@@ -23,7 +23,6 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.server.ResponseStatusException;
 
 @Transactional
 class SavedQueryServiceTest extends IntegrationTestBase {
@@ -247,18 +246,15 @@ class SavedQueryServiceTest extends IntegrationTestBase {
         .set(DSL.field(DSL.name("chart", "created_by"), Long.class), otherUserId)
         .execute();
 
-    // Owner tries to change SQL text — should fail with 409
+    // 소유자가 SQL 을 바꾸면 막힌다 — IllegalStateException 은 전역 처리에서 409 + 이 문구 그대로다(WD-649).
     assertThatThrownBy(
             () ->
                 savedQueryService.update(
                     sharedQuery.id(),
                     new UpdateSavedQueryRequest(null, null, "SELECT 2", null, null, null),
                     ownerUserId))
-        .isInstanceOf(ResponseStatusException.class)
-        .satisfies(
-            ex ->
-                assertThat(((ResponseStatusException) ex).getStatusCode())
-                    .isEqualTo(HttpStatus.CONFLICT));
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("공유 쿼리의 SQL은 수정할 수 없습니다. '복제' 후 수정하세요.");
   }
 
   @Test

@@ -160,6 +160,41 @@ export function isMemberGoneError(error: unknown): boolean {
   );
 }
 
+/**
+ * 로그인 자격 증명 오류(아이디·비밀번호 불일치)인가(WD-572) — 다시 입력할 비밀번호 칸으로 포커스를 옮길지 판단한다.
+ * api 는 자격 증명 오류를 code 없는 401(InvalidCredentialsException)로, 같은 401 이라도 다른 이유(비활성 계정 ACCOUNT_DEACTIVATED, WD-278)는
+ * code 를 실어 준다 — 그래서 code 가 있으면 비밀번호 문제가 아니다. 본문이 비어 있는 401 도 자격 증명 오류로 본다.
+ * 잠금(429)·서버 오류(5xx)·네트워크 오류는 아니다.
+ */
+export function isBadCredentialsError(error: unknown): boolean {
+  if (!axios.isAxiosError(error) || error.response?.status !== 401) return false;
+  const data = error.response.data as ErrorResponse | '' | undefined;
+  return !data || typeof data !== 'object' || !data.code;
+}
+
+/** 현재 비밀번호 불일치 코드(WD-572) — api WrongCurrentPasswordException.CODE 와 같은 값. */
+const WRONG_CURRENT_PASSWORD_CODE = 'WRONG_CURRENT_PASSWORD';
+
+/**
+ * 비밀번호 변경이 「현재 비밀번호가 틀림」으로 거절됐는가(WD-572) — 현재 비밀번호 칸으로 포커스를 옮길지 판단한다.
+ * 같은 400 이 「새 비밀번호가 현재와 같음」(SAME_AS_CURRENT_PASSWORD)에도 쓰이므로 상태가 아니라 code 로 구분한다.
+ * 403·429·5xx·네트워크 오류는 아니다.
+ */
+export function isWrongCurrentPasswordError(error: unknown): boolean {
+  return (
+    axios.isAxiosError(error) &&
+    error.response?.status === 400 &&
+    (error.response.data as ErrorResponse | undefined)?.code === WRONG_CURRENT_PASSWORD_CODE
+  );
+}
+
+/**
+ * 비밀번호 변경 실패의 대체 문구(WD-572) — 서버 문구가 없을 때(네트워크·5xx) 쓴다.
+ * 예전 대체 문구 「현재 비밀번호가 올바르지 않습니다」는 비밀번호와 무관한 오류도 비밀번호 탓으로 보이게 했다.
+ * 강제 변경 화면과 프로필 화면이 함께 쓴다.
+ */
+export const PASSWORD_CHANGE_FAILED_MESSAGE = '비밀번호를 변경하지 못했습니다. 잠시 후 다시 시도하세요';
+
 /** 리포트 등급 차단 코드(WD-198) — api ProactiveJobService.REPORT_LEVEL_BLOCKED_CODE 와 같은 값. */
 const REPORT_LEVEL_BLOCKED_CODE = 'REPORT_SECURITY_LEVEL_BLOCKED';
 

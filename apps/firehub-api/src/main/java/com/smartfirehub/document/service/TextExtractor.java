@@ -4,6 +4,7 @@ import com.smartfirehub.dataimport.exception.UnsupportedFileTypeException;
 import com.smartfirehub.document.dto.ExtractedText;
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.text.PDFTextStripper;
 import org.apache.poi.xwpf.extractor.XWPFWordExtractor;
@@ -16,7 +17,7 @@ public class TextExtractor {
 
   /** 파일 바이트와 mime으로 텍스트를 추출한다. 지원하지 않는 포맷은 예외. */
   public ExtractedText extract(byte[] data, String mimeType, String fileName) {
-    String mime = mimeType == null ? "" : mimeType.toLowerCase();
+    String mime = mimeType == null ? "" : mimeType.toLowerCase(Locale.ROOT);
     try {
       if (mime.equals("application/pdf")) {
         return extractPdf(data);

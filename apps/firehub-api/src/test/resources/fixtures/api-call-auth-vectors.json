@@ -1,0 +1,172 @@
+{
+  "description": "API_CALL \uc778\uc99d \uacf5\uc6a9 \uc0ac\ub840 \ud45c(WD-657) \u2014 Java(ApiCallAuthVectorsTest)\uc640 Python(test_api_call_auth_vectors.py)\uc774 \uac19\uc740 \ud45c\ub85c \uac19\uc740 \uacb0\uacfc\ub97c \ub0b4\ub294\uc9c0 \ubcf8\ub2e4. \ud55c\ucabd \uaddc\uce59\ub9cc \ubc14\uafb8\uba74 \uc5b4\ub290 \ud55c\ucabd \ud14c\uc2a4\ud2b8\uac00 \uae68\uc9c4\ub2e4. \ud5e4\ub354 \uc774\ub984 \uae30\ubcf8\uac12\uc740 Java X-API-Key\u00b7Python x-api-key \ub85c \ub300\uc18c\ubb38\uc790\ub9cc \ub2ec\ub77c \ub300\uc18c\ubb38\uc790\ub97c \ubb34\uc2dc\ud558\uace0 \ube44\uad50\ud55c\ub2e4.",
+  "sameAuthOrigin": [
+    {
+      "name": "same origin, host case, explicit default port",
+      "origin": "https://Api.Example.com/v1?x=1",
+      "target": "HTTPS://api.example.com:443/v2",
+      "expected": true
+    },
+    {
+      "name": "same scheme default port normalized",
+      "origin": "http://h.example/a",
+      "target": "http://h.example:80/b",
+      "expected": true
+    },
+    {
+      "name": "http to https upgrade with default ports",
+      "origin": "http://h.example/a",
+      "target": "https://h.example/a",
+      "expected": true
+    },
+    {
+      "name": "http to https upgrade with same explicit port",
+      "origin": "http://h.example:8080/a",
+      "target": "https://h.example:8080/a",
+      "expected": true
+    },
+    {
+      "name": "http to https with port change",
+      "origin": "http://h.example:8080/a",
+      "target": "https://h.example/a",
+      "expected": false
+    },
+    {
+      "name": "https to http downgrade",
+      "origin": "https://h.example/a",
+      "target": "http://h.example/a",
+      "expected": false
+    },
+    {
+      "name": "same scheme different port",
+      "origin": "http://h.example/a",
+      "target": "http://h.example:8080/b",
+      "expected": false
+    },
+    {
+      "name": "different host",
+      "origin": "https://api.example.com/",
+      "target": "https://evil.example.com/",
+      "expected": false
+    },
+    {
+      "name": "relative target has no host",
+      "origin": "https://api.example.com/",
+      "target": "/relative",
+      "expected": false
+    }
+  ],
+  "bearerToken": [
+    {
+      "name": "prefix and surrounding spaces",
+      "raw": " Bearer abc ",
+      "expected": "abc"
+    },
+    {
+      "name": "stacked prefixes",
+      "raw": "bearer Bearer abc",
+      "expected": "abc"
+    },
+    {
+      "name": "prefix only",
+      "raw": "Bearer",
+      "expected": ""
+    },
+    {
+      "name": "prefix glued to token is the token",
+      "raw": "bearerXYZ",
+      "expected": "bearerXYZ"
+    },
+    {
+      "name": "trailing NEL is not end of input",
+      "raw": "Bearer\u0085",
+      "expected": "Bearer\u0085"
+    },
+    {
+      "name": "stacked prefix then trailing NEL",
+      "raw": "Bearer Bearer\u0085",
+      "expected": "Bearer\u0085"
+    },
+    {
+      "name": "trailing line separator is stripped first",
+      "raw": "Bearer\u2028",
+      "expected": ""
+    },
+    {
+      "name": "no-break space is not whitespace",
+      "raw": "Bearer\u00a0abc",
+      "expected": "Bearer\u00a0abc"
+    }
+  ],
+  "headerName": [
+    {
+      "name": "inline key_name trimmed",
+      "auth": {
+        "authType": "API_KEY",
+        "key_name": " X-Key \t",
+        "value": "k"
+      },
+      "expected": "X-Key"
+    },
+    {
+      "name": "stored headerName trailing space trimmed",
+      "auth": {
+        "authType": "API_KEY",
+        "headerName": "X-Saved ",
+        "apiKey": "k"
+      },
+      "expected": "X-Saved"
+    },
+    {
+      "name": "blank headerName falls back to key_name",
+      "auth": {
+        "authType": "API_KEY",
+        "headerName": " ",
+        "key_name": "X-Alt",
+        "apiKey": "k"
+      },
+      "expected": "X-Alt"
+    },
+    {
+      "name": "blank names use default header",
+      "auth": {
+        "authType": "API_KEY",
+        "headerName": "  ",
+        "apiKey": "k"
+      },
+      "expected": "X-API-Key"
+    }
+  ],
+  "scrub": [
+    {
+      "name": "raw and sent forms",
+      "text": "raw and sent forms: abc+d== / abc%2Bd%3D%3D",
+      "secret": "abc+d==",
+      "expected": "raw and sent forms: ****+d== / ****+d=="
+    },
+    {
+      "name": "form-encoded forms",
+      "text": "form-encoded: my+key+1234 and my%20key%201234",
+      "secret": "my key 1234",
+      "expected": "form-encoded: ****1234 and ****1234"
+    },
+    {
+      "name": "pre-encoded key and its decoded form",
+      "text": "pre-encoded key decoded too: abc+d== and abc%2Bd%3D%3D",
+      "secret": "abc%2Bd%3D%3D",
+      "expected": "pre-encoded key decoded too: ****D%3D and ****D%3D"
+    },
+    {
+      "name": "secret shorter than 4 is left alone",
+      "text": "short secret untouched: abc",
+      "secret": "abc",
+      "expected": "short secret untouched: abc"
+    },
+    {
+      "name": "star and tilde forms",
+      "text": "star tilde: ab%2Acd~ef9876 ab*cd%7Eef9876",
+      "secret": "ab*cd~ef9876",
+      "expected": "star tilde: ****9876 ****9876"
+    }
+  ]
+}

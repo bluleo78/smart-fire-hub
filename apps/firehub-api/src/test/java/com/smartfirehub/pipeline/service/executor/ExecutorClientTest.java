@@ -9,6 +9,7 @@ import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import com.smartfirehub.global.tenant.MissingTenantScopeException;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.global.util.AdhocSqlErrorMessages;
 import com.smartfirehub.pipeline.service.PipelineSqlErrorMessages;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -658,6 +659,58 @@ class ExecutorClientTest {
 
     assertThatThrownBy(() -> executorClient().executeQuery("SELECT count(*) FROM test", 1000, true))
         .isInstanceOf(Exception.class);
+  }
+
+  /**
+   * WD-641 — 문장 제한을 받는 executeQuery 는 본문에 {@code timeout_seconds} 를 싣는다. 실행기는 이 값으로 {@code
+   * statement_timeout} 을 건다. 기존 필드(query·max_rows·read_only·tenantId)는 그대로다.
+   */
+  @Test
+  void executeQuery_withStatementTimeout_sendsTimeoutSeconds() {
+    stubOkFor("/execute/query", "{\"success\": true}");
+
+    executorClient()
+        .executeQuery("SELECT 1", 10, true, AdhocSqlErrorMessages.ADHOC_STATEMENT_TIMEOUT_SECONDS);
+
+    wireMock.verify(
+        postRequestedFor(urlEqualTo("/execute/query"))
+            .withRequestBody(
+                matchingJsonPath(
+                    "$.timeout_seconds",
+                    equalTo(String.valueOf(AdhocSqlErrorMessages.ADHOC_STATEMENT_TIMEOUT_SECONDS))))
+            .withRequestBody(matchingJsonPath("$.query", equalTo("SELECT 1")))
+            .withRequestBody(matchingJsonPath("$.max_rows", equalTo("10")))
+            .withRequestBody(matchingJsonPath("$.read_only", equalTo("true")))
+            .withRequestBody(matchingJsonPath("$.tenantId", equalTo("1"))));
+  }
+
+  /**
+   * WD-641 — 3인자 executeQuery(GuardedSqlExecutor 등)는 문장 제한을 싣지 않는다 — 실행기 기본값(30초)이 적용된다(예전과 같다).
+   */
+  @Test
+  void executeQuery_withoutStatementTimeout_omitsTimeoutSeconds() {
+    stubOkFor("/execute/query", "{\"success\": true}");
+
+    executorClient().executeQuery("SELECT 1", 10, true);
+
+    wireMock.verify(
+        postRequestedFor(urlEqualTo("/execute/query"))
+            .withRequestBody(notMatching(".*timeout_seconds.*")));
+  }
+
+  /** WD-641 — 실행기 db_error.position 을 DbError.position 으로 읽는다(없으면 null). */
+  @Test
+  void executeQuery_errorResponse_deserializesDbErrorPosition() {
+    stubOkFor(
+        "/execute/query",
+        """
+        {"success": false, "error": "boom", "db_error": {"code": 0, "sql_state": "42703", "message": "boom", "position": 8}}
+        """);
+
+    var result = executorClient().executeQuery("SELECT nope", 10, true);
+
+    assertThat(result.dbError().sqlState()).isEqualTo("42703");
+    assertThat(result.dbError().position()).isEqualTo(8);
   }
 
   // -------------------------------------------------------------------------

@@ -296,7 +296,7 @@ class InteractiveQueryConcurrencyIntegrationTest extends IntegrationTestBase {
   }
 
   @Test
-  void waitExceeded_chartSqlEditorAndDashboard_areRejectedWith429() throws Exception {
+  void waitExceeded_chartAndSqlEditorAre429_missingDashboardIs404() throws Exception {
     try (Connection raw = rawConnection()) {
       Async first = startBlockedChart(raw);
       try {
@@ -308,14 +308,20 @@ class InteractiveQueryConcurrencyIntegrationTest extends IntegrationTestBase {
         // SQL 편집기도 같은 게이트를 지난다.
         assertLimited(sqlEditor("SELECT v FROM " + freeTable));
 
-        // 대시보드 일괄 데이터도 허가 하나를 먼저 얻는다 — 대시보드 존재 확인보다 앞이라 없는 id 라도 429.
-        assertLimited(
+        // 대시보드는 존재 확인 뒤 실행이 필요할 때만 허가를 잡는다(WD-625) — 게이트가 차 있어도 없는 id 는
+        // 줄 서지 않고 곧바로 404. 캐시 미스 대시보드의 대기 뒤 429 는 InteractiveGatePermitPlacementTest 가 다룬다.
+        long dashboardStart = System.currentTimeMillis();
+        MockHttpServletResponse missingDashboard =
             mockMvc
                 .perform(
                     get("/api/v1/analytics/dashboards/" + Long.MAX_VALUE + "/data")
                         .header("Authorization", token(viewer)))
                 .andReturn()
-                .getResponse());
+                .getResponse();
+        assertThat(missingDashboard.getStatus())
+            .as(missingDashboard.getContentAsString())
+            .isEqualTo(404);
+        assertThat(System.currentTimeMillis() - dashboardStart).isLessThan(WAIT_MS);
       } finally {
         release(raw, first);
       }

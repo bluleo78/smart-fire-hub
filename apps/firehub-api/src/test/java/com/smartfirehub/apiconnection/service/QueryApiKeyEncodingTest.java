@@ -94,15 +94,14 @@ class QueryApiKeyEncodingTest {
   @Test
   void authQueryMasker_encodedAndDecodedKeysProduceSameCallUrl() {
     AuthQueryMasker.AuthQueryUrls enc =
-        AuthQueryMasker.buildForAuth(
+        AuthQueryMasker.build(
             "http://h.example/api",
-            "API_KEY",
-            Map.of("placement", "query", "paramName", "serviceKey", "apiKey", "abc%2Bd%3D%3D"));
+            Map.of("serviceKey", "abc%2Bd%3D%3D"),
+            "serviceKey",
+            "abc%2Bd%3D%3D");
     AuthQueryMasker.AuthQueryUrls dec =
-        AuthQueryMasker.buildForAuth(
-            "http://h.example/api",
-            "API_KEY",
-            Map.of("placement", "query", "paramName", "serviceKey", "apiKey", "abc+d=="));
+        AuthQueryMasker.build(
+            "http://h.example/api", Map.of("serviceKey", "abc+d=="), "serviceKey", "abc+d==");
 
     assertThat(enc.callUrl()).isEqualTo("http://h.example/api?serviceKey=abc%2Bd%3D%3D");
     assertThat(dec.callUrl()).isEqualTo(enc.callUrl());

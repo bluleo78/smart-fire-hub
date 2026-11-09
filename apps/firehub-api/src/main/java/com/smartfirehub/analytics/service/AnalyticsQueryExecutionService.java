@@ -27,6 +27,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import lombok.extern.slf4j.Slf4j;
@@ -188,12 +189,19 @@ public class AnalyticsQueryExecutionService {
 
   private AnalyticsQueryResponse executeViaExecutor(String sql, int maxRows, boolean readOnly) {
     try {
-      var result = executorClient.executeQuery(sql, maxRows, readOnly);
+      // 문장 제한은 시간 초과 안내 문구와 같은 상수로 실행기에 보낸다(WD-641) — 안내 숫자와 실제 제한이 한곳에서 나온다.
+      var result =
+          executorClient.executeQuery(
+              sql, maxRows, readOnly, AdhocSqlErrorMessages.ADHOC_STATEMENT_TIMEOUT_SECONDS);
       if (!result.success()) {
         // 운영 기본 경로라 직접 실행 경로와 같은 한국어 안내를 첫 줄에 붙인다(WD-571) — 실행기는 예외 대신 원문 문자열과
-        // db_error.sql_state 만 주므로 SQLState 로 안내를 고르고, 실행기 원문은 둘째 줄부터 그대로 둔다.
-        String sqlState = result.dbError() != null ? result.dbError().sqlState() : null;
-        return errorResponse(AdhocSqlErrorMessages.withGuide(sqlState, result.error()));
+        // db_error.sql_state 만 주므로 SQLState 로 안내를 고르고, 실행기 원문은 둘째 줄부터 둔다. 직접 경로와 같은 모양이 되게
+        // 끝에 SQLState 줄을 붙이고 같은 2000자 상한(꼬리 보존)을 건다(WD-641).
+        // 위치(db_error.position)도 받아 직접 경로처럼 Position 줄을 만든다(WD-641).
+        ExecutorClient.DbError dbError = result.dbError();
+        String sqlState = dbError != null ? dbError.sqlState() : null;
+        Integer position = dbError != null ? dbError.position() : null;
+        return errorResponse(AdhocSqlErrorMessages.withGuide(sqlState, position, result.error()));
       }
       return new AnalyticsQueryResponse(
           result.queryType(),
@@ -623,8 +631,8 @@ public class AnalyticsQueryExecutionService {
           // PostGIS type can be "geometry", "geography", or schema-qualified like
           // "public"."geometry"
           if (pgType != null
-              && (pgType.toLowerCase().contains("geometry")
-                  || pgType.toLowerCase().contains("geography"))) {
+              && (pgType.toLowerCase(Locale.ROOT).contains("geometry")
+                  || pgType.toLowerCase(Locale.ROOT).contains("geography"))) {
             geomColumns.add(i);
           }
         } catch (ReflectiveOperationException ignored) {

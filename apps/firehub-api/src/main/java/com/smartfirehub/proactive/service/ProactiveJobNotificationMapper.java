@@ -14,6 +14,7 @@ import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -82,7 +83,7 @@ public final class ProactiveJobNotificationMapper {
   private static ChannelType mapChannelType(String type) {
     if (type == null) return null;
     try {
-      return ChannelType.valueOf(type.toUpperCase());
+      return ChannelType.valueOf(type.toUpperCase(Locale.ROOT));
     } catch (IllegalArgumentException e) {
       return null;
     }

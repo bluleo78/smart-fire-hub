@@ -1,0 +1,54 @@
+"""API_CALL 인증 공용 사례 표(WD-657) — Java ``ApiCallAuthVectorsTest`` 와 같은 표로 Python 실행기를 검증한다.
+
+픽스처 ``apps/firehub-api/src/test/resources/fixtures/api-call-auth-vectors.json`` 은 api 의 Java 테스트도 읽는다 —
+리다이렉트 인증 출처 판정, Bearer 접두 정리, 헤더 이름 공백 정리, 비밀 가림이 두 실행기에서 같아야 한다. 한쪽 규칙만 바꾸면
+어느 한쪽 테스트가 깨진다.
+"""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from app.services import api_call_errors as errors
+from app.services import api_call_executor
+
+_FIXTURE = (
+    Path(__file__).resolve().parents[2]
+    / "firehub-api/src/test/resources/fixtures/api-call-auth-vectors.json"
+)
+_DATA = json.loads(_FIXTURE.read_text(encoding="utf-8"))
+
+
+def _ids(section: str):
+    return [c["name"] for c in _DATA[section]]
+
+
+def test_fixture_is_loaded():
+    # 표가 비면 아래 파라미터 테스트가 공허하게 통과한다 — 갈래마다 사례가 실제로 읽혔는지 본다.
+    for section in ("sameAuthOrigin", "bearerToken", "headerName", "scrub"):
+        assert len(_DATA[section]) >= 4, section
+
+
+@pytest.mark.parametrize("case", _DATA["sameAuthOrigin"], ids=_ids("sameAuthOrigin"))
+def test_same_auth_origin_matches_vector(case):
+    assert api_call_executor._same_auth_origin(case["origin"], case["target"]) is case["expected"]
+
+
+@pytest.mark.parametrize("case", _DATA["bearerToken"], ids=_ids("bearerToken"))
+def test_bearer_token_matches_vector(case):
+    resolved = api_call_executor._resolve_auth({"authType": "BEARER", "token": case["raw"]})
+    assert resolved.secret == case["expected"]
+
+
+@pytest.mark.parametrize("case", _DATA["headerName"], ids=_ids("headerName"))
+def test_header_name_matches_vector(case):
+    # 기본 헤더 이름만 두 언어의 대소문자가 달라(X-API-Key·x-api-key) 대소문자를 무시하고 비교한다.
+    resolved = api_call_executor._resolve_auth(case["auth"])
+    assert resolved.header_name.lower() == case["expected"].lower()
+
+
+@pytest.mark.parametrize("case", _DATA["scrub"], ids=_ids("scrub"))
+def test_scrub_secret_matches_vector(case):
+    assert errors.scrub_secret(case["text"], case["secret"]) == case["expected"]

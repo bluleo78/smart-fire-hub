@@ -17,6 +17,7 @@ import com.smartfirehub.apiconnection.repository.ApiConnectionRepository.HealthC
 import com.smartfirehub.audit.service.AuditLogService;
 import com.smartfirehub.global.exception.SerializationException;
 import com.smartfirehub.job.service.AsyncJobService;
+import com.smartfirehub.pipeline.service.executor.ApiCallAuth;
 import com.smartfirehub.pipeline.service.executor.ApiCallErrorMessages;
 import com.smartfirehub.pipeline.service.executor.SsrfException;
 import com.smartfirehub.pipeline.service.executor.SsrfProtectionService;
@@ -28,6 +29,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -320,9 +322,13 @@ public class ApiConnectionService {
     ApiConnectionResponse conn = reader.getById(id);
     Map<String, String> rawConfig = reader.getDecryptedAuthConfig(id);
     // ── 아래 HTTP 호출은 트랜잭션 밖이다 ──
+    // 인증은 파이프라인 API_CALL 실행·미리보기와 같은 진입점으로 푼다(WD-657) — 방식은 연결의 auth_type 컬럼, 키·대체 키·대소문자·Bearer
+    // 접두 정리는 실행과 같다. 예전 규칙(소문자 query 만·paramName 필수·대체 키 없음·Bearer 정리 없음)으로는 「테스트는 실패, 실행은 성공」
+    // 또는 그 반대가 났다.
     TestConnectionResponse result =
         callHealthCheck(
-            UrlUtils.joinUrl(conn.baseUrl(), conn.healthCheckPath()), conn.authType(), rawConfig);
+            UrlUtils.joinUrl(conn.baseUrl(), conn.healthCheckPath()),
+            ApiCallAuth.resolve(conn, rawConfig));
     // 성공·HTTP 오류·연결 실패·주소 차단 모두 같은 규칙으로 저장한다.
     recordHealthResult(id, conn.name(), result, actorUserId);
     return result;
@@ -379,8 +385,10 @@ public class ApiConnectionService {
             request.authType(), resolveMaskedSecrets(request.authConfig(), null, false));
     String normalizedBaseUrl = validateAndNormalizeBaseUrl(request.baseUrl());
     String normalizedPath = normalizeHealthCheckPath(request.healthCheckPath());
+    // 저장 전이라 연결 행이 없다 — 요청의 방식을 연결 컬럼처럼 보고 같은 규칙으로 푼다(WD-657).
     return callHealthCheck(
-        UrlUtils.joinUrl(normalizedBaseUrl, normalizedPath), request.authType(), rawConfig);
+        UrlUtils.joinUrl(normalizedBaseUrl, normalizedPath),
+        ApiCallAuth.resolveWithAuthType(request.authType(), rawConfig));
   }
 
   /**
@@ -398,17 +406,23 @@ public class ApiConnectionService {
    * <p>리다이렉트: 이 WebClient 는 Reactor Netty 기본값(리다이렉트를 따라가지 않음)이라 3xx 응답을 그대로 결과로 돌려줄 뿐 다른 주소로 다시
    * 요청하지 않는다. DNS: API_CALL 과 마찬가지로 검사 때 해석한 IP 로 고정하지는 않는다(검사 후 WebClient 가 다시 해석).
    *
+   * <p><b>인증(WD-657).</b> 헤더·쿼리 키·가릴 비밀 모두 {@link ApiCallAuth#resolve} 로 푼 값 하나로 만든다 — 파이프라인
+   * 실행(Java·Python 실행기)·미리보기와 같은 값을 보낸다.
+   *
    * @param targetUrl 인증 쿼리를 붙이기 전 호출 URL(기준 URL + 헬스체크 경로)
+   * @param auth 실행과 같은 규칙으로 푼 인증 설정
    */
-  private TestConnectionResponse callHealthCheck(
-      String targetUrl, String authType, Map<String, String> rawConfig) {
+  private TestConnectionResponse callHealthCheck(String targetUrl, ApiCallAuth.ResolvedAuth auth) {
+    // 응답 본문·헤더·오류 문구에서 가릴 값 — 실제로 보내는 비밀 전부다(쿼리 키뿐 아니라 헤더 키·Bearer 토큰, WD-657).
+    String secret = auth.sentSecret();
     // 응답의 requestUrl 은 인증 쿼리 키를 가린 표시용 URL 이다(WD-177). URL 을 만들기 전에 실패하면 키 없는 기준 URL 을 보인다.
     String displayUrl = targetUrl;
 
     long start = System.currentTimeMillis();
     // 이미 저장된 인증 값이 HTTP 요청에 쓸 수 없는 것이면(WD-392 전에 저장된 띄어쓰기 헤더 이름 등) 호출하지 않고 그 사유를 보인다 —
     // 호출하면 클라이언트 예외가 「대상 서버에 연결하지 못했습니다」로 안내돼 주소·네트워크를 의심하게 된다.
-    String authProblem = AuthConfigValidator.describeProblem(authType, rawConfig);
+    // 검사도 보내는 값으로 한다(WD-657) — 문구는 연결 화면용(「… 입력하세요」)이다.
+    String authProblem = AuthConfigValidator.describeSentValueProblem(auth);
     if (authProblem != null) {
       return new TestConnectionResponse(
           false, null, 0L, authProblem, displayUrl, null, Map.of(), null);
@@ -420,17 +434,18 @@ public class ApiConnectionService {
       // placement=query 인 경우 URL 에 인증 파라미터 부착 (#113). 호출용·표시용을 함께 만든다(WD-177) — try 안에서 만들어,
       // URL 을 만들 수 없어 실패해도 400 응답에 키가 실리지 않고 DOWN 결과(고정 문구)로 돌아가게 한다. 키 값은 인코딩 키·디코딩 키
       // 모두 공용 규칙(QueryApiKeyEncoding)으로 한 번만 인코딩된다(WD-182).
-      AuthQueryMasker.AuthQueryUrls urls =
-          AuthQueryMasker.buildForAuth(targetUrl, authType, rawConfig);
+      // 쿼리 인증이 아니면 URL 을 손대지 않는다(정적 파라미터 없음 → null) — 공용 빌더(ResolvedAuth.buildUrls, WD-657).
+      AuthQueryMasker.AuthQueryUrls urls = auth.buildUrls(targetUrl, null);
       displayUrl = urls.displayUrl();
       // 응답 본문/헤더를 함께 받아 디버깅용으로 노출 (#76).
       // 쿼리 인증이면 이미 인코딩을 마친 URI 를 넘긴다(WD-182) — 문자열로 넘기면 WebClient 가 템플릿으로 다시 인코딩해 인코딩 키의
       // %2B 가 %252B 로 나갔다(미리보기·실행은 URI 를 넘겨 그대로 나가 경로마다 보내는 바이트가 달랐다). 쿼리 인증이 아니면 예전처럼
-      // 문자열로 넘겨 경로의 한글·공백을 WebClient 가 인코딩하게 둔다(buildForAuth 가 URL 을 손대지 않는다).
-      boolean queryAuth = AuthQueryMasker.queryAuthParamName(authType, rawConfig) != null;
+      // 문자열로 넘겨 경로의 한글·공백을 WebClient 가 인코딩하게 둔다(buildUrls 가 URL 을 손대지 않는다).
       var resp =
-          (queryAuth ? webClient.get().uri(urls.callUri()) : webClient.get().uri(urls.callUrl()))
-              .headers(h -> buildAuthHeaders(authType, rawConfig).forEach(h::set))
+          (auth.isQueryApiKey()
+                  ? webClient.get().uri(urls.callUri())
+                  : webClient.get().uri(urls.callUrl()))
+              .headers(h -> auth.applyHeaders(h::set))
               .retrieve()
               .toEntity(String.class)
               .block(Duration.ofSeconds(HEALTH_CHECK_TIMEOUT_SECONDS));
@@ -439,9 +454,9 @@ public class ApiConnectionService {
       Integer status = resp != null ? resp.getStatusCode().value() : null;
       boolean ok = resp != null && resp.getStatusCode().is2xxSuccessful();
       String err = ok ? null : ("HTTP " + status);
-      String body = resp != null ? truncateBody(resp.getBody(), rawConfig) : null;
+      String body = resp != null ? truncateBody(resp.getBody(), secret) : null;
       Map<String, String> headers =
-          resp != null ? sanitizeHeaders(resp.getHeaders(), rawConfig) : Map.of();
+          resp != null ? sanitizeHeaders(resp.getHeaders(), secret) : Map.of();
       String contentType =
           resp != null && resp.getHeaders().getContentType() != null
               ? resp.getHeaders().getContentType().toString()
@@ -461,8 +476,8 @@ public class ApiConnectionService {
       long latency = System.currentTimeMillis() - start;
       String err = "HTTP " + e.getStatusCode().value();
       // 4xx/5xx 응답 본문도 운영자가 봐야 디버깅 가능하므로 함께 노출.
-      String body = truncateBody(e.getResponseBodyAsString(), rawConfig);
-      Map<String, String> headers = sanitizeHeaders(e.getHeaders(), rawConfig);
+      String body = truncateBody(e.getResponseBodyAsString(), secret);
+      Map<String, String> headers = sanitizeHeaders(e.getHeaders(), secret);
       String contentType =
           e.getHeaders().getContentType() != null
               ? e.getHeaders().getContentType().toString()
@@ -473,7 +488,7 @@ public class ApiConnectionService {
     } catch (Exception e) {
       long latency = System.currentTimeMillis() - start;
       // 예외 메시지에 URL·키가 실릴 수 있어 가린 문구만 응답·lastErrorMessage·알림으로 보낸다(WD-177).
-      String msg = toUserFacingErrorMessage(e, targetUrl, rawConfig);
+      String msg = toUserFacingErrorMessage(e, targetUrl, secret);
       return new TestConnectionResponse(
           false, null, latency, msg, displayUrl, null, Map.of(), null);
     }
@@ -494,8 +509,7 @@ public class ApiConnectionService {
    * 쿼리 키(원문·인코딩형)를 {@code ****XXXX} 로 가린다. API_KEY 를 쿼리로 보내는 연결에서 예외 메시지에 호출 URL 이 실리면 키가 그대로 남기
    * 때문이다.
    */
-  private static String toUserFacingErrorMessage(
-      Exception e, String targetUrl, Map<String, String> authConfig) {
+  private static String toUserFacingErrorMessage(Exception e, String targetUrl, String secret) {
     String message;
     if (isTimeoutException(e)) {
       // Reactor block(Duration) 타임아웃(IllegalStateException)은 분류기의 타임아웃 판별에 걸리지 않을 수 있어
@@ -511,7 +525,7 @@ public class ApiConnectionService {
           ApiCallErrorMessages.describe(e, HEALTH_CHECK_TIMEOUT_SECONDS * 1000, hostOf(targetUrl));
     }
     // 분류하지 못한 원문에 인증 쿼리 키(원문·인코딩형)가 실려 올 수 있어 마지막에 가린다(WD-177).
-    return AuthQueryMasker.scrubSecret(message, authSecretOf(authConfig));
+    return AuthQueryMasker.scrubSecret(message, secret);
   }
 
   /** 「호스트 이름을 찾을 수 없습니다: X」 문구용 호스트. 해석할 수 없으면 null(문구는 「알 수 없음」). */
@@ -550,16 +564,12 @@ public class ApiConnectionService {
    * 응답 본문 미리보기. (WD-177) 오류 본문이 요청 파라미터를 되울려 쿼리 인증 키가 담겨 올 수 있어 키(원문·인코딩형)를 먼저 가린 뒤 자른다 — 자른 뒤 가리면
    * 경계에 걸친 키 앞부분이 남는다.
    */
-  private static String truncateBody(String body, Map<String, String> authConfig) {
+  private static String truncateBody(String body, String secret) {
     if (body == null || body.isEmpty()) return body;
-    String masked = AuthQueryMasker.scrubSecret(body, authSecretOf(authConfig));
+    // JSON 이스케이프로 되울린 비밀까지 가리도록 미리보기와 같은 본문 가림을 쓴다(WD-657).
+    String masked = AuthQueryMasker.maskBody(body, secret);
     if (masked.length() <= MAX_BODY_PREVIEW_BYTES) return masked;
     return masked.substring(0, MAX_BODY_PREVIEW_BYTES) + "\n... (truncated)";
-  }
-
-  /** 응답·오류 문구에서 가릴 인증 키(API_KEY 의 apiKey). 없으면 null. */
-  private static String authSecretOf(Map<String, String> authConfig) {
-    return authConfig != null ? authConfig.get("apiKey") : null;
   }
 
   /** 민감 헤더 마스킹 — 인증/세션/쿠키 헤더 값은 노출하지 않는다. */
@@ -577,13 +587,12 @@ public class ApiConnectionService {
    * 따라가지 않아 3xx 의 {@code Location: https://…?serviceKey=<키>} 가 그대로 결과에 실리기 때문이다.
    */
   private static Map<String, String> sanitizeHeaders(
-      org.springframework.http.HttpHeaders headers, Map<String, String> authConfig) {
-    String secret = authSecretOf(authConfig);
+      org.springframework.http.HttpHeaders headers, String secret) {
     Map<String, String> out = new HashMap<>();
     headers.forEach(
         (k, v) -> {
           String joined = String.join(", ", v);
-          if (SENSITIVE_HEADER_NAMES.contains(k.toLowerCase())) {
+          if (SENSITIVE_HEADER_NAMES.contains(k.toLowerCase(Locale.ROOT))) {
             out.put(k, "****");
           } else {
             out.put(k, AuthQueryMasker.scrubSecret(joined, secret));
@@ -697,31 +706,6 @@ public class ApiConnectionService {
       // URI 파서의 영어 원문(「Illegal character in authority at index …」)은 싣지 않고 고정 안내만 보낸다(WD-180).
       throw new ApiConnectionException("baseUrl 형식이 올바르지 않습니다 — http(s)://호스트[:포트]/경로 형태로 입력하세요");
     }
-  }
-
-  /**
-   * authType과 authConfig를 기반으로 HTTP 인증 헤더를 생성한다. API_KEY + placement=query 인 경우는 URL query param 으로
-   * 전송해야 하므로 헤더에 포함하지 않는다(AuthQueryMasker.buildForAuth 가 처리). (#113)
-   */
-  private Map<String, String> buildAuthHeaders(String authType, Map<String, String> config) {
-    Map<String, String> headers = new HashMap<>();
-    if (config == null) return headers;
-
-    if ("API_KEY".equals(authType)) {
-      String placement = config.getOrDefault("placement", "header");
-      if ("query".equals(placement)) {
-        // placement=query 는 URL 에 붙이므로 헤더 미생성
-        return headers;
-      }
-      String headerName =
-          config.getOrDefault("headerName", AuthConfigValidator.DEFAULT_API_KEY_HEADER);
-      String apiKey = config.get("apiKey");
-      if (apiKey != null) headers.put(headerName, apiKey);
-    } else if ("BEARER".equals(authType)) {
-      String token = config.get("token");
-      if (token != null) headers.put("Authorization", "Bearer " + token);
-    }
-    return headers;
   }
 
   /**

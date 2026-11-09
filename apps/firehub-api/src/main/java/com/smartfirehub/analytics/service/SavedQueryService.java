@@ -32,11 +32,9 @@ import java.util.Map;
 import java.util.Objects;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
-import org.springframework.web.server.ResponseStatusException;
 
 @Service
 @RequiredArgsConstructor
@@ -218,12 +216,13 @@ public class SavedQueryService {
       requireSqlSavable(viewer, req.sqlText());
     }
 
-    // Protect shared query SQL if other users' charts reference it
+    // 다른 사용자의 차트가 참조하는 공유 쿼리는 SQL 을 바꿀 수 없다 — 차트 결과가 소유자 모르게 바뀌지 않게.
+    // 상태 충돌이라 IllegalStateException 으로 던진다: 전역 처리가 409 + 이 한국어 문구 그대로 답하고(화면 토스트가 그대로 보인다),
+    // ResponseStatusException 의 reason 은 사용자에게 보이지 않으므로(WD-649) 쓰지 않는다.
     if (sqlChanged && existing.isShared()) {
       long otherChartCount = savedQueryRepository.countOtherUserCharts(id, userId);
       if (otherChartCount > 0) {
-        throw new ResponseStatusException(
-            HttpStatus.CONFLICT, "공유 쿼리의 SQL은 수정할 수 없습니다. '복제' 후 수정하세요.");
+        throw new IllegalStateException("공유 쿼리의 SQL은 수정할 수 없습니다. '복제' 후 수정하세요.");
       }
     }
 

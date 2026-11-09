@@ -80,6 +80,26 @@ test.describe('API 연결 페이지', () => {
     await expect(page.getByText('등록된 API 연결이 없습니다.')).toBeVisible();
   });
 
+  test('빈 목록에서 만들기 버튼을 누르면 새 API 연결 창이 열린다 (WD-621)', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/api-connections', []);
+    await page.goto('/admin/api-connections');
+
+    const emptyRow = page.getByRole('row').filter({ hasText: '등록된 API 연결이 없습니다.' });
+    await emptyRow.getByRole('button', { name: '새 API 연결 만들기' }).click();
+    // 머리말 「새 연결」과 같은 생성 창이 열린다
+    await expect(page.getByRole('dialog').getByRole('heading', { name: '새 API 연결' })).toBeVisible();
+  });
+
+  test('쓰기 권한(apiconnection:write)이 없으면 빈 목록에 만들기 버튼을 두지 않는다 (WD-621)', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/auth/me/permissions', ['apiconnection:read']);
+    await mockApi(page, 'GET', '/api/v1/api-connections', []);
+    await page.goto('/admin/api-connections');
+
+    await expect(page.getByText('등록된 API 연결이 없습니다.')).toBeVisible();
+    await expect(page.getByRole('button', { name: '새 API 연결 만들기' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '새 연결' })).toHaveCount(0);
+  });
+
   test('새 연결 버튼 클릭 시 생성 다이얼로그가 열린다', async ({ authenticatedPage: page }) => {
     await setupApiConnectionListMocks(page);
 

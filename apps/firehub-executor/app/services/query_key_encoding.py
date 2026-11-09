@@ -29,6 +29,19 @@ from urllib.parse import quote
 _PERCENT_ESCAPE = re.compile(r"%[0-9A-Fa-f]{2}")
 
 
+# 뒤에 hex 두 자리가 오지 않는 % — 디코딩할 수 없는 값의 표시(WD-657).
+_BAD_PERCENT = re.compile(r"%(?![0-9A-Fa-f]{2})")
+
+
+def has_invalid_percent(value: str) -> bool:
+    """값에 디코딩할 수 없는 % 시퀀스(뒤에 hex 두 자리가 없는 %)가 있는지 — Java ``URLDecoder.decode`` 가 예외를 내는 경우다(WD-657).
+
+    비밀 형태 고르기(``api_call_errors._secret_forms``)와 실행기의 쿼리 파라미터 이름 비교(``api_call_executor._decode_name``)가
+    같은 판정을 쓰도록 퍼센트 인코딩 규칙 곁에 둔다.
+    """
+    return _BAD_PERCENT.search(value) is not None
+
+
 def is_pre_encoded(value: Optional[str]) -> bool:
     """값에 유효한 퍼센트 인코딩(``%XX``)이 하나라도 있어 「이미 인코딩된 키」로 보는지. None 은 False."""
     return value is not None and _PERCENT_ESCAPE.search(value) is not None

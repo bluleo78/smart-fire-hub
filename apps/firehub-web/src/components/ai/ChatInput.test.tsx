@@ -4,10 +4,11 @@
  * 패널 열림 여부(focusOnOpen)가 false→true 로 바뀔 때 입력창에 포커스하는 동작을 검증한다.
  * 스트리밍 SSE 를 E2E 로 붙잡아 두기 어려워 disabled→enabled 전환·가드는 여기서 다룬다.
  */
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import type { RefObject } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { MAX_CHAT_MESSAGE_LENGTH } from '../../lib/ai-chat-limits';
 import { ChatInput } from './ChatInput';
 
 /** 실제 AIChatPanel 처럼 data-ai-chat-panel 경계 안에 ChatInput 을 둔다 */
@@ -130,5 +131,55 @@ describe('ChatInput 입력란 이름 (WD-590·WD-643)', () => {
     // AINativeMode 는 UI 진입로가 없어 E2E 로 띄울 수 없으므로, 그 화면이 쓰는 그대로(이름 prop 없이) 여기서 지킨다.
     render(<ChatInput onSend={vi.fn()} />);
     expect(screen.getByRole('textbox', { name: '메시지 입력' })).toBe(textarea());
+  });
+});
+
+/**
+ * 메시지 길이 상한 (WD-631) — 서버 상한(50,000자)을 넘으면 전송을 막고 안내를 보이되, 글은 자르지 않는다.
+ * 큰 문자열 입력은 E2E 에서도 다루지만, 경계값(정확히 상한 / 공백 trim)은 여기서 빠르게 검증한다.
+ */
+describe('ChatInput 메시지 길이 상한 (WD-631)', () => {
+  const sendButton = () => screen.getByRole('button', { name: '메시지 전송' });
+
+  it('정확히 상한(50,000자)이면 보낼 수 있고 안내가 없다', () => {
+    const onSend = vi.fn();
+    render(<ChatInput onSend={onSend} />);
+    fireEvent.change(textarea(), { target: { value: 'a'.repeat(MAX_CHAT_MESSAGE_LENGTH) } });
+    expect(sendButton()).toBeEnabled();
+    expect(screen.queryByText(/자 이하로 입력하세요/)).toBeNull();
+    fireEvent.click(sendButton());
+    expect(onSend).toHaveBeenCalledWith('a'.repeat(MAX_CHAT_MESSAGE_LENGTH), undefined);
+  });
+
+  it('상한을 넘으면 전송 버튼이 비활성되고 현재 길이를 담은 안내가 입력창과 이어진다 — Enter 로도 보내지 않고 글은 그대로', () => {
+    const onSend = vi.fn();
+    render(<ChatInput onSend={onSend} />);
+    const value = 'a'.repeat(MAX_CHAT_MESSAGE_LENGTH + 1);
+    fireEvent.change(textarea(), { target: { value } });
+
+    expect(sendButton()).toBeDisabled();
+    const hint = screen.getByText('메시지는 50,000자 이하로 입력하세요. (현재 50,001자)');
+    expect(textarea()).toHaveAttribute('aria-describedby', hint.id);
+    expect(textarea()).toHaveAttribute('aria-invalid', 'true');
+
+    fireEvent.keyDown(textarea(), { key: 'Enter' });
+    expect(onSend).not.toHaveBeenCalled();
+    expect(textarea()).toHaveValue(value);
+  });
+
+  it('앞뒤 공백은 보내지 않으므로 길이에 세지 않는다', () => {
+    render(<ChatInput onSend={vi.fn()} />);
+    fireEvent.change(textarea(), { target: { value: `  ${'a'.repeat(MAX_CHAT_MESSAGE_LENGTH)}  ` } });
+    expect(sendButton()).toBeEnabled();
+  });
+
+  it('줄여서 상한 안으로 들어오면 안내가 사라지고 다시 보낼 수 있다', () => {
+    render(<ChatInput onSend={vi.fn()} />);
+    fireEvent.change(textarea(), { target: { value: 'a'.repeat(MAX_CHAT_MESSAGE_LENGTH + 10) } });
+    expect(sendButton()).toBeDisabled();
+    fireEvent.change(textarea(), { target: { value: 'a'.repeat(10) } });
+    expect(sendButton()).toBeEnabled();
+    expect(screen.queryByText(/자 이하로 입력하세요/)).toBeNull();
+    expect(textarea()).not.toHaveAttribute('aria-describedby');
   });
 });

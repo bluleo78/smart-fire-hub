@@ -198,7 +198,8 @@ class AnalyticsQueryExecutionServiceExtTest extends IntegrationTestBase {
             false,
             null);
 
-    when(executorClient.executeQuery(anyString(), anyInt(), anyBoolean())).thenReturn(mockResult);
+    when(executorClient.executeQuery(anyString(), anyInt(), anyBoolean(), anyInt()))
+        .thenReturn(mockResult);
 
     // executorEnabled=false이므로 직접 실행 경로가 사용됨 (executor mock은 호출되지 않음)
     // 대신 직접 실행 경로에서 정상 응답 확인
@@ -380,50 +381,99 @@ class AnalyticsQueryExecutionServiceExtTest extends IntegrationTestBase {
 
   /**
    * WD-571 — 운영 기본 경로(실행기, {@code app.executor.enabled: true})의 시간 초과(57014)도 첫 줄에 제한 시간·해결 방법 안내가
-   * 오고, 실행기 원문은 둘째 줄부터 그대로 남는다. 안내는 실행기 응답 {@code db_error.sql_state} 로 고른다.
+   * 오고, 실행기 원문은 둘째 줄부터 그대로 남는다. 안내는 실행기 응답 {@code db_error.sql_state} 로 고른다. WD-641 — 직접 경로({@link
+   * #formatExecutionError_statementTimeout_prependsTimeoutGuide})처럼 끝에 {@code SQLState:} 줄이 있다.
    */
   @Test
   void executeViaExecutor_statementTimeout_prependsKoreanGuide() {
     String raw = "canceling statement due to statement timeout";
-    when(executorClient.executeQuery(anyString(), anyInt(), anyBoolean()))
+    when(executorClient.executeQuery(anyString(), anyInt(), anyBoolean(), anyInt()))
         .thenReturn(executorFailure(raw, "57014"));
 
     AnalyticsQueryResponse res = executeWithExecutor("SELECT 1");
 
     assertThat(res.error())
-        .isEqualTo(AdhocSqlErrorMessages.STATEMENT_TIMEOUT_GUIDE + "\n" + raw)
+        .isEqualTo(AdhocSqlErrorMessages.STATEMENT_TIMEOUT_GUIDE + "\n" + raw + "\nSQLState: 57014")
         .contains("30초");
   }
 
-  /** WD-571 — 실행기 경로의 없는 테이블(42P01)도 한국어 안내 + 실행기 원문(LINE·캐럿 포함)을 그대로 돌려준다. */
+  /** WD-571 — 실행기 경로의 없는 테이블(42P01)도 한국어 안내 + 실행기 원문(LINE·캐럿 포함) + SQLState 줄(WD-641)을 돌려준다. */
   @Test
   void executeViaExecutor_undefinedTable_prependsKoreanGuide() {
     String raw =
         "relation \"nope\" does not exist\nLINE 1: SELECT * FROM nope\n                      ^";
-    when(executorClient.executeQuery(anyString(), anyInt(), anyBoolean()))
+    when(executorClient.executeQuery(anyString(), anyInt(), anyBoolean(), anyInt()))
         .thenReturn(executorFailure(raw, "42P01"));
 
     AnalyticsQueryResponse res = executeWithExecutor("SELECT 1");
 
-    assertThat(res.error()).isEqualTo(AdhocSqlErrorMessages.UNDEFINED_TABLE_GUIDE + "\n" + raw);
+    assertThat(res.error())
+        .isEqualTo(AdhocSqlErrorMessages.UNDEFINED_TABLE_GUIDE + "\n" + raw + "\nSQLState: 42P01");
   }
 
-  /** WD-571 — db_error 가 없는 응답(구버전 실행기)·안내 없는 코드는 실행기 원문 그대로(하위 호환). */
+  /**
+   * WD-641 — 같은 오류(57014)에 두 경로가 같은 모양이다: 첫 줄 같은 안내, 끝 줄 같은 {@code SQLState: 57014}. 실행기 원문은
+   * psycopg2 원문({@code ERROR:} 접두 없음, 끝 줄바꿈)이라 가운데 본문 글자만 다를 수 있다.
+   */
   @Test
-  void executeViaExecutor_withoutDbErrorOrUnknownCode_returnsRawError() {
-    when(executorClient.executeQuery(anyString(), anyInt(), anyBoolean()))
+  void executorAndDirectPaths_sameGuideFirstLineAndSqlStateLastLine() {
+    String executorRaw = "canceling statement due to statement timeout\n";
+    when(executorClient.executeQuery(anyString(), anyInt(), anyBoolean(), anyInt()))
+        .thenReturn(executorFailure(executorRaw, "57014"));
+    String viaExecutor = executeWithExecutor("SELECT 1").error();
+
+    String direct =
+        executionService.formatExecutionError(
+            new org.postgresql.util.PSQLException(
+                new org.postgresql.util.ServerErrorMessage(
+                    "SERROR\0C57014\0Mcanceling statement due to statement timeout\0")));
+
+    String[] executorLines = viaExecutor.split("\n");
+    String[] directLines = direct.split("\n");
+    assertThat(executorLines[0])
+        .isEqualTo(directLines[0])
+        .isEqualTo(AdhocSqlErrorMessages.STATEMENT_TIMEOUT_GUIDE);
+    assertThat(executorLines[executorLines.length - 1])
+        .isEqualTo(directLines[directLines.length - 1])
+        .isEqualTo("SQLState: 57014");
+    // 원문 끝 줄바꿈 때문에 빈 줄이 생기지 않는다.
+    assertThat(viaExecutor).doesNotContain("\n\n");
+  }
+
+  /** WD-571 — db_error 가 없는 응답(구버전 실행기)은 실행기 원문 그대로(하위 호환). 안내 없는 코드는 원문 + SQLState 줄(WD-641). */
+  @Test
+  void executeViaExecutor_withoutDbError_returnsRaw_unknownCode_appendsSqlState() {
+    when(executorClient.executeQuery(anyString(), anyInt(), anyBoolean(), anyInt()))
         .thenReturn(
             new QueryExecuteResult(
                 false, "SELECT", List.of(), List.of(), 0, 0, 5L, false, "old executor error"));
     assertThat(executeWithExecutor("SELECT 1").error()).isEqualTo("old executor error");
 
-    when(executorClient.executeQuery(anyString(), anyInt(), anyBoolean()))
+    when(executorClient.executeQuery(anyString(), anyInt(), anyBoolean(), anyInt()))
         .thenReturn(executorFailure("syntax error at or near \"x\"", "42601"));
-    assertThat(executeWithExecutor("SELECT 1").error()).isEqualTo("syntax error at or near \"x\"");
+    assertThat(executeWithExecutor("SELECT 1").error())
+        .isEqualTo("syntax error at or near \"x\"\nSQLState: 42601");
+  }
+
+  /** WD-641 — 실행기가 준 db_error.position 은 직접 경로처럼 SQLState 줄 다음의 {@code Position:} 줄이 된다. */
+  @Test
+  void executeViaExecutor_dbErrorPosition_appendsPositionLine() {
+    String raw = "column \"nope\" does not exist\nLINE 1: SELECT nope\n               ^\n";
+    when(executorClient.executeQuery(anyString(), anyInt(), anyBoolean(), anyInt()))
+        .thenReturn(executorFailure(raw, "42703", 8));
+
+    assertThat(executeWithExecutor("SELECT 1").error())
+        .startsWith(AdhocSqlErrorMessages.UNDEFINED_COLUMN_GUIDE + "\n")
+        .endsWith("^\nSQLState: 42703\nPosition: 8");
   }
 
   /** 실행기 실패 응답 — 파이썬 실행기처럼 error 원문과 db_error(code 0, SQLState) 를 함께 싣는다. */
   private static QueryExecuteResult executorFailure(String raw, String sqlState) {
+    return executorFailure(raw, sqlState, null);
+  }
+
+  /** 위치(db_error.position)까지 싣는 실행기 실패 응답(WD-641). */
+  private static QueryExecuteResult executorFailure(String raw, String sqlState, Integer position) {
     return new QueryExecuteResult(
         false,
         "SELECT",
@@ -434,7 +484,7 @@ class AnalyticsQueryExecutionServiceExtTest extends IntegrationTestBase {
         5L,
         false,
         raw,
-        new ExecutorClient.DbError(0, raw, sqlState));
+        new ExecutorClient.DbError(0, raw, sqlState, position));
   }
 
   /** executorEnabled 를 잠시 켜고 실행한다(테스트 기본값은 직접 실행 경로). */
@@ -554,7 +604,7 @@ class AnalyticsQueryExecutionServiceExtTest extends IntegrationTestBase {
 
   @Test
   void executeViaExecutor_failure_keepsExistingPrefixUnchanged_BC() {
-    when(executorClient.executeQuery(anyString(), anyInt(), anyBoolean()))
+    when(executorClient.executeQuery(anyString(), anyInt(), anyBoolean(), anyInt()))
         .thenThrow(new RuntimeException("connection refused"));
 
     // executorEnabled 강제 활성
@@ -579,7 +629,7 @@ class AnalyticsQueryExecutionServiceExtTest extends IntegrationTestBase {
    */
   @Test
   void executeViaExecutor_responseTooLarge_returnsResultTooLargeMessage() {
-    when(executorClient.executeQuery(anyString(), anyInt(), anyBoolean()))
+    when(executorClient.executeQuery(anyString(), anyInt(), anyBoolean(), anyInt()))
         .thenThrow(
             new com.smartfirehub.pipeline.service.executor.ExecutorResponseTooLargeException(
                 32 * 1024 * 1024, new RuntimeException("DataBufferLimitException")));

@@ -22,9 +22,6 @@ public final class TiberoDdlSql {
 
   private TiberoDdlSql() {}
 
-  /** 시스템 컬럼 이름(소문자 메타데이터 이름). */
-  private static final String UPDATED_AT = "_updated_at";
-
   /**
    * 실행할 DDL 한 문장과, 실행부가 무시해도 되는 "객체 없음" 오류. 예전에는 실행부가 SQL 문자열({@code " DROP CONSTRAINT "})을 보고 무시
    * 여부를 정했는데, 문장을 만든 쪽이 그 사실을 함께 넘기도록 바꿨다.
@@ -128,7 +125,7 @@ public final class TiberoDdlSql {
     if (!pk.isEmpty()) {
       out.add(createPrimaryKeyIndex(schema, table, pk));
     }
-    out.add(createIndex(schema, table, UPDATED_AT));
+    out.add(createIndex(schema, table, ReservedColumnNames.UPDATED_AT_COLUMN));
     out.add(grantReadOnly(schema, table));
     return out;
   }

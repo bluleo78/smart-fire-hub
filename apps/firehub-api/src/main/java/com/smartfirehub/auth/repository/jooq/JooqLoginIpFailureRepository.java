@@ -55,6 +55,8 @@ public class JooqLoginIpFailureRepository implements LoginIpFailureRepository {
    *
    * <p>키 앞에 {@link #LOCK_NAMESPACE} 를 붙여 다른 문자열 잠금(가입·멤버 관리 가드 등)과 잠금 공간이 겹치지 않게 한다. MANDATORY 인
    * 이유: 트랜잭션 밖에서 부르면 잠금이 즉시 풀려 동시 로그인을 막지 못하는데도 조용히 지나가므로, 그런 호출은 예외로 드러낸다.
+   *
+   * <p>같은 인스턴스 안의 줄 세우기는 트랜잭션 밖 {@code LoginIpGate} 가 먼저 한다(WD-630).
    */
   @Override
   @Transactional(propagation = Propagation.MANDATORY)

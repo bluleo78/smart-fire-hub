@@ -1,8 +1,9 @@
 import { File as FileIcon, Image, Paperclip, Send, StopCircle, X } from 'lucide-react';
 import type { ClipboardEvent, DragEvent, KeyboardEvent, RefObject } from 'react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
+import { MAX_CHAT_MESSAGE_LENGTH, messageTooLongHint } from '../../lib/ai-chat-limits';
 import { Button } from '../ui/button';
 import { Textarea } from '../ui/textarea';
 
@@ -114,12 +115,19 @@ export function ChatInput({
     });
   };
 
-  const handleSend = () => {
-    const hasMessage = message.trim().length > 0;
-    const hasFiles = pendingFiles.length > 0;
-    if ((!hasMessage && !hasFiles) || isStreaming || isUploading) return;
+  // 실제로 보내는 값(trim 결과)의 길이로 서버 상한(50,000자)을 미리 검사한다(WD-631).
+  // 넘으면 잘라 보내지 않고 전송만 막는다 — 사용자가 직접 줄일 수 있게 글은 그대로 둔다.
+  const trimmed = message.trim();
+  const isTooLong = trimmed.length > MAX_CHAT_MESSAGE_LENGTH;
+  // 패널 모드(사이드·전체화면)가 바뀌어도 id 가 겹치지 않게 useId 로 만든다
+  const tooLongHintId = useId();
+  // 보낼 수 있는 상태 — 글이나 첨부가 있고, 길이 초과·스트리밍·업로드 중이 아닐 때. 버튼 활성과 Enter 전송이 같은 조건을 쓴다.
+  const canSend = (trimmed.length > 0 || pendingFiles.length > 0) && !isTooLong && !isStreaming && !isUploading;
 
-    onSend(message.trim(), pendingFiles.length > 0 ? pendingFiles.map(f => f.file) : undefined);
+  const handleSend = () => {
+    if (!canSend) return;
+
+    onSend(trimmed, pendingFiles.length > 0 ? pendingFiles.map(f => f.file) : undefined);
     setMessage('');
     setPendingFiles(prev => {
       prev.forEach(f => { if (f.previewUrl) URL.revokeObjectURL(f.previewUrl); });
@@ -203,7 +211,6 @@ export function ChatInput({
     // preventScroll: 폭 전환 중인 사이드 패널의 overflow-hidden 조상이 스크롤되지 않게 한다.
     el.focus({ preventScroll: true });
   }, [focusOnOpen, isDisabled, focusOriginRef]);
-  const canSend = (message.trim().length > 0 || pendingFiles.length > 0) && !isStreaming && !isUploading;
 
   return (
     <div
@@ -280,6 +287,9 @@ export function ChatInput({
           placeholder={placeholder}
           // placeholder 는 입력하면 사라져 이름이 될 수 없으므로 접근 가능한 이름을 따로 준다(WD-590).
           aria-label="메시지 입력"
+          // 길이 초과 안내를 입력창과 잇는다 — 스크린리더가 입력창에서 바로 이유를 듣게(WD-631)
+          aria-invalid={isTooLong || undefined}
+          aria-describedby={isTooLong ? tooLongHintId : undefined}
           disabled={isDisabled}
           className="min-h-[44px] max-h-[150px] resize-none text-sm"
           rows={1}
@@ -312,6 +322,13 @@ export function ChatInput({
           </Button>
         )}
       </div>
+      {/* 메시지 길이 초과 안내(WD-631) — 서버 검증 문구와 같은 표현 + 현재 길이. 초과 동안만 보인다.
+          role="alert" 를 두지 않는 이유: 글자마다 숫자가 바뀌어 매 입력마다 다시 읽히기 때문 — 입력창의 aria-describedby 로 잇는다. */}
+      {isTooLong && (
+        <p id={tooLongHintId} className="px-1 text-xs text-destructive">
+          {messageTooLongHint(trimmed.length)}
+        </p>
+      )}
     </div>
   );
 }

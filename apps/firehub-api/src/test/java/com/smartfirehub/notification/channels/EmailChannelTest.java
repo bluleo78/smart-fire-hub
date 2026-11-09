@@ -110,13 +110,18 @@ class EmailChannelTest {
     assertThat(smtpConfig.get("requireTLS")).isEqualTo(true);
   }
 
-  /** WD-593: 포트 587 + STARTTLS 꺼짐이면 암시적 TLS 도, STARTTLS 강제도 하지 않는다(운영자가 명시적으로 끈 경우의 기존 동작 유지). */
+  /**
+   * WD-593·WD-627: 포트 587 + STARTTLS 꺼짐은 기회적 STARTTLS 다 — 암시적 TLS 도, STARTTLS 강제도 하지 않는다. ignoreTLS
+   * 는 보내지 않는다: 보내면 nodemailer 가 서버가 STARTTLS 를 광고해도 평문으로 보내 자격증명이 노출되고, AUTH 전에 STARTTLS 를 요구하는 서버는
+   * 530 으로 거부한다.
+   */
   @Test
-  void deliver_port587StartTlsFalse_sendsNeitherSecureNorRequireTls() {
+  void deliver_port587StartTlsFalse_sendsOpportunisticStartTls() {
     Map<String, Object> smtpConfig = capturedSmtpConfig("587", "false");
 
     assertThat(smtpConfig.get("secure")).isEqualTo(false);
     assertThat(smtpConfig.get("requireTLS")).isEqualTo(false);
+    assertThat(smtpConfig).doesNotContainKey("ignoreTLS");
   }
 
   /**
@@ -141,6 +146,27 @@ class EmailChannelTest {
 
     assertThat(smtpConfig.get("secure")).isEqualTo(false);
     assertThat(smtpConfig.get("requireTLS")).isEqualTo(true);
+  }
+
+  /**
+   * WD-627: 숫자가 아닌 옛 포트는 deliver() 밖으로 NumberFormatException 을 던지지 않고, SMTP 미설정과 같은 영구 실패(설정 위치
+   * 안내)가 된다 — 재시도로 고쳐지지 않는 설정 문제이고, 처리되지 않은 예외는 발송 워커로 튀어나간다.
+   */
+  @Test
+  void deliver_nonNumericPort_returnsPermanentFailureWithoutSending() {
+    when(settingsService.getSmtpConfig())
+        .thenReturn(Map.of("smtp.host", "smtp.example.com", "smtp.port", "smtp"));
+
+    var result = channel.deliver(ctx(null, "to@example.com"));
+
+    assertThat(result)
+        .isInstanceOfSatisfying(
+            DeliveryResult.PermanentFailure.class,
+            pf -> {
+              assertThat(pf.reason()).isEqualTo(PermanentFailureReason.UNRECOVERABLE);
+              assertThat(pf.details()).isEqualTo(EmailChannel.SMTP_PORT_INVALID);
+            });
+    verify(channelHttpClient, never()).send(any(), any(), any());
   }
 
   @Test

@@ -18,6 +18,7 @@
 
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { isUnderInert } from '../../fixtures/inert-a11y';
 
 /** AIStatusChip — 패널을 여는 트리거(패널 바깥) */
 const chipLocator = (page: import('@playwright/test').Page) =>
@@ -150,18 +151,18 @@ test.describe('AISidePanel — 열림 시 입력창 포커스 (WD-579)', () => {
     expect(visitedInside).toBeGreaterThan(5);
 
     // 뒤 화면(메뉴 버튼·본문·사이드바)은 inert 아래에 있어 포커스·접근성 트리에서 빠진다.
-    // Playwright 의 역할 조회는 inert 를 거르지 않으므로 inert 조상을 직접 확인한다.
-    const underInert = (selector: string) =>
-      page.evaluate((sel) => !!document.querySelector(sel)?.closest('[inert]'), selector);
-    expect(await underInert('button[aria-label="메뉴 열기"]')).toBe(true);
-    expect(await underInert('main#main-content')).toBe(true);
-    expect(await underInert('aside')).toBe(true);
+    // Playwright 의 역할 조회는 inert 를 거르지 않으므로 inert 조상을 직접 확인한다(공용 도우미).
+    const menuButton = page.locator('button[aria-label="메뉴 열기"]');
+    const main = page.locator('main#main-content');
+    expect(await isUnderInert(menuButton)).toBe(true);
+    expect(await isUnderInert(main)).toBe(true);
+    expect(await isUnderInert(page.locator('aside'))).toBe(true);
 
     // 닫기 버튼으로 닫으면 뒤 화면이 다시 Tab·접근성 트리에 돌아온다.
     await dialog.getByRole('button', { name: 'AI 어시스턴트 닫기' }).click();
     await expect(dialog).toHaveCount(0);
     await expect(page.getByRole('button', { name: '메뉴 열기' })).toBeVisible();
-    expect(await underInert('button[aria-label="메뉴 열기"]')).toBe(false);
-    expect(await underInert('main#main-content')).toBe(false);
+    expect(await isUnderInert(menuButton)).toBe(false);
+    expect(await isUnderInert(main)).toBe(false);
   });
 });

@@ -9,6 +9,7 @@ import com.smartfirehub.apiconnection.repository.ApiConnectionRepository;
 import com.smartfirehub.apiconnection.repository.ApiConnectionRepository.ApiConnectionRow;
 import com.smartfirehub.global.exception.SerializationException;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
@@ -127,7 +128,7 @@ public class ApiConnectionReader {
    */
   static boolean isSensitiveKey(String key) {
     if (key == null) return false;
-    String lower = key.toLowerCase();
+    String lower = key.toLowerCase(Locale.ROOT);
     return SENSITIVE_KEY_PARTS.stream().anyMatch(lower::contains);
   }
 

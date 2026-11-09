@@ -43,26 +43,14 @@ class AuthQueryMaskerTest {
   void build_preEncodedKey_callUnchanged_displayHasNoForm() {
     String encodedKey = "abc%2Bdef%2F%3D%3D";
     AuthQueryMasker.AuthQueryUrls urls =
-        AuthQueryMasker.buildForAuth(
-            "http://h.example/api",
-            "API_KEY",
-            Map.of("placement", "query", "paramName", "serviceKey", "apiKey", encodedKey));
+        AuthQueryMasker.build(
+            "http://h.example/api", Map.of("serviceKey", encodedKey), "serviceKey", encodedKey);
 
     assertThat(urls.callUrl()).isEqualTo("http://h.example/api?serviceKey=" + encodedKey);
     assertThat(urls.displayUrl())
         .doesNotContain(encodedKey)
         .doesNotContain("abc+def/==")
         .startsWith("http://h.example/api?serviceKey=****");
-  }
-
-  /** 쿼리 인증이 아니면 URL 을 손대지 않는다(경로의 한글·공백을 WebClient 가 인코딩하던 예전 동작 유지). */
-  @Test
-  void buildForAuth_noQueryAuth_returnsUrlUntouched() {
-    String url = "http://h.example/경로 공백";
-    AuthQueryMasker.AuthQueryUrls urls =
-        AuthQueryMasker.buildForAuth(url, "BEARER", Map.of("token", "t"));
-    assertThat(urls.callUrl()).isEqualTo(url);
-    assertThat(urls.displayUrl()).isEqualTo(url);
   }
 
   /**
@@ -172,5 +160,33 @@ class AuthQueryMaskerTest {
     assertThat(sentStar).isEqualTo("ab%2Acd~ef9876");
     assertThat(AuthQueryMasker.scrubSecret("echo " + sentStar, star))
         .isEqualTo("echo " + AuthQueryMasker.maskSecret(star));
+  }
+
+  // ── WD-657: 응답 본문 비밀 가림(미리보기·연결 테스트 공용) ─────────────────────────────
+
+  /** 비밀이 없는 응답은 원문 형태(들여쓰기·줄바꿈) 그대로이고, 최소 길이(4자) 미만 비밀은 가리지 않는다(평범한 글자를 지우지 않게). */
+  @Test
+  void maskBody_keepsBodyWhenNothingToMask() {
+    String pretty = "{\n  \"a\" : \"x\"\n}";
+    assertThat(AuthQueryMasker.maskBody(pretty, "NotThere657")).isEqualTo(pretty);
+    assertThat(AuthQueryMasker.maskBody("{\"a\":\"abc\"}", "abc")).isEqualTo("{\"a\":\"abc\"}");
+    assertThat(AuthQueryMasker.maskBody(pretty, null)).isEqualTo(pretty);
+    // JSON 이 아니면 문자열 가림
+    assertThat(AuthQueryMasker.maskBody("<p>Key6571</p>", "Key6571")).isEqualTo("<p>****6571</p>");
+  }
+
+  /** 비밀을 일부로 품은 숫자는 숫자 그대로 둔다 — 값 전체가 비밀과 같을 때만 가린다(미리보기 행이 실제 실행과 같은 값·타입이게). */
+  @Test
+  void maskBody_numberContainingSecretStaysNumber() {
+    String secret = "98765432";
+    assertThat(AuthQueryMasker.maskBody("{\"n\":1987654321,\"m\":98765432}", secret))
+        .isEqualTo("{\"n\":1987654321,\"m\":\"****5432\"}");
+  }
+
+  /** 키를 가린 결과가 같은 객체의 다른 키와 겹치면 덮어쓰지 않고 뒤의 것에 꼬리를 붙여 둘 다 남긴다. */
+  @Test
+  void maskBody_maskedKeyCollisionKeepsBoth() {
+    String masked = AuthQueryMasker.maskBody("{\"****abcd\":1,\"KeyXabcd\":2}", "KeyXabcd");
+    assertThat(masked).isEqualTo("{\"****abcd\":1,\"****abcd (2)\":2}");
   }
 }

@@ -7,7 +7,7 @@ import { Link, Navigate, useLocation } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { BrandLogo } from '../components/BrandLogo';
-import { Button } from '../components/ui/button';
+import { PendingSubmitButton } from '../components/PendingSubmitButton';
 import { Card, CardContent, CardHeader } from '../components/ui/card';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
@@ -15,6 +15,8 @@ import { PasswordInput } from '../components/ui/password-input';
 import { useSignupStatus } from '../hooks/queries/useSignupStatus';
 import { useAuth } from '../hooks/useAuth';
 import { useBranding } from '../hooks/useBranding';
+import { useSubmitGuard } from '../hooks/useSubmitGuard';
+import { isBadCredentialsError } from '../lib/api-error';
 import { takeLoginNotice } from '../lib/login-notice';
 import type { LoginFormData } from '../lib/validations/auth';
 import { loginSchema } from '../lib/validations/auth';
@@ -38,10 +40,12 @@ export default function LoginPage() {
   const {
     register,
     handleSubmit,
+    setFocus,
     formState: { errors, isSubmitting },
   } = useForm<LoginFormData>({
     resolver: zodResolver(loginSchema),
   });
+  const guardSubmit = useSubmitGuard();
 
   if (isAuthenticated) {
     // 딥링크 보존(#675): ProtectedRoute가 미인증 상태로 리다이렉트하며 실어 보낸
@@ -58,17 +62,16 @@ export default function LoginPage() {
       setServerError('');
       await login(data);
     } catch (error) {
-      if (axios.isAxiosError(error) && error.response?.data) {
-        // 서버 문구를 그대로 보여 준다 — 자격증명 오류·비활성 계정(WD-278) 등 401 의 이유는 서버만 안다. 예전에는 401 을
-        // 고정 문구로 덮어 비활성 계정도 「비밀번호가 틀렸다」로 보여, 비밀번호를 의심해 다시 시도하다 잠금까지 갔다.
-        // 운영자 콘솔 로그인과 같은 규칙. 문구가 없을 때만 상태별 기본 문구를 쓴다.
-        const errData = error.response.data as ErrorResponse;
-        const fallback =
-          error.response.status === 401 ? '이메일 또는 비밀번호가 올바르지 않습니다.' : '로그인에 실패했습니다.';
-        setServerError(errData.message || fallback);
-      } else {
-        setServerError('로그인에 실패했습니다.');
-      }
+      // 서버 문구를 그대로 보여 준다 — 자격증명 오류·비활성 계정(WD-278) 등 401 의 이유는 서버만 안다. 예전에는 401 을
+      // 고정 문구로 덮어 비활성 계정도 「비밀번호가 틀렸다」로 보여, 비밀번호를 의심해 다시 시도하다 잠금까지 갔다.
+      // 운영자 콘솔 로그인과 같은 규칙. 문구가 없을 때(본문 없는 401·네트워크 오류 포함)만 상태별 기본 문구를 쓴다.
+      const response = axios.isAxiosError(error) ? error.response : undefined;
+      const fallback = response?.status === 401 ? '이메일 또는 비밀번호가 올바르지 않습니다.' : '로그인에 실패했습니다.';
+      setServerError((response?.data as ErrorResponse | undefined)?.message || fallback);
+      // 자격 증명 오류면 다시 입력할 비밀번호 칸으로 포커스를 옮긴다(WD-572) — 키보드 사용자가 폼 밖에서 길을 잃지 않게.
+      // 비활성 계정(같은 401 이지만 code 있음, WD-278)·잠금·서버/네트워크 오류는 비밀번호 문제가 아니므로 버튼에 포커스를 둔다.
+      const badCreds = isBadCredentialsError(error);
+      if (badCreds) setFocus('password');
     }
   };
 
@@ -86,7 +89,7 @@ export default function LoginPage() {
           <h1 className="text-2xl leading-8 font-semibold tracking-tight">{brandName}</h1>
         </CardHeader>
         <CardContent>
-          <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+          <form onSubmit={guardSubmit(handleSubmit(onSubmit))} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="username">아이디 (이메일)</Label>
               <Input
@@ -124,9 +127,9 @@ export default function LoginPage() {
             {serverError && (
               <p role="alert" className="text-sm text-destructive">{serverError}</p>
             )}
-            <Button type="submit" className="w-full" disabled={isSubmitting}>
+            <PendingSubmitButton className="w-full" pending={isSubmitting}>
               {isSubmitting ? '로그인 중...' : '로그인'}
-            </Button>
+            </PendingSubmitButton>
           </form>
           {/* 공개 가입은 시스템 첫 사용자만(WD-2). 열림이 확인될 때만 링크를 그린다(로딩·실패 = 숨김). */}
           {signupStatus.data?.open && (

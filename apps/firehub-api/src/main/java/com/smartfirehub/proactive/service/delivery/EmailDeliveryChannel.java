@@ -8,6 +8,7 @@ import com.smartfirehub.proactive.service.ReportRenderUtils.ChartImage;
 import com.smartfirehub.proactive.util.ProactiveConfigParser;
 import com.smartfirehub.proactive.util.ProactiveConfigParser.ChannelConfig;
 import com.smartfirehub.settings.service.SettingsService;
+import com.smartfirehub.settings.service.SmtpMailSenders;
 import com.smartfirehub.user.dto.UserResponse;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -18,7 +19,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Properties;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -144,7 +144,8 @@ public class EmailDeliveryChannel implements DeliveryChannel {
       // 이메일 공통 준비 (SMTP, 템플릿) - 루프 밖에서 1회 수행
       // htmlContent가 있으면 요약(summary) 기반 이메일을 보내고, PDF에 전체 리포트를 첨부한다.
       // htmlContent가 없으면 기존 sections 기반 전체 내용을 이메일 본문에 포함한다.
-      JavaMailSenderImpl mailSender = buildMailSender(smtp);
+      // 연결 테스트와 같은 팩토리로 만든다(WD-627) — 포트·TLS·타임아웃 해석이 세 발송 경로에서 같다.
+      JavaMailSenderImpl mailSender = SmtpMailSenders.create(smtp);
       List<Map<String, Object>> templateSections;
       List<ChartImage> chartImages;
 
@@ -210,38 +211,6 @@ public class EmailDeliveryChannel implements DeliveryChannel {
     } catch (Exception e) {
       log.error("EmailDeliveryChannel delivery failed for job {}: {}", job.id(), e.getMessage(), e);
     }
-  }
-
-  private JavaMailSenderImpl buildMailSender(Map<String, String> smtp) {
-    JavaMailSenderImpl sender = new JavaMailSenderImpl();
-    sender.setHost(smtp.getOrDefault("smtp.host", ""));
-
-    String portStr = smtp.getOrDefault("smtp.port", "587");
-    sender.setPort(portStr.isBlank() ? 587 : Integer.parseInt(portStr));
-
-    String username = smtp.getOrDefault("smtp.username", "");
-    if (!username.isBlank()) {
-      sender.setUsername(username);
-    }
-
-    String password = smtp.getOrDefault("smtp.password", "");
-    if (!password.isBlank()) {
-      sender.setPassword(password);
-    }
-
-    Properties props = sender.getJavaMailProperties();
-    props.put("mail.transport.protocol", "smtp");
-    props.put("mail.smtp.auth", !username.isBlank() ? "true" : "false");
-    props.put("mail.smtp.connectiontimeout", "10000");
-    props.put("mail.smtp.timeout", "10000");
-    props.put("mail.smtp.writetimeout", "10000");
-
-    String starttls = smtp.getOrDefault("smtp.starttls", "true");
-    if ("true".equalsIgnoreCase(starttls)) {
-      props.put("mail.smtp.starttls.enable", "true");
-    }
-
-    return sender;
   }
 
   /**

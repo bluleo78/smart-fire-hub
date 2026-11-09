@@ -805,8 +805,31 @@ class TriggerServiceExtTest extends IntegrationTestBase {
             null,
             Map.of("cron", "0 0 * * *", "concurrencyPolicy", "INVALID_POLICY"));
 
+    // 응답에 실리는 문구라 내부 클래스 경로(「No enum constant com.smartfirehub…」) 대신 허용 값을 담은 한국어여야 한다(WD-622)
     assertThatThrownBy(() -> triggerService.createTrigger(pipelineId, request, testUserId))
-        .isInstanceOf(IllegalArgumentException.class);
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("동시 실행 정책(concurrencyPolicy)은 SKIP, ALLOW 중 하나여야 합니다: INVALID_POLICY")
+        .message()
+        .doesNotContain("com.smartfirehub");
+  }
+
+  /** 수정 요청도 같은 검증을 탄다 — 기존 SCHEDULE 트리거의 정책을 잘못된 값으로 바꾸면 같은 한국어 400 문구(WD-622). */
+  @Test
+  void updateScheduleTrigger_invalidConcurrencyPolicy_koreanMessage() {
+    TriggerResponse created =
+        triggerService.createTrigger(
+            pipelineId,
+            new CreateTriggerRequest(
+                "Policy Update", TriggerType.SCHEDULE, null, Map.of("cron", "0 0 * * *")),
+            testUserId);
+
+    UpdateTriggerRequest update =
+        new UpdateTriggerRequest("Policy Update", null, null, Map.of("concurrencyPolicy", "skip"));
+
+    // 실행 시 비교가 대소문자를 가리므로 소문자도 받지 않는다
+    assertThatThrownBy(() -> triggerService.updateTrigger(created.id(), update, testUserId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("동시 실행 정책(concurrencyPolicy)은 SKIP, ALLOW 중 하나여야 합니다: skip");
   }
 
   // -----------------------------------------------------------------------

@@ -1,3 +1,5 @@
+import type { Page } from '@playwright/test';
+
 import { createTokenResponse, createUser } from '../../factories/auth.factory';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, MOCK_USER_DETAIL, seedSessionOnce, test } from '../../fixtures/auth.fixture';
@@ -168,7 +170,7 @@ test.describe('비밀번호 변경 강제', () => {
     await mockApi(page, 'POST', '/api/v1/auth/refresh', PWC_TOKEN);
     await mockApi(page, 'GET', '/api/v1/auth/me', PWC_ME);
     await mockApi(page, 'PUT', '/api/v1/users/me/password',
-      { status: 400, error: 'Bad Request', message: '현재 비밀번호가 올바르지 않습니다' }, { status: 400 });
+      { status: 400, error: 'Bad Request', code: 'WRONG_CURRENT_PASSWORD', message: '현재 비밀번호가 올바르지 않습니다' }, { status: 400 });
     await page.goto('/change-password');
 
     await page.getByLabel(CURRENT_PASSWORD).fill('Wrong1Pass');
@@ -247,5 +249,64 @@ test.describe('비밀번호 변경 강제', () => {
     await logout.waitForRequest();
     await expect(page).toHaveURL(/\/login$/);
     await expect(page.getByLabel('아이디 (이메일)')).toBeVisible();
+  });
+});
+
+/**
+ * 회귀 테스트 (WD-572): 제출 버튼을 disabled 로 잠가 Enter 로 제출하면 포커스가 body 로 떨어지던 결함.
+ * 현재 비밀번호가 틀렸을 때(code WRONG_CURRENT_PASSWORD)만 그 칸으로 포커스를 옮기고, 다른 실패는 버튼에 둔다.
+ */
+test.describe('비밀번호 변경 강제 — 제출 중·실패 뒤 포커스 (WD-572)', () => {
+  test.beforeEach(async ({ authMockedPage: page }) => {
+    await seedSessionOnce(page);
+    await mockApi(page, 'POST', '/api/v1/auth/refresh', PWC_TOKEN);
+    await mockApi(page, 'GET', '/api/v1/auth/me', PWC_ME);
+  });
+
+  /** 세 칸을 채우고 포커스한 제출 버튼에서 Enter 로 제출한다 — 제출 버튼 locator 를 돌려준다. */
+  async function submitWithEnter(page: Page, currentPassword: string) {
+    await page.goto('/change-password');
+    await page.getByLabel(CURRENT_PASSWORD).fill(currentPassword);
+    await page.getByLabel(NEW_PASSWORD).fill('NewPass1x');
+    await page.getByLabel(CONFIRM_PASSWORD).fill('NewPass1x');
+    const button = page.getByRole('button', { name: '변경하고 계속' });
+    await button.focus();
+    await page.keyboard.press('Enter');
+    return button;
+  }
+
+  test('현재 비밀번호가 틀리면 포커스가 현재 비밀번호 칸으로 가고 요청은 한 번만 나간다', async ({ authMockedPage: page }) => {
+    const change = await mockApi(page, 'PUT', '/api/v1/users/me/password',
+      { status: 400, error: 'Bad Request', code: 'WRONG_CURRENT_PASSWORD', message: '현재 비밀번호가 올바르지 않습니다' },
+      { status: 400, delayMs: 500, capture: true });
+    const button = await submitWithEnter(page, 'Wrong1Pass');
+
+    // 제출 중: 잠겼지만(aria-disabled) 포커스는 버튼에 남고, 다시 Enter 를 눌러도 요청이 또 나가지 않는다
+    await expect(button).toHaveAttribute('aria-disabled', 'true');
+    await expect(button).toBeFocused();
+    await page.keyboard.press('Enter');
+
+    await expect(page.getByRole('alert')).toHaveText('현재 비밀번호가 올바르지 않습니다');
+    await expect(page.getByLabel(CURRENT_PASSWORD)).toBeFocused();
+    expect(change.requests.length).toBe(1);
+  });
+
+  test('서버 오류(500)면 포커스가 버튼에 남고 일반 실패 문구를 보여 준다', async ({ authMockedPage: page }) => {
+    await mockApi(page, 'PUT', '/api/v1/users/me/password', {}, { status: 500 });
+    const button = await submitWithEnter(page, 'TempPass1x');
+
+    // 「현재 비밀번호가 틀림」으로 오해하게 하지 않는다
+    await expect(page.getByRole('alert')).toHaveText('비밀번호를 변경하지 못했습니다. 잠시 후 다시 시도하세요');
+    await expect(button).toBeFocused();
+  });
+
+  test('새 비밀번호가 현재와 같다는 400(SAME_AS_CURRENT_PASSWORD)이면 포커스가 버튼에 남는다', async ({ authMockedPage: page }) => {
+    await mockApi(page, 'PUT', '/api/v1/users/me/password',
+      { status: 400, error: 'Bad Request', code: 'SAME_AS_CURRENT_PASSWORD', message: '새 비밀번호는 현재 비밀번호와 달라야 합니다' },
+      { status: 400 });
+    const button = await submitWithEnter(page, 'TempPass1x');
+
+    await expect(page.getByRole('alert')).toHaveText('새 비밀번호는 현재 비밀번호와 달라야 합니다');
+    await expect(button).toBeFocused();
   });
 });

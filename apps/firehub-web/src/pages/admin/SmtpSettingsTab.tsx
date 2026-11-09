@@ -20,6 +20,10 @@ const CLEAR_TITLE = 'SMTP 설정 해제';
 // 6개 항목을 이름으로 나열한다 — 발신자 주소까지 함께 지워진다는 사실을 누르기 전에 알린다.
 const CLEAR_BODY =
   'SMTP 호스트, 포트, 사용자 이름, 비밀번호, STARTTLS, 발신자 주소 6개 항목이 모두 삭제됩니다. 해제하면 이 워크스페이스의 이메일 알림과 리포트 메일이 발송되지 않으며, 저장된 비밀번호는 복구할 수 없습니다.';
+// STARTTLS 스위치 설명(WD-627) — 알림·리포트 메일·연결 테스트가 같은 규칙(api SmtpTlsPolicy)으로 접속하므로 그 규칙을 그대로 적는다.
+// E2E(settings.spec.ts)가 스위치의 접근 가능한 설명으로 이 문구를 확인한다.
+const STARTTLS_DESCRIPTION =
+  '켜면 STARTTLS 로 암호화를 강제합니다(서버가 지원하지 않으면 발송 실패). 끄면 서버가 지원할 때만 암호화합니다. 포트 465 는 이 설정과 관계없이 접속 즉시 TLS 로 암호화합니다.';
 
 /**
  * 이메일(SMTP) 설정 탭 — 워크스페이스 전용 SMTP 6키(#712). <b>표현 전용</b> 컴포넌트다: 폼 상태는
@@ -192,14 +196,18 @@ export default function SmtpSettingsTab({ state }: { state: SmtpSettingsFormStat
         </FormField>
 
         {/* STARTTLS — Switch 는 라벨 오른쪽에 놓이는 배치라 FormField 대신 라벨+설명을 직접 조합한다. */}
-        <div className="flex items-center justify-between max-w-md">
+        <div className="flex items-center justify-between gap-4 max-w-md">
           <div className="space-y-1">
             <Label htmlFor="smtp-starttls">{meta['smtp.starttls'].label}</Label>
-            <p className="text-sm text-muted-foreground">TLS 암호화로 SMTP 연결 보안</p>
+            <p id="smtp-starttls-desc" className="text-sm text-muted-foreground">
+              {STARTTLS_DESCRIPTION}
+            </p>
           </div>
           <Switch
             id="smtp-starttls"
+            className="shrink-0"
             aria-label={meta['smtp.starttls'].label}
+            aria-describedby="smtp-starttls-desc"
             checked={form['smtp.starttls'] === 'true'}
             onCheckedChange={(checked) => updateField('smtp.starttls', checked ? 'true' : 'false')}
           />

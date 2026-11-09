@@ -396,25 +396,19 @@ class PipelineStepColumnValidationTest extends IntegrationTestBase {
   }
 
   /**
-   * WD-635 — 출력 컬럼 타입 비교는 기본 로캘과 무관해야 한다. 터키어 로캘에서는 {@code "integer".toUpperCase()} 가 "İNTEGER" 가
-   * 되어 허용 타입 목록과 어긋나, 소문자로 쓴 정상 타입이 저장에서 거부됐다. 로캘은 finally 에서 되돌린다.
+   * 소문자로 쓴 출력 컬럼 타입도 저장된다(대소문자 무시). 터키어 기본 로캘 사례는 Spring 없이 {@code CaseConversionLocaleTest} 가
+   * 본다(WD-653).
    */
   @Test
-  void create_pythonLowerCaseOutputType_succeeds_underTurkishDefaultLocale() {
-    java.util.Locale saved = java.util.Locale.getDefault();
-    try {
-      java.util.Locale.setDefault(java.util.Locale.forLanguageTag("tr"));
-      PipelineDetailResponse created =
-          pipelineService.createPipeline(
-              new CreatePipelineRequest(
-                  "WD635 터키어 타입",
-                  null,
-                  List.of(pythonStep(null, List.of(Map.of("name", "score", "type", "integer"))))),
-              userId);
-      assertThat(created.steps()).hasSize(1);
-    } finally {
-      java.util.Locale.setDefault(saved);
-    }
+  void create_pythonLowerCaseOutputType_succeeds() {
+    PipelineDetailResponse created =
+        pipelineService.createPipeline(
+            new CreatePipelineRequest(
+                "WD635 소문자 타입",
+                null,
+                List.of(pythonStep(null, List.of(Map.of("name", "score", "type", "integer"))))),
+            userId);
+    assertThat(created.steps()).hasSize(1);
   }
 
   /** 페이지 크기 경계값(1·10000)은 저장된다(WD-362). */

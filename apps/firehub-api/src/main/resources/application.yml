@@ -61,6 +61,10 @@ app:
       # 사내 NAT 처럼 많은 사람이 한 주소로 나가는 대역만 넣는다 — 제외 대역은 IP 제한 없이 계정 잠금(5회/15분)만 받는다.
       # 잘못된 항목이 있으면 기동이 실패한다(보안 설정을 조용히 무시하지 않는다).
       exempt: ${APP_LOGIN_IP_LIMIT_EXEMPT:}
+      # 같은 IP 키 로그인 게이트(WD-630, LoginIpGate): 앞 로그인을 기다리는 최대 시간 — 넘으면 429 LOGIN_BUSY.
+      gate-wait: ${APP_LOGIN_IP_LIMIT_GATE_WAIT:10s}
+      # 같은 IP 키 로그인 게이트: 한 키에 동시에 있을 수 있는 로그인 수(잡은 요청 포함, 1 이상) — 넘으면 기다리지 않고 429 LOGIN_BUSY.
+      gate-max-waiters: ${APP_LOGIN_IP_LIMIT_GATE_MAX_WAITERS:20}
   analytics:
     query-concurrency:
       # 분석 쿼리(애드혹·저장 쿼리 실행·결과 내보내기 재실행) 동시 실행 상한(WD-553). 쿼리 시간 내내 공용 Hikari 풀(기본 10) 커넥션을

@@ -14,6 +14,7 @@ import com.smartfirehub.pipeline.service.executor.JsonResponseParser;
 import com.smartfirehub.pipeline.service.executor.SsrfProtectionService;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -1399,5 +1400,103 @@ class ApiCallPreviewServiceTest {
 
     assertThat(bearer.rawJson()).doesNotContain("EchoToken647xyz");
     assertThat(key.rawJson()).doesNotContain("EchoKey647xyz");
+  }
+
+  // =========================================================================
+  // WD-657: 결과 행도 rawJson 과 같은 가린 본문으로 만든다
+  // =========================================================================
+
+  /** 필드 매핑 하나(TEXT)를 둔 인라인 인증 미리보기 요청. */
+  private ApiCallPreviewRequest mappedPreview(
+      String path, String dataPath, String sourceField, Map<String, String> auth) {
+    return new ApiCallPreviewRequest(
+        baseUrl() + path,
+        "GET",
+        null,
+        null,
+        null,
+        dataPath,
+        List.of(new ApiCallPreviewRequest.FieldMappingPreview(sourceField, "v", "TEXT")),
+        null,
+        auth,
+        5000);
+  }
+
+  /**
+   * httpbin /headers 처럼 요청 헤더를 되울리는 응답 — dataPath {@code $.headers}·필드 매핑 Authorization 으로 받은 행에도,
+   * rawJson 에도 비밀 원문 대신 가린 값만 있다. 예전에는 rawJson 만 가려 행으로 「Bearer <원문>」 이 나갔다.
+   */
+  @Test
+  void preview_echoedAuthorizationHeader_rowsAndRawJsonMasked() {
+    wireMock.stubFor(
+        get(urlPathEqualTo("/headers657"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody(
+                        "{\"headers\":{\"Authorization\":\"{{request.headers.Authorization}}\"}}")
+                    .withTransformers("response-template")));
+
+    ApiCallPreviewResponse response =
+        service.preview(
+            mappedPreview(
+                "/headers657",
+                "$.headers",
+                "Authorization",
+                Map.of("authType", "BEARER", "token", "EchoSecret657abcd")));
+
+    assertThat(response.errorMessage()).isNull();
+    assertThat(response.rows()).hasSize(1);
+    assertThat(response.rows().get(0)).containsEntry("v", "Bearer ****abcd");
+    assertThat(response.rawJson()).contains("Bearer ****abcd").doesNotContain("EchoSecret657");
+    assertThat(response.rows().toString()).doesNotContain("EchoSecret657");
+  }
+
+  /** JSON 이스케이프된 형태(슬래시 앞 역슬래시)로 되울려도 파싱하면 원문이 되므로 값 단위로 가린다 — 중첩 배열·객체 안까지. */
+  @Test
+  void preview_escapedEchoInNestedValues_rowsAndRawJsonMasked() {
+    wireMock.stubFor(
+        get(urlPathEqualTo("/escaped657"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody(
+                        "{\"items\":[{\"v\":{\"deep\":[\"Esc\\/Key657zz\"]}},{\"v\":\"plain\"}]}")));
+
+    ApiCallPreviewResponse response =
+        service.preview(
+            mappedPreview(
+                "/escaped657",
+                "$.items",
+                "v",
+                Map.of("authType", "API_KEY", "key_value", "Esc/Key657zz")));
+
+    assertThat(response.errorMessage()).isNull();
+    assertThat(response.rows()).hasSize(2);
+    assertThat(response.rows().toString()).doesNotContain("Esc/Key657").contains("****57zz");
+    assertThat(response.rawJson()).doesNotContain("Key657").contains("plain");
+  }
+
+  /** 따옴표 없는 숫자로 되울린 비밀도 가린다 — 본문 문자열을 바로 바꾸면 JSON 이 깨져 미리보기가 「JSON 이 아닙니다」 로 실패했을 것이다. */
+  @Test
+  void preview_numericEchoedSecret_maskedWithoutBreakingJson() {
+    wireMock.stubFor(
+        get(urlPathEqualTo("/num657"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"n\":98765432,\"other\":1}]")));
+
+    ApiCallPreviewResponse response =
+        service.preview(
+            mappedPreview(
+                "/num657", "$", "n", Map.of("authType", "API_KEY", "apiKey", "98765432")));
+
+    assertThat(response.success()).isTrue();
+    assertThat(response.rows().get(0)).containsEntry("v", "****5432");
+    assertThat(response.rawJson()).doesNotContain("98765432").contains("\"other\":1");
   }
 }

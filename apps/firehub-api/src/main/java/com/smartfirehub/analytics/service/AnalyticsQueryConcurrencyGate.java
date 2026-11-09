@@ -20,8 +20,8 @@ import org.springframework.stereotype.Component;
  * 풀을 쥐어 같은 고갈이 되풀이된다. 초과면 429 {@code QUERY_CONCURRENCY_LIMIT}.
  *
  * <p><b>적용 범위.</b> 관문(GuardedSqlExecutor)의 PG 실행 구간에서 애드혹·저장 쿼리·내보내기 경로만 이 게이트를 지난다. 차트·대시보드는 위젯을
- * 병렬로 불러오므로 지나지 않는다(429 로 깨지지 않게) — 대신 커넥션을 잡기 전에 차례를 기다리는 {@link
- * InteractiveQueryConcurrencyGate}(WD-599)를 서비스 진입부에서 지난다. 각 상한은 0 이하면 따로 꺼진다.
+ * 병렬로 불러오므로 지나지 않는다(429 로 깨지지 않게) — 대신 트랜잭션 밖에서 차례를 기다리는 {@link
+ * InteractiveQueryConcurrencyGate}(WD-599)를 실행이 정해진 뒤에 지난다(언제·어디서는 그 클래스 설명). 각 상한은 0 이하면 따로 꺼진다.
  */
 @Component
 public class AnalyticsQueryConcurrencyGate {

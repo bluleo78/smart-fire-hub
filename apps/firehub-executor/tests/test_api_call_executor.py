@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, NamedTuple, Optional
 from unittest.mock import MagicMock, call, patch
 
 import pytest
@@ -16,7 +16,6 @@ from app.schemas.requests import (
 )
 from app.services.api_call_executor import (
     ApiCallException,
-    _apply_auth,
     _convert_value,
     _resolve_mapping,
     _has_next_page,
@@ -26,6 +25,7 @@ from app.services.api_call_executor import (
 from app.services.db_utils import insert_batch
 from app.services.value_conversion import ConversionFailed
 from app.validators.ssrf_protection import SsrfException
+from tests.conftest import apply_auth
 
 
 def _conv(value, fm):
@@ -553,7 +553,7 @@ def test_auth_bearer():
     headers: Dict[str, str] = {}
     params: Dict[str, str] = {}
     auth = {"type": "BEARER", "token": "my-token"}
-    _apply_auth(auth, headers, params)
+    apply_auth(auth, headers, params)
     assert headers.get("Authorization") == "Bearer my-token"
 
 
@@ -561,7 +561,7 @@ def test_auth_api_key_header():
     headers: Dict[str, str] = {}
     params: Dict[str, str] = {}
     auth = {"type": "API_KEY", "key_name": "X-API-Key", "key_value": "secret", "location": "header"}
-    _apply_auth(auth, headers, params)
+    apply_auth(auth, headers, params)
     assert headers.get("X-API-Key") == "secret"
 
 
@@ -570,7 +570,7 @@ def test_auth_api_key_query():
     params: Dict[str, str] = {}
     auth = {"type": "API_KEY", "key_name": "api_key", "key_value": "secret", "location": "query"}
     # 쿼리 키는 params(httpx 식 인코딩)에 넣지 않고 돌려준다 — 공용 규칙으로 따로 인코딩해 붙인다(WD-182).
-    assert _apply_auth(auth, headers, params) == ("api_key", "secret")
+    assert apply_auth(auth, headers, params) == ("api_key", "secret")
     assert params == {}
     assert "api_key" not in headers
 
@@ -578,7 +578,7 @@ def test_auth_api_key_query():
 def test_no_auth():
     headers: Dict[str, str] = {}
     params: Dict[str, str] = {}
-    _apply_auth(None, headers, params)
+    apply_auth(None, headers, params)
     assert headers == {}
     assert params == {}
 
@@ -589,7 +589,7 @@ def test_auth_java_bearer():
     headers: Dict[str, str] = {}
     params: Dict[str, str] = {}
     auth = {"authType": "BEARER", "token": "jwt-token-123"}
-    _apply_auth(auth, headers, params)
+    apply_auth(auth, headers, params)
     assert headers.get("Authorization") == "Bearer jwt-token-123"
 
 
@@ -597,7 +597,7 @@ def test_auth_java_api_key_header():
     headers: Dict[str, str] = {}
     params: Dict[str, str] = {}
     auth = {"authType": "API_KEY", "placement": "header", "headerName": "X-Custom-Key", "apiKey": "secret-key"}
-    _apply_auth(auth, headers, params)
+    apply_auth(auth, headers, params)
     assert headers.get("X-Custom-Key") == "secret-key"
 
 
@@ -605,7 +605,7 @@ def test_auth_java_api_key_query():
     headers: Dict[str, str] = {}
     params: Dict[str, str] = {"service_key": "static-value", "pageNo": "1"}
     auth = {"authType": "API_KEY", "placement": "query", "paramName": "service_key", "apiKey": "qry-secret"}
-    assert _apply_auth(auth, headers, params) == ("service_key", "qry-secret")
+    assert apply_auth(auth, headers, params) == ("service_key", "qry-secret")
     # 같은 이름의 정적 파라미터는 지운다 — Java 처럼 그 이름으로는 키 하나만 나간다.
     assert params == {"pageNo": "1"}
     assert len(headers) == 0
@@ -617,27 +617,27 @@ def test_auth_bearer_token_is_normalized_like_java():
     # 앞뒤 공백·「Bearer 」 접두어(겹친 것까지)를 뗀 값을 보낸다 — 「Bearer Bearer abc」 가 나가면 안 된다.
     for raw in ("Bearer abc", " Bearer abc ", "bearer Bearer abc", "abc"):
         headers: Dict[str, str] = {}
-        _apply_auth({"authType": "BEARER", "value": raw}, headers, {})
+        apply_auth({"authType": "BEARER", "value": raw}, headers, {})
         assert headers["Authorization"] == "Bearer abc", raw
 
 
 def test_auth_whitespace_only_names_are_absent():
     # 공백뿐인 headerName·placement 는 없는 것으로 보고 다음 키·기본값을 쓴다(Java 와 같다).
     headers: Dict[str, str] = {}
-    _apply_auth({"authType": "API_KEY", "headerName": "  ", "apiKey": "k"}, headers, {})
+    apply_auth({"authType": "API_KEY", "headerName": "  ", "apiKey": "k"}, headers, {})
     assert headers == {"x-api-key": "k"}
 
     headers = {}
-    _apply_auth({"authType": "API_KEY", "headerName": " ", "key_name": "X-Alt", "apiKey": "k"}, headers, {})
+    apply_auth({"authType": "API_KEY", "headerName": " ", "key_name": "X-Alt", "apiKey": "k"}, headers, {})
     assert headers == {"X-Alt": "k"}
 
     # 공백뿐인 authType 이면 type 을 본다
     headers = {}
-    _apply_auth({"authType": " ", "type": "BEARER", "token": "t"}, headers, {})
+    apply_auth({"authType": " ", "type": "BEARER", "token": "t"}, headers, {})
     assert headers == {"Authorization": "Bearer t"}
 
     # 공백뿐인 placement 면 location 을 본다
-    assert _apply_auth(
+    assert apply_auth(
         {"authType": "API_KEY", "placement": " ", "location": "query", "paramName": " ", "key_name": "svc",
          "apiKey": "k"},
         {},
@@ -648,7 +648,7 @@ def test_auth_whitespace_only_names_are_absent():
 def test_auth_api_key_value_is_not_stripped():
     # API 키는 Java 처럼 원문 그대로 보낸다(정리는 BEARER 만).
     headers: Dict[str, str] = {}
-    _apply_auth({"authType": "API_KEY", "apiKey": " k "}, headers, {})
+    apply_auth({"authType": "API_KEY", "apiKey": " k "}, headers, {})
     assert headers == {"x-api-key": " k "}
 
 
@@ -1351,3 +1351,233 @@ def test_offset_pagination_non_positive_page_size_falls_back_to_default(bad):
     assert do_request.call_count == 1
     # 첫 요청의 limit 도 기본값으로 보낸다
     assert do_request.call_args.kwargs["query_params"]["limit"] == "100"
+
+
+# ---------------------------------------------------------------------------
+# WD-657: 다른 출처 리다이렉트에 인증 떼기·Bearer 끝 앵커·헤더 이름 공백·오류문 비밀 가림
+# ---------------------------------------------------------------------------
+
+def _redirect(status: int, location: str) -> MagicMock:
+    resp = _status_response(status)
+    resp.headers = {"location": location}
+    return resp
+
+
+class _Run(NamedTuple):
+    """``_run_with_responses`` 결과 — 실행 결과와, 단언에 쓰는 가짜 객체(요청 기록 client·주소 검사 validate)."""
+
+    result: Any
+    client: MagicMock
+    validate: MagicMock
+
+
+def _run_with_responses(req, responses) -> _Run:
+    """httpx.Client 를 바꿔 차례로 응답하게 하고 실행 결과와 가짜 객체를 돌려준다 — 테스트마다 같은 patch 묶음을 다시 쓰지 않게 한다."""
+    conn, _ = make_conn()
+    client = _patched_client(responses)
+    with patch("app.services.api_call_executor.validate_url") as validate, \
+            patch("httpx.Client", return_value=client), patch("time.sleep"), \
+            patch("app.services.api_call_executor.insert_batch"):
+        result = execute_api_call(req, conn)
+    return _Run(result, client, validate)
+
+
+def _sent(client, index):
+    """index 번째 요청의 (url, headers)."""
+    kwargs = client.request.call_args_list[index].kwargs
+    return kwargs["url"], kwargs["headers"]
+
+
+def test_cross_origin_redirect_drops_bearer_and_same_named_custom_header():
+    req = make_request(
+        url="https://a.example.com/api",
+        headers={"authorization": "Bearer custom-copy", "X-Trace": "t1"},
+        auth={"authType": "BEARER", "token": "CrossTok657"},
+    )
+    result, client, _ = _run_with_responses(
+        req, [_redirect(302, "https://b.example.com/next"), mock_response({"items": []})]
+    )
+
+    assert result.success is True
+    _, first_headers = _sent(client, 0)
+    assert first_headers["Authorization"] == "Bearer CrossTok657"
+    url, headers = _sent(client, 1)
+    assert url == "https://b.example.com/next"
+    assert {k.lower() for k in headers} == {"x-trace"}
+
+
+def test_cross_origin_redirect_drops_api_key_header_and_echoed_query_key():
+    req = make_request(
+        url="https://a.example.com/api",
+        auth={"authType": "API_KEY", "headerName": "X-Key", "apiKey": "HdrKey657"},
+    )
+    _, client, _ = _run_with_responses(
+        req, [_redirect(301, "https://a.example.com:8443/next"), mock_response({"items": []})]
+    )
+    assert "X-Key" not in _sent(client, 1)[1]
+
+    req = make_request(
+        url="http://a.example.com/api",
+        auth={"authType": "API_KEY", "placement": "query", "paramName": "serviceKey", "apiKey": "QryKey657"},
+    )
+    _, client, _ = _run_with_responses(
+        req,
+        [_redirect(302, "http://b.example.com/api?serviceKey=QryKey657&x=1#f"), mock_response({"items": []})],
+    )
+    assert _sent(client, 0)[0] == "http://a.example.com/api?serviceKey=QryKey657"
+    # 다른 호스트 — 되울린 키를 빼고 나머지 쿼리·프래그먼트는 둔다
+    assert _sent(client, 1)[0] == "http://b.example.com/api?x=1#f"
+
+
+def test_http_to_https_upgrade_keeps_header_and_query_key():
+    # 같은 호스트 http→https 승격(기본 포트끼리)은 같은 출처 — serviceKey 가 따라가던 WD-182 동작을 지킨다.
+    req = make_request(
+        url="http://a.example.com/api",
+        headers={"X-Key": "HdrUp657"},
+        auth={"authType": "API_KEY", "placement": "query", "paramName": "serviceKey", "apiKey": "QryUp657"},
+    )
+    _, client, _ = _run_with_responses(
+        req,
+        [_redirect(301, "https://a.example.com/api?serviceKey=QryUp657"), mock_response({"items": []})],
+    )
+    url, headers = _sent(client, 1)
+    assert url == "https://a.example.com/api?serviceKey=QryUp657"
+    assert headers["X-Key"] == "HdrUp657"
+
+    req = make_request(url="http://a.example.com/api", auth={"authType": "BEARER", "token": "UpTok657"})
+    _, client, _ = _run_with_responses(req, [_redirect(301, "https://a.example.com/v2"), mock_response({"items": []})])
+    assert _sent(client, 1)[1]["Authorization"] == "Bearer UpTok657"
+
+
+def test_https_to_http_downgrade_drops_header_and_query_key():
+    req = make_request(
+        url="https://a.example.com/api",
+        auth={"authType": "API_KEY", "placement": "query", "paramName": "serviceKey", "apiKey": "QryDown657"},
+    )
+    _, client, _ = _run_with_responses(
+        req,
+        [_redirect(302, "http://a.example.com/api?serviceKey=QryDown657&x=1"), mock_response({"items": []})],
+    )
+    assert _sent(client, 1)[0] == "http://a.example.com/api?x=1"
+
+    req = make_request(url="https://a.example.com/api", auth={"authType": "BEARER", "token": "DownTok657"})
+    _, client, _ = _run_with_responses(req, [_redirect(302, "http://a.example.com/v2"), mock_response({"items": []})])
+    assert "Authorization" not in _sent(client, 1)[1]
+
+
+def test_relative_location_is_resolved_first_and_followed_as_same_origin():
+    req = make_request(url="https://a.example.com/api/v1", auth={"authType": "BEARER", "token": "RelTok657"})
+    result, client, mock_validate = _run_with_responses(
+        req, [_redirect(302, "/v2/items?page=2"), mock_response({"items": []})]
+    )
+
+    assert result.success is True
+    url, headers = _sent(client, 1)
+    assert url == "https://a.example.com/v2/items?page=2"
+    assert headers["Authorization"] == "Bearer RelTok657"
+    # 주소 검사도 푼 절대 주소로 한다
+    mock_validate.assert_any_call("https://a.example.com/v2/items?page=2")
+
+
+def test_redirect_a_to_b_to_a_restores_query_key():
+    req = make_request(
+        url="https://a.example.com/one",
+        auth={"authType": "API_KEY", "placement": "query", "paramName": "serviceKey", "apiKey": "AbaQry657"},
+    )
+    _, client, _ = _run_with_responses(
+        req,
+        [
+            _redirect(302, "https://b.example.com/two?serviceKey=AbaQry657"),
+            _redirect(302, "https://a.example.com/three?p=1"),
+            mock_response({"items": []}),
+        ],
+    )
+    assert _sent(client, 1)[0] == "https://b.example.com/two"
+    assert _sent(client, 2)[0] == "https://a.example.com/three?p=1&serviceKey=AbaQry657"
+
+
+def test_cross_origin_redirect_drops_user_credential_headers_with_query_auth():
+    req = make_request(
+        url="https://a.example.com/api",
+        headers={"Authorization": "Basic dXNlcjpwdw==", "proxy-authorization": "Basic cA==", "COOKIE": "sid=1",
+                 "X-Trace": "t"},
+        auth={"authType": "API_KEY", "placement": "query", "paramName": "serviceKey", "apiKey": "ChKey657"},
+    )
+    _, client, _ = _run_with_responses(
+        req, [_redirect(302, "https://b.example.com/next"), mock_response({"items": []})]
+    )
+    assert _sent(client, 0)[1]["Authorization"] == "Basic dXNlcjpwdw=="
+    assert _sent(client, 1)[1] == {"X-Trace": "t"}
+
+
+def test_same_origin_redirect_keeps_auth_with_default_port_normalized():
+    req = make_request(
+        url="https://a.example.com/api",
+        auth={"authType": "BEARER", "token": "SameTok657"},
+    )
+    _, client, _ = _run_with_responses(
+        req, [_redirect(302, "https://A.EXAMPLE.com:443/next"), mock_response({"items": []})]
+    )
+    assert _sent(client, 1)[1]["Authorization"] == "Bearer SameTok657"
+
+
+def test_redirect_a_to_b_to_a_uses_original_origin():
+    req = make_request(
+        url="https://a.example.com/one",
+        auth={"authType": "BEARER", "token": "AbaTok657"},
+    )
+    _, client, _ = _run_with_responses(
+        req,
+        [
+            _redirect(302, "https://b.example.com/two"),
+            _redirect(302, "https://a.example.com/three"),
+            mock_response({"items": []}),
+        ],
+    )
+    assert "Authorization" not in _sent(client, 1)[1]
+    url, headers = _sent(client, 2)
+    assert url == "https://a.example.com/three"
+    assert headers["Authorization"] == "Bearer AbaTok657"
+
+
+def test_strip_query_param_helper_matches_java_rules():
+    # 출처 판정 사례는 공용 사례 표(api-call-auth-vectors.json, test_api_call_auth_vectors.py)가 본다.
+    from app.services.api_call_executor import _strip_query_param
+
+    assert _strip_query_param("https://b.example/p?svc=K&x=1&svc=K2#frag", "svc") == "https://b.example/p?x=1#frag"
+    assert _strip_query_param("https://b.example/p?s%76c=K", "svc") == "https://b.example/p"
+    assert _strip_query_param("https://b.example/p?svcx=1", "svc") == "https://b.example/p?svcx=1"
+
+
+def test_describe_exception_scrubs_sent_secret():
+    from app.services import api_call_errors as errors
+
+    message = errors.describe_exception(RuntimeError("boom Bearer HdrSecret657xyz"), 1000, "h", "HdrSecret657xyz")
+    assert "HdrSecret657xyz" not in message
+    assert "****7xyz" in message
+    # 최소 길이(4자) 미만 비밀은 Java 처럼 손대지 않는다 — 평범한 글자를 지우지 않게
+    assert errors.describe_exception(RuntimeError("abc"), 1000, "h", "abc").endswith("abc")
+
+
+def test_retry_warning_and_failure_message_scrub_header_secret(caplog):
+    req = make_request(
+        retry=RetryConfig(max_retries=1, initial_backoff_ms=0, max_backoff_ms=0),
+        auth={"authType": "API_KEY", "headerName": "X-Key", "apiKey": "LeakKey657abc"},
+    )
+    with caplog.at_level("WARNING"):
+        result, _, _ = _run_with_responses(req, [RuntimeError("upstream echoed LeakKey657abc")])
+
+    assert result.success is False
+    assert "LeakKey657abc" not in result.error
+    assert "****7abc" in result.error
+    assert "LeakKey657abc" not in caplog.text
+
+
+def test_execution_log_scrubs_secret_in_url():
+    req = make_request(
+        url="http://public.example.com/api/data?key=UrlKey657abc",
+        auth={"authType": "API_KEY", "headerName": "X-Key", "apiKey": "UrlKey657abc"},
+    )
+    result, _, _ = _run_with_responses(req, [mock_response({"items": []})])
+    assert result.success is True
+    assert "UrlKey657abc" not in result.execution_log

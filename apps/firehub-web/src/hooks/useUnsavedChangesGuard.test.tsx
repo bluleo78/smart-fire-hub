@@ -1,13 +1,21 @@
 /**
- * useUnsavedChangesGuard 단위 테스트 (WD-651)
+ * useUnsavedChangesGuard 단위 테스트
  *
- * 「이탈」 확정 즉시 가드(레지스트리 isDirty·click 캡처·beforeunload)가 꺼지고, 이 페이지로 다시 정착하거나
+ * (WD-651) 「이탈」 확정 즉시 가드(레지스트리 isDirty·click 캡처·beforeunload)가 꺼지고, 이 페이지로 다시 정착하거나
  * (커밋된 location == window.location) 폼이 깨끗해지면 다시 켜지는지 확인한다. 「취소」는 가드를 끄지 않는다.
  * 배경 설명은 훅의 leavingRef 주석 참고.
+ *
+ * (WD-662) 선택 옵션 onStay 와 isDialogOpen.
+ * - onStay 는 사용자가 확인창에서 남기(「취소」·Esc)를 고른 때 정확히 한 번 불려야 한다.
+ *   Radix 는 「취소」 클릭 때 onClick 과 onOpenChange(false) 로 handleCancel 을 두 번 부르고,
+ *   「이탈」 클릭 뒤에도 onOpenChange(false) 가 이어지므로 중복·오호출을 거르는지 본다.
+ * - 옵션 없이 쓰는 기존 화면(약 20곳)은 그대로 동작해야 한다.
+ *
+ * 레지스트리 모듈 모킹은 파일 전체에 걸리지만, WD-662 묶음은 requestNavigate 경로만 쓰므로 실제 레지스트리가 필요 없다.
  */
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import type { ReactNode } from 'react';
-import { MemoryRouter, useNavigate } from 'react-router-dom';
+import { type ReactNode, useEffect } from 'react';
+import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useUnsavedChangesGuard } from './useUnsavedChangesGuard';
@@ -147,5 +155,95 @@ describe('useUnsavedChangesGuard — 이탈 확정 뒤 가드 해제 (WD-651)', 
     // click 캡처도 다시 동작해 다이얼로그가 뜬다
     fireEvent.click(screen.getByText('다른 곳'));
     expect(screen.getByRole('alertdialog')).toBeInTheDocument();
+  });
+});
+
+/** 훅 반환값을 테스트에서 읽기 위한 보관소 */
+const exposed: { isDialogOpen?: () => boolean } = {};
+
+/** (WD-662) 늘 dirty 인 화면 — 「이동」 버튼은 requestNavigate 로 확인창을 띄운다. */
+function StayGuardedPage({ onStay, withOptions }: { onStay?: () => void; withOptions: boolean }) {
+  // withOptions=false 는 기존 화면처럼 두 번째 인자를 아예 넘기지 않는 경우다
+  const guard = useUnsavedChangesGuard(true, withOptions ? { onStay } : undefined);
+  // 렌더 중 바깥 값을 바꾸지 않도록(react-hooks 규칙) effect 에서 넘긴다
+  const { isDialogOpen } = guard;
+  useEffect(() => {
+    exposed.isDialogOpen = isDialogOpen;
+  }, [isDialogOpen]);
+  return (
+    <div>
+      <button type="button" onClick={() => guard.requestNavigate('/other')}>
+        이동
+      </button>
+      {guard.dialog}
+    </div>
+  );
+}
+
+function renderStayPage(props: { onStay?: () => void; withOptions?: boolean }) {
+  return render(
+    <MemoryRouter initialEntries={['/start']}>
+      <Routes>
+        <Route path="/start" element={<StayGuardedPage withOptions={props.withOptions ?? true} onStay={props.onStay} />} />
+        <Route path="/other" element={<div>다른 화면</div>} />
+      </Routes>
+    </MemoryRouter>,
+  );
+}
+
+describe('useUnsavedChangesGuard — onStay·isDialogOpen (WD-662)', () => {
+  // 앞 테스트가 남긴 함수를 읽지 않도록 매번 비운다
+  beforeEach(() => {
+    exposed.isDialogOpen = undefined;
+    registered.isDirty = null;
+  });
+
+  it('「취소」를 누르면 onStay 가 한 번만 불리고 isDialogOpen 이 열림 여부를 동기로 알려 준다', () => {
+    const onStay = vi.fn();
+    renderStayPage({ onStay });
+    expect(exposed.isDialogOpen?.()).toBe(false);
+
+    fireEvent.click(screen.getByRole('button', { name: '이동' }));
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument();
+    expect(exposed.isDialogOpen?.()).toBe(true);
+
+    fireEvent.click(screen.getByRole('button', { name: '취소' }));
+    expect(onStay).toHaveBeenCalledTimes(1);
+    expect(exposed.isDialogOpen?.()).toBe(false);
+    // 남았으므로 이동하지 않는다
+    expect(screen.queryByText('다른 화면')).not.toBeInTheDocument();
+  });
+
+  it('Esc 로 닫아도 onStay 가 한 번 불린다', () => {
+    const onStay = vi.fn();
+    renderStayPage({ onStay });
+    fireEvent.click(screen.getByRole('button', { name: '이동' }));
+    fireEvent.keyDown(screen.getByRole('alertdialog'), { key: 'Escape' });
+    expect(onStay).toHaveBeenCalledTimes(1);
+  });
+
+  it('「이탈」을 고르면 onStay 는 불리지 않고 가려던 곳으로 간다', async () => {
+    vi.useFakeTimers();
+    try {
+      const onStay = vi.fn();
+      renderStayPage({ onStay });
+      fireEvent.click(screen.getByRole('button', { name: '이동' }));
+      fireEvent.click(screen.getByRole('button', { name: '이탈' }));
+      await act(async () => {
+        vi.runAllTimers();
+      });
+      expect(onStay).not.toHaveBeenCalled();
+      expect(screen.getByText('다른 화면')).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('옵션 없이 쓰는 화면은 이전처럼 「취소」에 머무른다', () => {
+    renderStayPage({ withOptions: false });
+    fireEvent.click(screen.getByRole('button', { name: '이동' }));
+    fireEvent.click(screen.getByRole('button', { name: '취소' }));
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(screen.queryByText('다른 화면')).not.toBeInTheDocument();
   });
 });

@@ -14,6 +14,7 @@ import com.smartfirehub.ontology.repository.DatasetOntologyRepository;
 import com.smartfirehub.ontology.repository.OntologyRepository;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -204,7 +205,7 @@ public class MappingService {
       return null;
     }
     // VARCHAR(255)·NUMERIC(18,6)처럼 정밀도가 붙어 올 수 있어 괄호 앞부분만 본다.
-    String base = columnType.trim().toUpperCase();
+    String base = columnType.trim().toUpperCase(Locale.ROOT);
     int paren = base.indexOf('(');
     if (paren >= 0) {
       base = base.substring(0, paren);
@@ -248,7 +249,7 @@ public class MappingService {
       return null; // 미지정 속성은 판정 대상이 아니고, text는 모두 허용
     }
     String actual = collapseColumnType(columnType);
-    if (actual == null || actual.equals(want.toLowerCase())) {
+    if (actual == null || actual.equals(want.toLowerCase(Locale.ROOT))) {
       return null;
     }
     return actual;

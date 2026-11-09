@@ -18,12 +18,15 @@ import java.util.stream.Stream;
  */
 public final class ReservedColumnNames {
 
+  /** 행 변경 시각 시스템 컬럼 이름 — 예약 목록의 출처인 이 클래스에 리터럴을 두어 의존이 DataTableStore → 이 클래스 한 방향이 되게 한다. */
+  public static final String UPDATED_AT_COLUMN = "_updated_at";
+
   /**
    * 앱 시스템 컬럼(순서 고정) — 모든 백엔드의 데이터셋 물리 테이블이 갖는 컬럼이다. 결과 숨김·적재 키 제거 등 「물리적으로 있는 시스템 컬럼」 용도로도 이 목록을
    * 쓴다({@link DataTableStore#SYSTEM_COLUMN_NAMES} 가 이 목록을 가리킨다).
    */
   public static final List<String> APP_SYSTEM =
-      List.of("id", "import_id", "created_at", DataTableStore.UPDATED_AT_COLUMN);
+      List.of("id", "import_id", "created_at", UPDATED_AT_COLUMN);
 
   /**
    * PostgreSQL 이 모든 테이블에 숨겨 두는 시스템 컬럼 이름(WD-564). 사용자 컬럼으로 만들면 DDL 이 "conflicts with a system

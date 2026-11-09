@@ -57,6 +57,9 @@ async def execute_query_endpoint(
             request.read_only,
             conn,
             tenant_id=request.tenant_id,
+            # 문장 제한은 /execute/sql·/execute/load 와 같은 모양으로 넘긴다(WD-641) — 요청값과 설정 기본값, 고르기는 서비스가 한다.
+            timeout_seconds=request.timeout_seconds,
+            default_timeout_seconds=settings.query_statement_timeout_seconds,
         ),
     )
 

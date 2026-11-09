@@ -7,8 +7,10 @@ import {
   extractApiErrorAsync,
   GRAPH_READ_RESTRICTED_MESSAGE,
   handleApiError,
+  isBadCredentialsError,
   isGraphReadRestricted,
   isMemberGoneError,
+  isWrongCurrentPasswordError,
 } from './api-error';
 
 // toast 는 부수효과만 확인한다 — 실제 sonner 렌더는 E2E 몫이다. vi.mock 은 호이스팅되므로 import 아래에 둬도
@@ -18,6 +20,11 @@ vi.mock('sonner', () => ({ toast: { error: vi.fn() } }));
 /** axios.isAxiosError 는 isAxiosError === true 인 객체를 인정한다 — 실제 AxiosError 없이 응답 모양만 재현한다. */
 function axiosErrorWith(data: unknown) {
   return { isAxiosError: true, response: { status: 400, data } };
+}
+
+/** 상태 코드까지 고르는 axiosErrorWith — 상태·code 로 판정하는 is*Error 도우미 테스트가 함께 쓴다. */
+function axiosErrorWithStatus(status: number, data: unknown) {
+  return { isAxiosError: true, response: { status, data } };
 }
 
 describe('extractApiError — errors 맵의 두 의미 구분 (#787)', () => {
@@ -100,20 +107,19 @@ describe('extractApiError — errors 맵의 두 의미 구분 (#787)', () => {
 });
 
 describe('isGraphReadRestricted', () => {
-  const err = (status: number, data: unknown) => ({ isAxiosError: true, response: { status, data } });
 
   it('403 + GRAPH_READ_RESTRICTED 만 참이다', () => {
-    expect(isGraphReadRestricted(err(403, { code: 'GRAPH_READ_RESTRICTED' }))).toBe(true);
-    expect(isGraphReadRestricted(err(403, { code: 'PASSWORD_CHANGE_REQUIRED' }))).toBe(false);
-    expect(isGraphReadRestricted(err(403, { message: '권한 없음' }))).toBe(false);
-    expect(isGraphReadRestricted(err(500, { code: 'GRAPH_READ_RESTRICTED' }))).toBe(false);
+    expect(isGraphReadRestricted(axiosErrorWithStatus(403, { code: 'GRAPH_READ_RESTRICTED' }))).toBe(true);
+    expect(isGraphReadRestricted(axiosErrorWithStatus(403, { code: 'PASSWORD_CHANGE_REQUIRED' }))).toBe(false);
+    expect(isGraphReadRestricted(axiosErrorWithStatus(403, { message: '권한 없음' }))).toBe(false);
+    expect(isGraphReadRestricted(axiosErrorWithStatus(500, { code: 'GRAPH_READ_RESTRICTED' }))).toBe(false);
     expect(isGraphReadRestricted(new Error('x'))).toBe(false);
   });
 
   // 판정 조회 일시 장애(502)는 제한이 아니다 — 자물쇠 안내가 아니라 재시도 가능한 일반 오류로 남아야 한다.
   it('판정 조회 실패 502 는 제한이 아니다', () => {
-    expect(isGraphReadRestricted(err(502, { message: '지식그래프 조회 중 ai-agent 호출 실패' }))).toBe(false);
-    expect(isGraphReadRestricted(err(502, { code: 'GRAPH_READ_CHECK_FAILED' }))).toBe(false);
+    expect(isGraphReadRestricted(axiosErrorWithStatus(502, { message: '지식그래프 조회 중 ai-agent 호출 실패' }))).toBe(false);
+    expect(isGraphReadRestricted(axiosErrorWithStatus(502, { code: 'GRAPH_READ_CHECK_FAILED' }))).toBe(false);
   });
 
   it('제한 안내 문구 상수가 스펙 원문과 같다', () => {
@@ -153,12 +159,45 @@ describe('applyFieldErrors — 서버 필드 오류를 폼 필드로 (WD-270)', 
 });
 
 describe('isMemberGoneError (WD-288)', () => {
-  const err = (status: number, data: unknown) => ({ isAxiosError: true, response: { status, data } });
 
   it('404 + USER_NOT_IN_WORKSPACE 만 참이다 — 다른 404 를 「제거된 멤버」로 오인하지 않는다', () => {
-    expect(isMemberGoneError(err(404, { code: 'USER_NOT_IN_WORKSPACE' }))).toBe(true);
-    expect(isMemberGoneError(err(404, { message: '역할을 찾을 수 없습니다' }))).toBe(false);
-    expect(isMemberGoneError(err(409, { code: 'USER_NOT_IN_WORKSPACE' }))).toBe(false);
+    expect(isMemberGoneError(axiosErrorWithStatus(404, { code: 'USER_NOT_IN_WORKSPACE' }))).toBe(true);
+    expect(isMemberGoneError(axiosErrorWithStatus(404, { message: '역할을 찾을 수 없습니다' }))).toBe(false);
+    expect(isMemberGoneError(axiosErrorWithStatus(409, { code: 'USER_NOT_IN_WORKSPACE' }))).toBe(false);
     expect(isMemberGoneError(new Error('x'))).toBe(false);
+  });
+});
+
+describe('isBadCredentialsError (WD-572)', () => {
+
+  it('code 없는 401 은 자격 증명 오류다 — 본문이 비어 있어도', () => {
+    expect(isBadCredentialsError(axiosErrorWithStatus(401, { status: 401, message: '아이디 또는 비밀번호가 올바르지 않습니다.' }))).toBe(true);
+    expect(isBadCredentialsError(axiosErrorWithStatus(401, ''))).toBe(true);
+    expect(isBadCredentialsError(axiosErrorWithStatus(401, undefined))).toBe(true);
+  });
+
+  it('비활성 계정 401(code 있음)·잠금 429·500·네트워크 오류는 아니다', () => {
+    expect(isBadCredentialsError(axiosErrorWithStatus(401, { status: 401, code: 'ACCOUNT_DEACTIVATED', message: 'x' }))).toBe(false);
+    expect(isBadCredentialsError(axiosErrorWithStatus(429, { status: 429, message: 'x' }))).toBe(false);
+    expect(isBadCredentialsError(axiosErrorWithStatus(500, {}))).toBe(false);
+    expect(isBadCredentialsError({ isAxiosError: true })).toBe(false);
+    expect(isBadCredentialsError(new Error('x'))).toBe(false);
+  });
+});
+
+describe('isWrongCurrentPasswordError (WD-572)', () => {
+
+  it('code WRONG_CURRENT_PASSWORD 인 400 만 참이다', () => {
+    expect(isWrongCurrentPasswordError(axiosErrorWithStatus(400, { status: 400, code: 'WRONG_CURRENT_PASSWORD', message: '현재 비밀번호가 올바르지 않습니다' }))).toBe(true);
+  });
+
+  it('다른 code·code 없는 400·403·429·500·네트워크 오류는 아니다', () => {
+    expect(isWrongCurrentPasswordError(axiosErrorWithStatus(400, { status: 400, code: 'SAME_AS_CURRENT_PASSWORD', message: 'x' }))).toBe(false);
+    // 문구가 같아도 code 가 없으면 아니다 — 문구가 아니라 code 로 판정한다
+    expect(isWrongCurrentPasswordError(axiosErrorWithStatus(400, { status: 400, message: '현재 비밀번호가 올바르지 않습니다' }))).toBe(false);
+    expect(isWrongCurrentPasswordError(axiosErrorWithStatus(403, { status: 403, code: 'WRONG_CURRENT_PASSWORD' }))).toBe(false);
+    expect(isWrongCurrentPasswordError(axiosErrorWithStatus(429, {}))).toBe(false);
+    expect(isWrongCurrentPasswordError(axiosErrorWithStatus(500, {}))).toBe(false);
+    expect(isWrongCurrentPasswordError({ isAxiosError: true })).toBe(false);
   });
 });

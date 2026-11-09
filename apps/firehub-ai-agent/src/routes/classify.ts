@@ -1,13 +1,9 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod/v4';
-import { internalAuth } from '../middleware/auth.js';
-import { jsonBody } from '../http/json-body.js';
+import { authedJsonBody, CLASSIFY_BODY_LIMIT } from '../http/json-body.js';
 import { ProviderFactory } from '../providers/index.js';
 
 const router = Router();
-
-// 2mb body limit for batch requests (up to 100 rows with long text)
-const jsonParser = jsonBody('2mb');
 
 const outputColumnSchema = z.object({
   name: z.string().min(1),
@@ -36,7 +32,7 @@ const classifyRequestSchema = z.object({
   reasoningEffort: z.string().optional(),
 });
 
-router.post('/classify', jsonParser, internalAuth, async (req: Request, res: Response) => {
+router.post('/classify', ...authedJsonBody({ limit: CLASSIFY_BODY_LIMIT }), async (req: Request, res: Response) => {
   const parseResult = classifyRequestSchema.safeParse(req.body);
   if (!parseResult.success) {
     res.status(400).json({

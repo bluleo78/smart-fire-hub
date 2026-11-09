@@ -6,6 +6,7 @@ import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Locale;
 import org.apache.poi.ss.usermodel.DataFormatter;
 import org.apache.poi.ss.usermodel.DateUtil;
 
@@ -137,7 +138,7 @@ public class LegacyExcelDataFormatter extends DataFormatter {
       } else if (c == '[') {
         int end = formatString.indexOf(']', i);
         if (end < 0) break;
-        String bracket = formatString.substring(i + 1, end).toLowerCase();
+        String bracket = formatString.substring(i + 1, end).toLowerCase(Locale.ROOT);
         // [h]·[mm]·[ss] 경과 시간은 시각으로 본다. 그 밖([Red]·[$-412]·[>100])은 무시.
         if (bracket.matches("h+|m+|s+")) plain.append('h');
         i = end;

@@ -374,3 +374,33 @@ test.describe('공개 가입 폐쇄', () => {
     await expect(page.getByRole('link', { name: '로그인으로 이동' })).toBeVisible();
   });
 });
+
+/** 회귀 테스트 (WD-572): 제출 중 버튼을 disabled 로 잠가 Enter 로 제출하면 포커스가 body 로 떨어지던 결함. */
+test.describe('회원가입 제출 중 포커스 (WD-572)', () => {
+  test.beforeEach(async ({ authMockedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/auth/signup-status', { open: true });
+  });
+
+  test('Enter 로 제출해 실패해도 포커스가 버튼에 남고 요청은 한 번만 나간다 (WD-572)', async ({ authMockedPage: page }) => {
+    const signup = await mockApi(page, 'POST', '/api/v1/auth/signup',
+      { status: 409, message: '이미 사용 중인 아이디입니다.' }, { status: 409, delayMs: 500, capture: true });
+    await page.goto('/signup');
+
+    await page.getByLabel('아이디 (이메일)').fill('existing@example.com');
+    await page.getByLabel('비밀번호', { exact: true }).fill('Password123');
+    await page.getByLabel('비밀번호 확인').fill('Password123');
+    await page.getByLabel('이름').fill('기존 사용자');
+    await page.getByRole('button', { name: '회원가입' }).focus();
+    await page.keyboard.press('Enter');
+
+    // 제출 중: aria-disabled 로 잠기지만 포커스는 버튼에 남고, 다시 Enter 를 눌러도 요청이 또 나가지 않는다
+    const pending = page.getByRole('button', { name: '회원가입 중...' });
+    await expect(pending).toHaveAttribute('aria-disabled', 'true');
+    await expect(pending).toBeFocused();
+    await page.keyboard.press('Enter');
+
+    await expect(page.getByText('이미 사용 중인 아이디입니다.')).toBeVisible();
+    await expect(page.getByRole('button', { name: '회원가입' })).toBeFocused();
+    expect(signup.requests.length).toBe(1);
+  });
+});

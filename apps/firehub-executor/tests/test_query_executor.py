@@ -8,7 +8,8 @@ from app.services.query_executor import (
     _build_geojson_wrapped_sql,
     execute_query,
 )
-from tests.conftest import PgError
+from app.schemas.requests import QUERY_TIMEOUT_SECONDS_MAX
+from tests.conftest import PgError, conn_patch, gate_backend
 
 
 # ---------------------------------------------------------------------------
@@ -372,8 +373,17 @@ def test_search_path_set_and_restored():
         f"Expected search_path restore in: {executed_sqls}"
 
 
-def test_statement_timeout_set():
-    """SET LOCAL statement_timeout = '30s' must be issued."""
+@pytest.mark.parametrize(
+    "kwargs, expected_millis",
+    [
+        ({}, 30000),  # 아무것도 주지 않으면 설정 기본값과 같은 상수(30초)
+        ({"timeout_seconds": 7}, 7000),  # 요청값(api 가 보낸 값)이 기본값보다 우선(WD-641)
+        ({"default_timeout_seconds": 45}, 45000),  # 요청값이 없으면 라우터가 넘긴 설정 기본값
+        ({"timeout_seconds": 12, "default_timeout_seconds": 45}, 12000),
+    ],
+)
+def test_statement_timeout_set(kwargs, expected_millis):
+    """문장 제한은 요청값, 없으면 기본값으로 공용 문장(밀리초)을 건다 — /execute/sql·/execute/load 와 같은 고르기(WD-641)."""
     executed_sqls = []
     cursor = MagicMock()
     cursor.description = [("x", 23, None, None, None, None, None)]
@@ -388,10 +398,10 @@ def test_statement_timeout_set():
     conn = MagicMock()
     conn.cursor.return_value = cursor
 
-    execute_query("SELECT 1", max_rows=1000, read_only=False, conn=conn, tenant_id=1)
+    execute_query("SELECT 1", max_rows=1000, read_only=False, conn=conn, tenant_id=1, **kwargs)
 
-    assert any("statement_timeout" in s and "30s" in s for s in executed_sqls), \
-        f"Expected statement_timeout in: {executed_sqls}"
+    assert any(f"SET LOCAL statement_timeout = {expected_millis}" in s for s in executed_sqls), \
+        f"Expected statement_timeout {expected_millis} in: {executed_sqls}"
 
 
 def test_numeric_text_not_misdetected_as_geometry():
@@ -1178,3 +1188,62 @@ def test_non_57014_is_never_timeout(fake_clock):
     fake_clock.advance(100)
     assert is_statement_timeout(PgError("deadlock detected", "40P01"), started_at, 50) is False
     assert is_statement_timeout(RuntimeError("boom"), started_at, 50) is False
+
+
+# ---------------------------------------------------------------------------
+# WD-641 — 오류 위치를 db_error.position 으로, 요청 timeout_seconds 를 라우터가 서비스로
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("raw, expected", [("15", 15), (None, None), ("", None), ("abc", None)])
+def test_failure_db_error_carries_statement_position(raw, expected):
+    """PG 오류의 diag.statement_position(문자열)을 정수로 db_error.position 에 싣는다. 없거나 숫자가 아니면 None."""
+    cursor = make_cursor()
+
+    def fail_user_sql(sql, *args, **kwargs):
+        # 설정 문장은 통과시키고 사용자 SQL 만 실패시킨다. 22P02(형 변환)는 래핑 재시도 없이 바로 올라가는 실행 오류다.
+        if "'abc'::int" in sql:
+            raise PgError('invalid input syntax for type integer: "abc"', "22P02", position=raw)
+
+    cursor.execute.side_effect = fail_user_sql
+    conn = make_conn(cursor)
+
+    result = execute_query("SELECT 'abc'::int", max_rows=10, read_only=True, conn=conn, tenant_id=1)
+
+    assert result.success is False
+    assert result.db_error.sql_state == "22P02"
+    assert result.db_error.position == expected
+
+
+_QUERY_BODY = {"tenantId": 1, "query": "SELECT 1", "max_rows": 10, "read_only": True}
+
+
+def _post_query(test_client, headers, body):
+    """PG 테넌트로 /execute/query 를 보내고(게이트·커넥션·서비스는 대역) 응답과 서비스 대역을 돌려준다."""
+    from app.schemas.responses import QueryExecuteResponse
+
+    ok = QueryExecuteResponse(success=True, row_count=0)
+    with gate_backend(kind="POSTGRESQL"), conn_patch("app.db.connection.get_connection"), \
+            patch("app.routers.query.query_executor.execute_query", return_value=ok) as service:
+        resp = test_client.post("/execute/query", json=body, headers=headers)
+    return resp, service
+
+
+@pytest.mark.parametrize("body_timeout, expected", [(12, 12), (QUERY_TIMEOUT_SECONDS_MAX, QUERY_TIMEOUT_SECONDS_MAX), (None, None)])
+def test_route_passes_timeout_and_settings_default(test_client, mock_auth_header, body_timeout, expected):
+    """요청 timeout_seconds(없으면 None)와 설정 기본값(30초)을 /execute/sql 과 같은 모양으로 서비스에 넘긴다 — 상한 값 그 자체는 받는다."""
+    body = dict(_QUERY_BODY) if body_timeout is None else {**_QUERY_BODY, "timeout_seconds": body_timeout}
+
+    resp, service = _post_query(test_client, mock_auth_header, body)
+
+    assert resp.status_code == 200
+    assert service.call_args.kwargs["timeout_seconds"] == expected
+    assert service.call_args.kwargs["default_timeout_seconds"] == 30
+
+
+@pytest.mark.parametrize("bad", [0, -5, "30", 1.5, QUERY_TIMEOUT_SECONDS_MAX + 1])
+def test_route_rejects_invalid_timeout_seconds(test_client, mock_auth_header, bad):
+    """0 이하('제한 없음')·문자열·소수는 /execute/sql 처럼, 상한 초과는 편집기 조회에 맞지 않아 422 로 거부하고 실행하지 않는다."""
+    resp, service = _post_query(test_client, mock_auth_header, {**_QUERY_BODY, "timeout_seconds": bad})
+
+    assert resp.status_code == 422
+    service.assert_not_called()

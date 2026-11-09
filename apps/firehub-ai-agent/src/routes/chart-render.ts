@@ -1,7 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { ChartJSNodeCanvas } from 'chartjs-node-canvas';
-import { internalAuth } from '../middleware/auth.js';
-import { jsonBody } from '../http/json-body.js';
+import { authedJsonBody } from '../http/json-body.js';
 
 const canvasCache = new Map<string, ChartJSNodeCanvas>();
 
@@ -54,8 +53,7 @@ interface ChartRenderResponse {
 
 router.post(
   '/chart-render',
-  jsonBody(),
-  internalAuth,
+  ...authedJsonBody(),
   async (req: Request, res: Response): Promise<void> => {
     const body = req.body as ChartRenderRequest;
 

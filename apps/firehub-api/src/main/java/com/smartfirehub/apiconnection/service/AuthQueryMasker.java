@@ -1,11 +1,20 @@
 package com.smartfirehub.apiconnection.service;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.databind.node.TextNode;
+import com.smartfirehub.global.util.ExactJsonMapper;
 import java.net.URI;
 import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import org.springframework.web.util.UriComponentsBuilder;
@@ -30,7 +39,7 @@ import org.springframework.web.util.UriComponentsBuilder;
  * 값을 httpx 로 다시 인코딩해 {@code %252B} 로 보내 미리보기는 되는데 실행은 인증에 실패했다. 이제 미리보기·Java 실행기·Python 실행기({@code
  * _build_request_url})가 같은 규칙으로 같은 바이트를 보낸다(공용 사례 표 {@code
  * fixtures/query-param-encoding-vectors.json}). 인증 파라미터는 같은 이름의 정적 파라미터가 있어도 하나만, 맨 끝에 붙인다(Python
- * {@code _apply_auth} 와 같은 순서).
+ * {@code _apply_resolved_auth} 와 같은 순서).
  *
  * <p><b>URL 을 만들 수 없을 때.</b> 기준 URL(경로·이미 붙어 있던 쿼리)은 예전처럼 다시 인코딩하지 않는다. {@code build(true)} 는 그런 곳에
  * {@code = 공백 한글} 처럼 URL 에 그대로 쓸 수 없는 문자가 있으면 {@code Invalid character ... in "<값 원문>"} 을 던진다. 이
@@ -129,47 +138,130 @@ public final class AuthQueryMasker {
   }
 
   /**
-   * 인증 설정(authType·placement·paramName·apiKey)으로 쿼리 인증 파라미터를 붙인 호출·표시 URL 을 만든다. API_KEY +
-   * placement=query 가 아니면 원본 URL 을 그대로 쓴다.
-   */
-  public static AuthQueryUrls buildForAuth(
-      String url, String authType, Map<String, String> config) {
-    String paramName = queryAuthParamName(authType, config);
-    if (paramName == null) {
-      // 쿼리 인증이 없으면 예전처럼 URL 을 손대지 않는다 — 빌더로 다시 만들면 경로의 한글·공백(WebClient 가 인코딩해 주던 것)에서
-      // build(true) 가 실패해 지금 되는 연결이 깨진다.
-      return new AuthQueryUrls(url, url);
-    }
-    String apiKey = config.get("apiKey");
-    Map<String, String> params = new LinkedHashMap<>();
-    params.put(paramName, apiKey);
-    return build(url, params, paramName, apiKey);
-  }
-
-  /** API_KEY + placement=query 이고 paramName·apiKey 가 있으면 인증 파라미터 이름을, 아니면 null 을 돌려준다. */
-  public static String queryAuthParamName(String authType, Map<String, String> config) {
-    if (config == null || !"API_KEY".equals(authType)) return null;
-    if (!"query".equals(config.getOrDefault("placement", "header"))) return null;
-    String paramName = config.get("paramName");
-    String apiKey = config.get("apiKey");
-    if (paramName == null || paramName.isBlank() || apiKey == null) return null;
-    return paramName;
-  }
-
-  /**
    * 자유 문장(오류 메시지 등)에서 비밀값을 원문·URL 인코딩형·URL 디코딩형 모두 {@link #maskSecret} 으로 바꾼다. 예외 메시지에 URL 이나 값이 실려
    * 오는 경우를 막는 마지막 방어선이다. 값이 너무 짧으면(4자 미만) 평범한 글자까지 지워지므로 건드리지 않는다.
    */
   public static String scrubSecret(String text, String secret) {
-    if (text == null || secret == null || secret.length() < MIN_SCRUB_LENGTH) return text;
-    String mask = maskSecret(secret);
-    String out = text;
-    for (String form : secretForms(secret)) {
-      if (form.length() >= MIN_SCRUB_LENGTH) {
+    Scrubber scrubber = Scrubber.of(secret);
+    return text == null || scrubber == null ? text : scrubber.scrub(text);
+  }
+
+  /**
+   * 응답 본문에서 보낸 비밀을 가린다(WD-657) — API_CALL 미리보기(결과 행·rawJson 이 함께 쓰는 본문)와 연결 테스트의 응답 본문이 같은 규칙을 쓴다.
+   *
+   * <p>본문 문자열에서 비밀을 바로 바꾸면 새는 경우가 남는다 — JSON 이스케이프된 형태(슬래시 앞 역슬래시·유니코드 이스케이프)는 문자열 비교로 못 찾지만 파싱하면
+   * 원문이 되고, 따옴표 없는 숫자 비밀을 바꾸면 JSON 이 깨진다. 그래서 JSON 이면 파싱한 값마다 가려 다시 쓴다.
+   *
+   * <ul>
+   *   <li>비밀이 없거나 최소 길이(4자) 미만이면 손대지 않는다 — 짧은 값을 지우면 평범한 글자까지 지워진다.
+   *   <li>어느 형태의 비밀도 없고 역슬래시(JSON 이스케이프)도 없으면 파싱하지 않고 그대로 돌려준다 — 대부분의 응답이 여기서 끝난다.
+   *   <li>가린 값이 하나도 없으면 원문 형태(줄바꿈·들여쓰기)를 지키려고 문자열 가림만 한 본문을 돌려준다.
+   *   <li>JSON 이 아니면(파싱 실패) 문자열 가림 결과.
+   * </ul>
+   *
+   * @param body 응답 본문(null 가능)
+   * @param secret 보낸 비밀. null 이면 가릴 것 없음
+   */
+  public static String maskBody(String body, String secret) {
+    Scrubber scrubber = Scrubber.of(secret);
+    if (body == null || scrubber == null) return body;
+    String textMasked = scrubber.scrub(body);
+    if (textMasked.equals(body) && body.indexOf('\\') < 0) return body;
+    ObjectMapper mapper = ExactJsonMapper.INSTANCE;
+    try {
+      JsonNode tree = mapper.readTree(body);
+      if (tree == null) return textMasked;
+      JsonNode masked = maskNode(tree, scrubber);
+      // 바뀐 노드만 새로 만들므로 같은 객체면 가린 것이 없다.
+      return masked == tree ? textMasked : mapper.writeValueAsString(masked);
+    } catch (JsonProcessingException e) {
+      return textMasked;
+    }
+  }
+
+  /**
+   * JSON 값 하나를 재귀로 가린다. 바뀐 것이 없으면 받은 노드를 그대로 돌려주고, 바뀐 노드(와 그 조상)만 새로 만든다.
+   *
+   * <ul>
+   *   <li>문자열·키: 든 비밀을 가린 문자열로 바꾼다.
+   *   <li>숫자: 숫자 그대로 둔다 — 값 전체가 비밀의 한 형태와 똑같을 때만 가린 문자열로 바꾼다. 비밀을 일부로 품은 숫자까지 바꾸면 미리보기 행의 타입·값이 실제
+   *       실행과 달라진다.
+   *   <li>키를 가린 결과가 같은 객체의 다른 키와 겹치면 둘 다 남긴다 — 뒤의 것에 「 (2)」 같은 꼬리를 붙인다(덮어쓰면 값이 사라진다).
+   * </ul>
+   */
+  private static JsonNode maskNode(JsonNode node, Scrubber scrubber) {
+    if (node.isObject()) {
+      List<Map.Entry<String, JsonNode>> entries = new ArrayList<>();
+      boolean changed = false;
+      for (var it = node.fields(); it.hasNext(); ) {
+        Map.Entry<String, JsonNode> e = it.next();
+        String key = scrubber.scrub(e.getKey());
+        JsonNode value = maskNode(e.getValue(), scrubber);
+        if (!key.equals(e.getKey()) || value != e.getValue()) changed = true;
+        entries.add(Map.entry(key, value));
+      }
+      if (!changed) return node;
+      ObjectNode out = ExactJsonMapper.INSTANCE.createObjectNode();
+      for (Map.Entry<String, JsonNode> e : entries) {
+        out.set(uniqueKey(out, e.getKey()), e.getValue());
+      }
+      return out;
+    }
+    if (node.isArray()) {
+      List<JsonNode> items = new ArrayList<>();
+      boolean changed = false;
+      for (JsonNode child : node) {
+        JsonNode masked = maskNode(child, scrubber);
+        if (masked != child) changed = true;
+        items.add(masked);
+      }
+      if (!changed) return node;
+      ArrayNode out = ExactJsonMapper.INSTANCE.createArrayNode();
+      items.forEach(out::add);
+      return out;
+    }
+    if (node.isTextual()) {
+      String text = node.asText();
+      String scrubbed = scrubber.scrub(text);
+      return scrubbed.equals(text) ? node : TextNode.valueOf(scrubbed);
+    }
+    if (node.isNumber() && scrubber.forms().contains(node.asText())) {
+      return TextNode.valueOf(scrubber.mask());
+    }
+    return node;
+  }
+
+  /** 객체에 이미 있는 키면 「 (2)」「 (3)」… 꼬리를 붙여 겹치지 않는 키를 만든다. */
+  private static String uniqueKey(ObjectNode out, String key) {
+    if (!out.has(key)) return key;
+    int n = 2;
+    while (out.has(key + " (" + n + ")")) n++;
+    return key + " (" + n + ")";
+  }
+
+  /**
+   * 비밀 하나를 가리는 데 필요한 값을 한 번만 계산해 둔 것(WD-657) — 본문의 값마다 형태·가림 문자열을 다시 만들지 않는다.
+   *
+   * @param forms 지울 형태(긴 것부터, 최소 길이 이상만)
+   * @param mask 바꿔 넣을 가림 문자열({@link #maskSecret})
+   */
+  private record Scrubber(List<String> forms, String mask) {
+
+    /** 비밀이 없거나 최소 길이 미만이면 null — 가릴 것이 없다. */
+    static Scrubber of(String secret) {
+      if (secret == null || secret.length() < MIN_SCRUB_LENGTH) return null;
+      List<String> forms =
+          secretForms(secret).stream().filter(f -> f.length() >= MIN_SCRUB_LENGTH).toList();
+      return new Scrubber(forms, maskSecret(secret));
+    }
+
+    String scrub(String text) {
+      String out = text;
+      for (String form : forms) {
         out = out.replace(form, mask);
       }
+      return out;
     }
-    return out;
   }
 
   /**

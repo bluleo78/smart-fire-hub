@@ -74,6 +74,20 @@ class DataTableFacadeNameValidationTest {
         .hasMessageContaining("Invalid name: bad name");
   }
 
+  /**
+   * WD-653 — FORMAT 분기는 검증 메서드의 부수효과에 기대지 않고 직접 던지되, 문구는 공용 검증기({@code DataTableNames.validate})와
+   * 글자 하나 다르지 않다.
+   */
+  @Test
+  void 새_컬럼명_형식_오류_문구는_공용_검증기와_같다() {
+    TenantContext.clear();
+    String expected = "Invalid name: Bad-Name. Must match [a-z][a-z0-9_]*";
+    assertThatThrownBy(() -> tableService.validateNewColumnName("Bad-Name"))
+        .isInstanceOf(InvalidTableNameException.class)
+        .hasMessage(expected);
+    assertThatThrownBy(() -> tableService.validateName("Bad-Name")).hasMessage(expected);
+  }
+
   /** WD-635 — 길이 상한도 테넌트와 무관한 형식 검사라 저장소 조회보다 먼저 400 이 난다. */
   @Test
   void 테넌트_컨텍스트_없이_너무_긴_새_컬럼명은_길이_오류() {

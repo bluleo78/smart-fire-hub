@@ -8,7 +8,7 @@
  */
 import type { NextFunction, Request, Response } from 'express';
 
-/** 전역 JSON 파서 한도 — 기본값(100kb)에 기대지 않고 명시한다. 채팅 본문(최대 5만 자 + 컨텍스트)을 넉넉히 수용. */
+/** 라우트 JSON 파서 기본 한도 — 기본값(100kb)에 기대지 않고 명시한다. 채팅(/agent/chat)은 따로 2mb(json-body.ts CHAT_BODY_LIMIT, WD-631). */
 export const JSON_BODY_LIMIT = '1mb';
 
 /** 본문을 JSON 으로 해석하지 못했을 때(깨진 JSON, strict 모드의 top-level null/문자열 등) 메시지 */
@@ -50,7 +50,7 @@ export function formatByteLimit(bytes: number): string {
   return `${bytes}B`;
 }
 
-/** 413 메시지 — 오류가 한도 정보를 갖고 있으면 그 파서의 실제 한도(전역 1MB / PDF 5MB)를 알려준다. */
+/** 413 메시지 — 오류가 한도 정보를 갖고 있으면 그 파서의 실제 한도(기본 1MB / 채팅·classify 2MB / PDF 5MB)를 알려준다. */
 function tooLargeMessage(limit: number | undefined): string {
   if (typeof limit === 'number' && Number.isFinite(limit) && limit > 0) {
     return `요청 본문이 너무 큽니다(최대 ${formatByteLimit(limit)}).`;

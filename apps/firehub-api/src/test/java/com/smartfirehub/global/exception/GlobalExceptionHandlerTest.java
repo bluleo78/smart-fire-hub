@@ -19,25 +19,34 @@ import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.user.exception.UserNotFoundException;
+import java.lang.reflect.Method;
+import java.util.Arrays;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.context.support.DefaultMessageSourceResolvable;
+import org.springframework.core.DefaultParameterNameDiscoverer;
 import org.springframework.core.MethodParameter;
+import org.springframework.core.annotation.SynthesizingMethodParameter;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.validation.method.MethodValidationResult;
+import org.springframework.validation.method.ParameterValidationResult;
 import org.springframework.web.ErrorResponseException;
 import org.springframework.web.HttpMediaTypeNotAcceptableException;
 import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
+import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.server.ResponseStatusException;
+import teststub.mvcerror.SpringMvcStandardErrorStubController;
 
 @SuppressWarnings("null")
 @WebMvcTest(controllers = ExceptionStubController.class)
@@ -574,6 +583,96 @@ class GlobalExceptionHandlerTest {
     assertThat(unsupported.getBody().message()).contains("application/json 이어야");
   }
 
+  /**
+   * ResponseStatusException 의 reason 은 언어와 무관하게 사용자에게 보이지 않고 상태별 기본 문구다(WD-649) — 사용자 문구가 필요한 곳은
+   * 도메인 예외(IllegalStateException 409 등)를 쓴다.
+   */
+  @Test
+  void responseStatusReason_neverShown() {
+    var english =
+        handler.handleException(
+            new ResponseStatusException(HttpStatus.BAD_REQUEST, "Required part missing"),
+            new MockHttpServletRequest());
+    assertThat(english.getStatusCode().value()).isEqualTo(400);
+    assertThat(english.getBody().message()).isEqualTo("요청이 올바르지 않습니다.");
+    var korean =
+        handler.handleException(
+            new ResponseStatusException(HttpStatus.CONFLICT, "이미 공유된 쿼리입니다 (id=3)"),
+            new MockHttpServletRequest());
+    assertThat(korean.getStatusCode().value()).isEqualTo(409);
+    assertThat(korean.getBody().message()).isEqualTo("요청이 현재 상태와 충돌합니다.");
+  }
+
+  /** 5xx 표준 예외는 그 상태와 헤더를 그대로 쓰고, reason 이 있어도 기본 문구다(WD-649). */
+  @Test
+  void standard5xxException_keepsStatusAndHeaders() {
+    ErrorResponseException unavailable = new ErrorResponseException(HttpStatus.SERVICE_UNAVAILABLE);
+    unavailable.getHeaders().set("Retry-After", "60");
+    var res = handler.handleException(unavailable, new MockHttpServletRequest());
+    assertThat(res.getStatusCode().value()).isEqualTo(503);
+    assertThat(res.getHeaders().getFirst("Retry-After")).isEqualTo("60");
+    assertThat(res.getBody().status()).isEqualTo(503);
+    assertThat(res.getBody().message())
+        .isEqualTo(GlobalExceptionHandler.SERVICE_UNAVAILABLE_MESSAGE);
+
+    var notImplemented =
+        handler.handleException(
+            new ResponseStatusException(HttpStatus.NOT_IMPLEMENTED, "내부 상세 SecretModule"),
+            new MockHttpServletRequest());
+    assertThat(notImplemented.getStatusCode().value()).isEqualTo(501);
+    assertThat(notImplemented.getBody().message())
+        .isEqualTo(GlobalExceptionHandler.NOT_IMPLEMENTED_MESSAGE);
+
+    // 별도 문구가 없는 5xx(502)는 공통 500 문구로 답하되 상태는 그대로다.
+    var badGateway =
+        handler.handleException(
+            new ErrorResponseException(HttpStatus.BAD_GATEWAY), new MockHttpServletRequest());
+    assertThat(badGateway.getStatusCode().value()).isEqualTo(502);
+    assertThat(badGateway.getBody().message())
+        .isEqualTo(GlobalExceptionHandler.UNEXPECTED_ERROR_MESSAGE);
+  }
+
+  /** 커밋된 응답이면 5xx 표준 예외 길도 본문을 쓰지 않는다(WD-649 — 상태 보존이 SSE 를 깨지 않게). */
+  @Test
+  void standard5xxException_committedResponse_returnsNull() {
+    MockHttpServletRequest request = new MockHttpServletRequest();
+    withCommittedResponse(
+        request,
+        () ->
+            assertThat(
+                    handler.handleException(
+                        new ErrorResponseException(HttpStatus.SERVICE_UNAVAILABLE), request))
+                .isNull());
+  }
+
+  /** 406: 응답 형식이 여럿이면 전부 나열한다(WD-649). 하나면 기존처럼 「으로만」이다. */
+  @Test
+  void notAcceptable_multipleFormats_listsAll() {
+    var two =
+        handler.handleMediaTypeNotAcceptable(
+            new HttpMediaTypeNotAcceptableException(
+                List.of(MediaType.APPLICATION_JSON, MediaType.valueOf("text/csv"))),
+            new MockHttpServletRequest());
+    assertThat(two.getBody().message())
+        .contains("application/json 또는 text/csv 으로 제공합니다.")
+        .doesNotContain("으로만");
+    var three =
+        handler.handleMediaTypeNotAcceptable(
+            new HttpMediaTypeNotAcceptableException(
+                List.of(
+                    MediaType.APPLICATION_JSON,
+                    MediaType.valueOf("text/csv"),
+                    MediaType.TEXT_EVENT_STREAM)),
+            new MockHttpServletRequest());
+    assertThat(three.getBody().message())
+        .contains("application/json, text/csv 또는 text/event-stream 으로 제공합니다.");
+    var sseOnly =
+        handler.handleMediaTypeNotAcceptable(
+            new HttpMediaTypeNotAcceptableException(List.of(MediaType.TEXT_EVENT_STREAM)),
+            new MockHttpServletRequest());
+    assertThat(sseOnly.getBody().message()).contains("text/event-stream(SSE)");
+  }
+
   /** 헤더가 왔지만 변환 결과가 없으면(빈 숫자 헤더 등) 「값이 올바르지 않습니다」다(WD-626). */
   @Test
   void missingHeaderAfterConversion_saysInvalidValue() throws Exception {
@@ -592,6 +691,67 @@ class GlobalExceptionHandlerTest {
             new MissingRequestHeaderException("X-N", parameter, false),
             new MockHttpServletRequest());
     assertThat(missing.getBody().errors()).containsEntry("X-N", "'X-N' 헤더가 필요합니다.");
+  }
+
+  // --- 컨트롤러 메서드 검증의 반환값 분기 (WD-649 — 파라미터 키 규칙은 WD-640 의 ValidationErrorShapeTest) -----------
+
+  /**
+   * 반환값 검증 실패는 클라이언트 입력 오류가 아니다 — 입력 오류 문구·errors(arg-1) 가 아니라 서버 오류 길(500 「예기치 않은 오류」, errors 없음)로
+   * 간다(WD-649 리뷰).
+   */
+  @Test
+  void handlerMethodValidation_returnValue_goesToServerErrorPath() {
+    MethodParameter returnType = param("returnsValue", -1);
+    var ex =
+        new HandlerMethodValidationException(
+            MethodValidationResult.create(
+                new ValidationTargets(),
+                returnType.getMethod(),
+                List.of(valueErrors(returnType, "NotBlank", "비어 있으면 안 됩니다."))));
+    assertThat(ex.isForReturnValue()).isTrue();
+
+    var res = handler.handleHandlerMethodValidation(ex, new MockHttpServletRequest());
+
+    assertThat(res.getStatusCode().value()).isEqualTo(500);
+    assertThat(res.getBody().message()).isEqualTo(GlobalExceptionHandler.UNEXPECTED_ERROR_MESSAGE);
+    assertThat(res.getBody().errors()).isNull();
+  }
+
+  /** 검증 대상 메서드 모음 — MethodParameter·애너테이션을 만들기 위한 것으로 실제로 호출하지 않는다. */
+  @SuppressWarnings("unused")
+  static class ValidationTargets {
+    String returnsValue() {
+      return "";
+    }
+  }
+
+  /**
+   * ValidationTargets 의 메서드 파라미터(-1 = 반환값). 운영의 HandlerMethod 파라미터처럼 애너테이션을 합성(@AliasFor 반영)하는
+   * SynthesizingMethodParameter 를 쓰고, 파라미터 이름을 읽을 수 있게 이름 탐색을 켠다.
+   */
+  private static MethodParameter param(String methodName, int index) {
+    Method method =
+        Arrays.stream(ValidationTargets.class.getDeclaredMethods())
+            .filter(m -> m.getName().equals(methodName))
+            .findFirst()
+            .orElseThrow();
+    MethodParameter parameter = new SynthesizingMethodParameter(method, index);
+    parameter.initParameterNameDiscovery(new DefaultParameterNameDiscoverer());
+    return parameter;
+  }
+
+  /** 값 파라미터 위반 하나(코드 = 제약 이름). */
+  private static ParameterValidationResult valueErrors(
+      MethodParameter parameter, String code, String message) {
+    // 마지막 인자는 원본 위반(unwrap) 조회 — 처리는 쓰지 않아 위반 객체 자신을 돌려준다.
+    return new ParameterValidationResult(
+        parameter,
+        null,
+        List.of(new DefaultMessageSourceResolvable(new String[] {code}, message)),
+        null,
+        null,
+        null,
+        (error, type) -> error);
   }
 
   /** 요청 문맥에 커밋된 응답을 세운 채 실행하고 문맥을 원래대로 지운다. */

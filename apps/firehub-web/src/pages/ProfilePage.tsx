@@ -4,14 +4,15 @@ import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 
 import { FormField } from '@/components/ui/form-field';
-import { applyFieldErrors, extractApiError } from '@/lib/api-error';
+import { applyFieldErrors, extractApiError, isWrongCurrentPasswordError } from '@/lib/api-error';
 
 import { usersApi } from '../api/users';
-import { Button } from '../components/ui/button';
+import { PendingSubmitButton } from '../components/PendingSubmitButton';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Input } from '../components/ui/input';
 import { Separator } from '../components/ui/separator';
 import { useAuth } from '../hooks/useAuth';
+import { useSubmitGuard } from '../hooks/useSubmitGuard';
 import type { ChangePasswordFormData,UpdateProfileFormData } from '../lib/validations/user';
 import { changePasswordSchema,updateProfileSchema } from '../lib/validations/user';
 
@@ -52,6 +53,9 @@ export default function ProfilePage() {
       confirmPassword: '',
     },
   });
+
+  const guardProfileSubmit = useSubmitGuard();
+  const guardPasswordSubmit = useSubmitGuard();
 
   useEffect(() => {
     if (user) {
@@ -106,6 +110,8 @@ export default function ProfilePage() {
       passwordForm.setError('root', {
         message: koreanOr(extractApiError(error, ''), '비밀번호를 변경하지 못했습니다. 잠시 후 다시 시도하세요.'),
       });
+      // 현재 비밀번호가 틀린 경우에만 그 칸으로 포커스를 옮긴다(WD-572). 그 밖의 오류와 프로필 저장 실패는 다시 누를 버튼에 둔다.
+      if (isWrongCurrentPasswordError(error)) passwordForm.setFocus('currentPassword');
     }
   };
 
@@ -118,7 +124,7 @@ export default function ProfilePage() {
           <CardTitle>프로필 정보</CardTitle>
         </CardHeader>
         <CardContent>
-          <form onSubmit={profileForm.handleSubmit(onProfileSubmit)} className="space-y-4">
+          <form onSubmit={guardProfileSubmit(profileForm.handleSubmit(onProfileSubmit))} className="space-y-4">
             {/* 로그인 계정(username)은 변경 불가 — 사용자가 자신의 로그인 이메일을 항상 확인할 수 있도록 읽기 전용으로 표시한다 */}
             <FormField
               label="로그인 계정"
@@ -167,9 +173,9 @@ export default function ProfilePage() {
             {profileForm.formState.errors.root && (
               <p className="text-sm text-destructive">{profileForm.formState.errors.root.message}</p>
             )}
-            <Button type="submit" disabled={profileForm.formState.isSubmitting}>
+            <PendingSubmitButton pending={profileForm.formState.isSubmitting}>
               {profileForm.formState.isSubmitting ? '저장 중...' : '저장'}
-            </Button>
+            </PendingSubmitButton>
           </form>
         </CardContent>
       </Card>
@@ -181,7 +187,7 @@ export default function ProfilePage() {
           <CardTitle>비밀번호 변경</CardTitle>
         </CardHeader>
         <CardContent>
-          <form onSubmit={passwordForm.handleSubmit(onPasswordSubmit)} className="space-y-4">
+          <form onSubmit={guardPasswordSubmit(passwordForm.handleSubmit(onPasswordSubmit))} className="space-y-4">
             <FormField
               label="현재 비밀번호"
               htmlFor="current-password"
@@ -232,9 +238,9 @@ export default function ProfilePage() {
             {passwordForm.formState.errors.root && (
               <p className="text-sm text-destructive">{passwordForm.formState.errors.root.message}</p>
             )}
-            <Button type="submit" disabled={passwordForm.formState.isSubmitting}>
+            <PendingSubmitButton pending={passwordForm.formState.isSubmitting}>
               {passwordForm.formState.isSubmitting ? '변경 중...' : '비밀번호 변경'}
-            </Button>
+            </PendingSubmitButton>
           </form>
         </CardContent>
       </Card>

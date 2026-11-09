@@ -12,6 +12,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import lombok.RequiredArgsConstructor;
@@ -110,8 +111,10 @@ public class ApiCallExecutor {
     String resolvedUrl = resolveTargetUrl(config, conn);
 
     // 인증 설정은 실행마다 한 번만 푼다(WD-647) — 페이지·재시도·리다이렉트마다 다시 풀지 않고 이 값을 요청 조립까지 넘긴다. 러너가 호출 전 검사에
-    // 쓴 것과 같은 규칙(ApiCallAuth.resolve)이라 검사한 값과 보내는 값이 같다.
-    ApiCallAuth.ResolvedAuth auth = ApiCallAuth.resolve(decryptedAuthConfig);
+    // 쓴 것과 같은 진입점(ApiCallAuth.resolve(conn, …))이라 검사한 값과 보내는 값이 같다(WD-657). 예전에는 conn 없이 풀어, 둘이 같은
+    // 것은
+    // 조회(ApiConnectionReader)가 Map 의 authType 을 컬럼으로 덮어 준 덕분일 뿐이었다.
+    ApiCallAuth.ResolvedAuth auth = ApiCallAuth.resolve(conn, decryptedAuthConfig);
 
     // 2. SSRF guard on the initial URL
     ssrfProtectionService.validateUrl(resolvedUrl);
@@ -379,23 +382,18 @@ public class ApiCallExecutor {
       allQueryParams.putAll(paginationParams);
     }
 
-    // 쿼리 인증(API_KEY + placement=query) — 키·이름은 execute 가 한 번 푼 값이다(WD-647, Python 실행기와 같은 규칙).
-    // 오류 문구에서 가릴 값은 쿼리 키뿐 아니라 실제로 보내는 비밀 전부다(헤더 키·Bearer 토큰 포함).
-    String authParamName = null;
+    // 오류 문구에서 가릴 값 — 쿼리 키뿐 아니라 실제로 보내는 비밀 전부다(헤더 키·Bearer 토큰 포함).
     String authSecret = auth.sentSecret();
-    if (auth.isQueryApiKey()) {
-      allQueryParams.put(auth.paramName(), auth.secret());
-      authParamName = auth.paramName();
-    }
 
     // Build the full URI with query params (resolvedUrl은 이미 SSRF 검증 완료)
-    // (WD-182) 인증 키는 공용 빌더가 연결 테스트·미리보기와 같은 규칙(QueryApiKeyEncoding)으로 한 번만 인코딩한다 — 인코딩 키·디코딩 키
-    // 모두 같은 바이트가 나간다. (WD-177) 정적 쿼리 값에 쿼리에 쓸 수 없는 문자(=·공백·한글 등)가 있으면 Spring 이 원문을 담은 메시지로
-    // 실패하는데, 공용 빌더가 원문 없는 고정 문구로 바꿔 주고, 다시 보내도 같으므로 재시도하지 않는 ApiCallException 으로 낸다.
+    // 쿼리 인증 키(API_KEY + placement=query)는 execute 가 한 번 푼 값으로, 연결 테스트·미리보기와 같은 공용
+    // 빌더(ResolvedAuth.buildUrls,
+    // WD-657)가 붙인다. (WD-182) 키는 공용 규칙(QueryApiKeyEncoding)으로 한 번만 인코딩한다 — 인코딩 키·디코딩 키 모두 같은 바이트가
+    // 나간다. (WD-177) 정적 쿼리 값에 쿼리에 쓸 수 없는 문자(=·공백·한글 등)가 있으면 Spring 이 원문을 담은 메시지로 실패하는데, 공용
+    // 빌더가 원문 없는 고정 문구로 바꿔 주고, 다시 보내도 같으므로 재시도하지 않는 ApiCallException 으로 낸다.
     URI requestUri;
     try {
-      requestUri =
-          AuthQueryMasker.build(resolvedUrl, allQueryParams, authParamName, authSecret).callUri();
+      requestUri = auth.buildUrls(resolvedUrl, allQueryParams).callUri();
     } catch (AuthQueryMasker.InvalidRequestUrlException e) {
       throw new ApiCallException(e.getMessage());
     }
@@ -423,11 +421,13 @@ public class ApiCallExecutor {
             .exchangeStrategies(exchangeStrategies)
             .build();
 
-    String method = (config.method() != null) ? config.method().toUpperCase() : "GET";
+    String method = (config.method() != null) ? config.method().toUpperCase(Locale.ROOT) : "GET";
 
     try {
-      return executeWithRedirects(
-          client, method, requestUri, config, resolvedUrl, auth, timeoutMs, 0);
+      // 첫 요청의 출처가 리다이렉트마다 인증을 붙일지 정하는 기준이다(WD-657).
+      RedirectContext ctx =
+          new RedirectContext(client, requestUri, config, resolvedUrl, auth, timeoutMs);
+      return executeWithRedirects(ctx, method, requestUri, 0, false);
     } catch (DataBufferLimitException e) {
       throw new ApiCallException(ApiCallErrorMessages.responseTooLarge(maxResponseSizeMb), e);
     } catch (ApiCallException | SsrfException | ExternalServiceException e) {
@@ -452,24 +452,33 @@ public class ApiCallExecutor {
    * <p>Redirect following uses GET semantics (standard browser behaviour for 301/302/303). POST
    * bodies are only sent on the initial request; redirects always use GET.
    *
+   * <p>인증은 처음 요청과 같은 출처(스킴·호스트·포트)로 가는 홉에만 붙인다(WD-657) — 다른 출처로 3xx 하면 인증 헤더·쿼리 인증 키를 떼고 따라간다. 판단
+   * 기준은 언제나 처음 요청의 출처라, A→B→A 면 B 에는 떼고 다시 A 로 올 때는 붙인다. 리다이렉트 자체는 따른다(막으면 기존 파이프라인이 깨진다).
+   *
+   * @param ctx 홉마다 바뀌지 않는 값(클라이언트·처음 요청 URI·설정·인증·시간 제한)
    * @param redirectCount number of redirects followed so far (guards against infinite loops)
+   * @param hasLeftOrigin 이 홉까지 오는 동안 리다이렉트가 처음 출처를 벗어난 적이 있는지 — 처음 출처로 돌아올 때 뗐던 쿼리 인증 키를 되붙이는 데 쓴다
    */
   private String executeWithRedirects(
-      WebClient client,
+      RedirectContext ctx,
       String method,
       URI requestUri,
-      ApiCallConfig config,
-      String resolvedUrl,
-      ApiCallAuth.ResolvedAuth auth,
-      int timeoutMs,
-      int redirectCount) {
+      int redirectCount,
+      boolean hasLeftOrigin) {
+    WebClient client = ctx.client();
+    URI originUri = ctx.originUri();
+    ApiCallConfig config = ctx.config();
+    ApiCallAuth.ResolvedAuth auth = ctx.auth();
 
     if (redirectCount > MAX_REDIRECTS) {
       throw new ApiCallException(ApiCallErrorMessages.tooManyRedirects(MAX_REDIRECTS));
     }
 
+    // 이 홉이 처음 요청과 같은 출처일 때만 인증 헤더를 붙인다(WD-657). 첫 홉은 판정 없이 붙인다 — java.net.URI 가 호스트를 못 읽는 주소(밑줄 든
+    // 호스트 이름 등)도 예전처럼 인증해 보내야 한다.
+    boolean sendAuth = redirectCount == 0 || ApiCallAuth.isSameAuthOrigin(originUri, requestUri);
     WebClient.RequestHeadersSpec<?> requestSpec =
-        buildRequestSpec(client, method, requestUri, config, auth);
+        buildRequestSpec(client, method, requestUri, config, auth, sendAuth);
 
     // Use exchangeToMono so we can inspect both status and headers before consuming the body.
     // We capture the Location header via an AtomicReference because the reactive callback
@@ -512,47 +521,95 @@ public class ApiCallExecutor {
                   // 2xx — read the response body (size enforced by ExchangeStrategies codec limit)
                   return response.bodyToMono(String.class);
                 })
-            .timeout(Duration.ofMillis(timeoutMs))
+            .timeout(Duration.ofMillis(ctx.timeoutMs()))
             .block();
 
     // Handle redirect: locationRef is set only when a 3xx was received
     String location = locationRef.get();
     if (location != null) {
+      // Location 은 무엇보다 먼저 지금 요청 기준 절대 주소로 푼다(WD-657) — 주소 검사(SSRF)·출처 판단·다음 요청이 모두 같은 절대 주소를 본다.
+      // 예전에는 상대 주소(「/v2/items?page=2」)를 그대로 써 검사·요청이 실패했다.
+      URI target = requestUri.resolve(location);
       log.debug(
           "Redirect {}/{}: {} -> {}",
           redirectCount + 1,
           MAX_REDIRECTS,
           ApiCallErrorMessages.redactUrl(requestUri),
-          ApiCallErrorMessages.redactUrl(location));
+          ApiCallErrorMessages.redactUrl(target));
 
       // SSRF-validate the redirect target before following it
-      ssrfProtectionService.validateUrl(location);
+      ssrfProtectionService.validateUrl(target.toString());
 
-      URI redirectUri = URI.create(location);
+      boolean sameOrigin = ApiCallAuth.isSameAuthOrigin(originUri, target);
+      if (auth.isQueryApiKey()) {
+        target = adjustQueryAuth(target, auth, sameOrigin, hasLeftOrigin);
+      }
       // Redirects always use GET (standard 301/302/303 behaviour)
       return executeWithRedirects(
-          client, "GET", redirectUri, config, resolvedUrl, auth, timeoutMs, redirectCount + 1);
+          ctx, "GET", target, redirectCount + 1, hasLeftOrigin || !sameOrigin);
     }
 
     return body;
   }
 
   /**
+   * 리다이렉트 대상의 쿼리 인증 키를 출처에 맞춘다(WD-657).
+   *
+   * <ul>
+   *   <li>다른 출처: Location 이 되울려 담아 온 키를 뺀다 — 헤더만 떼고 쿼리 키를 남기면 같은 비밀이 그대로 나간다.
+   *   <li>처음 출처로 돌아옴(A→B→A): 앞에서 뗀 키가 빠져 있으면 되붙인다 — 헤더 인증은 같은 출처 홉에 다시 붙으므로 쿼리 인증도 같게 한다.
+   *   <li>처음부터 같은 출처 안에서만 옮겨 다니면 Location 을 받은 그대로 쓴다(WD-182).
+   * </ul>
+   */
+  static URI adjustQueryAuth(
+      URI target, ApiCallAuth.ResolvedAuth auth, boolean sameOrigin, boolean hasLeftOrigin) {
+    String url = target.toString();
+    if (!sameOrigin) {
+      return URI.create(ApiCallAuth.stripQueryParam(url, auth.paramName()));
+    }
+    if (hasLeftOrigin && !ApiCallAuth.hasQueryParam(url, auth.paramName())) {
+      try {
+        // 처음 요청과 같은 공용 빌더(QueryApiKeyEncoding 으로 한 번만 인코딩)로 붙인다.
+        return auth.buildUrls(url, Map.of()).callUri();
+      } catch (AuthQueryMasker.InvalidRequestUrlException e) {
+        throw new ApiCallException(e.getMessage());
+      }
+    }
+    return target;
+  }
+
+  /**
+   * 리다이렉트를 따라가는 동안 홉마다 바뀌지 않는 값(WD-657) — 홉마다 바뀌는 메서드·URI·횟수·출처 이탈 여부만 인자로 넘긴다.
+   *
+   * @param originUri 처음 요청 URI — 인증을 붙일지 판단하는 출처 기준
+   */
+  private record RedirectContext(
+      WebClient client,
+      URI originUri,
+      ApiCallConfig config,
+      String resolvedUrl,
+      ApiCallAuth.ResolvedAuth auth,
+      int timeoutMs) {}
+
+  /**
    * Builds a {@link WebClient.RequestHeadersSpec} for the given method and URI, applying configured
    * headers and auth.
+   *
+   * @param sendAuth 인증 헤더를 붙일지 — 처음 요청과 다른 출처로 가는 리다이렉트 홉이면 false(WD-657)
    */
   private WebClient.RequestHeadersSpec<?> buildRequestSpec(
       WebClient client,
       String method,
       URI requestUri,
       ApiCallConfig config,
-      ApiCallAuth.ResolvedAuth auth) {
+      ApiCallAuth.ResolvedAuth auth,
+      boolean sendAuth) {
 
     WebClient.RequestHeadersSpec<?> requestSpec;
 
     if ("POST".equals(method)) {
       WebClient.RequestBodySpec bodySpec = client.post().uri(requestUri);
-      applyHeaders(bodySpec, config, auth);
+      applyHeaders(bodySpec, config, auth, sendAuth);
       if (config.body() != null && !config.body().isBlank()) {
         requestSpec = bodySpec.header("Content-Type", "application/json").bodyValue(config.body());
       } else {
@@ -561,25 +618,44 @@ public class ApiCallExecutor {
     } else {
       // GET (default) and redirect follow-ups
       WebClient.RequestHeadersSpec<?> getSpec = client.get().uri(requestUri);
-      applyHeaders(getSpec, config, auth);
+      applyHeaders(getSpec, config, auth, sendAuth);
       requestSpec = getSpec;
     }
 
     return requestSpec;
   }
 
-  @SuppressWarnings("unchecked")
+  /**
+   * 사용자 헤더와 인증 헤더를 붙인다.
+   *
+   * <p>{@code sendAuth} 가 false(다른 출처 리다이렉트, WD-657)면 인증 헤더를 붙이지 않고, 사용자 헤더 가운데 자격 증명 헤더도 뺀다 —
+   * Authorization·Proxy-Authorization·Cookie 와 인증 헤더와 같은 이름({@link
+   * ApiCallAuth.ResolvedAuth#isCredentialHeader}). 비밀을 사용자 헤더로 넣어 둔 경우까지 다른 출처로 나가지 않게 한다. Python
+   * {@code _do_request} 도 같은 규칙이다.
+   */
   private void applyHeaders(
-      WebClient.RequestHeadersSpec<?> spec, ApiCallConfig config, ApiCallAuth.ResolvedAuth auth) {
+      WebClient.RequestHeadersSpec<?> spec,
+      ApiCallConfig config,
+      ApiCallAuth.ResolvedAuth auth,
+      boolean sendAuth) {
 
-    // Custom headers from config
+    // Custom headers from config — 다른 출처 홉이면 자격 증명 헤더를 뺀다(WD-657).
     if (config.headers() != null) {
-      config.headers().forEach(spec::header);
+      config
+          .headers()
+          .forEach(
+              (name, value) -> {
+                if (sendAuth || !auth.isCredentialHeader(name)) {
+                  spec.header(name, value);
+                }
+              });
     }
 
     // 인증 헤더 — execute 가 한 번 푼 값(ApiCallAuth.resolve)을 미리보기와 같은 규칙(ResolvedAuth.applyHeaders)으로
-    // 붙인다(WD-647).
-    auth.applyHeaders(spec::header);
+    // 붙인다(WD-647). 다른 출처 홉에는 붙이지 않는다(WD-657).
+    if (sendAuth) {
+      auth.applyHeaders(spec::header);
+    }
   }
 
   // -------------------------------------------------------------------------

@@ -9,7 +9,9 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, Iterator, List, Optional,
 import psycopg2
 from pydantic import TypeAdapter
 
+from app.config import QUERY_STATEMENT_TIMEOUT_DEFAULT_SECONDS
 from app.schemas.responses import DbErrorInfo, QueryExecuteResponse, db_error_of, to_json_value
+from app.services.db_utils import statement_timeout_sql
 from app.tenant import resolve_read_db_url, resolve_schema
 
 if TYPE_CHECKING:
@@ -148,7 +150,7 @@ def _exec_geojson_wrapped(
 
 # 사용자 SQL 자체의 "실행 중" 오류(#779). 데이터 예외(클래스 22 — 0 나누기·형변환 실패 등)와
 # query_canceled(57014 — statement_timeout 포함)는 같은 SQL 을 다시 돌려도 같은 오류가 난다.
-# geometry 래핑으로 재시도하면 사용자 SQL 이 한 번 더 실행될 뿐(timeout 이면 30초 추가 점유) 결과는 같다.
+# geometry 래핑으로 재시도하면 사용자 SQL 이 한 번 더 실행될 뿐(timeout 이면 문장 제한만큼 추가 점유) 결과는 같다.
 # 40(교착·직렬화)은 재시도로 풀릴 수 있어 넣지 않는다. 메시지가 아니라 SQLSTATE 로만 판정한다.
 _RUNTIME_SQLSTATE_CLASSES = ("22",)
 _RUNTIME_SQLSTATES = frozenset({"57014"})
@@ -161,6 +163,20 @@ def sqlstate(exc: BaseException) -> str | None:
     """
     code = getattr(exc, "pgcode", None)
     return code if isinstance(code, str) else None
+
+
+def statement_position(exc: BaseException) -> Optional[int]:
+    """psycopg2 오류의 위치(``diag.statement_position``, 사용자 SQL 기준 1부터 센 글자 위치, WD-641). 없거나 숫자가 아니면 None.
+
+    libpq 는 이 값을 문자열로 준다. api 가 ``Position: n`` 줄을 만들도록 ``db_error.position`` 에 정수로 싣는다. 목(mock) 예외처럼
+    ``diag`` 가 없거나 이상한 값이어도 실패 응답을 깨지 않게 None 으로 둔다.
+    """
+    raw = getattr(getattr(exc, "diag", None), "statement_position", None)
+    if isinstance(raw, int):
+        return raw
+    if isinstance(raw, str) and raw.strip().isdigit():
+        return int(raw.strip())
+    return None
 
 
 # 시간 초과 판정의 허용 오차(초, WD-261 §5.2). 경과 시간은 실행기 쪽 시계로 재므로 서버의 문장 시작·취소 시각과 수 밀리초 어긋난다 —
@@ -662,9 +678,20 @@ def _add_limit(sql: str, max_rows: int) -> str:
 
 
 def execute_query(
-    query: str, max_rows: int, read_only: bool, conn, *, tenant_id: int
+    query: str,
+    max_rows: int,
+    read_only: bool,
+    conn,
+    *,
+    tenant_id: int,
+    timeout_seconds: Optional[int] = None,
+    default_timeout_seconds: int = QUERY_STATEMENT_TIMEOUT_DEFAULT_SECONDS,
 ) -> QueryExecuteResponse:
     """분석 쿼리를 실행한다. ``tenant_id`` 는 **키워드 전용 필수** 인자다.
+
+    문장 제한(WD-641)은 ``/execute/sql``·``/execute/load`` 와 같은 모양이다: ``timeout_seconds`` 는 요청값(api 가 시간 초과 안내 문구와
+    같은 값을 보낸다), 없으면 ``default_timeout_seconds``(라우터가 ``Settings.query_statement_timeout_seconds`` 를 넘긴다). 키워드
+    기본값은 설정 기본값과 같은 상수(``QUERY_STATEMENT_TIMEOUT_DEFAULT_SECONDS``)라 숫자가 따로 생기지 않는다.
 
     스키마명을 인자로 받지 않고 ``tenant_id`` 로 파생하는 이유: 스키마 문자열을 파라미터로
     받으면 "누가 그 값을 정했는가" 가 다시 흩어지고 조립점이 우회 가능한 장식이 된다
@@ -672,6 +699,7 @@ def execute_query(
     """
     start = time.perf_counter()
     schema = resolve_schema(tenant_id)
+    effective_timeout = timeout_seconds if timeout_seconds is not None else default_timeout_seconds
 
     # 1. Validate
     # 끝의 주석·세미콜론을 주석/리터럴 인지로 걷어낸다(#745). 이후 모든 소비처(LIMIT 부착, geometry
@@ -716,9 +744,8 @@ def execute_query(
         # 파라미터 없는 설정 문장들은 한 번의 execute 로 보내 왕복을 줄인다(순서 유지 — READ ONLY 가 첫 문장).
         setup = [
             f"SET LOCAL search_path = '{schema}', 'public'",
-            # 30초는 API 의 AdhocSqlErrorMessages.ADHOC_STATEMENT_TIMEOUT_SECONDS 와 같은 값이어야 한다(WD-571) — API 가 이 실패
-            # (57014)에 「30초 제한 시간」 한국어 안내를 붙이므로, 이 값을 바꾸면 그 상수(와 ExecutorClient.executeQuery 의 35초 대기)도 함께 바꾼다.
-            "SET LOCAL statement_timeout = '30s'",
+            # 제한은 요청값(api 의 시간 초과 안내와 같은 값) 또는 설정 기본값이다(WD-571/WD-641). 공용 함수로 밀리초 문장을 만든다.
+            statement_timeout_sql(effective_timeout),
             "SAVEPOINT analytics_query",
         ]
         if read_only:
@@ -845,7 +872,8 @@ def execute_query(
             success=False,
             query_type=query_type,
             error=str(exc),
-            db_error=db_error_of(str(exc), sqlstate(exc)),
+            # 위치는 구조화해 싣는다(WD-641) — api 가 직접 실행 경로처럼 Position 줄을 만든다.
+            db_error=db_error_of(str(exc), sqlstate(exc), statement_position(exc)),
             execution_time_ms=elapsed_ms,
         )
     finally:
@@ -948,7 +976,7 @@ def stream_slot_query(query: str, *, tenant_id: int, read_slot: int, settings: "
             batch = cursor.fetchmany(STREAM_FETCH_SIZE)
         yield _line({"success": True, "row_count": count})
     except Exception as exc:  # noqa: BLE001 — 모든 실패를 마지막 실패 줄로 알린다(받는 쪽은 마지막 줄로 판정)
-        yield stream_failure_line(str(exc), db_error_of(str(exc), sqlstate(exc)))
+        yield stream_failure_line(str(exc), db_error_of(str(exc), sqlstate(exc), statement_position(exc)))
     finally:
         for close in (
             (lambda: cursor.close()) if cursor is not None else None,

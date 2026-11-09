@@ -13,8 +13,8 @@ import com.smartfirehub.pipeline.service.executor.JsonResponseParser;
 import com.smartfirehub.pipeline.service.executor.SsrfProtectionService;
 import java.net.URI;
 import java.time.Duration;
-import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -75,22 +75,13 @@ public class ApiCallPreviewService {
             displayUrlOrNull(resolvedUrl, request.queryParams()));
       }
 
-      // 4. Build query params (static + auth query-param)
-      Map<String, String> allQueryParams = new LinkedHashMap<>();
-      if (request.queryParams() != null) {
-        allQueryParams.putAll(request.queryParams());
-      }
-      String authParamName = null;
-      if (auth.isQueryApiKey()) {
-        allQueryParams.put(auth.paramName(), auth.secret());
-        authParamName = auth.paramName();
-      }
-
-      // 5. Build URI — 호출용(키 원문)과 응답용(키 가림)을 함께 만든다(WD-177). 응답의 resolvedUrl 은 화면·AI 챗으로 나가므로
-      //    인증 쿼리 키를 ****XXXX 로 가린 표시용 URL 이다. 키는 연결 테스트·실행과 같은 규칙으로 한 번만 인코딩한다(WD-182). 정적 쿼리
-      //    값에 쿼리에 쓸 수 없는 문자가 있으면 원문 없는 고정 문구로 실패한다.
+      // 4~5. Build URI(정적 쿼리 + 쿼리 인증 키) — 호출용(키 원문)과 응답용(키 가림)을 함께 만든다(WD-177). 응답의 resolvedUrl 은
+      //    화면·AI 챗으로 나가므로 인증 쿼리 키를 ****XXXX 로 가린 표시용 URL 이다. 키는 연결 테스트·실행과 같은 공용 규칙
+      //    (ResolvedAuth.buildUrls, WD-657)으로 한 번만 인코딩한다(WD-182). 정적 쿼리 값에 쿼리에 쓸 수 없는 문자가 있으면 원문 없는
+      //    고정 문구로 실패한다.
       AuthQueryMasker.AuthQueryUrls urls =
-          AuthQueryMasker.build(resolvedUrl, allQueryParams, authParamName, authSecret);
+          auth.buildUrls(
+              resolvedUrl, request.queryParams() != null ? request.queryParams() : Map.of());
       URI requestUri = urls.callUri();
       resolvedRequestUrl = urls.displayUrl();
       targetHost = requestUri.getHost();
@@ -98,9 +89,11 @@ public class ApiCallPreviewService {
       // 6. Execute HTTP request
       String responseBody = executeRequest(requestUri, request, auth, timeoutMs);
 
-      // 7. Truncate raw JSON — (WD-177) 응답이 요청 파라미터를 되울려 인증 키가 담겨 올 수 있어 먼저 가린 뒤 자른다.
-      String rawJson =
-          truncate(AuthQueryMasker.scrubSecret(responseBody, authSecret), MAX_RAW_JSON_BYTES);
+      // 7. 응답을 가린다 — (WD-177) 응답이 요청 파라미터·헤더를 되울려 보낸 비밀이 담겨 올 수 있다. rawJson 과 결과 행(previewRows)을 이
+      //    가린 본문 하나로 만든다(WD-657) — 예전에는 rawJson 만 가리고 행은 원문 본문으로 만들어, httpbin /headers 같은 echo 응답에서
+      //    「Authorization: Bearer <원문>」 이 행으로 화면·AI 챗에 나갔다. 가린 뒤 자른다(자른 뒤 가리면 경계에 걸친 앞부분이 남는다).
+      String maskedBody = AuthQueryMasker.maskBody(responseBody, authSecret);
+      String rawJson = truncate(maskedBody, MAX_RAW_JSON_BYTES);
 
       // 8. Convert field mappings
       List<ApiCallConfig.FieldMapping> fieldMappings = toFieldMappings(request.fieldMappings());
@@ -109,7 +102,7 @@ public class ApiCallPreviewService {
       String effectiveDataPath =
           (request.dataPath() == null || request.dataPath().isBlank()) ? "$" : request.dataPath();
       List<Map<String, Object>> allRows =
-          jsonResponseParser.parseAndMap(responseBody, effectiveDataPath, fieldMappings, null, 0);
+          jsonResponseParser.parseAndMap(maskedBody, effectiveDataPath, fieldMappings, null, 0);
 
       List<String> columns =
           request.fieldMappings() != null
@@ -180,7 +173,7 @@ public class ApiCallPreviewService {
       URI uri, ApiCallPreviewRequest request, ApiCallAuth.ResolvedAuth auth, int timeoutMs) {
 
     WebClient client = webClientBuilder.build();
-    String method = request.method() != null ? request.method().toUpperCase() : "GET";
+    String method = request.method() != null ? request.method().toUpperCase(Locale.ROOT) : "GET";
 
     WebClient.RequestHeadersSpec<?> requestSpec;
 

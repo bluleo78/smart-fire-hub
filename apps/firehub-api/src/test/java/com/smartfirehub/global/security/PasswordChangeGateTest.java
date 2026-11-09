@@ -279,7 +279,28 @@ class PasswordChangeGateTest extends IntegrationTestBase {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"currentPassword\":\"TempPass1x\",\"newPassword\":\"TempPass1x\"}"))
         .andExpect(status().isBadRequest())
-        .andExpect(jsonPath("$.message").value("새 비밀번호는 현재 비밀번호와 달라야 합니다"));
+        .andExpect(jsonPath("$.message").value("새 비밀번호는 현재 비밀번호와 달라야 합니다"))
+        // 같은 400 의 다른 이유(현재 비밀번호 불일치)와 코드로 구분된다(WD-572)
+        .andExpect(jsonPath("$.code").value("SAME_AS_CURRENT_PASSWORD"));
+
+    assertThat(userRepository.findById(userId).orElseThrow().mustChangePassword()).isTrue();
+  }
+
+  /**
+   * WD-572: 현재 비밀번호가 틀리면 400 + 코드 WRONG_CURRENT_PASSWORD 를 준다 — 웹은 이 코드일 때만 현재 비밀번호 칸으로 포커스를 옮기므로,
+   * 같은 400 의 다른 이유(새 비밀번호가 현재와 같음)와 코드로 구분돼야 한다. 문구는 예전과 같다(#27).
+   */
+  @Test
+  void changePassword_wrongCurrent_returnsCode_andFlagStays() throws Exception {
+    mockMvc
+        .perform(
+            put("/api/v1/users/me/password")
+                .header("Authorization", pwcToken())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"currentPassword\":\"Wrong1Pass\",\"newPassword\":\"NewPass1x\"}"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value("현재 비밀번호가 올바르지 않습니다"))
+        .andExpect(jsonPath("$.code").value("WRONG_CURRENT_PASSWORD"));
 
     assertThat(userRepository.findById(userId).orElseThrow().mustChangePassword()).isTrue();
   }

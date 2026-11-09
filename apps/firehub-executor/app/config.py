@@ -3,6 +3,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 
 
+# 분석 조회(/execute/query 비스트리밍) 문장 제한의 대체값(초, WD-641). Settings 필드와 서비스 함수의 키워드 기본값이 이 한 상수를 쓴다.
+QUERY_STATEMENT_TIMEOUT_DEFAULT_SECONDS = 30
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="EXECUTOR_", env_file=".env", extra="ignore")
 
@@ -49,6 +53,11 @@ class Settings(BaseSettings):
     # app.sql.pre-statement-timeout-seconds(기본 1800)와 같은 의미·같은 기본값이며, api 의 app.executor.pre-statement-timeout-seconds
     # (api 가 선행 문장이 있는 요청의 HTTP 대기를 이만큼 늘린다)와 **같은 값**이어야 한다. 0 은 PG 에서 '제한 없음' 이라 1 이상만 받는다.
     sql_pre_statement_timeout_seconds: int = Field(1800, gt=0)
+    # 분석 조회(/execute/query 비스트리밍) 문장 제한의 대체값(초, WD-641). 요청에 timeout_seconds 가 **없을 때만** 쓴다(예: 이 필드를
+    # 보내지 않는 구버전 api, 또는 api 의 3인자 executeQuery 호출부). 요청에 값이 있으면 이 설정은 보지 않으므로, 조회 제한을 정하거나
+    # 줄이는 운영 손잡이가 아니다. 구버전 api 의 시간 초과 안내 문구(「30초」)·응답 대기(35초)와 맞도록 30초로 둔다.
+    # 환경변수 EXECUTOR_QUERY_STATEMENT_TIMEOUT_SECONDS.
+    query_statement_timeout_seconds: int = Field(QUERY_STATEMENT_TIMEOUT_DEFAULT_SECONDS, gt=0)
     # 적재는 execute_values 의 각 페이지 문장에 이 제한을 건다(db-executor 적재 기본 1800초와 맞춤).
     load_statement_timeout_seconds: int = Field(1800, gt=0)
 

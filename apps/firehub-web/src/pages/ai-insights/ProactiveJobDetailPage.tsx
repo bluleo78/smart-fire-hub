@@ -25,6 +25,7 @@ import { cloneSuccessMessage, useCanWriteProactive,useCloneProactiveJob, useCrea
 import { useEditModeFocus } from '@/hooks/useEditModeFocus';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { extractApiError, handleApiError, isEditConflict, isForbiddenError, isJobAlreadyRunning } from '@/lib/api-error';
+import { parseRouteId } from '@/lib/route-id';
 import { goalTemplateName, type ProactiveJobFormValues,proactiveJobSchema } from '@/lib/validations/proactive-job';
 
 import { OwnerIneligibleBadge } from './components/OwnerIneligibleBadge';
@@ -104,13 +105,15 @@ export default function ProactiveJobDetailPage() {
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const isNew = !id || id === 'new';
-  const parsedId = isNew ? 0 : Number(id);
+  // 공백(`%20`)·`0` 은 `Number()` 가 0 이라 `Number.isFinite` 를 통과해 이름 `-` 인 유령 상세와
+  // 실행·삭제 버튼이 보였다(WD-568). parseRouteId 로 숫자만·양의 정수만 받고, 그 밖은 null(없는 id)로 다룬다.
+  const parsedId = isNew ? 0 : parseRouteId(id);
   // id가 'abc'처럼 숫자로 변환 불가능한 경우 — Number()가 NaN을 반환하면
   // useProactiveJob의 enabled:!!id가 항상 false가 되어 쿼리 자체가 실행되지 않고
   // isLoading/isError가 영구히 false로 남아 유령 상세 화면이 렌더링된다 (#545).
   // 이런 경우를 별도 플래그로 구분해 아래 에러 뷰 조건에 합류시킨다.
-  const isInvalidId = !isNew && !Number.isFinite(parsedId);
-  const jobId = isInvalidId ? 0 : parsedId;
+  const isInvalidId = !isNew && parsedId == null;
+  const jobId = parsedId ?? 0;
 
   // ReportBuilderWidget 저장 버튼에서 전달된 프리필 데이터 (이슈 #213)
   const prefill = isNew ? (location.state as ReportPrefillState | null) : null;

@@ -13,6 +13,7 @@ import pytest
 
 from app.db.store_client import StoreLookupError
 from app.routers import store_gate
+from tests.conftest import conn_patch, gate_backend
 
 # 경로별: 요청 본문, 게이트 사본, 실패 응답 필드 검증, patch 대상(커넥션 / 서비스 함수)
 ROUTES = {
@@ -58,25 +59,6 @@ NAMES = list(ROUTES)
 TIBERO_BLOCKED_NAMES = [n for n in NAMES if n not in ("api-call", "python")]
 
 
-def _gate_backend(kind=None, error=None):
-    """게이트가 쓰는 저장소 클라이언트(get_store_client)를 대체한다. kind 는 기술자의 backend 값이다."""
-    client = MagicMock()
-    # 기본은 캐시 미스(peek → None)라 스레드풀 조회 경로를 탄다. 적중 경로는 아래 별도 테스트가 다룬다.
-    client.peek.return_value = None
-    if error is not None:
-        client.get.side_effect = error
-    else:
-        client.get.return_value = SimpleNamespace(backend=kind)
-    return patch("app.routers.store_gate.get_store_client", return_value=client)
-
-
-def _conn_patch(route):
-    """라우트의 get_connection patch. python 라우트는 커넥션을 쓰지 않으므로 아무것도 patch 하지 않는다(None 반환)."""
-    if route["conn"] is None:
-        return nullcontext(None)
-    return patch(route["conn"], MagicMock())
-
-
 def _post(client, headers, name):
     r = ROUTES[name]
     return client.post(r["path"], json=r["body"], headers=headers)
@@ -97,7 +79,7 @@ def _assert_blocked_shape(name, data, message):
 def test_tibero_tenant_blocked_on_every_route(test_client, mock_auth_header, name):
     r = ROUTES[name]
     service = MagicMock()
-    with _gate_backend(kind="TIBERO"), patch(r["service"], service), _conn_patch(r) as conn:
+    with gate_backend(kind="TIBERO"), patch(r["service"], service), conn_patch(r["conn"]) as conn:
         resp = _post(test_client, mock_auth_header, name)
     assert resp.status_code == 200
     _assert_blocked_shape(name, resp.json(), r["message"])
@@ -111,7 +93,7 @@ def test_lookup_failure_blocked_on_every_route(test_client, mock_auth_header, na
     r = ROUTES[name]
     service = MagicMock()
     err = StoreLookupError("데이터셋 저장소 정보를 가져오지 못했습니다 — 테스트")
-    with _gate_backend(error=err), patch(r["service"], service), _conn_patch(r) as conn:
+    with gate_backend(error=err), patch(r["service"], service), conn_patch(r["conn"]) as conn:
         resp = _post(test_client, mock_auth_header, name)
     assert resp.status_code == 200
     _assert_blocked_shape(name, resp.json(), str(err))
@@ -140,7 +122,7 @@ def test_postgres_tenant_runs_existing_path(test_client, mock_auth_header, mock_
     conn_obj = object()
     conn_cm.return_value.__enter__.return_value = conn_obj
     conn_patch = nullcontext(None) if r["conn"] is None else patch(r["conn"], conn_cm)
-    with _gate_backend(kind="POSTGRESQL"), patch(r["service"], return_value=ret) as service, conn_patch:
+    with gate_backend(kind="POSTGRESQL"), patch(r["service"], return_value=ret) as service, conn_patch:
         resp = _post(test_client, mock_auth_header, name)
     assert resp.status_code == 200
     data = resp.json()
@@ -150,7 +132,8 @@ def test_postgres_tenant_runs_existing_path(test_client, mock_auth_header, mock_
     if name == "query":
         assert args[:3] == ("SELECT 1", 10, True)
         assert args[3] is conn_obj
-        assert kwargs == {"tenant_id": 7}
+        # timeout_seconds 를 보내지 않은 요청이라 요청값 None 과 설정 기본값(30초)이 함께 넘어간다(WD-641).
+        assert kwargs == {"tenant_id": 7, "timeout_seconds": None, "default_timeout_seconds": 30}
         assert conn_cm.call_args.args[0] == 7
         assert data["row_count"] == 1
     elif name == "sql":
@@ -231,7 +214,7 @@ def test_tibero_api_call_goes_to_remote_load_not_pg(test_client, mock_auth_heade
 
     ret = ApiCallExecuteResponse(success=True, rows_loaded=5, total_pages=1)
     conn = MagicMock()
-    with _gate_backend(kind="TIBERO"), patch(REMOTE_SERVICE, return_value=ret) as remote, \
+    with gate_backend(kind="TIBERO"), patch(REMOTE_SERVICE, return_value=ret) as remote, \
             patch(PG_SERVICE) as pg, patch("app.db.connection.get_connection", conn):
         resp = test_client.post(
             "/execute/api-call", json=_api_call_body(output_table=STAGING), headers=mock_auth_header
@@ -251,7 +234,7 @@ def test_tibero_api_call_goes_to_remote_load_not_pg(test_client, mock_auth_heade
     ["test_table", STAGING.lower(), "STG_0123456789ABCDEF0123456", STAGING + "\n", "STG_0123456789ABCDEF012345ZZ"],
 )
 def test_tibero_api_call_rejects_non_staging_output_table(test_client, mock_auth_header, bad):
-    with _gate_backend(kind="TIBERO"), patch(REMOTE_SERVICE) as remote, patch(PG_SERVICE) as pg, \
+    with gate_backend(kind="TIBERO"), patch(REMOTE_SERVICE) as remote, patch(PG_SERVICE) as pg, \
             patch("app.db.connection.get_connection") as conn:
         resp = test_client.post(
             "/execute/api-call", json=_api_call_body(output_table=bad), headers=mock_auth_header
@@ -270,7 +253,7 @@ def test_postgres_api_call_never_builds_remote_loader_and_keeps_pg_names(test_cl
 
     ret = ApiCallExecuteResponse(success=True, rows_loaded=1)
     conn_cm = MagicMock()
-    with _gate_backend(kind="POSTGRESQL"), patch(PG_SERVICE, return_value=ret) as pg, \
+    with gate_backend(kind="POSTGRESQL"), patch(PG_SERVICE, return_value=ret) as pg, \
             patch(REMOTE_SERVICE) as remote, patch("app.routers.store_gate.RemoteLoader") as loader_cls, \
             patch("app.db.connection.get_connection", conn_cm):
         resp = test_client.post("/execute/api-call", json=_api_call_body(), headers=mock_auth_header)
@@ -287,7 +270,7 @@ def test_tibero_api_call_remote_load_failure_is_success_false(test_client, mock_
     loader = MagicMock()
     loader.load.side_effect = RemoteLoadError("적재 실패 — 테스트")
     page = {"items": [{"id": 1, "name": "a"}]}
-    with _gate_backend(kind="TIBERO"), patch("app.routers.store_gate.RemoteLoader", return_value=loader), \
+    with gate_backend(kind="TIBERO"), patch("app.routers.store_gate.RemoteLoader", return_value=loader), \
             patch("app.services.api_call_executor.validate_url"), \
             patch("app.services.api_call_executor._do_request", return_value=page):
         resp = test_client.post(
@@ -339,7 +322,7 @@ def test_tibero_python_goes_to_tibero_path_with_token_and_remote_loader(test_cli
 
     ret = PythonExecuteResponse(success=True, output="", exit_code=0, execution_time_ms=3, rows_loaded=2)
     body = _python_body(output_table=STAGING, column_type_map={"a": "TEXT"}, script_token=PY_TOKEN)
-    with _gate_backend(kind="TIBERO"), patch(PY_TIBERO_SERVICE, return_value=ret) as tibero, \
+    with gate_backend(kind="TIBERO"), patch(PY_TIBERO_SERVICE, return_value=ret) as tibero, \
             patch(PY_PG_SERVICE) as pg:
         resp = test_client.post("/execute/python", json=body, headers=mock_auth_header)
     assert resp.status_code == 200
@@ -358,7 +341,7 @@ def test_tibero_python_goes_to_tibero_path_with_token_and_remote_loader(test_cli
 @pytest.mark.parametrize("token", [None, "", "   "])
 def test_tibero_python_without_script_token_fails_before_running(test_client, mock_auth_header, token):
     body = _python_body(output_table=STAGING) if token is None else _python_body(output_table=STAGING, script_token=token)
-    with _gate_backend(kind="TIBERO"), patch(PY_TIBERO_SERVICE) as tibero, patch(PY_PG_SERVICE) as pg:
+    with gate_backend(kind="TIBERO"), patch(PY_TIBERO_SERVICE) as tibero, patch(PY_PG_SERVICE) as pg:
         resp = test_client.post("/execute/python", json=body, headers=mock_auth_header)
     assert resp.status_code == 200
     data = resp.json()
@@ -371,7 +354,7 @@ def test_tibero_python_without_script_token_fails_before_running(test_client, mo
 @pytest.mark.parametrize("bad", ["orders", STAGING.lower(), STAGING + "\n"])
 def test_tibero_python_rejects_non_staging_output_table(test_client, mock_auth_header, bad):
     body = _python_body(output_table=bad, script_token=PY_TOKEN)
-    with _gate_backend(kind="TIBERO"), patch(PY_TIBERO_SERVICE) as tibero, patch(PY_PG_SERVICE) as pg:
+    with gate_backend(kind="TIBERO"), patch(PY_TIBERO_SERVICE) as tibero, patch(PY_PG_SERVICE) as pg:
         resp = test_client.post("/execute/python", json=body, headers=mock_auth_header)
     data = resp.json()
     assert data["success"] is False and "STG_" in data["error"]
@@ -382,7 +365,7 @@ def test_tibero_python_rejects_non_staging_output_table(test_client, mock_auth_h
 
 def test_tibero_python_missing_token_is_reported_before_bad_output_table(test_client, mock_auth_header):
     """둘 다 틀리면 토큰 누락을 먼저 알린다(라우터 검사 순서: 토큰 → 스테이징 이름)."""
-    with _gate_backend(kind="TIBERO"), patch(PY_TIBERO_SERVICE) as tibero:
+    with gate_backend(kind="TIBERO"), patch(PY_TIBERO_SERVICE) as tibero:
         resp = test_client.post("/execute/python", json=_python_body(output_table="orders"), headers=mock_auth_header)
     assert "스크립트 토큰" in resp.json()["error"]
     tibero.assert_not_called()

@@ -63,6 +63,10 @@ class PythonExecuteRequest(TenantScopedRequest):
     script_token: Optional[SecretStr] = None
 
 
+# 분석 조회 요청 timeout_seconds 의 상한(초, WD-641) — 편집기 조회는 사람이 기다리는 짧은 조회라, 잘못된 값으로 커넥션을 오래 쥐지 않게
+# 막는다. /execute/sql 은 파이프라인 긴 SQL 용이라 상한이 없어 맞출 값이 없다. 테스트가 이 이름으로 경계(MAX·MAX+1)를 확인한다.
+QUERY_TIMEOUT_SECONDS_MAX = 300
+
 # 슬롯 조회 요청 조합 거부 문구 — db-executor ExecuteController 와 같은 문장(두 실행기 같은 계약, WD-78).
 SLOT_REQUIRES_STREAM = "슬롯 조회(readSlot)는 stream:true 로만 실행할 수 있습니다."
 STREAM_REQUIRES_SLOT = "스트리밍 조회(stream)는 슬롯 조회(readSlot)에서만 쓸 수 있습니다."
@@ -77,6 +81,11 @@ class QueryExecuteRequest(TenantScopedRequest):
     # strict=True: "2"·True 같은 값이 조용히 정수·불리언으로 바뀌지 않게(python 실행 요청의 readSlot 과 같은 규칙).
     read_slot: Optional[int] = Field(default=None, alias="readSlot", ge=1, le=MAX_READ_SLOT, strict=True)
     stream: bool = Field(default=False, strict=True)
+    # 비스트리밍 조회의 문장 제한(초, 선택, WD-641). api 가 시간 초과 안내 문구와 같은 값을 실어 보낸다. 없으면 라우터가
+    # Settings.query_statement_timeout_seconds(기본 30초)를 기본값으로 넘긴다 — /execute/sql·/execute/load 의 timeout_seconds 와
+    # 같은 모양이다(0 이하는 PG 에서 '제한 없음' 이라 422, strict 로 "30" 같은 문자열 거부). 상한은 QUERY_TIMEOUT_SECONDS_MAX.
+    # 슬롯 스트리밍은 자기 제한(STREAM_STATEMENT_TIMEOUT)을 쓰므로 이 값을 보지 않는다.
+    timeout_seconds: Optional[int] = Field(default=None, gt=0, le=QUERY_TIMEOUT_SECONDS_MAX, strict=True)
 
     @model_validator(mode="after")
     def _slot_and_stream_together(self) -> "QueryExecuteRequest":

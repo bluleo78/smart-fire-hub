@@ -1,7 +1,7 @@
 import { zodResolver } from '@hookform/resolvers/zod';
-import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FormProvider, useForm } from 'react-hook-form';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { Badge } from '../../components/ui/badge';
@@ -14,7 +14,7 @@ import { useCategories, useCreateDataset, useDatasets } from '../../hooks/querie
 import { useDataStoreFeatures } from '../../hooks/queries/useDataStoreCapabilities';
 import { useRhfDirtyReader } from '../../hooks/useRhfDirtyReader';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
-import { handleApiError } from '../../lib/api-error';
+import { extractApiError, handleApiError } from '../../lib/api-error';
 import { getOriginTypeLabel, getStorageTypeLabel } from '../../lib/formatters';
 import type { CreateDatasetFormData } from '../../lib/validations/dataset';
 import { createDatasetSchema, makeCreateDatasetSchema } from '../../lib/validations/dataset';
@@ -97,6 +97,28 @@ export default function DatasetCreatePage() {
   // 진행 중 거듭 누르면 생성 요청이 여러 번 간다. 만들어진 뒤에도 상세로 넘어가는 라우터 전환 중이나
   // 확인창 선택을 기다리는 동안 화면이 남아 있으므로, created 는 풀지 않는다.
   const submitLockRef = useRef<'idle' | 'pending' | 'created'>('idle');
+  // 이 화면에서 만든 데이터셋 (WD-662) — 상세 경로, 만들 때 이 생성 화면의 경로,
+  // 확인창이 떠 있는 동안 만들어져 「취소」(남기) 때 상세로 보낼지(goOnStay, WD-642 에서 공용 훅에 있던 것을 옮김).
+  const createdRef = useRef<{ detailPath: string; formPathname: string; goOnStay: boolean } | null>(null);
+  const navigate = useNavigate();
+
+  // 사용자가 아직 이 화면 인스턴스로 그 경로에 있는가 (WD-642, WD-662) — 인스턴스가 살아 있고 실제 주소가 같을 때만 참이다.
+  // 마운트 여부만으로는 부족하다: react-router 가 이동을 startTransition 으로 처리해, 주소는 이미 바뀌었어도
+  // 다음 화면(lazy 라우트)이 준비될 때까지 이 페이지가 남아 저장 응답·Cmd/Ctrl+S·확인창 이벤트를 받는 틈이 있다.
+  const isStillOn = useCallback(
+    (pathname: string) => aliveRef.current && window.location.pathname === pathname,
+    [],
+  );
+
+  // 확인창에서 남기를 골랐을 때 (WD-662) — 그 사이 끝난 저장이 있으면 결과(상세) 화면으로 보낸다.
+  // 저장된 입력을 그대로 두면 같은 입력으로 다시 만들게 된다. 표식은 한 번 쓰고 비우며, 이미 다른 주소면 비우기만 한다.
+  // useCallback: 공용 훅의 onStay 동기화 effect 가 매 렌더 돌지 않게.
+  const handleStay = useCallback(() => {
+    const created = createdRef.current;
+    if (!created?.goOnStay) return;
+    created.goOnStay = false;
+    if (isStillOn(created.formPathname)) navigate(created.detailPath);
+  }, [isStillOn, navigate]);
 
   // 미저장 입력 판정 (WD-642) — 가드가 물을 때만 현재 값을 기본값과 직접 비교한다(useRhfDirtyReader 참고).
   // shouldDirty 를 빠뜨린 setValue 도 잡히고, URL 쿼리(storageType/originType)로 정해진 초기값만으로는 dirty 가 되지 않는다.
@@ -104,8 +126,10 @@ export default function DatasetCreatePage() {
 
   // 미저장 입력 이탈 가드 (WD-577) — 이름·테이블명·설명·카테고리 입력이나 칼럼 추가·삭제·편집이 있으면
   // 사이드바 링크·브라우저 뒤로가기·새로고침/탭 닫기·취소 버튼에서 확인 다이얼로그를 띄운다.
-  const { dialog: unsavedChangesDialog, requestNavigate, navigateAfterSave } =
-    useUnsavedChangesGuard(readIsDirty);
+  // (WD-662) 확인창에서 남기를 고르면 handleStay 가 그 사이 끝난 저장의 상세로 보낸다.
+  const { dialog: unsavedChangesDialog, requestNavigate, isDialogOpen } = useUnsavedChangesGuard(readIsDirty, {
+    onStay: handleStay,
+  });
 
   // 폼 ref — Cmd/Ctrl+S 단축키에서 submit 트리거에 사용 (#100)
   const formRef = useRef<HTMLFormElement>(null);
@@ -165,12 +189,10 @@ export default function DatasetCreatePage() {
   }, []);
 
   const onSubmit = async (data: CreateDatasetFormData) => {
-    // 제출 시점 경로 — 생성 요청 중 사용자가 이탈을 확정해 다른 화면으로 갔다면 응답 후 상세로 끌고 가지 않으려고 기억한다 (WD-577).
-    // 마운트 ref 로는 부족하다: react-router 가 이동을 startTransition 으로 처리해, 주소는 이미 바뀌었어도
-    // 다음 화면(lazy 라우트)이 준비될 때까지 이 페이지가 마운트된 채 남는 틈이 있다. 실제 주소를 비교하면 그 틈도 막는다.
+    // 제출 시점 경로 — 생성 요청 중 사용자가 이탈을 확정해 다른 화면으로 갔다면 응답 후 상세로 끌고 가지 않으려고 기억한다 (WD-577, isStillOn 참고).
     const submitPathname = window.location.pathname;
     // 이 제출이 낡았는가 — 화면 인스턴스가 사라졌거나(이탈 후 같은 화면으로 돌아온 경우 포함) 주소가 바뀌었으면 낡았다 (WD-642)
-    const isStale = () => !aliveRef.current || window.location.pathname !== submitPathname;
+    const isStale = () => !isStillOn(submitPathname);
     // 중복 인라인 검증 결과가 있으면 제출 차단 (#103) — 서버 왕복으로 알게 되는 비용을 줄임
     if (isNameDuplicate) {
       form.setError('name', { type: 'duplicate', message: '이미 사용 중인 이름입니다.' });
@@ -202,22 +224,29 @@ export default function DatasetCreatePage() {
           description: col.description || undefined,
         })),
       });
-      // 이후 이 화면에서의 재제출을 막는다
+      // 이후 이 화면에서의 재제출을 막는다 — 다시 누르면 만든 데이터셋으로 이동을 재시도한다 (WD-662)
       submitLockRef.current = 'created';
       // 이탈 후 응답이 와도 서버에는 만들어졌으므로 토스트는 그대로 알린다.
       toast.success('데이터셋이 생성되었습니다.');
       // 응답 사이 이미 이탈했으면(주소가 바뀜·화면 인스턴스가 바뀜) 사용자가 있는 화면을 건드리지 않는다 (WD-577, WD-642).
       if (isStale()) return;
+      // 떠나지 않았을 때만 기억한다 — 떠난 뒤(라우터 전환 중 남은 화면)의 재제출이 사용자를 상세로 끌고 가지 않게 (WD-662)
+      const detailPath = `/data/datasets/${result.data.id}`;
+      createdRef.current = { detailPath, formPathname: submitPathname, goOnStay: isDialogOpen() };
       // 저장한 값으로 폼을 초기화해 dirty 를 끈다 (WD-577) — 이제 잃을 입력이 없다.
       form.reset(data);
-      // 상세로 이동한다. 이탈 확인창이 떠 있으면 끌고 가지 않고 사용자의 선택을 기다린다 (WD-642) —
-      // 「이탈」이면 가려던 곳으로(WD-577 의 "이탈 선택 → 상세로 가지 않음"과 같다), 「취소」면 만든 데이터셋 상세로 간다.
-      navigateAfterSave(`/data/datasets/${result.data.id}`);
+      // 상세로 이동한다. 이탈 확인창이 떠 있으면 끌고 가지 않고 사용자의 선택을 기다린다 (WD-642, WD-662) —
+      // 「이탈」이면 가려던 곳으로(WD-577 의 "이탈 선택 → 상세로 가지 않음"과 같다), 「취소」면 handleStay 가 만든 데이터셋 상세로 보낸다.
+      if (!createdRef.current.goOnStay) navigate(detailPath);
     } catch (error) {
       // 떠난 화면의 저장 실패도 알린다 (WD-642) — 성공은 떠난 뒤에도 알리므로 실패만 숨기면 만들어졌는지 알 수 없다.
       // 다른 화면 위에 뜨므로 어느 데이터셋의 일인지와 저장되지 않았다는 결과를 함께 적는다.
+      // (WD-662) 서버가 사유(ErrorResponse)를 주면 덧붙인다 — 왜 실패했는지 알아야 돌아가 고칠 수 있다. 없으면 지금 문구 그대로.
       if (isStale()) {
-        toast.error(`데이터셋 「${data.name}」 생성에 실패했습니다 — 저장되지 않았습니다.`);
+        const reason = extractApiError(error, '');
+        const base = `데이터셋 「${data.name}」 생성에 실패했습니다 — 저장되지 않았습니다.`;
+        // 사유 자체에 「(외 2건)」 같은 괄호가 있을 수 있어 괄호로 감싸지 않고 「 — 사유: 」로 잇는다
+        toast.error(reason ? `${base} — 사유: ${reason}` : base);
         return;
       }
       handleApiError(error, '데이터셋 생성에 실패했습니다.');
@@ -245,6 +274,13 @@ export default function DatasetCreatePage() {
   const handleFormSubmit = async (e: FormEvent<HTMLFormElement>) => {
     if (submitLockRef.current !== 'idle') {
       e.preventDefault();
+      // (WD-662) 이미 만들어졌고 아직 생성 화면에 있으면 무반응 대신 알리고 상세로 보낸다(다시 입력했으면 requestNavigate 가 확인창).
+      // createdRef 는 떠나지 않은 성공에서만 생기므로, 떠난 뒤 성공·진행 중(pending)은 여기 오지 않고 그냥 막힌다.
+      const created = createdRef.current;
+      if (created && !isDialogOpen() && isStillOn(created.formPathname)) {
+        toast.info('이미 만들어졌습니다. 만든 데이터셋으로 이동합니다.');
+        requestNavigate(created.detailPath);
+      }
       return;
     }
     submitLockRef.current = 'pending';

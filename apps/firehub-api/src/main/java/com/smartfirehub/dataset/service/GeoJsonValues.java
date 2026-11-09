@@ -1,10 +1,9 @@
 package com.smartfirehub.dataset.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import com.smartfirehub.global.util.ExactJsonMapper;
 import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -39,11 +38,11 @@ public final class GeoJsonValues {
           "MultiPolygon",
           "GeometryCollection");
 
-  /** 좌표 숫자를 double 로 바꾸지 않고 원문 그대로 읽는 리더 — Feature 에서 꺼낸 geometry 를 다시 직렬화할 때 좌표 자릿수가 바뀌지 않게 한다. */
-  private static final ObjectMapper EXACT_MAPPER =
-      new ObjectMapper()
-          .enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS)
-          .setNodeFactory(JsonNodeFactory.withExactBigDecimals(true));
+  /**
+   * 좌표 숫자를 double 로 바꾸지 않고 원문 그대로 읽는 리더 — Feature 에서 꺼낸 geometry 를 다시 직렬화할 때 좌표 자릿수가 바뀌지 않게 한다. 같은
+   * 설정을 응답 본문 비밀 가림도 쓰므로 공용 매퍼를 쓴다(WD-657).
+   */
+  private static final ObjectMapper EXACT_MAPPER = ExactJsonMapper.INSTANCE;
 
   static final String INVALID_FORMAT_MESSAGE =
       "GeoJSON 형식이 아닙니다. 예: {\"type\":\"Point\",\"coordinates\":[126.97,37.56]}";

@@ -10,9 +10,10 @@ import { expect, test } from '../../fixtures/auth.fixture';
  * #545(스마트 작업 상세)와 동일한 원인 클래스라 같은 isInvalidId 플래그 패턴으로 수정함.
  * WD-581: 목록 이동 대신 주소를 그대로 두고 화면 안 안내 + 「목록으로」를 보인다(토스트 없음).
  *   양의 정수가 아닌 id 전부('1.5'는 400 후 목록 이동, '0'은 무한 스켈레톤이었다)를 요청 없이 같은 안내로 다룬다.
+ * WD-568: 공백(`%20`)·`0` 은 Number() 가 0 이라 무한 스켈레톤이었다 — 같은 안내로 다룬다.
  */
 test.describe('데이터셋 상세 — 양의 정수가 아닌 ID 처리 (#543, WD-581)', () => {
-  for (const rawId of ['abc', '1.5', '0', '3x']) {
+  for (const rawId of ['abc', '1.5', '0', '3x', '%20']) {
     test(`양의 정수가 아닌 ID(/data/datasets/${rawId})는 요청 없이 화면 안 안내를 보인다`, async ({
       authenticatedPage: page,
     }) => {

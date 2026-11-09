@@ -1,4 +1,7 @@
 import time
+from contextlib import nullcontext
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -111,6 +114,42 @@ class PgError(Exception):
     가른다, WD-261).
     """
 
-    def __init__(self, msg: str, pgcode: str):
+    def __init__(self, msg: str, pgcode: str, position=None):
         super().__init__(msg)
         self.pgcode = pgcode
+        # 서버 오류 위치(diag.statement_position, WD-641) — libpq 처럼 문자열로 둔다. 주지 않으면 diag 자체가 없다.
+        if position is not None:
+            self.diag = SimpleNamespace(statement_position=position)
+
+
+def gate_backend(kind=None, error=None):
+    """게이트가 쓰는 저장소 클라이언트(get_store_client)를 대체한다. kind 는 기술자의 backend 값이다.
+
+    여러 라우트 테스트(저장소 게이트·이벤트 루프·분석 조회 시간 제한)가 같은 대역을 쓰도록 여기 둔다.
+    """
+    client = MagicMock()
+    # 기본은 캐시 미스(peek → None)라 스레드풀 조회 경로를 탄다. 적중 경로는 test_store_gate_routes 의 별도 테스트가 다룬다.
+    client.peek.return_value = None
+    if error is not None:
+        client.get.side_effect = error
+    else:
+        client.get.return_value = SimpleNamespace(backend=kind)
+    return patch("app.routers.store_gate.get_store_client", return_value=client)
+
+
+def conn_patch(target):
+    """라우트의 get_connection patch. 커넥션을 쓰지 않는 라우트(target None)는 아무것도 patch 하지 않는다(None 반환)."""
+    if target is None:
+        return nullcontext(None)
+    return patch(target, MagicMock())
+
+
+def apply_auth(auth, headers, params):
+    """인증 설정(dict)을 실행기와 같은 두 단계(``_resolve_auth`` → ``_apply_resolved_auth``)로 요청에 붙인다(WD-657).
+
+    실행기는 실행마다 한 번 푼 값을 붙이고 dict 를 바로 받는 함수는 없앴다 — 테스트는 이 도우미 하나로 같은 경로를 탄다.
+    반환값은 쿼리 인증이면 ``(파라미터 이름, 키 원문)``, 아니면 None.
+    """
+    from app.services.api_call_executor import _apply_resolved_auth, _resolve_auth
+
+    return _apply_resolved_auth(_resolve_auth(auth), headers, params)

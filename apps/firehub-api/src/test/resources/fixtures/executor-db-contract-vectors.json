@@ -12,6 +12,12 @@
     {
       "name": "message",
       "type": "string"
+    },
+    {
+      "name": "position",
+      "type": "int|null",
+      "required": false,
+      "_doc": "오류 위치(사용자 SQL 기준 1부터 센 글자 위치, WD-641). Python 실행기는 PG 오류의 diag.statement_position 을 정수로 싣고(모르면 null), api 는 직접 실행 경로처럼 'Position: n' 줄을 만든다. db-executor 는 보내지 않아도 된다(선택 필드)."
     }
   ],
   "endpoints": {
@@ -173,6 +179,11 @@
           "name": "stream",
           "required": false,
           "type": "boolean"
+        },
+        {
+          "name": "timeout_seconds",
+          "required": false,
+          "type": "int"
         }
       ],
       "responseFields": [
@@ -187,7 +198,7 @@
         "error",
         "db_error"
       ],
-      "notes": "db-executor: read_only 가 true 가 아니면(false·누락) '읽기 전용 조회만 실행할 수 있습니다.' 로 거부하고 max_rows 는 필수다(슬롯 스트리밍은 max_rows 를 쓰지 않아 없어도 된다). Python 실행기: max_rows 기본 1000, read_only 기본 false(false 도 실행). readSlot 과 stream:true 는 함께일 때만 슬롯 스트리밍(streaming)이고, 둘 중 하나만 있으면 두 실행기 모두 거부한다(db-executor 200+success=false, Python 422) — 슬롯 조회의 길을 하나로 둔다(WD-78). stream:true 요청이 실행 전에 거부되면 db-executor 는 JSON 이 아니라 NDJSON 실패 줄 하나로 답한다(스트리밍 응답 모양 유지).",
+      "notes": "db-executor: read_only 가 true 가 아니면(false·누락) '읽기 전용 조회만 실행할 수 있습니다.' 로 거부하고 max_rows 는 필수다(슬롯 스트리밍은 max_rows 를 쓰지 않아 없어도 된다). Python 실행기: max_rows 기본 1000, read_only 기본 false(false 도 실행). readSlot 과 stream:true 는 함께일 때만 슬롯 스트리밍(streaming)이고, 둘 중 하나만 있으면 두 실행기 모두 거부한다(db-executor 200+success=false, Python 422) — 슬롯 조회의 길을 하나로 둔다(WD-78). stream:true 요청이 실행 전에 거부되면 db-executor 는 JSON 이 아니라 NDJSON 실패 줄 하나로 답한다(스트리밍 응답 모양 유지). timeout_seconds(선택, WD-641)는 Python 실행기 비스트리밍 조회의 문장 제한(초)이다: api 가 시간 초과 안내 문구와 같은 상수(AdhocSqlErrorMessages.ADHOC_STATEMENT_TIMEOUT_SECONDS)를 싣고, 없으면 EXECUTOR_QUERY_STATEMENT_TIMEOUT_SECONDS(기본 30초), 0 이하·300 초과·정수 아님은 422 다. 슬롯 스트리밍은 쓰지 않는다. db-executor 는 이 필드를 모르는 채로 무시한다(QueryRequest 는 알 수 없는 필드를 무시).",
       "examples": [
         {
           "name": "읽기 전용 조회",

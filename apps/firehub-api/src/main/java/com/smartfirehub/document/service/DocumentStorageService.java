@@ -7,6 +7,7 @@ import java.security.MessageDigest;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.HexFormat;
+import java.util.Locale;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -71,6 +72,8 @@ public class DocumentStorageService {
     if (name == null) return "";
     int dot = name.lastIndexOf('.');
     // 소문자화 후 영숫자만 허용해 경로 조작/특수문자 주입을 차단한다.
-    return dot < 0 ? "" : name.substring(dot + 1).toLowerCase().replaceAll("[^a-z0-9]", "");
+    return dot < 0
+        ? ""
+        : name.substring(dot + 1).toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]", "");
   }
 }

@@ -120,6 +120,34 @@ class MediaTypeErrorHandlingTest extends IntegrationTestBase {
         .contains("multipart/form-data");
   }
 
+  /**
+   * multipart/form-data 인데 boundary 가 없으면 400 + 업로드 본문 해석 불가 안내다(JSON 형식 안내가 아니다). WD-626 에서 확인한 결과
+   * 이미 맞게 나가므로 회귀 고정용이다. multipart 해석은 Tomcat 이 하므로 MockMvc 슬라이스가 아니라 실제 서버 왕복이 필요하다(WD-649 에서
+   * SpringMvcStandardErrorHandlingTest 로부터 옮김 — 별도 컨텍스트 없이 이 공유 통합 컨텍스트에서 돈다).
+   */
+  @Test
+  void fileUpload_multipartWithoutBoundary_returns400UploadGuidance() throws Exception {
+    HttpResponse<String> res =
+        send(authed(post("/api/v1/files", "garbage", "multipart/form-data")));
+    assertJsonError(res, 400, "파일 업로드 요청 본문을 해석할 수 없습니다.");
+  }
+
+  /**
+   * boundary 는 있지만 본문에 경계 구분자가 없으면 Tomcat 은 part 0개로 해석한다 — 그래서 필수 part 누락(WD-521)으로 400 이고 errors
+   * 에 {@code files} 가 실린다. 415·JSON 형식 안내가 아니라 업로드 파일이 필요하다는 안내이므로 맞는 응답이다(WD-626 에서 확인, 고정). 위와 같은
+   * 이유로 실제 서버 왕복이다.
+   */
+  @Test
+  void fileUpload_multipartWithBrokenBody_returns400MissingFilesPart() throws Exception {
+    HttpResponse<String> res =
+        send(
+            authed(
+                post("/api/v1/files", "not a multipart body", "multipart/form-data; boundary=x")));
+    assertJsonError(res, 400, GlobalExceptionHandler.VALIDATION_FAILED_MESSAGE);
+    assertThat(objectMapper.readTree(res.body()).path("errors").path("files").asText())
+        .isEqualTo("'files' 파일이 필요합니다.");
+  }
+
   // --- 406: 응답 형식 불일치 -----------------------------------------------------
 
   /** Accept 가 JSON 을 받지 않아도(text/html·application/xml) Whitelabel·빈 본문이 아니라 406 한국어 JSON 이다. */

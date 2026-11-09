@@ -68,6 +68,12 @@ public class PlatformAuthService {
    *
    * <p>계정 잠금보다 먼저 IP 기준 제한(WD-578)을 본다. 실패 카운터를 올리는 모든 경로({@link #failed}: 없는 계정·비밀번호 불일치·롤 없음)에서
    * IP 실패도 함께 기록한다 — 테넌트 평면과 카운터를 공유하므로 두 로그인 화면을 번갈아 써도 피할 수 없다.
+   *
+   * <p>롤 없음은 비밀번호가 맞았는데도 IP 실패로 센다(WD-630 리뷰). 롤 없음의 401 은 열거 방지를 위해 비밀번호 불일치와 <b>똑같다</b>. 그런데 맞는
+   * 비밀번호만 IP 카운터에서 빠지면, 공격자가 한도 직전에서 후보 비밀번호를 넣어 보고 다음 요청이 429 인지 아닌지로 "방금 비밀번호가 맞았다"를 알아낼 수 있다(IP
+   * 카운터가 비밀번호 오라클이 된다). 테넌트의 비활성 계정은 응답이 달라(비활성 안내) 이미 맞았음을 알리므로 같은 문제가 없다.
+   *
+   * <p>같은 IP 키 줄 세우기는 트랜잭션 밖 {@code LoginIpGate} 가 한다(WD-630).
    */
   @Transactional(
       noRollbackFor = {
@@ -103,6 +109,7 @@ public class PlatformAuthService {
     }
     // 운영자 자격. 여기서 갈리는 것이 이 서비스와 테넌트 로그인의 유일한 차이다.
     if (!platformRoleRepository.hasAnyPlatformRole(user.id())) {
+      // 비밀번호가 맞았어도 IP 실패로 센다 — 응답이 같으므로 빼면 IP 카운터가 비밀번호 오라클이 된다(WD-630 리뷰).
       throw failed(username, clientIp);
     }
 

@@ -77,7 +77,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.transaction.CannotCreateTransactionException;
-import org.springframework.util.StringUtils;
 import org.springframework.validation.BindException;
 import org.springframework.validation.Errors;
 import org.springframework.validation.FieldError;
@@ -198,10 +197,17 @@ public class GlobalExceptionHandler {
   /** 지금 처리 중인 요청의 응답이 이미 커밋됐는지 본다(WD-626). 요청 문맥이 없으면(단위 테스트에서 처리를 직접 부르는 경우 등) 커밋되지 않은 것으로 본다. */
   private static boolean isCurrentResponseCommitted() {
     if (RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes attrs) {
-      HttpServletResponse response = attrs.getResponse();
-      return response != null && response.isCommitted();
+      return isCommitted(attrs.getResponse());
     }
     return false;
+  }
+
+  /**
+   * 응답이 이미 커밋됐는지(SSE·다운로드가 흐르는 중)의 단일 판정(WD-649). {@link #json} 과, 응답을 인자로 받아 json() 을 거치기 전에 먼저
+   * 확인해야 하는 처리(handleIOException·handleAsyncTimeout — 커밋 시 ERROR·WARN 로그 없이 조용히 끝낸다)가 모두 이 메서드를 쓴다.
+   */
+  private static boolean isCommitted(HttpServletResponse response) {
+    return response != null && response.isCommitted();
   }
 
   /**
@@ -248,6 +254,12 @@ public class GlobalExceptionHandler {
   @ExceptionHandler(HandlerMethodValidationException.class)
   public ResponseEntity<ErrorResponse> handleHandlerMethodValidation(
       HandlerMethodValidationException ex, HttpServletRequest request) {
+    // 반환값 검증 실패(isForReturnValue — Spring 이 500 으로 둔다)는 클라이언트 입력 오류가 아니라 서버가 계약을 어긴 것이다(WD-649).
+    // 입력 오류처럼 400 「입력값이 올바르지 않습니다」+ 내부 이름(arg-1)으로 답하면 결함이 묻히므로 일반 서버 오류 길(ERROR 로그·스택,
+    // 「예기치 않은 오류」, errors 없음)로 넘긴다.
+    if (!ex.getStatusCode().is4xxClientError()) {
+      return handleException(ex, request);
+    }
     ValidationErrorCollector collector = new ValidationErrorCollector();
     for (ParameterValidationResult r : ex.getParameterValidationResults()) {
       if (r instanceof ParameterErrors errors) {
@@ -1135,7 +1147,7 @@ public class GlobalExceptionHandler {
   @ExceptionHandler(IOException.class)
   public ResponseEntity<ErrorResponse> handleIOException(
       IOException ex, HttpServletRequest request, HttpServletResponse response) {
-    if (response.isCommitted()) {
+    if (isCommitted(response)) {
       log.debug("IOException on committed response (client disconnect): {}", ex.getMessage());
       return null;
     }
@@ -1155,7 +1167,7 @@ public class GlobalExceptionHandler {
       AsyncRequestTimeoutException ex, HttpServletRequest request, HttpServletResponse response) {
     // SSE/streaming endpoints: response is already committed with text/event-stream,
     // so we cannot write a JSON ErrorResponse. Just complete silently.
-    if (response.isCommitted()) {
+    if (isCommitted(response)) {
       log.debug(
           "Async timeout on committed response (SSE disconnect): {}", request.getRequestURI());
       return;
@@ -1276,21 +1288,30 @@ public class GlobalExceptionHandler {
   }
 
   /**
-   * 406 안내 문구를 응답 가능 형식 목록에서 고른다(WD-626). 형식 정리는 415 와 같은 {@link #concreteTypes} 를 쓴다.
-   * text/event-stream 만 있으면 SSE 로 받으라고, JSON 과 text/event-stream 이 함께 있으면 둘 다 안내한다. 그 밖에는 JSON 이
-   * 있거나 목록이 비면(협상 이전 단계 실패 등) 이 API 의 기본인 JSON 을, 아니면 첫 형식을 안내한다. 오류 본문 자체는 어느 경우든 JSON 이다.
+   * 406 안내 문구를 응답 가능 형식 목록에서 만든다(WD-626, WD-649). 형식 정리는 415 와 같은 {@link #concreteTypes} 를 쓴다.
+   *
+   * <ul>
+   *   <li>형식이 여럿이면(produces 가 여러 개) 하나만 고르지 않고 전부 원래 순서대로 나열한다 — 예전에는 대표 하나만 「으로만 제공」이라 해 다른 지원 형식을
+   *       빠뜨렸다(WD-649). 예: 「application/json, text/csv 또는 text/event-stream 으로 제공합니다」.
+   *   <li>text/event-stream 하나뿐이면 SSE 로 받으라고 Accept 까지 안내한다.
+   *   <li>하나뿐이면 그 형식, 목록이 비면(협상 이전 단계 실패 등) 이 API 의 기본인 JSON 으로 「으로만 제공」이라 안내한다.
+   * </ul>
+   *
+   * 오류 본문 자체는 어느 경우든 JSON 이다.
    */
   private static String notAcceptableMessage(List<MediaType> supported) {
-    // 세 갈래 모두 같은 머리말로 시작한다.
+    // 모든 갈래가 같은 머리말로 시작한다.
     String prefix = "요청한 응답 형식을 지원하지 않습니다 — 응답은 ";
-    Set<String> types = concreteTypes(supported);
+    List<String> types = List.copyOf(concreteTypes(supported));
+    if (types.size() > 1) {
+      String head = String.join(", ", types.subList(0, types.size() - 1));
+      return prefix + head + " 또는 " + types.get(types.size() - 1) + " 으로 제공합니다.";
+    }
     if (types.contains(MediaType.TEXT_EVENT_STREAM_VALUE)) {
-      if (types.contains(MediaType.APPLICATION_JSON_VALUE)) {
-        return prefix + "application/json 또는 text/event-stream 으로 제공합니다.";
-      }
       return prefix + "text/event-stream(SSE) 으로 제공합니다. Accept 에 text/event-stream 을 넣으세요.";
     }
-    return prefix + preferredType(types, MediaType.APPLICATION_JSON_VALUE) + " 으로만 제공합니다.";
+    String only = types.isEmpty() ? MediaType.APPLICATION_JSON_VALUE : types.get(0);
+    return prefix + only + " 으로만 제공합니다.";
   }
 
   /**
@@ -1441,16 +1462,17 @@ public class GlobalExceptionHandler {
   /**
    * 전용 처리가 없는 모든 예외의 마지막 처리.
    *
-   * <p>두 갈래로 나뉜다(WD-626).
+   * <p>두 갈래로 나뉜다(WD-626, WD-649).
    *
    * <ol>
    *   <li>Spring 표준 예외({@link org.springframework.web.ErrorResponse} — Spring MVC 표준 예외·{@link
-   *       ResponseStatusException}·ErrorResponseException 이 구현)이고 상태가 4xx 면 그 상태를 그대로 쓰는 한국어 JSON
+   *       ResponseStatusException}·ErrorResponseException 이 구현)는 4xx 든 5xx 든 그 상태를 그대로 쓰는 한국어 JSON
    *       으로 답한다. 예외가 실은 응답 헤더(Allow·Retry-After·WWW-Authenticate 등, {@code getHeaders()})도 그대로
-   *       싣는다. 예전에는 필수 쿠키 누락·ResponseStatusException(409) 등 클라이언트 잘못이 500 + ERROR 스택이 됐다. 예외마다 전용
-   *       처리를 늘리는 대신 여기서 한 번에 받아 앞으로 생길 표준 예외도 같은 길을 탄다. 더 구체적인 전용 처리(405·415·406 등)는 Spring 이 먼저
-   *       고르므로 가로채지 않는다.
-   *   <li>그 밖(5xx 상태의 표준 예외 포함)은 지금처럼 500 「예기치 않은 오류」+ ERROR 로그다.
+   *       싣는다. 예전에는 필수 쿠키 누락·ResponseStatusException(409) 등 클라이언트 잘못이 500 이 됐고(WD-626), 그 뒤에도
+   *       503·501 같은 5xx 표준 예외는 500 으로 뭉개지고 Retry-After 가 사라졌다(WD-649). 로그 수준만 나눈다 — 4xx 는 클라이언트
+   *       잘못이라 DEBUG, 5xx 는 서버 쪽 문제라 ERROR + 스택. 5xx 본문 문구는 예외 상세(내부 정보)를 싣지 않는 상태별 기본 한국어 문구다. 더
+   *       구체적인 전용 처리(405·415·406 등)는 Spring 이 먼저 고르므로 가로채지 않는다.
+   *   <li>그 밖의 예외는 지금처럼 500 「예기치 않은 오류」+ ERROR 로그다.
    * </ol>
    *
    * <p>응답이 이미 커밋됐으면(SSE·스트리밍이 흐르는 중) 본문은 {@link #json} 이 생략한다 — 로그는 위 규칙 그대로 남겨, 스트림 도중 난 서버 결함이
@@ -1460,16 +1482,16 @@ public class GlobalExceptionHandler {
    */
   @ExceptionHandler(Exception.class)
   public ResponseEntity<ErrorResponse> handleException(Exception ex, HttpServletRequest request) {
-    if (ex instanceof org.springframework.web.ErrorResponse standard
-        && standard.getStatusCode().is4xxClientError()) {
-      // 클라이언트 잘못이라 ERROR 스택 없이 DEBUG 로만 남긴다(공개 엔드포인트로 오류 로그·알림을 채우지 못하게).
-      log.debug(
-          "Client error {} on {}: {}",
-          standard.getStatusCode(),
-          request.getRequestURI(),
-          ex.getMessage());
+    if (ex instanceof org.springframework.web.ErrorResponse standard) {
       HttpStatus status = toHttpStatus(standard.getStatusCode());
-      ErrorResponse body = buildError(status, clientErrorMessage(ex, status), null, request);
+      if (status.is4xxClientError()) {
+        // 클라이언트 잘못이라 ERROR 스택 없이 DEBUG 로만 남긴다(공개 엔드포인트로 오류 로그·알림을 채우지 못하게).
+        log.debug(
+            "Client error {} on {}: {}", status.value(), request.getRequestURI(), ex.getMessage());
+      } else {
+        log.error("Server error {} on {}", status.value(), request.getRequestURI(), ex);
+      }
+      ErrorResponse body = buildError(status, standardErrorMessage(status), null, request);
       return json(status, standard.getHeaders(), body);
     }
     log.error("Unhandled exception", ex);
@@ -1480,24 +1502,33 @@ public class GlobalExceptionHandler {
     return json(HttpStatus.INTERNAL_SERVER_ERROR, body);
   }
 
-  /** 표준 예외의 상태 코드를 HttpStatus 로 바꾼다 — 표준에 없는 4xx 값(예: 499)은 400 으로 본다(WD-626). */
+  /**
+   * 표준 예외의 상태 코드를 HttpStatus 로 바꾼다 — 표준에 없는 값은 계열로 본다: 4xx(예: 499)는 400, 그 밖(예: 599)은 500(WD-626,
+   * WD-649). 4xx·5xx 가 아닌 값(1xx~3xx — 오류 처리로 올 일이 없다)도 오류 응답이 성공처럼 보이지 않게 500 으로 본다.
+   */
   private static HttpStatus toHttpStatus(HttpStatusCode code) {
     HttpStatus status = HttpStatus.resolve(code.value());
-    return status != null ? status : HttpStatus.BAD_REQUEST;
+    if (status != null && (status.is4xxClientError() || status.is5xxServerError())) {
+      return status;
+    }
+    return code.is4xxClientError() ? HttpStatus.BAD_REQUEST : HttpStatus.INTERNAL_SERVER_ERROR;
   }
 
+  /** 503 안내 — 일시적으로 처리할 수 없는 상태라 재시도를 권한다(WD-649). */
+  static final String SERVICE_UNAVAILABLE_MESSAGE = "서비스를 일시적으로 사용할 수 없습니다. 잠시 후 다시 시도하세요.";
+
+  /** 501 안내 — 서버가 아직 지원하지 않는 기능이다(WD-649). */
+  static final String NOT_IMPLEMENTED_MESSAGE = "지원하지 않는 기능입니다.";
+
   /**
-   * 4xx 표준 예외의 사용자 안내 문구(WD-626).
+   * 표준 예외의 사용자 안내 문구 — 상태별 한국어 기본 문구다(WD-626, WD-649).
    *
-   * <p>{@link ResponseStatusException} 의 reason 은 비어 있지 않으면 그대로 쓴다. 이 코드베이스의 약속(WD-110)이 「우리 코드가
-   * 던지는 예외 메시지는 화면 토스트에 그대로 보이는 한국어 사용자 문장」이기 때문이다 — 지금 유일하게 던지는 곳인 SavedQueryService 의 409(「공유 쿼리의
-   * SQL은 수정할 수 없습니다…」)도 이를 따른다. reason 이 비었거나 그 밖의 표준 예외(Spring 기본 상세는 영어 내부 문구)면 상태별 짧은 한국어 문구로
-   * 답한다.
+   * <p>{@link ResponseStatusException} 의 reason 은 사용자에게 보이지 않는다(WD-649). 라이브러리·프레임워크가 던진 reason 은
+   * 영어·내부 문구라 그대로 토스트에 나갔다. 우리 코드가 사용자 문구를 실어야 하면 ResponseStatusException 이 아니라 그 문구를 그대로 답하는 도메인
+   * 예외(예: 상태 충돌은 IllegalStateException → 409)를 쓴다 — SavedQueryService 의 공유 쿼리 409 가 그렇게 바뀌었다. 5xx 도
+   * 서버 쪽 상세(내부 정보)를 보이지 않고 상태별 기본 문구로만 답한다.
    */
-  private static String clientErrorMessage(Exception ex, HttpStatus status) {
-    if (ex instanceof ResponseStatusException rse && StringUtils.hasText(rse.getReason())) {
-      return rse.getReason();
-    }
+  private static String standardErrorMessage(HttpStatus status) {
     return switch (status) {
       case BAD_REQUEST -> "요청이 올바르지 않습니다.";
       case UNAUTHORIZED -> "인증이 필요합니다.";
@@ -1505,7 +1536,9 @@ public class GlobalExceptionHandler {
       case NOT_FOUND -> NOT_FOUND_MESSAGE;
       case CONFLICT -> "요청이 현재 상태와 충돌합니다.";
       case TOO_MANY_REQUESTS -> "요청이 너무 많습니다. 잠시 후 다시 시도하세요.";
-      default -> "요청을 처리할 수 없습니다.";
+      case SERVICE_UNAVAILABLE -> SERVICE_UNAVAILABLE_MESSAGE;
+      case NOT_IMPLEMENTED -> NOT_IMPLEMENTED_MESSAGE;
+      default -> status.is5xxServerError() ? UNEXPECTED_ERROR_MESSAGE : "요청을 처리할 수 없습니다.";
     };
   }
 }

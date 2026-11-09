@@ -89,18 +89,19 @@ public class DataTableService {
     if (violation == null) {
       return;
     }
-    switch (violation.kind()) {
-      // 형식 문구는 공용 검증기(DataTableNames.validate)의 것을 그대로 쓴다 — 다른 호출처와 같은 문장이다.
-      case FORMAT -> validateName(columnName);
+    // default 없는 switch 식 — 위반 종류가 늘면 컴파일러가 빠진 분기를 알리고, 모든 분기가 예외를 직접 만든다.
+    throw switch (violation.kind()) {
+      // 형식 문구는 공용 검증기(DataTableNames.validate)의 것과 글자 하나 다르지 않게 쓴다 — 다른 호출처와 같은 문장이다.
+      case FORMAT -> DataTableNames.invalidNameException(columnName);
       case LENGTH ->
-          throw new InvalidTableNameException(
+          new InvalidTableNameException(
               "필드명은 최대 "
                   + MAX_COLUMN_NAME_LENGTH
                   + "자까지 쓸 수 있습니다(입력 "
                   + columnName.length()
                   + "자)");
-      case RESERVED -> throw new InvalidTableNameException(violation.reservedMessage());
-    }
+      case RESERVED -> new InvalidTableNameException(violation.reservedMessage());
+    };
   }
 
   /** 새 컬럼명 위반 종류 — 문구는 호출처(데이터셋 DDL·파이프라인 스텝 저장)마다 달라 종류만 공유한다. */

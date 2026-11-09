@@ -27,6 +27,8 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -321,19 +323,8 @@ class AiAgentProxyServiceTest extends IntegrationTestBase {
     SseEmitter emitter = spy(new SseEmitter());
     aiAgentProxyService.streamChat(emitter, "hi", null, List.of(), 1L, null, null);
 
-    ArgumentCaptor<SseEmitter.SseEventBuilder> eventCaptor =
-        ArgumentCaptor.forClass(SseEmitter.SseEventBuilder.class);
-    verify(emitter).send(eventCaptor.capture());
     verify(emitter).complete();
-    // SseEventBuilder.build() 는 "data:" 접두어와 실제 페이로드를 서로 다른
-    // DataWithMediaType 항목으로 나눠 담을 수 있어(SseEmitter 내부 구현, 문자열에 개행이
-    // 없으면 접두어가 먼저 플러시됨), 첫 항목만 보면 "data:" 리터럴만 잡힌다 — 모든 항목을
-    // 이어붙여 실제 메시지가 어디 있든 포함 여부를 확인한다.
-    String sentData =
-        eventCaptor.getValue().build().stream()
-            .map(d -> d.getData().toString())
-            .reduce("", String::concat);
-    assertThat(sentData).contains("claude-sonnet-5").contains("opencode 형식");
+    assertThat(sentData(emitter)).contains("claude-sonnet-5").contains("opencode 형식");
     wireMock.verify(0, postRequestedFor(urlEqualTo("/agent/chat")));
   }
 
@@ -356,19 +347,8 @@ class AiAgentProxyServiceTest extends IntegrationTestBase {
     SseEmitter emitter = spy(new SseEmitter());
     aiAgentProxyService.streamChat(emitter, "hi", null, List.of(), 1L, null, null);
 
-    ArgumentCaptor<SseEmitter.SseEventBuilder> eventCaptor =
-        ArgumentCaptor.forClass(SseEmitter.SseEventBuilder.class);
-    verify(emitter).send(eventCaptor.capture());
     verify(emitter).complete();
-    // SseEventBuilder.build() 는 "data:" 접두어와 실제 페이로드를 서로 다른
-    // DataWithMediaType 항목으로 나눠 담을 수 있어(SseEmitter 내부 구현, 문자열에 개행이
-    // 없으면 접두어가 먼저 플러시됨), 첫 항목만 보면 "data:" 리터럴만 잡힌다 — 모든 항목을
-    // 이어붙여 실제 메시지가 어디 있든 포함 여부를 확인한다.
-    String sentData =
-        eventCaptor.getValue().build().stream()
-            .map(d -> d.getData().toString())
-            .reduce("", String::concat);
-    assertThat(sentData).contains("anthropic/claude-sonnet-5").contains("opencode 형식");
+    assertThat(sentData(emitter)).contains("anthropic/claude-sonnet-5").contains("opencode 형식");
     wireMock.verify(0, postRequestedFor(urlEqualTo("/agent/chat")));
   }
 
@@ -394,16 +374,80 @@ class AiAgentProxyServiceTest extends IntegrationTestBase {
     await().atMost(Duration.ofSeconds(3)).untilAsserted(() -> verify(emitter).complete());
     verify(emitter, org.mockito.Mockito.never())
         .completeWithError(org.mockito.ArgumentMatchers.any());
-    ArgumentCaptor<SseEmitter.SseEventBuilder> eventCaptor =
-        ArgumentCaptor.forClass(SseEmitter.SseEventBuilder.class);
-    verify(emitter, org.mockito.Mockito.atLeastOnce()).send(eventCaptor.capture());
-    String allSent =
-        eventCaptor.getAllValues().stream()
-            .flatMap(b -> b.build().stream())
-            .map(d -> d.getData().toString())
-            .reduce("", String::concat);
+    String allSent = sentData(emitter);
     assertThat(allSent).contains("\"code\":\"session_busy\"").contains("이전 응답을 처리 중입니다");
     assertThat(allSent).doesNotContain("Agent connection failed");
+  }
+
+  /**
+   * WD-631: ai-agent 가 413 + {@code {"error": "…"}}(error-handler 의 한국어 안내)로 거절하면, 웹 채팅에는 "Agent
+   * connection failed: Agent error: 413 …{json}" 날 문구가 아니라 그 안내 문구만 오류 이벤트로 가고, 처리된 거절이므로 정상 종료한다.
+   */
+  @Test
+  void streamChat_agent가_413_JSON안내로_거절하면_그_문구를_오류이벤트로_전달한다() {
+    SseEmitter emitter =
+        streamChatAgainstAgentReply(
+            413, "application/json; charset=utf-8", "{\"error\":\"요청 본문이 너무 큽니다(최대 2MB).\"}");
+
+    await().atMost(Duration.ofSeconds(3)).untilAsserted(() -> verify(emitter).complete());
+    verify(emitter, org.mockito.Mockito.never())
+        .completeWithError(org.mockito.ArgumentMatchers.any());
+    String allSent = sentData(emitter);
+    assertThat(allSent).contains("\"type\":\"error\"").contains("요청 본문이 너무 큽니다(최대 2MB).");
+    assertThat(allSent).doesNotContain("Agent connection failed").doesNotContain("413");
+  }
+
+  /**
+   * WD-631: 413 이 아닌 비 2xx 는 본문이 무엇이든(프록시 HTML 502 · 내부 토큰 문제 401 JSON · 내부 계약 오류 400 JSON) 사용자 문구로
+   * 넘기지 않고 예전처럼 "Agent connection failed" 진단 문구를 보낸 뒤 completeWithError 로 끝낸다.
+   */
+  @ParameterizedTest(name = "{0} {1}")
+  @CsvSource(
+      delimiter = '|',
+      value = {
+        "502|text/html|<html>Bad Gateway</html>",
+        "401|application/json|{\"error\":\"Unauthorized: Invalid token\"}",
+        "400|application/json|{\"error\":\"tenantId is required\"}"
+      })
+  void streamChat_agent가_413이_아닌_비2xx면_기존_연결실패_문구를_유지한다(
+      int status, String contentType, String body) {
+    SseEmitter emitter = streamChatAgainstAgentReply(status, contentType, body);
+
+    await()
+        .atMost(Duration.ofSeconds(3))
+        .untilAsserted(() -> verify(emitter).completeWithError(org.mockito.ArgumentMatchers.any()));
+    assertThat(sentData(emitter)).contains("Agent connection failed: Agent error: " + status);
+  }
+
+  /** ai-agent /agent/chat 이 지정한 상태·본문으로 답하게 스텁하고, sdk 자격증명으로 streamChat 을 부른 emitter 를 돌려준다. */
+  private SseEmitter streamChatAgainstAgentReply(int status, String contentType, String body) {
+    when(settingsService.getAsMap("ai")).thenReturn(Map.of("ai.model", "claude-sonnet-5"));
+    when(aiCredentialService.resolve()).thenReturn(new AiCredential.Sdk("oat-test", ""));
+    wireMock.stubFor(
+        post(urlEqualTo("/agent/chat"))
+            .willReturn(
+                aResponse()
+                    .withStatus(status)
+                    .withHeader("Content-Type", contentType)
+                    .withBody(body)));
+    SseEmitter emitter = spy(new SseEmitter());
+    aiAgentProxyService.streamChat(emitter, "hi", "sess-" + status, List.of(), 1L, null, null);
+    return emitter;
+  }
+
+  /** emitter 로 보낸 모든 이벤트의 data 를 이어 붙인다. */
+  private static String sentData(SseEmitter emitter) {
+    ArgumentCaptor<SseEmitter.SseEventBuilder> eventCaptor =
+        ArgumentCaptor.forClass(SseEmitter.SseEventBuilder.class);
+    try {
+      verify(emitter, org.mockito.Mockito.atLeastOnce()).send(eventCaptor.capture());
+    } catch (IOException e) {
+      throw new IllegalStateException(e);
+    }
+    return eventCaptor.getAllValues().stream()
+        .flatMap(b -> b.build().stream())
+        .map(d -> d.getData().toString())
+        .reduce("", String::concat);
   }
 
   /** WD-57: 취소 프록시는 테넌트(요청 스레드의 컨텍스트)와 사용자 id 를 바디에 실어 ai-agent 의 취소 엔드포인트를 부른다. */

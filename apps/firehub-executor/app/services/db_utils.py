@@ -8,6 +8,16 @@ from psycopg2 import sql as pgsql
 from psycopg2.extras import execute_values
 
 
+def statement_timeout_sql(seconds: float) -> str:
+    """``SET LOCAL statement_timeout = <밀리초>`` 문장 문자열(WD-641) — :func:`set_local_statement_timeout` 과 같은 규칙으로 만든다.
+
+    분석 조회(``/execute/query``)는 설정 문장들을 한 번의 execute 로 묶어 보내므로(왕복 절약) 커서 호출 대신 문자열이 필요하다.
+    """
+    # round(…, 6) 은 12.3 * 1000 = 12300.000000000002 같은 부동소수 잡음에 올림이 한 칸 더 올라가는 것을 막는다.
+    millis = max(1, math.ceil(round(seconds * 1000, 6)))
+    return f"SET LOCAL statement_timeout = {millis}"
+
+
 def set_local_statement_timeout(cursor, seconds: float) -> None:
     """이 트랜잭션에만 걸리는 ``statement_timeout``(밀리초)을 건다 — ``/execute/sql`` 본문·선행 문장과 ``/execute/load`` 적재 공용.
 
@@ -17,9 +27,7 @@ def set_local_statement_timeout(cursor, seconds: float) -> None:
     소수 초를 받는다(WD-262) — 선행 문장 예산의 「남은 시간」은 소수라서다. 올림해 남은 시간보다 짧게 끊지 않으며, 0 밀리초는 PG 에서
     「제한 없음」이므로 최소 1 밀리초로 올린다(호출부가 예산 소진을 먼저 걸러내지만 방어선으로 둔다). 정수 초는 예전과 같은 값이다.
     """
-    # round(…, 6) 은 12.3 * 1000 = 12300.000000000002 같은 부동소수 잡음에 올림이 한 칸 더 올라가는 것을 막는다.
-    millis = max(1, math.ceil(round(seconds * 1000, 6)))
-    cursor.execute(f"SET LOCAL statement_timeout = {millis}")
+    cursor.execute(statement_timeout_sql(seconds))
 
 
 def pre_statement_timeout_message(seconds: int) -> str:
