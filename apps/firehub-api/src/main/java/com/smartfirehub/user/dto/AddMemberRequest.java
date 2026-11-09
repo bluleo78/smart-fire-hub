@@ -21,10 +21,9 @@ public record AddMemberRequest(
         String email,
     @NotBlank(message = "이름은 필수입니다") @Size(max = 50, message = "이름은 50자 이하여야 합니다") String name,
     @NotBlank(message = "임시 비밀번호는 필수입니다")
-        @Size(
-            min = PasswordRules.MIN_LENGTH,
-            max = PasswordRules.MAX_LENGTH,
-            message = PasswordRules.SIZE_MESSAGE)
+        // 길이: 하한은 글자 수, 상한은 BCrypt 가 실제로 쓰는 UTF-8 72바이트 (WD-605)
+        @Size(min = PasswordRules.MIN_LENGTH, message = PasswordRules.MIN_LENGTH_MESSAGE)
+        @PasswordMaxBytes
         @Pattern(regexp = PasswordRules.PATTERN, message = PasswordRules.PATTERN_MESSAGE)
         String temporaryPassword,
     List<Long> roleIds) {}

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { generateTemporaryPassword, PASSWORD_POLICY } from './temp-password';
 
 describe('generateTemporaryPassword', () => {
-  it('항상 서버 정책(소·대·숫자 각 1+, 8~128자)을 만족한다', () => {
+  it('항상 서버 정책(소·대·숫자 각 1+, 8자 이상·72바이트 이하)을 만족한다', () => {
     for (let i = 0; i < 500; i++) {
       const pw = generateTemporaryPassword();
       expect(pw).toHaveLength(12);

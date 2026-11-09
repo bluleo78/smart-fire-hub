@@ -13,6 +13,7 @@ import { Input } from '../components/ui/input';
 import { Separator } from '../components/ui/separator';
 import { useAuth } from '../hooks/useAuth';
 import { useGuardedSubmit } from '../hooks/useSubmitGuard';
+import { PASSWORD_HELP_TEXT } from '../lib/temp-password';
 import type { ChangePasswordFormData,UpdateProfileFormData } from '../lib/validations/user';
 import { changePasswordSchema,updateProfileSchema } from '../lib/validations/user';
 
@@ -222,8 +223,9 @@ export default function ProfilePage() {
                 }
                 {...passwordForm.register('newPassword')}
               />
+              {/* 상한은 UTF-8 바이트라 한글이 3바이트로 세어짐을 함께 알린다 (WD-605) */}
               <p id="new-password-help" className="text-[13px] text-muted-foreground">
-                8~128자, 대·소문자·숫자 포함
+                {PASSWORD_HELP_TEXT}
               </p>
             </FormField>
             <FormField

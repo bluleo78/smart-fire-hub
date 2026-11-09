@@ -741,6 +741,25 @@ class PlatformAccountControllerTest extends IntegrationTestBase {
     assertThat(userIdByUsername(marker + "-weak@example.com")).isNull();
   }
 
+  /**
+   * WD-605: 임시 비밀번호가 UTF-8 72바이트를 넘으면 400 + 한국어 필드 문구, 계정은 생기지 않는다(BCrypt 가 앞 72바이트만 쓴다). 72바이트는
+   * 만들어진다.
+   */
+  @Test
+  void create_temporaryPasswordOver72Bytes_400_noAccount() throws Exception {
+    String email = marker + "-long@example.com";
+    createAccount(createBody(email, "긴비번", "Aa1" + "a".repeat(70)), operatorToken)
+        .andExpect(status().isBadRequest())
+        .andExpect(
+            jsonPath("$.errors.temporaryPassword")
+                .value("비밀번호는 72바이트(영문·숫자 72자, 한글 24자) 이하여야 합니다"));
+    assertThat(userIdByUsername(email)).isNull();
+
+    createAccount(createBody(email, "긴비번", "Aa1" + "a".repeat(69)), operatorToken)
+        .andExpect(status().isCreated());
+    users.add(userIdByUsername(email));
+  }
+
   /** 평면 격리: 테넌트 토큰(ADMIN 이라도)으로는 계정을 만들 수 없다. */
   @Test
   void create_tenantToken_rejected() throws Exception {

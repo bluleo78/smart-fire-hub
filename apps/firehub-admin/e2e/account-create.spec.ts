@@ -86,6 +86,30 @@ test.describe('계정 생성 (WD-46)', () => {
     await expect(dialog.getByRole('heading', { name: '계정 생성' })).toBeVisible();
   });
 
+  /**
+   * WD-605: 서버는 BCrypt 가 실제로 쓰는 UTF-8 72바이트까지만 받는다 — 한글은 1자 3바이트라 27자('Aa1'+한글 24자)도
+   * 75바이트로 넘친다. 제출 전에 비밀번호 아래에서 막고 POST 를 보내지 않는다. 72바이트는 그대로 보낸다.
+   */
+  test('임시 비밀번호가 72바이트를 넘으면(한글 포함) 바이트 상한 문구를 보이고 요청하지 않는다 (WD-605)', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/platform/accounts', createAccountPage([]));
+    const capture = await mockApi(page, 'POST', '/api/platform/accounts', CREATED, { status: 201, capture: true });
+    await page.goto('/accounts');
+    await page.getByRole('button', { name: '계정 생성' }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByText('8자 이상·72바이트 이하(한글 1자는 3바이트), 대·소문자·숫자 포함. 열 때마다 자동으로 만들어집니다.')).toBeVisible();
+    await dialog.getByLabel('이메일(로그인 아이디)').fill('new@example.com');
+    await dialog.getByLabel('이름').fill('신규자');
+    await dialog.getByLabel('임시 비밀번호').fill('Aa1' + '가'.repeat(24));
+    await dialog.getByRole('button', { name: '계정 생성' }).click();
+    await expect(dialog.getByText('비밀번호는 72바이트(영문·숫자 72자, 한글 24자) 이하여야 합니다')).toBeVisible();
+    expect(capture.requests).toHaveLength(0);
+
+    await dialog.getByLabel('임시 비밀번호').fill('Aa1' + '가'.repeat(23));
+    await dialog.getByRole('button', { name: '계정 생성' }).click();
+    const sent = await capture.waitForRequest();
+    expect(sent.payload).toMatchObject({ temporaryPassword: 'Aa1' + '가'.repeat(23) });
+  });
+
   test('서버 Bean Validation 400 은 필드 아래로 돌려 준다', async ({ authenticatedPage: page }) => {
     await mockApi(page, 'GET', '/api/platform/accounts', createAccountPage([]));
     await mockApi(

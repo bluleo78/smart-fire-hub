@@ -15,14 +15,20 @@ import type { UserDetailResponse } from '../../../src/types/user';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, MOCK_USER, test } from '../../fixtures/auth.fixture';
 
-/** 대·소문자·숫자를 모두 넣어 복잡도는 통과하고 길이(129자)만 위반하는 값 (WD-270) */
-const PASSWORD_129 = 'Aa1' + 'a'.repeat(126);
-/** ChangePasswordRequest 길이 위반 시 서버 400 응답 (WD-270) */
+/**
+ * 대·소문자·숫자를 모두 넣어 복잡도는 통과하고 UTF-8 바이트 상한(72)만 가르는 값 (WD-605).
+ * 한글은 UTF-8 로 1자 3바이트 — 'Aa1' + 한글 24자는 27자지만 75바이트다.
+ */
+const PASSWORD_73_BYTES = 'Aa1' + 'a'.repeat(70);
+const PASSWORD_72_BYTES = 'Aa1' + 'a'.repeat(69);
+const KOREAN_75_BYTES = 'Aa1' + '가'.repeat(24);
+const KOREAN_72_BYTES = 'Aa1' + '가'.repeat(23);
+/** ChangePasswordRequest 길이(바이트) 위반 시 서버 400 응답 (WD-270, WD-605) */
 const NEW_PASSWORD_SIZE_400 = {
   status: 400,
   error: 'Bad Request',
   message: 'Validation failed',
-  errors: { newPassword: '새 비밀번호는 8~128자여야 합니다' },
+  errors: { newPassword: '새 비밀번호는 72바이트(영문·숫자 72자, 한글 24자) 이하여야 합니다' },
 };
 
 test.describe('프로필 페이지', () => {
@@ -583,22 +589,61 @@ test.describe('프로필 페이지', () => {
     expect(passwordApiCalled).toBe(false);
   });
 
-  /** 회귀 테스트 (WD-270): 129자는 제출 전에 새 비밀번호 아래에서 막히고 PUT 이 나가지 않는다. */
-  test('새 비밀번호 129자 → 새 비밀번호 아래 128자 상한 에러가 표시되고 API 호출이 안 된다 (WD-270)', async ({ authenticatedPage: page }) => {
+  /**
+   * 회귀 테스트 (WD-605): BCrypt 는 앞 72바이트만 쓰므로 상한은 글자 수가 아니라 UTF-8 72바이트다.
+   * 73바이트(영문)는 제출 전에 새 비밀번호 아래에서 막히고 PUT 이 나가지 않는다.
+   */
+  test('새 비밀번호 73바이트(영문) → 72바이트 상한 에러가 표시되고 API 호출이 안 된다 (WD-605)', async ({ authenticatedPage: page }) => {
     await page.goto('/profile');
     const pwCapture = await mockApi(page, 'PUT', '/api/v1/users/me/password', {}, { capture: true });
 
     await expect(page.locator('#current-password')).toBeVisible({ timeout: 5000 });
-    // 강제 변경 화면과 같은 규칙 안내가 aria-describedby 로 연결돼 있어야 한다
-    await expect(page.locator('#new-password')).toHaveAccessibleDescription('8~128자, 대·소문자·숫자 포함');
+    // 강제 변경 화면과 같은 규칙 안내가 aria-describedby 로 연결돼 있어야 한다 — 한글이 3바이트임을 알린다
+    await expect(page.locator('#new-password')).toHaveAccessibleDescription('8자 이상·72바이트 이하(한글 1자는 3바이트), 대·소문자·숫자 포함');
     await page.locator('#current-password').fill('OldPass123');
-    await page.locator('#new-password').fill(PASSWORD_129);
-    await page.locator('#confirm-password').fill(PASSWORD_129);
+    await page.locator('#new-password').fill(PASSWORD_73_BYTES);
+    await page.locator('#confirm-password').fill(PASSWORD_73_BYTES);
 
     await page.getByRole('button', { name: '비밀번호 변경' }).click();
 
-    await expect(page.locator('#new-password-error')).toHaveText('새 비밀번호는 128자 이하여야 합니다', { timeout: 5000 });
+    await expect(page.locator('#new-password-error')).toHaveText('새 비밀번호는 72바이트(영문·숫자 72자, 한글 24자) 이하여야 합니다', { timeout: 5000 });
     expect(pwCapture.requests).toHaveLength(0);
+  });
+
+  /** 회귀 테스트 (WD-605): 한글은 1자 3바이트 — 27자(75바이트)도 글자 수로는 짧지만 바이트 상한에 걸린다. */
+  test('새 비밀번호 한글 포함 75바이트 → 72바이트 상한 에러가 표시되고 API 호출이 안 된다 (WD-605)', async ({ authenticatedPage: page }) => {
+    await page.goto('/profile');
+    const pwCapture = await mockApi(page, 'PUT', '/api/v1/users/me/password', {}, { capture: true });
+
+    await expect(page.locator('#current-password')).toBeVisible({ timeout: 5000 });
+    await page.locator('#current-password').fill('OldPass123');
+    await page.locator('#new-password').fill(KOREAN_75_BYTES);
+    await page.locator('#confirm-password').fill(KOREAN_75_BYTES);
+
+    await page.getByRole('button', { name: '비밀번호 변경' }).click();
+
+    await expect(page.locator('#new-password-error')).toHaveText('새 비밀번호는 72바이트(영문·숫자 72자, 한글 24자) 이하여야 합니다', { timeout: 5000 });
+    expect(pwCapture.requests).toHaveLength(0);
+  });
+
+  /** 회귀 테스트 (WD-605): 정확히 72바이트(영문 72자·한글 포함 72바이트)는 경계 안 — 그대로 PUT 된다. */
+  test('새 비밀번호 72바이트(영문·한글 포함) → 상한 에러 없이 PUT 된다 (WD-605)', async ({ authenticatedPage: page }) => {
+    await page.goto('/profile');
+    const pwCapture = await mockApi(page, 'PUT', '/api/v1/users/me/password', {}, { capture: true });
+
+    await expect(page.locator('#current-password')).toBeVisible({ timeout: 5000 });
+    for (const value of [PASSWORD_72_BYTES, KOREAN_72_BYTES]) {
+      await page.locator('#current-password').fill('OldPass123');
+      await page.locator('#new-password').fill(value);
+      await page.locator('#confirm-password').fill(value);
+      await page.getByRole('button', { name: '비밀번호 변경' }).click();
+      const captured = await pwCapture.waitForRequest();
+      expect(captured.payload).toMatchObject({ newPassword: value });
+      // 성공하면 폼이 비워진다 — 다음 값을 넣기 전에 기다린다
+      await expect(page.locator('#current-password')).toHaveValue('', { timeout: 3000 });
+    }
+    expect(pwCapture.requests).toHaveLength(2);
+    await expect(page.locator('#new-password-error')).toHaveCount(0);
   });
 
   /** 회귀 테스트 (WD-270): 서버 필드 errors 400 은 폼 상단이 아니라 해당 입력 아래에 표시한다. */
@@ -612,7 +657,7 @@ test.describe('프로필 페이지', () => {
     await page.locator('#confirm-password').fill('NewPass456');
     await page.getByRole('button', { name: '비밀번호 변경' }).click();
 
-    await expect(page.locator('#new-password-error')).toHaveText('새 비밀번호는 8~128자여야 합니다', { timeout: 5000 });
+    await expect(page.locator('#new-password-error')).toHaveText('새 비밀번호는 72바이트(영문·숫자 72자, 한글 24자) 이하여야 합니다', { timeout: 5000 });
     // 폼 상단 기본 문구로 떨어지지 않아야 한다
     await expect(page.getByText('현재 비밀번호가 올바르지 않습니다.')).toHaveCount(0);
   });

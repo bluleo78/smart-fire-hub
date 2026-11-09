@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { PASSWORD_POLICY } from '../temp-password';
+import { PASSWORD_MAX_BYTES_MESSAGE, PASSWORD_POLICY, withinPasswordMaxBytes } from '../temp-password';
 
 /**
  * 운영자 계정 생성 폼(WD-46). 경계는 서버 `CreatePlatformAccountRequest` 와 **같아야** 한다 —
@@ -19,7 +19,8 @@ export const createAccountSchema = z.object({
   temporaryPassword: z
     .string()
     .min(8, '비밀번호는 8자 이상이어야 합니다')
-    .max(128, '비밀번호는 128자 이하여야 합니다')
+    // 상한은 UTF-8 72바이트 — 서버 CreatePlatformAccountRequest 와 같다. BCrypt 가 앞 72바이트만 쓴다 (WD-605)
+    .refine(withinPasswordMaxBytes, PASSWORD_MAX_BYTES_MESSAGE)
     .regex(PASSWORD_POLICY, '대문자, 소문자, 숫자를 모두 포함해야 합니다'),
 });
 

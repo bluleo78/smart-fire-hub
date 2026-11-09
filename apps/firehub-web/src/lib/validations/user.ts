@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { PASSWORD_MAX_LENGTH, PASSWORD_POLICY } from '../temp-password';
+import { PASSWORD_MAX_BYTES_MESSAGE, PASSWORD_POLICY, withinPasswordMaxBytes } from '../temp-password';
 
 export const updateProfileSchema = z.object({
   // 이름은 1자 이상 50자 이하 — DB 컬럼(user.name VARCHAR(50))·멤버 추가 폼과 같은 상한 (WD-125).
@@ -16,8 +16,9 @@ export const changePasswordSchema = z.object({
   newPassword: z
     .string()
     .min(8, '새 비밀번호는 8자 이상이어야 합니다')
-    // 서버 ChangePasswordRequest 와 같은 상한 — 프로필·강제 변경 공용 (WD-270)
-    .max(PASSWORD_MAX_LENGTH, `새 비밀번호는 ${PASSWORD_MAX_LENGTH}자 이하여야 합니다`)
+    // 서버 ChangePasswordRequest 와 같은 상한 — 프로필·강제 변경 공용 (WD-270).
+    // 상한은 글자 수가 아니라 UTF-8 72바이트 — BCrypt 가 앞 72바이트만 쓴다 (WD-605)
+    .refine(withinPasswordMaxBytes, `새 ${PASSWORD_MAX_BYTES_MESSAGE}`)
     .regex(PASSWORD_POLICY, '대문자, 소문자, 숫자를 모두 포함해야 합니다'),
   confirmPassword: z.string().min(1, '비밀번호 확인을 입력하세요'),
 }).refine(data => data.newPassword === data.confirmPassword, {
@@ -51,7 +52,8 @@ export const addMemberSchema = z.object({
   temporaryPassword: z
     .string()
     .min(8, '비밀번호는 8자 이상이어야 합니다')
-    .max(PASSWORD_MAX_LENGTH, `비밀번호는 ${PASSWORD_MAX_LENGTH}자 이하여야 합니다`)
+    // 상한은 UTF-8 72바이트 — 서버 AddMemberRequest 와 같다 (WD-605)
+    .refine(withinPasswordMaxBytes, PASSWORD_MAX_BYTES_MESSAGE)
     .regex(PASSWORD_POLICY, '대문자, 소문자, 숫자를 모두 포함해야 합니다'),
   roleIds: z.array(z.number()),
 });

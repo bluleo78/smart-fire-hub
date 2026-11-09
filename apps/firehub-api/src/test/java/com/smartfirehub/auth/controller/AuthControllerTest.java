@@ -136,12 +136,15 @@ class AuthControllerTest {
     verify(authService, never()).signup(any());
   }
 
-  /** 비밀번호 129자는 400 + 한국어 필드 문구, 가입 시도 없음 (WD-270). */
+  /**
+   * WD-605: 비밀번호가 UTF-8 72바이트를 넘으면 400 + 한국어 필드 문구, 가입 시도 없음. BCrypt 가 앞 72바이트만 쓰므로 그 뒤는 비밀번호 구실을 못
+   * 한다. "Aa1" + 한글 24자 = 27자·75바이트 — 글자 수 상한(예전 128자)으로는 통과하던 값이다.
+   */
   @Test
-  void signup_passwordOver128_returnsKoreanFieldErrorWithoutSignup() throws Exception {
+  void signup_passwordOver72Bytes_returnsKoreanFieldErrorWithoutSignup() throws Exception {
     SignupRequest request =
         new SignupRequest(
-            "test@example.com", "test@example.com", "Aa1" + "a".repeat(126), "Test User");
+            "test@example.com", "test@example.com", "Aa1" + "가".repeat(24), "Test User");
 
     mockMvc
         .perform(
@@ -149,7 +152,7 @@ class AuthControllerTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(request)))
         .andExpect(status().isBadRequest())
-        .andExpect(jsonPath("$.errors.password").value("비밀번호는 8~128자여야 합니다"));
+        .andExpect(jsonPath("$.errors.password").value("비밀번호는 72바이트(영문·숫자 72자, 한글 24자) 이하여야 합니다"));
 
     verify(authService, never()).signup(any());
   }

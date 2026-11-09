@@ -1,5 +1,7 @@
 package com.smartfirehub.platform.dto;
 
+import com.smartfirehub.user.dto.PasswordMaxBytes;
+import com.smartfirehub.user.dto.PasswordRules;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
@@ -22,8 +24,8 @@ public record CreatePlatformAccountRequest(
         String email,
     @NotBlank(message = "이름은 필수입니다") @Size(max = 50, message = "이름은 50자 이하여야 합니다") String name,
     @NotBlank(message = "임시 비밀번호는 필수입니다")
-        @Size(min = 8, max = 128, message = "비밀번호는 8~128자여야 합니다")
-        @Pattern(
-            regexp = "^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d).+$",
-            message = "비밀번호는 대문자, 소문자, 숫자를 각각 1자 이상 포함해야 합니다")
+        // 멤버 추가와 같은 PasswordRules 공용 규칙 — 상한은 BCrypt 가 실제로 쓰는 UTF-8 72바이트 (WD-605)
+        @Size(min = PasswordRules.MIN_LENGTH, message = PasswordRules.MIN_LENGTH_MESSAGE)
+        @PasswordMaxBytes
+        @Pattern(regexp = PasswordRules.PATTERN, message = PasswordRules.PATTERN_MESSAGE)
         String temporaryPassword) {}

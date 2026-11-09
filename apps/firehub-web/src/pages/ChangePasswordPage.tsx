@@ -18,6 +18,7 @@ import {
   isWrongCurrentPasswordError,
   PASSWORD_CHANGE_FAILED_MESSAGE,
 } from '../lib/api-error';
+import { PASSWORD_HELP_TEXT } from '../lib/temp-password';
 import type { ChangePasswordFormData } from '../lib/validations/user';
 import { forcedPasswordChangeSchema } from '../lib/validations/user';
 
@@ -118,8 +119,9 @@ export default function ChangePasswordPage() {
                 aria-describedby="new-password-help"
                 {...register('newPassword')}
               />
+              {/* 상한은 UTF-8 바이트라 한글이 3바이트로 세어짐을 함께 알린다 (WD-605) */}
               <p id="new-password-help" className="text-[13px] text-muted-foreground">
-                8~128자, 대·소문자·숫자 포함
+                {PASSWORD_HELP_TEXT}
               </p>
             </FormField>
             <FormField label="새 비밀번호 확인" htmlFor="confirm-password" error={errors.confirmPassword?.message} required>
