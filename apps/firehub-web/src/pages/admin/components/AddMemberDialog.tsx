@@ -28,7 +28,7 @@ import { Input } from '../../../components/ui/input';
 import { Label } from '../../../components/ui/label';
 import { Skeleton } from '../../../components/ui/skeleton';
 import { useAuth } from '../../../hooks/useAuth';
-import { useSubmitGuard } from '../../../hooks/useSubmitGuard';
+import { useGuardedSubmit } from '../../../hooks/useSubmitGuard';
 import { applyFieldErrors, extractApiError } from '../../../lib/api-error';
 import { generateTemporaryPassword, PASSWORD_MAX_LENGTH } from '../../../lib/temp-password';
 import type { AddMemberFormData } from '../../../lib/validations/user';
@@ -106,7 +106,6 @@ export function AddMemberDialog({ canAssignRoles, canReadRoles }: { canAssignRol
   });
   const {
     register,
-    handleSubmit,
     control,
     setValue,
     setError,
@@ -155,9 +154,6 @@ export function AddMemberDialog({ canAssignRoles, canReadRoles }: { canAssignRol
     reset(next ? { ...EMPTY_FORM, temporaryPassword: generateTemporaryPassword() } : EMPTY_FORM);
   };
 
-  // 제출 잠금(WD-637) — 버튼을 disabled 대신 aria-disabled 로 잠가 포커스를 지키므로, 진행 중 재제출(입력칸 Enter 연타)은 여기서 무시한다
-  const guardSubmit = useSubmitGuard();
-
   const onSubmit = async (values: AddMemberFormData) => {
     const email = values.email.trim();
     try {
@@ -198,6 +194,8 @@ export function AddMemberDialog({ canAssignRoles, canReadRoles }: { canAssignRol
       setError('root', { message: extractApiError(error, '멤버를 추가하지 못했습니다') });
     }
   };
+
+  const submitForm = useGuardedSubmit(form.handleSubmit, onSubmit);
 
   const roles = rolesQuery.data ?? [];
 
@@ -268,7 +266,7 @@ export function AddMemberDialog({ canAssignRoles, canReadRoles }: { canAssignRol
             </DialogFooter>
           </>
         ) : (
-          <form onSubmit={guardSubmit(handleSubmit(onSubmit))} noValidate className="flex min-h-0 flex-1 flex-col gap-4">
+          <form onSubmit={submitForm} noValidate className="flex min-h-0 flex-1 flex-col gap-4">
             <DialogHeader>
               <DialogTitle>멤버 추가</DialogTitle>
               <DialogDescription className="break-keep">
@@ -456,7 +454,6 @@ export function AddMemberDialog({ canAssignRoles, canReadRoles }: { canAssignRol
               <Button type="button" variant="outline" disabled={isSubmitting} onClick={() => handleOpenChange(false)}>
                 취소
               </Button>
-              {/* 제출 중에도 포커스가 버튼에 남도록 aria-disabled 로 잠근다(WD-637) */}
               <PendingSubmitButton pending={isSubmitting}>
                 {isSubmitting && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
                 추가

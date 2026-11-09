@@ -12,7 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Input } from '../components/ui/input';
 import { Separator } from '../components/ui/separator';
 import { useAuth } from '../hooks/useAuth';
-import { useSubmitGuard } from '../hooks/useSubmitGuard';
+import { useGuardedSubmit } from '../hooks/useSubmitGuard';
 import type { ChangePasswordFormData,UpdateProfileFormData } from '../lib/validations/user';
 import { changePasswordSchema,updateProfileSchema } from '../lib/validations/user';
 
@@ -53,9 +53,6 @@ export default function ProfilePage() {
       confirmPassword: '',
     },
   });
-
-  const guardProfileSubmit = useSubmitGuard();
-  const guardPasswordSubmit = useSubmitGuard();
 
   useEffect(() => {
     if (user) {
@@ -115,6 +112,10 @@ export default function ProfilePage() {
     }
   };
 
+  // 두 폼은 서로 다른 요청이라 잠금도 따로다
+  const submitProfile = useGuardedSubmit(profileForm.handleSubmit, onProfileSubmit);
+  const submitPassword = useGuardedSubmit(passwordForm.handleSubmit, onPasswordSubmit);
+
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">내 프로필</h1>
@@ -124,7 +125,7 @@ export default function ProfilePage() {
           <CardTitle>프로필 정보</CardTitle>
         </CardHeader>
         <CardContent>
-          <form onSubmit={guardProfileSubmit(profileForm.handleSubmit(onProfileSubmit))} className="space-y-4">
+          <form onSubmit={submitProfile} className="space-y-4">
             {/* 로그인 계정(username)은 변경 불가 — 사용자가 자신의 로그인 이메일을 항상 확인할 수 있도록 읽기 전용으로 표시한다 */}
             <FormField
               label="로그인 계정"
@@ -187,7 +188,7 @@ export default function ProfilePage() {
           <CardTitle>비밀번호 변경</CardTitle>
         </CardHeader>
         <CardContent>
-          <form onSubmit={guardPasswordSubmit(passwordForm.handleSubmit(onPasswordSubmit))} className="space-y-4">
+          <form onSubmit={submitPassword} className="space-y-4">
             <FormField
               label="현재 비밀번호"
               htmlFor="current-password"

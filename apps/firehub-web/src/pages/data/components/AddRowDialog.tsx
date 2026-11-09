@@ -7,7 +7,7 @@ import { toast } from 'sonner';
 import { PendingSubmitButton } from '../../../components/PendingSubmitButton';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../../components/ui/dialog';
 import { useAddRow } from '../../../hooks/queries/useDatasets';
-import { useSubmitGuard } from '../../../hooks/useSubmitGuard';
+import { useGuardedSubmit } from '../../../hooks/useSubmitGuard';
 import { handleApiError } from '../../../lib/api-error';
 import type { DatasetColumnResponse } from '../../../types/dataset';
 import { buildRowZodSchema, cleanFormValues } from './row-form-utils';
@@ -43,8 +43,6 @@ export function AddRowDialog({ open, onOpenChange, datasetId, columns }: AddRowD
   });
 
   const addRow = useAddRow(datasetId);
-  // 제출 잠금(WD-637) — 버튼을 disabled 대신 aria-disabled 로 잠가 포커스를 지키므로, 진행 중 재제출(입력칸 Enter 연타)은 여기서 무시한다
-  const guardSubmit = useSubmitGuard();
 
   const onSubmit = async (data: Record<string, unknown>) => {
     const cleaned = cleanFormValues(data, columns);
@@ -58,6 +56,8 @@ export function AddRowDialog({ open, onOpenChange, datasetId, columns }: AddRowD
     }
   };
 
+  const submitForm = useGuardedSubmit(form.handleSubmit, onSubmit);
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[80vh] overflow-y-auto overscroll-contain">
@@ -65,10 +65,9 @@ export function AddRowDialog({ open, onOpenChange, datasetId, columns }: AddRowD
           <DialogTitle>행 추가</DialogTitle>
           <DialogDescription className="sr-only">데이터셋에 새 행을 추가합니다.</DialogDescription>
         </DialogHeader>
-        <form onSubmit={guardSubmit(form.handleSubmit(onSubmit))} className="space-y-4">
+        <form onSubmit={submitForm} className="space-y-4">
           <RowFormFields columns={columns} form={form} idPrefix="add" mode="add" />
 
-          {/* 제출 중에도 포커스가 버튼에 남도록 aria-disabled 로 잠근다(WD-637) */}
           <PendingSubmitButton className="w-full" pending={form.formState.isSubmitting}>
             {form.formState.isSubmitting ? (
               <>

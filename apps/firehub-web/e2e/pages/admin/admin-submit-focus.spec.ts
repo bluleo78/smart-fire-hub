@@ -42,13 +42,12 @@ test.describe('멤버 추가 — 제출 중 포커스 (WD-637)', () => {
     const submit = dialog.getByRole('button', { name: '추가', exact: true });
 
     // 진행 중 라벨은 「추가」 그대로다(스피너만 붙는다)
-    await submitAndRetryWhilePending(page, submit, submit);
+    await submitAndRetryWhilePending(page, submit, submit, post);
     post.release();
 
     await expect(dialog.getByRole('alert')).toHaveText('서버 오류가 발생했습니다.');
     await expect(submit).toBeFocused();
     expect(await focusInsideDialog(page)).toBe(true);
-    expect(post.requests.length).toBe(1);
   });
 
   test('이미 멤버(409): 포커스가 다이얼로그 안의 이메일 칸으로 옮겨진다', async ({ authenticatedPage: page }) => {
@@ -78,12 +77,12 @@ test.describe('새 역할 — 제출 중 포커스 (WD-637)', () => {
       page,
       dialog.getByRole('button', { name: '만들기' }),
       dialog.getByRole('button', { name: '만드는 중...' }),
+      post,
     );
     post.release();
 
     await expect(dialog.getByText('역할 서버 오류')).toBeVisible();
     await expect(dialog.getByRole('button', { name: '만들기' })).toBeFocused();
     expect(await focusInsideDialog(page)).toBe(true);
-    expect(post.requests.length).toBe(1);
   });
 });

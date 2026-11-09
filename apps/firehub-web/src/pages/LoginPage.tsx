@@ -15,7 +15,7 @@ import { PasswordInput } from '../components/ui/password-input';
 import { useSignupStatus } from '../hooks/queries/useSignupStatus';
 import { useAuth } from '../hooks/useAuth';
 import { useBranding } from '../hooks/useBranding';
-import { useSubmitGuard } from '../hooks/useSubmitGuard';
+import { useGuardedSubmit } from '../hooks/useSubmitGuard';
 import { isBadCredentialsError } from '../lib/api-error';
 import { takeLoginNotice } from '../lib/login-notice';
 import type { LoginFormData } from '../lib/validations/auth';
@@ -45,17 +45,6 @@ export default function LoginPage() {
   } = useForm<LoginFormData>({
     resolver: zodResolver(loginSchema),
   });
-  const guardSubmit = useSubmitGuard();
-
-  if (isAuthenticated) {
-    // 딥링크 보존(#675): ProtectedRoute가 미인증 상태로 리다이렉트하며 실어 보낸
-    // state.from이 있으면 원래 접근하려던 경로로, 없으면 기존처럼 홈으로 이동한다.
-    // state.from은 ProtectedRoute의 useLocation()이 만든 내부 객체이므로 외부 입력으로
-    // 조작 불가능하다(open redirect 위험 없음).
-    const from = (location.state as { from?: Location } | null)?.from;
-    const redirectTo = from ? `${from.pathname}${from.search}${from.hash}` : '/';
-    return <Navigate to={redirectTo} replace />;
-  }
 
   const onSubmit = async (data: LoginFormData) => {
     try {
@@ -74,6 +63,17 @@ export default function LoginPage() {
       if (badCreds) setFocus('password');
     }
   };
+  const submitForm = useGuardedSubmit(handleSubmit, onSubmit);
+
+  if (isAuthenticated) {
+    // 딥링크 보존(#675): ProtectedRoute가 미인증 상태로 리다이렉트하며 실어 보낸
+    // state.from이 있으면 원래 접근하려던 경로로, 없으면 기존처럼 홈으로 이동한다.
+    // state.from은 ProtectedRoute의 useLocation()이 만든 내부 객체이므로 외부 입력으로
+    // 조작 불가능하다(open redirect 위험 없음).
+    const from = (location.state as { from?: Location } | null)?.from;
+    const redirectTo = from ? `${from.pathname}${from.search}${from.hash}` : '/';
+    return <Navigate to={redirectTo} replace />;
+  }
 
   return (
     <div className="flex min-h-dvh items-center justify-center px-4">
@@ -89,7 +89,7 @@ export default function LoginPage() {
           <h1 className="text-2xl leading-8 font-semibold tracking-tight">{brandName}</h1>
         </CardHeader>
         <CardContent>
-          <form onSubmit={guardSubmit(handleSubmit(onSubmit))} className="space-y-4">
+          <form onSubmit={submitForm} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="username">아이디 (이메일)</Label>
               <Input

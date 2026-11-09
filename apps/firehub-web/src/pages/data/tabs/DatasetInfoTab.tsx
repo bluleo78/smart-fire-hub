@@ -24,7 +24,7 @@ import {
 } from '../../../components/ui/select';
 import { useDatasetPermissions, useUpdateDataset } from '../../../hooks/queries/useDatasets';
 import { useEditModeFocus } from '../../../hooks/useEditModeFocus';
-import { useSubmitGuard } from '../../../hooks/useSubmitGuard';
+import { guardFormSubmit, useSubmitGuard } from '../../../hooks/useSubmitGuard';
 import { isEditConflict } from '../../../lib/api-error';
 import { formatDate, formatRelativeTime, getOriginTypeLabel, getStorageTypeLabel } from '../../../lib/formatters';
 import type { UpdateDatasetFormData } from '../../../lib/validations/dataset';
@@ -57,8 +57,6 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
   const queryClient = useQueryClient();
   // 정보 저장이 편집 충돌(409 EDIT_CONFLICT)로 거부됐는가(WD-575) — 참이면 EditConflictDialog 를 띄운다
   const [editConflict, setEditConflict] = React.useState(false);
-  // 제출 잠금(WD-637) — 버튼을 disabled 대신 aria-disabled 로 잠가 포커스를 지키므로, 진행 중 재제출(입력칸 Enter 연타)은 여기서 무시한다
-  const guardInfoSubmit = useSubmitGuard();
 
   const infoForm = useForm<UpdateDatasetFormData>({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -122,6 +120,11 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
     },
     [updateDataset, dataset.updatedAt]
   );
+
+  // 기본 저장과 충돌 창의 「덮어쓰기」가 같은 잠금을 쓴다(WD-683) — 한쪽이 진행 중일 때 다른 쪽이 PUT 을 또 보내지 않게
+  const guardInfoSubmit = useSubmitGuard();
+  const submitInfo = guardFormSubmit(guardInfoSubmit, infoForm.handleSubmit, onInfoSubmit);
+  const overwriteInfo = guardFormSubmit(guardInfoSubmit, infoForm.handleSubmit, (data) => onInfoSubmit(data, true));
 
   /**
    * 편집 충돌의 「다시 불러오기」(WD-575) — 최신 데이터셋을 서버에서 새로 받아 폼을 그것으로 바꾸고 내 변경은 버린다.
@@ -218,8 +221,7 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
             ref={(el) => {
               editRegionRef.current = el;
             }}
-            // handleSubmit 은 두 번째 인자로 이벤트를 넘기므로 감싸서 부른다 — 그대로 넘기면 이벤트가 overwrite 로 읽혀 기준 없이 저장된다
-            onSubmit={guardInfoSubmit(infoForm.handleSubmit((data) => onInfoSubmit(data)))}
+            onSubmit={submitInfo}
             className="space-y-4"
           >
             <div className="space-y-2">
@@ -266,7 +268,6 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
             </div>
 
             <div className="flex gap-2">
-              {/* 제출 중에도 포커스가 버튼에 남도록 aria-disabled 로 잠근다(WD-637) */}
               <PendingSubmitButton pending={infoForm.formState.isSubmitting}>
                 저장
               </PendingSubmitButton>
@@ -340,7 +341,7 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
         resourceLabel="데이터셋"
         pending={infoForm.formState.isSubmitting}
         onReload={handleReloadLatest}
-        onOverwrite={() => infoForm.handleSubmit((data) => onInfoSubmit(data, true))()}
+        onOverwrite={() => overwriteInfo()}
       />
     </div>
   );

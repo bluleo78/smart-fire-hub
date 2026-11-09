@@ -11,7 +11,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader } from '../c
 import { FormField } from '../components/ui/form-field';
 import { PasswordInput } from '../components/ui/password-input';
 import { useAuth } from '../hooks/useAuth';
-import { useSubmitGuard } from '../hooks/useSubmitGuard';
+import { useGuardedSubmit } from '../hooks/useSubmitGuard';
 import {
   applyFieldErrors,
   extractApiError,
@@ -43,19 +43,6 @@ export default function ChangePasswordPage() {
     mode: 'onBlur',
     reValidateMode: 'onChange',
   });
-  const guardSubmit = useSubmitGuard();
-
-  // 부팅 refresh 가 끝나기 전에는 표식을 모른다 — 성급히 리다이렉트하지 않고 스피너만 보인다.
-  if (isLoading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" aria-label="불러오는 중" />
-      </div>
-    );
-  }
-  if (!isAuthenticated) return <Navigate to="/login" replace />;
-  // 표식이 꺼진 사용자(이미 변경했거나 대상이 아님)가 주소로 들어오면 홈으로 돌려보낸다.
-  if (!mustChangePassword) return <Navigate to="/" replace />;
 
   const onSubmit = async (data: ChangePasswordFormData) => {
     try {
@@ -85,6 +72,19 @@ export default function ChangePasswordPage() {
     toast.success('비밀번호가 변경되었습니다');
     navigate('/', { replace: true });
   };
+  const submitForm = useGuardedSubmit(handleSubmit, onSubmit);
+
+  // 부팅 refresh 가 끝나기 전에는 표식을 모른다 — 성급히 리다이렉트하지 않고 스피너만 보인다.
+  if (isLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" aria-label="불러오는 중" />
+      </div>
+    );
+  }
+  if (!isAuthenticated) return <Navigate to="/login" replace />;
+  // 표식이 꺼진 사용자(이미 변경했거나 대상이 아님)가 주소로 들어오면 홈으로 돌려보낸다.
+  if (!mustChangePassword) return <Navigate to="/" replace />;
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
@@ -95,7 +95,7 @@ export default function ChangePasswordPage() {
           <CardDescription className="break-keep">관리자가 발급한 임시 비밀번호입니다. 계속하려면 새 비밀번호를 설정하세요.</CardDescription>
         </CardHeader>
         <CardContent>
-          <form onSubmit={guardSubmit(handleSubmit(onSubmit))} className="space-y-4" noValidate>
+          <form onSubmit={submitForm} className="space-y-4" noValidate>
             {errors.root && (
               <p role="alert" className="text-sm text-destructive">
                 {errors.root.message}
