@@ -8,12 +8,15 @@ import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.dto.DatasetDetailResponse;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
+import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TestUsers;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterEach;
@@ -127,6 +130,55 @@ class DatasetColumnConcurrentDdlTest extends IntegrationTestBase {
 
     // 기존 3개 + 회차마다 2개
     assertThat(columns()).hasSize(3 + ROUNDS * 2);
+  }
+
+  /**
+   * WD-591 — 같은 이름의 필드 추가 8건을 한꺼번에 보내면 데드락으로 7건이 500 이 되던 문제. 데이터셋 행 잠금으로 줄 서면 먼저 잠근 1건만 추가되고, 나머지는
+   * 잠금을 얻은 뒤 중복 이름 확인에서 409(COLUMN_NAME_DUPLICATE)로 거부돼야 한다 — 교착·무결성 500 은 하나도 없어야 한다.
+   */
+  @Test
+  void 같은_이름의_필드를_동시에_여러_번_추가하면_한_건만_추가되고_나머지는_409() throws Exception {
+    int requests = 8;
+    CyclicBarrier start = new CyclicBarrier(requests);
+    // 공용 ForkJoinPool 은 다른 비동기 작업·부하에 스레드를 뺏겨 8건이 장벽에 다 모이지 못하고 시간 초과가 났다(커밋 훅에서 재현) —
+    // 요청 수만큼 전용 스레드를 둬 8건이 반드시 함께 출발하게 한다.
+    ExecutorService pool = Executors.newFixedThreadPool(requests);
+    List<CompletableFuture<Integer>> futures = new ArrayList<>();
+    for (int i = 0; i < requests; i++) {
+      futures.add(
+          CompletableFuture.supplyAsync(
+              () -> {
+                try {
+                  start.await(10, TimeUnit.SECONDS);
+                } catch (Exception e) {
+                  throw new IllegalStateException(e);
+                }
+                // 성공은 201, 중복 거부는 예외가 실은 상태 코드로 센다 — 그 밖의 예외는 그대로 드러나 테스트가 실패한다.
+                try {
+                  inTenantFixture(
+                      () ->
+                          datasetService.addColumn(
+                              datasetId,
+                              new AddColumnRequest("dup", "dup", "TEXT", null, true, false, null)));
+                  return 201;
+                } catch (CodedApiException e) {
+                  return e.status().value();
+                }
+              },
+              pool));
+    }
+    List<Integer> statuses = new ArrayList<>();
+    try {
+      for (CompletableFuture<Integer> f : futures) {
+        statuses.add(f.get(60, TimeUnit.SECONDS));
+      }
+    } finally {
+      pool.shutdownNow();
+    }
+
+    assertThat(statuses).filteredOn(s -> s == 201).hasSize(1);
+    assertThat(statuses).filteredOn(s -> s == 409).hasSize(requests - 1);
+    assertThat(columns().stream().filter(c -> c.columnName().equals("dup"))).hasSize(1);
   }
 
   @Test
