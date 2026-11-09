@@ -188,7 +188,7 @@ test.describe('비밀번호 변경 강제', () => {
     await mockApi(page, 'POST', '/api/v1/auth/refresh', PWC_TOKEN);
     await mockApi(page, 'GET', '/api/v1/auth/me', PWC_ME);
     await mockApi(page, 'PUT', '/api/v1/users/me/password',
-      { status: 400, error: 'Bad Request', message: 'Validation failed', errors: { newPassword: '새 비밀번호는 8~128자여야 합니다' } },
+      { status: 400, error: 'Bad Request', message: 'Validation failed', errors: { newPassword: '새 비밀번호는 72바이트(영문·숫자 72자, 한글 24자) 이하여야 합니다' } },
       { status: 400 });
     await page.goto('/change-password');
 
@@ -197,9 +197,9 @@ test.describe('비밀번호 변경 강제', () => {
     await page.getByLabel(CONFIRM_PASSWORD).fill('NewPass1x');
     await page.getByRole('button', { name: '변경하고 계속' }).click();
 
-    await expect(page.locator('#new-password-error')).toHaveText('새 비밀번호는 8~128자여야 합니다');
+    await expect(page.locator('#new-password-error')).toHaveText('새 비밀번호는 72바이트(영문·숫자 72자, 한글 24자) 이하여야 합니다');
     // 폼 상단 alert 로 떨어지지 않는다 — 알려지는 alert 는 칸 아래 오류 문구 하나뿐이다(WD-515 로 칸 오류도 alert)
-    await expect(page.getByRole('alert')).toHaveText(['새 비밀번호는 8~128자여야 합니다']);
+    await expect(page.getByRole('alert')).toHaveText(['새 비밀번호는 72바이트(영문·숫자 72자, 한글 24자) 이하여야 합니다']);
     await expect(page.locator('#new-password-error')).toHaveAttribute('role', 'alert');
     await expect(page).toHaveURL(/\/change-password$/);
   });
@@ -228,7 +228,7 @@ test.describe('비밀번호 변경 강제', () => {
     await expect(next).toHaveAttribute('autocomplete', 'new-password');
     await expect(confirm).toHaveAttribute('autocomplete', 'new-password');
     // 도움말이 먼저 읽힌다. Tab 으로 지나가며 생긴 칸 오류는 도움말 뒤에 이어 읽힌다(WD-515 — FormField 가 오류 문구를 연결).
-    await expect(next).toHaveAccessibleDescription(/^8~128자, 대·소문자·숫자 포함( 새 비밀번호는 .+)?$/);
+    await expect(next).toHaveAccessibleDescription(/^8자 이상·72바이트 이하\(한글 1자는 3바이트\), 대·소문자·숫자 포함( 새 비밀번호는 .+)?$/);
     // 사이드바·헤더(AppLayout)를 그리지 않는다 — 변경 전에는 그 API 들이 전부 403 이다.
     await expect(page.getByRole('navigation')).toHaveCount(0);
 

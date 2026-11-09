@@ -50,6 +50,8 @@ final class ValidationErrorCollector {
           "NotEmpty",
           TYPE_MISMATCH_CODE,
           "Size",
+          // 비밀번호 UTF-8 바이트 상한(WD-605)도 길이 제약이라 형식(Pattern)보다 먼저 보인다.
+          "PasswordMaxBytes",
           "Length",
           "Min",
           "Max",

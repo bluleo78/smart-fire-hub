@@ -30,7 +30,7 @@ import { Skeleton } from '../../../components/ui/skeleton';
 import { useAuth } from '../../../hooks/useAuth';
 import { useGuardedSubmit } from '../../../hooks/useSubmitGuard';
 import { applyFieldErrors, extractApiError } from '../../../lib/api-error';
-import { generateTemporaryPassword, PASSWORD_MAX_LENGTH } from '../../../lib/temp-password';
+import { generateTemporaryPassword, PASSWORD_HELP_TEXT, PASSWORD_MAX_BYTES } from '../../../lib/temp-password';
 import type { AddMemberFormData } from '../../../lib/validations/user';
 import { addMemberSchema } from '../../../lib/validations/user';
 import type { ErrorResponse } from '../../../types/auth';
@@ -328,7 +328,8 @@ export function AddMemberDialog({ canAssignRoles, canReadRoles }: { canAssignRol
                     className="font-mono"
                     autoComplete="off"
                     spellCheck={false}
-                    maxLength={PASSWORD_MAX_LENGTH}
+                    // maxLength 는 글자 수라 바이트 상한을 다 표현하지 못한다 — 72자로 1차 차단하고 한글 등 다바이트는 스키마가 막는다 (WD-605)
+                    maxLength={PASSWORD_MAX_BYTES}
                     aria-invalid={!!errors.temporaryPassword}
                     aria-describedby={
                       errors.temporaryPassword ? 'member-password-help member-password-error' : 'member-password-help'
@@ -360,7 +361,7 @@ export function AddMemberDialog({ canAssignRoles, canReadRoles }: { canAssignRol
                   </Button>
                 </div>
                 <p id="member-password-help" className="text-[13px] text-muted-foreground break-keep">
-                  8~128자, 대·소문자·숫자 포함. 기존 계정이면 사용되지 않습니다.
+                  {PASSWORD_HELP_TEXT}. 기존 계정이면 사용되지 않습니다.
                 </p>
               </FormField>
               <fieldset className="space-y-2">

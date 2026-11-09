@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { PASSWORD_MAX_LENGTH, PASSWORD_POLICY } from '../temp-password';
+import { PASSWORD_MAX_BYTES_MESSAGE, PASSWORD_POLICY, withinPasswordMaxBytes } from '../temp-password';
 
 export const loginSchema = z.object({
   username: z.email("유효한 이메일 형식의 아이디를 입력하세요"),
@@ -15,8 +15,8 @@ export const signupSchema = z
     password: z
       .string()
       .min(8, "비밀번호는 8자 이상이어야 합니다")
-      // 서버 SignupRequest 와 같은 상한 (WD-270)
-      .max(PASSWORD_MAX_LENGTH, `비밀번호는 ${PASSWORD_MAX_LENGTH}자 이하여야 합니다`)
+      // 서버 SignupRequest 와 같은 상한 (WD-270) — 글자 수가 아니라 UTF-8 72바이트, BCrypt 가 앞 72바이트만 쓴다 (WD-605)
+      .refine(withinPasswordMaxBytes, PASSWORD_MAX_BYTES_MESSAGE)
       .regex(PASSWORD_POLICY, "비밀번호는 영문 대문자, 소문자, 숫자를 각각 하나 이상 포함해야 합니다"),
     // 비밀번호 확인 필드: password와 일치해야 함 (refine에서 검증)
     confirmPassword: z.string().min(1, "비밀번호 확인을 입력하세요"),

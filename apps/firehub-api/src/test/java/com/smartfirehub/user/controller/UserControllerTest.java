@@ -207,22 +207,92 @@ class UserControllerTest {
         .andExpect(status().isUnauthorized());
   }
 
-  /** 새 비밀번호 129자는 400 + 한국어 필드 문구, 서비스 호출 없음 (WD-270). */
+  /**
+   * WD-605: BCrypt 는 앞 72바이트만 쓴다 — 그보다 긴 새 비밀번호는 뒤가 버려져 "앞 72자만 알면 로그인" 이 됐다. 그래서 설정 시점에 UTF-8
+   * 72바이트를 넘으면 400 + 한국어 필드 문구로 거부하고 서비스는 부르지 않는다. 73바이트(영문)는 거부, 72바이트는 통과.
+   */
   @Test
-  void changePassword_newPasswordTooLong_returnsKoreanFieldError() throws Exception {
+  void changePassword_newPassword73Bytes_returnsKoreanByteLimitError() throws Exception {
     mockAuthentication();
+    // "Aa1" + 70자 = 73바이트(ASCII 1자=1바이트), 129자 상한 안이라 예전 규칙은 통과시켰다.
     ChangePasswordRequest request =
-        new ChangePasswordRequest("oldPassword1", "Aa1" + "a".repeat(126));
+        new ChangePasswordRequest("oldPassword1", "Aa1" + "a".repeat(70));
 
-    mockMvc
-        .perform(
-            put("/api/v1/users/me/password")
-                .header("Authorization", "Bearer valid-token")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(request)))
+    putChangePassword(request)
         .andExpect(status().isBadRequest())
-        .andExpect(jsonPath("$.errors.newPassword").value("새 비밀번호는 8~128자여야 합니다"));
+        .andExpect(
+            jsonPath("$.errors.newPassword").value("새 비밀번호는 72바이트(영문·숫자 72자, 한글 24자) 이하여야 합니다"));
     verify(userService, never()).changePassword(anyLong(), any(), any());
+  }
+
+  /** WD-605: 정확히 72바이트(영문)는 경계 안 — 204. */
+  @Test
+  void changePassword_newPassword72Bytes_returnsNoContent() throws Exception {
+    mockAuthentication();
+    stubSessionAfterPasswordChange();
+    String newPassword = "Aa1" + "a".repeat(69);
+
+    putChangePassword(new ChangePasswordRequest("oldPassword1", newPassword))
+        .andExpect(status().isNoContent());
+    verify(userService).changePassword(1L, "oldPassword1", newPassword);
+  }
+
+  /**
+   * WD-605: 한글은 UTF-8 로 1자 3바이트 — "Aa1" + 한글 24자 = 27자지만 75바이트라 거부한다(글자 수 상한으로는 못 막는다). 순수 한글은
+   * 대·소문자·숫자 규칙에 먼저 걸리므로 규칙을 만족하는 접두를 붙였다.
+   */
+  @Test
+  void changePassword_koreanNewPassword75Bytes_returnsKoreanByteLimitError() throws Exception {
+    mockAuthentication();
+
+    putChangePassword(new ChangePasswordRequest("oldPassword1", "Aa1" + "가".repeat(24)))
+        .andExpect(status().isBadRequest())
+        .andExpect(
+            jsonPath("$.errors.newPassword").value("새 비밀번호는 72바이트(영문·숫자 72자, 한글 24자) 이하여야 합니다"));
+    verify(userService, never()).changePassword(anyLong(), any(), any());
+  }
+
+  /** WD-605: "Aa1" + 한글 23자 = 72바이트 — 통과. */
+  @Test
+  void changePassword_koreanNewPassword72Bytes_returnsNoContent() throws Exception {
+    mockAuthentication();
+    stubSessionAfterPasswordChange();
+    String newPassword = "Aa1" + "가".repeat(23);
+
+    putChangePassword(new ChangePasswordRequest("oldPassword1", newPassword))
+        .andExpect(status().isNoContent());
+    verify(userService).changePassword(1L, "oldPassword1", newPassword);
+  }
+
+  /**
+   * WD-605: 상한은 "설정하는" 비밀번호에만 건다. 예전에 72바이트보다 길게 만든 기존 비밀번호로도 바꿀 수 있어야 하므로 현재 비밀번호 칸은 길이를 보지
+   * 않는다(검증은 BCrypt matches 가 예전과 같이 앞 72바이트로 한다).
+   */
+  @Test
+  void changePassword_longCurrentPassword_isNotRejected() throws Exception {
+    mockAuthentication();
+    stubSessionAfterPasswordChange();
+    String longCurrent = "Old1" + "x".repeat(96);
+
+    putChangePassword(new ChangePasswordRequest(longCurrent, "NewPassword1"))
+        .andExpect(status().isNoContent());
+    verify(userService).changePassword(1L, longCurrent, "NewPassword1");
+  }
+
+  /** 비밀번호 변경 PUT 공통 호출. */
+  private org.springframework.test.web.servlet.ResultActions putChangePassword(
+      ChangePasswordRequest request) throws Exception {
+    return mockMvc.perform(
+        put("/api/v1/users/me/password")
+            .header("Authorization", "Bearer valid-token")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(objectMapper.writeValueAsString(request)));
+  }
+
+  /** 변경 성공 뒤 컨트롤러가 여는 새 세션(리뷰 지적 2) 스텁. */
+  private void stubSessionAfterPasswordChange() {
+    when(authService.startSessionAfterPasswordChange(eq(1L), any()))
+        .thenReturn(new TokenResponse("a", "new-refresh", "Bearer", 1800L, null, List.of(), false));
   }
 
   @Test
@@ -479,6 +549,27 @@ class UserControllerTest {
                     "{\"email\":\"n@acme.io\",\"name\":\"N\",\"temporaryPassword\":\"short\"}"))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.errors.temporaryPassword").exists());
+  }
+
+  /** WD-605: 관리자가 정하는 임시 비밀번호도 UTF-8 72바이트 상한 — 73바이트면 400, 서비스 호출 없음. */
+  @Test
+  void addMember_temporaryPasswordOver72Bytes_badRequest() throws Exception {
+    mockAuthentication("user:write");
+
+    mockMvc
+        .perform(
+            post("/api/v1/users")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"email\":\"n@acme.io\",\"name\":\"N\",\"temporaryPassword\":\"Aa1"
+                        + "a".repeat(70)
+                        + "\",\"roleIds\":[]}"))
+        .andExpect(status().isBadRequest())
+        .andExpect(
+            jsonPath("$.errors.temporaryPassword")
+                .value("비밀번호는 72바이트(영문·숫자 72자, 한글 24자) 이하여야 합니다"));
+    verify(userService, never()).addMember(any(), any());
   }
 
   @Test

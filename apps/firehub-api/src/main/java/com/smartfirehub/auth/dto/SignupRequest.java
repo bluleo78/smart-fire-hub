@@ -1,5 +1,6 @@
 package com.smartfirehub.auth.dto;
 
+import com.smartfirehub.user.dto.PasswordMaxBytes;
 import com.smartfirehub.user.dto.PasswordRules;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
@@ -11,10 +12,9 @@ public record SignupRequest(
     @Email String email,
     // 규칙·한국어 문구는 PasswordRules 공용 (WD-270)
     @NotBlank
-        @Size(
-            min = PasswordRules.MIN_LENGTH,
-            max = PasswordRules.MAX_LENGTH,
-            message = PasswordRules.SIZE_MESSAGE)
+        // 길이: 하한은 글자 수, 상한은 BCrypt 가 실제로 쓰는 UTF-8 72바이트 (WD-605)
+        @Size(min = PasswordRules.MIN_LENGTH, message = PasswordRules.MIN_LENGTH_MESSAGE)
+        @PasswordMaxBytes
         @Pattern(regexp = PasswordRules.PATTERN, message = PasswordRules.PATTERN_MESSAGE)
         String password,
     // 이름 상한은 DB 컬럼(user.name VARCHAR(50))과 같다 — 없으면 51자부터 DB 오류로 거부된다 (WD-125)

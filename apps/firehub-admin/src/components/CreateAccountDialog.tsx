@@ -21,7 +21,7 @@ import { Input } from '@/components/ui/input';
 import { PasswordInput } from '@/components/ui/password-input';
 import { copyText } from '@/lib/clipboard';
 import { applyServerFieldErrors, isForbidden, serverMessage } from '@/lib/http-errors';
-import { generateTemporaryPassword } from '@/lib/temp-password';
+import { generateTemporaryPassword, PASSWORD_HELP_TEXT, PASSWORD_MAX_BYTES } from '@/lib/temp-password';
 import type { CreateAccountFormData } from '@/lib/validations/account';
 import { createAccountSchema } from '@/lib/validations/account';
 import type { ErrorResponse, PlatformAccountResponse } from '@/types/platform';
@@ -275,7 +275,8 @@ function CreateAccountDialogBody({
                       className="font-mono"
                       autoComplete="new-password"
                       spellCheck={false}
-                      maxLength={128}
+                      // maxLength 는 글자 수라 바이트 상한을 다 표현하지 못한다 — 72자로 1차 차단하고 한글 등 다바이트는 스키마가 막는다 (WD-605)
+                      maxLength={PASSWORD_MAX_BYTES}
                       aria-invalid={!!errors.temporaryPassword}
                       aria-describedby={
                         errors.temporaryPassword ? 'account-password-help account-password-error' : 'account-password-help'
@@ -308,7 +309,7 @@ function CreateAccountDialogBody({
                   </Button>
                 </div>
                 <p id="account-password-help" className="text-[13px] text-muted-foreground break-keep">
-                  8~128자, 대·소문자·숫자 포함. 열 때마다 자동으로 만들어집니다.
+                  {PASSWORD_HELP_TEXT}. 열 때마다 자동으로 만들어집니다.
                 </p>
               </FormField>
             </div>
