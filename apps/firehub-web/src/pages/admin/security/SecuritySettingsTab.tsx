@@ -309,17 +309,19 @@ export default function SecuritySettingsTab() {
         onOpenChange={(o) => !o && setConflict(null)}
         resourceLabel="보안 등급"
         pending={save.isPending}
+        // pending(save.isPending)은 다시 불러오기를 덮지 않는다 — 불러오기 중 잠금은 돌려준 Promise 가 맡는다(WD-678)
         onReload={() => {
           if (!conflict) return;
           const { id } = conflict;
-          void invalidate().then(() => {
+          return invalidate().then(() => {
             setRowResets((r) => ({ ...r, [id]: (r[id] ?? 0) + 1 }));
             setConflict(null);
           });
         }}
         onOverwrite={() => {
           if (!conflict) return;
-          save.mutate({ id: conflict.id, req: { ...conflict.req, expected: undefined } });
+          // 성공·실패 안내는 useMutation 의 onSuccess/onError 가 그대로 맡는다 — 거부는 충돌 창이 잠금만 풀고 삼킨다
+          return save.mutateAsync({ id: conflict.id, req: { ...conflict.req, expected: undefined } });
         }}
       />
 

@@ -43,3 +43,42 @@ export async function submitAndRetryWhilePending(page: Page, submit: Locator, pe
   await page.keyboard.press('Enter');
   await pending.locator('xpath=ancestor::form').evaluate((f: HTMLFormElement) => f.requestSubmit());
 }
+
+// ── 원래 모킹으로 넘기는 붙잡기·편집 충돌 창 잠금 확인 (WD-678) ──
+// holdApi 는 고정 응답을 직접 보내고, holdRequests 는 풀 때 route.fallback() 으로 이미 등록된 상태 서버 모킹이 응답하게 한다
+// (나중에 등록한 route 가 먼저 받으므로 상태 서버 모킹 뒤에 부른다).
+
+/**
+ * pathname·method 가 맞는 요청을 release() 전까지 붙잡는다.
+ * @returns release — 붙잡은(그리고 이후의) 요청을 원래 모킹으로 넘긴다 / count — 지금까지 붙잡힌 요청 수
+ */
+export async function holdRequests(page: Page, pathname: string, method: string) {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let count = 0;
+  await page.route(
+    (url) => url.pathname === pathname,
+    async (route) => {
+      if (route.request().method() !== method) return route.fallback();
+      count += 1;
+      await gate;
+      return route.fallback();
+    },
+  );
+  return { release, count: () => count };
+}
+
+/**
+ * 편집 충돌 창이 요청 진행 중 잠겨 있는지 본다 — 세 버튼 모두 aria-disabled="true",
+ * 누른 버튼은 실제 disabled 속성이 없고(포커스를 빼앗지 않음) 포커스를 그대로 가진다.
+ */
+export async function expectLockedInFlight(dialog: Locator, pressedButton: Locator) {
+  for (const name of ['계속 편집', '다시 불러오기', '내 변경으로 덮어쓰기']) {
+    await expect(dialog.getByRole('button', { name })).toHaveAttribute('aria-disabled', 'true');
+  }
+  // Playwright 의 toBeDisabled 는 aria-disabled 도 disabled 로 보므로 실제 disabled 속성이 없는지 본다
+  await expect(pressedButton).not.toHaveAttribute('disabled');
+  await expect(pressedButton).toBeFocused();
+}

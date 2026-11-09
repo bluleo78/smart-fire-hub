@@ -388,7 +388,8 @@ function ReportTemplateDetailContent({ templateId }: { templateId: number | null
         },
       });
     } else {
-      updateMutation.mutate(
+      // Promise 를 돌려 충돌 창이 저장 끝까지 잠기게 하고(WD-678), 거부는 콜백이 처리하므로 삼킨다(이 화면은 isSubmitSuccessful 을 읽지 않는다).
+      return updateMutation.mutateAsync(
         // 편집 기준 버전(WD-364) — 그 사이 다른 곳에서 저장됐으면 서버가 409 EDIT_CONFLICT 로 거부한다
         { id: templateId, data: force ? payload : { ...payload, expectedUpdatedAt: baseUpdatedAt } },
         {
@@ -412,7 +413,7 @@ function ReportTemplateDetailContent({ templateId }: { templateId: number | null
             handleApiError(err, '템플릿 수정에 실패했습니다.');
           },
         },
-      );
+      ).catch(() => undefined);
     }
   });
   const handleSave = submitTemplate(false);

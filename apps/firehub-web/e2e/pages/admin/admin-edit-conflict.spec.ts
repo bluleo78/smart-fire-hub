@@ -20,6 +20,7 @@ import { createLevels } from '../../factories/security-level.factory';
 import { setupAdminAuth, setupSettingsMocks } from '../../fixtures/admin.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { expectLockedInFlight, holdRequests } from '../../fixtures/hold-api';
 import { setupSecurityLevelMocks } from '../../fixtures/security-level.fixture';
 
 const conflictDialog = (page: Page) => page.getByRole('alertdialog', { name: '다른 곳에서 먼저 변경되었습니다' });
@@ -251,6 +252,55 @@ test.describe('관리 화면 — 동시 편집 충돌 (WD-440)', () => {
     expect(server.puts).toHaveLength(2);
     expect(server.puts[1]).not.toHaveProperty('expectedPermissionIds');
     expect(server.permissionIds().sort()).toEqual([1, 2, 3]);
+  });
+
+  /**
+   * WD-678 — 이 창의 pending(isSavingPermissions)은 「다시 불러오기」를 덮지 않는다.
+   * 창 안 잠금이 콜백의 Promise 를 따르므로, 다시 불러오기가 오래 걸려도 끝날 때까지 두 번째 조회·덮어쓰기 저장·「계속 편집」 닫기가 모두 막힌다.
+   * Escape 는 끝나지 않는 요청의 비상구로 창을 닫되, 요청을 더 보내지 않는다.
+   */
+  test('역할 권한 — 느린 「다시 불러오기」가 끝날 때까지 다시 Enter·덮어쓰기·계속 편집이 막히고 포커스는 누른 버튼에 남는다', async ({
+    authenticatedPage: page,
+  }) => {
+    const server = await mockRolePermissionsServer(page);
+    await page.goto('/admin/roles/3');
+    await expect(page.getByRole('checkbox', { name: 'DATASET_WRITE' })).toBeChecked();
+
+    server.otherAdminRevokesDatasetWrite();
+    await page.getByRole('checkbox', { name: 'PIPELINE_READ' }).check();
+    await page.getByRole('button', { name: '권한 저장' }).click();
+    await expect(conflictDialog(page)).toBeVisible();
+
+    // 화면 첫 조회 뒤부터 역할 다시 읽기를 붙잡는다
+    const hold = await holdRequests(page, '/api/v1/roles/3', 'GET');
+    const reload = conflictDialog(page).getByRole('button', { name: '다시 불러오기' });
+    const overwrite = conflictDialog(page).getByRole('button', { name: '내 변경으로 덮어쓰기' });
+    const cancel = conflictDialog(page).getByRole('button', { name: '계속 편집' });
+    await reload.focus();
+    await page.keyboard.press('Enter');
+    await expect.poll(() => hold.count()).toBe(1);
+    await expectLockedInFlight(conflictDialog(page), reload);
+
+    // 다시 Enter, 덮어쓰기·계속 편집 클릭(포커스를 옮기지 않으려 이벤트로 보낸다) — 모두 무시된다
+    await page.keyboard.press('Enter');
+    await overwrite.dispatchEvent('click');
+    await cancel.dispatchEvent('click');
+    // 요청이 나갈 틈을 잠깐 준 뒤 센다 — 누른 직후 바로 세면 아직 안 나간 요청을 놓친다
+    await page.waitForTimeout(300);
+    await expect(conflictDialog(page)).toBeVisible();
+    await expect(reload).toBeFocused();
+    await expect(reload).toHaveAttribute('aria-disabled', 'true');
+    expect(hold.count()).toBe(1);
+    // 충돌을 낸 첫 PUT 뿐 — 불러오는 중 덮어쓰기 저장이 나가지 않았다
+    expect(server.puts).toHaveLength(1);
+
+    // Escape 는 비상구로 창을 닫는다 — 요청은 더 나가지 않는다
+    await page.keyboard.press('Escape');
+    await expect(conflictDialog(page)).toBeHidden();
+    expect(hold.count()).toBe(1);
+
+    hold.release();
+    await expect(page.getByRole('checkbox', { name: 'DATASET_WRITE' })).not.toBeChecked();
   });
 
   test.describe('보안 등급', () => {

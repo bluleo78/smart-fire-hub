@@ -283,7 +283,8 @@ export default function ProactiveJobDetailPage() {
     } else {
       // 「기본 (선택 안 함)」을 고르면 templateId 가 null 이 되는데, 서버는 null 을 "바꾸지 않음"으로 받는다.
       // 해제 의도를 clearTemplate 로 함께 보내야 옛 템플릿이 남지 않는다 (WD-136).
-      updateMutation.mutate(
+      // Promise 를 돌려 충돌 창이 저장 끝까지 잠기게 하고(WD-678), 거부는 콜백이 처리하므로 삼킨다(이 화면은 isSubmitSuccessful 을 읽지 않는다).
+      return updateMutation.mutateAsync(
         {
           id: jobId,
           data: {
@@ -310,7 +311,7 @@ export default function ProactiveJobDetailPage() {
             handleApiError(err, '작업 저장에 실패했습니다.');
           },
         },
-      );
+      ).catch(() => undefined);
     }
   })(e);
   const handleSave = submitJob(false);

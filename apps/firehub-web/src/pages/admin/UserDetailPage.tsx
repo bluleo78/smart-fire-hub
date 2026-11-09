@@ -402,16 +402,17 @@ export default function UserDetailPage() {
         onOpenChange={setIsRolesConflictOpen}
         resourceLabel="사용자의 역할"
         pending={isSavingRoles}
+        // pending(isSavingRoles)은 다시 불러오기를 덮지 않는다 — 불러오기 중 잠금은 돌려준 Promise 가 맡는다(WD-678)
         onReload={() => {
           if (!user) return;
-          void reloadUserRoles(user.id)
+          return reloadUserRoles(user.id)
             .then(() => setIsRolesConflictOpen(false))
             .catch(error => {
               // 그사이 제거된 멤버면 충돌 창째 목록으로 돌아간다(WD-288)
               if (!leaveIfMemberGone(error)) toast.error('사용자 정보를 불러오는 데 실패했습니다.');
             });
         }}
-        onOverwrite={() => void handleSaveRoles(true)}
+        onOverwrite={() => handleSaveRoles(true)}
       />
 
       {/* 역할 전체 해제 확인 AlertDialog — "역할 저장" 시점에 선택된 역할이 0개일 때만 표시된다 (#512) */}
