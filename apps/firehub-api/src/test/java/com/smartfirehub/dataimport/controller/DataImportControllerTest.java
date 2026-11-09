@@ -488,6 +488,101 @@ class DataImportControllerTest {
                     "지원하지 않는 인코딩입니다. 사용할 수 있는 값: AUTO, UTF-8, UTF-16LE, UTF-16BE, EUC-KR, CP949, MS949"));
   }
 
+  private static final String INVALID_DELIMITER_MESSAGE =
+      "구분자는 따옴표(\")·역슬래시(\\)·줄바꿈이 아닌 한 글자여야 합니다.";
+
+  /**
+   * WD-602: 구분자가 따옴표(")·역슬래시(\)면 opencsv 가 UnsupportedOperationException 을 던져 500 이 났다. 미리보기는 서비스에
+   * 닿기 전에 400 한국어로 거부해야 한다.
+   */
+  @ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"\"", "\\"})
+  void previewImport_invalidDelimiter_returns400Korean(String delimiter) throws Exception {
+    mockMvc
+        .perform(
+            multipart("/api/v1/datasets/1/imports/preview")
+                .file(csvFile())
+                .param("delimiter", delimiter)
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(INVALID_DELIMITER_MESSAGE));
+    verifyNoInteractions(importService);
+  }
+
+  /** WD-602: 쉼표·세미콜론·탭은 그대로 200 이고, 받은 구분자가 그대로 서비스에 전달된다. */
+  @ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {",", ";", "\t"})
+  void previewImport_validDelimiter_returnsOkAndPassesDelimiter(String delimiter) throws Exception {
+    when(importService.previewImport(anyLong(), any(), any(), anyBoolean()))
+        .thenReturn(new ImportPreviewResponse(List.of(), List.of(), List.of(), 0));
+    mockMvc
+        .perform(
+            multipart("/api/v1/datasets/1/imports/preview")
+                .file(csvFile())
+                .param("delimiter", delimiter)
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isOk());
+    ArgumentCaptor<com.smartfirehub.dataimport.dto.ParseOptions> captor =
+        ArgumentCaptor.forClass(com.smartfirehub.dataimport.dto.ParseOptions.class);
+    verify(importService).previewImport(eq(1L), any(), captor.capture(), anyBoolean());
+    assertThat(captor.getValue().delimiter()).isEqualTo(delimiter);
+  }
+
+  /** WD-602: 사전 검증도 같은 구분자 검증을 거쳐 400 한국어로 거부한다(매핑은 유효한 빈 배열). */
+  @ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"\"", "\\"})
+  void validateImport_invalidDelimiter_returns400Korean(String delimiter) throws Exception {
+    mockMvc
+        .perform(
+            multipart("/api/v1/datasets/1/imports/validate")
+                .file(csvFile())
+                .param("mappings", "[]")
+                .param("delimiter", delimiter)
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(INVALID_DELIMITER_MESSAGE));
+    verifyNoInteractions(importService);
+  }
+
+  /** WD-602: 가져오기 시작도 같은 구분자 검증을 거쳐 잡을 만들기 전에 400 한국어로 거부한다. */
+  @ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"\"", "\\"})
+  void importFile_invalidDelimiter_returns400Korean(String delimiter) throws Exception {
+    mockMvc
+        .perform(
+            multipart("/api/v1/datasets/1/imports")
+                .file(csvFile())
+                .param("delimiter", delimiter)
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(INVALID_DELIMITER_MESSAGE));
+    verifyNoInteractions(importService);
+  }
+
+  /** WD-602: 사전 검증·가져오기에서도 탭 구분자는 그대로 통과한다. */
+  @Test
+  void validateAndImport_tabDelimiter_isAccepted() throws Exception {
+    when(importService.validateImport(anyLong(), any(), any(), any())).thenReturn(null);
+    when(importService.importFile(
+            anyLong(), any(), any(), anyLong(), any(), any(), any(), any(), any()))
+        .thenReturn(new ImportStartResponse("job-1", "PENDING"));
+    mockMvc
+        .perform(
+            multipart("/api/v1/datasets/1/imports/validate")
+                .file(csvFile())
+                .param("mappings", "[]")
+                .param("delimiter", "\t")
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isOk());
+    mockMvc
+        .perform(
+            multipart("/api/v1/datasets/1/imports")
+                .file(csvFile())
+                .param("delimiter", "\t")
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isCreated());
+  }
+
   /** 지원하지 않는 확장자 — 서비스가 던진 한국어 문구가 400 으로 그대로 나간다. */
   @Test
   void previewImport_unsupportedExtension_returns400Korean() throws Exception {
