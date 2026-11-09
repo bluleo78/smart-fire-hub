@@ -6,9 +6,10 @@
  * 포커스가 옮겨져야 하고, 기존 스텝 카드를 클릭해 선택만 바꿀 때는 포커스를 끌어가지 않아야 한다.
  */
 
-import { mockApi } from '../../fixtures/api-mock';
+import { createExecution, createPipelineDetail } from '../../factories/pipeline.factory';
+import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
-import { grantPipelinePermissions, setupPipelineEditorMocks } from '../../fixtures/pipeline.fixture';
+import { clickToolbarAddStep, grantPipelinePermissions, setupPipelineEditorMocks } from '../../fixtures/pipeline.fixture';
 
 test.describe('파이프라인 에디터 — 스텝 추가 후 포커스 (WD-545)', () => {
   // 수정·추가 버튼은 권한이 있을 때만 보인다(WD-219) — 모든 파이프라인 권한을 준다.
@@ -123,6 +124,80 @@ test.describe('파이프라인 에디터 — 스텝 추가 후 포커스 (WD-545
     // 남은 카드를 클릭해 선택만 바꾼다 — 남아 있던 포커스 표시가 이름 입력으로 포커스를 뺏으면 안 된다
     await page.locator('.react-flow__node').first().click();
     const stepName = page.locator('#step-name');
+    await expect(stepName).toHaveValue('데이터 추출');
+    await expect(stepName).not.toBeFocused();
+  });
+
+  test('리듀서가 혼자 무시한 추가 뒤 서버 재조회로 선택이 새 id 로 바뀌어도 이름 입력으로 포커스를 끌어가지 않는다(WD-672)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 실행 목록 폴링이 RUNNING → COMPLETED 를 보면 상세가 재조회된다(#733). 테스트가 completeRun 을 켜기 전까지는 RUNNING 만 준다 —
+    // 무시된 추가를 보낸 뒤에 재조회가 오도록 순서를 정하기 위해서다. 재조회 응답은 내용이 달라야 새 객체로 반영된다(structural sharing).
+    let completeRun = false;
+    let detailCalls = 0;
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/triggers', []);
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/trigger-events', []);
+    await mockApi(page, 'GET', '/api/v1/datasets', { content: [], page: 0, size: 1000, totalElements: 0, totalPages: 0 });
+    await page.route(
+      (url) => url.pathname === '/api/v1/pipelines/1' || url.pathname === '/api/v1/pipelines/1/executions',
+      (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        if (new URL(route.request().url()).pathname.endsWith('/executions')) {
+          const status = completeRun ? 'COMPLETED' : 'RUNNING';
+          return route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify(createPageResponse([createExecution({ id: 475, pipelineId: 1, status })])),
+          });
+        }
+        detailCalls += 1;
+        const body = createPipelineDetail({ id: 1, description: detailCalls === 1 ? '처음 설명' : '다른 탭에서 바뀐 설명' });
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+      },
+    );
+
+    await page.goto('/pipelines/1');
+    await page.getByRole('button', { name: '수정' }).click();
+    await expect(page.locator('.react-flow__node')).toHaveCount(2);
+
+    // 스텝을 하나 추가하고(포커스 표시는 여기서 소비된다) 그 새 스텝 카드의 「다음 스텝 추가」 콜백을 붙잡아 둔다
+    await clickToolbarAddStep(page);
+    await expect(page.locator('.react-flow__node')).toHaveCount(3);
+    await expect(page.locator('#step-name')).toBeFocused();
+    await page.evaluate(() => {
+      const buttons = document.querySelectorAll<HTMLButtonElement>('.react-flow__node button[aria-label="다음 스텝 추가"]');
+      const button = buttons[buttons.length - 1] as unknown as Record<string, { onClick?: unknown }>;
+      const propsKey = Object.keys(button).find((k) => k.startsWith('__reactProps$'));
+      (window as unknown as { __staleAddAfter?: unknown }).__staleAddAfter = propsKey ? button[propsKey].onClick : undefined;
+    });
+
+    // 편집을 취소하면 새 스텝이 사라진다 — 붙잡은 콜백은 이제 없는 스텝을 가리키는 옛 콜백이다
+    await page.getByRole('button', { name: '취소', exact: true }).click();
+    await page.getByRole('button', { name: '변경사항 취소' }).click();
+    await expect(page.locator('.react-flow__node')).toHaveCount(2);
+
+    // 다시 수정 모드(미저장 변경 없음 — 재조회가 화면에 반영된다)에서 기존 카드를 골라 둔다
+    await page.getByRole('button', { name: '수정' }).click();
+    await page.locator('.react-flow__node').first().click();
+    const stepName = page.locator('#step-name');
+    await expect(stepName).toHaveValue('데이터 추출');
+    await expect(stepName).not.toBeFocused();
+
+    // 옛 콜백으로 추가를 보낸다 — 리듀서가 무시해 같은 상태를 돌려주므로(다른 변화 없음) 다시 그려지지 않는다
+    const called = await page.evaluate(() => {
+      const stale = (window as unknown as { __staleAddAfter?: (e: unknown) => void }).__staleAddAfter;
+      if (!stale) return false;
+      stale({ stopPropagation() {}, preventDefault() {} });
+      return true;
+    });
+    expect(called).toBe(true);
+    await expect(page.locator('.react-flow__node')).toHaveCount(2);
+
+    // 실행이 끝나 상세가 재조회되면 tempId 가 새로 만들어지고, 선택은 이름으로 새 id 에 다시 붙는다 —
+    // 남아 있던 포커스 표시가 이 「새 id 선택」을 새 스텝으로 오인해 이름 입력으로 포커스를 뺏으면 안 된다
+    completeRun = true;
+    await expect.poll(() => detailCalls, { timeout: 15_000 }).toBeGreaterThanOrEqual(2);
+    await page.waitForTimeout(500);
     await expect(stepName).toHaveValue('데이터 추출');
     await expect(stepName).not.toBeFocused();
   });

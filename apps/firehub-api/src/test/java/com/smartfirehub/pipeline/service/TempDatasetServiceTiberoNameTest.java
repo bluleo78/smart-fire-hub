@@ -174,6 +174,7 @@ class TempDatasetServiceTiberoNameTest {
             schema.isTibero()
                 ? com.smartfirehub.support.ReservedNameResolvers.appReservedOnly()
                 : com.smartfirehub.support.ReservedNameResolvers.postgres()),
-        schema);
+        schema,
+        mock(com.smartfirehub.dataset.service.DatasetDataWriteLock.class));
   }
 }

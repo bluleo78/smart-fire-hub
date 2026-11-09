@@ -159,10 +159,20 @@ export default function PipelineEditorPage() {
    * WD-666: 표시는 「추가를 보낸 그때 있던 스텝 id 묶음」이다. 리듀서가 추가를 무시하면(지워진 원본·대상을 가리킨 옛 콜백) 새 스텝이 없어
    * 예전 불리언 표시는 선택이 바뀔 때까지 남았고, 나중의 카드 클릭이 이름 입력으로 포커스를 뺏었다. 이제 표시를 켠 뒤 처음 스텝·선택이
    * 바뀌는 커밋에서 표시를 무조건 지우고, 선택된 스텝이 그 묶음에 없을 때(= 실제로 새로 생긴 스텝)만 포커스를 준다.
+   *
+   * WD-672: 추가가 혼자 무시되면 리듀서가 같은 상태를 돌려줘 다시 그려지지 않고, 표시를 지울 effect 도 돌지 않았다 — 표시가 남아 있다가
+   * 나중의 서버 재조회(tempId 가 새로 만들어지고 선택이 이름으로 새 id 에 다시 붙는다)를 새 스텝으로 오인해 포커스를 뺏었다. 그래서 추가를
+   * 보낼 때 요청 번호(state)도 함께 올려, 추가가 반영됐든 무시됐든 그 커밋에서 effect 가 반드시 돌아 표시를 소비·제거하게 한다.
+   * 「그때 있던 스텝」 묶음도 추가를 보낼 때만 만든다 — 예전처럼 매 커밋(이름 입력 한 글자마다)마다 Set 을 새로 만들지 않는다.
    */
   const pendingNameFocusRef = useRef<ReadonlySet<string> | null>(null);
-  /** 마지막 커밋의 스텝 id — 추가를 보낼 때 「그때 있던 스텝」 묶음으로 복사해 둔다 */
-  const committedStepIdsRef = useRef<ReadonlySet<string>>(new Set());
+  /** 추가 요청 번호 — 값 자체는 쓰지 않고, 무시된 추가에도 다시 그려져 아래 effect 가 돌게 하는 용도다 */
+  const [addRequestSeq, setAddRequestSeq] = useState(0);
+  /** 마지막 커밋의 스텝 배열 참조(복사 없음) — 추가를 보낼 때 이것으로 「그때 있던 스텝」 묶음을 만든다 */
+  const committedStepsRef = useRef(state.steps);
+  useEffect(() => {
+    committedStepsRef.current = state.steps;
+  }, [state.steps]);
   const stepNameInputRef = useRef<HTMLInputElement>(null);
   // 패널이 자기 ref(WD-560)와 함께 이 콜백으로 이름 입력을 넘겨준다 — 객체 ref 를 prop 으로 넘기면 패널이 고칠 수 없다
   const setStepNameInput = useCallback((el: HTMLInputElement | null) => {
@@ -171,7 +181,8 @@ export default function PipelineEditorPage() {
   const editorDispatch = useCallback(
     (action: EditorAction) => {
       if (action.type === 'ADD_STEP' || action.type === 'ADD_STEP_AFTER' || action.type === 'INSERT_STEP_BETWEEN') {
-        pendingNameFocusRef.current = committedStepIdsRef.current;
+        pendingNameFocusRef.current = new Set(committedStepsRef.current.map((s) => s.tempId));
+        setAddRequestSeq((n) => n + 1);
       }
       dispatch(action);
     },
@@ -179,8 +190,8 @@ export default function PipelineEditorPage() {
   );
   // 부모 effect 는 자식(StepConfigPanel) 커밋 뒤에 돌므로 이 시점엔 새 스텝의 이름 입력이 DOM 에 있다 — 시간 추측(setTimeout) 불필요.
   // 좁은 화면에서 패널은 캔버스 아래에 쌓이므로 preventScroll 을 쓰지 않는다: 입력이 화면 밖이면 브라우저가 보이는 곳까지만 스크롤해 준다.
+  // 추가 요청과 리듀서 반영은 같은 배치로 커밋되므로, 표시가 있으면 이 effect 는 바로 그 커밋에서 돈다(addRequestSeq 가 바뀌므로).
   useEffect(() => {
-    committedStepIdsRef.current = new Set(state.steps.map((s) => s.tempId));
     const knownBeforeAdd = pendingNameFocusRef.current;
     if (!knownBeforeAdd) return;
     // 추가가 반영됐든 무시됐든 한 번만 쓴다 — 남겨 두면 나중 선택 변경이 포커스를 뺏는다
@@ -189,7 +200,7 @@ export default function PipelineEditorPage() {
     if (selected && !knownBeforeAdd.has(selected)) {
       stepNameInputRef.current?.focus();
     }
-  }, [state.steps, state.selectedStepId]);
+  }, [addRequestSeq, state.selectedStepId]);
 
   // 미저장 변경사항(dirty) 이탈 가드 (#550) — 브라우저 새로고침/닫기(beforeunload)뿐 아니라
   // 사이드바 SPA 링크 클릭·뒤로가기(popstate)도 가로채 확인 다이얼로그를 띄운다.

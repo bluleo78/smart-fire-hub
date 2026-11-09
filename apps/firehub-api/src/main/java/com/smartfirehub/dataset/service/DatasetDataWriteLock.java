@@ -4,6 +4,7 @@ import com.smartfirehub.dataset.exception.DatasetNotFoundException;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.repository.DatasetWriteTarget;
 import java.util.Collection;
+import java.util.List;
 import java.util.function.Supplier;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -20,10 +21,13 @@ import org.springframework.transaction.support.TransactionTemplate;
  * <p><b>잠금 모드(사다리).</b>
  *
  * <ul>
- *   <li>데이터 쓰기: {@code FOR KEY SHARE} — 쓰기끼리, 그리고 정보 수정(이름·설명: NO KEY UPDATE + UPDATE)과 서로 막지 않는다.
- *       긴 적재가 이름 변경을 붙잡지 않는 이유다.
- *   <li>구조 변경(필드 추가·변경·삭제·순서, truncate·replace)·데이터셋 삭제: {@code FOR UPDATE} — 데이터 쓰기와 충돌해 진행 중인 쓰기가
- *       커밋될 때까지 기다리고, 뒤에 온 쓰기는 구조 변경 커밋 뒤의 모양(또는 삭제됨 → 404)을 본다.
+ *   <li>데이터 쓰기: {@code FOR KEY SHARE} — 쓰기끼리, 그리고 아래 NO KEY UPDATE 단계와 서로 막지 않는다. 긴 적재가 이름 변경을 붙잡지
+ *       않는 이유다.
+ *   <li>정보 수정(이름·설명)·필드 순서 변경: {@code FOR NO KEY UPDATE} — 같은 단계끼리는 줄 서지만 데이터 테이블 모양을 바꾸지 않으므로 데이터
+ *       쓰기는 막지 않는다. 이 단계는 이 클래스가 아니라 {@link DatasetService} 가 직접 잡는다({@code
+ *       DatasetRepository#lockUpdatedAtById}·{@code #lockForColumnReorder}).
+ *   <li>필드 추가·변경·삭제, truncate·replace, 데이터셋 삭제: {@code FOR UPDATE} — 데이터 쓰기와 충돌해 진행 중인 쓰기가 커밋될 때까지
+ *       기다리고, 뒤에 온 쓰기는 구조 변경 커밋 뒤의 모양(또는 삭제됨 → 404)을 본다.
  * </ul>
  *
  * <p><b>범위(입도).</b> 잠금은 데이터셋 하나·쓰기 트랜잭션 하나 단위다. 한 트랜잭션으로 묶인 쓰기(행 쓰기, 가져오기 APPEND·REPLACE, promote,
@@ -118,6 +122,17 @@ public class DatasetDataWriteLock {
   }
 
   /**
+   * 지울 데이터셋 여럿의 행을 id 오름차순으로 삭제 잠금(FOR UPDATE)한다 — 파이프라인 임시 데이터셋 일괄 삭제용(WD-672). 오름차순이라 두 일괄 삭제가 서로
+   * 거꾸로 기다리지 않고, 테넌트 동기화 잠금·테이블 DROP 보다 먼저 잡아 「데이터셋 행 → 동기화 → 테이블」 순서를 지킨다.
+   *
+   * @return 실제로 잠근(아직 남아 있는) 데이터셋 id 들(오름차순). 기다리는 동안 이미 지워진 행은 빠진다 — 호출자는 그 id 를 건너뛴다.
+   */
+  public List<Long> lockAllForDelete(Collection<Long> datasetIds) {
+    requireTransaction();
+    return datasetIds.stream().sorted().filter(datasetRepository::lockForDelete).toList();
+  }
+
+  /**
    * 트랜잭션(없으면 새로, 있으면 합류)을 열어 출력 테이블의 데이터 쓰기 잠금을 잡은 뒤 {@code body} 를 실행한다. 페이지·배치마다 커밋하는 파이프라인 적재와
    * 맞바꿈이 쓴다 — 잠금과 쓰기가 같은 트랜잭션에 있어야 잠금이 쓰기 커밋까지 유지된다.
    */
@@ -136,6 +151,20 @@ public class DatasetDataWriteLock {
         () -> {
           body.run();
           return null;
+        });
+  }
+
+  /**
+   * 트랜잭션(없으면 새로, 있으면 합류)을 열어 데이터셋 id 로 데이터 쓰기 잠금을 잡은 뒤 {@code body} 를 실행한다(WD-672) — 가져오기의 대상 테이블
+   * 쓰기(APPEND·REPLACE 삽입 스트림, UPSERT·REPLACE promote)가 쓴다. {@link #writeToOutput} 의 id 판이다.
+   *
+   * @throws DatasetNotFoundException 데이터셋이 없거나 기다리는 동안 삭제됐을 때 — {@code body} 는 실행되지 않는다
+   */
+  public <T> T writeToDataset(Long datasetId, Supplier<T> body) {
+    return tx.execute(
+        status -> {
+          lockForDataWrite(datasetId);
+          return body.get();
         });
   }
 
