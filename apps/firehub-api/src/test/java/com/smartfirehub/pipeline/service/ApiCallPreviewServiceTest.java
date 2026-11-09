@@ -501,7 +501,7 @@ class ApiCallPreviewServiceTest {
    */
   @Test
   void preview_apiConnectionId_joinsBaseUrlAndPath() {
-    // apiConnectionService.getById()가 baseUrl을 가진 connection을 반환
+    // apiConnectionService.getByIdForCall()가 baseUrl을 가진 connection을 반환
     com.smartfirehub.apiconnection.dto.ApiConnectionResponse mockConn =
         new com.smartfirehub.apiconnection.dto.ApiConnectionResponse(
             1L,
@@ -518,7 +518,7 @@ class ApiCallPreviewServiceTest {
             1L,
             null,
             null);
-    when(apiConnectionService.getById(1L)).thenReturn(mockConn);
+    when(apiConnectionService.getByIdForCall(1L)).thenReturn(mockConn);
     // BEARER 연결이면 토큰이 있어야 한다 — 빈 비밀 검사는 연결의 auth_type 컬럼 기준이라(WD-639) 목의 기본 빈 Map 이면 호출 전에 막힌다.
     when(apiConnectionService.getDecryptedAuthConfig(1L))
         .thenReturn(java.util.Map.of("authType", "BEARER", "token", "test-token"));
@@ -563,7 +563,7 @@ class ApiCallPreviewServiceTest {
             1L,
             null,
             null);
-    when(apiConnectionService.getById(7L)).thenReturn(mockConn);
+    when(apiConnectionService.getByIdForCall(7L)).thenReturn(mockConn);
     // 핵심: 실제 운영 코드의 getDecryptedAuthConfig 가 authType 을 합쳐 반환하도록 변경됨
     when(apiConnectionService.getDecryptedAuthConfig(7L))
         .thenReturn(
@@ -1072,10 +1072,10 @@ class ApiCallPreviewServiceTest {
   void preview_savedConnectionWithEmptySecret_failsWithoutCall() {
     wireMock.stubFor(
         get(urlEqualTo("/data")).willReturn(aResponse().withStatus(200).withBody("[]")));
-    when(apiConnectionService.getById(8L)).thenReturn(connAt(8L, "BEARER"));
+    when(apiConnectionService.getByIdForCall(8L)).thenReturn(connAt(8L, "BEARER"));
     when(apiConnectionService.getDecryptedAuthConfig(8L))
         .thenReturn(java.util.Map.of("authType", "BEARER", "token", "Bearer"));
-    when(apiConnectionService.getById(9L)).thenReturn(connAt(9L, "API_KEY"));
+    when(apiConnectionService.getByIdForCall(9L)).thenReturn(connAt(9L, "API_KEY"));
     when(apiConnectionService.getDecryptedAuthConfig(9L))
         .thenReturn(
             java.util.Map.of("authType", "API_KEY", "placement", "header", "headerName", "X-Key"));
@@ -1178,7 +1178,7 @@ class ApiCallPreviewServiceTest {
                     .withStatus(200)
                     .withHeader("Content-Type", "application/json")
                     .withBody("[]")));
-    when(apiConnectionService.getById(10L)).thenReturn(connAt(10L, "BEARER"));
+    when(apiConnectionService.getByIdForCall(10L)).thenReturn(connAt(10L, "BEARER"));
     when(apiConnectionService.getDecryptedAuthConfig(10L))
         .thenReturn(java.util.Map.of("authType", "API_KEY", "token", "t"));
 
@@ -1204,7 +1204,7 @@ class ApiCallPreviewServiceTest {
                     .withStatus(200)
                     .withHeader("Content-Type", "application/json")
                     .withBody("[]")));
-    when(apiConnectionService.getById(11L)).thenReturn(connAt(11L, "API_KEY"));
+    when(apiConnectionService.getByIdForCall(11L)).thenReturn(connAt(11L, "API_KEY"));
     when(apiConnectionService.getDecryptedAuthConfig(11L))
         .thenReturn(java.util.Map.of("authType", "API_KEY", "apiKey", "wd639-default-key"));
 
@@ -1311,7 +1311,7 @@ class ApiCallPreviewServiceTest {
   /** 빈 비밀로 실패해도 다른 실패처럼 요청 URL(키 가림)을 돌려준다 — 예전에는 null 이었다. */
   @Test
   void preview_emptySecretFailure_returnsResolvedUrl() {
-    when(apiConnectionService.getById(12L)).thenReturn(connAt(12L, "BEARER"));
+    when(apiConnectionService.getByIdForCall(12L)).thenReturn(connAt(12L, "BEARER"));
     when(apiConnectionService.getDecryptedAuthConfig(12L))
         .thenReturn(java.util.Map.of("authType", "BEARER", "token", ""));
 
@@ -1504,5 +1504,139 @@ class ApiCallPreviewServiceTest {
     assertThat(response.success()).isTrue();
     assertThat(response.rows().get(0)).containsEntry("v", "****5432");
     assertThat(response.rawJson()).doesNotContain("98765432").contains("\"other\":1");
+  }
+
+  // ── WD-681: BASIC·baseUrl 사용자 정보 ─────────────────────────────────────────────
+
+  /** 사용자 정보가 든 baseUrl 의 연결(옛 연결)·BASIC 연결 응답 DTO. */
+  private com.smartfirehub.apiconnection.dto.ApiConnectionResponse connWithBase(
+      Long id, String authType, String baseUrl) {
+    return new com.smartfirehub.apiconnection.dto.ApiConnectionResponse(
+        id,
+        "WD681",
+        null,
+        authType,
+        java.util.Map.of(),
+        baseUrl,
+        null,
+        null,
+        null,
+        null,
+        null,
+        1L,
+        null,
+        null);
+  }
+
+  /** BASIC 연결 미리보기는 Basic 헤더를 보내고, echo 응답의 Base64 덩어리·비밀번호는 rawJson·결과 행 어디에도 남지 않는다. */
+  @Test
+  void preview_basicConnection_sendsBasicHeader_andMasksEcho() {
+    String b64 =
+        java.util.Base64.getEncoder()
+            .encodeToString("alice:Pw681prev".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    when(apiConnectionService.getByIdForCall(21L))
+        .thenReturn(connWithBase(21L, "BASIC", "http://localhost:" + wireMock.port()));
+    when(apiConnectionService.getDecryptedAuthConfig(21L))
+        .thenReturn(
+            java.util.Map.of("authType", "BASIC", "username", "alice", "password", "Pw681prev"));
+    wireMock.stubFor(
+        get(urlEqualTo("/echo"))
+            .withHeader("Authorization", equalTo("Basic " + b64))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"auth\":\"Basic " + b64 + "\",\"pw\":\"Pw681prev\"}]")));
+
+    var response =
+        service.preview(
+            new com.smartfirehub.pipeline.dto.ApiCallPreviewRequest(
+                "/echo",
+                "GET",
+                null,
+                null,
+                null,
+                "$",
+                java.util.List.of(
+                    new com.smartfirehub.pipeline.dto.ApiCallPreviewRequest.FieldMappingPreview(
+                        "auth", "auth", "TEXT"),
+                    new com.smartfirehub.pipeline.dto.ApiCallPreviewRequest.FieldMappingPreview(
+                        "pw", "pw", "TEXT")),
+                21L,
+                null,
+                5000));
+
+    assertThat(response.success()).isTrue();
+    assertThat(response.rawJson()).doesNotContain(b64).doesNotContain("Pw681prev");
+    assertThat(response.rows().toString()).doesNotContain(b64).doesNotContain("Pw681prev");
+  }
+
+  /**
+   * 짧은 낱말 비밀번호(admin)도 결과 행을 망가뜨리지 않는다(WD-681 리뷰) — 예전에는 비밀번호를 API 키처럼 본문 전체에서 바꿔 「admin user」 같은
+   * 값이 「****dmin user」 가 됐다. 이제 결과 행은 값 전체가 비밀번호인 칸만 가리고, 화면 원문(rawJson)은 SMTP 규칙으로 비밀번호를 지운다.
+   */
+  @Test
+  void preview_basicShortWordPassword_keepsRowsIntact() {
+    when(apiConnectionService.getByIdForCall(23L))
+        .thenReturn(connWithBase(23L, "BASIC", "http://localhost:" + wireMock.port()));
+    when(apiConnectionService.getDecryptedAuthConfig(23L))
+        .thenReturn(java.util.Map.of("authType", "BASIC", "username", "bob", "password", "admin"));
+    wireMock.stubFor(
+        get(urlEqualTo("/roles"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"role\":\"admin user\",\"pw\":\"admin\"}]")));
+
+    var response =
+        service.preview(
+            new com.smartfirehub.pipeline.dto.ApiCallPreviewRequest(
+                "/roles",
+                "GET",
+                null,
+                null,
+                null,
+                "$",
+                java.util.List.of(
+                    new com.smartfirehub.pipeline.dto.ApiCallPreviewRequest.FieldMappingPreview(
+                        "role", "role", "TEXT"),
+                    new com.smartfirehub.pipeline.dto.ApiCallPreviewRequest.FieldMappingPreview(
+                        "pw", "pw", "TEXT")),
+                23L,
+                null,
+                5000));
+
+    assertThat(response.success()).isTrue();
+    assertThat(response.rows()).hasSize(1);
+    assertThat(response.rows().get(0))
+        .containsEntry("role", "admin user")
+        .containsEntry("pw", "****");
+    assertThat(response.rawJson()).doesNotContain("admin");
+  }
+
+  /** 옛 연결(baseUrl 사용자 정보)의 미리보기 — 저장 원문으로 부르되 응답 resolvedUrl 에서는 비밀번호를 가린다. */
+  @Test
+  void preview_legacyUserInfoBaseUrl_resolvedUrlMasked() {
+    String raw = "http://svc:LegacyPrev681@localhost:" + wireMock.port();
+    when(apiConnectionService.getByIdForCall(22L)).thenReturn(connWithBase(22L, "BEARER", raw));
+    when(apiConnectionService.getDecryptedAuthConfig(22L))
+        .thenReturn(java.util.Map.of("authType", "BEARER", "token", "tok681prev"));
+    wireMock.stubFor(
+        get(urlEqualTo("/v1/legacy"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"id\":1}]")));
+
+    var response =
+        service.preview(
+            new com.smartfirehub.pipeline.dto.ApiCallPreviewRequest(
+                "/v1/legacy", "GET", null, null, null, "$", null, 22L, null, 5000));
+
+    assertThat(response.success()).isTrue();
+    assertThat(response.resolvedUrl())
+        .isEqualTo("http://svc:****@localhost:" + wireMock.port() + "/v1/legacy");
   }
 }

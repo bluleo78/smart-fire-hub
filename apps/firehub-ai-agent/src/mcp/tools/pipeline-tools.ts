@@ -14,6 +14,14 @@ const UPDATE_SCRIPT_CONTENT_PREFIX =
 const PG_DATASET_REF = '명시적 데이터셋은 data."tableName" 사용';
 const TIBERO_DATASET_REF = '명시적 데이터셋은 get_data_schema 가 돌려준 schema 로 genia_t{id}.{tableName} 사용';
 
+/**
+ * API_CALL 인라인 인증(inlineAuth) 필드 설명 — 파이프라인 스텝과 미리보기 도구가 같은 문구를 쓴다.
+ * (WD-681) 서버가 인라인 인증에서도 BASIC(username·password)을 받으므로 지원 방식과 필드 모양을 함께 알려 주고,
+ * URL 에 아이디:비밀번호@ 를 넣는 우회를 막는다.
+ */
+const INLINE_AUTH_DESCRIPTION =
+  '인라인 인증 정보 — { authType, ... }. API_KEY: { placement, headerName/paramName, apiKey }, BEARER: { token }, BASIC: { username, password }. URL 에 사용자 정보(아이디:비밀번호@)를 넣지 말 것. 가능하면 저장된 apiConnectionId 를 쓰세요';
+
 export function registerPipelineTools(
   apiClient: FireHubApiClient,
   safeTool: SafeToolFn,
@@ -141,7 +149,7 @@ export function registerPipelineTools(
                   inlineAuth: z
                     .record(z.string(), z.string())
                     .optional()
-                    .describe('인라인 인증 정보'),
+                    .describe(INLINE_AUTH_DESCRIPTION),
                 })
                 .optional()
                 .describe('API_CALL 스텝 설정'),
@@ -320,7 +328,7 @@ export function registerPipelineTools(
           .optional()
           .describe('필드 매핑'),
         apiConnectionId: z.number().optional().describe('저장된 API 연결 ID'),
-        inlineAuth: z.record(z.string(), z.string()).optional().describe('인라인 인증 정보'),
+        inlineAuth: z.record(z.string(), z.string()).optional().describe(INLINE_AUTH_DESCRIPTION),
         timeoutMs: z.number().optional().describe('타임아웃(ms)'),
       },
       async (args: {

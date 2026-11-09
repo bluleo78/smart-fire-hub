@@ -204,19 +204,19 @@ class ApiConnectionServiceExtTest extends IntegrationTestBase {
 
   @Test
   void create_invalidAuthType_throwsApiConnectionException() {
-    // "BASIC" — 지원되지 않는 authType → 한국어 안내 예외(WD-180, 400)
+    // "OAUTH2" — 지원되지 않는 authType → 한국어 안내 예외(WD-180, 400). BASIC 은 WD-681 부터 지원한다.
     CreateApiConnectionRequest req =
         new CreateApiConnectionRequest(
             "Bad AuthType",
             null,
-            "BASIC",
+            "OAUTH2",
             Map.of("username", "u", "password", "p"),
             "https://svc.example.com",
             null);
 
     assertThatThrownBy(() -> apiConnectionService.create(req, testUserId))
         .isInstanceOf(ApiConnectionException.class)
-        .hasMessage("지원하지 않는 인증 방식입니다: BASIC (사용 가능: API_KEY, BEARER)");
+        .hasMessage("지원하지 않는 인증 방식입니다: OAUTH2 (사용 가능: API_KEY, BEARER, BASIC)");
   }
 
   @Test
@@ -227,7 +227,7 @@ class ApiConnectionServiceExtTest extends IntegrationTestBase {
 
     assertThatThrownBy(() -> apiConnectionService.create(req, testUserId))
         .isInstanceOf(ApiConnectionException.class)
-        .hasMessage("인증 방식(authType)을 입력하세요 (사용 가능: API_KEY, BEARER)");
+        .hasMessage("인증 방식(authType)을 입력하세요 (사용 가능: API_KEY, BEARER, BASIC)");
   }
 
   // ── update(): baseUrl 변경 경로 (validateAndNormalizeBaseUrl 호출) ───────────
@@ -471,6 +471,6 @@ class ApiConnectionServiceExtTest extends IntegrationTestBase {
 
     assertThatThrownBy(() -> apiConnectionService.update(created.id(), updateReq, testUserId))
         .isInstanceOf(ApiConnectionException.class)
-        .hasMessage("지원하지 않는 인증 방식입니다: INVALID_TYPE (사용 가능: API_KEY, BEARER)");
+        .hasMessage("지원하지 않는 인증 방식입니다: INVALID_TYPE (사용 가능: API_KEY, BEARER, BASIC)");
   }
 }

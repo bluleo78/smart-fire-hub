@@ -40,11 +40,24 @@ public class ApiConnectionReader {
   private final EncryptionService encryptionService;
   private final ObjectMapper objectMapper;
 
-  /** 단건 조회 — authConfig 는 마스킹된 형태로 반환한다. */
+  /** 단건 조회 — authConfig 는 마스킹된 형태로, baseUrl 은 사용자 정보의 비밀번호를 가린 형태로(WD-681) 반환한다. */
   public ApiConnectionResponse getById(Long id) {
     ApiConnectionRow row =
         repository.findById(id).orElseThrow(() -> new ApiConnectionNotFoundException(id));
     return toResponse(row);
+  }
+
+  /**
+   * 호출용 단건 조회(WD-681) — {@link #getById} 와 같되 baseUrl 을 가리지 않은 저장 원문으로 싣는다.
+   *
+   * <p>연결 테스트·API_CALL 미리보기·파이프라인 실행은 이 baseUrl 로 실제 요청 URL 을 만든다. 이미 저장된 옛 연결(API_KEY·BEARER + 사용자
+   * 정보)은 이관하지 않았으므로(Python 실행기는 httpx 가 사용자 정보를 Basic 인증으로 보낸다) 가린 값({@code ****})으로 부르면 동작이 바뀐다.
+   * <b>이 결과의 baseUrl 을 응답·로그·실행 기록으로 내보내지 말 것</b> — 내보낼 때는 {@link BaseUrlUserInfo#mask} 를 거친다.
+   */
+  public ApiConnectionResponse getByIdForCall(Long id) {
+    ApiConnectionRow row =
+        repository.findById(id).orElseThrow(() -> new ApiConnectionNotFoundException(id));
+    return toResponse(row, false);
   }
 
   /**
@@ -86,6 +99,16 @@ public class ApiConnectionReader {
    * 중복시키지 않기 위함이다.
    */
   public ApiConnectionResponse toResponse(ApiConnectionRow r) {
+    return toResponse(r, true);
+  }
+
+  /**
+   * 행 → 응답 DTO.
+   *
+   * @param maskBaseUrl baseUrl 의 사용자 정보 비밀번호를 가릴지(WD-681). 응답·화면·AI 챗으로 나가는 경로는 true, 실제 호출 URL 을
+   *     만드는 경로({@link #getByIdForCall})만 false
+   */
+  private ApiConnectionResponse toResponse(ApiConnectionRow r, boolean maskBaseUrl) {
     Map<String, String> plainConfig = decryptToMap(r.authConfig());
     Map<String, String> masked = maskAuthConfig(plainConfig);
 
@@ -95,7 +118,7 @@ public class ApiConnectionReader {
         r.description(),
         r.authType(),
         masked,
-        r.baseUrl(),
+        maskBaseUrl ? BaseUrlUserInfo.mask(r.baseUrl()) : r.baseUrl(),
         r.healthCheckPath(),
         r.lastStatus(),
         r.lastCheckedAt(),
@@ -139,8 +162,23 @@ public class ApiConnectionReader {
       boolean isSensitive = isSensitiveKey(entry.getKey());
       masked.put(
           entry.getKey(),
-          isSensitive ? encryptionService.maskValue(entry.getValue()) : entry.getValue());
+          isSensitive ? maskSecretValue(entry.getKey(), entry.getValue()) : entry.getValue());
     }
     return masked;
+  }
+
+  /**
+   * 비밀 필드 값 하나의 응답용 가린 모양(WD-681 리뷰). BASIC 비밀번호({@link AuthConfigValidator#BASIC_PASSWORD_KEY})는 끝
+   * 글자 없이 고정 {@link AuthQueryMasker#PASSWORD_MASK} — SMTP 비밀번호(WD-676)·baseUrl 사용자 정보({@link
+   * BaseUrlUserInfo#mask})와 같다. 비밀 필드인지는 {@link #isSensitiveKey} 한 곳이 정하고, 여기서는 가린 모양만 고른다. 비밀번호는
+   * 짧고 사람이 고른 값이라 끝 4자만 보여도 크게 줄어든다. API 키·토큰은 예전 그대로 {@code ****}+끝 4자(어느 키인지 알아보는 데 쓴다).
+   *
+   * <p>응답 가리기와 수정 시 「가린 값을 그대로 되돌려 보냈는지」 판정({@code ApiConnectionService.resolveMaskedSecrets})이 반드시
+   * 이 한 함수를 같이 써야 한다 — 어긋나면 되돌려 보낸 가린 값을 알아보지 못해 거절하거나 가린 값이 저장된다.
+   */
+  String maskSecretValue(String key, String value) {
+    return AuthConfigValidator.BASIC_PASSWORD_KEY.equals(key)
+        ? AuthQueryMasker.PASSWORD_MASK
+        : encryptionService.maskValue(value);
   }
 }

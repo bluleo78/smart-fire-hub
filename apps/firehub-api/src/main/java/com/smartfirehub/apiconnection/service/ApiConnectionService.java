@@ -93,14 +93,18 @@ public class ApiConnectionService {
   @Transactional
   public ApiConnectionResponse create(CreateApiConnectionRequest request, Long userId) {
     validateAuthType(request.authType());
+    // baseUrl 의 사용자 정보(아이디:비밀번호@) 규칙(WD-681) — BASIC 이면 인증 설정으로 옮기고 baseUrl 에서 뗀다, 그 밖의 방식이면 400.
+    BaseUrlCandidate baseUrl = applyUserInfoRule(request.authType(), request.baseUrl(), false);
     // 저장값이 없으니 가린 값(****…)은 유지할 대상도 없다 — 그대로 저장되지 않게 거절한다(WD-179).
     // 비밀 필드 빈 값(정리한 뒤 기준, WD-588 → WD-623)을 먼저, 이어서 헤더·파라미터 이름과 값 줄바꿈을 저장 전에 검사한다(WD-392) —
-    // 쓸 수 없는 값이 저장돼 테스트가 네트워크 오류처럼 안내되지 않게.
+    // 쓸 수 없는 값이 저장돼 테스트가 네트워크 오류처럼 안내되지 않게. 옮긴 사용자 정보는 가린 값 처리 뒤에 합친다(합친 값으로 필수 검사).
     Map<String, String> normalizedConfig =
         AuthConfigValidator.validateAndNormalize(
-            request.authType(), resolveMaskedSecrets(request.authConfig(), null, false));
+            request.authType(),
+            mergeUserInfo(
+                resolveMaskedSecrets(request.authConfig(), null, false), baseUrl.moved()));
     // 입력 검증(인증 정보·기준 URL, 400)은 이름 중복(409)보다 먼저 — 입력 자체가 틀린 요청은 400 으로 답한다.
-    String normalizedBaseUrl = validateAndNormalizeBaseUrl(request.baseUrl());
+    String normalizedBaseUrl = validateAndNormalizeBaseUrl(baseUrl.baseUrl());
     validateNameNotDuplicated(request.name());
 
     String encryptedConfig = serializeAndEncrypt(normalizedConfig);
@@ -134,6 +138,15 @@ public class ApiConnectionService {
   @Transactional(readOnly = true)
   public ApiConnectionResponse getById(Long id) {
     return reader.getById(id);
+  }
+
+  /**
+   * 호출용 단건 조회(WD-681) — baseUrl 을 가리지 않은 저장 원문으로 싣는다. API_CALL 미리보기·파이프라인 실행처럼 실제 요청 URL 을 만드는 곳만
+   * 쓴다(응답으로 내보내지 말 것). 구현은 {@link ApiConnectionReader#getByIdForCall}.
+   */
+  @Transactional(readOnly = true)
+  public ApiConnectionResponse getByIdForCall(Long id) {
+    return reader.getByIdForCall(id);
   }
 
   /** 복호화된 authConfig 조회. 구현은 {@link ApiConnectionReader} 에 있고 여기서는 위임만 한다. */
@@ -182,43 +195,99 @@ public class ApiConnectionService {
     }
     // 검사·저장·감사 모두 바뀐 뒤의 인증 방식 기준이다(WD-392) — 방식을 바꾸지 않는 수정이면 저장된 방식으로 본다.
     String effectiveAuthType = request.authType() != null ? request.authType() : currentAuthType;
-    if (authTypeChanged) {
-      // 방식 변경은 새 방식의 비밀이 반드시 함께 와야 한다(WD-180). 가린 값 거절·헤더 이름 등 다른 사유보다 먼저 본다 — 무엇을 빠뜨렸는지가 가장
-      // 중요한 안내다(WD-623).
-      requireSecretForNewAuthType(effectiveAuthType, request.authConfig());
+
+    // baseUrl 의 사용자 정보(WD-681). 화면은 가린 baseUrl(아이디:****@)을 받아 다른 칸·경로·쿼리만 고쳐 보낼 수 있다 —
+    // 옛 연결(API_KEY·BEARER + 사용자 정보)은 이관하지 않으므로 이때 저장된 비밀번호를 되살린다. 되살리는 것은 스킴·호스트·포트·아이디가 저장값과 같을
+    // 때뿐이고(WD-681
+    // 리뷰), 가린 값을 남긴 채 주소·아이디를 바꾸면 저장된 비밀번호를 새 주소로 보내지 않도록 400 이다. BASIC 으로 바꾸며 baseUrl 을 보내지
+    // 않으면 저장된 baseUrl 의 사용자 정보를 옮긴다(BASIC 연결의 baseUrl 에는 사용자 정보를 남기지 않는다). 되살린 사용자 정보는 이번 요청에서
+    // 입력한 값이 아니므로 인증 설정과 충돌로 보지 않는다(아래 putUserInfoIfAbsent).
+    String requestedBaseUrl =
+        request.baseUrl() != null && !request.baseUrl().isBlank() ? request.baseUrl() : null;
+    boolean restoredStoredBaseUrl = false;
+    if (requestedBaseUrl != null && BaseUrlUserInfo.hasUserInfo(requestedBaseUrl)) {
+      java.util.Optional<String> restored =
+          BaseUrlUserInfo.restoreStoredUserInfo(requestedBaseUrl, existing.baseUrl());
+      if (restored.isPresent()) {
+        requestedBaseUrl = restored.get();
+        restoredStoredBaseUrl = true;
+      } else if (BaseUrlUserInfo.hasMaskedPassword(requestedBaseUrl)
+          && BaseUrlUserInfo.hasPassword(existing.baseUrl())) {
+        throw new ApiConnectionException(USERINFO_MASKED_OTHER_ADDRESS_MESSAGE);
+      }
+    } else if (requestedBaseUrl == null
+        && "BASIC".equals(effectiveAuthType)
+        && BaseUrlUserInfo.hasUserInfo(existing.baseUrl())) {
+      requestedBaseUrl = existing.baseUrl();
+      restoredStoredBaseUrl = true;
+    }
+    BaseUrlCandidate baseUrl =
+        requestedBaseUrl != null
+            ? applyUserInfoRule(effectiveAuthType, requestedBaseUrl, restoredStoredBaseUrl)
+            : new BaseUrlCandidate(null, null);
+    // 저장소에서 되살린 옛 사용자 정보는 BASIC 이면 인증 설정으로 옮긴다 — 방식별 분기 전에 한 번만 다룬다. 요청 authConfig 가 아이디·비밀번호를
+    // 하나라도 주면 그 값이 이기고(옛 사용자 정보는 baseUrl 에서 떼기만 한다), 아무것도 주지 않으면 옛 사용자 정보를 채운다. authConfig 없이
+    // 같은 방식을 유지하는 수정은 아래에서 저장된 설정에 덮어쓴다.
+    BaseUrlUserInfo.UserInfo restoredUserInfo =
+        restoredStoredBaseUrl && "BASIC".equals(effectiveAuthType)
+            ? BaseUrlUserInfo.extract(requestedBaseUrl).orElse(null)
+            : null;
+    Map<String, String> requestedConfig = request.authConfig();
+    if (restoredUserInfo != null && (authTypeChanged || requestedConfig != null)) {
+      requestedConfig = putUserInfoIfAbsent(requestedConfig, restoredUserInfo);
     }
 
     String encryptedConfig = null;
     // 인증 정보가 실제로 바뀌었는지(감사용, WD-181). 인증 방식이 바뀌면 새 방식의 비밀이 반드시 함께 오므로 바뀐 것이다.
     boolean credentialsChanged = authTypeChanged;
-    if (request.authConfig() != null) {
-      // 조회 결과(maskedAuthConfig)를 그대로 되돌려 보낸 비밀 필드는 저장 원문으로 채운다(WD-179). authType 이 바뀌면 같은 이름의
-      // 필드라도 뜻이 달라지므로 저장값을 쓰지 않는다 — 가린 값은 모두 거절된다.
-      Map<String, String> stored = null;
-      if (!authTypeChanged) {
-        stored = reader.getDecryptedAuthConfig(id);
-        rejectMaskedEchoOfEmptyStoredSecret(effectiveAuthType, request.authConfig(), stored);
+    if (authTypeChanged) {
+      // baseUrl 에서 옮긴 사용자 정보(BASIC)는 요청 authConfig 에 합쳐서 본다(WD-681) — 옛 연결을 BASIC 으로 바꾸며 아이디·비밀번호를
+      // 입력하지 않으면 baseUrl 의 사용자 정보가 새 방식의 비밀이고, 입력했으면 입력한 값을 쓴다.
+      Map<String, String> requested = mergeUserInfo(requestedConfig, baseUrl.moved());
+      // 방식 변경은 새 방식의 비밀이 반드시 함께 와야 한다(WD-180). 가린 값 거절·헤더 이름 등 다른 사유보다 먼저 본다 — 무엇을 빠뜨렸는지가 가장
+      // 중요한 안내다(WD-623).
+      requireSecretForNewAuthType(effectiveAuthType, requested);
+      // authType 이 바뀌면 같은 이름의 필드라도 뜻이 달라지므로 저장값을 쓰지 않는다 — 가린 값은 모두 거절된다(WD-179).
+      Map<String, String> resolved =
+          AuthConfigValidator.validateAndNormalize(
+              effectiveAuthType, resolveMaskedSecrets(requested, null, true));
+      encryptedConfig = serializeAndEncrypt(resolved);
+    } else if (request.authConfig() != null
+        || baseUrl.moved() != null
+        || restoredUserInfo != null) {
+      Map<String, String> stored = reader.getDecryptedAuthConfig(id);
+      Map<String, String> base;
+      if (request.authConfig() != null) {
+        // baseUrl 에 새로 입력한 사용자 정보를 먼저 합친다(WD-681 리뷰) — 가린 비밀번호(****)를 그대로 되돌려 보낸 칸은 새로 입력한 값이
+        // 아니라 baseUrl 의 비밀번호가 바꾼다. 아이디·비밀번호를 함께 입력했고 서로 다르면 400.
+        Map<String, String> requested = mergeUserInfo(requestedConfig, baseUrl.moved());
+        // 조회 결과(maskedAuthConfig)를 그대로 되돌려 보낸 비밀 필드는 저장 원문으로 채운다(WD-179).
+        rejectMaskedEchoOfEmptyStoredSecret(effectiveAuthType, requested, stored);
+        base = resolveMaskedSecrets(requested, stored, true);
+      } else {
+        // authConfig 없이 BASIC 연결의 baseUrl 에 사용자 정보만 넣은(또는 되살린) 수정(WD-681 리뷰) — 그 사용자 정보가 저장된
+        // 아이디·비밀번호를 바꾼다(저장값과 다르다고 충돌로 보지 않는다 — 이번 요청이 입력한 값은 baseUrl 하나뿐이다).
+        base = new HashMap<>(stored);
+        base.remove("authType");
+        base.putAll(userInfoFields(baseUrl.moved() != null ? baseUrl.moved() : restoredUserInfo));
       }
       // authConfig 는 통째로 교체되므로 방식이 그대로여도 비밀 필드가 비면 거절한다(WD-623) — 예전에는 방식이 바뀔 때만 봐서 {}·빈 토큰이
       // 저장된 비밀을 빈 값으로 덮었다(200). 가린 값을 그대로 보낸 경우는 저장 원문으로 채워져 통과한다. 빈 값 검사는 validateAndNormalize 가
       // 정리한 값으로 다른 필드 검사보다 먼저 한다.
       Map<String, String> resolved =
-          AuthConfigValidator.validateAndNormalize(
-              effectiveAuthType, resolveMaskedSecrets(request.authConfig(), stored, true));
+          AuthConfigValidator.validateAndNormalize(effectiveAuthType, base);
       encryptedConfig = serializeAndEncrypt(resolved);
-      if (!authTypeChanged) {
-        // 비교는 메모리 안에서만 한다 — 값은 어디에도 남기지 않고 true/false 만 감사에 싣는다. 양쪽을 같은 규칙(authType 키 빼기·토큰 정리·
-        // API_KEY 기본값)으로 맞춰 비교해 뜻이 같은 저장을 변경으로 오판하지 않는다(WD-639).
-        credentialsChanged =
-            !AuthConfigValidator.comparableConfig(effectiveAuthType, resolved)
-                .equals(AuthConfigValidator.comparableConfig(effectiveAuthType, stored));
-      }
+      // 비교는 메모리 안에서만 한다 — 값은 어디에도 남기지 않고 true/false 만 감사에 싣는다. 양쪽을 같은 규칙(authType 키 빼기·토큰 정리·
+      // API_KEY 기본값)으로 맞춰 비교해 뜻이 같은 저장을 변경으로 오판하지 않는다(WD-639).
+      credentialsChanged =
+          !AuthConfigValidator.comparableConfig(effectiveAuthType, resolved)
+              .equals(AuthConfigValidator.comparableConfig(effectiveAuthType, stored));
     }
 
-    // baseUrl이 있으면 정규화 및 SSRF 검증
+    // baseUrl이 있으면 정규화 및 SSRF 검증 — 사용자 정보를 옮겼으면 뗀 값이다(WD-681).
     String normalizedBaseUrl = null;
-    if (request.baseUrl() != null && !request.baseUrl().isBlank()) {
-      normalizedBaseUrl = validateAndNormalizeBaseUrl(request.baseUrl());
+    if (baseUrl.baseUrl() != null) {
+      normalizedBaseUrl = validateAndNormalizeBaseUrl(baseUrl.baseUrl());
     }
 
     // 이름을 변경하는 경우에만 중복 검사 — 자기 자신은 제외 (#647)
@@ -295,7 +364,11 @@ public class ApiConnectionService {
   @Transactional(readOnly = true)
   public List<ApiConnectionSelectableResponse> findSelectable() {
     return repository.findAll().stream()
-        .map(r -> new ApiConnectionSelectableResponse(r.id(), r.name(), r.authType(), r.baseUrl()))
+        // baseUrl 은 사용자 정보의 비밀번호를 가린다(WD-681) — 이 목록은 일반 사용자(파이프라인 편집)에게도 나간다.
+        .map(
+            r ->
+                new ApiConnectionSelectableResponse(
+                    r.id(), r.name(), r.authType(), BaseUrlUserInfo.mask(r.baseUrl())))
         .toList();
   }
 
@@ -320,7 +393,9 @@ public class ApiConnectionService {
    */
   public TestConnectionResponse testConnection(Long id, Long actorUserId) {
     // ── 여기까지가 트랜잭션 구간(각 호출이 reader 프록시에서 자체 트랜잭션을 연다) ──
-    ApiConnectionResponse conn = reader.getById(id);
+    // 호출 URL 은 저장 원문 baseUrl 로 만든다(WD-681) — 옛 연결의 사용자 정보를 가린 값으로 부르면 안 된다. 응답 requestUrl 은
+    // callHealthCheck 가 가린다.
+    ApiConnectionResponse conn = reader.getByIdForCall(id);
     Map<String, String> rawConfig = reader.getDecryptedAuthConfig(id);
     // ── 아래 HTTP 호출은 트랜잭션 밖이다 ──
     // 인증은 파이프라인 API_CALL 실행·미리보기와 같은 진입점으로 푼다(WD-657) — 방식은 연결의 auth_type 컬럼, 키·대체 키·대소문자·Bearer
@@ -378,13 +453,17 @@ public class ApiConnectionService {
    */
   public TestConnectionResponse testConnectionPayload(CreateApiConnectionRequest request) {
     validateAuthType(request.authType());
+    // baseUrl 의 사용자 정보는 생성과 같은 규칙이다(WD-681) — BASIC 이면 인증 설정으로 옮겨 Basic 헤더로 보내고, 그 밖의 방식이면 400.
+    BaseUrlCandidate baseUrl = applyUserInfoRule(request.authType(), request.baseUrl(), false);
     // 저장 전 테스트도 가린 값(****…)을 인증 값으로 보내지 않는다 — 저장값이 없으니 유지할 것도 없다(WD-179).
     // 비밀 필드가 없거나 비면(정리한 뒤 기준) 대상 서버를 부르지 않고 생성과 같은 안내로 거절한다(WD-623) — 예전에는 빈 인증으로 호출해 대상
     // 서버의 401/403 만 보여 무엇을 빠뜨렸는지 알 수 없었다. 이 검사는 validateAndNormalize 가 다른 필드 검사보다 먼저 한다.
     Map<String, String> rawConfig =
         AuthConfigValidator.validateAndNormalize(
-            request.authType(), resolveMaskedSecrets(request.authConfig(), null, false));
-    String normalizedBaseUrl = validateAndNormalizeBaseUrl(request.baseUrl());
+            request.authType(),
+            mergeUserInfo(
+                resolveMaskedSecrets(request.authConfig(), null, false), baseUrl.moved()));
+    String normalizedBaseUrl = validateAndNormalizeBaseUrl(baseUrl.baseUrl());
     String normalizedPath = normalizeHealthCheckPath(request.healthCheckPath());
     // 저장 전이라 연결 행이 없다 — 요청의 방식을 연결 컬럼처럼 보고 같은 규칙으로 푼다(WD-657).
     return callHealthCheck(
@@ -415,9 +494,11 @@ public class ApiConnectionService {
    */
   private TestConnectionResponse callHealthCheck(String targetUrl, ApiCallAuth.ResolvedAuth auth) {
     // 응답 본문·헤더·오류 문구에서 가릴 값 — 실제로 보내는 비밀 전부다(쿼리 키뿐 아니라 헤더 키·Bearer 토큰, WD-657).
-    String secret = auth.sentSecret();
+    // BASIC 은 비밀번호와 Basic 헤더의 Base64 덩어리 둘 다 가린다(WD-681).
+    AuthQueryMasker.SentSecrets secret = auth.sentSecrets();
     // 응답의 requestUrl 은 인증 쿼리 키를 가린 표시용 URL 이다(WD-177). URL 을 만들기 전에 실패하면 키 없는 기준 URL 을 보인다.
-    String displayUrl = targetUrl;
+    // 옛 연결의 baseUrl 사용자 정보는 비밀번호를 가린다(WD-681) — 이 값은 응답·화면·AI 챗으로 나간다.
+    String displayUrl = BaseUrlUserInfo.mask(targetUrl);
 
     long start = System.currentTimeMillis();
     // 이미 저장된 인증 값이 HTTP 요청에 쓸 수 없는 것이면(WD-392 전에 저장된 띄어쓰기 헤더 이름 등) 호출하지 않고 그 사유를 보인다 —
@@ -436,6 +517,7 @@ public class ApiConnectionService {
       // URL 을 만들 수 없어 실패해도 400 응답에 키가 실리지 않고 DOWN 결과(고정 문구)로 돌아가게 한다. 키 값은 인코딩 키·디코딩 키
       // 모두 공용 규칙(QueryApiKeyEncoding)으로 한 번만 인코딩된다(WD-182).
       // 쿼리 인증이 아니면 URL 을 손대지 않는다(정적 파라미터 없음 → null) — 공용 빌더(ResolvedAuth.buildUrls, WD-657).
+      // 표시용 URL 은 사용자 정보 비밀번호까지 가려져 나온다(WD-681, buildUrls).
       AuthQueryMasker.AuthQueryUrls urls = auth.buildUrls(targetUrl, null);
       displayUrl = urls.displayUrl();
       // 응답 본문/헤더를 함께 받아 디버깅용으로 노출 (#76).
@@ -512,7 +594,8 @@ public class ApiConnectionService {
    * 쿼리 키(원문·인코딩형)를 {@code ****XXXX} 로 가린다. API_KEY 를 쿼리로 보내는 연결에서 예외 메시지에 호출 URL 이 실리면 키가 그대로 남기
    * 때문이다.
    */
-  private static String toUserFacingErrorMessage(Exception e, String targetUrl, String secret) {
+  private static String toUserFacingErrorMessage(
+      Exception e, String targetUrl, AuthQueryMasker.SentSecrets secret) {
     String message;
     if (isTimeoutException(e)) {
       // Reactor block(Duration) 타임아웃(IllegalStateException)은 분류기의 타임아웃 판별에 걸리지 않을 수 있어
@@ -528,7 +611,7 @@ public class ApiConnectionService {
           ApiCallErrorMessages.describe(e, HEALTH_CHECK_TIMEOUT_SECONDS * 1000, hostOf(targetUrl));
     }
     // 분류하지 못한 원문에 인증 쿼리 키(원문·인코딩형)가 실려 올 수 있어 마지막에 가린다(WD-177).
-    return AuthQueryMasker.scrubSecret(message, secret);
+    return secret.scrubText(message);
   }
 
   /**
@@ -569,10 +652,11 @@ public class ApiConnectionService {
    * 응답 본문 미리보기. (WD-177) 오류 본문이 요청 파라미터를 되울려 쿼리 인증 키가 담겨 올 수 있어 키(원문·인코딩형)를 먼저 가린 뒤 자른다 — 자른 뒤 가리면
    * 경계에 걸친 키 앞부분이 남는다.
    */
-  private static String truncateBody(String body, String secret) {
+  private static String truncateBody(String body, AuthQueryMasker.SentSecrets secret) {
     if (body == null || body.isEmpty()) return body;
-    // JSON 이스케이프로 되울린 비밀까지 가리도록 미리보기와 같은 본문 가림을 쓴다(WD-657).
-    String masked = AuthQueryMasker.maskBody(body, secret);
+    // JSON 이스케이프로 되울린 비밀까지 가리도록 미리보기와 같은 본문 가림을 쓴다(WD-657). 화면에 그대로 보이는 원문이라 BASIC 비밀번호도
+    // 가린다(WD-681 리뷰, SentSecrets.maskRawText).
+    String masked = secret.maskRawText(body);
     if (masked.length() <= MAX_BODY_PREVIEW_BYTES) return masked;
     return masked.substring(0, MAX_BODY_PREVIEW_BYTES) + "\n... (truncated)";
   }
@@ -592,7 +676,7 @@ public class ApiConnectionService {
    * 따라가지 않아 3xx 의 {@code Location: https://…?serviceKey=<키>} 가 그대로 결과에 실리기 때문이다.
    */
   private static Map<String, String> sanitizeHeaders(
-      org.springframework.http.HttpHeaders headers, String secret) {
+      org.springframework.http.HttpHeaders headers, AuthQueryMasker.SentSecrets secret) {
     Map<String, String> out = new HashMap<>();
     headers.forEach(
         (k, v) -> {
@@ -600,7 +684,7 @@ public class ApiConnectionService {
           if (SENSITIVE_HEADER_NAMES.contains(k.toLowerCase(Locale.ROOT))) {
             out.put(k, "****");
           } else {
-            out.put(k, AuthQueryMasker.scrubSecret(joined, secret));
+            out.put(k, secret.scrubText(joined));
           }
         });
     return out;
@@ -716,6 +800,134 @@ public class ApiConnectionService {
     }
   }
 
+  /** API_KEY·BEARER 인데 baseUrl 에 사용자 정보가 새로 들어왔을 때의 안내(WD-681). */
+  static final String USERINFO_NEEDS_BASIC_MESSAGE =
+      "baseUrl 에 사용자 정보(아이디:비밀번호@)를 넣으려면 인증 방식을 BASIC 으로 고르세요";
+
+  /** baseUrl 의 사용자 정보와 BASIC 인증 설정의 아이디·비밀번호가 서로 다를 때의 안내(WD-681). */
+  static final String USERINFO_CONFLICT_MESSAGE =
+      "사용자 정보가 baseUrl 과 인증 설정에 다르게 들어 있습니다 — 한 곳에만 넣으세요";
+
+  /** baseUrl 사용자 정보의 비밀번호가 가린 값(****)일 때의 안내(WD-681) — 가린 값이 실제 비밀번호로 저장되지 않게 한다. */
+  static final String USERINFO_MASKED_PASSWORD_MESSAGE =
+      "baseUrl 의 비밀번호에 가려진 값(****)은 쓸 수 없습니다 — 실제 비밀번호를 입력하거나 사용자 정보를 지우고 인증 설정의 비밀번호 칸을 쓰세요";
+
+  /**
+   * 가린 사용자 정보({@code 아이디:****@})를 남긴 채 baseUrl 의 주소(스킴·호스트·포트)나 아이디를 바꿨을 때의 안내(WD-681 리뷰). 저장된
+   * 비밀번호를 다른 주소로 보내지 않으므로 되살리지 않는다 — 사용자 정보를 지우거나 BASIC 을 골라 아이디·비밀번호를 입력하게 한다.
+   */
+  static final String USERINFO_MASKED_OTHER_ADDRESS_MESSAGE =
+      "저장된 비밀번호는 다른 주소(스킴·호스트·포트)나 다른 아이디로 옮길 수 없습니다 — baseUrl 에서 사용자 정보(아이디:****@)를 지우거나, 인증 방식을"
+          + " BASIC 으로 골라 아이디·비밀번호를 입력하세요";
+
+  /**
+   * 사용자 정보 규칙을 적용한 baseUrl 과 옮길 사용자 정보.
+   *
+   * @param baseUrl 검증할 baseUrl(BASIC 이면 사용자 정보를 뗀 값). 요청에 없으면 null
+   * @param moved 이번 요청 baseUrl 에 입력해 BASIC 인증 설정으로 옮길 사용자 정보. 없거나 저장소에서 되살린 값이면 null(되살린 값은 호출자가 따로
+   *     다룬다)
+   */
+  private record BaseUrlCandidate(String baseUrl, BaseUrlUserInfo.UserInfo moved) {}
+
+  /**
+   * baseUrl 의 사용자 정보(아이디:비밀번호@) 규칙(WD-681, 사람 결정 Z).
+   *
+   * <ul>
+   *   <li>사용자 정보가 없으면 그대로.
+   *   <li>BASIC: baseUrl 에서는 뗀다. 이번 요청에서 입력한 사용자 정보면 퍼센트 디코딩한 아이디·비밀번호를 옮길 값으로 돌려준다(저장소에서 되살린 값이면
+   *       돌려주지 않는다 — 호출자가 충돌 검사 없이 채운다). 입력한 비밀번호가 가린 값({@code ****})이면 400 — 되살릴 저장값이 없는(생성·저장 전
+   *       테스트·저장값에 비밀번호 없음) 가린 값이라 실제 비밀번호로 저장하면 안 된다.
+   *   <li>API_KEY·BEARER: 저장된 옛 값을 되살린 것이면 허용(옛 연결은 이관하지 않는다), 새로 들어온 사용자 정보면 400.
+   * </ul>
+   *
+   * <p>baseUrl 형식·SSRF 검사는 여기서 하지 않는다 — 호출자가 돌려받은 baseUrl 로 {@link #validateAndNormalizeBaseUrl} 을
+   * 부른다.
+   *
+   * @param authType 검증을 마친 (바뀐 뒤의) 인증 방식
+   * @param baseUrl 요청 baseUrl(가린 값은 이미 저장 원문으로 되살린 것). null 가능
+   * @param restoredStored {@code baseUrl} 의 사용자 정보가 저장된 원래 값인지(가린 값 되살리기·BASIC 전환 시 저장값 이관)
+   */
+  private static BaseUrlCandidate applyUserInfoRule(
+      String authType, String baseUrl, boolean restoredStored) {
+    if (baseUrl == null || !BaseUrlUserInfo.hasUserInfo(baseUrl)) {
+      return new BaseUrlCandidate(baseUrl, null);
+    }
+    if ("BASIC".equals(authType)) {
+      if (restoredStored) return new BaseUrlCandidate(BaseUrlUserInfo.strip(baseUrl), null);
+      if (BaseUrlUserInfo.hasMaskedPassword(baseUrl)) {
+        throw new ApiConnectionException(USERINFO_MASKED_PASSWORD_MESSAGE);
+      }
+      return new BaseUrlCandidate(
+          BaseUrlUserInfo.strip(baseUrl), BaseUrlUserInfo.extract(baseUrl).orElse(null));
+    }
+    if (!restoredStored) {
+      throw new ApiConnectionException(USERINFO_NEEDS_BASIC_MESSAGE);
+    }
+    return new BaseUrlCandidate(baseUrl, null);
+  }
+
+  /**
+   * 이번 요청 baseUrl 에 입력한 사용자 정보를 요청의 BASIC 인증 설정에 합친다(WD-681, 리뷰 반영). 같은 요청의 authConfig 에 아이디·비밀번호가
+   * 함께 있고 값이 다르면 400(어느 쪽이 맞는지 서버가 고를 수 없다). 비었거나 같으면 사용자 정보 값을 쓴다. 가린 비밀번호({@code ****…}, 조회 결과를
+   * 되돌려 보낸 것)는 입력한 값이 아니라 비어 있는 것으로 본다. 비밀번호가 없는 사용자 정보({@code 아이디@})는 아이디만 합친다.
+   *
+   * @param config 요청 설정(null 가능 — 빈 설정으로 본다)
+   * @param typed 입력한 사용자 정보. null 이면 {@code config} 를 그대로 돌려준다
+   * @return 합친 새 Map(요청 Map 은 불변일 수 있어 건드리지 않는다)
+   */
+  private static Map<String, String> mergeUserInfo(
+      Map<String, String> config, BaseUrlUserInfo.UserInfo typed) {
+    if (typed == null) return config;
+    Map<String, String> merged = new HashMap<>(config != null ? config : Map.of());
+    userInfoFields(typed).forEach((key, value) -> putTypedUserInfoField(merged, key, value));
+    return merged;
+  }
+
+  /**
+   * 저장소에서 되살린 옛 사용자 정보를 설정에 채운다(옛 연결을 BASIC 으로 바꿀 때, WD-681 리뷰) — 충돌로 보지 않는다. 설정이 아이디나 비밀번호를 하나라도
+   * 주면 그 값이 이기고 그대로 둔다. 아무것도 주지 않으면 옛 사용자 정보를 넣는다.
+   *
+   * @param config 요청 설정(null 가능 — 빈 설정으로 본다)
+   * @return 새 Map(요청 Map 은 불변일 수 있어 건드리지 않는다)
+   */
+  private static Map<String, String> putUserInfoIfAbsent(
+      Map<String, String> config, BaseUrlUserInfo.UserInfo restored) {
+    Map<String, String> merged = new HashMap<>(config != null ? config : Map.of());
+    String user = merged.get(AuthConfigValidator.BASIC_USERNAME_KEY);
+    String password = merged.get(AuthConfigValidator.BASIC_PASSWORD_KEY);
+    boolean provided =
+        (user != null && !user.isBlank()) || (password != null && !password.isEmpty());
+    if (!provided) merged.putAll(userInfoFields(restored));
+    return merged;
+  }
+
+  /** 사용자 정보를 BASIC 인증 설정 필드(아이디·비밀번호)로 — 비밀번호가 없는 사용자 정보면 아이디만. */
+  private static Map<String, String> userInfoFields(BaseUrlUserInfo.UserInfo info) {
+    Map<String, String> fields = new LinkedHashMap<>();
+    fields.put(AuthConfigValidator.BASIC_USERNAME_KEY, info.username());
+    if (info.password() != null) {
+      fields.put(AuthConfigValidator.BASIC_PASSWORD_KEY, info.password());
+    }
+    return fields;
+  }
+
+  /**
+   * 이번 요청에서 입력한 사용자 정보 필드 하나를 합친다 — 설정 값이 비어 있으면(아이디는 공백만이어도, 비밀번호는 빈 문자열·가린 값) 사용자 정보 값을 넣고, 다른
+   * 값이면 충돌 400.
+   */
+  private static void putTypedUserInfoField(Map<String, String> config, String key, String value) {
+    String existing = config.get(key);
+    boolean empty =
+        existing == null
+            || (AuthConfigValidator.BASIC_USERNAME_KEY.equals(key)
+                ? existing.isBlank()
+                : existing.isEmpty() || AuthConfigValidator.isMaskedSecret(key, existing));
+    if (!empty && !existing.equals(value)) {
+      throw new ApiConnectionException(USERINFO_CONFLICT_MESSAGE);
+    }
+    config.put(key, value);
+  }
+
   /**
    * 동일 테넌트 내 이름 중복을 막는다 (#647). {@code api_connection.name}에는 유니크 제약이 없어(V93 주석 참고) 같은 이름의 연결이 여러 개
    * 생성될 수 있었고, 목록/삭제 확인 다이얼로그가 이름만으로 항목을 구분해 오삭제 위험이 있었다. RLS 정책이 테넌트 경계를 자동으로 걸어주므로 여기서는 이름만 검사하면
@@ -728,11 +940,11 @@ public class ApiConnectionService {
   }
 
   /** 안내 문구에 싣는 지원 목록 — 순서를 고정해 문구가 실행마다 달라지지 않게 한다. */
-  private static final String SUPPORTED_AUTH_TYPES_TEXT = "API_KEY, BEARER";
+  private static final String SUPPORTED_AUTH_TYPES_TEXT = "API_KEY, BEARER, BASIC";
 
   /**
-   * 인증 방식 값 자체를 검증한다 — 생성·수정·저장 전 테스트 공통. 지원 목록 밖(OAUTH2·BASIC·FOO 등)은 DB CHECK 제약(409 일반 문구)에 닿기
-   * 전에 400 한국어 안내로 거절한다(WD-180).
+   * 인증 방식 값 자체를 검증한다 — 생성·수정·저장 전 테스트 공통. 지원 목록 밖(OAUTH2·FOO 등)은 DB CHECK 제약(409 일반 문구)에 닿기 전에 400
+   * 한국어 안내로 거절한다(WD-180).
    */
   private void validateAuthType(String authType) {
     if (authType == null || authType.isBlank()) {
@@ -749,7 +961,8 @@ public class ApiConnectionService {
   private static final Map<String, String> STORED_SECRET_EMPTY_MESSAGE_BY_AUTH_TYPE =
       Map.of(
           "API_KEY", "저장된 API 키가 비어 있습니다 — 새 키를 입력하세요 (authConfig.apiKey)",
-          "BEARER", "저장된 Bearer 토큰이 비어 있습니다 — 새 토큰을 입력하세요 (authConfig.token)");
+          "BEARER", "저장된 Bearer 토큰이 비어 있습니다 — 새 토큰을 입력하세요 (authConfig.token)",
+          "BASIC", "저장된 비밀번호가 비어 있습니다 — 새 비밀번호를 입력하세요 (authConfig.password)");
 
   /**
    * 인증 방식을 바꾸는 수정에는 새 방식의 비밀 필드를 담은 authConfig 가 함께 와야 한다(WD-180). 저장된 비밀은 옛 방식의 것이라(API 키 ↔ 토큰) 새
@@ -834,7 +1047,8 @@ public class ApiConnectionService {
       String comparable = AuthConfigValidator.maskComparable(key, value);
       String storedValue = stored != null ? stored.get(key) : null;
       if (storedValue != null
-          && AuthConfigValidator.maskComparable(key, encryptionService.maskValue(storedValue))
+          // 저장값의 가린 모양은 응답과 같은 함수로 만든다(WD-681 리뷰) — 비밀번호는 고정 ****, 키·토큰은 ****+끝 4자.
+          && AuthConfigValidator.maskComparable(key, reader.maskSecretValue(key, storedValue))
               .equals(comparable)) {
         // 조회 결과를 그대로 되돌려 보낸 경우 — 이 필드만 저장 원문으로 채워 비밀을 유지한다.
         resolved.put(key, storedValue);

@@ -37,9 +37,6 @@ public final class SmtpFailureMessages {
   /** 일반 문구에 덧붙이는 서버 응답 조각의 최대 길이 — 긴 스택·HTML 오류 페이지가 토스트를 덮지 않게. */
   static final int MAX_DETAIL_LENGTH = 200;
 
-  /** 비밀번호 자리에 넣는 가림 문자열 — API 키와 달리 끝 4자도 보이지 않는다. */
-  private static final String PASSWORD_MASK = "****";
-
   private SmtpFailureMessages() {}
 
   /**
@@ -142,33 +139,40 @@ public final class SmtpFailureMessages {
    * SMTP 실패를 비밀 없이 바꾸는 마스커(WD-686, {@link #forCredentials}) — 분류 문구({@link #describe(Throwable)})와
    * 가린 예외 사본({@link #maskedCopy(Throwable)})이 같은 지우기 규칙을 쓴다.
    *
-   * <p><b>지우는 것.</b> 비밀번호 원문·URL 인코딩형({@link AuthQueryMasker#scrubberFor}), Base64(AUTH LOGIN 형태),
-   * AUTH PLAIN 자격 증명 덩어리 {@code Base64("\0" + user + "\0" + password)}(authzid 없음)·{@code
-   * Base64(user + "\0" + user + "\0" + password)} (authzid=user). PLAIN 덩어리는 비밀번호 원문·Base64 가 아니라
-   * 앞의 가림에 걸리지 않는데, 디코딩하면 비밀번호가 그대로 나온다. 지운 뒤에도 원문이 남으면(최소 길이 미만이라 지우지 않은 짧은 값) 그 문장을 통째로 버린다 —
+   * <p><b>지우는 것.</b> 먼저 AUTH PLAIN 자격 증명 덩어리 {@code Base64("\0" + user + "\0" + password)}(authzid
+   * 없음)·{@code Base64(user + "\0" + user + "\0" + password)} (authzid=user)를 지운다. PLAIN 덩어리는 비밀번호
+   * 원문·Base64 가 아니라 뒤의 가림에 걸리지 않는데, 디코딩하면 비밀번호가 그대로 나온다. 그다음 BASIC 인증과 같은 비밀번호 규칙({@link
+   * AuthQueryMasker#scrubPassword}, WD-681 — 원문·URL 인코딩형·Base64(AUTH LOGIN 형태)를 {@link
+   * AuthQueryMasker#PASSWORD_MASK} 로)을 적용한다. 지운 뒤에도 원문이 남으면(최소 길이 미만이라 지우지 않은 짧은 값) 그 문장을 통째로 버린다 —
    * 비밀번호는 어떤 경우에도 나가지 않는다.
    */
   public static final class CredentialMasker {
 
     private final String where;
     private final String password;
-    private final java.util.function.UnaryOperator<String> plainScrubber;
 
-    /** 긴 덩어리부터 — 「\0user\0」 처럼 앞 조각이 3바이트 경계에 맞으면 비밀번호만의 Base64 가 PLAIN 덩어리의 끝부분과 같다. */
-    private final List<String> base64Forms;
+    /**
+     * 비밀번호 공용 규칙({@link AuthQueryMasker#passwordScrubberFor}, WD-681)을 한 번만 계산해 둔 함수 —
+     * 원문·인코딩형·Base64 를 {@link AuthQueryMasker#PASSWORD_MASK} 로 지우고, 비밀번호가 남으면 null 을 돌려준다.
+     */
+    private final java.util.function.UnaryOperator<String> passwordScrubber;
+
+    /**
+     * AUTH PLAIN 덩어리 Base64 형(WD-686) — 비밀번호 규칙보다 먼저 지운다. 「\0user\0」 처럼 앞 조각이 3바이트 경계에 맞으면 비밀번호만의
+     * Base64 가 PLAIN 덩어리의 끝부분과 같아, 비밀번호 규칙을 먼저 쓰면 덩어리 앞부분만 남는다.
+     */
+    private final List<String> plainForms;
 
     private CredentialMasker(String host, String username, String password) {
       this.where = host == null || host.isBlank() ? "SMTP 서버" : "SMTP 서버(" + host + ")";
       this.password = password == null || password.isEmpty() ? null : password;
-      this.plainScrubber = AuthQueryMasker.scrubberFor(this.password, PASSWORD_MASK);
+      this.passwordScrubber = AuthQueryMasker.passwordScrubberFor(this.password, null);
       String user = username == null ? "" : username;
-      this.base64Forms =
+      this.plainForms =
           this.password == null
               ? List.of()
               : List.of(
-                      user + "\0" + user + "\0" + this.password,
-                      "\0" + user + "\0" + this.password,
-                      this.password)
+                      user + "\0" + user + "\0" + this.password, "\0" + user + "\0" + this.password)
                   .stream()
                   .map(c -> Base64.getEncoder().encodeToString(c.getBytes(StandardCharsets.UTF_8)))
                   .toList();
@@ -209,11 +213,12 @@ public final class SmtpFailureMessages {
     /** 문장에서 비밀을 지운다. 지운 뒤에도 비밀번호 원문이 남으면 null — 호출부가 문장을 버린다. */
     private String scrub(String text) {
       if (text == null || password == null) return text;
-      String out = plainScrubber.apply(text);
-      for (String form : base64Forms) {
-        out = out.replace(form, PASSWORD_MASK);
+      // AUTH PLAIN 덩어리를 먼저 지우고(WD-686), 나머지는 BASIC 과 같은 비밀번호 규칙(WD-681)에 맡긴다 — 남으면 null.
+      String out = text;
+      for (String form : plainForms) {
+        out = out.replace(form, AuthQueryMasker.PASSWORD_MASK);
       }
-      return out.contains(password) ? null : out;
+      return passwordScrubber.apply(out);
     }
 
     /**

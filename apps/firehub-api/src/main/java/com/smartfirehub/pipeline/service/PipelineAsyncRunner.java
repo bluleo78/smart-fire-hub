@@ -1170,7 +1170,9 @@ public class PipelineAsyncRunner {
         Map<String, String> decryptedAuth = null;
         if (step.apiConnectionId() != null) {
           try {
-            apiConn = apiConnectionService.getById(step.apiConnectionId());
+            // 호출 URL 은 저장 원문 baseUrl 로 만든다(WD-681) — 옛 연결의 사용자 정보(Python 실행기는 httpx 가
+            // Basic 으로 보낸다)를 가린 값으로 부르면 동작이 바뀐다.
+            apiConn = apiConnectionService.getByIdForCall(step.apiConnectionId());
             decryptedAuth = apiConnectionService.getDecryptedAuthConfig(step.apiConnectionId());
           } catch (ApiConnectionNotFoundException e) {
             // 실행 기록(스텝 오류)에 남는 문구라 사용자가 할 일을 담은 한국어로 바꾼다(WD-180) — 예전에는 「ApiConnection not

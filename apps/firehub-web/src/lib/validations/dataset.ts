@@ -128,11 +128,22 @@ export const datasetDescriptionSchema = z
   .optional()
   .or(z.literal(''));
 
+/**
+ * 데이터셋 이름 규칙 — 만들기·정보 수정·복제가 함께 쓴다(WD-523: 복제 폼이 따로 적은 규칙에 trim·길이 상한이 빠져 있었다).
+ * 공백만 넣은 이름이 길이 검사를 통과해 서버 @NotBlank 400 까지 가지 않도록 trim 뒤 검사하고(WD-502), 앞뒤 공백은 잘라 보낸다.
+ * 상한 100자는 dataset.name 칼럼 VARCHAR(100) 과 같다 — 넘으면 서버가 DB 오류로 실패하므로 화면이 먼저 막는다.
+ */
+export const DATASET_NAME_MAX_LENGTH = 100;
+export const datasetNameSchema = z
+  .string()
+  .trim()
+  .min(1, '데이터셋 이름을 입력하세요')
+  .max(DATASET_NAME_MAX_LENGTH, `이름은 ${DATASET_NAME_MAX_LENGTH}자 이하여야 합니다`);
+
 /** 생성 폼 스키마를 VARCHAR 길이 상한과 함께 만든다(WD-636) — 칼럼 길이 상한만 저장소 값을 따른다. */
 export function makeCreateDatasetSchema(maxVarcharLength: number = DEFAULT_MAX_VARCHAR_LENGTH) {
   return z.object({
-    // 공백만 넣은 이름이 길이 검사를 통과해 서버 @NotBlank 400(당시 영어 토스트, WD-570 이후 한국어)까지 가지 않도록 trim 뒤 검사한다 (WD-502).
-    name: z.string().trim().min(1, '데이터셋 이름을 입력하세요').max(100, '이름은 100자 이하여야 합니다'),
+    name: datasetNameSchema,
     tableName: z.string()
       .min(1, '테이블명을 입력하세요')
       .max(MAX_TABLE_NAME_LENGTH, TABLE_NAME_MAX_MESSAGE)
@@ -163,8 +174,7 @@ export function makeCreateDatasetSchema(maxVarcharLength: number = DEFAULT_MAX_V
 export const createDatasetSchema = makeCreateDatasetSchema();
 
 export const updateDatasetSchema = z.object({
-  // 공백만 넣은 이름이 길이 검사를 통과해 서버 @NotBlank 400(당시 영어 토스트, WD-570 이후 한국어)까지 가지 않도록 trim 뒤 검사한다 (WD-502).
-  name: z.string().trim().min(1, '데이터셋 이름을 입력하세요').max(100, '이름은 100자 이하여야 합니다'),
+  name: datasetNameSchema,
   description: datasetDescriptionSchema,
   categoryId: z.number().optional(),
 });

@@ -715,6 +715,22 @@ describe('SL-ACM: api-connection-manager subagent integration', () => {
     expect(prompt).toContain('authConfig');
   });
 
+  // WD-681: BASIC(아이디·비밀번호) 인증과 baseUrl 사용자 정보 금지·옛 연결의 가린 baseUrl 안내가 프롬프트에 있어야 한다.
+  it('api-connection-manager prompt covers BASIC auth and baseUrl userinfo rules (WD-681)', () => {
+    resetSubagentCache();
+    const realSubagentsDir = path.join(__dirname, 'subagents');
+    const agents = loadSubagents(realSubagentsDir);
+
+    const def = agents['api-connection-manager'];
+    expect(def.description).toContain('BASIC');
+    expect(def.prompt).toContain('BASIC');
+    expect(def.prompt).toContain('username');
+    expect(def.prompt).toContain('password');
+    // baseUrl 에 아이디:비밀번호@ 를 넣지 말라는 규칙과, 가린 baseUrl(user:****@)은 고치지 말라는 규칙
+    expect(def.prompt).toContain('사용자 정보');
+    expect(def.prompt).toContain(':****@');
+  });
+
   it('api-connection-manager description and prompt include baseUrl keyword', () => {
     resetSubagentCache();
     const realSubagentsDir = path.join(__dirname, 'subagents');

@@ -3,6 +3,7 @@ package com.smartfirehub.pipeline.service.executor;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.smartfirehub.apiconnection.dto.ApiConnectionResponse;
+import com.smartfirehub.apiconnection.service.AuthQueryMasker;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
@@ -255,5 +256,109 @@ class ApiCallAuthTest {
         .isEqualTo("https://b.example/p?svcx=1");
     assertThat(ApiCallAuth.stripQueryParam("https://b.example/p", "svc"))
         .isEqualTo("https://b.example/p");
+  }
+
+  // ── WD-681: BASIC ─────────────────────────────────────────────────────────────
+
+  /**
+   * BASIC 은 Authorization: Basic base64(utf8(아이디:비밀번호)) 하나를 붙이고, 다른 출처에서 뗄 헤더는 Authorization 이다.
+   */
+  @Test
+  void basic_appliesBasicAuthorizationHeader() {
+    ApiCallAuth.ResolvedAuth auth =
+        ApiCallAuth.resolve(conn("BASIC"), Map.of("username", "홍길동", "password", "pa:ss 1"));
+    java.util.Map<String, String> headers = new java.util.LinkedHashMap<>();
+    auth.applyHeaders(headers::put);
+    String expected =
+        java.util.Base64.getEncoder()
+            .encodeToString("홍길동:pa:ss 1".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    assertThat(headers).containsExactly(Map.entry("Authorization", "Basic " + expected));
+    assertThat(auth.isBasic()).isTrue();
+    assertThat(auth.authHeaderName()).isEqualTo("Authorization");
+    assertThat(auth.isCredentialHeader("authorization")).isTrue();
+    // 가릴 비밀은 비밀번호와 Base64 덩어리 둘 다다 — 둘 다 끝 글자 없는 고정 가림(WD-681 리뷰)
+    assertThat(auth.sentSecrets())
+        .isEqualTo(new AuthQueryMasker.SentSecrets(null, expected, "pa:ss 1"));
+    assertThat(auth.sentSecrets().scrubText("x Basic " + expected + " y"))
+        .isEqualTo("x Basic **** y");
+    // API 키 규칙으로 가릴 값(sentSecret)에는 BASIC 비밀번호를 넣지 않는다 — 고정 가림은 sentSecrets 가 맡는다
+    assertThat(auth.sentSecret()).isNull();
+    // 쿼리에는 아무것도 붙이지 않는다 — URL 은 그대로
+    assertThat(auth.buildUrls("https://a.example.com/x", null).callUrl())
+        .isEqualTo("https://a.example.com/x");
+  }
+
+  /** 인라인 인증(방식이 설정 안의 authType)도 같은 규칙 — 소문자 basic 도 BASIC 이다. */
+  @Test
+  void basic_inlineLowercaseType_resolvesSame() {
+    ApiCallAuth.ResolvedAuth auth =
+        ApiCallAuth.resolve(Map.of("authType", "basic", "username", "u", "password", "p"));
+    assertThat(auth.isBasic()).isTrue();
+    assertThat(auth.basicCredentials()).isEqualTo("dTpw");
+  }
+
+  /** 호출 전 검사: 아이디가 비면 아이디, 비밀번호가 비면 비밀번호를 짚는다(연결·인라인 위치별 문구). */
+  @Test
+  void basic_describeCallProblem_pointsUsernameThenPassword() {
+    assertThat(ApiCallAuth.describeCallProblem(conn("BASIC"), Map.of("password", "p")))
+        .isEqualTo("API 연결 「공공 API」의 아이디가 비어 있습니다 — API 연결 화면에서 인증 정보를 저장하세요.");
+    assertThat(ApiCallAuth.describeCallProblem(conn("BASIC"), Map.of("username", "u")))
+        .isEqualTo("API 연결 「공공 API」의 비밀번호가 비어 있습니다 — API 연결 화면에서 인증 정보를 저장하세요.");
+    assertThat(ApiCallAuth.describeCallProblem(null, Map.of("authType", "BASIC", "username", "u")))
+        .isEqualTo("스텝 인증 설정의 비밀번호가 비어 있습니다 — 파이프라인 편집에서 이 스텝의 인증 설정을 고치세요.");
+    assertThat(
+            ApiCallAuth.describeCallProblem(
+                conn("BASIC"), Map.of("username", "u", "password", "p")))
+        .isNull();
+  }
+
+  /**
+   * 인라인 BASIC 아이디도 저장 연결 검사와 같은 규칙으로 콜론·줄바꿈을 거절한다(WD-681 리뷰) — 예전에는 빈 아이디만 봐서 「a:b」 아이디가 Basic 헤더에서
+   * 비밀번호 일부로 읽혔다. 문구에는 연결 화면 검사({@code AuthConfigValidator.basicUsernameProblem})의 사유를 그대로 싣는다.
+   */
+  @Test
+  void basic_describeCallProblem_rejectsColonAndLineBreakInUsername() {
+    assertThat(
+            ApiCallAuth.describeCallProblem(
+                null, Map.of("authType", "BASIC", "username", "a:b", "password", "p")))
+        .isEqualTo(
+            "스텝 인증 설정의 아이디를 쓸 수 없습니다(아이디에 콜론(:)을 넣을 수 없습니다 — Basic 인증 아이디에는 콜론을 쓸 수 없습니다) —"
+                + " 파이프라인 편집에서 이 스텝의 인증 설정을 고치세요.");
+    assertThat(
+            ApiCallAuth.describeCallProblem(
+                conn("BASIC"), Map.of("username", "a\nb", "password", "p")))
+        .startsWith("API 연결 「공공 API」의 아이디를 쓸 수 없습니다(")
+        .endsWith(") — API 연결 화면에서 이 연결의 아이디를 고치세요.");
+  }
+
+  /**
+   * BASIC 비밀번호 가림 규칙(WD-681 리뷰, SMTP WD-676 과 같다) — 자유 문장은 지우고 짧아 못 지우면 문장을 통째로 가린다. 결과 행을 만드는 본문은
+   * 비밀번호 원문을 건드리지 않아(짧은 낱말 비밀번호가 응답 글자를 모두 바꾸지 않게) 값 전체가 같은 칸만 가린다.
+   */
+  @Test
+  void basic_sentSecrets_passwordRuleLikeSmtp() {
+    AuthQueryMasker.SentSecrets shortPw =
+        ApiCallAuth.resolve(Map.of("authType", "BASIC", "username", "u", "password", "ab"))
+            .sentSecrets();
+    assertThat(shortPw.scrubText("failed for ab")).isEqualTo(AuthQueryMasker.PASSWORD_WITHHELD);
+    assertThat(shortPw.scrubText("connection refused")).isEqualTo("connection refused");
+
+    AuthQueryMasker.SentSecrets word =
+        ApiCallAuth.resolve(Map.of("authType", "BASIC", "username", "u", "password", "admin"))
+            .sentSecrets();
+    String body = "{\"items\":[{\"role\":\"admin user\",\"echo\":\"admin\"}]}";
+    // 결과 행 본문: 비밀번호 원문은 그대로(구조 보존)
+    assertThat(word.maskBody(body)).isEqualTo(body);
+    // 화면 원문: 비밀번호를 고정 **** 로
+    assertThat(word.maskRawText(body)).doesNotContain("admin").contains("****");
+    // 결과 행: 값 전체가 비밀번호인 칸만
+    java.util.List<java.util.Map<String, Object>> rows =
+        java.util.List.of(
+            new java.util.LinkedHashMap<>(Map.of("role", "admin user", "echo", "admin")));
+    assertThat(word.maskRows(rows).get(0))
+        .containsEntry("role", "admin user")
+        .containsEntry("echo", "****");
+    // 오류 문구: 지운다(끝 글자 없는 고정 가림)
+    assertThat(word.scrubText("bad admin")).isEqualTo("bad ****");
   }
 }

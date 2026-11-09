@@ -276,7 +276,7 @@ public class ApiConnection extends TableImpl<ApiConnectionRecord> {
     @Override
     public List<Check<ApiConnectionRecord>> getChecks() {
         return Arrays.asList(
-            Internal.createCheck(this, DSL.name("api_connection_auth_type_check"), "(((auth_type)::text = ANY ((ARRAY['API_KEY'::character varying, 'BEARER'::character varying, 'OAUTH2'::character varying])::text[])))", true)
+            Internal.createCheck(this, DSL.name("api_connection_auth_type_check"), "(((auth_type)::text = ANY ((ARRAY['API_KEY'::character varying, 'BEARER'::character varying, 'OAUTH2'::character varying, 'BASIC'::character varying])::text[])))", true)
         );
     }
 

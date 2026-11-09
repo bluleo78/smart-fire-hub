@@ -26,4 +26,9 @@ describe('cloneName (WD-430)', () => {
     expect(result).not.toContain('�');
     expect(Array.from(result).slice(0, 194).every((c) => c === '😀')).toBe(true);
   });
+
+  it('구분 글자를 비우면 접미사를 바로 붙이고 그만큼 원래 이름을 남긴다 (WD-523 데이터셋 복제)', () => {
+    expect(cloneName('매출', '_copy', 100, '')).toBe('매출_copy');
+    expect(cloneName('가'.repeat(98), '_copy', 100, '')).toBe(`${'가'.repeat(95)}_copy`);
+  });
 });

@@ -6,6 +6,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.apiconnection.service.AuthQueryMasker;
+import com.smartfirehub.apiconnection.service.BaseUrlUserInfo;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
@@ -68,6 +69,14 @@ class ApiCallAuthVectorsTest {
     return cases("redirectMethod");
   }
 
+  static Stream<Arguments> basicAuth() throws IOException {
+    return cases("basicAuth");
+  }
+
+  static Stream<Arguments> maskUserInfo() throws IOException {
+    return cases("maskUserInfo");
+  }
+
   /** 표가 비면 아래 파라미터 테스트가 공허하게 통과한다 — 갈래마다 사례가 실제로 읽혔는지 본다. */
   @Test
   void fixture_isLoaded() throws IOException {
@@ -78,7 +87,10 @@ class ApiCallAuthVectorsTest {
             "headerName",
             "scrub",
             "redirectLocation",
-            "redirectMethod")) {
+            "redirectMethod",
+            "basicAuth",
+            "maskUserInfo",
+            "basicScrub")) {
       assertThat(section(name).size()).as(name).isGreaterThanOrEqualTo(4);
     }
   }
@@ -138,5 +150,52 @@ class ApiCallAuthVectorsTest {
         RedirectLocations.keepsMethodAndBody(
             c.get("status").asInt(), c.get("sameOrigin").asBoolean());
     assertThat(keeps).isEqualTo(c.get("keepsBody").asBoolean());
+  }
+
+  /**
+   * BASIC 인증 헤더(WD-681) — 두 실행기가 같은 입력에서 같은 「Authorization: Basic …」 을 보내고, 그 Base64 덩어리와 비밀번호를 모두
+   * 가릴 비밀로 본다.
+   */
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("basicAuth")
+  void basicAuth_matchesVector(String name, JsonNode c) {
+    Map<String, String> auth = MAPPER.convertValue(c.get("auth"), new TypeReference<>() {});
+    ApiCallAuth.ResolvedAuth resolved = ApiCallAuth.resolve(auth);
+    Map<String, String> headers = new java.util.LinkedHashMap<>();
+    resolved.applyHeaders(headers::put);
+    String expected = c.get("expectedHeader").asText();
+    assertThat(headers).containsExactly(Map.entry("Authorization", expected));
+    assertThat(resolved.sentSecrets())
+        .isEqualTo(
+            new AuthQueryMasker.SentSecrets(
+                null, expected.substring("Basic ".length()), auth.get("password")));
+  }
+
+  static Stream<Arguments> basicScrub() throws IOException {
+    return cases("basicScrub");
+  }
+
+  /**
+   * BASIC 비밀 가림(WD-681 리뷰) — Basic 덩어리는 늘 고정 ****, 비밀번호는 SMTP 규칙(지우고 남으면 문장을 통째로 가림). Python {@code
+   * SentSecrets.scrub} 과 같은 표다.
+   */
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("basicScrub")
+  void basicScrub_matchesVector(String name, JsonNode c) {
+    ApiCallAuth.ResolvedAuth resolved =
+        ApiCallAuth.resolve(
+            Map.of(
+                "authType", "BASIC",
+                "username", c.get("username").asText(),
+                "password", c.get("password").asText()));
+    assertThat(resolved.sentSecrets().scrubText(c.get("text").asText()))
+        .isEqualTo(c.get("expected").asText());
+  }
+
+  /** 실행 기록·응답에 남기는 URL 의 사용자 정보 가림(WD-681) — Python 실행기 요약 줄과 같은 모양이다. */
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("maskUserInfo")
+  void maskUserInfo_matchesVector(String name, JsonNode c) {
+    assertThat(BaseUrlUserInfo.mask(c.get("url").asText())).isEqualTo(c.get("expected").asText());
   }
 }

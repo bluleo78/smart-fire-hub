@@ -84,9 +84,18 @@ function isRepeatedOrSequentialPattern(value: string): boolean {
 }
 
 /**
+ * 비밀이 아닌 식별자 필드 — 빈 값·정확일치 placeholder 만 거르고 접두사·반복·길이 검사는 건너뛴다.
+ * (WD-681) BASIC 의 username 은 "testuser"·"jo" 처럼 실제로 쓰이는 아이디가 접두사·길이 규칙에 걸릴 수 있어,
+ * 무작위 비밀(apiKey·token·password)과 같은 기준을 적용하면 정상 아이디를 막는 오탐이 생긴다.
+ */
+const NON_SECRET_IDENTITY_FIELDS = new Set(['username']);
+
+/**
  * authConfig가 명백히 placeholder/더미 값을 포함하는지 검증한다.
  * 빈 문자열·공백만·`none`/`dummy` 등 placeholder는 거부.
- * authType별 필수 필드(API_KEY: apiKey+headerName, BEARER: token)도 함께 확인.
+ * authType별 필수 필드(API_KEY: apiKey+headerName, BEARER: token, BASIC: username+password)도 함께 확인.
+ * BASIC 의 password 는 apiKey·token 과 같은 비밀로 보고 모든 더미 검사를 그대로 적용한다(WD-681).
+ * 조회 결과의 가린 값(****…)은 여기서 막지 않는다 — 서버가 저장값 유지/거절을 판정한다(WD-179).
  *
  * 회귀 방지: 모델이 사용자에게 더미 값을 권유하거나 자가 보정으로 빈 문자열을
  * 채워 호출하는 경로를 MCP 스키마 레벨에서 차단한다 (#255).
@@ -107,7 +116,7 @@ export function assertAuthConfigNotPlaceholder(
     const trimmed = value.trim();
     if (trimmed.length === 0) {
       throw new Error(
-        `authConfig.${field}가 빈 값입니다. "인증 없는 공개 API"는 지원되지 않습니다 — 사용자에게 실제 API_KEY 또는 BEARER 토큰을 요구하세요. 빈 문자열/더미 값으로 우회 등록 금지 (#255).`,
+        `authConfig.${field}가 빈 값입니다. "인증 없는 공개 API"는 지원되지 않습니다 — 사용자에게 실제 API_KEY·BEARER 토큰 또는 BASIC 아이디·비밀번호를 요구하세요. 빈 문자열/더미 값으로 우회 등록 금지 (#255).`,
       );
     }
     const normalized = trimmed.toLowerCase();
@@ -116,6 +125,8 @@ export function assertAuthConfigNotPlaceholder(
         `authConfig.${field}="${value}"는 명백한 placeholder 값입니다. 사용자에게 실제 인증 정보를 받기 전에는 등록할 수 없습니다 — 더미 권유·자가 보정 금지 (#255).`,
       );
     }
+    // 비밀이 아닌 아이디(username)는 여기까지만 검사한다 — 아래 규칙은 무작위 비밀용이라 실제 아이디를 오탐한다 (WD-681)
+    if (NON_SECRET_IDENTITY_FIELDS.has(field)) continue;
     // 접두사 기반 변형 패턴 차단 — "dummyvalue12345", "testkey123" 등 (#619)
     const matchedPrefix = PLACEHOLDER_PREFIXES.find((p) => normalized.startsWith(p));
     if (matchedPrefix) {
@@ -148,6 +159,13 @@ export function assertAuthConfigNotPlaceholder(
     if (!authConfig.token) {
       throw new Error('BEARER 인증은 authConfig.token이 필요합니다.');
     }
+  } else if (authType === 'BASIC') {
+    // BASIC 은 아이디·비밀번호 둘 다 있어야 Authorization: Basic 헤더를 만들 수 있다 (WD-681)
+    if (!authConfig.username || !authConfig.password) {
+      throw new Error(
+        'BASIC 인증은 authConfig.{username, password} 두 필드가 모두 필요합니다. baseUrl 에 아이디:비밀번호@ 를 넣지 말고 이 두 필드로 보내세요.',
+      );
+    }
   }
 }
 
@@ -176,20 +194,22 @@ export function registerApiConnectionTools(
 
     safeTool(
       'create_api_connection',
-      '새 API 연결을 생성합니다. baseUrl은 필수, healthCheckPath는 선택. 인증 정보는 AES-256-GCM 암호화되어 저장됩니다.',
+      '새 API 연결을 생성합니다. baseUrl은 필수, healthCheckPath는 선택. 인증 정보는 AES-256-GCM 암호화되어 저장됩니다. 아이디·비밀번호 인증은 authType BASIC + authConfig { username, password } 로 보내고, baseUrl 에 사용자 정보(아이디:비밀번호@)를 넣지 마세요.',
       {
         name: z.string().describe('연결 이름 (예: Make.com API)'),
         description: descriptionParam('API 연결'),
-        authType: z.enum(['API_KEY', 'BEARER']).describe('인증 유형'),
+        authType: z.enum(['API_KEY', 'BEARER', 'BASIC']).describe('인증 유형 (API_KEY, BEARER, BASIC=아이디·비밀번호)'),
         authConfig: z
           .record(z.string(), z.string())
           .describe(
-            '인증 설정 — API_KEY: { placement, headerName/paramName, apiKey }, BEARER: { token }',
+            '인증 설정 — API_KEY: { placement, headerName/paramName, apiKey }, BEARER: { token }, BASIC: { username, password }',
           ),
         baseUrl: z
           .string()
           .url()
-          .describe('호출 대상 서비스의 기본 URL (예: https://api.make.com/v2, trailing slash 불필요)'),
+          .describe(
+            '호출 대상 서비스의 기본 URL (예: https://api.make.com/v2, trailing slash 불필요). 사용자 정보(아이디:비밀번호@)는 넣지 말고 BASIC 의 username·password 로 보내세요.',
+          ),
         healthCheckPath: z
           .string()
           .regex(/^\//)
@@ -209,14 +229,23 @@ export function registerApiConnectionTools(
       // WD-179: authConfig 는 통째로 교체된다. 조회 결과의 가린 값(****…)을 그대로 보내면 서버가 저장값을 유지하고,
       // 그 밖의 ****… 값(지어낸 값·다른 연결 값)은 서버가 400 으로 거절한다. 클라이언트에서 ****… 를 막지 않는 이유:
       // 비밀은 그대로 두고 placement/paramName 같은 다른 필드만 바꾸는 유일한 경로가 「가린 값 그대로 보내기」이기 때문이다.
-      'API 연결을 수정합니다. authConfig를 제공하면 인증 정보 전체가 교체됩니다(빠진 필드는 지워짐). baseUrl/healthCheckPath도 변경 가능. 인증 정보를 바꾸지 않으면 authConfig를 생략하세요. 가려진 값(****…)을 새 값처럼 지어내 보내지 마세요 — get_api_connection 결과의 가린 값과 정확히 같을 때만 기존 값이 유지되고, 그 외의 ****… 값은 거절됩니다. 비밀 값을 바꾸려면 사용자에게 실제 값을 받으세요.',
+      'API 연결을 수정합니다. authConfig를 제공하면 인증 정보 전체가 교체됩니다(빠진 필드는 지워짐). baseUrl/healthCheckPath도 변경 가능. 인증 정보를 바꾸지 않으면 authConfig를 생략하세요. 가려진 값(****…)을 새 값처럼 지어내 보내지 마세요 — get_api_connection 결과의 가린 값과 정확히 같을 때만 기존 값이 유지되고, 그 외의 ****… 값은 거절됩니다. 비밀 값을 바꾸려면 사용자에게 실제 값을 받으세요. BASIC 은 authConfig { username, password } 이며 password 도 가린 값 규칙이 같습니다. 조회한 baseUrl 이 아이디:****@ 처럼 가려져 있으면 옛 연결의 사용자 정보이므로 고치려 하지 말고, baseUrl 을 바꾸지 않을 때는 생략하세요.',
       {
         id: z.number().describe('API 연결 ID'),
         name: z.string().optional().describe('연결 이름'),
         description: descriptionParam('API 연결'),
-        authType: z.string().optional().describe('인증 유형 (API_KEY 또는 BEARER)'),
-        authConfig: z.record(z.string(), z.string()).optional().describe('인증 설정'),
-        baseUrl: z.string().url().optional().describe('기본 URL 변경'),
+        authType: z.string().optional().describe('인증 유형 (API_KEY, BEARER, BASIC 중 하나)'),
+        authConfig: z
+          .record(z.string(), z.string())
+          .optional()
+          .describe(
+            '인증 설정 — API_KEY: { placement, headerName/paramName, apiKey }, BEARER: { token }, BASIC: { username, password }',
+          ),
+        baseUrl: z
+          .string()
+          .url()
+          .optional()
+          .describe('기본 URL 변경. 사용자 정보(아이디:비밀번호@)는 넣지 말고 BASIC 의 username·password 로 보내세요.'),
         healthCheckPath: z
           .string()
           .regex(/^\//)
