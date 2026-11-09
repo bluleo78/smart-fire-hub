@@ -3,6 +3,7 @@ package com.smartfirehub.dataset.service;
 import com.smartfirehub.dataset.dto.ColumnStatsResponse;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
+import com.smartfirehub.dataset.exception.ColumnModificationException;
 import com.smartfirehub.dataset.exception.InvalidTableNameException;
 import com.smartfirehub.dataset.rowsearch.IndexRef;
 import com.smartfirehub.dataset.storage.DataStoreBackend;
@@ -184,6 +185,43 @@ public class DataTableService {
       // 타입 오류(알 수 없는 타입·VARCHAR 길이 범위)도 DDL 조립 전에 낸다. WD-636: 파사드의 PG 사본 대신 현재 테넌트 저장소가
       // 검사한다 — 백엔드별 상한(Tibero 4000)이 DDL 전에 같은 문구로 적용된다.
       validateColumnType(col.dataType(), col.maxLength());
+    }
+    // WD-603: 필드 수 상한 — 넘으면 DDL 이 "tables can have at most 1600 columns" 로 실패해 500 이 됐다. 생성·복제·TEMP
+    // (재)생성은 전체 목록을 넘기므로 여기서 한 번에 막는다(필드 추가는 기존 수를 아는 validateColumnCountForAdd 가 맡는다).
+    if (!columns.isEmpty()) {
+      requireWithinColumnLimit(columns.size(), "요청 " + columns.size() + "개");
+    }
+  }
+
+  /**
+   * 현재 테넌트 백엔드에서 사용자가 만들 수 있는 필드 수 상한(WD-603) — 테이블 컬럼 한도({@link
+   * DataTableStore#maxTableColumns()})에서 앱 시스템 컬럼 수를 뺀다. 시스템 컬럼은 사용자에게 보이지 않으므로 안내 숫자도 이 값을 쓴다.
+   */
+  int maxUserColumns() {
+    return resolver.tableStore().maxTableColumns() - DataTableStore.SYSTEM_COLUMN_NAMES.size();
+  }
+
+  /**
+   * 필드 하나를 더 추가해도 상한 안인지 검사한다(WD-603). 카탈로그 저장·DDL 전에, 같은 데이터셋 필드 변경을 직렬화하는 잠금 뒤 읽은 기존 필드 수로 부른다 —
+   * 잠금 전 수로 보면 동시 추가 둘이 함께 통과할 수 있다.
+   *
+   * @param existingCount 지금 데이터셋의 사용자 필드 수
+   */
+  public void validateColumnCountForAdd(int existingCount) {
+    requireWithinColumnLimit(existingCount + 1, "지금 " + existingCount + "개");
+  }
+
+  /**
+   * 결과 필드 수가 사용자 필드 상한({@link #maxUserColumns()}) 안인지 검사한다(WD-603). 생성(요청 목록)·추가(기존 + 1) 두 검사가 같은
+   * 문구 「필드는 최대 N개까지 만들 수 있습니다(detail)」를 내도록 한곳에 둔다.
+   *
+   * @param resultingCount DDL 이 성공하면 테이블에 생길 사용자 필드 수
+   * @param detail 괄호 안에 보일 현재 상황(예: "요청 M개", "지금 K개")
+   */
+  private void requireWithinColumnLimit(int resultingCount, String detail) {
+    int limit = maxUserColumns();
+    if (resultingCount > limit) {
+      throw new ColumnModificationException("필드는 최대 " + limit + "개까지 만들 수 있습니다(" + detail + ")");
     }
   }
 

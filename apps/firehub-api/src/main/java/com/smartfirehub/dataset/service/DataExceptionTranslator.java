@@ -109,6 +109,14 @@ public final class DataExceptionTranslator {
   }
 
   /**
+   * 원인 체인·연쇄 예외 어딘가에 SQLState 가 정확히 {@code sqlState} 인 SQLException 이 있는지(WD-603). DDL 실패 중 특정
+   * 원인(컬럼 한도 54011 등)만 골라 도메인 400 으로 바꾸고 나머지는 그대로 전파하려는 호출부가 쓴다.
+   */
+  public static boolean hasSqlState(Throwable e, String sqlState) {
+    return findSqlException(e, x -> sqlState.equals(x.getSQLState())) != null;
+  }
+
+  /**
    * 원인 체인(getCause)과 각 SQLException 의 연쇄 예외(getNextException)를 걸으며 {@code matches} 를 만족하는 첫
    * SQLException 을 찾는다(없으면 null). 두 방향 모두 {@link #MAX_DEPTH} 까지만 걷는다 — 순환 체인에서도 끝난다.
    */

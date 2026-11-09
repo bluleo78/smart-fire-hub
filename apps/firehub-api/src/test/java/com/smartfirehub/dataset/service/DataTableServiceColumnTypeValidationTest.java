@@ -39,6 +39,8 @@ class DataTableServiceColumnTypeValidationTest {
     store = mock(DataTableStore.class);
     when(resolver.tableStore()).thenReturn(store);
     when(store.isReservedColumnName(anyString())).thenReturn(false);
+    // 필드 수 상한 검사(WD-603)가 묻는 백엔드 컬럼 한도 — 목 기본값 0 이면 모든 목록이 상한 초과가 된다.
+    when(store.maxTableColumns()).thenReturn(1600);
     service = new DataTableService(resolver);
     // 저장소 위임은 테넌트가 있을 때만 일어난다(WD-655) — 기본은 테넌트 안 호출로 둔다.
     TenantContext.set(1L);
