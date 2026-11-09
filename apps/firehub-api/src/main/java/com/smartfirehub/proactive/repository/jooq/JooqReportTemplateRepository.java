@@ -141,19 +141,14 @@ public class JooqReportTemplateRepository implements ReportTemplateRepository {
       List<Map<String, Object>> sections,
       String style,
       Long userId) {
-    try {
-      String sectionsJson = objectMapper.writeValueAsString(sections);
-      return dsl.insertInto(REPORT_TEMPLATE)
-          .set(RT_NAME, name)
-          .set(RT_DESCRIPTION, blankToNull(description))
-          .set(RT_SECTIONS, JSONB.valueOf(sectionsJson))
-          .set(RT_STYLE, blankToNull(style))
-          .set(RT_USER_ID, userId)
-          .returning(RT_ID)
-          .fetchOne(r -> r.get(RT_ID));
-    } catch (Exception e) {
-      throw new RuntimeException("Failed to serialize sections", e);
-    }
+    return dsl.insertInto(REPORT_TEMPLATE)
+        .set(RT_NAME, name)
+        .set(RT_DESCRIPTION, blankToNull(description))
+        .set(RT_SECTIONS, ProactiveJsonb.toJsonb(objectMapper, sections, "sections"))
+        .set(RT_STYLE, blankToNull(style))
+        .set(RT_USER_ID, userId)
+        .returning(RT_ID)
+        .fetchOne(r -> r.get(RT_ID));
   }
 
   /**
@@ -192,23 +187,18 @@ public class JooqReportTemplateRepository implements ReportTemplateRepository {
     // 빌트인 템플릿(user_id IS NULL)은 수정 불가
     // null 은 "바꾸지 않음"(AI 도구 update_report_template 가 일부 필드만 보낸다), 빈 문자열은 "비움"이다 (WD-135).
     // 예전에는 화면이 비운 값을 아예 빼고 보내 성공 토스트만 뜨고 옛 값이 남았다 — 화면은 이제 빈 문자열을 보낸다.
-    try {
-      var query = dsl.update(REPORT_TEMPLATE);
-      var step = query.set(RT_UPDATED_AT, ProactiveTime.nowUtc());
-      if (name != null) step = step.set(RT_NAME, name);
-      if (description != null) step = step.set(RT_DESCRIPTION, blankToNull(description));
-      if (sections != null) {
-        String sectionsJson = objectMapper.writeValueAsString(sections);
-        step = step.set(RT_SECTIONS, JSONB.valueOf(sectionsJson));
-      }
-      if (style != null) step = step.set(RT_STYLE, blankToNull(style));
-      return step.where(RT_ID.eq(id).and(RT_USER_ID.eq(userId)))
-          .returning(RT_UPDATED_AT)
-          .fetchOptional(RT_UPDATED_AT)
-          .orElse(null);
-    } catch (Exception e) {
-      throw new RuntimeException("Failed to serialize sections", e);
+    var query = dsl.update(REPORT_TEMPLATE);
+    var step = query.set(RT_UPDATED_AT, ProactiveTime.nowUtc());
+    if (name != null) step = step.set(RT_NAME, name);
+    if (description != null) step = step.set(RT_DESCRIPTION, blankToNull(description));
+    if (sections != null) {
+      step = step.set(RT_SECTIONS, ProactiveJsonb.toJsonb(objectMapper, sections, "sections"));
     }
+    if (style != null) step = step.set(RT_STYLE, blankToNull(style));
+    return step.where(RT_ID.eq(id).and(RT_USER_ID.eq(userId)))
+        .returning(RT_UPDATED_AT)
+        .fetchOptional(RT_UPDATED_AT)
+        .orElse(null);
   }
 
   /**

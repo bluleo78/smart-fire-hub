@@ -202,24 +202,21 @@ public class JooqProactiveJobRepository implements ProactiveJobRepository {
       Boolean enabled,
       String triggerType,
       Map<String, Object> config) {
-    try {
-      String configJson = config != null ? objectMapper.writeValueAsString(config) : "{}";
-      return dsl.insertInto(PROACTIVE_JOB)
-          .set(PJ_USER_ID, userId)
-          .set(PJ_NAME, name)
-          .set(PJ_PROMPT, prompt)
-          .set(PJ_TEMPLATE_ID, templateId)
-          .set(PJ_CRON_EXPRESSION, cronExpression)
-          .set(PJ_TIMEZONE, timezone != null ? timezone : "Asia/Seoul")
-          .set(PJ_ENABLED, enabled != null ? enabled : true)
-          // triggerType 미지정 시 DB 컬럼 기본값과 동일하게 SCHEDULE로 명시 저장 (#655)
-          .set(PJ_TRIGGER_TYPE, triggerType != null ? triggerType : DEFAULT_TRIGGER_TYPE)
-          .set(PJ_CONFIG, JSONB.valueOf(configJson))
-          .returning(PJ_ID)
-          .fetchOne(r -> r.get(PJ_ID));
-    } catch (Exception e) {
-      throw new RuntimeException("Failed to serialize config", e);
-    }
+    return dsl.insertInto(PROACTIVE_JOB)
+        .set(PJ_USER_ID, userId)
+        .set(PJ_NAME, name)
+        .set(PJ_PROMPT, prompt)
+        .set(PJ_TEMPLATE_ID, templateId)
+        .set(PJ_CRON_EXPRESSION, cronExpression)
+        .set(PJ_TIMEZONE, timezone != null ? timezone : "Asia/Seoul")
+        .set(PJ_ENABLED, enabled != null ? enabled : true)
+        // triggerType 미지정 시 DB 컬럼 기본값과 동일하게 SCHEDULE로 명시 저장 (#655)
+        .set(PJ_TRIGGER_TYPE, triggerType != null ? triggerType : DEFAULT_TRIGGER_TYPE)
+        .set(
+            PJ_CONFIG,
+            ProactiveJsonb.toJsonb(objectMapper, config != null ? config : Map.of(), "config"))
+        .returning(PJ_ID)
+        .fetchOne(r -> r.get(PJ_ID));
   }
 
   /**
@@ -260,34 +257,30 @@ public class JooqProactiveJobRepository implements ProactiveJobRepository {
       Boolean enabled,
       String triggerType,
       Map<String, Object> config) {
-    try {
-      var query = dsl.update(PROACTIVE_JOB).set(PJ_UPDATED_AT, ProactiveTime.nowUtc());
-      if (name != null) query = query.set(PJ_NAME, name);
-      if (prompt != null) query = query.set(PJ_PROMPT, prompt);
-      if (templateId != null) {
-        query = query.set(PJ_TEMPLATE_ID, templateId);
-      } else if (clearTemplate) {
-        // 화면에서 「기본 (선택 안 함)」으로 되돌린 명시적 요청(WD-136). templateId=null 만으로는 "미제공"과
-        // 구분할 수 없어 예전에는 무시됐고, 저장 성공 토스트 뒤에도 옛 템플릿이 남았다.
-        query = query.set(PJ_TEMPLATE_ID, (Long) null);
-      }
-      if (cronExpression != null) query = query.set(PJ_CRON_EXPRESSION, cronExpression);
-      if (timezone != null) query = query.set(PJ_TIMEZONE, timezone);
-      if (enabled != null) query = query.set(PJ_ENABLED, enabled);
-      // triggerType이 null이면 기존 값을 유지한다(부분 수정 지원) — 회귀 원인이었던 필드이므로
-      // 명시적으로 전달된 경우에만 갱신하도록 나머지 필드와 동일한 패턴을 따른다 (#655)
-      if (triggerType != null) query = query.set(PJ_TRIGGER_TYPE, triggerType);
-      if (config != null) {
-        query = query.set(PJ_CONFIG, JSONB.valueOf(objectMapper.writeValueAsString(config)));
-      }
-      return query
-          .where(PJ_ID.eq(id).and(PJ_USER_ID.eq(userId)))
-          .returning(PJ_UPDATED_AT)
-          .fetchOptional(PJ_UPDATED_AT)
-          .orElse(null);
-    } catch (Exception e) {
-      throw new RuntimeException("Failed to serialize config", e);
+    var query = dsl.update(PROACTIVE_JOB).set(PJ_UPDATED_AT, ProactiveTime.nowUtc());
+    if (name != null) query = query.set(PJ_NAME, name);
+    if (prompt != null) query = query.set(PJ_PROMPT, prompt);
+    if (templateId != null) {
+      query = query.set(PJ_TEMPLATE_ID, templateId);
+    } else if (clearTemplate) {
+      // 화면에서 「기본 (선택 안 함)」으로 되돌린 명시적 요청(WD-136). templateId=null 만으로는 "미제공"과
+      // 구분할 수 없어 예전에는 무시됐고, 저장 성공 토스트 뒤에도 옛 템플릿이 남았다.
+      query = query.set(PJ_TEMPLATE_ID, (Long) null);
     }
+    if (cronExpression != null) query = query.set(PJ_CRON_EXPRESSION, cronExpression);
+    if (timezone != null) query = query.set(PJ_TIMEZONE, timezone);
+    if (enabled != null) query = query.set(PJ_ENABLED, enabled);
+    // triggerType이 null이면 기존 값을 유지한다(부분 수정 지원) — 회귀 원인이었던 필드이므로
+    // 명시적으로 전달된 경우에만 갱신하도록 나머지 필드와 동일한 패턴을 따른다 (#655)
+    if (triggerType != null) query = query.set(PJ_TRIGGER_TYPE, triggerType);
+    if (config != null) {
+      query = query.set(PJ_CONFIG, ProactiveJsonb.toJsonb(objectMapper, config, "config"));
+    }
+    return query
+        .where(PJ_ID.eq(id).and(PJ_USER_ID.eq(userId)))
+        .returning(PJ_UPDATED_AT)
+        .fetchOptional(PJ_UPDATED_AT)
+        .orElse(null);
   }
 
   /**

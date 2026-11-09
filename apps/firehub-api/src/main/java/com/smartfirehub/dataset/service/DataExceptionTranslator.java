@@ -90,8 +90,11 @@ public final class DataExceptionTranslator {
       case "22007", "22008" ->
           // invalid_datetime_format / datetime_field_overflow
           columnPart + "올바르지 않거나 허용 범위를 벗어난 날짜·시간 값이 있습니다";
-      case "22021" ->
-          // character_not_in_repertoire — 주로 NUL(0x00) 문자
+      case "22021", "22P05" ->
+          // 22021 character_not_in_repertoire — 텍스트 열의 NUL(0x00) 문자.
+          // 22P05 untranslatable_character — JSONB 안 문자열의 NUL(U+0000)(PG jsonb 는 NUL 을 담지 못한다,
+          // WD-609).
+          // 둘 다 원인이 NUL 이라 같은 문구로 안내한다.
           columnPart + "저장할 수 없는 문자(NUL 문자 등)가 포함된 값이 있습니다";
       default -> columnPart + "저장할 수 없는 값이 있습니다";
     };
