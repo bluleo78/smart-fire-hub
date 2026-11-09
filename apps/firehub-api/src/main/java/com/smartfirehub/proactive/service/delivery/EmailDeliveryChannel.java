@@ -143,7 +143,10 @@ public class EmailDeliveryChannel implements DeliveryChannel {
 
     // 성공한 발송 수와 마지막 실패(WD-676) — 하나도 보내지 못했으면 예외로 알려 실행 기록에 「이메일로 전달됨」이 거짓으로 남지 않게 한다.
     int sent = 0;
-    Exception lastFailure = null;
+    Failures failures =
+        new Failures(
+            SmtpFailureMessages.forCredentials(
+                host, smtp.get("smtp.username"), smtp.get("smtp.password")));
     try {
       // 이메일 공통 준비 (SMTP, 템플릿) - 루프 밖에서 1회 수행
       // htmlContent가 있으면 요약(summary) 기반 이메일을 보내고, PDF에 전체 리포트를 첨부한다.
@@ -209,22 +212,49 @@ public class EmailDeliveryChannel implements DeliveryChannel {
               toAddress,
               job.id());
         } catch (Exception e) {
-          log.error("EmailDeliveryChannel failed to send to {}: {}", toAddress, e.getMessage());
           // 개별 발송 실패는 다른 수신자에게 영향을 주지 않도록 continue
-          lastFailure = e;
+          failures.record("failed to send to", toAddress, e);
         }
       }
     } catch (Exception e) {
       // sender 생성(옛 포트 형식 등)·템플릿 실패 — 아무에게도 보내지 못했다.
-      log.error("EmailDeliveryChannel delivery failed for job {}: {}", job.id(), e.getMessage(), e);
-      lastFailure = e;
+      failures.record("delivery failed for job", job.id(), e);
     }
-    if (sent == 0 && lastFailure != null) {
+    if (sent == 0 && failures.lastMasked != null) {
       // 하나도 보내지 못했다(WD-676) — 예전에는 로그만 남기고 정상 반환해 실행 기록에 EMAIL 이 「전달됨」으로 남았다(STARTTLS 미지원·인증서
       // 불일치로 모든 발송이 실패해도 조용했다). 예외를 던지면 호출부가 EMAIL 을 전달 채널에서 빼고 사유를 warn 로그로 남긴다. 사유 문구는
       // 설정 화면 연결 테스트와 같은 분류(SmtpFailureMessages)를 쓴다. 일부만 실패하면 지금처럼 정상 반환한다(개별 주소 오류는 로그로만).
-      throw new IllegalStateException(
-          SmtpFailureMessages.describe(lastFailure, host, smtp.get("smtp.password")), lastFailure);
+      // cause 는 가린 사본이다(WD-686, Failures 참고).
+      throw new IllegalStateException(failures.lastDescribed, failures.lastMasked);
+    }
+  }
+
+  /**
+   * 발송 실패를 가려 기록한다(WD-686).
+   *
+   * <p>원래 예외는 서버 응답 원문을 담는다 — AUTH 단계 비밀번호·AUTH PLAIN 자격 증명(Base64)이 되울려 올 수 있다. 그래서 로그에는 가린 분류 문구와
+   * 가린 사본(원래 클래스 이름·스택 위치는 그대로라 어느 단계에서 실패했는지는 보인다)만 남긴다. 스택은 첫 실패만 찍는다 — 수신자가 많으면 같은 스택이 수신자 수만큼
+   * 반복된다. 마지막 실패의 문구·사본은 최종 예외에 그대로 다시 쓴다.
+   */
+  private static final class Failures {
+    private final SmtpFailureMessages.CredentialMasker masker;
+    private String lastDescribed;
+    private Throwable lastMasked;
+
+    Failures(SmtpFailureMessages.CredentialMasker masker) {
+      this.masker = masker;
+    }
+
+    /** 실패 하나를 가려 로그로 남기고 마지막 실패로 기억한다. 첫 실패가 아니면 스택 없이 문구만 남긴다. */
+    void record(String what, Object subject, Exception e) {
+      boolean first = lastMasked == null;
+      lastDescribed = masker.describe(e);
+      lastMasked = masker.maskedCopy(e);
+      if (first) {
+        log.error("EmailDeliveryChannel {} {}: {}", what, subject, lastDescribed, lastMasked);
+      } else {
+        log.error("EmailDeliveryChannel {} {}: {}", what, subject, lastDescribed);
+      }
     }
   }
 

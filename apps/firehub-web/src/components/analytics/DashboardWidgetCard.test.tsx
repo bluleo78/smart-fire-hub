@@ -22,7 +22,9 @@ vi.mock('../../hooks/queries/useAnalytics', () => ({
 vi.mock('../../hooks/useWidgetVisibility', () => ({ useWidgetVisibility: () => true }));
 // 수동 새로고침 실패 토스트 호출 여부만 확인
 const handleApiErrorMock = vi.fn();
-vi.mock('../../lib/api-error', () => ({
+// 토스트만 가로채고 나머지(429 판정·문구 추출, WD-686)는 실제 구현을 쓴다
+vi.mock('../../lib/api-error', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../lib/api-error')>()),
   handleApiError: (...args: unknown[]) => handleApiErrorMock(...args),
 }));
 // 차트 렌더러는 rows 수만 노출하는 스텁으로 대체 — "빈 결과 → 데이터가 없습니다." 문구만 흉내

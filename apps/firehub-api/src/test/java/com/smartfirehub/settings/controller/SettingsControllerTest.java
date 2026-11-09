@@ -323,6 +323,6 @@ class SettingsControllerTest {
             jsonPath("$.message")
                 .value(
                     SmtpFailureMessages.describe(
-                        new NumberFormatException(), "smtp.example.com", null)));
+                        new NumberFormatException(), "smtp.example.com", null, null)));
   }
 }

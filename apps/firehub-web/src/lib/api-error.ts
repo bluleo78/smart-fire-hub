@@ -135,6 +135,14 @@ export function isNotFoundError(error: unknown): boolean {
 }
 
 /**
+ * 요청이 너무 많음(429) 응답인가 (WD-686) — 화면 쿼리 동시 실행 상한(QUERY_CONCURRENCY_LIMIT)처럼 「실행 중인 것이 끝난 뒤」 다시 하라는
+ * 거절이라, 곧바로 자동 재시도하면 같은 상한에 또 걸린다. 전역 쿼리 재시도(main.tsx)가 403 처럼 다시 시도하지 않는 데 쓴다.
+ */
+export function isTooManyRequestsError(error: unknown): boolean {
+  return axios.isAxiosError(error) && error.response?.status === 429;
+}
+
+/**
  * 충돌(409) 응답인가 (WD-367) — 요청 사이 다른 탭·사람이 같은 것을 먼저 바꿔 서버 상태와 화면이 어긋났다(예: 이미 대시보드에 추가된 차트).
  * 코드까지 보는 편집 충돌은 isEditConflict 를 쓴다.
  */

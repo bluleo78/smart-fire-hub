@@ -7,7 +7,7 @@ import time
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple
-from urllib.parse import unquote_plus, urljoin, urlsplit, urlunsplit
+from urllib.parse import unquote_plus, urldefrag, urljoin, urlsplit, urlunsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
@@ -328,10 +328,7 @@ def _do_request(
     판단 기준은 언제나 처음 요청 출처라 A→B→A 면 B 에만 떼고, 처음 출처로 돌아오면 헤더도 쿼리 키도 다시 붙인다. Java
     ``ApiCallExecutor.executeWithRedirects`` 와 같은 규칙이다.
 
-    다른 출처로 가는 홉부터는 메서드를 GET 으로 바꾸고 본문을 버린다(WD-676) — 307/308 이라도 다른 출처로 본문(비밀이 들 수 있음)을 보내지
-    않는다. 본문을 버린 홉부터는 본문 헤더(Content-Type·Content-Length 등)도 뺀다. 이 상태는 유지되어 처음 출처로 돌아와도
-    본문을 다시 싣지 않는다. Java 실행기는 모든 리다이렉트 홉을 본문 없는 GET 으로 보내므로
-    다른 출처 홉에서는 두 실행기가 같다. 같은 출처 307/308 의 메서드·본문 유지는 이 실행기에만 있는 차이로 남는다.
+    리다이렉트 홉의 메서드·본문 규칙은 ``_redirect_keeps_method_and_body`` 참고(WD-686).
     """
     # 인증 헤더는 따로 만들어 둔다 — 다른 출처 홉에서 뗄 수 있게(WD-657).
     req_params = dict(query_params)
@@ -350,7 +347,7 @@ def _do_request(
     redirect_count = 0
     # 이 홉까지 오는 동안 리다이렉트가 처음 출처를 벗어난 적이 있는지 — 돌아올 때 뗐던 쿼리 키를 되붙이는 데 쓴다.
     has_left_origin = False
-    # 리다이렉트로 본문을 버렸는지(303·다른 출처 홉, WD-676) — 그 뒤 홉은 본문 헤더도 뺀다.
+    # 리다이렉트로 본문을 버렸는지(WD-686, 규칙은 _redirect_keeps_method_and_body) — 한 번 True 면 되돌리지 않는다.
     body_dropped = False
 
     with httpx.Client(follow_redirects=False, timeout=timeout_sec) as client:
@@ -361,7 +358,7 @@ def _do_request(
             send_auth = redirect_count == 0 or _same_auth_origin(origin_url, current_url)
             hop_headers = req_headers if send_auth else cross_origin_headers
             if body_dropped:
-                # 본문을 버린 홉(303·다른 출처, WD-676)에는 본문 헤더(Content-Type 등)도 보내지 않는다 — Java 리다이렉트 GET 홉과 같다.
+                # 본문을 버린 홉에는 본문 헤더도 보내지 않는다(_BODY_HEADERS 참고).
                 hop_headers = {k: v for k, v in hop_headers.items() if k.lower() not in _BODY_HEADERS}
             resp = client.request(
                 method=method,
@@ -379,7 +376,8 @@ def _do_request(
                     raise ApiCallException(errors.redirect_without_location_message())
                 # Location 은 무엇보다 먼저 지금 요청 기준 절대 주소로 푼다(WD-657) — 주소 검사(SSRF)·출처 판단·다음 요청이 모두 같은
                 # 절대 주소를 본다. 예전에는 상대 주소(「/v2/items?page=2」)를 그대로 써 검사·요청이 실패했다.
-                location = urljoin(current_url, location)
+                # 프래그먼트는 이때 뗀다(WD-686) — Java RedirectLocations 와 같다.
+                location = _resolve_redirect_location(current_url, location)
                 # SSRF check on redirect target
                 validate_url(location)
                 same_origin = _same_auth_origin(origin_url, location)
@@ -387,10 +385,8 @@ def _do_request(
                     location = _adjust_query_auth(location, auth, same_origin, has_left_origin)
                 has_left_origin = has_left_origin or not same_origin
                 current_url = location
-                # 303 이거나 다른 출처 홉이면 본문 없는 GET 으로 따라간다(WD-676) — 예전에는 307/308 이 다른 출처로 가도 POST 본문
-                # (client_secret 등 비밀이 들 수 있음)을 그대로 보냈다. 한 번 바꾸면 되돌리지 않아 A→B→A 로 돌아와도 본문을 다시
-                # 싣지 않는다. 같은 출처 307/308 은 메서드·본문을 유지한다(운영 동작 보존).
-                if resp.status_code == 303 or not same_origin:
+                # 다음 홉의 메서드·본문(WD-686) — 규칙은 _redirect_keeps_method_and_body 참고.
+                if not _redirect_keeps_method_and_body(resp.status_code, same_origin):
                     method = "GET"
                     body = None
                     body_dropped = True
@@ -542,8 +538,33 @@ def _resolve_auth(auth: Optional[dict]) -> _ResolvedAuth:
 # 다른 출처 홉에서 인증 방식과 상관없이 빼는 표준 자격 증명 헤더(소문자, WD-657) — Java ApiCallExecutor.CREDENTIAL_HEADERS 와 같다.
 _CREDENTIAL_HEADERS = frozenset({"authorization", "proxy-authorization", "cookie"})
 
-# 본문을 설명하는 헤더(소문자, WD-676) — 본문을 버린 리다이렉트 홉에서 뺀다. Java ApiCallExecutor.BODY_HEADERS 와 같다.
+# 본문을 설명하는 헤더(소문자, WD-676) — 본문을 버린 리다이렉트 홉부터 뺀다(규칙은 _redirect_keeps_method_and_body).
+# Java ApiCallExecutor.BODY_HEADERS 와 같다.
 _BODY_HEADERS = frozenset({"content-type", "content-length", "content-encoding", "transfer-encoding"})
+
+
+def _resolve_redirect_location(current_url: str, location: str) -> str:
+    """리다이렉트 Location 을 지금 요청 기준 절대 주소로 풀고 프래그먼트를 뗀다(WD-657·WD-686).
+
+    해석은 RFC 3986 을 따르는 ``urljoin`` 이다(Java ``RedirectLocations`` 와 같은 결과 — 공용 사례 표 ``redirectLocation``).
+    프래그먼트는 요청 줄에 실리지 않아 의미가 없고, 주소 검사(SSRF)·출처 판정·로그에 섞이지 않게 뗀다. 원 요청의 프래그먼트도
+    물려받지 않는다.
+    """
+    return urldefrag(urljoin(current_url, location)).url
+
+
+def _redirect_keeps_method_and_body(status: int, same_origin: bool) -> bool:
+    """리다이렉트 홉이 메서드·본문을 그대로 유지하는지(WD-686) — 이 실행기의 리다이렉트 메서드·본문 규칙은 여기 한 곳에 적는다.
+
+    - 307·308: 메서드를 바꾸지 말라는 상태라 처음 요청과 같은 출처면 메서드·본문을 유지한다. 다른 출처면 비밀이 든 본문을 보내지
+      않으려고 본문 없는 GET 으로 바꾼다(WD-676).
+    - 301·302·303: RFC 9110·브라우저 관례대로 출처와 상관없이 본문 없는 GET.
+    - 한 번 본문을 버리면 그 뒤 홉(같은 출처 307·처음 출처로 돌아옴 포함)도 본문 없는 GET 이고, 본문 헤더(``_BODY_HEADERS``)도 뺀다.
+
+    Java ``RedirectLocations.keepsMethodAndBody`` 와 같고 공용 사례 표(``redirectMethod``)로 검증한다. 그 밖의 3xx 는
+    ``_do_request`` 가 일반 응답으로 다룬다 — Java 는 본문 없는 GET 으로 따라가는, 원래 있던 차이다.
+    """
+    return status in (307, 308) and same_origin
 
 
 def _same_auth_origin(origin: str, target: str) -> bool:

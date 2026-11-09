@@ -1425,8 +1425,8 @@ def test_cross_origin_redirect_drops_api_key_header_and_echoed_query_key():
         [_redirect(302, "http://b.example.com/api?serviceKey=QryKey657&x=1#f"), mock_response({"items": []})],
     )
     assert _sent(client, 0)[0] == "http://a.example.com/api?serviceKey=QryKey657"
-    # 다른 호스트 — 되울린 키를 빼고 나머지 쿼리·프래그먼트는 둔다
-    assert _sent(client, 1)[0] == "http://b.example.com/api?x=1#f"
+    # 다른 호스트 — 되울린 키를 빼고 나머지 쿼리는 둔다. 프래그먼트는 Location 을 풀 때 뗀다(WD-686, Java 와 같게).
+    assert _sent(client, 1)[0] == "http://b.example.com/api?x=1"
 
 
 def test_http_to_https_upgrade_keeps_header_and_query_key():
@@ -1648,3 +1648,74 @@ def test_same_origin_307_keeps_post_and_body():
         req, [_redirect(307, "https://a.example.com/two"), mock_response({"items": []})]
     )
     assert _sent_method_body(client, 1) == ("POST", b'{"client_secret":"x"}')
+
+
+# ---------------------------------------------------------------------------
+# WD-686: 같은 출처 301/302 도 본문 없는 GET — Java 실행기와 규칙 하나, Location 프래그먼트 떼기
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("status", [301, 302, 303])
+def test_same_origin_301_302_303_post_follows_as_get_without_body(status):
+    # RFC 9110·브라우저 관례 — 301·302·303 은 같은 출처여도 본문 없는 GET. 예전에는 같은 출처 301·302 에서 POST·본문을 유지해
+    # 모든 리다이렉트를 GET 으로 보내던 Java 실행기와 달랐다.
+    req = make_request(
+        url="https://a.example.com/one",
+        method="POST",
+        body='{"client_secret":"x"}',
+        headers={"Content-Type": "application/json", "X-Trace": "t686"},
+    )
+    result, client, _ = _run_with_responses(
+        req, [_redirect(status, "https://a.example.com/two"), mock_response({"items": []})]
+    )
+    assert result.success is True
+    assert _sent_method_body(client, 1) == ("GET", None)
+    second_headers = {k.lower(): v for k, v in _sent(client, 1)[1].items()}
+    assert "content-type" not in second_headers
+    assert second_headers["x-trace"] == "t686"
+
+
+def test_same_origin_308_keeps_post_and_body():
+    # 308 도 307 처럼 같은 출처면 메서드·본문(본문 헤더 포함)을 유지한다 — Java 실행기와 같다(WD-686).
+    req = make_request(
+        url="https://a.example.com/one",
+        method="POST",
+        body='{"client_secret":"x"}',
+        headers={"Content-Type": "application/json"},
+    )
+    _, client, _ = _run_with_responses(
+        req, [_redirect(308, "https://a.example.com/two"), mock_response({"items": []})]
+    )
+    assert _sent_method_body(client, 1) == ("POST", b'{"client_secret":"x"}')
+    assert {k.lower(): v for k, v in _sent(client, 1)[1].items()}["content-type"] == "application/json"
+
+
+def test_body_dropped_by_303_stays_get_on_later_same_origin_307():
+    # 한 번 본문을 버리면 그 뒤 같은 출처 307 이 와도 본문 없는 GET 이 이어진다 — Java 실행기와 같다(WD-686).
+    req = make_request(
+        url="https://a.example.com/one",
+        method="POST",
+        body='{"client_secret":"x"}',
+        headers={"Content-Type": "application/json"},
+    )
+    _, client, _ = _run_with_responses(
+        req,
+        [
+            _redirect(303, "https://a.example.com/two"),
+            _redirect(307, "https://a.example.com/three"),
+            mock_response({"items": []}),
+        ],
+    )
+    assert _sent_method_body(client, 2) == ("GET", None)
+    assert "content-type" not in {k.lower() for k in _sent(client, 2)[1]}
+
+
+def test_redirect_location_fragment_is_dropped_before_ssrf_check_and_request():
+    # Location 의 프래그먼트는 떼고 따라간다(WD-686) — 요청·주소 검사(SSRF)·로그에 섞이지 않게. Java RedirectLocations 와 같다.
+    req = make_request(url="https://a.example.com/one")
+    _, client, validate = _run_with_responses(
+        req, [_redirect(302, "/two?page=2#frag"), mock_response({"items": []})]
+    )
+    assert _sent(client, 1)[0] == "https://a.example.com/two?page=2"
+    assert "https://a.example.com/two?page=2" in [c.args[0] for c in validate.call_args_list]
+    assert all("#" not in c.args[0] for c in validate.call_args_list)
+

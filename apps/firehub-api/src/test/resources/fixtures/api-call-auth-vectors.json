@@ -1,5 +1,5 @@
 {
-  "description": "API_CALL \uc778\uc99d \uacf5\uc6a9 \uc0ac\ub840 \ud45c(WD-657) \u2014 Java(ApiCallAuthVectorsTest)\uc640 Python(test_api_call_auth_vectors.py)\uc774 \uac19\uc740 \ud45c\ub85c \uac19\uc740 \uacb0\uacfc\ub97c \ub0b4\ub294\uc9c0 \ubcf8\ub2e4. \ud55c\ucabd \uaddc\uce59\ub9cc \ubc14\uafb8\uba74 \uc5b4\ub290 \ud55c\ucabd \ud14c\uc2a4\ud2b8\uac00 \uae68\uc9c4\ub2e4. \ud5e4\ub354 \uc774\ub984 \uae30\ubcf8\uac12\uc740 Java X-API-Key\u00b7Python x-api-key \ub85c \ub300\uc18c\ubb38\uc790\ub9cc \ub2ec\ub77c \ub300\uc18c\ubb38\uc790\ub97c \ubb34\uc2dc\ud558\uace0 \ube44\uad50\ud55c\ub2e4.",
+  "description": "API_CALL \uc778\uc99d \uacf5\uc6a9 \uc0ac\ub840 \ud45c(WD-657) \u2014 Java(ApiCallAuthVectorsTest)\uc640 Python(test_api_call_auth_vectors.py)\uc774 \uac19\uc740 \ud45c\ub85c \uac19\uc740 \uacb0\uacfc\ub97c \ub0b4\ub294\uc9c0 \ubcf8\ub2e4. \ud55c\ucabd \uaddc\uce59\ub9cc \ubc14\uafb8\uba74 \uc5b4\ub290 \ud55c\ucabd \ud14c\uc2a4\ud2b8\uac00 \uae68\uc9c4\ub2e4. \ud5e4\ub354 \uc774\ub984 \uae30\ubcf8\uac12\uc740 Java X-API-Key\u00b7Python x-api-key \ub85c \ub300\uc18c\ubb38\uc790\ub9cc \ub2ec\ub77c \ub300\uc18c\ubb38\uc790\ub97c \ubb34\uc2dc\ud558\uace0 \ube44\uad50\ud55c\ub2e4. redirectMethod(WD-686)\uc758 \uaddc\uce59\uc740 Java RedirectLocations.keepsMethodAndBody\u00b7Python _redirect_keeps_method_and_body \ucc38\uace0. redirectLocation \uacb0\uacfc\uc5d0\ub294 \ud504\ub798\uadf8\uba3c\ud2b8\uac00 \uc5c6\ub2e4(WD-686 \u2014 \ub9ac\ub2e4\uc774\ub809\ud2b8 \ud574\uc11d\uc774 \ubb38\ubc95 \uac80\uc0ac \uc804\uc5d0 \ub5c0\ub2e4).",
   "sameAuthOrigin": [
     {
       "name": "same origin, host case, explicit default port",
@@ -237,10 +237,10 @@
       "expected": "http://other.example/x"
     },
     {
-      "name": "fragment-only reference",
+      "name": "fragment-only reference drops fragment (WD-686)",
       "base": "http://a/b/c?x=1",
       "location": "#f",
-      "expected": "http://a/b/c?x=1#f"
+      "expected": "http://a/b/c?x=1"
     },
     {
       "name": "empty reference",
@@ -277,6 +277,104 @@
       "base": "http://my_api.internal/v1/a",
       "location": "b?x=1",
       "expected": "http://my_api.internal/v1/b?x=1"
+    },
+    {
+      "name": "absolute URL fragment is dropped (WD-686)",
+      "base": "https://api.example.com/v1/items?k=v",
+      "location": "https://other.example/p?q=1#section",
+      "expected": "https://other.example/p?q=1"
+    },
+    {
+      "name": "relative path fragment is dropped (WD-686)",
+      "base": "https://api.example.com/v1/items?k=v",
+      "location": "next?page=2#top",
+      "expected": "https://api.example.com/v1/next?page=2"
+    },
+    {
+      "name": "empty fragment is dropped (WD-686)",
+      "base": "https://api.example.com/v1/items",
+      "location": "/v2#",
+      "expected": "https://api.example.com/v2"
+    },
+    {
+      "name": "base fragment is not inherited (WD-686)",
+      "base": "https://api.example.com/v1/items#old",
+      "location": "/v2?x=1",
+      "expected": "https://api.example.com/v2?x=1"
+    },
+    {
+      "name": "malformed fragment (second #) is dropped before syntax check (WD-686)",
+      "base": "https://api.example.com/v1/items",
+      "location": "/v2/items?page=2#a#b",
+      "expected": "https://api.example.com/v2/items?page=2"
+    },
+    {
+      "name": "fragment with space is dropped before syntax check (WD-686)",
+      "base": "https://api.example.com/v1/items",
+      "location": "next?page=3#my section",
+      "expected": "https://api.example.com/v1/next?page=3"
+    }
+  ],
+  "redirectMethod": [
+    {
+      "name": "301 same origin",
+      "status": 301,
+      "sameOrigin": true,
+      "keepsBody": false
+    },
+    {
+      "name": "302 same origin",
+      "status": 302,
+      "sameOrigin": true,
+      "keepsBody": false
+    },
+    {
+      "name": "303 same origin",
+      "status": 303,
+      "sameOrigin": true,
+      "keepsBody": false
+    },
+    {
+      "name": "307 same origin",
+      "status": 307,
+      "sameOrigin": true,
+      "keepsBody": true
+    },
+    {
+      "name": "308 same origin",
+      "status": 308,
+      "sameOrigin": true,
+      "keepsBody": true
+    },
+    {
+      "name": "301 cross origin",
+      "status": 301,
+      "sameOrigin": false,
+      "keepsBody": false
+    },
+    {
+      "name": "302 cross origin",
+      "status": 302,
+      "sameOrigin": false,
+      "keepsBody": false
+    },
+    {
+      "name": "303 cross origin",
+      "status": 303,
+      "sameOrigin": false,
+      "keepsBody": false
+    },
+    {
+      "name": "307 cross origin",
+      "status": 307,
+      "sameOrigin": false,
+      "keepsBody": false
+    },
+    {
+      "name": "308 cross origin",
+      "status": 308,
+      "sameOrigin": false,
+      "keepsBody": false
     }
   ]
 }

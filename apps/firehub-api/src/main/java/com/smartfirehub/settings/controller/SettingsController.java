@@ -101,10 +101,13 @@ public class SettingsController {
     String host = "";
     // 실패 문구의 서버 응답 조각에서 지울 비밀번호(WD-676) — 비밀번호는 어떤 경우에도 토스트에 나가지 않는다.
     String password = null;
+    // AUTH PLAIN 자격 증명 덩어리(Base64)를 지우는 데 쓸 사용자 이름(WD-686)
+    String username = null;
     try {
       Map<String, String> config = settingsService.getSmtpConfig();
       host = config.getOrDefault("smtp.host", "");
       password = config.get("smtp.password");
+      username = config.get("smtp.username");
       if (host.isBlank()) {
         return ResponseEntity.ok(
             Map.of("success", false, "message", "SMTP 가 설정되지 않았습니다. 호스트를 입력하고 저장한 뒤 다시 테스트하세요"));
@@ -118,7 +121,11 @@ public class SettingsController {
     } catch (Exception e) {
       // JavaMail 영어 원문 대신 고칠 방법을 담은 한국어 분류 문구(WD-676) — 리포트 메일 발송 실패 사유와 같은 문장이다.
       return ResponseEntity.ok(
-          Map.of("success", false, "message", SmtpFailureMessages.describe(e, host, password)));
+          Map.of(
+              "success",
+              false,
+              "message",
+              SmtpFailureMessages.forCredentials(host, username, password).describe(e)));
     }
   }
 }

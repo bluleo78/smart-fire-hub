@@ -104,25 +104,29 @@ public final class SmtpFailureMessages {
               where -> where + "에 연결하지 못했습니다 — " + SETTINGS_PLACE + "의 호스트·포트와 서버 상태를 확인하세요"));
 
   /**
-   * 예외의 원인 사슬을 {@link #RULES} 순서로 분류해 한국어 안내를 만든다. 맞는 규칙이 없으면 서버 응답 조각(예: {@code 554 relay access
-   * denied})을 덧붙인 일반 문구 — 조각은 공백을 접고 {@link #MAX_DETAIL_LENGTH} 자로 자르며 비밀번호(원문·Base64)를 지운다.
+   * 예외의 원인 사슬을 {@link #RULES} 순서로 분류해 한국어 안내를 만든다 — {@code forCredentials(host, username,
+   * password).describe(error)} 와 같다. 설정을 한 번 읽고 여러 번 쓰는 호출부는 {@link #forCredentials} 로 마스커를 한 번만
+   * 만든다.
    *
    * @param error 발송·연결 테스트에서 난 예외(null 이면 일반 문구)
    * @param host 설정된 SMTP 호스트(문구용, null·빈 값이면 생략)
+   * @param username 설정된 SMTP 사용자 이름 — AUTH PLAIN 자격 증명 덩어리를 지우는 데 쓴다(null 가능)
    * @param password 설정된 SMTP 비밀번호 — 조각에서 지울 값(null 가능)
    */
-  public static String describe(Throwable error, String host, String password) {
-    if (error == null) {
-      return generic(null);
-    }
-    String where = host == null || host.isBlank() ? "SMTP 서버" : "SMTP 서버(" + host + ")";
-    List<Throwable> chain = chain(error);
-    for (Rule rule : RULES) {
-      if (chain.stream().anyMatch(rule.matches())) {
-        return rule.message().apply(where);
-      }
-    }
-    return generic(detail(chain, password));
+  public static String describe(Throwable error, String host, String username, String password) {
+    return forCredentials(host, username, password).describe(error);
+  }
+
+  /**
+   * SMTP 설정 값으로 실패 문구·가린 예외 사본을 만드는 마스커(WD-686). 지울 형태(비밀번호 원문·URL 인코딩형·Base64, AUTH PLAIN 덩어리 두
+   * 가지)는 여기서 한 번만 계산한다.
+   *
+   * @param host 문구에 넣을 SMTP 호스트(null·빈 값이면 생략)
+   * @param username SMTP 사용자 이름(null 이면 빈 사용자 이름의 AUTH PLAIN 덩어리만 지운다)
+   * @param password SMTP 비밀번호(null·빈 값이면 지울 것이 없다)
+   */
+  public static CredentialMasker forCredentials(String host, String username, String password) {
+    return new CredentialMasker(host, username, password);
   }
 
   /** 분류하지 못한 실패의 일반 문구 — 서버 응답 조각이 있으면 덧붙인다. */
@@ -135,33 +139,157 @@ public final class SmtpFailureMessages {
   }
 
   /**
-   * 원인 사슬에서 서버 응답에 가장 가까운(가장 깊은) 메시지를 골라 정리한다. 메시지가 없으면 그 예외의 클래스 이름. 비밀번호는 {@link
-   * AuthQueryMasker#scrubSecret}(원문·URL 인코딩형)과 Base64(AUTH LOGIN 형태)로 지운다. 지운 뒤에도 남아 있으면(지우기엔 짧은 값)
-   * 조각을 버리고 클래스 이름만 쓴다 — 비밀번호는 어떤 경우에도 문구에 나가지 않는다.
+   * SMTP 실패를 비밀 없이 바꾸는 마스커(WD-686, {@link #forCredentials}) — 분류 문구({@link #describe(Throwable)})와
+   * 가린 예외 사본({@link #maskedCopy(Throwable)})이 같은 지우기 규칙을 쓴다.
+   *
+   * <p><b>지우는 것.</b> 비밀번호 원문·URL 인코딩형({@link AuthQueryMasker#scrubberFor}), Base64(AUTH LOGIN 형태),
+   * AUTH PLAIN 자격 증명 덩어리 {@code Base64("\0" + user + "\0" + password)}(authzid 없음)·{@code
+   * Base64(user + "\0" + user + "\0" + password)} (authzid=user). PLAIN 덩어리는 비밀번호 원문·Base64 가 아니라
+   * 앞의 가림에 걸리지 않는데, 디코딩하면 비밀번호가 그대로 나온다. 지운 뒤에도 원문이 남으면(최소 길이 미만이라 지우지 않은 짧은 값) 그 문장을 통째로 버린다 —
+   * 비밀번호는 어떤 경우에도 나가지 않는다.
    */
-  static String detail(List<Throwable> chain, String password) {
-    Throwable pick = null;
-    for (Throwable t : chain) {
-      if (t.getMessage() != null && !t.getMessage().isBlank()) pick = t;
+  public static final class CredentialMasker {
+
+    private final String where;
+    private final String password;
+    private final java.util.function.UnaryOperator<String> plainScrubber;
+
+    /** 긴 덩어리부터 — 「\0user\0」 처럼 앞 조각이 3바이트 경계에 맞으면 비밀번호만의 Base64 가 PLAIN 덩어리의 끝부분과 같다. */
+    private final List<String> base64Forms;
+
+    private CredentialMasker(String host, String username, String password) {
+      this.where = host == null || host.isBlank() ? "SMTP 서버" : "SMTP 서버(" + host + ")";
+      this.password = password == null || password.isEmpty() ? null : password;
+      this.plainScrubber = AuthQueryMasker.scrubberFor(this.password, PASSWORD_MASK);
+      String user = username == null ? "" : username;
+      this.base64Forms =
+          this.password == null
+              ? List.of()
+              : List.of(
+                      user + "\0" + user + "\0" + this.password,
+                      "\0" + user + "\0" + this.password,
+                      this.password)
+                  .stream()
+                  .map(c -> Base64.getEncoder().encodeToString(c.getBytes(StandardCharsets.UTF_8)))
+                  .toList();
     }
-    if (pick == null) return chain.get(chain.size() - 1).getClass().getSimpleName();
-    String text = pick.getMessage().replaceAll("\\s+", " ").strip();
-    if (password != null && !password.isEmpty()) {
-      text = AuthQueryMasker.scrubSecret(text, password, PASSWORD_MASK);
-      String base64 = Base64.getEncoder().encodeToString(password.getBytes(StandardCharsets.UTF_8));
-      text = text.replace(base64, PASSWORD_MASK);
-      if (text.contains(password)) return pick.getClass().getSimpleName();
+
+    /**
+     * 원인 사슬을 {@link #RULES} 순서로 분류해 한국어 안내를 만든다. 맞는 규칙이 없으면 서버 응답 조각(예: {@code 554 relay access
+     * denied})을 덧붙인 일반 문구 — 조각은 공백을 접고 {@link #MAX_DETAIL_LENGTH} 자로 자르며 비밀을 지운다.
+     */
+    public String describe(Throwable error) {
+      if (error == null) {
+        return generic(null);
+      }
+      List<Throwable> chain = chain(error);
+      for (Rule rule : RULES) {
+        if (chain.stream().anyMatch(rule.matches())) {
+          return rule.message().apply(where);
+        }
+      }
+      return generic(detail(chain));
     }
-    if (text.length() > MAX_DETAIL_LENGTH) {
-      text = text.substring(0, MAX_DETAIL_LENGTH) + "…";
+
+    /** 원인 사슬에서 서버 응답에 가장 가까운(가장 깊은) 메시지를 골라 정리한다. 메시지가 없거나 비밀을 다 지우지 못했으면 그 예외의 클래스 이름만 쓴다. */
+    private String detail(List<Throwable> chain) {
+      Throwable pick = null;
+      for (Throwable t : chain) {
+        if (t.getMessage() != null && !t.getMessage().isBlank()) pick = t;
+      }
+      if (pick == null) return chain.get(chain.size() - 1).getClass().getSimpleName();
+      String text = scrub(pick.getMessage().replaceAll("\\s+", " ").strip());
+      if (text == null) return pick.getClass().getSimpleName();
+      if (text.length() > MAX_DETAIL_LENGTH) {
+        text = text.substring(0, MAX_DETAIL_LENGTH) + "…";
+      }
+      return text;
     }
-    return text;
+
+    /** 문장에서 비밀을 지운다. 지운 뒤에도 비밀번호 원문이 남으면 null — 호출부가 문장을 버린다. */
+    private String scrub(String text) {
+      if (text == null || password == null) return text;
+      String out = plainScrubber.apply(text);
+      for (String form : base64Forms) {
+        out = out.replace(form, PASSWORD_MASK);
+      }
+      return out.contains(password) ? null : out;
+    }
+
+    /**
+     * 예외를 비밀을 가린 사본으로 바꾼다(WD-686) — 발송 실패를 다시 던질 때 cause 나 로그 스택에 원래 예외 대신 붙인다.
+     *
+     * <p><b>왜.</b> 원래 예외는 서버 응답 원문을 메시지에 담는다(AUTH 단계 응답에 비밀번호·자격 증명이 되울려 오기도 한다). 그대로 cause 로 붙이면
+     * 호출부가 스택을 찍는 순간 원문이 남고, cause 를 버리면 디버깅 단서가 사라진다.
+     *
+     * <p><b>사본이 지키는 것.</b> 사슬의 예외마다 원래 클래스 이름(메시지 앞)·비밀을 지운 메시지·원래 스택 위치. 따라가는 연결은 {@link
+     * #links}(cause·suppressed·MailSendException 메시지별 예외)로 분류 사슬과 같다 — 사본에서 cause 는 cause, 나머지는
+     * suppressed 다. 원래 예외 객체는 사본 어디에도 붙지 않는다. 순환하는 사슬은 동일성으로 끊어 사본도 같은 모양으로 순환한다.
+     *
+     * @param error 원래 예외(null 이면 null)
+     */
+    public MaskedSmtpException maskedCopy(Throwable error) {
+      return maskedCopy(error, new IdentityHashMap<>());
+    }
+
+    private MaskedSmtpException maskedCopy(
+        Throwable t, java.util.Map<Throwable, MaskedSmtpException> copies) {
+      if (t == null) return null;
+      MaskedSmtpException existing = copies.get(t);
+      if (existing != null) return existing;
+      String message = t.getMessage();
+      String masked = scrub(message);
+      if (message != null && masked == null) {
+        // 지우지 못한 짧은 비밀번호가 남았다 — 메시지를 통째로 뺀다.
+        masked = "(비밀번호가 들어 있어 메시지를 뺐습니다)";
+      }
+      MaskedSmtpException copy = new MaskedSmtpException(t.getClass().getName(), masked);
+      copy.setStackTrace(t.getStackTrace());
+      // 먼저 등록해야 순환 사슬에서 같은 사본을 다시 쓴다.
+      copies.put(t, copy);
+      Links links = links(t);
+      if (links.cause() != null) {
+        copy.initCause(maskedCopy(links.cause(), copies));
+      }
+      for (Throwable other : links.others()) {
+        MaskedSmtpException sc = maskedCopy(other, copies);
+        // 자기 자신을 suppressed 로 붙일 수는 없다(순환에서 돌아온 경우).
+        if (sc != null && sc != copy) copy.addSuppressed(sc);
+      }
+      return copy;
+    }
   }
 
   /**
-   * 원인 사슬을 넓게 모은다 — {@code getCause()} 와 함께 Spring {@link MailSendException} 의 메시지별 예외도 따라간다({@code
-   * send()} 실패는 원인을 cause 가 아니라 메시지별 예외 맵에 담는다). 순환은 동일성으로 끊는다.
+   * 비밀을 가린 예외 사본(WD-686, {@link CredentialMasker#maskedCopy}). 메시지 앞에 원래 클래스 이름을 붙인다({@code 원래클래스:
+   * 가린 메시지}) — 로그 스택의 머리줄·「Caused by」는 로깅 라이브러리마다 찍는 방법이 달라(Logback 은 {@code toString()} 이 아니라
+   * {@code getClass().getName()} 과 메시지를 찍는다) 메시지에 넣어야 어디서나 원래 예외가 무엇이었는지 보인다. 원래 예외 타입은 아니므로 {@code
+   * instanceof} 로 분류하는 코드에는 원래 예외를 넘긴다 — 이 사본은 다시 던지거나 로그에 붙이는 데만 쓴다.
    */
+  public static final class MaskedSmtpException extends RuntimeException {
+
+    MaskedSmtpException(String originalClassName, String maskedMessage) {
+      super(maskedMessage != null ? originalClassName + ": " + maskedMessage : originalClassName);
+    }
+  }
+
+  /** 예외에서 이어지는 예외들 — cause 와 그 밖(suppressed·MailSendException 메시지별 예외). */
+  private record Links(Throwable cause, List<Throwable> others) {}
+
+  /**
+   * 예외의 연결(WD-686) — 분류 사슬({@link #chain})과 가린 사본({@link CredentialMasker#maskedCopy})이 함께 써서, 한쪽만
+   * 따라가는 연결이 생기지 않게 한다. Spring {@link MailSendException} 은 {@code send()} 실패 원인을 cause 가 아니라 메시지별
+   * 예외 맵에 담는다.
+   */
+  private static Links links(Throwable t) {
+    List<Throwable> others = new ArrayList<>(List.of(t.getSuppressed()));
+    if (t instanceof MailSendException mse) {
+      others.addAll(List.of(mse.getMessageExceptions()));
+    }
+    return new Links(t.getCause(), others);
+  }
+
+  /** 원인 사슬을 넓게 모은다 — {@link #links} 를 따라간다. 순환은 동일성으로 끊는다. */
   private static List<Throwable> chain(Throwable error) {
     List<Throwable> out = new ArrayList<>();
     Set<Throwable> seen = Collections.newSetFromMap(new IdentityHashMap<>());
@@ -171,10 +299,9 @@ public final class SmtpFailureMessages {
       Throwable t = todo.poll();
       if (t == null || !seen.add(t)) continue;
       out.add(t);
-      if (t.getCause() != null) todo.add(t.getCause());
-      if (t instanceof MailSendException mse) {
-        Collections.addAll(todo, mse.getMessageExceptions());
-      }
+      Links links = links(t);
+      if (links.cause() != null) todo.add(links.cause());
+      todo.addAll(links.others());
     }
     return out;
   }

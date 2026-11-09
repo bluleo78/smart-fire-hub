@@ -4,6 +4,7 @@ import type { Dashboard } from '../../../src/types/analytics';
 import { createChart, createDashboard, createQueryResult, createWidget } from '../../factories/analytics.factory';
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { holdApi } from '../../fixtures/hold-api';
 
 /**
  * 대시보드 위젯 데이터 조회·새로고침 회귀 테스트 (#778)
@@ -253,5 +254,161 @@ test.describe('대시보드 위젯 — 새로고침 버튼 이름·크기와 제
 
     await expect(page.getByRole('heading', { level: 2, name: '위젯 A', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { level: 2, name: '위젯 B', exact: true })).toBeVisible();
+  });
+});
+
+/**
+ * 조회 실패 안내 (WD-686)
+ * 서버는 화면 쿼리 동시 실행 상한에 걸리면 「동시에 실행 중인 쿼리가 많습니다 …」 문구를 준다 — 위젯 단건 조회는 HTTP 429 로,
+ * 일괄 조회(WD-676)는 그 위젯의 queryResult.error 로. 위젯은 429 뿐 아니라 어떤 조회 실패든 표시할 데이터가 없으면 그 위젯 안에 서버 문구와
+ * 그 위젯만 다시 조회하는 「다시 시도」를 보인다(전역 배너 없이). 429 는 자동 재시도하지 않는다(main.tsx). 다른 위젯은 결과를 그대로 보인다.
+ */
+const LIMIT_MESSAGE = '동시에 실행 중인 쿼리가 많습니다 — 실행 중인 쿼리가 끝난 뒤 다시 시도하세요.';
+/** 동시 실행 상한 응답(HTTP 429) — api GlobalExceptionHandler 의 CodedApiException 응답 형태 */
+const limited = { status: 429, body: { status: 429, code: 'QUERY_CONCURRENCY_LIMIT', message: LIMIT_MESSAGE } };
+
+/** 토스트가 한 번이라도 떴는지 window.__toastSeen 에 남긴다 — 토스트는 몇 초 뒤 사라지므로 끝에서 한 번 보는 것으로는 놓친다 */
+async function watchToasts(page: Page) {
+  await page.addInitScript(() => {
+    const w = window as unknown as { __toastSeen: boolean };
+    w.__toastSeen = false;
+    new MutationObserver(() => {
+      if (document.querySelector('[data-sonner-toast]')) w.__toastSeen = true;
+    }).observe(document, { childList: true, subtree: true });
+  });
+}
+
+test.describe('대시보드 위젯 — 조회 실패 안내 (WD-686)', () => {
+  test('상한 오류(queryResult.error)인 위젯은 문구를 보이고, 그 위젯 새로고침이 그 위젯만 다시 조회한다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDashboard(page);
+    const a = await routeChartData(page, 1, [{ body: rowsBody(chartA, 'a-1') }]);
+    const b = await routeChartData(page, 2, [
+      {
+        body: {
+          chart: chartB,
+          queryResult: createQueryResult({ columns: [], rows: [], totalRows: 0, error: LIMIT_MESSAGE }),
+        },
+      },
+      { body: rowsBody(chartB, 'b-after-limit') },
+    ]);
+
+    await page.goto('/analytics/dashboards/1');
+    const cardA = card(page, '위젯 A');
+    const cardB = card(page, '위젯 B');
+    await expect(cardA.getByText('a-1')).toBeVisible();
+    await expect(cardB.getByRole('alert')).toContainText(LIMIT_MESSAGE);
+    await expect(cardA.getByRole('alert')).toHaveCount(0);
+
+    await page.getByRole('button', { name: '위젯 B 새로고침', exact: true }).click();
+
+    await expect(cardB.getByText('b-after-limit')).toBeVisible();
+    await expect(cardB.getByRole('alert')).toHaveCount(0);
+    expect(a.count).toBe(1);
+    expect(b.count).toBe(2);
+  });
+
+  test('위젯 단건 조회가 429 면 자동 재시도 없이 그 위젯 안에 상한 문구와 「다시 시도」가 보이고, 누르면 그 위젯만 다시 조회한다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDashboard(page);
+    const a = await routeChartData(page, 1, [{ body: rowsBody(chartA, 'a-1') }]);
+    const b = await routeChartData(page, 2, [limited, { body: rowsBody(chartB, 'b-after-limit') }]);
+
+    await page.goto('/analytics/dashboards/1');
+    const cardA = card(page, '위젯 A');
+    const cardB = card(page, '위젯 B');
+    await expect(cardA.getByText('a-1')).toBeVisible();
+    await expect(cardB.getByRole('alert')).toContainText(LIMIT_MESSAGE);
+    await expect(cardA.getByRole('alert')).toHaveCount(0);
+    // 429 는 전역 재시도(1회)에서 빠진다 — 첫 조회 한 번뿐
+    expect(b.count).toBe(1);
+
+    await cardB.getByRole('button', { name: '다시 시도' }).click();
+
+    await expect(cardB.getByText('b-after-limit')).toBeVisible();
+    await expect(cardB.getByRole('alert')).toHaveCount(0);
+    expect(b.count).toBe(2);
+    expect(a.count).toBe(1);
+  });
+
+  test('429 가 아닌 조회 실패(500)도 서버 문구와 「다시 시도」를 보이고, 문구가 없으면 일반 문구를 보인다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDashboard(page);
+    await routeChartData(page, 1, [{ status: 500, body: { message: '위젯 A 원본 조회 실패' } }]);
+    await routeChartData(page, 2, [{ status: 504, body: {} }]);
+
+    await page.goto('/analytics/dashboards/1');
+    await expect(card(page, '위젯 A').getByRole('alert')).toContainText('위젯 A 원본 조회 실패');
+    await expect(card(page, '위젯 B').getByRole('alert')).toContainText('데이터를 불러올 수 없습니다.');
+    await expect(card(page, '위젯 A').getByRole('button', { name: '다시 시도' })).toBeVisible();
+    await expect(card(page, '위젯 B').getByRole('button', { name: '다시 시도' })).toBeVisible();
+  });
+
+  test('「다시 시도」는 응답을 기다리는 동안 aria-disabled 로 잠겨, 거듭 눌러도 요청이 하나만 나간다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDashboard(page);
+    await routeChartData(page, 1, [{ body: rowsBody(chartA, 'a-1') }]);
+    await routeChartData(page, 2, [limited]);
+
+    await page.goto('/analytics/dashboards/1');
+    const cardB = card(page, '위젯 B');
+    await expect(cardB.getByRole('alert')).toContainText(LIMIT_MESSAGE);
+    // 이제부터의 요청(다시 시도)은 테스트가 풀 때까지 붙잡는다 — 나중에 등록한 라우트가 먼저 처리한다
+    const held = await holdApi(page, 'GET', '/api/v1/analytics/charts/2/data', 200, rowsBody(chartB, 'b-after-hold'));
+    const retry = cardB.getByRole('button', { name: '다시 시도' });
+
+    await retry.click();
+    await expect(retry).toHaveAttribute('aria-disabled', 'true');
+    await expect.poll(() => held.requests.length).toBe(1);
+    // 잠긴 동안 다시 누른다 — 포커스가 남은 버튼의 Enter 와 직접 보낸 click 모두 무시돼야 한다
+    await retry.press('Enter');
+    await retry.dispatchEvent('click');
+    expect(held.requests).toHaveLength(1);
+
+    held.release();
+    await expect(cardB.getByText('b-after-hold')).toBeVisible();
+    expect(held.requests).toHaveLength(1);
+  });
+
+  test('「다시 시도」가 다시 429 를 받으면 토스트 없이 위젯 안 안내만 남는다', async ({ authenticatedPage: page }) => {
+    await watchToasts(page);
+    await setupDashboard(page);
+    await routeChartData(page, 1, [{ body: rowsBody(chartA, 'a-1') }]);
+    const b = await routeChartData(page, 2, [limited]);
+
+    await page.goto('/analytics/dashboards/1');
+    const cardB = card(page, '위젯 B');
+    await expect(cardB.getByRole('alert')).toContainText(LIMIT_MESSAGE);
+    const retry = cardB.getByRole('button', { name: '다시 시도' });
+
+    await retry.click();
+
+    // 다시 시도 요청이 나가고(429 라 재시도 없음), 조회가 끝나 잠금이 풀린 뒤에도 안내만 남고 토스트는 한 번도 뜨지 않았다
+    await expect.poll(() => b.count).toBe(2);
+    await expect(retry).not.toHaveAttribute('aria-disabled', 'true');
+    await expect(cardB.getByRole('alert')).toContainText(LIMIT_MESSAGE);
+    expect(await page.evaluate(() => (window as unknown as { __toastSeen: boolean }).__toastSeen)).toBe(false);
+  });
+
+  test('데이터를 받은 뒤 새로고침이 429 면 화면이 깨지지 않고 받은 데이터가 그대로 보인다', async ({ authenticatedPage: page }) => {
+    await setupDashboard(page);
+    await routeChartData(page, 1, [{ body: rowsBody(chartA, 'a-1') }]);
+    await routeChartData(page, 2, [{ body: rowsBody(chartB, 'b-loaded') }, limited]);
+
+    await page.goto('/analytics/dashboards/1');
+    const cardB = card(page, '위젯 B');
+    await expect(cardB.getByText('b-loaded')).toBeVisible();
+
+    await page.getByRole('button', { name: '위젯 B 새로고침', exact: true }).click();
+
+    // 이전 결과는 그대로, 실패는 신선도 바 배지로만 — 위젯 오류 상자로 바뀌지 않는다(예전에는 렌더가 끝없이 돌아 화면 전체가 오류 경계로 넘어갔다)
+    await expect(cardB.getByText('새로고침 실패')).toBeVisible();
+    await expect(cardB.getByText('b-loaded')).toBeVisible();
+    await expect(cardB.getByRole('alert')).toHaveCount(0);
+    await expect(card(page, '위젯 A').getByText('a-1')).toBeVisible();
   });
 });
