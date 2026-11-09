@@ -49,7 +49,6 @@ import org.jobrunr.scheduling.JobScheduler;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.multipart.MultipartFile;
 
 @Service
@@ -90,7 +89,6 @@ public class DataImportService {
   private final JobScheduler jobScheduler;
   private final ObjectMapper objectMapper;
   private final AsyncJobService asyncJobService;
-  private final TransactionTemplate transactionTemplate;
   private final NotificationService notificationService;
 
   /** 데이터 테이블 쓰기 공용 잠금(WD-666) — 대상 테이블에 닿는 트랜잭션의 첫 문장으로 데이터셋 행을 잡는다. */
@@ -565,7 +563,7 @@ public class DataImportService {
 
       Path path = Path.of(filePath);
       String fileTypeLower = fileType.toLowerCase();
-      // 람다(transactionTemplate)에서 캡처하려면 effectively-final이어야 하므로 확정 값을 복사한다.
+      // 람다(writeToTarget 등)에서 캡처하려면 effectively-final이어야 하므로 확정 값을 복사한다.
       final ParseOptions parseOptionsFinal = parseOptions;
 
       // Task2: 검증(Pass1)이 전량 스트리밍하며 행수를 세므로, 별도의 countRows() pre-scan은 더 이상 필요 없다
@@ -913,17 +911,18 @@ public class DataImportService {
       // 원자적으로 하므로 스트림 전체 트랜잭션이 필요 없다.
       if (importMode == ImportMode.APPEND
           || (importMode == ImportMode.REPLACE && pkColumns.isEmpty())) {
-        transactionTemplate.executeWithoutResult(
-            status -> {
-              // WD-666: 대상 테이블에 쓰기 전, 같은 트랜잭션에서 데이터셋 행을 잡는다 — 삽입 스트림이 커밋될 때까지 truncate·NOT NULL
-              // 필드 추가·삭제가 이 뒤로 줄 선다(정보 수정은 막지 않는다).
-              lockTargetForWrite(datasetId);
+        // WD-666: 대상 테이블에 쓰기 전, 같은 트랜잭션에서 데이터셋 행을 잡는다 — 삽입 스트림이 커밋될 때까지 truncate·NOT NULL
+        // 필드 추가·삭제가 이 뒤로 줄 선다(정보 수정은 막지 않는다).
+        writeToTarget(
+            datasetId,
+            () -> {
               try {
                 fileParserService.parseStreaming(
                     path, fileTypeLower, parseOptionsFinal, BATCH_SIZE, insertBatch);
               } catch (Exception e) {
                 throw (e instanceof RuntimeException re) ? re : new RuntimeException(e);
               }
+              return null;
             });
       } else {
         fileParserService.parseStreaming(
@@ -976,18 +975,17 @@ public class DataImportService {
           log.info("UPSERT mode: promoting staging to target on PK columns {}", pkColumns);
           // WD-666: promote 는 대상 테이블 쓰기다 — 예전에는 트랜잭션 없이 나갔다. 잠금과 같은 트랜잭션으로 묶어 구조 변경·삭제와 줄 세운다.
           DataTableRowService.UpsertResult upsertResult =
-              transactionTemplate.execute(
-                  status -> {
-                    lockTargetForWrite(datasetId);
-                    return dataWrite(
-                        () ->
-                            dataTableRowService.promoteStagingToUpsert(
-                                stagingTableFinal,
-                                dataset.tableName(),
-                                columnNames,
-                                pkColumns,
-                                null));
-                  });
+              writeToTarget(
+                  datasetId,
+                  () ->
+                      dataWrite(
+                          () ->
+                              dataTableRowService.promoteStagingToUpsert(
+                                  stagingTableFinal,
+                                  dataset.tableName(),
+                                  columnNames,
+                                  pkColumns,
+                                  null)));
           log.info(
               "UPSERT mode: promoted — inserted={}, updated={}",
               upsertResult.inserted(),
@@ -999,18 +997,17 @@ public class DataImportService {
         } else if (importMode == ImportMode.REPLACE && !pkColumns.isEmpty()) {
           log.info("REPLACE mode: promoting staging to target (truncate + insert) atomically");
           // 교체는 대상을 비운 뒤 넣으므로, 같은 트랜잭션에서 센 대상 행 수가 곧 반영된 행 수다
+          // WD-666: 교체 promote 도 같은 트랜잭션의 첫 문장으로 데이터셋 행을 잡는다.
           long replacedRows =
-              transactionTemplate.execute(
-                  status -> {
-                    // WD-666: 교체 promote 도 같은 트랜잭션의 첫 문장으로 데이터셋 행을 잡는다.
-                    lockTargetForWrite(datasetId);
-                    return dataWrite(
-                        () -> {
-                          dataTableRowService.promoteStagingToReplace(
-                              stagingTableFinal, dataset.tableName(), columnNames, pkColumns);
-                          return dataTableRowService.countRows(dataset.tableName());
-                        });
-                  });
+              writeToTarget(
+                  datasetId,
+                  () ->
+                      dataWrite(
+                          () -> {
+                            dataTableRowService.promoteStagingToReplace(
+                                stagingTableFinal, dataset.tableName(), columnNames, pkColumns);
+                            return dataTableRowService.countRows(dataset.tableName());
+                          }));
           duplicateKeyRows = (int) Math.max(0, validCountFinal - replacedRows);
         }
       }
@@ -1331,12 +1328,12 @@ public class DataImportService {
   static final String DATASET_GONE_MESSAGE = "임포트 중 데이터셋이 삭제되어 데이터를 적재하지 않았습니다.";
 
   /**
-   * 대상 테이블 쓰기 트랜잭션의 첫 문장 — 데이터셋 행 쓰기 잠금(KEY SHARE, {@link DatasetDataWriteLock})을 잡는다(WD-666). 그 사이
-   * 데이터셋이 지워졌으면 사라진 테이블에 쓰지 않고 이유가 담긴 실패로 끝낸다.
+   * 대상 테이블 쓰기를 한 트랜잭션으로 실행한다 — 첫 문장으로 데이터셋 행 쓰기 잠금(KEY SHARE)을 잡는다(WD-666, 공용 층 {@link
+   * DatasetDataWriteLock#writeToDataset}, WD-672). 그 사이 데이터셋이 지워졌으면 사라진 테이블에 쓰지 않고 이유가 담긴 실패로 끝낸다.
    */
-  private void lockTargetForWrite(Long datasetId) {
+  private <T> T writeToTarget(Long datasetId, Supplier<T> body) {
     try {
-      writeLock.lockForDataWrite(datasetId);
+      return writeLock.writeToDataset(datasetId, body);
     } catch (DatasetNotFoundException e) {
       throw new ImportProcessingException(DATASET_GONE_MESSAGE, e);
     }

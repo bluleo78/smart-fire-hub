@@ -9,6 +9,7 @@ import com.smartfirehub.dataset.exception.InvalidTableNameException;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.service.DataTableService;
+import com.smartfirehub.dataset.service.DatasetDataWriteLock;
 import com.smartfirehub.dataset.service.DatasetService;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -155,7 +156,8 @@ class TempDatasetServiceTest {
             datasetService,
             columnRepository,
             new DataTableService(com.smartfirehub.support.ReservedNameResolvers.postgres()),
-            org.mockito.Mockito.mock(PipelineDataSchema.class));
+            org.mockito.Mockito.mock(PipelineDataSchema.class),
+            org.mockito.Mockito.mock(DatasetDataWriteLock.class));
     String col63 = "c_" + "x".repeat(61);
     String col64 = "c_" + "x".repeat(62);
 

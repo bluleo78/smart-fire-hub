@@ -6,6 +6,7 @@ import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.service.DataTableService;
+import com.smartfirehub.dataset.service.DatasetDataWriteLock;
 import com.smartfirehub.dataset.service.DatasetService;
 import com.smartfirehub.dataset.storage.tibero.TiberoNames;
 import java.util.List;
@@ -25,6 +26,9 @@ public class TempDatasetService {
 
   /** 테넌트 저장소 판정 — Tibero 테넌트의 TEMP 테이블 이름 규칙(30자)을 고르는 데 쓴다. */
   private final PipelineDataSchema pipelineDataSchema;
+
+  /** 데이터셋 행 잠금 공용 층(WD-666·WD-672) — 일괄 삭제가 트랜잭션 안에서만 행을 잠그게 한다. */
+  private final DatasetDataWriteLock writeLock;
 
   /** Find the dataset ID for an existing temp dataset linked to the given pipeline step (FK). */
   public Optional<Long> findExistingTempDataset(Long stepId) {
@@ -163,17 +167,22 @@ public class TempDatasetService {
    *
    * <p>WD-666: 동기화 잠금보다 먼저 지울 데이터셋 행 전부를 id 오름차순으로 FOR UPDATE 잠근다 — 잠금 순서 규칙은 「데이터셋 행 → 테넌트 동기화 →
    * 테이블」이다. 출력 맞바꿈(데이터셋 행 KEY SHARE → 동기화 잠금)과 거꾸로 잡으면 교착한다. 예전에는 동기화 잠금을 먼저 잡은 뒤 deleteDataset 이
-   * 데이터셋마다 행을 잠갔다. 이미 없는 행은 건너뛴다 — deleteDataset 이 404 로 같은 결과를 낸다.
+   * 데이터셋마다 행을 잠갔다.
+   *
+   * <p>WD-672: 행 잠금은 공용 층({@link DatasetDataWriteLock#lockAllForDelete})을 거친다 — 트랜잭션 밖에서 부르면 잠금이 문장
+   * 끝에서 바로 풀리므로 {@link IllegalStateException} 으로 거부된다. 기다리는 동안 이미 지워진 행은 건너뛴다 — 그 id 로
+   * deleteDataset 을 부르면 404 가 합류한 호출자 트랜잭션을 롤백 전용으로 만들어 스텝·파이프라인 삭제까지 실패시키기 때문이다.
    */
   public void deleteTempDatasets(List<Long> datasetIds) {
     if (datasetIds.isEmpty()) {
       return;
     }
-    datasetIds.stream().sorted().forEach(datasetRepository::lockForDelete);
-    dataTableService.lockTenantGrantSyncForDdl();
-    for (Long datasetId : datasetIds) {
-      datasetService.deleteDataset(datasetId);
+    List<Long> lockedIds = writeLock.lockAllForDelete(datasetIds);
+    if (lockedIds.isEmpty()) {
+      return;
     }
+    dataTableService.lockTenantGrantSyncForDdl();
+    lockedIds.forEach(datasetService::deleteDataset);
   }
 
   /**

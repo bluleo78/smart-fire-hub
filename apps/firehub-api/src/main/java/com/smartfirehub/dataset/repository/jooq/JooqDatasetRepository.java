@@ -410,7 +410,8 @@ public class JooqDatasetRepository implements DatasetRepository {
 
   // WD-184: 지식 모델 연결·재연결(DatasetOntologyService.bind)이 잡는 데이터셋 행 잠금. 재연결은 "이전 연결 읽기 → 연결 갱신 → 옛 모델
   // 기준 매핑 삭제"를 한 덩어리로 해야 하는데, 매핑 저장·활성화(MappingService.validate — 이 행을 FOR SHARE 로 잡는다)와 직렬화하지
-  // 않으면 옛 모델로 검증한 매핑이 재연결 뒤에 저장돼 고아 매핑이 다시 생긴다. NO KEY UPDATE 인 이유는 lockForColumnChange 와 같다.
+  // 않으면 옛 모델로 검증한 매핑이 재연결 뒤에 저장돼 고아 매핑이 다시 생긴다.
+  // NO KEY UPDATE 인 이유: 매핑 저장의 SHARE 와는 충돌해 줄 서고, 키를 바꾸지 않으므로 FK 참조 삽입·데이터 쓰기(KEY SHARE)는 막지 않는다.
   // 잠금 순서: 데이터셋 행 → 매핑 행(온톨로지 행은 잡지 않는다) — 온톨로지 행 → 데이터셋 행 → 매핑 행 규약의 부분 순서다.
   @Override
   public void lockForOntologyRebind(Long id) {
@@ -547,9 +548,9 @@ public class JooqDatasetRepository implements DatasetRepository {
         .fetchOptional(r -> r.get(DS_ID));
   }
 
-  // WD-575: 정보 수정의 편집 기준 버전 비교용 행 잠금. WD-666: FOR NO KEY UPDATE — 키를 바꾸지 않으니 충분하고 데이터 쓰기(KEY
-  // SHARE)를
-  // 기다리지 않는다(정보 수정끼리는 여전히 줄 선다).
+  // WD-575: 정보 수정의 편집 기준 버전 비교용 행 잠금.
+  // WD-666: FOR NO KEY UPDATE — 키를 바꾸지 않으니 충분하고, 데이터 쓰기(KEY SHARE)를 기다리지 않는다
+  // (정보 수정끼리는 여전히 줄 선다).
   // 이 잠금은 트랜잭션 끝까지 유지돼 같은 데이터셋의 동시 정보 수정이 한 줄로 서고, 나중 요청은 앞 저장이 바꾼 수정 시각을 읽는다.
   @Override
   public Optional<LockedRowVersion> lockUpdatedAtById(Long id) {

@@ -156,7 +156,9 @@ class PipelineAsyncRunnerTiberoOutputlessTest {
                 // Tibero 테넌트 — 예약 컬럼명은 앱 시스템 컬럼만(WD-564).
                 new DataTableService(
                     com.smartfirehub.support.ReservedNameResolvers.appReservedOnly()),
-                pipelineDataSchema));
+                pipelineDataSchema,
+                org.mockito.Mockito.mock(
+                    com.smartfirehub.dataset.service.DatasetDataWriteLock.class)));
     org.springframework.test.util.ReflectionTestUtils.setField(
         runner, "tempDatasetService", realTempDatasetService);
     TenantContext.set(TENANT_ID);

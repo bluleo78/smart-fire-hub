@@ -82,9 +82,9 @@ public class DatasetDataService {
     }
   }
 
-  // WD-551·WD-566·WD-666: 쓰기 잠금은 공용 층(DatasetDataWriteLock)이 맡는다 — 행 쓰기는 KEY SHARE,
-  // truncate·replace 는 FOR
-  // UPDATE. 호출자가 모두 @Transactional 이라 잠금이 데이터 테이블 쓰기와 같은 트랜잭션에서 커밋까지 유지된다.
+  // WD-551·WD-566·WD-666: 쓰기 잠금은 공용 층(DatasetDataWriteLock)이 맡는다.
+  // 행 쓰기는 KEY SHARE, truncate·replace 는 FOR UPDATE 다(사다리 전체는 DatasetDataWriteLock 참고).
+  // 호출자가 모두 @Transactional 이라 잠금이 데이터 테이블 쓰기와 같은 트랜잭션에서 커밋까지 유지된다.
 
   @Transactional(readOnly = true)
   public List<ColumnStatsResponse> getDatasetStats(Long datasetId) {

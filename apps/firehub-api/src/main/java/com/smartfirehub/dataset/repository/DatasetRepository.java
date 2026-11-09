@@ -57,8 +57,9 @@ public interface DatasetRepository {
   /**
    * WD-184: 지식 모델 연결·재연결(DatasetOntologyService.bind)이 잡는 데이터셋 행 잠금. 재연결은 "이전 연결 읽기 → 연결 갱신 → 옛 모델
    * 기준 매핑 삭제"를 한 덩어리로 해야 하는데, 매핑 저장·활성화(MappingService.validate — 이 행을 FOR SHARE 로 잡는다)와 직렬화하지 않으면
-   * 옛 모델로 검증한 매핑이 재연결 뒤에 저장돼 고아 매핑이 다시 생긴다. NO KEY UPDATE 인 이유는 lockForColumnChange 와 같다. 잠금 순서:
-   * 데이터셋 행 → 매핑 행(온톨로지 행은 잡지 않는다) — 온톨로지 행 → 데이터셋 행 → 매핑 행 규약의 부분 순서다.
+   * 옛 모델로 검증한 매핑이 재연결 뒤에 저장돼 고아 매핑이 다시 생긴다. NO KEY UPDATE 인 이유: 매핑 저장의 SHARE 와는 충돌해 줄 서고, 키를 바꾸지
+   * 않으므로 이 행을 FK 로 참조하는 삽입·데이터 쓰기(KEY SHARE)는 막지 않는다. 잠금 순서: 데이터셋 행 → 매핑 행(온톨로지 행은 잡지 않는다) — 온톨로지 행
+   * → 데이터셋 행 → 매핑 행 규약의 부분 순서다.
    */
   void lockForOntologyRebind(Long id);
 
@@ -86,8 +87,9 @@ public interface DatasetRepository {
   Optional<DatasetWriteTarget> lockForDataWriteByTableName(String tableName);
 
   /**
-   * WD-666: 데이터 테이블을 통째로 바꾸는 쓰기(truncate·replace)와 필드 순서 변경의 첫 문장 — {@code FOR UPDATE OF dataset} 로
-   * 잡으며 같은 문장으로 읽는다. 데이터 쓰기(KEY SHARE)·필드 변경과 줄 선다. 정보 수정과도 짧게 줄 선다(구조 변경에만 강한 잠금을 쓴다).
+   * WD-666: 데이터 테이블을 통째로 바꾸는 쓰기(truncate·replace)의 첫 문장 — {@code FOR UPDATE OF dataset} 로 잡으며 같은
+   * 문장으로 읽는다. 데이터 쓰기(KEY SHARE)·필드 변경과 줄 선다. 정보 수정·필드 순서 변경(NO KEY UPDATE)과도 짧게 줄 선다(구조 변경에만 강한 잠금을
+   * 쓴다). 필드 순서 변경은 이 잠금이 아니라 {@link #lockForColumnReorder} 를 쓴다.
    *
    * @return 잠근 데이터셋의 쓰기 대상 정보, 행이 없으면 빈 값
    */
