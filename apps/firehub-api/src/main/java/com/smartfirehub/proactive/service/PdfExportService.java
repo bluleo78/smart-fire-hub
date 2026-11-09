@@ -21,6 +21,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.thymeleaf.TemplateEngine;
 import org.thymeleaf.context.Context;
+import org.xhtmlrenderer.pdf.ITextOutputDevice;
 import org.xhtmlrenderer.pdf.ITextRenderer;
 import reactor.netty.http.client.HttpClient;
 
@@ -148,6 +149,24 @@ public class PdfExportService {
     return pdfBytes;
   }
 
+  /**
+   * 외부 자원을 가져오지 않는 Flying Saucer 렌더러를 만든다(WD-695).
+   *
+   * <p>기본 생성자는 절대 URL 자원을 서버에서 여는 UserAgent 를 쓰므로, AI 본문의 {@code <img src="http://내부주소">} 가 SSRF 가
+   * 된다. {@code data:} 만 허용하는 {@link DataUriOnlyUserAgent} 를 꽂되, 기본 생성자와 똑같이 같은 출력 장치를 UserAgent 와
+   * 렌더러가 함께 쓰게 한다.
+   */
+  static ITextRenderer createRenderer() {
+    ITextOutputDevice outputDevice = new ITextOutputDevice(ITextRenderer.DEFAULT_DOTS_PER_POINT);
+    DataUriOnlyUserAgent userAgent =
+        new DataUriOnlyUserAgent(outputDevice, ITextRenderer.DEFAULT_DOTS_PER_PIXEL);
+    return new ITextRenderer(
+        ITextRenderer.DEFAULT_DOTS_PER_POINT,
+        ITextRenderer.DEFAULT_DOTS_PER_PIXEL,
+        outputDevice,
+        userAgent);
+  }
+
   /** 기존 Flying Saucer 기반 PDF 생성 — sections → Thymeleaf → XHTML → PDF (하위 호환) */
   private byte[] generatePdfViaFlyingSaucer(
       ProactiveResult result, String jobName, String reportedAt) {
@@ -183,7 +202,7 @@ public class PdfExportService {
     String xhtml = templateEngine.process("proactive-report-pdf", ctx);
 
     try {
-      ITextRenderer renderer = new ITextRenderer();
+      ITextRenderer renderer = createRenderer();
       ClassPathResource fontResource = new ClassPathResource(FONT_PATH);
       renderer
           .getFontResolver()
