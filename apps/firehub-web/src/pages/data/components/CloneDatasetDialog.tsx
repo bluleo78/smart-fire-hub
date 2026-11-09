@@ -16,8 +16,11 @@ import { Textarea } from '../../../components/ui/textarea';
 import { useCloneDataset } from '../../../hooks/queries/useDatasets';
 import { useGuardedSubmit } from '../../../hooks/useSubmitGuard';
 import { handleApiError } from '../../../lib/api-error';
+import { cloneName } from '../../../lib/clone-name';
 import {
+  DATASET_NAME_MAX_LENGTH,
   datasetDescriptionSchema,
+  datasetNameSchema,
   MAX_TABLE_NAME_LENGTH,
   TABLE_NAME_MAX_MESSAGE,
   tableNameRegex,
@@ -32,7 +35,7 @@ interface CloneDatasetDialogProps {
 }
 
 const cloneSchema = z.object({
-  name: z.string().min(1, '데이터셋 이름을 입력하세요.'),
+  name: datasetNameSchema,
   tableName: z
     .string()
     .min(1, '테이블 이름을 입력하세요.')
@@ -58,8 +61,9 @@ export function CloneDatasetDialog({ open, onOpenChange, dataset }: CloneDataset
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     resolver: zodResolver(cloneSchema) as any,
     defaultValues: {
-      name: `${dataset.name}_copy`,
-      tableName: `${dataset.tableName}_copy`,
+      // 원래 이름이 길어도 기본 사본 이름·테이블명이 각 상한을 넘지 않게 원래 이름 끝을 잘라 맞춘다 (WD-523).
+      name: cloneName(dataset.name, '_copy', DATASET_NAME_MAX_LENGTH, ''),
+      tableName: cloneName(dataset.tableName, '_copy', MAX_TABLE_NAME_LENGTH, ''),
       description: dataset.description || '',
       includeData: false,
       includeTags: true,
@@ -104,10 +108,10 @@ export function CloneDatasetDialog({ open, onOpenChange, dataset }: CloneDataset
 
         <form onSubmit={submitForm} className="space-y-4">
           <div className="space-y-1.5">
-            <Label htmlFor="clone-name">데이터셋 이름 *</Label>
+            <Label htmlFor={`${baseId}-name`}>데이터셋 이름 *</Label>
             {/* 오류 문구를 aria-describedby/aria-invalid 로 입력에 연결한다 (#432, §J). */}
             <Input
-              id="clone-name"
+              id={`${baseId}-name`}
               aria-invalid={!!form.formState.errors.name}
               aria-describedby={
                 form.formState.errors.name ? `${baseId}-name-error` : undefined
@@ -122,9 +126,9 @@ export function CloneDatasetDialog({ open, onOpenChange, dataset }: CloneDataset
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="clone-tableName">테이블 이름 *</Label>
+            <Label htmlFor={`${baseId}-tableName`}>테이블 이름 *</Label>
             <Input
-              id="clone-tableName"
+              id={`${baseId}-tableName`}
               aria-invalid={!!form.formState.errors.tableName}
               // 도움말은 항상, 오류 문구는 있을 때만 연결한다.
               aria-describedby={
@@ -147,17 +151,17 @@ export function CloneDatasetDialog({ open, onOpenChange, dataset }: CloneDataset
           {/* 원본에 상한 이전의 긴 설명이 있으면 maxLength 가 자르지 않으므로 zod 문구를 FormField 로 안내한다 */}
           <FormField
             label="설명"
-            htmlFor="clone-description"
+            htmlFor={`${baseId}-description`}
             className="space-y-1.5"
             error={form.formState.errors.description?.message}
           >
             <Textarea
-              id="clone-description"
+              id={`${baseId}-description`}
               {...form.register('description')}
               rows={3}
               maxLength={MAX_DESCRIPTION_LENGTH}
               aria-invalid={!!form.formState.errors.description}
-              aria-describedby={form.formState.errors.description ? 'clone-description-error' : undefined}
+              aria-describedby={form.formState.errors.description ? `${baseId}-description-error` : undefined}
             />
           </FormField>
 

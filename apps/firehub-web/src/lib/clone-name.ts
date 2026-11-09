@@ -7,8 +7,11 @@
  */
 export const NAME_MAX_LENGTH = 200;
 
-export function cloneName(name: string, suffix: string, maxLength = NAME_MAX_LENGTH): string {
-  const tail = ` ${suffix}`;
+/**
+ * @param separator 원래 이름과 접미사 사이 글자 — 기본은 공백(「이름 (복사본)」), 데이터셋 복제는 빈 문자열(「이름_copy」, WD-523).
+ */
+export function cloneName(name: string, suffix: string, maxLength = NAME_MAX_LENGTH, separator = ' '): string {
+  const tail = `${separator}${suffix}`;
   const room = maxLength - Array.from(tail).length;
   const chars = Array.from(name);
   const base = chars.length > room ? chars.slice(0, room).join('').trimEnd() : name;
