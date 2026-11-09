@@ -1538,6 +1538,11 @@ public class DatasetService {
   /** 필드 순서를 바꾸고, 순서가 실제로 바뀌면 감사(WD-463, FIELD_REORDER)를 남긴다. */
   @Transactional
   public void reorderColumns(Long datasetId, ReorderColumnsRequest request, Long userId) {
+    // WD-604: HTTP 요청은 Bean Validation 이 먼저 막지만, 검증을 거치지 않는 코드 경로에서도 NPE(500) 대신 같은 문구의 400 이 되게
+    // 한다.
+    if (request == null || request.columnIds() == null) {
+      throw new IllegalArgumentException(ReorderColumnsRequest.COLUMN_IDS_REQUIRED_MESSAGE);
+    }
     // WD-551·WD-566: 필드 목록을 읽기 전에 데이터셋 행을 잡아 같은 데이터셋의 순서 변경·필드 변경을 줄 세운다. 잠금 없이 두면 순서가 다른 두
     // 요청이 dataset_column 행을 서로 반대 순서로 UPDATE 해 교착(409)이 났다. WD-666: 잠금과 조회를 한 문장으로 하고(그 사이 삭제됐으면
     // 404), 모드는 NO KEY UPDATE 다 — 순서 변경은 데이터 테이블을 건드리지 않으므로 데이터 쓰기(KEY SHARE)를 막을 이유가 없고, 순서 변경·필드

@@ -181,7 +181,8 @@ public class DatasetController {
   @RequirePermission("dataset:write")
   public ResponseEntity<Void> updatePrimaryKeys(
       @PathVariable Long id,
-      @RequestBody UpdatePrimaryKeysRequest request,
+      // WD-604: 목록 누락·null·null 요소를 요청 경계에서 400 으로 거부한다(빈 배열 = 기본 키 해제는 허용).
+      @Valid @RequestBody UpdatePrimaryKeysRequest request,
       Authentication authentication) {
     // 변경 감사(WD-463)의 행위자로 남기기 위해 요청 사용자를 넘긴다.
     datasetService.updatePrimaryKeys(id, request.columnIds(), (Long) authentication.getPrincipal());
@@ -192,7 +193,8 @@ public class DatasetController {
   @RequirePermission("dataset:write")
   public ResponseEntity<Void> reorderColumns(
       @PathVariable Long id,
-      @RequestBody ReorderColumnsRequest request,
+      // WD-604: 목록 누락·null·null 요소를 요청 경계에서 400 으로 거부한다 — 서비스에서 NPE(500)가 났다.
+      @Valid @RequestBody ReorderColumnsRequest request,
       Authentication authentication) {
     // 변경 감사(WD-463)의 행위자로 남기기 위해 요청 사용자를 넘긴다.
     datasetService.reorderColumns(id, request, (Long) authentication.getPrincipal());
