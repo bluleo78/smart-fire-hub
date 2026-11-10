@@ -274,8 +274,7 @@ public class TiberoOutboxWakeupChannel implements OutboxWakeupChannel, Initializ
 
   /** 스키마 → 알림 이름: 접두사 + 스키마 SHA-256 앞 4바이트의 대문자 16진 8자. 결정적이라 같은 스키마의 모든 인스턴스가 같은 이름을 쓴다. */
   static String alertNameFor(String schema) {
-    int h = (int) (TiberoPlatformLocks.hash64(schema) >>> 32);
-    return ALERT_NAME_PREFIX + String.format("%08X", h);
+    return ALERT_NAME_PREFIX + TiberoNameHash.hex8(schema);
   }
 
   /**

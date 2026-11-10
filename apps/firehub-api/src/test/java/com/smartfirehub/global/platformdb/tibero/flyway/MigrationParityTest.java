@@ -34,17 +34,26 @@ class MigrationParityTest {
   private static final Set<MigrationVersion> BASELINE_VERSIONS =
       Set.of(MigrationVersion.fromVersion("155"), MigrationVersion.fromVersion("155.1"));
 
+  /**
+   * PG 짝이 없는 Tibero 전용 버전 — 허용 목록. V156.1 은 테넌트 격리(컨텍스트 + DBMS_RLS, WD-492)로, PG 는 같은 일을 RLS 정책·롤
+   * 마이그레이션(V83 등)에 이미 가졌다. 설계 docs/superpowers/specs/2026-11-10-wd492-tibero-tenant-rls-design.md
+   * §6 이 이 예외를 정했다. 여기에 버전을 더할 때는 그 마이그레이션 머리말에 PG 짝이 없는 이유를 적는다.
+   */
+  private static final Set<MigrationVersion> TIBERO_ONLY =
+      Set.of(MigrationVersion.fromVersion("156.1"));
+
   private static final Pattern VERSIONED = Pattern.compile("^V([0-9._]+?)__.+\\.(sql|java)$");
 
   private static final Path PG_SQL = Path.of("src/main/resources/db/migration");
   private static final Path PG_JAVA = Path.of("src/main/java/db/migration");
   private static final Path TIBERO = Path.of("src/main/resources/db/migration-tibero");
 
-  /** 기준선 뒤 PG 버전마다 같은 Tibero 버전이 있고, Tibero 에만 있는 버전은 없다. */
+  /** 기준선 뒤 PG 버전마다 같은 Tibero 버전이 있고, Tibero 에만 있는 버전은 없다(허용 목록 {@link #TIBERO_ONLY} 제외). */
   @Test
   void tiberoVersions_equalBaselinePlusPgVersionsAfterBaseline() throws IOException {
     MigrationVersion baseline = MigrationVersion.fromVersion(String.valueOf(BASELINE));
     Set<MigrationVersion> expected = new TreeSet<>(BASELINE_VERSIONS);
+    expected.addAll(TIBERO_ONLY);
     for (MigrationVersion v : pgVersions()) {
       if (v.isNewerThan(baseline)) expected.add(v);
     }
@@ -58,7 +67,7 @@ class MigrationParityTest {
         .as("PG 에 있는데 db/migration-tibero 에 없는 버전 — 같은 번호의 Tibero 파일(할 일이 없으면 주석만)을 추가할 것")
         .isEmpty();
     assertThat(extra)
-        .as("PG 에 없는 Tibero 버전 — Tibero 에만 스키마를 바꾸지 말 것(기준선 V155·V155.1 제외)")
+        .as("PG 에 없는 Tibero 버전 — Tibero 에만 스키마를 바꾸지 말 것(기준선 V155·V155.1·TIBERO_ONLY 제외)")
         .isEmpty();
   }
 

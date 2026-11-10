@@ -262,6 +262,24 @@ public final class TiberoDialect {
           + " IMMEDIATE 'ALTER SESSION SET NLS_NUMERIC_CHARACTERS=''.,'''; END;";
 
   /**
+   * {@link #SESSION_INIT_SQL} 맨 앞에 {@code ALTER SESSION SET CURRENT_SCHEMA} 를 더한 블록(WD-492) — 플랫폼 앱
+   * 풀의 런타임 계정이 한정 없는 이름을 소유자 객체로 풀게 한다. {@code application-tibero.yml} 의 앱 풀 문장은 이 모양의 리터럴이다(설정 시험이
+   * 대조).
+   *
+   * <p>이름은 검사하지 않는다 — 설정 대조 시험이 {@code ${…}} 자리표시자를 그대로 넘기고, 운영 값은 설정 파일이 정한다.
+   *
+   * @param currentSchema CURRENT_SCHEMA 로 둘 스키마 이름(또는 자리표시자)
+   */
+  public static String sessionInitSql(String currentSchema) {
+    String begin = "BEGIN ";
+    return begin
+        + "EXECUTE IMMEDIATE 'ALTER SESSION SET CURRENT_SCHEMA="
+        + currentSchema
+        + "'; "
+        + SESSION_INIT_SQL.substring(begin.length());
+  }
+
+  /**
    * 행 저장소 조회·검색·페이징·건수·DML 문장의 실행 시간 제한(초). 응답 없는 질의가 요청 스레드와 묶인 커넥션을 무한정 붙잡지 않게 한다. 컬럼 통계는 따로 30초를
    * 쓴다. 데이터 크기에 비례하는 일괄 문장(스테이징 승격·전체 삭제)에는 걸지 않는다 — 큰 가져오기를 실패시키지 않도록.
    */

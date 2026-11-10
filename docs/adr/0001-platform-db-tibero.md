@@ -45,7 +45,7 @@
 | PG 데이터 저장소 | `PostgresDataTableStore`·`PostgresDataRowStore`·`DataTableQueryService`·`PgRowSearchIndex`·`SearchSourceReader`·`StagingTableCleanupService`·`AnalyticsQueryExecutionService`·`IncrementalCursorService`·`VerbatimSql`·`Adhoc*`·`TemporalSafeFetch` | PG `data` 스키마(사용자 테이블·사용자 SQL) | **WD-494 완료** — PG 데이터 저장소 전용 DSLContext(`@DataStoreDb`)로 옮겼다. Tibero 설치본에서 플랫폼 DSLContext 는 Tibero 를 가리키기 때문이다. |
 | PG 롤·스키마 준비 | `TenantSchemaProvisioner`·`TenantPipelineRoleProvisioner`·`TenantPipelineRoleBootstrap`·`PipelineSandboxDataSourceConfig`·`TenantPipelineDataSourceRegistry` | PG 테넌트 스키마·파이프라인 롤(소유자 연결 포함) | **WD-494 완료** — 데이터 저장소 소유자 연결로 옮겼고, 테넌트 롤은 기동 치유가 만든다 |
 | 플랫폼 + 데이터 저장소 혼합 | `PythonReadGrantSync`·`TiberoPythonReadGrantSync`·`PythonReadGrantBackend` | 플랫폼 메타 테이블(jOOQ 생성 테이블)을 읽고, 데이터 저장소에 GRANT 를 한다 | 메타 읽기는 **WD-494 완료**(`DatasetRepository.findSchemaMetas`·`findTableLevels`). staging 정리 게이트는 JobRunr 테이블을 직접 읽지 않고 JobRunr `StorageProvider.getJobStats()` 를 쓴다(Tibero 는 JobRunr Oracle 방언). 잠금: PG 백엔드는 데이터 저장소에서 잡는다(`lockTenantSync`). Tibero 데이터 저장소 백엔드는 `PlatformLocks` 로 플랫폼 DB 에서 잡고, Tibero 맞바꿈 경로는 JVM 안 잠금뿐이다(알려진 빈틈, 아래 별도 이슈 후보) — **WD-493 완료** |
-| PG 전용 플랫폼 구현 | `PostgresPlatformLocks`·`PostgresPlatformTenantSession` | 플랫폼 DB(PG) | Tibero 짝: 잠금은 **WD-493 완료**(`TiberoPlatformLocks`), 테넌트 세션은 **WD-492** |
+| PG 전용 플랫폼 구현 | `PostgresPlatformLocks`·`PostgresPlatformTenantSession` | 플랫폼 DB(PG) | Tibero 짝: 잠금은 **WD-493 완료**(`TiberoPlatformLocks`), 테넌트 세션은 **WD-492 완료**(`TiberoPlatformTenantSession`, 결정 7) |
 
 → WD-491(리포지토리 73개)의 범위는 바뀌지 않는다. 다만 WD-494 는 "연결 분리" 만이 아니라 **위 18개 클래스의 DSLContext 를 바꿔 다는 일** 이다. 규모 M → L 로 본다.
 
@@ -155,8 +155,8 @@ PG는 jOOQ 구현을 그대로 쓰고, Tibero용 MyBatis 구현(`repository/myba
 - **소유자 계정**(`owner-url`·`owner-username`)에는 superuser(`CREATE EXTENSION postgis`), `pg_read_all_stats`(없으면 `fh_incremental_cursor_candidate` 가 오류 없이 틀린 값을 돌려준다), `app_tenant` 에 대한 ADMIN OPTION 이 필요하다.
 - **같은 클러스터면 `app_tenant` 비밀번호도 같아야 한다.** `app_tenant` 는 PG 클러스터 전역 롤이다. PG 플랫폼 DB 와 분리 모드 데이터 저장소가 한 클러스터에 있으면 플랫폼 Flyway(`spring.datasource.password`)와 데이터 저장소 Flyway(`firehub.data-store.postgres.password`)가 기동마다 서로 덮어써 플랫폼 풀 접속이 깨진다. 막지는 않고, 두 값이 다르면 기동 시 경고 로그를 남긴다.
 - **테넌트 파이프라인 롤은 기동 치유(`TenantPipelineRoleBootstrap`)가 데이터 저장소에 만든다.** 플랫폼 마이그레이션이 만들어 주지 않는다.
-- **배포 차단 사항 해제 — WD-493 완료.** 출력 테이블 잠금을 SQL REPLACE 출력 잠금과 같은 DB(데이터 저장소)에서 잡도록 옮겼다(이후 WD-690 에서 세션 잠금이 트랜잭션 범위 잠금으로 바뀌었다). 이제 분리 모드를 배포할 수 있다(남은 선행 이슈는 WD-491·WD-492).
-- **WD-491 이 MyBatis 짝을 만들어야 하는 새 플랫폼 리포지토리 메서드:** `DatasetRepository.findSchemaMetas`, `DatasetRepository.findTableLevels`. (staging 정리 게이트는 JobRunr `StorageProvider` 를 써서 MyBatis 짝이 필요 없다.)
+- **배포 차단 사항 해제 — WD-493 완료.** 출력 테이블 잠금을 SQL REPLACE 출력 잠금과 같은 DB(데이터 저장소)에서 잡도록 옮겼다(이후 WD-690 에서 세션 잠금이 트랜잭션 범위 잠금으로 바뀌었다). 이제 분리 모드를 배포할 수 있다(남은 선행 이슈는 WD-491 — WD-492 테넌트 격리는 결정 7 로 끝났다).
+- **WD-491 이 MyBatis 짝을 만들어야 하는 새 플랫폼 리포지토리 메서드:** `DatasetRepository.findSchemaMetas`, `DatasetRepository.findTableLevels`. (staging 정리 게이트는 JobRunr `StorageProvider` 를 써서 MyBatis 짝이 필요 없다.) 테넌트 격리(WD-492)에서 넘어온 WD-491 일은 결정 7 「넘겨받을 일」에 있다.
 - **회귀:** Gradle 태스크 `separateDataStoreTest` 가 데이터 저장소 패키지를 분리 모드로 돌린다.
 
 #### 잠금 배치 규칙(WD-493)
@@ -241,6 +241,78 @@ Tibero 드라이버는 시각을 JVM 기본 시간대로 저장한다. JVM 이 K
 - Tibero 설치본은 `user.timezone=UTC` 를 **기동 시 검사로 강제**한다(WD-496).
 - Tibero 테스트 하네스도 UTC 로 돈다(WD-497).
 
+### 7. Tibero 테넌트 격리(WD-492)
+
+PG 는 `app_tenant` 롤 + RLS 정책 + 트랜잭션-로컬 GUC(`app.tenant_id`)로 테넌트를 가른다. Tibero 는 같은 모델을 **애플리케이션 컨텍스트 + `DBMS_RLS` 정책**으로 옮겼다. 설계: `docs/superpowers/specs/2026-11-10-wd492-tibero-tenant-rls-design.md`. 스키마는 `db/migration-tibero/V156.1__tibero_tenant_rls.sql`(Tibero 전용 버전, PG 짝 없음)이 만든다.
+
+#### 계정 두 개와 권한
+
+| 계정 | 설정 | 권한 |
+|---|---|---|
+| 소유자 | `spring.flyway.user/password`, 스키마 이름은 `firehub.platform-db.tibero.owner-schema`(기본 Flyway 계정) | `CREATE SESSION`·`TABLE`·`SEQUENCE`·`VIEW`·`PROCEDURE`·`TRIGGER` + `CREATE ANY CONTEXT` + `GRANT EXECUTE ON SYS.DBMS_RLS`. `DROP ANY CONTEXT` 는 필요 없다(`CREATE OR REPLACE CONTEXT` 가 된다 — 실측) |
+| 런타임 | `spring.datasource.username/password`(앱 풀) | `CREATE SESSION` + `GRANT EXECUTE ON SYS.DBMS_LOCK`(WD-493) + `GRANT EXECUTE ON SYS.DBMS_ALERT`(WD-691). 소유자 객체의 DML(모든 테이블)·SELECT(뷰·시퀀스)·`FH_TENANT` EXECUTE 는 Flyway `afterMigrate` 콜백(`TiberoRuntimeGrantCallback`)이 **기동마다** 준다 — 이후 마이그레이션이 테이블을 더해도 다음 기동에서 권한이 붙는다(PG `ALTER DEFAULT PRIVILEGES` 대신) |
+
+- 앱 풀 초기화 문장이 `ALTER SESSION SET CURRENT_SCHEMA=<소유자>` 로 시작한다. 그래서 앱 SQL 은 한정 없는 이름을 그대로 쓰고, `DBMS_LOCK` id·`DBMS_ALERT` 이름의 이름공간(WD-493)도 소유자 스키마 기준 그대로다.
+- **두 계정이 같으면(대소문자 무시) 단일 계정 모드다.** 기동은 되지만 앱이 소유자로 붙어 정책에 걸리지 않으므로 격리가 꺼진다. 기동 때 WARN 한 줄(「런타임 계정이 없어 테넌트 격리가 꺼져 있습니다」)을 남기고, 권한 콜백도 달지 않는다.
+- **`owner-schema` 는 객체를 소유한 스키마이고 Flyway 계정과 같아야 한다.** 기본값은 `${spring.flyway.user:${spring.datasource.username}}` 다(Flyway 계정이 없으면 Boot 가 Flyway 를 datasource 계정으로 돌리므로 같은 순서로 대체한다). 권한 콜백은 Flyway 연결로 `USER_TABLES`·`USER_TAB_PRIVS` 같은 `USER_*` 뷰를 읽으므로, `spring.flyway.default-schema`/`schemas` 로 다른 스키마를 가리키는 설치는 지원하지 않는다. 값은 기동 때 Flyway 커스터마이저(`TiberoTenantMigration.configure`)가 식별자 모양(`[A-Za-z][A-Za-z0-9_$#]{0,127}`)을 검사해 어긋나면 기동을 멈춘다 — Flyway 계정과 같은지까지 대조하지는 않는다.
+- 런타임 계정은 `DBMS_SESSION.SET_CONTEXT` 를 직접 부를 수 없다(-17004 실측). 컨텍스트는 `CREATE CONTEXT … USING FH_TENANT` 로 소유자 패키지에만 묶여 있어 `FH_TENANT.set_tenant`·`clear_tenant` 로만 바뀐다. 테넌트를 넘어 읽는 루틴 6개(아웃박스·선제 실행 테넌트 목록, 트리거·슬랙 워크스페이스 테넌트 해석, 테넌트 기본값 준비)도 이 패키지 안에서만 우회(`BYPASS`)를 켜고 끄며, 우회를 켜는 공개 루틴은 없다.
+- 컨텍스트 이름은 인스턴스 전역이라 `FH_TENANT_<소유자 스키마 SHA-256 앞 8자리 16진>` 으로 설치본마다 다르게 만든다(WD-493 알림 이름과 같은 규칙).
+
+#### 설치 전 점검(DBA 로)
+
+```sql
+-- 판(edition) — 격리는 Enterprise(개발 서버 값 enterprise)에서만 확인했다. 다른 판이면 아래 DBMS_RLS 확인과 실서버 시험을 먼저 돌린다
+SELECT EDITION FROM V$LICENSE;
+-- DBMS_RLS 패키지가 있고 유효한지 — VALID 여야 한다
+SELECT STATUS FROM DBA_OBJECTS
+ WHERE OWNER = 'SYS' AND OBJECT_NAME = 'DBMS_RLS' AND OBJECT_TYPE = 'PACKAGE';
+```
+
+두 쿼리는 실서버에서 돌려 열 이름·값을 확인했다(`TiberoPlatformTenantSessionLiveTest.설치_전_점검_쿼리가_돈다`, `V$LICENSE` 열은 `LICENSE_VERSION, LICENSEE, LICENSE_TYPE, PRODUCT_NAME, PRODUCT_VERSION, EDITION, ISSUE_DATE, EXPIRE_DATE, LIMIT_USER, LIMIT_CPU, HOST, OPTIONS`).
+
+#### 단일 계정 설치본을 두 계정으로 옮기기
+
+1. DBA 로 런타임 계정을 만든다: `CREATE USER <런타임> IDENTIFIED BY …; GRANT CREATE SESSION TO <런타임>;`
+2. `GRANT EXECUTE ON SYS.DBMS_LOCK TO <런타임>; GRANT EXECUTE ON SYS.DBMS_ALERT TO <런타임>;`
+3. 소유자 계정에 `CREATE ANY CONTEXT`·`EXECUTE ON SYS.DBMS_RLS` 가 없으면 준다(V156.1 을 적용하려면 필요하다).
+4. 앱 설정에서 `spring.datasource.username/password` 를 런타임 계정으로 바꾼다. `spring.flyway.user/password` 는 소유자 그대로 둔다.
+5. 재기동한다. Flyway 가 (아직이면) V156.1 을 적용하고, `afterMigrate` 콜백이 런타임 계정에 권한을 준다. 기동 로그에 단일 계정 WARN 이 없고 권한 부여 INFO 가 있는지 본다.
+
+#### 컨텍스트는 세션 범위 — 트랜잭션 끝에 지우고, 못 지우면 버린다
+
+- PG GUC 는 트랜잭션-로컬이지만 Tibero 컨텍스트는 **세션 범위**라 커밋·롤백 뒤에도 남는다(실측). 지우지 않은 커넥션이 풀로 돌아가면 다음 요청이 이전 테넌트를 물려받는다.
+- 그래서 `TenantAwareTransactionManager` 가 트랜잭션 시작에 `FH_TENANT.set_tenant` 를 부르고(`TiberoPlatformTenantSession`), 커넥션을 풀에 돌려주기 직전(`doCleanupAfterCompletion`)에 `FH_TENANT.clear_tenant` 를 부른다. 새 트랜잭션만 지운다 — 참여한 안쪽 트랜잭션은 지우지 않고, `REQUIRES_NEW` 는 자기 커넥션만 지운다(바깥 컨텍스트는 남는다).
+- 테넌트 없는 트랜잭션은 시작에도 `FH_TENANT.clear_tenant` 를 한 번 부른다 — 앞선 대여자의 끝 지우기·버리기가 모두 실패해 값이 남은 커넥션이 와도 물려받지 않게(fail-closed). 시작 지우기가 실패하면 트랜잭션을 열지 않고 그 커넥션을 버린다.
+- 지우기에 실패하면 WARN 을 남기고 그 커넥션을 풀에서 버린다(Hikari `evictConnection`, 아니면 `abort`). 예외는 던지지 않는다 — 커밋이 이미 끝나 「커밋됐는데 예외」가 되기 때문이다. 실서버 시험이 풀 크기 1 에서 다음 트랜잭션이 다른 세션(`USERENV.SESSIONID`)을 받는 것으로 확인했다.
+- 로그인처럼 트랜잭션이 열린 뒤 테넌트가 정해지는 경로(`applyToCurrentTransaction`)는 플랫폼 풀이 현재 트랜잭션에 묶여 있을 때만 심는다. 아니면 `IllegalStateException` — 트랜잭션 밖 커넥션에는 지워 줄 자리가 없다.
+- `FH_TENANT.set_tenant` 를 `TiberoPlatformTenantSession` 밖에서 부르지 못하게 소스 검사(`PlatformDbPgSpecificSourceTest`)로 고정했다.
+
+#### 정책·DEFAULT
+
+- 정책은 PG 정책 61개에서 벡터 테이블 4개(Tibero 에 없음)를 뺀 **57개 테이블**에 PG 정책 이름 그대로 건다. `SELECT,INSERT,UPDATE,DELETE` + `update_check`(다른 테넌트 행 쓰기는 -10067). 정책 없이 두는 `tenant_id` 테이블은 PG 와 같은 4개(`membership`, `oauth_state`, `tenant_data_store`, `tenant_data_store_account`)이고, 카탈로그 시험이 「`TENANT_ID` 가 있는 테이블은 모두 정책이 있다」를 고정한다.
+- 정책은 **동적**(`static_policy => FALSE`)이다. 술어가 세션 사용자(소유자는 걸러지지 않음)·`BYPASS` 에 따라 달라 캐시되면 안 되기 때문이다. 정책 함수가 문장마다 불리므로 성능 영향은 WD-498 에서 실측한다(필요하면 context-sensitive 로).
+- `tenant_id` 열 DEFAULT 는 **58곳**이 `SYS_CONTEXT('<컨텍스트>','TENANT_ID')` 다(PG 62곳에서 벡터 4개를 뺀 수). NOT NULL 은 유지하므로 테넌트 없이 넣으면 NOT NULL 위반(-10005)으로 실패한다(fail-closed). `dataset.security_level_id`·`role.max_security_level_id` 의 PG DEFAULT(사용자 함수)는 BEFORE INSERT 트리거가 소유자 함수 `FH_DEFAULT_SECURITY_LEVEL`(런타임에 EXECUTE 없음)로 대신한다.
+- `audit_log` 는 테넌트가 없으면 `tenant_id IS NULL` 행만 보인다(PG `IS NOT DISTINCT FROM` 과 같은 의미).
+
+#### 넘겨받을 일(추적 목록)
+
+**WD-491(MyBatis 구현)**
+- Tibero 의 테넌트 해석 루틴(`FH_TENANT` 의 트리거·슬랙 워크스페이스 해석)은 **테넌트 id 만** 돌려준다. MyBatis 구현은 `TriggerRef.triggerId`·`SlackWorkspaceRef.workspaceId` 를 테넌트를 심은 뒤 RLS 아래에서 다시 읽어 채워야 한다(지금 호출처는 `ref.tenantId()` 만 쓴다).
+- `FH_TENANT.set_tenant` 소스 검사(`PlatformDbPgSpecificSourceTest`)를 `src/main/resources` 아래 MyBatis XML 까지 넓힌다.
+- JobRunr 풀은 런타임 계정으로 붙고 `CURRENT_SCHEMA=<소유자>` 다. 두 계정 모드에서 Oracle 저장소 제공자가 JobRunr 테이블을 제대로 찾는지 확인한다.
+
+**WD-498(배포·운영)**
+- 동적 정책 비용과 트랜잭션 시작·끝의 추가 지우기 왕복을 실측한다. 색인을 타도록 술어를 `tenant_id = TO_NUMBER(SYS_CONTEXT(...))` 로 바꾸는 것을 검토한다.
+
+**강제하지 않는 것**
+- `owner-schema` 가 Flyway 계정과 같은지는 강제하지 않는다 — 식별자 모양만 검사한다.
+
+**운영 메모**
+- 단일 계정 → 두 계정 전환: `spring.flyway.user` 를 따로 두지 않았다면 `spring.datasource.username` 을 바꾸기 **전에** `spring.flyway.user/password` 를 소유자로 명시한다. 그러지 않으면 둘 다 런타임 계정으로 대체된다.
+- `CREATE ANY CONTEXT` 는 컨텍스트를 만들 때만 필요하다. V156.1 적용 뒤에는 회수해도 된다.
+- 컨텍스트는 인스턴스 전역이고 `DROP USER … CASCADE` 로 지워지지 않는다. 설치본을 없앨 때는 컨텍스트(`FH_TENANT_<해시>`)를 먼저 지운다.
+- 컨텍스트 이름 해시가 겹치는 두 번째 설치본을 만들면 컨텍스트가 그쪽 패키지로 다시 묶여 **기존** 설치본이 fail-closed(-17004)로 실패한다. 테넌트가 새지는 않는다.
+
 ## 2단계 순서와 규모
 
 | 순서 | 이슈 | 내용 | 규모 |
@@ -250,7 +322,7 @@ Tibero 드라이버는 시각을 JVM 기본 시간대로 저장한다. JVM 이 K
 | 2 | WD-490 | 기준선 DDL(V155 상당) + JobRunr 스키마, `MigrationParityTest`, 작성 규칙 | L |
 | 3 | WD-494 | PG 데이터 저장소 연결을 플랫폼 DB 연결에서 분리하고, 데이터 저장소 경로 18개 클래스의 DSLContext 를 바꿔 단다(위 표) | L |
 | 3 | WD-493 | 잠금(`DBMS_LOCK`)·알림(`DBMS_ALERT`/폴링), 두 저장소 직렬화 재설계 | M |
-| 4 | WD-492 | 테넌트 격리 CONTEXT + DBMS_RLS(61개 테이블, 소유자 필터 대응). PoC 에서 본 테넌트 조건 누락 7곳 포함 | L |
+| 4 | WD-492 | 테넌트 격리 CONTEXT + DBMS_RLS(61개 테이블 — Tibero 는 57개, 벡터 4개 제외(결정 7), 소유자 필터 대응). PoC 에서 본 테넌트 조건 누락 7곳 포함 | L |
 | 5 | WD-491 | Tibero 용 MyBatis 구현(73개) + 구현 짝 검사. 도메인 묶음으로 쪼갠다(아래) | XL |
 | 6 | WD-495 | Tibero 빌드 기능 비활성 + 화면 안내 | S |
 | 7 | WD-498 | 배포·운영: Helm 값, 백업(tbexport), 설치·복구 문서, 데모 라이선스 갱신 runbook | M |

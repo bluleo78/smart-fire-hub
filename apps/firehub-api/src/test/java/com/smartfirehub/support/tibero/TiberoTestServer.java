@@ -119,6 +119,15 @@ public final class TiberoTestServer {
    */
   public static HikariDataSource pool(
       String poolName, Dba dba, String user, String password, int size) {
+    return pool(poolName, dba, user, password, size, TiberoDialect.SESSION_INIT_SQL);
+  }
+
+  /**
+   * 세션 초기화 문장을 직접 주는 테스트 계정 풀(WD-492) — 런타임 계정 풀이 운영처럼 {@code CURRENT_SCHEMA} 를 소유자로 맞추는 문장을 앞에 붙일
+   * 때 쓴다. 나머지 설정은 위 기본 풀과 같다.
+   */
+  public static HikariDataSource pool(
+      String poolName, Dba dba, String user, String password, int size, String initSql) {
     HikariConfig cfg = new HikariConfig();
     cfg.setPoolName(poolName);
     cfg.setDriverClassName(TiberoDialect.DRIVER_CLASS);
@@ -129,7 +138,7 @@ public final class TiberoTestServer {
     cfg.setMinimumIdle(0);
     cfg.setIdleTimeout(10_000);
     cfg.setConnectionTimeout(15_000);
-    cfg.setConnectionInitSql(TiberoDialect.SESSION_INIT_SQL);
+    cfg.setConnectionInitSql(initSql);
     cfg.setConnectionTestQuery(TiberoDialect.VALIDATION_QUERY);
     return new HikariDataSource(cfg);
   }

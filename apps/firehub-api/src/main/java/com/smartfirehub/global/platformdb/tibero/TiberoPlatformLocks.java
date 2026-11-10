@@ -1,13 +1,8 @@
 package com.smartfirehub.global.platformdb.tibero;
 
-import static java.nio.charset.StandardCharsets.UTF_8;
-
 import com.smartfirehub.global.platformdb.ConditionalOnTiberoPlatformDb;
 import com.smartfirehub.global.platformdb.PlatformLockWaitTimeoutException;
 import com.smartfirehub.global.platformdb.PlatformLocks;
-import java.nio.ByteBuffer;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.sql.CallableStatement;
 import java.sql.Connection;
 import java.sql.ResultSet;
@@ -334,7 +329,7 @@ public class TiberoPlatformLocks implements PlatformLocks, InitializingBean {
    * SHA-256 앞 8바이트라 문자열 키 해시({@code 스키마 + ":" + 키})와 입력이 겹치지 않는다.
    */
   static int lockId(String schema, long key) {
-    long offset = Math.floorMod(hash64(schema + "#L"), (long) LONG_KEY_SPACE);
+    long offset = Math.floorMod(TiberoNameHash.hash64(schema + "#L"), (long) LONG_KEY_SPACE);
     long slot = Math.floorMod(key, (long) LONG_KEY_SPACE);
     return MIN_ID + (int) Math.floorMod(slot + offset, (long) LONG_KEY_SPACE);
   }
@@ -344,14 +339,9 @@ public class TiberoPlatformLocks implements PlatformLocks, InitializingBean {
    * 나오고, 스키마가 다르면 (해시 충돌이 아닌 한) 다른 id 가 된다.
    */
   static int lockId(String schema, String key) {
-    long h = hash64(schema + ":" + key);
+    long h = TiberoNameHash.hash64(schema + ":" + key);
     long stringSpace = (long) MAX_ID - MIN_ID - LONG_KEY_SPACE + 1; // 925,258,176
     return (int) (MIN_ID + LONG_KEY_SPACE + Math.floorMod(h, stringSpace));
-  }
-
-  /** 문자열의 UTF-8 SHA-256 앞 8바이트를 부호 있는 long 으로 — id 매핑과 알림 이름이 같은 해시를 쓴다. */
-  static long hash64(String text) {
-    return ByteBuffer.wrap(sha256(text.getBytes(UTF_8)), 0, 8).getLong();
   }
 
   /** 트랜잭션 잠금 반환값 — 0 잡음, 4 이미 쥠(재진입), 1 시간 초과·2 교착은 잠금 실패, 그 밖은 잘못된 호출. */
@@ -427,22 +417,6 @@ public class TiberoPlatformLocks implements PlatformLocks, InitializingBean {
     try (Statement st = connection.createStatement();
         ResultSet rs = st.executeQuery(sql)) {
       return rs.next() ? rs.getString(1) : null;
-    }
-  }
-
-  /**
-   * SHA-256 다이제스트를 구한다 — 잠금 id 해시의 원천이다.
-   *
-   * <p>왜 SHA-256 인가: {@code String.hashCode} 는 32비트라 문자열 공간(약 9억 칸)을 고르게 채우지 못하고, JVM 이 달라도 같은 값이
-   * 나와야 하는 잠금 id 의 원천으로는 명세가 고정된 알고리즘이 안전하다. 암호학적 강도가 필요해서가 아니라 분포·결정성 때문이다. {@link MessageDigest}
-   * 는 스레드 안전하지 않아 매번 새로 얻는다(잠금 호출 빈도에서 비용은 무시할 만하다).
-   */
-  static byte[] sha256(byte[] bytes) {
-    try {
-      return MessageDigest.getInstance("SHA-256").digest(bytes);
-    } catch (NoSuchAlgorithmException e) {
-      // 모든 JVM 이 SHA-256 을 갖춰야 한다(Java SE 명세) — 여기 오면 환경 결함이다.
-      throw new IllegalStateException("SHA-256 을 쓸 수 없습니다", e);
     }
   }
 }

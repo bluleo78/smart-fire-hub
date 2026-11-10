@@ -7,6 +7,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.TreeSet;
 import java.util.stream.Stream;
@@ -95,6 +96,46 @@ class PlatformDbPgSpecificSourceTest {
             "PG 전용 SQL 토큰 %s 은 허용 집합 밖에 둘 수 없다 — 플랫폼 인터페이스(global.platformdb)를 쓰거나 사유와 함께 허용 집합에 추가",
             TOKENS)
         .isEmpty();
+  }
+
+  /** Tibero 테넌트 컨텍스트 심기 호출 — 대소문자를 가리지 않는다(Tibero 식별자는 대소문자 무시). */
+  private static final String TIBERO_SET_TENANT = "fh_tenant.set_tenant";
+
+  /** 그 호출을 둘 수 있는 유일한 파일. */
+  private static final String TIBERO_SET_TENANT_OWNER =
+      "com/smartfirehub/global/platformdb/tibero/TiberoPlatformTenantSession.java";
+
+  /** 주석 줄을 뺀 본문에 Tibero 테넌트 심기 호출이 있는 파일인가. */
+  private static boolean hasTiberoSetTenant(String rel) throws IOException {
+    for (String line : Files.readAllLines(MAIN_JAVA.resolve(rel))) {
+      if (!isComment(line) && line.toLowerCase(Locale.ROOT).contains(TIBERO_SET_TENANT)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * {@code FH_TENANT.set_tenant} 는 {@code TiberoPlatformTenantSession} 한 파일에서만 부른다(WD-492 스펙 「남는
+   * 위험」).
+   *
+   * <p>왜: Tibero 컨텍스트는 세션 범위다. 트랜잭션 매니저 밖에서 커넥션을 빌려 심으면 아무도 지우지 않은 채 풀로 돌아가 다음 요청이 이전 테넌트를 물려받는다.
+   * 지금 심는 길은 {@code PlatformTenantSession} 두 메서드뿐이고 둘 다 트랜잭션 매니저가 지운다. 허용 파일에 호출이 실제로 있는지도 본다 — 이름이
+   * 바뀌어 규칙이 헛돌지 않게.
+   */
+  @Test
+  void tiberoSetTenantOnlyInTenantSession() throws IOException {
+    TreeSet<String> hits = new TreeSet<>();
+    for (String rel : listRelativePaths()) {
+      if (rel.endsWith(".java") && hasTiberoSetTenant(rel)) {
+        hits.add(rel);
+      }
+    }
+    assertThat(hits)
+        .as(
+            "FH_TENANT.set_tenant 는 %s 밖에서 부를 수 없다 — PlatformTenantSession 을 쓴다(세션 범위 컨텍스트가 풀에 남는다)",
+            TIBERO_SET_TENANT_OWNER)
+        .containsExactly(TIBERO_SET_TENANT_OWNER);
   }
 
   /** 허용 경로가 실제로 존재해야 한다 — 이름이 바뀌어 허용이 조용히 무의미해지는 것을 막는다. */

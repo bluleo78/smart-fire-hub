@@ -152,6 +152,9 @@ class TiberoPlatformDbLiveTest {
         .withBean(DataSource.class, () -> new DelegatingDataSource(account.dataSource()))
         .withPropertyValues(
             "firehub.platform-db.type=tibero",
+            // 테넌트 격리 Flyway 커스터마이저(WD-492)가 받는 두 값 — 단일 계정이라 WARN 만 남고 Flyway 는 이 시험에서 돌지 않는다.
+            "firehub.platform-db.tibero.owner-schema=" + account.name(),
+            "spring.datasource.username=" + account.name(),
             "org.jobrunr.database.skip-create=false",
             "org.jobrunr.background-job-server.enabled=false",
             "org.jobrunr.dashboard.enabled=false")

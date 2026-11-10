@@ -4,20 +4,29 @@
 # 전제:
 # - JVM 시간대 UTC(-Duser.timezone=UTC 또는 TZ=UTC) — 아니면 PlatformDbStartupGuard 가 기동을 멈춘다(ADR 0001 결정 6).
 # - Tibero JDBC 드라이버 jar(libs/tibero*.jar)가 클래스패스에 있어야 한다.
-# - 계정에 CREATE SESSION·TABLE·SEQUENCE·VIEW 권한이 있어야 한다(기준선이 JobRunr 통계 뷰를 만든다).
-# - 플랫폼 계정에 GRANT EXECUTE ON SYS.DBMS_LOCK 이 필요하다(ADR 0001). 없으면 기동 검사가 안내와 함께 멈춘다.
-# - 스키마는 db/migration-tibero 기준선(V155·V155.1, WD-490)이 만든다. 리포지토리(WD-491)·테넌트 세션(WD-492)이 남아 이 프로필만으로는
-#   앱이 뜨지 않는다 — 잠금(DBMS_LOCK)·아웃박스 깨우기(DBMS_ALERT)는 WD-493 에서 끝났다.
+# - 계정 두 개(WD-492, PG 의 app 소유자 + app_tenant 런타임과 같은 모델):
+#   · 소유자 계정(spring.flyway.user/password) — 스키마 객체를 소유하고 Flyway 가 이 계정으로 돈다. 권한: CREATE SESSION·TABLE·
+#     SEQUENCE·VIEW·PROCEDURE·TRIGGER(기준선이 JobRunr 통계 뷰를, V156.1 이 패키지·정책 함수를 만든다) + CREATE ANY CONTEXT +
+#     GRANT EXECUTE ON SYS.DBMS_RLS.
+#   · 런타임 계정(spring.datasource.username/password) — 앱 풀. 권한: CREATE SESSION + GRANT EXECUTE ON SYS.DBMS_LOCK·SYS.DBMS_ALERT
+#     (ADR 0001, 없으면 기동 검사가 안내와 함께 멈춘다). 소유자 객체의 DML·FH_TENANT EXECUTE 는 Flyway 콜백이 기동마다 준다.
+#   · 두 계정이 같으면(단일 계정 설치본) 기동은 되지만 테넌트 격리가 꺼진다 — 기동 WARN 한 줄로 알린다.
+# - 스키마는 db/migration-tibero 기준선(V155·V155.1, WD-490)과 테넌트 격리(V156.1, WD-492)가 만든다. 리포지토리(WD-491)가 남아 이
+#   프로필만으로는 앱이 뜨지 않는다.
 # - 아웃박스 깨우기(DBMS_ALERT)는 API 인스턴스마다 Tibero 세션 1개를 상시 쓴다. 끄려면 notification.worker.listen_notify=false(30초 폴링만).
 # - PG 데이터 저장소는 플랫폼 DB(Tibero)와 따로 둔다(WD-494, 아래 firehub.data-store.postgres). 접속 정보는 전부 환경변수로 받는다.
 #   소유자 계정(owner-*)은 superuser(CREATE EXTENSION postgis)·pg_read_all_stats·app_tenant 에 대한 ADMIN OPTION 이 필요하다.
 #   데이터 저장소 Flyway 기준선(db/datastore-postgres V1)은 빈 DB 에서만 적용한다(기존 데이터가 있는 DB 는 지원하지 않는다).
 #
-# 세션 초기화 문장(SESSION_INIT_SQL)·검증 쿼리는 데이터 저장소 Tibero 풀과 같은 값이다(TiberoDialect). 두 곳이 어긋나지 않게
+# 세션 초기화 문장(SESSION_INIT_SQL — 앱 풀은 맨 앞 CURRENT_SCHEMA 문장을 뺀 나머지)·검증 쿼리는 데이터 저장소 Tibero 풀과 같은 값이다(TiberoDialect). 두 곳이 어긋나지 않게
 # TiberoProfileSettingsTest 가 이 파일의 값을 TiberoDialect 상수와 대조한다.
 firehub:
   platform-db:
     type: tibero
+    tibero:
+      # 소유자 스키마(WD-492) — 앱 풀의 CURRENT_SCHEMA 와 Flyway 자리표시자(컨텍스트 이름·정책 함수의 소유자 비교)가 쓴다.
+      # Flyway 계정과 같아야 한다. spring.flyway.user 가 없으면 Boot 가 Flyway 를 datasource 계정으로 돌리므로 같은 순서로 대체한다.
+      owner-schema: ${spring.flyway.user:${spring.datasource.username}}
   data-store:
     postgres:
       # 분리 모드 — 데이터 저장소(PG) 연결을 플랫폼 DB(Tibero) 연결과 따로 만든다(WD-494). 두 DB 는 하나의 트랜잭션으로 묶이지 않는다.
@@ -39,8 +48,9 @@ spring:
     hikari:
       # 검증 서버는 세션 한도가 작다(트라이얼 20개, 다른 팀과 공유). 운영 라이선스에 맞춰 환경변수로 늘린다.
       maximum-pool-size: ${PLATFORM_DB_POOL_SIZE:5}
-      # 세션 NLS 고정 — 날짜·타임스탬프 기본 형식과 소수점 문자를 고정해 DB·클라이언트 로캘에 따라 암묵 변환 결과가 달라지지 않게 한다.
-      connection-init-sql: "BEGIN EXECUTE IMMEDIATE 'ALTER SESSION SET NLS_DATE_FORMAT=''YYYY-MM-DD'''; EXECUTE IMMEDIATE 'ALTER SESSION SET NLS_TIMESTAMP_FORMAT=''YYYY-MM-DD HH24:MI:SS.FF6'''; EXECUTE IMMEDIATE 'ALTER SESSION SET NLS_NUMERIC_CHARACTERS=''.,'''; END;"
+      # 맨 앞 CURRENT_SCHEMA — 런타임 계정이 한정 없는 이름을 소유자 객체로 풀게 한다(WD-492). 잠금 id·알림 이름도 이 스키마로 이름공간을 잡는다.
+      # 그 뒤 세션 NLS 고정 — 날짜·타임스탬프 기본 형식과 소수점 문자를 고정해 DB·클라이언트 로캘에 따라 암묵 변환 결과가 달라지지 않게 한다.
+      connection-init-sql: "BEGIN EXECUTE IMMEDIATE 'ALTER SESSION SET CURRENT_SCHEMA=${firehub.platform-db.tibero.owner-schema}'; EXECUTE IMMEDIATE 'ALTER SESSION SET NLS_DATE_FORMAT=''YYYY-MM-DD'''; EXECUTE IMMEDIATE 'ALTER SESSION SET NLS_TIMESTAMP_FORMAT=''YYYY-MM-DD HH24:MI:SS.FF6'''; EXECUTE IMMEDIATE 'ALTER SESSION SET NLS_NUMERIC_CHARACTERS=''.,'''; END;"
       connection-test-query: SELECT 1 FROM DUAL
   flyway:
     # PG 마이그레이션(db/migration)과 섞이지 않게 형제 폴더를 쓴다 — Flyway 는 위치를 재귀로 훑는다(ADR 0001 결정 2).
@@ -51,5 +61,5 @@ spring:
     # application.yml 의 baseline-on-migrate(PG 기존 DB 용, 버전 80)를 물려받지 않는다. 켜 두면 객체가 있는데 이력 테이블이 없는 계정을
     # 조용히 "적용됨"으로 표시해 기준선(V155)이 반쯤 건너뛰어질 수 있다. Tibero 설치본은 빈 계정에서 V155 부터 적용한다(WD-490).
     baseline-on-migrate: false
-    # 마이그레이션 연결도 앱 풀과 같은 세션 NLS 로 돈다(Flyway 는 자기 연결을 따로 만든다).
+    # 마이그레이션 연결도 앱 풀과 같은 세션 NLS 로 돈다(Flyway 는 자기 연결을 따로 만든다). 소유자 계정이 돌리므로 CURRENT_SCHEMA 는 두지 않는다.
     init-sql: "BEGIN EXECUTE IMMEDIATE 'ALTER SESSION SET NLS_DATE_FORMAT=''YYYY-MM-DD'''; EXECUTE IMMEDIATE 'ALTER SESSION SET NLS_TIMESTAMP_FORMAT=''YYYY-MM-DD HH24:MI:SS.FF6'''; EXECUTE IMMEDIATE 'ALTER SESSION SET NLS_NUMERIC_CHARACTERS=''.,'''; END;"

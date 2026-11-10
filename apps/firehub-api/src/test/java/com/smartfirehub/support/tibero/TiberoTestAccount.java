@@ -2,6 +2,7 @@ package com.smartfirehub.support.tibero;
 
 import com.smartfirehub.dataset.storage.DataStorePasswordGenerator;
 import com.smartfirehub.dataset.storage.tibero.TiberoNames;
+import com.smartfirehub.global.platformdb.tibero.flyway.TiberoTenantMigration;
 import com.smartfirehub.support.tibero.TiberoTestServer.Dba;
 import com.zaxxer.hikari.HikariDataSource;
 import java.security.SecureRandom;
@@ -11,6 +12,9 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Timestamp;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Pattern;
 
 /**
@@ -26,7 +30,9 @@ import java.util.regex.Pattern;
  *   <li>지울 때는 이름과 만든 직후 읽은 생성 시각({@code DBA_USERS.CREATED})이 모두 같을 때만 지운다. 이름이 같아도 시각이 다르면 다른 주체의
  *       계정이다.
  *   <li>이전 실행이 죽어 남긴 {@code FHT_*} 계정은 자동으로 지우지 않고 개수만 증거로 남긴다. {@code DCIM_*} 등 다른 계정은 보지도 않는다.
- *   <li>비밀번호는 실행 중에만 만들어 쓰고 어디에도 남기지 않는다. 비밀번호가 든 문장의 오류는 원문 대신 오류 코드만 남긴다.
+ *   <li>비밀번호는 실행 중에만 만들어 쓰고 어디에도 남기지 않는다(추가 풀을 열려고 인스턴스 필드로 메모리에만 둔다). 비밀번호가 든 문장의 오류는 원문 대신 오류 코드만
+ *       남긴다.
+ *   <li>계정에 묶인 컨텍스트(인스턴스 전역 객체, WD-492)는 계정을 지우기 직전 함께 지운다 — {@code DROP USER CASCADE} 가 지우지 않는다.
  * </ul>
  */
 public final class TiberoTestAccount implements AutoCloseable {
@@ -46,6 +52,8 @@ public final class TiberoTestAccount implements AutoCloseable {
   public enum Privileges {
     /** 테이블·시퀀스 — 리포지토리 계약 테스트. */
     TABLES("CREATE SESSION, CREATE TABLE, CREATE SEQUENCE"),
+    /** 접속만 — 테넌트 격리(WD-492)의 런타임 계정. 소유자 객체 권한은 Flyway 권한 콜백이 준다. */
+    SESSION_ONLY("CREATE SESSION"),
     /**
      * {@link #TABLES} + {@code SYS.DBMS_LOCK} 실행 권한 — 플랫폼 잠금(WD-493) 실서버 테스트. 객체 권한이라 시스템 권한 GRANT
      * 뒤 DBA 연결로 이번 실행의 계정에만 따로 준다.
@@ -53,11 +61,12 @@ public final class TiberoTestAccount implements AutoCloseable {
     TABLES_WITH_DBMS_LOCK("CREATE SESSION, CREATE TABLE, CREATE SEQUENCE"),
     /**
      * 마이그레이션 소유자 — 테이블·시퀀스·뷰·프로시저·트리거(clean 이 지울 객체 종류를 고루 만든다), 구체화 뷰(clean 이 다루지 않는 종류를 만나면 멈추는지
-     * 본다).
+     * 본다), 컨텍스트 생성(V156.1 의 테넌트 컨텍스트, WD-492). 객체 권한 {@code EXECUTE ON SYS.DBMS_RLS}(정책, WD-492)는
+     * DBA 연결로 따로 준다.
      */
     MIGRATION_OWNER(
         "CREATE SESSION, CREATE TABLE, CREATE SEQUENCE, CREATE VIEW, CREATE PROCEDURE,"
-            + " CREATE TRIGGER, CREATE MATERIALIZED VIEW");
+            + " CREATE TRIGGER, CREATE MATERIALIZED VIEW, CREATE ANY CONTEXT");
 
     private final String grants;
 
@@ -71,11 +80,21 @@ public final class TiberoTestAccount implements AutoCloseable {
   private final Timestamp created;
   private final HikariDataSource dataSource;
 
+  /** 이 계정 비밀번호 — {@link #newPool} 이 추가 풀을 열 때만 쓴다. 메모리에만 두고 출력·기록하지 않는다. */
+  private final String password;
+
+  /** 추가 풀 이름 일련번호 — 같은 계정의 풀끼리 Hikari 이름이 겹치지 않게. */
+  private final AtomicInteger poolSeq = new AtomicInteger();
+
+  /** {@link #newPool} 로 연 풀 — {@link #close()} 가 계정을 지우기 전에 모두 닫는다(세션이 남으면 DROP USER 가 거절된다). */
+  private final List<HikariDataSource> extraPools = new ArrayList<>();
+
   private TiberoTestAccount(
       Dba dba, String name, Timestamp created, String password, int poolSize) {
     this.dba = dba;
     this.name = name;
     this.created = created;
+    this.password = password;
     this.dataSource = TiberoTestServer.pool(name.toLowerCase(), dba, name, password, poolSize);
   }
 
@@ -135,6 +154,23 @@ public final class TiberoTestAccount implements AutoCloseable {
     return dataSource;
   }
 
+  /**
+   * 이 계정의 풀을 하나 더 연다 — 세션 초기화 문장을 호출자가 정한다(예: 런타임 계정이 {@code CURRENT_SCHEMA} 를 소유자로 맞춤, WD-492).
+   * 호출자가 닫아도 되고, 닫지 않아도 {@link #close()} 가 계정을 지우기 전에 닫는다.
+   */
+  public synchronized HikariDataSource newPool(int size, String initSql) {
+    HikariDataSource pool =
+        TiberoTestServer.pool(
+            name.toLowerCase() + "-" + poolSeq.incrementAndGet(),
+            dba,
+            name,
+            password,
+            size,
+            initSql);
+    extraPools.add(pool);
+    return pool;
+  }
+
   /** 계정으로 문장 하나를 실행한다(픽스처용, 자동 커밋). */
   public void execute(String sql) throws SQLException {
     try (Connection c = dataSource.getConnection();
@@ -166,6 +202,9 @@ public final class TiberoTestAccount implements AutoCloseable {
   @Override
   public void close() {
     try {
+      synchronized (this) {
+        extraPools.forEach(HikariDataSource::close);
+      }
       dataSource.close();
     } finally {
       dropOwned(dba, name, created);
@@ -194,17 +233,23 @@ public final class TiberoTestAccount implements AutoCloseable {
 
   // ── 내부 ──────────────────────────────────────────────
 
-  /** 이름 + 생성 시각이 같을 때만 지우고, 남은 수를 증거로 남긴다. */
+  /**
+   * 이름 + 생성 시각이 같을 때만 지우고, 남은 수를 증거로 남긴다. 계정을 지우기 전에 그 계정 패키지에 묶인 컨텍스트를 먼저 지운다 — 컨텍스트는 인스턴스 전역이라
+   * {@code DROP USER CASCADE} 로 사라지지 않는다. 계정이 이 실행의 것임을 생성 시각까지 확인한 뒤에만 지우므로 남의 컨텍스트는 건드리지 않는다.
+   */
   private static void dropOwned(Dba dba, String name, Timestamp created) {
     try (Connection c = TiberoTestServer.openDbaForCleanup(dba)) {
       Timestamp now = createdAt(c, name);
       if (now != null && now.equals(created)) {
+        dropContexts(c, name);
         dropUser(c, name);
       } else if (now != null) {
         TiberoTestEvidence.write(name + " 생성 시각이 달라 지우지 않음");
       }
       // 정확한 이름으로 다시 본다 — LIKE 로 세면 이름의 '_' 가 한 글자 와일드카드라 다른 계정까지 셀 수 있다.
       TiberoTestEvidence.write(name + " remaining count=" + (createdAt(c, name) == null ? 0 : 1));
+      // 컨텍스트 남은 수 — 메타데이터의 묶인 스키마와 별개로, 이름 규칙(contextNameFor)으로 독립적으로 구한 이름도 함께 센다.
+      TiberoTestEvidence.write(name + " contexts remaining count=" + remainingContexts(c, name));
     } catch (SQLException e) {
       TiberoTestEvidence.write(name + " 정리 실패(오류 코드 " + e.getErrorCode() + ")");
       throw new IllegalStateException("테스트 계정 정리 실패(오류 코드 " + e.getErrorCode() + ")", e);
@@ -253,6 +298,37 @@ public final class TiberoTestAccount implements AutoCloseable {
     }
   }
 
+  /**
+   * 계정 패키지에 묶인 컨텍스트를 하나씩 지운다(DBA 연결). 메타데이터는 {@code SYS._SYS_CONTEXT} 에만 있다(DBA_CONTEXT 없음, 실측).
+   */
+  private static void dropContexts(Connection c, String name) throws SQLException {
+    List<String> contexts = new ArrayList<>();
+    try (PreparedStatement ps =
+        c.prepareStatement("SELECT NAMESPACE FROM SYS._SYS_CONTEXT WHERE PKG_SCHEMA = ?")) {
+      ps.setString(1, name);
+      try (ResultSet rs = ps.executeQuery()) {
+        while (rs.next()) contexts.add(rs.getString(1));
+      }
+    }
+    try (Statement st = c.createStatement()) {
+      for (String ctx : contexts) st.execute("DROP CONTEXT " + TiberoNames.quote(ctx));
+    }
+  }
+
+  /** 계정에 묶였거나 계정 이름 규칙으로 정해지는 컨텍스트 중 남은 수. */
+  private static long remainingContexts(Connection c, String name) throws SQLException {
+    try (PreparedStatement ps =
+        c.prepareStatement(
+            "SELECT COUNT(*) FROM SYS._SYS_CONTEXT WHERE PKG_SCHEMA = ? OR NAMESPACE = ?")) {
+      ps.setString(1, name);
+      ps.setString(2, TiberoTenantMigration.contextNameFor(name));
+      try (ResultSet rs = ps.executeQuery()) {
+        rs.next();
+        return rs.getLong(1);
+      }
+    }
+  }
+
   private static void dropUser(Connection c, String name) throws SQLException {
     try (Statement st = c.createStatement()) {
       st.execute("DROP USER " + TiberoNames.quote(name) + " CASCADE");
@@ -277,6 +353,10 @@ public final class TiberoTestAccount implements AutoCloseable {
       if (privileges == Privileges.TABLES_WITH_DBMS_LOCK) {
         // 이번 실행이 방금 만든 계정에만 준다. 실패하면 호출자의 "생성 실패면 이번 계정 정리" 경로를 탄다.
         st.execute("GRANT EXECUTE ON SYS.DBMS_LOCK TO " + account);
+      }
+      if (privileges == Privileges.MIGRATION_OWNER) {
+        // 테넌트 정책(DBMS_RLS.ADD_POLICY, WD-492)을 소유자가 직접 건다. 객체 권한이라 같은 방식으로 이번 계정에만 준다.
+        st.execute("GRANT EXECUTE ON SYS.DBMS_RLS TO " + account);
       }
     }
   }

@@ -4,10 +4,14 @@ import com.smartfirehub.global.platformdb.PlatformTenantSession;
 import java.sql.Connection;
 import java.sql.SQLException;
 import javax.sql.DataSource;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.jdbc.datasource.ConnectionHolder;
 import org.springframework.jdbc.datasource.DataSourceUtils;
 import org.springframework.jdbc.support.JdbcTransactionManager;
 import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * 트랜잭션 시작 직후 활성 테넌트를 RLS GUC {@code app.tenant_id} 로 주입하는 트랜잭션 매니저.
@@ -15,8 +19,13 @@ import org.springframework.transaction.TransactionDefinition;
  * <p>세 번째 인자 {@code true} 는 <b>트랜잭션-로컬</b>을 뜻한다. 커밋/롤백 시 값이 자동으로 사라지므로 HikariCP 커넥션이 풀에 반납된 뒤 다음
  * 요청이 이전 테넌트를 물려받는 사고가 원천적으로 불가능하다. 세션 스코프({@code false})로 심으면 그 사고가 실제로 발생한다.
  *
+ * <p><b>세션 범위 값(Tibero 컨텍스트, WD-492)</b>의 계약은 {@link PlatformTenantSession} 에 있다. 이 매니저 쪽 몫은 {@link
+ * #doCleanupAfterCompletion} 에서 반납 직전에 지우고, 실패하면 {@link PooledConnectionDiscard} 로 버리는 것이다.
+ *
  * <p>{@link TenantContext} 가 비어 있으면 GUC 를 설정하지 않는다. 그 결과 RLS 정책의 비교가 NULL 이 되어 모든 행이 보이지
- * 않는다(fail-closed) — 테넌트를 모른 채 데이터가 노출되는 것보다 안전한 기본값이다.
+ * 않는다(fail-closed) — 테넌트를 모른 채 데이터가 노출되는 것보다 안전한 기본값이다. 이때 시작 시점에 {@link
+ * PlatformTenantSession#clearConnection} 을 한 번 부른다(WD-492) — 앞선 대여자의 끝 지우기와 버리기가 모두 실패해 세션 값이 남은
+ * 커넥션이 풀로 돌아왔더라도 테넌트 없는 트랜잭션이 그 값을 물려받지 않게 하려는 것이다. PG 는 빈 기본 구현이라 동작이 같다.
  *
  * <p><a id="repo-transactional"></a><b>리포지토리에 클래스 레벨 {@code @Transactional} 이 왜 필요한가 — 채널 도메인 리포지토리
  * 5개가 공유하는 근거.</b> 위에 적은 대로 GUC 는 {@code doBegin} 이 <b>트랜잭션이 열리는 순간에만</b> 주입한다. 그 리포지토리들을 부르는
@@ -33,8 +42,9 @@ import org.springframework.transaction.TransactionDefinition;
  * 두었다).
  *
  * <p><b>다만 그 애노테이션은 필요조건일 뿐 충분조건이 아니다.</b> {@code doBegin} 은 {@link TenantContext} 가 비어 있으면 GUC 를
- * <b>아예 심지 않고 조용히 return</b> 한다. 배경 스레드에는 그 컨텍스트가 없으므로 <b>컨텍스트 공급은 호출자(배경 경로) 책임이며 P2-f Task 3 이
- * 배선한다.</b> 애노테이션이 붙었다고 배경 경로가 고쳐진 것이 아니다 — V107 이후 0행을 조사한다면 애노테이션이 아니라 호출자의 컨텍스트를 먼저 볼 것.
+ * <b>아예 심지 않는다</b>(세션 범위 값을 지우기만 하고 예외 없이 시작한다). 배경 스레드에는 그 컨텍스트가 없으므로 <b>컨텍스트 공급은 호출자(배경 경로) 책임이며
+ * P2-f Task 3 이 배선한다.</b> 애노테이션이 붙었다고 배경 경로가 고쳐진 것이 아니다 — V107 이후 0행을 조사한다면 애노테이션이 아니라 호출자의 컨텍스트를
+ * 먼저 볼 것.
  *
  * <p>이 문단이 여기 있는 이유: 같은 근거가 리포지토리 5개에 통째로 복붙돼 있었고, 그중 하나만 갱신되는 드리프트가 실제로 반복됐다. 각 impl 은 이 문단을
  * {@code {@link}} 로 가리키고 자기 지점에만 해당하는 사실만 따로 적는다.
@@ -49,6 +59,8 @@ import org.springframework.transaction.TransactionDefinition;
  */
 public class TenantAwareTransactionManager extends JdbcTransactionManager {
 
+  private static final Logger log = LoggerFactory.getLogger(TenantAwareTransactionManager.class);
+
   /** 테넌트를 DB 세션에 심는 포트 — DB 별 SQL 은 구현체가 안다(WD-486). */
   private final PlatformTenantSession tenantSession;
 
@@ -62,14 +74,16 @@ public class TenantAwareTransactionManager extends JdbcTransactionManager {
     super.doBegin(transaction, definition);
 
     Long tenantId = TenantContext.get();
-    if (tenantId == null) {
-      return;
-    }
-
     // super.doBegin 이 커넥션을 트랜잭션에 바인딩한 뒤이므로, 여기서 얻는 커넥션은 그 트랜잭션의 것이다.
     Connection connection = DataSourceUtils.getConnection(obtainDataSource());
     try {
-      tenantSession.applyToConnection(connection, tenantId);
+      if (tenantId == null) {
+        // 테넌트 없는 트랜잭션도 fail-closed 여야 한다 — 앞선 대여자의 끝 지우기·버리기가 모두 실패해 세션 값(Tibero 컨텍스트)이
+        // 남은 커넥션이 왔을 수 있으므로 시작에 한 번 더 지운다(WD-492). PG 는 빈 기본 구현이라 아무 일도 하지 않는다.
+        tenantSession.clearConnection(connection);
+      } else {
+        tenantSession.applyToConnection(connection, tenantId);
+      }
     } catch (SQLException e) {
       // GUC 주입 실패를 조용히 넘기면 RLS 가 fail-closed 로 빈 결과를 주어 원인 추적이 어려워진다.
       // 다만 이 예외는 super.doBegin() 이 "성공적으로 끝난 뒤"에 발생한다 — 즉 커넥션 홀더가 이미
@@ -80,8 +94,46 @@ public class TenantAwareTransactionManager extends JdbcTransactionManager {
       // 오인되어 doBegin 이 다시 실행되지 않고, GUC 도 주입되지 않은 채 죽은 커넥션을 계속 쓰게 되어
       // 풀이 고갈된다. DataSourceTransactionManager 자신이 doBegin 실패 시 수행하는 정리와 동일한
       // 작업(언바인딩 + 커넥션 반납)을 doCleanupAfterCompletion 을 재사용해 수행한 뒤 예외를 던진다.
+      // 그 재정의가 반납 전에 테넌트 값도 지우므로(실패하면 버림) 반쯤 심긴 세션 값도 풀로 돌아가지 않는다(WD-492).
+      // 시작 지우기가 실패한 경우도 같은 길이다 — 값이 남았을 수 있는 커넥션으로 트랜잭션을 열지 않는다.
       doCleanupAfterCompletion(transaction);
-      throw new CannotCreateTransactionException("app.tenant_id GUC 설정 실패", e);
+      throw new CannotCreateTransactionException(
+          tenantId == null ? "테넌트 세션 값 지우기 실패" : "app.tenant_id GUC 설정 실패", e);
     }
+  }
+
+  /**
+   * 커넥션을 풀에 돌려주기 직전에 세션에 심은 테넌트 값을 지운다(WD-492).
+   *
+   * <p>왜: {@link PlatformTenantSession} 계약 — 세션 범위 값은 풀로 돌아가기 전에 사라져야 한다.
+   *
+   * <p>{@code AbstractPlatformTransactionManager} 는 이 메서드를 <b>새 트랜잭션</b>이 끝날 때만 부른다 — 바깥 트랜잭션에 참여한
+   * 안쪽 트랜잭션(REQUIRED)은 부르지 않으므로 바깥 컨텍스트를 건드리지 않는다. {@code REQUIRES_NEW} 는 자기 커넥션을 따로 받으므로 자기 커넥션만
+   * 지우고, 바깥 트랜잭션의 커넥션 컨텍스트는 그대로 남는다.
+   *
+   * <p>커넥션은 {@code super} 를 부르기 전에 {@link TransactionSynchronizationManager} 에 묶인 {@link
+   * ConnectionHolder} 에서 꺼낸다 — {@code DataSourceTransactionManager} 의 트랜잭션 객체 클래스는 비공개이고, {@code
+   * super} 가 그 묶음을 풀고 커넥션을 반납하기 때문이다.
+   *
+   * <p>지우기에 실패하면 경고를 남기고 그 커넥션을 풀에서 버린다({@link PooledConnectionDiscard}). 예외는 던지지 않는다 — 커밋은 이미
+   * 끝났으므로 호출자에게 실패를 돌려주면 「커밋됐는데 예외」가 된다.
+   */
+  @Override
+  protected void doCleanupAfterCompletion(Object transaction) {
+    DataSource dataSource = obtainDataSource();
+    Object resource = TransactionSynchronizationManager.getResource(dataSource);
+    if (resource instanceof ConnectionHolder holder) {
+      Connection connection = null;
+      try {
+        connection = holder.getConnection();
+        tenantSession.clearConnection(connection);
+      } catch (SQLException | RuntimeException e) {
+        log.warn("트랜잭션 끝에 테넌트 세션 값을 지우지 못해 커넥션을 풀에서 버린다", e);
+        if (connection != null) {
+          PooledConnectionDiscard.discard(dataSource, connection);
+        }
+      }
+    }
+    super.doCleanupAfterCompletion(transaction);
   }
 }

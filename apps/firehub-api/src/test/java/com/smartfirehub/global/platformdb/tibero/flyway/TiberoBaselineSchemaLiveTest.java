@@ -83,12 +83,17 @@ class TiberoBaselineSchemaLiveTest {
   @BeforeAll
   static void migrate() {
     account = TiberoTestAccount.create("BASELINE", Privileges.MIGRATION_OWNER, 2);
+    // 단일 계정(런타임 null) — V156.1 의 자리표시자만 넣고 권한 콜백은 아무것도 하지 않는다(WD-492).
     Flyway flyway =
-        Flyway.configure()
-            .dataSource(account.dataSource())
-            .schemas(account.name())
-            .initSql(TiberoDialect.SESSION_INIT_SQL)
-            .locations("classpath:db/migration-tibero", "classpath:tibero-baseline/comment-only")
+        TiberoTenantMigration.configure(
+                Flyway.configure()
+                    .dataSource(account.dataSource())
+                    .schemas(account.name())
+                    .initSql(TiberoDialect.SESSION_INIT_SQL)
+                    .locations(
+                        "classpath:db/migration-tibero", "classpath:tibero-baseline/comment-only"),
+                account.name(),
+                null)
             .load();
     long started = System.nanoTime();
     migrated = flyway.migrate();
@@ -105,22 +110,32 @@ class TiberoBaselineSchemaLiveTest {
     if (account != null) account.close();
   }
 
-  /** 기준선 두 파일과 주석만 있는 V9999 가 모두 성공으로 기록된다 — 빈 마이그레이션을 Oracle 파서가 받는지(ADR 0001 결정 2 의 확인 항목). */
+  /**
+   * 기준선 두 파일·이후 마이그레이션과 주석만 있는 V9999 가 모두 성공으로 기록된다 — 빈 마이그레이션을 Oracle 파서가 받는지(ADR 0001 결정 2 의 확인
+   * 항목).
+   */
   @Test
   void baselineAndCommentOnlyMigration_succeed() {
     assertThat(migrated.success).isTrue();
     Flyway info =
-        Flyway.configure()
-            .dataSource(account.dataSource())
-            .schemas(account.name())
-            .locations("classpath:db/migration-tibero", "classpath:tibero-baseline/comment-only")
+        TiberoTenantMigration.configure(
+                Flyway.configure()
+                    .dataSource(account.dataSource())
+                    .schemas(account.name())
+                    .locations(
+                        "classpath:db/migration-tibero", "classpath:tibero-baseline/comment-only"),
+                account.name(),
+                null)
             .load();
     List<String> states = new ArrayList<>();
     for (MigrationInfo i : info.info().all()) {
       states.add(i.getVersion() + ":" + i.getState());
     }
     write("마이그레이션 상태 " + states);
-    assertThat(states).containsExactly("155:SUCCESS", "155.1:SUCCESS", "9999:SUCCESS");
+    // V156(WD-578)·V156.1(WD-492)도 같이 적용된다 — 이전 단언은 V156 이 생기며 낡았다.
+    assertThat(states)
+        .containsExactly(
+            "155:SUCCESS", "155.1:SUCCESS", "156:SUCCESS", "156.1:SUCCESS", "9999:SUCCESS");
     assertThat(info.info().current().getState()).isEqualTo(MigrationState.SUCCESS);
   }
 
