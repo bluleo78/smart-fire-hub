@@ -8,6 +8,7 @@ import com.smartfirehub.securitylevel.pythonread.PythonReadGrantBackend.NarrowRe
 import java.time.Duration;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import lombok.extern.slf4j.Slf4j;
@@ -137,14 +138,30 @@ public class PythonReadGrants {
   }
 
   /**
-   * 커밋 직후(응답 전) 주어진 PG 슬롯 롤 세션을 상한 안에서 끊는다(WD-624, {@link
+   * 커밋 직후 주어진 PG 슬롯 롤 세션에 미확인 표식을 달고 끊기를 요청한다 — 기다리지 않는다(WD-624 → WD-664 9, {@link
    * PythonReadGrantSync#terminateSlotSessionsAfterCommit}). 백엔드를 묻지 않는다 — 커밋 콜백에서 백엔드 조회(캐시 미스)가 바깥
    * 커넥션을 다시 쓰지 않게. Tibero 테넌트는 PG 슬롯 롤 세션이 없어 끊을 것이 없다(조회 한 번).
-   *
-   * @return 상한 안에 끊었으면 true(실패·시간 초과는 로그와 미확인 표식으로 처리하고 false)
    */
-  public boolean terminateSlotSessionsAfterCommit(long tenantId, Set<Integer> slots) {
-    return pg.terminateSlotSessionsAfterCommit(tenantId, slots);
+  public void terminateSlotSessionsAfterCommit(long tenantId, Set<Integer> slots) {
+    pg.terminateSlotSessionsAfterCommit(tenantId, slots);
+  }
+
+  /**
+   * 확인된 커밋 직전 회수 뒤 실제로 회수한 PG 슬롯의 세션 끊기를 요청만 한다 — 기다리지 않고 표식도 달지 않는다(WD-664 7, {@link
+   * PythonReadGrantSync#requestSlotSessionTermination}). 커밋 콜백이 부르므로 백엔드를 묻지 않는다(위와 같은 이유).
+   */
+  public CompletableFuture<Integer> requestSlotSessionTermination(
+      long tenantId, Set<Integer> slots) {
+    return pg.requestSlotSessionTermination(tenantId, slots);
+  }
+
+  /**
+   * PG 슬롯 세션을 끊고 기다린다 — 실행기 재시도 작업 전용(WD-664 7). 못 끊으면 일시 실패({@link
+   * PythonReadGrantBackend.SessionKillFailed})를 던져 실행기가 다시 한다({@link
+   * PythonReadGrantSync#terminateSlotSessionsOrThrow}).
+   */
+  public void terminateSlotSessionsOrThrow(long tenantId, Set<Integer> slots) {
+    pg.terminateSlotSessionsOrThrow(tenantId, slots);
   }
 
   /**

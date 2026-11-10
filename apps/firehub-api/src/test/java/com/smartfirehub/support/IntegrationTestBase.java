@@ -2,6 +2,7 @@ package com.smartfirehub.support;
 
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantPipelineRoleBootstrap;
+import com.smartfirehub.securitylevel.pythonread.PythonReadSessionTerminator;
 import com.smartfirehub.securitylevel.pythonread.PythonReadSyncExecutor;
 import com.smartfirehub.securitylevel.service.SecurityAuditRecorder;
 import java.time.Duration;
@@ -107,16 +108,21 @@ public abstract class IntegrationTestBase {
   static final AfterTestExecutionCallback DRAIN_PYTHON_READ_SYNC =
       context ->
           awaitPythonReadSyncIdle(
-              SpringExtension.getApplicationContext(context).getBean(PythonReadSyncExecutor.class));
+              SpringExtension.getApplicationContext(context).getBean(PythonReadSyncExecutor.class),
+              SpringExtension.getApplicationContext(context)
+                  .getBean(PythonReadSessionTerminator.class));
 
   @Autowired private PythonReadSyncExecutor pythonReadSyncExecutor;
+
+  /** 커밋 콜백이 기다리지 않고 넣은 슬롯 세션 끊기(WD-664 7·9)도 함께 비운다 — 늦은 끊기가 다음 단언의 새 슬롯 연결을 끊지 않게. */
+  @Autowired private PythonReadSessionTerminator pythonReadSessionTerminator;
 
   /**
    * 커밋 뒤 전용 실행기로 넘어간 PYTHON 읽기 권한 동기화(WD-594)가 모두 끝날 때까지 기다린다. 데이터셋 생성·복제 등 트랜잭션 커밋 직후의 슬롯 GRANT 를
    * 단언하기 직전에 부른다.
    */
   protected void awaitPythonReadGrantSync() {
-    awaitPythonReadSyncIdle(pythonReadSyncExecutor);
+    awaitPythonReadSyncIdle(pythonReadSyncExecutor, pythonReadSessionTerminator);
   }
 
   /**
@@ -124,10 +130,14 @@ public abstract class IntegrationTestBase {
    * 테스트로 새어 원인 모를 실패를 낳으므로, 시간 초과는 AssertionError 로 드러낸다. 인터럽트되면 인터럽트 상태를 되살린 뒤 AssertionError 로
    * 던진다.
    */
-  private static void awaitPythonReadSyncIdle(PythonReadSyncExecutor executor) {
+  private static void awaitPythonReadSyncIdle(
+      PythonReadSyncExecutor executor, PythonReadSessionTerminator terminator) {
     try {
-      if (!executor.awaitIdle(Duration.ofSeconds(30))) {
-        throw new AssertionError("커밋 뒤 PYTHON 읽기 권한 동기화가 30초 안에 끝나지 않았다");
+      // 끊기 → 실행기(끊기 실패 재시도 작업이 실행기로 갈 수 있다) → 끊기 순서로 비운다(WD-664 7·9).
+      if (!terminator.awaitIdle(Duration.ofSeconds(30))
+          || !executor.awaitIdle(Duration.ofSeconds(30))
+          || !terminator.awaitIdle(Duration.ofSeconds(30))) {
+        throw new AssertionError("커밋 뒤 PYTHON 읽기 권한 동기화·세션 끊기가 30초 안에 끝나지 않았다");
       }
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();

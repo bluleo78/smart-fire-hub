@@ -66,6 +66,53 @@ class JdbcExternalDbConnectorTest {
     }
   }
 
+  /**
+   * WD-664 6 — 부르는 쪽이 준 접속 상한이 기본 상한보다 짧으면 그만큼만 기다린다(커밋 직전 좁히기가 플랫폼 커넥션을 쥔 채 10초씩 기다리지 않게). 기본 상한보다
+   * 긴 값은 늘리지 않는다.
+   */
+  @Test
+  void open_withShorterTimeout_givesUpEarlier_butNeverExtendsDefault() throws Exception {
+    JdbcExternalDbConnector connector =
+        new JdbcExternalDbConnector(
+            PRESENT_CLASS,
+            Duration.ofSeconds(5),
+            (url, props) -> {
+              try {
+                Thread.sleep(10_000);
+              } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+              }
+              return mock(Connection.class);
+            });
+    JdbcExternalDbConnector shortDefault =
+        new JdbcExternalDbConnector(
+            PRESENT_CLASS,
+            Duration.ofMillis(200),
+            (url, props) -> {
+              try {
+                Thread.sleep(10_000);
+              } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+              }
+              return mock(Connection.class);
+            });
+    try {
+      long start = System.currentTimeMillis();
+      assertThatThrownBy(() -> connector.open(TARGET, "u", "p", Duration.ofMillis(200)))
+          .isInstanceOf(ExternalDbConnectionException.class)
+          .hasMessageStartingWith("연결 시간이 초과되었습니다");
+      assertThat(System.currentTimeMillis() - start).as("기본 5초가 아니라 200ms 에 포기").isLessThan(2_000L);
+
+      start = System.currentTimeMillis();
+      assertThatThrownBy(() -> shortDefault.open(TARGET, "u", "p", Duration.ofSeconds(30)))
+          .isInstanceOf(ExternalDbConnectionException.class);
+      assertThat(System.currentTimeMillis() - start).as("기본 상한보다 늘리지 않는다").isLessThan(2_000L);
+    } finally {
+      connector.shutdown();
+      shortDefault.shutdown();
+    }
+  }
+
   @Test
   void open_timeout_boundedAndCancelled() throws Exception {
     AtomicBoolean interrupted = new AtomicBoolean();

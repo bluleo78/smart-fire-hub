@@ -3,6 +3,7 @@ package com.smartfirehub.dataset.storage.external;
 import com.smartfirehub.dataset.storage.tibero.TiberoDialect;
 import com.zaxxer.hikari.HikariDataSource;
 import java.sql.Connection;
+import java.time.Duration;
 import javax.sql.DataSource;
 import org.springframework.stereotype.Component;
 
@@ -63,5 +64,15 @@ public class ExternalStorePoolFactory {
   public Connection openDirect(ExternalDbTarget target, String username, String password)
       throws ExternalDbConnectionException {
     return connector.open(target, username, password);
+  }
+
+  /**
+   * {@link #openDirect(ExternalDbTarget, String, String)} 와 같되 접속 대기 상한을 부르는 쪽이 정한다(WD-664 6, 기본
+   * 10초보다 긴 값은 10초로 줄인다) — 커밋 직전 좁히기처럼 플랫폼 커넥션을 쥔 채 접속하는 경로용.
+   */
+  public Connection openDirect(
+      ExternalDbTarget target, String username, String password, Duration timeout)
+      throws ExternalDbConnectionException {
+    return connector.open(target, username, password, timeout);
   }
 }

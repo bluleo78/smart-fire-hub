@@ -20,6 +20,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -64,13 +65,26 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
    * @param revokeFailed 남는 권한을 회수하지 못한 테이블 → 과권한이 남았을 수 있는 슬롯 롤 이름들. prepareForRun 은 <b>실행 슬롯
    *     롤</b>이 여기 들어 있을 때만 실행을 거부한다(다른 슬롯 롤의 과권한은 이 실행이 쓰지 않는 롤이라 무관). GRANT 실패는 과소권한(안전)이라 로그만 남긴다
    * @param runSlot 실행 준비 동기화(prepareForRun)에서 같은 등급 스냅샷으로 계산한 실행 슬롯(범위 밖이면 그 값 그대로), 그 밖의 동기화는 0
+   * @param revoked REVOKE 문장이 성공한 테이블 → 회수한 슬롯 롤 이름들(WD-664 7) — 확인된 커밋 직전 좁히기 뒤 그 슬롯의 세션만 끊는 데 쓴다.
+   *     PG 판만 채운다(Tibero 는 끊을 세션이 없어 — 스펙 §5.1 — 비워 둔다)
    */
   public record SyncResult(
       List<LevelPolicy> levelsAsc,
       Set<Integer> availableSlots,
       int changedTables,
       Map<String, Set<String>> revokeFailed,
-      int runSlot) {
+      int runSlot,
+      Map<String, Set<String>> revoked) {
+
+    /** 회수 기록 없이 만든다(Tibero 판·아무것도 바꾸지 않은 결과). */
+    public SyncResult(
+        List<LevelPolicy> levelsAsc,
+        Set<Integer> availableSlots,
+        int changedTables,
+        Map<String, Set<String>> revokeFailed,
+        int runSlot) {
+      this(levelsAsc, availableSlots, changedTables, revokeFailed, runSlot, Map.of());
+    }
 
     /** 회수 실패 테이블 이름들(롤 구분 없이). */
     public Set<String> revokeFailedTables() {
@@ -110,9 +124,6 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
    * 않는다(전체 동기화) / 실행을 거부한다(실행 준비).
    */
   static final Duration TERMINATE_WAIT = Duration.ofSeconds(10);
-
-  /** 커밋 콜백이 세션 끊기를 기다리는 상한 — 바깥 플랫폼 커넥션을 쥐고 기다리므로 짧게 둔다(넘기면 미확인 표식, WD-624). */
-  static final Duration AFTER_COMMIT_TERMINATE_WAIT = Duration.ofSeconds(3);
 
   /** 커밋 직전 좁히기가 테넌트 동기화 잠금을 기다리는 상한 — 사용자 트랜잭션의 커넥션을 쥐고 기다리므로 짧게 둔다(WD-624). */
   static final Duration NARROW_LOCK_WAIT = Duration.ofSeconds(3);
@@ -239,20 +250,46 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
   }
 
   /**
-   * 커밋 직후(커밋 응답 전) 그 테넌트의 주어진 슬롯 롤 세션을 끊는다 — 커밋 콜백이 부른다(WD-624). GRANT 는 건드리지 않는다.
+   * 커밋 직후 그 테넌트의 주어진 슬롯 롤 세션 끊기를 <b>요청</b>한다 — 커밋 콜백(회수 미확인 대체 경로·등급 정의 변경)이 부른다(WD-624 → WD-664
+   * 9). GRANT 는 건드리지 않는다.
    *
-   * <p><b>왜 커밋 응답 전에 끊는가.</b> 넓어지는 GRANT 는 전용 실행기에서 나중에 돈다. 그 사이 옛 등급으로 슬롯을 받아 실행 중이던 세션이 살아 있으면
-   * (1) 좁아진 슬롯의 테이블을 계속 읽고 (2) 다른 실행의 준비(JIT)가 같은 슬롯을 새 기준으로 넓히면 자격 밖까지 읽는다. 끊긴 스크립트는 다시 실행되면 JIT 가
-   * 커밋된 등급으로 자기 슬롯을 맞춘 뒤에 접속한다.
+   * <p><b>왜 커밋 뒤에 끊는가.</b> 넓어지는 GRANT 는 전용 실행기에서 나중에 돈다. 그 사이 옛 등급으로 슬롯을 받아 실행 중이던 세션이 살아 있으면 (1)
+   * 좁아진 슬롯의 테이블을 계속 읽고 (2) 다른 실행의 준비(JIT)가 같은 슬롯을 새 기준으로 넓히면 자격 밖까지 읽는다. 끊긴 스크립트는 다시 실행되면 JIT 가 커밋된
+   * 등급으로 자기 슬롯을 맞춘 뒤에 접속한다.
    *
-   * <p><b>왜 상한만큼만 기다리는가.</b> 커밋 콜백은 바깥 플랫폼 커넥션을 쥔 채 돈다. 끊기는 소유자 풀 전용 스레드에서 돌므로 플랫폼 풀을 더 쥐지 않지만, 소유자
-   * 풀이 바쁘면 기다림이 길어진다 — 그래서 {@link #AFTER_COMMIT_TERMINATE_WAIT} 만 기다린다. 기다리기 전에 미확인 표식을 달아, 끊기가 끝내
-   * 실패하면 실행 준비가 넓히기 전에 먼저 끊는다(fail-closed, {@link PythonReadSessionTerminator}).
-   *
-   * @return 상한 안에 끊었으면 true
+   * <p><b>왜 기다리지 않는가(WD-664 9, 설계 결정 Q2 A).</b> 커밋 콜백은 바깥 플랫폼 커넥션을 쥔 채 돈다 — 예전처럼 상한(3초)만큼 기다리면 동시
+   * 커밋 N 개가 플랫폼 풀 커넥션 N 개를 그만큼 쥐었다. 이제 슬롯마다 미확인 표식을 <b>먼저</b> 달고 끊기 요청만 넣은 뒤 돌아온다({@link
+   * PythonReadSessionTerminator#markAndRequest}). 끊기는 끊기 전용 스레드에서 몇 초 안에 이어지고, 성공하면 표식이 지워진다. 실패하거나
+   * 아직이면 표식이 남아 그 슬롯의 실행 준비가 넓히기 전에 먼저 끊고, 못 끊으면 실행을 거부한다(fail-closed). 받아들인 값: 커밋 응답 시점에 세션이 끊겼다는
+   * 보장은 없다.
    */
-  public boolean terminateSlotSessionsAfterCommit(long tenantId, Set<Integer> slots) {
-    return terminator.terminateConfirmingWithin(tenantId, slots, AFTER_COMMIT_TERMINATE_WAIT);
+  public void terminateSlotSessionsAfterCommit(long tenantId, Set<Integer> slots) {
+    terminator.markAndRequest(tenantId, slots);
+  }
+
+  /**
+   * 확인된 커밋 직전 회수 뒤, <b>실제로 회수한 슬롯</b>의 세션 끊기를 요청만 한다(WD-664 7) — 기다리지 않고 표식도 달지 않는다. 회수가 이미 커밋돼 새
+   * 실행은 옳은 권한으로 붙으므로 실행 준비를 막을 필요가 없고, 회수 전에 시작한 긴 쿼리·서버 쪽 커서만 끊으면 된다(PG 는 권한을 쿼리 시작 때만 본다). 실패하면
+   * 부르는 쪽이 {@link #terminateSlotSessionsOrThrow} 로 실행기에서 다시 한다.
+   *
+   * @return 끊은 세션 수로 완료되는 결과(실패면 예외로 완료)
+   */
+  public CompletableFuture<Integer> requestSlotSessionTermination(
+      long tenantId, Set<Integer> slots) {
+    return terminator.requestTermination(tenantId, slots);
+  }
+
+  /**
+   * 슬롯 세션을 끊고 {@link #TERMINATE_WAIT} 까지 기다린다 — 실행기 작업 전용(커넥션·잠금을 쥐지 않은 채 부른다). 끊지 못하면 {@link
+   * PythonReadGrantBackend.SessionKillFailed}(일시 실패, WD-664 1b)를 던져 실행기가 재시도 상한까지 다시 하게 한다.
+   */
+  public void terminateSlotSessionsOrThrow(long tenantId, Set<Integer> slots) {
+    try {
+      terminator.terminateWithin(tenantId, slots, TERMINATE_WAIT);
+    } catch (IllegalStateException e) {
+      throw new PythonReadGrantBackend.SessionKillFailed(
+          "PYTHON 슬롯 롤 세션 끊기 실패 — 다시 한다(tenant=" + tenantId + " slots=" + slots + ")", e);
+    }
   }
 
   /** sinceMillis 이후 이 테넌트의 슬롯 롤 세션을 끊었는가 — 러너가 실패 문구를 고르는 데만 쓴다. */
@@ -703,6 +740,8 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
     int changed = 0;
     // 테이블 → 과권한이 남았을 수 있는 슬롯 롤
     Map<String, Set<String>> revokeFailed = new TreeMap<>();
+    // 테이블 → REVOKE 가 성공한 슬롯 롤(WD-664 7 — 확인된 좁히기 뒤 끊을 슬롯)
+    Map<String, Set<String>> revoked = new TreeMap<>();
     List<String> changedTables = new ArrayList<>();
     for (String table : physical) {
       // 데이터셋이 아닌 테이블(staging·REPLACE 임시 테이블 등)·뷰는 계산값이 "없음" — 남아 있는 슬롯 GRANT 는 회수한다.
@@ -759,6 +798,9 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
         revokeFailed.computeIfAbsent(table, x -> new TreeSet<>()).addAll(excess);
         continue;
       }
+      if (!excess.isEmpty()) {
+        revoked.computeIfAbsent(table, x -> new TreeSet<>()).addAll(excess);
+      }
       if (!missing.isEmpty()
           && !inSavepoint(
               () ->
@@ -788,7 +830,7 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
           changed,
           revokeFailed.size());
     }
-    return new SyncResult(levelsAsc, availableSlots, changed, revokeFailed, runSlot);
+    return new SyncResult(levelsAsc, availableSlots, changed, revokeFailed, runSlot, revoked);
   }
 
   /**

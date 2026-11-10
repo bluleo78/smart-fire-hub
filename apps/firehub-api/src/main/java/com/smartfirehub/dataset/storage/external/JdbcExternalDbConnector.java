@@ -70,6 +70,28 @@ public class JdbcExternalDbConnector implements ExternalDbConnector {
   @Override
   public Connection open(ExternalDbTarget target, String username, String password)
       throws ExternalDbConnectionException {
+    return openWithin(target, username, password, timeout);
+  }
+
+  /**
+   * 접속 대기 상한을 부르는 쪽이 정한다(WD-664 6) — 이 접속기의 기본 상한보다 긴 값은 기본 상한으로 줄인다(늘리지 않는다). 커밋 직전 좁히기처럼 플랫폼 커넥션을
+   * 쥔 채 접속하는 경로가 10초보다 짧게 포기하게 한다.
+   */
+  @Override
+  public Connection open(
+      ExternalDbTarget target, String username, String password, Duration requested)
+      throws ExternalDbConnectionException {
+    Duration bounded =
+        requested == null || requested.isNegative() || requested.isZero()
+            ? timeout
+            : (requested.compareTo(timeout) < 0 ? requested : timeout);
+    return openWithin(target, username, password, bounded);
+  }
+
+  /** 접속 본체 — 주어진 상한만큼만 기다린다(클래스 Javadoc 의 전용 스레드 + Future.get 방식). */
+  private Connection openWithin(
+      ExternalDbTarget target, String username, String password, Duration limit)
+      throws ExternalDbConnectionException {
     // 드라이버가 없으면 DriverManager 의 모호한 "No suitable driver" 대신 분명한 사유를 낸다.
     if (TiberoDialect.loadDriver(driverClassName) != null) {
       throw new ExternalDbConnectionException("Tibero JDBC 드라이버가 설치되지 않았습니다");
@@ -106,12 +128,12 @@ public class JdbcExternalDbConnector implements ExternalDbConnector {
     }
 
     try {
-      return result.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
+      return result.get(limit.toMillis(), TimeUnit.MILLISECONDS);
     } catch (TimeoutException e) {
       // 포기 표시를 먼저 하고 작업을 인터럽트한다. 그 사이 작업이 끝났다면 그 결과를 같은 규칙으로 돌려준다.
       if (result.completeExceptionally(e)) {
         task.cancel(true);
-        throw new ExternalDbConnectionException("연결 시간이 초과되었습니다(" + timeout.toSeconds() + "초)");
+        throw new ExternalDbConnectionException("연결 시간이 초과되었습니다(" + limit.toSeconds() + "초)");
       }
       return deliver(result, password);
     } catch (InterruptedException e) {

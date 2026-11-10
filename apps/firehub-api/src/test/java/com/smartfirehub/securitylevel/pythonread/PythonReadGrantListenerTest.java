@@ -174,12 +174,16 @@ class PythonReadGrantListenerTest {
     verify(grants, times(1)).syncDatasetsWith(any(), any());
   }
 
-  /** 커밋 직후 세션 끊기가 실행기 작업보다 먼저, 호출 스레드에서 돈다. 끊기 요청이 예외여도 커밋 콜백은 실패하지 않고 동기화는 넘긴다. */
+  /**
+   * 커밋 직후 세션 끊기 요청(표식 + 요청, 기다리지 않음 — WD-664 9)이 실행기 작업보다 먼저, 호출 스레드에서 돈다. 끊기 요청이 예외여도 커밋 콜백은 실패하지
+   * 않고 동기화는 넘긴다.
+   */
   @Test
   void levelsChange_terminatesOnCallerThreadBeforeQueueing_andSurvivesTerminateErrors()
       throws Exception {
-    when(grants.terminateSlotSessionsAfterCommit(TENANT, ALL))
-        .thenThrow(new IllegalStateException("x"));
+    doThrow(new IllegalStateException("x"))
+        .when(grants)
+        .terminateSlotSessionsAfterCommit(TENANT, ALL);
     listener.onLevelsChanged(LEVELS);
     drain();
     InOrder order = inOrder(grants);
@@ -215,6 +219,96 @@ class PythonReadGrantListenerTest {
 
     verify(grants, never()).invalidateScriptTokensInCurrentTx(anyLong());
     assertThat(TransactionSynchronizationManager.getSynchronizations()).isEmpty();
+  }
+
+  /**
+   * WD-664 7(설계 결정 Q2 A) — 회수가 확인되고 실제로 회수한 슬롯이 있으면, 커밋된 뒤에만 <b>그 슬롯만</b>(막을 슬롯 전부가 아니라) 끊기를 요청한다.
+   * 커밋 전(커밋 직전 단계)에는 요청하지 않고, 롤백되면(회수도 되돌려진다) 요청하지 않는다. 표식·토큰 무효화·뒷정리 같은 대체 경로는 쓰지 않는다. 고치기 전에는 확인된
+   * 경로가 회수만 하고 아무것도 끊지 않았다.
+   */
+  @Test
+  void datasetBeforeCommit_confirmedWithRevoke_requestsKillOfRevokedSlotsOnlyAfterCommit() {
+    TenantContext.set(TENANT);
+    TransactionSynchronizationManager.initSynchronization();
+    when(grants.narrowDatasetInCurrentTx(42L, 1L, 3L))
+        .thenReturn(NarrowResult.confirmed(Set.of(1, 2), Set.of(1)));
+    when(grants.requestSlotSessionTermination(TENANT, Set.of(1)))
+        .thenReturn(java.util.concurrent.CompletableFuture.completedFuture(1));
+
+    listener.narrowDatasetBeforeCommit(DATASET);
+    verify(grants, never()).requestSlotSessionTermination(anyLong(), any());
+    List<TransactionSynchronization> syncs =
+        TransactionSynchronizationManager.getSynchronizations();
+    assertThat(syncs).hasSize(1);
+    TransactionSynchronizationManager.clearSynchronization();
+
+    syncs.get(0).afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK);
+    verify(grants, never()).requestSlotSessionTermination(anyLong(), any());
+
+    syncs.get(0).afterCommit();
+    verify(grants).requestSlotSessionTermination(TENANT, Set.of(1));
+    verify(grants, never()).terminateSlotSessionsAfterCommit(anyLong(), any());
+    verify(grants, never()).invalidateScriptTokensInCurrentTx(anyLong());
+  }
+
+  /**
+   * WD-664 9 — 커밋 콜백은 끊기를 기다리지 않는다: 끊기가 영영 끝나지 않아도(소유자 풀 막힘) 커밋 콜백은 곧바로 돌아온다. 회수 미확인 대체 경로도 같다(표식 +
+   * 요청만).
+   */
+  @Test
+  void afterCommitCallbacks_neverWaitForKill() {
+    TenantContext.set(TENANT);
+    TransactionSynchronizationManager.initSynchronization();
+    when(grants.narrowDatasetInCurrentTx(42L, 1L, 3L))
+        .thenReturn(NarrowResult.confirmed(Set.of(1, 2), Set.of(1, 2)));
+    when(grants.requestSlotSessionTermination(TENANT, Set.of(1, 2)))
+        .thenReturn(new java.util.concurrent.CompletableFuture<>()); // 영영 끝나지 않는 끊기
+    listener.narrowDatasetBeforeCommit(DATASET);
+    List<TransactionSynchronization> syncs =
+        TransactionSynchronizationManager.getSynchronizations();
+    TransactionSynchronizationManager.clearSynchronization();
+    long start = System.nanoTime();
+    syncs.get(0).afterCommit();
+    assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start)).isLessThan(300L);
+  }
+
+  /**
+   * WD-664 7 + 1b — 확인된 회수 뒤 끊기 요청이 실패하면(큐 포화·소유자 풀 오류) 실행기에서 다시 한다. 다시 해도 못 끊으면 일시
+   * 실패(SessionKillFailed)라 재시도 상한까지 다시 한다 — 끊으면 멈춘다. 이벤트 테넌트로 돈다.
+   */
+  @Test
+  void datasetConfirmedKill_requestFails_retriedOnExecutorUntilKilled() throws Exception {
+    TenantContext.set(TENANT);
+    TransactionSynchronizationManager.initSynchronization();
+    when(grants.narrowDatasetInCurrentTx(42L, 1L, 3L))
+        .thenReturn(NarrowResult.confirmed(Set.of(1, 2), Set.of(2)));
+    when(grants.requestSlotSessionTermination(TENANT, Set.of(2)))
+        .thenReturn(
+            java.util.concurrent.CompletableFuture.failedFuture(
+                new IllegalStateException("owner pool busy")));
+    AtomicInteger calls = new AtomicInteger();
+    AtomicInteger seenTenant = new AtomicInteger(-1);
+    doAnswer(
+            inv -> {
+              seenTenant.set((int) TenantContext.require("t"));
+              if (calls.incrementAndGet() == 1) {
+                throw new PythonReadGrantBackend.SessionKillFailed("x", null);
+              }
+              return null;
+            })
+        .when(grants)
+        .terminateSlotSessionsOrThrow(TENANT, Set.of(2));
+
+    listener.narrowDatasetBeforeCommit(DATASET);
+    List<TransactionSynchronization> syncs =
+        TransactionSynchronizationManager.getSynchronizations();
+    TransactionSynchronizationManager.clearSynchronization();
+    TenantContext.clear();
+    syncs.get(0).afterCommit();
+    drain();
+
+    assertThat(calls.get()).as("첫 재시도는 못 끊어 한 번 더").isEqualTo(2);
+    assertThat(seenTenant.get()).isEqualTo((int) TENANT);
   }
 
   /** 리뷰 2 — 확인 못 했어도 막을 슬롯이 비면(넓어지는 변경·권한 없는 새 테이블의 클론) 아무것도 끊지 않는다. */
