@@ -121,6 +121,25 @@ export async function handleApiErrorAsync(
   toast.error(message);
 }
 
+/**
+ * 성공(2xx) 응답인데 기대한 본문이 없음(WD-693) — 예: 차트 데이터 응답이 null·빈 본문. 화면이 「받은 데이터 없음 = 아직 조회 중」으로 보고
+ * 스피너에 멈추지 않도록 조회 함수가 이 오류로 바꿔 일반 실패 안내로 보낸다. 서버 응답 오류가 아니라 extractApiError 는 호출부의 일반 문구를 쓴다.
+ */
+export class EmptyResponseError extends Error {
+  constructor(what: string) {
+    super(`${what} 응답에 본문이 없습니다`);
+    this.name = 'EmptyResponseError';
+  }
+}
+
+/**
+ * 빈 성공 응답 오류인가(WD-693) — 같은 요청을 곧바로 다시 보내도 같은 응답일 가능성이 커, 전역 쿼리 재시도(main.tsx)가 403·429 처럼 다시
+ * 시도하지 않고 화면 안내(「다시 시도」)로 넘기는 데 쓴다.
+ */
+export function isEmptyResponseError(error: unknown): boolean {
+  return error instanceof EmptyResponseError;
+}
+
 /** 권한 부족(403) 응답인가 — 목록 조회 실패를 「데이터 없음」과 구분해 권한 안내를 보일 때 쓴다 (WD-122). */
 export function isForbiddenError(error: unknown): boolean {
   return axios.isAxiosError(error) && error.response?.status === 403;

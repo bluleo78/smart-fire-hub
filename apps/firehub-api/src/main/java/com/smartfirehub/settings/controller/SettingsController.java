@@ -116,7 +116,9 @@ public class SettingsController {
       // 리포트 메일과 같은 팩토리로 만든다(WD-627) — 포트·TLS(465 암시적 TLS, STARTTLS 강제/기회적)·타임아웃이 실제
       // 발송과 같아야 테스트 결과가 발송 결과를 말해 준다. 숫자가 아닌 옛 포트는 아래 catch 가 실패 응답으로 바꾼다.
       JavaMailSenderImpl sender = SmtpMailSenders.create(config);
-      sender.testConnection();
+      // 연결 실패는 호출 지점에서 가린 실패(분류 문구 포함)로 바꾼다(WD-693) — 아래 catch 의 describe 가 그 문구를 그대로 쓴다.
+      SmtpFailureMessages.forCredentials(host, username, password)
+          .callMasked(sender::testConnection);
       return ResponseEntity.ok(Map.of("success", true, "message", "SMTP 연결 성공"));
     } catch (Exception e) {
       // JavaMail 영어 원문 대신 고칠 방법을 담은 한국어 분류 문구(WD-676) — 리포트 메일 발송 실패 사유와 같은 문장이다.

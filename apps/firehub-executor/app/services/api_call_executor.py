@@ -388,7 +388,8 @@ def _do_request(
                 content=body.encode() if body else None,
             )
 
-            if resp.status_code in (301, 302, 303, 307, 308):
+            # 따라가는 상태는 다섯 개뿐이다(WD-693, _is_followed_redirect) — 300·304·305 등은 아래 일반 응답으로 읽는다.
+            if _is_followed_redirect(resp.status_code):
                 redirect_count += 1
                 if redirect_count > MAX_REDIRECTS:
                     raise ApiCallException(errors.too_many_redirects_message(MAX_REDIRECTS))
@@ -612,10 +613,24 @@ def _redirect_keeps_method_and_body(status: int, same_origin: bool) -> bool:
     - 301·302·303: RFC 9110·브라우저 관례대로 출처와 상관없이 본문 없는 GET.
     - 한 번 본문을 버리면 그 뒤 홉(같은 출처 307·처음 출처로 돌아옴 포함)도 본문 없는 GET 이고, 본문 헤더(``_BODY_HEADERS``)도 뺀다.
 
-    Java ``RedirectLocations.keepsMethodAndBody`` 와 같고 공용 사례 표(``redirectMethod``)로 검증한다. 그 밖의 3xx 는
-    ``_do_request`` 가 일반 응답으로 다룬다 — Java 는 본문 없는 GET 으로 따라가는, 원래 있던 차이다.
+    Java ``RedirectLocations.keepsMethodAndBody`` 와 같고 공용 사례 표(``redirectMethod``)로 검증한다. 따라가는 상태 자체는
+    ``_is_followed_redirect`` 가 정한다.
     """
     return status in (307, 308) and same_origin
+
+
+# 리다이렉트로 따라가는 상태(WD-693) — Java RedirectLocations.isFollowed(int) 와 같다.
+_FOLLOWED_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+
+
+def _is_followed_redirect(status: int) -> bool:
+    """리다이렉트로 따라가는 상태인지(WD-693) — 301·302·303·307·308 만.
+
+    300(선택지)·304(변경 없음)·305(프록시 사용, 폐기) 등 그 밖의 3xx 는 따라갈 곳이 정해지지 않았거나 따라가면 안 되는 상태라
+    ``_do_request`` 가 일반 응답으로 읽는다 — JSON 본문이면 적재하고, 본문이 없거나 JSON 이 아니면 「JSON 형식이 아닙니다」로
+    실패한다. Java 실행기도 같은 규칙이고 공용 사례 표(``redirectFollow``)로 검증한다(예전 Java 는 모든 3xx 를 따라갔다).
+    """
+    return status in _FOLLOWED_REDIRECT_STATUSES
 
 
 def _same_auth_origin(origin: str, target: str) -> bool:

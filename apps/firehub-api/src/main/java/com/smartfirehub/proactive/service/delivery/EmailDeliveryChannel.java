@@ -8,6 +8,7 @@ import com.smartfirehub.proactive.service.ReportRenderUtils.ChartImage;
 import com.smartfirehub.proactive.util.ProactiveConfigParser;
 import com.smartfirehub.proactive.util.ProactiveConfigParser.ChannelConfig;
 import com.smartfirehub.settings.service.SettingsService;
+import com.smartfirehub.settings.service.SmtpFailureLog;
 import com.smartfirehub.settings.service.SmtpFailureMessages;
 import com.smartfirehub.settings.service.SmtpMailSenders;
 import com.smartfirehub.user.dto.UserResponse;
@@ -135,7 +136,9 @@ public class EmailDeliveryChannel implements DeliveryChannel {
               .findFirst()
               .orElse(null);
       if (ownerEmail == null || ownerEmail.isBlank()) {
-        log.warn("EmailDeliveryChannel skipped: no email for userId {}", job.userId());
+        // 메일 코드는 Logger 를 직접 부르지 않는다(WD-693, SmtpFailureLog).
+        SmtpFailureLog.warn(
+            log, "EmailDeliveryChannel skipped: no email for userId {}", job.userId());
         return;
       }
       toAddresses.add(ownerEmail);
@@ -143,10 +146,10 @@ public class EmailDeliveryChannel implements DeliveryChannel {
 
     // 성공한 발송 수와 마지막 실패(WD-676) — 하나도 보내지 못했으면 예외로 알려 실행 기록에 「이메일로 전달됨」이 거짓으로 남지 않게 한다.
     int sent = 0;
-    Failures failures =
-        new Failures(
-            SmtpFailureMessages.forCredentials(
-                host, smtp.get("smtp.username"), smtp.get("smtp.password")));
+    SmtpFailureMessages.CredentialMasker masker =
+        SmtpFailureMessages.forCredentials(
+            host, smtp.get("smtp.username"), smtp.get("smtp.password"));
+    Failures failures = new Failures(masker);
     try {
       // 이메일 공통 준비 (SMTP, 템플릿) - 루프 밖에서 1회 수행
       // htmlContent가 있으면 요약(summary) 기반 이메일을 보내고, PDF에 전체 리포트를 첨부한다.
@@ -178,7 +181,8 @@ public class EmailDeliveryChannel implements DeliveryChannel {
         try {
           pdfBytes = pdfExportService.generatePdf(result, job.name());
         } catch (Exception e) {
-          log.warn("PDF generation failed for job {}: {}", job.id(), e.getMessage());
+          SmtpFailureLog.warn(
+              log, "PDF generation failed for job {}: {}", job.id(), e.getMessage());
         }
       }
       final byte[] finalPdfBytes = pdfBytes;
@@ -204,9 +208,11 @@ public class EmailDeliveryChannel implements DeliveryChannel {
             helper.addAttachment(pdfName, new ByteArrayResource(finalPdfBytes), "application/pdf");
           }
 
-          mailSender.send(message);
+          // 발송 실패는 발송 지점에서 가린 실패로 바꾼다(WD-693) — 아래 catch 는 가리지 않은 메일 예외를 쥐지 않는다.
+          masker.callMasked(() -> mailSender.send(message));
           sent++;
-          log.info(
+          SmtpFailureLog.info(
+              log,
               "EmailDeliveryChannel sent report '{}' to {} for job {}",
               result.effectiveTitle(job.name()),
               toAddress,
@@ -249,11 +255,14 @@ public class EmailDeliveryChannel implements DeliveryChannel {
     void record(String what, Object subject, Exception e) {
       boolean first = lastMasked == null;
       lastDescribed = masker.describe(e);
-      lastMasked = masker.maskedCopy(e);
       if (first) {
-        log.error("EmailDeliveryChannel {} {}: {}", what, subject, lastDescribed, lastMasked);
+        // 스택이 붙는 로그는 SmtpFailureLog 로만 남긴다(WD-693) — 가린 사본만 붙고, 그 사본을 최종 예외 cause 로도 쓴다.
+        lastMasked =
+            SmtpFailureLog.error(
+                log, masker, e, "EmailDeliveryChannel {} {}: {}", what, subject, lastDescribed);
       } else {
-        log.error("EmailDeliveryChannel {} {}: {}", what, subject, lastDescribed);
+        lastMasked = masker.maskedCopy(e);
+        SmtpFailureLog.error(log, "EmailDeliveryChannel {} {}: {}", what, subject, lastDescribed);
       }
     }
   }

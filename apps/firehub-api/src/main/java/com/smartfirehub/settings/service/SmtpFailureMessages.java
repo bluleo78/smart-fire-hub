@@ -186,6 +186,11 @@ public final class SmtpFailureMessages {
       if (error == null) {
         return generic(null);
       }
+      // 발송 지점에서 이미 가린 실패(mask)는 원래 예외로 만들어 둔 문구를 쓴다(WD-693).
+      // 사본은 원래 타입이 아니라 instanceof 규칙이 맞지 않는다.
+      if (error instanceof MaskedSmtpException masked && masked.userMessage != null) {
+        return masked.userMessage;
+      }
       List<Throwable> chain = chain(error);
       for (Rule rule : RULES) {
         if (chain.stream().anyMatch(rule.matches())) {
@@ -237,9 +242,39 @@ public final class SmtpFailureMessages {
       return maskedCopy(error, new IdentityHashMap<>());
     }
 
+    /**
+     * 메일 호출 하나를 하고, 실패하면 원래 예외 대신 가린 실패({@link #mask})를 던진다(WD-693) — 발송({@code
+     * JavaMailSender.send})·연결 테스트({@code testConnection})를 부르는 곳에서 쓴다. 그 뒤 코드(로그·결과 cause·다시 던지기)는
+     * 가리지 않은 메일 예외를 손에 쥐지 않는다.
+     *
+     * <p>왜 여기인가: 메일 예외는 서버 응답 원문(AUTH 단계에서 되울린 비밀번호·AUTH PLAIN 자격 증명)을 담는다. 예전에는 로그를 남기는 곳마다 가려야 했고
+     * 그것을 소스 스캔으로 지켰다. 발송 지점에서 가리면 지킬 곳이 하나다.
+     */
+    public void callMasked(MailCall call) {
+      try {
+        call.run();
+      } catch (Exception e) {
+        throw mask(e);
+      }
+    }
+
+    /**
+     * 가린 실패를 만든다(WD-693) — {@link #maskedCopy} 사본에 원래 예외로 분류한 문구({@link #describe})를 함께 담는다. 사본으로는
+     * 분류할 수 없으므로(원래 타입이 아니다) 문구는 원래 예외가 있을 때 미리 만든다. 이미 가린 예외면 그대로 돌려준다.
+     */
+    public MaskedSmtpException mask(Throwable error) {
+      if (error instanceof MaskedSmtpException already) return already;
+      String described = describe(error);
+      MaskedSmtpException copy = maskedCopy(error);
+      copy.userMessage = described;
+      return copy;
+    }
+
     private MaskedSmtpException maskedCopy(
         Throwable t, java.util.Map<Throwable, MaskedSmtpException> copies) {
       if (t == null) return null;
+      // 이미 가린 사본은 다시 가리지 않는다(WD-693) — 발송 지점에서 가린 실패를 로그·결과에 그대로 쓴다.
+      if (t instanceof MaskedSmtpException already) return already;
       MaskedSmtpException existing = copies.get(t);
       if (existing != null) return existing;
       String message = t.getMessage();
@@ -273,9 +308,24 @@ public final class SmtpFailureMessages {
    */
   public static final class MaskedSmtpException extends RuntimeException {
 
+    /**
+     * 원래 예외로 분류한 사용자 문구({@link CredentialMasker#mask}, WD-693) — 발송 지점에서 가린 실패만 갖는다. {@link
+     * CredentialMasker#describe} 가 이것을 그대로 쓴다.
+     */
+    private String userMessage;
+
     MaskedSmtpException(String originalClassName, String maskedMessage) {
       super(maskedMessage != null ? originalClassName + ": " + maskedMessage : originalClassName);
     }
+  }
+
+  /**
+   * 메일 호출 하나(WD-693, {@link CredentialMasker#callMasked}) — JavaMail 의 검사 예외(MessagingException)도
+   * 던질 수 있다.
+   */
+  @FunctionalInterface
+  public interface MailCall {
+    void run() throws Exception;
   }
 
   /** 예외에서 이어지는 예외들 — cause 와 그 밖(suppressed·MailSendException 메시지별 예외). */

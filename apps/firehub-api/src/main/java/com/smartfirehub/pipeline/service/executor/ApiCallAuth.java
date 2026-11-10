@@ -363,13 +363,26 @@ public final class ApiCallAuth {
     // 호스트·포트는 UrlAuthority 로 읽는다(WD-676) — getHost() 는 밑줄 든 호스트(my_api.internal)에서 null 이라, 같은 호스트로
     // 가는 홉도 다른 출처로 봐 인증을 뗐다. 해석할 수 없으면 지금처럼 다른 출처다.
     // (WD-686) Python 과 같게 두려고 남긴다 — 공용 사례 표 sameAuthOrigin 의 밑줄 호스트 사례가 고정한다.
-    Optional<UrlAuthority> fromAuthority = UrlAuthority.of(origin);
+    return UrlAuthority.of(origin)
+        .map(o -> isSameAuthOrigin(origin.getScheme(), o, target))
+        .orElse(false);
+  }
+
+  /**
+   * {@link #isSameAuthOrigin(URI, URI)} 의 처음 출처를 미리 읽어 둔 판(WD-693) — 리다이렉트를 따라가는 동안 처음 요청 주소는 그대로라
+   * {@link RedirectFollower} 가 요청마다 한 번만 읽고 홉마다 이것을 부른다. 규칙은 같다.
+   *
+   * @param originScheme 처음 요청의 스킴
+   * @param o 처음 요청의 호스트·포트
+   * @param target 리다이렉트 대상(null·호스트를 알 수 없으면 다른 출처)
+   */
+  static boolean isSameAuthOrigin(String originScheme, UrlAuthority o, URI target) {
+    if (target == null) return false;
     Optional<UrlAuthority> toAuthority = UrlAuthority.of(target);
-    if (fromAuthority.isEmpty() || toAuthority.isEmpty()) return false;
-    UrlAuthority o = fromAuthority.get();
+    if (toAuthority.isEmpty()) return false;
     UrlAuthority t = toAuthority.get();
     if (!o.host().equalsIgnoreCase(t.host())) return false;
-    String from = upper(origin.getScheme());
+    String from = upper(originScheme);
     String to = upper(target.getScheme());
     if (from == null || to == null) return false;
     if (from.equals(to)) return o.effectivePort(from) == t.effectivePort(to);

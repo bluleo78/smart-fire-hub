@@ -1,3 +1,4 @@
+import { EmptyResponseError } from '../lib/api-error';
 import { normalizeChartConfig } from '../lib/normalize-chart-config';
 import type {
   AddWidgetRequest,
@@ -35,6 +36,16 @@ export const DELETE_IMPACT_TIMEOUT_MS = 10_000;
 function withNormalizedChart<R extends { data: Chart }>(r: R): R {
   if (r.data?.config) r.data = { ...r.data, config: normalizeChartConfig(r.data.config) };
   return r;
+}
+
+/**
+ * 차트 데이터 응답(`/charts/{id}/data`)으로 쓸 수 있는 본문인가(WD-693) — 객체이고 chart 가 있어야 한다. 원본을 볼 수 없는 위젯의
+ * `denied: true` 응답도 유효한 본문이다(위젯이 잠금 상태를 그린다) — chart 가 비어 있어도 오류로 바꾸지 않는다.
+ */
+function isChartDataPayload(data: unknown): data is ChartDataResponse {
+  if (data == null || typeof data !== 'object') return false;
+  const body = data as Partial<ChartDataResponse>;
+  return body.denied === true || body.chart != null;
 }
 
 export const analyticsApi = {
@@ -151,8 +162,11 @@ export const analyticsApi = {
 
   getChartData: (id: number) =>
     client.get<ChartDataResponse>(`/analytics/charts/${id}/data`).then((r) => {
+      // 성공(200)인데 차트 데이터가 없으면(null·빈 본문) 오류로 바꾼다(WD-693) — 그대로 돌려주면 위젯이 「아직 받은 데이터 없음」으로 보고
+      // 스피너에 영영 멈춘다. 오류면 위젯의 실패 안내(「데이터를 불러올 수 없습니다.」 + 「다시 시도」)로 간다.
+      if (!isChartDataPayload(r.data)) throw new EmptyResponseError('차트 데이터');
       // 대시보드 위젯이 그리는 config 도 같은 모양으로 맞춘다(WD-413)
-      if (r.data?.chart) r.data.chart = { ...r.data.chart, config: normalizeChartConfig(r.data.chart.config) };
+      if (r.data.chart) r.data.chart = { ...r.data.chart, config: normalizeChartConfig(r.data.chart.config) };
       return r;
     }),
 

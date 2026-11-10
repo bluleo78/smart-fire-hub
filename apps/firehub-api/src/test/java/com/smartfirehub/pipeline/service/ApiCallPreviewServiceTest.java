@@ -1646,4 +1646,245 @@ class ApiCallPreviewServiceTest {
     assertThat(response.resolvedUrl())
         .isEqualTo("http://svc:****@localhost:" + wireMock.port() + "/v1/legacy");
   }
+
+  // =========================================================================
+  // WD-693: 미리보기도 실행과 같은 리다이렉트 경로(RedirectFollower)를 쓴다
+  // =========================================================================
+
+  /** 같은 WireMock 을 다른 출처(호스트가 다름)로 가리키는 주소 — localhost 와 127.0.0.1 은 출처가 다르다. */
+  private String otherOrigin() {
+    return "http://127.0.0.1:" + wireMock.port();
+  }
+
+  /** path 가 GET·POST 어느 쪽이든 행 하나를 주는 스텁. */
+  private static void stubOneRowAnyMethod(String path) {
+    wireMock.stubFor(
+        any(urlPathEqualTo(path))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"id\":693}]")));
+  }
+
+  /** method 의 path 가 status 로 location 에 리다이렉트하는 스텁. */
+  private static void stubRedirect(String method, String path, int status, String location) {
+    wireMock.stubFor(
+        request(method, urlPathEqualTo(path))
+            .willReturn(aResponse().withStatus(status).withHeader("Location", location)));
+  }
+
+  /** POST 미리보기 요청 — 본문·Bearer 인증을 싣는다(리다이렉트 홉에서 본문·인증이 어떻게 되는지 보려고). */
+  private ApiCallPreviewResponse previewPost(String url) {
+    return service.preview(
+        new ApiCallPreviewRequest(
+            url,
+            "POST",
+            null,
+            null,
+            "{\"k\":\"v693\"}",
+            "$",
+            null,
+            null,
+            Map.of("authType", "BEARER", "token", "tok693"),
+            5000));
+  }
+
+  /**
+   * 같은 출처 307 은 실행처럼 POST·본문·인증을 유지해 따라가고, 응답 표시 URL 은 처음 요청 주소다(WD-693 — 예전에는 3xx 본문을 미리보기로 보였다).
+   */
+  @Test
+  void preview_sameOrigin307Post_keepsMethodBodyAndAuth() {
+    stubRedirect("POST", "/p693/k1", 307, baseUrl() + "/p693/k2");
+    stubOneRowAnyMethod("/p693/k2");
+
+    ApiCallPreviewResponse response = previewPost(baseUrl() + "/p693/k1");
+
+    assertThat(response.success()).isTrue();
+    assertThat(response.totalExtractedRows()).isEqualTo(1);
+    assertThat(response.resolvedUrl()).isEqualTo(baseUrl() + "/p693/k1");
+    wireMock.verify(
+        postRequestedFor(urlPathEqualTo("/p693/k2"))
+            .withRequestBody(equalTo("{\"k\":\"v693\"}"))
+            .withHeader("Authorization", equalTo("Bearer tok693")));
+    wireMock.verify(0, getRequestedFor(urlPathEqualTo("/p693/k2")));
+  }
+
+  /** 301 은 실행처럼 본문·본문 헤더 없는 GET 으로 따라간다(WD-693, 규칙은 RedirectLocations.keepsMethodAndBody). */
+  @Test
+  void preview_301Post_followsAsGetWithoutBody() {
+    stubRedirect("POST", "/p693/m1", 301, baseUrl() + "/p693/m2");
+    stubOneRowAnyMethod("/p693/m2");
+
+    ApiCallPreviewResponse response = previewPost(baseUrl() + "/p693/m1");
+
+    assertThat(response.success()).isTrue();
+    wireMock.verify(0, postRequestedFor(urlPathEqualTo("/p693/m2")));
+    List<com.github.tomakehurst.wiremock.verification.LoggedRequest> hops =
+        wireMock.findAll(getRequestedFor(urlPathEqualTo("/p693/m2")));
+    assertThat(hops).hasSize(1);
+    assertThat(hops.get(0).getBodyAsString()).isEmpty();
+    assertThat(hops.get(0).containsHeader("Content-Type")).isFalse();
+  }
+
+  /**
+   * 다른 출처로 가는 307 은 인증 헤더를 떼고(본문도 버린 GET 으로) 따라간다(WD-693 — 실행과 같은 ApiCallAuth.isSameAuthOrigin 판정).
+   */
+  @Test
+  void preview_crossOrigin307_dropsAuthorizationAndBody() {
+    stubRedirect("POST", "/p693/x1", 307, otherOrigin() + "/p693/x2");
+    stubOneRowAnyMethod("/p693/x2");
+
+    ApiCallPreviewResponse response = previewPost(baseUrl() + "/p693/x1");
+
+    assertThat(response.success()).isTrue();
+    wireMock.verify(0, postRequestedFor(urlPathEqualTo("/p693/x2")));
+    List<com.github.tomakehurst.wiremock.verification.LoggedRequest> hops =
+        wireMock.findAll(getRequestedFor(urlPathEqualTo("/p693/x2")));
+    assertThat(hops).hasSize(1);
+    assertThat(hops.get(0).containsHeader("Authorization")).isFalse();
+    assertThat(hops.get(0).getBodyAsString()).isEmpty();
+  }
+
+  /**
+   * BASIC 인증(WD-681)도 미리보기 리다이렉트 경로(WD-693)에서 Bearer 와 같이 다룬다 — 같은 출처 홉에는 Basic 헤더를 다시 붙이고, 다른 출처
+   * 홉에는 떼어 저장된 비밀번호가 다른 출처로 나가지 않는다.
+   */
+  @Test
+  void preview_basicAuth_keptOnSameOriginHop_droppedOnCrossOriginHop() {
+    String b64 =
+        java.util.Base64.getEncoder()
+            .encodeToString("alice:Pw693redir".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    stubRedirect("GET", "/p693/b1", 302, baseUrl() + "/p693/b2");
+    stubRedirect("GET", "/p693/b2", 302, otherOrigin() + "/p693/b3");
+    stubOneRowAnyMethod("/p693/b3");
+
+    ApiCallPreviewResponse response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/p693/b1",
+                "GET",
+                null,
+                null,
+                null,
+                "$",
+                null,
+                null,
+                Map.of("authType", "BASIC", "username", "alice", "password", "Pw693redir"),
+                5000));
+
+    assertThat(response.success()).isTrue();
+    wireMock.verify(
+        getRequestedFor(urlPathEqualTo("/p693/b2"))
+            .withHeader("Authorization", equalTo("Basic " + b64)));
+    List<com.github.tomakehurst.wiremock.verification.LoggedRequest> hops =
+        wireMock.findAll(getRequestedFor(urlPathEqualTo("/p693/b3")));
+    assertThat(hops).hasSize(1);
+    assertThat(hops.get(0).containsHeader("Authorization")).isFalse();
+  }
+
+  /** 리다이렉트 대상(Location)이 내부망이면 홉마다 SSRF 검사로 막는다(WD-693) — 처음 주소(WireMock)만 검사를 건너뛴다. */
+  @Test
+  void preview_redirectToInternalAddress_blockedBySsrfCheck() {
+    SsrfProtectionService guardRedirectsOnly =
+        new SsrfProtectionService() {
+          @Override
+          public void validateUrl(String url) {
+            if (!url.startsWith(baseUrl())) {
+              super.validateUrl(url);
+            }
+          }
+        };
+    ApiCallPreviewService guarded =
+        new ApiCallPreviewService(
+            guardRedirectsOnly,
+            new JsonResponseParser(),
+            apiConnectionService,
+            WebClient.builder(),
+            // WireMock(루프백)에 접속해야 하므로 접속 시점 주소 검사(WD-613)는 끈다 — 이 TC 는 홉마다 하는 사전 검사를 본다.
+            new SsrfSafeHttpClientFactory(address -> {}));
+    stubRedirect("GET", "/p693/s1", 302, "http://127.0.0.1:1/meta");
+
+    ApiCallPreviewResponse response =
+        guarded.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/p693/s1", "GET", null, null, null, "$", null, null, null, 5000));
+
+    assertThat(response.success()).isFalse();
+    assertThat(response.errorMessage()).isEqualTo("내부망 주소는 호출할 수 없습니다(루프백): 127.0.0.1");
+  }
+
+  /** 리다이렉트가 최대 홉 수(5)를 넘으면 실행과 같은 문구로 실패한다(WD-693). */
+  @Test
+  void preview_tooManyRedirects_fails() {
+    stubRedirect("GET", "/p693/loop", 302, baseUrl() + "/p693/loop");
+
+    ApiCallPreviewResponse response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/p693/loop", "GET", null, null, null, "$", null, null, null, 5000));
+
+    assertThat(response.success()).isFalse();
+    assertThat(response.errorMessage()).isEqualTo(ApiCallErrorMessages.tooManyRedirects(5));
+  }
+
+  /**
+   * 미리보기의 시간 제한은 홉마다가 아니라 리다이렉트 전체에 한 번 건다(WD-693) — 홉마다 걸면 한 번의 미리보기가 (최대 홉 수+1)×timeoutMs 동안
+   * 붙잡힌다. 두 홉이 각각 제한보다 짧아도 합이 넘으면 예전과 같은 시간 초과 문구로 실패한다.
+   */
+  @Test
+  void preview_timeoutIsOneDeadlineAcrossRedirectHops() {
+    wireMock.stubFor(
+        get(urlPathEqualTo("/p693/t1"))
+            .willReturn(
+                aResponse()
+                    .withStatus(302)
+                    .withHeader("Location", baseUrl() + "/p693/t2")
+                    .withFixedDelay(700)));
+    wireMock.stubFor(
+        get(urlPathEqualTo("/p693/t2"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"id\":1}]")
+                    .withFixedDelay(700)));
+
+    ApiCallPreviewResponse response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/p693/t1", "GET", null, null, null, "$", null, null, null, 1000));
+
+    assertThat(response.success()).isFalse();
+    assertThat(response.errorMessage()).isEqualTo(ApiCallErrorMessages.timeout(1000));
+  }
+
+  /** 리다이렉트 뒤 홉의 DNS 실패는 실패한 그 홉의 호스트를 문구에 쓴다(WD-693 — 예전에는 처음 호스트 localhost 를 보였다). */
+  @Test
+  void preview_unknownHostOnRedirectHop_namesThatHop() {
+    stubRedirect("GET", "/p693/d1", 302, "http://wd693-no-such-host.invalid/x");
+
+    ApiCallPreviewResponse response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/p693/d1", "GET", null, null, null, "$", null, null, null, 5000));
+
+    assertThat(response.success()).isFalse();
+    assertThat(response.errorMessage())
+        .isEqualTo(ApiCallErrorMessages.unknownHost("wd693-no-such-host.invalid"));
+  }
+
+  /** 재시도할 상태(503)는 예전과 같은 「대상 서버 오류(HTTP 503)」 문구다(WD-693 — RetryableApiCallException 만 그대로 쓴다). */
+  @Test
+  void preview_503_showsTargetServerErrorMessage() {
+    wireMock.stubFor(get(urlPathEqualTo("/p693/e1")).willReturn(aResponse().withStatus(503)));
+
+    ApiCallPreviewResponse response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/p693/e1", "GET", null, null, null, "$", null, null, null, 5000));
+
+    assertThat(response.success()).isFalse();
+    assertThat(response.errorMessage()).isEqualTo("대상 서버 오류(HTTP 503)");
+  }
 }

@@ -19,6 +19,7 @@ import com.smartfirehub.global.exception.SerializationException;
 import com.smartfirehub.job.service.AsyncJobService;
 import com.smartfirehub.pipeline.service.executor.ApiCallAuth;
 import com.smartfirehub.pipeline.service.executor.ApiCallErrorMessages;
+import com.smartfirehub.pipeline.service.executor.RedirectFollower;
 import com.smartfirehub.pipeline.service.executor.SsrfException;
 import com.smartfirehub.pipeline.service.executor.SsrfProtectionService;
 import com.smartfirehub.pipeline.service.executor.SsrfSafeHttpClientFactory;
@@ -26,7 +27,6 @@ import com.smartfirehub.pipeline.service.executor.UrlAuthority;
 import com.smartfirehub.user.dto.UserResponse;
 import com.smartfirehub.user.repository.UserRepository;
 import java.net.URI;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -39,11 +39,11 @@ import java.util.concurrent.Executor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.http.client.reactive.ReactorClientHttpConnector;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.reactive.function.client.WebClient;
-import org.springframework.web.reactive.function.client.WebClientResponseException;
+import org.springframework.web.util.DefaultUriBuilderFactory;
 
 /**
  * API 연결(ApiConnection) 비즈니스 로직 서비스. Phase 9: baseUrl 정규화/SSRF 검증, 헬스체크(testConnection), slim
@@ -86,9 +86,15 @@ public class ApiConnectionService {
 
   /**
    * 헬스체크용 HTTP 클라이언트의 출처(WD-613) — 접속 시점에 해석한 IP 를 SSRF 정책으로 다시 검사한다. 예전에는 기본 WebClient 가 호출 직전 검사
-   * 뒤에 호스트를 다시 해석해, DNS 재바인딩으로 내부 주소에 접속할 수 있었다.
+   * 뒤에 호스트를 다시 해석해, DNS 재바인딩으로 내부 주소에 접속할 수 있었다. 리다이렉트 홉도 같은 클라이언트로 나가므로 홉마다 같은 검사를 받는다.
    */
   private final SsrfSafeHttpClientFactory ssrfSafeHttpClientFactory;
+
+  /**
+   * 쿼리 인증이 아닌 호출 URL(경로의 한글·공백 등 인코딩 전)을 URI 로 바꾸는 팩토리 — 예전 {@code webClient.get().uri(String)} 이
+   * 쓰던 WebClient 기본 팩토리(템플릿·값 인코딩)와 같아 나가는 바이트가 바뀌지 않는다(WD-693).
+   */
+  private static final DefaultUriBuilderFactory URI_FACTORY = new DefaultUriBuilderFactory();
 
   /** 헬스체크 HTTP 호출 타임아웃(초). 메시지 문구(「응답 시간 초과(N초) — …」)와 값이 어긋나지 않도록 한 곳에서 관리한다. */
   private static final int HEALTH_CHECK_TIMEOUT_SECONDS = 5;
@@ -488,9 +494,12 @@ public class ApiConnectionService {
    * <p>검사 대상은 인증 쿼리 키를 붙이기 <b>전</b> URL(기준 URL + 헬스체크 경로)이다. 키는 쿼리에만 붙어 호스트를 바꾸지 못하고, API_CALL 도
    * 쿼리를 붙이기 전 URL 을 검사한다. 키 붙은 URL 을 넘기면 검사 실패 문구에 키가 실릴 위험만 커진다.
    *
-   * <p>리다이렉트: 이 WebClient 는 Reactor Netty 기본값(리다이렉트를 따라가지 않음)이라 3xx 응답을 그대로 결과로 돌려줄 뿐 다른 주소로 다시
-   * 요청하지 않는다. DNS: WebClient 가 접속 때 다시 해석하지만, 그 해석 결과를 {@link SsrfSafeHttpClientFactory} 의 해석기가 같은
-   * 판정으로 다시 검사한다(WD-613) — 검사 뒤 DNS 가 내부 주소로 바뀌어도(재바인딩) 접속하지 않고 같은 차단 문구의 DOWN 결과가 된다.
+   * <p><b>리다이렉트(WD-693).</b> 미리보기·실행과 같은 {@link RedirectFollower#follow} 로 따라간다 —
+   * 301·302·303·307·308 만, 홉마다 주소 검사(SSRF)·다른 출처 홉의 인증 떼기·최대 홉 수가 같다. 예전에는 따라가지 않고 3xx 를 결과로
+   * 돌려줘(3xx 를 성공처럼 보이기도 했다) 같은 연결의 테스트와 실행 결과가 달랐다. 결과는 마지막 응답이고 표시 URL({@code requestUrl})은 처음 요청
+   * 주소(키 가림)다. 시간 제한은 모든 홉을 합쳐 {@link #HEALTH_CHECK_TIMEOUT_SECONDS} 한 번이다. DNS: WebClient 가 접속 때
+   * 다시 해석하지만, 그 해석 결과를 {@link SsrfSafeHttpClientFactory} 의 해석기가 같은 판정으로 다시 검사한다(WD-613) — 첫 요청이든
+   * 리다이렉트 홉이든 검사 뒤 DNS 가 내부 주소로 바뀌어도(재바인딩) 접속하지 않고 같은 차단 문구의 DOWN 결과가 된다.
    *
    * <p><b>인증(WD-657).</b> 헤더·쿼리 키·가릴 비밀 모두 {@link ApiCallAuth#resolve} 로 푼 값 하나로 만든다 — 파이프라인
    * 실행(Java·Python 실행기)·미리보기와 같은 값을 보낸다.
@@ -527,30 +536,33 @@ public class ApiConnectionService {
       AuthQueryMasker.AuthQueryUrls urls = auth.buildUrls(targetUrl, null);
       displayUrl = urls.displayUrl();
       // 응답 본문/헤더를 함께 받아 디버깅용으로 노출 (#76).
-      // 쿼리 인증이면 이미 인코딩을 마친 URI 를 넘긴다(WD-182) — 문자열로 넘기면 WebClient 가 템플릿으로 다시 인코딩해 인코딩 키의
-      // %2B 가 %252B 로 나갔다(미리보기·실행은 URI 를 넘겨 그대로 나가 경로마다 보내는 바이트가 달랐다). 쿼리 인증이 아니면 예전처럼
-      // 문자열로 넘겨 경로의 한글·공백을 WebClient 가 인코딩하게 둔다(buildUrls 가 URL 을 손대지 않는다).
-      // Netty 가 못 부르는 호스트(밑줄 등)는 요청 전에 고정 문구로 실패한다(WD-676) — 아래 catch 가 그 문구를 그대로 보인다.
-      UrlAuthority.requireClientSupportedHost(urls.callUrl());
-      WebClient webClient = healthCheckClient();
-      var resp =
-          (auth.isQueryApiKey()
-                  ? webClient.get().uri(urls.callUri())
-                  : webClient.get().uri(urls.callUrl()))
-              .headers(h -> auth.applyHeaders(h::set))
-              .retrieve()
-              .toEntity(String.class)
-              .block(Duration.ofSeconds(HEALTH_CHECK_TIMEOUT_SECONDS));
+      // 쿼리 인증이면 이미 인코딩을 마친 URI 를 쓴다(WD-182) — 다시 인코딩하면 인코딩 키의 %2B 가 %252B 로 나간다. 쿼리 인증이 아니면 예전
+      // webClient.get().uri(String) 과 같은 기본 팩토리로 경로의 한글·공백을 인코딩한다(buildUrls 가 URL 을 손대지 않는다).
+      URI callUri = auth.isQueryApiKey() ? urls.callUri() : URI_FACTORY.expand(urls.callUrl());
+      // 리다이렉트는 미리보기·실행과 같은 RedirectFollower 로 따라간다(WD-693). Netty 가 못 부르는 호스트(밑줄 등)는 첫 홉부터 홉마다 요청
+      // 전에
+      // 고정 문구로 실패하고(WD-676), 리다이렉트 대상이 내부망이면 SsrfException 으로 아래에서 DOWN 결과가 된다. 4xx·5xx 도 예외 없이 마지막
+      // 응답으로 받는다 — 오류 본문·헤더를 운영자가 봐야 디버깅할 수 있다.
+      // 시간 제한은 모든 홉을 합쳐 한 번(timeoutPerHop=false), 4xx·5xx 는 결과로 받는다(failOnErrorStatus=false).
+      ResponseEntity<String> resp =
+          RedirectFollower.follow(
+              RedirectFollower.Request.bodilessGet(
+                  healthCheckClient(),
+                  ssrfProtectionService,
+                  callUri,
+                  auth,
+                  HEALTH_CHECK_TIMEOUT_SECONDS * 1000,
+                  false,
+                  false));
 
       long latency = System.currentTimeMillis() - start;
-      Integer status = resp != null ? resp.getStatusCode().value() : null;
-      boolean ok = resp != null && resp.getStatusCode().is2xxSuccessful();
+      int status = resp.getStatusCode().value();
+      boolean ok = resp.getStatusCode().is2xxSuccessful();
       String err = ok ? null : ("HTTP " + status);
-      String body = resp != null ? truncateBody(resp.getBody(), secret) : null;
-      Map<String, String> headers =
-          resp != null ? sanitizeHeaders(resp.getHeaders(), secret) : Map.of();
+      String body = truncateBody(resp.getBody(), secret);
+      Map<String, String> headers = sanitizeHeaders(resp.getHeaders(), secret);
       String contentType =
-          resp != null && resp.getHeaders().getContentType() != null
+          resp.getHeaders().getContentType() != null
               ? resp.getHeaders().getContentType().toString()
               : null;
       return new TestConnectionResponse(
@@ -559,23 +571,10 @@ public class ApiConnectionService {
     } catch (SsrfException e) {
       long latency = System.currentTimeMillis() - start;
       // 차단 사유는 SsrfProtectionService 의 한국어 문구를 그대로 쓴다(「내부망 주소는 호출할 수 없습니다(루프백): 127.0.0.1」) —
-      // 저장 시 검사·API_CALL 실행·미리보기(ApiCallErrorMessages.describe)와 같은 문장이다(WD-150). 호출하지 않았으므로 본문·헤더는
-      // 비운다.
+      // 저장 시 검사·API_CALL 실행·미리보기(ApiCallErrorMessages.describe)와 같은 문장이다(WD-150). 처음 주소든 리다이렉트 대상이든
+      // (WD-693) 막힌 주소로는 호출하지 않았으므로 본문·헤더는 비운다.
       return new TestConnectionResponse(
           false, null, latency, e.getMessage(), displayUrl, null, Map.of(), null);
-
-    } catch (WebClientResponseException e) {
-      long latency = System.currentTimeMillis() - start;
-      String err = "HTTP " + e.getStatusCode().value();
-      // 4xx/5xx 응답 본문도 운영자가 봐야 디버깅 가능하므로 함께 노출.
-      String body = truncateBody(e.getResponseBodyAsString(), secret);
-      Map<String, String> headers = sanitizeHeaders(e.getHeaders(), secret);
-      String contentType =
-          e.getHeaders().getContentType() != null
-              ? e.getHeaders().getContentType().toString()
-              : null;
-      return new TestConnectionResponse(
-          false, e.getStatusCode().value(), latency, err, displayUrl, body, headers, contentType);
 
     } catch (Exception e) {
       long latency = System.currentTimeMillis() - start;
@@ -587,21 +586,20 @@ public class ApiConnectionService {
             false, null, latency, blocked.getMessage(), displayUrl, null, Map.of(), null);
       }
       // 예외 메시지에 URL·키가 실릴 수 있어 가린 문구만 응답·lastErrorMessage·알림으로 보낸다(WD-177).
-      String msg = toUserFacingErrorMessage(e, targetUrl, secret);
+      String msg = toUserFacingErrorMessage(e, secret);
       return new TestConnectionResponse(
           false, null, latency, msg, displayUrl, null, Map.of(), null);
     }
   }
 
   /**
-   * 헬스체크 WebClient — 접속 시점 주소 검사가 걸린 커넥터를 쓴다(WD-613). 압축(compress)은 예전 기본 커넥터({@code
-   * WebClient.builder().build()})와 같게 켠다. HttpClient 는 전역 연결 풀·이벤트 루프를 공유하므로 호출마다 만들어도 연결을 새로 열지
-   * 않는다.
+   * 헬스체크 WebClient — 프로젝트 관행에 따라 빌더를 직접 생성한다(별도 Bean 없음). 자동 리다이렉트를 끄고 따라가기는 미리보기·실행과 같은 {@link
+   * RedirectFollower} 가 홉마다 검사하며 한다(WD-693). 커넥터는 접속 시점 주소 검사가 걸린 {@link SsrfSafeHttpClientFactory}
+   * 의 HttpClient 라(WD-613) 첫 요청과 모든 리다이렉트 홉이 DNS 재바인딩에 막힌다. 주입받은 팩토리가 필요해 필드 초기화 대신 호출마다 만든다 —
+   * HttpClient 는 전역 연결 풀·이벤트 루프를 공유하므로 연결을 새로 열지 않는다.
    */
   private WebClient healthCheckClient() {
-    return WebClient.builder()
-        .clientConnector(
-            new ReactorClientHttpConnector(ssrfSafeHttpClientFactory.httpClient().compress(true)))
+    return RedirectFollower.withoutAutoRedirect(WebClient.builder(), ssrfSafeHttpClientFactory)
         .build();
   }
 
@@ -620,8 +618,7 @@ public class ApiConnectionService {
    * 쿼리 키(원문·인코딩형)를 {@code ****XXXX} 로 가린다. API_KEY 를 쿼리로 보내는 연결에서 예외 메시지에 호출 URL 이 실리면 키가 그대로 남기
    * 때문이다.
    */
-  private static String toUserFacingErrorMessage(
-      Exception e, String targetUrl, AuthQueryMasker.SentSecrets secret) {
+  private static String toUserFacingErrorMessage(Exception e, AuthQueryMasker.SentSecrets secret) {
     String message;
     if (isTimeoutException(e)) {
       // Reactor block(Duration) 타임아웃(IllegalStateException)은 분류기의 타임아웃 판별에 걸리지 않을 수 있어
@@ -631,24 +628,13 @@ public class ApiConnectionService {
       // 이미 한국어 안내(값 원문 없음) — 분류기 4단계로 보내면 「API 호출 중 오류가 발생했습니다: 」 접두가 겹친다.
       message = e.getMessage();
     } else {
-      // 연결 거부·연결 실패·호스트 없음 등은 API_CALL 실행·미리보기와 같은 분류·문장을 쓴다(WD-150 → WD-180). 분류하지 못한 원문은
-      // 분류기가 URL 의 쿼리·userinfo 를 지운다(WD-177).
-      message =
-          ApiCallErrorMessages.describe(e, HEALTH_CHECK_TIMEOUT_SECONDS * 1000, hostOf(targetUrl));
+      // 연결 거부·연결 실패·호스트 없음 등은 API_CALL 실행·미리보기와 같은 분류·문장을 쓴다(WD-150 → WD-180). 대상 서버와 주고받다 난
+      // 전송 오류는 RedirectFollower 가 실패한 홉의 호스트로 이미 문구를 만들어 둔다(WD-693). 분류하지 못한 원문은 분류기가 URL 의
+      // 쿼리·userinfo 를 지운다(WD-177).
+      message = ApiCallErrorMessages.describe(e, HEALTH_CHECK_TIMEOUT_SECONDS * 1000);
     }
     // 분류하지 못한 원문에 인증 쿼리 키(원문·인코딩형)가 실려 올 수 있어 마지막에 가린다(WD-177).
     return secret.scrubText(message);
-  }
-
-  /**
-   * 「호스트 이름을 찾을 수 없습니다: X」 문구용 호스트(밑줄 든 호스트도 {@link UrlAuthority} 로 읽는다, WD-676). 해석할 수 없으면 null.
-   */
-  private static String hostOf(String url) {
-    try {
-      return url != null ? UrlAuthority.hostOrNull(URI.create(url)) : null;
-    } catch (IllegalArgumentException e) {
-      return null;
-    }
   }
 
   /**

@@ -34,6 +34,7 @@ vi.mock('./ChartRenderer', () => ({
   ),
 }));
 
+import { EmptyResponseError } from '../../lib/api-error';
 import { DashboardWidgetCard } from './DashboardWidgetCard';
 
 const DIV_ZERO = 'ERROR: division by zero\nSQLState: 22012';
@@ -218,5 +219,42 @@ describe('DashboardWidgetCard — 볼 수 없는 차트 위젯 (WD-195)', () => 
 
     fireEvent.click(screen.getByTitle('위젯 제거'));
     expect(onRemove).toHaveBeenCalledWith(9);
+  });
+});
+
+describe('DashboardWidgetCard — 조회 성공·데이터 없음 (WD-693)', () => {
+  beforeEach(() => {
+    useChartMock.mockReset();
+    useChartDataMock.mockReset();
+    useChartMock.mockReturnValue({ data: chart, isLoading: false });
+  });
+
+  // 빈 성공 응답은 조회 함수(analyticsApi.getChartData)가 EmptyResponseError 로 바꾼다 — 위젯은 일반 조회 실패 갈래로 보인다.
+  it('빈 성공 응답(EmptyResponseError)이면 스피너 대신 일반 안내와 「다시 시도」를 보이고, 누르면 이 위젯만 다시 조회한다', async () => {
+    const refetch = vi.fn().mockResolvedValue({ isError: false });
+    useChartDataMock.mockReturnValue(
+      chartDataState({
+        data: undefined,
+        isError: true,
+        error: new EmptyResponseError('차트 데이터'),
+        status: 'error',
+        refetch,
+      }),
+    );
+    render(<DashboardWidgetCard widget={widget} isEditing={false} />);
+
+    expect(screen.getByRole('alert')).toHaveTextContent('데이터를 불러올 수 없습니다.');
+    fireEvent.click(screen.getByRole('button', { name: '다시 시도' }));
+    await vi.waitFor(() => expect(refetch).toHaveBeenCalledTimes(1));
+    // 위젯 안 안내가 사유를 보이므로 토스트는 띄우지 않는다(WD-686 다시 시도와 같다)
+    expect(handleApiErrorMock).not.toHaveBeenCalled();
+  });
+
+  it('조회 대기(비활성 쿼리 — status pending)는 안내 없이 스피너 그대로다', () => {
+    useChartDataMock.mockReturnValue(chartDataState({ data: undefined, status: 'pending' }));
+    render(<DashboardWidgetCard widget={widget} isEditing={false} />);
+
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '다시 시도' })).not.toBeInTheDocument();
   });
 });
