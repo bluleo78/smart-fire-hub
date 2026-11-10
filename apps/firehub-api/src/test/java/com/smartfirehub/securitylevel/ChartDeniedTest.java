@@ -10,6 +10,7 @@ import com.smartfirehub.analytics.dto.DashboardDataResponse;
 import com.smartfirehub.analytics.dto.UpdateChartRequest;
 import com.smartfirehub.analytics.service.AnalyticsDashboardService;
 import com.smartfirehub.analytics.service.ChartService;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.util.NormalizedSql;
@@ -38,6 +39,10 @@ class ChartDeniedTest extends IntegrationTestBase {
   private static final String PUB_VALUE = "pub-row";
 
   @Autowired private DSLContext dsl;
+
+  /** 물리 테이블을 만들고 지우는 데이터 저장소 — 질의는 여기서 돈다. 분리 모드에서는 플랫폼 DB 와 다른 서버다(WD-705). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   @Autowired private PasswordEncoder encoder;
   @Autowired private ChartService chartService;
   @Autowired private AnalyticsDashboardService dashboardService;
@@ -65,10 +70,10 @@ class ChartDeniedTest extends IntegrationTestBase {
     secTable = m + "_sec";
     pubTable = m + "_pub";
     // 실행까지 확인하므로 물리 테이블과 실제 행을 만든다. SEC_VALUE 가 자격 없는 조회자 결과에 나오면 누출이다.
-    dsl.execute("CREATE TABLE " + schema + "." + secTable + " (v text)");
-    dsl.execute("INSERT INTO " + schema + "." + secTable + " VALUES ('" + SEC_VALUE + "')");
-    dsl.execute("CREATE TABLE " + schema + "." + pubTable + " (v text)");
-    dsl.execute("INSERT INTO " + schema + "." + pubTable + " VALUES ('" + PUB_VALUE + "')");
+    dataDsl.execute("CREATE TABLE " + schema + "." + secTable + " (v text)");
+    dataDsl.execute("INSERT INTO " + schema + "." + secTable + " VALUES ('" + SEC_VALUE + "')");
+    dataDsl.execute("CREATE TABLE " + schema + "." + pubTable + " (v text)");
+    dataDsl.execute("INSERT INTO " + schema + "." + pubTable + " VALUES ('" + PUB_VALUE + "')");
     datasets.add(fx.createDatasetRow(secTable, fx.levelId("민감"), owner));
     datasets.add(fx.createDatasetRow(pubTable, fx.levelId("공개"), owner));
     secChart = chart(m + "_secq", "SELECT v FROM " + secTable);
@@ -148,8 +153,8 @@ class ChartDeniedTest extends IntegrationTestBase {
     datasets.forEach(fx::deleteDatasetRow);
     users.forEach(fx::deleteUser);
     roles.forEach(fx::deleteRole);
-    dsl.execute("DROP TABLE IF EXISTS " + schema + "." + secTable);
-    dsl.execute("DROP TABLE IF EXISTS " + schema + "." + pubTable);
+    dataDsl.execute("DROP TABLE IF EXISTS " + schema + "." + secTable);
+    dataDsl.execute("DROP TABLE IF EXISTS " + schema + "." + pubTable);
   }
 
   private static Map<Long, ChartDataResponse> byChart(DashboardDataResponse d) {

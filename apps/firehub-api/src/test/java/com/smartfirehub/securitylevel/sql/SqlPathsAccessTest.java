@@ -6,6 +6,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
@@ -45,6 +46,10 @@ class SqlPathsAccessTest extends IntegrationTestBase {
 
   @Autowired private MockMvc mockMvc;
   @Autowired private DSLContext dsl;
+
+  /** 물리 테이블을 만들고 지우는 데이터 저장소 — 질의는 여기서 돈다. 분리 모드에서는 플랫폼 DB 와 다른 서버다(WD-705). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   @Autowired private PasswordEncoder encoder;
   @Autowired private JwtTokenProvider jwt;
   @Autowired private ObjectMapper om;
@@ -71,10 +76,10 @@ class SqlPathsAccessTest extends IntegrationTestBase {
     pubTable = m + "_pub";
     secTable = m + "_sec";
     // 실행 결과까지 확인하므로 물리 테이블도 만든다. 민감 테이블의 값 SEC_VALUE 가 응답에 나오면 누출이다.
-    dsl.execute("CREATE TABLE " + schema + "." + pubTable + " (v text)");
-    dsl.execute("INSERT INTO " + schema + "." + pubTable + " VALUES ('" + PUB_VALUE + "')");
-    dsl.execute("CREATE TABLE " + schema + "." + secTable + " (v text)");
-    dsl.execute("INSERT INTO " + schema + "." + secTable + " VALUES ('" + SEC_VALUE + "')");
+    dataDsl.execute("CREATE TABLE " + schema + "." + pubTable + " (v text)");
+    dataDsl.execute("INSERT INTO " + schema + "." + pubTable + " VALUES ('" + PUB_VALUE + "')");
+    dataDsl.execute("CREATE TABLE " + schema + "." + secTable + " (v text)");
+    dataDsl.execute("INSERT INTO " + schema + "." + secTable + " VALUES ('" + SEC_VALUE + "')");
     pubId = fx.createDatasetRow(pubTable, fx.levelId("공개"), owner);
     datasets.add(pubId);
     secId = fx.createDatasetRow(secTable, fx.levelId("민감"), owner);
@@ -103,8 +108,8 @@ class SqlPathsAccessTest extends IntegrationTestBase {
     datasets.forEach(fx::deleteDatasetRow);
     users.forEach(fx::deleteUser);
     roles.forEach(fx::deleteRole);
-    dsl.execute("DROP TABLE IF EXISTS " + schema + "." + pubTable);
-    dsl.execute("DROP TABLE IF EXISTS " + schema + "." + secTable);
+    dataDsl.execute("DROP TABLE IF EXISTS " + schema + "." + pubTable);
+    dataDsl.execute("DROP TABLE IF EXISTS " + schema + "." + secTable);
   }
 
   /** 지정 등급 자격(역할 하나)만 가진 사용자의 Bearer 토큰. */
@@ -181,7 +186,7 @@ class SqlPathsAccessTest extends IntegrationTestBase {
         "SQL_WRITE_DOWNGRADE");
     // 거부 후 공개 테이블에 민감 값이 복사되지 않았다(부작용 없음).
     assertThat(
-            dsl.fetchValue(
+            dataDsl.fetchValue(
                 "SELECT count(*) FROM "
                     + schema
                     + "."
@@ -194,7 +199,7 @@ class SqlPathsAccessTest extends IntegrationTestBase {
     MvcResult ok =
         postJson(path, high, sqlBody("INSERT INTO " + pubTable + " (v) SELECT v FROM " + pubTable));
     assertThat(ok.getResponse().getStatus()).isEqualTo(200);
-    assertThat(dsl.fetchValue("SELECT count(*) FROM " + schema + "." + pubTable)).isEqualTo(2L);
+    assertThat(dataDsl.fetchValue("SELECT count(*) FROM " + schema + "." + pubTable)).isEqualTo(2L);
   }
 
   /**
@@ -236,7 +241,7 @@ class SqlPathsAccessTest extends IntegrationTestBase {
     }
     // 부작용 없음: 공개 테이블에 민감 값이 복사되지 않았고, 민감 테이블 행이 지워지지 않았다.
     assertThat(
-            dsl.fetchValue(
+            dataDsl.fetchValue(
                 "SELECT count(*) FROM "
                     + schema
                     + "."
@@ -245,7 +250,7 @@ class SqlPathsAccessTest extends IntegrationTestBase {
                     + SEC_VALUE
                     + "'"))
         .isEqualTo(0L);
-    assertThat(dsl.fetchValue("SELECT count(*) FROM " + schema + "." + secTable)).isEqualTo(1L);
+    assertThat(dataDsl.fetchValue("SELECT count(*) FROM " + schema + "." + secTable)).isEqualTo(1L);
   }
 
   @Test
@@ -269,7 +274,7 @@ class SqlPathsAccessTest extends IntegrationTestBase {
   void schemaListing_showsOnlyVisibleDatasetTables() throws Exception {
     // 가시성과 무관하게 data 스키마에 존재하는 비데이터셋 테이블(스테이징) — 항상 숨겨져야 한다.
     String staging = "stg_import_sp" + System.nanoTime();
-    dsl.execute("CREATE TABLE " + schema + "." + staging + " (v int)");
+    dataDsl.execute("CREATE TABLE " + schema + "." + staging + " (v int)");
     try {
       List<String> low = schemaTables("/api/v1/analytics/queries/schema", tokenAt("공개"));
       assertThat(low).contains(pubTable).doesNotContain(secTable, staging);
@@ -281,7 +286,7 @@ class SqlPathsAccessTest extends IntegrationTestBase {
       assertThat(schemaTables(byId, tokenAt("공개"))).isEmpty();
       assertThat(schemaTables(byId, tokenAt("민감"))).containsExactly(secTable);
     } finally {
-      dsl.execute("DROP TABLE IF EXISTS " + schema + "." + staging);
+      dataDsl.execute("DROP TABLE IF EXISTS " + schema + "." + staging);
     }
   }
 

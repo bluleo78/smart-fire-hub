@@ -8,6 +8,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataset.exception.DatasetNotFoundException;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -43,6 +44,10 @@ class DatasetRouteHidingTest extends IntegrationTestBase {
 
   @Autowired private MockMvc mockMvc;
   @Autowired private DSLContext dsl;
+
+  /** 물리 테이블을 만들고 지우는 데이터 저장소 — 질의는 여기서 돈다. 분리 모드에서는 플랫폼 DB 와 다른 서버다(WD-705). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   @Autowired private PasswordEncoder encoder;
   @Autowired private JwtTokenProvider jwt;
   @Autowired private ObjectMapper objectMapper;
@@ -72,7 +77,7 @@ class DatasetRouteHidingTest extends IntegrationTestBase {
     // 양성 대조(200)가 성립하려면 상세 조회가 읽는 물리 테이블이 있어야 한다 — 메타 행만으론 500 이 난다.
     visibleTable = "rh_visible_" + System.nanoTime();
     visibleId = fx.createDatasetRow(visibleTable, fx.levelId("공개"), creatorId);
-    dsl.execute("CREATE TABLE IF NOT EXISTS \"data\".\"" + visibleTable + "\" (id bigserial)");
+    dataDsl.execute("CREATE TABLE IF NOT EXISTS \"data\".\"" + visibleTable + "\" (id bigserial)");
     token = "Bearer " + jwt.generateAccessToken(userId, "rh" + userId, DEFAULT_TEST_TENANT_ID);
   }
 
@@ -81,7 +86,7 @@ class DatasetRouteHidingTest extends IntegrationTestBase {
     TenantContext.set(DEFAULT_TEST_TENANT_ID);
     fx.deleteDatasetRow(hiddenId);
     fx.deleteDatasetRow(visibleId);
-    dsl.execute("DROP TABLE IF EXISTS \"data\".\"" + visibleTable + "\"");
+    dataDsl.execute("DROP TABLE IF EXISTS \"data\".\"" + visibleTable + "\"");
     fx.deleteUser(userId);
     fx.deleteUser(creatorId);
     fx.deleteRole(roleId);

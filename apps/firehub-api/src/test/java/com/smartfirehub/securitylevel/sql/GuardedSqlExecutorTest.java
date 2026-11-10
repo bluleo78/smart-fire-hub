@@ -25,6 +25,7 @@ import com.smartfirehub.dataset.dto.SqlQueryResponse;
 import com.smartfirehub.dataset.exception.SqlQueryException;
 import com.smartfirehub.dataset.service.DataTableQueryService;
 import com.smartfirehub.dataset.service.DatasetDataService;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
@@ -70,6 +71,10 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 class GuardedSqlExecutorTest extends IntegrationTestBase {
 
   @Autowired private DSLContext dsl;
+
+  /** 물리 테이블을 만들고 지우는 데이터 저장소 — 질의는 여기서 돈다. 분리 모드에서는 플랫폼 DB 와 다른 서버다(WD-705). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   @Autowired private PasswordEncoder encoder;
   @Autowired private GuardedSqlExecutor gate;
   @Autowired private DatasetDataService datasetDataService;
@@ -102,10 +107,10 @@ class GuardedSqlExecutorTest extends IntegrationTestBase {
     pub = m + "_pub";
     hidden = m + "_hidden";
     // 실행까지 확인하므로 물리 테이블도 만든다. hidden 의 값(4242)이 결과에 나오면 누출이다.
-    dsl.execute("CREATE TABLE " + schema + "." + pub + " (a int)");
-    dsl.execute("INSERT INTO " + schema + "." + pub + " VALUES (1)");
-    dsl.execute("CREATE TABLE " + schema + "." + hidden + " (a int)");
-    dsl.execute("INSERT INTO " + schema + "." + hidden + " VALUES (4242)");
+    dataDsl.execute("CREATE TABLE " + schema + "." + pub + " (a int)");
+    dataDsl.execute("INSERT INTO " + schema + "." + pub + " VALUES (1)");
+    dataDsl.execute("CREATE TABLE " + schema + "." + hidden + " (a int)");
+    dataDsl.execute("INSERT INTO " + schema + "." + hidden + " VALUES (4242)");
     pubId = fx.createDatasetRow(pub, fx.levelId("공개"), creator);
     datasets.add(pubId);
     hiddenId = fx.createDatasetRow(hidden, fx.levelId("기밀"), creator);
@@ -129,8 +134,8 @@ class GuardedSqlExecutorTest extends IntegrationTestBase {
     datasets.forEach(fx::deleteDatasetRow);
     users.forEach(fx::deleteUser);
     roles.forEach(fx::deleteRole);
-    dsl.execute("DROP TABLE IF EXISTS " + schema + "." + pub);
-    dsl.execute("DROP TABLE IF EXISTS " + schema + "." + hidden);
+    dataDsl.execute("DROP TABLE IF EXISTS " + schema + "." + pub);
+    dataDsl.execute("DROP TABLE IF EXISTS " + schema + "." + hidden);
   }
 
   /**
@@ -298,9 +303,9 @@ class GuardedSqlExecutorTest extends IntegrationTestBase {
       errors.add(gate.executeAnalytics(viewer, sql, 100, true).error());
     }
     // 행 변화를 먼저 본다 — 분류가 틀리면 실제로 일어난 쓰기가 결함의 실체다.
-    assertThat(dsl.fetchOne("SELECT count(*) FROM " + schema + "." + pub).get(0, Integer.class))
+    assertThat(dataDsl.fetchOne("SELECT count(*) FROM " + schema + "." + pub).get(0, Integer.class))
         .isEqualTo(1);
-    assertThat(dsl.fetchOne("SELECT a FROM " + schema + "." + pub).get(0, Integer.class))
+    assertThat(dataDsl.fetchOne("SELECT a FROM " + schema + "." + pub).get(0, Integer.class))
         .isEqualTo(1);
     for (int k = 0; k < dml.size(); k++) {
       assertThat(errors.get(k)).as(dml.get(k)).contains("SELECT 쿼리만");
@@ -327,7 +332,7 @@ class GuardedSqlExecutorTest extends IntegrationTestBase {
         gate.executeAnalytics(
             viewer, "WITH\"d\"AS(DELETE FROM " + pub + " RETURNING *)SELECT*FROM\"d\"", 100, true);
     assertThat(cte.error()).isNotNull();
-    assertThat(dsl.fetchOne("SELECT count(*) FROM " + schema + "." + pub).get(0, Integer.class))
+    assertThat(dataDsl.fetchOne("SELECT count(*) FROM " + schema + "." + pub).get(0, Integer.class))
         .isEqualTo(1);
 
     asUser(userId);
@@ -374,9 +379,9 @@ class GuardedSqlExecutorTest extends IntegrationTestBase {
   @Test
   void datasetQuery_recordsAuditAccessOnlyAfterSuccessfulExecution() {
     String sens = "gse" + System.nanoTime() + "_sens";
-    dsl.execute("CREATE TABLE " + schema + "." + sens + " (a int)");
+    dataDsl.execute("CREATE TABLE " + schema + "." + sens + " (a int)");
     try {
-      dsl.execute("INSERT INTO " + schema + "." + sens + " VALUES (1)");
+      dataDsl.execute("INSERT INTO " + schema + "." + sens + " VALUES (1)");
       long sensId = fx.createDatasetRow(sens, fx.levelId("민감"), creator);
       datasets.add(sensId);
       asUser(userId);
@@ -400,7 +405,7 @@ class GuardedSqlExecutorTest extends IntegrationTestBase {
       assertThat(ok.error()).isNull();
       assertThat(accessRows(userId, sensId)).isEqualTo(1);
     } finally {
-      dsl.execute("DROP TABLE IF EXISTS " + schema + "." + sens);
+      dataDsl.execute("DROP TABLE IF EXISTS " + schema + "." + sens);
     }
   }
 
@@ -507,7 +512,7 @@ class GuardedSqlExecutorTest extends IntegrationTestBase {
     assertThat(cte.queryType()).isEqualTo("UNKNOWN");
     assertThat(cte.error()).startsWith("WITH 절 안에서").contains("DELETE");
     // 거부만 됐는지 — CTE 의 DELETE 가 실행되지 않았다(행이 그대로 남아 있다).
-    assertThat(dsl.fetchOne("SELECT count(*) FROM " + schema + "." + pub).get(0, Integer.class))
+    assertThat(dataDsl.fetchOne("SELECT count(*) FROM " + schema + "." + pub).get(0, Integer.class))
         .isEqualTo(1);
 
     AnalyticsQueryResponse drop = gate.executeAnalytics(viewer, "DROP TABLE " + pub, 100, true);

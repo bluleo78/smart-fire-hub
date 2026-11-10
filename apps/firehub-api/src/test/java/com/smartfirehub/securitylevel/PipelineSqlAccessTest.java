@@ -10,6 +10,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.service.DatasetService;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
@@ -66,6 +67,10 @@ import org.springframework.transaction.event.TransactionalApplicationListener;
 class PipelineSqlAccessTest extends IntegrationTestBase {
 
   @Autowired private DSLContext dsl;
+
+  /** 데이터셋 물리 테이블의 행을 심고 읽는 데이터 저장소 — 파이프라인 실행도 여기서 돈다. 분리 모드에서는 플랫폼 DB 와 다른 서버다(WD-705). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   @Autowired private PasswordEncoder encoder;
   @Autowired private DatasetService datasetService;
   @Autowired private PipelineService pipelineService;
@@ -160,12 +165,15 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
 
   private void insertRow(String t, String v) {
     inTenantFixture(
-        () -> dsl.execute("INSERT INTO " + DataSchema.qualify(t) + " (v) VALUES (?)", v));
+        () -> dataDsl.execute("INSERT INTO " + DataSchema.qualify(t) + " (v) VALUES (?)", v));
   }
 
   private int rowCount(String t) {
     return inTenantFixture(
-        () -> dsl.fetchOne("SELECT count(*) FROM " + DataSchema.qualify(t)).get(0, Integer.class));
+        () ->
+            dataDsl
+                .fetchOne("SELECT count(*) FROM " + DataSchema.qualify(t))
+                .get(0, Integer.class));
   }
 
   /** 기본 USER 역할을 떼고 지정 등급 자격의 역할 하나만 가진 사용자. */
@@ -985,7 +993,8 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
   private List<String> values(String t) {
     return inTenantFixture(
         () ->
-            dsl.fetch("SELECT v FROM " + DataSchema.qualify(t) + " ORDER BY v")
+            dataDsl
+                .fetch("SELECT v FROM " + DataSchema.qualify(t) + " ORDER BY v")
                 .getValues(0, String.class));
   }
 
@@ -1083,7 +1092,7 @@ class PipelineSqlAccessTest extends IntegrationTestBase {
     var rows =
         inTenantFixture(
             () ->
-                dsl.fetch(
+                dataDsl.fetch(
                     "SELECT n, d, b, dt, ts FROM " + DataSchema.qualify(out) + " ORDER BY n DESC"));
     assertThat(rows).hasSize(2);
     assertThat(rows.get(0).get("n", Long.class))
