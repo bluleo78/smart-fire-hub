@@ -545,6 +545,34 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
 - 배포: **api 단독**. 사전 점검 없음(인덱스를 느슨하게 할 뿐 기존 행은 그대로 통과).
 - 롤백: 이미지만 되돌린다. **DB 는 되돌리지 않는다** — 배포 뒤 같은 이름이 생기면 유일 인덱스를 다시 만들 수 없다. 구 코드는 이름 중복 검사를 테넌트 전체로 하므로 새 중복을 만들지는 않는다.
 
+### V159 PYTHON 읽기 미확인 표식 DB화 — 소유자 계정 통계 열람 권한 (WD-701 4차·WD-713)
+- 무엇이 바뀌나: PYTHON 읽기 슬롯의 "세션 끊기 미확인" 표식이 데이터 저장소 표 `public.python_read_unconfirmed_slot` 으로 옮겨 갔다(플랫폼 V159 / 분리 설치 데이터 저장소 V2). 실행 준비는 SECURITY DEFINER 함수 `public.fh_python_read_sessions_before(text[], timestamptz[])` 로 **표식 전에 시작한** 슬롯 세션 수를 센다 — 런타임 롤(`app_tenant`)에게는 남의 세션 `backend_start` 가 NULL 로 보여서(실측) 함수 소유자 권한으로 센다.
+- **사전 점검(필수) — 함수 소유자 계정의 통계 열람 권한.** 함수 소유자는 마이그레이션을 돌린 계정이다: PG 설치본은 `spring.flyway.user`, 분리 설치(Tibero 플랫폼)는 데이터 저장소 소유자 `firehub.data-store.postgres.owner-username`(`DATA_STORE_PG_OWNER_USERNAME`). 이 계정이 **superuser 도 아니고 `pg_read_all_stats` 권한도 없으면** 함수 안에서도 `backend_start` 가 NULL 로 보여 모든 슬롯 세션이 "표식 전" 으로 세진다 → 표식이 달린 슬롯의 PYTHON 실행이 세션이 하나라도 있는 동안 계속 "Python 읽기 권한을 준비하지 못해 실행을 중단했습니다." 로 거부된다(fail-closed 장애 — 보안 공백은 아니다).
+  - 배포 **전**(함수가 아직 없다) — 그 계정으로 접속해서, 또는 이름을 넣어:
+    ```sql
+    -- 그 계정으로 접속한 경우
+    SELECT current_user, rolsuper, pg_has_role(current_user, 'pg_read_all_stats', 'USAGE') AS read_all_stats
+    FROM pg_roles WHERE rolname = current_user;
+    -- 다른 계정에서 이름으로
+    SELECT rolname, rolsuper, pg_has_role(oid, 'pg_read_all_stats', 'USAGE') AS read_all_stats
+    FROM pg_roles WHERE rolname = '<flyway 또는 owner-username 계정>';
+    ```
+  - 배포 **후**(실제 소유자를 본다 — 설정 이름이 아니라):
+    ```sql
+    SELECT r.rolname, r.rolsuper, pg_has_role(r.oid, 'pg_read_all_stats', 'USAGE') AS read_all_stats
+    FROM pg_proc p JOIN pg_roles r ON r.oid = p.proowner
+    WHERE p.oid = to_regprocedure('public.fh_python_read_sessions_before(text[], timestamptz[])');
+    ```
+  - 판정: `rolsuper = t` 이거나 `read_all_stats = t` 면 통과. `MEMBER` 가 아니라 `USAGE` 로 본다 — PG16 이상에서 `INHERIT FALSE` 로 받은 멤버십(예: CREATEROLE 자동 부여)은 멤버여도 권한을 쓰지 못한다(V137 절의 같은 함정).
+  - 조치: `GRANT pg_read_all_stats TO <계정>;` (PG16 이상은 `GRANT pg_read_all_stats TO <계정> WITH INHERIT TRUE;` — 계정이 `NOINHERIT` 면 `ALTER ROLE <계정> INHERIT` 도 필요). 함수는 SECURITY DEFINER 라 GRANT **즉시** 정상이 된다(재기동 불필요). 기동 경고만 다음 기동부터 사라진다.
+- **세션 끊기 계정(같은 계정인지 확인).** 실제로 세션을 끊는 소유자 풀은 `firehub.data-store.postgres.owner-username`(기본값 `${spring.flyway.user}`)이다. 이 계정은 끊기 위해 superuser 또는 `pg_signal_backend` 권한이 필요하고(V137 절), **통계 열람 권한도** 있어야 한다 — 없으면 끊기 질의의 `backend_start is null` 분기로 표식 뒤에 시작한 정상 세션까지 슬롯 세션을 모두 끊는다(과도한 끊기 — 가용성 문제, 보안 공백 아님). 기본 설정이면 함수 소유자와 같은 계정이라 위 점검 하나로 끝난다. 두 값을 따로 설정했다면 이 계정도 위 "배포 전" 쿼리로 본다.
+- **기동 자가 점검:** api 는 기동 때(ApplicationReady) 위 "배포 후" 쿼리로 함수 소유자를 보고, 통과하지 못하면 WARN 한 줄을 남긴다 — `PYTHON 읽기 세션 수 함수(public.fh_python_read_sessions_before(text[], timestamptz[]))의 소유자 롤 <롤> 가 superuser 도 pg_read_all_stats 권한 보유자도 아니다 — … 조치: GRANT pg_read_all_stats TO <롤> …`. 점검 질의가 실패해도 `… 점검하지 못했다(기동은 계속)` WARN 만 남기고 기동은 막지 않는다. 배포 후 api 로그에서 이 두 문구가 없는지 본다.
+- **표식이 끝내 남을 때 보는 로그(WD-713):**
+  - `PYTHON 실행 준비 거부 — 미확인 표식 슬롯의 세션을 정리하지 못했다: <사유>(tenant= slot= 표식=[종류@시각#번호] 기준시각=)` (WARN, 거부된 실행마다 한 줄). 표식 뒤에 시작한 세션도 계속 남는 것처럼 보이면 위 소유자 권한부터 본다.
+  - `등급 정의 변경(kind=…) 뒤 PYTHON 읽기 전체 동기화를 끝내 하지 못하고 버렸다 — … REDEFINED·REDEFINED_APPLIED … (tenant= slots=1~10)` (ERROR). 그 표식은 다음 등급 정의 변경 동기화만 지운다 — 원인을 해소한 뒤 등급 정의를 다시 저장한다. 그 전까지 일반 동기화(일 1회 포함)는 표식 슬롯을 넓히지 않는다(실행 준비는 계속 넓히므로 PYTHON 실행은 된다).
+  - `PYTHON 슬롯 미확인 표식을 데이터 저장소에 끝내 쓰지 못했다(…) — 이 인스턴스 메모리 표식만 남아 … (tenant= slots= kind=)` (ERROR). 그 표식은 이 인스턴스만 본다(재기동하면 사라진다) — 데이터 저장소 연결을 확인한다.
+- 배포: api 단독(V159 는 표·함수·GRANT 만 만든다). 롤백: 이미지만 되돌린다 — 표·함수는 남겨도 무해하다(구 코드는 쓰지 않는다).
+
 ### opencode baseURL 사설망 점검 (이슈 #698)
 
 #693 의 SSRF 가드는 **저장 시점**에만 baseURL 을 검사한다. 그 가드가 생기기 전에 저장된 행에는

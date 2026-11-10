@@ -438,6 +438,7 @@ $ docker exec smart-fire-hub-prod-db-1 psql -U app -d smartfirehub -c "select to
 
 **권고**: 별도 승인 하에 방안 A(전용 비-슈퍼유저 롤)를 가장 먼저 검토할 것을 제안한다 —
 가장 근본적인 축소이기 때문이다. 다만 그 결정 자체는 이 태스크의 범위가 아니다.
+(2026-11 추가, WD-713) 방안 A 로 소유자 계정을 비-슈퍼유저로 바꿀 때는 그 계정에 `pg_read_all_stats`(PG16 이상 `WITH INHERIT TRUE`)와 `pg_signal_backend` 를 함께 줘야 한다 — 없으면 PYTHON 읽기 세션 수 함수(`fh_python_read_sessions_before`)·세션 끊기가 모든 슬롯 세션의 시작 시각을 NULL 로 보고 표식 슬롯의 실행을 계속 거부한다. 점검 SQL·조치는 `.claude/docs/deploy.md` V159 절.
 
 ---
 

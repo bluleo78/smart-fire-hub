@@ -79,6 +79,21 @@ final class PythonReadUnconfirmedMarks {
     }
 
     /**
+     * 로그용 종류 요약(WD-713) — 예: {@code [STALE_SESSION@2026-11-10T09:00Z#2, 메모리#7]}. 표식 시각·번호를 함께 적어
+     * 운영자가 표 행과 맞춰 볼 수 있게 한다.
+     */
+    String describeKinds() {
+      List<String> parts = new ArrayList<>();
+      for (Row r : rows) {
+        parts.add(r.kind() + "@" + r.markedAt() + "#" + r.version());
+      }
+      if (memorySeq != null) {
+        parts.add("메모리#" + memorySeq);
+      }
+      return parts.toString();
+    }
+
+    /**
      * 끊고 확인할 세션의 기준 시각 — 이 시각 전에 시작한 세션만 본다. null 이면 전부. STALE_SESSION 만 있으면 가장 늦은 표식 시각(종류마다 한 행이라
      * 하나뿐).
      */
@@ -284,6 +299,94 @@ final class PythonReadUnconfirmedMarks {
         DSL.val(Kind.REDEFINED.name()),
         DSL.val(Kind.REDEFINED_APPLIED.name()),
         DSL.val(upTo));
+  }
+
+  /** 세션 수 함수(V159·데이터 저장소 V2) — 기동 점검이 소유자를 찾는 서명. */
+  static final String SESSION_COUNT_FUNCTION =
+      "public.fh_python_read_sessions_before(text[], timestamptz[])";
+
+  /**
+   * 세션 수 함수 소유자의 통계 열람 권한(WD-713).
+   *
+   * @param owner 소유자 롤 이름
+   * @param superuser superuser 인가
+   * @param readAllStats {@code pg_read_all_stats} 의 권한을 실제로 쓸 수 있는가({@code
+   *     pg_has_role(...,'USAGE')} — PG16 의 {@code INHERIT FALSE} 부여는 멤버여도 권한을 쓰지 못하므로 MEMBER 가 아니라
+   *     USAGE 로 본다)
+   */
+  record OwnerStatsPrivilege(String owner, boolean superuser, boolean readAllStats) {
+
+    /** 남의 세션 {@code backend_start} 를 볼 수 있는가. */
+    boolean canReadStats() {
+      return superuser || readAllStats;
+    }
+  }
+
+  /**
+   * 세션 수 함수 소유자의 통계 열람 권한을 읽는다(WD-713) — 함수가 없으면 null. 카탈로그({@code pg_proc}·{@code pg_roles})와
+   * {@code pg_has_role} 만 쓰므로 런타임 롤(app_tenant)로도 읽힌다. 설정값(Flyway 계정 이름)이 아니라 실제 소유자를 본다 — PG 설치본은
+   * 플랫폼 Flyway 계정, 분리 설치는 데이터 저장소 소유자 계정(owner-username)이 함수를 만들어 둘이 다를 수 있다.
+   */
+  static OwnerStatsPrivilege sessionCountOwner(DSLContext ctx) {
+    var row =
+        ctx.fetchOne(
+            "select r.rolname, r.rolsuper, pg_has_role(r.oid, 'pg_read_all_stats', 'USAGE')"
+                + " from pg_proc p join pg_roles r on r.oid = p.proowner"
+                + " where p.oid = to_regprocedure({0})",
+            DSL.val(SESSION_COUNT_FUNCTION));
+    if (row == null) {
+      return null;
+    }
+    return new OwnerStatsPrivilege(
+        row.get(0, String.class), row.get(1, Boolean.class), row.get(2, Boolean.class));
+  }
+
+  /**
+   * 기동 점검(WD-713) — 세션 수 함수 소유자가 superuser 도 {@code pg_read_all_stats} 권한 보유자도 아니면 WARN 한 줄을 남긴다. 그
+   * 상태에서는 함수 안에서도 남의 세션 {@code backend_start} 가 NULL 로 보여 모든 슬롯 세션이 "표식 전" 으로 세진다 — 미확인 표식이 달린 슬롯의
+   * PYTHON 실행이 세션이 하나라도 있는 동안 계속 거부된다(fail-closed 장애, 보안 공백은 아님). 기동은 절대 막지 않는다: 점검 질의가 실패하거나 함수가
+   * 없어도 WARN 만 남긴다.
+   *
+   * @return 남긴 경고 문구(없으면 null) — 테스트 확인용
+   */
+  static String warnIfOwnerCannotReadStats(DSLContext ctx) {
+    String msg;
+    try {
+      OwnerStatsPrivilege owner = sessionCountOwner(ctx);
+      msg = ownerStatsWarning(owner);
+      if (msg == null) {
+        // 통과도 한 줄 남긴다 — 점검이 실제로 돌았는지 기동 로그로 확인할 수 있게(기동당 한 번).
+        log.info("PYTHON 읽기 세션 수 함수 소유자 {} 의 통계 열람 권한 확인", owner.owner());
+      }
+    } catch (RuntimeException e) {
+      // 데이터 저장소 접속 실패 등 — 점검만 못 한 것이라 기동은 계속한다.
+      msg = "PYTHON 읽기 세션 수 함수 소유자의 통계 열람 권한을 점검하지 못했다(기동은 계속): " + e;
+    }
+    if (msg != null) {
+      log.warn(msg);
+    }
+    return msg;
+  }
+
+  /** 점검 결과 → 경고 문구(괜찮으면 null) — 판정만 따로 둬 단위 테스트한다(WD-713). */
+  static String ownerStatsWarning(OwnerStatsPrivilege owner) {
+    if (owner == null) {
+      return "PYTHON 읽기 세션 수 함수("
+          + SESSION_COUNT_FUNCTION
+          + ")가 데이터 저장소에 없어 소유자의 통계 열람 권한을 점검하지 못했다 — 마이그레이션(V159·데이터 저장소 V2) 적용을 확인한다";
+    }
+    if (owner.canReadStats()) {
+      return null;
+    }
+    return "PYTHON 읽기 세션 수 함수("
+        + SESSION_COUNT_FUNCTION
+        + ")의 소유자 롤 "
+        + owner.owner()
+        + " 가 superuser 도 pg_read_all_stats 권한 보유자도 아니다 — 남의 세션 시작 시각(backend_start)이 NULL 로 보여 모든 슬롯 세션이 표식"
+        + " 전으로 세지고, 미확인 표식이 달린 슬롯의 PYTHON 실행이 계속 거부된다. 조치: GRANT pg_read_all_stats TO "
+        + owner.owner()
+        + " (PG16 이상은 WITH INHERIT TRUE — 롤이 NOINHERIT 면 INHERIT 가 필요). 함수는 GRANT 즉시 정상이 되고, 이 경고는 다음 기동부터"
+        + " 사라진다";
   }
 
   /** 데이터 저장소 시계의 지금({@code clock_timestamp()}) — 표식 시각과 같은 시계로 비교하려고. */

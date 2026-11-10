@@ -47,6 +47,8 @@ import org.jooq.Result;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.TransientDataAccessResourceException;
@@ -205,6 +207,16 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
     this.tableSavepoint.setPropagationBehavior(TransactionDefinition.PROPAGATION_NESTED);
   }
 
+  /**
+   * 기동 점검(WD-713) — 데이터 저장소의 세션 수 함수 소유자가 남의 세션 시작 시각을 볼 수 있는지(superuser 또는 pg_read_all_stats)
+   * 확인하고, 못 보면 WARN 한 줄을 남긴다. 기동은 막지 않는다(점검 실패도 WARN). 판정·문구는 {@link
+   * PythonReadUnconfirmedMarks#warnIfOwnerCannotReadStats} 에 있다.
+   */
+  @EventListener(ApplicationReadyEvent.class)
+  public void checkSessionCountOwnerOnStartup() {
+    PythonReadUnconfirmedMarks.warnIfOwnerCannotReadStats(dsl);
+  }
+
   /** 현재 테넌트 전체 재동기화. 실패는 예외(호출부가 로그/실패를 정한다). */
   @Override
   public SyncResult syncTenant() {
@@ -286,10 +298,13 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
       toKill = busy.get();
       log.info("넓어질 슬롯에 세션이 있어 끊고 다시 본다(tenant={} slots={} 시도 {})", tenantId, toKill, attempt + 1);
     }
+    // 포기 사유를 예외 문구에 담는다(WD-713) — 실행기의 영구 실패 ERROR 가 이 문구를 싣고, 리스너의 버림 ERROR 가 남는 표식을 알린다.
     throw new IllegalStateException(
-        "PYTHON 슬롯 롤 세션이 계속 다시 붙어 넓히는 GRANT 를 이번에는 걸지 않았다(tenant="
+        "PYTHON 슬롯 롤 세션이 "
+            + LEVELS_SYNC_ATTEMPTS
+            + "번 끊은 뒤에도 계속 다시 붙어 넓히는 GRANT 를 이번에는 걸지 않았다 — 미확인 표식(REDEFINED·REDEFINED_APPLIED)이 남는다(tenant="
             + tenantId
-            + " slots="
+            + " 세션이 남은 slots="
             + toKill
             + ")");
   }
@@ -308,39 +323,70 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
    * <p><b>표식 지우기.</b> 확인과 맞추기가 끝나고 실행 슬롯 롤에 회수 실패가 없으면, 읽은 번호 그대로인 표식만 같은 잠금 트랜잭션에서 지운다(그 사이 다른
    * 인스턴스가 다시 단 표식은 남는다). 메모리 대비 표식은 커밋 뒤 순번이 같을 때만 지운다.
    *
+   * <p><b>거부 로그(WD-713).</b> 끝내 맞추지 못하고 실행을 거부하는 지점(시도 상한·끊기 실패·잠금 안 세션 확인 실패)에서 WARN 한 줄에 테넌트·실행
+   * 슬롯·표식 종류·기준 시각·사유를 남긴다 — 예전에는 게이트가 예외를 감싸기만 해 운영 로그에 아무것도 없었다. 경합으로 생기는 예상된 거부라 ERROR 가 아니라
+   * WARN 이고, 거부된 실행마다 한 줄이다(시도마다의 INFO 는 그대로).
+   *
    * @param firstKill 잠금 전에 처음 끊을 범위(잠금 밖 추정 실행 슬롯 → 기준 시각, 비면 건너뛴다)
+   * @param firstMarks 잠금 밖에서 읽은 추정 실행 슬롯의 표식(없으면 null) — 잠금 안에서 다시 읽기 전에 거부되면 로그에 쓴다
    */
   private SyncResult prepareUnderMarks(
-      long tenantId, int readRank, Map<Integer, OffsetDateTime> firstKill) {
+      long tenantId,
+      int readRank,
+      Map<Integer, OffsetDateTime> firstKill,
+      PythonReadUnconfirmedMarks.SlotMarks firstMarks) {
     Map<Integer, OffsetDateTime> toKill = firstKill;
+    // 거부 로그용 — 마지막으로 본 실행 슬롯과 그 표식(잠금 안에서 다시 읽으면 갱신).
+    AtomicReference<Integer> lastSlot =
+        new AtomicReference<>(firstKill.isEmpty() ? null : firstKill.keySet().iterator().next());
+    AtomicReference<PythonReadUnconfirmedMarks.SlotMarks> lastMarks =
+        new AtomicReference<>(firstMarks);
     for (int attempt = 1; attempt <= LEVELS_SYNC_ATTEMPTS; attempt++) {
-      terminator.terminateWithin(tenantId, toKill, TERMINATE_WAIT);
+      try {
+        terminator.terminateWithin(tenantId, toKill, TERMINATE_WAIT);
+      } catch (IllegalStateException e) {
+        logPrepareRefused(
+            tenantId, lastSlot.get(), lastMarks.get(), "슬롯 세션 끊기 실패: " + e.getMessage());
+        throw e;
+      }
       AtomicReference<Map<Integer, OffsetDateTime>> again = new AtomicReference<>(Map.of());
       AtomicReference<Runnable> afterCommit = new AtomicReference<>(() -> {});
-      SyncResult result =
-          requiresNew.execute(
-              status -> {
-                lockOps.lock(syncLockKey(tenantId));
-                // 잠금 뒤 읽은 등급으로 실행 슬롯을 정한다(applyInTx 와 같은 스냅샷 규칙) — 표식도 잠금 안에서 다시 읽는다.
-                int runSlot = PythonReadSlots.slotFor(levelRepository.findAll(), readRank);
-                PythonReadUnconfirmedMarks.SlotMarks marks =
-                    unconfirmedMarks.read(dsl, tenantId).get(runSlot);
-                if (marks != null) {
-                  Map<Integer, OffsetDateTime> scope = new TreeMap<>();
-                  scope.put(runSlot, marks.cutoff());
-                  if (slotSessionsExist(tenantId, scope)) {
-                    again.set(scope);
-                    return null; // 표식이 요구하는 세션이 남았다 — 잠금을 놓고 그만큼 다시 끊는다
+      SyncResult result;
+      try {
+        result =
+            requiresNew.execute(
+                status -> {
+                  lockOps.lock(syncLockKey(tenantId));
+                  // 잠금 뒤 읽은 등급으로 실행 슬롯을 정한다(applyInTx 와 같은 스냅샷 규칙) — 표식도 잠금 안에서 다시 읽는다.
+                  int runSlot = PythonReadSlots.slotFor(levelRepository.findAll(), readRank);
+                  PythonReadUnconfirmedMarks.SlotMarks marks =
+                      unconfirmedMarks.read(dsl, tenantId).get(runSlot);
+                  lastSlot.set(runSlot);
+                  lastMarks.set(marks);
+                  if (marks != null) {
+                    Map<Integer, OffsetDateTime> scope = new TreeMap<>();
+                    scope.put(runSlot, marks.cutoff());
+                    if (slotSessionsExist(tenantId, scope)) {
+                      again.set(scope);
+                      return null; // 표식이 요구하는 세션이 남았다 — 잠금을 놓고 그만큼 다시 끊는다
+                    }
                   }
-                }
-                SyncResult applied = applyInTx(dsl, tenantId, null, readRank, false);
-                if (marks != null && !runSlotOverGranted(tenantId, runSlot, applied)) {
-                  unconfirmedMarks.clearAfterRun(dsl, tenantId, runSlot, marks);
-                  afterCommit.set(
-                      () -> unconfirmedMarks.clearMemoryAfterRun(tenantId, runSlot, marks));
-                }
-                return applied;
-              });
+                  SyncResult applied = applyInTx(dsl, tenantId, null, readRank, false);
+                  if (marks != null && !runSlotOverGranted(tenantId, runSlot, applied)) {
+                    unconfirmedMarks.clearAfterRun(dsl, tenantId, runSlot, marks);
+                    afterCommit.set(
+                        () -> unconfirmedMarks.clearMemoryAfterRun(tenantId, runSlot, marks));
+                  }
+                  return applied;
+                });
+      } catch (RuntimeException e) {
+        // 잠금 안 세션 확인(fh_python_read_sessions_before)·표식 읽기·맞추기 실패 — 표식이 있었을 때만 표식 때문에 거부된 것으로 남긴다
+        // (표식이 없는 일반 실패는 게이트·호출부가 다룬다).
+        if (lastMarks.get() != null) {
+          logPrepareRefused(tenantId, lastSlot.get(), lastMarks.get(), "잠금 안 세션 확인·맞추기 실패: " + e);
+        }
+        throw e;
+      }
       if (result != null) {
         afterCommit.get().run();
         return result;
@@ -348,8 +394,30 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
       toKill = again.get();
       log.info("끊은 뒤 슬롯 세션이 남아 다시 끊는다(tenant={} 범위={} 시도 {})", tenantId, toKill, attempt);
     }
+    logPrepareRefused(
+        tenantId,
+        lastSlot.get(),
+        lastMarks.get(),
+        LEVELS_SYNC_ATTEMPTS + "번 끊은 뒤에도 표식이 요구하는 세션이 남아");
     throw new IllegalStateException(
         "PYTHON 슬롯 롤 세션이 계속 남아 실행 슬롯을 이번에는 맞추지 않았다(tenant=" + tenantId + " 범위=" + toKill + ")");
+  }
+
+  /**
+   * 실행 준비가 미확인 표식 때문에 실행을 거부하는 지점의 WARN(WD-713) — 테넌트·실행 슬롯·표식 종류·기준 시각·사유. 표식 뒤에 시작한 세션까지 계속 남는
+   * 것처럼 보이면 세션 확인 함수 소유자에게 통계 열람 권한이 없는 것일 수 있다(모든 세션의 시작 시각이 NULL 로 보여 표식 전으로 세진다 — fail-closed
+   * 장애).
+   */
+  private static void logPrepareRefused(
+      long tenantId, Integer slot, PythonReadUnconfirmedMarks.SlotMarks marks, String reason) {
+    log.warn(
+        "PYTHON 실행 준비 거부 — 미확인 표식 슬롯의 세션을 정리하지 못했다: {}(tenant={} slot={} 표식={} 기준시각={}). 표식 뒤에 시작한 세션도 계속"
+            + " 남는다면 세션 확인 함수(fh_python_read_sessions_before) 소유자의 superuser·pg_read_all_stats 권한을 확인한다",
+        reason,
+        tenantId,
+        slot,
+        marks == null ? "?" : marks.describeKinds(),
+        marks == null ? "?" : (marks.cutoff() == null ? "전부" : marks.cutoff()));
   }
 
   /** 실행 슬롯 롤에 회수 실패(과권한)가 남았는가 — 남았으면 표식을 지우지 않는다(게이트가 실행도 거부한다). */
@@ -449,10 +517,29 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
                       "PYTHON 슬롯 미확인 표식 쓰기 실패 — 다시 한다(tenant=" + tenantId + ")");
                 }
               }),
-          true);
+          true,
+          // 포기 지점(재시도 소진·영구 실패·종료, WD-713) — 프로세스 메모리 로그만(실행기 콜백 규칙: 짧게, DB 없이).
+          dropped -> logMarkPersistGivenUp(tenantId, slots, kind, "실행기 다시 쓰기를 끝내 하지 못함"));
     } catch (RuntimeException e) {
       log.error("PYTHON 슬롯 미확인 표식 다시 쓰기 등록 실패(tenant={} slots={})", tenantId, slots, e);
+      logMarkPersistGivenUp(tenantId, slots, kind, "실행기 다시 쓰기 등록 실패");
     }
+  }
+
+  /**
+   * 데이터 저장소 표식 쓰기를 포기했다는 ERROR(WD-713) — 시도마다의 쓰기 실패 로그와 달리 "이제 다시 쓰지 않는다" 는 끝 지점을 한 줄로 남긴다. 결과는 이
+   * 인스턴스 메모리 표식만 남는 상태다: 이 인스턴스의 실행 준비는 그 슬롯을 계속 막지만, 다른 API 인스턴스의 실행 준비는 표식을 보지 못한다(롤링 업데이트 중 남는
+   * 틈). 메모리 표식은 이 인스턴스가 재기동하면 사라진다.
+   */
+  private void logMarkPersistGivenUp(
+      long tenantId, Set<Integer> slots, PythonReadUnconfirmedMarks.Kind kind, String reason) {
+    log.error(
+        "PYTHON 슬롯 미확인 표식을 데이터 저장소에 끝내 쓰지 못했다({}) — 이 인스턴스 메모리 표식만 남아 다른 API 인스턴스의 실행 준비는 이 표식을 보지"
+            + " 못한다. 데이터 저장소 연결을 확인한다(tenant={} slots={} kind={})",
+        reason,
+        tenantId,
+        slots,
+        kind);
   }
 
   /**
@@ -1397,9 +1484,11 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
               firstKill.put(estimated, marks.get(estimated).cutoff());
             }
           }
+          PythonReadUnconfirmedMarks.SlotMarks firstMarks =
+              firstKill.isEmpty() ? null : marks.get(firstKill.keySet().iterator().next());
           // 표식이 없어도 잠금 안에서 표식을 다시 읽는다(리뷰 4) — 잠금 밖 읽기와 잠금 사이에 커밋된 등급 정의 변경의 표식을 놓치지 않게. 잠금 밖
           // 읽기는 첫 끊기 범위를 정하는 데만 쓴다.
-          return prepareUnderMarks(tenantId, readRank, firstKill);
+          return prepareUnderMarks(tenantId, readRank, firstKill, firstMarks);
         },
         slot -> TenantPipelineRole.pythonReadRoleName(runAs.tenantId(), slot));
   }

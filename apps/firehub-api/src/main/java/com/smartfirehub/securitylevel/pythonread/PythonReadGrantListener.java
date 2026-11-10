@@ -484,6 +484,23 @@ public class PythonReadGrantListener {
         PythonReadGrantBackend.waitingAttempt(
             tenantId, log, logContext + " ", sync::syncTenantForLevelsChange),
         // 회수 필수(WD-664 1a) — 커밋 직전 토큰 번호 올리기가 실패했을 때의 유일한 대체 경로라 포화여도 버리지 않는다.
-        true);
+        true,
+        // 포기 지점(재시도 소진·영구 실패·종료, WD-713) — 로그만(실행기 콜백 규칙: 짧게, DB 없이).
+        dropped -> logLevelsSyncGivenUp(tenantId, logContext));
+  }
+
+  /**
+   * 등급 정의 변경 전체 동기화를 실행기가 끝내 버렸다는 ERROR(WD-713). 실행기의 일반 버림 문구("일 1회 동기화가 회복한다")는 이 작업에 맞지 않는다 — 커밋
+   * 콜백이 슬롯 전부(1~10)에 단 REDEFINED 표식과 실행 준비가 남긴 REDEFINED_APPLIED 표식은 이 작업만 지우고, 일반 동기화(일 1회 포함)는 표식
+   * 슬롯을 넓히지 않는다. 그래서 다음 등급 정의 변경 저장이 이 작업을 다시 돌릴 때까지 표식이 남는다(실행 준비는 REDEFINED 슬롯을 세션이 없을 때 계속 넓힌다 —
+   * 기능은 유지, 안전 쪽). Tibero 테넌트는 표식이 없어 해당 없다.
+   */
+  private void logLevelsSyncGivenUp(long tenantId, String logContext) {
+    log.error(
+        "{} 뒤 PYTHON 읽기 전체 동기화를 끝내 하지 못하고 버렸다 — PG 테넌트면 미확인 표식(REDEFINED·REDEFINED_APPLIED)이 남아 일반 동기화(일 1회"
+            + " 포함)는 그 슬롯을 넓히지 않는다. 원인(바로 앞 영구 실패·재시도 로그)을 해소한 뒤 등급 정의를 다시 저장하면 이 작업이 다시 돈다(tenant={}"
+            + " slots=1~10)",
+        logContext,
+        tenantId);
   }
 }

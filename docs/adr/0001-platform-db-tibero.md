@@ -152,7 +152,7 @@ PG는 jOOQ 구현을 그대로 쓰고, Tibero용 MyBatis 구현(`repository/myba
 
 - **두 DB 는 원자적이지 않다.** 스프링 트랜잭션 하나당 데이터 저장소 연결 하나를 열고 beforeCommit 에서 먼저 커밋한다. 그래서 데이터 저장소는 커밋됐는데 플랫폼 쪽이 롤백될 수 있다(이때 경고 로그를 남긴다). 데이터 저장소 연결에는 테넌트 GUC 를 걸지 않는다.
 - **새 설치만 지원한다.** 데이터 저장소 Flyway 기준선(`db/datastore-postgres` V1)은 분리 모드에서만 돌고, 빈 DB 만 받는다. 데이터가 든 기존 DB 를 분리 모드로 옮기는 길은 없다.
-- **소유자 계정**(`owner-url`·`owner-username`)에는 superuser(`CREATE EXTENSION postgis`), `pg_read_all_stats`(없으면 `fh_incremental_cursor_candidate` 가 오류 없이 틀린 값을 돌려준다), `app_tenant` 에 대한 ADMIN OPTION 이 필요하다.
+- **소유자 계정**(`owner-url`·`owner-username`)에는 superuser(`CREATE EXTENSION postgis`), `pg_read_all_stats`(없으면 `fh_incremental_cursor_candidate` 가 오류 없이 틀린 값을 돌려주고, `fh_python_read_sessions_before` 가 모든 슬롯 세션을 미확인 표식 전으로 세어 표식 슬롯의 PYTHON 실행이 계속 거부된다 — 기동 때 WARN, WD-713. PG16 이상은 `WITH INHERIT TRUE` 로 준다. 점검·조치는 `.claude/docs/deploy.md` V159 절), `app_tenant` 에 대한 ADMIN OPTION 이 필요하다.
 - **같은 클러스터면 `app_tenant` 비밀번호도 같아야 한다.** `app_tenant` 는 PG 클러스터 전역 롤이다. PG 플랫폼 DB 와 분리 모드 데이터 저장소가 한 클러스터에 있으면 플랫폼 Flyway(`spring.datasource.password`)와 데이터 저장소 Flyway(`firehub.data-store.postgres.password`)가 기동마다 서로 덮어써 플랫폼 풀 접속이 깨진다. 막지는 않고, 두 값이 다르면 기동 시 경고 로그를 남긴다.
 - **테넌트 파이프라인 롤은 기동 치유(`TenantPipelineRoleBootstrap`)가 데이터 저장소에 만든다.** 플랫폼 마이그레이션이 만들어 주지 않는다.
 - **배포 차단 사항 해제 — WD-493 완료.** 출력 테이블 잠금을 SQL REPLACE 출력 잠금과 같은 DB(데이터 저장소)에서 잡도록 옮겼다(이후 WD-690 에서 세션 잠금이 트랜잭션 범위 잠금으로 바뀌었다). 이제 분리 모드를 배포할 수 있다(남은 선행 이슈는 WD-491 — WD-492 테넌트 격리는 결정 7 로 끝났다).
