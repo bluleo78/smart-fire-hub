@@ -323,7 +323,8 @@ val separateDataStoreTest by tasks.registering(Test::class) {
         includeTestsMatching("com.smartfirehub.dataimport.*")
         includeTestsMatching("com.smartfirehub.pipeline.*")
         includeTestsMatching("com.smartfirehub.analytics.*")
-        includeTestsMatching("com.smartfirehub.securitylevel.pythonread.*")
+        // 보안 등급 판정은 데이터 저장소에서 도는 질의·파이프라인을 가로지른다 — pythonread 만이 아니라 패키지 전체를 분리 모드로 본다(WD-705).
+        includeTestsMatching("com.smartfirehub.securitylevel.*")
         includeTestsMatching("com.smartfirehub.global.datastore.*")
         includeTestsMatching("com.smartfirehub.global.tenant.*")
     }

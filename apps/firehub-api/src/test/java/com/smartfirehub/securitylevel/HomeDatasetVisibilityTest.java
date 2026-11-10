@@ -7,6 +7,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.embedding.config.EmbeddingConfigService;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.settings.model.AiCredentialSlot;
@@ -38,6 +39,10 @@ class HomeDatasetVisibilityTest extends IntegrationTestBase {
 
   @Autowired private MockMvc mockMvc;
   @Autowired private DSLContext dsl;
+
+  /** 물리 테이블을 만들고 지우는 데이터 저장소 — 질의는 여기서 돈다. 분리 모드에서는 플랫폼 DB 와 다른 서버다(WD-705). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   @Autowired private PasswordEncoder encoder;
   @Autowired private JwtTokenProvider jwt;
   @Autowired private ObjectMapper om;
@@ -265,7 +270,7 @@ class HomeDatasetVisibilityTest extends IntegrationTestBase {
     // MockMvc 요청이 끝나면 필터가 TenantContext 를 지운다 — 스키마 해석 전에 다시 세운다.
     TenantContext.set(DEFAULT_TEST_TENANT_ID);
     String schema = com.smartfirehub.global.tenant.DataSchema.current();
-    dsl.execute("CREATE TABLE " + schema + "." + table + " (v text)");
+    dataDsl.execute("CREATE TABLE " + schema + "." + table + " (v text)");
     try {
       TenantRlsTestSupport.runInTenantTransaction(
           fixtureTransactionTemplate,
@@ -294,7 +299,7 @@ class HomeDatasetVisibilityTest extends IntegrationTestBase {
           .as("high trend(오늘)")
           .isEqualTo(highBefore.get("trend").get(6).asLong() + 1);
     } finally {
-      dsl.execute("DROP TABLE IF EXISTS " + schema + "." + table);
+      dataDsl.execute("DROP TABLE IF EXISTS " + schema + "." + table);
     }
   }
 }

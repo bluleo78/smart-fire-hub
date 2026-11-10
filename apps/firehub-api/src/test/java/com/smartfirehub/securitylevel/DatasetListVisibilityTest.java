@@ -11,6 +11,7 @@ import com.smartfirehub.dataset.repository.DatasetSearchRepository;
 import com.smartfirehub.dataset.search.DatasetSearchHit;
 import com.smartfirehub.embedding.EmbeddingDimension;
 import com.smartfirehub.embedding.EmbeddingSpace;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
@@ -37,6 +38,10 @@ class DatasetListVisibilityTest extends IntegrationTestBase {
 
   @Autowired private MockMvc mockMvc;
   @Autowired private DSLContext dsl;
+
+  /** 물리 테이블을 만들고 지우는 데이터 저장소 — 질의는 여기서 돈다. 분리 모드에서는 플랫폼 DB 와 다른 서버다(WD-705). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   @Autowired private PasswordEncoder encoder;
   @Autowired private JwtTokenProvider jwt;
   @Autowired private ObjectMapper om;
@@ -159,13 +164,13 @@ class DatasetListVisibilityTest extends IntegrationTestBase {
   void detail_carriesSecurityLevel() throws Exception {
     // 상세 조회는 물리 테이블 행 수를 센다 — 메타 행만 있으면 500 이라 이 테스트에서만 테이블을 만든다.
     String table = marker + "_visible";
-    dsl.execute("CREATE TABLE IF NOT EXISTS \"data\".\"" + table + "\" (id bigserial)");
+    dataDsl.execute("CREATE TABLE IF NOT EXISTS \"data\".\"" + table + "\" (id bigserial)");
     try {
       JsonNode d = getJson("/api/v1/datasets/" + visibleId);
       assertThat(d.get("securityLevel").get("name").asText()).isEqualTo("공개");
       assertThat(d.get("securityLevelAutoRaisedAt").isNull()).isTrue();
     } finally {
-      dsl.execute("DROP TABLE IF EXISTS \"data\".\"" + table + "\"");
+      dataDsl.execute("DROP TABLE IF EXISTS \"data\".\"" + table + "\"");
     }
   }
 
