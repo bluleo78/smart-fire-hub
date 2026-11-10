@@ -233,6 +233,12 @@ function makeLedgers(customers) {
   return { sales, purchases };
 }
 
+// WD-698: 서버는 이제 isNullable 을 빼면 NULL 허용(기본 키면 NOT NULL)으로 만든다. 이 시드는 「빼면 NOT NULL」 이던 때에 쓰여
+// 비어도 되는 열에만 isNullable: true 를 적었으므로, 나머지 열이 예전처럼 NOT NULL 로 만들어지게 명시해 둔다.
+function notNullByDefault(columns) {
+  return columns.map((c) => ({ isNullable: false, ...c }));
+}
+
 async function batch(token, datasetId, rows, size = 100) {
   for (let i = 0; i < rows.length; i += size) {
     await call(token, 'POST', `/datasets/${datasetId}/data/rows/batch`, { rows: rows.slice(i, i + size) });
@@ -272,7 +278,7 @@ async function seed() {
     tableName: 'sales_ledger',
     description: 'ERP 에서 매일 받아 오는 매출 전표(최근 12개월). 거래처·제품군·공급가액·원가·만기일·입금일을 담는다.',
     categoryId: catFin.id,
-    columns: [
+    columns: notNullByDefault([
       { columnName: 'invoice_no', displayName: '전표번호', dataType: 'VARCHAR', maxLength: 20, isNullable: false, isPrimaryKey: true },
       { columnName: 'invoice_date', displayName: '전표일자', dataType: 'DATE', isIndexed: true },
       { columnName: 'customer_id', displayName: '거래처코드', dataType: 'VARCHAR', maxLength: 10, isIndexed: true },
@@ -284,7 +290,7 @@ async function seed() {
       { columnName: 'cost', displayName: '원가(원)', dataType: 'DECIMAL' },
       { columnName: 'due_date', displayName: '수금만기일', dataType: 'DATE' },
       { columnName: 'paid_date', displayName: '입금일', dataType: 'DATE', isNullable: true, description: '아직 입금되지 않았으면 비어 있다' },
-    ],
+    ]),
   });
   await batch(token, dsSales.id, sales);
   console.log(`  매출 전표 ${sales.length}건`);
@@ -294,13 +300,13 @@ async function seed() {
     tableName: 'purchase_ledger',
     description: 'ERP 에서 매일 받아 오는 매입(발주) 전표(최근 12개월)',
     categoryId: catFin.id,
-    columns: [
+    columns: notNullByDefault([
       { columnName: 'po_no', displayName: '발주번호', dataType: 'VARCHAR', maxLength: 20, isNullable: false, isPrimaryKey: true },
       { columnName: 'po_date', displayName: '발주일자', dataType: 'DATE', isIndexed: true },
       { columnName: 'supplier_name', displayName: '공급사', dataType: 'VARCHAR', maxLength: 40 },
       { columnName: 'category', displayName: '매입구분', dataType: 'VARCHAR', maxLength: 20 },
       { columnName: 'amount', displayName: '매입금액(원)', dataType: 'DECIMAL' },
-    ],
+    ]),
   });
   await batch(token, dsPurchase.id, purchases);
   console.log(`  매입 전표 ${purchases.length}건`);
@@ -310,7 +316,7 @@ async function seed() {
     tableName: 'customers',
     description: '거래처 기본 정보와 구매 담당자 연락처, 등급·여신 한도·위치. 개인정보가 들어 있어 영업·재무 역할만 조회한다.',
     categoryId: catCust.id,
-    columns: [
+    columns: notNullByDefault([
       { columnName: 'customer_id', displayName: '거래처코드', dataType: 'VARCHAR', maxLength: 10, isNullable: false, isPrimaryKey: true },
       { columnName: 'customer_name', displayName: '거래처명', dataType: 'VARCHAR', maxLength: 40 },
       { columnName: 'industry', displayName: '업종', dataType: 'VARCHAR', maxLength: 20 },
@@ -321,7 +327,7 @@ async function seed() {
       { columnName: 'contact_email', displayName: '이메일', dataType: 'VARCHAR', maxLength: 60 },
       { columnName: 'credit_limit', displayName: '여신한도(백만원)', dataType: 'INTEGER' },
       { columnName: 'location', displayName: '위치', dataType: 'GEOMETRY' },
-    ],
+    ]),
   });
   await batch(
     token,
@@ -346,13 +352,13 @@ async function seed() {
     tableName: 'customer_inquiries',
     description: '메일·전화·영업담당을 통해 들어온 거래처 문의·클레임 원문(당일분). 긴급도 분류 파이프라인의 입력',
     categoryId: catCust.id,
-    columns: [
+    columns: notNullByDefault([
       { columnName: 'inquiry_no', displayName: '접수번호', dataType: 'VARCHAR', maxLength: 20, isNullable: false, isPrimaryKey: true },
       { columnName: 'received_at', displayName: '접수시각', dataType: 'TIMESTAMP' },
       { columnName: 'customer_name', displayName: '거래처명', dataType: 'VARCHAR', maxLength: 40 },
       { columnName: 'channel', displayName: '접수경로', dataType: 'VARCHAR', maxLength: 10 },
       { columnName: 'inquiry_text', displayName: '문의내용', dataType: 'TEXT' },
-    ],
+    ]),
   });
   await batch(
     token,
@@ -529,14 +535,14 @@ ORDER BY c.received_at`,
     tableName: 'daily_sales_summary',
     description: '파이프라인이 매일 새벽 갱신하는 권역·제품군별 일 매출 집계',
     categoryId: ids.catFin,
-    columns: [
+    columns: notNullByDefault([
       { columnName: 'stat_date', displayName: '집계일', dataType: 'DATE' },
       { columnName: 'region', displayName: '영업권역', dataType: 'VARCHAR', maxLength: 10 },
       { columnName: 'product_line', displayName: '제품군', dataType: 'VARCHAR', maxLength: 20 },
       { columnName: 'invoice_count', displayName: '전표수', dataType: 'INTEGER' },
       { columnName: 'sales_amount', displayName: '매출(원)', dataType: 'DECIMAL' },
       { columnName: 'gross_profit', displayName: '매출총이익(원)', dataType: 'DECIMAL' },
-    ],
+    ]),
   });
   // AI 분류 출력도 이름 있는 데이터셋으로 둔다 — 비워 두면 "…(자동생성)" 임시 데이터셋이 목록·홈에 보인다.
   const dsTriage = await call(token, 'POST', '/datasets', {
@@ -544,12 +550,12 @@ ORDER BY c.received_at`,
     tableName: 'inquiry_triage',
     description: '파이프라인의 AI 분류 단계가 문의 원문을 읽고 판정한 긴급도·유형·근거',
     categoryId: ids.catCust,
-    columns: [
+    columns: notNullByDefault([
       { columnName: 'source_id', displayName: '원본 행', dataType: 'INTEGER' },
       { columnName: 'urgency', displayName: '긴급도', dataType: 'TEXT' },
       { columnName: 'category', displayName: '유형', dataType: 'TEXT' },
       { columnName: 'reason', displayName: '판단 근거', dataType: 'TEXT' },
-    ],
+    ]),
   });
   const pipeline = await call(token, 'POST', '/pipelines', {
     name: '매출 데이터 일일 마감',

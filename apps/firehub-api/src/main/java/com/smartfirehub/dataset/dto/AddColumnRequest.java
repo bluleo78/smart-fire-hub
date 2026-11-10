@@ -16,16 +16,20 @@ public record AddColumnRequest(
     String displayName,
     @NotBlank(message = DatasetColumnRequest.DATA_TYPE_REQUIRED_MESSAGE) String dataType,
     Integer maxLength,
-    boolean isNullable,
-    boolean isIndexed,
+    Boolean isNullable,
+    Boolean isIndexed,
     String description,
-    boolean isPrimaryKey) {
+    Boolean isPrimaryKey) {
   /**
    * 타입을 입력 경계에서 정규화한다(WD-636) — 소문자·앞뒤 공백 타입도 받아 대문자로 저장한다({@code
    * ColumnPhysicalType#normalizeDataType}).
    */
   public AddColumnRequest {
     dataType = ColumnPhysicalType.normalizeDataType(dataType);
+    // WD-698: 누락·null 옵션을 SQL 기본으로 채운다 — 규칙은 {@link DatasetColumnRequest#defaultNullable}.
+    isPrimaryKey = Boolean.TRUE.equals(isPrimaryKey);
+    isIndexed = Boolean.TRUE.equals(isIndexed);
+    isNullable = DatasetColumnRequest.defaultNullable(isNullable, isPrimaryKey);
   }
 
   public AddColumnRequest(

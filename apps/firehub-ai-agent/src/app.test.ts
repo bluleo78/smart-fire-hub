@@ -149,8 +149,12 @@ describe('createApp — 인증이 본문 파서보다 먼저 (WD-631)', () => {
   });
 
   it('토큰 없는 chat 3MB → 413 이 아니라 401', async () => {
-    const res = await post('/agent/chat').send(jsonOfBytes(3 * 1024 * 1024));
+    // supertest 로 본문을 끝까지 쓰면 인증이 먼저 401 로 연결을 닫을 때 쓰기 중 ECONNRESET 이 간헐적으로 난다 —
+    // 위 두 테스트와 같이 본문 없이 401 을 받고, 서버가 본문을 요구하지 않았음을 함께 확인한다 (WD-703)
+    const res = await postOversizedExpectContinue('/agent/chat', 3 * 1024 * 1024);
     expect(res.status).toBe(401);
+    expect(res.body.error).toContain('Unauthorized');
+    expect(res.bodyWritten).toBe(false);
   });
 
   it('틀린 토큰 + 과대 본문 → 401', async () => {

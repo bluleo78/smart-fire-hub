@@ -183,7 +183,7 @@ export function registerDatasetTools(
                   '데이터 타입 (TEXT, INTEGER, DECIMAL, BOOLEAN, DATE, TIMESTAMP, VARCHAR)',
                 ),
               maxLength: z.number().optional().describe('VARCHAR 타입의 최대 길이'),
-              isNullable: z.boolean().optional().describe('NULL 허용 여부 (기본값: false)'),
+              isNullable: z.boolean().optional().describe('NULL 허용 여부 (기본값: true, 기본키면 false)'),
               isIndexed: z.boolean().optional().describe('인덱스 생성 여부 (기본값: false)'),
               isPrimaryKey: z
                 .boolean()

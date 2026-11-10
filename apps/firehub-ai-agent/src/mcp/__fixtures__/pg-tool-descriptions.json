@@ -437,7 +437,7 @@
                 "type": "number"
               },
               "isNullable": {
-                "description": "NULL 허용 여부 (기본값: false)",
+                "description": "NULL 허용 여부 (기본값: true, 기본키면 false)",
                 "type": "boolean"
               },
               "isIndexed": {
