@@ -1002,6 +1002,8 @@ public class DatasetService {
     if (nameTaken) {
       throw duplicateColumnName(request.columnName());
     }
+    // WD-603: 필드 수 상한 — 잠금 뒤 읽은 목록 기준이라 동시 추가도 한도를 넘지 못한다. 카탈로그 저장·DDL 전에 막아 500 대신 400.
+    dataTableService.validateColumnCountForAdd(existingColumns.size());
 
     long rowCount = dataTableRowService.countRows(dataset.tableName());
     if (rowCount > 0 && !request.isNullable()) {

@@ -38,6 +38,7 @@ def test_fixture_is_loaded():
         "maskUserInfo",
         "basicScrub",
         "redirectFollow",
+        "scrubUrlUserInfo",
     ):
         assert len(_DATA[section]) >= 4, section
 
@@ -113,3 +114,13 @@ def test_basic_scrub_matches_vector(case):
 def test_redirect_follow_matches_vector(case):
     # 리다이렉트로 따라가는 상태인지(WD-693) — 301·302·303·307·308 만 따라가고 300·304·305 등은 일반 응답(Java RedirectLocations.isFollowed 와 같다).
     assert api_call_executor._is_followed_redirect(case["status"]) is case["follows"]
+
+
+@pytest.mark.parametrize("case", _DATA["scrubUrlUserInfo"], ids=_ids("scrubUrlUserInfo"))
+def test_scrub_url_userinfo_matches_vector(case):
+    # 자유 문장 안 URL 사용자 정보 가림(WD-699) — 옛 연결은 비밀번호가 SentSecrets 에 없어 공용 가림이 문장 안 URL 의 비밀번호를 직접 가린다.
+    # Java ApiCallAuthVectorsTest.scrubUrlUserInfo_matchesVector 와 같은 표다. 두 번 가려도 같아야 한다(이미 가린 **** 는 그대로).
+    secrets = errors.SentSecrets(key=case["secret"])
+    once = errors.scrub_secret(case["text"], secrets)
+    assert once == case["expected"]
+    assert errors.scrub_secret(once, secrets) == once

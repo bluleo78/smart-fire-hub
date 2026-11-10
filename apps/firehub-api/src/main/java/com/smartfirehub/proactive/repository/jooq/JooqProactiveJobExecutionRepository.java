@@ -120,18 +120,14 @@ public class JooqProactiveJobExecutionRepository implements ProactiveJobExecutio
   @Override
   public boolean updateResult(
       Long id, String status, Map<String, Object> result, LocalDateTime completedAt) {
-    try {
-      String resultJson = result != null ? objectMapper.writeValueAsString(result) : null;
-      var query =
-          dsl.update(PROACTIVE_JOB_EXECUTION)
-              .set(PJE_STATUS, status)
-              .set(PJE_COMPLETED_AT, completedAt);
-      if (resultJson != null) query = query.set(PJE_RESULT, JSONB.valueOf(resultJson));
-      // 정리기가 먼저 FAILED 로 닫은 실행의 결과와 상태를 되살리지 않는다.
-      return query.where(PJE_ID.eq(id)).and(ACTIVE).execute() == 1;
-    } catch (Exception e) {
-      throw new RuntimeException("Failed to serialize result", e);
-    }
+    var query =
+        dsl.update(PROACTIVE_JOB_EXECUTION)
+            .set(PJE_STATUS, status)
+            .set(PJE_COMPLETED_AT, completedAt);
+    if (result != null)
+      query = query.set(PJE_RESULT, ProactiveJsonb.toJsonb(objectMapper, result, "result"));
+    // 정리기가 먼저 FAILED 로 닫은 실행의 결과와 상태를 되살리지 않는다.
+    return query.where(PJE_ID.eq(id)).and(ACTIVE).execute() == 1;
   }
 
   @Override

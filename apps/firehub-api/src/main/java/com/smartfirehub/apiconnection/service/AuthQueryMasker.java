@@ -280,10 +280,18 @@ public final class AuthQueryMasker {
       return password;
     }
 
-    /** 오류 문구·헤더 값 같은 자유 문장을 가린다. */
+    /**
+     * 오류 문구·헤더 값 같은 자유 문장을 가린다.
+     *
+     * <p>먼저 문장 안 URL 의 사용자 정보 비밀번호를 {@code 아이디:****@} 로 가린다(WD-699, {@link
+     * BaseUrlUserInfo#maskInText}) — 옛 연결(API_KEY·BEARER + baseUrl 사용자 정보)은 그 비밀번호가 이 비밀 목록에 없어,
+     * 분류하지 못한 원문·되울린 헤더로 새었다. 이 가림을 여기 한 곳에 두어 실행·미리보기·연결 테스트가 모두 같이 받는다. Python {@code
+     * SentSecrets.scrub} 과 같은 순서다.
+     */
     public String scrubText(String text) {
       if (text == null) return null;
-      String out = keyScrubber != null ? keyScrubber.scrub(text) : text;
+      String out = BaseUrlUserInfo.maskInText(text);
+      out = keyScrubber != null ? keyScrubber.scrub(out) : out;
       out = tokenScrubber != null ? tokenScrubber.scrub(out) : out;
       return passwordScrub.apply(out, PASSWORD_WITHHELD);
     }

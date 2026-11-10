@@ -25,7 +25,10 @@ public final class ReservedNameResolvers {
 
   /** Tibero 처럼 인터페이스 기본 예약어 규칙(앱 시스템 컬럼만)을 쓰는 리졸버. */
   public static DataStoreResolver appReservedOnly() {
-    return withStore(mock(DataTableStore.class, CALLS_REAL_METHODS));
+    DataTableStore store = mock(DataTableStore.class, CALLS_REAL_METHODS);
+    // 인터페이스 목은 추상 메서드가 0 을 돌려준다 — 필드 수 상한 검사(WD-603)가 모든 목록을 거부하지 않게 Tibero 한도를 준다.
+    lenient().doReturn(1000).when(store).maxTableColumns();
+    return withStore(store);
   }
 
   private static DataStoreResolver withStore(DataTableStore store) {

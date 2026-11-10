@@ -9,6 +9,7 @@ from __future__ import annotations
 import ipaddress
 import socket
 import threading
+import types
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Dict, List
 from unittest.mock import patch
@@ -19,6 +20,7 @@ import pytest
 
 from app.schemas.requests import ApiCallExecuteRequest, FieldMapping, RetryConfig
 from app.services.api_call_errors import describe_exception, unknown_host_message
+from app.services import api_call_executor
 from app.services.api_call_executor import execute_api_call
 from app.validators.ssrf_protection import SsrfException
 from app.validators.ssrf_safe_transport import SsrfGuardedNetworkBackend, create_ssrf_safe_transport
@@ -110,6 +112,29 @@ def test_dns_rebinding_is_refused_at_connect_without_retry(monkeypatch, rebound_
     assert resolver.calls == ["rebind.attacker.example", "rebind.attacker.example"]
     raw_connect.assert_not_called()
     sleep.assert_not_called()
+
+
+def test_api_call_client_ignores_environment(monkeypatch):
+    """실행기 클라이언트는 trust_env=False 로 만든다(WD-700) — 컨테이너에 HTTP(S)_PROXY 가 생겨도 프록시가 DNS 를 따로 풀어
+    연결 시점 가드를 건너뛰지 않게. 지금 httpx 는 transport 를 넘기면 환경 프록시를 이미 쓰지 않지만 문서에 없는 내부 규칙이라,
+    동작(현 버전에선 인자 없이도 같음) 대신 생성 인자를 고정한다.
+    """
+    seen: List[dict] = []
+    real_client = httpx.Client
+
+    def spy(*args, **kwargs):
+        seen.append(kwargs)
+        return real_client(*args, **kwargs)
+
+    resolver = FakeResolver({"rebind.attacker.example": [["93.184.216.34"], ["127.0.0.1"]]})
+    monkeypatch.setattr(socket, "getaddrinfo", resolver)
+    # 공용 httpx 모듈의 Client 를 바꾸면 같은 프로세스의 다른 클라이언트까지 잡히므로, 실행기 모듈이 보는 httpx 만 바꾼다.
+    local_httpx = types.SimpleNamespace(**{**vars(httpx), "Client": spy})
+    monkeypatch.setattr(api_call_executor, "httpx", local_httpx)
+    with patch("time.sleep"):
+        execute_api_call(_request("http://rebind.attacker.example/data", max_retries=0), _Conn())
+
+    assert seen and all(kw.get("trust_env") is False for kw in seen)
 
 
 def test_connect_time_refusal_raises_ssrf_exception_through_httpx(monkeypatch):

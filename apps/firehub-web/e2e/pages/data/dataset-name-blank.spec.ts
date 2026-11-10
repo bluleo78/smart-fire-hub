@@ -132,11 +132,25 @@ test.describe('데이터셋 복제 이름 검증 (WD-523)', () => {
     const dialog = await openCloneDialog(page);
     await dialog.getByRole('button', { name: '복제' }).click();
 
-    // 자르는 셈(코드 포인트·경계)은 clone-name 단위 테스트가 고정한다 — 여기서는 기본값이 상한 안으로 폼에 들어가는지만 본다
+    // 자르는 셈(UTF-16 단위·경계, WD-699)은 clone-name 단위 테스트가 고정한다 — 여기서는 기본값이 상한 안으로 폼에 들어가는지만 본다
     const req = await clone.waitForRequest();
     const name = (req.payload as { name: string }).name;
     expect(name.length).toBeLessThanOrEqual(100);
     expect(name.endsWith('_copy')).toBe(true);
+  });
+
+  test('복제: 이모지가 든 긴 이름도 기본 사본 이름 그대로 복제된다 (WD-699)', async ({ authenticatedPage: page }) => {
+    // 이모지 50개 = 코드 포인트 50·UTF-16 100단위 — 코드 포인트로 자르던 때는 기본값이 105단위가 되어 「100자 이하」에 막혔다
+    await setupDatasetDetailMocks(page, 1);
+    await mockApi(page, 'GET', '/api/v1/datasets/1', createDatasetDetail({ id: 1, name: '😀'.repeat(50) }));
+    const clone = await mockCloneSuccess(page);
+
+    const dialog = await openCloneDialog(page);
+    await dialog.getByRole('button', { name: '복제' }).click();
+
+    const req = await clone.waitForRequest();
+    expect((req.payload as { name: string }).name).toBe(`${'😀'.repeat(47)}_copy`);
+    await expect(dialog.getByText('이름은 100자 이하여야 합니다')).toHaveCount(0);
   });
 
   test('복제: 100자를 넘는 이름은 이름 칸에 안내하고 복제 요청을 보내지 않는다', async ({ authenticatedPage: page }) => {

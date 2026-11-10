@@ -79,6 +79,8 @@ class DataExceptionTranslatorTest {
     assertThat(DataExceptionTranslator.describe(new SQLException("x", "22008")))
         .contains("날짜·시간 값");
     assertThat(DataExceptionTranslator.describe(new SQLException("x", "22021"))).contains("NUL 문자");
+    // WD-609: JSONB 안의 NUL(U+0000) 은 22P05 로 거부된다 — 텍스트 열 NUL(22021)과 같은 문구.
+    assertThat(DataExceptionTranslator.describe(new SQLException("x", "22P05"))).contains("NUL 문자");
     assertThat(DataExceptionTranslator.describe(new SQLException("x", "22012")))
         .contains("저장할 수 없는 값이 있습니다");
   }

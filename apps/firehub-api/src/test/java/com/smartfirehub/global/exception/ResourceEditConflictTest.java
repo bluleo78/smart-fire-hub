@@ -233,6 +233,8 @@ class ResourceEditConflictTest extends IntegrationTestBase {
         body.put("prompt", "처음 값");
         // 꺼 두어 예약 실행에 등록되지 않게 한다
         body.put("enabled", false);
+        // 정기 작업은 주기가 필수다(WD-607)
+        body.put("cronExpression", "0 0 9 * * *");
         body.put("config", Map.of());
       }
     }

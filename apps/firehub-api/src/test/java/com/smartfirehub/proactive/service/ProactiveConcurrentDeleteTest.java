@@ -66,7 +66,7 @@ class ProactiveConcurrentDeleteTest extends IntegrationTestBase {
 
   // ── 도우미 ────────────────────────────────────────────────────────────────
 
-  /** cron 없는 작업 — 실제 예약은 만들지 않는다(스케줄러는 목). */
+  /** cron 없는 이상 탐지 작업 — 실제 예약은 만들지 않는다(스케줄러는 목). 정기 작업은 주기가 필수라 ANOMALY 로 만든다(WD-607). */
   private ProactiveJobResponse createJob(String label) {
     return jobService.createJob(
         new CreateProactiveJobRequest(
@@ -76,7 +76,7 @@ class ProactiveConcurrentDeleteTest extends IntegrationTestBase {
             null,
             null,
             false,
-            null,
+            "ANOMALY",
             Map.of("channels", List.of("CHAT"))),
         owner);
   }

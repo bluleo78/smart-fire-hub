@@ -249,6 +249,24 @@ test.describe('좁은 폭 breadcrumb (WD-663)', () => {
     await expect(middleLink).toHaveAttribute('href', '/data/datasets');
   });
 
+  test('키보드로 가운데 항목 링크에 포커스하면 잘린 라벨에 전체 라벨 title 이 붙는다 (WD-700)', async ({
+    authenticatedPage: page,
+  }) => {
+    // WD-669 에서 링크 onFocus 를 뺀 뒤로 포커스는 링크(a)가 받고 안쪽 라벨의 onFocus 는 불리지 않아(focus 는 내려가지 않음)
+    // Tab 포커스로는 title 이 붙지 않았다. hover 를 거치지 않고 포커스만으로 붙는지 본다.
+    await setupDataset(page, { name: '화재 출동 기록' });
+    await page.goto('/data/datasets/1');
+    const { middleLink, label } = await makeMiddleLabelWide(page);
+    await expect(label, '포커스 전에는 title 이 없다(전제)').not.toHaveAttribute('title');
+
+    // 앞 링크(「데이터」)에서 Tab 한 번 — 실제 키보드 이동으로 가운데 링크에 포커스한다
+    const nav = page.getByRole('navigation', { name: '현재 위치' });
+    await nav.getByRole('link', { name: '데이터', exact: true }).focus();
+    await page.keyboard.press('Tab');
+    await expect(middleLink).toBeFocused();
+    await expect(label).toHaveAttribute('title', '데이터셋');
+  });
+
   test('320px 에서 첫 줄에 들어가는 짧은 이름은 다음 줄로 밀리지 않고 한 줄에 남는다 (WD-669)', async ({
     authenticatedPage: page,
   }) => {

@@ -139,7 +139,9 @@ public class ProactiveJobService {
   /**
    * cronExpression / timezone 값을 Spring 스케줄러가 실제로 사용하는 파서로 사전 검증한다.
    *
-   * <p>둘 다 nullable / blank 허용 — 값이 비어 있으면 스케줄에 등록되지 않을 뿐 저장은 정상 처리된다. 값이 들어 있으면 다음 조건을 만족해야 한다.
+   * <p>둘 다 null 이면 「생략」이라 통과한다(생성은 기본값, 수정은 그대로). cron 이 빈 값·공백이면 형식 검사를 건너뛴다 — 정기 실행의 주기 필수는
+   * {@link #requireCronForScheduledTrigger} 가 따로 판정한다. timezone 의 빈 값·공백은 400 이다(WD-607) — 예전엔 수정
+   * 요청의 빈 시간대가 그대로 저장됐다(Tibero 에서는 NOT NULL 위반 500). 값이 들어 있으면 다음 조건을 만족해야 한다.
    *
    * <ul>
    *   <li>{@code cronExpression}: {@link CronExpression#parse} 통과 (6필드: 초 분 시 일 월 요일)
@@ -171,7 +173,10 @@ public class ProactiveJobService {
         throw new ProactiveJobException(tooFrequent + ": \"" + cronExpression.trim() + "\"");
       }
     }
-    if (timezone != null && !timezone.isBlank()) {
+    if (timezone != null && timezone.isBlank()) {
+      throw new ProactiveJobException(BLANK_TIMEZONE_MESSAGE);
+    }
+    if (timezone != null) {
       try {
         ZoneId.of(timezone);
       } catch (DateTimeException e) {
@@ -179,6 +184,85 @@ public class ProactiveJobService {
             "유효하지 않은 timezone: \"" + timezone + "\" — IANA zone ID 가 아닙니다");
       }
     }
+  }
+
+  /** 정기 실행(SCHEDULE·BOTH)인데 실행 주기가 비어 있을 때의 400 안내(WD-607). */
+  static final String SCHEDULE_REQUIRES_CRON_MESSAGE = "정기 실행에는 실행 주기가 필요합니다";
+
+  /** 요청의 시간대가 빈 값·공백일 때의 400 안내(WD-607). */
+  static final String BLANK_TIMEZONE_MESSAGE = "시간대를 비워 둘 수 없습니다";
+
+  /**
+   * 정기 실행이 들어 있는 트리거(SCHEDULE·BOTH)면 실제로 쓰일 cron 이 비어 있지 않아야 한다(WD-607).
+   *
+   * <p>예전엔 주기 없는 정기 작업이 201/200 으로 「켜짐」 저장됐지만 스케줄러는 cron 이 없으면 등록하지 않아 영원히 실행되지 않았다. 그래서 저장 전에 400
+   * 으로 막는다. ANOMALY 만 주기 없이 둘 수 있다 — 트리거가 null 인 옛 행은 컬럼 기본값과 같이 SCHEDULE 로 본다.
+   *
+   * @param effectiveTriggerType 저장 후 적용될 트리거(요청값, 없으면 기본값·저장값)
+   * @param effectiveCron 저장 후 적용될 cron(요청값, 없으면 저장값). 빈 값·공백은 「주기 없음」이다.
+   * @throws ProactiveJobException 정기 실행인데 주기가 비어 있을 때
+   */
+  static void requireCronForScheduledTrigger(String effectiveTriggerType, String effectiveCron) {
+    boolean scheduled = !ProactiveJobRepository.TRIGGER_ANOMALY.equals(effectiveTriggerType);
+    if (scheduled && (effectiveCron == null || effectiveCron.isBlank())) {
+      throw new ProactiveJobException(SCHEDULE_REQUIRES_CRON_MESSAGE);
+    }
+  }
+
+  /**
+   * 저장 후 적용될 트리거 — 요청값, 없으면 저장값, 그것도 없으면(생성 생략·트리거가 NULL 인 옛 행) 기본값 SCHEDULE 이다(WD-607).
+   *
+   * @param requested 요청의 트리거(null 이면 「안 바꿈」·「생략」)
+   * @param stored 저장된 트리거(생성이면 null)
+   */
+  static String effectiveTrigger(String requested, String stored) {
+    if (requested != null) {
+      return requested;
+    }
+    return stored != null ? stored : ProactiveJobRepository.DEFAULT_TRIGGER_TYPE;
+  }
+
+  /**
+   * 수정 요청이 정기 실행을 실제로 바꿀 때만 주기 필수를 확인한다(WD-607).
+   *
+   * <p>부분 수정이라 null 은 「안 바꿈」이다 — 판정은 저장 후 적용될 트리거·cron(요청값, 없으면 저장값)으로 한다. 요청 cron 의 빈 값·공백은
+   * 「지우기」다. 「바꿈」은 값을 보냈는지가 아니라 저장값과 다른지로 본다 — 웹 상세 화면은 저장할 때마다 triggerType 과 cronExpression(없으면
+   * "")을 그대로 실어 보내므로, 보냈다는 것만으로 확인하면 주기 없는 BOTH 작업이나 V158 이 꺼 둔 주기 없는 정기 작업의 이름만 고쳐도 400 이 났다. 확인하는
+   * 경우는 셋이다.
+   *
+   * <ul>
+   *   <li>트리거를 저장값과 다르게 보냈을 때 — 정기 실행으로 바꾸려면 주기가 있어야 한다.
+   *   <li>cron 을 저장값과 다르게 보냈을 때(빈 값·공백·null 은 모두 「없음」으로 같게 본다) — 정기 실행이 남는데 주기를 지우면 400.
+   *   <li>꺼진 작업을 켜는데 트리거가 SCHEDULE(NULL 인 옛 행 포함)일 때 — 주기 없이 켜면 다시 「켜짐인데 실행 안 되는」 작업이 된다.
+   * </ul>
+   *
+   * <p>그 밖의 수정(이름·프롬프트·설정 등)은 확인하지 않는다. 주기 없는 BOTH 작업을 켜는 것도 막지 않는다 — 이상 탐지 쪽은 실제로 실행되기 때문이다. BOTH
+   * 를 ANOMALY 로 바꾸며 cron 을 비우는 요청은 정기 실행이 없어지므로 통과한다.
+   */
+  private static void requireCronIfSchedulingTouched(
+      UpdateProactiveJobRequest request, ProactiveJobResponse before) {
+    String storedTrigger = effectiveTrigger(null, before.triggerType());
+    String effectiveTrigger = effectiveTrigger(request.triggerType(), before.triggerType());
+    String effectiveCron =
+        request.cronExpression() != null ? request.cronExpression() : before.cronExpression();
+    // 트리거는 @Pattern 으로 저장 형태(대문자)만 들어오므로 그대로 비교한다
+    boolean triggerChanged = !storedTrigger.equals(effectiveTrigger);
+    boolean cronChanged =
+        request.cronExpression() != null
+            && !Objects.equals(
+                blankToNull(request.cronExpression()), blankToNull(before.cronExpression()));
+    boolean enablingSchedule =
+        Boolean.TRUE.equals(request.enabled())
+            && !Boolean.TRUE.equals(before.enabled())
+            && ProactiveJobRepository.TRIGGER_SCHEDULE.equals(effectiveTrigger);
+    if (triggerChanged || cronChanged || enablingSchedule) {
+      requireCronForScheduledTrigger(effectiveTrigger, effectiveCron);
+    }
+  }
+
+  /** 빈 값·공백을 null 로 — 「주기 없음」의 여러 표현(null·""·" ")을 같게 비교하려고 쓴다. */
+  private static String blankToNull(String value) {
+    return value == null || value.isBlank() ? null : value;
   }
 
   @Transactional(readOnly = true)
@@ -256,6 +340,10 @@ public class ProactiveJobService {
     // cronExpression / timezone 형식을 사전 검증한다. 잘못된 값을 그대로 저장하면 스케줄러가 silent fail 하여
     // 사용자에게는 정상 생성처럼 보이지만 실제 실행이 한 번도 일어나지 않는 좀비 상태가 된다 (#221).
     validateCronAndTimezone(request.cronExpression(), request.timezone());
+    // 주기 없는 정기 실행은 저장·스케줄러 등록·감사 전에 400 으로 막는다(WD-607). 꺼 둔 채(enabled=false) 만들어도 막는다 —
+    // 켜는 순간 같은 「켜짐인데 실행 안 되는」 작업이 되므로 저장 자체를 막는 편이 단순하다.
+    requireCronForScheduledTrigger(
+        effectiveTrigger(request.triggerType(), null), request.cronExpression());
     // 보안 등급(S2): 메트릭 SQL 이 작성자가 볼 수 없는 데이터셋을 참조하면 거부(스펙 §4.2 6행). update 도 같은 검사 — 우회로 차단.
     metricSqlAccessChecker.requireMetricQueriesAllowed(request.config(), userId);
     requireUsableTemplate(request.templateId(), userId);
@@ -316,13 +404,22 @@ public class ProactiveJobService {
             .updatedAt();
     EditConflictException.check(
         request.expectedUpdatedAt(), currentUpdatedAt, EDIT_CONFLICT_MESSAGE);
-    // 업데이트 요청에 포함된 cronExpression / timezone 도 동일하게 사전 검증한다 (#221).
-    validateCronAndTimezone(request.cronExpression(), request.timezone());
+    // 저장 전 값 — 시간대·「주기 없는 정기 실행」 판정(WD-607)과 감사 비교(WD-464)에 쓴다. 행 잠금 뒤에 읽어 동시 저장의 값이 섞이지
+    // 않는다. 바로 위에서 잠근 행이라 보통 있다 — 없으면 검증을 건너뛰지 않고 소유자 확인과 같은 404 로 끝낸다.
+    ProactiveJobResponse before =
+        proactiveJobRepository
+            .findById(id, userId)
+            .orElseThrow(
+                () -> new ProactiveJobNotFoundException("Proactive Job을 찾을 수 없습니다: " + id));
+    // 업데이트 요청에 포함된 cronExpression / timezone 도 동일하게 사전 검증한다 (#221). 시간대는 저장값과 같으면 「안 바꿈」이라 건너뛴다
+    // (WD-607) — 예전 수정 경로가 빈 시간대를 저장해 둔 옛 행은 웹이 그 값을 그대로 다시 보내므로, 검사하면 이름만 고쳐도 400 이 났다.
+    String changedTimezone =
+        Objects.equals(request.timezone(), before.timezone()) ? null : request.timezone();
+    validateCronAndTimezone(request.cronExpression(), changedTimezone);
+    requireCronIfSchedulingTouched(request, before);
     // 보안 등급(S2): 메트릭 SQL 이 작성자가 볼 수 없는 데이터셋을 참조하면 거부(스펙 §4.2 6행). update 도 같은 검사 — 우회로 차단.
     metricSqlAccessChecker.requireMetricQueriesAllowed(request.config(), userId);
     requireUsableTemplate(request.templateId(), userId);
-    // 감사 비교용 저장 전 값(WD-464) — 행 잠금 뒤에 읽어 동시 저장의 값이 섞이지 않는다.
-    ProactiveJobResponse before = proactiveJobRepository.findById(id, userId).orElse(null);
 
     LocalDateTime savedUpdatedAt =
         proactiveJobRepository.update(
@@ -341,7 +438,7 @@ public class ProactiveJobService {
     if (updated != null) {
       schedulerService.rescheduleJob(updated);
     }
-    if (before != null && updated != null) {
+    if (updated != null) {
       auditJobUpdate(userId, before, updated);
     }
     return savedUpdatedAt;

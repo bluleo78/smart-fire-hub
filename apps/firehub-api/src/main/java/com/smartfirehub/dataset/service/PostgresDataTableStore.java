@@ -3,6 +3,7 @@ package com.smartfirehub.dataset.service;
 import com.smartfirehub.dataset.dto.ColumnStatsResponse;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
+import com.smartfirehub.dataset.exception.ColumnModificationException;
 import com.smartfirehub.dataset.exception.DatasetInUseException;
 import com.smartfirehub.dataset.exception.InvalidTableNameException;
 import com.smartfirehub.dataset.exception.OutputStructureChangedException;
@@ -54,6 +55,18 @@ public class PostgresDataTableStore implements DataTableStore {
   @Override
   public DataStoreBackend backend() {
     return DataStoreBackend.POSTGRESQL;
+  }
+
+  /**
+   * PostgreSQL 컬럼 수 한도 초과 SQLState(too_many_columns, "tables can have at most 1600 columns") —
+   * {@link #addColumn} 의 WD-603 안전망이 이 원인만 골라 400 으로 바꾼다.
+   */
+  private static final String PG_TOO_MANY_COLUMNS = "54011";
+
+  /** PostgreSQL 테이블 컬럼 한도 1600(MaxHeapAttributeNumber, WD-603). 삭제한 컬럼도 이 수에 센다. */
+  @Override
+  public int maxTableColumns() {
+    return 1600;
   }
 
   @DataStoreDb private final DSLContext dsl;
@@ -262,13 +275,34 @@ public class PostgresDataTableStore implements DataTableStore {
       sql.append(" NOT NULL");
     }
 
-    dsl.execute(sql.toString());
+    try {
+      dsl.execute(sql.toString());
+    } catch (RuntimeException e) {
+      // WD-603 안전망: PG 는 삭제(DROP COLUMN)한 컬럼도 한도에 세어, 카탈로그 필드 수가 상한 밑이어도
+      // ALTER TABLE 이 54011 로 실패할 수 있다(앞단 수 검사로는 못 막는다). 이 테이블에는 더 이상 컬럼을 붙일 수 없으니
+      // 원문 SQL 대신 복제(새 테이블)를 안내하는 400 으로 바꾼다. 다른 오류는 그대로 전파한다.
+      if (DataExceptionTranslator.hasSqlState(e, PG_TOO_MANY_COLUMNS)) {
+        throw new ColumnModificationException(
+            "이 데이터셋에는 더 이상 필드를 추가할 수 없습니다 — 삭제한 필드도 DB 한도에 포함돼, 필드가 "
+                + maxUserColumns()
+                + "개보다 적어도 자리가 없습니다. 데이터셋을 복제해 새로 만든 뒤 추가해 주세요");
+      }
+      throw e;
+    }
 
     // 필드 인덱스 — 규칙은 createTable 과 같다.
     FieldIndexKind kind = autoIndexKind(column.dataType(), column.isIndexed());
     if (kind != null) {
       createFieldIndex(tableName, column.columnName(), kind, false);
     }
+  }
+
+  /**
+   * 안전망 안내에 보일 사용자 필드 한도(WD-603) — 테이블 한도에서 앱 시스템 컬럼 수를 뺀다. 앞단 수 검사({@code
+   * DataTableService#maxUserColumns})와 같은 계산이라, DB 원래 한도(시스템 컬럼 포함)를 보여 안내 숫자가 어긋나지 않는다.
+   */
+  private int maxUserColumns() {
+    return maxTableColumns() - SYSTEM_COLUMN_NAMES.size();
   }
 
   @Override

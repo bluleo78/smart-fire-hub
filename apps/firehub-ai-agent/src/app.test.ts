@@ -7,6 +7,8 @@
  * 토큰 있는 요청이 "파서를 통과했다"는 증거로는 라우트 본문의 필수 필드 검증 400(파서 오류와 다른 문구)을 쓴다 —
  * 라우트의 무거운 로직(에이전트 실행·PDF 렌더 등)까지 가지 않게 하기 위함이다.
  */
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import request from 'supertest';
 import { createApp } from './app.js';
@@ -37,6 +39,88 @@ function post(path: string, opts: { auth?: boolean | string; headers?: Record<st
   return req;
 }
 
+/**
+ * 과대 본문을 「본문 없이」 보내 인증 거절 응답을 받는다 (WD-696).
+ *
+ * 왜: supertest 로 6MB 본문을 끝까지 쓰면, 인증이 파서보다 먼저라 서버가 본문을 다 받기 전에 401 을 보내고 연결을 닫는다.
+ * 서버 쪽에 읽지 않은 본문이 남은 채 닫히면 커널이 RST 를 보내, 클라이언트는 쓰기 중 ECONNRESET 을 받거나 이미 도착한
+ * 401 까지 잃는다(macOS·Node 24 에서 매번 재현). 쓰기 오류를 삼키는 방식도 RST 가 응답을 지우면 소용없다.
+ *
+ * 그래서 `Expect: 100-continue` + Content-Length(과대 크기)만 보내고, 서버의 `checkContinue` 처리기는 100 Continue 를
+ * 보내지 않고 바로 앱에 넘긴다. 클라이언트는 'continue' 를 받기 전에는 본문을 쓰지 않으므로
+ * - 인증이 먼저면: 본문 한 바이트도 없이 401 이 온다 → 「파서가 본문을 버퍼링·파싱하지 않는다」를 그대로 보여 준다.
+ * - 파서가 먼저로 퇴행하면: 파서는 Content-Length 한도 초과(413)여도 본문을 다 받아 버린 뒤에야 응답하므로,
+ *   본문을 기다리다 아래 응답 대기 한도에 걸려 원인 메시지와 함께 실패한다(직접 확인함).
+ * 응답 없이 연결이 끊기면(error 이벤트) 그대로 reject 해 테스트가 실패한다 — ECONNRESET 을 삼키지 않는다.
+ *
+ * @param path 요청 경로
+ * @param bodyBytes Content-Length 로 알릴 본문 크기(실제로는 보내지 않음, 'continue' 가 오면 그때만 보냄)
+ * @param auth Authorization 헤더 값(없으면 생략)
+ */
+async function postOversizedExpectContinue(
+  path: string,
+  bodyBytes: number,
+  auth?: string,
+): Promise<{ status: number; body: { error?: string }; bodyWritten: boolean }> {
+  const app = createApp();
+  const server = http.createServer(app);
+  // 100 Continue 를 자동으로 보내지 않고 곧장 앱에 넘긴다 — 서버가 본문을 요구하지 않고 응답할 수 있는지 보기 위함
+  server.on('checkContinue', (req, res) => app(req, res));
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address() as AddressInfo;
+
+  try {
+    return await new Promise((resolve, reject) => {
+      let bodyWritten = false;
+      const headers: Record<string, string | number> = {
+        'Content-Type': 'application/json',
+        'Content-Length': bodyBytes,
+        Expect: '100-continue',
+      };
+      if (auth) headers.Authorization = auth;
+      const req = http.request({ host: '127.0.0.1', port, path, method: 'POST', headers });
+
+      // 서버가 본문을 달라고 하면(=퇴행) 그때만 본문을 보낸다 — bodyWritten 으로 단언에서 드러낸다
+      req.on('continue', () => {
+        bodyWritten = true;
+        req.end(jsonOfBytes(bodyBytes, 'html'));
+      });
+      req.on('response', (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (c: Buffer) => chunks.push(c));
+        res.on('end', () => {
+          const text = Buffer.concat(chunks).toString('utf8');
+          let body: { error?: string } = {};
+          try {
+            body = JSON.parse(text) as { error?: string };
+          } catch {
+            body = { error: text };
+          }
+          // 본문을 보내지 않은 요청이므로 응답을 다 읽은 뒤 소켓을 정리한다
+          req.destroy();
+          resolve({ status: res.statusCode ?? 0, body, bodyWritten });
+        });
+        res.on('error', reject);
+      });
+      // 응답을 받기 전의 연결 오류는 그대로 실패시킨다(응답 resolve 뒤의 destroy 는 영향 없음)
+      req.on('error', reject);
+      // 퇴행 시 서버가 본문을 기다리며 멈추면 vitest 기본 한도 대신 원인이 보이는 메시지로 실패시킨다
+      req.setTimeout(3000, () =>
+        req.destroy(
+          new Error(
+            '본문 없이 응답이 오지 않았습니다 — 파서가 인증보다 먼저 본문을 기다리는 것으로 보입니다',
+          ),
+        ),
+      );
+      // 헤더만 먼저 보낸다(본문은 'continue' 를 받을 때만)
+      req.flushHeaders();
+    });
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+}
+
 /** 테스트마다 내부 토큰 환경변수를 심고, 4xx/5xx 로그 출력을 막는다 */
 function setupEnv(): void {
   let saved: string | undefined;
@@ -57,9 +141,11 @@ describe('createApp — 인증이 본문 파서보다 먼저 (WD-631)', () => {
   setupEnv();
 
   it('토큰 없는 html-to-pdf 6MB → 413 이 아니라 401 (파서가 본문을 버퍼링·파싱하지 않는다)', async () => {
-    const res = await post('/agent/html-to-pdf').send(jsonOfBytes(6 * 1024 * 1024, 'html'));
+    // 본문을 보내지 않고도 401 이 와야 한다 — 서버가 본문을 요구(100 Continue)하지 않았음을 함께 확인 (WD-696)
+    const res = await postOversizedExpectContinue('/agent/html-to-pdf', 6 * 1024 * 1024);
     expect(res.status).toBe(401);
     expect(res.body.error).toContain('Unauthorized');
+    expect(res.bodyWritten).toBe(false);
   });
 
   it('토큰 없는 chat 3MB → 413 이 아니라 401', async () => {
@@ -68,10 +154,14 @@ describe('createApp — 인증이 본문 파서보다 먼저 (WD-631)', () => {
   });
 
   it('틀린 토큰 + 과대 본문 → 401', async () => {
-    const res = await post('/agent/classify', { auth: 'Internal wrong-token-value-xx' }).send(
-      jsonOfBytes(3 * 1024 * 1024),
+    // 틀린 토큰도 본문 없이 401 — 쓰기 중 ECONNRESET 경합을 피한다 (WD-696)
+    const res = await postOversizedExpectContinue(
+      '/agent/classify',
+      3 * 1024 * 1024,
+      'Internal wrong-token-value-xx',
     );
     expect(res.status).toBe(401);
+    expect(res.bodyWritten).toBe(false);
   });
 
   it('토큰 있고 delegation 헤더 없는 graph 변경 + 깨진 JSON → 파서보다 먼저 400 delegation 안내', async () => {

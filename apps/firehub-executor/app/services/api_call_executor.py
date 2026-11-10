@@ -369,8 +369,14 @@ def _do_request(
 
     # 연결 시점에도 같은 SSRF 정책을 건다(WD-613) — validate_url 뒤 httpx 가 DNS 를 다시 해석하는 사이 응답이 내부망 IP 로
     # 바뀌는 DNS 리바인딩을 막는다. 막히면 SsrfException 이 그대로 올라와 아래 _execute_request 가 재시도하지 않는다.
+    # trust_env=False(WD-700): 컨테이너에 HTTP(S)_PROXY·ALL_PROXY 가 생겨도 프록시로 보내지 않는다 — 프록시가 DNS 를 따로 풀면
+    # 위 연결 시점 IP 검사가 빠진다. 지금 httpx(0.27·0.28)는 transport 를 넘기면 환경 프록시를 이미 쓰지 않지만, 그 규칙은
+    # 문서에 없는 내부 동작이라 명시해 고정한다(.netrc 인증을 몰래 붙이는 것도 함께 막는다).
     with httpx.Client(
-        follow_redirects=False, timeout=timeout_sec, transport=create_ssrf_safe_transport()
+        follow_redirects=False,
+        timeout=timeout_sec,
+        transport=create_ssrf_safe_transport(),
+        trust_env=False,
     ) as client:
         while True:
             # 리다이렉트 대상(Location)의 쿼리는 받은 그대로 쓴다 — 예전에는 params={} 로 Location 의 쿼리(흔한 http→https 리다이렉트가

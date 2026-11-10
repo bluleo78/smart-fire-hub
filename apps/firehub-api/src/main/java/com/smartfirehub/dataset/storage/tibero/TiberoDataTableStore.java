@@ -123,6 +123,15 @@ public class TiberoDataTableStore implements DataTableStore {
   }
 
   /**
+   * Tibero 테이블 컬럼 한도 1000(Oracle 계열과 같은 한도, WD-603). 실서버 오류 코드로는 확인하지 못해 DDL 단의 벤더 코드 변환은 두지 않고 앞단
+   * 수 검사만 이 값으로 한다.
+   */
+  @Override
+  public int maxTableColumns() {
+    return 1000;
+  }
+
+  /**
    * WD-636: DDL 조립({@link TiberoDialect#columnDdl})과 같은 규칙으로 검사만 한다 — VARCHAR 상한 4000, GEOMETRY 는
    * {@code DataStoreFeatureUnsupportedException}. 결과는 버리고 문장은 실행하지 않는다.
    */

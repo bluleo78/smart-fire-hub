@@ -102,20 +102,17 @@ public class JooqProactiveMessageRepository implements ProactiveMessageRepositor
       String title,
       Map<String, Object> content,
       String messageType) {
-    try {
-      String contentJson = content != null ? objectMapper.writeValueAsString(content) : "{}";
-      return dsl.insertInto(PROACTIVE_MESSAGE)
-          .set(PM_USER_ID, userId)
-          .set(PM_EXECUTION_ID, executionId)
-          .set(PM_TITLE, title)
-          .set(PM_CONTENT, JSONB.valueOf(contentJson))
-          .set(PM_MESSAGE_TYPE, messageType != null ? messageType : "REPORT")
-          .set(PM_READ, false)
-          .returning(PM_ID)
-          .fetchOne(r -> r.get(PM_ID));
-    } catch (Exception e) {
-      throw new RuntimeException("Failed to serialize content", e);
-    }
+    return dsl.insertInto(PROACTIVE_MESSAGE)
+        .set(PM_USER_ID, userId)
+        .set(PM_EXECUTION_ID, executionId)
+        .set(PM_TITLE, title)
+        .set(
+            PM_CONTENT,
+            ProactiveJsonb.toJsonb(objectMapper, content != null ? content : Map.of(), "content"))
+        .set(PM_MESSAGE_TYPE, messageType != null ? messageType : "REPORT")
+        .set(PM_READ, false)
+        .returning(PM_ID)
+        .fetchOne(r -> r.get(PM_ID));
   }
 
   @Override

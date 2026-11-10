@@ -111,16 +111,29 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
         null);
   }
 
+  /** 매일 9시 정기 작업 생성 요청(켜짐 여부·트리거 생략 = 기본값). */
   private CreateProactiveJobRequest buildCreateRequest(String name) {
+    return createRequest(name, "0 0 9 * * *", "Asia/Seoul", null, null);
+  }
+
+  /** 이름·cron·timezone·켜짐 여부·트리거만 바꿔 가며 만드는 생성 요청. 프롬프트·채널(CHAT)은 고정이다. */
+  private static CreateProactiveJobRequest createRequest(
+      String name, String cron, String timezone, Boolean enabled, String triggerType) {
     return new CreateProactiveJobRequest(
         name,
         "테스트 프롬프트",
         null,
-        "0 0 9 * * *",
-        "Asia/Seoul",
-        null,
-        null,
+        cron,
+        timezone,
+        enabled,
+        triggerType,
         Map.of("channels", List.of("CHAT")));
+  }
+
+  /** 켜진 상태로 만드는 {@link #createRequest(String, String, String, Boolean, String)}. */
+  private static CreateProactiveJobRequest createRequest(
+      String name, String cron, String timezone, String triggerType) {
+    return createRequest(name, cron, timezone, true, triggerType);
   }
 
   private ProactiveResult buildMockResult() {
@@ -490,6 +503,372 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
 
     ProactiveJobResponse updated = proactiveJobService.getJob(created.id(), testUserId);
     assertThat(updated.name()).isEqualTo("이름만 변경");
+  }
+
+  // ── WD-607: 정기(SCHEDULE/BOTH) 작업은 실행 주기 없이 저장하지 못한다 ─────────────────────────
+
+  /** 정기 실행인데 주기가 없을 때 400 문구 — 서비스 상수와 같은 값을 문자열로 고정해 문구 회귀도 잡는다. */
+  private static final String NO_CRON_MESSAGE = "정기 실행에는 실행 주기가 필요합니다";
+
+  /** 시간대를 빈 값·공백으로 보냈을 때 400 문구. */
+  private static final String BLANK_TIMEZONE_MESSAGE = "시간대를 비워 둘 수 없습니다";
+
+  /** 이름으로 저장된 작업 행 수 — 400 이 저장 전에 났는지 확인한다. */
+  private int countJobsByName(String name) {
+    return dsl.fetchCount(PROACTIVE_JOB, PROACTIVE_JOB.NAME.eq(name));
+  }
+
+  /**
+   * [WD-607] 트리거 생략(=SCHEDULE) 생성에서 cron 이 null·빈 값·공백이면 400 이고 저장되지 않는다. 예전엔 201 로 「켜짐」인데 영원히 실행되지
+   * 않는 작업이 저장됐다.
+   */
+  @Test
+  void createJob_scheduleWithoutCron_rejectedAndNotPersisted() {
+    java.util.Arrays.asList(null, "", "   ")
+        .forEach(
+            cron -> {
+              String name = "주기 없는 정기 작업 [" + cron + "]";
+              assertThatThrownBy(
+                      () ->
+                          proactiveJobService.createJob(
+                              createRequest(name, cron, "Asia/Seoul", null), testUserId))
+                  .as("cron=%s", cron)
+                  .isInstanceOf(ProactiveJobException.class)
+                  .hasMessage(NO_CRON_MESSAGE);
+              assertThat(countJobsByName(name)).as("cron=%s 저장 안 됨", cron).isZero();
+            });
+  }
+
+  /** [WD-607] 트리거를 SCHEDULE·BOTH 로 명시해도 cron 이 없으면 400 — BOTH 도 정기 실행을 포함한다. */
+  @Test
+  void createJob_explicitScheduleOrBothWithoutCron_rejected() {
+    for (String trigger : List.of("SCHEDULE", "BOTH")) {
+      assertThatThrownBy(
+              () ->
+                  proactiveJobService.createJob(
+                      createRequest("주기 없음 " + trigger, null, "Asia/Seoul", trigger), testUserId))
+          .as(trigger)
+          .isInstanceOf(ProactiveJobException.class)
+          .hasMessage(NO_CRON_MESSAGE);
+    }
+  }
+
+  /** [WD-607] 꺼 둔 채(enabled=false) 만들어도 막는다 — 켜는 순간 같은 좀비가 되므로 저장 자체를 막는다. */
+  @Test
+  void createJob_disabledScheduleWithoutCron_rejected() {
+    assertThatThrownBy(
+            () ->
+                proactiveJobService.createJob(
+                    createRequest("꺼 둔 주기 없는 작업", null, "Asia/Seoul", false, null), testUserId))
+        .isInstanceOf(ProactiveJobException.class)
+        .hasMessage(NO_CRON_MESSAGE);
+  }
+
+  /** [WD-607] 이상 탐지(ANOMALY) 전용 작업은 cron 없이 만들 수 있다(기존 그대로). */
+  @Test
+  void createJob_anomalyWithoutCron_allowed() {
+    ProactiveJobResponse created =
+        proactiveJobService.createJob(
+            createRequest("이상 탐지 전용", "  ", "Asia/Seoul", "ANOMALY"), testUserId);
+    assertThat(created.triggerType()).isEqualTo("ANOMALY");
+  }
+
+  /** [WD-607] 생성 시 시간대를 빈 값·공백으로 보내면 400. null 은 기본값(Asia/Seoul)으로 저장된다. */
+  @Test
+  void createJob_blankTimezone_rejected_nullDefaults() {
+    for (String tz : List.of("", "   ")) {
+      assertThatThrownBy(
+              () ->
+                  proactiveJobService.createJob(
+                      createRequest("빈 시간대 [" + tz + "]", "0 0 9 * * *", tz, null), testUserId))
+          .as("timezone=[%s]", tz)
+          .isInstanceOf(ProactiveJobException.class)
+          .hasMessage(BLANK_TIMEZONE_MESSAGE);
+    }
+    ProactiveJobResponse created =
+        proactiveJobService.createJob(
+            createRequest("시간대 생략", "0 0 9 * * *", null, null), testUserId);
+    assertThat(created.timezone()).isEqualTo("Asia/Seoul");
+  }
+
+  /** [WD-607] 정기 작업의 cron 을 빈 값·공백으로 지우는 수정은 400 이고 저장된 cron 은 그대로다. */
+  @Test
+  void updateJob_clearingCronOfScheduleJob_rejectedAndKeepsStored() {
+    ProactiveJobResponse created =
+        proactiveJobService.createJob(buildCreateRequest("cron 지우기"), testUserId);
+    for (String cron : List.of("", "   ")) {
+      assertThatThrownBy(
+              () ->
+                  proactiveJobService.updateJob(
+                      created.id(),
+                      new UpdateProactiveJobRequest(null, null, null, cron, null, null, null, null),
+                      testUserId))
+          .as("cron=[%s]", cron)
+          .isInstanceOf(ProactiveJobException.class)
+          .hasMessage(NO_CRON_MESSAGE);
+    }
+    assertThat(proactiveJobService.getJob(created.id(), testUserId).cronExpression())
+        .isEqualTo("0 0 9 * * *");
+  }
+
+  /** [WD-607] 목록의 켜기 토글처럼 enabled 만 보내는 수정은 저장된 cron 을 그대로 쓰므로 통과한다(회귀 금지). */
+  @Test
+  void updateJob_enabledOnly_keepsStoredCron() {
+    ProactiveJobResponse created =
+        proactiveJobService.createJob(
+            createRequest("토글 작업", "0 0 9 * * *", "Asia/Seoul", false, null), testUserId);
+
+    proactiveJobService.updateJob(
+        created.id(),
+        new UpdateProactiveJobRequest(null, null, null, null, null, true, null, null),
+        testUserId);
+
+    ProactiveJobResponse updated = proactiveJobService.getJob(created.id(), testUserId);
+    assertThat(updated.enabled()).isTrue();
+    assertThat(updated.cronExpression()).isEqualTo("0 0 9 * * *");
+  }
+
+  /** [WD-607] cron 없는 이상 탐지 작업을 트리거만 SCHEDULE·BOTH 로 바꾸면 400 — 주기를 함께 보내야 한다. */
+  @Test
+  void updateJob_switchingAnomalyWithoutCronToSchedule_rejected() {
+    ProactiveJobResponse created =
+        proactiveJobService.createJob(
+            createRequest("트리거만 정기로", null, "Asia/Seoul", "ANOMALY"), testUserId);
+    for (String trigger : List.of("SCHEDULE", "BOTH")) {
+      assertThatThrownBy(
+              () ->
+                  proactiveJobService.updateJob(
+                      created.id(),
+                      new UpdateProactiveJobRequest(
+                          null, null, null, null, null, null, trigger, null),
+                      testUserId))
+          .as(trigger)
+          .isInstanceOf(ProactiveJobException.class)
+          .hasMessage(NO_CRON_MESSAGE);
+    }
+    assertThat(proactiveJobService.getJob(created.id(), testUserId).triggerType())
+        .isEqualTo("ANOMALY");
+
+    // 주기를 함께 보내면 정기로 바꿀 수 있다
+    proactiveJobService.updateJob(
+        created.id(),
+        new UpdateProactiveJobRequest(
+            null, null, null, "0 0 9 * * *", null, null, "SCHEDULE", null),
+        testUserId);
+    assertThat(proactiveJobService.getJob(created.id(), testUserId).triggerType())
+        .isEqualTo("SCHEDULE");
+  }
+
+  /** [WD-607] BOTH 작업을 ANOMALY 로 바꾸면서 cron 을 비우는 수정은 통과한다 — 정기 실행이 없어지므로 주기가 필요 없다. */
+  @Test
+  void updateJob_bothToAnomalyClearingCron_allowed() {
+    ProactiveJobResponse created =
+        proactiveJobService.createJob(
+            createRequest("둘 다 → 이상 탐지", "0 0 9 * * *", "Asia/Seoul", "BOTH"), testUserId);
+
+    proactiveJobService.updateJob(
+        created.id(),
+        new UpdateProactiveJobRequest(null, null, null, "", null, null, "ANOMALY", null),
+        testUserId);
+
+    assertThat(proactiveJobService.getJob(created.id(), testUserId).triggerType())
+        .isEqualTo("ANOMALY");
+  }
+
+  /**
+   * 검증 도입 전에 저장된 「주기 없는」 옛 작업을 흉내 낸다 — 서비스로 cron 없는 꺼진 ANOMALY 작업을 만든 뒤 트리거만 DB 에서 직접 덮는다(V158 이 꺼
+   * 둔 작업과 같은 상태).
+   */
+  private Long insertLegacyCronlessJob(String name, String triggerType) {
+    ProactiveJobResponse created =
+        proactiveJobService.createJob(
+            createRequest(name, null, "Asia/Seoul", false, "ANOMALY"), testUserId);
+    dsl.update(PROACTIVE_JOB)
+        .set(PROACTIVE_JOB.TRIGGER_TYPE, triggerType)
+        .where(PROACTIVE_JOB.ID.eq(created.id()))
+        .execute();
+    return created.id();
+  }
+
+  /**
+   * [WD-607] V158 이 꺼 둔 주기 없는 옛 정기 작업도 이름·프롬프트는 고칠 수 있다 — 정기 실행을 건드리지 않는 수정까지 막으면 정리할 방법이 없다. 켜는
+   * 수정은 400 이고, 주기를 함께 보내면 켜진다. 트리거가 NULL 인 옛 행도 SCHEDULE 로 본다.
+   */
+  @Test
+  void updateJob_legacyCronlessSchedule_editAllowed_enableRejected() {
+    for (String trigger : java.util.Arrays.asList("SCHEDULE", null)) {
+      Long id = insertLegacyCronlessJob("옛 정기 작업 " + trigger, trigger);
+
+      proactiveJobService.updateJob(
+          id,
+          new UpdateProactiveJobRequest(
+              "이름 고침 " + trigger, "프롬프트 고침", null, null, null, null, null, null),
+          testUserId);
+      assertThat(proactiveJobService.getJob(id, testUserId).name()).isEqualTo("이름 고침 " + trigger);
+
+      assertThatThrownBy(
+              () ->
+                  proactiveJobService.updateJob(
+                      id,
+                      new UpdateProactiveJobRequest(null, null, null, null, null, true, null, null),
+                      testUserId))
+          .as("trigger=%s 켜기", trigger)
+          .isInstanceOf(ProactiveJobException.class)
+          .hasMessage(NO_CRON_MESSAGE);
+      assertThat(proactiveJobService.getJob(id, testUserId).enabled()).isFalse();
+
+      // 주기를 함께 보내면 켤 수 있다
+      proactiveJobService.updateJob(
+          id,
+          new UpdateProactiveJobRequest(null, null, null, "0 0 9 * * *", null, true, null, null),
+          testUserId);
+      assertThat(proactiveJobService.getJob(id, testUserId).enabled()).isTrue();
+    }
+  }
+
+  /**
+   * [WD-607] 주기 없는 옛 BOTH 작업은 고치거나 켤 수 있다 — 이상 탐지 쪽은 실제로 실행되기 때문이다. 다만 주기가 있는 BOTH 작업의 cron 을 비우는
+   * 수정은 정기 실행이 남아 400 이다.
+   */
+  @Test
+  void updateJob_legacyCronlessBoth_editAndEnableAllowed_clearingCronRejected() {
+    Long id = insertLegacyCronlessJob("옛 BOTH 작업", "BOTH");
+
+    proactiveJobService.updateJob(
+        id,
+        new UpdateProactiveJobRequest("BOTH 이름 고침", null, null, null, null, true, null, null),
+        testUserId);
+    ProactiveJobResponse updated = proactiveJobService.getJob(id, testUserId);
+    assertThat(updated.name()).isEqualTo("BOTH 이름 고침");
+    assertThat(updated.enabled()).isTrue();
+
+    ProactiveJobResponse withCron =
+        proactiveJobService.createJob(
+            createRequest("주기 있는 BOTH", "0 9 * * *", "Asia/Seoul", "BOTH"), testUserId);
+    assertThatThrownBy(
+            () ->
+                proactiveJobService.updateJob(
+                    withCron.id(),
+                    new UpdateProactiveJobRequest(null, null, null, "", null, null, null, null),
+                    testUserId))
+        .isInstanceOf(ProactiveJobException.class)
+        .hasMessage(NO_CRON_MESSAGE);
+  }
+
+  // ── WD-607: 웹 상세 화면의 저장 요청 모양 ─────────────────────────────────────────────────
+
+  /**
+   * 웹 상세 화면(ProactiveJobDetailPage)이 저장할 때 보내는 모양 — 이름·프롬프트·템플릿·cron(없으면 "")·시간대·트리거·설정을 매번 모두 싣고
+   * enabled 는 보내지 않는다.
+   */
+  private static UpdateProactiveJobRequest webSave(
+      String name, String cron, String timezone, String triggerType) {
+    return new UpdateProactiveJobRequest(
+        name,
+        "테스트 프롬프트",
+        null,
+        cron,
+        timezone,
+        null,
+        triggerType,
+        Map.of("channels", List.of("CHAT")));
+  }
+
+  /**
+   * [WD-607] 웹이 트리거·빈 cron 을 그대로 다시 보내는 이름 변경은 통과한다 — 주기 없는 BOTH 작업, V158 이 꺼 둔 주기 없는 정기 작업 모두.
+   * 보냈다는 것만으로 「바꿈」으로 보면 이름만 고쳐도 400 이 났다.
+   */
+  @Test
+  void updateJob_webPayloadRenameOfCronlessJob_allowed() {
+    for (String trigger : List.of("BOTH", "SCHEDULE")) {
+      Long id = insertLegacyCronlessJob("웹 저장 " + trigger, trigger);
+
+      proactiveJobService.updateJob(
+          id, webSave("웹 이름 고침 " + trigger, "", "Asia/Seoul", trigger), testUserId);
+
+      ProactiveJobResponse updated = proactiveJobService.getJob(id, testUserId);
+      assertThat(updated.name()).isEqualTo("웹 이름 고침 " + trigger);
+      assertThat(updated.enabled()).as("꺼진 상태 그대로").isFalse();
+    }
+  }
+
+  /** [WD-607] 웹 모양으로 트리거를 ANOMALY → SCHEDULE 로 바꾸며 cron 을 ""로 보내면 400. */
+  @Test
+  void updateJob_webPayloadSwitchToScheduleWithoutCron_rejected() {
+    ProactiveJobResponse created =
+        proactiveJobService.createJob(
+            createRequest("웹 트리거 변경", null, "Asia/Seoul", "ANOMALY"), testUserId);
+
+    assertThatThrownBy(
+            () ->
+                proactiveJobService.updateJob(
+                    created.id(), webSave("웹 트리거 변경", "", "Asia/Seoul", "SCHEDULE"), testUserId))
+        .isInstanceOf(ProactiveJobException.class)
+        .hasMessage(NO_CRON_MESSAGE);
+  }
+
+  /** [WD-607] 웹 모양으로 저장된 cron "0 9 * * *" 를 ""로 비우면 400 이고 저장된 cron 은 그대로다. */
+  @Test
+  void updateJob_webPayloadClearingExistingCron_rejected() {
+    ProactiveJobResponse created =
+        proactiveJobService.createJob(
+            createRequest("웹 주기 비우기", "0 9 * * *", "Asia/Seoul", "SCHEDULE"), testUserId);
+
+    assertThatThrownBy(
+            () ->
+                proactiveJobService.updateJob(
+                    created.id(), webSave("웹 주기 비우기", "", "Asia/Seoul", "SCHEDULE"), testUserId))
+        .isInstanceOf(ProactiveJobException.class)
+        .hasMessage(NO_CRON_MESSAGE);
+    assertThat(proactiveJobService.getJob(created.id(), testUserId).cronExpression())
+        .isEqualTo("0 9 * * *");
+  }
+
+  /**
+   * [WD-607] 예전 수정 경로가 빈 시간대를 저장해 둔 옛 행은, 웹이 그 빈 값을 그대로 다시 보내도 저장된다(안 바꿈). 저장값과 다른 빈 값으로 바꾸는 것만 400
+   * 이다.
+   */
+  @Test
+  void updateJob_unchangedBlankTimezoneOfLegacyRow_allowed() {
+    ProactiveJobResponse created =
+        proactiveJobService.createJob(buildCreateRequest("옛 빈 시간대"), testUserId);
+    dsl.update(PROACTIVE_JOB)
+        .set(PROACTIVE_JOB.TIMEZONE, "")
+        .where(PROACTIVE_JOB.ID.eq(created.id()))
+        .execute();
+
+    proactiveJobService.updateJob(
+        created.id(), webSave("옛 빈 시간대 고침", "0 0 9 * * *", "", "SCHEDULE"), testUserId);
+    assertThat(proactiveJobService.getJob(created.id(), testUserId).name()).isEqualTo("옛 빈 시간대 고침");
+
+    assertThatThrownBy(
+            () ->
+                proactiveJobService.updateJob(
+                    created.id(),
+                    webSave("옛 빈 시간대 고침", "0 0 9 * * *", "   ", "SCHEDULE"),
+                    testUserId))
+        .isInstanceOf(ProactiveJobException.class)
+        .hasMessage(BLANK_TIMEZONE_MESSAGE);
+  }
+
+  /** [WD-607] 수정에서 시간대를 빈 값·공백으로 보내면 400 이고 저장된 시간대는 그대로다(예전엔 빈 값이 그대로 저장됐다). */
+  @Test
+  void updateJob_blankTimezone_rejectedAndKeepsStored() {
+    ProactiveJobResponse created =
+        proactiveJobService.createJob(buildCreateRequest("시간대 비우기"), testUserId);
+    for (String tz : List.of("", "   ")) {
+      assertThatThrownBy(
+              () ->
+                  proactiveJobService.updateJob(
+                      created.id(),
+                      new UpdateProactiveJobRequest(null, null, null, null, tz, null, null, null),
+                      testUserId))
+          .as("timezone=[%s]", tz)
+          .isInstanceOf(ProactiveJobException.class)
+          .hasMessage(BLANK_TIMEZONE_MESSAGE);
+    }
+    assertThat(proactiveJobService.getJob(created.id(), testUserId).timezone())
+        .isEqualTo("Asia/Seoul");
   }
 
   @Test

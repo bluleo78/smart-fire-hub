@@ -92,6 +92,35 @@ class DocumentIngestionServiceTest extends IntegrationTestBase {
     assertThat(chunks).isEqualTo(file.chunkCount());
   }
 
+  /**
+   * 255 코드포인트를 넘는 원본 이름도 거부하지 않고 잘라 document_file.original_name(VARCHAR 255)에 보존한다 — 안전한 확장자는 끝에
+   * 살린다 (WD-610, 데이터 가져오기·채팅 첨부와 같은 공용 규칙).
+   */
+  @Test
+  void uploadTruncatesOverlongOriginalNameKeepingExtension() {
+    Long userId =
+        dsl.fetchOne(
+                "INSERT INTO \"user\"(username, password, name, email) VALUES"
+                    + " ('docing_long','x','Doc Long','docing_long@example.com') RETURNING id")
+            .get(0, Long.class);
+    Long datasetId =
+        dsl.fetchOne(
+                "INSERT INTO dataset(name, table_name, storage_type, origin_type, created_by) VALUES"
+                    + " ('docing-long-set','data.docing_long_set','DOCUMENT', 'SOURCE', ?)"
+                    + " RETURNING id",
+                userId)
+            .get(0, Long.class);
+    String longName = "보고서".repeat(150) + ".txt";
+
+    var resp =
+        ingestionService.upload(
+            datasetId, "긴 이름 문서".repeat(10).getBytes(), longName, "text/plain", userId);
+
+    String saved = fileRepository.findById(resp.id()).orElseThrow().originalName();
+    assertThat(saved.codePointCount(0, saved.length())).isEqualTo(255);
+    assertThat(saved).endsWith(".txt").startsWith("보고서");
+  }
+
   @Test
   void processIngestionMarksFailedWithNotConfiguredReason() {
     when(embeddingProviderFactory.current()).thenThrow(new EmbeddingNotConfiguredException());
