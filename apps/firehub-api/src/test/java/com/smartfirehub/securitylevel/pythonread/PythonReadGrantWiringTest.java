@@ -1337,7 +1337,9 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
                 fixtureTransactionTemplate,
                 DEFAULT_TEST_TENANT_ID,
                 () -> {
-                  dsl.fetchValue(
+                  // PG 동기화 잠금은 데이터 저장소에서 잡힌다(WD-493) — 분리 모드에서도 같은 곳에서 쥐도록 데이터 저장소 DSL 로 잡는다(WD-701
+                  // 3차).
+                  dataDsl.fetchValue(
                       "select pg_advisory_xact_lock(hashtextextended({0}, 0))",
                       DSL.val(PythonReadGrantSync.syncLockKey(DEFAULT_TEST_TENANT_ID)));
                   held.countDown();
@@ -1351,14 +1353,14 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
     return release;
   }
 
-  /** 지금 다른 트랜잭션이 테넌트 동기화 잠금을 쥐고 있지 않은가(기다리지 않고 시도). */
+  /** 지금 다른 트랜잭션이 테넌트 동기화 잠금을 쥐고 있지 않은가(기다리지 않고 시도) — 잠금이 잡히는 데이터 저장소에서 본다. */
   private boolean tenantSyncLockFree() {
     return TenantRlsTestSupport.runInTenantTransaction(
         fixtureTransactionTemplate,
         DEFAULT_TEST_TENANT_ID,
         () ->
             Boolean.TRUE.equals(
-                dsl.fetchValue(
+                dataDsl.fetchValue(
                     DSL.field(
                         "pg_try_advisory_xact_lock(hashtextextended({0}, 0))",
                         Boolean.class,

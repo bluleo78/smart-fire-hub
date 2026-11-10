@@ -3,6 +3,7 @@ package com.smartfirehub.securitylevel.pythonread;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
@@ -209,7 +210,7 @@ class PythonReadGrantListenerTest {
 
   /** 좁히기가 확인되면 대체 경로(토큰 무효화·세션 끊기·뒷정리)를 쓰지 않는다 — 잦은 자동 상향이 동시 실행을 끊지 않게. */
   @Test
-  void datasetBeforeCommit_narrowed_doesNotTouchOtherRuns() {
+  void datasetBeforeCommit_narrowed_doesNotTouchOtherRuns() throws Exception {
     TenantContext.set(TENANT);
     TransactionSynchronizationManager.initSynchronization();
     when(grants.narrowDatasetInCurrentTx(42L, 1L, 3L))
@@ -218,7 +219,20 @@ class PythonReadGrantListenerTest {
     listener.narrowDatasetBeforeCommit(DATASET);
 
     verify(grants, never()).invalidateScriptTokensInCurrentTx(anyLong());
-    assertThat(TransactionSynchronizationManager.getSynchronizations()).isEmpty();
+    assertOnlyRollbackResyncRegistered();
+  }
+
+  /** 등록된 커밋 콜백이 롤백 뒤 재동기화(WD-701 3차) 하나뿐인지 본다 — 커밋되면 아무것도 하지 않는다(끊기·표식·뒷정리 없음). */
+  private void assertOnlyRollbackResyncRegistered() throws InterruptedException {
+    List<TransactionSynchronization> syncs =
+        TransactionSynchronizationManager.getSynchronizations();
+    assertThat(syncs).hasSize(1);
+    syncs.get(0).afterCommit();
+    syncs.get(0).afterCompletion(TransactionSynchronization.STATUS_COMMITTED);
+    verify(grants, never()).requestSlotSessionTermination(anyLong(), any());
+    verify(grants, never()).terminateSlotSessionsAfterCommit(anyLong(), any());
+    assertThat(executor.awaitIdle(Duration.ofSeconds(5))).isTrue();
+    verify(grants, never()).syncDatasetsWith(any(), any());
   }
 
   /**
@@ -239,7 +253,7 @@ class PythonReadGrantListenerTest {
     verify(grants, never()).requestSlotSessionTermination(anyLong(), any());
     List<TransactionSynchronization> syncs =
         TransactionSynchronizationManager.getSynchronizations();
-    assertThat(syncs).hasSize(1);
+    assertThat(syncs).as("끊기 요청 + 롤백 뒤 재동기화(WD-701 3차)").hasSize(2);
     TransactionSynchronizationManager.clearSynchronization();
 
     syncs.get(0).afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK);
@@ -309,11 +323,117 @@ class PythonReadGrantListenerTest {
 
     assertThat(calls.get()).as("첫 재시도는 못 끊어 한 번 더").isEqualTo(2);
     assertThat(seenTenant.get()).isEqualTo((int) TENANT);
+    verify(grants, never()).markSlotsUnconfirmed(anyLong(), any());
+  }
+
+  /**
+   * PR #1015 리뷰 반영(WD-701 3차) — 확인된 회수 뒤 끊기 재시도가 <b>모두</b> 실패해 실행기가 버리면 그 슬롯에 미확인 표식을
+   * 단다(fail-closed — 실행 준비가 먼저 끊고, 못 끊으면 거부한다). 첫 요청 실패만으로는 달지 않는다. 고치기 전에는 ERROR 로그만 남고 표식이 없었다.
+   */
+  @Test
+  void datasetConfirmedKill_allRetriesFail_marksSlotsUnconfirmed() throws Exception {
+    PythonReadSyncExecutor shortRetry =
+        new PythonReadSyncExecutor(
+            16,
+            new PythonReadSyncExecutor.RetryPolicy(
+                Duration.ofMillis(2), Duration.ofMillis(10), 3, 2));
+    PythonReadGrantListener l = new PythonReadGrantListener(grants, shortRetry);
+    try {
+      TenantContext.set(TENANT);
+      TransactionSynchronizationManager.initSynchronization();
+      when(grants.narrowDatasetInCurrentTx(42L, 1L, 3L))
+          .thenReturn(NarrowResult.confirmed(Set.of(1, 2), Set.of(2)));
+      when(grants.requestSlotSessionTermination(TENANT, Set.of(2)))
+          .thenReturn(
+              java.util.concurrent.CompletableFuture.failedFuture(
+                  new IllegalStateException("owner pool busy")));
+      AtomicInteger calls = new AtomicInteger();
+      doAnswer(
+              inv -> {
+                calls.incrementAndGet();
+                throw new PythonReadGrantBackend.SessionKillFailed("x", null);
+              })
+          .when(grants)
+          .terminateSlotSessionsOrThrow(TENANT, Set.of(2));
+
+      l.narrowDatasetBeforeCommit(DATASET);
+      List<TransactionSynchronization> syncs =
+          TransactionSynchronizationManager.getSynchronizations();
+      TransactionSynchronizationManager.clearSynchronization();
+      TenantContext.clear();
+      syncs.get(0).afterCommit();
+      verify(grants, never()).markSlotsUnconfirmed(anyLong(), any());
+      assertThat(shortRetry.awaitIdle(Duration.ofSeconds(10))).isTrue();
+
+      assertThat(calls.get()).as("첫 시도 + 재시도 2번 모두 실패").isEqualTo(3);
+      verify(grants, times(1)).markSlotsUnconfirmed(TENANT, Set.of(2));
+    } finally {
+      shortRetry.shutdown();
+    }
+  }
+
+  /** 끊기 재시도를 실행기가 받지 않으면(종료 중) 곧바로 미확인 표식을 단다(WD-701 3차) — 버려진 재시도도 막기를 빠뜨리지 않는다. */
+  @Test
+  void datasetConfirmedKill_retryRejected_marksSlotsUnconfirmed() {
+    TenantContext.set(TENANT);
+    TransactionSynchronizationManager.initSynchronization();
+    when(grants.narrowDatasetInCurrentTx(42L, 1L, 3L))
+        .thenReturn(NarrowResult.confirmed(Set.of(1, 2), Set.of(1)));
+    when(grants.requestSlotSessionTermination(TENANT, Set.of(1)))
+        .thenReturn(
+            java.util.concurrent.CompletableFuture.failedFuture(new IllegalStateException("x")));
+
+    listener.narrowDatasetBeforeCommit(DATASET);
+    List<TransactionSynchronization> syncs =
+        TransactionSynchronizationManager.getSynchronizations();
+    TransactionSynchronizationManager.clearSynchronization();
+    executor.shutdown();
+    syncs.get(0).afterCommit();
+
+    verify(grants).markSlotsUnconfirmed(TENANT, Set.of(1));
+  }
+
+  /**
+   * WD-701 3차 — 발행 트랜잭션이 롤백되면(커밋 직전 회수가 데이터 저장소·Tibero 에서 따로 커밋됐을 수 있다) 그 데이터셋 재동기화를 이벤트 테넌트로 실행기에
+   * 넣어 줄어든 권한을 되살린다. 확인된 경로·대체 경로 모두다. 커밋되면 이 콜백은 아무것도 넣지 않는다(커밋 뒤 재동기화는 {@code
+   * onDatasetLevelChanged} 몫). 고치기 전에는 롤백 뒤 아무것도 돌지 않아, 분리 설치에서 슬롯이 실행 준비·일 1회 동기화까지 그 테이블을 못 읽었다.
+   */
+  @Test
+  void datasetBeforeCommit_rolledBack_queuesResyncUnderEventTenant() throws Exception {
+    AtomicInteger seenTenant = new AtomicInteger(-1);
+    when(grants.syncDatasetsWith(any(), any()))
+        .thenAnswer(
+            inv -> {
+              seenTenant.set((int) TenantContext.require("t"));
+              return PythonReadGrantBackend.BatchResult.done(java.util.Map.of());
+            });
+    for (NarrowResult result :
+        List.of(
+            NarrowResult.confirmed(Set.of(1, 2), Set.of(1)),
+            NarrowResult.unconfirmed(Set.of(1, 2)))) {
+      TenantContext.set(TENANT);
+      TransactionSynchronizationManager.initSynchronization();
+      when(grants.narrowDatasetInCurrentTx(42L, 1L, 3L)).thenReturn(result);
+      listener.narrowDatasetBeforeCommit(DATASET);
+      List<TransactionSynchronization> syncs =
+          TransactionSynchronizationManager.getSynchronizations();
+      TransactionSynchronizationManager.clearSynchronization();
+      TenantContext.clear();
+      for (TransactionSynchronization sync : syncs) {
+        sync.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK);
+      }
+      drain();
+    }
+    verify(grants, times(2))
+        .syncDatasetsWith(org.mockito.ArgumentMatchers.eq(List.of("42")), any());
+    assertThat(seenTenant.get()).isEqualTo((int) TENANT);
+    verify(grants, never()).requestSlotSessionTermination(anyLong(), any());
+    verify(grants, never()).terminateSlotSessionsAfterCommit(anyLong(), any());
   }
 
   /** 리뷰 2 — 확인 못 했어도 막을 슬롯이 비면(넓어지는 변경·권한 없는 새 테이블의 클론) 아무것도 끊지 않는다. */
   @Test
-  void datasetBeforeCommit_unconfirmedButNothingExposed_doesNothing() {
+  void datasetBeforeCommit_unconfirmedButNothingExposed_doesNothing() throws Exception {
     TenantContext.set(TENANT);
     TransactionSynchronizationManager.initSynchronization();
     when(grants.narrowDatasetInCurrentTx(42L, 1L, 3L))
@@ -322,7 +442,7 @@ class PythonReadGrantListenerTest {
     listener.narrowDatasetBeforeCommit(DATASET);
 
     verify(grants, never()).invalidateScriptTokensInCurrentTx(anyLong());
-    assertThat(TransactionSynchronizationManager.getSynchronizations()).isEmpty();
+    assertOnlyRollbackResyncRegistered();
   }
 
   /**
@@ -348,7 +468,7 @@ class PythonReadGrantListenerTest {
     listener.narrowDatasetBeforeCommit(DATASET);
     List<TransactionSynchronization> syncs =
         TransactionSynchronizationManager.getSynchronizations();
-    assertThat(syncs).hasSize(1);
+    assertThat(syncs).as("대체 경로 + 롤백 뒤 재동기화(WD-701 3차)").hasSize(2);
     TransactionSynchronizationManager.clearSynchronization();
     TenantContext.clear();
     syncs.get(0).afterCommit();
@@ -377,7 +497,9 @@ class PythonReadGrantListenerTest {
       try {
         assertThatCode(() -> listener.narrowDatasetBeforeCommit(DATASET))
             .doesNotThrowAnyException();
-        assertThat(TransactionSynchronizationManager.getSynchronizations()).hasSize(1);
+        assertThat(TransactionSynchronizationManager.getSynchronizations())
+            .as("대체 경로 + 롤백 뒤 재동기화(WD-701 3차)")
+            .hasSize(2);
         TransactionSynchronizationManager.getSynchronizations().get(0).afterCommit();
       } finally {
         TransactionSynchronizationManager.clearSynchronization();
@@ -394,6 +516,102 @@ class PythonReadGrantListenerTest {
     TenantContext.set(TENANT);
     when(grants.narrowDatasetInCurrentTx(42L, 1L, 3L)).thenThrow(new IllegalStateException("x"));
     assertThatCode(() -> listener.narrowDatasetBeforeCommit(DATASET)).doesNotThrowAnyException();
+  }
+
+  /**
+   * WD-701 3차 리뷰 SF4 — 좁히기가 예외로 끝나도 롤백 재동기화는 등록된다(회수가 데이터 저장소에 이미 커밋됐을 수 있다). 롤백되면 그 데이터셋 재동기화가
+   * 실행기에 들어간다. 고치기 전에는 등록이 try 안 끝에 있어 예외면 건너뛰었다.
+   */
+  @Test
+  void datasetBeforeCommit_unexpectedError_stillRegistersRollbackResync() throws Exception {
+    TenantContext.set(TENANT);
+    TransactionSynchronizationManager.initSynchronization();
+    when(grants.narrowDatasetInCurrentTx(42L, 1L, 3L)).thenThrow(new IllegalStateException("x"));
+    when(grants.syncDatasetsWith(any(), any()))
+        .thenReturn(PythonReadGrantBackend.BatchResult.done(java.util.Map.of()));
+
+    assertThatCode(() -> listener.narrowDatasetBeforeCommit(DATASET)).doesNotThrowAnyException();
+    List<TransactionSynchronization> syncs =
+        TransactionSynchronizationManager.getSynchronizations();
+    assertThat(syncs).as("롤백 뒤 재동기화만").hasSize(1);
+    TransactionSynchronizationManager.clearSynchronization();
+    TenantContext.clear();
+    syncs.get(0).afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK);
+    drain();
+    verify(grants).syncDatasetsWith(org.mockito.ArgumentMatchers.eq(List.of("42")), any());
+  }
+
+  /**
+   * WD-701 3차 리뷰 B1 — 분리 설치에서 확인된 회수가 플랫폼보다 먼저 커밋됐으면(테넌트 잠금도 그때 풀려 옛 등급으로 다시 GRANT 될 수 있다) 커밋 뒤 회수
+   * 필수 뒷정리(잠금 안 새 등급 회수 → 회수·되살아난 슬롯만 끊기)를 넣는다. 실행기가 포화여도 받아들이고, 회수한 슬롯 끊기 요청도 곧바로 넣는다. 대체 경로(토큰
+   * 무효화·표식)는 쓰지 않고, 롤백되면 아무것도 넣지 않는다. 고치기 전에는 끊기 요청만 해 되살아난 GRANT 가 남았다.
+   */
+  @Test
+  void datasetBeforeCommit_confirmedSeparately_queuesCriticalLockedCleanup_evenWhenSaturated()
+      throws Exception {
+    executor.shutdown();
+    executor = new PythonReadSyncExecutor(1);
+    listener = new PythonReadGrantListener(grants, executor);
+    TenantContext.set(TENANT);
+    TransactionSynchronizationManager.initSynchronization();
+    when(grants.narrowDatasetInCurrentTx(42L, 1L, 3L))
+        .thenReturn(NarrowResult.confirmed(Set.of(2), Set.of(1)).separately());
+    when(grants.requestSlotSessionTermination(TENANT, Set.of(1)))
+        .thenReturn(java.util.concurrent.CompletableFuture.completedFuture(1));
+    AtomicInteger seenTenant = new AtomicInteger(-1);
+    doAnswer(
+            inv -> {
+              seenTenant.set((int) TenantContext.require("t"));
+              return null;
+            })
+        .when(grants)
+        .syncDatasetAfterSeparateNarrowing(42L, Set.of(1));
+
+    listener.narrowDatasetBeforeCommit(DATASET);
+    List<TransactionSynchronization> syncs =
+        TransactionSynchronizationManager.getSynchronizations();
+    assertThat(syncs).as("분리 설치 뒷정리 + 롤백 뒤 재동기화").hasSize(2);
+    TransactionSynchronizationManager.clearSynchronization();
+    TenantContext.clear();
+
+    syncs.get(0).afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK);
+    verify(grants, never()).requestSlotSessionTermination(anyLong(), any());
+
+    CountDownLatch release = block(); // 워커 점유 — 상한 1 이 찼다
+    syncs.get(0).afterCommit();
+    verify(grants).requestSlotSessionTermination(TENANT, Set.of(1));
+    release.countDown();
+    drain();
+    verify(grants).syncDatasetAfterSeparateNarrowing(42L, Set.of(1));
+    verify(grants, never()).syncDatasetAfterUnconfirmedNarrowing(anyLong(), any(), anyBoolean());
+    assertThat(seenTenant.get()).isEqualTo((int) TENANT);
+    verify(grants, never()).invalidateScriptTokensInCurrentTx(anyLong());
+    verify(grants, never()).terminateSlotSessionsAfterCommit(anyLong(), any());
+    verify(grants, never()).markSlotsUnconfirmed(anyLong(), any());
+  }
+
+  /**
+   * WD-701 3차 리뷰 B1 — 분리 설치 뒷정리를 실행기가 끝내 버리면(여기선 종료 중 제출 거부) 그 슬롯에 미확인 표식을 단다(실행 준비가 먼저 끊고 새 등급으로
+   * 맞춘다).
+   */
+  @Test
+  void datasetConfirmedSeparately_cleanupRejected_marksSlotsUnconfirmed() {
+    TenantContext.set(TENANT);
+    TransactionSynchronizationManager.initSynchronization();
+    when(grants.narrowDatasetInCurrentTx(42L, 1L, 3L))
+        .thenReturn(NarrowResult.confirmed(Set.of(), Set.of(1)).separately());
+    when(grants.requestSlotSessionTermination(TENANT, Set.of(1)))
+        .thenReturn(java.util.concurrent.CompletableFuture.completedFuture(1));
+    listener.narrowDatasetBeforeCommit(DATASET);
+    List<TransactionSynchronization> syncs =
+        TransactionSynchronizationManager.getSynchronizations();
+    TransactionSynchronizationManager.clearSynchronization();
+    TenantContext.clear();
+    executor.shutdown();
+
+    syncs.get(0).afterCommit();
+    verify(grants).markSlotsUnconfirmed(TENANT, Set.of(1));
+    verify(grants, never()).syncDatasetAfterSeparateNarrowing(anyLong(), any());
   }
 
   /**

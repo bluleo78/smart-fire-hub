@@ -1428,4 +1428,70 @@ class PythonReadSyncExecutorTest {
       Thread.currentThread().interrupt();
     }
   }
+
+  // ------------------------------------------------ WD-701 3차: 버림 콜백
+
+  /**
+   * 버림 콜백(WD-701 3차) — 일시 실패가 상한을 넘겨 버려지면 그 항목으로 콜백이 <b>한 번</b> 불린다. 확인된 회수 뒤 끊기 재시도가 모두 실패했을 때
+   * 리스너가 미확인 표식을 다는 근거다. 끝난 작업(DONE)은 부르지 않는다. 고치기 전에는 버림이 ERROR 로그·건수로만 남았다.
+   */
+  @Test
+  void dropListener_calledOnceWithItems_whenTransientFailuresExhausted_notOnSuccess()
+      throws Exception {
+    PythonReadSyncExecutor executor = executor(Duration.ofMillis(2), CAP, 3, 2);
+    try {
+      List<List<String>> dropped = new CopyOnWriteArrayList<>();
+      executor.submitRetryable(
+          "kill-broken", "slots", (items, lockWait) -> Outcome.FAILED, true, dropped::add);
+      executor.submitRetryable(
+          "kill-ok", "slots", (items, lockWait) -> Outcome.DONE, true, dropped::add);
+      assertThat(executor.awaitIdle(Duration.ofSeconds(5))).isTrue();
+      assertThat(dropped).as("소진된 작업만, 한 번").containsExactly(List.of("slots"));
+      assertThat(executor.droppedCount()).isEqualTo(1);
+    } finally {
+      executor.shutdown();
+    }
+  }
+
+  /** 영구 실패로 곧바로 버려져도, 시도가 예외로 새어 나와도 콜백이 불린다 — 버림 지점마다 빠짐없이(WD-701 3차). 콜백의 예외는 실행기를 멈추지 않는다. */
+  @Test
+  void dropListener_calledOnPermanentFailureAndEscapedException_andItsErrorIsContained()
+      throws Exception {
+    PythonReadSyncExecutor executor = executor(Duration.ofMillis(2), CAP, 3, 5);
+    try {
+      List<String> dropped = new CopyOnWriteArrayList<>();
+      executor.submitRetryable(
+          "perm", "a", (items, lockWait) -> Outcome.PERMANENT_FAILURE, false, dropped::addAll);
+      executor.submitRetryable(
+          "boom",
+          "b",
+          (items, lockWait) -> {
+            throw new IllegalStateException("시도가 새어 나온 예외");
+          },
+          false,
+          items -> {
+            dropped.addAll(items);
+            throw new IllegalStateException("콜백 실패");
+          });
+      assertThat(executor.awaitIdle(Duration.ofSeconds(5))).isTrue();
+      assertThat(dropped).containsExactlyInAnyOrder("a", "b");
+      assertThat(submit(executor, () -> {})).as("콜백 예외 뒤에도 실행기는 계속 받는다").isTrue();
+      assertThat(executor.awaitIdle(Duration.ofSeconds(5))).isTrue();
+    } finally {
+      executor.shutdown();
+    }
+  }
+
+  /** 종료(비우기) 중 제출이 버려지면 제출한 항목으로 콜백이 곧바로 불린다(WD-701 3차) — 받아들이지 않은 작업도 막기 표식을 놓치지 않게. */
+  @Test
+  void dropListener_calledWhenSubmissionRejectedWhileClosing() throws Exception {
+    PythonReadSyncExecutor executor = executor(Duration.ofMillis(2), CAP);
+    executor.shutdown();
+    List<String> dropped = new CopyOnWriteArrayList<>();
+    boolean accepted =
+        executor.submitRetryable(
+            "late", "x", (items, lockWait) -> Outcome.DONE, true, dropped::addAll);
+    assertThat(accepted).isFalse();
+    assertThat(dropped).containsExactly("x");
+  }
 }

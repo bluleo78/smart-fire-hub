@@ -165,6 +165,15 @@ public class PythonReadGrants {
   }
 
   /**
+   * PG 슬롯에 미확인 표식만 단다 — 확인된 회수 뒤 끊기 재시도가 모두 버려졌을 때 리스너가 부른다(WD-701 3차, {@link
+   * PythonReadGrantSync#markSlotsUnconfirmed}). 백엔드를 묻지 않는다(실행기 콜백·커밋 콜백에서 불릴 수 있다). Tibero 테넌트는 PG
+   * 슬롯 실행 준비가 없어 표식이 아무것도 막지 않는다.
+   */
+  public void markSlotsUnconfirmed(long tenantId, Set<Integer> slots) {
+    pg.markSlotsUnconfirmed(tenantId, slots);
+  }
+
+  /**
    * 데이터셋 등급 변경 트랜잭션의 커밋 직전, 그 트랜잭션에서 남는 슬롯 권한만 회수한다(WD-624, {@link
    * PythonReadGrantBackend#narrowDatasetInCurrentTx}). 커밋 전이라 백엔드 조회는 이 트랜잭션에 정상 합류한다.
    *
@@ -189,6 +198,15 @@ public class PythonReadGrants {
   public void syncDatasetAfterUnconfirmedNarrowing(
       long datasetId, Set<Integer> exposedSlots, boolean tokensInvalidated) {
     delegate().syncDatasetAfterUnconfirmedNarrowing(datasetId, exposedSlots, tokensInvalidated);
+  }
+
+  /**
+   * 분리 설치에서 확인된 커밋 직전 회수가 플랫폼보다 먼저 커밋된 데이터셋 등급 변경의 뒷정리(WD-701 3차 리뷰 B1, {@link
+   * PythonReadGrantSync#syncDatasetAfterSeparateNarrowing}). 분리 설치는 PG 데이터 저장소뿐이라 PG 로 바로 보낸다. 실패는
+   * 예외 — 실행기 작업이 다시 한다.
+   */
+  public void syncDatasetAfterSeparateNarrowing(long datasetId, Set<Integer> revokedSlots) {
+    pg.syncDatasetAfterSeparateNarrowing(datasetId, revokedSlots);
   }
 
   /** 데이터셋 하나의 테이블만 재동기화. */

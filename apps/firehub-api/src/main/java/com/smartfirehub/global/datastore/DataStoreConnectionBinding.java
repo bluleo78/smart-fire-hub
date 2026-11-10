@@ -106,6 +106,26 @@ public class DataStoreConnectionBinding implements ConnectionProvider {
   }
 
   /**
+   * 현재 Spring 트랜잭션에 <b>이미</b> 묶여 있고 아직 커밋·정리되지 않은 연결 — 없으면 {@code null}. {@link
+   * #boundConnectionOrNull} 과 달리 <b>절대 새로 묶지 않는다</b>(WD-701 3차).
+   *
+   * <p>왜 따로 있나: PYTHON 읽기 커밋 직전 좁히기({@code PythonReadGrantSync})는 커밋 직전 단계에서 돈다. 거기서 처음 묶으면 그 연결의
+   * 동기화가 커밋 직전 콜백 목록(시작할 때 찍은 스냅숏)에 들지 못해 플랫폼 커밋 <b>뒤</b>에야 커밋된다(클래스 설명 "완료 단계에서 처음 묶는 경우"). 그래서 이미
+   * 묶였는지만 보고, 묶였으면 그 연결(커밋 직전 콜백이 플랫폼 커밋보다 먼저 커밋한다)을, 아니면 따로 빌린 연결을 쓴다.
+   *
+   * <p><b>전제(부르는 쪽 책임).</b> "플랫폼 커밋보다 먼저 커밋한다" 는 그 연결이 커밋 직전 단계가 <b>시작되기 전에</b> 묶였을 때만 참이다. 커밋 직전
+   * 단계 안에서(부르는 쪽보다 먼저 돈 다른 커밋 직전 콜백이) 처음 묶은 연결도 여기서 돌려주지만, 그 커밋은 플랫폼 커밋 뒤로 밀린다. 이 메서드는 그 둘을 구별하지
+   * 않는다.
+   */
+  public Connection currentlyBoundConnectionOrNull() {
+    if (!inActualTransaction()) {
+      return null;
+    }
+    BoundConnection bound = currentBound();
+    return bound == null || bound.committed || bound.completed ? null : bound.connection;
+  }
+
+  /**
    * 실제 트랜잭션과 동기화가 모두 활성일 때만 묶는다 — 동기화만 켜진 비트랜잭션 구간(SUPPORTS 등)에서는 afterCompletion 이 오지 않을 수 있어 묶으면
    * 연결이 샌다.
    */
