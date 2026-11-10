@@ -18,8 +18,8 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
 /**
- * 데이터 저장소 기준선({@code db/datastore-postgres})이 PG 설치본의 플랫폼 마이그레이션(V2~V155)이 만든 데이터 저장소 객체와 같은 상태를
- * 만드는지 대조한다(WD-494 스펙 4·5절).
+ * 데이터 저장소 마이그레이션({@code db/datastore-postgres} 기준선 V1 과 그 뒤 판)이 PG 설치본의 플랫폼 마이그레이션(V2~최신, 예: V159 의
+ * PYTHON 읽기 미확인 표식 표)이 만든 데이터 저장소 객체와 같은 상태를 만드는지 대조한다(WD-494 스펙 4·5절).
  *
  * <p>컨테이너 A(플랫폼 마이그레이션 전부)와 컨테이너 B(데이터 저장소 기준선만)는 <b>다른 서버</b>다 — PG 롤은 서버 전체 객체라 같은 서버의 두 DB 로
  * 비교하면 기준선이 빠뜨린 롤·권한을 플랫폼 마이그레이션이 만든 것으로 착각한다. 두 컨테이너 모두 분리 모드 컨텍스트가 기동하면서 실제 경로(플랫폼 Flyway → 데이터
@@ -172,6 +172,44 @@ class DataStoreBaselineParityTest extends IntegrationTestBase {
             + " AND (s.setdatabase = 0 OR d.datname = current_database())"
             + " ORDER BY s.setdatabase DESC LIMIT 1";
     assertThat(single(dataStore(), sql)).isEqualTo(single(platform(), sql)).isNotNull();
+  }
+
+  /**
+   * PYTHON 읽기 슬롯 미확인 표식 표(플랫폼 V159 / 데이터 저장소 V2, WD-701 4차) — 두 쪽의 열 정의·제약·권한이 같다. 분리 설치는 데이터 저장소
+   * 쪽만 쓴다(표식 시각을 pg_stat_activity 와 같은 서버 시계로 적으려고).
+   */
+  @Test
+  void python_읽기_미확인_표식_표가_같다() throws SQLException {
+    String columns =
+        "SELECT string_agg(column_name || ' ' || data_type || ' ' || is_nullable || ' '"
+            + " || coalesce(column_default, '-'), ',' ORDER BY ordinal_position)"
+            + " FROM information_schema.columns"
+            + " WHERE table_schema = 'public' AND table_name = 'python_read_unconfirmed_slot'";
+    String expected = single(platform(), columns);
+    assertThat(expected).as("A 에 표가 있어야 한다").isNotNull();
+    assertThat(single(dataStore(), columns)).isEqualTo(expected);
+    String constraints =
+        "SELECT string_agg(contype::text || ' ' || pg_get_constraintdef(oid), ','"
+            + " ORDER BY contype, pg_get_constraintdef(oid))"
+            + " FROM pg_constraint WHERE conrelid = 'public.python_read_unconfirmed_slot'::regclass";
+    assertThat(single(dataStore(), constraints)).isEqualTo(single(platform(), constraints));
+    for (String priv : List.of("SELECT", "INSERT", "UPDATE", "DELETE")) {
+      String sql =
+          "SELECT has_table_privilege('app_tenant', 'public.python_read_unconfirmed_slot', '"
+              + priv
+              + "')";
+      assertThat(single(dataStore(), sql)).as("app_tenant " + priv).isEqualTo("t");
+      assertThat(single(platform(), sql)).as("app_tenant " + priv).isEqualTo("t");
+    }
+    // 표식 전 세션을 소유자 권한으로 세는 함수(리뷰 2) — 정의·실행 권한이 같고, 런타임 롤이 부를 수 있다.
+    String fn = "public.fh_python_read_sessions_before(text[], timestamptz[])";
+    String def = "SELECT pg_get_functiondef('" + fn + "'::regprocedure)";
+    assertThat(single(dataStore(), def))
+        .isEqualTo(single(platform(), def))
+        .contains("SECURITY DEFINER");
+    String exec = "SELECT has_function_privilege('app_tenant', '" + fn + "', 'EXECUTE')";
+    assertThat(single(dataStore(), exec)).isEqualTo("t");
+    assertThat(single(platform(), exec)).isEqualTo("t");
   }
 
   // ── 헬퍼 ──────────────────────────────────────────────────────────────────────────────

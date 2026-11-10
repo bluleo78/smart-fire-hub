@@ -41,7 +41,13 @@ class TiberoTenantPolicyParityTest {
           "DOCUMENT_CHUNK_VEC_1024",
           "DOCUMENT_CHUNK_VEC_1536");
 
-  private static final Path TIBERO = Path.of("src/main/resources/db/migration-tibero");
+  /**
+   * Tibero 기준선에 없는 PG 전용 테이블 — PG 쪽 집합에서 뺀다. PYTHON 읽기 미확인 표식(WD-701)은 PG 데이터 저장소의
+   * pg_stat_activity.backend_start 와 같은 시계로 비교하려고 PG 데이터 저장소에만 두고, Tibero V159 는 주석뿐이다.
+   */
+  private static final Set<String> PG_ONLY_TABLES = Set.of("PYTHON_READ_UNCONFIRMED_SLOT");
+
+  private static final Path TIBERO =Path.of("src/main/resources/db/migration-tibero");
 
   /** add_policy('<테이블>', ...) 의 첫 인자. 선언부 add_policy(p_table ...) 는 따옴표가 없어 걸리지 않는다. */
   private static final Pattern ADD_POLICY =
@@ -59,6 +65,7 @@ class TiberoTenantPolicyParityTest {
     }
     expected.removeAll(NO_POLICY);
     expected.removeAll(VECTOR_TABLES);
+    expected.removeAll(PG_ONLY_TABLES);
 
     Set<String> actual = namesCalled(ADD_POLICY);
 
@@ -84,6 +91,7 @@ class TiberoTenantPolicyParityTest {
       }
     }
     expected.removeAll(VECTOR_TABLES);
+    expected.removeAll(PG_ONLY_TABLES);
 
     Set<String> actual = namesCalled(SET_DEFAULT);
 

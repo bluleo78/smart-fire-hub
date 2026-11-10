@@ -14,6 +14,7 @@ import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantPipelineRole;
+import com.smartfirehub.global.tenant.TenantPipelineRoleProvisioner;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.repository.SecurityLevelRepository;
@@ -70,6 +71,7 @@ class PythonReadGrantSyncTest extends IntegrationTestBase {
   @Autowired private DatasetRepository datasetRepository;
   @Autowired private PlatformTransactionManager txManager;
   @Autowired private PythonReadSyncExecutor syncExecutor;
+  @Autowired private TenantPipelineRoleProvisioner roleProvisioner;
 
   @Value("${firehub.data-store.postgres.separate:false}")
   private boolean separateDataStore;
@@ -95,6 +97,7 @@ class PythonReadGrantSyncTest extends IntegrationTestBase {
     users.add(owner);
     m = "prs" + System.nanoTime();
     TenantContext.set(DEFAULT_TEST_TENANT_ID);
+    clearDbMarks();
   }
 
   /** PipelineSqlAccessTest.table 과 같은 방식: 물리 테이블 + 행 1개 + 등급 직접 지정. */
@@ -776,8 +779,9 @@ class PythonReadGrantSyncTest extends IntegrationTestBase {
 
   /**
    * WD-664 9 — 커밋 콜백의 슬롯 세션 끊기({@link PythonReadGrantSync#terminateSlotSessionsAfterCommit})는 끊기가
-   * 막혀 있어도(소유자 풀 바쁨) 기다리지 않고 돌아온다 — 커밋 콜백이 바깥 플랫폼 커넥션을 쥔 채 멈추지 않게. 표식은 돌아오기 전에 이미 서 있고, 막힘이 풀려 끊기가
-   * 성공하면 지워진다. 고치기 전에는 상한(3초)만큼 기다렸다.
+   * 막혀 있어도(소유자 풀 바쁨) 기다리지 않고 돌아온다 — 커밋 콜백이 바깥 플랫폼 커넥션을 쥔 채 멈추지 않게. 표식은 돌아오기 전에 이미 데이터 저장소 표에 서
+   * 있다(WD-701 4차 — 메모리 표식은 쓰지 않는다). 커밋 직후 끊기 성공만으로는 지우지 않는다 — 실행 준비·실행기 작업이 지운다. 고치기 전에는 상한(3초)만큼
+   * 기다렸다.
    */
   @Test
   void afterCommitTermination_doesNotWaitForBlockedKill_butMarksFirst() throws Exception {
@@ -795,14 +799,15 @@ class PythonReadGrantSyncTest extends IntegrationTestBase {
     try {
       PythonReadGrantSync isolated = syncWith(term);
       long start = System.nanoTime();
-      isolated.terminateSlotSessionsAfterCommit(DEFAULT_TEST_TENANT_ID, Set.of(3));
+      isolated.terminateSlotSessionsAfterCommit(DEFAULT_TEST_TENANT_ID, Set.of(3), false);
       assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start))
           .as("막힌 끊기를 기다리지 않는다")
           .isLessThan(500L);
-      assertThat(term.unconfirmedSlots(DEFAULT_TEST_TENANT_ID)).as("돌아오기 전에 표식").containsExactly(3);
+      assertThat(dbMarks()).as("돌아오기 전에 데이터 저장소 표식").containsExactly("3:STALE_SESSION");
+      assertThat(term.unconfirmedSlots(DEFAULT_TEST_TENANT_ID)).as("메모리 대비 표식은 쓰지 않는다").isEmpty();
       gate.countDown();
       assertThat(term.awaitIdle(Duration.ofSeconds(10))).isTrue();
-      assertThat(term.unconfirmedSlots(DEFAULT_TEST_TENANT_ID)).as("늦게라도 끊기가 성공하면 지운다").isEmpty();
+      assertThat(dbMarks()).as("커밋 직후 끊기 성공만으로는 지우지 않는다").containsExactly("3:STALE_SESSION");
     } finally {
       gate.countDown();
       term.shutdown();
@@ -827,11 +832,9 @@ class PythonReadGrantSyncTest extends IntegrationTestBase {
             });
     try {
       PythonReadGrantSync isolated = syncWith(term);
-      isolated.terminateSlotSessionsAfterCommit(DEFAULT_TEST_TENANT_ID, Set.of(3));
+      isolated.terminateSlotSessionsAfterCommit(DEFAULT_TEST_TENANT_ID, Set.of(3), false);
       assertThat(term.awaitIdle(Duration.ofSeconds(10))).isTrue();
-      assertThat(term.unconfirmedSlots(DEFAULT_TEST_TENANT_ID))
-          .as("끊기 실패 — 표식이 남는다")
-          .containsExactly(3);
+      assertThat(dbMarks()).as("끊기 실패 — 표식이 남는다").containsExactly("3:STALE_SESSION");
 
       Clearance sensitive = clearanceResolver.resolve(userAt("민감"));
       assertThatThrownBy(() -> isolated.prepareForRun(sensitive))
@@ -840,7 +843,7 @@ class PythonReadGrantSyncTest extends IntegrationTestBase {
 
       failing.set(false);
       assertThat(isolated.prepareForRun(sensitive)).as("끊기가 되면 실행한다").isEqualTo(3);
-      assertThat(term.unconfirmedSlots(DEFAULT_TEST_TENANT_ID)).isEmpty();
+      assertThat(dbMarks()).as("실행 준비가 확인하고 지운다").isEmpty();
     } finally {
       term.shutdown();
     }
@@ -876,6 +879,474 @@ class PythonReadGrantSyncTest extends IntegrationTestBase {
     return null;
   }
 
+  // ── WD-701 4차: 데이터 저장소 표식·시작 시각 기준 끊기·넓어질 슬롯만 확인 ─────────────────────────────
+
+  /** 이 테넌트의 데이터 저장소 표식들("슬롯:종류", 정렬) — 커밋된 상태만 본다(자동 커밋). */
+  private List<String> dbMarks() {
+    return dataDsl
+        .fetch(
+            "select slot || ':' || kind from "
+                + PythonReadUnconfirmedMarks.TABLE
+                + " where tenant_id = {0} order by 1",
+            DSL.val(DEFAULT_TEST_TENANT_ID))
+        .getValues(0, String.class);
+  }
+
+  /** 이 테넌트의 표식을 모두 지운다 — 같은 JVM 의 다른 테스트에 표식이 새지 않게. */
+  private void clearDbMarks() {
+    dataDsl.execute(
+        "delete from " + PythonReadUnconfirmedMarks.TABLE + " where tenant_id = {0}",
+        DSL.val(DEFAULT_TEST_TENANT_ID));
+  }
+
+  /** 슬롯 롤로 로그인한 연결 — 실행 중인 PYTHON 스크립트의 DB 세션을 흉내 낸다. */
+  private Connection openSlotSession(int slot) throws SQLException {
+    return DriverManager.getConnection(
+        PostgresTestContainer.dataStoreJdbcUrl(),
+        TenantPipelineRole.pythonReadRoleName(DEFAULT_TEST_TENANT_ID, slot),
+        TenantPipelineRole.pythonReadPassword(DEFAULT_TEST_TENANT_ID, slot, secret));
+  }
+
+  /** 연결로 쿼리 하나를 돌린다 — 살아 있으면 true. */
+  private static boolean alive(Connection c) {
+    try (Statement st = c.createStatement()) {
+      st.execute("SELECT 1");
+      return true;
+    } catch (SQLException e) {
+      return false;
+    }
+  }
+
+  /** 운영과 같은 끊기(소유자 연결)를 쓰는 별도 인스턴스 — 메모리 표식이 비어 있는 다른 API 인스턴스를 흉내 낸다. */
+  private PythonReadSessionTerminator realTerminator() {
+    return new PythonReadSessionTerminator(roleProvisioner);
+  }
+
+  /**
+   * 핵심(WD-701 4차 — 3): 인스턴스 A 가 단 미확인 표식을 인스턴스 B(메모리 표식 없음)의 실행 준비가 본다. B 는 표식 전에 시작한 슬롯 3 세션을 끊으려
+   * 하고, 끊지 못하면 실행을 거부한다(fail-closed). 고치기 전에는 표식이 A 메모리에만 있어 B 는 그대로 슬롯을 맞추고 실행했다.
+   */
+  @Test
+  void unconfirmedMark_byInstanceA_isEnforcedByInstanceB() throws Exception {
+    PythonReadSessionTerminator termA = realTerminator();
+    AtomicInteger kills = new AtomicInteger();
+    PythonReadSessionTerminator termB = failingTerminator(kills);
+    try (Connection old = openSlotSession(3)) {
+      Thread.sleep(20);
+      syncWith(termA).markSlotsUnconfirmed(DEFAULT_TEST_TENANT_ID, Set.of(3));
+
+      PythonReadGrantSync instanceB = syncWith(termB);
+      Clearance sensitive = clearanceResolver.resolve(userAt("민감"));
+      assertThatThrownBy(() -> instanceB.prepareForRun(sensitive))
+          .as("다른 인스턴스도 표식을 보고, 옛 세션을 끊지 못하면 거부")
+          .isInstanceOf(PythonReadAccessException.class);
+      assertThat(kills.get()).as("B 가 끊기를 시도했다").isPositive();
+      assertThat(termA.unconfirmedSlots(DEFAULT_TEST_TENANT_ID)).as("메모리가 아니라 표에 단다").isEmpty();
+      assertThat(alive(old)).isTrue();
+      assertThat(dbMarks()).as("거부되면 표식은 남는다").containsExactly("3:STALE_SESSION");
+    } finally {
+      termA.shutdown();
+      termB.shutdown();
+    }
+  }
+
+  /**
+   * 핵심(WD-701 4차 — 8): 회수·끊기 미확인 표식(STALE_SESSION)이 있는 슬롯의 실행 준비는 표식 <b>전에</b> 시작한 세션만 끊는다. 표식 뒤에
+   * 시작한 세션(이미 좁혀진 권한으로 붙은 정상 실행)은 그대로 두고 실행하며, 표식을 지운다. 고치기 전에는 그 슬롯 세션을 모두 끊었다.
+   */
+  @Test
+  void staleMark_prepareKillsOnlySessionsStartedBeforeMark_andClearsIt() throws Exception {
+    PythonReadSessionTerminator term = realTerminator();
+    try (Connection old = openSlotSession(3)) {
+      Thread.sleep(20);
+      PythonReadGrantSync instance = syncWith(term);
+      instance.markSlotsUnconfirmed(DEFAULT_TEST_TENANT_ID, Set.of(3));
+      Thread.sleep(20);
+      try (Connection fresh = openSlotSession(3);
+          Connection otherSlot = openSlotSession(2)) {
+        assertThat(instance.prepareForRun(clearanceResolver.resolve(userAt("민감")))).isEqualTo(3);
+        assertThat(alive(old)).as("표식 전에 시작한 세션은 끊긴다").isFalse();
+        assertThat(alive(fresh)).as("표식 뒤에 시작한 세션은 그대로").isTrue();
+        assertThat(alive(otherSlot)).as("다른 슬롯은 건드리지 않는다").isTrue();
+        assertThat(dbMarks()).as("확인하고 맞춘 뒤 지운다").isEmpty();
+      }
+    } finally {
+      term.shutdown();
+    }
+  }
+
+  /**
+   * 등급 정의 변경 표식(REDEFINED)은 시작 시각으로 거르지 않는다 — 커밋 직전에 옛 정의로 슬롯을 받은 실행이 표식 뒤에 접속했을 수 있다(내가 정한 것,
+   * fail-closed). 표식 뒤에 시작한 세션도 끊고 실행한다.
+   */
+  @Test
+  void redefinedMark_prepareKillsAllSessionsOfRunSlot() throws Exception {
+    PythonReadSessionTerminator term = realTerminator();
+    try {
+      PythonReadGrantSync instance = syncWith(term);
+      instance.terminateSlotSessionsAfterCommit(DEFAULT_TEST_TENANT_ID, Set.of(3), true);
+      assertThat(term.awaitIdle(Duration.ofSeconds(10))).isTrue();
+      assertThat(dbMarks()).containsExactly("3:REDEFINED");
+      Thread.sleep(20);
+      try (Connection afterMark = openSlotSession(3)) {
+        assertThat(instance.prepareForRun(clearanceResolver.resolve(userAt("민감")))).isEqualTo(3);
+        assertThat(alive(afterMark)).as("정의 변경 표식은 표식 뒤 세션도 끊는다").isFalse();
+        assertThat(dbMarks())
+            .as("실행 준비는 바꿔 남긴다(등급 정의 변경 작업이 지운다)")
+            .containsExactly("3:REDEFINED_APPLIED");
+      }
+    } finally {
+      term.shutdown();
+    }
+  }
+
+  /** 실행 준비는 자기가 읽은 번호의 표식만 지운다 — 그 사이 다른 인스턴스가 같은 슬롯에 다시 단 표식(번호가 오름)은 남는다(조건부 DELETE). */
+  @Test
+  void clearAfterRun_doesNotWipeNewerMarkSetMeanwhile() {
+    PythonReadSessionTerminator term = realTerminator();
+    try {
+      PythonReadUnconfirmedMarks marks = new PythonReadUnconfirmedMarks(d -> null, term);
+      syncWith(term).markSlotsUnconfirmed(DEFAULT_TEST_TENANT_ID, Set.of(4));
+      PythonReadUnconfirmedMarks.SlotMarks read =
+          marks.read(dataDsl, DEFAULT_TEST_TENANT_ID).get(4);
+      syncWith(term).markSlotsUnconfirmed(DEFAULT_TEST_TENANT_ID, Set.of(4)); // 다른 인스턴스가 다시 단다
+      marks.clearAfterRun(dataDsl, DEFAULT_TEST_TENANT_ID, 4, read);
+      assertThat(dbMarks()).as("더 새 표식은 남는다").containsExactly("4:STALE_SESSION");
+
+      PythonReadUnconfirmedMarks.SlotMarks latest =
+          marks.read(dataDsl, DEFAULT_TEST_TENANT_ID).get(4);
+      marks.clearAfterRun(dataDsl, DEFAULT_TEST_TENANT_ID, 4, latest);
+      assertThat(dbMarks()).isEmpty();
+    } finally {
+      term.shutdown();
+    }
+  }
+
+  /**
+   * 핵심(WD-701 4차 — 8 뒷부분): 등급 정의 변경 실행기 작업은 <b>넓어질 슬롯</b>의 세션만 끊는다. 넓어질 것이 없는 슬롯(커밋 뒤 실행 준비가 이미 새
+   * 정의로 맞춘 슬롯)의 정상 세션은 끊지 않는다. 슬롯 2 에서 공개 테이블 GRANT 를 손으로 떼어 "넓어질 슬롯" 을 만들면 그 슬롯 세션만 끊고 GRANT 를
+   * 되살린다. 적용하면 등급 정의 변경 표식도 지운다. 고치기 전에는 먼저 슬롯 전부를 끊어 슬롯 3 정상 세션까지 끊었다.
+   */
+  @Test
+  void levelsChangeJob_killsOnlySessionsOfSlotsThatWiden_andClearsRedefinedMarks()
+      throws Exception {
+    String pub = table("lvw", "공개");
+    sync.syncTenant();
+    PythonReadSessionTerminator term = realTerminator();
+    try {
+      PythonReadGrantSync instance = syncWith(term);
+      instance.terminateSlotSessionsAfterCommit(
+          DEFAULT_TEST_TENANT_ID, PythonReadSlots.ALL_SLOTS, true);
+      assertThat(term.awaitIdle(Duration.ofSeconds(10))).isTrue();
+      ownerDsl()
+          .execute(
+              "REVOKE SELECT ON TABLE "
+                  + ownerQualified(pub)
+                  + " FROM \""
+                  + TenantPipelineRole.pythonReadRoleName(DEFAULT_TEST_TENANT_ID, 2)
+                  + "\"");
+      assertThat(selectAs(2, pub)).as("전제: 슬롯 2 는 넓어질 슬롯").isEqualTo("42501");
+      try (Connection widening = openSlotSession(2);
+          Connection unchanged = openSlotSession(3)) {
+        TenantContext.runScoped(DEFAULT_TEST_TENANT_ID, instance::syncTenantForLevelsChange);
+        assertThat(alive(widening)).as("넓어질 슬롯 2 의 세션은 끊는다").isFalse();
+        assertThat(alive(unchanged)).as("넓어질 것이 없는 슬롯 3 의 세션은 그대로").isTrue();
+      }
+      assertThat(selectAs(2, pub)).as("슬롯 2 GRANT 를 되살렸다").isNull();
+      assertThat(dbMarks()).as("적용하면 등급 정의 변경 표식을 지운다").isEmpty();
+    } finally {
+      term.shutdown();
+    }
+  }
+
+  /** 넓어질 것이 없으면 등급 정의 변경 작업은 어떤 세션도 끊지 않는다(고치기 전에는 슬롯 전부를 먼저 끊었다). */
+  @Test
+  void levelsChangeJob_nothingWidens_killsNoSession() throws Exception {
+    sync.syncTenant();
+    try (Connection s1 = openSlotSession(1);
+        Connection s2 = openSlotSession(2)) {
+      TenantContext.runScoped(DEFAULT_TEST_TENANT_ID, sync::syncTenantForLevelsChange);
+      assertThat(alive(s1)).isTrue();
+      assertThat(alive(s2)).isTrue();
+    }
+  }
+
+  /** 시작 시각과 무관한 실행기 끊기(회수 뒤 끊기 재시도)는 끊기 전에 단 STALE_SESSION 표식만 지운다 — 등급 정의 변경 표식은 남긴다. */
+  @Test
+  void executorKill_clearsStaleMarksUpToKillStart_keepsRedefined() {
+    PythonReadSessionTerminator term = realTerminator();
+    try {
+      PythonReadGrantSync instance = syncWith(term);
+      instance.markSlotsUnconfirmed(DEFAULT_TEST_TENANT_ID, Set.of(5));
+      instance.terminateSlotSessionsAfterCommit(DEFAULT_TEST_TENANT_ID, Set.of(5), true);
+      instance.terminateSlotSessionsOrThrow(DEFAULT_TEST_TENANT_ID, Set.of(5));
+      assertThat(dbMarks()).containsExactly("5:REDEFINED");
+    } finally {
+      term.shutdown();
+    }
+  }
+
+  /**
+   * 리뷰 1 — 실행 준비가 STALE 표식(번호 1, 시각 T1)을 읽은 뒤, 실행기가 그 표식을 지우고(잠금 없이) 커밋 콜백이 같은 슬롯에 새 표식을 달면 번호가 다시
+   * 1 이다(시각 T3). 실행 준비의 정리는 T1 전 세션만 확인했으므로 T3 표식을 지우면 안 된다 — 번호와 시각을 함께 본다.
+   */
+  @Test
+  void clearAfterRun_doesNotWipeMarkReinsertedAfterExecutorClear() {
+    PythonReadSessionTerminator term = realTerminator();
+    try {
+      PythonReadUnconfirmedMarks marks = new PythonReadUnconfirmedMarks(d -> null, term);
+      PythonReadGrantSync instance = syncWith(term);
+      instance.markSlotsUnconfirmed(DEFAULT_TEST_TENANT_ID, Set.of(4));
+      PythonReadUnconfirmedMarks.SlotMarks read =
+          marks.read(dataDsl, DEFAULT_TEST_TENANT_ID).get(4);
+      marks.clearStaleUpTo(
+          dataDsl,
+          DEFAULT_TEST_TENANT_ID,
+          Set.of(4),
+          PythonReadUnconfirmedMarks.dataStoreNow(dataDsl)); // 실행기 끊기 뒤 정리
+      instance.markSlotsUnconfirmed(DEFAULT_TEST_TENANT_ID, Set.of(4)); // 새 표식 — 번호가 1 로 다시 시작
+      assertThat(marks.read(dataDsl, DEFAULT_TEST_TENANT_ID).get(4).rows().get(0).version())
+          .as("전제: 번호가 같다")
+          .isEqualTo(read.rows().get(0).version());
+      marks.clearAfterRun(dataDsl, DEFAULT_TEST_TENANT_ID, 4, read);
+      assertThat(dbMarks()).as("새로 단 표식은 남는다").containsExactly("4:STALE_SESSION");
+    } finally {
+      term.shutdown();
+    }
+  }
+
+  /**
+   * 리뷰 2 — 잠금 안 재확인이 표식 전 세션을 실제로 본다. 런타임 롤(app_tenant)에게는 남의 세션 backend_start 가 NULL 로 보여(실측) 직접
+   * 비교하면 "없음" 으로 오판한다. 첫 끊기가 그 세션을 놓친 경우(잠금 밖 추정 슬롯 ≠ 잠금 뒤 실행 슬롯 — 여기서는 아무것도 끊지 않는 끊기 장치로 흉내)에도
+   * 재확인이 세션을 찾아 실행을 거부해야 한다(fail-closed).
+   */
+  @Test
+  void staleMark_recheckUnderLockSeesOldSession_evenWhenFirstKillMissed() throws Exception {
+    AtomicInteger kills = new AtomicInteger();
+    PythonReadSessionTerminator missing =
+        new PythonReadSessionTerminator(
+            (tenant, slots) -> {
+              kills.incrementAndGet();
+              return 0; // 아무것도 끊지 못했다
+            });
+    try (Connection old = openSlotSession(3)) {
+      Thread.sleep(20);
+      PythonReadGrantSync instance = syncWith(missing);
+      instance.markSlotsUnconfirmed(DEFAULT_TEST_TENANT_ID, Set.of(3));
+      Clearance sensitive = clearanceResolver.resolve(userAt("민감"));
+      assertThatThrownBy(() -> instance.prepareForRun(sensitive))
+          .as("잠금 안 재확인이 표식 전 세션을 보고 거부")
+          .isInstanceOf(PythonReadAccessException.class);
+      assertThat(alive(old)).isTrue();
+      assertThat(dbMarks()).containsExactly("3:STALE_SESSION");
+    } finally {
+      missing.shutdown();
+    }
+  }
+
+  /**
+   * 리뷰 3 — 커밋 뒤 첫 실행 준비가 REDEFINED 슬롯을 넓힌 뒤, 커밋 직전에 옛 정의로 준비한 스크립트가 늦게 접속하면 등급 정의 변경 작업이 그 슬롯을 다시
+   * 확인해 끊는다(실행 준비는 표식을 REDEFINED_APPLIED 로 바꿔 남긴다). 커밋 뒤 손대지 않은 슬롯 2 세션은 끊지 않는다. 고치기 전에는 실행 준비가 표식을
+   * 지워 작업이 그 슬롯을 보지 않았다.
+   */
+  @Test
+  void levelsChangeJob_rechecksSlotWidenedByPostCommitPrepare_killsLateOldSession()
+      throws Exception {
+    PythonReadSessionTerminator term = realTerminator();
+    try {
+      PythonReadGrantSync instance = syncWith(term);
+      instance.terminateSlotSessionsAfterCommit(DEFAULT_TEST_TENANT_ID, Set.of(3), true);
+      assertThat(term.awaitIdle(Duration.ofSeconds(10))).isTrue();
+      assertThat(instance.prepareForRun(clearanceResolver.resolve(userAt("민감")))).isEqualTo(3);
+      assertThat(dbMarks()).as("실행 준비는 지우지 않고 바꿔 남긴다").containsExactly("3:REDEFINED_APPLIED");
+      try (Connection lateOld = openSlotSession(3);
+          Connection untouched = openSlotSession(2)) {
+        TenantContext.runScoped(DEFAULT_TEST_TENANT_ID, instance::syncTenantForLevelsChange);
+        assertThat(alive(lateOld)).as("넓힌 슬롯에 늦게 붙은 세션은 끊는다").isFalse();
+        assertThat(alive(untouched)).as("손대지 않은 슬롯은 그대로").isTrue();
+      }
+      assertThat(dbMarks()).as("적용하면 지운다").isEmpty();
+    } finally {
+      term.shutdown();
+    }
+  }
+
+  /**
+   * 리뷰 4 — 잠금 밖에서 표식을 읽을 때는 없었는데, 잠금을 기다리는 사이 등급 정의 변경 표식이 커밋되면 실행 준비는 잠금 안에서 다시 읽고 그 슬롯 세션을 끊은 뒤
+   * 실행한다. 고치기 전에는 표식 없는 경로(lockedSync)로 가 그대로 넓혔다.
+   */
+  @Test
+  void prepare_markCommittedWhileWaitingForLock_isSeenUnderLock() throws Exception {
+    PythonReadSessionTerminator term = realTerminator();
+    java.util.concurrent.ExecutorService pool =
+        java.util.concurrent.Executors.newSingleThreadExecutor();
+    // 테넌트 동기화 잠금을 따로 연 데이터 저장소 연결의 트랜잭션에서 쥔다 — 실행 준비가 잠금 밖 읽기를 지나 잠금에서 기다리게.
+    try (Connection lockConn = dataStoreDataSource.getConnection()) {
+      lockConn.setAutoCommit(false);
+      assertThat(
+              com.smartfirehub.global.platformdb.postgres.PostgresPlatformLocks.tryXactLock(
+                  DSL.using(lockConn, SQLDialect.POSTGRES),
+                  PythonReadGrantSync.syncLockKey(DEFAULT_TEST_TENANT_ID)))
+          .isTrue();
+      PythonReadGrantSync instance = syncWith(term);
+      Clearance sensitive = clearanceResolver.resolve(userAt("민감"));
+      java.util.concurrent.Future<Integer> run =
+          pool.submit(
+              () ->
+                  TenantContext.runScopedGet(
+                      DEFAULT_TEST_TENANT_ID, () -> instance.prepareForRun(sensitive)));
+      long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+      // 테스트 풀(크기 2)은 잠금 연결·기다리는 실행 준비가 다 쥐었다 — 관찰·표식 넣기는 데이터 저장소의 다른 연결(소유자·슈퍼유저)로 한다.
+      while (((Number)
+                  observe(
+                      "select count(*) from pg_locks where locktype = 'advisory' and not granted"))
+              .longValue()
+          == 0) {
+        assertThat(System.nanoTime()).as("실행 준비가 잠금을 기다려야 한다").isLessThan(deadline);
+        Thread.sleep(20);
+      }
+      // 실행 준비가 잠금 밖 읽기(표식 없음)를 지나 잠금을 기다리는 중 — 이제 표식을 커밋하고 그 슬롯 세션을 연다.
+      observe(
+          "insert into "
+              + PythonReadUnconfirmedMarks.TABLE
+              + " (tenant_id, slot, kind, marked_at) values ("
+              + DEFAULT_TEST_TENANT_ID
+              + ", 3, 'REDEFINED', clock_timestamp()) returning 1");
+      try (Connection oldDefinition = openSlotSession(3)) {
+        lockConn.rollback(); // 잠금을 놓는다
+        lockConn.close(); // 풀 연결도 돌려준다(테스트 풀이 작다)
+        assertThat(run.get(30, TimeUnit.SECONDS)).isEqualTo(3);
+        assertThat(alive(oldDefinition)).as("잠금 안에서 표식을 보고 끊었다").isFalse();
+      }
+    } finally {
+      pool.shutdownNow();
+      term.shutdown();
+    }
+  }
+
+  /** 데이터 저장소의 별도 연결(분리면 슈퍼유저, 아니면 소유자)로 값 하나를 읽는다(자동 커밋) — 앱 풀이 다 찼을 때의 관찰·준비용. */
+  /**
+   * 재검토 1(WD-701 4차): 미확인 표식이 남은 슬롯은 일반 동기화(전체·syncTable·커밋 뒤 실행기 묶음)가 <b>넓히지 않는다</b> — 등급 정의 변경
+   * 작업이 실패해 표식이 남은 채 옛 세션이 살아 있으면, 매일 전체 동기화가 그 슬롯을 세션 확인 없이 넓혀 자격 밖까지 읽게 했다. 회수는 그대로 한다. 표식이 지워지면
+   * 다음 동기화가 넓힌다. 고치기 전에는 세 경로 모두 슬롯 2 의 공개 테이블 GRANT 를 되살렸다.
+   */
+  @Test
+  void markedSlot_isNotWidenedByGeneralSyncs_butRevokesStillApply() throws Exception {
+    String pub = table("mkw", "공개");
+    String sens = table("mks", "민감");
+    sync.syncTenant();
+    String s2 = "\"" + TenantPipelineRole.pythonReadRoleName(DEFAULT_TEST_TENANT_ID, 2) + "\"";
+    PythonReadSessionTerminator term = realTerminator();
+    try {
+      syncWith(term).markSlotsUnconfirmed(DEFAULT_TEST_TENANT_ID, Set.of(2));
+      assertThat(dbMarks()).containsExactly("2:STALE_SESSION");
+      ownerDsl().execute("REVOKE SELECT ON TABLE " + ownerQualified(pub) + " FROM " + s2);
+      ownerDsl().execute("GRANT SELECT ON TABLE " + ownerQualified(sens) + " TO " + s2);
+      assertThat(selectAs(2, pub)).as("전제: 슬롯 2 는 넓어질 슬롯").isEqualTo("42501");
+      assertThat(selectAs(2, sens)).as("전제: 슬롯 2 에 과권한").isNull();
+
+      sync.syncTenant();
+      assertThat(selectAs(2, pub)).as("전체 동기화는 표식 슬롯을 넓히지 않는다").isEqualTo("42501");
+      assertThat(selectAs(2, sens)).as("회수는 그대로 한다").isEqualTo("42501");
+      assertThat(selectAs(1, pub)).as("다른 슬롯은 그대로").isNull();
+
+      sync.syncTable(pub);
+      assertThat(selectAs(2, pub)).as("syncTable 도 넓히지 않는다").isEqualTo("42501");
+      sync.syncTablesWith(List.of(pub), Duration.ofSeconds(5));
+      assertThat(selectAs(2, pub)).as("커밋 뒤 실행기 묶음도 넓히지 않는다").isEqualTo("42501");
+
+      // 실행 준비가 남긴 REDEFINED_APPLIED 도 일반 동기화는 넓히지 않는다(등급 정의 변경 작업이 다시 확인할 슬롯).
+      clearDbMarks();
+      dataDsl.execute(
+          "insert into "
+              + PythonReadUnconfirmedMarks.TABLE
+              + " (tenant_id, slot, kind, marked_at) values ({0}, 2, 'REDEFINED_APPLIED',"
+              + " clock_timestamp() - interval '1 second')",
+          DSL.val(DEFAULT_TEST_TENANT_ID));
+      sync.syncTenant();
+      assertThat(selectAs(2, pub)).as("APPLIED 슬롯도 전체 동기화가 넓히지 않는다").isEqualTo("42501");
+
+      clearDbMarks();
+      sync.syncTenant();
+      assertThat(selectAs(2, pub)).as("표식이 지워지면 넓힌다").isNull();
+    } finally {
+      term.shutdown();
+    }
+  }
+
+  /** 슬롯 롤 이름 배열과 기준 시각 배열로 definer 함수를 런타임 롤(app_tenant)로 부른다. */
+  private long sessionsBefore(String[] roles, java.time.OffsetDateTime[] cutoffs) {
+    Object n =
+        dataDsl.fetchValue(
+            "select public.fh_python_read_sessions_before({0}::text[], {1}::timestamptz[])",
+            DSL.val(roles), DSL.val(cutoffs));
+    return ((Number) n).longValue();
+  }
+
+  /**
+   * 재검토 3: {@code fh_python_read_sessions_before} 는 기준 시각 <b>뒤에</b> 시작한 세션은 세지 않고 전에 시작한 세션만 센다.
+   * 기준이 NULL 인 롤은 모두 센다(한 배열에 NULL·비 NULL 이 섞여도 롤마다 따로). 배열이 NULL 이거나 길이가 다르면 세지 않고 오류다(fail-closed
+   * — 호출자는 실행 거부).
+   */
+  @Test
+  void sessionsBeforeFunction_countsOnlyOldSessions_perRoleCutoff_andRejectsBadArrays()
+      throws Exception {
+    // 앞선 테스트가 남긴 슬롯 2·3 세션이 "옛 세션" 으로 세지지 않게 먼저 끊는다.
+    roleProvisioner.terminatePythonReadSessions(DEFAULT_TEST_TENANT_ID, Set.of(2, 3));
+    String r2 = TenantPipelineRole.pythonReadRoleName(DEFAULT_TEST_TENANT_ID, 2);
+    String r3 = TenantPipelineRole.pythonReadRoleName(DEFAULT_TEST_TENANT_ID, 3);
+    try (Connection old3 = openSlotSession(3)) {
+      Thread.sleep(20);
+      java.time.OffsetDateTime cutoff = PythonReadUnconfirmedMarks.dataStoreNow(dataDsl);
+      Thread.sleep(20);
+      try (Connection fresh2 = openSlotSession(2);
+          Connection fresh3 = openSlotSession(3)) {
+        assertThat(alive(old3) && alive(fresh2) && alive(fresh3)).isTrue();
+        assertThat(sessionsBefore(new String[] {r3}, new java.time.OffsetDateTime[] {cutoff}))
+            .as("슬롯 3: 기준 전 세션 1개만(뒤에 시작한 세션은 세지 않는다)")
+            .isEqualTo(1);
+        assertThat(sessionsBefore(new String[] {r2}, new java.time.OffsetDateTime[] {cutoff}))
+            .as("슬롯 2: 기준 뒤 세션뿐이라 0")
+            .isZero();
+        assertThat(
+                sessionsBefore(
+                    new String[] {r2, r3}, new java.time.OffsetDateTime[] {null, cutoff}))
+            .as("섞인 배열: 슬롯 2 는 기준 없음(전부 1) + 슬롯 3 은 기준 전(1)")
+            .isEqualTo(2);
+        assertThat(
+                sessionsBefore(
+                    new String[] {r2, r3}, new java.time.OffsetDateTime[] {cutoff, null}))
+            .as("섞인 배열 반대: 슬롯 2 기준 전(0) + 슬롯 3 전부(2)")
+            .isEqualTo(2);
+        assertThat(sessionsBefore(new String[0], new java.time.OffsetDateTime[0])).isZero();
+        assertThatThrownBy(
+                () ->
+                    dataDsl.fetchValue(
+                        "select public.fh_python_read_sessions_before(null::text[],"
+                            + " array[]::timestamptz[])"))
+            .as("NULL 배열은 오류")
+            .hasMessageContaining("fh_python_read_sessions_before");
+        assertThatThrownBy(
+                () ->
+                    sessionsBefore(new String[] {r2, r3}, new java.time.OffsetDateTime[] {cutoff}))
+            .as("길이가 다르면 오류")
+            .hasMessageContaining("fh_python_read_sessions_before");
+      }
+    }
+  }
+
+  private Object observe(String sql) throws SQLException {
+    try (Connection c =
+            separateDataStore
+                ? com.smartfirehub.support.DataStorePostgresTestContainer.openSuperuserConnection()
+                : schemaOwnerDataSource.getConnection();
+        Statement st = c.createStatement();
+        java.sql.ResultSet rs = st.executeQuery(sql)) {
+      rs.next();
+      return rs.getObject(1);
+    }
+  }
+
   /** 기본 USER 역할을 떼고 지정 등급 자격의 역할 하나만 가진 사용자. */
   private long userAt(String level) {
     long uid = fx.createUser("prs_u");
@@ -899,5 +1370,6 @@ class PythonReadGrantSyncTest extends IntegrationTestBase {
     }
     users.forEach(fx::deleteUser);
     roles.forEach(fx::deleteRole);
+    clearDbMarks();
   }
 }

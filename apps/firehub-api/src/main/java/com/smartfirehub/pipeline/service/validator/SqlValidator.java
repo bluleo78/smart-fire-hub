@@ -416,6 +416,9 @@ public class SqlValidator {
           // SQL 스텝이 호출할 이유가 없다(카탈로그 열람과 마찬가지로 애드혹 SQL 경로에서 미한정 허용할
           // 근거가 없다) — 차단한다.
           "fh_incremental_cursor_candidate",
+          // V159(WD-701 4차): PYTHON 읽기 슬롯 세션 수를 소유자 권한으로 세는 SECURITY DEFINER.
+          // PythonReadGrantSync 전용 경로이며 사용자 SQL 이 다른 세션 정보를 엿볼 이유가 없다 — 차단한다.
+          "fh_python_read_sessions_before",
           "query_to_xml",
           "query_to_xmlschema",
           "query_to_xml_and_xmlschema",

@@ -74,9 +74,18 @@ class TenantSchemaConformanceTest extends IntegrationTestBase {
    *
    * <p>{@code tenant_data_store}·{@code tenant_data_store_account}(V138, WD-73)가 영구로 들어가는 이유: 테넌트
    * 생성이 운영자 컨텍스트(테넌트 미선택)에서 실행되고 연결 정보는 플랫폼 운영자 소관인 전역 설정 테이블이라 RLS 를 걸면 생성·백엔드 해석이 0행/실패가 된다.
+   *
+   * <p>{@code python_read_unconfirmed_slot}(V159, WD-701 4차)이 영구로 들어가는 이유: 플랫폼 메타데이터가 아니라 PG 데이터
+   * 저장소 객체(PYTHON 읽기 슬롯 세션 끊기 미확인 표식)다 — 분리 설치에서는 데이터 저장소 DB 에 있다. 커밋 콜백·실행기 버림 콜백처럼 테넌트 컨텍스트가 없을 수
+   * 있는 곳에서 쓰고, 행에는 슬롯 번호·시각뿐이며 모든 질의가 tenant_id 를 명시한다.
    */
   private static final Set<String> RLS_DISABLED_ALLOWLIST =
-      Set.of("membership", "oauth_state", "tenant_data_store", "tenant_data_store_account");
+      Set.of(
+          "membership",
+          "oauth_state",
+          "tenant_data_store",
+          "tenant_data_store_account",
+          "python_read_unconfirmed_slot");
 
   /**
    * 밴드 진행 중 임시 허용 목록 — <b>커밋 시점에 반드시 비어 있어야 한다.</b>
@@ -366,7 +375,12 @@ class TenantSchemaConformanceTest extends IntegrationTestBase {
           "resolve_slack_workspace_tenant_by_team_id",
           // V123: 증분 처리 책갈피 후보값 계산용. search_path 고정 + PUBLIC EXECUTE 회수 + app_tenant
           // 에만 명시 GRANT — 다른 definer 함수와 같은 최소권한 설계다.
-          "fh_incremental_cursor_candidate");
+          "fh_incremental_cursor_candidate",
+          // V159(WD-701 4차): 표식 전에 시작한 PYTHON 슬롯 롤 세션 수. app_tenant 에게는 남의 세션 backend_start 가 NULL
+          // 로
+          // 보여(슬롯 롤 멤버·pg_read_all_stats 아님) 소유자 권한으로만 셀 수 있다. 슬롯 롤 이름만 세고 개수만 돌려준다.
+          // search_path 고정 + PUBLIC EXECUTE 회수 + app_tenant 에만 GRANT.
+          "fh_python_read_sessions_before");
 
   /**
    * {@code PUBLIC EXECUTE} 를 남겨 둘 사유가 있는 definer 함수. <b>지금은 비어 있고, 비어 있는 것이 정상이다.</b> 형태는 {@link

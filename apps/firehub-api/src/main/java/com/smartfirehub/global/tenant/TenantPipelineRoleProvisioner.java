@@ -3,9 +3,12 @@ package com.smartfirehub.global.tenant;
 import static org.jooq.impl.DSL.inline;
 import static org.jooq.impl.DSL.name;
 
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import javax.sql.DataSource;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -92,15 +95,47 @@ public class TenantPipelineRoleProvisioner {
    * @return 끊은(종료 신호를 보낸) 세션 수
    */
   public int terminatePythonReadSessions(long tenantId, Set<Integer> slots) {
-    if (slots.isEmpty()) {
+    Map<Integer, OffsetDateTime> all = new TreeMap<>();
+    for (int slot : slots) {
+      all.put(slot, null);
+    }
+    return terminatePythonReadSessions(tenantId, all);
+  }
+
+  /**
+   * {@link #terminatePythonReadSessions(long, Set)} 와 같되, 슬롯마다 <b>그 시각 전에 시작한</b>({@code
+   * pg_stat_activity.backend_start < 기준}) 세션만 끊는다(WD-701 4차). 값이 null 인 슬롯은 시작 시각과 무관하게 전부 끊는다.
+   *
+   * <p>왜: 회수·끊기 미확인 표식이 달린 슬롯이라도 표식 <b>뒤</b>에 시작한 세션은 이미 좁혀진 권한으로 붙었다(실행 준비가 그 슬롯을 커밋된 등급으로 맞춘 뒤
+   * 접속). 그 세션까지 끊으면 표식과 무관한 정상 실행이 끊긴다. 기준 시각은 같은 서버의 {@code clock_timestamp()} 로 적은 표식 시각이라 시계 차이가
+   * 없다.
+   *
+   * @param startedBefore 슬롯 번호 → 기준 시각(null = 전부). 비면 아무것도 하지 않는다
+   * @return 끊은(종료 신호를 보낸) 세션 수
+   */
+  public int terminatePythonReadSessions(
+      long tenantId, Map<Integer, OffsetDateTime> startedBefore) {
+    if (startedBefore.isEmpty()) {
       return 0;
     }
-    String[] roles = TenantPipelineRole.pythonReadRoleNames(tenantId, slots).toArray(new String[0]);
+    List<String> roleList = new ArrayList<>();
+    List<OffsetDateTime> cutoffList = new ArrayList<>();
+    startedBefore.forEach(
+        (slot, cutoff) -> {
+          roleList.add(TenantPipelineRole.pythonReadRoleName(tenantId, slot));
+          cutoffList.add(cutoff);
+        });
+    // 롤 이름·기준 시각을 짝지은 배열을 unnest 로 펼쳐 정확한 롤 이름으로만 고른다(LIKE 금지 — 위와 같다).
+    // 소유자 연결이라 시작 시각이 보인다(superuser 또는 pg_read_all_stats). 그래도 안 보이면(NULL) 표식 전으로 보고
+    // 끊는다(fail-closed).
     var results =
         ownerDsl.fetch(
-            "select pid, pg_terminate_backend(pid, 5000) from pg_stat_activity"
-                + " where usename::text = any({0}::text[])",
-            DSL.val(roles));
+            "select a.pid, pg_terminate_backend(a.pid, 5000) from pg_stat_activity a"
+                + " join unnest({0}::text[], {1}::timestamptz[]) as t(role_name, cutoff)"
+                + " on a.usename::text = t.role_name"
+                + " where t.cutoff is null or a.backend_start is null or a.backend_start < t.cutoff",
+            DSL.val(roleList.toArray(new String[0])),
+            DSL.val(cutoffList.toArray(new OffsetDateTime[0])));
     List<Integer> unconfirmed = new ArrayList<>();
     for (var r : results) {
       if (!Boolean.TRUE.equals(r.get(1, Boolean.class))) {

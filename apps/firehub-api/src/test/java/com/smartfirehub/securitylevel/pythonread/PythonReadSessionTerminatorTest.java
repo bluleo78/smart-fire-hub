@@ -4,8 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Duration;
+import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
@@ -45,6 +48,86 @@ class PythonReadSessionTerminatorTest {
             }
             return 2;
           });
+
+  /**
+   * WD-701 4차 — 시작 시각 기준 끊기 요청이 아직 시작하지 않은 작업에 합쳐지면 슬롯마다 더 넓게 끊는 쪽을 쓴다: 전부(null)가 기준 시각을 이기고, 기준
+   * 시각끼리는 더 늦은 쪽. 덜 끊는 쪽으로 합쳐지면 표식 전 세션이 살아남는다.
+   */
+  @Test
+  void cutoffRequests_mergeToWiderScopePerSlot() throws Exception {
+    CountDownLatch hold = new CountDownLatch(1);
+    CountDownLatch firstEntered = new CountDownLatch(1);
+    List<Map<Integer, OffsetDateTime>> scopes = new CopyOnWriteArrayList<>();
+    PythonReadSessionTerminator t =
+        PythonReadSessionTerminator.withKiller(
+            (tenantId, scope) -> {
+              firstEntered.countDown();
+              try {
+                hold.await(10, TimeUnit.SECONDS);
+              } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+              }
+              scopes.add(new TreeMap<>(scope));
+              return 0;
+            });
+    try {
+      OffsetDateTime early = OffsetDateTime.parse("2026-11-10T00:00:00Z");
+      OffsetDateTime late = early.plusSeconds(5);
+      t.requestTermination(TENANT, Set.of(9)); // 앞 작업이 돌며 막힌다 — 뒤 요청들은 다음 작업에 합쳐진다
+      assertThat(firstEntered.await(5, TimeUnit.SECONDS)).isTrue();
+      Map<Integer, OffsetDateTime> a = new TreeMap<>();
+      a.put(1, early);
+      a.put(2, early);
+      a.put(3, null);
+      Map<Integer, OffsetDateTime> b = new TreeMap<>();
+      b.put(1, late);
+      b.put(2, null);
+      b.put(3, late);
+      CompletableFuture<Integer> fa =
+          CompletableFuture.supplyAsync(() -> t.terminateWithin(TENANT, a, Duration.ofSeconds(5)));
+      Thread.sleep(100);
+      CompletableFuture<Integer> fb =
+          CompletableFuture.supplyAsync(() -> t.terminateWithin(TENANT, b, Duration.ofSeconds(5)));
+      Thread.sleep(100);
+      hold.countDown();
+      fa.get(5, TimeUnit.SECONDS);
+      fb.get(5, TimeUnit.SECONDS);
+      Map<Integer, OffsetDateTime> expected = new TreeMap<>();
+      expected.put(1, late);
+      expected.put(2, null);
+      expected.put(3, null);
+      assertThat(scopes).hasSize(2);
+      assertThat(scopes.get(1)).isEqualTo(expected);
+    } finally {
+      hold.countDown();
+      t.shutdown();
+    }
+  }
+
+  /**
+   * WD-701 4차 — 메모리 대비 표식은 "그 슬롯 세션 전부" 를 요구하므로, 기준 시각으로만 끊은 슬롯의 표식은 지우지 않는다. 전부 끊은 슬롯의 표식만 지운다.
+   */
+  @Test
+  void cutoffKill_doesNotClearMemoryMark_fullKillDoes() {
+    terminator.markUnconfirmed(TENANT, Set.of(4, 5));
+    Map<Integer, OffsetDateTime> scope = new TreeMap<>();
+    scope.put(4, OffsetDateTime.now());
+    scope.put(5, null);
+    terminator.terminateWithin(TENANT, scope, Duration.ofSeconds(5));
+    assertThat(terminator.unconfirmedSlots(TENANT)).containsExactly(4);
+  }
+
+  /** 실행 준비는 읽은 순번의 메모리 표식만 지운다 — 그 사이 다시 달린 표식(순번이 오름)은 남는다. */
+  @Test
+  void clearUnconfirmedIfUnchanged_keepsNewerMark() {
+    terminator.markUnconfirmed(TENANT, Set.of(6));
+    long seq = terminator.unconfirmedMarks(TENANT).get(6);
+    terminator.markUnconfirmed(TENANT, Set.of(6));
+    terminator.clearUnconfirmedIfUnchanged(TENANT, 6, seq);
+    assertThat(terminator.unconfirmedSlots(TENANT)).containsExactly(6);
+    terminator.clearUnconfirmedIfUnchanged(TENANT, 6, terminator.unconfirmedMarks(TENANT).get(6));
+    assertThat(terminator.unconfirmedSlots(TENANT)).isEmpty();
+  }
 
   @AfterEach
   void tearDown() {

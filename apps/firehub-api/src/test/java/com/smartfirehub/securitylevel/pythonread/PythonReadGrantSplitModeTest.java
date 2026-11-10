@@ -15,11 +15,13 @@ import com.smartfirehub.securitylevel.pythonread.PythonReadGrantBackend.NarrowRe
 import com.smartfirehub.securitylevel.repository.SecurityLevelRepository;
 import com.smartfirehub.support.DataStorePostgresTestContainer;
 import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.support.PostgresTestContainer;
 import com.smartfirehub.support.PythonReadTestTables;
 import com.smartfirehub.support.SecurityFixture;
 import com.smartfirehub.support.TenantRlsTestSupport;
 import java.lang.reflect.Proxy;
 import java.sql.Connection;
+import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -42,6 +44,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
@@ -243,21 +246,110 @@ class PythonReadGrantSplitModeTest extends IntegrationTestBase {
       throws Exception {
     long id = table("bnd", "공개");
     String t = tableName(id);
+    long to = fx.levelId("민감");
+    // 리뷰 요청 ①(WD-701 4차): 데이터 저장소 커밋이 플랫폼 커밋보다 먼저임을 순서로 못박는다. 묶인 연결의 커밋 직전 콜백 뒤에 등록한 관찰
+    // 콜백이, 같은 순간에 "데이터 저장소 회수는 밖에서 보인다(커밋됨) + 플랫폼 등급 변경은 밖에서 아직 안 보인다(미커밋)" 를 기록한다 — 등록 순서의
+    // 우연이 아니라 두 DB 의 커밋 상태를 같은 시점에 함께 보므로, 순서가 뒤집히면 첫 기록이 달라진다.
+    List<String> events = new ArrayList<>();
 
     NarrowResult result =
         changeAndNarrow(
             id,
             fx.levelId("공개"),
-            fx.levelId("민감"),
+            to,
             true,
-            () ->
-                assertThat(slotsWithSelect(t))
-                    .as("묶인 연결의 회수는 아직 커밋 전(같은 데이터 저장소 트랜잭션)")
-                    .contains(1, 2));
+            () -> {
+              assertThat(slotsWithSelect(t))
+                  .as("묶인 연결의 회수는 아직 커밋 전(같은 데이터 저장소 트랜잭션)")
+                  .contains(1, 2);
+              TransactionSynchronizationManager.registerSynchronization(
+                  new TransactionSynchronization() {
+                    @Override
+                    public void beforeCommit(boolean readOnly) {
+                      events.add(
+                          "beforeCommit ds="
+                              + dataStoreRevokeState(t)
+                              + " platform="
+                              + platformLevelState(id, to));
+                    }
 
+                    @Override
+                    public void afterCommit() {
+                      events.add("afterCommit platform=" + platformLevelState(id, to));
+                    }
+                  });
+            });
+
+    assertThat(events)
+        .as("데이터 저장소 커밋 → 플랫폼 커밋 순서")
+        .containsExactly(
+            "beforeCommit ds=committed platform=pending", "afterCommit platform=committed");
     assertThat(result.confirmed()).isTrue();
     assertThat(result.revokedSlots()).isEqualTo(Set.of(1, 2));
     assertThat(slotsWithSelect(t)).as("커밋 뒤").doesNotContain(1, 2).contains(3);
+  }
+
+  /**
+   * WD-701 4차 — 분리 설치에서 미확인 표식은 <b>데이터 저장소</b> 표에 쓴다(pg_stat_activity 와 같은 서버 시계). 플랫폼 쪽 같은 이름의
+   * 표(V159)는 쓰지 않는다. 다른 API 인스턴스는 같은 데이터 저장소를 보므로 표식을 함께 본다.
+   */
+  @Test
+  void unconfirmedMark_inSplitMode_landsInDataStoreTable_notPlatform() throws Exception {
+    String count =
+        "select count(*) from public.python_read_unconfirmed_slot where tenant_id = "
+            + DEFAULT_TEST_TENANT_ID
+            + " and slot = 6";
+    try {
+      grants.markSlotsUnconfirmed(DEFAULT_TEST_TENANT_ID, Set.of(6));
+      try (Connection ds = DataStorePostgresTestContainer.openSuperuserConnection();
+          Connection platform =
+              DriverManager.getConnection(
+                  PostgresTestContainer.INSTANCE.getJdbcUrl(),
+                  PostgresTestContainer.INSTANCE.getUsername(),
+                  PostgresTestContainer.INSTANCE.getPassword());
+          Statement dsSt = ds.createStatement();
+          Statement platformSt = platform.createStatement();
+          ResultSet dsRs = dsSt.executeQuery(count);
+          ResultSet platformRs = platformSt.executeQuery(count)) {
+        dsRs.next();
+        platformRs.next();
+        assertThat(dsRs.getLong(1)).as("데이터 저장소에 표식").isEqualTo(1L);
+        assertThat(platformRs.getLong(1)).as("플랫폼 표는 쓰지 않는다").isZero();
+      }
+    } finally {
+      dataStoreSuperuser(
+          "delete from public.python_read_unconfirmed_slot where tenant_id = "
+              + DEFAULT_TEST_TENANT_ID);
+    }
+  }
+
+  /** 데이터 저장소의 회수가 밖(슈퍼유저 연결)에서 보이는가 — 슬롯 1·2 의 SELECT 가 사라졌으면 committed. */
+  private static String dataStoreRevokeState(String table) {
+    try {
+      Set<Integer> slots = slotsWithSelect(table);
+      return !slots.contains(1) && !slots.contains(2) ? "committed" : "pending";
+    } catch (SQLException e) {
+      throw new IllegalStateException(e);
+    }
+  }
+
+  /** 플랫폼의 등급 변경이 밖(플랫폼 슈퍼유저 연결 — RLS·바깥 트랜잭션과 무관)에서 보이는가. */
+  private static String platformLevelState(long datasetId, long toLevelId) {
+    try (Connection c =
+            DriverManager.getConnection(
+                PostgresTestContainer.INSTANCE.getJdbcUrl(),
+                PostgresTestContainer.INSTANCE.getUsername(),
+                PostgresTestContainer.INSTANCE.getPassword());
+        PreparedStatement ps =
+            c.prepareStatement("select security_level_id from dataset where id = ?")) {
+      ps.setLong(1, datasetId);
+      try (ResultSet rs = ps.executeQuery()) {
+        rs.next();
+        return rs.getLong(1) == toLevelId ? "committed" : "pending";
+      }
+    } catch (SQLException e) {
+      throw new IllegalStateException(e);
+    }
   }
 
   /**

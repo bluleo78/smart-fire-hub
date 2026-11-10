@@ -114,6 +114,11 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
     owner = fx.createUser("prw_owner");
     m = "prw" + System.nanoTime();
     TenantContext.set(DEFAULT_TEST_TENANT_ID);
+    // 앞선 테스트가 남긴 미확인 표식(데이터 저장소 표, WD-701 4차)을 지운다 — 표식 슬롯은 일반 동기화가 넓히지 않으므로(재검토 1) 남으면
+    // 이 테스트의 출발 상태가 달라진다.
+    dataDsl.execute(
+        "delete from " + PythonReadUnconfirmedMarks.TABLE + " where tenant_id = {0}",
+        DSL.val(DEFAULT_TEST_TENANT_ID));
   }
 
   /**
@@ -1678,6 +1683,10 @@ class PythonReadGrantWiringTest extends IntegrationTestBase {
   @AfterEach
   void tearDown() {
     TenantContext.set(DEFAULT_TEST_TENANT_ID);
+    // 이 테스트가 남긴 미확인 표식도 지운다 — 같은 JVM 의 뒤 테스트 클래스가 일반 동기화로 넓히기를 기대할 수 있다(재검토 1).
+    dataDsl.execute(
+        "delete from " + PythonReadUnconfirmedMarks.TABLE + " where tenant_id = {0}",
+        DSL.val(DEFAULT_TEST_TENANT_ID));
     for (Long id : datasets) {
       try {
         datasetService.deleteDataset(id);

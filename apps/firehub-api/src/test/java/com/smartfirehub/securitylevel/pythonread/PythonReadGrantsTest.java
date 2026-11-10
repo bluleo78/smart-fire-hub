@@ -104,11 +104,11 @@ class PythonReadGrantsTest {
   void invalidateTokensAndTerminate_neverConsultBackend() {
     tiberoTenant();
     assertThat(grants.invalidateScriptTokensInCurrentTx(5L)).isTrue();
-    grants.terminateSlotSessionsAfterCommit(5L, Set.of(1, 2));
+    grants.terminateSlotSessionsAfterCommit(5L, Set.of(1, 2), true);
     grants.requestSlotSessionTermination(5L, Set.of(3)); // 확인된 회수 뒤 끊기(WD-664 7)도 커밋 콜백에서 부른다
 
     verify(tibero).bumpScriptTokenEpochInCurrentTx(5L);
-    verify(pg).terminateSlotSessionsAfterCommit(5L, Set.of(1, 2));
+    verify(pg).terminateSlotSessionsAfterCommit(5L, Set.of(1, 2), true);
     verify(pg).requestSlotSessionTermination(5L, Set.of(3));
     verifyNoInteractions(resolver);
     verifyNoMoreInteractions(pg, tibero);

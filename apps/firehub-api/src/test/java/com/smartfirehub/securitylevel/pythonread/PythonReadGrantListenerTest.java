@@ -102,7 +102,7 @@ class PythonReadGrantListenerTest {
     for (int i = 0; i < 3; i++) {
       listener.onLevelsChanged(LEVELS);
     }
-    verify(grants, times(3)).terminateSlotSessionsAfterCommit(TENANT, ALL);
+    verify(grants, times(3)).terminateSlotSessionsAfterCommit(TENANT, ALL, true);
     verify(grants, never()).syncTenantForLevelsChange();
     release.countDown();
     drain();
@@ -184,11 +184,11 @@ class PythonReadGrantListenerTest {
       throws Exception {
     doThrow(new IllegalStateException("x"))
         .when(grants)
-        .terminateSlotSessionsAfterCommit(TENANT, ALL);
+        .terminateSlotSessionsAfterCommit(TENANT, ALL, true);
     listener.onLevelsChanged(LEVELS);
     drain();
     InOrder order = inOrder(grants);
-    order.verify(grants).terminateSlotSessionsAfterCommit(TENANT, ALL);
+    order.verify(grants).terminateSlotSessionsAfterCommit(TENANT, ALL, true);
     order.verify(grants).syncTenantForLevelsChange();
   }
 
@@ -230,7 +230,7 @@ class PythonReadGrantListenerTest {
     syncs.get(0).afterCommit();
     syncs.get(0).afterCompletion(TransactionSynchronization.STATUS_COMMITTED);
     verify(grants, never()).requestSlotSessionTermination(anyLong(), any());
-    verify(grants, never()).terminateSlotSessionsAfterCommit(anyLong(), any());
+    verify(grants, never()).terminateSlotSessionsAfterCommit(anyLong(), any(), anyBoolean());
     assertThat(executor.awaitIdle(Duration.ofSeconds(5))).isTrue();
     verify(grants, never()).syncDatasetsWith(any(), any());
   }
@@ -261,7 +261,7 @@ class PythonReadGrantListenerTest {
 
     syncs.get(0).afterCommit();
     verify(grants).requestSlotSessionTermination(TENANT, Set.of(1));
-    verify(grants, never()).terminateSlotSessionsAfterCommit(anyLong(), any());
+    verify(grants, never()).terminateSlotSessionsAfterCommit(anyLong(), any(), anyBoolean());
     verify(grants, never()).invalidateScriptTokensInCurrentTx(anyLong());
   }
 
@@ -428,7 +428,7 @@ class PythonReadGrantListenerTest {
         .syncDatasetsWith(org.mockito.ArgumentMatchers.eq(List.of("42")), any());
     assertThat(seenTenant.get()).isEqualTo((int) TENANT);
     verify(grants, never()).requestSlotSessionTermination(anyLong(), any());
-    verify(grants, never()).terminateSlotSessionsAfterCommit(anyLong(), any());
+    verify(grants, never()).terminateSlotSessionsAfterCommit(anyLong(), any(), anyBoolean());
   }
 
   /** 리뷰 2 — 확인 못 했어도 막을 슬롯이 비면(넓어지는 변경·권한 없는 새 테이블의 클론) 아무것도 끊지 않는다. */
@@ -476,7 +476,7 @@ class PythonReadGrantListenerTest {
 
     InOrder order = inOrder(grants);
     order.verify(grants).invalidateScriptTokensInCurrentTx(TENANT);
-    order.verify(grants).terminateSlotSessionsAfterCommit(TENANT, Set.of(1, 2));
+    order.verify(grants).terminateSlotSessionsAfterCommit(TENANT, Set.of(1, 2), false);
     order.verify(grants).syncDatasetAfterUnconfirmedNarrowing(42L, Set.of(1, 2), false);
     assertThat(seenTenant.get()).isEqualTo((int) TENANT);
   }
@@ -507,7 +507,7 @@ class PythonReadGrantListenerTest {
     }
     verify(grants, never()).narrowDatasetInCurrentTx(anyLong(), any(), anyLong());
     verify(grants, times(2)).invalidateScriptTokensInCurrentTx(TENANT);
-    verify(grants, times(2)).terminateSlotSessionsAfterCommit(TENANT, ALL);
+    verify(grants, times(2)).terminateSlotSessionsAfterCommit(TENANT, ALL, false);
   }
 
   /** 예상 밖 예외(대체 경로 등록 실패 등)도 게시자에게 새지 않는다. */
@@ -586,7 +586,7 @@ class PythonReadGrantListenerTest {
     verify(grants, never()).syncDatasetAfterUnconfirmedNarrowing(anyLong(), any(), anyBoolean());
     assertThat(seenTenant.get()).isEqualTo((int) TENANT);
     verify(grants, never()).invalidateScriptTokensInCurrentTx(anyLong());
-    verify(grants, never()).terminateSlotSessionsAfterCommit(anyLong(), any());
+    verify(grants, never()).terminateSlotSessionsAfterCommit(anyLong(), any(), anyBoolean());
     verify(grants, never()).markSlotsUnconfirmed(anyLong(), any());
   }
 

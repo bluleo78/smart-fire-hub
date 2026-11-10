@@ -96,6 +96,9 @@ class PlatformDbAccessArchitectureTest {
           "com.smartfirehub.global.tenant.TenantSchemaProvisioner",
           "com.smartfirehub.securitylevel.pythonread.PythonReadGrantBackend",
           "com.smartfirehub.securitylevel.pythonread.PythonReadGrantSync",
+          // PYTHON 읽기 미확인 표식(WD-701) — PG 데이터 저장소 테이블 python_read_unconfirmed_slot 을 데이터 저장소
+          // 커넥션으로 읽고 쓴다(backend_start 와 같은 시계). PythonReadGrantSync 의 동기화 잠금 안에서만 쓰는 부품이다.
+          "com.smartfirehub.securitylevel.pythonread.PythonReadUnconfirmedMarks",
           "com.smartfirehub.securitylevel.pythonread.TiberoPythonReadGrantSync");
 
   /**

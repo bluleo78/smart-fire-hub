@@ -1,0 +1,4 @@
+-- V159: PG V159 와 짝(MigrationParityTest) — 할 일 없음.
+--
+-- PG V159 의 python_read_unconfirmed_slot 은 플랫폼 메타데이터가 아니라 PG 데이터 저장소 객체다(PYTHON 읽기 슬롯 롤 세션 표식, WD-701 4차).
+-- Tibero 플랫폼 설치본의 데이터 저장소는 언제나 따로 둔 PG 이고, 그쪽은 db/datastore-postgres V2 가 만든다. 그래서 Tibero 플랫폼에는 만들지 않는다.
