@@ -6,6 +6,10 @@
 # 핀을 빼면 멀티아치 빌드 시 각 타깃이 자기 아키(QEMU 에뮬)로 install 해 올바른 네이티브 패키지를 받는다.
 FROM node:22-alpine AS build
 
+# puppeteer 의 postinstall Chrome 다운로드를 끈다(WD-702). 런타임은 alpine 패키지 chromium 을 쓰고,
+# 빌드 스테이지에서 받아 봐야 런타임으로 복사되지 않으며 glibc 용 Chrome 은 musl(alpine)에서 돌지도 않는다.
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+
 RUN corepack enable && corepack prepare pnpm@10.11.0 --activate
 
 WORKDIR /app
@@ -38,6 +42,15 @@ RUN npm install -g @anthropic-ai/claude-code
 # buildOpenCodeConfig(agent-opencode.ts)가 provider 블록을 OPENCODE_CONFIG_CONTENT 로 자식
 # 프로세스에 주입한다. 이 컨테이너의 env 에는 opencode 모델 인증용 값을 두지 않는다.
 RUN npm install -g opencode-ai
+
+# HTML → PDF 변환(POST /agent/html-to-pdf, puppeteer)용 브라우저와 한글 폰트(WD-702).
+# puppeteer 가 받는 Chrome 은 glibc 용이라 alpine 에서 돌지 않고 이미지에 들어오지도 않아 "Could not find Chrome" 500 이 났다.
+# 그래서 alpine 의 chromium 을 설치하고, 폰트가 하나도 없으면 한글이 두부(□)로 찍히므로 CJK 폰트를 함께 넣는다.
+RUN apk add --no-cache chromium font-noto-cjk
+
+# puppeteer 는 이 환경변수를 import 시점에 읽어 위 chromium 을 실행 파일로 쓰고, Chrome 다운로드도 하지 않는다
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser \
+    PUPPETEER_SKIP_DOWNLOAD=true
 
 # Create non-root user (Claude Code blocks --dangerously-skip-permissions as root)
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup

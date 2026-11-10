@@ -8,10 +8,13 @@
  * 주소(169.254.169.254 등)를 대신 호출하면 SSRF 가 된다. 목(mock)으로는 Chrome 의 실제 요청
  * 경로(OOPIF iframe 포함)를 검증할 수 없어 실브라우저로 확인한다.
  * WD-697: IP 리터럴 대상의 투기적 연결(preconnect 등)까지 원시 TCP accept 수로 확인한다(아래 describe).
- * Chrome 이 설치되지 않은 환경(CI 등)에서는 건너뛴다 — 가드 판정 로직은 pdf-request-guard.test.ts 가 덮는다.
+ * Puppeteer 전용 Chrome 이 없으면 Playwright 가 받아 둔 chromium 으로 대신 돈다(WD-702 — 그 전에는 조용히 건너뛰었다).
+ * 어떤 브라우저도 없는 환경(CI 등)에서만 건너뛴다 — 가드 판정 로직은 pdf-request-guard.test.ts 가 덮는다.
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
+import { homedir } from 'node:os';
+import path from 'node:path';
 import http from 'node:http';
 import net, { type AddressInfo } from 'node:net';
 import express from 'express';
@@ -22,13 +25,54 @@ const TOKEN = 'test-internal-token-pdf-ssrf';
 /** 렌더 결과 확인용 문서 제목 — Chrome 은 이를 PDF 메타데이터 /Title 에 그대로 싣는다 */
 const REPORT_TITLE = 'WD617-REPORT-TITLE';
 
-/** Chrome 실행 파일이 있을 때만 실브라우저 테스트를 돈다 */
-function chromeAvailable(): boolean {
+/** Puppeteer 가 지금 설정으로 실행할 Chrome 이 실제로 있는지 — 없으면 executablePath() 가 던지거나 없는 경로를 준다 */
+function puppeteerChromeExists(): boolean {
   try {
     return existsSync(puppeteer.executablePath());
   } catch {
     return false;
   }
+}
+
+/**
+ * Playwright 가 받아 둔 chromium 중 가장 최신 실행 파일 경로를 찾는다(없으면 null).
+ * 왜: 루트 package.json 의 onlyBuiltDependencies 에 puppeteer 가 없어 postinstall 이 Chrome 을 받지 않으므로
+ * 로컬에는 Puppeteer 전용 Chrome 이 보통 없다. 대신 E2E 용 Playwright chromium 은 대개 깔려 있어 이를 쓴다.
+ */
+function findPlaywrightChromium(): string | null {
+  const root = path.join(homedir(), '.cache', 'ms-playwright');
+  if (!existsSync(root)) return null;
+  // chromium-1243 처럼 리비전 번호가 붙으므로 숫자 내림차순으로 최신부터 본다(chromium_headless_shell-* 등은 제외)
+  const revisions = readdirSync(root)
+    .filter((name) => /^chromium-\d+$/.test(name))
+    .sort((a, b) => Number(b.slice('chromium-'.length)) - Number(a.slice('chromium-'.length)));
+  for (const revision of revisions) {
+    for (const platformDir of ['chrome-linux64', 'chrome-linux']) {
+      const candidate = path.join(root, revision, platformDir, 'chrome');
+      if (existsSync(candidate)) return candidate;
+    }
+  }
+  return null;
+}
+
+/**
+ * 실브라우저 테스트에 쓸 Chrome 을 준비하고, 하나라도 있으면 true 를 돌려준다.
+ * PUPPETEER_EXECUTABLE_PATH 가 명시돼 있으면 그대로 따르고, 없을 때 Puppeteer 전용 Chrome 이 없으면
+ * Playwright chromium 으로 대체한다. Puppeteer 는 이 환경변수를 import 시점에 설정으로 굳히므로
+ * (getConfiguration), 이미 import 된 뒤인 여기서는 환경변수와 함께 설정값도 직접 바꿔야 라우터의 launch 에 반영된다.
+ * 그 설정값(configuration)은 공개 타입에서 빠진 내부 필드라 필요한 모양으로만 좁혀 접근한다.
+ */
+function chromeAvailable(): boolean {
+  if (puppeteerChromeExists()) return true;
+  // 경로를 명시했는데 거기에 없으면 설정 오류이므로 몰래 다른 브라우저로 바꾸지 않는다
+  if (process.env.PUPPETEER_EXECUTABLE_PATH) return false;
+  const fallback = findPlaywrightChromium();
+  if (!fallback) return false;
+  process.env.PUPPETEER_EXECUTABLE_PATH = fallback;
+  (
+    puppeteer as unknown as { configuration: { executablePath?: string } }
+  ).configuration.executablePath = fallback;
+  return puppeteerChromeExists();
 }
 
 /** 서버를 임의 포트로 띄우고 포트를 돌려준다 */
@@ -70,11 +114,13 @@ describe.skipIf(!chromeAvailable())('POST /agent/html-to-pdf — 실브라우저
     appPort = await listen(appServer);
   });
 
+  // 실브라우저 종료(browser.close)는 부하가 큰 머신에서 수 초(실측 최대 7초)가 걸려 기본 훅 제한 10초를
+  // 넘기곤 한다 — 테스트 본문과 같은 수준의 여유를 준다(WD-702 에서 이 파일이 실제로 돌기 시작하며 드러남)
   afterAll(async () => {
     await closePdfBrowser();
     await Promise.all([closeServer(victim), closeServer(appServer)]);
     delete process.env.INTERNAL_SERVICE_TOKEN;
-  });
+  }, 30000);
 
   /** 실제 라우트로 HTML 을 보내고 응답과 걸린 시간을 돌려준다 */
   async function renderPdf(html: string): Promise<{ res: Response; elapsed: number }> {
