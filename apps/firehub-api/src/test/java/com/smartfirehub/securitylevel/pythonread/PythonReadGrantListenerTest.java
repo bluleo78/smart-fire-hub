@@ -137,6 +137,43 @@ class PythonReadGrantListenerTest {
     verify(grants, times(2)).syncTenantForLevelsChange();
   }
 
+  /**
+   * WD-713 (a) — 등급 정의 변경 전체 동기화를 실행기가 끝내 버리면(여기서는 "세션이 계속 다시 붙음" 영구 실패) 포기 지점에서 ERROR 한 줄에 테넌트·슬롯
+   * 범위· 남는 표식 종류(REDEFINED·REDEFINED_APPLIED)와 다시 돌리는 방법이 남는다. 고치기 전에는 일반 영구 실패·버림 ERROR 뿐이었고, 버림
+   * 문구는 "일 1회 동기화가 회복한다" 고 잘못 안내했다(일반 동기화는 표식 슬롯을 넓히지 않는다).
+   */
+  @Test
+  void levelsSync_givenUp_logsErrorWithTenantSlotsAndRemainingMarkKinds() throws Exception {
+    ch.qos.logback.classic.Logger logger =
+        (ch.qos.logback.classic.Logger)
+            org.slf4j.LoggerFactory.getLogger(PythonReadGrantListener.class);
+    ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> logs =
+        new ch.qos.logback.core.read.ListAppender<>();
+    logs.start();
+    logger.addAppender(logs);
+    try {
+      doThrow(new IllegalStateException("PYTHON 슬롯 롤 세션이 계속 다시 붙어 넓히지 않았다"))
+          .when(grants)
+          .syncTenantForLevelsChange();
+      listener.onLevelsChanged(LEVELS);
+      drain();
+      assertThat(logs.list)
+          .filteredOn(e -> e.getLevel() == ch.qos.logback.classic.Level.ERROR)
+          .extracting(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+          .anySatisfy(
+              msg ->
+                  assertThat(msg)
+                      .contains("끝내")
+                      .contains("tenant=" + TENANT)
+                      .contains("slots=1~10")
+                      .contains("REDEFINED")
+                      .contains("REDEFINED_APPLIED")
+                      .contains("등급 정의"));
+    } finally {
+      logger.detachAppender(logs);
+    }
+  }
+
   /** 동기화가 예외로 끝나도 표식이 남지 않는다 — 다음 변경이 다시 작업을 넣는다(지우기가 작업의 첫 문장이다). */
   @Test
   void failedSync_doesNotLeavePendingMark() throws Exception {

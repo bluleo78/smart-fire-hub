@@ -7,6 +7,10 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.dataset.service.DatasetService;
@@ -845,6 +849,140 @@ class PythonReadGrantSyncTest extends IntegrationTestBase {
       assertThat(isolated.prepareForRun(sensitive)).as("끊기가 되면 실행한다").isEqualTo(3);
       assertThat(dbMarks()).as("실행 준비가 확인하고 지운다").isEmpty();
     } finally {
+      term.shutdown();
+    }
+  }
+
+  // ── WD-713: 표식이 끝내 남는 경로의 로그(테넌트·슬롯·종류·사유) ─────────────────────────────
+
+  /** 그 클래스 로거에 붙인 로그 수집기 — 끝나면 {@link #detach} 로 뗀다. */
+  private static ListAppender<ILoggingEvent> capture(Class<?> type) {
+    ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    appender.start();
+    ((Logger) LoggerFactory.getLogger(type)).addAppender(appender);
+    return appender;
+  }
+
+  private static void detach(Class<?> type, ListAppender<ILoggingEvent> appender) {
+    ((Logger) LoggerFactory.getLogger(type)).detachAppender(appender);
+  }
+
+  /** 주어진 수준 이상의 로그 문구들. */
+  private static List<String> messagesAtLeast(ListAppender<ILoggingEvent> appender, Level level) {
+    return appender.list.stream()
+        .filter(e -> e.getLevel().isGreaterOrEqual(level))
+        .map(ILoggingEvent::getFormattedMessage)
+        .toList();
+  }
+
+  /**
+   * WD-713 (c) — 실행 준비가 표식 슬롯의 세션을 끊지 못해 실행을 거부하면, 거부 지점에서 WARN 한 줄에 테넌트·슬롯·표식 종류·사유가 남는다. 고치기 전에는
+   * 게이트가 예외를 감싸기만 해 어떤 로그도 남지 않았다(실행 기록의 사용자 문구만).
+   */
+  @Test
+  void prepareRefused_killFails_logsWarnWithTenantSlotKindAndReason() {
+    AtomicInteger kills = new AtomicInteger();
+    PythonReadSessionTerminator term = failingTerminator(kills);
+    ListAppender<ILoggingEvent> logs = capture(PythonReadGrantSync.class);
+    try {
+      PythonReadGrantSync isolated = syncWith(term);
+      isolated.markSlotsUnconfirmed(DEFAULT_TEST_TENANT_ID, Set.of(3));
+      Clearance sensitive = clearanceResolver.resolve(userAt("민감"));
+      assertThatThrownBy(() -> isolated.prepareForRun(sensitive))
+          .isInstanceOf(PythonReadAccessException.class);
+      assertThat(messagesAtLeast(logs, Level.WARN))
+          .as("거부 지점의 WARN — 테넌트·슬롯·종류·사유")
+          .anySatisfy(
+              msg ->
+                  assertThat(msg)
+                      .contains("실행 준비")
+                      .contains("tenant=" + DEFAULT_TEST_TENANT_ID)
+                      .contains("slot=3")
+                      .contains("STALE_SESSION")
+                      .contains("끊기 실패"));
+    } finally {
+      detach(PythonReadGrantSync.class, logs);
+      term.shutdown();
+    }
+  }
+
+  /**
+   * WD-713 (c) — 끊기는 성공으로 끝나는데 표식 전에 시작한 세션이 계속 남으면(소유자 통계 권한이 없어 모든 세션이 표식 전으로 세지는 경우도 이렇게 보인다) 시도
+   * 상한 뒤 거부하며 WARN 에 사유와 소유자 권한 점검 안내가 남는다.
+   */
+  @Test
+  void prepareRefused_sessionsKeepRemaining_logsWarnWithOwnerPrivilegeHint() throws Exception {
+    PythonReadSessionTerminator term = new PythonReadSessionTerminator((tenant, scope) -> 0);
+    ListAppender<ILoggingEvent> logs = capture(PythonReadGrantSync.class);
+    try (Connection old = openSlotSession(3)) {
+      Thread.sleep(20);
+      PythonReadGrantSync isolated = syncWith(term);
+      isolated.markSlotsUnconfirmed(DEFAULT_TEST_TENANT_ID, Set.of(3));
+      Clearance sensitive = clearanceResolver.resolve(userAt("민감"));
+      assertThatThrownBy(() -> isolated.prepareForRun(sensitive))
+          .isInstanceOf(PythonReadAccessException.class);
+      assertThat(alive(old)).as("전제: 끊지 않는 끊기 장치 — 옛 세션이 남는다").isTrue();
+      assertThat(messagesAtLeast(logs, Level.WARN))
+          .anySatisfy(
+              msg ->
+                  assertThat(msg)
+                      .contains("tenant=" + DEFAULT_TEST_TENANT_ID)
+                      .contains("slot=3")
+                      .contains("STALE_SESSION")
+                      .contains("세션이 남아")
+                      .contains("pg_read_all_stats"));
+    } finally {
+      detach(PythonReadGrantSync.class, logs);
+      term.shutdown();
+    }
+  }
+
+  /**
+   * WD-713 (b) — 커밋 콜백이 표식을 데이터 저장소에 쓰지 못하고(메모리 표식으로 대비) 실행기 다시 쓰기도 재시도 상한까지 실패하면, 포기 지점에서 ERROR 한
+   * 줄에 테넌트·슬롯·종류와 "이 인스턴스 메모리에만 남는다" 는 결과가 남는다. 고치기 전에는 시도마다의 쓰기 실패 ERROR 와 실행기의 일반 버림 ERROR("회수가
+   * 빠졌을 수 있다")뿐이었다.
+   */
+  @Test
+  void markPersistRetriesExhausted_logsErrorThatOnlyMemoryMarkRemains() throws Exception {
+    DataSource broken = mock(DataSource.class);
+    when(broken.getConnection()).thenThrow(new SQLException("데이터 저장소 장애 흉내", "08006"));
+    PythonReadSyncExecutor retrying =
+        new PythonReadSyncExecutor(
+            10,
+            new PythonReadSyncExecutor.RetryPolicy(
+                Duration.ofMillis(5), Duration.ofMillis(20), 0, 2));
+    // 끊기도 실패해야 메모리 대비 표식이 남는다(끊기가 성공하면 메모리 표식은 지워진다).
+    PythonReadSessionTerminator term = failingTerminator(new AtomicInteger());
+    ListAppender<ILoggingEvent> logs = capture(PythonReadGrantSync.class);
+    try {
+      PythonReadGrantSync isolated =
+          new PythonReadGrantSync(
+              dataDsl,
+              broken,
+              term,
+              levelRepository,
+              datasetRepository,
+              txManager,
+              retrying,
+              separateDataStore);
+      isolated.terminateSlotSessionsAfterCommit(DEFAULT_TEST_TENANT_ID, Set.of(3), false);
+      assertThat(retrying.awaitIdle(Duration.ofSeconds(10))).isTrue();
+      assertThat(term.awaitIdle(Duration.ofSeconds(10))).isTrue();
+      assertThat(term.unconfirmedSlots(DEFAULT_TEST_TENANT_ID))
+          .as("전제: 메모리 대비 표식이 남는다")
+          .containsExactly(3);
+      assertThat(messagesAtLeast(logs, Level.ERROR))
+          .anySatisfy(
+              msg ->
+                  assertThat(msg)
+                      .contains("끝내")
+                      .contains("tenant=" + DEFAULT_TEST_TENANT_ID)
+                      .contains("slots=[3]")
+                      .contains("kind=STALE_SESSION")
+                      .contains("다른 API 인스턴스"));
+    } finally {
+      detach(PythonReadGrantSync.class, logs);
+      retrying.shutdown();
       term.shutdown();
     }
   }
