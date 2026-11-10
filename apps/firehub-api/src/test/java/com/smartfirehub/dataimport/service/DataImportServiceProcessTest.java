@@ -410,6 +410,42 @@ class DataImportServiceProcessTest extends IntegrationTestBase {
   }
 
   @Test
+  void headerNameTooLong_jobFailsWithKoreanHeaderMessage_noRowsInserted() throws Exception {
+    // WD-612: 미리보기를 거치지 않고 바로 임포트 잡으로 넘어온 파일도 미리보기·사전 검증과 같은 헤더 크기 상한으로 거절해야 한다.
+    // 잡 실패 사유는 파서의 한국어 헤더 오류 문구 그대로이고, 한 행도 적재되지 않아야 한다.
+    String tableName = "process_long_header_dataset";
+    Long datasetId = createDatasetWithBigintColumn(tableName);
+    Path tempDir = Path.of(System.getProperty("java.io.tmpdir"), "firehub-test");
+    Files.createDirectories(tempDir);
+    Path csv = Files.createTempFile(tempDir, "process-long-header-", ".csv");
+    String longName = "n".repeat(ImportFileLimits.MAX_HEADER_NAME_LENGTH + 1);
+    Files.writeString(csv, "name,amount," + longName + "\n서울,1,x\n", StandardCharsets.UTF_8);
+
+    dataImportService.processImport(
+        "process-long-header-job-id",
+        datasetId,
+        csv.toString(),
+        "",
+        "",
+        "long_header.csv",
+        Files.size(csv),
+        "CSV",
+        testUserId,
+        "Test User",
+        "",
+        "",
+        "APPEND",
+        1L);
+
+    assertThat(countRows(tableName)).isZero();
+    ArgumentCaptor<String> msg = ArgumentCaptor.forClass(String.class);
+    Mockito.verify(asyncJobService)
+        .failJob(Mockito.eq("process-long-header-job-id"), msg.capture());
+    assertThat(msg.getValue())
+        .isEqualTo("열 이름이 너무 깁니다: 3번째 열(501자) (최대 500자). 열 이름을 줄인 뒤 다시 올려 주세요.");
+  }
+
+  @Test
   void twoBlankHeaders_mappedBlankColumn_jobFailsInKorean_noRowsInserted() throws Exception {
     // WD-369: 빈 이름 열이 둘인 파일에서 빈 열을 매핑한 채 잡으로 바로 들어와도(시작 요청 검사를 거치지 않은 경로) 마지막 빈 열 값이
     // 조용히 저장되지 않고, 잡이 한국어 사유로 실패해야 한다.

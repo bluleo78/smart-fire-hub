@@ -380,6 +380,39 @@ class DataImportControllerTest {
         .andExpect(jsonPath("$.message").value(message));
   }
 
+  /** WD-612: 헤더 열 수 상한을 넘으면 미리보기가 400 + 한국어 사유로 거절된다(500·거대 응답 대신). */
+  @Test
+  void previewImport_tooManyHeaderColumns_returns400WithKoreanMessage() throws Exception {
+    String message = "파일의 열이 너무 많습니다: 1,601개 (최대 1,600개). 가져올 열만 남긴 뒤 다시 올려 주세요.";
+    when(importService.previewImport(anyLong(), any(), any(), anyBoolean()))
+        .thenThrow(new InvalidFileHeaderException(message));
+
+    mockMvc
+        .perform(
+            multipart("/api/v1/datasets/1/imports/preview")
+                .file(csvFile())
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(message));
+  }
+
+  /** WD-612: 열 이름 길이 상한을 넘으면 사전 검증도 같은 400 + 한국어 사유를 돌려준다. */
+  @Test
+  void validateImport_headerNameTooLong_returns400WithKoreanMessage() throws Exception {
+    String message = "열 이름이 너무 깁니다: 2번째 열(501자) (최대 500자). 열 이름을 줄인 뒤 다시 올려 주세요.";
+    when(importService.validateImport(anyLong(), any(), any(), any()))
+        .thenThrow(new InvalidFileHeaderException(message));
+
+    mockMvc
+        .perform(
+            multipart("/api/v1/datasets/1/imports/validate")
+                .file(csvFile())
+                .param("mappings", "[]")
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(message));
+  }
+
   // ── WD-250: 입력 오류는 400 + 한국어(빈 본문·500·영어 문구 대신) ─────────────────────────
 
   /** 틀린 importMode — 예전에는 본문 없는 400. 허용 값을 나열한 한국어 문구로 답하고 서비스는 부르지 않는다. */

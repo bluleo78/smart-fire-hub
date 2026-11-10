@@ -8,12 +8,15 @@ import com.opencsv.exceptions.CsvMalformedLineException;
 import com.opencsv.exceptions.CsvValidationException;
 import com.smartfirehub.dataimport.dto.ParseOptions;
 import com.smartfirehub.dataimport.exception.FileUnreadableException;
+import com.smartfirehub.dataimport.exception.InvalidFileHeaderException;
 import com.smartfirehub.dataimport.exception.UnsupportedFileTypeException;
 import java.io.BufferedInputStream;
 import java.io.ByteArrayInputStream;
+import java.io.FilterReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.Reader;
 import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -314,14 +317,14 @@ public class FileParserService {
 
   private List<Map<String, String>> parseCsvFromBytes(byte[] data, ParseOptions opts)
       throws Exception {
-    try (CSVReader reader = buildCsvReaderFromBytes(data, opts)) {
+    try (CsvSource reader = buildCsvReaderFromBytes(data, opts)) {
       skipLeadingRows(reader, opts);
       return readRowMaps(reader, Integer.MAX_VALUE, opts);
     }
   }
 
   private List<String> parseHeadersCsvFromBytes(byte[] data, ParseOptions opts) throws Exception {
-    try (CSVReader reader = buildCsvReaderFromBytes(data, opts)) {
+    try (CsvSource reader = buildCsvReaderFromBytes(data, opts)) {
       skipLeadingRows(reader, opts);
       return readHeaderNames(reader, opts);
     }
@@ -329,14 +332,14 @@ public class FileParserService {
 
   private List<Map<String, String>> parseSampleRowsCsvFromBytes(
       byte[] data, int maxRows, ParseOptions opts) throws Exception {
-    try (CSVReader reader = buildCsvReaderFromBytes(data, opts)) {
+    try (CsvSource reader = buildCsvReaderFromBytes(data, opts)) {
       skipLeadingRows(reader, opts);
       return readRowMaps(reader, maxRows, opts);
     }
   }
 
   private int countRowsCsvFromBytes(byte[] data, ParseOptions opts) throws Exception {
-    try (CSVReader reader = buildCsvReaderFromBytes(data, opts)) {
+    try (CsvSource reader = buildCsvReaderFromBytes(data, opts)) {
       skipLeadingRows(reader, opts);
       return countDataRows(reader, opts);
     }
@@ -357,7 +360,7 @@ public class FileParserService {
 
   private List<Map<String, String>> parseCsvFromStream(InputStream inputStream, ParseOptions opts)
       throws Exception {
-    try (CSVReader reader = buildCsvReaderFromStream(inputStream, opts)) {
+    try (CsvSource reader = buildCsvReaderFromStream(inputStream, opts)) {
       skipLeadingRows(reader, opts);
       return readRowMaps(reader, Integer.MAX_VALUE, opts);
     }
@@ -365,7 +368,7 @@ public class FileParserService {
 
   private List<String> parseHeadersCsvFromStream(InputStream inputStream, ParseOptions opts)
       throws Exception {
-    try (CSVReader reader = buildCsvReaderFromStream(inputStream, opts)) {
+    try (CsvSource reader = buildCsvReaderFromStream(inputStream, opts)) {
       skipLeadingRows(reader, opts);
       return readHeaderNames(reader, opts);
     }
@@ -373,14 +376,14 @@ public class FileParserService {
 
   private List<Map<String, String>> parseSampleRowsCsvFromStream(
       InputStream inputStream, int maxRows, ParseOptions opts) throws Exception {
-    try (CSVReader reader = buildCsvReaderFromStream(inputStream, opts)) {
+    try (CsvSource reader = buildCsvReaderFromStream(inputStream, opts)) {
       skipLeadingRows(reader, opts);
       return readRowMaps(reader, maxRows, opts);
     }
   }
 
   private int countRowsCsvFromStream(InputStream inputStream, ParseOptions opts) throws Exception {
-    try (CSVReader reader = buildCsvReaderFromStream(inputStream, opts)) {
+    try (CsvSource reader = buildCsvReaderFromStream(inputStream, opts)) {
       skipLeadingRows(reader, opts);
       return countDataRows(reader, opts);
     }
@@ -399,7 +402,7 @@ public class FileParserService {
       int batchSize,
       Consumer<List<Map<String, String>>> onBatch)
       throws Exception {
-    try (CSVReader reader = buildCsvReaderFromStream(inputStream, opts)) {
+    try (CsvSource reader = buildCsvReaderFromStream(inputStream, opts)) {
       skipLeadingRows(reader, opts); // skipRows가 파일 범위를 넘으면 아래에서 결과 없음
       int[] skipped = {0};
       CsvHead head = readCsvHead(reader, opts, skipped);
@@ -428,7 +431,7 @@ public class FileParserService {
   // -----------------------------------------------------------------------
 
   /** 헤더 앞 skipRows 줄을 물리 줄 그대로 건너뛴다(빈 줄도 한 줄로 센다). 파일이 먼저 끝나면 거기서 멈춘다. */
-  private static void skipLeadingRows(CSVReader reader, ParseOptions opts) throws Exception {
+  private static void skipLeadingRows(CsvSource reader, ParseOptions opts) throws Exception {
     for (int s = 0; s < opts.skipRows(); s++) {
       if (reader.readNext() == null) return;
     }
@@ -448,16 +451,20 @@ public class FileParserService {
    * <p>hasHeader=false 면 첫 <b>빈 행이 아닌</b> 행의 너비로 column_N 을 만든다 — 앞의 빈 줄 너비(1열)로 열이 정해지지 않게 한다. 헤더
    * 행 자체는 빈 행이어도 거르지 않는다(헤더 판정은 범위 밖).
    */
-  private static CsvHead readCsvHead(CSVReader reader, ParseOptions opts, int[] skipped)
+  private static CsvHead readCsvHead(CsvSource reader, ParseOptions opts, int[] skipped)
       throws Exception {
     if (opts.hasHeader()) {
-      String[] headers = reader.readNext();
+      // WD-612: 헤더 줄은 길이 감시 아래에서 읽어, 줄바꿈 없는 거대한 첫 줄을 통째로 문자열로 만들기 전에 끊는다.
+      String[] headers = reader.readHeaderRow();
       if (headers == null) return null;
-      FileHeaderValidator.requireDistinctNames(headers); // WD-205: 같은 이름 열 중복 거절
+      // WD-612 열 수·열 이름 길이 상한 → WD-205 같은 이름 열 중복 거절
+      FileHeaderValidator.requireValidHeader(headers);
       return new CsvHead(headers, null);
     }
     String[] firstRow = readNextDataRow(reader, Integer.MAX_VALUE, skipped);
     if (firstRow == null) return null;
+    // WD-612: 헤더 없는 파일도 첫 행 너비만큼 column_N 이름이 응답에 되풀이되므로 열 수 상한을 같이 건다. 이름을 만들기 전에 본다.
+    FileHeaderValidator.requireColumnCount(firstRow.length);
     String[] headers = new String[firstRow.length];
     for (int i = 0; i < firstRow.length; i++) headers[i] = "column_" + (i + 1);
     return new CsvHead(headers, firstRow);
@@ -468,7 +475,7 @@ public class FileParserService {
    *
    * @param width 헤더 열 수 — 그 뒤의 셀은 어차피 버려지므로 빈 행 판정에서도 보지 않는다(「,,x」 를 헤더 2열 파일에서 빈 행으로 본다)
    */
-  private static String[] readNextDataRow(CSVReader reader, int width, int[] skipped)
+  private static String[] readNextDataRow(CsvSource reader, int width, int[] skipped)
       throws Exception {
     String[] row;
     while ((row = reader.readNext()) != null) {
@@ -478,7 +485,7 @@ public class FileParserService {
     return null;
   }
 
-  private static List<String> readHeaderNames(CSVReader reader, ParseOptions opts)
+  private static List<String> readHeaderNames(CsvSource reader, ParseOptions opts)
       throws Exception {
     CsvHead head = readCsvHead(reader, opts, null);
     return head == null ? Collections.emptyList() : Arrays.asList(head.headers());
@@ -489,7 +496,7 @@ public class FileParserService {
    * 만큼만 읽어 메모리를 줄인다(#169). 빈 행은 maxRows 에 세지 않는다.
    */
   private static List<Map<String, String>> readRowMaps(
-      CSVReader reader, int maxRows, ParseOptions opts) throws Exception {
+      CsvSource reader, int maxRows, ParseOptions opts) throws Exception {
     CsvHead head = readCsvHead(reader, opts, null);
     if (head == null) return Collections.emptyList();
     List<Map<String, String>> result = new ArrayList<>();
@@ -506,7 +513,7 @@ public class FileParserService {
    * 데이터 행 수(헤더·빈 행 제외)를 센다. readAll() 대신 readNext() 반복으로 전체 행을 메모리에 올리지 않는다(대용량 CSV OOM 방지, #169
    * 연장선).
    */
-  private static int countDataRows(CSVReader reader, ParseOptions opts) throws Exception {
+  private static int countDataRows(CsvSource reader, ParseOptions opts) throws Exception {
     CsvHead head = readCsvHead(reader, opts, null);
     if (head == null) return 0;
     int count = head.firstDataRow() != null ? 1 : 0;
@@ -550,7 +557,7 @@ public class FileParserService {
    *
    * <p>BOM 처리 규칙은 {@link #resolveEncoding} 참고.
    */
-  private CSVReader buildCsvReaderFromBytes(byte[] data, ParseOptions opts) {
+  private CsvSource buildCsvReaderFromBytes(byte[] data, ParseOptions opts) {
     ParseOptions.Bom bom = ParseOptions.detectBom(data);
     String encoding = resolveEncoding(opts, bom, () -> ParseOptions.detectEncoding(data));
     int offset = bom == null ? 0 : bom.length();
@@ -565,7 +572,7 @@ public class FileParserService {
    * <p>BufferedInputStream 에 mark 를 걸고 선행 바이트를 읽어 BOM(항상)과 인코딩(AUTO 일 때)을 판별한 뒤 reset 하고, BOM 이 있으면
    * 그 바이트만큼 건너뛴다(WD-245). mark 를 지원하는 BufferedInputStream 이 아니면 감싼다.
    */
-  private CSVReader buildCsvReaderFromStream(InputStream inputStream, ParseOptions opts)
+  private CsvSource buildCsvReaderFromStream(InputStream inputStream, ParseOptions opts)
       throws IOException {
     BufferedInputStream buffered =
         inputStream instanceof BufferedInputStream bi
@@ -600,12 +607,129 @@ public class FileParserService {
     return "AUTO".equals(opts.encoding()) ? autoDetect.get() : opts.encoding();
   }
 
-  /** 인코딩·구분자를 적용한 CSVReader 를 만든다. 입력 스트림은 이미 BOM 이 소비된 상태여야 한다. */
-  private static CSVReader newCsvReader(InputStream in, String encoding, ParseOptions opts) {
+  /**
+   * 인코딩·구분자를 적용한 CSV 읽기 원본을 만든다. 입력 스트림은 이미 BOM 이 소비된 상태여야 한다.
+   *
+   * <p>디코딩된 글자 스트림과 opencsv 사이에 {@link HeaderLineGuardReader} 를 끼워, 헤더 줄을 읽는 동안 꺼낸 글자 수를
+   * 센다(WD-612).
+   */
+  private static CsvSource newCsvReader(InputStream in, String encoding, ParseOptions opts) {
     char sep = opts.delimiter().charAt(0);
     Charset charset = Charset.forName(encoding);
     CSVParser parser = new CSVParserBuilder().withSeparator(sep).build();
-    return new CSVReaderBuilder(new InputStreamReader(in, charset)).withCSVParser(parser).build();
+    HeaderLineGuardReader guard = new HeaderLineGuardReader(new InputStreamReader(in, charset));
+    CSVReader reader = new CSVReaderBuilder(guard).withCSVParser(parser).build();
+    return new CsvSource(reader, guard);
+  }
+
+  /**
+   * opencsv 리더와 그 아래 헤더 줄 길이 감시기를 묶은 CSV 읽기 원본(WD-612). 공통 읽기 helper 는 행을 이것으로 읽고, 헤더를 읽을 때만 감시를
+   * 켠다.
+   */
+  private static final class CsvSource implements AutoCloseable {
+    private final CSVReader reader;
+    private final HeaderLineGuardReader guard;
+
+    CsvSource(CSVReader reader, HeaderLineGuardReader guard) {
+      this.reader = reader;
+      this.guard = guard;
+    }
+
+    /** 다음 행(물리 줄 하나, 따옴표 안 줄바꿈이면 여러 줄)을 읽는다. 끝이면 null. */
+    String[] readNext() throws Exception {
+      return reader.readNext();
+    }
+
+    /**
+     * 헤더 행 하나를 길이 감시 아래에서 읽는다(WD-612). 끝이면 null.
+     *
+     * <p>opencsv 는 한 줄을 통째로 문자열로 만든 뒤에야 셀로 나누므로, 셀 길이·열 수 검사({@link
+     * FileHeaderValidator#requireWithinLimits})만으로는 줄바꿈 없는 60MB 파일을 60MB 문자열로 만든 뒤에야 거절한다. 그래서 읽는
+     * 도중에 {@link ImportFileLimits#MAX_HEADER_LINE_CHARS}(+ 내부 버퍼 선읽기 여유분)를 넘으면 바로 끊는다.
+     *
+     * <p>헤더가 따옴표 안 줄바꿈으로 이어 붙는 물리 줄 수도 {@link ImportFileLimits#MAX_HEADER_PHYSICAL_LINES} 로 막는다.
+     * opencsv 는 이어지는 줄마다 지금까지 모은 값을 통째로 다시 만들어(줄 수 × 글자 수에 비례), 닫히지 않은 따옴표 뒤에 짧은 줄이 아주 많은 파일은 글자 수
+     * 상한 안에서도 요청 하나가 스레드를 오래 붙잡는다.
+     */
+    String[] readHeaderRow() throws Exception {
+      long startLines = reader.getLinesRead();
+      guard.arm(
+          ImportFileLimits.MAX_HEADER_LINE_CHARS + HeaderLineGuardReader.READ_AHEAD_SLACK,
+          () -> reader.getLinesRead() - startLines > ImportFileLimits.MAX_HEADER_PHYSICAL_LINES);
+      try {
+        return reader.readNext();
+      } finally {
+        guard.disarm();
+      }
+    }
+
+    @Override
+    public void close() throws IOException {
+      reader.close();
+    }
+  }
+
+  /**
+   * 감시가 켜진 동안 아래 리더에서 꺼낸 글자 수가 예산을 넘으면 {@link InvalidFileHeaderException}(400)으로 읽기를 끊는 리더(WD-612).
+   *
+   * <p>opencsv 리더가 이 리더를 {@link java.io.BufferedReader} 로 감싸 한 번에 최대 8,192자씩 미리 읽으므로, 감시를 켜기 전에 이미
+   * 버퍼에 들어온 글자는 세지 않고 헤더 줄 뒤의 글자를 최대 한 버퍼만큼 더 셀 수 있다. 예산에 {@link #READ_AHEAD_SLACK} 을 더해 정상 헤더가 이
+   * 선읽기 때문에 걸리지 않게 한다. 데이터 행은 감시하지 않는다 — 긴 GeoJSON·본문 텍스트 셀이 정상 데이터일 수 있다.
+   */
+  private static final class HeaderLineGuardReader extends FilterReader {
+    /** BufferedReader 선읽기 여유분 — 기본 버퍼(8,192자)의 두 배로 넉넉히 둔다. */
+    static final long READ_AHEAD_SLACK = 16_384;
+
+    /** 지금까지 아래 리더에서 꺼낸 글자 수. */
+    private long consumed;
+
+    /** 이 글자 수를 넘으면 끊는다. 감시가 꺼져 있으면 -1. */
+    private long limit = -1;
+
+    /** 감시 중 헤더가 이어 붙은 물리 줄 수가 상한을 넘었는지. 감시가 꺼져 있으면 null. */
+    private java.util.function.BooleanSupplier tooManyLines;
+
+    HeaderLineGuardReader(Reader in) {
+      super(in);
+    }
+
+    /**
+     * 지금부터 {@code budget} 자까지만 읽게 감시를 켠다. {@code tooManyLines} 는 버퍼를 새로 채울 때마다(최대 8,192자마다) 확인한다 —
+     * 그 사이에 넘은 줄 수는 한 버퍼 분량으로 묶인다.
+     */
+    void arm(long budget, java.util.function.BooleanSupplier tooManyLines) {
+      this.limit = consumed + budget;
+      this.tooManyLines = tooManyLines;
+    }
+
+    /** 감시를 끈다. */
+    void disarm() {
+      limit = -1;
+      tooManyLines = null;
+    }
+
+    @Override
+    public int read() throws IOException {
+      int c = super.read();
+      if (c >= 0) count(1);
+      return c;
+    }
+
+    @Override
+    public int read(char[] cbuf, int off, int len) throws IOException {
+      int n = super.read(cbuf, off, len);
+      if (n > 0) count(n);
+      return n;
+    }
+
+    /** 읽은 글자 수를 더하고, 감시 중 글자 예산이나 물리 줄 수 상한을 넘었으면 헤더 줄이 너무 길다는 400 으로 끊는다. */
+    private void count(int n) {
+      consumed += n;
+      if (limit < 0) return;
+      if (consumed > limit || (tooManyLines != null && tooManyLines.getAsBoolean())) {
+        throw new InvalidFileHeaderException(FileHeaderValidator.HEADER_LINE_TOO_LONG);
+      }
+    }
   }
 
   // -----------------------------------------------------------------------
@@ -644,7 +768,7 @@ public class FileParserService {
       if (headerHolder[0] == null) {
         // 첫 행 = 헤더
         headerHolder[0] = new ArrayList<>(cells);
-        FileHeaderValidator.requireDistinctNames(headerHolder[0]); // WD-205
+        FileHeaderValidator.requireValidHeader(headerHolder[0]); // WD-205 중복 이름·WD-612 크기 상한
         return true;
       }
       if (isBlankRow(cells, headerHolder[0].size())) {
@@ -676,7 +800,7 @@ public class FileParserService {
         opts.sheetName(),
         (idx, cells) -> {
           headerHolder[0] = new ArrayList<>(cells);
-          FileHeaderValidator.requireDistinctNames(headerHolder[0]); // WD-205
+          FileHeaderValidator.requireValidHeader(headerHolder[0]); // WD-205 중복 이름·WD-612 크기 상한
           return false; // 첫 행 후 즉시 중단
         });
     return headerHolder[0] != null ? headerHolder[0] : Collections.emptyList();
