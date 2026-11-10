@@ -132,10 +132,9 @@ class TiberoBaselineSchemaLiveTest {
       states.add(i.getVersion() + ":" + i.getState());
     }
     write("마이그레이션 상태 " + states);
-    // V156(WD-578)·V156.1(WD-492)도 같이 적용된다 — 이전 단언은 V156 이 생기며 낡았다.
-    assertThat(states)
-        .containsExactly(
-            "155:SUCCESS", "155.1:SUCCESS", "156:SUCCESS", "156.1:SUCCESS", "9999:SUCCESS");
+    // 기준선 뒤 마이그레이션은 계속 늘어나므로 버전을 하나하나 못 박지 않는다 — 기준선·코멘트 전용이 들어 있고 모두 성공인지만 본다.
+    assertThat(states).contains("155:SUCCESS", "155.1:SUCCESS", "9999:SUCCESS");
+    assertThat(states).allMatch(s -> s.endsWith(":SUCCESS"));
     assertThat(info.info().current().getState()).isEqualTo(MigrationState.SUCCESS);
   }
 
