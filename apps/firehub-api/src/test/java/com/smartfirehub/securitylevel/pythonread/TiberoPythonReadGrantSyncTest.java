@@ -1486,8 +1486,8 @@ class TiberoPythonReadGrantSyncTest extends IntegrationTestBase {
   // ------------------------------------------------ WD-664 6: 커밋 직전 좁히기의 시간 상한
 
   /** 테스트용 짧은 상한 — 전체 1초·접속 0.6초·문장 0.5초(초 단위 queryTimeout 은 1초로 올림). */
-  private static final TiberoPythonReadGrantSync.PreCommitBounds SHORT_BOUNDS =
-      new TiberoPythonReadGrantSync.PreCommitBounds(
+  private static final PreCommitDeadline.Bounds SHORT_BOUNDS =
+      new PreCommitDeadline.Bounds(
           Duration.ofSeconds(1), Duration.ofMillis(600), Duration.ofMillis(500));
 
   /** 등급 변경 트랜잭션 안에서 공개 → 민감 좁히기를 부르고, 결과와 걸린 시간(ms)을 돌려준다. */

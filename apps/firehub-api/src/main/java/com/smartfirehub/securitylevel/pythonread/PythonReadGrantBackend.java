@@ -266,8 +266,15 @@ interface PythonReadGrantBackend {
    * @param exposedSlots 이 변경으로 그 테이블을 더는 읽으면 안 되는 슬롯(회수 실패 슬롯 포함) — 확인 못 했을 때 실행 중 스크립트를 막을 범위
    * @param revokedSlots 확인된 회수에서 <b>실제로</b> SELECT 를 회수한(REVOKE 가 성공한) PG 슬롯(WD-664 7) — 커밋 뒤 이 슬롯의
    *     세션만 끊는다. 확인 못 함이면 늘 비어 있다(savepoint 가 회수를 되돌린다). Tibero 는 끊을 세션이 없어(스펙 §5.1) 늘 비어 있다
+   * @param committedSeparately 회수와 테넌트 동기화 잠금이 플랫폼 트랜잭션보다 <b>먼저</b> 따로 커밋됐는가(WD-701 3차 — PG 분리 설치).
+   *     그러면 잠금이 풀린 뒤 플랫폼 커밋 전까지 다른 동기화가 아직 커밋 안 된 옛 등급을 읽고 회수한 슬롯에 다시 GRANT 할 수 있어, 커밋 뒤 회수 필수 뒷정리가
+   *     필요하다({@link #needsSeparateCleanup})
    */
-  record NarrowResult(boolean confirmed, Set<Integer> exposedSlots, Set<Integer> revokedSlots) {
+  record NarrowResult(
+      boolean confirmed,
+      Set<Integer> exposedSlots,
+      Set<Integer> revokedSlots,
+      boolean committedSeparately) {
 
     /** 확인됨 — 실제로 회수한 슬롯 없음(회수할 권한이 원래 없었거나 Tibero). */
     static NarrowResult confirmed(Set<Integer> exposedSlots) {
@@ -276,11 +283,21 @@ interface PythonReadGrantBackend {
 
     /** 확인됨 — 실제로 회수한 슬롯과 함께(커밋 뒤 그 슬롯 세션 끊기, WD-664 7). */
     static NarrowResult confirmed(Set<Integer> exposedSlots, Set<Integer> revokedSlots) {
-      return new NarrowResult(true, Set.copyOf(exposedSlots), Set.copyOf(revokedSlots));
+      return new NarrowResult(true, Set.copyOf(exposedSlots), Set.copyOf(revokedSlots), false);
+    }
+
+    /** 확인됨 — 회수와 잠금이 플랫폼 트랜잭션과 따로 먼저 커밋됐다(WD-701 3차 B1, PG 분리 설치). */
+    static NarrowResult confirmedSeparately(Set<Integer> exposedSlots, Set<Integer> revokedSlots) {
+      return new NarrowResult(true, Set.copyOf(exposedSlots), Set.copyOf(revokedSlots), true);
     }
 
     static NarrowResult unconfirmed(Set<Integer> exposedSlots) {
-      return new NarrowResult(false, Set.copyOf(exposedSlots), Set.of());
+      return new NarrowResult(false, Set.copyOf(exposedSlots), Set.of(), false);
+    }
+
+    /** 이 결과를 "따로 먼저 커밋됨" 으로 표시한다 — 확인된 결과만 바꾸고, 확인 못 함은 대체 경로가 이미 회수 필수 뒷정리를 하므로 그대로 둔다. */
+    NarrowResult separately() {
+      return confirmed ? confirmedSeparately(exposedSlots, revokedSlots) : this;
     }
 
     /** 대체 경로(막기)가 필요한가 — 확인 못 했고, 더는 읽으면 안 되는 슬롯이 있다(넓어지는 변경이면 필요 없다). */
@@ -289,11 +306,21 @@ interface PythonReadGrantBackend {
     }
 
     /**
+     * 확인됐지만 따로 먼저 커밋돼 커밋 뒤 회수 필수 뒷정리가 필요한가(WD-701 3차 B1) — 회수한 슬롯이 있거나 이 변경으로 못 읽게 된 슬롯이 있다(그 슬롯은 옛
+     * 등급으로 맞추는 동기화가 플랫폼 커밋 전에 다시 GRANT 할 수 있다). 넓어지는 변경이고 회수한 것도 없으면 다시 GRANT 될 것도 없어 필요 없다.
+     */
+    boolean needsSeparateCleanup() {
+      return confirmed
+          && committedSeparately
+          && (!revokedSlots.isEmpty() || !exposedSlots.isEmpty());
+    }
+
+    /**
      * 확인된 회수 뒤 커밋 뒤 세션 끊기가 필요한가(WD-664 7) — 실제로 회수한 슬롯이 있다. PG 는 권한을 쿼리 시작 때만 보므로 회수 전에 시작한 긴 쿼리·서버
-     * 쪽 커서는 회수 뒤에도 계속 읽는다 — 그 세션을 끊는다.
+     * 쪽 커서는 회수 뒤에도 계속 읽는다 — 그 세션을 끊는다. 따로 먼저 커밋된 결과는 뒷정리({@link #needsSeparateCleanup})가 끊기까지 맡는다.
      */
     boolean needsKillAfterCommit() {
-      return confirmed && !revokedSlots.isEmpty();
+      return confirmed && !committedSeparately && !revokedSlots.isEmpty();
     }
   }
 

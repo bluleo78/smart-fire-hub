@@ -57,6 +57,9 @@ class PythonReadGrantSyncTest extends IntegrationTestBase {
   /** 데이터 저장소(data 스키마) 테이블 조작·검사용 — 분리 모드에서는 플랫폼 DB 와 다른 DB 다(WD-494). */
   @Autowired @DataStoreDb private DSLContext dataDsl;
 
+  /** 데이터 저장소 풀 — 직접 만드는 PG 동기화의 생성자 인자(WD-701 3차, 분리 설치 커밋 직전 좁히기용). */
+  @Autowired @DataStoreDb private DataSource dataStoreDataSource;
+
   @Autowired private PasswordEncoder encoder;
   @Autowired private DatasetService datasetService;
   @Autowired private DataTableService dataTableService;
@@ -650,6 +653,7 @@ class PythonReadGrantSyncTest extends IntegrationTestBase {
     PythonReadGrantSync isolated =
         new PythonReadGrantSync(
             dataDsl,
+            dataStoreDataSource,
             terminator,
             levelRepository,
             failingForB,
@@ -685,6 +689,7 @@ class PythonReadGrantSyncTest extends IntegrationTestBase {
   private PythonReadGrantSync syncWith(PythonReadSessionTerminator term) {
     return new PythonReadGrantSync(
         dataDsl,
+        dataStoreDataSource,
         term,
         levelRepository,
         datasetRepository,

@@ -143,6 +143,16 @@ public class PythonReadSyncExecutor implements SmartLifecycle {
   }
 
   /**
+   * 항목을 버렸을 때 부르는 콜백(WD-701 3차) — 버림이 곧 보안 공백인 작업(확인된 회수 뒤 끊기 재시도)이 버려진 순간 막기 표식을 달 수 있게 한다. 모든 버림
+   * 지점(제출 때 포화·종료, 일시 실패 소진, 영구 실패, 종료 비우기 시간 초과)에서 <b>실행기 모니터 밖에서</b> 부른다 — 콜백이 다른 잠금을 잡아도 실행기와
+   * 교착하지 않게. 콜백의 예외는 ERROR 로그로 끝낸다(실행기 스레드·호출자를 죽이지 않는다).
+   */
+  @FunctionalInterface
+  interface DropListener {
+    void dropped(List<String> items);
+  }
+
+  /**
    * 재시도 규칙(WD-644) — 간격은 {@code initial} 에서 두 배씩 늘려 {@code cap} 에서 멈춘다.
    *
    * @param initial 첫 재시도 앞의 대기
@@ -308,6 +318,18 @@ public class PythonReadSyncExecutor implements SmartLifecycle {
    * @param critical 회수 필수 작업이면 true — 포화여도 버리지 않는다
    */
   public boolean submitRetryable(String group, String item, Attempt attempt, boolean critical) {
+    return submitRetryable(group, item, attempt, critical, null);
+  }
+
+  /**
+   * {@link #submitRetryable(String, String, Attempt, boolean)} 와 같되, 항목을 버리면 {@code onDropped} 를
+   * 부른다(WD-701 3차, {@link DropListener}). 같은 그룹에 합쳐지면 처음 만든 작업의 콜백을 쓴다 — 같은 그룹은 같은 백엔드·테넌트·같은 요청(그룹
+   * 이름에 요청 인자를 넣는 경로)이라 콜백도 같다.
+   *
+   * @param onDropped 버림 콜백(null 이면 없음)
+   */
+  public boolean submitRetryable(
+      String group, String item, Attempt attempt, boolean critical, DropListener onDropped) {
     Job job = null;
     String dropReason = null;
     synchronized (this) {
@@ -324,7 +346,7 @@ public class PythonReadSyncExecutor implements SmartLifecycle {
         if (!critical && pending >= capacity) {
           dropReason = "진행 중 작업 상한(" + capacity + ") 포화";
         } else {
-          job = new Job(group, attempt);
+          job = new Job(group, attempt, onDropped);
           job.queued.add(item);
           jobs.put(group, job);
           pending++;
@@ -333,6 +355,7 @@ public class PythonReadSyncExecutor implements SmartLifecycle {
     }
     if (job == null) {
       countDropped(1, dropReason + "(" + group + " " + item + ")");
+      notifyDropped(onDropped, group, List.of(item));
       return false;
     }
     return schedule(job, Duration.ZERO);
@@ -372,6 +395,9 @@ public class PythonReadSyncExecutor implements SmartLifecycle {
     private final String group;
     private final Attempt attempt;
 
+    /** 버림 콜백(WD-701 3차, 없으면 null) — 실행기 모니터 밖에서만 부른다. */
+    private final DropListener onDropped;
+
     /** 다음 시도에서 동기화할 항목(테이블) — 합치기·뒤따르는 실행·BUSY/FAILED 되돌림이 모두 여기로 모인다. 삽입 순서 유지. */
     private final Set<String> queued = new LinkedHashSet<>();
 
@@ -396,9 +422,10 @@ public class PythonReadSyncExecutor implements SmartLifecycle {
      */
     private final Map<String, Integer> failures = new HashMap<>();
 
-    private Job(String group, Attempt attempt) {
+    private Job(String group, Attempt attempt, DropListener onDropped) {
       this.group = group;
       this.attempt = attempt;
+      this.onDropped = onDropped;
     }
 
     @Override
@@ -444,6 +471,8 @@ public class PythonReadSyncExecutor implements SmartLifecycle {
     private void complete(List<String> items, AttemptResult result, String permanentReason) {
       List<String> exhausted = List.of();
       List<String> lost = List.of();
+      List<String> droppedNow = List.of();
+      boolean finished = false;
       Duration next;
       synchronized (PythonReadSyncExecutor.this) {
         running = false;
@@ -507,13 +536,21 @@ public class PythonReadSyncExecutor implements SmartLifecycle {
         if (!lost.isEmpty()) {
           countDropped(lost.size(), permanentReason + "(" + group + " " + lost + ")");
         }
+        if (!exhausted.isEmpty() || !lost.isEmpty()) {
+          droppedNow = new ArrayList<>(exhausted);
+          droppedNow.addAll(lost);
+        }
         if (queued.isEmpty()) {
           // 할 일이 없다 — 끝남. 실행 중인 작업은 다른 경로가 빼지 않으므로 여기서 정확히 한 번 정리된다.
-          if (jobs.remove(group, this)) {
-            finish(1);
-          }
+          // 끝남(pending 감소)은 모니터 밖에서 버림 콜백을 부른 뒤에 센다 — awaitIdle 로 끝을 본 쪽이 콜백(미확인 표식)까지 끝난 상태를 보게.
+          finished = jobs.remove(group, this);
           next = null;
         }
+      }
+      // 버림 콜백은 모니터 밖에서(DropListener) — 재예약보다 먼저 불러, 버림 직후의 표식이 다음 시도보다 늦지 않게 한다.
+      notifyDropped(onDropped, group, droppedNow);
+      if (finished) {
+        finish(1);
       }
       if (next != null) {
         // 잠금이 바쁘거나 일시 실패, 또는 뒤따르는 실행 — 기다리지 않고 다음 간격 뒤로 다시 올린다(그 사이 스레드는 다른 작업을 돌린다).
@@ -586,13 +623,38 @@ public class PythonReadSyncExecutor implements SmartLifecycle {
    * 초과의 버림 지점. 이미 빠진 작업이면(다른 경로가 먼저 정리) 아무것도 하지 않는다.
    */
   private void retire(Job job, String dropReason) {
+    List<String> items = null;
     synchronized (this) {
       if (jobs.remove(job.group, job)) {
         // 버림을 먼저 세고 끝낸다 — awaitIdle 로 끝을 본 쪽이 버림 건수를 빠짐없이 보게.
-        List<String> items = List.copyOf(job.queued);
+        items = List.copyOf(job.queued);
         countDropped(Math.max(1, items.size()), dropReason + "(" + job.group + " " + items + ")");
-        finish(1);
       }
+    }
+    if (items != null) {
+      // 버림 콜백은 모니터 밖에서, 끝남(pending 감소)보다 먼저 — 위 complete 와 같은 순서.
+      notifyDropped(job.onDropped, job.group, items);
+      finish(1);
+    }
+  }
+
+  /**
+   * 버림 콜백을 부른다 — 콜백·항목이 없으면 아무것도 하지 않고, 콜백의 예외는 ERROR 로 끝낸다(DropListener). 실행기 모니터({@code this})
+   * 밖에서 부른다.
+   *
+   * <p><b>{@link #lifecycleLock} 은 쥘 수 있다.</b> {@link #replaceScheduler}(lifecycleLock 안)가 옮긴 작업을 새
+   * 스케줄러에 다시 올리다 거부되면({@link #schedule} → {@link #retire}) 이 콜백이 lifecycleLock 을 쥔 채 불린다. 그래서 콜백은
+   * 짧아야 하고(지금 쓰는 콜백은 프로세스 메모리에 미확인 표식만 단다) 다른 스레드가 lifecycleLock 을 기다리게 만드는 일(다른 스레드와의 동기 대기)을 하면 안
+   * 된다. 같은 스레드에서의 재제출은 모니터 재진입이라 막히지 않는다.
+   */
+  private static void notifyDropped(DropListener onDropped, String group, List<String> items) {
+    if (onDropped == null || items.isEmpty()) {
+      return;
+    }
+    try {
+      onDropped.dropped(List.copyOf(items));
+    } catch (RuntimeException e) {
+      log.error("PYTHON 읽기 권한 동기화 버림 콜백 실패: {} {}", group, items, e);
     }
   }
 

@@ -1,6 +1,7 @@
 package com.smartfirehub.securitylevel.pythonread;
 
 import com.smartfirehub.dataset.repository.DatasetRepository;
+import com.smartfirehub.global.datastore.DataStoreConnectionBinding;
 import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.datastore.DataStoreDbConfig;
 import com.smartfirehub.global.platformdb.postgres.PostgresPlatformLocks;
@@ -10,6 +11,12 @@ import com.smartfirehub.global.tenant.TenantPipelineRole;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.LevelPolicy;
 import com.smartfirehub.securitylevel.repository.SecurityLevelRepository;
+import com.zaxxer.hikari.HikariDataSource;
+import com.zaxxer.hikari.HikariPoolMXBean;
+import jakarta.annotation.PreDestroy;
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -21,16 +28,26 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.SynchronousQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import javax.sql.DataSource;
 import lombok.extern.slf4j.Slf4j;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.jooq.Result;
+import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataAccessException;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -132,16 +149,34 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
   static final int LEVELS_SYNC_ATTEMPTS = 3;
 
   /**
-   * 분리 설치(데이터 저장소가 플랫폼 DB 와 다른 DB)인가 — 커밋 직전 좁히기를 "확인 못 함" 으로 다룬다({@link
-   * #narrowDatasetInCurrentTx}).
+   * 분리 설치(데이터 저장소가 플랫폼 DB 와 다른 DB)인가 — 커밋 직전 좁히기를 데이터 저장소 연결에서 따로 커밋한다({@link
+   * #narrowDatasetInCurrentTx}, WD-701 3차).
    */
   private final boolean separateDataStore;
+
+  /**
+   * 데이터 저장소 풀(WD-701 3차) — 분리 설치의 커밋 직전 좁히기가 이 트랜잭션에 데이터 저장소 연결이 아직 묶이지 않았을 때 연결 하나를 따로 빌려 REVOKE 를
+   * <b>플랫폼 커밋 전에</b> 커밋한다({@link #narrowOnOwnDataStoreConnection}). 분리하지 않은 설치에서는 쓰지 않는다(플랫폼 풀 별칭).
+   */
+  private final DataSource dataStoreDataSource;
+
+  /**
+   * 이 인스턴스가 쓰는 커밋 직전 시간 상한(WD-701 3차) — 운영은 {@link PreCommitDeadline#DEFAULT_BOUNDS}, 단위 테스트는 짧게
+   * 바꾼다.
+   */
+  private volatile PreCommitDeadline.Bounds preCommitBounds = PreCommitDeadline.DEFAULT_BOUNDS;
+
+  /** 테스트 전용 — 분리 설치 커밋 직전 좁히기의 예산 초과를 몇 초 안에 재현하려고 상한을 짧게 바꾼다. */
+  void preCommitBoundsForTest(PreCommitDeadline.Bounds bounds) {
+    this.preCommitBounds = bounds;
+  }
 
   /**
    * txManager 는 @Primary TenantAwareTransactionManager — 트랜잭션 시작 때 TenantContext 를 RLS GUC 로 주입한다.
    */
   public PythonReadGrantSync(
       @DataStoreDb DSLContext dsl,
+      @DataStoreDb DataSource dataStoreDataSource,
       PythonReadSessionTerminator terminator,
       SecurityLevelRepository levelRepository,
       DatasetRepository datasetRepository,
@@ -149,6 +184,7 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
       PythonReadSyncExecutor afterCommitExecutor,
       @Value("${" + DataStoreDbConfig.SEPARATE_PROPERTY + ":false}") boolean separateDataStore) {
     this.dsl = dsl;
+    this.dataStoreDataSource = dataStoreDataSource;
     this.afterCommitExecutor = afterCommitExecutor;
     this.terminator = terminator;
     this.levelRepository = levelRepository;
@@ -223,7 +259,7 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
                 if (!check.isEmpty() && slotSessionsExist(tenantId, check)) {
                   return null; // 끊은 뒤 다시 붙은 세션 — 잠금을 놓고 그 슬롯만 다시 끊는다
                 }
-                return applyInTx(tenantId, null, runRank, false);
+                return applyInTx(dsl, tenantId, null, runRank, false);
               });
       if (result != null) {
         return result;
@@ -289,6 +325,17 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
     } catch (IllegalStateException e) {
       throw new PythonReadGrantBackend.SessionKillFailed(
           "PYTHON 슬롯 롤 세션 끊기 실패 — 다시 한다(tenant=" + tenantId + " slots=" + slots + ")", e);
+    }
+  }
+
+  /**
+   * 끊기 요청 없이 슬롯에 미확인 표식만 단다(WD-701 3차) — 확인된 회수 뒤 끊기 재시도가 실행기에서 모두 버려졌을 때(일시 실패 소진·영구 실패·포화·종료)
+   * 리스너가 부른다. 회수 전에 시작한 긴 쿼리를 끊었다는 확인이 끝내 없으므로, 그 슬롯의 다음 실행 준비가 넓히기 전에 먼저 끊고 못 끊으면 실행을 거부하게
+   * 한다(fail-closed). 표식은 그 뒤 성공한 끊기가 지운다.
+   */
+  public void markSlotsUnconfirmed(long tenantId, Set<Integer> slots) {
+    if (!slots.isEmpty()) {
+      terminator.markUnconfirmed(tenantId, slots);
     }
   }
 
@@ -441,6 +488,63 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
     }
   }
 
+  /**
+   * 분리 설치에서 확인된 커밋 직전 회수가 플랫폼보다 먼저 커밋된 데이터셋 등급 변경의 뒷정리(실행기, WD-701 3차 리뷰 B1) — 잠금 안에서 그 테이블을 <b>커밋된
+   * 새 등급</b>으로 다시 맞추고(회수 포함), 커밋 직전에 회수한 슬롯과 이번에 다시 회수한 슬롯의 세션을 끊는다.
+   *
+   * <p><b>왜.</b> 테넌트 동기화 잠금이 데이터 저장소 회수와 함께 플랫폼 커밋 전에 풀려, 그 틈에 잠금을 기다리던 동기화가 아직 커밋 안 된 옛 등급으로 회수한
+   * 슬롯에 다시 GRANT 하고 스크립트를 붙였을 수 있다({@link #narrowOnSeparateDataStore}). 플랫폼 커밋 뒤라 이 재동기화는 새 등급을 읽어
+   * 그 GRANT 를 거둔다. 끊기를 회수 <b>뒤</b>에 하므로 그 전에 붙은 세션은 모두 끊기고 뒤의 쿼리는 거부된다.
+   *
+   * <p><b>왜 테넌트 전체에서 차이 슬롯을 끊지 않는가.</b> 회수 미확인 뒷정리({@link #syncDatasetAfterUnconfirmedNarrowing})처럼
+   * 차이 슬롯을 모두 끊으면, 회수할 권한이 없던 새 테이블(클론 상속·자동 상향)에서도 그 슬롯 세션을 테넌트 전체에서 끊는 가용성 회귀(WD-664 5)가 돌아온다.
+   * 그래서 실제로 권한이 있었던 — 커밋 직전에 회수했거나 이번에 다시 회수한(되살아난) — 슬롯만 끊는다. 회수 실패가 남으면 그 슬롯도 끊고 ERROR 다. 끊지 못하면
+   * {@link PythonReadGrantBackend.SessionKillFailed}(일시 실패)로 실행기가 다시 한다.
+   */
+  public void syncDatasetAfterSeparateNarrowing(long datasetId, Set<Integer> revokedSlots) {
+    long tenantId = TenantContext.require("데이터셋 분리 설치 좁히기 뒷정리");
+    SyncResult result =
+        PythonReadGrantBackend.syncDatasetTable(
+            requiresNew, datasetRepository, datasetId, this::syncTable);
+    Set<Integer> kill = new TreeSet<>(revokedSlots);
+    if (result != null) {
+      Set<Integer> regranted = slotsOf(tenantId, result.revoked());
+      if (!regranted.isEmpty()) {
+        log.warn(
+            "데이터셋 분리 설치 좁히기 뒷정리: 커밋 틈에 옛 등급으로 되살아난 권한을 다시 회수했다(tenant={} dataset={} slots={})",
+            tenantId,
+            datasetId,
+            regranted);
+      }
+      kill.addAll(regranted);
+      Set<Integer> left = slotsOf(tenantId, result.revokeFailed());
+      if (!left.isEmpty()) {
+        log.error(
+            "데이터셋 분리 설치 좁히기 뒷정리: 회수 실패가 남았다(tenant={} dataset={} slots={})",
+            tenantId,
+            datasetId,
+            left);
+        kill.addAll(left);
+      }
+    }
+    if (kill.isEmpty()) {
+      return; // 끊을 슬롯 없음 — 권한이 원래 없었고 되살아나지도 않았다
+    }
+    try {
+      terminator.terminateWithin(tenantId, kill, TERMINATE_WAIT);
+    } catch (IllegalStateException e) {
+      throw new PythonReadGrantBackend.SessionKillFailed(
+          "데이터셋 분리 설치 좁히기 뒷정리: PYTHON 슬롯 롤 세션 끊기 실패 — 다시 한다(tenant="
+              + tenantId
+              + " dataset="
+              + datasetId
+              + " slots="
+              + kill
+              + ")",
+          e);
+    }
+  }
+
   /** 끊기를 요청하고 상한만큼 기다린다 — 실패는 ERROR 로그만(회수 앞의 첫 끊기 전용 — 뒤의 회수·두 번째 끊기가 다음 방어선을 이어 간다). */
   private void terminateQuietly(long tenantId, Set<Integer> slots) {
     try {
@@ -457,22 +561,27 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
   }
 
   /**
-   * 데이터셋 등급 변경을 커밋하기 <b>직전</b>, 그 변경을 담은 <b>바로 그 트랜잭션</b>에서 데이터셋 테이블의 남는 슬롯 권한만 회수한다(WD-624). GRANT
-   * 는 걸지 않는다 — 넓어지는 쪽은 커밋 뒤 전용 실행기의 {@link #syncDataset} 몫이다. 파사드가 savepoint 안에서 부르므로 여기서 난 예외는 이
-   * 좁히기만 되돌리고 발행 트랜잭션을 깨뜨리지 않는다({@link PythonReadGrants#narrowDatasetInCurrentTx}).
+   * 데이터셋 등급 변경을 커밋하기 <b>직전</b>, 데이터셋 테이블의 남는 슬롯 권한만 회수한다(WD-624). GRANT 는 걸지 않는다 — 넓어지는 쪽은 커밋 뒤 전용
+   * 실행기의 {@link #syncDataset} 몫이다. 파사드가 플랫폼 savepoint 안에서 부르므로 여기서 난 예외는 이 좁히기만 되돌리고 발행 트랜잭션을 깨뜨리지
+   * 않는다({@link PythonReadGrants#narrowDatasetInCurrentTx}).
    *
-   * <p><b>왜 같은 트랜잭션인가.</b> 새 트랜잭션(REQUIRES_NEW)을 열면 요청 하나가 플랫폼 커넥션 2개를 쥐어 동시 변경 때 풀이 멈춘다. 같은 트랜잭션이면
-   * 커넥션이 하나뿐이고, 아직 커밋 전인 새 등급을 그대로 읽어 계산하며, REVOKE 가 등급 변경과 <b>함께</b> 커밋된다 — 커밋 응답이 나가는 순간 실행 중 세션의
-   * 다음 쿼리부터 막힌다.
+   * <p><b>같은 DB 설치 — 같은 트랜잭션.</b> 새 트랜잭션(REQUIRES_NEW)을 열면 요청 하나가 플랫폼 커넥션 2개를 쥐어 동시 변경 때 풀이 멈춘다. 같은
+   * 트랜잭션이면 커넥션이 하나뿐이고, 아직 커밋 전인 새 등급을 그대로 읽어 계산하며, REVOKE 가 등급 변경과 <b>함께</b> 커밋된다 — 커밋 응답이 나가는 순간
+   * 실행 중 세션의 다음 쿼리부터 막힌다.
+   *
+   * <p><b>분리 설치 — 데이터 저장소에서 플랫폼 커밋 전에 따로 커밋(WD-701 3차, 설계 결정 Q1 A).</b> 예전에는 분리 설치면 늘 "확인 못 함" 으로
+   * 대체 경로(커밋 뒤 비동기 회수)로 갔다 — 커밋 응답이 나간 뒤에도 슬롯이 그 테이블을 읽을 수 있었다. 이제 {@link
+   * #narrowOnSeparateDataStore} 가 데이터 저장소 연결에서 회수하고, 그 회수가 <b>플랫폼 커밋보다 먼저</b> 데이터 저장소에 커밋되게 한다. 시간
+   * 예산({@link PreCommitDeadline}, Tibero 커밋 직전 좁히기와 같은 장치·같은 값)을 넘기거나 접속하지 못하면 "확인 못 함" 으로 대체 경로에
+   * 맡긴다.
    *
    * <p><b>왜 방향(올림·내림)을 따지지 않는가.</b> 회수 대상은 "실제 ACL − 새 등급 기준 계산값" 이라 넓어지는 변경이면 저절로 빈다. 결과에는 확인 여부와
    * 함께 "더는 읽으면 안 되는 슬롯"({@link PythonReadSlots#slotsLosingAccess} + 회수 실패 슬롯)을 실어, 확인 못 했을 때 막을 범위를
    * 그 슬롯으로만 좁힌다.
    *
-   * <p><b>확인 못 함으로 다루는 경우.</b> 잠금을 {@link #NARROW_LOCK_WAIT} 안에 못 잡음, 회수 실패, 그리고 <b>분리 설치</b>. 분리
-   * 설치에서는 데이터 저장소 연결이 이 트랜잭션에 처음 묶이는 것이 커밋 직전 단계일 수 있는데, 그러면 그 연결은 플랫폼 커밋 <b>뒤</b>(완료 콜백)에서야 커밋되고
-   * 실패해도 로그만 남는다 — 커밋 응답 전에 회수가 커밋됐다고 확인할 수 없다. 또 그 연결의 문장 오류는 플랫폼 savepoint 로 되돌릴 수 없어 데이터 저장소 커밋
-   * 실패가 발행 트랜잭션을 롤백시킬 수 있다. 그래서 분리 설치에서는 데이터 저장소를 건드리지 않고 대체 경로(그 슬롯 세션 끊기 + 실행기 회수)로 간다.
+   * <p><b>확인 못 함으로 다루는 경우.</b> 잠금을 {@link #NARROW_LOCK_WAIT} 안에 못 잡음(막을 슬롯에 지금 실제로 SELECT 를 가진 슬롯을
+   * 더한다 — WD-664 5, {@link #exposedWithCurrentHolders}), 회수 실패, 분리 설치의 시간 예산 초과·접속 실패(새 등급에서 못 읽는
+   * 모든 슬롯).
    *
    * @throws IllegalStateException 실제 트랜잭션 밖에서 불렀을 때(파사드가 "확인 못 함" 으로 바꾼다)
    */
@@ -482,32 +591,402 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
       throw new IllegalStateException("데이터셋 등급 좁히기는 등급 변경 트랜잭션 안에서만 부른다");
     }
     long tenantId = TenantContext.require("데이터셋 등급 좁히기");
-    Set<Integer> exposed =
-        PythonReadSlots.slotsLosingAccess(levelRepository.findAll(), fromLevelId, toLevelId);
-    if (separateDataStore) {
-      return NarrowResult.unconfirmed(exposed);
-    }
+    List<LevelPolicy> levels = levelRepository.findAll();
+    Set<Integer> exposed = PythonReadSlots.slotsLosingAccess(levels, fromLevelId, toLevelId);
     String table = datasetRepository.findTableNameById(datasetId).orElse(null);
     if (table == null) {
       return NarrowResult.confirmed(exposed); // 물리 테이블이 없는 데이터셋(문서·파일형) — 회수할 권한이 없다
     }
-    if (!tryLockTenantSync(dsl, tenantId, NARROW_LOCK_WAIT)) {
+    if (separateDataStore) {
+      return narrowOnSeparateDataStore(tenantId, datasetId, table, exposed, levels, toLevelId);
+    }
+    return narrowWith(
+        dsl, tenantId, datasetId, table, exposed, levels, toLevelId, NARROW_LOCK_WAIT);
+  }
+
+  /**
+   * 주어진 데이터 저장소 연결(같은 DB 설치면 발행 트랜잭션의 DSL, 분리 설치면 {@link #narrowOnSeparateDataStore} 가 고른 연결)의 현재
+   * 트랜잭션에서 테넌트 동기화 잠금을 잡고 그 테이블의 남는 권한만 회수한다. 커밋·되돌리기는 부르는 쪽 몫이다.
+   *
+   * @param lockWait 잠금 대기 상한(분리 설치면 남은 예산으로 줄인 값)
+   */
+  private NarrowResult narrowWith(
+      DSLContext ds,
+      long tenantId,
+      long datasetId,
+      String table,
+      Set<Integer> exposed,
+      List<LevelPolicy> levels,
+      long toLevelId,
+      Duration lockWait) {
+    if (!tryLockTenantSync(ds, tenantId, lockWait)) {
+      Set<Integer> block =
+          exposedWithCurrentHolders(ds, tenantId, table, exposed, levels, toLevelId);
       log.warn(
-          "데이터셋 등급 좁히기: 테넌트 동기화 잠금을 {} 안에 얻지 못했다(tenant={} dataset={})",
-          NARROW_LOCK_WAIT,
+          "데이터셋 등급 좁히기: 테넌트 동기화 잠금을 {} 안에 얻지 못했다(tenant={} dataset={} 막을 슬롯={})",
+          lockWait,
           tenantId,
-          datasetId);
-      return NarrowResult.unconfirmed(exposed);
+          datasetId,
+          block);
+      return NarrowResult.unconfirmed(block);
     }
     // 회수 실패 시 넓혀 막을 슬롯은 잠금 뒤 applyInTx 가 이미 읽은 등급 스냅샷으로 계산한다(WD-664 10) — 같은 트랜잭션의 같은 값이라
     // 결과는 같고, 커밋 직전 경로(사용자 트랜잭션의 커넥션을 쥔 채)의 등급 재조회를 한 번 줄인다.
-    PythonReadGrantSync.SyncResult narrowed = applyInTx(tenantId, table, null, true);
+    PythonReadGrantSync.SyncResult narrowed = applyInTx(ds, tenantId, table, null, true);
     return PythonReadGrantBackend.narrowResultOf(
         narrowed,
         exposed,
         narrowed::levelsAsc,
         toLevelId,
         k -> TenantPipelineRole.pythonReadRoleName(tenantId, k));
+  }
+
+  /**
+   * 잠금을 못 잡아 회수를 확인하지 못했을 때 막을 슬롯(WD-664 5) — 이전 → 새 등급 차이({@code exposed})에 <b>지금 그 테이블에 실제로
+   * SELECT 를 가진 슬롯 중 새 등급에서 못 읽는 슬롯</b>을 더한다. 예전에는 차이만 막아, ACL 이 이전 등급보다 넓게 어긋나 있으면(손으로 건 GRANT·놓친
+   * 회수) 그 슬롯을 막지 못했다.
+   *
+   * <p>카탈로그 읽기 하나(잠금 없음)라 싸다. 차이를 빼지 않고 <b>합집합</b>으로 두는 이유: 잠금을 쥔 다른 동기화(옛 등급 기준 실행 준비 등)가 아직 커밋하지
+   * 않은 GRANT 는 이 읽기에 보이지 않는다 — 차이 슬롯은 그 GRANT 를 받을 수 있는 슬롯이라 계속 막는다(fail-closed). 읽기가 실패하면 실제 ACL 을
+   * 모르므로 새 등급에서 못 읽는 모든 슬롯을 막는다.
+   */
+  private Set<Integer> exposedWithCurrentHolders(
+      DSLContext ds,
+      long tenantId,
+      String table,
+      Set<Integer> exposed,
+      List<LevelPolicy> levels,
+      long toLevelId) {
+    Set<Integer> block = new TreeSet<>(exposed);
+    try {
+      String[] roles = TenantPipelineRole.pythonReadRoleNames(tenantId).toArray(new String[0]);
+      Map<String, Set<String>> holders = new HashMap<>();
+      for (var r : fetchSlotSelectGrants(ds, DataSchema.current(), List.of(table), roles)) {
+        holders.computeIfAbsent(table, x -> new TreeSet<>()).add(r.get(1, String.class));
+      }
+      Set<Integer> current =
+          PythonReadGrantBackend.slotsOf(
+              holders, k -> TenantPipelineRole.pythonReadRoleName(tenantId, k));
+      current.removeAll(PythonReadSlots.grantSlotsFor(levels, toLevelId));
+      block.addAll(current);
+    } catch (RuntimeException e) {
+      log.warn(
+          "데이터셋 등급 좁히기: 현재 슬롯 권한을 읽지 못해 새 등급에서 못 읽는 모든 슬롯을 막는다(tenant={} table={})",
+          tenantId,
+          table,
+          e);
+      block.addAll(PythonReadSlots.slotsLosingAccess(levels, null, toLevelId));
+    }
+    return block;
+  }
+
+  /**
+   * 분리 설치의 커밋 직전 좁히기(WD-701 3차, 설계 결정 Q1 A) — 회수를 데이터 저장소에서 <b>플랫폼 커밋보다 먼저</b> 커밋되게 한다. 연결은 둘 중
+   * 하나다.
+   *
+   * <ul>
+   *   <li><b>이 트랜잭션에 데이터 저장소 연결이 이미 묶여 있으면</b>(같은 트랜잭션에서 테이블 생성·맞바꿈 등 데이터 저장소를 이미 썼으면) 그 연결에서, 이름
+   *       있는 SAVEPOINT 안에서 회수한다({@link #narrowOnBoundDataStoreConnection}). 묶인 연결의 커밋 직전 콜백(기본 순서 =
+   *       가장 늦음)은 이 리스너(가장 높은 우선순위) 뒤, 플랫폼 커밋 앞에 데이터 저장소를 커밋한다 — 회수도 그때 함께 커밋된다. 같은 세션이라 그 트랜잭션이 쥔
+   *       테넌트 잠금(재진입)·테이블 잠금에 막히지 않고, 아직 커밋 안 된 새 테이블도 보인다. 이 트랜잭션은 이미 그 데이터 저장소 커밋에 기대고 있었으므로 새
+   *       결합도 아니다.
+   *   <li><b>아니면</b> 데이터 저장소 풀에서 연결을 하나 따로 빌려 회수하고 곧바로 커밋한다({@link
+   *       #narrowOnOwnDataStoreConnection}). 이 트랜잭션에 새로 묶으면 안 된다 — 커밋 직전 단계에서 처음 묶은 연결은 플랫폼 커밋
+   *       <b>뒤</b>에야 커밋된다({@link DataStoreConnectionBinding#currentlyBoundConnectionOrNull}).
+   * </ul>
+   *
+   * <p><b>시간 예산.</b> {@link PreCommitDeadline}(운영 {@link PreCommitDeadline#DEFAULT_BOUNDS}) — 잠금
+   * 대기는 남은 예산 안에서만, 모든 문장에 queryTimeout, 문장마다 예산 확인. 예산을 넘기거나(문장 취소 57014 포함) 접속·커밋하지 못하면 어디까지
+   * 회수했는지 모르므로 "새 등급에서 못 읽는 모든 슬롯" 을 막도록 "확인 못 함" 을 돌려준다(Tibero 판과 같은 규칙). 그 밖의 예외는 그대로 던진다 — 파사드가
+   * 모든 슬롯을 막는다.
+   *
+   * <p><b>순서 위험(받아들임).</b> 데이터 저장소 회수가 커밋된 뒤 플랫폼 트랜잭션이 롤백되면(뒤따르는 커밋 직전 작업·플랫폼 커밋 실패) 슬롯은 잠시 원래보다
+   * <b>적게</b> 읽는다(fail-closed). 리스너가 롤백 완료 때 그 데이터셋 재동기화를 실행기에 넣어 되살린다({@link
+   * PythonReadGrantListener#narrowDatasetBeforeCommit}). 실행 준비(JIT)·일 1회 동기화도 회복한다.
+   *
+   * <p><b>잠금이 플랫폼 커밋보다 먼저 풀리는 틈(WD-701 3차 B1).</b> 테넌트 동기화 잠금은 데이터 저장소 트랜잭션에 묶여 회수와 함께 커밋 — 곧 풀린다.
+   * 플랫폼 커밋 전이라 그 틈에 잠금을 기다리던 동기화(실행 준비·전체·실행기)는 아직 커밋 안 된 <b>옛 등급</b>을 읽고 방금 회수한 슬롯에 다시 GRANT 할 수
+   * 있다. 그래서 확인된 결과를 "따로 먼저 커밋됨"({@link NarrowResult#separately})으로 표시하고, 리스너가 커밋 뒤 회수 필수 뒷정리({@link
+   * #syncDatasetAfterSeparateNarrowing})로 새 등급 기준으로 다시 회수하고 그 슬롯 세션을 끊는다. 같은 DB 설치는 잠금이 발행 트랜잭션과 함께
+   * 풀려 틈이 없다. Tibero 는 REVOKE(DDL)가 곧바로 반영되지만 테넌트 잠금은 플랫폼 잠금({@code PlatformLocks})이라 플랫폼 커밋 때 풀린다
+   * — 기다리던 동기화는 커밋된 새 등급을 읽으므로 이 틈이 없다.
+   */
+  private NarrowResult narrowOnSeparateDataStore(
+      long tenantId,
+      long datasetId,
+      String table,
+      Set<Integer> exposed,
+      List<LevelPolicy> levels,
+      long toLevelId) {
+    PreCommitDeadline deadline = new PreCommitDeadline(preCommitBounds);
+    Connection bound = boundDataStoreConnectionOrNull();
+    try {
+      NarrowResult result =
+          bound != null
+              ? narrowOnBoundDataStoreConnection(
+                  bound, deadline, tenantId, datasetId, table, exposed, levels, toLevelId)
+              : narrowOnOwnDataStoreConnection(
+                  deadline, tenantId, datasetId, table, exposed, levels, toLevelId);
+      // 확인됐으면 회수·잠금이 플랫폼보다 먼저 커밋된다 — 커밋 뒤 회수 필수 뒷정리가 필요하다(B1, 위 Javadoc).
+      return result.separately();
+    } catch (RuntimeException e) {
+      if (!deadline.exceededBy(e)) {
+        throw e; // 시간·접속과 무관한 실패 — 파사드가 savepoint 를 되돌리고 모든 슬롯을 막는다
+      }
+      Set<Integer> wider =
+          new TreeSet<>(PythonReadSlots.slotsLosingAccess(levels, null, toLevelId));
+      wider.addAll(exposed);
+      log.warn(
+          "데이터셋 등급 좁히기(분리 설치): 커밋 직전 시간 상한({}) 초과 또는 데이터 저장소 접속·커밋 실패로 대체 경로로 막는다(tenant={} dataset={} slots={}): {}",
+          deadline.bounds(),
+          tenantId,
+          datasetId,
+          wider,
+          e.toString());
+      return NarrowResult.unconfirmed(wider);
+    }
+  }
+
+  /**
+   * 이 트랜잭션에 이미 묶인 데이터 저장소 연결(없으면 null) — 절대 새로 묶지 않는다({@link #narrowOnSeparateDataStore}).
+   *
+   * <p><b>전제.</b> 묶인 연결은 커밋 직전 단계가 시작되기 <b>전에</b> 묶였어야 한다 — 그래야 그 연결의 커밋 직전 콜백이 시작 때 찍은 콜백 스냅숏에 들어
+   * 플랫폼 커밋 전에 데이터 저장소를 커밋한다. 이 리스너보다 먼저(같거나 높은 우선순위) 도는 다른 커밋 직전 작업이 처음 묶은 연결이면 그 커밋은 플랫폼 커밋 뒤로
+   * 밀린다. 지금은 그런 작업이 없다(이 리스너가 가장 높은 우선순위).
+   */
+  private Connection boundDataStoreConnectionOrNull() {
+    return dsl.configuration().connectionProvider() instanceof DataStoreConnectionBinding binding
+        ? binding.currentlyBoundConnectionOrNull()
+        : null;
+  }
+
+  /**
+   * 이미 묶인 데이터 저장소 연결에서 이름 있는 SAVEPOINT 안에서 회수한다 — 커밋은 묶인 연결의 커밋 직전 콜백이 플랫폼 커밋 전에 한다. 확인되면 SAVEPOINT
+   * 를 풀고(회수 유지), 확인 못 했거나 예외면 SAVEPOINT 로 되돌린다: 묶인 연결의 문장 오류(예산 초과로 취소된 문장 포함)는 데이터 저장소 트랜잭션 전체를
+   * aborted 로 남겨 그 커밋 — 곧 게시자 커밋 — 을 실패시키기 때문이다(같은 DB 설치의 파사드 savepoint 와 같은 이유). SAVEPOINT 문장들은
+   * 예산과 무관하게(넘긴 뒤에도 되돌려야 하므로) 원래 연결로, 문장 상한만 걸고 보낸다({@link #savepointStatement}).
+   */
+  private NarrowResult narrowOnBoundDataStoreConnection(
+      Connection bound,
+      PreCommitDeadline deadline,
+      long tenantId,
+      long datasetId,
+      String table,
+      Set<Integer> exposed,
+      List<LevelPolicy> levels,
+      long toLevelId) {
+    savepointStatement(bound, deadline, "SAVEPOINT " + NARROW_SAVEPOINT);
+    NarrowResult result;
+    try {
+      result =
+          narrowWith(
+              DSL.using(deadline.bind(bound), SQLDialect.POSTGRES),
+              tenantId,
+              datasetId,
+              table,
+              exposed,
+              levels,
+              toLevelId,
+              deadline.cap(NARROW_LOCK_WAIT));
+    } catch (RuntimeException e) {
+      try {
+        savepointStatement(bound, deadline, "ROLLBACK TO SAVEPOINT " + NARROW_SAVEPOINT);
+      } catch (RuntimeException rollbackFailure) {
+        e.addSuppressed(rollbackFailure); // 원래 원인을 가리지 않는다
+      }
+      throw e;
+    }
+    savepointStatement(
+        bound,
+        deadline,
+        (result.confirmed() ? "RELEASE SAVEPOINT " : "ROLLBACK TO SAVEPOINT ") + NARROW_SAVEPOINT);
+    return result;
+  }
+
+  /** 묶인 데이터 저장소 연결에서 커밋 직전 좁히기를 감싸는 SAVEPOINT 이름 — applyInTx 의 문장 savepoint 와 겹치지 않게 따로 둔다. */
+  private static final String NARROW_SAVEPOINT = "python_read_narrow";
+
+  /**
+   * SAVEPOINT·RELEASE·ROLLBACK TO SAVEPOINT 를 원래 연결로 보낸다 — 남은 예산이 아니라 문장 상한({@link
+   * PreCommitDeadline#statementTimeoutSeconds})만 건다. 예산을 넘긴 뒤에도 되돌리기는 꼭 해야 하고, 그래도 느린 데이터 저장소에서 무한정
+   * 멈추지는 않게 한다.
+   */
+  private static void savepointStatement(Connection conn, PreCommitDeadline deadline, String sql) {
+    try (Statement st = conn.createStatement()) {
+      st.setQueryTimeout(deadline.statementTimeoutSeconds());
+      st.execute(sql);
+    } catch (SQLException e) {
+      throw new DataAccessResourceFailureException("데이터 저장소 SAVEPOINT 문장 실패: " + sql, e);
+    }
+  }
+
+  /**
+   * 데이터 저장소 풀에서 연결을 따로 빌려 회수하고 곧바로 커밋한다 — 반환 시점에 회수가 데이터 저장소에 커밋돼 있다(플랫폼 커밋 전). 확인 못 함(회수 일부 실패·잠금
+   * 대기 초과)이어도 이미 성공한 회수는 커밋한다 — 회수는 좁히기라 늘 안전하고, 남은 슬롯은 대체 경로가 막는다. 예외면 되돌린다.
+   *
+   * <p><b>접속 상한.</b> 빌리기는 {@link #borrowDataStoreConnection} 이 접속 상한({@link
+   * PreCommitDeadline#connectTimeout})까지만 기다린다.
+   *
+   * <p><b>네트워크 상한.</b> 빌린 직후 연결에 남은 예산(최소 1초)만큼 네트워크 상한을 건다({@link #applyNetworkTimeout}). 문장 상한은
+   * 서버에 취소를 보내는 방식이라, 네트워크가 소리 없이 패킷을 버리면 commit·rollback·취소가 응답을 영원히 기다린다(풀에 socketTimeout 설정 없음).
+   * Hikari 는 반납 때 바뀐 네트워크 상한을 원래대로 되돌린다.
+   */
+  private NarrowResult narrowOnOwnDataStoreConnection(
+      PreCommitDeadline deadline,
+      long tenantId,
+      long datasetId,
+      String table,
+      Set<Integer> exposed,
+      List<LevelPolicy> levels,
+      long toLevelId) {
+    try (Connection conn = borrowDataStoreConnection(deadline)) {
+      applyNetworkTimeout(conn, deadline.networkTimeoutMillis());
+      conn.setAutoCommit(false);
+      boolean committed = false;
+      try {
+        NarrowResult result =
+            narrowWith(
+                DSL.using(deadline.bind(conn), SQLDialect.POSTGRES),
+                tenantId,
+                datasetId,
+                table,
+                exposed,
+                levels,
+                toLevelId,
+                deadline.cap(NARROW_LOCK_WAIT));
+        conn.commit();
+        committed = true;
+        return result;
+      } finally {
+        // autoCommit 은 되돌리지 않는다 — Hikari 가 반납 때 바뀐 연결 상태를 되돌린다(여기서 되돌리다 실패하면 원래 예외를 가린다).
+        if (!committed) {
+          rollbackQuietly(conn);
+        }
+      }
+    } catch (SQLException e) {
+      // 접속·커밋 실패 — 회수가 커밋됐는지 모른다. 예산 초과와 같이 다룬다(새 등급에서 못 읽는 모든 슬롯을 막는다).
+      throw new DataAccessResourceFailureException("데이터 저장소 커밋 직전 좁히기 연결·커밋 실패", e);
+    }
+  }
+
+  /**
+   * 커밋 직전 좁히기용 데이터 저장소 연결을 접속 상한({@link PreCommitDeadline#connectTimeout}) 안에서 빌린다(WD-701 3차 리뷰).
+   *
+   * <p><b>왜 따로 스레드에서 빌리는가.</b> Hikari 는 호출마다 대기 상한을 줄 수 없다(풀 설정 {@code connection-timeout}, 기본
+   * 30초). 데이터 저장소가 죽었거나 풀이 말랐으면 빌리기가 그만큼 멈추고, 그동안 이 요청은 플랫폼 커넥션을 쥔다 — 등급 변경마다 30초. 그래서 (1) 풀이
+   * 찼거나(쉬는 연결 없음 + 최대 크기) 이미 기다리는 스레드가 있으면 빌리지 않고 곧바로 예산 초과로 보고({@link #dataStorePoolBusy}), (2)
+   * 빌리기는 작은 전용 스레드 풀에서 하며 접속 상한만 기다린다. 넘기면 예산 초과로 대체 경로에 맡기고, 늦게 도착한 연결은 받는 즉시 닫아 풀에 돌려준다. 전용 스레드가
+   * 모두 바쁘면(데이터 저장소가 느린 동안 몰린 요청) 거절 = 예산 초과다.
+   */
+  private Connection borrowDataStoreConnection(PreCommitDeadline deadline) {
+    if (dataStorePoolBusy()) {
+      throw new PreCommitDeadline.BudgetExceeded("데이터 저장소 풀 포화");
+    }
+    deadline.check("데이터 저장소 접속");
+    CompletableFuture<Connection> borrowed;
+    try {
+      borrowed =
+          CompletableFuture.supplyAsync(
+              () -> {
+                try {
+                  return dataStoreDataSource.getConnection();
+                } catch (SQLException e) {
+                  throw new CompletionException(e);
+                }
+              },
+              connectionBorrower);
+    } catch (RejectedExecutionException e) {
+      throw new PreCommitDeadline.BudgetExceeded("데이터 저장소 접속 스레드 포화");
+    }
+    try {
+      return borrowed.get(deadline.connectTimeout().toNanos(), TimeUnit.NANOSECONDS);
+    } catch (TimeoutException e) {
+      borrowed.thenAccept(PythonReadGrantSync::closeQuietly); // 늦게 온 연결은 받는 즉시 돌려준다
+      throw new PreCommitDeadline.BudgetExceeded("데이터 저장소 접속 상한");
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      borrowed.thenAccept(PythonReadGrantSync::closeQuietly);
+      throw new PreCommitDeadline.BudgetExceeded("데이터 저장소 접속 대기 중 인터럽트");
+    } catch (ExecutionException e) {
+      throw new DataAccessResourceFailureException("데이터 저장소 연결 획득 실패", e.getCause());
+    }
+  }
+
+  /** 커밋 직전 좁히기의 연결 빌리기 전용 스레드 수 — 데이터 저장소가 느릴 때 이만큼만 동시에 기다리고, 넘치면 대체 경로로 간다. */
+  static final int CONNECTION_BORROW_THREADS = 4;
+
+  /** 연결 빌리기 전용 스레드 풀(데몬, 쉬면 줄어든다) — {@link #borrowDataStoreConnection}. 대기 큐 없이 스레드가 모자라면 거절한다. */
+  private final ThreadPoolExecutor connectionBorrower =
+      new ThreadPoolExecutor(
+          0,
+          CONNECTION_BORROW_THREADS,
+          30L,
+          TimeUnit.SECONDS,
+          new SynchronousQueue<>(),
+          r -> {
+            Thread th = new Thread(r, "python-read-narrow-borrow");
+            th.setDaemon(true);
+            return th;
+          });
+
+  /** 종료 — 빌리기 스레드를 멈춘다(데몬이라 종료를 막지는 않는다). */
+  @PreDestroy
+  void shutdownConnectionBorrower() {
+    connectionBorrower.shutdownNow();
+  }
+
+  /**
+   * 데이터 저장소 풀이 포화인가 — 이미 연결을 기다리는 스레드가 있거나, 쉬는 연결이 없고 최대 크기까지 찼다. 그러면 빌리기가 대기 줄로 가 남이 반납할 때까지 기다리므로
+   * 빌리지 않는다. 쉬는 연결만 없고 최대 크기 전이면 빌린다 — Hikari 가 새 연결을 만들고(정상 저장소면 곧바로), 죽은 저장소면 접속 상한이 묶는다. 쉬는 연결 0
+   * 만으로 막으면 평범한 풀 바쁨이 대체 경로(차이 슬롯 세션을 테넌트 전체에서 끊기)로 바뀌어 WD-664 5 의 가용성 회귀가 돌아온다. Hikari 가 아니거나 알 수
+   * 없으면 false(빌리기를 시도한다 — 접속 상한이 여전히 묶는다).
+   */
+  private boolean dataStorePoolBusy() {
+    try {
+      if (!dataStoreDataSource.isWrapperFor(HikariDataSource.class)) {
+        return false;
+      }
+      HikariPoolMXBean pool =
+          dataStoreDataSource.unwrap(HikariDataSource.class).getHikariPoolMXBean();
+      return pool != null
+          && (pool.getThreadsAwaitingConnection() > 0
+              || (pool.getIdleConnections() == 0
+                  && pool.getTotalConnections()
+                      >= dataStoreDataSource.unwrap(HikariDataSource.class).getMaximumPoolSize()));
+    } catch (SQLException e) {
+      return false;
+    }
+  }
+
+  /**
+   * 연결에 네트워크 상한(밀리초)을 건다 — 실패해도(드라이버 미지원 등) 경로를 깨지 않고 WARN 만 남긴다(문장 상한·예산은 여전히 묶는다). 실행기는 호출 스레드에서
+   * 곧바로 도는 직접 실행기다: PG 드라이버는 이 실행기를 쓰지 않고 소켓 읽기 상한만 바꾸며, 상한 초과 때 연결을 끊는 작업을 하는 드라이버도 빌리기 전용 스레드
+   * 풀(포화면 거절)에 기대지 않게 한다.
+   */
+  static void applyNetworkTimeout(Connection conn, int millis) {
+    try {
+      conn.setNetworkTimeout(Runnable::run, millis);
+    } catch (SQLException | RuntimeException e) {
+      log.warn("데이터 저장소 연결 네트워크 상한 설정 실패(계속 진행): {}", e.toString());
+    }
+  }
+
+  /** 연결을 조용히 닫는다(늦게 도착한 빌린 연결 반납용). */
+  private static void closeQuietly(Connection conn) {
+    try {
+      conn.close();
+    } catch (SQLException e) {
+      log.debug("데이터 저장소 연결 닫기 실패(무시): {}", e.getClass().getName());
+    }
+  }
+
+  /** 되돌리기 — 실패는 로그만(연결은 곧 닫혀 풀이 정리한다). */
+  private static void rollbackQuietly(Connection conn) {
+    try {
+      conn.rollback();
+    } catch (SQLException e) {
+      log.warn("데이터 저장소 커밋 직전 좁히기 되돌리기 실패: {}", e.getClass().getName());
+    }
   }
 
   /**
@@ -637,7 +1116,7 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
    */
   private SyncResult syncInTx(String onlyTable, Integer runRank) {
     long tenantId = TenantContext.require("PYTHON 읽기 권한 동기화");
-    return applyInTx(tenantId, onlyTable, runRank, false);
+    return applyInTx(dsl, tenantId, onlyTable, runRank, false);
   }
 
   /**
@@ -647,7 +1126,7 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
    * @param revokeOnly true 면 남는 권한 회수만 하고 부족한 GRANT 는 걸지 않는다(커밋 직전 좁히기 — 넓히기는 커밋 뒤 실행기 몫)
    */
   private SyncResult applyInTx(
-      long tenantId, String onlyTable, Integer runRank, boolean revokeOnly) {
+      DSLContext ds, long tenantId, String onlyTable, Integer runRank, boolean revokeOnly) {
     String schema = DataSchema.current();
     List<String> slotRoleNames = TenantPipelineRole.pythonReadRoleNames(tenantId);
     List<LevelPolicy> levelsAsc = levelRepository.findAll(); // rank asc, 이 트랜잭션에 합류(RLS GUC)
@@ -667,7 +1146,7 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
         targetRoles.isEmpty()
             ? Set.of()
             : new HashSet<>(
-                dsl.fetch(
+                ds.fetch(
                         "select rolname::text from pg_roles where rolname::text = any({0}::text[])",
                         DSL.val(targetRoles.toArray(new String[0])))
                     .getValues(0, String.class));
@@ -708,7 +1187,7 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
     // 이름은 RENAME 뒤 옛 이름으로 찾을 수 없어 가를 수 없고(WD-655 fail-open), oid 는 RENAME 해도 그대로다.
     Map<String, Long> oids = new HashMap<>();
     for (var r :
-        dsl.fetch(
+        ds.fetch(
             "select c.relname::text, c.relkind::text, c.oid::bigint from pg_class c"
                 + " join pg_namespace n on n.oid = c.relnamespace"
                 + " where n.nspname = {0} and c.relkind in ('r','p','v','m','f')"
@@ -731,7 +1210,7 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
           return kind == 'r' || kind == 'p' ? desired.getOrDefault(t, Set.of()) : Set.of();
         };
     Map<String, Set<String>> actual = new HashMap<>();
-    for (var r : fetchSlotSelectGrants(schema, physical, roleArray)) {
+    for (var r : fetchSlotSelectGrants(ds, schema, physical, roleArray)) {
       actual
           .computeIfAbsent(r.get(0, String.class), x -> new TreeSet<>())
           .add(r.get(1, String.class));
@@ -760,15 +1239,15 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
         }
         missing.clear();
       }
-      String qualified = dsl.render(DSL.name(schema, table));
+      String qualified = ds.render(DSL.name(schema, table));
       // ACL 을 고치기 전에 그 테이블에 ACCESS SHARE 잠금을 잡는다(이유는 lockTableForAclChange 참고).
       // 못 잡으면(시간 초과, 그새 DROP·RENAME) 이번에는 이 테이블을 건너뛴다.
       // 부족한 GRANT 는 과소권한이라 안전하다. 남는 권한은 회수 실패로 세어 prepareForRun 이 실행을 거부한다.
-      if (!lockTableForAclChange(qualified)) {
+      if (!lockTableForAclChange(ds, qualified)) {
         // WD-673: 목록을 읽은 뒤 실제로 DROP 된 테이블(oid 가 사라짐)은 ACL 도 함께 사라졌다 — 과권한이 남지 않으므로 회수 실패로
         // 세지 않는다(예전에는 세어 그 동기화와 겹친 PYTHON 실행이 한 번 거부됐다). 아직 진행 중(미커밋)인 DROP 은 oid 가 보이므로
         // 아래 fail-closed 로 간다 — 되돌려질 수 있기 때문이다.
-        if (!relationExists(oids.get(table))) {
+        if (!relationExists(ds, oids.get(table))) {
           log.info(
               "PYTHON 읽기 권한 동기화: 테이블이 그새 삭제돼 건너뛴다(권한도 함께 사라짐): tenant={} table={}",
               tenantId,
@@ -792,8 +1271,10 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
       // 까지 되돌리면 과권한이 남는다.
       if (!excess.isEmpty()
           && !inSavepoint(
+              ds,
               () ->
-                  dsl.execute("REVOKE ALL ON TABLE " + qualified + " FROM " + quoteAll(excess)))) {
+                  ds.execute(
+                      "REVOKE ALL ON TABLE " + qualified + " FROM " + quoteAll(ds, excess)))) {
         // REVOKE 문장 전체가 되돌려졌다 — excess 롤 전부에 과권한이 남았을 수 있다(그 슬롯으로 실행하면 prepareForRun 이 거부).
         revokeFailed.computeIfAbsent(table, x -> new TreeSet<>()).addAll(excess);
         continue;
@@ -803,8 +1284,10 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
       }
       if (!missing.isEmpty()
           && !inSavepoint(
+              ds,
               () ->
-                  dsl.execute("GRANT SELECT ON TABLE " + qualified + " TO " + quoteAll(missing)))) {
+                  ds.execute(
+                      "GRANT SELECT ON TABLE " + qualified + " TO " + quoteAll(ds, missing)))) {
         // 과소권한(안전) — 스크립트가 그 테이블을 읽으면 permission denied. 다음 동기화가 재시도한다.
         log.warn("PYTHON 읽기 GRANT 실패(과소권한, 다음 동기화에서 재시도): tenant={} table={}", tenantId, table);
       }
@@ -815,7 +1298,7 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
     // savepoint 성공만으로는 회수를 믿을 수 없다 — 바꾼 테이블의 실제 ACL 을 다시 읽어 "원하지 않는 슬롯에 SELECT 가 남은" 테이블을 회수
     // 실패로 센다(과권한 → prepareForRun 이 실행 거부).
     if (!changedTables.isEmpty()) {
-      for (var r : fetchSlotSelectGrants(schema, changedTables, roleArray)) {
+      for (var r : fetchSlotSelectGrants(ds, schema, changedTables, roleArray)) {
         String table = r.get(0, String.class);
         String role = r.get(1, String.class);
         if (!wantOf.apply(table).contains(role)) {
@@ -837,19 +1320,20 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
    * 관계 oid 가 아직 카탈로그에 있는가(WD-673) — 잠금 실패 뒤 "실제 DROP" 과 "RENAME·잠금 시간 초과" 를 가른다. 카탈로그 읽기는 문장마다 새
    * 스냅숏이라 그새 커밋된 DROP 이 보인다. oid 를 모르면(목록에 없던 이름) 있다고 본다(fail-closed).
    */
-  private boolean relationExists(Long oid) {
+  private static boolean relationExists(DSLContext ds, Long oid) {
     return oid == null
         || Boolean.TRUE.equals(
-            dsl.fetchValue(
+            ds.fetchValue(
                 "select exists(select 1 from pg_class where oid = {0}::oid)", DSL.val(oid)));
   }
 
   /** 주어진 테이블들에 슬롯 롤이 가진 SELECT 권한(테이블명, 롤명) 쌍. 테이블 목록이 비면 빈 결과. */
-  private Result<Record> fetchSlotSelectGrants(String schema, List<String> tables, String[] roles) {
+  private static Result<Record> fetchSlotSelectGrants(
+      DSLContext ds, String schema, List<String> tables, String[] roles) {
     if (tables.isEmpty()) {
-      return dsl.newResult();
+      return ds.newResult();
     }
-    return dsl.fetch(
+    return ds.fetch(
         "select c.relname::text, r.rolname::text from pg_class c"
             + " join pg_namespace n on n.oid = c.relnamespace"
             + " cross join lateral aclexplode(c.relacl) a join pg_roles r on r.oid = a.grantee"
@@ -859,8 +1343,8 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
   }
 
   /** 롤 이름들을 인용 식별자 목록으로("a", "b"). 이름은 TenantPipelineRole 조립값이지만 그래도 인용한다. */
-  private String quoteAll(Set<String> roles) {
-    return roles.stream().map(x -> dsl.render(DSL.name(x))).collect(Collectors.joining(", "));
+  private static String quoteAll(DSLContext ds, Set<String> roles) {
+    return roles.stream().map(x -> ds.render(DSL.name(x))).collect(Collectors.joining(", "));
   }
 
   /**
@@ -892,13 +1376,13 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
    * 멈추지 않게, 또 같은 스레드가 쥔 다른 트랜잭션의 DDL 을 기다리는 교착(데이터베이스가 볼 수 없는 교착)이 생겨도 풀리게 한다. 테넌트 advisory 잠금 대기에는
    * 걸지 않는다 — 다른 동기화가 그 잠금을 쥐었다고 실행 준비가 실패하면 안 되므로 문장이 끝나면 이전 값으로 되돌린다.
    */
-  private boolean lockTableForAclChange(String qualified) {
-    String previous = dsl.fetchValue(DSL.field("current_setting('lock_timeout')", String.class));
-    dsl.execute("select set_config('lock_timeout', {0}, true)", DSL.val(TABLE_LOCK_TIMEOUT));
+  private static boolean lockTableForAclChange(DSLContext ds, String qualified) {
+    String previous = ds.fetchValue(DSL.field("current_setting('lock_timeout')", String.class));
+    ds.execute("select set_config('lock_timeout', {0}, true)", DSL.val(TABLE_LOCK_TIMEOUT));
     try {
-      return inSavepoint(() -> dsl.execute("LOCK TABLE " + qualified + " IN ACCESS SHARE MODE"));
+      return inSavepoint(ds, () -> ds.execute("LOCK TABLE " + qualified + " IN ACCESS SHARE MODE"));
     } finally {
-      dsl.execute("select set_config('lock_timeout', {0}, true)", DSL.val(previous));
+      ds.execute("select set_config('lock_timeout', {0}, true)", DSL.val(previous));
     }
   }
 
@@ -909,14 +1393,14 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
    * concurrently updated」 등)를 번역하지 않아 jOOQ 예외가 그대로 나온다. Spring 예외만 잡으면 바로 그 오류가 savepoint 를 지나쳐 동기화
    * 트랜잭션 전체를 실패시킨다(실측).
    */
-  private boolean inSavepoint(Runnable statement) {
-    dsl.execute("SAVEPOINT python_read_sync");
+  private static boolean inSavepoint(DSLContext ds, Runnable statement) {
+    ds.execute("SAVEPOINT python_read_sync");
     try {
       statement.run();
-      dsl.execute("RELEASE SAVEPOINT python_read_sync");
+      ds.execute("RELEASE SAVEPOINT python_read_sync");
       return true;
     } catch (DataAccessException | org.jooq.exception.DataAccessException e) {
-      dsl.execute("ROLLBACK TO SAVEPOINT python_read_sync");
+      ds.execute("ROLLBACK TO SAVEPOINT python_read_sync");
       log.warn("PYTHON 읽기 권한 문장 실패: {}", e.getMessage());
       return false;
     }

@@ -251,8 +251,12 @@ public class PythonReadSessionTerminator {
     return sequence;
   }
 
-  /** 슬롯마다 새 순번으로 미확인 표식을 단다(이미 있으면 더 큰 순번으로). */
-  private synchronized void markUnconfirmed(long tenantId, Set<Integer> slots) {
+  /**
+   * 슬롯마다 새 순번으로 미확인 표식을 단다(이미 있으면 더 큰 순번으로). {@link #markAndRequest} 와, 확인된 회수 뒤 끊기 재시도가 모두 버려졌을
+   * 때(WD-701 3차, {@link PythonReadGrantSync#markSlotsUnconfirmed})가 부른다 — 표식이 있는 슬롯은 실행 준비가 먼저 끊고,
+   * 못 끊으면 실행을 거부한다.
+   */
+  synchronized void markUnconfirmed(long tenantId, Set<Integer> slots) {
     long seq = ++sequence;
     Map<Integer, Long> marks = unconfirmed.computeIfAbsent(tenantId, k -> new HashMap<>());
     for (int slot : slots) {
