@@ -120,7 +120,7 @@ public class PythonReadGrantListener {
   public void onLevelsChanged(SecurityLevelsChangedEvent event) {
     long tenantId = event.tenantId();
     String logContext = "등급 정의 변경(kind=" + event.kind() + ")";
-    terminateAfterCommit(tenantId, PythonReadSlots.ALL_SLOTS, logContext);
+    terminateAfterCommit(tenantId, PythonReadSlots.ALL_SLOTS, true, logContext);
     submitLevelsSync(tenantId, logContext);
   }
 
@@ -331,7 +331,7 @@ public class PythonReadGrantListener {
         new TransactionSynchronization() {
           @Override
           public void afterCommit() {
-            terminateAfterCommit(tenantId, exposed, logContext);
+            terminateAfterCommit(tenantId, exposed, false, logContext);
             // 대기형(필드 주석) — 끊기·회수·다시 끊기를 한 시도 안에서 끝까지 한다.
             executor.submitRetryable(
                 NARROW_GROUP
@@ -460,12 +460,14 @@ public class PythonReadGrantListener {
   }
 
   /**
-   * 커밋 직후 주어진 PG 슬롯에 미확인 표식을 달고 세션 끊기를 요청한다 — 기다리지 않는다(WD-664 9). 커밋 콜백이 실패하면 안 되므로 예상 밖 예외도 로그로
-   * 끝낸다.
+   * 커밋 직후 주어진 PG 슬롯에 미확인 표식을 달고 세션 끊기를 요청한다 — 기다리지 않는다(WD-664 9). 등급 정의 변경이면 {@code
+   * slotRedefined}(실행 준비가 그 슬롯 세션 전부를 본다), 데이터셋 회수 미확인이면 아니다(표식 전 세션만, WD-701 4차). 커밋 콜백이 실패하면 안
+   * 되므로 예상 밖 예외도 로그로 끝낸다.
    */
-  private void terminateAfterCommit(long tenantId, Set<Integer> slots, String logContext) {
+  private void terminateAfterCommit(
+      long tenantId, Set<Integer> slots, boolean slotRedefined, String logContext) {
     try {
-      sync.terminateSlotSessionsAfterCommit(tenantId, slots);
+      sync.terminateSlotSessionsAfterCommit(tenantId, slots, slotRedefined);
     } catch (RuntimeException e) {
       log.error("{} 후 PYTHON 슬롯 세션 끊기 요청 실패: tenant={} slots={}", logContext, tenantId, slots, e);
     }

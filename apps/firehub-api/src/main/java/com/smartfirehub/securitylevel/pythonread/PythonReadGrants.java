@@ -140,10 +140,14 @@ public class PythonReadGrants {
   /**
    * 커밋 직후 주어진 PG 슬롯 롤 세션에 미확인 표식을 달고 끊기를 요청한다 — 기다리지 않는다(WD-624 → WD-664 9, {@link
    * PythonReadGrantSync#terminateSlotSessionsAfterCommit}). 백엔드를 묻지 않는다 — 커밋 콜백에서 백엔드 조회(캐시 미스)가 바깥
-   * 커넥션을 다시 쓰지 않게. Tibero 테넌트는 PG 슬롯 롤 세션이 없어 끊을 것이 없다(조회 한 번).
+   * 커넥션을 다시 쓰지 않게. Tibero 테넌트는 PG 슬롯 롤 세션이 없어 끊을 것이 없다(조회 한 번 — 표식 행은 남지만 Tibero 실행 준비는 읽지 않는다).
+   *
+   * @param slotRedefined 등급 정의 변경(슬롯의 뜻이 바뀜)이면 true — 실행 준비가 그 슬롯 세션 전부를 본다. 데이터셋 좁히기 회수 미확인이면
+   *     false — 표식 전에 시작한 세션만 본다(WD-701 4차)
    */
-  public void terminateSlotSessionsAfterCommit(long tenantId, Set<Integer> slots) {
-    pg.terminateSlotSessionsAfterCommit(tenantId, slots);
+  public void terminateSlotSessionsAfterCommit(
+      long tenantId, Set<Integer> slots, boolean slotRedefined) {
+    pg.terminateSlotSessionsAfterCommit(tenantId, slots, slotRedefined);
   }
 
   /**

@@ -74,6 +74,7 @@ import com.smartfirehub.jooq.tables.ProactiveActiveExecutionTenantIds;
 import com.smartfirehub.jooq.tables.ProactiveJob;
 import com.smartfirehub.jooq.tables.ProactiveJobExecution;
 import com.smartfirehub.jooq.tables.ProactiveMessage;
+import com.smartfirehub.jooq.tables.PythonReadUnconfirmedSlot;
 import com.smartfirehub.jooq.tables.QueryHistory;
 import com.smartfirehub.jooq.tables.RefreshToken;
 import com.smartfirehub.jooq.tables.ReportTemplate;
@@ -659,6 +660,11 @@ public class Tables {
      * The table <code>public.proactive_message</code>.
      */
     public static final ProactiveMessage PROACTIVE_MESSAGE = ProactiveMessage.PROACTIVE_MESSAGE;
+
+    /**
+     * PYTHON 읽기 슬롯 세션 끊기 미확인 표식 — 모든 API 인스턴스의 실행 준비가 넓히기 전에 본다(WD-701 4차)
+     */
+    public static final PythonReadUnconfirmedSlot PYTHON_READ_UNCONFIRMED_SLOT = PythonReadUnconfirmedSlot.PYTHON_READ_UNCONFIRMED_SLOT;
 
     /**
      * The table <code>public.query_history</code>.

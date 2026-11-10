@@ -18,6 +18,7 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.Duration;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -48,6 +49,7 @@ import org.jooq.impl.DSL;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.TransientDataAccessResourceException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -121,6 +123,12 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
    */
   private final PythonReadSessionTerminator terminator;
 
+  /**
+   * 미확인 표식 저장소(WD-701 4차) — 데이터 저장소 표(모든 인스턴스가 본다) + 끊기 장치의 메모리 대비 표식. 쓰기 연결은 {@link #borrowWithin}
+   * 으로 상한 안에서 빌린다.
+   */
+  private final PythonReadUnconfirmedMarks unconfirmedMarks;
+
   private final SecurityLevelRepository levelRepository;
   // 플랫폼 테이블(dataset) 조회 — 데이터 저장소 DSL 이 아니라 리포지토리로 읽는다(WD-494).
   private final DatasetRepository datasetRepository;
@@ -187,6 +195,7 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
     this.dataStoreDataSource = dataStoreDataSource;
     this.afterCommitExecutor = afterCommitExecutor;
     this.terminator = terminator;
+    this.unconfirmedMarks = new PythonReadUnconfirmedMarks(this::borrowForMark, terminator);
     this.levelRepository = levelRepository;
     this.datasetRepository = datasetRepository;
     this.separateDataStore = separateDataStore;
@@ -212,60 +221,70 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
    *
    * <p><b>왜 잠금 밖에서 끊고 잠금 안에서는 확인만 하는가(WD-624).</b> 끊기는 소유자 풀(크기 1)·세션당 최대 5초를 기다린다. 그 기다림을 테넌트 동기화
    * 잠금과 플랫폼 커넥션을 쥔 채 하면, 그 잠금을 기다리는 실행 준비들이 각자 플랫폼 커넥션을 쥔 채 함께 멈춘다. 그래서 (1) 커넥션·잠금 없이 끊고 ({@link
-   * #TERMINATE_WAIT} 상한, 넘기면 예외 = 넓히지 않음), (2) 새 트랜잭션에서 잠금을 잡은 뒤 슬롯 세션이 <b>하나도 없을 때만</b> 넓힌다. 그새 다시
-   * 붙은 세션이 있으면 이 트랜잭션은 아무것도 바꾸지 않고 끝내고 (1) 부터 다시 한다({@link #LEVELS_SYNC_ATTEMPTS} 번). 그래도 남으면 예외 —
-   * 이번에는 넓히지 않는다(fail-closed). 넓히지 못해도 기능은 유지된다: 실행 준비가 자기 슬롯을 계산값대로(넓히기 포함) 맞춘 뒤 스크립트를 띄운다.
+   * #TERMINATE_WAIT} 상한, 넘기면 예외 = 넓히지 않음), (2) 새 트랜잭션에서 잠금을 잡은 뒤 <b>넓어질 슬롯</b>의 세션이 하나도 없을 때만
+   * 넓힌다(WD-701 4차 — {@link #applyLevelsChangeUnderLock}). 있으면 이 트랜잭션은 아무것도 바꾸지 않고 끝내고 그 슬롯만 끊은 뒤 다시
+   * 본다({@link #LEVELS_SYNC_ATTEMPTS} 번). 그래도 남으면 예외 — 이번에는 넓히지 않는다(fail-closed). 넓히지 못해도 기능은 유지된다:
+   * 실행 준비가 자기 슬롯을 계산값대로(넓히기 포함) 맞춘 뒤 스크립트를 띄운다.
    */
   @Override
   public SyncResult syncTenantForLevelsChange() {
     long tenantId = TenantContext.require("등급 정의 변경 전체 동기화");
-    return killThenApplyUnderLock(
-        tenantId, PythonReadSlots.ALL_SLOTS, PythonReadSlots.ALL_SLOTS, null);
+    return applyLevelsChangeUnderLock(tenantId);
   }
 
   /**
-   * 주어진 슬롯 세션을 <b>잠금·커넥션 없이</b> 끊고, 새 트랜잭션에서 잠금을 잡은 뒤 <b>넓힐 슬롯</b>의 세션이 하나도 없을 때만 차이를 적용한다(WD-624).
-   * 그새 다시 붙은 세션이 있으면 아무것도 바꾸지 않고 잠금을 놓은 뒤 그 슬롯만 다시 끊는다({@link #LEVELS_SYNC_ATTEMPTS} 번, 그래도 남으면 예외
-   * = 넓히지 않음). 끊기 기다림(소유자 풀)이 잠금 안에 들어가지 않으므로, 소유자 풀이 바빠도 잠금을 기다리는 다른 실행 준비가 함께 멈추지 않는다.
+   * 등급 정의 변경 동기화 본체(WD-701 4차) — 잠금 안에서 <b>새로 넓어질 슬롯</b>을 계산하고 그 슬롯의 세션이 하나도 없을 때만 적용한다. 있으면 아무것도
+   * 바꾸지 않고 잠금을 놓은 뒤 그 슬롯만 <b>잠금·커넥션 없이</b> 끊고 다시 본다({@link #LEVELS_SYNC_ATTEMPTS} 번 끊고도 남으면 예외 =
+   * 넓히지 않음).
    *
-   * <p><b>실행 준비는 자기 실행 슬롯만 본다.</b> 실행 준비가 넓히는 것은 실행 슬롯 하나뿐이므로, 잠금 안에서 그 슬롯(∩ 끊을 슬롯)의 세션만 확인하고 다시 끊는
-   * 것도 그 슬롯만이다 — 미확인 표식 창에 정상적으로 시작한 다른 슬롯의 실행을 끊지 않는다. 첫 끊기도 실행 준비면 실행 슬롯(∩ 표식 슬롯)뿐이다(WD-664 8) —
-   * 이 실행과 무관한 슬롯의 끊기 실패가 실행을 거부하지 않게. 다른 슬롯의 표식은 남아 그 슬롯의 실행 준비가 먼저 끊는다.
+   * <p><b>왜 넓어질 슬롯만 보는가(WD-701 4차 — 8).</b> 예전에는 테넌트 슬롯 전부를 먼저 끊고, 잠금 안에서 어떤 슬롯이든 세션이 있으면 다시 끊었다(최대
+   * 3번). 그런데 커밋 뒤 정상으로 시작한 실행은 실행 준비가 자기 슬롯을 <b>이미 새 정의로 넓힌 뒤</b> 붙는다 — 그 슬롯은 더 넓어질 것이 없다. 위험은 옛
+   * 정의로 슬롯을 받은 세션이 살아 있는 채 그 슬롯이 넓어지는 것뿐이므로, 넓어질 슬롯만 확인·끊으면 정상 실행을 거듭 끊지 않는다. 좁아지거나 그대로인 슬롯의 옛 세션은
+   * 새로 읽게 되는 것이 없다(PG 는 쿼리마다 권한을 본다 — 좁힌 테이블은 다음 쿼리부터 거부). 커밋 직후의 첫 끊기는 커밋 콜백이 이미 슬롯 전부에 했다({@link
+   * #terminateSlotSessionsAfterCommit}).
    *
-   * @param firstKill 잠금 전에 처음 끊을 슬롯 — 전체 동기화면 {@code slots} 전부, 실행 준비면 잠금 밖에서 계산한 실행 슬롯 ∩ 표식 슬롯(비면
-   *     첫 끊기를 건너뛰고 잠금 안 재확인만 한다)
-   * @param slots 잠금 안에서 다시 붙은 세션을 확인할 슬롯 범위(실행 준비면 표식 슬롯 — 잠금 뒤 등급으로 다시 고른 실행 슬롯과 겹치는 것만 본다)
-   * @param runRank null 이면 슬롯 전부(전체 동기화), 아니면 실행 준비의 실행 슬롯 하나
+   * <p><b>실행 준비가 먼저 넓힌 슬롯도 다시 본다(WD-701 4차 리뷰 3, 내가 정한 것).</b> 커밋 직전에 옛 정의로 준비한 스크립트가 커밋 뒤 첫 실행
+   * 준비(그 슬롯을 넓힘) <b>다음에</b> 접속할 수 있다 — PG 는 Tibero 와 달리 스크립트 토큰 무효화가 없어, 이 작업이 슬롯 전부를 끊던 예전에는 그 세션을
+   * 이 작업이 끊었다. 그래서 실행 준비는 REDEFINED 표식을 지우는 대신 REDEFINED_APPLIED 로 바꾸고, 이 작업은 넓어질 슬롯 ∪ 실행 준비가 넓힌
+   * 슬롯을 확인한다. 커밋 뒤 손대지 않았고 넓어질 것도 없는 슬롯만 끊지 않는다 — 실행 준비가 넓힌 슬롯의 정상 세션은 예전처럼 끊길 수 있다(받아들인 값).
+   *
+   * <p><b>왜 시작 시각으로 거르지 않는가(내가 정한 것).</b> 커밋 직전에 옛 정의로 슬롯을 받은 실행 준비의 스크립트가 커밋·표식 <b>뒤</b>에 접속할 수 있다
+   * — 시작 시각으로는 그 세션을 가를 수 없다. 넓어질 슬롯에서는 세션이 하나도 없어야 넓힌다(fail-closed).
+   *
+   * <p><b>표식 정리.</b> 적용하면 모든 슬롯이 커밋된 정의로 맞춰졌으므로, 잠금 안에서 등급을 읽기 <b>전</b>에 데이터 저장소 시계로 읽은 시각 이하의 등급
+   * 정의 변경 표식(REDEFINED)을 같은 트랜잭션에서 지운다 — 그 뒤 커밋된 정의 변경의 표식은 남는다.
    */
-  private SyncResult killThenApplyUnderLock(
-      long tenantId, Set<Integer> firstKill, Set<Integer> slots, Integer runRank) {
-    Set<Integer> toKill = firstKill;
-    for (int attempt = 1; attempt <= LEVELS_SYNC_ATTEMPTS; attempt++) {
-      terminator.terminateWithin(tenantId, toKill, TERMINATE_WAIT);
-      AtomicReference<Set<Integer>> widened = new AtomicReference<>(slots);
+  private SyncResult applyLevelsChangeUnderLock(long tenantId) {
+    Set<Integer> toKill = Set.of();
+    for (int attempt = 0; attempt <= LEVELS_SYNC_ATTEMPTS; attempt++) {
+      if (!toKill.isEmpty()) {
+        terminator.terminateWithin(tenantId, toKill, TERMINATE_WAIT);
+      }
+      AtomicReference<Set<Integer>> busy = new AtomicReference<>(Set.of());
       SyncResult result =
           requiresNew.execute(
               status -> {
-                // 대기 잠금(WD-644 의 WAIT) — 시도형으로 바꾸지 않는다: 바쁠 때마다 처음부터 다시 하면 끊기도 되풀이돼 커밋 뒤 정상
-                // 시작한 실행까지 거듭 끊는다. 이 경로(등급 정의 변경·미확인 표식 실행 준비)는 드물어 실행기 줄을 잠시 막는 쪽을 받아들인다.
+                // 대기 잠금(WD-644 의 WAIT) — 시도형으로 바꾸지 않는다(드문 경로라 실행기 줄을 잠시 막는 쪽을 받아들인다).
                 lockOps.lock(syncLockKey(tenantId));
-                Set<Integer> check = new TreeSet<>(slots);
-                if (runRank != null) {
-                  // 잠금 뒤 읽은 등급으로 실행 슬롯을 정한다(applyInTx 와 같은 스냅샷 규칙).
-                  check.retainAll(
-                      Set.of(PythonReadSlots.slotFor(levelRepository.findAll(), runRank)));
-                }
-                widened.set(check);
+                OffsetDateTime checkedAt = PythonReadUnconfirmedMarks.dataStoreNow(dsl);
+                AclPlan plan = planAcl(dsl, tenantId, null, null);
+                // 확인할 슬롯 = 이번에 넓어질 슬롯 ∪ 커밋 뒤 실행 준비가 이미 넓힌 슬롯(REDEFINED_APPLIED, 리뷰 3). 뒤쪽은 커밋 직전에 옛
+                // 정의로 준비한 스크립트가 그 실행 준비 뒤에 늦게 붙었을 수 있어 다시 본다. 둘 다 아닌 슬롯은 끊지 않는다.
+                Set<Integer> check = new TreeSet<>(widenedSlots(plan));
+                check.addAll(unconfirmedMarks.appliedSlots(dsl, tenantId, checkedAt));
                 if (!check.isEmpty() && slotSessionsExist(tenantId, check)) {
-                  return null; // 끊은 뒤 다시 붙은 세션 — 잠금을 놓고 그 슬롯만 다시 끊는다
+                  busy.set(check);
+                  return null; // 확인할 슬롯에 세션 — 잠금을 놓고 그 슬롯만 끊는다
                 }
-                return applyInTx(dsl, tenantId, null, runRank, false);
+                SyncResult applied = applyInTx(dsl, tenantId, null, null, false);
+                unconfirmedMarks.clearRedefinedUpTo(dsl, tenantId, checkedAt);
+                return applied;
               });
       if (result != null) {
         return result;
       }
-      toKill = widened.get();
-      log.info("끊은 뒤 슬롯 세션이 다시 붙어 다시 끊는다(tenant={} slots={} 시도 {})", tenantId, toKill, attempt);
+      toKill = busy.get();
+      log.info("넓어질 슬롯에 세션이 있어 끊고 다시 본다(tenant={} slots={} 시도 {})", tenantId, toKill, attempt + 1);
     }
     throw new IllegalStateException(
         "PYTHON 슬롯 롤 세션이 계속 다시 붙어 넓히는 GRANT 를 이번에는 걸지 않았다(tenant="
@@ -275,13 +294,101 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
             + ")");
   }
 
+  /**
+   * 실행 준비의 미확인 표식 경로(WD-624 → WD-701 4차) — 실행 슬롯의 표식이 요구하는 세션(기준 시각 전, 또는 전부)을 <b>잠금·커넥션 없이</b> 끊고,
+   * 잠금 안에서 <b>잠금 뒤 등급으로 다시 고른 실행 슬롯</b>의 표식을 다시 읽어 그 세션이 남지 않았을 때만 슬롯을 맞춘다. 남았으면 아무것도 바꾸지 않고 잠금을 놓은
+   * 뒤 그만큼만 다시 끊는다({@link #LEVELS_SYNC_ATTEMPTS} 번, 그래도 남으면 예외 = 실행 거부).
+   *
+   * <p><b>실행 슬롯만 본다(WD-664 8).</b> 다른 슬롯의 표식은 이 실행이 쓰지 않는 롤이라 무관하다 — 그 슬롯의 실행 준비가 본다.
+   *
+   * <p><b>시작 시각(WD-701 4차).</b> 회수·끊기 미확인 표식(STALE_SESSION)이면 표식 <b>전에</b> 시작한 세션만 끊고 확인한다 — 표식 뒤에
+   * 시작한 세션은 실행 준비가 그 슬롯을 커밋된 등급으로 맞춘 뒤 붙었거나 회수가 반영된 뒤라 끊지 않는다(예전에는 다 끊고 10초 기다린 뒤 실패해 무관한 실행까지
+   * 거부했다). 등급 정의 변경 표식·메모리 대비 표식이면 예전처럼 세션 전부다({@link PythonReadUnconfirmedMarks}).
+   *
+   * <p><b>표식 지우기.</b> 확인과 맞추기가 끝나고 실행 슬롯 롤에 회수 실패가 없으면, 읽은 번호 그대로인 표식만 같은 잠금 트랜잭션에서 지운다(그 사이 다른
+   * 인스턴스가 다시 단 표식은 남는다). 메모리 대비 표식은 커밋 뒤 순번이 같을 때만 지운다.
+   *
+   * @param firstKill 잠금 전에 처음 끊을 범위(잠금 밖 추정 실행 슬롯 → 기준 시각, 비면 건너뛴다)
+   */
+  private SyncResult prepareUnderMarks(
+      long tenantId, int readRank, Map<Integer, OffsetDateTime> firstKill) {
+    Map<Integer, OffsetDateTime> toKill = firstKill;
+    for (int attempt = 1; attempt <= LEVELS_SYNC_ATTEMPTS; attempt++) {
+      terminator.terminateWithin(tenantId, toKill, TERMINATE_WAIT);
+      AtomicReference<Map<Integer, OffsetDateTime>> again = new AtomicReference<>(Map.of());
+      AtomicReference<Runnable> afterCommit = new AtomicReference<>(() -> {});
+      SyncResult result =
+          requiresNew.execute(
+              status -> {
+                lockOps.lock(syncLockKey(tenantId));
+                // 잠금 뒤 읽은 등급으로 실행 슬롯을 정한다(applyInTx 와 같은 스냅샷 규칙) — 표식도 잠금 안에서 다시 읽는다.
+                int runSlot = PythonReadSlots.slotFor(levelRepository.findAll(), readRank);
+                PythonReadUnconfirmedMarks.SlotMarks marks =
+                    unconfirmedMarks.read(dsl, tenantId).get(runSlot);
+                if (marks != null) {
+                  Map<Integer, OffsetDateTime> scope = new TreeMap<>();
+                  scope.put(runSlot, marks.cutoff());
+                  if (slotSessionsExist(tenantId, scope)) {
+                    again.set(scope);
+                    return null; // 표식이 요구하는 세션이 남았다 — 잠금을 놓고 그만큼 다시 끊는다
+                  }
+                }
+                SyncResult applied = applyInTx(dsl, tenantId, null, readRank, false);
+                if (marks != null && !runSlotOverGranted(tenantId, runSlot, applied)) {
+                  unconfirmedMarks.clearAfterRun(dsl, tenantId, runSlot, marks);
+                  afterCommit.set(
+                      () -> unconfirmedMarks.clearMemoryAfterRun(tenantId, runSlot, marks));
+                }
+                return applied;
+              });
+      if (result != null) {
+        afterCommit.get().run();
+        return result;
+      }
+      toKill = again.get();
+      log.info("끊은 뒤 슬롯 세션이 남아 다시 끊는다(tenant={} 범위={} 시도 {})", tenantId, toKill, attempt);
+    }
+    throw new IllegalStateException(
+        "PYTHON 슬롯 롤 세션이 계속 남아 실행 슬롯을 이번에는 맞추지 않았다(tenant=" + tenantId + " 범위=" + toKill + ")");
+  }
+
+  /** 실행 슬롯 롤에 회수 실패(과권한)가 남았는가 — 남았으면 표식을 지우지 않는다(게이트가 실행도 거부한다). */
+  private static boolean runSlotOverGranted(long tenantId, int runSlot, SyncResult result) {
+    if (runSlot < 1 || runSlot > TenantPipelineRole.PYTHON_READ_SLOTS) {
+      return true;
+    }
+    String role = TenantPipelineRole.pythonReadRoleName(tenantId, runSlot);
+    return result.revokeFailed().values().stream().anyMatch(roles -> roles.contains(role));
+  }
+
   /** 그 테넌트의 주어진 슬롯 롤 세션이 지금 있는가. 런타임 롤도 남의 세션 행의 롤 이름은 볼 수 있다(쿼리 내용 등은 가려진다). */
   private boolean slotSessionsExist(long tenantId, Set<Integer> slots) {
-    String[] roles = TenantPipelineRole.pythonReadRoleNames(tenantId, slots).toArray(new String[0]);
+    return slotSessionsExist(tenantId, PythonReadSessionTerminator.allSessions(slots));
+  }
+
+  /**
+   * 그 테넌트의 슬롯마다 기준 시각 전에 시작한({@code backend_start < 기준}, null 이면 전부) 슬롯 롤 세션이 지금 있는가(WD-701 4차). 기준
+   * 시각은 같은 데이터 저장소 시계로 적은 표식 시각이다.
+   */
+  private boolean slotSessionsExist(long tenantId, Map<Integer, OffsetDateTime> startedBefore) {
+    if (startedBefore.isEmpty()) {
+      return false;
+    }
+    List<String> roles = new ArrayList<>();
+    List<OffsetDateTime> cutoffs = new ArrayList<>();
+    startedBefore.forEach(
+        (slot, cutoff) -> {
+          roles.add(TenantPipelineRole.pythonReadRoleName(tenantId, slot));
+          cutoffs.add(cutoff);
+        });
+    // 런타임 롤(app_tenant)에게는 남의 세션 backend_start 가 NULL 로 보인다(실측, 리뷰 2) — pg_stat_activity 를 직접 비교하면
+    // "표식 전 세션 없음" 으로 오판한다(fail-open). 소유자 권한으로 세는 SECURITY DEFINER 함수(V159·데이터 저장소 V2)를 부른다.
+    // 소유자 풀(끊기가 쓰는 크기 1)을 잠금 안에서 기다리지 않게 연결이 아니라 함수다. 시작 시각이 끝내 안 보이면 함수가 표식 전으로
+    // 센다(fail-closed). 배열이 NULL 이거나 길이가 다르면 함수가 오류를 던진다 — 그대로 올라가 실행 거부·작업 재시도가 된다.
     Object count =
         dsl.fetchValue(
-            "select count(*) from pg_stat_activity where usename::text = any({0}::text[])",
-            DSL.val(roles));
+            "select public.fh_python_read_sessions_before({0}::text[], {1}::timestamptz[])",
+            DSL.val(roles.toArray(new String[0])), DSL.val(cutoffs.toArray(new OffsetDateTime[0])));
     return count != null && ((Number) count).longValue() > 0;
   }
 
@@ -294,13 +401,58 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
    * 등급으로 자기 슬롯을 맞춘 뒤에 접속한다.
    *
    * <p><b>왜 기다리지 않는가(WD-664 9, 설계 결정 Q2 A).</b> 커밋 콜백은 바깥 플랫폼 커넥션을 쥔 채 돈다 — 예전처럼 상한(3초)만큼 기다리면 동시
-   * 커밋 N 개가 플랫폼 풀 커넥션 N 개를 그만큼 쥐었다. 이제 슬롯마다 미확인 표식을 <b>먼저</b> 달고 끊기 요청만 넣은 뒤 돌아온다({@link
-   * PythonReadSessionTerminator#markAndRequest}). 끊기는 끊기 전용 스레드에서 몇 초 안에 이어지고, 성공하면 표식이 지워진다. 실패하거나
-   * 아직이면 표식이 남아 그 슬롯의 실행 준비가 넓히기 전에 먼저 끊고, 못 끊으면 실행을 거부한다(fail-closed). 받아들인 값: 커밋 응답 시점에 세션이 끊겼다는
-   * 보장은 없다.
+   * 커밋 N 개가 플랫폼 풀 커넥션 N 개를 그만큼 쥐었다. 이제 슬롯마다 미확인 표식을 <b>먼저</b> 달고 끊기 요청만 넣은 뒤 돌아온다. 표식은 그 슬롯의 실행 준비가
+   * 넓히기 전에 먼저 끊게 하고, 못 끊으면 실행을 거부하게 한다(fail-closed). 받아들인 값: 커밋 응답 시점에 세션이 끊겼다는 보장은 없다.
+   *
+   * <p><b>표식은 데이터 저장소에(WD-701 4차).</b> 상한({@link PythonReadUnconfirmedMarks#MARK_CONNECT_WAIT}) 안에서
+   * 따로 빌린 연결로 표에 곧바로 커밋한다 — 모든 인스턴스의 실행 준비가 본다. 표식은 실행 준비(그 슬롯을 확인하고 맞춘 뒤)나 뒤따르는 실행기 작업(등급 정의 변경
+   * 동기화·회수 미확인 뒷정리)이 지운다 — 커밋 직후 끊기 성공만으로는 지우지 않는다(끊기 스레드는 데이터 저장소 연결을 쓰지 않는다). 쓰지 못하면(데이터 저장소 장애 —
+   * 대체 경로가 바로 그런 때 돈다) 이 인스턴스 메모리 표식을 요청 전에 달고({@link PythonReadSessionTerminator#markAndRequest})
+   * 실행기에서 다시 쓴다 — 그동안 다른 인스턴스는 이 표식을 못 본다(남는 틈).
    */
-  public void terminateSlotSessionsAfterCommit(long tenantId, Set<Integer> slots) {
-    terminator.markAndRequest(tenantId, slots);
+  public void terminateSlotSessionsAfterCommit(
+      long tenantId, Set<Integer> slots, boolean slotRedefined) {
+    if (slots.isEmpty()) {
+      return;
+    }
+    PythonReadUnconfirmedMarks.Kind kind =
+        slotRedefined
+            ? PythonReadUnconfirmedMarks.Kind.REDEFINED
+            : PythonReadUnconfirmedMarks.Kind.STALE_SESSION;
+    // 표식을 끊기 요청 전에 데이터 저장소에 단다(WD-701 4차 — 모든 인스턴스의 실행 준비가 본다). 못 쓰면 이 인스턴스 메모리 표식을
+    // 요청 전에 달고(markAndRequest), 실행기가 데이터 저장소 표식을 다시 쓴다.
+    if (unconfirmedMarks.persist(tenantId, slots, kind)) {
+      terminator.requestTermination(tenantId, slots);
+    } else {
+      terminator.markAndRequest(tenantId, slots);
+      retryPersistMark(tenantId, slots, kind);
+    }
+  }
+
+  /**
+   * 데이터 저장소에 표식을 쓰지 못했을 때 실행기에서 다시 쓴다(WD-701 4차) — 일시 실패로 던져 재시도 상한까지 한다. 늦게 쓴 표식은 시각이 더 늦어 실행 준비가
+   * 더 많은 세션을 "표식 전" 으로 본다(안전한 쪽). 등록 실패는 ERROR 만(메모리 표식은 이미 달렸다).
+   */
+  private void retryPersistMark(
+      long tenantId, Set<Integer> slots, PythonReadUnconfirmedMarks.Kind kind) {
+    try {
+      afterCommitExecutor.submitRetryable(
+          "python-read-mark t" + tenantId + " kind=" + kind + " slots=" + slots,
+          kind.name(),
+          PythonReadGrantBackend.waitingAttempt(
+              tenantId,
+              log,
+              "미확인 표식 다시 쓰기 ",
+              () -> {
+                if (!unconfirmedMarks.persist(tenantId, slots, kind)) {
+                  throw new TransientDataAccessResourceException(
+                      "PYTHON 슬롯 미확인 표식 쓰기 실패 — 다시 한다(tenant=" + tenantId + ")");
+                }
+              }),
+          true);
+    } catch (RuntimeException e) {
+      log.error("PYTHON 슬롯 미확인 표식 다시 쓰기 등록 실패(tenant={} slots={})", tenantId, slots, e);
+    }
   }
 
   /**
@@ -321,10 +473,35 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
    */
   public void terminateSlotSessionsOrThrow(long tenantId, Set<Integer> slots) {
     try {
-      terminator.terminateWithin(tenantId, slots, TERMINATE_WAIT);
+      killAllAndClearStale(tenantId, slots);
     } catch (IllegalStateException e) {
       throw new PythonReadGrantBackend.SessionKillFailed(
           "PYTHON 슬롯 롤 세션 끊기 실패 — 다시 한다(tenant=" + tenantId + " slots=" + slots + ")", e);
+    }
+  }
+
+  /**
+   * 실행기 전용(커넥션·잠금 없이 부른다) — 슬롯 세션을 시작 시각과 무관하게 모두 끊고, 끊기 <b>전</b>에 데이터 저장소 시계로 읽은 시각 이하의
+   * STALE_SESSION 표식을 지운다(WD-701 4차). 그 표식이 요구한 "표식 전 세션" 이 모두 끊겼기 때문이다. 표식 정리 실패는 WARN 만 — 남은 표식은
+   * 다음 실행 준비가 확인하고 지운다(끊을 세션이 없으니 곧바로). 끊기 실패는 {@link IllegalStateException}.
+   */
+  private void killAllAndClearStale(long tenantId, Set<Integer> slots) {
+    if (slots.isEmpty()) {
+      return;
+    }
+    OffsetDateTime before = null;
+    try {
+      before = PythonReadUnconfirmedMarks.dataStoreNow(dsl);
+    } catch (RuntimeException e) {
+      log.warn("데이터 저장소 시계 읽기 실패 — 끊은 뒤 표식을 지우지 않는다(tenant={}): {}", tenantId, e.toString());
+    }
+    terminator.terminateWithin(tenantId, slots, TERMINATE_WAIT);
+    if (before != null) {
+      try {
+        unconfirmedMarks.clearStaleUpTo(dsl, tenantId, slots, before);
+      } catch (RuntimeException e) {
+        log.warn("끊은 뒤 미확인 표식 지우기 실패 — 다음 실행 준비가 지운다(tenant={}): {}", tenantId, e.toString());
+      }
     }
   }
 
@@ -334,8 +511,14 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
    * 한다(fail-closed). 표식은 그 뒤 성공한 끊기가 지운다.
    */
   public void markSlotsUnconfirmed(long tenantId, Set<Integer> slots) {
-    if (!slots.isEmpty()) {
+    if (slots.isEmpty()) {
+      return;
+    }
+    // 회수는 이미 커밋됐다 — 슬롯의 뜻은 그대로라 표식 전에 시작한 세션만 문제다(STALE_SESSION, WD-701 4차).
+    PythonReadUnconfirmedMarks.Kind kind = PythonReadUnconfirmedMarks.Kind.STALE_SESSION;
+    if (!unconfirmedMarks.persist(tenantId, slots, kind)) {
       terminator.markUnconfirmed(tenantId, slots);
+      retryPersistMark(tenantId, slots, kind);
     }
   }
 
@@ -371,9 +554,11 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
             lockWait,
             () -> {
               Map<String, RuntimeException> failed = new LinkedHashMap<>();
+              // 잠금 안에서 표식 슬롯을 한 번 읽는다(재검토 1) — 표식이 남은 슬롯은 이 묶음에서 넓히지 않는다.
+              Set<Integer> noWiden = markedSlotsUnderLock();
               for (String table : PythonReadGrantBackend.batchOrder(tableNames)) {
                 try {
-                  inTableSavepoint(() -> syncInTx(table, null));
+                  inTableSavepoint(() -> syncInTx(table, null, noWiden));
                 } catch (RuntimeException e) {
                   // 이 테이블만 되돌려졌다 — 다른 테이블은 이어서 맞추고, 이 테이블은 실행기가 분류해 다시 하거나 버린다.
                   failed.put(table, e);
@@ -419,7 +604,7 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
 
   /**
    * 잠금을 기다려 잡은 뒤 동기화한다 — 커밋 뒤 실행기의 테이블 묶음을 뺀 경로(전체·테이블 하나·실행 준비)의 공통 진입점(WD-644). 등급 정의 변경 전체 동기화와
-   * 미확인 표식이 있는 실행 준비는 끊기 → 잠금 안 재확인 순서가 필요해 {@link #killThenApplyUnderLock} 으로 간다(WD-624).
+   * 미확인 표식이 있는 실행 준비는 끊기 → 잠금 안 재확인 순서가 필요해 {@link #prepareUnderMarks} 로 간다(WD-624).
    */
   private SyncResult lockedSync(String onlyTable, Integer runRank) {
     // 대기형(WAIT)은 빈 값을 내지 않는다는 불변식을 이름 붙은 검사로 묶는다 — 깨지면 원인을 알리는 IllegalStateException(WD-694).
@@ -429,7 +614,41 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
             lockOps,
             PythonReadGrantBackend.LockMode.WAIT,
             null,
-            () -> syncInTx(onlyTable, runRank)));
+            () -> syncInTx(onlyTable, runRank, markedSlotsUnderLock())));
+  }
+
+  /**
+   * 잠금을 잡은 트랜잭션 안에서 미확인 표식이 남은 슬롯을 읽는다(WD-701 4차 재검토 1) — 일반 동기화(전체·테이블·커밋 뒤 실행기 묶음)는 이 슬롯을 <b>넓히지
+   * 않는다</b>(회수만). 표식은 "그 슬롯에 옛 기준 세션이 남았을 수 있다" 는 뜻이라, 세션 확인 없이 넓히면 그 세션이 자격 밖까지 읽는다(등급 정의 변경 작업이
+   * 재시도를 다 쓰고 실패했거나 아직 돌지 않았을 때 매일 전체 동기화·syncTable 이 그 빈틈을 열었다). 표식 슬롯을 넓히는 것은 세션을 확인하는 실행
+   * 준비({@link #prepareUnderMarks})와 등급 정의 변경 작업({@link #syncTenantForLevelsChange})뿐이다.
+   *
+   * <p>{@link PythonReadUnconfirmedMarks.Kind#REDEFINED_APPLIED} 도 넓히지 않는다 — 실행 준비가 실행 슬롯만 확인해 넓힌
+   * 뒤에도, 커밋 직전에 옛 정의로 준비한 스크립트가 늦게 붙었을 수 있어 등급 정의 변경 작업이 다시 확인하는 슬롯이다(그 확인 전에 일반 동기화가 새로 낮아진 테이블까지
+   * 넓히면 늦은 세션이 읽는다). 실행 준비는 이 종류를 보지 않으므로 실행은 막히지 않는다. 읽기가 실패하면 savepoint 로 되돌려 트랜잭션은 살리고(회수는 계속해야
+   * 한다) 모든 슬롯을 넓히지 않는다(fail-closed).
+   */
+  private Set<Integer> markedSlotsUnderLock() {
+    long tenantId = TenantContext.require("PYTHON 읽기 표식 읽기");
+    Set<Integer> marked = new TreeSet<>();
+    boolean ok =
+        inSavepoint(
+            dsl,
+            () -> {
+              marked.addAll(unconfirmedMarks.read(dsl, tenantId).keySet());
+              marked.addAll(
+                  unconfirmedMarks.appliedSlots(
+                      dsl, tenantId, PythonReadUnconfirmedMarks.dataStoreNow(dsl)));
+            });
+    if (!ok) {
+      log.warn("미확인 표식 읽기 실패 — 이번 동기화는 모든 슬롯을 넓히지 않는다(tenant={})", tenantId);
+      Set<Integer> all = new TreeSet<>();
+      for (int slot = 1; slot <= TenantPipelineRole.PYTHON_READ_SLOTS; slot++) {
+        all.add(slot);
+      }
+      return all;
+    }
+    return marked;
   }
 
   /** 데이터셋 하나 — 테이블 이름을 찾아 syncTable. 물리 테이블이 없는 데이터셋(문서·파일형)은 할 일이 없다. */
@@ -474,7 +693,7 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
     // 회수 커밋 뒤 — 커밋 전에 시작한 쿼리까지 끊는다. 이 끊기는 삼키지 않는다(WD-664 1b): 실패하면 일시 실패로 던져 실행기가 재시도 상한까지
     // 다시 하게 한다(회수는 멱등). 삼키면 작업이 DONE 으로 끝나 회수 커밋 전에 시작한 긴 쿼리가 끝까지 돈다.
     try {
-      terminator.terminateWithin(tenantId, again, TERMINATE_WAIT);
+      killAllAndClearStale(tenantId, again);
     } catch (IllegalStateException e) {
       throw new PythonReadGrantBackend.SessionKillFailed(
           "데이터셋 좁히기 뒷정리: 회수 뒤 PYTHON 슬롯 롤 세션 끊기 실패 — 다시 한다(tenant="
@@ -531,7 +750,7 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
       return; // 끊을 슬롯 없음 — 권한이 원래 없었고 되살아나지도 않았다
     }
     try {
-      terminator.terminateWithin(tenantId, kill, TERMINATE_WAIT);
+      killAllAndClearStale(tenantId, kill);
     } catch (IllegalStateException e) {
       throw new PythonReadGrantBackend.SessionKillFailed(
           "데이터셋 분리 설치 좁히기 뒷정리: PYTHON 슬롯 롤 세션 끊기 실패 — 다시 한다(tenant="
@@ -873,16 +1092,31 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
    * 커밋 직전 좁히기용 데이터 저장소 연결을 접속 상한({@link PreCommitDeadline#connectTimeout}) 안에서 빌린다(WD-701 3차 리뷰).
    *
    * <p><b>왜 따로 스레드에서 빌리는가.</b> Hikari 는 호출마다 대기 상한을 줄 수 없다(풀 설정 {@code connection-timeout}, 기본
-   * 30초). 데이터 저장소가 죽었거나 풀이 말랐으면 빌리기가 그만큼 멈추고, 그동안 이 요청은 플랫폼 커넥션을 쥔다 — 등급 변경마다 30초. 그래서 (1) 풀이
-   * 찼거나(쉬는 연결 없음 + 최대 크기) 이미 기다리는 스레드가 있으면 빌리지 않고 곧바로 예산 초과로 보고({@link #dataStorePoolBusy}), (2)
-   * 빌리기는 작은 전용 스레드 풀에서 하며 접속 상한만 기다린다. 넘기면 예산 초과로 대체 경로에 맡기고, 늦게 도착한 연결은 받는 즉시 닫아 풀에 돌려준다. 전용 스레드가
-   * 모두 바쁘면(데이터 저장소가 느린 동안 몰린 요청) 거절 = 예산 초과다.
+   * 30초). 데이터 저장소가 죽었거나 풀이 말랐으면 빌리기가 그만큼 멈추고, 그동안 이 요청은 플랫폼 커넥션을 쥔다 — 등급 변경마다 30초. 그래서 (1) 풀이 정말로
+   * 포화(빌려 간 연결 = 최대 크기 + 기다리는 스레드 있음)면 빌리지 않고 곧바로 예산 초과로 보고({@link #dataStorePoolBusy}), (2) 빌리기는
+   * 작은 전용 스레드 풀에서 하며 접속 상한만 기다린다. 넘기면 예산 초과로 대체 경로에 맡기고, 늦게 도착한 연결은 받는 즉시 닫아 풀에 돌려준다. 전용 스레드가 모두
+   * 바쁘면(데이터 저장소가 느린 동안 몰린 요청) 거절 = 예산 초과다.
    */
   private Connection borrowDataStoreConnection(PreCommitDeadline deadline) {
     if (dataStorePoolBusy()) {
       throw new PreCommitDeadline.BudgetExceeded("데이터 저장소 풀 포화");
     }
     deadline.check("데이터 저장소 접속");
+    return borrowWithin(deadline.connectTimeout());
+  }
+
+  /**
+   * 데이터 저장소 연결을 빌리기 전용 스레드에서 빌리고 최대 {@code timeout} 만 기다린다 — 커밋 직전 좁히기({@link
+   * #borrowDataStoreConnection})와 커밋 콜백의 미확인 표식 쓰기({@link PythonReadUnconfirmedMarks#persist},
+   * WD-701 4차)가 함께 쓴다. 넘기면 {@link PreCommitDeadline.BudgetExceeded}, 늦게 온 연결은 받는 즉시 돌려준다. 빌리기 스레드가
+   * 모두 바쁘면 거절이다.
+   */
+  Connection borrowWithin(Duration timeout) {
+    return borrowWithin(timeout, connectionBorrower);
+  }
+
+  /** {@link #borrowWithin(Duration)} 와 같되 빌리기 스레드 풀을 고른다(표식 쓰기는 따로 — 리뷰 5). */
+  private Connection borrowWithin(Duration timeout, ThreadPoolExecutor borrowerPool) {
     CompletableFuture<Connection> borrowed;
     try {
       borrowed =
@@ -894,12 +1128,12 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
                   throw new CompletionException(e);
                 }
               },
-              connectionBorrower);
+              borrowerPool);
     } catch (RejectedExecutionException e) {
       throw new PreCommitDeadline.BudgetExceeded("데이터 저장소 접속 스레드 포화");
     }
     try {
-      return borrowed.get(deadline.connectTimeout().toNanos(), TimeUnit.NANOSECONDS);
+      return borrowed.get(timeout.toNanos(), TimeUnit.NANOSECONDS);
     } catch (TimeoutException e) {
       borrowed.thenAccept(PythonReadGrantSync::closeQuietly); // 늦게 온 연결은 받는 즉시 돌려준다
       throw new PreCommitDeadline.BudgetExceeded("데이터 저장소 접속 상한");
@@ -909,6 +1143,51 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
       throw new PreCommitDeadline.BudgetExceeded("데이터 저장소 접속 대기 중 인터럽트");
     } catch (ExecutionException e) {
       throw new DataAccessResourceFailureException("데이터 저장소 연결 획득 실패", e.getCause());
+    }
+  }
+
+  /**
+   * 커밋 콜백의 미확인 표식 쓰기용 연결 빌리기(WD-701 4차) — 지금 곧바로 내줄 연결이 없으면(쉬는 연결 0 + 최대 크기) <b>기다리지 않고</b> 곧바로
+   * 실패한다. 커밋 콜백은 바깥 플랫폼 커넥션을 쥔 채 돈다 — 분리 아닌 설치에서는 데이터 저장소 풀이 곧 플랫폼 풀이라, 동시 커밋들이 풀을 다 쥔 채 서로의 반납을
+   * 기다리면(WD-594 의 이중 점유) 모두 상한만큼 멈춘다. 실패하면 부르는 쪽이 메모리 표식 + 실행기 재시도(커넥션을 쥐지 않은 스레드)로 넘긴다.
+   */
+  private Connection borrowForMark(Duration timeout) {
+    if (dataStorePoolHasNoFreeConnection()) {
+      throw new PreCommitDeadline.BudgetExceeded("데이터 저장소 풀에 쉬는 연결 없음(표식 쓰기)");
+    }
+    return borrowWithin(timeout, markBorrower);
+  }
+
+  /** 표식 쓰기 연결 빌리기 전용 스레드 수 — 커밋 직전 좁히기의 빌리기 스레드와 나눠, 표식 쓰기가 몰려도 좁히기가 대체 경로로 밀리지 않게 한다(리뷰 5). */
+  static final int MARK_BORROW_THREADS = 2;
+
+  /** 표식 쓰기 연결 빌리기 전용 스레드 풀(데몬, 큐 없음 — 모자라면 거절 = 메모리 표식 + 재시도). */
+  private final ThreadPoolExecutor markBorrower =
+      new ThreadPoolExecutor(
+          0,
+          MARK_BORROW_THREADS,
+          30L,
+          TimeUnit.SECONDS,
+          new SynchronousQueue<>(),
+          r -> {
+            Thread th = new Thread(r, "python-read-mark-borrow");
+            th.setDaemon(true);
+            return th;
+          });
+
+  /** 데이터 저장소 풀에 곧바로 내줄 연결이 없는가 — 쉬는 연결 0 이고 최대 크기까지 찼다. Hikari 가 아니거나 알 수 없으면 false. */
+  private boolean dataStorePoolHasNoFreeConnection() {
+    try {
+      if (!dataStoreDataSource.isWrapperFor(HikariDataSource.class)) {
+        return false;
+      }
+      HikariDataSource hikari = dataStoreDataSource.unwrap(HikariDataSource.class);
+      HikariPoolMXBean pool = hikari.getHikariPoolMXBean();
+      return pool != null
+          && pool.getIdleConnections() == 0
+          && pool.getTotalConnections() >= hikari.getMaximumPoolSize();
+    } catch (SQLException e) {
+      return false;
     }
   }
 
@@ -933,29 +1212,42 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
   @PreDestroy
   void shutdownConnectionBorrower() {
     connectionBorrower.shutdownNow();
+    markBorrower.shutdownNow();
   }
 
   /**
-   * 데이터 저장소 풀이 포화인가 — 이미 연결을 기다리는 스레드가 있거나, 쉬는 연결이 없고 최대 크기까지 찼다. 그러면 빌리기가 대기 줄로 가 남이 반납할 때까지 기다리므로
-   * 빌리지 않는다. 쉬는 연결만 없고 최대 크기 전이면 빌린다 — Hikari 가 새 연결을 만들고(정상 저장소면 곧바로), 죽은 저장소면 접속 상한이 묶는다. 쉬는 연결 0
-   * 만으로 막으면 평범한 풀 바쁨이 대체 경로(차이 슬롯 세션을 테넌트 전체에서 끊기)로 바뀌어 WD-664 5 의 가용성 회귀가 돌아온다. Hikari 가 아니거나 알 수
-   * 없으면 false(빌리기를 시도한다 — 접속 상한이 여전히 묶는다).
+   * 데이터 저장소 풀이 <b>정말로</b> 포화인가(WD-701 4차 리뷰 ② — 판정을 좁혔다). Hikari 가 아니거나 알 수 없으면 false(빌리기를 시도한다 —
+   * 접속 상한이 여전히 묶는다).
    */
   private boolean dataStorePoolBusy() {
     try {
       if (!dataStoreDataSource.isWrapperFor(HikariDataSource.class)) {
         return false;
       }
-      HikariPoolMXBean pool =
-          dataStoreDataSource.unwrap(HikariDataSource.class).getHikariPoolMXBean();
+      HikariDataSource hikari = dataStoreDataSource.unwrap(HikariDataSource.class);
+      HikariPoolMXBean pool = hikari.getHikariPoolMXBean();
       return pool != null
-          && (pool.getThreadsAwaitingConnection() > 0
-              || (pool.getIdleConnections() == 0
-                  && pool.getTotalConnections()
-                      >= dataStoreDataSource.unwrap(HikariDataSource.class).getMaximumPoolSize()));
+          && poolSaturated(
+              pool.getActiveConnections(),
+              hikari.getMaximumPoolSize(),
+              pool.getThreadsAwaitingConnection());
     } catch (SQLException e) {
       return false;
     }
+  }
+
+  /**
+   * 포화 판정 — <b>빌려 간 연결이 최대 크기에 닿았고 그래도 기다리는 스레드가 있을 때만</b> 포화다(WD-701 4차 리뷰 ②).
+   *
+   * <p><b>왜 좁혔는가(내가 정한 것).</b> 예전 판정은 "기다리는 스레드가 하나라도 있거나, 쉬는 연결 0 + 최대 크기" 였다. 그런데 기다리는 스레드 하나는 풀이
+   * 새 연결을 만드는 몇 ms 동안(최대 크기 전)에도 흔히 보이고, 쉬는 연결 0 + 최대 크기도 곧 반납될 연결을 기다리면 되는 평범한 바쁨이다. 포화로 보면 곧바로 대체
+   * 경로 — 그 데이터셋을 더는 읽으면 안 되는 슬롯 세션을 테넌트 전체에서 끊기 — 로 가서 WD-664 5 의 가용성 회귀가 돌아온다. 그래서 정말로 말라 줄이 선 경우만
+   * 빌리기를 건너뛰고, 나머지는 빌리기에 맡긴다. 빌리기는 이미 묶여 있다: 접속 상한({@link PreCommitDeadline#connectTimeout}, 운영
+   * 3초)만 기다리고, 빌리기 전용 스레드({@link #CONNECTION_BORROW_THREADS}개)가 모두 바쁘면 곧바로 거절이다. 그래서 판정을 좁혀도 커밋 지연의
+   * 최악은 접속 상한으로 묶인다.
+   */
+  static boolean poolSaturated(int active, int maximumPoolSize, int threadsAwaiting) {
+    return active >= maximumPoolSize && threadsAwaiting > 0;
   }
 
   /**
@@ -1064,8 +1356,9 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
    * 않는다. 어떤 실패든 {@link PythonReadAccessException}(fail-closed). 테넌트 실행 롤(pipeline_executor_t*)로
    * 대체하는 경로는 없다 — 그 롤은 모든 등급을 읽으므로 대체하는 순간 등급 경계가 사라진다.
    *
-   * <p>커밋 직후 세션 끊기를 확인하지 못한 슬롯(미확인 표식, WD-624)이 있으면 슬롯을 맞추기 <b>전에</b> 먼저 끊는다 — 옛 등급으로 슬롯을 받은 세션이 살아
-   * 있는 채로 이 실행이 같은 슬롯을 넓히지 않게. 끊기는 잠금·커넥션을 쥐기 전에 기다린다(상한 {@link #TERMINATE_WAIT}). 끊지 못하면 실행을 거부한다.
+   * <p>커밋 직후 세션 끊기를 확인하지 못한 슬롯(미확인 표식, WD-624 — 4차부터 데이터 저장소 표라 모든 인스턴스가 본다)이 실행 슬롯이면 슬롯을 맞추기
+   * <b>전에</b> 표식이 요구하는 세션(표식 전에 시작한 세션, 등급 정의 변경이면 전부)을 먼저 끊는다 — 옛 등급으로 슬롯을 받은 세션이 살아 있는 채로 이 실행이
+   * 같은 슬롯을 넓히지 않게. 끊기는 잠금·커넥션을 쥐기 전에 기다린다(상한 {@link #TERMINATE_WAIT}). 끊지 못하면 실행을 거부한다.
    *
    * @return 실행에 쓸 슬롯 번호(1~10)
    */
@@ -1085,23 +1378,28 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
         runAs,
         readRank,
         () -> {
-          // 커밋 직후 끊기를 확인하지 못한 슬롯이 있으면 넓히기 전에 먼저 끊는다 — 끊기는 잠금·커넥션 없이, 잠금 안에서는 다시 붙은 세션이 없는지만
-          // 본다(WD-624, killThenApplyUnderLock). 끝내 못 끊으면 예외 → 게이트가 실행을 거부(fail-closed). 그 밖에는 잠금을
-          // 기다려
-          // 맞춘다(WD-644 의 대기 경로 — 실행 준비는 호출 스레드에서 돌아 실행기 줄을 막지 않는다).
-          Set<Integer> unconfirmed = terminator.unconfirmedSlots(runAs.tenantId());
-          if (!unconfirmed.isEmpty()) {
-            // 첫 끊기는 이 실행의 슬롯과 겹치는 표식 슬롯만(WD-664 8) — 무관한 슬롯의 끊기 실패로 실행을 거부하지 않는다. 실행 슬롯은 잠금 밖
-            // 추정값이다: security_level 이 RLS 테이블이라 트랜잭션(GUC) 안에서 읽어야 한다(밖에서 읽으면 0행 → 교집합이 비어 끊기를 건너뛰는
-            // fail-open). 추정이 잠금 뒤 등급과 달라져도 잠금 안 재확인이 잠금 뒤 실행 슬롯 ∩ 표식 슬롯의 세션을 다시 보고 끊는다.
+          // 미확인 표식(WD-624 → WD-701 4차: 데이터 저장소 표 + 메모리 대비)을 읽는다 — 읽기 실패는 예외 → 게이트가 실행을
+          // 거부(fail-closed).
+          // 표식이 없으면 잠금을 기다려 맞춘다(WD-644 의 대기 경로 — 실행 준비는 호출 스레드에서 돌아 실행기 줄을 막지 않는다).
+          long tenantId = runAs.tenantId();
+          Map<Integer, PythonReadUnconfirmedMarks.SlotMarks> marks =
+              unconfirmedMarks.read(dsl, tenantId);
+          Map<Integer, OffsetDateTime> firstKill = new TreeMap<>();
+          if (!marks.isEmpty()) {
+            // 첫 끊기는 이 실행의 슬롯 표식만(WD-664 8), 표식이 요구하는 세션만(WD-701 4차). 실행 슬롯은 잠금 밖 추정값이다:
+            // security_level 이
+            // RLS 테이블이라 트랜잭션(GUC) 안에서 읽어야 한다(밖에서 읽으면 0행 → 끊기를 건너뛰는 fail-open). 추정이 잠금 뒤 등급과 달라져도
+            // 잠금 안 재확인이 잠금 뒤 실행 슬롯의 표식을 다시 읽고 끊는다.
             Integer estimated =
                 requiresNew.execute(
                     status -> PythonReadSlots.slotFor(levelRepository.findAll(), readRank));
-            Set<Integer> firstKill = new TreeSet<>(unconfirmed);
-            firstKill.retainAll(estimated == null ? Set.of() : Set.of(estimated));
-            return killThenApplyUnderLock(runAs.tenantId(), firstKill, unconfirmed, readRank);
+            if (estimated != null && marks.containsKey(estimated)) {
+              firstKill.put(estimated, marks.get(estimated).cutoff());
+            }
           }
-          return lockedSync(null, readRank);
+          // 표식이 없어도 잠금 안에서 표식을 다시 읽는다(리뷰 4) — 잠금 밖 읽기와 잠금 사이에 커밋된 등급 정의 변경의 표식을 놓치지 않게. 잠금 밖
+          // 읽기는 첫 끊기 범위를 정하는 데만 쓴다.
+          return prepareUnderMarks(tenantId, readRank, firstKill);
         },
         slot -> TenantPipelineRole.pythonReadRoleName(runAs.tenantId(), slot));
   }
@@ -1113,10 +1411,11 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
    *
    * @param onlyTable null 이면 스키마 전체, 아니면 그 테이블만
    * @param runRank null 이면 슬롯 롤 전부, 아니면 그 자격 rank 의 실행 슬롯 롤 하나만(실행 준비) — 슬롯은 잠금 뒤 읽은 등급 스냅샷으로 계산한다
+   * @param noWidenSlots 넓히지 않을(회수만 할) 슬롯 — 미확인 표식이 남은 슬롯({@link #markedSlotsUnderLock})
    */
-  private SyncResult syncInTx(String onlyTable, Integer runRank) {
+  private SyncResult syncInTx(String onlyTable, Integer runRank, Set<Integer> noWidenSlots) {
     long tenantId = TenantContext.require("PYTHON 읽기 권한 동기화");
-    return applyInTx(dsl, tenantId, onlyTable, runRank, false);
+    return applyInTx(dsl, tenantId, onlyTable, runRank, false, noWidenSlots);
   }
 
   /**
@@ -1127,6 +1426,79 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
    */
   private SyncResult applyInTx(
       DSLContext ds, long tenantId, String onlyTable, Integer runRank, boolean revokeOnly) {
+    return applyInTx(ds, tenantId, onlyTable, runRank, revokeOnly, Set.of());
+  }
+
+  /**
+   * {@link #applyInTx(DSLContext, long, String, Integer, boolean)} 에 "넓히지 않을 슬롯" 을 더한 것(재검토 1) — 그
+   * 슬롯 롤에는 부족한 GRANT 를 걸지 않고 남는 권한 회수만 한다.
+   */
+  private SyncResult applyInTx(
+      DSLContext ds,
+      long tenantId,
+      String onlyTable,
+      Integer runRank,
+      boolean revokeOnly,
+      Set<Integer> noWidenSlots) {
+    Set<String> noWidenRoles = new TreeSet<>();
+    for (int slot : noWidenSlots) {
+      noWidenRoles.add(TenantPipelineRole.pythonReadRoleName(tenantId, slot));
+    }
+    AclPlan plan = planAcl(ds, tenantId, onlyTable, runRank);
+    if (plan.existingRoles().isEmpty()) {
+      if (runRank == null) {
+        log.warn("PYTHON 읽기 슬롯 롤이 없다 — 동기화 생략(tenant={})", tenantId);
+      }
+      return new SyncResult(plan.levelsAsc(), plan.availableSlots(), 0, Map.of(), plan.runSlot());
+    }
+    String schema = plan.schema();
+    List<LevelPolicy> levelsAsc = plan.levelsAsc();
+    Set<Integer> availableSlots = plan.availableSlots();
+    int runSlot = plan.runSlot();
+    String[] roleArray = plan.existingRoles().toArray(new String[0]);
+    Map<String, Long> oids = plan.oids();
+    List<String> physical = plan.physical();
+    Function<String, Set<String>> wantOf = plan.wantOf();
+    Map<String, Set<String>> actual = plan.actual();
+    return applyPlan(
+        ds,
+        tenantId,
+        revokeOnly,
+        noWidenRoles,
+        schema,
+        levelsAsc,
+        availableSlots,
+        runSlot,
+        roleArray,
+        oids,
+        physical,
+        wantOf,
+        actual);
+  }
+
+  /**
+   * 계산값과 실제 ACL 묶음(WD-701 4차) — 적용({@link #applyInTx})과 등급 정의 변경 동기화의 "넓어질 슬롯" 계산({@link
+   * #widenedSlots})이 <b>같은 규칙</b>을 쓰게 한 곳({@link #planAcl})에서 만든다. 둘이 따로 계산하면 어긋나 넓어지는 슬롯을 놓칠 수 있다.
+   *
+   * @param existingRoles 다룰 슬롯 롤 중 실제로 있는 롤(비면 나머지 필드는 비어 있다)
+   * @param physical 스키마의 관계 이름(오름차순)
+   * @param wantOf 관계 → 받아야 할 슬롯 롤(일반·분할 테이블만, 그 밖은 없음)
+   * @param actual 관계 → 지금 SELECT 를 가진 슬롯 롤
+   */
+  private record AclPlan(
+      String schema,
+      List<LevelPolicy> levelsAsc,
+      List<String> slotRoleNames,
+      Set<String> existingRoles,
+      Set<Integer> availableSlots,
+      int runSlot,
+      Map<String, Long> oids,
+      List<String> physical,
+      Function<String, Set<String>> wantOf,
+      Map<String, Set<String>> actual) {}
+
+  /** 잠금을 잡은 트랜잭션 안에서 계산값(등급·데이터셋)과 실제 ACL(카탈로그)을 읽는다 — 바꾸지는 않는다. 규칙은 예전 applyInTx 앞부분 그대로다. */
+  private AclPlan planAcl(DSLContext ds, long tenantId, String onlyTable, Integer runRank) {
     String schema = DataSchema.current();
     List<String> slotRoleNames = TenantPipelineRole.pythonReadRoleNames(tenantId);
     List<LevelPolicy> levelsAsc = levelRepository.findAll(); // rank asc, 이 트랜잭션에 합류(RLS GUC)
@@ -1158,10 +1530,17 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
     }
 
     if (existingRoles.isEmpty()) {
-      if (runRank == null) {
-        log.warn("PYTHON 읽기 슬롯 롤이 없다 — 동기화 생략(tenant={})", tenantId);
-      }
-      return new SyncResult(levelsAsc, availableSlots, 0, Map.of(), runSlot);
+      return new AclPlan(
+          schema,
+          levelsAsc,
+          slotRoleNames,
+          existingRoles,
+          availableSlots,
+          runSlot,
+          Map.of(),
+          List.of(),
+          t -> Set.of(),
+          Map.of());
     }
     String[] roleArray = existingRoles.toArray(new String[0]);
 
@@ -1215,7 +1594,53 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
           .computeIfAbsent(r.get(0, String.class), x -> new TreeSet<>())
           .add(r.get(1, String.class));
     }
+    return new AclPlan(
+        schema,
+        levelsAsc,
+        slotRoleNames,
+        existingRoles,
+        availableSlots,
+        runSlot,
+        oids,
+        physical,
+        wantOf,
+        actual);
+  }
 
+  /**
+   * 이 계획을 적용하면 SELECT 를 <b>새로 받는</b> 슬롯 번호들(WD-701 4차) — 등급 정의 변경 동기화는 이 슬롯에만 "세션이 없어야 넓힌다" 를 건다.
+   * 좁아지거나 그대로인 슬롯의 옛 세션은 새로 읽게 되는 것이 없다(PG 는 쿼리마다 권한을 본다).
+   */
+  private static Set<Integer> widenedSlots(AclPlan plan) {
+    Set<Integer> widened = new TreeSet<>();
+    for (String table : plan.physical()) {
+      Set<String> missing = new TreeSet<>(plan.wantOf().apply(table));
+      missing.removeAll(plan.actual().getOrDefault(table, Set.of()));
+      for (String role : missing) {
+        int k = plan.slotRoleNames().indexOf(role);
+        if (k >= 0) {
+          widened.add(k + 1);
+        }
+      }
+    }
+    return widened;
+  }
+
+  /** 계획의 차이를 적용한다 — 예전 applyInTx 뒷부분 그대로(잠금·savepoint·재확인). */
+  private SyncResult applyPlan(
+      DSLContext ds,
+      long tenantId,
+      boolean revokeOnly,
+      Set<String> noWidenRoles,
+      String schema,
+      List<LevelPolicy> levelsAsc,
+      Set<Integer> availableSlots,
+      int runSlot,
+      String[] roleArray,
+      Map<String, Long> oids,
+      List<String> physical,
+      Function<String, Set<String>> wantOf,
+      Map<String, Set<String>> actual) {
     int changed = 0;
     // 테이블 → 과권한이 남았을 수 있는 슬롯 롤
     Map<String, Set<String>> revokeFailed = new TreeMap<>();
@@ -1238,6 +1663,11 @@ public class PythonReadGrantSync implements PythonReadGrantBackend {
           continue; // 좁히기는 부족한 GRANT 를 건드리지 않는다 — 넓히기는 커밋 뒤 실행기가 한다
         }
         missing.clear();
+      }
+      // 미확인 표식 슬롯은 넓히지 않는다(재검토 1) — 회수는 그대로 한다.
+      missing.removeAll(noWidenRoles);
+      if (excess.isEmpty() && missing.isEmpty()) {
+        continue;
       }
       String qualified = ds.render(DSL.name(schema, table));
       // ACL 을 고치기 전에 그 테이블에 ACCESS SHARE 잠금을 잡는다(이유는 lockTableForAclChange 참고).

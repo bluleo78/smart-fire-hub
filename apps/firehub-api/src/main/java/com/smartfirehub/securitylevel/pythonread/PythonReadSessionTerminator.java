@@ -3,10 +3,11 @@ package com.smartfirehub.securitylevel.pythonread;
 import com.smartfirehub.global.tenant.TenantPipelineRoleProvisioner;
 import jakarta.annotation.PreDestroy;
 import java.time.Duration;
-import java.util.Collections;
+import java.time.OffsetDateTime;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CompletableFuture;
@@ -46,7 +47,15 @@ import org.springframework.stereotype.Component;
  * 뒤 곧바로 돌아온다. 끊기는 이 전용 스레드에서 몇 초 안에 이어지고, 실패하면 표식이 남아 실행 준비가 막는다(fail-closed). 대신 커밋 응답 시점에 끊기가
  * 끝났다는 보장은 없다(설계 결정 Q2 A 에서 받아들인 값).
  *
- * <p>표식·끊은 시각은 이 프로세스 메모리에만 있다 — 다른 API 인스턴스의 실행 준비는 이 표식을 보지 못한다(끊기 자체는 DB 단위라 모든 인스턴스의 세션을 끊는다).
+ * <p><b>메모리 표식은 대비책이다(WD-701 4차).</b> 표식의 원본은 이제 데이터 저장소 표({@link PythonReadUnconfirmedMarks}) — 모든
+ * API 인스턴스의 실행 준비가 본다. 이 메모리 표식은 그 표에 쓰지 못했을 때(데이터 저장소 장애 — 대체 경로가 바로 그런 때 돈다)만 단다. 메모리 표식은 이
+ * 프로세스에만 보이고, 실행 준비는 이것을 "시작 시각과 무관하게 그 슬롯 세션 전부" 로 다룬다(가장 보수적).
+ *
+ * <p><b>시작 시각 기준 끊기(WD-701 4차).</b> 요청은 슬롯마다 기준 시각을 실을 수 있다 — 그 시각 전에 시작한 세션만 끊는다(null 이면 전부). 같은
+ * 슬롯의 요청이 합쳐지면 더 넓은 쪽(전부 &gt; 더 늦은 기준)을 쓴다 — 덜 끊는 쪽으로 합치지 않는다. 기준 시각으로 끊은 슬롯은 메모리 표식을 지우지 않는다(메모리
+ * 표식은 "전부" 를 요구한다).
+ *
+ * <p>끊은 시각(러너 문구용)은 이 프로세스 메모리에만 있다.
  */
 @Slf4j
 @Component
@@ -55,16 +64,41 @@ public class PythonReadSessionTerminator {
   /** 대기 큐 상한 — 테넌트당 최대 1개라 테넌트 수보다 넉넉하면 된다. 넘치면 요청을 즉시 실패시킨다(부르는 쪽이 fail-closed 처리). */
   static final int QUEUE_CAPACITY = 1_000;
 
-  /** 실제 끊기(테넌트, 슬롯들 → 끊은 세션 수). 운영은 프로비저너, 단위 테스트는 가짜를 넣는다. */
-  private final ToIntBiFunction<Long, Set<Integer>> killer;
+  /**
+   * 실제 끊기 — 테넌트와 (슬롯 → 기준 시각, null 이면 전부)을 받아 끊은 세션 수를 돌려준다(WD-701 4차). 운영은 프로비저너, 단위 테스트는 가짜를 넣는다.
+   */
+  @FunctionalInterface
+  interface Killer {
+    int kill(long tenantId, Map<Integer, OffsetDateTime> startedBefore);
+  }
+
+  /** 실제 끊기. */
+  private final Killer killer;
 
   /** 끊기 전용 단일 스레드(소유자 풀이 크기 1이라 더 늘려도 빨라지지 않는다). */
   private final ThreadPoolExecutor worker;
 
-  /** 아직 시작하지 않은 끊기 — 합류한 요청의 슬롯을 모은다. */
+  /** 아직 시작하지 않은 끊기 — 합류한 요청의 슬롯과 기준 시각을 모은다. {@code scope} 는 자기 모니터로 보호한다(값 null = 그 슬롯 세션 전부). */
   private static final class Pending {
-    final Set<Integer> slots = Collections.synchronizedSet(new TreeSet<>());
+    final Map<Integer, OffsetDateTime> scope = new TreeMap<>();
     final CompletableFuture<Integer> future = new CompletableFuture<>();
+
+    /** 요청 하나를 합친다 — 같은 슬롯이면 더 넓게 끊는 쪽(전부 &gt; 더 늦은 기준)을 남긴다. */
+    void merge(Map<Integer, OffsetDateTime> more) {
+      synchronized (scope) {
+        more.forEach(
+            (slot, cutoff) -> {
+              if (!scope.containsKey(slot)) {
+                scope.put(slot, cutoff);
+                return;
+              }
+              OffsetDateTime have = scope.get(slot);
+              scope.put(
+                  slot,
+                  have == null || cutoff == null ? null : (cutoff.isAfter(have) ? cutoff : have));
+            });
+      }
+    }
   }
 
   /** 테넌트 → 아직 시작하지 않은 끊기. 작업이 시작할 때 스스로 지운다(지운 뒤에는 합류할 수 없다 — 같은 키 잠금 안의 원자 연산). */
@@ -82,11 +116,23 @@ public class PythonReadSessionTerminator {
   /** 운영용 — 소유자 연결을 가진 프로비저너로 끊는다. */
   @Autowired
   public PythonReadSessionTerminator(TenantPipelineRoleProvisioner roleProvisioner) {
-    this(roleProvisioner::terminatePythonReadSessions);
+    this((Killer) roleProvisioner::terminatePythonReadSessions);
   }
 
-  /** 테스트용 — 끊기 동작을 갈아 끼운다(막힘·실패 재현). */
-  PythonReadSessionTerminator(ToIntBiFunction<Long, Set<Integer>> killer) {
+  /** 테스트용 — 슬롯만 보는 끊기 동작을 갈아 끼운다(막힘·실패 재현). 기준 시각은 무시한다. */
+  PythonReadSessionTerminator(ToIntBiFunction<Long, Set<Integer>> slotKiller) {
+    this((Killer) (tenantId, scope) -> slotKiller.applyAsInt(tenantId, scope.keySet()));
+  }
+
+  /**
+   * 테스트용 — 기준 시각까지 보는 끊기 동작을 갈아 끼운다. 생성자가 아니라 팩터리인 이유: 슬롯만 보는 생성자와 람다 모양(인자 둘)이 같아 생성자로 두면 호출부 람다가
+   * 모호해진다.
+   */
+  static PythonReadSessionTerminator withKiller(Killer killer) {
+    return new PythonReadSessionTerminator(killer);
+  }
+
+  private PythonReadSessionTerminator(Killer killer) {
     this.killer = killer;
     this.worker =
         new ThreadPoolExecutor(
@@ -110,10 +156,28 @@ public class PythonReadSessionTerminator {
    * @throws IllegalStateException 시간 초과·끊기 실패·큐 포화·인터럽트 — 부르는 쪽이 fail-closed 로 처리한다
    */
   public int terminateWithin(long tenantId, Set<Integer> slots, Duration wait) {
-    if (slots.isEmpty()) {
+    return terminateWithin(tenantId, allSessions(slots), wait);
+  }
+
+  /**
+   * {@link #terminateWithin(long, Set, Duration)} 와 같되 슬롯마다 기준 시각 전에 시작한 세션만 끊는다(WD-701 4차, 값 null
+   * 이면 그 슬롯 세션 전부).
+   */
+  public int terminateWithin(
+      long tenantId, Map<Integer, OffsetDateTime> startedBefore, Duration wait) {
+    if (startedBefore.isEmpty()) {
       return 0;
     }
-    return await(request(tenantId, slots), tenantId, wait);
+    return await(request(tenantId, startedBefore), tenantId, wait);
+  }
+
+  /** 슬롯 집합 → "슬롯마다 세션 전부" 범위. */
+  static Map<Integer, OffsetDateTime> allSessions(Set<Integer> slots) {
+    Map<Integer, OffsetDateTime> scope = new TreeMap<>();
+    for (int slot : slots) {
+      scope.put(slot, null);
+    }
+    return scope;
   }
 
   /**
@@ -131,7 +195,7 @@ public class PythonReadSessionTerminator {
       return CompletableFuture.completedFuture(0);
     }
     markUnconfirmed(tenantId, slots);
-    CompletableFuture<Integer> result = request(tenantId, slots);
+    CompletableFuture<Integer> result = request(tenantId, allSessions(slots));
     result.whenComplete(
         (n, e) -> {
           if (e != null) {
@@ -155,7 +219,7 @@ public class PythonReadSessionTerminator {
     if (slots.isEmpty()) {
       return CompletableFuture.completedFuture(0);
     }
-    return request(tenantId, slots);
+    return request(tenantId, allSessions(slots));
   }
 
   /**
@@ -198,14 +262,15 @@ public class PythonReadSessionTerminator {
    * 끊기 작업을 큐에 넣거나, 아직 시작하지 않은 같은 테넌트 작업에 합류해 슬롯을 보탠다. 합류(슬롯 보태기)와 작업 시작(큐에서 지우기)은 같은 키에 대한 {@link
    * ConcurrentHashMap} 원자 연산이라, 합류한 슬롯은 반드시 그 작업이 끊는다.
    */
-  private CompletableFuture<Integer> request(long tenantId, Set<Integer> slots) {
+  private CompletableFuture<Integer> request(
+      long tenantId, Map<Integer, OffsetDateTime> startedBefore) {
     Pending[] created = {null};
     Pending pending =
         queued.compute(
             tenantId,
             (k, existing) -> {
               Pending p = existing != null ? existing : new Pending();
-              p.slots.addAll(slots);
+              p.merge(startedBefore);
               if (existing == null) {
                 created[0] = p;
               }
@@ -226,12 +291,13 @@ public class PythonReadSessionTerminator {
   private void run(long tenantId, Pending pending) {
     queued.remove(tenantId, pending); // 이후 요청은 새 작업을 만든다(이 작업이 그 요청의 세션을 못 봤을 수 있다)
     long startSeq = currentSequence();
-    Set<Integer> slots;
-    synchronized (pending.slots) {
-      slots = new TreeSet<>(pending.slots);
+    Map<Integer, OffsetDateTime> scope;
+    synchronized (pending.scope) {
+      scope = new TreeMap<>(pending.scope);
     }
+    Set<Integer> slots = scope.keySet();
     try {
-      int terminated = killer.applyAsInt(tenantId, slots);
+      int terminated = killer.kill(tenantId, scope);
       if (terminated > 0) {
         terminatedAt.put(tenantId, System.currentTimeMillis());
         log.warn(
@@ -240,7 +306,15 @@ public class PythonReadSessionTerminator {
             tenantId,
             slots);
       }
-      clearUnconfirmed(tenantId, slots, startSeq);
+      // 메모리 표식은 "그 슬롯 세션 전부" 를 요구한다 — 기준 시각으로 끊은 슬롯은 지우지 않는다.
+      Set<Integer> killedAll = new TreeSet<>();
+      scope.forEach(
+          (slot, cutoff) -> {
+            if (cutoff == null) {
+              killedAll.add(slot);
+            }
+          });
+      clearUnconfirmed(tenantId, killedAll, startSeq);
       pending.future.complete(terminated);
     } catch (RuntimeException e) {
       pending.future.completeExceptionally(e);
@@ -285,6 +359,24 @@ public class PythonReadSessionTerminator {
   synchronized Set<Integer> unconfirmedSlots(long tenantId) {
     Map<Integer, Long> marks = unconfirmed.get(tenantId);
     return marks == null ? Set.of() : Set.copyOf(marks.keySet());
+  }
+
+  /** 메모리 표식(슬롯 → 순번) 사본 — 실행 준비가 읽은 순번으로만 지우게({@link #clearUnconfirmedIfUnchanged}) 순번까지 준다. */
+  synchronized Map<Integer, Long> unconfirmedMarks(long tenantId) {
+    Map<Integer, Long> marks = unconfirmed.get(tenantId);
+    return marks == null ? Map.of() : Map.copyOf(marks);
+  }
+
+  /** 실행 준비가 그 슬롯의 세션이 없음을 확인하고 맞춘 뒤 메모리 표식을 지운다(WD-701 4차) — 읽은 뒤 다시 달린(순번이 바뀐) 표식은 지우지 않는다. */
+  synchronized void clearUnconfirmedIfUnchanged(long tenantId, int slot, long seq) {
+    Map<Integer, Long> marks = unconfirmed.get(tenantId);
+    if (marks == null) {
+      return;
+    }
+    marks.remove(slot, seq);
+    if (marks.isEmpty()) {
+      unconfirmed.remove(tenantId);
+    }
   }
 
   /** sinceMillis 이후 이 테넌트의 슬롯 롤 세션을 끊었는가 — 러너가 실패 문구를 고르는 데만 쓴다. */
