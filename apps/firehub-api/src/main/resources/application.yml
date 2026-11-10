@@ -199,6 +199,9 @@ firehub:
       # 기본값은 Hikari 기본(10개, 30000ms)과 같다.
       maximum-pool-size: 10
       connection-timeout: 30000
+      # 유휴 연결 하한·유휴 만료(WD-704). 기본값은 Hikari 기본(하한 = 최대 크기, 600000ms)과 같아 운영 동작은 바뀌지 않는다.
+      minimum-idle: ${firehub.data-store.postgres.maximum-pool-size}
+      idle-timeout: 600000
   file:
     upload-dir: ${FILE_UPLOAD_DIR:./uploads}
     max-files-per-request: 3

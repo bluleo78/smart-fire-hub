@@ -11,6 +11,7 @@ import com.smartfirehub.analytics.repository.ChartRepository;
 import com.smartfirehub.analytics.repository.DashboardWidgetRepository;
 import com.smartfirehub.analytics.repository.SavedQueryRepository;
 import com.smartfirehub.global.config.TransactionTemplateConfig;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.pipeline.service.PipelineDataSchema;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
@@ -49,6 +50,10 @@ class ChartDashboardRejudgeTest extends IntegrationTestBase {
   private static final String PUB_VALUE = "rj-pub-row";
 
   @Autowired private DSLContext dsl;
+
+  /** 민감·공개 물리 테이블을 만들고 지우는 데이터 저장소 — 차트 쿼리는 여기서 돈다. 분리 모드에서는 플랫폼 DB 와 다른 서버다(WD-704). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   @Autowired private PasswordEncoder encoder;
   @Autowired private ChartRepository chartRepository;
   @Autowired private SavedQueryRepository savedQueryRepository;
@@ -90,10 +95,11 @@ class ChartDashboardRejudgeTest extends IntegrationTestBase {
     String m = "rj" + System.nanoTime();
     secTable = m + "_sec";
     pubTable = m + "_pub";
-    dsl.execute("CREATE TABLE " + schema + "." + secTable + " (v text)");
-    dsl.execute("INSERT INTO " + schema + "." + secTable + " VALUES ('" + SEC_VALUE + "')");
-    dsl.execute("CREATE TABLE " + schema + "." + pubTable + " (v text)");
-    dsl.execute("INSERT INTO " + schema + "." + pubTable + " VALUES ('" + PUB_VALUE + "')");
+    // 물리 테이블은 쿼리가 도는 데이터 저장소에 만든다(플랫폼 dsl 로 만들면 분리 모드에서 relation 이 없다).
+    dataDsl.execute("CREATE TABLE " + schema + "." + secTable + " (v text)");
+    dataDsl.execute("INSERT INTO " + schema + "." + secTable + " VALUES ('" + SEC_VALUE + "')");
+    dataDsl.execute("CREATE TABLE " + schema + "." + pubTable + " (v text)");
+    dataDsl.execute("INSERT INTO " + schema + "." + pubTable + " VALUES ('" + PUB_VALUE + "')");
     secDatasetId = fx.createDatasetRow(secTable, fx.levelId("민감"), owner);
     pubDatasetId = fx.createDatasetRow(pubTable, fx.levelId("공개"), owner);
     secChart = chart(m + "_secq", "SELECT v FROM " + secTable);
@@ -115,8 +121,8 @@ class ChartDashboardRejudgeTest extends IntegrationTestBase {
     fx.deleteUser(viewer);
     fx.deleteUser(owner);
     fx.deleteRole(roleId);
-    dsl.execute("DROP TABLE IF EXISTS " + schema + "." + secTable);
-    dsl.execute("DROP TABLE IF EXISTS " + schema + "." + pubTable);
+    dataDsl.execute("DROP TABLE IF EXISTS " + schema + "." + secTable);
+    dataDsl.execute("DROP TABLE IF EXISTS " + schema + "." + pubTable);
   }
 
   // ---------------------------------------------------------------- 고정물

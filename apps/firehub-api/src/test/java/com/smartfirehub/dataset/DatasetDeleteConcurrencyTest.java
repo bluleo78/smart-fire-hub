@@ -199,6 +199,9 @@ class DatasetDeleteConcurrencyTest extends IntegrationTestBase {
    * 그때 이미 행 잠금(= 트랜잭션 ID 할당)을 쥐고 있어야 한다. 풀리면 정상으로 지운다. 행 잠금은 pg_locks 에 행 단위로 나오지 않으므로, FOR UPDATE
    * 가 트랜잭션 ID 를 받으면 생기는 transactionid 잠금으로 가른다. 변이: lockTenantGrantSyncForDdl 을 lockForDelete 앞으로
    * 옮기면(WD-655 첫 수정) 대기 중 transactionid 잠금이 없어 실패.
+   *
+   * <p>pid 는 두 개를 본다(WD-704) — advisory 는 데이터 저장소 연결이, 데이터셋 행 잠금은 플랫폼 연결이 잡는다. 분리 모드에서는 두 연결이 다른 PG
+   * 서버에 있으므로 transactionid 잠금은 플랫폼 pid 로 플랫폼 DB({@code dsl})의 pg_locks 에서 센다. 기본 모드에서는 두 pid 가 같다.
    */
   @Test
   void 삭제는_데이터셋_행_잠금을_테넌트_동기화_잠금보다_먼저_잡는다() throws Exception {
@@ -210,7 +213,7 @@ class DatasetDeleteConcurrencyTest extends IntegrationTestBase {
     ExecutorService pool = Executors.newSingleThreadExecutor();
     try {
       AtomicReference<Future<?>> running = new AtomicReference<>();
-      CompletableFuture<Integer> actionPid = new CompletableFuture<>();
+      CompletableFuture<int[]> actionPids = new CompletableFuture<>();
       AtomicBoolean returned = new AtomicBoolean();
       dataDsl.transaction(
           cfg -> {
@@ -223,23 +226,27 @@ class DatasetDeleteConcurrencyTest extends IntegrationTestBase {
                             fixtureTransactionTemplate,
                             DEFAULT_TEST_TENANT_ID,
                             () -> {
-                              actionPid.complete(
-                                  dataDsl
-                                      .fetchOne("SELECT pg_backend_pid()")
-                                      .get(0, Integer.class));
+                              // [0] = 데이터 저장소 연결(advisory 대기), [1] = 플랫폼 연결(데이터셋 행 잠금)
+                              actionPids.complete(
+                                  new int[] {
+                                    dataDsl
+                                        .fetchOne("SELECT pg_backend_pid()")
+                                        .get(0, Integer.class),
+                                    dsl.fetchOne("SELECT pg_backend_pid()").get(0, Integer.class)
+                                  });
                               datasetService.deleteDataset(datasetId);
                               returned.set(true);
                             })));
-            int pid = actionPid.get(10, TimeUnit.SECONDS);
-            assertThat(TenantRlsTestSupport.awaitAdvisoryWait(holder, pid, returned))
-                .as("삭제 트랜잭션(pid=%d)이 테넌트 동기화 잠금을 기다려야 한다", pid)
+            int[] pid = actionPids.get(10, TimeUnit.SECONDS);
+            assertThat(TenantRlsTestSupport.awaitAdvisoryWait(holder, pid[0], returned))
+                .as("삭제 트랜잭션(pid=%d)이 테넌트 동기화 잠금을 기다려야 한다", pid[0])
                 .isTrue();
+            // 행 잠금(transactionid)은 플랫폼 DB 에 있다 — 데이터 저장소 연결(holder)이 아니라 플랫폼 dsl 로 본다.
             assertThat(
-                    holder
-                        .fetchOne(
+                    dsl.fetchOne(
                             "SELECT count(*) FROM pg_locks WHERE pid = ?"
                                 + " AND locktype = 'transactionid' AND granted",
-                            pid)
+                            pid[1])
                         .get(0, Integer.class))
                 .as("advisory 를 기다릴 때 데이터셋 행은 이미 FOR UPDATE 로 잡혀 있다(행 → advisory 순서)")
                 .isPositive();

@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.service.DatasetService;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.pipeline.dto.CreatePipelineRequest;
 import com.smartfirehub.pipeline.dto.ExecutionDetailResponse;
@@ -44,6 +45,10 @@ class PipelineTempDatasetConcurrentCreateIntegrationTest extends IntegrationTest
   private static final int ROUNDS = 6;
 
   @Autowired private DSLContext dsl;
+
+  /** 원본 데이터 테이블(data 스키마)이 있는 데이터 저장소 — 분리 모드에서는 플랫폼 DB 와 다른 서버다(WD-704). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   @Autowired private DatasetService datasetService;
   @Autowired private PipelineService pipelineService;
   @Autowired private PipelineExecutionService executionService;
@@ -77,7 +82,8 @@ class PipelineTempDatasetConcurrentCreateIntegrationTest extends IntegrationTest
                     null),
                 userId)
             .id();
-    dsl.execute("INSERT INTO " + DataSchema.qualify(srcTable) + " (code) VALUES ('A'), ('B')");
+    // 원본 행은 물리 테이블이 있는 데이터 저장소에 넣는다 — 플랫폼 dsl 로 넣으면 분리 모드에서 relation 이 없다.
+    dataDsl.execute("INSERT INTO " + DataSchema.qualify(srcTable) + " (code) VALUES ('A'), ('B')");
   }
 
   @AfterEach

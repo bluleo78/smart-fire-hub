@@ -28,7 +28,7 @@ import org.springframework.context.annotation.DependsOn;
 public class SeparateDataStoreDbConfig {
 
   /** 런타임 롤 이름 — {@code TenantSchemaProvisioner.RUNTIME_ROLE} 이 이 이름에 GRANT 하므로 고정한다(설정 키 없음). */
-  static final String RUNTIME_USERNAME = "app_tenant";
+  public static final String RUNTIME_USERNAME = "app_tenant";
 
   /** 풀 이름 — 지표·로그에서 플랫폼 풀과 구분한다. */
   static final String POOL_NAME = "data-store";
@@ -48,7 +48,9 @@ public class SeparateDataStoreDbConfig {
       @Value("${firehub.data-store.postgres.url}") String url,
       @Value("${firehub.data-store.postgres.password}") String password,
       @Value("${firehub.data-store.postgres.maximum-pool-size}") int maximumPoolSize,
-      @Value("${firehub.data-store.postgres.connection-timeout}") long connectionTimeoutMs) {
+      @Value("${firehub.data-store.postgres.connection-timeout}") long connectionTimeoutMs,
+      @Value("${firehub.data-store.postgres.minimum-idle}") int minimumIdle,
+      @Value("${firehub.data-store.postgres.idle-timeout}") long idleTimeoutMs) {
     HikariDataSource ds = new HikariDataSource();
     ds.setPoolName(POOL_NAME);
     ds.setJdbcUrl(url);
@@ -59,6 +61,11 @@ public class SeparateDataStoreDbConfig {
     // 30초)으로 지금 동작과 같고, 기본값은 application.yml 한 곳에만 둔다(여기에 :기본값을 다시 적지 않는다).
     ds.setMaximumPoolSize(maximumPoolSize);
     ds.setConnectionTimeout(connectionTimeoutMs);
+    // 유휴 연결 수·유휴 만료도 설정으로 연다(WD-704). Hikari 는 minimumIdle 을 안 정하면 최대 크기만큼 유휴 연결을 계속 쥔다 — 스프링
+    // 컨텍스트를 여럿 캐시하는 테스트 실행에서는 컨텍스트마다 10개씩 쌓여 데이터 저장소 서버의 연결 한도를 채웠다. 기본값(최대 크기와 같음,
+    // 600000ms)은 Hikari 기본이라 운영 동작은 그대로다.
+    ds.setMinimumIdle(minimumIdle);
+    ds.setIdleTimeout(idleTimeoutMs);
     return ds;
   }
 

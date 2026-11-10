@@ -285,6 +285,18 @@ class SeparateDataStoreTransactionTest extends IntegrationTestBase {
     assertNotSame(primaryDsl, dsl);
   }
 
+  /**
+   * WD-704 — 데이터 저장소 풀의 유휴 연결 하한·만료가 설정값을 따르는지. 설정을 무시하면(Hikari 기본: 하한 = 최대 크기 10, 만료 600000ms) 캐시된
+   * 컨텍스트마다 유휴 연결 10개를 쥐어 분리 모드 전체 실행에서 두 번째 컨테이너의 연결 한도가 찬다. 값은 application-test.yml 의 {@code
+   * firehub.data-store.postgres.minimum-idle: 0}·{@code idle-timeout: 10000} 이다.
+   */
+  @Test
+  void 데이터저장소_풀은_설정한_유휴_연결_하한과_만료를_쓴다() {
+    HikariDataSource pool = (HikariDataSource) dataStoreDataSource;
+    assertThat(pool.getMinimumIdle()).isZero();
+    assertThat(pool.getIdleTimeout()).isEqualTo(10_000L);
+  }
+
   // --- 검증 도우미: 검증 대상 빈을 거치지 않고 컨테이너에 직접 붙는다 ---
 
   private int backendPid() {

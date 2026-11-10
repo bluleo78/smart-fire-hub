@@ -9,13 +9,14 @@ import com.smartfirehub.analytics.dto.CreateChartRequest;
 import com.smartfirehub.analytics.dto.CreateSavedQueryRequest;
 import com.smartfirehub.analytics.service.ChartService;
 import com.smartfirehub.analytics.service.SavedQueryService;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.support.DataStoreTestConnections;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.SecurityFixture;
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.ArrayList;
@@ -60,6 +61,10 @@ class InteractiveQueryConcurrencyIntegrationTest extends IntegrationTestBase {
 
   @Autowired private MockMvc mockMvc;
   @Autowired private DSLContext dsl;
+
+  /** 데이터 테이블을 만들고 지우는 데이터 저장소 — 분석 쿼리는 여기서 돈다. 분리 모드에서는 플랫폼 DB 와 다른 서버다(WD-704). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   @Autowired private PasswordEncoder encoder;
   @Autowired private JwtTokenProvider jwt;
   @Autowired private ObjectMapper om;
@@ -116,8 +121,9 @@ class InteractiveQueryConcurrencyIntegrationTest extends IntegrationTestBase {
   /** 공개 등급 데이터셋 테이블 하나(행 하나). 스키마까지 붙인 이름을 돌려준다. */
   private String createTable(String name) {
     String schema = DataSchema.current();
-    dsl.execute("CREATE TABLE " + schema + "." + name + " (v int)");
-    dsl.execute("INSERT INTO " + schema + "." + name + " VALUES (1)");
+    // 물리 테이블은 쿼리가 도는 데이터 저장소에 만든다(플랫폼 dsl 로 만들면 분리 모드에서 relation 이 없다).
+    dataDsl.execute("CREATE TABLE " + schema + "." + name + " (v int)");
+    dataDsl.execute("INSERT INTO " + schema + "." + name + " VALUES (1)");
     tables.add(name);
     datasets.add(fx.createDatasetRow(name, fx.levelId("공개"), creator));
     return DataSchema.qualify(name);
@@ -154,7 +160,7 @@ class InteractiveQueryConcurrencyIntegrationTest extends IntegrationTestBase {
     }
     datasets.forEach(fx::deleteDatasetRow);
     for (String t : tables) {
-      dsl.execute("DROP TABLE IF EXISTS " + DataSchema.current() + "." + t);
+      dataDsl.execute("DROP TABLE IF EXISTS " + DataSchema.current() + "." + t);
     }
     users.forEach(fx::deleteUser);
     roles.forEach(fx::deleteRole);
@@ -251,14 +257,9 @@ class InteractiveQueryConcurrencyIntegrationTest extends IntegrationTestBase {
     assertThat(a.thread().isAlive()).as("첫 요청이 잠금 해제 뒤 끝나야 한다").isFalse();
   }
 
+  /** 잠금을 걸고 대기를 관찰할 풀 밖 원시 커넥션 — 쿼리가 도는 데이터 저장소에 연다({@link DataStoreTestConnections}). */
   private Connection rawConnection() throws Exception {
-    Connection c =
-        DriverManager.getConnection(
-            env.getRequiredProperty("spring.datasource.url"),
-            env.getRequiredProperty("spring.datasource.username"),
-            env.getRequiredProperty("spring.datasource.password"));
-    c.setAutoCommit(false);
-    return c;
+    return DataStoreTestConnections.openRuntime(env);
   }
 
   @Test

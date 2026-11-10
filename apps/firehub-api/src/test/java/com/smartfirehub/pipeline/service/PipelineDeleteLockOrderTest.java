@@ -192,9 +192,10 @@ class PipelineDeleteLockOrderTest extends IntegrationTestBase {
             assertThat(TenantRlsTestSupport.awaitAdvisoryWait(holder, pid[0], returned))
                 .as("파이프라인 트랜잭션(pid=%d)이 테넌트 동기화 잠금을 기다려야 한다", pid[0])
                 .isTrue();
+            // public.dataset 은 플랫폼 DB 에만 있다 — 데이터 저장소 연결(holder)로 regclass 를 풀면 분리 모드에서
+            // relation 이 없어 실패한다(WD-704). 플랫폼 pid 의 잠금이므로 플랫폼 dsl 로 본다.
             assertThat(
-                    holder
-                        .fetchOne(
+                    dsl.fetchOne(
                             "SELECT count(*) FROM pg_locks WHERE pid = ?"
                                 + " AND relation = 'public.dataset'::regclass"
                                 + " AND mode = 'RowExclusiveLock' AND granted",
