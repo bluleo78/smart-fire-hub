@@ -2,6 +2,7 @@ package com.smartfirehub.dataimport.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -9,6 +10,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.dataimport.dto.ColumnMappingEntry;
 import com.smartfirehub.dataimport.dto.ImportMode;
 import com.smartfirehub.dataimport.dto.ImportPreviewResponse;
 import com.smartfirehub.dataimport.dto.ImportStartResponse;
@@ -33,6 +35,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -429,7 +432,7 @@ class DataImportControllerTest {
         .andExpect(
             jsonPath("$.message")
                 .value(org.hamcrest.Matchers.containsString("APPEND, UPSERT, REPLACE")));
-    verify(importService, org.mockito.Mockito.never())
+    verify(importService, never())
         .importFile(anyLong(), any(), any(), anyLong(), any(), any(), any(), any(), any());
   }
 
@@ -478,6 +481,111 @@ class DataImportControllerTest {
         .andExpect(jsonPath("$.message").value(DataImportController.INVALID_MAPPINGS_MESSAGE));
   }
 
+  /**
+   * 사전 검증 mappings 에 null 항목·fileColumn 없는 항목 — 예전에는 NPE 500 이거나 빈 값 적재로 흘렀다(WD-608). 규칙은 서비스 진입점이
+   * 검사하므로(서비스는 이 테스트에서 mock), mock 이 실제 규칙 {@link ColumnMappingEntry#requireComplete} 를 컨트롤러가 읽은
+   * 목록에 그대로 적용하게 해 JSON 읽기 → 규칙 → 전용 400 문구까지 이어지는지 본다.
+   */
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "[null]",
+        "[{\"fileColumn\":\"a\",\"datasetColumn\":\"a\"}, null]",
+        "[{\"datasetColumn\":\"a\"}]",
+        "[{\"fileColumn\":null,\"datasetColumn\":\"a\"}]"
+      })
+  void validateImport_nullMappingElement_returns400Korean(String mappingsJson) throws Exception {
+    when(importService.validateImport(anyLong(), any(), any(), any()))
+        .thenAnswer(
+            inv -> {
+              ColumnMappingEntry.requireComplete(inv.getArgument(2));
+              return null;
+            });
+
+    mockMvc
+        .perform(
+            multipart("/api/v1/datasets/1/imports/validate")
+                .file(csvFile())
+                .param("mappings", mappingsJson)
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(ColumnMappingEntry.INCOMPLETE_MAPPING_MESSAGE));
+  }
+
+  /**
+   * 임포트 시작 mappings 에 null 항목·fileColumn 없는 항목 — 예전에는 201 접수 뒤 잡이 실패했다(WD-608). 서비스 규칙이 던지는 400 이
+   * 그대로 나가는지 본다(잡 생성 전 거부는 DataImportServiceTest 가 확인).
+   */
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "[null]",
+        "[{\"fileColumn\":\"a\",\"datasetColumn\":\"a\"}, null]",
+        "[{\"datasetColumn\":\"a\"}]",
+        "[{\"fileColumn\":null,\"datasetColumn\":\"a\"}]"
+      })
+  void importFile_nullMappingElement_returns400Korean(String mappingsJson) throws Exception {
+    when(importService.importFile(
+            anyLong(), any(), any(), anyLong(), any(), any(), any(), any(), any()))
+        .thenAnswer(
+            inv -> {
+              ColumnMappingEntry.requireComplete(inv.getArgument(2));
+              return new ImportStartResponse("job-1", "PENDING");
+            });
+
+    mockMvc
+        .perform(
+            multipart("/api/v1/datasets/1/imports")
+                .file(csvFile())
+                .param("mappings", mappingsJson)
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(ColumnMappingEntry.INCOMPLETE_MAPPING_MESSAGE));
+  }
+
+  /**
+   * 웹 가져오기 화면이 보내는 정상 모양은 그대로 통과한다(WD-608 회귀 방지) — datasetColumn null(가져오지 않는 열), fileColumn 빈
+   * 문자열(이름이 빈 헤더 열, WD-369), 빈 배열. 원소를 그대로 서비스에 넘기는지도 확인한다.
+   */
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "[{\"fileColumn\":\"a\",\"datasetColumn\":null}]",
+        "[{\"fileColumn\":\"\",\"datasetColumn\":null}, {\"fileColumn\":\"b\",\"datasetColumn\":\"b\"}]",
+        "[]"
+      })
+  void importFile_legitimateMappingShapes_areAccepted(String mappingsJson) throws Exception {
+    when(importService.importFile(
+            anyLong(), any(), any(), anyLong(), any(), any(), any(), any(), any()))
+        .thenReturn(new ImportStartResponse("job-1", "PENDING"));
+
+    mockMvc
+        .perform(
+            multipart("/api/v1/datasets/1/imports")
+                .file(csvFile())
+                .param("mappings", mappingsJson)
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isCreated());
+    verify(importService)
+        .importFile(anyLong(), any(), any(), anyLong(), any(), any(), any(), any(), any());
+  }
+
+  /** 사전 검증도 정상 매핑(가져오지 않는 열 포함)은 그대로 서비스에 넘겨 200 이다(WD-608 회귀 방지). */
+  @Test
+  void validateImport_mappingWithUnmappedColumn_isAccepted() throws Exception {
+    mockMvc
+        .perform(
+            multipart("/api/v1/datasets/1/imports/validate")
+                .file(csvFile())
+                .param(
+                    "mappings",
+                    "[{\"fileColumn\":\"a\",\"datasetColumn\":\"a\"},"
+                        + " {\"fileColumn\":\"\",\"datasetColumn\":null}]")
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isOk());
+    verify(importService).validateImport(eq(1L), any(), any(), any());
+  }
+
   /** mappings 없이 사전 검증 — 예전에는 필수 파라미터 누락으로 500. 400 한국어로 거부하고 서비스는 부르지 않는다. */
   @Test
   void validateImport_withoutMappings_returns400Korean() throws Exception {
@@ -488,8 +596,7 @@ class DataImportControllerTest {
                 .header("Authorization", "Bearer test-token"))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.message").value(DataImportController.MISSING_MAPPINGS_MESSAGE));
-    verify(importService, org.mockito.Mockito.never())
-        .validateImport(anyLong(), any(), any(), any());
+    verify(importService, never()).validateImport(anyLong(), any(), any(), any());
   }
 
   /** JSON null 도 매핑 없음으로 본다 — 같은 400. */

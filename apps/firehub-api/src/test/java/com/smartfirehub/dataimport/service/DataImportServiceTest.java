@@ -135,6 +135,50 @@ class DataImportServiceTest extends IntegrationTestBase {
   }
 
   /**
+   * WD-608: 서비스 진입점(importFile·validateImport)도 null 항목·fileColumn 없는 항목을 400 문구로 거부한다 — 컨트롤러를 거치지
+   * 않는 호출자도 같은 규칙을 따르게. importFile 은 파일 저장·잡 생성 전에 끝나야 한다(잡이 생기면 201 접수 뒤 실패가 된다).
+   */
+  @Test
+  void importAndValidate_incompleteMappings_throwIllegalArgumentBeforeJob() throws Exception {
+    String csvContent =
+        """
+        name,age,email
+        Alice,30,alice@example.com
+        """;
+    List<ColumnMappingEntry> nullElement = new ArrayList<>();
+    nullElement.add(new ColumnMappingEntry("name", "name"));
+    nullElement.add(null);
+    List<ColumnMappingEntry> missingFileColumn = List.of(new ColumnMappingEntry(null, "name"));
+
+    for (List<ColumnMappingEntry> mappings : List.of(nullElement, missingFileColumn)) {
+      MockMultipartFile file =
+          Mockito.spy(
+              new MockMultipartFile(
+                  "file", "test.csv", "text/csv", csvContent.getBytes(StandardCharsets.UTF_8)));
+
+      assertThatThrownBy(
+              () ->
+                  dataImportService.importFile(
+                      testDatasetId,
+                      file,
+                      mappings,
+                      testUserId,
+                      "Test User",
+                      "127.0.0.1",
+                      "TestAgent"))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessage(ColumnMappingEntry.INCOMPLETE_MAPPING_MESSAGE);
+      assertThatThrownBy(() -> dataImportService.validateImport(testDatasetId, file, mappings))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessage(ColumnMappingEntry.INCOMPLETE_MAPPING_MESSAGE);
+      // 업로드를 디스크에 쓰지도, 잡을 만들지도 않는다.
+      Mockito.verify(file, Mockito.never()).transferTo(Mockito.any(java.io.File.class));
+    }
+    Mockito.verify(asyncJobService, Mockito.never())
+        .createJob(Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any());
+  }
+
+  /**
    * 회귀 가드(#312): 같은 데이터셋에 임포트가 이미 진행 중이면 두 번째 요청은 ConcurrentImportException(→409)이어야 한다.
    *
    * <p>V14 partial unique index가 활성 잡을 하나로 제한하므로 두 번째 createJob은 제약 위반을 일으킨다. 이때 DSLContext에

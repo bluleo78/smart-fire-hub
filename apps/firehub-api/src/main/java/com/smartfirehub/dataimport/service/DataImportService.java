@@ -228,6 +228,9 @@ public class DataImportService {
       List<ColumnMappingEntry> mappings,
       ParseOptions parseOptions)
       throws Exception {
+    // null 항목·fileColumn 없는 항목은 검증 중 NPE(500)·빈 값 적재로 이어지므로 파일을 저장하기 전에 400 으로 거부한다(WD-608).
+    ColumnMappingEntry.requireComplete(mappings);
+
     // Validate dataset exists
     datasetRepository
         .findById(datasetId)
@@ -356,6 +359,9 @@ public class DataImportService {
       ParseOptions parseOptions,
       ImportMode importMode)
       throws Exception {
+    // 불완전한 매핑은 잡을 만들기 전에 400 으로 거부한다(WD-608) — 잡으로 넘기면 201 접수 뒤 실패로 끝나 사유를 잡 상태에서 찾아야 한다.
+    ColumnMappingEntry.requireComplete(mappings);
+
     // Validate dataset exists
     datasetRepository
         .findById(datasetId)
@@ -601,6 +607,15 @@ public class DataImportService {
         String mappingsJson = Files.readString(Path.of(mappingsPath));
         mappings =
             objectMapper.readValue(mappingsJson, new TypeReference<List<ColumnMappingEntry>>() {});
+      }
+      // 새 잡은 importFile 이 이미 거른 매핑만 저장하므로 여기 걸리는 것은 WD-608 이전에 큐에 들어간 잡이나 손으로 고친 임시 매핑 파일뿐이다 —
+      // 그래도 NPE 범용 문구로 끝나지 않게 같은 규칙으로 확인하고, 아래 catch 가 한국어 문구를 실패 사유로 남기도록
+      // ImportProcessingException 으로
+      // 감싼다.
+      try {
+        ColumnMappingEntry.requireComplete(mappings);
+      } catch (IllegalArgumentException e) {
+        throw new ImportProcessingException(e.getMessage(), e);
       }
       boolean hasMappings = mappings != null && !mappings.isEmpty();
       List<ColumnMappingEntry> mappingsFinal = mappings;

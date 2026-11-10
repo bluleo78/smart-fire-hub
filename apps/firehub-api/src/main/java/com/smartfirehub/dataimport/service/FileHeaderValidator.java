@@ -168,9 +168,12 @@ final class FileHeaderValidator {
   /**
    * 빈 이름 파일 열을 데이터셋 컬럼에 매핑한 항목인지(WD-369). 검증·적재({@link DataValidationService})와 같이 datasetColumn 이
    * 있으면 매핑된 것이다.
+   *
+   * <p>null 항목은 호출 전에 {@link ColumnMappingEntry#requireComplete} 가 400 으로 거른다(WD-608) — 여기서 조용히
+   * 건너뛰면 규칙이 두 곳으로 갈라지므로 따로 막지 않는다.
    */
   private static boolean isMappedBlank(ColumnMappingEntry m) {
-    return m != null && m.datasetColumn() != null && normalize(m.fileColumn()).isEmpty();
+    return m.datasetColumn() != null && normalize(m.fileColumn()).isEmpty();
   }
 
   /**
