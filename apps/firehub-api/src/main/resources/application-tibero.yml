@@ -40,6 +40,9 @@ firehub:
       # 풀 조정 — 접속 정보와 달리 기본값을 둔다(Hikari 기본과 같음). 트랜잭션마다 연결 하나, REQUIRES_NEW 는 하나 더 쥔다.
       maximum-pool-size: ${DATA_STORE_PG_POOL_SIZE:10}
       connection-timeout: ${DATA_STORE_PG_CONNECTION_TIMEOUT_MS:30000}
+      # 유휴 연결 하한·유휴 만료(WD-704) — 기본값은 Hikari 기본(하한 = 최대 크기, 600000ms)과 같다.
+      minimum-idle: ${DATA_STORE_PG_MIN_IDLE:${firehub.data-store.postgres.maximum-pool-size}}
+      idle-timeout: ${DATA_STORE_PG_IDLE_TIMEOUT_MS:600000}
 
 spring:
   datasource:

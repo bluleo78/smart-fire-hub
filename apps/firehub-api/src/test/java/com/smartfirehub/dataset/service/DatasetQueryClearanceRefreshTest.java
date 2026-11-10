@@ -9,6 +9,7 @@ import com.smartfirehub.dataset.dto.SqlQueryResponse;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.repository.QueryHistoryRepository;
+import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.permission.repository.jooq.JooqPermissionRepository;
@@ -53,6 +54,10 @@ import org.springframework.web.context.request.ServletRequestAttributes;
 class DatasetQueryClearanceRefreshTest extends IntegrationTestBase {
 
   @Autowired private DSLContext dsl;
+
+  /** 물리 테이블을 만들고 지우는 데이터 저장소 — 질의는 여기서 돈다. 분리 모드에서는 플랫폼 DB 와 다른 서버다(WD-704). */
+  @Autowired @DataStoreDb private DSLContext dataDsl;
+
   @Autowired private PasswordEncoder encoder;
   @Autowired private DatasetRepository datasetRepository;
   @Autowired private DatasetColumnRepository columnRepository;
@@ -96,9 +101,9 @@ class DatasetQueryClearanceRefreshTest extends IntegrationTestBase {
     fx.assignRole(viewer, roleId);
     schema = DataSchema.current();
     table = "qcr" + System.nanoTime();
-    // 양성 대조가 실제로 실행되도록 물리 테이블도 만든다.
-    dsl.execute("CREATE TABLE " + schema + "." + table + " (v int)");
-    dsl.execute("INSERT INTO " + schema + "." + table + " VALUES (4242)");
+    // 양성 대조가 실제로 실행되도록 물리 테이블도 만든다 — 질의가 도는 데이터 저장소에 만든다.
+    dataDsl.execute("CREATE TABLE " + schema + "." + table + " (v int)");
+    dataDsl.execute("INSERT INTO " + schema + "." + table + " VALUES (4242)");
     datasetId = fx.createDatasetRow(table, fx.levelId("민감"), owner);
     // 요청 경로 흉내 — ClearanceResolver 가 요청 속성에 캐시하고, principal(userId)로 자격을 계산한다.
     RequestContextHolder.setRequestAttributes(
@@ -122,7 +127,7 @@ class DatasetQueryClearanceRefreshTest extends IntegrationTestBase {
     fx.deleteRole(roleId);
     fx.deleteUser(viewer);
     fx.deleteUser(owner);
-    dsl.execute("DROP TABLE IF EXISTS " + schema + "." + table);
+    dataDsl.execute("DROP TABLE IF EXISTS " + schema + "." + table);
   }
 
   /** 게이트만 대역인 실제 서비스. */
