@@ -325,6 +325,40 @@ class TiberoPlatformLocksTest {
     }
   }
 
+  /**
+   * 묶인 대기 시간 초과 계약(WD-694) — Tibero 판.
+   *
+   * <ul>
+   *   <li>(a) 시간 초과(반환값 1)는 PG 판과 같은 {@link PlatformLockWaitTimeoutException} 이다.
+   *   <li>(b') PG 와 달리 Tibero 는 트랜잭션을 깨뜨리지 않는다 — 잠금 구현은 커넥션을 되돌리거나 닫지 않고, 같은 커넥션에서 다음 요청도 그대로 된다.
+   *       그래서 "이어 써도 된다" 로 보이지만, PG 판에서는 트랜잭션이 중단되므로(PostgresPlatformLocksTest) 인터페이스 계약은 저장소와 무관하게
+   *       "시간 초과 뒤에는 트랜잭션을 끝낸다" 다. 이 테스트는 그 차이를 고정해, 계약을 저장소 동작에 맡기면 안 되는 이유를 남긴다.
+   * </ul>
+   */
+  @Test
+  void boundedXactLockTimeout_isPlatformTimeout_andLeavesTransactionAlive() throws Exception {
+    DataSource ds = mock(DataSource.class);
+    var locks = initialized(ds);
+    Connection txConn = mock(Connection.class);
+    CallableStatement request = mock(CallableStatement.class);
+    when(txConn.prepareCall(contains("release_on_commit => TRUE"))).thenReturn(request);
+    when(request.getInt(3)).thenReturn(1, 0);
+    TransactionSynchronizationManager.bindResource(ds, new ConnectionHolder(txConn));
+    try {
+      assertThatThrownBy(() -> locks.xactLock("k", Duration.ofMillis(300)))
+          .as("(a) 시간 초과는 PlatformLockWaitTimeoutException")
+          .isInstanceOf(PlatformLockWaitTimeoutException.class);
+      // (b') 트랜잭션 커넥션은 되돌리거나 닫히지 않는다 — Tibero 에서는 트랜잭션이 살아 있다.
+      verify(txConn, never()).rollback();
+      verify(txConn, never()).close();
+      assertThatCode(() -> locks.xactLock("k", Duration.ofMillis(300)))
+          .as("같은 커넥션에서 다음 요청도 된다(PG 라면 25P02)")
+          .doesNotThrowAnyException();
+    } finally {
+      TransactionSynchronizationManager.unbindResource(ds);
+    }
+  }
+
   /** 묶인 대기 → DBMS_LOCK 초: 올림, 1초 미만·0 이하는 1초(0 이면 시도형이 된다), 무기한 값보다 작게. */
   @Test
   void boundedWaitSecondsRoundsUpAndStaysFinite() {

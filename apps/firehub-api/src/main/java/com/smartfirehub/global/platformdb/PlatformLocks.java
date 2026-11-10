@@ -38,10 +38,23 @@ public interface PlatformLocks extends SessionLocks {
    * {@link #xactLock(String)} 과 같되 최대 {@code timeout} 만 기다린다(WD-644) — 잠금 대기 줄에 서므로 시도형처럼 굶지 않고, 대기
    * 시간은 묶인다. 대기 제한은 이 잠금 대기에만 걸리고, 잡은 뒤의 문장에는 남지 않는다.
    *
-   * <p>시간을 넘기면 예외를 던진다 — PG 는 SQLState {@code 55P03}(lock_not_available)의 SQLException 이 원인 사슬에 있고
-   * 현재 트랜잭션은 중단된다. Tibero({@code DBMS_LOCK})는 {@link PlatformLockWaitTimeoutException} 이다(WD-493
-   * 이후, 트랜잭션은 깨지지 않지만 호출자는 같은 방식으로 트랜잭션을 끝낸다). 어느 쪽이든 호출자는 트랜잭션을 끝내고 다시 시도한다. 대기 길이의 단위는 구현마다 다르다 —
-   * Tibero 는 초 단위 정수라 1초 미만은 1초로 올린다.
+   * <p>시간을 넘기면 저장소와 무관하게 {@link PlatformLockWaitTimeoutException} 을 던진다(WD-694). PG 는 원인 사슬에
+   * SQLState {@code 55P03}(lock_not_available)의 SQLException 을 품는다. 대기 길이의 단위는 구현마다 다르다 — Tibero 는
+   * 초 단위 정수라 1초 미만은 1초로 올린다.
+   *
+   * <p><b>계약 — 시간 초과 뒤에는 트랜잭션을 끝낸다(WD-694).</b> {@link PlatformLockWaitTimeoutException} 을 받은 호출자는
+   * 현재 트랜잭션을 <b>롤백으로 끝내야 하고, 그 트랜잭션을 더 쓰면 안 된다</b>(다시 하려면 새 트랜잭션에서). 왜: 저장소마다 시간 초과 뒤 트랜잭션 상태가 다르다
+   * — PG 는 기다리던 문장이 실패해 트랜잭션이 중단되고 그 뒤 모든 문장이 {@code 25P02}(in_failed_sql_transaction)로 실패하며 커밋도 되지
+   * 않는다. Tibero({@code DBMS_LOCK})는 반환값으로 알릴 뿐 트랜잭션이 살아 있어 이어 쓸 수 있어 보인다. 이 차이에 기대 "살아 있으면 이어 쓴다" 고
+   * 짜면 PG 에서만 깨지므로, 더 엄격한 쪽(PG)을 계약으로 둔다. 지금 호출자 {@code PythonReadGrantBackend.withTenantSyncLock}
+   * 은 시간 초과를 표시 예외로 바꿔 REQUIRES_NEW 트랜잭션을 롤백한다. 두 저장소의 차이와 호출자 동작은 {@code
+   * PostgresPlatformLocksTest}·{@code TiberoPlatformLocksTest}·{@code
+   * PythonReadSyncLockTimeoutContractTest} 가 고정한다.
+   *
+   * <p>트랜잭션을 이어 써야 하는 곳(사용자 트랜잭션의 커밋 직전 등)은 이 메서드 대신 기다리는 문장을 쓰지 않는 {@link #tryXactLock(String,
+   * Duration)} 을 쓴다.
+   *
+   * @throws PlatformLockWaitTimeoutException 제한 시간 안에 잠금을 얻지 못했다 — 트랜잭션을 롤백으로 끝낼 것
    */
   void xactLock(String key, Duration timeout);
 

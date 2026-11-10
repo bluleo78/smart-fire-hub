@@ -73,8 +73,9 @@ interface PythonReadGrantBackend {
     boolean tryLock(String key);
 
     /**
-     * 최대 {@code timeout} 기다려 잡는다 — 넘기면 예외(PG: lock_not_available 55P03, 트랜잭션 중단 / Tibero: {@link
-     * PlatformLockWaitTimeoutException}). 어느 쪽이든 {@link #isLockTimeout} 이 "바쁨" 으로 가른다.
+     * 최대 {@code timeout} 기다려 잡는다 — 넘기면 {@link PlatformLockWaitTimeoutException}(PG 는 원인에 55P03 을 품고
+     * 트랜잭션이 중단된다, Tibero 는 트랜잭션이 살아 있다). {@link #isLockTimeout} 이 "바쁨" 으로 가르고, 계약대로 어느 저장소든 트랜잭션을
+     * 롤백으로 끝낸다 ({@code PlatformLocks#xactLock(String, Duration)}, WD-694).
      */
     void lock(String key, Duration timeout);
   }
@@ -145,6 +146,24 @@ interface PythonReadGrantBackend {
       // 묶인 대기의 시간 초과 — 트랜잭션은 이미 롤백됐다(잠금 전이라 바뀐 것이 없다).
       return Optional.empty();
     }
+  }
+
+  /**
+   * {@link LockMode#WAIT} 로 부른 {@link #withTenantSyncLock} 결과를 푼다(WD-694).
+   *
+   * <p>왜: 대기형은 잠금이 풀릴 때까지 기다리므로 "바쁨(빈 값)" 이 나올 수 없다 — 빈 값은 시도 실패·묶인 대기 시간 초과에서만 나온다. 호출자({@code
+   * lockedSync})가 이 불변식에 기대 맨 {@code orElseThrow()} 를 쓰면, 누가 방식을 바꾸거나 빈 값 경로를 넓혔을 때 원인을 알 수 없는
+   * {@code NoSuchElementException} 으로 터진다. 불변식을 이름 붙은 검사로 묶어 깨지면 무엇이 잘못됐는지 알리는 {@link
+   * IllegalStateException} 을 던진다.
+   *
+   * @throws IllegalStateException 빈 값 — 대기형 잠금이 일을 하지 않고 끝났다(프로그램 오류)
+   */
+  static <T> T requireWaitModeResult(Optional<T> result) {
+    if (result.isEmpty()) {
+      throw new IllegalStateException(
+          "테넌트 동기화 잠금을 WAIT(대기형)로 잡았는데 결과가 비었습니다 — 대기형은 바쁨(빈 값)을 내지 않아야 합니다(불변식 위반)");
+    }
+    return result.get();
   }
 
   /**

@@ -187,6 +187,30 @@ class PythonReadGrantBackendTest {
         .isSameAs(boom);
   }
 
+  /**
+   * WD-694: 대기형(WAIT) 결과 풀기 — 값이 있으면 그대로 돌려주고, 빈 값이면 {@code NoSuchElementException} 대신 불변식(대기형은 빈
+   * 값을 내지 않는다)이 깨졌다는 안내의 {@link IllegalStateException} 을 던진다.
+   */
+  @Test
+  void requireWaitModeResult_unwrapsValue_andRejectsEmptyAsInvariantBreach() {
+    assertThat(PythonReadGrantBackend.requireWaitModeResult(Optional.of("ok"))).isEqualTo("ok");
+    assertThatThrownBy(() -> PythonReadGrantBackend.requireWaitModeResult(Optional.empty()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("WAIT");
+  }
+
+  /** 대기형으로 잡으면 실제 결과가 빈 값이 아니다 — lockedSync 가 기대는 불변식(WD-694). */
+  @Test
+  void waitMode_neverReturnsEmpty() {
+    Optional<Boolean> r =
+        TenantContext.runScopedGet(
+            1L,
+            () ->
+                PythonReadGrantBackend.withTenantSyncLock(
+                    DIRECT, ops(false), LockMode.WAIT, null, () -> true));
+    assertThat(PythonReadGrantBackend.requireWaitModeResult(r)).isTrue();
+  }
+
   /** 실행기의 잠금 대기 → 방식: 0 이면 시도형, 양수면 묶인 대기. */
   @Test
   void lockModeForExecutorWait() {

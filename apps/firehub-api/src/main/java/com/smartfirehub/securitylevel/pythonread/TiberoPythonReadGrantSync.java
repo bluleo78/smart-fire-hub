@@ -322,13 +322,14 @@ public class TiberoPythonReadGrantSync implements PythonReadGrantBackend {
 
   /** 잠금을 기다려 잡은 뒤 동기화한다 — 커밋 뒤 실행기를 뺀 모든 경로(전체·테이블 하나·실행 준비)의 공통 진입점. */
   private PythonReadGrantSync.SyncResult lockedSync(String onlyTable, Integer runRank) {
-    return PythonReadGrantBackend.withTenantSyncLock(
+    // 대기형(WAIT)은 빈 값을 내지 않는다는 불변식을 이름 붙은 검사로 묶는다 — 깨지면 원인을 알리는 IllegalStateException(WD-694).
+    return PythonReadGrantBackend.requireWaitModeResult(
+        PythonReadGrantBackend.withTenantSyncLock(
             requiresNew,
             lockOps(),
             PythonReadGrantBackend.LockMode.WAIT,
             null,
-            () -> syncInTx(onlyTable, runRank))
-        .orElseThrow();
+            () -> syncInTx(onlyTable, runRank)));
   }
 
   /**
