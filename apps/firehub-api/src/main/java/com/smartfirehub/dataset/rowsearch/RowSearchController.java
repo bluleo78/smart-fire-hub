@@ -1,5 +1,6 @@
 package com.smartfirehub.dataset.rowsearch;
 
+import com.smartfirehub.dataset.exception.TranslatesMissingDatasetTable;
 import com.smartfirehub.dataset.rowsearch.dto.RowSearchRequest;
 import com.smartfirehub.dataset.rowsearch.dto.RowSearchResponse;
 import com.smartfirehub.dataset.rowsearch.dto.SearchIndexStatusResponse;
@@ -20,6 +21,8 @@ import org.springframework.web.bind.annotation.RestController;
  * 데이터셋 행 검색(Tibero 테넌트는 네 엔드포인트 모두 {@link RowSearchBackendGuard} 에서 422): 검색 설정(검색 탭)과 행 검색(에이전트
  * 도구) 엔드포인트.
  */
+// WD-601: 행 검색·색인 설정도 경로 데이터셋의 테이블만 다룬다 — 삭제 경합의 「테이블 없음」은 404 「데이터셋 없음」으로 답한다.
+@TranslatesMissingDatasetTable
 @RestController
 @RequestMapping("/api/v1/datasets/{id}")
 @RequiredArgsConstructor

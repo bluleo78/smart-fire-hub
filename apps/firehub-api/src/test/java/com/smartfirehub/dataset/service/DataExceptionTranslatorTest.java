@@ -184,4 +184,44 @@ class DataExceptionTranslatorTest {
       }
     }
   }
+
+  // ── WD-601: 테이블 없음 판정 ───────────────────────────────────────────
+
+  /** PG 42P01 을 Spring 이 감싼 체인(BadSqlGrammarException)에서도 찾는다 — 실제 데이터 테이블 경로의 예외 모양. */
+  @Test
+  void isUndefinedTable_pg42P01WrappedBySpring_true() {
+    PSQLException pg = pgError("42P01", "relation \"data.t\" does not exist", null);
+    assertThat(
+            DataExceptionTranslator.isUndefinedTable(
+                new org.springframework.jdbc.BadSqlGrammarException("select", "SELECT 1", pg)))
+        .isTrue();
+  }
+
+  /** 다른 문법 오류(없는 컬럼 42703)·데이터 오류(22001)·SQL 예외 없는 체인은 거짓 — 「데이터셋 없음」으로 바꾸지 않는다. */
+  @Test
+  void isUndefinedTable_otherErrors_false() {
+    assertThat(DataExceptionTranslator.isUndefinedTable(pgError("42703", "column", null)))
+        .isFalse();
+    assertThat(DataExceptionTranslator.isUndefinedTable(pgError("22001", "too long", null)))
+        .isFalse();
+    assertThat(DataExceptionTranslator.isUndefinedTable(new IllegalStateException("x"))).isFalse();
+    assertThat(DataExceptionTranslator.isUndefinedTable(null)).isFalse();
+  }
+
+  /** Tibero 「테이블 없음」 벤더 코드(ORA-00942·JDBC-8033)는 참, 다른 코드는 거짓. */
+  @ParameterizedTest
+  @CsvSource({"942,true", "-8033,true", "-10007,false", "0,false"})
+  void isUndefinedTable_tiberoCodes(int code, boolean expected) {
+    assertThat(DataExceptionTranslator.isUndefinedTable(new SQLException("x", null, code)))
+        .isEqualTo(expected);
+  }
+
+  /** PG 예외는 벤더 코드가 아니라 SQLState 로만 본다 — SQLState 가 42P01 이 아니면 거짓. */
+  @Test
+  void isUndefinedTable_pgWithOtherState_false() {
+    assertThat(
+            DataExceptionTranslator.isUndefinedTable(
+                new PSQLException("x", PSQLState.UNKNOWN_STATE)))
+        .isFalse();
+  }
 }

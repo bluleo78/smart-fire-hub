@@ -495,4 +495,37 @@ class DatasetControllerTest {
         .andExpect(jsonPath("$.errors.id").value("'id' 값이 비어 있습니다."));
     verify(datasetService, never()).getDatasetById(any(), any());
   }
+
+  /** WD-601: 데이터셋 엔드포인트(통계)에서 새어 나온 「테이블 없음」(PG 42P01)은 404 + 데이터셋 없음 문구다. */
+  @Test
+  void getDatasetStats_undefinedTable_returns404DatasetGone() throws Exception {
+    when(datasetDataService.getDatasetStats(1L)).thenThrow(pgUndefinedTable());
+    mockMvc
+        .perform(get("/api/v1/datasets/1/stats").header("Authorization", "Bearer test-token"))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.message").value(DatasetNotFoundException.MESSAGE));
+  }
+
+  /** WD-601 회귀: 사용자 SQL 실행(/query)은 번역에서 빠져 있어, 같은 42P01 이 새어 나와도 예전처럼 500 이다(404 로 바뀌지 않음). */
+  @Test
+  void executeQuery_undefinedTable_isNotTranslatedTo404() throws Exception {
+    when(datasetDataService.executeQuery(eq(1L), any(SqlQueryRequest.class), any()))
+        .thenThrow(pgUndefinedTable());
+    mockMvc
+        .perform(
+            post("/api/v1/datasets/1/query")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"sql\":\"SELECT * FROM t\"}"))
+        .andExpect(status().isInternalServerError());
+  }
+
+  /** WD-601: PG 드라이버 42P01 을 Spring 이 감싼 모양(실제 데이터 테이블 경로와 같다). */
+  private static org.springframework.jdbc.BadSqlGrammarException pgUndefinedTable() {
+    return new org.springframework.jdbc.BadSqlGrammarException(
+        "select",
+        "SELECT count(*) FROM data.t",
+        new org.postgresql.util.PSQLException(
+            "relation \"data.t\" does not exist", org.postgresql.util.PSQLState.UNDEFINED_TABLE));
+  }
 }

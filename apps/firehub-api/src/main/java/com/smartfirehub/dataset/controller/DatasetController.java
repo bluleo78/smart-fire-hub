@@ -2,6 +2,7 @@ package com.smartfirehub.dataset.controller;
 
 import com.smartfirehub.dataset.dto.*;
 import com.smartfirehub.dataset.dto.SpatialFilter;
+import com.smartfirehub.dataset.exception.TranslatesMissingDatasetTable;
 import com.smartfirehub.dataset.search.DatasetEmbeddingBackfillService;
 import com.smartfirehub.dataset.search.DatasetSearchHit;
 import com.smartfirehub.dataset.search.DatasetSearchRequest;
@@ -25,6 +26,9 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
+// WD-601: 경로 데이터셋의 테이블이 삭제 경합으로 사라져 난 「테이블 없음」 DB 오류는 500 대신 404 「데이터셋 없음」으로 답한다.
+// 사용자 SQL 실행(/query)은 아래에서 뺀다.
+@TranslatesMissingDatasetTable
 @RestController
 @RequestMapping("/api/v1/datasets")
 @RequiredArgsConstructor
@@ -404,6 +408,8 @@ public class DatasetController {
   // SQL Query (Ad-hoc)
   // =========================================================================
 
+  // WD-601: 사용자 SQL 의 없는 테이블은 사용자 SQL 오류(200 + error·403 판정)로 남겨야 해 「데이터셋 없음」 번역에서 뺀다.
+  @TranslatesMissingDatasetTable(false)
   @PostMapping("/{id}/query")
   @RequirePermission("data:import")
   public ResponseEntity<SqlQueryResponse> executeQuery(

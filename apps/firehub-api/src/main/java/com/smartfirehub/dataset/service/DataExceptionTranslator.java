@@ -97,6 +97,29 @@ public final class DataExceptionTranslator {
     };
   }
 
+  /** PostgreSQL undefined_table — 「relation ... does not exist」. */
+  private static final String UNDEFINED_TABLE = "42P01";
+
+  /**
+   * 예외 체인에 「테이블 없음」 DB 오류가 있는가(WD-601) — PG 는 SQLState 42P01, Tibero 는 벤더 코드가 대응표에서 42P01 로 옮겨지는
+   * 코드({@link TiberoDialect.NotFound#TABLE} — ORA-00942·JDBC-8033).
+   *
+   * <p>데이터셋 화면 API 가 존재 확인(findById) 뒤 데이터 테이블에 SQL 을 보내는 사이 삭제가 DROP 을 커밋하면 이 오류가 난다. 전역 처리기가 이를
+   * 「데이터셋 없음」(404)으로 바꿀지 판정하는 데 쓴다 — 어느 엔드포인트에서 번역할지는 호출자({@code TranslatesMissingDatasetTable})가
+   * 정한다. 원인 체인·연쇄 예외를 함께 보는 이유는 {@link #findSqlException} 참고.
+   *
+   * <p>Tibero 판정이 PG 예외를 빼는 이유는 {@link #isTiberoDataError} 와 같다(pgjdbc 는 벤더 코드를 늘 0 으로 둔다).
+   */
+  public static boolean isUndefinedTable(Throwable e) {
+    return findSqlException(
+            e,
+            x ->
+                x instanceof PSQLException
+                    ? UNDEFINED_TABLE.equals(x.getSQLState())
+                    : UNDEFINED_TABLE.equals(TiberoDialect.sqlState(x.getErrorCode())))
+        != null;
+  }
+
   /**
    * 원인 체인(getCause)과 각 SQLException 의 연쇄 예외(getNextException)에서 PostgreSQL 서버 구조화 오류(SQLState·제약
    * 이름·세부)를 찾는다(없으면 null). 배치 실행은 바깥 BatchUpdateException 이 제약 이름 없이 오고 실제 오류는 연쇄 예외에 있어 둘 다 본다.
