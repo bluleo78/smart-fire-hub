@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { rolesApi } from '../../api/roles';
 import { usersApi } from '../../api/users';
 import { EditConflictDialog } from '../../components/EditConflictDialog';
+import { DetailPageTitle } from '../../components/PageTitleSync';
 import { ResourceNotFound } from '../../components/ResourceNotFound';
 import {
   AlertDialog,
@@ -333,6 +334,8 @@ function UserDetailView() {
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
+      {/* 탭 제목에 서버에서 불러온 저장된 이름을 붙인다 (WD-534) */}
+      <DetailPageTitle name={user.name} />
       <div className="flex items-center gap-4">
         {/* 사용자 목록으로 돌아가는 뒤로가기 버튼 — 접근성 보강 (#102)
             (#636) navigate() 직접 호출 대신 requestNavigate 사용 — dirty 상태면 이탈 가드 다이얼로그를 띄운다 */}

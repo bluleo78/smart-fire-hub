@@ -25,6 +25,7 @@ import { useNavigate,useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { DashboardWidgetCard } from '../../components/analytics/DashboardWidgetCard';
+import { DetailPageTitle } from '../../components/PageTitleSync';
 import { ResourceNotFound } from '../../components/ResourceNotFound';
 import {
   AlertDialog,
@@ -716,6 +717,8 @@ export default function DashboardEditorPage() {
   return (
     // 인쇄(WD-424): 화면 높이에 맞춘 h-full·flex 를 풀어 위젯 격자 전체가 종이에 이어서 찍히게 한다
     <div ref={containerRef} className="flex flex-col h-full min-h-0 bg-background print:block print:h-auto">
+      {/* 탭 제목에 서버에서 불러온 저장된 이름을 붙인다 (WD-534) */}
+      <DetailPageTitle name={dashboard.name} />
       {/* Toolbar — 인쇄에서는 이름·설명·인쇄 시각만 남기고 「←」·배지·조작 버튼은 숨긴다(WD-424) */}
       {/* 좁은 화면에서는 버튼 묶음이 다음 줄로 내려가 이름이 읽히고 「완료」·「편집 취소」가 화면 밖으로 밀리지 않는다(WD-321) */}
       <div className="flex flex-wrap items-center gap-2 px-4 py-2 border-b shrink-0 bg-background">

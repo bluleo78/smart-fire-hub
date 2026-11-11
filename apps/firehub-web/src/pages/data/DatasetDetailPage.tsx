@@ -19,6 +19,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { Breadcrumb } from '../../components/layout/Breadcrumb';
+import { DetailPageTitle } from '../../components/PageTitleSync';
 import { ResourceNotFound } from '../../components/ResourceNotFound';
 import { TruncatedTitle } from '../../components/TruncatedTitle';
 import { Badge } from '../../components/ui/badge';
@@ -369,6 +370,8 @@ export default function DatasetDetailPage() {
      * 높이가 main에 고정돼 내용이 잘린다 — 그래서 탭별로 갈라 적용한다.
      */
     <div className={fillsHeight ? 'flex h-full min-h-0 flex-col gap-6' : 'space-y-6'}>
+      {/* 탭 제목에 서버에서 불러온 저장된 이름을 붙인다 (WD-534) */}
+      <DetailPageTitle name={dataset.name} />
       <div className={fillsHeight ? 'shrink-0' : undefined}>
         {/* 상위 경로 표시용 breadcrumb (#101) — 사용자가 현재 위치를 인지하고 상위 목록으로 빠르게 이동할 수 있도록 함 */}
         <Breadcrumb

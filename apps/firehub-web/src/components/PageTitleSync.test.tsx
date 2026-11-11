@@ -3,7 +3,7 @@ import { useEffect } from 'react';
 import { MemoryRouter, useNavigate } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
 
-import { PageTitleOverride, PageTitleSync } from './PageTitleSync';
+import { DetailPageTitle, PageTitleOverride, PageTitleSync } from './PageTitleSync';
 
 /**
  * PageTitleSync + PageTitleOverride 단위 테스트 (WD-580).
@@ -57,5 +57,69 @@ describe('PageTitleSync', () => {
 
     rerender(<Harness path="/" />);
     expect(document.title).toBe('Smart Fire Hub');
+  });
+});
+
+/**
+ * DetailPageTitle 단위 테스트 (WD-534).
+ * 상세 화면이 불러온 리소스 이름을 「리소스 이름 · 섹션 이름 · 브랜드명」으로 걸고, 이름이 없거나 공백뿐이면 섹션 제목에 머물며,
+ * 이름이 바뀌면 따라가고(저장 후 refetch·다른 id), 언마운트(목록으로 이동)하면 섹션/목록 제목으로 돌아가는지 확인한다.
+ */
+function DetailHarness({ path, name, mounted = true }: { path: string; name?: string | null; mounted?: boolean }) {
+  return (
+    <MemoryRouter initialEntries={[path]}>
+      <NavigateCapture />
+      <PageTitleSync />
+      {mounted && <DetailPageTitle name={name} />}
+    </MemoryRouter>
+  );
+}
+
+describe('DetailPageTitle', () => {
+  it('이름이 있으면 「리소스 이름 · 섹션 이름 · 브랜드명」', () => {
+    render(<DetailHarness path="/data/datasets/1" name="화재 출동 기록" />);
+    expect(document.title).toBe('화재 출동 기록 · 데이터셋 · Smart Fire Hub');
+  });
+
+  it.each([[undefined], [null], [''], ['   ']])('이름이 %j 이면 섹션 제목에 머문다', (name) => {
+    render(<DetailHarness path="/pipelines/7" name={name} />);
+    expect(document.title).toBe('파이프라인 · Smart Fire Hub');
+  });
+
+  it('이름을 불러오면 섹션 제목에서 리소스 제목으로 바뀌고, 이름이 바뀌면 따라간다', () => {
+    const { rerender } = render(<DetailHarness path="/admin/users/2" name={undefined} />);
+    expect(document.title).toBe('사용자 관리 · Smart Fire Hub');
+
+    rerender(<DetailHarness path="/admin/users/2" name="홍길동" />);
+    expect(document.title).toBe('홍길동 · 사용자 관리 · Smart Fire Hub');
+
+    // 저장으로 이름이 바뀌거나 다른 id 로 옮겨 가면 이전 이름이 남지 않아야 한다
+    rerender(<DetailHarness path="/admin/users/2" name="김철수" />);
+    expect(document.title).toBe('김철수 · 사용자 관리 · Smart Fire Hub');
+  });
+
+  it('이름이 여러 번 바뀐 뒤 언마운트돼도 이전 이름이 남지 않는다', () => {
+    // 이름이 바뀔 때마다 이전 덮어쓰기가 풀리지 않으면 저장소에 쌓여, 언마운트 뒤에도 옛 이름이 제목에 남는다
+    const { rerender } = render(<DetailHarness path="/admin/users/2" name="홍길동" />);
+    rerender(<DetailHarness path="/admin/users/2" name="김철수" />);
+    rerender(<DetailHarness path="/admin/users/2" name="이영희" />);
+    expect(document.title).toBe('이영희 · 사용자 관리 · Smart Fire Hub');
+
+    rerender(<DetailHarness path="/admin/users/2" name="이영희" mounted={false} />);
+    expect(document.title).toBe('사용자 관리 · Smart Fire Hub');
+  });
+
+  it('라우트 표에 없는 경로에서는 리소스 이름을 붙이지 않는다', () => {
+    render(<DetailHarness path="/no-such-route/1" name="화재 출동 기록" />);
+    expect(document.title).toBe('페이지를 찾을 수 없음 · Smart Fire Hub');
+  });
+
+  it('언마운트되면(목록으로 이동) 경로 기반 제목으로 돌아간다', () => {
+    const { rerender } = render(<DetailHarness path="/data/datasets/1" name="화재 출동 기록" />);
+    expect(document.title).toBe('화재 출동 기록 · 데이터셋 · Smart Fire Hub');
+
+    act(() => navigateRef?.('/data/datasets'));
+    rerender(<DetailHarness path="/data/datasets/1" name="화재 출동 기록" mounted={false} />);
+    expect(document.title).toBe('데이터셋 · Smart Fire Hub');
   });
 });

@@ -1,8 +1,8 @@
-import { useEffect, useSyncExternalStore } from 'react';
+import { memo, useEffect, useSyncExternalStore } from 'react';
 import { useLocation } from 'react-router-dom';
 
 import { useBranding } from '@/hooks/useBranding';
-import { composePageTitle, resolvePageLabel } from '@/lib/page-title';
+import { composeDetailLabel, composePageTitle, NOT_FOUND_TITLE, resolvePageLabel } from '@/lib/page-title';
 import {
   getPageTitleOverride,
   pushPageTitleOverride,
@@ -38,3 +38,19 @@ export function PageTitleOverride({ label }: { label: string }) {
   useEffect(() => pushPageTitleOverride(label), [label]);
   return null;
 }
+
+/**
+ * 상세 화면에서 탭 제목을 「리소스 이름 · 섹션 이름 · 브랜드명」으로 바꾼다 (WD-534).
+ *
+ * 섹션 이름은 WD-580 의 라우트 표(resolvePageLabel)에서 얻어 화면 이름을 한 곳에서만 관리한다.
+ * name 에는 편집 중인 입력값이 아니라 서버에서 불러온 저장된 이름을 넘긴다(입력할 때마다 탭 제목이 바뀌지 않게).
+ * 홈·라우트 표에 없는 경로(404)에는 이름을 붙이지 않는다 — 「이름 · 페이지를 찾을 수 없음」 같은 제목을 막는다.
+ * 편집기 페이지는 입력마다 다시 그려지므로 memo 로 감싸 이름이 그대로면 경로 표 탐색을 건너뛴다.
+ */
+export const DetailPageTitle = memo(function DetailPageTitle({ name }: { name?: string | null }) {
+  const { pathname } = useLocation();
+  const section = resolvePageLabel(pathname);
+  const hasName = !!name?.trim();
+  if (!hasName || !section || section === NOT_FOUND_TITLE) return null;
+  return <PageTitleOverride label={composeDetailLabel(name, section)} />;
+});

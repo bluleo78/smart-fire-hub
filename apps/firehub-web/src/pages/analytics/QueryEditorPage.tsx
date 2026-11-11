@@ -27,6 +27,7 @@ import { analyticsApi } from '../../api/analytics';
 import { exportsApi } from '../../api/exports';
 import { SharedReadOnlyNotice } from '../../components/analytics/SharedReadOnlyNotice';
 import { EditConflictDialog } from '../../components/EditConflictDialog';
+import { DetailPageTitle } from '../../components/PageTitleSync';
 import { ResourceNotFound } from '../../components/ResourceNotFound';
 import { TruncatedTitle } from '../../components/TruncatedTitle';
 import { Badge } from '../../components/ui/badge';
@@ -807,6 +808,8 @@ export default function QueryEditorPage() {
 
   return (
     <div className="flex flex-col h-[calc(100vh-120px)] min-h-0 gap-0">
+      {/* 탭 제목에 서버에서 불러온 저장된 이름을 붙인다 (WD-534) */}
+      <DetailPageTitle name={savedQuery?.name} />
       {/* Toolbar */}
       <div className="flex items-center gap-3 pb-4 flex-wrap">
         <Button
