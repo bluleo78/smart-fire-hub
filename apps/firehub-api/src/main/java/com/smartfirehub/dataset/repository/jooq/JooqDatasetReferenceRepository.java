@@ -6,6 +6,8 @@ import com.smartfirehub.analytics.repository.jooq.JooqAnalyticsDashboardReposito
 import com.smartfirehub.dataset.dto.DatasetDetailResponse;
 import com.smartfirehub.dataset.dto.DatasetReferencesResponse;
 import com.smartfirehub.dataset.repository.DatasetReferenceRepository;
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
+import com.smartfirehub.global.util.LikePatternUtils;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
@@ -22,6 +24,7 @@ import org.springframework.stereotype.Repository;
  * 본문 대조(파서 판정)는 서비스에 남기고, 여기서는 1차로 거른 후보 행만 돌려준다.
  */
 @Repository
+@ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
 public class JooqDatasetReferenceRepository implements DatasetReferenceRepository {
 
@@ -126,7 +129,7 @@ public class JooqDatasetReferenceRepository implements DatasetReferenceRepositor
         .join(table(name("pipeline_step")))
         .on(pipelineId.eq(field(name("pipeline_step", "pipeline_id"), Long.class)))
         .where(field(name("pipeline_step", "script_type"), String.class).eq("SQL"))
-        .and(script.likeIgnoreCase(containsPattern(tableName), '\\'))
+        .and(script.likeIgnoreCase(LikePatternUtils.containsPattern(tableName), '\\'))
         .fetch()
         .map(r -> new PipelineSqlCandidate(r.get(pipelineId), r.get(pipelineName), r.get(script)));
   }
@@ -187,7 +190,7 @@ public class JooqDatasetReferenceRepository implements DatasetReferenceRepositor
         .on(
             field(name("chart", "saved_query_id"), Long.class)
                 .eq(field(name("saved_query", "id"), Long.class)))
-        .where(sqlText.likeIgnoreCase(containsPattern(tableName), '\\'))
+        .where(sqlText.likeIgnoreCase(LikePatternUtils.containsPattern(tableName), '\\'))
         .fetch()
         .map(
             r ->
@@ -229,13 +232,5 @@ public class JooqDatasetReferenceRepository implements DatasetReferenceRepositor
                     r.get(field(name("pipeline_trigger", "name"), String.class)),
                     r.get(field(name("pipeline", "id"), Long.class)),
                     r.get(field(name("pipeline", "name"), String.class))));
-  }
-
-  /**
-   * {@code ILIKE} 부분 일치 패턴 — 테이블 이름의 {@code _} 는 LIKE 와일드카드라 이스케이프한다(안 하면 1차 거르기가 넓어질 뿐 결과는 같다).
-   */
-  private static String containsPattern(String tableName) {
-    String escaped = tableName.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
-    return "%" + escaped + "%";
   }
 }

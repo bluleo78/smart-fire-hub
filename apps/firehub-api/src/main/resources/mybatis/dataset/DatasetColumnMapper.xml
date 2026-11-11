@@ -1,0 +1,165 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  dataset_column 문장(WD-707) — JooqDatasetColumnRepository 와 같은 의미. 테넌트 정책(RLS) 대상이라 tenant_id 를 쓰지 않는다
+  (복원 INSERT 도 정책 기본값이 채운다). 불리언 열은 PG boolean·Tibero NUMBER(1) 이라 공용 조각 sqlTrue/sqlFalse·boolLiteral 리터럴로 쓰고
+  읽을 때는 JDBC getBoolean 으로 받는다. IN 목록은 구현이 500 개씩 나눈 청크(Tibero 1000 개 상한)를 공용 조각 inChunks 로 잇는다.
+  정렬은 column_order + id (같은 순번 행의 순서를 고정 — jOOQ 판에도 같은 꼬리표를 붙였다).
+  빈 문자열: 변환하지 않는다 — Tibero 는 '' 를 NULL 로 저장(display_name·description 은 null 로 돌아옴).
+-->
+<mapper namespace="com.smartfirehub.dataset.repository.mybatis.DatasetColumnMapper">
+
+  <resultMap id="columnRow" type="com.smartfirehub.dataset.dto.DatasetColumnResponse">
+    <constructor>
+      <idArg column="id" javaType="java.lang.Long"/>
+      <arg column="column_name" javaType="java.lang.String"/>
+      <arg column="display_name" javaType="java.lang.String"/>
+      <arg column="data_type" javaType="java.lang.String"/>
+      <arg column="max_length" javaType="java.lang.Integer"/>
+      <arg column="is_nullable" javaType="_boolean"/>
+      <arg column="is_indexed" javaType="_boolean"/>
+      <arg column="description" javaType="java.lang.String"/>
+      <arg column="column_order" javaType="_int"/>
+      <arg column="is_primary_key" javaType="_boolean"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="snapshotRow" type="com.smartfirehub.dataset.dto.DatasetColumnSnapshot">
+    <constructor>
+      <idArg column="id" javaType="java.lang.Long"/>
+      <arg column="dataset_id" javaType="java.lang.Long"/>
+      <arg column="column_name" javaType="java.lang.String"/>
+      <arg column="display_name" javaType="java.lang.String"/>
+      <arg column="data_type" javaType="java.lang.String"/>
+      <arg column="is_nullable" javaType="java.lang.Boolean"/>
+      <arg column="is_indexed" javaType="java.lang.Boolean"/>
+      <arg column="description" javaType="java.lang.String"/>
+      <arg column="column_order" javaType="java.lang.Integer"/>
+      <arg column="max_length" javaType="java.lang.Integer"/>
+      <arg column="is_primary_key" javaType="java.lang.Boolean"/>
+      <arg column="tenant_id" javaType="java.lang.Long"/>
+      <arg column="is_searchable" javaType="java.lang.Boolean"/>
+    </constructor>
+  </resultMap>
+
+  <sql id="columnList">c.id, c.column_name, c.display_name, c.data_type, c.max_length, c.is_nullable, c.is_indexed,
+    c.description, c.column_order, c.is_primary_key</sql>
+
+  <select id="selectByDatasetId" resultMap="columnRow">
+    SELECT <include refid="columnList"/> FROM dataset_column c
+     WHERE c.dataset_id = #{datasetId}
+     ORDER BY c.column_order, c.id
+  </select>
+
+  <select id="selectById" resultMap="columnRow">
+    SELECT <include refid="columnList"/> FROM dataset_column c WHERE c.id = #{id}
+  </select>
+
+  <insert id="insert" useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+    INSERT INTO dataset_column
+      (dataset_id, column_name, display_name, data_type, max_length, is_nullable, is_indexed, description, column_order, is_primary_key)
+    VALUES (#{datasetId}, #{columnName}, #{displayName,jdbcType=VARCHAR}, #{dataType}, #{maxLength,jdbcType=INTEGER},
+      <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.boolLiteral"><property name="v" value="isNullable"/></include>,
+      <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.boolLiteral"><property name="v" value="isIndexed"/></include>,
+      #{description,jdbcType=VARCHAR}, #{columnOrder},
+      <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.boolLiteral"><property name="v" value="isPrimaryKey"/></include>)
+  </insert>
+
+  <!-- column_order = column_order 는 jOOQ 판의 id = id 와 같은 역할(SET 절이 비지 않게 하는 무변경 대입). -->
+  <update id="update">
+    UPDATE dataset_column
+       SET column_order = column_order
+      <if test="displayName != null">, display_name = #{displayName}</if>
+      <if test="isIndexed != null">, is_indexed = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.boolLiteral"><property name="v" value="isIndexed"/></include></if>
+      <if test="description != null">, description = #{description}</if>
+      <if test="columnName != null">, column_name = #{columnName}</if>
+      <if test="dataType != null">, data_type = #{dataType}</if>
+      <choose>
+        <when test="clearMaxLength">, max_length = NULL</when>
+        <when test="maxLength != null">, max_length = #{maxLength}</when>
+      </choose>
+      <if test="isNullable != null">, is_nullable = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.boolLiteral"><property name="v" value="isNullable"/></include></if>
+      <if test="isPrimaryKey != null">, is_primary_key = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.boolLiteral"><property name="v" value="isPrimaryKey"/></include></if>
+     WHERE id = #{id}
+  </update>
+
+  <select id="selectMaxOrder" resultType="java.lang.Integer">
+    SELECT MAX(c.column_order) FROM dataset_column c WHERE c.dataset_id = #{datasetId}
+  </select>
+
+  <delete id="deleteByDatasetId">
+    DELETE FROM dataset_column WHERE dataset_id = #{datasetId}
+  </delete>
+
+  <!-- 보관본이 모든 열을 담는다 — 예전 SELECT * 와 같은 열 집합을 이름으로 나열(열이 늘면 DatasetColumnSnapshot 과 함께 더한다). -->
+  <select id="selectSnapshotByDatasetId" resultMap="snapshotRow">
+    SELECT c.id, c.dataset_id, c.column_name, c.display_name, c.data_type, c.is_nullable, c.is_indexed, c.description,
+           c.column_order, c.max_length, c.is_primary_key, c.tenant_id, c.is_searchable
+      FROM dataset_column c
+     WHERE c.dataset_id = #{datasetId}
+     ORDER BY c.column_order, c.id
+  </select>
+
+  <insert id="insertSnapshotRow">
+    INSERT INTO dataset_column
+      (id, dataset_id, column_name, display_name, data_type, is_nullable, is_indexed, description, column_order, max_length,
+       is_primary_key, is_searchable)
+    VALUES (#{id}, #{datasetId}, #{columnName}, #{displayName,jdbcType=VARCHAR}, #{dataType},
+      <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.boolLiteral"><property name="v" value="isNullable"/></include>,
+      <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.boolLiteral"><property name="v" value="isIndexed"/></include>,
+      #{description,jdbcType=VARCHAR}, #{columnOrder}, #{maxLength,jdbcType=INTEGER},
+      <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.boolLiteral"><property name="v" value="isPrimaryKey"/></include>,
+      <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.boolLiteral"><property name="v" value="isSearchable"/></include>)
+  </insert>
+
+  <select id="countByDatasetIdAndName" resultType="_int">
+    SELECT COUNT(*) FROM dataset_column c
+     WHERE c.dataset_id = #{datasetId} AND c.column_name = #{columnName}
+      <if test="excludeColumnId != null">AND c.id &lt;&gt; #{excludeColumnId}</if>
+  </select>
+
+  <select id="selectDatasetIdByColumnId" resultType="java.lang.Long">
+    SELECT c.dataset_id FROM dataset_column c WHERE c.id = #{columnId}
+  </select>
+
+  <delete id="deleteById">
+    DELETE FROM dataset_column WHERE id = #{id}
+  </delete>
+
+  <update id="clearPrimaryKeys">
+    UPDATE dataset_column
+       SET is_primary_key = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlFalse"/>
+     WHERE dataset_id = #{datasetId}
+  </update>
+
+  <update id="markPrimaryKeys">
+    UPDATE dataset_column
+       SET is_primary_key = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>
+     WHERE dataset_id = #{datasetId}
+       AND <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="id"/></include>
+  </update>
+
+  <update id="updateOrder">
+    UPDATE dataset_column SET column_order = #{order} WHERE id = #{id} AND dataset_id = #{datasetId}
+  </update>
+
+  <!--
+    설명이 비어 있지 않은 행만(두 DB 공용). LENGTH(description) &gt; 0 은 PG 에서 '' (길이 0)를, Tibero 에서는 '' 가 NULL 이라
+    LENGTH 도 NULL 이 되어 같은 행을 거른다 — &lt;&gt; '' 는 Tibero 에서 항상 UNKNOWN 이라 모든 행을 거르므로 쓰지 않는다(실측).
+    「첫」 행은 id 오름차순으로 고정(jOOQ 판에도 같은 정렬).
+  -->
+  <select id="selectFirstDescriptionByColumnName" resultType="java.lang.String">
+    SELECT c.description FROM dataset_column c
+     WHERE c.column_name = #{columnName}
+       AND c.dataset_id &lt;&gt; #{excludeDatasetId}
+       AND c.description IS NOT NULL
+       AND LENGTH(c.description) &gt; 0
+     ORDER BY c.id
+     <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.limitRows"><property name="n" value="1"/></include>
+  </select>
+
+  <update id="updateDescription">
+    UPDATE dataset_column SET description = #{description,jdbcType=VARCHAR} WHERE id = #{columnId}
+  </update>
+
+</mapper>

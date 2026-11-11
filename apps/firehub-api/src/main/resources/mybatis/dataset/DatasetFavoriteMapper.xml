@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  dataset_favorite 문장(WD-707) — JooqDatasetFavoriteRepository 와 같은 의미. 테넌트 정책(RLS) 대상이라 tenant_id 를 쓰지 않는다.
+  insertIfAbsent: PG ON CONFLICT DO NOTHING, Tibero MERGE(WHEN NOT MATCHED 만).
+-->
+<mapper namespace="com.smartfirehub.dataset.repository.mybatis.DatasetFavoriteMapper">
+
+  <select id="count" resultType="_int">
+    SELECT COUNT(*) FROM dataset_favorite f WHERE f.user_id = #{userId} AND f.dataset_id = #{datasetId}
+  </select>
+
+  <insert id="insertIfAbsent" databaseId="postgresql">
+    INSERT INTO dataset_favorite (user_id, dataset_id) VALUES (#{userId}, #{datasetId})
+    ON CONFLICT DO NOTHING
+  </insert>
+
+  <insert id="insertIfAbsent" databaseId="tibero">
+    MERGE INTO dataset_favorite t
+    USING (SELECT #{userId} AS u, #{datasetId} AS d FROM DUAL) s
+       ON (t.user_id = s.u AND t.dataset_id = s.d)
+    WHEN NOT MATCHED THEN INSERT (user_id, dataset_id) VALUES (s.u, s.d)
+  </insert>
+
+  <delete id="delete">
+    DELETE FROM dataset_favorite WHERE user_id = #{userId} AND dataset_id = #{datasetId}
+  </delete>
+
+  <select id="selectDatasetIds" resultType="java.lang.Long">
+    SELECT f.dataset_id FROM dataset_favorite f WHERE f.user_id = #{userId}
+  </select>
+
+  <!-- 데이터셋 목록 한 쪽의 즐겨찾기 표시용 — 사용자의 즐겨찾기 전체가 아니라 그 쪽의 id(청크) 가운데 즐겨찾기한 것만 읽는다. -->
+  <select id="selectDatasetIdsAmong" resultType="java.lang.Long">
+    SELECT f.dataset_id FROM dataset_favorite f
+     WHERE f.user_id = #{userId}
+       AND <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="f.dataset_id"/></include>
+  </select>
+
+</mapper>

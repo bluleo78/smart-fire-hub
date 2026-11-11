@@ -5,6 +5,7 @@ import com.smartfirehub.dataset.search.DatasetSearchHit;
 import com.smartfirehub.embedding.EmbeddingSpace;
 import com.smartfirehub.embedding.repository.VectorLiterals;
 import com.smartfirehub.embedding.repository.jooq.HnswSearch;
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.securitylevel.repository.DatasetAccessRepository;
 import java.util.List;
@@ -25,6 +26,7 @@ import org.springframework.stereotype.Repository;
  * <p>코사인 검색은 현재 공간의 차원 테이블만 보고(모델 필터), 트라이그램은 부모 source_text 그대로라 벡터가 없는 행도 키워드로 보인다(#713).
  */
 @Repository
+@ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
 public class JooqDatasetSearchRepository implements DatasetSearchRepository {
 

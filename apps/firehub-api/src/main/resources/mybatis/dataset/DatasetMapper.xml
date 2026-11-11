@@ -1,0 +1,306 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  dataset 문장(WD-707) — JooqDatasetRepository 와 같은 의미. 규칙은 MyBatisPlatformConfig javadoc.
+  테넌트 정책(RLS) 대상이라 tenant_id 를 INSERT 값·WHERE 술어로 쓰지 않는다(넣을 때는 DEFAULT 가 채운다).
+  가시성은 공유 조각 securitylevel/DatasetVisibility.xml(파라미터 이름 vis), 검색은 공용 조각 PlatformSql.likeIgnoreCase
+  (PG ILIKE 대체 — 패턴은 리포지토리가 LikePatternUtils.containsPattern 로 이스케이프), IN 목록은 공용 조각 PlatformSql.inChunks(500 개씩 나눈 청크를 OR 로 잇는다 — Tibero 1000 개 상한).
+  잠금 모드(스펙 D2): PG 는 jOOQ 와 같은 모드, Tibero 에는 KEY SHARE·NO KEY UPDATE·SHARE 가 없어 모두 FOR UPDATE(더 강한 잠금 —
+  동시 공유 잠금이 직렬화되지만 정확성은 지킨다). 아래 lock* 조각이 databaseId 로 가른다.
+  빈 문자열: 변환하지 않는다 — Tibero 는 '' 를 NULL 로 저장(description·status_note 는 null 로 돌아옴).
+-->
+<mapper namespace="com.smartfirehub.dataset.repository.mybatis.DatasetMapper">
+
+  <resultMap id="datasetRow" type="com.smartfirehub.dataset.repository.mybatis.DatasetRows$DatasetRow">
+    <constructor>
+      <idArg column="id" javaType="java.lang.Long"/>
+      <arg column="name" javaType="java.lang.String"/>
+      <arg column="table_name" javaType="java.lang.String"/>
+      <arg column="description" javaType="java.lang.String"/>
+      <arg column="storage_type" javaType="java.lang.String"/>
+      <arg column="origin_type" javaType="java.lang.String"/>
+      <arg column="created_at" javaType="java.time.LocalDateTime"/>
+      <arg column="status" javaType="java.lang.String"/>
+      <arg column="status_note" javaType="java.lang.String"/>
+      <arg column="status_updated_at" javaType="java.time.LocalDateTime"/>
+      <arg column="source_pipeline_step_id" javaType="java.lang.Long"/>
+      <arg column="security_level_id" javaType="java.lang.Long"/>
+      <arg column="security_level_auto_raised_at" javaType="java.time.LocalDateTime"/>
+      <arg column="category_id" javaType="java.lang.Long"/>
+      <arg column="category_name" javaType="java.lang.String"/>
+      <arg column="category_description" javaType="java.lang.String"/>
+      <arg column="status_user_name" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="tagRow" type="com.smartfirehub.dataset.repository.mybatis.DatasetRows$TagRow">
+    <constructor>
+      <arg column="dataset_id" javaType="java.lang.Long"/>
+      <arg column="tag_name" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="lockedRow" type="com.smartfirehub.dataset.repository.mybatis.DatasetRows$LockedRow">
+    <constructor>
+      <idArg column="id" javaType="java.lang.Long"/>
+      <arg column="updated_at" javaType="java.time.LocalDateTime"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="schemaRow" type="com.smartfirehub.dataset.repository.mybatis.DatasetRows$SchemaRow">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="name" javaType="java.lang.String"/>
+      <arg column="table_name" javaType="java.lang.String"/>
+      <arg column="storage_type" javaType="java.lang.String"/>
+      <arg column="column_name" javaType="java.lang.String"/>
+      <arg column="data_type" javaType="java.lang.String"/>
+      <arg column="display_name" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="writeTarget" type="com.smartfirehub.dataset.repository.DatasetWriteTarget">
+    <constructor>
+      <idArg column="id" javaType="java.lang.Long"/>
+      <arg column="name" javaType="java.lang.String"/>
+      <arg column="table_name" javaType="java.lang.String"/>
+      <arg column="storage_type" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="tableLevel" type="com.smartfirehub.dataset.repository.DatasetRepository$DatasetTableLevel">
+    <constructor>
+      <arg column="table_name" javaType="java.lang.String"/>
+      <arg column="security_level_id" javaType="java.lang.Long"/>
+    </constructor>
+  </resultMap>
+
+  <!-- 불리언 열은 PG boolean·Tibero NUMBER(1) — JDBC getBoolean 으로 읽는다. -->
+  <resultMap id="levelSummary" type="com.smartfirehub.securitylevel.dto.SecurityLevelSummary">
+    <constructor>
+      <idArg column="id" javaType="java.lang.Long"/>
+      <arg column="name" javaType="java.lang.String"/>
+      <arg column="rank" javaType="_int"/>
+      <arg column="allowlist_required" javaType="_boolean"/>
+      <arg column="export_policy" javaType="java.lang.String"/>
+      <arg column="ai_policy" javaType="java.lang.String"/>
+      <arg column="share_policy" javaType="java.lang.String"/>
+      <arg column="audit_access" javaType="_boolean"/>
+    </constructor>
+  </resultMap>
+
+  <!-- 잠금 절(스펙 D2). PG 는 jOOQ 판과 같은 모드, Tibero 는 모두 FOR UPDATE. -->
+  <sql id="lockKeyShare" databaseId="postgresql">FOR KEY SHARE</sql>
+  <sql id="lockKeyShare" databaseId="tibero">FOR UPDATE</sql>
+  <sql id="lockNoKeyUpdate" databaseId="postgresql">FOR NO KEY UPDATE</sql>
+  <sql id="lockNoKeyUpdate" databaseId="tibero">FOR UPDATE</sql>
+  <sql id="lockShare" databaseId="postgresql">FOR SHARE</sql>
+  <sql id="lockShare" databaseId="tibero">FOR UPDATE</sql>
+
+  <!--
+    목록 FROM·WHERE(findAll·count 공용) — jOOQ buildCondition 과 같은 조건. 가시성을 다른 필터보다 먼저 AND 하고(검색어·필터가 가시성을
+    넓힐 수 없다), 검색 OR 묶음은 괄호로 감싼다. 컬럼·태그 LEFT JOIN 은 행을 늘리므로 호출 문장이 DISTINCT·COUNT(DISTINCT) 로 걷는다.
+    컬럼·태그 조인은 검색어(pattern)가 있을 때만 건다 — 검색어 없는 목록·건수가 컬럼 수 × 태그 수만큼 행을 불렸다가 DISTINCT 로 다시 줄이지
+    않게 한다(결과는 같다). 카테고리 조인은 1:1 이라 행을 늘리지 않아 그대로 둔다.
+  -->
+  <sql id="listFromWhere">
+    FROM dataset d
+    <if test="pattern != null">
+      LEFT JOIN dataset_column dc ON dc.dataset_id = d.id
+      LEFT JOIN dataset_tag dt ON dt.dataset_id = d.id
+    </if>
+    LEFT JOIN dataset_category dcat ON dcat.id = d.category_id
+    <if test="favoriteUserId != null">
+      JOIN dataset_favorite df ON df.dataset_id = d.id AND df.user_id = #{favoriteUserId}
+    </if>
+    WHERE <include refid="com.smartfirehub.securitylevel.repository.mybatis.DatasetVisibility.visible">
+            <property name="idCol" value="d.id"/>
+            <property name="levelCol" value="d.security_level_id"/>
+          </include>
+    <if test="securityLevelId != null">AND d.security_level_id = #{securityLevelId}</if>
+    <if test="categoryId != null">AND d.category_id = #{categoryId}</if>
+    <if test="storageType != null">AND d.storage_type = #{storageType}</if>
+    <if test="originType != null">AND d.origin_type = #{originType}</if>
+    <if test="status != null">AND d.status = #{status}</if>
+    <if test="pattern != null">
+      AND (<include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.likeIgnoreCase"><property name="col" value="d.name"/></include>
+        OR <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.likeIgnoreCase"><property name="col" value="d.description"/></include>
+        OR <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.likeIgnoreCase"><property name="col" value="d.table_name"/></include>
+        OR <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.likeIgnoreCase"><property name="col" value="dc.column_name"/></include>
+        OR <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.likeIgnoreCase"><property name="col" value="dc.display_name"/></include>
+        OR <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.likeIgnoreCase"><property name="col" value="dc.description"/></include>
+        OR <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.likeIgnoreCase"><property name="col" value="dt.tag_name"/></include>
+        OR <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.likeIgnoreCase"><property name="col" value="dcat.name"/></include>)
+    </if>
+  </sql>
+
+  <select id="selectPageIds" resultType="java.lang.Long">
+    SELECT DISTINCT d.id <include refid="listFromWhere"/>
+     ORDER BY d.id
+     <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.pageClause"/>
+  </select>
+
+  <select id="countFiltered" resultType="_long">
+    SELECT COUNT(DISTINCT d.id) <include refid="listFromWhere"/>
+  </select>
+
+  <!-- 응답 행: 데이터셋 + 카테고리 + 상태 변경자 이름(N+1 제거용 조인, jOOQ 의 status_user 별칭과 같은 역할). -->
+  <sql id="rowSelect">
+    SELECT d.id, d.name, d.table_name, d.description, d.storage_type, d.origin_type, d.created_at, d.status, d.status_note,
+           d.status_updated_at, d.source_pipeline_step_id, d.security_level_id, d.security_level_auto_raised_at,
+           dcat.id AS category_id, dcat.name AS category_name, dcat.description AS category_description,
+           su.name AS status_user_name
+      FROM dataset d
+      LEFT JOIN dataset_category dcat ON dcat.id = d.category_id
+      LEFT JOIN <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.userTable"/> su ON su.id = d.status_updated_by
+  </sql>
+
+  <select id="selectByIds" resultMap="datasetRow">
+    <include refid="rowSelect"/>
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="d.id"/></include>
+     ORDER BY d.id
+  </select>
+
+  <select id="selectById" resultMap="datasetRow">
+    <include refid="rowSelect"/>
+     WHERE d.id = #{id}
+  </select>
+
+  <select id="selectTagsByDatasetIds" resultMap="tagRow">
+    SELECT t.dataset_id, t.tag_name FROM dataset_tag t
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="t.dataset_id"/></include>
+     ORDER BY t.tag_name
+  </select>
+
+  <select id="selectLevelSummaries" resultMap="levelSummary">
+    SELECT s.id, s.name, s.rank, s.allowlist_required, s.export_policy, s.ai_policy, s.share_policy, s.audit_access
+      FROM security_level s
+     ORDER BY s.rank
+  </select>
+
+  <select id="lockIdForUpdate" resultType="java.lang.Long">
+    SELECT d.id FROM dataset d WHERE d.id = #{id} FOR UPDATE
+  </select>
+
+  <select id="lockIdNoKeyUpdate" resultType="java.lang.Long">
+    SELECT d.id FROM dataset d WHERE d.id = #{id} <include refid="lockNoKeyUpdate"/>
+  </select>
+
+  <select id="lockIdShare" resultType="java.lang.Long">
+    SELECT d.id FROM dataset d WHERE d.id = #{id} <include refid="lockShare"/>
+  </select>
+
+  <!-- 잠금 + 쓰기 대상 읽기를 한 문장으로(WD-666). 조인이 없어 OF 절 없이도 데이터셋 행만 잠근다. -->
+  <sql id="writeTargetSelect">SELECT d.id, d.name, d.table_name, d.storage_type FROM dataset d</sql>
+
+  <select id="lockWriteTargetKeyShare" resultMap="writeTarget">
+    <include refid="writeTargetSelect"/> WHERE d.id = #{id} <include refid="lockKeyShare"/>
+  </select>
+
+  <select id="lockWriteTargetKeyShareByTableName" resultMap="writeTarget">
+    <include refid="writeTargetSelect"/> WHERE d.table_name = #{tableName} <include refid="lockKeyShare"/>
+  </select>
+
+  <select id="lockWriteTargetForUpdate" resultMap="writeTarget">
+    <include refid="writeTargetSelect"/> WHERE d.id = #{id} FOR UPDATE
+  </select>
+
+  <select id="lockWriteTargetNoKeyUpdate" resultMap="writeTarget">
+    <include refid="writeTargetSelect"/> WHERE d.id = #{id} <include refid="lockNoKeyUpdate"/>
+  </select>
+
+  <select id="lockUpdatedAt" resultMap="lockedRow">
+    SELECT d.id, d.updated_at FROM dataset d WHERE d.id = #{id} <include refid="lockNoKeyUpdate"/>
+  </select>
+
+  <!-- 출처 스텝은 값이 있을 때만 넣는다(jOOQ 판과 같다). tenant_id·security_level_id·status·created_at 은 DEFAULT·트리거가 채운다. -->
+  <insert id="insert" useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+    INSERT INTO dataset (name, table_name, description, category_id, storage_type, origin_type, created_by
+      <if test="sourcePipelineStepId != null">, source_pipeline_step_id</if>)
+    VALUES (#{name}, #{tableName}, #{description,jdbcType=VARCHAR}, #{categoryId,jdbcType=BIGINT}, #{storageType},
+      #{originType}, #{createdBy}
+      <if test="sourcePipelineStepId != null">, #{sourcePipelineStepId}</if>)
+  </insert>
+
+  <!-- jOOQ 판처럼 정렬 없이 한 행. -->
+  <select id="selectIdBySourcePipelineStepId" resultType="java.lang.Long">
+    SELECT d.id FROM dataset d WHERE d.source_pipeline_step_id = #{stepId}
+    <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.limitRows"><property name="n" value="1"/></include>
+  </select>
+
+  <update id="update">
+    UPDATE dataset
+       SET name = #{name}, description = #{description,jdbcType=VARCHAR}, category_id = #{categoryId,jdbcType=BIGINT},
+           updated_at = #{now}, updated_by = #{updatedBy,jdbcType=BIGINT}
+     WHERE id = #{id}
+  </update>
+
+  <update id="updateStatus">
+    UPDATE dataset
+       SET status = #{status,jdbcType=VARCHAR}, status_note = #{statusNote,jdbcType=VARCHAR},
+           status_updated_by = #{statusUpdatedBy,jdbcType=BIGINT}, status_updated_at = #{now}
+     WHERE id = #{id}
+  </update>
+
+  <delete id="deleteById">
+    DELETE FROM dataset WHERE id = #{id}
+  </delete>
+
+  <!-- 한 행만 보면 되므로 1행으로 자른 부분 질의를 센다(Tibero 는 FROM 없는 SELECT 가 없다). -->
+  <select id="countVisibleByName" resultType="_int">
+    SELECT COUNT(*) FROM (
+      SELECT d.id FROM dataset d
+       WHERE d.name = #{name}
+         AND <include refid="com.smartfirehub.securitylevel.repository.mybatis.DatasetVisibility.visible">
+               <property name="idCol" value="d.id"/>
+               <property name="levelCol" value="d.security_level_id"/>
+             </include>
+         <if test="excludeId != null">AND d.id &lt;&gt; #{excludeId}</if>
+      <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.limitRows"><property name="n" value="1"/></include>) x
+  </select>
+
+  <select id="countByTableName" resultType="_int">
+    SELECT COUNT(*) FROM (
+      SELECT d.id FROM dataset d WHERE d.table_name = #{tableName}
+      <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.limitRows"><property name="n" value="1"/></include>) x
+  </select>
+
+  <select id="selectTableNameById" resultType="java.lang.String">
+    SELECT d.table_name FROM dataset d WHERE d.id = #{id}
+  </select>
+
+  <select id="selectCreatedById" resultType="java.lang.Long">
+    SELECT d.created_by FROM dataset d WHERE d.id = #{id}
+  </select>
+
+  <select id="selectUpdatedAtById" resultType="java.time.LocalDateTime">
+    SELECT d.updated_at FROM dataset d WHERE d.id = #{id}
+  </select>
+
+  <select id="selectUpdatedById" resultType="java.lang.Long">
+    SELECT d.updated_by FROM dataset d WHERE d.id = #{id}
+  </select>
+
+  <!--
+    스키마 메타(WD-494) — 데이터셋 LEFT JOIN 컬럼 한 번의 조회. visibilitySql 은 호출자(DatasetAccessGuard.visibleSql)가 만든
+    별칭 d 기준 SQL 조각이라 ${} 로 이어 붙인다(사용자 입력이 아니다 — jOOQ 판의 plain SQL 과 같다). 조각을 괄호로 감싸 뒤 AND 와
+    우선순위가 섞이지 않게 한다. id 목록은 예전 문자열 IN 대신 바인드 청크(Tibero 1000 개 상한 — Review Focus 3), 빈 목록이면 inChunks 가 1=0 을 내 아무 행도 없다.
+  -->
+  <select id="selectSchemaMetaRows" resultMap="schemaRow">
+    SELECT d.id, d.name, d.table_name, d.storage_type, dc.column_name, dc.data_type, dc.display_name
+      FROM dataset d
+      LEFT JOIN dataset_column dc ON dc.dataset_id = d.id
+     WHERE (${visibilitySql})
+     <if test="chunks != null">AND <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="d.id"/></include></if>
+     ORDER BY d.table_name, d.id, dc.column_order
+  </select>
+
+  <select id="selectTableLevels" resultMap="tableLevel">
+    SELECT d.table_name, d.security_level_id FROM dataset d
+     WHERE <choose>
+             <when test="onlyTable == null">d.table_name IS NOT NULL</when>
+             <otherwise>d.table_name = #{onlyTable}</otherwise>
+           </choose>
+  </select>
+
+</mapper>

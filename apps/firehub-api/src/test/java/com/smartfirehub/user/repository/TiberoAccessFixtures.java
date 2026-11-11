@@ -8,6 +8,7 @@ import java.sql.Types;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Supplier;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
@@ -26,6 +27,9 @@ public class TiberoAccessFixtures implements AccessFixtures {
   private final List<String> systemSettingKeys = new ArrayList<>();
   private final List<Long> platformRoles = new ArrayList<>();
   private final List<Long> auditLogs = new ArrayList<>();
+
+  /** 픽스처 데이터셋의 만든 이(처음 쓸 때 만든다). */
+  private Long datasetCreatorId;
 
   public TiberoAccessFixtures(TiberoPlatformSchema poc) {
     this.poc = poc;
@@ -324,6 +328,328 @@ public class TiberoAccessFixtures implements AccessFixtures {
   }
 
   @Override
+  public long createDataset(long tenantId, String name) {
+    // 소유자 세션이라 tenant_id 는 직접 넣는다. security_level_id 는 빼서 기본 등급 트리거가 채운다. created_by 는 "USER" FK 라
+    // 픽스처 전용 사용자를 한 번 만들어 쓰고, table_name 은 (테넌트, table_name) 유일 색인용 무작위 ASCII.
+    long creator = datasetCreator();
+    return poc.insertReturningId(
+        "INSERT INTO dataset (tenant_id, name, table_name, created_by, storage_type, origin_type)"
+            + " VALUES (?, ?, ?, ?, 'TABLE', 'SOURCE')",
+        tenantId,
+        name,
+        PgAccessFixtures.randomTableName(),
+        creator);
+  }
+
+  @Override
+  public long createCategory(long tenantId, String name) {
+    return poc.insertReturningId(
+        "INSERT INTO dataset_category (tenant_id, name) VALUES (?, ?)", tenantId, name);
+  }
+
+  @Override
+  public void assignCategory(long datasetId, long categoryId) {
+    poc.jdbc().update("UPDATE dataset SET category_id = ? WHERE id = ?", categoryId, datasetId);
+  }
+
+  @Override
+  public long createColumn(long datasetId, String name, int order) {
+    // 호출자는 테넌트를 넘기지 않는다 — 데이터셋 행의 테넌트를 소유자로 읽어 그대로 넣는다(소유자 세션에는 DEFAULT 가 없다).
+    long tenantId =
+        poc.jdbc()
+            .queryForObject("SELECT tenant_id FROM dataset WHERE id = ?", Long.class, datasetId);
+    return poc.insertReturningId(
+        "INSERT INTO dataset_column (tenant_id, dataset_id, column_name, data_type, column_order)"
+            + " VALUES (?, ?, ?, 'TEXT', ?)",
+        tenantId,
+        datasetId,
+        name,
+        order);
+  }
+
+  @Override
+  public void setColumnText(long columnId, String displayName, String description) {
+    // null 바인드는 타입을 밝혀야 드라이버가 받는다.
+    poc.jdbc()
+        .update(
+            "UPDATE dataset_column SET display_name = ?, description = ? WHERE id = ?",
+            new Object[] {displayName, description, columnId},
+            new int[] {java.sql.Types.VARCHAR, java.sql.Types.VARCHAR, java.sql.Types.BIGINT});
+  }
+
+  @Override
+  public void setDatasetField(long datasetId, String column, Object value) {
+    String col = PgAccessFixtures.datasetField(column);
+    if (value == null) {
+      poc.jdbc().update("UPDATE dataset SET " + col + " = NULL WHERE id = ?", datasetId);
+      return;
+    }
+    poc.jdbc().update("UPDATE dataset SET " + col + " = ? WHERE id = ?", value, datasetId);
+  }
+
+  @Override
+  public long datasetSecurityLevel(long datasetId) {
+    return poc.jdbc()
+        .queryForObject(
+            "SELECT security_level_id FROM dataset WHERE id = ?", Long.class, datasetId);
+  }
+
+  @Override
+  public void addTag(long datasetId, String tagName) {
+    long tenantId = datasetTenantOf(datasetId);
+    poc.jdbc()
+        .update(
+            "INSERT INTO dataset_tag (tenant_id, dataset_id, tag_name) VALUES (?, ?, ?)",
+            tenantId,
+            datasetId,
+            tagName);
+  }
+
+  @Override
+  public void addFavorite(long userId, long datasetId) {
+    long tenantId = datasetTenantOf(datasetId);
+    poc.jdbc()
+        .update(
+            "INSERT INTO dataset_favorite (tenant_id, user_id, dataset_id) VALUES (?, ?, ?)",
+            tenantId,
+            userId,
+            datasetId);
+  }
+
+  @Override
+  public long createPipeline(long tenantId, String name, boolean active) {
+    return poc.insertReturningId(
+        "INSERT INTO pipeline (tenant_id, name, is_active, created_by) VALUES (?, ?, ?, ?)",
+        tenantId,
+        name,
+        active ? 1 : 0,
+        datasetCreator());
+  }
+
+  @Override
+  public long createStep(
+      long pipelineId,
+      String name,
+      String scriptType,
+      String scriptContent,
+      Long outputDatasetId,
+      String loadStrategy) {
+    // 소유자 세션에는 tenant_id DEFAULT 가 없어 파이프라인 행의 테넌트를 읽어 넣는다. null 바인드는 타입을 밝혀야 드라이버가 받는다
+    // (script_content 는 CLOB — 긴 본문도 문자열 바인드로 넣는다).
+    long tenantId = ownerTenantOf("pipeline", pipelineId);
+    return insertWithBinder(
+        "INSERT INTO pipeline_step (tenant_id, pipeline_id, name, script_type, script_content,"
+            + " output_dataset_id, step_order, load_strategy) VALUES (?, ?, ?, ?, ?, ?, 0, ?)",
+        ps -> {
+          ps.setLong(1, tenantId);
+          ps.setLong(2, pipelineId);
+          ps.setString(3, name);
+          ps.setString(4, scriptType);
+          if (scriptContent == null) ps.setNull(5, Types.CLOB);
+          else ps.setString(5, scriptContent);
+          if (outputDatasetId == null) ps.setNull(6, Types.BIGINT);
+          else ps.setLong(6, outputDatasetId);
+          ps.setString(7, loadStrategy);
+        });
+  }
+
+  @Override
+  public void addStepInput(long stepId, long datasetId) {
+    poc.jdbc()
+        .update(
+            "INSERT INTO pipeline_step_input (tenant_id, step_id, dataset_id) VALUES (?, ?, ?)",
+            ownerTenantOf("pipeline_step", stepId),
+            stepId,
+            datasetId);
+  }
+
+  @Override
+  public long createTrigger(long pipelineId, String name, String triggerType, String configJson) {
+    return poc.insertReturningId(
+        "INSERT INTO pipeline_trigger (tenant_id, pipeline_id, trigger_type, name, config, created_by)"
+            + " VALUES (?, ?, ?, ?, ?, ?)",
+        ownerTenantOf("pipeline", pipelineId),
+        pipelineId,
+        triggerType,
+        name,
+        configJson,
+        datasetCreator());
+  }
+
+  @Override
+  public long createSavedQuery(long tenantId, Long datasetId, String sqlText) {
+    long creator = datasetCreator();
+    return insertWithBinder(
+        "INSERT INTO saved_query (tenant_id, name, sql_text, dataset_id, created_by)"
+            + " VALUES (?, 'fx-q', ?, ?, ?)",
+        ps -> {
+          ps.setLong(1, tenantId);
+          ps.setString(2, sqlText);
+          if (datasetId == null) ps.setNull(3, Types.BIGINT);
+          else ps.setLong(3, datasetId);
+          ps.setLong(4, creator);
+        });
+  }
+
+  @Override
+  public long createChart(long savedQueryId) {
+    return poc.insertReturningId(
+        "INSERT INTO chart (tenant_id, name, saved_query_id, chart_type, created_by)"
+            + " VALUES (?, 'fx-c', ?, 'BAR', ?)",
+        ownerTenantOf("saved_query", savedQueryId),
+        savedQueryId,
+        datasetCreator());
+  }
+
+  @Override
+  public long createDashboard(long tenantId, String name, long createdBy, boolean shared) {
+    return poc.insertReturningId(
+        "INSERT INTO dashboard (tenant_id, name, is_shared, created_by) VALUES (?, ?, ?, ?)",
+        tenantId,
+        name,
+        shared ? 1 : 0,
+        createdBy);
+  }
+
+  @Override
+  public void addWidget(long dashboardId, long chartId) {
+    poc.jdbc()
+        .update(
+            "INSERT INTO dashboard_widget (tenant_id, dashboard_id, chart_id) VALUES (?, ?, ?)",
+            ownerTenantOf("dashboard", dashboardId),
+            dashboardId,
+            chartId);
+  }
+
+  @Override
+  public String searchIndexConfigHash(long datasetId) {
+    return poc.jdbc()
+        .queryForObject(
+            "SELECT config_hash FROM dataset_search_index WHERE dataset_id = ?",
+            String.class,
+            datasetId);
+  }
+
+  @Override
+  public void setSearchLeaseFromDbNow(long datasetId, int seconds) {
+    // 플랫폼 TIMESTAMP 는 UTC 벽시계 — 운영 문장(dbNowPlusSeconds)과 같은 식으로 맞춘다.
+    poc.jdbc()
+        .update(
+            "UPDATE dataset_search_index SET sync_lease_until ="
+                + " SYS_EXTRACT_UTC(SYSTIMESTAMP) + NUMTODSINTERVAL(?, 'SECOND') WHERE dataset_id = ?",
+            seconds,
+            datasetId);
+  }
+
+  @Override
+  public java.time.Duration searchLeaseRemaining(long datasetId) {
+    // 둘 다 UTC 벽시계 TIMESTAMP 라 LocalDateTime 으로 읽어 그대로 뺀다(JVM 시간대와 무관).
+    return poc.jdbc()
+        .queryForObject(
+            "SELECT sync_lease_until, SYS_EXTRACT_UTC(SYSTIMESTAMP) AS db_now"
+                + " FROM dataset_search_index WHERE dataset_id = ?",
+            (rs, i) -> {
+              LocalDateTime lease = rs.getObject(1, LocalDateTime.class);
+              LocalDateTime now = rs.getObject(2, LocalDateTime.class);
+              return lease == null ? null : java.time.Duration.between(now, lease);
+            },
+            datasetId);
+  }
+
+  @Override
+  public void setSecurityLevelAiPolicy(long levelId, String aiPolicy) {
+    poc.jdbc().update("update security_level set ai_policy = ? where id = ?", aiPolicy, levelId);
+  }
+
+  @Override
+  public String embeddingSourceText(long datasetId) {
+    return poc
+        .jdbc()
+        .queryForList(
+            "select source_text from dataset_embedding where dataset_id = ?",
+            String.class,
+            datasetId)
+        .stream()
+        .findFirst()
+        .orElse(null);
+  }
+
+  @Override
+  public Long embeddingTenantId(long datasetId) {
+    return poc
+        .jdbc()
+        .queryForList(
+            "select tenant_id from dataset_embedding where dataset_id = ?", Long.class, datasetId)
+        .stream()
+        .findFirst()
+        .orElse(null);
+  }
+
+  @Override
+  public void setEmbeddingUpdatedAt(long datasetId, LocalDateTime updatedAt) {
+    poc.jdbc()
+        .update(
+            "update dataset_embedding set updated_at = ? where dataset_id = ?",
+            java.sql.Timestamp.valueOf(updatedAt),
+            datasetId);
+  }
+
+  @Override
+  public LocalDateTime embeddingUpdatedAt(long datasetId) {
+    return poc.jdbc()
+        .queryForObject(
+            "select updated_at from dataset_embedding where dataset_id = ?",
+            java.sql.Timestamp.class,
+            datasetId)
+        .toLocalDateTime();
+  }
+
+  /**
+   * PreparedStatement 바인드를 직접 거는 IDENTITY 삽입 — null 바인드에 타입(Types)을 밝혀야 할 때 쓴다(insertReturningId 는
+   * setObject).
+   */
+  private long insertWithBinder(String sql, StatementBinder binder) {
+    GeneratedKeyHolder keys = new GeneratedKeyHolder();
+    poc.jdbc()
+        .update(
+            con -> {
+              PreparedStatement ps = con.prepareStatement(sql, new String[] {"id"});
+              binder.bind(ps);
+              return ps;
+            },
+            keys);
+    Number key = keys.getKey();
+    if (key == null) throw new IllegalStateException("생성 키 없음: " + sql);
+    return key.longValue();
+  }
+
+  /** {@link #insertWithBinder} 의 바인드 콜백. */
+  @FunctionalInterface
+  private interface StatementBinder {
+    void bind(PreparedStatement ps) throws java.sql.SQLException;
+  }
+
+  /** 부모 행의 테넌트(소유자 시점). table 은 시험 코드의 고정 이름만 넘긴다(pipeline·pipeline_step·saved_query·dashboard). */
+  private long ownerTenantOf(String table, long id) {
+    return poc.jdbc()
+        .queryForObject("SELECT tenant_id FROM " + table + " WHERE id = ?", Long.class, id);
+  }
+
+  /** 데이터셋의 테넌트(소유자 시점). */
+  private long datasetTenantOf(long datasetId) {
+    return poc.jdbc()
+        .queryForObject("SELECT tenant_id FROM dataset WHERE id = ?", Long.class, datasetId);
+  }
+
+  /** 픽스처 데이터셋의 만든 이 — 처음 부를 때 한 번 만들고 정리 대상(users)에 올린다. */
+  private long datasetCreator() {
+    if (datasetCreatorId == null) {
+      datasetCreatorId = createUser("dsfx" + UUID.randomUUID().toString().substring(0, 12), null);
+    }
+    return datasetCreatorId;
+  }
+
+  @Override
   public long insertAuditLog(
       Long tenantId,
       String username,
@@ -428,6 +754,82 @@ public class TiberoAccessFixtures implements AccessFixtures {
   }
 
   @Override
+  public void setDataStoreUpdatedAt(long tenantId, LocalDateTime updatedAt) {
+    poc.jdbc()
+        .update(
+            "update tenant_data_store set updated_at = ? where tenant_id = ?",
+            java.sql.Timestamp.valueOf(updatedAt),
+            tenantId);
+  }
+
+  @Override
+  public LocalDateTime dataStoreUpdatedAt(long tenantId) {
+    return poc.jdbc()
+        .queryForObject(
+            "select updated_at from tenant_data_store where tenant_id = ?",
+            java.sql.Timestamp.class,
+            tenantId)
+        .toLocalDateTime();
+  }
+
+  @Override
+  public String dataStoreHost(long tenantId) {
+    return poc.jdbc()
+        .queryForObject(
+            "select host from tenant_data_store where tenant_id = ?", String.class, tenantId);
+  }
+
+  @Override
+  public <T> T withDataStoreRowLocked(long tenantId, Supplier<T> call) {
+    return poc.jdbc()
+        .execute(
+            (java.sql.Connection c) -> {
+              c.setAutoCommit(false);
+              try (java.sql.PreparedStatement ps =
+                  c.prepareStatement(
+                      "select tenant_id from tenant_data_store where tenant_id = ? for update")) {
+                ps.setLong(1, tenantId);
+                ps.executeQuery().close();
+                return call.get();
+              } finally {
+                // 문장 시간 제한으로 취소되면 Tibero 는 커넥션을 닫아 롤백이 실패할 수 있다 — 정리 실패는 무시한다.
+                try {
+                  c.rollback();
+                  c.setAutoCommit(true);
+                } catch (java.sql.SQLException closed) {
+                  // 이미 닫힌 커넥션
+                }
+              }
+            });
+  }
+
+  @Override
+  public boolean isDataStoreRowLockedByOther(long tenantId) {
+    return poc.jdbc()
+        .execute(
+            (java.sql.Connection c) -> {
+              c.setAutoCommit(false);
+              try (java.sql.PreparedStatement ps =
+                  c.prepareStatement(
+                      "select tenant_id from tenant_data_store where tenant_id = ? for update nowait")) {
+                ps.setLong(1, tenantId);
+                ps.executeQuery().close();
+                return false;
+              } catch (java.sql.SQLException timedOut) {
+                return true;
+              } finally {
+                // 문장 시간 제한으로 취소되면 Tibero 는 커넥션을 닫아 롤백이 실패할 수 있다 — 정리 실패는 무시한다.
+                try {
+                  c.rollback();
+                  c.setAutoCommit(true);
+                } catch (java.sql.SQLException closed) {
+                  // 이미 닫힌 커넥션
+                }
+              }
+            });
+  }
+
+  @Override
   public <T> T inTenant(Long tenantId, Supplier<T> call) {
     // 컨텍스트를 먼저 세운 뒤 트랜잭션을 연다(매니저가 시작 시점에 읽는다). 구현 클래스에 @Transactional 이 없으므로(jOOQ 와 같음 — 호출자 트랜잭션에
     // 참여) 호출자 역할을 하는 이 테스트가 트랜잭션을 연다.
@@ -464,6 +866,11 @@ public class TiberoAccessFixtures implements AccessFixtures {
       poc.jdbc().update("DELETE FROM audit_log WHERE tenant_id = ?", t);
       poc.jdbc().update("DELETE FROM async_job WHERE tenant_id = ?", t);
       poc.jdbc().update("DELETE FROM dataset_access_grant WHERE tenant_id = ?", t);
+      // 대시보드·저장 쿼리·파이프라인은 사용자(created_by)를 참조하고, 스텝의 output_dataset_id 는 ON DELETE 없는 데이터셋 FK
+      // 라 데이터셋보다 먼저 지운다. 위젯·차트·스텝·스텝 입력·트리거는 FK CASCADE 로 함께 사라진다.
+      poc.jdbc().update("DELETE FROM dashboard WHERE tenant_id = ?", t);
+      poc.jdbc().update("DELETE FROM saved_query WHERE tenant_id = ?", t);
+      poc.jdbc().update("DELETE FROM pipeline WHERE tenant_id = ?", t);
       poc.jdbc().update("DELETE FROM dataset WHERE tenant_id = ?", t);
       poc.jdbc().update("DELETE FROM tenant_settings WHERE tenant_id = ?", t);
       poc.jdbc().update("DELETE FROM role_permission WHERE tenant_id = ?", t);

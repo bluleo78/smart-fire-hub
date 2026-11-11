@@ -1,0 +1,187 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  dataset_search_index 문장(WD-707) — JooqSearchIndexStateRepository 와 같은 의미. 규칙은 MyBatisPlatformConfig javadoc,
+  공용 조각은 mybatis/common/PlatformSql.xml. 테넌트 정책(RLS) 대상이라 tenant_id 를 쓰지 않는다(DEFAULT 가 채우고 정책이 좁힌다).
+
+  벤더 차이:
+  - now() → PlatformSql.dbNow(Tibero 는 UTC 벽시계 SYS_EXTRACT_UTC(SYSTIMESTAMP)). 임대는 dbNowPlusSeconds 로 DB 시계 기준.
+  - ?::timestamptz → Instant 바인딩(Tibero 전역 UtcInstantTypeHandler 가 UTC 벽시계로, PG 기본 핸들러가 순간으로) — JVM 시간대 무관.
+  - IS [NOT] DISTINCT FROM → PlatformSql.nullSafeEquals / nullSafeDistinct.
+  - config_hash = '' (빈 해시 = 강제 전체 재색인): Tibero 기준선은 NOT NULL·DEFAULT '' 를 뺐고 '' 는 NULL 로 저장된다.
+    이 문장들은 config_hash 를 비교하지 않으며(서비스가 자바에서 비교), 읽기에서 리포지토리가 NULL 을 "" 로 맞춘다.
+  - createIfAbsent: PG 는 ON CONFLICT DO NOTHING, Tibero 는 MERGE(WHEN NOT MATCHED) — 리포지토리가 Tibero 중복 키를 「이미 있음」으로 본다.
+-->
+<mapper namespace="com.smartfirehub.dataset.repository.mybatis.SearchIndexStateMapper">
+
+  <resultMap id="stateRow" type="com.smartfirehub.dataset.repository.mybatis.SearchIndexStateMapper$Row">
+    <constructor>
+      <idArg column="dataset_id" javaType="_long"/>
+      <arg column="status" javaType="java.lang.String"/>
+      <arg column="config_hash" javaType="java.lang.String"/>
+      <arg column="embedding_model" javaType="java.lang.String"/>
+      <arg column="embedding_dim" javaType="java.lang.Integer"/>
+      <arg column="source_table_oid" javaType="java.lang.Long"/>
+      <arg column="sync_cursor" javaType="java.time.Instant"/>
+      <arg column="pass_cursor" javaType="java.time.Instant"/>
+      <arg column="resume_after_id" javaType="java.lang.Long"/>
+      <arg column="indexed_rows" javaType="_long"/>
+      <arg column="total_rows" javaType="_long"/>
+      <arg column="consecutive_failures" javaType="_int"/>
+      <arg column="last_synced_at" javaType="java.time.Instant"/>
+      <arg column="last_error" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <!-- 백오프·오류 해제(재시도 즉시 허용) — 수동 재색인과 설정 변경 직후가 함께 쓴다(jOOQ CLEAR_BACKOFF). -->
+  <sql id="clearBackoff">consecutive_failures = 0, next_attempt_at = NULL, last_error = NULL,</sql>
+
+  <!-- 패스 진행 위치 초기화(책갈피·재개 위치·진행률 분자) — 전체 재색인과 swap 재구축이 함께 쓴다(jOOQ RESET_PASS). -->
+  <sql id="resetPass">sync_cursor = NULL, pass_cursor = NULL, resume_after_id = NULL, indexed_rows = 0,</sql>
+
+  <!-- 색인 진행 중 표시 + 갱신 시각(SET 절 꼬리) — SYNCING 으로 바꾸는 문장들이 함께 쓴다(백오프 해제 여부는 문장마다 clearBackoff 로 따로 정한다). -->
+  <sql id="touchSyncing">status = 'SYNCING', updated_at = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/></sql>
+
+  <select id="selectByDatasetId" resultMap="stateRow">
+    SELECT dataset_id, status, config_hash, embedding_model, embedding_dim, source_table_oid,
+           sync_cursor, pass_cursor, resume_after_id, indexed_rows, total_rows, consecutive_failures,
+           last_synced_at, last_error
+      FROM dataset_search_index
+     WHERE dataset_id = #{datasetId}
+  </select>
+
+  <insert id="insertIfAbsent" databaseId="postgresql">
+    INSERT INTO dataset_search_index (dataset_id) VALUES (#{datasetId}) ON CONFLICT (dataset_id) DO NOTHING
+  </insert>
+
+  <!--
+    Tibero 에는 ON CONFLICT 가 없어 MERGE(WHEN NOT MATCHED 만)로 「없을 때만 넣기」를 한다. config_hash 는 기본값이 없어 NULL(= 빈 해시)로 들어간다.
+    동시 첫 삽입이나 RLS 로 안 보이는 다른 테넌트 행과 PK 가 겹치면 중복 키 오류가 나는데, 리포지토리가 PG DO NOTHING 처럼 무시한다.
+  -->
+  <insert id="insertIfAbsent" databaseId="tibero">
+    MERGE INTO dataset_search_index t
+    USING (SELECT #{datasetId} AS d FROM DUAL) s
+       ON (t.dataset_id = s.d)
+    WHEN NOT MATCHED THEN INSERT (dataset_id) VALUES (s.d)
+  </insert>
+
+  <delete id="delete">
+    DELETE FROM dataset_search_index WHERE dataset_id = #{datasetId}
+  </delete>
+
+  <!-- config_hash = '' 는 Tibero 에서 NULL 로 저장된다(빈 해시 — 읽기에서 "" 로 맞춘다). -->
+  <update id="forceFull">
+    UPDATE dataset_search_index
+       SET config_hash = '', <include refid="clearBackoff"/> <include refid="touchSyncing"/>
+     WHERE dataset_id = #{datasetId}
+  </update>
+
+  <update id="markKeywordOnly">
+    UPDATE dataset_search_index
+       SET embedding_model = #{keywordOnlyModel,jdbcType=VARCHAR}, config_hash = '',
+           <include refid="clearBackoff"/> <include refid="touchSyncing"/>
+     WHERE dataset_id = #{datasetId}
+  </update>
+
+  <select id="selectDueDatasetIds" resultType="java.lang.Long">
+    SELECT dataset_id FROM dataset_search_index
+     WHERE next_attempt_at IS NULL
+        OR next_attempt_at &lt;= <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>
+     ORDER BY dataset_id
+  </select>
+
+  <!-- OR 를 괄호로 묶는다 — 묶지 않으면 AND 가 뒤 항에만 붙는다. -->
+  <select id="countStale" resultType="long">
+    SELECT COUNT(*) FROM dataset_search_index
+     WHERE (<include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.nullSafeDistinct">
+              <property name="col" value="embedding_model"/><property name="param" value="model"/>
+            </include>
+            OR <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.nullSafeDistinct">
+              <property name="col" value="embedding_dim"/><property name="param" value="dim"/>
+            </include>)
+       AND <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.nullSafeDistinct">
+             <property name="col" value="embedding_model"/><property name="param" value="keywordOnlyModel"/>
+           </include>
+  </select>
+
+  <!--
+    임대가 비었거나 만료됐으면 DB 시계 + seconds 로 설정하는 조건부 UPDATE 한 문장(경합 창 없음 — 인터페이스 javadoc).
+    만료 판정과 새 만료 시각이 모두 DB 시계라 JVM 시간대·앱 서버 시계와 무관하다.
+  -->
+  <update id="tryAcquireLease">
+    UPDATE dataset_search_index
+       SET sync_lease_until = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNowPlusSeconds"/>
+     WHERE dataset_id = #{datasetId}
+       AND (sync_lease_until IS NULL
+            OR sync_lease_until &lt; <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>)
+  </update>
+
+  <update id="releaseLease">
+    UPDATE dataset_search_index SET sync_lease_until = NULL WHERE dataset_id = #{datasetId}
+  </update>
+
+  <!-- 비교 후 갱신: embedding_model 이 아직 expectedModel 일 때만(NULL 안전 비교). -->
+  <update id="resetForFullPass">
+    UPDATE dataset_search_index
+       SET config_hash = #{configHash,jdbcType=VARCHAR}, embedding_model = #{model,jdbcType=VARCHAR},
+           embedding_dim = #{dim}, source_table_oid = #{sourceOid},
+           <include refid="resetPass"/> <include refid="touchSyncing"/>
+     WHERE dataset_id = #{datasetId}
+       AND <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.nullSafeEquals">
+             <property name="col" value="embedding_model"/><property name="param" value="expectedModel"/>
+           </include>
+  </update>
+
+  <update id="markSourceOid">
+    UPDATE dataset_search_index
+       SET source_table_oid = #{sourceOid}, <include refid="resetPass"/> <include refid="touchSyncing"/>
+     WHERE dataset_id = #{datasetId}
+  </update>
+
+  <update id="startPassIfNeeded">
+    UPDATE dataset_search_index
+       SET pass_cursor = #{candidate,jdbcType=TIMESTAMP}, total_rows = #{totalRows}
+     WHERE dataset_id = #{datasetId} AND pass_cursor IS NULL
+  </update>
+
+  <update id="markSyncing">
+    UPDATE dataset_search_index
+       SET <include refid="clearBackoff"/> <include refid="touchSyncing"/>
+     WHERE dataset_id = #{datasetId}
+  </update>
+
+  <update id="saveProgress">
+    UPDATE dataset_search_index
+       SET resume_after_id = #{resumeAfterId}, indexed_rows = GREATEST(indexed_rows + #{indexedDelta}, 0),
+           <include refid="touchSyncing"/>
+     WHERE dataset_id = #{datasetId}
+  </update>
+
+  <update id="markCompleted">
+    UPDATE dataset_search_index
+       SET sync_cursor = pass_cursor, pass_cursor = NULL, resume_after_id = NULL,
+           indexed_rows = #{indexedRows}, total_rows = #{totalRows}, status = 'IDLE', consecutive_failures = 0,
+           next_attempt_at = NULL, last_error = NULL,
+           last_synced_at = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>,
+           updated_at = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>
+     WHERE dataset_id = #{datasetId}
+  </update>
+
+  <update id="markFailed">
+    UPDATE dataset_search_index
+       SET status = 'ERROR', last_error = #{error,jdbcType=VARCHAR},
+           consecutive_failures = consecutive_failures + 1,
+           next_attempt_at = #{nextAttemptAt,jdbcType=TIMESTAMP},
+           updated_at = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>
+     WHERE dataset_id = #{datasetId}
+  </update>
+
+  <update id="markWaiting">
+    UPDATE dataset_search_index
+       SET status = 'ERROR', last_error = #{reason,jdbcType=VARCHAR},
+           next_attempt_at = #{nextAttemptAt,jdbcType=TIMESTAMP},
+           updated_at = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>
+     WHERE dataset_id = #{datasetId}
+  </update>
+
+</mapper>

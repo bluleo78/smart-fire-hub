@@ -3,6 +3,7 @@ package com.smartfirehub.dataset.repository.jooq;
 import static org.jooq.impl.DSL.*;
 
 import com.smartfirehub.dataset.repository.DatasetFavoriteRepository;
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import java.util.HashSet;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
@@ -13,6 +14,7 @@ import org.springframework.stereotype.Repository;
 
 /** DatasetFavoriteRepository 의 jOOQ(PostgreSQL) 구현 — WD-485. */
 @Repository
+@ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
 public class JooqDatasetFavoriteRepository implements DatasetFavoriteRepository {
 

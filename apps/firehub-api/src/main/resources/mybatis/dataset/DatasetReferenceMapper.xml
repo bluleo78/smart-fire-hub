@@ -1,0 +1,163 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  데이터셋 참조(파이프라인·대시보드·트리거) 문장(WD-707) — JooqDatasetReferenceRepository 와 같은 의미. 규칙은 MyBatisPlatformConfig javadoc.
+  모든 테이블이 테넌트 정책(RLS) 대상이라 tenant_id 를 쓰지 않는다.
+  - 본문 검색(script_content·sql_text)은 공용 조각 PlatformSql.likeIgnoreCase(PG ILIKE 대체 — 패턴은 리포지토리가 LikePatternUtils.containsPattern 로
+    이스케이프). Tibero script_content 는 CLOB 이라 DISTINCT 를 걸지 않는다(jOOQ 판도 DISTINCT 없음).
+  - 대시보드 가시성은 공유 조각 analytics/DashboardVisibility.xml(파라미터 이름 userId) — SELECT 목록에는 CASE 로 감싸 불리언 리터럴로 낸다.
+  - 트리거 config 의 datasetIds 포함 판정만 벤더별 문장(databaseId)이다. 아래 selectDatasetChangeTriggers 주석 참조.
+  정렬은 jOOQ 판 그대로(ORDER BY 가 없는 문장은 순서를 보장하지 않는다).
+-->
+<mapper namespace="com.smartfirehub.dataset.repository.mybatis.DatasetReferenceMapper">
+
+  <resultMap id="linkedPipeline" type="com.smartfirehub.dataset.dto.DatasetDetailResponse$LinkedPipelineInfo">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="name" javaType="java.lang.String"/>
+      <arg column="is_active" javaType="_boolean"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="referenceItem" type="com.smartfirehub.dataset.dto.DatasetReferencesResponse$ReferenceItem">
+    <constructor>
+      <arg column="id" javaType="_long"/>
+      <arg column="name" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="pipelineSqlCandidate" type="com.smartfirehub.dataset.repository.DatasetReferenceRepository$PipelineSqlCandidate">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="name" javaType="java.lang.String"/>
+      <arg column="script_content" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="dashboardHit" type="com.smartfirehub.dataset.repository.DatasetReferenceRepository$DashboardHit">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="name" javaType="java.lang.String"/>
+      <arg column="visible" javaType="_boolean"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="dashboardSqlRow" type="com.smartfirehub.dataset.repository.mybatis.DatasetReferenceMapper$DashboardSqlRow">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="name" javaType="java.lang.String"/>
+      <arg column="visible" javaType="_boolean"/>
+      <arg column="sql_text" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="triggerReference" type="com.smartfirehub.dataset.dto.DatasetReferencesResponse$TriggerReferenceItem">
+    <constructor>
+      <arg column="trigger_id" javaType="_long"/>
+      <arg column="trigger_name" javaType="java.lang.String"/>
+      <arg column="pipeline_id" javaType="_long"/>
+      <arg column="pipeline_name" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <!-- 조회자 가시성을 SELECT 값으로(Tibero 에는 불리언 값 식이 없어 CASE 로 리터럴을 낸다). -->
+  <sql id="visibleColumn">
+    CASE WHEN <include refid="com.smartfirehub.analytics.repository.mybatis.DashboardVisibility.dashboardVisibleTo"/>
+      THEN <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>
+      ELSE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlFalse"/> END AS visible
+  </sql>
+
+  <!-- 대시보드 → 위젯 → 차트 → 저장 쿼리 조인(jOOQ 판과 같은 경로). -->
+  <sql id="dashboardToSavedQuery">
+    FROM dashboard
+    JOIN dashboard_widget ON dashboard.id = dashboard_widget.dashboard_id
+    JOIN chart ON dashboard_widget.chart_id = chart.id
+    JOIN saved_query ON chart.saved_query_id = saved_query.id
+  </sql>
+
+  <select id="selectLinkedPipelines" resultMap="linkedPipeline">
+    SELECT DISTINCT pipeline.id, pipeline.name, pipeline.is_active
+      FROM pipeline_step
+      JOIN pipeline ON pipeline_step.pipeline_id = pipeline.id
+     WHERE pipeline_step.output_dataset_id = #{id}
+  </select>
+
+  <select id="countStepsByOutputDataset" resultType="_int">
+    SELECT COUNT(*) FROM pipeline_step WHERE output_dataset_id = #{id}
+  </select>
+
+  <select id="selectPipelinesByFk" resultMap="referenceItem">
+    SELECT DISTINCT pipeline.id, pipeline.name
+      FROM pipeline
+     WHERE pipeline.id IN (SELECT pipeline_step.pipeline_id FROM pipeline_step
+                            WHERE pipeline_step.output_dataset_id = #{datasetId})
+        OR pipeline.id IN (SELECT pipeline_step.pipeline_id FROM pipeline_step
+                             JOIN pipeline_step_input ON pipeline_step.id = pipeline_step_input.step_id
+                            WHERE pipeline_step_input.dataset_id = #{datasetId})
+     ORDER BY pipeline.id
+  </select>
+
+  <select id="selectMergeOutputPipelines" resultMap="referenceItem">
+    SELECT DISTINCT pipeline.id, pipeline.name
+      FROM pipeline
+      JOIN pipeline_step ON pipeline_step.pipeline_id = pipeline.id
+     WHERE pipeline_step.output_dataset_id = #{datasetId}
+       AND pipeline_step.load_strategy = 'MERGE'
+     ORDER BY pipeline.id
+  </select>
+
+  <!-- 스텝마다 한 행(DISTINCT 없음 — Tibero script_content 는 CLOB). 같은 테넌트(RLS) 안의 값싼 1차 거르기이고 확정은 서비스 파서가 한다. -->
+  <select id="selectPipelineSqlCandidates" resultMap="pipelineSqlCandidate">
+    SELECT pipeline.id, pipeline.name, pipeline_step.script_content
+      FROM pipeline
+      JOIN pipeline_step ON pipeline.id = pipeline_step.pipeline_id
+     WHERE pipeline_step.script_type = 'SQL'
+       AND <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.likeIgnoreCase"><property name="col" value="pipeline_step.script_content"/></include>
+  </select>
+
+  <select id="selectDashboardsByFk" resultMap="dashboardHit">
+    SELECT DISTINCT dashboard.id, dashboard.name, <include refid="visibleColumn"/>
+    <include refid="dashboardToSavedQuery"/>
+     WHERE saved_query.dataset_id = #{datasetId}
+  </select>
+
+  <select id="selectDashboardSqlCandidates" resultMap="dashboardSqlRow">
+    SELECT DISTINCT dashboard.id, dashboard.name, <include refid="visibleColumn"/>, saved_query.sql_text
+    <include refid="dashboardToSavedQuery"/>
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.likeIgnoreCase"><property name="col" value="saved_query.sql_text"/></include>
+  </select>
+
+  <!-- DATASET_CHANGE 트리거 중 config.datasetIds 배열에 이 데이터셋 id 가 든 것(#600). 아래 datasetIdsContains 만 벤더별이다. -->
+  <select id="selectDatasetChangeTriggers" resultMap="triggerReference">
+    SELECT DISTINCT pipeline_trigger.id AS trigger_id, pipeline_trigger.name AS trigger_name,
+           pipeline.id AS pipeline_id, pipeline.name AS pipeline_name
+      FROM pipeline_trigger
+      JOIN pipeline ON pipeline_trigger.pipeline_id = pipeline.id
+     WHERE pipeline_trigger.trigger_type = 'DATASET_CHANGE'
+       AND <include refid="datasetIdsContains"/>
+     ORDER BY pipeline_trigger.id
+  </select>
+
+  <!-- PG: jOOQ 판 술어 그대로(jsonb 포함 연산자). -->
+  <sql id="datasetIdsContains" databaseId="postgresql">
+    (pipeline_trigger.config -> 'datasetIds') @> to_jsonb(CAST(#{datasetId} AS bigint))
+  </sql>
+
+  <!--
+    Tibero: jsonb @> 가 없고, lax 경로식(JSON_EXISTS ?(@ == id))은 문자열 "5" 까지 맞혀 PG 와 다르며 strict·type()·JSON_TRANSFORM 은
+    문법 오류다(실측: TiberoBundle2SyntaxProbeLiveTest, Task 1 C1~C7). 그래서 Task 1 의 C8 — 배열 원소를 JSON_TABLE 로 한 행씩 펼쳐
+    원소의 JSON 텍스트(FORMAT JSON)가 TO_CHAR(id) 와 같은지 본다:
+      · 문자열 원소 "5" 는 텍스트가 따옴표째("5")라 5 와 다르다(PG 와 같음). 15·50 같은 부분 문자열은 원소 단위 비교라 안 맞는다.
+      · 배열 전체를 한 텍스트로 꺼내지 않으므로 길이 한도가 없다. C6(JSON_QUERY 텍스트에 ',id,' LIKE)은 배열이 VARCHAR2 최대(65532 바이트)를
+        넘으면 오류 없이 거짓이 돼 트리거 참조를 놓쳤다(실측: 계약 findDatasetChangeTriggers_hugeArray 가 C6 에서 실패, 여기서 통과).
+      · datasetIds 가 스칼라(5)면 PG @> 는 맞히지만 Tibero JSON_TABLE 은 행을 내지 않아 안 맞는다(Task 1 C4 실측) — 앱은 List&lt;Long&gt; 만
+        저장하므로 실사용 밖. [[5]] 같은 중첩 배열은 두 DB 모두 안 맞는다.
+  -->
+  <sql id="datasetIdsContains" databaseId="tibero">
+    EXISTS (SELECT 1
+              FROM JSON_TABLE(pipeline_trigger.config, '$.datasetIds[*]'
+                              COLUMNS (elem VARCHAR2(100) FORMAT JSON PATH '$')) ids
+             WHERE ids.elem = TO_CHAR(#{datasetId}))
+  </sql>
+
+</mapper>

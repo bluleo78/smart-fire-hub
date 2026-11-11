@@ -2,6 +2,7 @@ package com.smartfirehub.dataset.repository.jooq;
 
 import com.smartfirehub.dataset.repository.SearchColumnRepository;
 import com.smartfirehub.dataset.rowsearch.SearchConfig;
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import java.util.Collection;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
@@ -14,6 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>dataset_column.is_searchable 읽기/쓰기(RLS 테이블).
  */
 @Repository
+@ConditionalOnPostgresPlatformDb
 @Transactional
 @RequiredArgsConstructor
 public class JooqSearchColumnRepository implements SearchColumnRepository {

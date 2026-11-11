@@ -113,6 +113,112 @@ public interface AccessFixtures {
   long createDataset(long tenantId, long createdBy, String tableName, Long securityLevelId);
 
   /**
+   * 데이터셋 카탈로그 행 하나(묶음 ② 데이터셋 리포지토리 계약용, WD-707). 표시 이름은 그대로 넣고(검색 시험이 한글·대소문자·{@code %}·{@code _} 를
+   * 넣는다), table_name 은 (테넌트, table_name) 유일 색인과 겹치지 않게 무작위 ASCII 로 만든다. 만든 이는 픽스처가 처음 한 번 만드는 사용자,
+   * 보안 등급은 테넌트 기본 등급. 테넌트 정리 때 함께 지운다.
+   */
+  long createDataset(long tenantId, String name);
+
+  /** 그 테넌트의 데이터셋 카테고리 하나(설명 없음). 테넌트 정리 때 함께 지운다(데이터셋을 먼저 지운 뒤). */
+  long createCategory(long tenantId, String name);
+
+  /** 데이터셋을 카테고리에 연결한다(소유자 시점 직접 갱신, WD-707). */
+  void assignCategory(long datasetId, long categoryId);
+
+  /**
+   * 데이터셋의 컬럼 하나(data_type TEXT). 테넌트는 데이터셋 행에서 읽는다. 데이터셋을 지우면 FK CASCADE 로 함께 사라진다.
+   *
+   * @param order column_order
+   */
+  long createColumn(long datasetId, String name, int order);
+
+  /** 컬럼의 표시 이름·설명을 바꾼다(소유자 시점, null 허용 — 데이터셋 검색·스키마 메타 시험용, WD-707). */
+  void setColumnText(long columnId, String displayName, String description);
+
+  /**
+   * 데이터셋 행의 열 하나를 직접 바꾼다(소유자 시점, WD-707). column 은 시험 코드의 고정 이름만 — description·storage_type·
+   * origin_type·status·status_note·security_level_id·updated_at 만 허용한다. value 가 null 이면 NULL 로 비운다.
+   */
+  void setDatasetField(long datasetId, String column, Object value);
+
+  /** 데이터셋의 보안 등급 id(소유자 시점). */
+  long datasetSecurityLevel(long datasetId);
+
+  /** 데이터셋에 태그 하나를 붙인다(만든 이 없음). 데이터셋을 지우면 FK CASCADE 로 함께 사라진다. */
+  void addTag(long datasetId, String tagName);
+
+  /** 사용자의 데이터셋 즐겨찾기 하나. 데이터셋을 지우면 FK CASCADE 로 함께 사라진다. */
+  void addFavorite(long userId, long datasetId);
+
+  /** 이름·활성 여부를 정한 파이프라인 하나(만든 이는 픽스처 사용자, WD-707 데이터셋 참조 계약용). 테넌트 정리 때 지운다. */
+  long createPipeline(long tenantId, String name, boolean active);
+
+  /**
+   * 파이프라인 스텝 하나(테넌트는 파이프라인 행에서 읽는다, WD-707). 이름은 파이프라인 안에서 유일해야 한다. 파이프라인을 지우면 FK CASCADE 로 함께
+   * 사라진다.
+   *
+   * @param scriptType SQL·PYTHON 등
+   * @param scriptContent null 허용
+   * @param outputDatasetId null 허용
+   * @param loadStrategy REPLACE·APPEND·MERGE
+   */
+  long createStep(
+      long pipelineId,
+      String name,
+      String scriptType,
+      String scriptContent,
+      Long outputDatasetId,
+      String loadStrategy);
+
+  /** 스텝 입력 데이터셋 한 줄(pipeline_step_input). 스텝을 지우면 FK CASCADE 로 함께 사라진다. */
+  void addStepInput(long stepId, long datasetId);
+
+  /** 파이프라인 트리거 하나(config 는 JSON 문자열 그대로, 만든 이는 픽스처 사용자). 파이프라인을 지우면 FK CASCADE 로 함께 사라진다. */
+  long createTrigger(long pipelineId, String name, String triggerType, String configJson);
+
+  /** 저장 쿼리 하나(datasetId null 허용, 만든 이는 픽스처 사용자). 테넌트 정리 때 지운다(차트·위젯은 FK CASCADE). */
+  long createSavedQuery(long tenantId, Long datasetId, String sqlText);
+
+  /** 저장 쿼리를 쓰는 BAR 차트 하나(테넌트는 저장 쿼리 행에서 읽는다). 저장 쿼리를 지우면 FK CASCADE 로 함께 사라진다. */
+  long createChart(long savedQueryId);
+
+  /** 대시보드 하나(만든 이·공유 여부 지정). 테넌트 정리 때 지운다(위젯은 FK CASCADE). */
+  long createDashboard(long tenantId, String name, long createdBy, boolean shared);
+
+  /** 대시보드에 차트 위젯 하나를 붙인다(테넌트는 대시보드 행에서 읽는다). */
+  void addWidget(long dashboardId, long chartId);
+
+  /**
+   * dataset_search_index 행의 config_hash 저장값 그대로(소유자 시점, WD-707) — 빈 해시가 PG 는 {@code ""}, Tibero 는
+   * NULL 로 저장되는지 확인용(리포지토리 읽기는 둘 다 {@code ""} 로 맞춘다).
+   */
+  String searchIndexConfigHash(long datasetId);
+
+  /**
+   * dataset_search_index 행의 임대 만료 시각을 DB 시계 + seconds 초로 직접 맞춘다(소유자 시점, WD-707). 막 만료(음수)·아직 유효(양수)
+   * 경계를 벽시계 대기 없이 만들려고 쓴다.
+   */
+  void setSearchLeaseFromDbNow(long datasetId, int seconds);
+
+  /** 임대 만료 시각 − DB 현재 시각(소유자 시점 한 문장으로 둘 다 읽어 자바에서 뺀다). 임대가 비어 있으면 null. */
+  java.time.Duration searchLeaseRemaining(long datasetId);
+
+  /** 보안 등급의 ai_policy 를 바꾼다(소유자 시점, WD-707 — 임베딩 등급 허용 술어 시험용). 값은 ALL·SELF_HOSTED_ONLY·DENY. */
+  void setSecurityLevelAiPolicy(long levelId, String aiPolicy);
+
+  /** dataset_embedding 행의 source_text 저장값(소유자 시점, WD-707). 행이 없으면 null. */
+  String embeddingSourceText(long datasetId);
+
+  /** dataset_embedding 행의 tenant_id(소유자 시점) — 새 행에 컨텍스트 DEFAULT 가 채워졌는지 확인용. 행이 없으면 null. */
+  Long embeddingTenantId(long datasetId);
+
+  /** dataset_embedding.updated_at 을 지정 시각으로 되돌린다(소유자 시점) — upsert 가 갱신 시각을 새로 쓰는지 보려고. */
+  void setEmbeddingUpdatedAt(long datasetId, LocalDateTime updatedAt);
+
+  /** dataset_embedding.updated_at(소유자 시점, 드라이버가 돌려준 벽시계 그대로). */
+  LocalDateTime embeddingUpdatedAt(long datasetId);
+
+  /**
    * 감사 로그 한 행을 시각을 정해 직접 넣는다(정렬·기간·가시성 시험용). tenantId 가 null 이면 테넌트 없는(플랫폼) 행. 정리 대상에 올린다.
    *
    * @param actionTime 저장 TZ 벽시계 action_time
@@ -143,6 +249,27 @@ public interface AccessFixtures {
 
   /** 그 id 의 비동기 작업 행 수 — 테넌트와 무관하게 정책을 우회해 센다(거절된 쓰기가 아무 행도 남기지 않았는지 확인용). */
   int countAsyncJobAnyTenant(String id);
+
+  /** tenant_data_store 행의 updated_at 을 직접 바꾼다(소유자 시점, 저장 TZ 벽시계, WD-707). */
+  void setDataStoreUpdatedAt(long tenantId, LocalDateTime updatedAt);
+
+  /** tenant_data_store 행의 updated_at(소유자 시점). */
+  LocalDateTime dataStoreUpdatedAt(long tenantId);
+
+  /** tenant_data_store 행의 host 열(소유자 시점) — 다른 테넌트 호출이 행을 건드리지 않았는지 확인용. */
+  String dataStoreHost(long tenantId);
+
+  /**
+   * 별도 소유자 커넥션이 그 테넌트의 tenant_data_store 행을 FOR UPDATE 로 쥔 채 call 을 실행하고 끝나면 롤백한다 — 행 잠금 대기 시간 제한
+   * 시험용(WD-707).
+   */
+  <T> T withDataStoreRowLocked(long tenantId, Supplier<T> call);
+
+  /**
+   * 다른 소유자 커넥션이 그 테넌트의 tenant_data_store 행을 FOR UPDATE NOWAIT 로 잡으려다 못 잡으면 true — 지금 다른 트랜잭션이 그 행을
+   * 잠갔다는 뜻이다(WD-707).
+   */
+  boolean isDataStoreRowLockedByOther(long tenantId);
 
   /** 지정 테넌트(null 이면 테넌트 없음) 컨텍스트로 리포지토리 호출을 실행한다. */
   <T> T inTenant(Long tenantId, Supplier<T> call);

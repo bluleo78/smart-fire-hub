@@ -7,6 +7,7 @@ import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.dto.DatasetColumnSnapshot;
 import com.smartfirehub.dataset.dto.UpdateColumnRequest;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import java.util.List;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
@@ -19,6 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 /** DatasetColumnRepository 의 jOOQ(PostgreSQL) 구현 — WD-485. */
 @Repository
+@ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
 // 배경 잡(JobRunr/@Async/@Scheduled)은 앰비언트 트랜잭션이 없다. RLS GUC 는 트랜잭션 시작
 // 시점에만 주입되므로, 트랜잭션이 없으면 TenantContext 를 세워도 정책이 전 행을 차단한다.
@@ -85,7 +87,7 @@ public class JooqDatasetColumnRepository implements DatasetColumnRepository {
             COL_IS_PRIMARY_KEY)
         .from(DATASET_COLUMN)
         .where(COL_DATASET_ID.eq(datasetId))
-        .orderBy(COL_COLUMN_ORDER.asc())
+        .orderBy(COL_COLUMN_ORDER.asc(), COL_ID.asc())
         .fetch(this::mapToColumnResponse);
   }
 
@@ -220,7 +222,7 @@ public class JooqDatasetColumnRepository implements DatasetColumnRepository {
     return dsl.select()
         .from(DATASET_COLUMN)
         .where(COL_DATASET_ID.eq(datasetId))
-        .orderBy(COL_COLUMN_ORDER)
+        .orderBy(COL_COLUMN_ORDER, COL_ID)
         .fetch(
             r ->
                 new DatasetColumnSnapshot(
@@ -341,6 +343,7 @@ public class JooqDatasetColumnRepository implements DatasetColumnRepository {
         .and(COL_DATASET_ID.ne(excludeDatasetId))
         .and(COL_DESCRIPTION.isNotNull())
         .and(COL_DESCRIPTION.ne(""))
+        .orderBy(COL_ID.asc())
         .limit(1)
         .fetchOptional(r -> r.get(COL_DESCRIPTION))
         .orElse(null);

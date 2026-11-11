@@ -3,6 +3,7 @@ package com.smartfirehub.dataset.repository.jooq;
 import static org.jooq.impl.DSL.*;
 
 import com.smartfirehub.dataset.repository.DatasetTagRepository;
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.securitylevel.repository.jooq.JooqDatasetVisibility;
 import java.util.List;
@@ -14,6 +15,7 @@ import org.springframework.stereotype.Repository;
 
 /** DatasetTagRepository 의 jOOQ(PostgreSQL) 구현 — WD-485. */
 @Repository
+@ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
 public class JooqDatasetTagRepository implements DatasetTagRepository {
 

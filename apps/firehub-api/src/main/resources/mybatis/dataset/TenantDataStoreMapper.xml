@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  tenant_data_store·tenant_data_store_account 문장(WD-707) — JooqTenantDataStoreRepository 와 같은 의미. 규칙은 MyBatisPlatformConfig javadoc.
+  이 두 테이블은 정책(RLS)이 없는 전역 테이블이라 tenant_id 를 DEFAULT·정책이 채우지 않는다 — jOOQ 가 거는 tenant_id 조건(INSERT 값·WHERE)을 그대로 옮긴다.
+  public. 스키마 한정은 쓰지 않는다(두 DB 모두 현재 스키마로 해석한다).
+  벤더 차이: 모든 문장이 두 DB 공통이다. UPDATE … RETURNING 은 Tibero 에 없어 UPDATE 후 같은 트랜잭션에서 SELECT 한다(행 잠금을 쥐고 있어 읽은 값이 내가 올린 값이다).
+  updated_at 은 jOOQ 판처럼 앱 시계 LocalDateTime 을 바인딩한다. 문장 시간 제한은 파라미터 queryTimeoutSeconds 를 StatementTimeoutInterceptor 가 건다.
+-->
+<mapper namespace="com.smartfirehub.dataset.repository.mybatis.TenantDataStoreMapper">
+
+  <resultMap id="storeRow" type="com.smartfirehub.dataset.repository.mybatis.TenantDataStoreMapper$StoreRow">
+    <constructor>
+      <idArg column="tenant_id" javaType="_long"/>
+      <arg column="backend" javaType="java.lang.String"/>
+      <arg column="host" javaType="java.lang.String"/>
+      <arg column="port" javaType="_int"/>
+      <arg column="database_name" javaType="java.lang.String"/>
+      <arg column="schema_name" javaType="java.lang.String"/>
+      <arg column="tablespace" javaType="java.lang.String"/>
+      <arg column="provision_mode" javaType="java.lang.String"/>
+      <arg column="status" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="accountRow" type="com.smartfirehub.dataset.repository.mybatis.TenantDataStoreMapper$AccountRow">
+    <constructor>
+      <arg column="account_role" javaType="java.lang.String"/>
+      <arg column="username" javaType="java.lang.String"/>
+      <arg column="password_enc" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <insert id="insertStore">
+    INSERT INTO tenant_data_store
+      (tenant_id, backend, host, port, database_name, schema_name, tablespace, provision_mode, status)
+    VALUES
+      (#{tenantId}, #{backend}, #{host}, #{port}, #{databaseName}, #{schemaName},
+       #{tablespace,jdbcType=VARCHAR}, #{provisionMode}, #{status})
+  </insert>
+
+  <insert id="insertAccount">
+    INSERT INTO tenant_data_store_account (tenant_id, account_role, username, password_enc)
+    VALUES (#{tenantId}, #{accountRole}, #{username}, #{passwordEnc})
+  </insert>
+
+  <select id="selectBackend" resultType="java.lang.String">
+    SELECT backend FROM tenant_data_store WHERE tenant_id = #{tenantId}
+  </select>
+
+  <select id="selectStore" resultMap="storeRow">
+    SELECT tenant_id, backend, host, port, database_name, schema_name, tablespace, provision_mode, status
+      FROM tenant_data_store
+     WHERE tenant_id = #{tenantId}
+  </select>
+
+  <!-- tenant 와 조인하면 status 가 양쪽에 있으므로 열을 테이블 이름으로 한정한다. 정지된 테넌트는 뺀다(WD-449). -->
+  <select id="selectReadyTenantIds" resultType="java.lang.Long">
+    SELECT tenant_data_store.tenant_id
+      FROM tenant_data_store
+      JOIN tenant ON tenant.id = tenant_data_store.tenant_id
+     WHERE tenant_data_store.backend = #{backend}
+       AND tenant_data_store.status = #{readyStatus}
+       AND tenant.status = 'ACTIVE'
+     ORDER BY tenant_data_store.tenant_id
+  </select>
+
+  <select id="selectAccounts" resultMap="accountRow">
+    SELECT account_role, username, password_enc FROM tenant_data_store_account WHERE tenant_id = #{tenantId}
+  </select>
+
+  <update id="updateStatus">
+    UPDATE tenant_data_store SET status = #{status}, updated_at = #{now} WHERE tenant_id = #{tenantId}
+  </update>
+
+  <select id="lockStore" resultType="java.lang.Long">
+    SELECT tenant_id FROM tenant_data_store WHERE tenant_id = #{tenantId} FOR UPDATE
+  </select>
+
+  <update id="updatePassword">
+    UPDATE tenant_data_store_account SET password_enc = #{passwordEnc}
+     WHERE tenant_id = #{tenantId} AND account_role = #{accountRole}
+  </update>
+
+  <select id="selectScriptTokenEpoch" resultType="java.lang.Long">
+    SELECT script_token_epoch FROM tenant_data_store WHERE tenant_id = #{tenantId}
+  </select>
+
+  <!-- 세대 번호 올리기. 파라미터 queryTimeoutSeconds 가 null 이 아니고 양수면 StatementTimeoutInterceptor 가 문장 시간 제한을 건다. -->
+  <update id="incrementScriptTokenEpoch">
+    UPDATE tenant_data_store SET script_token_epoch = script_token_epoch + 1, updated_at = #{now}
+     WHERE tenant_id = #{tenantId}
+  </update>
+
+</mapper>

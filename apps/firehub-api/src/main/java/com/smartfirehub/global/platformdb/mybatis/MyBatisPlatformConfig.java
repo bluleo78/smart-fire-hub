@@ -87,6 +87,8 @@ public class MyBatisPlatformConfig {
       configuration.setDatabaseId(databaseId);
       // 컬럼 snake_case 를 필드 camelCase 로 자동 매핑해 resultMap 보일러플레이트를 줄인다.
       configuration.setMapUnderscoreToCamelCase(true);
+      // 매퍼 파라미터 queryTimeoutSeconds 가 있는 문장에만 JDBC 문장 시간 제한을 건다(두 DB 공통, WD-707).
+      configuration.addInterceptor(new StatementTimeoutInterceptor());
       if (TIBERO.equals(databaseId)) {
         applyTiberoSettings(configuration);
       }

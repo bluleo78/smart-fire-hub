@@ -6,6 +6,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 import java.util.function.Supplier;
 import javax.sql.DataSource;
 import org.jooq.DSLContext;
@@ -23,6 +24,9 @@ public class PgAccessFixtures implements AccessFixtures {
   private final List<String> systemSettingKeys = new ArrayList<>();
   private final List<Long> platformRoles = new ArrayList<>();
   private final List<Long> auditLogs = new ArrayList<>();
+
+  /** 픽스처 데이터셋의 만든 이(처음 쓸 때 만든다). */
+  private Long datasetCreatorId;
 
   /** 정책을 우회하는 소유자 커넥션(테넌트와 무관한 실제 행 확인용). */
   private final JdbcTemplate ownerJdbc;
@@ -331,6 +335,348 @@ public class PgAccessFixtures implements AccessFixtures {
   }
 
   @Override
+  public long createDataset(long tenantId, String name) {
+    // created_by 는 "USER" FK(NOT NULL)라 픽스처 전용 사용자를 한 번 만들어 쓴다. table_name 은 유일 색인용 무작위 ASCII,
+    // security_level_id 는 빼서 열 DEFAULT(테넌트 기본 등급)가 채운다.
+    long creator = datasetCreator();
+    return inTenant(
+        tenantId,
+        () ->
+            dsl.fetchOne(
+                    "insert into dataset (name, table_name, created_by, storage_type, origin_type)"
+                        + " values (?, ?, ?, 'TABLE', 'SOURCE') returning id",
+                    name,
+                    randomTableName(),
+                    creator)
+                .get(0, Long.class));
+  }
+
+  @Override
+  public long createCategory(long tenantId, String name) {
+    // tenant_id 는 DEFAULT(GUC)가 채운다.
+    return inTenant(
+        tenantId,
+        () ->
+            dsl.fetchOne("insert into dataset_category (name) values (?) returning id", name)
+                .get(0, Long.class));
+  }
+
+  @Override
+  public void assignCategory(long datasetId, long categoryId) {
+    ownerJdbc.update("update dataset set category_id = ? where id = ?", categoryId, datasetId);
+  }
+
+  @Override
+  public long createColumn(long datasetId, String name, int order) {
+    long tenantId = datasetTenant(datasetId);
+    return inTenant(
+        tenantId,
+        () ->
+            dsl.fetchOne(
+                    "insert into dataset_column (dataset_id, column_name, data_type, column_order)"
+                        + " values (?, ?, 'TEXT', ?) returning id",
+                    datasetId,
+                    name,
+                    order)
+                .get(0, Long.class));
+  }
+
+  @Override
+  public void setColumnText(long columnId, String displayName, String description) {
+    ownerJdbc.update(
+        "update dataset_column set display_name = ?, description = ? where id = ?",
+        displayName,
+        description,
+        columnId);
+  }
+
+  /** setDatasetField 가 받는 열 이름 — 시험 코드 고정 이름만 SQL 에 이어 붙인다(Tibero 픽스처도 같은 목록을 쓴다). */
+  static final Set<String> DATASET_FIELDS =
+      Set.of(
+          "description",
+          "storage_type",
+          "origin_type",
+          "status",
+          "status_note",
+          "security_level_id",
+          "updated_at");
+
+  /** 허용 목록에 없는 열 이름이면 예외. */
+  static String datasetField(String column) {
+    if (!DATASET_FIELDS.contains(column)) {
+      throw new IllegalArgumentException("허용하지 않는 데이터셋 열: " + column);
+    }
+    return column;
+  }
+
+  @Override
+  public void setDatasetField(long datasetId, String column, Object value) {
+    String col = datasetField(column);
+    if (value == null) {
+      // NULL 은 바인드 대신 리터럴로 — 드라이버가 타입 없는 NULL 바인드를 거절하지 않게(Tibero 픽스처와 같은 방식).
+      ownerJdbc.update("update dataset set " + col + " = null where id = ?", datasetId);
+      return;
+    }
+    ownerJdbc.update("update dataset set " + col + " = ? where id = ?", value, datasetId);
+  }
+
+  @Override
+  public long datasetSecurityLevel(long datasetId) {
+    return ownerJdbc.queryForObject(
+        "select security_level_id from dataset where id = ?", Long.class, datasetId);
+  }
+
+  @Override
+  public void addTag(long datasetId, String tagName) {
+    inTenant(
+        datasetTenant(datasetId),
+        () ->
+            dsl.execute(
+                "insert into dataset_tag (dataset_id, tag_name) values (?, ?)",
+                datasetId,
+                tagName));
+  }
+
+  @Override
+  public void addFavorite(long userId, long datasetId) {
+    inTenant(
+        datasetTenant(datasetId),
+        () ->
+            dsl.execute(
+                "insert into dataset_favorite (user_id, dataset_id) values (?, ?)",
+                userId,
+                datasetId));
+  }
+
+  @Override
+  public long createPipeline(long tenantId, String name, boolean active) {
+    long creator = datasetCreator();
+    return inTenant(
+        tenantId,
+        () ->
+            dsl.fetchOne(
+                    "insert into pipeline (name, is_active, created_by) values (?, ?, ?) returning id",
+                    name,
+                    active,
+                    creator)
+                .get(0, Long.class));
+  }
+
+  @Override
+  public long createStep(
+      long pipelineId,
+      String name,
+      String scriptType,
+      String scriptContent,
+      Long outputDatasetId,
+      String loadStrategy) {
+    return inTenant(
+        ownerTenantOf("pipeline", pipelineId),
+        () ->
+            dsl.fetchOne(
+                    "insert into pipeline_step (pipeline_id, name, script_type, script_content,"
+                        + " output_dataset_id, step_order, load_strategy) values (?, ?, ?, ?, ?, 0, ?)"
+                        + " returning id",
+                    pipelineId,
+                    name,
+                    scriptType,
+                    scriptContent,
+                    outputDatasetId,
+                    loadStrategy)
+                .get(0, Long.class));
+  }
+
+  @Override
+  public void addStepInput(long stepId, long datasetId) {
+    inTenant(
+        ownerTenantOf("pipeline_step", stepId),
+        () ->
+            dsl.execute(
+                "insert into pipeline_step_input (step_id, dataset_id) values (?, ?)",
+                stepId,
+                datasetId));
+  }
+
+  @Override
+  public long createTrigger(long pipelineId, String name, String triggerType, String configJson) {
+    long creator = datasetCreator();
+    return inTenant(
+        ownerTenantOf("pipeline", pipelineId),
+        () ->
+            dsl.fetchOne(
+                    "insert into pipeline_trigger (pipeline_id, trigger_type, name, config, created_by)"
+                        + " values (?, ?, ?, ?::jsonb, ?) returning id",
+                    pipelineId,
+                    triggerType,
+                    name,
+                    configJson,
+                    creator)
+                .get(0, Long.class));
+  }
+
+  @Override
+  public long createSavedQuery(long tenantId, Long datasetId, String sqlText) {
+    long creator = datasetCreator();
+    return inTenant(
+        tenantId,
+        () ->
+            dsl.fetchOne(
+                    "insert into saved_query (name, sql_text, dataset_id, created_by)"
+                        + " values ('fx-q', ?, ?, ?) returning id",
+                    sqlText,
+                    datasetId,
+                    creator)
+                .get(0, Long.class));
+  }
+
+  @Override
+  public long createChart(long savedQueryId) {
+    long creator = datasetCreator();
+    return inTenant(
+        ownerTenantOf("saved_query", savedQueryId),
+        () ->
+            dsl.fetchOne(
+                    "insert into chart (name, saved_query_id, chart_type, created_by)"
+                        + " values ('fx-c', ?, 'BAR', ?) returning id",
+                    savedQueryId,
+                    creator)
+                .get(0, Long.class));
+  }
+
+  @Override
+  public long createDashboard(long tenantId, String name, long createdBy, boolean shared) {
+    return inTenant(
+        tenantId,
+        () ->
+            dsl.fetchOne(
+                    "insert into dashboard (name, is_shared, created_by) values (?, ?, ?) returning id",
+                    name,
+                    shared,
+                    createdBy)
+                .get(0, Long.class));
+  }
+
+  @Override
+  public void addWidget(long dashboardId, long chartId) {
+    inTenant(
+        ownerTenantOf("dashboard", dashboardId),
+        () ->
+            dsl.execute(
+                "insert into dashboard_widget (dashboard_id, chart_id) values (?, ?)",
+                dashboardId,
+                chartId));
+  }
+
+  @Override
+  public String searchIndexConfigHash(long datasetId) {
+    return ownerJdbc.queryForObject(
+        "select config_hash from dataset_search_index where dataset_id = ?",
+        String.class,
+        datasetId);
+  }
+
+  @Override
+  public void setSearchLeaseFromDbNow(long datasetId, int seconds) {
+    ownerJdbc.update(
+        "update dataset_search_index set sync_lease_until = now() + (? * interval '1 second')"
+            + " where dataset_id = ?",
+        seconds,
+        datasetId);
+  }
+
+  @Override
+  public java.time.Duration searchLeaseRemaining(long datasetId) {
+    // 임대 만료 시각과 DB 시계를 같은 문장에서 읽는다 — 두 값 모두 timestamptz 라 순간(Instant)으로 뺀다.
+    return ownerJdbc.queryForObject(
+        "select sync_lease_until, now() as db_now from dataset_search_index where dataset_id = ?",
+        (rs, i) -> {
+          java.time.OffsetDateTime lease = rs.getObject(1, java.time.OffsetDateTime.class);
+          java.time.OffsetDateTime now = rs.getObject(2, java.time.OffsetDateTime.class);
+          return lease == null ? null : java.time.Duration.between(now, lease);
+        },
+        datasetId);
+  }
+
+  @Override
+  public void setSecurityLevelAiPolicy(long levelId, String aiPolicy) {
+    ownerJdbc.update("update security_level set ai_policy = ? where id = ?", aiPolicy, levelId);
+  }
+
+  @Override
+  public String embeddingSourceText(long datasetId) {
+    return ownerJdbc
+        .queryForList(
+            "select source_text from dataset_embedding where dataset_id = ?",
+            String.class,
+            datasetId)
+        .stream()
+        .findFirst()
+        .orElse(null);
+  }
+
+  @Override
+  public Long embeddingTenantId(long datasetId) {
+    return ownerJdbc
+        .queryForList(
+            "select tenant_id from dataset_embedding where dataset_id = ?", Long.class, datasetId)
+        .stream()
+        .findFirst()
+        .orElse(null);
+  }
+
+  @Override
+  public void setEmbeddingUpdatedAt(long datasetId, LocalDateTime updatedAt) {
+    ownerJdbc.update(
+        "update dataset_embedding set updated_at = ? where dataset_id = ?",
+        java.sql.Timestamp.valueOf(updatedAt),
+        datasetId);
+  }
+
+  @Override
+  public LocalDateTime embeddingUpdatedAt(long datasetId) {
+    return ownerJdbc
+        .queryForObject(
+            "select updated_at from dataset_embedding where dataset_id = ?",
+            java.sql.Timestamp.class,
+            datasetId)
+        .toLocalDateTime();
+  }
+
+  /**
+   * 부모 행의 테넌트 — 정책을 우회하는 소유자 커넥션으로 읽는다(자식 행 픽스처가 테넌트를 받지 않는다). table 은 시험 코드의 고정 이름만
+   * 넘긴다(pipeline·pipeline_step·saved_query·dashboard).
+   */
+  private long ownerTenantOf(String table, long id) {
+    Long t =
+        ownerJdbc.queryForObject(
+            "select tenant_id from " + table + " where id = ?", Long.class, id);
+    if (t == null) throw new IllegalStateException(table + " " + id + " 없음");
+    return t;
+  }
+
+  /** 데이터셋의 테넌트 — 정책을 우회하는 소유자 커넥션으로 읽는다(호출자는 테넌트를 넘기지 않는다). */
+  private long datasetTenant(long datasetId) {
+    Long t =
+        ownerJdbc.queryForObject(
+            "select tenant_id from dataset where id = ?", Long.class, datasetId);
+    if (t == null) throw new IllegalStateException("데이터셋 " + datasetId + " 없음");
+    return t;
+  }
+
+  /** 픽스처 데이터셋의 만든 이 — 처음 부를 때 한 번 만들고 정리 대상(users)에 올린다. */
+  private long datasetCreator() {
+    if (datasetCreatorId == null) {
+      datasetCreatorId = createUser("dsfx" + UUID.randomUUID().toString().substring(0, 12), null);
+    }
+    return datasetCreatorId;
+  }
+
+  /** (테넌트, table_name) 유일 색인과 겹치지 않는 무작위 테이블 이름(실제 데이터 테이블은 만들지 않는다). */
+  static String randomTableName() {
+    return "t_" + UUID.randomUUID().toString().replace("-", "").substring(0, 20);
+  }
+
+  @Override
   public long insertAuditLog(
       Long tenantId,
       String username,
@@ -419,6 +765,73 @@ public class PgAccessFixtures implements AccessFixtures {
   }
 
   @Override
+  public void setDataStoreUpdatedAt(long tenantId, LocalDateTime updatedAt) {
+    ownerJdbc.update(
+        "update tenant_data_store set updated_at = ? where tenant_id = ?",
+        java.sql.Timestamp.valueOf(updatedAt),
+        tenantId);
+  }
+
+  @Override
+  public LocalDateTime dataStoreUpdatedAt(long tenantId) {
+    return ownerJdbc
+        .queryForObject(
+            "select updated_at from tenant_data_store where tenant_id = ?",
+            java.sql.Timestamp.class,
+            tenantId)
+        .toLocalDateTime();
+  }
+
+  @Override
+  public String dataStoreHost(long tenantId) {
+    return ownerJdbc.queryForObject(
+        "select host from tenant_data_store where tenant_id = ?", String.class, tenantId);
+  }
+
+  @Override
+  public <T> T withDataStoreRowLocked(long tenantId, Supplier<T> call) {
+    return ownerJdbc.execute(
+        (java.sql.Connection c) -> {
+          c.setAutoCommit(false);
+          try (java.sql.PreparedStatement ps =
+              c.prepareStatement(
+                  "select tenant_id from tenant_data_store where tenant_id = ? for update")) {
+            ps.setLong(1, tenantId);
+            ps.executeQuery().close();
+            return call.get();
+          } finally {
+            c.rollback();
+            c.setAutoCommit(true);
+          }
+        });
+  }
+
+  @Override
+  public boolean isDataStoreRowLockedByOther(long tenantId) {
+    return ownerJdbc.execute(
+        (java.sql.Connection c) -> {
+          c.setAutoCommit(false);
+          try (java.sql.PreparedStatement ps =
+              c.prepareStatement(
+                  "select tenant_id from tenant_data_store where tenant_id = ? for update nowait")) {
+            ps.setLong(1, tenantId);
+            ps.executeQuery().close();
+            return false;
+          } catch (java.sql.SQLException timedOut) {
+            return true;
+          } finally {
+            // 문장 시간 제한으로 취소되면 Tibero 는 커넥션을 닫아 롤백이 실패할 수 있다 — 정리 실패는 무시한다.
+            try {
+              c.rollback();
+              c.setAutoCommit(true);
+            } catch (java.sql.SQLException closed) {
+              // 이미 닫힌 커넥션
+            }
+          }
+        });
+  }
+
+  @Override
   public <T> T inTenant(Long tenantId, Supplier<T> call) {
     return TenantRlsTestSupport.runInTenantTransaction(tx, tenantId, call);
   }
@@ -452,6 +865,11 @@ public class PgAccessFixtures implements AccessFixtures {
             dsl.execute("delete from audit_log where tenant_id = ?", t);
             dsl.execute("delete from async_job where tenant_id = ?", t);
             dsl.execute("delete from dataset_access_grant where tenant_id = ?", t);
+            // 대시보드·저장 쿼리·파이프라인은 사용자(created_by)를 참조하고, 스텝의 output_dataset_id 는 ON DELETE 없는 데이터셋
+            // FK 라 데이터셋보다 먼저 지운다. 위젯·차트·스텝·스텝 입력·트리거는 FK CASCADE 로 함께 사라진다.
+            dsl.execute("delete from dashboard where tenant_id = ?", t);
+            dsl.execute("delete from saved_query where tenant_id = ?", t);
+            dsl.execute("delete from pipeline where tenant_id = ?", t);
             dsl.execute("delete from dataset where tenant_id = ?", t);
             dsl.execute("delete from tenant_settings where tenant_id = ?", t);
             TenantRlsTestSupport.deleteRbacCascade(dsl, t);

@@ -11,6 +11,7 @@ import com.smartfirehub.dataset.storage.DataStoreProvisionMode;
 import com.smartfirehub.dataset.storage.StoredAccount;
 import com.smartfirehub.dataset.storage.TenantDataStoreRow;
 import com.smartfirehub.dataset.storage.TenantDataStoreStatus;
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.Comparator;
@@ -33,6 +34,7 @@ import org.springframework.stereotype.Repository;
  * <p>트랜잭션 경계는 호출 서비스가 잡는다(테넌트 생성과 같은 트랜잭션에서 insert 해야 한다).
  */
 @Repository
+@ConditionalOnPostgresPlatformDb
 public class JooqTenantDataStoreRepository implements TenantDataStoreRepository {
 
   // public 스키마를 명시한다: 테넌트 search_path 에 같은 이름의 데이터셋 테이블이 있어도 가려지지 않게 한다.

@@ -1,12 +1,14 @@
 package com.smartfirehub.dataset.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.dataset.search.DatasetSearchHit;
 import com.smartfirehub.embedding.EmbeddingDimension;
 import com.smartfirehub.embedding.EmbeddingSpace;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.support.IntegrationTestBase;
+import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -15,13 +17,57 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * dataset_embedding 코사인/트라이그램 검색이 동작하는지 검증하는 실제 DB 통합 테스트.
  *
- * <p>인터페이스 계약 테스트 — 구현마다 하위 클래스로 실행한다(WD-485).
+ * <p>인터페이스 계약 테스트 — 구현마다 하위 클래스로 실행한다(WD-485). 두 메서드는 스펙 D1 꺼진 경로라(WD-707) MyBatis 하위(PG
+ * 프로필·Tibero)는 {@link #supportsVectorSearch()}·{@link #supportsTrigramSearch()} 를 거짓으로 두고 각 시나리오 대신
+ * UnsupportedOperationException 을 단언한다.
  */
 @Transactional
 abstract class DatasetSearchRepositoryContractTest extends IntegrationTestBase {
 
   /** 계약 대상 리포지토리 — 구현별 하위 클래스가 제공한다. */
   protected abstract DatasetSearchRepository repository();
+
+  /** 코사인(벡터) 검색을 구현하는가(jOOQ 참, MyBatis 거짓 — 스펙 D1 꺼진 경로). */
+  protected boolean supportsVectorSearch() {
+    return true;
+  }
+
+  /** 트라이그램(키워드) 검색을 구현하는가(jOOQ 참, MyBatis 거짓 — 스펙 D1 꺼진 경로). */
+  protected boolean supportsTrigramSearch() {
+    return true;
+  }
+
+  /**
+   * 꺼진 구현이면 시나리오 대신 예외(종류·기능 이름)를 단언하고 참을 돌려준다 — 호출자는 시드 전에 바로 끝낸다(시드는 PG 전용 RETURNING·pgvector).
+   */
+  private boolean assertedOff(boolean supported, String feature, ThrowingCallable call) {
+    if (supported) return false;
+    assertThatThrownBy(call)
+        .isInstanceOf(UnsupportedOperationException.class)
+        .hasMessageContaining(feature);
+    return true;
+  }
+
+  private boolean trigramOff() {
+    return assertedOff(
+        supportsTrigramSearch(),
+        "TRIGRAM_SEARCH",
+        () -> repository().searchByTrigram("화재", null, 10, ALL_VISIBLE));
+  }
+
+  private boolean vectorOff() {
+    return assertedOff(
+        supportsVectorSearch(),
+        "VECTOR_SEARCH",
+        () ->
+            repository()
+                .searchByCosine(
+                    new EmbeddingSpace(EmbeddingDimension.D1024, "bge-m3"),
+                    vec(1f, 0f),
+                    null,
+                    10,
+                    ALL_VISIBLE));
+  }
 
   @Autowired private DSLContext dsl;
 
@@ -89,6 +135,7 @@ abstract class DatasetSearchRepositoryContractTest extends IntegrationTestBase {
 
   @Test
   void searchByTrigramFindsTermAndScoresPositive() {
+    if (trigramOff()) return;
     Long userId = createUser("dssearch_trgm");
     Long matched = createDataset("화재 통계 데이터셋", "data.ds_trgm_a", "DOCUMENT", "SOURCE", userId);
     Long unrelated = createDataset("전혀 무관한 인사 자료", "data.ds_trgm_b", "DOCUMENT", "SOURCE", userId);
@@ -107,6 +154,7 @@ abstract class DatasetSearchRepositoryContractTest extends IntegrationTestBase {
 
   @Test
   void searchByTrigramAppliesStorageTypeFilter() {
+    if (trigramOff()) return;
     Long userId = createUser("dssearch_filter");
     Long doc = createDataset("화재 문서셋", "data.ds_f_doc", "DOCUMENT", "SOURCE", userId);
     Long table = createDataset("화재 테이블셋", "data.ds_f_tbl", "TABLE", "SOURCE", userId);
@@ -124,6 +172,7 @@ abstract class DatasetSearchRepositoryContractTest extends IntegrationTestBase {
 
   @Test
   void searchByCosineRanksNearestFirstAndExcludesNullEmbedding() {
+    if (vectorOff()) return;
     Long userId = createUser("dssearch_cos");
     Long near = createDataset("근접 데이터셋", "data.ds_cos_near", "TABLE", "SOURCE", userId);
     Long far = createDataset("원거리 데이터셋", "data.ds_cos_far", "TABLE", "DERIVED", userId);
@@ -159,6 +208,7 @@ abstract class DatasetSearchRepositoryContractTest extends IntegrationTestBase {
 
   @Test
   void searchByCosineAppliesStorageTypeFilter() {
+    if (vectorOff()) return;
     Long userId = createUser("dssearch_cos_filter");
     Long doc = createDataset("코사인 문서셋", "data.ds_cf_doc", "DOCUMENT", "SOURCE", userId);
     Long table = createDataset("코사인 테이블셋", "data.ds_cf_tbl", "TABLE", "SOURCE", userId);
@@ -186,6 +236,7 @@ abstract class DatasetSearchRepositoryContractTest extends IntegrationTestBase {
    */
   @Test
   void searchByTrigramIncludesFileStorageTypeWhenUnfiltered() {
+    if (trigramOff()) return;
     Long userId = createUser("dssearch_file");
     Long file = createDataset("화재 현장 사진 모음", "data.ds_file_a", "FILE", "SOURCE", userId);
     seedEmbedding(file, "화재 현장 사진 및 첨부 파일 오브젝트", null);
@@ -200,6 +251,7 @@ abstract class DatasetSearchRepositoryContractTest extends IntegrationTestBase {
   /** FILE 로 storageType 필터를 걸면 FILE 데이터셋만 반환된다. */
   @Test
   void searchByTrigramAppliesFileStorageTypeFilter() {
+    if (trigramOff()) return;
     Long userId = createUser("dssearch_file_filter");
     Long file = createDataset("화재 파일셋", "data.ds_ff_file", "FILE", "SOURCE", userId);
     Long doc = createDataset("화재 문서셋2", "data.ds_ff_doc", "DOCUMENT", "SOURCE", userId);

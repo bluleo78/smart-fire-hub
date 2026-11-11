@@ -4,6 +4,7 @@ import static org.jooq.impl.DSL.*;
 
 import com.smartfirehub.dataset.dto.QueryHistoryResponse;
 import com.smartfirehub.dataset.repository.QueryHistoryRepository;
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import java.time.LocalDateTime;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -15,6 +16,7 @@ import org.springframework.stereotype.Repository;
 
 /** QueryHistoryRepository 의 jOOQ(PostgreSQL) 구현 — WD-485. */
 @Repository
+@ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
 public class JooqQueryHistoryRepository implements QueryHistoryRepository {
 
@@ -75,7 +77,8 @@ public class JooqQueryHistoryRepository implements QueryHistoryRepository {
             QH_EXECUTED_AT)
         .from(QUERY_HISTORY)
         .where(QH_DATASET_ID.eq(datasetId))
-        .orderBy(QH_EXECUTED_AT.desc())
+        // 같은 시각 행의 순서를 고정하려고 id 내림차순을 더한다(MyBatis 구현과 같은 정렬).
+        .orderBy(QH_EXECUTED_AT.desc(), QH_ID.desc())
         .limit(size)
         .offset(page * size)
         .fetch(this::mapToResponse);

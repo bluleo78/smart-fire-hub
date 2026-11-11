@@ -4,6 +4,7 @@ import static org.jooq.impl.DSL.*;
 
 import com.smartfirehub.dataset.dto.CategoryResponse;
 import com.smartfirehub.dataset.repository.DatasetCategoryRepository;
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -17,6 +18,7 @@ import org.springframework.stereotype.Repository;
 
 /** DatasetCategoryRepository 의 jOOQ(PostgreSQL) 구현 — WD-485. */
 @Repository
+@ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
 public class JooqDatasetCategoryRepository implements DatasetCategoryRepository {
 

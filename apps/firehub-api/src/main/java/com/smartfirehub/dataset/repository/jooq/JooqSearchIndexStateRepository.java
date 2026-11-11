@@ -3,6 +3,7 @@ package com.smartfirehub.dataset.repository.jooq;
 import com.smartfirehub.dataset.repository.SearchIndexStateRepository;
 import com.smartfirehub.dataset.rowsearch.RowSearchSyncService;
 import com.smartfirehub.dataset.rowsearch.SearchIndexState;
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -22,6 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 때문이다.
  */
 @Repository
+@ConditionalOnPostgresPlatformDb
 @Transactional
 @RequiredArgsConstructor
 public class JooqSearchIndexStateRepository implements SearchIndexStateRepository {

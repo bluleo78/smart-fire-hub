@@ -47,6 +47,7 @@ import com.smartfirehub.embedding.reembed.EmbeddingBacklogService;
 import com.smartfirehub.embedding.reembed.TenantReembedJob;
 import com.smartfirehub.embedding.repository.EmbeddingReembedStateRepository;
 import com.smartfirehub.global.platformdb.postgres.PostgresPlatformDbFeatures;
+import com.smartfirehub.global.platformdb.tibero.TiberoPlatformDbFeatures;
 import com.smartfirehub.global.tenant.TenantScopedRunner;
 import com.smartfirehub.notification.service.NotificationService;
 import com.smartfirehub.securitylevel.access.Clearance;
@@ -259,6 +260,38 @@ class PlatformDbFeaturesOffPathTest {
     verify(repo, never()).upsertEmbedding(any(), anyLong(), any());
     verify(repo, never()).deleteVectors(anyLong());
     verifyNoInteractions(factory);
+  }
+
+  /**
+   * WD-707 스펙 D1: Tibero 기능 답(실제 {@link TiberoPlatformDbFeatures})에서 소스 텍스트 갱신·데이터셋 삭제(메타 없음) 경로가
+   * 살아 있는 리포지토리 메서드(upsertSourceText·delete)만 부르는지 고정한다 — MyBatis 구현은 벡터 메서드에서 예외를 던지므로, 여기서 다른 호출이
+   * 하나라도 생기면 verifyNoMoreInteractions 가 잡는다. 데이터셋 삭제 자체(DatasetService.deleteDataset)는 임베딩 리포지토리를
+   * 부르지 않고 dataset_embedding 의 FK CASCADE 로 지워진다.
+   */
+  @Test
+  void 데이터셋_임베딩_Tibero_기능에서_소스_텍스트_갱신과_삭제_경로는_살아_있는_메서드만_부른다() {
+    var repo = mock(DatasetEmbeddingRepository.class);
+    var meta = mock(DatasetMetaReader.class);
+    var factory = mock(EmbeddingProviderFactory.class);
+    var gate = mock(EmbeddingAiGate.class);
+    var input =
+        new DatasetSourceTextBuilder.Input("화재", "설명", "fire", List.of("col"), List.of(), null);
+    when(meta.read(7L)).thenReturn(input);
+    when(meta.read(8L)).thenReturn(null);
+    var svc =
+        new DatasetEmbeddingService(repo, meta, factory, gate, new TiberoPlatformDbFeatures());
+
+    // 갱신: 메타가 있으면 source_text upsert, 비동기 재임베딩은 벡터 꺼짐으로 바로 끝난다.
+    svc.syncSourceText(7L);
+    svc.reindexEmbedding(7L, 1L);
+    // 삭제: 메타가 사라진 데이터셋은 카탈로그 행 delete 만, 재임베딩도 아무것도 하지 않는다.
+    svc.syncSourceText(8L);
+    svc.reindexEmbedding(8L, 1L);
+
+    verify(repo).upsertSourceText(eq(7L), eq("화재\n설명\nfire\ncol"));
+    verify(repo).delete(8L);
+    org.mockito.Mockito.verifyNoMoreInteractions(repo);
+    verifyNoInteractions(factory, gate);
   }
 
   @Test

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  dataset_column.is_searchable 문장(WD-707) — JooqSearchColumnRepository 와 같은 의미. 테넌트 정책(RLS) 대상이라 tenant_id 를 쓰지 않는다.
+  PG 의 column_name = ANY(?) 는 Tibero 에 없어 CASE WHEN column_name IN (…) THEN 참 ELSE 거짓 END 로 두 DB 공통이다.
+  IN 목록은 구현이 500 개씩 나눈 청크(Tibero 1000 개 상한)를 공용 조각 inChunks 로 잇는다. 빈 목록이면 inChunks 가 1=0 이라 전부 거짓.
+  불리언 리터럴은 공용 조각 sqlTrue/sqlFalse(Tibero NUMBER(1)).
+-->
+<mapper namespace="com.smartfirehub.dataset.repository.mybatis.SearchColumnMapper">
+
+  <resultMap id="fieldRow" type="com.smartfirehub.dataset.rowsearch.SearchConfig$Field">
+    <constructor>
+      <arg column="column_name" javaType="java.lang.String"/>
+      <arg column="display_name" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <select id="selectSearchableFields" resultMap="fieldRow">
+    SELECT c.column_name, c.display_name FROM dataset_column c
+     WHERE c.dataset_id = #{datasetId}
+       AND c.is_searchable = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>
+     ORDER BY c.column_order, c.id
+  </select>
+
+  <update id="updateSearchable">
+    UPDATE dataset_column SET is_searchable =
+      CASE WHEN <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="column_name"/></include>
+      THEN <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>
+      ELSE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlFalse"/> END
+     WHERE dataset_id = #{datasetId}
+  </update>
+
+  <select id="countSearchable" resultType="_int">
+    SELECT COUNT(*) FROM dataset_column c
+     WHERE c.id = #{columnId}
+       AND c.is_searchable = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>
+  </select>
+
+</mapper>

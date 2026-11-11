@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  query_history 문장(WD-707) — JooqQueryHistoryRepository 와 같은 의미. 테넌트 정책(RLS) 대상이라 tenant_id 를 쓰지 않는다.
+  success 는 PG boolean·Tibero NUMBER(1) 이라 공용 조각 boolLiteral 로 쓰고 읽을 때는 JDBC getBoolean 으로 받는다.
+  affected_rows·execution_time_ms 는 NULL 허용 열이라 COALESCE 로 0 을 준다(jOOQ 매핑과 같음, record 의 원시 타입 인자에 null 이 못 들어간다).
+  정렬은 executed_at 내림차순 + id 내림차순(같은 시각 행의 순서를 고정 — jOOQ 판의 정렬을 좁힌 것).
+  빈 문자열: 변환하지 않는다 — Tibero 는 '' 를 NULL 로 저장(error_message 는 null 로 돌아옴, sql_text 는 NOT NULL 이라 거절).
+-->
+<mapper namespace="com.smartfirehub.dataset.repository.mybatis.QueryHistoryMapper">
+
+  <resultMap id="historyRow" type="com.smartfirehub.dataset.dto.QueryHistoryResponse">
+    <constructor>
+      <idArg column="id" javaType="java.lang.Long"/>
+      <arg column="sql_text" javaType="java.lang.String"/>
+      <arg column="query_type" javaType="java.lang.String"/>
+      <arg column="affected_rows" javaType="_int"/>
+      <arg column="execution_time_ms" javaType="_long"/>
+      <arg column="success" javaType="_boolean"/>
+      <arg column="error_message" javaType="java.lang.String"/>
+      <arg column="executed_at" javaType="java.time.LocalDateTime"/>
+    </constructor>
+  </resultMap>
+
+  <insert id="insert">
+    INSERT INTO query_history
+      (dataset_id, user_id, sql_text, query_type, affected_rows, execution_time_ms, success, error_message)
+    VALUES (#{datasetId}, #{userId}, #{sql}, #{queryType}, #{affectedRows}, #{executionTimeMs},
+      <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.boolLiteral"><property name="v" value="success"/></include>,
+      #{error,jdbcType=VARCHAR})
+  </insert>
+
+  <select id="selectPage" resultMap="historyRow">
+    SELECT q.id, q.sql_text, q.query_type,
+           COALESCE(q.affected_rows, 0) AS affected_rows,
+           COALESCE(q.execution_time_ms, 0) AS execution_time_ms,
+           q.success, q.error_message, q.executed_at
+      FROM query_history q
+     WHERE q.dataset_id = #{datasetId}
+     ORDER BY q.executed_at DESC, q.id DESC
+     <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.pageClause"/>
+  </select>
+
+  <select id="countByDatasetId" resultType="long">
+    SELECT COUNT(*) FROM query_history q WHERE q.dataset_id = #{datasetId}
+  </select>
+
+</mapper>

@@ -5,6 +5,7 @@ import com.smartfirehub.embedding.EmbeddingDimension;
 import com.smartfirehub.embedding.EmbeddingSpace;
 import com.smartfirehub.embedding.repository.VectorLiterals;
 import com.smartfirehub.embedding.repository.jooq.VectorTables;
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.securitylevel.ai.EmbeddingAllowance;
 import com.smartfirehub.securitylevel.repository.EmbeddingAiPolicyRepository;
@@ -24,6 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>벡터는 차원별 테이블(dataset_embedding_vec_N)에 둔다(#713).
  */
 @Repository
+@ConditionalOnPostgresPlatformDb
 // 배경 잡(JobRunr/@Async/@Scheduled)은 앰비언트 트랜잭션이 없다. RLS GUC 는 트랜잭션 시작
 // 시점에만 주입되므로, 트랜잭션이 없으면 TenantContext 를 세워도 정책이 전 행을 차단한다.
 // REQUIRED 라 서비스가 이미 연 트랜잭션에는 합류한다(기존 경로 동작 불변).

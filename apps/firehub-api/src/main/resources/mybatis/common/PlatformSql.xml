@@ -27,6 +27,59 @@
   <sql id="dbNow" databaseId="postgresql">now()</sql>
   <sql id="dbNow" databaseId="tibero">SYS_EXTRACT_UTC(SYSTIMESTAMP)</sql>
 
+  <!--
+    DB 시계 + 파라미터 seconds 초(음수면 과거). 임대 만료 시각(sync_lease_until 등)을 DB 시계로 정한다(WD-707).
+    PG 는 jOOQ 판 그대로 now() + (? * interval '1 second'), Tibero 는 UTC 벽시계에 NUMTODSINTERVAL(실측: TiberoBundle2SyntaxProbeLiveTest).
+  -->
+  <sql id="dbNowPlusSeconds" databaseId="postgresql">(now() + (#{seconds} * interval '1 second'))</sql>
+  <sql id="dbNowPlusSeconds" databaseId="tibero">(SYS_EXTRACT_UTC(SYSTIMESTAMP) + NUMTODSINTERVAL(#{seconds}, 'SECOND'))</sql>
+
+  <!--
+    대소문자 무시 부분 일치(PG ILIKE 대체, WD-707). 속성 col 은 열 식, 파라미터 pattern 은 LikePatternUtils.containsPattern 로
+    %·_·\ 를 이스케이프하고 앞뒤에 % 를 붙인 패턴이다. 두 DB 같은 문장이라 databaseId 가 없다
+    (Tibero VARCHAR2(65532) 긴 값·한글에서도 동작, 실측: TiberoBundle2SyntaxProbeLiveTest).
+  -->
+  <sql id="likeIgnoreCase">LOWER(${col}) LIKE LOWER(#{pattern}) ESCAPE '\'</sql>
+
+  <!--
+    NULL 안전 같음(PG IS NOT DISTINCT FROM 대체, WD-707). 속성 col 은 열 식, 속성 param 은 파라미터 이름이다.
+    Tibero 에는 IS NOT DISTINCT FROM 이 없어 DECODE 로 쓴다 — DECODE 는 NULL 과 NULL 을 같다고 보므로 「같거나 둘 다 NULL」이면 1,
+    아니면 0 이고 결과가 UNKNOWN 이 되지 않는다(열 식도 한 번만 쓴다, 실측: TiberoBundle2SyntaxProbeLiveTest). 주의: Tibero 는 '' 를
+    NULL 로 저장·바인드하므로 '' 와 NULL 이 같다고 나온다(PG 는 다르다) — 빈 문자열을 다루는 호출자는 emptyStringIsNull 계약으로 기대를 가른다.
+  -->
+  <sql id="nullSafeEquals" databaseId="postgresql">${col} IS NOT DISTINCT FROM #{${param}}</sql>
+  <sql id="nullSafeEquals" databaseId="tibero">DECODE(${col}, #{${param}}, 1, 0) = 1</sql>
+
+  <!--
+    NULL 안전 다름(PG IS DISTINCT FROM 대체, WD-707). 속성 col·param 은 nullSafeEquals 와 같다.
+    Tibero 는 nullSafeEquals 와 같은 DECODE 의 0 쪽이다 — 한쪽만 NULL 이면 「다르다」(참), 둘 다 NULL 이면 「같다」(거짓)로 늘 참·거짓이 정해진다.
+    Tibero 는 '' 를 NULL 로 다루므로 '' 와 NULL 은 다르지 않다고 나온다(PG 는 다르다).
+  -->
+  <sql id="nullSafeDistinct" databaseId="postgresql">${col} IS DISTINCT FROM #{${param}}</sql>
+  <sql id="nullSafeDistinct" databaseId="tibero">DECODE(${col}, #{${param}}, 1, 0) = 0</sql>
+
+  <!--
+    불리언 값 리터럴(속성 v 는 파라미터 이름, WD-707). 자바 Boolean·boolean 파라미터를 sqlTrue/sqlFalse 리터럴로 바꾼다 — null 은 거짓으로 본다.
+  -->
+  <sql id="boolLiteral">
+    <choose>
+      <when test="${v} != null and ${v}"><include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/></when>
+      <otherwise><include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlFalse"/></otherwise>
+    </choose>
+  </sql>
+
+  <!--
+    id 청크 술어(WD-707). 속성 col 은 열 식, 파라미터 chunks 는 InChunks.of 가 500 개씩 나눈 목록이다(Tibero IN 목록 1000 개 상한).
+    청크가 여럿이면 OR 로 잇는다. 빈 목록이면 거짓 술어 1=0 을 낸다 — WHERE 에서는 「행 없음」, CASE WHEN 에서는 「전부 ELSE」가 된다
+    (Tibero sqlFalse 는 리터럴 0 이라 술어 자리에 못 쓴다). chunks 가 null 일 수 있는 호출자는 바깥에서 &lt;if&gt; 로 거른다.
+  -->
+  <sql id="inChunks">
+    <choose>
+      <when test="chunks.isEmpty()">1=0</when>
+      <otherwise>(<foreach collection="chunks" item="chunk" separator=" OR ">${col} IN <foreach collection="chunk" item="n" open="(" separator="," close=")">#{n}</foreach></foreach>)</otherwise>
+    </choose>
+  </sql>
+
   <!-- JSON 컬럼을 문자열로 읽는다(속성 col·alias). PG 는 jsonb 를 text 로 바꾸고, Tibero JSON 열은 getString 으로 문자열 그대로 읽힌다(실측). -->
   <sql id="jsonText" databaseId="postgresql">${col}::text AS ${alias}</sql>
   <sql id="jsonText" databaseId="tibero">${col} AS ${alias}</sql>

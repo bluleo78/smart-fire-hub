@@ -57,4 +57,21 @@ class LikePatternUtilsTest {
     assertThat(LikePatternUtils.containsPattern(" bulk01 ")).isEqualTo("%bulk01%");
     assertThat(LikePatternUtils.containsPattern("\t홍 길동\n")).isEqualTo("%홍 길동%");
   }
+
+  /**
+   * 역슬래시를 먼저 이스케이프해야 뒤의 % 이스케이프와 섞이지 않는다 — 원문을 한 번만 훑기 때문에 붙인 이스케이프 문자를 다시 이스케이프하지 않는다(WD-707, 옛
+   * LikePatternsTest 에서 옮김).
+   */
+  @Test
+  void containsPattern_backslashBeforePercent_isEscapedOnce() {
+    // a\% → a + \\ + \% (역슬래시 글자 하나와 퍼센트 글자 하나)
+    assertThat(LikePatternUtils.containsPattern("a\\%")).isEqualTo("%a\\\\\\%%");
+    assertThat(LikePatternUtils.containsPattern("\\")).isEqualTo("%\\\\%");
+  }
+
+  /** 빈 검색어는 모든 값과 맞는 %% 가 된다(WD-707, 옛 LikePatternsTest 에서 옮김) — 호출자가 빈 검색어를 먼저 거른다. */
+  @Test
+  void containsPattern_empty_matchesEverything() {
+    assertThat(LikePatternUtils.containsPattern("")).isEqualTo("%%");
+  }
 }

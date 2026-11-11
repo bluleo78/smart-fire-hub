@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  대시보드 가시성 공유 SQL 조각(WD-707) — JooqAnalyticsDashboardRepository.visibleTo(userId) 의 MyBatis 판.
+  조회자에게 보이는 대시보드 = 본인이 만들었거나(created_by) 공유된 것(is_shared). 데이터셋 참조(묶음 ②)가 먼저 쓰고
+  대시보드 리포지토리(묶음 ⑤)가 그대로 재사용한다 — 규칙을 복사하면 한쪽만 바뀌는 순간 볼 수 없는 대시보드 이름이 새어 나가므로
+  (WD-143) 이 한 곳만 고친다.
+
+  쓰는 법: 문장이 조회자 id 를 파라미터 이름 "userId" 로 받고, 별칭 없는 dashboard 테이블(jOOQ 조건과 같은 전제)이 FROM 에 있어야 한다.
+    WHERE 에서:   AND <include refid="com.smartfirehub.analytics.repository.mybatis.DashboardVisibility.dashboardVisibleTo"/>
+    SELECT 에서:  CASE WHEN <include refid="…dashboardVisibleTo"/>
+                  THEN <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>
+                  ELSE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlFalse"/> END AS visible
+  SELECT 목록에 술어를 바로 못 두는 이유: Tibero 에는 불리언 값 식이 없다. CASE 로 감싸면 PG 는 boolean, Tibero 는 NUMBER(1) 이
+  나오고 _boolean 결과 매핑이 둘 다 받는다. userId 가 null 이면 두 DB 모두 거짓(created_by NOT NULL 이라 jOOQ 판과 같다).
+
+  벤더 차이는 불리언 리터럴뿐이라 공용 조각(PlatformSql.sqlTrue)으로 한 본문을 쓴다(Tibero 불리언 컬럼은 NUMBER(1)).
+-->
+<mapper namespace="com.smartfirehub.analytics.repository.mybatis.DashboardVisibility">
+
+  <sql id="dashboardVisibleTo">(dashboard.created_by = #{userId} OR dashboard.is_shared = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>)</sql>
+
+</mapper>

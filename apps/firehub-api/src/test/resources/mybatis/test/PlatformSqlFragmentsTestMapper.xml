@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  PlatformSql 공용 조각(dbNowPlusSeconds·likeIgnoreCase·nullSafeEquals·nullSafeDistinct) 시험 전용 질의(WD-707).
+  include·속성 치환·파라미터 이름이 실제로 맞물리는지 PG(PlatformSqlFragmentsTest)와 Tibero(TiberoBundle2SyntaxProbeLiveTest)에서 돌린다.
+  매퍼 인터페이스 없이 SqlSessionTemplate.selectOne(namespace.id) 로 부른다. DUAL 유무만 다른 문장은 databaseId 별로 둔다.
+-->
+<mapper namespace="com.smartfirehub.global.platformdb.mybatis.PlatformSqlFragmentsTest">
+
+  <!-- 같은 문장 안의 DB 현재 시각과 seconds 초 뒤 시각(차이를 자바에서 잰다 — DB 서버와 시험 머신 시계 차이에 기대지 않는다). -->
+  <select id="nowAndLater" resultType="map" databaseId="postgresql">
+    SELECT <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/> AS base_at,
+           <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNowPlusSeconds"/> AS later_at
+  </select>
+  <select id="nowAndLater" resultType="map" databaseId="tibero">
+    SELECT <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/> AS base_at,
+           <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNowPlusSeconds"/> AS later_at
+      FROM DUAL
+  </select>
+
+  <!-- 바인드한 값 하나가 패턴과 맞으면 1. 값은 형을 밝힌 파생 테이블 열로 둔다(열 식에 바인드를 직접 넣으면 형 추론이 DB 마다 다르다). -->
+  <select id="likeCount" resultType="int" databaseId="postgresql">
+    SELECT COUNT(*) FROM (SELECT CAST(#{value} AS VARCHAR) AS v) x
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.likeIgnoreCase"><property name="col" value="x.v"/></include>
+  </select>
+  <select id="likeCount" resultType="int" databaseId="tibero">
+    SELECT COUNT(*) FROM (SELECT CAST(#{value} AS VARCHAR2(4000)) AS v FROM DUAL) x
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.likeIgnoreCase"><property name="col" value="x.v"/></include>
+  </select>
+
+  <!-- 열 값 a 와 파라미터 b 가 NULL 안전하게 같으면 1. -->
+  <select id="nullSafeCount" resultType="int" databaseId="postgresql">
+    SELECT COUNT(*) FROM (SELECT CAST(#{a} AS VARCHAR) AS v) x
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.nullSafeEquals"><property name="col" value="x.v"/><property name="param" value="b"/></include>
+  </select>
+  <select id="nullSafeCount" resultType="int" databaseId="tibero">
+    SELECT COUNT(*) FROM (SELECT CAST(#{a} AS VARCHAR2(4000)) AS v FROM DUAL) x
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.nullSafeEquals"><property name="col" value="x.v"/><property name="param" value="b"/></include>
+  </select>
+
+  <!-- 열 값 a 와 파라미터 b 가 NULL 안전하게 다르면 1. -->
+  <select id="nullSafeDistinctCount" resultType="int" databaseId="postgresql">
+    SELECT COUNT(*) FROM (SELECT CAST(#{a} AS VARCHAR) AS v) x
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.nullSafeDistinct"><property name="col" value="x.v"/><property name="param" value="b"/></include>
+  </select>
+  <select id="nullSafeDistinctCount" resultType="int" databaseId="tibero">
+    SELECT COUNT(*) FROM (SELECT CAST(#{a} AS VARCHAR2(4000)) AS v FROM DUAL) x
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.nullSafeDistinct"><property name="col" value="x.v"/><property name="param" value="b"/></include>
+  </select>
+
+  <!-- 숫자 열 a 와 파라미터 b(jdbcType 없이 바인드 — countStale 의 embedding_dim 과 같은 모양)가 NULL 안전하게 다르면 1. -->
+  <select id="nullSafeDistinctNumberCount" resultType="int" databaseId="postgresql">
+    SELECT COUNT(*) FROM (SELECT CAST(#{a,jdbcType=INTEGER} AS INTEGER) AS v) x
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.nullSafeDistinct"><property name="col" value="x.v"/><property name="param" value="b"/></include>
+  </select>
+  <select id="nullSafeDistinctNumberCount" resultType="int" databaseId="tibero">
+    SELECT COUNT(*) FROM (SELECT CAST(#{a,jdbcType=INTEGER} AS NUMBER(10)) AS v FROM DUAL) x
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.nullSafeDistinct"><property name="col" value="x.v"/><property name="param" value="b"/></include>
+  </select>
+
+  <!-- 실제 정책 테이블의 긴 설명 열(PG TEXT, Tibero VARCHAR2(65532))에 대한 대소문자 무시 검색 — 두 DB 같은 문장. -->
+  <select id="datasetDescriptionLikeCount" resultType="int">
+    SELECT COUNT(*) FROM dataset
+     WHERE id = #{id}
+       AND <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.likeIgnoreCase"><property name="col" value="description"/></include>
+  </select>
+
+</mapper>
