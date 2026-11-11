@@ -5,6 +5,7 @@ import static org.jooq.impl.DSL.name;
 import static org.jooq.impl.DSL.select;
 import static org.jooq.impl.DSL.table;
 
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.graphreview.dto.ReviewItemRecord;
 import com.smartfirehub.graphreview.repository.ReviewItemRepository;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
@@ -31,6 +32,7 @@ import org.springframework.transaction.annotation.Transactional;
  * JSONB}로 저장하고, Record에는 JSON 문자열로 실어 서비스가 Jackson으로 파싱한다.
  */
 @Repository
+@ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
 // RLS GUC 는 트랜잭션 시작 시점에만 주입되는데 호출자 ReviewItemService(evidence 제외)와 MCP 추출
 // 툴은 트랜잭션 경계를 만들지 않는다. 여기서 열지 않으면 세 갈래로 깨진다 — insertPending*: tenant_id

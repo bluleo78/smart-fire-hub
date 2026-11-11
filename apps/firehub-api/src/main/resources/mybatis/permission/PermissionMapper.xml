@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  permission 조회 문장(WD-706) — JooqPermissionRepository 와 같은 의미. 규칙은 MyBatisPlatformConfig javadoc, 공용 조각은
+  mybatis/common/PlatformSql.xml. 전부 벤더 공통이다. permission 은 전역, role_permission·user_role 은 RLS 라 테넌트를 문장에 쓰지 않는다 —
+  예외는 테넌트를 인자로 받는 findActiveMemberIdsWithPermission(user_role.tenant_id 를 명시, RLS 와 별개).
+  설명(description)은 NULL 허용 열이고 쓰기 문장이 없어 변환이 없다.
+-->
+<mapper namespace="com.smartfirehub.permission.repository.mybatis.PermissionMapper">
+
+  <resultMap id="permissionRow" type="com.smartfirehub.permission.dto.PermissionResponse">
+    <constructor>
+      <idArg column="id" javaType="java.lang.Long"/>
+      <arg column="code" javaType="java.lang.String"/>
+      <arg column="description" javaType="java.lang.String"/>
+      <arg column="category" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="roleCodeRow" type="com.smartfirehub.permission.repository.mybatis.PermissionMapper$RoleCodeRow">
+    <constructor>
+      <arg column="role_id" javaType="java.lang.Long"/>
+      <arg column="code" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <sql id="permissionColumns">p.id, p.code, p.description, p.category</sql>
+
+  <select id="selectAll" resultMap="permissionRow">
+    SELECT <include refid="permissionColumns"/> FROM permission p ORDER BY p.id ASC
+  </select>
+
+  <select id="selectByCategory" resultMap="permissionRow">
+    SELECT <include refid="permissionColumns"/> FROM permission p WHERE p.category = #{category} ORDER BY p.id ASC
+  </select>
+
+  <select id="selectById" resultMap="permissionRow">
+    SELECT <include refid="permissionColumns"/> FROM permission p WHERE p.id = #{id}
+  </select>
+
+  <select id="selectByCode" resultMap="permissionRow">
+    SELECT <include refid="permissionColumns"/> FROM permission p WHERE p.code = #{code}
+  </select>
+
+  <select id="selectByRoleId" resultMap="permissionRow">
+    SELECT <include refid="permissionColumns"/> FROM permission p
+      JOIN role_permission rp ON rp.permission_id = p.id
+     WHERE rp.role_id = #{roleId}
+     ORDER BY p.id ASC
+  </select>
+
+  <select id="selectCodesByIds" resultType="java.lang.String">
+    SELECT p.code FROM permission p
+     WHERE p.id IN <foreach collection="ids" item="i" open="(" separator="," close=")">#{i}</foreach>
+  </select>
+
+  <select id="countInCategory" resultType="_int">
+    SELECT COUNT(*) FROM permission p
+     WHERE p.id IN <foreach collection="ids" item="i" open="(" separator="," close=")">#{i}</foreach>
+       AND p.category = #{category}
+  </select>
+
+  <select id="selectCodesByRoleIds" resultMap="roleCodeRow">
+    SELECT rp.role_id, p.code FROM role_permission rp
+      JOIN permission p ON p.id = rp.permission_id
+     WHERE rp.role_id IN <foreach collection="roleIds" item="i" open="(" separator="," close=")">#{i}</foreach>
+  </select>
+
+  <!--
+    권한 → 역할 → 사용자 역할 → 계정(활성) → 멤버십(같은 테넌트 ACTIVE). 사용자 단위·권한 단위 조회가 같은 조인을 쓴다.
+    membership 은 전역 테이블이라 user_role.tenant_id 로 짝을 맞춘다.
+  -->
+  <sql id="activeMemberGrants">
+    FROM permission p
+      JOIN role_permission rp ON rp.permission_id = p.id
+      JOIN user_role ur ON ur.role_id = rp.role_id
+      JOIN <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.userTable"/> u
+        ON u.id = ur.user_id AND u.is_active = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>
+      JOIN membership m ON m.user_id = ur.user_id AND m.tenant_id = ur.tenant_id AND m.status = 'ACTIVE'
+  </sql>
+
+  <select id="selectCodesByUserId" resultType="java.lang.String">
+    SELECT DISTINCT p.code <include refid="activeMemberGrants"/> WHERE ur.user_id = #{userId}
+  </select>
+
+  <select id="selectActiveMemberIdsWithPermission" resultType="java.lang.Long">
+    SELECT DISTINCT ur.user_id <include refid="activeMemberGrants"/>
+     WHERE p.code = #{code} AND ur.tenant_id = #{tenantId}
+  </select>
+</mapper>

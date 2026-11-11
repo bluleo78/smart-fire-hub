@@ -90,6 +90,31 @@ PG는 jOOQ 구현을 그대로 쓰고, Tibero용 MyBatis 구현(`repository/myba
    - 지역 캐시는 문장 단위(`localCacheScope=STATEMENT`)로 둔다.
    - jOOQ 중첩 트랜잭션(savepoint)과 Spring `REQUIRED` 의 의미 차이는 구현마다 주석으로 남긴다(PoC `claimDue`).
 
+**구현 선택·짝 검사·하네스(WD-706, WD-491 묶음 ①에서 정함)**:
+
+- **배선(구현 선택).**
+  - `MyBatisPlatformConfig` 는 `firehub.platform-db.mybatis.enabled=true`(테스트 프로필)이거나 `firehub.platform-db.type=tibero` 일 때 켜진다(`MyBatisPlatformCondition`).
+  - MyBatis 구현은 `@Repository` 대신 표지 `@PlatformMyBatisRepository` 를 단다. 등록기(`PlatformMyBatisRepositoryRegistrar`)가 이를 스캔해 빈으로 올리고, 빈 이름은 클래스 이름을 소문자로 시작한 것이다.
+  - Tibero 에서는 MyBatis 구현이 일반 주입 후보다. 그 밖(PG 테스트 프로필)에서는 `autowireCandidate=false` 라 계약 테스트만 이름으로 꺼낸다.
+  - 짝이 생긴 jOOQ 구현은 `@ConditionalOnPostgresPlatformDb` 를 단다. 그래서 Tibero 에서 그 인터페이스의 후보는 MyBatis 하나뿐이다. PG 운영 컨텍스트에는 MyBatis 빈이 하나도 생기지 않는다(`MyBatisPlatformConfigGateTest`).
+- **구현 짝 검사.**
+  - `PlatformRepositoryPairTest` 는 jOOQ `@Repository` 가 구현하는 플랫폼 리포지토리 인터페이스마다 `@PlatformMyBatisRepository` 구현이 있는지 본다. 없으면 `PENDING`(인터페이스 → 묶음 번호)에 있어야 한다.
+  - `PENDING` 에 있는데 짝이 생기면 실패한다. 그래서 목록이 줄어들 수밖에 없다.
+  - 짝이 있는 jOOQ 구현에 `@ConditionalOnPostgresPlatformDb` 가 없어도 실패한다.
+  - 묶음 ① 뒤에는 ②~⑦ 항목만 남는다.
+- **Tibero 계약 테스트 하네스.**
+  - 운영과 같은 두 계정 구조다(결정 7). 소유자 계정이 Flyway 를 적용하고 픽스처·정리를 맡는다. 리포지토리는 런타임 계정 풀(`CURRENT_SCHEMA=<소유자>`) 위에서 `TenantAwareTransactionManager` + `TiberoPlatformTenantSession` 으로 돈다.
+  - 그래서 Tibero 계약 테스트도 DBMS_RLS 를 거친다. 소유자 계정은 정책 함수가 거르지 않으므로, 소유자로 돌리면 테넌트 차단 시험이 아무것도 보지 못한 채 통과한다.
+  - 공유 하네스는 `TiberoPlatformSchema.shared()` 다. 런타임 풀은 2개다.
+- **문장에 테넌트를 쓰지 않는다.**
+  - Tibero 도 컨텍스트 DEFAULT 가 `tenant_id` 를 채우고 RLS 가 읽기·쓰기를 거른다. 그래서 MyBatis 문장은 PG·jOOQ 처럼 `tenant_id` 를 INSERT 값이나 WHERE 술어에 넣지 않는다.
+  - 예외는 인터페이스가 테넌트를 인자로 받는 문장이다. `FH_TENANT.set_tenant`/`clear_tenant` 를 매퍼 XML 에서 부르는 것은 소스 검사가 막는다.
+  - 결과로 쓰기는 트랜잭션을 시작할 때 심은 세션 테넌트에 적용된다. 트랜잭션 안에서 `TenantContext` 를 다른 테넌트로 바꿔 써서는 안 된다.
+- **빈 문자열.**
+  - Tibero 는 `''` 를 NULL 로 저장한다. 읽을 수 있는 열에는 대체 값(센티널)을 저장하지 않고 Tibero 고유 의미를 따른다. NULL 허용 열은 null 로 돌아오고, NOT NULL 열은 빈 값을 거부한다. 계약 테스트는 DB별 기대로 이 차이를 고정한다.
+  - 조회에만 쓰는 인증 키는 예외로 `EmptyKeys` 의 센티널 하나를 쓴다.
+  - 서비스 쪽 대응은 `smtp.*` 설정뿐이다. 빈 값은 행 삭제로 저장한다.
+
 ### 2. 마이그레이션 이원화 규칙
 
 - **경로**:
@@ -298,8 +323,8 @@ SELECT STATUS FROM DBA_OBJECTS
 
 **WD-491(MyBatis 구현)**
 - Tibero 의 테넌트 해석 루틴(`FH_TENANT` 의 트리거·슬랙 워크스페이스 해석)은 **테넌트 id 만** 돌려준다. MyBatis 구현은 `TriggerRef.triggerId`·`SlackWorkspaceRef.workspaceId` 를 테넌트를 심은 뒤 RLS 아래에서 다시 읽어 채워야 한다(지금 호출처는 `ref.tenantId()` 만 쓴다).
-- `FH_TENANT.set_tenant` 소스 검사(`PlatformDbPgSpecificSourceTest`)를 `src/main/resources` 아래 MyBatis XML 까지 넓힌다.
-- JobRunr 풀은 런타임 계정으로 붙고 `CURRENT_SCHEMA=<소유자>` 다. 두 계정 모드에서 Oracle 저장소 제공자가 JobRunr 테이블을 제대로 찾는지 확인한다.
+- ~~`FH_TENANT.set_tenant` 소스 검사(`PlatformDbPgSpecificSourceTest`)를 `src/main/resources` 아래 MyBatis XML 까지 넓힌다.~~ **WD-706 완료.**
+- ~~JobRunr 풀은 런타임 계정으로 붙고 `CURRENT_SCHEMA=<소유자>` 다. 두 계정 모드에서 Oracle 저장소 제공자가 JobRunr 테이블을 제대로 찾는지 확인한다.~~ **WD-706 완료.** 설정 변경 없이 동작한다(`TiberoJobRunrRuntimeAccountLiveTest`).
 
 **WD-498(배포·운영)**
 - 동적 정책 비용과 트랜잭션 시작·끝의 추가 지우기 왕복을 실측한다. 색인을 타도록 술어를 `tenant_id = TO_NUMBER(SYS_CONTEXT(...))` 로 바꾸는 것을 검토한다.
@@ -331,7 +356,7 @@ SELECT STATUS FROM DBA_OBJECTS
 
 | 묶음 | 도메인 | jOOQ 구현 수 |
 |---|---|---|
-| ① 공통·인증 | auth·user·role·permission·tenant·settings·platform·audit·job | 14 |
+| ① 공통·인증 | auth·user·role·permission·tenant·settings·platform·audit·job | 15 (처음엔 14로 셌다. **WD-706 완료**) |
 | ② 데이터셋 | dataset | 13 |
 | ③ 파이프라인 | pipeline·mapping·apiconnection | 9 |
 | ④ 알림·선제 메시지 | notification·proactive (PoC 2개 포함) | 13 |

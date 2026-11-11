@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  membership 문장(WD-706) — JooqMembershipRepository 와 같은 의미. 규칙은 MyBatisPlatformConfig javadoc.
+  membership·tenant·user 는 정책 없는 전역 테이블이다(테넌트 선택 전 로그인 경로에서도 읽어야 해서 RLS 를 걸면 순환이 된다).
+  그래서 인터페이스가 테넌트를 인자로 받는 문장은 tenant_id 를 직접 건다 — 전역 제약의 「테넌트를 인자로 받는 문장」 예외다.
+  빈 문자열(controller Ruling): 변환하지 않는다 — status '' 는 PG 에서 CHECK 위반, Tibero 에서 NOT NULL 위반으로 둘 다 거절된다.
+-->
+<mapper namespace="com.smartfirehub.tenant.repository.mybatis.MembershipMapper">
+
+  <resultMap id="membershipResponse" type="com.smartfirehub.tenant.dto.MembershipResponse">
+    <constructor>
+      <arg column="tenant_id" javaType="java.lang.Long"/>
+      <arg column="tenant_slug" javaType="java.lang.String"/>
+      <arg column="tenant_name" javaType="java.lang.String"/>
+      <arg column="role" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="unavailableRow" type="com.smartfirehub.tenant.repository.mybatis.MembershipMapper$UnavailableRow">
+    <constructor>
+      <arg column="tenant_name" javaType="java.lang.String"/>
+      <arg column="tenant_status" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="tenantMembership" type="com.smartfirehub.tenant.dto.TenantMembership">
+    <constructor>
+      <arg column="user_id" javaType="java.lang.Long"/>
+      <arg column="role" javaType="java.lang.String"/>
+      <arg column="status" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <!-- 선택 가능한 테넌트: 멤버십·테넌트 모두 ACTIVE, 테넌트 id 오름차순. -->
+  <select id="selectActiveByUser" resultMap="membershipResponse">
+    SELECT t.id AS tenant_id, t.slug AS tenant_slug, t.name AS tenant_name, m.role
+      FROM membership m
+      JOIN tenant t ON t.id = m.tenant_id
+     WHERE m.user_id = #{userId}
+       AND m.status = 'ACTIVE'
+       AND t.status = 'ACTIVE'
+     ORDER BY t.id ASC
+  </select>
+
+  <!-- 들어갈 수 없는 워크스페이스: 멤버십 또는 테넌트가 ACTIVE 가 아님(selectActiveByUser 의 여집합). -->
+  <select id="selectUnavailableByUser" resultMap="unavailableRow">
+    SELECT t.name AS tenant_name, t.status AS tenant_status
+      FROM membership m
+      JOIN tenant t ON t.id = m.tenant_id
+     WHERE m.user_id = #{userId}
+       AND (m.status &lt;&gt; 'ACTIVE' OR t.status &lt;&gt; 'ACTIVE')
+     ORDER BY t.id ASC
+  </select>
+
+  <select id="countActiveMembership" resultType="_int">
+    SELECT COUNT(*)
+      FROM membership m
+      JOIN tenant t ON t.id = m.tenant_id
+     WHERE m.user_id = #{userId}
+       AND m.tenant_id = #{tenantId}
+       AND m.status = 'ACTIVE'
+       AND t.status = 'ACTIVE'
+  </select>
+
+  <select id="selectInTenant" resultMap="tenantMembership">
+    SELECT m.user_id, m.role, m.status FROM membership m
+     WHERE m.user_id = #{userId} AND m.tenant_id = #{tenantId}
+  </select>
+
+  <!-- 배치 조회 — IN 목록은 구현이 500 개씩 나눠 보낸다(Tibero IN 목록 1000 개 상한). -->
+  <select id="selectInTenantBatch" resultMap="tenantMembership">
+    SELECT m.user_id, m.role, m.status FROM membership m
+     WHERE m.tenant_id = #{tenantId}
+       AND m.user_id IN <foreach collection="userIds" item="u" open="(" separator="," close=")">#{u}</foreach>
+  </select>
+
+  <!-- 계정 활성 + 이 테넌트 ACTIVE 멤버 + 테넌트 ACTIVE. MemberEligibility.isActiveMember 와 조건을 함께 바꾼다. -->
+  <select id="selectActiveMemberIds" resultType="java.lang.Long">
+    SELECT m.user_id
+      FROM membership m
+      JOIN tenant t ON t.id = m.tenant_id
+      JOIN <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.userTable"/> u ON u.id = m.user_id
+     WHERE m.tenant_id = #{tenantId}
+       AND m.user_id IN <foreach collection="userIds" item="u" open="(" separator="," close=")">#{u}</foreach>
+       AND m.status = 'ACTIVE'
+       AND t.status = 'ACTIVE'
+       AND u.is_active = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>
+  </select>
+
+  <!-- 멤버 추가: ACTIVE MEMBER. 중복(membership_unique)은 두 DB 모두 DuplicateKeyException. -->
+  <insert id="insertMember">
+    INSERT INTO membership (user_id, tenant_id, role, status) VALUES (#{userId}, #{tenantId}, 'MEMBER', 'ACTIVE')
+  </insert>
+
+  <update id="updateStatus">
+    UPDATE membership SET status = #{status,jdbcType=VARCHAR}
+     WHERE user_id = #{userId} AND tenant_id = #{tenantId}
+  </update>
+
+  <delete id="delete">
+    DELETE FROM membership WHERE user_id = #{userId} AND tenant_id = #{tenantId}
+  </delete>
+</mapper>

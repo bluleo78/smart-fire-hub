@@ -1,17 +1,6 @@
 package com.smartfirehub.global.platformdb.mybatis;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.platformdb.tibero.TiberoSqlExceptionTranslator;
-import com.smartfirehub.graphreview.repository.ReviewItemRepository;
-import com.smartfirehub.graphreview.repository.mybatis.MyBatisReviewItemRepository;
-import com.smartfirehub.graphreview.repository.mybatis.ReviewItemMapper;
-import com.smartfirehub.notification.repository.NotificationOutboxRepository;
-import com.smartfirehub.notification.repository.mybatis.MyBatisNotificationOutboxRepository;
-import com.smartfirehub.notification.repository.mybatis.NotificationOutboxMapper;
-import com.smartfirehub.proactive.repository.ProactiveMessageRepository;
-import com.smartfirehub.proactive.repository.mybatis.MyBatisProactiveMessageRepository;
-import com.smartfirehub.proactive.repository.mybatis.ProactiveMessageMapper;
-import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import java.time.Instant;
 import java.util.Properties;
 import java.util.UUID;
@@ -23,9 +12,10 @@ import org.mybatis.spring.MyBatisExceptionTranslator;
 import org.mybatis.spring.SqlSessionFactoryBean;
 import org.mybatis.spring.SqlSessionTemplate;
 import org.mybatis.spring.annotation.MapperScan;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Conditional;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Import;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 
@@ -37,26 +27,30 @@ import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
  * 같은 설정으로 팩토리를 만들어야 해서 {@link #sqlSessionFactory(DataSource)} 를 정적으로 둔다. 트랜잭션은 앱 기본 트랜잭션 관리자(같은
  * DataSource)가 쥐고 SqlSessionTemplate 이 그 커넥션에 참여한다.
  *
- * <p>왜 기본 꺼짐: {@code firehub.platform-db.mybatis.enabled=true}(테스트 프로필만)일 때만 켜진다. PoC 라 운영 컨텍스트에는
- * 매퍼 스캔·XML 파싱·기동 시 DB 연결·구현 빈이 하나도 생기지 않아야 한다.
+ * <p>왜 기본 꺼짐: {@link MyBatisPlatformCondition} — {@code
+ * firehub.platform-db.mybatis.enabled=true}(테스트 프로필) 또는 {@code firehub.platform-db.type=tibero} 일
+ * 때만 켜진다. PG 운영 컨텍스트에는 매퍼 스캔·XML 파싱·기동 시 DB 연결·구현 빈이 하나도 생기지 않아야 한다. 구현 빈은 {@link
+ * PlatformMyBatisRepositoryRegistrar} 가 {@link PlatformMyBatisRepository} 를 스캔해 등록한다.
  *
  * <p>매퍼 XML 공통 규칙(각 XML 머리말은 여기를 가리킨다):
  *
  * <ul>
  *   <li>databaseId: 벤더 공통 문장은 databaseId 를 달지 않고, PG 전용 문법이 든 문장·조각만 {@code
  *       databaseId="postgresql"}, Tibero 판은 같은 id 로 {@code databaseId="tibero"} 에 둔다. MyBatis 는 현재
- *       databaseId 판을 고르고 없으면 공통 판을 쓴다. 테넌트 술어·리터럴·행 제한만 다른 문장은 한 본문에 공용 조각({@code
+ *       databaseId 판을 고르고 없으면 공통 판을 쓴다. 리터럴·행 제한만 다른 문장은 한 본문에 공용 조각({@code
  *       mybatis/common/PlatformSql.xml})을 끼워 쓴다(PG 렌더 결과는 공백만 다르다).
- *   <li>tenant_id: PG 는 컬럼 DEFAULT(GUC {@code app.tenant_id})가 채우고 RLS 가 읽기를 거르므로 문장에 넣지 않는다(jOOQ 와
- *       같음). Tibero 는 RLS·GUC 가 없어(WD-492 범위) INSERT 값과 읽기 술어에 테넌트를 명시하는데, 값은 공용 조각 {@code
- *       tiberoTenantBind} 가 {@code TenantContext} 에서 한 곳에서 읽는다(매퍼 인자로 넘기지 않는다). 인터페이스 계약이 테넌트를 인자로
- *       받는 문장(claimDue·countPendingByChannel)만 명시 인자를 쓴다.
+ *   <li>tenant_id: 두 DB 모두 컬럼 DEFAULT(PG GUC {@code app.tenant_id}, Tibero 컨텍스트 — WD-492)가 채우고
+ *       RLS(PG 정책, Tibero DBMS_RLS)가 읽기·쓰기를 거르므로 문장에 INSERT 값·WHERE 술어로 쓰지 않는다(jOOQ 와 같음, WD-706).
+ *       그래서 테넌트 없는 경로(로그인·플랫폼 관리 등)에서도 문장이 {@code TenantContext} 를 요구하지 않는다. 예외는 인터페이스 계약이 테넌트를 인자로
+ *       받는 문장(claimDue·countPendingByChannel)뿐이고 그 인자를 그대로 쓴다. 테넌트를 가로지르는 조회는 정책을 넘는 함수(PG SECURITY
+ *       DEFINER, Tibero {@code FH_TENANT} 패키지)를 부른다.
  *   <li>null 바인드: Tibero 팩토리 전역 {@code jdbcTypeForNull=VARCHAR}(아래 {@code applyTiberoSettings}) 라
  *       Tibero 문장에는 null 때문에 {@code jdbcType} 을 달지 않는다.
  * </ul>
  */
 @Configuration(proxyBeanMethods = false)
-@ConditionalOnProperty(name = MyBatisPlatformConfig.ENABLED_PROPERTY, havingValue = "true")
+@Conditional(MyBatisPlatformCondition.class)
+@Import(PlatformMyBatisRepositoryRegistrar.class)
 @MapperScan(
     basePackages = "com.smartfirehub",
     annotationClass = PlatformMapper.class,
@@ -161,32 +155,5 @@ public class MyBatisPlatformConfig {
         factory,
         factory.getConfiguration().getDefaultExecutorType(),
         new MyBatisExceptionTranslator(TiberoSqlExceptionTranslator::create, true));
-  }
-
-  /**
-   * ReviewItemRepository 의 MyBatis 구현(WD-487 PoC). {@code autowireCandidate=false} 라 인터페이스 타입 주입에
-   * 끼지 않고(서비스는 그대로 jOOQ 구현을 받는다) 계약 테스트가 빈 이름으로 꺼낸다. 컨테이너가 만드는 빈이라 구현 클래스의 {@code @Transactional}
-   * 프록시가 적용된다.
-   */
-  @Bean(name = "myBatisReviewItemRepository", autowireCandidate = false)
-  public ReviewItemRepository myBatisReviewItemRepository(ReviewItemMapper reviewItemMapper) {
-    return new MyBatisReviewItemRepository(reviewItemMapper);
-  }
-
-  /** NotificationOutboxRepository 의 MyBatis 구현(WD-487 PoC). 계약 테스트가 빈 이름으로 꺼낸다(서비스 주입은 jOOQ 구현). */
-  @Bean(name = "myBatisNotificationOutboxRepository", autowireCandidate = false)
-  public NotificationOutboxRepository myBatisNotificationOutboxRepository(
-      NotificationOutboxMapper notificationOutboxMapper) {
-    return new MyBatisNotificationOutboxRepository(notificationOutboxMapper);
-  }
-
-  /** ProactiveMessageRepository 의 MyBatis 구현(WD-487 PoC). 계약 테스트가 빈 이름으로 꺼낸다(서비스 주입은 jOOQ 구현). */
-  @Bean(name = "myBatisProactiveMessageRepository", autowireCandidate = false)
-  public ProactiveMessageRepository myBatisProactiveMessageRepository(
-      ProactiveMessageMapper proactiveMessageMapper,
-      ObjectMapper objectMapper,
-      ClearanceResolver clearanceResolver) {
-    return new MyBatisProactiveMessageRepository(
-        proactiveMessageMapper, objectMapper, clearanceResolver);
   }
 }

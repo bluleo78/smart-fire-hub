@@ -5,6 +5,7 @@ import static org.jooq.impl.DSL.*;
 import com.smartfirehub.audit.dto.AuditLogResponse;
 import com.smartfirehub.audit.repository.AuditLogRepository;
 import com.smartfirehub.global.dto.PageResponse;
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.global.util.LikePatternUtils;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.securitylevel.repository.jooq.JooqDatasetVisibility;
@@ -33,6 +34,7 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @Transactional
 @Repository
+@ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
 public class JooqAuditLogRepository implements AuditLogRepository {
 
@@ -290,7 +292,8 @@ public class JooqAuditLogRepository implements AuditLogRepository {
         dsl.select(RESPONSE_FIELDS)
             .from(AUDIT_LOG)
             .where(condition)
-            .orderBy(AL_ACTION_TIME.desc())
+            // 같은 시각 행이 페이지 경계에서 겹치거나 빠지지 않도록 id desc 를 2차 키로 둔다(WD-706 — MyBatis 구현과 같은 순서).
+            .orderBy(AL_ACTION_TIME.desc(), AL_ID.desc())
             .offset((long) page * size)
             .limit(size)
             .fetch(this::mapToResponse);

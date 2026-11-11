@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  플랫폼 운영자 RBAC 문장(WD-706) — JooqPlatformRoleRepository 와 같은 의미. 규칙은 MyBatisPlatformConfig javadoc.
+  platform_user_role·platform_role_permission·permission 은 테넌트 경계 위의 전역 테이블(tenant_id·정책 없음)이라 두 벤더 공통 문장이다.
+  테넌트 평면 role·user_role(정책 테이블)은 조인하지 않는다 — 평면을 섞으면 운영자 토큰으로 테넌트 권한을 얻거나 그 반대가 된다.
+-->
+<mapper namespace="com.smartfirehub.platform.repository.mybatis.PlatformRoleMapper">
+
+  <select id="selectPermissionCodes" resultType="java.lang.String">
+    SELECT DISTINCT p.code
+      FROM platform_user_role pur
+      JOIN platform_role_permission prp ON prp.platform_role_id = pur.platform_role_id
+      JOIN permission p ON p.id = prp.permission_id
+     WHERE pur.user_id = #{userId}
+  </select>
+
+  <select id="countPlatformRoles" resultType="_int">
+    SELECT COUNT(*) FROM platform_user_role WHERE user_id = #{userId}
+  </select>
+</mapper>

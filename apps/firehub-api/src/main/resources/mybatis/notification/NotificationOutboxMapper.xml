@@ -2,8 +2,9 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <!--
   notification_outbox 문장(WD-487 PoC) — JooqNotificationOutboxRepository 와 같은 의미. databaseId·테넌트·null 바인드 규칙은
-  MyBatisPlatformConfig javadoc, 공용 조각은 mybatis/common/PlatformSql.xml. claimDue·countPendingByChannel 은 jOOQ 와 같이
-  명시 tenantId 인자를 쓴다. id 로 찾는 쓰기(markSent·requeueForRetry 등)는 Tibero 에서 테넌트 경계가 없다(보고서 참조).
+  MyBatisPlatformConfig javadoc, 공용 조각은 mybatis/common/PlatformSql.xml. 테넌트는 두 DB 모두 tenant_id DEFAULT(PG GUC·
+  Tibero 컨텍스트)가 채우고 RLS(PG 정책·Tibero DBMS_RLS)가 거르므로 문장에 쓰지 않는다 — id 로 찾는 쓰기(markSent·requeueForRetry
+  등)도 정책이 테넌트 경계다(WD-706). 예외로 claimDue·countPendingByChannel 은 jOOQ 와 같이 명시 tenantId 인자를 쓴다.
   Tibero 차이(실측): uuid 는 VARCHAR2(36)(Tibero 팩토리 전역 UUID 핸들러가 문자열로 바인딩), jsonb 는 JSON 컬럼 문자열,
   TIMESTAMPTZ 는 UTC 벽시계 TIMESTAMP(OffsetDateTime(UTC) 바인딩이 벽시계 그대로 저장, 읽기는 전역 UtcInstantTypeHandler).
 -->
@@ -30,20 +31,11 @@
   </resultMap>
 
   <!-- payload(jsonb)를 JSON 문자열로 읽는다. -->
-  <sql id="payloadText" databaseId="postgresql">payload::text AS payload</sql>
-  <sql id="payloadText" databaseId="tibero">payload AS payload</sql>
-
-  <!-- Tibero 읽기 테넌트 술어(PG 는 렌더되지 않는다). -->
-  <sql id="tiberoTenant">
-    <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.tiberoTenant">
-      <property name="alias" value="notification_outbox"/>
-    </include>
-  </sql>
 
   <sql id="rowColumns">
     id, idempotency_key, correlation_id, event_type, event_source_id, channel_type,
     recipient_user_id, recipient_address, payload_ref_type, payload_ref_id,
-    <include refid="payloadText"/>, payload_type, status, attempt_count, next_attempt_at
+    <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.jsonText"><property name="col" value="payload"/><property name="alias" value="payload"/></include>, payload_type, status, attempt_count, next_attempt_at
   </sql>
 
   <insert id="insertIfAbsent" databaseId="postgresql">
@@ -59,33 +51,41 @@
   </insert>
 
   <!--
-    Tibero: 멱등 키 MERGE. 일치 조건은 PG V106 의 uk_outbox_idempotency UNIQUE (tenant_id, idempotency_key) 와 같다 — 키만으로
-    맞추면 다른 테넌트가 같은 키를 이미 쓴 경우 조용히 삽입을 건너뛴다.
+    Tibero: 멱등 키 MERGE. PG V106 의 uk_outbox_idempotency UNIQUE (tenant_id, idempotency_key) 의 테넌트 쪽은 DBMS_RLS 가 맡는다 —
+    정책이 MERGE 대상을 현재 테넌트 행으로 거르므로 다른 테넌트가 같은 키를 이미 썼어도 NOT MATCHED 가 되어 삽입되고, tenant_id 는 컨텍스트
+    DEFAULT 가 채운다(계약 시험 insertIfAbsent_sameKeyInTwoTenants_insertsBoth 가 고정).
     동시 삽입 경합에서는 한쪽이 UNIQUE 위반으로 실패할 수 있다(PG ON CONFLICT 는 조용히 무시) — 계약 테스트는 순차 호출만 본다.
   -->
   <insert id="insertIfAbsent" databaseId="tibero">
-    <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.tiberoTenantBind"/>
     MERGE INTO notification_outbox t
-    USING (SELECT #{ctxTenantId} AS tenant_id, #{idempotencyKey} AS idempotency_key FROM DUAL) s
-       ON (t.tenant_id = s.tenant_id AND t.idempotency_key = s.idempotency_key)
+    USING (SELECT #{idempotencyKey} AS idempotency_key FROM DUAL) s
+       ON (t.idempotency_key = s.idempotency_key)
     WHEN NOT MATCHED THEN INSERT
-      (tenant_id, idempotency_key, correlation_id, event_type, event_source_id, channel_type,
+      (idempotency_key, correlation_id, event_type, event_source_id, channel_type,
        recipient_user_id, recipient_address, payload_ref_type, payload_ref_id, payload, payload_type)
     VALUES
-      (s.tenant_id, s.idempotency_key, #{correlationId}, #{eventType},
+      (s.idempotency_key, #{correlationId}, #{eventType},
        #{eventSourceId}, #{channelType}, #{recipientUserId},
        #{recipientAddress}, #{payloadRefType},
        #{payloadRefId}, #{payloadJson}, #{payloadType})
   </insert>
 
+  <!-- 테넌트를 가로지르는 조회라 정책을 넘는 함수를 부른다. 결과는 반환 목록으로 온다. -->
   <select id="tenantIdsWithStatus" resultType="java.lang.Long" databaseId="postgresql">
-    SELECT t FROM outbox_tenant_ids(ARRAY[<foreach collection="statuses" item="s" separator=",">#{s}</foreach>]::text[]) AS t
+    SELECT t FROM outbox_tenant_ids(ARRAY[<foreach collection="query.statuses" item="s" separator=",">#{s}</foreach>]::text[]) AS t
   </select>
 
-  <!-- Tibero: RLS 가 없어 SECURITY DEFINER 함수가 필요 없다 — 전 테넌트를 그대로 본다. -->
-  <select id="tenantIdsWithStatus" resultType="java.lang.Long" databaseId="tibero">
-    SELECT DISTINCT tenant_id FROM notification_outbox
-     WHERE status IN <foreach collection="statuses" item="s" open="(" separator="," close=")">#{s}</foreach>
+  <!-- 커서의 tenant_id 한 열을 Long 으로 읽는다(단순 타입이라 첫 열 자동 매핑). -->
+  <resultMap id="tenantIdRow" type="java.lang.Long"/>
+
+  <!--
+    Tibero: 정책(DBMS_RLS)을 넘으려면 FH_TENANT.outbox_tenant_ids(V156.1, BYPASS 를 켠 채 연 SYS_REFCURSOR)를 불러야 한다 — 일반
+    SELECT 는 배경 스레드(테넌트 없음)에서 0행이다. 커서 OUT 인자는 MyBatis 가 resultMap 으로 읽어 파라미터 객체의 tenantIds 에 넣고, 반환
+    목록은 비어 있다(구현이 둘 중 채워진 쪽을 쓴다). 상태 목록은 쉼표 구분 문자열로 넘긴다(컬렉션 타입을 만들 권한이 없다).
+  -->
+  <select id="tenantIdsWithStatus" statementType="CALLABLE" databaseId="tibero">
+    {#{query.tenantIds,mode=OUT,jdbcType=CURSOR,javaType=java.sql.ResultSet,resultMap=tenantIdRow} =
+      call FH_TENANT.outbox_tenant_ids(#{query.statusesCsv,jdbcType=VARCHAR})}
   </select>
 
   <select id="selectDueIdsForUpdate" resultType="java.lang.Long" databaseId="postgresql">
@@ -152,11 +152,10 @@
      WHERE status = 'SENDING' AND claimed_at &lt; #{cutoff}
   </update>
 
-  <!-- Tibero 는 RLS 대신 테넌트 술어를 둔다. 상관 id 는 Tibero 팩토리 전역 UUID 핸들러가 문자열로 바인딩한다(jdbcType=OTHER 는 PG 용). -->
+  <!-- 상관 id 는 Tibero 팩토리 전역 UUID 핸들러가 문자열로 바인딩한다(jdbcType=OTHER 는 PG 용). -->
   <select id="findByCorrelation" resultMap="outboxRow">
     SELECT <include refid="rowColumns"/> FROM notification_outbox
      WHERE correlation_id = #{correlationId,jdbcType=OTHER}
-       <include refid="tiberoTenant"/>
      ORDER BY channel_type ASC
   </select>
 
@@ -171,11 +170,10 @@
      GROUP BY channel_type
   </select>
 
-  <!-- 정체 대기 행 최대 200건. Tibero 는 RLS 대신 테넌트 술어를 둔다(잠금 없는 조회라 FETCH FIRST 를 쓸 수 있다). -->
+  <!-- 정체 대기 행 최대 200건(Tibero 는 잠금 없는 조회라 FETCH FIRST 를 쓸 수 있다). -->
   <select id="findStuckPending" resultMap="outboxRow">
     SELECT <include refid="rowColumns"/> FROM notification_outbox
      WHERE status = 'PENDING' AND created_at &lt; #{olderThan}
-       <include refid="tiberoTenant"/>
      ORDER BY created_at ASC
      <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.limitRows"><property name="n" value="200"/></include>
   </select>

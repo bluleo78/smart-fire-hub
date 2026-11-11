@@ -33,14 +33,50 @@ public interface NotificationOutboxMapper {
       @Param("payloadJson") String payloadJson,
       @Param("payloadType") String payloadType);
 
-  /** 주어진 상태의 행을 가진 테넌트 id 목록(SECURITY DEFINER 함수). */
-  List<Long> tenantIdsWithStatus(@Param("statuses") List<String> statuses);
+  /**
+   * 주어진 상태의 행을 가진 테넌트 id 목록 — 정책을 넘는 함수(PG SECURITY DEFINER {@code outbox_tenant_ids}, Tibero
+   * {@code FH_TENANT.outbox_tenant_ids} 커서)를 부른다. PG 는 반환 목록으로, Tibero 는 커서 OUT 인자로 {@link
+   * TenantIdsQuery#getTenantIds()} 에 돌려준다(이때 반환 목록은 비어 있다).
+   */
+  List<Long> tenantIdsWithStatus(@Param("query") TenantIdsQuery query);
+
+  /**
+   * {@link #tenantIdsWithStatus} 의 입출력 — 벤더마다 결과가 오는 자리가 달라(PG 결과 집합, Tibero 커서 OUT 인자) 한 매퍼 시그니처로
+   * 두려고 가변 객체로 둔다. MyBatis 가 Tibero 커서 결과를 {@code tenantIds} 세터로 넣는다.
+   */
+  final class TenantIdsQuery {
+    private final List<String> statuses;
+    private List<Long> tenantIds;
+
+    public TenantIdsQuery(List<String> statuses) {
+      this.statuses = List.copyOf(statuses);
+    }
+
+    /** PG 문장이 배열로 펼치는 상태 목록. */
+    public List<String> getStatuses() {
+      return statuses;
+    }
+
+    /** Tibero 함수 인자 — 쉼표 구분 상태 목록(컬렉션 타입을 만들 권한이 없어 문자열로 받는다, V156.1). */
+    public String getStatusesCsv() {
+      return String.join(",", statuses);
+    }
+
+    /** Tibero 커서 OUT 결과(PG 는 null). */
+    public List<Long> getTenantIds() {
+      return tenantIds;
+    }
+
+    public void setTenantIds(List<Long> tenantIds) {
+      this.tenantIds = tenantIds;
+    }
+  }
 
   /**
    * 처리 대상 id 를 잠그며 고른다(FOR UPDATE SKIP LOCKED). 행 제한과 {@code rowBounds} 의 관계는 XML Tibero 판 주석 참조.
    */
   List<Long> selectDueIdsForUpdate(
-      @Param("tenantId") long tenantId,
+      @Param("tenantId") Long tenantId,
       @Param("now") OffsetDateTime now,
       @Param("batchSize") int batchSize,
       RowBounds rowBounds);
@@ -55,19 +91,19 @@ public interface NotificationOutboxMapper {
   List<NotificationOutboxRow> findByIds(@Param("ids") List<Long> ids);
 
   int markSent(
-      @Param("id") long id,
+      @Param("id") Long id,
       @Param("sentAt") OffsetDateTime sentAt,
       @Param("externalMessageId") String externalMessageId);
 
   int rescheduleTransient(
-      @Param("id") long id,
+      @Param("id") Long id,
       @Param("attemptCount") int attemptCount,
       @Param("nextAttemptAt") OffsetDateTime nextAttemptAt,
       @Param("error") String error,
       @Param("errorAt") OffsetDateTime errorAt);
 
   int markPermanentFailure(
-      @Param("id") long id,
+      @Param("id") Long id,
       @Param("reason") String reason,
       @Param("error") String error,
       @Param("errorAt") OffsetDateTime errorAt);
@@ -77,11 +113,11 @@ public interface NotificationOutboxMapper {
   List<NotificationOutboxRow> findByCorrelation(@Param("correlationId") UUID correlationId);
 
   /** 채널별 PENDING 건수. 키 channel_type, cnt. */
-  List<Map<String, Object>> countPendingByChannel(@Param("tenantId") long tenantId);
+  List<Map<String, Object>> countPendingByChannel(@Param("tenantId") Long tenantId);
 
   List<NotificationOutboxRow> findStuckPending(@Param("olderThan") OffsetDateTime olderThan);
 
-  int requeueForRetry(@Param("id") long id, @Param("now") OffsetDateTime now);
+  int requeueForRetry(@Param("id") Long id, @Param("now") OffsetDateTime now);
 
   int deleteSentOlderThan(@Param("cutoff") OffsetDateTime cutoff);
 

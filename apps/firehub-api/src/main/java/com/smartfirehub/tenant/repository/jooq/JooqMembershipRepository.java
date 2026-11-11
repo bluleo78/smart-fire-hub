@@ -4,6 +4,7 @@ import static org.jooq.impl.DSL.field;
 import static org.jooq.impl.DSL.name;
 import static org.jooq.impl.DSL.table;
 
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.tenant.dto.MembershipResponse;
 import com.smartfirehub.tenant.dto.TenantMembership;
 import com.smartfirehub.tenant.dto.UnavailableWorkspace;
@@ -28,6 +29,7 @@ import org.springframework.stereotype.Repository;
  * 어떤 테넌트를 선택할 수 있는지 알 수 없다.
  */
 @Repository
+@ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
 public class JooqMembershipRepository implements MembershipRepository {
 

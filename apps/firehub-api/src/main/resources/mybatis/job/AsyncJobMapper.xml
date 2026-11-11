@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  async_job 문장(WD-706) — JooqAsyncJobRepository 와 같은 의미. databaseId·테넌트·null 바인드 규칙은 MyBatisPlatformConfig javadoc,
+  공용 조각(resourceColumn)은 mybatis/common/PlatformSql.xml.
+
+  테넌트: async_job 은 표준 정책 대상(tenant_id NOT NULL)이라 컨텍스트가 심긴 트랜잭션 안에서만 행이 보이고, tenant_id 는 INSERT 에서
+  빼 열 DEFAULT 가 채운다(컨텍스트가 없으면 NOT NULL 위반 — fail-closed). 그래서 구현은 클래스 레벨 @Transactional 을 둔다.
+  벤더 차이: resource 열 이름(Tibero 예약어 "RESOURCE"), metadata(PG jsonb ↔ Tibero JSON 문자열). id 는 두 DB 모두 문자열(VARCHAR 36).
+  updated_at 은 jOOQ 처럼 JVM 시각(now 파라미터)으로 쓴다. 목록은 jOOQ 처럼 정렬하지 않는다.
+  빈 문자열(controller Ruling): 변환하지 않는다 — Tibero 는 '' 를 NULL 로 저장해 message·error_message 는 null 로 돌아오고
+  NOT NULL 열(job_type·resource·resource_id·stage)은 거절된다.
+-->
+<mapper namespace="com.smartfirehub.job.repository.mybatis.AsyncJobMapper">
+
+  <resultMap id="asyncJobRow" type="com.smartfirehub.job.repository.mybatis.AsyncJobRow">
+    <constructor>
+      <idArg column="id" javaType="java.lang.String"/>
+      <arg column="job_type" javaType="java.lang.String"/>
+      <arg column="stage" javaType="java.lang.String"/>
+      <arg column="progress" javaType="java.lang.Integer"/>
+      <arg column="message" javaType="java.lang.String"/>
+      <arg column="metadata" javaType="java.lang.String"/>
+      <arg column="error_message" javaType="java.lang.String"/>
+      <arg column="created_at" javaType="java.time.LocalDateTime"/>
+      <arg column="updated_at" javaType="java.time.LocalDateTime"/>
+      <arg column="user_id" javaType="java.lang.Long"/>
+    </constructor>
+  </resultMap>
+
+  <!-- metadata 를 JSON 문자열로 읽는다. PG 는 jsonb 를 text 로, Tibero JSON 열은 문자열 그대로(실측). -->
+
+  <sql id="rowColumns">
+    async_job.id, async_job.job_type, async_job.stage, async_job.progress, async_job.message,
+    <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.jsonText"><property name="col" value="async_job.metadata"/><property name="alias" value="metadata"/></include>, async_job.error_message, async_job.created_at, async_job.updated_at,
+    async_job.user_id
+  </sql>
+
+  <sql id="resourceCol">async_job.<include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.resourceColumn"/></sql>
+
+  <!-- 끝나지 않은 작업(진행 중 유일 인덱스의 「진행 중」 조건과 같은 식). -->
+  <sql id="active">async_job.stage NOT IN ('COMPLETED', 'FAILED')</sql>
+
+  <insert id="insert" databaseId="postgresql">
+    INSERT INTO async_job (id, job_type, resource, resource_id, user_id, stage, progress, metadata)
+    VALUES (#{id}, #{jobType,jdbcType=VARCHAR}, #{resource,jdbcType=VARCHAR}, #{resourceId,jdbcType=VARCHAR},
+            #{userId,jdbcType=BIGINT}, 'PENDING', 0, CAST(#{metadataJson,jdbcType=VARCHAR} AS jsonb))
+  </insert>
+
+  <!-- Tibero: metadata 는 JSON 열에 문자열 그대로(PG 는 CAST AS jsonb) — 그래서 PG 판과 합치지 않는다. -->
+  <insert id="insert" databaseId="tibero">
+    INSERT INTO async_job (id, job_type, <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.resourceColumn"/>, resource_id, user_id, stage, progress, metadata)
+    VALUES (#{id}, #{jobType,jdbcType=VARCHAR}, #{resource,jdbcType=VARCHAR}, #{resourceId,jdbcType=VARCHAR},
+            #{userId,jdbcType=BIGINT}, 'PENDING', 0, #{metadataJson,jdbcType=VARCHAR})
+  </insert>
+
+  <select id="selectDatasetResourceId" resultType="string">
+    SELECT async_job.resource_id FROM async_job
+     WHERE async_job.id = #{id} AND <include refid="resourceCol"/> = 'dataset'
+  </select>
+
+  <select id="selectById" resultMap="asyncJobRow">
+    SELECT <include refid="rowColumns"/> FROM async_job WHERE async_job.id = #{id}
+  </select>
+
+  <update id="updateStageAndProgress" databaseId="postgresql">
+    UPDATE async_job
+       SET stage = #{stage,jdbcType=VARCHAR}, progress = #{progress}, message = #{message,jdbcType=VARCHAR},
+           metadata = CAST(#{metadataJson,jdbcType=VARCHAR} AS jsonb), updated_at = #{now}
+     WHERE id = #{id}
+  </update>
+
+  <update id="updateStageAndProgress" databaseId="tibero">
+    UPDATE async_job
+       SET stage = #{stage,jdbcType=VARCHAR}, progress = #{progress}, message = #{message,jdbcType=VARCHAR},
+           metadata = #{metadataJson,jdbcType=VARCHAR}, updated_at = #{now}
+     WHERE id = #{id}
+  </update>
+
+  <update id="updateStageAndError">
+    UPDATE async_job
+       SET stage = #{stage,jdbcType=VARCHAR}, progress = #{progress},
+           error_message = #{errorMessage,jdbcType=VARCHAR}, updated_at = #{now}
+     WHERE id = #{id}
+  </update>
+
+  <select id="selectActiveByResource" resultMap="asyncJobRow">
+    SELECT <include refid="rowColumns"/> FROM async_job
+     WHERE async_job.job_type = #{jobType,jdbcType=VARCHAR}
+       AND <include refid="resourceCol"/> = #{resource,jdbcType=VARCHAR}
+       AND async_job.resource_id = #{resourceId,jdbcType=VARCHAR}
+       AND <include refid="active"/>
+  </select>
+
+  <select id="selectActiveByUserAndJobType" resultMap="asyncJobRow">
+    SELECT <include refid="rowColumns"/> FROM async_job
+     WHERE async_job.user_id = #{userId,jdbcType=BIGINT}
+       AND async_job.job_type = #{jobType,jdbcType=VARCHAR}
+       AND <include refid="active"/>
+  </select>
+
+  <select id="selectStale" resultMap="asyncJobRow">
+    SELECT <include refid="rowColumns"/> FROM async_job
+     WHERE async_job.updated_at &lt; #{before} AND <include refid="active"/>
+  </select>
+
+  <delete id="deleteOlderThan">
+    DELETE FROM async_job
+     WHERE created_at &lt; #{before} AND stage IN ('COMPLETED', 'FAILED')
+  </delete>
+
+  <select id="selectOwnerById" resultType="java.lang.Long">
+    SELECT async_job.user_id FROM async_job WHERE async_job.id = #{id}
+  </select>
+</mapper>

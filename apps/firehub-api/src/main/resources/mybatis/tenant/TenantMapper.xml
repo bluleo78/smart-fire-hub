@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  tenant 문장(WD-706) — JooqTenantRepository 와 같은 의미. 규칙은 MyBatisPlatformConfig javadoc.
+  tenant 는 테넌트 경계 위의 전역 테이블이라 정책·tenant_id DEFAULT 가 없다 — 테넌트 컨텍스트 없이(배경 순회·예약 발화) 읽는다.
+  기본값 시드: PG 는 SECURITY DEFINER 함수 provision_tenant_defaults(V98~V133), Tibero 는 같은 의미의 FH_TENANT.provision_tenant_defaults
+  (V156.1, WD-492 — 본문에서 정책 우회를 켜고 끈다). 두 벌이므로 바꿀 때 둘 다.
+-->
+<mapper namespace="com.smartfirehub.tenant.repository.mybatis.TenantMapper">
+
+  <select id="selectActiveIds" resultType="java.lang.Long">
+    SELECT id FROM tenant WHERE status = 'ACTIVE' ORDER BY id ASC
+  </select>
+
+  <select id="countActive" resultType="_int">
+    SELECT COUNT(*) FROM tenant WHERE id = #{tenantId} AND status = 'ACTIVE'
+  </select>
+
+  <!-- PG: void 함수를 SELECT 로 부른다(서비스·jOOQ 에 있던 문장 그대로). MyBatis 의 갱신 실행은 execute() 라 결과 집합을 돌려줘도 된다. -->
+  <update id="provisionDefaults" databaseId="postgresql">
+    SELECT provision_tenant_defaults(#{tenantId})
+  </update>
+
+  <!-- Tibero: 패키지 프로시저 호출(CALLABLE). 런타임 계정의 FH_TENANT EXECUTE 는 Flyway afterMigrate 콜백이 준다. -->
+  <update id="provisionDefaults" databaseId="tibero" statementType="CALLABLE">
+    {call FH_TENANT.provision_tenant_defaults(#{tenantId,mode=IN,jdbcType=BIGINT})}
+  </update>
+</mapper>

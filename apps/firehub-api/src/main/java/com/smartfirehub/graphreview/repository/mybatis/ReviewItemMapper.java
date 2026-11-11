@@ -42,15 +42,15 @@ public interface ReviewItemMapper {
       @Param("vis") VisibilityParams vis);
 
   /** id 단건. 없으면 null. */
-  ReviewItemRecord findById(@Param("id") long id);
+  ReviewItemRecord findById(@Param("id") Long id);
 
   /** pending 일 때만 결정을 기록한다. 바뀐 행 수를 돌려준다. */
   int updateStatusIfPending(
-      @Param("id") long id,
+      @Param("id") Long id,
       @Param("status") String status,
-      @Param("decidedBy") long decidedBy,
+      @Param("decidedBy") Long decidedBy,
       @Param("decidedAt") LocalDateTime decidedAt);
 
   /** 행 잠금(SELECT … FOR UPDATE). 잠긴 id 목록(0 또는 1건). */
-  List<Long> lockForDecision(@Param("id") long id);
+  List<Long> lockForDecision(@Param("id") Long id);
 }

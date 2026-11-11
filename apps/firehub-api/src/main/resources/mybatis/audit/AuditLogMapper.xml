@@ -1,0 +1,179 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  audit_log 문장(WD-706) — JooqAuditLogRepository 와 같은 의미. databaseId·테넌트·null 바인드 규칙은 MyBatisPlatformConfig javadoc,
+  공용 조각(resourceColumn·pageClause)은 mybatis/common/PlatformSql.xml, 데이터셋 가시성은 mybatis/securitylevel/DatasetVisibility.xml.
+
+  테넌트: audit_log 는 NULL 테넌트 허용 정책(PG V99 IS NOT DISTINCT FROM, Tibero FH_TENANT_POLICY_NULLABLE) 아래 있어 컨텍스트가 있으면
+  그 테넌트 행만, 없으면 tenant_id IS NULL 행만 보인다. tenant_id 는 INSERT 에서 빼 열 DEFAULT 가 채운다. 플랫폼 조회의
+  「tenant_id IS NULL」 은 테넌트 바인드가 아니라 인터페이스 의미(플랫폼 감사만, 컨텍스트가 남아 있으면 0행 fail-closed)다.
+  dataset 은 표준 정책 테이블이라 가시성 EXISTS 는 컨텍스트 테넌트의 데이터셋만 본다 — 다른 테넌트 데이터셋 id 를 가리키는 행은 걸러진다.
+
+  벤더 차이: resource 열 이름(Tibero 예약어 "RESOURCE"), metadata(PG jsonb ↔ Tibero JSON 문자열), JSON 필드 추출(->> ↔ JSON_VALUE),
+  resource_id 숫자 판정(~ ↔ REGEXP_LIKE). 대소문자 무시 검색은 jOOQ ILIKE 대신 LOWER() LIKE LOWER() ESCAPE '\' 로 두 벤더 공통이다.
+  빈 문자열(controller Ruling): 변환하지 않는다 — Tibero 는 '' 를 NULL 로 저장해 NULL 허용 열(description 등)은 null 로 돌아오고
+  NOT NULL 열(username·action_type·resource·result)은 거절된다.
+-->
+<mapper namespace="com.smartfirehub.audit.repository.mybatis.AuditLogMapper">
+
+  <resultMap id="auditLogRow" type="com.smartfirehub.audit.dto.AuditLogResponse">
+    <constructor>
+      <idArg column="id" javaType="java.lang.Long"/>
+      <arg column="user_id" javaType="java.lang.Long"/>
+      <arg column="username" javaType="java.lang.String"/>
+      <arg column="action_type" javaType="java.lang.String"/>
+      <arg column="resource" javaType="java.lang.String"/>
+      <arg column="resource_id" javaType="java.lang.String"/>
+      <arg column="description" javaType="java.lang.String"/>
+      <arg column="action_time" javaType="java.time.LocalDateTime"/>
+      <arg column="ip_address" javaType="java.lang.String"/>
+      <arg column="user_agent" javaType="java.lang.String"/>
+      <arg column="result" javaType="java.lang.String"/>
+      <arg column="error_message" javaType="java.lang.String"/>
+      <arg column="metadata" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <!-- metadata 를 JSON 문자열로 읽는다. PG 는 jsonb 를 text 로 바꾸고(jOOQ JSONB.data() 와 같은 정규화 문자열), Tibero JSON 열은 문자열 그대로 읽힌다(실측). -->
+
+  <!-- 응답 13열(jOOQ RESPONSE_FIELDS). resource 는 별칭 없이 두어 Tibero "RESOURCE" 라벨도 대소문자 무시로 매핑된다. -->
+  <sql id="responseColumns">
+    audit_log.id, audit_log.user_id, audit_log.username, audit_log.action_type,
+    audit_log.<include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.resourceColumn"/>,
+    audit_log.resource_id, audit_log.description, audit_log.action_time, audit_log.ip_address,
+    audit_log.user_agent, audit_log.result, audit_log.error_message, <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.jsonText"><property name="col" value="audit_log.metadata"/><property name="alias" value="metadata"/></include>
+  </sql>
+
+  <sql id="resourceCol">audit_log.<include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.resourceColumn"/></sql>
+
+  <!--
+    resource_id(문자열)를 데이터셋 id 와 비교할 숫자 식 — 18자리 이하 숫자만 바꾸고 나머지(숫자 아님·BIGINT 초과)는 NULL 로 둔다.
+    단순 CAST 는 그런 값에서 오류를 내 목록 전체가 실패한다(jOOQ AL_RESOURCE_ID_AS_LONG 과 같은 규칙).
+  -->
+  <sql id="resourceIdAsLong" databaseId="postgresql">
+    (CASE WHEN audit_log.resource_id ~ '^[0-9]{1,18}$' THEN audit_log.resource_id::BIGINT ELSE NULL END)
+  </sql>
+  <sql id="resourceIdAsLong" databaseId="tibero">
+    (CASE WHEN REGEXP_LIKE(audit_log.resource_id, '^[0-9]{1,18}$') THEN TO_NUMBER(audit_log.resource_id) ELSE NULL END)
+  </sql>
+
+  <!-- metadata 의 문자열 필드 하나(속성 key 는 XML 에 박힌 고정 이름). 괄호로 연산 우선순위를 밝힌다. -->
+  <sql id="metadataField" databaseId="postgresql">(audit_log.metadata ->> '${key}')</sql>
+  <sql id="metadataField" databaseId="tibero">JSON_VALUE(audit_log.metadata, '$.${key}')</sql>
+
+  <!-- 생성 키는 useGeneratedKeys(PG 는 RETURNING id, Tibero 는 IDENTITY + keyColumn="id" 로 숫자 키, 실측). tenant_id 는 DEFAULT. -->
+  <insert id="insert" databaseId="postgresql" useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+    INSERT INTO audit_log
+      (user_id, username, action_type, resource, resource_id, description, ip_address, user_agent,
+       result, error_message, metadata)
+    VALUES
+      (#{userId,jdbcType=BIGINT}, #{username,jdbcType=VARCHAR}, #{actionType,jdbcType=VARCHAR},
+       #{resource,jdbcType=VARCHAR}, #{resourceId,jdbcType=VARCHAR}, #{description,jdbcType=VARCHAR},
+       #{ipAddress,jdbcType=VARCHAR}, #{userAgent,jdbcType=VARCHAR}, #{result,jdbcType=VARCHAR},
+       #{errorMessage,jdbcType=VARCHAR}, CAST(#{metadataJson,jdbcType=VARCHAR} AS jsonb))
+  </insert>
+
+  <!-- Tibero: metadata 는 JSON 열에 문자열 그대로(PG 는 CAST AS jsonb) — 그래서 PG 판과 합치지 않는다. -->
+  <insert id="insert" databaseId="tibero" useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+    INSERT INTO audit_log
+      (user_id, username, action_type, <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.resourceColumn"/>, resource_id, description, ip_address, user_agent,
+       result, error_message, metadata)
+    VALUES
+      (#{userId,jdbcType=BIGINT}, #{username,jdbcType=VARCHAR}, #{actionType,jdbcType=VARCHAR},
+       #{resource,jdbcType=VARCHAR}, #{resourceId,jdbcType=VARCHAR}, #{description,jdbcType=VARCHAR},
+       #{ipAddress,jdbcType=VARCHAR}, #{userAgent,jdbcType=VARCHAR}, #{result,jdbcType=VARCHAR},
+       #{errorMessage,jdbcType=VARCHAR}, #{metadataJson,jdbcType=VARCHAR})
+  </insert>
+
+  <select id="selectById" resultMap="auditLogRow">
+    SELECT <include refid="responseColumns"/> FROM audit_log WHERE audit_log.id = #{id}
+  </select>
+
+  <!-- findByResource 조건(WD-535) — actionType·resourceId 가 null 이면 뺀다. 건수·목록이 같은 조건을 쓴다. -->
+  <sql id="resourceWhere">
+    WHERE <include refid="resourceCol"/> = #{resource,jdbcType=VARCHAR}
+    <if test="actionType != null">AND audit_log.action_type = #{actionType}</if>
+    <if test="resourceId != null">AND audit_log.resource_id = #{resourceId}</if>
+  </sql>
+
+  <select id="countByResource" resultType="_long">
+    SELECT COUNT(*) FROM audit_log <include refid="resourceWhere"/>
+  </select>
+
+  <!-- 같은 시각 행이 페이지 경계에서 겹치거나 빠지지 않도록 id desc 로 순서를 고정한다(WD-535). -->
+  <select id="selectByResource" resultMap="auditLogRow">
+    SELECT <include refid="responseColumns"/> FROM audit_log <include refid="resourceWhere"/>
+     ORDER BY audit_log.action_time DESC, audit_log.id DESC
+     <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.pageClause"/>
+  </select>
+
+  <!--
+    findAll 조건. vis 가 있으면(WD-289) 데이터셋 행은 지금 있는 데이터셋 중 열람 조건을 만족하는 것의 행만 남긴다 — 삭제된 데이터셋의
+    지난 기록은 등급을 알 수 없어 vis 없는(ADMIN) 경로에서만 보인다. resource 는 NOT NULL 이라 jOOQ 의 IS DISTINCT FROM 과 &lt;&gt; 가 같다.
+    날짜는 하한·상한 모두 포함.
+  -->
+  <sql id="allWhere">
+    <where>
+      <if test="vis != null">
+        AND (<include refid="resourceCol"/> &lt;&gt; 'dataset'
+             OR EXISTS (SELECT 1 FROM dataset
+                         WHERE dataset.id = <include refid="resourceIdAsLong"/>
+                           AND <include refid="com.smartfirehub.securitylevel.repository.mybatis.DatasetVisibility.visible">
+                                 <property name="idCol" value="dataset.id"/>
+                                 <property name="levelCol" value="dataset.security_level_id"/>
+                               </include>))
+      </if>
+      <if test="searchPattern != null">
+        AND (LOWER(audit_log.username) LIKE LOWER(#{searchPattern}) ESCAPE '\'
+             OR LOWER(audit_log.description) LIKE LOWER(#{searchPattern}) ESCAPE '\')
+      </if>
+      <if test="userId != null">AND audit_log.user_id = #{userId}</if>
+      <if test="actionType != null">AND audit_log.action_type = #{actionType}</if>
+      <if test="resource != null">AND <include refid="resourceCol"/> = #{resource}</if>
+      <if test="result != null">AND audit_log.result = #{result}</if>
+      <if test="fromInclusive != null">AND audit_log.action_time &gt;= #{fromInclusive}</if>
+      <if test="toInclusive != null">AND audit_log.action_time &lt;= #{toInclusive}</if>
+    </where>
+  </sql>
+
+  <select id="countAll" resultType="_long">
+    SELECT COUNT(*) FROM audit_log <include refid="allWhere"/>
+  </select>
+
+  <!-- 같은 시각 행이 페이지 경계에서 흔들리지 않도록 id desc 를 2차 키로 둔다(jOOQ 구현도 같은 순서, WD-706). -->
+  <select id="selectAll" resultMap="auditLogRow">
+    SELECT <include refid="responseColumns"/> FROM audit_log <include refid="allWhere"/>
+     ORDER BY audit_log.action_time DESC, audit_log.id DESC
+     <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.pageClause"/>
+  </select>
+
+  <!--
+    플랫폼 감사(WD-4) — tenant_id IS NULL 만. 컨텍스트가 없으면 정책도 NULL 행만 보여 주지만 조건을 명시해, 컨텍스트가 남아 있으면 정책(그 테넌트
+    행만)과 이 조건(NULL 행만)이 겹치지 않아 0행이 된다(fail-closed). 대상은 resource_id 정확 일치 또는 metadata 의 대상 아이디·테넌트
+    slug·이름 부분일치. 시각은 [from, to).
+  -->
+  <sql id="platformWhere">
+    WHERE audit_log.tenant_id IS NULL
+    <if test="actorPattern != null">AND LOWER(audit_log.username) LIKE LOWER(#{actorPattern}) ESCAPE '\'</if>
+    <if test="target != null">
+      AND (audit_log.resource_id = #{target}
+           OR LOWER(<include refid="metadataField"><property name="key" value="targetUsername"/></include>) LIKE LOWER(#{targetPattern}) ESCAPE '\'
+           OR LOWER(<include refid="metadataField"><property name="key" value="tenantSlug"/></include>) LIKE LOWER(#{targetPattern}) ESCAPE '\'
+           OR LOWER(<include refid="metadataField"><property name="key" value="tenantName"/></include>) LIKE LOWER(#{targetPattern}) ESCAPE '\')
+    </if>
+    <if test="actionType != null">AND audit_log.action_type = #{actionType}</if>
+    <if test="fromInclusive != null">AND audit_log.action_time &gt;= #{fromInclusive}</if>
+    <if test="toExclusive != null">AND audit_log.action_time &lt; #{toExclusive}</if>
+  </sql>
+
+  <select id="countPlatform" resultType="_long">
+    SELECT COUNT(*) FROM audit_log <include refid="platformWhere"/>
+  </select>
+
+  <!-- 같은 트랜잭션 행은 시각이 같다 — id 로 순서를 고정해 페이지 경계가 흔들리지 않게 한다. -->
+  <select id="selectPlatform" resultMap="auditLogRow">
+    SELECT <include refid="responseColumns"/> FROM audit_log <include refid="platformWhere"/>
+     ORDER BY audit_log.action_time DESC, audit_log.id DESC
+     <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.pageClause"/>
+  </select>
+</mapper>

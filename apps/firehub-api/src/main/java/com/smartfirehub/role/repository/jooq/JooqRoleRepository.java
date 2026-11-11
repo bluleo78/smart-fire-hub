@@ -3,6 +3,7 @@ package com.smartfirehub.role.repository.jooq;
 import static com.smartfirehub.jooq.Tables.*;
 
 import com.smartfirehub.global.dto.LockedRowVersion;
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.role.dto.RoleResponse;
 import com.smartfirehub.role.repository.RoleRepository;
 import java.time.LocalDateTime;
@@ -21,6 +22,7 @@ import org.springframework.stereotype.Repository;
 
 /** RoleRepository 의 jOOQ(PostgreSQL) 구현 — WD-485. */
 @Repository
+@ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
 public class JooqRoleRepository implements RoleRepository {
 

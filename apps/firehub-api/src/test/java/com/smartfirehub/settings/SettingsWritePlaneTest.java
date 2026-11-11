@@ -301,7 +301,8 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
   }
 
   /**
-   * 인증 없는 SMTP 릴레이를 위해 <b>빈 비밀번호는 합법이다</b> — 저장도 되고, 읽어도 터지지 않는다.
+   * 인증 없는 SMTP 릴레이를 위해 <b>빈 비밀번호는 합법이다</b> — 받아들여지고, 읽어도 터지지 않는다. WD-706 Ruling 이후 빈 SMTP 값은 행으로
+   * 저장하지 않고 지운다(행 없음 ≡ 빈 칸).
    *
    * <p>암호화·마스킹을 붙이면서 함께 깨지기 쉬운 지점이다. 빈 값을 암호화하면 나중에 빈 ciphertext 를 복호화하려다 실패하고, 마스킹에서 {@code
    * decrypt("")} 를 부르면 설정 화면 전체가 500 이 된다 — <b>진짜 값만 쓰는 테스트로는 둘 다 안 걸린다</b>. 그래서 쓰기와 읽기 양쪽을 빈 값으로 한
@@ -312,7 +313,7 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
    * {@code ****} 로 보이고 복호화 실패까지 따라온다.
    */
   @Test
-  void 인증_없는_릴레이를_위해_빈_SMTP_비밀번호도_저장되고_읽힌다() {
+  void 인증_없는_릴레이의_빈_SMTP_비밀번호는_행_없이_빈_값으로_읽힌다() {
     testTenant = createActiveTenant(dsl, "swp-smtp-blank");
     TenantContext.set(testTenant);
 
@@ -320,10 +321,13 @@ class SettingsWritePlaneTest extends IntegrationTestBase {
         Map.of("smtp.host", "relay.internal", "smtp.username", "relay-user", "smtp.password", ""),
         null);
 
-    // 빈 값은 암호화하지 않는다 — 빈 ciphertext 는 나중에 복호화할 수 없다.
-    assertThat(tenantRawValue("smtp.password")).contains("");
-    // 읽기 경로가 decrypt("") 로 터지지 않고 빈 값을 그대로 돌려준다.
-    assertThat(resolvedSmtpValue("smtp.password")).isEmpty();
+    // 빈 값은 암호화하지도 저장하지도 않는다 — SMTP 키는 행 없음 ≡ 빈 칸이고(WD-706 Ruling), Tibero 는 "" 를 거절한다.
+    assertThat(tenantRawValue("smtp.password")).isEmpty();
+    // 화면 목록에도 비밀번호 키가 없다(web 은 없는 키를 빈 값으로 읽는다). 발송 설정도 빈 값으로 읽힌다.
+    assertThat(settingsService.getResolvedByPrefix("smtp"))
+        .extracting(r -> r.key())
+        .doesNotContain("smtp.password");
+    assertThat(settingsService.getSmtpConfig().getOrDefault("smtp.password", "")).isEmpty();
 
     // 비밀 키가 아닌 사용자명은 마스킹 없이 평문 그대로 읽힌다.
     assertThat(resolvedSmtpValue("smtp.username")).isEqualTo("relay-user");

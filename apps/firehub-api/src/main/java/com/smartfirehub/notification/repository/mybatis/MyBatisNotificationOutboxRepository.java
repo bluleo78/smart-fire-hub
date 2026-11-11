@@ -1,5 +1,6 @@
 package com.smartfirehub.notification.repository.mybatis;
 
+import com.smartfirehub.global.platformdb.mybatis.PlatformMyBatisRepository;
 import com.smartfirehub.notification.ChannelType;
 import com.smartfirehub.notification.repository.NotificationOutboxRepository;
 import java.time.Instant;
@@ -18,12 +19,13 @@ import org.springframework.transaction.annotation.Transactional;
  * NotificationOutboxRepository 의 MyBatis 구현(WD-487 PoC) — {@code JooqNotificationOutboxRepository}
  * 와 같은 의미.
  *
- * <p>{@code @Repository} 없이 {@code MyBatisPlatformConfig} 가 {@code autowireCandidate=false} 빈으로
- * 등록한다.
+ * <p>{@code @PlatformMyBatisRepository} 로 등록기가 빈으로 등록하며, Tibero 설치본에서만 주입 후보다(그 밖에는 서비스가 jOOQ 구현을
+ * 받는다).
  */
 // 클래스 레벨 @Transactional 이유: RLS 테넌트 GUC 는 트랜잭션이 열리는 순간에만 심기고, 컨텍스트 공급은
 // 호출자 책임이다(TenantAwareTransactionManager 참조). 열지 않으면 tenant_id 기본값이 비어 INSERT 가
 // 실패하고 조회는 0행이 된다. 지우지 말 것.
+@PlatformMyBatisRepository
 @Transactional
 public class MyBatisNotificationOutboxRepository implements NotificationOutboxRepository {
 
@@ -50,16 +52,18 @@ public class MyBatisNotificationOutboxRepository implements NotificationOutboxRe
   }
 
   /**
-   * 클래스 레벨 트랜잭션을 거부한다 — SECURITY DEFINER 함수라 GUC 가 필요 없고, 호출마다 BEGIN/COMMIT 왕복이 붙는 것을 피한다. jOOQ 구현과
-   * 같은 이유·같은 전제(호출자는 전부 앰비언트 트랜잭션 없는 배경 스레드)다.
+   * 클래스 레벨 트랜잭션을 거부한다 — 정책을 넘는 함수(PG SECURITY DEFINER·Tibero FH_TENANT)라 테넌트가 필요 없고, 호출마다
+   * BEGIN/COMMIT 왕복이 붙는 것을 피한다. jOOQ 구현과 같은 이유·같은 전제(호출자는 전부 앰비언트 트랜잭션 없는 배경 스레드)다.
    */
   @Override
   @Transactional(propagation = Propagation.NOT_SUPPORTED)
   public List<Long> tenantIdsWithStatus(String... statuses) {
-    // 상태가 없으면 DB 에 가지 않고 빈 목록 — jOOQ 구현(status = ANY(빈 배열))과 같은 결과다. Tibero 문장은 IN (…) 이라 빈 목록이면
-    // "IN ()" 구문 오류가 나므로 두 벤더 모두 여기서 막는다.
+    // 상태가 없으면 DB 에 가지 않고 빈 목록 — jOOQ 구현(status = ANY(빈 배열))과 같은 결과다. 두 벤더 모두 여기서 막는다.
     if (statuses == null || statuses.length == 0) return List.of();
-    return mapper.tenantIdsWithStatus(Arrays.asList(statuses));
+    var query = new NotificationOutboxMapper.TenantIdsQuery(Arrays.asList(statuses));
+    List<Long> rows = mapper.tenantIdsWithStatus(query);
+    // Tibero 는 커서 OUT 인자로 돌려주고 반환 목록은 비어 있다 — 채워진 쪽을 쓴다.
+    return query.getTenantIds() != null ? query.getTenantIds() : rows;
   }
 
   /**

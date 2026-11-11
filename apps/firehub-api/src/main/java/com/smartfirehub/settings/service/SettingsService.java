@@ -320,6 +320,8 @@ public class SettingsService {
    * 열면서 그 근거가 죽었다({@code smtp.password} 는 {@link #SECRET_KEYS} 의 원소다). 그 한 줄이 세 결함을 동시에 깨웠다 — 평문
    * 저장·마스크 센티널 덮어쓰기·포트 검증 부재.
    *
+   * <p>{@code smtp.*} 의 빈 값은 행 삭제로 저장한다(Tibero NOT NULL value 열, 부재≡빈 값).
+   *
    * <p>{@code @Transactional} 이 필수다 — {@code tenant_settings} 는 RLS 테이블이라 GUC 가 트랜잭션이 열릴 때만
    * 주입된다({@code TenantAwareTransactionManager.doBegin}). 트랜잭션 없이 {@link
    * TenantSettingsRepository#upsert} 를 부르면 GUC 없는 커넥션에서 INSERT 가 정책 위반으로 거부된다.
@@ -361,7 +363,23 @@ public class SettingsService {
 
     // 저장 대상은 **여기서만** 정한다 — 쓰기까지 공유 헬퍼에 넣으면 두 평면이 저장 대상에서
     // 갈라질 때 조용히 어긋난다(플랫폼은 system_settings, 테넌트는 tenant_settings).
-    toWrite.forEach((key, value) -> tenantSettingsRepository.upsert(key, value, userId));
+    //
+    // smtp.* 의 빈 값은 행을 저장하지 않고 지운다(WD-706 controller Ruling). SMTP 키는 플랫폼 행도 코드 기본값도
+    // 없어 "행 없음"이 곧 빈 칸이다 — 판독기(getAsMap·getSmtpConfig·발송 채널·연결 테스트·화면 hook)는 모두
+    // 키 부재와 "" 를 같게 읽는다. 그리고 Tibero 는 '' 를 NULL 로 보아 NOT NULL 인 value 열이 "" 를 거절한다.
+    // ai.* 는 validateValues 가 빈 값을 이미 거부하므로(코드 기본값과 의미가 달라 지우면 안 된다) 여기 오지 않는다.
+    List<String> clearedSmtpKeys = new ArrayList<>();
+    toWrite.forEach(
+        (key, value) -> {
+          if (key.startsWith("smtp.") && value.isEmpty()) {
+            clearedSmtpKeys.add(key);
+          } else {
+            tenantSettingsRepository.upsert(key, value, userId);
+          }
+        });
+    if (!clearedSmtpKeys.isEmpty()) {
+      tenantSettingsRepository.deleteAll(clearedSmtpKeys);
+    }
 
     // 한 요청에 AI·SMTP 키가 섞여 오면 묶음별로 한 행씩 남긴다(바뀐 것이 없는 묶음은 기록하지 않는다).
     auditRecorder.aiSettingsUpdated(userId, aiChanged);

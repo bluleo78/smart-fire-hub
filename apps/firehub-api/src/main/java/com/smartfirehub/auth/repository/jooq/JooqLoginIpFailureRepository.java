@@ -3,6 +3,7 @@ package com.smartfirehub.auth.repository.jooq;
 import static com.smartfirehub.jooq.Tables.LOGIN_IP_FAILURES;
 
 import com.smartfirehub.auth.repository.LoginIpFailureRepository;
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.global.platformdb.PlatformLocks;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
@@ -26,6 +27,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 트랜잭션이 없으면 여기서 자기 트랜잭션을 연다.
  */
 @Repository
+@ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
 public class JooqLoginIpFailureRepository implements LoginIpFailureRepository {
 

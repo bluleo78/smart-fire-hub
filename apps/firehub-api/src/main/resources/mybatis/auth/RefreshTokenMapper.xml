@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  refresh_token 문장(WD-706) — JooqRefreshTokenRepository 와 같은 의미. 전역 테이블이라 테넌트 술어·컬럼이 없다.
+  전부 벤더 공통 문장이다: 불리언은 공용 조각(PG TRUE/FALSE, Tibero NUMBER(1) 1/0), 시각은 자바 LocalDateTime 바인딩(UTC JVM 전제),
+  family_id 는 PG uuid·Tibero VARCHAR2(36) 이라 쓸 때 전역 UUID 핸들러(Tibero)·jdbcType=OTHER(PG)로, 읽을 때 CAST 로 문자열화한다.
+-->
+<mapper namespace="com.smartfirehub.auth.repository.mybatis.RefreshTokenMapper">
+
+  <!-- plane·revoked 는 컬럼 DEFAULT 에 맡기지 않고 plane 만 명시한다(revoked 기본값 false). -->
+  <insert id="insert">
+    INSERT INTO refresh_token (user_id, token_hash, expires_at, family_id, plane)
+    VALUES (#{userId}, #{tokenHash}, #{expiresAt}, #{familyId,jdbcType=OTHER}, #{plane})
+  </insert>
+
+  <select id="countValid" resultType="_int">
+    SELECT COUNT(*) FROM refresh_token
+     WHERE token_hash = #{tokenHash}
+       AND revoked = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlFalse"/>
+       AND expires_at &gt; #{now}
+  </select>
+
+  <select id="countRevoked" resultType="_int">
+    SELECT COUNT(*) FROM refresh_token
+     WHERE token_hash = #{tokenHash}
+       AND revoked = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>
+  </select>
+
+  <select id="selectFamilyId" resultType="java.lang.String">
+    SELECT CAST(family_id AS VARCHAR(36)) FROM refresh_token WHERE token_hash = #{tokenHash}
+  </select>
+
+  <update id="revokeByTokenHash">
+    UPDATE refresh_token
+       SET revoked = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>
+     WHERE token_hash = #{tokenHash}
+       AND revoked = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlFalse"/>
+  </update>
+
+  <update id="revokeByFamilyId">
+    UPDATE refresh_token
+       SET revoked = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>
+     WHERE family_id = #{familyId,jdbcType=OTHER}
+       AND revoked = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlFalse"/>
+  </update>
+
+  <update id="revokeAllByUserIdAndPlane">
+    UPDATE refresh_token
+       SET revoked = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>
+     WHERE user_id = #{userId}
+       AND plane = #{plane}
+       AND revoked = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlFalse"/>
+  </update>
+
+  <update id="revokeAllByUserId">
+    UPDATE refresh_token
+       SET revoked = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>
+     WHERE user_id = #{userId}
+       AND revoked = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlFalse"/>
+  </update>
+
+  <delete id="deleteExpired">
+    DELETE FROM refresh_token
+     WHERE expires_at &lt; #{now}
+        OR (revoked = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>
+            AND created_at &lt; #{revokedBefore})
+  </delete>
+</mapper>

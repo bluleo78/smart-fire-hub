@@ -2,6 +2,7 @@ package com.smartfirehub.proactive.repository.mybatis;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.global.platformdb.mybatis.PlatformMyBatisRepository;
 import com.smartfirehub.proactive.dto.ProactiveMessageResponse;
 import com.smartfirehub.proactive.repository.ProactiveMessageRepository;
 import com.smartfirehub.proactive.util.ProactiveTime;
@@ -16,12 +17,13 @@ import org.springframework.transaction.annotation.Transactional;
  * ProactiveMessageRepository 의 MyBatis 구현(WD-487 PoC) — {@code JooqProactiveMessageRepository} 와 같은
  * 의미.
  *
- * <p>{@code @Repository} 없이 {@code MyBatisPlatformConfig} 가 {@code autowireCandidate=false} 빈으로
- * 등록한다. 요약 가림 규칙은 jOOQ 구현과 같되, 매퍼가 돌려준 평평한 {@link ProactiveMessageRow} 위에서 수행한다.
+ * <p>{@code @PlatformMyBatisRepository} 로 등록기가 빈으로 등록하며, Tibero 설치본에서만 주입 후보다(그 밖에는 서비스가 jOOQ 구현을
+ * 받는다). 요약 가림 규칙은 jOOQ 구현과 같되, 매퍼가 돌려준 평평한 {@link ProactiveMessageRow} 위에서 수행한다.
  */
 // 클래스 레벨 @Transactional 이유: V103 으로 tenant_id 가 생겼고 V104 에서 RLS 가 걸린다. 테넌트 값은 트랜잭션-로컬 GUC 라서
 // 트랜잭션 없이 도는 발송 경로(@Scheduled 워커, @Async 실행기)에서는 INSERT 가 NOT NULL 위반으로 깨진다. 전파 REQUIRED 라
 // 컨트롤러 경로의 동작은 불변이다. 지우지 말 것.
+@PlatformMyBatisRepository
 @Transactional
 public class MyBatisProactiveMessageRepository implements ProactiveMessageRepository {
 

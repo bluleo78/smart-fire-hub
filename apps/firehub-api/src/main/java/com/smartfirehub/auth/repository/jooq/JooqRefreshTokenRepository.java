@@ -4,6 +4,7 @@ import static com.smartfirehub.jooq.Tables.*;
 import static org.jooq.impl.DSL.field;
 
 import com.smartfirehub.auth.repository.RefreshTokenRepository;
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import java.time.LocalDateTime;
 import java.util.Optional;
 import java.util.UUID;
@@ -14,6 +15,7 @@ import org.springframework.stereotype.Repository;
 
 /** RefreshTokenRepository 의 jOOQ(PostgreSQL) 구현 — WD-485. */
 @Repository
+@ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
 public class JooqRefreshTokenRepository implements RefreshTokenRepository {
 

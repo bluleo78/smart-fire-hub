@@ -91,8 +91,8 @@ public abstract class NotificationOutboxRepositoryContractTest extends Integrati
   }
 
   /**
-   * 행 수준 보안(RLS)으로 다른 테넌트의 행이 가려지는지 시험할 수 있는가. PG 는 정책이 있어 true. Tibero 는 RLS·GUC 가 없고(WD-492 범위)
-   * 쓰기 문장에 테넌트 술어를 두지 않았으므로 false 다.
+   * 행 수준 보안(RLS)으로 다른 테넌트의 행이 가려지는지 시험할 수 있는가. PG(정책)·Tibero(DBMS_RLS, WD-492) 모두 true — 정책 없는 DB
+   * 에서 돌리는 구현이 생기면 false 로 재정의한다.
    */
   protected boolean supportsRowLevelSecurity() {
     return true;
@@ -183,6 +183,23 @@ public abstract class NotificationOutboxRepositoryContractTest extends Integrati
     assertThat(repository().tenantIdsWithStatus("PENDING")).contains(tenantId);
     // 상태 인자로 용도가 갈리는지도 함께 본다(SENT 행은 아직 없다).
     assertThat(repository().tenantIdsWithStatus("SENT")).doesNotContain(tenantId);
+  }
+
+  /**
+   * 배경 경로(디스패치·스위퍼·보존 정리)는 {@code TenantContext} 없이 부른다 — 정책을 넘는 함수가 아니라 일반 조회면 RLS 가 0행을 줘 일감을 영영
+   * 못 찾는다(Tibero 일반 SELECT 가 그랬다, WD-706). 컨텍스트를 지운 채 내 테넌트가 나오는지 본다.
+   */
+  @Test
+  void tenantIdsWithStatus_withoutTenantContext_findsTenant() {
+    UUID corr = UUID.randomUUID();
+    repository().insertIfAbsent(sampleRow("key-ids-noctx-" + corr, corr));
+
+    TenantContext.clear();
+    try {
+      assertThat(repository().tenantIdsWithStatus("PENDING")).contains(tenantId);
+    } finally {
+      TenantContext.set(tenantId);
+    }
   }
 
   @Test

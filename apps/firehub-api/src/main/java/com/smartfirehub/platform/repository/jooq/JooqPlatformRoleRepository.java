@@ -4,6 +4,7 @@ import static org.jooq.impl.DSL.field;
 import static org.jooq.impl.DSL.name;
 import static org.jooq.impl.DSL.table;
 
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.platform.repository.PlatformRoleRepository;
 import java.util.Set;
 import org.jooq.DSLContext;
@@ -24,6 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 테이블은 RLS 가 없으므로 GUC 주입은 불필요하지만, 커넥션 획득과 조회를 한 단위로 묶어 두는 편이 명시적이다.
  */
 @Repository
+@ConditionalOnPostgresPlatformDb
 @Transactional(readOnly = true)
 public class JooqPlatformRoleRepository implements PlatformRoleRepository {
 

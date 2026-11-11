@@ -3,6 +3,7 @@ package com.smartfirehub.auth.repository.jooq;
 import static com.smartfirehub.jooq.Tables.LOGIN_ATTEMPTS;
 
 import com.smartfirehub.auth.repository.LoginAttemptRepository;
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import java.time.LocalDateTime;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
@@ -26,6 +27,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 쥔 쪽은 진행하므로 풀 교착은 아니다. 또 증가분은 커밋 시점에야 {@code isBlocked} 에 보이므로, 독립 커밋하던 예전보다 조금 늦게 반영된다.
  */
 @Repository
+@ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
 public class JooqLoginAttemptRepository implements LoginAttemptRepository {
 

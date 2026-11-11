@@ -172,12 +172,15 @@ class SmtpHostAndFromAddressValidationTest extends IntegrationTestBase {
     assertThatCode(() -> helper.setFrom(value)).doesNotThrowAnyException();
   }
 
-  /** 빈 발신자는 통과한다 — 발송 코드가 기본 발신자로 바꿔 보내는, 동작하는 상태다. */
+  /**
+   * 빈 발신자는 통과한다 — 발송 코드가 기본 발신자로 바꿔 보내는, 동작하는 상태다. 빈 값은 행으로 남기지 않고 지운다(WD-706 Ruling — 행 없음 ≡ 빈 칸),
+   * 발송 설정에서는 빈 값으로 읽힌다.
+   */
   @Test
-  void 빈_발신자_주소는_저장된다() {
+  void 빈_발신자_주소는_빈_칸으로_받아들여진다() {
     assertThatCode(() -> settingsService.updateSettings(Map.of("smtp.from_address", ""), null))
         .doesNotThrowAnyException();
-    assertThat(settingsService.getSmtpConfig()).containsEntry("smtp.from_address", "");
+    assertThat(settingsService.getSmtpConfig().getOrDefault("smtp.from_address", "")).isEmpty();
   }
 
   @ParameterizedTest(name = "smtp.host = [{0}] 은 저장된다")

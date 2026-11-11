@@ -12,6 +12,25 @@
   <sql id="sqlFalse" databaseId="postgresql">FALSE</sql>
   <sql id="sqlFalse" databaseId="tibero">0</sql>
 
+  <!-- 사용자 테이블 이름. PG 는 예약어라 소문자 따옴표, Tibero 기준선은 따옴표 대문자 "USER" 다(WD-706). -->
+  <sql id="userTable" databaseId="postgresql">"user"</sql>
+  <sql id="userTable" databaseId="tibero">"USER"</sql>
+
+  <!--
+    resource 열 이름(audit_log·async_job). PG 는 그냥 resource, Tibero 기준선은 예약어라 따옴표 대문자 "RESOURCE" 다(WD-706).
+    SELECT 에서 별칭 없이 쓰면 결과 열 라벨이 벤더마다 대소문자가 달라도 MyBatis 가 대소문자 무시로 맞춘다.
+  -->
+  <sql id="resourceColumn" databaseId="postgresql">resource</sql>
+  <sql id="resourceColumn" databaseId="tibero">"RESOURCE"</sql>
+
+  <!-- DB 시계. PG 는 now(), Tibero 는 UTC 벽시계 TIMESTAMP 라 SYS_EXTRACT_UTC(SYSTIMESTAMP) 다. -->
+  <sql id="dbNow" databaseId="postgresql">now()</sql>
+  <sql id="dbNow" databaseId="tibero">SYS_EXTRACT_UTC(SYSTIMESTAMP)</sql>
+
+  <!-- JSON 컬럼을 문자열로 읽는다(속성 col·alias). PG 는 jsonb 를 text 로 바꾸고, Tibero JSON 열은 getString 으로 문자열 그대로 읽힌다(실측). -->
+  <sql id="jsonText" databaseId="postgresql">${col}::text AS ${alias}</sql>
+  <sql id="jsonText" databaseId="tibero">${col} AS ${alias}</sql>
+
   <!-- 행 수 상한(잠금 없는 조회 전용). 속성 n 은 XML 에 박힌 고정 숫자다. Tibero 는 LIMIT 대신 FETCH FIRST(NULLS LAST 와 함께 쓸 수 있음, 실측). -->
   <sql id="limitRows" databaseId="postgresql">LIMIT ${n}</sql>
   <sql id="limitRows" databaseId="tibero">FETCH FIRST ${n} ROWS ONLY</sql>
@@ -19,19 +38,5 @@
   <!-- 페이지(파라미터 limit·offset). Tibero 는 OFFSET … ROWS FETCH NEXT … ROWS ONLY(바인드 가능, 실측). -->
   <sql id="pageClause" databaseId="postgresql">LIMIT #{limit} OFFSET #{offset}</sql>
   <sql id="pageClause" databaseId="tibero">OFFSET #{offset} ROWS FETCH NEXT #{limit} ROWS ONLY</sql>
-
-  <!--
-    Tibero 전용 현재 테넌트 바인드 #{ctxTenantId}. Tibero 는 RLS·GUC 가 없어 INSERT 값과 읽기 술어에 테넌트를 명시하는데, 그 값을
-    TenantContext 에서 여기 한 곳에서만 읽는다. Tibero 문장 안이나 아래 tiberoTenant 의 if 안에서만 include 한다 — PG 는
-    TenantContext 를 읽지 않는다. 이름을 tenantId 와 다르게 둔 이유: bind 값은 같은 이름의 문장 파라미터를 가리므로, 테넌트를
-    명시 인자로 받는 문장(selectDueIdsForUpdate·countPendingByChannel)과 섞이지 않게 한다.
-  -->
-  <sql id="tiberoTenantBind"><bind name="ctxTenantId" value="@com.smartfirehub.global.tenant.TenantContext@get()"/></sql>
-
-  <!--
-    Tibero 읽기 테넌트 술어(PG 는 RLS 가 거르므로 렌더되지 않는다). 속성 alias 에 테이블 별칭(또는 이름)을 넘긴다 — 빠뜨리면 런타임
-    파라미터 조회로 바뀌어 오류가 난다.
-  -->
-  <sql id="tiberoTenant"><if test="_databaseId == 'tibero'"><include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.tiberoTenantBind"/> AND ${alias}.tenant_id = #{ctxTenantId}</if></sql>
 
 </mapper>

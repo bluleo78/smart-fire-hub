@@ -26,7 +26,8 @@ import org.junit.jupiter.api.TestInstance;
  *
  * <p>각 항목은 결과를 {@code PROBE <이름>: <결과>} 로 표준 출력에 남길 뿐 실패시키지 않는다(음성 결과도 기록할 값이다). 실패는 접속·계정 준비가 안 될
  * 때뿐이다. 스프링 컨텍스트가 필요 없어 IntegrationTestBase 를 상속하지 않는다. 계정은 JVM 공용 {@link TiberoPlatformSchema} 가
- * 만들고 지우므로, 이 클래스가 만든 탐침 테이블은 끝에서 스스로 지운다.
+ * 만들고 지우므로, 이 클래스가 만든 탐침 테이블은 끝에서 스스로 지운다. 탐침은 방언 동작(RLS 아님)을 보므로 테이블을 만든 소유자 계정 커넥션으로 한다 — 런타임 계정은
+ * 마이그레이션 뒤에 만든 탐침 테이블에 권한이 없다(WD-706).
  */
 @TiberoLive
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -59,6 +60,11 @@ class TiberoPlatformProbeTest {
     }
   }
 
+  /** 소유자 계정 커넥션(풀 크기 3 — 동시성 탐침이 둘을 쥔다). 빌린 커넥션은 반드시 닫는다. */
+  private Connection ownerConnection() throws SQLException {
+    return poc.jdbc().getDataSource().getConnection();
+  }
+
   private void exec(String sql) {
     poc.jdbc().execute(sql);
   }
@@ -78,7 +84,7 @@ class TiberoPlatformProbeTest {
    * 이름에 남긴다.
    */
   private void probe(String name, ProbeBody body) {
-    try (Connection c = poc.dataSource().getConnection()) {
+    try (Connection c = ownerConnection()) {
       String result = body.run(c);
       if (result != null) report(name, result);
     } catch (SQLException e) {
@@ -176,8 +182,8 @@ class TiberoPlatformProbeTest {
           });
     }
     // SKIP LOCKED 동시성: A 가 v=1 행을 잠근 채, B 가 같은 조건으로 고르면 무엇이 오는가. 커넥션 2개라 probe 도우미를 쓰지 않는다.
-    try (Connection a = poc.dataSource().getConnection();
-        Connection b = poc.dataSource().getConnection()) {
+    try (Connection a = ownerConnection();
+        Connection b = ownerConnection()) {
       a.setAutoCommit(false);
       b.setAutoCommit(false);
       try {

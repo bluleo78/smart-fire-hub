@@ -13,8 +13,8 @@ import org.junit.jupiter.api.TestInstance;
  * NotificationOutboxRepositoryContractTest 를 MyBatis 구현 + Tibero 실서버로 실행한다(WD-487 PoC).
  *
  * <p>게이트·준비 방식은 {@code TiberoMyBatisReviewItemRepositoryContractTest} 와 같다. 테넌트는 Tibero {@code
- * tenant} 표에 예약 대역(900,000,000+) id 로 만든다. RLS 가 없으므로 {@link #supportsRowLevelSecurity()} 는 false —
- * 다른 테넌트 행 재투입 차단 시험은 건너뛴다(Tibero 쓰기 문장에 테넌트 술어가 없다, WD-492 범위).
+ * tenant} 표에 예약 대역(900,000,000+) id 로 만든다. 리포지토리는 런타임 계정 + DBMS_RLS(WD-492) 위에서 돌므로 다른 테넌트 행 재투입 차단
+ * 시험도 PG 와 같이 돈다(WD-706). 픽스처(테넌트·정리·시각 당기기·원시 조회)는 정책을 우회하는 소유자 계정으로 한다.
  */
 @TiberoLive
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -43,8 +43,9 @@ class TiberoMyBatisNotificationOutboxRepositoryContractTest
     long id = 900_000_000L + ThreadLocalRandom.current().nextLong(1_000_000L);
     poc.jdbc()
         .update(
-            "INSERT INTO tenant (id, slug, status) VALUES (?, ?, 'ACTIVE')",
+            "INSERT INTO tenant (id, slug, name, status) VALUES (?, ?, ?, 'ACTIVE')",
             id,
+            slugPrefix + "-" + id,
             slugPrefix + "-" + id);
     return id;
   }
@@ -77,11 +78,5 @@ class TiberoMyBatisNotificationOutboxRepositoryContractTest
             "SELECT tenant_id FROM notification_outbox WHERE correlation_id = ?",
             Long.class,
             correlationId.toString());
-  }
-
-  /** Tibero 에는 RLS 가 없다(WD-492 범위). */
-  @Override
-  protected boolean supportsRowLevelSecurity() {
-    return false;
   }
 }

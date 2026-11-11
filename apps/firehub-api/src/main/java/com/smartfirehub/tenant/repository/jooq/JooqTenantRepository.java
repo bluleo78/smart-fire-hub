@@ -4,6 +4,7 @@ import static org.jooq.impl.DSL.field;
 import static org.jooq.impl.DSL.name;
 import static org.jooq.impl.DSL.table;
 
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.tenant.repository.TenantRepository;
 import java.util.List;
 import org.jooq.DSLContext;
@@ -17,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>전역 `tenant` 테이블 조회. 이 테이블은 테넌트 경계 위에 있어 tenant_id·RLS 가 없다(V81).
  */
 @Repository
+@ConditionalOnPostgresPlatformDb
 public class JooqTenantRepository implements TenantRepository {
 
   private final DSLContext dsl;

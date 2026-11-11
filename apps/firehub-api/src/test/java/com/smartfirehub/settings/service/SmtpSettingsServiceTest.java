@@ -86,13 +86,47 @@ class SmtpSettingsServiceTest extends IntegrationTestBase {
         .isEqualTo("real-smtp-password");
   }
 
+  /**
+   * 인증 없는 릴레이: 빈 비밀번호는 행으로 저장하지 않는다(WD-706 Ruling — SMTP 키는 행 없음 ≡ 빈 칸, Tibero 는 "" 를 거절). 발송 설정에는
+   * 키가 없고, 소비자는 키 부재를 빈 값으로 읽는다({@code getOrDefault(.., "")}·{@code isBlank}).
+   */
   @Test
-  void getSmtpConfig_emptyPassword_returnsEmptyString() {
-    // 인증 없는 릴레이: 빈 비밀번호는 암호화하지 않고, 읽을 때도 복호화하지 않는다.
+  void getSmtpConfig_emptyPassword_readsAsEmpty() {
     settingsService.updateSettings(
         Map.of("smtp.host", "relay.example.com", "smtp.password", ""), null);
 
-    assertThat(settingsService.getSmtpConfig()).containsEntry("smtp.password", "");
+    Map<String, String> config = settingsService.getSmtpConfig();
+    assertThat(config).doesNotContainKey("smtp.password");
+    assertThat(config.getOrDefault("smtp.password", "")).isEmpty();
+    assertThat(config).containsEntry("smtp.host", "relay.example.com");
+  }
+
+  /**
+   * 저장된 비밀번호를 빈 값으로 지우면 행이 사라지고, 읽기 결과는 처음부터 비밀번호가 없던 워크스페이스와 같다(발송 설정·화면 목록 모두) — WD-706 Ruling.
+   */
+  @Test
+  void updateSettings_emptySmtpPassword_deletesRow_andReadsAsUnset() {
+    settingsService.updateSettings(
+        Map.of("smtp.host", "relay.example.com", "smtp.password", "real-smtp-password"), null);
+    assertThat(rawValue("smtp.password")).isPresent();
+
+    settingsService.updateSettings(Map.of("smtp.password", ""), null);
+
+    assertThat(rawValue("smtp.password")).isEmpty();
+    assertThat(settingsService.getSmtpConfig().getOrDefault("smtp.password", "")).isEmpty();
+    // 화면 목록에도 비밀번호 키가 없다 — web 은 없는 키를 빈 값("저장된 비밀번호 없음")으로 읽는다.
+    assertThat(settingsService.getResolvedByPrefix("smtp"))
+        .extracting(r -> r.key())
+        .doesNotContain("smtp.password")
+        .contains("smtp.host");
+    // 다른 키는 그대로다.
+    assertThat(rawValue("smtp.host")).contains("relay.example.com");
+  }
+
+  /** 현재 테넌트의 저장 행 원문(없으면 빈 값). */
+  private java.util.Optional<String> rawValue(String key) {
+    return com.smartfirehub.support.SettingsTestSupport.rawTenantSettingValue(
+        dsl, fixtureTransactionTemplate, testTenant, key);
   }
 
   @Test

@@ -1,0 +1,165 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  user·user_role 문장(WD-706) — JooqUserRepository 와 같은 의미. databaseId·테넌트·null 바인드 규칙은 MyBatisPlatformConfig javadoc,
+  공용 조각(userTable·limit·page·불리언)은 mybatis/common/PlatformSql.xml. user 는 전역 테이블이라 테넌트 컨텍스트 없이 조회된다(로그인 경로).
+  테넌트 경계는 인터페이스가 테넌트를 인자로 받는 문장(membership 조인)이 명시 tenantId 로 세운다. user_role.tenant_id 는 DEFAULT 가 채운다.
+  빈 문자열(controller Ruling): 값을 변환하지 않는다 — Tibero 는 '' 를 NULL 로 저장하므로 NULL 허용 열(email)은 null 로 돌아오고 NOT NULL 열(username·name·password)은 거절된다(PG 는 '' 그대로).
+  대소문자 무시 검색은 jOOQ 의 ILIKE 대신 LOWER(열) LIKE LOWER(패턴) ESCAPE '\' 로 두 벤더 공통이다.
+-->
+<mapper namespace="com.smartfirehub.user.repository.mybatis.UserMapper">
+
+  <resultMap id="userRow" type="com.smartfirehub.user.dto.UserResponse">
+    <constructor>
+      <idArg column="id" javaType="java.lang.Long"/>
+      <arg column="username" javaType="java.lang.String"/>
+      <arg column="email" javaType="java.lang.String"/>
+      <arg column="name" javaType="java.lang.String"/>
+      <arg column="is_active" javaType="_boolean"/>
+      <arg column="created_at" javaType="java.time.LocalDateTime"/>
+      <arg column="must_change_password" javaType="_boolean"/>
+    </constructor>
+  </resultMap>
+
+  <sql id="userColumns">u.id, u.username, u.email, u.name, u.is_active, u.created_at, u.must_change_password</sql>
+
+  <sql id="fromUser">FROM <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.userTable"/> u</sql>
+
+  <!-- 이 테넌트 멤버(ACTIVE·SUSPENDED 모두). user 는 전역이라 RLS 가 아닌 membership 조인으로 테넌트 경계를 세운다. -->
+  <sql id="inTenant">
+    EXISTS (SELECT 1 FROM membership m WHERE m.user_id = u.id AND m.tenant_id = #{tenantId})
+  </sql>
+
+  <sql id="searchFilter">
+    <if test="pattern != null">
+      AND (LOWER(u.username) LIKE LOWER(#{pattern}) ESCAPE '\'
+        OR LOWER(u.name) LIKE LOWER(#{pattern}) ESCAPE '\'
+        OR LOWER(u.email) LIKE LOWER(#{pattern}) ESCAPE '\')
+    </if>
+  </sql>
+
+  <select id="selectByUsername" resultMap="userRow">
+    SELECT <include refid="userColumns"/> <include refid="fromUser"/> WHERE u.username = #{username}
+  </select>
+
+  <select id="selectById" resultMap="userRow">
+    SELECT <include refid="userColumns"/> <include refid="fromUser"/> WHERE u.id = #{id}
+  </select>
+
+  <select id="selectByUsernameIgnoreCase" resultMap="userRow">
+    SELECT <include refid="userColumns"/> <include refid="fromUser"/>
+     WHERE LOWER(u.username) = #{lowered}
+     ORDER BY u.id ASC
+     <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.limitRows"><property name="n" value="1"/></include>
+  </select>
+
+  <select id="selectPasswordByUsername" resultType="java.lang.String">
+    SELECT u.password <include refid="fromUser"/> WHERE u.username = #{username}
+  </select>
+
+  <select id="selectPasswordById" resultType="java.lang.String">
+    SELECT u.password <include refid="fromUser"/> WHERE u.id = #{id}
+  </select>
+
+  <select id="countByUsername" resultType="_int">
+    SELECT COUNT(*) <include refid="fromUser"/> WHERE u.username = #{username}
+  </select>
+
+  <!-- 한 행만 보면 되므로 1행으로 자른 부분 질의를 센다(Tibero 는 FROM 없는 SELECT 가 없어 EXISTS 식을 쓰지 않는다). -->
+  <select id="countAny" resultType="_int">
+    SELECT COUNT(*) FROM (SELECT id FROM <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.userTable"/>
+      <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.limitRows"><property name="n" value="1"/></include>) x
+  </select>
+
+  <insert id="insert" useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+    INSERT INTO <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.userTable"/>
+      (username, email, password, name, must_change_password)
+    VALUES (#{username}, #{email,jdbcType=VARCHAR}, #{password}, #{name},
+      <choose>
+        <when test="mustChangePassword"><include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/></when>
+        <otherwise><include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlFalse"/></otherwise>
+      </choose>)
+  </insert>
+
+  <select id="selectPage" resultMap="userRow">
+    SELECT <include refid="userColumns"/> <include refid="fromUser"/>
+     WHERE <include refid="inTenant"/> <include refid="searchFilter"/>
+     ORDER BY u.id ASC
+     <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.pageClause"/>
+  </select>
+
+  <select id="selectActiveMembersByIds" resultMap="userRow">
+    SELECT <include refid="userColumns"/> <include refid="fromUser"/>
+     WHERE EXISTS (SELECT 1 FROM membership m WHERE m.user_id = u.id AND m.tenant_id = #{tenantId} AND m.status = 'ACTIVE')
+       AND u.id IN <foreach collection="ids" item="i" open="(" separator="," close=")">#{i}</foreach>
+  </select>
+
+  <select id="countInTenant" resultType="long">
+    SELECT COUNT(*) <include refid="fromUser"/> WHERE <include refid="inTenant"/> <include refid="searchFilter"/>
+  </select>
+
+  <update id="update">
+    UPDATE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.userTable"/>
+       SET name = #{name}, email = #{email,jdbcType=VARCHAR}, updated_at = #{now}
+     WHERE id = #{id}
+  </update>
+
+  <update id="updatePassword">
+    UPDATE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.userTable"/>
+       SET password = #{password},
+           must_change_password = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlFalse"/>,
+           updated_at = #{now}
+     WHERE id = #{id}
+  </update>
+
+  <update id="activate">
+    UPDATE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.userTable"/>
+       SET is_active = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>, updated_at = #{now}
+     WHERE id = #{id} AND is_active = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlFalse"/>
+  </update>
+
+  <update id="deactivate">
+    UPDATE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.userTable"/>
+       SET is_active = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlFalse"/>, updated_at = #{now}
+     WHERE id = #{id} AND is_active = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>
+  </update>
+
+  <!-- 활성 ADMIN: 이 테넌트 ADMIN 역할 + 이 테넌트 멤버십 ACTIVE + 전역 계정 활성. tenant_id 를 명시한다(membership 은 RLS 없음). -->
+  <sql id="activeAdminJoin">
+    <include refid="fromUser"/>
+    JOIN user_role ur ON ur.user_id = u.id AND ur.tenant_id = #{tenantId}
+    JOIN role r ON r.id = ur.role_id AND r.tenant_id = #{tenantId}
+    JOIN membership m ON m.user_id = u.id AND m.tenant_id = #{tenantId}
+    WHERE r.name = 'ADMIN' AND m.status = 'ACTIVE'
+      AND u.is_active = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>
+  </sql>
+
+  <select id="countActiveAdmins" resultType="_int">
+    SELECT COUNT(DISTINCT u.id) <include refid="activeAdminJoin"/>
+  </select>
+
+  <select id="selectActiveAdminIds" resultType="java.lang.Long">
+    SELECT DISTINCT u.id <include refid="activeAdminJoin"/> ORDER BY u.id
+  </select>
+
+  <delete id="deleteRolesInTenant">
+    DELETE FROM user_role WHERE user_id = #{userId} AND tenant_id = #{tenantId}
+  </delete>
+
+  <select id="countAdminRole" resultType="_int">
+    SELECT COUNT(*) FROM user_role ur JOIN role r ON r.id = ur.role_id
+     WHERE ur.user_id = #{userId} AND r.name = 'ADMIN'
+  </select>
+
+  <insert id="insertUserRole">
+    INSERT INTO user_role (user_id, role_id) VALUES (#{userId}, #{roleId})
+  </insert>
+
+  <delete id="deleteUserRole">
+    DELETE FROM user_role WHERE user_id = #{userId} AND role_id = #{roleId}
+  </delete>
+
+  <delete id="deleteAllUserRoles">
+    DELETE FROM user_role WHERE user_id = #{userId}
+  </delete>
+</mapper>

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  system_settings 문장(WD-706) — JooqSettingsRepository 와 같은 의미. 규칙은 MyBatisPlatformConfig javadoc.
+  전역 테이블이라 테넌트 술어가 없다. 프리픽스 패턴은 구현이 LikePatternUtils.settingKeyPrefixPattern 으로 만들어 넘긴다(이스케이프 문자 \).
+  빈 문자열(controller Ruling): 변환하지 않는다 — value 는 두 DB 모두 NOT NULL 이라 Tibero 에는 '' 값 행이 있을 수 없고,
+  NULL 허용인 description 은 Tibero 에서 null 로 돌아온다(PG 는 '').
+-->
+<mapper namespace="com.smartfirehub.settings.repository.mybatis.SettingsMapper">
+
+  <resultMap id="settingRow" type="com.smartfirehub.settings.dto.SettingResponse">
+    <constructor>
+      <arg column="key" javaType="java.lang.String"/>
+      <arg column="value" javaType="java.lang.String"/>
+      <arg column="description" javaType="java.lang.String"/>
+      <arg column="updated_at" javaType="java.time.LocalDateTime"/>
+    </constructor>
+  </resultMap>
+
+  <select id="selectByPattern" resultMap="settingRow">
+    SELECT s.key, s.value, s.description, s.updated_at
+      FROM system_settings s
+     WHERE s.key LIKE #{pattern} ESCAPE '\'
+     ORDER BY s.key ASC
+  </select>
+
+  <select id="selectValue" resultType="java.lang.String">
+    SELECT s.value FROM system_settings s WHERE s.key = #{key}
+  </select>
+</mapper>

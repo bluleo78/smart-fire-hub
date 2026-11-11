@@ -10,6 +10,7 @@ import static org.jooq.impl.DSL.table;
 import static org.jooq.impl.DSL.when;
 
 import com.smartfirehub.global.dto.PageResponse;
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.global.util.LikePatternUtils;
 import com.smartfirehub.platform.dto.PlatformAccountResponse;
 import com.smartfirehub.platform.dto.PlatformUserResponse;
@@ -39,6 +40,7 @@ import org.springframework.stereotype.Repository;
  * 문자열 API 를 쓴다.
  */
 @Repository
+@ConditionalOnPostgresPlatformDb
 public class JooqPlatformUserRepository implements PlatformUserRepository {
 
   private final DSLContext dsl;

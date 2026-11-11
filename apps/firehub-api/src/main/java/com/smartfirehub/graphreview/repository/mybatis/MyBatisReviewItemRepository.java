@@ -1,5 +1,6 @@
 package com.smartfirehub.graphreview.repository.mybatis;
 
+import com.smartfirehub.global.platformdb.mybatis.PlatformMyBatisRepository;
 import com.smartfirehub.graphreview.dto.ReviewItemRecord;
 import com.smartfirehub.graphreview.repository.ReviewItemRepository;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
@@ -13,14 +14,15 @@ import org.springframework.transaction.annotation.Transactional;
  * ReviewItemRepository 의 MyBatis 구현(WD-487 PoC) — {@code JooqReviewItemRepository} 와 같은 의미.
  *
  * <p>SQL 은 {@code mybatis/graphreview/ReviewItemMapper.xml} 에 있고, 이 클래스는 계약 의미(offset 기본값·0행
- * 예외·Optional 변환·가시성 값 펼치기)만 맡는다. 같은 인터페이스 계약 테스트를 PG·Tibero 양쪽에서 돌리기 위한 구현이라 {@code @Repository} 를
- * 달지 않고 {@code MyBatisPlatformConfig} 가 {@code autowireCandidate=false} 빈으로 등록한다 — 서비스 주입은 여전히 jOOQ
- * 구현이다.
+ * 예외·Optional 변환·가시성 값 펼치기)만 맡는다. 같은 인터페이스 계약 테스트를 PG·Tibero 양쪽에서 돌리기 위한 구현이다.
+ * {@code @PlatformMyBatisRepository} 로 등록기가 빈으로 등록하며, Tibero 설치본에서만 주입 후보다(그 밖에는 서비스가 jOOQ 구현을
+ * 받는다).
  */
 // RLS GUC 는 트랜잭션 시작 시점에만 주입되는데 호출자 ReviewItemService(evidence 제외)와 MCP 추출
 // 툴은 트랜잭션 경계를 만들지 않는다. 여기서 열지 않으면 세 갈래로 깨진다 — insertPending*: tenant_id
 // NOT NULL 위반으로 추출 중단, lookup*: 0행이라 승인 항목이 중복 재생성, updateStatus: 0행인데
 // 검수자에게는 성공으로 보고. 지우지 말 것.
+@PlatformMyBatisRepository
 @Transactional
 public class MyBatisReviewItemRepository implements ReviewItemRepository {
 

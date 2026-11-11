@@ -10,6 +10,7 @@ import static org.jooq.impl.DSL.name;
 import static org.jooq.impl.DSL.selectOne;
 import static org.jooq.impl.DSL.table;
 
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.global.platformdb.PlatformLocks;
 import com.smartfirehub.global.util.LikePatternUtils;
 import com.smartfirehub.user.dto.UserResponse;
@@ -29,6 +30,7 @@ import org.springframework.stereotype.Repository;
 
 /** UserRepository 의 jOOQ(PostgreSQL) 구현 — WD-485. */
 @Repository
+@ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
 public class JooqUserRepository implements UserRepository {
 

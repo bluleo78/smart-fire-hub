@@ -2,6 +2,7 @@ package com.smartfirehub.settings.repository.jooq;
 
 import static org.jooq.impl.DSL.*;
 
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.util.LikePatternUtils;
 import com.smartfirehub.settings.repository.TenantSettingsRepository;
@@ -44,6 +45,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 있었기 때문이다 — 컨텍스트를 세우는 책임은 여전히 호출자에게 있다.
  */
 @Repository
+@ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
 @Transactional
 public class JooqTenantSettingsRepository implements TenantSettingsRepository {

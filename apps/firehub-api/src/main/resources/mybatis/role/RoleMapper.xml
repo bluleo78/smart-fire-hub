@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  role·role_permission·user_role 문장(WD-706) — JooqRoleRepository 와 같은 의미. 규칙은 MyBatisPlatformConfig javadoc.
+  세 테이블 모두 테넌트 정책(RLS) 대상이라 tenant_id 를 INSERT 값·WHERE 술어로 쓰지 않는다 — 정책이 테넌트 경계다(다른 테넌트 역할은 안 보인다).
+  빈 문자열(controller Ruling): 값을 변환하지 않는다 — Tibero 는 '' 를 NULL 로 저장하므로 설명은 null 로 돌아오고 NOT NULL 인 이름은 거절된다(PG 는 '' 그대로).
+  FOR UPDATE 는 두 벤더 공통이다(행 수 제한이 없어 Tibero 의 FETCH FIRST + FOR UPDATE 문제를 피한다).
+-->
+<mapper namespace="com.smartfirehub.role.repository.mybatis.RoleMapper">
+
+  <resultMap id="roleRow" type="com.smartfirehub.role.dto.RoleResponse">
+    <constructor>
+      <idArg column="id" javaType="java.lang.Long"/>
+      <arg column="name" javaType="java.lang.String"/>
+      <arg column="description" javaType="java.lang.String"/>
+      <arg column="is_system" javaType="_boolean"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="userRoleRow" type="com.smartfirehub.role.repository.mybatis.RoleMapper$UserRoleRow">
+    <constructor>
+      <arg column="user_id" javaType="java.lang.Long"/>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="name" javaType="java.lang.String"/>
+      <arg column="description" javaType="java.lang.String"/>
+      <arg column="is_system" javaType="_boolean"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="versionRow" type="com.smartfirehub.role.repository.mybatis.RoleMapper$VersionRow">
+    <constructor>
+      <idArg column="id" javaType="java.lang.Long"/>
+      <arg column="updated_at" javaType="java.time.LocalDateTime"/>
+    </constructor>
+  </resultMap>
+
+  <sql id="roleColumns">r.id, r.name, r.description, r.is_system</sql>
+
+  <select id="selectAll" resultMap="roleRow">
+    SELECT <include refid="roleColumns"/> FROM role r ORDER BY r.id ASC
+  </select>
+
+  <select id="selectById" resultMap="roleRow">
+    SELECT <include refid="roleColumns"/> FROM role r WHERE r.id = #{id}
+  </select>
+
+  <select id="selectByName" resultMap="roleRow">
+    SELECT <include refid="roleColumns"/> FROM role r WHERE r.name = #{name}
+  </select>
+
+  <select id="countByName" resultType="_int">
+    SELECT COUNT(*) FROM role r WHERE r.name = #{name}
+  </select>
+
+  <select id="selectExistingIds" resultType="java.lang.Long">
+    SELECT r.id FROM role r WHERE r.id IN <foreach collection="ids" item="i" open="(" separator="," close=")">#{i}</foreach>
+  </select>
+
+  <insert id="insert" useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+    INSERT INTO role (name, description) VALUES (#{name}, #{description,jdbcType=VARCHAR})
+  </insert>
+
+  <update id="update">
+    UPDATE role SET name = #{name}, description = #{description,jdbcType=VARCHAR}, updated_at = #{now}
+     WHERE id = #{id}
+  </update>
+
+  <select id="lockById" resultType="java.lang.Long">
+    SELECT id FROM role WHERE id = #{id} FOR UPDATE
+  </select>
+
+  <select id="selectUpdatedAt" resultType="java.time.LocalDateTime">
+    SELECT updated_at FROM role WHERE id = #{id}
+  </select>
+
+  <select id="lockVersionById" resultMap="versionRow">
+    SELECT id, updated_at FROM role WHERE id = #{id} FOR UPDATE
+  </select>
+
+  <select id="selectUserIdsByRoleId" resultType="java.lang.Long">
+    SELECT user_id FROM user_role WHERE role_id = #{roleId} ORDER BY user_id
+  </select>
+
+  <delete id="deleteById">
+    DELETE FROM role WHERE id = #{id}
+  </delete>
+
+  <insert id="insertPermission">
+    INSERT INTO role_permission (role_id, permission_id) VALUES (#{roleId}, #{permissionId})
+  </insert>
+
+  <delete id="deletePermission">
+    DELETE FROM role_permission WHERE role_id = #{roleId} AND permission_id = #{permissionId}
+  </delete>
+
+  <delete id="deleteAllPermissions">
+    DELETE FROM role_permission WHERE role_id = #{roleId}
+  </delete>
+
+  <select id="selectByUserId" resultMap="roleRow">
+    SELECT <include refid="roleColumns"/> FROM role r JOIN user_role ur ON ur.role_id = r.id
+     WHERE ur.user_id = #{userId} ORDER BY r.id ASC
+  </select>
+
+  <select id="selectByUserIds" resultMap="userRoleRow">
+    SELECT ur.user_id, <include refid="roleColumns"/> FROM role r JOIN user_role ur ON ur.role_id = r.id
+     WHERE ur.user_id IN <foreach collection="userIds" item="i" open="(" separator="," close=")">#{i}</foreach>
+     ORDER BY ur.user_id ASC, r.id ASC
+  </select>
+</mapper>

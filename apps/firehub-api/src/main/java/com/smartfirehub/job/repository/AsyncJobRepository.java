@@ -9,7 +9,8 @@ import java.util.Optional;
 /**
  * 범용 비동기 작업(async_job) 저장·조회 리포지토리.
  *
- * <p>구현은 {@code JooqAsyncJobRepository}(jOOQ/PostgreSQL) 이다 — WD-485.
+ * <p>구현은 {@code JooqAsyncJobRepository}(jOOQ/PostgreSQL, WD-485)와 {@code
+ * MyBatisAsyncJobRepository}(MyBatis — Tibero 설치본, WD-706)다.
  */
 public interface AsyncJobRepository {
 

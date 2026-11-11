@@ -13,7 +13,8 @@ import java.util.Optional;
  * 안에서 호출되는 경로는 편승하지만, 알림·비동기 내보내기 경로는 편승할 트랜잭션이 없어 RLS 정책 아래에서 tenant_id DEFAULT 가 NULL 이 되고 INSERT
  * 가 WITH CHECK 를 통과하지 못한다. 전파는 REQUIRED 이므로 기존 경로의 동작은 불변이다. (이슈 #384-3)
  *
- * <p>구현은 {@code JooqAuditLogRepository}(jOOQ/PostgreSQL) 이다 — WD-485.
+ * <p>구현은 {@code JooqAuditLogRepository}(jOOQ/PostgreSQL, WD-485)와 {@code
+ * MyBatisAuditLogRepository}(MyBatis — Tibero 설치본, WD-706)다.
  */
 public interface AuditLogRepository {
 

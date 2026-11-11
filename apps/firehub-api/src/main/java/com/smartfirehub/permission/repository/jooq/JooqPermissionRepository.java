@@ -2,6 +2,7 @@ package com.smartfirehub.permission.repository.jooq;
 
 import static com.smartfirehub.jooq.Tables.*;
 
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.permission.dto.PermissionResponse;
 import com.smartfirehub.permission.repository.PermissionRepository;
 import com.smartfirehub.securitylevel.repository.jooq.ActiveMembership;
@@ -20,6 +21,7 @@ import org.springframework.stereotype.Repository;
 
 /** PermissionRepository 의 jOOQ(PostgreSQL) 구현 — WD-485. */
 @Repository
+@ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
 public class JooqPermissionRepository implements PermissionRepository {
 

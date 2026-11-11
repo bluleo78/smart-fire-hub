@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  login_ip_failures 문장(WD-706) — JooqLoginIpFailureRepository 와 같은 의미. 전역 테이블이라 테넌트 술어가 없다.
+  만료 판정·만료 시각은 모두 DB 시계다(PG now(), Tibero 는 UTC 벽시계 TIMESTAMP 라 SYS_EXTRACT_UTC(SYSTIMESTAMP)). 만료 기간(15분)은
+  SQL 에 박혀 있다 — 바꿀 때 V156 마이그레이션 주석·jOOQ 구현과 함께 고친다.
+-->
+<mapper namespace="com.smartfirehub.auth.repository.mybatis.LoginIpFailureMapper">
+
+  <!-- DB 시계의 "지금" -->
+
+  <!-- UPSERT: 신규 쌍이면 행을 넣고, 이미 있으면(만료된 행 포함) 만료만 15분 뒤로 미룬다(rolling window). -->
+  <insert id="upsertFailure" databaseId="postgresql">
+    INSERT INTO login_ip_failures (ip_key, username, expires_at)
+    VALUES (#{ipKey}, #{username}, now() + interval '15 minutes')
+    ON CONFLICT (ip_key, username) DO UPDATE SET
+      expires_at = now() + interval '15 minutes'
+  </insert>
+
+  <insert id="upsertFailure" databaseId="tibero">
+    MERGE INTO login_ip_failures t
+    USING (SELECT #{ipKey} AS ip_key, #{username} AS username FROM DUAL) s
+       ON (t.ip_key = s.ip_key AND t.username = s.username)
+    WHEN MATCHED THEN UPDATE SET
+      t.expires_at = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/> + INTERVAL '15' MINUTE
+    WHEN NOT MATCHED THEN INSERT (ip_key, username, expires_at)
+      VALUES (s.ip_key, s.username, <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/> + INTERVAL '15' MINUTE)
+  </insert>
+
+  <select id="countActive" resultType="_int">
+    SELECT COUNT(*) FROM login_ip_failures
+     WHERE ip_key = #{ipKey} AND expires_at &gt; <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>
+  </select>
+
+  <delete id="deleteExpired">
+    DELETE FROM login_ip_failures WHERE expires_at &lt;= <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>
+  </delete>
+</mapper>

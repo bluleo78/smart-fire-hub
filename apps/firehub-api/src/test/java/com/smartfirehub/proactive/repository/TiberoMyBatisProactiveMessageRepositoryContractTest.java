@@ -26,6 +26,8 @@ import org.springframework.transaction.annotation.Transactional;
  * 쪽 동기화에 걸어 두고 이미 반납한 커넥션을 다음 호출에서 재사용하게 된다. 그래서 Tibero 픽스처 행은 롤백되지 않고 남는다 — 테스트마다 새 사용자를 만들고 단언이
  * 사용자 단위라 서로 섞이지 않으며, 클래스 끝({@link #cleanupTiberoFixtures()})에 지운다.
  *
+ * <p>리포지토리는 런타임 계정 + DBMS_RLS(WD-492) 위에서 돌고, 픽스처는 정책을 우회하는 소유자 계정({@code poc.jdbc()})으로 넣고 지운다.
+ *
  * <p><b>열람 자격(ClearanceResolver)은 스텁이다.</b> 실제 해석기는 PG 리포지토리·권한 서비스에 묶여 있어, Tibero {@code user_role
  * → role → security_level} 에서 최대 등급을 읽는 하위 클래스로 바꾼다. 멤버십·관리자 여부·권한은 보지 않는다(이 계약이 쓰는 것은 rank 하나다).
  */
@@ -53,8 +55,8 @@ class TiberoMyBatisProactiveMessageRepositoryContractTest
   }
 
   /**
-   * 이 클래스가 넣은 픽스처 행을 지운다 — 테스트 트랜잭션이 없어 롤백되지 않고, PoC 스키마는 JVM 공용이라 다음 클래스가 본다. 기반 클래스의 사용자는 모두
-   * {@code pmrepo} 접두사라 그 사용자에 딸린 메시지·작업·실행·역할 부여를 먼저 지운다.
+   * 이 클래스가 넣은 픽스처 행을 소유자 계정으로 지운다(정책 우회) — 테스트 트랜잭션이 없어 롤백되지 않고, 하네스 스키마는 JVM 공용이라 다음 클래스가 본다. 기반
+   * 클래스의 사용자는 모두 {@code pmrepo} 접두사라 그 사용자에 딸린 메시지·작업·실행·역할 부여를 먼저 지운다.
    */
   @AfterAll
   void cleanupTiberoFixtures() {

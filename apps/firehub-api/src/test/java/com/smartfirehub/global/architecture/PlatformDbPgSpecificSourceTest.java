@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.TreeSet;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 
@@ -22,6 +23,10 @@ import org.junit.jupiter.api.Test;
  *
  * <p>왜: ArchUnit 은 클래스 의존만 보므로 문자열 안의 PG 전용 SQL 은 못 잡는다. 플랫폼 DB 를 Tibero 로 옮길 때 서비스·리포지토리에 이런 문장이
  * 남아 있으면 조용히 깨진다. 잠금·세션·LISTEN 문장은 {@code global/platformdb/postgres/} 에만 둔다.
+ *
+ * <p>매퍼 XML({@code src/main/resources/mybatis/**}, WD-706)에도 같은 검사를 건다 — PG 전용 문법은 {@code
+ * databaseId="postgresql"} 문장 안에서만, {@code FH_TENANT.set_tenant}·{@code clear_tenant} 는 XML 어디서도
+ * 금지다.
  *
  * <p>WD-486 완료 — 허용 집합의 사유는 {@link #ALLOWED} 각 항목에 적었다.
  */
@@ -136,6 +141,96 @@ class PlatformDbPgSpecificSourceTest {
             "FH_TENANT.set_tenant 는 %s 밖에서 부를 수 없다 — PlatformTenantSession 을 쓴다(세션 범위 컨텍스트가 풀에 남는다)",
             TIBERO_SET_TENANT_OWNER)
         .containsExactly(TIBERO_SET_TENANT_OWNER);
+  }
+
+  /** 플랫폼 매퍼 XML 위치(WD-706). */
+  private static final Path MYBATIS_XML = Paths.get("src/main/resources/mybatis");
+
+  /**
+   * XML 에서 PG 전용으로 보는 토큰(소문자). 자바용 {@link #TOKENS} 에 PG 문법 흔적({@code ::} 캐스트·ON
+   * CONFLICT·ILIKE·RETURNING)을 더한다.
+   */
+  private static final List<String> XML_PG_TOKENS =
+      List.of(
+          "pg_advisory",
+          "set_config(",
+          "listen ",
+          "notify ",
+          "hashtextextended",
+          "::",
+          "on conflict",
+          "ilike",
+          "returning ");
+
+  private static final Pattern XML_COMMENT = Pattern.compile("<!--.*?-->", Pattern.DOTALL);
+
+  /** {@code databaseId="postgresql"} 문장·조각 통째(같은 태그로 닫힐 때까지). */
+  private static final Pattern PG_ONLY_ELEMENT =
+      Pattern.compile(
+          "<(select|insert|update|delete|sql)\\b[^>]*databaseId=\"postgresql\"[^>]*>.*?</\\1>",
+          Pattern.DOTALL);
+
+  /** Tibero 테넌트 컨텍스트 직접 조작({@code set_tenant}·{@code clear_tenant}) — XML 어디서도 금지. */
+  private static final Pattern FH_TENANT_CONTEXT_CALL =
+      Pattern.compile("fh_tenant\\s*\\.\\s*(set_tenant|clear_tenant)", Pattern.CASE_INSENSITIVE);
+
+  /**
+   * 매퍼 XML 한 개의 위반 목록. 주석은 지우고, PG 전용 토큰은 {@code databaseId="postgresql"} 요소 밖에서만 위반으로 본다. {@code
+   * FH_TENANT.set_tenant}·{@code clear_tenant} 는 어디서든 위반이다.
+   */
+  static List<String> xmlViolations(String xml) {
+    String body = XML_COMMENT.matcher(xml).replaceAll("");
+    List<String> out = new java.util.ArrayList<>();
+    if (FH_TENANT_CONTEXT_CALL.matcher(body).find()) {
+      out.add("FH_TENANT.set_tenant/clear_tenant 직접 호출");
+    }
+    String common = PG_ONLY_ELEMENT.matcher(body).replaceAll("").toLowerCase(Locale.ROOT);
+    for (String t : XML_PG_TOKENS) {
+      if (common.contains(t)) {
+        out.add("databaseId=\"postgresql\" 밖의 PG 전용 문법 '" + t + "'");
+      }
+    }
+    return out;
+  }
+
+  /** 매퍼 XML 은 PG 전용 문법을 databaseId="postgresql" 문장 안에서만 쓰고, 테넌트 컨텍스트를 직접 만지지 않는다. */
+  @Test
+  void mybatisXmlHasNoPgSpecificSyntaxOutsidePostgresStatements() throws IOException {
+    TreeSet<String> hits = new TreeSet<>();
+    try (Stream<Path> files = Files.walk(MYBATIS_XML)) {
+      for (Path p : files.filter(f -> f.toString().endsWith(".xml")).toList()) {
+        List<String> v = xmlViolations(Files.readString(p));
+        if (!v.isEmpty()) {
+          hits.add(MYBATIS_XML.relativize(p) + " " + v);
+        }
+      }
+    }
+    assertThat(hits)
+        .as("매퍼 XML 의 PG 전용 문법은 databaseId=\"postgresql\" 문장에만, set_tenant/clear_tenant 는 금지")
+        .isEmpty();
+  }
+
+  /** 검사 규칙 자체 시험 — 위반 XML 은 잡고 허용 XML 은 통과시킨다. */
+  @Test
+  void xmlRuleDetectsViolationsAndAllowsPostgresOnlyStatements() {
+    String pgOnly =
+        "<mapper><!-- ::text 는 주석 --><select id=\"a\" databaseId=\"postgresql\">select x::text from t</select>"
+            + "<select id=\"a\" databaseId=\"tibero\">select x from t</select></mapper>";
+    assertThat(xmlViolations(pgOnly)).isEmpty();
+    assertThat(xmlViolations("<mapper><select id=\"b\">select x::text from t</select></mapper>"))
+        .isNotEmpty();
+    assertThat(
+            xmlViolations(
+                "<mapper><insert id=\"c\" databaseId=\"postgresql\">insert into t values (1) on conflict do nothing</insert></mapper>"))
+        .isEmpty();
+    assertThat(
+            xmlViolations(
+                "<mapper><select id=\"d\" databaseId=\"tibero\">call FH_TENANT.set_tenant(1)</select></mapper>"))
+        .isNotEmpty();
+    assertThat(
+            xmlViolations(
+                "<mapper><select id=\"e\" databaseId=\"postgresql\">select fh_tenant.clear_tenant()</select></mapper>"))
+        .isNotEmpty();
   }
 
   /** 허용 경로가 실제로 존재해야 한다 — 이름이 바뀌어 허용이 조용히 무의미해지는 것을 막는다. */

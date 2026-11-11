@@ -2,6 +2,7 @@ package com.smartfirehub.settings.repository.jooq;
 
 import static org.jooq.impl.DSL.*;
 
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.global.util.LikePatternUtils;
 import com.smartfirehub.settings.dto.SettingResponse;
 import com.smartfirehub.settings.repository.SettingsRepository;
@@ -16,6 +17,7 @@ import org.springframework.stereotype.Repository;
 
 /** SettingsRepository 의 jOOQ(PostgreSQL) 구현 — WD-485. */
 @Repository
+@ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
 public class JooqSettingsRepository implements SettingsRepository {
 

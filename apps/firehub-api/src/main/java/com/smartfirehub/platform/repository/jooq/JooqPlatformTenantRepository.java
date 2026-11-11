@@ -4,6 +4,7 @@ import static org.jooq.impl.DSL.field;
 import static org.jooq.impl.DSL.name;
 import static org.jooq.impl.DSL.table;
 
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.platform.dto.TenantMemberResponse;
 import com.smartfirehub.platform.dto.TenantSummaryResponse;
 import com.smartfirehub.platform.repository.PlatformTenantRepository;
@@ -25,6 +26,7 @@ import org.springframework.stereotype.Repository;
  * <p>트랜잭션 경계는 서비스가 잡는다 — 테넌트 생성은 여러 쓰기가 원자적이어야 한다.
  */
 @Repository
+@ConditionalOnPostgresPlatformDb
 public class JooqPlatformTenantRepository implements PlatformTenantRepository {
 
   private final DSLContext dsl;
