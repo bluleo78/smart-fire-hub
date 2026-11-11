@@ -5,6 +5,7 @@ import static org.jooq.impl.DSL.*;
 import com.smartfirehub.ai.dto.AiSessionResponse;
 import com.smartfirehub.ai.dto.CreateAiSessionRequest;
 import com.smartfirehub.ai.repository.AiSessionRepository;
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -43,6 +44,7 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @Transactional
 @Repository
+@ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
 public class JooqAiSessionRepository implements AiSessionRepository {
 
@@ -104,7 +106,7 @@ public class JooqAiSessionRepository implements AiSessionRepository {
             UPDATED_AT)
         .from(AI_SESSION)
         .where(USER_ID.eq(userId))
-        .orderBy(UPDATED_AT.desc())
+        .orderBy(UPDATED_AT.desc(), ID.desc())
         .limit(size)
         .offset((long) page * size)
         .fetch(

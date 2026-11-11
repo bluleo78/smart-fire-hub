@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  ai_session 문장(WD-712) — JooqAiSessionRepository 와 같은 의미. 테넌트 정책(RLS) 대상이라 tenant_id 를 쓰지 않는다(넣을 때는 DEFAULT 가
+  채우고 정책이 좁힌다). 두 DB 같은 문장이고 벤더 차이는 공용 조각(페이지 절·DB 시계)이 흡수한다. RETURNING 은 Tibero 에 없어 생성 키
+  (useGeneratedKeys)로 id 를 받는다. created_at·updated_at 은 시간대 없는 TIMESTAMP 라 구현이 Java 에서 JVM 시간대 벽시계
+  (LocalDateTime.now())를 #{now} 로 바인드하고 LocalDateTime 으로 그대로 읽는다 — jOOQ 의 currentLocalDateTime(PG LOCALTIMESTAMP,
+  세션 시간대 = 접속 시 JVM 시간대)과 같은 기준. DB 시계(dbNow)를 쓰지 않는 이유: Tibero 판 dbNow 는 UTC 벽시계라 KST JVM 에서 9시간
+  어긋난다. 빈 문자열: 변환하지 않는다(Tibero 는 '' 를 NULL 로 저장 — title 만 해당).
+  목록 정렬은 updated_at DESC 에 id DESC 를 붙여 같은 시각 행의 순서를 고정한다(jOOQ 구현에도 같은 보조 정렬).
+-->
+<mapper namespace="com.smartfirehub.ai.repository.mybatis.AiSessionMapper">
+
+  <resultMap id="sessionRow" type="com.smartfirehub.ai.dto.AiSessionResponse">
+    <constructor>
+      <idArg column="id" javaType="java.lang.Long"/>
+      <arg column="user_id" javaType="java.lang.Long"/>
+      <arg column="session_id" javaType="java.lang.String"/>
+      <arg column="context_type" javaType="java.lang.String"/>
+      <arg column="context_resource_id" javaType="java.lang.Long"/>
+      <arg column="title" javaType="java.lang.String"/>
+      <arg column="created_at" javaType="java.time.LocalDateTime"/>
+      <arg column="updated_at" javaType="java.time.LocalDateTime"/>
+      <arg column="channel_source" javaType="java.lang.String"/>
+      <arg column="slack_team_id" javaType="java.lang.String"/>
+      <arg column="slack_channel_id" javaType="java.lang.String"/>
+      <arg column="slack_thread_ts" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <sql id="baseColumns">
+    s.id, s.user_id, s.session_id, s.context_type, s.context_resource_id, s.title, s.created_at, s.updated_at
+  </sql>
+
+  <!-- WEB 형태: 채널은 리터럴 'WEB', Slack 열은 NULL 로 고정 — SLACK 행을 id 로 읽어도 jOOQ 의 ofWeb 과 같은 값(WEB, Slack 필드 null). -->
+  <sql id="webColumns">
+    <include refid="baseColumns"/>, 'WEB' AS channel_source, NULL AS slack_team_id, NULL AS slack_channel_id, NULL AS slack_thread_ts
+  </sql>
+
+  <select id="selectByUser" resultMap="sessionRow">
+    SELECT <include refid="webColumns"/>
+      FROM ai_session s
+     WHERE s.user_id = #{userId}
+     ORDER BY s.updated_at DESC, s.id DESC
+     <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.pageClause"/>
+  </select>
+
+  <select id="selectById" resultMap="sessionRow">
+    SELECT <include refid="webColumns"/> FROM ai_session s WHERE s.id = #{id}
+  </select>
+
+  <select id="selectByUserAndContext" resultMap="sessionRow">
+    SELECT <include refid="webColumns"/>
+      FROM ai_session s
+     WHERE s.user_id = #{userId}
+       AND s.context_type = #{contextType}
+       AND s.context_resource_id = #{contextResourceId}
+  </select>
+
+  <select id="selectByUserAndSessionId" resultMap="sessionRow">
+    SELECT <include refid="webColumns"/>
+      FROM ai_session s
+     WHERE s.user_id = #{userId} AND s.session_id = #{sessionId}
+  </select>
+
+  <!-- 존재 확인이라 첫 일치 행에서 멈춘다(COUNT(*) 전수 집계 대신). -->
+  <select id="countForOtherUser" resultType="int">
+    SELECT COUNT(*) FROM (
+      SELECT 1 FROM ai_session s WHERE s.session_id = #{sessionId} AND s.user_id &lt;&gt; #{userId}
+      <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.limitRows"><property name="n" value="1"/></include>) x
+  </select>
+
+  <insert id="insertWeb" useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+    INSERT INTO ai_session
+      (user_id, session_id, context_type, context_resource_id, title, created_at, updated_at)
+    VALUES (#{userId}, #{sessionId}, #{contextType}, #{contextResourceId}, #{title},
+            #{now}, #{now})
+  </insert>
+
+  <insert id="insertSlack" useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+    INSERT INTO ai_session
+      (user_id, session_id, title, channel_source, slack_team_id, slack_channel_id, slack_thread_ts, created_at, updated_at)
+    VALUES (#{userId}, #{sessionId}, #{title}, 'SLACK', #{slackTeamId}, #{slackChannelId}, #{slackThreadTs},
+            #{now}, #{now})
+  </insert>
+
+  <update id="updateTitle">
+    UPDATE ai_session
+       SET title = #{title},
+           updated_at = #{now}
+     WHERE id = #{id}
+  </update>
+
+  <delete id="deleteById">
+    DELETE FROM ai_session WHERE id = #{id}
+  </delete>
+
+  <select id="selectBySlackContext" resultMap="sessionRow">
+    SELECT <include refid="baseColumns"/>, s.channel_source, s.slack_team_id, s.slack_channel_id, s.slack_thread_ts
+      FROM ai_session s
+     WHERE s.channel_source = 'SLACK'
+       AND s.slack_team_id = #{teamId}
+       AND s.slack_channel_id = #{channelId}
+       AND s.slack_thread_ts = #{threadTs}
+  </select>
+
+</mapper>

@@ -1,6 +1,7 @@
 package com.smartfirehub.dataset.repository.mybatis;
 
 import com.smartfirehub.global.platformdb.mybatis.PlatformMapper;
+import com.smartfirehub.securitylevel.repository.mybatis.MyBatisDatasetVisibility;
 import org.apache.ibatis.annotations.Param;
 
 /**
@@ -20,10 +21,7 @@ public interface DatasetEmbeddingMapper {
   /**
    * 등급이 임베딩 공급자를 허용하는 카탈로그 행 수.
    *
-   * @param aiPolicyAll ai_policy 의 "모두 허용" 값
-   * @param aiPolicySelfHosted 자체 호스팅이면 함께 허용할 값, 외부면 null
+   * @param aiPolicy {@code MyBatisDatasetVisibility.aiPolicyValues} 가 호스팅 위치로 정한 허용 값
    */
-  long countAllowed(
-      @Param("aiPolicyAll") String aiPolicyAll,
-      @Param("aiPolicySelfHosted") String aiPolicySelfHosted);
+  long countAllowed(@Param("aiPolicy") MyBatisDatasetVisibility.AiPolicyValues aiPolicy);
 }

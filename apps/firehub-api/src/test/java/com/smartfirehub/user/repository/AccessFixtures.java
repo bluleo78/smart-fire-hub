@@ -219,6 +219,21 @@ public interface AccessFixtures {
   LocalDateTime embeddingUpdatedAt(long datasetId);
 
   /**
+   * document_file 한 행을 소유자 시점으로 만든다(WD-712 — 청크 시험용). tenant_id 는 직접 넣고 올린 이는 픽스처 전용 사용자다. 데이터셋을
+   * 지우면 FK CASCADE 로 파일·청크가 함께 사라진다.
+   *
+   * @param status PENDING·PARSING·COMPLETED 등
+   */
+  long createDocumentFile(long tenantId, long datasetId, String name, String status);
+
+  /** 그 문서의 document_chunk 저장 행(소유자 시점, chunk_index 오름차순) — 청크 적재 왕복·테넌트 DEFAULT 확인용. */
+  List<ChunkRow> chunkRows(long documentFileId);
+
+  /** document_chunk 한 행의 저장값(소유자 시점). */
+  record ChunkRow(
+      long datasetId, int chunkIndex, String content, Integer tokenCount, long tenantId) {}
+
+  /**
    * 감사 로그 한 행을 시각을 정해 직접 넣는다(정렬·기간·가시성 시험용). tenantId 가 null 이면 테넌트 없는(플랫폼) 행. 정리 대상에 올린다.
    *
    * @param actionTime 저장 TZ 벽시계 action_time
@@ -276,6 +291,36 @@ public interface AccessFixtures {
 
   /** 테넌트 컨텍스트를 비우고 트랜잭션 없이 실행한다 — 로그인 경로 재현. */
   <T> T noTenant(Supplier<T> call);
+
+  /** AI 세션의 수정 시각을 직접 바꾼다(소유자 시점, 목록 정렬·페이지 재현용, 저장 TZ 벽시계 — WD-712). */
+  void setAiSessionUpdatedAt(long sessionId, LocalDateTime updatedAt);
+
+  /** 소유자 시점에서 본 AI 세션의 제목·수정 시각 — 리포지토리 쓰기 결과 확인용(WD-712). 행이 없으면 예외. */
+  String aiSessionTitle(long sessionId);
+
+  /**
+   * embedding_reembed_state 행의 임대 만료 시각을 DB 시계 + seconds 초로 직접 맞춘다(소유자 시점, WD-712). 막 만료(음수)·아직
+   * 유효(양수) 경계를 벽시계 대기 없이 만들려고 쓴다.
+   */
+  void setReembedLeaseFromDbNow(long tenantId, int seconds);
+
+  /** 재임베딩 임대 만료 시각 − DB 현재 시각(소유자 시점 한 문장으로 둘 다 읽어 자바에서 뺀다, WD-712). 임대가 비어 있으면 null, 행이 없으면 예외. */
+  java.time.Duration reembedLeaseRemaining(long tenantId);
+
+  /**
+   * embedding_reembed_state 행의 updated_at 을 DB 시계 + seconds 초로 직접 맞춘다(소유자 시점, 저장 기준 그대로 — WD-712).
+   */
+  void setReembedUpdatedAtFromDbNow(long tenantId, int seconds);
+
+  /**
+   * tenant_settings 한 행을 넣거나 바꾸고 updated_at 을 DB 시계 + seconds 초로 맞춘다(소유자 시점, WD-712). 운영 쓰기와 같은 저장
+   * 기준이다 — PG 는 LOCALTIMESTAMP(jOOQ currentLocalDateTime), Tibero 는 UTC 벽시계(MyBatis dbNow). Tibero
+   * 열 DEFAULT(LOCALTIMESTAMP)에는 기대지 않는다. 테넌트 정리 때 함께 지운다.
+   */
+  void putTenantSettingFromDbNow(long tenantId, String key, String value, int seconds);
+
+  /** DB 시계의 현재 순간(소유자 시점, WD-712) — JVM 시간대와 무관하게 리포지토리가 읽은 시각과 비교하려고 쓴다. */
+  java.time.Instant dbNow();
 
   /** 이 DB 가 빈 문자열을 NULL 로 저장하는가(Tibero true, PG false). */
   boolean emptyStringIsNull();

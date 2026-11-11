@@ -3,6 +3,7 @@ package com.smartfirehub.embedding.repository.jooq;
 import com.smartfirehub.embedding.EmbeddingSpace;
 import com.smartfirehub.embedding.reembed.ReembedState;
 import com.smartfirehub.embedding.repository.EmbeddingReembedStateRepository;
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.global.tenant.TenantContext;
 import java.time.Duration;
 import java.time.OffsetDateTime;
@@ -20,6 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 를 세운다.
  */
 @Repository
+@ConditionalOnPostgresPlatformDb
 @Transactional
 @RequiredArgsConstructor
 public class JooqEmbeddingReembedStateRepository implements EmbeddingReembedStateRepository {

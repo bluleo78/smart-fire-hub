@@ -212,7 +212,11 @@ public class PgAccessFixtures implements AccessFixtures {
           "security_level",
           "dataset_category",
           "report_template",
-          "tenant_settings");
+          "tenant_settings",
+          "uploaded_files",
+          "document_file",
+          "file_dataset_config",
+          "ai_session");
 
   @Override
   public int countTenantRows(String table, long tenantId) {
@@ -642,6 +646,37 @@ public class PgAccessFixtures implements AccessFixtures {
         .toLocalDateTime();
   }
 
+  @Override
+  public long createDocumentFile(long tenantId, long datasetId, String name, String status) {
+    // 소유자 세션이라 정책이 거르지 않아 tenant_id 를 직접 넣는다. 정리는 데이터셋 삭제의 FK CASCADE 가 맡는다.
+    return ownerJdbc.queryForObject(
+        "insert into document_file (tenant_id, dataset_id, original_name, mime_type, file_size,"
+            + " storage_path, status, uploaded_by) values (?, ?, ?, 'text/plain', 3, ?, ?, ?)"
+            + " returning id",
+        Long.class,
+        tenantId,
+        datasetId,
+        name,
+        "/tmp/" + name,
+        status,
+        datasetCreator());
+  }
+
+  @Override
+  public List<ChunkRow> chunkRows(long documentFileId) {
+    return ownerJdbc.query(
+        "select dataset_id, chunk_index, content, token_count, tenant_id from document_chunk"
+            + " where document_file_id = ? order by chunk_index",
+        (rs, n) ->
+            new ChunkRow(
+                rs.getLong("dataset_id"),
+                rs.getInt("chunk_index"),
+                rs.getString("content"),
+                rs.getObject("token_count") == null ? null : rs.getInt("token_count"),
+                rs.getLong("tenant_id")),
+        documentFileId);
+  }
+
   /**
    * 부모 행의 테넌트 — 정책을 우회하는 소유자 커넥션으로 읽는다(자식 행 픽스처가 테넌트를 받지 않는다). table 은 시험 코드의 고정 이름만
    * 넘긴다(pipeline·pipeline_step·saved_query·dashboard).
@@ -843,6 +878,67 @@ public class PgAccessFixtures implements AccessFixtures {
   }
 
   @Override
+  public void setAiSessionUpdatedAt(long sessionId, LocalDateTime updatedAt) {
+    ownerJdbc.update("update ai_session set updated_at = ? where id = ?", updatedAt, sessionId);
+  }
+
+  @Override
+  public String aiSessionTitle(long sessionId) {
+    return ownerJdbc.queryForObject(
+        "select title from ai_session where id = ?", String.class, sessionId);
+  }
+
+  @Override
+  public void setReembedLeaseFromDbNow(long tenantId, int seconds) {
+    ownerJdbc.update(
+        "update embedding_reembed_state set lease_until = now() + (? * interval '1 second')"
+            + " where tenant_id = ?",
+        seconds,
+        tenantId);
+  }
+
+  @Override
+  public java.time.Duration reembedLeaseRemaining(long tenantId) {
+    // 임대 만료 시각과 DB 시계를 같은 문장에서 읽는다 — 둘 다 timestamptz 라 순간으로 뺀다.
+    return ownerJdbc.queryForObject(
+        "select lease_until, now() as db_now from embedding_reembed_state where tenant_id = ?",
+        (rs, i) -> {
+          java.time.OffsetDateTime lease = rs.getObject(1, java.time.OffsetDateTime.class);
+          java.time.OffsetDateTime now = rs.getObject(2, java.time.OffsetDateTime.class);
+          return lease == null ? null : java.time.Duration.between(now, lease);
+        },
+        tenantId);
+  }
+
+  @Override
+  public void setReembedUpdatedAtFromDbNow(long tenantId, int seconds) {
+    ownerJdbc.update(
+        "update embedding_reembed_state set updated_at = now() + (? * interval '1 second')"
+            + " where tenant_id = ?",
+        seconds,
+        tenantId);
+  }
+
+  @Override
+  public void putTenantSettingFromDbNow(long tenantId, String key, String value, int seconds) {
+    // 운영(jOOQ currentLocalDateTime)과 같은 LOCALTIMESTAMP 기준 — 세션 TimeZone 벽시계 TIMESTAMP 다.
+    ownerJdbc.update(
+        "insert into tenant_settings (tenant_id, key, value, updated_at)"
+            + " values (?, ?, ?, LOCALTIMESTAMP + (? * interval '1 second'))"
+            + " on conflict (tenant_id, key) do update set value = excluded.value,"
+            + " updated_at = excluded.updated_at",
+        tenantId,
+        key,
+        value,
+        seconds);
+  }
+
+  @Override
+  public java.time.Instant dbNow() {
+    return ownerJdbc.queryForObject("select now()", java.time.OffsetDateTime.class).toInstant();
+  }
+
+  @Override
   public boolean emptyStringIsNull() {
     return false;
   }
@@ -864,14 +960,19 @@ public class PgAccessFixtures implements AccessFixtures {
           () -> {
             dsl.execute("delete from audit_log where tenant_id = ?", t);
             dsl.execute("delete from async_job where tenant_id = ?", t);
+            // ai_session 은 사용자 FK 가 CASCADE 가 아니라 사용자보다 먼저 지운다(WD-712).
+            dsl.execute("delete from ai_session where tenant_id = ?", t);
             dsl.execute("delete from dataset_access_grant where tenant_id = ?", t);
             // 대시보드·저장 쿼리·파이프라인은 사용자(created_by)를 참조하고, 스텝의 output_dataset_id 는 ON DELETE 없는 데이터셋
             // FK 라 데이터셋보다 먼저 지운다. 위젯·차트·스텝·스텝 입력·트리거는 FK CASCADE 로 함께 사라진다.
+            // uploaded_files 는 사용자 FK 가 CASCADE 가 아니라 사용자보다 먼저 지운다(WD-712).
+            dsl.execute("delete from uploaded_files where tenant_id = ?", t);
             dsl.execute("delete from dashboard where tenant_id = ?", t);
             dsl.execute("delete from saved_query where tenant_id = ?", t);
             dsl.execute("delete from pipeline where tenant_id = ?", t);
             dsl.execute("delete from dataset where tenant_id = ?", t);
             dsl.execute("delete from tenant_settings where tenant_id = ?", t);
+            dsl.execute("delete from embedding_reembed_state where tenant_id = ?", t);
             TenantRlsTestSupport.deleteRbacCascade(dsl, t);
             return null;
           });

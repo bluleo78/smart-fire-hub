@@ -5,6 +5,7 @@ import static org.jooq.impl.DSL.name;
 import static org.jooq.impl.DSL.table;
 
 import com.smartfirehub.file.repository.FileDatasetConfigRepository;
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import java.util.Optional;
 import org.jooq.DSLContext;
 import org.jooq.Field;
@@ -21,6 +22,7 @@ import org.springframework.stereotype.Repository;
  * 않아(Task 4 시점 기준) 생성 클래스 대신 plain jOOQ DSL(field/table/name)로 접근한다.
  */
 @Repository
+@ConditionalOnPostgresPlatformDb
 public class JooqFileDatasetConfigRepository implements FileDatasetConfigRepository {
 
   private static final Table<?> T = table(name("file_dataset_config"));

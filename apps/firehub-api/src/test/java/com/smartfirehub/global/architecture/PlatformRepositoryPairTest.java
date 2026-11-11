@@ -2,7 +2,6 @@ package com.smartfirehub.global.architecture;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.smartfirehub.ai.repository.AiSessionRepository;
 import com.smartfirehub.analytics.repository.AnalyticsDashboardRepository;
 import com.smartfirehub.analytics.repository.AnalyticsQueryRunRepository;
 import com.smartfirehub.analytics.repository.AnalyticsWorkspaceRepository;
@@ -11,11 +10,6 @@ import com.smartfirehub.analytics.repository.DashboardWidgetRepository;
 import com.smartfirehub.analytics.repository.SavedQueryRepository;
 import com.smartfirehub.apiconnection.repository.ApiConnectionRepository;
 import com.smartfirehub.dashboard.repository.DashboardStatsRepository;
-import com.smartfirehub.document.repository.DocumentChunkRepository;
-import com.smartfirehub.document.repository.DocumentFileRepository;
-import com.smartfirehub.embedding.repository.EmbeddingReembedStateRepository;
-import com.smartfirehub.file.repository.FileDatasetConfigRepository;
-import com.smartfirehub.file.repository.UploadedFileRepository;
 import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.global.platformdb.mybatis.PlatformMyBatisRepository;
 import com.smartfirehub.graphingest.repository.GraphIngestRepository;
@@ -83,7 +77,6 @@ class PlatformRepositoryPairTest {
 
   private static Map<Class<?>, String> pending() {
     Map<Class<?>, String> m = new LinkedHashMap<>();
-    m.put(AiSessionRepository.class, "묶음 ⑦: ai");
     m.put(AnalyticsDashboardRepository.class, "묶음 ⑤: analytics");
     m.put(AnalyticsQueryRunRepository.class, "묶음 ⑤: analytics");
     m.put(AnalyticsWorkspaceRepository.class, "묶음 ⑤: analytics");
@@ -92,11 +85,6 @@ class PlatformRepositoryPairTest {
     m.put(SavedQueryRepository.class, "묶음 ⑤: analytics");
     m.put(ApiConnectionRepository.class, "묶음 ③: apiconnection");
     m.put(DashboardStatsRepository.class, "묶음 ⑤: dashboard");
-    m.put(DocumentChunkRepository.class, "묶음 ⑦: document");
-    m.put(DocumentFileRepository.class, "묶음 ⑦: document");
-    m.put(EmbeddingReembedStateRepository.class, "묶음 ⑦: embedding");
-    m.put(FileDatasetConfigRepository.class, "묶음 ⑦: file");
-    m.put(UploadedFileRepository.class, "묶음 ⑦: file");
     m.put(GraphIngestRepository.class, "묶음 ⑥: graphingest");
     m.put(MappingRepository.class, "묶음 ③: mapping");
     m.put(SlackWorkspaceTenantResolver.class, "묶음 ④: notification");

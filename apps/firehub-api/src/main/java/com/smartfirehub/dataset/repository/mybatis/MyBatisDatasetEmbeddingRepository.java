@@ -6,9 +6,8 @@ import com.smartfirehub.embedding.EmbeddingSpace;
 import com.smartfirehub.global.platformdb.PlatformDbFeature;
 import com.smartfirehub.global.platformdb.mybatis.PlatformFeatureOff;
 import com.smartfirehub.global.platformdb.mybatis.PlatformMyBatisRepository;
-import com.smartfirehub.securitylevel.access.LevelPolicy;
-import com.smartfirehub.securitylevel.access.ProviderHosting;
 import com.smartfirehub.securitylevel.ai.EmbeddingAllowance;
+import com.smartfirehub.securitylevel.repository.mybatis.MyBatisDatasetVisibility;
 import java.util.List;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.transaction.annotation.Transactional;
@@ -22,9 +21,10 @@ import org.springframework.transaction.annotation.Transactional;
  * 구현이다.
  *
  * <p>등급 허용 술어(countAll)는 묶음 ⑥ 의 {@code EmbeddingAiPolicyRepository.allowedDatasetSql}(jOOQ 렌더 문자열)에
- * 기대지 않고 매퍼 XML 이 같은 모양으로 직접 렌더한다 — Tibero 컨텍스트에 그 빈이 없고, jOOQ 렌더 문자열은 Tibero 유효성을 보장하지 않는다.
- * 규칙(ALL, 자체 호스팅이면 SELF_HOSTED_ONLY 도)은 {@code JooqDatasetVisibility.aiPolicyAllows} 와 같으며 계약 테스트의
- * ai_policy 행렬이 두 구현을 고정한다. 묶음 ⑥ 이전 시 한 곳으로 모을 후보다.
+ * 기대지 않고 공용 조각 {@code DatasetVisibility.aiPolicyAllowedDataset}(문서 청크 매퍼와 공유)이 같은 모양으로 렌더한다 —
+ * Tibero 컨텍스트에 그 빈이 없고, jOOQ 렌더 문자열은 Tibero 유효성을 보장하지 않는다. 허용 값 규칙(ALL, 자체 호스팅이면 SELF_HOSTED_ONLY
+ * 도)은 {@link MyBatisDatasetVisibility#aiPolicyValues} 한 곳에 있고 계약 테스트의 ai_policy 행렬이 두 구현을 고정한다. 묶음
+ * ⑥ 이 조각과 도우미를 흡수할 후보다.
  */
 // 배경 잡(JobRunr/@Async/@Scheduled)은 앰비언트 트랜잭션이 없다. RLS GUC 는 트랜잭션 시작
 // 시점에만 주입되므로, 트랜잭션이 없으면 TenantContext 를 세워도 정책이 전 행을 차단한다.
@@ -91,11 +91,7 @@ public class MyBatisDatasetEmbeddingRepository implements DatasetEmbeddingReposi
    */
   @Override
   public long countAll(EmbeddingAllowance allowance) {
-    String selfHosted =
-        allowance.hosting() == ProviderHosting.SELF_HOSTED
-            ? LevelPolicy.AiPolicy.SELF_HOSTED_ONLY.name()
-            : null;
-    return mapper.countAllowed(LevelPolicy.AiPolicy.ALL.name(), selfHosted);
+    return mapper.countAllowed(MyBatisDatasetVisibility.aiPolicyValues(allowance.hosting()));
   }
 
   /** 벡터 검색이 꺼진 플랫폼 DB 라 지원하지 않는다 — 서비스가 PlatformDbFeatures 로 건너뛴다. */

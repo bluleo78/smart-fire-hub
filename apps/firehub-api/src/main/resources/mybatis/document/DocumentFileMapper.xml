@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  document_file 문장(WD-712) — JooqDocumentFileRepository 와 같은 의미. 테넌트 정책(RLS) 대상이라 tenant_id 를 쓰지 않는다(넣을 때는 DEFAULT 가
+  채우고 정책이 좁힌다). 두 DB 같은 문장이고 시각 열만 공용 조각 dbNow 를 쓴다. RETURNING 은 Tibero 에 없어 생성 키(useGeneratedKeys)로 id 를 받는다.
+  status 는 'PENDING' 리터럴로 넣는다(jOOQ 판과 같음). 시각은 Instant 로 읽는다(Tibero UTC 벽시계 TIMESTAMP, PG timestamptz).
+  목록 정렬은 created_at 내림차순 + id 내림차순(같은 시각 행의 순서를 고정 — jOOQ 판에도 같은 꼬리 정렬을 더했다).
+  빈 문자열: 변환하지 않는다 — Tibero 는 '' 를 NULL 로 저장(checksum·error_detail 은 null 로 돌아오고 existsByChecksum 은 NULL 과 비교돼 거짓).
+-->
+<mapper namespace="com.smartfirehub.document.repository.mybatis.DocumentFileMapper">
+
+  <resultMap id="fileRow" type="com.smartfirehub.document.repository.mybatis.DocumentFileRow">
+    <constructor>
+      <idArg column="id" javaType="java.lang.Long"/>
+      <arg column="dataset_id" javaType="java.lang.Long"/>
+      <arg column="original_name" javaType="java.lang.String"/>
+      <arg column="mime_type" javaType="java.lang.String"/>
+      <arg column="file_size" javaType="_long"/>
+      <arg column="status" javaType="java.lang.String"/>
+      <arg column="page_count" javaType="java.lang.Integer"/>
+      <arg column="chunk_count" javaType="java.lang.Integer"/>
+      <arg column="error_detail" javaType="java.lang.String"/>
+      <arg column="uploaded_by" javaType="java.lang.Long"/>
+      <arg column="created_at" javaType="java.time.Instant"/>
+      <arg column="completed_at" javaType="java.time.Instant"/>
+    </constructor>
+  </resultMap>
+
+  <sql id="rowColumns">
+    f.id, f.dataset_id, f.original_name, f.mime_type, f.file_size, f.status, f.page_count, f.chunk_count,
+    f.error_detail, f.uploaded_by, f.created_at, f.completed_at
+  </sql>
+
+  <insert id="insert" useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+    INSERT INTO document_file
+      (dataset_id, original_name, mime_type, file_size, storage_path, checksum, status, uploaded_by)
+    VALUES (#{datasetId}, #{originalName}, #{mimeType}, #{fileSize}, #{storagePath}, #{checksum,jdbcType=VARCHAR}, 'PENDING', #{uploadedBy})
+  </insert>
+
+  <update id="updateStatus">
+    UPDATE document_file SET status = #{status} WHERE id = #{id}
+  </update>
+
+  <update id="markCompleted">
+    UPDATE document_file
+       SET status = 'COMPLETED', page_count = #{pageCount,jdbcType=INTEGER}, chunk_count = #{chunkCount},
+           completed_at = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>
+     WHERE id = #{id}
+  </update>
+
+  <update id="markFailed">
+    UPDATE document_file SET status = 'FAILED', error_detail = #{errorDetail,jdbcType=VARCHAR} WHERE id = #{id}
+  </update>
+
+  <select id="selectStoragePath" resultType="java.lang.String">
+    SELECT f.storage_path FROM document_file f WHERE f.id = #{id}
+  </select>
+
+  <select id="countByChecksum" resultType="int">
+    SELECT COUNT(*) FROM (
+      SELECT 1 FROM document_file f WHERE f.dataset_id = #{datasetId} AND f.checksum = #{checksum,jdbcType=VARCHAR}
+      <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.limitRows"><property name="n" value="1"/></include>) x
+  </select>
+
+  <select id="selectByDataset" resultMap="fileRow">
+    SELECT <include refid="rowColumns"/> FROM document_file f
+     WHERE f.dataset_id = #{datasetId}
+     ORDER BY f.created_at DESC, f.id DESC
+  </select>
+
+  <select id="selectById" resultMap="fileRow">
+    SELECT <include refid="rowColumns"/> FROM document_file f WHERE f.id = #{id}
+  </select>
+
+  <delete id="deleteById">
+    DELETE FROM document_file WHERE id = #{id}
+  </delete>
+
+</mapper>

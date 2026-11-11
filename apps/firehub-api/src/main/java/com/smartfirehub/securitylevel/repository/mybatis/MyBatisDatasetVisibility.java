@@ -35,8 +35,8 @@ public final class MyBatisDatasetVisibility {
    * @param roleIds 허용 목록 역할 부여 대조용 역할 id(비어 있으면 역할 IN 절을 렌더하지 않는다 — 빈 {@code IN ()} 은 문법 오류)
    * @param tenantAdmin 시스템 ADMIN 이면 등급의 admin_bypass 로 허용 목록을 우회한다
    * @param ai AI 문맥 여부 — 참이면 ai_policy 술어를 건다
-   * @param aiPolicyAll ai_policy 의 "모두 허용" 값
-   * @param aiPolicySelfHosted 자체 호스팅이면 함께 허용할 ai_policy 값, 외부(또는 hosting null)면 null
+   * @param aiPolicy ai_policy 허용 값(모두 허용·자체 호스팅 허용 — {@code #{vis.aiPolicy.all}}·{@code
+   *     #{vis.aiPolicy.selfHosted}})
    * @param share 공유 목적 여부 — 참이면 share_policy 술어를 건다
    * @param sharePolicyAllow share_policy 의 허용 값
    */
@@ -48,10 +48,37 @@ public final class MyBatisDatasetVisibility {
       List<Long> roleIds,
       boolean tenantAdmin,
       boolean ai,
-      String aiPolicyAll,
-      String aiPolicySelfHosted,
+      AiPolicyValues aiPolicy,
       boolean share,
       String sharePolicyAllow) {}
+
+  /**
+   * 등급 ai_policy 허용 값 — {@code aiPolicyAllowedDataset} 조각이 {@code #{aiPolicy.all}}·{@code
+   * #{aiPolicy.selfHosted}} 로 읽는다.
+   *
+   * @param all ai_policy 의 "모두 허용" 값(언제나 허용)
+   * @param selfHosted 자체 호스팅이면 함께 허용할 값(SELF_HOSTED_ONLY), 외부(또는 hosting null)면 null
+   */
+  public record AiPolicyValues(String all, String selfHosted) {}
+
+  /**
+   * 공급자 호스팅 위치로 허용할 ai_policy 값을 정한다 — MyBatis 구현이 이 규칙을 쓰는 단 한 곳이다(가시성 조각·임베딩 카탈로그·문서 청크 진행률 분모가
+   * 모두 여기서 받는다). 규칙은 {@code JooqDatasetVisibility.aiPolicyAllows} 와 같다: ALL 은 언제나, SELF_HOSTED_ONLY
+   * 는 자체 호스팅일 때만, hosting null 은 외부로 취급.
+   *
+   * <p>묶음 ⑥({@code EmbeddingAiPolicyRepository} 의 MyBatis 이전)이 이 도우미와 {@code
+   * aiPolicyAllowedDataset} 조각을 흡수해 한 리포지토리로 옮길 후보다.
+   *
+   * @param hosting 공급자 호스팅 위치(null 가능)
+   * @return 조각에 넘길 허용 값
+   */
+  public static AiPolicyValues aiPolicyValues(ProviderHosting hosting) {
+    return new AiPolicyValues(
+        LevelPolicy.AiPolicy.ALL.name(),
+        hosting == ProviderHosting.SELF_HOSTED
+            ? LevelPolicy.AiPolicy.SELF_HOSTED_ONLY.name()
+            : null);
+  }
 
   /**
    * 가시성 값을 조각 파라미터로 펼친다. AI 문맥은 값 생성 시점에 캡처된 것을 그대로 쓴다(렌더 시점 AI 범위는 보지 않는다 — jOOQ 렌더러와 같음).
@@ -60,19 +87,15 @@ public final class MyBatisDatasetVisibility {
    * @return 조각 파라미터
    */
   public static VisibilityParams params(DatasetVisibility v) {
-    String all = LevelPolicy.AiPolicy.ALL.name();
     String allow = LevelPolicy.SharePolicy.ALLOW.name();
     if (v.unrestricted()) {
       return new VisibilityParams(
-          true, false, 0, 0L, List.of(), false, false, all, null, false, allow);
+          true, false, 0, 0L, List.of(), false, false, aiPolicyValues(null), false, allow);
     }
     Clearance c = v.clearance();
     AiCall ai = v.aiCall();
-    // hosting null 은 외부로 취급한다(JooqDatasetVisibility.aiPolicyAllows 와 같은 규칙).
-    String selfHosted =
-        ai != null && ai.hosting() == ProviderHosting.SELF_HOSTED
-            ? LevelPolicy.AiPolicy.SELF_HOSTED_ONLY.name()
-            : null;
+    // AI 문맥이 없으면 ai_policy 술어를 렌더하지 않으므로 selfHosted 는 null(외부와 같은 값)로 둔다.
+    AiPolicyValues aiPolicy = aiPolicyValues(ai == null ? null : ai.hosting());
     return new VisibilityParams(
         false,
         c.rank() == Clearance.NO_RANK,
@@ -81,8 +104,7 @@ public final class MyBatisDatasetVisibility {
         List.copyOf(c.roleIds()),
         c.tenantAdmin(),
         ai != null,
-        all,
-        selfHosted,
+        aiPolicy,
         ai != null && ai.share(),
         allow);
   }

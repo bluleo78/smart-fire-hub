@@ -101,7 +101,7 @@ PG는 jOOQ 구현을 그대로 쓰고, Tibero용 MyBatis 구현(`repository/myba
   - `PlatformRepositoryPairTest` 는 jOOQ `@Repository` 가 구현하는 플랫폼 리포지토리 인터페이스마다 `@PlatformMyBatisRepository` 구현이 있는지 본다. 없으면 `PENDING`(인터페이스 → 묶음 번호)에 있어야 한다.
   - `PENDING` 에 있는데 짝이 생기면 실패한다. 그래서 목록이 줄어들 수밖에 없다.
   - 짝이 있는 jOOQ 구현에 `@ConditionalOnPostgresPlatformDb` 가 없어도 실패한다.
-  - 묶음 ① 뒤에는 ②~⑦ 항목만 남는다.
+  - 묶음 ① 뒤에는 ②~⑦ 항목만 남았고, 묶음 ②·⑦(WD-707·712) 뒤에는 ③~⑥ 36개가 남는다.
 - **Tibero 계약 테스트 하네스.**
   - 운영과 같은 두 계정 구조다(결정 7). 소유자 계정이 Flyway 를 적용하고 픽스처·정리를 맡는다. 리포지토리는 런타임 계정 풀(`CURRENT_SCHEMA=<소유자>`) 위에서 `TenantAwareTransactionManager` + `TiberoPlatformTenantSession` 으로 돈다.
   - 그래서 Tibero 계약 테스트도 DBMS_RLS 를 거친다. 소유자 계정은 정책 함수가 거르지 않으므로, 소유자로 돌리면 테넌트 차단 시험이 아무것도 보지 못한 채 통과한다.
@@ -114,6 +114,19 @@ PG는 jOOQ 구현을 그대로 쓰고, Tibero용 MyBatis 구현(`repository/myba
   - Tibero 는 `''` 를 NULL 로 저장한다. 읽을 수 있는 열에는 대체 값(센티널)을 저장하지 않고 Tibero 고유 의미를 따른다. NULL 허용 열은 null 로 돌아오고, NOT NULL 열은 빈 값을 거부한다. 계약 테스트는 DB별 기대로 이 차이를 고정한다.
   - 조회에만 쓰는 인증 키는 예외로 `EmptyKeys` 의 센티널 하나를 쓴다.
   - 서비스 쪽 대응은 `smtp.*` 설정뿐이다. 빈 값은 행 삭제로 저장한다.
+
+**묶음 ②·⑦ 에서 더한 규칙(WD-707·WD-712)**:
+
+- **꺼진 기능 메서드.** 벡터·트라이그램 메서드 가운데 서비스가 `PlatformDbFeatures` 확인 뒤에서만 부르는 것은 MyBatis 구현이 `PlatformFeatureOff` 로 `UnsupportedOperationException` 을 던진다(빈 결과로 숨기지 않는다). 가드 없이 닿는 메서드는 Tibero 에 있는 테이블만으로 구현한다. 계약 테스트는 `supportsVectorSearch()`/`supportsTrigramSearch()` 훅이 false 면 시나리오 대신 예외를 단언한다.
+- **잠금.** Tibero 에는 `FOR KEY SHARE`·`FOR SHARE`·`FOR NO KEY UPDATE` 가 없어 모두 `FOR UPDATE` 로 둔다(더 강한 잠금, 정확성 유지).
+- **정책 없는 테이블.** `tenant_data_store`·`tenant_data_store_account`·`tenant` 는 RLS 가 거르지 않으므로 jOOQ 의 테넌트 조건을 문장에 그대로 둔다. `public.` 스키마 한정은 쓰지 않는다.
+- **JSON 배열 포함.** 트리거 `datasetIds` 포함 판정은 Tibero 에서 `JSON_TABLE` 원소 비교로 한다(lax `JSON_EXISTS` 는 문자열 "5" 도 맞히고, 텍스트 비교는 길이 한도·부분 문자열 오탐이 있다). `JSON_TRANSFORM` 이 없어 배열 원소 제거는 잠근 뒤 자바에서 고쳐 쓴다(묶음 ③ `TriggerRepository`).
+- **시각.** `TIMESTAMP` 는 UTC 벽시계로 저장하고 `Instant` 는 `UtcInstantTypeHandler` 로 바인딩한다. jOOQ 가 JVM 로컬 벽시계(`LocalDateTime`·`LOCALTIMESTAMP`)를 쓰는 열(`ai_session`, `document_file` 응답)은 MyBatis 도 같은 기준을 지킨다. 계약 테스트에 JVM 기본 시간대를 Asia/Seoul 로 바꾼 시나리오를 둔다.
+- **바이트 한도.** Tibero 문자열 열은 `VARCHAR2(65532)` 바이트다. 예외 메시지처럼 길이가 정해지지 않은 값은 `TiberoTextLimits` 로 대리 쌍을 깨지 않고 자른다.
+- **쿼리 시간 제한.** 매퍼 인자 `queryTimeoutSeconds` 를 `StatementTimeoutInterceptor` 가 `Statement.setQueryTimeout` 으로 건다(이미 걸린 더 짧은 트랜잭션 제한은 유지). Tibero 는 문장 취소 때 연결을 닫는다.
+- **중복 키.** MERGE 중복 키는 사이트마다 1회 재시도가 기본이다. 임대(`EmbeddingReembedState`·`SearchIndexState.createIfAbsent`)는 중복 키를 "이미 있음/획득 실패"로 본다 — 대기 쪽은 승자 커밋 뒤에야 실패하므로 재시도해도 결과가 같다.
+- **IDENTITY 다건 삽입.** Tibero `INSERT ALL` 은 IDENTITY 를 문장당 한 번만 매겨 중복 키가 난다. 다건 삽입은 행마다 INSERT 한다.
+- **묶음 ⑥ 인계.** 데이터셋 가시성 SQL 일부는 아직 jOOQ `DatasetAccessRepository` 가 만든 문자열을 끼우고, AI 정책 허용 규칙은 `securitylevel/DatasetVisibility.xml` 조각 하나로 MyBatis 에 따로 있다. 묶음 ⑥ 이 `DatasetAccessRepository`·`EmbeddingAiPolicyRepository`·`SecurityLevelRepository` 를 옮길 때 합친다.
 
 ### 2. 마이그레이션 이원화 규칙
 
@@ -357,12 +370,12 @@ SELECT STATUS FROM DBA_OBJECTS
 | 묶음 | 도메인 | jOOQ 구현 수 |
 |---|---|---|
 | ① 공통·인증 | auth·user·role·permission·tenant·settings·platform·audit·job | 15 (처음엔 14로 셌다. **WD-706 완료**) |
-| ② 데이터셋 | dataset | 13 |
+| ② 데이터셋 | dataset | 13 (짝 검사 대상 리포지토리 12 + `JooqDatasetMetaReader`. **WD-707 완료**) |
 | ③ 파이프라인 | pipeline·mapping·apiconnection | 9 |
 | ④ 알림·선제 메시지 | notification·proactive (PoC 2개 포함) | 13 |
 | ⑤ 분석·대시보드 | analytics·dashboard | 7 |
 | ⑥ 보안 등급·온톨로지·그래프 | securitylevel·ontology·graphreview·graphingest (PoC 1개 포함) | 11 |
-| ⑦ AI·문서·파일 | ai·document·embedding·file | 6 |
+| ⑦ AI·문서·파일 | ai·document·embedding·file | 6 (**WD-712 완료**) |
 
 각 묶음은 "계약 테스트 보강 → MyBatis 구현(+Tibero 전용 문장) → PG CI 계약 테스트 통과 → Tibero 실서버 계약 테스트 통과 → 구현 짝 허용 목록에서 제거" 를 한 단위로 한다. PG 운영 빈은 바뀌지 않는다.
 

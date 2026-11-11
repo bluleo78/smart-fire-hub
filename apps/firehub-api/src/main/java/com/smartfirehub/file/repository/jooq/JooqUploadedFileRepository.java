@@ -3,6 +3,7 @@ package com.smartfirehub.file.repository.jooq;
 import static com.smartfirehub.jooq.Tables.UPLOADED_FILES;
 
 import com.smartfirehub.file.repository.UploadedFileRepository;
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -21,6 +22,7 @@ import org.springframework.stereotype.Repository;
  * 안에서 부른다.
  */
 @Repository
+@ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
 public class JooqUploadedFileRepository implements UploadedFileRepository {
 

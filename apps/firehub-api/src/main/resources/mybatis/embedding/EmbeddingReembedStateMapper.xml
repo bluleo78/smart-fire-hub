@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  embedding_reembed_state 문장(WD-712) — JooqEmbeddingReembedStateRepository 와 같은 의미. 규칙은 MyBatisPlatformConfig javadoc,
+  공용 조각은 mybatis/common/PlatformSql.xml.
+
+  테넌트: 테넌트 정책(RLS) 대상이고 인터페이스가 테넌트를 인자로 받지 않으므로 tenant_id 를 INSERT 값·WHERE 술어로 쓰지 않는다(D3).
+  PK 가 tenant_id 라 정책이 좁힌 뒤 보이는 행은 현재 테넌트의 0..1 행뿐이다 — 그래서 UPDATE·SELECT 에 WHERE tenant_id 가 없어도
+  다른 테넌트 행에 닿지 않는다(jOOQ 판은 소유자 권한 커넥션 대비로 술어를 명시했지만 MyBatis 문장은 언제나 정책이 켜진 런타임 계정으로 돈다).
+  새 행의 tenant_id 는 DEFAULT(PG GUC, Tibero 컨텍스트)가 채운다. "테넌트가 반드시 있다"는 구현이 TenantContext.require 로 먼저 확인한다.
+
+  벤더 차이:
+  - now() → PlatformSql.dbNow(Tibero 는 UTC 벽시계). 임대는 dbNowPlusSeconds — 만료 판정과 새 만료 시각이 모두 DB 시계라 JVM 시간대 무관.
+  - tryAcquire: PG 는 ON CONFLICT … DO UPDATE … WHERE, Tibero 는 MERGE … WHEN MATCHED THEN UPDATE … WHERE … WHEN NOT MATCHED THEN INSERT.
+    두 DB 모두 RETURNING 없이 영향 행 수(1 = 잡음, 0 = 유효한 임대 있음)로 판정한다.
+  - tenant_settings.updated_at 비교: PG 는 TIMESTAMP(LOCALTIMESTAMP) 를 세션 TimeZone 으로 timestamptz 에 올려 비교하고, Tibero 는 두 열
+    모두 UTC 벽시계 TIMESTAMP(MyBatis 쓰기가 dbNow)라 그대로 비교한다 — 공통 문장.
+-->
+<mapper namespace="com.smartfirehub.embedding.repository.mybatis.EmbeddingReembedStateMapper">
+
+  <resultMap id="stateRow" type="com.smartfirehub.embedding.repository.mybatis.EmbeddingReembedStateMapper$Row">
+    <constructor>
+      <arg column="status" javaType="java.lang.String"/>
+      <arg column="model" javaType="java.lang.String"/>
+      <arg column="dimension" javaType="java.lang.Integer"/>
+      <arg column="last_error" javaType="java.lang.String"/>
+      <arg column="updated_at" javaType="java.time.Instant"/>
+    </constructor>
+  </resultMap>
+
+  <!--
+    PG: 없으면 넣고, 있으면 임대가 비었거나 만료됐을 때만 갱신한다(한 문장 — 동시 시도 중 하나만 1행). WHERE 가 거짓이면 영향 행 수 0.
+    동시 첫 삽입은 PG 가 뒤 트랜잭션을 기다리게 한 뒤 충돌 행에 WHERE 를 다시 평가하므로 예외 없이 0 이 된다.
+  -->
+  <update id="tryAcquire" databaseId="postgresql">
+    INSERT INTO embedding_reembed_state (status, lease_until, updated_at)
+    VALUES ('RUNNING', <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNowPlusSeconds"/>,
+            <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>)
+    ON CONFLICT (tenant_id) DO UPDATE SET status = 'RUNNING', lease_until = EXCLUDED.lease_until,
+           last_error = NULL, updated_at = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>
+     WHERE embedding_reembed_state.lease_until IS NULL
+        OR embedding_reembed_state.lease_until &lt; <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>
+  </update>
+
+  <!--
+    Tibero: MERGE. ON (1 = 1) — 대상 읽기에 정책 술어가 붙어 현재 테넌트 행(PK tenant_id 라 많아야 하나)만 만나므로 「행이 있으면 MATCHED」다.
+    MATCHED 쪽 UPDATE … WHERE 가 거짓(유효한 임대)이면 영향 행 수 0. 같은 테넌트의 첫 삽입이 동시에 겹치면 뒤 트랜잭션이 PK 위반
+    (DuplicateKeyException)으로 끝나는데, 구현이 「못 잡음」으로 본다(MyBatisEmbeddingReembedStateRepository.tryAcquire).
+  -->
+  <update id="tryAcquire" databaseId="tibero">
+    MERGE INTO embedding_reembed_state t
+    USING (SELECT 1 AS one FROM DUAL) s
+       ON (1 = 1)
+    WHEN MATCHED THEN UPDATE SET
+      t.status = 'RUNNING',
+      t.lease_until = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNowPlusSeconds"/>,
+      t.last_error = NULL,
+      t.updated_at = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>
+      WHERE t.lease_until IS NULL
+         OR t.lease_until &lt; <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>
+    WHEN NOT MATCHED THEN INSERT (status, lease_until, updated_at)
+      VALUES ('RUNNING', <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNowPlusSeconds"/>,
+              <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>)
+  </update>
+
+  <!-- 정책이 현재 테넌트 행으로 좁힌다(WHERE tenant_id 없음 — 파일 머리 주석). -->
+  <update id="renewLease">
+    UPDATE embedding_reembed_state
+       SET lease_until = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNowPlusSeconds"/>
+  </update>
+
+  <update id="markRunning">
+    UPDATE embedding_reembed_state
+       SET status = 'RUNNING', model = #{model}, dimension = #{dimension}, last_error = NULL,
+           updated_at = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>
+  </update>
+
+  <update id="setStatus">
+    UPDATE embedding_reembed_state
+       SET status = #{status}, last_error = #{error,jdbcType=VARCHAR},
+           updated_at = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>
+  </update>
+
+  <update id="release">
+    UPDATE embedding_reembed_state SET lease_until = NULL
+  </update>
+
+  <select id="countActiveLease" resultType="_int">
+    SELECT COUNT(*) FROM embedding_reembed_state
+     WHERE status = 'RUNNING'
+       AND lease_until &gt; <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>
+  </select>
+
+  <!--
+    하위 조회도 정책이 현재 테넌트의 설정 행으로 좁힌다 — jOOQ 판의 t.tenant_id = s.tenant_id 상관 조건은 같은 테넌트끼리라 쓰지 않는다.
+    시각 비교 기준은 파일 머리 주석.
+  -->
+  <select id="countFailedSinceLastConfigSave" resultType="_int">
+    SELECT COUNT(*) FROM embedding_reembed_state s
+     WHERE s.status = 'FAILED'
+       AND NOT EXISTS (SELECT 1 FROM tenant_settings t
+                        WHERE t.key = 'embedding.config' AND t.updated_at &gt; s.updated_at)
+  </select>
+
+  <select id="selectState" resultMap="stateRow">
+    SELECT status, model, dimension, last_error, updated_at FROM embedding_reembed_state
+  </select>
+
+</mapper>

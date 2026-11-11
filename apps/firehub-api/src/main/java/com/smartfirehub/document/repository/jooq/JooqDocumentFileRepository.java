@@ -6,6 +6,7 @@ import static org.jooq.impl.DSL.table;
 
 import com.smartfirehub.document.dto.DocumentFileResponse;
 import com.smartfirehub.document.repository.DocumentFileRepository;
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -24,6 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>document_file 메타 CRUD + 상태 전이.
  */
 @Repository
+@ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
 // 배경 잡(JobRunr/@Async/@Scheduled)은 앰비언트 트랜잭션이 없다. RLS GUC 는 트랜잭션 시작
 // 시점에만 주입되므로, 트랜잭션이 없으면 TenantContext 를 세워도 정책이 전 행을 차단한다.
@@ -133,7 +135,7 @@ public class JooqDocumentFileRepository implements DocumentFileRepository {
     return dsl.select()
         .from(T)
         .where(DATASET_ID.eq(datasetId))
-        .orderBy(CREATED_AT.desc())
+        .orderBy(CREATED_AT.desc(), ID.desc())
         .fetch(this::map);
   }
 

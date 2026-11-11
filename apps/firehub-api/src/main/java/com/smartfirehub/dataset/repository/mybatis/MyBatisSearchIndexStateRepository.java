@@ -4,6 +4,7 @@ import com.smartfirehub.dataset.repository.SearchIndexStateRepository;
 import com.smartfirehub.dataset.rowsearch.RowSearchSyncService;
 import com.smartfirehub.dataset.rowsearch.SearchIndexState;
 import com.smartfirehub.global.platformdb.mybatis.PlatformMyBatisRepository;
+import com.smartfirehub.global.platformdb.mybatis.TiberoTextLimits;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
@@ -29,11 +30,9 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional
 public class MyBatisSearchIndexStateRepository implements SearchIndexStateRepository {
 
-  /** last_error 에 쓰는 메시지 최대 글자 수 — UTF-8 로 최대 48000 바이트라 Tibero VARCHAR2(65532) 바이트 한도를 넘지 않는다. */
-  static final int MAX_ERROR_CHARS = 16_000;
-
   private final SearchIndexStateMapper mapper;
 
+  /** 매퍼를 주입받는다(플랫폼 MyBatis 빈 — 매퍼 SQL 은 mybatis/ 아래 XML). */
   public MyBatisSearchIndexStateRepository(SearchIndexStateMapper mapper) {
     this.mapper = mapper;
   }
@@ -146,35 +145,21 @@ public class MyBatisSearchIndexStateRepository implements SearchIndexStateReposi
     mapper.markCompleted(datasetId, indexedRows, totalRows);
   }
 
-  /** 실패: 커서는 그대로 두고 백오프를 건다. 오류 메시지는 {@link #truncateError} 로 열 한도 안에 자른다. */
+  /**
+   * 실패: 커서는 그대로 두고 백오프를 건다. 오류 메시지는 {@link TiberoTextLimits#truncateErrorMessage} 로 Tibero 열 바이트 한도
+   * 안에 자른다.
+   */
   @Override
   public void markFailed(long datasetId, String error, OffsetDateTime nextAttemptAt) {
-    mapper.markFailed(datasetId, truncateError(error), toInstant(nextAttemptAt));
+    mapper.markFailed(
+        datasetId, TiberoTextLimits.truncateErrorMessage(error), toInstant(nextAttemptAt));
   }
 
   /** 대기: 사유만 남기고 잠시 뒤 다시 due 가 되게 한다(실패 횟수는 그대로). 사유도 열 한도 안에 자른다. */
   @Override
   public void markWaiting(long datasetId, String reason, OffsetDateTime nextAttemptAt) {
-    mapper.markWaiting(datasetId, truncateError(reason), toInstant(nextAttemptAt));
-  }
-
-  /**
-   * last_error 에 쓸 메시지를 {@link #MAX_ERROR_CHARS} 글자 이하로 자른다.
-   *
-   * <p>왜: Tibero 의 last_error 는 VARCHAR2(65532) — 바이트 한도다. 긴(또는 한글처럼 여러 바이트인) 오류 메시지를 그대로 넣으면
-   * UPDATE 가 실패해 백오프가 기록되지 않고, 같은 데이터셋을 곧바로 다시 집는다. UTF-8 한 글자(char)는 최대 3바이트(보충 문자는 char 두 개에
-   * 4바이트)라 16000 글자면 48000 바이트를 넘지 않는다. MyBatis 구현은 PG 에서도 같은 길이로 잘라 두 DB 의 MyBatis 결과를 맞춘다(jOOQ 판은
-   * PG TEXT 라 자르지 않는다 — 계약은 「원문의 접두어」만 요구한다). 보충 문자의 짝(서로게이트)을 반으로 가르지 않게 끝이 상위 서로게이트면 한 글자 덜 자른다.
-   */
-  static String truncateError(String message) {
-    if (message == null || message.length() <= MAX_ERROR_CHARS) {
-      return message;
-    }
-    int end = MAX_ERROR_CHARS;
-    if (Character.isHighSurrogate(message.charAt(end - 1))) {
-      end--;
-    }
-    return message.substring(0, end);
+    mapper.markWaiting(
+        datasetId, TiberoTextLimits.truncateErrorMessage(reason), toInstant(nextAttemptAt));
   }
 
   private static Instant toInstant(OffsetDateTime t) {

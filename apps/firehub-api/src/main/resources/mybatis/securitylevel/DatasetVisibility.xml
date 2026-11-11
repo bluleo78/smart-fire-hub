@@ -41,13 +41,29 @@
                               <foreach collection="vis.roleIds" item="roleId" open="(" separator="," close=")">#{roleId}</foreach>
                             </if>)))
              <if test="vis.ai">
-               AND (vis_sl.ai_policy = #{vis.aiPolicyAll}
-                    <if test="vis.aiPolicySelfHosted != null">OR vis_sl.ai_policy = #{vis.aiPolicySelfHosted}</if>)
+               AND (vis_sl.ai_policy = #{vis.aiPolicy.all}
+                    <if test="vis.aiPolicy.selfHosted != null">OR vis_sl.ai_policy = #{vis.aiPolicy.selfHosted}</if>)
              </if>
              <if test="vis.share">AND vis_sl.share_policy = #{vis.sharePolicyAllow}</if>
         ))
       </otherwise>
     </choose>
+  </sql>
+
+  <!--
+    등급이 AI 공급자를 허용하는 데이터셋 술어(WD-712) — JooqEmbeddingAiPolicyRepository.allowedDatasetSql(col, hosting) 렌더와 같은
+    모양이다(dataset aig_d JOIN security_level aig_sl — 등급 없는 데이터셋은 내부 조인이라 빠진다). 진행률 분모(데이터셋 임베딩 카탈로그·
+    문서 청크)가 함께 쓰는 단 하나의 본문이다.
+    속성 datasetIdCol: 바깥 문장의 데이터셋 id 열 식(XML 에 박힌 고정 값). 파라미터 aiPolicy: MyBatisDatasetVisibility.aiPolicyValues 결과.
+    묶음 ⑥(EmbeddingAiPolicyRepository 의 MyBatis 이전)이 이 조각과 Java 도우미를 흡수할 후보다.
+  -->
+  <sql id="aiPolicyAllowedDataset">
+    EXISTS (
+      SELECT 1 FROM dataset aig_d
+        JOIN security_level aig_sl ON aig_sl.id = aig_d.security_level_id
+       WHERE aig_d.id = ${datasetIdCol}
+         AND (aig_sl.ai_policy = #{aiPolicy.all}
+              <if test="aiPolicy.selfHosted != null">OR aig_sl.ai_policy = #{aiPolicy.selfHosted}</if>))
   </sql>
 
 </mapper>

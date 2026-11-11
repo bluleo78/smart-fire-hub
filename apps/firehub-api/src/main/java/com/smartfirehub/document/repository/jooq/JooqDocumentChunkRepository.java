@@ -11,6 +11,7 @@ import com.smartfirehub.embedding.EmbeddingDimension;
 import com.smartfirehub.embedding.EmbeddingSpace;
 import com.smartfirehub.embedding.repository.jooq.HnswSearch;
 import com.smartfirehub.embedding.repository.jooq.VectorTables;
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.securitylevel.ai.EmbeddingAllowance;
@@ -36,6 +37,7 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>벡터는 '[..]'::vector 문자열 캐스팅으로 바인딩한다. 테이블명은 {@link EmbeddingDimension} 에서만 나온다.
  */
 @Repository
+@ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
 // 배경 잡(JobRunr/@Async/@Scheduled)은 앰비언트 트랜잭션이 없다. RLS GUC 는 트랜잭션 시작
 // 시점에만 주입되므로, 트랜잭션이 없으면 TenantContext 를 세워도 정책이 전 행을 차단한다.

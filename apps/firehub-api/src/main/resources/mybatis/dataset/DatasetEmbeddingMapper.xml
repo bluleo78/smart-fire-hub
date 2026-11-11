@@ -34,17 +34,12 @@
   </delete>
 
   <!--
-    등급 허용 술어는 JooqEmbeddingAiPolicyRepository.allowedDatasetSql("de.dataset_id", hosting) 렌더와 같은 모양이다
-    (dataset aig_d JOIN security_level aig_sl — 등급 없는 데이터셋은 내부 조인이라 빠진다). 값은 구현이 Java 에서 정한다.
+    등급 허용 술어는 공용 조각 DatasetVisibility.aiPolicyAllowedDataset(문서 청크 매퍼와 함께 쓴다). 허용 값은 구현이
+    MyBatisDatasetVisibility.aiPolicyValues 로 정한다.
   -->
   <select id="countAllowed" resultType="long">
     SELECT count(*) FROM dataset_embedding de
-     WHERE EXISTS (
-       SELECT 1 FROM dataset aig_d
-         JOIN security_level aig_sl ON aig_sl.id = aig_d.security_level_id
-        WHERE aig_d.id = de.dataset_id
-          AND (aig_sl.ai_policy = #{aiPolicyAll}
-               <if test="aiPolicySelfHosted != null">OR aig_sl.ai_policy = #{aiPolicySelfHosted}</if>))
+     WHERE <include refid="com.smartfirehub.securitylevel.repository.mybatis.DatasetVisibility.aiPolicyAllowedDataset"><property name="datasetIdCol" value="de.dataset_id"/></include>
   </select>
 
 </mapper>

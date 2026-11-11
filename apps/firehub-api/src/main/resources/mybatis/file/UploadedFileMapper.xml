@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  uploaded_files 문장(WD-712) — JooqUploadedFileRepository 와 같은 의미. 테넌트 정책(RLS) 대상이라 tenant_id 를 쓰지 않는다(넣을 때는 DEFAULT 가
+  채우고 정책이 좁힌다). 두 DB 같은 문장이라 databaseId 가 없다. RETURNING 은 Tibero 에 없어 생성 키(useGeneratedKeys)로 id 를 받는다.
+  시각(created_at·expires_at)은 Instant 로 바인딩·읽는다 — Tibero 는 UTC 벽시계 TIMESTAMP(전역 핸들러), PG 는 timestamptz.
+  만료 판정은 expires_at &lt; now(경계 시각은 만료 아님). 빈 문자열: 변환하지 않는다(전 열 NOT NULL 이라 Tibero 는 '' 를 거절).
+-->
+<mapper namespace="com.smartfirehub.file.repository.mybatis.UploadedFileMapper">
+
+  <resultMap id="fileRow" type="com.smartfirehub.file.repository.mybatis.UploadedFileRow">
+    <constructor>
+      <idArg column="id" javaType="java.lang.Long"/>
+      <arg column="original_name" javaType="java.lang.String"/>
+      <arg column="mime_type" javaType="java.lang.String"/>
+      <arg column="file_size" javaType="java.lang.Long"/>
+      <arg column="file_category" javaType="java.lang.String"/>
+      <arg column="storage_path" javaType="java.lang.String"/>
+      <arg column="created_at" javaType="java.time.Instant"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="expiredRow" type="com.smartfirehub.file.repository.UploadedFileRepository$ExpiredFile">
+    <constructor>
+      <idArg column="id" javaType="java.lang.Long"/>
+      <arg column="storage_path" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <insert id="insert" useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+    INSERT INTO uploaded_files
+      (original_name, stored_name, mime_type, file_size, file_category, storage_path, uploaded_by, created_at, expires_at)
+    VALUES (#{originalName}, #{storedName}, #{mimeType}, #{fileSize}, #{category}, #{storagePath}, #{userId}, #{createdAt}, #{expiresAt})
+  </insert>
+
+  <select id="selectByIdAndUploader" resultMap="fileRow">
+    SELECT f.id, f.original_name, f.mime_type, f.file_size, f.file_category, f.storage_path, f.created_at
+      FROM uploaded_files f
+     WHERE f.id = #{fileId} AND f.uploaded_by = #{userId}
+  </select>
+
+  <select id="selectExpired" resultMap="expiredRow">
+    SELECT f.id, f.storage_path FROM uploaded_files f WHERE f.expires_at &lt; #{now} ORDER BY f.id
+  </select>
+
+  <delete id="deleteExpiredByIds">
+    DELETE FROM uploaded_files
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="id"/></include>
+       AND expires_at &lt; #{now}
+  </delete>
+
+</mapper>

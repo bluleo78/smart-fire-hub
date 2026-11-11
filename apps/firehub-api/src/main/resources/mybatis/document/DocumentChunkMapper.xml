@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  document_chunk 문장(WD-712) — JooqDocumentChunkRepository 의 살아 있는 경로(deleteByDocumentFileId·insertChunksOnly·
+  findChunkContentsByDataset·countChunksInDataset·countAllChunks)와 같은 의미. 규칙은 MyBatisPlatformConfig javadoc.
+  테넌트 정책(RLS) 대상이라 tenant_id 를 쓰지 않는다(넣을 때는 DEFAULT 가 채우고 정책이 좁힌다).
+  벡터 테이블(document_chunk_vec_N)·트라이그램 문장은 두지 않는다 — Tibero 기준선에 테이블·색인이 없고 서비스가 PlatformDbFeatures 로
+  건너뛴다(스펙 D1). metadata(jsonb/JSON) 열은 인터페이스의 어떤 메서드도 읽거나 쓰지 않아(jOOQ 판과 같음) 문장에 없다.
+-->
+<mapper namespace="com.smartfirehub.document.repository.mybatis.DocumentChunkMapper">
+
+  <resultMap id="chunkContent" type="com.smartfirehub.document.repository.DocumentChunkRepository$ChunkContent">
+    <constructor>
+      <arg column="id" javaType="_long"/>
+      <arg column="content" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <delete id="deleteByDocumentFileId">
+    DELETE FROM document_chunk WHERE document_file_id = #{documentFileId}
+  </delete>
+
+  <!--
+    청크 한 건. 구현이 청크마다 이 문장을 돈다 — Tibero 에는 다건 VALUES 가 없고, INSERT ALL 은 IDENTITY 를 한 문장에 한 번만 매겨
+    둘째 행부터 PK 중복(JDBC-4008)으로 실패한다(실측). 값은 VALUES 에 바로 바인드해 수만 바이트 본문이 SQL 식 4000바이트 한도에 걸리지
+    않게 한다. id 는 IDENTITY, tenant_id 는 컨텍스트 DEFAULT 가 채운다. RETURNING 은 쓰지 않는다 — 벡터 없는 적재라 생성 id 가 필요 없다.
+  -->
+  <insert id="insertChunk">
+    INSERT INTO document_chunk (document_file_id, dataset_id, chunk_index, content, token_count)
+    VALUES (#{documentFileId}, #{datasetId}, #{chunk.index}, #{chunk.content,jdbcType=VARCHAR}, #{chunk.tokenCount})
+  </insert>
+
+  <select id="selectChunkContentsByDataset" resultMap="chunkContent">
+    SELECT id, content FROM document_chunk WHERE dataset_id = #{datasetId} ORDER BY id
+  </select>
+
+  <!-- id 목록은 InChunks 로 500 개씩 나눠 OR 로 잇는다(Tibero IN 목록 1000 개 상한). 행 하나는 한 번만 세진다. -->
+  <select id="countChunksInDataset" resultType="long">
+    SELECT count(*) FROM document_chunk
+     WHERE dataset_id = #{datasetId}
+       AND <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="id"/></include>
+  </select>
+
+  <!--
+    등급 허용 술어는 공용 조각 DatasetVisibility.aiPolicyAllowedDataset(데이터셋 임베딩 매퍼와 함께 쓴다). 허용 값은 구현이
+    MyBatisDatasetVisibility.aiPolicyValues 로 정한다.
+  -->
+  <select id="countAllowed" resultType="long">
+    SELECT count(*) FROM document_chunk c
+     WHERE <include refid="com.smartfirehub.securitylevel.repository.mybatis.DatasetVisibility.aiPolicyAllowedDataset"><property name="datasetIdCol" value="c.dataset_id"/></include>
+  </select>
+
+</mapper>

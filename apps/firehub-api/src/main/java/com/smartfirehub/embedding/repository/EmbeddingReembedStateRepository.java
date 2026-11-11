@@ -6,10 +6,12 @@ import java.time.Duration;
 import java.util.Optional;
 
 /**
- * 테넌트 재임베딩 상태·임대(embedding_reembed_state, 테넌트당 1행). 모든 문장이 {@code WHERE tenant_id = ?} 를 명시한다(RLS 에
- * 더해 — 조건 없는 DML 금지 규율). 잡 스레드는 앰비언트 트랜잭션이 없으므로 클래스 레벨 {@code @Transactional} 이 호출마다 GUC 를 세운다.
+ * 테넌트 재임베딩 상태·임대(embedding_reembed_state, 테넌트당 1행). jOOQ 구현은 모든 문장이 {@code WHERE tenant_id = ?} 를
+ * 명시한다(RLS 에 더해 — 조건 없는 DML 금지 규율). MyBatis 구현은 D3 규칙대로 tenant_id 를 쓰지 않고 정책(PK tenant_id 라 현재 테넌트
+ * 1행)에 맡긴다. 잡 스레드는 앰비언트 트랜잭션이 없으므로 클래스 레벨 {@code @Transactional} 이 호출마다 GUC 를 세운다.
  *
- * <p>구현은 {@code JooqEmbeddingReembedStateRepository}(jOOQ/PostgreSQL) 이다 — WD-485.
+ * <p>구현은 {@code JooqEmbeddingReembedStateRepository}(jOOQ/PostgreSQL, WD-485)와 {@code
+ * MyBatisEmbeddingReembedStateRepository}(MyBatis/PostgreSQL·Tibero, WD-712) 이다.
  */
 public interface EmbeddingReembedStateRepository {
 

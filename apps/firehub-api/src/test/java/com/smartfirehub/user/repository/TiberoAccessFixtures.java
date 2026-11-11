@@ -20,6 +20,12 @@ import org.springframework.jdbc.support.GeneratedKeyHolder;
  */
 public class TiberoAccessFixtures implements AccessFixtures {
 
+  /** Tibero DB 시계(UTC 벽시계) — PlatformSql.xml 의 {@code dbNow}(tibero) 와 같은 식이다. */
+  private static final String DB_NOW = "SYS_EXTRACT_UTC(SYSTIMESTAMP)";
+
+  /** DB 시계 + ? 초(바인드 1개) — PlatformSql.xml 의 {@code dbNowPlusSeconds}(tibero) 와 같은 식이다. */
+  private static final String DB_NOW_PLUS_SECONDS = DB_NOW + " + NUMTODSINTERVAL(?, 'SECOND')";
+
   private final TiberoPlatformSchema poc;
   private final List<Long> tenants = new ArrayList<>();
   private final List<Long> users = new ArrayList<>();
@@ -536,7 +542,9 @@ public class TiberoAccessFixtures implements AccessFixtures {
     poc.jdbc()
         .update(
             "UPDATE dataset_search_index SET sync_lease_until ="
-                + " SYS_EXTRACT_UTC(SYSTIMESTAMP) + NUMTODSINTERVAL(?, 'SECOND') WHERE dataset_id = ?",
+                + " "
+                + DB_NOW_PLUS_SECONDS
+                + " WHERE dataset_id = ?",
             seconds,
             datasetId);
   }
@@ -546,7 +554,9 @@ public class TiberoAccessFixtures implements AccessFixtures {
     // 둘 다 UTC 벽시계 TIMESTAMP 라 LocalDateTime 으로 읽어 그대로 뺀다(JVM 시간대와 무관).
     return poc.jdbc()
         .queryForObject(
-            "SELECT sync_lease_until, SYS_EXTRACT_UTC(SYSTIMESTAMP) AS db_now"
+            "SELECT sync_lease_until, "
+                + DB_NOW
+                + " AS db_now"
                 + " FROM dataset_search_index WHERE dataset_id = ?",
             (rs, i) -> {
               LocalDateTime lease = rs.getObject(1, LocalDateTime.class);
@@ -602,6 +612,36 @@ public class TiberoAccessFixtures implements AccessFixtures {
             java.sql.Timestamp.class,
             datasetId)
         .toLocalDateTime();
+  }
+
+  @Override
+  public long createDocumentFile(long tenantId, long datasetId, String name, String status) {
+    // 소유자 세션이라 정책이 거르지 않아 tenant_id 를 직접 넣는다. 정리는 데이터셋 삭제의 FK CASCADE 가 맡는다.
+    return poc.insertReturningId(
+        "INSERT INTO document_file (tenant_id, dataset_id, original_name, mime_type, file_size,"
+            + " storage_path, status, uploaded_by) VALUES (?, ?, ?, 'text/plain', 3, ?, ?, ?)",
+        tenantId,
+        datasetId,
+        name,
+        "/tmp/" + name,
+        status,
+        datasetCreator());
+  }
+
+  @Override
+  public List<ChunkRow> chunkRows(long documentFileId) {
+    return poc.jdbc()
+        .query(
+            "select dataset_id, chunk_index, content, token_count, tenant_id from document_chunk"
+                + " where document_file_id = ? order by chunk_index",
+            (rs, n) ->
+                new ChunkRow(
+                    rs.getLong("dataset_id"),
+                    rs.getInt("chunk_index"),
+                    rs.getString("content"),
+                    rs.getObject("token_count") == null ? null : rs.getInt("token_count"),
+                    rs.getLong("tenant_id")),
+            documentFileId);
   }
 
   /**
@@ -847,6 +887,87 @@ public class TiberoAccessFixtures implements AccessFixtures {
   }
 
   @Override
+  public void setAiSessionUpdatedAt(long sessionId, LocalDateTime updatedAt) {
+    poc.jdbc()
+        .update(
+            "UPDATE ai_session SET updated_at = ? WHERE id = ?",
+            Timestamp.valueOf(updatedAt),
+            sessionId);
+  }
+
+  @Override
+  public String aiSessionTitle(long sessionId) {
+    return poc.jdbc()
+        .queryForObject("SELECT title FROM ai_session WHERE id = ?", String.class, sessionId);
+  }
+
+  @Override
+  public void setReembedLeaseFromDbNow(long tenantId, int seconds) {
+    // 플랫폼 TIMESTAMP 는 UTC 벽시계 — 운영 문장(dbNowPlusSeconds)과 같은 식으로 맞춘다.
+    poc.jdbc()
+        .update(
+            "UPDATE embedding_reembed_state SET lease_until ="
+                + " "
+                + DB_NOW_PLUS_SECONDS
+                + " WHERE tenant_id = ?",
+            seconds,
+            tenantId);
+  }
+
+  @Override
+  public java.time.Duration reembedLeaseRemaining(long tenantId) {
+    // 둘 다 UTC 벽시계 TIMESTAMP 라 LocalDateTime 으로 읽어 그대로 뺀다(JVM 시간대와 무관).
+    return poc.jdbc()
+        .queryForObject(
+            "SELECT lease_until, "
+                + DB_NOW
+                + " AS db_now"
+                + " FROM embedding_reembed_state WHERE tenant_id = ?",
+            (rs, i) -> {
+              LocalDateTime lease = rs.getObject(1, LocalDateTime.class);
+              LocalDateTime now = rs.getObject(2, LocalDateTime.class);
+              return lease == null ? null : java.time.Duration.between(now, lease);
+            },
+            tenantId);
+  }
+
+  @Override
+  public void setReembedUpdatedAtFromDbNow(long tenantId, int seconds) {
+    poc.jdbc()
+        .update(
+            "UPDATE embedding_reembed_state SET updated_at ="
+                + " "
+                + DB_NOW_PLUS_SECONDS
+                + " WHERE tenant_id = ?",
+            seconds,
+            tenantId);
+  }
+
+  @Override
+  public void putTenantSettingFromDbNow(long tenantId, String key, String value, int seconds) {
+    // 운영 MyBatis 쓰기(dbNow)와 같은 UTC 벽시계로 명시한다 — 열 DEFAULT LOCALTIMESTAMP 는 서버 지역 시각이라 쓰지 않는다.
+    poc.jdbc().update("DELETE FROM tenant_settings WHERE tenant_id = ? AND key = ?", tenantId, key);
+    poc.jdbc()
+        .update(
+            "INSERT INTO tenant_settings (tenant_id, key, value, updated_at)"
+                + " VALUES (?, ?, ?, "
+                + DB_NOW_PLUS_SECONDS
+                + ")",
+            tenantId,
+            key,
+            value,
+            seconds);
+  }
+
+  @Override
+  public java.time.Instant dbNow() {
+    // UTC 벽시계를 LocalDateTime 으로 읽어 UTC 순간으로 바꾼다(JVM 시간대와 무관).
+    return poc.jdbc()
+        .queryForObject("SELECT " + DB_NOW + " FROM DUAL", LocalDateTime.class)
+        .toInstant(java.time.ZoneOffset.UTC);
+  }
+
+  @Override
   public boolean emptyStringIsNull() {
     return true;
   }
@@ -865,14 +986,19 @@ public class TiberoAccessFixtures implements AccessFixtures {
     for (long t : tenants) {
       poc.jdbc().update("DELETE FROM audit_log WHERE tenant_id = ?", t);
       poc.jdbc().update("DELETE FROM async_job WHERE tenant_id = ?", t);
+      // ai_session 은 사용자 FK 가 CASCADE 가 아니라 사용자보다 먼저 지운다(WD-712).
+      poc.jdbc().update("DELETE FROM ai_session WHERE tenant_id = ?", t);
       poc.jdbc().update("DELETE FROM dataset_access_grant WHERE tenant_id = ?", t);
       // 대시보드·저장 쿼리·파이프라인은 사용자(created_by)를 참조하고, 스텝의 output_dataset_id 는 ON DELETE 없는 데이터셋 FK
       // 라 데이터셋보다 먼저 지운다. 위젯·차트·스텝·스텝 입력·트리거는 FK CASCADE 로 함께 사라진다.
+      // uploaded_files 는 사용자 FK 가 CASCADE 가 아니라 사용자보다 먼저 지운다(WD-712).
+      poc.jdbc().update("DELETE FROM uploaded_files WHERE tenant_id = ?", t);
       poc.jdbc().update("DELETE FROM dashboard WHERE tenant_id = ?", t);
       poc.jdbc().update("DELETE FROM saved_query WHERE tenant_id = ?", t);
       poc.jdbc().update("DELETE FROM pipeline WHERE tenant_id = ?", t);
       poc.jdbc().update("DELETE FROM dataset WHERE tenant_id = ?", t);
       poc.jdbc().update("DELETE FROM tenant_settings WHERE tenant_id = ?", t);
+      poc.jdbc().update("DELETE FROM embedding_reembed_state WHERE tenant_id = ?", t);
       poc.jdbc().update("DELETE FROM role_permission WHERE tenant_id = ?", t);
       poc.jdbc().update("DELETE FROM user_role WHERE tenant_id = ?", t);
       poc.jdbc().update("DELETE FROM report_template WHERE tenant_id = ?", t);
