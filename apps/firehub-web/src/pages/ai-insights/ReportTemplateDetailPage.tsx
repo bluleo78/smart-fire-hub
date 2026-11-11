@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 
 import type { ReportTemplate, ReportTemplateSummary } from '@/api/proactive';
 import { EditConflictDialog } from '@/components/EditConflictDialog';
+import { DetailPageTitle } from '@/components/PageTitleSync';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -583,6 +584,8 @@ function ReportTemplateDetailContent({ templateId }: { templateId: number | null
 
   return (
     <div className="space-y-6">
+      {/* 탭 제목에 서버에서 불러온 저장된 이름을 붙인다 (WD-534) */}
+      <DetailPageTitle name={template?.name} />
       {/* 사이드바 링크 클릭 등 SPA 내부 네비게이션 가드 다이얼로그 (이슈 #552) */}
       {unsavedChangesDialog}
       {/* 헤더 */}

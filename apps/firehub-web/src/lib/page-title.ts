@@ -8,7 +8,9 @@ import { matchPath } from 'react-router-dom';
  * 경로별 화면 이름을 이 한 곳에 모아 두고, PageTitleSync 가 경로가 바뀔 때마다 제목을 갱신한다.
  *
  * - 화면 이름은 사이드바 메뉴 라벨(AppLayout navItems)·페이지 제목(h1)과 같은 문구를 쓴다.
- * - 상세·생성·편집 화면은 개별 리소스 이름 대신 섹션 이름을 쓴다(리소스 이름은 비동기 로딩이라 범위 밖).
+ * - 상세·생성·편집 화면은 이 표에서 섹션 이름을 쓴다. 상세 화면은 리소스 이름을 불러온 뒤 DetailPageTitle 이
+ *   「리소스 이름 · 섹션 이름」으로 덮어쓴다(WD-534, composeDetailLabel). 스마트 작업 실행 상세·리포트 보기는
+ *   응답에 작업 이름이 없어(새 요청 없이는 알 수 없어) 섹션 이름에 머문다.
  * - 패턴은 App.tsx 의 <Route path> 와 1:1 로 맞춘다 — 여기에 없는 경로는 App.tsx 의 catch-all(404)과 같이 404 제목이 된다.
  *   App.tsx 에 라우트를 추가하면 이 표에도 추가해야 한다 — 빠뜨리면 page-title.test.ts 의 동기화 가드
  *   (App.tsx 의 모든 <Route path> 가 404 아닌 제목으로 풀리는지 검사)가 실패한다.
@@ -111,4 +113,14 @@ export function formatPageTitle(pathname: string, brandName: string): string {
 /** 화면 이름(null 이면 홈)과 브랜드명으로 제목을 조립한다 — 경로 기반·덮어쓰기 제목이 같은 형식을 쓰게 한 곳에 둔다. */
 export function composePageTitle(label: string | null, brandName: string): string {
   return label ? `${label}${TITLE_SEPARATOR}${brandName}` : brandName;
+}
+
+/**
+ * 상세 화면 제목의 화면 이름 부분을 「리소스 이름 · 섹션 이름」으로 조립한다 (WD-534).
+ * 탭 여러 개를 띄운 사용자·스크린리더 사용자가 어느 리소스를 보고 있는지 구분하도록 리소스 이름을 맨 앞에 둔다.
+ * 긴 이름은 자르지 않는다 — 탭에서는 브라우저가 자르고, 방문 기록·스크린리더에는 전체 이름이 맞다.
+ * 「앞부분이 있으면 구분자로 잇는다」 규칙은 composePageTitle 과 같으므로 그것을 그대로 쓴다.
+ */
+export function composeDetailLabel(name: string | null | undefined, section: string): string {
+  return composePageTitle(name?.trim() || null, section);
 }

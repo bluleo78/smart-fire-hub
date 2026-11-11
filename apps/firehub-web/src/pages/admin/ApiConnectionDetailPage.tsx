@@ -4,6 +4,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { StatusBadge } from '@/components/api-connection/StatusBadge';
+import { DetailPageTitle } from '@/components/PageTitleSync';
 import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
 import { FormField } from '@/components/ui/form-field';
 import {
@@ -388,6 +389,8 @@ export default function ApiConnectionDetailPage() {
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
+      {/* 탭 제목에 서버에서 불러온 저장된 이름을 붙인다 (WD-534) */}
+      <DetailPageTitle name={connection.name} />
       {/* 미저장 변경사항 이탈 가드 다이얼로그 (#551) */}
       {unsavedChangesDialog}
       <div className="flex items-center gap-4">

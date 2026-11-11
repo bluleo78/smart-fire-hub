@@ -1,9 +1,9 @@
-import { setupAdminAuth, setupUserListMocks } from '../fixtures/admin.fixture';
+import { setupAdminAuth, setupUserDetailMocks, setupUserListMocks } from '../fixtures/admin.fixture';
 import { mockApi } from '../fixtures/api-mock';
 import { expect, MOCK_MEMBERSHIP, MOCK_TOKEN_RESPONSE, test } from '../fixtures/auth.fixture';
 import { mockBrandingConfig } from '../fixtures/branding.fixture';
 import { setupDatasetDetailMocks, setupDatasetMocks } from '../fixtures/dataset.fixture';
-import { setupPipelineMocks } from '../fixtures/pipeline.fixture';
+import { setupPipelineEditorMocks, setupPipelineMocks } from '../fixtures/pipeline.fixture';
 
 /**
  * 화면별 탭 제목 E2E (WD-580, WCAG 2.4.2 Page Titled).
@@ -11,6 +11,7 @@ import { setupPipelineMocks } from '../fixtures/pipeline.fixture';
  * 수정 전에는 index.html·config.js 가 시작할 때 넣은 브랜드명 하나가 모든 화면의 제목이었다.
  * SPA 경로 이동(사이드바 클릭) 때마다 제목이 「화면 이름 · 브랜드명」으로 바뀌는지,
  * 홈은 브랜드명만 쓰는지, 404·로그인·관리 화면까지 같은 규칙인지 확인한다.
+ * 상세 화면은 불러온 리소스 이름을 앞에 붙여 「리소스 이름 · 섹션 이름 · 브랜드명」이 되는지도 확인한다 (WD-534).
  */
 
 test.describe('화면별 탭 제목', () => {
@@ -47,10 +48,46 @@ test.describe('화면별 탭 제목', () => {
     await expect(page).toHaveTitle('Smart Fire Hub');
   });
 
-  test('상세 화면은 섹션 이름을 쓴다', async ({ authenticatedPage: page }) => {
+  /**
+   * 상세 화면은 불러온 리소스 이름을 앞에 붙인다 (WD-534) — 「리소스 이름 · 섹션 이름 · 브랜드명」.
+   * 이름은 각 fixture 의 목 응답 이름(createDatasetDetail·createPipelineDetail·setupUserDetailMocks)이다.
+   */
+  test('상세 화면은 「리소스 이름 · 섹션 이름」을 쓰고, 목록으로 돌아가면 목록 제목으로 돌아온다', async ({
+    authenticatedPage: page,
+  }) => {
+    // 목록 목을 먼저 걸고 상세 목을 나중에 걸어 상세 응답이 이기게 한다
+    await setupDatasetMocks(page);
     await setupDatasetDetailMocks(page, 1);
     await page.goto('/data/datasets/1');
+    await expect(page.getByRole('heading', { level: 1, name: '테스트 데이터셋' })).toBeVisible();
+    await expect(page).toHaveTitle('테스트 데이터셋 · 데이터셋 · Smart Fire Hub');
+
+    // 상세가 언마운트되면 덮어쓰기가 풀려 목록 제목이 된다 — 이전 리소스 이름이 남으면 안 된다(breadcrumb 의 목록 링크로 돌아간다)
+    await page.getByLabel('현재 위치').getByRole('link', { name: '데이터셋', exact: true }).click();
+    await expect(page).toHaveURL(/\/data\/datasets$/);
     await expect(page).toHaveTitle('데이터셋 · Smart Fire Hub');
+  });
+
+  test('파이프라인 상세는 「파이프라인 이름 · 파이프라인」', async ({ authenticatedPage: page }) => {
+    await setupPipelineEditorMocks(page, 1);
+    await page.goto('/pipelines/1');
+    await expect(page).toHaveTitle('테스트 파이프라인 · 파이프라인 · Smart Fire Hub');
+  });
+
+  test('새 파이프라인 화면은 이름이 없어 섹션 제목을 쓴다', async ({ authenticatedPage: page }) => {
+    // 새로 만들기는 쓰기 권한 화면이라 권한 안내 대신 편집기가 보이도록 관리자 권한으로 들어간다
+    await setupAdminAuth(page);
+    await setupPipelineEditorMocks(page, 1);
+    await page.goto('/pipelines/new');
+    await expect(page.getByRole('heading', { level: 1, name: '새 파이프라인' })).toBeAttached();
+    await expect(page).toHaveTitle('파이프라인 · Smart Fire Hub');
+  });
+
+  test('사용자 상세는 「사용자 이름 · 사용자 관리」', async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+    await setupUserDetailMocks(page, 1);
+    await page.goto('/admin/users/1');
+    await expect(page).toHaveTitle('테스트 사용자 · 사용자 관리 · Smart Fire Hub');
   });
 
   test('없는 경로는 404 제목을 쓴다', async ({ authenticatedPage: page }) => {

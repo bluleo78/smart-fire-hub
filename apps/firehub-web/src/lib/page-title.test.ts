@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-import { composePageTitle, formatPageTitle, NOT_FOUND_TITLE, resolvePageLabel } from './page-title';
+import { composeDetailLabel, composePageTitle, formatPageTitle, NOT_FOUND_TITLE, resolvePageLabel } from './page-title';
 
 /**
  * 라우트 → 문서 제목 변환 단위 테스트 (WD-580, WCAG 2.4.2 Page Titled).
@@ -79,6 +79,31 @@ describe('composePageTitle', () => {
   it('화면 이름이 null 이면 브랜드명만, 있으면 「화면 이름 · 브랜드명」', () => {
     expect(composePageTitle(null, 'Acme Data')).toBe('Acme Data');
     expect(composePageTitle('워크스페이스 선택', 'Acme Data')).toBe('워크스페이스 선택 · Acme Data');
+  });
+});
+
+/**
+ * 상세 화면 제목의 화면 이름 부분 조립 (WD-534) — 「리소스 이름 · 섹션 이름」, 이름이 없으면 섹션 이름만.
+ */
+describe('composeDetailLabel', () => {
+  it('이름이 있으면 「리소스 이름 · 섹션 이름」', () => {
+    expect(composeDetailLabel('화재 출동 기록', '데이터셋')).toBe('화재 출동 기록 · 데이터셋');
+    expect(composePageTitle(composeDetailLabel('화재 출동 기록', '데이터셋'), 'Smart Fire Hub')).toBe(
+      '화재 출동 기록 · 데이터셋 · Smart Fire Hub',
+    );
+  });
+
+  it('이름 앞뒤 공백은 지운다', () => {
+    expect(composeDetailLabel('  일일 집계  ', '파이프라인')).toBe('일일 집계 · 파이프라인');
+  });
+
+  it.each([[undefined], [null], [''], ['   ']])('이름이 %j 이면 섹션 이름만', (name) => {
+    expect(composeDetailLabel(name, '데이터셋')).toBe('데이터셋');
+  });
+
+  it('긴 이름도 자르지 않는다(탭에서는 브라우저가 자른다)', () => {
+    const longName = '가'.repeat(300);
+    expect(composeDetailLabel(longName, '쿼리')).toBe(`${longName} · 쿼리`);
   });
 });
 

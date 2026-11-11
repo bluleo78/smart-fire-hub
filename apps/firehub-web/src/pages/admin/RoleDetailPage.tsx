@@ -10,6 +10,7 @@ import { toast } from 'sonner';
 import { permissionsApi } from '../../api/permissions';
 import { ROLE_LIST_KEY, rolesApi } from '../../api/roles';
 import { EditConflictDialog } from '../../components/EditConflictDialog';
+import { DetailPageTitle } from '../../components/PageTitleSync';
 import { ResourceNotFound } from '../../components/ResourceNotFound';
 import {
   AlertDialog,
@@ -434,6 +435,8 @@ function RoleDetailView() {
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
+      {/* 탭 제목에 서버에서 불러온 저장된 이름을 붙인다 (WD-534) */}
+      <DetailPageTitle name={role.name} />
       <div className="flex items-center gap-4">
         {/* 역할 목록으로 돌아가는 뒤로가기 버튼 — 접근성 보강 (#102)
             (#636) navigate() 직접 호출 대신 requestNavigate 사용 — dirty 상태면 이탈 가드 다이얼로그를 띄운다 */}

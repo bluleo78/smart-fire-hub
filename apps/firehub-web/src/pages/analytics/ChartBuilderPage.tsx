@@ -15,6 +15,7 @@ import { ChartTypeSelector } from '../../components/analytics/ChartTypeSelector'
 import { isNumericColumn, isWeightColumn } from '../../components/analytics/numeric-columns';
 import { SharedReadOnlyNotice } from '../../components/analytics/SharedReadOnlyNotice';
 import { EditConflictDialog } from '../../components/EditConflictDialog';
+import { DetailPageTitle } from '../../components/PageTitleSync';
 import { ResourceNotFound } from '../../components/ResourceNotFound';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
@@ -877,6 +878,8 @@ export default function ChartBuilderPage() {
 
   return (
     <div className="space-y-6">
+      {/* 탭 제목에 서버에서 불러온 저장된 이름을 붙인다 (WD-534) */}
+      <DetailPageTitle name={existingChart?.name} />
       {/* Toolbar */}
       <div className="flex items-center gap-3 flex-wrap">
         <Button

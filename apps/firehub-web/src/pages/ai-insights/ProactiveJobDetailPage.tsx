@@ -7,6 +7,7 @@ import { useLocation, useNavigate, useParams, useSearchParams } from 'react-rout
 import { toast } from 'sonner';
 
 import { EditConflictDialog } from '@/components/EditConflictDialog';
+import { DetailPageTitle } from '@/components/PageTitleSync';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -475,6 +476,8 @@ export default function ProactiveJobDetailPage() {
 
   return (
     <div className="space-y-6">
+      {/* 탭 제목에 서버에서 불러온 저장된 이름을 붙인다 (WD-534) */}
+      <DetailPageTitle name={job?.name} />
       {/* 헤더 — 좁은 화면에서 제목과 버튼 줄이 한 줄에 다 안 들어가면 버튼 줄이 아래로 내려가고, 버튼끼리도 줄바꿈해
           본문이 옆으로 밀리지 않게 한다(WD-295). */}
       <header className="flex flex-wrap items-center justify-between gap-3">

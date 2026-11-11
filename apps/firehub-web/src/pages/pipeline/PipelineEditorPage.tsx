@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 
 import { EditConflictDialog } from '@/components/EditConflictDialog';
 import { Breadcrumb } from '@/components/layout/Breadcrumb';
+import { DetailPageTitle } from '@/components/PageTitleSync';
 import { DurationText } from '@/components/pipeline/DurationText';
 import { ResourceNotFound } from '@/components/ResourceNotFound';
 import {
@@ -403,6 +404,8 @@ export default function PipelineEditorPage() {
   return (
     <div className="h-[calc(100vh-64px)] w-full overflow-hidden flex flex-col">
       <h1 className="sr-only">{headingText}</h1>
+      {/* 탭 제목에 서버에서 불러온 저장된 이름을 붙인다 (WD-534) */}
+      <DetailPageTitle name={pipelineData?.name} />
 
       {/* 미저장 변경사항 이탈 가드 다이얼로그 (#550) — 사이드바 링크 클릭/뒤로가기/새로고침 가로채기 */}
       {unsavedChangesDialog}
