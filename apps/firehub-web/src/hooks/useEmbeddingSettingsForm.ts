@@ -14,6 +14,7 @@ import type { HostingLocation } from '../lib/hosting-location';
 import { isSameTransportTarget, normalizeHosting } from '../lib/hosting-location';
 import { useEmbeddingStatus, useReindexAllEmbeddings } from './queries/useEmbedding';
 import { useEmbeddingConfig, useSaveEmbeddingConfig } from './queries/useEmbeddingSettings';
+import { usePlatformDbFeatures } from './queries/usePlatformDbCapabilities';
 
 /** 임베딩 provider 폼 값. */
 export interface EmbeddingForm {
@@ -85,7 +86,10 @@ export interface EmbeddingSettingsFormState {
 export function useEmbeddingSettingsForm(): EmbeddingSettingsFormState {
   const { data: config, isLoading, isError, refetch } = useEmbeddingConfig();
   const save = useSaveEmbeddingConfig();
-  const { data: status } = useEmbeddingStatus();
+  // WD-495: 벡터 검색이 꺼진 설치본(Tibero)은 탭이 안내만 보이고 현황을 그리지 않는다 — 진행률 폴링(3초)을 멈춘다.
+  // 조회 중·실패면 켜짐이라 PG 설치본은 그대로 폴링한다. 설정 조회·저장·dirty 흐름은 현황과 무관해 건드리지 않는다.
+  const { vectorSearch } = usePlatformDbFeatures();
+  const { data: status } = useEmbeddingStatus({ enabled: vectorSearch });
   const reindex = useReindexAllEmbeddings();
 
   const [form, setForm] = useState<EmbeddingForm>(EMPTY);

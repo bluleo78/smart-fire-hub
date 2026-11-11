@@ -35,11 +35,14 @@ export function embeddingStatusRefetchInterval(state: {
  * - 재임베딩이 진행 중일 때는 3초 간격으로 폴링하고,
  *   데이터셋·문서청크가 모두 임베딩 완료되면 폴링을 멈춘다.
  * - 조회가 실패하면(403 등) 폴링을 멈춘다(embeddingStatusRefetchInterval, WD-600).
+ * - enabled=false 면 조회 자체를 하지 않는다(WD-495: 벡터 검색이 꺼진 설치본은 임베딩 현황이 의미 없다).
  */
-export function useEmbeddingStatus() {
+export function useEmbeddingStatus(options: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: EMBEDDING_STATUS_KEY,
     queryFn: () => embeddingApi.getStatus().then((r) => r.data),
+    // 꺼지면(플랫폼 DB 가 벡터 검색을 끈 설치본 등) 조회도 폴링도 하지 않는다 — 무효화로도 다시 불리지 않는다.
+    enabled: options.enabled ?? true,
     // v5 refetchInterval 콜백은 query 객체를 받는다 — query.state 로 최신 상태·데이터 접근.
     refetchInterval: (query) =>
       embeddingStatusRefetchInterval({ status: query.state.status, data: query.state.data }),

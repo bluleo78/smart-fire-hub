@@ -1,5 +1,7 @@
 import type { AxiosInstance } from 'axios';
 
+import type { SearchMode } from './platform-db-api.js';
+
 /**
  * 데이터셋 컬럼 추가/조회용 입력 타입.
  * 백엔드 `AddColumnRequest` 레코드와 동일한 필드 셋을 사용한다.
@@ -57,7 +59,7 @@ export interface DatasetReferences {
  */
 export interface RowSearchBody {
   query: string;
-  mode?: 'HYBRID' | 'SEMANTIC' | 'KEYWORD';
+  mode?: SearchMode;
   filters?: { column: string; op: string; value?: unknown }[];
   columns?: string[];
   limit?: number;

@@ -96,3 +96,88 @@ describe('find_datasets MCP tool', () => {
     expect(result.content[0].text).toContain('검색 오류');
   });
 });
+
+// WD-495: 플랫폼 DB(Tibero 등)가 검색을 끈 설치본에서 find_datasets 의 동작.
+describe('find_datasets — 플랫폼 DB 검색 기능 상태', () => {
+  let client: FireHubApiClient;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let server: any;
+
+  beforeEach(() => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    client = createMockClient();
+    (client.searchDatasets as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    server = createFireHubMcpServer(client);
+  });
+
+  const caps = () => client.getPlatformDbCapabilities as ReturnType<typeof vi.fn>;
+
+  it('둘 다 꺼짐: 검색 API 를 부르지 않고 안내문을 오류 아닌 결과로 돌려준다', async () => {
+    caps().mockResolvedValue({ vectorSearch: false, trigramSearch: false });
+    const result = await invokeTool(server, 'find_datasets', { query: '화재' });
+
+    expect(client.searchDatasets).not.toHaveBeenCalled();
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0].text).toBe('이 설치본에서는 검색 기능(벡터·키워드)이 꺼져 있어 쓸 수 없습니다.');
+  });
+
+  it('벡터만 꺼짐: HYBRID 요청을 KEYWORD 로 바꿔 부르고 바꾼 사실을 덧붙인다', async () => {
+    caps().mockResolvedValue({ vectorSearch: false, trigramSearch: true });
+    const result = await invokeTool(server, 'find_datasets', { query: '화재', mode: 'HYBRID' });
+
+    expect(client.searchDatasets).toHaveBeenCalledWith('화재', 'KEYWORD', undefined, undefined);
+    expect(result.isError).toBeFalsy();
+    // 첫 블록은 기존과 같은 JSON 결과 그대로, 안내는 두 번째 블록.
+    expect(JSON.parse(result.content[0].text)).toEqual([]);
+    expect(result.content[1].text).toContain('KEYWORD');
+  });
+
+  it('벡터만 꺼짐: SEMANTIC 요청도 KEYWORD 로 바꾼다', async () => {
+    caps().mockResolvedValue({ vectorSearch: false, trigramSearch: true });
+    const result = await invokeTool(server, 'find_datasets', { query: '화재', mode: 'SEMANTIC' });
+
+    expect(client.searchDatasets).toHaveBeenCalledWith('화재', 'KEYWORD', undefined, undefined);
+    expect(result.content[1].text).toContain('벡터');
+  });
+
+  it('벡터만 꺼짐: KEYWORD 요청은 그대로 부르고 안내를 붙이지 않는다', async () => {
+    caps().mockResolvedValue({ vectorSearch: false, trigramSearch: true });
+    const result = await invokeTool(server, 'find_datasets', { query: '화재', mode: 'KEYWORD' });
+
+    expect(client.searchDatasets).toHaveBeenCalledWith('화재', 'KEYWORD', undefined, undefined);
+    expect(result.content).toHaveLength(1);
+  });
+
+  it('트라이그램만 꺼짐: 모드 생략(HYBRID)을 SEMANTIC 으로 바꿔 부르고 안내한다', async () => {
+    caps().mockResolvedValue({ vectorSearch: true, trigramSearch: false });
+    const result = await invokeTool(server, 'find_datasets', { query: '화재' });
+
+    expect(client.searchDatasets).toHaveBeenCalledWith('화재', 'SEMANTIC', undefined, undefined);
+    expect(result.content[1].text).toContain('SEMANTIC');
+  });
+
+  it('트라이그램만 꺼짐: KEYWORD 요청을 SEMANTIC 으로 바꾼다', async () => {
+    caps().mockResolvedValue({ vectorSearch: true, trigramSearch: false });
+    const result = await invokeTool(server, 'find_datasets', { query: '화재', mode: 'KEYWORD' });
+
+    expect(client.searchDatasets).toHaveBeenCalledWith('화재', 'SEMANTIC', undefined, undefined);
+    expect(result.content[1].text).toContain('키워드 검색이 꺼져');
+  });
+
+  it('트라이그램만 꺼짐: SEMANTIC 요청은 그대로 부르고 안내를 붙이지 않는다', async () => {
+    caps().mockResolvedValue({ vectorSearch: true, trigramSearch: false });
+    const result = await invokeTool(server, 'find_datasets', { query: '화재', mode: 'SEMANTIC' });
+
+    expect(client.searchDatasets).toHaveBeenCalledWith('화재', 'SEMANTIC', undefined, undefined);
+    expect(result.content).toHaveLength(1);
+  });
+
+  it('둘 다 켜짐: 그대로 부른다', async () => {
+    caps().mockResolvedValue({ vectorSearch: true, trigramSearch: true });
+    const result = await invokeTool(server, 'find_datasets', { query: '화재', mode: 'KEYWORD' });
+
+    expect(client.searchDatasets).toHaveBeenCalledWith('화재', 'KEYWORD', undefined, undefined);
+    expect(JSON.parse(result.content[0].text)).toEqual([]);
+  });
+});

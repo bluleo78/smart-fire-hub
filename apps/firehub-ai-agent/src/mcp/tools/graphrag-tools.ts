@@ -3,6 +3,7 @@ import { z } from 'zod/v4';
 import type { FireHubApiClient } from '../api-client.js';
 import type { SafeToolFn, JsonResultFn, GraphragCredentials } from '../firehub-mcp-server.js';
 import { policyBlockedOf } from '../policy-blocked.js';
+import { searchDisabledResult } from '../api-client/platform-db-api.js';
 import { ingestDataset } from '../../graphrag/ingest.js';
 import { extractGraph } from '../../graphrag/extractor.js';
 import { createCompleter } from '../../graphrag/llm-completer.js';
@@ -772,12 +773,16 @@ export function registerGraphragTools(
         // 그 청크에서 유래한 엔티티를 1~2홉 확장한 서브그래프+출처를 조립한다.
         const result = await retrieve(
           {
-            searchDocuments: (q, ids, k, mode) => apiClient.searchDocuments(
-              q, ids, k, mode as 'SEMANTIC' | 'KEYWORD' | 'HYBRID' | undefined,
-            ),
+            searchDocuments: (q, ids, k, mode) => apiClient.searchDocuments(q, ids, k, mode),
+            // WD-495: 검색이 꺼진 설치본이면 retriever 가 시드 검색을 건너뛴다.
+            getPlatformDbCapabilities: () => apiClient.getPlatformDbCapabilities(),
           },
           ontologyId, args.query, { topK: args.topK },
         );
+        // 검색이 꺼져 시드를 못 잡은 경우는 빈 서브그래프 대신 안내문을 정상 결과로 돌려준다(isError 아님 — 재시도 방지).
+        if (result.searchDisabled) {
+          return searchDisabledResult();
+        }
         // Neo4j 연결 불가 등은 retrieve에서 throw → safeTool이 isError로 감싸 폴백 메시지 제공.
         return jsonResult({
           subgraph: { nodes: result.nodes, relations: result.relations },

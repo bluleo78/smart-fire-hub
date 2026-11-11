@@ -89,7 +89,7 @@ async function main(): Promise<void> {
       const result = await retrieve(
         {
           searchDocuments: (q, ids, topK, mode) =>
-            apiClient.searchDocuments(q, ids, topK, mode as 'SEMANTIC' | 'KEYWORD' | 'HYBRID' | undefined),
+            apiClient.searchDocuments(q, ids, topK, mode),
         },
         ontologyId,
         question,

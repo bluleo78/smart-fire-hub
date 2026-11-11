@@ -62,6 +62,7 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import org.jobrunr.jobs.lambdas.JobLambda;
 import org.jobrunr.scheduling.JobScheduler;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
@@ -461,5 +462,50 @@ class PlatformDbFeaturesOffPathTest {
     assertThat(impact.datasets()).isEqualTo(3L);
     verify(gate).allowance();
     assertThat(svc.hasWork(SPACE)).isTrue();
+  }
+
+  // ---------- 관리자 전체 재임베딩(WD-495) ----------
+
+  @Test
+  void 전체_재임베딩_요청_벡터_꺼지면_202_이고_영향도_0_이며_예외가_없다() {
+    var configService = mock(EmbeddingConfigService.class);
+    var chunks = mock(DocumentChunkRepository.class);
+    var datasets = mock(DatasetEmbeddingRepository.class);
+    var indexStates = mock(com.smartfirehub.dataset.repository.SearchIndexStateRepository.class);
+    var gate = mock(EmbeddingAiGate.class);
+    when(gate.allowance()).thenReturn(ALLOWANCE);
+    when(configService.currentSpace()).thenReturn(Optional.of(SPACE));
+    when(indexStates.countStale(any(), anyInt())).thenReturn(0L);
+    var jobScheduler = mock(JobScheduler.class);
+    var job =
+        new TenantReembedJob(
+            mock(EmbeddingProviderFactory.class),
+            configService,
+            chunks,
+            datasets,
+            mock(EmbeddingReembedStateRepository.class),
+            new EmbeddingBacklogService(chunks, datasets, indexStates, gate, only()),
+            mock(DatasetEmbeddingBackfillService.class),
+            jobScheduler,
+            gate,
+            only());
+    var controller =
+        new com.smartfirehub.admin.embedding.EmbeddingAdminController(
+            mock(EmbeddingStatusService.class), job, mock(EmbeddingProviderFactory.class));
+
+    var response =
+        com.smartfirehub.global.tenant.TenantContext.runScopedGet(
+            1L, () -> controller.reindexAll());
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
+    var impact = response.getBody();
+    assertThat(impact).isNotNull();
+    assertThat(impact.chunks()).isZero();
+    assertThat(impact.datasets()).isZero();
+    // 벡터 테이블을 읽는 누락 수 조회는 한 번도 없다. 잡은 예약돼도 실행 시점에 바로 끝난다.
+    verify(chunks, never()).countMissing(any(), any());
+    verify(datasets, never()).countMissing(any(), any());
+    // 202 의 의미 — 잡은 실제로 예약된다(트랜잭션 밖이라 즉시 투입). 실행 시점에 벡터 꺼짐으로 바로 끝난다.
+    verify(jobScheduler).enqueue(any(JobLambda.class));
   }
 }

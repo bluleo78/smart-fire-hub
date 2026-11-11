@@ -1,12 +1,22 @@
+import { Info } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 
 import { Button } from '../../../components/ui/button';
+import { InlineBanner } from '../../../components/ui/inline-banner';
 import { Input } from '../../../components/ui/input';
 import { Tabs, TabsControlsContent, TabsList, TabsTrigger } from '../../../components/ui/tabs';
 import { useSearchDocuments } from '../../../hooks/queries/useDocuments';
+import { availableSearchModes, usePlatformDbFeatures } from '../../../hooks/queries/usePlatformDbCapabilities';
 import { MAX_SEARCH_QUERY_LENGTH } from '../../../lib/validations/search-query';
 import type { DocumentSearchHit, DocumentSearchMode } from '../../../types/document';
+
+/** 검색 모드 탭 라벨. 표시 순서·노출 여부는 availableSearchModes 가 정한다. */
+const MODE_LABELS: Record<DocumentSearchMode, string> = {
+  HYBRID: '하이브리드',
+  SEMANTIC: '의미',
+  KEYWORD: '키워드',
+};
 
 interface DocumentSearchPanelProps {
   datasetId: number;
@@ -23,6 +33,15 @@ export function DocumentSearchPanel({ datasetId }: DocumentSearchPanelProps) {
   // 확장된 청크 ID 집합 — 클릭 시 content를 펼쳐서 전문을 보여주는 accordion 패턴 (#291).
   const [expandedChunks, setExpandedChunks] = useState<Set<number>>(new Set());
   const search = useSearchDocuments();
+  // 플랫폼 DB 가 끈 검색 기능(WD-495). 조회 중·실패면 둘 다 켜짐이라 PG 설치본 화면은 그대로다.
+  const features = usePlatformDbFeatures();
+  // 모드별로 필요한 기능이 켜졌을 때만 보인다(스펙 2) — 매핑 규칙은 availableSearchModes 참고.
+  const availableModes = availableSearchModes(features);
+  // 고른 모드가 숨겨졌으면 남은 첫 모드를 쓴다 — effect 로 상태를 고치지 않고 렌더마다 계산해,
+  // capabilities 응답이 늦게 와도 꺼진 모드로 검색 요청이 나가지 않는다.
+  const effectiveMode: DocumentSearchMode = availableModes.includes(mode)
+    ? mode
+    : (availableModes[0] ?? mode);
 
   /** 청크 accordion 토글 — 이미 열려 있으면 접고, 닫혀 있으면 펼친다. */
   const toggleChunk = (chunkId: number) => {
@@ -40,9 +59,9 @@ export function DocumentSearchPanel({ datasetId }: DocumentSearchPanelProps) {
   const handleSearch = () => {
     const q = query.trim();
     if (!q) return;
-    setSearchedMode(mode);
+    setSearchedMode(effectiveMode);
     search.mutate(
-      { query: q, datasetIds: [datasetId], topK: 5, mode },
+      { query: q, datasetIds: [datasetId], topK: 5, mode: effectiveMode },
       {
         onSuccess: (data) => setHits(data),
         onError: () => toast.error('검색에 실패했습니다. 임베딩 서비스 상태를 확인하세요.'),
@@ -50,19 +69,33 @@ export function DocumentSearchPanel({ datasetId }: DocumentSearchPanelProps) {
     );
   };
 
+  // 벡터·트라이그램이 모두 꺼진 설치본(Tibero)은 쓸 수 있는 모드가 없다 — 늘 빈 결과를 내는 검색창 대신 안내만 둔다.
+  if (availableModes.length === 0) {
+    return (
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold">문서 검색</h2>
+        <InlineBanner variant="info" icon={<Info />}>
+          이 설치본(Tibero)에서는 문서 검색을 쓸 수 없습니다.
+        </InlineBanner>
+      </section>
+    );
+  }
+
   return (
     <section className="space-y-3">
       <h2 className="text-lg font-semibold">문서 검색</h2>
       {/* 검색 모드 토글 — 하이브리드(기본)/의미/키워드. 서버는 생략 시 HYBRID.
           검색 입력·결과를 TabsControlsContent 로 감싸 선택 모드 탭이 실제 패널을 가리킨다(WD-514, ui/tabs.tsx).
           검색어·결과 상태는 이 컴포넌트에 있어 모드를 바꿔도 유지된다. gap-3 은 이전 space-y-3 유지 */}
-      <Tabs className="gap-3" value={mode} onValueChange={(v) => setMode(v as DocumentSearchMode)}>
+      <Tabs className="gap-3" value={effectiveMode} onValueChange={(v) => setMode(v as DocumentSearchMode)}>
         <TabsList>
-          <TabsTrigger value="HYBRID">하이브리드</TabsTrigger>
-          <TabsTrigger value="SEMANTIC">의미</TabsTrigger>
-          <TabsTrigger value="KEYWORD">키워드</TabsTrigger>
+          {availableModes.map((m) => (
+            <TabsTrigger key={m} value={m}>
+              {MODE_LABELS[m]}
+            </TabsTrigger>
+          ))}
         </TabsList>
-        <TabsControlsContent value={mode} className="space-y-3">
+        <TabsControlsContent value={effectiveMode} className="space-y-3">
           <div className="flex gap-2">
             {/* shadcn Input 사용 — 다크모드 배경·포커스링·border-input 토큰 일관성 보장 (#288) */}
             <Input

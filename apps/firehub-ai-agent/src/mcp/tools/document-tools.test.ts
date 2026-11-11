@@ -139,3 +139,68 @@ describe('Document MCP Tools', () => {
     expect(registeredTools).toContain('search_documents');
   });
 });
+
+// WD-495: 플랫폼 DB(Tibero 등)가 검색을 끈 설치본에서 search_documents 의 동작.
+describe('search_documents — 플랫폼 DB 검색 기능 상태', () => {
+  let client: FireHubApiClient;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let server: any;
+  const hits: DocumentSearchHit[] = [
+    { chunkId: 1, documentFileId: 10, datasetId: 3, fileName: 'a.pdf', chunkIndex: 0, content: '본문', score: 0.9 },
+  ];
+
+  beforeEach(() => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    client = createMockClient();
+    (client.searchDocuments as ReturnType<typeof vi.fn>).mockResolvedValue(hits);
+    server = createFireHubMcpServer(client);
+  });
+
+  const caps = () => client.getPlatformDbCapabilities as ReturnType<typeof vi.fn>;
+
+  it('둘 다 꺼짐: 검색 API 를 부르지 않고 안내문을 오류 아닌 결과로 돌려준다', async () => {
+    caps().mockResolvedValue({ vectorSearch: false, trigramSearch: false });
+    const result = await invokeTool(server, 'search_documents', { query: '질의' });
+
+    expect(client.searchDocuments).not.toHaveBeenCalled();
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0].text).toBe('이 설치본에서는 검색 기능(벡터·키워드)이 꺼져 있어 쓸 수 없습니다.');
+  });
+
+  it('벡터만 꺼짐: 하이브리드(생략) 요청을 KEYWORD 로 바꿔 부르고 바꾼 사실을 덧붙인다', async () => {
+    caps().mockResolvedValue({ vectorSearch: false, trigramSearch: true });
+    const result = await invokeTool(server, 'search_documents', { query: '질의', datasetIds: [3] });
+
+    expect(client.searchDocuments).toHaveBeenCalledWith('질의', [3], undefined, 'KEYWORD');
+    expect(result.isError).toBeFalsy();
+    // 첫 블록은 기존과 같은 JSON 결과 그대로.
+    expect(JSON.parse(result.content[0].text)).toEqual(hits);
+    expect(result.content[1].text).toContain('KEYWORD');
+  });
+
+  it('트라이그램만 꺼짐: KEYWORD 요청을 SEMANTIC 으로 바꿔 부르고 안내한다', async () => {
+    caps().mockResolvedValue({ vectorSearch: true, trigramSearch: false });
+    const result = await invokeTool(server, 'search_documents', { query: '질의', mode: 'KEYWORD' });
+
+    expect(client.searchDocuments).toHaveBeenCalledWith('질의', undefined, undefined, 'SEMANTIC');
+    expect(result.content[1].text).toContain('SEMANTIC');
+  });
+
+  it('트라이그램만 꺼짐: SEMANTIC 요청은 그대로 부르고 안내를 붙이지 않는다', async () => {
+    caps().mockResolvedValue({ vectorSearch: true, trigramSearch: false });
+    const result = await invokeTool(server, 'search_documents', { query: '질의', mode: 'SEMANTIC' });
+
+    expect(client.searchDocuments).toHaveBeenCalledWith('질의', undefined, undefined, 'SEMANTIC');
+    expect(result.content).toHaveLength(1);
+  });
+
+  it('둘 다 켜짐: 요청 모드 그대로 부르고 결과도 기존과 같다', async () => {
+    caps().mockResolvedValue({ vectorSearch: true, trigramSearch: true });
+    const result = await invokeTool(server, 'search_documents', { query: '질의', mode: 'HYBRID' });
+
+    expect(client.searchDocuments).toHaveBeenCalledWith('질의', undefined, undefined, 'HYBRID');
+    expect(result.content).toHaveLength(1);
+    expect(JSON.parse(result.content[0].text)).toEqual(hits);
+  });
+});

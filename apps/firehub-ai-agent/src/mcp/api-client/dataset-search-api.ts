@@ -1,5 +1,6 @@
 import type { AxiosInstance } from 'axios';
 
+import type { SearchMode } from './platform-db-api.js';
 import { clampSearchQuery } from './request-limits.js';
 
 /** POST /datasets/search 응답 후보 1건. (백엔드 DatasetSearchHit record와 필드 일치) */
@@ -27,7 +28,7 @@ export function createDatasetSearchApi(client: AxiosInstance) {
      */
     async searchDatasets(
       query: string,
-      mode?: 'SEMANTIC' | 'KEYWORD' | 'HYBRID',
+      mode?: SearchMode,
       topK?: number,
       storageType?: 'TABLE' | 'DOCUMENT' | 'FILE',
     ): Promise<DatasetSearchHit[]> {

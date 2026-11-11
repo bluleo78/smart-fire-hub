@@ -2,6 +2,7 @@ import { z } from 'zod/v4';
 import { estimateTokens } from './analytics-tools.js';
 import type { FireHubApiClient, DocumentSearchHit } from '../api-client.js';
 import type { SafeToolFn, JsonResultFn } from '../firehub-mcp-server.js';
+import { type SearchMode, withSearchGuard } from '../api-client/platform-db-api.js';
 
 // search_documents 응답 크기 가드.
 // analytics(execute_analytics_query)와 동일한 SDK single tool_result 토큰 한도(~25K) 문제에 대응한다.
@@ -81,11 +82,16 @@ export function registerDocumentTools(
         query: string;
         datasetIds?: number[];
         topK?: number;
-        mode?: 'SEMANTIC' | 'KEYWORD' | 'HYBRID';
+        mode?: SearchMode;
       }) => {
-        const hits = await apiClient.searchDocuments(args.query, args.datasetIds, args.topK, args.mode);
-        // 청크 content가 길 수 있어 토큰 한도 가드를 적용한다.
-        return jsonResult(clampDocumentHits(hits));
+        // WD-495: 플랫폼 DB(Tibero 등)가 검색을 끈 설치본이면 서버는 늘 빈 목록을 준다 —
+        // 모델이 「찾지 못했다」로 오해하지 않게, 둘 다 꺼졌으면 API 를 부르지 않고 안내문을 정상 결과로 돌려준다
+        // (isError 가 아니어야 모델이 같은 도구를 되풀이하지 않는다). 하나만 꺼졌으면 켜진 기능의 모드로 바꾸고 안내를 덧붙인다.
+        return withSearchGuard(() => apiClient.getPlatformDbCapabilities(), args.mode, async (mode) => {
+          const hits = await apiClient.searchDocuments(args.query, args.datasetIds, args.topK, mode);
+          // 청크 content가 길 수 있어 토큰 한도 가드를 적용한다.
+          return jsonResult(clampDocumentHits(hits));
+        });
       },
     ),
   ];

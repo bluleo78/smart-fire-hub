@@ -1,9 +1,10 @@
 // expandSubgraph 순수 함수 유닛 테스트 — Neo4j 없이 fetchNeighbors를 목으로 주입해
 // 앵커타입 인지 허브 감쇠(anchor-aware hub damping) BFS 로직만 검증한다.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
-  expandSubgraph, FetchNeighbors, SubgraphNode, SeedNode,
+  expandSubgraph, retrieve, FetchNeighbors, SubgraphNode, SeedNode,
 } from './retriever.js';
+import type { GraphReadableOntologyId } from './verified-ontology-id.js';
 
 describe('expandSubgraph', () => {
   // 그래프: A(시드, Incident, deg 3) -REL- near1(Cause, deg 2), A -REL- HUB(Regulation, deg 12),
@@ -95,5 +96,53 @@ describe('expandSubgraph', () => {
       ['B1'], [lowDegreeBuildingSeed], fetchNeighborsB, { maxHops: 2, hubDegree: 4, maxNodes: 40, anchorTypes },
     );
     expect(nodes.map((n) => n.key)).toContain('I1');
+  });
+});
+
+// WD-495: 검색이 꺼진 설치본에서 retrieve 의 시드 문서 검색 단계.
+// 시드가 비면 Neo4j 세션을 열기 전에 돌아오므로 Neo4j 없이 검증할 수 있다.
+describe('retrieve — 플랫폼 DB 검색 기능 상태', () => {
+  const ontologyId = 9 as unknown as GraphReadableOntologyId;
+
+  it('둘 다 꺼짐: 문서 검색을 건너뛰고 searchDisabled 를 표시한다', async () => {
+    const searchDocuments = vi.fn().mockResolvedValue([]);
+    const result = await retrieve(
+      { searchDocuments, getPlatformDbCapabilities: async () => ({ vectorSearch: false, trigramSearch: false }) },
+      ontologyId, '원인?',
+    );
+    expect(searchDocuments).not.toHaveBeenCalled();
+    expect(result).toEqual({ nodes: [], relations: [], sourceChunks: [], searchDisabled: true });
+  });
+
+  it('벡터만 꺼짐: HYBRID 대신 KEYWORD 로 시드를 잡는다', async () => {
+    const searchDocuments = vi.fn().mockResolvedValue([]);
+    await retrieve(
+      { searchDocuments, getPlatformDbCapabilities: async () => ({ vectorSearch: false, trigramSearch: true }) },
+      ontologyId, '원인?', { topK: 5 },
+    );
+    expect(searchDocuments).toHaveBeenCalledWith('원인?', undefined, 5, 'KEYWORD');
+  });
+
+  it('트라이그램만 꺼짐: SEMANTIC 으로 시드를 잡는다', async () => {
+    const searchDocuments = vi.fn().mockResolvedValue([]);
+    await retrieve(
+      { searchDocuments, getPlatformDbCapabilities: async () => ({ vectorSearch: true, trigramSearch: false }) },
+      ontologyId, '원인?', { topK: 5 },
+    );
+    expect(searchDocuments).toHaveBeenCalledWith('원인?', undefined, 5, 'SEMANTIC');
+  });
+
+  it('둘 다 켜짐·조회기 없음: 기존대로 HYBRID 로 검색한다', async () => {
+    const on = vi.fn().mockResolvedValue([]);
+    const r1 = await retrieve(
+      { searchDocuments: on, getPlatformDbCapabilities: async () => ({ vectorSearch: true, trigramSearch: true }) },
+      ontologyId, 'q', { topK: 5 },
+    );
+    expect(on).toHaveBeenCalledWith('q', undefined, 5, 'HYBRID');
+    expect(r1.searchDisabled).toBeUndefined();
+
+    const none = vi.fn().mockResolvedValue([]);
+    await retrieve({ searchDocuments: none }, ontologyId, 'q', { topK: 5 });
+    expect(none).toHaveBeenCalledWith('q', undefined, 5, 'HYBRID');
   });
 });

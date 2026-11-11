@@ -1,6 +1,7 @@
 import { z } from 'zod/v4';
 import type { FireHubApiClient } from '../api-client.js';
 import type { SafeToolFn, JsonResultFn } from '../firehub-mcp-server.js';
+import { type SearchMode, withSearchGuard } from '../api-client/platform-db-api.js';
 
 /** 데이터셋 discovery 단일 진입점: 키워드+의미 하이브리드 검색. */
 export function registerFindDatasetTools(
@@ -35,18 +36,18 @@ export function registerFindDatasetTools(
       },
       async (args: {
         query: string;
-        mode?: 'SEMANTIC' | 'KEYWORD' | 'HYBRID';
+        mode?: SearchMode;
         topK?: number;
         storageType?: 'TABLE' | 'DOCUMENT' | 'FILE';
       }) => {
-        const hits = await apiClient.searchDatasets(
-          args.query,
-          args.mode,
-          args.topK,
-          args.storageType,
-        );
-        // 응답은 후보 메타만이라 크기 가드(clamp) 불필요.
-        return jsonResult(hits);
+        // WD-495: 벡터·트라이그램 검색이 둘 다 꺼진 설치본이면 API 를 부르지 않고 안내문을 정상 결과로 돌려준다
+        // (isError 아님 — 모델이 재시도하지 않게). 하나만 꺼졌으면 search_documents 와 같은 규칙으로 켜진 기능의
+        // 단일 모드로 바꿔 부르고(HYBRID 는 두 기능 모두 필요), 바꾼 사실을 결과 끝에 덧붙인다.
+        return withSearchGuard(() => apiClient.getPlatformDbCapabilities(), args.mode, async (mode) => {
+          const hits = await apiClient.searchDatasets(args.query, mode, args.topK, args.storageType);
+          // 응답은 후보 메타만이라 크기 가드(clamp) 불필요.
+          return jsonResult(hits);
+        });
       },
     ),
   ];

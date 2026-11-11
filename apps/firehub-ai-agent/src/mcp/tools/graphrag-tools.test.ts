@@ -143,6 +143,24 @@ describe('graphrag_query 도구', () => {
     expect(vi.mocked(retrieve)).toHaveBeenCalledWith(expect.anything(), 9, '원인?', expect.anything());
   });
 
+  // WD-495: 검색이 꺼진 설치본이면 retriever 가 시드 검색을 건너뛰고 searchDisabled 를 준다 —
+  // 빈 서브그래프 대신 안내문을 오류 아닌 결과로 돌려줘 모델이 「찾지 못했다」로 답하거나 재시도하지 않게 한다.
+  it('retrieve 가 searchDisabled 를 주면 검색 꺼짐 안내문을 돌려준다', async () => {
+    vi.mocked(retrieve).mockResolvedValueOnce({ nodes: [], relations: [], sourceChunks: [], searchDisabled: true });
+    const apiClient = {
+      searchDocuments: vi.fn(),
+      getPlatformDbCapabilities: vi.fn(),
+      getOntologyById: vi.fn().mockResolvedValue({ domain: 'd', schemaVersion: 1, entities: [], relations: [] }),
+    } as unknown as FireHubApiClient;
+    withSelfPurpose(apiClient);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const tools: any[] = registerGraphragTools(apiClient, safeTool, jsonResult);
+    const query = tools.find((t) => t.name === 'graphrag_query');
+    const out = await query.handler({ ontologyId: 9, query: '원인?' });
+    expect(out.isError).toBeFalsy();
+    expect(out.content[0].text).toBe('이 설치본에서는 검색 기능(벡터·키워드)이 꺼져 있어 쓸 수 없습니다.');
+  });
+
   // 소유권 확인은 firehub-api 왕복(RLS)이 전담한다 — Neo4j 에는 RLS 가 없으므로 이 호출이
   // 빠지면 남의 온톨로지 id 를 그대로 받아 그래프를 읽는 IDOR 이 된다. api 가 거부하면(남의 것
   // 또는 없는 것) 그 예외가 그대로 올라가 Neo4j 를 조회조차 하지 않아야 한다.

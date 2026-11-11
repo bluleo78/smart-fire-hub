@@ -16,15 +16,24 @@
 import { GraphReadableOntologyId } from './verified-ontology-id.js';
 import neo4j from 'neo4j-driver';
 import { getSession } from './neo4j-client.js';
+import { type PlatformDbCapabilities, type SearchMode, guardSearch } from '../mcp/api-client/platform-db-api.js';
 
 export interface SubgraphNode { key: string; type: string; name: string; }
 export interface SubgraphRelation { subject: string; type: string; object: string; }
 export interface SourceChunk { chunkId: number; fileName: string; content: string; }
-export interface RetrievalResult { nodes: SubgraphNode[]; relations: SubgraphRelation[]; sourceChunks: SourceChunk[]; }
+/**
+ * searchDisabled: 플랫폼 DB 가 벡터·키워드 검색을 둘 다 끈 설치본이라 시드 문서 검색을 건너뛰었다(WD-495).
+ * 호출자(graphrag_query)는 빈 결과를 「찾지 못했다」가 아니라 「꺼져 있다」로 안내하는 데 쓴다.
+ */
+export interface RetrievalResult {
+  nodes: SubgraphNode[]; relations: SubgraphRelation[]; sourceChunks: SourceChunk[]; searchDisabled?: true;
+}
 
 export interface RetrieverDeps {
-  searchDocuments(query: string, datasetIds?: number[], topK?: number, mode?: string):
+  searchDocuments(query: string, datasetIds?: number[], topK?: number, mode?: SearchMode):
     Promise<Array<{ chunkId: number; fileName: string; content: string }>>;
+  /** 플랫폼 DB 기능 상태(WD-495). 없으면(평가 스크립트·기존 호출자) 켜짐으로 보고 기존대로 HYBRID 검색한다. */
+  getPlatformDbCapabilities?(): Promise<PlatformDbCapabilities>;
 }
 
 // 검색/확장 파라미터.
@@ -148,8 +157,18 @@ export async function retrieve(
 ): Promise<RetrievalResult> {
   const o = { ...DEFAULT_OPTS, ...opts };
 
+  // 0) 기능 상태(WD-495): 벡터·키워드 검색이 둘 다 꺼진 설치본이면 시드를 잡을 수 없으니 문서 검색을 건너뛴다.
+  //    하나만 꺼졌으면 HYBRID 대신 켜진 쪽 모드로 시드를 잡는다(search_documents 와 같은 규칙).
+  let seedMode: SearchMode = 'HYBRID';
+  if (deps.getPlatformDbCapabilities) {
+    // 검색 도구와 같은 공통 가드. 조회기(FireHubApiClient)는 실패해도 던지지 않고 모두 켜짐을 준다.
+    const guard = await guardSearch(() => deps.getPlatformDbCapabilities!(), 'HYBRID');
+    if (guard.disabled) return { nodes: [], relations: [], sourceChunks: [], searchDisabled: true };
+    seedMode = guard.mode ?? 'HYBRID';
+  }
+
   // 1) 시드: 기존 하이브리드 문서검색으로 관련 청크 확보.
-  const hits = await deps.searchDocuments(query, undefined, o.topK, 'HYBRID');
+  const hits = await deps.searchDocuments(query, undefined, o.topK, seedMode);
   const chunkIds = hits.map((h) => h.chunkId);
   if (chunkIds.length === 0) return { nodes: [], relations: [], sourceChunks: [] };
 

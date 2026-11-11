@@ -58,6 +58,7 @@ import {
   type DatasetSearchHit,
 } from './api-client/dataset-search-api.js';
 import { createGraphSourceApi, type ChunkContent } from './api-client/graph-source-api.js';
+import { createPlatformDbApi, type PlatformDbCapabilities, type SearchMode } from './api-client/platform-db-api.js';
 import { createReviewApi } from './api-client/review-api.js';
 import {
   createFileObjectApi,
@@ -159,6 +160,7 @@ export class FireHubApiClient {
   private _audit: ReturnType<typeof createAuditApi>;
   private _document: ReturnType<typeof createDocumentApi>;
   private _datasetSearch: ReturnType<typeof createDatasetSearchApi>;
+  private _platformDb: ReturnType<typeof createPlatformDbApi>;
   private _graphSource: ReturnType<typeof createGraphSourceApi>;
   private _review: ReturnType<typeof createReviewApi>;
   private _fileObject: ReturnType<typeof createFileObjectApi>;
@@ -282,6 +284,7 @@ export class FireHubApiClient {
     this._audit = createAuditApi(this.client);
     this._document = createDocumentApi(this.client);
     this._datasetSearch = createDatasetSearchApi(this.client);
+    this._platformDb = createPlatformDbApi(this.client);
     this._graphSource = createGraphSourceApi(this.client);
     this._review = createReviewApi(this.client);
     this._fileObject = createFileObjectApi(this.client);
@@ -934,7 +937,7 @@ export class FireHubApiClient {
     query: string,
     datasetIds?: number[],
     topK?: number,
-    mode?: 'SEMANTIC' | 'KEYWORD' | 'HYBRID',
+    mode?: SearchMode,
   ): Promise<DocumentSearchHit[]> {
     return this._document.searchDocuments(query, datasetIds, topK, mode);
   }
@@ -942,11 +945,19 @@ export class FireHubApiClient {
   /** 데이터셋 카탈로그 통합 Discovery 검색. 시맨틱+키워드 하이브리드로 후보 데이터셋을 반환한다. */
   searchDatasets(
     query: string,
-    mode?: 'SEMANTIC' | 'KEYWORD' | 'HYBRID',
+    mode?: SearchMode,
     topK?: number,
     storageType?: 'TABLE' | 'DOCUMENT' | 'FILE',
   ): Promise<DatasetSearchHit[]> {
     return this._datasetSearch.searchDatasets(query, mode, topK, storageType);
+  }
+
+  /**
+   * 플랫폼 DB 기능 상태(벡터·트라이그램 검색 켜짐 여부, WD-495). 설치본 단위라 프로세스 캐시하며,
+   * 조회 실패 시 모두 켜짐(PG 기본)으로 간주한다 — 던지지 않는다.
+   */
+  getPlatformDbCapabilities(): Promise<PlatformDbCapabilities> {
+    return this._platformDb.getPlatformDbCapabilities();
   }
 
   /**

@@ -1,4 +1,4 @@
-import { Boxes, PlugZap, RefreshCw, RotateCcw, Save } from 'lucide-react';
+import { Boxes, Info, PlugZap, RefreshCw, RotateCcw, Save } from 'lucide-react';
 
 import type { EmbeddingProviderType } from '../../api/embedding';
 import { HostingLocationField } from '../../components/admin/HostingLocationField';
@@ -26,6 +26,7 @@ import {
   SelectValue,
 } from '../../components/ui/select';
 import { Separator } from '../../components/ui/separator';
+import { usePlatformDbFeatures } from '../../hooks/queries/usePlatformDbCapabilities';
 import type { EmbeddingSettingsFormState } from '../../hooks/useEmbeddingSettingsForm';
 
 // VOYAGE 는 팩토리가 거부하던 죽은 선택지라 제거했다(#713).
@@ -99,6 +100,19 @@ export default function EmbeddingSettingsTab({
     cancelPendingSave,
     handleReindexAll,
   } = state;
+  // 플랫폼 DB 가 벡터 검색을 끈 설치본(WD-495). 조회 중·실패면 켜짐이라 PG 설치본은 지금 화면 그대로다.
+  const { vectorSearch } = usePlatformDbFeatures();
+
+  // 벡터 검색이 꺼진 설치본(Tibero)은 서버가 임베딩·재임베딩 경로를 모두 건너뛴다. 동작하는 척하는 설정 폼·재임베딩·
+  // 진행률 대신 안내만 보인다. 폼 상태(state)는 페이지가 소유하므로 여기서 숨겨도 다른 탭의 저장·이탈 가드는 그대로다.
+  // 설정 조회 결과(로딩·실패·미설정 배너)와 무관한 사실이라 그보다 먼저 판정한다.
+  if (!vectorSearch) {
+    return (
+      <InlineBanner variant="info" icon={<Info />}>
+        이 설치본(Tibero)에서는 AI 벡터 검색이 꺼져 있어 임베딩 설정을 쓰지 않습니다.
+      </InlineBanner>
+    );
+  }
 
   if (isLoading) {
     return <div className="py-8 text-center text-muted-foreground text-sm">불러오는 중...</div>;
