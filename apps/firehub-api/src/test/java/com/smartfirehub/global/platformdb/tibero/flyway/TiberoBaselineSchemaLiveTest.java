@@ -65,6 +65,9 @@ class TiberoBaselineSchemaLiveTest {
           "spatial_ref_sys", // PostGIS
           "geography_columns",
           "geometry_columns",
+          // PG V159: 플랫폼 메타가 아니라 PG 데이터 저장소 객체(PYTHON 읽기 슬롯 표식) — Tibero 플랫폼에는
+          // 만들지 않는다(Tibero V159 머리말, 데이터 저장소 쪽은 db/datastore-postgres 가 만든다)
+          "python_read_unconfirmed_slot",
           "flyway_schema_history"); // 양쪽 다 Flyway 가 만든다(대조 대상 아님)
 
   /** PG 는 NOT NULL 인데 Tibero 는 NULL 을 허용하는 열 — ''=NULL 이라 앱이 '' 를 쓰는 열(V155 머리말, 코드 쪽은 WD-491). */
