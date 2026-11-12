@@ -1,0 +1,268 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  파이프라인 트리거(pipeline_trigger) 문장(WD-708) — JooqTriggerRepository 와 같은 의미. 규칙은 MyBatisPlatformConfig javadoc.
+  pipeline_trigger·pipeline·pipeline_step·pipeline_execution 은 테넌트 정책(RLS) 대상이라 tenant_id 를 술어로 쓰지 않는다(DEFAULT 가 채운다).
+  - config·trigger_state 는 PG jsonb / Tibero JSON 열: 읽기는 jsonText, 쓰기는 PlatformSql.jsonValue(PG CAST AS jsonb, Tibero 문자열 그대로).
+  - ->> 추출은 Tibero JSON_VALUE. 상류 id 는 jOOQ 처럼 정수로 바꿔 비교한다(숫자로 못 읽는 값은 두 DB 모두 문장 오류 — 저장 시 검사가 막는다).
+  - 토큰·웹훅 조회: PG 는 jOOQ 술어 그대로, Tibero 는 유일 함수 색인 uq_trigger_api_token_hash·uq_trigger_webhook_id 와 같은 CASE 식
+    (색인을 타고 FH_TENANT 해석 함수와 같은 판정 — Task 1 실측).
+  - created_at·updated_at 은 삽입에서 DB 시계(dbNow)로 명시한다(jOOQ 는 열 DEFAULT now(), Tibero 열 DEFAULT 는 세션 시간대에 기댄다).
+    수정 문장의 updated_at 은 jOOQ 처럼 자바 시각을 바인딩한다. updateState 는 updated_at 을 건드리지 않는다(WD-576).
+  - 감시 목록 정리(스펙 D5): Tibero 에 jsonb_set·#-·JSON_TRANSFORM 이 없어 후보를 잠가 읽고(lockWatchingTriggers) 자바에서 고친 값을
+    updateWatch 로 쓴다. 후보: PG 는 묶음 ② 의 DatasetReferenceMapper.datasetIdsContains(@>), Tibero 는 DATASET_CHANGE 전부(자바가 숫자로 판정).
+-->
+<mapper namespace="com.smartfirehub.pipeline.repository.mybatis.TriggerMapper">
+
+  <resultMap id="triggerRow" type="com.smartfirehub.pipeline.repository.mybatis.TriggerRows$TriggerRow">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="pipeline_id" javaType="java.lang.Long"/>
+      <arg column="trigger_type" javaType="java.lang.String"/>
+      <arg column="name" javaType="java.lang.String"/>
+      <arg column="description" javaType="java.lang.String"/>
+      <arg column="is_enabled" javaType="_boolean"/>
+      <arg column="config" javaType="java.lang.String"/>
+      <arg column="trigger_state" javaType="java.lang.String"/>
+      <arg column="created_by" javaType="java.lang.Long"/>
+      <arg column="created_at" javaType="java.time.LocalDateTime"/>
+      <arg column="updated_at" javaType="java.time.LocalDateTime"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="versionRow" type="com.smartfirehub.pipeline.repository.mybatis.TriggerRows$VersionRow">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="updated_at" javaType="java.time.LocalDateTime"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="watchRow" type="com.smartfirehub.pipeline.repository.mybatis.TriggerRows$WatchRow">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="is_enabled" javaType="_boolean"/>
+      <arg column="config" javaType="java.lang.String"/>
+      <arg column="trigger_state" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="chainEdge" type="com.smartfirehub.pipeline.repository.TriggerRepository$ChainEdgeRow">
+    <constructor>
+      <arg column="id" javaType="_long"/>
+      <arg column="pipeline_id" javaType="_long"/>
+      <arg column="upstream" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="downstreamChain" type="com.smartfirehub.pipeline.dto.PipelineDeleteImpactResponse$DownstreamChainTrigger">
+    <constructor>
+      <arg column="id" javaType="_long"/>
+      <arg column="name" javaType="java.lang.String"/>
+      <arg column="pipeline_id" javaType="_long"/>
+      <arg column="pipeline_name" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <!-- config 의 상류 파이프라인 id(정수 변환) — jOOQ (config->>'upstreamPipelineId')::bigint. -->
+  <sql id="upstreamId" databaseId="postgresql">(pipeline_trigger.config ->> 'upstreamPipelineId')::bigint</sql>
+  <sql id="upstreamId" databaseId="tibero">CAST(JSON_VALUE(pipeline_trigger.config, '$.upstreamPipelineId') AS NUMBER(19))</sql>
+
+  <!-- config 의 상류 파이프라인 id 원문 텍스트. -->
+  <sql id="upstreamText" databaseId="postgresql">(pipeline_trigger.config ->> 'upstreamPipelineId')</sql>
+  <sql id="upstreamText" databaseId="tibero">JSON_VALUE(pipeline_trigger.config, '$.upstreamPipelineId')</sql>
+
+  <sql id="triggerColumns">
+    pipeline_trigger.id, pipeline_trigger.pipeline_id, pipeline_trigger.trigger_type, pipeline_trigger.name,
+    pipeline_trigger.description, pipeline_trigger.is_enabled,
+    <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.jsonText"><property name="col" value="pipeline_trigger.config"/><property name="alias" value="config"/></include>,
+    <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.jsonText"><property name="col" value="pipeline_trigger.trigger_state"/><property name="alias" value="trigger_state"/></include>,
+    pipeline_trigger.created_by, pipeline_trigger.created_at, pipeline_trigger.updated_at
+  </sql>
+
+  <sql id="isEnabledTrue">pipeline_trigger.is_enabled = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/></sql>
+
+  <select id="selectByPipelineId" resultMap="triggerRow">
+    SELECT <include refid="triggerColumns"/>
+      FROM pipeline_trigger
+     WHERE pipeline_trigger.pipeline_id = #{pipelineId}
+     ORDER BY pipeline_trigger.id ASC
+  </select>
+
+  <select id="selectById" resultMap="triggerRow">
+    SELECT <include refid="triggerColumns"/> FROM pipeline_trigger WHERE pipeline_trigger.id = #{id}
+  </select>
+
+  <select id="selectEnabledByType" resultMap="triggerRow">
+    SELECT <include refid="triggerColumns"/>
+      FROM pipeline_trigger
+     WHERE pipeline_trigger.trigger_type = #{triggerType} AND <include refid="isEnabledTrue"/>
+  </select>
+
+  <select id="selectEnabledChainByUpstream" resultMap="triggerRow">
+    SELECT <include refid="triggerColumns"/>
+      FROM pipeline_trigger
+     WHERE pipeline_trigger.trigger_type = 'PIPELINE_CHAIN' AND <include refid="isEnabledTrue"/>
+       AND <include refid="upstreamId"/> = #{upstreamId}
+  </select>
+
+  <select id="selectEnabledChainEdges" resultMap="chainEdge">
+    SELECT pipeline_trigger.id, pipeline_trigger.pipeline_id, <include refid="upstreamText"/> AS upstream
+      FROM pipeline_trigger
+     WHERE pipeline_trigger.trigger_type = 'PIPELINE_CHAIN' AND <include refid="isEnabledTrue"/>
+  </select>
+
+  <!-- is_enabled·trigger_state 는 열 DEFAULT(켜짐, {}). -->
+  <insert id="insert" useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+    INSERT INTO pipeline_trigger (pipeline_id, trigger_type, name, description, config, created_by, created_at, updated_at)
+    VALUES (#{pipelineId}, #{triggerType}, #{name}, #{description,jdbcType=VARCHAR},
+            <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.jsonValue"><property name="param" value="configJson"/></include>, #{createdBy},
+            <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>,
+            <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>)
+  </insert>
+
+  <select id="lockVersionById" resultMap="versionRow">
+    SELECT id, updated_at FROM pipeline_trigger WHERE id = #{id} FOR UPDATE
+  </select>
+
+  <update id="update">
+    UPDATE pipeline_trigger
+       SET updated_at = #{updatedAt}, updated_by = #{updatedBy}
+       <if test="name != null">, name = #{name}</if>
+       <if test="setDescription">, description = #{description,jdbcType=VARCHAR}</if>
+       <if test="isEnabled != null">, is_enabled = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.boolLiteral"><property name="v" value="isEnabled"/></include></if>
+       <if test="configJson != null">, config = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.jsonValue"><property name="param" value="configJson"/></include></if>
+     WHERE id = #{id}
+  </update>
+
+  <delete id="deleteById">
+    DELETE FROM pipeline_trigger WHERE id = #{id}
+  </delete>
+
+  <update id="updateEnabled">
+    UPDATE pipeline_trigger
+       SET is_enabled = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.boolLiteral"><property name="v" value="enabled"/></include>,
+           updated_at = #{updatedAt}
+     WHERE id = #{id}
+  </update>
+
+  <update id="updateState">
+    UPDATE pipeline_trigger SET trigger_state = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.jsonValue"><property name="param" value="stateJson"/></include> WHERE id = #{id}
+  </update>
+
+  <!-- 상류 매칭은 disableByUpstream 과 같은 규칙. 지워질 파이프라인 자신의 트리거는 뺀다. 정렬은 jOOQ 그대로(하류 이름, 트리거 id). -->
+  <select id="selectEnabledDownstreamChain" resultMap="downstreamChain">
+    SELECT pipeline_trigger.id, pipeline_trigger.name, pipeline_trigger.pipeline_id, pipeline.name AS pipeline_name
+      FROM pipeline_trigger
+      JOIN pipeline ON pipeline.id = pipeline_trigger.pipeline_id
+     WHERE pipeline_trigger.trigger_type = 'PIPELINE_CHAIN' AND <include refid="isEnabledTrue"/>
+       AND pipeline_trigger.pipeline_id &lt;&gt; #{upstreamId}
+       AND <include refid="upstreamId"/> = #{upstreamId}
+     ORDER BY pipeline.name, pipeline_trigger.id
+  </select>
+
+  <!-- jOOQ 처럼 켜짐 여부를 거르지 않는다(이미 꺼진 연쇄도 수정 시각을 새로 쓰고 센다). -->
+  <update id="disableByUpstream">
+    UPDATE pipeline_trigger
+       SET is_enabled = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlFalse"/>, updated_at = #{updatedAt}
+     WHERE pipeline_trigger.trigger_type = 'PIPELINE_CHAIN'
+       AND <include refid="upstreamId"/> = #{upstreamId}
+  </update>
+
+  <!-- 감시 목록 정리용 행(watchRow) 열 목록 — lockWatchingTriggers·lockWatchById 가 함께 쓴다. -->
+  <sql id="watchColumns">
+    pipeline_trigger.id, pipeline_trigger.is_enabled,
+    <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.jsonText"><property name="col" value="pipeline_trigger.config"/><property name="alias" value="config"/></include>,
+    <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.jsonText"><property name="col" value="pipeline_trigger.trigger_state"/><property name="alias" value="trigger_state"/></include>
+  </sql>
+
+  <!--
+    감시 목록 정리 후보(스펙 D5). 교착을 피하려고 id 순으로 잠근다. 잠금은 jOOQ 한 문장 UPDATE 가 거는 행 잠금과 같은 모드(lockNoKeyUpdate —
+    PG FOR NO KEY UPDATE, Tibero FOR UPDATE).
+    - PG: jOOQ 판과 같은 포함 판정(@>, 묶음 ② 의 DatasetReferenceMapper.datasetIdsContains). @> 는 스칼라 datasetIds(5) 도 맞히므로
+      jOOQ 의 jsonb_typeof = 'array' 조건은 구현이 자바에서 건다. jsonb 숫자 비교라 101.0 도 101 과 같다.
+    - Tibero: 후보를 JSON 텍스트 비교로 좁히지 않고 DATASET_CHANGE 트리거를 모두 잠가 읽는다 — datasetIdsContains 의 텍스트 비교는
+      101.0·1.01e2 같은 표기를 101 과 다르다고 봐서 jOOQ(jsonb 숫자 같음) 대상인 행을 놓친다. 배열 여부·숫자 같음은 구현의 자바
+      sameNumber 가 판정하고, 원소가 하나도 빠지지 않는 행은 쓰지 않는다(잠금만 트랜잭션 끝까지 쥔다).
+  -->
+  <select id="lockWatchingTriggers" resultMap="watchRow" databaseId="postgresql">
+    SELECT <include refid="watchColumns"/>
+      FROM pipeline_trigger
+     WHERE pipeline_trigger.trigger_type = 'DATASET_CHANGE'
+       AND <include refid="com.smartfirehub.dataset.repository.mybatis.DatasetReferenceMapper.datasetIdsContains"/>
+     ORDER BY pipeline_trigger.id
+       <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.lockNoKeyUpdate"/>
+  </select>
+
+  <select id="lockWatchingTriggers" resultMap="watchRow" databaseId="tibero">
+    SELECT <include refid="watchColumns"/>
+      FROM pipeline_trigger
+     WHERE pipeline_trigger.trigger_type = 'DATASET_CHANGE'
+     ORDER BY pipeline_trigger.id
+       <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.lockNoKeyUpdate"/>
+  </select>
+
+  <update id="updateWatch">
+    UPDATE pipeline_trigger
+       SET config = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.jsonValue"><property name="param" value="configJson"/></include>,
+           trigger_state = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.jsonValue"><property name="param" value="stateJson"/></include>,
+           is_enabled = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.boolLiteral"><property name="v" value="enabled"/></include>,
+           updated_at = #{updatedAt}
+     WHERE id = #{id}
+  </update>
+
+  <!-- 한 트리거를 잠가 상태를 읽는다(clearPollSnapshot) — jOOQ UPDATE 와 같은 잠금 모드. -->
+  <select id="lockWatchById" resultMap="watchRow">
+    SELECT <include refid="watchColumns"/>
+      FROM pipeline_trigger
+     WHERE pipeline_trigger.id = #{id}
+       <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.lockNoKeyUpdate"/>
+  </select>
+
+  <select id="selectOutputDatasetIds" resultType="java.lang.Long">
+    SELECT DISTINCT output_dataset_id FROM pipeline_step
+     WHERE pipeline_id = #{pipelineId} AND output_dataset_id IS NOT NULL
+  </select>
+
+  <select id="selectByTokenHash" resultMap="triggerRow" databaseId="postgresql">
+    SELECT <include refid="triggerColumns"/>
+      FROM pipeline_trigger
+     WHERE pipeline_trigger.trigger_type = 'API' AND (pipeline_trigger.config ->> 'tokenHash') = #{tokenHash}
+  </select>
+
+  <!--
+    Tibero 토큰·웹훅 술어 — 유일 함수 색인 uq_trigger_api_token_hash·uq_trigger_webhook_id 와 같은 CASE 식이라 색인을 탄다(FH_TENANT 함수와 같은
+    판정). selectByTokenHash·selectByWebhookId 와 TriggerTenantResolverMapper 의 재조회가 함께 include 한다 — 바꿀 때 색인(V156.1)과 함께.
+    파라미터 이름은 tokenHash·webhookId 로 박아 두었다.
+  -->
+  <sql id="tiberoTokenHashMatches" databaseId="tibero">(CASE WHEN pipeline_trigger.trigger_type = 'API' THEN JSON_VALUE(pipeline_trigger.config, '$.tokenHash') END) = #{tokenHash}</sql>
+  <sql id="tiberoWebhookIdMatches" databaseId="tibero">(CASE WHEN pipeline_trigger.trigger_type = 'WEBHOOK' THEN JSON_VALUE(pipeline_trigger.config, '$.webhookId') END) = #{webhookId}</sql>
+
+  <select id="selectByTokenHash" resultMap="triggerRow" databaseId="tibero">
+    SELECT <include refid="triggerColumns"/>
+      FROM pipeline_trigger
+     WHERE <include refid="tiberoTokenHashMatches"/>
+  </select>
+
+  <select id="selectByWebhookId" resultMap="triggerRow" databaseId="postgresql">
+    SELECT <include refid="triggerColumns"/>
+      FROM pipeline_trigger
+     WHERE pipeline_trigger.trigger_type = 'WEBHOOK' AND (pipeline_trigger.config ->> 'webhookId') = #{webhookId}
+  </select>
+
+  <select id="selectByWebhookId" resultMap="triggerRow" databaseId="tibero">
+    SELECT <include refid="triggerColumns"/>
+      FROM pipeline_trigger
+     WHERE <include refid="tiberoWebhookIdMatches"/>
+  </select>
+
+  <select id="selectRunningExecutionMarker" resultType="java.lang.Integer">
+    SELECT 1 FROM pipeline_execution
+     WHERE pipeline_id = #{pipelineId} AND status IN ('PENDING', 'RUNNING')
+     <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.limitRows"><property name="n" value="1"/></include>
+  </select>
+
+  <select id="selectPipelineActive" resultType="java.lang.Boolean">
+    SELECT is_active FROM pipeline WHERE id = #{pipelineId}
+  </select>
+
+</mapper>

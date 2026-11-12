@@ -1,5 +1,6 @@
 package com.smartfirehub.pipeline.repository.jooq;
 
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.pipeline.repository.TriggerTenantResolver;
 import com.smartfirehub.pipeline.repository.TriggerTenantResolver.TriggerRef;
 import java.util.Optional;
@@ -29,6 +30,7 @@ import org.springframework.stereotype.Repository;
  * 를 우회하므로 GUC 가 필요 없다. 원자성을 확보할 대상도 없다.
  */
 @Repository
+@ConditionalOnPostgresPlatformDb
 public class JooqTriggerTenantResolver implements TriggerTenantResolver {
 
   private final DSLContext dsl;

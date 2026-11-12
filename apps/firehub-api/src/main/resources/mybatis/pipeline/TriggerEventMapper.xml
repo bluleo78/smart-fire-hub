@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  트리거 발화 이력(trigger_event) 문장(WD-708) — JooqTriggerEventRepository 와 같은 의미. 규칙은 MyBatisPlatformConfig javadoc.
+  trigger_event·pipeline_trigger 는 테넌트 정책(RLS) 대상이라 tenant_id 를 술어로 쓰지 않는다(DEFAULT 가 채운다).
+  detail 은 PG jsonb / Tibero JSON 열 — 읽기는 jsonText, 쓰기는 PlatformSql.jsonValue(PG CAST AS jsonb, Tibero 는 문자열 그대로), 필드 추출은 ->> ↔ JSON_VALUE.
+  created_at 은 삽입에서 DB 시계(dbNow)로 명시한다(Tibero 열 DEFAULT 는 세션 시간대에 기댄다). 정렬은 jOOQ 와 같이 created_at 내림차순 + id 내림차순 —
+  PG now() 는 트랜잭션 시작 시각이라 한 트랜잭션에서 넣은 이벤트의 시각이 같아질 수 있어 id 로 가른다.
+-->
+<mapper namespace="com.smartfirehub.pipeline.repository.mybatis.TriggerEventMapper">
+
+  <resultMap id="latestEvent" type="com.smartfirehub.pipeline.repository.TriggerEventRepository$LatestEvent">
+    <constructor>
+      <arg column="event_type" javaType="java.lang.String"/>
+      <arg column="reason" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="eventRow" type="com.smartfirehub.pipeline.repository.mybatis.TriggerEventRows$EventRow">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="trigger_id" javaType="java.lang.Long"/>
+      <arg column="trigger_name" javaType="java.lang.String"/>
+      <arg column="event_type" javaType="java.lang.String"/>
+      <arg column="execution_id" javaType="java.lang.Long"/>
+      <arg column="detail" javaType="java.lang.String"/>
+      <arg column="created_at" javaType="java.time.LocalDateTime"/>
+    </constructor>
+  </resultMap>
+
+  <!--
+    detail 의 문자열 필드 하나(속성 key 는 XML 에 박힌 고정 이름). 차이: 값이 객체·배열이거나 Tibero JSON_VALUE 의 반환 길이를 넘으면
+    Tibero 는 NULL 을 돌려주고(기본 NULL ON ERROR), PG ->> 는 그 JSON 텍스트를 돌려준다. 읽는 필드(chainDepth·reason)는 스칼라라 결과가 같다.
+  -->
+  <sql id="detailField" databaseId="postgresql">(te.detail ->> '${key}')</sql>
+  <sql id="detailField" databaseId="tibero">JSON_VALUE(te.detail, '$.${key}')</sql>
+
+  <select id="selectChainDepthRaw" resultType="java.lang.String">
+    SELECT <include refid="detailField"><property name="key" value="chainDepth"/></include>
+      FROM trigger_event te
+      JOIN pipeline_trigger t ON te.trigger_id = t.id
+     WHERE te.pipeline_id = #{pipelineId}
+       AND te.execution_id = #{executionId}
+       AND te.event_type = 'FIRED'
+       AND t.trigger_type = 'PIPELINE_CHAIN'
+     <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.limitRows"><property name="n" value="1"/></include>
+  </select>
+
+  <!-- MISSED 는 발화 결과가 아니라 「놓친 발화를 지금 대신 돈다」는 표시라 직후의 실제 발화 결과와 짝을 이룬다 — 직전 이벤트로 보지 않는다. -->
+  <select id="selectLatest" resultMap="latestEvent">
+    SELECT te.event_type, <include refid="detailField"><property name="key" value="reason"/></include> AS reason
+      FROM trigger_event te
+     WHERE te.trigger_id = #{triggerId} AND te.event_type &lt;&gt; 'MISSED'
+     ORDER BY te.created_at DESC, te.id DESC
+     <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.limitRows"><property name="n" value="1"/></include>
+  </select>
+
+  <insert id="insert">
+    INSERT INTO trigger_event (trigger_id, pipeline_id, execution_id, event_type, detail, created_at)
+    VALUES (#{triggerId}, #{pipelineId}, #{executionId,jdbcType=BIGINT}, #{eventType},
+            <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.jsonValue"><property name="param" value="detailJson"/></include>, <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>)
+  </insert>
+
+  <sql id="eventColumns">
+    te.id, te.trigger_id, t.name AS trigger_name, te.event_type, te.execution_id,
+    <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.jsonText"><property name="col" value="te.detail"/><property name="alias" value="detail"/></include>,
+    te.created_at
+  </sql>
+
+  <select id="selectByPipeline" resultMap="eventRow">
+    SELECT <include refid="eventColumns"/>
+      FROM trigger_event te
+      LEFT JOIN pipeline_trigger t ON te.trigger_id = t.id
+     WHERE te.pipeline_id = #{pipelineId}
+     ORDER BY te.created_at DESC, te.id DESC
+     <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.pageClause"/>
+  </select>
+
+  <select id="selectByTrigger" resultMap="eventRow">
+    SELECT <include refid="eventColumns"/>
+      FROM trigger_event te
+      LEFT JOIN pipeline_trigger t ON te.trigger_id = t.id
+     WHERE te.trigger_id = #{triggerId}
+     ORDER BY te.created_at DESC, te.id DESC
+     <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.pageClause"/>
+  </select>
+
+  <delete id="deleteOlderThan">
+    DELETE FROM trigger_event WHERE created_at &lt; #{cutoff}
+  </delete>
+
+</mapper>

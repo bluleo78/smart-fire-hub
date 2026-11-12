@@ -399,6 +399,195 @@ public interface AccessFixtures {
   long insertGraphIngest(
       long tenantId, long datasetId, int schemaVersion, LocalDateTime ingestedAt);
 
+  // ---- 묶음 ③ Task 8 픽스처(WD-708: AI 추론 캐시·트리거 이벤트·파이프라인) ----
+
+  /**
+   * 파이프라인 실행 한 행(상태 지정, 실행자는 픽스처 사용자, 하트비트·시작 시각 NULL). 트리거 이벤트의 execution_id 용이며 파이프라인을 지우면 FK
+   * CASCADE 로 사라진다. 5 인자판에 맡긴다.
+   */
+  default long createExecution(long pipelineId, String status) {
+    return createExecution(pipelineId, datasetCreator(), status, null, null);
+  }
+
+  /** 픽스처가 만든 이로 쓰는 사용자 id — 처음 부를 때 한 번 만들고 정리 대상에 올린다. */
+  long datasetCreator();
+
+  /**
+   * 트리거 이벤트 한 행을 시각을 정해 소유자 시점으로 직접 넣는다(정렬·기간 삭제 시험용, 저장 TZ 벽시계). pipeline_id 는 트리거 행에서, 테넌트는 파이프라인
+   * 행에서 읽는다. executionId·detailJson 은 null 허용. 파이프라인을 지우면 FK CASCADE 로 사라진다.
+   */
+  long insertTriggerEvent(
+      long triggerId,
+      Long executionId,
+      String eventType,
+      String detailJson,
+      LocalDateTime createdAt);
+
+  /** 그 트리거의 이벤트 생성 시각(소유자 시점, id 오름차순) — 쓰기 문장이 DB 시계로 시각을 쓰는지 확인용. */
+  List<LocalDateTime> triggerEventCreatedAts(long triggerId);
+
+  /** 그 파이프라인의 이벤트 행 수(소유자 시점, 정책 우회). */
+  int countTriggerEvents(long pipelineId);
+
+  /** 트리거의 사용 여부를 직접 바꾼다(소유자 시점 — 활성 트리거 수 시험용). */
+  void setTriggerEnabled(long triggerId, boolean enabled);
+
+  /** 파이프라인 수정 시각을 직접 바꾼다(소유자 시점, null 이면 NULL — 수정 시각이 빈 옛 행 재현용). */
+  void setPipelineUpdatedAt(long pipelineId, LocalDateTime updatedAt);
+
+  /** 그 테넌트로 저장된 AI 추론 캐시 행 수(소유자 시점, 정책 우회) — 같은 키 두 번이 한 행이고 테넌트 DEFAULT 가 채워졌는지 확인용. */
+  int countAiInferenceCache(long tenantId, String rowHash, String promptVersion);
+
+  /** 그 테넌트의 AI 추론 캐시 행 created_at(소유자 시점, 저장 TZ 벽시계). 행이 없으면 null. */
+  LocalDateTime aiInferenceCacheCreatedAt(long tenantId, String rowHash, String promptVersion);
+
+  // ---- 묶음 ③ Task 9 픽스처(WD-708: API 연결·데이터셋 매핑) ----
+
+  /** API 연결 한 행의 저장값(소유자 시점) — 리포지토리를 거치지 않고 실제 행을 본다. 시각은 저장 TZ 벽시계. */
+  record ApiConnectionStored(
+      String baseUrl,
+      String healthCheckPath,
+      String lastStatus,
+      Long lastLatencyMs,
+      String lastErrorMessage,
+      String authConfig,
+      LocalDateTime createdAt,
+      LocalDateTime updatedAt,
+      LocalDateTime lastCheckedAt) {}
+
+  /** API 연결 저장 행(소유자 시점, 정책 우회). 행이 없으면 null. */
+  ApiConnectionStored apiConnectionStored(long id);
+
+  /** API 연결의 수정 시각을 직접 바꾼다(소유자 시점, 저장 TZ 벽시계 — 갱신이 시각을 새로 쓰는지 보려고). */
+  void setApiConnectionUpdatedAt(long id, LocalDateTime at);
+
+  /**
+   * API_CALL 스텝 하나(api_connection_id 로 연결을 참조, 테넌트는 파이프라인 행에서 읽는다). 파이프라인을 지우면 FK CASCADE 로 함께
+   * 사라진다. 연결 삭제 전에 파이프라인이 먼저 지워지도록 정리 순서가 맞춰져 있다.
+   */
+  long createApiCallStep(long pipelineId, String name, long apiConnectionId);
+
+  /** dataset_mapping 한 행의 저장값(소유자 시점). updatedAt 은 UTC 순간. */
+  record DatasetMappingStored(
+      long ontologyId, String status, Long updatedBy, java.time.Instant updatedAt) {}
+
+  /** 그 테넌트·데이터셋의 dataset_mapping 저장 행(소유자 시점, 정책 우회) — 업서트가 한 행만 남겼는지·값 확인용. */
+  List<DatasetMappingStored> datasetMappingRows(long tenantId, long datasetId);
+
+  /** dataset_mapping 의 updated_at 을 지정 순간으로 되돌린다(소유자 시점 — 갱신이 시각을 새로 쓰는지 보려고). */
+  void setDatasetMappingUpdatedAt(long tenantId, long datasetId, java.time.Instant at);
+
+  // ---- 묶음 ③ Task 10 픽스처(WD-708: 파이프라인 스텝) ----
+
+  /** 스텝 생성 시각(소유자 시점, 저장 TZ 벽시계) — 저장 문장이 DB 시계로 시각을 쓰는지·수정이 유지하는지 확인용. */
+  LocalDateTime stepCreatedAt(long stepId);
+
+  // ---- 묶음 ③ Task 11 픽스처(WD-708: 파이프라인 실행) ----
+
+  /** setExecutionField 가 받는 열 — 열 이름을 SQL 에 끼워 넣으므로 허용 목록으로 막는다(PG·Tibero 픽스처 공용). */
+  static String executionField(String column) {
+    if (!java.util.Set.of(
+            "created_at",
+            "started_at",
+            "completed_at",
+            "cancel_requested_at",
+            "cancel_requested_by",
+            "status")
+        .contains(column)) {
+      throw new IllegalArgumentException("허용하지 않는 실행 열: " + column);
+    }
+    return column;
+  }
+
+  /**
+   * 하트비트·시작 시각을 정한 파이프라인 실행 한 행(실행자는 executedBy, 테넌트는 파이프라인 행에서 읽는다, 저장 TZ 벽시계). 시각은 null 허용.
+   * 파이프라인을 지우면 FK CASCADE 로 사라진다.
+   */
+  long createExecution(
+      long pipelineId,
+      long executedBy,
+      String status,
+      LocalDateTime heartbeatAt,
+      LocalDateTime startedAt);
+
+  /**
+   * 스텝 실행 한 행(stepId·stepName·startedAt·completedAt null 허용, 테넌트는 실행 행에서 읽는다). 실행을 지우면 FK CASCADE.
+   */
+  long createStepExecution(
+      long executionId,
+      Long stepId,
+      String stepName,
+      String status,
+      LocalDateTime startedAt,
+      LocalDateTime completedAt);
+
+  /**
+   * 실행 행의 열 하나를 직접 바꾼다(소유자 시점 — 생성 시각·취소 요청 재현용). 열은 created_at·started_at·completed_at·
+   * cancel_requested_at·cancel_requested_by·status 만 받는다. 시각은 LocalDateTime(저장 TZ 벽시계), null 이면
+   * NULL.
+   */
+  void setExecutionField(long executionId, String column, Object value);
+
+  /** 파이프라인 실행 한 행의 저장값(소유자 시점, 정책 우회). 시각은 저장 TZ 벽시계. */
+  record ExecutionStored(
+      long pipelineId,
+      String status,
+      long executedBy,
+      String triggeredBy,
+      Long triggerId,
+      String errorMessage,
+      LocalDateTime startedAt,
+      LocalDateTime completedAt,
+      LocalDateTime createdAt,
+      LocalDateTime heartbeatAt,
+      LocalDateTime cancelRequestedAt,
+      Long cancelRequestedBy) {}
+
+  /** 실행 저장 행(소유자 시점). 행이 없으면 null. */
+  ExecutionStored executionStored(long executionId);
+
+  /** 스텝 실행 한 행의 저장값(소유자 시점). injectedLastRunAt 은 UTC 순간, 나머지 시각은 저장 TZ 벽시계. */
+  record StepExecutionStored(
+      Long stepId,
+      String stepName,
+      String status,
+      Integer outputRows,
+      String log,
+      String errorMessage,
+      LocalDateTime startedAt,
+      LocalDateTime completedAt,
+      java.time.Instant injectedLastRunAt) {}
+
+  /** 스텝 실행 저장 행(소유자 시점). 행이 없으면 null. */
+  StepExecutionStored stepExecutionStored(long stepExecId);
+
+  /**
+   * pipeline_step_execution UPDATE 가 실패하도록 임시 트리거를 건 채 body 를 실행하고, 끝나면 반드시 지운다(소유자 DDL — 한 트랜잭션
+   * 원자성 시험용). marker 가 있으면 새 error_message 가 그 값일 때, null 이면 새 상태가 SKIPPED 일 때 터진다.
+   */
+  void withFailingStepExecutionUpdate(String marker, Runnable body);
+
+  // ---- 묶음 ③ Task 12 픽스처(WD-708: 트리거) ----
+
+  /** 트리거 실행 상태(trigger_state)를 JSON 문자열 그대로 직접 바꾼다(소유자 시점 — 폴러가 남긴 스냅숏 재현용). */
+  void setTriggerState(long triggerId, String stateJson);
+
+  /** 트리거 수정 시각을 직접 바꾼다(소유자 시점, 저장 TZ 벽시계, null 이면 NULL — 수정 시각 유지·갱신 판정과 빈 옛 행 재현용). */
+  void setTriggerUpdatedAt(long triggerId, LocalDateTime updatedAt);
+
+  /** 트리거 한 행의 저장값(소유자 시점). JSON 열은 텍스트 그대로(시험이 파싱해 비교), 시각은 저장 TZ 벽시계. */
+  record TriggerStored(
+      String configJson,
+      String stateJson,
+      boolean enabled,
+      String description,
+      Long updatedBy,
+      LocalDateTime createdAt,
+      LocalDateTime updatedAt) {}
+
+  /** 트리거 저장 행(소유자 시점, 정책 우회 — 다른 테넌트 행이 바뀌지 않았는지 볼 때 쓴다). 행이 없으면 null. */
+  TriggerStored triggerStored(long triggerId);
+
   /** 만든 행을 모두 지운다. */
   void cleanup();
 }

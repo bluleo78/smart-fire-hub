@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  파이프라인(pipeline) 문장(WD-708) — JooqPipelineRepository 와 같은 의미. 규칙은 MyBatisPlatformConfig javadoc.
+  pipeline·pipeline_step·pipeline_trigger 는 테넌트 정책(RLS) 대상이라 tenant_id 를 술어로 쓰지 않는다(DEFAULT 가 채운다).
+  사용자 이름 조인("user" 는 PG 소문자 따옴표, Tibero 따옴표 대문자)은 jOOQ 처럼 테넌트 조건 없이 id 로만 잇는다.
+  created_at·updated_at 은 삽입에서 DB 시계(dbNow)로 명시한다(jOOQ 는 열 DEFAULT 가 둘 다 채운다)(Tibero 열 DEFAULT 는 세션 시간대에 기댄다). is_active 는 불리언 리터럴(PG TRUE / Tibero 1).
+  RETURNING 대신 생성 키(useGeneratedKeys) + 쓴 뒤 재조회.
+-->
+<mapper namespace="com.smartfirehub.pipeline.repository.mybatis.PipelineMapper">
+
+  <!-- PipelineRow 는 record(기본형 boolean·int 포함)라 생성자 인자 타입을 기본형으로 밝힌다. -->
+  <resultMap id="pipelineRow" type="com.smartfirehub.pipeline.repository.mybatis.PipelineRows$PipelineRow">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="name" javaType="java.lang.String"/>
+      <arg column="description" javaType="java.lang.String"/>
+      <arg column="is_active" javaType="_boolean"/>
+      <arg column="created_by" javaType="java.lang.Long"/>
+      <arg column="created_at" javaType="java.time.LocalDateTime"/>
+      <arg column="step_count" javaType="_int"/>
+      <arg column="trigger_count" javaType="_int"/>
+      <arg column="user_name" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="lockedPipeline" type="com.smartfirehub.pipeline.repository.PipelineRepository$LockedPipeline">
+    <constructor>
+      <arg column="name" javaType="java.lang.String"/>
+      <arg column="updated_at" javaType="java.time.LocalDateTime"/>
+    </constructor>
+  </resultMap>
+
+  <!-- 스텝 수·활성 트리거 수는 상관 서브쿼리(jOOQ 와 같은 패턴). -->
+  <sql id="pipelineColumns">
+    p.id, p.name, p.description, p.is_active, p.created_by, p.created_at,
+    (SELECT COUNT(*) FROM pipeline_step s WHERE s.pipeline_id = p.id) AS step_count,
+    (SELECT COUNT(*) FROM pipeline_trigger pt
+      WHERE pt.pipeline_id = p.id AND pt.is_enabled = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>) AS trigger_count,
+    u.name AS user_name
+  </sql>
+
+  <sql id="pipelineFrom">
+    FROM pipeline p
+    LEFT JOIN <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.userTable"/> u ON p.created_by = u.id
+  </sql>
+
+  <select id="selectPage" resultMap="pipelineRow">
+    SELECT <include refid="pipelineColumns"/>
+    <include refid="pipelineFrom"/>
+    ORDER BY p.id DESC
+    <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.pageClause"/>
+  </select>
+
+  <select id="count" resultType="long">
+    SELECT COUNT(*) FROM pipeline
+  </select>
+
+  <select id="selectById" resultMap="pipelineRow">
+    SELECT <include refid="pipelineColumns"/>
+    <include refid="pipelineFrom"/>
+    WHERE p.id = #{id}
+  </select>
+
+  <insert id="insert" useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+    INSERT INTO pipeline (name, description, is_active, created_by, created_at, updated_at)
+    VALUES (#{name}, #{description,jdbcType=VARCHAR},
+            <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>,
+            #{createdBy}, <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>,
+            <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>)
+  </insert>
+
+  <update id="update">
+    UPDATE pipeline
+       SET name = #{name},
+           description = #{description,jdbcType=VARCHAR},
+           updated_at = #{updatedAt},
+           updated_by = #{updatedBy,jdbcType=BIGINT}
+           <if test="isActive != null">, is_active = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.boolLiteral"><property name="v" value="isActive"/></include></if>
+     WHERE id = #{id}
+  </update>
+
+  <delete id="deleteById">
+    DELETE FROM pipeline WHERE id = #{id}
+  </delete>
+
+  <select id="countByName" resultType="int">
+    SELECT COUNT(*) FROM pipeline WHERE name = #{name}
+  </select>
+
+  <select id="countById" resultType="int">
+    SELECT COUNT(*) FROM pipeline WHERE id = #{id}
+  </select>
+
+  <select id="selectExistingIds" resultType="java.lang.Long">
+    SELECT p.id FROM pipeline p
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="p.id"/></include>
+  </select>
+
+  <select id="selectName" resultType="java.lang.String">
+    SELECT name FROM pipeline WHERE id = #{id}
+  </select>
+
+  <select id="selectCreatedBy" resultType="java.lang.Long">
+    SELECT created_by FROM pipeline WHERE id = #{id}
+  </select>
+
+  <select id="selectUpdatedAt" resultType="java.time.LocalDateTime">
+    SELECT updated_at FROM pipeline WHERE id = #{id}
+  </select>
+
+  <select id="selectUpdatedBy" resultType="java.lang.Long">
+    SELECT updated_by FROM pipeline WHERE id = #{id}
+  </select>
+
+  <!-- jOOQ forUpdate() 와 같은 FOR UPDATE — 두 DB 같은 문장. 삭제·실행 생성 경쟁(WD-437)의 판정 전 잠금이다. -->
+  <select id="selectForUpdate" resultMap="lockedPipeline">
+    SELECT name, updated_at FROM pipeline WHERE id = #{id} FOR UPDATE
+  </select>
+
+</mapper>

@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  데이터셋 매핑(dataset_mapping) 문장(WD-708) — JooqMappingRepository 와 같은 의미.
+  dataset_mapping 은 테넌트 정책(RLS) 대상이라 tenant_id 를 INSERT 값·WHERE 술어로 쓰지 않는다(열 DEFAULT 가 채운다).
+  예외 없음 — dataset 조인도 정책 대상이다.
+
+  spec 은 PG jsonb / Tibero JSON 열 — 읽기는 jsonText, 쓰기는 PlatformSql.jsonValue(PG CAST AS jsonb, Tibero 는 문자열 그대로).
+  upsert: PG 는 ON CONFLICT (tenant_id, dataset_id) DO UPDATE — 유일 색인(V101)과 맞춘 충돌 대상일 뿐 값·술어가 아니다. Tibero 는 MERGE ON dataset_id
+  (정책이 다른 테넌트 행을 대상에서 거르므로 tenant_id 를 MERGE 키에 쓰지 않는다). 소스는 DUAL 한 행, 소스 열을 uid 로 별칭하지 않는다(-8006).
+  동시 첫 저장의 패자는 중복 키(-10007)를 받으며 구현이 1회 다시 시도한다.
+  updated_at 은 jOOQ 의 currentOffsetDateTime 대신 같은 의미의 DB 시계(dbNow — PG now() 는 timestamptz, Tibero 는 UTC 벽시계).
+  잠금: PG·Tibero 모두 FOR UPDATE. findByOntologyForUpdate 는 ORDER BY dataset_id 와 함께 건다.
+  findLiveByOntology: 가시성 조각(visible)을 dataset 이름 관례(별칭 없음)로 건다. 안 보이는 데이터셋은 이름만 NULL 이고 행은 남는다.
+-->
+<mapper namespace="com.smartfirehub.mapping.repository.mybatis.MappingMapper">
+
+  <resultMap id="storedMapping" type="com.smartfirehub.mapping.repository.StoredMapping">
+    <constructor>
+      <arg column="ontology_id" javaType="_long"/>
+      <arg column="spec" javaType="java.lang.String"/>
+      <arg column="status" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="ontologyMappingRow" type="com.smartfirehub.mapping.repository.MappingRepository$OntologyMappingRow">
+    <constructor>
+      <arg column="dataset_id" javaType="_long"/>
+      <arg column="spec" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="liveMappingRow" type="com.smartfirehub.mapping.repository.MappingRepository$LiveMappingRow">
+    <constructor>
+      <arg column="dataset_id" javaType="_long"/>
+      <arg column="visible_dataset_name" javaType="java.lang.String"/>
+      <arg column="spec" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <sql id="specText">
+    <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.jsonText"><property name="col" value="dm.spec"/><property name="alias" value="spec"/></include>
+  </sql>
+
+  <insert id="upsert" databaseId="postgresql">
+    INSERT INTO dataset_mapping (dataset_id, ontology_id, spec, status, updated_by, updated_at)
+    VALUES (#{datasetId}, #{ontologyId}, <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.jsonValue"><property name="param" value="specJson"/></include>, #{status}, #{userId,jdbcType=BIGINT},
+            <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>)
+    ON CONFLICT (tenant_id, dataset_id) DO UPDATE
+       SET ontology_id = EXCLUDED.ontology_id,
+           spec = EXCLUDED.spec,
+           status = EXCLUDED.status,
+           updated_by = EXCLUDED.updated_by,
+           updated_at = EXCLUDED.updated_at
+  </insert>
+
+  <update id="upsert" databaseId="tibero">
+    MERGE INTO dataset_mapping t
+    USING (SELECT #{datasetId} AS d FROM DUAL) s
+       ON (t.dataset_id = s.d)
+    WHEN MATCHED THEN UPDATE
+       SET t.ontology_id = #{ontologyId},
+           t.spec = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.jsonValue"><property name="param" value="specJson"/></include>,
+           t.status = #{status},
+           t.updated_by = #{userId,jdbcType=BIGINT},
+           t.updated_at = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>
+    WHEN NOT MATCHED THEN INSERT (dataset_id, ontology_id, spec, status, updated_by, updated_at)
+      VALUES (s.d, #{ontologyId}, <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.jsonValue"><property name="param" value="specJson"/></include>, #{status}, #{userId,jdbcType=BIGINT},
+              <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>)
+  </update>
+
+  <select id="selectByDataset" resultMap="storedMapping">
+    SELECT dm.ontology_id, <include refid="specText"/>, dm.status
+      FROM dataset_mapping dm
+     WHERE dm.dataset_id = #{datasetId}
+  </select>
+
+  <select id="selectByDatasetForUpdate" resultMap="storedMapping">
+    SELECT dm.ontology_id, <include refid="specText"/>, dm.status
+      FROM dataset_mapping dm
+     WHERE dm.dataset_id = #{datasetId}
+       FOR UPDATE
+  </select>
+
+  <delete id="deleteByDatasetExceptOntology">
+    DELETE FROM dataset_mapping WHERE dataset_id = #{datasetId} AND ontology_id &lt;&gt; #{keepOntologyId}
+  </delete>
+
+  <update id="updateStatus">
+    UPDATE dataset_mapping
+       SET status = #{status},
+           updated_by = #{userId,jdbcType=BIGINT},
+           updated_at = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>
+     WHERE dataset_id = #{datasetId}
+  </update>
+
+  <select id="selectByOntologyForUpdate" resultMap="ontologyMappingRow">
+    SELECT dm.dataset_id, <include refid="specText"/>
+      FROM dataset_mapping dm
+     WHERE dm.ontology_id = #{ontologyId}
+     ORDER BY dm.dataset_id
+       FOR UPDATE
+  </select>
+
+  <select id="selectLiveByOntology" resultMap="liveMappingRow">
+    SELECT dm.dataset_id,
+           CASE WHEN <include refid="com.smartfirehub.securitylevel.repository.mybatis.DatasetVisibility.visible">
+                  <property name="idCol" value="dataset.id"/>
+                  <property name="levelCol" value="dataset.security_level_id"/>
+                </include> THEN dataset.name END AS visible_dataset_name,
+           <include refid="specText"/>
+      FROM dataset_mapping dm
+      JOIN dataset ON dataset.id = dm.dataset_id
+     WHERE dm.ontology_id = #{ontologyId}
+     ORDER BY dm.dataset_id
+  </select>
+
+  <update id="updateSpec">
+    UPDATE dataset_mapping
+       SET spec = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.jsonValue"><property name="param" value="specJson"/></include>,
+           updated_at = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>
+     WHERE dataset_id = #{datasetId}
+  </update>
+
+</mapper>

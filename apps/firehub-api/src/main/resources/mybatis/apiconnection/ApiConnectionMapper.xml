@@ -1,0 +1,146 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  API 연결(api_connection) 문장(WD-708) — JooqApiConnectionRepository 와 같은 의미. 규칙은 MyBatisPlatformConfig javadoc.
+  api_connection·pipeline·pipeline_step 은 테넌트 정책(RLS) 대상이라 tenant_id 를 술어·INSERT 값으로 쓰지 않는다(DEFAULT 가 채운다).
+  created_at·updated_at 은 삽입에서 DB 시계(dbNow)로 명시한다(Tibero 열 DEFAULT 는 세션 시간대에 기댄다). 수정·점검 시각은 jOOQ 처럼 자바 시각을 바인드한다.
+  정렬: findAll 은 created_at 내림차순 + id 내림차순(같은 트랜잭션에서 넣은 행은 PG now() 가 같아 id 로 가른다).
+  health_check_path 비어 있음 판정: PG 는 IS NOT NULL AND <> '' 이고 Tibero 는 '' 가 NULL 이라 IS NOT NULL 만 쓴다
+  (Tibero 에서 <> '' 를 쓰면 모든 행이 UNKNOWN 이 되어 대상이 사라진다).
+-->
+<mapper namespace="com.smartfirehub.apiconnection.repository.mybatis.ApiConnectionMapper">
+
+  <resultMap id="apiConnectionRow" type="com.smartfirehub.apiconnection.repository.ApiConnectionRepository$ApiConnectionRow">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="name" javaType="java.lang.String"/>
+      <arg column="auth_type" javaType="java.lang.String"/>
+      <arg column="auth_config" javaType="java.lang.String"/>
+      <arg column="description" javaType="java.lang.String"/>
+      <arg column="created_by" javaType="java.lang.Long"/>
+      <arg column="created_at" javaType="java.time.LocalDateTime"/>
+      <arg column="updated_at" javaType="java.time.LocalDateTime"/>
+      <arg column="base_url" javaType="java.lang.String"/>
+      <arg column="health_check_path" javaType="java.lang.String"/>
+      <arg column="last_status" javaType="java.lang.String"/>
+      <arg column="last_checked_at" javaType="java.time.LocalDateTime"/>
+      <arg column="last_latency_ms" javaType="java.lang.Long"/>
+      <arg column="last_error_message" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="healthCheckTarget" type="com.smartfirehub.apiconnection.repository.ApiConnectionRepository$HealthCheckTarget">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="name" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="referencingPipeline" type="com.smartfirehub.apiconnection.repository.ApiConnectionRepository$ReferencingPipeline">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="name" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="previousStatus" type="com.smartfirehub.apiconnection.repository.mybatis.ApiConnectionRows$PreviousStatus">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="last_status" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <sql id="rowColumns">
+    ac.id, ac.name, ac.auth_type, ac.auth_config, ac.description, ac.created_by, ac.created_at, ac.updated_at,
+    ac.base_url, ac.health_check_path, ac.last_status, ac.last_checked_at, ac.last_latency_ms, ac.last_error_message
+  </sql>
+
+  <select id="selectAll" resultMap="apiConnectionRow">
+    SELECT <include refid="rowColumns"/>
+      FROM api_connection ac
+     ORDER BY ac.created_at DESC, ac.id DESC
+  </select>
+
+  <select id="selectById" resultMap="apiConnectionRow">
+    SELECT <include refid="rowColumns"/> FROM api_connection ac WHERE ac.id = #{id}
+  </select>
+
+  <select id="selectByCreatedBy" resultMap="apiConnectionRow">
+    SELECT <include refid="rowColumns"/> FROM api_connection ac WHERE ac.created_by = #{userId}
+  </select>
+
+  <insert id="insert" useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+    INSERT INTO api_connection (name, description, auth_type, auth_config, created_by, base_url, health_check_path, created_at, updated_at)
+    VALUES (#{name}, #{description,jdbcType=VARCHAR}, #{authType}, #{authConfig}, #{createdBy}, #{baseUrl},
+            #{healthCheckPath,jdbcType=VARCHAR},
+            <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>,
+            <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>)
+  </insert>
+
+  <!-- healthCheckPath: null=미변경, ""=명시적 지움(NULL), 그 외=값 설정(#115). -->
+  <update id="update">
+    UPDATE api_connection
+    <set>
+      updated_at = #{updatedAt},
+      <if test="name != null">name = #{name},</if>
+      <if test="description != null">description = #{description},</if>
+      <if test="authType != null">auth_type = #{authType},</if>
+      <if test="authConfig != null">auth_config = #{authConfig},</if>
+      <!-- baseUrl 은 null(미변경)이거나 비어 있지 않다 — 공백은 서비스가 막는다(Tibero 에서 '' 는 NULL 이라 NOT NULL 위반이 된다). -->
+      <if test="baseUrl != null">base_url = #{baseUrl},</if>
+      <if test="healthCheckPath != null">
+        <choose>
+          <when test="healthCheckPath.isEmpty()">health_check_path = NULL,</when>
+          <otherwise>health_check_path = #{healthCheckPath},</otherwise>
+        </choose>
+      </if>
+    </set>
+    WHERE id = #{id}
+  </update>
+
+  <!-- jOOQ forUpdate() 와 같은 FOR UPDATE(두 DB 공통). -->
+  <select id="selectPreviousStatusForUpdate" resultMap="previousStatus">
+    SELECT ac.id, ac.last_status FROM api_connection ac WHERE ac.id = #{id} FOR UPDATE
+  </select>
+
+  <update id="updateHealth">
+    UPDATE api_connection
+       SET last_status = #{status},
+           last_checked_at = #{checkedAt},
+           last_latency_ms = #{latencyMs,jdbcType=BIGINT},
+           last_error_message = #{errorMessage,jdbcType=VARCHAR}
+     WHERE id = #{id}
+  </update>
+
+  <select id="selectHealthCheckable" resultMap="healthCheckTarget" databaseId="postgresql">
+    SELECT ac.id, ac.name FROM api_connection ac
+     WHERE ac.health_check_path IS NOT NULL AND ac.health_check_path &lt;&gt; ''
+  </select>
+
+  <select id="selectHealthCheckable" resultMap="healthCheckTarget" databaseId="tibero">
+    SELECT ac.id, ac.name FROM api_connection ac WHERE ac.health_check_path IS NOT NULL
+  </select>
+
+  <select id="countByName" resultType="java.lang.Long">
+    SELECT COUNT(*) FROM api_connection ac WHERE ac.name = #{name}
+  </select>
+
+  <select id="countByNameExcludingId" resultType="java.lang.Long">
+    SELECT COUNT(*) FROM api_connection ac WHERE ac.name = #{name} AND ac.id &lt;&gt; #{excludeId}
+  </select>
+
+  <select id="countById" resultType="java.lang.Long">
+    SELECT COUNT(*) FROM api_connection ac WHERE ac.id = #{id}
+  </select>
+
+  <delete id="deleteById">
+    DELETE FROM api_connection WHERE id = #{id}
+  </delete>
+
+  <select id="selectReferencingPipelines" resultMap="referencingPipeline">
+    SELECT DISTINCT p.id, p.name
+      FROM pipeline p
+     WHERE p.id IN (SELECT ps.pipeline_id FROM pipeline_step ps WHERE ps.api_connection_id = #{apiConnectionId})
+  </select>
+
+</mapper>

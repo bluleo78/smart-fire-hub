@@ -6,6 +6,7 @@ import static org.jooq.impl.DSL.name;
 import static org.jooq.impl.DSL.table;
 import static org.jooq.impl.DSL.when;
 
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.mapping.repository.MappingRepository;
 import com.smartfirehub.mapping.repository.StoredMapping;
 import com.smartfirehub.ontology.repository.GraphOntologySourceRepository;
@@ -25,6 +26,7 @@ import org.springframework.transaction.annotation.Transactional;
 /** MappingRepository 의 jOOQ(PostgreSQL) 구현 — WD-485. */
 // 데이터셋 매핑 문서 저장/조회 — OntologyRepository와 동일 plain-SQL DSL(codegen 비의존).
 @Repository
+@ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
 // RLS GUC 는 트랜잭션 시작 시점에만 주입되는데 호출자 MappingService.get 은 트랜잭션 경계를 만들지
 // 않는다. 여기서 열지 않으면 조회가 조용히 0행 — save/activate 는 서비스 트랜잭션이라 쓰기만 성공하고

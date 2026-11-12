@@ -101,7 +101,7 @@ PG는 jOOQ 구현을 그대로 쓰고, Tibero용 MyBatis 구현(`repository/myba
   - `PlatformRepositoryPairTest` 는 jOOQ `@Repository` 가 구현하는 플랫폼 리포지토리 인터페이스마다 `@PlatformMyBatisRepository` 구현이 있는지 본다. 없으면 `PENDING`(인터페이스 → 묶음 번호)에 있어야 한다.
   - `PENDING` 에 있는데 짝이 생기면 실패한다. 그래서 목록이 줄어들 수밖에 없다.
   - 짝이 있는 jOOQ 구현에 `@ConditionalOnPostgresPlatformDb` 가 없어도 실패한다.
-  - 묶음 ① 뒤에는 ②~⑦ 항목만 남았고, 묶음 ②·⑦(WD-707·712) 뒤에는 ③~⑥ 36개가 남는다.
+  - 묶음 ① 뒤에는 ②~⑦ 항목만 남았고, 묶음 ②·⑦(WD-707·712) 뒤에는 ③~⑥ 36개가 남는다. 묶음 ③·⑥(WD-708·711) 뒤에는 ④·⑤ 18개가 남는다.
 - **Tibero 계약 테스트 하네스.**
   - 운영과 같은 두 계정 구조다(결정 7). 소유자 계정이 Flyway 를 적용하고 픽스처·정리를 맡는다. 리포지토리는 런타임 계정 풀(`CURRENT_SCHEMA=<소유자>`) 위에서 `TenantAwareTransactionManager` + `TiberoPlatformTenantSession` 으로 돈다.
   - 그래서 Tibero 계약 테스트도 DBMS_RLS 를 거친다. 소유자 계정은 정책 함수가 거르지 않으므로, 소유자로 돌리면 테넌트 차단 시험이 아무것도 보지 못한 채 통과한다.
@@ -127,6 +127,18 @@ PG는 jOOQ 구현을 그대로 쓰고, Tibero용 MyBatis 구현(`repository/myba
 - **중복 키.** MERGE 중복 키는 사이트마다 1회 재시도가 기본이다. 임대(`EmbeddingReembedState`·`SearchIndexState.createIfAbsent`)는 중복 키를 "이미 있음/획득 실패"로 본다 — 대기 쪽은 승자 커밋 뒤에야 실패하므로 재시도해도 결과가 같다.
 - **IDENTITY 다건 삽입.** Tibero `INSERT ALL` 은 IDENTITY 를 문장당 한 번만 매겨 중복 키가 난다. 다건 삽입은 행마다 INSERT 한다.
 - **묶음 ⑥ 인계.** 데이터셋 가시성 SQL 일부는 아직 jOOQ `DatasetAccessRepository` 가 만든 문자열을 끼우고, AI 정책 허용 규칙은 `securitylevel/DatasetVisibility.xml` 조각 하나로 MyBatis 에 따로 있다. 묶음 ⑥ 이 `DatasetAccessRepository`·`EmbeddingAiPolicyRepository`·`SecurityLevelRepository` 를 옮길 때 합친다.
+
+**묶음 ③·⑥ 에서 더한 규칙(WD-708·WD-711)**:
+
+- **가시성은 SQL 문자열 대신 값으로 넘긴다.** 스키마 조회(`findSchemaMetas`·`getSchemaInfo`)는 jOOQ 가 렌더한 가시성 문자열 대신 `DatasetVisibility` 를 받는다. jOOQ 는 조건으로, MyBatis 는 `securitylevel/DatasetVisibility.xml` 의 `visible` 조각으로 푼다(`${}` 치환 없음). 남은 문자열 메서드(`visibleSql`·`allowedDatasetSql`)는 Tibero 에서 꺼진 벡터·트라이그램 경로만 쓰므로 MyBatis 구현은 `PlatformFeatureOff` 로 던진다. AI 정책 허용 규칙의 MyBatis 원본은 securitylevel 패키지 한 곳이다(위 「묶음 ⑥ 인계」 완료).
+- **트리거 비인증 해석은 재조회한다.** Tibero `FH_TENANT.resolve_trigger_tenant_by_*` 는 테넌트 id 만 준다. `MyBatisTriggerTenantResolver` 는 새 마이그레이션 없이, 얻은 테넌트로 `REQUIRES_NEW` 트랜잭션(TransactionTemplate)을 열고 `PlatformTenantSession.applyToCurrentTransaction` 으로 테넌트를 심은 뒤 유일 함수 색인과 같은 CASE 식으로 트리거 id 를 RLS 아래에서 다시 읽는다. 클래스에 `@Transactional` 은 없고 호출자 트랜잭션의 테넌트는 바뀌지 않는다(계약 시험). PG 는 jOOQ 처럼 함수가 (트리거, 테넌트) 를 한 번에 준다.
+- **JSON 배열 원소 제거는 잠근 뒤 자바에서.** `removeWatchedDataset`·`clearPollSnapshot` 은 후보를 `FOR UPDATE` 로 id 순으로 잠가 읽고(포함 판정은 묶음 ② 의 JSON_TABLE 조각), Jackson 으로 jOOQ SQL 과 같은 의미(숫자 원소만 제거, 스냅숏 키 정리, `is_enabled AND 남은 원소`)로 고친 행만 쓴다(위 「JSON 배열 포함」 인계 완료).
+- **지연 제약이 없다 → 맞바꿈은 CASE 한 문장.** Tibero 는 `SET CONSTRAINT(S) … DEFERRED` 가 실패하고(-7001) 두 문장 맞바꿈은 중복 키(-10007)다. 등급 순위 맞바꿈(`updateRanks`)은 두 DB 모두 `UPDATE … SET rank = CASE id WHEN … END WHERE id IN (…)` 한 문장이다(IN 은 쪼갤 수 없어 등급 수가 1000 을 넘으면 Tibero 에서 실패 — 테넌트당 등급은 몇 개뿐).
+- **CASE 식 유일 색인은 같은 식으로 맞춘다.** 접근 허용(사용자 XOR 역할)·트리거 토큰/웹훅처럼 CASE 식 유일 색인이 걸린 열은 조회 WHERE 와 MERGE `ON` 에 색인과 똑같은 식을 쓴다(색인을 타고 판정이 같다). 동시 삽입의 패자는 -10007 을 받고 1회 재시도한다.
+- **다건 「충돌 무시」 삽입은 행마다 MERGE.** 원천에 중복 키가 있는 한 문장 MERGE 는 -4008 로 실패한다. `AiInferenceCache.insertIgnoringConflicts`·`DatasetAccessGrant.copy` 는 두 DB 모두 행마다 한 문장(중복 키 1회 재시도)이다. MERGE 원천 열 별칭에 `uid` 는 쓰지 않는다(-8006).
+- **공용 도우미.** 중복 키 재시도는 `PlatformRetries.onceOnDuplicateKey`/`runOnceOnDuplicateKey`(사이트마다 같은 정책), 생성 키는 `GeneratedId` 상속 홀더, 잠금 모드는 `PlatformSql.xml` 의 `lockNoKeyUpdate`·`lockShare`·`lockKeyShare` 조각(Tibero 는 모두 `FOR UPDATE`)으로 쓴다.
+- **삽입 시각은 `dbNow` 로 명시.** Tibero `TIMESTAMP` 열 DEFAULT(`LOCALTIMESTAMP`)는 세션 시간대에 기대므로 삽입 문장은 `created_at`·`updated_at` 등을 `dbNow`(UTC 벽시계)로 직접 쓴다. jOOQ 가 자바 시각을 쓰는 수정 문장은 같은 자바 값을 바인딩한다.
+- **오류 메시지 자르기 범위.** `TiberoTextLimits.truncateErrorMessage` 는 시스템이 쓰는 실행·스텝 실행 `error_message` 의 동적 쓰기 세 곳에만 건다. `api_connection.last_error_message` 는 두 DB 모두 1000자 한도라 자르지 않는다(같이 실패). 사용자 입력 열과 CLOB 은 자르지 않는다.
 
 ### 2. 마이그레이션 이원화 규칙
 
@@ -335,7 +347,7 @@ SELECT STATUS FROM DBA_OBJECTS
 #### 넘겨받을 일(추적 목록)
 
 **WD-491(MyBatis 구현)**
-- Tibero 의 테넌트 해석 루틴(`FH_TENANT` 의 트리거·슬랙 워크스페이스 해석)은 **테넌트 id 만** 돌려준다. MyBatis 구현은 `TriggerRef.triggerId`·`SlackWorkspaceRef.workspaceId` 를 테넌트를 심은 뒤 RLS 아래에서 다시 읽어 채워야 한다(지금 호출처는 `ref.tenantId()` 만 쓴다).
+- Tibero 의 테넌트 해석 루틴(`FH_TENANT` 의 트리거·슬랙 워크스페이스 해석)은 **테넌트 id 만** 돌려준다. MyBatis 구현은 `TriggerRef.triggerId`·`SlackWorkspaceRef.workspaceId` 를 테넌트를 심은 뒤 RLS 아래에서 다시 읽어 채워야 한다(지금 호출처는 `ref.tenantId()` 만 쓴다). 트리거는 **WD-708 완료**(`MyBatisTriggerTenantResolver`, 위 「묶음 ③·⑥ 에서 더한 규칙」). 슬랙 워크스페이스는 묶음 ④ 에 남는다.
 - ~~`FH_TENANT.set_tenant` 소스 검사(`PlatformDbPgSpecificSourceTest`)를 `src/main/resources` 아래 MyBatis XML 까지 넓힌다.~~ **WD-706 완료.**
 - ~~JobRunr 풀은 런타임 계정으로 붙고 `CURRENT_SCHEMA=<소유자>` 다. 두 계정 모드에서 Oracle 저장소 제공자가 JobRunr 테이블을 제대로 찾는지 확인한다.~~ **WD-706 완료.** 설정 변경 없이 동작한다(`TiberoJobRunrRuntimeAccountLiveTest`).
 
@@ -371,10 +383,10 @@ SELECT STATUS FROM DBA_OBJECTS
 |---|---|---|
 | ① 공통·인증 | auth·user·role·permission·tenant·settings·platform·audit·job | 15 (처음엔 14로 셌다. **WD-706 완료**) |
 | ② 데이터셋 | dataset | 13 (짝 검사 대상 리포지토리 12 + `JooqDatasetMetaReader`. **WD-707 완료**) |
-| ③ 파이프라인 | pipeline·mapping·apiconnection | 9 |
+| ③ 파이프라인 | pipeline·mapping·apiconnection | 9 (**WD-708 완료**) |
 | ④ 알림·선제 메시지 | notification·proactive (PoC 2개 포함) | 13 |
 | ⑤ 분석·대시보드 | analytics·dashboard | 7 |
-| ⑥ 보안 등급·온톨로지·그래프 | securitylevel·ontology·graphreview·graphingest (PoC 1개 포함) | 11 |
+| ⑥ 보안 등급·온톨로지·그래프 | securitylevel·ontology·graphreview·graphingest (PoC 1개 포함) | 11 (**WD-711 완료**) |
 | ⑦ AI·문서·파일 | ai·document·embedding·file | 6 (**WD-712 완료**) |
 
 각 묶음은 "계약 테스트 보강 → MyBatis 구현(+Tibero 전용 문장) → PG CI 계약 테스트 통과 → Tibero 실서버 계약 테스트 통과 → 구현 짝 허용 목록에서 제거" 를 한 단위로 한다. PG 운영 빈은 바뀌지 않는다.

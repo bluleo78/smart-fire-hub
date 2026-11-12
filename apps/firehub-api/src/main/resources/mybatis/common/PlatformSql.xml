@@ -92,6 +92,13 @@
   <sql id="jsonText" databaseId="postgresql">${col}::text AS ${alias}</sql>
   <sql id="jsonText" databaseId="tibero">${col} AS ${alias}</sql>
 
+  <!--
+    JSON 컬럼에 쓸 값(속성 param 은 파라미터 이름, WD-708). PG 는 jsonb 로 CAST, Tibero JSON 열은 문자열 바인드를 그대로 받는다.
+    null 바인드도 되도록 jdbcType=VARCHAR 를 박아 두었다 — CAST 하나 때문에 문장을 databaseId 별로 두 벌 두지 않으려고 이 조각을 쓴다.
+  -->
+  <sql id="jsonValue" databaseId="postgresql">CAST(#{${param},jdbcType=VARCHAR} AS jsonb)</sql>
+  <sql id="jsonValue" databaseId="tibero">#{${param},jdbcType=VARCHAR}</sql>
+
   <!-- 행 수 상한(잠금 없는 조회 전용). 속성 n 은 XML 에 박힌 고정 숫자다. Tibero 는 LIMIT 대신 FETCH FIRST(NULLS LAST 와 함께 쓸 수 있음, 실측). -->
   <sql id="limitRows" databaseId="postgresql">LIMIT ${n}</sql>
   <sql id="limitRows" databaseId="tibero">FETCH FIRST ${n} ROWS ONLY</sql>

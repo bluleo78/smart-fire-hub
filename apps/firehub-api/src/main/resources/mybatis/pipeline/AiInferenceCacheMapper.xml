@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  AI 추론 캐시(ai_inference_cache) 문장(WD-708) — JooqAiInferenceCacheRepository 와 같은 의미. 규칙은 MyBatisPlatformConfig javadoc.
+  tenant_id: 삽입은 DEFAULT 가 채운다(값으로 쓰지 않는다). 조회는 인터페이스가 테넌트를 인자로 받으므로 명시 술어를 그대로 둔다(스펙 D1).
+  created_at 은 DB 시계(dbNow)로 명시한다 — Tibero 열 DEFAULT(LOCALTIMESTAMP)는 세션 시간대에 기댄다.
+  result_json 은 PG jsonb / Tibero JSON 열이다. 읽기는 jsonText, 쓰기는 PlatformSql.jsonValue(PG CAST AS jsonb, Tibero 는 문자열 그대로).
+-->
+<mapper namespace="com.smartfirehub.pipeline.repository.mybatis.AiInferenceCacheMapper">
+
+  <select id="selectResultJson" resultType="java.lang.String">
+    SELECT <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.jsonText"><property name="col" value="result_json"/><property name="alias" value="result_json"/></include>
+      FROM ai_inference_cache
+     WHERE row_hash = #{rowHash} AND prompt_version = #{promptVersion} AND tenant_id = #{tenantId}
+  </select>
+
+  <!-- 한 건 — 다건 문장이 동시 쓰기와 중복 키로 부딪쳤을 때 구현이 그 조각을 한 건씩 다시 넣는 경로다. -->
+  <insert id="insertIgnoring" databaseId="postgresql">
+    INSERT INTO ai_inference_cache (row_hash, prompt_version, result_json, created_at)
+    VALUES (#{rowHash}, #{promptVersion}, <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.jsonValue"><property name="param" value="resultJson"/></include>, <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>)
+    ON CONFLICT DO NOTHING
+  </insert>
+
+  <!-- Tibero: 유일 색인 (tenant_id, row_hash, prompt_version) 중 tenant_id 는 정책(RLS)이 거른 대상 행으로 맞춰진다. 소스 열 별칭에 uid 를 쓰지 않는다. -->
+  <insert id="insertIgnoring" databaseId="tibero">
+    MERGE INTO ai_inference_cache t
+    USING (SELECT #{rowHash} AS rh, #{promptVersion} AS pv FROM DUAL) s
+       ON (t.row_hash = s.rh AND t.prompt_version = s.pv)
+    WHEN NOT MATCHED THEN INSERT (row_hash, prompt_version, result_json, created_at)
+      VALUES (s.rh, s.pv, #{resultJson,jdbcType=VARCHAR}, <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>)
+  </insert>
+
+  <!--
+    여러 건(한 조각 ≤ 500, 해시가 서로 다르다 — 구현이 앞의 것만 남겨 중복을 뺀다). PG 는 jOOQ 판과 같은 다건 INSERT … ON CONFLICT DO NOTHING.
+  -->
+  <insert id="insertIgnoringBatch" databaseId="postgresql">
+    INSERT INTO ai_inference_cache (row_hash, prompt_version, result_json, created_at)
+    VALUES
+    <foreach collection="entries" item="e" separator=",">
+      (#{e.rowHash}, #{promptVersion}, <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.jsonValue"><property name="param" value="e.resultJson"/></include>, <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>)
+    </foreach>
+    ON CONFLICT DO NOTHING
+  </insert>
+
+  <!--
+    Tibero: 다건 「충돌 무시」 INSERT 가 없어 소스를 DUAL UNION ALL 로 펼친 MERGE … WHEN NOT MATCHED 다. 한 MERGE 에 같은 키 소스가 둘이면
+    오류(-4008)라 구현이 해시 중복을 미리 뺀다. 동시 쓰기와 부딪친 중복 키는 구현이 그 조각만 한 건씩 다시 넣는다.
+  -->
+  <insert id="insertIgnoringBatch" databaseId="tibero">
+    MERGE INTO ai_inference_cache t
+    USING (
+      <foreach collection="entries" item="e" separator=" UNION ALL ">
+        SELECT #{e.rowHash,jdbcType=VARCHAR} AS rh, #{e.resultJson,jdbcType=VARCHAR} AS rj FROM DUAL
+      </foreach>
+    ) s
+       ON (t.row_hash = s.rh AND t.prompt_version = #{promptVersion})
+    WHEN NOT MATCHED THEN INSERT (row_hash, prompt_version, result_json, created_at)
+      VALUES (s.rh, #{promptVersion}, s.rj, <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>)
+  </insert>
+
+</mapper>

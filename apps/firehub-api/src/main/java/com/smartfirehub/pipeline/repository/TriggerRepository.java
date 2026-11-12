@@ -12,7 +12,8 @@ import java.util.Optional;
 /**
  * 파이프라인 트리거(pipeline_trigger) 정의 저장·조회 리포지토리.
  *
- * <p>구현은 {@code JooqTriggerRepository}(jOOQ/PostgreSQL) 이다 — WD-485.
+ * <p>구현은 {@code JooqTriggerRepository}(jOOQ/PostgreSQL, WD-485)와 {@code
+ * MyBatisTriggerRepository}(MyBatis — Tibero 설치본, WD-708)다.
  */
 public interface TriggerRepository {
 
@@ -139,6 +140,9 @@ public interface TriggerRepository {
    *
    * <p>읽고-고쳐-쓰기 대신 SQL 한 문장으로 바꾸는 이유: 같은 시각에 폴러가 상태를 쓰거나 다른 감시 대상이 지워져도 서로의 변경을 덮지 않게 하기 위함이다.
    * {@code jsonb_agg} 는 남는 원소가 없으면 NULL 이라 빈 배열로 감싼다. UPDATE 의 SET 식은 모두 바뀌기 전 행 값을 읽는다.
+   *
+   * <p>MyBatis 구현(WD-708, 스펙 D5)은 Tibero 에 {@code jsonb_set}·{@code JSON_TRANSFORM} 이 없어 후보 행을
+   * {@code FOR UPDATE} 로 잠근 뒤 자바에서 같은 의미로 고쳐 쓴다 — 잠금이 한 문장 UPDATE 와 같은 「서로 덮지 않음」을 보장한다.
    *
    * @return 바뀐 트리거 수
    */

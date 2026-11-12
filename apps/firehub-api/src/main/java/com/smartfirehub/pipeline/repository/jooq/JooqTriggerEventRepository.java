@@ -4,6 +4,7 @@ import static org.jooq.impl.DSL.*;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.pipeline.dto.TriggerEventResponse;
 import com.smartfirehub.pipeline.repository.TriggerEventRepository;
 import java.time.LocalDateTime;
@@ -21,6 +22,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 /** TriggerEventRepository 의 jOOQ(PostgreSQL) 구현 — WD-485. */
 @Repository
+@ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
 // 배경 잡(JobRunr/@Async/@Scheduled)은 앰비언트 트랜잭션이 없다. RLS GUC 는 트랜잭션 시작
 // 시점에만 주입되므로, 트랜잭션이 없으면 TenantContext 를 세워도 정책이 전 행을 차단한다.
@@ -145,7 +147,7 @@ public class JooqTriggerEventRepository implements TriggerEventRepository {
         .leftJoin(PIPELINE_TRIGGER)
         .on(TE_TRIGGER_ID.eq(T_ID))
         .where(TE_PIPELINE_ID.eq(pipelineId))
-        .orderBy(TE_CREATED_AT.desc())
+        .orderBy(TE_CREATED_AT.desc(), TE_ID.desc())
         .limit(limit)
         .fetch(
             r ->
@@ -167,7 +169,7 @@ public class JooqTriggerEventRepository implements TriggerEventRepository {
         .leftJoin(PIPELINE_TRIGGER)
         .on(TE_TRIGGER_ID.eq(T_ID))
         .where(TE_TRIGGER_ID.eq(triggerId))
-        .orderBy(TE_CREATED_AT.desc())
+        .orderBy(TE_CREATED_AT.desc(), TE_ID.desc())
         .limit(limit)
         .fetch(
             r ->

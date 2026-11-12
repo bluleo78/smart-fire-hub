@@ -797,7 +797,8 @@ public class TiberoAccessFixtures implements AccessFixtures {
   }
 
   /** 픽스처 데이터셋의 만든 이 — 처음 부를 때 한 번 만들고 정리 대상(users)에 올린다. */
-  private long datasetCreator() {
+  @Override
+  public long datasetCreator() {
     if (datasetCreatorId == null) {
       datasetCreatorId = createUser("dsfx" + UUID.randomUUID().toString().substring(0, 12), null);
     }
@@ -1132,6 +1133,363 @@ public class TiberoAccessFixtures implements AccessFixtures {
   }
 
   @Override
+  public long insertTriggerEvent(
+      long triggerId,
+      Long executionId,
+      String eventType,
+      String detailJson,
+      LocalDateTime createdAt) {
+    Long pipelineId =
+        poc.jdbc()
+            .queryForObject(
+                "SELECT pipeline_id FROM pipeline_trigger WHERE id = ?", Long.class, triggerId);
+    long tenantId = ownerTenantOf("pipeline", pipelineId);
+    return insertWithBinder(
+        "INSERT INTO trigger_event (tenant_id, trigger_id, pipeline_id, execution_id, event_type,"
+            + " detail, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ps -> {
+          ps.setLong(1, tenantId);
+          ps.setLong(2, triggerId);
+          ps.setLong(3, pipelineId);
+          if (executionId == null) ps.setNull(4, Types.BIGINT);
+          else ps.setLong(4, executionId);
+          ps.setString(5, eventType);
+          if (detailJson == null) ps.setNull(6, Types.VARCHAR);
+          else ps.setString(6, detailJson);
+          ps.setTimestamp(7, Timestamp.valueOf(createdAt));
+        });
+  }
+
+  @Override
+  public List<LocalDateTime> triggerEventCreatedAts(long triggerId) {
+    return poc.jdbc()
+        .query(
+            "SELECT created_at FROM trigger_event WHERE trigger_id = ? ORDER BY id",
+            (rs, i) -> rs.getTimestamp(1).toLocalDateTime(),
+            triggerId);
+  }
+
+  @Override
+  public int countTriggerEvents(long pipelineId) {
+    return poc.jdbc()
+        .queryForObject(
+            "SELECT COUNT(*) FROM trigger_event WHERE pipeline_id = ?", Integer.class, pipelineId);
+  }
+
+  @Override
+  public void setTriggerEnabled(long triggerId, boolean enabled) {
+    poc.jdbc()
+        .update(
+            "UPDATE pipeline_trigger SET is_enabled = ? WHERE id = ?", enabled ? 1 : 0, triggerId);
+  }
+
+  @Override
+  public void setTriggerState(long triggerId, String stateJson) {
+    poc.jdbc()
+        .update("UPDATE pipeline_trigger SET trigger_state = ? WHERE id = ?", stateJson, triggerId);
+  }
+
+  @Override
+  public void setTriggerUpdatedAt(long triggerId, LocalDateTime updatedAt) {
+    poc.jdbc()
+        .update(
+            "UPDATE pipeline_trigger SET updated_at = ? WHERE id = ?",
+            updatedAt == null ? null : Timestamp.valueOf(updatedAt),
+            triggerId);
+  }
+
+  @Override
+  public TriggerStored triggerStored(long triggerId) {
+    List<TriggerStored> rows =
+        poc.jdbc()
+            .query(
+                "SELECT config, trigger_state, is_enabled, description, updated_by, created_at,"
+                    + " updated_at FROM pipeline_trigger WHERE id = ?",
+                (rs, i) ->
+                    new TriggerStored(
+                        rs.getString("config"),
+                        rs.getString("trigger_state"),
+                        rs.getInt("is_enabled") == 1,
+                        rs.getString("description"),
+                        rs.getObject("updated_by") == null ? null : rs.getLong("updated_by"),
+                        wall(rs, "created_at"),
+                        wall(rs, "updated_at")),
+                triggerId);
+    return rows.isEmpty() ? null : rows.get(0);
+  }
+
+  @Override
+  public void setPipelineUpdatedAt(long pipelineId, LocalDateTime updatedAt) {
+    poc.jdbc()
+        .update(
+            "UPDATE pipeline SET updated_at = ? WHERE id = ?",
+            updatedAt == null ? null : Timestamp.valueOf(updatedAt),
+            pipelineId);
+  }
+
+  @Override
+  public int countAiInferenceCache(long tenantId, String rowHash, String promptVersion) {
+    return poc.jdbc()
+        .queryForObject(
+            "SELECT COUNT(*) FROM ai_inference_cache WHERE tenant_id = ? AND row_hash = ?"
+                + " AND prompt_version = ?",
+            Integer.class,
+            tenantId,
+            rowHash,
+            promptVersion);
+  }
+
+  @Override
+  public LocalDateTime aiInferenceCacheCreatedAt(
+      long tenantId, String rowHash, String promptVersion) {
+    return poc
+        .jdbc()
+        .query(
+            "SELECT created_at FROM ai_inference_cache WHERE tenant_id = ? AND row_hash = ?"
+                + " AND prompt_version = ?",
+            (rs, i) -> rs.getTimestamp(1).toLocalDateTime(),
+            tenantId,
+            rowHash,
+            promptVersion)
+        .stream()
+        .findFirst()
+        .orElse(null);
+  }
+
+  @Override
+  public ApiConnectionStored apiConnectionStored(long id) {
+    return poc
+        .jdbc()
+        .query(
+            "SELECT base_url, health_check_path, last_status, last_latency_ms, last_error_message,"
+                + " auth_config, created_at, updated_at, last_checked_at FROM api_connection"
+                + " WHERE id = ?",
+            (rs, i) ->
+                new ApiConnectionStored(
+                    rs.getString("base_url"),
+                    rs.getString("health_check_path"),
+                    rs.getString("last_status"),
+                    rs.getObject("last_latency_ms") == null ? null : rs.getLong("last_latency_ms"),
+                    rs.getString("last_error_message"),
+                    rs.getString("auth_config"),
+                    toLocal(rs.getTimestamp("created_at")),
+                    toLocal(rs.getTimestamp("updated_at")),
+                    toLocal(rs.getTimestamp("last_checked_at"))),
+            id)
+        .stream()
+        .findFirst()
+        .orElse(null);
+  }
+
+  private static LocalDateTime toLocal(Timestamp t) {
+    return t == null ? null : t.toLocalDateTime();
+  }
+
+  @Override
+  public void setApiConnectionUpdatedAt(long id, LocalDateTime at) {
+    poc.jdbc()
+        .update("UPDATE api_connection SET updated_at = ? WHERE id = ?", Timestamp.valueOf(at), id);
+  }
+
+  @Override
+  public long createApiCallStep(long pipelineId, String name, long apiConnectionId) {
+    return poc.insertReturningId(
+        "INSERT INTO pipeline_step (tenant_id, pipeline_id, name, script_type, step_order,"
+            + " api_connection_id) VALUES (?, ?, ?, 'API_CALL', 0, ?)",
+        ownerTenantOf("pipeline", pipelineId),
+        pipelineId,
+        name,
+        apiConnectionId);
+  }
+
+  @Override
+  public List<DatasetMappingStored> datasetMappingRows(long tenantId, long datasetId) {
+    return poc.jdbc()
+        .query(
+            "SELECT ontology_id, status, updated_by, updated_at FROM dataset_mapping"
+                + " WHERE tenant_id = ? AND dataset_id = ?",
+            (rs, i) ->
+                new DatasetMappingStored(
+                    rs.getLong("ontology_id"),
+                    rs.getString("status"),
+                    rs.getObject("updated_by") == null ? null : rs.getLong("updated_by"),
+                    rs.getTimestamp("updated_at")
+                        .toLocalDateTime()
+                        .toInstant(java.time.ZoneOffset.UTC)),
+            tenantId,
+            datasetId);
+  }
+
+  @Override
+  public void setDatasetMappingUpdatedAt(long tenantId, long datasetId, java.time.Instant at) {
+    poc.jdbc()
+        .update(
+            "UPDATE dataset_mapping SET updated_at = ? WHERE tenant_id = ? AND dataset_id = ?",
+            Timestamp.valueOf(LocalDateTime.ofInstant(at, java.time.ZoneOffset.UTC)),
+            tenantId,
+            datasetId);
+  }
+
+  @Override
+  public LocalDateTime stepCreatedAt(long stepId) {
+    return poc.jdbc()
+        .queryForObject(
+            "SELECT created_at FROM pipeline_step WHERE id = ?",
+            (rs, i) -> rs.getTimestamp(1).toLocalDateTime(),
+            stepId);
+  }
+
+  // ---- 묶음 ③ Task 11(WD-708: 파이프라인 실행) ----
+
+  /** null 허용 시각 바인드 — 드라이버가 타입 없는 NULL 을 거절하지 않게 TIMESTAMP 로 밝힌다. */
+  private static void setTimestamp(PreparedStatement ps, int i, LocalDateTime t)
+      throws java.sql.SQLException {
+    if (t == null) {
+      ps.setNull(i, Types.TIMESTAMP);
+    } else {
+      ps.setTimestamp(i, Timestamp.valueOf(t));
+    }
+  }
+
+  @Override
+  public long createExecution(
+      long pipelineId,
+      long executedBy,
+      String status,
+      LocalDateTime heartbeatAt,
+      LocalDateTime startedAt) {
+    long tenantId = ownerTenantOf("pipeline", pipelineId);
+    return insertWithBinder(
+        "INSERT INTO pipeline_execution (tenant_id, pipeline_id, status, executed_by, heartbeat_at,"
+            + " started_at) VALUES (?, ?, ?, ?, ?, ?)",
+        ps -> {
+          ps.setLong(1, tenantId);
+          ps.setLong(2, pipelineId);
+          ps.setString(3, status);
+          ps.setLong(4, executedBy);
+          setTimestamp(ps, 5, heartbeatAt);
+          setTimestamp(ps, 6, startedAt);
+        });
+  }
+
+  @Override
+  public long createStepExecution(
+      long executionId,
+      Long stepId,
+      String stepName,
+      String status,
+      LocalDateTime startedAt,
+      LocalDateTime completedAt) {
+    long tenantId = ownerTenantOf("pipeline_execution", executionId);
+    return insertWithBinder(
+        "INSERT INTO pipeline_step_execution (tenant_id, execution_id, step_id, step_name, status,"
+            + " started_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ps -> {
+          ps.setLong(1, tenantId);
+          ps.setLong(2, executionId);
+          if (stepId == null) ps.setNull(3, Types.BIGINT);
+          else ps.setLong(3, stepId);
+          if (stepName == null) ps.setNull(4, Types.VARCHAR);
+          else ps.setString(4, stepName);
+          ps.setString(5, status);
+          setTimestamp(ps, 6, startedAt);
+          setTimestamp(ps, 7, completedAt);
+        });
+  }
+
+  @Override
+  public void setExecutionField(long executionId, String column, Object value) {
+    String col = AccessFixtures.executionField(column);
+    if (value == null) {
+      poc.jdbc()
+          .update("UPDATE pipeline_execution SET " + col + " = NULL WHERE id = ?", executionId);
+      return;
+    }
+    Object bound = value instanceof LocalDateTime t ? Timestamp.valueOf(t) : value;
+    poc.jdbc()
+        .update("UPDATE pipeline_execution SET " + col + " = ? WHERE id = ?", bound, executionId);
+  }
+
+  /** TIMESTAMP 열을 저장된 벽시계 그대로 읽는다(null 허용). */
+  private static LocalDateTime wall(java.sql.ResultSet rs, String column)
+      throws java.sql.SQLException {
+    Timestamp t = rs.getTimestamp(column);
+    return t == null ? null : t.toLocalDateTime();
+  }
+
+  @Override
+  public ExecutionStored executionStored(long executionId) {
+    List<ExecutionStored> rows =
+        poc.jdbc()
+            .query(
+                "SELECT pipeline_id, status, executed_by, triggered_by, trigger_id, error_message,"
+                    + " started_at, completed_at, created_at, heartbeat_at, cancel_requested_at,"
+                    + " cancel_requested_by FROM pipeline_execution WHERE id = ?",
+                (rs, i) ->
+                    new ExecutionStored(
+                        rs.getLong("pipeline_id"),
+                        rs.getString("status"),
+                        rs.getLong("executed_by"),
+                        rs.getString("triggered_by"),
+                        rs.getObject("trigger_id") == null ? null : rs.getLong("trigger_id"),
+                        rs.getString("error_message"),
+                        wall(rs, "started_at"),
+                        wall(rs, "completed_at"),
+                        wall(rs, "created_at"),
+                        wall(rs, "heartbeat_at"),
+                        wall(rs, "cancel_requested_at"),
+                        rs.getObject("cancel_requested_by") == null
+                            ? null
+                            : rs.getLong("cancel_requested_by")),
+                executionId);
+    return rows.isEmpty() ? null : rows.get(0);
+  }
+
+  @Override
+  public StepExecutionStored stepExecutionStored(long stepExecId) {
+    List<StepExecutionStored> rows =
+        poc.jdbc()
+            .query(
+                "SELECT step_id, step_name, status, output_rows, log, error_message, started_at,"
+                    + " completed_at, injected_last_run_at FROM pipeline_step_execution"
+                    + " WHERE id = ?",
+                (rs, i) -> {
+                  // injected_last_run_at 은 UTC 벽시계 TIMESTAMP 다(운영 UtcInstantTypeHandler 와 같은 해석).
+                  LocalDateTime injected = wall(rs, "injected_last_run_at");
+                  return new StepExecutionStored(
+                      rs.getObject("step_id") == null ? null : rs.getLong("step_id"),
+                      rs.getString("step_name"),
+                      rs.getString("status"),
+                      rs.getObject("output_rows") == null ? null : rs.getInt("output_rows"),
+                      rs.getString("log"),
+                      rs.getString("error_message"),
+                      wall(rs, "started_at"),
+                      wall(rs, "completed_at"),
+                      injected == null ? null : injected.toInstant(java.time.ZoneOffset.UTC));
+                },
+                stepExecId);
+    return rows.isEmpty() ? null : rows.get(0);
+  }
+
+  @Override
+  public void withFailingStepExecutionUpdate(String marker, Runnable body) {
+    String cond =
+        marker != null ? "NEW.error_message = '" + marker + "'" : "NEW.status = 'SKIPPED'";
+    // 소유자 계정(= 실행마다 새 스키마)에 임시 트리거를 건다 — 공유 서버의 다른 스키마에는 닿지 않는다. WHEN 절의 NEW 는 콜론 없이 쓴다.
+    poc.jdbc()
+        .execute(
+            "CREATE OR REPLACE TRIGGER wd230_step_boom_trg BEFORE UPDATE ON pipeline_step_execution"
+                + " FOR EACH ROW WHEN ("
+                + cond
+                + ") BEGIN RAISE_APPLICATION_ERROR(-20001, 'wd230 boom'); END;");
+    try {
+      body.run();
+    } finally {
+      poc.jdbc().execute("DROP TRIGGER wd230_step_boom_trg");
+    }
+  }
+
+  @Override
   public void cleanup() {
     for (long t : tenants) {
       // 적재 이력은 테넌트 FK 만 있어(온톨로지 CASCADE 밖) 테넌트 정리 전에 지운다.
@@ -1156,15 +1514,19 @@ public class TiberoAccessFixtures implements AccessFixtures {
       // ai_session 은 사용자 FK 가 CASCADE 가 아니라 사용자보다 먼저 지운다(WD-712).
       poc.jdbc().update("DELETE FROM ai_session WHERE tenant_id = ?", t);
       poc.jdbc().update("DELETE FROM dataset_access_grant WHERE tenant_id = ?", t);
+      poc.jdbc().update("DELETE FROM dataset_mapping WHERE tenant_id = ?", t);
       // 온톨로지 하위(엔티티 타입·속성·관계·데이터셋 연결)는 FK CASCADE 로 함께 사라진다.
       poc.jdbc().update("DELETE FROM ontology WHERE tenant_id = ?", t);
       // 대시보드·저장 쿼리·파이프라인은 사용자(created_by)를 참조하고, 스텝의 output_dataset_id 는 ON DELETE 없는 데이터셋 FK
       // 라 데이터셋보다 먼저 지운다. 위젯·차트·스텝·스텝 입력·트리거는 FK CASCADE 로 함께 사라진다.
       // uploaded_files 는 사용자 FK 가 CASCADE 가 아니라 사용자보다 먼저 지운다(WD-712).
       poc.jdbc().update("DELETE FROM uploaded_files WHERE tenant_id = ?", t);
+      poc.jdbc().update("DELETE FROM ai_inference_cache WHERE tenant_id = ?", t);
       poc.jdbc().update("DELETE FROM dashboard WHERE tenant_id = ?", t);
       poc.jdbc().update("DELETE FROM saved_query WHERE tenant_id = ?", t);
       poc.jdbc().update("DELETE FROM pipeline WHERE tenant_id = ?", t);
+      // API 연결은 파이프라인 스텝이 참조하므로 파이프라인 뒤, 사용자(created_by) 앞에서 지운다(WD-708).
+      poc.jdbc().update("DELETE FROM api_connection WHERE tenant_id = ?", t);
       poc.jdbc().update("DELETE FROM dataset WHERE tenant_id = ?", t);
       poc.jdbc().update("DELETE FROM tenant_settings WHERE tenant_id = ?", t);
       poc.jdbc().update("DELETE FROM embedding_reembed_state WHERE tenant_id = ?", t);

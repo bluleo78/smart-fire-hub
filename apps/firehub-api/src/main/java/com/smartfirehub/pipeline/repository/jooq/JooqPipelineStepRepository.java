@@ -6,6 +6,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.exception.SerializationException;
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.pipeline.dto.PipelineStepRequest;
 import com.smartfirehub.pipeline.dto.PipelineStepResponse;
 import com.smartfirehub.pipeline.dto.StepCursor;
@@ -25,6 +26,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 /** PipelineStepRepository 의 jOOQ(PostgreSQL) 구현 — WD-485. */
 @Repository
+@ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
 @lombok.extern.slf4j.Slf4j
 // 배경 잡(JobRunr/@Async/@Scheduled)은 앰비언트 트랜잭션이 없다. RLS GUC 는 트랜잭션 시작
@@ -105,7 +107,13 @@ public class JooqPipelineStepRepository implements PipelineStepRepository {
   private static Field<Long> resolvedOutputDatasetId() {
     return coalesce(
         PS_OUTPUT_DATASET_ID,
-        field(select(D_ID).from(DATASET).where(D_SOURCE_PIPELINE_STEP_ID.eq(PS_ID)).limit(1)));
+        // 여럿이면 최소 id(결정적) — MyBatis 판의 MIN(id) 와 같은 행.
+        field(
+            select(D_ID)
+                .from(DATASET)
+                .where(D_SOURCE_PIPELINE_STEP_ID.eq(PS_ID))
+                .orderBy(D_ID)
+                .limit(1)));
   }
 
   /**

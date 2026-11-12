@@ -802,7 +802,8 @@ public class PgAccessFixtures implements AccessFixtures {
   }
 
   /** 픽스처 데이터셋의 만든 이 — 처음 부를 때 한 번 만들고 정리 대상(users)에 올린다. */
-  private long datasetCreator() {
+  @Override
+  public long datasetCreator() {
     if (datasetCreatorId == null) {
       datasetCreatorId = createUser("dsfx" + UUID.randomUUID().toString().substring(0, 12), null);
     }
@@ -1090,6 +1091,310 @@ public class PgAccessFixtures implements AccessFixtures {
   }
 
   @Override
+  public long insertTriggerEvent(
+      long triggerId,
+      Long executionId,
+      String eventType,
+      String detailJson,
+      LocalDateTime createdAt) {
+    Long pipelineId =
+        ownerJdbc.queryForObject(
+            "select pipeline_id from pipeline_trigger where id = ?", Long.class, triggerId);
+    return ownerJdbc.queryForObject(
+        "insert into trigger_event (tenant_id, trigger_id, pipeline_id, execution_id, event_type,"
+            + " detail, created_at) values (?, ?, ?, ?, ?, ?::jsonb, ?) returning id",
+        Long.class,
+        ownerTenantOf("pipeline", pipelineId),
+        triggerId,
+        pipelineId,
+        executionId,
+        eventType,
+        detailJson,
+        createdAt);
+  }
+
+  @Override
+  public List<LocalDateTime> triggerEventCreatedAts(long triggerId) {
+    return ownerJdbc.query(
+        "select created_at from trigger_event where trigger_id = ? order by id",
+        (rs, i) -> rs.getObject(1, LocalDateTime.class),
+        triggerId);
+  }
+
+  @Override
+  public int countTriggerEvents(long pipelineId) {
+    return ownerJdbc.queryForObject(
+        "select count(*) from trigger_event where pipeline_id = ?", Integer.class, pipelineId);
+  }
+
+  @Override
+  public void setTriggerEnabled(long triggerId, boolean enabled) {
+    ownerJdbc.update("update pipeline_trigger set is_enabled = ? where id = ?", enabled, triggerId);
+  }
+
+  @Override
+  public void setTriggerState(long triggerId, String stateJson) {
+    ownerJdbc.update(
+        "update pipeline_trigger set trigger_state = ?::jsonb where id = ?", stateJson, triggerId);
+  }
+
+  @Override
+  public void setTriggerUpdatedAt(long triggerId, LocalDateTime updatedAt) {
+    ownerJdbc.update(
+        "update pipeline_trigger set updated_at = ? where id = ?", updatedAt, triggerId);
+  }
+
+  @Override
+  public TriggerStored triggerStored(long triggerId) {
+    List<TriggerStored> rows =
+        ownerJdbc.query(
+            "select config::text as config, trigger_state::text as state, is_enabled, description,"
+                + " updated_by, created_at, updated_at from pipeline_trigger where id = ?",
+            (rs, i) ->
+                new TriggerStored(
+                    rs.getString("config"),
+                    rs.getString("state"),
+                    rs.getBoolean("is_enabled"),
+                    rs.getString("description"),
+                    rs.getObject("updated_by", Long.class),
+                    rs.getObject("created_at", LocalDateTime.class),
+                    rs.getObject("updated_at", LocalDateTime.class)),
+            triggerId);
+    return rows.isEmpty() ? null : rows.get(0);
+  }
+
+  @Override
+  public void setPipelineUpdatedAt(long pipelineId, LocalDateTime updatedAt) {
+    ownerJdbc.update("update pipeline set updated_at = ? where id = ?", updatedAt, pipelineId);
+  }
+
+  @Override
+  public int countAiInferenceCache(long tenantId, String rowHash, String promptVersion) {
+    return ownerJdbc.queryForObject(
+        "select count(*) from ai_inference_cache where tenant_id = ? and row_hash = ?"
+            + " and prompt_version = ?",
+        Integer.class,
+        tenantId,
+        rowHash,
+        promptVersion);
+  }
+
+  @Override
+  public LocalDateTime aiInferenceCacheCreatedAt(
+      long tenantId, String rowHash, String promptVersion) {
+    return ownerJdbc
+        .query(
+            "select created_at from ai_inference_cache where tenant_id = ? and row_hash = ?"
+                + " and prompt_version = ?",
+            (rs, i) -> rs.getObject(1, LocalDateTime.class),
+            tenantId,
+            rowHash,
+            promptVersion)
+        .stream()
+        .findFirst()
+        .orElse(null);
+  }
+
+  @Override
+  public ApiConnectionStored apiConnectionStored(long id) {
+    return ownerJdbc
+        .query(
+            "select base_url, health_check_path, last_status, last_latency_ms, last_error_message,"
+                + " auth_config, created_at, updated_at, last_checked_at from api_connection"
+                + " where id = ?",
+            (rs, i) ->
+                new ApiConnectionStored(
+                    rs.getString("base_url"),
+                    rs.getString("health_check_path"),
+                    rs.getString("last_status"),
+                    rs.getObject("last_latency_ms") == null ? null : rs.getLong("last_latency_ms"),
+                    rs.getString("last_error_message"),
+                    rs.getString("auth_config"),
+                    rs.getObject("created_at", LocalDateTime.class),
+                    rs.getObject("updated_at", LocalDateTime.class),
+                    rs.getObject("last_checked_at", LocalDateTime.class)),
+            id)
+        .stream()
+        .findFirst()
+        .orElse(null);
+  }
+
+  @Override
+  public void setApiConnectionUpdatedAt(long id, LocalDateTime at) {
+    ownerJdbc.update("update api_connection set updated_at = ? where id = ?", at, id);
+  }
+
+  @Override
+  public long createApiCallStep(long pipelineId, String name, long apiConnectionId) {
+    return inTenant(
+        ownerTenantOf("pipeline", pipelineId),
+        () ->
+            dsl.fetchOne(
+                    "insert into pipeline_step (pipeline_id, name, script_type, step_order,"
+                        + " api_connection_id) values (?, ?, 'API_CALL', 0, ?) returning id",
+                    pipelineId,
+                    name,
+                    apiConnectionId)
+                .get(0, Long.class));
+  }
+
+  @Override
+  public List<DatasetMappingStored> datasetMappingRows(long tenantId, long datasetId) {
+    return ownerJdbc.query(
+        "select ontology_id, status, updated_by, updated_at from dataset_mapping"
+            + " where tenant_id = ? and dataset_id = ?",
+        (rs, i) ->
+            new DatasetMappingStored(
+                rs.getLong("ontology_id"),
+                rs.getString("status"),
+                rs.getObject("updated_by", Long.class),
+                rs.getObject("updated_at", java.time.OffsetDateTime.class).toInstant()),
+        tenantId,
+        datasetId);
+  }
+
+  @Override
+  public void setDatasetMappingUpdatedAt(long tenantId, long datasetId, java.time.Instant at) {
+    ownerJdbc.update(
+        "update dataset_mapping set updated_at = ? where tenant_id = ? and dataset_id = ?",
+        java.time.OffsetDateTime.ofInstant(at, java.time.ZoneOffset.UTC),
+        tenantId,
+        datasetId);
+  }
+
+  @Override
+  public LocalDateTime stepCreatedAt(long stepId) {
+    return ownerJdbc.queryForObject(
+        "select created_at from pipeline_step where id = ?", LocalDateTime.class, stepId);
+  }
+
+  // ---- 묶음 ③ Task 11(WD-708: 파이프라인 실행) ----
+
+  @Override
+  public long createExecution(
+      long pipelineId,
+      long executedBy,
+      String status,
+      LocalDateTime heartbeatAt,
+      LocalDateTime startedAt) {
+    return ownerJdbc.queryForObject(
+        "insert into pipeline_execution (tenant_id, pipeline_id, status, executed_by, heartbeat_at,"
+            + " started_at) values (?, ?, ?, ?, ?, ?) returning id",
+        Long.class,
+        ownerTenantOf("pipeline", pipelineId),
+        pipelineId,
+        status,
+        executedBy,
+        heartbeatAt,
+        startedAt);
+  }
+
+  @Override
+  public long createStepExecution(
+      long executionId,
+      Long stepId,
+      String stepName,
+      String status,
+      LocalDateTime startedAt,
+      LocalDateTime completedAt) {
+    return ownerJdbc.queryForObject(
+        "insert into pipeline_step_execution (tenant_id, execution_id, step_id, step_name, status,"
+            + " started_at, completed_at) values (?, ?, ?, ?, ?, ?, ?) returning id",
+        Long.class,
+        ownerTenantOf("pipeline_execution", executionId),
+        executionId,
+        stepId,
+        stepName,
+        status,
+        startedAt,
+        completedAt);
+  }
+
+  @Override
+  public void setExecutionField(long executionId, String column, Object value) {
+    String col = AccessFixtures.executionField(column);
+    if (value == null) {
+      ownerJdbc.update(
+          "update pipeline_execution set " + col + " = null where id = ?", executionId);
+      return;
+    }
+    ownerJdbc.update(
+        "update pipeline_execution set " + col + " = ? where id = ?", value, executionId);
+  }
+
+  @Override
+  public ExecutionStored executionStored(long executionId) {
+    List<ExecutionStored> rows =
+        ownerJdbc.query(
+            "select pipeline_id, status, executed_by, triggered_by, trigger_id, error_message,"
+                + " started_at, completed_at, created_at, heartbeat_at, cancel_requested_at,"
+                + " cancel_requested_by from pipeline_execution where id = ?",
+            (rs, i) ->
+                new ExecutionStored(
+                    rs.getLong("pipeline_id"),
+                    rs.getString("status"),
+                    rs.getLong("executed_by"),
+                    rs.getString("triggered_by"),
+                    rs.getObject("trigger_id", Long.class),
+                    rs.getString("error_message"),
+                    rs.getObject("started_at", LocalDateTime.class),
+                    rs.getObject("completed_at", LocalDateTime.class),
+                    rs.getObject("created_at", LocalDateTime.class),
+                    rs.getObject("heartbeat_at", LocalDateTime.class),
+                    rs.getObject("cancel_requested_at", LocalDateTime.class),
+                    rs.getObject("cancel_requested_by", Long.class)),
+            executionId);
+    return rows.isEmpty() ? null : rows.get(0);
+  }
+
+  @Override
+  public StepExecutionStored stepExecutionStored(long stepExecId) {
+    List<StepExecutionStored> rows =
+        ownerJdbc.query(
+            "select step_id, step_name, status, output_rows, log, error_message, started_at,"
+                + " completed_at, injected_last_run_at from pipeline_step_execution where id = ?",
+            (rs, i) -> {
+              java.time.OffsetDateTime injected =
+                  rs.getObject("injected_last_run_at", java.time.OffsetDateTime.class);
+              return new StepExecutionStored(
+                  rs.getObject("step_id", Long.class),
+                  rs.getString("step_name"),
+                  rs.getString("status"),
+                  rs.getObject("output_rows", Integer.class),
+                  rs.getString("log"),
+                  rs.getString("error_message"),
+                  rs.getObject("started_at", LocalDateTime.class),
+                  rs.getObject("completed_at", LocalDateTime.class),
+                  injected == null ? null : injected.toInstant());
+            },
+            stepExecId);
+    return rows.isEmpty() ? null : rows.get(0);
+  }
+
+  @Override
+  public void withFailingStepExecutionUpdate(String marker, Runnable body) {
+    String cond =
+        marker != null ? "NEW.error_message = '" + marker + "'" : "NEW.status = 'SKIPPED'";
+    // DDL(임시 트리거)은 앱 롤에 권한이 없어 플랫폼 DB 소유자 연결로 건다(WD-494 — 스키마 소유자 풀은 분리 모드에서 데이터 저장소를
+    // 가리킬 수 있어 플랫폼 소유자 풀을 따로 쓴다).
+    JdbcTemplate ddl =
+        new JdbcTemplate(com.smartfirehub.support.PostgresTestContainer.platformOwnerDataSource());
+    ddl.execute(
+        "CREATE OR REPLACE FUNCTION wd230_step_boom() RETURNS trigger AS $$ BEGIN IF "
+            + cond
+            + " THEN RAISE EXCEPTION 'wd230 boom'; END IF; RETURN NEW; END $$ LANGUAGE plpgsql");
+    ddl.execute(
+        "CREATE TRIGGER wd230_step_boom_trg BEFORE UPDATE ON pipeline_step_execution"
+            + " FOR EACH ROW EXECUTE FUNCTION wd230_step_boom()");
+    try {
+      body.run();
+    } finally {
+      ddl.execute("DROP TRIGGER IF EXISTS wd230_step_boom_trg ON pipeline_step_execution");
+      ddl.execute("DROP FUNCTION IF EXISTS wd230_step_boom()");
+    }
+  }
+
+  @Override
   public void cleanup() {
     for (long t : tenants) {
       // 적재 이력은 테넌트 FK 만 있어(온톨로지 CASCADE 밖) 테넌트 정리 전에 지운다.
@@ -1117,15 +1422,19 @@ public class PgAccessFixtures implements AccessFixtures {
             // ai_session 은 사용자 FK 가 CASCADE 가 아니라 사용자보다 먼저 지운다(WD-712).
             dsl.execute("delete from ai_session where tenant_id = ?", t);
             dsl.execute("delete from dataset_access_grant where tenant_id = ?", t);
+            dsl.execute("delete from dataset_mapping where tenant_id = ?", t);
             // 온톨로지 하위(엔티티 타입·속성·관계·데이터셋 연결)는 FK CASCADE 로 함께 사라진다.
             dsl.execute("delete from ontology where tenant_id = ?", t);
             // 대시보드·저장 쿼리·파이프라인은 사용자(created_by)를 참조하고, 스텝의 output_dataset_id 는 ON DELETE 없는 데이터셋
             // FK 라 데이터셋보다 먼저 지운다. 위젯·차트·스텝·스텝 입력·트리거는 FK CASCADE 로 함께 사라진다.
             // uploaded_files 는 사용자 FK 가 CASCADE 가 아니라 사용자보다 먼저 지운다(WD-712).
             dsl.execute("delete from uploaded_files where tenant_id = ?", t);
+            dsl.execute("delete from ai_inference_cache where tenant_id = ?", t);
             dsl.execute("delete from dashboard where tenant_id = ?", t);
             dsl.execute("delete from saved_query where tenant_id = ?", t);
             dsl.execute("delete from pipeline where tenant_id = ?", t);
+            // API 연결은 파이프라인 스텝이 참조하므로 파이프라인 뒤, 사용자(created_by) 앞에서 지운다(WD-708).
+            dsl.execute("delete from api_connection where tenant_id = ?", t);
             dsl.execute("delete from dataset where tenant_id = ?", t);
             dsl.execute("delete from tenant_settings where tenant_id = ?", t);
             dsl.execute("delete from embedding_reembed_state where tenant_id = ?", t);

@@ -4,8 +4,9 @@ import java.util.Optional;
 
 /**
  * 비인증 트리거 경로의 테넌트 해석기. 외부 식별자(API 토큰 해시·웹훅 id)에서 (트리거 id, 테넌트 id) 만 얻는다. 구현은 {@code
- * JooqTriggerTenantResolver}(V95 의 RLS 우회 SECURITY DEFINER 함수 호출)다. 얻은 테넌트로 컨텍스트를 세운 뒤의 처리는 전부 RLS
- * 아래에서 돈다.
+ * JooqTriggerTenantResolver}(V95 의 RLS 우회 SECURITY DEFINER 함수 호출)와 {@code
+ * MyBatisTriggerTenantResolver}(Tibero 는 {@code FH_TENANT} 함수로 테넌트를 얻고 RLS 아래에서 트리거 id 를 다시 읽는다 —
+ * WD-708)다. 얻은 테넌트로 컨텍스트를 세운 뒤의 처리는 전부 RLS 아래에서 돈다.
  *
  * <p>우회가 기대는 두 전제(소유자·FORCE RLS 미적용)는 구현 주석에 있고 {@code TriggerTenantResolverTest} 가 카탈로그로 고정한다.
  *

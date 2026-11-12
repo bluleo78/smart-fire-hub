@@ -1,0 +1,292 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  파이프라인 실행(pipeline_execution)·스텝 실행(pipeline_step_execution) 문장(WD-708) — JooqPipelineExecutionRepository 와 같은 의미.
+  두 테이블 모두 테넌트 정책(RLS) 대상이라 tenant_id 를 INSERT 값으로 쓰지 않는다(DEFAULT 가 채운다). 예외: 인터페이스가 테넌트를 인자로 받는
+  selectStale·selectRunningMarker 은 jOOQ 처럼 tenant_id 조건을 명시한다(정책과 이중 방어). "user"·pipeline·pipeline_trigger·pipeline_step 조인은
+  실행 행의 FK 를 따라가므로 같은 테넌트 행만 닿는다.
+
+  Tibero 에는 RETURNING 이 없다 — INSERT 는 생성 키(useGeneratedKeys), 상태 조건부 UPDATE 는 영향 행 수로 승자를 가리고 필요한 값은
+  같은 트랜잭션에서 다시 읽는다(구현 쪽). 시각은 jOOQ 와 같은 자바 값을 바인딩한다(하트비트·stale 임계값·취소 시각 — 자바 UTC). created_at 만
+  INSERT 에서 DB 시계(dbNow)로 명시한다(Tibero 열 DEFAULT LOCALTIMESTAMP 는 세션 시간대에 기댄다).
+  log 는 PG text / Tibero CLOB(문자열 바인드·getString, 한도 없음). error_message 는 Tibero VARCHAR2(65532) 바이트 — 구현이 길이를 자른다.
+  injected_last_run_at 은 PG timestamptz / Tibero UTC 벽시계 TIMESTAMP 라 Instant 로 바인딩한다(Tibero 는 UtcInstantTypeHandler).
+  id 목록 술어는 inChunks(조각 500 개) — 1000 개 넘는 목록도 Tibero 가 받는다.
+-->
+<mapper namespace="com.smartfirehub.pipeline.repository.mybatis.PipelineExecutionMapper">
+
+  <resultMap id="stopStateRow" type="com.smartfirehub.pipeline.repository.mybatis.PipelineExecutionRows$StopStateRow">
+    <constructor>
+      <arg column="status" javaType="java.lang.String"/>
+      <arg column="cancel_requested_at" javaType="java.time.LocalDateTime"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="activeCountsRow" type="com.smartfirehub.pipeline.repository.mybatis.PipelineExecutionRows$ActiveCountsRow">
+    <constructor>
+      <arg column="active_count" javaType="_long"/>
+      <arg column="not_cancelling_count" javaType="_long"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="staleRow" type="com.smartfirehub.pipeline.repository.mybatis.PipelineExecutionRows$StaleRow">
+    <constructor>
+      <arg column="id" javaType="_long"/>
+      <arg column="pipeline_id" javaType="_long"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="stepStartRow" type="com.smartfirehub.pipeline.repository.mybatis.PipelineExecutionRows$StepStartRow">
+    <constructor>
+      <arg column="step_id" javaType="java.lang.Long"/>
+      <arg column="started_at" javaType="java.time.LocalDateTime"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="executionListRow" type="com.smartfirehub.pipeline.repository.mybatis.PipelineExecutionRows$ExecutionListRow">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="pipeline_id" javaType="java.lang.Long"/>
+      <arg column="status" javaType="java.lang.String"/>
+      <arg column="executed_by" javaType="java.lang.Long"/>
+      <arg column="started_at" javaType="java.time.LocalDateTime"/>
+      <arg column="completed_at" javaType="java.time.LocalDateTime"/>
+      <arg column="created_at" javaType="java.time.LocalDateTime"/>
+      <arg column="user_name" javaType="java.lang.String"/>
+      <arg column="triggered_by" javaType="java.lang.String"/>
+      <arg column="trigger_name" javaType="java.lang.String"/>
+      <arg column="cancel_requested_at" javaType="java.time.LocalDateTime"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="executionDetailRow" type="com.smartfirehub.pipeline.repository.mybatis.PipelineExecutionRows$ExecutionDetailRow">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="pipeline_id" javaType="java.lang.Long"/>
+      <arg column="status" javaType="java.lang.String"/>
+      <arg column="executed_by" javaType="java.lang.Long"/>
+      <arg column="started_at" javaType="java.time.LocalDateTime"/>
+      <arg column="completed_at" javaType="java.time.LocalDateTime"/>
+      <arg column="created_at" javaType="java.time.LocalDateTime"/>
+      <arg column="error_message" javaType="java.lang.String"/>
+      <arg column="pipeline_name" javaType="java.lang.String"/>
+      <arg column="user_name" javaType="java.lang.String"/>
+      <arg column="cancel_requested_at" javaType="java.time.LocalDateTime"/>
+      <arg column="canceller_name" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="stepExecutionRow" type="com.smartfirehub.pipeline.repository.mybatis.PipelineExecutionRows$StepExecutionRow">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="step_id" javaType="java.lang.Long"/>
+      <arg column="resolved_step_name" javaType="java.lang.String"/>
+      <arg column="status" javaType="java.lang.String"/>
+      <arg column="output_rows" javaType="java.lang.Integer"/>
+      <arg column="log" javaType="java.lang.String"/>
+      <arg column="error_message" javaType="java.lang.String"/>
+      <arg column="started_at" javaType="java.time.LocalDateTime"/>
+      <arg column="completed_at" javaType="java.time.LocalDateTime"/>
+    </constructor>
+  </resultMap>
+
+  <!-- 아직 끝나지 않은 실행 상태(jOOQ ACTIVE_STATUSES) — 실행 상태 쓰기는 이 상태에서만 일어난다(WD-153). -->
+  <sql id="activeStatuses">('PENDING', 'RUNNING')</sql>
+
+  <insert id="insertExecution" useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+    INSERT INTO pipeline_execution (pipeline_id, status, executed_by, heartbeat_at, triggered_by, trigger_id, created_at)
+    VALUES (#{pipelineId}, 'PENDING', #{executedBy}, #{heartbeatAt}, #{triggeredBy}, #{triggerId,jdbcType=BIGINT},
+            <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>)
+  </insert>
+
+  <update id="updateExecutionStatus">
+    UPDATE pipeline_execution
+       SET status = #{status}
+           <if test="startedAt != null">, started_at = #{startedAt}</if>
+           <if test="startedAt != null and status == 'RUNNING'">, heartbeat_at = #{startedAt}</if>
+           <if test="completedAt != null">, completed_at = #{completedAt}</if>
+           <if test="errorMessage != null">, error_message = #{errorMessage}</if>
+     WHERE id = #{executionId}
+       AND status IN <include refid="activeStatuses"/>
+  </update>
+
+  <update id="finishUnlessCancelRequested">
+    UPDATE pipeline_execution
+       SET status = #{status}, completed_at = #{completedAt}
+     WHERE id = #{executionId}
+       AND status IN <include refid="activeStatuses"/>
+       AND cancel_requested_at IS NULL
+  </update>
+
+  <update id="touchHeartbeat">
+    UPDATE pipeline_execution
+       SET heartbeat_at = #{now}
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="id"/></include>
+       AND status IN <include refid="activeStatuses"/>
+  </update>
+
+  <select id="selectStale" resultMap="staleRow">
+    SELECT id, pipeline_id
+      FROM pipeline_execution
+     WHERE tenant_id = #{tenantId}
+       AND status IN <include refid="activeStatuses"/>
+       AND COALESCE(heartbeat_at, started_at, created_at) &lt; #{threshold}
+  </select>
+
+  <update id="failExecution">
+    UPDATE pipeline_execution
+       SET status = 'FAILED', completed_at = #{now}, error_message = #{message,jdbcType=VARCHAR}
+     WHERE id = #{executionId}
+       AND status IN <include refid="activeStatuses"/>
+  </update>
+
+  <update id="failRunningSteps">
+    UPDATE pipeline_step_execution
+       SET status = 'FAILED', error_message = #{message,jdbcType=VARCHAR}, completed_at = #{now}
+     WHERE execution_id = #{executionId}
+       AND status = 'RUNNING'
+  </update>
+
+  <update id="skipPendingSteps">
+    UPDATE pipeline_step_execution
+       SET status = 'SKIPPED', error_message = #{message,jdbcType=VARCHAR}, completed_at = #{now}
+     WHERE execution_id = #{executionId}
+       AND status = 'PENDING'
+  </update>
+
+  <select id="selectStopState" resultMap="stopStateRow">
+    SELECT status, cancel_requested_at FROM pipeline_execution WHERE id = #{executionId}
+  </select>
+
+  <!-- jOOQ count().filterWhere(...) 는 Tibero 에 없어 SUM(CASE …) 로 쓴다. 행이 없으면 SUM 이 NULL 이라 COALESCE. -->
+  <select id="selectActiveCounts" resultMap="activeCountsRow">
+    SELECT COUNT(*) AS active_count,
+           COALESCE(SUM(CASE WHEN cancel_requested_at IS NULL THEN 1 ELSE 0 END), 0) AS not_cancelling_count
+      FROM pipeline_execution
+     WHERE pipeline_id = #{pipelineId}
+       AND status IN <include refid="activeStatuses"/>
+  </select>
+
+  <update id="cancelPending">
+    UPDATE pipeline_execution
+       SET status = 'CANCELLED', completed_at = #{now}, error_message = #{message},
+           cancel_requested_at = #{now}, cancel_requested_by = #{userId}
+     WHERE id = #{executionId}
+       AND status = 'PENDING'
+  </update>
+
+  <!-- 재요청은 첫 요청 시각·요청자를 덮지 않는다(COALESCE). -->
+  <update id="requestCancelRunning">
+    UPDATE pipeline_execution
+       SET cancel_requested_at = COALESCE(cancel_requested_at, #{now}),
+           cancel_requested_by = COALESCE(cancel_requested_by, #{userId})
+     WHERE id = #{executionId}
+       AND status = 'RUNNING'
+  </update>
+
+  <select id="selectCancelRequestedAt" resultType="java.time.LocalDateTime">
+    SELECT cancel_requested_at FROM pipeline_execution WHERE id = #{executionId}
+  </select>
+
+  <!-- 있으면 1, 없으면 행 없음(null) — 한 행만 보면 된다(TriggerMapper.selectRunningExecutionMarker 와 같은 꼴). -->
+  <select id="selectRunningMarker" resultType="java.lang.Integer">
+    SELECT 1 FROM pipeline_execution WHERE tenant_id = #{tenantId} AND status = 'RUNNING'
+    <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.limitRows"><property name="n" value="1"/></include>
+  </select>
+
+  <select id="selectPipelineId" resultType="java.lang.Long">
+    SELECT pipeline_id FROM pipeline_execution WHERE id = #{executionId}
+  </select>
+
+  <select id="selectExecutedBy" resultType="java.lang.Long">
+    SELECT executed_by FROM pipeline_execution WHERE id = #{executionId}
+  </select>
+
+  <insert id="insertStepExecution" useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+    INSERT INTO pipeline_step_execution (execution_id, step_id, step_name, status)
+    VALUES (#{executionId}, #{stepId,jdbcType=BIGINT}, #{stepName,jdbcType=VARCHAR}, 'PENDING')
+  </insert>
+
+  <select id="selectStepStart" resultMap="stepStartRow">
+    SELECT step_id, started_at FROM pipeline_step_execution WHERE id = #{stepExecId}
+  </select>
+
+  <!-- 같은 스텝의 다른 실행이 지금 RUNNING 이거나, 이 실행 시작 뒤(같은 시각 포함)에 끝났으면 겹침. -->
+  <select id="selectOverlappingMarker" resultType="java.lang.Integer">
+    SELECT 1 FROM pipeline_step_execution
+     WHERE step_id = #{stepId}
+       AND id &lt;&gt; #{stepExecId}
+       AND (status = 'RUNNING' OR (status &lt;&gt; 'PENDING' AND completed_at &gt;= #{startedAt}))
+    <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.limitRows"><property name="n" value="1"/></include>
+  </select>
+
+  <update id="updateStepProgress">
+    UPDATE pipeline_step_execution
+       SET output_rows = #{outputRows,jdbcType=INTEGER}, log = #{log,jdbcType=VARCHAR}
+     WHERE id = #{stepExecId}
+  </update>
+
+  <update id="setInjectedLastRunAt">
+    UPDATE pipeline_step_execution
+       SET injected_last_run_at = #{value,jdbcType=TIMESTAMP}
+     WHERE id = #{stepExecId}
+  </update>
+
+  <!-- 상관 EXISTS — 이 단계의 부모 실행 한 건만 본다(jOOQ 와 같다). -->
+  <update id="updateStepExecution">
+    UPDATE pipeline_step_execution
+       SET status = #{status}
+           <if test="outputRows != null">, output_rows = #{outputRows}</if>
+           <if test="log != null">, log = #{log}</if>
+           <if test="errorMessage != null">, error_message = #{errorMessage}</if>
+           <if test="startedAt != null">, started_at = #{startedAt}</if>
+           <if test="completedAt != null">, completed_at = #{completedAt}</if>
+     WHERE id = #{stepExecId}
+       AND EXISTS (SELECT 1 FROM pipeline_execution pe
+                    WHERE pe.id = pipeline_step_execution.execution_id
+                      AND pe.status IN <include refid="activeStatuses"/>)
+  </update>
+
+  <select id="selectExecutionPage" resultMap="executionListRow">
+    SELECT pe.id, pe.pipeline_id, pe.status, pe.executed_by, pe.started_at, pe.completed_at, pe.created_at,
+           u.name AS user_name, pe.triggered_by, pt.name AS trigger_name, pe.cancel_requested_at
+      FROM pipeline_execution pe
+      LEFT JOIN <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.userTable"/> u ON pe.executed_by = u.id
+      LEFT JOIN pipeline_trigger pt ON pe.trigger_id = pt.id
+     WHERE pe.pipeline_id = #{pipelineId}
+     ORDER BY pe.id DESC
+    <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.pageClause"/>
+  </select>
+
+  <select id="countByPipeline" resultType="long">
+    SELECT COUNT(*) FROM pipeline_execution WHERE pipeline_id = #{pipelineId}
+  </select>
+
+  <select id="selectExecutionDetail" resultMap="executionDetailRow">
+    SELECT pe.id, pe.pipeline_id, pe.status, pe.executed_by, pe.started_at, pe.completed_at, pe.created_at,
+           pe.error_message, p.name AS pipeline_name, u.name AS user_name, pe.cancel_requested_at,
+           canceller.name AS canceller_name
+      FROM pipeline_execution pe
+      JOIN pipeline p ON pe.pipeline_id = p.id
+      LEFT JOIN <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.userTable"/> u ON pe.executed_by = u.id
+      LEFT JOIN <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.userTable"/> canceller ON pe.cancel_requested_by = canceller.id
+     WHERE pe.id = #{executionId}
+  </select>
+
+  <!-- 지워진 스텝의 기록(step_id NULL)도 남도록 LEFT JOIN, 이름은 실행 당시 스냅샷 우선(WD-108). -->
+  <select id="selectStepExecutions" resultMap="stepExecutionRow">
+    SELECT pse.id, pse.step_id, COALESCE(pse.step_name, ps.name) AS resolved_step_name, pse.status,
+           pse.output_rows, pse.log, pse.error_message, pse.started_at, pse.completed_at
+      FROM pipeline_step_execution pse
+      LEFT JOIN pipeline_step ps ON pse.step_id = ps.id
+     WHERE pse.execution_id = #{executionId}
+     ORDER BY pse.id ASC
+  </select>
+
+  <delete id="deleteCompletedCreatedBefore">
+    DELETE FROM pipeline_execution
+     WHERE created_at &lt; #{cutoff}
+       AND status = 'COMPLETED'
+  </delete>
+
+</mapper>

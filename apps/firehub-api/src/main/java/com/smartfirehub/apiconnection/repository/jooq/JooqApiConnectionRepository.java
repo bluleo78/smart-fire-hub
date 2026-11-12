@@ -3,6 +3,7 @@ package com.smartfirehub.apiconnection.repository.jooq;
 import static org.jooq.impl.DSL.*;
 
 import com.smartfirehub.apiconnection.repository.ApiConnectionRepository;
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -21,6 +22,7 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>API 연결 정보 저장소. Phase 9 리디자인: baseUrl, 헬스체크 경로, 헬스체크 상태 필드 추가.
  */
 @Repository
+@ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
 @lombok.extern.slf4j.Slf4j
 // 배경 잡(JobRunr/@Async/@Scheduled)은 앰비언트 트랜잭션이 없다. RLS GUC 는 트랜잭션 시작
@@ -98,7 +100,7 @@ public class JooqApiConnectionRepository implements ApiConnectionRepository {
             AC_LAST_LATENCY_MS,
             AC_LAST_ERROR_MESSAGE)
         .from(API_CONNECTION)
-        .orderBy(AC_CREATED_AT.desc())
+        .orderBy(AC_CREATED_AT.desc(), AC_ID.desc())
         .fetch(JooqApiConnectionRepository::toRow);
   }
 

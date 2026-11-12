@@ -1,0 +1,224 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  파이프라인 스텝(pipeline_step·pipeline_step_input·pipeline_step_dependency) 문장(WD-708) — JooqPipelineStepRepository 와 같은 의미.
+  세 테이블 모두 테넌트 정책(RLS) 대상이라 tenant_id 를 술어·INSERT 값으로 쓰지 않는다(DEFAULT 가 채운다). dataset 조인도 정책 대상이다.
+
+  api_config·ai_config·python_config 는 PG jsonb / Tibero JSON 열 — 읽기는 jsonText, 쓰기는 jsonValue(PG CAST AS jsonb, Tibero 는 문자열 그대로).
+  script_content 는 PG text / Tibero CLOB(문자열 바인드·getString, 한도 없음).
+  해석된 출력 id = COALESCE(저장된 출력, 그 스텝의 러너 TEMP). jOOQ 의 상관 서브쿼리 LIMIT 1 은 Tibero 스칼라 서브쿼리에서 쓰기 곤란해 MIN(id) 로 정한다
+  — 최소 id 를 고른다(여럿일 때 결정적). jOOQ 판(ORDER BY id LIMIT 1)·DatasetMapper.selectIdBySourcePipelineStepId(ORDER BY id)도 같은 행을 고른다. 「자동 생성」 불리언 식은 SELECT 목록 불리언이 안 되는 Tibero 를 위해 CASE WHEN 으로 쓴다.
+  출력 데이터셋 이름 가림: 가시성 조각(visible)을 CASE WHEN … THEN d.name END 로 건다(jOOQ 는 LEFT JOIN ON 에 걸지만 이름만 null 이고 id 는 남는다는 같은 결과).
+  책갈피 전진 가드는 null 안전 비교 — 쓴 출력이 null 이면 IS NULL, 아니면 =(양쪽 DB 같은 문장).
+  last_run_at 은 Instant(Tibero 는 UTC 벽시계 핸들러), created_at 은 삽입에서 DB 시계(dbNow)로 명시한다(Tibero 열 DEFAULT 는 세션 시간대에 기댄다).
+  id 목록 술어는 inChunks(조각 500 개, OR 로 이음) — 1000 개 넘는 목록도 Tibero 가 받는다.
+-->
+<mapper namespace="com.smartfirehub.pipeline.repository.mybatis.PipelineStepMapper">
+
+  <resultMap id="stepRow" type="com.smartfirehub.pipeline.repository.mybatis.PipelineStepRows$StepRow">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="name" javaType="java.lang.String"/>
+      <arg column="description" javaType="java.lang.String"/>
+      <arg column="script_type" javaType="java.lang.String"/>
+      <arg column="script_content" javaType="java.lang.String"/>
+      <arg column="resolved_output_dataset_id" javaType="java.lang.Long"/>
+      <arg column="output_auto_generated" javaType="_boolean"/>
+      <arg column="step_order" javaType="_int"/>
+      <arg column="load_strategy" javaType="java.lang.String"/>
+      <arg column="api_config" javaType="java.lang.String"/>
+      <arg column="ai_config" javaType="java.lang.String"/>
+      <arg column="python_config" javaType="java.lang.String"/>
+      <arg column="api_connection_id" javaType="java.lang.Long"/>
+      <arg column="last_run_at" javaType="java.time.Instant"/>
+      <arg column="full_rebuild_pending" javaType="_boolean"/>
+      <arg column="output_dataset_name" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="inputRow" type="com.smartfirehub.pipeline.repository.mybatis.PipelineStepRows$InputRow">
+    <constructor>
+      <arg column="step_id" javaType="java.lang.Long"/>
+      <arg column="dataset_id" javaType="java.lang.Long"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="dependencyRow" type="com.smartfirehub.pipeline.repository.mybatis.PipelineStepRows$DependencyRow">
+    <constructor>
+      <arg column="step_id" javaType="java.lang.Long"/>
+      <arg column="depends_on_step_name" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="idPair" type="com.smartfirehub.pipeline.repository.mybatis.PipelineStepRows$IdPair">
+    <constructor>
+      <arg column="first_id" javaType="java.lang.Long"/>
+      <arg column="second_id" javaType="java.lang.Long"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="cursorRow" type="com.smartfirehub.pipeline.repository.mybatis.PipelineStepRows$CursorRow">
+    <constructor>
+      <arg column="last_run_at" javaType="java.time.Instant"/>
+      <arg column="full_rebuild_pending" javaType="_boolean"/>
+      <arg column="output_dataset_id" javaType="java.lang.Long"/>
+    </constructor>
+  </resultMap>
+
+  <!-- ps 별칭 스텝의 해석된 출력 데이터셋 id 식. -->
+  <sql id="resolvedOutput">COALESCE(ps.output_dataset_id, (SELECT MIN(rd.id) FROM dataset rd WHERE rd.source_pipeline_step_id = ps.id))</sql>
+
+  <select id="selectSteps" resultMap="stepRow">
+    SELECT ps.id, ps.name, ps.description, ps.script_type, ps.script_content,
+           <include refid="resolvedOutput"/> AS resolved_output_dataset_id,
+           CASE WHEN ps.output_dataset_id IS NULL
+                  OR ps.output_dataset_id IN (SELECT ad.id FROM dataset ad WHERE ad.source_pipeline_step_id = ps.id)
+                THEN <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/> ELSE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlFalse"/> END AS output_auto_generated,
+           ps.step_order, ps.load_strategy,
+           <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.jsonText"><property name="col" value="ps.api_config"/><property name="alias" value="api_config"/></include>,
+           <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.jsonText"><property name="col" value="ps.ai_config"/><property name="alias" value="ai_config"/></include>,
+           <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.jsonText"><property name="col" value="ps.python_config"/><property name="alias" value="python_config"/></include>,
+           ps.api_connection_id, ps.last_run_at, ps.full_rebuild_pending,
+           CASE WHEN <include refid="com.smartfirehub.securitylevel.repository.mybatis.DatasetVisibility.visible">
+                  <property name="idCol" value="d.id"/>
+                  <property name="levelCol" value="d.security_level_id"/>
+                </include> THEN d.name END AS output_dataset_name
+      FROM pipeline_step ps
+      LEFT JOIN dataset d ON d.id = <include refid="resolvedOutput"/>
+     WHERE ps.pipeline_id = #{pipelineId}
+     ORDER BY ps.step_order ASC, ps.id ASC
+  </select>
+
+  <select id="selectInputs" resultMap="inputRow">
+    SELECT psi.step_id, psi.dataset_id FROM pipeline_step_input psi
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="psi.step_id"/></include>
+     ORDER BY psi.step_id, psi.dataset_id
+  </select>
+
+  <select id="selectDependencies" resultMap="dependencyRow">
+    SELECT psd.step_id, dep.name AS depends_on_step_name
+      FROM pipeline_step_dependency psd
+      JOIN pipeline_step dep ON psd.depends_on_step_id = dep.id
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="psd.step_id"/></include>
+     ORDER BY psd.step_id, dep.id
+  </select>
+
+  <insert id="insert" useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+    INSERT INTO pipeline_step (pipeline_id, name, description, script_type, script_content, output_dataset_id,
+                               step_order, load_strategy, api_config, ai_config, python_config, api_connection_id, created_at)
+    VALUES (#{pipelineId}, #{name}, #{description,jdbcType=VARCHAR}, #{scriptType}, #{scriptContent,jdbcType=VARCHAR},
+            #{outputDatasetId,jdbcType=BIGINT}, #{stepOrder}, #{loadStrategy},
+            <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.jsonValue"><property name="param" value="apiConfig"/></include>, <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.jsonValue"><property name="param" value="aiConfig"/></include>,
+            <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.jsonValue"><property name="param" value="pythonConfig"/></include>, #{apiConnectionId,jdbcType=BIGINT},
+            <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>)
+  </insert>
+
+  <!-- 정의 필드만 고친다 — 책갈피(last_run_at·full_rebuild_pending)와 created_at 은 건드리지 않는다(WD-108). -->
+  <update id="update">
+    UPDATE pipeline_step
+       SET name = #{row.name}, description = #{row.description,jdbcType=VARCHAR},
+           script_type = #{row.scriptType}, script_content = #{row.scriptContent,jdbcType=VARCHAR},
+           output_dataset_id = #{row.outputDatasetId,jdbcType=BIGINT}, step_order = #{row.stepOrder},
+           load_strategy = #{row.loadStrategy},
+           api_config = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.jsonValue"><property name="param" value="row.apiConfig"/></include>,
+           ai_config = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.jsonValue"><property name="param" value="row.aiConfig"/></include>,
+           python_config = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.jsonValue"><property name="param" value="row.pythonConfig"/></include>,
+           api_connection_id = #{row.apiConnectionId,jdbcType=BIGINT}
+     WHERE id = #{stepId} AND pipeline_id = #{pipelineId}
+  </update>
+
+  <update id="renameTemporarily">
+    UPDATE pipeline_step SET name = #{newName} WHERE id = #{stepId} AND pipeline_id = #{pipelineId}
+  </update>
+
+  <insert id="insertInput">
+    INSERT INTO pipeline_step_input (step_id, dataset_id) VALUES (#{stepId}, #{datasetId})
+  </insert>
+
+  <insert id="insertDependency">
+    INSERT INTO pipeline_step_dependency (step_id, depends_on_step_id) VALUES (#{stepId}, #{dependsOnStepId})
+  </insert>
+
+  <select id="selectStepIdsByPipeline" resultType="java.lang.Long">
+    SELECT id FROM pipeline_step WHERE pipeline_id = #{pipelineId}
+  </select>
+
+  <delete id="deleteSteps">
+    DELETE FROM pipeline_step
+     WHERE pipeline_id = #{pipelineId}
+       AND <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="id"/></include>
+  </delete>
+
+  <delete id="deleteDependencies">
+    DELETE FROM pipeline_step_dependency
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="step_id"/></include>
+        OR <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="depends_on_step_id"/></include>
+  </delete>
+
+  <delete id="deleteInputs">
+    DELETE FROM pipeline_step_input
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="step_id"/></include>
+  </delete>
+
+  <select id="selectTempDatasetsByStepIds" resultMap="idPair">
+    SELECT d.source_pipeline_step_id AS first_id, d.id AS second_id
+      FROM dataset d
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="d.source_pipeline_step_id"/></include>
+     ORDER BY d.id
+  </select>
+
+  <select id="selectTempOwnersByDatasetIds" resultMap="idPair">
+    SELECT d.id AS first_id, d.source_pipeline_step_id AS second_id
+      FROM dataset d
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="d.id"/></include>
+       AND d.origin_type = 'TEMP' AND d.source_pipeline_step_id IS NOT NULL
+  </select>
+
+  <select id="selectAutoTempDatasetIds" resultType="java.lang.Long">
+    SELECT d.id FROM dataset d
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="d.source_pipeline_step_id"/></include>
+       AND d.origin_type = 'TEMP'
+     ORDER BY d.id
+  </select>
+
+  <select id="selectUsedOutputDatasetIds" resultType="java.lang.Long">
+    SELECT DISTINCT ps.output_dataset_id FROM pipeline_step ps
+     WHERE (<foreach collection="datasetChunks" item="chunk" separator=" OR ">ps.output_dataset_id IN <foreach collection="chunk" item="n" open="(" separator="," close=")">#{n}</foreach></foreach>)
+     <if test="!excludedChunks.isEmpty()">
+       AND NOT (<foreach collection="excludedChunks" item="chunk" separator=" OR ">ps.id IN <foreach collection="chunk" item="n" open="(" separator="," close=")">#{n}</foreach></foreach>)
+     </if>
+  </select>
+
+  <select id="selectCursor" resultMap="cursorRow">
+    SELECT last_run_at, full_rebuild_pending, output_dataset_id FROM pipeline_step WHERE id = #{stepId}
+  </select>
+
+  <update id="advanceCursor">
+    UPDATE pipeline_step ps
+       SET last_run_at = #{candidate,jdbcType=TIMESTAMP}
+           <if test="wasFullRebuild">, full_rebuild_pending = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlFalse"/></if>
+     WHERE ps.id = #{stepId}
+       AND <choose>
+             <when test="writtenOutputDatasetId == null"><include refid="resolvedOutput"/> IS NULL</when>
+             <otherwise><include refid="resolvedOutput"/> = #{writtenOutputDatasetId}</otherwise>
+           </choose>
+  </update>
+
+  <update id="setFullRebuildPending">
+    UPDATE pipeline_step
+       SET full_rebuild_pending = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.boolLiteral"><property name="v" value="pending"/></include>
+     WHERE id = #{stepId}
+  </update>
+
+  <update id="setCursor">
+    UPDATE pipeline_step
+       SET last_run_at = #{lastRunAt,jdbcType=TIMESTAMP},
+           full_rebuild_pending = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.boolLiteral"><property name="v" value="pending"/></include>
+     WHERE id = #{stepId}
+  </update>
+
+  <select id="selectStepIdByPipelineAndName" resultType="java.lang.Long">
+    SELECT id FROM pipeline_step WHERE pipeline_id = #{pipelineId} AND name = #{name}
+  </select>
+
+</mapper>

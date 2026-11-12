@@ -542,11 +542,13 @@ public class JooqDatasetRepository implements DatasetRepository {
             });
   }
 
+  /** 이 스텝이 만든 데이터셋 id — 여럿이면 최소 id(결정적, 스텝 출력 해석의 MIN(id)·MyBatis 판과 같은 행). */
   @Override
   public Optional<Long> findBySourcePipelineStepId(Long stepId) {
     return dsl.select(DS_ID)
         .from(DATASET)
         .where(DS_SOURCE_PIPELINE_STEP_ID.eq(stepId))
+        .orderBy(DS_ID)
         .limit(1)
         .fetchOptional(r -> r.get(DS_ID));
   }

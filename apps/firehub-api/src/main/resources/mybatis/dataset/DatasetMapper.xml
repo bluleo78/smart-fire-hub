@@ -194,9 +194,10 @@
       <if test="sourcePipelineStepId != null">, #{sourcePipelineStepId}</if>)
   </insert>
 
-  <!-- jOOQ 판처럼 정렬 없이 한 행. -->
+  <!-- 여럿이면 최소 id 한 행(결정적) — jOOQ 판(ORDER BY id LIMIT 1)·PipelineStepMapper 의 해석된 출력(MIN(id))과 같은 행이다. -->
   <select id="selectIdBySourcePipelineStepId" resultType="java.lang.Long">
     SELECT d.id FROM dataset d WHERE d.source_pipeline_step_id = #{stepId}
+     ORDER BY d.id
     <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.limitRows"><property name="n" value="1"/></include>
   </select>
 

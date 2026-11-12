@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  비인증 트리거 경로의 테넌트 해석(WD-708, 스펙 D2) — JooqTriggerTenantResolver 와 같은 결과.
+  - PG: 정책 우회 SECURITY DEFINER 함수(V95·V140)가 (trigger_id, tenant_id) 를 결과 집합으로 돌려준다(jOOQ 와 같은 호출).
+  - Tibero: FH_TENANT.resolve_trigger_tenant_by_*(V156.1, 본문에서 정책 우회를 켜고 끈다)는 테넌트 id 하나만 돌려준다 — 함수 호출(CALLABLE)의
+    OUT 인자로 받고 반환 목록은 비어 있다. 트리거 id 는 구현이 새 트랜잭션에서 그 테넌트를 심고 selectTriggerIdBy* 로 RLS 아래에서 다시 읽는다.
+    두 벌이므로 바꿀 때 V140·V156.1 함수와 함께.
+  - 재조회 문장은 Tibero 에만 있다(PG 는 함수가 트리거 id 까지 준다). 술어는 TriggerMapper 의 tiberoTokenHashMatches·tiberoWebhookIdMatches 조각(유일 함수 색인과 같은 CASE 식)을 함께 쓴다.
+-->
+<mapper namespace="com.smartfirehub.pipeline.repository.mybatis.TriggerTenantResolverMapper">
+
+  <resultMap id="refRow" type="com.smartfirehub.pipeline.repository.mybatis.TriggerRows$RefRow">
+    <constructor>
+      <arg column="trigger_id" javaType="java.lang.Long"/>
+      <arg column="tenant_id" javaType="java.lang.Long"/>
+    </constructor>
+  </resultMap>
+
+  <select id="resolveByTokenHash" resultMap="refRow" databaseId="postgresql">
+    SELECT trigger_id, tenant_id FROM resolve_trigger_tenant_by_token_hash(#{q.identifier})
+  </select>
+
+  <select id="resolveByTokenHash" statementType="CALLABLE" databaseId="tibero">
+    {#{q.tenantId,mode=OUT,jdbcType=BIGINT} = call FH_TENANT.resolve_trigger_tenant_by_token_hash(#{q.identifier,jdbcType=VARCHAR})}
+  </select>
+
+  <select id="resolveByWebhookId" resultMap="refRow" databaseId="postgresql">
+    SELECT trigger_id, tenant_id FROM resolve_trigger_tenant_by_webhook_id(#{q.identifier})
+  </select>
+
+  <select id="resolveByWebhookId" statementType="CALLABLE" databaseId="tibero">
+    {#{q.tenantId,mode=OUT,jdbcType=BIGINT} = call FH_TENANT.resolve_trigger_tenant_by_webhook_id(#{q.identifier,jdbcType=VARCHAR})}
+  </select>
+
+  <select id="selectTriggerIdByTokenHash" resultType="java.lang.Long" databaseId="tibero">
+    SELECT id FROM pipeline_trigger
+     WHERE <include refid="com.smartfirehub.pipeline.repository.mybatis.TriggerMapper.tiberoTokenHashMatches"/>
+  </select>
+
+  <select id="selectTriggerIdByWebhookId" resultType="java.lang.Long" databaseId="tibero">
+    SELECT id FROM pipeline_trigger
+     WHERE <include refid="com.smartfirehub.pipeline.repository.mybatis.TriggerMapper.tiberoWebhookIdMatches"/>
+  </select>
+
+</mapper>
