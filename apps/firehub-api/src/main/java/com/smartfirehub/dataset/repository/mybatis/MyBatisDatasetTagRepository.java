@@ -2,10 +2,10 @@ package com.smartfirehub.dataset.repository.mybatis;
 
 import com.smartfirehub.dataset.repository.DatasetTagRepository;
 import com.smartfirehub.global.platformdb.mybatis.PlatformMyBatisRepository;
+import com.smartfirehub.global.platformdb.mybatis.PlatformRetries;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.securitylevel.repository.mybatis.MyBatisDatasetVisibility;
 import java.util.List;
-import org.springframework.dao.DuplicateKeyException;
 
 /**
  * DatasetTagRepository 의 MyBatis 구현(WD-707) — {@code JooqDatasetTagRepository} 와 같은 의미.
@@ -35,11 +35,8 @@ public class MyBatisDatasetTagRepository implements DatasetTagRepository {
    */
   @Override
   public int insert(Long datasetId, String tagName, Long userId) {
-    try {
-      return mapper.insertIfAbsent(datasetId, tagName, userId);
-    } catch (DuplicateKeyException e) {
-      return mapper.insertIfAbsent(datasetId, tagName, userId);
-    }
+    return PlatformRetries.onceOnDuplicateKey(
+        () -> mapper.insertIfAbsent(datasetId, tagName, userId));
   }
 
   /** 대소문자 무시로 같은 태그를 지우고 지운 행 수를 돌려준다(jOOQ 판과 같다). */

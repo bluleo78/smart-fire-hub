@@ -62,12 +62,13 @@ public final class MyBatisDatasetVisibility {
   public record AiPolicyValues(String all, String selfHosted) {}
 
   /**
-   * 공급자 호스팅 위치로 허용할 ai_policy 값을 정한다 — MyBatis 구현이 이 규칙을 쓰는 단 한 곳이다(가시성 조각·임베딩 카탈로그·문서 청크 진행률 분모가
-   * 모두 여기서 받는다). 규칙은 {@code JooqDatasetVisibility.aiPolicyAllows} 와 같다: ALL 은 언제나, SELF_HOSTED_ONLY
-   * 는 자체 호스팅일 때만, hosting null 은 외부로 취급.
+   * 공급자 호스팅 위치로 허용할 ai_policy 값을 정한다 — MyBatis 구현이 이 규칙을 쓰는 단 한 곳이다(가시성 조각·임베딩 카탈로그·문서 청크 진행률
+   * 분모·{@code MyBatisEmbeddingAiPolicyRepository} 가 모두 여기서 받는다, 스펙 D4). 규칙은 {@code
+   * JooqDatasetVisibility.aiPolicyAllows} 와 같다: ALL 은 언제나, SELF_HOSTED_ONLY 는 자체 호스팅일 때만, hosting
+   * null 은 외부로 취급.
    *
-   * <p>묶음 ⑥({@code EmbeddingAiPolicyRepository} 의 MyBatis 이전)이 이 도우미와 {@code
-   * aiPolicyAllowedDataset} 조각을 흡수해 한 리포지토리로 옮길 후보다.
+   * <p>원본은 securitylevel 패키지의 이 한 곳에 둔다(스펙 D4, WD-711) — 데이터셋·문서 청크 리포지토리도 이미 이 도우미를 부르므로 리포지토리 안으로
+   * 옮기면 그 둘이 다른 리포지토리 구현에 기대게 된다. SQL 본문은 {@code aiPolicyAllowedDataset} 조각 하나다.
    *
    * @param hosting 공급자 호스팅 위치(null 가능)
    * @return 조각에 넘길 허용 값

@@ -3,7 +3,7 @@ package com.smartfirehub.auth.repository.mybatis;
 import com.smartfirehub.auth.repository.LoginIpFailureRepository;
 import com.smartfirehub.global.platformdb.PlatformLocks;
 import com.smartfirehub.global.platformdb.mybatis.PlatformMyBatisRepository;
-import org.springframework.dao.DuplicateKeyException;
+import com.smartfirehub.global.platformdb.mybatis.PlatformRetries;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -41,11 +41,7 @@ public class MyBatisLoginIpFailureRepository implements LoginIpFailureRepository
   public void recordFailure(String ipKey, String username) {
     String key = EmptyKeys.key(ipKey);
     String user = EmptyKeys.key(username);
-    try {
-      mapper.upsertFailure(key, user);
-    } catch (DuplicateKeyException e) {
-      mapper.upsertFailure(key, user);
-    }
+    PlatformRetries.runOnceOnDuplicateKey(() -> mapper.upsertFailure(key, user));
   }
 
   /** IP 키 잠금 — MANDATORY: 트랜잭션 밖에서 부르면 잠금이 즉시 풀려 막지 못하는데도 조용히 지나가므로 예외로 드러낸다. */

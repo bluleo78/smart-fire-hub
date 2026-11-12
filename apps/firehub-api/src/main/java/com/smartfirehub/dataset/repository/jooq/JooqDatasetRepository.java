@@ -668,51 +668,56 @@ public class JooqDatasetRepository implements DatasetRepository {
   }
 
   /**
-   * 열람 가능한 데이터셋 메타를 한 번의 조회로 읽는다 — {@code dataset d LEFT JOIN dataset_column dc}. 가시성 조건은 호출자가 만든
-   * SQL 조각이라 {@code d} 별칭 plain SQL 이다. 컬럼은 데이터셋 안에서 {@code column_order} 순으로 담고(예전 Tibero 경로의 정렬과
-   * 같다), 컬럼 없는 데이터셋은 LEFT JOIN 이라 빈 컬럼 목록으로 남는다.
+   * 열람 가능한 데이터셋 메타를 한 번의 조회로 읽는다 — {@code dataset d LEFT JOIN dataset_column dc}. 가시성은 {@link
+   * JooqDatasetVisibility#condition} 을 별칭 {@code d} 의 열에 걸어 jOOQ 술어 그대로 쿼리에 넣는다(인라인 렌더 문자열을 잇지 않는다
+   * — DatasetAccessRepository.visibleSql 렌더를 복제하지 않으려고, WD-711 리뷰). 컬럼은 데이터셋 안에서 {@code
+   * column_order} 순으로 담고(예전 Tibero 경로의 정렬과 같다), 컬럼 없는 데이터셋은 LEFT JOIN 이라 빈 컬럼 목록으로 남는다.
    *
    * <p>왜 한 번인가(최종 리뷰 지적 5): 예전에는 데이터셋 행을 읽은 뒤 그 id 전부를 컬럼 조회의 {@code IN} 목록으로 묶었다. 열람 가능한 데이터셋 수만큼
    * 바인드 값이 늘어 PG 바인드 상한(32767)에 닿을 수 있고 왕복도 한 번 더였다. 조인하면 id 목록을 넘길 필요가 없다.
    */
   @Override
-  public List<DatasetSchemaMeta> findSchemaMetas(List<Long> datasetIds, String visibilitySql) {
-    StringBuilder sql =
-        new StringBuilder(
-                "SELECT d.id, d.name, d.table_name, d.storage_type,"
-                    + " dc.column_name, dc.data_type, dc.display_name"
-                    + " FROM dataset d LEFT JOIN dataset_column dc ON dc.dataset_id = d.id WHERE ")
-            .append(visibilitySql)
-            .append(" ");
+  public List<DatasetSchemaMeta> findSchemaMetas(
+      List<Long> datasetIds, DatasetVisibility visibility) {
+    Table<?> d = table(name("dataset")).as("d");
+    Table<?> dc = table(name("dataset_column")).as("dc");
+    Field<Long> dId = field(name("d", "id"), Long.class);
+    Field<String> dName = field(name("d", "name"), String.class);
+    Field<String> dTableName = field(name("d", "table_name"), String.class);
+    Field<String> dStorageType = field(name("d", "storage_type"), String.class);
+    Field<String> dcColumnName = field(name("dc", "column_name"), String.class);
+    Field<String> dcDataType = field(name("dc", "data_type"), String.class);
+    Field<String> dcDisplayName = field(name("dc", "display_name"), String.class);
+    Condition where =
+        JooqDatasetVisibility.condition(
+            visibility, dId, field(name("d", "security_level_id"), Long.class));
     if (datasetIds != null) {
-      // datasetIds 는 컨트롤러에서 Long 으로 바인딩된 값이라 SQL injection 위험 없음. 호출자가 고른 목록이라 크기도 요청이 정한다.
-      sql.append("AND d.id IN (")
-          .append(datasetIds.stream().map(String::valueOf).collect(Collectors.joining(",")))
-          .append(") ");
+      // 호출자가 고른 목록 — null 이면 거르지 않는다(빈 목록이면 결과도 빈다).
+      where = where.and(dId.in(datasetIds));
     }
-    sql.append("ORDER BY d.table_name, d.id, dc.column_order");
 
     // 행은 데이터셋별로 붙어 오므로(ORDER BY d.table_name, d.id) 순서를 지키는 맵에 모은다.
     Map<Long, DatasetSchemaMeta> byId = new LinkedHashMap<>();
-    for (var r : dsl.fetch(sql.toString())) {
-      long id = r.get(0, Long.class);
+    for (var r :
+        dsl.select(dId, dName, dTableName, dStorageType, dcColumnName, dcDataType, dcDisplayName)
+            .from(d)
+            .leftJoin(dc)
+            .on(field(name("dc", "dataset_id"), Long.class).eq(dId))
+            .where(where)
+            .orderBy(dTableName, dId, field(name("dc", "column_order")))
+            .fetch()) {
+      long id = r.get(dId);
       DatasetSchemaMeta meta =
           byId.computeIfAbsent(
               id,
               k ->
                   new DatasetSchemaMeta(
-                      k,
-                      r.get(1, String.class),
-                      r.get(2, String.class),
-                      r.get(3, String.class),
-                      new ArrayList<>()));
-      String columnName = r.get(4, String.class);
+                      k, r.get(dName), r.get(dTableName), r.get(dStorageType), new ArrayList<>()));
+      String columnName = r.get(dcColumnName);
       if (columnName != null) {
         // LEFT JOIN 의 빈 쪽(컬럼 없는 데이터셋)은 column_name 이 null 이다 — 컬럼으로 담지 않는다.
         meta.columns()
-            .add(
-                new DatasetSchemaMeta.Column(
-                    columnName, r.get(5, String.class), r.get(6, String.class)));
+            .add(new DatasetSchemaMeta.Column(columnName, r.get(dcDataType), r.get(dcDisplayName)));
       }
     }
     return new ArrayList<>(byId.values());

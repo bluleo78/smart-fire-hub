@@ -53,9 +53,9 @@
   <!--
     등급이 AI 공급자를 허용하는 데이터셋 술어(WD-712) — JooqEmbeddingAiPolicyRepository.allowedDatasetSql(col, hosting) 렌더와 같은
     모양이다(dataset aig_d JOIN security_level aig_sl — 등급 없는 데이터셋은 내부 조인이라 빠진다). 진행률 분모(데이터셋 임베딩 카탈로그·
-    문서 청크)가 함께 쓰는 단 하나의 본문이다.
+    문서 청크)와 EmbeddingAiPolicyMapper(허용·불허 판정)가 함께 쓰는 단 하나의 본문이다.
     속성 datasetIdCol: 바깥 문장의 데이터셋 id 열 식(XML 에 박힌 고정 값). 파라미터 aiPolicy: MyBatisDatasetVisibility.aiPolicyValues 결과.
-    묶음 ⑥(EmbeddingAiPolicyRepository 의 MyBatis 이전)이 이 조각과 Java 도우미를 흡수할 후보다.
+    MyBatisEmbeddingAiPolicyRepository(WD-711)도 이 조각과 Java 도우미를 그대로 쓴다 — 허용 규칙의 MyBatis 원본은 이 둘뿐이다(스펙 D4).
   -->
   <sql id="aiPolicyAllowedDataset">
     EXISTS (

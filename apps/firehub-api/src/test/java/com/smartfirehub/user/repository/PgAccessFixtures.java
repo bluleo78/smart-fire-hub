@@ -356,6 +356,108 @@ public class PgAccessFixtures implements AccessFixtures {
   }
 
   @Override
+  public void grantDatasetAccess(long tenantId, long datasetId, Long roleId, Long userId) {
+    // tenant_id 는 DEFAULT(GUC)가 채운다. 사용자 XOR 역할은 열 CHECK 가 막는다.
+    inTenant(
+        tenantId,
+        () ->
+            dsl.execute(
+                "insert into dataset_access_grant (dataset_id, user_id, role_id) values (?, ?, ?)",
+                datasetId,
+                userId,
+                roleId));
+  }
+
+  @Override
+  public void setOntologyUpdatedAt(long ontologyId, java.time.Instant at) {
+    ownerJdbc.update(
+        "update ontology set updated_at = ? where id = ?",
+        java.time.OffsetDateTime.ofInstant(at, java.time.ZoneOffset.UTC),
+        ontologyId);
+  }
+
+  @Override
+  public void bindDatasetOntology(long tenantId, long datasetId, long ontologyId) {
+    // 소유자 커넥션에는 GUC 가 없어 tenant_id DEFAULT 가 비므로 명시로 넣는다.
+    ownerJdbc.update(
+        "insert into dataset_ontology (tenant_id, dataset_id, ontology_id) values (?, ?, ?)",
+        tenantId,
+        datasetId,
+        ontologyId);
+  }
+
+  @Override
+  public void createDatasetMapping(long tenantId, long datasetId, long ontologyId) {
+    ownerJdbc.update(
+        "insert into dataset_mapping (tenant_id, dataset_id, ontology_id, spec)"
+            + " values (?, ?, ?, '{}'::jsonb)",
+        tenantId,
+        datasetId,
+        ontologyId);
+  }
+
+  @Override
+  public List<DatasetOntologyRow> datasetOntologyRows(long tenantId, long datasetId) {
+    return ownerJdbc.query(
+        "select ontology_id, bound_by, bound_at from dataset_ontology"
+            + " where tenant_id = ? and dataset_id = ?",
+        (rs, i) ->
+            new DatasetOntologyRow(
+                rs.getLong("ontology_id"),
+                rs.getObject("bound_by", Long.class),
+                rs.getObject("bound_at", java.time.OffsetDateTime.class).toInstant()),
+        tenantId,
+        datasetId);
+  }
+
+  @Override
+  public void setDatasetOntologyBoundAt(long tenantId, long datasetId, java.time.Instant at) {
+    ownerJdbc.update(
+        "update dataset_ontology set bound_at = ? where tenant_id = ? and dataset_id = ?",
+        java.time.OffsetDateTime.ofInstant(at, java.time.ZoneOffset.UTC),
+        tenantId,
+        datasetId);
+  }
+
+  @Override
+  public void setRoleMaxLevel(long roleId, long levelId) {
+    ownerJdbc.update("update role set max_security_level_id = ? where id = ?", levelId, roleId);
+  }
+
+  @Override
+  public void setSecurityLevelFlags(long levelId, boolean allowlistRequired, boolean adminBypass) {
+    ownerJdbc.update(
+        "update security_level set allowlist_required = ?, admin_bypass = ? where id = ?",
+        allowlistRequired,
+        adminBypass,
+        levelId);
+  }
+
+  @Override
+  public List<LocalDateTime> securityLevelCreatedAndUpdatedAt(long levelId) {
+    return ownerJdbc.queryForObject(
+        "select created_at, updated_at from security_level where id = ?",
+        (rs, i) ->
+            List.of(rs.getObject(1, LocalDateTime.class), rs.getObject(2, LocalDateTime.class)),
+        levelId);
+  }
+
+  @Override
+  public LocalDateTime dbWallClockNow() {
+    return ownerJdbc.queryForObject("select localtimestamp", LocalDateTime.class);
+  }
+
+  @Override
+  public long createOntology(long tenantId, String name) {
+    // tenant_id·schema_version·status·updated_at 은 열 DEFAULT 가 채운다.
+    return inTenant(
+        tenantId,
+        () ->
+            dsl.fetchOne("insert into ontology (domain) values (?) returning id", name)
+                .get(0, Long.class));
+  }
+
+  @Override
   public long createCategory(long tenantId, String name) {
     // tenant_id 는 DEFAULT(GUC)가 채운다.
     return inTenant(
@@ -403,6 +505,7 @@ public class PgAccessFixtures implements AccessFixtures {
           "status",
           "status_note",
           "security_level_id",
+          "source_pipeline_step_id",
           "updated_at");
 
   /** 허용 목록에 없는 열 이름이면 예외. */
@@ -944,7 +1047,58 @@ public class PgAccessFixtures implements AccessFixtures {
   }
 
   @Override
+  public void deleteDataset(long datasetId) {
+    ownerJdbc.update("delete from dataset where id = ?", datasetId);
+  }
+
+  @Override
+  public void setOntologySchemaVersion(long ontologyId, int version) {
+    ownerJdbc.update("update ontology set schema_version = ? where id = ?", version, ontologyId);
+  }
+
+  @Override
+  public void insertGraphSource(long tenantId, long ontologyId, long datasetId) {
+    ownerJdbc.update(
+        "insert into graph_ontology_source (tenant_id, ontology_id, dataset_id) values (?, ?, ?)",
+        tenantId,
+        ontologyId,
+        datasetId);
+  }
+
+  @Override
+  public int countGraphSources(long tenantId, long ontologyId, long datasetId) {
+    return ownerJdbc.queryForObject(
+        "select count(*) from graph_ontology_source"
+            + " where tenant_id = ? and ontology_id = ? and dataset_id = ?",
+        Integer.class,
+        tenantId,
+        ontologyId,
+        datasetId);
+  }
+
+  @Override
+  public long insertGraphIngest(
+      long tenantId, long datasetId, int schemaVersion, LocalDateTime ingestedAt) {
+    return ownerJdbc.queryForObject(
+        "insert into dataset_graph_ingest (tenant_id, dataset_id, ingested_at, schema_version_at_ingest)"
+            + " values (?, ?, ?, ?) returning id",
+        Long.class,
+        tenantId,
+        datasetId,
+        ingestedAt,
+        schemaVersion);
+  }
+
+  @Override
   public void cleanup() {
+    for (long t : tenants) {
+      // 적재 이력은 테넌트 FK 만 있어(온톨로지 CASCADE 밖) 테넌트 정리 전에 지운다.
+      ownerJdbc.update("delete from dataset_graph_ingest where tenant_id = ?", t);
+    }
+    cleanupRows();
+  }
+
+  private void cleanupRows() {
     for (String k : systemSettingKeys) {
       dsl.execute("delete from system_settings where key = ?", k);
     }
@@ -963,6 +1117,8 @@ public class PgAccessFixtures implements AccessFixtures {
             // ai_session 은 사용자 FK 가 CASCADE 가 아니라 사용자보다 먼저 지운다(WD-712).
             dsl.execute("delete from ai_session where tenant_id = ?", t);
             dsl.execute("delete from dataset_access_grant where tenant_id = ?", t);
+            // 온톨로지 하위(엔티티 타입·속성·관계·데이터셋 연결)는 FK CASCADE 로 함께 사라진다.
+            dsl.execute("delete from ontology where tenant_id = ?", t);
             // 대시보드·저장 쿼리·파이프라인은 사용자(created_by)를 참조하고, 스텝의 output_dataset_id 는 ON DELETE 없는 데이터셋
             // FK 라 데이터셋보다 먼저 지운다. 위젯·차트·스텝·스텝 입력·트리거는 FK CASCADE 로 함께 사라진다.
             // uploaded_files 는 사용자 FK 가 CASCADE 가 아니라 사용자보다 먼저 지운다(WD-712).

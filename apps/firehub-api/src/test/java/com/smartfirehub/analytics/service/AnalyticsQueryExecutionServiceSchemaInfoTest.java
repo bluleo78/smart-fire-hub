@@ -7,9 +7,12 @@ import com.smartfirehub.analytics.dto.SchemaInfoResponse;
 import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.service.DatasetService;
+import com.smartfirehub.securitylevel.access.Clearance;
+import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.securitylevel.sql.TiberoQueryService;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.util.List;
+import java.util.Set;
 import org.jooq.DSLContext;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
@@ -21,7 +24,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
  *
  * <p>Tibero 테이블은 PG 에 없으므로 응답은 {@code dataset}/{@code dataset_column} 메타데이터에서 만든다. 테넌트 백엔드 판정은
  * {@link TiberoQueryService} 목으로 갈라 세우고, 데이터셋 메타 행은 PG 테스트 DB 에 실제로 만든다(PG 물리 테이블이 함께 생겨도 Tibero
- * 경로는 {@code information_schema} 를 보지 않으므로 결과에 영향이 없다). 가시성 조건({@code visibilitySql})은 보안 요건이라
+ * 경로는 {@code information_schema} 를 보지 않으므로 결과에 영향이 없다). 가시성({@link DatasetVisibility})은 보안 요건이라
  * Tibero 경로에서도 걸려야 한다.
  */
 class AnalyticsQueryExecutionServiceSchemaInfoTest extends IntegrationTestBase {
@@ -75,9 +78,27 @@ class AnalyticsQueryExecutionServiceSchemaInfoTest extends IntegrationTestBase {
     Long doc = inTenantFixture(() -> createDataset(userId, "Tib 문서", "tib_doc", "y"));
     inTenantFixture(
         () -> dsl.execute("UPDATE dataset SET storage_type = 'DOCUMENT' WHERE id = " + doc));
+    // 숨김 데이터셋은 조회자 rank 보다 높은 등급으로 옮긴다 — 실제 가시성 값이 Tibero 메타 조회에서 걸러야 한다(스펙 D3).
+    int hiddenRank = 10_000 + (int) (System.nanoTime() % 100_000);
+    Long hiddenLevel =
+        inTenantFixture(
+            () ->
+                dsl.fetchOne(
+                        "INSERT INTO security_level (rank, name) VALUES (?, ?) RETURNING id",
+                        hiddenRank,
+                        "schemainfo-hidden-" + hiddenRank)
+                    .get(0, Long.class));
+    inTenantFixture(
+        () ->
+            dsl.execute(
+                "UPDATE dataset SET security_level_id = " + hiddenLevel + " WHERE id = " + hidden));
+    DatasetVisibility visibility =
+        new DatasetVisibility(
+            new Clearance(userId, 0L, hiddenRank - 1, Set.of(), false, Set.of()), null);
     try {
+      // 공용 테스트 테넌트라 다른 시험의 데이터셋이 섞이지 않게 id 로 고른다 — 숨김은 id 로 골라도 가시성이 뺀다.
       SchemaInfoResponse res =
-          executionService.getSchemaInfo(null, "d.id IN (" + shown + "," + doc + ")");
+          executionService.getSchemaInfo(List.of(shown, hidden, doc), visibility);
 
       assertThat(res.dialect()).isEqualTo("TIBERO");
       assertThat(res.schema()).isEqualTo("genia_t5");
@@ -96,6 +117,7 @@ class AnalyticsQueryExecutionServiceSchemaInfoTest extends IntegrationTestBase {
       assertThat(t.columns().get(0).dataType()).isEqualTo("TEXT");
     } finally {
       cleanup(userId, shown, hidden, doc);
+      inTenantFixture(() -> dsl.execute("DELETE FROM security_level WHERE id = " + hiddenLevel));
     }
   }
 
@@ -107,12 +129,14 @@ class AnalyticsQueryExecutionServiceSchemaInfoTest extends IntegrationTestBase {
     Long a = inTenantFixture(() -> createDataset(userId, "Tib A", "tib_a", "c1"));
     Long b = inTenantFixture(() -> createDataset(userId, "Tib B", "tib_b", "c2"));
     try {
-      SchemaInfoResponse only = executionService.getSchemaInfo(List.of(b), "TRUE");
+      SchemaInfoResponse only =
+          executionService.getSchemaInfo(List.of(b), DatasetVisibility.UNRESTRICTED);
       assertThat(only.tables())
           .extracting(SchemaInfoResponse.TableInfo::tableName)
           .containsExactly("tib_b");
 
-      SchemaInfoResponse empty = executionService.getSchemaInfo(List.of(), "TRUE");
+      SchemaInfoResponse empty =
+          executionService.getSchemaInfo(List.of(), DatasetVisibility.UNRESTRICTED);
       assertThat(empty.tables()).isEmpty();
       assertThat(empty.dialect()).isEqualTo("TIBERO");
       assertThat(empty.schema()).isEqualTo("genia_t5");
@@ -127,14 +151,16 @@ class AnalyticsQueryExecutionServiceSchemaInfoTest extends IntegrationTestBase {
     Long userId = inTenantFixture(this::createTestUser);
     Long id = inTenantFixture(() -> createDataset(userId, "Pg DS", "pg_schema_info", "col_a"));
     try {
-      SchemaInfoResponse res = executionService.getSchemaInfo(List.of(id), "TRUE");
+      SchemaInfoResponse res =
+          executionService.getSchemaInfo(List.of(id), DatasetVisibility.UNRESTRICTED);
       assertThat(res.dialect()).isEqualTo("POSTGRESQL");
       assertThat(res.schema()).isEqualTo(com.smartfirehub.global.tenant.DataSchema.current());
       assertThat(res.tables())
           .extracting(SchemaInfoResponse.TableInfo::tableName)
           .containsExactly("pg_schema_info");
 
-      SchemaInfoResponse empty = executionService.getSchemaInfo(List.of(), "TRUE");
+      SchemaInfoResponse empty =
+          executionService.getSchemaInfo(List.of(), DatasetVisibility.UNRESTRICTED);
       assertThat(empty.tables()).isEmpty();
       assertThat(empty.dialect()).isEqualTo("POSTGRESQL");
       assertThat(empty.schema()).isEqualTo(res.schema());

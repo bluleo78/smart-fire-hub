@@ -20,6 +20,7 @@ import com.smartfirehub.global.util.ContentDispositions;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.securitylevel.ai.AiCallContext;
 import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
 import jakarta.validation.Valid;
@@ -83,7 +84,8 @@ public class SavedQueryController {
     // datasetIds 미지정 시 null 위임 → 서비스 BC 분기로 전체 스키마 반환.
     // 지정 시 (?datasetIds=11 / ?datasetIds=11,7) 해당 데이터셋만 필터링 — ai-agent 응답 크기 절감.
     // 스키마 목록도 열람 가능한 데이터셋만(스펙 §4.2 3행).
-    String visibility = datasetAccessGuard.visibleSql(clearanceResolver.current(), "d");
+    // 가시성은 값으로 넘기고 SQL 로 옮기는 일은 리포지토리 구현이 한다(스펙 D3 — PG 렌더 문자열을 넘기면 Tibero 에서 깨진다).
+    DatasetVisibility visibility = datasetAccessGuard.visibility(clearanceResolver.current());
     return ResponseEntity.ok(executionService.getSchemaInfo(datasetIds, visibility));
   }
 

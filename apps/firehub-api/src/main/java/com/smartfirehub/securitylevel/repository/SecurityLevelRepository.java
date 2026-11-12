@@ -14,7 +14,8 @@ import java.util.Set;
  * 보안 등급(security_level 테이블) 정의와 등급 배정(dataset·role 의 등급 컬럼)·허용 목록 집계(dataset_access_grant)·사용자
  * 역할(user_role) 저장·조회 리포지토리.
  *
- * <p>구현은 {@code JooqSecurityLevelRepository}(jOOQ/PostgreSQL) 이다 — WD-485.
+ * <p>구현은 {@code JooqSecurityLevelRepository}(jOOQ/PostgreSQL, WD-485)와 {@code
+ * MyBatisSecurityLevelRepository}(Tibero 설치본, WD-711) 이다.
  */
 public interface SecurityLevelRepository {
 

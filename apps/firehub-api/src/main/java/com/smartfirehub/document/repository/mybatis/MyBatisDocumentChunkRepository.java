@@ -25,10 +25,11 @@ import org.springframework.transaction.annotation.Transactional;
  * 검색은 TRIGRAM_SEARCH 가드 뒤에서만 부르고 Tibero 기준선에 테이블·색인도 없어 {@link UnsupportedOperationException} 을
  * 던진다(스펙 D1). PG 프로필의 이 빈도 같다 — PG 운영은 jOOQ 구현이다.
  *
- * <p>등급 허용 술어(countAllChunks)는 묶음 ⑥ 의 {@code EmbeddingAiPolicyRepository.allowedDatasetSql}(jOOQ 렌더
- * 문자열)에 기대지 않고 매퍼 XML 이 같은 모양으로 직접 렌더한다(Task 8 의 {@code MyBatisDatasetEmbeddingRepository.countAll}
- * 과 같은 판단) — Tibero 컨텍스트에 그 빈이 없고, jOOQ 렌더 문자열은 Tibero 유효성을 보장하지 않는다. 계약 테스트의 ai_policy 행렬이 두 구현을
- * 고정한다.
+ * <p>등급 허용 술어(countAllChunks)는 {@code EmbeddingAiPolicyRepository.allowedDatasetSql}(jOOQ 렌더 문자열 —
+ * MyBatis 판은 꺼진 기능)에 기대지 않고 매퍼 XML 이 같은 모양으로 직접 렌더한다(Task 8 의 {@code
+ * MyBatisDatasetEmbeddingRepository.countAll} 과 같은 판단) — Tibero 컨텍스트에 그 빈이 없고, jOOQ 렌더 문자열은 Tibero
+ * 유효성을 보장하지 않는다. 허용 값은 {@link MyBatisDatasetVisibility#aiPolicyValues} 한 곳(스펙 D4)이고 계약 테스트의
+ * ai_policy 행렬이 두 구현을 고정한다.
  */
 // 배경 잡(JobRunr/@Async/@Scheduled)은 앰비언트 트랜잭션이 없다. RLS GUC 는 트랜잭션 시작
 // 시점에만 주입되므로, 트랜잭션이 없으면 TenantContext 를 세워도 정책이 전 행을 차단한다.

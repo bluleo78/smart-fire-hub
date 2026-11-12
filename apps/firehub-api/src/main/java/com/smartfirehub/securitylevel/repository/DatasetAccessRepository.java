@@ -11,15 +11,18 @@ import java.util.Set;
  * 데이터셋 접근 판정에 필요한 사실(dataset·security_level·dataset_access_grant)과 사용자 자격 원자료(user_role·role·user)를
  * 읽는 리포지토리. 판정 자체는 하지 않는다.
  *
- * <p>구현은 {@code JooqDatasetAccessRepository}(jOOQ/PostgreSQL) 이다 — WD-485.
+ * <p>구현은 {@code JooqDatasetAccessRepository}(jOOQ/PostgreSQL, WD-485)·{@code
+ * MyBatisDatasetAccessRepository}(MyBatis — Tibero 플랫폼 DB, WD-711) 이다.
  */
 public interface DatasetAccessRepository {
 
   /**
    * 가시성을 바인드 값 인라인 SQL 문자열 술어로 렌더한다 — <b>문자열 SQL 을 조립하는 리포지토리 구현</b>(시맨틱·키워드 검색의 Jooq 구현이 자기 별칭으로
-   * 부른다)과 <b>테넌트 데이터 경로</b>(스키마 조회 — DatasetAccessGuard#visibleSql 경유) 전용이다. 서비스가 이 문자열을 만들어 다른 플랫폼
-   * 리포지토리 인터페이스로 넘기지 않는다(WD-485 T10 — 인터페이스는 {@link DatasetVisibility} 를 받는다). 값이 모두 long/boolean
-   * 이라 인라인 렌더링이 안전하다. 술어는 {@code JooqDatasetVisibility#condition} 그대로라 jOOQ 목록 경로와 같은 규칙이다.
+   * 부른다) 전용이다 — 스키마 조회는 WD-711(스펙 D3)부터 {@link DatasetVisibility} 값을 받는 {@code
+   * DatasetRepository#findSchemaMetas} 로 옮겨 이 문자열을 쓰지 않는다. 그 소비자(벡터·트라이그램)는 Tibero 에서 꺼져 있어 MyBatis
+   * 구현은 꺼진 기능 예외(VECTOR_SEARCH)를 던진다. 서비스가 이 문자열을 만들어 다른 플랫폼 리포지토리 인터페이스로 넘기지 않는다(WD-485 T10 —
+   * 인터페이스는 {@link DatasetVisibility} 를 받는다). 값이 모두 long/boolean 이라 인라인 렌더링이 안전하다. 술어는 {@code
+   * JooqDatasetVisibility#condition} 그대로라 jOOQ 목록 경로와 같은 규칙이다.
    *
    * <p>쿼리를 실행하지 않는 렌더 전용이다. 클래스 단위 readOnly 트랜잭션을 상속하면 트랜잭션 없는 호출부에서 불필요한 트랜잭션·GUC 주입이 새로 생기므로
    * {@code SUPPORTS} 로 둔다(있으면 합류, 없으면 만들지 않음).

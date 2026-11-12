@@ -8,6 +8,7 @@ import static com.smartfirehub.jooq.Tables.USER;
 import static com.smartfirehub.jooq.Tables.USER_ROLE;
 import static org.jooq.impl.DSL.val;
 
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.global.platformdb.PlatformLocks;
 import com.smartfirehub.jooq.tables.records.SecurityLevelRecord;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
@@ -36,6 +37,7 @@ import org.springframework.stereotype.Repository;
  * "트랜잭션 없는 호출자"(비동기 러너·인터셉터)도 안전하게 한다(DatasetRepository 와 같은 관례). 호출자 트랜잭션이 있으면 합류한다.
  */
 @Repository
+@ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
 @org.springframework.transaction.annotation.Transactional
 public class JooqSecurityLevelRepository implements SecurityLevelRepository {
@@ -393,7 +395,8 @@ public class JooqSecurityLevelRepository implements SecurityLevelRepository {
         .join(ActiveMembership.TABLE)
         .on(ActiveMembership.of(USER.ID, val(tenantId)))
         .where(USER.IS_ACTIVE.isTrue())
-        .orderBy(USER.NAME.asc())
+        // 같은 이름끼리의 순서를 고정한다(id) — MyBatis 구현과 같은 정렬(WD-711).
+        .orderBy(USER.NAME.asc(), USER.ID.asc())
         .fetch(r -> new CandidateUser(r.get(USER.ID), r.get(USER.NAME), r.get(USER.EMAIL)));
   }
 
@@ -401,7 +404,7 @@ public class JooqSecurityLevelRepository implements SecurityLevelRepository {
   public List<CandidateRole> findCandidateRoles() {
     return dsl.select(ROLE.ID, ROLE.NAME, ROLE.MAX_SECURITY_LEVEL_ID)
         .from(ROLE)
-        .orderBy(ROLE.NAME.asc())
+        .orderBy(ROLE.NAME.asc(), ROLE.ID.asc())
         .fetch(
             r ->
                 new CandidateRole(

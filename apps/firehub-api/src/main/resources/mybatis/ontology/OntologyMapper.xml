@@ -1,0 +1,174 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  온톨로지(ontology·ontology_entity_type·ontology_entity_property·ontology_relation) 문장(WD-711) — JooqOntologyRepository 와 같은 의미.
+  모든 테이블이 테넌트 정책(RLS) 대상이라 tenant_id 를 술어·INSERT 값으로 쓰지 않는다(열 DEFAULT 가 컨텍스트에서 채운다).
+  RETURNING 이 없는 Tibero 를 위해 INSERT 는 생성 키(useGeneratedKeys)로 id 를 돌려준다.
+  시각: updated_at 은 DB 시계(dbNow — PG now(), Tibero UTC 벽시계)로 쓰고 Instant 로 읽는다(Tibero 는 전역 UtcInstantTypeHandler).
+  빈 문자열: 설명·명명 규칙은 그대로 읽어 오고, Tibero 에서 NULL 로 돌아온 값의 "" 보정은 리포지토리가 자바에서 한다.
+  잠금: PG 는 jOOQ 와 같은 모드(FOR NO KEY UPDATE·FOR SHARE), Tibero 는 둘 다 FOR UPDATE.
+-->
+<mapper namespace="com.smartfirehub.ontology.repository.mybatis.OntologyMapper">
+
+  <resultMap id="headRow" type="com.smartfirehub.ontology.repository.mybatis.OntologyRows$HeadRow">
+    <constructor>
+      <arg column="domain" javaType="java.lang.String"/>
+      <arg column="schema_version" javaType="_int"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="entityTypeRow" type="com.smartfirehub.ontology.repository.mybatis.OntologyRows$EntityTypeRow">
+    <constructor>
+      <arg column="id" javaType="_long"/>
+      <arg column="type" javaType="java.lang.String"/>
+      <arg column="description" javaType="java.lang.String"/>
+      <arg column="naming" javaType="java.lang.String"/>
+      <arg column="resolution" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="propertyRow" type="com.smartfirehub.ontology.repository.mybatis.OntologyRows$PropertyRow">
+    <constructor>
+      <arg column="entity_type_id" javaType="_long"/>
+      <arg column="name" javaType="java.lang.String"/>
+      <arg column="description" javaType="java.lang.String"/>
+      <arg column="data_type" javaType="java.lang.String"/>
+      <arg column="unit" javaType="java.lang.String"/>
+      <arg column="id" javaType="_long"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="relationRow" type="com.smartfirehub.ontology.repository.mybatis.OntologyRows$RelationRow">
+    <constructor>
+      <arg column="id" javaType="_long"/>
+      <arg column="subject_type_id" javaType="_long"/>
+      <arg column="relation" javaType="java.lang.String"/>
+      <arg column="object_type_id" javaType="_long"/>
+      <arg column="description" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="summaryRow" type="com.smartfirehub.ontology.repository.mybatis.OntologyRows$SummaryRow">
+    <constructor>
+      <arg column="id" javaType="_long"/>
+      <arg column="domain" javaType="java.lang.String"/>
+      <arg column="schema_version" javaType="_int"/>
+      <arg column="status" javaType="java.lang.String"/>
+      <arg column="entity_count" javaType="_int"/>
+      <arg column="dataset_count" javaType="_int"/>
+      <arg column="updated_at" javaType="java.time.Instant"/>
+    </constructor>
+  </resultMap>
+
+  <select id="selectHead" resultMap="headRow">
+    SELECT o.domain, o.schema_version FROM ontology o WHERE o.id = #{ontologyId}
+  </select>
+
+  <select id="selectEntityTypes" resultMap="entityTypeRow">
+    SELECT et.id, et.type, et.description, et.naming, et.resolution
+      FROM ontology_entity_type et
+     WHERE et.ontology_id = #{ontologyId}
+     ORDER BY et.sort_order
+  </select>
+
+  <select id="selectProperties" resultMap="propertyRow">
+    SELECT ep.entity_type_id, ep.name, ep.description, ep.data_type, ep.unit, ep.id
+      FROM ontology_entity_property ep
+     WHERE ep.entity_type_id IN (SELECT et.id FROM ontology_entity_type et WHERE et.ontology_id = #{ontologyId})
+     ORDER BY ep.entity_type_id, ep.sort_order
+  </select>
+
+  <select id="selectRelations" resultMap="relationRow">
+    SELECT r.id, r.subject_type_id, r.relation, r.object_type_id, r.description
+      FROM ontology_relation r
+     WHERE r.ontology_id = #{ontologyId}
+     ORDER BY r.sort_order
+  </select>
+
+  <!-- 엔티티 수·바인딩 수는 상관 서브쿼리(jOOQ 와 같음 — 온톨로지 행이 적어 조인 폭발 걱정이 없다). -->
+  <select id="selectSummaries" resultMap="summaryRow">
+    SELECT o.id, o.domain, o.schema_version, o.status,
+           (SELECT COUNT(*) FROM ontology_entity_type et WHERE et.ontology_id = o.id) AS entity_count,
+           (SELECT COUNT(*) FROM dataset_ontology dn WHERE dn.ontology_id = o.id) AS dataset_count,
+           o.updated_at
+      FROM ontology o
+    <where>
+      <if test="status != null">o.status = #{status}</if>
+    </where>
+     ORDER BY o.id
+  </select>
+
+  <select id="countLiveDomain" resultType="_int">
+    SELECT COUNT(*) FROM ontology o WHERE o.domain = #{domain} AND o.status &lt;&gt; 'archived'
+  </select>
+
+  <select id="selectStatus" resultType="java.lang.String">
+    SELECT o.status FROM ontology o WHERE o.id = #{ontologyId}
+  </select>
+
+  <select id="lockAndSelectStatus" resultType="java.lang.String">
+    SELECT o.status FROM ontology o WHERE o.id = #{ontologyId} <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.lockNoKeyUpdate"/>
+  </select>
+
+  <select id="lockForShare" resultType="java.lang.Long">
+    SELECT o.id FROM ontology o WHERE o.id = #{ontologyId} <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.lockShare"/>
+  </select>
+
+  <update id="updateStatus">
+    UPDATE ontology
+       SET status = #{status},
+           updated_at = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>
+     WHERE id = #{ontologyId}
+  </update>
+
+  <!-- 합산이 아니라 dataset_id 기준 UNION(중복 제거) — 매핑이 있는 데이터셋은 바인딩도 함께 있다(jOOQ 주석 참조). -->
+  <select id="countReferences" resultType="_int">
+    SELECT COUNT(*) FROM (
+      SELECT dn.dataset_id FROM dataset_ontology dn WHERE dn.ontology_id = #{ontologyId}
+      UNION
+      SELECT dm.dataset_id FROM dataset_mapping dm WHERE dm.ontology_id = #{ontologyId}
+    ) refs
+  </select>
+
+  <!-- 하위 타입·속성·관계·연결은 FK ON DELETE CASCADE 로 함께 지워진다. -->
+  <delete id="deleteOntology">
+    DELETE FROM ontology WHERE id = #{ontologyId}
+  </delete>
+
+  <select id="countById" resultType="_int">
+    SELECT COUNT(*) FROM ontology o WHERE o.id = #{ontologyId}
+  </select>
+
+  <select id="selectSchemaVersion" resultType="java.lang.Integer">
+    SELECT o.schema_version FROM ontology o WHERE o.id = #{ontologyId}
+  </select>
+
+  <insert id="insertOntology" useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+    INSERT INTO ontology (domain, schema_version, status, updated_at)
+    VALUES (#{domain}, 1, #{status},
+            <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>)
+  </insert>
+
+  <!--
+    하위 행 INSERT — 요소 단위 리포지토리(MyBatisOntologyElementRepository)도 이 문장을 주입받아 쓴다(createOntology 와 같은 문장).
+    설명·명명·단위는 null 일 수 있어 VARCHAR 로 밝힌다(Tibero 는 전역 jdbcTypeForNull=VARCHAR 지만 PG 를 위해 명시).
+  -->
+  <insert id="insertEntityType" useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+    INSERT INTO ontology_entity_type (ontology_id, type, description, naming, resolution, sort_order)
+    VALUES (#{ontologyId}, #{type}, #{description,jdbcType=VARCHAR}, #{naming,jdbcType=VARCHAR},
+            #{resolution}, #{sortOrder})
+  </insert>
+
+  <insert id="insertProperty" useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+    INSERT INTO ontology_entity_property (entity_type_id, name, description, data_type, unit, sort_order)
+    VALUES (#{entityTypeId}, #{name}, #{description,jdbcType=VARCHAR}, #{dataType},
+            #{unit,jdbcType=VARCHAR}, #{sortOrder})
+  </insert>
+
+  <insert id="insertRelation" useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+    INSERT INTO ontology_relation (ontology_id, subject_type_id, relation, object_type_id, description, sort_order)
+    VALUES (#{ontologyId}, #{subjectTypeId}, #{relation}, #{objectTypeId},
+            #{description,jdbcType=VARCHAR}, #{sortOrder})
+  </insert>
+
+</mapper>

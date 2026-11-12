@@ -6,6 +6,7 @@ import com.smartfirehub.analytics.dto.SchemaInfoResponse;
 import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.service.DatasetService;
+import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.util.List;
 import org.jooq.DSLContext;
@@ -59,7 +60,8 @@ class AnalyticsQueryExecutionServiceSchemaGucTest extends IntegrationTestBase {
     try {
       // 검증 대상 호출 — 여기가 핵심이다. 트랜잭션 없이(운영에서 자가 @Transactional 이 없을 때와
       // 동일한 조건) 직접 호출해야 doBegin() 미실행 결함이 재현/검증된다.
-      SchemaInfoResponse res = executionService.getSchemaInfo(List.of(datasetId), "TRUE");
+      SchemaInfoResponse res =
+          executionService.getSchemaInfo(List.of(datasetId), DatasetVisibility.UNRESTRICTED);
 
       assertThat(res.tables())
           .extracting(SchemaInfoResponse.TableInfo::tableName)

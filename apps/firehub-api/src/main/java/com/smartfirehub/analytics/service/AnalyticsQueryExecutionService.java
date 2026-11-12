@@ -20,6 +20,7 @@ import com.smartfirehub.pipeline.exception.UnsafeSqlException;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient;
 import com.smartfirehub.pipeline.service.executor.ExecutorResponseTooLargeException;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
+import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.securitylevel.sql.TiberoQueryService;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -479,11 +480,11 @@ public class AnalyticsQueryExecutionService {
   /**
    * 데이터셋 필터 없이 전체(열람 가능한 데이터셋만) 스키마를 반환하는 진입점. datasetIds=null 오버로드에 위임한다.
    *
-   * @param visibilitySql 별칭 {@code d}(dataset) 기준 열람 가능 조건 SQL 조각({@code
-   *     DatasetAccessGuard.visibleSql})
+   * @param visibility 조회자 가시성({@code DatasetAccessGuard.visibility}) — SQL 로 옮기는 일은 리포지토리 구현이 한다(스펙
+   *     D3)
    */
-  public SchemaInfoResponse getSchemaInfo(String visibilitySql) {
-    return getSchemaInfo(null, visibilitySql);
+  public SchemaInfoResponse getSchemaInfo(DatasetVisibility visibility) {
+    return getSchemaInfo(null, visibility);
   }
 
   /**
@@ -496,7 +497,8 @@ public class AnalyticsQueryExecutionService {
    *       <li>값 있음 — 해당 id 들만 필터
    *     </ul>
    *
-   * @param visibilitySql 보안 등급(S2): 별칭 {@code d} 기준 열람 가능 조건. 조회자가 볼 수 있는 데이터셋의 테이블만 반환한다.
+   * @param visibility 보안 등급(S2): 조회자 가시성. 조회자가 볼 수 있는 데이터셋의 테이블만 반환한다(스펙 D3 — 예전에는 PG 렌더 SQL 문자열을
+   *     받아 Tibero 메타 조회에도 그대로 이어 붙였다).
    *     <p>#596: {@code @Transactional}이 없으면 {@code TenantAwareTransactionManager.doBegin()}이 실행되지
    *     않아 {@code app.tenant_id} GUC가 주입되지 않는다. 그 결과 V107 이후 RLS가 걸린 {@code dataset}/{@code
    *     dataset_column} 테이블에 대한 이 raw-SQL LEFT JOIN이 예외 없이 항상 0행을 반환해(fail-closed)
@@ -504,7 +506,7 @@ public class AnalyticsQueryExecutionService {
    *     문제가 없었다).
    */
   @Transactional(readOnly = true)
-  public SchemaInfoResponse getSchemaInfo(List<Long> datasetIds, String visibilitySql) {
+  public SchemaInfoResponse getSchemaInfo(List<Long> datasetIds, DatasetVisibility visibility) {
     // 응답의 방언·스키마는 두 백엔드 모두에 싣는다(빈 결과 경로 포함) — 웹 편집기가 한정 이름(genia_t5.orders)과 ROWNUM/LIMIT
     // 스니펫을 고르는 근거다. Tibero 스키마는 쿼리에 소문자로 써도 대문자로 접히므로 소문자로 내려 PG 쪽 표기와 맞춘다.
     boolean tibero = tiberoQueryService.isTibero();
@@ -519,14 +521,14 @@ public class AnalyticsQueryExecutionService {
     }
 
     if (tibero) {
-      return new SchemaInfoResponse(getTiberoTables(datasetIds, visibilitySql), dialect, schema);
+      return new SchemaInfoResponse(getTiberoTables(datasetIds, visibility), dialect, schema);
     }
 
     // 플랫폼 메타(열람 가능한 데이터셋 + 컬럼 표시 이름)는 리포지토리로, 물리 컬럼은 데이터 저장소에서 따로 읽어 앱에서 합친다(WD-494).
     // 예전에는 information_schema.columns 와 dataset 을 한 SQL 로 조인했다 — 데이터셋이 아닌 data 스키마 테이블(stg_import_*
     // 등)이
     // INNER JOIN 으로 사라지던 것은 메타 맵에 없는 테이블을 건너뛰는 것으로 같다.
-    List<DatasetSchemaMeta> metas = datasetRepository.findSchemaMetas(datasetIds, visibilitySql);
+    List<DatasetSchemaMeta> metas = datasetRepository.findSchemaMetas(datasetIds, visibility);
     // 테이블 이름 → 메타, 테이블 이름 → (컬럼 → 표시 이름). 같은 테이블 이름이 두 번 오면 둘 다 뒤의 메타가 이긴다(예전과 같은 마지막 우선).
     Map<String, DatasetSchemaMeta> metaByTable = new HashMap<>();
     Map<String, Map<String, String>> displayNamesByTable = new HashMap<>();
@@ -586,18 +588,18 @@ public class AnalyticsQueryExecutionService {
   /**
    * Tibero 테넌트의 스키마 정보 — 테이블이 PG 에 없으므로 {@code information_schema} 대신 데이터셋 메타데이터({@code
    * dataset}·{@code dataset_column})로 만든다. 컬럼 순서는 {@code column_order}, 테이블 이름은 스키마 없는 원래 {@code
-   * table_name} 이다. 보안 등급(S2) 가시성 조건은 PG 경로와 같이 별칭 {@code d} 기준으로 반드시 건다. 컬럼 없는 데이터셋도 LEFT JOIN 으로
-   * 빈 컬럼 목록의 테이블로 나온다.
+   * table_name} 이다. 보안 등급(S2) 가시성은 PG 경로와 같은 값을 리포지토리에 넘겨 반드시 건다. 컬럼 없는 데이터셋도 LEFT JOIN 으로 빈 컬럼 목록의
+   * 테이블로 나온다.
    */
   // 주의: 이 경로는 메타데이터({@code dataset_column}) 컬럼만 나열한다. PG 경로는 물리 컬럼을 나열하므로 메타 행이 없는 컬럼도 포함하지만
   // 여기서는 나오지 않고, 컬럼 메타가 없는 TABLE 데이터셋은 빈 컬럼 목록의 테이블로 나온다.
   private List<SchemaInfoResponse.TableInfo> getTiberoTables(
-      List<Long> datasetIds, String visibilitySql) {
+      List<Long> datasetIds, DatasetVisibility visibility) {
     // 메타는 전부 플랫폼 테이블이라 리포지토리로 읽는다(WD-494). TABLE 저장 방식만 거르는 것은 예전 SQL 조건과 같다.
     // 메타 하나가 곧 테이블 하나다 — table_name 은 테넌트 안에서 유일(idx_dataset_table_name)하고 메타 조회는 테넌트 범위라 묶을 일이
     // 없다. 컬럼 없는 데이터셋은 LEFT JOIN 처럼 빈 컬럼 목록의 테이블로 나온다.
     List<SchemaInfoResponse.TableInfo> tables = new ArrayList<>();
-    for (DatasetSchemaMeta m : datasetRepository.findSchemaMetas(datasetIds, visibilitySql)) {
+    for (DatasetSchemaMeta m : datasetRepository.findSchemaMetas(datasetIds, visibility)) {
       if (!"TABLE".equals(m.storageType())) {
         continue;
       }

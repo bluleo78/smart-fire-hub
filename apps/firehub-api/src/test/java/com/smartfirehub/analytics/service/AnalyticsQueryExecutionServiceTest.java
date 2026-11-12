@@ -17,6 +17,7 @@ import com.smartfirehub.pipeline.service.PipelineDataSchema;
 import com.smartfirehub.pipeline.service.executor.DbExecutorClient;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
+import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.securitylevel.sql.TiberoQueryService;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.util.ArrayList;
@@ -40,7 +41,7 @@ class AnalyticsQueryExecutionServiceTest extends IntegrationTestBase {
   @Autowired @DataStoreDb private DSLContext dataDsl;
 
   /** 이 테스트는 필터 동작만 검증하므로 열람 조건은 항상 참(가시성 자체는 SqlPathsAccessTest 가 검증). */
-  private static final String ALL_VISIBLE = "TRUE";
+  private static final DatasetVisibility ALL_VISIBLE = DatasetVisibility.UNRESTRICTED;
 
   private Long testUserId;
 

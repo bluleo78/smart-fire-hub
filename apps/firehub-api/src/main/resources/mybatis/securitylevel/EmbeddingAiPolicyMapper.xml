@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  임베딩·AI 허용 등급 정책 문장(WD-711) — JooqEmbeddingAiPolicyRepository 와 같은 의미. 규칙은 MyBatisPlatformConfig javadoc.
+  허용 판정은 공용 조각 DatasetVisibility.aiPolicyAllowedDataset 하나(데이터셋 임베딩 카탈로그·문서 청크 진행률 분모와 같은 본문 — 스펙 D4),
+  허용 값(파라미터 aiPolicy)은 MyBatisDatasetVisibility.aiPolicyValues 가 만든다. 불허는 그 조각의 NOT — ai_policy·security_level_id 가
+  NOT NULL(+FK)이라 jOOQ 의 JOIN + NOT(aiPolicyAllows) 와 같은 행이다.
+  예외(스펙 D1): jOOQ 가 dataset.tenant_id 를 명시하므로 그대로 옮긴다 — 소유자 커넥션에서 불려도 다른 테넌트 데이터셋을 허용·불허로 보지 않게.
+-->
+<mapper namespace="com.smartfirehub.securitylevel.repository.mybatis.EmbeddingAiPolicyMapper">
+
+  <select id="countAllowed" resultType="_long">
+    SELECT COUNT(*) FROM dataset d
+     WHERE d.id = #{datasetId}
+       AND d.tenant_id = #{tenantId}
+       AND <include refid="com.smartfirehub.securitylevel.repository.mybatis.DatasetVisibility.aiPolicyAllowedDataset"><property name="datasetIdCol" value="d.id"/></include>
+  </select>
+
+  <select id="countDisallowed" resultType="_long">
+    SELECT COUNT(*) FROM dataset d
+     WHERE d.id = #{datasetId}
+       AND d.tenant_id = #{tenantId}
+       AND NOT <include refid="com.smartfirehub.securitylevel.repository.mybatis.DatasetVisibility.aiPolicyAllowedDataset"><property name="datasetIdCol" value="d.id"/></include>
+  </select>
+
+  <select id="selectDisallowedIds" resultType="java.lang.Long">
+    SELECT d.id FROM dataset d
+     WHERE d.tenant_id = #{tenantId}
+       AND NOT <include refid="com.smartfirehub.securitylevel.repository.mybatis.DatasetVisibility.aiPolicyAllowedDataset"><property name="datasetIdCol" value="d.id"/></include>
+     ORDER BY d.id
+  </select>
+
+</mapper>

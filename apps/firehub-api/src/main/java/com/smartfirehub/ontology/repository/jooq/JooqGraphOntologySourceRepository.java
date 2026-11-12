@@ -7,6 +7,7 @@ import static org.jooq.impl.DSL.not;
 import static org.jooq.impl.DSL.selectOne;
 import static org.jooq.impl.DSL.table;
 
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.ontology.repository.GraphOntologySourceRepository;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.securitylevel.repository.jooq.JooqDatasetVisibility;
@@ -30,6 +31,7 @@ import org.springframework.transaction.annotation.Transactional;
  * GraphReadGate 가 아니라 이 별도 빈에 두는 이유도 같다 — 같은 클래스 안의 자기 호출은 프록시를 우회해 트랜잭션이 걸리지 않는다.
  */
 @Repository
+@ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
 @Transactional
 public class JooqGraphOntologySourceRepository implements GraphOntologySourceRepository {

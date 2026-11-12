@@ -6,10 +6,10 @@ import com.smartfirehub.embedding.EmbeddingSpace;
 import com.smartfirehub.global.platformdb.PlatformDbFeature;
 import com.smartfirehub.global.platformdb.mybatis.PlatformFeatureOff;
 import com.smartfirehub.global.platformdb.mybatis.PlatformMyBatisRepository;
+import com.smartfirehub.global.platformdb.mybatis.PlatformRetries;
 import com.smartfirehub.securitylevel.ai.EmbeddingAllowance;
 import com.smartfirehub.securitylevel.repository.mybatis.MyBatisDatasetVisibility;
 import java.util.List;
-import org.springframework.dao.DuplicateKeyException;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -20,11 +20,11 @@ import org.springframework.transaction.annotation.Transactional;
  * 기준선에 테이블도 없어 {@link UnsupportedOperationException} 을 던진다(스펙 D1). PG 프로필의 이 빈도 같다 — PG 운영은 jOOQ
  * 구현이다.
  *
- * <p>등급 허용 술어(countAll)는 묶음 ⑥ 의 {@code EmbeddingAiPolicyRepository.allowedDatasetSql}(jOOQ 렌더 문자열)에
- * 기대지 않고 공용 조각 {@code DatasetVisibility.aiPolicyAllowedDataset}(문서 청크 매퍼와 공유)이 같은 모양으로 렌더한다 —
- * Tibero 컨텍스트에 그 빈이 없고, jOOQ 렌더 문자열은 Tibero 유효성을 보장하지 않는다. 허용 값 규칙(ALL, 자체 호스팅이면 SELF_HOSTED_ONLY
- * 도)은 {@link MyBatisDatasetVisibility#aiPolicyValues} 한 곳에 있고 계약 테스트의 ai_policy 행렬이 두 구현을 고정한다. 묶음
- * ⑥ 이 조각과 도우미를 흡수할 후보다.
+ * <p>등급 허용 술어(countAll)는 {@code EmbeddingAiPolicyRepository.allowedDatasetSql}(jOOQ 렌더 문자열 —
+ * MyBatis 판은 꺼진 기능)에 기대지 않고 공용 조각 {@code DatasetVisibility.aiPolicyAllowedDataset}(문서 청크 매퍼와 공유)이
+ * 같은 모양으로 렌더한다 — Tibero 컨텍스트에 그 빈이 없고, jOOQ 렌더 문자열은 Tibero 유효성을 보장하지 않는다. 허용 값 규칙(ALL, 자체 호스팅이면
+ * SELF_HOSTED_ONLY 도)은 {@link MyBatisDatasetVisibility#aiPolicyValues} 한 곳에 있고 계약 테스트의 ai_policy
+ * 행렬이 두 구현을 고정한다. {@code MyBatisEmbeddingAiPolicyRepository}(WD-711)도 같은 조각·도우미를 쓴다(스펙 D4).
  */
 // 배경 잡(JobRunr/@Async/@Scheduled)은 앰비언트 트랜잭션이 없다. RLS GUC 는 트랜잭션 시작
 // 시점에만 주입되므로, 트랜잭션이 없으면 TenantContext 를 세워도 정책이 전 행을 차단한다.
@@ -47,11 +47,7 @@ public class MyBatisDatasetEmbeddingRepository implements DatasetEmbeddingReposi
    */
   @Override
   public void upsertSourceText(long datasetId, String sourceText) {
-    try {
-      mapper.upsertSourceText(datasetId, sourceText);
-    } catch (DuplicateKeyException e) {
-      mapper.upsertSourceText(datasetId, sourceText);
-    }
+    PlatformRetries.runOnceOnDuplicateKey(() -> mapper.upsertSourceText(datasetId, sourceText));
   }
 
   /** 벡터 검색이 꺼진 플랫폼 DB 라 지원하지 않는다 — 서비스가 PlatformDbFeatures 로 건너뛴다. */

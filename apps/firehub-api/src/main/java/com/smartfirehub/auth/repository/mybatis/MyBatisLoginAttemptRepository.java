@@ -2,8 +2,8 @@ package com.smartfirehub.auth.repository.mybatis;
 
 import com.smartfirehub.auth.repository.LoginAttemptRepository;
 import com.smartfirehub.global.platformdb.mybatis.PlatformMyBatisRepository;
+import com.smartfirehub.global.platformdb.mybatis.PlatformRetries;
 import java.time.LocalDateTime;
-import org.springframework.dao.DuplicateKeyException;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -35,11 +35,7 @@ public class MyBatisLoginAttemptRepository implements LoginAttemptRepository {
   @Transactional
   public int incrementAttempts(String username) {
     String key = EmptyKeys.key(username);
-    try {
-      mapper.upsertAttempt(key);
-    } catch (DuplicateKeyException e) {
-      mapper.upsertAttempt(key);
-    }
+    PlatformRetries.runOnceOnDuplicateKey(() -> mapper.upsertAttempt(key));
     Integer attempts = mapper.selectAttempts(key);
     // UPSERT 직후라 행이 반드시 있다 — 없으면 동시 삭제 같은 이상 상황이라 조용히 넘기지 않는다.
     if (attempts == null) {

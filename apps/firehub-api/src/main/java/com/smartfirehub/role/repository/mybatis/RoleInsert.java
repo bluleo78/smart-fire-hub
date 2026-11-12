@@ -1,12 +1,12 @@
 package com.smartfirehub.role.repository.mybatis;
 
+import com.smartfirehub.global.platformdb.mybatis.GeneratedId;
+
 /** 역할 INSERT 파라미터 겸 생성 키 홀더(WD-706) — {@code useGeneratedKeys} 가 id 를 채운다. */
-public class RoleInsert {
+public class RoleInsert extends GeneratedId {
 
   private final String name;
   private final String description;
-
-  private Long id;
 
   public RoleInsert(String name, String description) {
     this.name = name;
@@ -19,13 +19,5 @@ public class RoleInsert {
 
   public String getDescription() {
     return description;
-  }
-
-  public Long getId() {
-    return id;
-  }
-
-  public void setId(Long id) {
-    this.id = id;
   }
 }

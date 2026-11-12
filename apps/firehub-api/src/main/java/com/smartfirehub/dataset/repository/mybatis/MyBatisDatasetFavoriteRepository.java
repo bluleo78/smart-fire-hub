@@ -2,9 +2,9 @@ package com.smartfirehub.dataset.repository.mybatis;
 
 import com.smartfirehub.dataset.repository.DatasetFavoriteRepository;
 import com.smartfirehub.global.platformdb.mybatis.PlatformMyBatisRepository;
+import com.smartfirehub.global.platformdb.mybatis.PlatformRetries;
 import java.util.HashSet;
 import java.util.Set;
-import org.springframework.dao.DuplicateKeyException;
 
 /**
  * DatasetFavoriteRepository 의 MyBatis 구현(WD-707) — {@code JooqDatasetFavoriteRepository} 와 같은 의미.
@@ -30,11 +30,7 @@ public class MyBatisDatasetFavoriteRepository implements DatasetFavoriteReposito
    */
   @Override
   public void insert(Long userId, Long datasetId) {
-    try {
-      mapper.insertIfAbsent(userId, datasetId);
-    } catch (DuplicateKeyException e) {
-      mapper.insertIfAbsent(userId, datasetId);
-    }
+    PlatformRetries.runOnceOnDuplicateKey(() -> mapper.insertIfAbsent(userId, datasetId));
   }
 
   /** 즐겨찾기를 지운다(없으면 아무 일도 하지 않는다). */

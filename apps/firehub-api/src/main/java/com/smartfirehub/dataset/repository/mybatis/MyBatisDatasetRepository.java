@@ -17,7 +17,9 @@ import com.smartfirehub.global.platformdb.mybatis.InChunks;
 import com.smartfirehub.global.platformdb.mybatis.PlatformMyBatisRepository;
 import com.smartfirehub.global.util.LikePatternUtils;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
+import com.smartfirehub.securitylevel.access.LevelPolicy;
 import com.smartfirehub.securitylevel.dto.SecurityLevelSummary;
+import com.smartfirehub.securitylevel.repository.SecurityLevelRepository;
 import com.smartfirehub.securitylevel.repository.mybatis.MyBatisDatasetVisibility;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -29,6 +31,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -38,9 +41,8 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>클래스 레벨 {@code @Transactional} 은 jOOQ 구현 그대로다 — 배경 잡(JobRunr/@Async/@Scheduled)은 앰비언트 트랜잭션이 없고
  * RLS 테넌트 컨텍스트는 트랜잭션이 열릴 때 심기므로, 트랜잭션이 없으면 정책이 전 행을 막는다(REQUIRED 라 서비스 트랜잭션에는 합류).
  *
- * <p>등급 요약: jOOQ 판은 {@code SecurityLevelRepository.findAll()} 로 읽지만 그 인터페이스는 아직 MyBatis 짝이 없다(묶음
- * ⑥). Tibero 설치본에서 주입할 빈이 없으므로 같은 행(현재 테넌트의 security_level 전부)을 이 매퍼가 직접 읽어 {@link
- * SecurityLevelSummary} 로 옮긴다 — 결과는 {@code SecurityLevelSummary.of(LevelPolicy)} 와 같다.
+ * <p>등급 요약: jOOQ 판과 같게 {@code SecurityLevelRepository.findAll()} 로 읽어 {@code
+ * SecurityLevelSummary.of} 로 옮긴다 (등급 조회 문장을 이 매퍼에 중복해 두지 않는다 — WD-711 Task 7).
  *
  * <p>잠금 모드는 스펙 D2 — PG 는 jOOQ 와 같은 모드, Tibero 는 모두 FOR UPDATE(매퍼 XML 의 lock* 조각). 빈 문자열은 변환하지 않는다 —
  * Tibero 는 {@code ''} 를 NULL 로 저장한다.
@@ -57,11 +59,18 @@ public class MyBatisDatasetRepository implements DatasetRepository {
   /** advisory 잠금 창구 — 이름·테이블명 검사 직렬화 잠금(WD-540)에 쓴다. */
   private final PlatformLocks locks;
 
+  /** 테넌트 보안 등급 조회 창구(인터페이스) — 등급 요약을 이 리포지토리가 직접 읽지 않고 등급 리포지토리에 맡긴다. */
+  private final SecurityLevelRepository securityLevelRepository;
+
   public MyBatisDatasetRepository(
-      DatasetMapper mapper, DatasetFavoriteMapper favoriteMapper, PlatformLocks locks) {
+      DatasetMapper mapper,
+      DatasetFavoriteMapper favoriteMapper,
+      PlatformLocks locks,
+      SecurityLevelRepository securityLevelRepository) {
     this.mapper = mapper;
     this.favoriteMapper = favoriteMapper;
     this.locks = locks;
+    this.securityLevelRepository = securityLevelRepository;
   }
 
   /** 빈·공백 필터는 걸지 않는다(jOOQ 의 isBlank 검사와 같다). */
@@ -336,15 +345,18 @@ public class MyBatisDatasetRepository implements DatasetRepository {
   }
 
   /**
-   * 스키마 메타를 한 번의 조회(데이터셋 LEFT JOIN 컬럼)로 읽는다(WD-494). id 목록은 예전 문자열 IN 대신 500 개씩 나눈 바인드 청크다 — Tibero
-   * 는 IN 목록 1000 개를 넘으면 거절한다(Review Focus 3).
+   * 스키마 메타를 한 번의 조회(데이터셋 LEFT JOIN 컬럼)로 읽는다(WD-494). 가시성은 공용 조각 {@code DatasetVisibility.visible} 이
+   * 렌더한다(스펙 D3 — 예전에는 PG 렌더 문자열을 {@code ${}} 로 이어 붙여 Tibero 에서 유효하지 않았다). id 목록은 예전 문자열 IN 대신 500
+   * 개씩 나눈 바인드 청크다 — Tibero 는 IN 목록 1000 개를 넘으면 거절한다(Review Focus 3).
    */
   @Override
-  public List<DatasetSchemaMeta> findSchemaMetas(List<Long> datasetIds, String visibilitySql) {
+  public List<DatasetSchemaMeta> findSchemaMetas(
+      List<Long> datasetIds, DatasetVisibility visibility) {
     List<List<Long>> chunks = datasetIds == null ? null : InChunks.of(datasetIds);
     // 행은 데이터셋별로 붙어 오므로(ORDER BY table_name, id) 순서를 지키는 맵에 모은다.
     Map<Long, DatasetSchemaMeta> byId = new LinkedHashMap<>();
-    for (SchemaRow r : mapper.selectSchemaMetaRows(visibilitySql, chunks)) {
+    for (SchemaRow r :
+        mapper.selectSchemaMetaRows(MyBatisDatasetVisibility.params(visibility), chunks)) {
       DatasetSchemaMeta meta =
           byId.computeIfAbsent(
               r.id(),
@@ -401,11 +413,8 @@ public class MyBatisDatasetRepository implements DatasetRepository {
 
   /** 테넌트 등급은 보통 4~10개 — 행마다 조인하는 대신 한 번 읽어 id 로 매핑한다(jOOQ 판과 같다). */
   private Map<Long, SecurityLevelSummary> fetchLevelSummaries() {
-    Map<Long, SecurityLevelSummary> out = new HashMap<>();
-    for (SecurityLevelSummary s : mapper.selectLevelSummaries()) {
-      out.put(s.id(), s);
-    }
-    return out;
+    return securityLevelRepository.findAll().stream()
+        .collect(Collectors.toMap(LevelPolicy::id, SecurityLevelSummary::of));
   }
 
   private Map<Long, List<String>> fetchTagsByDatasetIds(List<Long> datasetIds) {

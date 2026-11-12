@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  지식그래프 출처(graph_ontology_source) 문장(WD-711) — JooqGraphOntologySourceRepository 와 같은 의미.
+  graph_ontology_source·dataset 은 테넌트 정책(RLS) 대상이라 tenant_id 를 INSERT 값·WHERE 술어로 쓰지 않는다.
+  예외(스펙 D1): findDatasetsWithGraphHistory 는 인터페이스가 tenantId 를 받으므로 jOOQ 처럼 두 테이블에 tenant_id 를 명시한다.
+
+  record: PG 는 ON CONFLICT DO NOTHING. Tibero 는 MERGE(NOT MATCHED 만) — 소스는 DUAL 한 행, 소스 열을 uid 로 별칭하지 않는다(-8006).
+  동시 첫 기록의 패자는 중복 키(-10007)를 받으며 구현이 1회 다시 시도한다(두 번째에는 MATCHED 라 아무것도 하지 않는다).
+
+  countUnreadable: 가시성 조각(DatasetVisibility.visible)을 dataset 이름 관례로 건다. 삭제된 데이터셋은 LEFT JOIN 에서 dataset.id 가
+  NULL 이라 isNotNull 을 명시해 NOT visible 에 섞이지 않게 한다. 존재 여부는 COUNT(*) 로 판정해 두 DB 공통 문장으로 둔다.
+-->
+<mapper namespace="com.smartfirehub.ontology.repository.mybatis.GraphOntologySourceMapper">
+
+  <insert id="record" databaseId="postgresql">
+    INSERT INTO graph_ontology_source (ontology_id, dataset_id)
+    VALUES (#{ontologyId}, #{datasetId})
+    ON CONFLICT DO NOTHING
+  </insert>
+
+  <insert id="record" databaseId="tibero">
+    MERGE INTO graph_ontology_source t
+    USING (SELECT #{ontologyId} AS o, #{datasetId} AS d FROM DUAL) s
+       ON (t.ontology_id = s.o AND t.dataset_id = s.d)
+    WHEN NOT MATCHED THEN INSERT (ontology_id, dataset_id)
+      VALUES (s.o, s.d)
+  </insert>
+
+  <select id="selectDatasetIds" resultType="java.lang.Long">
+    SELECT gos.dataset_id FROM graph_ontology_source gos WHERE gos.ontology_id = #{ontologyId}
+  </select>
+
+  <select id="countUnreadable" resultType="java.lang.Long">
+    SELECT COUNT(*)
+      FROM graph_ontology_source gos
+      LEFT JOIN dataset ON dataset.id = gos.dataset_id
+     WHERE gos.ontology_id = #{ontologyId}
+       AND ((dataset.id IS NOT NULL
+             AND NOT <include refid="com.smartfirehub.securitylevel.repository.mybatis.DatasetVisibility.visible">
+                       <property name="idCol" value="dataset.id"/>
+                       <property name="levelCol" value="dataset.security_level_id"/>
+                     </include>)
+            <if test="!deletedSourceReadable">OR dataset.id IS NULL</if>)
+  </select>
+
+  <!--
+    출처·적재 이력의 합집합을 바깥에서 한 번만 id 조각으로 거른다 — 조각을 UNION 가지마다 걸면 id 를 두 번 바인딩한다(1000 개 넘는 목록이면
+    바인드 수가 두 배). 테넌트 조건은 jOOQ 처럼 가지 안에 명시한다. 파생 테이블 별칭에 AS 를 쓰지 않는다(Tibero 는 테이블 별칭 앞 AS 를 거절).
+  -->
+  <select id="selectDatasetsWithGraphHistory" resultType="java.lang.Long">
+    SELECT DISTINCT h.dataset_id
+      FROM (SELECT gos.dataset_id FROM graph_ontology_source gos WHERE gos.tenant_id = #{tenantId}
+            UNION ALL
+            SELECT dgi.dataset_id FROM dataset_graph_ingest dgi WHERE dgi.tenant_id = #{tenantId}) h
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="h.dataset_id"/></include>
+     ORDER BY h.dataset_id
+  </select>
+
+</mapper>

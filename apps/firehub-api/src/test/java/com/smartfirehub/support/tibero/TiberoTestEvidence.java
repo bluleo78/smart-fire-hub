@@ -35,4 +35,19 @@ public final class TiberoTestEvidence {
       // 증거 파일은 보조 수단이다 — 표준 출력에는 이미 남겼다.
     }
   }
+
+  /** 탐침 테스트용 — 태그를 붙여 {@link #write(String)} 한다(어느 탐침의 측정값인지 파일에서 가르기 위함). */
+  public static void write(String tag, String line) {
+    write(tag + " " + line);
+  }
+
+  /** 예외 사슬의 맨 안쪽 원인을 「클래스명: 메시지」 한 줄로 줄인다(줄바꿈은 공백으로) — 증거 줄에 실을 용도. */
+  public static String rootMessage(Throwable e) {
+    Throwable c = e;
+    while (c.getCause() != null) {
+      c = c.getCause();
+    }
+    String m = c.getMessage() == null ? "" : c.getMessage().replace('\n', ' ');
+    return c.getClass().getSimpleName() + ": " + m;
+  }
 }

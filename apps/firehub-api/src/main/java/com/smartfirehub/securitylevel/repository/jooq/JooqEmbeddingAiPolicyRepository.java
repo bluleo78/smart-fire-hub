@@ -3,6 +3,7 @@ package com.smartfirehub.securitylevel.repository.jooq;
 import static com.smartfirehub.jooq.Tables.DATASET;
 import static com.smartfirehub.jooq.Tables.SECURITY_LEVEL;
 
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.securitylevel.access.ProviderHosting;
 import com.smartfirehub.securitylevel.repository.EmbeddingAiPolicyRepository;
 import java.util.List;
@@ -22,6 +23,7 @@ import org.springframework.stereotype.Repository;
  * 문맥 확인과 호스팅 해석은 게이트가 하고 이 클래스는 값만 받는다.
  */
 @Repository
+@ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
 public class JooqEmbeddingAiPolicyRepository implements EmbeddingAiPolicyRepository {
 

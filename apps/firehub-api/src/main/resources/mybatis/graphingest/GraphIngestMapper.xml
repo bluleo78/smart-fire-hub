@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  그래프 적재 이력(dataset_graph_ingest) 문장(WD-711) — JooqGraphIngestRepository 와 같은 의미.
+  dataset_graph_ingest·dataset_ontology·ontology·dataset 은 테넌트 정책(RLS) 대상이라 tenant_id 를 쓰지 않는다(열 DEFAULT 가 채운다).
+  ingested_at 은 DB 시계(dbNow — PG now(), Tibero UTC 벽시계)로 명시한다. Tibero 열 DEFAULT(LOCALTIMESTAMP)는 세션 시간대에 기대므로 쓰지 않는다.
+  metadata(JSON)는 jOOQ 구현도 읽고 쓰지 않아 옮기지 않는다.
+
+  findStale: DISTINCT ON 이 Tibero 에 없어 ROW_NUMBER() OVER (PARTITION BY dataset_id ORDER BY ingested_at DESC, id DESC) = 1 로 데이터셋별
+  최신행을 뽑는다(두 DB 공통 문장). 가시성은 "데이터셋 행이 있는데 볼 수 없으면 뺀다" — 데이터셋 행이 없는 이력은 그대로 둔다.
+-->
+<mapper namespace="com.smartfirehub.graphingest.repository.mybatis.GraphIngestMapper">
+
+  <resultMap id="ingestRecord" type="com.smartfirehub.graphingest.dto.GraphIngestRecord">
+    <constructor>
+      <idArg column="id" javaType="java.lang.Long"/>
+      <arg column="dataset_id" javaType="_long"/>
+      <arg column="ingested_at" javaType="java.time.LocalDateTime"/>
+      <arg column="schema_version_at_ingest" javaType="_int"/>
+      <arg column="chunk_count" javaType="_int"/>
+      <arg column="node_count" javaType="_int"/>
+      <arg column="edge_count" javaType="_int"/>
+      <arg column="extraction_failures" javaType="_int"/>
+      <arg column="status" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="staleRow" type="com.smartfirehub.graphingest.dto.GraphIngestRecord$StaleRow">
+    <constructor>
+      <arg column="dataset_id" javaType="_long"/>
+      <arg column="ingested_at" javaType="java.time.LocalDateTime"/>
+      <arg column="schema_version_at_ingest" javaType="_int"/>
+      <arg column="ontology_version" javaType="_int"/>
+    </constructor>
+  </resultMap>
+
+  <insert id="insert" useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+    INSERT INTO dataset_graph_ingest
+      (dataset_id, ingested_at, schema_version_at_ingest, chunk_count, node_count, edge_count, extraction_failures, status)
+    VALUES
+      (#{datasetId}, <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>,
+       #{schemaVersionAtIngest}, #{chunkCount}, #{nodeCount}, #{edgeCount},
+       #{extractionFailures}, #{status})
+  </insert>
+
+  <select id="selectByDataset" resultMap="ingestRecord">
+    SELECT g.id, g.dataset_id, g.ingested_at, g.schema_version_at_ingest, g.chunk_count, g.node_count,
+           g.edge_count, g.extraction_failures, g.status
+      FROM dataset_graph_ingest g
+     WHERE g.dataset_id = #{datasetId}
+     ORDER BY g.ingested_at DESC, g.id DESC
+  </select>
+
+  <select id="selectStale" resultMap="staleRow">
+    SELECT latest.dataset_id, latest.ingested_at, latest.schema_version_at_ingest,
+           o.schema_version AS ontology_version
+      FROM (SELECT g.dataset_id, g.ingested_at, g.schema_version_at_ingest,
+                   ROW_NUMBER() OVER (PARTITION BY g.dataset_id ORDER BY g.ingested_at DESC, g.id DESC) AS rn
+              FROM dataset_graph_ingest g) latest
+      JOIN dataset_ontology dn ON dn.dataset_id = latest.dataset_id
+      JOIN ontology o ON o.id = dn.ontology_id
+     WHERE latest.rn = 1
+       AND latest.schema_version_at_ingest &lt; o.schema_version
+       AND NOT EXISTS (
+             SELECT 1 FROM dataset
+              WHERE dataset.id = latest.dataset_id
+                AND NOT <include refid="com.smartfirehub.securitylevel.repository.mybatis.DatasetVisibility.visible">
+                          <property name="idCol" value="dataset.id"/>
+                          <property name="levelCol" value="dataset.security_level_id"/>
+                        </include>)
+  </select>
+
+</mapper>

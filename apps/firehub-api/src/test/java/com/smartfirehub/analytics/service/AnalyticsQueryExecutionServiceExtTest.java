@@ -14,6 +14,7 @@ import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.util.AdhocSqlErrorMessages;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient.QueryExecuteResult;
+import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.util.List;
 import java.util.Map;
@@ -663,7 +664,7 @@ class AnalyticsQueryExecutionServiceExtTest extends IntegrationTestBase {
   @Test
   void getSchemaInfo_includesDatasetMetadata() {
     // exec_ext_test 테이블이 data 스키마에 존재하고 dataset과 연결되어 있어야 함
-    var schemaInfo = executionService.getSchemaInfo("TRUE");
+    var schemaInfo = executionService.getSchemaInfo(DatasetVisibility.UNRESTRICTED);
     assertThat(schemaInfo.tables()).isNotEmpty();
 
     boolean hasTable =

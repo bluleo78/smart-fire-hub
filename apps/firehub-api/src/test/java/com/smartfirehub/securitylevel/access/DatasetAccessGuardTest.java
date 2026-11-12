@@ -193,24 +193,6 @@ class DatasetAccessGuardTest extends IntegrationTestBase {
     }
   }
 
-  @Test
-  void visibleSql_rendersSameRuleForRawSqlCallers() {
-    long uid = user("공개", false);
-    long internal = dataset("내부");
-    long pub = dataset("공개");
-    Clearance c = clearanceResolver.resolve(uid);
-    String frag = guard.visibleSql(c, "d");
-    List<Long> visible =
-        inTenantFixture(
-            () ->
-                dsl.fetch(
-                        "select d.id from dataset d where d.id in (?, ?) and " + frag,
-                        internal,
-                        pub)
-                    .getValues(0, Long.class));
-    assertThat(visible).containsExactly(pub);
-  }
-
   /**
    * S3 §4.3: AI 문맥 SQL 조각(ai_policy·share_policy 술어 포함)이 호스팅 2종 × share 여부 전 조합에서 가드 판정(AI
    * [+SHARE])과 같은 답을 낸다. 기밀은 허용 목록에 올려 VIEW 를 통과시켜야 share 술어가 실제로 검증된다.

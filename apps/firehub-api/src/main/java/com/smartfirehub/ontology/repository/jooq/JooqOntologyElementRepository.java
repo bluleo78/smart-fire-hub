@@ -2,6 +2,7 @@ package com.smartfirehub.ontology.repository.jooq;
 
 import static org.jooq.impl.DSL.*;
 
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.ontology.element.dto.ElementDtos.CreateEntityTypeRequest;
 import com.smartfirehub.ontology.element.dto.ElementDtos.CreatePropertyRequest;
 import com.smartfirehub.ontology.element.dto.ElementDtos.CreateRelationRequest;
@@ -27,6 +28,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 건드린다. 읽기는 OntologyRepository.findById를 그대로 쓴다(중복 조립 회피).
  */
 @Repository
+@ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
 // RLS GUC 는 트랜잭션 시작 시점에만 주입되는데 호출자 OntologyElementService 와 MCP 툴 핸들러는
 // 트랜잭션 경계를 만들지 않는다. 여기서 열지 않으면 요소 조회는 조용히 0행, 요소 쓰기는 tenant_id

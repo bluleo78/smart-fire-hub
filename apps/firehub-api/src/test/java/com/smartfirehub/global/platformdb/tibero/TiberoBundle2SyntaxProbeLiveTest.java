@@ -91,19 +91,10 @@ class TiberoBundle2SyntaxProbeLiveTest {
       try {
         poc.jdbc().execute("DROP TABLE " + t);
       } catch (RuntimeException e) {
-        ev("drop " + t + " 실패 " + rootMessage(e));
+        TiberoTestEvidence.write(
+            "B2PROBE", "drop " + t + " 실패 " + TiberoTestEvidence.rootMessage(e));
       }
     }
-  }
-
-  private static void ev(String line) {
-    TiberoTestEvidence.write("B2PROBE " + line);
-  }
-
-  private static String rootMessage(Throwable e) {
-    Throwable c = e;
-    while (c.getCause() != null) c = c.getCause();
-    return c.getClass().getSimpleName() + ": " + c.getMessage();
   }
 
   private void createTable(String name, String ddl) {
@@ -155,7 +146,7 @@ class TiberoBundle2SyntaxProbeLiveTest {
                 ? poc.jdbc().queryForList(q, Long.class, id)
                 : poc.jdbc().queryForList(q, Long.class);
       } catch (RuntimeException ex) {
-        return "ERROR " + rootMessage(ex);
+        return "ERROR " + TiberoTestEvidence.rootMessage(ex);
       }
       if (!got.equals(e.getValue())) {
         wrong.append(" id=").append(id).append(" got=").append(got);
@@ -221,7 +212,7 @@ class TiberoBundle2SyntaxProbeLiveTest {
   @DisplayName("(a) JSON 숫자 배열 포함 후보 술어를 PG 기대와 비교해 기록하고, 채택 술어는 PG 와 같은 행을 고른다")
   void jsonContains_candidates() {
     Map<String, String> results = runAllJsonCandidates();
-    results.forEach((name, r) -> ev("json " + name + ": " + r));
+    results.forEach((name, r) -> TiberoTestEvidence.write("B2PROBE", "json " + name + ": " + r));
     // 다른 후보는 기록만 한다(음성 결과도 Task 5 판단 근거). 채택 술어만 PG 와 같은 행을 골라야 한다.
     assertThat(results.get("C6 배열 확인 + JSON_QUERY 텍스트 LIKE"))
         .as("채택 JSON 포함 술어 — 후보 전체 결과 %s", results)
@@ -241,9 +232,12 @@ class TiberoBundle2SyntaxProbeLiveTest {
                       + " WHERE JSON_VALUE(config, '$.upstreamPipelineId' RETURNING NUMBER) = ?",
                   Long.class,
                   42L);
-      ev("json_value RETURNING NUMBER = ?: " + (got.equals(List.of(7L)) ? "OK" : "WRONG " + got));
+      TiberoTestEvidence.write(
+          "B2PROBE",
+          "json_value RETURNING NUMBER = ?: " + (got.equals(List.of(7L)) ? "OK" : "WRONG " + got));
     } catch (RuntimeException e) {
-      ev("json_value RETURNING NUMBER = ?: ERROR " + rootMessage(e));
+      TiberoTestEvidence.write(
+          "B2PROBE", "json_value RETURNING NUMBER = ?: ERROR " + TiberoTestEvidence.rootMessage(e));
     }
     try {
       String out =
@@ -253,9 +247,10 @@ class TiberoBundle2SyntaxProbeLiveTest {
                       + jsonTable
                       + " WHERE id = 1",
                   String.class);
-      ev("json_transform REMOVE: OK " + out);
+      TiberoTestEvidence.write("B2PROBE", "json_transform REMOVE: OK " + out);
     } catch (RuntimeException e) {
-      ev("json_transform REMOVE: ERROR " + rootMessage(e));
+      TiberoTestEvidence.write(
+          "B2PROBE", "json_transform REMOVE: ERROR " + TiberoTestEvidence.rootMessage(e));
     }
     try {
       String out =
@@ -265,9 +260,10 @@ class TiberoBundle2SyntaxProbeLiveTest {
                       + jsonTable
                       + " WHERE id = 1",
                   String.class);
-      ev("json_mergepatch: OK " + out);
+      TiberoTestEvidence.write("B2PROBE", "json_mergepatch: OK " + out);
     } catch (RuntimeException e) {
-      ev("json_mergepatch: ERROR " + rootMessage(e));
+      TiberoTestEvidence.write(
+          "B2PROBE", "json_mergepatch: ERROR " + TiberoTestEvidence.rootMessage(e));
     }
   }
 
@@ -298,7 +294,7 @@ class TiberoBundle2SyntaxProbeLiveTest {
             + " WHERE id = ? AND (until_at IS NULL OR until_at < SYS_EXTRACT_UTC(SYSTIMESTAMP))";
     assertThat(poc.jdbc().update(acquire, 60L, 1L)).as("막 만료된 임대").isEqualTo(1);
     assertThat(poc.jdbc().update(acquire, 60L, 1L)).as("아직 유효한 임대").isZero();
-    ev("numtodsinterval lease: OK");
+    TiberoTestEvidence.write("B2PROBE", "numtodsinterval lease: OK");
   }
 
   // ---------------------------------------------------------------- (c) LIKE
@@ -329,7 +325,7 @@ class TiberoBundle2SyntaxProbeLiveTest {
     assertThat(
             poc.jdbc().queryForObject(q, Integer.class, LikePatternUtils.containsPattern("50%x")))
         .isZero();
-    ev("like long varchar2(65532): OK");
+    TiberoTestEvidence.write("B2PROBE", "like long varchar2(65532): OK");
   }
 
   @Test
@@ -374,7 +370,7 @@ class TiberoBundle2SyntaxProbeLiveTest {
     assertThat(q.nullSafeDistinctNumber(1024, null)).isEqualTo(1);
     assertThat(q.nullSafeDistinctNumber(null, 1024)).isEqualTo(1);
     assertThat(q.nullSafeDistinctNumber(1024, 768)).isEqualTo(1);
-    ev("nullSafeDistinct DECODE (varchar·number·null bind): OK");
+    TiberoTestEvidence.write("B2PROBE", "nullSafeDistinct DECODE (varchar·number·null bind): OK");
   }
 
   @Test
@@ -465,11 +461,12 @@ class TiberoBundle2SyntaxProbeLiveTest {
                   pool.submit(() -> selectForUpdate(a, ds, "FOR UPDATE NOWAIT"))
                       .get(30, TimeUnit.SECONDS));
       assertThat(same).as("같은 테넌트 NOWAIT 는 잠금 때문에 실패").isNotNull();
-      ev("for update same-tenant nowait: " + rootMessage(same));
+      TiberoTestEvidence.write(
+          "B2PROBE", "for update same-tenant nowait: " + TiberoTestEvidence.rootMessage(same));
 
       release.countDown();
       assertThat(holder.get(30, TimeUnit.SECONDS)).containsExactly(ds);
-      ev("for update under rls: OK");
+      TiberoTestEvidence.write("B2PROBE", "for update under rls: OK");
     } finally {
       release.countDown();
       pool.shutdownNow();

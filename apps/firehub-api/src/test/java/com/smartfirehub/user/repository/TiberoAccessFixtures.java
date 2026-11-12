@@ -348,6 +348,121 @@ public class TiberoAccessFixtures implements AccessFixtures {
   }
 
   @Override
+  public void grantDatasetAccess(long tenantId, long datasetId, Long roleId, Long userId) {
+    // 소유자 세션이라 tenant_id 를 직접 넣는다. null 바인드는 타입을 밝혀야 드라이버가 받는다.
+    insertWithBinder(
+        // granted_at 은 운영 문장과 같은 DB 시계(UTC 벽시계) — 열 DEFAULT(세션 시간대)에 기대면 리포지토리가 넣은 행과 정렬이 어긋난다.
+        "INSERT INTO dataset_access_grant (tenant_id, dataset_id, user_id, role_id, granted_at)"
+            + " VALUES (?, ?, ?, ?, "
+            + DB_NOW
+            + ")",
+        ps -> {
+          ps.setLong(1, tenantId);
+          ps.setLong(2, datasetId);
+          if (userId == null) ps.setNull(3, Types.BIGINT);
+          else ps.setLong(3, userId);
+          if (roleId == null) ps.setNull(4, Types.BIGINT);
+          else ps.setLong(4, roleId);
+        });
+  }
+
+  @Override
+  public void setOntologyUpdatedAt(long ontologyId, java.time.Instant at) {
+    // Tibero 플랫폼 테이블은 UTC 벽시계 TIMESTAMP 다.
+    poc.jdbc()
+        .update(
+            "UPDATE ontology SET updated_at = ? WHERE id = ?",
+            Timestamp.valueOf(LocalDateTime.ofInstant(at, java.time.ZoneOffset.UTC)),
+            ontologyId);
+  }
+
+  @Override
+  public void bindDatasetOntology(long tenantId, long datasetId, long ontologyId) {
+    poc.jdbc()
+        .update(
+            "INSERT INTO dataset_ontology (tenant_id, dataset_id, ontology_id) VALUES (?, ?, ?)",
+            tenantId,
+            datasetId,
+            ontologyId);
+  }
+
+  @Override
+  public void createDatasetMapping(long tenantId, long datasetId, long ontologyId) {
+    poc.jdbc()
+        .update(
+            "INSERT INTO dataset_mapping (tenant_id, dataset_id, ontology_id, spec)"
+                + " VALUES (?, ?, ?, '{}')",
+            tenantId,
+            datasetId,
+            ontologyId);
+  }
+
+  @Override
+  public List<DatasetOntologyRow> datasetOntologyRows(long tenantId, long datasetId) {
+    return poc.jdbc()
+        .query(
+            "SELECT ontology_id, bound_by, bound_at FROM dataset_ontology"
+                + " WHERE tenant_id = ? AND dataset_id = ?",
+            (rs, i) ->
+                new DatasetOntologyRow(
+                    rs.getLong("ontology_id"),
+                    rs.getObject("bound_by") == null ? null : rs.getLong("bound_by"),
+                    rs.getTimestamp("bound_at")
+                        .toLocalDateTime()
+                        .toInstant(java.time.ZoneOffset.UTC)),
+            tenantId,
+            datasetId);
+  }
+
+  @Override
+  public void setDatasetOntologyBoundAt(long tenantId, long datasetId, java.time.Instant at) {
+    poc.jdbc()
+        .update(
+            "UPDATE dataset_ontology SET bound_at = ? WHERE tenant_id = ? AND dataset_id = ?",
+            Timestamp.valueOf(LocalDateTime.ofInstant(at, java.time.ZoneOffset.UTC)),
+            tenantId,
+            datasetId);
+  }
+
+  @Override
+  public void setRoleMaxLevel(long roleId, long levelId) {
+    poc.jdbc().update("UPDATE role SET max_security_level_id = ? WHERE id = ?", levelId, roleId);
+  }
+
+  @Override
+  public void setSecurityLevelFlags(long levelId, boolean allowlistRequired, boolean adminBypass) {
+    // 불리언 열은 NUMBER(1) — 1/0 으로 쓴다.
+    poc.jdbc()
+        .update(
+            "UPDATE security_level SET allowlist_required = ?, admin_bypass = ? WHERE id = ?",
+            allowlistRequired ? 1 : 0,
+            adminBypass ? 1 : 0,
+            levelId);
+  }
+
+  @Override
+  public List<LocalDateTime> securityLevelCreatedAndUpdatedAt(long levelId) {
+    return poc.jdbc()
+        .queryForObject(
+            "SELECT created_at, updated_at FROM security_level WHERE id = ?",
+            (rs, i) ->
+                List.of(rs.getTimestamp(1).toLocalDateTime(), rs.getTimestamp(2).toLocalDateTime()),
+            levelId);
+  }
+
+  @Override
+  public LocalDateTime dbWallClockNow() {
+    // 플랫폼 TIMESTAMP 열의 저장 기준(UTC 벽시계) — 운영 dbNow 와 같은 식.
+    return poc.jdbc().queryForObject("SELECT " + DB_NOW + " FROM DUAL", LocalDateTime.class);
+  }
+
+  @Override
+  public long createOntology(long tenantId, String name) {
+    return poc.insertReturningId(
+        "INSERT INTO ontology (tenant_id, domain) VALUES (?, ?)", tenantId, name);
+  }
+
+  @Override
   public long createCategory(long tenantId, String name) {
     return poc.insertReturningId(
         "INSERT INTO dataset_category (tenant_id, name) VALUES (?, ?)", tenantId, name);
@@ -973,7 +1088,59 @@ public class TiberoAccessFixtures implements AccessFixtures {
   }
 
   @Override
+  public void deleteDataset(long datasetId) {
+    poc.jdbc().update("DELETE FROM dataset WHERE id = ?", datasetId);
+  }
+
+  @Override
+  public void setOntologySchemaVersion(long ontologyId, int version) {
+    poc.jdbc().update("UPDATE ontology SET schema_version = ? WHERE id = ?", version, ontologyId);
+  }
+
+  @Override
+  public void insertGraphSource(long tenantId, long ontologyId, long datasetId) {
+    poc.jdbc()
+        .update(
+            "INSERT INTO graph_ontology_source (tenant_id, ontology_id, dataset_id) VALUES (?, ?, ?)",
+            tenantId,
+            ontologyId,
+            datasetId);
+  }
+
+  @Override
+  public int countGraphSources(long tenantId, long ontologyId, long datasetId) {
+    return poc.jdbc()
+        .queryForObject(
+            "SELECT COUNT(*) FROM graph_ontology_source"
+                + " WHERE tenant_id = ? AND ontology_id = ? AND dataset_id = ?",
+            Integer.class,
+            tenantId,
+            ontologyId,
+            datasetId);
+  }
+
+  @Override
+  public long insertGraphIngest(
+      long tenantId, long datasetId, int schemaVersion, LocalDateTime ingestedAt) {
+    return poc.insertReturningId(
+        "INSERT INTO dataset_graph_ingest (tenant_id, dataset_id, ingested_at, schema_version_at_ingest)"
+            + " VALUES (?, ?, ?, ?)",
+        tenantId,
+        datasetId,
+        Timestamp.valueOf(ingestedAt),
+        schemaVersion);
+  }
+
+  @Override
   public void cleanup() {
+    for (long t : tenants) {
+      // 적재 이력은 테넌트 FK 만 있어(온톨로지 CASCADE 밖) 테넌트 정리 전에 지운다.
+      poc.jdbc().update("DELETE FROM dataset_graph_ingest WHERE tenant_id = ?", t);
+    }
+    cleanupRows();
+  }
+
+  private void cleanupRows() {
     for (String k : systemSettingKeys) {
       poc.jdbc().update("DELETE FROM system_settings WHERE key = ?", k);
     }
@@ -989,6 +1156,8 @@ public class TiberoAccessFixtures implements AccessFixtures {
       // ai_session 은 사용자 FK 가 CASCADE 가 아니라 사용자보다 먼저 지운다(WD-712).
       poc.jdbc().update("DELETE FROM ai_session WHERE tenant_id = ?", t);
       poc.jdbc().update("DELETE FROM dataset_access_grant WHERE tenant_id = ?", t);
+      // 온톨로지 하위(엔티티 타입·속성·관계·데이터셋 연결)는 FK CASCADE 로 함께 사라진다.
+      poc.jdbc().update("DELETE FROM ontology WHERE tenant_id = ?", t);
       // 대시보드·저장 쿼리·파이프라인은 사용자(created_by)를 참조하고, 스텝의 output_dataset_id 는 ON DELETE 없는 데이터셋 FK
       // 라 데이터셋보다 먼저 지운다. 위젯·차트·스텝·스텝 입력·트리거는 FK CASCADE 로 함께 사라진다.
       // uploaded_files 는 사용자 FK 가 CASCADE 가 아니라 사용자보다 먼저 지운다(WD-712).

@@ -21,6 +21,7 @@ import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.securitylevel.ai.AiCallContext;
 import com.smartfirehub.securitylevel.sql.GuardedSqlExecutor;
 import java.time.LocalDateTime;
@@ -192,8 +193,13 @@ class SavedQueryControllerTest {
             List.of(new SchemaInfoResponse.TableInfo("my_table", "My Dataset", 1L, List.of())),
             "POSTGRESQL",
             "data_t1");
+    // 스펙 D3: 컨트롤러는 가드의 가시성 값을 그대로 서비스에 넘긴다(PG 렌더 문자열이 아니다).
+    Clearance viewer = Clearance.none(1L, 1L);
+    DatasetVisibility visibility = new DatasetVisibility(viewer, null);
+    when(clearanceResolver.current()).thenReturn(viewer);
+    when(datasetAccessGuard.visibility(viewer)).thenReturn(visibility);
     // PR-1 Task 2: 컨트롤러가 datasetIds 파라미터를 받는 오버로드로 변경됨 → null 분기 stub.
-    when(executionService.getSchemaInfo((List<Long>) isNull(), any())).thenReturn(schema);
+    when(executionService.getSchemaInfo((List<Long>) isNull(), eq(visibility))).thenReturn(schema);
 
     mockMvc
         .perform(
@@ -204,7 +210,7 @@ class SavedQueryControllerTest {
         .andExpect(jsonPath("$.schema").value("data_t1"));
 
     // 추가 — datasetIds 미지정 시 서비스의 List<Long> 오버로드에 null 위임 검증
-    verify(executionService).getSchemaInfo((java.util.List<Long>) isNull(), any());
+    verify(executionService).getSchemaInfo((java.util.List<Long>) isNull(), eq(visibility));
   }
 
   // === GET /api/v1/analytics/queries/schema — datasetIds 필터 (PR-1 Task 2) ===

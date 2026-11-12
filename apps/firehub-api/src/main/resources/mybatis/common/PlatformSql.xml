@@ -6,6 +6,14 @@
 -->
 <mapper namespace="com.smartfirehub.global.platformdb.mybatis.PlatformSql">
 
+  <!-- 잠금 절(스펙 D2). PG 는 jOOQ 판과 같은 모드, Tibero 에는 KEY SHARE·NO KEY UPDATE·SHARE 가 없어 모두 FOR UPDATE. -->
+  <sql id="lockKeyShare" databaseId="postgresql">FOR KEY SHARE</sql>
+  <sql id="lockKeyShare" databaseId="tibero">FOR UPDATE</sql>
+  <sql id="lockNoKeyUpdate" databaseId="postgresql">FOR NO KEY UPDATE</sql>
+  <sql id="lockNoKeyUpdate" databaseId="tibero">FOR UPDATE</sql>
+  <sql id="lockShare" databaseId="postgresql">FOR SHARE</sql>
+  <sql id="lockShare" databaseId="tibero">FOR UPDATE</sql>
+
   <!-- 불리언 리터럴. Tibero 불리언 컬럼은 NUMBER(1) 이다. -->
   <sql id="sqlTrue" databaseId="postgresql">TRUE</sql>
   <sql id="sqlTrue" databaseId="tibero">1</sql>

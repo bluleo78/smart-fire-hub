@@ -2,6 +2,7 @@ package com.smartfirehub.settings.repository.mybatis;
 
 import com.smartfirehub.global.platformdb.mybatis.InChunks;
 import com.smartfirehub.global.platformdb.mybatis.PlatformMyBatisRepository;
+import com.smartfirehub.global.platformdb.mybatis.PlatformRetries;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.util.LikePatternUtils;
 import com.smartfirehub.settings.repository.TenantSettingsRepository;
@@ -11,7 +12,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import org.springframework.dao.DuplicateKeyException;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -67,11 +67,7 @@ public class MyBatisTenantSettingsRepository implements TenantSettingsRepository
   public void upsert(String key, String value, Long userId) {
     Objects.requireNonNull(value, "tenant_settings.value 는 NOT NULL 이다 — 삭제는 delete(key) 를 쓸 것");
     TenantContext.require("tenant_settings 오버라이드 저장");
-    try {
-      mapper.upsert(key, value, userId);
-    } catch (DuplicateKeyException e) {
-      mapper.upsert(key, value, userId);
-    }
+    PlatformRetries.runOnceOnDuplicateKey(() -> mapper.upsert(key, value, userId));
   }
 
   @Override

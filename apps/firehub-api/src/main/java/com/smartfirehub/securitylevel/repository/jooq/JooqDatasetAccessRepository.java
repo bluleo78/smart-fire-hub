@@ -12,6 +12,7 @@ import static org.jooq.impl.DSL.field;
 import static org.jooq.impl.DSL.name;
 import static org.jooq.impl.DSL.selectOne;
 
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.securitylevel.repository.DatasetAccessRepository;
@@ -33,6 +34,7 @@ import org.springframework.stereotype.Repository;
  * <p>판정에 필요한 "사실"(데이터셋의 등급 정책 + 이 사용자가 허용 목록에 있는가)과 사용자 자격 원자료를 읽는다. 판정 자체는 하지 않는다.
  */
 @Repository
+@ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
 // 인터셉터·러너·폴러처럼 트랜잭션 없이 부르는 경로가 있다 — 트랜잭션이 있어야 RLS GUC 가 주입된다(없으면 조용히 0행 → 전부 거부).
 @org.springframework.transaction.annotation.Transactional(readOnly = true)

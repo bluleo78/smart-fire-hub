@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  데이터셋 접근 사실·자격 원자료 문장(WD-711) — JooqDatasetAccessRepository 와 같은 의미. 규칙은 MyBatisPlatformConfig javadoc.
+  dataset·security_level·dataset_access_grant·role·user_role 은 테넌트 정책(RLS) 대상이라 tenant_id 를 술어로 쓰지 않는다.
+  예외(스펙 D1): 자격 원자료(selectClearanceRows*)는 인터페이스가 tenantId 를 받으므로 jOOQ 처럼 user_role.tenant_id 를 명시하고,
+  정책 없는 전역 테이블 membership 은 user_role.tenant_id 로 ACTIVE 멤버십을 잇는다(Review Focus 1).
+  SELECT 목록의 불리언 식(허용 목록 여부)은 두 DB 공통으로 CASE WHEN … THEN 1 ELSE 0 END. 불리언 열 비교는 sqlTrue 조각.
+  IN 목록은 InChunks(500 개) + inChunks 조각(Tibero 1000 개 상한 — Review Focus 3). 호출자 보유 역할(roleIds)은 몇 개뿐이라
+  가시성 조각(DatasetVisibility.visible)처럼 그대로 foreach — 비면 렌더하지 않는다(빈 IN () 은 문법 오류).
+  별칭 acl_g·role_g 는 jOOQ 판과 같다.
+-->
+<mapper namespace="com.smartfirehub.securitylevel.repository.mybatis.DatasetAccessMapper">
+
+  <!-- 판정 사실 평평한 행 — 등급 정책 문자열은 EnumTypeHandler(Enum.valueOf)로 엄격 변환(jOOQ toPolicy 와 같은 규칙). -->
+  <resultMap id="factRow" type="com.smartfirehub.securitylevel.repository.mybatis.DatasetAccessRows$FactRow">
+    <constructor>
+      <arg column="dataset_id" javaType="java.lang.Long"/>
+      <arg column="dataset_table_name" javaType="java.lang.String"/>
+      <arg column="on_list" javaType="java.lang.Integer"/>
+      <arg column="level_id" javaType="java.lang.Long"/>
+      <arg column="level_name" javaType="java.lang.String"/>
+      <arg column="level_rank" javaType="java.lang.Integer"/>
+      <arg column="is_default" javaType="java.lang.Boolean"/>
+      <arg column="allowlist_required" javaType="java.lang.Boolean"/>
+      <arg column="admin_bypass" javaType="java.lang.Boolean"/>
+      <arg column="export_policy" javaType="com.smartfirehub.securitylevel.access.LevelPolicy$ExportPolicy"/>
+      <arg column="ai_policy" javaType="com.smartfirehub.securitylevel.access.LevelPolicy$AiPolicy"/>
+      <arg column="share_policy" javaType="com.smartfirehub.securitylevel.access.LevelPolicy$SharePolicy"/>
+      <arg column="audit_access" javaType="java.lang.Boolean"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="clearanceRoleRow" type="com.smartfirehub.securitylevel.repository.mybatis.DatasetAccessRows$ClearanceRoleRow">
+    <constructor>
+      <arg column="user_id" javaType="java.lang.Long"/>
+      <arg column="role_id" javaType="java.lang.Long"/>
+      <arg column="role_name" javaType="java.lang.String"/>
+      <arg column="is_system" javaType="java.lang.Boolean"/>
+      <arg column="role_rank" javaType="java.lang.Integer"/>
+    </constructor>
+  </resultMap>
+
+  <!--
+    "호출자 본인 또는 보유 역할이 허용 목록에 있는가" 상관 서브쿼리 — JooqDatasetAccessRepository.onAllowlistCondition 과 같은 식.
+    속성 idCol: 바깥 문장의 데이터셋 id 열 식(XML 에 박힌 고정 값). 파라미터 userId·roleIds.
+  -->
+  <sql id="onAllowlist">
+    EXISTS (
+      SELECT 1 FROM dataset_access_grant acl_g
+       WHERE acl_g.dataset_id = ${idCol}
+         AND (acl_g.user_id = #{userId}
+              <if test="roleIds != null and roleIds.size() > 0">
+                OR acl_g.role_id IN
+                <foreach collection="roleIds" item="roleId" open="(" separator="," close=")">#{roleId}</foreach>
+              </if>))
+  </sql>
+
+  <!-- 판정 사실 SELECT 머리 — dataset 과 security_level 의 id·name 이 겹치므로 별칭을 붙인다. -->
+  <sql id="factSelect">
+    SELECT d.id AS dataset_id, d.table_name AS dataset_table_name,
+           CASE WHEN <include refid="onAllowlist"><property name="idCol" value="d.id"/></include> THEN 1 ELSE 0 END AS on_list,
+           sl.id AS level_id, sl.name AS level_name, sl.rank AS level_rank, sl.is_default, sl.allowlist_required,
+           sl.admin_bypass, sl.export_policy, sl.ai_policy, sl.share_policy, sl.audit_access
+      FROM dataset d
+      JOIN security_level sl ON sl.id = d.security_level_id
+  </sql>
+
+  <select id="selectFactsByIds" resultMap="factRow">
+    <include refid="factSelect"/>
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="d.id"/></include>
+  </select>
+
+  <select id="selectFactsByTableNames" resultMap="factRow">
+    <include refid="factSelect"/>
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="d.table_name"/></include>
+  </select>
+
+  <!--
+    열람 판정(decide)의 두 거부 절 — rank 초과 또는 (허용 목록 없음 ∧ ADMIN 우회 아님). 허용 목록 필요 등급의 허용 항목만 본다.
+    dataset.security_level_id 는 NOT NULL + FK 라 내부 조인이 행을 흘리지 않는다.
+  -->
+  <select id="selectRoleIdsWithAllowlistNotViewable" resultType="java.lang.Long">
+    SELECT DISTINCT role_g.role_id
+      FROM dataset_access_grant role_g
+      JOIN dataset d ON d.id = role_g.dataset_id
+      JOIN security_level sl ON sl.id = d.security_level_id
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="role_g.role_id"/></include>
+       AND sl.allowlist_required = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>
+       AND (sl.rank &gt; #{rank}
+            OR NOT (<include refid="onAllowlist"><property name="idCol" value="role_g.dataset_id"/></include>
+                    <if test="tenantAdmin">OR sl.admin_bypass = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/></if>))
+  </select>
+
+  <!--
+    자격 계산 공통 조인 — (사용자, 역할, 역할 등급 rank). ACTIVE 멤버십 + 활성 계정의 이 테넌트 역할만 남긴다(jOOQ clearanceRoleRows 와 같은
+    조인). membership 은 정책 없는 전역 테이블이라 user_role.tenant_id 로 잇고, user_role.tenant_id 는 인자로 명시한다.
+  -->
+  <sql id="clearanceJoin">
+    SELECT ur.user_id, r.id AS role_id, r.name AS role_name, r.is_system, sl.rank AS role_rank
+      FROM user_role ur
+      JOIN role r ON r.id = ur.role_id
+      JOIN security_level sl ON sl.id = r.max_security_level_id
+      JOIN <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.userTable"/> u
+        ON u.id = ur.user_id AND u.is_active = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>
+      JOIN membership m ON m.user_id = ur.user_id AND m.tenant_id = ur.tenant_id AND m.status = 'ACTIVE'
+  </sql>
+
+  <select id="selectClearanceRows" resultMap="clearanceRoleRow">
+    <include refid="clearanceJoin"/>
+     WHERE ur.user_id = #{userId}
+       AND ur.tenant_id = #{tenantId}
+  </select>
+
+  <select id="selectClearanceRowsByUsers" resultMap="clearanceRoleRow">
+    <include refid="clearanceJoin"/>
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="ur.user_id"/></include>
+       AND ur.tenant_id = #{tenantId}
+  </select>
+
+</mapper>

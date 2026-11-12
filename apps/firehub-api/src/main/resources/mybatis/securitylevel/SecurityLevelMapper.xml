@@ -1,0 +1,317 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  보안 등급 문장(WD-711) — JooqSecurityLevelRepository 와 같은 의미. 규칙은 MyBatisPlatformConfig javadoc.
+  security_level·dataset·role·user_role·dataset_access_grant 는 테넌트 정책(RLS) 대상이라 tenant_id 를 INSERT 값·WHERE 술어로 쓰지 않는다.
+  예외(스펙 D1): 정책 없는 전역 테이블 membership 조인은 인자로 받은 tenantId 를 명시한다(selectCandidateUsers·countActiveMember).
+  불리언 열은 PG boolean·Tibero NUMBER(1) — 쓸 때는 공용 조각 sqlTrue/sqlFalse·boolLiteral, 읽을 때는 JDBC getBoolean.
+  숫자 집계는 Tibero 가 BigDecimal 로 돌려주므로 Long 을 명시한 생성자 매핑으로 받는다.
+  IN 목록은 InChunks(500 개) + inChunks 조각 — Tibero IN 목록 1000 개 상한(Review Focus 3).
+  잠금: FOR UPDATE 는 두 DB 공통(jOOQ forUpdate 와 같은 모드, 행 수 제한 없음).
+-->
+<mapper namespace="com.smartfirehub.securitylevel.repository.mybatis.SecurityLevelMapper">
+
+  <!-- 등급 행 → LevelPolicy. 정책 문자열은 MyBatis EnumTypeHandler(Enum.valueOf)로 엄격 변환 — jOOQ toPolicy 와 같은 규칙. -->
+  <resultMap id="levelPolicy" type="com.smartfirehub.securitylevel.access.LevelPolicy">
+    <constructor>
+      <idArg column="id" javaType="_long"/>
+      <arg column="name" javaType="java.lang.String"/>
+      <arg column="rank" javaType="_int"/>
+      <arg column="is_default" javaType="_boolean"/>
+      <arg column="allowlist_required" javaType="_boolean"/>
+      <arg column="admin_bypass" javaType="_boolean"/>
+      <arg column="export_policy" javaType="com.smartfirehub.securitylevel.access.LevelPolicy$ExportPolicy"/>
+      <arg column="ai_policy" javaType="com.smartfirehub.securitylevel.access.LevelPolicy$AiPolicy"/>
+      <arg column="share_policy" javaType="com.smartfirehub.securitylevel.access.LevelPolicy$SharePolicy"/>
+      <arg column="audit_access" javaType="_boolean"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="levelCount" type="com.smartfirehub.securitylevel.repository.mybatis.SecurityLevelRows$LevelCount">
+    <constructor>
+      <arg column="level_id" javaType="java.lang.Long"/>
+      <arg column="cnt" javaType="java.lang.Long"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="levelRoleCount" type="com.smartfirehub.securitylevel.repository.mybatis.SecurityLevelRows$LevelRoleCount">
+    <constructor>
+      <arg column="level_id" javaType="java.lang.Long"/>
+      <arg column="role_id" javaType="java.lang.Long"/>
+      <arg column="cnt" javaType="java.lang.Long"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="roleLevelId" type="com.smartfirehub.securitylevel.repository.mybatis.SecurityLevelRows$RoleLevelId">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="max_security_level_id" javaType="java.lang.Long"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="roleRow" type="com.smartfirehub.securitylevel.repository.mybatis.SecurityLevelRows$RoleRow">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="name" javaType="java.lang.String"/>
+      <arg column="max_security_level_id" javaType="java.lang.Long"/>
+      <arg column="is_system" javaType="java.lang.Boolean"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="roleClearanceRow" type="com.smartfirehub.securitylevel.repository.SecurityLevelRepository$RoleClearanceRow">
+    <constructor>
+      <arg column="name" javaType="java.lang.String"/>
+      <arg column="is_system" javaType="java.lang.Boolean"/>
+      <arg column="max_security_level_id" javaType="java.lang.Long"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="candidateUser" type="com.smartfirehub.securitylevel.repository.SecurityLevelRepository$CandidateUser">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="name" javaType="java.lang.String"/>
+      <arg column="email" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="candidateRole" type="com.smartfirehub.securitylevel.repository.SecurityLevelRepository$CandidateRole">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="name" javaType="java.lang.String"/>
+      <arg column="max_security_level_id" javaType="java.lang.Long"/>
+    </constructor>
+  </resultMap>
+
+  <sql id="levelColumns">
+    sl.id, sl.name, sl.rank, sl.is_default, sl.allowlist_required, sl.admin_bypass,
+    sl.export_policy, sl.ai_policy, sl.share_policy, sl.audit_access
+  </sql>
+
+  <select id="selectAll" resultMap="levelPolicy">
+    SELECT <include refid="levelColumns"/> FROM security_level sl ORDER BY sl.rank ASC
+  </select>
+
+  <select id="selectById" resultMap="levelPolicy">
+    SELECT <include refid="levelColumns"/> FROM security_level sl WHERE sl.id = #{id}
+  </select>
+
+  <select id="selectDefault" resultMap="levelPolicy">
+    SELECT <include refid="levelColumns"/> FROM security_level sl
+     WHERE sl.is_default = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>
+  </select>
+
+  <!-- 잠금 없는 조회라 행 수 상한 조각(Tibero FETCH FIRST)을 쓸 수 있다. -->
+  <select id="selectTop" resultMap="levelPolicy">
+    SELECT <include refid="levelColumns"/> FROM security_level sl ORDER BY sl.rank DESC
+    <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.limitRows"><property name="n" value="1"/></include>
+  </select>
+
+  <select id="selectDatasetLevelId" resultType="java.lang.Long">
+    SELECT d.security_level_id FROM dataset d WHERE d.id = #{datasetId}
+  </select>
+
+  <select id="selectDatasetIdsWhereLevelFlag" resultType="java.lang.Long">
+    SELECT d.id FROM dataset d JOIN security_level sl ON sl.id = d.security_level_id
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="d.id"/></include>
+       AND <choose>
+             <when test="audited">sl.audit_access</when>
+             <otherwise>sl.allowlist_required</otherwise>
+           </choose> = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>
+  </select>
+
+  <!-- 이름은 리포지토리가 trim 해 넘긴다 — jOOQ 처럼 정확히 같은지 본다(대소문자 구분). -->
+  <select id="countByName" resultType="_long">
+    SELECT COUNT(*) FROM security_level sl WHERE sl.name = #{name}
+    <if test="excludeId != null">AND sl.id &lt;&gt; #{excludeId}</if>
+  </select>
+
+  <!--
+    tenant_id 는 DEFAULT(PG GUC·Tibero 컨텍스트)가 채운다. RETURNING 대신 생성 키.
+    created_at·updated_at 은 DB 시계(dbNow)로 명시한다 — Tibero 열 DEFAULT(LOCALTIMESTAMP)는 세션 시간대에 기대므로 쓰지 않는다
+    (PG 는 jOOQ 판이 기대는 DEFAULT now() 와 같은 값).
+  -->
+  <insert id="insert" useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+    INSERT INTO security_level
+      (rank, name, allowlist_required, admin_bypass, export_policy, ai_policy, share_policy, audit_access, created_by, updated_by,
+       created_at, updated_at)
+    VALUES
+      (#{rank}, #{name},
+       <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.boolLiteral"><property name="v" value="allowlistRequired"/></include>,
+       <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.boolLiteral"><property name="v" value="adminBypass"/></include>,
+       #{exportPolicy}, #{aiPolicy}, #{sharePolicy},
+       <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.boolLiteral"><property name="v" value="auditAccess"/></include>,
+       #{actor}, #{actor}, <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>, <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>)
+  </insert>
+
+  <!-- 수정 시각은 jOOQ 처럼 자바 현재 시각(LocalDateTime.now())을 바인딩한다. -->
+  <update id="update">
+    UPDATE security_level
+       SET name = #{name},
+           allowlist_required = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.boolLiteral"><property name="v" value="allowlistRequired"/></include>,
+           admin_bypass = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.boolLiteral"><property name="v" value="adminBypass"/></include>,
+           export_policy = #{exportPolicy},
+           ai_policy = #{aiPolicy},
+           share_policy = #{sharePolicy},
+           audit_access = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.boolLiteral"><property name="v" value="auditAccess"/></include>,
+           updated_by = #{actor},
+           updated_at = #{now}
+     WHERE id = #{id}
+  </update>
+
+  <update id="clearDefault">
+    UPDATE security_level SET is_default = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlFalse"/>
+     WHERE is_default = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>
+  </update>
+
+  <update id="markDefault">
+    UPDATE security_level SET is_default = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>
+     WHERE id = #{id}
+  </update>
+
+  <delete id="delete">
+    DELETE FROM security_level WHERE id = #{id}
+  </delete>
+
+  <select id="countDatasetsByLevel" resultMap="levelCount">
+    SELECT d.security_level_id AS level_id, COUNT(*) AS cnt FROM dataset d GROUP BY d.security_level_id
+  </select>
+
+  <select id="countRoleGrantedDatasetsByLevelAndRole" resultMap="levelRoleCount">
+    SELECT d.security_level_id AS level_id, g.role_id AS role_id, COUNT(*) AS cnt
+      FROM dataset_access_grant g JOIN dataset d ON d.id = g.dataset_id
+     WHERE g.role_id IS NOT NULL
+     GROUP BY d.security_level_id, g.role_id
+  </select>
+
+  <select id="countRolesByLevel" resultMap="levelCount">
+    SELECT r.max_security_level_id AS level_id, COUNT(*) AS cnt FROM role r GROUP BY r.max_security_level_id
+  </select>
+
+  <update id="moveDatasets">
+    UPDATE dataset SET security_level_id = #{toLevelId} WHERE security_level_id = #{fromLevelId}
+  </update>
+
+  <update id="moveRoles">
+    UPDATE role SET max_security_level_id = #{toLevelId} WHERE max_security_level_id = #{fromLevelId}
+  </update>
+
+  <!-- 시스템 ADMIN 판정은 SystemAdminRole 과 같다: name = 'ADMIN' AND is_system. -->
+  <update id="updateSystemAdminLevel">
+    UPDATE role SET max_security_level_id = #{levelId}
+     WHERE name = #{adminName} AND is_system = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>
+  </update>
+
+  <select id="selectRoleClearanceRow" resultMap="roleClearanceRow">
+    SELECT r.name, r.is_system, r.max_security_level_id FROM role r WHERE r.id = #{roleId}
+  </select>
+
+  <select id="countRoleMembers" resultType="_long">
+    SELECT COUNT(*) FROM user_role ur WHERE ur.role_id = #{roleId}
+  </select>
+
+  <update id="updateRoleMaxLevel">
+    UPDATE role SET max_security_level_id = #{levelId} WHERE id = #{roleId}
+  </update>
+
+  <select id="countVisibleDatasets" resultType="_long">
+    SELECT COUNT(*) FROM dataset d
+     WHERE <include refid="com.smartfirehub.securitylevel.repository.mybatis.DatasetVisibility.visible">
+             <property name="idCol" value="d.id"/>
+             <property name="levelCol" value="d.security_level_id"/>
+           </include>
+  </select>
+
+  <select id="selectDistinctLevelIds" resultType="java.lang.Long">
+    SELECT DISTINCT d.security_level_id FROM dataset d
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="d.id"/></include>
+  </select>
+
+  <select id="countTempDataset" resultType="_long">
+    SELECT COUNT(*) FROM dataset d
+     WHERE d.id = #{datasetId} AND d.origin_type = 'TEMP'
+     <if test="stepId != null">AND d.source_pipeline_step_id = #{stepId}</if>
+  </select>
+
+  <select id="selectRoleRows" resultMap="roleRow">
+    SELECT r.id, r.name, r.max_security_level_id, r.is_system FROM role r
+  </select>
+
+  <update id="setDatasetLevel">
+    UPDATE dataset SET security_level_id = #{levelId,jdbcType=BIGINT} WHERE id = #{datasetId}
+  </update>
+
+  <update id="setDatasetLevelClearingAutoRaise">
+    UPDATE dataset SET security_level_id = #{levelId}, security_level_auto_raised_at = NULL WHERE id = #{datasetId}
+  </update>
+
+  <!-- raisedAt 은 자동 상향일 때만 넘어온다(jOOQ 처럼 자바 현재 시각). -->
+  <update id="setPipelineOutputLevel">
+    UPDATE dataset SET security_level_id = #{levelId}
+    <if test="raisedAt != null">, security_level_auto_raised_at = #{raisedAt}</if>
+     WHERE id = #{datasetId}
+  </update>
+
+  <select id="selectAutoRaisedAt" resultType="java.time.LocalDateTime">
+    SELECT d.security_level_auto_raised_at FROM dataset d WHERE d.id = #{datasetId}
+  </select>
+
+  <update id="clearAutoRaisedAt">
+    UPDATE dataset SET security_level_auto_raised_at = NULL WHERE id = #{datasetId}
+  </update>
+
+  <update id="restoreAutoRaisedAtIfAbsent">
+    UPDATE dataset SET security_level_auto_raised_at = #{previous,jdbcType=TIMESTAMP}
+     WHERE id = #{datasetId} AND security_level_auto_raised_at IS NULL
+  </update>
+
+  <select id="lockDatasetAndSelectLevelId" resultType="java.lang.Long">
+    SELECT d.security_level_id FROM dataset d WHERE d.id = #{datasetId} FOR UPDATE
+  </select>
+
+  <select id="selectRoleLevelIds" resultMap="roleLevelId">
+    SELECT r.id, r.max_security_level_id FROM role r
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="r.id"/></include>
+  </select>
+
+  <select id="countRole" resultType="_long">
+    SELECT COUNT(*) FROM role r WHERE r.id = #{roleId}
+  </select>
+
+  <!-- membership 은 정책 없는 전역 테이블 — tenant_id 를 명시한다(Review Focus 1). 같은 이름은 id 순(jOOQ 와 같은 정렬). -->
+  <select id="selectCandidateUsers" resultMap="candidateUser">
+    SELECT u.id, u.name, u.email
+      FROM <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.userTable"/> u
+      JOIN membership m ON m.user_id = u.id AND m.tenant_id = #{tenantId} AND m.status = 'ACTIVE'
+     WHERE u.is_active = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>
+     ORDER BY u.name ASC, u.id ASC
+  </select>
+
+  <!-- 이름 순, 같은 이름이면 id 순(jOOQ 와 같은 정렬 — 테넌트 안 이름은 유일하지만 정렬을 결정적으로 고정한다). -->
+  <select id="selectCandidateRoles" resultMap="candidateRole">
+    SELECT r.id, r.name, r.max_security_level_id FROM role r ORDER BY r.name ASC, r.id ASC
+  </select>
+
+  <!-- 후보 조회와 같은 기준: 이 테넌트 ACTIVE 멤버십 + 활성 계정. -->
+  <select id="countActiveMember" resultType="_long">
+    SELECT COUNT(*)
+      FROM membership m
+      JOIN <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.userTable"/> u ON u.id = m.user_id
+     WHERE m.user_id = #{userId} AND m.tenant_id = #{tenantId} AND m.status = 'ACTIVE'
+       AND u.is_active = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>
+  </select>
+
+  <!--
+    순서 일괄 갱신 — 한 문장(CASE)으로 바꾼다. Tibero 는 SET CONSTRAINT(S) … DEFERRED 가 문법 오류(-7001)이고 두 문장 맞바꿈은 즉시
+    UNIQUE 위반(-10007)이라 문장 끝에 유일성을 보는 한 문장이 유일한 길이다(실측: TiberoBundle36SyntaxProbeLiveTest). PG 도
+    uq_security_level_rank 가 DEFERRABLE(INITIALLY IMMEDIATE)이라 문장 끝에 검사하므로 같은 문장이 그대로 맞는다 — databaseId 없음.
+    IN 목록을 조각내지 않는 이유: 맞바꿈은 한 문장이어야 하고(Tibero 는 지연 제약을 거절한다) 테넌트당 등급 수는 몇 개뿐이라 1000 개 상한에 닿지 않는다.
+  -->
+  <update id="updateRanks">
+    UPDATE security_level
+       SET rank = CASE id
+         <foreach collection="entries" item="e">WHEN #{e.id} THEN #{e.rank} </foreach>
+       END
+     WHERE id IN <foreach collection="entries" item="e" open="(" separator="," close=")">#{e.id}</foreach>
+  </update>
+
+</mapper>

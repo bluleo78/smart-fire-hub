@@ -7,6 +7,7 @@ import com.smartfirehub.dataset.repository.mybatis.DatasetFavoriteMapper;
 import com.smartfirehub.dataset.repository.mybatis.DatasetMapper;
 import com.smartfirehub.dataset.repository.mybatis.MyBatisDatasetRepository;
 import com.smartfirehub.global.platformdb.PlatformLocks;
+import com.smartfirehub.securitylevel.repository.SecurityLevelRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -22,7 +23,10 @@ class MyBatisDatasetRepositoryLockKeyTest {
     PlatformLocks locks = mock(PlatformLocks.class);
     MyBatisDatasetRepository repository =
         new MyBatisDatasetRepository(
-            mock(DatasetMapper.class), mock(DatasetFavoriteMapper.class), locks);
+            mock(DatasetMapper.class),
+            mock(DatasetFavoriteMapper.class),
+            locks,
+            mock(SecurityLevelRepository.class));
 
     repository.acquireNameLock(7L, "화재 Data");
     repository.acquireTableNameLock(7L, "t_fire");

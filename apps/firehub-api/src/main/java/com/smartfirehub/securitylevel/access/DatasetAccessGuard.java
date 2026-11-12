@@ -498,20 +498,6 @@ public class DatasetAccessGuard {
   }
 
   /**
-   * 가시성을 문자열 SQL 술어로 렌더한다 — <b>테넌트 데이터 경로의 스키마 조회 한 곳</b>(SavedQueryController →
-   * AnalyticsQueryExecutionService#getSchemaInfo, 허용 목록·PG/Tibero 카탈로그 SQL 을 직접 조립) 전용으로 남긴다. 값이 모두
-   * long/boolean 이라 인라인 렌더링이 안전하다.
-   *
-   * <p>플랫폼 리포지토리(시맨틱 검색 등)는 문자열을 받지 않는다 — {@link #visibility(Clearance)} 로 캡처한 값을 넘기고 렌더·별칭은 리포지토리
-   * 구현이 맡는다(WD-485 T10). 새 호출부는 이 메서드 대신 그 경로를 쓴다.
-   *
-   * @param datasetAlias 호출부 SQL 에서 dataset 테이블의 별칭(예: "d")
-   */
-  public String visibleSql(Clearance c, String datasetAlias) {
-    return accessRepository.visibleSql(visibility(c), datasetAlias);
-  }
-
-  /**
    * SQL 이 아니라 <b>데이터셋 id 목록</b>을 직접 읽는 실행 지점(AI_CLASSIFY 스텝 입력)의 판정 — {@link #checkSql} 의 읽기 집합 규칙과
    * 같다: 전부 VIEW 여야 하고, 실효 등급은 최대 rank, 내보내기 허용은 전부의 EXPORT. 없는 id·null id·볼 수 없는 id 는 같은 거부(SQL 경로와
    * 같은 코드·메시지 — 실행 이력에 남는 문구로 숨김 데이터셋 존재를 구분할 수 없게).

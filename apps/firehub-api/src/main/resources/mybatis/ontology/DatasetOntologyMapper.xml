@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  데이터셋↔온톨로지 연결(dataset_ontology) 문장(WD-711) — JooqDatasetOntologyRepository 와 같은 의미.
+  dataset_ontology 는 테넌트 정책(RLS) 대상이라 tenant_id 를 INSERT 값·WHERE 술어로 쓰지 않는다(열 DEFAULT 가 채운다).
+
+  bind: PG 는 jOOQ 와 같은 ON CONFLICT (tenant_id, dataset_id) DO UPDATE — 유일 색인(V101)과 맞춘 충돌 대상일 뿐 값·술어가 아니다.
+  Tibero 는 PK 없이 유일 색인(tenant_id, dataset_id)만 있어 MERGE ON dataset_id 로 쓴다. 정책이 다른 테넌트 행을 대상에서 거르므로
+  tenant_id 를 MERGE 키에 쓰지 않는다. 소스는 DUAL 한 행(원본 중복 -4008 없음), 소스 열을 uid 로 별칭하지 않는다(-8006).
+  같은 데이터셋이 동시에 처음 연결되면 한쪽이 중복 키(-10007)를 받으며 구현이 1회 다시 시도한다(두 번째에는 MATCHED 갱신).
+  bound_at 은 DB 시계(dbNow — PG now(), Tibero UTC 벽시계).
+-->
+<mapper namespace="com.smartfirehub.ontology.repository.mybatis.DatasetOntologyMapper">
+
+  <insert id="bind" databaseId="postgresql">
+    INSERT INTO dataset_ontology (dataset_id, ontology_id, bound_by, bound_at)
+    VALUES (#{datasetId}, #{ontologyId}, #{userId,jdbcType=BIGINT}, <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>)
+    ON CONFLICT (tenant_id, dataset_id) DO UPDATE
+       SET ontology_id = EXCLUDED.ontology_id,
+           bound_by = EXCLUDED.bound_by,
+           bound_at = EXCLUDED.bound_at
+  </insert>
+
+  <update id="bind" databaseId="tibero">
+    MERGE INTO dataset_ontology t
+    USING (SELECT #{datasetId} AS d FROM DUAL) s
+       ON (t.dataset_id = s.d)
+    WHEN MATCHED THEN UPDATE
+       SET t.ontology_id = #{ontologyId},
+           t.bound_by = #{userId,jdbcType=BIGINT},
+           t.bound_at = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>
+    WHEN NOT MATCHED THEN INSERT (dataset_id, ontology_id, bound_by, bound_at)
+      VALUES (s.d, #{ontologyId}, #{userId,jdbcType=BIGINT}, <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>)
+  </update>
+
+  <select id="selectOntologyIdByDataset" resultType="java.lang.Long">
+    SELECT dn.ontology_id FROM dataset_ontology dn WHERE dn.dataset_id = #{datasetId}
+  </select>
+
+</mapper>

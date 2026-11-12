@@ -6,6 +6,7 @@ import static org.jooq.impl.DSL.not;
 import static org.jooq.impl.DSL.selectOne;
 import static org.jooq.impl.DSL.table;
 
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.graphingest.dto.GraphIngestRecord;
 import com.smartfirehub.graphingest.dto.GraphIngestRecord.StaleRow;
 import com.smartfirehub.graphingest.repository.GraphIngestRepository;
@@ -30,6 +31,7 @@ import org.springframework.transaction.annotation.Transactional;
  * com.smartfirehub.audit.repository.AuditLogRepository} 선례를 따름)
  */
 @Repository
+@ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
 // RLS GUC 는 트랜잭션 시작 시점에만 주입되는데 호출자 GraphIngestService(record/history/findStale)는
 // 트랜잭션 경계를 만들지 않는다. 여기서 열지 않으면 record 는 tenant_id NOT NULL 위반, findStale 은
@@ -101,7 +103,7 @@ public class JooqGraphIngestRepository implements GraphIngestRepository {
     return dsl.select(ID, DATASET_ID, INGESTED_AT, SCHEMA_VER, CHUNK, NODE, EDGE, FAILURES, STATUS)
         .from(T)
         .where(DATASET_ID.eq(datasetId))
-        .orderBy(INGESTED_AT.desc())
+        .orderBy(INGESTED_AT.desc(), ID.desc())
         .fetch(
             r ->
                 new GraphIngestRecord(

@@ -9,6 +9,7 @@ import static org.jooq.impl.DSL.notExists;
 import static org.jooq.impl.DSL.selectCount;
 import static org.jooq.impl.DSL.selectOne;
 
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.securitylevel.repository.DatasetAccessGrantRepository;
 import java.util.Collection;
 import java.util.HashMap;
@@ -29,6 +30,7 @@ import org.springframework.stereotype.Repository;
  * <p>데이터셋 허용 목록(dataset_access_grant) CRUD. 테넌트 범위는 RLS — 클래스 레벨 트랜잭션으로 GUC 를 보장한다.
  */
 @Repository
+@ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
 @org.springframework.transaction.annotation.Transactional
 public class JooqDatasetAccessGrantRepository implements DatasetAccessGrantRepository {

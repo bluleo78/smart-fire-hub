@@ -1,0 +1,201 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  데이터셋 허용 목록(dataset_access_grant) 문장(WD-711) — JooqDatasetAccessGrantRepository 와 같은 의미. 규칙은 MyBatisPlatformConfig javadoc.
+  dataset_access_grant·dataset·security_level 은 테넌트 정책(RLS) 대상이라 tenant_id 를 술어로 쓰지 않는다(DEFAULT 가 채운다).
+  사용자·역할 이름 조인("user" 는 PG 소문자 따옴표, Tibero 따옴표 대문자)은 jOOQ 처럼 테넌트 조건 없이 id 로만 잇는다.
+
+  insertIfAbsent: PG 는 ON CONFLICT DO NOTHING(유일 제약 (dataset_id,user_id)·(dataset_id,role_id)).
+  Tibero 기준선(V155)은 유일 제약 대신 CASE 식 유일 색인 uq_dataset_access_grant_user/role 이라, MERGE 의 ON 절에 그 색인과 같은
+  CASE 식을 그대로 쓴다. 소스 열은 uid 로 별칭을 달지 않는다(-8006). 대상 종류별로 분기해 소스에 NULL 바인드를 두지 않는다.
+  동시 삽입의 패자는 중복 키(-10007)를 받으며, 구현이 1회 다시 시도한다.
+  사용자·역할 둘 다 있거나 둘 다 없는 대상은 구현이 문장 전에 막는다(Tibero MERGE 분기가 한쪽을 조용히 버리지 않게, PG CHECK 와 같은 예외 계열).
+
+  granted_at 은 모든 삽입 문장에서 DB 시계(dbNow — PG now(), Tibero UTC 벽시계)로 명시한다. Tibero 열 DEFAULT(LOCALTIMESTAMP)는
+  세션 시간대에 기대므로 쓰지 않는다(GraphIngest ingested_at 과 같은 규칙).
+-->
+<mapper namespace="com.smartfirehub.securitylevel.repository.mybatis.DatasetAccessGrantMapper">
+
+  <resultMap id="subjectRow" type="com.smartfirehub.securitylevel.repository.mybatis.DatasetAccessGrantRows$SubjectRow">
+    <constructor>
+      <arg column="dataset_id" javaType="java.lang.Long"/>
+      <arg column="user_id" javaType="java.lang.Long"/>
+      <arg column="role_id" javaType="java.lang.Long"/>
+    </constructor>
+  </resultMap>
+
+  <!-- GrantRow 는 record(long 기본형 id·dataset_id)라 생성자 인자 타입을 기본형(_long)으로 밝힌다. -->
+  <resultMap id="grantRow" type="com.smartfirehub.securitylevel.repository.DatasetAccessGrantRepository$GrantRow">
+    <constructor>
+      <arg column="id" javaType="_long"/>
+      <arg column="dataset_id" javaType="_long"/>
+      <arg column="user_id" javaType="java.lang.Long"/>
+      <arg column="role_id" javaType="java.lang.Long"/>
+      <arg column="subject_name" javaType="java.lang.String"/>
+      <arg column="granted_by" javaType="java.lang.Long"/>
+      <arg column="granted_by_name" javaType="java.lang.String"/>
+      <arg column="granted_at" javaType="java.time.LocalDateTime"/>
+    </constructor>
+  </resultMap>
+
+  <select id="selectSubjects" resultMap="subjectRow">
+    SELECT g.dataset_id, g.user_id, g.role_id
+      FROM dataset_access_grant g
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="g.dataset_id"/></include>
+  </select>
+
+  <!-- 대상 조건 공통 — 사용자 대상이면 user_id, 아니면 role_id(jOOQ 의 subject 조건과 같다). -->
+  <sql id="subjectCond">
+    <choose>
+      <when test="userId != null">g.user_id = #{userId}</when>
+      <otherwise>g.role_id = #{roleId}</otherwise>
+    </choose>
+  </sql>
+
+  <select id="selectIdBySubject" resultType="java.lang.Long">
+    SELECT g.id FROM dataset_access_grant g
+     WHERE g.dataset_id = #{datasetId} AND <include refid="subjectCond"/>
+  </select>
+
+  <insert id="insertIfAbsent" databaseId="postgresql">
+    INSERT INTO dataset_access_grant (dataset_id, user_id, role_id, granted_by, granted_at)
+    VALUES (#{datasetId}, #{userId,jdbcType=BIGINT}, #{roleId,jdbcType=BIGINT}, #{grantedBy,jdbcType=BIGINT}, <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>)
+    ON CONFLICT DO NOTHING
+  </insert>
+
+  <insert id="insertIfAbsent" databaseId="tibero">
+    <choose>
+      <when test="userId != null">
+        MERGE INTO dataset_access_grant t
+        USING (SELECT #{datasetId} AS d, #{userId} AS sid FROM DUAL) s
+           ON (CASE WHEN t.dataset_id IS NOT NULL AND t.user_id IS NOT NULL THEN t.dataset_id END = s.d
+               AND CASE WHEN t.dataset_id IS NOT NULL AND t.user_id IS NOT NULL THEN t.user_id END = s.sid)
+        WHEN NOT MATCHED THEN INSERT (dataset_id, user_id, granted_by, granted_at)
+          VALUES (s.d, s.sid, #{grantedBy,jdbcType=BIGINT}, <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>)
+      </when>
+      <otherwise>
+        MERGE INTO dataset_access_grant t
+        USING (SELECT #{datasetId} AS d, #{roleId} AS sid FROM DUAL) s
+           ON (CASE WHEN t.dataset_id IS NOT NULL AND t.role_id IS NOT NULL THEN t.dataset_id END = s.d
+               AND CASE WHEN t.dataset_id IS NOT NULL AND t.role_id IS NOT NULL THEN t.role_id END = s.sid)
+        WHEN NOT MATCHED THEN INSERT (dataset_id, role_id, granted_by, granted_at)
+          VALUES (s.d, s.sid, #{grantedBy,jdbcType=BIGINT}, <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>)
+      </otherwise>
+    </choose>
+  </insert>
+
+  <!-- tenant_id 는 DEFAULT 가 채운다. RETURNING 대신 생성 키. -->
+  <insert id="insert" useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+    INSERT INTO dataset_access_grant (dataset_id, user_id, role_id, granted_by, granted_at)
+    VALUES (#{datasetId}, #{userId,jdbcType=BIGINT}, #{roleId,jdbcType=BIGINT}, #{grantedBy,jdbcType=BIGINT}, <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>)
+  </insert>
+
+  <!--
+    복사 — 원본 데이터셋의 항목을 대상 데이터셋으로 한 문장에 넣고 영향 행 수를 돌려준다(jOOQ INSERT … SELECT … ON CONFLICT DO NOTHING 과
+    같은 값). 대상에 같은 대상(사용자·역할, 열마다 NULL 안전 비교)이 이미 있으면 NOT EXISTS 가 건너뛴다 — 본문(copySql)은 두 DB 공통.
+    PG 판은 끝에 ON CONFLICT DO NOTHING 을 더 붙인다: 동시 복사가 같은 행을 넣으려 하면 PG 는 유일 위반이 트랜잭션 전체를 망가뜨려 재시도도
+    실패하기 때문이다(Tibero 는 문장 단위 실패라 구현의 1회 재시도로 충분하다).
+    granted_by 가 null 이면 바인드 대신 NULL 리터럴 — Tibero 는 SELECT 목록의 NULL 바인드 타입을 정하지 못한다(MERGE 소스와 같은 이유).
+  -->
+  <sql id="copySql">
+    INSERT INTO dataset_access_grant (dataset_id, user_id, role_id, granted_by, granted_at)
+    SELECT #{toDatasetId}, src.user_id, src.role_id,
+           <choose><when test="grantedBy != null">#{grantedBy}</when><otherwise>NULL</otherwise></choose>,
+           <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>
+      FROM dataset_access_grant src
+     WHERE src.dataset_id = #{fromDatasetId}
+       AND NOT EXISTS (SELECT 1 FROM dataset_access_grant t
+                        WHERE t.dataset_id = #{toDatasetId}
+                          AND (t.user_id = src.user_id OR (t.user_id IS NULL AND src.user_id IS NULL))
+                          AND (t.role_id = src.role_id OR (t.role_id IS NULL AND src.role_id IS NULL)))
+  </sql>
+
+  <insert id="copy" databaseId="postgresql">
+    <include refid="copySql"/>
+    ON CONFLICT DO NOTHING
+  </insert>
+
+  <insert id="copy" databaseId="tibero">
+    <include refid="copySql"/>
+  </insert>
+
+  <delete id="deleteSubject">
+    DELETE FROM dataset_access_grant g
+     WHERE g.dataset_id = #{datasetId} AND <include refid="subjectCond"/>
+  </delete>
+
+  <delete id="deleteById">
+    DELETE FROM dataset_access_grant WHERE id = #{id}
+  </delete>
+
+  <!-- 화면용 행 공통부 — 대상 이름(사용자 항목이면 사용자, 아니면 역할)과 추가한 사람 이름을 조인한다. -->
+  <sql id="rowSelect">
+    SELECT g.id, g.dataset_id, g.user_id, g.role_id,
+           CASE WHEN g.user_id IS NOT NULL THEN su.name ELSE r.name END AS subject_name,
+           g.granted_by, gb.name AS granted_by_name, g.granted_at
+      FROM dataset_access_grant g
+      LEFT JOIN <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.userTable"/> su ON su.id = g.user_id
+      LEFT JOIN role r ON r.id = g.role_id
+      LEFT JOIN <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.userTable"/> gb ON gb.id = g.granted_by
+  </sql>
+
+  <select id="selectRowsByDataset" resultMap="grantRow">
+    <include refid="rowSelect"/>
+     WHERE g.dataset_id = #{datasetId}
+     ORDER BY g.granted_at ASC, g.id ASC
+  </select>
+
+  <select id="selectRowsByDatasetAndSubject" resultMap="grantRow">
+    <include refid="rowSelect"/>
+     WHERE g.dataset_id = #{datasetId} AND <include refid="subjectCond"/>
+     ORDER BY g.granted_at ASC, g.id ASC
+  </select>
+
+  <select id="selectRowsById" resultMap="grantRow">
+    <include refid="rowSelect"/>
+     WHERE g.id = #{id}
+  </select>
+
+  <!-- 이름 열은 없다(null) — 화면 응답이 아닌 내부 판단용. -->
+  <select id="selectPlainById" resultMap="grantRow">
+    SELECT g.id, g.dataset_id, g.user_id, g.role_id, NULL AS subject_name,
+           g.granted_by, NULL AS granted_by_name, g.granted_at
+      FROM dataset_access_grant g
+     WHERE g.id = #{id}
+  </select>
+
+  <select id="countByDataset" resultType="_int">
+    SELECT COUNT(*) FROM dataset_access_grant g WHERE g.dataset_id = #{datasetId}
+  </select>
+
+  <select id="countUser" resultType="_int">
+    SELECT COUNT(*) FROM dataset_access_grant g WHERE g.dataset_id = #{datasetId} AND g.user_id = #{userId}
+  </select>
+
+  <!-- 조인 없이 dataset 행만 id 오름차순으로 잠근다. FOR UPDATE 는 두 벤더 공통. -->
+  <select id="lockDatasetsGrantedToRole" resultType="java.lang.Long">
+    SELECT d.id
+      FROM dataset d
+     WHERE d.id IN (SELECT g.dataset_id FROM dataset_access_grant g WHERE g.role_id = #{roleId})
+     ORDER BY d.id ASC
+     FOR UPDATE
+  </select>
+
+  <select id="selectDatasetsWhereRoleIsSoleGrantOnAllowlistLevel" resultType="java.lang.Long">
+    SELECT g.dataset_id
+      FROM dataset_access_grant g
+      JOIN dataset d ON d.id = g.dataset_id
+      JOIN security_level sl ON sl.id = d.security_level_id
+     WHERE g.role_id = #{roleId}
+       AND sl.allowlist_required = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>
+       AND (SELECT COUNT(*) FROM dataset_access_grant other_g WHERE other_g.dataset_id = g.dataset_id) = 1
+  </select>
+
+  <select id="selectDatasetIdsWithoutAllowlist" resultType="java.lang.Long">
+    SELECT d.id
+      FROM dataset d
+     WHERE d.security_level_id = #{levelId}
+       AND NOT EXISTS (SELECT 1 FROM dataset_access_grant g WHERE g.dataset_id = d.id)
+  </select>
+
+</mapper>

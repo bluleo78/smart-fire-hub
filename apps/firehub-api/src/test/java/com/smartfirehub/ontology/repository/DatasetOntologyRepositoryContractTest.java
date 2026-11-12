@@ -1,144 +1,147 @@
 package com.smartfirehub.ontology.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.jooq.impl.DSL.field;
-import static org.jooq.impl.DSL.name;
-import static org.jooq.impl.DSL.table;
 
-import com.smartfirehub.support.IntegrationTestBase;
-import com.smartfirehub.support.TenantRlsTestSupport;
-import org.jooq.DSLContext;
+import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.user.repository.AccessFixtures.DatasetOntologyRow;
+import com.smartfirehub.user.repository.TenantPairContractBase;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.List;
+import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.transaction.support.TransactionTemplate;
 
-// V77 마이그레이션이 dataset_ontology 테이블과 ontology IDENTITY를 정상 생성했는지 확인한다.
-/** 인터페이스 계약 테스트 — 구현마다 하위 클래스로 실행한다(WD-485). */
-abstract class DatasetOntologyRepositoryContractTest extends IntegrationTestBase {
-
-  @Autowired private DSLContext dsl;
+/**
+ * DatasetOntologyRepository 계약 테스트 — 구현마다 하위 클래스로 실행한다(WD-485·WD-711).
+ *
+ * <p>(WD-711) jOOQ DSLContext 직접 사용을 픽스처로 걷어 냈다. 저장 행은 소유자 시점({@code fx.datasetOntologyRows})으로
+ * 확인한다. 리포지토리 호출은 테넌트 범위(inA/inB)로 감싼다 — PG 는 테넌트 트랜잭션에 리포지토리의 클래스 단위 {@code @Transactional} 이
+ * 합류하고, Tibero 는 하네스 프록시가 호출마다 테넌트 트랜잭션을 연다. dataset_id 에는 FK 가 없어 실제 dataset 행은 만들지 않는다. 연결 행은
+ * 온톨로지를 지울 때(테넌트 정리) FK CASCADE 로 함께 사라진다.
+ *
+ * <p>MyBatis 판은 Tibero 에서 MERGE ON dataset_id 를 쓴다 — 테넌트는 정책이 거르므로 같은 dataset_id 가 두 테넌트에 각자 연결돼도
+ * 서로를 덮지 않아야 한다(아래 시나리오).
+ */
+abstract class DatasetOntologyRepositoryContractTest extends TenantPairContractBase {
 
   /** 계약 대상 리포지토리 — 구현별 하위 클래스가 제공한다. */
   protected abstract DatasetOntologyRepository repository();
 
-  // V101 이후 dataset_ontology/ontology 의 tenant_id 는 NOT NULL 이고 DEFAULT 가 GUC
-  // app.tenant_id 에서 채워진다. GUC 는 트랜잭션 시작에서만 주입되므로, 리포지토리를 거치지 않는
-  // raw dsl 픽스처·정리 쿼리는 트랜잭션 안에서 돌려야 한다. 반대로 bindingRepository 호출은
-  // 리포지토리 자신의 클래스 레벨 @Transactional 이 경계를 열므로 감싸지 않는다 —
-  // 그 배선이 살아 있는지가 이 테스트가 증명하는 것이다.
-  @Autowired private TransactionTemplate tx;
+  private long ontologyA1;
+  private long ontologyA2;
+  private long ontologyB;
+
+  /** 테넌트 A 에 온톨로지 둘, 테넌트 B 에 하나. */
+  @BeforeEach
+  void createOntologies() {
+    String s = UUID.randomUUID().toString().substring(0, 8);
+    ontologyA1 = fx.createOntology(tenantA, "do-a1-" + s);
+    ontologyA2 = fx.createOntology(tenantA, "do-a2-" + s);
+    ontologyB = fx.createOntology(tenantB, "do-b-" + s);
+  }
 
   @Test
+  @DisplayName("바인딩을 저장하면 조회되고 bound_by·bound_at 이 채워진다")
   void 바인딩_저장후_조회된다() {
-    long datasetId = 999001L; // 실제 dataset 행 불필요(FK 없음, audit 패턴).
-    repository().bind(datasetId, 1L, 42L);
-    try {
-      assertThat(repository().findOntologyIdByDataset(datasetId)).contains(1L);
-    } finally {
-      TenantRlsTestSupport.runInTenantTransaction(
-          tx,
-          DEFAULT_TEST_TENANT_ID,
-          () ->
-              dsl.deleteFrom(table(name("dataset_ontology")))
-                  .where(field(name("dataset_id"), Long.class).eq(datasetId))
-                  .execute());
-    }
+    long datasetId = 999_001L;
+    runA(() -> repository().bind(datasetId, ontologyA1, 42L));
+
+    assertThat(inA(() -> repository().findOntologyIdByDataset(datasetId))).contains(ontologyA1);
+    List<DatasetOntologyRow> rows = fx.datasetOntologyRows(tenantA, datasetId);
+    assertThat(rows).hasSize(1);
+    assertThat(rows.get(0).ontologyId()).isEqualTo(ontologyA1);
+    assertThat(rows.get(0).boundBy()).isEqualTo(42L);
+    // 연결은 출처(graph_ontology_source)도 같은 트랜잭션에서 남긴다(WD-28).
+    assertThat(fx.countGraphSources(tenantA, ontologyA1, datasetId)).isEqualTo(1);
+    // bound_at 은 UTC 순간으로 DB 현재 시각 근처(시간대 해석이 어긋나면 9시간 차이).
+    assertThat(Duration.between(rows.get(0).boundAt(), fx.dbNow()).abs())
+        .isLessThan(Duration.ofMinutes(1));
   }
 
   @Test
+  @DisplayName(
+      "시험 트랜잭션 없이 테넌트 컨텍스트만 세워도 bind·findOntologyIdByDataset 이 맞다 — 클래스 단위 @Transactional 이 테넌트를 심는다")
+  void 트랜잭션_없이_컨텍스트만으로_동작한다() {
+    long datasetId = 999_009L;
+
+    // inA 는 테넌트 트랜잭션으로 감싼다 — 여기서는 컨텍스트만 세워 리포지토리 자신의 트랜잭션 경계를 시험한다.
+    TenantContext.runScoped(tenantA, () -> repository().bind(datasetId, ontologyA1, 42L));
+
+    assertThat(
+            TenantContext.runScopedGet(
+                tenantA, () -> repository().findOntologyIdByDataset(datasetId)))
+        .contains(ontologyA1);
+    // 행이 테넌트 A 로 들어갔다(트랜잭션이 없으면 tenant_id DEFAULT 가 비어 실패하거나 정책이 0행으로 거른다).
+    assertThat(fx.datasetOntologyRows(tenantA, datasetId)).hasSize(1);
+    assertThat(fx.countGraphSources(tenantA, ontologyA1, datasetId)).isEqualTo(1);
+    assertThat(
+            TenantContext.runScopedGet(
+                tenantB, () -> repository().findOntologyIdByDataset(datasetId)))
+        .isEmpty();
+  }
+
+  @Test
+  @DisplayName("다른 온톨로지로 재바인딩하면 한 행에서 ontology_id·bound_by·bound_at 을 덮어쓴다")
   void 재바인딩은_기존값을_덮어쓴다() {
-    long datasetId = 999002L;
-    repository().bind(datasetId, 1L, 42L);
-    repository().bind(datasetId, 1L, 43L); // 같은 온톨로지 재바인딩(UPSERT 경로).
-    try {
-      assertThat(repository().findOntologyIdByDataset(datasetId)).contains(1L);
-      Integer rows =
-          TenantRlsTestSupport.runInTenantTransaction(
-              tx,
-              DEFAULT_TEST_TENANT_ID,
-              () ->
-                  dsl.selectCount()
-                      .from(table(name("dataset_ontology")))
-                      .where(field(name("dataset_id"), Long.class).eq(datasetId))
-                      .fetchOne(0, int.class));
-      assertThat(rows).isEqualTo(1); // UNIQUE(dataset_id) — 중복 행 없음.
-    } finally {
-      TenantRlsTestSupport.runInTenantTransaction(
-          tx,
-          DEFAULT_TEST_TENANT_ID,
-          () ->
-              dsl.deleteFrom(table(name("dataset_ontology")))
-                  .where(field(name("dataset_id"), Long.class).eq(datasetId))
-                  .execute());
-    }
+    long datasetId = 999_002L;
+    runA(() -> repository().bind(datasetId, ontologyA1, 42L));
+    fx.setDatasetOntologyBoundAt(tenantA, datasetId, Instant.parse("2020-01-02T03:04:05Z"));
+
+    runA(() -> repository().bind(datasetId, ontologyA2, null)); // 업서트 경로(만든 이 없음).
+
+    assertThat(inA(() -> repository().findOntologyIdByDataset(datasetId))).contains(ontologyA2);
+    List<DatasetOntologyRow> rows = fx.datasetOntologyRows(tenantA, datasetId);
+    assertThat(rows).hasSize(1); // (tenant_id, dataset_id) 유일 — 중복 행 없음.
+    assertThat(rows.get(0).ontologyId()).isEqualTo(ontologyA2);
+    assertThat(rows.get(0).boundBy()).isNull();
+    assertThat(Duration.between(rows.get(0).boundAt(), fx.dbNow()).abs())
+        .isLessThan(Duration.ofMinutes(1));
   }
 
   @Test
+  @DisplayName("같은 온톨로지로 다시 바인딩해도 한 행이다")
+  void 같은_온톨로지_재바인딩은_한_행이다() {
+    long datasetId = 999_003L;
+    runA(() -> repository().bind(datasetId, ontologyA1, 42L));
+    runA(() -> repository().bind(datasetId, ontologyA1, 43L));
+
+    List<DatasetOntologyRow> rows = fx.datasetOntologyRows(tenantA, datasetId);
+    assertThat(rows).hasSize(1);
+    assertThat(rows.get(0).boundBy()).isEqualTo(43L);
+  }
+
+  @Test
+  @DisplayName("같은 dataset_id 를 두 테넌트가 각자 바인딩하면 서로 덮지 않고 각자 자기 것만 본다")
+  void 같은_데이터셋_id_두_테넌트_바인딩은_섞이지_않는다() {
+    long datasetId = 999_004L;
+    runA(() -> repository().bind(datasetId, ontologyA1, 1L));
+    fx.inTenant(
+        tenantB,
+        () -> {
+          repository().bind(datasetId, ontologyB, 2L);
+          return null;
+        });
+
+    assertThat(inA(() -> repository().findOntologyIdByDataset(datasetId))).contains(ontologyA1);
+    assertThat(inB(() -> repository().findOntologyIdByDataset(datasetId))).contains(ontologyB);
+    assertThat(fx.datasetOntologyRows(tenantA, datasetId))
+        .extracting(DatasetOntologyRow::ontologyId)
+        .containsExactly(ontologyA1);
+    assertThat(fx.datasetOntologyRows(tenantB, datasetId))
+        .extracting(DatasetOntologyRow::ontologyId)
+        .containsExactly(ontologyB);
+  }
+
+  @Test
+  @DisplayName("리포지토리가 쓰지 않은 연결 행도 조회되고, 미바인딩·다른 테넌트 데이터셋은 empty")
   void 미바인딩_데이터셋은_empty() {
-    assertThat(repository().findOntologyIdByDataset(999999L)).isEmpty();
-  }
+    long datasetId = 998_877L;
+    fx.bindDatasetOntology(tenantA, datasetId, ontologyA1);
 
-  @Test
-  void V77_dataset_ontology_행을_저장하고_읽을수있다() {
-    // 테이블 존재 + 컬럼 계약을 실제 삽입/조회 왕복으로 검증한다(항상-참 count 대신 의미 있는 단언).
-    long datasetId = 998877L;
-    TenantRlsTestSupport.runInTenantTransaction(
-        tx,
-        DEFAULT_TEST_TENANT_ID,
-        () ->
-            dsl.insertInto(table(name("dataset_ontology")))
-                .set(field(name("dataset_id"), Long.class), datasetId)
-                .set(field(name("ontology_id"), Long.class), 1L)
-                .set(field(name("bound_by"), Long.class), 42L)
-                .execute());
-    try {
-      Long readOntologyId =
-          TenantRlsTestSupport.runInTenantTransaction(
-              tx,
-              DEFAULT_TEST_TENANT_ID,
-              () ->
-                  dsl.select(field(name("ontology_id"), Long.class))
-                      .from(table(name("dataset_ontology")))
-                      .where(field(name("dataset_id"), Long.class).eq(datasetId))
-                      .fetchOne(0, Long.class));
-      assertThat(readOntologyId).isEqualTo(1L);
-    } finally {
-      TenantRlsTestSupport.runInTenantTransaction(
-          tx,
-          DEFAULT_TEST_TENANT_ID,
-          () ->
-              dsl.deleteFrom(table(name("dataset_ontology")))
-                  .where(field(name("dataset_id"), Long.class).eq(datasetId))
-                  .execute());
-    }
-  }
-
-  @Test
-  void 신규_온톨로지_INSERT시_id가_자동발급된다() {
-    // id를 지정하지 않고 INSERT하면 IDENTITY(START 2)로 2 이상이 발급되어야 한다.
-    Long newId =
-        TenantRlsTestSupport.runInTenantTransaction(
-            tx,
-            DEFAULT_TEST_TENANT_ID,
-            () ->
-                dsl.insertInto(table(name("ontology")))
-                    .set(field(name("domain"), String.class), "V77_IDENTITY_PROBE")
-                    .set(field(name("schema_version"), Integer.class), 1)
-                    .returning(field(name("id"), Long.class))
-                    .fetchOne()
-                    .get(field(name("id"), Long.class)));
-    try {
-      assertThat(newId).isGreaterThanOrEqualTo(2L);
-    } finally {
-      // 정리: 이 테스트가 만든 온톨로지 삭제(롤백 없음). 단언 실패 시에도 반드시 삭제되어야
-      // 이후 재실행 시 domain UNIQUE 제약 위반(고아 행)이 발생하지 않는다.
-      TenantRlsTestSupport.runInTenantTransaction(
-          tx,
-          DEFAULT_TEST_TENANT_ID,
-          () ->
-              dsl.deleteFrom(table(name("ontology")))
-                  .where(field(name("id"), Long.class).eq(newId))
-                  .execute());
-    }
+    assertThat(inA(() -> repository().findOntologyIdByDataset(datasetId))).contains(ontologyA1);
+    assertThat(inB(() -> repository().findOntologyIdByDataset(datasetId))).isEmpty();
+    assertThat(inA(() -> repository().findOntologyIdByDataset(999_999L))).isEmpty();
   }
 }

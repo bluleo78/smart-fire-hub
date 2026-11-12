@@ -3,9 +3,12 @@ package com.smartfirehub.dataset.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.smartfirehub.dataset.repository.DatasetRepository.DatasetTableLevel;
+import com.smartfirehub.securitylevel.access.Clearance;
+import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.user.repository.TenantPairContractBase;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -45,10 +48,11 @@ public abstract class DatasetRepositoryPlatformMetaContractTest extends TenantPa
     long b = createDataset("b", "TABLE");
     long a = createDataset("a", "TABLE");
     long hidden = createDataset("c", "TABLE");
+    // 스펙 D3 — 가시성은 값으로 넘긴다. 숨김 하나를 조회자 rank(기본 등급 2)보다 높은 등급으로 옮긴다.
+    long high = fx.createSecurityLevel(tenantA, 5, prefix + "-high");
+    fx.setDatasetField(hidden, "security_level_id", high);
 
-    // 가시성 조각은 호출자(DatasetAccessGuard.visibleSql)가 별칭 d 기준으로 만든다 — 여기서는 숨김 하나를 빼는 조각으로 흉내 낸다.
-    String visibility = "d.name LIKE '" + prefix + "%' AND d.id <> " + hidden;
-    List<DatasetSchemaMeta> metas = inA(() -> repository().findSchemaMetas(null, visibility));
+    List<DatasetSchemaMeta> metas = inA(() -> repository().findSchemaMetas(null, rank(2)));
 
     // 테이블 이름은 무작위라 그 순서를 기대값으로 삼는다.
     List<Long> byTable = new ArrayList<>(List.of(a, b));
@@ -65,7 +69,8 @@ public abstract class DatasetRepositoryPlatformMetaContractTest extends TenantPa
     long a = createDataset("a", "TABLE");
     createDataset("b", "TABLE");
 
-    List<DatasetSchemaMeta> metas = inA(() -> repository().findSchemaMetas(List.of(a), "1=1"));
+    List<DatasetSchemaMeta> metas =
+        inA(() -> repository().findSchemaMetas(List.of(a), DatasetVisibility.UNRESTRICTED));
 
     assertThat(metas).extracting(DatasetSchemaMeta::datasetId).containsExactly(a);
   }
@@ -86,7 +91,8 @@ public abstract class DatasetRepositoryPlatformMetaContractTest extends TenantPa
     }
     assertThat(ids).hasSize(1001);
 
-    List<DatasetSchemaMeta> metas = inA(() -> repository().findSchemaMetas(ids, "1=1"));
+    List<DatasetSchemaMeta> metas =
+        inA(() -> repository().findSchemaMetas(ids, DatasetVisibility.UNRESTRICTED));
 
     assertThat(metas)
         .extracting(DatasetSchemaMeta::datasetId)
@@ -98,7 +104,11 @@ public abstract class DatasetRepositoryPlatformMetaContractTest extends TenantPa
     long mine = createDataset("mine", "TABLE");
     long others = fx.createDataset(tenantB, prefix + "남의");
 
-    assertThat(inA(() -> repository().findSchemaMetas(List.of(mine, others), "1=1")))
+    assertThat(
+            inA(
+                () ->
+                    repository()
+                        .findSchemaMetas(List.of(mine, others), DatasetVisibility.UNRESTRICTED)))
         .extracting(DatasetSchemaMeta::datasetId)
         .containsExactly(mine);
   }
@@ -111,7 +121,8 @@ public abstract class DatasetRepositoryPlatformMetaContractTest extends TenantPa
     addColumn(id, "first", "첫째", 1);
     addColumn(id, "second", null, 2);
 
-    List<DatasetSchemaMeta> metas = inA(() -> repository().findSchemaMetas(List.of(id), "1=1"));
+    List<DatasetSchemaMeta> metas =
+        inA(() -> repository().findSchemaMetas(List.of(id), DatasetVisibility.UNRESTRICTED));
 
     assertThat(metas).hasSize(1);
     assertThat(metas.get(0).columns())
@@ -128,7 +139,9 @@ public abstract class DatasetRepositoryPlatformMetaContractTest extends TenantPa
     long doc = createDataset("doc", "DOCUMENT");
 
     List<DatasetSchemaMeta> metas =
-        inA(() -> repository().findSchemaMetas(List.of(empty, doc), "1=1"));
+        inA(
+            () ->
+                repository().findSchemaMetas(List.of(empty, doc), DatasetVisibility.UNRESTRICTED));
 
     assertThat(metas)
         .extracting(DatasetSchemaMeta::datasetId)
@@ -141,7 +154,43 @@ public abstract class DatasetRepositoryPlatformMetaContractTest extends TenantPa
   @Test
   void findSchemaMetas_맞는_데이터셋이_없으면_빈_목록이다() {
     createDataset("x", "TABLE");
-    assertThat(inA(() -> repository().findSchemaMetas(null, "1=0"))).isEmpty();
+    assertThat(inA(() -> repository().findSchemaMetas(null, rank(Clearance.NO_RANK)))).isEmpty();
+  }
+
+  @Test
+  void findSchemaMetas_가시성_값의_등급_허용_목록_제한_없음_규칙을_따른다() {
+    // 스펙 D3 — jOOQ(JooqDatasetVisibility.condition)·MyBatis(DatasetVisibility.visible 조각)가 같은 행 집합을
+    // 낸다.
+    long plain = createDataset("plain", "TABLE");
+    long high = createDataset("high", "TABLE");
+    long listed = createDataset("listed", "TABLE");
+    long unlisted = createDataset("unlisted", "TABLE");
+    long highLevel = fx.createSecurityLevel(tenantA, 5, prefix + "-h");
+    long listLevel = fx.createSecurityLevel(tenantA, 3, prefix + "-l");
+    fx.setSecurityLevelFlags(listLevel, true, false);
+    fx.setDatasetField(high, "security_level_id", highLevel);
+    fx.setDatasetField(listed, "security_level_id", listLevel);
+    fx.setDatasetField(unlisted, "security_level_id", listLevel);
+    long viewer = fx.createUser(prefix + "-viewer", null);
+    fx.grantDatasetAccess(tenantA, listed, null, viewer);
+
+    DatasetVisibility rank4 =
+        new DatasetVisibility(new Clearance(viewer, tenantA, 4, Set.of(), false, Set.of()), null);
+    assertThat(inA(() -> repository().findSchemaMetas(null, rank4)))
+        .extracting(DatasetSchemaMeta::datasetId)
+        .containsExactlyInAnyOrder(plain, listed);
+    assertThat(inA(() -> repository().findSchemaMetas(null, DatasetVisibility.UNRESTRICTED)))
+        .extracting(DatasetSchemaMeta::datasetId)
+        .containsExactlyInAnyOrder(plain, high, listed, unlisted);
+    // id 목록과 가시성은 함께 건다 — 보이지 않는 id 는 골라도 빠진다.
+    assertThat(inA(() -> repository().findSchemaMetas(List.of(high, plain), rank4)))
+        .extracting(DatasetSchemaMeta::datasetId)
+        .containsExactly(plain);
+  }
+
+  /** rank 만 정한 조회자 가시성(역할·허용 목록 없음). */
+  private DatasetVisibility rank(int rank) {
+    return new DatasetVisibility(new Clearance(1L, tenantA, rank, Set.of(), false, Set.of()), null);
   }
 
   @Test

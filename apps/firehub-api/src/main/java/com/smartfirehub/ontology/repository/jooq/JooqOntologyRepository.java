@@ -2,6 +2,7 @@ package com.smartfirehub.ontology.repository.jooq;
 
 import static org.jooq.impl.DSL.*;
 
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.ontology.dto.CreateOntologyRequest;
 import com.smartfirehub.ontology.dto.OntologyResponse;
 import com.smartfirehub.ontology.dto.OntologySummary;
@@ -25,6 +26,7 @@ import org.springframework.transaction.annotation.Transactional;
 // (S2 Task 7) 전체 스키마 교체(entity_type/relation의 매칭 기반 UPDATE/INSERT/DELETE) updateOntology는
 // 요소 단위 편집(OntologyElementRepository)으로 대체되어 삭제됐다.
 @Repository
+@ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
 // RLS GUC 는 트랜잭션 시작 시점에만 주입되는데 호출자 OntologyService 와 MCP 툴 핸들러는 트랜잭션
 // 경계를 만들지 않는다. 여기서 열지 않으면 온톨로지 조회는 조용히 0행, 쓰기는 tenant_id NOT NULL

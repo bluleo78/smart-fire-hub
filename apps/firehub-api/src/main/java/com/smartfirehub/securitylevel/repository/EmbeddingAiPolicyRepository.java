@@ -6,7 +6,9 @@ import java.util.List;
 /**
  * 임베딩·AI 호출 허용 등급 정책을 dataset 과 security_level 테이블에서 읽는 리포지토리.
  *
- * <p>구현은 {@code JooqEmbeddingAiPolicyRepository}(jOOQ/PostgreSQL) 이다 — WD-485.
+ * <p>구현은 {@code JooqEmbeddingAiPolicyRepository}(jOOQ/PostgreSQL, WD-485)·{@code
+ * MyBatisEmbeddingAiPolicyRepository}(MyBatis — Tibero 플랫폼 DB, WD-711) 이다. MyBatis 판의 {@link
+ * #allowedDatasetSql} 은 꺼진 기능 예외(VECTOR_SEARCH)다.
  */
 public interface EmbeddingAiPolicyRepository {
 

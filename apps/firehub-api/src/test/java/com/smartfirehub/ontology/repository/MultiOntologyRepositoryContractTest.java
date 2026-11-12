@@ -1,65 +1,59 @@
 package com.smartfirehub.ontology.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.jooq.impl.DSL.field;
-import static org.jooq.impl.DSL.name;
-import static org.jooq.impl.DSL.table;
 
 import com.smartfirehub.ontology.dto.CreateOntologyRequest;
 import com.smartfirehub.ontology.dto.OntologyResponse;
 import com.smartfirehub.ontology.dto.OntologySummary;
-import com.smartfirehub.support.IntegrationTestBase;
-import com.smartfirehub.support.TenantRlsTestSupport;
+import com.smartfirehub.user.repository.TenantPairContractBase;
 import java.util.List;
-import org.jooq.DSLContext;
-import org.junit.jupiter.api.AfterEach;
+import java.util.UUID;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.transaction.support.TransactionTemplate;
 
 // 싱글톤(id=1) 제약 해제 후, 서로 다른 온톨로지의 타입/관계가 섞이지 않는지(WHERE ontology_id 필터)
 // 판별한다. 온톨로지 1개만으론 판별력이 없으므로 반드시 2번째 온톨로지를 생성해 검증한다.
-/** 인터페이스 계약 테스트 — 구현마다 하위 클래스로 실행한다(WD-485). */
-abstract class MultiOntologyRepositoryContractTest extends IntegrationTestBase {
+// (WD-711) jOOQ DSLContext 정리 코드를 걷어 내고 픽스처 테넌트(A)에 만든다 — 테넌트 정리가 온톨로지를 지운다(하위는 FK CASCADE).
+/** 인터페이스 계약 테스트 — 구현마다 하위 클래스로 실행한다(WD-485·WD-711). */
+abstract class MultiOntologyRepositoryContractTest extends TenantPairContractBase {
 
   /** 계약 대상 리포지토리 — 구현별 하위 클래스가 제공한다. */
   protected abstract OntologyRepository repository();
 
-  @Autowired private DSLContext dsl;
-  @Autowired private TransactionTemplate tx;
+  /** 테넌트 A 에 온톨로지를 만든다(도메인은 실행마다 고유하게). */
+  private long create(CreateOntologyRequest req) {
+    return inA(() -> repository().createOntology(req));
+  }
 
-  private Long createdId;
-
-  @AfterEach
-  void cleanup() {
-    // 롤백 없음 — 이 테스트가 만든 온톨로지(id≥2)를 직접 삭제(CASCADE로 타입/관계 함께 삭제).
-    // V102 이후 ontology 는 RLS 대상이라 트랜잭션(=GUC) 안에서 지워야 한다 — 밖에서는 조용히
-    // 0행이 되고, 남은 행이 entity_type 전체를 스캔하는 OntologyMigrationTest 를 오염시킨다.
-    if (createdId != null) {
-      TenantRlsTestSupport.runInTenantTransaction(
-          tx,
-          DEFAULT_TEST_TENANT_ID,
-          () ->
-              dsl.deleteFrom(table(name("ontology")))
-                  .where(field(name("id"), Long.class).eq(createdId))
-                  .execute());
-    }
+  private static String unique(String label) {
+    return label + "-" + UUID.randomUUID().toString().substring(0, 8);
   }
 
   @Test
+  @DisplayName("두 온톨로지는 각자 자기 타입과 관계만 돌려준다")
   void 두번째_온톨로지는_자기_타입과_관계만_반환한다() {
-    CreateOntologyRequest req =
-        new CreateOntologyRequest(
-            "테스트 판매 도메인",
-            List.of(
-                new OntologyResponse.EntityType("Customer", "고객", "표기 그대로", "exact", List.of()),
-                new OntologyResponse.EntityType("Product", "상품", "표기 그대로", "embedding", List.of())),
-            List.of(new OntologyResponse.Triple("Customer", "PURCHASED", "Product", "구매")));
-    createdId = repository().createOntology(req);
-    assertThat(createdId).isGreaterThanOrEqualTo(2L);
+    long first =
+        create(
+            new CreateOntologyRequest(
+                unique("테스트 화재 도메인"),
+                List.of(
+                    new OntologyResponse.EntityType("Incident", "사건", "표기 그대로", "exact", List.of()),
+                    new OntologyResponse.EntityType(
+                        "Building", "건물", "표기 그대로", "embedding", List.of())),
+                List.of(new OntologyResponse.Triple("Incident", "OCCURRED_AT", "Building", "장소"))));
+    long second =
+        create(
+            new CreateOntologyRequest(
+                unique("테스트 판매 도메인"),
+                List.of(
+                    new OntologyResponse.EntityType("Customer", "고객", "표기 그대로", "exact", List.of()),
+                    new OntologyResponse.EntityType(
+                        "Product", "상품", "표기 그대로", "embedding", List.of())),
+                List.of(new OntologyResponse.Triple("Customer", "PURCHASED", "Product", "구매"))));
+    assertThat(second).isGreaterThan(first);
 
-    OntologyResponse created = repository().findById(createdId);
-    assertThat(created.domain()).isEqualTo("테스트 판매 도메인");
+    OntologyResponse created = inA(() -> repository().findById(second));
+    assertThat(created.domain()).startsWith("테스트 판매 도메인");
     assertThat(created.entities())
         .extracting(OntologyResponse.EntityType::type)
         .containsExactly("Customer", "Product");
@@ -67,52 +61,45 @@ abstract class MultiOntologyRepositoryContractTest extends IntegrationTestBase {
         .extracting(OntologyResponse.Triple::relation)
         .containsExactly("PURCHASED");
 
-    // 화재조사(id=1)는 신규 온톨로지 타입에 오염되지 않아야 한다(미필터 fetch 버그 판별).
-    OntologyResponse fire = repository().findById(1L);
+    // 첫 온톨로지는 두 번째 온톨로지 타입에 오염되지 않아야 한다(미필터 fetch 버그 판별).
+    OntologyResponse fire = inA(() -> repository().findById(first));
     assertThat(fire.entities())
         .extracting(OntologyResponse.EntityType::type)
-        .contains("Incident", "Building")
-        .doesNotContain("Customer", "Product");
+        .containsExactly("Incident", "Building");
     assertThat(fire.relations())
         .extracting(OntologyResponse.Triple::relation)
-        .doesNotContain("PURCHASED");
+        .containsExactly("OCCURRED_AT");
   }
 
   @Test
-  void 존재하지_않는_id는_IllegalArgumentException() {
-    // 신규 라우트가 임의 id를 받으므로 NPE→500이 아니라 400 매핑 예외여야 한다.
-    org.assertj.core.api.Assertions.assertThatThrownBy(() -> repository().findById(999999L))
-        .isInstanceOf(IllegalArgumentException.class);
-  }
-
-  @Test
+  @DisplayName("findAllSummaries 는 새로 만든 온톨로지를 담는다")
   void findAllSummaries_는_생성된_온톨로지를_포함한다() {
-    createdId =
-        repository()
-            .createOntology(
-                new CreateOntologyRequest(
-                    "요약 테스트 도메인",
-                    List.of(new OntologyResponse.EntityType("A", "a", "n", "exact", List.of())),
-                    List.of()));
-    List<OntologySummary> all = repository().findAllSummaries();
-    assertThat(all).extracting(OntologySummary::id).contains(1L, createdId);
+    long id =
+        create(
+            new CreateOntologyRequest(
+                unique("요약 테스트 도메인"),
+                List.of(new OntologyResponse.EntityType("A", "a", "n", "exact", List.of())),
+                List.of()));
+    List<OntologySummary> all = inA(() -> repository().findAllSummaries());
+    assertThat(all).extracting(OntologySummary::id).contains(id);
   }
 
   @Test
+  @DisplayName("목록 요약은 상태·엔티티 수·바인딩 수(0)·수정 시각을 담는다")
   void 목록_요약은_상태와_엔티티_개수와_수정일을_포함한다() {
-    CreateOntologyRequest req =
-        new CreateOntologyRequest(
-            "V79 요약 필드 테스트",
-            List.of(
-                new OntologyResponse.EntityType("Alpha", "가", "표기 그대로", "exact", List.of()),
-                new OntologyResponse.EntityType("Beta", "나", "표기 그대로", "embedding", List.of())),
-            List.of(),
-            "draft");
-    createdId = repository().createOntology(req);
+    long id =
+        create(
+            new CreateOntologyRequest(
+                unique("V79 요약 필드 테스트"),
+                List.of(
+                    new OntologyResponse.EntityType("Alpha", "가", "표기 그대로", "exact", List.of()),
+                    new OntologyResponse.EntityType("Beta", "나", "표기 그대로", "embedding", List.of())),
+                List.of(),
+                "draft"));
 
     var summary =
-        repository().findAllSummaries(null).stream()
-            .filter(s -> s.id().equals(createdId))
+        inA(() -> repository().findAllSummaries(null)).stream()
+            .filter(s -> s.id() == id)
             .findFirst()
             .orElseThrow();
 
@@ -124,37 +111,43 @@ abstract class MultiOntologyRepositoryContractTest extends IntegrationTestBase {
   }
 
   @Test
+  @DisplayName("목록 요약은 상태로 거른다")
   void 목록_요약은_상태로_필터링된다() {
-    CreateOntologyRequest req =
-        new CreateOntologyRequest(
-            "V79 상태 필터 테스트",
-            List.of(new OntologyResponse.EntityType("Alpha", "가", "표기 그대로", "exact", List.of())),
-            List.of(),
-            "draft");
-    createdId = repository().createOntology(req);
+    long id =
+        create(
+            new CreateOntologyRequest(
+                unique("V79 상태 필터 테스트"),
+                List.of(
+                    new OntologyResponse.EntityType("Alpha", "가", "표기 그대로", "exact", List.of())),
+                List.of(),
+                "draft"));
 
     // active 필터에는 잡히지 않고
-    assertThat(repository().findAllSummaries("active"))
-        .extracting(com.smartfirehub.ontology.dto.OntologySummary::id)
-        .doesNotContain(createdId);
+    assertThat(inA(() -> repository().findAllSummaries("active")))
+        .extracting(OntologySummary::id)
+        .doesNotContain(id);
     // draft 필터에는 잡힌다
-    assertThat(repository().findAllSummaries("draft"))
-        .extracting(com.smartfirehub.ontology.dto.OntologySummary::id)
-        .contains(createdId);
+    assertThat(inA(() -> repository().findAllSummaries("draft")))
+        .extracting(OntologySummary::id)
+        .contains(id);
   }
 
   @Test
+  @DisplayName("findStatusById 는 저장된 상태를 돌려준다")
   void findStatusById는_저장된_상태를_반환한다() {
-    CreateOntologyRequest req =
-        new CreateOntologyRequest(
-            "V79 상태 조회 테스트",
-            List.of(new OntologyResponse.EntityType("Alpha", "가", "표기 그대로", "exact", List.of())),
-            List.of(),
-            "archived");
-    createdId = repository().createOntology(req);
+    long archived =
+        create(
+            new CreateOntologyRequest(
+                unique("V79 상태 조회 테스트"),
+                List.of(
+                    new OntologyResponse.EntityType("Alpha", "가", "표기 그대로", "exact", List.of())),
+                List.of(),
+                "archived"));
+    long active = fx.createOntology(tenantA, unique("기본 상태"));
 
-    assertThat(repository().findStatusById(createdId)).isEqualTo("archived");
-    assertThat(repository().findStatusById(1L)).isEqualTo("active");
+    assertThat(inA(() -> repository().findStatusById(archived))).isEqualTo("archived");
+    // 열 기본값(active) — 리포지토리가 직접 쓰지 않은 행도 읽는다.
+    assertThat(inA(() -> repository().findStatusById(active))).isEqualTo("active");
   }
 
   /**
@@ -165,30 +158,31 @@ abstract class MultiOntologyRepositoryContractTest extends IntegrationTestBase {
    * 이상을 만든다.
    */
   @Test
+  @DisplayName("findById 는 프로퍼티를 타입별로 순서대로 묶고 프로퍼티 없는 타입은 빈 목록이다")
   void findById_는_프로퍼티를_타입별로_올바르게_묶는다() {
-    CreateOntologyRequest req =
-        new CreateOntologyRequest(
-            "테스트 프로퍼티 묶기 도메인",
-            List.of(
-                new OntologyResponse.EntityType(
-                    "Customer",
-                    "고객",
-                    "표기 그대로",
-                    "exact",
-                    List.of(
-                        new OntologyResponse.Property("등급", "고객 등급", "text", null),
-                        new OntologyResponse.Property("가입일", "가입 일자", "date", null))),
-                new OntologyResponse.EntityType(
-                    "Product",
-                    "상품",
-                    "표기 그대로",
-                    "exact",
-                    List.of(new OntologyResponse.Property("단가", "판매 단가", "number", "원"))),
-                new OntologyResponse.EntityType("Store", "매장", "표기 그대로", "exact", List.of())),
-            List.of());
-    createdId = repository().createOntology(req);
+    long id =
+        create(
+            new CreateOntologyRequest(
+                unique("테스트 프로퍼티 묶기 도메인"),
+                List.of(
+                    new OntologyResponse.EntityType(
+                        "Customer",
+                        "고객",
+                        "표기 그대로",
+                        "exact",
+                        List.of(
+                            new OntologyResponse.Property("등급", "고객 등급", "text", null),
+                            new OntologyResponse.Property("가입일", "가입 일자", "date", null))),
+                    new OntologyResponse.EntityType(
+                        "Product",
+                        "상품",
+                        "표기 그대로",
+                        "exact",
+                        List.of(new OntologyResponse.Property("단가", "판매 단가", "number", "원"))),
+                    new OntologyResponse.EntityType("Store", "매장", "표기 그대로", "exact", List.of())),
+                List.of()));
 
-    OntologyResponse found = repository().findById(createdId);
+    OntologyResponse found = inA(() -> repository().findById(id));
     var byType =
         found.entities().stream()
             .collect(

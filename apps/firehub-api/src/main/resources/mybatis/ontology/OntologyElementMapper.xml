@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  요소 단위 온톨로지 쓰기 문장(WD-711) — JooqOntologyElementRepository 와 같은 의미.
+  모든 테이블이 테넌트 정책(RLS) 대상이라 tenant_id 를 술어·INSERT 값으로 쓰지 않는다(열 DEFAULT 가 채운다).
+  bumpVersion 은 RETURNING 대신 갱신 뒤 같은 트랜잭션에서 다시 읽는다(갱신이 행을 잠가 사이에 끼어드는 갱신이 없다).
+  요소 INSERT·schema_version 조회는 OntologyMapper.xml 의 문장을 쓴다(MyBatisOntologyElementRepository 가 두 매퍼를 모두 주입받는다).
+  PATCH 갱신은 null 인자를 SET 에서 뺀다 — "" 는 변경이다(Tibero 에서는 NULL 로 저장되고 읽기 쪽이 "" 로 보정한다).
+-->
+<mapper namespace="com.smartfirehub.ontology.repository.mybatis.OntologyElementMapper">
+
+  <update id="bumpVersion">
+    UPDATE ontology
+       SET schema_version = schema_version + 1,
+           updated_at = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>
+     WHERE id = #{ontologyId}
+  </update>
+
+  <update id="updateDomain">
+    UPDATE ontology SET domain = #{domain} WHERE id = #{ontologyId}
+  </update>
+
+  <select id="selectTypeNames" resultType="java.lang.String">
+    SELECT et.type FROM ontology_entity_type et WHERE et.ontology_id = #{ontologyId}
+  </select>
+
+  <select id="countEntityTypes" resultType="_int">
+    SELECT COUNT(*) FROM ontology_entity_type et WHERE et.ontology_id = #{ontologyId}
+  </select>
+
+  <select id="selectTypeName" resultType="java.lang.String">
+    SELECT et.type FROM ontology_entity_type et
+     WHERE et.id = #{entityTypeId} AND et.ontology_id = #{ontologyId}
+  </select>
+
+  <select id="selectMaxTypeOrder" resultType="java.lang.Integer">
+    SELECT MAX(et.sort_order) FROM ontology_entity_type et WHERE et.ontology_id = #{ontologyId}
+  </select>
+
+  <update id="updateEntityType">
+    UPDATE ontology_entity_type
+    <set>
+      <if test="type != null">type = #{type},</if>
+      <if test="description != null">description = #{description},</if>
+      <if test="naming != null">naming = #{naming},</if>
+      <if test="resolution != null">resolution = #{resolution},</if>
+    </set>
+     WHERE id = #{entityTypeId}
+  </update>
+
+  <select id="selectRelationIdsTouching" resultType="java.lang.Long">
+    SELECT r.id FROM ontology_relation r
+     WHERE r.subject_type_id = #{entityTypeId} OR r.object_type_id = #{entityTypeId}
+  </select>
+
+  <!-- 속성·관계는 FK ON DELETE CASCADE 로 함께 지워진다. -->
+  <delete id="deleteEntityType">
+    DELETE FROM ontology_entity_type WHERE id = #{entityTypeId}
+  </delete>
+
+  <select id="selectPropertyNames" resultType="java.lang.String">
+    SELECT ep.name FROM ontology_entity_property ep WHERE ep.entity_type_id = #{entityTypeId}
+  </select>
+
+  <select id="selectPropertyName" resultType="java.lang.String">
+    SELECT ep.name FROM ontology_entity_property ep
+     WHERE ep.id = #{propertyId} AND ep.entity_type_id = #{entityTypeId}
+  </select>
+
+  <select id="selectMaxPropertyOrder" resultType="java.lang.Integer">
+    SELECT MAX(ep.sort_order) FROM ontology_entity_property ep WHERE ep.entity_type_id = #{entityTypeId}
+  </select>
+
+  <!-- unitSet 이면 unit 을 바꾼다 — null 이면 NULL 로 지우기(리포지토리가 빈 단위를 null 로 정규화해 넘긴다). -->
+  <update id="updateProperty">
+    UPDATE ontology_entity_property
+    <set>
+      <if test="name != null">name = #{name},</if>
+      <if test="description != null">description = #{description},</if>
+      <if test="dataType != null">data_type = #{dataType},</if>
+      <if test="unitSet">unit = #{unit,jdbcType=VARCHAR},</if>
+    </set>
+     WHERE id = #{propertyId}
+  </update>
+
+  <delete id="deleteProperty">
+    DELETE FROM ontology_entity_property WHERE id = #{propertyId}
+  </delete>
+
+  <select id="countTriple" resultType="_int">
+    SELECT COUNT(*) FROM ontology_relation r
+     WHERE r.ontology_id = #{ontologyId}
+       AND r.subject_type_id = #{subjectTypeId}
+       AND r.relation = #{relation}
+       AND r.object_type_id = #{objectTypeId}
+  </select>
+
+  <select id="selectMaxRelationOrder" resultType="java.lang.Integer">
+    SELECT MAX(r.sort_order) FROM ontology_relation r WHERE r.ontology_id = #{ontologyId}
+  </select>
+
+  <update id="updateRelation">
+    UPDATE ontology_relation
+    <set>
+      <if test="relation != null">relation = #{relation},</if>
+      <if test="description != null">description = #{description},</if>
+    </set>
+     WHERE id = #{relationId}
+  </update>
+
+  <delete id="deleteRelation">
+    DELETE FROM ontology_relation WHERE id = #{relationId}
+  </delete>
+
+</mapper>

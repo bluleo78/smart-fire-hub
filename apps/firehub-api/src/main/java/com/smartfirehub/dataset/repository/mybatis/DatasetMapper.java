@@ -7,7 +7,6 @@ import com.smartfirehub.dataset.repository.mybatis.DatasetRows.LockedRow;
 import com.smartfirehub.dataset.repository.mybatis.DatasetRows.SchemaRow;
 import com.smartfirehub.dataset.repository.mybatis.DatasetRows.TagRow;
 import com.smartfirehub.global.platformdb.mybatis.PlatformMapper;
-import com.smartfirehub.securitylevel.dto.SecurityLevelSummary;
 import com.smartfirehub.securitylevel.repository.mybatis.MyBatisDatasetVisibility.VisibilityParams;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -57,9 +56,6 @@ public interface DatasetMapper {
 
   /** id 청크의 태그(태그 이름 오름차순). */
   List<TagRow> selectTagsByDatasetIds(@Param("chunks") List<List<Long>> chunks);
-
-  /** 현재 테넌트의 보안 등급 요약 전부(rank 오름차순). */
-  List<SecurityLevelSummary> selectLevelSummaries();
 
   /** FOR UPDATE 로 잠근다(두 DB 같은 모드). 행이 없으면 빈 목록. */
   List<Long> lockIdForUpdate(@Param("id") Long id);
@@ -133,11 +129,11 @@ public interface DatasetMapper {
   Long selectUpdatedById(@Param("id") Long id);
 
   /**
-   * 스키마 메타 행(데이터셋 LEFT JOIN 컬럼, table_name·id·column_order 순). visibilitySql 은 호출자가 만든 별칭 d 기준 SQL
-   * 조각(그대로 이어 붙인다), chunks 가 null 이면 id 로 거르지 않는다.
+   * 스키마 메타 행(데이터셋 LEFT JOIN 컬럼, table_name·id·column_order 순). vis 는 가시성 조각 파라미터(별칭 d 기준), chunks 가
+   * null 이면 id 로 거르지 않는다.
    */
   List<SchemaRow> selectSchemaMetaRows(
-      @Param("visibilitySql") String visibilitySql, @Param("chunks") List<List<Long>> chunks);
+      @Param("vis") VisibilityParams vis, @Param("chunks") List<List<Long>> chunks);
 
   /** (테이블 이름, 보안 등급 id). onlyTable 이 null 이면 table_name 이 있는 전부. */
   List<DatasetTableLevel> selectTableLevels(@Param("onlyTable") String onlyTable);

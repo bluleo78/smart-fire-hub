@@ -137,7 +137,8 @@ public interface AccessFixtures {
 
   /**
    * 데이터셋 행의 열 하나를 직접 바꾼다(소유자 시점, WD-707). column 은 시험 코드의 고정 이름만 — description·storage_type·
-   * origin_type·status·status_note·security_level_id·updated_at 만 허용한다. value 가 null 이면 NULL 로 비운다.
+   * origin_type·status·status_note·security_level_id·source_pipeline_step_id(WD-711)·updated_at 만
+   * 허용한다. value 가 null 이면 NULL 로 비운다.
    */
   void setDatasetField(long datasetId, String column, Object value);
 
@@ -324,6 +325,79 @@ public interface AccessFixtures {
 
   /** 이 DB 가 빈 문자열을 NULL 로 저장하는가(Tibero true, PG false). */
   boolean emptyStringIsNull();
+
+  // ---- 묶음 ③·⑥ 픽스처(WD-711) ----
+
+  /**
+   * 데이터셋 접근 허용 한 줄(dataset_access_grant). roleId·userId 는 정확히 하나만 채운다(사용자 XOR 역할). 테넌트 정리 때 함께 지운다.
+   */
+  void grantDatasetAccess(long tenantId, long datasetId, Long roleId, Long userId);
+
+  /** 그 테넌트의 온톨로지 하나(domain = name, 나머지는 열 기본값). 테넌트 정리 때 함께 지운다(하위 행은 FK CASCADE). */
+  long createOntology(long tenantId, String name);
+
+  /**
+   * 온톨로지 수정 시각을 지정 순간으로 직접 바꾼다(소유자 시점, WD-711 — updated_at 왕복·갱신 시험용). PG 는 timestamptz, Tibero 는
+   * UTC 벽시계로 쓴다.
+   */
+  void setOntologyUpdatedAt(long ontologyId, java.time.Instant at);
+
+  /**
+   * 데이터셋↔온톨로지 연결 한 줄(dataset_ontology)을 소유자 시점으로 직접 넣는다(WD-711 — 리포지토리가 직접 쓰지 않은 행을 읽는지·참조 수 시험용).
+   * 온톨로지를 지우면 FK CASCADE 로 함께 사라진다.
+   */
+  void bindDatasetOntology(long tenantId, long datasetId, long ontologyId);
+
+  /** 데이터셋 매핑 한 줄(dataset_mapping, spec 은 빈 JSON 객체)을 소유자 시점으로 넣는다(WD-711). 온톨로지를 지우면 FK CASCADE. */
+  void createDatasetMapping(long tenantId, long datasetId, long ontologyId);
+
+  /** 그 테넌트·데이터셋의 dataset_ontology 저장 행(소유자 시점, 정책 우회) — 업서트가 한 행만 남겼는지·값 확인용(WD-711). */
+  List<DatasetOntologyRow> datasetOntologyRows(long tenantId, long datasetId);
+
+  /** dataset_ontology 의 bound_at 을 지정 순간으로 되돌린다(소유자 시점, WD-711 — 재바인딩이 시각을 새로 쓰는지 보려고). */
+  void setDatasetOntologyBoundAt(long tenantId, long datasetId, java.time.Instant at);
+
+  /** dataset_ontology 한 행의 저장값(소유자 시점). boundAt 은 UTC 순간. */
+  record DatasetOntologyRow(long ontologyId, Long boundBy, java.time.Instant boundAt) {}
+
+  /** 역할의 최대 열람 등급(role.max_security_level_id)을 바꾼다(소유자 시점, WD-711 — 자격 원자료 시험용). */
+  void setRoleMaxLevel(long roleId, long levelId);
+
+  /**
+   * 보안 등급의 허용 목록 필요·ADMIN 우회 플래그를 바꾼다(소유자 시점, WD-711 — 접근 사실·허용 목록 판정 시험용). Tibero 불리언 열은 NUMBER(1)
+   * 이라 구현이 1/0 으로 쓴다.
+   */
+  void setSecurityLevelFlags(long levelId, boolean allowlistRequired, boolean adminBypass);
+
+  /**
+   * 보안 등급의 [created_at, updated_at] 을 저장된 벽시계 그대로 읽는다(소유자 시점, WD-711 — 삽입 문장이 DB 시계로 시각을 쓰는지 확인용).
+   * {@link #dbWallClockNow()} 와 비교한다.
+   */
+  List<LocalDateTime> securityLevelCreatedAndUpdatedAt(long levelId);
+
+  /**
+   * timestamp(시간대 없는) 열의 저장 기준 벽시계로 본 DB 현재 시각(WD-711). PG 는 LOCALTIMESTAMP(세션 TimeZone 벽시계 — now()
+   * 를 timestamp 열에 넣은 값과 같다), Tibero 는 UTC 벽시계(MyBatis dbNow). 열 DEFAULT·dbNow 로 넣은 시각이 맞는지 볼 때 쓴다.
+   */
+  LocalDateTime dbWallClockNow();
+
+  // ---- 묶음 ⑥ Task 6 픽스처(WD-711: 그래프 출처·적재 이력) ----
+
+  /** 데이터셋 행을 소유자 시점으로 지운다(삭제된 데이터셋 출처 재현용 — 출처 행은 데이터셋 FK 가 없어 남는다). */
+  void deleteDataset(long datasetId);
+
+  /** 온톨로지의 schema_version 을 직접 바꾼다(소유자 시점 — 낡음 판정 시험용). */
+  void setOntologySchemaVersion(long ontologyId, int version);
+
+  /** 지식그래프 출처 한 줄(graph_ontology_source)을 소유자 시점으로 직접 넣는다. 온톨로지를 지우면 FK CASCADE 로 함께 사라진다. */
+  void insertGraphSource(long tenantId, long ontologyId, long datasetId);
+
+  /** 그 테넌트의 출처 행 수(소유자 시점, 정책 우회) — 멱등 기록이 한 행만 남겼는지 확인용. */
+  int countGraphSources(long tenantId, long ontologyId, long datasetId);
+
+  /** 적재 이력 한 행을 시각을 정해 소유자 시점으로 직접 넣는다(최신·동시각 판정 시험용, 저장 TZ 벽시계). 데이터셋 FK 가 없다. 테넌트 정리 때 함께 지운다. */
+  long insertGraphIngest(
+      long tenantId, long datasetId, int schemaVersion, LocalDateTime ingestedAt);
 
   /** 만든 행을 모두 지운다. */
   void cleanup();

@@ -4,6 +4,8 @@ import com.smartfirehub.dataset.repository.mybatis.DatasetFavoriteMapper;
 import com.smartfirehub.dataset.repository.mybatis.DatasetMapper;
 import com.smartfirehub.dataset.repository.mybatis.MyBatisDatasetRepository;
 import com.smartfirehub.global.platformdb.PlatformLocks;
+import com.smartfirehub.securitylevel.repository.mybatis.MyBatisSecurityLevelRepository;
+import com.smartfirehub.securitylevel.repository.mybatis.SecurityLevelMapper;
 import com.smartfirehub.support.tibero.TiberoLive;
 import com.smartfirehub.support.tibero.TiberoPlatformSchema;
 import com.smartfirehub.user.repository.AccessFixtures;
@@ -33,7 +35,9 @@ class TiberoMyBatisDatasetRepositoryContractTest extends DatasetRepositoryContra
             new MyBatisDatasetRepository(
                 poc.mapper(DatasetMapper.class),
                 poc.mapper(DatasetFavoriteMapper.class),
-                Mockito.mock(PlatformLocks.class)));
+                Mockito.mock(PlatformLocks.class),
+                new MyBatisSecurityLevelRepository(
+                    poc.mapper(SecurityLevelMapper.class), Mockito.mock(PlatformLocks.class))));
   }
 
   @Override
