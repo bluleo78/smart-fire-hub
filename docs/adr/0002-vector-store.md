@@ -111,14 +111,22 @@ OpenSearch 는 PoC(단계 1)에서 한국어 키워드 품질이 기준에 못 �
 
 지금 `countMissing`/`findMissing` 은 기반 테이블과 벡터 테이블을 anti-join 한다(모델 일치 포함). 벡터가 다른 저장소로 가면 이 조인을 할 수 없다.
 
-- `dataset_embedding`·`document_chunk` 에 **표시 열 두 개**를 둔다: 임베딩 공간(`차원:모델`)과 **임베딩한 원문의 해시**.
-- **채우는 규칙:** 벡터 쓰기가 성공한 뒤, "임베딩한 원문 해시 = 지금 원문 해시" 일 때만 채운다(조건부 UPDATE). 옛 원문으로 돌던 늦은 재임베딩이 표시 열을 잘못 채우지 않는다.
-- **비우는 규칙:** 그 변경과 같은 트랜잭션에서 비운다.
-  - 원문이 **실제로 바뀔 때만**(`IS DISTINCT FROM`). `upsertSourceText` 는 데이터셋·태그를 고칠 때마다 돌기 때문에, 무조건 비우면 편집마다 재임베딩이 걸린다.
-  - 외부 벡터 정리(`deleteVectors`·`deleteVectorsOf`·`AiVectorPurgeService`)
-  - 차원·모델 전환 정리(`deleteOtherDimensions`)
-- 백로그와 진행률 분자(`countEmbedded`)는 이 열로 판정한다. **pgvector 구현도 같은 열을 쓴다**(판정식 한 벌). pgvector 구현은 벡터 쓰기와 같은 트랜잭션에서 채운다. 그래서 pgvector 설치본에서는 지금과 같은 결과가 나온다.
-- Tibero+qdrant 조합에서는 이 판정이 처음으로 **실제 MyBatis SQL** 이 된다(지금은 빈 메서드). MyBatis 구현·계약 테스트(`supportsVectorSearch()` 훅 조정)·구현 짝 허용 목록 갱신이 따라온다.
+이 결정은 동작을 바꾸는지에 따라 세 이슈로 나눠 넣는다.
+
+**① 공간 표시 — WD-717 (pgvector 동작 변경 없음)**
+- `dataset_embedding`·`document_chunk` 에 공간 표시 열 `embedded_dim`·`embedded_model` 을 둔다(V160, PG·Tibero 두 벌). **벡터 행의 거울**이다. 벡터 행이 있으면 그 차원·모델이 들어 있고, 없으면 NULL 이다. PG 는 지금 벡터 행으로 백필하고(`<unknown>` 모델도 그대로 옮겨 계속 백로그로 남는다), Tibero 는 벡터가 없어 열만 더한다.
+- **채우고 비우는 규칙:** 벡터를 쓰거나 지우는 경로(`upsertEmbeddings`·`insertBatch`·`deleteVectors`·`deleteVectorsOf`·`deleteOtherDimensions`)가 벡터 SQL 과 같은 트랜잭션에서 표시 열을 채우거나 비운다.
+- 백로그(`countMissing`·`findMissing`)와 진행률 분자(`countEmbedded`)는 이 열로 판정한다. 판정식은 `embedded_dim`·`embedded_model` 이 NULL 이거나 지금 공간과 다르면 백로그다. Tibero 로 옮길 수 있게 NULL 을 명시적으로 비교한다(`IS DISTINCT FROM` 을 쓰지 않는다). 거울이라 pgvector 설치본에서는 예전 anti-join 과 결과가 같다(동등성 테스트로 확인).
+- 표시 열 쓰기는 벡터 SQL 과 나눠 둔다. 포트를 추출할 때 벡터 SQL 은 Pg 구현으로 옮기고, 표시 열 쓰기는 플랫폼 리포지토리에 남긴다.
+
+**② MyBatis 실제 SQL — WD-718 (포트 추출)**
+- Tibero 설치본에서는 Qdrant 가 들어오기 전까지 표시 열을 채우는 쪽이 없다. 그래서 MyBatis `countMissing`·`findMissing`·`countEmbedded` 를 빈 메서드에서 실제 SQL 로 바꾸는 일은 Off 구현과 4조합 빈 조건을 정하는 포트 추출에서 함께 한다. 계약 테스트(`supportsVectorSearch()` 훅 조정)와 구현 짝 허용 목록 갱신도 같이 한다.
+
+**③ 원문 해시 — WD-720 (Qdrant 검색, 새 동작)**
+- **임베딩한 원문의 해시**를 표시에 더한다. 원문이 바뀌면 백로그로 잡히므로 백로그·진행률이 달라지는 **새 동작**이다. 그래서 ①과 떼어 키워드 표시가 필요한 WD-720 에서 다룬다.
+- **채우는 규칙:** 벡터 쓰기가 성공한 뒤, "임베딩한 원문 해시 = 지금 원문 해시" 일 때만 채운다(조건부 UPDATE). 옛 원문으로 돌던 늦은 재임베딩이 표시를 잘못 채우지 않는다.
+- **비우는 규칙:** 원문이 **실제로 바뀔 때만** 같은 트랜잭션에서 비운다. `upsertSourceText` 는 데이터셋·태그를 고칠 때마다 돌기 때문에, 무조건 비우면 편집마다 재임베딩이 걸린다. Tibero 에는 `IS DISTINCT FROM` 이 없어 NULL 을 명시적으로 비교한다.
+- 해시는 Java 한 곳에서 계산한다. SQL 에서 SHA 를 계산하면 Tibero 백필이 어렵다. 원문을 바꾼 직후 5분 스윕이 재임베딩 잡을 중복으로 넣지 않는지 확인한다.
 - **키워드 쪽:** pgvector 구현은 원문 열 자체가 키워드 색인이라 표시가 필요 없다. Qdrant 구현은 sparse 벡터를 따로 써야 하므로 **키워드 표시(키워드로 색인한 원문 해시)** 를 하나 더 두고, 비어 있거나 어긋나면 백로그 스윕이 다시 쓴다. 키워드 sparse 는 임베딩 API 없이 만들 수 있어 싸다.
 - 마이그레이션은 PG(Flyway)와 Tibero 기준선 **두 벌**이 필요하다(ADR 0001 결정 2 규칙).
 - 행 검색은 색인 자체가 `source_hash` 를 들고 있어(`existingHashes`) 표시 열이 필요 없다.
@@ -226,16 +234,16 @@ OpenSearch 는 PoC(단계 1)에서 한국어 키워드 품질이 기준에 못 �
 | # | 내용 | 규모 | 선행 |
 |---|---|---|---|
 | 1 | **PoC**: 한국어 키워드(Nori+바이그램 sparse 대 pg_trgm), 필터 k-NN 지연·재현율(tenant + dataset_id 수천 개), 키워드 두 sparse 합치기 비중, 단독→클러스터 모드 전환, 폐쇄망 설치 | M | — |
-| 2 | 표시 열(공간·임베딩 원문 해시, PG·Tibero 두 벌), 채움·비움 규칙, 백로그·진행률 판정 전환. 판정 MyBatis 실제 구현과 계약 테스트 | M | — |
-| 3 | 포트 추출: `DatasetVectorIndex`·`ChunkVectorIndex`(의미·키워드 목록 분리)·`VectorStoreFeatures`·`VectorStoreLifecycle`, Pg·Off 구현으로 기존 코드 이동, 4조합 빈 조건·설정 축, 기능 판정 통합(`supportsRowSearch` 세 곳 포함, `AiVectorPurgeService` 판정 분리), 설치 종류 기록·판별(결정 10), 명시 삭제 호출 추가, 추상 계약 테스트 | L | 2 |
+| 2 | 공간 표시 열(`embedded_dim`·`embedded_model`, PG·Tibero 두 벌, 벡터 행의 거울), 채움·비움 규칙, 백로그·진행률 판정 전환(jOOQ). 판정의 MyBatis 실제 SQL 은 3번, 원문 해시는 5번으로 넘긴다(결정 4) | M | — |
+| 3 | 포트 추출: `DatasetVectorIndex`·`ChunkVectorIndex`(의미·키워드 목록 분리)·`VectorStoreFeatures`·`VectorStoreLifecycle`, Pg·Off 구현으로 기존 코드 이동, 4조합 빈 조건·설정 축, 기능 판정 통합(`supportsRowSearch` 세 곳 포함, `AiVectorPurgeService` 판정 분리), 설치 종류 기록·판별(결정 10), 명시 삭제 호출 추가, 백로그 판정 MyBatis 실제 SQL(결정 4 ②), 추상 계약 테스트 | L | 2 |
 | 4 | Qdrant 기반: 클라이언트·설정·`QdrantVectorStoreLifecycle`(컬렉션·스키마 버전), Nori·바이그램 sparse 생성기, Testcontainers 하네스 | M | 1 |
-| 5 | `QdrantDatasetVectorIndex`·`QdrantChunkVectorIndex`: 가시성 2단계(볼 수 있는 dataset_id 조회·표시 필드 읽기 — 두 벌 + RLS 계약 테스트), 테넌트 강제, 키워드 쓰기 경로·키워드 표시, 청크 적재 순서 분리 | L | 3, 4 |
+| 5 | `QdrantDatasetVectorIndex`·`QdrantChunkVectorIndex`: 가시성 2단계(볼 수 있는 dataset_id 조회·표시 필드 읽기 — 두 벌 + RLS 계약 테스트), 테넌트 강제, 키워드 쓰기 경로·키워드 표시, 원문 해시 표시(결정 4 ③, 두 벌), 청크 적재 순서 분리 | L | 3, 4 |
 | 6 | 정합성: 벡터 아웃박스(PG·Tibero 두 벌, RLS 정책·tenant_id DEFAULT·카탈로그 시험 갱신)·순번 시퀀스·워커(폴링)·양방향 대조 스윕 | M | 5 |
 | 7 | `QdrantRowSearchIndex`: `RowSearchIndex` 서명 변경(`RowFilter` 입력·세대 중립 메서드), `dataset_search_index.generation`(두 벌), 필터 2단계, `deleteMissing` 대체, 정확 스캔 기준 | L | 4, 6 |
 | 8 | Tibero 데이터 저장소 행 검색: `SearchSourceReader`(OID·행 수·행 읽기·변경분)·`RowFilterCompiler` Tibero 짝, `TiberoIncrementalCursor` 연결 | M | 7 |
 | 9 | 설치·배포·안내: 기능 응답 "저장소 일시 중단" 필드와 웹·ai-agent 반영, docker-compose, Helm 값, 시크릿, 스냅샷 백업, 배포 문서 | M | 5 |
 
-- 2·3번은 Qdrant 없이도 가치가 있고 pgvector 설치본 동작을 바꾸지 않는다. 먼저 병합한다.
+- 2·3번은 Qdrant 없이도 가치가 있고 pgvector 설치본 동작을 바꾸지 않는다. 먼저 병합한다. 원문 해시는 백로그 결과를 바꾸는 새 동작이라 2번에서 빼 5번으로 넘겼다.
 - 1번 PoC 결과가 키워드 품질 기준에 못 미치면 4번 이전에 엔진 선택(OpenSearch)을 다시 연다. 2·3번은 엔진과 무관해서 그대로 유효하다.
 
 ## 결과(감수하는 것)
