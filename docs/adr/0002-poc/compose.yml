@@ -1,0 +1,19 @@
+# WD-716 PoC — 클러스터 모드: node1 로 시작해 node2 를 붙이고 샤드를 옮긴다
+services:
+  node1:
+    image: qdrant/qdrant:v1.20.0
+    command: ./qdrant --uri http://node1:6335
+    environment:
+      QDRANT__CLUSTER__ENABLED: "true"
+      QDRANT__SERVICE__API_KEY: poc-key
+    ports: ["16333:6333"]
+    volumes: ["./n1:/qdrant/storage"]
+  node2:
+    image: qdrant/qdrant:v1.20.0
+    command: ./qdrant --bootstrap http://node1:6335 --uri http://node2:6335
+    environment:
+      QDRANT__CLUSTER__ENABLED: "true"
+      QDRANT__SERVICE__API_KEY: poc-key
+    ports: ["16334:6333"]
+    volumes: ["./n2:/qdrant/storage"]
+    profiles: ["two"]
