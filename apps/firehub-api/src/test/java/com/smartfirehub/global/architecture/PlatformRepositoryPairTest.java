@@ -11,17 +11,6 @@ import com.smartfirehub.analytics.repository.SavedQueryRepository;
 import com.smartfirehub.dashboard.repository.DashboardStatsRepository;
 import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.global.platformdb.mybatis.PlatformMyBatisRepository;
-import com.smartfirehub.notification.repository.OAuthStateRepository;
-import com.smartfirehub.notification.repository.SlackWorkspaceRepository;
-import com.smartfirehub.notification.repository.SlackWorkspaceTenantResolver;
-import com.smartfirehub.notification.repository.UserChannelBindingRepository;
-import com.smartfirehub.notification.repository.UserChannelPreferenceRepository;
-import com.smartfirehub.proactive.repository.AnomalyEventRepository;
-import com.smartfirehub.proactive.repository.MetricSnapshotRepository;
-import com.smartfirehub.proactive.repository.ProactiveJobExecutionRepository;
-import com.smartfirehub.proactive.repository.ProactiveJobRepository;
-import com.smartfirehub.proactive.repository.ReportTemplateRepository;
-import com.smartfirehub.proactive.repository.SystemMetricRepository;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -66,17 +55,6 @@ class PlatformRepositoryPairTest {
     m.put(DashboardWidgetRepository.class, "묶음 ⑤: analytics");
     m.put(SavedQueryRepository.class, "묶음 ⑤: analytics");
     m.put(DashboardStatsRepository.class, "묶음 ⑤: dashboard");
-    m.put(SlackWorkspaceTenantResolver.class, "묶음 ④: notification");
-    m.put(AnomalyEventRepository.class, "묶음 ④: proactive");
-    m.put(MetricSnapshotRepository.class, "묶음 ④: proactive");
-    m.put(ProactiveJobExecutionRepository.class, "묶음 ④: proactive");
-    m.put(ProactiveJobRepository.class, "묶음 ④: proactive");
-    m.put(ReportTemplateRepository.class, "묶음 ④: proactive");
-    m.put(SystemMetricRepository.class, "묶음 ④: proactive");
-    m.put(OAuthStateRepository.class, "묶음 ④: notification");
-    m.put(SlackWorkspaceRepository.class, "묶음 ④: notification");
-    m.put(UserChannelBindingRepository.class, "묶음 ④: notification");
-    m.put(UserChannelPreferenceRepository.class, "묶음 ④: notification");
     return Collections.unmodifiableMap(m);
   }
 

@@ -2,6 +2,7 @@ package com.smartfirehub.notification.repository.jooq;
 
 import static com.smartfirehub.jooq.Tables.SLACK_WORKSPACE;
 
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.notification.repository.SlackWorkspaceRepository;
 import java.time.OffsetDateTime;
 import java.util.Optional;
@@ -17,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
  * {@code @Transactional} 이 왜 필요한가" 문단 참조. 요약: GUC 는 트랜잭션이 열리는 순간에만 심기고, 컨텍스트 공급은 여전히 호출자 책임이다.
  */
 @Repository
+@ConditionalOnPostgresPlatformDb
 @Transactional
 class JooqSlackWorkspaceRepository implements SlackWorkspaceRepository {
 

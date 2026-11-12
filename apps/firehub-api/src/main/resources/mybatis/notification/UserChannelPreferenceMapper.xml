@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  사용자 채널 선호 문장(WD-709) — JooqUserChannelPreferenceRepository 와 같은 의미.
+  user_channel_preference 는 테넌트 정책(RLS) 대상이라 tenant_id 를 INSERT 값·WHERE 술어로 쓰지 않는다(열 DEFAULT 가 채운다).
+  upsert: PG 는 ON CONFLICT (tenant_id, user_id, channel_type) — uk_preference(V106)와 맞춘 충돌 대상일 뿐 값·술어가 아니다.
+  Tibero 는 MERGE ON (user_id, channel_type) — 정책이 다른 테넌트 행을 대상에서 거르므로 tenant_id 를 키에 쓰지 않는다.
+  소스는 DUAL 한 행, 소스 열을 uid 로 별칭하지 않는다(-8006). 동시 첫 저장의 패자는 중복 키(-10007)를 받으며 구현이 1회 다시 시도한다.
+  enabled 는 PG boolean / Tibero NUMBER(1) — 쓰기는 boolLiteral 리터럴, 읽기는 BooleanTypeHandler 가 0/1 을 받는다.
+  updated_at 은 jOOQ 가 건드리지 않으므로(열 DEFAULT) 여기서도 건드리지 않는다.
+-->
+<mapper namespace="com.smartfirehub.notification.repository.mybatis.UserChannelPreferenceMapper">
+
+  <select id="selectEnabled" resultType="java.lang.Boolean">
+    SELECT enabled
+      FROM user_channel_preference
+     WHERE user_id = #{userId}
+       AND channel_type = #{channelType}
+  </select>
+
+  <insert id="upsert" databaseId="postgresql">
+    INSERT INTO user_channel_preference (user_id, channel_type, enabled)
+    VALUES (#{userId}, #{channelType}, <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.boolLiteral"><property name="v" value="enabled"/></include>)
+    ON CONFLICT (tenant_id, user_id, channel_type) DO UPDATE
+       SET enabled = EXCLUDED.enabled
+  </insert>
+
+  <update id="upsert" databaseId="tibero">
+    MERGE INTO user_channel_preference t
+    USING (SELECT #{userId} AS u, #{channelType} AS c FROM DUAL) s
+       ON (t.user_id = s.u AND t.channel_type = s.c)
+    WHEN MATCHED THEN UPDATE
+       SET t.enabled = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.boolLiteral"><property name="v" value="enabled"/></include>
+    WHEN NOT MATCHED THEN INSERT (user_id, channel_type, enabled)
+      VALUES (s.u, s.c, <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.boolLiteral"><property name="v" value="enabled"/></include>)
+  </update>
+
+</mapper>

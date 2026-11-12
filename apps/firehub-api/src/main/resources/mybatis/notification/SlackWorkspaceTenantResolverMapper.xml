@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  비인증 Slack 웹훅 경로의 테넌트 해석(WD-709, 스펙 D2) — JooqSlackWorkspaceTenantResolver 와 같은 결과.
+  - PG: 정책 우회 SECURITY DEFINER 함수(V106)가 (workspace_id, tenant_id) 를 결과 집합으로 돌려준다(jOOQ 와 같은 호출).
+  - Tibero: FH_TENANT.resolve_slack_workspace_tenant_by_team_id(V156.1, 본문에서 정책 우회를 켜고 끈다)는 테넌트 id 하나만 돌려준다 —
+    함수 호출(CALLABLE)의 OUT 인자로 받고 반환 목록은 비어 있다. 워크스페이스 id 는 구현이 새 트랜잭션에서 그 테넌트를 심고
+    selectWorkspaceIdByTeamId 로 RLS 아래에서 다시 읽는다. 두 벌이므로 바꿀 때 V106·V156.1 함수와 함께.
+  - 재조회 문장은 Tibero 에만 있다. 해지된 워크스페이스는 두 판 모두 테넌트조차 알려주지 않는다.
+-->
+<mapper namespace="com.smartfirehub.notification.repository.mybatis.SlackWorkspaceTenantResolverMapper">
+
+  <resultMap id="refRow" type="com.smartfirehub.notification.repository.mybatis.SlackWorkspaceTenantResolverMapper$RefRow">
+    <constructor>
+      <arg column="workspace_id" javaType="java.lang.Long"/>
+      <arg column="tenant_id" javaType="java.lang.Long"/>
+    </constructor>
+  </resultMap>
+
+  <select id="resolveByTeamId" resultMap="refRow" databaseId="postgresql">
+    SELECT workspace_id, tenant_id FROM resolve_slack_workspace_tenant_by_team_id(#{q.teamId})
+  </select>
+
+  <select id="resolveByTeamId" statementType="CALLABLE" databaseId="tibero">
+    {#{q.tenantId,mode=OUT,jdbcType=BIGINT} = call FH_TENANT.resolve_slack_workspace_tenant_by_team_id(#{q.teamId,jdbcType=VARCHAR})}
+  </select>
+
+  <select id="selectWorkspaceIdByTeamId" resultType="java.lang.Long" databaseId="tibero">
+    SELECT id FROM slack_workspace WHERE team_id = #{teamId,jdbcType=VARCHAR} AND revoked_at IS NULL
+  </select>
+
+</mapper>

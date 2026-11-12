@@ -1,0 +1,291 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  proactive_job_execution 문장(WD-709) — JooqProactiveJobExecutionRepository 와 같은 의미. 규칙은 MyBatisPlatformConfig javadoc.
+  proactive_job_execution·proactive_job·security_level·dataset 은 테넌트 정책(RLS) 대상이라 tenant_id 를 술어·INSERT 값으로 쓰지 않는다
+  (DEFAULT 가 채운다). 예외(스펙 D1): 인터페이스가 테넌트를 인자로 받는 findStaleExecutions 는 tenant_id 술어를 그대로 둔다.
+  - 상태 갱신(updateStatus·updateResult·updateError·touchHeartbeat)은 모두 활성 조건(status IN ('PENDING','RUNNING'))을 건
+    조건부 갱신이다 — 정리기가 먼저 닫은 실행을 늦게 돌아온 러너가 되살리지 않는다(WD-258). 성공 판정은 리포지토리가 건수로 한다.
+  - result 는 PG jsonb / Tibero JSON 열: 읽기는 jsonText, 쓰기는 PlatformSql.jsonValue.
+  - created_at 은 Tibero 삽입에서 DB 시계(dbNow)로 명시한다(PG 는 jOOQ 처럼 열 DEFAULT). heartbeat_at 은 두 DB 모두 자바 UTC 시각.
+  - DISTINCT ON(최근 실행) 은 두 DB 공통 ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY created_at DESC, id DESC) = 1 —
+    jOOQ 판의 정렬(job_id, created_at DESC, id DESC)과 같은 승자다.
+  - 등급은 LEFT JOIN security_level pje_sl 의 열을 sl_* 별칭으로 읽어 SecurityLevelMapper.levelPolicy 결과 맵(columnPrefix sl_)으로
+    LevelPolicy 를 만든다 — 등급이 없어 열이 모두 NULL 이면 null 이다.
+  - IN 목록은 InChunks(500 개) + inChunks 조각 — Tibero IN 목록 1000 개 상한.
+-->
+<mapper namespace="com.smartfirehub.proactive.repository.mybatis.ProactiveJobExecutionMapper">
+
+  <resultMap id="executionRow" type="com.smartfirehub.proactive.repository.mybatis.ProactiveJobExecutionRows$ExecutionRow">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="job_id" javaType="java.lang.Long"/>
+      <arg column="status" javaType="java.lang.String"/>
+      <arg column="started_at" javaType="java.time.LocalDateTime"/>
+      <arg column="completed_at" javaType="java.time.LocalDateTime"/>
+      <arg column="error_message" javaType="java.lang.String"/>
+      <arg column="result_json" javaType="java.lang.String"/>
+      <arg column="delivered_channels" javaType="java.lang.String"/>
+      <arg column="created_at" javaType="java.time.LocalDateTime"/>
+      <arg resultMap="com.smartfirehub.securitylevel.repository.mybatis.SecurityLevelMapper.levelPolicy" columnPrefix="sl_"
+           javaType="com.smartfirehub.securitylevel.access.LevelPolicy"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="reportRow" type="com.smartfirehub.proactive.repository.mybatis.ProactiveJobExecutionRows$ReportRow">
+    <constructor>
+      <arg column="execution_id" javaType="java.lang.Long"/>
+      <arg column="job_id" javaType="java.lang.Long"/>
+      <arg column="job_name" javaType="java.lang.String"/>
+      <arg column="title" javaType="java.lang.String"/>
+      <arg column="summary" javaType="java.lang.String"/>
+      <arg column="completed_at" javaType="java.time.LocalDateTime"/>
+      <arg resultMap="com.smartfirehub.securitylevel.repository.mybatis.SecurityLevelMapper.levelPolicy" columnPrefix="sl_"
+           javaType="com.smartfirehub.securitylevel.access.LevelPolicy"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="levelCount" type="com.smartfirehub.proactive.repository.mybatis.ProactiveJobExecutionRows$LevelCount">
+    <constructor>
+      <arg column="level_id" javaType="java.lang.Long"/>
+      <arg column="cnt" javaType="java.lang.Long"/>
+    </constructor>
+  </resultMap>
+
+  <!-- 커서의 tenant_id 한 열을 Long 으로 읽는다(단순 타입이라 첫 열 자동 매핑). 이름은 아웃박스 매퍼의 tenantIdRow 와 겹치지 않게 다르게 둔다 — 짧은 이름이 겹치면 MyBatis 가 두 매퍼 모두에서 "ambiguous" 로 실패한다. -->
+  <resultMap id="activeTenantIdRow" type="java.lang.Long"/>
+
+  <!-- 활성(닫히지 않은) 실행 조건 — 상태 갱신·하트비트·정리 조회가 같은 정의를 쓴다. -->
+  <sql id="active">status IN ('PENDING', 'RUNNING')</sql>
+
+  <!-- 등급 열 — SecurityLevelMapper.levelColumns 와 같은 열 목록을 sl_ 접두사로 읽는다(levelPolicy 결과 맵의 columnPrefix). -->
+  <sql id="levelColumns">
+    pje_sl.id AS sl_id, pje_sl.name AS sl_name, pje_sl.rank AS sl_rank, pje_sl.is_default AS sl_is_default,
+    pje_sl.allowlist_required AS sl_allowlist_required, pje_sl.admin_bypass AS sl_admin_bypass,
+    pje_sl.export_policy AS sl_export_policy, pje_sl.ai_policy AS sl_ai_policy,
+    pje_sl.share_policy AS sl_share_policy, pje_sl.audit_access AS sl_audit_access
+  </sql>
+
+  <sql id="levelJoin">
+    LEFT JOIN security_level pje_sl ON pje_sl.id = pje.security_level_id
+  </sql>
+
+  <!-- 본문(result)을 뺀 공통 열 + 등급 — 요약·전체 열 목록이 같이 쓴다. -->
+  <sql id="baseColumns">
+    pje.id AS id, pje.job_id AS job_id, pje.status AS status, pje.started_at AS started_at,
+    pje.completed_at AS completed_at, pje.error_message AS error_message,
+    pje.delivered_channels AS delivered_channels, pje.created_at AS created_at,
+    <include refid="levelColumns"/>
+  </sql>
+
+  <!-- 요약·최근 실행 문장용 — result_json 자리는 NULL 로 채워 결과 맵을 하나로 쓴다. -->
+  <sql id="summaryColumns">
+    <include refid="baseColumns"/>, NULL AS result_json
+  </sql>
+
+  <sql id="fullColumns">
+    <include refid="baseColumns"/>,
+    <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.jsonText"><property name="col" value="pje.result"/><property name="alias" value="result_json"/></include>
+  </sql>
+
+  <!-- 작업 한 개의 실행 페이지(id 내림차순) — findByJobId·findSummariesByJobId 공통 꼬리. -->
+  <sql id="byJobPage">
+      FROM proactive_job_execution pje
+      <include refid="levelJoin"/>
+     WHERE pje.job_id = #{jobId}
+     ORDER BY pje.id DESC
+     <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.pageClause"/>
+  </sql>
+
+  <!-- 생성과 등록 사이 정리기가 돌아도 새 실행을 고아로 보지 않도록 하트비트를 바로 남긴다(jOOQ 와 같이 자바 UTC 시각). -->
+  <sql id="insertCreatedAtColumn" databaseId="postgresql"></sql>
+  <sql id="insertCreatedAtColumn" databaseId="tibero">, created_at</sql>
+  <sql id="insertCreatedAtValue" databaseId="postgresql"></sql>
+  <sql id="insertCreatedAtValue" databaseId="tibero">, <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/></sql>
+
+  <insert id="insert" useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+    INSERT INTO proactive_job_execution (job_id, status, heartbeat_at<include refid="insertCreatedAtColumn"/>)
+    VALUES (#{jobId}, 'PENDING', #{heartbeatAt}<include refid="insertCreatedAtValue"/>)
+  </insert>
+
+  <!-- 생성 직후 러너가 멈춘 사이 정리기가 닫았다면 RUNNING 으로 되살리지 않는다. -->
+  <update id="updateStatus">
+    UPDATE proactive_job_execution
+       SET status = #{status}
+       <if test="startedAt != null">, started_at = #{startedAt}</if>
+       <if test="completedAt != null">, completed_at = #{completedAt}</if>
+     WHERE id = #{id} AND <include refid="active"/>
+  </update>
+
+  <!-- 정리기가 먼저 FAILED 로 닫은 실행의 결과와 상태를 되살리지 않는다. 결과가 null 이면 기존 결과를 유지한다. -->
+  <update id="updateResult">
+    UPDATE proactive_job_execution
+       SET status = #{status}, completed_at = #{completedAt,jdbcType=TIMESTAMP}
+       <if test="resultJson != null">, result = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.jsonValue"><property name="param" value="resultJson"/></include></if>
+     WHERE id = #{id} AND <include refid="active"/>
+  </update>
+
+  <update id="updateError">
+    UPDATE proactive_job_execution
+       SET status = 'FAILED', error_message = #{errorMessage,jdbcType=VARCHAR}, completed_at = #{completedAt}
+     WHERE id = #{id} AND <include refid="active"/>
+  </update>
+
+  <update id="touchHeartbeat">
+    UPDATE proactive_job_execution
+       SET heartbeat_at = #{now}
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="id"/></include>
+       AND <include refid="active"/>
+  </update>
+
+  <!-- 테넌트를 가로지르는 조회라 정책을 넘는 함수(V149 SECURITY DEFINER)를 부른다. 결과는 반환 목록으로 온다. -->
+  <select id="tenantIdsWithActiveExecutions" resultType="java.lang.Long" databaseId="postgresql">
+    SELECT t FROM proactive_active_execution_tenant_ids() AS t
+  </select>
+
+  <!--
+    Tibero: 정책(DBMS_RLS)을 넘으려면 FH_TENANT.proactive_active_execution_tenant_ids(V156.1, BYPASS 를 켠 채 연 SYS_REFCURSOR)를
+    불러야 한다 — 일반 SELECT 는 테넌트 없는 배경 스레드에서 0행이다. 커서 OUT 인자는 MyBatis 가 resultMap 으로 읽어 파라미터 객체의
+    tenantIds 에 넣고, 반환 목록은 비어 있다(구현이 채워진 쪽을 쓴다). NotificationOutboxMapper.tenantIdsWithStatus 와 같은 모양.
+  -->
+  <select id="tenantIdsWithActiveExecutions" statementType="CALLABLE" databaseId="tibero">
+    {#{query.tenantIds,mode=OUT,jdbcType=CURSOR,javaType=java.sql.ResultSet,resultMap=com.smartfirehub.proactive.repository.mybatis.ProactiveJobExecutionMapper.activeTenantIdRow} =
+      call FH_TENANT.proactive_active_execution_tenant_ids()}
+  </select>
+
+  <!-- 명시 tenant_id 술어(스펙 D1). 하트비트가 없으면 시작 시각, 그것도 없으면 생성 시각으로 판정한다. -->
+  <select id="findStaleExecutions" resultType="java.lang.Long">
+    SELECT id FROM proactive_job_execution
+     WHERE tenant_id = #{tenantId}
+       AND <include refid="active"/>
+       AND COALESCE(heartbeat_at, started_at, created_at) &lt; #{threshold}
+  </select>
+
+  <select id="findByJobId" resultMap="executionRow">
+    SELECT <include refid="fullColumns"/>
+    <include refid="byJobPage"/>
+  </select>
+
+  <!-- 목록 endpoint 전용 경량 뷰 — result(리포트 본문)를 읽지 않는다(#604). -->
+  <select id="findSummariesByJobId" resultMap="executionRow">
+    SELECT <include refid="summaryColumns"/>
+    <include refid="byJobPage"/>
+  </select>
+
+  <!-- 작업마다 최근 실행 한 건(WD-134). 인덱스 (job_id, created_at DESC) 순서를 따르고 같은 시각이면 나중 행(id 큰 쪽). -->
+  <select id="findLatestByJobIds" resultMap="executionRow">
+    SELECT <include refid="summaryColumns"/>
+      FROM (SELECT e.id, e.job_id, e.status, e.started_at, e.completed_at, e.error_message,
+                   e.delivered_channels, e.created_at, e.security_level_id,
+                   ROW_NUMBER() OVER (PARTITION BY e.job_id ORDER BY e.created_at DESC, e.id DESC) AS rn
+              FROM proactive_job_execution e
+             WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="e.job_id"/></include>) pje
+      <include refid="levelJoin"/>
+     WHERE pje.rn = 1
+  </select>
+
+  <select id="findById" resultMap="executionRow">
+    SELECT <include refid="fullColumns"/>
+      FROM proactive_job_execution pje
+      <include refid="levelJoin"/>
+     WHERE pje.id = #{id}
+  </select>
+
+  <update id="updateDeliveredChannels">
+    UPDATE proactive_job_execution SET delivered_channels = #{channels,jdbcType=VARCHAR} WHERE id = #{id}
+  </update>
+
+  <!--
+    리포트 = COMPLETED 이면서 result.htmlContent 가 있고 비어 있지 않은 실행(jOOQ: result ->> 'htmlContent' IS NOT NULL AND <> '').
+    잡 스코핑이 없는 엔드포인트라 user_id 조건이 유일한 소유권 방어선이다. 본문(htmlContent)은 수십 KB 라 SELECT 하지 않는다.
+    판정·제목·요약만 DB 별 조각이고 정렬·페이지는 공통이라, 리포트가 아닌 실행이 사이에 있어도 페이지는 리포트만 센다.
+    제목은 ProactiveResult.effectiveTitle 규칙 — 앞뒤 공백(' ')을 뗀 뒤 비면 작업 이름.
+  -->
+  <sql id="reportTitleSummary" databaseId="postgresql">
+    COALESCE(NULLIF(TRIM(pje.result ->> 'title'), ''), pj.name) AS title, pje.result ->> 'summary' AS summary
+  </sql>
+
+  <!--
+    Tibero(실측 TiberoBundle45SyntaxProbeLiveTest (d)):
+    · 제목은 기본 JSON_VALUE(VARCHAR2 반환) — 6600 바이트 제목도 그대로 나온다(RETURNING VARCHAR2(4000) 은 4000 바이트에서 NULL).
+      VARCHAR2 최대(65532 바이트)를 넘는 제목은 기본 NULL ON ERROR 라 오류 없이 NULL → 작업 이름(ERROR ON ERROR 면 JDBC-11070).
+      ''=NULL 이라 TRIM 이 빈·공백뿐인 제목을 NULL 로 만들어 PG 의 NULLIF(TRIM(…), '') 와 같다. CLOB 반환은 COALESCE 에서 작업
+      이름(VARCHAR2)과 섞이지 않는다(JDBC-11022).
+    · 요약은 RETURNING CLOB — 길이 한도가 없고(25000 자 실측) 빈 문자열이 NULL 이 아니라 빈 값으로 나와 PG ->> 와 같다.
+    · 제목·요약이 객체·배열이면 PG 는 JSON 텍스트, Tibero 는 NULL(제목은 작업 이름) — 앱은 문자열만 쓴다.
+  -->
+  <sql id="reportTitleSummary" databaseId="tibero">
+    COALESCE(TRIM(JSON_VALUE(pje.result, '$.title')), pj.name) AS title,
+    JSON_VALUE(pje.result, '$.summary' RETURNING CLOB) AS summary
+  </sql>
+
+  <sql id="hasHtmlContent" databaseId="postgresql">
+    pje.result ->> 'htmlContent' IS NOT NULL AND pje.result ->> 'htmlContent' &lt;&gt; ''
+  </sql>
+
+  <!--
+    Tibero 판정(실측 TiberoBundle45SyntaxProbeLiveTest (d) — 19 가지 문서에서 PG ->> 판정과 같은 행):
+    · 스칼라 값: JSON_VALUE … RETURNING CLOB 는 길이 한도가 없고(42000 자 본문 실측) JSON null·키 없음은 NULL, 빈 문자열은 길이 0 이라
+      DBMS_LOB.GETLENGTH > 0 이 PG ->> 의 「NULL 아님 + '' 아님」과 같다. 숫자·불리언도 텍스트라 PG 처럼 리포트다.
+    · 객체·배열 값: JSON_VALUE 는 NULL 이지만 PG ->> 는 JSON 텍스트라 리포트다 — JSON_QUERY 텍스트 첫 글자가 { 나 [ 이면 참
+      (JSON null 은 'null', 빈 문자열은 '""' 라 여기서도 거짓).
+    · 최상위 배열: lax 경로가 배열을 풀어 [{"htmlContent":"x"}] 도 값을 찾으므로, JSON_TABLE '$[*]' 가 행을 내면(최상위 배열) 뺀다
+      — 최상위 객체에서는 0행이다. PG ->> 도 최상위 배열에 NULL 이다.
+    · 존재 판정에만 쓰고 본문 값은 SELECT 하지 않는다.
+    · 쓰지 못한 식: strict 경로·IS JSON OBJECT·$.type() 은 문법 오류/0행, 필터식 빈 문자열 리터럴("")은 JDBC-23004, ?(@ == null) 은
+      JSON null 을 못 맞힌다. SUBSTR(result,1,1) 은 큰(70KB 이상) 문서가 있는 표에서 한 번 서버 연결을 끊어 쓰지 않는다.
+  -->
+  <sql id="hasHtmlContent" databaseId="tibero">
+    NOT EXISTS (SELECT 1 FROM JSON_TABLE(pje.result, '$[*]' COLUMNS (n FOR ORDINALITY)) pje_arr)
+    AND (DBMS_LOB.GETLENGTH(JSON_VALUE(pje.result, '$.htmlContent' RETURNING CLOB)) &gt; 0
+         OR DBMS_LOB.SUBSTR(JSON_QUERY(pje.result, '$.htmlContent' RETURNING CLOB), 1, 1) IN ('{', '['))
+  </sql>
+
+  <select id="findReports" resultMap="reportRow">
+    SELECT pje.id AS execution_id, pje.job_id AS job_id, pj.name AS job_name,
+           <include refid="reportTitleSummary"/>, pje.completed_at AS completed_at,
+           <include refid="levelColumns"/>
+      FROM proactive_job_execution pje
+      JOIN proactive_job pj ON pje.job_id = pj.id
+      <include refid="levelJoin"/>
+     WHERE pj.user_id = #{userId}
+       AND pje.status = 'COMPLETED'
+       AND <include refid="hasHtmlContent"/>
+     ORDER BY pje.completed_at DESC, pje.id DESC
+     <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.pageClause"/>
+  </select>
+
+  <!--
+    리포트 등급을 올린다(WD-198) — 지금 등급이 없거나 rank 가 더 낮을 때만(한 문장이라 동시 기록끼리 낮은 값으로 덮지 않는다). 작성자 조건은
+    늘 걸고, runningSince 가 있으면(대행 요청 경로) 그때 진행 중이던 실행(지금 RUNNING 이거나 그 뒤에 끝남)만. 다른 테넌트의 등급 id 는 RLS
+    로 보이지 않아 rank 가 NULL → 갱신되지 않는다. 두 DB 같은 문장.
+  -->
+  <update id="raiseSecurityLevel">
+    UPDATE proactive_job_execution
+       SET security_level_id = #{levelId}
+     WHERE id = #{executionId}
+       AND (SELECT sl.rank FROM security_level sl WHERE sl.id = #{levelId}) IS NOT NULL
+       AND (proactive_job_execution.security_level_id IS NULL
+            OR (SELECT cur_sl.rank FROM security_level cur_sl WHERE cur_sl.id = proactive_job_execution.security_level_id)
+               &lt; (SELECT sl.rank FROM security_level sl WHERE sl.id = #{levelId}))
+       AND job_id IN (SELECT pj.id FROM proactive_job pj WHERE pj.user_id = #{ownerUserId})
+       <if test="runningSince != null">AND (status = 'RUNNING' OR completed_at &gt;= #{runningSince})</if>
+  </update>
+
+  <select id="findDatasetLevelIds" resultType="java.lang.Long">
+    SELECT DISTINCT d.security_level_id FROM dataset d
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="d.id"/></include>
+  </select>
+
+  <select id="countByLevel" resultMap="levelCount">
+    SELECT security_level_id AS level_id, COUNT(*) AS cnt
+      FROM proactive_job_execution
+     WHERE security_level_id IS NOT NULL
+     GROUP BY security_level_id
+  </select>
+
+  <update id="moveLevel">
+    UPDATE proactive_job_execution SET security_level_id = #{toLevelId} WHERE security_level_id = #{fromLevelId}
+  </update>
+
+</mapper>

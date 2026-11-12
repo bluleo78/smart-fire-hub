@@ -5,6 +5,7 @@ import static org.jooq.impl.DSL.*;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.dto.LockedRowVersion;
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.proactive.dto.ProactiveJobResponse;
 import com.smartfirehub.proactive.repository.ProactiveJobRepository;
 import com.smartfirehub.proactive.util.ProactiveTime;
@@ -33,6 +34,7 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @Transactional
 @Repository
+@ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
 public class JooqProactiveJobRepository implements ProactiveJobRepository {
 

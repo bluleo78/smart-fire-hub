@@ -588,6 +588,149 @@ public interface AccessFixtures {
   /** 트리거 저장 행(소유자 시점, 정책 우회 — 다른 테넌트 행이 바뀌지 않았는지 볼 때 쓴다). 행이 없으면 null. */
   TriggerStored triggerStored(long triggerId);
 
+  // ---- 묶음 ④·⑤ 픽스처(WD-709·710: 알림·채널·선제 실행) ----
+
+  /**
+   * 슬랙 워크스페이스 하나(team_id 는 호출자가 유일하게 정한다). bot 토큰·서명 비밀은 고정 더미 값이고, revoked 면 revoked_at 이 지금으로
+   * 채워진다. 테넌트 정리 때 함께 지운다.
+   */
+  long createSlackWorkspace(long tenantId, String teamId, boolean revoked);
+
+  /** 선제 작업 하나(SCHEDULE, 활성, 프롬프트 더미). 테넌트 정리 때 지운다(실행 이력은 FK CASCADE). */
+  long createProactiveJob(long tenantId, long userId, String name);
+
+  /**
+   * 트리거 유형·활성 여부·설정 JSON 을 정해 선제 작업을 만든다(WD-709 묶음 ④ Task 4 — 이상탐지 폴링 대상 조회 시험용). 설정은 JSON 문자열(null
+   * 이면 열 기본값 {@code {}}). 테넌트 정리 때 함께 지운다(이상 이벤트·메트릭 스냅샷은 FK CASCADE).
+   */
+  long createProactiveJob(
+      long tenantId,
+      long userId,
+      String name,
+      boolean enabled,
+      String triggerType,
+      String configJson);
+
+  /** 리포트 템플릿 하나(userId null 허용 — 시스템 템플릿). 테넌트 정리 때 지운다. */
+  long createReportTemplate(long tenantId, Long userId, String name);
+
+  /** 선제 작업 실행 한 행(상태 지정, 결과 없음). 작업을 지우면 FK CASCADE 로 함께 사라진다. */
+  long createProactiveJobExecution(long tenantId, long jobId, String status);
+
+  // ---- 묶음 ④ Task 5 픽스처(WD-709: 리포트 양식·선제 작업 저장 상태, 소유자 시점) ----
+
+  /** 선제 작업 한 행의 저장값(소유자 시점). config 는 JSON 텍스트 그대로, 시각은 저장 TZ 벽시계. */
+  record ProactiveJobStored(
+      String name,
+      String prompt,
+      Long templateId,
+      String cronExpression,
+      String timezone,
+      boolean enabled,
+      String triggerType,
+      String configJson,
+      LocalDateTime lastExecutedAt,
+      LocalDateTime nextExecuteAt,
+      LocalDateTime createdAt,
+      LocalDateTime updatedAt) {}
+
+  /** id 로 선제 작업 저장 행을 읽는다(정책 우회). 행이 없으면 null. */
+  ProactiveJobStored proactiveJobStored(long id);
+
+  /** 선제 작업의 수정 시각을 직접 바꾼다(소유자 시점, null 이면 NULL — 빈 옛 행 재현용). */
+  void setProactiveJobUpdatedAt(long id, LocalDateTime updatedAt);
+
+  /** 리포트 양식 한 행의 저장값(소유자 시점). sections 는 JSON 텍스트 그대로. */
+  record ReportTemplateStored(
+      String name,
+      String description,
+      String sectionsJson,
+      String style,
+      Long userId,
+      LocalDateTime createdAt,
+      LocalDateTime updatedAt) {}
+
+  /** id 로 리포트 양식 저장 행을 읽는다(정책 우회). 행이 없으면 null. */
+  ReportTemplateStored reportTemplateStored(long id);
+
+  /** 리포트 양식의 수정 시각을 직접 바꾼다(소유자 시점, null 이면 NULL — 빈 옛 행 재현용). */
+  void setReportTemplateUpdatedAt(long id, LocalDateTime updatedAt);
+
+  /** 리포트 양식의 sections 를 JSON 텍스트 그대로 바꾼다(소유자 시점) — 리포지토리가 쓰지 않는 원소 모양(문자열 원소 등) 재현용. */
+  void setReportTemplateSectionsJson(long id, String sectionsJson);
+
+  // ---- 묶음 ④ Task 2 픽스처(WD-709: OAuth state·채널 선호·슬랙 워크스페이스 저장 상태, 소유자 시점) ----
+
+  /** oauth_state 한 행의 저장값(소유자 시점). 소비됐으면 consumed 가 true. */
+  record OAuthStateStored(long userId, String channelType, long tenantId, boolean consumed) {}
+
+  /** state 로 oauth_state 저장 행을 읽는다(정책 우회). 행이 없으면 null. */
+  OAuthStateStored oauthStateStored(String state);
+
+  /** 사용자 채널 선호의 저장 enabled 값(소유자 시점). 행이 없으면 null. */
+  Boolean userChannelPreferenceEnabled(long tenantId, long userId, String channelType);
+
+  /** 슬랙 워크스페이스 한 행의 저장값(소유자 시점). signingSecretEnc 는 저장된 그대로(Tibero 의 빈 값은 null). */
+  record SlackWorkspaceStored(
+      String teamId,
+      String teamName,
+      String botUserId,
+      String botTokenEnc,
+      String signingSecretEnc,
+      Long installedByUserId,
+      boolean revoked) {}
+
+  /** id 로 슬랙 워크스페이스 저장 행을 읽는다(정책 우회). 행이 없으면 null. */
+  SlackWorkspaceStored slackWorkspaceStored(long id);
+
+  /** 슬랙 워크스페이스의 서명 비밀(암호문)을 직접 바꾼다 — 관리자가 서명 비밀을 입력한 상태 재현용. */
+  void setSlackSigningSecret(long id, String enc);
+
+  /** 슬랙 워크스페이스의 직전 서명 비밀과 만료 시각을 직접 채운다 — 서명 비밀 회전 직후 상태 재현용. */
+  void setSlackPreviousSigningSecret(long id, String enc, java.time.Instant expiresAt);
+
+  // ---- 묶음 ④ Task 6 픽스처(WD-709: 선제 작업 실행 저장 상태, 소유자 시점) ----
+
+  /** 선제 작업 실행 한 행의 저장값(소유자 시점). result 는 JSON 텍스트 그대로, 시각은 저장 TZ 벽시계. */
+  record ProactiveExecutionStored(
+      long jobId,
+      String status,
+      LocalDateTime startedAt,
+      LocalDateTime completedAt,
+      String errorMessage,
+      String resultJson,
+      String deliveredChannels,
+      Long securityLevelId,
+      LocalDateTime heartbeatAt,
+      LocalDateTime createdAt) {}
+
+  /** id 로 선제 작업 실행 저장 행을 읽는다(정책 우회). 행이 없으면 null. */
+  ProactiveExecutionStored proactiveExecutionStored(long id);
+
+  /**
+   * 선제 작업 실행 한 행의 열 하나를 직접 바꾼다(소유자 시점, null 이면 NULL) — 하트비트·시작·생성·완료 시각, 상태, 등급 id 를 시험 상태로 맞출 때
+   * 쓴다. 열 이름은 {@link #proactiveExecutionField} 허용 목록만 받는다.
+   */
+  void setProactiveExecutionField(long id, String column, Object value);
+
+  /** 선제 작업 실행의 result 를 JSON 텍스트 그대로 바꾼다(소유자 시점) — 최상위 배열처럼 리포지토리가 쓰지 않는 모양 재현용. */
+  void setProactiveExecutionResultJson(long id, String resultJson);
+
+  /** setProactiveExecutionField 가 받는 열 — 열 이름을 SQL 에 끼워 넣으므로 허용 목록으로 막는다(PG·Tibero 픽스처 공용). */
+  static String proactiveExecutionField(String column) {
+    if (!java.util.Set.of(
+            "heartbeat_at",
+            "started_at",
+            "created_at",
+            "completed_at",
+            "status",
+            "security_level_id")
+        .contains(column)) {
+      throw new IllegalArgumentException("허용하지 않는 선제 실행 열: " + column);
+    }
+    return column;
+  }
+
   /** 만든 행을 모두 지운다. */
   void cleanup();
 }

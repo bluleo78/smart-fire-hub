@@ -78,7 +78,9 @@ class TiberoBaselineSchemaLiveTest {
           "ONTOLOGY_ENTITY_TYPE.DESCRIPTION",
           "ONTOLOGY_ENTITY_TYPE.NAMING",
           "ONTOLOGY_RELATION.DESCRIPTION",
-          "ONTOLOGY_ENTITY_PROPERTY.DESCRIPTION");
+          "ONTOLOGY_ENTITY_PROPERTY.DESCRIPTION",
+          // V159.1(WD-709, 스펙 D3): 슬랙 최초 설치가 서명 비밀을 '' 로 넣는데 Tibero 는 ''=NULL 이라 NOT NULL 을 푼다.
+          "SLACK_WORKSPACE.SIGNING_SECRET_ENC");
 
   private static TiberoTestAccount account;
   private static MigrateResult migrated;

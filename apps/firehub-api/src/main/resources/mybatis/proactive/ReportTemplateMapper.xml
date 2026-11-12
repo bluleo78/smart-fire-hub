@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  report_template 문장(WD-709) — JooqReportTemplateRepository 와 같은 의미. 규칙은 MyBatisPlatformConfig javadoc.
+  report_template 은 테넌트 정책(RLS) 대상이라 tenant_id 를 술어·INSERT 값으로 쓰지 않는다(DEFAULT 가 채운다).
+  - sections 는 PG jsonb / Tibero JSON 열: 읽기는 jsonText, 쓰기는 PlatformSql.jsonValue. 목록의 섹션 개수는 본문 대신
+    PlatformSql.jsonArrayLength 로 DB 에서 센다(jOOQ jsonb_array_length 와 같은 값 — 원소 종류와 무관).
+  - created_at·updated_at 은 Tibero 삽입에서 DB 시계(dbNow)로 명시한다(PG 는 jOOQ 처럼 열 DEFAULT). 수정 문장의 updated_at 은 자바 시각.
+  - 설명·스타일은 구현이 공백을 NULL 로 바꿔 넘긴다. user_id NULL = 시스템 양식(모두에게 보임).
+-->
+<mapper namespace="com.smartfirehub.proactive.repository.mybatis.ReportTemplateMapper">
+
+  <resultMap id="templateRow" type="com.smartfirehub.proactive.repository.mybatis.ReportTemplateRows$TemplateRow">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="name" javaType="java.lang.String"/>
+      <arg column="description" javaType="java.lang.String"/>
+      <arg column="sections" javaType="java.lang.String"/>
+      <arg column="style" javaType="java.lang.String"/>
+      <arg column="user_id" javaType="java.lang.Long"/>
+      <arg column="created_at" javaType="java.time.LocalDateTime"/>
+      <arg column="updated_at" javaType="java.time.LocalDateTime"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="summaryRow" type="com.smartfirehub.proactive.repository.mybatis.ReportTemplateRows$SummaryRow">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="name" javaType="java.lang.String"/>
+      <arg column="description" javaType="java.lang.String"/>
+      <arg column="section_count" javaType="java.lang.Integer"/>
+      <arg column="user_id" javaType="java.lang.Long"/>
+      <arg column="created_at" javaType="java.time.LocalDateTime"/>
+      <arg column="updated_at" javaType="java.time.LocalDateTime"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="versionRow" type="com.smartfirehub.proactive.repository.mybatis.ReportTemplateRows$VersionRow">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="updated_at" javaType="java.time.LocalDateTime"/>
+    </constructor>
+  </resultMap>
+
+  <sql id="sectionsText"><include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.jsonText"><property name="col" value="report_template.sections"/><property name="alias" value="sections"/></include></sql>
+
+  <select id="findAllForUser" resultMap="summaryRow">
+    SELECT report_template.id AS id, report_template.name AS name, report_template.description AS description,
+           <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.jsonArrayLength"><property name="col" value="report_template.sections"/></include> AS section_count,
+           report_template.user_id AS user_id, report_template.created_at AS created_at, report_template.updated_at AS updated_at
+      FROM report_template
+     WHERE report_template.user_id IS NULL OR report_template.user_id = #{userId}
+     ORDER BY report_template.id ASC
+     <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.pageClause"/>
+  </select>
+
+  <sql id="detailColumns">
+    report_template.id AS id, report_template.name AS name, report_template.description AS description,
+    <include refid="sectionsText"/>, report_template.style AS style,
+    report_template.user_id AS user_id, report_template.created_at AS created_at, report_template.updated_at AS updated_at
+  </sql>
+
+  <select id="findById" resultMap="templateRow">
+    SELECT <include refid="detailColumns"/> FROM report_template WHERE report_template.id = #{id}
+  </select>
+
+  <select id="findVisibleTo" resultMap="templateRow">
+    SELECT <include refid="detailColumns"/> FROM report_template
+     WHERE report_template.id = #{id}
+       AND (report_template.user_id IS NULL OR report_template.user_id = #{userId})
+  </select>
+
+  <insert id="insert" useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+    INSERT INTO report_template (name, description, sections, style, user_id<include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.insertTimestampColumns"/>)
+    VALUES (#{name}, #{description,jdbcType=VARCHAR},
+            <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.jsonValue"><property name="param" value="sectionsJson"/></include>,
+            #{style,jdbcType=VARCHAR}, #{userId,jdbcType=BIGINT}<include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.insertTimestampValues"/>)
+  </insert>
+
+  <select id="lockVersionById" resultMap="versionRow">
+    SELECT id, updated_at FROM report_template WHERE id = #{id} FOR UPDATE
+  </select>
+
+  <update id="update">
+    UPDATE report_template
+       SET updated_at = #{updatedAt}
+       <if test="name != null">, name = #{name}</if>
+       <if test="setDescription">, description = #{description,jdbcType=VARCHAR}</if>
+       <if test="sectionsJson != null">, sections = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.jsonValue"><property name="param" value="sectionsJson"/></include></if>
+       <if test="setStyle">, style = #{style,jdbcType=VARCHAR}</if>
+     WHERE id = #{id} AND user_id = #{userId}
+  </update>
+
+  <delete id="delete">
+    DELETE FROM report_template WHERE id = #{id} AND user_id = #{userId}
+  </delete>
+
+</mapper>

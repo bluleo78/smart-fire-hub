@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  anomaly_event 문장(WD-709) — JooqAnomalyEventRepository 와 같은 의미. 두 DB 같은 문장이라 databaseId 가 없다.
+  tenant_id 는 INSERT 값·WHERE 술어로 쓰지 않는다(열 DEFAULT 와 RLS 정책이 맡는다).
+  detected_at 은 자바 UTC(ProactiveTime.nowUtc) 값을 바인딩한다. 값 열은 PG DOUBLE PRECISION / Tibero BINARY_DOUBLE.
+  최근 N건은 공용 pageClause(offset 0) — 정렬은 detected_at DESC 에 id DESC 를 더해 동시각에도 결정적이다(jOOQ 와 같다).
+-->
+<mapper namespace="com.smartfirehub.proactive.repository.mybatis.AnomalyEventMapper">
+
+  <resultMap id="anomalyEvent" type="com.smartfirehub.proactive.repository.AnomalyEventRepository$AnomalyEventRecord">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="job_id" javaType="java.lang.Long"/>
+      <arg column="metric_id" javaType="java.lang.String"/>
+      <arg column="metric_name" javaType="java.lang.String"/>
+      <arg column="current_value" javaType="_double"/>
+      <arg column="mean" javaType="_double"/>
+      <arg column="stddev" javaType="_double"/>
+      <arg column="deviation" javaType="_double"/>
+      <arg column="sensitivity" javaType="java.lang.String"/>
+      <arg column="detected_at" javaType="java.time.LocalDateTime"/>
+    </constructor>
+  </resultMap>
+
+  <insert id="insert">
+    INSERT INTO anomaly_event
+      (job_id, metric_id, metric_name, current_value, mean, stddev, deviation, sensitivity, detected_at)
+    VALUES
+      (#{jobId}, #{metricId}, #{metricName}, #{currentValue}, #{mean}, #{stddev}, #{deviation}, #{sensitivity}, #{detectedAt})
+  </insert>
+
+  <select id="findByJobId" resultMap="anomalyEvent">
+    SELECT id, job_id, metric_id, metric_name, current_value, mean, stddev, deviation, sensitivity, detected_at
+      FROM anomaly_event
+     WHERE job_id = #{jobId}
+     ORDER BY detected_at DESC, id DESC
+     <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.pageClause"/>
+  </select>
+
+</mapper>

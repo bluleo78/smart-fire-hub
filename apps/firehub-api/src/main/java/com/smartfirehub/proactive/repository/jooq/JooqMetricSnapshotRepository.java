@@ -2,6 +2,7 @@ package com.smartfirehub.proactive.repository.jooq;
 
 import static com.smartfirehub.jooq.Tables.METRIC_SNAPSHOT;
 
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.proactive.repository.MetricSnapshotRepository;
 import com.smartfirehub.proactive.util.ProactiveTime;
 import java.time.LocalDateTime;
@@ -22,6 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @Transactional
 @Repository
+@ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
 public class JooqMetricSnapshotRepository implements MetricSnapshotRepository {
 
@@ -49,7 +51,7 @@ public class JooqMetricSnapshotRepository implements MetricSnapshotRepository {
                 .eq(jobId)
                 .and(METRIC_SNAPSHOT.METRIC_ID.eq(metricId))
                 .and(METRIC_SNAPSHOT.COLLECTED_AT.ge(cutoff)))
-        .orderBy(METRIC_SNAPSHOT.COLLECTED_AT.desc())
+        .orderBy(METRIC_SNAPSHOT.COLLECTED_AT.desc(), METRIC_SNAPSHOT.ID.desc())
         .fetch(
             r ->
                 new MetricSnapshot(
@@ -61,7 +63,7 @@ public class JooqMetricSnapshotRepository implements MetricSnapshotRepository {
   public MetricSnapshot findLatest(Long jobId, String metricId) {
     return dsl.selectFrom(METRIC_SNAPSHOT)
         .where(METRIC_SNAPSHOT.JOB_ID.eq(jobId).and(METRIC_SNAPSHOT.METRIC_ID.eq(metricId)))
-        .orderBy(METRIC_SNAPSHOT.COLLECTED_AT.desc())
+        .orderBy(METRIC_SNAPSHOT.COLLECTED_AT.desc(), METRIC_SNAPSHOT.ID.desc())
         .limit(1)
         .fetchOne(
             r ->

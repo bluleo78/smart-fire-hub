@@ -170,6 +170,15 @@ class PlatformDbPgSpecificSourceTest {
           "<(select|insert|update|delete|sql)\\b[^>]*databaseId=\"postgresql\"[^>]*>.*?</\\1>",
           Pattern.DOTALL);
 
+  /**
+   * SQL/JSON 함수의 반환형 절({@code JSON_VALUE(col, '$.x' RETURNING CLOB)}) — 경로 문자열 바로 뒤의 RETURNING 은 PG
+   * 의 {@code INSERT … RETURNING} 이 아니라 표준 SQL/JSON 문법이라 검사 전에 걷어낸다(WD-709 Tibero 리포트 판정). JSON 경로
+   * 리터럴({@code '$…'})과 그 뒤의 RETURNING 만 걷어낸다 — 다른 문자열 리터럴 뒤의 DML RETURNING({@code SET s = 'x'
+   * RETURNING id})은 그대로 위반으로 남는다.
+   */
+  private static final Pattern SQL_JSON_RETURNING =
+      Pattern.compile("'\\$[^']*'\\s+returning\\s+", Pattern.CASE_INSENSITIVE);
+
   /** Tibero 테넌트 컨텍스트 직접 조작({@code set_tenant}·{@code clear_tenant}) — XML 어디서도 금지. */
   private static final Pattern FH_TENANT_CONTEXT_CALL =
       Pattern.compile("fh_tenant\\s*\\.\\s*(set_tenant|clear_tenant)", Pattern.CASE_INSENSITIVE);
@@ -184,7 +193,11 @@ class PlatformDbPgSpecificSourceTest {
     if (FH_TENANT_CONTEXT_CALL.matcher(body).find()) {
       out.add("FH_TENANT.set_tenant/clear_tenant 직접 호출");
     }
-    String common = PG_ONLY_ELEMENT.matcher(body).replaceAll("").toLowerCase(Locale.ROOT);
+    String common =
+        SQL_JSON_RETURNING
+            .matcher(PG_ONLY_ELEMENT.matcher(body).replaceAll(""))
+            .replaceAll("''")
+            .toLowerCase(Locale.ROOT);
     for (String t : XML_PG_TOKENS) {
       if (common.contains(t)) {
         out.add("databaseId=\"postgresql\" 밖의 PG 전용 문법 '" + t + "'");
@@ -226,6 +239,20 @@ class PlatformDbPgSpecificSourceTest {
     assertThat(
             xmlViolations(
                 "<mapper><select id=\"d\" databaseId=\"tibero\">call FH_TENANT.set_tenant(1)</select></mapper>"))
+        .isNotEmpty();
+    // SQL/JSON 반환형 절은 허용, DML RETURNING 은 여전히 위반.
+    assertThat(
+            xmlViolations(
+                "<mapper><select id=\"f\" databaseId=\"tibero\">select JSON_VALUE(r, '$.x' RETURNING CLOB) from t</select></mapper>"))
+        .isEmpty();
+    assertThat(
+            xmlViolations(
+                "<mapper><insert id=\"g\">insert into t (a) values (1) returning id</insert></mapper>"))
+        .isNotEmpty();
+    // 문자열 리터럴 바로 뒤의 DML RETURNING 도 위반(JSON 경로 리터럴이 아니므로 걷어내지 않는다).
+    assertThat(
+            xmlViolations(
+                "<mapper><update id=\"h\">update t set s = 'x' returning id</update></mapper>"))
         .isNotEmpty();
     assertThat(
             xmlViolations(

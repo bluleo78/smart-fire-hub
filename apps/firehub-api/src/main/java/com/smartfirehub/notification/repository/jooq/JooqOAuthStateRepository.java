@@ -2,6 +2,7 @@ package com.smartfirehub.notification.repository.jooq;
 
 import static com.smartfirehub.jooq.Tables.OAUTH_STATE;
 
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.notification.ChannelType;
 import com.smartfirehub.notification.repository.OAuthStateRepository;
 import java.time.Instant;
@@ -28,6 +29,7 @@ import org.springframework.transaction.annotation.Transactional;
  * DEFAULT 가 NULL 이 되어 INSERT 가 터지는 23502 하나뿐</b>이다.
  */
 @Repository
+@ConditionalOnPostgresPlatformDb
 @Transactional
 class JooqOAuthStateRepository implements OAuthStateRepository {
 

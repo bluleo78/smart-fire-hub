@@ -101,7 +101,7 @@ PG는 jOOQ 구현을 그대로 쓰고, Tibero용 MyBatis 구현(`repository/myba
   - `PlatformRepositoryPairTest` 는 jOOQ `@Repository` 가 구현하는 플랫폼 리포지토리 인터페이스마다 `@PlatformMyBatisRepository` 구현이 있는지 본다. 없으면 `PENDING`(인터페이스 → 묶음 번호)에 있어야 한다.
   - `PENDING` 에 있는데 짝이 생기면 실패한다. 그래서 목록이 줄어들 수밖에 없다.
   - 짝이 있는 jOOQ 구현에 `@ConditionalOnPostgresPlatformDb` 가 없어도 실패한다.
-  - 묶음 ① 뒤에는 ②~⑦ 항목만 남았고, 묶음 ②·⑦(WD-707·712) 뒤에는 ③~⑥ 36개가 남는다. 묶음 ③·⑥(WD-708·711) 뒤에는 ④·⑤ 18개가 남는다.
+  - 묶음 ① 뒤에는 ②~⑦ 항목만 남았고, 묶음 ②·⑦(WD-707·712) 뒤에는 ③~⑥ 36개가 남는다. 묶음 ③·⑥(WD-708·711) 뒤에는 ④·⑤ 18개가 남는다. 묶음 ④(WD-709) 뒤에는 ⑤ 7개만 남는다.
 - **Tibero 계약 테스트 하네스.**
   - 운영과 같은 두 계정 구조다(결정 7). 소유자 계정이 Flyway 를 적용하고 픽스처·정리를 맡는다. 리포지토리는 런타임 계정 풀(`CURRENT_SCHEMA=<소유자>`) 위에서 `TenantAwareTransactionManager` + `TiberoPlatformTenantSession` 으로 돈다.
   - 그래서 Tibero 계약 테스트도 DBMS_RLS 를 거친다. 소유자 계정은 정책 함수가 거르지 않으므로, 소유자로 돌리면 테넌트 차단 시험이 아무것도 보지 못한 채 통과한다.
@@ -138,7 +138,15 @@ PG는 jOOQ 구현을 그대로 쓰고, Tibero용 MyBatis 구현(`repository/myba
 - **다건 「충돌 무시」 삽입은 행마다 MERGE.** 원천에 중복 키가 있는 한 문장 MERGE 는 -4008 로 실패한다. `AiInferenceCache.insertIgnoringConflicts`·`DatasetAccessGrant.copy` 는 두 DB 모두 행마다 한 문장(중복 키 1회 재시도)이다. MERGE 원천 열 별칭에 `uid` 는 쓰지 않는다(-8006).
 - **공용 도우미.** 중복 키 재시도는 `PlatformRetries.onceOnDuplicateKey`/`runOnceOnDuplicateKey`(사이트마다 같은 정책), 생성 키는 `GeneratedId` 상속 홀더, 잠금 모드는 `PlatformSql.xml` 의 `lockNoKeyUpdate`·`lockShare`·`lockKeyShare` 조각(Tibero 는 모두 `FOR UPDATE`)으로 쓴다.
 - **삽입 시각은 `dbNow` 로 명시.** Tibero `TIMESTAMP` 열 DEFAULT(`LOCALTIMESTAMP`)는 세션 시간대에 기대므로 삽입 문장은 `created_at`·`updated_at` 등을 `dbNow`(UTC 벽시계)로 직접 쓴다. jOOQ 가 자바 시각을 쓰는 수정 문장은 같은 자바 값을 바인딩한다.
-- **오류 메시지 자르기 범위.** `TiberoTextLimits.truncateErrorMessage` 는 시스템이 쓰는 실행·스텝 실행 `error_message` 의 동적 쓰기 세 곳에만 건다. `api_connection.last_error_message` 는 두 DB 모두 1000자 한도라 자르지 않는다(같이 실패). 사용자 입력 열과 CLOB 은 자르지 않는다.
+- **오류 메시지 자르기 범위.** `TiberoTextLimits.truncateErrorMessage` 는 시스템이 쓰는 오류 열의 동적 쓰기에만 건다 — 파이프라인 실행·스텝 실행 `error_message`, 검색 색인·재임베딩 상태의 오류 사유, 선제 실행 `proactive_job_execution.error_message`(`updateError`, WD-709). `api_connection.last_error_message` 는 두 DB 모두 1000자 한도라 자르지 않는다(같이 실패). 사용자 입력 열과 CLOB 은 자르지 않는다.
+
+**묶음 ④·⑤ 에서 더한 규칙(WD-709·WD-710)**:
+
+- **슬랙 비인증 해석은 재조회한다.** Tibero `FH_TENANT.resolve_slack_workspace_tenant_by_team_id` 는 테넌트 id 만 준다(해지된 워크스페이스는 NULL). `MyBatisSlackWorkspaceTenantResolver` 는 트리거 해석기와 같은 모양으로, 얻은 테넌트로 `REQUIRES_NEW` 트랜잭션을 열고 `PlatformTenantSession.applyToCurrentTransaction` 뒤 RLS 아래에서 워크스페이스 id 를 다시 읽는다. 빈·널 team_id 는 조회 없이 빈 결과, 호출자 트랜잭션의 테넌트는 바뀌지 않는다(계약 시험). 아래 「넘겨받을 일」의 슬랙 항목 완료.
+- **`slack_workspace.signing_secret_enc` NOT NULL 해제(Tibero 전용).** jOOQ upsert 는 최초 설치 때 NOT NULL 을 맞추려 `''` 를 넣는데 Tibero 는 이를 NULL 로 보고 거부한다. Tibero 전용 마이그레이션 `V159.1__tibero_slack_signing_secret_nullable.sql` 로 NOT NULL 을 풀고(`MigrationParityTest` TIBERO_ONLY, `TiberoBaselineSchemaLiveTest` NULL 허용 차이 허용 목록), MyBatis 는 Tibero 의 NULL 을 `""` 로 읽어 PG 와 같은 값을 돌려준다. 가짜 자리표시 값은 복호화 경로가 생기면 터지므로 쓰지 않는다. PG 는 바뀌지 않는다.
+- **긴 JSON 값은 SELECT 하지 않고 판정은 SQL 에서.** 수십 KB 가 될 수 있는 값(`proactive_job_execution.result` 의 `htmlContent`)은 읽어 오지 않는다. PG `->> … IS NOT NULL AND <> ''` 와 같은 판정은 Tibero 에서 `DBMS_LOB.GETLENGTH(JSON_VALUE(col, '$.htmlContent' RETURNING CLOB)) > 0`(CLOB 반환이라 길이 한도 없음, JSON null·빈 문자열·키 없음은 거짓) 또는 `JSON_QUERY(… RETURNING CLOB)` 첫 글자가 `{`·`[`(객체·배열 값 — PG `->>` 는 JSON 텍스트를 준다)에 최상위 배열 제외(`NOT EXISTS (… JSON_TABLE(col, '$[*]' …))` — lax 경로가 배열을 풀기 때문)를 더한 식이다. 판정·페이지를 한 SQL 에서 하므로 두 DB 모두 `pageClause` 그대로다(`findReportsByUserId`, 실측 `TiberoBundle45SyntaxProbeLiveTest` (d) 19 가지 문서에서 PG 와 같은 행). 쓰지 못한 것: strict 경로·`IS JSON OBJECT`·`$.type()`·`$.size()`(문법 오류·NULL), 필터식의 빈 문자열 리터럴 `""`(JDBC-23004), `?(@ == null)`(JSON null 을 못 맞힘), `SUBSTR(json열, 1, 1)`(큰 문서가 있는 표에서 한 번 연결이 끊김 — 한 번 관찰). 짧은 값: 제목은 기본 `JSON_VALUE`(VARCHAR2, 65532 바이트까지 — 넘으면 NULL ON ERROR), 요약은 `RETURNING CLOB`(빈 문자열이 NULL 이 아니라 PG 와 같다). `RETURNING VARCHAR2(4000)` 은 4000 바이트에서 NULL 이 되므로 쓰지 않는다. JSON 배열 길이는 `PlatformSql.jsonArrayLength`(Tibero 는 `$.size()` 가 NULL 이라 `JSON_TABLE '$[*]'` COUNT).
+- **다건 `UPDATE … RETURNING` 대체.** Tibero 에는 RETURNING 이 없다. 단건 `RETURNING id` 는 `GeneratedId`(useGeneratedKeys), `RETURNING updated_at` 은 바인딩한 자바 시각을 갱신 건수 1 일 때 돌려준다. 다건(`shareCharts`·`shareQueries` 의 `RETURNING id, name`)은 같은 트랜잭션에서 대상 행을 `FOR UPDATE` 로 고른 뒤 그 id 들만 UPDATE 하는 한 형태를 두 DB 에 공통으로 쓴다(묶음 ⑤ 적용).
+- **조건부 상태 갱신(CAS)은 그대로 옮긴다.** 선제 실행의 상태 갱신은 활성 조건(`status IN ('PENDING','RUNNING')`)을 건 한 문장 UPDATE 이고 갱신 건수 1 로 성공을 판정한다. 두 트랜잭션이 같은 실행을 닫으려 겨루면 뒤 쪽은 행 잠금에서 기다렸다가 0행이 된다(PG·Tibero 각 계약 시험). `DISTINCT ON` 은 두 DB 공통 `ROW_NUMBER() OVER (PARTITION BY … ORDER BY created_at DESC, id DESC) = 1` 이다.
 
 ### 2. 마이그레이션 이원화 규칙
 
@@ -261,7 +269,7 @@ PG는 jOOQ 구현을 그대로 쓰고, Tibero용 MyBatis 구현(`repository/myba
 
 다른 확인·후보:
 
-- `FOR UPDATE SKIP LOCKED` 는 확인했다(WD-487). 운영 빈 전환은 WD-491 이다.
+- `FOR UPDATE SKIP LOCKED` 는 확인했다(WD-487). ~~운영 빈 전환은 WD-491 이다.~~ **WD-709 완료** — Tibero 컨텍스트에서 `NotificationOutboxRepository` 빈이 `MyBatisNotificationOutboxRepository` 로 뽑히는 것을 `NotificationOutboxTiberoWiringTest` 가 본다.
 - 별도 이슈 후보: `TiberoDataTableStore` 의 JVM 안 잠금은 여러 API 인스턴스 사이를 막지 못한다. Tibero 맞바꿈과 Tibero Python 읽기 권한 동기화(플랫폼 `PlatformLocks`)가 서로 막지 못하는 것도 여기에 넣는다.
 - 별도 이슈 후보: 분리 모드에서 실행기를 끈 로컬 PYTHON REPLACE 가 동시에 많으면 `@DataStoreDb` 풀이 고갈된다(위 풀 크기 항목).
 
@@ -349,7 +357,7 @@ SELECT STATUS FROM DBA_OBJECTS
 #### 넘겨받을 일(추적 목록)
 
 **WD-491(MyBatis 구현)**
-- Tibero 의 테넌트 해석 루틴(`FH_TENANT` 의 트리거·슬랙 워크스페이스 해석)은 **테넌트 id 만** 돌려준다. MyBatis 구현은 `TriggerRef.triggerId`·`SlackWorkspaceRef.workspaceId` 를 테넌트를 심은 뒤 RLS 아래에서 다시 읽어 채워야 한다(지금 호출처는 `ref.tenantId()` 만 쓴다). 트리거는 **WD-708 완료**(`MyBatisTriggerTenantResolver`, 위 「묶음 ③·⑥ 에서 더한 규칙」). 슬랙 워크스페이스는 묶음 ④ 에 남는다.
+- Tibero 의 테넌트 해석 루틴(`FH_TENANT` 의 트리거·슬랙 워크스페이스 해석)은 **테넌트 id 만** 돌려준다. MyBatis 구현은 `TriggerRef.triggerId`·`SlackWorkspaceRef.workspaceId` 를 테넌트를 심은 뒤 RLS 아래에서 다시 읽어 채워야 한다(지금 호출처는 `ref.tenantId()` 만 쓴다). 트리거는 **WD-708 완료**(`MyBatisTriggerTenantResolver`, 위 「묶음 ③·⑥ 에서 더한 규칙」). 슬랙 워크스페이스는 **WD-709 완료**(`MyBatisSlackWorkspaceTenantResolver`, 위 「묶음 ④·⑤ 에서 더한 규칙」).
 - ~~`FH_TENANT.set_tenant` 소스 검사(`PlatformDbPgSpecificSourceTest`)를 `src/main/resources` 아래 MyBatis XML 까지 넓힌다.~~ **WD-706 완료.**
 - ~~JobRunr 풀은 런타임 계정으로 붙고 `CURRENT_SCHEMA=<소유자>` 다. 두 계정 모드에서 Oracle 저장소 제공자가 JobRunr 테이블을 제대로 찾는지 확인한다.~~ **WD-706 완료.** 설정 변경 없이 동작한다(`TiberoJobRunrRuntimeAccountLiveTest`).
 
@@ -386,7 +394,7 @@ SELECT STATUS FROM DBA_OBJECTS
 | ① 공통·인증 | auth·user·role·permission·tenant·settings·platform·audit·job | 15 (처음엔 14로 셌다. **WD-706 완료**) |
 | ② 데이터셋 | dataset | 13 (짝 검사 대상 리포지토리 12 + `JooqDatasetMetaReader`. **WD-707 완료**) |
 | ③ 파이프라인 | pipeline·mapping·apiconnection | 9 (**WD-708 완료**) |
-| ④ 알림·선제 메시지 | notification·proactive (PoC 2개 포함) | 13 |
+| ④ 알림·선제 메시지 | notification·proactive (PoC 2개 포함) | 13 (**WD-709 완료**) |
 | ⑤ 분석·대시보드 | analytics·dashboard | 7 |
 | ⑥ 보안 등급·온톨로지·그래프 | securitylevel·ontology·graphreview·graphingest (PoC 1개 포함) | 11 (**WD-711 완료**) |
 | ⑦ AI·문서·파일 | ai·document·embedding·file | 6 (**WD-712 완료**) |

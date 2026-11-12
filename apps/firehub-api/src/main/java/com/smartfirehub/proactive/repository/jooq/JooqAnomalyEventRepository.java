@@ -2,6 +2,7 @@ package com.smartfirehub.proactive.repository.jooq;
 
 import static org.jooq.impl.DSL.*;
 
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.proactive.dto.AnomalyEvent;
 import com.smartfirehub.proactive.repository.AnomalyEventRepository;
 import com.smartfirehub.proactive.util.ProactiveTime;
@@ -26,6 +27,7 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @Transactional
 @Repository
+@ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
 public class JooqAnomalyEventRepository implements AnomalyEventRepository {
 
@@ -73,7 +75,7 @@ public class JooqAnomalyEventRepository implements AnomalyEventRepository {
             field("detected_at", LocalDateTime.class))
         .from(table("anomaly_event"))
         .where(field("job_id").eq(jobId))
-        .orderBy(field("detected_at").desc())
+        .orderBy(field("detected_at").desc(), field("id").desc())
         .limit(limit)
         .fetch(this::toRecord);
   }

@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  이상탐지 폴러 조회 문장(WD-709) — JooqSystemMetricRepository 와 같은 의미. 두 DB 같은 문장이라 databaseId 가 없다.
+  proactive_job·dataset·pipeline_execution 은 RLS 테이블이라 tenant_id 를 술어로 쓰지 않는다(호출자 트랜잭션 컨텍스트가 거른다).
+  enabled 는 공용 sqlTrue(PG TRUE, Tibero 1). config(jsonb/JSON)는 jsonText 로 문자열로 읽는다.
+  countDatasets: 공용 가시성 조각(visible)을 dataset 이름 관례(별칭 없음)로 건다.
+  since 는 자바 UTC 벽시계 값(jOOQ 와 같다).
+-->
+<mapper namespace="com.smartfirehub.proactive.repository.mybatis.SystemMetricMapper">
+
+  <resultMap id="polledJob" type="com.smartfirehub.proactive.repository.SystemMetricRepository$PolledJob">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="user_id" javaType="java.lang.Long"/>
+      <arg column="config" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <select id="findEnabledAnomalyJobs" resultMap="polledJob">
+    SELECT id, user_id,
+           <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.jsonText"><property name="col" value="config"/><property name="alias" value="config"/></include>
+      FROM proactive_job
+     WHERE enabled = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>
+       AND trigger_type IN ('ANOMALY', 'BOTH')
+  </select>
+
+  <select id="countPipelineExecutionsSince" resultType="int">
+    SELECT COUNT(*) FROM pipeline_execution WHERE created_at &gt;= #{since}
+  </select>
+
+  <select id="countFailedPipelineExecutionsSince" resultType="int">
+    SELECT COUNT(*) FROM pipeline_execution WHERE created_at &gt;= #{since} AND status = 'FAILED'
+  </select>
+
+  <select id="countDatasets" resultType="int">
+    SELECT COUNT(*) FROM dataset
+     WHERE <include refid="com.smartfirehub.securitylevel.repository.mybatis.DatasetVisibility.visible">
+             <property name="idCol" value="dataset.id"/>
+             <property name="levelCol" value="dataset.security_level_id"/>
+           </include>
+  </select>
+
+  <select id="countDistinctPipelineExecutorsSince" resultType="int">
+    SELECT COUNT(*) FROM (
+      SELECT DISTINCT executed_by FROM pipeline_execution WHERE created_at &gt;= #{since}
+    ) executors
+  </select>
+
+</mapper>

@@ -1395,6 +1395,258 @@ public class PgAccessFixtures implements AccessFixtures {
   }
 
   @Override
+  public long createSlackWorkspace(long tenantId, String teamId, boolean revoked) {
+    return inTenant(
+        tenantId,
+        () ->
+            dsl.fetchOne(
+                    "insert into slack_workspace (team_id, team_name, bot_user_id, bot_token_enc,"
+                        + " signing_secret_enc, revoked_at) values (?, 'fx-team', 'UBOT', 'enc-bot',"
+                        + " 'enc-sign', case when ? then now() else null end) returning id",
+                    teamId,
+                    revoked)
+                .get(0, Long.class));
+  }
+
+  @Override
+  public long createProactiveJob(
+      long tenantId,
+      long userId,
+      String name,
+      boolean enabled,
+      String triggerType,
+      String configJson) {
+    // config 가 null 이면 열 기본값({})에 맡긴다 — jsonb 로 CAST 해 문자열을 그대로 넣는다.
+    return inTenant(
+        tenantId,
+        () ->
+            dsl.fetchOne(
+                    "insert into proactive_job (user_id, name, prompt, cron_expression, enabled,"
+                        + " trigger_type, config) values (?, ?, 'fx prompt', '0 0 9 * * *', ?, ?,"
+                        + " coalesce(cast(? as jsonb), '{}'::jsonb)) returning id",
+                    userId,
+                    name,
+                    enabled,
+                    triggerType,
+                    configJson)
+                .get(0, Long.class));
+  }
+
+  @Override
+  public long createProactiveJob(long tenantId, long userId, String name) {
+    return inTenant(
+        tenantId,
+        () ->
+            dsl.fetchOne(
+                    "insert into proactive_job (user_id, name, prompt, cron_expression, enabled)"
+                        + " values (?, ?, 'fx prompt', '0 0 9 * * *', true) returning id",
+                    userId,
+                    name)
+                .get(0, Long.class));
+  }
+
+  @Override
+  public long createReportTemplate(long tenantId, Long userId, String name) {
+    return inTenant(
+        tenantId,
+        () ->
+            dsl.fetchOne(
+                    "insert into report_template (name, user_id) values (?, ?) returning id",
+                    name,
+                    userId)
+                .get(0, Long.class));
+  }
+
+  @Override
+  public ProactiveJobStored proactiveJobStored(long id) {
+    return ownerJdbc
+        .query(
+            "select name, prompt, template_id, cron_expression, timezone, enabled, trigger_type,"
+                + " config::text as config, last_executed_at, next_execute_at, created_at,"
+                + " updated_at from proactive_job where id = ?",
+            (rs, i) ->
+                new ProactiveJobStored(
+                    rs.getString("name"),
+                    rs.getString("prompt"),
+                    rs.getObject("template_id", Long.class),
+                    rs.getString("cron_expression"),
+                    rs.getString("timezone"),
+                    rs.getBoolean("enabled"),
+                    rs.getString("trigger_type"),
+                    rs.getString("config"),
+                    rs.getObject("last_executed_at", LocalDateTime.class),
+                    rs.getObject("next_execute_at", LocalDateTime.class),
+                    rs.getObject("created_at", LocalDateTime.class),
+                    rs.getObject("updated_at", LocalDateTime.class)),
+            id)
+        .stream()
+        .findFirst()
+        .orElse(null);
+  }
+
+  @Override
+  public void setProactiveJobUpdatedAt(long id, LocalDateTime updatedAt) {
+    ownerJdbc.update("update proactive_job set updated_at = ? where id = ?", updatedAt, id);
+  }
+
+  @Override
+  public ReportTemplateStored reportTemplateStored(long id) {
+    return ownerJdbc
+        .query(
+            "select name, description, sections::text as sections, style, user_id, created_at,"
+                + " updated_at from report_template where id = ?",
+            (rs, i) ->
+                new ReportTemplateStored(
+                    rs.getString("name"),
+                    rs.getString("description"),
+                    rs.getString("sections"),
+                    rs.getString("style"),
+                    rs.getObject("user_id", Long.class),
+                    rs.getObject("created_at", LocalDateTime.class),
+                    rs.getObject("updated_at", LocalDateTime.class)),
+            id)
+        .stream()
+        .findFirst()
+        .orElse(null);
+  }
+
+  @Override
+  public void setReportTemplateUpdatedAt(long id, LocalDateTime updatedAt) {
+    ownerJdbc.update("update report_template set updated_at = ? where id = ?", updatedAt, id);
+  }
+
+  @Override
+  public void setReportTemplateSectionsJson(long id, String sectionsJson) {
+    ownerJdbc.update(
+        "update report_template set sections = cast(? as jsonb) where id = ?", sectionsJson, id);
+  }
+
+  @Override
+  public long createProactiveJobExecution(long tenantId, long jobId, String status) {
+    return inTenant(
+        tenantId,
+        () ->
+            dsl.fetchOne(
+                    "insert into proactive_job_execution (job_id, status) values (?, ?) returning id",
+                    jobId,
+                    status)
+                .get(0, Long.class));
+  }
+
+  @Override
+  public ProactiveExecutionStored proactiveExecutionStored(long id) {
+    return ownerJdbc
+        .query(
+            "select job_id, status, started_at, completed_at, error_message, result::text as result,"
+                + " delivered_channels, security_level_id, heartbeat_at, created_at"
+                + " from proactive_job_execution where id = ?",
+            (rs, i) ->
+                new ProactiveExecutionStored(
+                    rs.getLong("job_id"),
+                    rs.getString("status"),
+                    rs.getObject("started_at", LocalDateTime.class),
+                    rs.getObject("completed_at", LocalDateTime.class),
+                    rs.getString("error_message"),
+                    rs.getString("result"),
+                    rs.getString("delivered_channels"),
+                    rs.getObject("security_level_id", Long.class),
+                    rs.getObject("heartbeat_at", LocalDateTime.class),
+                    rs.getObject("created_at", LocalDateTime.class)),
+            id)
+        .stream()
+        .findFirst()
+        .orElse(null);
+  }
+
+  @Override
+  public void setProactiveExecutionField(long id, String column, Object value) {
+    String col = AccessFixtures.proactiveExecutionField(column);
+    if (value == null) {
+      ownerJdbc.update("update proactive_job_execution set " + col + " = null where id = ?", id);
+      return;
+    }
+    ownerJdbc.update("update proactive_job_execution set " + col + " = ? where id = ?", value, id);
+  }
+
+  @Override
+  public void setProactiveExecutionResultJson(long id, String resultJson) {
+    ownerJdbc.update(
+        "update proactive_job_execution set result = cast(? as jsonb) where id = ?",
+        resultJson,
+        id);
+  }
+
+  @Override
+  public OAuthStateStored oauthStateStored(String state) {
+    return ownerJdbc
+        .query(
+            "select user_id, channel_type, tenant_id, consumed_at is not null as consumed"
+                + " from oauth_state where state = ?",
+            (rs, i) ->
+                new OAuthStateStored(
+                    rs.getLong("user_id"),
+                    rs.getString("channel_type"),
+                    rs.getLong("tenant_id"),
+                    rs.getBoolean("consumed")),
+            state)
+        .stream()
+        .findFirst()
+        .orElse(null);
+  }
+
+  @Override
+  public Boolean userChannelPreferenceEnabled(long tenantId, long userId, String channelType) {
+    return ownerJdbc
+        .query(
+            "select enabled from user_channel_preference"
+                + " where tenant_id = ? and user_id = ? and channel_type = ?",
+            (rs, i) -> rs.getBoolean(1),
+            tenantId,
+            userId,
+            channelType)
+        .stream()
+        .findFirst()
+        .orElse(null);
+  }
+
+  @Override
+  public SlackWorkspaceStored slackWorkspaceStored(long id) {
+    return ownerJdbc
+        .query(
+            "select team_id, team_name, bot_user_id, bot_token_enc, signing_secret_enc,"
+                + " installed_by_user_id, revoked_at is not null as revoked"
+                + " from slack_workspace where id = ?",
+            (rs, i) ->
+                new SlackWorkspaceStored(
+                    rs.getString("team_id"),
+                    rs.getString("team_name"),
+                    rs.getString("bot_user_id"),
+                    rs.getString("bot_token_enc"),
+                    rs.getString("signing_secret_enc"),
+                    rs.getObject("installed_by_user_id", Long.class),
+                    rs.getBoolean("revoked")),
+            id)
+        .stream()
+        .findFirst()
+        .orElse(null);
+  }
+
+  @Override
+  public void setSlackSigningSecret(long id, String enc) {
+    ownerJdbc.update("update slack_workspace set signing_secret_enc = ? where id = ?", enc, id);
+  }
+
+  @Override
+  public void setSlackPreviousSigningSecret(long id, String enc, java.time.Instant expiresAt) {
+    ownerJdbc.update(
+        "update slack_workspace set previous_signing_secret_enc = ?,"
+            + " previous_signing_secret_expires_at = ? where id = ?",
+        enc,
+        java.time.OffsetDateTime.ofInstant(expiresAt, java.time.ZoneOffset.UTC),
+        id);
+  }
+
+  @Override
   public void cleanup() {
     for (long t : tenants) {
       // 적재 이력은 테넌트 FK 만 있어(온톨로지 CASCADE 밖) 테넌트 정리 전에 지운다.
@@ -1410,6 +1662,11 @@ public class PgAccessFixtures implements AccessFixtures {
     // 테넌트 없는(플랫폼) 감사 행은 GUC 없는 트랜잭션에서만 보인다 — 사용자 FK 를 잡으므로 사용자보다 먼저 지운다.
     for (long a : auditLogs) {
       inTenant(null, () -> dsl.execute("delete from audit_log where id = ?", a));
+    }
+    // 바인딩은 다른 테넌트의 슬랙 워크스페이스를 참조할 수 있어(같은 workspace 를 B 가 upsert, WD-709) 모든 테넌트의 바인딩을
+    // 워크스페이스 삭제보다 먼저 지운다 — 테넌트별 루프 안에서만 지우면 A 의 워크스페이스 삭제가 B 의 바인딩 FK 에 막힌다.
+    for (long t : tenants) {
+      inTenant(t, () -> dsl.execute("delete from user_channel_binding where tenant_id = ?", t));
     }
     for (long t : tenants) {
       // 프로비저닝·리포지토리가 만든 RBAC·시드 행과 설정 오버라이드를 그 테넌트 컨텍스트 안에서 지운다. 감사·작업·데이터셋은
@@ -1438,6 +1695,14 @@ public class PgAccessFixtures implements AccessFixtures {
             dsl.execute("delete from dataset where tenant_id = ?", t);
             dsl.execute("delete from tenant_settings where tenant_id = ?", t);
             dsl.execute("delete from embedding_reembed_state where tenant_id = ?", t);
+            // 선제 작업(실행 이력 CASCADE)은 사용자·템플릿을 참조하고, 슬랙 워크스페이스는 테넌트·사용자를 참조한다(WD-709·710).
+            dsl.execute("delete from proactive_job where tenant_id = ?", t);
+            // 채널 선호는 사용자 FK 가 CASCADE 가 아니라 사용자보다 먼저, oauth_state 도 같은 이유로 함께 지운다(WD-709).
+            dsl.execute("delete from user_channel_preference where tenant_id = ?", t);
+            dsl.execute("delete from oauth_state where tenant_id = ?", t);
+            // 바인딩의 workspace_id FK 는 CASCADE 가 아니라 워크스페이스보다 먼저 지운다(WD-709).
+            dsl.execute("delete from user_channel_binding where tenant_id = ?", t);
+            dsl.execute("delete from slack_workspace where tenant_id = ?", t);
             TenantRlsTestSupport.deleteRbacCascade(dsl, t);
             return null;
           });

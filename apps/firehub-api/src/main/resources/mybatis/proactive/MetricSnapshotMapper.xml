@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  metric_snapshot 문장(WD-709) — JooqMetricSnapshotRepository 와 같은 의미. 두 DB 같은 문장이라 databaseId 가 없다.
+  tenant_id 는 INSERT 값·WHERE 술어로 쓰지 않는다. 시각(collected_at·cutoff)은 자바 UTC 벽시계 값을 그대로 바인딩한다.
+  정렬은 collected_at DESC 에 id DESC 를 더한다(jOOQ 와 같다). 최신 1건은 공용 limitRows.
+-->
+<mapper namespace="com.smartfirehub.proactive.repository.mybatis.MetricSnapshotMapper">
+
+  <resultMap id="snapshot" type="com.smartfirehub.proactive.repository.MetricSnapshotRepository$MetricSnapshot">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="job_id" javaType="java.lang.Long"/>
+      <arg column="metric_id" javaType="java.lang.String"/>
+      <arg column="metric_value" javaType="_double"/>
+      <arg column="collected_at" javaType="java.time.LocalDateTime"/>
+    </constructor>
+  </resultMap>
+
+  <insert id="insert">
+    INSERT INTO metric_snapshot (job_id, metric_id, value, collected_at)
+    VALUES (#{jobId}, #{metricId}, #{value}, #{collectedAt})
+  </insert>
+
+  <select id="findRecent" resultMap="snapshot">
+    SELECT id, job_id, metric_id, value AS metric_value, collected_at
+      FROM metric_snapshot
+     WHERE job_id = #{jobId} AND metric_id = #{metricId} AND collected_at &gt;= #{cutoff}
+     ORDER BY collected_at DESC, id DESC
+  </select>
+
+  <select id="findLatest" resultMap="snapshot">
+    SELECT id, job_id, metric_id, value AS metric_value, collected_at
+      FROM metric_snapshot
+     WHERE job_id = #{jobId} AND metric_id = #{metricId}
+     ORDER BY collected_at DESC, id DESC
+     <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.limitRows"><property name="n" value="1"/></include>
+  </select>
+
+  <delete id="deleteOlderThan">
+    DELETE FROM metric_snapshot WHERE collected_at &lt; #{cutoff}
+  </delete>
+
+</mapper>

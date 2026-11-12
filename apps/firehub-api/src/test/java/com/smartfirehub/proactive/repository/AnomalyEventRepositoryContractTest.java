@@ -1,124 +1,115 @@
 package com.smartfirehub.proactive.repository;
 
-import static com.smartfirehub.jooq.Tables.PROACTIVE_JOB;
-import static com.smartfirehub.jooq.Tables.USER;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.smartfirehub.proactive.dto.AnomalyEvent;
-import com.smartfirehub.support.IntegrationTestBase;
+import com.smartfirehub.proactive.util.ProactiveTime;
+import com.smartfirehub.user.repository.TenantPairContractBase;
 import java.util.List;
-import org.jooq.DSLContext;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.transaction.annotation.Transactional;
 
 /**
- * AnomalyEventRepository 통합 테스트.
+ * AnomalyEventRepository 계약 테스트 — 공개 메서드 2 개 전부(WD-485·WD-709). jOOQ·MyBatis 는 PG, TiberoMyBatis 는
+ * Tibero 실서버(두 계정 RLS)다.
  *
- * <p>실제 테스트 DB(smartfirehub_test)를 사용하여 이상 탐지 이벤트의 저장 및 조회 기능을 검증한다. proactive_job은 user에 대한 FK를
- * 가지므로, 테스트 전에 user → proactive_job 순서로 데이터를 삽입한다. @Transactional 어노테이션으로 각 테스트 후 DB 상태를 자동으로 롤백한다.
- *
- * <p>인터페이스 계약 테스트 — 구현마다 하위 클래스로 실행한다(WD-485).
+ * <p>선행 데이터(사용자·선제 작업)는 {@code fx} 픽스처 seam 으로 만든다 — jOOQ DSLContext 를 직접 쓰지 않아 세 구현이 같은 시나리오를
+ * 공유한다. 값은 DOUBLE PRECISION / BINARY_DOUBLE 왕복(소수·음수)을 확인한다.
  */
-@Transactional
-abstract class AnomalyEventRepositoryContractTest extends IntegrationTestBase {
+abstract class AnomalyEventRepositoryContractTest extends TenantPairContractBase {
 
   /** 계약 대상 리포지토리 — 구현별 하위 클래스가 제공한다. */
   protected abstract AnomalyEventRepository repository();
 
-  /** jOOQ DSLContext — 테스트용 선행 데이터(user, proactive_job) 삽입에 사용 */
-  @Autowired private DSLContext dsl;
+  private long jobA;
+  private long jobB;
 
-  /** 테스트에서 사용할 proactive_job ID */
-  private Long testJobId;
-
-  /**
-   * 각 테스트 실행 전에 FK 제약 조건을 만족하는 선행 데이터를 삽입한다. anomaly_event.job_id → proactive_job.id → user.id 순으로
-   * 의존성이 있으므로 user → proactive_job 순으로 먼저 생성한다.
-   */
   @BeforeEach
-  void setUp() {
-    // user 레코드 먼저 삽입 (proactive_job FK 요건 충족)
-    Long testUserId =
-        dsl.insertInto(USER)
-            .set(USER.USERNAME, "anomaly_test_user")
-            .set(USER.PASSWORD, "password")
-            .set(USER.NAME, "Anomaly Test User")
-            .set(USER.EMAIL, "anomaly_test@example.com")
-            .returning(USER.ID)
-            .fetchOne()
-            .getId();
-
-    // proactive_job 레코드 삽입 (anomaly_event FK 요건 충족)
-    testJobId =
-        dsl.insertInto(PROACTIVE_JOB)
-            .set(PROACTIVE_JOB.USER_ID, testUserId)
-            .set(PROACTIVE_JOB.NAME, "Anomaly Test Job")
-            .set(PROACTIVE_JOB.PROMPT, "Test prompt")
-            .set(PROACTIVE_JOB.CRON_EXPRESSION, "0 9 * * *")
-            .set(PROACTIVE_JOB.TIMEZONE, "Asia/Seoul")
-            .set(PROACTIVE_JOB.ENABLED, true)
-            .returning(PROACTIVE_JOB.ID)
-            .fetchOne()
-            .getId();
+  void setUpJobs() {
+    long userA = fx.createUser(prefix + "-ua", null);
+    long userB = fx.createUser(prefix + "-ub", null);
+    jobA = fx.createProactiveJob(tenantA, userA, "Anomaly Test Job A");
+    jobB = fx.createProactiveJob(tenantB, userB, "Anomaly Test Job B");
   }
 
-  /**
-   * 이상 탐지 이벤트를 저장한 후 jobId로 조회 시 올바른 데이터가 반환되는지 검증한다. metricName과 deviation 필드 값이 저장된 그대로 조회되어야 한다.
-   */
+  private AnomalyEvent event(long jobId, String metricId, String name, double cur, double dev) {
+    return new AnomalyEvent(
+        jobId, 1L, metricId, name, cur, 12.3, 5.2, dev, "medium", List.of(10.0, 12.0, 14.0));
+  }
+
   @Test
+  @DisplayName("저장한 이벤트를 jobId 로 조회하면 값이 그대로 돌아온다(소수·음수 BINARY_DOUBLE 왕복)")
   void save_and_findByJobId() {
-    // Given: 이상 탐지 이벤트
-    var event =
-        new AnomalyEvent(
-            testJobId,
-            1L,
-            "pipeline_failure_rate",
-            "파이프라인 실패율",
-            45.5,
-            12.3,
-            5.2,
-            6.38,
-            "medium",
-            List.of(10.0, 12.0, 14.0));
+    runA(() -> repository().save(event(jobA, "pipeline_failure_rate", "파이프라인 실패율", -45.5, 6.38)));
 
-    // When: 저장
-    repository().save(event);
+    var results = inA(() -> repository().findByJobId(jobA, 10));
 
-    // Then: 조회 시 저장된 이벤트 반환
-    var results = repository().findByJobId(testJobId, 10);
-    assertThat(results).isNotEmpty();
-    assertThat(results.get(0).metricName()).isEqualTo("파이프라인 실패율");
-    assertThat(results.get(0).deviation()).isEqualTo(6.38);
+    assertThat(results).hasSize(1);
+    var r = results.get(0);
+    assertThat(r.id()).isNotNull();
+    assertThat(r.jobId()).isEqualTo(jobA);
+    assertThat(r.metricId()).isEqualTo("pipeline_failure_rate");
+    assertThat(r.metricName()).isEqualTo("파이프라인 실패율");
+    assertThat(r.currentValue()).isEqualTo(-45.5);
+    assertThat(r.mean()).isEqualTo(12.3);
+    assertThat(r.stddev()).isEqualTo(5.2);
+    assertThat(r.deviation()).isEqualTo(6.38);
+    assertThat(r.sensitivity()).isEqualTo("medium");
+    // detected_at 은 자바 UTC 값을 바인딩한다 — 방금 저장했으므로 UTC 기준 1분 안이어야 한다.
+    assertThat(r.detectedAt())
+        .isBetween(ProactiveTime.nowUtc().minusMinutes(1), ProactiveTime.nowUtc().plusMinutes(1));
   }
 
-  /**
-   * findByJobId 호출 시 limit 파라미터가 실제로 반환 건수를 제한하는지 검증한다. 3개를 저장하고 limit=2로 조회하면 정확히 2개만 반환되어야 한다.
-   */
   @Test
+  @DisplayName("limit 이 반환 건수를 제한한다")
   void findByJobId_respects_limit() {
-    // Given: 이벤트 3개 저장
     for (int i = 0; i < 3; i++) {
-      repository()
-          .save(
-              new AnomalyEvent(
-                  testJobId,
-                  1L,
-                  "metric_" + i,
-                  "메트릭 " + i,
-                  i * 10.0,
-                  5.0,
-                  2.0,
-                  i * 1.5,
-                  "high",
-                  List.of()));
+      int n = i;
+      runA(() -> repository().save(event(jobA, "metric_" + n, "메트릭 " + n, n * 10.0, n * 1.5)));
     }
 
-    // When: limit 2로 조회
-    var results = repository().findByJobId(testJobId, 2);
+    assertThat(inA(() -> repository().findByJobId(jobA, 2))).hasSize(2);
+    assertThat(inA(() -> repository().findByJobId(jobA, 10))).hasSize(3);
+  }
 
-    // Then: 최대 2개만 반환
-    assertThat(results).hasSize(2);
+  @Test
+  @DisplayName("최근 순(detected_at DESC, 동시각이면 id DESC)으로 돌려준다")
+  void findByJobId_ordersMostRecentFirst() {
+    for (int i = 0; i < 3; i++) {
+      int n = i;
+      runA(() -> repository().save(event(jobA, "m" + n, "메트릭 " + n, n, n)));
+    }
+
+    var results = inA(() -> repository().findByJobId(jobA, 10));
+
+    // 마지막에 저장한 것(m2)이 먼저 온다 — 같은 마이크로초여도 id DESC 로 결정된다.
+    assertThat(results)
+        .extracting(AnomalyEventRepository.AnomalyEventRecord::metricId)
+        .containsExactly("m2", "m1", "m0");
+  }
+
+  @Test
+  @DisplayName("없는 작업은 빈 목록이다")
+  void findByJobId_unknownJobIsEmpty() {
+    runA(() -> repository().save(event(jobA, "only_a", "A 전용", 1.0, 1.0)));
+
+    assertThat(inA(() -> repository().findByJobId(jobA + 9_999_999L, 10))).isEmpty();
+  }
+
+  @Test
+  @DisplayName("다른 테넌트는 남의 작업 이벤트를 못 본다(RLS)")
+  void findByJobId_hidesOtherTenant() {
+    runA(() -> repository().save(event(jobA, "only_a", "A 전용", 1.0, 1.0)));
+    inB(
+        () -> {
+          repository().save(event(jobB, "only_b", "B 전용", 2.0, 2.0));
+          return null;
+        });
+
+    assertThat(inB(() -> repository().findByJobId(jobA, 10))).isEmpty();
+    assertThat(inB(() -> repository().findByJobId(jobB, 10)))
+        .extracting(AnomalyEventRepository.AnomalyEventRecord::metricId)
+        .containsExactly("only_b");
   }
 }

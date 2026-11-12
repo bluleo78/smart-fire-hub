@@ -1,5 +1,6 @@
 package com.smartfirehub.notification.repository.jooq;
 
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.notification.repository.SlackWorkspaceTenantResolver;
 import com.smartfirehub.notification.repository.SlackWorkspaceTenantResolver.SlackWorkspaceRef;
 import java.util.Optional;
@@ -32,6 +33,7 @@ import org.springframework.stereotype.Repository;
  * 를 우회하므로 GUC 가 필요 없다.
  */
 @Repository
+@ConditionalOnPostgresPlatformDb
 public class JooqSlackWorkspaceTenantResolver implements SlackWorkspaceTenantResolver {
 
   private final DSLContext dsl;

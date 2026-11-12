@@ -1,0 +1,166 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  proactive_job 문장(WD-709) — JooqProactiveJobRepository 와 같은 의미. 규칙은 MyBatisPlatformConfig javadoc.
+  proactive_job·report_template 은 테넌트 정책(RLS) 대상이라 tenant_id 를 술어·INSERT 값으로 쓰지 않는다(DEFAULT 가 채운다).
+  예외(스펙 D1): 인터페이스가 테넌트를 인자로 받는 findAllEnabled·findWorkspaceRows·findWorkspaceRow·disableInTenant·deleteInTenant 는
+  tenant_id 술어를 그대로 둔다. "user" 는 정책 없는 조인(userTable).
+  - config 는 PG jsonb / Tibero JSON 열: 읽기는 jsonText, 쓰기는 PlatformSql.jsonValue. enabled 는 boolLiteral/sqlTrue.
+  - created_at·updated_at 은 Tibero 삽입에서 DB 시계(dbNow)로 명시한다(PG 는 jOOQ 처럼 열 DEFAULT). 수정·끄기의 updated_at 은 자바 시각.
+  - updateLastExecuted·updateNextExecuteAt 은 updated_at 을 건드리지 않는다(WD-364).
+-->
+<mapper namespace="com.smartfirehub.proactive.repository.mybatis.ProactiveJobMapper">
+
+  <resultMap id="jobRow" type="com.smartfirehub.proactive.repository.mybatis.ProactiveJobRows$JobRow">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="user_id" javaType="java.lang.Long"/>
+      <arg column="template_id" javaType="java.lang.Long"/>
+      <arg column="template_name" javaType="java.lang.String"/>
+      <arg column="name" javaType="java.lang.String"/>
+      <arg column="prompt" javaType="java.lang.String"/>
+      <arg column="cron_expression" javaType="java.lang.String"/>
+      <arg column="timezone" javaType="java.lang.String"/>
+      <arg column="enabled" javaType="java.lang.Boolean"/>
+      <arg column="trigger_type" javaType="java.lang.String"/>
+      <arg column="config" javaType="java.lang.String"/>
+      <arg column="last_executed_at" javaType="java.time.LocalDateTime"/>
+      <arg column="next_execute_at" javaType="java.time.LocalDateTime"/>
+      <arg column="created_at" javaType="java.time.LocalDateTime"/>
+      <arg column="updated_at" javaType="java.time.LocalDateTime"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="versionRow" type="com.smartfirehub.proactive.repository.mybatis.ProactiveJobRows$VersionRow">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="updated_at" javaType="java.time.LocalDateTime"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="workspaceRow" type="com.smartfirehub.proactive.repository.ProactiveJobRepository$WorkspaceJobRow">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="name" javaType="java.lang.String"/>
+      <arg column="user_id" javaType="java.lang.Long"/>
+      <arg column="owner_name" javaType="java.lang.String"/>
+      <arg column="enabled" javaType="java.lang.Boolean"/>
+      <arg column="next_execute_at" javaType="java.time.LocalDateTime"/>
+      <arg column="timezone" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <sql id="jobColumns">
+    proactive_job.id AS id, proactive_job.user_id AS user_id, proactive_job.template_id AS template_id,
+    report_template.name AS template_name, proactive_job.name AS name, proactive_job.prompt AS prompt,
+    proactive_job.cron_expression AS cron_expression, proactive_job.timezone AS timezone,
+    proactive_job.enabled AS enabled, proactive_job.trigger_type AS trigger_type,
+    <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.jsonText"><property name="col" value="proactive_job.config"/><property name="alias" value="config"/></include>,
+    proactive_job.last_executed_at AS last_executed_at, proactive_job.next_execute_at AS next_execute_at,
+    proactive_job.created_at AS created_at, proactive_job.updated_at AS updated_at
+  </sql>
+
+  <sql id="jobFrom">
+    FROM proactive_job
+    LEFT JOIN report_template ON proactive_job.template_id = report_template.id
+  </sql>
+
+  <select id="findByUserId" resultMap="jobRow">
+    SELECT <include refid="jobColumns"/> <include refid="jobFrom"/>
+     WHERE proactive_job.user_id = #{userId}
+     ORDER BY proactive_job.id DESC
+  </select>
+
+  <select id="findByIdAndUser" resultMap="jobRow">
+    SELECT <include refid="jobColumns"/> <include refid="jobFrom"/>
+     WHERE proactive_job.id = #{id} AND proactive_job.user_id = #{userId}
+  </select>
+
+  <select id="findById" resultMap="jobRow">
+    SELECT <include refid="jobColumns"/> <include refid="jobFrom"/>
+     WHERE proactive_job.id = #{id}
+  </select>
+
+  <!-- 명시 tenant_id 술어(스펙 D1) -->
+  <select id="findAllEnabled" resultMap="jobRow">
+    SELECT <include refid="jobColumns"/> <include refid="jobFrom"/>
+     WHERE proactive_job.enabled = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>
+       AND proactive_job.tenant_id = #{tenantId}
+  </select>
+
+  <insert id="insert" useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+    INSERT INTO proactive_job (user_id, name, prompt, template_id, cron_expression, timezone, enabled, trigger_type, config<include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.insertTimestampColumns"/>)
+    VALUES (#{userId}, #{name}, #{prompt,jdbcType=VARCHAR}, #{templateId,jdbcType=BIGINT},
+            #{cronExpression,jdbcType=VARCHAR}, #{timezone},
+            <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.boolLiteral"><property name="v" value="enabled"/></include>,
+            #{triggerType},
+            <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.jsonValue"><property name="param" value="configJson"/></include><include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.insertTimestampValues"/>)
+  </insert>
+
+  <select id="lockVersionById" resultMap="versionRow">
+    SELECT id, updated_at FROM proactive_job WHERE id = #{id} FOR UPDATE
+  </select>
+
+  <!-- 동적 SET: null 은 유지. templateId 가 있으면 교체, 없고 clearTemplate 이면 NULL(WD-136). -->
+  <update id="update">
+    UPDATE proactive_job
+       SET updated_at = #{updatedAt}
+       <if test="name != null">, name = #{name}</if>
+       <if test="prompt != null">, prompt = #{prompt}</if>
+       <if test="templateId != null">, template_id = #{templateId}</if>
+       <if test="templateId == null and clearTemplate">, template_id = NULL</if>
+       <if test="cronExpression != null">, cron_expression = #{cronExpression}</if>
+       <if test="timezone != null">, timezone = #{timezone}</if>
+       <if test="enabled != null">, enabled = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.boolLiteral"><property name="v" value="enabled"/></include></if>
+       <if test="triggerType != null">, trigger_type = #{triggerType}</if>
+       <if test="configJson != null">, config = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.jsonValue"><property name="param" value="configJson"/></include></if>
+     WHERE id = #{id} AND user_id = #{userId}
+  </update>
+
+  <update id="updateLastExecuted">
+    UPDATE proactive_job
+       SET last_executed_at = #{lastExecutedAt,jdbcType=TIMESTAMP}, next_execute_at = #{nextExecuteAt,jdbcType=TIMESTAMP}
+     WHERE id = #{id}
+  </update>
+
+  <update id="updateNextExecuteAt">
+    UPDATE proactive_job SET next_execute_at = #{nextExecuteAt,jdbcType=TIMESTAMP} WHERE id = #{id}
+  </update>
+
+  <delete id="delete">
+    DELETE FROM proactive_job WHERE id = #{id} AND user_id = #{userId}
+  </delete>
+
+  <sql id="workspaceColumns">
+    proactive_job.id AS id, proactive_job.name AS name, proactive_job.user_id AS user_id, u.name AS owner_name,
+    proactive_job.enabled AS enabled, proactive_job.next_execute_at AS next_execute_at, proactive_job.timezone AS timezone
+  </sql>
+
+  <sql id="workspaceFrom">
+    FROM proactive_job
+    LEFT JOIN <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.userTable"/> u ON u.id = proactive_job.user_id
+  </sql>
+
+  <!-- 명시 tenant_id 술어(스펙 D1) -->
+  <select id="findWorkspaceRows" resultMap="workspaceRow">
+    SELECT <include refid="workspaceColumns"/> <include refid="workspaceFrom"/>
+     WHERE proactive_job.tenant_id = #{tenantId}
+     ORDER BY proactive_job.id DESC
+  </select>
+
+  <select id="findWorkspaceRow" resultMap="workspaceRow">
+    SELECT <include refid="workspaceColumns"/> <include refid="workspaceFrom"/>
+     WHERE proactive_job.id = #{id} AND proactive_job.tenant_id = #{tenantId}
+  </select>
+
+  <update id="disableInTenant">
+    UPDATE proactive_job
+       SET enabled = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlFalse"/>, updated_at = #{updatedAt}
+     WHERE id = #{id} AND tenant_id = #{tenantId}
+  </update>
+
+  <delete id="deleteInTenant">
+    DELETE FROM proactive_job WHERE id = #{id} AND tenant_id = #{tenantId}
+  </delete>
+
+</mapper>

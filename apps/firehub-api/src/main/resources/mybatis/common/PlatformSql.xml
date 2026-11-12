@@ -99,6 +99,23 @@
   <sql id="jsonValue" databaseId="postgresql">CAST(#{${param},jdbcType=VARCHAR} AS jsonb)</sql>
   <sql id="jsonValue" databaseId="tibero">#{${param},jdbcType=VARCHAR}</sql>
 
+  <!--
+    JSON 배열 길이(속성 col 은 열 식, WD-709). PG 는 jOOQ 와 같은 jsonb_array_length. Tibero 는 $.size() 가 NULL 이라(실측
+    TiberoBundle45SyntaxProbeLiveTest (e)) JSON_TABLE 로 원소를 펼쳐 센다 — 원소 종류(문자열·객체·null·배열)와 무관하게 하나씩 세어 PG 와 같고,
+    배열 전체를 한 값으로 꺼내지 않아 길이 한도가 없다. 배열이 아닌 값은 PG 가 오류, Tibero 는 0 이다(열은 배열만 저장한다).
+  -->
+  <sql id="jsonArrayLength" databaseId="postgresql">jsonb_array_length(${col})</sql>
+  <sql id="jsonArrayLength" databaseId="tibero">(SELECT COUNT(*) FROM JSON_TABLE(${col}, '$[*]' COLUMNS (n FOR ORDINALITY)) jal)</sql>
+
+  <!--
+    삽입 시각 꼬리(WD-709 S2) — INSERT 열 목록·값 목록 끝에 붙인다. Tibero 는 created_at·updated_at 을 DB 시계(dbNow)로 명시하고
+    (열 DEFAULT 는 세션 시간대에 기댄다), PG 는 jOOQ 처럼 열 DEFAULT 에 맡겨 비워 둔다. 앞 쉼표를 조각이 갖는다.
+  -->
+  <sql id="insertTimestampColumns" databaseId="postgresql"></sql>
+  <sql id="insertTimestampColumns" databaseId="tibero">, created_at, updated_at</sql>
+  <sql id="insertTimestampValues" databaseId="postgresql"></sql>
+  <sql id="insertTimestampValues" databaseId="tibero">, <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>, <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/></sql>
+
   <!-- 행 수 상한(잠금 없는 조회 전용). 속성 n 은 XML 에 박힌 고정 숫자다. Tibero 는 LIMIT 대신 FETCH FIRST(NULLS LAST 와 함께 쓸 수 있음, 실측). -->
   <sql id="limitRows" databaseId="postgresql">LIMIT ${n}</sql>
   <sql id="limitRows" databaseId="tibero">FETCH FIRST ${n} ROWS ONLY</sql>

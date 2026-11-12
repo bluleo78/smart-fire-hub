@@ -1,15 +1,15 @@
 package com.smartfirehub.proactive.repository;
 
-import com.smartfirehub.proactive.repository.jooq.JooqAnomalyEventRepository;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationContext;
 
-/** AnomalyEventRepositoryContractTest 를 Jooq(PostgreSQL) 구현으로 실행한다(WD-485). */
+/** AnomalyEventRepositoryContractTest 를 jOOQ(PostgreSQL) 구현으로 실행한다(WD-709) — 빈 이름으로 꺼낸다. */
 class JooqAnomalyEventRepositoryContractTest extends AnomalyEventRepositoryContractTest {
 
-  @Autowired private JooqAnomalyEventRepository repository;
+  @Autowired private ApplicationContext applicationContext;
 
   @Override
   protected AnomalyEventRepository repository() {
-    return repository;
+    return applicationContext.getBean("jooqAnomalyEventRepository", AnomalyEventRepository.class);
   }
 }

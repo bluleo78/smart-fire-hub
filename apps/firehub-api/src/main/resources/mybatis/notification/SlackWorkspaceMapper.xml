@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  슬랙 워크스페이스 문장(WD-709) — JooqSlackWorkspaceRepository 와 같은 의미.
+  slack_workspace 는 테넌트 정책(RLS) 대상이라 tenant_id 를 INSERT 값·WHERE 술어로 쓰지 않는다(열 DEFAULT 가 채운다).
+  암호화 열(bot_token_enc·signing_secret_enc·previous_*)은 그대로 통과시키고 로그에 남기지 않는다.
+  upsertFromOAuth: PG 는 ON CONFLICT (team_id) — 유일 제약(slack_workspace_team_id_key, team_id 는 전역 유일)과 맞춘 충돌 대상일 뿐
+  값·술어가 아니다. Tibero 는 MERGE ON team_id. 두 판 모두 충돌 시 signing secret 은 건드리지 않고 revoked_at 을 NULL 로 되돌린다.
+  최초 설치의 signing_secret_enc 는 PG 는 '' (NOT NULL), Tibero 는 ''=NULL 이라 NULL 을 명시한다(V159.1 이 이 열만 NULL 허용).
+  Tibero 는 읽을 때 NULL 을 "" 로 돌려주는 일을 구현이 맡는다(SQL 의 COALESCE(x,'') 는 Tibero 에서 다시 NULL 이 된다).
+  소스는 DUAL 한 행(team_id 만), 소스 열을 uid 로 별칭하지 않는다(-8006). 동시 첫 설치의 패자는 중복 키(-10007)를 받으며 구현이 1회 다시 시도한다.
+  id 는 upsert 뒤 team_id 로 다시 읽는다(Tibero 에는 RETURNING 이 없다) — 두 DB 같은 문장.
+  installed_at 은 jOOQ 가 기본값에 맡기므로 여기서도 열 DEFAULT 에 맡긴다.
+-->
+<mapper namespace="com.smartfirehub.notification.repository.mybatis.SlackWorkspaceMapper">
+
+  <resultMap id="workspace" type="com.smartfirehub.notification.repository.SlackWorkspaceRepository$SlackWorkspace">
+    <constructor>
+      <arg column="id" javaType="_long"/>
+      <arg column="team_id" javaType="java.lang.String"/>
+      <arg column="team_name" javaType="java.lang.String"/>
+      <arg column="bot_user_id" javaType="java.lang.String"/>
+      <arg column="bot_token_enc" javaType="java.lang.String"/>
+      <arg column="signing_secret_enc" javaType="java.lang.String"/>
+      <arg column="previous_signing_secret_enc" javaType="java.lang.String"/>
+      <arg column="previous_signing_secret_expires_at" javaType="java.time.Instant"/>
+      <arg column="installed_by_user_id" javaType="java.lang.Long"/>
+    </constructor>
+  </resultMap>
+
+  <sql id="columns">
+    id, team_id, team_name, bot_user_id, bot_token_enc, signing_secret_enc,
+    previous_signing_secret_enc, previous_signing_secret_expires_at, installed_by_user_id
+  </sql>
+
+  <select id="selectActiveByTeamId" resultMap="workspace">
+    SELECT <include refid="columns"/>
+      FROM slack_workspace
+     WHERE team_id = #{teamId,jdbcType=VARCHAR}
+       AND revoked_at IS NULL
+  </select>
+
+  <select id="selectById" resultMap="workspace">
+    SELECT <include refid="columns"/>
+      FROM slack_workspace
+     WHERE id = #{id}
+  </select>
+
+  <select id="selectFirstActive" resultMap="workspace">
+    SELECT <include refid="columns"/>
+      FROM slack_workspace
+     WHERE revoked_at IS NULL
+     ORDER BY id DESC
+     <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.limitRows"><property name="n" value="1"/></include>
+  </select>
+
+  <insert id="upsertFromOAuth" databaseId="postgresql">
+    INSERT INTO slack_workspace (team_id, team_name, bot_user_id, bot_token_enc, signing_secret_enc, installed_by_user_id)
+    VALUES (#{teamId}, #{teamName,jdbcType=VARCHAR}, #{botUserId}, #{botTokenEnc}, '', #{installedByUserId,jdbcType=BIGINT})
+    ON CONFLICT (team_id) DO UPDATE
+       SET team_name = EXCLUDED.team_name,
+           bot_user_id = EXCLUDED.bot_user_id,
+           bot_token_enc = EXCLUDED.bot_token_enc,
+           installed_by_user_id = EXCLUDED.installed_by_user_id,
+           revoked_at = NULL
+  </insert>
+
+  <update id="upsertFromOAuth" databaseId="tibero">
+    MERGE INTO slack_workspace t
+    USING (SELECT #{teamId} AS tid FROM DUAL) s
+       ON (t.team_id = s.tid)
+    WHEN MATCHED THEN UPDATE
+       SET t.team_name = #{teamName,jdbcType=VARCHAR},
+           t.bot_user_id = #{botUserId},
+           t.bot_token_enc = #{botTokenEnc},
+           t.installed_by_user_id = #{installedByUserId,jdbcType=BIGINT},
+           t.revoked_at = NULL
+    WHEN NOT MATCHED THEN INSERT (team_id, team_name, bot_user_id, bot_token_enc, signing_secret_enc, installed_by_user_id)
+      VALUES (s.tid, #{teamName,jdbcType=VARCHAR}, #{botUserId}, #{botTokenEnc}, NULL, #{installedByUserId,jdbcType=BIGINT})
+  </update>
+
+  <select id="selectIdByTeamId" resultType="java.lang.Long">
+    SELECT id FROM slack_workspace WHERE team_id = #{teamId}
+  </select>
+
+  <update id="revoke">
+    UPDATE slack_workspace
+       SET revoked_at = #{revokedAt}
+     WHERE team_id = #{teamId,jdbcType=VARCHAR}
+  </update>
+
+</mapper>

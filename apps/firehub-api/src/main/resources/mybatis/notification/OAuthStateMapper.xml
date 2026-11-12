@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  OAuth CSRF state 문장(WD-709) — JooqOAuthStateRepository 와 같은 의미. 두 DB 같은 문장이라 databaseId 가 없다.
+  oauth_state 는 RLS 정책이 없다(V106 [R7]) — 컨텍스트 없는 permitAll 콜백이 consume 해야 하므로 테넌트 조건을 더하지 않는다(반목표).
+  tenant_id 는 INSERT 때 열 DEFAULT 가 채우고, 소비 때는 읽어서 돌려줄 뿐이다.
+  만료 비교·consumed_at 은 jOOQ 와 같은 자바 UTC 시각을 바인드한다(DB now 를 쓰지 않는다).
+  markConsumed 는 consumed_at IS NULL 을 다시 건다 — FOR UPDATE 대기 뒤 DB 가 조건을 다시 평가하지 않아도 단일 소비가 지켜지게 하는 안전망이다.
+-->
+<mapper namespace="com.smartfirehub.notification.repository.mybatis.OAuthStateMapper">
+
+  <resultMap id="stateRow" type="com.smartfirehub.notification.repository.mybatis.OAuthStateMapper$StateRow">
+    <constructor>
+      <arg column="user_id" javaType="java.lang.Long"/>
+      <arg column="channel_type" javaType="java.lang.String"/>
+      <arg column="tenant_id" javaType="java.lang.Long"/>
+    </constructor>
+  </resultMap>
+
+  <insert id="insert">
+    INSERT INTO oauth_state (state, user_id, channel_type, expires_at)
+    VALUES (#{state}, #{userId}, #{channelType}, #{expiresAt})
+  </insert>
+
+  <select id="selectConsumableForUpdate" resultMap="stateRow">
+    SELECT user_id, channel_type, tenant_id
+      FROM oauth_state
+     WHERE state = #{state,jdbcType=VARCHAR}
+       AND consumed_at IS NULL
+       AND expires_at &gt; #{now}
+       FOR UPDATE
+  </select>
+
+  <update id="markConsumed">
+    UPDATE oauth_state
+       SET consumed_at = #{now}
+     WHERE state = #{state,jdbcType=VARCHAR}
+       AND consumed_at IS NULL
+  </update>
+
+  <delete id="deleteExpired">
+    DELETE FROM oauth_state WHERE expires_at &lt; #{now}
+  </delete>
+
+</mapper>

@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.smartfirehub.global.exception.SerializationException;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -17,6 +18,9 @@ import java.util.Map;
 public final class PlatformJson {
 
   private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {};
+
+  private static final TypeReference<List<Map<String, Object>>> LIST_TYPE =
+      new TypeReference<>() {};
 
   private PlatformJson() {}
 
@@ -32,6 +36,23 @@ public final class PlatformJson {
     }
     try {
       return objectMapper.readValue(json, MAP_TYPE);
+    } catch (JsonProcessingException e) {
+      throw new SerializationException("Failed to parse " + label + " JSON", e);
+    }
+  }
+
+  /**
+   * JSON 텍스트 → 객체 목록(최상위가 배열). null 이면 null.
+   *
+   * @throws SerializationException 깨진 JSON 이거나 배열이 아닐 때 — 메시지 「Failed to parse {label} JSON」
+   */
+  public static List<Map<String, Object>> toMapList(
+      ObjectMapper objectMapper, String json, String label) {
+    if (json == null) {
+      return null;
+    }
+    try {
+      return objectMapper.readValue(json, LIST_TYPE);
     } catch (JsonProcessingException e) {
       throw new SerializationException("Failed to parse " + label + " JSON", e);
     }

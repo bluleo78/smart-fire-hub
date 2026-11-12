@@ -4,6 +4,7 @@ import static com.smartfirehub.jooq.Tables.DATASET;
 import static com.smartfirehub.jooq.Tables.PIPELINE_EXECUTION;
 import static com.smartfirehub.jooq.Tables.PROACTIVE_JOB;
 
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.proactive.repository.SystemMetricRepository;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.securitylevel.repository.jooq.JooqDatasetVisibility;
@@ -25,6 +26,7 @@ import org.springframework.stereotype.Repository;
  * 점유하지 않기 위해). 따라서 호출자는 반드시 그 경계 안에서 부르며, 그러지 않으면 RLS 가 모든 행을 차단해 0 이 집계된다.
  */
 @Repository
+@ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
 public class JooqSystemMetricRepository implements SystemMetricRepository {
 

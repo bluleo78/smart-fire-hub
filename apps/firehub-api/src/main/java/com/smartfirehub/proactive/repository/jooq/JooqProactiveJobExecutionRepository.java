@@ -4,6 +4,7 @@ import static org.jooq.impl.DSL.*;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.jooq.tables.SecurityLevel;
 import com.smartfirehub.proactive.dto.ProactiveJobExecutionResponse;
 import com.smartfirehub.proactive.dto.ProactiveJobExecutionSummaryResponse;
@@ -41,6 +42,7 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @Transactional
 @Repository
+@ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
 public class JooqProactiveJobExecutionRepository implements ProactiveJobExecutionRepository {
 

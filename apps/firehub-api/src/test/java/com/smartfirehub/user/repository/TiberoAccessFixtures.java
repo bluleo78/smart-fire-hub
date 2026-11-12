@@ -1490,6 +1490,270 @@ public class TiberoAccessFixtures implements AccessFixtures {
   }
 
   @Override
+  public long createSlackWorkspace(long tenantId, String teamId, boolean revoked) {
+    return poc.insertReturningId(
+        "INSERT INTO slack_workspace (tenant_id, team_id, team_name, bot_user_id, bot_token_enc,"
+            + " signing_secret_enc, revoked_at) VALUES (?, ?, 'fx-team', 'UBOT', 'enc-bot',"
+            + " 'enc-sign', CASE WHEN ? = 1 THEN SYS_EXTRACT_UTC(SYSTIMESTAMP) ELSE NULL END)",
+        tenantId,
+        teamId,
+        revoked ? 1 : 0);
+  }
+
+  @Override
+  public long createProactiveJob(
+      long tenantId,
+      long userId,
+      String name,
+      boolean enabled,
+      String triggerType,
+      String configJson) {
+    // JSON 열은 문자열 바인드를 그대로 받는다. config 가 null 이면 열 DEFAULT('{}')에 맡긴다.
+    if (configJson == null) {
+      return poc.insertReturningId(
+          "INSERT INTO proactive_job (tenant_id, user_id, name, prompt, cron_expression, enabled,"
+              + " trigger_type) VALUES (?, ?, ?, 'fx prompt', '0 0 9 * * *', ?, ?)",
+          tenantId,
+          userId,
+          name,
+          enabled ? 1 : 0,
+          triggerType);
+    }
+    return poc.insertReturningId(
+        "INSERT INTO proactive_job (tenant_id, user_id, name, prompt, cron_expression, enabled,"
+            + " trigger_type, config) VALUES (?, ?, ?, 'fx prompt', '0 0 9 * * *', ?, ?, ?)",
+        tenantId,
+        userId,
+        name,
+        enabled ? 1 : 0,
+        triggerType,
+        configJson);
+  }
+
+  @Override
+  public long createProactiveJob(long tenantId, long userId, String name) {
+    return poc.insertReturningId(
+        "INSERT INTO proactive_job (tenant_id, user_id, name, prompt, cron_expression, enabled)"
+            + " VALUES (?, ?, ?, 'fx prompt', '0 0 9 * * *', 1)",
+        tenantId,
+        userId,
+        name);
+  }
+
+  @Override
+  public long createReportTemplate(long tenantId, Long userId, String name) {
+    return poc.insertReturningId(
+        "INSERT INTO report_template (tenant_id, name, user_id) VALUES (?, ?, ?)",
+        tenantId,
+        name,
+        userId);
+  }
+
+  @Override
+  public ProactiveJobStored proactiveJobStored(long id) {
+    return poc
+        .jdbc()
+        .query(
+            "SELECT name, prompt, template_id, cron_expression, timezone, enabled, trigger_type,"
+                + " config, last_executed_at, next_execute_at, created_at, updated_at FROM"
+                + " proactive_job WHERE id = ?",
+            (rs, i) ->
+                new ProactiveJobStored(
+                    rs.getString("name"),
+                    rs.getString("prompt"),
+                    rs.getObject("template_id") == null ? null : rs.getLong("template_id"),
+                    rs.getString("cron_expression"),
+                    rs.getString("timezone"),
+                    rs.getInt("enabled") == 1,
+                    rs.getString("trigger_type"),
+                    rs.getString("config"),
+                    wall(rs, "last_executed_at"),
+                    wall(rs, "next_execute_at"),
+                    wall(rs, "created_at"),
+                    wall(rs, "updated_at")),
+            id)
+        .stream()
+        .findFirst()
+        .orElse(null);
+  }
+
+  @Override
+  public void setProactiveJobUpdatedAt(long id, LocalDateTime updatedAt) {
+    poc.jdbc()
+        .update(
+            "UPDATE proactive_job SET updated_at = ? WHERE id = ?",
+            updatedAt == null ? null : Timestamp.valueOf(updatedAt),
+            id);
+  }
+
+  @Override
+  public ReportTemplateStored reportTemplateStored(long id) {
+    return poc
+        .jdbc()
+        .query(
+            "SELECT name, description, sections, style, user_id, created_at, updated_at FROM"
+                + " report_template WHERE id = ?",
+            (rs, i) ->
+                new ReportTemplateStored(
+                    rs.getString("name"),
+                    rs.getString("description"),
+                    rs.getString("sections"),
+                    rs.getString("style"),
+                    rs.getObject("user_id") == null ? null : rs.getLong("user_id"),
+                    wall(rs, "created_at"),
+                    wall(rs, "updated_at")),
+            id)
+        .stream()
+        .findFirst()
+        .orElse(null);
+  }
+
+  @Override
+  public void setReportTemplateUpdatedAt(long id, LocalDateTime updatedAt) {
+    poc.jdbc()
+        .update(
+            "UPDATE report_template SET updated_at = ? WHERE id = ?",
+            updatedAt == null ? null : Timestamp.valueOf(updatedAt),
+            id);
+  }
+
+  @Override
+  public void setReportTemplateSectionsJson(long id, String sectionsJson) {
+    poc.jdbc().update("UPDATE report_template SET sections = ? WHERE id = ?", sectionsJson, id);
+  }
+
+  @Override
+  public long createProactiveJobExecution(long tenantId, long jobId, String status) {
+    return poc.insertReturningId(
+        "INSERT INTO proactive_job_execution (tenant_id, job_id, status) VALUES (?, ?, ?)",
+        tenantId,
+        jobId,
+        status);
+  }
+
+  @Override
+  public ProactiveExecutionStored proactiveExecutionStored(long id) {
+    return poc
+        .jdbc()
+        .query(
+            "SELECT job_id, status, started_at, completed_at, error_message, result,"
+                + " delivered_channels, security_level_id, heartbeat_at, created_at"
+                + " FROM proactive_job_execution WHERE id = ?",
+            (rs, i) ->
+                new ProactiveExecutionStored(
+                    rs.getLong("job_id"),
+                    rs.getString("status"),
+                    wall(rs, "started_at"),
+                    wall(rs, "completed_at"),
+                    rs.getString("error_message"),
+                    rs.getString("result"),
+                    rs.getString("delivered_channels"),
+                    rs.getObject("security_level_id") == null
+                        ? null
+                        : rs.getLong("security_level_id"),
+                    wall(rs, "heartbeat_at"),
+                    wall(rs, "created_at")),
+            id)
+        .stream()
+        .findFirst()
+        .orElse(null);
+  }
+
+  @Override
+  public void setProactiveExecutionField(long id, String column, Object value) {
+    String col = AccessFixtures.proactiveExecutionField(column);
+    if (value == null) {
+      poc.jdbc().update("UPDATE proactive_job_execution SET " + col + " = NULL WHERE id = ?", id);
+      return;
+    }
+    Object bound = value instanceof LocalDateTime t ? Timestamp.valueOf(t) : value;
+    poc.jdbc().update("UPDATE proactive_job_execution SET " + col + " = ? WHERE id = ?", bound, id);
+  }
+
+  @Override
+  public void setProactiveExecutionResultJson(long id, String resultJson) {
+    poc.jdbc().update("UPDATE proactive_job_execution SET result = ? WHERE id = ?", resultJson, id);
+  }
+
+  @Override
+  public OAuthStateStored oauthStateStored(String state) {
+    return poc
+        .jdbc()
+        .query(
+            "SELECT user_id, channel_type, tenant_id,"
+                + " CASE WHEN consumed_at IS NULL THEN 0 ELSE 1 END AS consumed"
+                + " FROM oauth_state WHERE state = ?",
+            (rs, i) ->
+                new OAuthStateStored(
+                    rs.getLong("user_id"),
+                    rs.getString("channel_type"),
+                    rs.getLong("tenant_id"),
+                    rs.getInt("consumed") == 1),
+            state)
+        .stream()
+        .findFirst()
+        .orElse(null);
+  }
+
+  @Override
+  public Boolean userChannelPreferenceEnabled(long tenantId, long userId, String channelType) {
+    return poc
+        .jdbc()
+        .query(
+            "SELECT enabled FROM user_channel_preference"
+                + " WHERE tenant_id = ? AND user_id = ? AND channel_type = ?",
+            (rs, i) -> rs.getInt(1) == 1,
+            tenantId,
+            userId,
+            channelType)
+        .stream()
+        .findFirst()
+        .orElse(null);
+  }
+
+  @Override
+  public SlackWorkspaceStored slackWorkspaceStored(long id) {
+    return poc
+        .jdbc()
+        .query(
+            "SELECT team_id, team_name, bot_user_id, bot_token_enc, signing_secret_enc,"
+                + " installed_by_user_id,"
+                + " CASE WHEN revoked_at IS NULL THEN 0 ELSE 1 END AS revoked"
+                + " FROM slack_workspace WHERE id = ?",
+            (rs, i) ->
+                new SlackWorkspaceStored(
+                    rs.getString("team_id"),
+                    rs.getString("team_name"),
+                    rs.getString("bot_user_id"),
+                    rs.getString("bot_token_enc"),
+                    rs.getString("signing_secret_enc"),
+                    rs.getObject("installed_by_user_id") == null
+                        ? null
+                        : rs.getLong("installed_by_user_id"),
+                    rs.getInt("revoked") == 1),
+            id)
+        .stream()
+        .findFirst()
+        .orElse(null);
+  }
+
+  @Override
+  public void setSlackSigningSecret(long id, String enc) {
+    poc.jdbc().update("UPDATE slack_workspace SET signing_secret_enc = ? WHERE id = ?", enc, id);
+  }
+
+  @Override
+  public void setSlackPreviousSigningSecret(long id, String enc, java.time.Instant expiresAt) {
+    poc.jdbc()
+        .update(
+            "UPDATE slack_workspace SET previous_signing_secret_enc = ?,"
+                + " previous_signing_secret_expires_at = ? WHERE id = ?",
+            enc,
+            Timestamp.valueOf(LocalDateTime.ofInstant(expiresAt, java.time.ZoneOffset.UTC)),
+            id);
+  }
+
+  @Override
   public void cleanup() {
     for (long t : tenants) {
       // 적재 이력은 테넌트 FK 만 있어(온톨로지 CASCADE 밖) 테넌트 정리 전에 지운다.
@@ -1508,6 +1772,10 @@ public class TiberoAccessFixtures implements AccessFixtures {
     }
     // 프로비저닝·리포지토리가 만든 행까지 FK 순서로 지운다(PG deleteRbacCascade 와 같은 순서) — 소유자 계정이라 정책이 거르지 않는다.
     // 감사·작업·데이터셋은 사용자·보안 등급을 참조하므로 먼저 지운다.
+    // 바인딩은 다른 테넌트의 슬랙 워크스페이스를 참조할 수 있어(WD-709) 모든 테넌트의 바인딩을 워크스페이스보다 먼저 지운다.
+    for (long t : tenants) {
+      poc.jdbc().update("DELETE FROM user_channel_binding WHERE tenant_id = ?", t);
+    }
     for (long t : tenants) {
       poc.jdbc().update("DELETE FROM audit_log WHERE tenant_id = ?", t);
       poc.jdbc().update("DELETE FROM async_job WHERE tenant_id = ?", t);
@@ -1530,6 +1798,14 @@ public class TiberoAccessFixtures implements AccessFixtures {
       poc.jdbc().update("DELETE FROM dataset WHERE tenant_id = ?", t);
       poc.jdbc().update("DELETE FROM tenant_settings WHERE tenant_id = ?", t);
       poc.jdbc().update("DELETE FROM embedding_reembed_state WHERE tenant_id = ?", t);
+      // 선제 작업(실행 이력 CASCADE)은 사용자·템플릿을 참조하고, 슬랙 워크스페이스는 테넌트·사용자를 참조한다(WD-709·710).
+      poc.jdbc().update("DELETE FROM proactive_job WHERE tenant_id = ?", t);
+      // 채널 선호·oauth_state 는 사용자 FK 가 CASCADE 가 아니라 사용자보다 먼저 지운다(WD-709).
+      poc.jdbc().update("DELETE FROM user_channel_preference WHERE tenant_id = ?", t);
+      poc.jdbc().update("DELETE FROM oauth_state WHERE tenant_id = ?", t);
+      // 바인딩의 workspace_id FK 는 CASCADE 가 아니라 워크스페이스보다 먼저 지운다(WD-709).
+      poc.jdbc().update("DELETE FROM user_channel_binding WHERE tenant_id = ?", t);
+      poc.jdbc().update("DELETE FROM slack_workspace WHERE tenant_id = ?", t);
       poc.jdbc().update("DELETE FROM role_permission WHERE tenant_id = ?", t);
       poc.jdbc().update("DELETE FROM user_role WHERE tenant_id = ?", t);
       poc.jdbc().update("DELETE FROM report_template WHERE tenant_id = ?", t);
