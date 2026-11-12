@@ -82,6 +82,16 @@ public class DatasetEmbedding extends TableImpl<DatasetEmbeddingRecord> {
      */
     public final TableField<DatasetEmbeddingRecord, Long> TENANT_ID = createField(DSL.name("tenant_id"), SQLDataType.BIGINT.nullable(false).defaultValue(DSL.field(DSL.raw("(NULLIF(current_setting('app.tenant_id'::text, true), ''::text))::bigint"), SQLDataType.BIGINT)), this, "");
 
+    /**
+     * The column <code>public.dataset_embedding.embedded_dim</code>.
+     */
+    public final TableField<DatasetEmbeddingRecord, Integer> EMBEDDED_DIM = createField(DSL.name("embedded_dim"), SQLDataType.INTEGER, this, "");
+
+    /**
+     * The column <code>public.dataset_embedding.embedded_model</code>.
+     */
+    public final TableField<DatasetEmbeddingRecord, String> EMBEDDED_MODEL = createField(DSL.name("embedded_model"), SQLDataType.VARCHAR(100), this, "");
+
     private DatasetEmbedding(Name alias, Table<DatasetEmbeddingRecord> aliased) {
         this(alias, aliased, (Field<?>[]) null, null);
     }

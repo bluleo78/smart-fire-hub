@@ -209,10 +209,11 @@ class SearchEmbeddingPredicateGoldenTest {
     // 예전 호출자: aiGate.allowedDatasetSql("de.dataset_id") = policyRepository.allowedDatasetSql(expr,
     // 호스팅)
     String oldAllowed = policyRepo.allowedDatasetSql("de.dataset_id", h);
+    // 판정식 자체는 WD-717 에서 차원 테이블 anti-join 에서 표시 열 비교로 바뀌었다(바인드: 차원, 모델). 이 골든이 지키는 것은 등급 허용 술어의
+    // 별칭·호스팅 전달이다. 두 판정식의 결과 동등성은 EmbeddingMarkerEquivalenceTest 가 실제 DB 로 고정한다.
     String missing =
-        "NOT EXISTS (SELECT 1 FROM "
-            + SPACE.dimension().datasetTable()
-            + " v WHERE v.dataset_id = de.dataset_id AND v.embedding_model = ?)";
+        "(de.embedded_dim IS NULL OR de.embedded_dim <> ? OR de.embedded_model IS NULL"
+            + " OR de.embedded_model <> ?)";
 
     assertSame(
         () -> repo.countAll(allowance),
@@ -222,6 +223,7 @@ class SearchEmbeddingPredicateGoldenTest {
         d ->
             d.fetchOne(
                 "SELECT count(*) FROM dataset_embedding de WHERE " + missing + " AND " + oldAllowed,
+                SPACE.dimension().size(),
                 SPACE.model()));
     assertSame(
         () -> repo.findMissing(SPACE, 10L, 50, allowance),
@@ -233,6 +235,7 @@ class SearchEmbeddingPredicateGoldenTest {
                     + oldAllowed
                     + " ORDER BY de.dataset_id LIMIT ?",
                 10L,
+                SPACE.dimension().size(),
                 SPACE.model(),
                 50));
   }
@@ -243,10 +246,10 @@ class SearchEmbeddingPredicateGoldenTest {
     var repo = new JooqDocumentChunkRepository(dsl, policyRepo, accessRepo);
     EmbeddingAllowance allowance = new EmbeddingAllowance(h);
     String oldAllowed = policyRepo.allowedDatasetSql("c.dataset_id", h);
+    // 판정식은 WD-717 에서 표시 열 비교로 바뀌었다 — 위 카탈로그 쪽 주석과 같다.
     String missing =
-        "NOT EXISTS (SELECT 1 FROM "
-            + SPACE.dimension().chunkTable()
-            + " v WHERE v.chunk_id = c.id AND v.embedding_model = ?)";
+        "(c.embedded_dim IS NULL OR c.embedded_dim <> ? OR c.embedded_model IS NULL"
+            + " OR c.embedded_model <> ?)";
 
     assertSame(
         () -> repo.countAllChunks(allowance),
@@ -256,6 +259,7 @@ class SearchEmbeddingPredicateGoldenTest {
         d ->
             d.fetchOne(
                 "SELECT count(*) FROM document_chunk c WHERE " + missing + " AND " + oldAllowed,
+                SPACE.dimension().size(),
                 SPACE.model()));
     assertSame(
         () -> repo.findMissing(SPACE, 10L, 50, allowance),
@@ -267,6 +271,7 @@ class SearchEmbeddingPredicateGoldenTest {
                     + oldAllowed
                     + " ORDER BY c.id LIMIT ?",
                 10L,
+                SPACE.dimension().size(),
                 SPACE.model(),
                 50));
   }

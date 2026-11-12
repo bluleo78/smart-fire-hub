@@ -76,6 +76,34 @@ public class DatasetEmbeddingRecord extends UpdatableRecordImpl<DatasetEmbedding
         return (Long) get(3);
     }
 
+    /**
+     * Setter for <code>public.dataset_embedding.embedded_dim</code>.
+     */
+    public void setEmbeddedDim(Integer value) {
+        set(4, value);
+    }
+
+    /**
+     * Getter for <code>public.dataset_embedding.embedded_dim</code>.
+     */
+    public Integer getEmbeddedDim() {
+        return (Integer) get(4);
+    }
+
+    /**
+     * Setter for <code>public.dataset_embedding.embedded_model</code>.
+     */
+    public void setEmbeddedModel(String value) {
+        set(5, value);
+    }
+
+    /**
+     * Getter for <code>public.dataset_embedding.embedded_model</code>.
+     */
+    public String getEmbeddedModel() {
+        return (String) get(5);
+    }
+
     // -------------------------------------------------------------------------
     // Primary key information
     // -------------------------------------------------------------------------
@@ -99,13 +127,15 @@ public class DatasetEmbeddingRecord extends UpdatableRecordImpl<DatasetEmbedding
     /**
      * Create a detached, initialised DatasetEmbeddingRecord
      */
-    public DatasetEmbeddingRecord(Long datasetId, String sourceText, OffsetDateTime updatedAt, Long tenantId) {
+    public DatasetEmbeddingRecord(Long datasetId, String sourceText, OffsetDateTime updatedAt, Long tenantId, Integer embeddedDim, String embeddedModel) {
         super(DatasetEmbedding.DATASET_EMBEDDING);
 
         setDatasetId(datasetId);
         setSourceText(sourceText);
         setUpdatedAt(updatedAt);
         setTenantId(tenantId);
+        setEmbeddedDim(embeddedDim);
+        setEmbeddedModel(embeddedModel);
         resetChangedOnNotNull();
     }
 }

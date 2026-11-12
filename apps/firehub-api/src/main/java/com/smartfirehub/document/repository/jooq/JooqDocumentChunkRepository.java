@@ -82,19 +82,23 @@ public class JooqDocumentChunkRepository implements DocumentChunkRepository {
     }
     for (int start = 0; start < chunks.size(); start += BATCH_SIZE) {
       int end = Math.min(start + BATCH_SIZE, chunks.size());
+      // 표시 열(WD-717)을 부모 INSERT 에 바로 싣는다 — 아래 벡터 INSERT 와 같은 트랜잭션이라 둘 중 하나만 남는 일이 없다.
       StringBuilder sql =
           new StringBuilder(
-              "INSERT INTO document_chunk(document_file_id, dataset_id, chunk_index, content, token_count) VALUES ");
+              "INSERT INTO document_chunk(document_file_id, dataset_id, chunk_index, content, token_count,"
+                  + " embedded_dim, embedded_model) VALUES ");
       List<Object> params = new ArrayList<>();
       for (int i = start; i < end; i++) {
         if (i > start) sql.append(',');
-        sql.append("(?,?,?,?,?)");
+        sql.append("(?,?,?,?,?,?,?)");
         Chunk c = chunks.get(i);
         params.add(documentFileId);
         params.add(datasetId);
         params.add(c.index());
         params.add(c.content());
         params.add(c.tokenCount());
+        params.add(space.dimension().size());
+        params.add(space.model());
       }
       sql.append(" RETURNING id, chunk_index");
       Map<Integer, Long> idByIndex = new HashMap<>();
@@ -182,6 +186,17 @@ public class JooqDocumentChunkRepository implements DocumentChunkRepository {
         batch = batch.bind(toVectorLiteral(embeddings.get(i)), space.model(), chunkIds.get(i));
       }
       batch.execute();
+      // 표시 열(WD-717)을 같은 트랜잭션에서 새 공간으로 맞춘다. 부모가 없는 id 는 0행.
+      List<Long> slice = chunkIds.subList(start, end);
+      List<Object> mparams = new ArrayList<>(slice.size() + 2);
+      mparams.add(space.dimension().size());
+      mparams.add(space.model());
+      mparams.addAll(slice);
+      dsl.execute(
+          "UPDATE document_chunk SET embedded_dim = ?, embedded_model = ? WHERE id IN ("
+              + placeholders(slice.size())
+              + ")",
+          mparams.toArray());
     }
   }
 
@@ -335,17 +350,19 @@ public class JooqDocumentChunkRepository implements DocumentChunkRepository {
         .get(0, Long.class);
   }
 
-  /** {@code space} 로 임베딩된 청크 수(RLS 로 현재 테넌트). 진행률 분자. */
+  /** {@code space} 로 임베딩된 청크 수(RLS 로 현재 테넌트). 진행률 분자 — 표시 열(WD-717)로 센다. */
   @Override
   public long countEmbedded(EmbeddingSpace space) {
     return dsl.fetchOne(
-            "SELECT count(*) FROM " + space.dimension().chunkTable() + " WHERE embedding_model = ?",
+            "SELECT count(*) FROM document_chunk WHERE embedded_dim = ? AND embedded_model = ?",
+            space.dimension().size(),
             space.model())
         .get(0, Long.class);
   }
 
   /**
-   * 재임베딩 판정식: 현재 차원 테이블에 현재 모델 벡터가 없고 <b>등급이 임베딩 공급자를 허용하는</b> 데이터셋의 청크 수. 영향도·저장 시 투입·잡이 같은 식을 쓴다.
+   * 재임베딩 판정식: 표시 열이 현재 공간이 아니고 <b>등급이 임베딩 공급자를 허용하는</b> 데이터셋의 청크 수. 표시 열은 벡터 행의 거울이라 예전 "현재 차원
+   * 테이블에 현재 모델 벡터가 없음" anti-join 과 같은 결과다(WD-717). 영향도·저장 시 투입·잡이 같은 식을 쓴다.
    * {@code allowance} 는 EmbeddingAiGate#allowance() 가 캡처한 값(별칭 {@code c.dataset_id} 렌더는 구현) — 정책 없는
    * 오버로드는 두지 않는다.
    */
@@ -353,9 +370,10 @@ public class JooqDocumentChunkRepository implements DocumentChunkRepository {
   public long countMissing(EmbeddingSpace space, EmbeddingAllowance allowance) {
     return dsl.fetchOne(
             "SELECT count(*) FROM document_chunk c WHERE "
-                + missingPredicate(space)
+                + MISSING_PREDICATE
                 + " AND "
                 + allowedSql(allowance),
+            space.dimension().size(),
             space.model())
         .get(0, Long.class);
   }
@@ -366,11 +384,12 @@ public class JooqDocumentChunkRepository implements DocumentChunkRepository {
       EmbeddingSpace space, long afterChunkId, int limit, EmbeddingAllowance allowance) {
     return dsl.fetch(
             "SELECT c.id, c.content FROM document_chunk c WHERE c.id > ? AND "
-                + missingPredicate(space)
+                + MISSING_PREDICATE
                 + " AND "
                 + allowedSql(allowance)
                 + " ORDER BY c.id LIMIT ?",
             afterChunkId,
+            space.dimension().size(),
             space.model(),
             limit)
         .map(r -> new ChunkContent(r.get("id", Long.class), r.get("content", String.class)));
@@ -382,8 +401,16 @@ public class JooqDocumentChunkRepository implements DocumentChunkRepository {
    */
   @Override
   public int deleteOtherDimensions(EmbeddingDimension keep) {
-    return VectorTables.deleteOtherDimensions(
-        dsl, keep, EmbeddingDimension::chunkTable, TenantContext.require("다른 차원 벡터 정리"));
+    long tenantId = TenantContext.require("다른 차원 벡터 정리");
+    int deleted =
+        VectorTables.deleteOtherDimensions(dsl, keep, EmbeddingDimension::chunkTable, tenantId);
+    // 표시 열도 같은 트랜잭션에서 비운다 — 다른 차원을 가리키던 거울은 방금 지운 벡터를 가리키기 때문이다(WD-717).
+    dsl.execute(
+        "UPDATE document_chunk SET embedded_dim = NULL, embedded_model = NULL"
+            + " WHERE tenant_id = ? AND embedded_dim <> ?",
+        tenantId,
+        keep.size());
+    return deleted;
   }
 
   /**
@@ -403,14 +430,22 @@ public class JooqDocumentChunkRepository implements DocumentChunkRepository {
               tenantId,
               ids);
     }
+    // 표시 열도 같은 트랜잭션에서 비운다(WD-717) — 청크 본문은 남아 키워드 검색은 유지된다.
+    dsl.execute(
+        "UPDATE document_chunk SET embedded_dim = NULL, embedded_model = NULL"
+            + " WHERE tenant_id = ? AND dataset_id = ANY(?)",
+        tenantId,
+        ids);
     return deleted;
   }
 
-  private static String missingPredicate(EmbeddingSpace space) {
-    return "NOT EXISTS (SELECT 1 FROM "
-        + space.dimension().chunkTable()
-        + " v WHERE v.chunk_id = c.id AND v.embedding_model = ?)";
-  }
+  /**
+   * 판정식 — 표시 열(WD-717)이 현재 공간(차원·모델)을 가리키지 않는 청크. 바인드 순서: 차원, 모델. NULL 을 명시적으로 다뤄 {@code IS
+   * DISTINCT FROM} 이 없는 DB(Tibero)에도 같은 식을 옮길 수 있게 한다.
+   */
+  private static final String MISSING_PREDICATE =
+      "(c.embedded_dim IS NULL OR c.embedded_dim <> ? OR c.embedded_model IS NULL"
+          + " OR c.embedded_model <> ?)";
 
   private static String placeholders(int n) {
     return java.util.stream.IntStream.range(0, n)

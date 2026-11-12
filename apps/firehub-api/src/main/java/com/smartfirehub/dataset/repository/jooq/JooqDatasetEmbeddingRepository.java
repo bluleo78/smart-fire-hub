@@ -95,6 +95,9 @@ public class JooqDatasetEmbeddingRepository implements DatasetEmbeddingRepositor
               VectorLiterals.toVectorLiteral(embeddings.get(i)), space.model(), datasetIds.get(i));
     }
     batch.execute();
+    // 표시 열(WD-717)을 같은 트랜잭션에서 새 공간으로 맞춘다 — 다른 차원 행은 위에서 지웠으므로 거울이 정확히 이 공간을 가리킨다.
+    // 부모가 없는 id(삭제 경합)는 위 INSERT…SELECT 처럼 여기서도 0행이다.
+    markEmbedded(space, ids);
   }
 
   /** 데이터셋 삭제 시 인덱스 행 제거(FK CASCADE 와 별개로 명시 호출 경로 제공). */
@@ -117,6 +120,7 @@ public class JooqDatasetEmbeddingRepository implements DatasetEmbeddingRepositor
           tenantId,
           datasetId);
     }
+    clearMarkers(tenantId, new Long[] {datasetId});
   }
 
   /**
@@ -136,6 +140,7 @@ public class JooqDatasetEmbeddingRepository implements DatasetEmbeddingRepositor
               tenantId,
               ids);
     }
+    clearMarkers(tenantId, ids);
     return deleted;
   }
 
@@ -150,19 +155,19 @@ public class JooqDatasetEmbeddingRepository implements DatasetEmbeddingRepositor
         .get(0, Long.class);
   }
 
-  /** {@code space} 로 임베딩된 데이터셋 수. */
+  /** {@code space} 로 임베딩된 데이터셋 수 — 표시 열(WD-717)로 센다(RLS 로 현재 테넌트). */
   @Override
   public long countEmbedded(EmbeddingSpace space) {
     return dsl.fetchOne(
-            "SELECT count(*) FROM "
-                + space.dimension().datasetTable()
-                + " WHERE embedding_model = ?",
+            "SELECT count(*) FROM dataset_embedding WHERE embedded_dim = ? AND embedded_model = ?",
+            space.dimension().size(),
             space.model())
         .get(0, Long.class);
   }
 
   /**
-   * 재임베딩 판정식(현재 차원 테이블에 현재 모델 벡터가 없고 <b>등급이 임베딩 공급자를 허용하는</b> 카탈로그 행 수). {@code allowance} 는
+   * 재임베딩 판정식(표시 열이 현재 공간이 아니고 <b>등급이 임베딩 공급자를 허용하는</b> 카탈로그 행 수). 표시 열은 벡터 행의 거울이라 예전 "현재 차원
+   * 테이블에 현재 모델 벡터가 없음" anti-join 과 같은 결과다(WD-717). {@code allowance} 는
    * EmbeddingAiGate#allowance() 가 캡처한 값(별칭 {@code de.dataset_id} 렌더는 구현) — 정책 없는 오버로드는 두지 않는다(우회
    * 경로가 된다).
    */
@@ -170,9 +175,10 @@ public class JooqDatasetEmbeddingRepository implements DatasetEmbeddingRepositor
   public long countMissing(EmbeddingSpace space, EmbeddingAllowance allowance) {
     return dsl.fetchOne(
             "SELECT count(*) FROM dataset_embedding de WHERE "
-                + missingPredicate(space)
+                + MISSING_PREDICATE
                 + " AND "
                 + allowedSql(allowance),
+            space.dimension().size(),
             space.model())
         .get(0, Long.class);
   }
@@ -183,11 +189,12 @@ public class JooqDatasetEmbeddingRepository implements DatasetEmbeddingRepositor
       EmbeddingSpace space, long afterDatasetId, int limit, EmbeddingAllowance allowance) {
     return dsl.fetch(
             "SELECT de.dataset_id, de.source_text FROM dataset_embedding de WHERE de.dataset_id > ? AND "
-                + missingPredicate(space)
+                + MISSING_PREDICATE
                 + " AND "
                 + allowedSql(allowance)
                 + " ORDER BY de.dataset_id LIMIT ?",
             afterDatasetId,
+            space.dimension().size(),
             space.model(),
             limit)
         .map(
@@ -199,14 +206,45 @@ public class JooqDatasetEmbeddingRepository implements DatasetEmbeddingRepositor
   /** 현재 차원이 아닌 테이블의 이 테넌트 카탈로그 벡터 삭제(WHERE tenant_id 명시 — 문서 청크 쪽과 같은 규율). */
   @Override
   public int deleteOtherDimensions(EmbeddingDimension keep) {
-    return VectorTables.deleteOtherDimensions(
-        dsl, keep, EmbeddingDimension::datasetTable, TenantContext.require("다른 차원 카탈로그 벡터 정리"));
+    long tenantId = TenantContext.require("다른 차원 카탈로그 벡터 정리");
+    int deleted =
+        VectorTables.deleteOtherDimensions(dsl, keep, EmbeddingDimension::datasetTable, tenantId);
+    // 표시 열도 같은 트랜잭션에서 비운다 — 다른 차원을 가리키던 거울은 방금 지운 벡터를 가리키기 때문이다.
+    dsl.execute(
+        "UPDATE dataset_embedding SET embedded_dim = NULL, embedded_model = NULL"
+            + " WHERE tenant_id = ? AND embedded_dim <> ?",
+        tenantId,
+        keep.size());
+    return deleted;
   }
 
-  private static String missingPredicate(EmbeddingSpace space) {
-    return "NOT EXISTS (SELECT 1 FROM "
-        + space.dimension().datasetTable()
-        + " v WHERE v.dataset_id = de.dataset_id AND v.embedding_model = ?)";
+  /**
+   * 판정식 — 표시 열이 현재 공간(차원·모델)을 가리키지 않는 행. 바인드 순서: 차원, 모델. NULL 을 명시적으로 다뤄 {@code IS DISTINCT FROM} 이
+   * 없는 DB(Tibero)에도 같은 식을 옮길 수 있게 한다.
+   */
+  private static final String MISSING_PREDICATE =
+      "(de.embedded_dim IS NULL OR de.embedded_dim <> ? OR de.embedded_model IS NULL"
+          + " OR de.embedded_model <> ?)";
+
+  /**
+   * 표시 열 채우기(WD-717) — 벡터 행을 쓴 메서드가 같은 트랜잭션에서 부른다. 표시 열 쓰기를 벡터 SQL 과 분리해 둔 이유: 포트 추출(WD-718)에서
+   * 벡터 SQL 은 벡터 저장소 구현으로 나가고 표시 열은 이 플랫폼 리포지토리에 남는다.
+   */
+  private void markEmbedded(EmbeddingSpace space, Long[] datasetIds) {
+    dsl.execute(
+        "UPDATE dataset_embedding SET embedded_dim = ?, embedded_model = ? WHERE dataset_id = ANY(?)",
+        space.dimension().size(),
+        space.model(),
+        datasetIds);
+  }
+
+  /** 표시 열 비우기(WD-717) — 벡터를 지운 메서드가 같은 트랜잭션에서 부른다. 벡터 삭제처럼 {@code tenant_id} 를 명시한다. */
+  private void clearMarkers(long tenantId, Long[] datasetIds) {
+    dsl.execute(
+        "UPDATE dataset_embedding SET embedded_dim = NULL, embedded_model = NULL"
+            + " WHERE tenant_id = ? AND dataset_id = ANY(?)",
+        tenantId,
+        datasetIds);
   }
 
   /**

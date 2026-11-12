@@ -147,6 +147,34 @@ public class DocumentChunkRecord extends UpdatableRecordImpl<DocumentChunkRecord
         return (Long) get(8);
     }
 
+    /**
+     * Setter for <code>public.document_chunk.embedded_dim</code>.
+     */
+    public void setEmbeddedDim(Integer value) {
+        set(9, value);
+    }
+
+    /**
+     * Getter for <code>public.document_chunk.embedded_dim</code>.
+     */
+    public Integer getEmbeddedDim() {
+        return (Integer) get(9);
+    }
+
+    /**
+     * Setter for <code>public.document_chunk.embedded_model</code>.
+     */
+    public void setEmbeddedModel(String value) {
+        set(10, value);
+    }
+
+    /**
+     * Getter for <code>public.document_chunk.embedded_model</code>.
+     */
+    public String getEmbeddedModel() {
+        return (String) get(10);
+    }
+
     // -------------------------------------------------------------------------
     // Primary key information
     // -------------------------------------------------------------------------
@@ -170,7 +198,7 @@ public class DocumentChunkRecord extends UpdatableRecordImpl<DocumentChunkRecord
     /**
      * Create a detached, initialised DocumentChunkRecord
      */
-    public DocumentChunkRecord(Long id, Long documentFileId, Long datasetId, Integer chunkIndex, String content, Integer tokenCount, JSONB metadata, OffsetDateTime createdAt, Long tenantId) {
+    public DocumentChunkRecord(Long id, Long documentFileId, Long datasetId, Integer chunkIndex, String content, Integer tokenCount, JSONB metadata, OffsetDateTime createdAt, Long tenantId, Integer embeddedDim, String embeddedModel) {
         super(DocumentChunk.DOCUMENT_CHUNK);
 
         setId(id);
@@ -182,6 +210,8 @@ public class DocumentChunkRecord extends UpdatableRecordImpl<DocumentChunkRecord
         setMetadata(metadata);
         setCreatedAt(createdAt);
         setTenantId(tenantId);
+        setEmbeddedDim(embeddedDim);
+        setEmbeddedModel(embeddedModel);
         resetChangedOnNotNull();
     }
 }

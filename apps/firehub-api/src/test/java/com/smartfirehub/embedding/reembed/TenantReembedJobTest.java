@@ -208,13 +208,22 @@ class TenantReembedJobTest extends IntegrationTestBase {
                   + " FROM document_chunk WHERE id = ?",
               ids.get(0));
         });
-    assertThat(inTenant(() -> chunks.countEmbedded(OLD))).isEqualTo(1);
+    // 옛 차원 행은 리포지토리를 거치지 않고 심었으므로 표시 열(WD-717)은 여전히 NEW 를 가리킨다 — countEmbedded 는 표시 열로 세므로 이 행을
+    // 보지 못한다. 그래서 정리 대상의 존재는 차원 테이블을 직접 세서 확인한다.
+    assertThat(oldDimensionChunkRows()).isEqualTo(1);
 
     job.run(tenant);
 
     assertThat(embeddedTexts).isEmpty(); // 판정식상 할 일은 없다
-    assertThat(inTenant(() -> chunks.countEmbedded(OLD))).isZero(); // 완료 단계 정리가 지웠다
+    assertThat(oldDimensionChunkRows()).isZero(); // 완료 단계 정리가 지웠다
     assertThat(inTenant(() -> chunks.countEmbedded(NEW))).isEqualTo(1);
+  }
+
+  /** 이 테넌트의 옛 차원(1024) 청크 벡터 행 수 — 표시 열이 아니라 차원 테이블 자체를 본다. */
+  private long oldDimensionChunkRows() {
+    return inTenantFixture(
+        tenant,
+        () -> dsl.fetchOne("SELECT count(*) FROM document_chunk_vec_1024").get(0, Long.class));
   }
 
   @Test
