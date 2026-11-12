@@ -174,6 +174,8 @@ PG는 jOOQ 구현을 그대로 쓰고, Tibero용 MyBatis 구현(`repository/myba
 
 ### 3. Tibero 빌드에서 끄는 기능
 
+> ADR 0002(벡터 저장소 옵션)가 이 결정을 보완한다. 벡터·키워드 검색이 꺼지는 것은 `firehub.vector-store.type=platform` 일 때뿐이다.
+
 | 기능 | 이유 | 방식 |
 |---|---|---|
 | 벡터(의미) 검색 — AI 문서·데이터셋 검색 | Tibero 7.2 에 VECTOR 가 없다 | `PlatformDbFeature.VECTOR_SEARCH` 를 Tibero 기본값으로 끈다(WD-486 플래그) |
