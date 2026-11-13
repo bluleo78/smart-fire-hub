@@ -4,9 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import com.smartfirehub.global.platformdb.PlatformDbErrors;
 import com.smartfirehub.global.platformdb.PlatformTenantSession;
 import com.smartfirehub.global.platformdb.mybatis.MyBatisPlatformConfig;
 import com.smartfirehub.global.platformdb.mybatis.PlatformMyBatisRepositoryRegistrar;
+import com.smartfirehub.global.platformdb.tibero.TiberoPlatformDbErrors;
 import com.smartfirehub.notification.repository.mybatis.MyBatisNotificationOutboxRepository;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
@@ -44,6 +46,7 @@ class NotificationOutboxTiberoWiringTest {
           .withUserConfiguration(
               MyBatisPlatformConfig.class, JooqNotificationRepositoriesScan.class)
           .withBean(DataSource.class, NotificationOutboxTiberoWiringTest::tiberoDataSource)
+          .withBean(PlatformDbErrors.class, TiberoPlatformDbErrors::new)
           .withBean(PlatformTenantSession.class, () -> mock(PlatformTenantSession.class))
           .withBean(PlatformTransactionManager.class, () -> mock(PlatformTransactionManager.class))
           .withPropertyValues(

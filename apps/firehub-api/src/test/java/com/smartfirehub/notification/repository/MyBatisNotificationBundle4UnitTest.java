@@ -11,6 +11,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.smartfirehub.global.platformdb.tibero.TiberoPlatformDbErrors;
 import com.smartfirehub.notification.ChannelType;
 import com.smartfirehub.notification.repository.mybatis.MyBatisOAuthStateRepository;
 import com.smartfirehub.notification.repository.mybatis.MyBatisSlackWorkspaceRepository;
@@ -89,11 +90,55 @@ class MyBatisNotificationBundle4UnitTest {
         .thenReturn(1);
     when(mapper.selectIdByTeamId("T1")).thenReturn(42L);
 
-    long id = new MyBatisSlackWorkspaceRepository(mapper).upsertFromOAuth("T1", "n", "b", "e", 1L);
+    long id =
+        new MyBatisSlackWorkspaceRepository(mapper, new TiberoPlatformDbErrors())
+            .upsertFromOAuth("T1", "n", "b", "e", 1L);
 
     assertThat(id).isEqualTo(42L);
     verify(mapper, times(2)).upsertFromOAuth("T1", "n", "b", "e", 1L);
     verify(mapper, times(1)).selectIdByTeamId("T1");
+  }
+
+  /** Tibero 유일 위반 모양 — 메시지의 ('스키마'.'제약') 에서 제약 이름을 꺼낸다. */
+  private static DuplicateKeyException tiberoDuplicate(String constraint) {
+    return new DuplicateKeyException(
+        "insert",
+        new java.sql.SQLIntegrityConstraintViolationException(
+            "JDBC-10007:UNIQUE constraint violation ('FHT_X'.'" + constraint + "').",
+            "23000",
+            -10007));
+  }
+
+  @Test
+  @DisplayName("재시도 뒤에도 남은 team_id 키 중복은 다른 테넌트 소유 신호로 바뀐다")
+  void upsertFromOAuth_teamIdKeyDuplicateAfterRetry_isOwnedByAnotherTenant() {
+    SlackWorkspaceMapper mapper = mock(SlackWorkspaceMapper.class);
+    when(mapper.upsertFromOAuth(any(), any(), any(), any(), any()))
+        .thenThrow(tiberoDuplicate("SLACK_WORKSPACE_TEAM_ID_KEY"));
+    var repo = new MyBatisSlackWorkspaceRepository(mapper, new TiberoPlatformDbErrors());
+
+    var thrown =
+        org.assertj.core.api.Assertions.catchThrowable(
+            () -> repo.upsertFromOAuth("T1", "n", "b", "e", 1L));
+
+    assertThat(thrown).isInstanceOf(SlackTeamOwnedByAnotherTenantException.class);
+    assertThat(thrown.getCause()).isInstanceOf(DuplicateKeyException.class);
+    verify(mapper, times(2)).upsertFromOAuth("T1", "n", "b", "e", 1L);
+  }
+
+  @Test
+  @DisplayName("team_id 가 아닌 다른 제약의 중복은 변환하지 않고 그대로 올린다")
+  void upsertFromOAuth_otherConstraintDuplicate_propagatesUnchanged() {
+    SlackWorkspaceMapper mapper = mock(SlackWorkspaceMapper.class);
+    DuplicateKeyException other = tiberoDuplicate("SLACK_WORKSPACE_PKEY");
+    when(mapper.upsertFromOAuth(any(), any(), any(), any(), any())).thenThrow(other);
+    var repo = new MyBatisSlackWorkspaceRepository(mapper, new TiberoPlatformDbErrors());
+
+    var thrown =
+        org.assertj.core.api.Assertions.catchThrowable(
+            () -> repo.upsertFromOAuth("T1", "n", "b", "e", 1L));
+
+    assertThat(thrown).isInstanceOf(DuplicateKeyException.class).isSameAs(other);
   }
 
   @Test
@@ -141,7 +186,10 @@ class MyBatisNotificationBundle4UnitTest {
             9L, "T1", null, "UB", "tok", null, null, null, null);
     when(mapper.selectById(9L)).thenReturn(raw);
 
-    var w = new MyBatisSlackWorkspaceRepository(mapper).findById(9L).orElseThrow();
+    var w =
+        new MyBatisSlackWorkspaceRepository(mapper, new TiberoPlatformDbErrors())
+            .findById(9L)
+            .orElseThrow();
 
     assertThat(w.signingSecretEnc()).isEqualTo("");
     assertThat(w.teamName()).isNull();

@@ -7,6 +7,7 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.global.platformdb.PlatformDbErrors;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.notification.ChannelType;
 import com.smartfirehub.notification.auth.exception.SlackWorkspaceInstallDeniedException;
@@ -47,6 +48,7 @@ class SlackReinstallCrossTenantTest extends IntegrationTestBase {
   @Autowired private SlackWorkspaceRepository slackWorkspaceRepo;
   @Autowired private OAuthStateService oAuthStateService;
   @Autowired private SlackOAuthService slackOAuthService;
+  @Autowired private PlatformDbErrors platformDbErrors;
   @Autowired private MockMvc mockMvc;
   @Autowired private ObjectMapper objectMapper;
 
@@ -140,8 +142,32 @@ class SlackReinstallCrossTenantTest extends IntegrationTestBase {
         catchThrowable(() -> slackOAuthService.completeAuthorization("code-b", userB));
 
     assertThat(thrown).isInstanceOf(SlackWorkspaceInstallDeniedException.class);
+    // PG 원인은 RLS 거부(42501)다 — Tibero 는 team_id 키 중복이며 TiberoSlackInstallDeniedServiceTest 가 본다.
+    assertThat(
+            platformDbErrors.isRowSecurityDenied(
+                ((DataAccessException) thrown.getCause()).getMostSpecificCause()))
+        .isTrue();
     // T4 의 배선 결함 계열과 섞이면 안 된다 — 그쪽은 IllegalStateException 이다.
     assertThat(thrown).isNotInstanceOf(IllegalStateException.class);
+  }
+
+  /** 같은 테넌트의 재설치는 거절이 아니라 같은 id 로 갱신된다(WD-730 Review Focus 4). */
+  @Test
+  void completeAuthorization_reinstallBySameTenant_updatesSameWorkspace() {
+    installForTenantA();
+    stubSlackOAuthExchange();
+    Long existing =
+        inTenantFixture(
+            tenantA,
+            () ->
+                ((Number)
+                        dsl.fetchValue("select id from slack_workspace where team_id = ?", teamId))
+                    .longValue());
+
+    TenantContext.set(tenantA);
+    var installed = slackOAuthService.completeAuthorization("code-a", userA);
+
+    assertThat(installed.workspaceId()).isEqualTo(existing);
   }
 
   /**

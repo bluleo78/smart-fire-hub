@@ -3,9 +3,11 @@ package com.smartfirehub.notification.auth;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.smartfirehub.apiconnection.service.EncryptionService;
 import com.smartfirehub.global.platformdb.PlatformDbErrors;
+import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.notification.ChannelType;
 import com.smartfirehub.notification.auth.exception.SlackWorkspaceInstallDeniedException;
 import com.smartfirehub.notification.channels.slack.SlackApiClient;
+import com.smartfirehub.notification.repository.SlackTeamOwnedByAnotherTenantException;
 import com.smartfirehub.notification.repository.SlackWorkspaceRepository;
 import com.smartfirehub.notification.repository.UserChannelBinding;
 import com.smartfirehub.notification.repository.UserChannelBindingRepository;
@@ -134,7 +136,10 @@ public class SlackOAuthService {
   }
 
   /**
-   * upsert 를 수행하되, RLS 거부({@code 42501})만 전용 예외로 바꾼다.
+   * upsert 를 수행하되, RLS 거부({@code 42501})와 「재시도 뒤에도 남은 team_id 중복」만 전용 예외로 바꾼다.
+   *
+   * <p>후자는 Tibero 경로다 — MERGE 가 다른 테넌트 행을 못 보고 INSERT 하다 유일 키에 걸린다. DB 종류를 묻지 않고 Spring 의 벤더 중립
+   * {@code DuplicateKeyException} 만 본다(리포지토리 계약: 같은 테넌트 경합은 리포지토리가 한 번 재시도해 흡수하고, 그래도 남으면 던진다).
    *
    * <p>다른 테넌트가 이미 설치한 팀을 (재)설치하면 전역 유니크 {@code team_id} 때문에 남의 행으로 DO UPDATE 가 내려가고 정책에 막힌다 —
    * {@link SlackWorkspaceInstallDeniedException} 의 설명 참조. fail-closed 라 보안상 안전하지만 500 으로 새어 나가면
@@ -155,7 +160,7 @@ public class SlackOAuthService {
    * 상태에서 나는 42501 은 "남의 테넌트 행과 충돌" 밖에 없다. 현재 유일한 호출부인 {@code SlackOAuthController.callback} 이 그 전제를
    * 만족한다: state 가 실어 온 테넌트로 {@code TenantContext.runScopedGet(long, …)} 을 감싸고, 복원에 실패하면 upsert 에
    * 도달하기 전에 400 으로 fail-closed 한다. <b>컨텍스트를 세우지 않는 호출부가 붙으면 배선 결함이 조용히 409 로 묻힌다</b> — 그건 500 으로
-   * 시끄럽게 터져야 한다.
+   * 시끄럽게 터져야 한다. 그래서 {@link #toInstallDenied} 가 테넌트 컨텍스트 부재를 직접 확인해, 없으면 변환하지 않고 원래 예외(500)를 올린다.
    */
   private long upsertOrDeny(
       String teamId,
@@ -166,14 +171,28 @@ public class SlackOAuthService {
     try {
       return slackWorkspaceRepo.upsertFromOAuth(
           teamId, teamName, botUserId, botTokenEnc, installedByUserId);
+    } catch (SlackTeamOwnedByAnotherTenantException ex) {
+      // Tibero: 재시도 뒤에도 남은 team_id 키 중복(리포지토리가 판정). PG 의 RLS 거부와 같은 예외·응답으로 맞춘다(WD-730).
+      throw toInstallDenied(ex, teamId);
     } catch (DataAccessException ex) {
       Throwable root = ex.getMostSpecificCause();
       if (platformDbErrors.isRowSecurityDenied(root)) {
-        throw new SlackWorkspaceInstallDeniedException(teamId, ex);
+        throw toInstallDenied(ex, teamId);
       }
       // 그 외 DB 오류는 손대지 않는다 — 500 으로 시끄럽게 터지는 것이 맞다.
       throw ex;
     }
+  }
+
+  /**
+   * 설치 거절 예외로 바꾸되, 테넌트 컨텍스트가 없으면 원래 예외를 그대로 돌려줘 500 으로 시끄럽게 터지게 한다 — 컨텍스트 없는 호출의 실패는 「다른 테넌트 소유」가
+   * 아니라 배선 결함일 수 있다(위 upsertOrDeny 설명).
+   */
+  private RuntimeException toInstallDenied(RuntimeException cause, String teamId) {
+    if (TenantContext.get() == null) {
+      return cause;
+    }
+    return new SlackWorkspaceInstallDeniedException(teamId, cause);
   }
 
   /**

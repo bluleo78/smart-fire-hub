@@ -726,7 +726,8 @@ public class GlobalExceptionHandler {
       Set.of("security_level_id", "max_security_level_id");
 
   /**
-   * Slack 앱 설치가 RLS 에 막힌 경우 500 이 아니라 409 로 응답한다 (멀티 테넌시 P2-g).
+   * Slack 앱 설치가 「다른 테넌트 소유 팀」(PG: RLS 거부, Tibero: team_id 키 중복)으로 막힌 경우 500 이 아니라 409 로 응답한다 (멀티
+   * 테넌시 P2-g).
    *
    * <p><b>왜 응답 문구가 일반적이어야 하는가 — 지우지 말 것.</b> "이미 다른 테넌트가 이 Slack 팀을 설치했다"고 알려 주면, 아무나 팀 ID 만 넣어 보고
    * <b>다른 테넌트의 설치 여부를 조회하는 오라클</b>이 된다(팀 ID 는 워크스페이스 관리자면 누구나 안다). 그래서 응답에는 원인·team_id· 상대 테넌트를 일절
@@ -745,7 +746,8 @@ public class GlobalExceptionHandler {
     MDC.put("correlationId", "slack-install-denied-" + ex.getTeamId());
     try {
       log.warn(
-          "Slack workspace install denied by RLS (sqlstate=42501) on {}: teamId={}",
+          "Slack workspace install denied (team owned by another tenant; cause={}) on {}: teamId={}",
+          ex.getCause() == null ? "none" : ex.getCause().getClass().getSimpleName(),
           request.getRequestURI(),
           ex.getTeamId(),
           ex);

@@ -1,13 +1,16 @@
 package com.smartfirehub.notification.auth.exception;
 
 /**
- * Slack 앱 설치(OAuth 콜백)가 RLS 정책에 막혔을 때 던진다.
+ * Slack 앱 설치(OAuth 콜백)가 「다른 테넌트가 이미 소유한 팀」이라 거절될 때 던진다.
+ *
+ * <p><b>원인은 DB 별로 다르다.</b> PG: RLS 거부({@code 42501}). Tibero: 재시도 뒤에도 남은 team_id 유일 키 중복(리포지토리가
+ * {@code SlackTeamOwnedByAnotherTenantException} 으로 알리고 서비스가 이 예외로 통일, WD-730). 아래 설명은 PG 경로 기준이다.
  *
  * <p><b>언제 나는가.</b> {@code slack_workspace.team_id} 유니크는 <b>전역</b>이다(접으면 {@code team_id → tenant}
  * 해석이 다의가 되므로 일부러 전역). {@code upsertFromOAuth} 는 {@code ON CONFLICT (team_id) DO UPDATE} 인데, <b>충돌
  * 판정은 유니크 인덱스가 하고 인덱스는 RLS 와 무관하게 모든 행을 본다.</b> 그래서 이미 <b>다른 테넌트</b>가 설치해 둔 팀을 설치하면 그 남의 행과 충돌해 DO
- * UPDATE 로 내려가고, 정책이 그 행을 보여 주지 않아 PostgreSQL 이 {@code 42501} (insufficient_privilege)로 거절한다.
- * {@code 23505} 는 이 경로에서 절대 발생하지 않는다.
+ * UPDATE 로 내려가고, 정책이 그 행을 보여 주지 않아 PostgreSQL 이 {@code 42501} (insufficient_privilege)로 거절한다. PG
+ * 에서는 {@code 23505} 가 이 경로에서 발생하지 않는다.
  *
  * <p><b>왜 별도 예외인가.</b> {@code 42501} 을 전역에서 통째로 4xx 로 바꾸면 컨텍스트 없이 도는 배경 경로의 쓰기 같은 <b>진짜 배선 결함</b>까지
  * 조용히 묻힌다 — 그건 500 으로 시끄럽게 터지는 것이 맞다. 그래서 OAuth 설치 경로에서만 이 예외로 좁혀 변환한다.
@@ -21,7 +24,7 @@ public class SlackWorkspaceInstallDeniedException extends RuntimeException {
   private final String teamId;
 
   public SlackWorkspaceInstallDeniedException(String teamId, Throwable cause) {
-    super("slack workspace install denied by row-level security: teamId=" + teamId, cause);
+    super("slack workspace install denied (team owned by another tenant): teamId=" + teamId, cause);
     this.teamId = teamId;
   }
 

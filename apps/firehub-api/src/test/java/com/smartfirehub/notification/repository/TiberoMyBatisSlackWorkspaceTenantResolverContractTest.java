@@ -1,5 +1,6 @@
 package com.smartfirehub.notification.repository;
 
+import com.smartfirehub.global.platformdb.tibero.TiberoPlatformDbErrors;
 import com.smartfirehub.global.platformdb.tibero.TiberoPlatformTenantSession;
 import com.smartfirehub.notification.repository.mybatis.MyBatisSlackWorkspaceRepository;
 import com.smartfirehub.notification.repository.mybatis.MyBatisSlackWorkspaceTenantResolver;
@@ -37,7 +38,8 @@ class TiberoMyBatisSlackWorkspaceTenantResolverContractTest
     workspaceRepository =
         poc.transactional(
             SlackWorkspaceRepository.class,
-            new MyBatisSlackWorkspaceRepository(poc.mapper(SlackWorkspaceMapper.class)));
+            new MyBatisSlackWorkspaceRepository(
+                poc.mapper(SlackWorkspaceMapper.class), new TiberoPlatformDbErrors()));
   }
 
   @Override
