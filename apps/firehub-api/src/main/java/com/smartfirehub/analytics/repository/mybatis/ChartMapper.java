@@ -4,6 +4,7 @@ import com.smartfirehub.analytics.repository.mybatis.AnalyticsRows.IdName;
 import com.smartfirehub.analytics.repository.mybatis.AnalyticsRows.SharingCounts;
 import com.smartfirehub.analytics.repository.mybatis.AnalyticsRows.VersionRow;
 import com.smartfirehub.analytics.repository.mybatis.ChartRows.ChartInsert;
+import com.smartfirehub.analytics.repository.mybatis.ChartRows.ChartListRow;
 import com.smartfirehub.analytics.repository.mybatis.ChartRows.ChartRow;
 import com.smartfirehub.analytics.repository.mybatis.ChartRows.ImpactRow;
 import com.smartfirehub.global.platformdb.mybatis.PlatformMapper;
@@ -21,8 +22,8 @@ import org.apache.ibatis.annotations.Param;
 @PlatformMapper
 public interface ChartMapper {
 
-  /** 목록 한 쪽 — 수정 시각 내림차순, 같으면 id 내림차순. */
-  List<ChartRow> selectPage(
+  /** 목록 한 쪽 — 수정 시각 내림차순, 같으면 id 내림차순. config 는 읽지 않는다(WD-733). */
+  List<ChartListRow> selectPage(
       @Param("shared") boolean shared,
       @Param("mine") boolean mine,
       @Param("userId") Long userId,

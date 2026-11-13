@@ -30,6 +30,21 @@ public final class ChartRows {
       LocalDateTime updatedAt,
       long dashboardCount) {}
 
+  /** 목록 한 행(WD-733) — {@link ChartRow} 에서 config 를 뺀 것. 목록 문장이 config 를 읽지 않는다. */
+  public record ChartListRow(
+      Long id,
+      String name,
+      String description,
+      Long savedQueryId,
+      String savedQueryName,
+      String chartType,
+      boolean shared,
+      String createdByName,
+      Long createdBy,
+      LocalDateTime createdAt,
+      LocalDateTime updatedAt,
+      long dashboardCount) {}
+
   /** 삭제 영향 조회 한 행 — 이름과 조회자에게 보이는지(소유 또는 공유). */
   public record ImpactRow(Long id, String name, boolean visible) {}
 

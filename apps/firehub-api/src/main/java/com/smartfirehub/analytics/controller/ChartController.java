@@ -1,6 +1,7 @@
 package com.smartfirehub.analytics.controller;
 
 import com.smartfirehub.analytics.dto.ChartDataResponse;
+import com.smartfirehub.analytics.dto.ChartListItemResponse;
 import com.smartfirehub.analytics.dto.ChartResponse;
 import com.smartfirehub.analytics.dto.CreateChartRequest;
 import com.smartfirehub.analytics.dto.DeleteImpactResponse;
@@ -24,7 +25,7 @@ public class ChartController {
 
   @GetMapping
   @RequirePermission("analytics:read")
-  public ResponseEntity<PageResponse<ChartResponse>> listCharts(
+  public ResponseEntity<PageResponse<ChartListItemResponse>> listCharts(
       @RequestParam(required = false) String search,
       @RequestParam(required = false) String chartType,
       @RequestParam(required = false) Long savedQueryId,

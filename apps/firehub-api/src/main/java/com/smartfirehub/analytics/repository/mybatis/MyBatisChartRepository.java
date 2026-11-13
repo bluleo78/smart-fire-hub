@@ -4,6 +4,7 @@ import static com.smartfirehub.global.platformdb.mybatis.PlatformText.blankToNul
 import static com.smartfirehub.global.platformdb.mybatis.PlatformText.searchPattern;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.analytics.dto.ChartListItemResponse;
 import com.smartfirehub.analytics.dto.ChartResponse;
 import com.smartfirehub.analytics.dto.CreateChartRequest;
 import com.smartfirehub.analytics.dto.DeleteImpactResponse;
@@ -11,6 +12,7 @@ import com.smartfirehub.analytics.dto.UpdateChartRequest;
 import com.smartfirehub.analytics.repository.ChartRepository;
 import com.smartfirehub.analytics.repository.mybatis.AnalyticsRows.SharingCounts;
 import com.smartfirehub.analytics.repository.mybatis.ChartRows.ChartInsert;
+import com.smartfirehub.analytics.repository.mybatis.ChartRows.ChartListRow;
 import com.smartfirehub.analytics.repository.mybatis.ChartRows.ChartRow;
 import com.smartfirehub.global.dto.LockedRowVersion;
 import com.smartfirehub.global.exception.SerializationException;
@@ -50,7 +52,7 @@ public class MyBatisChartRepository implements ChartRepository {
   }
 
   @Override
-  public List<ChartResponse> findAll(
+  public List<ChartListItemResponse> findAll(
       String search,
       String chartType,
       Long savedQueryId,
@@ -71,7 +73,7 @@ public class MyBatisChartRepository implements ChartRepository {
             size,
             (long) page * size)
         .stream()
-        .map(this::toResponse)
+        .map(this::toListItem)
         .toList();
   }
 
@@ -201,6 +203,23 @@ public class MyBatisChartRepository implements ChartRepository {
   @Override
   public boolean deleteById(Long id, Long userId) {
     return mapper.deleteByIdAndOwner(id, userId) > 0;
+  }
+
+  /** 목록 행 → 목록 전용 응답(config 없음, WD-733). */
+  private ChartListItemResponse toListItem(ChartListRow r) {
+    return new ChartListItemResponse(
+        r.id(),
+        r.name(),
+        r.description(),
+        r.savedQueryId(),
+        r.savedQueryName(),
+        r.chartType(),
+        r.shared(),
+        r.createdByName(),
+        r.createdBy(),
+        r.createdAt(),
+        r.updatedAt(),
+        r.dashboardCount());
   }
 
   /** 조회 행 → 응답. config 텍스트를 맵으로 바꾼다(configWithheld 는 리포지토리에서 늘 false — 가림은 서비스 몫). */

@@ -143,14 +143,22 @@ public class DashboardService {
     // 조회자가 볼 수 있는 데이터셋만 센다·싣는다(보안 등급) — 숨김 데이터셋 개수·이름이 홈에서 새지 않게.
     DatasetVisibility visible = datasetAccessGuard.visibility(viewer);
 
-    long totalDatasets = dashboardStatsRepository.countDatasets(visible);
-    long sourceDatasets = dashboardStatsRepository.countSourceDatasets(visible);
-    long derivedDatasets = dashboardStatsRepository.countDerivedDatasets(visible);
+    // 같은 dataset 표의 전체·원천·파생 수는 한 번에 센다(WD-733)
+    DashboardStatsRepository.DatasetCounts datasetCounts =
+        dashboardStatsRepository.countDatasetsByKind(visible);
+    long totalDatasets = datasetCounts.total();
+    long sourceDatasets = datasetCounts.source();
+    long derivedDatasets = datasetCounts.derived();
 
-    // 파이프라인 개수 — 조회 권한이 없으면 세지 않는다(WD-272)
-    long totalPipelines = includePipelines ? dashboardStatsRepository.countPipelines() : 0L;
-
-    long activePipelines = includePipelines ? dashboardStatsRepository.countActivePipelines() : 0L;
+    // 파이프라인 개수 — 조회 권한이 없으면 세지 않는다(WD-272). 전체·활성은 한 번에 센다(WD-733)
+    long totalPipelines = 0L;
+    long activePipelines = 0L;
+    if (includePipelines) {
+      DashboardStatsRepository.PipelineCounts pipelineCounts =
+          dashboardStatsRepository.countPipelineStats();
+      totalPipelines = pipelineCounts.total();
+      activePipelines = pipelineCounts.active();
+    }
 
     // 최근 임포트(상위 5개) — 감사 결과값을 화면 상태값으로 바꾼다.
     List<RecentImportResponse> recentImports =

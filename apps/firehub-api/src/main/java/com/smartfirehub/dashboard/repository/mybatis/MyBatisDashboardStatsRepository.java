@@ -51,13 +51,8 @@ public class MyBatisDashboardStatsRepository implements DashboardStatsRepository
   }
 
   @Override
-  public long countSourceDatasets(DatasetVisibility visibility) {
-    return mapper.countSourceDatasets(vis(visibility));
-  }
-
-  @Override
-  public long countDerivedDatasets(DatasetVisibility visibility) {
-    return mapper.countDerivedDatasets(vis(visibility));
+  public DatasetCounts countDatasetsByKind(DatasetVisibility visibility) {
+    return mapper.countDatasetsByKind(vis(visibility));
   }
 
   @Override
@@ -66,8 +61,8 @@ public class MyBatisDashboardStatsRepository implements DashboardStatsRepository
   }
 
   @Override
-  public long countActivePipelines() {
-    return mapper.countActivePipelines();
+  public PipelineCounts countPipelineStats() {
+    return mapper.countPipelineStats();
   }
 
   @Override

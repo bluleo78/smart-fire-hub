@@ -254,8 +254,6 @@ export interface ChartListItem {
   savedQueryId: number;
   savedQueryName: string;
   chartType: ChartType;
-  /** 서버가 설정을 가린 차트인가(WD-31②) — 목록에는 config 가 없어 표시용 플래그만 둔다. */
-  configWithheld?: boolean;
   isShared: boolean;
   createdByName: string;
   /** 작성자 id — 현재 사용자와 비교해 남의 공유 항목 줄에서 편집·삭제 버튼을 숨긴다(WD-196, useIsOwner). */

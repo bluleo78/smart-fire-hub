@@ -27,6 +27,21 @@
     </constructor>
   </resultMap>
 
+  <resultMap id="datasetCounts" type="com.smartfirehub.dashboard.repository.DashboardStatsRepository$DatasetCounts">
+    <constructor>
+      <arg column="total" javaType="_long"/>
+      <arg column="source_count" javaType="_long"/>
+      <arg column="derived_count" javaType="_long"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="pipelineCounts" type="com.smartfirehub.dashboard.repository.DashboardStatsRepository$PipelineCounts">
+    <constructor>
+      <arg column="total" javaType="_long"/>
+      <arg column="active_count" javaType="_long"/>
+    </constructor>
+  </resultMap>
+
   <resultMap id="recentExecutionRow" type="com.smartfirehub.dashboard.dto.RecentExecutionResponse">
     <constructor>
       <arg column="id" javaType="java.lang.Long"/>
@@ -128,21 +143,28 @@
     SELECT COUNT(*) FROM dataset WHERE <include refid="visible"/>
   </select>
 
-  <select id="countSourceDatasets" resultType="_long">
-    SELECT COUNT(*) FROM dataset WHERE <include refid="tableSource"/> AND <include refid="visible"/>
-  </select>
-
-  <select id="countDerivedDatasets" resultType="_long">
-    SELECT COUNT(*) FROM dataset
-     WHERE <include refid="tableDerived"/> AND <include refid="visible"/>
+  <!--
+    전체·원천·파생을 한 번의 훑기로(WD-733). 공통 가시성 조건은 WHERE 에 그대로 둔다(인덱스 사용 유지) — 종류별 수만 SUM(CASE) 로 센다.
+    jOOQ count().filterWhere 는 Tibero 에 없어 두 DB 모두 같은 SUM(CASE …) 로 쓴다(PipelineExecutionMapper 와 같은 관례).
+    행이 없으면 SUM 이 NULL 이라 COALESCE 로 0.
+  -->
+  <select id="countDatasetsByKind" resultMap="datasetCounts">
+    SELECT COUNT(*) AS total,
+           COALESCE(SUM(CASE WHEN <include refid="tableSource"/> THEN 1 ELSE 0 END), 0) AS source_count,
+           COALESCE(SUM(CASE WHEN <include refid="tableDerived"/> THEN 1 ELSE 0 END), 0) AS derived_count
+      FROM dataset
+     WHERE <include refid="visible"/>
   </select>
 
   <select id="countPipelines" resultType="_long">
     SELECT COUNT(*) FROM pipeline
   </select>
 
-  <select id="countActivePipelines" resultType="_long">
-    SELECT COUNT(*) FROM pipeline WHERE pipeline.is_active = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>
+  <!-- 전체·활성 파이프라인을 한 번의 훑기로(WD-733). 조건 없는 전체 수에 활성만 SUM(CASE) 로 센다. -->
+  <select id="countPipelineStats" resultMap="pipelineCounts">
+    SELECT COUNT(*) AS total,
+           COALESCE(SUM(CASE WHEN pipeline.is_active = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/> THEN 1 ELSE 0 END), 0) AS active_count
+      FROM pipeline
   </select>
 
   <!-- 가시성은 상위 5건 자르기 전에 SQL 에서 건다 — 숨김 행이 상위를 차지해 볼 수 있는 임포트가 밀려나지 않게. -->

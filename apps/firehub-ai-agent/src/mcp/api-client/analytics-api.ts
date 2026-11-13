@@ -141,8 +141,6 @@ export interface ChartList {
     createdByName: string;
     createdAt: string;
     updatedAt: string;
-    /** 조회자가 저장 쿼리 데이터를 볼 수 없어 config 를 가렸는가(WD-31②) */
-    configWithheld?: boolean;
   }>;
   totalElements: number;
   totalPages: number;

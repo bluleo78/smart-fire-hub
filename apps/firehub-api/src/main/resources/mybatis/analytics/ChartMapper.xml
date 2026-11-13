@@ -32,6 +32,24 @@
     </constructor>
   </resultMap>
 
+  <!-- 목록 행(WD-733) — chartRow 에서 config_json 을 뺀 것. -->
+  <resultMap id="chartListRow" type="com.smartfirehub.analytics.repository.mybatis.ChartRows$ChartListRow">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="name" javaType="java.lang.String"/>
+      <arg column="description" javaType="java.lang.String"/>
+      <arg column="saved_query_id" javaType="java.lang.Long"/>
+      <arg column="saved_query_name" javaType="java.lang.String"/>
+      <arg column="chart_type" javaType="java.lang.String"/>
+      <arg column="is_shared" javaType="_boolean"/>
+      <arg column="created_by_name" javaType="java.lang.String"/>
+      <arg column="created_by" javaType="java.lang.Long"/>
+      <arg column="created_at" javaType="java.time.LocalDateTime"/>
+      <arg column="updated_at" javaType="java.time.LocalDateTime"/>
+      <arg column="dashboard_count" javaType="_long"/>
+    </constructor>
+  </resultMap>
+
   <resultMap id="impactRow" type="com.smartfirehub.analytics.repository.mybatis.ChartRows$ImpactRow">
     <constructor>
       <arg column="id" javaType="java.lang.Long"/>
@@ -59,12 +77,17 @@
     <if test="savedQueryId != null">AND c.saved_query_id = #{savedQueryId}</if>
   </sql>
 
-  <!-- 응답 열 — 저장 쿼리 이름·만든이 이름은 내부 조인, 위젯 수는 jOOQ 와 같은 상관 서브쿼리. -->
-  <sql id="responseColumns">
+  <!-- 목록 열(WD-733) — 저장 쿼리 이름·만든이 이름은 내부 조인, 위젯 수는 jOOQ 와 같은 상관 서브쿼리. 목록 화면은 config 를 쓰지 않아 읽지 않는다. -->
+  <sql id="listColumns">
     c.id, c.name, c.description, c.saved_query_id, sq.name AS saved_query_name, c.chart_type,
-    <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.jsonText"><property name="col" value="c.config"/><property name="alias" value="config_json"/></include>,
     c.is_shared, u.name AS created_by_name, c.created_by, c.created_at, c.updated_at,
     (SELECT COUNT(*) FROM dashboard_widget dw WHERE dw.chart_id = c.id) AS dashboard_count
+  </sql>
+
+  <!-- 응답 열 — 목록 열 + config(단건용). -->
+  <sql id="responseColumns">
+    <include refid="listColumns"/>,
+    <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.jsonText"><property name="col" value="c.config"/><property name="alias" value="config_json"/></include>
   </sql>
 
   <sql id="responseJoins">
@@ -72,8 +95,8 @@
     JOIN <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.userTable"/> u ON u.id = c.created_by
   </sql>
 
-  <select id="selectPage" resultMap="chartRow">
-    SELECT <include refid="responseColumns"/>
+  <select id="selectPage" resultMap="chartListRow">
+    SELECT <include refid="listColumns"/>
       FROM chart c
       <include refid="responseJoins"/>
      WHERE <include refid="listScope"/>

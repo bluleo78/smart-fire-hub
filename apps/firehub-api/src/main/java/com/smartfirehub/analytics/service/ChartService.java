@@ -2,6 +2,7 @@ package com.smartfirehub.analytics.service;
 
 import com.smartfirehub.analytics.dto.AnalyticsQueryResponse;
 import com.smartfirehub.analytics.dto.ChartDataResponse;
+import com.smartfirehub.analytics.dto.ChartListItemResponse;
 import com.smartfirehub.analytics.dto.ChartResponse;
 import com.smartfirehub.analytics.dto.CreateChartRequest;
 import com.smartfirehub.analytics.dto.DeleteImpactResponse;
@@ -76,7 +77,7 @@ public class ChartService {
    */
   // RLS 가 걸린 chart 를 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
   @Transactional(readOnly = true)
-  public PageResponse<ChartResponse> list(
+  public PageResponse<ChartListItemResponse> list(
       String search,
       String chartType,
       Long savedQueryId,
@@ -85,12 +86,10 @@ public class ChartService {
       Long userId,
       int page,
       int size) {
-    // 저장 쿼리를 통과하지 못하는 조회자에게는 config(원본 컬럼명)를 가린다(WD-31②).
-    List<ChartResponse> content =
-        withholdDenied(
-            chartRepository.findAll(
-                search, chartType, savedQueryId, sharedOnly, mineOnly, userId, page, size),
-            userId);
+    // 목록 응답에는 config 가 없어(WD-733) 저장 쿼리 보안 판정(config 가림, WD-31②)이 필요 없다 — 가림은 단건·저장 응답에서 한다.
+    List<ChartListItemResponse> content =
+        chartRepository.findAll(
+            search, chartType, savedQueryId, sharedOnly, mineOnly, userId, page, size);
     long total =
         chartRepository.countAll(search, chartType, savedQueryId, sharedOnly, mineOnly, userId);
     int totalPages = (int) Math.ceil((double) total / size);
@@ -330,7 +329,7 @@ public class ChartService {
 
   /**
    * 조회자가 차트의 저장 쿼리를 SQL 판정으로 통과하지 못하면 config 를 가린다(WD-31②, 스펙 §5.1). 저장 쿼리 id 단위로 요청 범위 캐시 — 목록에서
-   * 같은 쿼리를 쓰는 차트마다 다시 판정하지 않는다. 빈 SQL·사라진 저장 쿼리는 가릴 대상이 없다.
+   * 같은 쿼리를 쓰는 차트마다 다시 판정하지 않는다(목록은 config 가 없어 이 판정을 하지 않는다, WD-733). 빈 SQL·사라진 저장 쿼리는 가릴 대상이 없다.
    */
   private List<ChartResponse> withholdDenied(List<ChartResponse> charts, Long userId) {
     if (charts.isEmpty()) {
@@ -371,8 +370,8 @@ public class ChartService {
    * denied 위젯 응답 — queryResult 는 null 이 아닌 빈 결과(null 이면 차트 빌더 등 다른 소비자가 깨진다, 판단 사항 7). 거부 코드·원본 이름은
    * 싣지 않는다. chart 는 웹 잠금 상태가 쓰는 최소 메타만 남긴다 — config(원본 테이블의 컬럼명이 들어 있다)는 빈 맵, savedQueryName 은
    * null. 빈 맵인 이유: config 를 순회하는 소비자(웹 ChartRenderer·ai-agent)가 null 에서 깨지지 않게. 데이터 응답이라
-   * configWithheld=true 로 표시한다. GET/목록/저장 응답의 가림은 {@link #withholdDenied} 가 config=null 로 한다(그쪽은
-   * 재저장 시 "유지" 계약 때문에 null).
+   * configWithheld=true 로 표시한다. GET/저장 응답의 가림은 {@link #withholdDenied} 가 config=null 로 한다(목록은
+   * config 자체가 없다, WD-733)(그쪽은 재저장 시 "유지" 계약 때문에 null).
    */
   public static ChartDataResponse deniedData(ChartResponse chart) {
     ChartResponse minimal =

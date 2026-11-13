@@ -2,9 +2,11 @@ package com.smartfirehub.dashboard.repository.mybatis;
 
 import com.smartfirehub.dashboard.dto.RecentExecutionResponse;
 import com.smartfirehub.dashboard.repository.DashboardStatsRepository.AuditActivityRow;
+import com.smartfirehub.dashboard.repository.DashboardStatsRepository.DatasetCounts;
 import com.smartfirehub.dashboard.repository.DashboardStatsRepository.ExecutionRow;
 import com.smartfirehub.dashboard.repository.DashboardStatsRepository.FailedImportRow;
 import com.smartfirehub.dashboard.repository.DashboardStatsRepository.FailedPipelineRow;
+import com.smartfirehub.dashboard.repository.DashboardStatsRepository.PipelineCounts;
 import com.smartfirehub.dashboard.repository.DashboardStatsRepository.RecentImportRow;
 import com.smartfirehub.global.platformdb.mybatis.PlatformMapper;
 import com.smartfirehub.securitylevel.repository.mybatis.MyBatisDatasetVisibility.VisibilityParams;
@@ -26,13 +28,13 @@ public interface DashboardStatsMapper {
 
   long countDatasets(@Param("vis") VisibilityParams vis);
 
-  long countSourceDatasets(@Param("vis") VisibilityParams vis);
-
-  long countDerivedDatasets(@Param("vis") VisibilityParams vis);
+  /** 전체·원천·파생 데이터셋 수를 한 문장으로(WD-733). */
+  DatasetCounts countDatasetsByKind(@Param("vis") VisibilityParams vis);
 
   long countPipelines();
 
-  long countActivePipelines();
+  /** 전체·활성 파이프라인 수를 한 문장으로(WD-733). */
+  PipelineCounts countPipelineStats();
 
   List<RecentImportRow> selectRecentImports(@Param("vis") VisibilityParams vis);
 

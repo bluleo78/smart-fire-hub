@@ -418,9 +418,9 @@ class ChartDeniedTest extends IntegrationTestBase {
   private static final ObjectMapper JSON = new ObjectMapper();
   private final List<Long> reassignedOwners = new ArrayList<>();
 
-  /** WD-31②: 저장 쿼리를 통과하지 못하는 조회자에게는 config(컬럼명)를 주지 않는다 — 단건·목록 모두. 볼 수 있는 차트는 그대로. */
+  /** WD-31②: 저장 쿼리를 통과하지 못하는 조회자에게는 config(컬럼명)를 주지 않는다 — 단건에서 가리고, 목록은 config 자체가 없다(WD-733). */
   @Test
-  void getAndList_withholdConfigForViewerWhoCannotRunSavedQuery() {
+  void getWithholdsConfig_andListHasNoConfig_forViewerWhoCannotRunSavedQuery() {
     setConfig(secChart, Map.of("xAxis", "v", "yAxis", List.of("v")));
     setConfig(pubChart, Map.of("xAxis", "v", "yAxis", List.of("v")));
     long viewer = viewerAt("공개");
@@ -428,18 +428,12 @@ class ChartDeniedTest extends IntegrationTestBase {
     assertThat(one.config()).isNull();
     assertThat(one.configWithheld()).isTrue();
     var page = chartService.list(null, null, null, null, null, viewer, 0, 200);
-    ChartResponse listed =
-        page.content().stream().filter(c -> c.id().equals(secChart)).findFirst().orElseThrow();
-    assertThat(listed.config()).isNull();
-    assertThat(listed.configWithheld()).isTrue();
-    // 양성 대조: 볼 수 있는 차트는 단건·목록 모두 config 를 그대로 받는다.
+    // 목록 응답에는 config 도 가림 표시도 없다(WD-733) — 차트는 그대로 실린다.
+    assertThat(page.content().stream().map(c -> c.id()).toList()).contains(secChart, pubChart);
+    // 양성 대조: 볼 수 있는 차트는 단건에서 config 를 그대로 받는다.
     ChartResponse pub = chartService.getById(pubChart, viewer);
     assertThat(pub.configWithheld()).isFalse();
     assertThat(pub.config()).containsEntry("xAxis", "v");
-    ChartResponse listedPub =
-        page.content().stream().filter(c -> c.id().equals(pubChart)).findFirst().orElseThrow();
-    assertThat(listedPub.configWithheld()).isFalse();
-    assertThat(listedPub.config()).containsEntry("xAxis", "v");
   }
 
   @Test

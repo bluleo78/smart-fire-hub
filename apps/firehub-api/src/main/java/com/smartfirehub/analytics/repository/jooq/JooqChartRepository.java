@@ -3,6 +3,7 @@ package com.smartfirehub.analytics.repository.jooq;
 import static org.jooq.impl.DSL.*;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.analytics.dto.ChartListItemResponse;
 import com.smartfirehub.analytics.dto.ChartResponse;
 import com.smartfirehub.analytics.dto.CreateChartRequest;
 import com.smartfirehub.analytics.dto.DeleteImpactResponse;
@@ -109,7 +110,7 @@ public class JooqChartRepository implements ChartRepository {
   }
 
   @Override
-  public List<ChartResponse> findAll(
+  public List<ChartListItemResponse> findAll(
       String search,
       String chartType,
       Long savedQueryId,
@@ -150,7 +151,6 @@ public class JooqChartRepository implements ChartRepository {
                 C_SAVED_QUERY_ID,
                 SQ_NAME,
                 C_CHART_TYPE,
-                C_CONFIG,
                 C_IS_SHARED,
                 U_NAME_ALIAS,
                 C_CREATED_BY,
@@ -169,9 +169,10 @@ public class JooqChartRepository implements ChartRepository {
             .offset(page * size)
             .fetch();
 
-    List<ChartResponse> result = new ArrayList<>();
+    // config 는 목록에 싣지 않으므로 읽지도 않는다(WD-733).
+    List<ChartListItemResponse> result = new ArrayList<>();
     for (Record r : records) {
-      result.add(mapToResponse(r));
+      result.add(mapToListItem(r));
     }
     return result;
   }
@@ -400,6 +401,23 @@ public class JooqChartRepository implements ChartRepository {
   public boolean deleteById(Long id, Long userId) {
     int deleted = dsl.deleteFrom(C).where(C_ID.eq(id).and(C_CREATED_BY.eq(userId))).execute();
     return deleted > 0;
+  }
+
+  /** 목록 한 행 → 목록 전용 응답(config 없음, WD-733). */
+  private ChartListItemResponse mapToListItem(Record r) {
+    return new ChartListItemResponse(
+        r.get(C_ID),
+        r.get(C_NAME),
+        r.get(C_DESCRIPTION),
+        r.get(C_SAVED_QUERY_ID),
+        r.get("saved_query_name", String.class),
+        r.get(C_CHART_TYPE),
+        Boolean.TRUE.equals(r.get(C_IS_SHARED)),
+        r.get("created_by_name", String.class),
+        r.get(C_CREATED_BY),
+        r.get(C_CREATED_AT),
+        r.get(C_UPDATED_AT),
+        r.get("dashboard_count", Long.class));
   }
 
   @SuppressWarnings("unchecked")

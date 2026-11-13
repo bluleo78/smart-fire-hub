@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.analytics.dto.ChartDataResponse;
+import com.smartfirehub.analytics.dto.ChartListItemResponse;
 import com.smartfirehub.analytics.dto.ChartResponse;
 import com.smartfirehub.analytics.dto.CreateChartRequest;
 import com.smartfirehub.analytics.dto.UpdateChartRequest;
@@ -388,10 +389,10 @@ class ChartServiceTest extends IntegrationTestBase {
             .fetchOne()
             .get(DSL.field(DSL.name("chart", "id"), Long.class));
 
-    PageResponse<ChartResponse> result =
+    PageResponse<ChartListItemResponse> result =
         chartService.list(null, null, null, null, null, ownerUserId, 0, 10);
 
-    List<String> names = result.content().stream().map(ChartResponse::name).toList();
+    List<String> names = result.content().stream().map(ChartListItemResponse::name).toList();
     assertThat(names).contains("My Private", "Other Shared Chart");
   }
 
@@ -409,11 +410,11 @@ class ChartServiceTest extends IntegrationTestBase {
         .set(DSL.field(DSL.name("chart", "created_by"), Long.class), otherUserId)
         .execute();
 
-    PageResponse<ChartResponse> result =
+    PageResponse<ChartListItemResponse> result =
         chartService.list(null, null, null, null, true, ownerUserId, 0, 10);
 
     assertThat(result.content()).allMatch(c -> ownerUserId.equals(c.createdBy()));
-    List<String> names = result.content().stream().map(ChartResponse::name).toList();
+    List<String> names = result.content().stream().map(ChartListItemResponse::name).toList();
     assertThat(names).contains("My Private", "My Shared");
     assertThat(names).doesNotContain("Other Shared Chart");
     // 건수(countAll)도 같은 범위 조건을 써서 목록과 어긋나지 않는다
@@ -434,11 +435,11 @@ class ChartServiceTest extends IntegrationTestBase {
         .set(DSL.field(DSL.name("chart", "created_by"), Long.class), ownerUserId)
         .execute();
 
-    PageResponse<ChartResponse> result =
+    PageResponse<ChartListItemResponse> result =
         chartService.list(null, "BAR", null, null, null, ownerUserId, 0, 10);
 
     assertThat(result.content()).allMatch(c -> "BAR".equals(c.chartType()));
-    List<String> names = result.content().stream().map(ChartResponse::name).toList();
+    List<String> names = result.content().stream().map(ChartListItemResponse::name).toList();
     assertThat(names).contains("Bar Chart 1");
     assertThat(names).doesNotContain("Line Chart 1");
   }
@@ -449,7 +450,7 @@ class ChartServiceTest extends IntegrationTestBase {
     createChart("Alpha Chart", false, ownerUserId);
     createChart("Beta Chart", false, ownerUserId);
 
-    PageResponse<ChartResponse> result =
+    PageResponse<ChartListItemResponse> result =
         chartService.list("Alpha", null, null, null, null, ownerUserId, 0, 10);
 
     assertThat(result.content()).hasSize(1);

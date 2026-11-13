@@ -62,17 +62,26 @@ public interface DashboardStatsRepository {
   /** 조회자가 볼 수 있는 데이터셋 수(통계 카드·건강도 공용). */
   long countDatasets(DatasetVisibility visibility);
 
-  /** 조회자가 볼 수 있는 원천(TABLE·SOURCE) 데이터셋 수. */
-  long countSourceDatasets(DatasetVisibility visibility);
+  /**
+   * 조회자가 볼 수 있는 데이터셋의 종류별 수 한 묶음(WD-733) — 통계 카드가 같은 {@code dataset} 표를 세 번 훑지 않고 한 번에 센다.
+   *
+   * @param total 볼 수 있는 데이터셋 전부(저장 방식 무관)
+   * @param source 그중 원천(TABLE·SOURCE)
+   * @param derived 그중 파생(TABLE·DERIVED)
+   */
+  record DatasetCounts(long total, long source, long derived) {}
 
-  /** 조회자가 볼 수 있는 파생(TABLE·DERIVED) 데이터셋 수. */
-  long countDerivedDatasets(DatasetVisibility visibility);
+  /** 파이프라인 수 한 묶음(WD-733) — 통계 카드가 {@code pipeline} 표를 두 번 훑지 않고 한 번에 센다. */
+  record PipelineCounts(long total, long active) {}
 
-  /** 전체 파이프라인 수(통계 카드·건강도 공용). */
+  /** 조회자가 볼 수 있는 데이터셋의 전체·원천·파생 수를 한 번에 센다(통계 카드). 가시성 조건은 세 수에 공통이다. */
+  DatasetCounts countDatasetsByKind(DatasetVisibility visibility);
+
+  /** 전체 파이프라인 수(건강도용 — 통계 카드는 {@link #countPipelineStats}). */
   long countPipelines();
 
-  /** 활성 파이프라인 수(통계 카드용). */
-  long countActivePipelines();
+  /** 전체·활성 파이프라인 수를 한 번에 센다(통계 카드). */
+  PipelineCounts countPipelineStats();
 
   /** 최근 임포트 상위 5건(audit_log) — 조회자가 볼 수 있는 데이터셋만. */
   List<RecentImportRow> findRecentImports(DatasetVisibility visibility);

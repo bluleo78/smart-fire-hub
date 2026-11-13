@@ -130,24 +130,28 @@ abstract class DashboardStatsRepositoryContractTest extends TenantPairContractBa
     fx.createDataset(tenantB, fx.datasetCreator(), prefix + "-bsrc", null);
 
     assertThat(inA(() -> repository().countDatasets(ALL))).isEqualTo(6);
-    assertThat(inA(() -> repository().countSourceDatasets(ALL))).isEqualTo(2);
-    assertThat(inA(() -> repository().countDerivedDatasets(ALL))).isEqualTo(2);
+    // 묶음 카운트(WD-733) — 개별 단언이던 전체·원천·파생 값과 같아야 한다
+    assertThat(inA(() -> repository().countDatasetsByKind(ALL)))
+        .isEqualTo(new DashboardStatsRepository.DatasetCounts(6, 2, 2));
     assertThat(inA(() -> repository().findTableDatasetNames(ALL)))
         .containsExactlyInAnyOrder(
             prefix + "-src", prefix + "-der", prefix + "-tmp", prefix + "-hsrc", prefix + "-hder");
 
     assertThat(inA(() -> repository().countDatasets(rank2()))).isEqualTo(4);
-    assertThat(inA(() -> repository().countSourceDatasets(rank2()))).isEqualTo(1);
-    assertThat(inA(() -> repository().countDerivedDatasets(rank2()))).isEqualTo(1);
+    assertThat(inA(() -> repository().countDatasetsByKind(rank2())))
+        .isEqualTo(new DashboardStatsRepository.DatasetCounts(4, 1, 1));
     assertThat(inA(() -> repository().findTableDatasetNames(rank2())))
         .containsExactlyInAnyOrder(prefix + "-src", prefix + "-der", prefix + "-tmp");
 
     assertThat(inA(() -> repository().countDatasets(none()))).isZero();
-    assertThat(inA(() -> repository().countSourceDatasets(none()))).isZero();
-    assertThat(inA(() -> repository().countDerivedDatasets(none()))).isZero();
+    // 행이 하나도 없어도 SUM 이 NULL 이 되지 않고 0 이다
+    assertThat(inA(() -> repository().countDatasetsByKind(none())))
+        .isEqualTo(new DashboardStatsRepository.DatasetCounts(0, 0, 0));
     assertThat(inA(() -> repository().findTableDatasetNames(none()))).isEmpty();
 
     assertThat(inB(() -> repository().countDatasets(ALL))).isEqualTo(1);
+    assertThat(inB(() -> repository().countDatasetsByKind(ALL)))
+        .isEqualTo(new DashboardStatsRepository.DatasetCounts(1, 1, 0));
     assertThat(inB(() -> repository().findTableDatasetNames(ALL)))
         .containsExactly(prefix + "-bsrc");
   }
@@ -163,10 +167,12 @@ abstract class DashboardStatsRepositoryContractTest extends TenantPairContractBa
     fx.createPipeline(tenantB, prefix + "-pb", true);
 
     assertThat(inA(() -> repository().countPipelines())).isEqualTo(3);
-    assertThat(inA(() -> repository().countActivePipelines())).isEqualTo(2);
+    assertThat(inA(() -> repository().countPipelineStats()))
+        .isEqualTo(new DashboardStatsRepository.PipelineCounts(3, 2));
     assertThat(inA(() -> repository().countDisabledPipelines())).isEqualTo(1);
     assertThat(inB(() -> repository().countPipelines())).isEqualTo(1);
-    assertThat(inB(() -> repository().countActivePipelines())).isEqualTo(1);
+    assertThat(inB(() -> repository().countPipelineStats()))
+        .isEqualTo(new DashboardStatsRepository.PipelineCounts(1, 1));
     assertThat(inB(() -> repository().countDisabledPipelines())).isZero();
   }
 

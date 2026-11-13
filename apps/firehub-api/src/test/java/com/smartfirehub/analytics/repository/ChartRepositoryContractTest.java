@@ -3,6 +3,7 @@ package com.smartfirehub.analytics.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.groups.Tuple.tuple;
 
+import com.smartfirehub.analytics.dto.ChartListItemResponse;
 import com.smartfirehub.analytics.dto.ChartResponse;
 import com.smartfirehub.analytics.dto.CreateChartRequest;
 import com.smartfirehub.analytics.dto.DeleteImpactResponse;
@@ -85,7 +86,7 @@ public abstract class ChartRepositoryContractTest extends TenantPairContractBase
                 repository()
                     .findAll(search, type, savedQueryId, sharedOnly, mineOnly, me, page, size))
         .stream()
-        .map(ChartResponse::id)
+        .map(ChartListItemResponse::id)
         .toList();
   }
 
@@ -141,20 +142,18 @@ public abstract class ChartRepositoryContractTest extends TenantPairContractBase
   }
 
   @Test
-  @DisplayName("insert·update — 4000바이트를 넘는 config(약 6KB)도 단건·목록에서 그대로 왕복한다(WD-710 P2)")
+  @DisplayName("insert·update — 4000바이트를 넘는 config(약 6KB)도 단건에서 그대로 왕복하고 목록에도 실린다(WD-710 P2)")
   void largeConfig_roundTrips() {
     Map<String, Object> big = largeConfig("insert");
     Long id = insertA(me, new CreateChartRequest(prefix + "-big", null, query, "BAR", big, false));
 
     assertThat(inA(() -> repository().findById(id, me)).orElseThrow().config()).isEqualTo(big);
+    // 목록은 config 를 읽지 않는다(WD-733) — 큰 config 를 가진 차트도 목록에는 정상적으로 실린다.
     assertThat(
             inA(() -> repository().findAll(prefix + "-big", null, null, null, null, me, 0, 10))
                 .stream()
-                .filter(r -> r.id().equals(id))
-                .findFirst()
-                .orElseThrow()
-                .config())
-        .isEqualTo(big);
+                .anyMatch(r -> r.id().equals(id)))
+        .isTrue();
 
     Map<String, Object> bigger = largeConfig("update");
     runA(() -> repository().update(id, new UpdateChartRequest(null, null, null, bigger, null), me));
@@ -265,14 +264,14 @@ public abstract class ChartRepositoryContractTest extends TenantPairContractBase
   }
 
   @Test
-  @DisplayName("findAll — 저장 쿼리 이름·만든이 이름·위젯 수·config 가 목록에도 실린다")
+  @DisplayName("findAll — 저장 쿼리 이름·만든이 이름·위젯 수가 목록에도 실리고 config 는 실리지 않는다(WD-733)")
   void list_carriesJoinedFields() {
     Long id =
         insertA(other, new CreateChartRequest(prefix + "-j", null, query2, "AREA", config(), true));
     fx.addWidget(tenantA, fx.createDashboard(tenantA, me, false), id);
 
     // 목록의 첫 행이 아니라 방금 만든 차트 행을 id 로 골라 단언한다(WD-736 — 다른 행이 끼어도 안정).
-    ChartResponse r =
+    ChartListItemResponse r =
         inA(() -> repository().findAll(null, null, null, null, null, me, 0, 10)).stream()
             .filter(c -> java.util.Objects.equals(c.id(), id))
             .findFirst()
@@ -281,8 +280,20 @@ public abstract class ChartRepositoryContractTest extends TenantPairContractBase
     assertThat(r.savedQueryName()).isEqualTo(prefix + "-sq2");
     assertThat(r.createdByName()).isEqualTo(prefix + "-other-name");
     assertThat(r.dashboardCount()).isEqualTo(1);
-    assertThat(r.config()).isEqualTo(config());
-    assertThat(r).isEqualTo(inA(() -> repository().findById(id, me)).orElseThrow());
+    // 단건 응답과 config 만 다르다 — 목록 전용 응답에는 config 필드 자체가 없다(WD-733).
+    ChartResponse detail = inA(() -> repository().findById(id, me)).orElseThrow();
+    assertThat(detail.config()).isEqualTo(config());
+    assertThat(r.id()).isEqualTo(detail.id());
+    assertThat(r.name()).isEqualTo(detail.name());
+    assertThat(r.savedQueryId()).isEqualTo(detail.savedQueryId());
+    assertThat(r.chartType()).isEqualTo(detail.chartType());
+    assertThat(r.isShared()).isEqualTo(detail.isShared());
+    assertThat(r.createdBy()).isEqualTo(detail.createdBy());
+    assertThat(r.updatedAt()).isEqualTo(detail.updatedAt());
+    assertThat(
+            java.util.Arrays.stream(ChartListItemResponse.class.getRecordComponents())
+                .map(java.lang.reflect.RecordComponent::getName))
+        .doesNotContain("config");
   }
 
   @Test

@@ -1,5 +1,6 @@
 package com.smartfirehub.analytics.repository;
 
+import com.smartfirehub.analytics.dto.ChartListItemResponse;
 import com.smartfirehub.analytics.dto.ChartResponse;
 import com.smartfirehub.analytics.dto.CreateChartRequest;
 import com.smartfirehub.analytics.dto.DeleteImpactResponse;
@@ -18,7 +19,8 @@ import java.util.Set;
  */
 public interface ChartRepository {
 
-  List<ChartResponse> findAll(
+  /** 목록 한 쪽 — config 를 읽지 않는 목록 전용 응답(WD-733). */
+  List<ChartListItemResponse> findAll(
       String search,
       String chartType,
       Long savedQueryId,

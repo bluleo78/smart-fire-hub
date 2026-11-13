@@ -16,6 +16,8 @@ import lombok.RequiredArgsConstructor;
 import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.Field;
+import org.jooq.Record2;
+import org.jooq.Record3;
 import org.jooq.Table;
 import org.springframework.stereotype.Repository;
 
@@ -102,38 +104,34 @@ public class JooqDashboardStatsRepository implements DashboardStatsRepository {
     return dsl.selectCount().from(DATASET).where(visible).fetchOne(0, Long.class);
   }
 
-  /** 조회자가 볼 수 있는 원천(TABLE·SOURCE) 데이터셋 수. */
+  /**
+   * 전체·원천·파생 데이터셋 수를 한 번의 훑기로 센다(WD-733). 공통 가시성 조건은 WHERE 에 그대로 두고(인덱스 사용 유지), 종류별 수는 {@code
+   * count() FILTER (WHERE …)} 로 센다.
+   */
   @Override
-  public long countSourceDatasets(DatasetVisibility visibility) {
+  public DatasetCounts countDatasetsByKind(DatasetVisibility visibility) {
     Condition visible = JooqDatasetVisibility.condition(visibility);
-    return dsl.selectCount()
-        .from(DATASET)
-        .where(D_STORAGE_TYPE.eq("TABLE").and(D_ORIGIN_TYPE.eq("SOURCE")))
-        .and(visible)
-        .fetchOne(0, Long.class);
+    Field<Integer> source =
+        count().filterWhere(D_STORAGE_TYPE.eq("TABLE").and(D_ORIGIN_TYPE.eq("SOURCE")));
+    Field<Integer> derived =
+        count().filterWhere(D_STORAGE_TYPE.eq("TABLE").and(D_ORIGIN_TYPE.eq("DERIVED")));
+    Record3<Integer, Integer, Integer> r =
+        dsl.select(count(), source, derived).from(DATASET).where(visible).fetchOne();
+    return new DatasetCounts(r.value1(), r.value2(), r.value3());
   }
 
-  /** 조회자가 볼 수 있는 파생(TABLE·DERIVED) 데이터셋 수. */
-  @Override
-  public long countDerivedDatasets(DatasetVisibility visibility) {
-    Condition visible = JooqDatasetVisibility.condition(visibility);
-    return dsl.selectCount()
-        .from(DATASET)
-        .where(D_STORAGE_TYPE.eq("TABLE").and(D_ORIGIN_TYPE.eq("DERIVED")))
-        .and(visible)
-        .fetchOne(0, Long.class);
-  }
-
-  /** 전체 파이프라인 수(통계 카드·건강도 공용). */
+  /** 전체 파이프라인 수(건강도용 — 통계 카드는 {@link #countPipelineStats}). */
   @Override
   public long countPipelines() {
     return dsl.selectCount().from(PIPELINE).fetchOne(0, Long.class);
   }
 
-  /** 활성 파이프라인 수(통계 카드용). */
+  /** 전체·활성 파이프라인 수를 한 번의 훑기로 센다(WD-733) — 조건 없는 전체 수에 {@code count() FILTER (WHERE is_active)}. */
   @Override
-  public long countActivePipelines() {
-    return dsl.selectCount().from(PIPELINE).where(P_IS_ACTIVE.eq(true)).fetchOne(0, Long.class);
+  public PipelineCounts countPipelineStats() {
+    Record2<Integer, Integer> r =
+        dsl.select(count(), count().filterWhere(P_IS_ACTIVE.eq(true))).from(PIPELINE).fetchOne();
+    return new PipelineCounts(r.value1(), r.value2());
   }
 
   /** 최근 임포트 상위 5건(audit_log) — 조회자가 볼 수 있는 데이터셋만. */
