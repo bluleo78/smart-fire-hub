@@ -93,10 +93,27 @@ class TiberoTextLimitsTest {
     assertThat(cut).hasSize(4000).endsWith("😀");
   }
 
+  // ---- 글자 한도 상한(WD-728) ----
+
   @Test
-  @DisplayName("truncate: 한도가 1 미만이면 IllegalArgumentException")
-  void truncate_rejectsNonPositiveLimit() {
+  @DisplayName("truncate: 최대 허용 한도에서 최악의 값(한글·보충 문자)도 UTF-8 65532 바이트를 넘지 않는다")
+  void truncate_maxAllowedLimit_fitsVarchar2Bytes() {
+    int max = TiberoTextLimits.MAX_TRUNCATE_CHARS;
+    // 한글은 char 하나에 3바이트, 이모지는 char 두 개에 4바이트 — char 당 3바이트가 최악이다.
+    for (String unit : new String[] {"가", "😀"}) {
+      String cut = TiberoTextLimits.truncate(unit.repeat(max), max);
+      assertThat(cut.getBytes(StandardCharsets.UTF_8).length)
+          .isLessThanOrEqualTo(TiberoTextLimits.VARCHAR2_TEXT_MAX_BYTES);
+    }
+  }
+
+  @Test
+  @DisplayName("truncate: 한도가 1 미만이거나 바이트 한도를 보장할 수 없을 만큼 크면 IllegalArgumentException")
+  void truncate_rejectsOutOfRangeLimit() {
     assertThatThrownBy(() -> TiberoTextLimits.truncate("x", 0))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () -> TiberoTextLimits.truncate("x", TiberoTextLimits.MAX_TRUNCATE_CHARS + 1))
         .isInstanceOf(IllegalArgumentException.class);
   }
 }

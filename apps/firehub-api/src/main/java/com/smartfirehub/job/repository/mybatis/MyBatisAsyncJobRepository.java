@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.platformdb.mybatis.PlatformMyBatisRepository;
+import com.smartfirehub.global.platformdb.mybatis.TiberoTextLimits;
 import com.smartfirehub.job.dto.AsyncJobStatusResponse;
 import com.smartfirehub.job.repository.AsyncJobRepository;
 import java.time.LocalDateTime;
@@ -73,7 +74,14 @@ public class MyBatisAsyncJobRepository implements AsyncJobRepository {
 
   @Override
   public void updateStageAndError(String id, String stage, int progress, String errorMessage) {
-    mapper.updateStageAndError(id, stage, progress, errorMessage, LocalDateTime.now());
+    // 실패 사유는 예외 메시지(외부 응답 포함)라 길이를 통제할 수 없다 — Tibero VARCHAR2(65532) 바이트 한도를 넘으면 UPDATE 가 실패해
+    // 실패 기록이 사라지므로 앞부분으로 자른다(WD-728).
+    mapper.updateStageAndError(
+        id,
+        stage,
+        progress,
+        TiberoTextLimits.truncateErrorMessage(errorMessage),
+        LocalDateTime.now());
   }
 
   @Override

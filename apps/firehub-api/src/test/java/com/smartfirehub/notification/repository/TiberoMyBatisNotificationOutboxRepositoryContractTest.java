@@ -1,5 +1,8 @@
 package com.smartfirehub.notification.repository;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
+import com.smartfirehub.global.platformdb.mybatis.TiberoTextLimits;
 import com.smartfirehub.notification.repository.mybatis.MyBatisNotificationOutboxRepository;
 import com.smartfirehub.notification.repository.mybatis.NotificationOutboxMapper;
 import com.smartfirehub.support.tibero.TiberoLive;
@@ -7,6 +10,8 @@ import com.smartfirehub.support.tibero.TiberoPlatformSchema;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 
 /**
@@ -77,6 +82,31 @@ class TiberoMyBatisNotificationOutboxRepositoryContractTest
         .queryForObject(
             "SELECT tenant_id FROM notification_outbox WHERE correlation_id = ?",
             Long.class,
+            correlationId.toString());
+  }
+
+  /**
+   * {@link TiberoTextLimits} 의 글자→바이트 전제를 실서버에서 고정한다(WD-728). DB 문자 집합이 UTF-8 이고, 보충 문자(Java char 두
+   * 개)가 4바이트, 한글(char 하나)이 3바이트로 저장되면 Java char 하나는 최대 3바이트다. 보충 문자를 6바이트로 저장하는 CESU-8 류여도 char 당
+   * 3바이트라 한도 계산은 같지만, 문자 집합이 바뀌면 이 시험이 먼저 알린다.
+   */
+  @Test
+  @DisplayName("Tibero 는 바인딩한 한글을 3바이트, 보충 문자를 4바이트로 센다(UTF-8)")
+  void databaseCharset_countsUtf8Bytes() {
+    // 시험 계정에서는 NLS_DATABASE_PARAMETERS 가 0행이라(실측) 문자 집합 이름 대신 DB 가 실제로 세는 바이트 수(LENGTHB)를 고정한다.
+    assertThat(poc.jdbc().queryForObject("SELECT LENGTHB(?) FROM DUAL", Integer.class, "가"))
+        .isEqualTo(3);
+    assertThat(poc.jdbc().queryForObject("SELECT LENGTHB(?) FROM DUAL", Integer.class, "😀"))
+        .isEqualTo(4);
+  }
+
+  /** last_error 원시 조회 — 소유자 계정이라 정책을 거치지 않는다(WD-728). */
+  @Override
+  protected String lastErrorOf(UUID correlationId) {
+    return poc.jdbc()
+        .queryForObject(
+            "SELECT last_error FROM notification_outbox WHERE correlation_id = ?",
+            String.class,
             correlationId.toString());
   }
 }

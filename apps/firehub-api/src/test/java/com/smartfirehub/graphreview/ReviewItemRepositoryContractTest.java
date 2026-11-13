@@ -6,6 +6,7 @@ import static org.jooq.impl.DSL.field;
 import static org.jooq.impl.DSL.name;
 import static org.jooq.impl.DSL.table;
 
+import com.smartfirehub.global.platformdb.mybatis.LongTextAssertions;
 import com.smartfirehub.graphreview.dto.ReviewItemRecord;
 import com.smartfirehub.graphreview.repository.ReviewItemRepository;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
@@ -17,6 +18,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -91,6 +93,24 @@ abstract class ReviewItemRepositoryContractTest extends IntegrationTestBase {
                 .findDecisionStatus(
                     "synonym_merge", "Test|none|none", DatasetVisibility.UNRESTRICTED))
         .isEmpty();
+  }
+
+  /** 사유는 LLM 근거·추출 원문으로 조립돼 길이를 통제할 수 없다 — Tibero 바이트 한도를 넘어도 검수 항목은 남아야 한다(WD-728). */
+  @Test
+  @DisplayName("reason 에 한도+1 바이트 한글 값을 넣어도 저장되고 한도 안으로 잘린다")
+  void upsertPending_overLimitReason_isStoredAsPrefix() {
+    String reason = LongTextAssertions.overVarchar2Limit();
+    repository()
+        .upsertPending("synonym_merge", "TestLong|a|b", null, "similarity", 0.7, reason, "{}");
+
+    var row =
+        repository()
+            .findByStatus("pending", "synonym_merge", null, null, DatasetVisibility.UNRESTRICTED)
+            .stream()
+            .filter(r -> "TestLong|a|b".equals(dedupeKeyOf(r)))
+            .findFirst()
+            .orElseThrow();
+    LongTextAssertions.assertStoredPrefix(row.reason(), reason);
   }
 
   @Test

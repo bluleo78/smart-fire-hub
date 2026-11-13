@@ -4,6 +4,7 @@ import com.smartfirehub.audit.dto.AuditLogResponse;
 import com.smartfirehub.audit.repository.AuditLogRepository;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.platformdb.mybatis.PlatformMyBatisRepository;
+import com.smartfirehub.global.platformdb.mybatis.TiberoTextLimits;
 import com.smartfirehub.global.util.LikePatternUtils;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.securitylevel.repository.mybatis.MyBatisDatasetVisibility;
@@ -56,7 +57,9 @@ public class MyBatisAuditLogRepository implements AuditLogRepository {
             ipAddress,
             userAgent,
             result,
-            errorMessage,
+            // 오류 메시지는 호출처 예외 문구라 길이를 통제할 수 없다 — Tibero VARCHAR2(65532) 바이트 한도를 넘으면 INSERT 가 실패해
+            // 감사 행이 사라지므로 앞부분으로 자른다(WD-728).
+            TiberoTextLimits.truncateErrorMessage(errorMessage),
             metadataJson);
     mapper.insert(row);
     return row.getId();

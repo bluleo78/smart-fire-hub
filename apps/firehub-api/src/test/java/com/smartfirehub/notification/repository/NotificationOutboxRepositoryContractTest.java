@@ -4,6 +4,7 @@ import static com.smartfirehub.jooq.Tables.NOTIFICATION_OUTBOX;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
+import com.smartfirehub.global.platformdb.mybatis.LongTextAssertions;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.notification.ChannelType;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -17,6 +18,7 @@ import java.util.concurrent.Executors;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
@@ -88,6 +90,17 @@ public abstract class NotificationOutboxRepositoryContractTest extends Integrati
                 .from(NOTIFICATION_OUTBOX)
                 .where(NOTIFICATION_OUTBOX.CORRELATION_ID.eq(correlationId))
                 .fetchOne(NOTIFICATION_OUTBOX.TENANT_ID));
+  }
+
+  /** 상관 id 행의 last_error 원시 조회 — 행 레코드에 last_error 가 없어 직접 읽는다(WD-728). */
+  protected String lastErrorOf(UUID correlationId) {
+    return inTenantFixture(
+        tenantId,
+        () ->
+            dsl.select(NOTIFICATION_OUTBOX.LAST_ERROR)
+                .from(NOTIFICATION_OUTBOX)
+                .where(NOTIFICATION_OUTBOX.CORRELATION_ID.eq(correlationId))
+                .fetchOne(NOTIFICATION_OUTBOX.LAST_ERROR));
   }
 
   /**
@@ -275,6 +288,19 @@ public abstract class NotificationOutboxRepositoryContractTest extends Integrati
     int reclaimed = repository().reclaimZombies(Instant.now().plusSeconds(60)); // 강제 cutoff 미래
     assertThat(reclaimed).isGreaterThanOrEqualTo(1);
     assertThat(repository().findByCorrelation(corr).get(0).status()).isEqualTo("PENDING");
+  }
+
+  /** 발송 오류는 외부 채널 응답·예외 문구라 길이를 통제할 수 없다 — Tibero 바이트 한도를 넘어도 백오프 기록은 남아야 한다(WD-728). */
+  @Test
+  @DisplayName("last_error 에 한도+1 바이트 한글 값을 넣어도 저장되고 한도 안으로 잘린다")
+  void rescheduleTransient_overLimitError_isStoredAsPrefix() {
+    long id = insertRow("long-error");
+    String error = LongTextAssertions.overVarchar2Limit();
+
+    repository().rescheduleTransient(id, 1, Instant.now().plusSeconds(3600), error);
+
+    assertThat(rowById(id).attemptCount()).isEqualTo(1);
+    LongTextAssertions.assertStoredPrefix(lastErrorOf(corrById.get(id)), error);
   }
 
   /**

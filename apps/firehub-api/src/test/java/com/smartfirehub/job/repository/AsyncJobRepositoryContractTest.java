@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.within;
 
+import com.smartfirehub.global.platformdb.mybatis.LongTextAssertions;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.job.dto.AsyncJobStatusResponse;
 import com.smartfirehub.job.repository.mybatis.AsyncJobRow;
@@ -252,6 +253,20 @@ public abstract class AsyncJobRepositoryContractTest extends AccessContractBase 
     AsyncJobStatusResponse r2 = inA(() -> repository().findById(id)).orElseThrow();
     assertThat(r2.metadata()).isEmpty();
     assertThat(r2.message()).isNull();
+  }
+
+  /** 실패 사유는 예외 메시지(외부 응답 포함)라 길이를 통제할 수 없다 — Tibero 바이트 한도를 넘어도 실패 기록은 남아야 한다(WD-728). */
+  @Test
+  @DisplayName("error_message 에 한도+1 바이트 한글 값을 넣어도 저장되고 한도 안으로 잘린다")
+  void updateStageAndError_overLimit_isStoredAsPrefix() {
+    String id = insertA("DATA_IMPORT", "dataset", prefix, userA);
+    String error = LongTextAssertions.overVarchar2Limit();
+
+    runA(() -> repository().updateStageAndError(id, "FAILED", 9, error));
+
+    AsyncJobStatusResponse r = inA(() -> repository().findById(id)).orElseThrow();
+    assertThat(r.stage()).isEqualTo("FAILED");
+    LongTextAssertions.assertStoredPrefix(r.errorMessage(), error);
   }
 
   @Test

@@ -1,6 +1,7 @@
 package com.smartfirehub.graphreview.repository.mybatis;
 
 import com.smartfirehub.global.platformdb.mybatis.PlatformMyBatisRepository;
+import com.smartfirehub.global.platformdb.mybatis.TiberoTextLimits;
 import com.smartfirehub.graphreview.dto.ReviewItemRecord;
 import com.smartfirehub.graphreview.repository.ReviewItemRepository;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
@@ -26,6 +27,12 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional
 public class MyBatisReviewItemRepository implements ReviewItemRepository {
 
+  /**
+   * 검수 사유 최대 글자 수(WD-728) — 오류 메시지와 같은 16000자(최악 48000 바이트)로 Tibero {@code VARCHAR2(65532)} 안이다.
+   * 사유는 화면에서 읽는 설명이라 이 길이면 뜻이 충분히 남는다.
+   */
+  private static final int REASON_MAX_CHARS = 16_000;
+
   private final ReviewItemMapper mapper;
 
   /**
@@ -45,8 +52,17 @@ public class MyBatisReviewItemRepository implements ReviewItemRepository {
       String reason,
       String payloadJson) {
     // tenant_id 는 컬럼 DEFAULT(GUC)가 채운다 — ON CONFLICT 대상은 V134 인덱스와 같다(XML 참고).
+    // 사유는 LLM 근거·추출 원문으로 조립돼 길이를 통제할 수 없다 — Tibero VARCHAR2(65532) 바이트 한도를 넘으면 INSERT 가 실패하므로
+    // 앞부분으로 자른다(WD-728). payload 는 Tibero JSON 열(VARCHAR2 아님)이고 JSON 은 자르면 깨지므로
+    // 그대로 둔다(ADR 0001 목록만).
     mapper.insertPendingIgnoreDuplicate(
-        itemType, dedupeKey, datasetId, signalType, signalScore, reason, payloadJson);
+        itemType,
+        dedupeKey,
+        datasetId,
+        signalType,
+        signalScore,
+        TiberoTextLimits.truncate(reason, REASON_MAX_CHARS),
+        payloadJson);
   }
 
   @Override

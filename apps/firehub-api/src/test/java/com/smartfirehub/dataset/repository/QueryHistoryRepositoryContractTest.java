@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.within;
 
 import com.smartfirehub.dataset.dto.QueryHistoryResponse;
+import com.smartfirehub.global.platformdb.mybatis.LongTextAssertions;
 import com.smartfirehub.user.repository.TenantPairContractBase;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
@@ -59,6 +60,19 @@ public abstract class QueryHistoryRepositoryContractTest extends TenantPairContr
     assertThat(ok.executionTimeMs()).isEqualTo(123L);
     assertThat(ok.id()).isNotNull();
     assertThat(ok.executedAt()).isCloseTo(LocalDateTime.now(), within(3, ChronoUnit.MINUTES));
+  }
+
+  /** 오류 메시지는 SQL 엔진 예외 문구라 길이를 통제할 수 없다 — Tibero 바이트 한도를 넘어도 저장은 성공해야 한다(WD-728). */
+  @Test
+  @DisplayName("error_message 에 한도+1 바이트 한글 값을 넣어도 저장되고 한도 안으로 잘린다")
+  void save_overLimitError_isStoredAsPrefix() {
+    long ds = fx.createDataset(tenantA, prefix + " ds");
+    String error = LongTextAssertions.overVarchar2Limit();
+
+    save(ds, "SELECT 1", false, error);
+
+    QueryHistoryResponse row = inA(() -> repository().findByDatasetId(ds, 0, 10)).get(0);
+    LongTextAssertions.assertStoredPrefix(row.error(), error);
   }
 
   @Test

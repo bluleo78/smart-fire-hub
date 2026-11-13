@@ -1,6 +1,7 @@
 package com.smartfirehub.notification.repository.mybatis;
 
 import com.smartfirehub.global.platformdb.mybatis.PlatformMyBatisRepository;
+import com.smartfirehub.global.platformdb.mybatis.TiberoTextLimits;
 import com.smartfirehub.notification.ChannelType;
 import com.smartfirehub.notification.repository.NotificationOutboxRepository;
 import java.time.Instant;
@@ -94,13 +95,20 @@ public class MyBatisNotificationOutboxRepository implements NotificationOutboxRe
         id,
         newAttemptCount,
         nextAttemptAt.atOffset(ZoneOffset.UTC),
-        error,
+        // 발송 오류는 외부 채널 응답·예외 문구라 길이를 통제할 수 없다 — Tibero VARCHAR2(65532) 바이트 한도 안으로 자른다(WD-728).
+        TiberoTextLimits.truncateErrorMessage(error),
         OffsetDateTime.now(ZoneOffset.UTC));
   }
 
   @Override
   public void markPermanentFailure(long id, String reason, String error) {
-    mapper.markPermanentFailure(id, reason, error, OffsetDateTime.now(ZoneOffset.UTC));
+    // last_error 는 rescheduleTransient 와 같은 이유로 자른다(WD-728). reason 은 짧은 분류 코드(varchar 같은 한도)라 그대로
+    // 둔다.
+    mapper.markPermanentFailure(
+        id,
+        reason,
+        TiberoTextLimits.truncateErrorMessage(error),
+        OffsetDateTime.now(ZoneOffset.UTC));
   }
 
   @Override

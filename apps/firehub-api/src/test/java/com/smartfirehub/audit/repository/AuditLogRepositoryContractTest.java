@@ -9,6 +9,7 @@ import static org.assertj.core.api.Assertions.within;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.audit.dto.AuditLogResponse;
 import com.smartfirehub.global.dto.PageResponse;
+import com.smartfirehub.global.platformdb.mybatis.LongTextAssertions;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
@@ -128,6 +129,32 @@ public abstract class AuditLogRepositoryContractTest extends AccessContractBase 
     // AuditTimes 의 「저장 TZ = JVM 기본 TZ」 불변식 — 9시간 어긋나면 여기서 걸린다.
     assertThat(r.actionTime()).isCloseTo(LocalDateTime.now(), within(3, MINUTES));
     assertThat(fx.countAuditLog(tenantA, id)).isEqualTo(1);
+  }
+
+  /** 오류 메시지는 호출처 예외 문구라 길이를 통제할 수 없다 — Tibero 바이트 한도를 넘어도 감사 행은 남아야 한다(WD-728). */
+  @Test
+  @DisplayName("error_message 에 한도+1 바이트 한글 값을 넣어도 저장되고 한도 안으로 잘린다")
+  void save_overLimitErrorMessage_isStoredAsPrefix() {
+    String error = LongTextAssertions.overVarchar2Limit();
+    Long id =
+        inA(
+            () ->
+                repository()
+                    .save(
+                        userA,
+                        prefix + "-actor",
+                        "CREATE",
+                        "dataset",
+                        "42",
+                        "긴 오류",
+                        "10.0.0.1",
+                        "agent/1.0",
+                        "FAILURE",
+                        error,
+                        null));
+
+    AuditLogResponse r = inA(() -> repository().findById(id)).orElseThrow();
+    LongTextAssertions.assertStoredPrefix(r.errorMessage(), error);
   }
 
   @Test

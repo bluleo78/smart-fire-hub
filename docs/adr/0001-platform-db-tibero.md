@@ -139,7 +139,36 @@ PG는 jOOQ 구현을 그대로 쓰고, Tibero용 MyBatis 구현(`repository/myba
 - **다건 「충돌 무시」 삽입은 행마다 MERGE.** 원천에 중복 키가 있는 한 문장 MERGE 는 -4008 로 실패한다. `AiInferenceCache.insertIgnoringConflicts`·`DatasetAccessGrant.copy` 는 두 DB 모두 행마다 한 문장(중복 키 1회 재시도)이다. MERGE 원천 열 별칭에 `uid` 는 쓰지 않는다(-8006).
 - **공용 도우미.** 중복 키 재시도는 `PlatformRetries.onceOnDuplicateKey`/`runOnceOnDuplicateKey`(사이트마다 같은 정책), 생성 키는 `GeneratedId` 상속 홀더, 잠금 모드는 `PlatformSql.xml` 의 `lockNoKeyUpdate`·`lockShare`·`lockKeyShare` 조각(Tibero 는 모두 `FOR UPDATE`)으로 쓴다.
 - **삽입 시각은 `dbNow` 로 명시.** Tibero `TIMESTAMP` 열 DEFAULT(`LOCALTIMESTAMP`)는 세션 시간대에 기대므로 삽입 문장은 `created_at`·`updated_at` 등을 `dbNow`(UTC 벽시계)로 직접 쓴다. jOOQ 가 자바 시각을 쓰는 수정 문장은 같은 자바 값을 바인딩한다.
-- **오류 메시지 자르기 범위.** `TiberoTextLimits.truncateErrorMessage` 는 시스템이 쓰는 오류 열의 동적 쓰기에만 건다 — 파이프라인 실행·스텝 실행 `error_message`, 검색 색인·재임베딩 상태의 오류 사유, 선제 실행 `proactive_job_execution.error_message`(`updateError`, WD-709). `api_connection.last_error_message` 는 두 DB 모두 1000자 한도라 자르지 않는다(같이 실패). 사용자 입력 열과 CLOB 은 자르지 않는다.
+- **오류 메시지 자르기 범위.** `TiberoTextLimits.truncateErrorMessage` 는 시스템이 쓰는 오류 열의 동적 쓰기에만 건다 — 파이프라인 실행·스텝 실행 `error_message`, 검색 색인·재임베딩 상태의 오류 사유, 선제 실행 `proactive_job_execution.error_message`(`updateError`, WD-709), 그리고 WD-728 에서 더한 `audit_log.error_message`·`async_job.error_message`·`notification_outbox.last_error`·`query_history.error_message`(아래 「긴 텍스트 열 목록」). 같은 WD-728 의 `graph_review_item.reason` 은 오류가 아니라 사유라 리포지토리 상수(16000자)로 `TiberoTextLimits.truncate` 를 쓴다. `api_connection.last_error_message` 는 두 DB 모두 1000자 한도라 자르지 않는다(같이 실패). 사용자 입력 열과 CLOB 은 자르지 않는다.
+- **긴 텍스트 열 목록(WD-728).** PG `text` 가 Tibero `VARCHAR2(65532)`(바이트) 또는 `VARCHAR2(1000 CHAR)` 로 바뀐 열 전부를 값의 출처로 판정했다. `varchar(n)` → `VARCHAR2(n CHAR)` 열은 두 DB 의 의미가 같아(글자 수 한도, 넘으면 둘 다 실패) 목록에서 뺐다. 판정 기준: **자른다** = 길이를 통제할 수 없고 잘라도 뜻이 남는 값(오류·사유), **목록만** = 의미 값이라 자르면 뜻이 바뀌는 값(PG 검증 유무를 적는다), **이미 막힘** = 기존 자르기나 검증이 한도 안을 보장. 자르기는 MyBatis 구현에서 바인딩 직전에 16000자(최악 48000 바이트)로 한다 — 오류 열은 `truncateErrorMessage`, 검수 사유는 같은 길이의 리포지토리 상수. MyBatis 빈은 Tibero 설치본·시험에서만 등록되므로(`PlatformMyBatisRepository`) PG 운영(jOOQ)은 바뀌지 않는다. `TiberoTextLimits.truncate` 의 한도는 Java char 수다. Tibero 는 바인딩 값을 UTF-8 로 센다(실서버 시험 `databaseCharset_countsUtf8Bytes`: `LENGTHB` 로 한글 3바이트·보충 문자 4바이트. 시험 계정에서 `NLS_DATABASE_PARAMETERS` 는 0행이라 문자 집합 이름 대신 바이트 수를 고정)이라 char 하나는 최대 3바이트이고, 그래서 `truncate` 는 `MAX_TRUNCATE_CHARS`(65532/3 = 21844) 를 넘는 한도를 바로 거부한다(그 이하면 어떤 값도 65532 바이트 안).
+
+  | 열 | Tibero | 값 출처 | 판정 |
+  |---|---|---|---|
+  | `audit_log.error_message` | VARCHAR2(65532) | 호출처 예외 문구 | 자른다(WD-728) |
+  | `async_job.error_message` | VARCHAR2(65532) | `failJob` 예외 메시지(`e.getMessage()`) | 자른다(WD-728) |
+  | `notification_outbox.last_error` | VARCHAR2(65532) | 채널 발송 오류·외부 응답(`rescheduleTransient`·`markPermanentFailure`) | 자른다(WD-728) |
+  | `query_history.error_message` | VARCHAR2(65532) | SQL 엔진 예외 문구 | 자른다(WD-728) |
+  | `graph_review_item.reason` | VARCHAR2(65532) | LLM 근거·추출 원문으로 조립 | 자른다(WD-728) |
+  | `pipeline_execution`·`pipeline_step_execution.error_message`, `dataset_search_index.last_error`, `embedding_reembed_state.last_error`, `proactive_job_execution.error_message` | VARCHAR2(65532) | 예외 메시지 | 이미 막힘(`truncateErrorMessage`) |
+  | `document_file.error_detail` | VARCHAR2(65532) | 파싱 오류 | 이미 막힘(`truncate` 4000자) |
+  | `saved_query.sql_text` | VARCHAR2(65532) | 사용자 SQL, PG 검증 100,000자 | **목록만 — PG 검증이 Tibero 한도보다 크다**(65532 바이트를 넘는 SQL 은 Tibero 에서만 실패). SQL 을 자르면 끝의 WHERE 같은 절이 떨어져 다시 실행할 때 다른 SQL 이 돌므로 자르지 않는다 |
+  | `query_history.sql_text` | VARCHAR2(65532) | 사용자 SQL(`SqlQueryRequest @NotBlank` 만) | 목록만, PG 검증 없음. 이력에서 다시 실행할 수 있어 잘린 SQL 은 끝의 WHERE 가 떨어진 다른 SQL 이 된다 — 자르지 않는다 |
+  | `analytics_query_run.sql_text` | VARCHAR2(65532) | 사용자 SQL(`@NotBlank` 만), 런을 다시 실행할 때 읽는다 | 목록만, PG 검증 없음(같은 이유로 자르지 않는다) |
+  | `graph_review_item.payload` | JSON | 검수 근거 JSON(시스템 조립) | 목록만 — VARCHAR2 가 아니고 JSON 은 자르면 깨진다 |
+  | `pipeline_step.description`, `pipeline_trigger.description` | VARCHAR2(65532) | 사용자 입력 | 목록만, PG 검증 없음 |
+  | `report_template.style` | VARCHAR2(65532) | 사용자 입력 | 목록만, PG 검증 없음 |
+  | `system_settings.value`, `tenant_settings.value` | VARCHAR2(65532) | 관리자 입력 | 목록만, PG 검증 없음 |
+  | `ontology.domain`, `ontology_entity_type.type`, `ontology_entity_property.name`, `ontology_relation.relation` | VARCHAR2(1000 CHAR) | 이름·키(사용자·AI 제안) | 목록만, PG 검증 없음 |
+  | `ontology_entity_type.description`·`naming`·`resolution`, `ontology_entity_property.description`·`data_type`·`unit`, `ontology_relation.description` | VARCHAR2(65532) | 온톨로지 정의(사용자·AI 제안) | 목록만, PG 검증 없음 |
+  | `api_connection`·`chart`·`dashboard`·`dataset`·`pipeline`·`saved_query`·`report_template.description` | VARCHAR2(65532) | 사용자 입력, `DescriptionLimits` 2000자 | 이미 막힘(검증, 최대 6000 바이트) |
+  | `dataset.status_note` | VARCHAR2(65532) | 사용자 입력, 500자 검증 | 이미 막힘(검증) |
+  | `proactive_job.prompt` | VARCHAR2(65532) | 사용자 입력, 10,000자 검증 | 이미 막힘(검증) |
+  | `audit_log.user_agent` | VARCHAR2(65532) | HTTP 헤더 | 이미 막힘(서버 헤더 한도 8KB) |
+  | `audit_log.description`, `async_job.message` | VARCHAR2(65532) | 시스템이 조립한 문구(이름·건수) | 목록만, 시스템 생성 |
+  | `notification_outbox.recipient_address` | VARCHAR2(65532) | 수신 주소 | 목록만, 의미 값 |
+  | `notification_outbox.rendered_subject` | VARCHAR2(65532) | 쓰는 곳 없음 | 목록만 |
+  | `proactive_job_execution.delivered_channels`, `api_connection.auth_config`·`oauth_state`, `*_enc`(슬랙·데이터 저장소·채널 토큰) | VARCHAR2(65532) | 시스템 생성(채널 목록·암호문) | 목록만, 시스템 생성 |
+  | `dataset_embedding.source_text`, `document_chunk.content` | VARCHAR2(65532) | 임베딩·청크 원문 | 제외(WD-717) |
 
 **묶음 ④·⑤ 에서 더한 규칙(WD-709·WD-710)**:
 

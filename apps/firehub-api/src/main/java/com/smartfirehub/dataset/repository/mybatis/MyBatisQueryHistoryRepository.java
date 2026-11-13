@@ -3,6 +3,7 @@ package com.smartfirehub.dataset.repository.mybatis;
 import com.smartfirehub.dataset.dto.QueryHistoryResponse;
 import com.smartfirehub.dataset.repository.QueryHistoryRepository;
 import com.smartfirehub.global.platformdb.mybatis.PlatformMyBatisRepository;
+import com.smartfirehub.global.platformdb.mybatis.TiberoTextLimits;
 import java.util.List;
 
 /**
@@ -19,7 +20,11 @@ public class MyBatisQueryHistoryRepository implements QueryHistoryRepository {
     this.mapper = mapper;
   }
 
-  /** 쿼리 실행 이력 한 건을 남긴다. */
+  /**
+   * 쿼리 실행 이력 한 건을 남긴다. 오류 메시지는 SQL 엔진 예외 문구라 길이를 통제할 수 없어 {@link
+   * TiberoTextLimits#truncateErrorMessage} 로 Tibero {@code VARCHAR2(65532)} 바이트 한도 안으로 자른다(WD-728)
+   * — 자르지 않으면 INSERT 가 실패해 이력이 사라진다. SQL 본문은 의미 값이라 자르지 않는다.
+   */
   @Override
   public void save(
       Long datasetId,
@@ -30,7 +35,15 @@ public class MyBatisQueryHistoryRepository implements QueryHistoryRepository {
       long executionTimeMs,
       boolean success,
       String error) {
-    mapper.insert(datasetId, userId, sql, queryType, affectedRows, executionTimeMs, success, error);
+    mapper.insert(
+        datasetId,
+        userId,
+        sql,
+        queryType,
+        affectedRows,
+        executionTimeMs,
+        success,
+        TiberoTextLimits.truncateErrorMessage(error));
   }
 
   /** 데이터셋의 실행 이력 한 쪽(0 부터 세는 page × size 만큼 건너뛴다). */
