@@ -99,7 +99,8 @@ public class QueryResultExportService {
     }
     // 거부면 executeJudgedAnalytics 가 감사 + 403. 내보내기는 읽기 전용으로만 재실행한다.
     // 재실행도 쿼리 시간 내내 공용 풀 커넥션을 쥐므로 동시 실행 상한(WD-553)을 건다 — 초과면 429.
-    AnalyticsQueryResponse r = guardedSqlExecutor.executeJudgedAnalyticsGated(j, run.maxRows(), true);
+    AnalyticsQueryResponse r =
+        guardedSqlExecutor.executeJudgedAnalyticsGated(j, run.maxRows(), true);
     if (r.error() != null || !"SELECT".equals(r.queryType())) {
       throw new CodedApiException(
           HttpStatus.BAD_REQUEST, "QUERY_RUN_NOT_EXPORTABLE", "내보낼 수 있는 조회 결과가 아닙니다.");

@@ -158,7 +158,8 @@ class DatasetColumnOptionDefaultTest extends IntegrationTestBase {
     String table = "wd698_addpk_" + unique;
     long id = createValidDataset(table);
 
-    MvcResult r = addColumn(id, "{\"columnName\":\"code\",\"dataType\":\"TEXT\",\"isPrimaryKey\":true}");
+    MvcResult r =
+        addColumn(id, "{\"columnName\":\"code\",\"dataType\":\"TEXT\",\"isPrimaryKey\":true}");
 
     assertThat(r.getResponse().getStatus()).as(body(r)).isEqualTo(201);
     assertThat(json(r).get("isPrimaryKey").asBoolean()).isTrue();

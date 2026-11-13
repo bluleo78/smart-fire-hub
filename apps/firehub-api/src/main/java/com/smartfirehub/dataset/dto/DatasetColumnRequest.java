@@ -38,9 +38,9 @@ public record DatasetColumnRequest(
    * isNullable 누락·null 의 기본값(WD-698) — 데이터셋 생성과 필드 추가(AddColumnRequest)가 같은 규칙을 쓴다.
    *
    * <p>세 옵션이 원시 boolean 이던 때는 JSON 에서 빠지면 false 가 돼, isNullable 을 빼먹은 API·AI 도구 호출이 NOT NULL 컬럼을
-   * 만들고 행이 있는 데이터셋에는 필드 추가가 거부됐다. 이제 누락은 SQL 기본처럼 NULL 허용이다. 단 기본 키는 NOT NULL 이어야 하므로(NULL
-   * 허용 기본 키는 거부된다) 기본 키에서 빠뜨리면 예전처럼 NOT NULL 로 둔다. isIndexed·isPrimaryKey 누락은 false. 명시한 값은 그대로
-   * 따르며, 정규화 뒤 세 값은 null 이 아니라 호출부는 언박싱해도 된다.
+   * 만들고 행이 있는 데이터셋에는 필드 추가가 거부됐다. 이제 누락은 SQL 기본처럼 NULL 허용이다. 단 기본 키는 NOT NULL 이어야 하므로(NULL 허용 기본 키는
+   * 거부된다) 기본 키에서 빠뜨리면 예전처럼 NOT NULL 로 둔다. isIndexed·isPrimaryKey 누락은 false. 명시한 값은 그대로 따르며, 정규화 뒤 세
+   * 값은 null 이 아니라 호출부는 언박싱해도 된다.
    */
   static boolean defaultNullable(Boolean isNullable, boolean isPrimaryKey) {
     return isNullable != null ? isNullable : !isPrimaryKey;

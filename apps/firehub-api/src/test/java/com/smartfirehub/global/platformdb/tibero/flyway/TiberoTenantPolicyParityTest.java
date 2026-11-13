@@ -47,7 +47,7 @@ class TiberoTenantPolicyParityTest {
    */
   private static final Set<String> PG_ONLY_TABLES = Set.of("PYTHON_READ_UNCONFIRMED_SLOT");
 
-  private static final Path TIBERO =Path.of("src/main/resources/db/migration-tibero");
+  private static final Path TIBERO = Path.of("src/main/resources/db/migration-tibero");
 
   /** add_policy('<테이블>', ...) 의 첫 인자. 선언부 add_policy(p_table ...) 는 따옴표가 없어 걸리지 않는다. */
   private static final Pattern ADD_POLICY =
