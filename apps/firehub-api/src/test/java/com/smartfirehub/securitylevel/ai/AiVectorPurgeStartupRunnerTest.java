@@ -31,7 +31,7 @@ class AiVectorPurgeStartupRunnerTest {
     settings = mock(TenantSettingsRepository.class);
     purge = mock(AiVectorPurgeService.class);
     tenantRunner = mock(TenantScopedRunner.class);
-    runner = new AiVectorPurgeStartupRunner(tenantRunner, settings, purge, true, f -> true);
+    runner = new AiVectorPurgeStartupRunner(tenantRunner, settings, purge, true);
     when(settings.findValue(AiVectorPurgeStartupRunner.FLAG_KEY)).thenReturn(Optional.empty());
   }
 
@@ -39,14 +39,14 @@ class AiVectorPurgeStartupRunnerTest {
   void success_setsFlag() {
     when(purge.purgeDisallowed())
         .thenReturn(new AiVectorPurgeService.PurgeResult(1, 1, 0, 0, 0, List.of()));
-    runner.runForCurrentTenant();
+    inTenant(runner::runForCurrentTenant);
     verify(settings).upsert(AiVectorPurgeStartupRunner.FLAG_KEY, "done", null);
   }
 
   @Test
   void purgeThrows_doesNotSetFlag() {
     when(purge.purgeDisallowed()).thenThrow(new IllegalStateException("db down"));
-    assertThatThrownBy(() -> runner.runForCurrentTenant())
+    assertThatThrownBy(() -> inTenant(runner::runForCurrentTenant))
         .isInstanceOf(IllegalStateException.class);
     verify(settings, never()).upsert(anyString(), anyString(), any());
   }
@@ -55,20 +55,25 @@ class AiVectorPurgeStartupRunnerTest {
   void partialFailure_doesNotSetFlag() {
     when(purge.purgeDisallowed())
         .thenReturn(new AiVectorPurgeService.PurgeResult(2, 1, 0, 0, 1, List.of()));
-    runner.runForCurrentTenant();
+    inTenant(runner::runForCurrentTenant);
     verify(settings, never()).upsert(anyString(), anyString(), any());
   }
 
   @Test
   void flagPresent_skipsPurge() {
     when(settings.findValue(AiVectorPurgeStartupRunner.FLAG_KEY)).thenReturn(Optional.of("done"));
-    runner.runForCurrentTenant();
+    inTenant(runner::runForCurrentTenant);
     verify(purge, never()).purgeDisallowed();
   }
 
   @Test
   void disabled_doesNotIterateTenants() {
-    new AiVectorPurgeStartupRunner(tenantRunner, settings, purge, false, f -> true).onReady();
+    new AiVectorPurgeStartupRunner(tenantRunner, settings, purge, false).onReady();
     verify(tenantRunner, never()).forEachActiveTenant(any());
+  }
+
+  /** 실제 러너는 TenantScopedRunner 가 세운 테넌트 문맥 안에서 돈다 — 지울 벡터 판정이 테넌트별이라(WD-718) 테스트도 문맥을 세운다. */
+  private static void inTenant(Runnable body) {
+    com.smartfirehub.global.tenant.TenantContext.runScoped(1L, body);
   }
 }

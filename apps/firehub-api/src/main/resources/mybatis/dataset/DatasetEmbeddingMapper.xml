@@ -3,7 +3,9 @@
 <!--
   dataset_embedding 문장(WD-707) — JooqDatasetEmbeddingRepository 의 살아 있는 경로(upsertSourceText·delete·countAll)와 같은 의미.
   규칙은 MyBatisPlatformConfig javadoc. 테넌트 정책(RLS) 대상이라 tenant_id 를 쓰지 않는다(DEFAULT 가 채우고 정책이 좁힌다).
-  벡터 테이블(dataset_embedding_vec_N) 문장은 두지 않는다 — Tibero 기준선에 테이블이 없고 서비스가 PlatformDbFeatures 로 건너뛴다(스펙 D1).
+  벡터 테이블(dataset_embedding_vec_N) 문장은 두지 않는다 — 벡터는 벡터 저장소 포트(DatasetVectorIndex, ADR 0002)가 맡는다.
+  표시 열(embedded_dim·embedded_model, WD-717)과 그 판정식은 플랫폼 DB 에 남아 여기 있다(WD-718). 판정식은 jOOQ 판의
+  MISSING_PREDICATE 와 같다 — NULL 을 명시적으로 비교해 IS DISTINCT FROM 이 없는 Tibero 에서도 같은 뜻이다.
 -->
 <mapper namespace="com.smartfirehub.dataset.repository.mybatis.DatasetEmbeddingMapper">
 
@@ -40,6 +42,57 @@
   <select id="countAllowed" resultType="long">
     SELECT count(*) FROM dataset_embedding de
      WHERE <include refid="com.smartfirehub.securitylevel.repository.mybatis.DatasetVisibility.aiPolicyAllowedDataset"><property name="datasetIdCol" value="de.dataset_id"/></include>
+  </select>
+
+  <resultMap id="sourceTextRow" type="com.smartfirehub.dataset.repository.DatasetEmbeddingRepository$SourceTextRow">
+    <constructor>
+      <arg column="dataset_id" javaType="_long"/>
+      <arg column="source_text" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <!-- 판정식: 표시 열이 현재 공간(차원·모델)을 가리키지 않는 행(jOOQ 판 MISSING_PREDICATE 와 같음). -->
+  <sql id="missingPredicate">
+    (de.embedded_dim IS NULL OR de.embedded_dim &lt;&gt; #{dim} OR de.embedded_model IS NULL OR de.embedded_model &lt;&gt; #{model})
+  </sql>
+
+  <!-- 표시 열 채우기 — 포트로 벡터를 쓴 뒤 같은 트랜잭션에서. id 목록은 InChunks 로 500 개씩(Tibero IN 상한). -->
+  <update id="markEmbedded">
+    UPDATE dataset_embedding SET embedded_dim = #{dim}, embedded_model = #{model}
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="dataset_id"/></include>
+  </update>
+
+  <!-- 표시 열 비우기 — 벡터를 지운 뒤 같은 트랜잭션에서. 벡터 삭제처럼 tenant_id 를 명시한다. -->
+  <update id="clearMarkers">
+    UPDATE dataset_embedding SET embedded_dim = NULL, embedded_model = NULL
+     WHERE tenant_id = #{tenantId}
+       AND <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="dataset_id"/></include>
+  </update>
+
+  <!-- 다른 차원을 가리키던 표시 열 비우기(차원 정리 뒤). -->
+  <update id="clearOtherDimensionMarkers">
+    UPDATE dataset_embedding SET embedded_dim = NULL, embedded_model = NULL
+     WHERE tenant_id = #{tenantId} AND embedded_dim &lt;&gt; #{keepDim}
+  </update>
+
+  <select id="countEmbedded" resultType="long">
+    SELECT count(*) FROM dataset_embedding WHERE embedded_dim = #{dim} AND embedded_model = #{model}
+  </select>
+
+  <select id="countMissing" resultType="long">
+    SELECT count(*) FROM dataset_embedding de
+     WHERE <include refid="missingPredicate"/>
+       AND <include refid="com.smartfirehub.securitylevel.repository.mybatis.DatasetVisibility.aiPolicyAllowedDataset"><property name="datasetIdCol" value="de.dataset_id"/></include>
+  </select>
+
+  <!-- 키셋 페이지(dataset_id 순). 상한은 pageClause(offset 0) — Tibero 는 FETCH NEXT … ROWS ONLY 에 바인드 가능(실측). -->
+  <select id="findMissing" resultMap="sourceTextRow">
+    SELECT de.dataset_id, de.source_text FROM dataset_embedding de
+     WHERE de.dataset_id &gt; #{afterDatasetId}
+       AND <include refid="missingPredicate"/>
+       AND <include refid="com.smartfirehub.securitylevel.repository.mybatis.DatasetVisibility.aiPolicyAllowedDataset"><property name="datasetIdCol" value="de.dataset_id"/></include>
+     ORDER BY de.dataset_id
+     <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.pageClause"/>
   </select>
 
 </mapper>

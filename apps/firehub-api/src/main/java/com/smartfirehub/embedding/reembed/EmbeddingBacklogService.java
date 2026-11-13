@@ -6,9 +6,9 @@ import com.smartfirehub.document.repository.DocumentChunkRepository;
 import com.smartfirehub.embedding.EmbeddingSpace;
 import com.smartfirehub.embedding.config.dto.EmbeddingImpact;
 import com.smartfirehub.global.platformdb.PlatformDbFeature;
-import com.smartfirehub.global.platformdb.PlatformDbFeatures;
 import com.smartfirehub.securitylevel.ai.EmbeddingAiGate;
 import com.smartfirehub.securitylevel.ai.EmbeddingAllowance;
+import com.smartfirehub.vectorstore.VectorStoreFeatures;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -30,7 +30,7 @@ public class EmbeddingBacklogService {
   private final SearchIndexStateRepository searchIndexStates;
   private final EmbeddingAiGate aiGate;
   // 벡터 읽기 가드(WD-486 패턴) — countMissing 은 NOT EXISTS 로 벡터 테이블을 읽는다.
-  private final PlatformDbFeatures features;
+  private final VectorStoreFeatures features;
 
   /** 영향도. 벡터 기능이 꺼지면 벡터 테이블을 읽는 누락 수는 0(조회 없음), 색인 stale 수는 그대로다. */
   @Transactional(readOnly = true)

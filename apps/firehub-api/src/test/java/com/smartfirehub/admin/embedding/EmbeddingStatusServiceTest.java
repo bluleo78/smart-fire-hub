@@ -31,7 +31,7 @@ class EmbeddingStatusServiceTest {
   @Mock private EmbeddingReembedStateRepository stateRepo;
   @Mock private EmbeddingAiGate aiGate;
   // 벡터 기능이 켜진 플랫폼 DB(PG) — 꺼진 경로는 PlatformDbFeaturesOffPathTest 가 맡는다.
-  private final com.smartfirehub.global.platformdb.PlatformDbFeatures features = f -> true;
+  private final com.smartfirehub.vectorstore.VectorStoreFeatures features = f -> true;
 
   /**
    * 게이트가 캡처한 허용 값 — 분모 조회가 이 값을 그대로 받는지 스텁 일치로 확인한다. 별칭(de./c.) 렌더는 리포지토리 골든 테스트가 고정한다(WD-485 T10).

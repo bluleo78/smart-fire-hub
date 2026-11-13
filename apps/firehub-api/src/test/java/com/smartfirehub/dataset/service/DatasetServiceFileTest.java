@@ -113,7 +113,10 @@ class DatasetServiceFileTest {
             org.mockito.Mockito.mock(DatasetAuditRecorder.class),
             new com.smartfirehub.global.platformdb.postgres.PostgresPlatformDbErrors(),
             // 이 테스트는 구조 변경을 쓰지 않아 구조 잠금(WD-670)은 호출되지 않는다.
-            org.mockito.Mockito.mock(DatasetDataWriteLock.class));
+            org.mockito.Mockito.mock(DatasetDataWriteLock.class),
+            // 이 테스트는 데이터셋 삭제를 쓰지 않아 색인 명시 삭제(ADR 0002 결정 6)는 호출되지 않는다.
+            org.mockito.Mockito.mock(com.smartfirehub.vectorstore.DatasetVectorIndex.class),
+            org.mockito.Mockito.mock(com.smartfirehub.vectorstore.ChunkVectorIndex.class));
   }
 
   @Test

@@ -1,7 +1,6 @@
 package com.smartfirehub.document.repository.mybatis;
 
 import com.smartfirehub.document.dto.Chunk;
-import com.smartfirehub.document.dto.DocumentSearchHit;
 import com.smartfirehub.document.repository.DocumentChunkRepository;
 import com.smartfirehub.embedding.EmbeddingDimension;
 import com.smartfirehub.embedding.EmbeddingSpace;
@@ -9,9 +8,10 @@ import com.smartfirehub.global.platformdb.PlatformDbFeature;
 import com.smartfirehub.global.platformdb.mybatis.InChunks;
 import com.smartfirehub.global.platformdb.mybatis.PlatformFeatureOff;
 import com.smartfirehub.global.platformdb.mybatis.PlatformMyBatisRepository;
-import com.smartfirehub.securitylevel.access.DatasetVisibility;
+import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.securitylevel.ai.EmbeddingAllowance;
 import com.smartfirehub.securitylevel.repository.mybatis.MyBatisDatasetVisibility;
+import com.smartfirehub.vectorstore.ChunkVectorIndex;
 import java.util.Collection;
 import java.util.List;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,11 +19,10 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * DocumentChunkRepository 의 MyBatis 구현(WD-712) — {@code JooqDocumentChunkRepository} 와 같은 의미.
  *
- * <p>살아 있는 경로(기반 테이블 document_chunk 만 쓰는 {@code deleteByDocumentFileId}·{@code
- * insertChunksOnly}·{@code findChunkContentsByDataset}·{@code countChunksInDataset}·{@code
- * countAllChunks})만 구현한다. 벡터 테이블 메서드는 서비스가 {@code PlatformDbFeatures}(VECTOR_SEARCH) 가드 뒤에서만, 트라이그램
- * 검색은 TRIGRAM_SEARCH 가드 뒤에서만 부르고 Tibero 기준선에 테이블·색인도 없어 {@link UnsupportedOperationException} 을
- * 던진다(스펙 D1). PG 프로필의 이 빈도 같다 — PG 운영은 jOOQ 구현이다.
+ * <p>벡터·트라이그램은 벡터 저장소 포트({@link ChunkVectorIndex}, ADR 0002 결정 2)가 맡는다. 벡터를 옮기거나 지우는 메서드는 jOOQ 판처럼
+ * 포트를 부른 뒤 같은 트랜잭션에서 표시 열을 맞추고, 백로그·진행률은 표시 열로 판정한다(WD-718). Tibero+platform 조합의 포트는 꺼짐 구현이라 그
+ * 메서드들은 예전처럼 {@link UnsupportedOperationException} 을 던진다. {@code insertBatch} 는 예외를 바로 던진다 — 청크를 먼저
+ * 넣고 벡터를 나중에 쓰는 적재 순서는 Qdrant 조합에서 정한다(ADR 0002 결정 6, WD-720).
  *
  * <p>등급 허용 술어(countAllChunks)는 {@code EmbeddingAiPolicyRepository.allowedDatasetSql}(jOOQ 렌더 문자열 —
  * MyBatis 판은 꺼진 기능)에 기대지 않고 매퍼 XML 이 같은 모양으로 직접 렌더한다(Task 8 의 {@code
@@ -40,9 +39,13 @@ public class MyBatisDocumentChunkRepository implements DocumentChunkRepository {
 
   private final DocumentChunkMapper mapper;
 
-  /** 매퍼를 주입받는다(플랫폼 MyBatis 빈 — 매퍼 SQL 은 mybatis/ 아래 XML). */
-  public MyBatisDocumentChunkRepository(DocumentChunkMapper mapper) {
+  // 벡터 저장소 포트(ADR 0002 결정 2) — Tibero+platform 이면 꺼짐 구현.
+  private final ChunkVectorIndex vectorIndex;
+
+  /** 매퍼와 청크 벡터 포트를 주입받는다(플랫폼 MyBatis 빈 — 매퍼 SQL 은 mybatis/ 아래 XML). */
+  public MyBatisDocumentChunkRepository(DocumentChunkMapper mapper, ChunkVectorIndex vectorIndex) {
     this.mapper = mapper;
+    this.vectorIndex = vectorIndex;
   }
 
   /** 해당 문서의 기존 청크를 모두 삭제(잡 재시도 시 중복 방지). */
@@ -51,7 +54,7 @@ public class MyBatisDocumentChunkRepository implements DocumentChunkRepository {
     mapper.deleteByDocumentFileId(documentFileId);
   }
 
-  /** 벡터 검색이 꺼진 플랫폼 DB 라 지원하지 않는다 — 서비스가 PlatformDbFeatures 로 건너뛴다(insertChunksOnly 로 간다). */
+  /** 벡터 검색이 꺼진 플랫폼 DB 라 지원하지 않는다 — 서비스가 VectorStoreFeatures 로 건너뛴다(insertChunksOnly 로 간다). */
   @Override
   public void insertBatch(
       Long documentFileId,
@@ -75,29 +78,17 @@ public class MyBatisDocumentChunkRepository implements DocumentChunkRepository {
     }
   }
 
-  /** 벡터 검색이 꺼진 플랫폼 DB 라 지원하지 않는다 — 서비스가 PlatformDbFeatures 로 건너뛴다. */
+  /** 포트로 청크 벡터를 옮긴 뒤 같은 트랜잭션에서 표시 열을 그 공간으로 맞춘다(jOOQ 판과 같음). */
   @Override
   public void upsertEmbeddings(
       EmbeddingSpace space, List<Long> chunkIds, List<float[]> embeddings) {
-    throw PlatformFeatureOff.unsupported(PlatformDbFeature.VECTOR_SEARCH);
-  }
-
-  /** 벡터 검색이 꺼진 플랫폼 DB 라 지원하지 않는다 — 서비스가 PlatformDbFeatures 로 건너뛴다. */
-  @Override
-  public List<DocumentSearchHit> searchByCosine(
-      EmbeddingSpace space,
-      float[] queryEmbedding,
-      List<Long> datasetIds,
-      int topK,
-      DatasetVisibility visibility) {
-    throw PlatformFeatureOff.unsupported(PlatformDbFeature.VECTOR_SEARCH);
-  }
-
-  /** 트라이그램 검색이 꺼진 플랫폼 DB 라 지원하지 않는다 — 서비스가 PlatformDbFeatures 로 건너뛴다. */
-  @Override
-  public List<DocumentSearchHit> searchByTrigram(
-      String query, List<Long> datasetIds, int topK, DatasetVisibility visibility) {
-    throw PlatformFeatureOff.unsupported(PlatformDbFeature.TRIGRAM_SEARCH);
+    if (chunkIds.size() != embeddings.size()) {
+      throw new IllegalArgumentException(
+          "청크 수와 임베딩 수 불일치: " + chunkIds.size() + " vs " + embeddings.size());
+    }
+    if (chunkIds.isEmpty()) return;
+    vectorIndex.upsertDense(space, chunkIds, embeddings);
+    mapper.markEmbedded(space.dimension().size(), space.model(), InChunks.of(chunkIds));
   }
 
   /**
@@ -128,34 +119,50 @@ public class MyBatisDocumentChunkRepository implements DocumentChunkRepository {
     return mapper.countAllowed(MyBatisDatasetVisibility.aiPolicyValues(allowance.hosting()));
   }
 
-  /** 벡터 검색이 꺼진 플랫폼 DB 라 지원하지 않는다 — 서비스가 PlatformDbFeatures 로 건너뛴다(분자 0). */
+  /** 표시 열이 이 공간을 가리키는 청크 수(진행률 분자). */
   @Override
   public long countEmbedded(EmbeddingSpace space) {
-    throw PlatformFeatureOff.unsupported(PlatformDbFeature.VECTOR_SEARCH);
+    return mapper.countEmbedded(space.dimension().size(), space.model());
   }
 
-  /** 벡터 검색이 꺼진 플랫폼 DB 라 지원하지 않는다 — 서비스가 PlatformDbFeatures 로 건너뛴다. */
+  /** 판정식(표시 열이 현재 공간이 아님 + 등급 허용) 청크 수 — jOOQ 판과 같은 식. */
   @Override
   public long countMissing(EmbeddingSpace space, EmbeddingAllowance allowance) {
-    throw PlatformFeatureOff.unsupported(PlatformDbFeature.VECTOR_SEARCH);
+    return mapper.countMissing(
+        space.dimension().size(),
+        space.model(),
+        MyBatisDatasetVisibility.aiPolicyValues(allowance.hosting()));
   }
 
-  /** 벡터 검색이 꺼진 플랫폼 DB 라 지원하지 않는다 — 서비스가 PlatformDbFeatures 로 건너뛴다. */
+  /** 판정식을 만족하는 청크를 id 순으로 {@code limit} 건(키셋). */
   @Override
   public List<ChunkContent> findMissing(
       EmbeddingSpace space, long afterChunkId, int limit, EmbeddingAllowance allowance) {
-    throw PlatformFeatureOff.unsupported(PlatformDbFeature.VECTOR_SEARCH);
+    return mapper.findMissing(
+        space.dimension().size(),
+        space.model(),
+        afterChunkId,
+        limit,
+        0,
+        MyBatisDatasetVisibility.aiPolicyValues(allowance.hosting()));
   }
 
-  /** 벡터 검색이 꺼진 플랫폼 DB 라 지원하지 않는다 — 서비스가 PlatformDbFeatures 로 건너뛴다. */
+  /** 다른 차원의 청크 벡터를 지우고, 그 차원을 가리키던 표시 열을 비운다. */
   @Override
   public int deleteOtherDimensions(EmbeddingDimension keep) {
-    throw PlatformFeatureOff.unsupported(PlatformDbFeature.VECTOR_SEARCH);
+    long tenantId = TenantContext.require("다른 차원 벡터 정리");
+    int deleted = vectorIndex.deleteOtherDimensions(tenantId, keep);
+    mapper.clearOtherDimensionMarkers(tenantId, keep.size());
+    return deleted;
   }
 
-  /** 벡터 검색이 꺼진 플랫폼 DB 라 지원하지 않는다 — 서비스가 PlatformDbFeatures 로 건너뛴다. */
+  /** 여러 데이터셋의 청크 벡터를 지우고 표시 열을 비운다(청크 본문은 남는다). */
   @Override
   public int deleteVectorsOf(List<Long> datasetIds) {
-    throw PlatformFeatureOff.unsupported(PlatformDbFeature.VECTOR_SEARCH);
+    if (datasetIds.isEmpty()) return 0;
+    long tenantId = TenantContext.require("청크 벡터 정리");
+    int deleted = vectorIndex.deleteDense(tenantId, datasetIds);
+    mapper.clearMarkersOfDatasets(tenantId, InChunks.of(datasetIds));
+    return deleted;
   }
 }

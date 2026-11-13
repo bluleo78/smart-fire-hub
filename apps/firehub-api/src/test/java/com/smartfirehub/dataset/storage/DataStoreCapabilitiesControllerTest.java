@@ -11,6 +11,7 @@ import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import com.smartfirehub.vectorstore.pg.PgVectorStoreFeatures;
 import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
@@ -24,7 +25,11 @@ import org.springframework.test.web.servlet.MockMvc;
 /** 저장소 기능 응답: 백엔드별 값과 "인증만 요구"(권한이 하나도 없어도 조회 가능)를 검증한다(WD-80). */
 @SuppressWarnings("null")
 @WebMvcTest(DataStoreCapabilitiesController.class)
-@Import({SecurityConfig.class, JwtAuthenticationFilter.class})
+@Import({
+  SecurityConfig.class,
+  JwtAuthenticationFilter.class,
+  PgVectorStoreFeatures.class // 행 검색 판정(ADR 0002 결정 3) — platform 조합의 실제 규칙
+})
 class DataStoreCapabilitiesControllerTest {
 
   @MockitoBean private DatasetAccessGuard datasetAccessGuard;

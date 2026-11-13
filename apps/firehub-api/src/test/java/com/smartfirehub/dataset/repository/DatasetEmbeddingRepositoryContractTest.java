@@ -2,6 +2,7 @@ package com.smartfirehub.dataset.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 
 import com.smartfirehub.dataset.repository.DatasetEmbeddingRepository.SourceTextRow;
 import com.smartfirehub.embedding.EmbeddingDimension;
@@ -169,20 +170,42 @@ public abstract class DatasetEmbeddingRepositoryContractTest extends TenantPairC
   // ---------- 벡터 테이블 메서드(스펙 D1) ----------
 
   @Test
-  @DisplayName("벡터 쓰기·세기·지우기 — 꺼진 구현은 UnsupportedOperationException(VECTOR_SEARCH)")
+  @DisplayName("벡터 쓰기·세기·지우기 — 꺼진 구현은 쓰기·지우기만 예외(VECTOR_SEARCH), 판정은 표시 열 SQL")
   void vectorWriteCountDelete() {
     long ds = fx.createDataset(tenantA, prefix + " ds");
     runA(() -> repository().upsertSourceText(ds, "벡터 본문"));
     if (!supportsVectorSearch()) {
+      // 벡터 쓰기·지우기는 꺼진 포트라 예외다.
       assertVectorOff(() -> runA(() -> repository().upsertEmbedding(SPACE, ds, vec())));
       assertVectorOff(
           () -> runA(() -> repository().upsertEmbeddings(SPACE, List.of(ds), List.of(vec()))));
-      assertVectorOff(() -> inA(() -> repository().countEmbedded(SPACE)));
-      assertVectorOff(() -> inA(() -> repository().countMissing(SPACE, EXTERNAL)));
       assertVectorOff(() -> runA(() -> repository().deleteVectors(ds)));
       assertVectorOff(() -> inA(() -> repository().deleteVectorsOf(List.of(ds))));
       // 꺼진 경로 호출이 기반 행을 건드리지 않았다.
       assertThat(fx.embeddingSourceText(ds)).isEqualTo("벡터 본문");
+      // 판정은 플랫폼 DB 의 표시 열 SQL 이다(WD-718) — 표시 열을 직접 심어 jOOQ 판과 같은 답인지 본다.
+      assertThat(inA(() -> repository().countEmbedded(SPACE))).isZero();
+      assertThat(inA(() -> repository().countMissing(SPACE, EXTERNAL))).isEqualTo(1L);
+      fx.setEmbeddingMarker(ds, SPACE.dimension().size(), SPACE.model());
+      assertThat(inA(() -> repository().countEmbedded(SPACE))).isEqualTo(1L);
+      assertThat(inA(() -> repository().countMissing(SPACE, EXTERNAL))).isZero();
+      // 다른 모델·다른 차원 공간에서는 아직 없음으로 센다.
+      assertThat(
+              inA(
+                  () ->
+                      repository()
+                          .countMissing(new EmbeddingSpace(SPACE.dimension(), "x"), EXTERNAL)))
+          .isEqualTo(1L);
+      assertThat(
+              inA(
+                  () ->
+                      repository()
+                          .countMissing(
+                              new EmbeddingSpace(EmbeddingDimension.D1536, SPACE.model()),
+                              EXTERNAL)))
+          .isEqualTo(1L);
+      // 다른 테넌트에서는 이 행이 보이지 않는다(정책).
+      assertThat(inB(() -> repository().countEmbedded(SPACE))).isZero();
       return;
     }
     assertThat(inA(() -> repository().countMissing(SPACE, EXTERNAL))).isEqualTo(1L);
@@ -210,19 +233,32 @@ public abstract class DatasetEmbeddingRepositoryContractTest extends TenantPairC
 
   @Test
   @DisplayName(
-      "findMissing 키셋 조회·deleteOtherDimensions — 꺼진 구현은 UnsupportedOperationException(VECTOR_SEARCH)")
+      "findMissing 키셋 조회·deleteOtherDimensions — 꺼진 구현은 차원 정리만 예외(VECTOR_SEARCH), 키셋은 표시 열 SQL")
   void findMissing_deleteOtherDimensions() {
     long ds1 = fx.createDataset(tenantA, prefix + " d1");
     long ds2 = fx.createDataset(tenantA, prefix + " d2");
     runA(() -> repository().upsertSourceText(ds1, "본문1"));
     runA(() -> repository().upsertSourceText(ds2, "본문2"));
-    if (!supportsVectorSearch()) {
-      assertVectorOff(() -> inA(() -> repository().findMissing(SPACE, 0L, 10, EXTERNAL)));
-      assertVectorOff(() -> inA(() -> repository().deleteOtherDimensions(SPACE.dimension())));
-      return;
-    }
     long lo = Math.min(ds1, ds2);
     long hi = Math.max(ds1, ds2);
+    if (!supportsVectorSearch()) {
+      // 차원 정리는 꺼진 포트라 예외다.
+      assertVectorOff(() -> inA(() -> repository().deleteOtherDimensions(SPACE.dimension())));
+      // 키셋 조회는 표시 열 SQL 이다(WD-718) — jOOQ 판과 같은 순서·상한·판정.
+      assertThat(inA(() -> repository().findMissing(SPACE, 0L, 10, EXTERNAL)))
+          .extracting(SourceTextRow::datasetId)
+          .containsExactly(lo, hi);
+      assertThat(inA(() -> repository().findMissing(SPACE, lo, 10, EXTERNAL)))
+          .extracting(SourceTextRow::datasetId)
+          .containsExactly(hi);
+      assertThat(inA(() -> repository().findMissing(SPACE, 0L, 1, EXTERNAL))).hasSize(1);
+      fx.setEmbeddingMarker(ds1, SPACE.dimension().size(), SPACE.model());
+      assertThat(inA(() -> repository().findMissing(SPACE, 0L, 10, EXTERNAL)))
+          .extracting(SourceTextRow::datasetId, SourceTextRow::sourceText)
+          .containsExactly(tuple(ds2, "본문2"));
+      assertThat(inB(() -> repository().findMissing(SPACE, 0L, 10, EXTERNAL))).isEmpty();
+      return;
+    }
     assertThat(inA(() -> repository().findMissing(SPACE, 0L, 10, EXTERNAL)))
         .extracting(SourceTextRow::datasetId)
         .containsExactly(lo, hi);

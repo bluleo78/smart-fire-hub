@@ -1,5 +1,6 @@
 package com.smartfirehub.dataset.storage;
 
+import com.smartfirehub.vectorstore.VectorStoreFeatures;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -17,6 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class DataStoreCapabilitiesController {
 
   private final DataStoreResolver dataStoreResolver;
+  private final VectorStoreFeatures vectorStoreFeatures;
 
   /**
    * 백엔드별 기능 지원 여부 — 판정은 {@link DataStoreBackend} 에 둔다(지금은 PostgreSQL 만 GEOMETRY·행 검색을 지원). WD-636:
@@ -29,7 +31,7 @@ public class DataStoreCapabilitiesController {
     return new DataStoreCapabilitiesResponse(
         backend.name(),
         backend.supportsGeometry(),
-        backend.supportsRowSearch(),
+        vectorStoreFeatures.supportsRowSearch(backend), // 행 검색 판정은 벡터 저장소 조합(ADR 0002 결정 3)
         backend.maxVarcharLength(),
         backend.defaultVarcharLength());
   }

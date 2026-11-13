@@ -64,6 +64,11 @@ class TempDatasetServiceDeleteLocksOnceTest {
   /** 구조 잠금(WD-670) 호출 순서를 보려는 목 — 실제 잠금은 하지 않는다. */
   @Mock private DatasetDataWriteLock writeLock;
 
+  /** 색인 명시 삭제(ADR 0002 결정 6) 포트 — 삭제 본문이 부르지만 이 테스트는 잠금 순서만 본다. */
+  @Mock private com.smartfirehub.vectorstore.DatasetVectorIndex datasetVectorIndex;
+
+  @Mock private com.smartfirehub.vectorstore.ChunkVectorIndex chunkVectorIndex;
+
   @InjectMocks private DatasetService datasetService;
 
   private TempDatasetService tempDatasetService;

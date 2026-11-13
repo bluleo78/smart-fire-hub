@@ -7,9 +7,9 @@ import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import com.smartfirehub.embedding.EmbeddingSpace;
 import com.smartfirehub.global.platformdb.PlatformDbFeature;
-import com.smartfirehub.global.platformdb.PlatformDbFeatures;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.securitylevel.ai.EmbeddingAiGate;
+import com.smartfirehub.vectorstore.VectorStoreFeatures;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -35,7 +35,7 @@ public class DatasetEmbeddingService {
   private final DatasetMetaReader metaReader;
   private final EmbeddingProviderFactory embeddingFactory;
   private final EmbeddingAiGate aiGate;
-  private final PlatformDbFeatures features;
+  private final VectorStoreFeatures features;
 
   /** 동기: source_text 만 갱신. 메타 없으면(삭제됨) 인덱스 제거. 쓰기 트랜잭션 내에서 호출. */
   public void syncSourceText(long datasetId) {

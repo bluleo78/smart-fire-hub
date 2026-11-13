@@ -3,12 +3,11 @@ package com.smartfirehub.dataset.repository.jooq;
 import com.smartfirehub.dataset.repository.DatasetEmbeddingRepository;
 import com.smartfirehub.embedding.EmbeddingDimension;
 import com.smartfirehub.embedding.EmbeddingSpace;
-import com.smartfirehub.embedding.repository.VectorLiterals;
-import com.smartfirehub.embedding.repository.jooq.VectorTables;
 import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.securitylevel.ai.EmbeddingAllowance;
 import com.smartfirehub.securitylevel.repository.EmbeddingAiPolicyRepository;
+import com.smartfirehub.vectorstore.DatasetVectorIndex;
 import java.util.List;
 import org.jooq.DSLContext;
 import org.springframework.stereotype.Repository;
@@ -23,6 +22,10 @@ import org.springframework.transaction.annotation.Transactional;
  * 노출된다.
  *
  * <p>벡터는 차원별 테이블(dataset_embedding_vec_N)에 둔다(#713).
+ *
+ * <p>벡터 SQL 은 벡터 저장소 포트({@link DatasetVectorIndex}, ADR 0002 결정 2)로 나갔다. 이 리포지토리는 기반 테이블(원문·표시
+ * 열·백로그 판정)만 다룬다. 벡터를 쓰거나 지우는 메서드는 포트를 부른 뒤 같은 트랜잭션(클래스 레벨 {@code @Transactional})에서 표시 열을 맞춘다.
+ * pgvector 구현은 그 트랜잭션에 합류하므로 벡터 행과 표시 열이 함께 커밋되거나 함께 롤백된다.
  */
 @Repository
 @ConditionalOnPostgresPlatformDb
@@ -37,10 +40,16 @@ public class JooqDatasetEmbeddingRepository implements DatasetEmbeddingRepositor
   // 임베딩 등급 허용 술어 렌더(WD-485 T10) — 별칭 de.dataset_id 는 이 구현이 소유한다(예전 호출자가 넘기던 값 그대로).
   private final EmbeddingAiPolicyRepository aiPolicyRepository;
 
+  // 벡터 저장소 포트 — 벡터 SQL 은 여기로 나갔다(ADR 0002 결정 2).
+  private final DatasetVectorIndex vectorIndex;
+
   public JooqDatasetEmbeddingRepository(
-      DSLContext dsl, EmbeddingAiPolicyRepository aiPolicyRepository) {
+      DSLContext dsl,
+      EmbeddingAiPolicyRepository aiPolicyRepository,
+      DatasetVectorIndex vectorIndex) {
     this.dsl = dsl;
     this.aiPolicyRepository = aiPolicyRepository;
+    this.vectorIndex = vectorIndex;
   }
 
   /** source_text 만 동기 upsert(외부 호출 없음). 벡터는 차원 테이블에 따로 있다 — 새 행은 벡터 없이 시작해 키워드 검색에는 즉시 노출된다. */
@@ -76,28 +85,10 @@ public class JooqDatasetEmbeddingRepository implements DatasetEmbeddingRepositor
           "데이터셋 수와 임베딩 수 불일치: " + datasetIds.size() + " vs " + embeddings.size());
     }
     if (datasetIds.isEmpty()) return;
-    Long[] ids = datasetIds.toArray(Long[]::new);
-    for (EmbeddingDimension d : EmbeddingDimension.values()) {
-      if (d == space.dimension()) continue;
-      dsl.execute("DELETE FROM " + d.datasetTable() + " WHERE dataset_id = ANY(?)", (Object) ids);
-    }
-    org.jooq.BatchBindStep batch =
-        dsl.batch(
-            "INSERT INTO "
-                + space.dimension().datasetTable()
-                + " (dataset_id, embedding, embedding_model, updated_at)"
-                + " SELECT de.dataset_id, ?::vector, ?, now() FROM dataset_embedding de WHERE de.dataset_id = ?"
-                + " ON CONFLICT (dataset_id) DO UPDATE SET embedding = EXCLUDED.embedding,"
-                + " embedding_model = EXCLUDED.embedding_model, updated_at = now()");
-    for (int i = 0; i < datasetIds.size(); i++) {
-      batch =
-          batch.bind(
-              VectorLiterals.toVectorLiteral(embeddings.get(i)), space.model(), datasetIds.get(i));
-    }
-    batch.execute();
-    // 표시 열(WD-717)을 같은 트랜잭션에서 새 공간으로 맞춘다 — 다른 차원 행은 위에서 지웠으므로 거울이 정확히 이 공간을 가리킨다.
-    // 부모가 없는 id(삭제 경합)는 위 INSERT…SELECT 처럼 여기서도 0행이다.
-    markEmbedded(space, ids);
+    vectorIndex.upsertDense(space, datasetIds, embeddings);
+    // 표시 열(WD-717)을 같은 트랜잭션에서 새 공간으로 맞춘다 — 다른 차원 행은 포트가 지웠으므로 거울이 정확히 이 공간을 가리킨다.
+    // 부모가 없는 id(삭제 경합)는 포트의 INSERT…SELECT 처럼 여기서도 0행이다.
+    markEmbedded(space, datasetIds.toArray(Long[]::new));
   }
 
   /** 데이터셋 삭제 시 인덱스 행 제거(FK CASCADE 와 별개로 명시 호출 경로 제공). */
@@ -114,12 +105,7 @@ public class JooqDatasetEmbeddingRepository implements DatasetEmbeddingRepositor
   @Override
   public void deleteVectors(long datasetId) {
     long tenantId = TenantContext.require("데이터셋 벡터 정리");
-    for (EmbeddingDimension d : EmbeddingDimension.values()) {
-      dsl.execute(
-          "DELETE FROM " + d.datasetTable() + " WHERE tenant_id = ? AND dataset_id = ?",
-          tenantId,
-          datasetId);
-    }
+    vectorIndex.deleteDense(tenantId, List.of(datasetId));
     clearMarkers(tenantId, new Long[] {datasetId});
   }
 
@@ -131,16 +117,8 @@ public class JooqDatasetEmbeddingRepository implements DatasetEmbeddingRepositor
   public int deleteVectorsOf(List<Long> datasetIds) {
     if (datasetIds.isEmpty()) return 0;
     long tenantId = TenantContext.require("데이터셋 벡터 정리");
-    Long[] ids = datasetIds.toArray(Long[]::new);
-    int deleted = 0;
-    for (EmbeddingDimension d : EmbeddingDimension.values()) {
-      deleted +=
-          dsl.execute(
-              "DELETE FROM " + d.datasetTable() + " WHERE tenant_id = ? AND dataset_id = ANY(?)",
-              tenantId,
-              ids);
-    }
-    clearMarkers(tenantId, ids);
+    int deleted = vectorIndex.deleteDense(tenantId, datasetIds);
+    clearMarkers(tenantId, datasetIds.toArray(Long[]::new));
     return deleted;
   }
 
@@ -166,10 +144,9 @@ public class JooqDatasetEmbeddingRepository implements DatasetEmbeddingRepositor
   }
 
   /**
-   * 재임베딩 판정식(표시 열이 현재 공간이 아니고 <b>등급이 임베딩 공급자를 허용하는</b> 카탈로그 행 수). 표시 열은 벡터 행의 거울이라 예전 "현재 차원
-   * 테이블에 현재 모델 벡터가 없음" anti-join 과 같은 결과다(WD-717). {@code allowance} 는
-   * EmbeddingAiGate#allowance() 가 캡처한 값(별칭 {@code de.dataset_id} 렌더는 구현) — 정책 없는 오버로드는 두지 않는다(우회
-   * 경로가 된다).
+   * 재임베딩 판정식(표시 열이 현재 공간이 아니고 <b>등급이 임베딩 공급자를 허용하는</b> 카탈로그 행 수). 표시 열은 벡터 행의 거울이라 예전 "현재 차원 테이블에
+   * 현재 모델 벡터가 없음" anti-join 과 같은 결과다(WD-717). {@code allowance} 는 EmbeddingAiGate#allowance() 가 캡처한
+   * 값(별칭 {@code de.dataset_id} 렌더는 구현) — 정책 없는 오버로드는 두지 않는다(우회 경로가 된다).
    */
   @Override
   public long countMissing(EmbeddingSpace space, EmbeddingAllowance allowance) {
@@ -207,8 +184,7 @@ public class JooqDatasetEmbeddingRepository implements DatasetEmbeddingRepositor
   @Override
   public int deleteOtherDimensions(EmbeddingDimension keep) {
     long tenantId = TenantContext.require("다른 차원 카탈로그 벡터 정리");
-    int deleted =
-        VectorTables.deleteOtherDimensions(dsl, keep, EmbeddingDimension::datasetTable, tenantId);
+    int deleted = vectorIndex.deleteOtherDimensions(tenantId, keep);
     // 표시 열도 같은 트랜잭션에서 비운다 — 다른 차원을 가리키던 거울은 방금 지운 벡터를 가리키기 때문이다.
     dsl.execute(
         "UPDATE dataset_embedding SET embedded_dim = NULL, embedded_model = NULL"
@@ -226,10 +202,7 @@ public class JooqDatasetEmbeddingRepository implements DatasetEmbeddingRepositor
       "(de.embedded_dim IS NULL OR de.embedded_dim <> ? OR de.embedded_model IS NULL"
           + " OR de.embedded_model <> ?)";
 
-  /**
-   * 표시 열 채우기(WD-717) — 벡터 행을 쓴 메서드가 같은 트랜잭션에서 부른다. 표시 열 쓰기를 벡터 SQL 과 분리해 둔 이유: 포트 추출(WD-718)에서
-   * 벡터 SQL 은 벡터 저장소 구현으로 나가고 표시 열은 이 플랫폼 리포지토리에 남는다.
-   */
+  /** 표시 열 채우기(WD-717) — 포트로 벡터를 쓴 메서드가 같은 트랜잭션에서 부른다. 표시 열은 플랫폼 DB 에 남는다(WD-718). */
   private void markEmbedded(EmbeddingSpace space, Long[] datasetIds) {
     dsl.execute(
         "UPDATE dataset_embedding SET embedded_dim = ?, embedded_model = ? WHERE dataset_id = ANY(?)",

@@ -1,5 +1,6 @@
 package com.smartfirehub.global.platformdb;
 
+import com.smartfirehub.vectorstore.VectorStoreType;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import org.springframework.beans.factory.config.BeanFactoryPostProcessor;
@@ -31,6 +32,8 @@ public class PlatformDbStartupGuard implements BeanFactoryPostProcessor, Environ
   @Override
   public void postProcessBeanFactory(ConfigurableListableBeanFactory beanFactory) {
     PlatformDbType type = resolve(environment.getProperty(PlatformDbType.PROPERTY));
+    // 벡터 저장소 종류도 같은 자리에서 검사한다(ADR 0002 결정 1) — 모르는 값·아직 구현 없는 qdrant 는 빈 없음 오류 전에 멈춘다.
+    VectorStoreType.resolve(environment.getProperty(VectorStoreType.PROPERTY));
     if (type == PlatformDbType.TIBERO) {
       requireUtc(ZoneId.systemDefault());
     }

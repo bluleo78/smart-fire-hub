@@ -8,7 +8,6 @@ import static org.mockito.Mockito.when;
 
 import com.smartfirehub.document.dto.DocumentSearchHit;
 import com.smartfirehub.document.dto.DocumentSearchRequest;
-import com.smartfirehub.document.repository.DocumentChunkRepository;
 import com.smartfirehub.embedding.EmbeddingDimension;
 import com.smartfirehub.embedding.EmbeddingNotConfiguredException;
 import com.smartfirehub.embedding.EmbeddingProvider;
@@ -17,6 +16,7 @@ import com.smartfirehub.embedding.EmbeddingSpace;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
+import com.smartfirehub.vectorstore.ChunkVectorIndex;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -52,11 +52,11 @@ class DocumentSearchServiceTest {
   @Test
   void searchEmbedsQueryAndDelegatesToRepository() {
     var factory = Mockito.mock(EmbeddingProviderFactory.class);
-    var repo = Mockito.mock(DocumentChunkRepository.class);
+    var repo = Mockito.mock(ChunkVectorIndex.class);
     when(factory.current()).thenReturn(fakeProvider(1024));
     var hit = new DocumentSearchHit(1L, 2L, 3L, "f.txt", 0, "내용", 0.9);
     // 검색 공간은 provider 의 (차원, 모델)이어야 한다 — 다른 공간이면 차원 테이블·모델 필터가 어긋난다.
-    when(repo.searchByCosine(
+    when(repo.semantic(
             Mockito.eq(new EmbeddingSpace(EmbeddingDimension.D1024, "fake")),
             Mockito.any(),
             Mockito.eq(List.of(3L)),
@@ -82,7 +82,7 @@ class DocumentSearchServiceTest {
     var service =
         new DocumentSearchService(
             Mockito.mock(EmbeddingProviderFactory.class),
-            Mockito.mock(DocumentChunkRepository.class),
+            Mockito.mock(ChunkVectorIndex.class),
             guard(),
             f -> true);
     assertThatThrownBy(() -> service.search(new DocumentSearchRequest("  ", null, 5), CLEARANCE))
@@ -92,10 +92,9 @@ class DocumentSearchServiceTest {
   @Test
   void keywordModeUsesTrigramAndSkipsEmbedding() {
     var factory = Mockito.mock(EmbeddingProviderFactory.class);
-    var repo = Mockito.mock(DocumentChunkRepository.class);
+    var repo = Mockito.mock(ChunkVectorIndex.class);
     var hit = new DocumentSearchHit(1L, 2L, 3L, "k.txt", 0, "키워드", 0.7);
-    when(repo.searchByTrigram(
-            Mockito.eq("질의"), Mockito.eq(List.of(3L)), Mockito.eq(5), Mockito.eq(VIS)))
+    when(repo.keyword(Mockito.eq("질의"), Mockito.eq(List.of(3L)), Mockito.eq(5), Mockito.eq(VIS)))
         .thenReturn(List.of(hit));
 
     var service = new DocumentSearchService(factory, repo, guard(), f -> true);
@@ -114,18 +113,17 @@ class DocumentSearchServiceTest {
   @Test
   void hybridModeFusesSemanticAndKeywordWithRrf() {
     var factory = Mockito.mock(EmbeddingProviderFactory.class);
-    var repo = Mockito.mock(DocumentChunkRepository.class);
+    var repo = Mockito.mock(ChunkVectorIndex.class);
     when(factory.current()).thenReturn(fakeProvider(1024));
 
     // 시맨틱: A(rank0), B(rank1) / 키워드: B(rank0), C(rank1)
     var a = new DocumentSearchHit(10L, 1L, 3L, "f", 0, "A", 0.9);
     var b = new DocumentSearchHit(11L, 1L, 3L, "f", 1, "B", 0.8);
     var c = new DocumentSearchHit(12L, 1L, 3L, "f", 2, "C", 0.7);
-    when(repo.searchByCosine(
+    when(repo.semantic(
             Mockito.any(), Mockito.any(), Mockito.eq(List.of(3L)), Mockito.eq(50), Mockito.eq(VIS)))
         .thenReturn(List.of(a, b));
-    when(repo.searchByTrigram(
-            Mockito.eq("질의"), Mockito.eq(List.of(3L)), Mockito.eq(50), Mockito.eq(VIS)))
+    when(repo.keyword(Mockito.eq("질의"), Mockito.eq(List.of(3L)), Mockito.eq(50), Mockito.eq(VIS)))
         .thenReturn(List.of(b, c));
 
     var service = new DocumentSearchService(factory, repo, guard(), f -> true);
@@ -145,12 +143,12 @@ class DocumentSearchServiceTest {
   @Test
   void defaultModeIsHybrid() {
     var factory = Mockito.mock(EmbeddingProviderFactory.class);
-    var repo = Mockito.mock(DocumentChunkRepository.class);
+    var repo = Mockito.mock(ChunkVectorIndex.class);
     when(factory.current()).thenReturn(fakeProvider(1024));
-    when(repo.searchByCosine(
+    when(repo.semantic(
             Mockito.any(), Mockito.any(), Mockito.any(), Mockito.anyInt(), Mockito.eq(VIS)))
         .thenReturn(List.of());
-    when(repo.searchByTrigram(Mockito.any(), Mockito.any(), Mockito.anyInt(), Mockito.eq(VIS)))
+    when(repo.keyword(Mockito.any(), Mockito.any(), Mockito.anyInt(), Mockito.eq(VIS)))
         .thenReturn(List.of());
 
     var service = new DocumentSearchService(factory, repo, guard(), f -> true);
@@ -158,15 +156,14 @@ class DocumentSearchServiceTest {
     service.search(new DocumentSearchRequest("질의", List.of(3L), 5), CLEARANCE);
 
     verify(repo)
-        .searchByCosine(
-            Mockito.any(), Mockito.any(), Mockito.any(), Mockito.anyInt(), Mockito.eq(VIS));
-    verify(repo).searchByTrigram(Mockito.any(), Mockito.any(), Mockito.anyInt(), Mockito.eq(VIS));
+        .semantic(Mockito.any(), Mockito.any(), Mockito.any(), Mockito.anyInt(), Mockito.eq(VIS));
+    verify(repo).keyword(Mockito.any(), Mockito.any(), Mockito.anyInt(), Mockito.eq(VIS));
   }
 
   @Test
   void semanticSearchWhenNotConfiguredThrowsNotConfigured() {
     var factory = Mockito.mock(EmbeddingProviderFactory.class);
-    var repo = Mockito.mock(DocumentChunkRepository.class);
+    var repo = Mockito.mock(ChunkVectorIndex.class);
     when(factory.current()).thenThrow(new EmbeddingNotConfiguredException());
     var service = new DocumentSearchService(factory, repo, guard(), f -> true);
     assertThatThrownBy(

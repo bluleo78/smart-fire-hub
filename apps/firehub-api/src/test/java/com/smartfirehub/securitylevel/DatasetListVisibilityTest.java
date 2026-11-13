@@ -7,7 +7,6 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataset.repository.DatasetEmbeddingRepository;
-import com.smartfirehub.dataset.repository.DatasetSearchRepository;
 import com.smartfirehub.dataset.search.DatasetSearchHit;
 import com.smartfirehub.embedding.EmbeddingDimension;
 import com.smartfirehub.embedding.EmbeddingSpace;
@@ -20,6 +19,7 @@ import com.smartfirehub.support.EmbeddingTestFixtures;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.SecurityFixture;
 import com.smartfirehub.support.TenantRlsTestSupport;
+import com.smartfirehub.vectorstore.DatasetVectorIndex;
 import java.util.ArrayList;
 import java.util.List;
 import org.jooq.DSLContext;
@@ -45,7 +45,7 @@ class DatasetListVisibilityTest extends IntegrationTestBase {
   @Autowired private PasswordEncoder encoder;
   @Autowired private JwtTokenProvider jwt;
   @Autowired private ObjectMapper om;
-  @Autowired private DatasetSearchRepository searchRepository;
+  @Autowired private DatasetVectorIndex searchRepository;
   @Autowired private DatasetEmbeddingRepository embeddingRepository;
   @Autowired private DatasetAccessGuard guard;
   @Autowired private ClearanceResolver clearanceResolver;
@@ -187,7 +187,7 @@ class DatasetListVisibilityTest extends IntegrationTestBase {
               embeddingRepository.upsertEmbedding(
                   space, visibleId, EmbeddingTestFixtures.axis(1024, 0));
               return searchRepository
-                  .searchByCosine(
+                  .semantic(
                       space,
                       EmbeddingTestFixtures.axis(1024, 0),
                       null,

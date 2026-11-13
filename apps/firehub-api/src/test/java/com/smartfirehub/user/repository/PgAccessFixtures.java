@@ -711,6 +711,24 @@ public class PgAccessFixtures implements AccessFixtures {
   }
 
   @Override
+  public void setEmbeddingMarker(long datasetId, Integer dim, String model) {
+    ownerJdbc.update(
+        "update dataset_embedding set embedded_dim = ?, embedded_model = ? where dataset_id = ?",
+        dim,
+        model,
+        datasetId);
+  }
+
+  @Override
+  public void setChunkMarker(long chunkId, Integer dim, String model) {
+    ownerJdbc.update(
+        "update document_chunk set embedded_dim = ?, embedded_model = ? where id = ?",
+        dim,
+        model,
+        chunkId);
+  }
+
+  @Override
   public String embeddingSourceText(long datasetId) {
     return ownerJdbc
         .queryForList(

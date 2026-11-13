@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 
 import com.smartfirehub.dataset.repository.mybatis.DatasetEmbeddingMapper;
 import com.smartfirehub.dataset.repository.mybatis.MyBatisDatasetEmbeddingRepository;
+import com.smartfirehub.vectorstore.off.OffDatasetVectorIndex;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DuplicateKeyException;
@@ -22,7 +23,7 @@ class MyBatisDatasetEmbeddingRepositoryRetryTest {
 
   private final DatasetEmbeddingMapper mapper = mock(DatasetEmbeddingMapper.class);
   private final MyBatisDatasetEmbeddingRepository repository =
-      new MyBatisDatasetEmbeddingRepository(mapper);
+      new MyBatisDatasetEmbeddingRepository(mapper, new OffDatasetVectorIndex());
 
   @Test
   @DisplayName("첫 시도가 중복 키로 실패하면 한 번만 다시 시도한다(두 번째는 이미 있는 행을 만나 UPDATE)")

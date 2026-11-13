@@ -7,13 +7,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.smartfirehub.global.config.SecurityConfig;
-import com.smartfirehub.global.platformdb.postgres.PostgresPlatformDbFeatures;
-import com.smartfirehub.global.platformdb.tibero.TiberoPlatformDbFeatures;
 import com.smartfirehub.global.security.JwtAuthenticationFilter;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import com.smartfirehub.vectorstore.VectorStoreFeatures;
+import com.smartfirehub.vectorstore.off.OffVectorStoreFeatures;
+import com.smartfirehub.vectorstore.pg.PgVectorStoreFeatures;
 import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
@@ -30,7 +31,7 @@ import org.springframework.test.web.servlet.MockMvc;
 @Import({SecurityConfig.class, JwtAuthenticationFilter.class})
 class PlatformDbCapabilitiesControllerTest {
 
-  @MockitoBean private PlatformDbFeatures features;
+  @MockitoBean private VectorStoreFeatures features;
   @MockitoBean private DatasetAccessGuard datasetAccessGuard;
   @MockitoBean private JwtTokenProvider jwtTokenProvider;
   @MockitoBean private JwtProperties jwtProperties;
@@ -46,7 +47,7 @@ class PlatformDbCapabilitiesControllerTest {
 
   @Test
   void postgres_구현이면_두_기능_모두_true() throws Exception {
-    var pg = new PostgresPlatformDbFeatures();
+    var pg = new PgVectorStoreFeatures();
     when(features.supports(any())).thenAnswer(i -> pg.supports(i.getArgument(0)));
     mockMvc
         .perform(
@@ -58,7 +59,7 @@ class PlatformDbCapabilitiesControllerTest {
 
   @Test
   void tibero_구현이면_두_기능_모두_false() throws Exception {
-    var tibero = new TiberoPlatformDbFeatures();
+    var tibero = new OffVectorStoreFeatures();
     when(features.supports(any())).thenAnswer(i -> tibero.supports(i.getArgument(0)));
     mockMvc
         .perform(

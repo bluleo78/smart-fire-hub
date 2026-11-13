@@ -12,12 +12,14 @@ import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.securitylevel.access.ProviderHosting;
 import com.smartfirehub.securitylevel.ai.EmbeddingAllowance;
+import com.smartfirehub.securitylevel.repository.DatasetAccessRepository;
 import com.smartfirehub.securitylevel.repository.EmbeddingAiPolicyRepository;
 import com.smartfirehub.support.EmbeddingTestFixtures;
 import com.smartfirehub.support.EmbeddingTestFixtures.DocFixture;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.PostgresTestContainer;
 import com.smartfirehub.support.TenantRlsTestSupport;
+import com.smartfirehub.vectorstore.repository.jooq.PgDatasetVectorIndex;
 import java.util.ArrayList;
 import java.util.List;
 import javax.sql.DataSource;
@@ -41,7 +43,7 @@ class DatasetEmbeddingVectorStoreTest extends IntegrationTestBase {
   // 제한 없는 가시성(예전 문자열 "TRUE") — 이 테스트는 등급 가시성이 아니라 검색 자체를 본다(WD-485 T10: 인터페이스가 도메인 값을 받는다).
   private static final DatasetVisibility ALL_VISIBLE = DatasetVisibility.UNRESTRICTED;
 
-  // package-private semanticSql(EXPLAIN 단언용)은 구현 내부라 이미 렌더한 가시성 조각을 받는다.
+  // semanticSql(EXPLAIN 단언용)은 구현 내부라 이미 렌더한 가시성 조각을 받는다.
   private static final String ALL_VISIBLE_SQL = "TRUE";
 
   // 가장 넓은 실제 허용 값(자체 호스팅 — DENY 등급만 뺀다). "제한 없음" 허용 값은 우회 경로라 일부러 없다(WD-485 T10).
@@ -49,7 +51,8 @@ class DatasetEmbeddingVectorStoreTest extends IntegrationTestBase {
       new EmbeddingAllowance(ProviderHosting.SELF_HOSTED);
 
   @Autowired private DatasetEmbeddingRepository repo;
-  @Autowired private JooqDatasetSearchRepository searchRepo;
+  @Autowired private PgDatasetVectorIndex searchRepo;
+  @Autowired private DatasetAccessRepository accessRepository;
   @Autowired private DSLContext dsl;
   // 손으로 만드는 소유자 커넥션 인스턴스에 넘길 술어 렌더러(삭제 경로는 쓰지 않는다 — 생성자 인자일 뿐).
   @Autowired private EmbeddingAiPolicyRepository aiPolicyRepository;
@@ -131,15 +134,14 @@ class DatasetEmbeddingVectorStoreTest extends IntegrationTestBase {
     // #392
     assertThat(
             TenantContext.runScopedGet(
-                tenant,
-                () -> searchRepo.searchByCosine(S1024, axis(1024, 0), null, 10, ALL_VISIBLE)))
+                tenant, () -> searchRepo.semantic(S1024, axis(1024, 0), null, 10, ALL_VISIBLE)))
         .extracting(DatasetSearchHit::datasetId)
         .containsExactly(doc.datasetId());
     EmbeddingSpace otherModel = new EmbeddingSpace(EmbeddingDimension.D1024, "other");
     assertThat(
             TenantContext.runScopedGet(
                 tenant,
-                () -> searchRepo.searchByCosine(otherModel, axis(1024, 0), null, 10, ALL_VISIBLE)))
+                () -> searchRepo.semantic(otherModel, axis(1024, 0), null, 10, ALL_VISIBLE)))
         .isEmpty();
     assertThat(
             TenantContext.runScopedGet(
@@ -168,7 +170,10 @@ class DatasetEmbeddingVectorStoreTest extends IntegrationTestBase {
       //     인스턴스라 @Transactional 없이 소유자 DSL 로 자동 커밋된다.
       DatasetEmbeddingRepository ownerRepo =
           new JooqDatasetEmbeddingRepository(
-              DSL.using(ownerDataSource, SQLDialect.POSTGRES), aiPolicyRepository);
+              DSL.using(ownerDataSource, SQLDialect.POSTGRES),
+              aiPolicyRepository,
+              new PgDatasetVectorIndex(
+                  DSL.using(ownerDataSource, SQLDialect.POSTGRES), accessRepository));
       int deletedByOwner =
           TenantContext.runScopedGet(
               tenantB, () -> ownerRepo.deleteOtherDimensions(EmbeddingDimension.D1536));

@@ -7,7 +7,6 @@ import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import com.smartfirehub.dataset.repository.DatasetSearchRepository;
 import com.smartfirehub.embedding.EmbeddingDimension;
 import com.smartfirehub.embedding.EmbeddingNotConfiguredException;
 import com.smartfirehub.embedding.EmbeddingProvider;
@@ -16,6 +15,7 @@ import com.smartfirehub.embedding.EmbeddingSpace;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
+import com.smartfirehub.vectorstore.DatasetVectorIndex;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -29,7 +29,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 @ExtendWith(MockitoExtension.class)
 class DatasetSearchServiceTest {
 
-  @Mock DatasetSearchRepository repository;
+  @Mock DatasetVectorIndex repository;
   @Mock EmbeddingProviderFactory embeddingFactory;
   @Mock EmbeddingProvider embeddingProvider;
   @Mock DatasetAccessGuard datasetAccessGuard;
@@ -58,14 +58,14 @@ class DatasetSearchServiceTest {
     var dsB = hit(2L);
     var dsC = hit(3L);
     // 검색 공간을 provider 의 (차원, 모델)로 고정한다 — 다른 공간으로 부르면 스텁이 맞지 않아 실패한다.
-    when(repository.searchByCosine(
+    when(repository.semantic(
             ArgumentMatchers.eq(new EmbeddingSpace(EmbeddingDimension.D1024, "bge-m3")),
             ArgumentMatchers.any(),
             ArgumentMatchers.isNull(),
             ArgumentMatchers.anyInt(),
             ArgumentMatchers.eq(VIS)))
         .thenReturn(List.of(dsA, dsC)); // 코사인: dsA(rank0), dsC(rank1)
-    when(repository.searchByTrigram(
+    when(repository.keyword(
             ArgumentMatchers.eq("화재"),
             ArgumentMatchers.isNull(),
             ArgumentMatchers.anyInt(),
@@ -96,7 +96,7 @@ class DatasetSearchServiceTest {
 
   @Test
   void keyword_모드는_임베딩을_호출하지_않는다() {
-    when(repository.searchByTrigram(
+    when(repository.keyword(
             ArgumentMatchers.eq("x"),
             ArgumentMatchers.isNull(),
             ArgumentMatchers.anyInt(),
@@ -114,7 +114,7 @@ class DatasetSearchServiceTest {
     lenient().when(embeddingProvider.dimension()).thenReturn(1024);
     lenient().when(embeddingProvider.modelId()).thenReturn("bge-m3");
     when(embeddingProvider.embed(List.of("화재"))).thenReturn(List.of(new float[1024]));
-    when(repository.searchByCosine(
+    when(repository.semantic(
             ArgumentMatchers.any(),
             ArgumentMatchers.any(),
             ArgumentMatchers.isNull(),
@@ -124,7 +124,7 @@ class DatasetSearchServiceTest {
     var req = new DatasetSearchRequest("화재", 10, DatasetSearchMode.SEMANTIC, null);
     assertThat(service().search(req, CLEARANCE)).hasSize(1);
     Mockito.verify(repository, Mockito.never())
-        .searchByTrigram(
+        .keyword(
             ArgumentMatchers.anyString(),
             ArgumentMatchers.any(),
             ArgumentMatchers.anyInt(),
@@ -138,14 +138,14 @@ class DatasetSearchServiceTest {
     lenient().when(embeddingProvider.dimension()).thenReturn(1024);
     lenient().when(embeddingProvider.modelId()).thenReturn("bge-m3");
     when(embeddingProvider.embed(List.of("화재"))).thenReturn(List.of(new float[1024]));
-    when(repository.searchByCosine(
+    when(repository.semantic(
             ArgumentMatchers.any(),
             ArgumentMatchers.any(),
             ArgumentMatchers.isNull(),
             ArgumentMatchers.anyInt(),
             ArgumentMatchers.eq(VIS)))
         .thenReturn(List.of(hit(1L)));
-    when(repository.searchByTrigram(
+    when(repository.keyword(
             ArgumentMatchers.eq("화재"),
             ArgumentMatchers.isNull(),
             ArgumentMatchers.anyInt(),
@@ -163,14 +163,14 @@ class DatasetSearchServiceTest {
     lenient().when(embeddingProvider.dimension()).thenReturn(1024);
     lenient().when(embeddingProvider.modelId()).thenReturn("bge-m3");
     when(embeddingProvider.embed(List.of("화재"))).thenReturn(List.of(new float[1024]));
-    when(repository.searchByCosine(
+    when(repository.semantic(
             ArgumentMatchers.any(),
             ArgumentMatchers.any(),
             ArgumentMatchers.isNull(),
             ArgumentMatchers.anyInt(),
             ArgumentMatchers.eq(VIS)))
         .thenReturn(List.of(hit(1L)));
-    when(repository.searchByTrigram(
+    when(repository.keyword(
             ArgumentMatchers.eq("화재"),
             ArgumentMatchers.isNull(),
             ArgumentMatchers.anyInt(),
@@ -183,14 +183,14 @@ class DatasetSearchServiceTest {
     ArgumentCaptor<Integer> cosineLimit = ArgumentCaptor.forClass(Integer.class);
     ArgumentCaptor<Integer> trigramLimit = ArgumentCaptor.forClass(Integer.class);
     Mockito.verify(repository)
-        .searchByCosine(
+        .semantic(
             ArgumentMatchers.any(),
             ArgumentMatchers.any(),
             ArgumentMatchers.isNull(),
             cosineLimit.capture(),
             ArgumentMatchers.eq(VIS));
     Mockito.verify(repository)
-        .searchByTrigram(
+        .keyword(
             ArgumentMatchers.eq("화재"),
             ArgumentMatchers.isNull(),
             trigramLimit.capture(),
@@ -201,7 +201,7 @@ class DatasetSearchServiceTest {
 
   @Test
   void topK가_null이면_기본_10으로_정규화된다() {
-    when(repository.searchByTrigram(
+    when(repository.keyword(
             ArgumentMatchers.eq("x"),
             ArgumentMatchers.isNull(),
             ArgumentMatchers.anyInt(),
@@ -212,7 +212,7 @@ class DatasetSearchServiceTest {
 
     ArgumentCaptor<Integer> topK = ArgumentCaptor.forClass(Integer.class);
     Mockito.verify(repository)
-        .searchByTrigram(
+        .keyword(
             ArgumentMatchers.eq("x"),
             ArgumentMatchers.isNull(),
             topK.capture(),
@@ -222,7 +222,7 @@ class DatasetSearchServiceTest {
 
   @Test
   void topK가_20초과면_20으로_제한된다() {
-    when(repository.searchByTrigram(
+    when(repository.keyword(
             ArgumentMatchers.eq("x"),
             ArgumentMatchers.isNull(),
             ArgumentMatchers.anyInt(),
@@ -233,7 +233,7 @@ class DatasetSearchServiceTest {
 
     ArgumentCaptor<Integer> topK = ArgumentCaptor.forClass(Integer.class);
     Mockito.verify(repository)
-        .searchByTrigram(
+        .keyword(
             ArgumentMatchers.eq("x"),
             ArgumentMatchers.isNull(),
             topK.capture(),
@@ -243,7 +243,7 @@ class DatasetSearchServiceTest {
 
   @Test
   void storageType_필터가_리포지토리로_전달된다() {
-    when(repository.searchByTrigram(
+    when(repository.keyword(
             ArgumentMatchers.eq("x"),
             ArgumentMatchers.eq("TABLE"),
             ArgumentMatchers.anyInt(),
@@ -252,7 +252,7 @@ class DatasetSearchServiceTest {
     var req = new DatasetSearchRequest("x", 10, DatasetSearchMode.KEYWORD, "TABLE");
     assertThat(service().search(req, CLEARANCE)).hasSize(1);
     Mockito.verify(repository)
-        .searchByTrigram(
+        .keyword(
             ArgumentMatchers.eq("x"),
             ArgumentMatchers.eq("TABLE"),
             ArgumentMatchers.anyInt(),
@@ -273,7 +273,7 @@ class DatasetSearchServiceTest {
 
   @Test
   void keyword_임베딩_미설정이어도_동작한다() {
-    when(repository.searchByTrigram("화재", null, 10, VIS)).thenReturn(List.of(hit(1L)));
+    when(repository.keyword("화재", null, 10, VIS)).thenReturn(List.of(hit(1L)));
     assertThat(
             service()
                 .search(

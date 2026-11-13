@@ -2,9 +2,9 @@ package com.smartfirehub.dataset.search;
 
 import com.smartfirehub.dataset.repository.DatasetMetaReader;
 import com.smartfirehub.global.platformdb.PlatformDbFeature;
-import com.smartfirehub.global.platformdb.PlatformDbFeatures;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.transaction.AfterCommitRunner;
+import com.smartfirehub.vectorstore.VectorStoreFeatures;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -30,7 +30,7 @@ public class DatasetEmbeddingBackfillService {
   private final DatasetEmbeddingService embeddingService;
   private final JobScheduler jobScheduler;
   // 벡터 검색 미지원 DB 면 벡터를 만들 일이 없으므로 재색인 잡을 쌓지 않는다.
-  private final PlatformDbFeatures features;
+  private final VectorStoreFeatures features;
 
   /**
    * 모든 데이터셋의 source_text 만 동기 적재한다. 재임베딩 판정식의 모집단(dataset_embedding 행)을 채워, 행이 없던 데이터셋도 전체 재임베딩 대상이

@@ -12,12 +12,16 @@ import com.smartfirehub.securitylevel.access.ProviderHosting;
 import com.smartfirehub.securitylevel.ai.EmbeddingAllowance;
 import com.smartfirehub.user.repository.AccessFixtures.ChunkRow;
 import com.smartfirehub.user.repository.TenantPairContractBase;
+import com.smartfirehub.vectorstore.ChunkVectorIndex;
+import com.smartfirehub.vectorstore.off.OffChunkVectorIndex;
+import com.smartfirehub.vectorstore.repository.jooq.PgChunkVectorIndex;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 
 /**
  * DocumentChunkRepository 적재·삭제·검색 계약 테스트 — 구현마다 하위 클래스로 실행한다(WD-485, WD-712 에서 두 테넌트 픽스처 기반으로 넓힘).
@@ -42,6 +46,18 @@ public abstract class DocumentChunkRepositoryContractTest extends TenantPairCont
 
   /** 계약 대상 리포지토리 — 구현별 하위 클래스가 제공한다. */
   protected abstract DocumentChunkRepository repository();
+
+  // 검색은 리포지토리에서 벡터 저장소 포트로 나갔다(ADR 0002 결정 2). PG 컨텍스트에서만 있는 빈이라 선택 주입이다.
+  @Autowired(required = false)
+  private PgChunkVectorIndex pgIndex;
+
+  /**
+   * 검색 시나리오가 쓰는 청크 색인 포트. 벡터 검색을 지원하는 구현(jOOQ)이면 pgvector 구현, 아니면 꺼짐 구현이다. 꺼짐 구현은 DB 에 닿지 않고 예전
+   * MyBatis 검색 메서드와 같은 예외를 던진다.
+   */
+  protected ChunkVectorIndex searchIndex() {
+    return supportsVectorSearch() ? pgIndex : new OffChunkVectorIndex();
+  }
 
   /** 벡터 테이블 메서드(insertBatch·searchByCosine)를 구현하는가(jOOQ 참, MyBatis 거짓 — 스펙 D1). */
   protected boolean supportsVectorSearch() {
@@ -234,18 +250,14 @@ public abstract class DocumentChunkRepositoryContractTest extends TenantPairCont
           () -> runA(() -> repository().insertBatch(f, ds, chunks, embeddings, SPACE)));
       assertOff(
           "VECTOR_SEARCH",
-          () ->
-              inA(
-                  () ->
-                      repository()
-                          .searchByCosine(SPACE, vec(1f, 0f), List.of(ds), 5, ALL_VISIBLE)));
+          () -> inA(() -> searchIndex().semantic(SPACE, vec(1f, 0f), List.of(ds), 5, ALL_VISIBLE)));
       assertThat(fx.chunkRows(f)).isEmpty();
       return;
     }
     runA(() -> repository().insertBatch(f, ds, chunks, embeddings, SPACE));
 
     List<DocumentSearchHit> hits =
-        inA(() -> repository().searchByCosine(SPACE, vec(1f, 0f), List.of(ds), 5, ALL_VISIBLE));
+        inA(() -> searchIndex().semantic(SPACE, vec(1f, 0f), List.of(ds), 5, ALL_VISIBLE));
 
     assertThat(hits).isNotEmpty();
     assertThat(hits.get(0).content()).isEqualTo("near");
@@ -288,11 +300,7 @@ public abstract class DocumentChunkRepositoryContractTest extends TenantPairCont
       runA(() -> repository().insertChunksOnly(f, ds, List.of(new Chunk(0, "hidden", 1))));
       assertOff(
           "VECTOR_SEARCH",
-          () ->
-              inA(
-                  () ->
-                      repository()
-                          .searchByCosine(SPACE, vec(1f, 0f), List.of(ds), 5, ALL_VISIBLE)));
+          () -> inA(() -> searchIndex().semantic(SPACE, vec(1f, 0f), List.of(ds), 5, ALL_VISIBLE)));
       return;
     }
     runA(
@@ -301,8 +309,7 @@ public abstract class DocumentChunkRepositoryContractTest extends TenantPairCont
                 .insertBatch(
                     f, ds, List.of(new Chunk(0, "hidden", 1)), List.of(vec(1f, 0f)), SPACE));
 
-    assertThat(
-            inA(() -> repository().searchByCosine(SPACE, vec(1f, 0f), List.of(ds), 5, ALL_VISIBLE)))
+    assertThat(inA(() -> searchIndex().semantic(SPACE, vec(1f, 0f), List.of(ds), 5, ALL_VISIBLE)))
         .isEmpty();
   }
 
@@ -326,13 +333,12 @@ public abstract class DocumentChunkRepositoryContractTest extends TenantPairCont
     if (!supportsTrigramSearch()) {
       assertOff(
           "TRIGRAM_SEARCH",
-          () ->
-              inA(() -> repository().searchByTrigram("UR4206974320", List.of(ds), 5, ALL_VISIBLE)));
+          () -> inA(() -> searchIndex().keyword("UR4206974320", List.of(ds), 5, ALL_VISIBLE)));
       return;
     }
 
     List<DocumentSearchHit> hits =
-        inA(() -> repository().searchByTrigram("UR4206974320", List.of(ds), 5, ALL_VISIBLE));
+        inA(() -> searchIndex().keyword("UR4206974320", List.of(ds), 5, ALL_VISIBLE));
 
     assertThat(hits).isNotEmpty();
     assertThat(hits.get(0).content()).contains("UR4206974320");
@@ -357,16 +363,13 @@ public abstract class DocumentChunkRepositoryContractTest extends TenantPairCont
           () ->
               inA(
                   () ->
-                      repository()
-                          .searchByTrigram("fire statistics report", List.of(ds), 5, ALL_VISIBLE)));
+                      searchIndex()
+                          .keyword("fire statistics report", List.of(ds), 5, ALL_VISIBLE)));
       return;
     }
 
     List<DocumentSearchHit> hits =
-        inA(
-            () ->
-                repository()
-                    .searchByTrigram("fire statistics report", List.of(ds), 5, ALL_VISIBLE));
+        inA(() -> searchIndex().keyword("fire statistics report", List.of(ds), 5, ALL_VISIBLE));
 
     assertThat(hits).isNotEmpty();
     assertThat(hits.get(0).content()).isEqualTo("annual wildfire damage summary 2026");
@@ -381,12 +384,11 @@ public abstract class DocumentChunkRepositoryContractTest extends TenantPairCont
     if (!supportsTrigramSearch()) {
       assertOff(
           "TRIGRAM_SEARCH",
-          () ->
-              inA(() -> repository().searchByTrigram("UR4206974320", List.of(ds), 5, ALL_VISIBLE)));
+          () -> inA(() -> searchIndex().keyword("UR4206974320", List.of(ds), 5, ALL_VISIBLE)));
       return;
     }
 
-    assertThat(inA(() -> repository().searchByTrigram("UR4206974320", List.of(ds), 5, ALL_VISIBLE)))
+    assertThat(inA(() -> searchIndex().keyword("UR4206974320", List.of(ds), 5, ALL_VISIBLE)))
         .isEmpty();
   }
 }

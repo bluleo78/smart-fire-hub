@@ -1,7 +1,10 @@
 package com.smartfirehub.global.config;
 
 import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
+import com.smartfirehub.global.platformdb.PlatformDbType;
 import com.smartfirehub.global.tenant.TenantPipelineRole;
+import com.smartfirehub.vectorstore.VectorStoreInstallKindCallback;
+import com.smartfirehub.vectorstore.VectorStoreType;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -19,7 +22,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * Flyway migrate 실행에 커스텀 콜백(pipeline_executor, app_tenant, 테넌트별 파이프라인 실행 롤 비밀번호 동기화)을 등록한다.
+ * Flyway migrate 실행에 커스텀 콜백(벡터 저장소 설치 종류 기록, pipeline_executor, app_tenant, 테넌트별 파이프라인 실행 롤 비밀번호
+ * 동기화)을 등록한다.
  *
  * <p>{@code FlywayConfigurationCustomizer} 빈을 두 개 등록하면 안 된다 — Flyway 설정 커스터마이저는 순서가 보장되지 않고, {@code
  * configuration.callbacks(...)} 는 "추가"가 아니라 "교체"이므로 나중에 실행되는 커스터마이저가 먼저 등록한 콜백을 통째로 지워버린다. 그래서 콜백을
@@ -36,9 +40,13 @@ public class FlywayCallbackConfig {
   public FlywayConfigurationCustomizer passwordSyncCustomizer(
       @Value("${app.pipeline.datasource.password}") String pipelineExecutorPassword,
       @Value("${spring.datasource.password}") String appTenantPassword,
-      @Value("${app.pipeline.role-password-secret}") String tenantPipelineRoleSecret) {
+      @Value("${app.pipeline.role-password-secret}") String tenantPipelineRoleSecret,
+      @Value("${" + VectorStoreType.PROPERTY + ":#{null}}") String vectorStoreType) {
+    // 벡터 저장소 설치 종류 기록·대조(ADR 0002 결정 10). 값 검사는 기동 검사(PlatformDbStartupGuard)가 이미 했다.
+    VectorStoreType configuredVectorStore = VectorStoreType.resolve(vectorStoreType);
     return configuration ->
         configuration.callbacks(
+            new VectorStoreInstallKindCallback(configuredVectorStore, PlatformDbType.POSTGRES),
             new RolePasswordSyncCallback("pipeline_executor", pipelineExecutorPassword),
             new RolePasswordSyncCallback("app_tenant", appTenantPassword),
             new RolePasswordSyncCallback(

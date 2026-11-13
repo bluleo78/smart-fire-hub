@@ -5,7 +5,9 @@ import org.springframework.context.ApplicationContext;
 
 /**
  * DocumentChunkReembedRepositoryContractTest 를 MyBatis(PostgreSQL) 구현으로 실행한다(WD-712) — 빈 이름으로 꺼낸다.
- * 벡터 메서드는 PG 프로필에서도 만들지 않으므로(스펙 D1 — PG 운영은 jOOQ) 예외를 단언한다.
+ *
+ * <p>PG 컨텍스트의 청크 포트는 pgvector 구현이라 이 빈도 벡터를 실제로 옮기고 지운다. 그래서 jOOQ 판과 같은 전체 시나리오로 MyBatis 표시 열
+ * SQL(WD-718)을 검증한다. 꺼짐 포트 경로는 Tibero 하위 클래스가 본다.
  */
 class MyBatisDocumentChunkReembedRepositoryContractTest
     extends DocumentChunkReembedRepositoryContractTest {
@@ -16,10 +18,5 @@ class MyBatisDocumentChunkReembedRepositoryContractTest
   protected DocumentChunkRepository repository() {
     return applicationContext.getBean(
         "myBatisDocumentChunkRepository", DocumentChunkRepository.class);
-  }
-
-  @Override
-  protected boolean supportsVectorSearch() {
-    return false;
   }
 }

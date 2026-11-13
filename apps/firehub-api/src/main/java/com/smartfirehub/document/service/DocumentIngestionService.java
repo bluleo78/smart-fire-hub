@@ -13,11 +13,12 @@ import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import com.smartfirehub.embedding.EmbeddingSpace;
 import com.smartfirehub.file.service.StoredFileNames;
 import com.smartfirehub.global.platformdb.PlatformDbFeature;
-import com.smartfirehub.global.platformdb.PlatformDbFeatures;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.transaction.AfterCommitRunner;
 import com.smartfirehub.notification.service.NotificationService;
 import com.smartfirehub.securitylevel.ai.EmbeddingAiGate;
+import com.smartfirehub.vectorstore.ChunkVectorIndex;
+import com.smartfirehub.vectorstore.VectorStoreFeatures;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -41,7 +42,10 @@ public class DocumentIngestionService {
   private final NotificationService notificationService;
   private final JobScheduler jobScheduler;
   private final EmbeddingAiGate embeddingAiGate;
-  private final PlatformDbFeatures features;
+  private final VectorStoreFeatures features;
+
+  /** 청크 색인 포트 — 문서 삭제·재적재 때 청크 색인을 명시적으로 지운다(ADR 0002 결정 6). */
+  private final ChunkVectorIndex chunkVectorIndex;
 
   /** 동기: 중복검사 + blob 저장 + document_file(PENDING) 생성 + 잡 enqueue. */
   // 메서드 레벨 트랜잭션을 두지 않는다 — 리포지토리가 자기 트랜잭션을 열어 GUC 를 보장하고,
@@ -102,6 +106,8 @@ public class DocumentIngestionService {
           boolean completed = false;
           try {
             // 잡 재시도 시 이전에 부분 적재된 청크가 남아 중복되지 않도록 먼저 정리한다(멱등성 보장).
+            // 청크 색인도 명시적으로 지운다(ADR 0002 결정 6) — pgvector 는 CASCADE 라 할 일이 없고 별도 저장소는 이 호출이 정리 경로다.
+            chunkVectorIndex.deleteAllOfDocument(tenantId, documentFileId);
             chunkRepository.deleteByDocumentFileId(documentFileId);
             fileRepository.updateStatus(documentFileId, "PARSING");
             // storagePath 는 응답 DTO에 없으므로 저장소 경로를 별도 조회로 얻는다.
@@ -162,6 +168,8 @@ public class DocumentIngestionService {
   public void deleteDocument(Long documentFileId) {
     // 메타 삭제 전에 저장소 경로를 먼저 확보한다(삭제 후엔 조회 불가).
     String storagePath = fileRepository.findStoragePath(documentFileId);
+    // 청크 색인 명시 삭제(ADR 0002 결정 6) — pgvector 는 CASCADE 라 할 일이 없고 별도 저장소는 이 호출이 정리 경로다.
+    chunkVectorIndex.deleteAllOfDocument(TenantContext.require("문서 삭제"), documentFileId);
     fileRepository.delete(documentFileId);
     try {
       storageService.delete(storagePath);

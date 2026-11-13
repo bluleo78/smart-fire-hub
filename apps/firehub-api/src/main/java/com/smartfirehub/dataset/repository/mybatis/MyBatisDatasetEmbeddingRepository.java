@@ -3,22 +3,24 @@ package com.smartfirehub.dataset.repository.mybatis;
 import com.smartfirehub.dataset.repository.DatasetEmbeddingRepository;
 import com.smartfirehub.embedding.EmbeddingDimension;
 import com.smartfirehub.embedding.EmbeddingSpace;
-import com.smartfirehub.global.platformdb.PlatformDbFeature;
-import com.smartfirehub.global.platformdb.mybatis.PlatformFeatureOff;
+import com.smartfirehub.global.platformdb.mybatis.InChunks;
 import com.smartfirehub.global.platformdb.mybatis.PlatformMyBatisRepository;
 import com.smartfirehub.global.platformdb.mybatis.PlatformRetries;
+import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.securitylevel.ai.EmbeddingAllowance;
 import com.smartfirehub.securitylevel.repository.mybatis.MyBatisDatasetVisibility;
+import com.smartfirehub.vectorstore.DatasetVectorIndex;
 import java.util.List;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
  * DatasetEmbeddingRepository 의 MyBatis 구현(WD-707) — {@code JooqDatasetEmbeddingRepository} 와 같은 의미.
  *
- * <p>살아 있는 경로(기반 테이블 dataset_embedding 만 쓰는 {@code upsertSourceText}·{@code delete}·{@code
- * countAll})만 구현한다. 벡터 테이블 메서드는 서비스가 {@code PlatformDbFeatures}(VECTOR_SEARCH) 가드 뒤에서만 부르고 Tibero
- * 기준선에 테이블도 없어 {@link UnsupportedOperationException} 을 던진다(스펙 D1). PG 프로필의 이 빈도 같다 — PG 운영은 jOOQ
- * 구현이다.
+ * <p>벡터는 벡터 저장소 포트({@link DatasetVectorIndex}, ADR 0002 결정 2)가 맡는다. 이 리포지토리는 jOOQ 판처럼 포트를 부른 뒤 같은
+ * 트랜잭션에서 표시 열({@code embedded_dim}·{@code embedded_model})을 맞추고, 백로그·진행률은 표시 열로 판정한다(WD-718).
+ * Tibero+platform 조합의 포트는 꺼짐 구현이라 벡터를 쓰거나 지우는 메서드는 예전처럼 {@link UnsupportedOperationException} 을 던진다
+ * — 서비스가 {@code VectorStoreFeatures} 가드 뒤에서만 부른다. Tibero+qdrant 조합(WD-720)이 오면 같은 코드가 Qdrant 포트로
+ * 그대로 돈다.
  *
  * <p>등급 허용 술어(countAll)는 {@code EmbeddingAiPolicyRepository.allowedDatasetSql}(jOOQ 렌더 문자열 —
  * MyBatis 판은 꺼진 기능)에 기대지 않고 공용 조각 {@code DatasetVisibility.aiPolicyAllowedDataset}(문서 청크 매퍼와 공유)이
@@ -35,8 +37,13 @@ public class MyBatisDatasetEmbeddingRepository implements DatasetEmbeddingReposi
 
   private final DatasetEmbeddingMapper mapper;
 
-  public MyBatisDatasetEmbeddingRepository(DatasetEmbeddingMapper mapper) {
+  // 벡터 저장소 포트(ADR 0002 결정 2) — Tibero+platform 이면 꺼짐 구현.
+  private final DatasetVectorIndex vectorIndex;
+
+  public MyBatisDatasetEmbeddingRepository(
+      DatasetEmbeddingMapper mapper, DatasetVectorIndex vectorIndex) {
     this.mapper = mapper;
+    this.vectorIndex = vectorIndex;
   }
 
   /**
@@ -50,17 +57,23 @@ public class MyBatisDatasetEmbeddingRepository implements DatasetEmbeddingReposi
     PlatformRetries.runOnceOnDuplicateKey(() -> mapper.upsertSourceText(datasetId, sourceText));
   }
 
-  /** 벡터 검색이 꺼진 플랫폼 DB 라 지원하지 않는다 — 서비스가 PlatformDbFeatures 로 건너뛴다. */
+  /** 카탈로그 벡터 1건 — {@link #upsertEmbeddings} 의 단건 편의. */
   @Override
   public void upsertEmbedding(EmbeddingSpace space, long datasetId, float[] embedding) {
-    throw PlatformFeatureOff.unsupported(PlatformDbFeature.VECTOR_SEARCH);
+    upsertEmbeddings(space, List.of(datasetId), List.of(embedding));
   }
 
-  /** 벡터 검색이 꺼진 플랫폼 DB 라 지원하지 않는다 — 서비스가 PlatformDbFeatures 로 건너뛴다. */
+  /** 포트로 벡터를 쓴 뒤 같은 트랜잭션에서 표시 열을 그 공간으로 맞춘다(jOOQ 판과 같음). */
   @Override
   public void upsertEmbeddings(
       EmbeddingSpace space, List<Long> datasetIds, List<float[]> embeddings) {
-    throw PlatformFeatureOff.unsupported(PlatformDbFeature.VECTOR_SEARCH);
+    if (datasetIds.size() != embeddings.size()) {
+      throw new IllegalArgumentException(
+          "데이터셋 수와 임베딩 수 불일치: " + datasetIds.size() + " vs " + embeddings.size());
+    }
+    if (datasetIds.isEmpty()) return;
+    vectorIndex.upsertDense(space, datasetIds, embeddings);
+    mapper.markEmbedded(space.dimension().size(), space.model(), InChunks.of(datasetIds));
   }
 
   /** 데이터셋 삭제 시 카탈로그 행 제거(FK CASCADE 와 별개로 명시 호출 경로 — 메타가 사라진 syncSourceText). */
@@ -69,16 +82,22 @@ public class MyBatisDatasetEmbeddingRepository implements DatasetEmbeddingReposi
     mapper.delete(datasetId);
   }
 
-  /** 벡터 검색이 꺼진 플랫폼 DB 라 지원하지 않는다 — 서비스가 PlatformDbFeatures 로 건너뛴다. */
+  /** 이 데이터셋의 벡터를 지우고 표시 열을 비운다. 카탈로그 행·원문은 남는다. */
   @Override
   public void deleteVectors(long datasetId) {
-    throw PlatformFeatureOff.unsupported(PlatformDbFeature.VECTOR_SEARCH);
+    long tenantId = TenantContext.require("데이터셋 벡터 정리");
+    vectorIndex.deleteDense(tenantId, List.of(datasetId));
+    mapper.clearMarkers(tenantId, InChunks.of(List.of(datasetId)));
   }
 
-  /** 벡터 검색이 꺼진 플랫폼 DB 라 지원하지 않는다 — 서비스가 PlatformDbFeatures 로 건너뛴다. */
+  /** 여러 데이터셋의 벡터를 지우고 표시 열을 비운다. 지운 벡터 수를 돌려준다. */
   @Override
   public int deleteVectorsOf(List<Long> datasetIds) {
-    throw PlatformFeatureOff.unsupported(PlatformDbFeature.VECTOR_SEARCH);
+    if (datasetIds.isEmpty()) return 0;
+    long tenantId = TenantContext.require("데이터셋 벡터 정리");
+    int deleted = vectorIndex.deleteDense(tenantId, datasetIds);
+    mapper.clearMarkers(tenantId, InChunks.of(datasetIds));
+    return deleted;
   }
 
   /**
@@ -90,28 +109,40 @@ public class MyBatisDatasetEmbeddingRepository implements DatasetEmbeddingReposi
     return mapper.countAllowed(MyBatisDatasetVisibility.aiPolicyValues(allowance.hosting()));
   }
 
-  /** 벡터 검색이 꺼진 플랫폼 DB 라 지원하지 않는다 — 서비스가 PlatformDbFeatures 로 건너뛴다. */
+  /** 표시 열이 이 공간을 가리키는 데이터셋 수(진행률 분자). */
   @Override
   public long countEmbedded(EmbeddingSpace space) {
-    throw PlatformFeatureOff.unsupported(PlatformDbFeature.VECTOR_SEARCH);
+    return mapper.countEmbedded(space.dimension().size(), space.model());
   }
 
-  /** 벡터 검색이 꺼진 플랫폼 DB 라 지원하지 않는다 — 서비스가 PlatformDbFeatures 로 건너뛴다. */
+  /** 판정식(표시 열이 현재 공간이 아님 + 등급 허용) 행 수 — jOOQ 판과 같은 식. */
   @Override
   public long countMissing(EmbeddingSpace space, EmbeddingAllowance allowance) {
-    throw PlatformFeatureOff.unsupported(PlatformDbFeature.VECTOR_SEARCH);
+    return mapper.countMissing(
+        space.dimension().size(),
+        space.model(),
+        MyBatisDatasetVisibility.aiPolicyValues(allowance.hosting()));
   }
 
-  /** 벡터 검색이 꺼진 플랫폼 DB 라 지원하지 않는다 — 서비스가 PlatformDbFeatures 로 건너뛴다. */
+  /** 판정식을 만족하는 행을 dataset_id 순으로 {@code limit} 건(키셋). */
   @Override
   public List<SourceTextRow> findMissing(
       EmbeddingSpace space, long afterDatasetId, int limit, EmbeddingAllowance allowance) {
-    throw PlatformFeatureOff.unsupported(PlatformDbFeature.VECTOR_SEARCH);
+    return mapper.findMissing(
+        space.dimension().size(),
+        space.model(),
+        afterDatasetId,
+        limit,
+        0,
+        MyBatisDatasetVisibility.aiPolicyValues(allowance.hosting()));
   }
 
-  /** 벡터 검색이 꺼진 플랫폼 DB 라 지원하지 않는다 — 서비스가 PlatformDbFeatures 로 건너뛴다. */
+  /** 다른 차원의 벡터를 지우고, 그 차원을 가리키던 표시 열을 비운다. */
   @Override
   public int deleteOtherDimensions(EmbeddingDimension keep) {
-    throw PlatformFeatureOff.unsupported(PlatformDbFeature.VECTOR_SEARCH);
+    long tenantId = TenantContext.require("다른 차원 카탈로그 벡터 정리");
+    int deleted = vectorIndex.deleteOtherDimensions(tenantId, keep);
+    mapper.clearOtherDimensionMarkers(tenantId, keep.size());
+    return deleted;
   }
 }

@@ -1,8 +1,15 @@
 package com.smartfirehub.global.platformdb.tibero;
 
 import com.smartfirehub.global.platformdb.ConditionalOnTiberoPlatformDb;
+import com.smartfirehub.global.platformdb.PlatformDbType;
 import com.smartfirehub.global.platformdb.tibero.flyway.TiberoTenantMigration;
+import com.smartfirehub.vectorstore.VectorStoreInstallKindCallback;
+import com.smartfirehub.vectorstore.VectorStoreType;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 import javax.sql.DataSource;
+import org.flywaydb.core.api.callback.Callback;
 import org.jobrunr.jobs.mappers.JobMapper;
 import org.jobrunr.spring.autoconfigure.JobRunrProperties;
 import org.jobrunr.storage.StorageProvider;
@@ -48,14 +55,22 @@ public class TiberoPlatformDbConfig {
   @Bean
   FlywayConfigurationCustomizer tiberoTenantMigrationCustomizer(
       @Value("${firehub.platform-db.tibero.owner-schema}") String ownerSchema,
-      @Value("${spring.datasource.username}") String runtimeUser) {
+      @Value("${spring.datasource.username}") String runtimeUser,
+      @Value("${" + VectorStoreType.PROPERTY + ":#{null}}") String vectorStoreType) {
     if (TiberoTenantMigration.isSingleAccount(ownerSchema, runtimeUser)) {
       log.warn(
           "런타임 계정이 없어 테넌트 격리가 꺼져 있습니다 — spring.datasource.username 을 소유자와 다른 런타임 계정으로"
               + " 두세요(ADR 0001 「Tibero 테넌트 격리」)");
     }
-    return configuration ->
-        TiberoTenantMigration.configure(configuration, ownerSchema, runtimeUser);
+    // 벡터 저장소 설치 종류 기록·대조(ADR 0002 결정 10). 기존 콜백을 지우지 않고 더한다(callbacks(...) 는 교체라서).
+    VectorStoreType configuredVectorStore = VectorStoreType.resolve(vectorStoreType);
+    return configuration -> {
+      TiberoTenantMigration.configure(configuration, ownerSchema, runtimeUser);
+      List<Callback> callbacks = new ArrayList<>(Arrays.asList(configuration.getCallbacks()));
+      callbacks.add(
+          new VectorStoreInstallKindCallback(configuredVectorStore, PlatformDbType.TIBERO));
+      configuration.callbacks(callbacks.toArray(Callback[]::new));
+    };
   }
 
   /**

@@ -19,6 +19,7 @@ import com.smartfirehub.support.EmbeddingTestFixtures;
 import com.smartfirehub.support.EmbeddingTestFixtures.DocFixture;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
+import com.smartfirehub.vectorstore.repository.jooq.PgChunkVectorIndex;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
@@ -50,7 +51,7 @@ class DocumentChunkVectorStoreTest extends IntegrationTestBase {
   // 제한 없는 가시성(예전 문자열 "TRUE") — 이 테스트는 등급 가시성이 아니라 검색 자체를 본다(WD-485 T10: 인터페이스가 도메인 값을 받는다).
   private static final DatasetVisibility ALL_VISIBLE = DatasetVisibility.UNRESTRICTED;
 
-  // package-private semanticSql(EXPLAIN 단언용)은 구현 내부라 이미 렌더한 가시성 조각을 받는다.
+  // semanticSql(EXPLAIN 단언용)은 구현 내부라 이미 렌더한 가시성 조각을 받는다.
   private static final String ALL_VISIBLE_SQL = "TRUE";
 
   // 가장 넓은 실제 허용 값(자체 호스팅 — DENY 등급만 뺀다). "제한 없음" 허용 값은 우회 경로라 일부러 없다(WD-485 T10).
@@ -58,8 +59,8 @@ class DocumentChunkVectorStoreTest extends IntegrationTestBase {
       new EmbeddingAllowance(ProviderHosting.SELF_HOSTED);
 
   @Autowired private DocumentChunkRepository repo;
-  // semanticSql 은 패키지 프라이빗 구현 세부라 구체 클래스로도 받는다(같은 빈).
-  @Autowired private JooqDocumentChunkRepository jooqRepo;
+  // 검색·semanticSql 은 벡터 저장소 포트의 pgvector 구현으로 나갔다(ADR 0002 결정 2).
+  @Autowired private PgChunkVectorIndex chunkIndex;
   @Autowired private DSLContext dsl;
   // 손으로 만드는 소유자 커넥션 인스턴스에 넘길 술어 렌더러(삭제 경로는 쓰지 않는다 — 생성자 인자일 뿐).
   @Autowired private EmbeddingAiPolicyRepository aiPolicyRepository;
@@ -113,7 +114,7 @@ class DocumentChunkVectorStoreTest extends IntegrationTestBase {
   void eachTenantSeesOnlyItsOwnDimensionAndRows() {
     List<DocumentSearchHit> aHits =
         TenantContext.runScopedGet(
-            tenantA, () -> repo.searchByCosine(S1024, axis(1024, 0), List.of(), 10, ALL_VISIBLE));
+            tenantA, () -> chunkIndex.semantic(S1024, axis(1024, 0), List.of(), 10, ALL_VISIBLE));
     assertThat(aHits).extracting(DocumentSearchHit::content).containsExactly("a-near", "a-far");
     // A 컨텍스트에서 1536 공간은 비어 있다(B 의 행이 새지 않는다).
     assertThat(TenantContext.runScopedGet(tenantA, () -> repo.countEmbedded(S1536))).isZero();
@@ -134,7 +135,7 @@ class DocumentChunkVectorStoreTest extends IntegrationTestBase {
     assertThat(
             TenantContext.runScopedGet(
                 tenantA,
-                () -> repo.searchByCosine(otherModel, axis(1024, 0), List.of(), 10, ALL_VISIBLE)))
+                () -> chunkIndex.semantic(otherModel, axis(1024, 0), List.of(), 10, ALL_VISIBLE)))
         .isEmpty();
     assertThat(
             TenantContext.runScopedGet(
@@ -194,7 +195,10 @@ class DocumentChunkVectorStoreTest extends IntegrationTestBase {
     //     @Transactional 없이 소유자 DSL 로 자동 커밋된다.
     DocumentChunkRepository ownerRepo =
         new JooqDocumentChunkRepository(
-            DSL.using(ownerDataSource, SQLDialect.POSTGRES), aiPolicyRepository, accessRepository);
+            DSL.using(ownerDataSource, SQLDialect.POSTGRES),
+            aiPolicyRepository,
+            new PgChunkVectorIndex(
+                DSL.using(ownerDataSource, SQLDialect.POSTGRES), accessRepository));
     int deletedByOwner =
         TenantContext.runScopedGet(
             tenantB, () -> ownerRepo.deleteOtherDimensions(EmbeddingDimension.D1536));
@@ -241,7 +245,7 @@ class DocumentChunkVectorStoreTest extends IntegrationTestBase {
 
     List<Object> params = new ArrayList<>();
     String sql =
-        jooqRepo.semanticSql(
+        chunkIndex.semanticSql(
             S1024, List.of(), vectorLiteral(axis(1024, 5)), 5, params, ALL_VISIBLE_SQL);
     int without =
         inTenantFixture(
@@ -270,7 +274,7 @@ class DocumentChunkVectorStoreTest extends IntegrationTestBase {
     assertThat(
             TenantContext.runScopedGet(
                 tenantA,
-                () -> repo.searchByCosine(S1024, axis(1024, 5), List.of(), 5, ALL_VISIBLE)))
+                () -> chunkIndex.semantic(S1024, axis(1024, 5), List.of(), 5, ALL_VISIBLE)))
         .hasSize(5);
   }
 
@@ -299,7 +303,7 @@ class DocumentChunkVectorStoreTest extends IntegrationTestBase {
   private String explain(EmbeddingSpace space) {
     List<Object> params = new ArrayList<>();
     String sql =
-        jooqRepo.semanticSql(
+        chunkIndex.semanticSql(
             space,
             List.of(),
             vectorLiteral(axis(space.dimension().size(), 0)),

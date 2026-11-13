@@ -4,9 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.global.platformdb.postgres.PostgresPlatformDbErrors;
-import com.smartfirehub.global.platformdb.postgres.PostgresPlatformDbFeatures;
 import com.smartfirehub.global.platformdb.tibero.TiberoPlatformDbErrors;
-import com.smartfirehub.global.platformdb.tibero.TiberoPlatformDbFeatures;
+import com.smartfirehub.vectorstore.VectorStoreFeatures;
+import com.smartfirehub.vectorstore.off.OffVectorStoreFeatures;
+import com.smartfirehub.vectorstore.pg.PgVectorStoreFeatures;
 import java.time.ZoneId;
 import java.util.TimeZone;
 import org.junit.jupiter.api.AfterEach;
@@ -28,9 +29,9 @@ class PlatformDbTypeWiringTest {
           .withUserConfiguration(
               PlatformDbStartupGuardConfig.class,
               PostgresPlatformDbErrors.class,
-              PostgresPlatformDbFeatures.class,
+              PgVectorStoreFeatures.class,
               TiberoPlatformDbErrors.class,
-              TiberoPlatformDbFeatures.class);
+              OffVectorStoreFeatures.class);
 
   @AfterEach
   void restoreTimeZone() {
@@ -44,8 +45,8 @@ class PlatformDbTypeWiringTest {
           assertThat(ctx).hasNotFailed();
           assertThat(ctx.getBean(PlatformDbErrors.class))
               .isInstanceOf(PostgresPlatformDbErrors.class);
-          assertThat(ctx.getBean(PlatformDbFeatures.class))
-              .isInstanceOf(PostgresPlatformDbFeatures.class);
+          assertThat(ctx.getBean(VectorStoreFeatures.class))
+              .isInstanceOf(PgVectorStoreFeatures.class);
           assertThat(ctx).doesNotHaveBean(TiberoPlatformDbErrors.class);
         });
   }
@@ -70,7 +71,7 @@ class PlatformDbTypeWiringTest {
               assertThat(ctx).hasNotFailed();
               assertThat(ctx.getBean(PlatformDbErrors.class))
                   .isInstanceOf(TiberoPlatformDbErrors.class);
-              PlatformDbFeatures features = ctx.getBean(PlatformDbFeatures.class);
+              VectorStoreFeatures features = ctx.getBean(VectorStoreFeatures.class);
               assertThat(features.supports(PlatformDbFeature.VECTOR_SEARCH)).isFalse();
               assertThat(features.supports(PlatformDbFeature.TRIGRAM_SEARCH)).isFalse();
               assertThat(ctx).doesNotHaveBean(PostgresPlatformDbErrors.class);

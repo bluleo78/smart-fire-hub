@@ -6,6 +6,7 @@ import com.smartfirehub.support.tibero.TiberoLive;
 import com.smartfirehub.support.tibero.TiberoPlatformSchema;
 import com.smartfirehub.user.repository.AccessFixtures;
 import com.smartfirehub.user.repository.TiberoAccessFixtures;
+import com.smartfirehub.vectorstore.off.OffDatasetVectorIndex;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.TestInstance;
 
@@ -27,7 +28,8 @@ class TiberoMyBatisDatasetEmbeddingRepositoryContractTest
     repository =
         poc.transactional(
             DatasetEmbeddingRepository.class,
-            new MyBatisDatasetEmbeddingRepository(poc.mapper(DatasetEmbeddingMapper.class)));
+            new MyBatisDatasetEmbeddingRepository(
+                poc.mapper(DatasetEmbeddingMapper.class), new OffDatasetVectorIndex()));
   }
 
   @Override

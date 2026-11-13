@@ -6,9 +6,9 @@ import com.smartfirehub.embedding.EmbeddingSpace;
 import com.smartfirehub.embedding.config.EmbeddingConfigService;
 import com.smartfirehub.embedding.repository.EmbeddingReembedStateRepository;
 import com.smartfirehub.global.platformdb.PlatformDbFeature;
-import com.smartfirehub.global.platformdb.PlatformDbFeatures;
 import com.smartfirehub.securitylevel.ai.EmbeddingAiGate;
 import com.smartfirehub.securitylevel.ai.EmbeddingAllowance;
+import com.smartfirehub.vectorstore.VectorStoreFeatures;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -24,7 +24,7 @@ public class EmbeddingStatusService {
   private final EmbeddingReembedStateRepository stateRepository;
   private final EmbeddingAiGate aiGate;
   // 벡터 읽기 가드(WD-486 패턴) — 꺼진 플랫폼 DB 에서는 벡터 테이블을 읽는 분자(countEmbedded)만 0 으로 둔다.
-  private final PlatformDbFeatures features;
+  private final VectorStoreFeatures features;
 
   /**
    * 현재 공간 기준 진행률 + 마지막 잡 상태. provider 를 만들지 않는다(설정 문서만 읽음) — 미설정이어도 409 로 죽지 않고 configured=false 로

@@ -8,8 +8,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.smartfirehub.dataset.repository.DatasetMetaReader;
-import com.smartfirehub.global.platformdb.PlatformDbFeatures;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.vectorstore.VectorStoreFeatures;
 import java.util.List;
 import org.jobrunr.jobs.lambdas.JobLambda;
 import org.jobrunr.scheduling.JobScheduler;
@@ -29,7 +29,7 @@ class DatasetEmbeddingBackfillServiceTest {
   @Mock DatasetEmbeddingService embeddingService;
   @Mock JobScheduler jobScheduler;
   // 기본은 벡터 검색 지원(PG) — 꺼진 경우는 PlatformDbFeaturesOffPathTest 가 다룬다.
-  PlatformDbFeatures features = f -> true;
+  VectorStoreFeatures features = f -> true;
 
   @BeforeEach
   void setTenant() {

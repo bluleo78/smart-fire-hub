@@ -17,6 +17,7 @@ import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.SecurityFixture;
 import com.smartfirehub.support.TenantRlsTestSupport;
+import com.smartfirehub.vectorstore.ChunkVectorIndex;
 import java.util.ArrayList;
 import java.util.List;
 import org.jooq.DSLContext;
@@ -46,6 +47,8 @@ class DocumentSearchVisibilityTest extends IntegrationTestBase {
   @Autowired private JwtTokenProvider jwt;
   @Autowired private ObjectMapper om;
   @Autowired private DocumentChunkRepository chunkRepository;
+  // 청크 검색은 벡터 저장소 포트로 나갔다(ADR 0002 결정 2).
+  @Autowired private ChunkVectorIndex chunkIndex;
   @Autowired private DatasetAccessGuard guard;
   @Autowired private ClearanceResolver clearanceResolver;
 
@@ -159,8 +162,8 @@ class DocumentSearchVisibilityTest extends IntegrationTestBase {
         TenantContext.runScopedGet(
             DEFAULT_TEST_TENANT_ID,
             () ->
-                chunkRepository
-                    .searchByCosine(
+                chunkIndex
+                    .semantic(
                         SPACE,
                         axis(1024, 0),
                         List.of(hiddenDatasetId, visibleDatasetId),
@@ -173,8 +176,8 @@ class DocumentSearchVisibilityTest extends IntegrationTestBase {
         TenantContext.runScopedGet(
             DEFAULT_TEST_TENANT_ID,
             () ->
-                chunkRepository
-                    .searchByCosine(
+                chunkIndex
+                    .semantic(
                         SPACE,
                         axis(1024, 0),
                         List.of(hiddenDatasetId, visibleDatasetId),

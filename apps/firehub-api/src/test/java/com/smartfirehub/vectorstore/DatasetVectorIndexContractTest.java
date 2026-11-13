@@ -1,4 +1,4 @@
-package com.smartfirehub.dataset.repository;
+package com.smartfirehub.vectorstore;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -17,22 +17,22 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * dataset_embedding 코사인/트라이그램 검색이 동작하는지 검증하는 실제 DB 통합 테스트.
  *
- * <p>인터페이스 계약 테스트 — 구현마다 하위 클래스로 실행한다(WD-485). 두 메서드는 스펙 D1 꺼진 경로라(WD-707) MyBatis 하위(PG
- * 프로필·Tibero)는 {@link #supportsVectorSearch()}·{@link #supportsTrigramSearch()} 를 거짓으로 두고 각 시나리오 대신
- * UnsupportedOperationException 을 단언한다.
+ * <p>포트 계약 테스트다. 구현마다 하위 클래스로 실행한다(ADR 0002 결정 2, 예전 DatasetSearchRepository 계약 테스트를 옮겼다). 꺼짐
+ * 구현(Tibero+platform) 하위는 {@link #supportsVectorSearch()}·{@link #supportsTrigramSearch()} 를 거짓으로
+ * 두고 각 시나리오 대신 UnsupportedOperationException 을 단언한다.
  */
 @Transactional
-abstract class DatasetSearchRepositoryContractTest extends IntegrationTestBase {
+abstract class DatasetVectorIndexContractTest extends IntegrationTestBase {
 
   /** 계약 대상 리포지토리 — 구현별 하위 클래스가 제공한다. */
-  protected abstract DatasetSearchRepository repository();
+  protected abstract DatasetVectorIndex repository();
 
-  /** 코사인(벡터) 검색을 구현하는가(jOOQ 참, MyBatis 거짓 — 스펙 D1 꺼진 경로). */
+  /** 코사인(벡터) 검색을 구현하는가(pgvector 참, 꺼짐 거짓). */
   protected boolean supportsVectorSearch() {
     return true;
   }
 
-  /** 트라이그램(키워드) 검색을 구현하는가(jOOQ 참, MyBatis 거짓 — 스펙 D1 꺼진 경로). */
+  /** 트라이그램(키워드) 검색을 구현하는가(pgvector 참, 꺼짐 거짓). */
   protected boolean supportsTrigramSearch() {
     return true;
   }
@@ -52,7 +52,7 @@ abstract class DatasetSearchRepositoryContractTest extends IntegrationTestBase {
     return assertedOff(
         supportsTrigramSearch(),
         "TRIGRAM_SEARCH",
-        () -> repository().searchByTrigram("화재", null, 10, ALL_VISIBLE));
+        () -> repository().keyword("화재", null, 10, ALL_VISIBLE));
   }
 
   private boolean vectorOff() {
@@ -61,7 +61,7 @@ abstract class DatasetSearchRepositoryContractTest extends IntegrationTestBase {
         "VECTOR_SEARCH",
         () ->
             repository()
-                .searchByCosine(
+                .semantic(
                     new EmbeddingSpace(EmbeddingDimension.D1024, "bge-m3"),
                     vec(1f, 0f),
                     null,
@@ -142,7 +142,7 @@ abstract class DatasetSearchRepositoryContractTest extends IntegrationTestBase {
     seedEmbedding(matched, "연도별 화재 발생 건수 및 피해 통계", null);
     seedEmbedding(unrelated, "직원 인사 발령 일반 자료", null);
 
-    var hits = repository().searchByTrigram("화재", null, 10, ALL_VISIBLE);
+    var hits = repository().keyword("화재", null, 10, ALL_VISIBLE);
 
     // 시드한 '화재' 포함 데이터셋이 후보로 나오고 score > 0.
     assertThat(hits).isNotEmpty();
@@ -161,7 +161,7 @@ abstract class DatasetSearchRepositoryContractTest extends IntegrationTestBase {
     seedEmbedding(doc, "화재 관련 비정형 문서 모음", null);
     seedEmbedding(table, "화재 관련 정형 테이블 데이터", null);
 
-    var hits = repository().searchByTrigram("화재", "DOCUMENT", 10, ALL_VISIBLE);
+    var hits = repository().keyword("화재", "DOCUMENT", 10, ALL_VISIBLE);
 
     // storageType 필터 → 결과 전부 DOCUMENT.
     assertThat(hits).isNotEmpty();
@@ -183,7 +183,7 @@ abstract class DatasetSearchRepositoryContractTest extends IntegrationTestBase {
 
     var hits =
         repository()
-            .searchByCosine(
+            .semantic(
                 new EmbeddingSpace(EmbeddingDimension.D1024, "bge-m3"),
                 vec(1f, 0f),
                 null,
@@ -217,7 +217,7 @@ abstract class DatasetSearchRepositoryContractTest extends IntegrationTestBase {
 
     var hits =
         repository()
-            .searchByCosine(
+            .semantic(
                 new EmbeddingSpace(EmbeddingDimension.D1024, "bge-m3"),
                 vec(1f, 0f),
                 "DOCUMENT",
@@ -241,7 +241,7 @@ abstract class DatasetSearchRepositoryContractTest extends IntegrationTestBase {
     Long file = createDataset("화재 현장 사진 모음", "data.ds_file_a", "FILE", "SOURCE", userId);
     seedEmbedding(file, "화재 현장 사진 및 첨부 파일 오브젝트", null);
 
-    var hits = repository().searchByTrigram("화재", null, 10, ALL_VISIBLE);
+    var hits = repository().keyword("화재", null, 10, ALL_VISIBLE);
 
     assertThat(hits).anyMatch(h -> h.datasetId().equals(file));
     var hit = hits.stream().filter(h -> h.datasetId().equals(file)).findFirst().orElseThrow();
@@ -258,7 +258,7 @@ abstract class DatasetSearchRepositoryContractTest extends IntegrationTestBase {
     seedEmbedding(file, "화재 관련 파일 오브젝트 모음", null);
     seedEmbedding(doc, "화재 관련 비정형 문서", null);
 
-    var hits = repository().searchByTrigram("화재", "FILE", 10, ALL_VISIBLE);
+    var hits = repository().keyword("화재", "FILE", 10, ALL_VISIBLE);
 
     assertThat(hits).isNotEmpty();
     assertThat(hits).allMatch(h -> h.storageType().equals("FILE"));
@@ -271,5 +271,15 @@ abstract class DatasetSearchRepositoryContractTest extends IntegrationTestBase {
       if (hits.get(i).datasetId().equals(datasetId)) return i;
     }
     return -1;
+  }
+
+  /**
+   * 「전부 지우기」(데이터셋 삭제의 명시 삭제, ADR 0002 결정 6)는 pgvector 에서는 CASCADE 가 맡아 할 일이 없고, 꺼짐 구현에서는 지울 것이 없다.
+   * 두 구현 모두 예외 없이 끝나야 한다 — 삭제 경로는 기능 가드 밖이다.
+   */
+  @Test
+  void deleteAllNeverThrows() {
+    repository().deleteAll(1L, java.util.List.of(1L, 2L));
+    repository().deleteAll(1L, java.util.List.of());
   }
 }

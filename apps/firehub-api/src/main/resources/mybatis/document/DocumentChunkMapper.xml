@@ -4,8 +4,8 @@
   document_chunk 문장(WD-712) — JooqDocumentChunkRepository 의 살아 있는 경로(deleteByDocumentFileId·insertChunksOnly·
   findChunkContentsByDataset·countChunksInDataset·countAllChunks)와 같은 의미. 규칙은 MyBatisPlatformConfig javadoc.
   테넌트 정책(RLS) 대상이라 tenant_id 를 쓰지 않는다(넣을 때는 DEFAULT 가 채우고 정책이 좁힌다).
-  벡터 테이블(document_chunk_vec_N)·트라이그램 문장은 두지 않는다 — Tibero 기준선에 테이블·색인이 없고 서비스가 PlatformDbFeatures 로
-  건너뛴다(스펙 D1). metadata(jsonb/JSON) 열은 인터페이스의 어떤 메서드도 읽거나 쓰지 않아(jOOQ 판과 같음) 문장에 없다.
+  벡터 테이블(document_chunk_vec_N)·트라이그램 문장은 두지 않는다 — 벡터 저장소 포트(ChunkVectorIndex, ADR 0002)가 맡는다.
+  표시 열(embedded_dim·embedded_model, WD-717)과 판정식은 플랫폼 DB 에 남아 여기 있다(WD-718, jOOQ 판 MISSING_PREDICATE 와 같은 식). metadata(jsonb/JSON) 열은 인터페이스의 어떤 메서드도 읽거나 쓰지 않아(jOOQ 판과 같음) 문장에 없다.
 -->
 <mapper namespace="com.smartfirehub.document.repository.mybatis.DocumentChunkMapper">
 
@@ -48,6 +48,50 @@
   <select id="countAllowed" resultType="long">
     SELECT count(*) FROM document_chunk c
      WHERE <include refid="com.smartfirehub.securitylevel.repository.mybatis.DatasetVisibility.aiPolicyAllowedDataset"><property name="datasetIdCol" value="c.dataset_id"/></include>
+  </select>
+
+  <!-- 판정식: 표시 열이 현재 공간(차원·모델)을 가리키지 않는 청크(jOOQ 판 MISSING_PREDICATE 와 같음). -->
+  <sql id="missingPredicate">
+    (c.embedded_dim IS NULL OR c.embedded_dim &lt;&gt; #{dim} OR c.embedded_model IS NULL OR c.embedded_model &lt;&gt; #{model})
+  </sql>
+
+  <!-- 표시 열 채우기 — 포트로 벡터를 쓴 뒤 같은 트랜잭션에서. id 목록은 InChunks 로 500 개씩(Tibero IN 상한). -->
+  <update id="markEmbedded">
+    UPDATE document_chunk SET embedded_dim = #{dim}, embedded_model = #{model}
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="id"/></include>
+  </update>
+
+  <!-- 데이터셋들의 청크 표시 열 비우기 — 벡터를 지운 뒤 같은 트랜잭션에서. tenant_id 를 명시한다. -->
+  <update id="clearMarkersOfDatasets">
+    UPDATE document_chunk SET embedded_dim = NULL, embedded_model = NULL
+     WHERE tenant_id = #{tenantId}
+       AND <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="dataset_id"/></include>
+  </update>
+
+  <!-- 다른 차원을 가리키던 표시 열 비우기(차원 정리 뒤). -->
+  <update id="clearOtherDimensionMarkers">
+    UPDATE document_chunk SET embedded_dim = NULL, embedded_model = NULL
+     WHERE tenant_id = #{tenantId} AND embedded_dim &lt;&gt; #{keepDim}
+  </update>
+
+  <select id="countEmbedded" resultType="long">
+    SELECT count(*) FROM document_chunk WHERE embedded_dim = #{dim} AND embedded_model = #{model}
+  </select>
+
+  <select id="countMissing" resultType="long">
+    SELECT count(*) FROM document_chunk c
+     WHERE <include refid="missingPredicate"/>
+       AND <include refid="com.smartfirehub.securitylevel.repository.mybatis.DatasetVisibility.aiPolicyAllowedDataset"><property name="datasetIdCol" value="c.dataset_id"/></include>
+  </select>
+
+  <!-- 키셋 페이지(id 순). 상한은 pageClause(offset 0). -->
+  <select id="findMissing" resultMap="chunkContent">
+    SELECT c.id, c.content FROM document_chunk c
+     WHERE c.id &gt; #{afterChunkId}
+       AND <include refid="missingPredicate"/>
+       AND <include refid="com.smartfirehub.securitylevel.repository.mybatis.DatasetVisibility.aiPolicyAllowedDataset"><property name="datasetIdCol" value="c.dataset_id"/></include>
+     ORDER BY c.id
+     <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.pageClause"/>
   </select>
 
 </mapper>

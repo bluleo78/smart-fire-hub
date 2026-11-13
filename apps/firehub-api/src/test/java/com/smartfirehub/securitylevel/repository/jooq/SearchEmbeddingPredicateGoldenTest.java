@@ -3,7 +3,6 @@ package com.smartfirehub.securitylevel.repository.jooq;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.smartfirehub.dataset.repository.jooq.JooqDatasetEmbeddingRepository;
-import com.smartfirehub.dataset.repository.jooq.JooqDatasetSearchRepository;
 import com.smartfirehub.document.repository.jooq.JooqDocumentChunkRepository;
 import com.smartfirehub.embedding.EmbeddingDimension;
 import com.smartfirehub.embedding.EmbeddingSpace;
@@ -12,6 +11,8 @@ import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.securitylevel.access.ProviderHosting;
 import com.smartfirehub.securitylevel.ai.AiCall;
 import com.smartfirehub.securitylevel.ai.EmbeddingAllowance;
+import com.smartfirehub.vectorstore.repository.jooq.PgChunkVectorIndex;
+import com.smartfirehub.vectorstore.repository.jooq.PgDatasetVectorIndex;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -109,12 +110,12 @@ class SearchEmbeddingPredicateGoldenTest {
 
   @Test
   void 데이터셋_검색_두_메서드는_예전_visibleSql_d_를_넘기던_SQL_과_같다() {
-    var repo = new JooqDatasetSearchRepository(dsl, accessRepo);
+    var repo = new PgDatasetVectorIndex(dsl, accessRepo);
     // 예전 서비스: String visibility = datasetAccessGuard.visibleSql(clearance, "d")
     String oldVis = accessRepo.visibleSql(VISIBILITY, "d");
 
     assertSame(
-        () -> repo.searchByCosine(SPACE, new float[] {1f, 0f}, "DOCUMENT", 5, VISIBILITY),
+        () -> repo.semantic(SPACE, new float[] {1f, 0f}, "DOCUMENT", 5, VISIBILITY),
         d ->
             d.fetch(
                 "SELECT d.id, d.name, d.description, d.storage_type, d.origin_type, d.table_name,"
@@ -134,7 +135,7 @@ class SearchEmbeddingPredicateGoldenTest {
                 5));
 
     assertSame(
-        () -> repo.searchByTrigram("화재", null, 7, VISIBILITY),
+        () -> repo.keyword("화재", null, 7, VISIBILITY),
         d ->
             d.fetch(
                 "SELECT d.id, d.name, d.description, d.storage_type, d.origin_type, d.table_name,"
@@ -153,11 +154,11 @@ class SearchEmbeddingPredicateGoldenTest {
 
   @Test
   void 문서_청크_검색_두_메서드는_예전_visibleSql_d_를_넘기던_SQL_과_같다() {
-    var repo = new JooqDocumentChunkRepository(dsl, policyRepo, accessRepo);
+    var repo = new PgChunkVectorIndex(dsl, accessRepo);
     String oldVis = accessRepo.visibleSql(VISIBILITY, "d");
 
     assertSame(
-        () -> repo.searchByCosine(SPACE, new float[] {1f, 0f}, List.of(3L, 4L), 5, VISIBILITY),
+        () -> repo.semantic(SPACE, new float[] {1f, 0f}, List.of(3L, 4L), 5, VISIBILITY),
         d ->
             d.fetch(
                 "SELECT c.id, c.document_file_id, c.dataset_id, df.original_name, c.chunk_index, c.content,"
@@ -179,7 +180,7 @@ class SearchEmbeddingPredicateGoldenTest {
                 5));
 
     assertSame(
-        () -> repo.searchByTrigram("질의", List.of(3L), 5, VISIBILITY),
+        () -> repo.keyword("질의", List.of(3L), 5, VISIBILITY),
         d ->
             d.fetch(
                 "SELECT dc.id, dc.document_file_id, dc.dataset_id, df.original_name,"
@@ -204,7 +205,9 @@ class SearchEmbeddingPredicateGoldenTest {
   @ParameterizedTest
   @EnumSource(ProviderHosting.class)
   void 카탈로그_임베딩_세_메서드는_예전_allowedDatasetSql_de_를_넘기던_SQL_과_같다(ProviderHosting h) {
-    var repo = new JooqDatasetEmbeddingRepository(dsl, policyRepo);
+    var repo =
+        new JooqDatasetEmbeddingRepository(
+            dsl, policyRepo, new PgDatasetVectorIndex(dsl, accessRepo));
     EmbeddingAllowance allowance = new EmbeddingAllowance(h);
     // 예전 호출자: aiGate.allowedDatasetSql("de.dataset_id") = policyRepository.allowedDatasetSql(expr,
     // 호스팅)
@@ -243,7 +246,8 @@ class SearchEmbeddingPredicateGoldenTest {
   @ParameterizedTest
   @EnumSource(ProviderHosting.class)
   void 문서_청크_임베딩_세_메서드는_예전_allowedDatasetSql_c_를_넘기던_SQL_과_같다(ProviderHosting h) {
-    var repo = new JooqDocumentChunkRepository(dsl, policyRepo, accessRepo);
+    var repo =
+        new JooqDocumentChunkRepository(dsl, policyRepo, new PgChunkVectorIndex(dsl, accessRepo));
     EmbeddingAllowance allowance = new EmbeddingAllowance(h);
     String oldAllowed = policyRepo.allowedDatasetSql("c.dataset_id", h);
     // 판정식은 WD-717 에서 표시 열 비교로 바뀌었다 — 위 카탈로그 쪽 주석과 같다.

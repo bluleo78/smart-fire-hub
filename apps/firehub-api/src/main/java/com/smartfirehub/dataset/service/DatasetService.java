@@ -49,6 +49,8 @@ import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.securitylevel.service.DatasetSecurityService;
 import com.smartfirehub.user.repository.UserRepository;
+import com.smartfirehub.vectorstore.ChunkVectorIndex;
+import com.smartfirehub.vectorstore.DatasetVectorIndex;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -206,6 +208,12 @@ public class DatasetService {
    * 테넌트 동기화 잠금보다 먼저 잡게 한다.
    */
   private final DatasetDataWriteLock writeLock;
+
+  /** 카탈로그 벡터·키워드 색인 포트 — 데이터셋 삭제 때 명시적으로 지운다(ADR 0002 결정 6). */
+  private final DatasetVectorIndex datasetVectorIndex;
+
+  /** 문서 청크 색인 포트 — 데이터셋 삭제 때 그 문서들의 청크 색인을 명시적으로 지운다(ADR 0002 결정 6). */
+  private final ChunkVectorIndex chunkVectorIndex;
 
   /** 파이프라인 전용 출처 필드를 일반 생성 경로에서 보냈을 때의 오류 코드. */
   public static final String ORIGIN_RESERVED_CODE = "DATASET_ORIGIN_RESERVED";
@@ -929,6 +937,11 @@ public class DatasetService {
       }
     }
     columnRepository.deleteByDatasetId(id);
+    // 벡터·키워드 색인 명시 삭제(ADR 0002 결정 6). pgvector 는 FK CASCADE 라 할 일이 없지만, 별도 벡터 저장소는 CASCADE 가 없어 이
+    // 호출이 정리 경로다. 카탈로그와 이 데이터셋 문서들의 청크 색인을 함께 지운다.
+    long tenantId = TenantContext.require();
+    datasetVectorIndex.deleteAll(tenantId, List.of(id));
+    chunkVectorIndex.deleteAllOfDatasets(tenantId, List.of(id));
     // 방어(WD-583): 위 잠금으로 이미 직렬화되지만, 지운 행이 없으면 성공(204)·감사로 끝내지 않고 404 로 롤백한다.
     if (datasetRepository.deleteById(id) == 0) {
       throw new DatasetNotFoundException();

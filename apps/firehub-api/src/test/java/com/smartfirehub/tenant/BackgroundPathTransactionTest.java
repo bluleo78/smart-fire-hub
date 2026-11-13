@@ -262,7 +262,8 @@ class BackgroundPathTransactionTest extends IntegrationTestBase {
           "JooqDatasetFavoriteRepository",
           "JooqDatasetTagRepository",
           "JooqQueryHistoryRepository",
-          "JooqDatasetSearchRepository",
+          "PgDatasetVectorIndex", // 예전 JooqDatasetSearchRepository — 검색은 호출자 트랜잭션 안, 쓰기는 메서드
+          // @Transactional(ADR 0002)
           "JooqFileDatasetConfigRepository",
           "JooqPermissionRepository",
           "JooqRoleRepository",

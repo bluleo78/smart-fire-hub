@@ -1,5 +1,6 @@
 package com.smartfirehub.global.platformdb;
 
+import com.smartfirehub.vectorstore.VectorStoreFeatures;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -16,9 +17,12 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class PlatformDbCapabilitiesController {
 
-  private final PlatformDbFeatures features;
+  private final VectorStoreFeatures features;
 
-  /** 기능별 지원 여부 — 판정은 {@link PlatformDbFeatures} 구현체(PG 는 모두 true, Tibero 는 모두 false)가 한다. */
+  /**
+   * 기능별 지원 여부 — 판정은 {@link VectorStoreFeatures} 구현체(platform+PG 는 모두 true, platform+Tibero 는 모두
+   * false)가 한다.
+   */
   @GetMapping("/capabilities")
   public PlatformDbCapabilitiesResponse capabilities() {
     return new PlatformDbCapabilitiesResponse(

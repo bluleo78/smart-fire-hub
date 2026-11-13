@@ -13,10 +13,10 @@ import com.smartfirehub.embedding.config.EmbeddingConfigService;
 import com.smartfirehub.embedding.config.dto.EmbeddingImpact;
 import com.smartfirehub.embedding.repository.EmbeddingReembedStateRepository;
 import com.smartfirehub.global.platformdb.PlatformDbFeature;
-import com.smartfirehub.global.platformdb.PlatformDbFeatures;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.transaction.AfterCommitRunner;
 import com.smartfirehub.securitylevel.ai.EmbeddingAiGate;
+import com.smartfirehub.vectorstore.VectorStoreFeatures;
 import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
@@ -54,7 +54,7 @@ public class TenantReembedJob {
   private final DatasetEmbeddingBackfillService datasetBackfillService;
   private final JobScheduler jobScheduler;
   private final EmbeddingAiGate aiGate;
-  private final PlatformDbFeatures features;
+  private final VectorStoreFeatures features;
 
   /** 한 단계(청크·데이터셋)의 결말 — 끝까지 갔는지, 설정 변경으로 멈췄는지. */
   private enum Outcome {

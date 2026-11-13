@@ -20,6 +20,7 @@ import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import com.smartfirehub.vectorstore.pg.PgVectorStoreFeatures;
 import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
@@ -35,7 +36,12 @@ import org.springframework.test.web.servlet.ResultActions;
 /** Tibero 테넌트는 행 검색 네 엔드포인트 모두 판정·DB 접근 전에 422 로 막고, PostgreSQL 은 기존대로 위임한다(WD-80). */
 @SuppressWarnings("null")
 @WebMvcTest(RowSearchController.class)
-@Import({SecurityConfig.class, JwtAuthenticationFilter.class, RowSearchBackendGuard.class})
+@Import({
+  SecurityConfig.class,
+  JwtAuthenticationFilter.class,
+  RowSearchBackendGuard.class,
+  PgVectorStoreFeatures.class // 행 검색 판정(ADR 0002 결정 3) — platform 조합의 실제 규칙
+})
 class RowSearchTiberoTest {
 
   private static final String MESSAGE = "행 검색: Tibero 저장소에서 아직 지원하지 않습니다";

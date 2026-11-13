@@ -17,7 +17,6 @@ import com.smartfirehub.admin.embedding.EmbeddingStatusService;
 import com.smartfirehub.dataset.repository.DatasetEmbeddingRepository;
 import com.smartfirehub.dataset.repository.DatasetMetaReader;
 import com.smartfirehub.dataset.repository.DatasetRepository;
-import com.smartfirehub.dataset.repository.DatasetSearchRepository;
 import com.smartfirehub.dataset.search.DatasetEmbeddingBackfillService;
 import com.smartfirehub.dataset.search.DatasetEmbeddingService;
 import com.smartfirehub.dataset.search.DatasetSearchHit;
@@ -46,8 +45,6 @@ import com.smartfirehub.embedding.config.EmbeddingConfigService;
 import com.smartfirehub.embedding.reembed.EmbeddingBacklogService;
 import com.smartfirehub.embedding.reembed.TenantReembedJob;
 import com.smartfirehub.embedding.repository.EmbeddingReembedStateRepository;
-import com.smartfirehub.global.platformdb.postgres.PostgresPlatformDbFeatures;
-import com.smartfirehub.global.platformdb.tibero.TiberoPlatformDbFeatures;
 import com.smartfirehub.global.tenant.TenantScopedRunner;
 import com.smartfirehub.notification.service.NotificationService;
 import com.smartfirehub.securitylevel.access.Clearance;
@@ -59,6 +56,11 @@ import com.smartfirehub.securitylevel.ai.AiVectorPurgeStartupRunner;
 import com.smartfirehub.securitylevel.ai.EmbeddingAiGate;
 import com.smartfirehub.securitylevel.ai.EmbeddingAllowance;
 import com.smartfirehub.settings.repository.TenantSettingsRepository;
+import com.smartfirehub.vectorstore.ChunkVectorIndex;
+import com.smartfirehub.vectorstore.DatasetVectorIndex;
+import com.smartfirehub.vectorstore.VectorStoreFeatures;
+import com.smartfirehub.vectorstore.off.OffVectorStoreFeatures;
+import com.smartfirehub.vectorstore.pg.PgVectorStoreFeatures;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Optional;
@@ -80,7 +82,7 @@ class PlatformDbFeaturesOffPathTest {
   private static final DatasetVisibility VIS = new DatasetVisibility(CLEARANCE, null);
 
   /** 지정한 기능만 켜진 스텁. */
-  private static PlatformDbFeatures only(PlatformDbFeature... on) {
+  private static VectorStoreFeatures only(PlatformDbFeature... on) {
     Set<PlatformDbFeature> set = EnumSet.noneOf(PlatformDbFeature.class);
     set.addAll(List.of(on));
     return set::contains;
@@ -115,7 +117,7 @@ class PlatformDbFeaturesOffPathTest {
 
   @Test
   void PG_구현은_모든_기능을_지원한다() {
-    var pg = new PostgresPlatformDbFeatures();
+    var pg = new PgVectorStoreFeatures();
     for (PlatformDbFeature f : PlatformDbFeature.values()) {
       assertThat(pg.supports(f)).isTrue();
     }
@@ -128,10 +130,10 @@ class PlatformDbFeaturesOffPathTest {
   }
 
   private record DsFixture(
-      DatasetSearchRepository repo, EmbeddingProviderFactory factory, DatasetSearchService svc) {}
+      DatasetVectorIndex repo, EmbeddingProviderFactory factory, DatasetSearchService svc) {}
 
-  private DsFixture ds(PlatformDbFeatures features) {
-    var repo = mock(DatasetSearchRepository.class);
+  private DsFixture ds(VectorStoreFeatures features) {
+    var repo = mock(DatasetVectorIndex.class);
     var factory = mock(EmbeddingProviderFactory.class);
     var guard = mock(DatasetAccessGuard.class);
     when(guard.visibility(CLEARANCE)).thenReturn(VIS);
@@ -142,23 +144,22 @@ class PlatformDbFeaturesOffPathTest {
   @Test
   void 데이터셋_HYBRID_벡터_꺼짐이면_의미검색_없이_키워드만_쓴다() {
     var f = ds(only(PlatformDbFeature.TRIGRAM_SEARCH));
-    when(f.repo.searchByTrigram(eq("화재"), any(), anyInt(), eq(VIS))).thenReturn(List.of(dsHit(1L)));
+    when(f.repo.keyword(eq("화재"), any(), anyInt(), eq(VIS))).thenReturn(List.of(dsHit(1L)));
     var r =
         f.svc.search(new DatasetSearchRequest("화재", 10, DatasetSearchMode.HYBRID, null), CLEARANCE);
     assertThat(r).extracting(DatasetSearchHit::datasetId).containsExactly(1L);
-    verify(f.repo, never()).searchByCosine(any(), any(), any(), anyInt(), any());
+    verify(f.repo, never()).semantic(any(), any(), any(), anyInt(), any());
     verifyNoInteractions(f.factory);
   }
 
   @Test
   void 데이터셋_HYBRID_트라이그램_꺼짐이면_키워드_없이_의미검색만_쓴다() {
     var f = ds(only(PlatformDbFeature.VECTOR_SEARCH));
-    when(f.repo.searchByCosine(any(), any(), any(), anyInt(), eq(VIS)))
-        .thenReturn(List.of(dsHit(2L)));
+    when(f.repo.semantic(any(), any(), any(), anyInt(), eq(VIS))).thenReturn(List.of(dsHit(2L)));
     var r =
         f.svc.search(new DatasetSearchRequest("화재", 10, DatasetSearchMode.HYBRID, null), CLEARANCE);
     assertThat(r).extracting(DatasetSearchHit::datasetId).containsExactly(2L);
-    verify(f.repo, never()).searchByTrigram(anyString(), any(), anyInt(), any());
+    verify(f.repo, never()).keyword(anyString(), any(), anyInt(), any());
   }
 
   @Test
@@ -167,8 +168,8 @@ class PlatformDbFeaturesOffPathTest {
       var f = ds(only());
       var r = f.svc.search(new DatasetSearchRequest("화재", 10, mode, null), CLEARANCE);
       assertThat(r).isEmpty();
-      verify(f.repo, never()).searchByCosine(any(), any(), any(), anyInt(), any());
-      verify(f.repo, never()).searchByTrigram(anyString(), any(), anyInt(), any());
+      verify(f.repo, never()).semantic(any(), any(), any(), anyInt(), any());
+      verify(f.repo, never()).keyword(anyString(), any(), anyInt(), any());
       verifyNoInteractions(f.factory);
     }
   }
@@ -185,16 +186,16 @@ class PlatformDbFeaturesOffPathTest {
             g.svc.search(
                 new DatasetSearchRequest("화재", 10, DatasetSearchMode.KEYWORD, null), CLEARANCE))
         .isEmpty();
-    verify(g.repo, never()).searchByTrigram(anyString(), any(), anyInt(), any());
+    verify(g.repo, never()).keyword(anyString(), any(), anyInt(), any());
   }
 
   // ---------- 문서 검색 ----------
 
   private record DocFixture(
-      DocumentChunkRepository repo, EmbeddingProviderFactory factory, DocumentSearchService svc) {}
+      ChunkVectorIndex repo, EmbeddingProviderFactory factory, DocumentSearchService svc) {}
 
-  private DocFixture doc(PlatformDbFeatures features) {
-    var repo = mock(DocumentChunkRepository.class);
+  private DocFixture doc(VectorStoreFeatures features) {
+    var repo = mock(ChunkVectorIndex.class);
     var factory = mock(EmbeddingProviderFactory.class);
     var guard = mock(DatasetAccessGuard.class);
     when(guard.visibility(CLEARANCE)).thenReturn(VIS);
@@ -209,22 +210,20 @@ class PlatformDbFeaturesOffPathTest {
   @Test
   void 문서_HYBRID_벡터_꺼짐이면_의미검색_없이_키워드만_쓴다() {
     var f = doc(only(PlatformDbFeature.TRIGRAM_SEARCH));
-    when(f.repo.searchByTrigram(eq("질의"), any(), anyInt(), eq(VIS)))
-        .thenReturn(List.of(chunkHit(1L)));
+    when(f.repo.keyword(eq("질의"), any(), anyInt(), eq(VIS))).thenReturn(List.of(chunkHit(1L)));
     var r = f.svc.search(new DocumentSearchRequest("질의", null, 5, SearchMode.HYBRID), CLEARANCE);
     assertThat(r).extracting(DocumentSearchHit::chunkId).containsExactly(1L);
-    verify(f.repo, never()).searchByCosine(any(), any(), any(), anyInt(), any());
+    verify(f.repo, never()).semantic(any(), any(), any(), anyInt(), any());
     verifyNoInteractions(f.factory);
   }
 
   @Test
   void 문서_HYBRID_트라이그램_꺼짐이면_키워드_없이_의미검색만_쓴다() {
     var f = doc(only(PlatformDbFeature.VECTOR_SEARCH));
-    when(f.repo.searchByCosine(any(), any(), any(), anyInt(), eq(VIS)))
-        .thenReturn(List.of(chunkHit(2L)));
+    when(f.repo.semantic(any(), any(), any(), anyInt(), eq(VIS))).thenReturn(List.of(chunkHit(2L)));
     var r = f.svc.search(new DocumentSearchRequest("질의", null, 5, SearchMode.HYBRID), CLEARANCE);
     assertThat(r).extracting(DocumentSearchHit::chunkId).containsExactly(2L);
-    verify(f.repo, never()).searchByTrigram(anyString(), any(), anyInt(), any());
+    verify(f.repo, never()).keyword(anyString(), any(), anyInt(), any());
   }
 
   @Test
@@ -233,8 +232,8 @@ class PlatformDbFeaturesOffPathTest {
       var f = doc(only());
       var r = f.svc.search(new DocumentSearchRequest("질의", null, 5, mode), CLEARANCE);
       assertThat(r).isEmpty();
-      verify(f.repo, never()).searchByCosine(any(), any(), any(), anyInt(), any());
-      verify(f.repo, never()).searchByTrigram(anyString(), any(), anyInt(), any());
+      verify(f.repo, never()).semantic(any(), any(), any(), anyInt(), any());
+      verify(f.repo, never()).keyword(anyString(), any(), anyInt(), any());
       verifyNoInteractions(f.factory);
     }
   }
@@ -263,8 +262,8 @@ class PlatformDbFeaturesOffPathTest {
   }
 
   /**
-   * WD-707 스펙 D1: Tibero 기능 답(실제 {@link TiberoPlatformDbFeatures})에서 소스 텍스트 갱신·데이터셋 삭제(메타 없음) 경로가
-   * 살아 있는 리포지토리 메서드(upsertSourceText·delete)만 부르는지 고정한다 — MyBatis 구현은 벡터 메서드에서 예외를 던지므로, 여기서 다른 호출이
+   * WD-707 스펙 D1: Tibero 기능 답(실제 {@link OffVectorStoreFeatures})에서 소스 텍스트 갱신·데이터셋 삭제(메타 없음) 경로가 살아
+   * 있는 리포지토리 메서드(upsertSourceText·delete)만 부르는지 고정한다 — MyBatis 구현은 벡터 메서드에서 예외를 던지므로, 여기서 다른 호출이
    * 하나라도 생기면 verifyNoMoreInteractions 가 잡는다. 데이터셋 삭제 자체(DatasetService.deleteDataset)는 임베딩 리포지토리를
    * 부르지 않고 dataset_embedding 의 FK CASCADE 로 지워진다.
    */
@@ -278,8 +277,7 @@ class PlatformDbFeaturesOffPathTest {
         new DatasetSourceTextBuilder.Input("화재", "설명", "fire", List.of("col"), List.of(), null);
     when(meta.read(7L)).thenReturn(input);
     when(meta.read(8L)).thenReturn(null);
-    var svc =
-        new DatasetEmbeddingService(repo, meta, factory, gate, new TiberoPlatformDbFeatures());
+    var svc = new DatasetEmbeddingService(repo, meta, factory, gate, new OffVectorStoreFeatures());
 
     // 갱신: 메타가 있으면 source_text upsert, 비동기 재임베딩은 벡터 꺼짐으로 바로 끝난다.
     svc.syncSourceText(7L);
@@ -342,7 +340,8 @@ class PlatformDbFeaturesOffPathTest {
             notif,
             mock(JobScheduler.class),
             gate,
-            only());
+            only(),
+            new com.smartfirehub.vectorstore.off.OffChunkVectorIndex());
 
     svc.processIngestion(9L, 1L);
 
@@ -379,16 +378,18 @@ class PlatformDbFeaturesOffPathTest {
   }
 
   @Test
-  void 벡터_정리_러너_벡터_꺼짐이면_정리도_플래그도_없다() {
+  void 벡터_정리_러너_지울_벡터가_없으면_정리도_플래그도_없다() {
     var settings = mock(TenantSettingsRepository.class);
     var purge = mock(AiVectorPurgeService.class);
+    // 카탈로그·청크 벡터도 행 검색도 없는 테넌트 — 판정은 서비스(nothingToPurge) 한 곳이 한다(WD-718).
+    when(purge.nothingToPurge(7L)).thenReturn(true);
     var runner =
-        new AiVectorPurgeStartupRunner(
-            mock(TenantScopedRunner.class), settings, purge, true, only());
+        new AiVectorPurgeStartupRunner(mock(TenantScopedRunner.class), settings, purge, true);
 
-    runner.runForCurrentTenant();
+    com.smartfirehub.global.tenant.TenantContext.runScoped(7L, runner::runForCurrentTenant);
 
-    verifyNoInteractions(purge, settings);
+    verify(purge, never()).purgeDisallowed();
+    verifyNoInteractions(settings);
   }
 
   @Test
@@ -405,7 +406,8 @@ class PlatformDbFeaturesOffPathTest {
             mock(com.smartfirehub.dataset.rowsearch.RowSearchIndex.class),
             mock(DatasetRepository.class),
             mock(com.smartfirehub.ontology.repository.GraphOntologySourceRepository.class),
-            only());
+            only(),
+            tiberoDataStore());
 
     var r =
         com.smartfirehub.global.tenant.TenantContext.runScopedGet(
@@ -420,6 +422,64 @@ class PlatformDbFeaturesOffPathTest {
 
     assertThat(r.failures()).isZero();
     verifyNoInteractions(gate, dsRepo, chunks);
+  }
+
+  /**
+   * WD-718 결함 수정: 카탈로그·청크 벡터가 꺼져 있어도(Tibero 플랫폼) 테넌트 데이터 저장소가 PostgreSQL 이면 행 검색 벡터는 지운다. 예전에는 플랫폼
+   * DB 벡터 지원만 보고 행 검색 정리까지 건너뛰었다.
+   */
+  @Test
+  void 벡터_정리_서비스_카탈로그_벡터가_꺼져도_PG_데이터_저장소의_행_검색_벡터는_지운다() {
+    var gate = mock(EmbeddingAiGate.class);
+    var dsRepo = mock(DatasetEmbeddingRepository.class);
+    var chunks = mock(DocumentChunkRepository.class);
+    var states = mock(com.smartfirehub.dataset.repository.SearchIndexStateRepository.class);
+    var rowIndex = mock(com.smartfirehub.dataset.rowsearch.RowSearchIndex.class);
+    var datasets = mock(DatasetRepository.class);
+    var resolver = mock(com.smartfirehub.dataset.storage.DataStoreResolver.class);
+    when(resolver.backendFor(1L))
+        .thenReturn(com.smartfirehub.dataset.storage.DataStoreBackend.POSTGRESQL);
+    when(gate.disallowedDatasetIds()).thenReturn(List.of(5L));
+    when(states.find(5L)).thenReturn(java.util.Optional.of(searchState("bge-m3")));
+    when(datasets.findTableNameById(5L)).thenReturn(java.util.Optional.of("t_5"));
+    var service =
+        new AiVectorPurgeService(
+            gate,
+            dsRepo,
+            chunks,
+            states,
+            rowIndex,
+            datasets,
+            mock(com.smartfirehub.ontology.repository.GraphOntologySourceRepository.class),
+            only(),
+            resolver);
+
+    var r = com.smartfirehub.global.tenant.TenantContext.runScopedGet(1L, service::purgeDisallowed);
+
+    assertThat(service.nothingToPurge(1L)).isFalse();
+    assertThat(r.rowIndexes()).isEqualTo(1);
+    assertThat(r.datasetVectors()).isZero();
+    assertThat(r.chunkVectors()).isZero();
+    verify(rowIndex).clearEmbeddings(any());
+    verify(states)
+        .markKeywordOnly(
+            5L, com.smartfirehub.dataset.rowsearch.RowSearchSyncService.KEYWORD_ONLY_MODEL);
+    // 카탈로그·청크 벡터는 꺼진 포트라 부르지 않는다.
+    verifyNoInteractions(dsRepo, chunks);
+  }
+
+  /** 행 검색 색인 상태 한 행 — 임베딩 모델만 의미가 있다(키워드 전용이 아니면 정리 대상). */
+  private static com.smartfirehub.dataset.rowsearch.SearchIndexState searchState(String model) {
+    return new com.smartfirehub.dataset.rowsearch.SearchIndexState(
+        5L, "IDLE", "h", model, 1024, null, null, null, null, 0L, 0L, 0, null, null);
+  }
+
+  /** 테넌트 데이터 저장소가 Tibero 인 해석기 — 행 검색이 없는 저장소. */
+  private static com.smartfirehub.dataset.storage.DataStoreResolver tiberoDataStore() {
+    var resolver = mock(com.smartfirehub.dataset.storage.DataStoreResolver.class);
+    when(resolver.backendFor(anyLong()))
+        .thenReturn(com.smartfirehub.dataset.storage.DataStoreBackend.TIBERO);
+    return resolver;
   }
 
   // ---------- 벡터 테이블 읽기 가드(WD-485, WD-486 이월) ----------

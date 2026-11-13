@@ -149,19 +149,34 @@ public abstract class DocumentChunkReembedRepositoryContractTest extends TenantP
 
   @Test
   @DisplayName(
-      "upsertEmbeddings·countEmbedded·countMissing·deleteVectorsOf — 꺼진 구현은 UnsupportedOperationException(VECTOR_SEARCH)")
+      "upsertEmbeddings·countEmbedded·countMissing·deleteVectorsOf — 꺼진 구현은 쓰기·지우기만 예외(VECTOR_SEARCH), 판정은 표시 열 SQL")
   void vectorWriteCountDelete() {
     long ds = fx.createDataset(tenantA, prefix + " ds");
     setPolicy(ds, 6, "ALL");
     List<Long> ids = seedChunks(ds, 2);
     List<float[]> embeddings = List.of(vec(0.5f, 0.5f), vec(0.25f, 0.75f));
     if (!supportsVectorSearch()) {
+      // 벡터 쓰기·지우기는 꺼진 포트라 예외다.
       assertVectorOff(() -> runA(() -> repository().upsertEmbeddings(SPACE, ids, embeddings)));
-      assertVectorOff(() -> inA(() -> repository().countEmbedded(SPACE)));
-      assertVectorOff(() -> inA(() -> repository().countMissing(SPACE, EXTERNAL)));
       assertVectorOff(() -> inA(() -> repository().deleteVectorsOf(List.of(ds))));
       // 꺼진 경로 호출이 기반 행을 건드리지 않았다.
       assertThat(inA(() -> repository().countChunksInDataset(ds, ids))).isEqualTo(2L);
+      // 판정은 플랫폼 DB 의 표시 열 SQL 이다(WD-718) — 표시 열을 직접 심어 jOOQ 판과 같은 답인지 본다.
+      assertThat(inA(() -> repository().countEmbedded(SPACE))).isZero();
+      assertThat(inA(() -> repository().countMissing(SPACE, EXTERNAL))).isEqualTo(2L);
+      for (long id : ids) {
+        fx.setChunkMarker(id, SPACE.dimension().size(), SPACE.model());
+      }
+      assertThat(inA(() -> repository().countEmbedded(SPACE))).isEqualTo(2L);
+      assertThat(inA(() -> repository().countMissing(SPACE, EXTERNAL))).isZero();
+      assertThat(
+              inA(
+                  () ->
+                      repository()
+                          .countMissing(new EmbeddingSpace(SPACE.dimension(), "x"), EXTERNAL)))
+          .isEqualTo(2L);
+      // 다른 테넌트에서는 이 청크들이 보이지 않는다(정책).
+      assertThat(inB(() -> repository().countEmbedded(SPACE))).isZero();
       return;
     }
     assertThat(inA(() -> repository().countMissing(SPACE, EXTERNAL))).isEqualTo(2L);
@@ -185,18 +200,31 @@ public abstract class DocumentChunkReembedRepositoryContractTest extends TenantP
 
   @Test
   @DisplayName(
-      "findMissing 키셋 조회·deleteOtherDimensions — 꺼진 구현은 UnsupportedOperationException(VECTOR_SEARCH)")
+      "findMissing 키셋 조회·deleteOtherDimensions — 꺼진 구현은 차원 정리만 예외(VECTOR_SEARCH), 키셋은 표시 열 SQL")
   void findMissing_deleteOtherDimensions() {
     long ds = fx.createDataset(tenantA, prefix + " ds");
     setPolicy(ds, 6, "ALL");
     List<Long> ids = seedChunks(ds, 2);
-    if (!supportsVectorSearch()) {
-      assertVectorOff(() -> inA(() -> repository().findMissing(SPACE, 0L, 10, EXTERNAL)));
-      assertVectorOff(() -> inA(() -> repository().deleteOtherDimensions(SPACE.dimension())));
-      return;
-    }
     long lo = ids.get(0);
     long hi = ids.get(1);
+    if (!supportsVectorSearch()) {
+      // 차원 정리는 꺼진 포트라 예외다.
+      assertVectorOff(() -> inA(() -> repository().deleteOtherDimensions(SPACE.dimension())));
+      // 키셋 조회는 표시 열 SQL 이다(WD-718) — jOOQ 판과 같은 순서·상한·판정.
+      assertThat(inA(() -> repository().findMissing(SPACE, 0L, 10, EXTERNAL)))
+          .extracting(ChunkContent::chunkId)
+          .containsExactly(lo, hi);
+      assertThat(inA(() -> repository().findMissing(SPACE, lo, 10, EXTERNAL)))
+          .extracting(ChunkContent::chunkId)
+          .containsExactly(hi);
+      assertThat(inA(() -> repository().findMissing(SPACE, 0L, 1, EXTERNAL))).hasSize(1);
+      fx.setChunkMarker(lo, SPACE.dimension().size(), SPACE.model());
+      assertThat(inA(() -> repository().findMissing(SPACE, 0L, 10, EXTERNAL)))
+          .extracting(ChunkContent::chunkId)
+          .containsExactly(hi);
+      assertThat(inB(() -> repository().findMissing(SPACE, 0L, 10, EXTERNAL))).isEmpty();
+      return;
+    }
     assertThat(inA(() -> repository().findMissing(SPACE, 0L, 10, EXTERNAL)))
         .extracting(ChunkContent::chunkId)
         .containsExactly(lo, hi);

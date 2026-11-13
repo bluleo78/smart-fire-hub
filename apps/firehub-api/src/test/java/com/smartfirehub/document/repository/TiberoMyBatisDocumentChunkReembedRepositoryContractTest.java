@@ -6,6 +6,7 @@ import com.smartfirehub.support.tibero.TiberoLive;
 import com.smartfirehub.support.tibero.TiberoPlatformSchema;
 import com.smartfirehub.user.repository.AccessFixtures;
 import com.smartfirehub.user.repository.TiberoAccessFixtures;
+import com.smartfirehub.vectorstore.off.OffChunkVectorIndex;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.TestInstance;
 
@@ -28,7 +29,8 @@ class TiberoMyBatisDocumentChunkReembedRepositoryContractTest
     repository =
         poc.transactional(
             DocumentChunkRepository.class,
-            new MyBatisDocumentChunkRepository(poc.mapper(DocumentChunkMapper.class)));
+            new MyBatisDocumentChunkRepository(
+                poc.mapper(DocumentChunkMapper.class), new OffChunkVectorIndex()));
   }
 
   @Override

@@ -1,6 +1,7 @@
 package com.smartfirehub.document.repository.mybatis;
 
 import com.smartfirehub.document.dto.Chunk;
+import com.smartfirehub.document.repository.DocumentChunkRepository;
 import com.smartfirehub.document.repository.DocumentChunkRepository.ChunkContent;
 import com.smartfirehub.global.platformdb.mybatis.PlatformMapper;
 import com.smartfirehub.securitylevel.repository.mybatis.MyBatisDatasetVisibility;
@@ -42,4 +43,35 @@ public interface DocumentChunkMapper {
    * @param aiPolicy {@code MyBatisDatasetVisibility.aiPolicyValues} 가 호스팅 위치로 정한 허용 값
    */
   long countAllowed(@Param("aiPolicy") MyBatisDatasetVisibility.AiPolicyValues aiPolicy);
+
+  /** 청크 표시 열을 공간(차원·모델)으로 채운다. */
+  int markEmbedded(
+      @Param("dim") int dim,
+      @Param("model") String model,
+      @Param("chunks") List<List<Long>> chunks);
+
+  /** 이 테넌트 데이터셋들의 청크 표시 열을 비운다. */
+  int clearMarkersOfDatasets(
+      @Param("tenantId") long tenantId, @Param("chunks") List<List<Long>> chunks);
+
+  /** 이 테넌트에서 {@code keepDim} 이 아닌 차원을 가리키는 청크 표시 열을 비운다. */
+  int clearOtherDimensionMarkers(@Param("tenantId") long tenantId, @Param("keepDim") int keepDim);
+
+  /** 표시 열이 이 공간을 가리키는 청크 수. */
+  long countEmbedded(@Param("dim") int dim, @Param("model") String model);
+
+  /** 판정식(등급 허용 포함)을 만족하는 청크 수. */
+  long countMissing(
+      @Param("dim") int dim,
+      @Param("model") String model,
+      @Param("aiPolicy") MyBatisDatasetVisibility.AiPolicyValues aiPolicy);
+
+  /** 판정식(등급 허용 포함)을 만족하는 청크를 id 순으로 {@code limit} 건(키셋). offset 은 0 이다. */
+  List<DocumentChunkRepository.ChunkContent> findMissing(
+      @Param("dim") int dim,
+      @Param("model") String model,
+      @Param("afterChunkId") long afterChunkId,
+      @Param("limit") int limit,
+      @Param("offset") int offset,
+      @Param("aiPolicy") MyBatisDatasetVisibility.AiPolicyValues aiPolicy);
 }

@@ -6,11 +6,12 @@ import com.smartfirehub.dataset.repository.SearchIndexStateRepository;
 import com.smartfirehub.dataset.rowsearch.IndexRef;
 import com.smartfirehub.dataset.rowsearch.RowSearchIndex;
 import com.smartfirehub.dataset.rowsearch.RowSearchSyncService;
+import com.smartfirehub.dataset.storage.DataStoreResolver;
 import com.smartfirehub.document.repository.DocumentChunkRepository;
 import com.smartfirehub.global.platformdb.PlatformDbFeature;
-import com.smartfirehub.global.platformdb.PlatformDbFeatures;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.ontology.repository.GraphOntologySourceRepository;
+import com.smartfirehub.vectorstore.VectorStoreFeatures;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -41,7 +42,8 @@ public class AiVectorPurgeService {
   private final RowSearchIndex rowSearchIndex;
   private final DatasetRepository datasetRepository;
   private final GraphOntologySourceRepository graphSources;
-  private final PlatformDbFeatures features;
+  private final VectorStoreFeatures features;
+  private final DataStoreResolver dataStoreResolver;
 
   /**
    * 정리 결과(로그·테스트·배포 1회 잡의 완료 판정용).
@@ -68,7 +70,7 @@ public class AiVectorPurgeService {
    */
   public PurgeResult purgeDisallowed() {
     long tenantId = TenantContext.require("외부 벡터 정리");
-    if (vectorUnsupported()) {
+    if (nothingToPurge(tenantId)) {
       return noVectorResult();
     }
     return purge(tenantId, gate.disallowedDatasetIds());
@@ -84,7 +86,7 @@ public class AiVectorPurgeService {
    */
   public PurgeResult purgeDataset(long datasetId) {
     long tenantId = TenantContext.require("외부 벡터 정리(데이터셋)");
-    if (vectorUnsupported()) {
+    if (nothingToPurge(tenantId)) {
       return noVectorResult();
     }
     List<Long> ids = gate.datasetDisallowed(datasetId) ? List.of(datasetId) : List.of();
@@ -92,15 +94,28 @@ public class AiVectorPurgeService {
   }
 
   /**
-   * 플랫폼 DB 가 벡터 검색을 지원하지 않으면 지울 벡터가 없다 — 서비스 가드가 러너·리스너 두 진입점을 모두 덮는다. 다만 {@code
-   * AiVectorPurgeStartupRunner} 도 일부러 기능을 따로 검사한다: 아무것도 지우지 않았는데 "완료" 플래그를 쓰지 않기 위해서다.
+   * 이 테넌트에 지울 벡터가 아예 없는지 본다. 카탈로그·청크 벡터(벡터 저장소)와 행 검색 벡터(테넌트 데이터 저장소)를 따로 판정한다.
+   *
+   * <p>예전에는 플랫폼 DB 의 벡터 검색 지원만 보고 둘 다 건너뛰었다. 그래서 Tibero 플랫폼 + PG 데이터 저장소 설치본에서는 행 검색 벡터가 있어도 정리되지
+   * 않았다(WD-718 에서 고친 결함). 둘 다 없을 때만 참이다. {@code AiVectorPurgeStartupRunner} 도 이 판정으로 건너뛴다 — 아무것도
+   * 지우지 않았는데 "완료" 플래그를 쓰지 않기 위해서다.
    */
-  private boolean vectorUnsupported() {
-    if (features.supports(PlatformDbFeature.VECTOR_SEARCH)) {
+  public boolean nothingToPurge(long tenantId) {
+    if (catalogVectorsSupported() || rowSearchSupported(tenantId)) {
       return false;
     }
-    log.info("외부 벡터 정리 건너뜀(벡터 검색 미지원 플랫폼 DB)");
+    log.info("외부 벡터 정리 건너뜀(카탈로그·청크 벡터와 행 검색 모두 미지원): tenant={}", tenantId);
     return true;
+  }
+
+  /** 카탈로그·청크 벡터가 있을 수 있는 조합인가(벡터 저장소 판정). */
+  private boolean catalogVectorsSupported() {
+    return features.supports(PlatformDbFeature.VECTOR_SEARCH);
+  }
+
+  /** 이 테넌트의 데이터 저장소에 행 검색 벡터가 있을 수 있는가(벡터 저장소 조합 + 데이터 저장소 판정). */
+  private boolean rowSearchSupported(long tenantId) {
+    return features.supportsRowSearch(dataStoreResolver.backendFor(tenantId));
   }
 
   private static PurgeResult noVectorResult() {
@@ -112,11 +127,14 @@ public class AiVectorPurgeService {
     if (ids.isEmpty()) {
       return new PurgeResult(0, 0, 0, 0, 0, List.of());
     }
-    int datasetVectors = datasetEmbeddingRepository.deleteVectorsOf(ids);
-    int chunkVectors = chunkRepository.deleteVectorsOf(ids);
+    // 카탈로그·청크 벡터와 행 검색 벡터는 사는 곳이 달라 따로 판정한다 — 한쪽이 없다고 다른 쪽까지 건너뛰지 않는다(WD-718).
+    boolean catalog = catalogVectorsSupported();
+    int datasetVectors = catalog ? datasetEmbeddingRepository.deleteVectorsOf(ids) : 0;
+    int chunkVectors = catalog ? chunkRepository.deleteVectorsOf(ids) : 0;
     int rowIndexes = 0;
     int failures = 0;
-    for (Long id : ids) {
+    List<Long> rowTargets = rowSearchSupported(tenantId) ? ids : List.of();
+    for (Long id : rowTargets) {
       try {
         if (purgeRowSearch(tenantId, id)) {
           rowIndexes++;

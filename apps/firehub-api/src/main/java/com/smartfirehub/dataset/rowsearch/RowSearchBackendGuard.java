@@ -3,6 +3,7 @@ package com.smartfirehub.dataset.rowsearch;
 import com.smartfirehub.dataset.storage.DataStoreBackend;
 import com.smartfirehub.dataset.storage.DataStoreFeatureUnsupportedException;
 import com.smartfirehub.dataset.storage.DataStoreResolver;
+import com.smartfirehub.vectorstore.VectorStoreFeatures;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -17,11 +18,13 @@ import org.springframework.stereotype.Component;
 public class RowSearchBackendGuard {
 
   private final DataStoreResolver dataStoreResolver;
+  private final VectorStoreFeatures vectorStoreFeatures;
 
   /** 현재 요청 테넌트의 저장소가 행 검색을 지원하지 않으면(Tibero) "행 검색" 미지원 예외(422)를 던진다. */
   public void requireSupported() {
     DataStoreBackend backend = dataStoreResolver.currentBackend();
-    if (!backend.supportsRowSearch()) {
+    // 판정은 벡터 저장소 조합이 한다(ADR 0002 결정 3) — 관문·기능 응답·배경 스윕이 같은 답을 쓴다.
+    if (!vectorStoreFeatures.supportsRowSearch(backend)) {
       throw new DataStoreFeatureUnsupportedException(backend, "행 검색");
     }
   }

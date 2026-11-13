@@ -5,7 +5,7 @@ import com.smartfirehub.global.platformdb.PlatformDbFeature;
 /**
  * 꺼진 기능 경로(벡터·트라이그램)의 MyBatis 구현이 던지는 예외를 한 곳에서 만든다(WD-707 스펙 D1).
  *
- * <p>무엇을: 서비스가 {@code PlatformDbFeatures} 가드 뒤에서만 부르는 리포지토리 메서드(벡터 테이블·트라이그램 검색)는 MyBatis 구현을 만들지
+ * <p>무엇을: 서비스가 {@code VectorStoreFeatures} 가드 뒤에서만 부르는 리포지토리 메서드(벡터 테이블·트라이그램 검색)는 MyBatis 구현을 만들지
  * 않고 {@link UnsupportedOperationException} 을 던진다. 메시지에 기능 이름을 담는다.
  *
  * <p>왜 빈 결과가 아니라 예외인가: 빈 목록·0 을 돌려주면 서비스 가드가 빠진 회귀가 조용히 숨는다. PG 운영은 jOOQ 구현이라 pgvector·pg_trgm
@@ -23,6 +23,6 @@ public final class PlatformFeatureOff {
    */
   public static UnsupportedOperationException unsupported(PlatformDbFeature feature) {
     return new UnsupportedOperationException(
-        feature.name() + " 가 꺼진 플랫폼 DB 에서는 호출하지 않는다 — 서비스가 PlatformDbFeatures 로 건너뛴다");
+        feature.name() + " 가 꺼진 플랫폼 DB 에서는 호출하지 않는다 — 서비스가 VectorStoreFeatures 로 건너뛴다");
   }
 }

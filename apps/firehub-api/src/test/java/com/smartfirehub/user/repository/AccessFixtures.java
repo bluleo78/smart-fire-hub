@@ -213,6 +213,15 @@ public interface AccessFixtures {
   /** dataset_embedding 행의 source_text 저장값(소유자 시점, WD-707). 행이 없으면 null. */
   String embeddingSourceText(long datasetId);
 
+  /**
+   * dataset_embedding 행의 표시 열(embedded_dim·embedded_model)을 직접 심는다(소유자 시점, WD-718). 벡터 쓰기가 꺼진
+   * 구현(Tibero+platform) 에서 표시 열 판정 SQL 을 시험하려고 쓴다. null 이면 비운다.
+   */
+  void setEmbeddingMarker(long datasetId, Integer dim, String model);
+
+  /** document_chunk 행의 표시 열을 직접 심는다(소유자 시점, WD-718). null 이면 비운다. */
+  void setChunkMarker(long chunkId, Integer dim, String model);
+
   /** dataset_embedding 행의 tenant_id(소유자 시점) — 새 행에 컨텍스트 DEFAULT 가 채워졌는지 확인용. 행이 없으면 null. */
   Long embeddingTenantId(long datasetId);
 

@@ -14,6 +14,7 @@ import com.smartfirehub.dataset.storage.DataStoreBackend;
 import com.smartfirehub.dataset.storage.DataStoreResolver;
 import com.smartfirehub.global.tenant.TenantScopedRunner;
 import com.smartfirehub.support.TenantScopedRunnerStubs;
+import com.smartfirehub.vectorstore.VectorStoreFeatures;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -27,6 +28,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
  */
 @ExtendWith(MockitoExtension.class)
 class RowSearchSweepSchedulerTest {
+
+  /** platform 조합의 기능 판정 — 행 검색은 기본 규칙(데이터 저장소가 PostgreSQL 일 때만)을 그대로 쓴다. */
+  private static final VectorStoreFeatures PLATFORM_FEATURES = f -> true;
 
   @Mock TenantScopedRunner tenantRunner;
   @Mock SearchIndexStateRepository states;
@@ -52,7 +56,8 @@ class RowSearchSweepSchedulerTest {
     when(states.findDueDatasetIds()).thenReturn(List.of(1L, 2L));
     when(syncService.sync(1L)).thenThrow(new IllegalStateException("x"));
 
-    new RowSearchSweepScheduler(tenantRunner, states, syncService, dataStoreResolver, true, CAP_MS)
+    new RowSearchSweepScheduler(
+            tenantRunner, states, syncService, dataStoreResolver, PLATFORM_FEATURES, true, CAP_MS)
         .sweep();
 
     verify(syncService).sync(2L);
@@ -60,7 +65,8 @@ class RowSearchSweepSchedulerTest {
 
   @Test
   void sweep_disabled_doesNothing() {
-    new RowSearchSweepScheduler(tenantRunner, states, syncService, dataStoreResolver, false, CAP_MS)
+    new RowSearchSweepScheduler(
+            tenantRunner, states, syncService, dataStoreResolver, PLATFORM_FEATURES, false, CAP_MS)
         .sweep();
     verify(tenantRunner, never()).forEachActiveTenant(any());
   }
@@ -71,7 +77,8 @@ class RowSearchSweepSchedulerTest {
     when(states.findDueDatasetIds()).thenReturn(List.of(1L));
     when(syncService.sync(1L)).thenReturn(Outcome.PARTIAL, Outcome.PARTIAL, Outcome.COMPLETED);
 
-    new RowSearchSweepScheduler(tenantRunner, states, syncService, dataStoreResolver, true, CAP_MS)
+    new RowSearchSweepScheduler(
+            tenantRunner, states, syncService, dataStoreResolver, PLATFORM_FEATURES, true, CAP_MS)
         .sweep();
 
     // 한 번의 스윕 안에서 남은 행이 없어질 때까지 이어 처리한다(60초 대기 없음).
@@ -87,7 +94,8 @@ class RowSearchSweepSchedulerTest {
     when(syncService.sync(1L)).thenReturn(Outcome.COMPLETED);
     when(syncService.sync(2L)).thenReturn(Outcome.COMPLETED);
 
-    new RowSearchSweepScheduler(tenantRunner, states, syncService, dataStoreResolver, true, CAP_MS)
+    new RowSearchSweepScheduler(
+            tenantRunner, states, syncService, dataStoreResolver, PLATFORM_FEATURES, true, CAP_MS)
         .sweep();
 
     verify(syncService, times(1)).sync(1L);
@@ -103,7 +111,8 @@ class RowSearchSweepSchedulerTest {
     when(syncService.sync(2L)).thenReturn(Outcome.FAILED);
     when(syncService.sync(3L)).thenThrow(new IllegalStateException("x"));
 
-    new RowSearchSweepScheduler(tenantRunner, states, syncService, dataStoreResolver, true, CAP_MS)
+    new RowSearchSweepScheduler(
+            tenantRunner, states, syncService, dataStoreResolver, PLATFORM_FEATURES, true, CAP_MS)
         .sweep();
 
     verify(states, times(1)).findDueDatasetIds();
@@ -116,7 +125,8 @@ class RowSearchSweepSchedulerTest {
     when(states.findDueDatasetIds()).thenReturn(List.of(1L));
     when(syncService.sync(1L)).thenReturn(Outcome.PARTIAL);
 
-    new RowSearchSweepScheduler(tenantRunner, states, syncService, dataStoreResolver, true, 0)
+    new RowSearchSweepScheduler(
+            tenantRunner, states, syncService, dataStoreResolver, PLATFORM_FEATURES, true, 0)
         .sweep();
 
     verify(syncService, times(1)).sync(1L);
@@ -131,7 +141,8 @@ class RowSearchSweepSchedulerTest {
     when(syncService.sync(1L)).thenReturn(Outcome.COMPLETED);
     when(syncService.sync(2L)).thenReturn(Outcome.PARTIAL, Outcome.COMPLETED);
 
-    new RowSearchSweepScheduler(tenantRunner, states, syncService, dataStoreResolver, true, CAP_MS)
+    new RowSearchSweepScheduler(
+            tenantRunner, states, syncService, dataStoreResolver, PLATFORM_FEATURES, true, CAP_MS)
         .sweep();
 
     verify(syncService, times(1)).sync(1L);
@@ -157,7 +168,8 @@ class RowSearchSweepSchedulerTest {
     when(states.findDueDatasetIds()).thenReturn(List.of(10L));
     when(syncService.sync(10L)).thenReturn(Outcome.COMPLETED);
 
-    new RowSearchSweepScheduler(tenantRunner, states, syncService, dataStoreResolver, true, CAP_MS)
+    new RowSearchSweepScheduler(
+            tenantRunner, states, syncService, dataStoreResolver, PLATFORM_FEATURES, true, CAP_MS)
         .sweep();
 
     verify(syncService, times(1)).sync(10L);

@@ -1,10 +1,8 @@
 package com.smartfirehub.document.repository;
 
 import com.smartfirehub.document.dto.Chunk;
-import com.smartfirehub.document.dto.DocumentSearchHit;
 import com.smartfirehub.embedding.EmbeddingDimension;
 import com.smartfirehub.embedding.EmbeddingSpace;
-import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.securitylevel.ai.EmbeddingAllowance;
 import java.util.Collection;
 import java.util.List;
@@ -48,34 +46,6 @@ public interface DocumentChunkRepository {
    * 0행이라 조용히 건너뛴다(재임베딩 중 문서 삭제 경합).
    */
   void upsertEmbeddings(EmbeddingSpace space, List<Long> chunkIds, List<float[]> embeddings);
-
-  /**
-   * 코사인 top-K. 한 차원 테이블만 쓰고 현재 모델 벡터만 본다(#392). COMPLETED 문서만. score = 1 - 거리. iterative scan 을
-   * 켜고({@code HnswSearch}) relaxed_order 라 바깥에서 점수로 재정렬한다.
-   *
-   * @param visibility 조회자 가시성(서비스가 {@code DatasetAccessGuard#visibility} 로 캡처). 구현이 dataset 별칭
-   *     {@code d} 로 렌더해 볼 수 없는 데이터셋의 청크를 뺀다
-   */
-  List<DocumentSearchHit> searchByCosine(
-      EmbeddingSpace space,
-      float[] queryEmbedding,
-      List<Long> datasetIds,
-      int topK,
-      DatasetVisibility visibility);
-
-  /**
-   * pg_trgm word_similarity 기준 키워드 top-K 청크 조회. 완료된 문서만 검색한다. word_similarity(query, content) 는 짧은
-   * 질의를 긴 본문의 일부와 매칭해 0~1 점수를 준다. 임베딩이 필요 없어 임베딩 서비스 장애 시에도 동작한다(KEYWORD/HYBRID 회복탄력성).
-   *
-   * <p>필터를 {@code content %> query} 연산자로 표현해 content 의 GIN trigram 인덱스
-   * (idx_document_chunk_content_trgm)를 Bitmap Index Scan 으로 사용하도록 한다(함수형 word_similarity()>0.1 은
-   * 인덱스를 못 타 대규모에서 seq scan — 실측 5.5만 행 298ms vs 인덱스 0.9ms). 인덱스를 타려면 컬럼이 좌변이어야 하므로 교환 연산자 {@code
-   * %>} 를 쓴다 ({@code content %> q} ≡ {@code q <% content} ≡ {@code word_similarity(q, content) >
-   * 임계값}). {@code %>} 는 pg_trgm.word_similarity_threshold GUC(기본 0.6)를 임계값으로 쓰므로, 기존 0.1 floor 를
-   * 유지하려면 같은 트랜잭션에서 SET LOCAL 로 0.1 로 낮춰야 한다.
-   */
-  List<DocumentSearchHit> searchByTrigram(
-      String query, List<Long> datasetIds, int topK, DatasetVisibility visibility);
 
   /** 해당 데이터셋의 청크 (id, content) 를 id 오름차순으로 조회. 검수·청크 목록·데이터셋 단위 재임베딩이 쓴다. */
   List<ChunkContent> findChunkContentsByDataset(long datasetId);

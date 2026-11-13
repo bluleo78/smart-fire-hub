@@ -2,16 +2,16 @@ package com.smartfirehub.document.service;
 
 import com.smartfirehub.document.dto.DocumentSearchHit;
 import com.smartfirehub.document.dto.DocumentSearchRequest;
-import com.smartfirehub.document.repository.DocumentChunkRepository;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import com.smartfirehub.embedding.EmbeddingSpace;
 import com.smartfirehub.global.platformdb.PlatformDbFeature;
-import com.smartfirehub.global.platformdb.PlatformDbFeatures;
 import com.smartfirehub.global.util.RankFusion;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
+import com.smartfirehub.vectorstore.ChunkVectorIndex;
+import com.smartfirehub.vectorstore.VectorStoreFeatures;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -26,10 +26,10 @@ import org.springframework.transaction.annotation.Transactional;
 public class DocumentSearchService {
 
   private final EmbeddingProviderFactory embeddingProviderFactory;
-  private final DocumentChunkRepository chunkRepository;
+  private final ChunkVectorIndex chunkRepository; // 청크 벡터·키워드 색인 포트(ADR 0002 결정 2)
   private final DatasetAccessGuard datasetAccessGuard;
   // 플랫폼 DB 가 벡터·트라이그램 검색을 지원하는지(꺼진 단계는 빈 목록으로 취급 — 5xx 를 내지 않는다).
-  private final PlatformDbFeatures features;
+  private final VectorStoreFeatures features;
 
   // RRF 상수: 후보 풀 크기. 융합 상수 k(=60)는 RankFusion 공통 유틸에서 관리한다.
   private static final int CANDIDATE_POOL = 50;
@@ -79,8 +79,7 @@ public class DocumentSearchService {
       return List.of();
     }
     QueryVector q = embedQuery(request.query());
-    return chunkRepository.searchByCosine(
-        q.space(), q.vector(), request.datasetIds(), limit, visibility);
+    return chunkRepository.semantic(q.space(), q.vector(), request.datasetIds(), limit, visibility);
   }
 
   /** 트라이그램 단계. 플랫폼 DB 가 지원하지 않으면 호출하지 않고 빈 목록. */
@@ -89,8 +88,7 @@ public class DocumentSearchService {
     if (!features.supports(PlatformDbFeature.TRIGRAM_SEARCH)) {
       return List.of();
     }
-    return chunkRepository.searchByTrigram(
-        request.query(), request.datasetIds(), limit, visibility);
+    return chunkRepository.keyword(request.query(), request.datasetIds(), limit, visibility);
   }
 
   /** RRF 융합: {@link RankFusion} 위임. hit.score 는 RRF 점수로 대체된다. */

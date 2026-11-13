@@ -1,15 +1,15 @@
 package com.smartfirehub.dataset.search;
 
-import com.smartfirehub.dataset.repository.DatasetSearchRepository;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import com.smartfirehub.embedding.EmbeddingSpace;
 import com.smartfirehub.global.platformdb.PlatformDbFeature;
-import com.smartfirehub.global.platformdb.PlatformDbFeatures;
 import com.smartfirehub.global.util.RankFusion;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
+import com.smartfirehub.vectorstore.DatasetVectorIndex;
+import com.smartfirehub.vectorstore.VectorStoreFeatures;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -31,11 +31,11 @@ public class DatasetSearchService {
   private static final int DEFAULT_TOP_K = 10;
   private static final int MAX_TOP_K = 20;
 
-  private final DatasetSearchRepository repository;
+  private final DatasetVectorIndex repository; // 벡터·키워드 색인 포트(ADR 0002 결정 2)
   private final EmbeddingProviderFactory embeddingFactory;
   private final DatasetAccessGuard datasetAccessGuard;
   // 플랫폼 DB 가 벡터·트라이그램 검색을 지원하는지(꺼진 단계는 빈 목록으로 취급 — 5xx 를 내지 않는다).
-  private final PlatformDbFeatures features;
+  private final VectorStoreFeatures features;
 
   /** mode 분기 진입점. mode null → HYBRID, topK 정규화 후 각 검색을 수행한다. */
   // RLS 가 걸린 dataset_embedding 을 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
@@ -73,7 +73,7 @@ public class DatasetSearchService {
       return List.of();
     }
     QueryVector q = embed(query);
-    return repository.searchByCosine(q.space(), q.vector(), storageType, limit, visibility);
+    return repository.semantic(q.space(), q.vector(), storageType, limit, visibility);
   }
 
   /** 트라이그램 단계. 플랫폼 DB 가 지원하지 않으면 호출하지 않고 빈 목록. */
@@ -82,7 +82,7 @@ public class DatasetSearchService {
     if (!features.supports(PlatformDbFeature.TRIGRAM_SEARCH)) {
       return List.of();
     }
-    return repository.searchByTrigram(query, storageType, limit, visibility);
+    return repository.keyword(query, storageType, limit, visibility);
   }
 
   /** RRF 융합: {@link RankFusion} 위임. hit.score 는 RRF 점수로 대체된다. */
