@@ -111,6 +111,9 @@ class JooqSlackWorkspaceRepository implements SlackWorkspaceRepository {
    * <p>signing_secret_enc는 기존 값을 유지한다 (재설치해도 signing secret는 변경되지 않는 경우가 많으므로). V51 마이그레이션의 NOT
    * NULL 제약이 있으므로 기존 값이 없는 최초 설치 시에는 빈 문자열로 임시 저장. bot_token_enc만 재설치 시 반드시 갱신.
    *
+   * <p>PG 에서는 {@code SlackTeamOwnedByAnotherTenantException} 이 나지 않는다. 다른 테넌트가 가진 팀은 RLS
+   * 위반(42501)으로 드러난다.
+   *
    * @return 생성 또는 갱신된 레코드의 PK id
    */
   @Override

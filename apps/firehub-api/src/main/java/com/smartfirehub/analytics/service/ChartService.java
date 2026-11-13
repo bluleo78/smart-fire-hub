@@ -370,8 +370,8 @@ public class ChartService {
    * denied 위젯 응답 — queryResult 는 null 이 아닌 빈 결과(null 이면 차트 빌더 등 다른 소비자가 깨진다, 판단 사항 7). 거부 코드·원본 이름은
    * 싣지 않는다. chart 는 웹 잠금 상태가 쓰는 최소 메타만 남긴다 — config(원본 테이블의 컬럼명이 들어 있다)는 빈 맵, savedQueryName 은
    * null. 빈 맵인 이유: config 를 순회하는 소비자(웹 ChartRenderer·ai-agent)가 null 에서 깨지지 않게. 데이터 응답이라
-   * configWithheld=true 로 표시한다. GET/저장 응답의 가림은 {@link #withholdDenied} 가 config=null 로 한다(목록은
-   * config 자체가 없다, WD-733)(그쪽은 재저장 시 "유지" 계약 때문에 null).
+   * configWithheld=true 로 표시한다. GET/저장 응답의 가림은 {@link #withholdDenied} 가 config=null 로 한다(재저장 시
+   * "유지" 계약 때문에 null 이다). 목록 응답에는 config 자체가 없다(WD-733).
    */
   public static ChartDataResponse deniedData(ChartResponse chart) {
     ChartResponse minimal =

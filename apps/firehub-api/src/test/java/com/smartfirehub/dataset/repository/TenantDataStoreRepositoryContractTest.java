@@ -246,8 +246,9 @@ abstract class TenantDataStoreRepositoryContractTest extends TenantPairContractB
             fx.inTenant(
                 tenantA,
                 () -> {
-                  // 시간 초과 예외는 호출 지점에서 잡아 종류를 확인한다 — Tibero 는 문장 취소 때 커넥션을 닫아 바깥 트랜잭션의 롤백이
-                  // 다시 실패하고(TransactionSystemException) 그 예외가 원래 예외를 덮기 때문이다.
+                  // 시간 초과 예외는 호출 지점에서 잡아 종류를 확인한다 — Tibero 문장 취소(SQLTimeoutException)를 받은 HikariCP
+                  // 가 커넥션을 닫아 바깥
+                  // 트랜잭션의 롤백이 다시 실패하고(TransactionSystemException) 그 예외가 원래 예외를 덮기 때문이다.
                   try {
                     repository().incrementScriptTokenEpoch(tenantA, Duration.ofMillis(1200));
                   } catch (RuntimeException e) {

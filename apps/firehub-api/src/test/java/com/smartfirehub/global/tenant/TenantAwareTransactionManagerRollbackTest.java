@@ -23,8 +23,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * {@link TenantAwareTransactionManager#doRollback} 단위 시험(WD-727) — 이미 닫힌 연결의 롤백 실패만 삼키고, 연결이 열려 있으면
- * 지금처럼 롤백 실패를 던지는지 본다. 실서버 쪽 증명(Tibero 문장 취소 → 풀이 연결을 닫음 → 원래 예외 전파, 변경 미커밋)은 {@code
- * TiberoQueryTimeoutLiveTest} 가 한다.
+ * 지금처럼 롤백 실패를 던지는지 본다. 커밋을 시도한 뒤의 롤백 실패는 삼키지 않는다. 실서버 쪽 증명(Tibero 문장 취소 → 풀이 연결을 닫음 → 원래 예외 전파, 변경
+ * 미커밋)은 {@code TiberoQueryTimeoutLiveTest} 가 한다.
  */
 class TenantAwareTransactionManagerRollbackTest {
 
