@@ -94,7 +94,7 @@ class TiberoBaselineSchemaLiveTest {
                 Flyway.configure()
                     .dataSource(account.dataSource())
                     .schemas(account.name())
-                    .initSql(TiberoDialect.SESSION_INIT_SQL)
+                    .initSql(TiberoDialect.PLATFORM_SESSION_INIT_SQL)
                     .locations(
                         "classpath:db/migration-tibero", "classpath:tibero-baseline/comment-only"),
                 account.name(),

@@ -4,6 +4,7 @@ import com.smartfirehub.dataset.service.ColumnPhysicalType;
 import com.smartfirehub.dataset.storage.DataStoreBackend;
 import com.smartfirehub.dataset.storage.DataStoreFeatureUnsupportedException;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -250,33 +251,59 @@ public final class TiberoDialect {
   /** 커넥션 유효성 검사 쿼리(FROM 절이 필수라 DUAL 이 필요). */
   public static final String VALIDATION_QUERY = "SELECT 1 FROM DUAL";
 
-  /**
-   * 세션 NLS 고정 문장. 풀 커넥션은 Hikari {@code connectionInitSql} 로, DDL 직결 커넥션은 연 직후 실행한다. 날짜·타임스탬프 기본 형식과
-   * 소수점 문자를 고정해 DB·클라이언트 로캘 기본값에 따라 암묵 변환(문자열 ↔ 날짜·숫자) 결과가 달라지지 않게 한다. 익명 블록 하나로 묶은 이유: {@code
-   * connectionInitSql} 은 문장 하나만 받는다. 실서버 동작은 {@code TiberoDialectProbeTest.session_init_block} 으로
-   * 확인한다.
-   */
-  public static final String SESSION_INIT_SQL =
-      "BEGIN EXECUTE IMMEDIATE 'ALTER SESSION SET NLS_DATE_FORMAT=''YYYY-MM-DD'''; EXECUTE IMMEDIATE"
-          + " 'ALTER SESSION SET NLS_TIMESTAMP_FORMAT=''YYYY-MM-DD HH24:MI:SS.FF6'''; EXECUTE"
-          + " IMMEDIATE 'ALTER SESSION SET NLS_NUMERIC_CHARACTERS=''.,'''; END;";
+  /** 세션 NLS 고정 문장들(날짜·타임스탬프 형식, 소수점 문자) — 두 init SQL 상수가 공유하는 원천. */
+  private static final List<String> NLS_STATEMENTS =
+      List.of(
+          "ALTER SESSION SET NLS_DATE_FORMAT=''YYYY-MM-DD''",
+          "ALTER SESSION SET NLS_TIMESTAMP_FORMAT=''YYYY-MM-DD HH24:MI:SS.FF6''",
+          "ALTER SESSION SET NLS_NUMERIC_CHARACTERS=''.,''");
+
+  /** 플랫폼 DB 세션 문장들 — NLS 뒤에 세션 시간대 UTC 고정(WD-729). */
+  private static final List<String> PLATFORM_STATEMENTS =
+      Stream.concat(NLS_STATEMENTS.stream(), Stream.of("ALTER SESSION SET TIME_ZONE=''+00:00''"))
+          .toList();
 
   /**
-   * {@link #SESSION_INIT_SQL} 맨 앞에 {@code ALTER SESSION SET CURRENT_SCHEMA} 를 더한 블록(WD-492) — 플랫폼 앱
-   * 풀의 런타임 계정이 한정 없는 이름을 소유자 객체로 풀게 한다. {@code application-tibero.yml} 의 앱 풀 문장은 이 모양의 리터럴이다(설정 시험이
-   * 대조).
+   * 세션 문장 목록을 익명 블록 하나로 묶는다. 묶는 이유: {@code connectionInitSql} 은 문장 하나만 받는다. 각 문장은 {@code EXECUTE
+   * IMMEDIATE '…'} 로 실행하며, 문장 안의 작은따옴표는 호출자가 두 번 쓴다.
+   */
+  private static String block(List<String> statements) {
+    return "BEGIN "
+        + statements.stream()
+            .map(st -> "EXECUTE IMMEDIATE '" + st + "'; ")
+            .collect(Collectors.joining())
+        + "END;";
+  }
+
+  /**
+   * 세션 NLS 고정 문장. 풀 커넥션은 Hikari {@code connectionInitSql} 로, DDL 직결 커넥션은 연 직후 실행한다. 날짜·타임스탬프 기본 형식과
+   * 소수점 문자를 고정해 DB·클라이언트 로캘 기본값에 따라 암묵 변환(문자열 ↔ 날짜·숫자) 결과가 달라지지 않게 한다. 실서버 동작은 {@code
+   * TiberoDialectProbeTest.session_init_block} 으로 확인한다. 데이터 저장소 풀 전용이라 시간대는 건드리지 않는다.
+   */
+  public static final String SESSION_INIT_SQL = block(NLS_STATEMENTS);
+
+  /**
+   * 플랫폼 DB(앱 풀·Flyway·풀 밖 곁 연결) 전용 세션 초기화 문장(WD-729) — NLS 문장 뒤에 {@code ALTER SESSION SET
+   * TIME_ZONE='+00:00'} 을 더한다. 왜: 기준선 스키마의 {@code TIMESTAMP DEFAULT LOCALTIMESTAMP} 열은 세션 시간대를 따라
+   * 쌓이므로, DB 서버·클라이언트 시간대와 무관하게 UTC 벽시계로 쌓이게 고정한다. 데이터 저장소 풀({@link #SESSION_INIT_SQL})은 건드리지 않는다.
+   */
+  public static final String PLATFORM_SESSION_INIT_SQL = block(PLATFORM_STATEMENTS);
+
+  /**
+   * {@link #PLATFORM_SESSION_INIT_SQL} 맨 앞에 {@code ALTER SESSION SET CURRENT_SCHEMA} 를 더한
+   * 블록(WD-492) — 플랫폼 앱 풀의 런타임 계정이 한정 없는 이름을 소유자 객체로 풀게 한다. {@code application-tibero.yml} 의 앱 풀 문장은
+   * 이 모양의 리터럴이다(설정 시험이 대조).
    *
    * <p>이름은 검사하지 않는다 — 설정 대조 시험이 {@code ${…}} 자리표시자를 그대로 넘기고, 운영 값은 설정 파일이 정한다.
    *
    * @param currentSchema CURRENT_SCHEMA 로 둘 스키마 이름(또는 자리표시자)
    */
   public static String sessionInitSql(String currentSchema) {
-    String begin = "BEGIN ";
-    return begin
-        + "EXECUTE IMMEDIATE 'ALTER SESSION SET CURRENT_SCHEMA="
-        + currentSchema
-        + "'; "
-        + SESSION_INIT_SQL.substring(begin.length());
+    return block(
+        Stream.concat(
+                Stream.of("ALTER SESSION SET CURRENT_SCHEMA=" + currentSchema),
+                PLATFORM_STATEMENTS.stream())
+            .toList());
   }
 
   /**

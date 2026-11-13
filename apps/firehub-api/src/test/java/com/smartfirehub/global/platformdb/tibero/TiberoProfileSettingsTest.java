@@ -36,7 +36,7 @@ class TiberoProfileSettingsTest {
     assertThat(String.valueOf(p.getProperty("spring.datasource.hikari.connection-init-sql")))
         .isEqualTo(TiberoDialect.sessionInitSql(OWNER_SCHEMA_PLACEHOLDER));
     assertThat(String.valueOf(p.getProperty("spring.flyway.init-sql")))
-        .isEqualTo(TiberoDialect.SESSION_INIT_SQL);
+        .isEqualTo(TiberoDialect.PLATFORM_SESSION_INIT_SQL);
     assertThat(String.valueOf(p.getProperty("spring.datasource.hikari.connection-test-query")))
         .isEqualTo(TiberoDialect.VALIDATION_QUERY);
   }

@@ -115,7 +115,7 @@ public final class TiberoTenantRlsSchema {
         Flyway.configure()
             .dataSource(owner.dataSource())
             .schemas(owner.name())
-            .initSql(TiberoDialect.SESSION_INIT_SQL)
+            .initSql(TiberoDialect.PLATFORM_SESSION_INIT_SQL)
             .locations("classpath:db/migration-tibero");
     return TiberoTenantMigration.configure(c, owner.name(), runtime.name()).load();
   }

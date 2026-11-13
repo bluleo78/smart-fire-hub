@@ -114,17 +114,9 @@ public final class TiberoTestServer {
   }
 
   /**
-   * 테스트 계정 풀 — 세션 초기화·검증 문장은 운영 Tibero 풀과 같다(세션 NLS 고정). 공유 서버 세션 한도 때문에 크기는 호출자가 작게 주고, 유휴 0·유휴
-   * 10초(Hikari 최소값)로 쓰지 않는 세션을 빨리 돌려준다. 대기는 15초(고갈 시 빨리 실패).
-   */
-  public static HikariDataSource pool(
-      String poolName, Dba dba, String user, String password, int size) {
-    return pool(poolName, dba, user, password, size, TiberoDialect.SESSION_INIT_SQL);
-  }
-
-  /**
-   * 세션 초기화 문장을 직접 주는 테스트 계정 풀(WD-492) — 런타임 계정 풀이 운영처럼 {@code CURRENT_SCHEMA} 를 소유자로 맞추는 문장을 앞에 붙일
-   * 때 쓴다. 나머지 설정은 위 기본 풀과 같다.
+   * 테스트 계정 풀 — 세션 초기화 문장은 호출자가 정한다(플랫폼 하네스는 운영과 같은 {@code PLATFORM_SESSION_INIT_SQL}, 런타임 계정 풀은 앞에
+   * {@code CURRENT_SCHEMA} 를 붙인 값 — WD-492). 공유 서버 세션 한도 때문에 크기는 호출자가 작게 주고, 유휴 0·유휴 10초(Hikari
+   * 최소값)로 쓰지 않는 세션을 빨리 돌려준다. 대기는 15초(고갈 시 빨리 실패).
    */
   public static HikariDataSource pool(
       String poolName, Dba dba, String user, String password, int size, String initSql) {

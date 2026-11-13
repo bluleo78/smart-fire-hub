@@ -1,6 +1,7 @@
 package com.smartfirehub.support.tibero;
 
 import com.smartfirehub.dataset.storage.DataStorePasswordGenerator;
+import com.smartfirehub.dataset.storage.tibero.TiberoDialect;
 import com.smartfirehub.dataset.storage.tibero.TiberoNames;
 import com.smartfirehub.global.platformdb.tibero.flyway.TiberoTenantMigration;
 import com.smartfirehub.support.tibero.TiberoTestServer.Dba;
@@ -95,7 +96,15 @@ public final class TiberoTestAccount implements AutoCloseable {
     this.name = name;
     this.created = created;
     this.password = password;
-    this.dataSource = TiberoTestServer.pool(name.toLowerCase(), dba, name, password, poolSize);
+    // 운영 플랫폼 풀과 같은 세션 시간대(UTC) 고정 문장을 쓴다(WD-729) — LOCALTIMESTAMP 기본값이 운영과 같은 기준으로 쌓이게.
+    this.dataSource =
+        TiberoTestServer.pool(
+            name.toLowerCase(),
+            dba,
+            name,
+            password,
+            poolSize,
+            TiberoDialect.PLATFORM_SESSION_INIT_SQL);
   }
 
   /**

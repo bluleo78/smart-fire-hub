@@ -1,11 +1,13 @@
 package com.smartfirehub.global.platformdb.tibero;
 
+import com.smartfirehub.dataset.storage.tibero.TiberoDialect;
 import com.smartfirehub.global.platformdb.ConditionalOnTiberoPlatformDb;
 import com.smartfirehub.global.platformdb.OutboxWakeupChannel;
 import java.sql.CallableStatement;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.sql.Types;
 import java.time.Duration;
 import java.util.concurrent.Callable;
@@ -80,13 +82,32 @@ public class TiberoOutboxWakeupChannel implements OutboxWakeupChannel, Initializ
 
   /** 운영 생성자 — 구독 연결은 풀 밖에서 {@link DriverManager} 로 직접 연다. */
   public TiberoOutboxWakeupChannel(DataSource dataSource, DataSourceProperties properties) {
-    this(
-        dataSource,
-        () ->
-            DriverManager.getConnection(
-                properties.determineUrl(),
-                properties.determineUsername(),
-                properties.determinePassword()));
+    this(dataSource, () -> openListenConnection(properties));
+  }
+
+  /**
+   * 풀 밖 구독 연결을 열고 운영 풀과 같은 세션 초기화 문장({@link TiberoDialect#PLATFORM_SESSION_INIT_SQL}, UTC 시간대 포함 —
+   * WD-729)을 실행한다. 왜: Hikari 의 connection-init-sql 을 거치지 않는 연결이라 직접 적용하지 않으면 플랫폼 풀과 세션 설정이 달라진다.
+   * 초기화에 실패하면 연결을 닫고 예외를 낸다.
+   */
+  private static Connection openListenConnection(DataSourceProperties properties)
+      throws SQLException {
+    Connection conn =
+        DriverManager.getConnection(
+            properties.determineUrl(),
+            properties.determineUsername(),
+            properties.determinePassword());
+    try (Statement st = conn.createStatement()) {
+      st.execute(TiberoDialect.PLATFORM_SESSION_INIT_SQL);
+      return conn;
+    } catch (SQLException | RuntimeException e) {
+      try {
+        conn.close();
+      } catch (SQLException suppressed) {
+        e.addSuppressed(suppressed);
+      }
+      throw e;
+    }
   }
 
   /** 테스트용 생성자 — 구독 연결 공급자를 직접 받는다. */

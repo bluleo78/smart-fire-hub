@@ -1,5 +1,6 @@
 package com.smartfirehub.pipeline.service;
 
+import com.smartfirehub.dataset.storage.tibero.TiberoDialect;
 import com.smartfirehub.global.platformdb.PlatformLocks;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.pipeline.service.executor.ExecutionCancelCheck;
@@ -110,6 +111,11 @@ public class IncrementalStepLock implements DisposableBean {
         config.setJdbcUrl(properties.determineUrl());
         config.setUsername(properties.determineUsername());
         config.setPassword(properties.determinePassword());
+        // 플랫폼 DB 가 Tibero 면 운영 풀과 같은 세션 초기화(UTC 시간대 포함, WD-729)를 건다 — 이 풀은 spring.datasource.hikari
+        // 설정을 거치지 않는다.
+        if (properties.determineUrl().startsWith("jdbc:tibero")) {
+          config.setConnectionInitSql(TiberoDialect.PLATFORM_SESSION_INIT_SQL);
+        }
         String driver = properties.determineDriverClassName();
         if (driver != null) {
           config.setDriverClassName(driver);
