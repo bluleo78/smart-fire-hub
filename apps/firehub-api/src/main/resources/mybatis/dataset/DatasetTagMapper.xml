@@ -4,10 +4,10 @@
   dataset_tag 문장(WD-707) — JooqDatasetTagRepository 와 같은 의미. 규칙은 MyBatisPlatformConfig javadoc.
   테넌트 정책(RLS) 대상이라 tenant_id 를 쓰지 않는다(DEFAULT 가 채우고 정책이 좁힌다). 가시성은 securitylevel/DatasetVisibility.xml 조각.
   insertIfAbsent: PG 는 ON CONFLICT DO NOTHING(유일 색인 (dataset_id, lower(tag_name)), V155).
-  Tibero 기준선에는 그 소문자 유일 색인이 없어(정확 일치 유일 키뿐) MERGE 의 ON 절에서 LOWER 비교로 대소문자 중복을 직접 거른다.
-  한계: 이 거르기는 순차 호출에서만 확실하다. 대소문자만 다른 같은 태그가 동시에 처음 들어오면 서로의 미커밋 행을 못 봐 둘 다 들어갈 수 있다
-  (정확히 같은 문자열의 동시 삽입은 정확 일치 유일 키가 막아 구현이 1회 재시도한다). 근본 해결은 Tibero 에 (dataset_id, LOWER(tag_name)) 함수 기반
-  유일 색인을 더하는 마이그레이션이며 이 변경의 범위 밖이다.
+  Tibero 기준선(V155 tibero baseline)에도 같은 의미의 유일 색인 uq_dataset_tag_dataset_lower_name (dataset_id, LOWER(tag_name)) 이 있다.
+  MERGE 의 ON 절 LOWER 비교가 순차 호출의 중복을 먼저 거르고, 동시 입력이 서로의 미커밋 행을 못 봐 둘 다 들어가려 하면 이 색인이 한쪽을 막는다.
+  색인 위반(-10007)은 TiberoSqlExceptionTranslator 가 정확 일치든 대소문자만 다르든 똑같이 DuplicateKeyException 으로 옮기고,
+  리포지토리가 1회 재시도하면 MERGE 가 이미 들어간 행을 만나 0 을 돌려준다.
 -->
 <mapper namespace="com.smartfirehub.dataset.repository.mybatis.DatasetTagMapper">
 

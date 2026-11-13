@@ -1,6 +1,7 @@
 package com.smartfirehub.dataset.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
@@ -9,10 +10,12 @@ import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataIntegrityViolationException;
 
 /**
  * DatasetTagRepository 계약 테스트 — 구현마다 하위 클래스로 실행한다(WD-707). dataset_tag 는 테넌트 정책 아래 있어 호출은 {@code
- * fx.inTenant} 로 감싼다. 같은 데이터셋에 대소문자만 다른 태그는 중복이다(PG 유일 색인, Tibero 는 MERGE 의 LOWER 비교).
+ * fx.inTenant} 로 감싼다. 같은 데이터셋에 대소문자만 다른 태그는 중복이다(두 DB 모두 유일 색인 uq_dataset_tag_dataset_lower_name
+ * (dataset_id, LOWER(tag_name)) 이 있다).
  */
 public abstract class DatasetTagRepositoryContractTest extends TenantPairContractBase {
 
@@ -56,6 +59,25 @@ public abstract class DatasetTagRepositoryContractTest extends TenantPairContrac
     // 다른 데이터셋에는 같은 이름을 넣을 수 있다.
     long ds2 = fx.createDataset(tenantA, prefix + " ds2");
     assertThat(inA(() -> repository().insert(ds2, "Fire", userA))).isEqualTo(1);
+  }
+
+  /**
+   * MERGE(Tibero)·ON CONFLICT(PG) 를 거치지 않는 직접 INSERT 도 (dataset_id, LOWER(tag_name)) 유일 색인이
+   * 막는다(WD-726). 두 DB 기준선 모두 같은 색인이 있어 공통 계약에 둔다. 픽스처는 번역기 없는 날 JDBC 라 PG 는
+   * DuplicateKeyException(23505), Tibero 는 DataIntegrityViolationException(JDBC-10007) 이 나와 공통 상위
+   * 타입으로 확인한다. 리포지토리 경로는 TiberoSqlExceptionTranslator 가 -10007 을 DuplicateKeyException 으로 옮기고 재시도가
+   * 흡수한다(TiberoSqlErrorCodesTest).
+   */
+  @Test
+  @DisplayName("색인이 MERGE 를 거치지 않은 직접 INSERT 도 막는다")
+  void directInsert_caseOnlyDifference_isRejectedByUniqueIndex() {
+    long ds = fx.createDataset(tenantA, prefix + " ds");
+    fx.addTag(ds, "Fire");
+
+    assertThatThrownBy(() -> fx.addTag(ds, "fire"))
+        .isInstanceOf(DataIntegrityViolationException.class);
+
+    assertThat(inA(() -> repository().findByDatasetId(ds))).containsExactly("Fire");
   }
 
   @Test
