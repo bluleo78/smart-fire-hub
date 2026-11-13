@@ -44,6 +44,11 @@ public final class TiberoSqlExceptionTranslator {
     codes.setCannotAcquireLockCodes(
         strings(
             TiberoPlatformDbErrors.LOCK_NOWAIT_FAILED, TiberoPlatformDbErrors.LOCK_WAIT_TIMEOUT));
+    // 문장 취소(-12040, TiberoDialect.STATEMENT_CANCELED)는 일부러 표에 넣지 않는다(WD-727).
+    // 이 코드는 queryTimeout 만이 아니라 명시적 취소(Statement.cancel·실행기의 마감 취소)와
+    // DBMS_LOCK 대기 취소에도 나온다. 모두 시간 초과로 번역하면 뜻이 달라진다.
+    // 진짜 queryTimeout 은 드라이버가 SQLTimeoutException 으로 보내므로
+    // 스프링 대체 번역이 이미 QueryTimeoutException 을 만든다(실서버 확인: TiberoQueryTimeoutLiveTest).
     return codes;
   }
 

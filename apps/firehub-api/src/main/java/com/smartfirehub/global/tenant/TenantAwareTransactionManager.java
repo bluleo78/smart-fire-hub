@@ -3,14 +3,19 @@ package com.smartfirehub.global.tenant;
 import com.smartfirehub.global.platformdb.PlatformTenantSession;
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.util.Collections;
+import java.util.Set;
+import java.util.WeakHashMap;
 import javax.sql.DataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.datasource.ConnectionHolder;
 import org.springframework.jdbc.datasource.DataSourceUtils;
+import org.springframework.jdbc.datasource.JdbcTransactionObjectSupport;
 import org.springframework.jdbc.support.JdbcTransactionManager;
 import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.DefaultTransactionStatus;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
@@ -64,6 +69,14 @@ public class TenantAwareTransactionManager extends JdbcTransactionManager {
   /** 테넌트를 DB 세션에 심는 포트 — DB 별 SQL 은 구현체가 안다(WD-486). */
   private final PlatformTenantSession tenantSession;
 
+  /**
+   * 커밋을 시도한 트랜잭션 객체(WD-727) — {@link #doRollback} 이 롤백 실패를 삼켜도 되는지 가르는 표시. 트랜잭션 객체마다 하나라 다른 트랜잭션으로
+   * 새지 않는다. 정리({@link #doCleanupAfterCompletion})에서 지우고, 혹시 정리를 거치지 않아도 약한 참조라 쌓이지 않는다. 트랜잭션 객체는
+   * equals 를 재정의하지 않아 동일성으로 비교된다.
+   */
+  private final Set<Object> commitAttempted =
+      Collections.synchronizedSet(Collections.newSetFromMap(new WeakHashMap<>()));
+
   public TenantAwareTransactionManager(DataSource dataSource, PlatformTenantSession tenantSession) {
     super(dataSource);
     this.tenantSession = tenantSession;
@@ -102,6 +115,57 @@ public class TenantAwareTransactionManager extends JdbcTransactionManager {
     }
   }
 
+  /** 커밋을 보내기 전에 이 트랜잭션에 「커밋 시도」 표시를 한다(WD-727 리뷰 I1) — {@link #doRollback} 참고. */
+  @Override
+  protected void doCommit(DefaultTransactionStatus status) {
+    commitAttempted.add(status.getTransaction());
+    super.doCommit(status);
+  }
+
+  /**
+   * 롤백하되, 커밋에 이르지 못한 작업의 연결이 이미 닫혀 롤백하지 못한 경우는 경고만 남기고 넘어간다(WD-727).
+   *
+   * <p>왜: Tibero 드라이버는 queryTimeout 취소를 {@code SQLTimeoutException}(-12040)으로 보내고, HikariCP 5 는 이
+   * 예외를 받은 연결을 고장으로 보고 닫는다(풀에서 빼고 실제 연결을 닫음). 그 뒤의 롤백은 「Connection is closed」로 실패하고, 스프링은 그 실패를
+   * {@code TransactionSystemException} 으로 던지면서 원래 예외(시간 초과)를 {@code getApplicationException()} 에만
+   * 남긴다. 원인 사슬만 보는 호출자(배경 작업·마감 판정·{@code PythonReadGrantBackend.isTransient} 등)와 오류 응답이 모두 원인을
+   * 잃었다. 닫힌 연결에서는 어차피 롤백할 수 없고, 커밋되지 않은 작업은 연결이 닫히며 서버가 버린다(실서버 확인: TiberoQueryTimeoutLiveTest — 취소
+   * 전에 바꾼 행이 커밋되지 않았다). 그래서 이 경우의 롤백 실패를 삼켜 원래 예외가 그대로 전파되게 한다.
+   *
+   * <p><b>롤백 경로에서만 삼킨다.</b> 커밋을 시도한 트랜잭션({@link #doCommit} 표시)은 커밋 실패 뒤의 롤백(스프링 {@code
+   * doRollbackOnCommitException})이라도 삼키지 않는다 — 커밋 요청이 서버에 닿았는지 알 수 없으므로 스프링이 결과를 「알 수 없음」({@code
+   * STATUS_UNKNOWN})으로 알리게 둬야 한다. 삼키면 「롤백됨」으로 알려져 afterCompletion 보상 처리(외부 계정·테이블 DROP)가 이미 커밋됐을 수
+   * 있는 작업을 되돌릴 수 없게 지운다.
+   *
+   * <p>연결이 열려 있는데 롤백이 실패한 경우도 지금과 같다(예외 그대로) — 서버 상태를 모르는 실패라 숨기지 않는다. PG 는 문장 시간 초과가 SQLState
+   * {@code 57014} 의 일반 예외라 풀이 연결을 닫지 않으므로 이 분기에 오지 않는다. 연결이 정말 끊긴 드문 경우(네트워크 단절 등)에는 PG 도 같은 규칙을
+   * 따르며, 그때도 커밋되지 않은 작업은 서버가 버린다.
+   */
+  @Override
+  protected void doRollback(DefaultTransactionStatus status) {
+    try {
+      super.doRollback(status);
+    } catch (RuntimeException e) {
+      if (commitAttempted.contains(status.getTransaction()) || !isConnectionClosed(status)) {
+        throw e;
+      }
+      log.warn("커밋 전에 실패한 트랜잭션의 연결이 이미 닫혀 롤백을 보내지 못했다 — 커밋되지 않은 작업은 서버가 버렸으므로 원래 예외를 그대로 전파한다", e);
+    }
+  }
+
+  /** 이 트랜잭션의 연결이 이미 닫혔는지. 확인 자체가 실패하면 닫히지 않은 것으로 본다(지금과 같은 예외 경로로 간다). */
+  private static boolean isConnectionClosed(DefaultTransactionStatus status) {
+    if (!(status.getTransaction() instanceof JdbcTransactionObjectSupport tx)
+        || !tx.hasConnectionHolder()) {
+      return false;
+    }
+    try {
+      return tx.getConnectionHolder().getConnection().isClosed();
+    } catch (SQLException | RuntimeException e) {
+      return false;
+    }
+  }
+
   /**
    * 커넥션을 풀에 돌려주기 직전에 세션에 심은 테넌트 값을 지운다(WD-492).
    *
@@ -134,6 +198,7 @@ public class TenantAwareTransactionManager extends JdbcTransactionManager {
         }
       }
     }
+    commitAttempted.remove(transaction);
     super.doCleanupAfterCompletion(transaction);
   }
 }
