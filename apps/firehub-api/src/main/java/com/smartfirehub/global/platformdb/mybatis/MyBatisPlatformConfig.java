@@ -1,6 +1,7 @@
 package com.smartfirehub.global.platformdb.mybatis;
 
 import com.smartfirehub.global.platformdb.tibero.TiberoSqlExceptionTranslator;
+import java.io.IOException;
 import java.time.Instant;
 import java.util.Properties;
 import java.util.UUID;
@@ -77,25 +78,56 @@ public class MyBatisPlatformConfig {
       // databaseId 를 XML 파싱 전에 먼저 정한다 — resultMap·파라미터의 타입 핸들러는 파싱 시점에 레지스트리에서 해소되므로, 벤더별 핸들러를
       // 등록하려면 파싱 전에 벤더를 알아야 한다. 팩토리 빈에는 provider 를 넘기지 않아 DB 연결을 두 번 열지 않는다.
       String databaseId = databaseIdProvider().getDatabaseId(dataSource);
-      SqlSessionFactoryBean bean = new SqlSessionFactoryBean();
-      bean.setDataSource(dataSource);
       Resource[] mapperXml =
           new PathMatchingResourcePatternResolver().getResources(MAPPER_LOCATIONS);
+      return sqlSessionFactory(dataSource, databaseId, mapperXml);
+    } catch (IOException e) {
+      throw new IllegalStateException("MyBatis SqlSessionFactory 구성 실패", e);
+    }
+  }
+
+  /**
+   * databaseId 와 매퍼 XML 을 정해 놓고 팩토리를 만든다 — 운영 빈과 매퍼 로드 시험(WD-731 {@code PlatformMapperLoadTest})이
+   * 함께 쓰는 유일한 조립 경로.
+   *
+   * <p>왜 따로 뽑나: 시험이 XML 파싱을 손으로 흉내 내면 운영 설정(타입 핸들러·인터셉터·팩토리 빈 옵션)이 늘 때 두 경로가 갈라진다. 이 메서드는 DB 에 연결하지
+   * 않으므로(databaseId provider 를 팩토리 빈에 넘기지 않는다) 시험은 연결 없는 DataSource 로 같은 팩토리를 만든다.
+   *
+   * @param dataSource 팩토리가 묶일 DataSource(여기서는 연결을 열지 않는다)
+   * @param databaseId {@code postgresql}·{@code tibero}. 매핑에 없는 제품이면 null(공통 문장만 쓴다)
+   * @param mapperXml 파싱할 매퍼 XML
+   */
+  static SqlSessionFactory sqlSessionFactory(
+      DataSource dataSource, String databaseId, Resource[] mapperXml) {
+    try {
+      SqlSessionFactoryBean bean = new SqlSessionFactoryBean();
+      bean.setDataSource(dataSource);
       bean.setMapperLocations(mapperXml);
       org.apache.ibatis.session.Configuration configuration =
           new org.apache.ibatis.session.Configuration();
       configuration.setDatabaseId(databaseId);
-      // 컬럼 snake_case 를 필드 camelCase 로 자동 매핑해 resultMap 보일러플레이트를 줄인다.
-      configuration.setMapUnderscoreToCamelCase(true);
-      // 매퍼 파라미터 queryTimeoutSeconds 가 있는 문장에만 JDBC 문장 시간 제한을 건다(두 DB 공통, WD-707).
-      configuration.addInterceptor(new StatementTimeoutInterceptor());
-      if (TIBERO.equals(databaseId)) {
-        applyTiberoSettings(configuration);
-      }
+      applyPlatformSettings(configuration, databaseId);
       bean.setConfiguration(configuration);
       return bean.getObject();
     } catch (Exception e) {
       throw new IllegalStateException("MyBatis SqlSessionFactory 구성 실패", e);
+    }
+  }
+
+  /**
+   * 전역 설정. XML 파싱 전에 불러야 한다 — 벤더별 타입 핸들러는 파싱 시점에 해소되기 때문이다. 벤더를 설정 객체에서 읽지 않고 인자로 받아, {@code
+   * setDatabaseId} 전에 불려 Tibero 설정이 조용히 빠지는 일을 막는다.
+   *
+   * @param databaseId tibero 면 Tibero 전용 설정을 더한다
+   */
+  private static void applyPlatformSettings(
+      org.apache.ibatis.session.Configuration configuration, String databaseId) {
+    // 컬럼 snake_case 를 필드 camelCase 로 자동 매핑해 resultMap 보일러플레이트를 줄인다.
+    configuration.setMapUnderscoreToCamelCase(true);
+    // 매퍼 파라미터 queryTimeoutSeconds 가 있는 문장에만 JDBC 문장 시간 제한을 건다(두 DB 공통, WD-707).
+    configuration.addInterceptor(new StatementTimeoutInterceptor());
+    if (TIBERO.equals(databaseId)) {
+      applyTiberoSettings(configuration);
     }
   }
 
