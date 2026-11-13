@@ -2,13 +2,6 @@ package com.smartfirehub.global.architecture;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.smartfirehub.analytics.repository.AnalyticsDashboardRepository;
-import com.smartfirehub.analytics.repository.AnalyticsQueryRunRepository;
-import com.smartfirehub.analytics.repository.AnalyticsWorkspaceRepository;
-import com.smartfirehub.analytics.repository.ChartRepository;
-import com.smartfirehub.analytics.repository.DashboardWidgetRepository;
-import com.smartfirehub.analytics.repository.SavedQueryRepository;
-import com.smartfirehub.dashboard.repository.DashboardStatsRepository;
 import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.global.platformdb.mybatis.PlatformMyBatisRepository;
 import java.util.ArrayList;
@@ -43,18 +36,14 @@ class PlatformRepositoryPairTest {
   /**
    * 아직 MyBatis 구현이 없는 인터페이스 → 맡은 묶음. 묶음은 ADR 0001 「WD-491 쪼개기」 표의 도메인 기준이다. 해당 묶음이 짝을 만들 때 자기 항목을
    * 지운다.
+   *
+   * <p>묶음 ⑤(WD-710) 뒤로 비어 있다 — 이제 새 jOOQ 리포지토리는 MyBatis 짝과 함께 들어와야 하고, 짝 없이 들이려면 여기에 묶음(이슈)과 함께
+   * 올린다. 비어 있어도 아래 검사는 그대로 돈다(PENDING 관련 두 검사는 항목이 없어 통과, 짝·PG 전용 검사는 전체 jOOQ 구현을 본다).
    */
   static final Map<Class<?>, String> PENDING = pending();
 
   private static Map<Class<?>, String> pending() {
     Map<Class<?>, String> m = new LinkedHashMap<>();
-    m.put(AnalyticsDashboardRepository.class, "묶음 ⑤: analytics");
-    m.put(AnalyticsQueryRunRepository.class, "묶음 ⑤: analytics");
-    m.put(AnalyticsWorkspaceRepository.class, "묶음 ⑤: analytics");
-    m.put(ChartRepository.class, "묶음 ⑤: analytics");
-    m.put(DashboardWidgetRepository.class, "묶음 ⑤: analytics");
-    m.put(SavedQueryRepository.class, "묶음 ⑤: analytics");
-    m.put(DashboardStatsRepository.class, "묶음 ⑤: dashboard");
     return Collections.unmodifiableMap(m);
   }
 
@@ -117,6 +106,8 @@ class PlatformRepositoryPairTest {
   /** 모든 플랫폼 리포지토리 인터페이스는 MyBatis 짝이 있거나 PENDING 에 있어야 한다. */
   @Test
   void everyPlatformRepositoryHasMyBatisPairOrIsPending() throws ClassNotFoundException {
+    // PENDING 이 비면 이 검사만 남는다 — 스캔이 깨져 jOOQ 구현을 하나도 못 찾으면 헛통과하므로 대상이 있는지 먼저 본다.
+    assertThat(jooqByInterface()).as("짝 검사 대상 jOOQ 리포지토리를 찾지 못했다 — 스캔 범위를 확인").isNotEmpty();
     Set<String> missing = new TreeSet<>();
     for (Class<?> iface : jooqByInterface().keySet()) {
       if (mybatisImpls(iface).isEmpty() && !PENDING.containsKey(iface)) {

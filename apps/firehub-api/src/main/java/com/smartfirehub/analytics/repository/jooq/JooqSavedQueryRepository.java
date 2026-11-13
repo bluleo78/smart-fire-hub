@@ -8,6 +8,7 @@ import com.smartfirehub.analytics.dto.SavedQueryResponse;
 import com.smartfirehub.analytics.dto.UpdateSavedQueryRequest;
 import com.smartfirehub.analytics.repository.SavedQueryRepository;
 import com.smartfirehub.global.dto.LockedRowVersion;
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.global.util.LikePatternUtils;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.securitylevel.repository.jooq.JooqDatasetVisibility;
@@ -27,6 +28,7 @@ import org.springframework.stereotype.Repository;
 
 /** SavedQueryRepository 의 jOOQ(PostgreSQL) 구현 — WD-485. */
 @Repository
+@ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
 public class JooqSavedQueryRepository implements SavedQueryRepository {
 
@@ -157,7 +159,8 @@ public class JooqSavedQueryRepository implements SavedQueryRepository {
             .join(USER_TABLE)
             .on(SQ_CREATED_BY.eq(U_ID))
             .where(combined)
-            .orderBy(SQ_UPDATED_AT.desc())
+            // 같은 수정 시각이면 id 내림차순으로 순서를 고정한다 — 페이지 경계에서 행이 겹치거나 빠지지 않게(MyBatis 판과 같다, WD-710).
+            .orderBy(SQ_UPDATED_AT.desc(), SQ_ID.desc())
             .limit(size)
             .offset(page * size)
             .fetch();

@@ -1,0 +1,154 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  분석 대시보드(dashboard) 문장(WD-710) — JooqAnalyticsDashboardRepository 와 같은 의미. 규칙은 MyBatisPlatformConfig javadoc.
+  dashboard·dashboard_widget 은 테넌트 정책(RLS) 대상이라 tenant_id 를 값·술어로 쓰지 않는다(DEFAULT 가 채운다). 만든이 이름 조인("user")은
+  jOOQ 처럼 테넌트 조건 없이 id 로만, 내부 조인으로 잇는다.
+  공유 가시성은 DashboardVisibility.dashboardVisibleTo 조각 하나로 쓴다(WD-143 — 데이터셋 참조와 같은 규칙). 그 조각은 별칭 없는 dashboard 표와
+  파라미터 이름 userId 를 전제하므로 이 파일의 문장은 dashboard 에 별칭을 두지 않는다. 삭제 영향의 불리언 열은 Tibero 에 불리언 값 식이 없어
+  CASE WHEN … THEN sqlTrue ELSE sqlFalse END 로 감싼다(PG boolean, Tibero NUMBER(1) 둘 다 _boolean 으로 받는다).
+  정렬: 목록은 updated_at DESC, id DESC(같은 수정 시각에서 페이지 경계가 흔들리지 않게 — jOOQ 판에도 같은 tiebreak 를 더했다). 삭제 영향은 jOOQ 그대로 name, id.
+  삽입 시각: PG 는 jOOQ 처럼 열 DEFAULT, Tibero 는 DB UTC 시계로 명시(insertTimestampColumns/Values). 수정 시각은 jOOQ 와 같은 자바 시각을 바인딩.
+  잠금: jOOQ forUpdate() 와 같은 FOR UPDATE — 두 DB 같은 문장. 집계(COUNT)에는 FOR UPDATE 를 못 걸어 id 를 읽는다.
+  위젯은 대시보드 삭제 때 DB FK(ON DELETE CASCADE)가 지운다 — 문장에서 따로 지우지 않는다.
+-->
+<mapper namespace="com.smartfirehub.analytics.repository.mybatis.AnalyticsDashboardMapper">
+
+  <resultMap id="dashboardRow" type="com.smartfirehub.analytics.repository.mybatis.AnalyticsDashboardRows$DashboardRow">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="name" javaType="java.lang.String"/>
+      <arg column="description" javaType="java.lang.String"/>
+      <arg column="is_shared" javaType="_boolean"/>
+      <arg column="auto_refresh_seconds" javaType="java.lang.Integer"/>
+      <arg column="created_by_name" javaType="java.lang.String"/>
+      <arg column="created_by" javaType="java.lang.Long"/>
+      <arg column="created_at" javaType="java.time.LocalDateTime"/>
+      <arg column="updated_at" javaType="java.time.LocalDateTime"/>
+      <arg column="widget_count" javaType="_int"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="impactRow" type="com.smartfirehub.analytics.repository.mybatis.AnalyticsDashboardRows$ImpactRow">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="name" javaType="java.lang.String"/>
+      <arg column="visible" javaType="_boolean"/>
+      <arg column="widget_count" javaType="_int"/>
+    </constructor>
+  </resultMap>
+
+  <!--
+    목록·건수가 함께 쓰는 소유/공유 범위(WD-328) — jOOQ listScope 와 같다. 둘 다 거짓이면 내 대시보드 + 공유 대시보드(dashboardVisibleTo),
+    shared 면 공유만, mine 이면 내 것만, 둘 다면 AND(내가 만든 공유 대시보드).
+  -->
+  <sql id="listScope">
+    <choose>
+      <when test="!shared and !mine"><include refid="com.smartfirehub.analytics.repository.mybatis.DashboardVisibility.dashboardVisibleTo"/></when>
+      <otherwise>
+        (1=1
+        <if test="shared">AND dashboard.is_shared = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/></if>
+        <if test="mine">AND dashboard.created_by = #{userId}</if>)
+      </otherwise>
+    </choose>
+  </sql>
+
+  <!-- 목록·건수의 검색(이름 또는 설명, 대소문자 무시 — 공용 nameDescSearch). 빈 검색은 구현이 null 로 넘겨 거르지 않는다. -->
+  <sql id="listFilters">
+    <include refid="com.smartfirehub.analytics.repository.mybatis.DashboardVisibility.nameDescSearch"><property name="alias" value="dashboard"/></include>
+  </sql>
+
+  <!-- 응답 열(위젯 수 제외) — 만든이 이름은 내부 조인. -->
+  <sql id="responseColumns">
+    dashboard.id, dashboard.name, dashboard.description, dashboard.is_shared, dashboard.auto_refresh_seconds,
+    u.name AS created_by_name, dashboard.created_by, dashboard.created_at, dashboard.updated_at
+  </sql>
+
+  <sql id="userJoin">
+    JOIN <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.userTable"/> u ON u.id = dashboard.created_by
+  </sql>
+
+  <!--
+    삭제 영향(WD-86) — 사용자 필터 없이 대상 차트를 쓰는 대시보드 모두, 대시보드별 GROUP BY 로 위젯 수와 목록을 한 쿼리에서 얻는다.
+    WHERE 가 GROUP BY 보다 먼저라 대상이 아닌 위젯은 세지 않는다. 보이는지는 목록과 같은 규칙으로 계산한 열(그룹 키에 created_by·is_shared 포함).
+  -->
+  <select id="selectImpact" resultMap="impactRow">
+    SELECT dashboard.id, dashboard.name,
+           CASE WHEN <include refid="com.smartfirehub.analytics.repository.mybatis.DashboardVisibility.dashboardVisibleTo"/>
+                THEN <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>
+                ELSE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlFalse"/> END AS visible,
+           COUNT(*) AS widget_count
+      FROM dashboard_widget dw
+      JOIN dashboard ON dw.dashboard_id = dashboard.id
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="dw.chart_id"/></include>
+     GROUP BY dashboard.id, dashboard.name, dashboard.created_by, dashboard.is_shared
+     ORDER BY dashboard.name ASC, dashboard.id ASC
+  </select>
+
+  <select id="selectPage" resultMap="dashboardRow">
+    SELECT <include refid="responseColumns"/>,
+           (SELECT COUNT(*) FROM dashboard_widget dw WHERE dw.dashboard_id = dashboard.id) AS widget_count
+      FROM dashboard
+      <include refid="userJoin"/>
+     WHERE <include refid="listScope"/>
+           <include refid="listFilters"/>
+     ORDER BY dashboard.updated_at DESC, dashboard.id DESC
+    <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.pageClause"/>
+  </select>
+
+  <!-- jOOQ 처럼 조인 없이 dashboard 만 센다. -->
+  <select id="count" resultType="_long">
+    SELECT COUNT(*) FROM dashboard
+     WHERE <include refid="listScope"/>
+           <include refid="listFilters"/>
+  </select>
+
+  <!-- 단건 — 위젯 수는 구현이 정한다(조회는 넘긴 목록 크기, 소유자 단건은 0, jOOQ 와 같다). -->
+  <select id="selectDetail" resultMap="dashboardRow">
+    SELECT <include refid="responseColumns"/>, 0 AS widget_count
+      FROM dashboard
+      <include refid="userJoin"/>
+     WHERE dashboard.id = #{id}
+       AND <choose>
+             <when test="ownerOnly">dashboard.created_by = #{userId}</when>
+             <otherwise><include refid="com.smartfirehub.analytics.repository.mybatis.DashboardVisibility.dashboardVisibleTo"/></otherwise>
+           </choose>
+  </select>
+
+  <!-- 위젯 추가 직렬화용 잠금(WD-202) — user 를 조인하지 않아 사용자 행은 잠그지 않는다. -->
+  <select id="lockOwnedId" resultType="java.lang.Long">
+    SELECT id FROM dashboard WHERE id = #{id} AND created_by = #{userId} FOR UPDATE
+  </select>
+
+  <insert id="insert" useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+    INSERT INTO dashboard (name, description, is_shared, auto_refresh_seconds, created_by<include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.insertTimestampColumns"/>)
+    VALUES (#{name}, #{description,jdbcType=VARCHAR},
+            <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.boolLiteral"><property name="v" value="shared"/></include>,
+            #{autoRefreshSeconds,jdbcType=INTEGER}, #{createdBy}<include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.insertTimestampValues"/>)
+  </insert>
+
+  <!-- id 를 함께 읽어 수정 시각이 비어도 행이 있음을 잃지 않는다(결과 매핑은 분석 공용 AnalyticsCommon.versionRow). -->
+  <select id="lockVersionById" resultMap="com.smartfirehub.analytics.repository.mybatis.AnalyticsCommon.versionRow">
+    SELECT id, updated_at FROM dashboard WHERE id = #{id} FOR UPDATE
+  </select>
+
+  <!-- 자동 새로고침: 값이 있으면 그 값, 없고 clearAutoRefresh 면 NULL(#568), 둘 다 아니면 그대로 — jOOQ 분기와 같다. -->
+  <update id="update">
+    UPDATE dashboard
+       SET updated_by = #{updatedBy,jdbcType=BIGINT},
+           updated_at = #{updatedAt}
+       <if test="name != null">, name = #{name}</if>
+       <if test="setDescription">, description = #{description,jdbcType=VARCHAR}</if>
+       <if test="isShared != null">, is_shared = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.boolLiteral"><property name="v" value="isShared"/></include></if>
+       <choose>
+         <when test="autoRefreshSeconds != null">, auto_refresh_seconds = #{autoRefreshSeconds}</when>
+         <when test="clearAutoRefresh">, auto_refresh_seconds = NULL</when>
+       </choose>
+     WHERE id = #{id}
+  </update>
+
+  <delete id="deleteByIdAndOwner">
+    DELETE FROM dashboard WHERE id = #{id} AND created_by = #{userId}
+  </delete>
+
+</mapper>

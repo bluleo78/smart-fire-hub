@@ -9,6 +9,7 @@ import com.smartfirehub.analytics.dto.DeleteImpactResponse;
 import com.smartfirehub.analytics.dto.UpdateChartRequest;
 import com.smartfirehub.analytics.repository.ChartRepository;
 import com.smartfirehub.global.dto.LockedRowVersion;
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.global.util.LikePatternUtils;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -30,6 +31,7 @@ import org.springframework.stereotype.Repository;
 
 /** ChartRepository 의 jOOQ(PostgreSQL) 구현 — WD-485. */
 @Repository
+@ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
 public class JooqChartRepository implements ChartRepository {
 
@@ -161,7 +163,8 @@ public class JooqChartRepository implements ChartRepository {
             .join(USER_TABLE)
             .on(C_CREATED_BY.eq(U_ID))
             .where(combined)
-            .orderBy(C_UPDATED_AT.desc())
+            // 같은 수정 시각이면 id 내림차순 — 페이지 경계가 흔들리지 않게, MyBatis 판과 같은 tiebreak(WD-710)
+            .orderBy(C_UPDATED_AT.desc(), C_ID.desc())
             .limit(size)
             .offset(page * size)
             .fetch();

@@ -4,6 +4,7 @@ import static com.smartfirehub.jooq.Tables.ANALYTICS_QUERY_RUN;
 import static org.jooq.impl.DSL.field;
 
 import com.smartfirehub.analytics.repository.AnalyticsQueryRunRepository;
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import java.time.OffsetDateTime;
 import java.util.Optional;
 import java.util.UUID;
@@ -23,6 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
  * #deleteExpired})도 이 경계 덕분에 TenantScopedRunner 가 세운 테넌트의 GUC 로 돈다.
  */
 @Repository
+@ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
 @Transactional
 public class JooqAnalyticsQueryRunRepository implements AnalyticsQueryRunRepository {

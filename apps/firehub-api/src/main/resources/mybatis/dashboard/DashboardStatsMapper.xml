@@ -1,0 +1,321 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  홈 대시보드 집계 문장(WD-710) — JooqDashboardStatsRepository 와 같은 의미. 읽기 전용이고 테넌트는 RLS 가 거른다(문장에 tenant_id 없음).
+
+  벤더 차이는 조각으로만 가른다:
+  - 날짜 버킷: PlatformSql.dayBucket(PG CAST(… AS date), Tibero TRUNC(…) — Tibero DATE 는 시각을 남긴다).
+  - metadata.fileName: AuditLogMapper.metadataField(PG ->>, Tibero JSON_VALUE — 파일 이름은 짧은 값이라 기본 JSON_VALUE 로 충분).
+  - resource_id 숫자 판정: AuditLogMapper.resourceIdAsLong(jOOQ AL_RESOURCE_ID_AS_LONG 과 같은 규칙). 신선·오래됨 집계는 jOOQ 처럼
+    문자열 비교(resource_id = 데이터셋 id 문자열)를 그대로 둔다 — 앞자리 0 같은 값의 판정이 jOOQ 와 같아야 해서다(계약 테스트가 고정).
+  - "RESOURCE" 열: PlatformSql.resourceColumn. 불리언: sqlTrue·sqlFalse. 상위 N 건: limitRows.
+  - 활성 파이프라인의 마지막 실행: jOOQ 의 상관 서브쿼리 (ORDER BY id DESC LIMIT 1) 대신 파이프라인별 MAX(id) 를 고른 뒤 그 실행 행에
+    조인한다 — 두 DB 공통 형태이고 고르는 행이 같다(가장 큰 id). 생성 시각 순서와 id 순서가 어긋나는 실행으로 계약 테스트가 고정한다.
+    MAX(id) 파생 표는 활성 파이프라인으로 먼저 좁히고, 상태 목록·실패 파이프라인 두 문장이 같은 latestExecution 조각을 쓴다.
+  가시성 조각(securitylevel/DatasetVisibility.xml visible)과 audit_log 조각(resourceIdAsLong 등)은 별칭 없는 dataset·audit_log 를 가정하므로
+  이 파일의 본 문장은 그 두 표에 별칭을 달지 않는다(datasetImport 만 속성 al 로 별칭을 받아 상관 서브쿼리 al2 에도 쓴다). 시각 정렬에는 id DESC 를 2차 키로 둔다(jOOQ 에도 같이 더했다).
+-->
+<mapper namespace="com.smartfirehub.dashboard.repository.mybatis.DashboardStatsMapper">
+
+  <resultMap id="recentImportRow" type="com.smartfirehub.dashboard.repository.DashboardStatsRepository$RecentImportRow">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="dataset_name" javaType="java.lang.String"/>
+      <arg column="file_name" javaType="java.lang.String"/>
+      <arg column="result" javaType="java.lang.String"/>
+      <arg column="action_time" javaType="java.time.LocalDateTime"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="recentExecutionRow" type="com.smartfirehub.dashboard.dto.RecentExecutionResponse">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="pipeline_name" javaType="java.lang.String"/>
+      <arg column="status" javaType="java.lang.String"/>
+      <arg column="created_at" javaType="java.time.LocalDateTime"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="dayCount" type="com.smartfirehub.dashboard.repository.mybatis.DashboardStatsMapper$DayCount">
+    <constructor>
+      <arg column="bucket_day" javaType="java.sql.Date"/>
+      <arg column="cnt" javaType="_int"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="failedPipelineRow" type="com.smartfirehub.dashboard.repository.DashboardStatsRepository$FailedPipelineRow">
+    <constructor>
+      <arg column="pipeline_id" javaType="java.lang.Long"/>
+      <arg column="pipeline_name" javaType="java.lang.String"/>
+      <arg column="last_failed_at" javaType="java.time.LocalDateTime"/>
+      <arg column="last_success_at" javaType="java.time.LocalDateTime"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="failedImportRow" type="com.smartfirehub.dashboard.repository.DashboardStatsRepository$FailedImportRow">
+    <constructor>
+      <arg column="dataset_id" javaType="java.lang.Long"/>
+      <arg column="dataset_name" javaType="java.lang.String"/>
+      <arg column="occurred_at" javaType="java.time.LocalDateTime"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="executionRow" type="com.smartfirehub.dashboard.repository.DashboardStatsRepository$ExecutionRow">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="pipeline_id" javaType="java.lang.Long"/>
+      <arg column="pipeline_name" javaType="java.lang.String"/>
+      <arg column="status" javaType="java.lang.String"/>
+      <arg column="created_at" javaType="java.time.LocalDateTime"/>
+      <arg column="completed_at" javaType="java.time.LocalDateTime"/>
+      <arg column="started_at" javaType="java.time.LocalDateTime"/>
+    </constructor>
+  </resultMap>
+
+  <!-- resource 는 별칭 없이 읽어 Tibero "RESOURCE" 라벨도 대소문자 무시로 매핑된다(AuditLogMapper 와 같다). -->
+  <resultMap id="auditActivityRow" type="com.smartfirehub.dashboard.repository.DashboardStatsRepository$AuditActivityRow">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="action_type" javaType="java.lang.String"/>
+      <arg column="resource" javaType="java.lang.String"/>
+      <arg column="resource_id" javaType="java.lang.String"/>
+      <arg column="result" javaType="java.lang.String"/>
+      <arg column="action_time" javaType="java.time.LocalDateTime"/>
+      <arg column="description" javaType="java.lang.String"/>
+      <arg column="dataset_name" javaType="java.lang.String"/>
+      <arg column="dataset_id" javaType="java.lang.Long"/>
+    </constructor>
+  </resultMap>
+
+  <!-- ===== 공용 조각 ===== -->
+
+  <!-- 조회자 데이터셋 가시성(파라미터 vis). -->
+  <sql id="visible">
+    <include refid="com.smartfirehub.securitylevel.repository.mybatis.DatasetVisibility.visible">
+      <property name="idCol" value="dataset.id"/>
+      <property name="levelCol" value="dataset.security_level_id"/>
+    </include>
+  </sql>
+
+  <!-- 원천 표 데이터셋(예전 dataset_type='SOURCE' ≡ storage_type='TABLE' AND origin_type='SOURCE'). -->
+  <sql id="tableSource">dataset.storage_type = 'TABLE' AND dataset.origin_type = 'SOURCE'</sql>
+
+  <!-- 파생 표 데이터셋(예전 dataset_type='DERIVED'). -->
+  <sql id="tableDerived">dataset.storage_type = 'TABLE' AND dataset.origin_type = 'DERIVED'</sql>
+
+  <sql id="alResource">audit_log.<include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.resourceColumn"/></sql>
+
+  <!--
+    데이터셋 감사 임포트 행. 속성 al 은 audit_log 의 별칭(XML 에 박힌 고정 값) — 본 문장은 별칭 없는 audit_log, 오래됨 판정의 상관 서브쿼리는 al2 를
+    넘겨 같은 술어를 다시 쓴다(속성을 빠뜨리면 런타임 파라미터 조회로 바뀌어 오류가 난다).
+  -->
+  <sql id="datasetImport">${al}.action_type = 'IMPORT' AND ${al}.<include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.resourceColumn"/> = 'dataset'</sql>
+
+  <!-- 데이터셋 id 의 문자열 — jOOQ D_ID.cast(String) 와 같은 문자열 비교용(Tibero 는 길이 없는 VARCHAR CAST 대신 TO_CHAR). -->
+  <sql id="datasetIdText" databaseId="postgresql">CAST(dataset.id AS varchar)</sql>
+  <sql id="datasetIdText" databaseId="tibero">TO_CHAR(dataset.id)</sql>
+
+  <!-- 데이터셋에 임포트 이력이 하나도 없다(문자열 비교, jOOQ 와 같다). -->
+  <sql id="noImportHistory">
+    NOT EXISTS (SELECT 1 FROM audit_log
+                 WHERE <include refid="datasetImport"><property name="al" value="audit_log"/></include>
+                   AND audit_log.resource_id = <include refid="datasetIdText"/>)
+  </sql>
+
+  <!-- ===== 통계(getStats) ===== -->
+
+  <select id="countDatasets" resultType="_long">
+    SELECT COUNT(*) FROM dataset WHERE <include refid="visible"/>
+  </select>
+
+  <select id="countSourceDatasets" resultType="_long">
+    SELECT COUNT(*) FROM dataset WHERE <include refid="tableSource"/> AND <include refid="visible"/>
+  </select>
+
+  <select id="countDerivedDatasets" resultType="_long">
+    SELECT COUNT(*) FROM dataset
+     WHERE <include refid="tableDerived"/> AND <include refid="visible"/>
+  </select>
+
+  <select id="countPipelines" resultType="_long">
+    SELECT COUNT(*) FROM pipeline
+  </select>
+
+  <select id="countActivePipelines" resultType="_long">
+    SELECT COUNT(*) FROM pipeline WHERE pipeline.is_active = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>
+  </select>
+
+  <!-- 가시성은 상위 5건 자르기 전에 SQL 에서 건다 — 숨김 행이 상위를 차지해 볼 수 있는 임포트가 밀려나지 않게. -->
+  <select id="selectRecentImports" resultMap="recentImportRow">
+    SELECT audit_log.id, dataset.name AS dataset_name,
+           <include refid="com.smartfirehub.audit.repository.mybatis.AuditLogMapper.metadataField"><property name="key" value="fileName"/></include> AS file_name,
+           audit_log.result, audit_log.action_time
+      FROM audit_log
+      JOIN dataset ON <include refid="com.smartfirehub.audit.repository.mybatis.AuditLogMapper.resourceIdAsLong"/> = dataset.id
+     WHERE <include refid="datasetImport"><property name="al" value="audit_log"/></include>
+       AND <include refid="visible"/>
+     ORDER BY audit_log.action_time DESC, audit_log.id DESC
+     <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.limitRows"><property name="n" value="5"/></include>
+  </select>
+
+  <select id="selectRecentExecutions" resultMap="recentExecutionRow">
+    SELECT pipeline_execution.id, pipeline.name AS pipeline_name, pipeline_execution.status, pipeline_execution.created_at
+      FROM pipeline_execution
+      JOIN pipeline ON pipeline_execution.pipeline_id = pipeline.id
+     ORDER BY pipeline_execution.created_at DESC, pipeline_execution.id DESC
+     <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.limitRows"><property name="n" value="5"/></include>
+  </select>
+
+  <!-- ===== 파이프라인 건강도 ===== -->
+
+  <select id="countDisabledPipelines" resultType="_int">
+    SELECT COUNT(*) FROM pipeline WHERE pipeline.is_active = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlFalse"/>
+  </select>
+
+  <!--
+    활성 파이프라인별 가장 큰 id 의 실행(= 마지막 실행) — FROM 절 조각. jOOQ 상관 서브쿼리의 ORDER BY id DESC LIMIT 1 과 같은 행을 고른다.
+    MAX(id) 파생 표 안에서 먼저 활성 파이프라인으로 좁혀(WD-710 C7) 비활성 파이프라인의 실행까지 묶지 않는다. 별칭: latest_exec(파이프라인별
+    마지막 id), last_pe(그 실행 행), pipeline(활성 파이프라인 — 바깥 문장이 이름 등을 읽는다).
+  -->
+  <sql id="latestExecution">
+    (SELECT pipeline_id, MAX(id) AS latest_id
+       FROM pipeline_execution
+      WHERE pipeline_id IN (SELECT active_p.id FROM pipeline active_p
+                             WHERE active_p.is_active = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>)
+      GROUP BY pipeline_id) latest_exec
+    JOIN pipeline_execution last_pe ON last_pe.id = latest_exec.latest_id
+    JOIN pipeline ON pipeline.id = latest_exec.pipeline_id
+  </sql>
+
+  <select id="selectLatestStatusesOfActivePipelines" resultType="java.lang.String">
+    SELECT last_pe.status
+      FROM <include refid="latestExecution"/>
+  </select>
+
+  <select id="countExecutionsByDay" resultMap="dayCount">
+    SELECT <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dayBucket"><property name="col" value="pipeline_execution.created_at"/></include> AS bucket_day,
+           COUNT(*) AS cnt
+      FROM pipeline_execution
+     WHERE pipeline_execution.created_at &gt;= #{trendFrom}
+     GROUP BY <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dayBucket"><property name="col" value="pipeline_execution.created_at"/></include>
+  </select>
+
+  <!-- ===== 데이터셋 건강도 ===== -->
+
+  <!-- fresh: threshold 이후(>) SUCCESS 임포트가 있는 원천 데이터셋 수(jOOQ selectDistinct(resource_id) 건수). -->
+  <select id="countFreshImportedDatasets" resultType="_int">
+    SELECT COUNT(DISTINCT audit_log.resource_id)
+      FROM audit_log
+      JOIN dataset ON audit_log.resource_id = <include refid="datasetIdText"/>
+     WHERE <include refid="datasetImport"><property name="al" value="audit_log"/></include>
+       AND audit_log.result = 'SUCCESS'
+       AND audit_log.action_time &gt; #{threshold}
+       AND <include refid="tableSource"/>
+       AND <include refid="visible"/>
+  </select>
+
+  <select id="countNewSourceDatasetsWithoutImport" resultType="_int">
+    SELECT COUNT(*) FROM dataset
+     WHERE <include refid="tableSource"/>
+       AND dataset.created_at &gt; #{threshold}
+       AND <include refid="visible"/>
+       AND <include refid="noImportHistory"/>
+  </select>
+
+  <!-- stale: SUCCESS 임포트는 있으나 threshold 이후(>)에는 SUCCESS 가 없는 원천 데이터셋 수. -->
+  <select id="countStaleImportedDatasets" resultType="_int">
+    SELECT COUNT(DISTINCT audit_log.resource_id)
+      FROM audit_log
+      JOIN dataset ON audit_log.resource_id = <include refid="datasetIdText"/>
+     WHERE <include refid="datasetImport"><property name="al" value="audit_log"/></include>
+       AND audit_log.result = 'SUCCESS'
+       AND <include refid="tableSource"/>
+       AND <include refid="visible"/>
+       AND NOT EXISTS (SELECT 1 FROM audit_log al2
+                        WHERE <include refid="datasetImport"><property name="al" value="al2"/></include>
+                          AND al2.result = 'SUCCESS'
+                          AND al2.resource_id = audit_log.resource_id
+                          AND al2.action_time &gt; #{threshold})
+  </select>
+
+  <select id="countStaleSourceDatasetsWithoutImport" resultType="_int">
+    SELECT COUNT(*) FROM dataset
+     WHERE <include refid="tableSource"/>
+       AND dataset.created_at &lt;= #{threshold}
+       AND <include refid="visible"/>
+       AND <include refid="noImportHistory"/>
+  </select>
+
+  <!-- 표(TABLE) 데이터셋 이름만 — DOCUMENT/FILE 은 물리 테이블이 없어 빈 테이블 판정 대상이 아니다. -->
+  <select id="selectTableDatasetNames" resultType="java.lang.String">
+    SELECT dataset.table_name FROM dataset WHERE dataset.storage_type = 'TABLE' AND <include refid="visible"/>
+  </select>
+
+  <!-- 숨김 데이터셋 이력은 빼고, 데이터셋 행이 없는 이력(삭제·숫자 아님)은 센다(dataset.id IS NULL). -->
+  <select id="countImportsByDay" resultMap="dayCount">
+    SELECT <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dayBucket"><property name="col" value="audit_log.action_time"/></include> AS bucket_day,
+           COUNT(*) AS cnt
+      FROM audit_log
+      LEFT JOIN dataset ON <include refid="com.smartfirehub.audit.repository.mybatis.AuditLogMapper.resourceIdAsLong"/> = dataset.id
+     WHERE <include refid="datasetImport"><property name="al" value="audit_log"/></include>
+       AND audit_log.action_time &gt;= #{trendFrom}
+       AND (dataset.id IS NULL OR <include refid="visible"/>)
+     GROUP BY <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dayBucket"><property name="col" value="audit_log.action_time"/></include>
+  </select>
+
+  <!-- ===== 주의 항목 ===== -->
+
+  <!--
+    마지막 실행(가장 큰 id)이 FAILED 인 활성 파이프라인과 마지막 실패·성공(COMPLETED) 생성 시각. 마지막 실행은 latestExecution 조각을 다시 쓴다.
+    마지막 실패·성공 시각은 그 파이프라인의 모든 실행에서 고른다(jOOQ 의 MAX(CASE …) 와 같은 값) — 걸러진 FAILED 파이프라인에만 도는 상관 서브쿼리다.
+  -->
+  <select id="selectFailedActivePipelines" resultMap="failedPipelineRow">
+    SELECT pipeline.id AS pipeline_id, pipeline.name AS pipeline_name,
+           (SELECT MAX(pe.created_at) FROM pipeline_execution pe
+             WHERE pe.pipeline_id = pipeline.id AND pe.status = 'FAILED') AS last_failed_at,
+           (SELECT MAX(pe.created_at) FROM pipeline_execution pe
+             WHERE pe.pipeline_id = pipeline.id AND pe.status = 'COMPLETED') AS last_success_at
+      FROM <include refid="latestExecution"/>
+     WHERE last_pe.status = 'FAILED'
+  </select>
+
+  <select id="selectFailedImportsSince" resultMap="failedImportRow">
+    SELECT dataset.id AS dataset_id, dataset.name AS dataset_name, audit_log.action_time AS occurred_at
+      FROM audit_log
+      JOIN dataset ON <include refid="com.smartfirehub.audit.repository.mybatis.AuditLogMapper.resourceIdAsLong"/> = dataset.id
+     WHERE <include refid="datasetImport"><property name="al" value="audit_log"/></include>
+       AND audit_log.result = 'FAILURE'
+       AND audit_log.action_time &gt; #{since}
+       AND <include refid="visible"/>
+     ORDER BY audit_log.action_time DESC, audit_log.id DESC
+  </select>
+
+  <!-- ===== 활동 피드 ===== -->
+
+  <select id="selectRecentExecutionsForFeed" resultMap="executionRow">
+    SELECT pipeline_execution.id, pipeline_execution.pipeline_id, pipeline.name AS pipeline_name,
+           pipeline_execution.status, pipeline_execution.created_at, pipeline_execution.completed_at,
+           pipeline_execution.started_at
+      FROM pipeline_execution
+      JOIN pipeline ON pipeline_execution.pipeline_id = pipeline.id
+     ORDER BY pipeline_execution.created_at DESC, pipeline_execution.id DESC
+     <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.limitRows"><property name="n" value="500"/></include>
+  </select>
+
+  <!--
+    데이터셋 임포트·생성 감사(분석 대시보드 CREATE 는 resource 가 dashboard 라 빠진다, WD-464). 가시성은 ON 이 아니라 WHERE 에 둔다 — ON 에
+    두면 숨김 행이 이름 없이 남아 id 가 새고, 자르기 전에 걸러야 LIMIT 500 이 볼 수 있는 행을 밀어내지 않는다.
+  -->
+  <select id="selectDatasetAuditActivities" resultMap="auditActivityRow">
+    SELECT audit_log.id, audit_log.action_type, <include refid="alResource"/>, audit_log.resource_id, audit_log.result,
+           audit_log.action_time, audit_log.description, dataset.name AS dataset_name, dataset.id AS dataset_id
+      FROM audit_log
+      LEFT JOIN dataset ON <include refid="alResource"/> = 'dataset' AND <include refid="com.smartfirehub.audit.repository.mybatis.AuditLogMapper.resourceIdAsLong"/> = dataset.id
+     WHERE audit_log.action_type IN ('IMPORT', 'CREATE')
+       AND <include refid="alResource"/> = 'dataset'
+       AND (dataset.id IS NULL OR <include refid="visible"/>)
+     ORDER BY audit_log.action_time DESC, audit_log.id DESC
+     <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.limitRows"><property name="n" value="500"/></include>
+  </select>
+
+</mapper>

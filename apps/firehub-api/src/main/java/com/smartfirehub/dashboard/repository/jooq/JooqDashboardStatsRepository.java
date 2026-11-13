@@ -5,6 +5,7 @@ import static org.jooq.impl.DSL.*;
 
 import com.smartfirehub.dashboard.dto.RecentExecutionResponse;
 import com.smartfirehub.dashboard.repository.DashboardStatsRepository;
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.securitylevel.repository.jooq.JooqDatasetVisibility;
 import java.time.LocalDate;
@@ -32,8 +33,12 @@ import org.springframework.stereotype.Repository;
  * <p>가시성(보안 등급)은 서비스가 {@code DatasetAccessGuard} 로 {@code DatasetVisibility} 를 만들어 넘기고, 여기서 {@code
  * JooqDatasetVisibility} 로 술어를 만든다. 시간 경계(24시간 전·추이 시작 시각)도 서비스가 예전과 같은 시점에 계산해 넘긴다 — 한 화면의 여러 집계가
  * 같은 기준 시각을 쓰게 하려는 것이다.
+ *
+ * <p>정렬: 시각이 같은 행의 순서를 고정하려고 id 내림차순을 2차 키로 둔다(WD-710 — MyBatis 구현과 같은 순서, 계약 테스트가 고정). Tibero
+ * 설치본에서는 {@code MyBatisDashboardStatsRepository} 가 대신한다(PG 전용 빈).
  */
 @Repository
+@ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
 public class JooqDashboardStatsRepository implements DashboardStatsRepository {
 
@@ -144,7 +149,7 @@ public class JooqDashboardStatsRepository implements DashboardStatsRepository {
         .where(AL_ACTION_TYPE.eq("IMPORT").and(AL_RESOURCE.eq("dataset")))
         // LIMIT 전에 SQL 에서 거른다 — 자바 후처리면 숨김 행이 상위 5개를 차지해 볼 수 있는 임포트가 밀려난다.
         .and(visible)
-        .orderBy(AL_ACTION_TIME.desc())
+        .orderBy(AL_ACTION_TIME.desc(), AL_ID.desc())
         .limit(5)
         .fetch(
             r ->
@@ -163,7 +168,7 @@ public class JooqDashboardStatsRepository implements DashboardStatsRepository {
         .from(PIPELINE_EXECUTION)
         .join(PIPELINE)
         .on(PE_PIPELINE_ID.eq(P_ID))
-        .orderBy(PE_CREATED_AT.desc())
+        .orderBy(PE_CREATED_AT.desc(), PE_ID.desc())
         .limit(5)
         .fetch(
             r ->
@@ -423,7 +428,7 @@ public class JooqDashboardStatsRepository implements DashboardStatsRepository {
                 .and(AL_RESULT.eq("FAILURE"))
                 .and(AL_ACTION_TIME.greaterThan(since))
                 .and(visible))
-        .orderBy(AL_ACTION_TIME.desc())
+        .orderBy(AL_ACTION_TIME.desc(), AL_ID.desc())
         .fetch(r -> new FailedImportRow(r.get(D_ID), r.get(D_NAME), r.get(AL_ACTION_TIME)));
   }
 
@@ -437,7 +442,7 @@ public class JooqDashboardStatsRepository implements DashboardStatsRepository {
         .from(PIPELINE_EXECUTION)
         .join(PIPELINE)
         .on(PE_PIPELINE_ID.eq(P_ID))
-        .orderBy(PE_CREATED_AT.desc())
+        .orderBy(PE_CREATED_AT.desc(), PE_ID.desc())
         .limit(500) // 피드 조립용 상한
         .fetch(
             r ->
@@ -477,7 +482,7 @@ public class JooqDashboardStatsRepository implements DashboardStatsRepository {
         // "dataset #id" 로 남아 id 가 새고, 자바 후처리면 LIMIT 500 이 볼 수 있는 행을 먼저 잘라 낸다. 데이터셋 행이
         // 없는 이력(삭제된 데이터셋)은 D_ID 가 null 이라 기존처럼 남는다.
         .and(D_ID.isNull().or(visible))
-        .orderBy(AL_ACTION_TIME.desc())
+        .orderBy(AL_ACTION_TIME.desc(), AL_ID.desc())
         .limit(500)
         .fetch(
             r ->

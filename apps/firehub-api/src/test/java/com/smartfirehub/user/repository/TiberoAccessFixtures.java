@@ -505,7 +505,9 @@ public class TiberoAccessFixtures implements AccessFixtures {
       poc.jdbc().update("UPDATE dataset SET " + col + " = NULL WHERE id = ?", datasetId);
       return;
     }
-    poc.jdbc().update("UPDATE dataset SET " + col + " = ? WHERE id = ?", value, datasetId);
+    // 시각 열(created_at·updated_at)은 Timestamp 로 바꿔 바인딩한다 — 실행 행 픽스처와 같은 방식(저장 TZ 벽시계 그대로).
+    Object bound = value instanceof LocalDateTime t ? Timestamp.valueOf(t) : value;
+    poc.jdbc().update("UPDATE dataset SET " + col + " = ? WHERE id = ?", bound, datasetId);
   }
 
   @Override
@@ -1754,6 +1756,181 @@ public class TiberoAccessFixtures implements AccessFixtures {
   }
 
   @Override
+  public long createSavedQuery(
+      long tenantId, long userId, String name, boolean shared, Long datasetId) {
+    // 생성·수정 시각은 DB UTC 시계로 명시한다 — 열 DEFAULT(LOCALTIMESTAMP)는 세션 시간대에 기대 리포지토리가 넣은 행과 정렬이 어긋날 수 있다.
+    return insertWithBinder(
+        "INSERT INTO saved_query (tenant_id, name, sql_text, dataset_id, is_shared, created_by,"
+            + " created_at, updated_at) VALUES (?, ?, 'SELECT 1', ?, ?, ?,"
+            + " SYS_EXTRACT_UTC(SYSTIMESTAMP), SYS_EXTRACT_UTC(SYSTIMESTAMP))",
+        ps -> {
+          ps.setLong(1, tenantId);
+          ps.setString(2, name);
+          if (datasetId == null) ps.setNull(3, Types.BIGINT);
+          else ps.setLong(3, datasetId);
+          ps.setInt(4, shared ? 1 : 0);
+          ps.setLong(5, userId);
+        });
+  }
+
+  @Override
+  public long createChart(long tenantId, long userId, long savedQueryId, boolean shared) {
+    return poc.insertReturningId(
+        "INSERT INTO chart (tenant_id, name, saved_query_id, chart_type, is_shared, created_by,"
+            + " created_at, updated_at) VALUES (?, 'fx-c', ?, 'BAR', ?, ?,"
+            + " SYS_EXTRACT_UTC(SYSTIMESTAMP), SYS_EXTRACT_UTC(SYSTIMESTAMP))",
+        tenantId,
+        savedQueryId,
+        shared ? 1 : 0,
+        userId);
+  }
+
+  @Override
+  public long createDashboard(long tenantId, long userId, boolean shared) {
+    return poc.insertReturningId(
+        "INSERT INTO dashboard (tenant_id, name, is_shared, created_by, created_at, updated_at)"
+            + " VALUES (?, 'fx-d', ?, ?, SYS_EXTRACT_UTC(SYSTIMESTAMP),"
+            + " SYS_EXTRACT_UTC(SYSTIMESTAMP))",
+        tenantId,
+        shared ? 1 : 0,
+        userId);
+  }
+
+  @Override
+  public long addWidget(long tenantId, long dashboardId, long chartId) {
+    return poc.insertReturningId(
+        "INSERT INTO dashboard_widget (tenant_id, dashboard_id, chart_id, created_at, updated_at)"
+            + " VALUES (?, ?, ?, SYS_EXTRACT_UTC(SYSTIMESTAMP), SYS_EXTRACT_UTC(SYSTIMESTAMP))",
+        tenantId,
+        dashboardId,
+        chartId);
+  }
+
+  @Override
+  public void setSavedQueryUpdatedAt(long id, LocalDateTime updatedAt) {
+    poc.jdbc()
+        .update(
+            "UPDATE saved_query SET updated_at = ? WHERE id = ?",
+            updatedAt == null ? null : Timestamp.valueOf(updatedAt),
+            id);
+  }
+
+  @Override
+  public Long savedQueryUpdatedBy(long id) {
+    List<Long> rows =
+        poc.jdbc()
+            .query(
+                "SELECT updated_by FROM saved_query WHERE id = ?",
+                (rs, i) -> {
+                  long v = rs.getLong(1);
+                  return rs.wasNull() ? null : v;
+                },
+                id);
+    return rows.isEmpty() ? null : rows.get(0);
+  }
+
+  @Override
+  public void ageAnalyticsQueryRun(UUID id, int minutesAgo) {
+    // DB UTC 시계로 옮긴다 — 리포지토리의 보존 기간 비교도 같은 시계다. id 는 VARCHAR2(36) 문자열.
+    poc.jdbc()
+        .update(
+            "UPDATE analytics_query_run SET created_at = SYS_EXTRACT_UTC(SYSTIMESTAMP)"
+                + " - NUMTODSINTERVAL(?, 'MINUTE') WHERE id = ?",
+            minutesAgo,
+            id.toString());
+  }
+
+  @Override
+  public boolean analyticsQueryRunExists(UUID id) {
+    Integer n =
+        poc.jdbc()
+            .queryForObject(
+                "SELECT COUNT(*) FROM analytics_query_run WHERE id = ?",
+                Integer.class,
+                id.toString());
+    return n != null && n > 0;
+  }
+
+  @Override
+  public void setChartUpdatedAt(long chartId, LocalDateTime updatedAt) {
+    poc.jdbc()
+        .update(
+            "UPDATE chart SET updated_at = ? WHERE id = ?",
+            updatedAt == null ? null : Timestamp.valueOf(updatedAt),
+            chartId);
+  }
+
+  @Override
+  public Long chartUpdatedBy(long chartId) {
+    List<Long> rows =
+        poc.jdbc()
+            .query(
+                "SELECT updated_by FROM chart WHERE id = ?",
+                (rs, i) -> {
+                  long v = rs.getLong(1);
+                  return rs.wasNull() ? null : v;
+                },
+                chartId);
+    return rows.isEmpty() ? null : rows.get(0);
+  }
+
+  @Override
+  public boolean widgetExists(long widgetId) {
+    Integer n =
+        poc.jdbc()
+            .queryForObject(
+                "SELECT COUNT(*) FROM dashboard_widget WHERE id = ?", Integer.class, widgetId);
+    return n != null && n > 0;
+  }
+
+  @Override
+  public void setWidgetUpdatedAt(long widgetId, LocalDateTime updatedAt) {
+    poc.jdbc()
+        .update(
+            "UPDATE dashboard_widget SET updated_at = ? WHERE id = ?",
+            updatedAt == null ? null : Timestamp.valueOf(updatedAt),
+            widgetId);
+  }
+
+  @Override
+  public LocalDateTime widgetUpdatedAt(long widgetId) {
+    return poc.jdbc()
+        .queryForObject(
+            "SELECT updated_at FROM dashboard_widget WHERE id = ?",
+            java.sql.Timestamp.class,
+            widgetId)
+        .toLocalDateTime();
+  }
+
+  @Override
+  public void setDashboardUpdatedAt(long dashboardId, LocalDateTime updatedAt) {
+    poc.jdbc()
+        .update(
+            "UPDATE dashboard SET updated_at = ? WHERE id = ?",
+            updatedAt == null ? null : Timestamp.valueOf(updatedAt),
+            dashboardId);
+  }
+
+  @Override
+  public Long dashboardUpdatedBy(long dashboardId) {
+    List<Long> rows =
+        poc.jdbc()
+            .query(
+                "SELECT updated_by FROM dashboard WHERE id = ?",
+                (rs, i) -> {
+                  long v = rs.getLong(1);
+                  return rs.wasNull() ? null : v;
+                },
+                dashboardId);
+    return rows.isEmpty() ? null : rows.get(0);
+  }
+
+  @Override
+  public void setAuditLogResult(long id, String result) {
+    poc.jdbc().update("UPDATE audit_log SET result = ? WHERE id = ?", result, id);
+  }
+
+  @Override
   public void cleanup() {
     for (long t : tenants) {
       // 적재 이력은 테넌트 FK 만 있어(온톨로지 CASCADE 밖) 테넌트 정리 전에 지운다.
@@ -1790,6 +1967,10 @@ public class TiberoAccessFixtures implements AccessFixtures {
       // uploaded_files 는 사용자 FK 가 CASCADE 가 아니라 사용자보다 먼저 지운다(WD-712).
       poc.jdbc().update("DELETE FROM uploaded_files WHERE tenant_id = ?", t);
       poc.jdbc().update("DELETE FROM ai_inference_cache WHERE tenant_id = ?", t);
+      // 쿼리 실행 기록은 테넌트 FK 가 CASCADE 가 아니라 테넌트보다 먼저, 위젯·차트는 대시보드·저장 쿼리보다 먼저(자식 먼저) 지운다(WD-710).
+      poc.jdbc().update("DELETE FROM analytics_query_run WHERE tenant_id = ?", t);
+      poc.jdbc().update("DELETE FROM dashboard_widget WHERE tenant_id = ?", t);
+      poc.jdbc().update("DELETE FROM chart WHERE tenant_id = ?", t);
       poc.jdbc().update("DELETE FROM dashboard WHERE tenant_id = ?", t);
       poc.jdbc().update("DELETE FROM saved_query WHERE tenant_id = ?", t);
       poc.jdbc().update("DELETE FROM pipeline WHERE tenant_id = ?", t);

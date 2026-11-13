@@ -177,7 +177,10 @@ public interface AccessFixtures {
   /** 파이프라인 트리거 하나(config 는 JSON 문자열 그대로, 만든 이는 픽스처 사용자). 파이프라인을 지우면 FK CASCADE 로 함께 사라진다. */
   long createTrigger(long pipelineId, String name, String triggerType, String configJson);
 
-  /** 저장 쿼리 하나(datasetId null 허용, 만든 이는 픽스처 사용자). 테넌트 정리 때 지운다(차트·위젯은 FK CASCADE). */
+  /**
+   * 저장 쿼리 하나(datasetId null 허용, 만든 이는 픽스처 사용자). 테넌트 정리 때 지운다 — 정리는 위젯·차트를 저장 쿼리보다 먼저 명시적으로 지운다 (FK
+   * CASCADE 에만 기대지 않는다, WD-710).
+   */
   long createSavedQuery(long tenantId, Long datasetId, String sqlText);
 
   /** 저장 쿼리를 쓰는 BAR 차트 하나(테넌트는 저장 쿼리 행에서 읽는다). 저장 쿼리를 지우면 FK CASCADE 로 함께 사라진다. */
@@ -730,6 +733,68 @@ public interface AccessFixtures {
     }
     return column;
   }
+
+  // ---- 묶음 ⑤ Task 7 픽스처(WD-710: 저장 쿼리·차트·대시보드·위젯·쿼리 실행 기록, 소유자 시점) ----
+
+  /**
+   * 저장 쿼리 하나(SQL 은 {@code SELECT 1}, 설명·폴더 없음). 만든 이·공유 여부·연결 데이터셋(null 허용)을 정한다 — 공유 가시성 시험용. 테넌트
+   * 정리 때 지운다 — 정리는 위젯·차트를 저장 쿼리보다 먼저 명시적으로 지운다(FK CASCADE 에만 기대지 않는다, WD-710).
+   */
+  long createSavedQuery(long tenantId, long userId, String name, boolean shared, Long datasetId);
+
+  /** 저장 쿼리를 쓰는 차트 하나(BAR, 설정 기본값). 만든 이·공유 여부를 정한다. 저장 쿼리를 지우면 FK CASCADE 로 사라진다. */
+  long createChart(long tenantId, long userId, long savedQueryId, boolean shared);
+
+  /** 대시보드 하나(이름 고정). 만든 이·공유 여부를 정한다. 테넌트 정리 때 지운다(위젯은 FK CASCADE). */
+  long createDashboard(long tenantId, long userId, boolean shared);
+
+  /** 대시보드에 차트 위젯 하나(위치·크기 기본값)를 붙이고 위젯 id 를 돌려준다. */
+  long addWidget(long tenantId, long dashboardId, long chartId);
+
+  /** 저장 쿼리의 수정 시각을 직접 바꾼다(소유자 시점) — 같은 수정 시각 행의 정렬 tiebreak 재현용. */
+  void setSavedQueryUpdatedAt(long id, LocalDateTime updatedAt);
+
+  /** 저장 쿼리의 저장된 updated_by(소유자 시점). 행이 없거나 비어 있으면 null. */
+  Long savedQueryUpdatedBy(long id);
+
+  /** 쿼리 실행 기록의 생성 시각을 DB 시계 기준 minutesAgo 분 전으로 옮긴다(소유자 시점) — 보존 기간(1시간) 안팎 재현용. */
+  void ageAnalyticsQueryRun(java.util.UUID id, int minutesAgo);
+
+  /** 쿼리 실행 기록이 남아 있는가(소유자 시점, 정책 우회). */
+  boolean analyticsQueryRunExists(java.util.UUID id);
+
+  // ---- 묶음 ⑤ Task 8 픽스처(WD-710: 차트·위젯, 소유자 시점) ----
+
+  /** 차트의 수정 시각을 직접 바꾼다(소유자 시점) — 같은 수정 시각 행의 정렬 tiebreak·잠금 조회 재현용. */
+  void setChartUpdatedAt(long chartId, LocalDateTime updatedAt);
+
+  /** 차트의 저장된 updated_by(소유자 시점). 행이 없거나 비어 있으면 null. */
+  Long chartUpdatedBy(long chartId);
+
+  /** 위젯 행이 남아 있는가(소유자 시점, 정책 우회) — 차트 삭제의 FK CASCADE 확인용. */
+  boolean widgetExists(long widgetId);
+
+  /** 위젯의 수정 시각을 직접 바꾼다(소유자 시점) — 갱신·배치 배치가 수정 시각을 새로 쓰는지 보려고 먼저 옛 값으로 고정한다(WD-710 P3). */
+  void setWidgetUpdatedAt(long widgetId, LocalDateTime updatedAt);
+
+  /** 위젯의 저장된 updated_at(소유자 시점, 저장 벽시계 그대로). */
+  LocalDateTime widgetUpdatedAt(long widgetId);
+
+  // ---- 묶음 ⑤ Task 9 픽스처(WD-710: 대시보드, 소유자 시점) ----
+
+  /** 대시보드의 수정 시각을 직접 바꾼다(소유자 시점) — 같은 수정 시각 행의 정렬 tiebreak·잠금 조회 재현용. */
+  void setDashboardUpdatedAt(long dashboardId, LocalDateTime updatedAt);
+
+  /** 대시보드의 저장된 updated_by(소유자 시점). 행이 없거나 비어 있으면 null. */
+  Long dashboardUpdatedBy(long dashboardId);
+
+  // ---- 묶음 ⑤ Task 10 픽스처(WD-710: 홈 대시보드 집계, 소유자 시점) ----
+
+  /**
+   * 감사 로그 한 행의 result 를 직접 바꾼다(소유자 시점) — {@link #insertAuditLog} 는 SUCCESS 로만 넣으므로 임포트 실패(FAILURE)
+   * 이력을 만들 때 쓴다.
+   */
+  void setAuditLogResult(long id, String result);
 
   /** 만든 행을 모두 지운다. */
   void cleanup();

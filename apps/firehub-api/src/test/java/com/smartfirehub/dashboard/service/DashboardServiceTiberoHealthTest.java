@@ -7,7 +7,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.smartfirehub.dashboard.dto.SystemHealthResponse;
-import com.smartfirehub.dashboard.repository.jooq.JooqDashboardStatsRepository;
+import com.smartfirehub.dashboard.repository.DashboardStatsRepository;
 import com.smartfirehub.dataset.storage.DataRowStore;
 import com.smartfirehub.dataset.storage.DataStoreBackend;
 import com.smartfirehub.dataset.storage.DataStoreResolver;
@@ -29,6 +29,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationContext;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
@@ -46,6 +47,7 @@ class DashboardServiceTiberoHealthTest extends IntegrationTestBase {
 
   @Autowired private PlatformTransactionManager transactionManager;
   @Autowired private DSLContext dsl;
+  @Autowired private ApplicationContext applicationContext;
 
   private Long userId;
   private String tableName;
@@ -132,7 +134,9 @@ class DashboardServiceTiberoHealthTest extends IntegrationTestBase {
 
     DashboardService service =
         new DashboardService(
-            new JooqDashboardStatsRepository(dsl),
+            // Tibero 설치본이 쓰는 MyBatis 구현으로 돌린다(WD-710) — 표 이름이 넘어가면 그 조회가 RLS 트랜잭션 안에서 돈 증거다.
+            applicationContext.getBean(
+                "myBatisDashboardStatsRepository", DashboardStatsRepository.class),
             guard,
             clearanceResolver,
             resolver,

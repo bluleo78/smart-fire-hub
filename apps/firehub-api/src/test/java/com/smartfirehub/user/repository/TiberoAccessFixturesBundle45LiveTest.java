@@ -37,6 +37,16 @@ class TiberoAccessFixturesBundle45LiveTest {
       assertThat(fx.createReportTemplate(tenant, null, prefix + "_sys")).isPositive();
       long job = fx.createProactiveJob(tenant, user, prefix + "_job");
       assertThat(fx.createProactiveJobExecution(tenant, job, "COMPLETED")).isPositive();
+      // 묶음 ⑤(WD-710): 저장 쿼리(데이터셋 null 바인드 포함)·차트·대시보드·위젯 — 정리 순서도 함께 확인한다.
+      long query = fx.createSavedQuery(tenant, user, prefix + "_q", true, null);
+      long chart = fx.createChart(tenant, user, query, false);
+      long dashboard = fx.createDashboard(tenant, user, true);
+      assertThat(fx.addWidget(tenant, dashboard, chart)).isPositive();
+      assertThat(
+              poc.jdbc()
+                  .queryForObject(
+                      "SELECT is_shared FROM saved_query WHERE id = ?", Integer.class, query))
+          .isEqualTo(1);
     } finally {
       fx.cleanup();
     }

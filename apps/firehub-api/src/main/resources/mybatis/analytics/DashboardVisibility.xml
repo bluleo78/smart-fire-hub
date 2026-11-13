@@ -20,4 +20,47 @@
 
   <sql id="dashboardVisibleTo">(dashboard.created_by = #{userId} OR dashboard.is_shared = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>)</sql>
 
+  <!--
+    소유 또는 공유 조각(WD-710, 스펙 D4) — 차트·저장 쿼리의 visibleTo(userId)(JooqChartRepository·JooqSavedQueryRepository) MyBatis 판.
+    대시보드 조각과 같은 규칙(created_by = 조회자 OR is_shared)을 표 별칭만 바꿔 쓴다 — 세 곳이 한 규칙을 따로 복사하면 한쪽만 바뀌는
+    순간 남의 비공유 차트·쿼리가 새어 나가므로 이 파일에 함께 둔다.
+
+    쓰는 법: 속성 alias 에 FROM 의 표 별칭(XML 에 박힌 고정 값 — 사용자 입력 아님)을 넘기고, 조회자 id 는 파라미터 이름 "userId" 로 받는다.
+      AND <include refid="com.smartfirehub.analytics.repository.mybatis.DashboardVisibility.ownedOrShared"><property name="alias" value="sq"/></include>
+    SELECT 목록의 불리언으로 쓸 때는 dashboardVisibleTo 와 같이 CASE WHEN … THEN sqlTrue ELSE sqlFalse END 로 감싼다.
+    속성을 빠뜨리면 런타임 파라미터 조회로 바뀌어 "no getter for alias" 오류가 난다. userId 가 null 이면 공유된 것만 참이다(jOOQ eq(null) 과 같다).
+  -->
+  <sql id="ownedOrShared">(${alias}.created_by = #{userId} OR ${alias}.is_shared = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>)</sql>
+
+  <!--
+    목록·건수·폴더가 함께 쓰는 소유/공유 범위(WD-328, WD-710 C4) — 차트·저장 쿼리 jOOQ listScope 의 MyBatis 판. 둘 다 거짓이면 내 것 + 공유된 것
+    (ownedOrShared), shared 면 공유만, mine 이면 내 것만, 둘 다면 AND(내가 만든 공유 자산). 차트·저장 쿼리가 같은 분기를 따로 복사하지 않게 여기 둔다.
+    쓰는 법: 속성 alias(XML 에 박힌 표 별칭), 파라미터 shared·mine(boolean)·userId.
+      WHERE <include refid="com.smartfirehub.analytics.repository.mybatis.DashboardVisibility.listScope"><property name="alias" value="c"/></include>
+    대시보드 목록은 별칭 없는 dashboard 와 dashboardVisibleTo 를 전제하므로 자기 listScope 를 그대로 쓴다(규칙은 같다).
+  -->
+  <sql id="listScope">
+    <choose>
+      <when test="!shared and !mine">
+        <include refid="com.smartfirehub.analytics.repository.mybatis.DashboardVisibility.ownedOrShared"><property name="alias" value="${alias}"/></include>
+      </when>
+      <otherwise>
+        (1=1
+        <if test="shared">AND ${alias}.is_shared = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/></if>
+        <if test="mine">AND ${alias}.created_by = #{userId}</if>)
+      </otherwise>
+    </choose>
+  </sql>
+
+  <!--
+    이름 또는 설명 검색(대소문자 무시, WD-710 C4) — 차트·저장 쿼리·대시보드 목록·건수가 함께 쓴다. 파라미터 pattern 이 null 이면(구현이 빈 검색을
+    null 로 넘긴다) 거르지 않는다. 앞에 AND 를 조각이 갖는다. 속성 alias 는 표 별칭(대시보드는 별칭 없는 표 이름 dashboard).
+  -->
+  <sql id="nameDescSearch">
+    <if test="pattern != null">
+      AND (<include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.likeIgnoreCase"><property name="col" value="${alias}.name"/></include>
+           OR <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.likeIgnoreCase"><property name="col" value="${alias}.description"/></include>)
+    </if>
+  </sql>
+
 </mapper>

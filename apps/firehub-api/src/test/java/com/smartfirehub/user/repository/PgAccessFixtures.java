@@ -506,6 +506,7 @@ public class PgAccessFixtures implements AccessFixtures {
           "status_note",
           "security_level_id",
           "source_pipeline_step_id",
+          "created_at",
           "updated_at");
 
   /** 허용 목록에 없는 열 이름이면 예외. */
@@ -1647,6 +1648,145 @@ public class PgAccessFixtures implements AccessFixtures {
   }
 
   @Override
+  public long createSavedQuery(
+      long tenantId, long userId, String name, boolean shared, Long datasetId) {
+    return inTenant(
+        tenantId,
+        () ->
+            dsl.fetchOne(
+                    "insert into saved_query (name, sql_text, dataset_id, is_shared, created_by)"
+                        + " values (?, 'SELECT 1', ?, ?, ?) returning id",
+                    name,
+                    datasetId,
+                    shared,
+                    userId)
+                .get(0, Long.class));
+  }
+
+  @Override
+  public long createChart(long tenantId, long userId, long savedQueryId, boolean shared) {
+    return inTenant(
+        tenantId,
+        () ->
+            dsl.fetchOne(
+                    "insert into chart (name, saved_query_id, chart_type, is_shared, created_by)"
+                        + " values ('fx-c', ?, 'BAR', ?, ?) returning id",
+                    savedQueryId,
+                    shared,
+                    userId)
+                .get(0, Long.class));
+  }
+
+  @Override
+  public long createDashboard(long tenantId, long userId, boolean shared) {
+    return createDashboard(tenantId, "fx-d", userId, shared);
+  }
+
+  @Override
+  public long addWidget(long tenantId, long dashboardId, long chartId) {
+    return inTenant(
+        tenantId,
+        () ->
+            dsl.fetchOne(
+                    "insert into dashboard_widget (dashboard_id, chart_id) values (?, ?) returning id",
+                    dashboardId,
+                    chartId)
+                .get(0, Long.class));
+  }
+
+  @Override
+  public void setSavedQueryUpdatedAt(long id, LocalDateTime updatedAt) {
+    ownerJdbc.update("update saved_query set updated_at = ? where id = ?", updatedAt, id);
+  }
+
+  @Override
+  public Long savedQueryUpdatedBy(long id) {
+    List<Long> rows =
+        ownerJdbc.query(
+            "select updated_by from saved_query where id = ?",
+            (rs, i) -> rs.getObject(1, Long.class),
+            id);
+    return rows.isEmpty() ? null : rows.get(0);
+  }
+
+  @Override
+  public void ageAnalyticsQueryRun(UUID id, int minutesAgo) {
+    // DB 시계(now())로 옮긴다 — 리포지토리의 보존 기간 비교도 DB 시계라 두 시계 차이가 끼지 않는다.
+    ownerJdbc.update(
+        "update analytics_query_run set created_at = now() - (? * interval '1 minute')"
+            + " where id = ?",
+        minutesAgo,
+        id);
+  }
+
+  @Override
+  public boolean analyticsQueryRunExists(UUID id) {
+    Integer n =
+        ownerJdbc.queryForObject(
+            "select count(*) from analytics_query_run where id = ?", Integer.class, id);
+    return n != null && n > 0;
+  }
+
+  @Override
+  public void setChartUpdatedAt(long chartId, LocalDateTime updatedAt) {
+    ownerJdbc.update("update chart set updated_at = ? where id = ?", updatedAt, chartId);
+  }
+
+  @Override
+  public Long chartUpdatedBy(long chartId) {
+    List<Long> rows =
+        ownerJdbc.query(
+            "select updated_by from chart where id = ?",
+            (rs, i) -> rs.getObject(1, Long.class),
+            chartId);
+    return rows.isEmpty() ? null : rows.get(0);
+  }
+
+  @Override
+  public boolean widgetExists(long widgetId) {
+    Integer n =
+        ownerJdbc.queryForObject(
+            "select count(*) from dashboard_widget where id = ?", Integer.class, widgetId);
+    return n != null && n > 0;
+  }
+
+  @Override
+  public void setWidgetUpdatedAt(long widgetId, LocalDateTime updatedAt) {
+    ownerJdbc.update(
+        "update dashboard_widget set updated_at = ? where id = ?", updatedAt, widgetId);
+  }
+
+  @Override
+  public LocalDateTime widgetUpdatedAt(long widgetId) {
+    return ownerJdbc
+        .queryForObject(
+            "select updated_at from dashboard_widget where id = ?",
+            java.sql.Timestamp.class,
+            widgetId)
+        .toLocalDateTime();
+  }
+
+  @Override
+  public void setDashboardUpdatedAt(long dashboardId, LocalDateTime updatedAt) {
+    ownerJdbc.update("update dashboard set updated_at = ? where id = ?", updatedAt, dashboardId);
+  }
+
+  @Override
+  public Long dashboardUpdatedBy(long dashboardId) {
+    List<Long> rows =
+        ownerJdbc.query(
+            "select updated_by from dashboard where id = ?",
+            (rs, i) -> rs.getObject(1, Long.class),
+            dashboardId);
+    return rows.isEmpty() ? null : rows.get(0);
+  }
+
+  @Override
+  public void setAuditLogResult(long id, String result) {
+    ownerJdbc.update("update audit_log set result = ? where id = ?", result, id);
+  }
+
+  @Override
   public void cleanup() {
     for (long t : tenants) {
       // 적재 이력은 테넌트 FK 만 있어(온톨로지 CASCADE 밖) 테넌트 정리 전에 지운다.
@@ -1687,6 +1827,11 @@ public class PgAccessFixtures implements AccessFixtures {
             // uploaded_files 는 사용자 FK 가 CASCADE 가 아니라 사용자보다 먼저 지운다(WD-712).
             dsl.execute("delete from uploaded_files where tenant_id = ?", t);
             dsl.execute("delete from ai_inference_cache where tenant_id = ?", t);
+            // 쿼리 실행 기록은 테넌트 FK 가 CASCADE 가 아니라 테넌트보다 먼저, 위젯·차트는 대시보드·저장 쿼리보다 먼저(자식 먼저) 지운다
+            // — 다른 테넌트 행을 참조하는 일은 없지만 CASCADE 에만 기대지 않고 정리 순서를 드러낸다(WD-710).
+            dsl.execute("delete from analytics_query_run where tenant_id = ?", t);
+            dsl.execute("delete from dashboard_widget where tenant_id = ?", t);
+            dsl.execute("delete from chart where tenant_id = ?", t);
             dsl.execute("delete from dashboard where tenant_id = ?", t);
             dsl.execute("delete from saved_query where tenant_id = ?", t);
             dsl.execute("delete from pipeline where tenant_id = ?", t);

@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  워크스페이스 분석 자산 관리(analytics:admin, WD-199) 문장(WD-710) — JooqAnalyticsWorkspaceRepository 와 같은 의미.
+  ${table} 은 표 이름 치환이다: 구현이 AnalyticsAssetKind.table() — enum 에 박힌 컴파일 시점 상수
+  (dashboard·chart·saved_query) 중 하나 — 를 넘기므로 사용자 입력이 아니다(바인딩 변수로는 표 이름을 넘길 수 없다). 세 표의 해당 열 이름이 같아 한 벌로 쓴다.
+  예외(스펙 D1): 인터페이스가 테넌트를 인자로 받으므로 RLS 와 별개로 tenant_id = #{tenantId} 술어를 네 문장 모두 그대로 둔다(정책이 빠져도 다른
+  워크스페이스 자산이 보이거나 바뀌지 않게). "user" 는 정책 없는 조인 — 작성자 계정이 없어도 행이 남도록 LEFT JOIN.
+  최소 열만 읽는다(id·이름·공유·작성자·수정일). 정렬은 jOOQ 그대로 updated_at DESC, id DESC. 공유 해제는 updated_at·updated_by 를 건드리지 않는다.
+-->
+<mapper namespace="com.smartfirehub.analytics.repository.mybatis.AnalyticsWorkspaceMapper">
+
+  <resultMap id="workspaceRow" type="com.smartfirehub.analytics.repository.AnalyticsWorkspaceRepository$WorkspaceItemRow">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="name" javaType="java.lang.String"/>
+      <arg column="owner_id" javaType="java.lang.Long"/>
+      <arg column="owner_name" javaType="java.lang.String"/>
+      <arg column="is_shared" javaType="_boolean"/>
+      <arg column="updated_at" javaType="java.time.LocalDateTime"/>
+    </constructor>
+  </resultMap>
+
+  <sql id="rowColumns">
+    a.id, a.name, a.created_by AS owner_id, u.name AS owner_name, a.is_shared, a.updated_at
+      FROM ${table} a
+      LEFT JOIN <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.userTable"/> u ON u.id = a.created_by
+  </sql>
+
+  <select id="selectRows" resultMap="workspaceRow">
+    SELECT <include refid="rowColumns"/>
+     WHERE a.tenant_id = #{tenantId}
+     ORDER BY a.updated_at DESC, a.id DESC
+  </select>
+
+  <select id="selectRow" resultMap="workspaceRow">
+    SELECT <include refid="rowColumns"/>
+     WHERE a.id = #{id} AND a.tenant_id = #{tenantId}
+  </select>
+
+  <!-- is_shared 조건을 걸지 않는다 — 이미 비공개인 자산도 일치 행(1)이라 멱등 성공이 유지되고, 0 행은 「자산이 사라짐」뿐이다(WD-616). -->
+  <update id="unshare">
+    UPDATE ${table} SET is_shared = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlFalse"/>
+     WHERE id = #{id} AND tenant_id = #{tenantId}
+  </update>
+
+  <delete id="delete">
+    DELETE FROM ${table} WHERE id = #{id} AND tenant_id = #{tenantId}
+  </delete>
+
+</mapper>

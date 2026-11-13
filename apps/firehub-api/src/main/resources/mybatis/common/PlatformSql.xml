@@ -116,9 +116,23 @@
   <sql id="insertTimestampValues" databaseId="postgresql"></sql>
   <sql id="insertTimestampValues" databaseId="tibero">, <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>, <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/></sql>
 
+  <!-- 삽입 시각 꼬리의 created_at 단독 판(WD-710 P6) — updated_at 열이 없는 표(analytics_query_run 등). 규칙은 위 insertTimestamp* 와 같다. -->
+  <sql id="insertCreatedAtColumn" databaseId="postgresql"></sql>
+  <sql id="insertCreatedAtColumn" databaseId="tibero">, created_at</sql>
+  <sql id="insertCreatedAtValue" databaseId="postgresql"></sql>
+  <sql id="insertCreatedAtValue" databaseId="tibero">, <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/></sql>
+
   <!-- 행 수 상한(잠금 없는 조회 전용). 속성 n 은 XML 에 박힌 고정 숫자다. Tibero 는 LIMIT 대신 FETCH FIRST(NULLS LAST 와 함께 쓸 수 있음, 실측). -->
   <sql id="limitRows" databaseId="postgresql">LIMIT ${n}</sql>
   <sql id="limitRows" databaseId="tibero">FETCH FIRST ${n} ROWS ONLY</sql>
+
+  <!--
+    날짜 버킷(속성 col 은 TIMESTAMP 열 식, WD-710) — 일자별 추이 집계의 SELECT·GROUP BY 에 같은 식으로 쓴다. PG 는 jOOQ 와 같은
+    CAST(… AS date). Tibero 는 CAST(… AS DATE) 가 시각을 남기므로(DATE 가 시각을 갖는다, 실측 TiberoBundle45SyntaxProbeLiveTest (c))
+    TRUNC(…) 로 자정에 맞춘다. 결과는 두 DB 모두 날짜 값이라 java.sql.Date 로 읽어 LocalDate 로 바꾼다.
+  -->
+  <sql id="dayBucket" databaseId="postgresql">CAST(${col} AS date)</sql>
+  <sql id="dayBucket" databaseId="tibero">TRUNC(${col})</sql>
 
   <!-- 페이지(파라미터 limit·offset). Tibero 는 OFFSET … ROWS FETCH NEXT … ROWS ONLY(바인드 가능, 실측). -->
   <sql id="pageClause" databaseId="postgresql">LIMIT #{limit} OFFSET #{offset}</sql>

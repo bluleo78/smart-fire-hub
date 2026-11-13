@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  분석 매퍼 공용 결과 매핑(WD-710) — 차트·저장 쿼리·대시보드 문장이 같은 행 모양(AnalyticsRows)을 읽는다. 매퍼 인터페이스가 없는 이름공간이라
+  각 문장이 resultMap="com.smartfirehub.analytics.repository.mybatis.AnalyticsCommon.<id>" 로 참조한다(DashboardVisibility 와 같은 방식).
+  한 도메인 파일에 두고 다른 도메인이 빌려 쓰지 않게 여기 모았다.
+-->
+<mapper namespace="com.smartfirehub.analytics.repository.mybatis.AnalyticsCommon">
+
+  <!-- 공유 켜기 대상 잠금 결과(id·이름). -->
+  <resultMap id="idName" type="com.smartfirehub.analytics.repository.mybatis.AnalyticsRows$IdName">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="name" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <!-- 잠금 조회한 수정 시각(id 를 함께 읽는다). -->
+  <resultMap id="versionRow" type="com.smartfirehub.analytics.repository.mybatis.AnalyticsRows$VersionRow">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="updated_at" javaType="java.time.LocalDateTime"/>
+    </constructor>
+  </resultMap>
+
+  <!-- 공유 여부별 수. -->
+  <resultMap id="sharingCounts" type="com.smartfirehub.analytics.repository.mybatis.AnalyticsRows$SharingCounts">
+    <constructor>
+      <arg column="private_count" javaType="_long"/>
+      <arg column="shared_count" javaType="_long"/>
+    </constructor>
+  </resultMap>
+
+</mapper>

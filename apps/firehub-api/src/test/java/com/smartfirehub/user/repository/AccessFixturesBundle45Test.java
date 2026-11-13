@@ -6,8 +6,9 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * 묶음 ④·⑤ 가 쓰는 새 픽스처(슬랙 워크스페이스·선제 작업·리포트 템플릿·실행 이력, WD-709·710)가 PG 에서 필수 열·FK 를 맞춰 행을 만들고 정리까지 되는지
- * 확인한다. 끝에서 {@link AccessContractBase} 가 정리하므로 정리 순서가 틀리면 이 시험이 깨진다. 실제 리포지토리 계약은 이후 태스크가 맡는다.
+ * 묶음 ④·⑤ 가 쓰는 새 픽스처(슬랙 워크스페이스·선제 작업·리포트 템플릿·실행 이력·저장 쿼리·차트·대시보드·위젯, WD-709·710)가 PG 에서 필수 열·FK 를 맞춰
+ * 행을 만들고 정리까지 되는지 확인한다. 끝에서 {@link AccessContractBase} 가 정리하므로 정리 순서가 틀리면 이 시험이 깨진다. 실제 리포지토리 계약은
+ * 이후 태스크가 맡는다.
  */
 class AccessFixturesBundle45Test extends AccessContractBase {
 
@@ -31,5 +32,15 @@ class AccessFixturesBundle45Test extends AccessContractBase {
     assertThat(job).isPositive();
     assertThat(fx.createProactiveJobExecution(tenant, job, "COMPLETED")).isPositive();
     assertThat(fx.createProactiveJobExecution(tenant, job, "RUNNING")).isPositive();
+
+    // 묶음 ⑤(WD-710): 저장 쿼리·차트·대시보드·위젯 — 정리 순서(위젯·차트 → 대시보드·저장 쿼리 → 데이터셋)가 틀리면 끝에서 깨진다.
+    long ds = fx.createDataset(tenant, prefix + "_ds");
+    long query = fx.createSavedQuery(tenant, user, prefix + "_q", true, ds);
+    assertThat(query).isPositive();
+    long chart = fx.createChart(tenant, user, query, false);
+    assertThat(chart).isPositive();
+    long dashboard = fx.createDashboard(tenant, user, true);
+    assertThat(fx.addWidget(tenant, dashboard, chart)).isPositive();
+    assertThat(fx.savedQueryUpdatedBy(query)).isNull();
   }
 }

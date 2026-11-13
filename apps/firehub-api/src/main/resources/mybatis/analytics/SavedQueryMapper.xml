@@ -1,0 +1,201 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  분석 저장 쿼리(saved_query) 문장(WD-710) — JooqSavedQueryRepository 와 같은 의미. 규칙은 MyBatisPlatformConfig javadoc.
+  saved_query·chart 는 테넌트 정책(RLS) 대상이라 tenant_id 를 값·술어로 쓰지 않는다(DEFAULT 가 채운다). 만든이 이름 조인("user")은 jOOQ 처럼
+  테넌트 조건 없이 id 로만, 내부 조인으로 잇는다.
+  공유 가시성(소유 또는 공유)은 DashboardVisibility.ownedOrShared 조각 하나로 쓴다(스펙 D4). 연결 데이터셋 이름 가림은 LEFT JOIN 의 ON 에
+  DatasetVisibility.visible 조각을 "dataset" 이름 관례로 건다 — 볼 수 없으면 이름만 null, dataset_id 는 saved_query 열이라 남는다.
+  정렬: 목록은 updated_at DESC, id DESC(같은 수정 시각에서 페이지 경계가 흔들리지 않게 — jOOQ 판에도 같은 tiebreak 를 더했다).
+  삽입 시각: PG 는 jOOQ 처럼 열 DEFAULT, Tibero 는 DB UTC 시계로 명시(insertTimestampColumns/Values). 수정 시각은 jOOQ 와 같은 자바 시각을 바인딩.
+  RETURNING 대신: 삽입은 생성 키(useGeneratedKeys), 공유 켜기는 대상 FOR UPDATE 조회 → 그 id 만 UPDATE(구현이 한 트랜잭션으로 묶는다).
+-->
+<mapper namespace="com.smartfirehub.analytics.repository.mybatis.SavedQueryMapper">
+
+  <resultMap id="listRow" type="com.smartfirehub.analytics.dto.SavedQueryListResponse">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="name" javaType="java.lang.String"/>
+      <arg column="description" javaType="java.lang.String"/>
+      <arg column="folder" javaType="java.lang.String"/>
+      <arg column="dataset_id" javaType="java.lang.Long"/>
+      <arg column="dataset_name" javaType="java.lang.String"/>
+      <arg column="is_shared" javaType="_boolean"/>
+      <arg column="created_by_name" javaType="java.lang.String"/>
+      <arg column="created_by" javaType="java.lang.Long"/>
+      <arg column="created_at" javaType="java.time.LocalDateTime"/>
+      <arg column="updated_at" javaType="java.time.LocalDateTime"/>
+      <arg column="chart_count" javaType="_long"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="detailRow" type="com.smartfirehub.analytics.dto.SavedQueryResponse">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="name" javaType="java.lang.String"/>
+      <arg column="description" javaType="java.lang.String"/>
+      <arg column="sql_text" javaType="java.lang.String"/>
+      <arg column="dataset_id" javaType="java.lang.Long"/>
+      <arg column="dataset_name" javaType="java.lang.String"/>
+      <arg column="folder" javaType="java.lang.String"/>
+      <arg column="is_shared" javaType="_boolean"/>
+      <arg column="created_by_name" javaType="java.lang.String"/>
+      <arg column="created_by" javaType="java.lang.Long"/>
+      <arg column="created_at" javaType="java.time.LocalDateTime"/>
+      <arg column="updated_at" javaType="java.time.LocalDateTime"/>
+      <arg column="chart_count" javaType="_long"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="rawRow" type="com.smartfirehub.analytics.repository.SavedQueryRepository$RawSavedQuery">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="name" javaType="java.lang.String"/>
+      <arg column="description" javaType="java.lang.String"/>
+      <arg column="sql_text" javaType="java.lang.String"/>
+      <arg column="dataset_id" javaType="java.lang.Long"/>
+      <arg column="folder" javaType="java.lang.String"/>
+      <arg column="is_shared" javaType="java.lang.Boolean"/>
+      <arg column="created_by" javaType="java.lang.Long"/>
+    </constructor>
+  </resultMap>
+
+
+
+  <!--
+    목록·건수·폴더가 함께 쓰는 소유/공유 범위(WD-328) — 차트·저장 쿼리 공용 DashboardVisibility.listScope. 셋이 어긋나지 않게 이 한 조각만 쓴다.
+  -->
+  <sql id="listScope">
+    <include refid="com.smartfirehub.analytics.repository.mybatis.DashboardVisibility.listScope"><property name="alias" value="sq"/></include>
+  </sql>
+
+  <!-- 목록·건수의 검색(이름 또는 설명 — 공용 nameDescSearch)·폴더(정확히 일치) 필터. 빈 값은 구현이 null 로 넘겨 거르지 않는다. -->
+  <sql id="listFilters">
+    <include refid="com.smartfirehub.analytics.repository.mybatis.DashboardVisibility.nameDescSearch"><property name="alias" value="sq"/></include>
+    <if test="folder != null">AND sq.folder = #{folder}</if>
+  </sql>
+
+  <!-- 차트 수 상관 서브쿼리(jOOQ 와 같은 패턴). -->
+  <sql id="chartCount">
+    (SELECT COUNT(*) FROM chart c WHERE c.saved_query_id = sq.id) AS chart_count
+  </sql>
+
+  <!-- 데이터셋(이름 가림)·만든이 조인. -->
+  <sql id="detailJoins">
+    LEFT JOIN dataset ON dataset.id = sq.dataset_id
+          AND <include refid="com.smartfirehub.securitylevel.repository.mybatis.DatasetVisibility.visible">
+                <property name="idCol" value="dataset.id"/>
+                <property name="levelCol" value="dataset.security_level_id"/>
+              </include>
+    JOIN <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.userTable"/> u ON u.id = sq.created_by
+  </sql>
+
+  <select id="selectPage" resultMap="listRow">
+    SELECT sq.id, sq.name, sq.description, sq.folder, sq.dataset_id, dataset.name AS dataset_name, sq.is_shared,
+           u.name AS created_by_name, sq.created_by, sq.created_at, sq.updated_at,
+           <include refid="chartCount"/>
+      FROM saved_query sq
+      <include refid="detailJoins"/>
+     WHERE <include refid="listScope"/>
+           <include refid="listFilters"/>
+     ORDER BY sq.updated_at DESC, sq.id DESC
+    <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.pageClause"/>
+  </select>
+
+  <select id="count" resultType="_long">
+    SELECT COUNT(*) FROM saved_query sq
+     WHERE <include refid="listScope"/>
+           <include refid="listFilters"/>
+  </select>
+
+  <select id="selectDetail" resultMap="detailRow">
+    SELECT sq.id, sq.name, sq.description, sq.sql_text, sq.dataset_id, dataset.name AS dataset_name, sq.folder,
+           sq.is_shared, u.name AS created_by_name, sq.created_by, sq.created_at, sq.updated_at,
+           <include refid="chartCount"/>
+      FROM saved_query sq
+      <include refid="detailJoins"/>
+     WHERE sq.id = #{id}
+       AND <choose>
+             <when test="ownerOnly">sq.created_by = #{userId}</when>
+             <otherwise><include refid="com.smartfirehub.analytics.repository.mybatis.DashboardVisibility.ownedOrShared"><property name="alias" value="sq"/></include></otherwise>
+           </choose>
+  </select>
+
+  <select id="selectRaw" resultMap="rawRow">
+    SELECT id, name, description, sql_text, dataset_id, folder, is_shared, created_by
+      FROM saved_query WHERE id = #{id}
+  </select>
+
+  <!--
+    공유 켜기 대상 잠금(Review Focus 4) — jOOQ 의 UPDATE … RETURNING 을 Tibero 에서 쓸 수 없어 대상(내가 만든 비공유)을 먼저 잠그고 읽는다.
+    잠근 행만 뒤의 markShared 가 바꾸므로 돌려주는 id→이름은 이번에 실제로 바뀐 행과 같다. PG 는 UPDATE 와 같은 FOR NO KEY UPDATE, Tibero 는 FOR UPDATE.
+  -->
+  <select id="selectShareTargetsForUpdate" resultMap="com.smartfirehub.analytics.repository.mybatis.AnalyticsCommon.idName">
+    SELECT sq.id, sq.name FROM saved_query sq
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="sq.id"/></include>
+       AND sq.created_by = #{ownerId}
+       AND sq.is_shared = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlFalse"/>
+    <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.lockNoKeyUpdate"/>
+  </select>
+
+  <update id="markShared">
+    UPDATE saved_query SET is_shared = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="id"/></include>
+  </update>
+
+  <!-- 공유 여부별 수 — 집계라 행이 늘 하나다(대상이 없으면 SUM 이 NULL 이라 COALESCE 로 0). -->
+  <select id="countOwnedBySharing" resultMap="com.smartfirehub.analytics.repository.mybatis.AnalyticsCommon.sharingCounts">
+    SELECT COALESCE(SUM(CASE WHEN sq.is_shared = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/> THEN 0 ELSE 1 END), 0) AS private_count,
+           COALESCE(SUM(CASE WHEN sq.is_shared = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/> THEN 1 ELSE 0 END), 0) AS shared_count
+      FROM saved_query sq
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="sq.id"/></include>
+       AND sq.created_by = #{ownerId}
+  </select>
+
+  <insert id="insert" useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+    INSERT INTO saved_query (name, description, sql_text, dataset_id, folder, is_shared, created_by<include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.insertTimestampColumns"/>)
+    VALUES (#{name}, #{description,jdbcType=VARCHAR}, #{sqlText}, #{datasetId,jdbcType=BIGINT}, #{folder,jdbcType=VARCHAR},
+            <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.boolLiteral"><property name="v" value="shared"/></include>,
+            #{createdBy}<include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.insertTimestampValues"/>)
+  </insert>
+
+  <!-- jOOQ forUpdate() 와 같은 FOR UPDATE — 두 DB 같은 문장. id 를 함께 읽어 수정 시각이 비어도 행이 있음을 잃지 않는다. -->
+  <select id="lockVersionById" resultMap="com.smartfirehub.analytics.repository.mybatis.AnalyticsCommon.versionRow">
+    SELECT id, updated_at FROM saved_query WHERE id = #{id} FOR UPDATE
+  </select>
+
+  <update id="update">
+    UPDATE saved_query
+       SET updated_by = #{updatedBy,jdbcType=BIGINT},
+           updated_at = #{updatedAt}
+       <if test="name != null">, name = #{name}</if>
+       <if test="setDescription">, description = #{description,jdbcType=VARCHAR}</if>
+       <if test="sqlText != null">, sql_text = #{sqlText}</if>
+       <if test="datasetId != null">, dataset_id = #{datasetId}</if>
+       <if test="setFolder">, folder = #{folder,jdbcType=VARCHAR}</if>
+       <if test="isShared != null">, is_shared = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.boolLiteral"><property name="v" value="isShared"/></include></if>
+     WHERE id = #{id}
+  </update>
+
+  <delete id="deleteByIdAndOwner">
+    DELETE FROM saved_query WHERE id = #{id} AND created_by = #{userId}
+  </delete>
+
+  <select id="selectDistinctFolders" resultType="java.lang.String">
+    SELECT DISTINCT sq.folder FROM saved_query sq
+     WHERE sq.folder IS NOT NULL
+       AND <include refid="listScope"/>
+     ORDER BY sq.folder ASC
+  </select>
+
+  <!--
+    주인이 아닌 사용자가 만든 차트 수. ownerId 가 null 인 경우는 구현이 이 문장을 부르기 전에 0 으로 끝낸다 — jOOQ 3.19 의 ne(null) 은
+    created_by &lt;&gt; NULL 을 그려 UNKNOWN(0행)이므로 같은 결과다(WD-710 C1).
+  -->
+  <select id="countOtherUserCharts" resultType="_long">
+    SELECT COUNT(*) FROM chart c
+     WHERE c.saved_query_id = #{savedQueryId}
+       AND c.created_by &lt;&gt; #{ownerId}
+  </select>
+
+</mapper>

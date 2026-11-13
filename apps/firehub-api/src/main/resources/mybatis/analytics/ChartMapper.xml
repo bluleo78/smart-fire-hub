@@ -1,0 +1,199 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  분석 차트(chart) 문장(WD-710) — JooqChartRepository 와 같은 의미. 규칙은 MyBatisPlatformConfig javadoc.
+  chart·saved_query·dashboard_widget 은 테넌트 정책(RLS) 대상이라 tenant_id 를 값·술어로 쓰지 않는다(DEFAULT 가 채운다). 만든이 이름 조인("user")은
+  jOOQ 처럼 테넌트 조건 없이 id 로만, 내부 조인으로 잇는다.
+  공유 가시성(소유 또는 공유)은 DashboardVisibility.ownedOrShared 조각 하나로 쓴다(스펙 D4) — 삭제 영향 조회의 불리언 열은 Tibero 에 불리언 값 식이
+  없어 CASE WHEN … THEN sqlTrue ELSE sqlFalse END 로 감싼다(PG boolean, Tibero NUMBER(1) 둘 다 _boolean 으로 받는다).
+  config 는 PG jsonb / Tibero JSON 열 — 읽기는 jsonText(문자열), 쓰기는 jsonValue(PG CAST jsonb). 맵 변환·기본값은 구현이 jOOQ 와 같게 한다.
+  정렬: 목록은 updated_at DESC, id DESC(같은 수정 시각에서 페이지 경계가 흔들리지 않게 — jOOQ 판에도 같은 tiebreak 를 더했다). 삭제 영향은 jOOQ 그대로 name, id.
+  삽입 시각: PG 는 jOOQ 처럼 열 DEFAULT, Tibero 는 DB UTC 시계로 명시(insertTimestampColumns/Values). 수정 시각은 jOOQ 와 같은 자바 시각을 바인딩.
+  RETURNING 대신: 삽입은 생성 키(useGeneratedKeys), 공유 켜기는 대상 FOR UPDATE 조회 → 그 id 만 UPDATE(구현이 한 트랜잭션으로 묶는다).
+  위젯은 차트 삭제 때 DB FK(ON DELETE CASCADE)가 지운다 — 문장에서 따로 지우지 않는다.
+-->
+<mapper namespace="com.smartfirehub.analytics.repository.mybatis.ChartMapper">
+
+  <resultMap id="chartRow" type="com.smartfirehub.analytics.repository.mybatis.ChartRows$ChartRow">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="name" javaType="java.lang.String"/>
+      <arg column="description" javaType="java.lang.String"/>
+      <arg column="saved_query_id" javaType="java.lang.Long"/>
+      <arg column="saved_query_name" javaType="java.lang.String"/>
+      <arg column="chart_type" javaType="java.lang.String"/>
+      <arg column="config_json" javaType="java.lang.String"/>
+      <arg column="is_shared" javaType="_boolean"/>
+      <arg column="created_by_name" javaType="java.lang.String"/>
+      <arg column="created_by" javaType="java.lang.Long"/>
+      <arg column="created_at" javaType="java.time.LocalDateTime"/>
+      <arg column="updated_at" javaType="java.time.LocalDateTime"/>
+      <arg column="dashboard_count" javaType="_long"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="impactRow" type="com.smartfirehub.analytics.repository.mybatis.ChartRows$ImpactRow">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="name" javaType="java.lang.String"/>
+      <arg column="visible" javaType="_boolean"/>
+    </constructor>
+  </resultMap>
+
+
+
+  <!-- 조회자에게 보이는 차트(본인 소유 또는 공유) — jOOQ visibleTo(userId). -->
+  <sql id="visible">
+    <include refid="com.smartfirehub.analytics.repository.mybatis.DashboardVisibility.ownedOrShared"><property name="alias" value="c"/></include>
+  </sql>
+
+  <!-- 목록·건수가 함께 쓰는 소유/공유 범위(WD-328) — 차트·저장 쿼리 공용 DashboardVisibility.listScope. -->
+  <sql id="listScope">
+    <include refid="com.smartfirehub.analytics.repository.mybatis.DashboardVisibility.listScope"><property name="alias" value="c"/></include>
+  </sql>
+
+  <!-- 목록·건수의 검색(이름 또는 설명 — 공용 nameDescSearch)·종류·저장 쿼리 필터. 빈 검색·종류는 구현이 null 로 넘겨 거르지 않는다. -->
+  <sql id="listFilters">
+    <include refid="com.smartfirehub.analytics.repository.mybatis.DashboardVisibility.nameDescSearch"><property name="alias" value="c"/></include>
+    <if test="chartType != null">AND c.chart_type = #{chartType}</if>
+    <if test="savedQueryId != null">AND c.saved_query_id = #{savedQueryId}</if>
+  </sql>
+
+  <!-- 응답 열 — 저장 쿼리 이름·만든이 이름은 내부 조인, 위젯 수는 jOOQ 와 같은 상관 서브쿼리. -->
+  <sql id="responseColumns">
+    c.id, c.name, c.description, c.saved_query_id, sq.name AS saved_query_name, c.chart_type,
+    <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.jsonText"><property name="col" value="c.config"/><property name="alias" value="config_json"/></include>,
+    c.is_shared, u.name AS created_by_name, c.created_by, c.created_at, c.updated_at,
+    (SELECT COUNT(*) FROM dashboard_widget dw WHERE dw.chart_id = c.id) AS dashboard_count
+  </sql>
+
+  <sql id="responseJoins">
+    JOIN saved_query sq ON sq.id = c.saved_query_id
+    JOIN <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.userTable"/> u ON u.id = c.created_by
+  </sql>
+
+  <select id="selectPage" resultMap="chartRow">
+    SELECT <include refid="responseColumns"/>
+      FROM chart c
+      <include refid="responseJoins"/>
+     WHERE <include refid="listScope"/>
+           <include refid="listFilters"/>
+     ORDER BY c.updated_at DESC, c.id DESC
+    <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.pageClause"/>
+  </select>
+
+  <!-- jOOQ 처럼 조인 없이 chart 만 센다. -->
+  <select id="count" resultType="_long">
+    SELECT COUNT(*) FROM chart c
+     WHERE <include refid="listScope"/>
+           <include refid="listFilters"/>
+  </select>
+
+  <select id="selectDetail" resultMap="chartRow">
+    SELECT <include refid="responseColumns"/>
+      FROM chart c
+      <include refid="responseJoins"/>
+     WHERE c.id = #{id}
+       AND <choose>
+             <when test="ownerOnly">c.created_by = #{userId}</when>
+             <otherwise><include refid="visible"/></otherwise>
+           </choose>
+  </select>
+
+  <!-- 삭제 영향(WD-86) — 사용자 필터 없이 모두, 보이는지는 목록과 같은 규칙으로 계산한 열. -->
+  <select id="selectImpactRefs" resultMap="impactRow">
+    SELECT c.id, c.name,
+           CASE WHEN <include refid="visible"/>
+                THEN <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>
+                ELSE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlFalse"/> END AS visible
+      FROM chart c
+     WHERE c.saved_query_id = #{savedQueryId}
+     ORDER BY c.name ASC, c.id ASC
+  </select>
+
+  <select id="selectSavedQueryId" resultType="java.lang.Long">
+    SELECT saved_query_id FROM chart WHERE id = #{chartId}
+  </select>
+
+  <!-- 가시성 없음(내부 용도) — jOOQ 그대로. -->
+  <select id="selectSqlTextBySavedQueryId" resultType="java.lang.String">
+    SELECT sql_text FROM saved_query WHERE id = #{savedQueryId}
+  </select>
+
+  <select id="selectVisibleSqlText" resultType="java.lang.String">
+    SELECT sq.sql_text FROM chart c
+      JOIN saved_query sq ON sq.id = c.saved_query_id
+     WHERE c.id = #{chartId}
+       AND <include refid="visible"/>
+  </select>
+
+  <insert id="insert" useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+    INSERT INTO chart (name, description, saved_query_id, chart_type, config, is_shared, created_by<include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.insertTimestampColumns"/>)
+    VALUES (#{name}, #{description,jdbcType=VARCHAR}, #{savedQueryId}, #{chartType},
+            <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.jsonValue"><property name="param" value="configJson"/></include>,
+            <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.boolLiteral"><property name="v" value="shared"/></include>,
+            #{createdBy}<include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.insertTimestampValues"/>)
+  </insert>
+
+  <!-- jOOQ forUpdate() 와 같은 FOR UPDATE — 두 DB 같은 문장. id 를 함께 읽어 수정 시각이 비어도 행이 있음을 잃지 않는다. -->
+  <select id="lockVersionById" resultMap="com.smartfirehub.analytics.repository.mybatis.AnalyticsCommon.versionRow">
+    SELECT id, updated_at FROM chart WHERE id = #{id} FOR UPDATE
+  </select>
+
+  <update id="update">
+    UPDATE chart
+       SET updated_by = #{updatedBy,jdbcType=BIGINT},
+           updated_at = #{updatedAt}
+       <if test="name != null">, name = #{name}</if>
+       <if test="setDescription">, description = #{description,jdbcType=VARCHAR}</if>
+       <if test="chartType != null">, chart_type = #{chartType}</if>
+       <if test="configJson != null">, config = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.jsonValue"><property name="param" value="configJson"/></include></if>
+       <if test="isShared != null">, is_shared = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.boolLiteral"><property name="v" value="isShared"/></include></if>
+     WHERE id = #{id}
+  </update>
+
+  <!--
+    공유 켜기 대상 잠금(WD-194·464, Review Focus 4) — 저장 쿼리 shareQueries 와 같은 형태. 대상(내가 만든 비공유)을 먼저 잠그고 읽고,
+    잠근 행만 뒤의 markShared 가 바꾸므로 돌려주는 id→이름은 이번에 실제로 바뀐 행과 같다. PG 는 UPDATE 와 같은 FOR NO KEY UPDATE, Tibero 는 FOR UPDATE.
+  -->
+  <select id="selectShareTargetsForUpdate" resultMap="com.smartfirehub.analytics.repository.mybatis.AnalyticsCommon.idName">
+    SELECT c.id, c.name FROM chart c
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="c.id"/></include>
+       AND c.created_by = #{ownerId}
+       AND c.is_shared = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlFalse"/>
+    <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.lockNoKeyUpdate"/>
+  </select>
+
+  <update id="markShared">
+    UPDATE chart SET is_shared = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="id"/></include>
+  </update>
+
+  <!-- 위젯 목록 가림(WD-195) — 단건·데이터 경로와 같은 visible 규칙을 한 번의 질의로. -->
+  <select id="selectVisibleIds" resultType="java.lang.Long">
+    SELECT c.id FROM chart c
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="c.id"/></include>
+       AND <include refid="visible"/>
+  </select>
+
+  <!-- 공유 여부별 수(WD-325) — 집계라 행이 늘 하나다(대상이 없으면 SUM 이 NULL 이라 COALESCE 로 0). -->
+  <select id="countOwnedBySharing" resultMap="com.smartfirehub.analytics.repository.mybatis.AnalyticsCommon.sharingCounts">
+    SELECT COALESCE(SUM(CASE WHEN c.is_shared = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/> THEN 0 ELSE 1 END), 0) AS private_count,
+           COALESCE(SUM(CASE WHEN c.is_shared = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/> THEN 1 ELSE 0 END), 0) AS shared_count
+      FROM chart c
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="c.id"/></include>
+       AND c.created_by = #{ownerId}
+  </select>
+
+  <!-- jOOQ selectDistinct 그대로 — 순서 없음(saved_query_id 는 NOT NULL 이지만 jOOQ 조건을 그대로 둔다). -->
+  <select id="selectSavedQueryIds" resultType="java.lang.Long">
+    SELECT DISTINCT c.saved_query_id FROM chart c
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="c.id"/></include>
+       AND c.saved_query_id IS NOT NULL
+  </select>
+
+  <delete id="deleteByIdAndOwner">
+    DELETE FROM chart WHERE id = #{id} AND created_by = #{userId}
+  </delete>
+
+</mapper>

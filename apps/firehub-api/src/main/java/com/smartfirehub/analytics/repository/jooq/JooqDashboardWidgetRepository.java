@@ -7,6 +7,7 @@ import com.smartfirehub.analytics.dto.DashboardResponse;
 import com.smartfirehub.analytics.dto.UpdateWidgetLayoutRequest;
 import com.smartfirehub.analytics.dto.UpdateWidgetRequest;
 import com.smartfirehub.analytics.repository.DashboardWidgetRepository;
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -23,6 +24,7 @@ import org.springframework.stereotype.Repository;
 
 /** DashboardWidgetRepository 의 jOOQ(PostgreSQL) 구현 — WD-485. */
 @Repository
+@ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
 public class JooqDashboardWidgetRepository implements DashboardWidgetRepository {
 

@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  애드혹 분석 쿼리 실행 기록(analytics_query_run) 문장(WD-710) — JooqAnalyticsQueryRunRepository 와 같은 의미. 규칙은 MyBatisPlatformConfig javadoc.
+  테넌트 정책(RLS) 대상이라 tenant_id 를 값·술어로 쓰지 않는다(DEFAULT 가 채운다).
+  id: 자바 UUID.randomUUID() 문자열을 넣는다 — PG 는 uuid 열이라 CAST, Tibero 는 VARCHAR2(36) 문자열 그대로(RETURNING 이 없어 DB 생성 id 를
+  돌려받지 않으려는 것이다).
+  보존 기간(1시간)은 DB 시계로 비교한다 — created_at 이 DB 시계로 채워지므로 앱 시계와 섞으면 두 시계 차이만큼 경계가 어긋난다(jOOQ 판 주석).
+  PG 는 jOOQ 와 같은 now() - interval '1 hour', Tibero 는 UTC 벽시계 TIMESTAMP 라 SYS_EXTRACT_UTC(SYSTIMESTAMP) - INTERVAL '1' HOUR.
+  created_at: PG 는 jOOQ 처럼 열 DEFAULT(now())에 맡기고, Tibero 는 DB UTC 시계(dbNow)로 명시한다(열 DEFAULT 에 기대지 않는 묶음 규칙).
+-->
+<mapper namespace="com.smartfirehub.analytics.repository.mybatis.AnalyticsQueryRunMapper">
+
+  <sql id="retentionCutoff" databaseId="postgresql">now() - interval '1 hour'</sql>
+  <sql id="retentionCutoff" databaseId="tibero">SYS_EXTRACT_UTC(SYSTIMESTAMP) - INTERVAL '1' HOUR</sql>
+
+  <sql id="idValue" databaseId="postgresql">CAST(#{id} AS uuid)</sql>
+  <sql id="idValue" databaseId="tibero">#{id}</sql>
+
+  <!-- created_at 은 공용 created_at 단독 꼬리(PG 는 비움 → 열 DEFAULT, Tibero 는 dbNow). -->
+  <insert id="insert">
+    INSERT INTO analytics_query_run (id, user_id, sql_text, max_rows<include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.insertCreatedAtColumn"/>)
+    VALUES (<include refid="idValue"/>, #{userId}, #{sqlText}, #{maxRows}<include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.insertCreatedAtValue"/>)
+  </insert>
+
+  <!-- created_at 단독 범위라 idx_analytics_query_run_created 를 탄다. -->
+  <delete id="deleteExpired">
+    DELETE FROM analytics_query_run WHERE created_at &lt; <include refid="retentionCutoff"/>
+  </delete>
+
+  <resultMap id="runRow" type="com.smartfirehub.analytics.repository.mybatis.AnalyticsQueryRunMapper$RunRow">
+    <constructor>
+      <arg column="sql_text" javaType="java.lang.String"/>
+      <arg column="max_rows" javaType="_int"/>
+    </constructor>
+  </resultMap>
+
+  <select id="selectOwned" resultMap="runRow">
+    SELECT sql_text, max_rows FROM analytics_query_run
+     WHERE id = <include refid="idValue"/>
+       AND user_id = #{userId}
+       AND created_at &gt;= <include refid="retentionCutoff"/>
+  </select>
+
+</mapper>

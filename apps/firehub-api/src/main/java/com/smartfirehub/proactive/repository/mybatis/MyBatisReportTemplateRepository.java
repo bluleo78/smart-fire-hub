@@ -1,5 +1,7 @@
 package com.smartfirehub.proactive.repository.mybatis;
 
+import static com.smartfirehub.global.platformdb.mybatis.PlatformText.blankToNull;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.dto.LockedRowVersion;
 import com.smartfirehub.global.platformdb.mybatis.PlatformJson;
@@ -112,11 +114,6 @@ public class MyBatisReportTemplateRepository implements ReportTemplateRepository
   @Override
   public int delete(Long id, Long userId) {
     return mapper.delete(id, userId);
-  }
-
-  /** 공백뿐인 설명·작성 스타일은 NULL 로 저장한다(WD-135) — jOOQ 구현과 같다. */
-  private static String blankToNull(String value) {
-    return value == null || value.isBlank() ? null : value;
   }
 
   private ReportTemplateResponse toResponse(TemplateRow r) {

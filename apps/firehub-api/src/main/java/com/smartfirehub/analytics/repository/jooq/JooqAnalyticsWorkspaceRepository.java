@@ -6,6 +6,7 @@ import static org.jooq.impl.DSL.table;
 
 import com.smartfirehub.analytics.repository.AnalyticsWorkspaceRepository;
 import com.smartfirehub.analytics.service.AnalyticsAssetKind;
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -34,6 +35,7 @@ import org.springframework.stereotype.Repository;
  * </ul>
  */
 @Repository
+@ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
 public class JooqAnalyticsWorkspaceRepository implements AnalyticsWorkspaceRepository {
 

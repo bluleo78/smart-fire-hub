@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  분석 대시보드 위젯(dashboard_widget) 문장(WD-710) — JooqDashboardWidgetRepository 와 같은 의미. 규칙은 MyBatisPlatformConfig javadoc.
+  dashboard_widget·chart 는 테넌트 정책(RLS) 대상이라 tenant_id 를 값·술어로 쓰지 않는다(DEFAULT 가 채운다).
+  위젯 응답은 조회자 가시성 미적용 원본(차트 이름·종류 포함, accessible 은 늘 참 — 가림은 서비스 withholdInaccessible, WD-195).
+  정렬: jOOQ 그대로 position_y, position_x.
+  삽입 시각: PG 는 jOOQ 처럼 열 DEFAULT, Tibero 는 DB UTC 시계로 명시. 수정 시각은 jOOQ 와 같은 자바 시각을 바인딩.
+  RETURNING 대신 생성 키(useGeneratedKeys). 위젯 소속 대시보드·차트가 지워지면 DB FK(ON DELETE CASCADE)가 위젯을 지운다.
+-->
+<mapper namespace="com.smartfirehub.analytics.repository.mybatis.DashboardWidgetMapper">
+
+  <resultMap id="widgetRow" type="com.smartfirehub.analytics.dto.DashboardResponse$DashboardWidgetResponse">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="chart_id" javaType="java.lang.Long"/>
+      <arg column="chart_name" javaType="java.lang.String"/>
+      <arg column="chart_type" javaType="java.lang.String"/>
+      <arg column="position_x" javaType="_int"/>
+      <arg column="position_y" javaType="_int"/>
+      <arg column="width" javaType="_int"/>
+      <arg column="height" javaType="_int"/>
+      <arg column="accessible" javaType="_boolean"/>
+    </constructor>
+  </resultMap>
+
+  <!-- accessible 은 리포지토리가 조회자를 모르므로 늘 참(jOOQ 판과 같다). -->
+  <sql id="widgetColumns">
+    dw.id, dw.chart_id, c.name AS chart_name, c.chart_type, dw.position_x, dw.position_y, dw.width, dw.height,
+    <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/> AS accessible
+  </sql>
+
+  <select id="selectByDashboardId" resultMap="widgetRow">
+    SELECT <include refid="widgetColumns"/>
+      FROM dashboard_widget dw
+      JOIN chart c ON c.id = dw.chart_id
+     WHERE dw.dashboard_id = #{dashboardId}
+     ORDER BY dw.position_y ASC, dw.position_x ASC
+  </select>
+
+  <select id="selectById" resultMap="widgetRow">
+    SELECT <include refid="widgetColumns"/>
+      FROM dashboard_widget dw
+      JOIN chart c ON c.id = dw.chart_id
+     WHERE dw.id = #{widgetId} AND dw.dashboard_id = #{dashboardId}
+  </select>
+
+  <select id="countByDashboardId" resultType="_int">
+    SELECT COUNT(*) FROM dashboard_widget WHERE dashboard_id = #{dashboardId}
+  </select>
+
+  <!-- 있는지 판정(WD-202) — PG 에 DUAL 이 없어 EXISTS 대신 수를 세고 구현이 0 보다 큰지 본다. -->
+  <select id="countByDashboardIdAndChartId" resultType="_int">
+    SELECT COUNT(*) FROM dashboard_widget WHERE dashboard_id = #{dashboardId} AND chart_id = #{chartId}
+  </select>
+
+  <insert id="insert" useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+    INSERT INTO dashboard_widget (dashboard_id, chart_id, position_x, position_y, width, height<include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.insertTimestampColumns"/>)
+    VALUES (#{dashboardId}, #{chartId}, #{positionX}, #{positionY}, #{width}, #{height}<include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.insertTimestampValues"/>)
+  </insert>
+
+  <update id="update">
+    UPDATE dashboard_widget
+       SET updated_at = #{updatedAt}
+       <if test="positionX != null">, position_x = #{positionX}</if>
+       <if test="positionY != null">, position_y = #{positionY}</if>
+       <if test="width != null">, width = #{width}</if>
+       <if test="height != null">, height = #{height}</if>
+     WHERE id = #{widgetId}
+  </update>
+
+  <select id="selectIdsInDashboard" resultType="java.lang.Long">
+    SELECT dw.id FROM dashboard_widget dw
+     WHERE dw.dashboard_id = #{dashboardId}
+       AND <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="dw.id"/></include>
+  </select>
+
+  <!-- WD-193 이중 방어 — dashboard_id 를 조건에 함께 건다. -->
+  <update id="updateLayout">
+    UPDATE dashboard_widget
+       SET position_x = #{positionX}, position_y = #{positionY}, width = #{width}, height = #{height},
+           updated_at = #{updatedAt}
+     WHERE id = #{widgetId} AND dashboard_id = #{dashboardId}
+  </update>
+
+  <delete id="deleteByIdAndDashboard">
+    DELETE FROM dashboard_widget WHERE id = #{widgetId} AND dashboard_id = #{dashboardId}
+  </delete>
+
+</mapper>
