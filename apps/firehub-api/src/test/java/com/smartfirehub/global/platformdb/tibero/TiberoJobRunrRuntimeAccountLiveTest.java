@@ -37,20 +37,25 @@ class TiberoJobRunrRuntimeAccountLiveTest {
         new OracleStorageProvider(poc.dataSource(), TABLE_PREFIX, DatabaseOptions.SKIP_CREATE);
     storage.setJobMapper(new JobMapper(new JacksonJsonMapper()));
 
-    Job job =
-        new Job(
-            new JobDetails(
-                TiberoJobRunrRuntimeAccountLiveTest.class.getName(), null, "noop", List.of()),
-            new EnqueuedState());
-    // 저장이 실패하면 지울 것이 없다 — 정리 예외가 원래 실패를 가리지 않게 try 밖에 둔다.
-    storage.save(job);
+    // 저장소는 폴링·메트릭 스레드를 쥔다 — 시험이 끝나면 닫아 공유 JVM 에 남기지 않는다(WD-737).
     try {
-      Job read = storage.getJobById(job.getId());
-      assertThat(read.getId()).isEqualTo(job.getId());
-      assertThat(read.getState()).isEqualTo(StateName.ENQUEUED);
-      assertThat(storage.countJobs(StateName.ENQUEUED)).isGreaterThanOrEqualTo(1);
+      Job job =
+          new Job(
+              new JobDetails(
+                  TiberoJobRunrRuntimeAccountLiveTest.class.getName(), null, "noop", List.of()),
+              new EnqueuedState());
+      // 저장이 실패하면 지울 것이 없다 — 정리 예외가 원래 실패를 가리지 않게 try 밖에 둔다.
+      storage.save(job);
+      try {
+        Job read = storage.getJobById(job.getId());
+        assertThat(read.getId()).isEqualTo(job.getId());
+        assertThat(read.getState()).isEqualTo(StateName.ENQUEUED);
+        assertThat(storage.countJobs(StateName.ENQUEUED)).isGreaterThanOrEqualTo(1);
+      } finally {
+        storage.deletePermanently(job.getId());
+      }
     } finally {
-      storage.deletePermanently(job.getId());
+      storage.close();
     }
   }
 

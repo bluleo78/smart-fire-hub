@@ -111,12 +111,15 @@ public class MyBatisRoleRepository implements RoleRepository {
     mapper.deletePermission(roleId, permissionId);
   }
 
-  /** 기존 권한을 지우고 다시 넣는다 — Tibero 는 다중 행 VALUES 가 없어 행마다 넣는다(같은 호출자 트랜잭션 안). */
+  /**
+   * 기존 권한을 지우고 다시 넣는다(같은 호출자 트랜잭션 안). 빈 목록이면 지우기만 한다. 넣기는 청크마다 한 문장(PG 다중 행 VALUES·Tibero INSERT
+   * ALL)이다. 중복 제거를 하지 않는다 — 행별 삽입·jOOQ 판처럼 중복 id 는 PK 위반으로 실패해야 한다.
+   */
   @Override
   public void setPermissions(Long roleId, List<Long> permissionIds) {
     mapper.deleteAllPermissions(roleId);
-    for (Long permissionId : permissionIds) {
-      mapper.insertPermission(roleId, permissionId);
+    for (List<Long> chunk : InChunks.ordered(permissionIds, InChunks.INSERT_ROWS)) {
+      mapper.insertPermissions(roleId, chunk);
     }
   }
 

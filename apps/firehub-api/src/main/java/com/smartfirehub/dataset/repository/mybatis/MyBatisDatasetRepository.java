@@ -15,7 +15,7 @@ import com.smartfirehub.global.dto.LockedRowVersion;
 import com.smartfirehub.global.platformdb.PlatformLocks;
 import com.smartfirehub.global.platformdb.mybatis.InChunks;
 import com.smartfirehub.global.platformdb.mybatis.PlatformMyBatisRepository;
-import com.smartfirehub.global.util.LikePatternUtils;
+import com.smartfirehub.global.platformdb.mybatis.PlatformText;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.securitylevel.access.LevelPolicy;
 import com.smartfirehub.securitylevel.dto.SecurityLevelSummary;
@@ -73,16 +73,6 @@ public class MyBatisDatasetRepository implements DatasetRepository {
     this.securityLevelRepository = securityLevelRepository;
   }
 
-  /** 빈·공백 필터는 걸지 않는다(jOOQ 의 isBlank 검사와 같다). */
-  private static String blankToNull(String s) {
-    return s == null || s.isBlank() ? null : s;
-  }
-
-  /** 검색 패턴 — jOOQ 의 LikePatternUtils.containsPattern 처럼 앞뒤 공백을 걷고 %·_·\ 를 이스케이프한다. 빈 검색어면 null. */
-  private static String searchPattern(String search) {
-    return search == null || search.isBlank() ? null : LikePatternUtils.containsPattern(search);
-  }
-
   /** 즐겨찾기만 보기는 사용자가 있을 때만 건다(jOOQ 와 같다). */
   private static Long favoriteUser(boolean favoriteOnly, Long currentUserId) {
     return favoriteOnly && currentUserId != null ? currentUserId : null;
@@ -106,11 +96,11 @@ public class MyBatisDatasetRepository implements DatasetRepository {
     List<Long> datasetIds =
         mapper.selectPageIds(
             categoryId,
-            blankToNull(storageType),
-            blankToNull(originType),
-            blankToNull(status),
+            PlatformText.blankToNull(storageType),
+            PlatformText.blankToNull(originType),
+            PlatformText.blankToNull(status),
             securityLevelId,
-            searchPattern(search),
+            PlatformText.searchPattern(search),
             favoriteUser(favoriteOnly, currentUserId),
             MyBatisDatasetVisibility.params(access),
             size,
@@ -142,11 +132,11 @@ public class MyBatisDatasetRepository implements DatasetRepository {
       DatasetVisibility access) {
     return mapper.countFiltered(
         categoryId,
-        blankToNull(storageType),
-        blankToNull(originType),
-        blankToNull(status),
+        PlatformText.blankToNull(storageType),
+        PlatformText.blankToNull(originType),
+        PlatformText.blankToNull(status),
         securityLevelId,
-        searchPattern(search),
+        PlatformText.searchPattern(search),
         favoriteUser(favoriteOnly, currentUserId),
         MyBatisDatasetVisibility.params(access));
   }

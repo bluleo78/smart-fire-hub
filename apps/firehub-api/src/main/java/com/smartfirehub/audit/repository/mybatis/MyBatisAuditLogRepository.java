@@ -4,8 +4,8 @@ import com.smartfirehub.audit.dto.AuditLogResponse;
 import com.smartfirehub.audit.repository.AuditLogRepository;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.platformdb.mybatis.PlatformMyBatisRepository;
+import com.smartfirehub.global.platformdb.mybatis.PlatformText;
 import com.smartfirehub.global.platformdb.mybatis.TiberoTextLimits;
-import com.smartfirehub.global.util.LikePatternUtils;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.securitylevel.repository.mybatis.MyBatisDatasetVisibility;
 import java.time.LocalDateTime;
@@ -99,11 +99,11 @@ public class MyBatisAuditLogRepository implements AuditLogRepository {
     AuditLogQuery q =
         new AuditLogQuery()
             .vis(datasetVisibility.map(MyBatisDatasetVisibility::params).orElse(null))
-            .searchPattern(isBlank(search) ? null : LikePatternUtils.containsPattern(search.trim()))
+            .searchPattern(PlatformText.searchPattern(search))
             .userId(userId)
-            .actionType(blankToNull(actionType))
-            .resource(blankToNull(resource))
-            .result(blankToNull(result))
+            .actionType(PlatformText.blankToNull(actionType))
+            .resource(PlatformText.blankToNull(resource))
+            .result(PlatformText.blankToNull(result))
             .fromInclusive(startDate)
             .toInclusive(endDate)
             .page(page, size);
@@ -121,14 +121,15 @@ public class MyBatisAuditLogRepository implements AuditLogRepository {
       int size) {
     AuditLogQuery q =
         new AuditLogQuery()
-            .actorPattern(isBlank(actor) ? null : LikePatternUtils.containsPattern(actor.trim()))
-            .actionType(blankToNull(actionType))
+            .actorPattern(PlatformText.searchPattern(actor))
+            .actionType(PlatformText.blankToNull(actionType))
             .fromInclusive(fromInclusive)
             .toExclusive(toExclusive)
             .page(page, size);
-    if (!isBlank(target)) {
-      String t = target.trim();
-      q.target(t, LikePatternUtils.containsPattern(t));
+    String t = PlatformText.blankToNull(target);
+    if (t != null) {
+      t = t.trim(); // 정확 일치 값과 패턴 모두 trim 한 값으로 — 이전 동작과 같다.
+      q.target(t, PlatformText.searchPattern(t));
     }
     return page(mapper.countPlatform(q), mapper.selectPlatform(q), page, size);
   }
@@ -138,14 +139,5 @@ public class MyBatisAuditLogRepository implements AuditLogRepository {
       long total, List<AuditLogResponse> content, int page, int size) {
     int totalPages = (int) Math.ceil((double) total / size);
     return new PageResponse<>(content, page, size, total, totalPages);
-  }
-
-  private static boolean isBlank(String s) {
-    return s == null || s.isBlank();
-  }
-
-  /** null·공백 필터는 조건에서 뺀다(jOOQ 구현의 {@code != null && !isBlank()} 분기와 같다). */
-  private static String blankToNull(String s) {
-    return isBlank(s) ? null : s;
   }
 }

@@ -3,7 +3,7 @@ package com.smartfirehub.user.repository.mybatis;
 import com.smartfirehub.global.platformdb.PlatformLocks;
 import com.smartfirehub.global.platformdb.mybatis.InChunks;
 import com.smartfirehub.global.platformdb.mybatis.PlatformMyBatisRepository;
-import com.smartfirehub.global.util.LikePatternUtils;
+import com.smartfirehub.global.platformdb.mybatis.PlatformText;
 import com.smartfirehub.user.dto.UserResponse;
 import com.smartfirehub.user.repository.UserRepository;
 import java.time.LocalDateTime;
@@ -111,7 +111,8 @@ public class MyBatisUserRepository implements UserRepository {
 
   @Override
   public List<UserResponse> findAllPaginated(long tenantId, String search, int page, int size) {
-    return mapper.selectPage(tenantId, searchPattern(search), size, (long) page * size);
+    return mapper.selectPage(
+        tenantId, PlatformText.searchPattern(search), size, (long) page * size);
   }
 
   @Override
@@ -128,12 +129,7 @@ public class MyBatisUserRepository implements UserRepository {
 
   @Override
   public long countAll(long tenantId, String search) {
-    return mapper.countInTenant(tenantId, searchPattern(search));
-  }
-
-  /** 검색어가 비었으면 null(필터 없음), 아니면 LIKE 패턴. */
-  private static String searchPattern(String search) {
-    return search != null && !search.isBlank() ? LikePatternUtils.containsPattern(search) : null;
+    return mapper.countInTenant(tenantId, PlatformText.searchPattern(search));
   }
 
   @Override
@@ -182,12 +178,15 @@ public class MyBatisUserRepository implements UserRepository {
     mapper.deleteUserRole(userId, roleId);
   }
 
-  /** 기존 배정을 지우고 다시 넣는다 — Tibero 는 다중 행 VALUES 가 없어 행마다 넣는다(같은 호출자 트랜잭션 안). */
+  /**
+   * 기존 배정을 지우고 다시 넣는다(같은 호출자 트랜잭션 안). 빈 목록이면 지우기만 한다. 넣기는 청크마다 한 문장(PG 다중 행 VALUES·Tibero INSERT
+   * ALL)이다. 중복 제거를 하지 않는다 — 행별 삽입·jOOQ 판처럼 중복 id 는 PK 위반으로 실패해야 한다.
+   */
   @Override
   public void setRoles(Long userId, List<Long> roleIds) {
     mapper.deleteAllUserRoles(userId);
-    for (Long roleId : roleIds) {
-      mapper.insertUserRole(userId, roleId);
+    for (List<Long> chunk : InChunks.ordered(roleIds, InChunks.INSERT_ROWS)) {
+      mapper.insertUserRoles(userId, chunk);
     }
   }
 }

@@ -8,7 +8,6 @@ import com.smartfirehub.notification.repository.mybatis.NotificationOutboxMapper
 import com.smartfirehub.support.tibero.TiberoLive;
 import com.smartfirehub.support.tibero.TiberoPlatformSchema;
 import java.util.UUID;
-import java.util.concurrent.ThreadLocalRandom;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -45,14 +44,8 @@ class TiberoMyBatisNotificationOutboxRepositoryContractTest
 
   @Override
   protected long createTenant(String slugPrefix) {
-    long id = 900_000_000L + ThreadLocalRandom.current().nextLong(1_000_000L);
-    poc.jdbc()
-        .update(
-            "INSERT INTO tenant (id, slug, name, status) VALUES (?, ?, ?, 'ACTIVE')",
-            id,
-            slugPrefix + "-" + id,
-            slugPrefix + "-" + id);
-    return id;
+    // 공유 서버의 다른 행과 id 가 겹치면 새 난수로 다시 시도한다(WD-736).
+    return poc.insertTenantWithRandomId(slugPrefix);
   }
 
   @Override

@@ -182,6 +182,7 @@ PG는 jOOQ 구현을 그대로 쓰고, Tibero용 MyBatis 구현(`repository/myba
 - **상관 `ORDER BY … LIMIT 1` 서브쿼리는 `MAX(id)` 조인.** 활성 파이프라인의 마지막 실행 상태(`findLatestStatusesOfActivePipelines`·`findFailedActivePipelines`)는 파이프라인별 `MAX(id)` 를 고른 뒤 그 실행 행에 조인하는 두 DB 공통 형태다(Tibero 상관 서브쿼리에 `LIMIT` 이 없다). `MAX(id)` 파생 표는 활성 파이프라인으로 먼저 좁히고 두 문장이 같은 `latestExecution` 조각을 쓴다. jOOQ 와 같은 행(가장 큰 id)을 고르는지는 id 순서와 생성 시각 순서가 어긋나는 실행으로 계약 시험이 본다.
 - **감사 로그 조인 조각 재사용.** 홈 대시보드 집계는 `AuditLogMapper.xml` 의 `resourceIdAsLong`(숫자 아님·자리 초과는 NULL)·`metadataField`(PG `->>`, Tibero `JSON_VALUE` — 파일 이름처럼 짧은 값만)와 `PlatformSql.resourceColumn` 을 그대로 쓴다. jOOQ 가 문자열로 비교하는 곳(신선·오래됨 집계의 `resource_id = 데이터셋 id 문자열`)은 문자열 비교를 그대로 둔다(Tibero 는 `TO_CHAR`) — 앞자리 0 같은 값의 판정이 jOOQ 와 같아야 한다.
 - **정렬 2차 키.** MyBatis 문장에 `id DESC` 같은 2차 키를 더하면 jOOQ 구현에도 같이 더한다(계약 시험이 같은 시각 행의 순서를 고정). 묶음 ⑤ 의 `updated_at DESC` 목록·홈 대시보드의 시각 정렬(최근 임포트·실행·피드·임포트 실패)이 그렇다.
+- **문자열 정렬 차이.** `PlatformUserMapper` 의 email/name 정렬은 PG 로캘 정렬과 Tibero 이진 정렬이 다를 수 있다(동작 변경 없음).
 - **남은 범위.** 묶음 ⑤ 로 짝 검사(`PlatformRepositoryPairTest.PENDING`)는 비었다. 남은 Tibero 전환 범위는 짝 검사 밖의 jOOQ 사용처 — jOOQ `@Component`·`DSLContext` 를 직접 쓰는 서비스 — 로 WD-494 가 추적한다.
 
 ### 2. 마이그레이션 이원화 규칙

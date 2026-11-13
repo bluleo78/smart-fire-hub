@@ -68,6 +68,12 @@ public interface UserMapper {
 
   int insertUserRole(@Param("userId") Long userId, @Param("roleId") Long roleId);
 
+  /**
+   * 한 사용자에게 역할 여러 개를 한 문장으로 넣는다(WD-737) — PG 는 다중 행 VALUES, Tibero 는 INSERT ALL. 호출자가 {@code
+   * roleIds} 를 {@code InChunks.INSERT_ROWS} 행 이하로 나눠 부른다(INSERT ALL 컬럼 상한·바인드 여유). 중복 id 는 PK 위반이다.
+   */
+  int insertUserRoles(@Param("userId") Long userId, @Param("roleIds") List<Long> roleIds);
+
   int deleteUserRole(@Param("userId") Long userId, @Param("roleId") Long roleId);
 
   int deleteAllUserRoles(@Param("userId") Long userId);

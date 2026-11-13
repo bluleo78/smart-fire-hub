@@ -9,6 +9,7 @@ import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.DuplicateKeyException;
@@ -413,6 +414,77 @@ abstract class UserRepositoryContractTest extends AccessContractBase {
         });
     assertThat(fx.inTenant(tenantA, () -> repository().deleteRolesInTenant(user, tenantA)))
         .isZero();
+  }
+
+  /** 청크 경계를 한 행 넘는 목록 크기 — PG·Tibero 모두 같은 크기로 경계를 실제로 넘긴다(WD-737). */
+  protected int overflowListSize() {
+    return com.smartfirehub.global.platformdb.mybatis.InChunks.INSERT_ROWS + 1;
+  }
+
+  @Test
+  @DisplayName("빈 목록이면 기존 권한만 지운다")
+  void setRoles_emptyListOnlyClearsExisting() {
+    long r1 = fx.createRole(tenantA, "ADMIN", "관리자");
+    long r2 = fx.createRole(tenantA, "SUPPORT", "지원");
+    long user = member("se", tenantA, "ACTIVE");
+    fx.inTenant(
+        tenantA,
+        () -> {
+          repository().setRoles(user, List.of(r1, r2));
+          return null;
+        });
+    assertThat(fx.inTenant(tenantA, () -> repository().hasAdminRole(user))).isTrue();
+
+    fx.inTenant(
+        tenantA,
+        () -> {
+          repository().setRoles(user, List.of());
+          return null;
+        });
+
+    assertThat(fx.inTenant(tenantA, () -> repository().hasAdminRole(user))).isFalse();
+    assertThat(fx.inTenant(tenantA, () -> repository().deleteRolesInTenant(user, tenantA)))
+        .isZero();
+  }
+
+  @Test
+  @DisplayName("중복 id 는 지금과 같게 처리된다")
+  void setRoles_duplicateIdFailsWithDuplicateKey() {
+    // 행별 삽입·jOOQ 다중 행 INSERT 모두 (user_id, role_id) PK 위반 → DuplicateKeyException 이다.
+    long r1 = fx.createRole(tenantA, "ADMIN", "관리자");
+    long r2 = fx.createRole(tenantA, "SUPPORT", "지원");
+    long user = member("sd", tenantA, "ACTIVE");
+
+    assertThatThrownBy(
+            () ->
+                fx.inTenant(
+                    tenantA,
+                    () -> {
+                      repository().setRoles(user, List.of(r1, r2, r1));
+                      return null;
+                    }))
+        .isInstanceOf(DuplicateKeyException.class);
+  }
+
+  @Test
+  @DisplayName("청크 크기를 넘는 목록도 모두 저장된다")
+  void setRoles_listLargerThanChunkIsFullySaved() {
+    long user = member("sb", tenantA, "ACTIVE");
+    int n = overflowListSize();
+    List<Long> roleIds = new java.util.ArrayList<>();
+    for (int i = 0; i < n; i++) {
+      roleIds.add(fx.createRole(tenantA, "R" + i, "역할" + i));
+    }
+
+    fx.inTenant(
+        tenantA,
+        () -> {
+          repository().setRoles(user, roleIds);
+          return null;
+        });
+
+    assertThat(fx.inTenant(tenantA, () -> repository().deleteRolesInTenant(user, tenantA)))
+        .isEqualTo(n);
   }
 
   @Test

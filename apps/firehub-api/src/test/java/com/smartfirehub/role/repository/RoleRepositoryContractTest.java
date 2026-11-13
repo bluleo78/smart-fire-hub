@@ -13,6 +13,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.DuplicateKeyException;
@@ -249,6 +250,55 @@ public abstract class RoleRepositoryContractTest extends AccessContractBase {
     assertThat(fx.permissionIdsOfRole(tenantA, role)).containsExactly(p3);
     inA(() -> repository().setPermissions(role, List.of()));
     assertThat(fx.permissionIdsOfRole(tenantA, role)).isEmpty();
+  }
+
+  /** 청크 경계를 한 행 넘는 목록 크기 — PG·Tibero 모두 같은 크기로 경계를 실제로 넘긴다(WD-737). */
+  protected int overflowListSize() {
+    return com.smartfirehub.global.platformdb.mybatis.InChunks.INSERT_ROWS + 1;
+  }
+
+  @Test
+  @DisplayName("빈 목록이면 기존 권한만 지운다")
+  void setPermissions_emptyListOnlyClearsExisting() {
+    long role = fx.createRole(tenantA, prefix + "-e", "d");
+    long p1 = fx.createPermission(prefix + ":e1", "cat-" + prefix, "d");
+    long p2 = fx.createPermission(prefix + ":e2", "cat-" + prefix, "d");
+    inA(() -> repository().setPermissions(role, List.of(p1, p2)));
+    assertThat(fx.permissionIdsOfRole(tenantA, role)).containsExactlyInAnyOrder(p1, p2);
+
+    inA(() -> repository().setPermissions(role, List.of()));
+
+    assertThat(fx.permissionIdsOfRole(tenantA, role)).isEmpty();
+  }
+
+  @Test
+  @DisplayName("중복 id 는 지금과 같게 처리된다")
+  void setPermissions_duplicateIdFailsWithDuplicateKey() {
+    // 행별 삽입·jOOQ 다중 행 INSERT 모두 (role_id, permission_id) PK 위반 → DuplicateKeyException 이다.
+    // 일괄 INSERT 도 중복을 걸러 주지 않고 같은 예외로 실패해야 한다.
+    long role = fx.createRole(tenantA, prefix + "-d", "d");
+    long p1 = fx.createPermission(prefix + ":d1", "cat-" + prefix, "d");
+    long p2 = fx.createPermission(prefix + ":d2", "cat-" + prefix, "d");
+
+    assertThatThrownBy(() -> inA(() -> repository().setPermissions(role, List.of(p1, p2, p1))))
+        .isInstanceOf(DuplicateKeyException.class);
+  }
+
+  @Test
+  @DisplayName("청크 크기를 넘는 목록도 모두 저장된다")
+  void setPermissions_listLargerThanChunkIsFullySaved() {
+    long role = fx.createRole(tenantA, prefix + "-big", "d");
+    int n = overflowListSize();
+    List<Long> ids = new java.util.ArrayList<>();
+    for (int i = 0; i < n; i++) {
+      ids.add(fx.createPermission(prefix + ":big" + i, "cat-" + prefix, "d"));
+    }
+
+    inA(() -> repository().setPermissions(role, ids));
+
+    assertThat(fx.permissionIdsOfRole(tenantA, role))
+        .hasSize(n)
+        .containsExactlyInAnyOrderElementsOf(ids);
   }
 
   @Test

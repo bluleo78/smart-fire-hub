@@ -200,7 +200,12 @@ public abstract class AnalyticsDashboardRepositoryContractTest extends TenantPai
     fx.addWidget(tenantA, id, chartA());
     fx.addWidget(tenantA, id, chartA());
 
-    DashboardResponse r = inA(() -> repository().findAll(null, null, null, me, 0, 10)).get(0);
+    // 목록의 첫 행이 아니라 방금 만든 대시보드 행을 id 로 골라 단언한다(WD-736 — 다른 행이 끼어도 안정).
+    DashboardResponse r =
+        inA(() -> repository().findAll(null, null, null, me, 0, 10)).stream()
+            .filter(d -> java.util.Objects.equals(d.id(), id))
+            .findFirst()
+            .orElseThrow();
     assertThat(r.id()).isEqualTo(id);
     assertThat(r.createdByName()).isEqualTo(prefix + "-other-name");
     assertThat(r.createdBy()).isEqualTo(other);

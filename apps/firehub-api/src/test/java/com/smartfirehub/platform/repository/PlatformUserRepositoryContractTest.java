@@ -164,21 +164,29 @@ public abstract class PlatformUserRepositoryContractTest extends AccessContractB
   }
 
   @Test
-  @DisplayName("findAccounts(null) 은 전체 목록을 생성 최신순, 같은 시각은 id 내림차순으로 — 2쪽이 겹치지 않는다")
+  @DisplayName("findAccounts(null) 은 전체 목록을 생성 최신순, 같은 시각은 id 내림차순으로 — 쪽이 겹치지 않는다")
   void findAccounts_all_newestFirst_tieById() {
-    // 공유 DB 에서도 첫 쪽에 오도록 먼 미래 시각을 준다.
+    // 검색어가 없으면 정렬이 생성 시각 순이라 검색어로 자기 행만 모을 수 없다. 공유 DB 의 다른 행에 기대지 않도록(WD-736)
+    // 자기 픽스처 셋에 먼 미래 시각을 주고, 쪽을 하나씩 넘기며 자기 행이 다 나올 때까지만 읽어 자기 행의 상대 순서와 쪽 겹침만 단언한다.
+    // 전체 건수나 서로 다른 시점의 질의 결과 비교에는 기대지 않는다.
     LocalDateTime t0 = LocalDateTime.of(2999, 1, 1, 0, 0, 0);
     fx.setUserCreatedAt(uA, t0);
     fx.setUserCreatedAt(uB, t0);
     fx.setUserCreatedAt(uC1, t0.plusSeconds(1));
+    List<Long> own = List.of(uC1, uA, uB);
 
-    PageResponse<PlatformAccountResponse> p0 = call(() -> repository().findAccounts(null, 0, 2));
-    PageResponse<PlatformAccountResponse> p1 = call(() -> repository().findAccounts(null, 1, 2));
+    List<Long> ownSeen = new java.util.ArrayList<>();
+    List<Long> allSeen = new java.util.ArrayList<>();
+    for (int page = 0; page < 50 && ownSeen.size() < own.size(); page++) {
+      int p = page;
+      List<Long> ids = accountIds(call(() -> repository().findAccounts(null, p, 2)));
+      assertThat(ids).hasSizeLessThanOrEqualTo(2);
+      assertThat(java.util.Collections.disjoint(ids, allSeen)).isTrue();
+      allSeen.addAll(ids);
+      ids.stream().filter(own::contains).forEach(ownSeen::add);
+    }
 
     // uB 는 uA 보다 먼저 만들었으므로 id 가 작다 — 같은 시각이면 id 내림차순이라 uA 가 앞.
-    assertThat(accountIds(p0)).containsExactly(uC1, uA);
-    assertThat(accountIds(p1)).startsWith(uB);
-    assertThat(p0.totalElements()).isGreaterThanOrEqualTo(9);
-    assertThat(p0.totalPages()).isEqualTo((int) ((p0.totalElements() + 1) / 2));
+    assertThat(ownSeen).containsExactly(uC1, uA, uB);
   }
 }

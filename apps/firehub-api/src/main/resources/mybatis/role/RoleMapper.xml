@@ -89,6 +89,19 @@
     INSERT INTO role_permission (role_id, permission_id) VALUES (#{roleId}, #{permissionId})
   </insert>
 
+  <!-- 일괄 삽입(WD-737). 중복 permission_id 는 PK 위반(DuplicateKeyException) — 행별 삽입·jOOQ 판과 같다. -->
+  <insert id="insertPermissions" databaseId="postgresql">
+    INSERT INTO role_permission (role_id, permission_id) VALUES
+    <foreach collection="permissionIds" item="pid" separator=",">(#{roleId}, #{pid})</foreach>
+  </insert>
+
+  <!-- Tibero 는 다중 행 VALUES 가 없어 INSERT ALL 을 쓴다(이 표는 IDENTITY 컬럼이 없어 안전). -->
+  <insert id="insertPermissions" databaseId="tibero">
+    INSERT ALL
+    <foreach collection="permissionIds" item="pid">INTO role_permission (role_id, permission_id) VALUES (#{roleId}, #{pid}) </foreach>
+    SELECT 1 FROM DUAL
+  </insert>
+
   <delete id="deletePermission">
     DELETE FROM role_permission WHERE role_id = #{roleId} AND permission_id = #{permissionId}
   </delete>

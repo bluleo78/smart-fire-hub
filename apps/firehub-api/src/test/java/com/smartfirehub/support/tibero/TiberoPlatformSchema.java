@@ -6,9 +6,11 @@ import com.smartfirehub.global.tenant.TenantAwareTransactionManager;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.zaxxer.hikari.HikariDataSource;
 import java.sql.PreparedStatement;
+import java.util.concurrent.ThreadLocalRandom;
 import javax.sql.DataSource;
 import org.mybatis.spring.SqlSessionTemplate;
 import org.springframework.aop.framework.ProxyFactory;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.transaction.annotation.AnnotationTransactionAttributeSource;
@@ -92,6 +94,33 @@ public final class TiberoPlatformSchema {
   /** 런타임 계정 이름 — 리포지토리 쪽 세션의 {@code USER}. */
   public String runtimeName() {
     return rls.runtime().name();
+  }
+
+  /** 무작위 테넌트 id 가 겹쳐 삽입이 중복 키로 실패할 때 새 난수로 다시 시도하는 최대 횟수. */
+  private static final int TENANT_ID_ATTEMPTS = 5;
+
+  /**
+   * 무작위 id(9억+난수) 로 테넌트 한 행을 넣고 id 를 돌려준다(소유자 계정, 픽스처용). slug·name 은 {@code <접두>-<id>}.
+   *
+   * <p>왜 재시도하는가(WD-736): 공유 Tibero 에는 다른 실행이 남긴 행이 있을 수 있어 난수가 겹치면 중복 키로 시험이 흔들린다. 삽입이 중복 키로 실패하면 새
+   * 난수로 최대 {@value #TENANT_ID_ATTEMPTS}회 다시 시도한다. 다른 무결성 오류는 재시도하지 않고 바로 터뜨린다.
+   */
+  public long insertTenantWithRandomId(String slugPrefix) {
+    DuplicateKeyException last = null;
+    for (int attempt = 0; attempt < TENANT_ID_ATTEMPTS; attempt++) {
+      long id = 900_000_000L + ThreadLocalRandom.current().nextLong(1_000_000L);
+      try {
+        ownerJdbc.update(
+            "INSERT INTO tenant (id, slug, name, status) VALUES (?, ?, ?, 'ACTIVE')",
+            id,
+            slugPrefix + "-" + id,
+            slugPrefix + "-" + id);
+        return id;
+      } catch (DuplicateKeyException e) {
+        last = e; // 다른 실행이 같은 id 를 먼저 넣었다 — 새 난수로 다시.
+      }
+    }
+    throw new IllegalStateException("겹치지 않는 테넌트 id 를 " + TENANT_ID_ATTEMPTS + "번 안에 못 찾았다", last);
   }
 
   /** 소유자 계정의 JdbcTemplate(자동 커밋, 정책 우회) — 픽스처·정리 전용. 리포지토리 동작 확인에 쓰면 격리 시험이 공허해진다. */

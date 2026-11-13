@@ -155,6 +155,19 @@
     INSERT INTO user_role (user_id, role_id) VALUES (#{userId}, #{roleId})
   </insert>
 
+  <!-- 일괄 삽입(WD-737). 중복 role_id 는 PK 위반(DuplicateKeyException) — 행별 삽입·jOOQ 판과 같다. -->
+  <insert id="insertUserRoles" databaseId="postgresql">
+    INSERT INTO user_role (user_id, role_id) VALUES
+    <foreach collection="roleIds" item="rid" separator=",">(#{userId}, #{rid})</foreach>
+  </insert>
+
+  <!-- Tibero 는 다중 행 VALUES 가 없어 INSERT ALL 을 쓴다(이 표는 IDENTITY 컬럼이 없어 안전). -->
+  <insert id="insertUserRoles" databaseId="tibero">
+    INSERT ALL
+    <foreach collection="roleIds" item="rid">INTO user_role (user_id, role_id) VALUES (#{userId}, #{rid}) </foreach>
+    SELECT 1 FROM DUAL
+  </insert>
+
   <delete id="deleteUserRole">
     DELETE FROM user_role WHERE user_id = #{userId} AND role_id = #{roleId}
   </delete>

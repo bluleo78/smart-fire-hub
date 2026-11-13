@@ -9,7 +9,6 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
-import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Supplier;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 
@@ -43,13 +42,8 @@ public class TiberoAccessFixtures implements AccessFixtures {
 
   @Override
   public long createTenant() {
-    long id = 900_000_000L + ThreadLocalRandom.current().nextLong(1_000_000L);
-    poc.jdbc()
-        .update(
-            "INSERT INTO tenant (id, slug, name, status) VALUES (?, ?, ?, 'ACTIVE')",
-            id,
-            "acc-" + id,
-            "acc-" + id);
+    // 공유 서버의 다른 행과 id 가 겹치면 새 난수로 다시 시도한다(WD-736).
+    long id = poc.insertTenantWithRandomId("acc");
     // 역할의 max_security_level_id 트리거가 테넌트 기본 등급을 찾으므로 하나 심는다.
     poc.jdbc()
         .update(

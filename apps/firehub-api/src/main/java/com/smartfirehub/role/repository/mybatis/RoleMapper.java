@@ -53,6 +53,14 @@ public interface RoleMapper {
 
   int insertPermission(@Param("roleId") Long roleId, @Param("permissionId") Long permissionId);
 
+  /**
+   * 한 역할에 권한 여러 개를 한 문장으로 넣는다(WD-737) — PG 는 다중 행 VALUES, Tibero 는 INSERT ALL. 호출자가 {@code
+   * permissionIds} 를 {@code InChunks.INSERT_ROWS} 행 이하로 나눠 부른다(INSERT ALL 컬럼 상한·바인드 여유). 중복 id 는 PK
+   * 위반이다.
+   */
+  int insertPermissions(
+      @Param("roleId") Long roleId, @Param("permissionIds") List<Long> permissionIds);
+
   int deletePermission(@Param("roleId") Long roleId, @Param("permissionId") Long permissionId);
 
   int deleteAllPermissions(@Param("roleId") Long roleId);
