@@ -69,6 +69,11 @@ public class JooqAuditLogRepository implements AuditLogRepository {
   /**
    * audit_log.resource_id(VARCHAR)를 데이터셋 id 와 비교하려고 BIGINT 로 바꾼 식. 단순 CAST 는 숫자가 아닌 값이나 BIGINT 를 넘는
    * 긴 숫자에서 오류를 내 목록 전체가 실패하므로, 18자리 이하 숫자만 바꾸고 나머지는 NULL 로 둔다. 대시보드 활동 피드도 이 식을 쓴다.
+   *
+   * <p>조인 형식이 두 가지인 것은 의도다(WD-732): audit_log 에서 출발해 dataset 을 찾는 조인은 이 숫자 식으로 dataset PK 를 타고,
+   * dataset 에서 출발해 audit_log 를 찾는 조인은 문자열 비교(resource_id = dataset.id 문자열)로 audit_log 의 (resource,
+   * resource_id) 색인을 탄다. 한쪽으로 통일하면 다른 방향이 색인을 잃으니 섞인 채로 둔다. 둘 다 색인을 타게 하려면 숫자 열을 따로 두는 마이그레이션이
+   * 필요하다.
    */
   public static final Field<Long> AL_RESOURCE_ID_AS_LONG =
       field(

@@ -49,6 +49,8 @@
   <!--
     resource_id(문자열)를 데이터셋 id 와 비교할 숫자 식 — 18자리 이하 숫자만 바꾸고 나머지(숫자 아님·BIGINT 초과)는 NULL 로 둔다.
     단순 CAST 는 그런 값에서 오류를 내 목록 전체가 실패한다(jOOQ AL_RESOURCE_ID_AS_LONG 과 같은 규칙).
+    조인 형식이 두 가지인 것은 의도다(WD-732): audit_log → dataset 방향은 이 숫자 식으로 dataset PK 를, dataset → audit_log 방향은
+    문자열 비교로 audit_log (resource, resource_id) 색인을 탄다. 한쪽으로 통일하면 다른 방향이 색인을 잃는다.
   -->
   <sql id="resourceIdAsLong" databaseId="postgresql">
     (CASE WHEN audit_log.resource_id ~ '^[0-9]{1,18}$' THEN audit_log.resource_id::BIGINT ELSE NULL END)

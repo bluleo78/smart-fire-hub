@@ -8,6 +8,7 @@
   - metadata.fileName: AuditLogMapper.metadataField(PG ->>, Tibero JSON_VALUE — 파일 이름은 짧은 값이라 기본 JSON_VALUE 로 충분).
   - resource_id 숫자 판정: AuditLogMapper.resourceIdAsLong(jOOQ AL_RESOURCE_ID_AS_LONG 과 같은 규칙). 신선·오래됨 집계는 jOOQ 처럼
     문자열 비교(resource_id = 데이터셋 id 문자열)를 그대로 둔다 — 앞자리 0 같은 값의 판정이 jOOQ 와 같아야 해서다(계약 테스트가 고정).
+    두 형식은 조회 방향별 색인 때문에 일부러 섞었다(WD-732, AuditLogMapper.resourceIdAsLong 주석) — 통일하지 않는다.
   - "RESOURCE" 열: PlatformSql.resourceColumn. 불리언: sqlTrue·sqlFalse. 상위 N 건: limitRows.
   - 활성 파이프라인의 마지막 실행: jOOQ 의 상관 서브쿼리 (ORDER BY id DESC LIMIT 1) 대신 파이프라인별 MAX(id) 를 고른 뒤 그 실행 행에
     조인한다 — 두 DB 공통 형태이고 고르는 행이 같다(가장 큰 id). 생성 시각 순서와 id 순서가 어긋나는 실행으로 계약 테스트가 고정한다.
@@ -126,7 +127,11 @@
   -->
   <sql id="datasetImport">${al}.action_type = 'IMPORT' AND ${al}.<include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.resourceColumn"/> = 'dataset'</sql>
 
-  <!-- 데이터셋 id 의 문자열 — jOOQ D_ID.cast(String) 와 같은 문자열 비교용(Tibero 는 길이 없는 VARCHAR CAST 대신 TO_CHAR). -->
+  <!--
+    데이터셋 id 의 문자열 — jOOQ D_ID.cast(String) 와 같은 문자열 비교용(Tibero 는 길이 없는 VARCHAR CAST 대신 TO_CHAR).
+    dataset 에서 출발해 audit_log 를 찾는 조인 전용 — audit_log (resource, resource_id) 색인을 탄다. audit_log 에서 출발하는 조인에
+    쓰면 dataset PK 를 못 타니 거기엔 resourceIdAsLong 을 쓴다(WD-732).
+  -->
   <sql id="datasetIdText" databaseId="postgresql">CAST(dataset.id AS varchar)</sql>
   <sql id="datasetIdText" databaseId="tibero">TO_CHAR(dataset.id)</sql>
 
