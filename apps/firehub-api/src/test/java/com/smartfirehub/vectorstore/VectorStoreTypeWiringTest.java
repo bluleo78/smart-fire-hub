@@ -8,6 +8,9 @@ import com.smartfirehub.global.platformdb.PlatformDbFeature;
 import com.smartfirehub.global.platformdb.PlatformDbStartupGuardConfig;
 import com.smartfirehub.vectorstore.off.OffVectorStoreFeatures;
 import com.smartfirehub.vectorstore.pg.PgVectorStoreFeatures;
+import com.smartfirehub.vectorstore.qdrant.QdrantClientConfig;
+import com.smartfirehub.vectorstore.qdrant.QdrantVectorStoreLifecycle;
+import io.qdrant.client.QdrantClient;
 import java.util.TimeZone;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -35,7 +38,9 @@ class VectorStoreTypeWiringTest {
           .withUserConfiguration(
               PlatformDbStartupGuardConfig.class,
               PgVectorStoreFeatures.class,
-              OffVectorStoreFeatures.class);
+              OffVectorStoreFeatures.class,
+              QdrantClientConfig.class,
+              QdrantVectorStoreLifecycle.class);
 
   @AfterEach
   void restoreTimeZone() {
@@ -50,6 +55,9 @@ class VectorStoreTypeWiringTest {
           assertThat(ctx.getBean(VectorStoreFeatures.class))
               .isInstanceOf(PgVectorStoreFeatures.class);
           assertThat(ctx).doesNotHaveBean(OffVectorStoreFeatures.class);
+          // Qdrant 클라이언트·기동 준비는 qdrant 일 때만 — platform 설치본은 Qdrant 에 접속하지 않는다(WD-719)
+          assertThat(ctx).doesNotHaveBean(QdrantClient.class);
+          assertThat(ctx).doesNotHaveBean(VectorStoreLifecycle.class);
         });
   }
 

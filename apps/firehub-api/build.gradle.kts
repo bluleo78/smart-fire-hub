@@ -119,6 +119,11 @@ dependencies {
     implementation("org.jsoup:jsoup:1.18.3")
     // MinIO(S3 호환) 오브젝트 스토리지 — FILE 데이터셋
     implementation("io.minio:minio:8.5.17")
+    // Qdrant 공식 Java 클라이언트(gRPC) — 벡터 저장소를 Qdrant 로 고른 설치본용(ADR 0002, WD-719). 서버는 v1.20 이상.
+    implementation("io.qdrant:client:1.20.0")
+    // 키워드 바이그램 해시(murmur3)에 직접 쓴다. 버전은 Spring Boot BOM 관리값(33.3.1-jre) — gRPC 가 요구하는 33.6 보다 낮지만
+    // 같은 33.x 라 API 가 호환되고, 다른 의존성(minio 등)과 버전을 하나로 맞춘다.
+    implementation("com.google.guava:guava")
 
     testImplementation("org.springframework.boot:spring-boot-starter-test") {
         exclude(group = "org.mockito")
@@ -132,6 +137,8 @@ dependencies {
     // Testcontainers — 통합 테스트용 격리 PostgreSQL 컨테이너.
     testImplementation("org.testcontainers:junit-jupiter")
     testImplementation("org.testcontainers:postgresql")
+    // Qdrant 하네스(WD-719) — 기동 시 컬렉션 생성·확인 테스트
+    testImplementation("org.testcontainers:qdrant")
     // WireMock for API call integration tests
     testImplementation("org.wiremock:wiremock-standalone:3.10.0")
     // MockWebServer for embedding provider unit tests (버전은 Spring Boot BOM이 관리)

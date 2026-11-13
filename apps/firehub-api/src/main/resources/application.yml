@@ -202,6 +202,20 @@ firehub:
       # 유휴 연결 하한·유휴 만료(WD-704). 기본값은 Hikari 기본(하한 = 최대 크기, 600000ms)과 같아 운영 동작은 바뀌지 않는다.
       minimum-idle: ${firehub.data-store.postgres.maximum-pool-size}
       idle-timeout: 600000
+  # 벡터 저장소(ADR 0002). 종류(firehub.vector-store.type)는 여기 적지 않는다 — 플랫폼 DB 종류처럼 「속성 없음 = platform」 규칙을
+  # 지키려는 것이다. 바꿀 때는 환경변수 FIREHUB_VECTOR_STORE_TYPE=qdrant 로 준다(색인 구현 WD-720 전까지는 기동을 거부한다).
+  # 아래 qdrant 값은 종류가 qdrant 일 때만 읽는다.
+  vector-store:
+    qdrant:
+      # gRPC 주소. https:// 면 TLS. 포트를 빼면 6334.
+      url: ${QDRANT_URL:http://localhost:6334}
+      # 읽기·쓰기 키(읽기 전용 키는 쓰기가 403). v1.20 은 노드 간 호출도 같은 키를 쓴다.
+      api-key: ${QDRANT_API_KEY:}
+      # 새 컬렉션 샤드 수 — 만든 뒤 바꿀 수 없다(오픈소스판은 리샤딩 없음). 바꾸면 기동이 멈춘다.
+      shard-number: ${QDRANT_SHARD_NUMBER:6}
+      # int8 양자화본 메모리 고정 + 원본 디스크. 만든 뒤 바꾸면 기동이 멈춘다.
+      quantization: ${QDRANT_QUANTIZATION:true}
+      timeout: ${QDRANT_TIMEOUT:10s}
   file:
     upload-dir: ${FILE_UPLOAD_DIR:./uploads}
     max-files-per-request: 3

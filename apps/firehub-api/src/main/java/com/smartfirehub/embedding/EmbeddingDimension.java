@@ -35,6 +35,16 @@ public enum EmbeddingDimension {
     return "dataset_embedding_vec_" + size;
   }
 
+  /** Qdrant 데이터셋 카탈로그 컬렉션 이름(ADR 0002 결정 7 — 차원별 테이블 이름과 같은 자리의 단일 출처). */
+  public String datasetCollection() {
+    return "fh_datasets_" + size;
+  }
+
+  /** Qdrant 문서 청크 컬렉션 이름(ADR 0002 결정 7). */
+  public String chunkCollection() {
+    return "fh_chunks_" + size;
+  }
+
   /**
    * 측정된 차원을 열거형으로 바꾼다. 미지원이면 {@link IllegalArgumentException} — 전역 핸들러가 400 으로 번역한다(설정 저장 시 "지원하지
    * 않는 차원" 안내).

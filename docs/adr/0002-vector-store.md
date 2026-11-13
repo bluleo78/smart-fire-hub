@@ -166,6 +166,7 @@ OpenSearch 는 한국어 키워드(특히 오타 — 퍼지 질의)가 문제가
 - **행 검색 컬렉션은 차원이 정해져 있지 않다.** 행 검색은 테넌트 공급자의 차원을 그대로 쓰고(상한 `MAX_DIM = 2000`), 키워드 전용 색인은 `KEYWORD_ONLY_DIM = 1` 이다. 그래서 `fh_rows_{dim}` 을 **필요할 때 만들고**, 키워드 전용은 dense 없는 `fh_rows_kw` 에 둔다.
 - **포인트 하나에 named vector 둘:** `dense`(임베딩), `kw_bigram`(음절 바이그램, sparse, `modifier: idf`). named vector 는 포인트마다 비워 둘 수 있어 "dense 만 지우기" 가 된다(`points/vectors/delete` 로 sparse·payload 를 남기는 것을 PoC 에서 확인). `kw_nori` 는 이름만 예약한다(결정 8).
 - **payload:** `tenant_id`, `dataset_id`, `model`(공간 일치 검사 — #392 원칙), `seq`(결정 6), 행 검색은 `row_id`·`chunk_no`·`source_hash`·`generation`.
+  - `tenant_id` 는 **키워드형**(값은 문자열 `"12"`)으로 색인하고 `is_tenant` 를 켠다. Qdrant 1.20 은 정수형 색인에 준 `is_tenant` 를 오류 없이 버린다(2026-11-13 실측, WD-719 — PoC `knn.py` 의 정수형 설정도 실제로는 적용되지 않았다). 청크는 문서 삭제용으로 `document_id` 도 색인한다.
 - **포인트 id 는 결정적으로 만든다.** (종류, tenant, 대상 id[, chunk_no, generation])로 UUIDv5 를 만든다. 같은 대상을 다시 쓰면 덮어쓰게(upsert) 된다.
 - **공유 컬렉션 안에서는 `tenant_id`+`model` 필터가 반드시 붙는다.** 테넌트마다 임베딩 공간이 다르기 때문이다.
 - **데이터셋마다 컬렉션을 만들지 않는다.** 데이터셋 수만큼 컬렉션이 생기면 운영이 무너진다.

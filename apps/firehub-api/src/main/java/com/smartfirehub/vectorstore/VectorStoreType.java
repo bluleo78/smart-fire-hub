@@ -9,7 +9,7 @@ package com.smartfirehub.vectorstore;
 public enum VectorStoreType {
   /** 플랫폼 DB 안에 둔다. PostgreSQL 이면 pgvector·pg_trgm 을 쓰고 Tibero 면 꺼진다. 속성이 없으면 이 값이다. */
   PLATFORM,
-  /** 별도 Qdrant 에 둔다(ADR 0002). 구현은 WD-719·720 에서 들어오며, 그 전에는 기동을 거부한다. */
+  /** 별도 Qdrant 에 둔다(ADR 0002). 기반(클라이언트·컬렉션)은 WD-719 에 있고 색인 구현은 WD-720 에서 들어온다. 그 전에는 기동을 거부한다. */
   QDRANT;
 
   /** 벡터 저장소 종류를 고르는 설정 키. 값은 {@code platform} 또는 {@code qdrant}. */
@@ -32,7 +32,7 @@ public enum VectorStoreType {
         if (type == QDRANT) {
           // 구현 빈이 없어 그대로 두면 "빈 없음" 오류로 죽어 원인을 알아보기 어렵다. 그래서 이유를 밝히고 먼저 멈춘다.
           throw new IllegalStateException(
-              PROPERTY + "=qdrant 는 아직 지원하지 않습니다(Qdrant 구현 WD-719·720 이후). platform 으로 설치하세요");
+              PROPERTY + "=qdrant 는 아직 지원하지 않습니다(Qdrant 색인 구현 WD-720 이후). platform 으로 설치하세요");
         }
         return type;
       }

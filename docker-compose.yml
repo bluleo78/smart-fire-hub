@@ -94,5 +94,22 @@ services:
       timeout: 5s
       retries: 10
 
+  # 벡터 저장소 Qdrant(ADR 0002, WD-719) — 기본으로는 뜨지 않는다. `docker compose --profile qdrant up -d qdrant` 로 켜고,
+  # api 는 FIREHUB_VECTOR_STORE_TYPE=qdrant · QDRANT_URL=http://localhost:6334 · QDRANT_API_KEY=firehub-qdrant-dev 로 붙는다.
+  # 운영과 같게 버전 고정·클러스터 모드(노드 1대여도 켜야 샤드 수가 설정대로 잡힌다)·API 키(dev 전용 값)로 띄운다.
+  qdrant:
+    image: qdrant/qdrant:v1.20.0
+    profiles: ["qdrant"]
+    command: ./qdrant --uri http://qdrant:6335
+    ports:
+      - "6333:6333"   # REST·대시보드
+      - "6334:6334"   # gRPC(앱이 붙는 포트)
+    environment:
+      QDRANT__CLUSTER__ENABLED: "true"
+      QDRANT__SERVICE__API_KEY: firehub-qdrant-dev
+    volumes:
+      - qdrant-data:/qdrant/storage
+
 volumes:
   neo4j-data:
+  qdrant-data:
