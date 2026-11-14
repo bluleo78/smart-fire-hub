@@ -71,6 +71,7 @@ import com.smartfirehub.jooq.tables.UploadedFiles;
 import com.smartfirehub.jooq.tables.User;
 import com.smartfirehub.jooq.tables.UserChannelBinding;
 import com.smartfirehub.jooq.tables.UserRole;
+import com.smartfirehub.jooq.tables.VectorOutbox;
 
 import org.jooq.Index;
 import org.jooq.OrderField;
@@ -232,6 +233,7 @@ public class Indexes {
     public static final Index IDX_USER_ROLE_ROLE_ID = Internal.createIndex(DSL.name("idx_user_role_role_id"), UserRole.USER_ROLE, new OrderField[] { UserRole.USER_ROLE.ROLE_ID }, false);
     public static final Index IDX_USER_ROLE_TENANT = Internal.createIndex(DSL.name("idx_user_role_tenant"), UserRole.USER_ROLE, new OrderField[] { UserRole.USER_ROLE.TENANT_ID }, false);
     public static final Index IDX_USER_USERNAME = Internal.createIndex(DSL.name("idx_user_username"), User.USER, new OrderField[] { User.USER.USERNAME }, false);
+    public static final Index IDX_VECTOR_OUTBOX_TENANT_SEQ = Internal.createIndex(DSL.name("idx_vector_outbox_tenant_seq"), VectorOutbox.VECTOR_OUTBOX, new OrderField[] { VectorOutbox.VECTOR_OUTBOX.TENANT_ID, VectorOutbox.VECTOR_OUTBOX.SEQ }, false);
     public static final Index JOBRUNR_BGJOBSRVRS_FSTHB_IDX = Internal.createIndex(DSL.name("jobrunr_bgjobsrvrs_fsthb_idx"), JobrunrBackgroundjobservers.JOBRUNR_BACKGROUNDJOBSERVERS, new OrderField[] { JobrunrBackgroundjobservers.JOBRUNR_BACKGROUNDJOBSERVERS.FIRSTHEARTBEAT }, false);
     public static final Index JOBRUNR_BGJOBSRVRS_LSTHB_IDX = Internal.createIndex(DSL.name("jobrunr_bgjobsrvrs_lsthb_idx"), JobrunrBackgroundjobservers.JOBRUNR_BACKGROUNDJOBSERVERS, new OrderField[] { JobrunrBackgroundjobservers.JOBRUNR_BACKGROUNDJOBSERVERS.LASTHEARTBEAT }, false);
     public static final Index JOBRUNR_JOB_CREATED_AT_IDX = Internal.createIndex(DSL.name("jobrunr_job_created_at_idx"), JobrunrJobs.JOBRUNR_JOBS, new OrderField[] { JobrunrJobs.JOBRUNR_JOBS.CREATEDAT }, false);

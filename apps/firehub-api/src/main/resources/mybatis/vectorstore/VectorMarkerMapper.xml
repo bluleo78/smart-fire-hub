@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  별도 벡터 저장소 정합성 확인용 표시 열(WD-721) — JooqVectorMarkerRepository 와 같은 의미. 규칙은 MyBatisPlatformConfig javadoc.
+  읽기는 테넌트 정책(RLS)이 좁히고, 비우는 문장은 tenant_id 를 명시한다. id 목록은 InChunks 로 500 개씩 나눈 chunks 파라미터다
+  (공용 조각 PlatformSql.inChunks). SELECT 목록 불리언이 안 되는 Tibero 를 위해 키워드 표시 유무는 CASE WHEN 정수로 읽는다.
+-->
+<mapper namespace="com.smartfirehub.vectorstore.repository.mybatis.VectorMarkerMapper">
+
+  <resultMap id="marker" type="com.smartfirehub.vectorstore.VectorMarkerRepository$Marker">
+    <constructor>
+      <arg column="id" javaType="_long"/>
+      <arg column="dataset_id" javaType="_long"/>
+      <arg column="embedded_dim" javaType="java.lang.Integer"/>
+      <arg column="embedded_model" javaType="java.lang.String"/>
+      <arg column="kw" javaType="_boolean"/>
+    </constructor>
+  </resultMap>
+
+  <sql id="datasetCols">
+    SELECT dataset_id AS id, dataset_id, embedded_dim, embedded_model,
+           CASE WHEN keyword_marker IS NOT NULL THEN 1 ELSE 0 END AS kw
+      FROM dataset_embedding
+  </sql>
+
+  <sql id="chunkCols">
+    SELECT id, dataset_id, embedded_dim, embedded_model,
+           CASE WHEN keyword_marker IS NOT NULL THEN 1 ELSE 0 END AS kw
+      FROM document_chunk
+  </sql>
+
+  <!-- dense 표시 수. chunks 가 null 이면 테넌트 전체, exceptDim 이 null 이면 모든 차원. table 은 코드 상수(외부 입력 없음). -->
+  <select id="countDense" resultType="int">
+    SELECT COUNT(*) FROM ${table}
+     WHERE embedded_dim IS NOT NULL
+     <if test="chunks != null">AND <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="dataset_id"/></include></if>
+     <if test="exceptDim != null">AND embedded_dim &lt;&gt; #{exceptDim}</if>
+  </select>
+
+  <select id="findDatasetsMarkedOtherThan" resultType="long">
+    SELECT dataset_id FROM dataset_embedding
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="dataset_id"/></include>
+       AND embedded_dim IS NOT NULL AND embedded_dim &lt;&gt; #{dim}
+     ORDER BY dataset_id
+  </select>
+
+  <select id="findChunkDatasetsMarkedOtherThan" resultType="long">
+    SELECT DISTINCT dataset_id FROM document_chunk
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="id"/></include>
+       AND embedded_dim IS NOT NULL AND embedded_dim &lt;&gt; #{dim}
+     ORDER BY dataset_id
+  </select>
+
+  <select id="findDatasetMarkers" resultMap="marker">
+    <include refid="datasetCols"/>
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="dataset_id"/></include>
+  </select>
+
+  <select id="findChunkMarkers" resultMap="marker">
+    <include refid="chunkCols"/>
+     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="id"/></include>
+  </select>
+
+  <!-- 키셋 페이지. 상한은 pageClause(offset 0). -->
+  <select id="pageMarkedDatasets" resultMap="marker">
+    <include refid="datasetCols"/>
+     WHERE dataset_id &gt; #{afterId} AND (embedded_dim IS NOT NULL OR keyword_marker IS NOT NULL)
+     ORDER BY dataset_id
+     <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.pageClause"/>
+  </select>
+
+  <select id="pageMarkedChunks" resultMap="marker">
+    <include refid="chunkCols"/>
+     WHERE id &gt; #{afterId} AND (embedded_dim IS NOT NULL OR keyword_marker IS NOT NULL)
+     ORDER BY id
+     <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.pageClause"/>
+  </select>
+
+  <!-- 키워드 대조용 원문 한 건(낱말 없는 원문 가리기). -->
+  <select id="findDatasetSourceText" resultType="string">
+    SELECT source_text FROM dataset_embedding WHERE dataset_id = #{id}
+  </select>
+
+  <select id="findChunkContent" resultType="string">
+    SELECT content FROM document_chunk WHERE id = #{id}
+  </select>
+
+  <!-- 데이터셋 dense 표시 비우기 — embedded_hash 도 함께(clearMarkers 와 같은 규칙). 표시가 그대로일 때만. -->
+  <update id="clearDatasetDense">
+    UPDATE dataset_embedding SET embedded_dim = NULL, embedded_model = NULL, embedded_hash = NULL
+     WHERE tenant_id = #{tenantId} AND dataset_id = #{id} AND embedded_dim = #{dim} AND embedded_model = #{model}
+  </update>
+
+  <update id="clearDatasetKeyword">
+    UPDATE dataset_embedding SET keyword_marker = NULL WHERE tenant_id = #{tenantId} AND dataset_id = #{id}
+  </update>
+
+  <update id="clearChunkDense">
+    UPDATE document_chunk SET embedded_dim = NULL, embedded_model = NULL
+     WHERE tenant_id = #{tenantId} AND id = #{id} AND embedded_dim = #{dim} AND embedded_model = #{model}
+  </update>
+
+  <update id="clearChunkKeyword">
+    UPDATE document_chunk SET keyword_marker = NULL WHERE tenant_id = #{tenantId} AND id = #{id}
+  </update>
+</mapper>

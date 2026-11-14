@@ -10,7 +10,8 @@ import java.util.List;
  * 문서 청크의 벡터·키워드 색인 포트(ADR 0002 결정 2). {@link DatasetVectorIndex} 와 같은 일을 문서 청크에 대해 한다.
  *
  * <p>구현체는 pgvector({@code PgChunkVectorIndex}: 차원 테이블 {@code document_chunk_vec_N} 과 청크 본문
- * pg_trgm), 꺼짐({@code OffChunkVectorIndex}, Tibero+platform), Qdrant(WD-720)다.
+ * pg_trgm), 꺼짐({@code OffChunkVectorIndex}, Tibero+platform), Qdrant(WD-720)다. Qdrant 구현의 삭제는 아웃박스에
+ * 쌓인다 (WD-721, {@link DatasetVectorIndex} 참고).
  *
  * <p>청크 본문 저장, 전체 수, 표시 열, 백로그 판정은 플랫폼 리포지토리({@code DocumentChunkRepository})에 남는다. 벡터를 쓰거나 지우는
  * 리포지토리 메서드는 이 포트를 부른 뒤 같은 트랜잭션에서 표시 열을 맞춘다. pgvector 구현은 그 트랜잭션에 합류한다.

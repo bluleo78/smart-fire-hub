@@ -102,6 +102,7 @@ import com.smartfirehub.jooq.tables.User;
 import com.smartfirehub.jooq.tables.UserChannelBinding;
 import com.smartfirehub.jooq.tables.UserChannelPreference;
 import com.smartfirehub.jooq.tables.UserRole;
+import com.smartfirehub.jooq.tables.VectorOutbox;
 import com.smartfirehub.jooq.tables.records.OutboxTenantIdsRecord;
 import com.smartfirehub.jooq.tables.records.PostgisSrsAllRecord;
 import com.smartfirehub.jooq.tables.records.PostgisSrsCodesRecord;
@@ -1030,4 +1031,9 @@ public class Tables {
      * The table <code>public.user_role</code>.
      */
     public static final UserRole USER_ROLE = UserRole.USER_ROLE;
+
+    /**
+     * The table <code>public.vector_outbox</code>.
+     */
+    public static final VectorOutbox VECTOR_OUTBOX = VectorOutbox.VECTOR_OUTBOX;
 }

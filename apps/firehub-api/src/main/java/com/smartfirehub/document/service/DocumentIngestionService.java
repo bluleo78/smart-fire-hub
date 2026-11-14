@@ -26,6 +26,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.jobrunr.jobs.annotations.Job;
 import org.jobrunr.scheduling.JobScheduler;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /** 문서 업로드 + 비동기 인제스션(추출→청킹→임베딩→저장). */
 @Service
@@ -199,17 +200,26 @@ public class DocumentIngestionService {
     keywordIndex.indexChunks(sources);
   }
 
-  /** 문서 1건 삭제: document_chunk 는 FK CASCADE, 원본 파일과 메타를 정리. */
+  /**
+   * 문서 1건 삭제: document_chunk 는 FK CASCADE, 원본 파일과 메타를 정리.
+   *
+   * <p>한 트랜잭션으로 묶는다(WD-721) — 별도 벡터 저장소는 청크 색인 삭제를 아웃박스에 쌓으므로, 메타 삭제가 실패해 롤백되면 그 삭제도 함께 사라져야 살아 있는
+   * 문서의 벡터를 지우지 않는다. 원본 파일은 되돌릴 수 없으니 커밋 뒤에 지운다.
+   */
+  @Transactional
   public void deleteDocument(Long documentFileId) {
     // 메타 삭제 전에 저장소 경로를 먼저 확보한다(삭제 후엔 조회 불가).
     String storagePath = fileRepository.findStoragePath(documentFileId);
     // 청크 색인 명시 삭제(ADR 0002 결정 6) — pgvector 는 CASCADE 라 할 일이 없고 별도 저장소는 이 호출이 정리 경로다.
     chunkVectorIndex.deleteAllOfDocument(TenantContext.require("문서 삭제"), documentFileId);
     fileRepository.delete(documentFileId);
-    try {
-      storageService.delete(storagePath);
-    } catch (Exception e) {
-      log.warn("원본 파일 삭제 실패(메타는 삭제됨): {}", storagePath, e);
-    }
+    AfterCommitRunner.run(
+        () -> {
+          try {
+            storageService.delete(storagePath);
+          } catch (Exception e) {
+            log.warn("원본 파일 삭제 실패(메타는 삭제됨): {}", storagePath, e);
+          }
+        });
   }
 }

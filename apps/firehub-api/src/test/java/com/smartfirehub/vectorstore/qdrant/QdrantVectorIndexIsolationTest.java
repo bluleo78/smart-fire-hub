@@ -34,8 +34,8 @@ import org.springframework.beans.factory.annotation.Autowired;
  * Qdrant 색인 구현만의 계약(WD-720): 테넌트 교차 0건, 모델 필터, dense 만 지우기, 다른 차원 정리, 전부 지우기, 문서 상태 사후 확인, 테넌트 문맥
  * 강제.
  *
- * <p>클래스에 {@code @Transactional} 을 붙이지 않는다 — Qdrant 삭제는 트랜잭션이 있으면 커밋 뒤로 미뤄지므로(롤백되는 테스트 트랜잭션에서는 돌지
- * 않는다) 실제 배경 경로처럼 트랜잭션 없이 불러 바로 지우게 한다. 플랫폼 DB 시드는 테넌트를 새로 만들어 커밋하고 끝나면 지운다.
+ * <p>클래스에 {@code @Transactional} 을 붙이지 않는다 — Qdrant 삭제는 아웃박스에 쌓였다가 워커가 반영하므로(WD-721) 쌓은 행이 커밋돼야 워커가
+ * 읽는다. 시험은 삭제 뒤 워커를 직접 한 번 돌린다. 플랫폼 DB 시드는 테넌트를 새로 만들어 커밋하고 끝나면 지운다.
  */
 class QdrantVectorIndexIsolationTest extends IntegrationTestBase {
 
@@ -48,12 +48,18 @@ class QdrantVectorIndexIsolationTest extends IntegrationTestBase {
   private static QdrantClient client;
 
   @Autowired private JooqSearchCandidateRepository candidates;
+  @Autowired private com.smartfirehub.vectorstore.repository.jooq.JooqVectorOutboxRepository outbox;
+
+  @Autowired
+  private com.smartfirehub.vectorstore.repository.jooq.JooqVectorMarkerRepository markers;
+
   @Autowired private DatasetEmbeddingRepository datasets;
   @Autowired private DocumentChunkRepository chunks;
   @Autowired private DSLContext dsl;
 
   private QdrantDatasetVectorIndex datasetIndex;
   private QdrantChunkVectorIndex chunkIndex;
+  private VectorOutboxWorker worker;
   private long tenantA;
   private long tenantB;
   private DocFixture docA;
@@ -74,8 +80,9 @@ class QdrantVectorIndexIsolationTest extends IntegrationTestBase {
   void seed() throws Exception {
     QdrantTestContainer.deleteAllCollections(client);
     new QdrantVectorStoreLifecycle(client, props).prepare();
-    datasetIndex = new QdrantDatasetVectorIndex(client, props, candidates);
-    chunkIndex = new QdrantChunkVectorIndex(client, props, candidates);
+    datasetIndex = new QdrantDatasetVectorIndex(client, props, candidates, outbox, markers);
+    chunkIndex = new QdrantChunkVectorIndex(client, props, candidates, outbox, markers);
+    worker = new VectorOutboxWorker(null, outbox, new QdrantOutboxApplier(client, props), false);
     tenantA = TenantRlsTestSupport.createActiveTenant(dsl, "qiso-a");
     tenantB = TenantRlsTestSupport.createActiveTenant(dsl, "qiso-b");
     docA =
@@ -96,6 +103,20 @@ class QdrantVectorIndexIsolationTest extends IntegrationTestBase {
     TenantRlsTestSupport.deleteTenants(dsl, tenantA, tenantB);
     TenantRlsTestSupport.deleteUser(dsl, docA.userId());
     TenantRlsTestSupport.deleteUser(dsl, docB.userId());
+  }
+
+  /**
+   * 테넌트 범위에서 삭제를 부르고(아웃박스에 쌓임, WD-721) 워커로 Qdrant 에 반영한 뒤 결과를 돌려준다. 포트의 삭제는 현재 테넌트에 쌓이므로 테넌트 문맥이
+   * 있어야 한다.
+   */
+  private <T> T deleteIn(long tenant, java.util.function.Supplier<T> delete) {
+    T result = TenantContext.runScopedGet(tenant, delete);
+    drain(tenant);
+    return result;
+  }
+
+  private void drain(long tenant) {
+    TenantContext.runScopedGet(tenant, worker::drainCurrentTenant);
   }
 
   /** 테넌트 범위에서 데이터셋 dense·키워드를 쓰고 표시 열을 그 공간으로 채운다. */
@@ -171,22 +192,39 @@ class QdrantVectorIndexIsolationTest extends IntegrationTestBase {
     indexDataset(tenantB, docB.datasetId(), S1024, axis(1024, 0));
 
     // dense 만 지운다 — 키워드는 남는다. 남의 테넌트는 그대로다.
-    assertThat(datasetIndex.deleteDense(tenantA, List.of(docA.datasetId()))).isEqualTo(1);
+    assertThat(
+            deleteIn(tenantA, () -> datasetIndex.deleteDense(tenantA, List.of(docA.datasetId()))))
+        .isEqualTo(1);
     assertThat(semanticIds(tenantA, S1024, axis(1024, 0))).isEmpty();
     assertThat(keywordIds(tenantA)).containsExactly(docA.datasetId());
     assertThat(semanticIds(tenantB, S1024, axis(1024, 0))).containsExactly(docB.datasetId());
 
-    // 새 차원으로 쓰면 옛 차원 점이 지워지고(트랜잭션이 없어 바로), 다른 차원 정리는 남은 것을 센다.
+    // 새 차원으로 쓰면 옛 차원 점이 지워지고(표시가 옛 차원이라 아웃박스에 쌓인다), 다른 차원 정리는 남은 표시를 센다.
     indexDataset(tenantA, docA.datasetId(), S1024, axis(1024, 0));
     indexDataset(tenantA, docA.datasetId(), S1536, axis(1536, 0));
-    assertThat(datasetIndex.deleteOtherDimensions(tenantA, EmbeddingDimension.D1536)).isZero();
+    drain(tenantA);
+    assertThat(semanticIds(tenantA, S1024, axis(1024, 0))).isEmpty();
+    assertThat(
+            deleteIn(
+                tenantA,
+                () -> datasetIndex.deleteOtherDimensions(tenantA, EmbeddingDimension.D1536)))
+        .isZero();
     assertThat(semanticIds(tenantA, S1536, axis(1536, 0))).containsExactly(docA.datasetId());
-    assertThat(datasetIndex.deleteOtherDimensions(tenantA, EmbeddingDimension.D1024)).isEqualTo(1);
+    assertThat(
+            deleteIn(
+                tenantA,
+                () -> datasetIndex.deleteOtherDimensions(tenantA, EmbeddingDimension.D1024)))
+        .isEqualTo(1);
     assertThat(semanticIds(tenantA, S1536, axis(1536, 0))).isEmpty();
 
     // 데이터셋 삭제 — dense·키워드 모두 지운다.
     indexDataset(tenantA, docA.datasetId(), S1024, axis(1024, 0));
-    datasetIndex.deleteAll(tenantA, List.of(docA.datasetId()));
+    deleteIn(
+        tenantA,
+        () -> {
+          datasetIndex.deleteAll(tenantA, List.of(docA.datasetId()));
+          return null;
+        });
     assertThat(semanticIds(tenantA, S1024, axis(1024, 0))).isEmpty();
     assertThat(keywordIds(tenantA)).isEmpty();
     assertThat(keywordIds(tenantB)).containsExactly(docB.datasetId());
@@ -215,7 +253,12 @@ class QdrantVectorIndexIsolationTest extends IntegrationTestBase {
     // 요청 데이터셋으로 좁힌다 — 남의 데이터셋을 넣어도 나오지 않는다.
     assertThat(chunkKeyword(tenantA, List.of(docB.datasetId()))).isEmpty();
 
-    chunkIndex.deleteAllOfDocument(tenantA, docA.fileId());
+    deleteIn(
+        tenantA,
+        () -> {
+          chunkIndex.deleteAllOfDocument(tenantA, docA.fileId());
+          return null;
+        });
     assertThat(chunkKeyword(tenantA, null)).isEmpty();
     assertThat(chunkSemantic(tenantA, null)).isEmpty();
     assertThat(chunkKeyword(tenantB, null)).containsExactly(other);

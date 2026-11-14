@@ -15,7 +15,8 @@ import java.util.List;
  *   <li>pgvector({@code PgDatasetVectorIndex}): 차원 테이블 {@code dataset_embedding_vec_N} 과 부모 {@code
  *       source_text} 의 pg_trgm
  *   <li>꺼짐({@code OffDatasetVectorIndex}): Tibero+platform. 호출되면 예외를 던진다
- *   <li>Qdrant: WD-720
+ *   <li>Qdrant({@code QdrantDatasetVectorIndex}, WD-720). 삭제 메서드는 저장소를 바로 부르지 않고 호출한 트랜잭션에 아웃박스 행을
+ *       쌓는다(WD-721) — 그래서 현재 테넌트 문맥이 있어야 하고 인자 {@code tenantId} 와 같아야 한다. 반환하는 "지운 수" 는 표시 열로 센 값이다
  * </ul>
  *
  * <p>무엇이 여기에 오고 무엇이 남는가. 벡터·키워드 색인 연산만 이 포트로 왔다. 기반 테이블 연산(원문 저장, 전체 수, 표시 열 {@code

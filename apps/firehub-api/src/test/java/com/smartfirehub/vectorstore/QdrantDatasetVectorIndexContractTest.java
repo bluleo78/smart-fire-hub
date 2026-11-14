@@ -27,6 +27,10 @@ class QdrantDatasetVectorIndexContractTest extends DatasetVectorIndexContractTes
   private static QdrantClient client;
 
   @Autowired private JooqSearchCandidateRepository candidates;
+  @Autowired private com.smartfirehub.vectorstore.repository.jooq.JooqVectorOutboxRepository outbox;
+
+  @Autowired
+  private com.smartfirehub.vectorstore.repository.jooq.JooqVectorMarkerRepository markers;
 
   private QdrantDatasetVectorIndex index;
 
@@ -46,7 +50,7 @@ class QdrantDatasetVectorIndexContractTest extends DatasetVectorIndexContractTes
   void emptyStore() throws Exception {
     QdrantTestContainer.deleteAllCollections(client);
     new QdrantVectorStoreLifecycle(client, props).prepare();
-    index = new QdrantDatasetVectorIndex(client, props, candidates);
+    index = new QdrantDatasetVectorIndex(client, props, candidates, outbox, markers);
   }
 
   @Override

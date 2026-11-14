@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  벡터 아웃박스와 순번(WD-721, ADR 0002 결정 6) — JooqVectorOutboxRepository 와 같은 의미. 규칙은 MyBatisPlatformConfig javadoc.
+  테넌트 정책(RLS) 대상이지만 쓰는 문장은 tenant_id 를 명시한다(조건 없는 DML 금지 규율). 시퀀스 문법만 방언별로 나뉜다.
+-->
+<mapper namespace="com.smartfirehub.vectorstore.repository.mybatis.VectorOutboxMapper">
+
+  <select id="nextSeq" resultType="long" databaseId="postgresql">SELECT nextval('vector_seq')</select>
+  <select id="nextSeq" resultType="long" databaseId="tibero">SELECT vector_seq.NEXTVAL FROM DUAL</select>
+
+  <!-- 순번은 nextSeq 로 먼저 받아 넘긴다 — INSERT … RETURNING 이 방언마다 달라서다. -->
+  <insert id="insert">
+    INSERT INTO vector_outbox (seq, tenant_id, kind, target_id, keep_dim)
+    VALUES (#{seq}, #{tenantId}, #{kind}, #{targetId,jdbcType=BIGINT}, #{keepDim,jdbcType=INTEGER})
+  </insert>
+
+  <resultMap id="entry" type="com.smartfirehub.vectorstore.VectorOutboxRepository$Entry">
+    <constructor>
+      <arg column="seq" javaType="_long"/>
+      <arg column="tenant_id" javaType="_long"/>
+      <arg column="kind" javaType="com.smartfirehub.vectorstore.VectorOutboxKind"/>
+      <arg column="target_id" javaType="java.lang.Long"/>
+      <arg column="keep_dim" javaType="java.lang.Integer"/>
+      <arg column="attempts" javaType="_int"/>
+    </constructor>
+  </resultMap>
+
+  <!-- 순번 순서로 limit 건. 상한은 pageClause(offset 0). -->
+  <select id="findPending" resultMap="entry">
+    SELECT seq, tenant_id, kind, target_id, keep_dim, attempts FROM vector_outbox
+     WHERE tenant_id = #{tenantId}
+     ORDER BY seq
+     <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.pageClause"/>
+  </select>
+
+  <delete id="delete">
+    DELETE FROM vector_outbox WHERE tenant_id = #{tenantId} AND seq = #{seq}
+  </delete>
+
+  <update id="markFailed">
+    UPDATE vector_outbox SET attempts = attempts + 1, last_error = #{error,jdbcType=VARCHAR}
+     WHERE tenant_id = #{tenantId} AND seq = #{seq}
+  </update>
+</mapper>

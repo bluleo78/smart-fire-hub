@@ -42,6 +42,11 @@ class QdrantKeywordWritePathTest extends IntegrationTestBase {
   private static QdrantClient client;
 
   @Autowired private JooqSearchCandidateRepository candidates;
+  @Autowired private com.smartfirehub.vectorstore.repository.jooq.JooqVectorOutboxRepository outbox;
+
+  @Autowired
+  private com.smartfirehub.vectorstore.repository.jooq.JooqVectorMarkerRepository markers;
+
   @Autowired private DatasetEmbeddingRepository datasets;
   @Autowired private DocumentChunkRepository chunks;
   @Autowired private DSLContext dsl;
@@ -68,8 +73,8 @@ class QdrantKeywordWritePathTest extends IntegrationTestBase {
   void seed() throws Exception {
     QdrantTestContainer.deleteAllCollections(client);
     new QdrantVectorStoreLifecycle(client, props).prepare();
-    datasetIndex = new QdrantDatasetVectorIndex(client, props, candidates);
-    chunkIndex = new QdrantChunkVectorIndex(client, props, candidates);
+    datasetIndex = new QdrantDatasetVectorIndex(client, props, candidates, outbox, markers);
+    chunkIndex = new QdrantChunkVectorIndex(client, props, candidates, outbox, markers);
     keywordIndex =
         new KeywordIndexService(datasetIndex, chunkIndex, datasets, chunks, transactionManager);
     tenant = TenantRlsTestSupport.createActiveTenant(dsl, "qkw");
@@ -141,7 +146,7 @@ class QdrantKeywordWritePathTest extends IntegrationTestBase {
     try (QdrantClient deadClient = QdrantClientConfig.create(dead)) {
       KeywordIndexService broken =
           new KeywordIndexService(
-              new QdrantDatasetVectorIndex(deadClient, dead, candidates),
+              new QdrantDatasetVectorIndex(deadClient, dead, candidates, outbox, markers),
               chunkIndex,
               datasets,
               chunks,

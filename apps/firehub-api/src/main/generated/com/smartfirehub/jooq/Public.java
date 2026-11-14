@@ -102,6 +102,7 @@ import com.smartfirehub.jooq.tables.User;
 import com.smartfirehub.jooq.tables.UserChannelBinding;
 import com.smartfirehub.jooq.tables.UserChannelPreference;
 import com.smartfirehub.jooq.tables.UserRole;
+import com.smartfirehub.jooq.tables.VectorOutbox;
 import com.smartfirehub.jooq.tables.records.OutboxTenantIdsRecord;
 import com.smartfirehub.jooq.tables.records.PostgisSrsAllRecord;
 import com.smartfirehub.jooq.tables.records.PostgisSrsCodesRecord;
@@ -123,6 +124,7 @@ import org.jooq.Configuration;
 import org.jooq.Field;
 import org.jooq.Geometry;
 import org.jooq.Result;
+import org.jooq.Sequence;
 import org.jooq.Table;
 import org.jooq.impl.SchemaImpl;
 
@@ -1045,6 +1047,11 @@ public class Public extends SchemaImpl {
     public final UserRole USER_ROLE = UserRole.USER_ROLE;
 
     /**
+     * The table <code>public.vector_outbox</code>.
+     */
+    public final VectorOutbox VECTOR_OUTBOX = VectorOutbox.VECTOR_OUTBOX;
+
+    /**
      * No further instances allowed
      */
     private Public() {
@@ -1055,6 +1062,13 @@ public class Public extends SchemaImpl {
     @Override
     public Catalog getCatalog() {
         return DefaultCatalog.DEFAULT_CATALOG;
+    }
+
+    @Override
+    public final List<Sequence<?>> getSequences() {
+        return Arrays.asList(
+            Sequences.VECTOR_SEQ
+        );
     }
 
     @Override
@@ -1157,7 +1171,8 @@ public class Public extends SchemaImpl {
             User.USER,
             UserChannelBinding.USER_CHANNEL_BINDING,
             UserChannelPreference.USER_CHANNEL_PREFERENCE,
-            UserRole.USER_ROLE
+            UserRole.USER_ROLE,
+            VectorOutbox.VECTOR_OUTBOX
         );
     }
 }

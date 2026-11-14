@@ -6,7 +6,6 @@ import static com.smartfirehub.vectorstore.qdrant.QdrantSupport.anyOf;
 import static com.smartfirehub.vectorstore.qdrant.QdrantSupport.await;
 import static com.smartfirehub.vectorstore.qdrant.QdrantSupport.tenant;
 import static com.smartfirehub.vectorstore.qdrant.QdrantSupport.tenantKey;
-import static io.qdrant.client.ConditionFactory.match;
 import static io.qdrant.client.ConditionFactory.matchKeyword;
 import static io.qdrant.client.ValueFactory.value;
 
@@ -20,13 +19,15 @@ import com.smartfirehub.vectorstore.ChunkVectorIndex;
 import com.smartfirehub.vectorstore.ConditionalOnQdrantVectorStore;
 import com.smartfirehub.vectorstore.KeywordSource;
 import com.smartfirehub.vectorstore.SearchCandidateRepository;
+import com.smartfirehub.vectorstore.VectorMarkerRepository;
+import com.smartfirehub.vectorstore.VectorOutboxKind;
+import com.smartfirehub.vectorstore.VectorOutboxRepository;
 import io.qdrant.client.PointIdFactory;
 import io.qdrant.client.QdrantClient;
 import io.qdrant.client.QueryFactory;
 import io.qdrant.client.VectorFactory;
 import io.qdrant.client.VectorsFactory;
 import io.qdrant.client.WithPayloadSelectorFactory;
-import io.qdrant.client.grpc.Common.Filter;
 import io.qdrant.client.grpc.Common.PointId;
 import io.qdrant.client.grpc.Points.PointStruct;
 import io.qdrant.client.grpc.Points.QueryPoints;
@@ -36,7 +37,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
-import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import org.springframework.stereotype.Component;
 
@@ -55,12 +55,20 @@ public class QdrantChunkVectorIndex implements ChunkVectorIndex {
   private final QdrantClient client;
   private final QdrantProperties props;
   private final SearchCandidateRepository candidates;
+  private final VectorOutboxRepository outbox;
+  private final VectorMarkerRepository markers;
 
   public QdrantChunkVectorIndex(
-      QdrantClient client, QdrantProperties props, SearchCandidateRepository candidates) {
+      QdrantClient client,
+      QdrantProperties props,
+      SearchCandidateRepository candidates,
+      VectorOutboxRepository outbox,
+      VectorMarkerRepository markers) {
     this.client = client;
     this.props = props;
     this.candidates = candidates;
+    this.outbox = outbox;
+    this.markers = markers;
   }
 
   @Override
@@ -113,7 +121,10 @@ public class QdrantChunkVectorIndex implements ChunkVectorIndex {
         points, topK, ids -> candidates.findChunkHits(ids, visibility, datasetIds, null));
   }
 
-  /** dense 를 {@code space} 의 컬렉션에 쓰고(덮어쓰기), 같은 청크의 다른 차원 점은 커밋 뒤 지운다. */
+  /**
+   * dense 를 {@code space} 의 컬렉션에 쓴다(덮어쓰기). 점마다 새 순번을 싣는다(WD-721). 표시가 다른 차원을 가리키던 청크가 있으면 그 데이터셋의
+   * 다른 차원 청크 점을 아웃박스로 지운다 — 차원이 바뀐 뒤라 옛 차원 점은 어차피 검색에 쓰이지 않는다.
+   */
   @Override
   public void upsertDense(EmbeddingSpace space, List<ChunkRef> chunks, List<float[]> embeddings) {
     if (chunks.size() != embeddings.size()) {
@@ -122,6 +133,7 @@ public class QdrantChunkVectorIndex implements ChunkVectorIndex {
     }
     if (chunks.isEmpty()) return;
     long tenantId = TenantContext.require("Qdrant 청크 벡터 쓰기");
+    long seq = outbox.nextSeq();
     List<PointStruct> points = new ArrayList<>(chunks.size());
     for (int i = 0; i < chunks.size(); i++) {
       ChunkRef ref = chunks.get(i);
@@ -137,55 +149,57 @@ public class QdrantChunkVectorIndex implements ChunkVectorIndex {
                       QdrantCollectionSpec.DATASET_ID, value(ref.datasetId()),
                       QdrantCollectionSpec.DOCUMENT_ID, value(ref.documentFileId()),
                       QdrantCollectionSpec.CHUNK_ID, value(ref.chunkId()),
-                      QdrantCollectionSpec.MODEL, value(space.model())))
+                      QdrantCollectionSpec.MODEL, value(space.model()),
+                      QdrantCollectionSpec.SEQ, value(seq)))
               .build());
     }
     await(
         client.upsertAsync(space.dimension().chunkCollection(), points, props.timeout()),
         props.timeout(),
         "청크 벡터 쓰기");
-    List<PointId> ids = chunks.stream().map(r -> pointId(tenantId, r.chunkId())).toList();
-    QdrantSupport.deleteAfterCommit(
-        "다른 차원 청크 벡터",
-        () -> {
-          for (EmbeddingDimension d : EmbeddingDimension.values()) {
-            if (d == space.dimension()) continue;
-            await(
-                client.deleteAsync(d.chunkCollection(), ids, props.timeout()),
-                props.timeout(),
-                d.chunkCollection() + " 삭제");
-          }
-        });
+    int dim = space.dimension().size();
+    List<Long> chunkIds = chunks.stream().map(ChunkRef::chunkId).toList();
+    for (Long datasetId : markers.findChunkDatasetsMarkedOtherThan(chunkIds, dim)) {
+      outbox.enqueue(VectorOutboxKind.CHUNK_DENSE, datasetId, dim);
+    }
   }
 
+  /**
+   * 이 데이터셋들의 청크 dense 점을 모든 차원에서 지운다(아웃박스, WD-721). 저장소에 묻지 않는다.
+   *
+   * @return 지울 벡터 수 — dense 표시가 있는 청크 수
+   */
   @Override
   public int deleteDense(long tenantId, List<Long> datasetIds) {
+    QdrantDatasetVectorIndex.requireTenant(tenantId);
     if (datasetIds.isEmpty()) return 0;
-    return deleteFromDenseCollections(
-        allOf(tenant(tenantId), anyOf(QdrantCollectionSpec.DATASET_ID, datasetIds)),
-        d -> true,
-        "청크 dense 정리");
+    int count = markers.countChunkDense(datasetIds, null);
+    for (Long id : datasetIds) outbox.enqueue(VectorOutboxKind.CHUNK_DENSE, id, null);
+    return count;
   }
 
   @Override
   public int deleteOtherDimensions(long tenantId, EmbeddingDimension keep) {
-    return deleteFromDenseCollections(allOf(tenant(tenantId)), d -> d != keep, "다른 차원 청크 벡터 정리");
+    QdrantDatasetVectorIndex.requireTenant(tenantId);
+    int count = markers.countChunkDense(null, keep.size());
+    outbox.enqueue(VectorOutboxKind.CHUNK_DENSE, null, keep.size());
+    return count;
   }
 
-  /** 문서 삭제·재적재 — dense·키워드 컬렉션 모두에서 그 문서의 점을 지운다(트랜잭션 안이면 커밋 뒤). */
+  /**
+   * 문서 삭제·재적재 — dense·키워드 컬렉션 모두에서 그 문서의 점을 지운다(아웃박스). 재적재는 같은 문서 id 로 새 청크를 쓰지만, 새 점은 이 행보다 큰 순번을
+   * 받아 늦게 반영된 삭제에도 남는다.
+   */
   @Override
   public void deleteAllOfDocument(long tenantId, long documentFileId) {
-    deleteEverywhere(
-        allOf(tenant(tenantId), match(QdrantCollectionSpec.DOCUMENT_ID, documentFileId)),
-        "문서 청크 색인 전부");
+    QdrantDatasetVectorIndex.requireTenant(tenantId);
+    outbox.enqueue(VectorOutboxKind.CHUNK_ALL_OF_DOCUMENT, documentFileId, null);
   }
 
   @Override
   public void deleteAllOfDatasets(long tenantId, List<Long> datasetIds) {
-    if (datasetIds.isEmpty()) return;
-    deleteEverywhere(
-        allOf(tenant(tenantId), anyOf(QdrantCollectionSpec.DATASET_ID, datasetIds)),
-        "데이터셋 청크 색인 전부");
+    QdrantDatasetVectorIndex.requireTenant(tenantId);
+    for (Long id : datasetIds) outbox.enqueue(VectorOutboxKind.CHUNK_ALL_OF_DATASET, id, null);
   }
 
   @Override
@@ -205,6 +219,7 @@ public class QdrantChunkVectorIndex implements ChunkVectorIndex {
         props,
         QdrantCollectionSpec.CHUNKS_KEYWORD_COLLECTION,
         tenantId,
+        sources.isEmpty() ? 0 : outbox.nextSeq(),
         sources,
         BigramSparseEncoder.Profile.CHUNK,
         s -> pointId(tenantId, s.id()),
@@ -252,48 +267,5 @@ public class QdrantChunkVectorIndex implements ChunkVectorIndex {
       if (out.size() == topK) break;
     }
     return out;
-  }
-
-  private int deleteFromDenseCollections(
-      Filter filter, Predicate<EmbeddingDimension> which, String what) {
-    long total = 0;
-    List<String> targets = new ArrayList<>();
-    for (EmbeddingDimension d : EmbeddingDimension.values()) {
-      if (!which.test(d)) continue;
-      targets.add(d.chunkCollection());
-      total +=
-          await(
-              client.countAsync(d.chunkCollection(), filter, true, props.timeout()),
-              props.timeout(),
-              what + " 세기");
-    }
-    QdrantSupport.deleteAfterCommit(
-        what,
-        () ->
-            targets.forEach(
-                c ->
-                    await(
-                        client.deleteAsync(c, filter, props.timeout()),
-                        props.timeout(),
-                        c + " 삭제")));
-    return Math.toIntExact(total);
-  }
-
-  private void deleteEverywhere(Filter filter, String what) {
-    QdrantSupport.deleteAfterCommit(
-        what,
-        () -> {
-          for (EmbeddingDimension d : EmbeddingDimension.values()) {
-            await(
-                client.deleteAsync(d.chunkCollection(), filter, props.timeout()),
-                props.timeout(),
-                d.chunkCollection() + " 삭제");
-          }
-          await(
-              client.deleteAsync(
-                  QdrantCollectionSpec.CHUNKS_KEYWORD_COLLECTION, filter, props.timeout()),
-              props.timeout(),
-              "청크 키워드 삭제");
-        });
   }
 }

@@ -695,6 +695,20 @@ public class TiberoAccessFixtures implements AccessFixtures {
   }
 
   @Override
+  public void setEmbeddingKeywordMarker(long datasetId, String marker) {
+    poc.jdbc()
+        .update(
+            "update dataset_embedding set keyword_marker = ? where dataset_id = ?",
+            marker,
+            datasetId);
+  }
+
+  @Override
+  public void setChunkKeywordMarker(long chunkId, String marker) {
+    poc.jdbc().update("update document_chunk set keyword_marker = ? where id = ?", marker, chunkId);
+  }
+
+  @Override
   public void setChunkMarker(long chunkId, Integer dim, String model) {
     poc.jdbc()
         .update(

@@ -4,8 +4,10 @@ import static io.qdrant.client.ConditionFactory.matchKeyword;
 import static io.qdrant.client.ConditionFactory.matchValues;
 
 import com.google.common.util.concurrent.ListenableFuture;
+import io.qdrant.client.ConditionFactory;
 import io.qdrant.client.grpc.Common.Condition;
 import io.qdrant.client.grpc.Common.Filter;
+import io.qdrant.client.grpc.Common.Range;
 import io.qdrant.client.grpc.JsonWithInt.Value;
 import io.qdrant.client.grpc.Points.QuantizationSearchParams;
 import io.qdrant.client.grpc.Points.ScoredPoint;
@@ -15,17 +17,13 @@ import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
- * Qdrant 색인 구현들이 함께 쓰는 도우미(WD-720). 테넌트 필터, 결과 기다리기, 커밋 뒤 삭제를 한곳에 둔다.
+ * Qdrant 색인 구현들이 함께 쓰는 도우미(WD-720). 테넌트 필터, 결과 기다리기, 순번 가드를 한곳에 둔다.
  *
  * <p>테넌트 필터는 모든 검색·삭제에 붙는다(ADR 0002 결정 5·7). 컬렉션을 테넌트끼리 함께 쓰기 때문이다. {@code tenant_id} 는 키워드형이라 값을
  * 문자열로 싣는다(정수형 색인은 Qdrant 1.20 이 {@code is_tenant} 를 버린다 — WD-719 실측).
  */
-@Slf4j
 final class QdrantSupport {
 
   /**
@@ -91,28 +89,18 @@ final class QdrantSupport {
   }
 
   /**
-   * 삭제를 커밋 뒤로 미룬다. 트랜잭션이 없으면 바로 하고 실패는 호출자에게 던진다.
+   * 순번 가드 — {@code seq} 가 {@code before} 보다 작거나 {@code seq} 가 없는 점만 고른다(ADR 0002 결정 6, WD-721).
    *
-   * <p>왜 미루나: 벡터를 지우는 리포지토리 메서드는 같은 트랜잭션에서 표시 열을 비운다. Qdrant 삭제를 트랜잭션 안에서 바로 하면, 그 트랜잭션이 롤백될 때 표시는
-   * 「임베딩됨」으로 남는데 벡터는 이미 사라진다(검색에서 조용히 빠짐). 커밋 뒤에 지우면 실패해도 표시는 이미 비어 있어 사후 확인이 그 결과를 걸러 낸다. 커밋 뒤 실패는
-   * 로그만 남긴다 — 콜백 예외가 커밋을 마친 요청을 500 으로 만들지 않게. 남은 점은 대조 스윕(WD-721)이 지운다. 순서·유실을 보장하는 아웃박스도 WD-721
-   * 이다.
+   * <p>아웃박스 워커와 대조 스윕은 이 조건을 붙여 지운다. 삭제를 쌓은 뒤 다시 쓴 점은 더 큰 순번을 받으므로 남는다(늦은 삭제가 새 벡터를 지우지 않음). {@code
+   * seq} 가 없는 점(순번을 싣기 전에 쓴 점)도 고른다 — 범위 조건만 쓰면 그런 점은 영영 지워지지 않는다.
    */
-  static void deleteAfterCommit(String what, Runnable delete) {
-    if (!TransactionSynchronizationManager.isSynchronizationActive()) {
-      delete.run();
-      return;
-    }
-    TransactionSynchronizationManager.registerSynchronization(
-        new TransactionSynchronization() {
-          @Override
-          public void afterCommit() {
-            try {
-              delete.run();
-            } catch (RuntimeException e) {
-              log.warn("Qdrant 삭제 실패(커밋 뒤) — 대조 스윕이 정리한다: {}", what, e);
-            }
-          }
-        });
+  static Condition seqBefore(long before) {
+    return ConditionFactory.filter(
+        Filter.newBuilder()
+            .addShould(
+                ConditionFactory.range(
+                    QdrantCollectionSpec.SEQ, Range.newBuilder().setLt(before).build()))
+            .addShould(ConditionFactory.isEmpty(QdrantCollectionSpec.SEQ))
+            .build());
   }
 }

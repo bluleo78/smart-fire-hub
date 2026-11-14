@@ -70,6 +70,7 @@ import com.smartfirehub.jooq.tables.User.UserPath;
 import com.smartfirehub.jooq.tables.UserChannelBinding.UserChannelBindingPath;
 import com.smartfirehub.jooq.tables.UserChannelPreference.UserChannelPreferencePath;
 import com.smartfirehub.jooq.tables.UserRole.UserRolePath;
+import com.smartfirehub.jooq.tables.VectorOutbox.VectorOutboxPath;
 import com.smartfirehub.jooq.tables.records.TenantRecord;
 
 import java.time.LocalDateTime;
@@ -1046,6 +1047,19 @@ public class Tenant extends TableImpl<TenantRecord> {
             _userChannelPreference = new UserChannelPreferencePath(this, null, Keys.USER_CHANNEL_PREFERENCE__USER_CHANNEL_PREFERENCE_TENANT_ID_FKEY.getInverseKey());
 
         return _userChannelPreference;
+    }
+
+    private transient VectorOutboxPath _vectorOutbox;
+
+    /**
+     * Get the implicit to-many join path to the
+     * <code>public.vector_outbox</code> table
+     */
+    public VectorOutboxPath vectorOutbox() {
+        if (_vectorOutbox == null)
+            _vectorOutbox = new VectorOutboxPath(this, null, Keys.VECTOR_OUTBOX__VECTOR_OUTBOX_TENANT_ID_FKEY.getInverseKey());
+
+        return _vectorOutbox;
     }
 
     /**

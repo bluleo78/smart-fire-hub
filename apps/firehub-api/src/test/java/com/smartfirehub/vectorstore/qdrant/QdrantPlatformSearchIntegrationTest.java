@@ -75,6 +75,9 @@ class QdrantPlatformSearchIntegrationTest extends IntegrationTestBase {
     r.add("firehub.vector-store.qdrant.api-key", PROPS::apiKey);
     r.add("firehub.vector-store.qdrant.shard-number", () -> "2");
     r.add("firehub.vector-store.keyword-sweep-enabled", () -> "false");
+    // 아웃박스 워커·대조 스윕(WD-721)은 시험이 직접 부른다 — 주기 실행이 시험 도중 끼어들지 않게 끈다.
+    r.add("firehub.vector-store.outbox-worker-enabled", () -> "false");
+    r.add("firehub.vector-store.reconcile-sweep-enabled", () -> "false");
     r.add("firehub.file.upload-dir", uploadDir::toString);
   }
 

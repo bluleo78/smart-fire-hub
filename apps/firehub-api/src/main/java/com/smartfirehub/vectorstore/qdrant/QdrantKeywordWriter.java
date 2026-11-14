@@ -22,6 +22,8 @@ import java.util.function.Function;
  *
  * <p>원문에 낱말이 하나도 없으면(빈 문자열·기호만) sparse 가 비어 Qdrant 가 쓰기를 거절할 수 있고, 옛 키워드가 남으면 안 되므로 그 점을 지운다. 쓰기는
  * 커밋 뒤에 불리므로(키워드 쓰기 경로) 삭제도 바로 한다.
+ *
+ * <p>점마다 호출자가 받은 순번({@code seq}, WD-721)을 싣는다. 그 전에 쌓인 아웃박스 삭제(문서 재적재·데이터셋 삭제)는 이 점을 지우지 않는다.
  */
 final class QdrantKeywordWriter {
 
@@ -32,6 +34,7 @@ final class QdrantKeywordWriter {
       QdrantProperties props,
       String collection,
       long tenantId,
+      long seq,
       List<KeywordSource> sources,
       BigramSparseEncoder.Profile profile,
       Function<KeywordSource, PointId> pointId,
@@ -47,6 +50,7 @@ final class QdrantKeywordWriter {
       }
       Map<String, Value> payload = new HashMap<>(extraPayload.apply(s));
       payload.put(QdrantCollectionSpec.TENANT_ID, value(tenantKey(tenantId)));
+      payload.put(QdrantCollectionSpec.SEQ, value(seq));
       points.add(
           PointStruct.newBuilder()
               .setId(pointId.apply(s))

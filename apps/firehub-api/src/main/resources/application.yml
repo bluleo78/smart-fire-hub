@@ -210,6 +210,12 @@ firehub:
     # 키워드 백로그 스윕(WD-720) — 키워드 표시가 비었거나 어긋난 행을 주기마다 Qdrant 에 다시 쓴다. 임베딩 API 를 부르지 않는다.
     keyword-sweep-enabled: ${FIREHUB_KEYWORD_SWEEP_ENABLED:true}
     keyword-sweep-interval-ms: ${FIREHUB_KEYWORD_SWEEP_INTERVAL_MS:300000}
+    # 벡터 아웃박스 워커(WD-721) — 데이터셋·문서 삭제와 외부 벡터 정리가 쌓은 삭제를 주기마다 Qdrant 에 반영한다.
+    outbox-worker-enabled: ${FIREHUB_VECTOR_OUTBOX_WORKER_ENABLED:true}
+    outbox-poll-interval-ms: ${FIREHUB_VECTOR_OUTBOX_POLL_INTERVAL_MS:5000}
+    # 대조 스윕(WD-721) — Qdrant 에만 남은 점을 지우고, 점이 없는 표시 열을 비워 백로그로 돌린다. 테넌트 점 전부를 훑으므로 드물게 돈다.
+    reconcile-sweep-enabled: ${FIREHUB_VECTOR_RECONCILE_SWEEP_ENABLED:true}
+    reconcile-sweep-interval-ms: ${FIREHUB_VECTOR_RECONCILE_SWEEP_INTERVAL_MS:1800000}
     qdrant:
       # gRPC 주소. https:// 면 TLS. 포트를 빼면 6334.
       url: ${QDRANT_URL:http://localhost:6334}

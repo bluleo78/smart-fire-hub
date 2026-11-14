@@ -69,7 +69,7 @@ class TiberoTenantPolicyCatalogLiveTest {
             + policyTables.size()
             + "개");
     assertThat(policyTables).isEqualTo(tenantTables);
-    assertThat(policyTables).hasSize(57);
+    assertThat(policyTables).hasSize(58); // V162 vector_outbox(WD-721) 추가
   }
 
   @Test

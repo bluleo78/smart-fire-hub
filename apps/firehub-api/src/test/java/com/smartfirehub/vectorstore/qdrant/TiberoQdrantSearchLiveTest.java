@@ -24,8 +24,14 @@ import com.smartfirehub.user.repository.TenantPairContractBase;
 import com.smartfirehub.user.repository.TiberoAccessFixtures;
 import com.smartfirehub.vectorstore.KeywordIndexService;
 import com.smartfirehub.vectorstore.SearchCandidateRepository;
+import com.smartfirehub.vectorstore.VectorMarkerRepository;
+import com.smartfirehub.vectorstore.VectorOutboxRepository;
 import com.smartfirehub.vectorstore.repository.mybatis.MyBatisSearchCandidateRepository;
+import com.smartfirehub.vectorstore.repository.mybatis.MyBatisVectorMarkerRepository;
+import com.smartfirehub.vectorstore.repository.mybatis.MyBatisVectorOutboxRepository;
 import com.smartfirehub.vectorstore.repository.mybatis.SearchCandidateMapper;
+import com.smartfirehub.vectorstore.repository.mybatis.VectorMarkerMapper;
+import com.smartfirehub.vectorstore.repository.mybatis.VectorOutboxMapper;
 import io.qdrant.client.QdrantClient;
 import java.util.List;
 import org.junit.jupiter.api.AfterAll;
@@ -67,8 +73,17 @@ class TiberoQdrantSearchLiveTest extends TenantPairContractBase {
         poc.transactional(
             SearchCandidateRepository.class,
             new MyBatisSearchCandidateRepository(poc.mapper(SearchCandidateMapper.class)));
-    datasetIndex = new QdrantDatasetVectorIndex(client, props, candidates);
-    chunkIndex = new QdrantChunkVectorIndex(client, props, candidates);
+    // 아웃박스·표시 열(WD-721)도 MyBatis 판 + Tibero 실서버로 묶는다.
+    VectorOutboxRepository outbox =
+        poc.transactional(
+            VectorOutboxRepository.class,
+            new MyBatisVectorOutboxRepository(poc.mapper(VectorOutboxMapper.class)));
+    VectorMarkerRepository markers =
+        poc.transactional(
+            VectorMarkerRepository.class,
+            new MyBatisVectorMarkerRepository(poc.mapper(VectorMarkerMapper.class)));
+    datasetIndex = new QdrantDatasetVectorIndex(client, props, candidates, outbox, markers);
+    chunkIndex = new QdrantChunkVectorIndex(client, props, candidates, outbox, markers);
     datasets =
         poc.transactional(
             DatasetEmbeddingRepository.class,

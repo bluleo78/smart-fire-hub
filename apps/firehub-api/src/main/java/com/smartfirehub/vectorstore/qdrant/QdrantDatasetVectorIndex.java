@@ -18,13 +18,15 @@ import com.smartfirehub.vectorstore.ConditionalOnQdrantVectorStore;
 import com.smartfirehub.vectorstore.DatasetVectorIndex;
 import com.smartfirehub.vectorstore.KeywordSource;
 import com.smartfirehub.vectorstore.SearchCandidateRepository;
+import com.smartfirehub.vectorstore.VectorMarkerRepository;
+import com.smartfirehub.vectorstore.VectorOutboxKind;
+import com.smartfirehub.vectorstore.VectorOutboxRepository;
 import io.qdrant.client.PointIdFactory;
 import io.qdrant.client.QdrantClient;
 import io.qdrant.client.QueryFactory;
 import io.qdrant.client.VectorFactory;
 import io.qdrant.client.VectorsFactory;
 import io.qdrant.client.WithPayloadSelectorFactory;
-import io.qdrant.client.grpc.Common.Filter;
 import io.qdrant.client.grpc.Common.PointId;
 import io.qdrant.client.grpc.Points.PointStruct;
 import io.qdrant.client.grpc.Points.QueryPoints;
@@ -59,12 +61,20 @@ public class QdrantDatasetVectorIndex implements DatasetVectorIndex {
   private final QdrantClient client;
   private final QdrantProperties props;
   private final SearchCandidateRepository candidates;
+  private final VectorOutboxRepository outbox;
+  private final VectorMarkerRepository markers;
 
   public QdrantDatasetVectorIndex(
-      QdrantClient client, QdrantProperties props, SearchCandidateRepository candidates) {
+      QdrantClient client,
+      QdrantProperties props,
+      SearchCandidateRepository candidates,
+      VectorOutboxRepository outbox,
+      VectorMarkerRepository markers) {
     this.client = client;
     this.props = props;
     this.candidates = candidates;
+    this.outbox = outbox;
+    this.markers = markers;
   }
 
   @Override
@@ -117,8 +127,11 @@ public class QdrantDatasetVectorIndex implements DatasetVectorIndex {
   }
 
   /**
-   * dense 를 {@code space} 의 컬렉션에 쓰고(덮어쓰기), 같은 데이터셋의 다른 차원 점은 커밋 뒤 지운다. 쓰기는 바로 한다 — 실패하면 예외가 트랜잭션을
-   * 롤백해 표시 열이 차지 않고 백로그가 다시 잡는다. 부모가 없는 id 는 호출한 리포지토리가 거른다.
+   * dense 를 {@code space} 의 컬렉션에 쓴다(덮어쓰기). 쓰기는 바로 한다 — 실패하면 예외가 트랜잭션을 롤백해 표시 열이 차지 않고 백로그가 다시 잡는다.
+   * 부모가 없는 id 는 호출한 리포지토리가 거른다.
+   *
+   * <p>점마다 새 순번({@code seq})을 싣는다(WD-721). 그 전에 쌓인 삭제는 이 점을 지우지 않는다. 표시 열이 다른 차원을 가리키던 데이터셋은 그 차원
+   * 점을 아웃박스로 지운다 — 표시는 호출한 리포지토리가 이 뒤에 새 공간으로 바꾸므로 지금 읽어야 옛 차원을 안다.
    */
   @Override
   public void upsertDense(EmbeddingSpace space, List<Long> datasetIds, List<float[]> embeddings) {
@@ -128,6 +141,7 @@ public class QdrantDatasetVectorIndex implements DatasetVectorIndex {
     }
     if (datasetIds.isEmpty()) return;
     long tenantId = TenantContext.require("Qdrant 데이터셋 벡터 쓰기");
+    long seq = outbox.nextSeq();
     List<PointStruct> points = new ArrayList<>(datasetIds.size());
     for (int i = 0; i < datasetIds.size(); i++) {
       long id = datasetIds.get(i);
@@ -141,49 +155,49 @@ public class QdrantDatasetVectorIndex implements DatasetVectorIndex {
                   Map.of(
                       QdrantCollectionSpec.TENANT_ID, value(tenantKey(tenantId)),
                       QdrantCollectionSpec.DATASET_ID, value(id),
-                      QdrantCollectionSpec.MODEL, value(space.model())))
+                      QdrantCollectionSpec.MODEL, value(space.model()),
+                      QdrantCollectionSpec.SEQ, value(seq)))
               .build());
     }
     await(
         client.upsertAsync(space.dimension().datasetCollection(), points, props.timeout()),
         props.timeout(),
         "데이터셋 벡터 쓰기");
-    Filter mine = allOf(tenant(tenantId), anyOf(QdrantCollectionSpec.DATASET_ID, datasetIds));
-    QdrantSupport.deleteAfterCommit(
-        "다른 차원 데이터셋 벡터",
-        () -> {
-          for (EmbeddingDimension d : EmbeddingDimension.values()) {
-            if (d != space.dimension()) delete(d.datasetCollection(), mine);
-          }
-        });
+    int dim = space.dimension().size();
+    for (Long moved : markers.findDatasetsMarkedOtherThan(datasetIds, dim)) {
+      outbox.enqueue(VectorOutboxKind.DATASET_DENSE, moved, dim);
+    }
   }
 
-  /** 모든 차원 컬렉션에서 이 데이터셋들의 dense 점을 지운다(키워드 컬렉션은 그대로). 지울 점 수를 지금 세어 돌려주고 삭제는 커밋 뒤에 한다. */
+  /**
+   * 모든 차원 컬렉션에서 이 데이터셋들의 dense 점을 지운다(키워드 컬렉션은 그대로). 삭제는 아웃박스에 쌓아 워커가 반영한다(WD-721) — 호출한 트랜잭션이 표시
+   * 열을 비우는 것과 함께 커밋된다. 저장소에 묻지 않으므로 저장소가 내려가 있어도 정리 경로가 실패하지 않는다.
+   *
+   * @return 지울 벡터 수 — dense 표시가 있는 데이터셋 수(표시는 점의 거울이다)
+   */
   @Override
   public int deleteDense(long tenantId, List<Long> datasetIds) {
+    requireTenant(tenantId);
     if (datasetIds.isEmpty()) return 0;
-    Filter mine = allOf(tenant(tenantId), anyOf(QdrantCollectionSpec.DATASET_ID, datasetIds));
-    return deleteFromDenseCollections(mine, d -> true, "데이터셋 dense 정리");
+    int count = markers.countDatasetDense(datasetIds, null);
+    for (Long id : datasetIds) outbox.enqueue(VectorOutboxKind.DATASET_DENSE, id, null);
+    return count;
   }
 
+  /** {@code keep} 이 아닌 차원의 이 테넌트 점을 지운다(아웃박스). 수는 다른 차원을 가리키는 표시 수다. */
   @Override
   public int deleteOtherDimensions(long tenantId, EmbeddingDimension keep) {
-    return deleteFromDenseCollections(allOf(tenant(tenantId)), d -> d != keep, "다른 차원 데이터셋 벡터 정리");
+    requireTenant(tenantId);
+    int count = markers.countDatasetDense(null, keep.size());
+    outbox.enqueue(VectorOutboxKind.DATASET_DENSE, null, keep.size());
+    return count;
   }
 
-  /** 데이터셋 삭제 — dense·키워드 컬렉션 모두에서 지운다(커밋 뒤). */
+  /** 데이터셋 삭제 — dense·키워드 컬렉션 모두에서 지운다(아웃박스, 데이터셋 삭제와 같은 트랜잭션). */
   @Override
   public void deleteAll(long tenantId, List<Long> datasetIds) {
-    if (datasetIds.isEmpty()) return;
-    Filter mine = allOf(tenant(tenantId), anyOf(QdrantCollectionSpec.DATASET_ID, datasetIds));
-    QdrantSupport.deleteAfterCommit(
-        "데이터셋 색인 전부",
-        () -> {
-          for (EmbeddingDimension d : EmbeddingDimension.values()) {
-            delete(d.datasetCollection(), mine);
-          }
-          delete(QdrantCollectionSpec.DATASETS_KEYWORD_COLLECTION, mine);
-        });
+    requireTenant(tenantId);
+    for (Long id : datasetIds) outbox.enqueue(VectorOutboxKind.DATASET_ALL, id, null);
   }
 
   @Override
@@ -204,6 +218,7 @@ public class QdrantDatasetVectorIndex implements DatasetVectorIndex {
         props,
         QdrantCollectionSpec.DATASETS_KEYWORD_COLLECTION,
         tenantId,
+        sources.isEmpty() ? 0 : outbox.nextSeq(),
         sources,
         BigramSparseEncoder.Profile.DATASET,
         s -> pointId(tenantId, s.id()),
@@ -250,28 +265,14 @@ public class QdrantDatasetVectorIndex implements DatasetVectorIndex {
     return out;
   }
 
-  /** 고른 차원 컬렉션에서 필터에 맞는 점 수를 지금 세고, 삭제는 커밋 뒤로 미룬다. */
-  private int deleteFromDenseCollections(
-      Filter filter, java.util.function.Predicate<EmbeddingDimension> which, String what) {
-    long total = 0;
-    List<String> targets = new ArrayList<>();
-    for (EmbeddingDimension d : EmbeddingDimension.values()) {
-      if (!which.test(d)) continue;
-      targets.add(d.datasetCollection());
-      total +=
-          await(
-              client.countAsync(d.datasetCollection(), filter, true, props.timeout()),
-              props.timeout(),
-              what + " 세기");
+  /**
+   * 아웃박스는 현재 테넌트(RLS·{@code TenantContext})에 쌓인다. 인자로 받은 테넌트가 다르면 남의 테넌트 점을 지우라는 요청이 엉뚱한 테넌트에 쌓이므로
+   * 거부한다.
+   */
+  static void requireTenant(long tenantId) {
+    long current = TenantContext.require("Qdrant 벡터 삭제");
+    if (current != tenantId) {
+      throw new IllegalStateException("테넌트 불일치: 문맥=" + current + ", 인자=" + tenantId);
     }
-    QdrantSupport.deleteAfterCommit(what, () -> targets.forEach(c -> delete(c, filter)));
-    return Math.toIntExact(total);
-  }
-
-  private void delete(String collection, Filter filter) {
-    await(
-        client.deleteAsync(collection, filter, props.timeout()),
-        props.timeout(),
-        collection + " 삭제");
   }
 }

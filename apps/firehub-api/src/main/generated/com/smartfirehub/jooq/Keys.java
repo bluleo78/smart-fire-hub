@@ -87,6 +87,7 @@ import com.smartfirehub.jooq.tables.User;
 import com.smartfirehub.jooq.tables.UserChannelBinding;
 import com.smartfirehub.jooq.tables.UserChannelPreference;
 import com.smartfirehub.jooq.tables.UserRole;
+import com.smartfirehub.jooq.tables.VectorOutbox;
 import com.smartfirehub.jooq.tables.records.AiInferenceCacheRecord;
 import com.smartfirehub.jooq.tables.records.AiSessionRecord;
 import com.smartfirehub.jooq.tables.records.AnalyticsQueryRunRecord;
@@ -170,6 +171,7 @@ import com.smartfirehub.jooq.tables.records.UserChannelBindingRecord;
 import com.smartfirehub.jooq.tables.records.UserChannelPreferenceRecord;
 import com.smartfirehub.jooq.tables.records.UserRecord;
 import com.smartfirehub.jooq.tables.records.UserRoleRecord;
+import com.smartfirehub.jooq.tables.records.VectorOutboxRecord;
 
 import org.jooq.ForeignKey;
 import org.jooq.TableField;
@@ -296,6 +298,7 @@ public class Keys {
     public static final UniqueKey<UserChannelPreferenceRecord> UK_PREFERENCE = Internal.createUniqueKey(UserChannelPreference.USER_CHANNEL_PREFERENCE, DSL.name("uk_preference"), new TableField[] { UserChannelPreference.USER_CHANNEL_PREFERENCE.TENANT_ID, UserChannelPreference.USER_CHANNEL_PREFERENCE.USER_ID, UserChannelPreference.USER_CHANNEL_PREFERENCE.CHANNEL_TYPE }, true);
     public static final UniqueKey<UserChannelPreferenceRecord> USER_CHANNEL_PREFERENCE_PKEY = Internal.createUniqueKey(UserChannelPreference.USER_CHANNEL_PREFERENCE, DSL.name("user_channel_preference_pkey"), new TableField[] { UserChannelPreference.USER_CHANNEL_PREFERENCE.ID }, true);
     public static final UniqueKey<UserRoleRecord> USER_ROLE_PKEY = Internal.createUniqueKey(UserRole.USER_ROLE, DSL.name("user_role_pkey"), new TableField[] { UserRole.USER_ROLE.USER_ID, UserRole.USER_ROLE.ROLE_ID }, true);
+    public static final UniqueKey<VectorOutboxRecord> VECTOR_OUTBOX_PKEY = Internal.createUniqueKey(VectorOutbox.VECTOR_OUTBOX, DSL.name("vector_outbox_pkey"), new TableField[] { VectorOutbox.VECTOR_OUTBOX.SEQ }, true);
 
     // -------------------------------------------------------------------------
     // FOREIGN KEY definitions
@@ -465,4 +468,5 @@ public class Keys {
     public static final ForeignKey<UserRoleRecord, TenantRecord> USER_ROLE__FK_USER_ROLE_TENANT = Internal.createForeignKey(UserRole.USER_ROLE, DSL.name("fk_user_role_tenant"), new TableField[] { UserRole.USER_ROLE.TENANT_ID }, Keys.TENANT_PKEY, new TableField[] { Tenant.TENANT.ID }, true);
     public static final ForeignKey<UserRoleRecord, RoleRecord> USER_ROLE__USER_ROLE_ROLE_ID_FKEY = Internal.createForeignKey(UserRole.USER_ROLE, DSL.name("user_role_role_id_fkey"), new TableField[] { UserRole.USER_ROLE.ROLE_ID }, Keys.ROLE_PKEY, new TableField[] { Role.ROLE.ID }, true);
     public static final ForeignKey<UserRoleRecord, UserRecord> USER_ROLE__USER_ROLE_USER_ID_FKEY = Internal.createForeignKey(UserRole.USER_ROLE, DSL.name("user_role_user_id_fkey"), new TableField[] { UserRole.USER_ROLE.USER_ID }, Keys.USER_PKEY, new TableField[] { User.USER.ID }, true);
+    public static final ForeignKey<VectorOutboxRecord, TenantRecord> VECTOR_OUTBOX__VECTOR_OUTBOX_TENANT_ID_FKEY = Internal.createForeignKey(VectorOutbox.VECTOR_OUTBOX, DSL.name("vector_outbox_tenant_id_fkey"), new TableField[] { VectorOutbox.VECTOR_OUTBOX.TENANT_ID }, Keys.TENANT_PKEY, new TableField[] { Tenant.TENANT.ID }, true);
 }
