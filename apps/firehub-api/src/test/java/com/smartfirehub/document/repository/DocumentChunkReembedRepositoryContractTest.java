@@ -62,7 +62,7 @@ public abstract class DocumentChunkReembedRepositoryContractTest extends TenantP
     for (int i = 0; i < n; i++) {
       chunks.add(new Chunk(i, "c" + i, 1));
     }
-    runA(() -> repository().insertChunksOnly(f, datasetId, chunks));
+    runA(() -> repository().insertChunks(f, datasetId, chunks));
     return inA(() -> repository().findChunkContentsByDataset(datasetId)).stream()
         .map(ChunkContent::chunkId)
         .toList();

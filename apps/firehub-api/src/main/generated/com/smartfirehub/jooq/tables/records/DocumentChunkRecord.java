@@ -175,6 +175,34 @@ public class DocumentChunkRecord extends UpdatableRecordImpl<DocumentChunkRecord
         return (String) get(10);
     }
 
+    /**
+     * Setter for <code>public.document_chunk.content_hash</code>.
+     */
+    public void setContentHash(String value) {
+        set(11, value);
+    }
+
+    /**
+     * Getter for <code>public.document_chunk.content_hash</code>.
+     */
+    public String getContentHash() {
+        return (String) get(11);
+    }
+
+    /**
+     * Setter for <code>public.document_chunk.keyword_marker</code>.
+     */
+    public void setKeywordMarker(String value) {
+        set(12, value);
+    }
+
+    /**
+     * Getter for <code>public.document_chunk.keyword_marker</code>.
+     */
+    public String getKeywordMarker() {
+        return (String) get(12);
+    }
+
     // -------------------------------------------------------------------------
     // Primary key information
     // -------------------------------------------------------------------------
@@ -198,7 +226,7 @@ public class DocumentChunkRecord extends UpdatableRecordImpl<DocumentChunkRecord
     /**
      * Create a detached, initialised DocumentChunkRecord
      */
-    public DocumentChunkRecord(Long id, Long documentFileId, Long datasetId, Integer chunkIndex, String content, Integer tokenCount, JSONB metadata, OffsetDateTime createdAt, Long tenantId, Integer embeddedDim, String embeddedModel) {
+    public DocumentChunkRecord(Long id, Long documentFileId, Long datasetId, Integer chunkIndex, String content, Integer tokenCount, JSONB metadata, OffsetDateTime createdAt, Long tenantId, Integer embeddedDim, String embeddedModel, String contentHash, String keywordMarker) {
         super(DocumentChunk.DOCUMENT_CHUNK);
 
         setId(id);
@@ -212,6 +240,8 @@ public class DocumentChunkRecord extends UpdatableRecordImpl<DocumentChunkRecord
         setTenantId(tenantId);
         setEmbeddedDim(embeddedDim);
         setEmbeddedModel(embeddedModel);
+        setContentHash(contentHash);
+        setKeywordMarker(keywordMarker);
         resetChangedOnNotNull();
     }
 }

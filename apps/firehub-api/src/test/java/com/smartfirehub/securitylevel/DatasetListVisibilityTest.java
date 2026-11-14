@@ -183,9 +183,9 @@ class DatasetListVisibilityTest extends IntegrationTestBase {
             DEFAULT_TEST_TENANT_ID,
             () -> {
               embeddingRepository.upsertEmbedding(
-                  space, hiddenId, EmbeddingTestFixtures.axis(1024, 0));
+                  space, hiddenId, EmbeddingTestFixtures.axis(1024, 0), "seed");
               embeddingRepository.upsertEmbedding(
-                  space, visibleId, EmbeddingTestFixtures.axis(1024, 0));
+                  space, visibleId, EmbeddingTestFixtures.axis(1024, 0), "seed");
               return searchRepository
                   .semantic(
                       space,

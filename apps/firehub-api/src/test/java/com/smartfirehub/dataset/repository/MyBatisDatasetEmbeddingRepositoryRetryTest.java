@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 
 import com.smartfirehub.dataset.repository.mybatis.DatasetEmbeddingMapper;
 import com.smartfirehub.dataset.repository.mybatis.MyBatisDatasetEmbeddingRepository;
+import com.smartfirehub.embedding.SourceHash;
 import com.smartfirehub.vectorstore.off.OffDatasetVectorIndex;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -28,34 +29,34 @@ class MyBatisDatasetEmbeddingRepositoryRetryTest {
   @Test
   @DisplayName("첫 시도가 중복 키로 실패하면 한 번만 다시 시도한다(두 번째는 이미 있는 행을 만나 UPDATE)")
   void upsertSourceText_retriesOnceAfterDuplicateKey() {
-    when(mapper.upsertSourceText(anyLong(), anyString()))
+    when(mapper.upsertSourceText(anyLong(), anyString(), anyString()))
         .thenThrow(new DuplicateKeyException("dup"))
         .thenReturn(1);
 
     repository.upsertSourceText(1L, "본문");
 
-    verify(mapper, times(2)).upsertSourceText(1L, "본문");
+    verify(mapper, times(2)).upsertSourceText(1L, "본문", SourceHash.of("본문"));
   }
 
   @Test
   @DisplayName("두 번 다 중복 키로 실패하면 예외가 삼켜지지 않고 그대로 올라간다")
   void upsertSourceText_propagatesWhenRetryAlsoFails() {
-    when(mapper.upsertSourceText(anyLong(), anyString()))
+    when(mapper.upsertSourceText(anyLong(), anyString(), anyString()))
         .thenThrow(new DuplicateKeyException("dup"));
 
     assertThatThrownBy(() -> repository.upsertSourceText(1L, "본문"))
         .isInstanceOf(DuplicateKeyException.class);
 
-    verify(mapper, times(2)).upsertSourceText(1L, "본문");
+    verify(mapper, times(2)).upsertSourceText(1L, "본문", SourceHash.of("본문"));
   }
 
   @Test
   @DisplayName("첫 시도가 성공하면 다시 시도하지 않는다")
   void upsertSourceText_noRetryOnSuccess() {
-    when(mapper.upsertSourceText(anyLong(), anyString())).thenReturn(1);
+    when(mapper.upsertSourceText(anyLong(), anyString(), anyString())).thenReturn(1);
 
     repository.upsertSourceText(1L, "본문");
 
-    verify(mapper, times(1)).upsertSourceText(1L, "본문");
+    verify(mapper, times(1)).upsertSourceText(1L, "본문", SourceHash.of("본문"));
   }
 }

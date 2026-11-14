@@ -5,15 +5,17 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.smartfirehub.dataset.repository.DatasetEmbeddingRepository;
 import com.smartfirehub.dataset.repository.DatasetEmbeddingRepository.SourceTextRow;
+import com.smartfirehub.document.dto.Chunk;
 import com.smartfirehub.document.repository.DocumentChunkRepository;
 import com.smartfirehub.document.repository.DocumentChunkRepository.ChunkContent;
-import com.smartfirehub.document.dto.Chunk;
 import com.smartfirehub.embedding.EmbeddingDimension;
 import com.smartfirehub.embedding.EmbeddingSpace;
+import com.smartfirehub.embedding.SourceHash;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.securitylevel.access.ProviderHosting;
 import com.smartfirehub.securitylevel.ai.EmbeddingAllowance;
 import com.smartfirehub.securitylevel.repository.EmbeddingAiPolicyRepository;
+import com.smartfirehub.support.ChunkSeeds;
 import com.smartfirehub.support.EmbeddingTestFixtures;
 import com.smartfirehub.support.EmbeddingTestFixtures.DocFixture;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -36,14 +38,19 @@ import org.springframework.beans.factory.annotation.Autowired;
 /**
  * 임베딩 표시 열(WD-717)이 벡터 행의 거울로 유지되고, 표시 열 기반 판정이 예전 차원 테이블 anti-join 판정과 같은 결과를 내는지 고정한다.
  *
- * <p>왜 필요한가: WD-717 은 재임베딩 백로그(countMissing/findMissing)와 진행률 분자(countEmbedded)의 근거를 차원 테이블(*_vec_N)에서
- * 부모 행의 표시 열로 옮겼다. 벡터를 다른 저장소로 옮기기 위한 준비라 pgvector 설치본의 결과는 바뀌면 안 된다. 그래서 벡터를 쓰거나 지우는 모든 리포지토리
- * 경로를 한 번씩 밟으며, 매 단계마다 (1) 표시 열 ↔ 실제 벡터 행 불일치 0건, (2) 새 판정 = 예전 판정을 단언한다.
+ * <p>왜 필요한가: WD-717 은 재임베딩 백로그(countMissing/findMissing)와 진행률 분자(countEmbedded)의 근거를 차원
+ * 테이블(*_vec_N)에서 부모 행의 표시 열로 옮겼다. 벡터를 다른 저장소로 옮기기 위한 준비라 pgvector 설치본의 결과는 바뀌면 안 된다. 그래서 벡터를 쓰거나
+ * 지우는 모든 리포지토리 경로를 한 번씩 밟으며, 매 단계마다 (1) 표시 열 ↔ 실제 벡터 행 불일치 0건, (2) 새 판정 = 예전 판정을 단언한다.
  *
  * <p>V160 백필(UPDATE … FROM *_vec_N)은 Flyway 가 테스트 DB 를 만들 때 데이터 없이 이미 돌았으므로, 같은 파일의 UPDATE 문을 소유자
  * 커넥션으로 다시 돌려 "표시 열이 찬 행 = 벡터 행" 을 따로 확인한다.
  */
 class EmbeddingMarkerEquivalenceTest extends IntegrationTestBase {
+
+  // 시드 원문의 해시 — 벡터를 쓸 때 이 원문으로 만들었다고 넘긴다(WD-720). 원문이 바뀌지 않는 이 시험에서는 표시가 예전처럼 거울로 찬다.
+  private static final String H_A = SourceHash.of("화재 통계");
+  private static final String H_A2 = SourceHash.of("소방 점검");
+  private static final String H_B = SourceHash.of("남의 데이터셋");
 
   private static final EmbeddingSpace S1024 =
       new EmbeddingSpace(EmbeddingDimension.D1024, "bge-m3");
@@ -72,21 +79,24 @@ class EmbeddingMarkerEquivalenceTest extends IntegrationTestBase {
   void seed() {
     tenantA = TenantRlsTestSupport.createActiveTenant(dsl, "mark-a");
     tenantB = TenantRlsTestSupport.createActiveTenant(dsl, "mark-b");
-    docA = inTenantFixture(tenantA, () -> EmbeddingTestFixtures.createDocumentDataset(dsl, "marka"));
+    docA =
+        inTenantFixture(tenantA, () -> EmbeddingTestFixtures.createDocumentDataset(dsl, "marka"));
     docA2 =
         inTenantFixture(tenantA, () -> EmbeddingTestFixtures.createDocumentDataset(dsl, "marka2"));
-    docB = inTenantFixture(tenantB, () -> EmbeddingTestFixtures.createDocumentDataset(dsl, "markb"));
+    docB =
+        inTenantFixture(tenantB, () -> EmbeddingTestFixtures.createDocumentDataset(dsl, "markb"));
     TenantContext.runScoped(
         tenantA,
         () -> {
           datasetRepo.upsertSourceText(docA.datasetId(), "화재 통계");
           datasetRepo.upsertSourceText(docA2.datasetId(), "소방 점검");
           // 벡터 없는 청크 두 개(AI 불허 문서 경로)와 벡터와 함께 넣는 청크 하나.
-          chunkRepo.insertChunksOnly(
+          chunkRepo.insertChunks(
               docA.fileId(),
               docA.datasetId(),
               List.of(new Chunk(0, "a-0", 1), new Chunk(1, "a-1", 1)));
-          chunkRepo.insertBatch(
+          ChunkSeeds.insertWithVectors(
+              chunkRepo,
               docA2.fileId(),
               docA2.datasetId(),
               List.of(new Chunk(0, "a2-0", 1)),
@@ -97,8 +107,9 @@ class EmbeddingMarkerEquivalenceTest extends IntegrationTestBase {
         tenantB,
         () -> {
           datasetRepo.upsertSourceText(docB.datasetId(), "남의 데이터셋");
-          datasetRepo.upsertEmbedding(S1024, docB.datasetId(), axis(1024, 2));
-          chunkRepo.insertBatch(
+          datasetRepo.upsertEmbedding(S1024, docB.datasetId(), axis(1024, 2), H_B);
+          ChunkSeeds.insertWithVectors(
+              chunkRepo,
               docB.fileId(),
               docB.datasetId(),
               List.of(new Chunk(0, "b-0", 1)),
@@ -128,15 +139,17 @@ class EmbeddingMarkerEquivalenceTest extends IntegrationTestBase {
             datasetRepo.upsertEmbeddings(
                 S1024,
                 List.of(docA.datasetId(), Long.MAX_VALUE, docA2.datasetId()),
-                List.of(axis(1024, 0), axis(1024, 1), axis(1024, 2))));
+                List.of(axis(1024, 0), axis(1024, 1), axis(1024, 2)),
+                List.of(H_A, H_A, H_A2)));
     assertMirroredAndEquivalent("데이터셋 배치 쓰기");
 
     // 데이터셋: 같은 차원 안 모델 교체 → 차원 교체
     TenantContext.runScoped(
-        tenantA, () -> datasetRepo.upsertEmbedding(S1024_OTHER, docA.datasetId(), axis(1024, 3)));
+        tenantA,
+        () -> datasetRepo.upsertEmbedding(S1024_OTHER, docA.datasetId(), axis(1024, 3), H_A));
     assertMirroredAndEquivalent("데이터셋 모델 교체");
     TenantContext.runScoped(
-        tenantA, () -> datasetRepo.upsertEmbedding(S1536, docA.datasetId(), axis(1536, 0)));
+        tenantA, () -> datasetRepo.upsertEmbedding(S1536, docA.datasetId(), axis(1536, 0), H_A));
     assertMirroredAndEquivalent("데이터셋 차원 교체");
 
     // 청크: 벡터 없던 청크 채우기 → 한 청크만 차원 교체
@@ -156,7 +169,9 @@ class EmbeddingMarkerEquivalenceTest extends IntegrationTestBase {
         tenantA,
         () ->
             chunkRepo.upsertEmbeddings(
-                S1536, List.of(chunkIdsA.get(0), Long.MAX_VALUE), List.of(axis(1536, 0), axis(1536, 1))));
+                S1536,
+                List.of(chunkIdsA.get(0), Long.MAX_VALUE),
+                List.of(axis(1536, 0), axis(1536, 1))));
     assertMirroredAndEquivalent("청크 차원 교체");
 
     // 다른 차원 정리 — 남의 테넌트(B, 1024)의 벡터·표시 열은 그대로여야 한다.
@@ -192,13 +207,15 @@ class EmbeddingMarkerEquivalenceTest extends IntegrationTestBase {
     TenantContext.runScoped(
         tenantA,
         () -> {
-          datasetRepo.upsertEmbedding(S1536, docA.datasetId(), axis(1536, 0));
+          datasetRepo.upsertEmbedding(S1536, docA.datasetId(), axis(1536, 0), H_A);
           datasetRepo.upsertEmbedding(
               new EmbeddingSpace(EmbeddingDimension.D1024, "<unknown>"),
               docA2.datasetId(),
-              axis(1024, 0));
+              axis(1024, 0),
+              H_A2);
         });
-    DSLContext owner = DSL.using(PostgresTestContainer.platformOwnerDataSource(), SQLDialect.POSTGRES);
+    DSLContext owner =
+        DSL.using(PostgresTestContainer.platformOwnerDataSource(), SQLDialect.POSTGRES);
     // 백필 전 상태를 만든다 — 표시 열을 전부 비운다(소유자 커넥션, 모든 테넌트).
     owner.execute("UPDATE dataset_embedding SET embedded_dim = NULL, embedded_model = NULL");
     owner.execute("UPDATE document_chunk SET embedded_dim = NULL, embedded_model = NULL");
@@ -209,19 +226,23 @@ class EmbeddingMarkerEquivalenceTest extends IntegrationTestBase {
 
     assertMirroredAndEquivalent("백필 후");
     long markedDatasets =
-        owner.fetchOne("SELECT count(*) FROM dataset_embedding WHERE embedded_dim IS NOT NULL")
+        owner
+            .fetchOne("SELECT count(*) FROM dataset_embedding WHERE embedded_dim IS NOT NULL")
             .get(0, Long.class);
     long datasetVectors =
-        owner.fetchOne(
+        owner
+            .fetchOne(
                 "SELECT (SELECT count(*) FROM dataset_embedding_vec_1024)"
                     + " + (SELECT count(*) FROM dataset_embedding_vec_1536)")
             .get(0, Long.class);
     assertThat(markedDatasets).isEqualTo(datasetVectors);
     long markedChunks =
-        owner.fetchOne("SELECT count(*) FROM document_chunk WHERE embedded_dim IS NOT NULL")
+        owner
+            .fetchOne("SELECT count(*) FROM document_chunk WHERE embedded_dim IS NOT NULL")
             .get(0, Long.class);
     long chunkVectors =
-        owner.fetchOne(
+        owner
+            .fetchOne(
                 "SELECT (SELECT count(*) FROM document_chunk_vec_1024)"
                     + " + (SELECT count(*) FROM document_chunk_vec_1536)")
             .get(0, Long.class);
@@ -230,9 +251,10 @@ class EmbeddingMarkerEquivalenceTest extends IntegrationTestBase {
     assertThat(
             TenantContext.runScopedGet(
                 tenantA,
-                () -> datasetRepo.findMissing(S1024, 0L, 10, ALLOW).stream()
-                    .map(SourceTextRow::datasetId)
-                    .toList()))
+                () ->
+                    datasetRepo.findMissing(S1024, 0L, 10, ALLOW).stream()
+                        .map(SourceTextRow::datasetId)
+                        .toList()))
         .contains(docA2.datasetId());
   }
 
@@ -298,9 +320,10 @@ class EmbeddingMarkerEquivalenceTest extends IntegrationTestBase {
     assertThat(
             TenantContext.runScopedGet(
                 tenant,
-                () -> datasetRepo.findMissing(space, 0L, 100, ALLOW).stream()
-                    .map(SourceTextRow::datasetId)
-                    .toList()))
+                () ->
+                    datasetRepo.findMissing(space, 0L, 100, ALLOW).stream()
+                        .map(SourceTextRow::datasetId)
+                        .toList()))
         .as("%s: 데이터셋 findMissing %s", step, space)
         .isEqualTo(oldIds);
     assertThat(TenantContext.runScopedGet(tenant, () -> datasetRepo.countEmbedded(space)))
@@ -349,9 +372,10 @@ class EmbeddingMarkerEquivalenceTest extends IntegrationTestBase {
     assertThat(
             TenantContext.runScopedGet(
                 tenant,
-                () -> chunkRepo.findMissing(space, 0L, 100, ALLOW).stream()
-                    .map(ChunkContent::chunkId)
-                    .toList()))
+                () ->
+                    chunkRepo.findMissing(space, 0L, 100, ALLOW).stream()
+                        .map(ChunkContent::chunkId)
+                        .toList()))
         .as("%s: 청크 findMissing %s", step, space)
         .isEqualTo(oldIds);
     assertThat(TenantContext.runScopedGet(tenant, () -> chunkRepo.countEmbedded(space)))
@@ -366,8 +390,8 @@ class EmbeddingMarkerEquivalenceTest extends IntegrationTestBase {
   }
 
   /**
-   * 표시 열이 벡터 행을 정확히 비추지 않는 데이터셋 수. 거울이면: 표시 열이 NULL 이고 어느 차원에도 벡터가 없거나, 표시 열의 차원 테이블에 그 모델 벡터가
-   * 있고 다른 차원에는 없다.
+   * 표시 열이 벡터 행을 정확히 비추지 않는 데이터셋 수. 거울이면: 표시 열이 NULL 이고 어느 차원에도 벡터가 없거나, 표시 열의 차원 테이블에 그 모델 벡터가 있고
+   * 다른 차원에는 없다.
    */
   private static String datasetMirrorMismatchSql() {
     return mirrorMismatchSql("dataset_embedding", "de", "dataset_id", "dataset_id", true);
@@ -390,7 +414,10 @@ class EmbeddingMarkerEquivalenceTest extends IntegrationTestBase {
                   String others =
                       Arrays.stream(EmbeddingDimension.values())
                           .filter(o -> o != d)
-                          .map(o -> " AND NOT " + exists(o, alias, parentKey, vecKey, datasetTables, false))
+                          .map(
+                              o ->
+                                  " AND NOT "
+                                      + exists(o, alias, parentKey, vecKey, datasetTables, false))
                           .collect(Collectors.joining());
                   return "("
                       + alias

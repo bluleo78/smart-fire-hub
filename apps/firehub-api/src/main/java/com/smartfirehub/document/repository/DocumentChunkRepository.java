@@ -19,31 +19,27 @@ public interface DocumentChunkRepository {
   /** 재임베딩 대상 청크의 (id, content) 쌍. content 만 임베딩 모델에 재투입한다. */
   record ChunkContent(long chunkId, String content) {}
 
+  /** 키워드 색인에 쓸 청크(WD-720) — 위치와 본문. */
+  record ChunkSource(long chunkId, long datasetId, long documentFileId, String content) {}
+
   /** 해당 문서의 기존 청크를 모두 삭제(잡 재시도 시 중복 방지). */
   void deleteByDocumentFileId(Long documentFileId);
 
   /**
-   * 청크 본문은 부모 테이블에, 벡터는 {@code space} 의 차원 테이블에 넣는다(한 트랜잭션 — 클래스 레벨 @Transactional). 새 청크라 다른 차원 행이
-   * 있을 수 없으므로 삭제 없이 INSERT 한다. 벡터 행은 {@code RETURNING id, chunk_index} 의 <b>chunk_index 로</b>
-   * 매핑한다(RETURNING 순서는 VALUES 순서를 보장하지 않는다).
+   * 청크 본문을 넣고 생성된 청크 id 를 {@code chunks} 순서대로 돌려준다. 벡터는 넣지 않는다 — 적재는 "청크 저장(id) → 커밋 → 벡터 쓰기({@link
+   * #upsertEmbeddings}) → 표시 열 → 문서 완료" 순서다(ADR 0002 결정 6, WD-720). 벡터 저장소가 플랫폼 DB 밖(Qdrant)에 있으면 한
+   * 트랜잭션으로 묶을 수 없어서, pgvector 를 포함한 모든 설치본이 같은 순서를 쓴다.
+   *
+   * <p>본문 해시({@code content_hash}, {@link com.smartfirehub.embedding.SourceHash})를 같은 문장에서 쓴다 — 키워드
+   * 표시가 이 해시로 "키워드로 색인한 본문" 을 판정한다. 등급이 임베딩 공급자를 허용하지 않는 문서(S3 §4.3)는 벡터 쓰기 없이 이것만 부른다. 이후 허용으로 바뀌면
+   * 재임베딩 판정식(countMissing/findMissing)이 이 청크들을 집어 벡터를 채운다.
    */
-  void insertBatch(
-      Long documentFileId,
-      Long datasetId,
-      List<Chunk> chunks,
-      List<float[]> embeddings,
-      EmbeddingSpace space);
+  List<Long> insertChunks(Long documentFileId, Long datasetId, List<Chunk> chunks);
 
   /**
-   * 벡터 없이 청크 본문만 넣는다 — 등급이 임베딩 공급자를 허용하지 않는 문서(S3 §4.3). 본문을 외부 공급자로 보내지 않으며, 이후 허용으로 바뀌면 재임베딩
-   * 판정식(countMissing/findMissing)이 이 청크들을 집어 벡터를 채운다.
-   */
-  void insertChunksOnly(Long documentFileId, Long datasetId, List<Chunk> chunks);
-
-  /**
-   * 기존 청크의 벡터를 {@code space} 로 옮긴다: 다른 차원 테이블의 같은 청크 행 DELETE + 현재 차원 테이블 UPSERT (같은 차원 안의 모델 교체도
-   * ON CONFLICT 로 처리). 불변식 "한 청크의 벡터는 차원 테이블 전체에서 최대 1행"을 이 트랜잭션이 지킨다. 부모가 사라진 id 는 INSERT…SELECT 가
-   * 0행이라 조용히 건너뛴다(재임베딩 중 문서 삭제 경합).
+   * 청크의 벡터를 {@code space} 로 쓰고 같은 트랜잭션에서 표시 열을 맞춘다. 새로 적재한 청크와 재임베딩하는 기존 청크가 모두 쓴다. 다른 차원의 같은 청크
+   * 벡터는 지운다(불변식 "한 청크의 벡터는 차원 전체에서 최대 1개"). 부모가 사라진 id(문서 삭제 경합)는 먼저 걸러 조용히 건너뛴다 — 별도 저장소에 고아 포인트가
+   * 생기지 않게 리포지토리가 거른다(WD-720).
    */
   void upsertEmbeddings(EmbeddingSpace space, List<Long> chunkIds, List<float[]> embeddings);
 
@@ -87,4 +83,16 @@ public interface DocumentChunkRepository {
    * S3 §4.3)용 — 지운 행 수를 돌려준다. {@code tenant_id} 를 명시한다(조건 없는 DELETE 금지 규율).
    */
   int deleteVectorsOf(List<Long> datasetIds);
+
+  /**
+   * 청크 키워드 표시를 채운다(WD-720) — 키워드를 만든 본문의 해시가 지금 {@code content_hash} 와 같을 때만. 해시가 없는 기존 청크는 넘긴 해시로
+   * 함께 채운다.
+   *
+   * @param rule 키워드 생성 규칙 표지
+   * @param contentHashes 각 키워드를 만든 본문의 해시. {@code chunkIds} 와 순서가 같다
+   */
+  void markKeywordIndexed(String rule, List<Long> chunkIds, List<String> contentHashes);
+
+  /** 키워드 표시가 비었거나 어긋난 청크를 id 순으로 {@code limit} 건(키셋). 키워드 백로그 스윕이 쓴다. */
+  List<ChunkSource> findKeywordMissing(String rule, long afterChunkId, int limit);
 }

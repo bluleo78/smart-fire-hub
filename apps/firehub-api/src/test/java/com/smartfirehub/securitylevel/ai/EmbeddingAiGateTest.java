@@ -199,7 +199,7 @@ class EmbeddingAiGateTest extends IntegrationTestBase {
     try {
       setLevel(doc.datasetId(), "민감");
       // 불허 문서는 본문만 저장된다(벡터 없음).
-      chunkRepository.insertChunksOnly(
+      chunkRepository.insertChunks(
           doc.fileId(), doc.datasetId(), List.of(new Chunk(0, "민감 본문", 3)));
       assertThat(chunkIds(doc.fileId())).isEmpty();
       store(ProviderHosting.SELF_HOSTED);

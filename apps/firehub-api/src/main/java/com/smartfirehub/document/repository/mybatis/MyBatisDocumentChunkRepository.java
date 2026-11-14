@@ -2,18 +2,22 @@ package com.smartfirehub.document.repository.mybatis;
 
 import com.smartfirehub.document.dto.Chunk;
 import com.smartfirehub.document.repository.DocumentChunkRepository;
+import com.smartfirehub.document.repository.mybatis.DocumentChunkRows.ChunkInsert;
 import com.smartfirehub.embedding.EmbeddingDimension;
 import com.smartfirehub.embedding.EmbeddingSpace;
-import com.smartfirehub.global.platformdb.PlatformDbFeature;
+import com.smartfirehub.embedding.SourceHash;
 import com.smartfirehub.global.platformdb.mybatis.InChunks;
-import com.smartfirehub.global.platformdb.mybatis.PlatformFeatureOff;
 import com.smartfirehub.global.platformdb.mybatis.PlatformMyBatisRepository;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.securitylevel.ai.EmbeddingAllowance;
 import com.smartfirehub.securitylevel.repository.mybatis.MyBatisDatasetVisibility;
+import com.smartfirehub.vectorstore.ChunkRef;
 import com.smartfirehub.vectorstore.ChunkVectorIndex;
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -21,8 +25,8 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>벡터·트라이그램은 벡터 저장소 포트({@link ChunkVectorIndex}, ADR 0002 결정 2)가 맡는다. 벡터를 옮기거나 지우는 메서드는 jOOQ 판처럼
  * 포트를 부른 뒤 같은 트랜잭션에서 표시 열을 맞추고, 백로그·진행률은 표시 열로 판정한다(WD-718). Tibero+platform 조합의 포트는 꺼짐 구현이라 그
- * 메서드들은 예전처럼 {@link UnsupportedOperationException} 을 던진다. {@code insertBatch} 는 예외를 바로 던진다 — 청크를 먼저
- * 넣고 벡터를 나중에 쓰는 적재 순서는 Qdrant 조합에서 정한다(ADR 0002 결정 6, WD-720).
+ * 메서드들은 예전처럼 {@link UnsupportedOperationException} 을 던진다. 적재는 청크를 먼저 넣어 커밋하고 벡터를 나중에 쓴다(ADR 0002 결정
+ * 6, WD-720) — 그래서 Tibero+qdrant 조합에서도 같은 코드가 그대로 돈다.
  *
  * <p>등급 허용 술어(countAllChunks)는 {@code EmbeddingAiPolicyRepository.allowedDatasetSql}(jOOQ 렌더 문자열 —
  * MyBatis 판은 꺼진 기능)에 기대지 않고 매퍼 XML 이 같은 모양으로 직접 렌더한다(Task 8 의 {@code
@@ -54,31 +58,28 @@ public class MyBatisDocumentChunkRepository implements DocumentChunkRepository {
     mapper.deleteByDocumentFileId(documentFileId);
   }
 
-  /** 벡터 검색이 꺼진 플랫폼 DB 라 지원하지 않는다 — 서비스가 VectorStoreFeatures 로 건너뛴다(insertChunksOnly 로 간다). */
+  /**
+   * 청크 본문과 본문 해시를 넣고 생성 id 를 청크 순서대로 돌려준다. 청크마다 단건 INSERT 를 돌고 생성 키(useGeneratedKeys)로 id 를 받는다(같은
+   * 트랜잭션). jOOQ 판의 200건 다건 VALUES 를 옮기지 않은 이유: Tibero 에는 다건 VALUES 가 없고, INSERT ALL 은 IDENTITY 를 한
+   * 문장에 한 번만 매겨 둘째 행부터 PK 중복으로 실패한다(실측 JDBC-4008). 스프링 트랜잭션 안에서는 MyBatis BATCH 실행기로 바꿀 수 없어 단건 반복이
+   * 된다. 빈 목록이면 문장을 돌리지 않는다.
+   */
   @Override
-  public void insertBatch(
-      Long documentFileId,
-      Long datasetId,
-      List<Chunk> chunks,
-      List<float[]> embeddings,
-      EmbeddingSpace space) {
-    throw PlatformFeatureOff.unsupported(PlatformDbFeature.VECTOR_SEARCH);
+  public List<Long> insertChunks(Long documentFileId, Long datasetId, List<Chunk> chunks) {
+    List<Long> ids = new ArrayList<>(chunks.size());
+    for (Chunk chunk : chunks) {
+      ChunkInsert row =
+          new ChunkInsert(documentFileId, datasetId, chunk, SourceHash.of(chunk.content()));
+      mapper.insertChunk(row);
+      ids.add(row.getId());
+    }
+    return ids;
   }
 
   /**
-   * 벡터 없이 청크 본문만 넣는다 — 등급이 임베딩 공급자를 허용하지 않거나 플랫폼 DB 가 벡터를 지원하지 않는 문서. 청크마다 단건 INSERT 를 돈다(같은 트랜잭션).
-   * jOOQ 판의 200건 다건 VALUES 를 옮기지 않은 이유: Tibero 에는 다건 VALUES 가 없고, INSERT ALL 은 IDENTITY 를 한 문장에 한
-   * 번만 매겨 둘째 행부터 PK 중복으로 실패한다(실측 JDBC-4008). 스프링 트랜잭션 안에서는 MyBatis BATCH 실행기로 바꿀 수 없어 단건 반복이 된다. 빈
-   * 목록이면 문장을 돌리지 않는다.
+   * 포트로 청크 벡터를 쓴 뒤 같은 트랜잭션에서 표시 열을 그 공간으로 맞춘다(jOOQ 판과 같음). 먼저 부모 청크 행을 읽어 사라진 id 를 거르고 데이터셋·문서 id 를
+   * 채운다.
    */
-  @Override
-  public void insertChunksOnly(Long documentFileId, Long datasetId, List<Chunk> chunks) {
-    for (Chunk chunk : chunks) {
-      mapper.insertChunk(documentFileId, datasetId, chunk);
-    }
-  }
-
-  /** 포트로 청크 벡터를 옮긴 뒤 같은 트랜잭션에서 표시 열을 그 공간으로 맞춘다(jOOQ 판과 같음). */
   @Override
   public void upsertEmbeddings(
       EmbeddingSpace space, List<Long> chunkIds, List<float[]> embeddings) {
@@ -87,8 +88,22 @@ public class MyBatisDocumentChunkRepository implements DocumentChunkRepository {
           "청크 수와 임베딩 수 불일치: " + chunkIds.size() + " vs " + embeddings.size());
     }
     if (chunkIds.isEmpty()) return;
-    vectorIndex.upsertDense(space, chunkIds, embeddings);
-    mapper.markEmbedded(space.dimension().size(), space.model(), InChunks.of(chunkIds));
+    Map<Long, ChunkRef> refs = new HashMap<>();
+    mapper.selectRefs(InChunks.of(chunkIds)).forEach(r -> refs.put(r.chunkId(), r));
+    List<ChunkRef> present = new ArrayList<>();
+    List<float[]> vectors = new ArrayList<>();
+    for (int i = 0; i < chunkIds.size(); i++) {
+      ChunkRef ref = refs.get(chunkIds.get(i));
+      if (ref == null) continue; // 부모가 사라진 청크(삭제 경합) — 조용히 건너뛴다
+      present.add(ref);
+      vectors.add(embeddings.get(i));
+    }
+    if (present.isEmpty()) return;
+    vectorIndex.upsertDense(space, present, vectors);
+    mapper.markEmbedded(
+        space.dimension().size(),
+        space.model(),
+        InChunks.of(present.stream().map(ChunkRef::chunkId).toList()));
   }
 
   /**
@@ -164,5 +179,23 @@ public class MyBatisDocumentChunkRepository implements DocumentChunkRepository {
     int deleted = vectorIndex.deleteDense(tenantId, datasetIds);
     mapper.clearMarkersOfDatasets(tenantId, InChunks.of(datasetIds));
     return deleted;
+  }
+
+  /** 청크 키워드 표시 채우기 — 행마다 조건부 UPDATE(jOOQ 판과 같은 규칙). */
+  @Override
+  public void markKeywordIndexed(String rule, List<Long> chunkIds, List<String> contentHashes) {
+    if (chunkIds.size() != contentHashes.size()) {
+      throw new IllegalArgumentException(
+          "청크·본문 해시 수 불일치: " + chunkIds.size() + " vs " + contentHashes.size());
+    }
+    for (int i = 0; i < chunkIds.size(); i++) {
+      String hash = contentHashes.get(i);
+      mapper.markKeywordIndexed(rule + ":" + hash, hash, chunkIds.get(i));
+    }
+  }
+
+  @Override
+  public List<ChunkSource> findKeywordMissing(String rule, long afterChunkId, int limit) {
+    return mapper.findKeywordMissing(rule + ":", afterChunkId, limit, 0);
   }
 }

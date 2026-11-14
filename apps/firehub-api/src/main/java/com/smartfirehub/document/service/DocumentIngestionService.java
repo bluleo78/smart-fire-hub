@@ -18,6 +18,7 @@ import com.smartfirehub.global.transaction.AfterCommitRunner;
 import com.smartfirehub.notification.service.NotificationService;
 import com.smartfirehub.securitylevel.ai.EmbeddingAiGate;
 import com.smartfirehub.vectorstore.ChunkVectorIndex;
+import com.smartfirehub.vectorstore.KeywordIndexService;
 import com.smartfirehub.vectorstore.VectorStoreFeatures;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -46,6 +47,9 @@ public class DocumentIngestionService {
 
   /** 청크 색인 포트 — 문서 삭제·재적재 때 청크 색인을 명시적으로 지운다(ADR 0002 결정 6). */
   private final ChunkVectorIndex chunkVectorIndex;
+
+  // 키워드 색인이 따로 있는 저장소(Qdrant)에 청크 키워드를 쓴다(WD-720). pgvector 면 바로 끝난다.
+  private final KeywordIndexService keywordIndex;
 
   /** 동기: 중복검사 + blob 저장 + document_file(PENDING) 생성 + 잡 enqueue. */
   // 메서드 레벨 트랜잭션을 두지 않는다 — 리포지토리가 자기 트랜잭션을 열어 GUC 를 보장하고,
@@ -125,7 +129,9 @@ public class DocumentIngestionService {
               // (a) 플랫폼 DB 가 벡터 검색을 지원하지 않는다 — 벡터 테이블 쓰기만 건너뛰고 임베딩 호출도 안 한다.
               // (b) S3 §4.3: 등급이 임베딩 공급자를 허용하지 않는다 — 문서 원문을 외부로 보내지 않는다.
               //     이후 허용으로 바뀌면(호스팅 선언·등급 하향) 재임베딩 판정식이 이 청크들의 벡터를 채운다.
-              chunkRepository.insertChunksOnly(documentFileId, file.datasetId(), chunks);
+              List<Long> chunkIds =
+                  chunkRepository.insertChunks(documentFileId, file.datasetId(), chunks);
+              indexKeywords(documentFileId, file.datasetId(), chunks, chunkIds);
               fileRepository.markCompleted(documentFileId, extracted.pageCount(), chunks.size());
               String reason =
                   features.supports(PlatformDbFeature.VECTOR_SEARCH) ? "AI 정책" : "벡터 미지원";
@@ -140,12 +146,12 @@ public class DocumentIngestionService {
               List<float[]> embeddings =
                   provider.embed(chunks.stream().map(Chunk::content).toList());
 
-              chunkRepository.insertBatch(
-                  documentFileId,
-                  file.datasetId(),
-                  chunks,
-                  embeddings,
-                  EmbeddingSpace.of(provider));
+              // 적재 순서(ADR 0002 결정 6, WD-720): 청크 저장(id) → 커밋 → 벡터 쓰기 → 표시 열 → 문서 완료.
+              // 벡터 저장소가 플랫폼 DB 밖(Qdrant)이면 한 트랜잭션으로 묶을 수 없어 모든 설치본이 이 순서를 쓴다.
+              List<Long> chunkIds =
+                  chunkRepository.insertChunks(documentFileId, file.datasetId(), chunks);
+              indexKeywords(documentFileId, file.datasetId(), chunks, chunkIds);
+              writeVectors(documentFileId, EmbeddingSpace.of(provider), chunkIds, embeddings);
               fileRepository.markCompleted(documentFileId, extracted.pageCount(), chunks.size());
               log.info("Document ingested: file={} chunks={}", documentFileId, chunks.size());
             }
@@ -162,6 +168,35 @@ public class DocumentIngestionService {
                 file.uploadedBy(), file.datasetId(), file.originalName(), true);
           }
         });
+  }
+
+  /**
+   * 커밋된 청크에 벡터를 쓴다. 실패해도 문서는 완료로 둔다 — 표시 열이 비어 있어 재임베딩 백로그(5분 스윕)가 벡터를 다시 채우고, 그동안 청크는 키워드 검색에는 보이고
+   * 의미 검색에만 빠진다(ADR 0002 결정 6). 예전처럼 문서를 실패로 돌리면 이미 커밋한 청크와 상태가 어긋나고, 사용자가 다시 올려야 한다.
+   */
+  private void writeVectors(
+      Long documentFileId, EmbeddingSpace space, List<Long> chunkIds, List<float[]> embeddings) {
+    try {
+      chunkRepository.upsertEmbeddings(space, chunkIds, embeddings);
+    } catch (RuntimeException e) {
+      log.warn(
+          "문서 청크 벡터 쓰기 실패 — 문서는 완료로 두고 재임베딩 백로그가 채운다: file={} chunks={}",
+          documentFileId,
+          chunkIds.size(),
+          e);
+    }
+  }
+
+  /** 커밋된 청크의 키워드를 쓴다(별도 저장소만). 실패는 서비스가 삼키고 키워드 백로그가 다시 쓴다. */
+  private void indexKeywords(
+      Long documentFileId, Long datasetId, List<Chunk> chunks, List<Long> chunkIds) {
+    List<DocumentChunkRepository.ChunkSource> sources = new java.util.ArrayList<>(chunks.size());
+    for (int i = 0; i < chunks.size(); i++) {
+      sources.add(
+          new DocumentChunkRepository.ChunkSource(
+              chunkIds.get(i), datasetId, documentFileId, chunks.get(i).content()));
+    }
+    keywordIndex.indexChunks(sources);
   }
 
   /** 문서 1건 삭제: document_chunk 는 FK CASCADE, 원본 파일과 메타를 정리. */

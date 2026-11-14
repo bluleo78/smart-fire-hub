@@ -17,6 +17,7 @@ import com.smartfirehub.document.repository.DocumentChunkRepository;
 import com.smartfirehub.embedding.EmbeddingDimension;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import com.smartfirehub.embedding.EmbeddingSpace;
+import com.smartfirehub.embedding.SourceHash;
 import com.smartfirehub.embedding.config.EmbeddingConfig;
 import com.smartfirehub.embedding.config.EmbeddingConfigService;
 import com.smartfirehub.embedding.config.EmbeddingProviderType;
@@ -33,6 +34,7 @@ import com.smartfirehub.securitylevel.event.SecurityLevelsChangedEvent;
 import com.smartfirehub.securitylevel.service.DatasetSecurityService;
 import com.smartfirehub.settings.repository.TenantSettingsRepository;
 import com.smartfirehub.settings.service.SettingsOverridePolicy;
+import com.smartfirehub.support.ChunkSeeds;
 import com.smartfirehub.support.EmbeddingTestFixtures;
 import com.smartfirehub.support.EmbeddingTestFixtures.DocFixture;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -129,8 +131,12 @@ class AiVectorPurgeTest extends IntegrationTestBase {
     store(ProviderHosting.EXTERNAL);
     int dim = SPACE.dimension().size();
     embeddingRepository.upsertEmbeddings(
-        SPACE, List.of(pubId, sensId), List.of(axis(dim, 0), axis(dim, 1)));
-    chunkRepository.insertBatch(
+        SPACE,
+        List.of(pubId, sensId),
+        List.of(axis(dim, 0), axis(dim, 1)),
+        List.of(SourceHash.of("a"), SourceHash.of("b")));
+    ChunkSeeds.insertWithVectors(
+        chunkRepository,
         doc.fileId(),
         doc.datasetId(),
         List.of(new Chunk(0, "문서 본문", 3)),
@@ -378,7 +384,8 @@ class AiVectorPurgeTest extends IntegrationTestBase {
                 "insert into dataset_embedding (dataset_id, source_text) values (?, 'o')", id));
     TenantContext.set(DEFAULT_TEST_TENANT_ID);
     int dim = SPACE.dimension().size();
-    embeddingRepository.upsertEmbeddings(SPACE, List.of(id), List.of(axis(dim, axisIndex)));
+    embeddingRepository.upsertEmbeddings(
+        SPACE, List.of(id), List.of(axis(dim, axisIndex)), List.of(SourceHash.of("o")));
     return id;
   }
 
@@ -547,7 +554,8 @@ class AiVectorPurgeTest extends IntegrationTestBase {
     assertThat(tenantSettings.findValue(AiVectorPurgeStartupRunner.FLAG_KEY)).contains("done");
     // 플래그가 있으면 다시 돌지 않는다 — 벡터를 되살려도 그대로 남는다.
     int dim = SPACE.dimension().size();
-    embeddingRepository.upsertEmbeddings(SPACE, List.of(sensId), List.of(axis(dim, 1)));
+    embeddingRepository.upsertEmbeddings(
+        SPACE, List.of(sensId), List.of(axis(dim, 1)), List.of(SourceHash.of("b")));
     startupRunner.runForCurrentTenant();
     assertThat(hasVector(sensId)).isTrue();
   }

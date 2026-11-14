@@ -13,6 +13,7 @@ import com.smartfirehub.embedding.reembed.TenantReembedJob;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantScopedRunner;
 import com.smartfirehub.securitylevel.access.ProviderHosting;
+import com.smartfirehub.support.ChunkSeeds;
 import com.smartfirehub.support.EmbeddingTestFixtures;
 import com.smartfirehub.support.EmbeddingTestFixtures.DocFixture;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -87,7 +88,8 @@ class EmbeddingTenantContextTest extends IntegrationTestBase {
     TenantContext.runScoped(
         tenantB,
         () ->
-            chunks.insertBatch(
+            ChunkSeeds.insertWithVectors(
+                chunks,
                 docB.fileId(),
                 docB.datasetId(),
                 List.of(new Chunk(0, "b", 1)),

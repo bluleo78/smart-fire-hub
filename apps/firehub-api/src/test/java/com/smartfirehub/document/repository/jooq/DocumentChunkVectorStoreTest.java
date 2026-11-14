@@ -15,6 +15,7 @@ import com.smartfirehub.securitylevel.access.ProviderHosting;
 import com.smartfirehub.securitylevel.ai.EmbeddingAllowance;
 import com.smartfirehub.securitylevel.repository.DatasetAccessRepository;
 import com.smartfirehub.securitylevel.repository.EmbeddingAiPolicyRepository;
+import com.smartfirehub.support.ChunkSeeds;
 import com.smartfirehub.support.EmbeddingTestFixtures;
 import com.smartfirehub.support.EmbeddingTestFixtures.DocFixture;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -84,7 +85,8 @@ class DocumentChunkVectorStoreTest extends IntegrationTestBase {
     TenantContext.runScoped(
         tenantA,
         () ->
-            repo.insertBatch(
+            ChunkSeeds.insertWithVectors(
+                repo,
                 docA.fileId(),
                 docA.datasetId(),
                 List.of(new Chunk(0, "a-near", 1), new Chunk(1, "a-far", 1)),
@@ -93,7 +95,8 @@ class DocumentChunkVectorStoreTest extends IntegrationTestBase {
     TenantContext.runScoped(
         tenantB,
         () ->
-            repo.insertBatch(
+            ChunkSeeds.insertWithVectors(
+                repo,
                 docB.fileId(),
                 docB.datasetId(),
                 List.of(new Chunk(0, "b-near", 1)),
@@ -233,15 +236,25 @@ class DocumentChunkVectorStoreTest extends IntegrationTestBase {
     }
     List<Chunk> target = new ArrayList<>();
     List<float[]> targetVec = new ArrayList<>();
+    // 목표 벡터는 질의(5번 축)와 45° — 다른 모델 40개(거리 0) 다음으로 가깝고, 다른 테스트가 공유 DB 에 남긴 축 벡터들(질의와 직교, 거리 1)보다는
+    // 확실히 가깝다. 예전에는 6번 축(질의와 직교)이라 공유 색인의 수많은 직교 벡터와 동점이 되어, 묶음 실행에서 iterative scan 이 메모리 한도 안에
+    // 목표를 다 찾지 못하는 일이 있었다(실행 순서에 따라 흔들림).
+    float[] between = axis(1024, 5);
+    between[6] = between[5];
     for (int i = 0; i < 5; i++) {
       target.add(new Chunk(200 + i, "target-" + i, 1));
-      targetVec.add(axis(1024, 6));
+      targetVec.add(between.clone());
     }
     TenantContext.runScoped(
         tenantA,
-        () -> repo.insertBatch(docA.fileId(), docA.datasetId(), near, nearVec, otherModel));
+        () ->
+            ChunkSeeds.insertWithVectors(
+                repo, docA.fileId(), docA.datasetId(), near, nearVec, otherModel));
     TenantContext.runScoped(
-        tenantA, () -> repo.insertBatch(docA.fileId(), docA.datasetId(), target, targetVec, S1024));
+        tenantA,
+        () ->
+            ChunkSeeds.insertWithVectors(
+                repo, docA.fileId(), docA.datasetId(), target, targetVec, S1024));
 
     List<Object> params = new ArrayList<>();
     String sql =

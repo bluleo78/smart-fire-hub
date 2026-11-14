@@ -16,6 +16,7 @@ import com.smartfirehub.embedding.repository.EmbeddingReembedStateRepository;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantScopedRunner;
 import com.smartfirehub.securitylevel.access.ProviderHosting;
+import com.smartfirehub.support.ChunkSeeds;
 import com.smartfirehub.support.EmbeddingTestFixtures;
 import com.smartfirehub.support.EmbeddingTestFixtures.DocFixture;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -85,7 +86,8 @@ class EmbeddingBacklogSweepSchedulerTest extends IntegrationTestBase {
     TenantContext.runScoped(
         tenant,
         () ->
-            chunks.insertBatch(
+            ChunkSeeds.insertWithVectors(
+                chunks,
                 doc.fileId(),
                 doc.datasetId(),
                 List.of(new Chunk(0, "late", 1)),

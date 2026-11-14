@@ -17,12 +17,15 @@ import com.smartfirehub.embedding.EmbeddingNotConfiguredException;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import com.smartfirehub.embedding.EmbeddingSpace;
+import com.smartfirehub.embedding.SourceHash;
 import com.smartfirehub.embedding.config.EmbeddingConfig;
 import com.smartfirehub.embedding.config.EmbeddingConfigService;
 import com.smartfirehub.embedding.config.EmbeddingProviderType;
 import com.smartfirehub.embedding.repository.EmbeddingReembedStateRepository;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.securitylevel.access.ProviderHosting;
+import com.smartfirehub.securitylevel.ai.EmbeddingAllowance;
+import com.smartfirehub.support.ChunkSeeds;
 import com.smartfirehub.support.EmbeddingTestFixtures;
 import com.smartfirehub.support.EmbeddingTestFixtures.DocFixture;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -126,7 +129,8 @@ class TenantReembedJobTest extends IntegrationTestBase {
       vs.add(axis(1024, 0));
     }
     TenantContext.runScoped(
-        tenant, () -> chunks.insertBatch(doc.fileId(), doc.datasetId(), cs, vs, OLD));
+        tenant,
+        () -> ChunkSeeds.insertWithVectors(chunks, doc.fileId(), doc.datasetId(), cs, vs, OLD));
   }
 
   private <T> T inTenant(java.util.function.Supplier<T> s) {
@@ -156,8 +160,7 @@ class TenantReembedJobTest extends IntegrationTestBase {
     TenantContext.runScoped(
         tenant,
         () -> {
-          chunks.insertChunksOnly(
-              sens.fileId(), sens.datasetId(), List.of(new Chunk(0, "민감청크", 1)));
+          chunks.insertChunks(sens.fileId(), sens.datasetId(), List.of(new Chunk(0, "민감청크", 1)));
           datasets.upsertSourceText(doc.datasetId(), "공개 카탈로그");
           datasets.upsertSourceText(sens.datasetId(), "민감 카탈로그");
         });
@@ -171,13 +174,38 @@ class TenantReembedJobTest extends IntegrationTestBase {
   }
 
   @Test
+  void sourceTextChangedWhileEmbedding_leavesRowInBacklog_andNextRunEmbedsNewText() {
+    // WD-720: 잡이 옛 원문을 임베딩하는 사이 원문이 바뀌면, 늦게 도착한 옛 벡터가 표시를 채우지 않아 그 행은 백로그에 남는다.
+    TenantContext.runScoped(tenant, () -> datasets.upsertSourceText(doc.datasetId(), "옛 원문"));
+    onFirstEmbed =
+        () ->
+            TenantContext.runScoped(
+                tenant, () -> datasets.upsertSourceText(doc.datasetId(), "새 원문"));
+
+    job.run(tenant);
+
+    assertThat(embeddedTexts).containsExactly("옛 원문");
+    assertThat(inTenant(() -> datasets.countEmbedded(NEW))).isZero();
+    assertThat(
+            inTenant(
+                () -> datasets.countMissing(NEW, new EmbeddingAllowance(ProviderHosting.EXTERNAL))))
+        .isEqualTo(1);
+
+    // 다음 실행(스윕이 재투입)은 새 원문으로 만들고 표시를 채운다.
+    job.run(tenant);
+
+    assertThat(embeddedTexts).containsExactly("옛 원문", "새 원문");
+    assertThat(inTenant(() -> datasets.countEmbedded(NEW))).isEqualTo(1);
+  }
+
+  @Test
   void reembedsFrom1024To1536AndCleansOldDimension() {
     seedChunks(3);
     TenantContext.runScoped(
         tenant,
         () -> {
           datasets.upsertSourceText(doc.datasetId(), "화재 카탈로그");
-          datasets.upsertEmbedding(OLD, doc.datasetId(), axis(1024, 0));
+          datasets.upsertEmbedding(OLD, doc.datasetId(), axis(1024, 0), SourceHash.of("화재 카탈로그"));
         });
 
     job.run(tenant);

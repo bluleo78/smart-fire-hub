@@ -7,6 +7,7 @@ import com.smartfirehub.global.platformdb.ConditionalOnTiberoPlatformDb;
 import com.smartfirehub.global.platformdb.PlatformDbFeature;
 import com.smartfirehub.global.platformdb.mybatis.PlatformFeatureOff;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
+import com.smartfirehub.vectorstore.ChunkRef;
 import com.smartfirehub.vectorstore.ChunkVectorIndex;
 import com.smartfirehub.vectorstore.ConditionalOnPlatformVectorStore;
 import java.util.List;
@@ -40,13 +41,7 @@ public class OffChunkVectorIndex implements ChunkVectorIndex {
   }
 
   @Override
-  public void insertDense(
-      EmbeddingSpace space, long datasetId, List<Long> chunkIds, List<float[]> embeddings) {
-    throw PlatformFeatureOff.unsupported(PlatformDbFeature.VECTOR_SEARCH);
-  }
-
-  @Override
-  public void upsertDense(EmbeddingSpace space, List<Long> chunkIds, List<float[]> embeddings) {
+  public void upsertDense(EmbeddingSpace space, List<ChunkRef> chunks, List<float[]> embeddings) {
     throw PlatformFeatureOff.unsupported(PlatformDbFeature.VECTOR_SEARCH);
   }
 

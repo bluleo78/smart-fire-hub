@@ -8,10 +8,12 @@ import com.smartfirehub.document.dto.Chunk;
 import com.smartfirehub.document.repository.DocumentChunkRepository;
 import com.smartfirehub.embedding.EmbeddingDimension;
 import com.smartfirehub.embedding.EmbeddingSpace;
+import com.smartfirehub.embedding.SourceHash;
 import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.securitylevel.ai.EmbeddingAllowance;
 import com.smartfirehub.securitylevel.repository.EmbeddingAiPolicyRepository;
+import com.smartfirehub.vectorstore.ChunkRef;
 import com.smartfirehub.vectorstore.ChunkVectorIndex;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -61,85 +63,46 @@ public class JooqDocumentChunkRepository implements DocumentChunkRepository {
   }
 
   /**
-   * 청크 본문은 부모 테이블에, 벡터는 포트로 넣는다(한 트랜잭션 — 클래스 레벨 @Transactional, pgvector 구현이 합류). 새 청크라 다른 차원 행이 있을
-   * 수 없으므로 삭제 없이 INSERT 한다. 벡터 행은 {@code RETURNING id, chunk_index} 의 <b>chunk_index 로</b>
-   * 매핑한다(RETURNING 순서는 VALUES 순서를 보장하지 않는다).
+   * 청크 본문과 본문 해시를 다건 VALUES 로 넣고(BATCH_SIZE 건씩) 생성 id 를 청크 순서대로 돌려준다. id 는 {@code RETURNING id,
+   * chunk_index} 의 <b>chunk_index 로</b> 매핑한다(RETURNING 순서는 VALUES 순서를 보장하지 않는다). 벡터는 쓰지 않는다 — 적재
+   * 순서는 인터페이스 javadoc(WD-720).
    */
   @Override
-  public void insertBatch(
-      Long documentFileId,
-      Long datasetId,
-      List<Chunk> chunks,
-      List<float[]> embeddings,
-      EmbeddingSpace space) {
-    if (chunks.size() != embeddings.size()) {
-      throw new IllegalArgumentException(
-          "청크 수와 임베딩 수 불일치: " + chunks.size() + " vs " + embeddings.size());
-    }
+  public List<Long> insertChunks(Long documentFileId, Long datasetId, List<Chunk> chunks) {
+    List<Long> ids = new ArrayList<>(chunks.size());
     for (int start = 0; start < chunks.size(); start += BATCH_SIZE) {
       int end = Math.min(start + BATCH_SIZE, chunks.size());
-      // 표시 열(WD-717)을 부모 INSERT 에 바로 싣는다 — 아래 벡터 INSERT 와 같은 트랜잭션이라 둘 중 하나만 남는 일이 없다.
       StringBuilder sql =
           new StringBuilder(
               "INSERT INTO document_chunk(document_file_id, dataset_id, chunk_index, content, token_count,"
-                  + " embedded_dim, embedded_model) VALUES ");
+                  + " content_hash) VALUES ");
       List<Object> params = new ArrayList<>();
       for (int i = start; i < end; i++) {
         if (i > start) sql.append(',');
-        sql.append("(?,?,?,?,?,?,?)");
+        sql.append("(?,?,?,?,?,?)");
         Chunk c = chunks.get(i);
         params.add(documentFileId);
         params.add(datasetId);
         params.add(c.index());
         params.add(c.content());
         params.add(c.tokenCount());
-        params.add(space.dimension().size());
-        params.add(space.model());
+        params.add(SourceHash.of(c.content()));
       }
       sql.append(" RETURNING id, chunk_index");
       Map<Integer, Long> idByIndex = new HashMap<>();
       dsl.fetch(sql.toString(), params.toArray())
           .forEach(
               r -> idByIndex.put(r.get("chunk_index", Integer.class), r.get("id", Long.class)));
-
-      // 벡터는 포트로 넣는다 — chunk_index 로 찾은 id 를 청크 순서대로 넘긴다.
-      List<Long> sliceIds = new ArrayList<>(end - start);
       for (int i = start; i < end; i++) {
-        sliceIds.add(idByIndex.get(chunks.get(i).index()));
+        ids.add(idByIndex.get(chunks.get(i).index()));
       }
-      vectorIndex.insertDense(space, datasetId, sliceIds, embeddings.subList(start, end));
     }
+    return ids;
   }
 
   /**
-   * 벡터 없이 청크 본문만 넣는다 — 등급이 임베딩 공급자를 허용하지 않는 문서(S3 §4.3). 본문을 외부 공급자로 보내지 않으며, 이후 허용으로 바뀌면 재임베딩
-   * 판정식(countMissing/findMissing)이 이 청크들을 집어 벡터를 채운다.
-   */
-  @Override
-  public void insertChunksOnly(Long documentFileId, Long datasetId, List<Chunk> chunks) {
-    for (int start = 0; start < chunks.size(); start += BATCH_SIZE) {
-      int end = Math.min(start + BATCH_SIZE, chunks.size());
-      StringBuilder sql =
-          new StringBuilder(
-              "INSERT INTO document_chunk(document_file_id, dataset_id, chunk_index, content, token_count) VALUES ");
-      List<Object> params = new ArrayList<>();
-      for (int i = start; i < end; i++) {
-        if (i > start) sql.append(',');
-        sql.append("(?,?,?,?,?)");
-        Chunk c = chunks.get(i);
-        params.add(documentFileId);
-        params.add(datasetId);
-        params.add(c.index());
-        params.add(c.content());
-        params.add(c.tokenCount());
-      }
-      dsl.execute(sql.toString(), params.toArray());
-    }
-  }
-
-  /**
-   * 기존 청크의 벡터를 {@code space} 로 옮긴다(포트가 다른 차원 행 DELETE + 현재 차원 UPSERT). 같은 트랜잭션에서 표시 열을 새 공간으로 맞춘다.
-   * 부모가 사라진 id 는 포트·표시 열 모두 0행이라 조용히 건너뛴다(재임베딩 중 문서 삭제 경합).
+   * 청크 벡터를 포트로 쓴 뒤 같은 트랜잭션에서 표시 열을 새 공간으로 맞춘다. 먼저 부모 청크 행을 읽어 사라진 id 를 거르고(별도 저장소의 고아 포인트 방지)
+   * 데이터셋·문서 id 를 채운다({@link ChunkRef}).
    */
   @Override
   public void upsertEmbeddings(
@@ -149,18 +112,41 @@ public class JooqDocumentChunkRepository implements DocumentChunkRepository {
           "청크 수와 임베딩 수 불일치: " + chunkIds.size() + " vs " + embeddings.size());
     }
     if (chunkIds.isEmpty()) return;
-    vectorIndex.upsertDense(space, chunkIds, embeddings);
     for (int start = 0; start < chunkIds.size(); start += BATCH_SIZE) {
       int end = Math.min(start + BATCH_SIZE, chunkIds.size());
-      // 표시 열(WD-717)을 같은 트랜잭션에서 새 공간으로 맞춘다. 부모가 없는 id 는 0행.
       List<Long> slice = chunkIds.subList(start, end);
-      List<Object> mparams = new ArrayList<>(slice.size() + 2);
+      Map<Long, ChunkRef> refs = new HashMap<>();
+      dsl.fetch(
+              "SELECT id, dataset_id, document_file_id FROM document_chunk WHERE id IN ("
+                  + placeholders(slice.size())
+                  + ")",
+              slice.toArray())
+          .forEach(
+              r ->
+                  refs.put(
+                      r.get("id", Long.class),
+                      new ChunkRef(
+                          r.get("id", Long.class),
+                          r.get("dataset_id", Long.class),
+                          r.get("document_file_id", Long.class))));
+      List<ChunkRef> present = new ArrayList<>();
+      List<float[]> vectors = new ArrayList<>();
+      for (int i = start; i < end; i++) {
+        ChunkRef ref = refs.get(chunkIds.get(i));
+        if (ref == null) continue; // 부모가 사라진 청크(삭제 경합) — 조용히 건너뛴다
+        present.add(ref);
+        vectors.add(embeddings.get(i));
+      }
+      if (present.isEmpty()) continue;
+      vectorIndex.upsertDense(space, present, vectors);
+      // 표시 열을 같은 트랜잭션에서 새 공간으로 맞춘다.
+      List<Object> mparams = new ArrayList<>(present.size() + 2);
       mparams.add(space.dimension().size());
       mparams.add(space.model());
-      mparams.addAll(slice);
+      present.forEach(ref -> mparams.add(ref.chunkId()));
       dsl.execute(
           "UPDATE document_chunk SET embedded_dim = ?, embedded_model = ? WHERE id IN ("
-              + placeholders(slice.size())
+              + placeholders(present.size())
               + ")",
           mparams.toArray());
     }
@@ -299,5 +285,44 @@ public class JooqDocumentChunkRepository implements DocumentChunkRepository {
    */
   private String allowedSql(EmbeddingAllowance allowance) {
     return aiPolicyRepository.allowedDatasetSql("c.dataset_id", allowance.hosting());
+  }
+
+  /** 청크 키워드 표시 채우기 — 행마다 조건부 UPDATE(JDBC 배치 1회, 데이터셋 쪽과 같은 규칙). */
+  @Override
+  public void markKeywordIndexed(String rule, List<Long> chunkIds, List<String> contentHashes) {
+    if (chunkIds.size() != contentHashes.size()) {
+      throw new IllegalArgumentException(
+          "청크·본문 해시 수 불일치: " + chunkIds.size() + " vs " + contentHashes.size());
+    }
+    if (chunkIds.isEmpty()) return;
+    org.jooq.BatchBindStep batch =
+        dsl.batch(
+            "UPDATE document_chunk SET keyword_marker = ?, content_hash = COALESCE(content_hash, ?)"
+                + " WHERE id = ? AND (content_hash IS NULL OR content_hash = ?)");
+    for (int i = 0; i < chunkIds.size(); i++) {
+      String hash = contentHashes.get(i);
+      batch = batch.bind(rule + ":" + hash, hash, chunkIds.get(i), hash);
+    }
+    batch.execute();
+  }
+
+  /** 키워드 백로그 청크 — 데이터셋 쪽 {@code findKeywordMissing} 과 같은 판정. */
+  @Override
+  public List<ChunkSource> findKeywordMissing(String rule, long afterChunkId, int limit) {
+    return dsl.fetch(
+            "SELECT c.id, c.dataset_id, c.document_file_id, c.content FROM document_chunk c"
+                + " WHERE c.id > ? AND (c.keyword_marker IS NULL OR c.content_hash IS NULL"
+                + " OR c.keyword_marker <> (CAST(? AS text) || c.content_hash))"
+                + " ORDER BY c.id LIMIT ?",
+            afterChunkId,
+            rule + ":",
+            limit)
+        .map(
+            r ->
+                new ChunkSource(
+                    r.get("id", Long.class),
+                    r.get("dataset_id", Long.class),
+                    r.get("document_file_id", Long.class),
+                    r.get("content", String.class)));
   }
 }

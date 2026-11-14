@@ -38,20 +38,13 @@ public interface ChunkVectorIndex {
       String query, List<Long> datasetIds, int topK, DatasetVisibility visibility);
 
   /**
-   * 방금 저장한 새 청크들의 dense 벡터를 {@code space} 로 넣는다. 새 청크라 다른 차원 행이 있을 수 없어 지우지 않는다.
+   * 청크들의 dense 벡터를 {@code space} 로 쓴다. 다른 차원의 같은 청크 벡터를 지우고 현재 차원에 덮어쓴다(upsert). 새로 적재한 청크와 재임베딩하는
+   * 기존 청크가 모두 이 경로를 쓴다(WD-720 — 청크를 먼저 커밋한 뒤 벡터를 쓰는 적재 순서). 호출한 리포지토리가 부모가 있는 청크만 골라 넘긴다.
    *
-   * @param chunkIds 저장된 청크 id. {@code embeddings} 와 순서가 같다
+   * @param chunks 청크와 그 데이터셋·문서. {@code embeddings} 와 순서가 같다
+   * @throws IllegalArgumentException 청크 수와 벡터 수가 다를 때
    */
-  void insertDense(
-      EmbeddingSpace space, long datasetId, List<Long> chunkIds, List<float[]> embeddings);
-
-  /**
-   * 기존 청크들의 dense 벡터를 {@code space} 로 옮긴다. 다른 차원의 같은 청크 벡터를 지우고 현재 차원에 덮어쓴다(upsert). 부모가 사라진
-   * id(재임베딩 중 문서 삭제 경합)는 조용히 건너뛴다.
-   *
-   * @throws IllegalArgumentException id 수와 벡터 수가 다를 때
-   */
-  void upsertDense(EmbeddingSpace space, List<Long> chunkIds, List<float[]> embeddings);
+  void upsertDense(EmbeddingSpace space, List<ChunkRef> chunks, List<float[]> embeddings);
 
   /**
    * 이 테넌트 데이터셋들의 청크 dense 벡터를 모든 차원에서 지운다. 청크 본문은 남아 키워드 검색은 그대로다. {@code tenantId} 를 조건에 명시한다.
@@ -80,4 +73,29 @@ public interface ChunkVectorIndex {
    * #deleteAllOfDocument} 와 같은 이유).
    */
   void deleteAllOfDatasets(long tenantId, List<Long> datasetIds);
+
+  /**
+   * 키워드 색인이 원문 열과 따로 있는가(WD-720). pgvector 는 원문 열 자체가 키워드 색인(pg_trgm)이라 거짓이고, 별도 저장소(Qdrant)는 참이다.
+   * 참이면 원문이 생기거나 바뀔 때 {@link #upsertKeyword} 로 키워드를 따로 쓰고, 키워드 표시({@code keyword_marker})로 실패분을
+   * 백로그가 다시 쓴다.
+   */
+  default boolean separateKeywordIndex() {
+    return false;
+  }
+
+  /**
+   * 키워드 생성 규칙 표지(WD-720). 키워드 표시에 원문 해시와 함께 적어, 규칙(정규화·낱말 자르기·해시)이 바뀌면 모든 표시가 어긋나 백로그가 새 규칙으로 다시 쓰게
+   * 한다. 키워드 색인이 따로 없는 구현은 빈 문자열이다.
+   */
+  default String keywordRule() {
+    return "";
+  }
+
+  /**
+   * 문서 청크 원문으로 키워드 색인을 쓴다(덮어쓴다). 원문에 낱말이 하나도 없으면 그 키워드를 지운다. {@link #separateKeywordIndex()} 가 거짓인
+   * 구현은 할 일이 없다(원문 열이 곧 색인).
+   *
+   * @param tenantId 원문이 속한 테넌트 — 별도 저장소는 테넌트를 payload 로 싣는다
+   */
+  default void upsertKeyword(long tenantId, List<KeywordSource> sources) {}
 }

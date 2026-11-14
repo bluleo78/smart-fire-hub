@@ -14,6 +14,7 @@ import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
+import com.smartfirehub.support.ChunkSeeds;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.SecurityFixture;
 import com.smartfirehub.support.TenantRlsTestSupport;
@@ -112,7 +113,8 @@ class DocumentSearchVisibilityTest extends IntegrationTestBase {
                       datasetId,
                       creator)
                   .get(0, Long.class);
-          chunkRepository.insertBatch(
+          ChunkSeeds.insertWithVectors(
+              chunkRepository,
               fileId,
               datasetId,
               List.of(new Chunk(index, content, 1)),

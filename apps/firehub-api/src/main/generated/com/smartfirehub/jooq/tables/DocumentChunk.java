@@ -120,6 +120,16 @@ public class DocumentChunk extends TableImpl<DocumentChunkRecord> {
      */
     public final TableField<DocumentChunkRecord, String> EMBEDDED_MODEL = createField(DSL.name("embedded_model"), SQLDataType.VARCHAR(100), this, "");
 
+    /**
+     * The column <code>public.document_chunk.content_hash</code>.
+     */
+    public final TableField<DocumentChunkRecord, String> CONTENT_HASH = createField(DSL.name("content_hash"), SQLDataType.VARCHAR(64), this, "");
+
+    /**
+     * The column <code>public.document_chunk.keyword_marker</code>.
+     */
+    public final TableField<DocumentChunkRecord, String> KEYWORD_MARKER = createField(DSL.name("keyword_marker"), SQLDataType.VARCHAR(80), this, "");
+
     private DocumentChunk(Name alias, Table<DocumentChunkRecord> aliased) {
         this(alias, aliased, (Field<?>[]) null, null);
     }

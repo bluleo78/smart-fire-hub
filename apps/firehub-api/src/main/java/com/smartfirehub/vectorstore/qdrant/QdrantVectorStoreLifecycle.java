@@ -54,8 +54,8 @@ public class QdrantVectorStoreLifecycle implements VectorStoreLifecycle, Initial
   /**
    * 빈이 만들어질 때 준비한다. 여기서 던지면 컨텍스트가 뜨지 않아 기동이 멈춘다(구성 불일치는 설계 의도).
    *
-   * <p>지금은 Qdrant 에 <b>접속하지 못해도</b> 똑같이 멈춘다. 내려가 있는 동안에도 기동하고 「저장소 일시 중단」으로 안내하다가 복구되면 준비하도록
-   * 나누는 일은 WD-724 에서 한다(2026-11-13 사용자 결정). 그 전까지 qdrant 설정은 {@code VectorStoreType} 이 기동을 거부하므로 운영 영향은
+   * <p>지금은 Qdrant 에 <b>접속하지 못해도</b> 똑같이 멈춘다. 내려가 있는 동안에도 기동하고 「저장소 일시 중단」으로 안내하다가 복구되면 준비하도록 나누는 일은
+   * WD-724 에서 한다(2026-11-13 사용자 결정). 그 전까지 qdrant 설정은 {@code VectorStoreType} 이 기동을 거부하므로 운영 영향은
    * 없다.
    */
   @Override
@@ -70,6 +70,9 @@ public class QdrantVectorStoreLifecycle implements VectorStoreLifecycle, Initial
       specs.add(QdrantCollectionSpec.datasets(dim));
       specs.add(QdrantCollectionSpec.chunks(dim));
     }
+    // 키워드 컬렉션은 차원과 무관해 하나씩만 둔다(A안, WD-720).
+    specs.add(QdrantCollectionSpec.datasetsKeyword());
+    specs.add(QdrantCollectionSpec.chunksKeyword());
     specs.add(QdrantCollectionSpec.rowsKeyword());
     for (QdrantCollectionSpec spec : specs) {
       ensure(spec);

@@ -713,7 +713,9 @@ public class PgAccessFixtures implements AccessFixtures {
   @Override
   public void setEmbeddingMarker(long datasetId, Integer dim, String model) {
     ownerJdbc.update(
-        "update dataset_embedding set embedded_dim = ?, embedded_model = ? where dataset_id = ?",
+        "update dataset_embedding set embedded_dim = ?, embedded_model = ?, embedded_hash = "
+            + (dim == null ? "NULL" : "source_hash")
+            + " where dataset_id = ?",
         dim,
         model,
         datasetId);
@@ -782,6 +784,29 @@ public class PgAccessFixtures implements AccessFixtures {
         "/tmp/" + name,
         status,
         datasetCreator());
+  }
+
+  @Override
+  public void seedEmbeddingRow(long tenantId, long datasetId, String sourceText) {
+    ownerJdbc.update(
+        "insert into dataset_embedding (tenant_id, dataset_id, source_text) values (?, ?, ?)",
+        tenantId,
+        datasetId,
+        sourceText);
+  }
+
+  @Override
+  public long insertChunk(
+      long tenantId, long documentFileId, long datasetId, int index, String content) {
+    return ownerJdbc.queryForObject(
+        "insert into document_chunk (tenant_id, document_file_id, dataset_id, chunk_index, content)"
+            + " values (?, ?, ?, ?, ?) returning id",
+        Long.class,
+        tenantId,
+        documentFileId,
+        datasetId,
+        index,
+        content);
   }
 
   @Override

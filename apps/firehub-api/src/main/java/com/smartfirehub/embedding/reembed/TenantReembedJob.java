@@ -9,6 +9,7 @@ import com.smartfirehub.embedding.EmbeddingNotConfiguredException;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import com.smartfirehub.embedding.EmbeddingSpace;
+import com.smartfirehub.embedding.SourceHash;
 import com.smartfirehub.embedding.config.EmbeddingConfigService;
 import com.smartfirehub.embedding.config.dto.EmbeddingImpact;
 import com.smartfirehub.embedding.repository.EmbeddingReembedStateRepository;
@@ -187,8 +188,12 @@ public class TenantReembedJob {
       List<float[]> vectors =
           provider.embed(batch.stream().map(SourceTextRow::sourceText).toList());
       // 배치당 한 번(한 트랜잭션) — 행마다 부르면 트랜잭션이 BATCH 회 열린다.
+      // 읽은 원문의 해시를 함께 넘긴다 — 임베딩하는 사이 원문이 바뀐 행은 표시가 차지 않는다(WD-720).
       datasetRepository.upsertEmbeddings(
-          space, batch.stream().map(SourceTextRow::datasetId).toList(), vectors);
+          space,
+          batch.stream().map(SourceTextRow::datasetId).toList(),
+          vectors,
+          batch.stream().map(r -> SourceHash.of(r.sourceText())).toList());
       afterId = batch.get(batch.size() - 1).datasetId();
       stateRepository.renewLease(LEASE);
     }

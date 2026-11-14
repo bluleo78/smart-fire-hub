@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  별도 벡터 저장소 검색의 플랫폼 DB 확인(WD-720, ADR 0002 결정 5) — JooqSearchCandidateRepository 와 같은 의미. 규칙은
+  MyBatisPlatformConfig javadoc. 테넌트 정책(RLS) 대상이라 tenant_id 를 쓰지 않는다(정책이 좁힌다).
+  가시성은 공용 조각 DatasetVisibility.visible(파라미터 vis, 별칭 d). id 목록은 InChunks 로 500 개씩 나눠 OR 로 잇는다(Tibero IN 상한 1000).
+  한 문장에 목록이 둘(후보 id, 요청 데이터셋)이라 공용 조각 PlatformSql.inChunks(파라미터 이름 chunks 고정) 대신 아래 idsIn 조각을 쓴다.
+-->
+<mapper namespace="com.smartfirehub.vectorstore.repository.mybatis.SearchCandidateMapper">
+
+  <!-- 속성 col·list: 열 식과 InChunks 목록 파라미터 이름. 빈 목록은 호출 전에 걸러 오지 않는다. -->
+  <sql id="idsIn">
+    (<foreach collection="${list}" item="chunk" separator=" OR ">${col} IN <foreach collection="chunk" item="n" open="(" separator="," close=")">#{n}</foreach></foreach>)
+  </sql>
+
+  <select id="selectVisibleDatasetIds" resultType="long">
+    SELECT d.id FROM dataset d
+     WHERE <include refid="com.smartfirehub.securitylevel.repository.mybatis.DatasetVisibility.visible">
+             <property name="idCol" value="d.id"/>
+             <property name="levelCol" value="d.security_level_id"/>
+           </include>
+       <if test="storageType != null">AND d.storage_type = #{storageType}</if>
+       <if test="restrictTo != null">AND <include refid="idsIn"><property name="col" value="d.id"/><property name="list" value="restrictTo"/></include></if>
+     ORDER BY d.id
+  </select>
+
+  <resultMap id="datasetHit" type="com.smartfirehub.dataset.search.DatasetSearchHit">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="name" javaType="java.lang.String"/>
+      <arg column="description" javaType="java.lang.String"/>
+      <arg column="storage_type" javaType="java.lang.String"/>
+      <arg column="origin_type" javaType="java.lang.String"/>
+      <arg column="table_name" javaType="java.lang.String"/>
+      <arg column="category_name" javaType="java.lang.String"/>
+      <arg column="score" javaType="_double"/>
+    </constructor>
+  </resultMap>
+
+  <!-- 후보 데이터셋 확인 + 표시 필드. 점수는 0(호출자가 저장소 점수를 붙인다). 의미 검색이면 표시 열 공간 일치(#392)도 본다. -->
+  <select id="selectDatasetHits" resultMap="datasetHit">
+    SELECT d.id, d.name, d.description, d.storage_type, d.origin_type, d.table_name, c.name AS category_name, 0 AS score
+      FROM dataset_embedding de
+      JOIN dataset d ON d.id = de.dataset_id
+      LEFT JOIN dataset_category c ON c.id = d.category_id
+     WHERE <include refid="idsIn"><property name="col" value="de.dataset_id"/><property name="list" value="ids"/></include>
+       AND <include refid="com.smartfirehub.securitylevel.repository.mybatis.DatasetVisibility.visible">
+             <property name="idCol" value="d.id"/>
+             <property name="levelCol" value="d.security_level_id"/>
+           </include>
+       <if test="storageType != null">AND d.storage_type = #{storageType}</if>
+       <if test="dim != null">AND de.embedded_dim = #{dim} AND de.embedded_model = #{model}</if>
+  </select>
+
+  <resultMap id="chunkHit" type="com.smartfirehub.document.dto.DocumentSearchHit">
+    <constructor>
+      <arg column="id" javaType="java.lang.Long"/>
+      <arg column="document_file_id" javaType="java.lang.Long"/>
+      <arg column="dataset_id" javaType="java.lang.Long"/>
+      <arg column="original_name" javaType="java.lang.String"/>
+      <arg column="chunk_index" javaType="_int"/>
+      <arg column="content" javaType="java.lang.String"/>
+      <arg column="score" javaType="_double"/>
+    </constructor>
+  </resultMap>
+
+  <!-- 후보 청크 확인 + 표시 필드. 문서가 COMPLETED 인 청크만, 요청 데이터셋으로 좁히고, 의미 검색이면 표시 열 공간 일치도 본다. -->
+  <select id="selectChunkHits" resultMap="chunkHit">
+    SELECT c.id, c.document_file_id, c.dataset_id, df.original_name, c.chunk_index, c.content, 0 AS score
+      FROM document_chunk c
+      JOIN document_file df ON df.id = c.document_file_id
+      JOIN dataset d ON d.id = c.dataset_id
+     WHERE <include refid="idsIn"><property name="col" value="c.id"/><property name="list" value="ids"/></include>
+       AND df.status = 'COMPLETED'
+       AND <include refid="com.smartfirehub.securitylevel.repository.mybatis.DatasetVisibility.visible">
+             <property name="idCol" value="d.id"/>
+             <property name="levelCol" value="d.security_level_id"/>
+           </include>
+       <if test="restrictTo != null">AND <include refid="idsIn"><property name="col" value="c.dataset_id"/><property name="list" value="restrictTo"/></include></if>
+       <if test="dim != null">AND c.embedded_dim = #{dim} AND c.embedded_model = #{model}</if>
+  </select>
+
+</mapper>

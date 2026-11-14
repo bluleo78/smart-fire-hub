@@ -71,6 +71,8 @@ class QdrantVectorStoreLifecycleTest {
             "fh_datasets_1536",
             "fh_chunks_1024",
             "fh_chunks_1536",
+            "fh_datasets_kw",
+            "fh_chunks_kw",
             "fh_rows_kw");
 
     CollectionInfo info = info(EmbeddingDimension.D1024.datasetCollection());
@@ -82,14 +84,25 @@ class QdrantVectorStoreLifecycleTest {
     assertThat(dense.getMemory()).isEqualTo(Memory.Cold);
     assertThat(info.getConfig().getQuantizationConfig().getScalar().getMemory())
         .isEqualTo(Memory.Pinned);
+    // 의미 컬렉션에는 sparse 가 없다 — 키워드는 차원과 무관한 별도 컬렉션에 둔다(A안, WD-720).
+    assertThat(info.getConfig().getParams().getSparseVectorsConfig().getMapMap()).isEmpty();
+    CollectionInfo datasetsKw = info("fh_datasets_kw");
     assertThat(
-            info.getConfig()
+            datasetsKw
+                .getConfig()
                 .getParams()
                 .getSparseVectorsConfig()
                 .getMapMap()
                 .get("kw_bigram")
                 .getModifier())
         .isEqualTo(Modifier.Idf);
+    assertThat(datasetsKw.getConfig().getParams().getVectorsConfig().getParamsMap().getMapMap())
+        .isEmpty();
+    assertThat(datasetsKw.getConfig().hasQuantizationConfig()).isFalse();
+    assertThat(datasetsKw.getPayloadSchemaMap().keySet())
+        .containsExactlyInAnyOrder("tenant_id", "dataset_id", "seq");
+    assertThat(info("fh_chunks_kw").getPayloadSchemaMap().keySet())
+        .containsExactlyInAnyOrder("tenant_id", "dataset_id", "document_id", "seq");
 
     // tenant_id 는 키워드형 + is_tenant 가 실제로 저장돼야 한다(정수형이면 Qdrant 가 조용히 버린다)
     Map<String, PayloadSchemaInfo> schema = info.getPayloadSchemaMap();
@@ -199,11 +212,10 @@ class QdrantVectorStoreLifecycleTest {
   @Test
   void sparseIdsAboveInt32RoundTripAndTenantFilterApplies() throws Exception {
     lifecycle(6, true).prepare();
-    String collection = EmbeddingDimension.D1024.datasetCollection();
+    // 키워드는 별도 키워드 컬렉션에 둔다(A안).
+    String collection = QdrantCollectionSpec.DATASETS_KEYWORD_COLLECTION;
     BigramSparseEncoder.SparseTerms doc =
         BigramSparseEncoder.document("소방안전관리자", BigramSparseEncoder.Profile.DATASET);
-    float[] dense = new float[1024];
-    dense[0] = 1f;
 
     client
         .upsertAsync(
@@ -214,8 +226,6 @@ class QdrantVectorStoreLifecycleTest {
                     .setVectors(
                         VectorsFactory.namedVectors(
                             Map.of(
-                                QdrantCollectionSpec.DENSE,
-                                VectorFactory.vector(dense),
                                 QdrantCollectionSpec.KW_BIGRAM,
                                 VectorFactory.vector(doc.valueList(), doc.indexList()))))
                     .putAllPayload(

@@ -8,6 +8,7 @@ import com.smartfirehub.embedding.repository.jooq.VectorTables;
 import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.securitylevel.repository.DatasetAccessRepository;
+import com.smartfirehub.vectorstore.ChunkRef;
 import com.smartfirehub.vectorstore.ChunkVectorIndex;
 import com.smartfirehub.vectorstore.ConditionalOnPlatformVectorStore;
 import java.util.ArrayList;
@@ -152,42 +153,14 @@ public class PgChunkVectorIndex implements ChunkVectorIndex {
   }
 
   /**
-   * 새 청크의 벡터를 {@code space} 의 차원 테이블에 INSERT 한다. 새 청크라 다른 차원 행이 있을 수 없으므로 지우지 않는다. 예전 {@code
-   * insertBatch} 의 벡터 INSERT 그대로다(배치 {@value #BATCH_SIZE}건씩).
-   */
-  @Override
-  public void insertDense(
-      EmbeddingSpace space, long datasetId, List<Long> chunkIds, List<float[]> embeddings) {
-    if (chunkIds.size() != embeddings.size()) {
-      throw new IllegalArgumentException(
-          "청크 수와 임베딩 수 불일치: " + chunkIds.size() + " vs " + embeddings.size());
-    }
-    for (int start = 0; start < chunkIds.size(); start += BATCH_SIZE) {
-      int end = Math.min(start + BATCH_SIZE, chunkIds.size());
-      StringBuilder vsql =
-          new StringBuilder("INSERT INTO ")
-              .append(space.dimension().chunkTable())
-              .append(" (chunk_id, dataset_id, embedding, embedding_model) VALUES ");
-      List<Object> vparams = new ArrayList<>();
-      for (int i = start; i < end; i++) {
-        if (i > start) vsql.append(',');
-        vsql.append("(?,?,?::vector,?)");
-        vparams.add(chunkIds.get(i));
-        vparams.add(datasetId);
-        vparams.add(toVectorLiteral(embeddings.get(i)));
-        vparams.add(space.model());
-      }
-      dsl.execute(vsql.toString(), vparams.toArray());
-    }
-  }
-
-  /**
    * 기존 청크의 벡터를 {@code space} 로 옮긴다: 다른 차원 테이블의 같은 청크 행 DELETE + 현재 차원 테이블 UPSERT (같은 차원 안의 모델 교체도
    * ON CONFLICT 로 처리). 불변식 "한 청크의 벡터는 차원 테이블 전체에서 최대 1행"을 이 트랜잭션이 지킨다. 부모가 사라진 id 는 INSERT…SELECT 가
    * 0행이라 조용히 건너뛴다(재임베딩 중 문서 삭제 경합).
    */
   @Override
-  public void upsertDense(EmbeddingSpace space, List<Long> chunkIds, List<float[]> embeddings) {
+  public void upsertDense(EmbeddingSpace space, List<ChunkRef> chunks, List<float[]> embeddings) {
+    // pgvector 는 청크 id 만 쓴다 — 데이터셋 id 는 아래 INSERT…SELECT 가 부모 행에서 읽는다.
+    List<Long> chunkIds = chunks.stream().map(ChunkRef::chunkId).toList();
     if (chunkIds.size() != embeddings.size()) {
       throw new IllegalArgumentException(
           "청크 수와 임베딩 수 불일치: " + chunkIds.size() + " vs " + embeddings.size());

@@ -7,6 +7,7 @@ import static org.assertj.core.api.Assertions.tuple;
 import com.smartfirehub.dataset.repository.DatasetEmbeddingRepository.SourceTextRow;
 import com.smartfirehub.embedding.EmbeddingDimension;
 import com.smartfirehub.embedding.EmbeddingSpace;
+import com.smartfirehub.embedding.SourceHash;
 import com.smartfirehub.securitylevel.access.ProviderHosting;
 import com.smartfirehub.securitylevel.ai.EmbeddingAllowance;
 import com.smartfirehub.user.repository.TenantPairContractBase;
@@ -176,9 +177,18 @@ public abstract class DatasetEmbeddingRepositoryContractTest extends TenantPairC
     runA(() -> repository().upsertSourceText(ds, "벡터 본문"));
     if (!supportsVectorSearch()) {
       // 벡터 쓰기·지우기는 꺼진 포트라 예외다.
-      assertVectorOff(() -> runA(() -> repository().upsertEmbedding(SPACE, ds, vec())));
       assertVectorOff(
-          () -> runA(() -> repository().upsertEmbeddings(SPACE, List.of(ds), List.of(vec()))));
+          () -> runA(() -> repository().upsertEmbedding(SPACE, ds, vec(), SourceHash.of("벡터 본문"))));
+      assertVectorOff(
+          () ->
+              runA(
+                  () ->
+                      repository()
+                          .upsertEmbeddings(
+                              SPACE,
+                              List.of(ds),
+                              List.of(vec()),
+                              List.of(SourceHash.of("벡터 본문")))));
       assertVectorOff(() -> runA(() -> repository().deleteVectors(ds)));
       assertVectorOff(() -> inA(() -> repository().deleteVectorsOf(List.of(ds))));
       // 꺼진 경로 호출이 기반 행을 건드리지 않았다.
@@ -209,7 +219,7 @@ public abstract class DatasetEmbeddingRepositoryContractTest extends TenantPairC
       return;
     }
     assertThat(inA(() -> repository().countMissing(SPACE, EXTERNAL))).isEqualTo(1L);
-    runA(() -> repository().upsertEmbedding(SPACE, ds, vec()));
+    runA(() -> repository().upsertEmbedding(SPACE, ds, vec(), SourceHash.of("벡터 본문")));
     assertThat(inA(() -> repository().countEmbedded(SPACE))).isEqualTo(1L);
     assertThat(inA(() -> repository().countMissing(SPACE, EXTERNAL))).isZero();
     // 다른 모델 공간에서는 아직 없음으로 센다.
@@ -225,10 +235,80 @@ public abstract class DatasetEmbeddingRepositoryContractTest extends TenantPairC
     // 벡터만 지우고 카탈로그 행은 남긴다.
     assertThat(fx.embeddingSourceText(ds)).isEqualTo("벡터 본문");
 
-    runA(() -> repository().upsertEmbeddings(SPACE, List.of(ds), List.of(vec())));
+    runA(
+        () ->
+            repository()
+                .upsertEmbeddings(
+                    SPACE, List.of(ds), List.of(vec()), List.of(SourceHash.of("벡터 본문"))));
     assertThat(inA(() -> repository().deleteVectorsOf(List.of(ds)))).isEqualTo(1);
     assertThat(inA(() -> repository().deleteVectorsOf(List.of()))).isZero();
     assertThat(inA(() -> repository().countEmbedded(SPACE))).isZero();
+  }
+
+  @Test
+  @DisplayName("키워드 표시(WD-720) — 원문 읽기, 「규칙:원문 해시」 조건부 채우기, 원문·규칙이 바뀌면 다시 백로그, 다른 테넌트는 보지 못한다")
+  void keywordMarker() {
+    long ds = fx.createDataset(tenantA, prefix + " kw");
+    runA(() -> repository().upsertSourceText(ds, "화재 통계"));
+    assertThat(inA(() -> repository().findSourceText(ds))).contains("화재 통계");
+    assertThat(inA(() -> repository().findSourceText(Long.MAX_VALUE))).isEmpty();
+    assertThat(inA(() -> repository().findKeywordMissing("r1", 0L, 10)))
+        .extracting(SourceTextRow::datasetId)
+        .containsExactly(ds);
+
+    // 옛 원문 해시(늦은 쓰기)로는 채워지지 않는다.
+    runA(() -> repository().markKeywordIndexed("r1", List.of(ds), List.of(SourceHash.of("옛"))));
+    assertThat(inA(() -> repository().findKeywordMissing("r1", 0L, 10))).hasSize(1);
+    runA(() -> repository().markKeywordIndexed("r1", List.of(ds), List.of(SourceHash.of("화재 통계"))));
+    assertThat(inA(() -> repository().findKeywordMissing("r1", 0L, 10))).isEmpty();
+
+    // 규칙이 바뀌거나 원문이 바뀌면 다시 백로그.
+    assertThat(inA(() -> repository().findKeywordMissing("r2", 0L, 10))).hasSize(1);
+    runA(() -> repository().upsertSourceText(ds, "구조 출동"));
+    assertThat(inA(() -> repository().findKeywordMissing("r1", 0L, 10)))
+        .extracting(SourceTextRow::sourceText)
+        .containsExactly("구조 출동");
+    assertThat(inB(() -> repository().findKeywordMissing("r1", 0L, 10))).isEmpty();
+  }
+
+  @Test
+  @DisplayName("원문 해시 판정(WD-720) — 원문이 바뀌면 백로그, 같은 원문 재저장은 아님, 옛 원문으로 만든 늦은 벡터는 표시를 채우지 않는다")
+  void sourceHashJudgement() {
+    long ds = fx.createDataset(tenantA, prefix + " hash");
+    runA(() -> repository().upsertSourceText(ds, "처음 원문"));
+    // 지금 원문으로 임베딩됨 — 꺼진 구현은 표시 열을 직접 심는다(심을 때 embedded_hash = 지금 source_hash).
+    if (supportsVectorSearch()) {
+      runA(() -> repository().upsertEmbedding(SPACE, ds, vec(), SourceHash.of("처음 원문")));
+    } else {
+      fx.setEmbeddingMarker(ds, SPACE.dimension().size(), SPACE.model());
+    }
+    assertThat(inA(() -> repository().countMissing(SPACE, EXTERNAL))).isZero();
+    assertThat(inA(() -> repository().countEmbedded(SPACE))).isEqualTo(1L);
+
+    // 같은 원문을 다시 저장해도(태그 편집 등으로 syncSourceText 가 다시 돌아도) 백로그가 아니다.
+    runA(() -> repository().upsertSourceText(ds, "처음 원문"));
+    assertThat(inA(() -> repository().countMissing(SPACE, EXTERNAL))).isZero();
+
+    // 원문이 바뀌면 같은 공간이어도 백로그이고 진행률 분자에서 빠진다.
+    runA(() -> repository().upsertSourceText(ds, "바뀐 원문"));
+    assertThat(inA(() -> repository().countMissing(SPACE, EXTERNAL))).isEqualTo(1L);
+    assertThat(inA(() -> repository().countEmbedded(SPACE))).isZero();
+    assertThat(inA(() -> repository().findMissing(SPACE, 0L, 10, EXTERNAL)))
+        .extracting(SourceTextRow::datasetId, SourceTextRow::sourceText)
+        .containsExactly(tuple(ds, "바뀐 원문"));
+    if (!supportsVectorSearch()) {
+      return; // 벡터 쓰기는 꺼진 포트라 아래 시나리오는 벡터 구현에서만 본다.
+    }
+
+    // 옛 원문으로 돌던 늦은 재임베딩 — 벡터는 써지지만 표시가 차지 않아 계속 백로그다.
+    runA(() -> repository().upsertEmbedding(SPACE, ds, vec(), SourceHash.of("처음 원문")));
+    assertThat(inA(() -> repository().countMissing(SPACE, EXTERNAL))).isEqualTo(1L);
+    assertThat(inA(() -> repository().countEmbedded(SPACE))).isZero();
+
+    // 새 원문으로 다시 만들면 표시가 찬다.
+    runA(() -> repository().upsertEmbedding(SPACE, ds, vec(), SourceHash.of("바뀐 원문")));
+    assertThat(inA(() -> repository().countMissing(SPACE, EXTERNAL))).isZero();
+    assertThat(inA(() -> repository().countEmbedded(SPACE))).isEqualTo(1L);
   }
 
   @Test
@@ -267,7 +347,7 @@ public abstract class DatasetEmbeddingRepositoryContractTest extends TenantPairC
         .containsExactly(hi);
     assertThat(inA(() -> repository().findMissing(SPACE, 0L, 1, EXTERNAL))).hasSize(1);
 
-    runA(() -> repository().upsertEmbedding(SPACE, ds1, vec()));
+    runA(() -> repository().upsertEmbedding(SPACE, ds1, vec(), SourceHash.of("본문1")));
     assertThat(inA(() -> repository().findMissing(SPACE, 0L, 10, EXTERNAL)))
         .extracting(SourceTextRow::datasetId)
         .containsExactly(ds2);

@@ -15,9 +15,11 @@ import com.smartfirehub.document.repository.DocumentChunkRepository;
 import com.smartfirehub.embedding.EmbeddingDimension;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import com.smartfirehub.embedding.EmbeddingSpace;
+import com.smartfirehub.embedding.SourceHash;
 import com.smartfirehub.embedding.config.dto.EmbeddingConfigRequest;
 import com.smartfirehub.embedding.reembed.TenantReembedJob;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.support.ChunkSeeds;
 import com.smartfirehub.support.EmbeddingTestFixtures;
 import com.smartfirehub.support.EmbeddingTestFixtures.DocFixture;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -66,7 +68,8 @@ class EmbeddingSaveReembedTriggerTest extends IntegrationTestBase {
     TenantContext.runScoped(
         tenant,
         () ->
-            chunks.insertBatch(
+            ChunkSeeds.insertWithVectors(
+                chunks,
                 doc.fileId(),
                 doc.datasetId(),
                 List.of(new Chunk(0, "a", 1), new Chunk(1, "b", 1)),
@@ -144,7 +147,10 @@ class EmbeddingSaveReembedTriggerTest extends IntegrationTestBase {
     // 세 항목을 모두 채운다: 청크 2(시드), 카탈로그 1(bge-m3/1024), 행 검색 색인 1(bge-m3/1024 로 색인됨).
     datasets.upsertSourceText(doc.datasetId(), "화재 카탈로그");
     datasets.upsertEmbedding(
-        new EmbeddingSpace(EmbeddingDimension.D1024, "bge-m3"), doc.datasetId(), axis(1024, 0));
+        new EmbeddingSpace(EmbeddingDimension.D1024, "bge-m3"),
+        doc.datasetId(),
+        axis(1024, 0),
+        SourceHash.of("화재 카탈로그"));
     searchIndexStates.createIfAbsent(doc.datasetId());
     searchIndexStates.resetForFullPass(
         doc.datasetId(),

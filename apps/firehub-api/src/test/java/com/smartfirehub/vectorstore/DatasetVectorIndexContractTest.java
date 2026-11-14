@@ -69,7 +69,7 @@ abstract class DatasetVectorIndexContractTest extends IntegrationTestBase {
                     ALL_VISIBLE));
   }
 
-  @Autowired private DSLContext dsl;
+  @Autowired protected DSLContext dsl;
 
   /** [a,b,0,0,...] 형태의 1024차원 쿼리 벡터. */
   private float[] vec(float a, float b) {
@@ -77,13 +77,6 @@ abstract class DatasetVectorIndexContractTest extends IntegrationTestBase {
     v[0] = a;
     v[1] = b;
     return v;
-  }
-
-  /** [a,b,0,...,0] 1024차원 pgvector 텍스트 리터럴(시드/프로브 공용). */
-  private static String literal(int a, int b) {
-    StringBuilder sb = new StringBuilder("[").append(a).append(',').append(b);
-    for (int i = 2; i < 1024; i++) sb.append(",0");
-    return sb.append("]").toString();
   }
 
   /** 테스트용 사용자 생성 후 id 반환. */
@@ -110,21 +103,40 @@ abstract class DatasetVectorIndexContractTest extends IntegrationTestBase {
         .get(0, Long.class);
   }
 
+  /** 시드 벡터의 공간 — 1024차원 bge-m3. */
+  protected static final EmbeddingSpace SEED_SPACE =
+      new EmbeddingSpace(EmbeddingDimension.D1024, "bge-m3");
+
   /**
-   * source_text 를 dataset_embedding 에, 벡터(있으면)를 dataset_embedding_vec_1024 에 시드(#713 — 벡터는 차원 테이블에
-   * 따로 있다). embedLiteral 이 null 이면 벡터 행을 만들지 않는다(비동기 임베딩 대기 상태).
+   * source_text 를 dataset_embedding 에 넣고, 벡터(있으면)는 표시 열과 함께 구현의 저장소에 시드한다. vector 가 null 이면 벡터를 만들지
+   * 않는다 (비동기 임베딩 대기 상태). 키워드 색인은 구현마다 다르다 — pgvector 는 원문 열 자체, 별도 저장소는 {@link #seedIndex} 가 쓴다.
    */
-  private void seedEmbedding(Long datasetId, String sourceText, String embedLiteral) {
+  private void seedEmbedding(Long datasetId, String sourceText, float[] vector) {
     dsl.execute(
         "INSERT INTO dataset_embedding(dataset_id, source_text) VALUES (?,?)",
         datasetId,
         sourceText);
-    if (embedLiteral != null) {
+    if (vector != null) {
+      // 표시 열 — 별도 저장소 구현은 사후 확인에서 공간 일치를 이 열로 본다(WD-720).
+      dsl.execute(
+          "UPDATE dataset_embedding SET embedded_dim = ?, embedded_model = ? WHERE dataset_id = ?",
+          SEED_SPACE.dimension().size(),
+          SEED_SPACE.model(),
+          datasetId);
+    }
+    seedIndex(datasetId, sourceText, vector);
+  }
+
+  /**
+   * 구현 저장소에 색인을 시드한다. 기본(pgvector)은 벡터만 차원 테이블에 넣는다(#713 — 키워드는 원문 열 자체). 별도 저장소 구현의 하위 클래스가 재정의한다.
+   */
+  protected void seedIndex(long datasetId, String sourceText, float[] vector) {
+    if (vector != null) {
       dsl.execute(
           "INSERT INTO dataset_embedding_vec_1024(dataset_id, embedding, embedding_model)"
               + " VALUES (?, ?::vector, 'bge-m3')",
           datasetId,
-          embedLiteral);
+          com.smartfirehub.embedding.repository.VectorLiterals.toVectorLiteral(vector));
     }
   }
 
@@ -177,8 +189,8 @@ abstract class DatasetVectorIndexContractTest extends IntegrationTestBase {
     Long near = createDataset("근접 데이터셋", "data.ds_cos_near", "TABLE", "SOURCE", userId);
     Long far = createDataset("원거리 데이터셋", "data.ds_cos_far", "TABLE", "DERIVED", userId);
     Long pending = createDataset("임베딩 대기 데이터셋", "data.ds_cos_pending", "TABLE", "SOURCE", userId);
-    seedEmbedding(near, "근접 본문", literal(1, 0)); // 쿼리 [1,0,..] 과 동일 방향
-    seedEmbedding(far, "원거리 본문", literal(0, 1)); // 직교
+    seedEmbedding(near, "근접 본문", vec(1f, 0f)); // 쿼리 [1,0,..] 과 동일 방향
+    seedEmbedding(far, "원거리 본문", vec(0f, 1f)); // 직교
     seedEmbedding(pending, "임베딩 미생성 본문", null); // embedding NULL — 코사인 결과에서 제외되어야 함
 
     var hits =
@@ -212,8 +224,8 @@ abstract class DatasetVectorIndexContractTest extends IntegrationTestBase {
     Long userId = createUser("dssearch_cos_filter");
     Long doc = createDataset("코사인 문서셋", "data.ds_cf_doc", "DOCUMENT", "SOURCE", userId);
     Long table = createDataset("코사인 테이블셋", "data.ds_cf_tbl", "TABLE", "SOURCE", userId);
-    seedEmbedding(doc, "문서 본문", literal(1, 0));
-    seedEmbedding(table, "테이블 본문", literal(1, 0));
+    seedEmbedding(doc, "문서 본문", vec(1f, 0f));
+    seedEmbedding(table, "테이블 본문", vec(1f, 0f));
 
     var hits =
         repository()

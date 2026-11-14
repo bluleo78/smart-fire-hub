@@ -104,6 +104,48 @@ public class DatasetEmbeddingRecord extends UpdatableRecordImpl<DatasetEmbedding
         return (String) get(5);
     }
 
+    /**
+     * Setter for <code>public.dataset_embedding.source_hash</code>.
+     */
+    public void setSourceHash(String value) {
+        set(6, value);
+    }
+
+    /**
+     * Getter for <code>public.dataset_embedding.source_hash</code>.
+     */
+    public String getSourceHash() {
+        return (String) get(6);
+    }
+
+    /**
+     * Setter for <code>public.dataset_embedding.embedded_hash</code>.
+     */
+    public void setEmbeddedHash(String value) {
+        set(7, value);
+    }
+
+    /**
+     * Getter for <code>public.dataset_embedding.embedded_hash</code>.
+     */
+    public String getEmbeddedHash() {
+        return (String) get(7);
+    }
+
+    /**
+     * Setter for <code>public.dataset_embedding.keyword_marker</code>.
+     */
+    public void setKeywordMarker(String value) {
+        set(8, value);
+    }
+
+    /**
+     * Getter for <code>public.dataset_embedding.keyword_marker</code>.
+     */
+    public String getKeywordMarker() {
+        return (String) get(8);
+    }
+
     // -------------------------------------------------------------------------
     // Primary key information
     // -------------------------------------------------------------------------
@@ -127,7 +169,7 @@ public class DatasetEmbeddingRecord extends UpdatableRecordImpl<DatasetEmbedding
     /**
      * Create a detached, initialised DatasetEmbeddingRecord
      */
-    public DatasetEmbeddingRecord(Long datasetId, String sourceText, OffsetDateTime updatedAt, Long tenantId, Integer embeddedDim, String embeddedModel) {
+    public DatasetEmbeddingRecord(Long datasetId, String sourceText, OffsetDateTime updatedAt, Long tenantId, Integer embeddedDim, String embeddedModel, String sourceHash, String embeddedHash, String keywordMarker) {
         super(DatasetEmbedding.DATASET_EMBEDDING);
 
         setDatasetId(datasetId);
@@ -136,6 +178,9 @@ public class DatasetEmbeddingRecord extends UpdatableRecordImpl<DatasetEmbedding
         setTenantId(tenantId);
         setEmbeddedDim(embeddedDim);
         setEmbeddedModel(embeddedModel);
+        setSourceHash(sourceHash);
+        setEmbeddedHash(embeddedHash);
+        setKeywordMarker(keywordMarker);
         resetChangedOnNotNull();
     }
 }

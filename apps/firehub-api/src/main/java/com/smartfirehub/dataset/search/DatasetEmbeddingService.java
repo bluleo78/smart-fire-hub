@@ -6,9 +6,11 @@ import com.smartfirehub.embedding.EmbeddingNotConfiguredException;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import com.smartfirehub.embedding.EmbeddingSpace;
+import com.smartfirehub.embedding.SourceHash;
 import com.smartfirehub.global.platformdb.PlatformDbFeature;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.securitylevel.ai.EmbeddingAiGate;
+import com.smartfirehub.vectorstore.KeywordIndexService;
 import com.smartfirehub.vectorstore.VectorStoreFeatures;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -36,6 +38,8 @@ public class DatasetEmbeddingService {
   private final EmbeddingProviderFactory embeddingFactory;
   private final EmbeddingAiGate aiGate;
   private final VectorStoreFeatures features;
+  // 키워드 색인이 원문 열과 따로 있는 저장소(Qdrant)에 커밋 뒤 키워드를 쓴다(WD-720). pgvector 면 바로 끝난다.
+  private final KeywordIndexService keywordIndex;
 
   /** 동기: source_text 만 갱신. 메타 없으면(삭제됨) 인덱스 제거. 쓰기 트랜잭션 내에서 호출. */
   public void syncSourceText(long datasetId) {
@@ -45,6 +49,7 @@ public class DatasetEmbeddingService {
       return;
     }
     embeddingRepo.upsertSourceText(datasetId, DatasetSourceTextBuilder.build(meta));
+    keywordIndex.indexDatasetAfterCommit(datasetId);
   }
 
   /**
@@ -85,7 +90,9 @@ public class DatasetEmbeddingService {
             return;
           }
           float[] embedding = provider.embed(List.of(sourceText)).get(0);
-          embeddingRepo.upsertEmbedding(EmbeddingSpace.of(provider), datasetId, embedding);
+          // 임베딩한 그 원문의 해시를 넘긴다 — 그새 원문이 바뀌었으면 표시가 차지 않아 백로그가 다시 만든다(WD-720).
+          embeddingRepo.upsertEmbedding(
+              EmbeddingSpace.of(provider), datasetId, embedding, SourceHash.of(sourceText));
         });
   }
 }

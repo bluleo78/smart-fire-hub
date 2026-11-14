@@ -250,13 +250,20 @@ class PlatformDbFeaturesOffPathTest {
         new DatasetSourceTextBuilder.Input(
             "화재", "설명", "fire", List.of("col"), List.of("tag"), "안전");
     when(meta.read(7L)).thenReturn(input);
-    var svc = new DatasetEmbeddingService(repo, meta, factory, gate, only());
+    var svc =
+        new DatasetEmbeddingService(
+            repo,
+            meta,
+            factory,
+            gate,
+            only(),
+            org.mockito.Mockito.mock(com.smartfirehub.vectorstore.KeywordIndexService.class));
 
     svc.syncSourceText(7L);
     svc.reindexEmbedding(7L, 1L);
 
     verify(repo).upsertSourceText(eq(7L), any(String.class));
-    verify(repo, never()).upsertEmbedding(any(), anyLong(), any());
+    verify(repo, never()).upsertEmbedding(any(), anyLong(), any(), any());
     verify(repo, never()).deleteVectors(anyLong());
     verifyNoInteractions(factory);
   }
@@ -277,7 +284,14 @@ class PlatformDbFeaturesOffPathTest {
         new DatasetSourceTextBuilder.Input("화재", "설명", "fire", List.of("col"), List.of(), null);
     when(meta.read(7L)).thenReturn(input);
     when(meta.read(8L)).thenReturn(null);
-    var svc = new DatasetEmbeddingService(repo, meta, factory, gate, new OffVectorStoreFeatures());
+    var svc =
+        new DatasetEmbeddingService(
+            repo,
+            meta,
+            factory,
+            gate,
+            new OffVectorStoreFeatures(),
+            org.mockito.Mockito.mock(com.smartfirehub.vectorstore.KeywordIndexService.class));
 
     // 갱신: 메타가 있으면 source_text upsert, 비동기 재임베딩은 벡터 꺼짐으로 바로 끝난다.
     svc.syncSourceText(7L);
@@ -341,12 +355,14 @@ class PlatformDbFeaturesOffPathTest {
             mock(JobScheduler.class),
             gate,
             only(),
-            new com.smartfirehub.vectorstore.off.OffChunkVectorIndex());
+            new com.smartfirehub.vectorstore.off.OffChunkVectorIndex(),
+            org.mockito.Mockito.mock(com.smartfirehub.vectorstore.KeywordIndexService.class));
 
+    when(chunks.insertChunks(9L, 3L, list)).thenReturn(List.of(100L));
     svc.processIngestion(9L, 1L);
 
-    verify(chunks).insertChunksOnly(9L, 3L, list);
-    verify(chunks, never()).insertBatch(anyLong(), anyLong(), anyList(), anyList(), any());
+    verify(chunks).insertChunks(9L, 3L, list);
+    verify(chunks, never()).upsertEmbeddings(any(), anyList(), anyList());
     verifyNoInteractions(factory);
     verify(files).markCompleted(9L, 1, 1);
   }

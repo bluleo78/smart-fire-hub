@@ -31,6 +31,9 @@ public final class BigramSparseEncoder {
   /** 생성 규칙 버전. 규칙을 바꾸면 올린다(컬렉션 스키마 버전과 따로 간다). */
   public static final int RULE_VERSION = 1;
 
+  /** 키워드 표시에 적는 규칙 표지(WD-720) — 「bigram-v{규칙 버전}」. 버전을 올리면 모든 표시가 어긋나 백로그가 다시 쓴다. */
+  public static final String KEYWORD_RULE = "bigram-v" + RULE_VERSION;
+
   /** BM25 TF 포화 상수. PoC 와 같은 표준값이다. */
   static final double K1 = 1.2;
 

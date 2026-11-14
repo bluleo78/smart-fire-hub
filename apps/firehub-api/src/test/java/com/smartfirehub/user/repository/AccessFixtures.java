@@ -215,7 +215,8 @@ public interface AccessFixtures {
 
   /**
    * dataset_embedding 행의 표시 열(embedded_dim·embedded_model)을 직접 심는다(소유자 시점, WD-718). 벡터 쓰기가 꺼진
-   * 구현(Tibero+platform) 에서 표시 열 판정 SQL 을 시험하려고 쓴다. null 이면 비운다.
+   * 구현(Tibero+platform) 에서 표시 열 판정 SQL 을 시험하려고 쓴다. null 이면 비운다. 심을 때는 "지금 원문으로 임베딩됨" 이라 {@code
+   * embedded_hash} 를 지금 {@code source_hash} 로 맞추고, 비울 때는 함께 비운다(WD-720).
    */
   void setEmbeddingMarker(long datasetId, Integer dim, String model);
 
@@ -238,6 +239,15 @@ public interface AccessFixtures {
    * @param status PENDING·PARSING·COMPLETED 등
    */
   long createDocumentFile(long tenantId, long datasetId, String name, String status);
+
+  /**
+   * dataset_embedding 카탈로그 행 하나를 소유자 시점으로 넣는다(WD-720 — 검색 후보 확인 시험용). 원문 해시는 비운다. 데이터셋 삭제의 FK
+   * CASCADE 가 정리한다.
+   */
+  void seedEmbeddingRow(long tenantId, long datasetId, String sourceText);
+
+  /** document_chunk 한 행을 소유자 시점으로 넣고 id 를 돌려준다(WD-720 — 검색 후보 확인 시험용). 문서 삭제의 FK CASCADE 가 정리한다. */
+  long insertChunk(long tenantId, long documentFileId, long datasetId, int index, String content);
 
   /** 그 문서의 document_chunk 저장 행(소유자 시점, chunk_index 오름차순) — 청크 적재 왕복·테넌트 DEFAULT 확인용. */
   List<ChunkRow> chunkRows(long documentFileId);

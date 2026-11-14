@@ -7,6 +7,7 @@ import com.smartfirehub.dataset.repository.DatasetEmbeddingRepository;
 import com.smartfirehub.dataset.search.DatasetSearchHit;
 import com.smartfirehub.embedding.EmbeddingDimension;
 import com.smartfirehub.embedding.EmbeddingSpace;
+import com.smartfirehub.embedding.SourceHash;
 import com.smartfirehub.embedding.repository.VectorLiterals;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
@@ -33,6 +34,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 
 /** 데이터셋 카탈로그 벡터: 차원 이동, #392 모델 필터, 부모 행 없으면 no-op, 차원별 HNSW, 다른 차원 정리의 테넌트 범위. */
 class DatasetEmbeddingVectorStoreTest extends IntegrationTestBase {
+
+  // 시드 원문의 해시 — 벡터를 쓸 때 "이 원문으로 만든 벡터" 라고 넘긴다(WD-720: 지금 원문과 같아야 표시가 찬다).
+  private static final String H_DOC = SourceHash.of("화재 통계");
+  private static final String H_DOC2 = SourceHash.of("소방 점검");
 
   private static final EmbeddingSpace S1024 =
       new EmbeddingSpace(EmbeddingDimension.D1024, "bge-m3");
@@ -74,7 +79,7 @@ class DatasetEmbeddingVectorStoreTest extends IntegrationTestBase {
     doc = inTenantFixture(tenant, () -> EmbeddingTestFixtures.createDocumentDataset(dsl, "dsvec"));
     TenantContext.runScoped(tenant, () -> repo.upsertSourceText(doc.datasetId(), "화재 통계"));
     TenantContext.runScoped(
-        tenant, () -> repo.upsertEmbedding(S1024, doc.datasetId(), axis(1024, 0)));
+        tenant, () -> repo.upsertEmbedding(S1024, doc.datasetId(), axis(1024, 0), H_DOC));
   }
 
   @AfterEach
@@ -88,7 +93,7 @@ class DatasetEmbeddingVectorStoreTest extends IntegrationTestBase {
   @Test
   void upsertIntoNewDimensionRemovesOldDimensionRow() {
     TenantContext.runScoped(
-        tenant, () -> repo.upsertEmbedding(S1536, doc.datasetId(), axis(1536, 0)));
+        tenant, () -> repo.upsertEmbedding(S1536, doc.datasetId(), axis(1536, 0), H_DOC));
     assertThat(TenantContext.runScopedGet(tenant, () -> repo.countEmbedded(S1024))).isZero();
     assertThat(TenantContext.runScopedGet(tenant, () -> repo.countEmbedded(S1536))).isEqualTo(1);
   }
@@ -103,7 +108,7 @@ class DatasetEmbeddingVectorStoreTest extends IntegrationTestBase {
         tenant,
         () -> {
           repo.upsertSourceText(doc2.datasetId(), "소방 점검");
-          repo.upsertEmbedding(S1024, doc2.datasetId(), axis(1024, 1));
+          repo.upsertEmbedding(S1024, doc2.datasetId(), axis(1024, 1), H_DOC2);
         });
     assertThat(TenantContext.runScopedGet(tenant, () -> repo.countEmbedded(S1024))).isEqualTo(2);
 
@@ -113,7 +118,8 @@ class DatasetEmbeddingVectorStoreTest extends IntegrationTestBase {
             repo.upsertEmbeddings(
                 S1536,
                 List.of(doc.datasetId(), Long.MAX_VALUE, doc2.datasetId()),
-                List.of(axis(1536, 0), axis(1536, 1), axis(1536, 2))));
+                List.of(axis(1536, 0), axis(1536, 1), axis(1536, 2)),
+                List.of(H_DOC, H_DOC, H_DOC2)));
 
     assertThat(TenantContext.runScopedGet(tenant, () -> repo.countEmbedded(S1024))).isZero();
     assertThat(TenantContext.runScopedGet(tenant, () -> repo.countEmbedded(S1536))).isEqualTo(2);
@@ -122,10 +128,37 @@ class DatasetEmbeddingVectorStoreTest extends IntegrationTestBase {
   }
 
   @Test
+  void legacyRowWithoutSourceHashIsJudgedBySpaceOnlyAndGetsHashOnNextWrite() {
+    // V161 이전 행(원문 해시 없음)을 흉내 낸다 — 소유자 커넥션으로 해시 열을 비운다.
+    DSLContext owner = DSL.using(ownerDataSource, SQLDialect.POSTGRES);
+    owner.execute(
+        "UPDATE dataset_embedding SET source_hash = NULL, embedded_hash = NULL WHERE dataset_id = ?",
+        doc.datasetId());
+    // 해시가 없으면 예전처럼 공간만 본다 — 공간이 맞으니 백로그가 아니다(업그레이드 직후 전체 재임베딩을 부르지 않는다).
+    assertThat(TenantContext.runScopedGet(tenant, () -> repo.countMissing(S1024, ALLOW_ALL_LEVELS)))
+        .isZero();
+    assertThat(TenantContext.runScopedGet(tenant, () -> repo.countEmbedded(S1024))).isEqualTo(1);
+
+    // 다음 벡터 쓰기가 넘긴 해시로 원문 해시까지 채운다 — 이후로는 원문 변경이 판정된다.
+    TenantContext.runScoped(
+        tenant, () -> repo.upsertEmbedding(S1024, doc.datasetId(), axis(1024, 0), H_DOC));
+    assertThat(
+            owner
+                .fetchOne(
+                    "SELECT source_hash, embedded_hash FROM dataset_embedding WHERE dataset_id = ?",
+                    doc.datasetId())
+                .intoArray())
+        .containsExactly(H_DOC, H_DOC);
+    TenantContext.runScoped(tenant, () -> repo.upsertSourceText(doc.datasetId(), "화재 통계 개정"));
+    assertThat(TenantContext.runScopedGet(tenant, () -> repo.countMissing(S1024, ALLOW_ALL_LEVELS)))
+        .isEqualTo(1);
+  }
+
+  @Test
   void upsertWithoutParentRowIsNoOp() {
     // 부모 dataset_embedding 행이 없으면(삭제 경합) 조용히 건너뛴다 — 옛 UPDATE 0행과 같은 의미.
     TenantContext.runScoped(
-        tenant, () -> repo.upsertEmbedding(S1024, Long.MAX_VALUE, axis(1024, 0)));
+        tenant, () -> repo.upsertEmbedding(S1024, Long.MAX_VALUE, axis(1024, 0), H_DOC));
     assertThat(TenantContext.runScopedGet(tenant, () -> repo.countEmbedded(S1024))).isEqualTo(1);
   }
 
@@ -163,7 +196,10 @@ class DatasetEmbeddingVectorStoreTest extends IntegrationTestBase {
     try {
       TenantContext.runScoped(tenantB, () -> repo.upsertSourceText(docB.datasetId(), "B 카탈로그"));
       TenantContext.runScoped(
-          tenantB, () -> repo.upsertEmbedding(S1536, docB.datasetId(), axis(1536, 0)));
+          tenantB,
+          () ->
+              repo.upsertEmbedding(
+                  S1536, docB.datasetId(), axis(1536, 0), SourceHash.of("B 카탈로그")));
 
       // (1) 소유자 커넥션(RLS 우회)에서 B 가 1536 을 남기라고 하면 DELETE 는 1024 테이블로 간다 — 거기엔 A 의 행만
       //     있다. 이 경로에선 RLS 가 막아 주지 않으므로 명시적 WHERE tenant_id = ? 만이 보호막이다. 스프링 빈이 아닌

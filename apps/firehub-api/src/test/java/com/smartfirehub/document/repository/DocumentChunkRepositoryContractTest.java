@@ -2,14 +2,17 @@ package com.smartfirehub.document.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 
 import com.smartfirehub.document.dto.Chunk;
 import com.smartfirehub.document.dto.DocumentSearchHit;
 import com.smartfirehub.embedding.EmbeddingDimension;
 import com.smartfirehub.embedding.EmbeddingSpace;
+import com.smartfirehub.embedding.SourceHash;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.securitylevel.access.ProviderHosting;
 import com.smartfirehub.securitylevel.ai.EmbeddingAllowance;
+import com.smartfirehub.support.ChunkSeeds;
 import com.smartfirehub.user.repository.AccessFixtures.ChunkRow;
 import com.smartfirehub.user.repository.TenantPairContractBase;
 import com.smartfirehub.vectorstore.ChunkVectorIndex;
@@ -105,6 +108,43 @@ public abstract class DocumentChunkRepositoryContractTest extends TenantPairCont
   // ---------- 살아 있는 경로 ----------
 
   @Test
+  @DisplayName(
+      "청크 키워드 표시(WD-720) — insertChunks 가 돌려준 id 가 청크 순서이고, 표시가 없거나 규칙·본문이 어긋난 청크만 백로그다. 다른 테넌트는 보지 못한다")
+  void keywordMarker_roundTrip() {
+    long ds = dataset("kw");
+    long f = file(ds, "kw.txt", "COMPLETED");
+    List<Long> ids =
+        inA(
+            () ->
+                repository()
+                    .insertChunks(
+                        f, ds, List.of(new Chunk(0, "소방 점검", 1), new Chunk(1, "화재 예방", 1))));
+    assertThat(ids).hasSize(2).doesNotHaveDuplicates();
+    assertThat(inA(() -> repository().findKeywordMissing("r1", 0L, 10)))
+        .extracting(
+            DocumentChunkRepository.ChunkSource::chunkId,
+            DocumentChunkRepository.ChunkSource::content)
+        .containsExactly(tuple(ids.get(0), "소방 점검"), tuple(ids.get(1), "화재 예방"));
+
+    // 첫 청크는 맞는 본문 해시로, 둘째는 옛 본문 해시로(늦은 쓰기) 표시를 채운다 — 둘째는 채워지지 않는다.
+    runA(
+        () ->
+            repository()
+                .markKeywordIndexed(
+                    "r1", ids, List.of(SourceHash.of("소방 점검"), SourceHash.of("옛 본문"))));
+    assertThat(inA(() -> repository().findKeywordMissing("r1", 0L, 10)))
+        .extracting(DocumentChunkRepository.ChunkSource::chunkId)
+        .containsExactly(ids.get(1));
+    // 규칙이 바뀌면 다시 백로그다.
+    assertThat(inA(() -> repository().findKeywordMissing("r2", 0L, 10))).hasSize(2);
+    // 키셋·상한.
+    assertThat(inA(() -> repository().findKeywordMissing("r2", ids.get(0), 10))).hasSize(1);
+    assertThat(inA(() -> repository().findKeywordMissing("r2", 0L, 1))).hasSize(1);
+    // 다른 테넌트에서는 보이지 않는다.
+    assertThat(inB(() -> repository().findKeywordMissing("r2", 0L, 10))).isEmpty();
+  }
+
+  @Test
   @DisplayName("insertChunksOnly 는 순번·본문·토큰 수를 그대로 넣고 tenant_id 는 컨텍스트가 채운다")
   void insertChunksOnly_roundTrip() {
     long ds = dataset("ds");
@@ -113,7 +153,7 @@ public abstract class DocumentChunkRepositoryContractTest extends TenantPairCont
     runA(
         () ->
             repository()
-                .insertChunksOnly(
+                .insertChunks(
                     f,
                     ds,
                     List.of(
@@ -138,8 +178,8 @@ public abstract class DocumentChunkRepositoryContractTest extends TenantPairCont
       chunks.add(new Chunk(i, "청크 c" + i, 1));
     }
 
-    runA(() -> repository().insertChunksOnly(f, ds, chunks));
-    runA(() -> repository().insertChunksOnly(f, ds, List.of()));
+    runA(() -> repository().insertChunks(f, ds, chunks));
+    runA(() -> repository().insertChunks(f, ds, List.of()));
 
     List<ChunkRow> rows = fx.chunkRows(f);
     assertThat(rows).hasSize(401);
@@ -158,7 +198,7 @@ public abstract class DocumentChunkRepositoryContractTest extends TenantPairCont
     runA(
         () ->
             repository()
-                .insertChunksOnly(f, ds, List.of(new Chunk(0, text, 9), new Chunk(1, "짧은", 1))));
+                .insertChunks(f, ds, List.of(new Chunk(0, text, 9), new Chunk(1, "짧은", 1))));
 
     List<ChunkRow> rows = fx.chunkRows(f);
     assertThat(rows.get(0).content()).isEqualTo(text);
@@ -176,11 +216,11 @@ public abstract class DocumentChunkRepositoryContractTest extends TenantPairCont
     long f = file(ds, "e.txt", "COMPLETED");
     if (emptyStringIsNull()) {
       assertThatThrownBy(
-              () -> runA(() -> repository().insertChunksOnly(f, ds, List.of(new Chunk(0, "", 0)))))
+              () -> runA(() -> repository().insertChunks(f, ds, List.of(new Chunk(0, "", 0)))))
           .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
       assertThat(fx.chunkRows(f)).isEmpty();
     } else {
-      runA(() -> repository().insertChunksOnly(f, ds, List.of(new Chunk(0, "", 0))));
+      runA(() -> repository().insertChunks(f, ds, List.of(new Chunk(0, "", 0))));
       assertThat(fx.chunkRows(f)).extracting(ChunkRow::content).containsExactly("");
     }
   }
@@ -193,9 +233,8 @@ public abstract class DocumentChunkRepositoryContractTest extends TenantPairCont
     long f2 = file(ds, "2.txt", "COMPLETED");
     runA(
         () ->
-            repository()
-                .insertChunksOnly(f1, ds, List.of(new Chunk(0, "a", 1), new Chunk(1, "b", 1))));
-    runA(() -> repository().insertChunksOnly(f2, ds, List.of(new Chunk(0, "keep", 1))));
+            repository().insertChunks(f1, ds, List.of(new Chunk(0, "a", 1), new Chunk(1, "b", 1))));
+    runA(() -> repository().insertChunks(f2, ds, List.of(new Chunk(0, "keep", 1))));
 
     runA(() -> repository().deleteByDocumentFileId(f1));
     runA(() -> repository().deleteByDocumentFileId(f1));
@@ -212,8 +251,7 @@ public abstract class DocumentChunkRepositoryContractTest extends TenantPairCont
     long f = file(ds, "a.txt", "COMPLETED");
     runA(
         () ->
-            repository()
-                .insertChunksOnly(f, ds, List.of(new Chunk(0, "a", 1), new Chunk(1, "b", 1))));
+            repository().insertChunks(f, ds, List.of(new Chunk(0, "a", 1), new Chunk(1, "b", 1))));
     List<Long> ids =
         inA(() -> repository().findChunkContentsByDataset(ds)).stream()
             .map(DocumentChunkRepository.ChunkContent::chunkId)
@@ -247,14 +285,18 @@ public abstract class DocumentChunkRepositoryContractTest extends TenantPairCont
     if (!supportsVectorSearch()) {
       assertOff(
           "VECTOR_SEARCH",
-          () -> runA(() -> repository().insertBatch(f, ds, chunks, embeddings, SPACE)));
+          () ->
+              runA(
+                  () ->
+                      ChunkSeeds.insertWithVectors(
+                          repository(), f, ds, chunks, embeddings, SPACE)));
       assertOff(
           "VECTOR_SEARCH",
           () -> inA(() -> searchIndex().semantic(SPACE, vec(1f, 0f), List.of(ds), 5, ALL_VISIBLE)));
       assertThat(fx.chunkRows(f)).isEmpty();
       return;
     }
-    runA(() -> repository().insertBatch(f, ds, chunks, embeddings, SPACE));
+    runA(() -> ChunkSeeds.insertWithVectors(repository(), f, ds, chunks, embeddings, SPACE));
 
     List<DocumentSearchHit> hits =
         inA(() -> searchIndex().semantic(SPACE, vec(1f, 0f), List.of(ds), 5, ALL_VISIBLE));
@@ -280,12 +322,16 @@ public abstract class DocumentChunkRepositoryContractTest extends TenantPairCont
     if (!supportsVectorSearch()) {
       assertOff(
           "VECTOR_SEARCH",
-          () -> runA(() -> repository().insertBatch(f, ds, chunks, embeddings, SPACE)));
+          () ->
+              runA(
+                  () ->
+                      ChunkSeeds.insertWithVectors(
+                          repository(), f, ds, chunks, embeddings, SPACE)));
       assertThat(fx.chunkRows(f)).isEmpty();
       return;
     }
 
-    runA(() -> repository().insertBatch(f, ds, chunks, embeddings, SPACE));
+    runA(() -> ChunkSeeds.insertWithVectors(repository(), f, ds, chunks, embeddings, SPACE));
 
     assertThat(fx.chunkRows(f)).hasSize(201);
   }
@@ -296,8 +342,8 @@ public abstract class DocumentChunkRepositoryContractTest extends TenantPairCont
     long ds = dataset("ds");
     long f = file(ds, "p.txt", "PARSING");
     if (!supportsVectorSearch()) {
-      // 시드(insertBatch)도 꺼진 경로라 본문만 살아 있는 경로로 넣고 검색이 예외인지 본다.
-      runA(() -> repository().insertChunksOnly(f, ds, List.of(new Chunk(0, "hidden", 1))));
+      // 시드(벡터 쓰기)도 꺼진 경로라 본문만 살아 있는 경로로 넣고 검색이 예외인지 본다.
+      runA(() -> repository().insertChunks(f, ds, List.of(new Chunk(0, "hidden", 1))));
       assertOff(
           "VECTOR_SEARCH",
           () -> inA(() -> searchIndex().semantic(SPACE, vec(1f, 0f), List.of(ds), 5, ALL_VISIBLE)));
@@ -305,9 +351,13 @@ public abstract class DocumentChunkRepositoryContractTest extends TenantPairCont
     }
     runA(
         () ->
-            repository()
-                .insertBatch(
-                    f, ds, List.of(new Chunk(0, "hidden", 1)), List.of(vec(1f, 0f)), SPACE));
+            ChunkSeeds.insertWithVectors(
+                repository(),
+                f,
+                ds,
+                List.of(new Chunk(0, "hidden", 1)),
+                List.of(vec(1f, 0f)),
+                SPACE));
 
     assertThat(inA(() -> searchIndex().semantic(SPACE, vec(1f, 0f), List.of(ds), 5, ALL_VISIBLE)))
         .isEmpty();
@@ -324,7 +374,7 @@ public abstract class DocumentChunkRepositoryContractTest extends TenantPairCont
     runA(
         () ->
             repository()
-                .insertChunksOnly(
+                .insertChunks(
                     f,
                     ds,
                     List.of(
@@ -355,7 +405,7 @@ public abstract class DocumentChunkRepositoryContractTest extends TenantPairCont
     runA(
         () ->
             repository()
-                .insertChunksOnly(
+                .insertChunks(
                     f, ds, List.of(new Chunk(0, "annual wildfire damage summary 2026", 1))));
     if (!supportsTrigramSearch()) {
       assertOff(
@@ -380,7 +430,7 @@ public abstract class DocumentChunkRepositoryContractTest extends TenantPairCont
   void searchByTrigram_excludesNonCompleted() {
     long ds = dataset("ds");
     long f = file(ds, "pp.txt", "PARSING");
-    runA(() -> repository().insertChunksOnly(f, ds, List.of(new Chunk(0, "UR4206974320 숨김", 1))));
+    runA(() -> repository().insertChunks(f, ds, List.of(new Chunk(0, "UR4206974320 숨김", 1))));
     if (!supportsTrigramSearch()) {
       assertOff(
           "TRIGRAM_SEARCH",

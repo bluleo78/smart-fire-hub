@@ -3,6 +3,8 @@ package com.smartfirehub.dataset.repository.mybatis;
 import com.smartfirehub.dataset.repository.DatasetEmbeddingRepository;
 import com.smartfirehub.embedding.EmbeddingDimension;
 import com.smartfirehub.embedding.EmbeddingSpace;
+import com.smartfirehub.embedding.SourceHash;
+import com.smartfirehub.embedding.repository.EmbeddingMarkers;
 import com.smartfirehub.global.platformdb.mybatis.InChunks;
 import com.smartfirehub.global.platformdb.mybatis.PlatformMyBatisRepository;
 import com.smartfirehub.global.platformdb.mybatis.PlatformRetries;
@@ -54,26 +56,36 @@ public class MyBatisDatasetEmbeddingRepository implements DatasetEmbeddingReposi
    */
   @Override
   public void upsertSourceText(long datasetId, String sourceText) {
-    PlatformRetries.runOnceOnDuplicateKey(() -> mapper.upsertSourceText(datasetId, sourceText));
+    // 원문 해시는 Java 한 곳(SourceHash)에서 계산해 원문과 같은 문장으로 쓴다(WD-720).
+    String sourceHash = SourceHash.of(sourceText);
+    PlatformRetries.runOnceOnDuplicateKey(
+        () -> mapper.upsertSourceText(datasetId, sourceText, sourceHash));
   }
 
   /** 카탈로그 벡터 1건 — {@link #upsertEmbeddings} 의 단건 편의. */
   @Override
-  public void upsertEmbedding(EmbeddingSpace space, long datasetId, float[] embedding) {
-    upsertEmbeddings(space, List.of(datasetId), List.of(embedding));
+  public void upsertEmbedding(
+      EmbeddingSpace space, long datasetId, float[] embedding, String sourceHash) {
+    upsertEmbeddings(space, List.of(datasetId), List.of(embedding), List.of(sourceHash));
   }
 
-  /** 포트로 벡터를 쓴 뒤 같은 트랜잭션에서 표시 열을 그 공간으로 맞춘다(jOOQ 판과 같음). */
+  /**
+   * 포트로 벡터를 쓴 뒤 같은 트랜잭션에서 표시 열을 그 공간으로 맞춘다(jOOQ 판과 같음). 행마다 "벡터를 만든 원문 해시 = 지금 원문 해시" 일 때만
+   * 채운다(WD-720). 한 번에 최대 배치 크기(64)라 행마다 UPDATE 한 번이다.
+   */
   @Override
   public void upsertEmbeddings(
-      EmbeddingSpace space, List<Long> datasetIds, List<float[]> embeddings) {
-    if (datasetIds.size() != embeddings.size()) {
-      throw new IllegalArgumentException(
-          "데이터셋 수와 임베딩 수 불일치: " + datasetIds.size() + " vs " + embeddings.size());
-    }
+      EmbeddingSpace space,
+      List<Long> datasetIds,
+      List<float[]> embeddings,
+      List<String> sourceHashes) {
+    EmbeddingMarkers.requireSameSize(datasetIds, embeddings, sourceHashes);
     if (datasetIds.isEmpty()) return;
     vectorIndex.upsertDense(space, datasetIds, embeddings);
-    mapper.markEmbedded(space.dimension().size(), space.model(), InChunks.of(datasetIds));
+    for (int i = 0; i < datasetIds.size(); i++) {
+      mapper.markEmbedded(
+          space.dimension().size(), space.model(), datasetIds.get(i), sourceHashes.get(i));
+    }
   }
 
   /** 데이터셋 삭제 시 카탈로그 행 제거(FK CASCADE 와 별개로 명시 호출 경로 — 메타가 사라진 syncSourceText). */
@@ -144,5 +156,28 @@ public class MyBatisDatasetEmbeddingRepository implements DatasetEmbeddingReposi
     int deleted = vectorIndex.deleteOtherDimensions(tenantId, keep);
     mapper.clearOtherDimensionMarkers(tenantId, keep.size());
     return deleted;
+  }
+
+  @Override
+  public java.util.Optional<String> findSourceText(long datasetId) {
+    return java.util.Optional.ofNullable(mapper.selectSourceText(datasetId));
+  }
+
+  /** 키워드 표시 채우기 — 행마다 조건부 UPDATE(jOOQ 판과 같은 규칙). */
+  @Override
+  public void markKeywordIndexed(String rule, List<Long> datasetIds, List<String> sourceHashes) {
+    if (datasetIds.size() != sourceHashes.size()) {
+      throw new IllegalArgumentException(
+          "id·원문 해시 수 불일치: " + datasetIds.size() + " vs " + sourceHashes.size());
+    }
+    for (int i = 0; i < datasetIds.size(); i++) {
+      String hash = sourceHashes.get(i);
+      mapper.markKeywordIndexed(rule + ":" + hash, hash, datasetIds.get(i));
+    }
+  }
+
+  @Override
+  public List<SourceTextRow> findKeywordMissing(String rule, long afterDatasetId, int limit) {
+    return mapper.findKeywordMissing(rule + ":", afterDatasetId, limit, 0);
   }
 }

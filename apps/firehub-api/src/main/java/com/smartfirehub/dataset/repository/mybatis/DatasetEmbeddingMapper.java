@@ -14,8 +14,15 @@ import org.apache.ibatis.annotations.Param;
 @PlatformMapper
 public interface DatasetEmbeddingMapper {
 
-  /** source_text 를 넣거나 바꾸고 updated_at 을 DB 시계로 갱신한다. PG 는 ON CONFLICT, Tibero 는 MERGE. */
-  int upsertSourceText(@Param("datasetId") long datasetId, @Param("sourceText") String sourceText);
+  /**
+   * source_text 와 원문 해시를 넣거나 바꾸고 updated_at 을 DB 시계로 갱신한다. PG 는 ON CONFLICT, Tibero 는 MERGE.
+   *
+   * @param sourceHash {@code SourceHash.of(sourceText)} — 해시는 Java 에서만 계산한다(WD-720)
+   */
+  int upsertSourceText(
+      @Param("datasetId") long datasetId,
+      @Param("sourceText") String sourceText,
+      @Param("sourceHash") String sourceHash);
 
   /** 카탈로그 행 하나를 지운다(없으면 0). */
   int delete(@Param("datasetId") long datasetId);
@@ -27,11 +34,16 @@ public interface DatasetEmbeddingMapper {
    */
   long countAllowed(@Param("aiPolicy") MyBatisDatasetVisibility.AiPolicyValues aiPolicy);
 
-  /** 표시 열을 공간(차원·모델)으로 채운다. */
+  /**
+   * 표시 열을 공간(차원·모델)과 벡터를 만든 원문 해시로 채운다. 지금 원문 해시가 {@code hash} 이거나 아직 없을 때만 채운다(WD-720).
+   *
+   * @return 채운 행 수(0 이면 원문이 그새 바뀌었거나 행이 없다)
+   */
   int markEmbedded(
       @Param("dim") int dim,
       @Param("model") String model,
-      @Param("chunks") List<List<Long>> chunks);
+      @Param("datasetId") long datasetId,
+      @Param("hash") String hash);
 
   /** 이 테넌트 데이터셋들의 표시 열을 비운다. */
   int clearMarkers(@Param("tenantId") long tenantId, @Param("chunks") List<List<Long>> chunks);
@@ -56,4 +68,20 @@ public interface DatasetEmbeddingMapper {
       @Param("limit") int limit,
       @Param("offset") int offset,
       @Param("aiPolicy") MyBatisDatasetVisibility.AiPolicyValues aiPolicy);
+
+  /** 이 데이터셋의 원문(없으면 null). */
+  String selectSourceText(@Param("datasetId") long datasetId);
+
+  /** 키워드 표시를 채운다 — 지금 원문 해시가 {@code hash} 이거나 없을 때만. */
+  int markKeywordIndexed(
+      @Param("marker") String marker,
+      @Param("hash") String hash,
+      @Param("datasetId") long datasetId);
+
+  /** 키워드 표시가 비었거나 어긋난 행(키셋, offset 은 0). */
+  List<DatasetEmbeddingRepository.SourceTextRow> findKeywordMissing(
+      @Param("prefix") String prefix,
+      @Param("afterDatasetId") long afterDatasetId,
+      @Param("limit") int limit,
+      @Param("offset") int offset);
 }

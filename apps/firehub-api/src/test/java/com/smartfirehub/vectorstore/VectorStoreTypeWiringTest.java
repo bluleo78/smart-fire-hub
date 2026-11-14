@@ -9,7 +9,7 @@ import com.smartfirehub.global.platformdb.PlatformDbStartupGuardConfig;
 import com.smartfirehub.vectorstore.off.OffVectorStoreFeatures;
 import com.smartfirehub.vectorstore.pg.PgVectorStoreFeatures;
 import com.smartfirehub.vectorstore.qdrant.QdrantClientConfig;
-import com.smartfirehub.vectorstore.qdrant.QdrantVectorStoreLifecycle;
+import com.smartfirehub.vectorstore.qdrant.QdrantVectorStoreFeatures;
 import io.qdrant.client.QdrantClient;
 import java.util.TimeZone;
 import org.junit.jupiter.api.AfterEach;
@@ -26,7 +26,7 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
  * <ul>
  *   <li>postgres+platform → pgvector
  *   <li>tibero+platform → 꺼짐
- *   <li>qdrant → 기동 거부(구현 전)
+ *   <li>qdrant(플랫폼 DB 무관) → Qdrant 구현, 행 검색은 WD-722 전까지 꺼짐
  * </ul>
  */
 class VectorStoreTypeWiringTest {
@@ -40,7 +40,7 @@ class VectorStoreTypeWiringTest {
               PgVectorStoreFeatures.class,
               OffVectorStoreFeatures.class,
               QdrantClientConfig.class,
-              QdrantVectorStoreLifecycle.class);
+              QdrantVectorStoreFeatures.class);
 
   @AfterEach
   void restoreTimeZone() {
@@ -93,19 +93,48 @@ class VectorStoreTypeWiringTest {
             });
   }
 
+  /**
+   * qdrant 는 플랫폼 DB 와 무관하게 Qdrant 기능 판정이 뜨고 pgvector·꺼짐 판정은 뜨지 않는다(WD-720). 컬렉션 준비(Qdrant 접속)는 실제
+   * 컨테이너가 필요해 {@code QdrantPlatformSearchIntegrationTest} 가 본다.
+   */
   @Test
-  void qdrant_는_PostgreSQL_플랫폼에서_아직_기동을_거부한다() {
+  void qdrant_는_PostgreSQL_플랫폼에서_Qdrant_구현이_뜬다() {
     runner
         .withPropertyValues("firehub.vector-store.type=qdrant")
-        .run(ctx -> assertThat(ctx).getFailure().hasStackTraceContaining("아직 지원하지 않습니다"));
+        .run(
+            ctx -> {
+              assertThat(ctx).hasNotFailed();
+              VectorStoreFeatures features = ctx.getBean(VectorStoreFeatures.class);
+              assertThat(features).isInstanceOf(QdrantVectorStoreFeatures.class);
+              assertThat(features.supports(PlatformDbFeature.VECTOR_SEARCH)).isTrue();
+              assertThat(features.supports(PlatformDbFeature.TRIGRAM_SEARCH)).isTrue();
+              assertThat(ctx).hasSingleBean(QdrantClient.class);
+              assertThat(ctx).doesNotHaveBean(PgVectorStoreFeatures.class);
+            });
   }
 
   @Test
-  void qdrant_는_Tibero_플랫폼에서도_아직_기동을_거부한다() {
+  void qdrant_는_Tibero_플랫폼에서도_Qdrant_구현이_뜬다() {
     TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
     runner
         .withPropertyValues("firehub.vector-store.type=qdrant", "firehub.platform-db.type=tibero")
-        .run(ctx -> assertThat(ctx).getFailure().hasStackTraceContaining("아직 지원하지 않습니다"));
+        .run(
+            ctx -> {
+              assertThat(ctx).hasNotFailed();
+              assertThat(ctx.getBean(VectorStoreFeatures.class))
+                  .isInstanceOf(QdrantVectorStoreFeatures.class);
+              assertThat(ctx).doesNotHaveBean(OffVectorStoreFeatures.class);
+            });
+  }
+
+  /** qdrant 조합의 행 검색은 Qdrant 행 색인(WD-722) 전까지 어떤 데이터 저장소에서도 꺼진다 — 데이터 저장소 pgvector 에 색인이 쌓이지 않게. */
+  @Test
+  void qdrant_조합의_행_검색은_WD722_전까지_꺼짐() {
+    for (DataStoreBackend backend : DataStoreBackend.values()) {
+      assertThat(new QdrantVectorStoreFeatures().supportsRowSearch(backend))
+          .as("%s", backend)
+          .isFalse();
+    }
   }
 
   @Test

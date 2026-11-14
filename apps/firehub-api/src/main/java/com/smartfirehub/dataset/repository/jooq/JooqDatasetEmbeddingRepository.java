@@ -3,6 +3,8 @@ package com.smartfirehub.dataset.repository.jooq;
 import com.smartfirehub.dataset.repository.DatasetEmbeddingRepository;
 import com.smartfirehub.embedding.EmbeddingDimension;
 import com.smartfirehub.embedding.EmbeddingSpace;
+import com.smartfirehub.embedding.SourceHash;
+import com.smartfirehub.embedding.repository.EmbeddingMarkers;
 import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.securitylevel.ai.EmbeddingAllowance;
@@ -52,14 +54,18 @@ public class JooqDatasetEmbeddingRepository implements DatasetEmbeddingRepositor
     this.vectorIndex = vectorIndex;
   }
 
-  /** source_text 만 동기 upsert(외부 호출 없음). 벡터는 차원 테이블에 따로 있다 — 새 행은 벡터 없이 시작해 키워드 검색에는 즉시 노출된다. */
+  /**
+   * source_text 와 그 해시를 동기 upsert(외부 호출 없음). 벡터는 차원 테이블에 따로 있다 — 새 행은 벡터 없이 시작해 키워드 검색에는 즉시 노출된다.
+   * 해시가 바뀌면 판정식이 이 행을 백로그로 본다(WD-720).
+   */
   @Override
   public void upsertSourceText(long datasetId, String sourceText) {
     String sql =
-        "INSERT INTO dataset_embedding(dataset_id, source_text, updated_at) "
-            + "VALUES (?, ?, NOW()) "
-            + "ON CONFLICT (dataset_id) DO UPDATE SET source_text = EXCLUDED.source_text, updated_at = NOW()";
-    dsl.execute(sql, datasetId, sourceText);
+        "INSERT INTO dataset_embedding(dataset_id, source_text, source_hash, updated_at) "
+            + "VALUES (?, ?, ?, NOW()) "
+            + "ON CONFLICT (dataset_id) DO UPDATE SET source_text = EXCLUDED.source_text,"
+            + " source_hash = EXCLUDED.source_hash, updated_at = NOW()";
+    dsl.execute(sql, datasetId, sourceText, SourceHash.of(sourceText));
   }
 
   /**
@@ -67,8 +73,9 @@ public class JooqDatasetEmbeddingRepository implements DatasetEmbeddingRepositor
    * DatasetEmbeddingService 가 쓴다).
    */
   @Override
-  public void upsertEmbedding(EmbeddingSpace space, long datasetId, float[] embedding) {
-    upsertEmbeddings(space, List.of(datasetId), List.of(embedding));
+  public void upsertEmbedding(
+      EmbeddingSpace space, long datasetId, float[] embedding, String sourceHash) {
+    upsertEmbeddings(space, List.of(datasetId), List.of(embedding), List.of(sourceHash));
   }
 
   /**
@@ -79,16 +86,16 @@ public class JooqDatasetEmbeddingRepository implements DatasetEmbeddingRepositor
    */
   @Override
   public void upsertEmbeddings(
-      EmbeddingSpace space, List<Long> datasetIds, List<float[]> embeddings) {
-    if (datasetIds.size() != embeddings.size()) {
-      throw new IllegalArgumentException(
-          "데이터셋 수와 임베딩 수 불일치: " + datasetIds.size() + " vs " + embeddings.size());
-    }
+      EmbeddingSpace space,
+      List<Long> datasetIds,
+      List<float[]> embeddings,
+      List<String> sourceHashes) {
+    EmbeddingMarkers.requireSameSize(datasetIds, embeddings, sourceHashes);
     if (datasetIds.isEmpty()) return;
     vectorIndex.upsertDense(space, datasetIds, embeddings);
-    // 표시 열(WD-717)을 같은 트랜잭션에서 새 공간으로 맞춘다 — 다른 차원 행은 포트가 지웠으므로 거울이 정확히 이 공간을 가리킨다.
-    // 부모가 없는 id(삭제 경합)는 포트의 INSERT…SELECT 처럼 여기서도 0행이다.
-    markEmbedded(space, datasetIds.toArray(Long[]::new));
+    // 표시 열을 같은 트랜잭션에서 새 공간으로 맞춘다 — 다른 차원 행은 포트가 지웠으므로 표시가 정확히 이 공간을 가리킨다.
+    // 부모가 없는 id(삭제 경합)는 포트의 INSERT…SELECT 처럼 여기서도 0행이다. 원문이 그새 바뀐 행도 0행이다(WD-720).
+    markEmbedded(space, datasetIds, sourceHashes);
   }
 
   /** 데이터셋 삭제 시 인덱스 행 제거(FK CASCADE 와 별개로 명시 호출 경로 제공). */
@@ -133,11 +140,15 @@ public class JooqDatasetEmbeddingRepository implements DatasetEmbeddingRepositor
         .get(0, Long.class);
   }
 
-  /** {@code space} 로 임베딩된 데이터셋 수 — 표시 열(WD-717)로 센다(RLS 로 현재 테넌트). */
+  /**
+   * {@code space} 로 임베딩된 데이터셋 수 — 표시 열로 센다(RLS 로 현재 테넌트). 원문이 바뀌어 낡은 벡터는 세지 않는다(판정식의 반대, WD-720).
+   */
   @Override
   public long countEmbedded(EmbeddingSpace space) {
     return dsl.fetchOne(
-            "SELECT count(*) FROM dataset_embedding WHERE embedded_dim = ? AND embedded_model = ?",
+            "SELECT count(*) FROM dataset_embedding de WHERE de.embedded_dim = ? AND de.embedded_model = ?"
+                + " AND NOT "
+                + STALE_PREDICATE,
             space.dimension().size(),
             space.model())
         .get(0, Long.class);
@@ -187,7 +198,7 @@ public class JooqDatasetEmbeddingRepository implements DatasetEmbeddingRepositor
     int deleted = vectorIndex.deleteOtherDimensions(tenantId, keep);
     // 표시 열도 같은 트랜잭션에서 비운다 — 다른 차원을 가리키던 거울은 방금 지운 벡터를 가리키기 때문이다.
     dsl.execute(
-        "UPDATE dataset_embedding SET embedded_dim = NULL, embedded_model = NULL"
+        "UPDATE dataset_embedding SET embedded_dim = NULL, embedded_model = NULL, embedded_hash = NULL"
             + " WHERE tenant_id = ? AND embedded_dim <> ?",
         tenantId,
         keep.size());
@@ -195,26 +206,46 @@ public class JooqDatasetEmbeddingRepository implements DatasetEmbeddingRepositor
   }
 
   /**
-   * 판정식 — 표시 열이 현재 공간(차원·모델)을 가리키지 않는 행. 바인드 순서: 차원, 모델. NULL 을 명시적으로 다뤄 {@code IS DISTINCT FROM} 이
-   * 없는 DB(Tibero)에도 같은 식을 옮길 수 있게 한다.
+   * 낡음 — 지금 원문 해시가 있고, 벡터를 만든 원문의 해시가 그와 다르거나 없다(WD-720). 지금 원문 해시가 없는 기존 행(V161 이전)은 낡았다고 보지
+   * 않는다(예전처럼 공간만으로 판정). 바인드 없음.
+   */
+  private static final String STALE_PREDICATE =
+      "(de.source_hash IS NOT NULL AND (de.embedded_hash IS NULL OR de.embedded_hash <> de.source_hash))";
+
+  /**
+   * 판정식 — 표시 열이 현재 공간(차원·모델)을 가리키지 않거나 원문이 바뀌어 낡은 행. 바인드 순서: 차원, 모델. NULL 을 명시적으로 다뤄 {@code IS
+   * DISTINCT FROM} 이 없는 DB(Tibero)에도 같은 식을 옮길 수 있게 한다.
    */
   private static final String MISSING_PREDICATE =
       "(de.embedded_dim IS NULL OR de.embedded_dim <> ? OR de.embedded_model IS NULL"
-          + " OR de.embedded_model <> ?)";
+          + " OR de.embedded_model <> ? OR "
+          + STALE_PREDICATE
+          + ")";
 
-  /** 표시 열 채우기(WD-717) — 포트로 벡터를 쓴 메서드가 같은 트랜잭션에서 부른다. 표시 열은 플랫폼 DB 에 남는다(WD-718). */
-  private void markEmbedded(EmbeddingSpace space, Long[] datasetIds) {
-    dsl.execute(
-        "UPDATE dataset_embedding SET embedded_dim = ?, embedded_model = ? WHERE dataset_id = ANY(?)",
-        space.dimension().size(),
-        space.model(),
-        datasetIds);
+  /**
+   * 표시 열 채우기 — 포트로 벡터를 쓴 메서드가 같은 트랜잭션에서 부른다. 표시 열은 플랫폼 DB 에 남는다(WD-718).
+   *
+   * <p>행마다 "벡터를 만든 원문 해시 = 지금 원문 해시" 일 때만 채운다(조건부 UPDATE, JDBC 배치 1회). 지금 해시가 없는 기존 행은 채우면서 넘긴 해시로
+   * 원문 해시도 채운다 — 벡터를 만든 원문이 곧 저장된 원문이라는 V160 백필과 같은 전제다.
+   */
+  private void markEmbedded(EmbeddingSpace space, List<Long> datasetIds, List<String> hashes) {
+    org.jooq.BatchBindStep batch =
+        dsl.batch(
+            "UPDATE dataset_embedding SET embedded_dim = ?, embedded_model = ?, embedded_hash = ?,"
+                + " source_hash = COALESCE(source_hash, ?)"
+                + " WHERE dataset_id = ? AND (source_hash IS NULL OR source_hash = ?)");
+    for (int i = 0; i < datasetIds.size(); i++) {
+      String hash = hashes.get(i);
+      batch =
+          batch.bind(space.dimension().size(), space.model(), hash, hash, datasetIds.get(i), hash);
+    }
+    batch.execute();
   }
 
-  /** 표시 열 비우기(WD-717) — 벡터를 지운 메서드가 같은 트랜잭션에서 부른다. 벡터 삭제처럼 {@code tenant_id} 를 명시한다. */
+  /** 표시 열 비우기 — 벡터를 지운 메서드가 같은 트랜잭션에서 부른다. 벡터 삭제처럼 {@code tenant_id} 를 명시한다. */
   private void clearMarkers(long tenantId, Long[] datasetIds) {
     dsl.execute(
-        "UPDATE dataset_embedding SET embedded_dim = NULL, embedded_model = NULL"
+        "UPDATE dataset_embedding SET embedded_dim = NULL, embedded_model = NULL, embedded_hash = NULL"
             + " WHERE tenant_id = ? AND dataset_id = ANY(?)",
         tenantId,
         datasetIds);
@@ -227,5 +258,51 @@ public class JooqDatasetEmbeddingRepository implements DatasetEmbeddingRepositor
    */
   private String allowedSql(EmbeddingAllowance allowance) {
     return aiPolicyRepository.allowedDatasetSql("de.dataset_id", allowance.hosting());
+  }
+
+  @Override
+  public java.util.Optional<String> findSourceText(long datasetId) {
+    return dsl.fetchOptional(
+            "SELECT source_text FROM dataset_embedding WHERE dataset_id = ?", datasetId)
+        .map(r -> r.get(0, String.class));
+  }
+
+  /** 키워드 표시 채우기 — 행마다 조건부 UPDATE(JDBC 배치 1회). 원문 해시 판정은 {@link #markEmbedded} 와 같은 규칙이다. */
+  @Override
+  public void markKeywordIndexed(String rule, List<Long> datasetIds, List<String> sourceHashes) {
+    if (datasetIds.size() != sourceHashes.size()) {
+      throw new IllegalArgumentException(
+          "id·원문 해시 수 불일치: " + datasetIds.size() + " vs " + sourceHashes.size());
+    }
+    if (datasetIds.isEmpty()) return;
+    org.jooq.BatchBindStep batch =
+        dsl.batch(
+            "UPDATE dataset_embedding SET keyword_marker = ?, source_hash = COALESCE(source_hash, ?)"
+                + " WHERE dataset_id = ? AND (source_hash IS NULL OR source_hash = ?)");
+    for (int i = 0; i < datasetIds.size(); i++) {
+      String hash = sourceHashes.get(i);
+      batch = batch.bind(rule + ":" + hash, hash, datasetIds.get(i), hash);
+    }
+    batch.execute();
+  }
+
+  /**
+   * 키워드 백로그 — 표시가 없거나, 원문 해시가 없거나(기존 행), 표시가 「규칙:지금 해시」 가 아닌 행. 규칙 표지는 바인드로 넘겨 SQL 에서 해시와 잇는다(해시
+   * 계산은 SQL 에서 하지 않는다).
+   */
+  @Override
+  public List<SourceTextRow> findKeywordMissing(String rule, long afterDatasetId, int limit) {
+    return dsl.fetch(
+            "SELECT de.dataset_id, de.source_text FROM dataset_embedding de WHERE de.dataset_id > ?"
+                + " AND (de.keyword_marker IS NULL OR de.source_hash IS NULL"
+                + " OR de.keyword_marker <> (CAST(? AS text) || de.source_hash))"
+                + " ORDER BY de.dataset_id LIMIT ?",
+            afterDatasetId,
+            rule + ":",
+            limit)
+        .map(
+            r ->
+                new SourceTextRow(
+                    r.get("dataset_id", Long.class), r.get("source_text", String.class)));
   }
 }

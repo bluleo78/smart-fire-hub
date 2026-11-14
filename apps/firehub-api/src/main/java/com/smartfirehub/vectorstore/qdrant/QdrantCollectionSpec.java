@@ -35,13 +35,19 @@ import java.util.Map;
  * <p>키워드 바이그램 생성 규칙의 버전({@code BigramSparseEncoder#RULE_VERSION})은 여기에 넣지 않는다. 규칙이 바뀌면 컬렉션은 그대로 두고
  * 키워드 표시를 비워 백로그로 다시 만든다(결정 8).
  *
+ * <p><b>카탈로그·청크는 dense 와 키워드를 다른 컬렉션에 둔다</b>(2026-11-14 사용자 결정, WD-720). 의미 컬렉션 {@code
+ * fh_datasets_{dim}}·{@code fh_chunks_{dim}} 에는 dense 만, 키워드 컬렉션 {@code fh_datasets_kw}·{@code
+ * fh_chunks_kw} 에는 sparse 만 있다. 키워드는 임베딩 차원과 무관해서 한 점에 함께 두면 임베딩 미설정 테넌트의 둘 곳이 없고, 차원을 바꿀 때 키워드도
+ * 옮겨야 하고, 두 쓰기가 같은 점을 두고 경합한다. 행 검색 컬렉션의 구성은 WD-722 에서 정한다.
+ *
  * @param name 컬렉션 이름
  * @param kind 컬렉션 종류(metadata {@code fh_kind}). 이름이 같고 종류가 다른 컬렉션을 잘못 쓰지 않게 대조한다.
- * @param denseDim dense 차원. {@code null} 이면 dense 없는 키워드 전용 컬렉션이다.
+ * @param denseDim dense 차원. {@code null} 이면 dense 가 없다.
+ * @param keyword 키워드 sparse({@code kw_bigram})를 두는가
  * @param payload 만들 payload 색인
  */
 public record QdrantCollectionSpec(
-    String name, String kind, Integer denseDim, List<PayloadField> payload) {
+    String name, String kind, Integer denseDim, boolean keyword, List<PayloadField> payload) {
 
   /** 컬렉션 구성 버전. 구성을 바꾸면 올린다. */
   public static final int SCHEMA_VERSION = 1;
@@ -63,6 +69,10 @@ public record QdrantCollectionSpec(
 
   public static final String DATASET_ID = "dataset_id";
   public static final String DOCUMENT_ID = "document_id";
+
+  /** 청크 점의 청크 id — 사후 확인에서 점을 청크로 되짚으려고 싣는다. 거르지 않으므로 색인하지 않는다(WD-720). */
+  public static final String CHUNK_ID = "chunk_id";
+
   public static final String MODEL = "model";
   public static final String SEQ = "seq";
   public static final String ROW_ID = "row_id";
@@ -72,6 +82,12 @@ public record QdrantCollectionSpec(
 
   /** 키워드 전용 행 검색 컬렉션 이름(결정 7). */
   public static final String ROWS_KEYWORD_COLLECTION = "fh_rows_kw";
+
+  /** 데이터셋 카탈로그 키워드 컬렉션 이름(WD-720, 차원과 무관). */
+  public static final String DATASETS_KEYWORD_COLLECTION = "fh_datasets_kw";
+
+  /** 문서 청크 키워드 컬렉션 이름(WD-720, 차원과 무관). */
+  public static final String CHUNKS_KEYWORD_COLLECTION = "fh_chunks_kw";
 
   /**
    * payload 색인 하나.
@@ -105,12 +121,13 @@ public record QdrantCollectionSpec(
     }
   }
 
-  /** 데이터셋 카탈로그 컬렉션({@code fh_datasets_{dim}}). */
+  /** 데이터셋 카탈로그 의미 컬렉션({@code fh_datasets_{dim}}) — dense 만. */
   public static QdrantCollectionSpec datasets(EmbeddingDimension dim) {
     return new QdrantCollectionSpec(
         dim.datasetCollection(),
         "datasets",
         dim.size(),
+        false,
         List.of(
             PayloadField.tenantKey(),
             PayloadField.integer(DATASET_ID),
@@ -118,17 +135,43 @@ public record QdrantCollectionSpec(
             PayloadField.integer(SEQ)));
   }
 
-  /** 문서 청크 컬렉션({@code fh_chunks_{dim}}). 문서 삭제·데이터셋 삭제 때 거를 수 있게 둘 다 색인한다. */
+  /** 문서 청크 의미 컬렉션({@code fh_chunks_{dim}}) — dense 만. 문서 삭제·데이터셋 삭제 때 거를 수 있게 둘 다 색인한다. */
   public static QdrantCollectionSpec chunks(EmbeddingDimension dim) {
     return new QdrantCollectionSpec(
         dim.chunkCollection(),
         "chunks",
         dim.size(),
+        false,
         List.of(
             PayloadField.tenantKey(),
             PayloadField.integer(DATASET_ID),
             PayloadField.integer(DOCUMENT_ID),
             PayloadField.keyword(MODEL),
+            PayloadField.integer(SEQ)));
+  }
+
+  /** 데이터셋 카탈로그 키워드 컬렉션({@code fh_datasets_kw}) — sparse 만, 모델과 무관해 {@code model} 이 없다. */
+  public static QdrantCollectionSpec datasetsKeyword() {
+    return new QdrantCollectionSpec(
+        DATASETS_KEYWORD_COLLECTION,
+        "datasets_kw",
+        null,
+        true,
+        List.of(
+            PayloadField.tenantKey(), PayloadField.integer(DATASET_ID), PayloadField.integer(SEQ)));
+  }
+
+  /** 문서 청크 키워드 컬렉션({@code fh_chunks_kw}) — sparse 만. */
+  public static QdrantCollectionSpec chunksKeyword() {
+    return new QdrantCollectionSpec(
+        CHUNKS_KEYWORD_COLLECTION,
+        "chunks_kw",
+        null,
+        true,
+        List.of(
+            PayloadField.tenantKey(),
+            PayloadField.integer(DATASET_ID),
+            PayloadField.integer(DOCUMENT_ID),
             PayloadField.integer(SEQ)));
   }
 
@@ -140,12 +183,14 @@ public record QdrantCollectionSpec(
       // 1 은 키워드 전용 표시값(KEYWORD_ONLY_DIM)이라 rowsKeyword() 로 가야 한다. 상한은 Qdrant 차원 한도.
       throw new IllegalArgumentException("행 검색 dense 차원은 2~65536 이어야 합니다: " + dim);
     }
-    return new QdrantCollectionSpec("fh_rows_" + dim, "rows", dim, rowFields(true));
+    // 행 검색은 아직 한 점에 dense 와 키워드를 함께 둔다 — 구성은 WD-722 에서 다시 정한다.
+    return new QdrantCollectionSpec("fh_rows_" + dim, "rows", dim, true, rowFields(true));
   }
 
   /** 키워드 전용 행 검색 컬렉션({@code fh_rows_kw}) — dense 가 없다. */
   public static QdrantCollectionSpec rowsKeyword() {
-    return new QdrantCollectionSpec(ROWS_KEYWORD_COLLECTION, "rows_kw", null, rowFields(false));
+    return new QdrantCollectionSpec(
+        ROWS_KEYWORD_COLLECTION, "rows_kw", null, true, rowFields(false));
   }
 
   private static List<PayloadField> rowFields(boolean withModel) {
@@ -169,8 +214,10 @@ public record QdrantCollectionSpec(
         CreateCollection.newBuilder()
             .setCollectionName(name)
             .setShardNumber(props.shardNumber())
-            .setSparseVectorsConfig(expectedSparse())
             .putAllMetadata(expectedMetadata());
+    if (keyword) {
+      b.setSparseVectorsConfig(expectedSparse());
+    }
     if (denseDim != null) {
       b.setVectorsConfig(
           VectorsConfig.newBuilder()
@@ -219,7 +266,7 @@ public record QdrantCollectionSpec(
     }
     if (denseDim == null) {
       if (!dense.isEmpty()) {
-        out.add("키워드 전용인데 dense 벡터가 있다: " + dense.keySet());
+        out.add("dense 가 없어야 하는데 있다: " + dense.keySet());
       }
     } else {
       VectorParams actual = dense.get(DENSE);
@@ -244,9 +291,11 @@ public record QdrantCollectionSpec(
 
     Map<String, SparseVectorParams> sparse =
         config.getParams().getSparseVectorsConfig().getMapMap();
-    if (!sparse.keySet().equals(expectedSparse().getMapMap().keySet())) {
-      out.add("sparse 벡터 " + sparse.keySet() + " ≠ 기대 " + expectedSparse().getMapMap().keySet());
-    } else if (sparse.get(KW_BIGRAM).getModifier() != Modifier.Idf) {
+    java.util.Set<String> expectedSparseKeys =
+        keyword ? expectedSparse().getMapMap().keySet() : java.util.Set.of();
+    if (!sparse.keySet().equals(expectedSparseKeys)) {
+      out.add("sparse 벡터 " + sparse.keySet() + " ≠ 기대 " + expectedSparseKeys);
+    } else if (keyword && sparse.get(KW_BIGRAM).getModifier() != Modifier.Idf) {
       out.add("sparse '" + KW_BIGRAM + "' 의 modifier 가 idf 가 아니다");
     }
 

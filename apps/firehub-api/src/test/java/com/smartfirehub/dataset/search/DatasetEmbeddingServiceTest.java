@@ -14,6 +14,7 @@ import com.smartfirehub.embedding.EmbeddingNotConfiguredException;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import com.smartfirehub.embedding.EmbeddingSpace;
+import com.smartfirehub.embedding.SourceHash;
 import com.smartfirehub.securitylevel.ai.EmbeddingAiGate;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -37,7 +38,13 @@ class DatasetEmbeddingServiceTest {
         .thenReturn(
             new DatasetSourceTextBuilder.Input(
                 "화재", "설명", "fire", List.of("col"), List.of("tag"), "안전"));
-    new DatasetEmbeddingService(embeddingRepo, metaReader, embeddingFactory, aiGate, f -> true)
+    new DatasetEmbeddingService(
+            embeddingRepo,
+            metaReader,
+            embeddingFactory,
+            aiGate,
+            f -> true,
+            org.mockito.Mockito.mock(com.smartfirehub.vectorstore.KeywordIndexService.class))
         .syncSourceText(7L);
     // source_text 만 갱신하고, 외부 호출(임베딩 provider)은 절대 일어나지 않아야 한다.
     verify(embeddingRepo).upsertSourceText(eq(7L), any(String.class));
@@ -47,7 +54,13 @@ class DatasetEmbeddingServiceTest {
   @Test
   void syncSourceText_삭제된_데이터셋이면_인덱스를_지운다() {
     when(metaReader.read(99L)).thenReturn(null);
-    new DatasetEmbeddingService(embeddingRepo, metaReader, embeddingFactory, aiGate, f -> true)
+    new DatasetEmbeddingService(
+            embeddingRepo,
+            metaReader,
+            embeddingFactory,
+            aiGate,
+            f -> true,
+            org.mockito.Mockito.mock(com.smartfirehub.vectorstore.KeywordIndexService.class))
         .syncSourceText(99L);
     verify(embeddingRepo).delete(99L);
     verifyNoInteractions(embeddingFactory);
@@ -64,17 +77,37 @@ class DatasetEmbeddingServiceTest {
     when(provider.modelId()).thenReturn("bge-m3");
     when(provider.dimension()).thenReturn(1024);
     when(provider.embed(any())).thenReturn(List.of(new float[1024]));
-    new DatasetEmbeddingService(embeddingRepo, metaReader, embeddingFactory, aiGate, f -> true)
+    new DatasetEmbeddingService(
+            embeddingRepo,
+            metaReader,
+            embeddingFactory,
+            aiGate,
+            f -> true,
+            org.mockito.Mockito.mock(com.smartfirehub.vectorstore.KeywordIndexService.class))
         .reindexEmbedding(7L, 1L);
     verify(embeddingRepo)
         .upsertEmbedding(
-            eq(new EmbeddingSpace(EmbeddingDimension.D1024, "bge-m3")), eq(7L), any(float[].class));
+            eq(new EmbeddingSpace(EmbeddingDimension.D1024, "bge-m3")),
+            eq(7L),
+            any(float[].class),
+            // 임베딩한 그 원문의 해시를 넘긴다(WD-720 — 늦은 재임베딩이 표시를 잘못 채우지 않게).
+            eq(
+                SourceHash.of(
+                    DatasetSourceTextBuilder.build(
+                        new DatasetSourceTextBuilder.Input(
+                            "화재", "설명", "fire", List.of("col"), List.of("tag"), "안전")))));
   }
 
   @Test
   void reindexEmbedding_삭제된_데이터셋이면_no_op이다() {
     when(metaReader.read(99L)).thenReturn(null);
-    new DatasetEmbeddingService(embeddingRepo, metaReader, embeddingFactory, aiGate, f -> true)
+    new DatasetEmbeddingService(
+            embeddingRepo,
+            metaReader,
+            embeddingFactory,
+            aiGate,
+            f -> true,
+            org.mockito.Mockito.mock(com.smartfirehub.vectorstore.KeywordIndexService.class))
         .reindexEmbedding(99L, 1L);
     // 메타가 없으면 임베딩 생성·갱신을 시도하지 않는다(동기 경로에서 이미 제거됨).
     verifyNoInteractions(embeddingFactory);
@@ -89,7 +122,13 @@ class DatasetEmbeddingServiceTest {
                 "화재", "설명", "fire", List.of("col"), List.of("tag"), "안전"));
     when(aiGate.datasetAllowed(7L)).thenReturn(true);
     when(embeddingFactory.current()).thenThrow(new EmbeddingNotConfiguredException());
-    new DatasetEmbeddingService(embeddingRepo, metaReader, embeddingFactory, aiGate, f -> true)
+    new DatasetEmbeddingService(
+            embeddingRepo,
+            metaReader,
+            embeddingFactory,
+            aiGate,
+            f -> true,
+            org.mockito.Mockito.mock(com.smartfirehub.vectorstore.KeywordIndexService.class))
         .reindexEmbedding(7L, 1L);
     verifyNoInteractions(embeddingRepo);
   }
@@ -102,10 +141,16 @@ class DatasetEmbeddingServiceTest {
             new DatasetSourceTextBuilder.Input(
                 "화재", "설명", "fire", List.of("col"), List.of("tag"), "안전"));
     when(aiGate.datasetAllowed(7L)).thenReturn(false);
-    new DatasetEmbeddingService(embeddingRepo, metaReader, embeddingFactory, aiGate, f -> true)
+    new DatasetEmbeddingService(
+            embeddingRepo,
+            metaReader,
+            embeddingFactory,
+            aiGate,
+            f -> true,
+            org.mockito.Mockito.mock(com.smartfirehub.vectorstore.KeywordIndexService.class))
         .reindexEmbedding(7L, 1L);
     verifyNoInteractions(embeddingFactory);
     verify(embeddingRepo).deleteVectors(7L);
-    verify(embeddingRepo, never()).upsertEmbedding(any(), any(Long.class), any());
+    verify(embeddingRepo, never()).upsertEmbedding(any(), any(Long.class), any(), any());
   }
 }

@@ -10,9 +10,10 @@
 <mapper namespace="com.smartfirehub.dataset.repository.mybatis.DatasetEmbeddingMapper">
 
   <insert id="upsertSourceText" databaseId="postgresql">
-    INSERT INTO dataset_embedding (dataset_id, source_text, updated_at)
-    VALUES (#{datasetId}, #{sourceText}, <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>)
-    ON CONFLICT (dataset_id) DO UPDATE SET source_text = EXCLUDED.source_text, updated_at = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>
+    INSERT INTO dataset_embedding (dataset_id, source_text, source_hash, updated_at)
+    VALUES (#{datasetId}, #{sourceText}, #{sourceHash}, <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>)
+    ON CONFLICT (dataset_id) DO UPDATE SET source_text = EXCLUDED.source_text, source_hash = EXCLUDED.source_hash,
+      updated_at = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>
   </insert>
 
   <!--
@@ -26,9 +27,10 @@
        ON (t.dataset_id = s.d)
     WHEN MATCHED THEN UPDATE SET
       t.source_text = #{sourceText},
+      t.source_hash = #{sourceHash},
       t.updated_at = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>
-    WHEN NOT MATCHED THEN INSERT (dataset_id, source_text, updated_at)
-      VALUES (s.d, #{sourceText}, <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>)
+    WHEN NOT MATCHED THEN INSERT (dataset_id, source_text, source_hash, updated_at)
+      VALUES (s.d, #{sourceText}, #{sourceHash}, <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.dbNow"/>)
   </insert>
 
   <delete id="delete">
@@ -51,32 +53,47 @@
     </constructor>
   </resultMap>
 
-  <!-- 판정식: 표시 열이 현재 공간(차원·모델)을 가리키지 않는 행(jOOQ 판 MISSING_PREDICATE 와 같음). -->
-  <sql id="missingPredicate">
-    (de.embedded_dim IS NULL OR de.embedded_dim &lt;&gt; #{dim} OR de.embedded_model IS NULL OR de.embedded_model &lt;&gt; #{model})
+  <!--
+    낡음(WD-720): 지금 원문 해시가 있고, 벡터를 만든 원문의 해시가 그와 다르거나 없다. 해시가 없는 기존 행(V161 이전)은 낡았다고 보지 않는다.
+    jOOQ 판 STALE_PREDICATE 와 같다.
+  -->
+  <sql id="stalePredicate">
+    (de.source_hash IS NOT NULL AND (de.embedded_hash IS NULL OR de.embedded_hash &lt;&gt; de.source_hash))
   </sql>
 
-  <!-- 표시 열 채우기 — 포트로 벡터를 쓴 뒤 같은 트랜잭션에서. id 목록은 InChunks 로 500 개씩(Tibero IN 상한). -->
+  <!-- 판정식: 표시 열이 현재 공간(차원·모델)을 가리키지 않거나 낡은 행(jOOQ 판 MISSING_PREDICATE 와 같음). -->
+  <sql id="missingPredicate">
+    (de.embedded_dim IS NULL OR de.embedded_dim &lt;&gt; #{dim} OR de.embedded_model IS NULL OR de.embedded_model &lt;&gt; #{model}
+     OR <include refid="stalePredicate"/>)
+  </sql>
+
+  <!--
+    표시 열 채우기 — 포트로 벡터를 쓴 뒤 같은 트랜잭션에서, 행마다. 벡터를 만든 원문 해시가 지금 원문 해시와 같을 때만 채운다(늦은 재임베딩 방어).
+    지금 해시가 없는 기존 행은 채우면서 원문 해시도 넘긴 값으로 채운다(jOOQ 판과 같음).
+  -->
   <update id="markEmbedded">
-    UPDATE dataset_embedding SET embedded_dim = #{dim}, embedded_model = #{model}
-     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="dataset_id"/></include>
+    UPDATE dataset_embedding
+       SET embedded_dim = #{dim}, embedded_model = #{model}, embedded_hash = #{hash},
+           source_hash = COALESCE(source_hash, #{hash})
+     WHERE dataset_id = #{datasetId} AND (source_hash IS NULL OR source_hash = #{hash})
   </update>
 
   <!-- 표시 열 비우기 — 벡터를 지운 뒤 같은 트랜잭션에서. 벡터 삭제처럼 tenant_id 를 명시한다. -->
   <update id="clearMarkers">
-    UPDATE dataset_embedding SET embedded_dim = NULL, embedded_model = NULL
+    UPDATE dataset_embedding SET embedded_dim = NULL, embedded_model = NULL, embedded_hash = NULL
      WHERE tenant_id = #{tenantId}
        AND <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="dataset_id"/></include>
   </update>
 
   <!-- 다른 차원을 가리키던 표시 열 비우기(차원 정리 뒤). -->
   <update id="clearOtherDimensionMarkers">
-    UPDATE dataset_embedding SET embedded_dim = NULL, embedded_model = NULL
+    UPDATE dataset_embedding SET embedded_dim = NULL, embedded_model = NULL, embedded_hash = NULL
      WHERE tenant_id = #{tenantId} AND embedded_dim &lt;&gt; #{keepDim}
   </update>
 
   <select id="countEmbedded" resultType="long">
-    SELECT count(*) FROM dataset_embedding WHERE embedded_dim = #{dim} AND embedded_model = #{model}
+    SELECT count(*) FROM dataset_embedding de
+     WHERE de.embedded_dim = #{dim} AND de.embedded_model = #{model} AND NOT <include refid="stalePredicate"/>
   </select>
 
   <select id="countMissing" resultType="long">
@@ -91,6 +108,25 @@
      WHERE de.dataset_id &gt; #{afterDatasetId}
        AND <include refid="missingPredicate"/>
        AND <include refid="com.smartfirehub.securitylevel.repository.mybatis.DatasetVisibility.aiPolicyAllowedDataset"><property name="datasetIdCol" value="de.dataset_id"/></include>
+     ORDER BY de.dataset_id
+     <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.pageClause"/>
+  </select>
+
+  <select id="selectSourceText" resultType="string">
+    SELECT source_text FROM dataset_embedding WHERE dataset_id = #{datasetId}
+  </select>
+
+  <!-- 키워드 표시(WD-720): 「규칙:원문 해시」. 지금 원문 해시가 같을 때만(늦은 키워드 쓰기 방어), 해시가 없는 기존 행은 함께 채운다. -->
+  <update id="markKeywordIndexed">
+    UPDATE dataset_embedding SET keyword_marker = #{marker}, source_hash = COALESCE(source_hash, #{hash})
+     WHERE dataset_id = #{datasetId} AND (source_hash IS NULL OR source_hash = #{hash})
+  </update>
+
+  <!-- 키워드 백로그 — jOOQ 판 findKeywordMissing 과 같은 판정. 규칙 표지(prefix)를 SQL 에서 해시와 잇는다(해시 계산은 하지 않는다). -->
+  <select id="findKeywordMissing" resultMap="sourceTextRow">
+    SELECT de.dataset_id, de.source_text FROM dataset_embedding de
+     WHERE de.dataset_id &gt; #{afterDatasetId}
+       AND (de.keyword_marker IS NULL OR de.source_hash IS NULL OR de.keyword_marker &lt;&gt; (#{prefix} || de.source_hash))
      ORDER BY de.dataset_id
      <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.pageClause"/>
   </select>

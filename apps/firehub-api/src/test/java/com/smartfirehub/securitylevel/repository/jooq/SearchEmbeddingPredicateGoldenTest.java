@@ -214,9 +214,11 @@ class SearchEmbeddingPredicateGoldenTest {
     String oldAllowed = policyRepo.allowedDatasetSql("de.dataset_id", h);
     // 판정식 자체는 WD-717 에서 차원 테이블 anti-join 에서 표시 열 비교로 바뀌었다(바인드: 차원, 모델). 이 골든이 지키는 것은 등급 허용 술어의
     // 별칭·호스팅 전달이다. 두 판정식의 결과 동등성은 EmbeddingMarkerEquivalenceTest 가 실제 DB 로 고정한다.
+    // WD-720 에서 원문 해시 낡음(STALE) 조건이 더해졌다 — 바인드는 그대로 차원, 모델.
     String missing =
         "(de.embedded_dim IS NULL OR de.embedded_dim <> ? OR de.embedded_model IS NULL"
-            + " OR de.embedded_model <> ?)";
+            + " OR de.embedded_model <> ? OR (de.source_hash IS NOT NULL AND (de.embedded_hash IS NULL"
+            + " OR de.embedded_hash <> de.source_hash)))";
 
     assertSame(
         () -> repo.countAll(allowance),

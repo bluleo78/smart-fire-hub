@@ -92,6 +92,21 @@ public class DatasetEmbedding extends TableImpl<DatasetEmbeddingRecord> {
      */
     public final TableField<DatasetEmbeddingRecord, String> EMBEDDED_MODEL = createField(DSL.name("embedded_model"), SQLDataType.VARCHAR(100), this, "");
 
+    /**
+     * The column <code>public.dataset_embedding.source_hash</code>.
+     */
+    public final TableField<DatasetEmbeddingRecord, String> SOURCE_HASH = createField(DSL.name("source_hash"), SQLDataType.VARCHAR(64), this, "");
+
+    /**
+     * The column <code>public.dataset_embedding.embedded_hash</code>.
+     */
+    public final TableField<DatasetEmbeddingRecord, String> EMBEDDED_HASH = createField(DSL.name("embedded_hash"), SQLDataType.VARCHAR(64), this, "");
+
+    /**
+     * The column <code>public.dataset_embedding.keyword_marker</code>.
+     */
+    public final TableField<DatasetEmbeddingRecord, String> KEYWORD_MARKER = createField(DSL.name("keyword_marker"), SQLDataType.VARCHAR(80), this, "");
+
     private DatasetEmbedding(Name alias, Table<DatasetEmbeddingRecord> aliased) {
         this(alias, aliased, (Field<?>[]) null, null);
     }

@@ -85,4 +85,29 @@ public interface DatasetVectorIndex {
    * 밖이라 예외를 던지면 안 된다.
    */
   void deleteAll(long tenantId, List<Long> datasetIds);
+
+  /**
+   * 키워드 색인이 원문 열과 따로 있는가(WD-720). pgvector 는 원문 열 자체가 키워드 색인(pg_trgm)이라 거짓이고, 별도 저장소(Qdrant)는 참이다.
+   * 참이면 원문이 생기거나 바뀔 때 {@link #upsertKeyword} 로 키워드를 따로 쓰고, 키워드 표시({@code keyword_marker})로 실패분을
+   * 백로그가 다시 쓴다.
+   */
+  default boolean separateKeywordIndex() {
+    return false;
+  }
+
+  /**
+   * 키워드 생성 규칙 표지(WD-720). 키워드 표시에 원문 해시와 함께 적어, 규칙(정규화·낱말 자르기·해시)이 바뀌면 모든 표시가 어긋나 백로그가 새 규칙으로 다시 쓰게
+   * 한다. 키워드 색인이 따로 없는 구현은 빈 문자열이다.
+   */
+  default String keywordRule() {
+    return "";
+  }
+
+  /**
+   * 데이터셋 카탈로그 원문으로 키워드 색인을 쓴다(덮어쓴다). 원문에 낱말이 하나도 없으면 그 키워드를 지운다. {@link #separateKeywordIndex()} 가
+   * 거짓인 구현은 할 일이 없다(원문 열이 곧 색인).
+   *
+   * @param tenantId 원문이 속한 테넌트 — 별도 저장소는 테넌트를 payload 로 싣는다
+   */
+  default void upsertKeyword(long tenantId, List<KeywordSource> sources) {}
 }
