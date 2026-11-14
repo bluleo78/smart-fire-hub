@@ -12,6 +12,8 @@ public interface VectorStoreLifecycle {
    * 저장소를 쓸 수 있게 준비한다. 없으면 만들고, 있으면 기대 구성과 대조한다.
    *
    * @throws IllegalStateException 기존 구성이 기대와 다를 때(기동을 멈춰야 한다)
+   * @throws VectorStoreUnavailableException 저장소에 닿지 못했을 때. Qdrant 구현은 기동 때 이것이 일시 장애면 경고만 남기고 뜬 뒤
+   *     복구되면 다시 준비한다(WD-724)
    */
   void prepare();
 

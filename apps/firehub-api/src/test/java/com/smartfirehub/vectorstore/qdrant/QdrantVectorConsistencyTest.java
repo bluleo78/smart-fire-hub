@@ -100,8 +100,10 @@ class QdrantVectorConsistencyTest extends IntegrationTestBase {
     new QdrantVectorStoreLifecycle(client, props).prepare();
     datasetIndex = new QdrantDatasetVectorIndex(client, props, candidates, outbox, markers);
     chunkIndex = new QdrantChunkVectorIndex(client, props, candidates, outbox, markers);
-    worker = new VectorOutboxWorker(null, outbox, new QdrantOutboxApplier(client, props), false);
-    sweeper = new QdrantReconcileSweeper(client, props, null, outbox, markers, false);
+    worker =
+        new VectorOutboxWorker(
+            null, outbox, new QdrantOutboxApplier(client, props), f -> true, false);
+    sweeper = new QdrantReconcileSweeper(client, props, null, outbox, markers, f -> true, false);
     tenant = TenantRlsTestSupport.createActiveTenant(dsl, "qcons");
     doc = inTenantFixture(tenant, () -> EmbeddingTestFixtures.createDocumentDataset(dsl, "qcons"));
     TenantContext.runScoped(tenant, () -> datasets.upsertSourceText(doc.datasetId(), "화재 통계"));
@@ -320,7 +322,8 @@ class QdrantVectorConsistencyTest extends IntegrationTestBase {
       assertThat(in(() -> broken.deleteDense(tenant, List.of(doc.datasetId())))).isEqualTo(1);
 
       VectorOutboxWorker brokenWorker =
-          new VectorOutboxWorker(null, outbox, new QdrantOutboxApplier(deadClient, dead), false);
+          new VectorOutboxWorker(
+              null, outbox, new QdrantOutboxApplier(deadClient, dead), f -> true, false);
       assertThat(TenantContext.runScopedGet(tenant, brokenWorker::drainCurrentTenant)).isZero();
     }
     List<Entry> rows = pending();

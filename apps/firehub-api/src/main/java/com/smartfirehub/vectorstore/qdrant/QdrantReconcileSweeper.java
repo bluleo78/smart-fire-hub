@@ -12,6 +12,7 @@ import com.smartfirehub.vectorstore.ConditionalOnQdrantVectorStore;
 import com.smartfirehub.vectorstore.VectorMarkerRepository;
 import com.smartfirehub.vectorstore.VectorMarkerRepository.Marker;
 import com.smartfirehub.vectorstore.VectorOutboxRepository;
+import com.smartfirehub.vectorstore.VectorStoreFeatures;
 import io.qdrant.client.ConditionFactory;
 import io.qdrant.client.PointIdFactory;
 import io.qdrant.client.QdrantClient;
@@ -67,6 +68,7 @@ public class QdrantReconcileSweeper {
   private final TenantScopedRunner tenantRunner;
   private final VectorOutboxRepository outbox;
   private final VectorMarkerRepository markers;
+  private final VectorStoreFeatures features;
   private final boolean enabled;
 
   /** 테넌트별 지난 회차 울타리(파드 메모리). */
@@ -78,6 +80,7 @@ public class QdrantReconcileSweeper {
       TenantScopedRunner tenantRunner,
       VectorOutboxRepository outbox,
       VectorMarkerRepository markers,
+      VectorStoreFeatures features,
       @org.springframework.beans.factory.annotation.Value(
               "${firehub.vector-store.reconcile-sweep-enabled:true}")
           boolean enabled) {
@@ -86,6 +89,7 @@ public class QdrantReconcileSweeper {
     this.tenantRunner = tenantRunner;
     this.outbox = outbox;
     this.markers = markers;
+    this.features = features;
     this.enabled = enabled;
   }
 
@@ -95,6 +99,8 @@ public class QdrantReconcileSweeper {
       fixedDelayString = "${firehub.vector-store.reconcile-sweep-interval-ms:1800000}")
   public void sweep() {
     if (!enabled) return;
+    // 저장소가 내려가 있으면 건너뛴다(WD-724). 울타리는 그대로 두므로 다음 회차가 지난 회차 기준으로 이어 한다.
+    if (!features.available()) return;
     tenantRunner.forEachActiveTenant(
         tenantId -> {
           long next = outbox.nextSeq();

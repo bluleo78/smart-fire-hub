@@ -4,6 +4,7 @@ import com.smartfirehub.global.tenant.TenantScopedRunner;
 import com.smartfirehub.vectorstore.ConditionalOnQdrantVectorStore;
 import com.smartfirehub.vectorstore.VectorOutboxRepository;
 import com.smartfirehub.vectorstore.VectorOutboxRepository.Entry;
+import com.smartfirehub.vectorstore.VectorStoreFeatures;
 import java.util.List;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -30,6 +31,7 @@ public class VectorOutboxWorker {
   private final TenantScopedRunner tenantRunner;
   private final VectorOutboxRepository outbox;
   private final QdrantOutboxApplier applier;
+  private final VectorStoreFeatures features;
   private final boolean enabled;
 
   /** 활성 여부는 설정값으로 받는다(테스트는 끄고 {@link #drainCurrentTenant()} 를 직접 부른다). */
@@ -37,10 +39,12 @@ public class VectorOutboxWorker {
       TenantScopedRunner tenantRunner,
       VectorOutboxRepository outbox,
       QdrantOutboxApplier applier,
+      VectorStoreFeatures features,
       @Value("${firehub.vector-store.outbox-worker-enabled:true}") boolean enabled) {
     this.tenantRunner = tenantRunner;
     this.outbox = outbox;
     this.applier = applier;
+    this.features = features;
     this.enabled = enabled;
   }
 
@@ -50,6 +54,8 @@ public class VectorOutboxWorker {
       fixedDelayString = "${firehub.vector-store.outbox-poll-interval-ms:5000}")
   public void poll() {
     if (!enabled) return;
+    // 저장소가 내려가 있으면 회차를 통째로 건너뛴다(WD-724). 돌리면 테넌트마다 제한 시간까지 기다리고 실패 기록만 쌓인다. 행은 남아 복구 뒤 반영된다.
+    if (!features.available()) return;
     tenantRunner.forEachActiveTenant(tenantId -> drainCurrentTenant());
   }
 

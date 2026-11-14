@@ -16,6 +16,7 @@ import javax.sql.DataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.InitializingBean;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceProperties;
 import org.springframework.stereotype.Component;
 
@@ -80,7 +81,11 @@ public class TiberoOutboxWakeupChannel implements OutboxWakeupChannel, Initializ
   /** 처음 쓸 때 풀 커넥션의 스키마로 정한 알림 이름 — 이후로는 바뀌지 않는다. */
   private volatile String alertName;
 
-  /** 운영 생성자 — 구독 연결은 풀 밖에서 {@link DriverManager} 로 직접 연다. */
+  /**
+   * 운영 생성자 — 구독 연결은 풀 밖에서 {@link DriverManager} 로 직접 연다. 생성자가 둘(시험용 패키지 생성자)이라 스프링이 고를 생성자를 {@code
+   * Autowired} 로 정한다 — 없으면 기본 생성자를 찾다 Tibero 플랫폼 기동이 멈춘다(WD-724 새 설치 점검에서 발견).
+   */
+  @Autowired
   public TiberoOutboxWakeupChannel(DataSource dataSource, DataSourceProperties properties) {
     this(dataSource, () -> openListenConnection(properties));
   }

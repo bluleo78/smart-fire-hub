@@ -3,6 +3,7 @@ package com.smartfirehub.embedding.reembed;
 import com.smartfirehub.embedding.config.EmbeddingConfigService;
 import com.smartfirehub.embedding.repository.EmbeddingReembedStateRepository;
 import com.smartfirehub.global.tenant.TenantScopedRunner;
+import com.smartfirehub.vectorstore.VectorStoreFeatures;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -27,6 +28,7 @@ public class EmbeddingBacklogSweepScheduler {
   private final EmbeddingBacklogService backlogService;
   private final EmbeddingReembedStateRepository stateRepository;
   private final TenantReembedJob reembedJob;
+  private final VectorStoreFeatures features;
   private final boolean enabled;
 
   /** 활성 여부는 설정값으로 받는다(테스트는 끄고 직접 {@link #sweep()} 을 부른다 — 행 검색 스윕과 같은 규약). */
@@ -36,12 +38,14 @@ public class EmbeddingBacklogSweepScheduler {
       EmbeddingBacklogService backlogService,
       EmbeddingReembedStateRepository stateRepository,
       TenantReembedJob reembedJob,
+      VectorStoreFeatures features,
       @Value("${app.embedding.backlog-sweep-enabled:true}") boolean enabled) {
     this.tenantRunner = tenantRunner;
     this.configService = configService;
     this.backlogService = backlogService;
     this.stateRepository = stateRepository;
     this.reembedJob = reembedJob;
+    this.features = features;
     this.enabled = enabled;
   }
 
@@ -51,6 +55,8 @@ public class EmbeddingBacklogSweepScheduler {
       fixedDelayString = "${app.embedding.backlog-sweep-interval-ms:300000}")
   public void sweep() {
     if (!enabled) return;
+    // 벡터 저장소가 내려가 있으면 잡을 넣지 않는다(WD-724) — 넣어도 첫 배치 쓰기에서 실패한다. 복구 뒤 회차가 백로그를 다시 집는다.
+    if (!features.available()) return;
     tenantRunner.forEachActiveTenant(this::sweepTenant);
   }
 

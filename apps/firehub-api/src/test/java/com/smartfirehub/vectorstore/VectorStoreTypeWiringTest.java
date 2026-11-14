@@ -10,6 +10,7 @@ import com.smartfirehub.vectorstore.off.OffVectorStoreFeatures;
 import com.smartfirehub.vectorstore.pg.PgVectorStoreFeatures;
 import com.smartfirehub.vectorstore.qdrant.QdrantClientConfig;
 import com.smartfirehub.vectorstore.qdrant.QdrantVectorStoreFeatures;
+import com.smartfirehub.vectorstore.qdrant.QdrantVectorStoreLifecycle;
 import io.qdrant.client.QdrantClient;
 import java.util.TimeZone;
 import org.junit.jupiter.api.AfterEach;
@@ -31,6 +32,9 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
  */
 class VectorStoreTypeWiringTest {
 
+  /** 아무도 듣지 않는 Qdrant 주소 — 접속 거부(일시 장애)로 기동하는 길을 탄다. */
+  private static final String UNREACHABLE = "firehub.vector-store.qdrant.url=http://127.0.0.1:1";
+
   private final TimeZone original = TimeZone.getDefault();
 
   private final ApplicationContextRunner runner =
@@ -40,6 +44,8 @@ class VectorStoreTypeWiringTest {
               PgVectorStoreFeatures.class,
               OffVectorStoreFeatures.class,
               QdrantClientConfig.class,
+              // 기능 판정이 가용성을 묻는다(WD-724). Qdrant 가 없어도 일시 장애라 경고만 남기고 뜬다.
+              QdrantVectorStoreLifecycle.class,
               QdrantVectorStoreFeatures.class);
 
   @AfterEach
@@ -96,11 +102,13 @@ class VectorStoreTypeWiringTest {
   /**
    * qdrant 는 플랫폼 DB 와 무관하게 Qdrant 기능 판정이 뜨고 pgvector·꺼짐 판정은 뜨지 않는다(WD-720). 컬렉션 준비(Qdrant 접속)는 실제
    * 컨테이너가 필요해 {@code QdrantPlatformSearchIntegrationTest} 가 본다.
+   *
+   * <p>여기서는 닿지 않는 주소를 준다 — Qdrant 가 내려가 있어도 컨텍스트가 뜨고 가용성만 거짓이어야 한다(WD-724, 일시 장애로 기동).
    */
   @Test
   void qdrant_는_PostgreSQL_플랫폼에서_Qdrant_구현이_뜬다() {
     runner
-        .withPropertyValues("firehub.vector-store.type=qdrant")
+        .withPropertyValues("firehub.vector-store.type=qdrant", UNREACHABLE)
         .run(
             ctx -> {
               assertThat(ctx).hasNotFailed();
@@ -108,6 +116,7 @@ class VectorStoreTypeWiringTest {
               assertThat(features).isInstanceOf(QdrantVectorStoreFeatures.class);
               assertThat(features.supports(PlatformDbFeature.VECTOR_SEARCH)).isTrue();
               assertThat(features.supports(PlatformDbFeature.TRIGRAM_SEARCH)).isTrue();
+              assertThat(features.available()).isFalse();
               assertThat(ctx).hasSingleBean(QdrantClient.class);
               assertThat(ctx).doesNotHaveBean(PgVectorStoreFeatures.class);
             });
@@ -117,7 +126,8 @@ class VectorStoreTypeWiringTest {
   void qdrant_는_Tibero_플랫폼에서도_Qdrant_구현이_뜬다() {
     TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
     runner
-        .withPropertyValues("firehub.vector-store.type=qdrant", "firehub.platform-db.type=tibero")
+        .withPropertyValues(
+            "firehub.vector-store.type=qdrant", "firehub.platform-db.type=tibero", UNREACHABLE)
         .run(
             ctx -> {
               assertThat(ctx).hasNotFailed();
@@ -131,7 +141,7 @@ class VectorStoreTypeWiringTest {
   @Test
   void qdrant_조합의_행_검색은_WD722_전까지_꺼짐() {
     for (DataStoreBackend backend : DataStoreBackend.values()) {
-      assertThat(new QdrantVectorStoreFeatures().supportsRowSearch(backend))
+      assertThat(new QdrantVectorStoreFeatures(null).supportsRowSearch(backend))
           .as("%s", backend)
           .isFalse();
     }

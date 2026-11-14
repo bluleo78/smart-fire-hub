@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.embedding.EmbeddingDimension;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.qdrant.client.ConditionFactory;
 import io.qdrant.client.PointIdFactory;
 import io.qdrant.client.QdrantClient;
@@ -23,9 +25,11 @@ import io.qdrant.client.grpc.Common.Filter;
 import io.qdrant.client.grpc.Points.PointStruct;
 import io.qdrant.client.grpc.Points.QueryPoints;
 import io.qdrant.client.grpc.Points.RetrievedPoint;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -40,7 +44,7 @@ import org.junit.jupiter.api.Test;
  *   <li>구성을 바꾸고 기동 → 멈춘다.
  * </ul>
  *
- * 앱 전체가 아닌 Lifecycle 빈 단위로 본다. 벡터 저장소 {@code qdrant} 는 색인 구현(WD-720)이 들어올 때까지 기동을 거부하기 때문이다.
+ * 앱 전체가 아닌 Lifecycle 빈 단위로 본다. 기동 때 일시 장애·설정 오류를 가르는 시나리오(WD-724)도 여기서 본다.
  */
 class QdrantVectorStoreLifecycleTest {
 
@@ -199,6 +203,149 @@ class QdrantVectorStoreLifecycleTest {
     try (QdrantClient dead = QdrantClientConfig.create(down)) {
       assertThat(new QdrantVectorStoreLifecycle(dead, down).available()).isFalse();
     }
+  }
+
+  /**
+   * 기동 때 일시 장애(WD-724) — 저장소에 닿지 못해도 기동하고, 복구되면 주기 재준비가 컬렉션을 만든다. 같은 포트를 껐다 켜는 중계({@link
+   * StoppableTcpRelay})를 앞에 두어 같은 클라이언트로 장애와 복구를 본다.
+   */
+  @Test
+  void transientOutageAtStartupStartsUnavailableThenPreparesOnRecovery() throws Exception {
+    var container = QdrantTestContainer.get();
+    try (StoppableTcpRelay relay =
+        new StoppableTcpRelay(container.getHost(), container.getGrpcPort())) {
+      QdrantProperties viaRelay =
+          new QdrantProperties(
+              "http://127.0.0.1:" + relay.port(),
+              QdrantTestContainer.API_KEY,
+              6,
+              true,
+              Duration.ofSeconds(2));
+      AtomicLong now = new AtomicLong(0);
+      try (QdrantClient c = QdrantClientConfig.create(viaRelay)) {
+        QdrantVectorStoreLifecycle lc = new QdrantVectorStoreLifecycle(c, viaRelay, now::get);
+
+        lc.afterPropertiesSet(); // 중계가 꺼져 있다 — 던지지 않고 경고만 남기고 뜬다
+        assertThat(lc.available()).isFalse();
+        lc.retryPrepare(); // 아직 내려가 있다 — 조용히 넘어간다
+        assertThat(lc.ensureReady()).isFalse();
+
+        relay.start();
+        // 캐시 안에서는 앞 결과(거짓)를 그대로 쓴다
+        assertThat(lc.available()).isFalse();
+        // gRPC 채널은 재접속 대기(백오프)가 있어 몇 번 만에 붙는다 — 스케줄러가 주기마다 부르는 것과 같다.
+        long deadline = System.currentTimeMillis() + 30_000;
+        while (!lc.ensureReady() && System.currentTimeMillis() < deadline) {
+          Thread.sleep(500);
+          lc.retryPrepare();
+        }
+        assertThat(client.listCollectionsAsync().get(30, TimeUnit.SECONDS))
+            .contains(EmbeddingDimension.D1024.datasetCollection(), "fh_rows_kw");
+        now.addAndGet(QdrantVectorStoreLifecycle.AVAILABILITY_CACHE_MS);
+        assertThat(lc.available()).isTrue();
+      }
+    }
+  }
+
+  /**
+   * 저장소가 응답 없이 패킷을 버리는 장애(WD-724) — 재준비 한 번이 제한 시간만큼 걸려도 요청 경로의 available() 은 그것을 기다리지 않는다. 기다리면 기능
+   * 응답·검색·커밋 뒤 쓰기가 제한 시간(기본 10초)만큼 붙잡힌다.
+   */
+  @Test
+  void availableDoesNotWaitForStuckPrepareDuringBlackhole() throws Exception {
+    var container = QdrantTestContainer.get();
+    try (StoppableTcpRelay relay =
+        new StoppableTcpRelay(container.getHost(), container.getGrpcPort())) {
+      relay.blackhole(true);
+      relay.start();
+      QdrantProperties viaRelay =
+          new QdrantProperties(
+              "http://127.0.0.1:" + relay.port(),
+              QdrantTestContainer.API_KEY,
+              6,
+              true,
+              Duration.ofSeconds(8));
+      try (QdrantClient c = QdrantClientConfig.create(viaRelay)) {
+        QdrantVectorStoreLifecycle lc = new QdrantVectorStoreLifecycle(c, viaRelay);
+        // 다른 스레드가 재준비를 붙든다(상태 점검 없이 바로 준비 — 제한 시간 8초까지 걸린다)
+        Thread stuck = new Thread(lc::ensureReady, "stuck-prepare");
+        stuck.start();
+        Thread.sleep(300);
+
+        long t0 = System.nanoTime();
+        assertThat(lc.available()).isFalse();
+        long elapsedMs = (System.nanoTime() - t0) / 1_000_000;
+        // 상태 점검 제한 시간(2초) 안팎에서 돌아온다 — 재준비(8초)를 기다리지 않는다
+        assertThat(elapsedMs).isLessThan(4_000);
+
+        // 주기 재준비도 상태 점검이 먼저라 긴 제한 시간만큼 붙들지 않는다
+        long t1 = System.nanoTime();
+        lc.retryPrepare();
+        assertThat((System.nanoTime() - t1) / 1_000_000).isLessThan(4_000);
+
+        relay.stop();
+        stuck.join(15_000);
+      }
+    }
+  }
+
+  /** 상태 점검은 되는데 준비가 안 됐으면 available() 이 그 자리에서 준비한다 — 워커가 꺼진 설치본도 첫 질의로 복구한다. */
+  @Test
+  void availablePreparesWhenHealthyButNotPrepared() throws Exception {
+    QdrantVectorStoreLifecycle lc = lifecycle(6, true); // afterPropertiesSet 을 부르지 않은 상태
+    assertThat(client.listCollectionsAsync().get(30, TimeUnit.SECONDS)).isEmpty();
+    assertThat(lc.available()).isTrue();
+    assertThat(client.listCollectionsAsync().get(30, TimeUnit.SECONDS)).hasSize(7);
+  }
+
+  /** API 키가 틀리면 설정 오류로 보고 기동을 멈춘다(2026-11-14 사용자 결정). */
+  @Test
+  void wrongApiKeyStopsStartup() {
+    QdrantProperties base = QdrantTestContainer.properties(6, true);
+    QdrantProperties wrongKey =
+        new QdrantProperties(base.url(), "wrong-key", 6, true, Duration.ofSeconds(5));
+    try (QdrantClient c = QdrantClientConfig.create(wrongKey)) {
+      assertThatThrownBy(() -> new QdrantVectorStoreLifecycle(c, wrongKey).afterPropertiesSet())
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("API 키");
+    }
+  }
+
+  /** 구성 불일치는 기동 때 그대로 멈춘다(일시 장애로 삼키지 않는다). */
+  @Test
+  void mismatchAtStartupStillStops() {
+    lifecycle(6, true).prepare();
+    assertThatThrownBy(() -> lifecycle(3, true).afterPropertiesSet())
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("구성이 기대와 다릅니다");
+  }
+
+  /** 실행 중 재준비에서 구성 불일치를 만나면 던지지 않고 사용 불가로 남는다 — 앱을 멈출 수 없으므로. */
+  @Test
+  void mismatchDuringRecoveryKeepsStoreUnavailableWithoutThrowing() {
+    lifecycle(6, true).prepare();
+    QdrantVectorStoreLifecycle other = lifecycle(3, true);
+    assertThat(other.ensureReady()).isFalse();
+    assertThat(other.ensureReady()).isFalse(); // 다시 시도하지 않는다
+    assertThat(other.available()).isFalse();
+  }
+
+  @Test
+  void transientClassificationFollowsGrpcStatus() {
+    assertThat(QdrantVectorStoreLifecycle.isTransient(wrap(Status.UNAVAILABLE))).isTrue();
+    assertThat(QdrantVectorStoreLifecycle.isTransient(wrap(Status.DEADLINE_EXCEEDED))).isTrue();
+    assertThat(QdrantVectorStoreLifecycle.isTransient(wrap(Status.INTERNAL))).isTrue();
+    assertThat(QdrantVectorStoreLifecycle.isTransient(wrap(Status.UNAUTHENTICATED))).isFalse();
+    assertThat(QdrantVectorStoreLifecycle.isTransient(wrap(Status.PERMISSION_DENIED))).isFalse();
+    assertThat(QdrantVectorStoreLifecycle.isTransient(wrap(Status.INVALID_ARGUMENT))).isFalse();
+    assertThat(
+            QdrantVectorStoreLifecycle.isTransient(
+                new QdrantAccessException("x", new java.util.concurrent.TimeoutException())))
+        .isTrue();
+  }
+
+  private static QdrantAccessException wrap(Status status) {
+    return new QdrantAccessException("x", new StatusRuntimeException(status));
   }
 
   /**

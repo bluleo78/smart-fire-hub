@@ -35,4 +35,16 @@ public interface VectorStoreFeatures {
   default boolean supportsRowSearch(DataStoreBackend backend) {
     return backend.supportsRowSearch();
   }
+
+  /**
+   * 벡터 저장소가 지금 응답하는가(ADR 0002 결정 3·11, WD-724). 기능 응답의 {@code vectorStoreAvailable} 과 검색·배경 작업의
+   * 건너뛰기에 쓴다.
+   *
+   * <p>{@link #supports} 는 「이 설치본이 지원하는가」(설정으로 정해져 바뀌지 않음), 이것은 「지금 쓸 수 있는가」다. 플랫폼 DB 안에 두는
+   * pgvector 와 꺼짐 조합은 늘 참이다 — 플랫폼 DB 가 내려가면 앱 전체가 안 되므로 따로 알릴 것이 없다. 별도 저장소(Qdrant)만 재정의한다. 요청마다
+   * 불려도 되도록 구현은 짧게 캐시한다.
+   */
+  default boolean available() {
+    return true;
+  }
 }

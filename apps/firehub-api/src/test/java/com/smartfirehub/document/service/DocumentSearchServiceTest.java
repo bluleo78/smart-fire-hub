@@ -17,6 +17,8 @@ import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.vectorstore.ChunkVectorIndex;
+import com.smartfirehub.vectorstore.VectorStoreFeatures;
+import com.smartfirehub.vectorstore.VectorStoreUnavailableException;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -173,5 +175,48 @@ class DocumentSearchServiceTest {
                         "화재", List.of(3L), 5, com.smartfirehub.document.dto.SearchMode.SEMANTIC),
                     CLEARANCE))
         .isInstanceOf(EmbeddingNotConfiguredException.class);
+  }
+
+  /** 저장소가 내려가 있는 설치본의 기능 판정 — 지원은 하지만 지금은 응답하지 않는다. */
+  private static VectorStoreFeatures storeDown() {
+    return new VectorStoreFeatures() {
+      public boolean supports(com.smartfirehub.global.platformdb.PlatformDbFeature f) {
+        return true;
+      }
+
+      public boolean available() {
+        return false;
+      }
+    };
+  }
+
+  @Test
+  void storeUnavailableReturnsEmptyWithoutEmbeddingOrIndexCalls() {
+    // WD-724: 저장소 일시 중단이면 5xx 대신 빈 목록 — 질의 임베딩도 부르지 않는다.
+    var factory = Mockito.mock(EmbeddingProviderFactory.class);
+    var repo = Mockito.mock(ChunkVectorIndex.class);
+    var service = new DocumentSearchService(factory, repo, guard(), storeDown());
+
+    assertThat(service.search(new DocumentSearchRequest("질의", List.of(3L), 5), CLEARANCE))
+        .isEmpty();
+    Mockito.verifyNoInteractions(factory, repo);
+  }
+
+  @Test
+  void storeFailingMidSearchDropsOnlyThatStage() {
+    // 가용성 캐시가 아직 켜짐인데 저장소가 내려간 경우 — 실패한 단계만 빠지고 나머지 결과는 그대로 나간다.
+    var factory = Mockito.mock(EmbeddingProviderFactory.class);
+    var repo = Mockito.mock(ChunkVectorIndex.class);
+    when(factory.current()).thenReturn(fakeProvider(1024));
+    var hit = new DocumentSearchHit(1L, 2L, 3L, "k.txt", 0, "키워드", 0.7);
+    when(repo.semantic(
+            Mockito.any(), Mockito.any(), Mockito.any(), Mockito.anyInt(), Mockito.any()))
+        .thenThrow(new VectorStoreUnavailableException("down", null));
+    when(repo.keyword(Mockito.any(), Mockito.any(), Mockito.anyInt(), Mockito.any()))
+        .thenReturn(List.of(hit));
+    var service = new DocumentSearchService(factory, repo, guard(), f -> true);
+
+    var result = service.search(new DocumentSearchRequest("질의", List.of(3L), 5), CLEARANCE);
+    assertThat(result).extracting(DocumentSearchHit::chunkId).containsExactly(1L);
   }
 }

@@ -41,6 +41,7 @@ public class KeywordIndexService {
   private final ChunkVectorIndex chunkIndex;
   private final DatasetEmbeddingRepository datasetRepository;
   private final DocumentChunkRepository chunkRepository;
+  private final VectorStoreFeatures features;
 
   /**
    * 플랫폼 DB 읽기·표시 쓰기용 새 트랜잭션(REQUIRES_NEW). 커밋 뒤 콜백에서 그냥 리포지토리를 부르면 이미 커밋된 트랜잭션에 합류해 표시 쓰기가 커밋되지 않는다
@@ -53,11 +54,13 @@ public class KeywordIndexService {
       ChunkVectorIndex chunkIndex,
       DatasetEmbeddingRepository datasetRepository,
       DocumentChunkRepository chunkRepository,
+      VectorStoreFeatures features,
       PlatformTransactionManager transactionManager) {
     this.datasetIndex = datasetIndex;
     this.chunkIndex = chunkIndex;
     this.datasetRepository = datasetRepository;
     this.chunkRepository = chunkRepository;
+    this.features = features;
     this.newTx = new TransactionTemplate(transactionManager);
     this.newTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
   }
@@ -68,6 +71,8 @@ public class KeywordIndexService {
    */
   public void indexDatasetAfterCommit(long datasetId) {
     if (!datasetIndex.separateKeywordIndex()) return;
+    // 저장소가 내려가 있으면 쓰지 않는다(WD-724). 커밋 뒤 요청 스레드에서 도므로 제한 시간까지 응답을 붙들게 된다. 표시가 비어 백로그 스윕이 복구 뒤 쓴다.
+    if (!features.available()) return;
     long tenantId = TenantContext.require("데이터셋 키워드 쓰기");
     Runnable write = () -> safely("데이터셋 " + datasetId, () -> writeDataset(tenantId, datasetId));
     if (TransactionSynchronizationManager.isSynchronizationActive()) {
@@ -86,6 +91,7 @@ public class KeywordIndexService {
   /** 커밋된 청크들의 키워드를 쓰고 표시를 채운다. 적재 잡이 청크 저장 직후 부른다(트랜잭션 밖). */
   public void indexChunks(List<ChunkSource> sources) {
     if (!chunkIndex.separateKeywordIndex() || sources.isEmpty()) return;
+    if (!features.available()) return; // 저장소 일시 중단 — 백로그 스윕이 복구 뒤 쓴다(WD-724)
     long tenantId = TenantContext.require("청크 키워드 쓰기");
     safely("청크 " + sources.size() + "건", () -> writeChunks(tenantId, sources));
   }

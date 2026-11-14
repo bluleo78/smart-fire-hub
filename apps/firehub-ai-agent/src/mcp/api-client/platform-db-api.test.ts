@@ -11,6 +11,7 @@ import {
   resetPlatformDbCapabilitiesCache,
   resolveSearchMode,
   SEARCH_DISABLED_NOTICE,
+  SEARCH_PAUSED_NOTICE,
 } from './platform-db-api.js';
 
 /**
@@ -44,7 +45,7 @@ describe('platformDbApi.getPlatformDbCapabilities (FireHubApiClient 경유)', ()
     // 다른 사용자·테넌트로 만든 새 클라이언트 — 설치본 단위 값이라 캐시를 공유해야 한다.
     const second = await new FireHubApiClient(BASE_URL, 'tok', 2, 7).getPlatformDbCapabilities();
 
-    expect(first).toEqual({ vectorSearch: false, trigramSearch: false });
+    expect(first).toEqual({ vectorSearch: false, trigramSearch: false, vectorStoreAvailable: true });
     expect(second).toEqual(first);
     expect(scope.isDone()).toBe(true);
     expect(nock.pendingMocks()).toHaveLength(0);
@@ -59,7 +60,7 @@ describe('platformDbApi.getPlatformDbCapabilities (FireHubApiClient 경유)', ()
 
     const [a, b] = await Promise.all([client.getPlatformDbCapabilities(), client.getPlatformDbCapabilities()]);
 
-    expect(a).toEqual({ vectorSearch: true, trigramSearch: false });
+    expect(a).toEqual({ vectorSearch: true, trigramSearch: false, vectorStoreAvailable: true });
     expect(b).toEqual(a);
     expect(scope.isDone()).toBe(true);
   });
@@ -71,7 +72,7 @@ describe('platformDbApi.getPlatformDbCapabilities (FireHubApiClient 경유)', ()
     const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
 
     // 실패 → 켜짐(PG 기본) — 기존 동작 유지.
-    expect(await client.getPlatformDbCapabilities()).toEqual({ vectorSearch: true, trigramSearch: true });
+    expect(await client.getPlatformDbCapabilities()).toEqual({ vectorSearch: true, trigramSearch: true, vectorStoreAvailable: true });
 
     // 재시도 간격 안에서는 실패를 기억해 다시 묻지 않는다 — 준비해 둔 응답 목이 소비되지 않아야 한다.
     const retryScope = nock(BASE_URL).get('/platform-db/capabilities').reply(200, {
@@ -79,22 +80,22 @@ describe('platformDbApi.getPlatformDbCapabilities (FireHubApiClient 경유)', ()
       trigramSearch: false,
     });
     clock.mockReturnValue(now + CAPABILITIES_FAILURE_RETRY_MS - 1);
-    expect(await client.getPlatformDbCapabilities()).toEqual({ vectorSearch: true, trigramSearch: true });
+    expect(await client.getPlatformDbCapabilities()).toEqual({ vectorSearch: true, trigramSearch: true, vectorStoreAvailable: true });
     expect(retryScope.isDone()).toBe(false);
 
     // 간격이 지나면 다시 조회해 실제 값을 받는다.
     clock.mockReturnValue(now + CAPABILITIES_FAILURE_RETRY_MS + 1);
-    expect(await client.getPlatformDbCapabilities()).toEqual({ vectorSearch: false, trigramSearch: false });
+    expect(await client.getPlatformDbCapabilities()).toEqual({ vectorSearch: false, trigramSearch: false, vectorStoreAvailable: true });
     expect(retryScope.isDone()).toBe(true);
   });
 
-  it('성공 값은 TTL(5분) 동안만 캐시하고, 지나면 다시 조회한다', async () => {
+  it('성공 값은 TTL(1분) 동안만 캐시하고, 지나면 다시 조회한다', async () => {
     nock(BASE_URL).get('/platform-db/capabilities').once().reply(200, { vectorSearch: true, trigramSearch: true });
     const client = new FireHubApiClient(BASE_URL, 'tok', 1);
     const now = Date.now();
     const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
 
-    expect(await client.getPlatformDbCapabilities()).toEqual({ vectorSearch: true, trigramSearch: true });
+    expect(await client.getPlatformDbCapabilities()).toEqual({ vectorSearch: true, trigramSearch: true, vectorStoreAvailable: true });
 
     // TTL 직전까지는 캐시를 쓴다 — 준비해 둔 다음 응답 목이 소비되지 않아야 한다.
     const refetch = nock(BASE_URL).get('/platform-db/capabilities').reply(200, {
@@ -102,12 +103,12 @@ describe('platformDbApi.getPlatformDbCapabilities (FireHubApiClient 경유)', ()
       trigramSearch: false,
     });
     clock.mockReturnValue(now + CAPABILITIES_SUCCESS_TTL_MS - 1);
-    expect(await client.getPlatformDbCapabilities()).toEqual({ vectorSearch: true, trigramSearch: true });
+    expect(await client.getPlatformDbCapabilities()).toEqual({ vectorSearch: true, trigramSearch: true, vectorStoreAvailable: true });
     expect(refetch.isDone()).toBe(false);
 
     // TTL 이 지나면 다시 조회해 바뀐 값을 따라간다.
     clock.mockReturnValue(now + CAPABILITIES_SUCCESS_TTL_MS + 1);
-    expect(await client.getPlatformDbCapabilities()).toEqual({ vectorSearch: false, trigramSearch: false });
+    expect(await client.getPlatformDbCapabilities()).toEqual({ vectorSearch: false, trigramSearch: false, vectorStoreAvailable: true });
     expect(refetch.isDone()).toBe(true);
   });
 
@@ -123,15 +124,49 @@ describe('platformDbApi.getPlatformDbCapabilities (FireHubApiClient 경유)', ()
   });
 });
 
+describe('platformDbApi 저장소 일시 중단 캐시 (WD-724)', () => {
+  beforeEach(() => resetPlatformDbCapabilitiesCache());
+  afterEach(() => {
+    nock.cleanAll();
+    vi.restoreAllMocks();
+    resetPlatformDbCapabilitiesCache();
+  });
+
+  it('일시 중단 응답은 짧게만(실패와 같은 간격) 기억해 복구를 빨리 따라간다', async () => {
+    nock(BASE_URL)
+      .get('/platform-db/capabilities')
+      .once()
+      .reply(200, { vectorSearch: true, trigramSearch: true, vectorStoreAvailable: false });
+    const client = new FireHubApiClient(BASE_URL, 'tok', 1);
+    const now = Date.now();
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
+    expect((await client.getPlatformDbCapabilities()).vectorStoreAvailable).toBe(false);
+
+    const recovered = nock(BASE_URL)
+      .get('/platform-db/capabilities')
+      .reply(200, { vectorSearch: true, trigramSearch: true, vectorStoreAvailable: true });
+    clock.mockReturnValue(now + CAPABILITIES_FAILURE_RETRY_MS + 1);
+    expect((await client.getPlatformDbCapabilities()).vectorStoreAvailable).toBe(true);
+    expect(recovered.isDone()).toBe(true);
+  });
+});
+
 describe('normalizeCapabilities', () => {
   it('명시적 false 만 꺼짐으로 본다 — 값이 빠졌거나 이상하면 켜짐(PG 기본)', () => {
     expect(normalizeCapabilities({ vectorSearch: false, trigramSearch: true })).toEqual({
       vectorSearch: false,
       trigramSearch: true,
+      vectorStoreAvailable: true,
     });
-    expect(normalizeCapabilities({ mocked: true })).toEqual({ vectorSearch: true, trigramSearch: true });
-    expect(normalizeCapabilities(null)).toEqual({ vectorSearch: true, trigramSearch: true });
-    expect(normalizeCapabilities('x')).toEqual({ vectorSearch: true, trigramSearch: true });
+    // 저장소 가용성도 명시적 false 만 일시 중단(WD-724)
+    expect(normalizeCapabilities({ vectorSearch: true, trigramSearch: true, vectorStoreAvailable: false })).toEqual({
+      vectorSearch: true,
+      trigramSearch: true,
+      vectorStoreAvailable: false,
+    });
+    expect(normalizeCapabilities({ mocked: true })).toEqual({ vectorSearch: true, trigramSearch: true, vectorStoreAvailable: true });
+    expect(normalizeCapabilities(null)).toEqual({ vectorSearch: true, trigramSearch: true, vectorStoreAvailable: true });
+    expect(normalizeCapabilities('x')).toEqual({ vectorSearch: true, trigramSearch: true, vectorStoreAvailable: true });
   });
 });
 
@@ -194,6 +229,14 @@ describe('guardSearch', () => {
     const tOff = await guardSearch(source(true, false), 'KEYWORD');
     expect(tOff).toMatchObject({ disabled: false, mode: 'SEMANTIC' });
     expect(tOff.notice).toContain('키워드 검색이 꺼져');
+  });
+
+  it('저장소 일시 중단(WD-724): 지원 여부와 무관하게 disabled 와 일시 중단 안내문', async () => {
+    const down = async () => ({ vectorSearch: true, trigramSearch: true, vectorStoreAvailable: false });
+    expect(await guardSearch(down, 'HYBRID')).toEqual({ disabled: true, notice: SEARCH_PAUSED_NOTICE });
+    // 설치본 꺼짐이 먼저다 — 둘 다 꺼진 설치본은 저장소 상태와 상관없이 꺼짐 안내
+    const offAndDown = async () => ({ vectorSearch: false, trigramSearch: false, vectorStoreAvailable: false });
+    expect(await guardSearch(offAndDown, 'HYBRID')).toEqual({ disabled: true, notice: SEARCH_DISABLED_NOTICE });
   });
 
   it('둘 다 켜짐: 요청 모드 그대로, 안내 없음', async () => {

@@ -12,8 +12,11 @@ import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.vectorstore.ChunkVectorIndex;
 import com.smartfirehub.vectorstore.VectorStoreFeatures;
+import com.smartfirehub.vectorstore.VectorStoreUnavailableException;
 import java.util.List;
+import java.util.function.Supplier;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -21,6 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 문서 검색: mode 에 따라 벡터(SEMANTIC)·트라이그램(KEYWORD)·RRF 융합(HYBRID, 기본)으로 분기한다. HYBRID 는 두 검색의 후보 풀을 가져와
  * RRF(Reciprocal Rank Fusion)로 순위를 융합한다.
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class DocumentSearchService {
@@ -78,8 +82,16 @@ public class DocumentSearchService {
     if (!features.supports(PlatformDbFeature.VECTOR_SEARCH)) {
       return List.of();
     }
-    QueryVector q = embedQuery(request.query());
-    return chunkRepository.semantic(q.space(), q.vector(), request.datasetIds(), limit, visibility);
+    if (!features.available()) {
+      return List.of(); // 저장소 일시 중단 — 질의 임베딩 호출도 아낀다(WD-724)
+    }
+    return unlessStoreDown(
+        "의미",
+        () -> {
+          QueryVector q = embedQuery(request.query());
+          return chunkRepository.semantic(
+              q.space(), q.vector(), request.datasetIds(), limit, visibility);
+        });
   }
 
   /** 트라이그램 단계. 플랫폼 DB 가 지원하지 않으면 호출하지 않고 빈 목록. */
@@ -88,7 +100,26 @@ public class DocumentSearchService {
     if (!features.supports(PlatformDbFeature.TRIGRAM_SEARCH)) {
       return List.of();
     }
-    return chunkRepository.keyword(request.query(), request.datasetIds(), limit, visibility);
+    if (!features.available()) {
+      return List.of();
+    }
+    return unlessStoreDown(
+        "키워드",
+        () -> chunkRepository.keyword(request.query(), request.datasetIds(), limit, visibility));
+  }
+
+  /**
+   * 검색 단계 하나를 부르고, 그사이 벡터 저장소가 내려가 실패하면 그 단계만 빈 목록으로 돌린다(ADR 0002 결정 11, WD-724). 가용성 캐시(몇 초)가 아직
+   * 「켜짐」일 때 내려간 경우다. 5xx 대신 빈 결과를 주고, 화면·에이전트는 기능 응답의 {@code vectorStoreAvailable} 로 안내한다.
+   */
+  private static List<DocumentSearchHit> unlessStoreDown(
+      String stage, Supplier<List<DocumentSearchHit>> call) {
+    try {
+      return call.get();
+    } catch (VectorStoreUnavailableException e) {
+      log.warn("벡터 저장소 장애로 {} 검색 단계를 건너뜀: {}", stage, e.getMessage());
+      return List.of();
+    }
   }
 
   /** RRF 융합: {@link RankFusion} 위임. hit.score 는 RRF 점수로 대체된다. */

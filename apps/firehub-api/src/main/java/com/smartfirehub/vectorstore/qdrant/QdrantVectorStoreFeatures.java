@@ -13,11 +13,18 @@ import org.springframework.stereotype.Component;
  * 면 켜짐)을 그대로 쓰면, 행 색인이 데이터 저장소의 pgvector 에 쌓이기 시작하고 나중에 옮길 도구가 없다(새 설치만 지원 — 사용자 결정 4). 그래서 WD-722
  * 까지는 모든 데이터 저장소에서 꺼짐으로 답한다.
  *
- * <p>저장소가 지금 응답하는지(「저장소 일시 중단」)는 WD-724 에서 더한다.
+ * <p>저장소가 지금 응답하는지(「저장소 일시 중단」, WD-724)는 {@link QdrantVectorStoreLifecycle#available()} 에 묻는다 — 상태
+ * 점검과 컬렉션 준비가 둘 다 끝나야 참이고, 결과는 몇 초 캐시된다.
  */
 @Component
 @ConditionalOnQdrantVectorStore
 public class QdrantVectorStoreFeatures implements VectorStoreFeatures {
+
+  private final QdrantVectorStoreLifecycle lifecycle;
+
+  public QdrantVectorStoreFeatures(QdrantVectorStoreLifecycle lifecycle) {
+    this.lifecycle = lifecycle;
+  }
 
   @Override
   public boolean supports(PlatformDbFeature feature) {
@@ -30,5 +37,11 @@ public class QdrantVectorStoreFeatures implements VectorStoreFeatures {
   @Override
   public boolean supportsRowSearch(DataStoreBackend backend) {
     return false;
+  }
+
+  /** 저장소가 지금 응답하고 컬렉션 준비가 끝났는가(캐시). */
+  @Override
+  public boolean available() {
+    return lifecycle.available();
   }
 }

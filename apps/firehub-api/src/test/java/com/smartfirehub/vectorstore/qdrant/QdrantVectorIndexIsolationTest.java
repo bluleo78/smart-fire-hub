@@ -82,7 +82,9 @@ class QdrantVectorIndexIsolationTest extends IntegrationTestBase {
     new QdrantVectorStoreLifecycle(client, props).prepare();
     datasetIndex = new QdrantDatasetVectorIndex(client, props, candidates, outbox, markers);
     chunkIndex = new QdrantChunkVectorIndex(client, props, candidates, outbox, markers);
-    worker = new VectorOutboxWorker(null, outbox, new QdrantOutboxApplier(client, props), false);
+    worker =
+        new VectorOutboxWorker(
+            null, outbox, new QdrantOutboxApplier(client, props), f -> true, false);
     tenantA = TenantRlsTestSupport.createActiveTenant(dsl, "qiso-a");
     tenantB = TenantRlsTestSupport.createActiveTenant(dsl, "qiso-b");
     docA =

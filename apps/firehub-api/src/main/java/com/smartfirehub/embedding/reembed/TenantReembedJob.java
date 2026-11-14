@@ -18,6 +18,7 @@ import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.transaction.AfterCommitRunner;
 import com.smartfirehub.securitylevel.ai.EmbeddingAiGate;
 import com.smartfirehub.vectorstore.VectorStoreFeatures;
+import com.smartfirehub.vectorstore.VectorStoreUnavailableException;
 import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
@@ -131,6 +132,11 @@ public class TenantReembedJob {
         primary = m;
         throw m;
       }
+    } catch (VectorStoreUnavailableException e) {
+      // 벡터 저장소 일시 중단(WD-724). 실패로 기록하지 않는다 — 기록하면 백로그 스윕이 「설정을 다시 저장하기 전까지」 재투입을 막아 복구 뒤에도
+      // 멈춰 있게 된다. JobRunr 재시도도 하지 않는다: 백로그 스윕이 저장소가 돌아온 뒤 남은 백로그로 다시 넣는다(이미 옮긴 배치는 판정식에서 빠진다).
+      log.warn(
+          "재임베딩 보류(벡터 저장소 일시 중단) — 복구 뒤 백로그 스윕이 다시 넣는다: tenant={}, {}", tenantId, e.getMessage());
     } catch (RuntimeException e) {
       primary = e;
       try {

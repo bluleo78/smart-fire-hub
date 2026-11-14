@@ -3,6 +3,7 @@ package com.smartfirehub.vectorstore.qdrant;
 import com.smartfirehub.global.tenant.TenantScopedRunner;
 import com.smartfirehub.vectorstore.ConditionalOnQdrantVectorStore;
 import com.smartfirehub.vectorstore.KeywordIndexService;
+import com.smartfirehub.vectorstore.VectorStoreFeatures;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -21,15 +22,18 @@ public class KeywordBacklogSweepScheduler {
 
   private final TenantScopedRunner tenantRunner;
   private final KeywordIndexService keywordIndex;
+  private final VectorStoreFeatures features;
   private final boolean enabled;
 
   /** 활성 여부는 설정값으로 받는다(테스트는 끄고 직접 {@link #sweep()} 을 부른다 — 임베딩 백로그 스윕과 같은 규약). */
   public KeywordBacklogSweepScheduler(
       TenantScopedRunner tenantRunner,
       KeywordIndexService keywordIndex,
+      VectorStoreFeatures features,
       @Value("${firehub.vector-store.keyword-sweep-enabled:true}") boolean enabled) {
     this.tenantRunner = tenantRunner;
     this.keywordIndex = keywordIndex;
+    this.features = features;
     this.enabled = enabled;
   }
 
@@ -39,6 +43,8 @@ public class KeywordBacklogSweepScheduler {
       fixedDelayString = "${firehub.vector-store.keyword-sweep-interval-ms:300000}")
   public void sweep() {
     if (!enabled) return;
+    // 저장소가 내려가 있으면 건너뛴다(WD-724) — 배치마다 제한 시간까지 기다리지 않게. 표시가 비어 있으니 복구 뒤 회차가 다시 쓴다.
+    if (!features.available()) return;
     tenantRunner.forEachActiveTenant(
         tenantId -> {
           int written = keywordIndex.sweepCurrentTenant();

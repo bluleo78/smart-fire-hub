@@ -76,7 +76,8 @@ class QdrantKeywordWritePathTest extends IntegrationTestBase {
     datasetIndex = new QdrantDatasetVectorIndex(client, props, candidates, outbox, markers);
     chunkIndex = new QdrantChunkVectorIndex(client, props, candidates, outbox, markers);
     keywordIndex =
-        new KeywordIndexService(datasetIndex, chunkIndex, datasets, chunks, transactionManager);
+        new KeywordIndexService(
+            datasetIndex, chunkIndex, datasets, chunks, f -> true, transactionManager);
     tenant = TenantRlsTestSupport.createActiveTenant(dsl, "qkw");
     doc = inTenantFixture(tenant, () -> EmbeddingTestFixtures.createDocumentDataset(dsl, "qkw"));
     TenantContext.set(tenant);
@@ -150,6 +151,7 @@ class QdrantKeywordWritePathTest extends IntegrationTestBase {
               chunkIndex,
               datasets,
               chunks,
+              f -> true,
               transactionManager);
       TenantRlsTestSupport.runInTenantTransaction(
           fixtureTransactionTemplate,

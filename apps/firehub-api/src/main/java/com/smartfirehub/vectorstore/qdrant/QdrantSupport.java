@@ -72,7 +72,7 @@ final class QdrantSupport {
 
   /**
    * 비동기 호출 결과를 제한 시간까지 기다린다. 실패하면 {@link QdrantAccessException} 으로 감싼다 — 호출자가 저장소 장애를 한 종류로 다루게 하려는
-   * 것이다(기능 응답 「저장소 일시 중단」은 WD-724).
+   * 것이다. 검색 서비스는 이것을 잡아 그 단계만 빈 목록으로 돌린다(WD-724).
    */
   static <T> T await(ListenableFuture<T> future, Duration timeout, String what) {
     try {

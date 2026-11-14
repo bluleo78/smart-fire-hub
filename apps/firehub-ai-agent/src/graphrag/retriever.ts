@@ -24,9 +24,10 @@ export interface SourceChunk { chunkId: number; fileName: string; content: strin
 /**
  * searchDisabled: 플랫폼 DB 가 벡터·키워드 검색을 둘 다 끈 설치본이라 시드 문서 검색을 건너뛰었다(WD-495).
  * 호출자(graphrag_query)는 빈 결과를 「찾지 못했다」가 아니라 「꺼져 있다」로 안내하는 데 쓴다.
+ * searchNotice: 그때 돌려줄 안내문 — 설치본 꺼짐(WD-495)과 저장소 일시 중단(WD-724)의 문구가 다르다.
  */
 export interface RetrievalResult {
-  nodes: SubgraphNode[]; relations: SubgraphRelation[]; sourceChunks: SourceChunk[]; searchDisabled?: true;
+  nodes: SubgraphNode[]; relations: SubgraphRelation[]; sourceChunks: SourceChunk[]; searchDisabled?: true; searchNotice?: string;
 }
 
 export interface RetrieverDeps {
@@ -163,7 +164,9 @@ export async function retrieve(
   if (deps.getPlatformDbCapabilities) {
     // 검색 도구와 같은 공통 가드. 조회기(FireHubApiClient)는 실패해도 던지지 않고 모두 켜짐을 준다.
     const guard = await guardSearch(() => deps.getPlatformDbCapabilities!(), 'HYBRID');
-    if (guard.disabled) return { nodes: [], relations: [], sourceChunks: [], searchDisabled: true };
+    if (guard.disabled) {
+      return { nodes: [], relations: [], sourceChunks: [], searchDisabled: true, searchNotice: guard.notice };
+    }
     seedMode = guard.mode ?? 'HYBRID';
   }
 

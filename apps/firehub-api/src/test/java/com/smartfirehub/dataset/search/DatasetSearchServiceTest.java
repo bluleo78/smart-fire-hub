@@ -16,6 +16,8 @@ import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.vectorstore.DatasetVectorIndex;
+import com.smartfirehub.vectorstore.VectorStoreFeatures;
+import com.smartfirehub.vectorstore.VectorStoreUnavailableException;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -280,6 +282,51 @@ class DatasetSearchServiceTest {
                     new DatasetSearchRequest("화재", 10, DatasetSearchMode.KEYWORD, null), CLEARANCE))
         .hasSize(1);
     verifyNoInteractions(embeddingFactory);
+  }
+
+  @Test
+  void 저장소_일시_중단이면_임베딩도_색인도_부르지_않고_빈_목록() {
+    // WD-724: 5xx 대신 빈 목록. 화면·에이전트는 기능 응답 vectorStoreAvailable 로 안내한다.
+    when(datasetAccessGuard.visibility(CLEARANCE)).thenReturn(VIS);
+    VectorStoreFeatures down =
+        new VectorStoreFeatures() {
+          public boolean supports(com.smartfirehub.global.platformdb.PlatformDbFeature f) {
+            return true;
+          }
+
+          public boolean available() {
+            return false;
+          }
+        };
+    var service = new DatasetSearchService(repository, embeddingFactory, datasetAccessGuard, down);
+
+    assertThat(service.search(new DatasetSearchRequest("화재", null, null, null), CLEARANCE))
+        .isEmpty();
+    verifyNoInteractions(repository, embeddingFactory);
+  }
+
+  @Test
+  void 검색_중_저장소가_실패하면_그_단계만_빠진다() {
+    when(embeddingFactory.current()).thenReturn(embeddingProvider);
+    lenient().when(embeddingProvider.dimension()).thenReturn(1024);
+    lenient().when(embeddingProvider.modelId()).thenReturn("bge-m3");
+    when(embeddingProvider.embed(List.of("화재"))).thenReturn(List.of(new float[1024]));
+    when(repository.semantic(
+            ArgumentMatchers.any(),
+            ArgumentMatchers.any(),
+            ArgumentMatchers.any(),
+            ArgumentMatchers.anyInt(),
+            ArgumentMatchers.any()))
+        .thenReturn(List.of(hit(1L)));
+    when(repository.keyword(
+            ArgumentMatchers.any(),
+            ArgumentMatchers.any(),
+            ArgumentMatchers.anyInt(),
+            ArgumentMatchers.any()))
+        .thenThrow(new VectorStoreUnavailableException("down", null));
+
+    var result = service().search(new DatasetSearchRequest("화재", null, null, null), CLEARANCE);
+    assertThat(result).extracting(DatasetSearchHit::datasetId).containsExactly(1L);
   }
 
   private static DatasetSearchHit hit(long id) {

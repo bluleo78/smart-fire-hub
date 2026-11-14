@@ -781,7 +781,7 @@ export function registerGraphragTools(
         );
         // 검색이 꺼져 시드를 못 잡은 경우는 빈 서브그래프 대신 안내문을 정상 결과로 돌려준다(isError 아님 — 재시도 방지).
         if (result.searchDisabled) {
-          return searchDisabledResult();
+          return searchDisabledResult(result.searchNotice);
         }
         // Neo4j 연결 불가 등은 retrieve에서 throw → safeTool이 isError로 감싸 폴백 메시지 제공.
         return jsonResult({

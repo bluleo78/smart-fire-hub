@@ -49,12 +49,14 @@ class PlatformDbCapabilitiesControllerTest {
   void postgres_구현이면_두_기능_모두_true() throws Exception {
     var pg = new PgVectorStoreFeatures();
     when(features.supports(any())).thenAnswer(i -> pg.supports(i.getArgument(0)));
+    when(features.available()).thenReturn(pg.available());
     mockMvc
         .perform(
             get("/api/v1/platform-db/capabilities").header("Authorization", "Bearer test-token"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.vectorSearch").value(true))
-        .andExpect(jsonPath("$.trigramSearch").value(true));
+        .andExpect(jsonPath("$.trigramSearch").value(true))
+        .andExpect(jsonPath("$.vectorStoreAvailable").value(true));
   }
 
   @Test
@@ -92,6 +94,20 @@ class PlatformDbCapabilitiesControllerTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.vectorSearch").value(false))
         .andExpect(jsonPath("$.trigramSearch").value(true));
+  }
+
+  /** WD-724: Qdrant 가 내려가 있으면 지원 여부는 그대로 두고 vectorStoreAvailable 만 거짓이다. */
+  @Test
+  void 저장소가_내려가_있으면_vectorStoreAvailable_만_false() throws Exception {
+    when(features.supports(any())).thenReturn(true);
+    when(features.available()).thenReturn(false);
+    mockMvc
+        .perform(
+            get("/api/v1/platform-db/capabilities").header("Authorization", "Bearer test-token"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.vectorSearch").value(true))
+        .andExpect(jsonPath("$.trigramSearch").value(true))
+        .andExpect(jsonPath("$.vectorStoreAvailable").value(false));
   }
 
   @Test

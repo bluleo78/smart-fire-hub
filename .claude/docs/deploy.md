@@ -650,6 +650,42 @@ Tibero 테넌트의 파이프라인 SQL 단계는 api 가 새 서비스 `db-exec
 - **k8s**: 운영 Helm 차트(`~/k8s/smart-fire-hub`, 이 저장소 밖)에 db-executor **Deployment + Service(`db-executor:8090`)** 를 추가하고, api 에 환경 변수 `DB_EXECUTOR_BASE_URL` 을 준다. readiness/liveness probe 경로는 정확히 `/actuator/health` 이다. **차트 수정은 사용자 승인 후에** 한다(이 작업에서는 읽지도 고치지도 않았다). 차트에 db-executor 가 없으면 Tibero 테넌트 SQL 단계는 접속 오류로 실패한다.
 - **롤백**: 이미지만 되돌린다. 마이그레이션은 없다.
 
+### 벡터 저장소 Qdrant 설치·점검 (ADR 0002, WD-724 — 기본 꺼짐)
+
+데이터셋·문서 검색의 벡터·키워드 색인을 플랫폼 DB 밖 Qdrant 에 둘 수 있다. Tibero 플랫폼 설치본에서도 이 길로 검색이 켜진다. **기본은 꺼짐**(`firehub.vector-store.type` 미설정 = `platform`)이라 설정을 바꾸지 않은 설치본은 아무것도 달라지지 않는다. V162(`vector_outbox`)는 모든 설치본에 적용되지만 qdrant 를 켜지 않으면 비어 있다.
+
+- **새 설치에서만 켠다.** 설치된 종류는 `system_settings` 의 `vector_store.install_type` 에 기록된다. 기록이 없고 `dataset_embedding`·`document_chunk` 에 행이 하나라도 있으면 `platform` 으로 확정된다. 그래서 이미 쓰던 설치본에 qdrant 를 켜면 api 가 「기록과 설정이 다르다」며 기동을 멈춘다(ADR 결정 10 — 옮기는 길은 없다).
+- **같은 신뢰 경계 안에 직접 설치만 지원한다.** Qdrant 는 api 와 같은 클러스터·내부망에 두고, 포트(6333 REST·6334 gRPC·6335 p2p)는 밖으로 열지 않는다. 외부 관리형 서비스나 공개망 주소는 지원하지 않는다. 벡터 payload 에는 원문 텍스트가 없지만 테넌트·데이터셋 id 가 실린다.
+- **버전**: `qdrant/qdrant:v1.20.0` 으로 고정한다(v1.20 이상). 노드가 하나여도 클러스터 모드(`QDRANT__CLUSTER__ENABLED=true`, `--uri http://<자기주소>:6335`)로 띄운다 — 그래야 샤드 수가 설정대로 잡히고 나중에 노드를 늘릴 수 있다.
+- **저장소**: 데이터는 **블록 스토리지 PV** 에 둔다. NFS·FUSE 위에서는 Qdrant 가 데이터 손상 경고를 낸다.
+- **api 환경 변수**
+
+  | 변수 | 값 | 비고 |
+  |---|---|---|
+  | `FIREHUB_VECTOR_STORE_TYPE` | `qdrant` | 빼면 `platform` |
+  | `QDRANT_URL` | `http://qdrant:6334` | gRPC 주소. `https://` 면 TLS |
+  | `QDRANT_API_KEY` | 읽기·쓰기 키 | Qdrant 서버의 `QDRANT__SERVICE__API_KEY` 와 같은 값. 읽기 전용 키는 쓰기가 403 |
+  | `QDRANT_SHARD_NUMBER` | `6` | 컬렉션을 만든 뒤 바꾸면 기동이 멈춘다 |
+  | `QDRANT_QUANTIZATION` | `true` | 같음 |
+  | `QDRANT_TIMEOUT` | `10s` | 호출 제한 시간 |
+
+- **k8s(Helm, `~/k8s/smart-fire-hub` — 저장소 밖)**: `qdrant.enabled: true` 와 `secrets.qdrantApiKey`(예: `openssl rand -hex 32`)를 주면 `qdrant` StatefulSet·headless Service·스냅샷 CronJob 이 뜨고 api 에 위 변수가 들어간다. 키가 비면 렌더가 실패한다. 데이터 PV 는 `qdrant.storageClass`(블록 스토리지, 비우면 클러스터 기본), 스냅샷 PV 는 공통 `storageClass` 를 쓴다. `qdrant.enabled: false`(기본) 렌더는 Qdrant 를 넣기 전과 같다.
+- **docker-compose(로컬)**: `docker compose --profile qdrant up -d qdrant` — 개발용 키 `firehub-qdrant-dev`. 운영 compose 에 넣을 때는 같은 서비스 정의에 실제 키를 주고 `qdrant-data` 볼륨을 블록 디스크에 둔다.
+- **설치 순서와 점검**
+  1. Qdrant 를 먼저 띄우고 Ready 를 확인한다(`kubectl rollout status sts/qdrant`, 또는 `curl -s http://qdrant:6333/readyz`).
+  2. api 를 띄운다. 기동 로그에 `Qdrant 컬렉션 준비 완료: 7개(스키마 버전 N)` 가 나와야 한다.
+  3. 기능 응답을 본다: `GET /api/v1/platform-db/capabilities` → `{"vectorSearch":true,"trigramSearch":true,"vectorStoreAvailable":true}`.
+  4. DB 기록을 본다: `SELECT value FROM system_settings WHERE key = 'vector_store.install_type'` → `qdrant`.
+  5. 테넌트에서 임베딩을 설정하고 문서를 하나 올린 뒤 문서 검색이 결과를 내는지 본다.
+- **장애 동작**
+  - Qdrant 에 **닿지 못하면**(접속 거부·제한 시간 초과) api 는 경고 `Qdrant 에 접속하지 못했습니다 — 「저장소 일시 중단」으로 기동…` 만 남기고 뜬다. 그동안 `vectorStoreAvailable=false` 이고, 검색은 5xx 대신 빈 목록을 주며 웹 문서 검색·ai-agent 검색 도구가 「검색 저장소 일시 중단」을 안내한다. 15초마다 다시 준비하므로 Qdrant 가 돌아오면 재기동 없이 컬렉션을 만들고 검색이 돌아온다.
+  - 장애 중에 생긴 삭제는 아웃박스(`vector_outbox`)에, 쓰기는 표시 열 백로그에 남아 복구 뒤 워커·스윕이 따라잡는다. 재임베딩 잡은 실패로 기록하지 않고 보류한다(복구 뒤 백로그 스윕이 다시 넣는다).
+  - **API 키가 틀리거나**(UNAUTHENTICATED·PERMISSION_DENIED) **컬렉션 구성이 다르면**(샤드 수·양자화·스키마 버전) 기동을 멈춘다 — 기다려도 풀리지 않는 설정 오류다. 로그의 `Qdrant 가 요청을 거부했습니다` 또는 `구성이 기대와 다릅니다` 를 보고 시크릿·값을 고친다. 실행 중 재준비에서 구성 불일치를 만나면 앱은 계속 돌지만 ERROR 를 남기고 재기동 전까지 검색을 쓰지 않는다.
+- **백업**: Helm 의 `qdrant-snapshot` CronJob 이 매일 03:00 컬렉션마다 스냅샷을 뜨고 최근 7개만 남긴다(`qdrant.snapshot.*`). 파일은 qdrant 파드의 `/qdrant/snapshots` PV 에 쌓이므로 밖으로 옮기려면 그 PV 를 백업한다. 되살리기는 컬렉션마다 `PUT /collections/<이름>/snapshots/recover`(본문 `{"location":"file:///qdrant/snapshots/<이름>/<스냅샷>"}`, `api-key` 헤더)다. 벡터는 파생 데이터라 스냅샷이 없어도 설정 › 임베딩 › 다시 색인으로 복구할 수 있다(시간이 더 걸린다). **Qdrant 저장소를 잃고 빈 채로 다시 띄웠으면 api 를 먼저 재기동한다** — 실행 중인 api 는 한 번 준비를 마친 뒤로는 컬렉션을 다시 만들지 않아, 재기동 전까지 검색이 빈 결과인데도 「일시 중단」 안내가 뜨지 않는다.
+- **노드 늘리기(자동 아님)**: 새 노드에 같은 `api_key`·클러스터 모드로 `--bootstrap http://qdrant-0.qdrant:6335` 를 주어 붙인 뒤, 컬렉션마다 `POST /collections/<이름>/cluster` 의 `move_shard`(`shard_id`·`from_peer_id`·`to_peer_id`)로 샤드를 옮긴다. 피어 id 는 `GET /cluster` 로 본다. 단일 노드는 HA 가 없다 — 내려간 동안은 위 「일시 중단」 안내로 버틴다.
+- **폐쇄망 반입 목록**: `qdrant/qdrant:v1.20.0`(amd64, gzip 약 61MB), `curlimages/curl:8.10.1`(스냅샷 CronJob). 사설 레지스트리면 `qdrant.image`·`qdrant.snapshot.image`·`qdrant.imagePullSecret` 을 바꾼다.
+- **롤백**: 새 설치에서만 켜는 기능이라 끄는 롤백은 없다(켠 뒤 끄면 `platform` 기록과 어긋나 기동이 멈춘다). 이미지 롤백은 다른 서비스와 같다.
+
 ### 부분 배포 (빌드+push 완료 후 컨테이너만 재시작)
 
 ```bash

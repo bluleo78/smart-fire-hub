@@ -1,4 +1,5 @@
-import { Info } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
+import { Info, PauseCircle } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 
@@ -7,7 +8,11 @@ import { InlineBanner } from '../../../components/ui/inline-banner';
 import { Input } from '../../../components/ui/input';
 import { Tabs, TabsControlsContent, TabsList, TabsTrigger } from '../../../components/ui/tabs';
 import { useSearchDocuments } from '../../../hooks/queries/useDocuments';
-import { availableSearchModes, usePlatformDbFeatures } from '../../../hooks/queries/usePlatformDbCapabilities';
+import {
+  availableSearchModes,
+  PLATFORM_DB_CAPABILITIES_KEY,
+  usePlatformDbFeatures,
+} from '../../../hooks/queries/usePlatformDbCapabilities';
 import { MAX_SEARCH_QUERY_LENGTH } from '../../../lib/validations/search-query';
 import type { DocumentSearchHit, DocumentSearchMode } from '../../../types/document';
 
@@ -33,6 +38,7 @@ export function DocumentSearchPanel({ datasetId }: DocumentSearchPanelProps) {
   // 확장된 청크 ID 집합 — 클릭 시 content를 펼쳐서 전문을 보여주는 accordion 패턴 (#291).
   const [expandedChunks, setExpandedChunks] = useState<Set<number>>(new Set());
   const search = useSearchDocuments();
+  const queryClient = useQueryClient();
   // 플랫폼 DB 가 끈 검색 기능(WD-495). 조회 중·실패면 둘 다 켜짐이라 PG 설치본 화면은 그대로다.
   const features = usePlatformDbFeatures();
   // 모드별로 필요한 기능이 켜졌을 때만 보인다(스펙 2) — 매핑 규칙은 availableSearchModes 참고.
@@ -63,7 +69,11 @@ export function DocumentSearchPanel({ datasetId }: DocumentSearchPanelProps) {
     search.mutate(
       { query: q, datasetIds: [datasetId], topK: 5, mode: effectiveMode },
       {
-        onSuccess: (data) => setHits(data),
+        onSuccess: (data) => {
+          setHits(data);
+          // 저장소가 그새 내려가도 서버는 빈 목록(200)을 준다(WD-724) — 빈 결과면 기능 상태를 다시 물어 「일시 중단」 안내를 띄운다.
+          if (data.length === 0) void queryClient.invalidateQueries({ queryKey: PLATFORM_DB_CAPABILITIES_KEY });
+        },
         onError: () => toast.error('검색에 실패했습니다. 임베딩 서비스 상태를 확인하세요.'),
       },
     );
@@ -81,9 +91,18 @@ export function DocumentSearchPanel({ datasetId }: DocumentSearchPanelProps) {
     );
   }
 
+  // 벡터 저장소(Qdrant)가 잠깐 내려가 있으면 검색이 늘 빈 결과다(WD-724) — 안내를 띄우고 검색 버튼을 막는다.
+  // 설치본이 지원하지 않는 경우(위 Tibero 안내)와 달리 복구되면 저절로 사라진다(기능 상태를 주기로 다시 묻는다).
+  const storeDown = !features.vectorStoreAvailable;
+
   return (
     <section className="space-y-3">
       <h2 className="text-lg font-semibold">문서 검색</h2>
+      {storeDown && (
+        <InlineBanner variant="warning" icon={<PauseCircle />}>
+          검색 저장소가 일시 중단되어 지금은 문서 검색을 쓸 수 없습니다. 잠시 뒤 다시 시도하세요.
+        </InlineBanner>
+      )}
       {/* 검색 모드 토글 — 하이브리드(기본)/의미/키워드. 서버는 생략 시 HYBRID.
           검색 입력·결과를 TabsControlsContent 로 감싸 선택 모드 탭이 실제 패널을 가리킨다(WD-514, ui/tabs.tsx).
           검색어·결과 상태는 이 컴포넌트에 있어 모드를 바꿔도 유지된다. gap-3 은 이전 space-y-3 유지 */}
@@ -105,9 +124,9 @@ export function DocumentSearchPanel({ datasetId }: DocumentSearchPanelProps) {
               maxLength={MAX_SEARCH_QUERY_LENGTH}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') handleSearch(); }}
+              onKeyDown={(e) => { if (e.key === 'Enter' && !storeDown) handleSearch(); }}
             />
-            <Button type="button" disabled={!query.trim() || search.isPending} onClick={handleSearch}>
+            <Button type="button" disabled={!query.trim() || search.isPending || storeDown} onClick={handleSearch}>
               {search.isPending ? '검색 중...' : '검색'}
             </Button>
           </div>

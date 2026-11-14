@@ -95,7 +95,12 @@ class TiberoQdrantSearchLiveTest extends TenantPairContractBase {
             new MyBatisDocumentChunkRepository(poc.mapper(DocumentChunkMapper.class), chunkIndex));
     keywordIndex =
         new KeywordIndexService(
-            datasetIndex, chunkIndex, datasets, chunks, poc.tx().getTransactionManager());
+            datasetIndex,
+            chunkIndex,
+            datasets,
+            chunks,
+            f -> true,
+            poc.tx().getTransactionManager());
   }
 
   @AfterAll

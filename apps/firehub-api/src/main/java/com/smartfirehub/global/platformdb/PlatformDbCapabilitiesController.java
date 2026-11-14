@@ -21,12 +21,13 @@ public class PlatformDbCapabilitiesController {
 
   /**
    * 기능별 지원 여부 — 판정은 {@link VectorStoreFeatures} 구현체(platform+PG 는 모두 true, platform+Tibero 는 모두
-   * false)가 한다.
+   * false)가 한다. 저장소 가용성은 Qdrant 조합만 바뀌고 몇 초 캐시된다(WD-724).
    */
   @GetMapping("/capabilities")
   public PlatformDbCapabilitiesResponse capabilities() {
     return new PlatformDbCapabilitiesResponse(
         features.supports(PlatformDbFeature.VECTOR_SEARCH),
-        features.supports(PlatformDbFeature.TRIGRAM_SEARCH));
+        features.supports(PlatformDbFeature.TRIGRAM_SEARCH),
+        features.available());
   }
 }

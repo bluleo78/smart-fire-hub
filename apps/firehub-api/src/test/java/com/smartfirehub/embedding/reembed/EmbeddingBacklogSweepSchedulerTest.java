@@ -56,7 +56,7 @@ class EmbeddingBacklogSweepSchedulerTest extends IntegrationTestBase {
   void seed() {
     scheduler =
         new EmbeddingBacklogSweepScheduler(
-            tenantRunner, configService, backlogService, states, job, true);
+            tenantRunner, configService, backlogService, states, job, f -> true, true);
     tenant = TenantRlsTestSupport.createActiveTenant(dsl, "bsweep");
     doc = inTenantFixture(tenant, () -> EmbeddingTestFixtures.createDocumentDataset(dsl, "bsweep"));
   }
@@ -202,7 +202,7 @@ class EmbeddingBacklogSweepSchedulerTest extends IntegrationTestBase {
     lateWriteOldVector();
 
     new EmbeddingBacklogSweepScheduler(
-            tenantRunner, configService, backlogService, states, job, false)
+            tenantRunner, configService, backlogService, states, job, f -> true, false)
         .sweep();
 
     verify(job, never()).enqueue(tenant);

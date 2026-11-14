@@ -168,6 +168,15 @@ describe('search_documents — 플랫폼 DB 검색 기능 상태', () => {
     expect(result.content[0].text).toBe('이 설치본에서는 검색 기능(벡터·키워드)이 꺼져 있어 쓸 수 없습니다.');
   });
 
+  it('저장소 일시 중단(WD-724): 검색 API 를 부르지 않고 「찾지 못했다」가 아닌 일시 중단 안내를 돌려준다', async () => {
+    caps().mockResolvedValue({ vectorSearch: true, trigramSearch: true, vectorStoreAvailable: false });
+    const result = await invokeTool(server, 'search_documents', { query: '질의' });
+
+    expect(client.searchDocuments).not.toHaveBeenCalled();
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0].text).toContain('검색 저장소가 일시 중단되어');
+  });
+
   it('벡터만 꺼짐: 하이브리드(생략) 요청을 KEYWORD 로 바꿔 부르고 바꾼 사실을 덧붙인다', async () => {
     caps().mockResolvedValue({ vectorSearch: false, trigramSearch: true });
     const result = await invokeTool(server, 'search_documents', { query: '질의', datasetIds: [3] });

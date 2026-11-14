@@ -61,6 +61,9 @@ spring:
     # PG 마이그레이션(db/migration)과 섞이지 않게 형제 폴더를 쓴다 — Flyway 는 위치를 재귀로 훑는다(ADR 0001 결정 2).
     # {vendor} 자리표시자는 Spring Boot 가 Tibero 를 몰라 그대로 남으므로 쓰지 않는다(WD-488 실측).
     locations: classpath:db/migration-tibero
+    # Flyway 가 소유자 계정으로 따로 여는 연결(spring.flyway.url)은 위 datasource 의 드라이버 설정을 물려받지 않는다. Spring Boot 가 jdbc:tibero
+    # URL 에서 드라이버를 추론하지 못해 「Name must not be null」로 기동이 멈추므로 같은 값을 준다(WD-724 새 설치 점검에서 발견).
+    driver-class-name: com.tmax.tibero.jdbc.TbDriver
     # 위치가 비거나 없으면 "마이그레이션 0개로 성공" 대신 기동 실패로 드러낸다.
     fail-on-missing-locations: true
     # application.yml 의 baseline-on-migrate(PG 기존 DB 용, 버전 80)를 물려받지 않는다. 켜 두면 객체가 있는데 이력 테이블이 없는 계정을

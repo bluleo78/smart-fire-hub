@@ -111,7 +111,22 @@ describe('retrieve — 플랫폼 DB 검색 기능 상태', () => {
       ontologyId, '원인?',
     );
     expect(searchDocuments).not.toHaveBeenCalled();
-    expect(result).toEqual({ nodes: [], relations: [], sourceChunks: [], searchDisabled: true });
+    expect(result).toMatchObject({ nodes: [], relations: [], sourceChunks: [], searchDisabled: true });
+    expect(result.searchNotice).toContain('꺼져 있어');
+  });
+
+  it('저장소 일시 중단(WD-724): 문서 검색을 건너뛰고 일시 중단 안내를 싣는다', async () => {
+    const searchDocuments = vi.fn().mockResolvedValue([]);
+    const result = await retrieve(
+      {
+        searchDocuments,
+        getPlatformDbCapabilities: async () => ({ vectorSearch: true, trigramSearch: true, vectorStoreAvailable: false }),
+      },
+      ontologyId, '원인?',
+    );
+    expect(searchDocuments).not.toHaveBeenCalled();
+    expect(result.searchDisabled).toBe(true);
+    expect(result.searchNotice).toContain('일시 중단');
   });
 
   it('벡터만 꺼짐: HYBRID 대신 KEYWORD 로 시드를 잡는다', async () => {
