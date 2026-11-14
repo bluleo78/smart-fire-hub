@@ -44,6 +44,9 @@ final class FakeTibero {
   final List<String> log = new ArrayList<>();
   Predicate<String> failOn = sql -> false;
 
+  /** {@link #failOn} 이 던지는 SQLException 의 오류 코드(기본 -7071). */
+  int failCode = -7071;
+
   /** CREATE TABLE 이 새 테이블에 줄 다음 OBJECT_ID. */
   long nextOid = 1000L;
 
@@ -192,7 +195,7 @@ final class FakeTibero {
   private void run(String sql) throws SQLException {
     log.add(sql);
     if (failOn.test(sql)) {
-      throw new SQLException("주입된 실패", "42000", -7071);
+      throw new SQLException("주입된 실패", "42000", failCode);
     }
     List<String> q = new ArrayList<>();
     Matcher m = QUOTED.matcher(sql);

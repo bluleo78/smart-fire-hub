@@ -379,7 +379,8 @@ public final class TiberoRebuildBackup {
 
   private static void execute(Connection c, String sql) throws SQLException {
     try (Statement st = c.createStatement()) {
-      st.execute(sql);
+      // 커밋 뒤 슬롯 GRANT 와 겹치면 NOWAIT(-12033) 으로 즉시 실패하므로 그 문장만 짧게 다시 보낸다(WD-739).
+      TiberoErrors.executeDdl(st, sql);
     }
   }
 

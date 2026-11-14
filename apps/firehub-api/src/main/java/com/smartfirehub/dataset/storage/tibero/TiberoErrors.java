@@ -9,12 +9,14 @@ import java.sql.SQLTransientConnectionException;
 import java.sql.Statement;
 import java.util.Locale;
 import java.util.Set;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * Tibero(Oracle 계열) 오류 판별 공용 헬퍼. DDL 저장소·행 저장소·커넥션 래퍼의 오류 번역이 같은 규칙으로 오류 코드를 보도록 한 곳에 둔다.
  *
  * <p>공개 클래스인 이유: {@code external} 패키지의 커넥션 래퍼(오류 번역기)도 {@link #hasCode} 를 쓴다.
  */
+@Slf4j
 public final class TiberoErrors {
 
   private TiberoErrors() {}
@@ -105,7 +107,7 @@ public final class TiberoErrors {
   static boolean runIgnoring(Connection c, String sql, TiberoDialect.NotFound... ignorable)
       throws SQLException {
     try (Statement st = c.createStatement()) {
-      st.execute(sql);
+      executeDdl(st, sql);
       return true;
     } catch (SQLException e) {
       for (TiberoDialect.NotFound nf : ignorable) {
@@ -115,5 +117,59 @@ public final class TiberoErrors {
       }
       throw e;
     }
+  }
+
+  /** 다른 DDL 이 같은 객체를 잡고 있어 기다리지 않고 즉시 실패(NOWAIT)했다는 Tibero 오류 코드. */
+  static final int LOCK_NOWAIT = -12033;
+
+  /** {@link #LOCK_NOWAIT} 재시도 사이의 대기(ms). 길이 4 → 시도는 최대 5회(첫 시도 + 재시도 4번). */
+  static final long[] BACKOFF_MILLIS = {50, 100, 200, 400};
+
+  /** 재시도 대기 주입점 — 시험이 실제로 자지 않고 대기값만 기록하게 한다. */
+  @FunctionalInterface
+  interface Sleeper {
+    void sleep(long millis) throws InterruptedException;
+  }
+
+  /** 운영용 — 실제로 잔다. */
+  static void executeDdl(Statement st, String sql) throws SQLException {
+    executeDdl(st, sql, Thread::sleep);
+  }
+
+  /**
+   * DDL 한 문장을 실행하되 {@link #LOCK_NOWAIT}(-12033) 으로만 짧게 다시 보낸다(WD-739).
+   *
+   * <p>왜: Tibero 는 세션에 DDL 잠금 대기 설정이 없어(DDL_LOCK_TIMEOUT 은 -7197) 겹친 DDL 이 기다리지 않고 즉시 실패한다. 커밋 뒤 슬롯
+   * GRANT 동기화와 사용자 DDL 이 겹치면 그 실패가 사용자에게 보였다. NOWAIT 실패는 문장이 실행되지 않았다는 뜻이라 같은 한 문장을 다시 보내도 안전하다 —
+   * 여러 문장을 묶은 작업 전체를 다시 돌리는 일은 하지 않는다. 다른 오류는 재시도하지 않고, 대기가 소진되면 마지막 예외를 그대로 던진다. 대기 중 인터럽트되면 표시를
+   * 되살리고 그 시도의 예외를 던진다.
+   */
+  static void executeDdl(Statement st, String sql, Sleeper sleeper) throws SQLException {
+    for (int attempt = 0; ; attempt++) {
+      try {
+        st.execute(sql);
+        return;
+      } catch (SQLException e) {
+        // 코드를 비우고 메시지에만 싣는 드라이버도 같은 규칙으로 잡는다.
+        if (!hasCode(e, LOCK_NOWAIT)) {
+          throw e;
+        }
+        if (attempt >= BACKOFF_MILLIS.length) {
+          log.warn("DDL -12033 재시도 소진 — 시도 {}회, 문장: {}", attempt + 1, head(sql));
+          throw e;
+        }
+        log.debug("DDL -12033 — {}ms 뒤 재시도, 문장: {}", BACKOFF_MILLIS[attempt], head(sql));
+        try {
+          sleeper.sleep(BACKOFF_MILLIS[attempt]);
+        } catch (InterruptedException ie) {
+          Thread.currentThread().interrupt();
+          throw e;
+        }
+      }
+    }
+  }
+
+  private static String head(String sql) {
+    return sql.length() <= 80 ? sql : sql.substring(0, 80);
   }
 }

@@ -928,17 +928,18 @@ public class TiberoDataRowStore implements DataRowStore {
             ddls.add(type.ddl());
           }
           List<String> statements = TiberoDmlSql.createStaging(c.schema(), physical, columns, ddls);
+          // 커밋 뒤 슬롯 GRANT 와 겹치면 NOWAIT(-12033) 으로 즉시 실패하므로 문장 단위로 짧게 다시 보낸다(WD-739).
           try (Statement st = conn.createStatement()) {
-            st.execute(statements.get(0));
+            TiberoErrors.executeDdl(st, statements.get(0));
             try {
               // 이어지는 _SEQ 인덱스·전용 시퀀스. 인덱스는 테이블에 딸려 있어 테이블 DROP 으로 함께 지워진다.
               for (String sql : statements.subList(1, statements.size())) {
-                st.execute(sql);
+                TiberoErrors.executeDdl(st, sql);
               }
             } catch (SQLException e) {
               // 인덱스·시퀀스 생성이 실패하면 테이블만 남지 않도록 지우고 원래 오류를 다시 던진다.
               try {
-                st.execute(TiberoDmlSql.dropStaging(c.schema(), physical).get(0));
+                TiberoErrors.executeDdl(st, TiberoDmlSql.dropStaging(c.schema(), physical).get(0));
               } catch (SQLException cleanup) {
                 e.addSuppressed(cleanup);
               }

@@ -54,11 +54,12 @@ import org.springframework.transaction.support.TransactionTemplate;
  *
  * <p><b>왜 테이블 잠금을 잡지 않는가(WD-629).</b> PG 판은 ACL 을 바꾸기 전에 테이블에 ACCESS SHARE 를 잡아 같은 테이블의 DDL 과
  * 직렬화한다({@code PythonReadGrantSync.lockTableForAclChange}). Oracle 계열(Tibero)에서는 GRANT/REVOKE 자체가
- * DDL 이라 실행 전 암묵 커밋으로 {@code LOCK TABLE} 잠금을 먼저 풀어 버리므로 같은 방법을 쓸 수 없다. Tibero 는 DDL 끼리 딕셔너리 잠금으로
- * 직렬화하고, 겹침 실측은 {@code TiberoLiveSlotGrantTest.grantOverlappingAlterAndDrop_doesNotFailUserDdl} 이
- * 맡는다. 겹쳐서 동기화 쪽 문장이 실패하면 GRANT 실패는 과소권한(안전), REVOKE 실패는 아래 재판정을 거쳐 남은 권한이 있으면 회수 실패(실행 거부)가 되고 다음
- * 동기화가 회복한다. 앱 수준 직렬화(DBMS_LOCK·JVM 잠금)는 Tibero DDL 경로 전부에 잠금을 끼워야 하고 교착 위험을 라이브로 검증할 수 없어 택하지
- * 않았다(WD-645).
+ * DDL 이라 실행 전 암묵 커밋으로 {@code LOCK TABLE} 잠금을 먼저 풀어 버리므로 같은 방법을 쓸 수 없다. Tibero 는 겹친 DDL 을 기다리지 않고
+ * -12033(NOWAIT)으로 즉시 실패시킨다 — 사용자 DDL 쪽이 {@code TiberoErrors.executeDdl} 로 짧게 재시도해 흡수하고(WD-739),
+ * 동기화 쪽 실패는 아래 규칙대로 처리한다. 겹침 실측은 {@code
+ * TiberoLiveSlotGrantTest.grantOverlappingAlterAndDrop_doesNotFailUserDdl} 이 맡는다. 겹쳐서 동기화 쪽 문장이
+ * 실패하면 GRANT 실패는 과소권한(안전), REVOKE 실패는 아래 재판정을 거쳐 남은 권한이 있으면 회수 실패(실행 거부)가 되고 다음 동기화가 회복한다. 앱 수준
+ * 직렬화(DBMS_LOCK·JVM 잠금)는 Tibero DDL 경로 전부에 잠금을 끼워야 하고 교착 위험을 라이브로 검증할 수 없어 택하지 않았다(WD-645).
  *
  * <p><b>재판정 규칙(WD-629 → WD-645).</b> Tibero 는 USER_TABLES 에서 이름이 사라져도 권한이 사라졌다는 보장이 없다 — 재생성은 테이블을
  * 보관본 이름으로 RENAME 하고({@code TiberoRebuildBackup}) 휴지통은 DROP 된 테이블을 {@code BIN$...} 객체로 남기며, GRANT 는

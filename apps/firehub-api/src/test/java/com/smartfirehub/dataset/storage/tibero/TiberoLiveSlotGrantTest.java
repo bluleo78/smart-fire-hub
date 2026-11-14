@@ -292,7 +292,8 @@ class TiberoLiveSlotGrantTest extends IntegrationTestBase {
           env.tenantId,
           c -> {
             try (Statement st = c.createStatement()) {
-              st.execute(sql);
+              // 운영의 사용자 DDL 경로(runIgnoring)와 같은 재시도 도우미를 쓴다(WD-739).
+              TiberoErrors.executeDdl(st, sql);
             }
             return null;
           });
@@ -302,10 +303,11 @@ class TiberoLiveSlotGrantTest extends IntegrationTestBase {
   }
 
   /**
-   * 겹침 실측(WD-629): 커밋 뒤 슬롯 GRANT 동기화는 전용 실행기에서 자동 커밋 GRANT/REVOKE 를 던지고, Tibero 는 테이블 잠금을 잡지
-   * 않는다(GRANT 가 DDL 이라 암묵 커밋으로 잠금이 먼저 풀린다). PG 판 회귀({@code PythonReadGrantWiringTest
+   * 겹침 실측(WD-629): 커밋 뒤 슬롯 GRANT 동기화는 전용 실행기에서 자동 커밋 GRANT/REVOKE 를 던지고, GRANT 가 DDL 이라 암묵 커밋으로 테이블
+   * 잠금이 먼저 풀려 잠금으로는 직렬화되지 않는다. 겹친 DDL 은 기다리지 않고 -12033(NOWAIT)으로 즉시 실패하며(실측, WD-739), 사용자 DDL 쪽이
+   * {@code TiberoErrors.executeDdl} 로 짧게 재시도해 흡수한다. PG 판 회귀({@code PythonReadGrantWiringTest
    * .syncTableAfterCommit_overlappingAlterAndDrop_...})와 같은 모양으로, 동기화와 같은 테이블의 ADD COLUMN·DROP
-   * TABLE 을 겹쳐 사용자 DDL 이 실패하지 않는지 본다. 실패하면 앱 수준 직렬화가 필요하다는 증거다(별도 이슈로 연기한 결정).
+   * TABLE 을 겹쳐 사용자 DDL 이 실패하지 않는지 본다. 실패하면 재시도 흡수가 부족하다는 증거다.
    */
   @Test
   void grantOverlappingAlterAndDrop_doesNotFailUserDdl() throws Exception {
