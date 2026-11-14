@@ -3,6 +3,7 @@ package com.smartfirehub.analytics.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.smartfirehub.analytics.repository.AnalyticsQueryRunRepository.Run;
+import com.smartfirehub.global.platformdb.mybatis.LongTextAssertions;
 import com.smartfirehub.user.repository.TenantPairContractBase;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -43,6 +44,17 @@ public abstract class AnalyticsQueryRunRepositoryContractTest extends TenantPair
 
     assertThat(id).isNotNull();
     assertThat(fx.analyticsQueryRunExists(id)).isTrue();
+    assertThat(inA(() -> repository().findOwned(id, owner))).contains(new Run(id, sql, 500));
+  }
+
+  /** SQL 본문은 잘리면 안 된다 — Tibero 도 sql_text 가 CLOB 라 65532 바이트를 넘어도 원문 그대로여야 한다(WD-740). */
+  @Test
+  @DisplayName("sql_text_가_65532바이트를_넘어도_저장되고_그대로_읽힌다")
+  void sql_text_가_65532바이트를_넘어도_저장되고_그대로_읽힌다() {
+    String sql = LongTextAssertions.koreanSql70Kb("-- 끝");
+    UUID id = insertA(owner, sql, 500);
+
+    assertThat(inA(() -> repository().findOwned(id, owner)).orElseThrow().sqlText()).isEqualTo(sql);
     assertThat(inA(() -> repository().findOwned(id, owner))).contains(new Run(id, sql, 500));
   }
 

@@ -39,10 +39,16 @@ class MigrationParityTest {
    * 마이그레이션(V83 등)에 이미 가졌다. 설계 docs/superpowers/specs/2026-11-10-wd492-tibero-tenant-rls-design.md
    * §6 이 이 예외를 정했다. V159.1 은 slack_workspace.signing_secret_enc 의 NOT NULL 해제로, Tibero 는 ''=NULL 이라
    * 슬랙 최초 설치가 넣는 빈 서명 비밀이 NOT NULL 에 걸려서 Tibero 열만 푼다(WD-709, 스펙 D3 — PG 스키마는 그대로 NOT NULL 이라 짝이
-   * 없다). 여기에 버전을 더할 때는 그 마이그레이션 머리말에 PG 짝이 없는 이유를 적는다.
+   * 없다). V162.1~V162.3 은 sql_text 세 열을 CLOB 로 바꾸는 한 일(열 추가·복사·교체)을 DDL·DML 규칙대로 쪼갠 것으로, Tibero 만
+   * 64KB 한도가 있어 PG 짝이 없다(WD-740). 여기에 버전을 더할 때는 그 마이그레이션 머리말에 PG 짝이 없는 이유를 적는다.
    */
   private static final Set<MigrationVersion> TIBERO_ONLY =
-      Set.of(MigrationVersion.fromVersion("156.1"), MigrationVersion.fromVersion("159.1"));
+      Set.of(
+          MigrationVersion.fromVersion("156.1"),
+          MigrationVersion.fromVersion("159.1"),
+          MigrationVersion.fromVersion("162.1"),
+          MigrationVersion.fromVersion("162.2"),
+          MigrationVersion.fromVersion("162.3"));
 
   private static final Pattern VERSIONED = Pattern.compile("^V([0-9._]+?)__.+\\.(sql|java)$");
 

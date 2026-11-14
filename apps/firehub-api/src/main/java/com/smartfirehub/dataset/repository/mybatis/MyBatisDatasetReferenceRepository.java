@@ -76,6 +76,9 @@ public class MyBatisDatasetReferenceRepository implements DatasetReferenceReposi
             r ->
                 new DashboardSqlCandidate(
                     new DashboardHit(r.id(), r.name(), r.visible()), r.sqlText()))
+        // 매퍼는 (대시보드, 저장 쿼리) 쌍마다 한 행이라(sql_text 가 Tibero CLOB 이라 DISTINCT 불가, WD-740)
+        // 같은 대시보드·같은 본문이 겹치는 것을 여기서 지운다. 순서는 처음 나온 순.
+        .distinct()
         .toList();
   }
 

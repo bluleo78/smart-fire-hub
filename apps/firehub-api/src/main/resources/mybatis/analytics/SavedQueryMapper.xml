@@ -9,6 +9,7 @@
   정렬: 목록은 updated_at DESC, id DESC(같은 수정 시각에서 페이지 경계가 흔들리지 않게 — jOOQ 판에도 같은 tiebreak 를 더했다).
   삽입 시각: PG 는 jOOQ 처럼 열 DEFAULT, Tibero 는 DB UTC 시계로 명시(insertTimestampColumns/Values). 수정 시각은 jOOQ 와 같은 자바 시각을 바인딩.
   RETURNING 대신: 삽입은 생성 키(useGeneratedKeys), 공유 켜기는 대상 FOR UPDATE 조회 → 그 id 만 UPDATE(구현이 한 트랜잭션으로 묶는다).
+  sql_text 는 PG text / Tibero CLOB(문자열 바인드·getString, 한도 없음 — V162.1, WD-740). CLOB 이라 DISTINCT·GROUP BY 에 넣지 않는다.
 -->
 <mapper namespace="com.smartfirehub.analytics.repository.mybatis.SavedQueryMapper">
 

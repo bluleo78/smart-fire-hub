@@ -11,6 +11,7 @@
   삽입 시각: PG 는 jOOQ 처럼 열 DEFAULT, Tibero 는 DB UTC 시계로 명시(insertTimestampColumns/Values). 수정 시각은 jOOQ 와 같은 자바 시각을 바인딩.
   RETURNING 대신: 삽입은 생성 키(useGeneratedKeys), 공유 켜기는 대상 FOR UPDATE 조회 → 그 id 만 UPDATE(구현이 한 트랜잭션으로 묶는다).
   위젯은 차트 삭제 때 DB FK(ON DELETE CASCADE)가 지운다 — 문장에서 따로 지우지 않는다.
+  저장 쿼리 sql_text 는 PG text / Tibero CLOB(문자열 바인드·getString, 한도 없음 — V162.1, WD-740).
 -->
 <mapper namespace="com.smartfirehub.analytics.repository.mybatis.ChartMapper">
 

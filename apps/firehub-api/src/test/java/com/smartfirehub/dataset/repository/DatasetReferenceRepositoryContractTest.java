@@ -8,6 +8,7 @@ import com.smartfirehub.dataset.dto.DatasetReferencesResponse.TriggerReferenceIt
 import com.smartfirehub.dataset.repository.DatasetReferenceRepository.DashboardHit;
 import com.smartfirehub.dataset.repository.DatasetReferenceRepository.DashboardSqlCandidate;
 import com.smartfirehub.dataset.repository.DatasetReferenceRepository.PipelineSqlCandidate;
+import com.smartfirehub.global.platformdb.mybatis.LongTextAssertions;
 import com.smartfirehub.user.repository.TenantPairContractBase;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -241,6 +242,43 @@ public abstract class DatasetReferenceRepositoryContractTest extends TenantPairC
         .containsExactly(
             new DashboardSqlCandidate(new DashboardHit(hidden, p(" hidden"), false), hiddenSql));
     assertThat(inA(() -> repository().findDashboardSqlCandidates("50%", viewer))).isEmpty();
+  }
+
+  /**
+   * Tibero 는 sql_text 가 CLOB 이라 DISTINCT 에 넣을 수 없다(WD-740). 65532 바이트를 넘는 본문이 섞여도 반환 행 집합이 같아야 하고,
+   * 같은 대시보드·같은 본문은 한 행(저장 쿼리가 둘이어도)이며, 같은 대시보드의 서로 다른 본문은 각각 한 행이다.
+   */
+  @Test
+  @DisplayName("대시보드_후보_조회가_긴_sql_text_에서도_같은_결과")
+  void 대시보드_후보_조회가_긴_sql_text_에서도_같은_결과() {
+    long viewer = fx.createUser(p("viewer"), null);
+    long owner = fx.createUser(p("owner"), null);
+    long mine = fx.createDashboard(tenantA, p(" mine"), viewer, false);
+    long shared = fx.createDashboard(tenantA, p(" shared"), owner, true);
+    long hidden = fx.createDashboard(tenantA, p(" hidden"), owner, false);
+    String longSql = LongTextAssertions.koreanSql70Kb(" select * from Wd740_Tbl");
+    String longSql2 = LongTextAssertions.koreanSql70Kb(" join WD740_TBL using (id)");
+    String shortSql = "select * from wd740_tbl";
+    // mine: 같은 긴 본문의 저장 쿼리 둘 → 한 행.
+    widget(mine, null, longSql);
+    widget(mine, null, longSql);
+    // shared: 긴 본문 둘(서로 다름) + 짧은 본문 + 같은 짧은 본문 → 세 행.
+    widget(shared, null, longSql);
+    widget(shared, null, longSql2);
+    widget(shared, null, shortSql);
+    widget(shared, null, shortSql);
+    // hidden: 짧은 본문 하나(남의 비공개는 visible=false 로 함께).
+    widget(hidden, null, shortSql);
+    // 패턴이 없는 본문은 빠진다.
+    widget(shared, null, "select 1 from other_tbl");
+
+    assertThat(inA(() -> repository().findDashboardSqlCandidates("wd740_tbl", viewer)))
+        .containsExactlyInAnyOrder(
+            new DashboardSqlCandidate(new DashboardHit(mine, p(" mine"), true), longSql),
+            new DashboardSqlCandidate(new DashboardHit(shared, p(" shared"), true), longSql),
+            new DashboardSqlCandidate(new DashboardHit(shared, p(" shared"), true), longSql2),
+            new DashboardSqlCandidate(new DashboardHit(shared, p(" shared"), true), shortSql),
+            new DashboardSqlCandidate(new DashboardHit(hidden, p(" hidden"), false), shortSql));
   }
 
   @Test

@@ -62,6 +62,20 @@ public abstract class QueryHistoryRepositoryContractTest extends TenantPairContr
     assertThat(ok.executedAt()).isCloseTo(LocalDateTime.now(), within(3, ChronoUnit.MINUTES));
   }
 
+  /** SQL 본문은 잘리면 안 된다 — Tibero 도 sql_text 가 CLOB 라 65532 바이트를 넘어도 원문 그대로여야 한다(WD-740). */
+  @Test
+  @DisplayName("sql_text_가_65532바이트를_넘어도_저장되고_그대로_읽힌다")
+  void sql_text_가_65532바이트를_넘어도_저장되고_그대로_읽힌다() {
+    long ds = fx.createDataset(tenantA, prefix + " ds");
+    String sql = LongTextAssertions.koreanSql70Kb("-- 끝");
+
+    save(ds, sql, true, null);
+
+    List<QueryHistoryResponse> rows = inA(() -> repository().findByDatasetId(ds, 0, 10));
+    assertThat(rows).hasSize(1);
+    assertThat(rows.get(0).sql()).isEqualTo(sql);
+  }
+
   /** 오류 메시지는 SQL 엔진 예외 문구라 길이를 통제할 수 없다 — Tibero 바이트 한도를 넘어도 저장은 성공해야 한다(WD-728). */
   @Test
   @DisplayName("error_message 에 한도+1 바이트 한글 값을 넣어도 저장되고 한도 안으로 잘린다")

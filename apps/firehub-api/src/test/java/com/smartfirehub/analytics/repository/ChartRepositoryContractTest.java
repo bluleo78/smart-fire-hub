@@ -9,6 +9,7 @@ import com.smartfirehub.analytics.dto.CreateChartRequest;
 import com.smartfirehub.analytics.dto.DeleteImpactResponse;
 import com.smartfirehub.analytics.dto.UpdateChartRequest;
 import com.smartfirehub.global.dto.LockedRowVersion;
+import com.smartfirehub.global.platformdb.mybatis.LongTextAssertions;
 import com.smartfirehub.user.repository.TenantPairContractBase;
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -372,6 +373,20 @@ public abstract class ChartRepositoryContractTest extends TenantPairContractBase
     assertThat(inA(() -> repository().findSavedQuerySqlText(othersPrivate, me))).isEmpty();
     assertThat(inA(() -> repository().findSavedQuerySqlText(-1L, me))).isEmpty();
     assertThat(inB(() -> repository().findSavedQuerySqlText(mine, me))).isEmpty();
+  }
+
+  /** 저장 쿼리 SQL 본문이 CLOB(Tibero)라 65532 바이트를 넘어도 차트 경로의 두 읽기 문장이 원문 그대로 돌려줘야 한다(WD-740). */
+  @Test
+  @DisplayName("저장_쿼리_sql_text_가_길어도_차트_경로에서_읽힌다")
+  void 저장_쿼리_sql_text_가_길어도_차트_경로에서_읽힌다() {
+    String sql = LongTextAssertions.koreanSql70Kb("-- 끝");
+    long longQuery = fx.createSavedQuery(tenantA, null, sql);
+    Long chart = insertA(me, req(prefix + "-long", longQuery, "BAR", false));
+
+    // 저장 쿼리 id 로 읽는 문장.
+    assertThat(inA(() -> repository().findSavedQuerySqlTextById(longQuery))).contains(sql);
+    // 차트 id 로(가시성 포함) 읽는 문장.
+    assertThat(inA(() -> repository().findSavedQuerySqlText(chart, me))).contains(sql);
   }
 
   // ---- 공유(Review Focus 4) ----

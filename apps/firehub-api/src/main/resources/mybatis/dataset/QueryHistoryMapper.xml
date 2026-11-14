@@ -6,6 +6,7 @@
   affected_rows·execution_time_ms 는 NULL 허용 열이라 COALESCE 로 0 을 준다(jOOQ 매핑과 같음, record 의 원시 타입 인자에 null 이 못 들어간다).
   정렬은 executed_at 내림차순 + id 내림차순(같은 시각 행의 순서를 고정 — jOOQ 판의 정렬을 좁힌 것).
   빈 문자열: 변환하지 않는다 — Tibero 는 '' 를 NULL 로 저장(error_message 는 null 로 돌아옴, sql_text 는 NOT NULL 이라 거절).
+  sql_text 는 PG text / Tibero CLOB(문자열 바인드·getString, 한도 없음 — V162.1, WD-740). CLOB 이라 DISTINCT·GROUP BY 에 넣지 않는다.
 -->
 <mapper namespace="com.smartfirehub.dataset.repository.mybatis.QueryHistoryMapper">
 

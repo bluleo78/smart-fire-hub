@@ -8,6 +8,7 @@ import com.smartfirehub.analytics.dto.SavedQueryResponse;
 import com.smartfirehub.analytics.dto.UpdateSavedQueryRequest;
 import com.smartfirehub.analytics.repository.SavedQueryRepository.RawSavedQuery;
 import com.smartfirehub.global.dto.LockedRowVersion;
+import com.smartfirehub.global.platformdb.mybatis.LongTextAssertions;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.user.repository.TenantPairContractBase;
@@ -498,6 +499,42 @@ public abstract class SavedQueryRepositoryContractTest extends TenantPairContrac
     assertThat(inB(() -> repository().countOtherUserCharts(q, me))).isZero();
     // 주인이 null 이면 jOOQ 는 created_by <> NULL 을 그려 UNKNOWN → 0행이다 — MyBatis 도 같은 0 이어야 한다(WD-710 C1).
     assertThat(inA(() -> repository().countOtherUserCharts(q, null))).isZero();
+  }
+
+  /** SQL 본문은 잘리면 안 된다 — Tibero 도 sql_text 가 CLOB 라 65532 바이트를 넘어도 원문 그대로여야 한다(WD-740). */
+  @Test
+  @DisplayName("sql_text_가_65532바이트를_넘어도_저장되고_그대로_읽힌다")
+  void sql_text_가_65532바이트를_넘어도_저장되고_그대로_읽힌다() {
+    String sql = LongTextAssertions.koreanSql70Kb("-- 끝");
+    Long id =
+        insertA(me, new CreateSavedQueryRequest(prefix + "-long", null, sql, null, null, true));
+
+    assertThat(inA(() -> repository().findById(id, me, ALL)).orElseThrow().sqlText())
+        .isEqualTo(sql);
+    assertThat(inA(() -> repository().findByIdForOwner(id, me, ALL)).orElseThrow().sqlText())
+        .isEqualTo(sql);
+    assertThat(raw(id).sqlText()).isEqualTo(sql);
+    // 목록 응답은 본문을 싣지 않지만, 긴 본문 행이 목록·건수 경로를 깨뜨리지 않아야 한다.
+    assertThat(listIds(null, null, null, null, 0, 50)).contains(id);
+
+    // UPDATE 경로 — 짧은 값으로 바꿨다가 다른 긴 값으로 바꾼다.
+    runA(
+        () ->
+            repository()
+                .update(
+                    id,
+                    new UpdateSavedQueryRequest(null, null, "SELECT 2", null, null, null, null),
+                    me));
+    assertThat(raw(id).sqlText()).isEqualTo("SELECT 2");
+    String sql2 = LongTextAssertions.koreanSql70Kb("-- 수정");
+    runA(
+        () ->
+            repository()
+                .update(
+                    id, new UpdateSavedQueryRequest(null, null, sql2, null, null, null, null), me));
+    assertThat(raw(id).sqlText()).isEqualTo(sql2);
+    assertThat(inA(() -> repository().findById(id, me, ALL)).orElseThrow().sqlText())
+        .isEqualTo(sql2);
   }
 
   private RawSavedQuery raw(Long id) {

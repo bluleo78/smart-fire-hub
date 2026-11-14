@@ -151,9 +151,9 @@ PG는 jOOQ 구현을 그대로 쓰고, Tibero용 MyBatis 구현(`repository/myba
   | `graph_review_item.reason` | VARCHAR2(65532) | LLM 근거·추출 원문으로 조립 | 자른다(WD-728) |
   | `pipeline_execution`·`pipeline_step_execution.error_message`, `dataset_search_index.last_error`, `embedding_reembed_state.last_error`, `proactive_job_execution.error_message` | VARCHAR2(65532) | 예외 메시지 | 이미 막힘(`truncateErrorMessage`) |
   | `document_file.error_detail` | VARCHAR2(65532) | 파싱 오류 | 이미 막힘(`truncate` 4000자) |
-  | `saved_query.sql_text` | VARCHAR2(65532) | 사용자 SQL, PG 검증 100,000자 | **목록만 — PG 검증이 Tibero 한도보다 크다**(65532 바이트를 넘는 SQL 은 Tibero 에서만 실패). SQL 을 자르면 끝의 WHERE 같은 절이 떨어져 다시 실행할 때 다른 SQL 이 돌므로 자르지 않는다 |
-  | `query_history.sql_text` | VARCHAR2(65532) | 사용자 SQL(`SqlQueryRequest @NotBlank` 만) | 목록만, PG 검증 없음. 이력에서 다시 실행할 수 있어 잘린 SQL 은 끝의 WHERE 가 떨어진 다른 SQL 이 된다 — 자르지 않는다 |
-  | `analytics_query_run.sql_text` | VARCHAR2(65532) | 사용자 SQL(`@NotBlank` 만), 런을 다시 실행할 때 읽는다 | 목록만, PG 검증 없음(같은 이유로 자르지 않는다) |
+  | `saved_query.sql_text` | Tibero CLOB(한도 없음, WD-740) | 사용자 SQL, PG 검증 100,000자 | **CLOB 로 해결(V162.1)** — SQL 을 자르면 끝의 WHERE 같은 절이 떨어져 다시 실행할 때 다른 SQL 이 돌므로 자르지 않고 열을 넓혔다 |
+  | `query_history.sql_text` | Tibero CLOB(한도 없음, WD-740) | 사용자 SQL(`SqlQueryRequest @NotBlank` 만) | CLOB 로 해결(V162.1) — 이력에서 다시 실행할 수 있어 잘린 SQL 은 다른 SQL 이 되므로 자르지 않는다 |
+  | `analytics_query_run.sql_text` | Tibero CLOB(한도 없음, WD-740) | 사용자 SQL(`@NotBlank` 만), 런을 다시 실행할 때 읽는다 | CLOB 로 해결(V162.1, 같은 이유로 자르지 않는다) |
   | `graph_review_item.payload` | JSON | 검수 근거 JSON(시스템 조립) | 목록만 — VARCHAR2 가 아니고 JSON 은 자르면 깨진다 |
   | `pipeline_step.description`, `pipeline_trigger.description` | VARCHAR2(65532) | 사용자 입력 | 목록만, PG 검증 없음 |
   | `report_template.style` | VARCHAR2(65532) | 사용자 입력 | 목록만, PG 검증 없음 |

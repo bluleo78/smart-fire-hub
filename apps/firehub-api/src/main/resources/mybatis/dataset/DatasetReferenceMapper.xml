@@ -4,7 +4,8 @@
   데이터셋 참조(파이프라인·대시보드·트리거) 문장(WD-707) — JooqDatasetReferenceRepository 와 같은 의미. 규칙은 MyBatisPlatformConfig javadoc.
   모든 테이블이 테넌트 정책(RLS) 대상이라 tenant_id 를 쓰지 않는다.
   - 본문 검색(script_content·sql_text)은 공용 조각 PlatformSql.likeIgnoreCase(PG ILIKE 대체 — 패턴은 리포지토리가 LikePatternUtils.containsPattern 로
-    이스케이프). Tibero script_content 는 CLOB 이라 DISTINCT 를 걸지 않는다(jOOQ 판도 DISTINCT 없음).
+    이스케이프). Tibero script_content 는 CLOB 이라 DISTINCT 를 걸지 않는다(jOOQ 판도 DISTINCT 없음). saved_query.sql_text 도 Tibero CLOB(WD-740)이라
+    selectDashboardSqlCandidates 는 본문을 DISTINCT 밖에서 붙인다.
   - 대시보드 가시성은 공유 조각 analytics/DashboardVisibility.xml(파라미터 이름 userId) — SELECT 목록에는 CASE 로 감싸 불리언 리터럴로 낸다.
   - 트리거 config 의 datasetIds 포함 판정만 벤더별 문장(databaseId)이다. 아래 selectDatasetChangeTriggers 주석 참조.
   정렬은 jOOQ 판 그대로(ORDER BY 가 없는 문장은 순서를 보장하지 않는다).
@@ -121,10 +122,18 @@
      WHERE saved_query.dataset_id = #{datasetId}
   </select>
 
+  <!--
+    sql_text 는 Tibero CLOB(WD-740)이라 DISTINCT 에 넣을 수 없다. 그래서 본문이 패턴에 맞는 (대시보드, 저장 쿼리 id) 쌍만 파생 표에서 DISTINCT 로 고른 뒤
+    그 id 로 saved_query 에서 본문을 붙인다. 같은 본문을 가진 저장 쿼리가 둘이면 두 행이 나오므로, 「같은 대시보드·같은 본문은 한 행」은
+    MyBatisDatasetReferenceRepository 가 자바에서 중복을 지워 지킨다(양쪽 DB 공통 문장).
+  -->
   <select id="selectDashboardSqlCandidates" resultMap="dashboardSqlRow">
-    SELECT DISTINCT dashboard.id, dashboard.name, <include refid="visibleColumn"/>, saved_query.sql_text
-    <include refid="dashboardToSavedQuery"/>
-     WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.likeIgnoreCase"><property name="col" value="saved_query.sql_text"/></include>
+    SELECT pair.id, pair.name, pair.visible, saved_query.sql_text
+      FROM (SELECT DISTINCT dashboard.id AS id, dashboard.name AS name, <include refid="visibleColumn"/>,
+                   saved_query.id AS saved_query_id
+            <include refid="dashboardToSavedQuery"/>
+             WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.likeIgnoreCase"><property name="col" value="saved_query.sql_text"/></include>) pair
+      JOIN saved_query ON saved_query.id = pair.saved_query_id
   </select>
 
   <!-- DATASET_CHANGE 트리거 중 config.datasetIds 배열에 이 데이터셋 id 가 든 것(#600). 아래 datasetIdsContains 만 벤더별이다. -->
