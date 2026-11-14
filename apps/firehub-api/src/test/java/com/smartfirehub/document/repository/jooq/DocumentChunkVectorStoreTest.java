@@ -223,27 +223,34 @@ class DocumentChunkVectorStoreTest extends IntegrationTestBase {
 
   @Test
   void iterativeScanFillsTopKWhenModelFilterRejectsNearestCandidates() {
-    // 모델 필터(인덱스 없음)는 HNSW 가 후보를 뽑은 "뒤에" 거른다. 질의에 가장 가까운 40개가 다른 모델이면
+    // 모델 필터(인덱스 없음)는 HNSW 가 후보를 뽑은 "뒤에" 거른다. 질의에 가장 가까운 20개가 다른 모델이면
     // ef_search 가 작을 때 iterative scan 없이는 현재 모델 벡터를 5건 채우지 못한다.
     // 뮤테이션: HnswSearch.relaxIterativeScan 의 iterative_scan 줄을 지우면 "with" 단언이 빨개진다.
     // (행이 적어 seq scan 이 되면 차이가 사라지므로 enable_seqscan 을 끄고, ef_search 를 10 으로 낮춰 재현한다.)
+    //
+    // 데이터 모양이 결과를 좌우한다(예전 40개·같은 벡터 반복 구성은 실행마다 흔들렸다).
+    // - 다른 모델 벡터 수(20)는 HNSW 0층 이웃 상한(m=16 의 두 배, 32)보다 적어야 한다. 넘치면 이웃 가지치기가 "덩어리 뒤쪽" 의 목표를 이웃
+    //   목록에서 지워, 목표가 그래프의 섬이 되고 iterative scan 으로도 닿지 못한다(EXPLAIN 에서 40행만 훑고 끝남을 확인).
+    // - 벡터는 모두 서로 다르다. 같은 벡터가 많으면 그래프 연결이 나빠진다.
+    // - 질의는 다른 테스트가 쓰지 않는 700번 축이라 공유 색인에 쌓인 다른 테스트의 벡터가 끼어들지 않는다.
+    //   다른 모델은 질의와 거리 약 0.04, 목표는 45°(약 0.29)라 ef_search 10 이 다른 모델만 집는다.
+    int queryAxis = 700;
     EmbeddingSpace otherModel = new EmbeddingSpace(EmbeddingDimension.D1024, "other-model");
     List<Chunk> near = new ArrayList<>();
     List<float[]> nearVec = new ArrayList<>();
-    for (int i = 0; i < 40; i++) {
+    for (int i = 0; i < 20; i++) {
       near.add(new Chunk(100 + i, "other-" + i, 1));
-      nearVec.add(axis(1024, 5));
+      float[] v = axis(1024, queryAxis);
+      v[800 + i] = 0.3f;
+      nearVec.add(v);
     }
     List<Chunk> target = new ArrayList<>();
     List<float[]> targetVec = new ArrayList<>();
-    // 목표 벡터는 질의(5번 축)와 45° — 다른 모델 40개(거리 0) 다음으로 가깝고, 다른 테스트가 공유 DB 에 남긴 축 벡터들(질의와 직교, 거리 1)보다는
-    // 확실히 가깝다. 예전에는 6번 축(질의와 직교)이라 공유 색인의 수많은 직교 벡터와 동점이 되어, 묶음 실행에서 iterative scan 이 메모리 한도 안에
-    // 목표를 다 찾지 못하는 일이 있었다(실행 순서에 따라 흔들림).
-    float[] between = axis(1024, 5);
-    between[6] = between[5];
     for (int i = 0; i < 5; i++) {
       target.add(new Chunk(200 + i, "target-" + i, 1));
-      targetVec.add(between.clone());
+      float[] v = axis(1024, queryAxis);
+      v[900 + i] = 1f;
+      targetVec.add(v);
     }
     TenantContext.runScoped(
         tenantA,
@@ -259,7 +266,7 @@ class DocumentChunkVectorStoreTest extends IntegrationTestBase {
     List<Object> params = new ArrayList<>();
     String sql =
         chunkIndex.semanticSql(
-            S1024, List.of(), vectorLiteral(axis(1024, 5)), 5, params, ALL_VISIBLE_SQL);
+            S1024, List.of(), vectorLiteral(axis(1024, queryAxis)), 5, params, ALL_VISIBLE_SQL);
     int without =
         inTenantFixture(
             tenantA,
@@ -287,7 +294,7 @@ class DocumentChunkVectorStoreTest extends IntegrationTestBase {
     assertThat(
             TenantContext.runScopedGet(
                 tenantA,
-                () -> chunkIndex.semantic(S1024, axis(1024, 5), List.of(), 5, ALL_VISIBLE)))
+                () -> chunkIndex.semantic(S1024, axis(1024, queryAxis), List.of(), 5, ALL_VISIBLE)))
         .hasSize(5);
   }
 
