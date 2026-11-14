@@ -66,6 +66,8 @@ public class RowSearchSweepScheduler {
       fixedDelayString = "${row-search.sync.interval-ms:60000}")
   public void sweep() {
     if (!enabled) return;
+    // 벡터 저장소가 일시 중단이면(Qdrant 장애, WD-724·722) 이번 주기를 쉰다 — 데이터셋마다 실패·백오프가 쌓여 오류로 보이지 않게.
+    if (!vectorStoreFeatures.available()) return;
     long startedAt = System.nanoTime();
     Set<Long> settled = new HashSet<>();
     boolean hasMore;

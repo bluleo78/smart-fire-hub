@@ -15,5 +15,12 @@ public enum VectorOutboxKind {
   /** 데이터셋의 청크 색인 전부(dense + 키워드). 데이터셋 삭제. */
   CHUNK_ALL_OF_DATASET,
   /** 문서 파일의 청크 색인 전부(dense + 키워드). 문서 삭제·재적재. 대상은 문서 파일 id. */
-  CHUNK_ALL_OF_DOCUMENT
+  CHUNK_ALL_OF_DOCUMENT,
+  /**
+   * 데이터셋의 행 검색 색인 전부(테넌트 행 컬렉션의 모든 차원 dense + 키워드, 모든 세대). 데이터셋 삭제·검색 끄기·재생성 보관본 폐기(WD-722). 대상은
+   * 데이터셋 id.
+   */
+  ROWS_ALL_OF_DATASET,
+  /** 데이터셋의 행 검색 dense 만(키워드는 남김, 모든 세대). 등급이 임베딩 공급자를 허용하지 않게 된 정리(WD-722). 대상은 데이터셋 id. */
+  ROWS_DENSE_OF_DATASET
 }

@@ -77,7 +77,7 @@ class PgRowSearchIndexSearchTest extends IntegrationTestBase {
 
   @Test
   void semantic_ranksByCosine() {
-    List<RowHit> hits = index.semantic(ref, axis(1), CompiledFilter.none(), 2);
+    List<RowHit> hits = index.semantic(ref, axis(1), RowQueryFilter.none(), 2);
     assertThat(hits).extracting(RowHit::rowId).first().isEqualTo(2L);
     assertThat(hits.get(0).score()).isCloseTo(1.0, org.assertj.core.data.Offset.offset(1e-6));
   }
@@ -85,7 +85,7 @@ class PgRowSearchIndexSearchTest extends IntegrationTestBase {
   @Test
   void semantic_withFilter_joinsSourceAndStillFillsLimit() {
     var filter =
-        RowFilterCompiler.compile(
+        RowQueryFilter.validated(
             new RowFilter(List.of(new RowFilter.Condition("status", "eq", "완료"))),
             Map.of("content", "TEXT", "status", "VARCHAR"));
 
@@ -98,7 +98,7 @@ class PgRowSearchIndexSearchTest extends IntegrationTestBase {
   @Test
   void semantic_withIntegerInFilter_bindsTypedArray() {
     var filter =
-        RowFilterCompiler.compile(
+        RowQueryFilter.validated(
             new RowFilter(List.of(new RowFilter.Condition("cnt", "in", List.of(1, 3)))),
             Map.of("content", "TEXT", "status", "VARCHAR", "cnt", "INTEGER"));
 
@@ -116,7 +116,7 @@ class PgRowSearchIndexSearchTest extends IntegrationTestBase {
   @Test
   void semanticSql_exactBypassesHnswButFilterJoinKeepsPk() {
     var filter =
-        RowFilterCompiler.compile(
+        RowQueryFilter.validated(
             new RowFilter(List.of(new RowFilter.Condition("status", "eq", "완료"))),
             Map.of("content", "TEXT", "status", "VARCHAR"));
     String vec = com.smartfirehub.embedding.repository.VectorLiterals.toVectorLiteral(axis(0));
@@ -125,7 +125,7 @@ class PgRowSearchIndexSearchTest extends IntegrationTestBase {
     assertThat(explain(CompiledFilter.none(), false, vec)).contains("embedding_idx");
     assertThat(explain(CompiledFilter.none(), true, vec)).doesNotContain("embedding_idx");
     // 필터가 있어도 정확 스캔은 embedding 인덱스를 쓰지 않고, 조인은 원본 PK 인덱스를 그대로 쓴다.
-    assertThat(explain(filter, true, vec))
+    assertThat(explain(filter.toPostgres(), true, vec))
         .doesNotContain("embedding_idx")
         .contains("rs_search_src_pkey");
   }
@@ -155,7 +155,7 @@ class PgRowSearchIndexSearchTest extends IntegrationTestBase {
 
   @Test
   void keyword_findsTwoSyllableKoreanTerm() {
-    List<RowHit> hits = index.keyword(ref, "누수", CompiledFilter.none(), 10);
+    List<RowHit> hits = index.keyword(ref, "누수", RowQueryFilter.none(), 10);
     assertThat(hits).extracting(RowHit::rowId).contains(1L, 3L).doesNotContain(2L);
     assertThat(hits).allMatch(h -> h.score() > 0);
   }

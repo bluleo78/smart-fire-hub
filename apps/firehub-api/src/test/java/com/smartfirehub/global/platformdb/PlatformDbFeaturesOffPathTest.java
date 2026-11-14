@@ -487,7 +487,7 @@ class PlatformDbFeaturesOffPathTest {
   /** 행 검색 색인 상태 한 행 — 임베딩 모델만 의미가 있다(키워드 전용이 아니면 정리 대상). */
   private static com.smartfirehub.dataset.rowsearch.SearchIndexState searchState(String model) {
     return new com.smartfirehub.dataset.rowsearch.SearchIndexState(
-        5L, "IDLE", "h", model, 1024, null, null, null, null, 0L, 0L, 0, null, null);
+        5L, "IDLE", "h", model, 1024, null, null, null, null, 0L, 0L, 0, null, null, 1L);
   }
 
   /** 테넌트 데이터 저장소가 Tibero 인 해석기 — 행 검색이 없는 저장소. */

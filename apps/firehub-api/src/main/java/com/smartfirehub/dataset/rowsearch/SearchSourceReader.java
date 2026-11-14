@@ -8,9 +8,11 @@ import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.jooq.DSLContext;
@@ -87,6 +89,55 @@ public class SearchSourceReader {
             (Object) ids.toArray(Long[]::new))
         .forEach(r -> result.put(r.get("id", Long.class), toValues(r, columns)));
     return result;
+  }
+
+  /**
+   * 필터를 만족하는 행 id 를 id 순으로 많아야 {@code limit} 개(행 검색 필터 1단계, ADR 0002 결정 9·WD-722). Qdrant 색인은 원본 열을
+   * 모르므로 데이터 저장소에서 먼저 필터를 평가해 id 로 넘긴다. 호출자는 상한+1 개를 요청해 상한을 넘는지 판단한다.
+   *
+   * @param filter 원본 별칭 {@code t} 기준 WHERE 조각(비어 있지 않아야 한다)
+   */
+  public List<Long> matchingIds(String table, CompiledFilter filter, int limit) {
+    List<Object> params = new ArrayList<>(filter.params());
+    params.add(limit);
+    return dsl.fetch(
+            "SELECT t.id FROM "
+                + DataSchema.qualify(table)
+                + " t WHERE "
+                + filter.sql()
+                + " ORDER BY t.id LIMIT ?",
+            params.toArray())
+        .map(r -> r.get(0, Long.class));
+  }
+
+  /**
+   * 후보 id 중 필터를 만족하는 것(행 검색 필터 2단계 — 필터를 만족하는 행이 상한을 넘을 때의 사후 확인, WD-722).
+   *
+   * @param filter 원본 별칭 {@code t} 기준 WHERE 조각(비어 있지 않아야 한다)
+   */
+  public Set<Long> filterIds(String table, Collection<Long> ids, CompiledFilter filter) {
+    if (ids.isEmpty()) return Set.of();
+    List<Object> params = new ArrayList<>();
+    params.add(ids.toArray(Long[]::new));
+    params.addAll(filter.params());
+    return new HashSet<>(
+        dsl.fetch(
+                "SELECT t.id FROM "
+                    + DataSchema.qualify(table)
+                    + " t WHERE t.id = ANY(?) AND "
+                    + filter.sql(),
+                params.toArray())
+            .map(r -> r.get(0, Long.class)));
+  }
+
+  /** 후보 id 중 원본에 아직 있는 것(행 색인 원본 대조 — 지워진 행의 점 정리, WD-722). */
+  public Set<Long> existingIds(String table, Collection<Long> ids) {
+    if (ids.isEmpty()) return Set.of();
+    return new HashSet<>(
+        dsl.fetch(
+                "SELECT id FROM " + DataSchema.qualify(table) + " WHERE id = ANY(?)",
+                (Object) ids.toArray(Long[]::new))
+            .map(r -> r.get(0, Long.class)));
   }
 
   /** 컬럼 이름을 인용해 쉼표로 잇는다(SELECT 목록용). 이름은 dataset_column 에서 온 값만 들어온다. */

@@ -76,8 +76,7 @@ class QdrantVectorStoreLifecycleTest {
             "fh_chunks_1024",
             "fh_chunks_1536",
             "fh_datasets_kw",
-            "fh_chunks_kw",
-            "fh_rows_kw");
+            "fh_chunks_kw");
 
     CollectionInfo info = info(EmbeddingDimension.D1024.datasetCollection());
     assertThat(info.getConfig().getParams().getShardNumber()).isEqualTo(6);
@@ -114,13 +113,6 @@ class QdrantVectorStoreLifecycleTest {
         .containsExactlyInAnyOrder("tenant_id", "dataset_id", "model", "seq");
     assertThat(schema.get("tenant_id").getDataType()).isEqualTo(PayloadSchemaType.Keyword);
     assertThat(schema.get("tenant_id").getParams().getKeywordIndexParams().getIsTenant()).isTrue();
-
-    CollectionInfo kw = info("fh_rows_kw");
-    assertThat(kw.getConfig().getParams().getVectorsConfig().getParamsMap().getMapMap()).isEmpty();
-    assertThat(kw.getConfig().hasQuantizationConfig()).isFalse();
-    assertThat(kw.getPayloadSchemaMap().keySet())
-        .contains("row_id", "chunk_no", "source_hash", "generation")
-        .doesNotContain("model");
   }
 
   @Test
@@ -175,23 +167,35 @@ class QdrantVectorStoreLifecycleTest {
         .containsExactlyInAnyOrder("tenant_id", "dataset_id", "document_id", "model", "seq");
   }
 
+  /**
+   * 행 컬렉션은 테넌트별이고 색인을 만들 때 생긴다(WD-722). 샤드 수는 행 전용 설정(기본 1)을 따르고, 키워드 전용(차원 1)은 키워드 컬렉션만 만든다. 테넌트
+   * 목록은 끝의 구분자까지 맞춰 테넌트 1 이 테넌트 12 의 컬렉션을 집지 않는다.
+   */
   @Test
-  void rowCollectionIsCreatedOnDemand() throws Exception {
+  void rowCollectionsArePerTenantAndCreatedOnDemand() throws Exception {
     QdrantVectorStoreLifecycle lc = lifecycle(6, true);
     lc.prepare();
-    assertThat(lc.ensureRowCollection(768)).isEqualTo("fh_rows_768");
-    assertThat(lc.ensureRowCollection(768)).isEqualTo("fh_rows_768"); // 두 번째는 확인만
-    assertThat(info("fh_rows_768").getPayloadSchemaMap().keySet())
+    lc.ensureRowCollections(1L, 768);
+    lc.ensureRowCollections(1L, 768); // 두 번째는 확인만
+    lc.ensureRowCollections(12L, 1); // 키워드 전용
+
+    assertThat(lc.rowCollections(1L)).containsExactly("fh_rows_t1_768", "fh_rows_t1_kw");
+    assertThat(lc.rowCollections(12L)).containsExactly("fh_rows_t12_kw");
+
+    CollectionInfo dense = info("fh_rows_t1_768");
+    assertThat(dense.getConfig().getParams().getShardNumber()).isEqualTo(1);
+    assertThat(dense.getConfig().getParams().getSparseVectorsConfig().getMapMap()).isEmpty();
+    assertThat(dense.getPayloadSchemaMap().keySet())
         .containsExactlyInAnyOrder(
-            "tenant_id",
-            "dataset_id",
-            "model",
-            "seq",
-            "row_id",
-            "chunk_no",
-            "source_hash",
-            "generation");
-    assertThatThrownBy(() -> lc.ensureRowCollection(1))
+            "tenant_id", "dataset_id", "model", "seq", "row_id", "source_hash", "generation");
+    CollectionInfo kw = info("fh_rows_t1_kw");
+    assertThat(kw.getConfig().getParams().getShardNumber()).isEqualTo(1);
+    assertThat(kw.getConfig().getParams().getVectorsConfig().getParamsMap().getMapMap()).isEmpty();
+    assertThat(kw.getConfig().hasQuantizationConfig()).isFalse();
+    assertThat(kw.getPayloadSchemaMap().keySet())
+        .containsExactlyInAnyOrder(
+            "tenant_id", "dataset_id", "seq", "row_id", "source_hash", "generation");
+    assertThatThrownBy(() -> QdrantCollectionSpec.rows(1L, 1))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -240,7 +244,7 @@ class QdrantVectorStoreLifecycleTest {
           lc.retryPrepare();
         }
         assertThat(client.listCollectionsAsync().get(30, TimeUnit.SECONDS))
-            .contains(EmbeddingDimension.D1024.datasetCollection(), "fh_rows_kw");
+            .contains(EmbeddingDimension.D1024.datasetCollection(), "fh_chunks_kw");
         now.addAndGet(QdrantVectorStoreLifecycle.AVAILABILITY_CACHE_MS);
         assertThat(lc.available()).isTrue();
       }
@@ -295,7 +299,7 @@ class QdrantVectorStoreLifecycleTest {
     QdrantVectorStoreLifecycle lc = lifecycle(6, true); // afterPropertiesSet 을 부르지 않은 상태
     assertThat(client.listCollectionsAsync().get(30, TimeUnit.SECONDS)).isEmpty();
     assertThat(lc.available()).isTrue();
-    assertThat(client.listCollectionsAsync().get(30, TimeUnit.SECONDS)).hasSize(7);
+    assertThat(client.listCollectionsAsync().get(30, TimeUnit.SECONDS)).hasSize(6);
   }
 
   /** API 키가 틀리면 설정 오류로 보고 기동을 멈춘다(2026-11-14 사용자 결정). */
@@ -308,6 +312,33 @@ class QdrantVectorStoreLifecycleTest {
       assertThatThrownBy(() -> new QdrantVectorStoreLifecycle(c, wrongKey).afterPropertiesSet())
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("API 키");
+    }
+  }
+
+  /**
+   * 서버의 JWT RBAC 가 꺼져 있으면 행 검색 테넌트 컬렉션 격리가 서지 않으므로 키 오류처럼 기동을 멈춘다(WD-722). 하네스 컨테이너는 켜져 있어 꺼진 컨테이너를
+   * 따로 띄운다.
+   */
+  @Test
+  void jwtRbacOffStopsStartup() {
+    try (org.testcontainers.qdrant.QdrantContainer off =
+        new org.testcontainers.qdrant.QdrantContainer(QdrantTestContainer.IMAGE)
+            .withApiKey("rbac-off-key")
+            // 훅처럼 여러 빌드가 겹치면 도커 API 가 응답 없이 끊길 때가 있다(NoHttpResponse) — 띄우기만 다시 시도한다.
+            .withStartupAttempts(3)) {
+      off.start();
+      QdrantProperties p =
+          new QdrantProperties(
+              "http://" + off.getHost() + ":" + off.getGrpcPort(),
+              "rbac-off-key",
+              1,
+              true,
+              Duration.ofSeconds(10));
+      try (QdrantClient c = QdrantClientConfig.create(p)) {
+        assertThatThrownBy(() -> new QdrantVectorStoreLifecycle(c, p).afterPropertiesSet())
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("JWT_RBAC");
+      }
     }
   }
 

@@ -226,6 +226,20 @@ abstract class SearchIndexStateRepositoryContractTest extends TenantPairContract
   }
 
   @Test
+  @DisplayName("세대 — 새 행은 1 에서 시작하고 markSourceOid 마다 1 오른다(전체 재색인은 세대를 바꾸지 않는다)")
+  void generation_startsAtOne_andBumpsOnSourceSwap() {
+    long ds = newIndexedDataset("ds");
+    assertThat(stateA(ds).generation()).isEqualTo(1L);
+
+    inA(() -> repository().resetForFullPass(ds, "h", "m", 1024, 1L, null));
+    assertThat(stateA(ds).generation()).isEqualTo(1L); // 전체 재색인은 색인을 통째로 지우므로 세대가 필요 없다
+
+    runA(() -> repository().markSourceOid(ds, 2L));
+    runA(() -> repository().markSourceOid(ds, 3L));
+    assertThat(stateA(ds).generation()).isEqualTo(3L);
+  }
+
+  @Test
   @DisplayName("패스 진행·완주·실패 백오프 — 시작 후보는 한 번만, 완주 시 책갈피가 된다")
   void pass_progress_complete_and_failure_backoff() {
     long ds = newIndexedDataset("ds");

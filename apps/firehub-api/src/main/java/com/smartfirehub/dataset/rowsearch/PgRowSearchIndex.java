@@ -6,6 +6,7 @@ import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantPipelineRole;
 import com.smartfirehub.global.tenant.TenantSchemaProvisioner;
+import com.smartfirehub.vectorstore.ConditionalOnPlatformVectorStore;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -24,9 +25,12 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>색인 테이블은 원본과 같은 테넌트 데이터 스키마에 둔다(스키마 단위 테넌트 격리를 그대로 따른다). FK 는 두지 않는다 — TRUNCATE·swap 이 깨지기
  * 때문(설계 3.4). vector/pg_trgm 은 public 에 있고 일부 경로의 search_path 에 public 이 없으므로 타입·연산자 클래스를 public.
  * 으로 한정한다.
+ *
+ * <p>벡터 저장소가 {@code platform} 일 때만 뜬다. qdrant 설치본은 {@code QdrantRowSearchIndex} 가 대신한다(WD-722).
  */
 @Repository
 @Transactional
+@ConditionalOnPlatformVectorStore
 public class PgRowSearchIndex implements RowSearchIndex {
 
   private final DSLContext dsl;
@@ -70,7 +74,7 @@ public class PgRowSearchIndex implements RowSearchIndex {
   }
 
   @Override
-  public void rebuildReusing(IndexRef ref, int dim) {
+  public void startGeneration(IndexRef ref, int dim) {
     requireCurrentTenant(ref);
     dsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(ref.prevTable()));
     if (tableExists(ref.indexTable())) {
@@ -87,13 +91,13 @@ public class PgRowSearchIndex implements RowSearchIndex {
   }
 
   @Override
-  public boolean hasPrev(IndexRef ref) {
+  public boolean hasPreviousGeneration(IndexRef ref) {
     requireCurrentTenant(ref);
     return tableExists(ref.prevTable());
   }
 
   @Override
-  public void dropPrev(IndexRef ref) {
+  public void dropPreviousGenerations(IndexRef ref) {
     requireCurrentTenant(ref);
     dsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(ref.prevTable()));
   }
@@ -102,7 +106,7 @@ public class PgRowSearchIndex implements RowSearchIndex {
   public void drop(IndexRef ref) {
     requireCurrentTenant(ref);
     dsl.execute("DROP TABLE IF EXISTS " + DataSchema.qualify(ref.indexTable()));
-    dropPrev(ref);
+    dropPreviousGenerations(ref);
   }
 
   @Override
@@ -205,8 +209,10 @@ public class PgRowSearchIndex implements RowSearchIndex {
   }
 
   @Override
-  public List<RowHit> semantic(IndexRef ref, float[] queryVec, CompiledFilter filter, int limit) {
+  public List<RowHit> semantic(
+      IndexRef ref, float[] queryVec, RowQueryFilter rowFilter, int limit) {
     requireCurrentTenant(ref);
+    CompiledFilter filter = rowFilter.toPostgres();
     String vector = VectorLiterals.toVectorLiteral(queryVec);
     boolean exact = useExactScan(ref);
     List<Object> params = new ArrayList<>();
@@ -274,8 +280,9 @@ public class PgRowSearchIndex implements RowSearchIndex {
   }
 
   @Override
-  public List<RowHit> keyword(IndexRef ref, String query, CompiledFilter filter, int limit) {
+  public List<RowHit> keyword(IndexRef ref, String query, RowQueryFilter rowFilter, int limit) {
     requireCurrentTenant(ref);
+    CompiledFilter filter = rowFilter.toPostgres();
     StringBuilder sql =
         new StringBuilder("SELECT s.row_id, word_similarity(?, s.source_text) AS score FROM ")
             .append(DataSchema.qualify(ref.indexTable()))
@@ -349,7 +356,7 @@ public class PgRowSearchIndex implements RowSearchIndex {
             + dim
             + "), embedding_model VARCHAR(100),"
             + " indexed_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (row_id, chunk_no))");
-    // 인덱스 이름은 자동 명명 — rebuildReusing 이 테이블을 _prev 로 바꿔도 새 테이블 인덱스와 충돌하지 않는다.
+    // 인덱스 이름은 자동 명명 — startGeneration 이 테이블을 _prev 로 바꿔도 새 테이블 인덱스와 충돌하지 않는다.
     dsl.execute("CREATE INDEX ON " + q + " USING hnsw (embedding public.vector_cosine_ops)");
     dsl.execute("CREATE INDEX ON " + q + " USING gin (source_text public.gin_trgm_ops)");
     dsl.execute("CREATE INDEX ON " + q + " (source_hash)");

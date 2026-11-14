@@ -38,7 +38,12 @@ import java.util.Map;
  * <p><b>카탈로그·청크는 dense 와 키워드를 다른 컬렉션에 둔다</b>(2026-11-14 사용자 결정, WD-720). 의미 컬렉션 {@code
  * fh_datasets_{dim}}·{@code fh_chunks_{dim}} 에는 dense 만, 키워드 컬렉션 {@code fh_datasets_kw}·{@code
  * fh_chunks_kw} 에는 sparse 만 있다. 키워드는 임베딩 차원과 무관해서 한 점에 함께 두면 임베딩 미설정 테넌트의 둘 곳이 없고, 차원을 바꿀 때 키워드도
- * 옮겨야 하고, 두 쓰기가 같은 점을 두고 경합한다. 행 검색 컬렉션의 구성은 WD-722 에서 정한다.
+ * 옮겨야 하고, 두 쓰기가 같은 점을 두고 경합한다.
+ *
+ * <p><b>행 검색은 테넌트별 컬렉션이다</b>(2026-11-14 사용자 결정, WD-722). 원본 행이 RDB 에서 테넌트 스키마에 있으므로 같은 수준으로 맞춘다 —
+ * dense 는 {@code fh_rows_t{테넌트}_{차원}}, 키워드는 {@code fh_rows_t{테넌트}_kw}(카탈로그·청크처럼 dense·키워드 분리). 테넌트
+ * 컬렉션만 허용한 토큰으로 접근해 Qdrant 가 교차 접근을 거부한다({@link QdrantCollectionToken}). 샤드 수는 {@link
+ * QdrantProperties#rowShardNumber}(기본 1)를 따른다 — 테넌트×차원마다 컬렉션이 생기기 때문이다.
  *
  * @param name 컬렉션 이름
  * @param kind 컬렉션 종류(metadata {@code fh_kind}). 이름이 같고 종류가 다른 컬렉션을 잘못 쓰지 않게 대조한다.
@@ -79,9 +84,6 @@ public record QdrantCollectionSpec(
   public static final String CHUNK_NO = "chunk_no";
   public static final String SOURCE_HASH = "source_hash";
   public static final String GENERATION = "generation";
-
-  /** 키워드 전용 행 검색 컬렉션 이름(결정 7). */
-  public static final String ROWS_KEYWORD_COLLECTION = "fh_rows_kw";
 
   /** 데이터셋 카탈로그 키워드 컬렉션 이름(WD-720, 차원과 무관). */
   public static final String DATASETS_KEYWORD_COLLECTION = "fh_datasets_kw";
@@ -175,22 +177,48 @@ public record QdrantCollectionSpec(
             PayloadField.integer(SEQ)));
   }
 
+  /** 행 검색 컬렉션 이름 접두사. 테넌트 컬렉션은 {@code fh_rows_t{테넌트}_} 로 시작한다. */
+  static final String ROWS_PREFIX = "fh_rows_t";
+
   /**
-   * 행 검색 컬렉션({@code fh_rows_{dim}}). 행 검색은 테넌트 공급자 차원을 그대로 쓰므로(상한 2000) 열거형이 아닌 정수를 받고, 필요할 때 만든다.
+   * 테넌트 행 컬렉션 이름 접두사 — 끝의 {@code _} 까지 넣어 테넌트 1 이 테넌트 12 의 컬렉션과 겹치지 않게 한다. 목록에서 테넌트 컬렉션을 고를 때 쓴다.
    */
-  public static QdrantCollectionSpec rows(int dim) {
-    if (dim < 2 || dim > 65_536) {
-      // 1 은 키워드 전용 표시값(KEYWORD_ONLY_DIM)이라 rowsKeyword() 로 가야 한다. 상한은 Qdrant 차원 한도.
-      throw new IllegalArgumentException("행 검색 dense 차원은 2~65536 이어야 합니다: " + dim);
-    }
-    // 행 검색은 아직 한 점에 dense 와 키워드를 함께 둔다 — 구성은 WD-722 에서 다시 정한다.
-    return new QdrantCollectionSpec("fh_rows_" + dim, "rows", dim, true, rowFields(true));
+  public static String rowsTenantPrefix(long tenantId) {
+    return ROWS_PREFIX + tenantId + "_";
   }
 
-  /** 키워드 전용 행 검색 컬렉션({@code fh_rows_kw}) — dense 가 없다. */
-  public static QdrantCollectionSpec rowsKeyword() {
+  /** 테넌트 행 키워드 컬렉션 이름({@code fh_rows_t{테넌트}_kw}). */
+  public static String rowsKeywordName(long tenantId) {
+    return rowsTenantPrefix(tenantId) + "kw";
+  }
+
+  /** 테넌트 행 dense 컬렉션 이름({@code fh_rows_t{테넌트}_{차원}}). */
+  public static String rowsDenseName(long tenantId, int dim) {
+    return rowsTenantPrefix(tenantId) + dim;
+  }
+
+  /** 테넌트 행 검색 dense 컬렉션 — dense 만. 행 검색은 테넌트 공급자 차원을 그대로 쓰므로(상한 2000) 열거형이 아닌 정수를 받고, 필요할 때 만든다. */
+  public static QdrantCollectionSpec rows(long tenantId, int dim) {
+    if (dim < 2 || dim > 65_536) {
+      // 1 은 키워드 전용 표시값(KEYWORD_ONLY_DIM)이라 dense 컬렉션이 없다. 상한은 Qdrant 차원 한도.
+      throw new IllegalArgumentException("행 검색 dense 차원은 2~65536 이어야 합니다: " + dim);
+    }
     return new QdrantCollectionSpec(
-        ROWS_KEYWORD_COLLECTION, "rows_kw", null, true, rowFields(false));
+        rowsDenseName(tenantId, dim), "rows", dim, false, rowFields(true));
+  }
+
+  /** 테넌트 행 검색 키워드 컬렉션 — sparse 만. 색인된 모든 행이 여기 점을 가진다(원문 해시 조회의 기준). */
+  public static QdrantCollectionSpec rowsKeyword(long tenantId) {
+    return new QdrantCollectionSpec(
+        rowsKeywordName(tenantId), "rows_kw", null, true, rowFields(false));
+  }
+
+  /**
+   * 이 컬렉션의 샤드 수 — 행 검색 테넌트 컬렉션은 {@link QdrantProperties#rowShardNumber}, 나머지는 {@link
+   * QdrantProperties#shardNumber}.
+   */
+  int shards(QdrantProperties props) {
+    return kind.startsWith("rows") ? props.rowShardNumber() : props.shardNumber();
   }
 
   private static List<PayloadField> rowFields(boolean withModel) {
@@ -202,7 +230,6 @@ public record QdrantCollectionSpec(
     }
     fields.add(PayloadField.integer(SEQ));
     fields.add(PayloadField.integer(ROW_ID));
-    fields.add(PayloadField.integer(CHUNK_NO));
     fields.add(PayloadField.keyword(SOURCE_HASH));
     fields.add(PayloadField.integer(GENERATION));
     return List.copyOf(fields);
@@ -213,7 +240,7 @@ public record QdrantCollectionSpec(
     CreateCollection.Builder b =
         CreateCollection.newBuilder()
             .setCollectionName(name)
-            .setShardNumber(props.shardNumber())
+            .setShardNumber(shards(props))
             .putAllMetadata(expectedMetadata());
     if (keyword) {
       b.setSparseVectorsConfig(expectedSparse());
@@ -253,8 +280,8 @@ public record QdrantCollectionSpec(
     }
 
     int shards = config.getParams().getShardNumber();
-    if (shards != props.shardNumber()) {
-      out.add("샤드 수 " + shards + " ≠ 설정 " + props.shardNumber() + "(샤드 수는 만든 뒤 바꿀 수 없다)");
+    if (shards != shards(props)) {
+      out.add("샤드 수 " + shards + " ≠ 설정 " + shards(props) + "(샤드 수는 만든 뒤 바꿀 수 없다)");
     }
 
     Map<String, VectorParams> dense =

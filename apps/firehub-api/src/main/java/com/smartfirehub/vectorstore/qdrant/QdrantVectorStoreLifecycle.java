@@ -30,8 +30,8 @@ import org.springframework.stereotype.Component;
  * <ul>
  *   <li>미리 만드는 것: {@link EmbeddingDimension} 의 모든 값에 대해 {@code fh_datasets_{dim}}·{@code
  *       fh_chunks_{dim}}, 키워드 전용 컬렉션들. 새 차원은 열거형에 값을 더하면 다음 기동에 생긴다.
- *   <li>필요할 때 만드는 것: {@code fh_rows_{dim}} — 행 검색 차원은 테넌트 공급자를 따르므로 {@link #ensureRowCollection} 으로
- *       색인을 만들 때 준비한다.
+ *   <li>필요할 때 만드는 것: 테넌트 행 컬렉션 {@code fh_rows_t{테넌트}_kw}·{@code fh_rows_t{테넌트}_{차원}} — 행 검색은 테넌트별
+ *       컬렉션이고 차원은 테넌트 공급자를 따르므로 {@link #ensureRowCollections} 로 색인을 만들 때 준비한다(WD-722).
  *   <li>이미 있으면 {@link QdrantCollectionSpec#mismatches} 로 대조하고 다르면 기동을 멈춘다. 빠진 payload 색인만은 채운다(컬렉션을
  *       만든 직후 죽은 경우).
  * </ul>
@@ -54,6 +54,9 @@ import org.springframework.stereotype.Component;
 @Component
 @ConditionalOnQdrantVectorStore
 public class QdrantVectorStoreLifecycle implements VectorStoreLifecycle, InitializingBean {
+
+  /** 컬렉션 토큰 확인에 쓰는 없는 컬렉션 이름 — 만들지 않는다. */
+  static final String JWT_PROBE_COLLECTION = "fh_jwt_probe";
 
   /** 상태 점검 제한 시간. 검색 화면 안내용이라 짧게 둔다. */
   private static final Duration HEALTH_TIMEOUT = Duration.ofSeconds(2);
@@ -143,10 +146,10 @@ public class QdrantVectorStoreLifecycle implements VectorStoreLifecycle, Initial
     // 키워드 컬렉션은 차원과 무관해 하나씩만 둔다(A안, WD-720).
     specs.add(QdrantCollectionSpec.datasetsKeyword());
     specs.add(QdrantCollectionSpec.chunksKeyword());
-    specs.add(QdrantCollectionSpec.rowsKeyword());
     for (QdrantCollectionSpec spec : specs) {
       ensure(spec);
     }
+    verifyCollectionTokens();
     prepared = true;
     log.info("Qdrant 컬렉션 준비 완료: {}개(스키마 버전 {})", specs.size(), QdrantCollectionSpec.SCHEMA_VERSION);
   }
@@ -192,11 +195,29 @@ public class QdrantVectorStoreLifecycle implements VectorStoreLifecycle, Initial
     if (!prepared && healthy()) ensureReady();
   }
 
-  /** 행 검색 dense 컬렉션({@code fh_rows_{dim}})을 준비하고 이름을 돌려준다. */
-  public String ensureRowCollection(int dim) {
-    QdrantCollectionSpec spec = QdrantCollectionSpec.rows(dim);
-    ensure(spec);
-    return spec.name();
+  /**
+   * 테넌트 행 컬렉션을 준비한다 — 키워드 컬렉션과, {@code dim} 이 dense 차원이면(2 이상) 그 dense 컬렉션. 컬렉션 만들기는 전역 권한이 필요해 마스터
+   * 키로 한다.
+   *
+   * @param dim 색인 차원. 1(키워드 전용 표시값)이면 키워드 컬렉션만
+   */
+  public void ensureRowCollections(long tenantId, int dim) {
+    ensure(QdrantCollectionSpec.rowsKeyword(tenantId));
+    if (dim >= 2) {
+      ensure(QdrantCollectionSpec.rows(tenantId, dim));
+    }
+  }
+
+  /**
+   * 이 테넌트의 행 컬렉션 이름들(키워드 + 있는 dense 차원 전부). 목록은 전역 권한이라 마스터 키로 읽는다. 차원을 바꾼 테넌트는 옛 차원 컬렉션도 남아 있으므로,
+   * 전체 삭제·정리는 이 목록 전부를 대상으로 한다.
+   */
+  public List<String> rowCollections(long tenantId) {
+    String prefix = QdrantCollectionSpec.rowsTenantPrefix(tenantId);
+    return await(client.listCollectionsAsync(), "컬렉션 목록").stream()
+        .filter(n -> n.startsWith(prefix))
+        .sorted()
+        .toList();
   }
 
   /**
@@ -289,6 +310,49 @@ public class QdrantVectorStoreLifecycle implements VectorStoreLifecycle, Initial
       log.info("Qdrant payload 색인 생성: {}.{}", spec.name(), field.name());
     }
     ready.add(spec.name());
+  }
+
+  /**
+   * 행 검색 격리에 쓰는 컬렉션 토큰을 서버가 받는지 확인한다(WD-722). 서버의 {@code service.jwt_rbac} 가 꺼져 있으면 토큰을 API 키로 보고
+   * UNAUTHENTICATED 로 거부한다 — 그러면 테넌트 컬렉션 격리가 서지 않으므로 키 오류처럼 설정 오류로 본다(기동 중단, 실행 중이면 사용 불가). 켜져 있으면
+   * 없는 컬렉션 하나만 허용한 토큰의 목록 조회가 빈 목록으로 성공한다.
+   *
+   * <p>재준비({@link #retryPrepare}) 경로에서도 돈다 — 기동 때 일시 장애로 건너뛰었어도 복구 뒤 확인한다. API 키가 없으면 행 검색이 꺼지므로
+   * 확인하지 않는다.
+   */
+  private void verifyCollectionTokens() {
+    if (!QdrantRowClients.enabled(props)) {
+      return;
+    }
+    QdrantProperties.Endpoint ep = props.endpoint();
+    String token =
+        QdrantCollectionToken.issue(
+            props.apiKey(),
+            List.of(JWT_PROBE_COLLECTION),
+            java.time.Instant.now(),
+            QdrantRowClients.TOKEN_TTL);
+    // 확인 한 번만 쓰는 클라이언트 — 버전 호환 확인은 끈다(제한 시간 없는 블로킹 호출, WD-724).
+    try (QdrantClient probe =
+        new QdrantClient(
+            io.qdrant.client.QdrantGrpcClient.newBuilder(ep.host(), ep.port(), ep.tls(), false)
+                .withTimeout(props.timeout())
+                .withApiKey(token)
+                .build())) {
+      List<String> visible = await(probe.listCollectionsAsync(), "컬렉션 토큰 확인");
+      if (!visible.isEmpty()) {
+        throw new IllegalStateException(
+            "Qdrant 컬렉션 토큰이 허용하지 않은 컬렉션을 보여 줍니다 — 행 검색 테넌트 격리가 서지 않습니다: " + visible);
+      }
+    } catch (QdrantAccessException e) {
+      if (isTransient(e)) {
+        throw e;
+      }
+      throw new IllegalStateException(
+          "Qdrant 가 컬렉션 토큰(JWT)을 거부했습니다 — 서버에 QDRANT__SERVICE__JWT_RBAC=true 가 필요합니다"
+              + "(행 검색 테넌트 격리, WD-722): "
+              + e.getMessage(),
+          e);
+    }
   }
 
   /** 설정의 제한 시간 안에 기다린다. 실패는 {@link QdrantAccessException}(색인 구현과 같은 종류). */

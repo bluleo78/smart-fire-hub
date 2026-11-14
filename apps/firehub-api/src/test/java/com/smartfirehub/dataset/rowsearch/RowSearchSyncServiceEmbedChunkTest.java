@@ -87,7 +87,8 @@ class RowSearchSyncServiceEmbedChunkTest {
         0,
         0,
         null,
-        null);
+        null,
+        1L);
   }
 
   /** 공통 협력자 준비: 상태·데이터셋·설정·원본 70행. 공급자 스텁은 테스트마다 다르므로 여기서 두지 않는다. */

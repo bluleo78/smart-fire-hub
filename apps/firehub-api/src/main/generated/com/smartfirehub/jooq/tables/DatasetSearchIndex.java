@@ -150,6 +150,12 @@ public class DatasetSearchIndex extends TableImpl<DatasetSearchIndexRecord> {
      */
     public final TableField<DatasetSearchIndexRecord, OffsetDateTime> UPDATED_AT = createField(DSL.name("updated_at"), SQLDataType.TIMESTAMPWITHTIMEZONE(6).nullable(false).defaultValue(DSL.field(DSL.raw("now()"), SQLDataType.TIMESTAMPWITHTIMEZONE)), this, "");
 
+    /**
+     * The column <code>public.dataset_search_index.generation</code>. 행 검색 색인
+     * 세대 — swap 재구축마다 1 증가. Qdrant 색인은 이 세대의 점만 검색한다(WD-722)
+     */
+    public final TableField<DatasetSearchIndexRecord, Long> GENERATION = createField(DSL.name("generation"), SQLDataType.BIGINT.nullable(false).defaultValue(DSL.field(DSL.raw("1"), SQLDataType.BIGINT)), this, "행 검색 색인 세대 — swap 재구축마다 1 증가. Qdrant 색인은 이 세대의 점만 검색한다(WD-722)");
+
     private DatasetSearchIndex(Name alias, Table<DatasetSearchIndexRecord> aliased) {
         this(alias, aliased, (Field<?>[]) null, null);
     }

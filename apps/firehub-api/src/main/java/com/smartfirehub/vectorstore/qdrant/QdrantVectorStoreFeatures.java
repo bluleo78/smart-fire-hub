@@ -9,9 +9,9 @@ import org.springframework.stereotype.Component;
 /**
  * qdrant 조합의 기능 판정(ADR 0002 결정 3, WD-720). 플랫폼 DB 가 PG 든 Tibero 든 데이터셋·문서 청크의 벡터·키워드 검색이 켜진다.
  *
- * <p><b>행 검색은 아직 끈다.</b> qdrant 설치본의 행 색인은 Qdrant 에 둔다(ADR 결정 9, WD-722). 그 구현 전에 기본 판정(데이터 저장소가 PG
- * 면 켜짐)을 그대로 쓰면, 행 색인이 데이터 저장소의 pgvector 에 쌓이기 시작하고 나중에 옮길 도구가 없다(새 설치만 지원 — 사용자 결정 4). 그래서 WD-722
- * 까지는 모든 데이터 저장소에서 꺼짐으로 답한다.
+ * <p><b>행 검색</b>은 Qdrant 테넌트 컬렉션에 둔다({@link QdrantRowSearchIndex}, WD-722). 원본 읽기·필터 평가가 아직
+ * PostgreSQL 전용이라 데이터 저장소가 PG 인 테넌트만 켠다(Tibero 짝은 WD-723). API 키가 없으면 테넌트 컬렉션 토큰을 서명할 수 없어 끈다 — 서버가
+ * 강제하는 격리 없이 마스터 키로 대신하지 않는다.
  *
  * <p>저장소가 지금 응답하는지(「저장소 일시 중단」, WD-724)는 {@link QdrantVectorStoreLifecycle#available()} 에 묻는다 — 상태
  * 점검과 컬렉션 준비가 둘 다 끝나야 참이고, 결과는 몇 초 캐시된다.
@@ -21,9 +21,12 @@ import org.springframework.stereotype.Component;
 public class QdrantVectorStoreFeatures implements VectorStoreFeatures {
 
   private final QdrantVectorStoreLifecycle lifecycle;
+  private final QdrantRowClients rowClients;
 
-  public QdrantVectorStoreFeatures(QdrantVectorStoreLifecycle lifecycle) {
+  public QdrantVectorStoreFeatures(
+      QdrantVectorStoreLifecycle lifecycle, QdrantRowClients rowClients) {
     this.lifecycle = lifecycle;
+    this.rowClients = rowClients;
   }
 
   @Override
@@ -33,10 +36,10 @@ public class QdrantVectorStoreFeatures implements VectorStoreFeatures {
     };
   }
 
-  /** 행 검색은 WD-722(Qdrant 행 색인) 전까지 꺼짐. */
+  /** 데이터 저장소가 PostgreSQL 이고 API 키가 있을 때만 켜짐(클래스 설명). */
   @Override
   public boolean supportsRowSearch(DataStoreBackend backend) {
-    return false;
+    return backend == DataStoreBackend.POSTGRESQL && rowClients.enabled();
   }
 
   /** 저장소가 지금 응답하고 컬렉션 준비가 끝났는가(캐시). */

@@ -14,6 +14,7 @@ import io.qdrant.client.grpc.Common.Condition;
 import io.qdrant.client.grpc.Common.Filter;
 import java.util.ArrayList;
 import java.util.List;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 /**
@@ -29,10 +30,19 @@ public class QdrantOutboxApplier {
 
   private final QdrantClient client;
   private final QdrantProperties props;
+  private final QdrantRowClients rowClients;
 
+  /** 카탈로그·청크 종류만 반영하는 생성자 — 시험용. 행 종류가 오면 거부한다. */
   public QdrantOutboxApplier(QdrantClient client, QdrantProperties props) {
+    this(client, props, null);
+  }
+
+  @Autowired
+  public QdrantOutboxApplier(
+      QdrantClient client, QdrantProperties props, QdrantRowClients rowClients) {
     this.client = client;
     this.props = props;
+    this.rowClients = rowClients;
   }
 
   /**
@@ -67,6 +77,43 @@ public class QdrantOutboxApplier {
         target(must, QdrantCollectionSpec.DOCUMENT_ID, required(e));
         delete(allChunkCollections(), must);
       }
+      case ROWS_ALL_OF_DATASET -> {
+        target(must, QdrantCollectionSpec.DATASET_ID, required(e));
+        deleteRows(e.tenantId(), true, must);
+      }
+      case ROWS_DENSE_OF_DATASET -> {
+        target(must, QdrantCollectionSpec.DATASET_ID, required(e));
+        deleteRows(e.tenantId(), false, must);
+      }
+    }
+  }
+
+  /**
+   * 테넌트 행 컬렉션에서 지운다(WD-722). 차원을 바꾼 테넌트는 옛 차원 컬렉션도 남아 있으므로 목록(마스터 키)으로 그 테넌트 컬렉션을 모두 찾고, 삭제는 그
+   * 컬렉션들만 허용한 토큰으로 한다. 세대 조건은 붙이지 않는다 — 모든 세대가 대상이다.
+   *
+   * @param withKeyword 키워드 컬렉션도 지울지(전체 삭제). 거짓이면 dense 만
+   */
+  private void deleteRows(long tenantId, boolean withKeyword, List<Condition> must) {
+    if (rowClients == null || !rowClients.enabled()) {
+      // API 키가 없으면 행 검색이 꺼져 있어 행 점이 생긴 적이 없다 — 지울 것이 없으므로 반영한 것으로 친다. 여기서 던지면 데이터셋 삭제마다 쌓이는
+      // 행 아웃박스가 그 테넌트의 다른 삭제(카탈로그·청크)까지 영영 막는다.
+      return;
+    }
+    String prefix = QdrantCollectionSpec.rowsTenantPrefix(tenantId);
+    String keyword = QdrantCollectionSpec.rowsKeywordName(tenantId);
+    List<String> targets =
+        await(client.listCollectionsAsync(), props.timeout(), "행 컬렉션 목록").stream()
+            .filter(n -> n.startsWith(prefix))
+            .filter(n -> withKeyword || !n.equals(keyword))
+            .sorted()
+            .toList();
+    if (targets.isEmpty()) return; // 아직 색인을 만든 적 없는 테넌트
+    QdrantClient tenantClient = rowClients.forCollections(targets);
+    Filter filter = allOf(must.toArray(Condition[]::new));
+    for (String c : targets) {
+      await(
+          tenantClient.deleteAsync(c, filter, props.timeout()), props.timeout(), c + " 행 아웃박스 삭제");
     }
   }
 

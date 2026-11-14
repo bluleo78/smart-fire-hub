@@ -1,6 +1,6 @@
 # ADR 0002 — 벡터 저장소를 설치 옵션으로 분리
 
-- 상태: **제안** (2026-11-12 — 1~5번 방향은 사용자가 정함, 세부 설계는 검토 대기. 2026-11-14 — WD-720 구현에 맞춰 결정 3·4③·5·6·7 과 열린 질문을 고침. 같은 날 WD-721 구현에 맞춰 결정 6 을, WD-724 구현에 맞춰 결정 3·11 을 고침)
+- 상태: **제안** (2026-11-12 — 1~5번 방향은 사용자가 정함, 세부 설계는 검토 대기. 2026-11-14 — WD-720 구현에 맞춰 결정 3·4③·5·6·7 과 열린 질문을 고침. 같은 날 WD-721 구현에 맞춰 결정 6 을, WD-724 구현에 맞춰 결정 3·11 을, WD-722 구현·사용자 결정(행 테넌트 격리)에 맞춰 결정 2·3·5·7·9 를 고침)
 - 날짜: 2026-11-12
 - 이슈: WD-715 (에픽 WD-714, 하위 WD-716~724)
 - 관련: ADR 0001(플랫폼 DB Tibero), WD-495(검색 기능 상태 API), WD-80(행 검색)
@@ -105,7 +105,7 @@ OpenSearch 는 한국어 키워드(특히 오타 — 퍼지 질의)가 문제가
 - `VECTOR_SEARCH`·`TRIGRAM_SEARCH` 판정을 `PlatformDbFeatures` 에서 떼어 `VectorStoreFeatures` 로 옮긴다. 근거가 "플랫폼 DB 종류" 에서 "벡터 저장소 설정" 으로 바뀐다. 서비스의 건너뛰기 분기는 그대로 두고 물어보는 대상만 바꾼다.
 - `supportsRowSearch()` 를 쓰는 **세 곳**(`RowSearchBackendGuard`, `RowSearchSweepScheduler`, `DataStoreCapabilitiesController`)도 `VectorStoreFeatures` 에 묻게 한다.
 - **카탈로그·청크 판정과 행 판정을 나눈다.** 지금 `AiVectorPurgeService` 는 플랫폼 DB 기능이 꺼지면 행 검색 정리까지 건너뛴다. 그래서 Tibero 플랫폼 + PG 데이터 저장소 조합에서는 행 색인 외부 벡터가 즉시 정리되지 않고 다음 스윕을 기다린다(기존 결함 — 단계 3 에서 함께 고친다).
-- **qdrant 조합의 행 검색은 WD-722 전까지 끈다**(`QdrantVectorStoreFeatures.supportsRowSearch` 가 늘 거짓, WD-720). 기본 판정(데이터 저장소가 PG 면 켜짐)을 쓰면 행 색인이 데이터 저장소 pgvector 에 쌓이기 시작하고, 새 설치만 지원하므로(사용자 결정 4) 나중에 옮길 길이 없다. 행 데이터의 Qdrant 테넌트 격리 수준(공유 컬렉션·전용 샤드·테넌트별 컬렉션·인스턴스)도 WD-722 에서 정한다.
+- **qdrant 조합의 행 검색(WD-722)은 데이터 저장소가 PostgreSQL 이고 `QDRANT_API_KEY` 가 있을 때만 켠다**(`QdrantVectorStoreFeatures.supportsRowSearch`). 원본 읽기·필터 평가가 아직 PG 전용이라 Tibero 데이터 저장소는 WD-723 까지 꺼짐이다. API 키가 없으면 테넌트 컬렉션 토큰(결정 5)을 서명할 수 없어 끈다 — 서버 강제 격리 없이 마스터 키로 대신하지 않는다. 행 검색 장애 중 응답은 결과 없이 색인 상태 `UNAVAILABLE` 이다.
 - **기능 응답에 "저장소 일시 중단" 을 더한다(WD-724 구현).** 기존 응답(`vectorSearch`·`trigramSearch`, `rowSearch`)은 "설치본이 지원하는가" 만 나타내고 그대로 둔다. `GET /platform-db/capabilities` 에 `vectorStoreAvailable` 을 더했다 — `VectorStoreFeatures.available()` 이 답하고, pgvector·꺼짐 조합은 늘 참, Qdrant 조합은 상태 점검 + 컬렉션 준비 완료를 5초 캐시해 답한다.
   - **장애 중 검색은 200 빈 목록**이다(2026-11-14 사용자 결정, 503 대신). 검색 서비스는 가용성이 거짓이면 질의 임베딩도 부르지 않고 그 단계를 빈 목록으로 두고, 캐시가 아직 참인 사이 내려가 `VectorStoreUnavailableException`(포트 수준 예외, `QdrantAccessException` 의 부모)이 나면 그 단계만 뺀다.
   - 웹 문서 검색은 `vectorStoreAvailable=false` 면 「검색 저장소 일시 중단」 배너를 띄우고 검색 버튼을 막는다. 기능 상태는 30초가 지나면 다시 묻고, 일시 중단 동안 15초마다 다시 물으며, 검색이 빈 결과면 바로 다시 묻는다. ai-agent 검색 도구(문서·데이터셋·GraphRAG 시드)는 검색 API 를 부르지 않고 「찾지 못했다고 답하지 말라」는 안내문을 정상 결과로 돌려준다(기능 상태 캐시: 정상 1분, 일시 중단 30초).
@@ -145,6 +145,17 @@ OpenSearch 는 한국어 키워드(특히 오타 — 퍼지 질의)가 문제가
   - **구현(WD-720):** 두 단계의 SQL 은 `SearchCandidateRepository`(jOOQ·MyBatis 두 벌, 두 계정 RLS 계약 테스트)에 모았다. 1단계는 요청한 `datasetIds`·`storageType` 과 미리 교집합을 구해 빈 집합이면 Qdrant 를 부르지 않는다. 2단계는 의미 검색이면 표시 열의 공간(차원·모델) 일치도 본다 — 공간이 바뀐 뒤 아직 지우지 못한 옛 점이 섞이지 않게. 확인을 통과한 것만 Qdrant 점수 순서로 topK 까지 자른다.
 - **호스팅 경계:** `AiHostingResolver`·`EmbeddingAiGate` 는 "등급 AI 정책 × 임베딩 공급자 호스팅" 으로 허용을 판정한다. 벡터 저장소가 원격(예: Qdrant Cloud)에 있으면 판정 밖의 반출 경로가 생긴다. 그래서 **Qdrant 는 api 와 같은 신뢰 경계 안의 직접 설치만 허용**한다. 원격 저장소를 허용해야 하면 등급 게이트가 벡터 저장소 위치까지 보도록 따로 설계한다.
 - **테넌트:** 모든 포인트에 `tenant_id` payload(`is_tenant` 색인)를 둔다. 어댑터는 `TenantContext` 없이 호출되면 예외를 던진다(`IndexRef` 가 테넌트를 타입에 싣고 `PgRowSearchIndex` 가 테넌트 불일치를 검사하는 것과 같은 원칙). 계약 테스트가 교차 테넌트 0건을 고정한다.
+- **행 검색은 테넌트별 컬렉션 + 컬렉션 토큰이다**(2026-11-14 사용자 결정, WD-722). 원본 행이 RDB 에서 테넌트 스키마(공유 PG) 또는 테넌트 전용 DB 에 있으므로 같은 수준으로 맞춘다. 카탈로그·청크는 원본이 공유 테이블+RLS 라 공유 컬렉션+`tenant_id` 로 둔다.
+
+  | RDB | Qdrant 행 색인 | 서버가 막는가 |
+  |---|---|---|
+  | 공유 테이블 + RLS(카탈로그·청크) | 공유 컬렉션 + `tenant_id` 필터 | 아니오(앱 필터 + 플랫폼 DB 사후 확인) |
+  | 테넌트 스키마(행, 기본) | 공유 Qdrant 의 테넌트별 컬렉션 `fh_rows_t{테넌트}_kw`·`fh_rows_t{테넌트}_{차원}` | 예 — api 가 그 테넌트 컬렉션만 허용한 JWT(서버 API 키로 HS256 서명, `service.jwt_rbac`)로 읽고 쓴다. 다른 테넌트 컬렉션은 403 |
+  | 테넌트 전용 DB(행, 선택) | 테넌트 전용 Qdrant 인스턴스 | 예 — 후속 WD-742 |
+
+  - 컬렉션 만들기·지우기·목록은 전역 권한이 필요해 마스터 키로 한다(실측 2026-11-14: 컬렉션 토큰으로는 403, 목록은 허용된 것만 보인다). 토큰은 컬렉션 이름을 정확히 나열한다(와일드카드 없음).
+  - JWT 가 막는 것은 「앱 필터 버그로 다른 테넌트 컬렉션을 읽는 일」까지다. api 가 마스터 키를 쥐고 있어 api 자체가 뚫리면 막지 못한다 — PG 에서 api 가 여러 테넌트 스키마에 권한 있는 롤로 붙는 것과 같은 수준이다.
+  - 모든 질의에 `tenant_id` 필터도 함께 붙인다(겹 방어). 기동·재준비 때 컬렉션 토큰이 받아들여지는지 확인하고, 서버의 JWT RBAC 가 꺼져 있으면 키 오류처럼 설정 오류로 기동을 멈춘다.
 - **원문 텍스트는 Qdrant 에 넣지 않는다.** id·벡터·필터용 payload(`tenant_id`·`dataset_id`·`model`, 청크는 `document_id`·`chunk_id`)만 둔다. 원문 해시는 플랫폼 DB 에만 있다. 시연·고객 데이터(매출·고객 정보)가 읽을 수 있는 형태로 한 곳 더 복제되는 것을 막는다. 다만 키워드 sparse 벡터에는 **토큰 해시와 빈도**가 들어간다. 원문으로 되돌릴 수는 없지만 흔한 단어는 사전 대입으로 추정될 수 있다는 점을 감수한다.
 - **접속:** API 키(읽기 전용 키 분리 가능), TLS, 네트워크 정책으로 api 파드만 접근하게 한다.
 
@@ -177,9 +188,9 @@ OpenSearch 는 한국어 키워드(특히 오타 — 퍼지 질의)가 문제가
 ### 7. Qdrant 컬렉션 구성
 
 - **카탈로그·청크는 차원별 컬렉션:** `fh_datasets_{dim}`, `fh_chunks_{dim}`. 이름은 `EmbeddingDimension`(지금 1024·1536)에서 만들고(차원별 SQL 테이블 이름의 단일 출처와 같은 자리), 기동 때 모든 값의 컬렉션을 미리 만든다. 새 차원은 열거형에 값을 더하면 컬렉션이 생긴다.
-- **행 검색 컬렉션은 차원이 정해져 있지 않다.** 행 검색은 테넌트 공급자의 차원을 그대로 쓰고(상한 `MAX_DIM = 2000`), 키워드 전용 색인은 `KEYWORD_ONLY_DIM = 1` 이다. 그래서 `fh_rows_{dim}` 을 **필요할 때 만들고**, 키워드 전용은 dense 없는 `fh_rows_kw` 에 둔다.
-- **카탈로그·청크는 dense 와 키워드를 다른 컬렉션에 둔다**(2026-11-14 사용자 결정, WD-720 — 처음 설계는 한 포인트에 named vector 둘이었다). 의미 컬렉션 `fh_datasets_{dim}`·`fh_chunks_{dim}` 에는 `dense` 만, 키워드 컬렉션 `fh_datasets_kw`·`fh_chunks_kw` 에는 `kw_bigram`(음절 바이그램, sparse, `modifier: idf`)만 있다. 키워드는 임베딩 차원과 무관해서 한 포인트에 두면 ① 임베딩 미설정 테넌트의 키워드를 둘 차원이 없고 ② 차원을 바꿀 때 키워드도 옮겨야 하고 ③ dense 쓰기와 키워드 쓰기가 같은 포인트를 두고 경합한다(Qdrant upsert 는 포인트 전체를 갈아 끼운다). "dense 만 지우기" 는 의미 컬렉션에서 점을 지우는 것이 된다(키워드는 그대로). 대신 Qdrant 서버 측 하이브리드(prefetch 융합)는 쓰지 않는다 — 융합은 서비스 `RankFusion` 이 한다(결정 2). 행 검색 컬렉션 구성(지금은 한 포인트에 둘)은 WD-722 에서 다시 정한다. `kw_nori` 는 이름만 예약한다(결정 8).
-- **payload:** `tenant_id`, `dataset_id`, `model`(공간 일치 검사 — #392 원칙), `seq`(결정 6), 행 검색은 `row_id`·`chunk_no`·`source_hash`·`generation`.
+- **행 검색 컬렉션은 테넌트별이고 차원이 정해져 있지 않다**(WD-722). 행 검색은 테넌트 공급자의 차원을 그대로 쓰고(상한 `MAX_DIM = 2000`), 키워드 전용 색인은 `KEYWORD_ONLY_DIM = 1` 이다. 그래서 `fh_rows_t{테넌트}_{dim}`(dense 만)과 `fh_rows_t{테넌트}_kw`(sparse 만)를 **색인을 만들 때** 만든다. 카탈로그·청크처럼 dense 와 키워드를 나눈다 — 색인된 모든 행은 키워드 컬렉션에 점이 있고(낱말 없는 원문은 벡터 없는 점) 원문 해시 조회·행 수의 기준이 된다. 샤드 수는 `QDRANT_ROW_SHARD_NUMBER`(기본 1) — 테넌트×차원마다 컬렉션이 생겨 공유 샤드 수(6)를 쓰면 샤드가 곱해진다. 테넌트 컬렉션 목록은 끝의 `_` 까지 맞춰 고른다(테넌트 1 이 12 를 집지 않게).
+- **카탈로그·청크는 dense 와 키워드를 다른 컬렉션에 둔다**(2026-11-14 사용자 결정, WD-720 — 처음 설계는 한 포인트에 named vector 둘이었다). 의미 컬렉션 `fh_datasets_{dim}`·`fh_chunks_{dim}` 에는 `dense` 만, 키워드 컬렉션 `fh_datasets_kw`·`fh_chunks_kw` 에는 `kw_bigram`(음절 바이그램, sparse, `modifier: idf`)만 있다. 키워드는 임베딩 차원과 무관해서 한 포인트에 두면 ① 임베딩 미설정 테넌트의 키워드를 둘 차원이 없고 ② 차원을 바꿀 때 키워드도 옮겨야 하고 ③ dense 쓰기와 키워드 쓰기가 같은 포인트를 두고 경합한다(Qdrant upsert 는 포인트 전체를 갈아 끼운다). "dense 만 지우기" 는 의미 컬렉션에서 점을 지우는 것이 된다(키워드는 그대로). 대신 Qdrant 서버 측 하이브리드(prefetch 융합)는 쓰지 않는다 — 융합은 서비스 `RankFusion` 이 한다(결정 2). 행 검색도 같은 분리를 따른다(WD-722, 사용자 결정). `kw_nori` 는 이름만 예약한다(결정 8).
+- **payload:** `tenant_id`, `dataset_id`, `model`(공간 일치 검사 — #392 원칙), `seq`(결정 6), 행 검색은 `row_id`·`source_hash`·`generation`(청크 분할이 없어 `chunk_no` 는 두지 않는다 — 점 id 에는 0 으로 들어간다).
   - `tenant_id` 는 **키워드형**(값은 문자열 `"12"`)으로 색인하고 `is_tenant` 를 켠다. Qdrant 1.20 은 정수형 색인에 준 `is_tenant` 를 오류 없이 버린다(2026-11-13 실측, WD-719 — PoC `knn.py` 의 정수형 설정도 실제로는 적용되지 않았다). 청크는 문서 삭제용으로 `document_id` 도 색인하고, 사후 확인에서 점을 청크로 되짚으려고 `chunk_id` 를 싣는다(거르지 않아 색인하지 않는다).
 - **포인트 id 는 결정적으로 만든다.** (종류, tenant, 대상 id[, chunk_no, generation])로 UUIDv5 를 만든다. 같은 대상을 다시 쓰면 덮어쓰게(upsert) 된다.
 - **공유 컬렉션 안에서는 `tenant_id`+`model` 필터가 반드시 붙는다.** 테넌트마다 임베딩 공간이 다르기 때문이다.
@@ -233,6 +244,16 @@ OpenSearch 는 한국어 키워드(특히 오타 — 퍼지 질의)가 문제가
 열 값을 payload 로 복제하는 방식은 원문 텍스트 미보관 원칙(결정 5)과 충돌해서 쓰지 않는다.
 
 `dataset_search_index.generation` 열은 데이터 저장소가 아니라 플랫폼 DB 테이블이다. PG·Tibero 마이그레이션 두 벌과 `SearchIndexStateRepository` jOOQ·MyBatis 구현을 고친다.
+
+**구현(WD-722):**
+
+- 포트 `RowSearchIndex` 는 `RowQueryFilter`(구조화 조건 + 허용 컬럼 타입, 만들 때 검증)를 받는다. PG 구현은 안에서 SQL 로 컴파일하고, Qdrant 구현은 `SearchSourceReader` 의 `matchingIds`·`filterIds` 로 데이터 저장소에서 평가한다. 세대 메서드는 `startGeneration`·`hasPreviousGeneration`·`dropPreviousGenerations` 다.
+- 세대는 `dataset_search_index.generation`(V163, PG·Tibero 두 벌, 1 부터)이고 `markSourceOid` 가 같은 UPDATE 에서 올린다. 참조 `IndexRef` 가 세대를 싣는다. 세대 0 은 「세대 무관」(전체 삭제·벡터 비우기)이며 Qdrant 쓰기·검색은 거부한다. 동기화는 색인 준비(`startGeneration`)를 먼저, 상태(OID·세대) 갱신을 나중에 한다 — 사이에서 죽으면 다음 주기가 다시 한다.
+- 쓰기는 dense 를 먼저, 키워드(원문 해시)를 나중에 쓴다 — 해시가 있으면 「이미 색인됨」으로 보기 때문이다. 점마다 `seq` 를 싣는다.
+- 데이터셋 전체 삭제(`drop`)·벡터 비우기(`clearEmbeddings`)는 아웃박스 `ROWS_ALL_OF_DATASET`·`ROWS_DENSE_OF_DATASET`(모든 세대·모든 차원 컬렉션)로 간다. 동기화 중 행 삭제·세대 정리·재색인 비우기는 바로 한다(실패하면 동기화 백오프).
+- 원본 대조(`deleteMissing`)는 데이터셋마다 `QDRANT_ROW_ORPHAN_SWEEP_INTERVAL_MS`(기본 30분)에 한 번 키워드 컬렉션을 스크롤해 데이터 저장소와 대조한다. 그 사이 남은 점은 원본 조회에서 빠져(없는 행) 결과가 틀리지 않는다.
+- 필터 1단계 상한은 1만, 사후 확인 경로는 `max(limit×10, 200)` 개를 받는다. 필터가 없을 때 정확 검색 기준은 지금 세대 점 수 추정치 ≤ `row-search.search.exact-scan-max-rows`(10만)이다.
+- 저장소 장애: 검색은 `UNAVAILABLE`, 동기화는 실패로 기록하지 않고 건너뛰며, 스윕은 가용성이 거짓이면 주기를 쉰다.
 
 **Tibero 데이터 저장소 테넌트도 행 검색이 되려면** 데이터 저장소 쪽에 Tibero 짝이 필요하다(단계 8).
 

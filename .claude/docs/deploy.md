@@ -657,6 +657,7 @@ Tibero 테넌트의 파이프라인 SQL 단계는 api 가 새 서비스 `db-exec
 - **새 설치에서만 켠다.** 설치된 종류는 `system_settings` 의 `vector_store.install_type` 에 기록된다. 기록이 없고 `dataset_embedding`·`document_chunk` 에 행이 하나라도 있으면 `platform` 으로 확정된다. 그래서 이미 쓰던 설치본에 qdrant 를 켜면 api 가 「기록과 설정이 다르다」며 기동을 멈춘다(ADR 결정 10 — 옮기는 길은 없다).
 - **같은 신뢰 경계 안에 직접 설치만 지원한다.** Qdrant 는 api 와 같은 클러스터·내부망에 두고, 포트(6333 REST·6334 gRPC·6335 p2p)는 밖으로 열지 않는다. 외부 관리형 서비스나 공개망 주소는 지원하지 않는다. 벡터 payload 에는 원문 텍스트가 없지만 테넌트·데이터셋 id 가 실린다.
 - **버전**: `qdrant/qdrant:v1.20.0` 으로 고정한다(v1.20 이상). 노드가 하나여도 클러스터 모드(`QDRANT__CLUSTER__ENABLED=true`, `--uri http://<자기주소>:6335`)로 띄운다 — 그래야 샤드 수가 설정대로 잡히고 나중에 노드를 늘릴 수 있다.
+- **JWT RBAC 를 켠다(WD-722, 필수)**: Qdrant 서버에 `QDRANT__SERVICE__JWT_RBAC=true`. 데이터셋 행 검색 색인은 테넌트별 컬렉션(`fh_rows_t{테넌트}_kw`·`fh_rows_t{테넌트}_{차원}`)에 두고, api 는 그 테넌트 컬렉션만 허용한 토큰(API 키로 서명)으로 읽고 쓴다 — RDB 의 테넌트 스키마와 같은 수준으로 Qdrant 가 다른 테넌트 컬렉션을 거부한다. 꺼져 있으면 api 가 기동 때 `Qdrant 가 컬렉션 토큰(JWT)을 거부했습니다 — 서버에 QDRANT__SERVICE__JWT_RBAC=true 가 필요합니다` 로 멈춘다. `QDRANT_API_KEY` 가 비어 있으면 토큰을 서명할 수 없어 **행 검색이 꺼진다**(카탈로그·문서 검색은 그대로). 테넌트 전용 Qdrant 인스턴스는 아직 없다(WD-742).
 - **저장소**: 데이터는 **블록 스토리지 PV** 에 둔다. NFS·FUSE 위에서는 Qdrant 가 데이터 손상 경고를 낸다.
 - **api 환경 변수**
 
@@ -668,18 +669,22 @@ Tibero 테넌트의 파이프라인 SQL 단계는 api 가 새 서비스 `db-exec
   | `QDRANT_SHARD_NUMBER` | `6` | 컬렉션을 만든 뒤 바꾸면 기동이 멈춘다 |
   | `QDRANT_QUANTIZATION` | `true` | 같음 |
   | `QDRANT_TIMEOUT` | `10s` | 호출 제한 시간 |
+  | `QDRANT_ROW_SHARD_NUMBER` | `1` | 행 검색 테넌트 컬렉션 샤드 수(테넌트×차원마다 컬렉션이라 작게). 만든 뒤 바꾸면 기동이 멈춘다 |
+  | `QDRANT_ROW_ORPHAN_SWEEP_INTERVAL_MS` | `1800000` | 원본에서 지운 행의 점 정리 최소 간격(데이터셋 점 전부를 훑는다) |
 
 - **k8s(Helm, `~/k8s/smart-fire-hub` — 저장소 밖)**: `qdrant.enabled: true` 와 `secrets.qdrantApiKey`(예: `openssl rand -hex 32`)를 주면 `qdrant` StatefulSet·headless Service·스냅샷 CronJob 이 뜨고 api 에 위 변수가 들어간다. 키가 비면 렌더가 실패한다. 데이터 PV 는 `qdrant.storageClass`(블록 스토리지, 비우면 클러스터 기본), 스냅샷 PV 는 공통 `storageClass` 를 쓴다. `qdrant.enabled: false`(기본) 렌더는 Qdrant 를 넣기 전과 같다.
 - **docker-compose(로컬)**: `docker compose --profile qdrant up -d qdrant` — 개발용 키 `firehub-qdrant-dev`. 운영 compose 에 넣을 때는 같은 서비스 정의에 실제 키를 주고 `qdrant-data` 볼륨을 블록 디스크에 둔다.
 - **설치 순서와 점검**
   1. Qdrant 를 먼저 띄우고 Ready 를 확인한다(`kubectl rollout status sts/qdrant`, 또는 `curl -s http://qdrant:6333/readyz`).
-  2. api 를 띄운다. 기동 로그에 `Qdrant 컬렉션 준비 완료: 7개(스키마 버전 N)` 가 나와야 한다.
+  2. api 를 띄운다. 기동 로그에 `Qdrant 컬렉션 준비 완료: 6개(스키마 버전 N)` 가 나와야 한다(행 검색 테넌트 컬렉션은 색인을 만들 때 생긴다).
   3. 기능 응답을 본다: `GET /api/v1/platform-db/capabilities` → `{"vectorSearch":true,"trigramSearch":true,"vectorStoreAvailable":true}`.
   4. DB 기록을 본다: `SELECT value FROM system_settings WHERE key = 'vector_store.install_type'` → `qdrant`.
   5. 테넌트에서 임베딩을 설정하고 문서를 하나 올린 뒤 문서 검색이 결과를 내는지 본다.
+  6. 행 검색(데이터 저장소가 PostgreSQL 인 테넌트): 데이터셋 「검색」 탭에서 필드를 지정하고 1~2분 뒤 상태가 IDLE 인지, `curl -s -H "api-key: $KEY" http://qdrant:6333/collections` 에 `fh_rows_t<테넌트>_kw` 가 생겼는지 본다. Tibero 데이터 저장소 테넌트는 행 검색이 아직 꺼져 있다(WD-723).
 - **장애 동작**
   - Qdrant 에 **닿지 못하면**(접속 거부·제한 시간 초과) api 는 경고 `Qdrant 에 접속하지 못했습니다 — 「저장소 일시 중단」으로 기동…` 만 남기고 뜬다. 그동안 `vectorStoreAvailable=false` 이고, 검색은 5xx 대신 빈 목록을 주며 웹 문서 검색·ai-agent 검색 도구가 「검색 저장소 일시 중단」을 안내한다. 15초마다 다시 준비하므로 Qdrant 가 돌아오면 재기동 없이 컬렉션을 만들고 검색이 돌아온다.
   - 장애 중에 생긴 삭제는 아웃박스(`vector_outbox`)에, 쓰기는 표시 열 백로그에 남아 복구 뒤 워커·스윕이 따라잡는다. 재임베딩 잡은 실패로 기록하지 않고 보류한다(복구 뒤 백로그 스윕이 다시 넣는다).
+  - 행 검색은 장애 중 결과 없이 색인 상태 `UNAVAILABLE` 로 답하고(ai-agent 가 「잠시 뒤 다시」를 안내), 동기화 스윕은 그 주기를 쉰다(데이터셋 오류·백오프를 남기지 않음). 복구 뒤 다음 주기에 책갈피부터 이어 간다.
   - **API 키가 틀리거나**(UNAUTHENTICATED·PERMISSION_DENIED) **컬렉션 구성이 다르면**(샤드 수·양자화·스키마 버전) 기동을 멈춘다 — 기다려도 풀리지 않는 설정 오류다. 로그의 `Qdrant 가 요청을 거부했습니다` 또는 `구성이 기대와 다릅니다` 를 보고 시크릿·값을 고친다. 실행 중 재준비에서 구성 불일치를 만나면 앱은 계속 돌지만 ERROR 를 남기고 재기동 전까지 검색을 쓰지 않는다.
 - **백업**: Helm 의 `qdrant-snapshot` CronJob 이 매일 03:00 컬렉션마다 스냅샷을 뜨고 최근 7개만 남긴다(`qdrant.snapshot.*`). 파일은 qdrant 파드의 `/qdrant/snapshots` PV 에 쌓이므로 밖으로 옮기려면 그 PV 를 백업한다. 되살리기는 컬렉션마다 `PUT /collections/<이름>/snapshots/recover`(본문 `{"location":"file:///qdrant/snapshots/<이름>/<스냅샷>"}`, `api-key` 헤더)다. 벡터는 파생 데이터라 스냅샷이 없어도 설정 › 임베딩 › 다시 색인으로 복구할 수 있다(시간이 더 걸린다). **Qdrant 저장소를 잃고 빈 채로 다시 띄웠으면 api 를 먼저 재기동한다** — 실행 중인 api 는 한 번 준비를 마친 뒤로는 컬렉션을 다시 만들지 않아, 재기동 전까지 검색이 빈 결과인데도 「일시 중단」 안내가 뜨지 않는다.
 - **노드 늘리기(자동 아님)**: 새 노드에 같은 `api_key`·클러스터 모드로 `--bootstrap http://qdrant-0.qdrant:6335` 를 주어 붙인 뒤, 컬렉션마다 `POST /collections/<이름>/cluster` 의 `move_shard`(`shard_id`·`from_peer_id`·`to_peer_id`)로 샤드를 옮긴다. 피어 id 는 `GET /cluster` 로 본다. 단일 노드는 HA 가 없다 — 내려간 동안은 위 「일시 중단」 안내로 버틴다.

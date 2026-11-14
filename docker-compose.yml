@@ -96,7 +96,7 @@ services:
 
   # 벡터 저장소 Qdrant(ADR 0002, WD-719) — 기본으로는 뜨지 않는다. `docker compose --profile qdrant up -d qdrant` 로 켜고,
   # api 는 FIREHUB_VECTOR_STORE_TYPE=qdrant · QDRANT_URL=http://localhost:6334 · QDRANT_API_KEY=firehub-qdrant-dev 로 붙는다.
-  # 운영과 같게 버전 고정·클러스터 모드(노드 1대여도 켜야 샤드 수가 설정대로 잡힌다)·API 키(dev 전용 값)로 띄운다.
+  # 운영과 같게 버전 고정·클러스터 모드(노드 1대여도 켜야 샤드 수가 설정대로 잡힌다)·API 키(dev 전용 값)·JWT RBAC 로 띄운다.
   qdrant:
     image: qdrant/qdrant:v1.20.0
     profiles: ["qdrant"]
@@ -107,6 +107,8 @@ services:
     environment:
       QDRANT__CLUSTER__ENABLED: "true"
       QDRANT__SERVICE__API_KEY: firehub-qdrant-dev
+      # 행 검색 테넌트 컬렉션 격리(WD-722) — 테넌트 컬렉션만 허용한 JWT. 꺼져 있으면 api 기동이 멈춘다.
+      QDRANT__SERVICE__JWT_RBAC: "true"
     volumes:
       - qdrant-data:/qdrant/storage
 

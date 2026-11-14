@@ -226,6 +226,10 @@ firehub:
       # int8 양자화본 메모리 고정 + 원본 디스크. 만든 뒤 바꾸면 기동이 멈춘다.
       quantization: ${QDRANT_QUANTIZATION:true}
       timeout: ${QDRANT_TIMEOUT:10s}
+      # 행 검색 테넌트 컬렉션(fh_rows_t{테넌트}_…) 샤드 수(WD-722). 테넌트×차원마다 컬렉션이라 작게 둔다. 만든 뒤 바꾸면 기동이 멈춘다.
+      row-shard-number: ${QDRANT_ROW_SHARD_NUMBER:1}
+      # 행 색인 원본 대조(원본에서 지워진 행의 점 정리) 최소 간격 — 데이터셋 점을 전부 훑으므로 드물게 한다.
+      row-orphan-sweep-interval-ms: ${QDRANT_ROW_ORPHAN_SWEEP_INTERVAL_MS:1800000}
   file:
     upload-dir: ${FILE_UPLOAD_DIR:./uploads}
     max-files-per-request: 3

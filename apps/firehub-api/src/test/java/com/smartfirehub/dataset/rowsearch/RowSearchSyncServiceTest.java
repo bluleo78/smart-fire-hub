@@ -211,7 +211,7 @@ class RowSearchSyncServiceTest extends IntegrationTestBase {
     // 'c' 는 _prev 에서 재사용(임베딩 안 함), 'z' 만 임베딩
     assertThat(embedded).containsExactly("내용: z");
     assertThat(index.existingHashes(ref(), List.of(1L, 2L))).containsOnlyKeys(1L, 2L);
-    assertThat(index.hasPrev(ref())).isFalse();
+    assertThat(index.hasPreviousGeneration(ref())).isFalse();
   }
 
   @Test

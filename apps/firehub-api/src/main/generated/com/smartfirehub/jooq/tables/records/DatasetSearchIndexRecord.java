@@ -272,6 +272,22 @@ public class DatasetSearchIndexRecord extends UpdatableRecordImpl<DatasetSearchI
         return (OffsetDateTime) get(17);
     }
 
+    /**
+     * Setter for <code>public.dataset_search_index.generation</code>. 행 검색 색인
+     * 세대 — swap 재구축마다 1 증가. Qdrant 색인은 이 세대의 점만 검색한다(WD-722)
+     */
+    public void setGeneration(Long value) {
+        set(18, value);
+    }
+
+    /**
+     * Getter for <code>public.dataset_search_index.generation</code>. 행 검색 색인
+     * 세대 — swap 재구축마다 1 증가. Qdrant 색인은 이 세대의 점만 검색한다(WD-722)
+     */
+    public Long getGeneration() {
+        return (Long) get(18);
+    }
+
     // -------------------------------------------------------------------------
     // Primary key information
     // -------------------------------------------------------------------------
@@ -295,7 +311,7 @@ public class DatasetSearchIndexRecord extends UpdatableRecordImpl<DatasetSearchI
     /**
      * Create a detached, initialised DatasetSearchIndexRecord
      */
-    public DatasetSearchIndexRecord(Long datasetId, Long tenantId, String status, String configHash, String embeddingModel, Integer embeddingDim, Long sourceTableOid, OffsetDateTime syncCursor, OffsetDateTime passCursor, Long resumeAfterId, Long indexedRows, Long totalRows, Integer consecutiveFailures, OffsetDateTime nextAttemptAt, OffsetDateTime syncLeaseUntil, OffsetDateTime lastSyncedAt, String lastError, OffsetDateTime updatedAt) {
+    public DatasetSearchIndexRecord(Long datasetId, Long tenantId, String status, String configHash, String embeddingModel, Integer embeddingDim, Long sourceTableOid, OffsetDateTime syncCursor, OffsetDateTime passCursor, Long resumeAfterId, Long indexedRows, Long totalRows, Integer consecutiveFailures, OffsetDateTime nextAttemptAt, OffsetDateTime syncLeaseUntil, OffsetDateTime lastSyncedAt, String lastError, OffsetDateTime updatedAt, Long generation) {
         super(DatasetSearchIndex.DATASET_SEARCH_INDEX);
 
         setDatasetId(datasetId);
@@ -316,6 +332,7 @@ public class DatasetSearchIndexRecord extends UpdatableRecordImpl<DatasetSearchI
         setLastSyncedAt(lastSyncedAt);
         setLastError(lastError);
         setUpdatedAt(updatedAt);
+        setGeneration(generation);
         resetChangedOnNotNull();
     }
 }

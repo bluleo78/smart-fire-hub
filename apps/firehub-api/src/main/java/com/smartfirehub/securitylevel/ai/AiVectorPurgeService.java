@@ -12,6 +12,7 @@ import com.smartfirehub.global.platformdb.PlatformDbFeature;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.ontology.repository.GraphOntologySourceRepository;
 import com.smartfirehub.vectorstore.VectorStoreFeatures;
+import com.smartfirehub.vectorstore.VectorStoreUnavailableException;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -162,25 +163,32 @@ public class AiVectorPurgeService {
   /**
    * 데이터셋 하나의 행 검색 벡터 정리. 색인이 없거나(검색 꺼짐) 이미 키워드 전용이면 할 일 없음(false) — 이것이 멱등의 근거다.
    *
-   * <p>현재 색인 테이블의 벡터를 비우고, 재구축(swap) 도중 남은 이전 테이블(prev)도 버린다 — prev 에도 외부 공급자가 만든 벡터가 있고, 상태를 키워드
-   * 전용으로 바꾸면 다음 스윕은 어차피 전체 재색인하므로 재사용할 일이 없다.
+   * <p>현재 색인 테이블의 벡터를 비우고, 재구축(swap) 도중 남은 이전 세대도 버린다 — 이전 세대에도 외부 공급자가 만든 벡터가 있고, 상태를 키워드 전용으로 바꾸면
+   * 다음 스윕은 어차피 전체 재색인하므로 재사용할 일이 없다.
    */
   private boolean purgeRowSearch(long tenantId, long datasetId) {
-    boolean needsPurge =
+    var state =
         searchStates
             .find(datasetId)
             .filter(s -> !RowSearchSyncService.KEYWORD_ONLY_MODEL.equals(s.embeddingModel()))
-            .isPresent();
-    if (!needsPurge) {
+            .orElse(null);
+    if (state == null) {
       return false;
     }
     String table = datasetRepository.findTableNameById(datasetId).orElse(null);
     if (table == null) {
       return false; // 삭제 중 — CASCADE 로 상태 행도 곧 사라진다
     }
-    IndexRef ref = new IndexRef(tenantId, datasetId, table);
+    // 지금 세대를 실은 참조 — 이전 세대 정리는 「지금보다 작은 세대」를 지우므로 세대가 있어야 한다(WD-722). 벡터 비우기는 모든 세대가 대상이다.
+    IndexRef ref = IndexRef.of(tenantId, datasetId, table, state);
     rowSearchIndex.clearEmbeddings(ref);
-    rowSearchIndex.dropPrev(ref);
+    try {
+      rowSearchIndex.dropPreviousGenerations(ref);
+    } catch (VectorStoreUnavailableException e) {
+      // 별도 벡터 저장소(Qdrant)가 내려가 있어도 정리는 이어 간다 — 벡터 비우기는 이미 아웃박스로 모든 세대를 덮었고, 남는 이전 세대 키워드 점은
+      // 키워드 전용 전환 뒤 다음 스윕의 전체 재색인이 지운다(WD-721 원칙: 정리 경로는 저장소 장애로 실패하지 않는다).
+      log.warn("행 검색 이전 세대 정리 보류 — 벡터 저장소 일시 중단: dataset={}, {}", datasetId, e.getMessage());
+    }
     // 상태 모델을 즉시 키워드 전용으로 — 다음 스윕 전에도 검색이 키워드 경로를 탄다(질의 임베딩 안 함).
     searchStates.markKeywordOnly(datasetId, RowSearchSyncService.KEYWORD_ONLY_MODEL);
     return true;

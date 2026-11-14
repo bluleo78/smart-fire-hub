@@ -76,6 +76,8 @@ public interface SearchIndexStateRepository {
   /**
    * swap 재구축: OID 만 새 값으로(재구축 중 검색이 STALE 이 아니라 새 색인을 읽도록 즉시 갱신). 새 색인 테이블은 비어 있으므로 진행률
    * 분자(indexed_rows)도 0 에서 다시 센다.
+   *
+   * <p>색인 세대(generation)도 같은 UPDATE 에서 1 올린다(WD-722) — Qdrant 색인은 이 세대로 새 점을 쓰고 검색한다.
    */
   void markSourceOid(long datasetId, long sourceOid);
 

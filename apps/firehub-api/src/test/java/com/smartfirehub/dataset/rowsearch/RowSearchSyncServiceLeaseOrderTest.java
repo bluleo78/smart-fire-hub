@@ -67,7 +67,21 @@ class RowSearchSyncServiceLeaseOrderTest {
 
   private static SearchIndexState state(int consecutiveFailures) {
     return new SearchIndexState(
-        ID, "ERROR", "h", "m", 1024, 1L, null, null, null, 0, 0, consecutiveFailures, null, null);
+        ID,
+        "ERROR",
+        "h",
+        "m",
+        1024,
+        1L,
+        null,
+        null,
+        null,
+        0,
+        0,
+        consecutiveFailures,
+        null,
+        null,
+        1L);
   }
 
   @Test

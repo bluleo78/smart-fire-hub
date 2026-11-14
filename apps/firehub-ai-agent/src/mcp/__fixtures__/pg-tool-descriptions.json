@@ -2999,7 +2999,7 @@
     }
   },
   "search_dataset_rows": {
-    "description": "데이터셋 행을 텍스트 내용으로 찾습니다(의미+키워드 하이브리드). \"누수 관련 신고\", \"이 민원과 비슷한 건\"처럼 내용·의미로 찾을 때 사용합니다. 정확한 조건 조회·집계는 execute_analytics_query, 데이터셋 자체를 찾을 때는 find_datasets 를 쓰세요. get_dataset 의 searchIndex.enabled 가 false 면 사용할 수 없습니다(사용자에게 데이터셋 상세의 \"검색\" 탭에서 필드를 지정하도록 안내). indexStatus.status 가 SYNCING 이면 일부만 색인된 결과, STALE 이면 원본이 방금 교체되어 잠시 후 다시 시도해야 함을, degraded 가 true 면 키워드 검색만 수행됐음을 알리세요. TIMESTAMP 필터 값은 시간대(Z/+09:00) 없이 데이터에 저장된 현지 시각 그대로 보내세요.",
+    "description": "데이터셋 행을 텍스트 내용으로 찾습니다(의미+키워드 하이브리드). \"누수 관련 신고\", \"이 민원과 비슷한 건\"처럼 내용·의미로 찾을 때 사용합니다. 정확한 조건 조회·집계는 execute_analytics_query, 데이터셋 자체를 찾을 때는 find_datasets 를 쓰세요. get_dataset 의 searchIndex.enabled 가 false 면 사용할 수 없습니다(사용자에게 데이터셋 상세의 \"검색\" 탭에서 필드를 지정하도록 안내). indexStatus.status 가 SYNCING 이면 일부만 색인된 결과, STALE 이면 원본이 방금 교체되어 잠시 후 다시 시도해야 함을, UNAVAILABLE 이면 검색 저장소가 일시 중단되어 잠시 뒤 다시 시도해야 함을(결과가 없다고 답하지 마세요), degraded 가 true 면 키워드 검색만 수행됐음을 알리세요. TIMESTAMP 필터 값은 시간대(Z/+09:00) 없이 데이터에 저장된 현지 시각 그대로 보내세요.",
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",

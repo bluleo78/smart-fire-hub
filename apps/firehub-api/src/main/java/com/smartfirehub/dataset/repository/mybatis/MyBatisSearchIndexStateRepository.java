@@ -186,6 +186,7 @@ public class MyBatisSearchIndexStateRepository implements SearchIndexStateReposi
         r.totalRows(),
         r.consecutiveFailures(),
         toUtc(r.lastSyncedAt()),
-        r.lastError());
+        r.lastError(),
+        r.generation());
   }
 }

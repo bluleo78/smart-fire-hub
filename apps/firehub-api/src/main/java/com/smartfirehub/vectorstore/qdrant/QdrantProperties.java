@@ -4,6 +4,7 @@ import java.net.URI;
 import java.time.Duration;
 import java.util.Locale;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.bind.ConstructorBinding;
 import org.springframework.boot.context.properties.bind.DefaultValue;
 
 /**
@@ -15,6 +16,8 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  * @param shardNumber 새 컬렉션의 샤드 수. 오픈소스판은 리샤딩이 없어 노드를 늘릴 때를 대비해 넉넉히 잡는다(기본 6).
  * @param quantization 원본 dense 를 디스크에 두고 int8 양자화본을 메모리에 고정할지(기본 켬, 결정 7 「메모리」).
  * @param timeout 호출 하나의 제한 시간.
+ * @param rowShardNumber 행 검색 테넌트 컬렉션({@code fh_rows_t{테넌트}_…})의 샤드 수(기본 1, WD-722). 행 색인은 테넌트×차원마다
+ *     컬렉션이 생겨 공유 컬렉션의 {@link #shardNumber} 를 그대로 쓰면 샤드가 테넌트 수만큼 곱해진다. 노드를 늘리면 컬렉션 단위로 옮긴다.
  */
 @ConfigurationProperties(prefix = "firehub.vector-store.qdrant")
 public record QdrantProperties(
@@ -22,18 +25,30 @@ public record QdrantProperties(
     String apiKey,
     @DefaultValue("6") int shardNumber,
     @DefaultValue("true") boolean quantization,
-    @DefaultValue("10s") Duration timeout) {
+    @DefaultValue("10s") Duration timeout,
+    @DefaultValue("1") int rowShardNumber) {
 
   /** gRPC 기본 포트. REST(6333)와 다르다. */
   static final int DEFAULT_GRPC_PORT = 6334;
 
   /** 설정값을 검사한다. 잘못된 값으로 컬렉션을 만들면 나중에 바꿀 수 없어서(샤드 수 고정) 기동 때 막는다. */
+  @ConstructorBinding
   public QdrantProperties {
     if (shardNumber < 1) {
       throw new IllegalStateException(
           "firehub.vector-store.qdrant.shard-number 는 1 이상이어야 합니다: " + shardNumber);
     }
+    if (rowShardNumber < 1) {
+      throw new IllegalStateException(
+          "firehub.vector-store.qdrant.row-shard-number 는 1 이상이어야 합니다: " + rowShardNumber);
+    }
     endpoint(url);
+  }
+
+  /** 행 검색 샤드 수를 기본값(1)으로 두는 생성자 — 시험·하네스용. */
+  public QdrantProperties(
+      String url, String apiKey, int shardNumber, boolean quantization, Duration timeout) {
+    this(url, apiKey, shardNumber, quantization, timeout, 1);
   }
 
   /** {@link #url} 에서 뽑은 접속 대상. */

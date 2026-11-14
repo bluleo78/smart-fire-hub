@@ -25,18 +25,12 @@ import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ProviderHosting;
 import com.smartfirehub.support.IntegrationTestBase;
-import com.smartfirehub.support.PostgresTestContainer;
 import com.smartfirehub.support.TenantRlsTestSupport;
 import com.smartfirehub.vectorstore.ChunkVectorIndex;
 import com.smartfirehub.vectorstore.DatasetVectorIndex;
 import com.smartfirehub.vectorstore.VectorStoreFeatures;
-import com.smartfirehub.vectorstore.VectorStoreInstallKindCallback;
 import io.qdrant.client.QdrantClient;
 import java.nio.file.Path;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
 import java.util.List;
 import java.util.Set;
 import org.jobrunr.scheduling.JobScheduler;
@@ -69,7 +63,7 @@ class QdrantPlatformSearchIntegrationTest extends IntegrationTestBase {
   static void qdrant(DynamicPropertyRegistry r) {
     // 공유 테스트 DB 는 다른 테스트가 먼저 띄운 컨텍스트로 설치 종류가 platform 으로 기록돼 있다(ADR 0002 결정 10 가드).
     // 이 컨텍스트가 뜨기 전에 qdrant 로 바꿔 두고, 끝나면 되돌려 뒤에 뜨는 platform 컨텍스트가 막히지 않게 한다.
-    recordInstallType("qdrant");
+    QdrantTestContainer.recordInstallType("qdrant");
     r.add("firehub.vector-store.type", () -> "qdrant");
     r.add("firehub.vector-store.qdrant.url", PROPS::url);
     r.add("firehub.vector-store.qdrant.api-key", PROPS::apiKey);
@@ -84,32 +78,7 @@ class QdrantPlatformSearchIntegrationTest extends IntegrationTestBase {
   /** 클래스가 끝나면 공유 DB 의 설치 종류 기록을 platform 으로 되돌린다. */
   @AfterAll
   static void restoreInstallType() {
-    recordInstallType("platform");
-  }
-
-  /**
-   * 공유 테스트 DB 의 설치 종류 기록을 소유자 계정으로 바꾼다. Flyway 가 아직 돌지 않은 새 DB(테이블 없음)면 아무것도 하지 않는다 — 그때는 콜백이 빈
-   * 설치본으로 보고 이번 설정값(qdrant)을 기록한다.
-   */
-  private static void recordInstallType(String type) {
-    try (Connection c = PostgresTestContainer.platformOwnerDataSource().getConnection()) {
-      try (ResultSet rs =
-          c.createStatement().executeQuery("SELECT to_regclass('public.system_settings')")) {
-        if (!rs.next() || rs.getString(1) == null) {
-          return;
-        }
-      }
-      try (PreparedStatement ps =
-          c.prepareStatement(
-              "INSERT INTO system_settings (key, value, description) VALUES (?, ?, 'test')"
-                  + " ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value")) {
-        ps.setString(1, VectorStoreInstallKindCallback.KEY);
-        ps.setString(2, type);
-        ps.executeUpdate();
-      }
-    } catch (SQLException e) {
-      throw new IllegalStateException(e);
-    }
+    QdrantTestContainer.recordInstallType("platform");
   }
 
   @Autowired private VectorStoreFeatures features;

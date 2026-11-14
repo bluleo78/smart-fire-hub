@@ -106,5 +106,6 @@ public interface SearchIndexStateMapper {
       long totalRows,
       int consecutiveFailures,
       Instant lastSyncedAt,
-      String lastError) {}
+      String lastError,
+      long generation) {}
 }

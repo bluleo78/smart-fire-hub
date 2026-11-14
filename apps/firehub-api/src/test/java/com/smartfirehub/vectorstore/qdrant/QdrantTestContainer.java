@@ -1,6 +1,12 @@
 package com.smartfirehub.vectorstore.qdrant;
 
+import com.smartfirehub.support.PostgresTestContainer;
+import com.smartfirehub.vectorstore.VectorStoreInstallKindCallback;
 import io.qdrant.client.QdrantClient;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -9,8 +15,8 @@ import org.testcontainers.qdrant.QdrantContainer;
 /**
  * Qdrant 테스트 하네스(WD-719). JVM 하나에 컨테이너 하나를 띄워 Qdrant 를 쓰는 테스트가 함께 쓴다.
  *
- * <p>운영과 같게 만든다: 버전 고정(v1.20.0), 클러스터 모드(노드 1대여도 {@code cluster.enabled}), API 키. 클러스터 모드로 시작해야 샤드
- * 수가 설정대로 잡힌다(단독 모드는 샤드 1로 고정 — PoC ③).
+ * <p>운영과 같게 만든다: 버전 고정(v1.20.0), 클러스터 모드(노드 1대여도 {@code cluster.enabled}), API 키, JWT RBAC(WD-722).
+ * 클러스터 모드로 시작해야 샤드 수가 설정대로 잡힌다(단독 모드는 샤드 1로 고정 — PoC ③).
  */
 public final class QdrantTestContainer {
 
@@ -30,6 +36,8 @@ public final class QdrantTestContainer {
           new QdrantContainer(IMAGE)
               .withApiKey(API_KEY)
               .withEnv("QDRANT__CLUSTER__ENABLED", "true")
+              // 행 검색 테넌트 컬렉션 토큰(WD-722) — 운영과 같게 켠다. 꺼져 있으면 기동 확인이 설정 오류로 멈춘다.
+              .withEnv("QDRANT__SERVICE__JWT_RBAC", "true")
               // 클러스터 모드는 자기 p2p 주소가 필요하다. 노드가 하나라 컨테이너 안 주소면 된다.
               .withCommand("./qdrant", "--uri", "http://localhost:6335");
       c.start();
@@ -54,6 +62,31 @@ public final class QdrantTestContainer {
     List<String> names = client.listCollectionsAsync().get(30, TimeUnit.SECONDS);
     for (String name : names) {
       client.deleteCollectionAsync(name).get(30, TimeUnit.SECONDS);
+    }
+  }
+
+  /**
+   * 공유 테스트 DB 의 설치 종류 기록을 소유자 계정으로 바꾼다. Flyway 가 아직 돌지 않은 새 DB(테이블 없음)면 아무것도 하지 않는다 — 그때는 콜백이 빈
+   * 설치본으로 보고 이번 설정값(qdrant)을 기록한다.
+   */
+  public static void recordInstallType(String type) {
+    try (Connection c = PostgresTestContainer.platformOwnerDataSource().getConnection()) {
+      try (ResultSet rs =
+          c.createStatement().executeQuery("SELECT to_regclass('public.system_settings')")) {
+        if (!rs.next() || rs.getString(1) == null) {
+          return;
+        }
+      }
+      try (PreparedStatement ps =
+          c.prepareStatement(
+              "INSERT INTO system_settings (key, value, description) VALUES (?, ?, 'test')"
+                  + " ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value")) {
+        ps.setString(1, VectorStoreInstallKindCallback.KEY);
+        ps.setString(2, type);
+        ps.executeUpdate();
+      }
+    } catch (SQLException e) {
+      throw new IllegalStateException(e);
     }
   }
 }

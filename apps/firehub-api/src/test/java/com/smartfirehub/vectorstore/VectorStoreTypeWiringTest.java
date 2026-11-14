@@ -27,7 +27,7 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
  * <ul>
  *   <li>postgres+platform → pgvector
  *   <li>tibero+platform → 꺼짐
- *   <li>qdrant(플랫폼 DB 무관) → Qdrant 구현, 행 검색은 WD-722 전까지 꺼짐
+ *   <li>qdrant(플랫폼 DB 무관) → Qdrant 구현, 행 검색은 PG 데이터 저장소 + API 키일 때만(WD-722)
  * </ul>
  */
 class VectorStoreTypeWiringTest {
@@ -46,6 +46,8 @@ class VectorStoreTypeWiringTest {
               QdrantClientConfig.class,
               // 기능 판정이 가용성을 묻는다(WD-724). Qdrant 가 없어도 일시 장애라 경고만 남기고 뜬다.
               QdrantVectorStoreLifecycle.class,
+              // 행 검색 판정이 API 키 유무를 묻는다(WD-722).
+              com.smartfirehub.vectorstore.qdrant.QdrantRowClients.class,
               QdrantVectorStoreFeatures.class);
 
   @AfterEach
@@ -137,13 +139,35 @@ class VectorStoreTypeWiringTest {
             });
   }
 
-  /** qdrant 조합의 행 검색은 Qdrant 행 색인(WD-722) 전까지 어떤 데이터 저장소에서도 꺼진다 — 데이터 저장소 pgvector 에 색인이 쌓이지 않게. */
+  /**
+   * qdrant 조합의 행 검색(WD-722)은 데이터 저장소가 PostgreSQL 이고 API 키가 있을 때만 켜진다. Tibero 데이터 저장소는 WD-723 전까지
+   * 꺼짐, 키가 없으면 테넌트 컬렉션 토큰을 서명할 수 없어 꺼짐.
+   */
   @Test
-  void qdrant_조합의_행_검색은_WD722_전까지_꺼짐() {
-    for (DataStoreBackend backend : DataStoreBackend.values()) {
-      assertThat(new QdrantVectorStoreFeatures(null).supportsRowSearch(backend))
-          .as("%s", backend)
-          .isFalse();
+  void qdrant_조합의_행_검색은_PG_데이터_저장소와_API_키가_있을_때만() {
+    var withKey =
+        new com.smartfirehub.vectorstore.qdrant.QdrantRowClients(
+            new com.smartfirehub.vectorstore.qdrant.QdrantProperties(
+                "http://localhost:1", "k", 6, true, java.time.Duration.ofSeconds(1)));
+    var noKey =
+        new com.smartfirehub.vectorstore.qdrant.QdrantRowClients(
+            new com.smartfirehub.vectorstore.qdrant.QdrantProperties(
+                "http://localhost:1", "", 6, true, java.time.Duration.ofSeconds(1)));
+    try {
+      for (DataStoreBackend backend : DataStoreBackend.values()) {
+        assertThat(new QdrantVectorStoreFeatures(null, withKey).supportsRowSearch(backend))
+            .as("%s", backend)
+            .isEqualTo(backend == DataStoreBackend.POSTGRESQL);
+        assertThat(new QdrantVectorStoreFeatures(null, noKey).supportsRowSearch(backend))
+            .as("키 없음 %s", backend)
+            .isFalse();
+      }
+    } finally {
+      try {
+        withKey.destroy();
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+      }
     }
   }
 

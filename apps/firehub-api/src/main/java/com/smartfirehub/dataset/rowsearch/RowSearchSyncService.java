@@ -10,6 +10,7 @@ import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.pipeline.service.IncrementalCursorService;
 import com.smartfirehub.securitylevel.ai.EmbeddingAiGate;
+import com.smartfirehub.vectorstore.VectorStoreUnavailableException;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
@@ -113,6 +114,11 @@ public class RowSearchSyncService {
       state = states.find(datasetId).orElse(null);
       if (state == null) return Outcome.SKIPPED; // 임대 직후 끄기(상태 행 삭제)와 경합
       return doSync(datasetId, state);
+    } catch (VectorStoreUnavailableException e) {
+      // 저장소 일시 중단(Qdrant 장애) — 데이터셋 탓이 아니므로 실패 횟수·백오프·오류 표시를 남기지 않는다(WD-724 재임베딩 잡과 같은 규칙).
+      // 책갈피는 전진하지 않았으니 복구 뒤 다음 주기가 같은 구간을 다시 처리한다.
+      log.warn("행 검색 색인 동기화 보류 — 벡터 저장소 일시 중단: datasetId={}, {}", datasetId, e.getMessage());
+      return Outcome.SKIPPED;
     } catch (RuntimeException e) {
       log.warn("행 검색 색인 동기화 실패: datasetId={}", datasetId, e);
       int failures = (state == null ? 0 : state.consecutiveFailures()) + 1;
@@ -134,7 +140,7 @@ public class RowSearchSyncService {
     // DatasetRepository 는 클래스 레벨 @Transactional 이라 트랜잭션 없이 불려도 RLS GUC 가 선다.
     DatasetResponse dataset = datasetRepository.findById(datasetId).orElse(null);
     if (dataset == null) return Outcome.SKIPPED; // 삭제 중 — CASCADE 로 상태 행도 곧 사라진다
-    IndexRef ref = new IndexRef(TenantContext.require(), datasetId, dataset.tableName());
+    IndexRef ref = IndexRef.of(TenantContext.require(), datasetId, dataset.tableName(), state);
     SearchConfig config = searchColumns.findConfig(datasetId);
     if (config.isEmpty()) {
       // 검색 탭에서 끄면 설정 서비스가 상태 행·색인을 지우지만, 검색 대상 컬럼을 컬럼 삭제로 모두 없애면 상태 행과
@@ -182,10 +188,16 @@ public class RowSearchSyncService {
       }
       state = states.find(datasetId).orElseThrow();
     } else if (state.sourceTableOid() == null || state.sourceTableOid() != oid) {
-      index.rebuildReusing(ref, dim); // swap: id 가 다시 매겨졌다 — 이전 색인은 내용 주소 재사용용으로만
+      // swap: id 가 다시 매겨졌다 — 새 세대를 시작하고 이전 세대는 내용 주소 재사용용으로만 둔다.
+      // 색인을 먼저 준비하고 상태(OID·세대)를 나중에 바꾼다: 그 사이 죽으면 다음 주기가 OID 불일치를 다시 보고 같은 일을 되풀이한다.
+      // 순서를 바꾸면 OID 만 새 값이 된 채 PG 색인은 옛 id 를 가리키는 테이블로 남는다. 세대는 markSourceOid 가 1 올릴 값을 미리 싣는다.
+      index.startGeneration(
+          new IndexRef(ref.tenantId(), datasetId, ref.sourceTable(), state.generation() + 1), dim);
       states.markSourceOid(datasetId, oid);
       state = states.find(datasetId).orElseThrow();
     }
+    // 재색인·세대 시작으로 상태가 바뀌었을 수 있다 — 아래 쓰기는 지금 세대를 실은 참조로 한다.
+    ref = IndexRef.of(ref.tenantId(), datasetId, ref.sourceTable(), state);
 
     // 2) 책갈피 후보 — 패스 시작 시에만 캡처(IncrementalCursorService 불변식: 실행 직전).
     //    패스 시작이면 원본 전체 행 수도 함께 기록해 여러 주기에 걸친 색인 중에도 진행률(분모)이 보이게 한다.
@@ -196,7 +208,7 @@ public class RowSearchSyncService {
     }
 
     // 3) 변경분 처리
-    boolean reusing = index.hasPrev(ref);
+    boolean reusing = index.hasPreviousGeneration(ref);
     long afterId = state.resumeAfterId() == null ? 0L : state.resumeAfterId();
     int processed = 0;
     boolean completed = false;
@@ -235,7 +247,7 @@ public class RowSearchSyncService {
 
     // 4) 삭제분 정리 + 5) 마무리
     index.deleteMissing(ref);
-    if (reusing) index.dropPrev(ref);
+    if (reusing) index.dropPreviousGenerations(ref);
     states.markCompleted(datasetId, index.count(ref), reader.countRows(ref.sourceTable()));
     return Outcome.COMPLETED;
   }

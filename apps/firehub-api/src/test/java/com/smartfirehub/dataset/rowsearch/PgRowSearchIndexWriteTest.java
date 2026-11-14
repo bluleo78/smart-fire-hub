@@ -77,7 +77,7 @@ class PgRowSearchIndexWriteTest extends IntegrationTestBase {
     assertThat(roleExists).as("테스트 DB 에 실행 롤이 있어야 이 단언이 의미가 있다").isTrue();
 
     index.recreate(ref, 1024);
-    index.rebuildReusing(ref, 1024); // 새 색인 + _prev(옛 색인 개명) 둘 다 확인
+    index.startGeneration(ref, 1024); // 새 색인 + _prev(옛 색인 개명) 둘 다 확인
 
     for (String t : List.of(ref.indexTable(), ref.prevTable())) {
       String q = DataSchema.qualify(t);
@@ -154,13 +154,13 @@ class PgRowSearchIndexWriteTest extends IntegrationTestBase {
   }
 
   @Test
-  void rebuildReusing_keepsPrev_andCopiesByHashAndModel() {
+  void startGeneration_keepsPrev_andCopiesByHashAndModel() {
     index.recreate(ref, 1024);
     index.upsert(ref, List.of(new IndexedRow(1, "a", "same-hash", vec(0.7f), "fake")));
 
-    index.rebuildReusing(ref, 1024);
+    index.startGeneration(ref, 1024);
 
-    assertThat(index.hasPrev(ref)).isTrue();
+    assertThat(index.hasPreviousGeneration(ref)).isTrue();
     assertThat(index.count(ref)).isZero();
     // 새 row_id=3 이 같은 내용(해시)이면 벡터를 복사한다. 모델이 다르면 복사하지 않는다.
     assertThat(index.upsertReusing(ref, 3, "a", "same-hash", "fake")).isTrue();
@@ -168,7 +168,7 @@ class PgRowSearchIndexWriteTest extends IntegrationTestBase {
     assertThat(index.upsertReusing(ref, 2, "b", "unknown-hash", "fake")).isFalse();
     assertThat(index.existingHashes(ref, List.of(3L))).containsEntry(3L, "same-hash");
 
-    index.dropPrev(ref);
-    assertThat(index.hasPrev(ref)).isFalse();
+    index.dropPreviousGenerations(ref);
+    assertThat(index.hasPreviousGeneration(ref)).isFalse();
   }
 }

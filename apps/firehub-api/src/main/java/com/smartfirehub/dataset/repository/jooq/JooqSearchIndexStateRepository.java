@@ -174,7 +174,8 @@ public class JooqSearchIndexStateRepository implements SearchIndexStateRepositor
   @Override
   public void markSourceOid(long datasetId, long sourceOid) {
     dsl.execute(
-        "UPDATE dataset_search_index SET source_table_oid = ?,"
+        // 세대를 같은 UPDATE 에서 올린다(WD-722) — OID 와 세대가 따로 바뀌는 틈에 검색이 옛 세대 점을 새 테이블에 대어 보지 않게.
+        "UPDATE dataset_search_index SET source_table_oid = ?, generation = generation + 1,"
             + RESET_PASS
             + " status = 'SYNCING', updated_at = now() WHERE dataset_id = ?",
         sourceOid,
@@ -282,6 +283,7 @@ public class JooqSearchIndexStateRepository implements SearchIndexStateRepositor
         r.get("total_rows", Long.class),
         r.get("consecutive_failures", Integer.class),
         r.get("last_synced_at", OffsetDateTime.class),
-        r.get("last_error", String.class));
+        r.get("last_error", String.class),
+        r.get("generation", Long.class));
   }
 }

@@ -39,7 +39,8 @@ class RowSearchServiceTest extends IntegrationTestBase {
   @Autowired private RowSearchService service;
   @Autowired private RowSearchSyncService sync;
   @Autowired private SearchIndexSettingsService settings;
-  @Autowired private PgRowSearchIndex index;
+  // 포트로 받는다 — 같은 시나리오를 qdrant 조합 하위 클래스(QdrantRowSearchServiceTest)도 돌린다(WD-722).
+  @Autowired private RowSearchIndex index;
   @Autowired private DataTableService dataTableService;
   @Autowired private DSLContext dsl;
 
@@ -54,7 +55,7 @@ class RowSearchServiceTest extends IntegrationTestBase {
   // 색인 이후 임베딩 모델·차원이 바뀐 상황(다음 스윕 전)을 흉내 내려고 가변으로 둔다.
   private volatile String model = "fake";
   private volatile int dim = 1024;
-  private long datasetId;
+  protected long datasetId;
   private Long userId;
 
   @BeforeEach
@@ -330,6 +331,52 @@ class RowSearchServiceTest extends IntegrationTestBase {
     assertThat(service.search(datasetId, req("누수", "KEYWORD", null)).hits()).isNotEmpty();
   }
 
+  /**
+   * 색인에 남은 의미 벡터 수(키워드 전용 재색인 확인용). PG 색인은 색인 테이블에서 벡터가 있거나 모델 표식이 키워드 전용이 아닌 행을 센다. 엔진마다 저장 위치가 달라
+   * 하위 클래스가 바꾼다.
+   */
+  protected long indexedVectorCount() {
+    return inTenantFixture(
+        () ->
+            dataDsl
+                .fetchOne(
+                    "SELECT count(*) FROM "
+                        + DataSchema.qualify(
+                            new IndexRef(DEFAULT_TEST_TENANT_ID, datasetId, SRC).indexTable())
+                        + " WHERE embedding IS NOT NULL OR embedding_model IS DISTINCT FROM ?",
+                    RowSearchSyncService.KEYWORD_ONLY_MODEL)
+                .get(0, Long.class));
+  }
+
+  @Test
+  void afterSwap_sweepRebuilds_reusingVectorsOfUnchangedRows() {
+    // 원본 교체: 같은 내용 한 행 + 새 행. 새 세대(PG 는 새 테이블)로 다시 채우고, 내용이 같은 행은 벡터를 재사용해 임베딩하지 않는다.
+    inTenantFixture(
+        () -> {
+          String tmp = dataTableService.createTempTable(SRC);
+          dataDsl.execute(
+              "INSERT INTO "
+                  + DataSchema.qualify(tmp)
+                  + " (content, status) VALUES ('정전 안내', '완료'), ('누수 재발', '완료')");
+          dataTableService.swapTable(SRC, tmp);
+        });
+    embedCalls.set(0);
+    assertThat(sync.sync(datasetId)).isEqualTo(RowSearchSyncService.Outcome.COMPLETED);
+    // '정전 안내' 한 건만 새로 임베딩(한 번의 embed 호출) — '누수 재발' 은 옛 세대 벡터 재사용
+    assertThat(embedCalls.get()).isEqualTo(1);
+
+    var hybrid = service.search(datasetId, req("누수", null, null));
+    assertThat(hybrid.indexStatus().status()).isEqualTo("IDLE");
+    // 옛 세대의 '파이프 누수 신고'(옛 row_id 1)가 새 테이블의 다른 행으로 나가지 않는다
+    assertThat(hybrid.hits())
+        .extracting(h -> h.row().get("content"))
+        .doesNotContain("파이프 누수 신고")
+        .first()
+        .isEqualTo("누수 재발");
+    var semantic = service.search(datasetId, req("배관 문제", "SEMANTIC", null));
+    assertThat(semantic.hits()).extracting(h -> h.row().get("content")).first().isEqualTo("누수 재발");
+  }
+
   /** 데이터셋 등급을 바꾼다(tenant 1 시드 등급 이름). */
   private void setLevel(String levelName) {
     inTenantFixture(
@@ -346,18 +393,7 @@ class RowSearchServiceTest extends IntegrationTestBase {
     // Review Focus 5: 민감 등급 + 임베딩 호스팅 외부(미선언 기본) → 다음 스윕이 키워드 전용(벡터 NULL, vector(1))으로 재색인한다.
     setLevel("민감");
     assertThat(sync.sync(datasetId)).isEqualTo(RowSearchSyncService.Outcome.COMPLETED);
-    long vectors =
-        inTenantFixture(
-            () ->
-                dataDsl
-                    .fetchOne(
-                        "SELECT count(*) FROM "
-                            + DataSchema.qualify(
-                                new IndexRef(DEFAULT_TEST_TENANT_ID, datasetId, SRC).indexTable())
-                            + " WHERE embedding IS NOT NULL OR embedding_model IS DISTINCT FROM ?",
-                        RowSearchSyncService.KEYWORD_ONLY_MODEL)
-                    .get(0, Long.class));
-    assertThat(vectors).isZero();
+    assertThat(indexedVectorCount()).isZero();
 
     embedCalls.set(0);
     clearInvocations(embeddingFactory);

@@ -14,6 +14,8 @@ import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.util.RankFusion;
+import com.smartfirehub.vectorstore.VectorStoreFeatures;
+import com.smartfirehub.vectorstore.VectorStoreUnavailableException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -44,6 +46,10 @@ public class RowSearchService {
   private final SearchSourceReader reader;
   private final RowSearchIndex index;
   private final EmbeddingProviderFactory embeddingFactory;
+  private final VectorStoreFeatures vectorStoreFeatures;
+
+  /** 벡터 저장소가 일시 중단일 때의 색인 상태 — 결과 없이 「잠시 뒤 다시」를 알린다(WD-722, 기능 응답 vectorStoreAvailable 과 같은 뜻). */
+  public static final String UNAVAILABLE = "UNAVAILABLE";
 
   /**
    * 메서드 수준 트랜잭션을 걸지 않는다 — 여기서 부르는 DB 접근(데이터셋·컬럼·상태·검색 필드 저장소, 원본 리더, 색인, 임베딩 설정 조회)은 모두 자체
@@ -80,10 +86,10 @@ public class RowSearchService {
     for (DatasetColumnResponse c : columnRepository.findByDatasetId(datasetId)) {
       columnTypes.put(c.columnName(), c.dataType());
     }
-    CompiledFilter filter = RowFilterCompiler.compile(new RowFilter(req.filters()), columnTypes);
+    RowQueryFilter filter = RowQueryFilter.validated(new RowFilter(req.filters()), columnTypes);
     List<String> returnColumns = resolveReturnColumns(req.columns(), columnTypes);
 
-    IndexRef ref = new IndexRef(TenantContext.require(), datasetId, dataset.tableName());
+    IndexRef ref = IndexRef.of(TenantContext.require(), datasetId, dataset.tableName(), state);
     long oid = reader.currentOid(ref.sourceTable());
     if (state.sourceTableOid() == null) {
       // 첫 스윕 전(상태 행만 있고 원본 OID·색인 테이블이 아직 없음) — 없는 색인 테이블을 조회하지 않고 현재 상태
@@ -94,6 +100,27 @@ public class RowSearchService {
       return empty(state, "STALE");
     }
 
+    // 벡터 저장소 일시 중단(Qdrant 장애)이면 색인을 부르지 않고 알린다 — 가용성은 짧게 캐시돼 요청마다 저장소를 기다리지 않는다.
+    if (!vectorStoreFeatures.available()) {
+      return empty(state, UNAVAILABLE);
+    }
+    try {
+      return searchIndex(req, mode, limit, state, filter, returnColumns, ref);
+    } catch (VectorStoreUnavailableException e) {
+      // 확인과 호출 사이에 내려간 경우 — 500 이 아니라 같은 안내로 답한다.
+      return empty(state, UNAVAILABLE);
+    }
+  }
+
+  /** 모드별 색인 조회 → 융합 → 원본 조회(저장소 장애는 호출자가 잡는다). */
+  private RowSearchResponse searchIndex(
+      RowSearchRequest req,
+      String mode,
+      int limit,
+      SearchIndexState state,
+      RowQueryFilter filter,
+      List<String> returnColumns,
+      IndexRef ref) {
     // S3 §4.3: 등급이 임베딩 공급자를 허용하지 않아 키워드만 색인된 데이터셋 — 질의 임베딩도, 의미 검색도 하지 않는다.
     // HYBRID 도 오류·degraded 없이 키워드 결과를 KEYWORD_ONLY 상태로 돌려준다(벡터가 원래 없는 정상 상태라 degraded 가 아니다).
     if (RowSearchSyncService.KEYWORD_ONLY_MODEL.equals(state.embeddingModel())) {

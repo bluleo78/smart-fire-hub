@@ -30,6 +30,7 @@
       <arg column="consecutive_failures" javaType="_int"/>
       <arg column="last_synced_at" javaType="java.time.Instant"/>
       <arg column="last_error" javaType="java.lang.String"/>
+      <arg column="generation" javaType="_long"/>
     </constructor>
   </resultMap>
 
@@ -45,7 +46,7 @@
   <select id="selectByDatasetId" resultMap="stateRow">
     SELECT dataset_id, status, config_hash, embedding_model, embedding_dim, source_table_oid,
            sync_cursor, pass_cursor, resume_after_id, indexed_rows, total_rows, consecutive_failures,
-           last_synced_at, last_error
+           last_synced_at, last_error, generation
       FROM dataset_search_index
      WHERE dataset_id = #{datasetId}
   </select>
@@ -134,7 +135,7 @@
 
   <update id="markSourceOid">
     UPDATE dataset_search_index
-       SET source_table_oid = #{sourceOid}, <include refid="resetPass"/> <include refid="touchSyncing"/>
+       SET source_table_oid = #{sourceOid}, generation = generation + 1, <include refid="resetPass"/> <include refid="touchSyncing"/>
      WHERE dataset_id = #{datasetId}
   </update>
 
