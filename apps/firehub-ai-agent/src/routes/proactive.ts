@@ -7,7 +7,7 @@ import type { AgentType, ProviderConfig } from '../providers/index.js';
 // 목이 정의하지 않은 값이라 undefined 가 되어 라우트가 깨진다.
 import { isKnownAgentType } from '../providers/types.js';
 import { parseProactiveExecutionId, parseSharePurpose } from '../mcp/api-client.js';
-import { DEFAULT_DB_DIALECT, parseDbDialect, type DbDialect } from '../agent/db-dialect.js';
+import { DEFAULT_DB_DIALECT, parseDbDialect, parseRowSearch, type DbDialect } from '../agent/db-dialect.js';
 import { TIBERO_SQL_GUIDE } from '../agent/tibero-sql-guide.js';
 import { authedJsonBody } from '../http/json-body.js';
 import { isValidTenantId, proactiveReportDir } from '../agent/tenant-paths.js';
@@ -59,6 +59,8 @@ interface ProactiveRequest {
   proactiveExecutionId?: number;
   /** WD-79: 테넌트 저장소 방언("POSTGRESQL" | "TIBERO") — parseDbDialect 로 해석한다. */
   dbDialect?: string;
+  /** WD-744: 「행 검색 가능」 플래그 — parseRowSearch 로 해석한다(없으면 방언 기준). */
+  rowSearch?: boolean;
 }
 
 interface OutputSection {
@@ -471,6 +473,8 @@ router.post('/proactive', ...authedJsonBody(), async (req: Request, res: Respons
       proactiveExecutionId: parseProactiveExecutionId(body.proactiveExecutionId),
       // WD-79: 테넌트 저장소 방언 — provider 가 MCP 도구 노출·설명과 서브에이전트(report-writer 등) 사본 선택에 반영한다.
       dbDialect,
+      // WD-744: 행 검색 도구 노출·서브에이전트 tools 를 방언 대신 이 플래그로 가른다.
+      rowSearch: parseRowSearch(body.rowSearch),
       // WD-62: opencode 실행기가 이 값을 MCP 프로세스 env 로 넘겨 write_report_file 을 이 디렉터리 전용으로 연다.
       reportDir,
     });

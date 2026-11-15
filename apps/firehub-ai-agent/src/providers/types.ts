@@ -38,10 +38,15 @@ export interface ChatProviderOptions {
    */
   proactiveExecutionId?: number;
   /**
-   * WD-79: 테넌트 저장소 방언. Tibero 면 행 검색 도구를 숨기고 도구 설명을 Tibero 용으로 바꾸며, 프롬프트도 Tibero 판으로 바꾼다
+   * WD-79: 테넌트 저장소 방언. Tibero 면 도구 설명을 Tibero 용으로 바꾸고 프롬프트도 Tibero 판으로 바꾼다(행 검색 노출은 rowSearch)
    * (메인 시스템 프롬프트의 SQL 규칙 = TIBERO_SQL_GUIDE, 서브에이전트는 `tibero/` 사본 — system-prompt.ts·subagent-loader.ts).
    */
   dbDialect?: DbDialect;
+  /**
+   * WD-744: 「행 검색 가능」 플래그(api 가 vectorStoreFeatures.supportsRowSearch 로 정한 값). 행 검색 도구 노출·get_dataset 의
+   * 색인 조회·프롬프트의 행 검색 안내·서브에이전트 tools 를 방언이 아니라 이 값으로 가른다. 없으면 방언 기준(PG 켬·Tibero 끔).
+   */
+  rowSearch?: boolean;
   /**
    * WD-62: Proactive 실행의 리포트 산출 디렉터리. opencode 실행기만 읽어 MCP 프로세스 env 로 주입한다
    * (write_report_file 도구가 이 디렉터리에만 쓴다). SDK·CLI 는 report-writer 하위 에이전트 경로를 쓰므로 무시한다.

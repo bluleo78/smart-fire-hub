@@ -91,7 +91,9 @@ describe('data-analyst Tibero 사본 (WD-79)', () => {
   it.each(FILES)('tibero/%s 에 PG 전용 문법·행 검색 도구·SQLState 규칙이 없다', (name) => {
     const text = readTibero(name);
     expect(findPgOnlySyntax(text)).toEqual([]);
-    expect(text).not.toContain('search_dataset_rows');
+    // WD-744: 행 검색 도구는 tools(frontmatter)에만 둔다 — 꺼진 조합에서는 로더가 빼고, 본문에 이름이 없어야
+    // 숨겨진 테넌트가 없는 도구를 부르지 않는다. 노출될 때의 안내는 메인 프롬프트 행 검색 줄이 맡는다.
+    expect(text.replace(/^---\n[\s\S]*?\n---\n/, '')).not.toContain('search_dataset_rows');
     expect(text).not.toMatch(/SQLState|42703|42P01|42601/);
   });
 
@@ -129,6 +131,22 @@ describe('data-analyst Tibero 사본 (WD-79)', () => {
 
     const pg = loadSubagents(undefined, 'POSTGRESQL')['data-analyst'];
     expect(pg.tools).toContain('mcp__firehub__search_dataset_rows');
+    resetSubagentCache();
+  });
+
+  // WD-744: 행 검색 도구는 방언이 아니라 「행 검색 가능」 플래그로 가른다.
+  it('로더의 행 검색 도구는 플래그를 따른다 — Tibero·켬이면 넣고, PG·끔이면 뺀다', () => {
+    resetSubagentCache();
+    const tiberoOn = loadSubagents(undefined, 'TIBERO', true)['data-analyst'];
+    expect(tiberoOn.tools).toContain('mcp__firehub__search_dataset_rows');
+    expect(tiberoOn.prompt).not.toContain('search_dataset_rows');
+    const pgOff = loadSubagents(undefined, 'POSTGRESQL', false)['data-analyst'];
+    expect(pgOff.tools).not.toContain('mcp__firehub__search_dataset_rows');
+    expect(pgOff.tools).toContain('mcp__firehub__execute_analytics_query');
+    // 끈 결과가 기본 캐시를 오염시키지 않는다.
+    expect(loadSubagents(undefined, 'POSTGRESQL')['data-analyst'].tools).toContain(
+      'mcp__firehub__search_dataset_rows',
+    );
     resetSubagentCache();
   });
 });

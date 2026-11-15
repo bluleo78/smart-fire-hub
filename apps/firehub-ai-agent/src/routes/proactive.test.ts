@@ -392,6 +392,15 @@ describe('Proactive routes — integration tests', () => {
       expect(((await run({})) as { dbDialect?: string }).dbDialect).toBe('POSTGRESQL');
     });
 
+    // WD-744: 「행 검색 가능」 플래그를 provider 로 넘긴다(없으면 undefined — 방언 기준).
+    it('바디의 rowSearch 를 provider.execute 의 rowSearch 로 넘긴다 (WD-744)', async () => {
+      expect(((await run({ dbDialect: 'TIBERO', rowSearch: true })) as { rowSearch?: boolean }).rowSearch).toBe(true);
+    });
+
+    it('rowSearch 가 없으면 undefined (WD-744)', async () => {
+      expect(((await run({})) as { rowSearch?: boolean }).rowSearch).toBeUndefined();
+    });
+
     // WD-79: Proactive 는 overrideSystemPrompt 라 메인 프롬프트가 안 들어간다 — 리포트 프롬프트에 직접 싣는다.
     it("dbDialect 'TIBERO' 면 리포트 시스템 프롬프트에 TIBERO_SQL_GUIDE 를 싣고, 없으면 싣지 않는다", async () => {
       const tibero = (await run({ dbDialect: 'TIBERO' })) as { systemPrompt?: string };

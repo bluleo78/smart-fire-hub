@@ -121,6 +121,25 @@ describe('stdio-server main() — 세션 사용자 권한으로 도구 등록 �
     expect(registeredToolNames).toContain('search_dataset_rows');
   });
 
+  // WD-744: 행 검색 도구는 부모가 심은 ROW_SEARCH 플래그를 방언보다 먼저 따른다.
+  it.each([
+    ['TIBERO', 'true', true],
+    ['POSTGRESQL', 'false', false],
+  ])('DB_DIALECT=%s · ROW_SEARCH=%s → search_dataset_rows 등록 %s (WD-744)', async (dialect, flag, shown) => {
+    getSessionPermissionsMock.mockResolvedValue(['dataset:read', 'data:read']);
+    process.env.DB_DIALECT = dialect;
+    process.env.ROW_SEARCH = flag;
+    try {
+      const { main } = await import('./stdio-server.js');
+      await main();
+      expect(registeredToolNames.includes('search_dataset_rows')).toBe(shown);
+      expect(registeredToolNames).toContain(UNGATED);
+    } finally {
+      delete process.env.DB_DIALECT;
+      delete process.env.ROW_SEARCH;
+    }
+  });
+
   // WD-62: 리포트 쓰기 도구는 부모가 reportDir 을 주입한 실행(opencode Proactive)에서만 노출된다.
   it('FIREHUB_REPORT_DIR 가 주입되면 write_report_file 을 등록한다 (WD-62)', async () => {
     getSessionPermissionsMock.mockResolvedValue([]);

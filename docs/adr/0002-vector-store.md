@@ -262,7 +262,7 @@ OpenSearch 는 한국어 키워드(특히 오타 — 퍼지 질의)가 문제가
 - 세대 재구축 경로: Tibero 테이블 재생성(보관 이름 바꾸기 → 새 테이블·새 시퀀스)은 OBJECT_ID 가 바뀌고 ID 가 1 부터 다시 매겨져 PG swap 과 같이 새 세대를 연다. 교체 적재(REPLACE)는 같은 테이블에 `DELETE FROM` + 시퀀스 INSERT 라 OBJECT_ID 가 그대로이고 ID 가 이어진다(재사용 없음) — 새 ID 가 변경분으로 다시 색인되고(재사용 없이 다시 임베딩), 옛 ID 의 점은 원본 대조가 지운다. 그 사이에도 원본 조회에서 빠져 결과가 틀리지 않는다.
 - `RowFilterCompiler` 는 검증·값 변환을 하나로 두고 SQL 모양만 방언으로 고른다(`RowQueryFilter.toTibero()` — 대문자 물리 컬럼, in 은 값마다 자리표시자, 바인딩은 `TiberoValues.bind`). Tibero 는 빈 문자열을 NULL 로 저장하므로 `eq ""` 는 어떤 행과도 맞지 않는다.
 - 증분 책갈피 후보는 저장소별(`SearchSourceStore.captureCursorCandidate`)이다. Tibero 는 `TiberoIncrementalCursor`(db-executor 경유)라 db-executor 가 내려가 있으면 Tibero 테넌트 동기화가 실패(백오프)로 남는다.
-- ai-agent 는 아직 방언(`dbDialect=TIBERO`)을 「행 검색 없음」으로 써서 Tibero 테넌트에서 행 검색 도구를 숨긴다 — 「행 검색 가능」 플래그를 방언과 나누는 일은 WD-744.
+- ai-agent 는 방언이 아니라 「행 검색 가능」 플래그로 행 검색 도구·`get_dataset` 의 색인 조회·프롬프트 안내·서브에이전트 tools 를 가른다(WD-744). api 가 채팅·프로액티브 요청 본문에 `rowSearch`(= `supportsRowSearch(backend)`, 관문과 같은 판정)를 싣고, 값이 없으면(옛 api) 방언 기준(PG 켬·Tibero 끔)으로 후방호환한다.
 
 ### 10. 새 설치만 — 설치 후 바꾸기 금지
 

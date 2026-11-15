@@ -831,6 +831,20 @@ describe('방언별 프롬프트 (WD-79)', () => {
     });
   });
 
+  // WD-744: PG 도 행 검색이 꺼진 조합(rowSearch=false)이면 행 검색 안내를 뺀다 — 켜짐(기본)은 픽스처와 바이트 동일.
+  describe('POSTGRESQL rowSearch 플래그', () => {
+    it('rowSearch=true 는 플래그 없음과 같다', () => {
+      expect(systemPromptFor('POSTGRESQL', true)).toBe(SYSTEM_PROMPT);
+      expect(opencodeSystemPromptFor('POSTGRESQL', true)).toBe(OPENCODE_SYSTEM_PROMPT);
+    });
+    it('rowSearch=false 면 search_dataset_rows 를 언급하지 않고 SQL 규칙은 PG 그대로다', () => {
+      const off = systemPromptFor('POSTGRESQL', false);
+      expect(off).not.toContain('search_dataset_rows');
+      expect(off).toContain('SQLState 42703');
+      expect(opencodeSystemPromptFor('POSTGRESQL', false)).not.toContain('search_dataset_rows');
+    });
+  });
+
   describe('TIBERO', () => {
     const main = systemPromptFor('TIBERO');
     const opencode = opencodeSystemPromptFor('TIBERO');
@@ -869,6 +883,27 @@ describe('방언별 프롬프트 (WD-79)', () => {
     ])('%s: SQLState(42703 등) 자기 교정 규칙과 PG 테이블 표기(data."tableName")가 없다', (_n, prompt) => {
       expect(prompt).not.toMatch(/SQLState|42703|42P01|42601/);
       expect(prompt).not.toContain('data."tableName"');
+    });
+
+    // WD-744: qdrant 조합 Tibero(rowSearch=true)는 행 검색 안내를 받는다 — 줄 원문은 PG 와 같고 나머지 Tibero 규칙은 그대로다.
+    describe('rowSearch=true', () => {
+      const mainOn = systemPromptFor('TIBERO', true);
+      const opencodeOn = opencodeSystemPromptFor('TIBERO', true);
+      it('main: 행 검색 줄과 PII 행 검색 도구 항목이 들어간다', () => {
+        expect(mainOn).toContain('- 내용으로 행 찾기: search_dataset_rows');
+        expect(mainOn).toContain('`search_dataset_rows`/');
+        expect(mainOn).toContain(TIBERO_SQL_GUIDE);
+        expect(findPgOnlySyntax(mainOn)).toEqual([]);
+      });
+      it('opencode: PII 행 검색 도구 항목이 들어가고 Tibero 규칙은 그대로다', () => {
+        expect(opencodeOn).toContain('`search_dataset_rows`/');
+        expect(opencodeOn).toContain(TIBERO_SQL_GUIDE);
+        expect(opencodeOn).not.toContain('SPLIT_PART');
+      });
+      it('플래그를 빼면 꺼진 판과 같다(후방호환)', () => {
+        expect(systemPromptFor('TIBERO', false)).toBe(main);
+        expect(opencodeSystemPromptFor('TIBERO', false)).toBe(opencode);
+      });
     });
 
     it('opencode: PG 전용 PII 마스킹 SQL 식(SPLIT_PART·REGEXP_REPLACE)을 주지 않는다', () => {

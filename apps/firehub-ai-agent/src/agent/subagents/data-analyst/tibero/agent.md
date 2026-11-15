@@ -14,6 +14,7 @@ tools:
   - mcp__firehub__find_datasets
   - mcp__firehub__list_datasets
   - mcp__firehub__get_dataset
+  - mcp__firehub__search_dataset_rows
   - mcp__firehub__create_saved_query
   - mcp__firehub__list_saved_queries
   - mcp__firehub__run_saved_query

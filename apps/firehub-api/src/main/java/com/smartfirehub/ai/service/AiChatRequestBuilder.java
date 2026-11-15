@@ -7,6 +7,7 @@ import com.smartfirehub.settings.model.AiBehaviorDefaults;
 import com.smartfirehub.settings.model.AiCredential;
 import com.smartfirehub.settings.service.AiCredentialService;
 import com.smartfirehub.settings.service.SettingsService;
+import com.smartfirehub.vectorstore.VectorStoreFeatures;
 import java.util.HashMap;
 import java.util.Map;
 import lombok.extern.slf4j.Slf4j;
@@ -26,14 +27,17 @@ public class AiChatRequestBuilder {
   private final SettingsService settingsService;
   private final AiCredentialService aiCredentialService;
   private final DataStoreResolver dataStoreResolver;
+  private final VectorStoreFeatures vectorStoreFeatures;
 
   public AiChatRequestBuilder(
       SettingsService settingsService,
       AiCredentialService aiCredentialService,
-      DataStoreResolver dataStoreResolver) {
+      DataStoreResolver dataStoreResolver,
+      VectorStoreFeatures vectorStoreFeatures) {
     this.settingsService = settingsService;
     this.aiCredentialService = aiCredentialService;
     this.dataStoreResolver = dataStoreResolver;
+    this.vectorStoreFeatures = vectorStoreFeatures;
   }
 
   /**
@@ -97,7 +101,11 @@ public class AiChatRequestBuilder {
     // 테넌트 데이터 저장소 방언 — ai-agent 가 프롬프트에 SQL 방언 지침(Tibero 는 LIMIT/ILIKE 불가 등)을 넣는 근거다(WD-79).
     // 스레드 컨텍스트(PipelineDataSchema.isTibero)가 아니라 호출부가 넘긴 명시적 tenantId 로 판정한다 —
     // 이 메서드가 받는 tenantId 가 곧 요청 바디의 tenantId 라, 두 값이 어긋나면 방언과 워크스페이스가 다른 테넌트를 가리키게 된다.
-    body.put("dbDialect", DataStoreBackend.dialectOf(dataStoreResolver.backendFor(tenantId)));
+    DataStoreBackend backend = dataStoreResolver.backendFor(tenantId);
+    body.put("dbDialect", DataStoreBackend.dialectOf(backend));
+    // 「행 검색 가능」(WD-744) — 방언만으로는 qdrant 조합의 Tibero(행 검색 가능)와 platform 조합의 Tibero(불가)를 못 가른다.
+    // 관문(422)·기능 응답과 같은 판정을 실어, ai-agent 가 행 검색 도구·안내를 이 값으로 켜고 끈다.
+    body.put("rowSearch", vectorStoreFeatures.supportsRowSearch(backend));
     // 자격증명 필드(agentType/apiKey/oauthToken/providerId/baseUrl/reasoningEffort)는 유형별
     // applyTo() 가 채운다 — 분류·프로액티브 경로와 같은 메서드를 공유한다(이슈 #695).
     credential.applyTo(body);

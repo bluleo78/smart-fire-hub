@@ -2,7 +2,7 @@ import { fileURLToPath } from 'url';
 import path from 'path';
 import fs from 'fs';
 import type { AgentDefinition } from '@anthropic-ai/claude-agent-sdk';
-import { DEFAULT_DB_DIALECT, type DbDialect } from './db-dialect.js';
+import { DEFAULT_DB_DIALECT, ROW_SEARCH_TOOLS, resolveRowSearch, type DbDialect } from './db-dialect.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -238,6 +238,7 @@ const cachedDefaultSubagents = new Map<DbDialect, Record<string, AgentDefinition
  */
 export function resetSubagentCache(): void {
   cachedDefaultSubagents.clear();
+  cachedNoRowSearch.clear();
 }
 
 /**
@@ -247,10 +248,43 @@ export function resetSubagentCache(): void {
  *
  * @param dialect 테넌트 저장소 방언(WD-79). TIBERO 면 각 서브에이전트의 `tibero/` 사본으로 같은 이름 파일을 대체한다.
  *   생략·undefined 는 POSTGRESQL(기존 동작 그대로).
+ * @param rowSearch 「행 검색 가능」 플래그(WD-744). 꺼져 있으면 각 서브에이전트 tools 에서 행 검색 도구를 뺀다 — MCP 목록에서
+ *   숨긴 도구를 서브에이전트가 허용 목록에 들고 있지 않게. 생략하면 방언 기준(PG 켬·Tibero 끔)이라 기존 결과와 같다.
  */
 export function loadSubagents(
   subagentsDir?: string,
   dialect: DbDialect = DEFAULT_DB_DIALECT,
+  rowSearch?: boolean,
+): Record<string, AgentDefinition> {
+  const base = loadSubagentsForDialect(subagentsDir, dialect);
+  if (resolveRowSearch(dialect, rowSearch)) return base;
+  const cached = subagentsDir === undefined ? cachedNoRowSearch.get(dialect) : undefined;
+  if (cached) return cached;
+  const filtered = withoutRowSearchTools(base);
+  if (subagentsDir === undefined) cachedNoRowSearch.set(dialect, filtered);
+  return filtered;
+}
+
+/** 행 검색이 꺼진 조합의 서브에이전트 캐시(방언별). 기본 캐시와 같이 resetSubagentCache 가 비운다. */
+const cachedNoRowSearch = new Map<DbDialect, Record<string, AgentDefinition>>();
+
+/** 각 서브에이전트 tools 에서 행 검색 도구(`mcp__firehub__<이름>`)를 뺀 사본. 원본(캐시)은 건드리지 않는다. */
+function withoutRowSearchTools(
+  agents: Record<string, AgentDefinition>,
+): Record<string, AgentDefinition> {
+  const blocked = new Set([...ROW_SEARCH_TOOLS].map((n) => `mcp__firehub__${n}`));
+  return Object.fromEntries(
+    Object.entries(agents).map(([name, def]) => [
+      name,
+      def.tools ? { ...def, tools: def.tools.filter((t) => !blocked.has(t)) } : def,
+    ]),
+  );
+}
+
+/** 방언별 서브에이전트 정의를 디스크에서 읽는다(기본 디렉터리는 방언별 캐시). 행 검색 필터 전 단계다. */
+function loadSubagentsForDialect(
+  subagentsDir: string | undefined,
+  dialect: DbDialect,
 ): Record<string, AgentDefinition> {
   // 기본 디렉터리 호출(인자 없음)에 대해서만 모듈 캐시를 사용한다.
   const cached = subagentsDir === undefined ? cachedDefaultSubagents.get(dialect) : undefined;

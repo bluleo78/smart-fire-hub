@@ -17,7 +17,7 @@ import { createInterface } from 'readline';
 import { randomUUID } from 'crypto';
 import type { ChatProviderOptions, SSEEvent } from '../providers/types.js';
 import { FireHubApiClient, type SharePurpose } from '../mcp/api-client.js';
-import { DB_DIALECT_ENV, type DbDialect } from './db-dialect.js';
+import { DB_DIALECT_ENV, ROW_SEARCH_ENV, type DbDialect } from './db-dialect.js';
 import {
   splitOpencodeModelOrNull,
   type OpencodeModelParts,
@@ -126,6 +126,8 @@ export interface BuildOpenCodeConfigOptions {
   proactiveExecutionId?: number;
   /** WD-79: 테넌트 저장소 방언 — MCP 프로세스 env(DB_DIALECT)로 넘긴다. */
   dbDialect?: DbDialect;
+  /** WD-744: 「행 검색 가능」 플래그 — MCP 프로세스 env(ROW_SEARCH)로 넘긴다. 없으면 방언 기준. */
+  rowSearch?: boolean;
   /** WD-62: Proactive 실행의 리포트 디렉터리 — 있으면 MCP 프로세스가 write_report_file 을 이 디렉터리 전용으로 연다. */
   reportDir?: string;
   /** WD-59: 설정 › AI 에이전트의 최대 턴 수(ai.max_turns) → agent.build.steps. */
@@ -165,6 +167,7 @@ export function buildOpenCodeConfig(options: BuildOpenCodeConfigOptions): OpenCo
     aiPurpose,
     proactiveExecutionId,
     dbDialect,
+    rowSearch,
     reportDir,
     maxTurns,
     temperature,
@@ -280,6 +283,8 @@ export function buildOpenCodeConfig(options: BuildOpenCodeConfigOptions): OpenCo
             ? { [PROACTIVE_EXECUTION_ID_ENV]: String(proactiveExecutionId) }
             : {}),
           ...(dbDialect ? { [DB_DIALECT_ENV]: dbDialect } : {}),
+          // WD-744: 행 검색 플래그 — 없으면 심지 않아 stdio 쪽이 방언 기준으로 떨어진다.
+          ...(rowSearch !== undefined ? { [ROW_SEARCH_ENV]: String(rowSearch) } : {}),
           // WD-62: opencode 는 호스트 Write·하위 에이전트가 없어 리포트 세 파일을 이 디렉터리 전용 MCP 도구로 쓴다.
           // 경로는 모델 인자가 아니라 여기서만 정해진다. 일반 채팅엔 키가 없어 도구도 등록되지 않는다.
           ...(reportDir ? { [REPORT_DIR_ENV]: reportDir } : {}),
@@ -615,6 +620,7 @@ export async function* executeOpenCodeAgent(
     aiPurpose,
     proactiveExecutionId,
     dbDialect,
+    rowSearch,
     reportDir,
     maxTurns,
     temperature,
@@ -718,6 +724,7 @@ export async function* executeOpenCodeAgent(
     aiPurpose,
     proactiveExecutionId,
     dbDialect,
+    rowSearch,
     reportDir,
     maxTurns,
     temperature,
@@ -738,7 +745,7 @@ export async function* executeOpenCodeAgent(
   //  - AGENTS.md 는 비밀이 아니므로 그대로 디스크에 쓴다(config 만 env 로 옮겼다).
   //  - WD-79: Tibero 테넌트는 Tibero 문법 판 프롬프트를 받는다(PG 는 OPENCODE_SYSTEM_PROMPT 와 바이트 동일).
   const effectiveSystemPrompt = resolveSystemPrompt(
-    opencodeSystemPromptFor(dbDialect),
+    opencodeSystemPromptFor(dbDialect, rowSearch),
     systemPrompt,
     overrideSystemPrompt,
   );

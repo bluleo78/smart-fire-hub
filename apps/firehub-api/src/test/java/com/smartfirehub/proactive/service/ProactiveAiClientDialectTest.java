@@ -16,6 +16,7 @@ import com.smartfirehub.dataset.storage.DataStoreBackend;
 import com.smartfirehub.dataset.storage.DataStoreResolver;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.settings.model.AiCredential;
+import com.smartfirehub.vectorstore.VectorStoreFeatures;
 import java.util.Map;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
@@ -49,10 +50,17 @@ class ProactiveAiClientDialectTest {
   }
 
   private void runWith(DataStoreBackend backend) {
+    runWith(backend, backend == DataStoreBackend.POSTGRESQL);
+  }
+
+  private void runWith(DataStoreBackend backend, boolean rowSearch) {
     DataStoreResolver resolver = mock(DataStoreResolver.class);
     when(resolver.backendFor(5L)).thenReturn(backend);
+    VectorStoreFeatures features = mock(VectorStoreFeatures.class);
+    when(features.supportsRowSearch(backend)).thenReturn(rowSearch);
     ProactiveAiClient client =
-        new ProactiveAiClient("http://localhost:" + wireMock.port(), new ObjectMapper(), resolver);
+        new ProactiveAiClient(
+            "http://localhost:" + wireMock.port(), new ObjectMapper(), resolver, features);
     ReflectionTestUtils.setField(client, "internalToken", "t");
     wireMock.stubFor(post(urlEqualTo("/agent/proactive")).willReturn(okJson("{\"sections\":[]}")));
     TenantContext.set(5L);
@@ -74,5 +82,24 @@ class ProactiveAiClientDialectTest {
     wireMock.verify(
         postRequestedFor(urlEqualTo("/agent/proactive"))
             .withRequestBody(matchingJsonPath("$.dbDialect", equalTo("POSTGRESQL"))));
+  }
+
+  /** WD-744 — qdrant 조합 Tibero 처럼 행 검색이 되면 rowSearch=true 를 싣는다(방언과 따로). */
+  @Test
+  void proactive_sendsRowSearchFromVectorStoreFeatures() {
+    runWith(DataStoreBackend.TIBERO, true);
+    wireMock.verify(
+        postRequestedFor(urlEqualTo("/agent/proactive"))
+            .withRequestBody(matchingJsonPath("$.dbDialect", equalTo("TIBERO")))
+            .withRequestBody(matchingJsonPath("$.rowSearch", equalTo("true"))));
+  }
+
+  /** WD-744 — platform 조합 Tibero 처럼 행 검색이 안 되면 rowSearch=false. */
+  @Test
+  void proactive_sendsRowSearchFalseWhenUnsupported() {
+    runWith(DataStoreBackend.TIBERO, false);
+    wireMock.verify(
+        postRequestedFor(urlEqualTo("/agent/proactive"))
+            .withRequestBody(matchingJsonPath("$.rowSearch", equalTo("false"))));
   }
 }

@@ -1,4 +1,4 @@
-import { DEFAULT_DB_DIALECT, type DbDialect } from './db-dialect.js';
+import { DEFAULT_DB_DIALECT, resolveRowSearch, type DbDialect } from './db-dialect.js';
 import { TIBERO_SQL_GUIDE } from './tibero-sql-guide.js';
 
 // 브랜드명 — 화이트라벨(사이트별 브랜딩). 운영은 컨테이너 env(BRAND_NAME)로 주입되며
@@ -529,18 +529,43 @@ Agent 를 \`run_in_background: false\`(동기)로 호출하면 subagent 의 완�
 `;
 
 /**
- * 테넌트 저장소 방언에 맞는 메인 시스템 프롬프트(WD-79). PG 는 변경 전 SYSTEM_PROMPT 와 바이트 단위로 같고,
- * Tibero 는 행 검색 도구 안내를 빼고 SQL 규칙을 Tibero 문법(TIBERO_SQL_GUIDE)으로 바꾼다.
+ * 행 검색 가능 여부(WD-744)로 조각의 행 검색 줄을 고친다. 행 검색 줄 원문은 PG 조각 하나뿐이고(Tibero 에 따로 두지 않는다),
+ * 켜져 있으면 그 원문을, 꺼져 있으면 빈 문자열을 넣는다 — 방언 기본값(PG 켬·Tibero 끔)이면 조각이 그대로라 변경 전과 바이트 단위로 같다.
+ */
+function withRowSearch<P extends { rowSearchLine?: string; piiRowSearchTool: string }>(
+  parts: P,
+  rowSearch: boolean,
+  on: Pick<P, 'piiRowSearchTool'> & { rowSearchLine?: string },
+): P {
+  return {
+    ...parts,
+    ...('rowSearchLine' in parts ? { rowSearchLine: rowSearch ? on.rowSearchLine : '' } : {}),
+    piiRowSearchTool: rowSearch ? on.piiRowSearchTool : '',
+  };
+}
+
+/** (방언, 행 검색) 조합별 메인 프롬프트 캐시 — 조합이 넷뿐이라 처음 쓸 때 한 번 만든다(BRAND_NAME 은 로드 시점 값 그대로). */
+const mainPromptCache = new Map<string, string>();
+
+/**
+ * 테넌트에 맞는 메인 시스템 프롬프트(WD-79·WD-744). SQL 규칙은 방언으로, 행 검색 도구 안내는 「행 검색 가능」 플래그로 가른다.
+ * 플래그가 없으면 방언 기준(PG 켬·Tibero 끔)이라 PG 는 변경 전 SYSTEM_PROMPT 와 바이트 단위로 같다.
  * 방언이 없으면(undefined) DEFAULT_DB_DIALECT(PG) 다 — 호출부가 기본값을 따로 쓰지 않는다.
  */
-export function systemPromptFor(dialect: DbDialect = DEFAULT_DB_DIALECT): string {
-  return dialect === 'TIBERO' ? TIBERO_SYSTEM_PROMPT : SYSTEM_PROMPT;
+export function systemPromptFor(dialect: DbDialect = DEFAULT_DB_DIALECT, rowSearch?: boolean): string {
+  const rs = resolveRowSearch(dialect, rowSearch);
+  const key = `${dialect}:${rs}`;
+  let prompt = mainPromptCache.get(key);
+  if (prompt === undefined) {
+    const base = dialect === 'TIBERO' ? TIBERO_MAIN_PARTS : PG_MAIN_PARTS;
+    prompt = buildSystemPrompt(withRowSearch(base, rs, PG_MAIN_PARTS));
+    mainPromptCache.set(key, prompt);
+  }
+  return prompt;
 }
 
 /** PG 테넌트 메인 시스템 프롬프트 — 기존 export 이름을 그대로 유지한다(호출부·테스트 호환). */
 export const SYSTEM_PROMPT = buildSystemPrompt(PG_MAIN_PARTS);
-/** Tibero 테넌트 메인 시스템 프롬프트 — 모듈 로드 때 한 번 만든다(BRAND_NAME 도 로드 시점 값). */
-const TIBERO_SYSTEM_PROMPT = buildSystemPrompt(TIBERO_MAIN_PARTS);
 
 /**
  * 파일 첨부 처리 가이드 (조건부 첨부, refs #260).
@@ -752,16 +777,25 @@ ${p.piiSqlMasking}  - 확인용 중간 쿼리에서도 PII 원본 컬럼을 SELE
 "[현재 화면]" 정보가 전달될 수 있다. 질문과 관련되면 활용하고(예: 데이터셋 상세 ID 42 화면에서 "이 데이터 분석해줘" → ID 42 를 직접 분석), 무관하거나 없으면 무시한다.
 `;
 
+/** (방언, 행 검색) 조합별 opencode 프롬프트 캐시. */
+const opencodePromptCache = new Map<string, string>();
+
 /**
- * 테넌트 저장소 방언에 맞는 opencode 시스템 프롬프트(WD-79). PG 는 변경 전 OPENCODE_SYSTEM_PROMPT 와 바이트 단위로
- * 같고, Tibero 는 집계 예시·SQL 규칙·PII 마스킹 SQL 을 Tibero 판으로 바꾸고 행 검색 도구 언급을 뺀다.
+ * 테넌트에 맞는 opencode 시스템 프롬프트(WD-79·WD-744). 집계 예시·SQL 규칙·PII 마스킹 SQL 은 방언으로, 행 검색 도구 언급은
+ * 「행 검색 가능」 플래그로 가른다. 플래그가 없으면 방언 기준이라 PG 는 변경 전 OPENCODE_SYSTEM_PROMPT 와 바이트 단위로 같다.
  * 방언이 없으면(undefined) DEFAULT_DB_DIALECT(PG) 다.
  */
-export function opencodeSystemPromptFor(dialect: DbDialect = DEFAULT_DB_DIALECT): string {
-  return dialect === 'TIBERO' ? TIBERO_OPENCODE_SYSTEM_PROMPT : OPENCODE_SYSTEM_PROMPT;
+export function opencodeSystemPromptFor(dialect: DbDialect = DEFAULT_DB_DIALECT, rowSearch?: boolean): string {
+  const rs = resolveRowSearch(dialect, rowSearch);
+  const key = `${dialect}:${rs}`;
+  let prompt = opencodePromptCache.get(key);
+  if (prompt === undefined) {
+    const base = dialect === 'TIBERO' ? TIBERO_OPENCODE_PARTS : PG_OPENCODE_PARTS;
+    prompt = buildOpencodeSystemPrompt(withRowSearch(base, rs, PG_OPENCODE_PARTS));
+    opencodePromptCache.set(key, prompt);
+  }
+  return prompt;
 }
 
 /** PG 테넌트 opencode 시스템 프롬프트 — 기존 export 이름을 그대로 유지한다. */
 export const OPENCODE_SYSTEM_PROMPT = buildOpencodeSystemPrompt(PG_OPENCODE_PARTS);
-/** Tibero 테넌트 opencode 시스템 프롬프트. */
-const TIBERO_OPENCODE_SYSTEM_PROMPT = buildOpencodeSystemPrompt(TIBERO_OPENCODE_PARTS);

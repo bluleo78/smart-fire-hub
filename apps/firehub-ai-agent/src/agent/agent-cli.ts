@@ -36,7 +36,7 @@ import {
 } from '../constants.js';
 import { isPositiveInteger } from '../utils.js';
 import { FireHubApiClient, type SharePurpose } from '../mcp/api-client.js';
-import { DB_DIALECT_ENV, type DbDialect } from './db-dialect.js';
+import { DB_DIALECT_ENV, ROW_SEARCH_ENV, type DbDialect } from './db-dialect.js';
 import {
   downloadChatFiles,
   cleanupChatFiles,
@@ -173,6 +173,7 @@ export function buildMcpConfig(
   aiPurpose?: SharePurpose,
   proactiveExecutionId?: number,
   dbDialect?: DbDialect,
+  rowSearch?: boolean,
 ): object {
   const { command, args } = getStdioServerCommand();
   // stdio MCP 서버는 별도 프로세스이고 env 를 여기서 명시적으로 구성한다.
@@ -191,6 +192,8 @@ export function buildMcpConfig(
       : {}),
     // WD-79: 테넌트 방언 — stdio-server.ts main 이 읽어 Tibero 에서 도구를 숨기고 설명을 바꾼다.
     ...(dbDialect ? { [DB_DIALECT_ENV]: dbDialect } : {}),
+    // WD-744: 「행 검색 가능」 플래그 — 없으면 심지 않아 stdio 쪽이 방언 기준으로 떨어진다.
+    ...(rowSearch !== undefined ? { [ROW_SEARCH_ENV]: String(rowSearch) } : {}),
   };
   if (credentials?.oauthToken?.trim()) {
     env.CLAUDE_CODE_OAUTH_TOKEN = credentials.oauthToken;
@@ -269,6 +272,7 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
     aiPurpose,
     proactiveExecutionId,
     dbDialect,
+    rowSearch,
   } = options;
 
   // #708: 자격증명이 없으면 어떤 부수효과(세션 표식·파일 다운로드·임시 파일)도 만들기 전에
@@ -471,6 +475,7 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
         aiPurpose,
         proactiveExecutionId,
         dbDialect,
+        rowSearch,
       ),
       null,
       2,
@@ -490,7 +495,7 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
   // claude CLI 는 CWD `.claude/agents/*.md` 를 자동 발견하므로, userWorkDir 하위에
   // 정의 파일들을 써두고 `--agents` 플래그는 사용하지 않는다.
   // WD-79: Tibero 테넌트는 서브에이전트도 Tibero 사본(subagents/*/tibero/)으로 받는다(PG 는 기존 정의 그대로).
-  const subagents = loadSubagents(undefined, dbDialect);
+  const subagents = loadSubagents(undefined, dbDialect, rowSearch);
   await writeSubagentDefinitions(userWorkDir, subagents);
   // #578: 위임 narration 가드(코드 레벨 백스톱). 프롬프트(#239 L2 가드)만으로는 "trigger-manager에게
   // 위임합니다"·위임 직후 "완료되면 전달드릴게요"·`Bash("echo noop")` 가 재호출에서도 그대로 재발했다.
@@ -510,7 +515,7 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
   // #260: 파일 첨부 가이드는 fileIds가 있는 요청에만 동적 첨부 (cold cache_creation 945 토큰 절감)
   const fileAttachmentGuide = fileIds?.length ? FILE_ATTACHMENT_PROMPT : '';
   // WD-79: 메인 프롬프트도 방언별(PG 는 SYSTEM_PROMPT 와 바이트 동일).
-  const basePromptWithGuide = `${systemPromptFor(dbDialect)}${subagentGuide}${fileAttachmentGuide}`;
+  const basePromptWithGuide = `${systemPromptFor(dbDialect, rowSearch)}${subagentGuide}${fileAttachmentGuide}`;
   const effectiveSystemPrompt = resolveSystemPrompt(basePromptWithGuide, systemPrompt, overrideSystemPrompt);
 
   // #256: SDK 프로바이더와 동일한 정책을 CLI 프로바이더에도 적용한다.

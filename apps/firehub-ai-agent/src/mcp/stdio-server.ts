@@ -16,9 +16,15 @@ import { FireHubApiClient, parseProactiveExecutionId, parseSharePurpose } from '
 import { MCP_SERVER_NAME, MCP_SERVER_VERSION, PROACTIVE_EXECUTION_ID_ENV } from '../constants.js';
 import { isValidTenantId } from '../agent/tenant-paths.js';
 import type { SafeToolFn, JsonResultFn } from './firehub-mcp-server.js';
-import { DB_DIALECT_ENV, parseDbDialect, type DbDialect } from '../agent/db-dialect.js';
 import {
-  isToolAvailableForDialect,
+  DB_DIALECT_ENV,
+  ROW_SEARCH_ENV,
+  parseDbDialect,
+  parseRowSearch,
+  type DbDialect,
+} from '../agent/db-dialect.js';
+import {
+  isToolAvailableForTenant,
   isToolPermitted,
   registerAllTools,
   toolErrorResult,
@@ -50,8 +56,10 @@ export function createMcpSafeTool(
   server: McpServer,
   tracker: FailureTracker,
   userPermissions?: string[],
-  // WD-79: 테넌트 방언 — Tibero 에서 미지원인 도구(행 검색)는 권한과 마찬가지로 등록 자체를 건너뛴다.
+  // WD-79: 테넌트 방언(도구 설명용). 행 검색 도구는 아래 rowSearch 가 꺼져 있으면 권한과 마찬가지로 등록 자체를 건너뛴다.
   dbDialect?: DbDialect,
+  // WD-744: 「행 검색 가능」 플래그. 없으면 방언 기준(PG 노출·Tibero 숨김).
+  rowSearch?: boolean,
 ): SafeToolFn {
   return function safeTool<Schema extends AnyZodRawShape>(
     name: string,
@@ -60,7 +68,7 @@ export function createMcpSafeTool(
     handler: (args: InferShape<Schema>) => Promise<ToolResult>,
   ) {
     // 권한 없는 도구는 등록 자체를 건너뛴다 — 에이전트가 도구 존재를 인지하지 못하게 한다.
-    if (isToolPermitted(name, userPermissions) && isToolAvailableForDialect(name, dbDialect)) {
+    if (isToolPermitted(name, userPermissions) && isToolAvailableForTenant(name, dbDialect, rowSearch)) {
       server.tool(
         name,
         description,
@@ -226,7 +234,9 @@ async function main(): Promise<void> {
   const tracker = createTracker();
   // WD-79: 부모가 심은 테넌트 방언(없거나 모르는 값이면 PG).
   const dbDialect = parseDbDialect(process.env[DB_DIALECT_ENV]);
-  const safeTool = createMcpSafeTool(server, tracker, userPermissions, dbDialect);
+  // WD-744: 부모가 심은 행 검색 플래그('true'/'false', 없으면 방언 기준).
+  const rowSearch = parseRowSearch(process.env[ROW_SEARCH_ENV]);
+  const safeTool = createMcpSafeTool(server, tracker, userPermissions, dbDialect, rowSearch);
 
   // Register all FireHub tools (공통 함수 사용)
   // GraphRAG 도구는 LLM completion 을 호출하므로 자격증명이 필요하다 — resolveStdioCredentials
@@ -236,6 +246,7 @@ async function main(): Promise<void> {
   registerAllTools(apiClient, safeTool, jsonResult, {
     userPermissions,
     dbDialect,
+    rowSearch,
     credentials: resolveStdioCredentials(process.env),
   });
 

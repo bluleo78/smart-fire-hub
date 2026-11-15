@@ -25,6 +25,8 @@ export function registerDatasetTools(
   jsonResult: JsonResultFn,
   // WD-79: 테넌트 저장소 방언 — Tibero 일 때만 도구 설명을 Tibero 용으로 바꾼다(PG 는 기존 설명 그대로).
   dialect: DbDialect = DEFAULT_DB_DIALECT,
+  // WD-744: 행 검색 가능 여부 — 꺼져 있으면 get_dataset 이 searchIndex 를 조회하지 않는다. 기본값은 방언 기준(후방호환).
+  rowSearch: boolean = dialect !== 'TIBERO',
 ) {
   const isTibero = dialect === 'TIBERO';
   // WD-79: 방언별 설명은 공통 앞부분 + 방언별 뒷부분으로 만든다 — PG 결과 문자열은 예전과 바이트 단위로 같다(PG 도구 설명 픽스처).
@@ -85,9 +87,9 @@ export function registerDatasetTools(
         const result = (await apiClient.getDataset(args.id)) as Record<string, unknown>;
         // 행 검색 가능 여부(검색 대상 필드·색인 상태)를 함께 준다. 실패해도 상세 조회는 막지 않는다.
         // 행 검색은 TABLE 데이터셋 전용이다 — DOCUMENT/FILE 에 조회하면 매번 400 이므로 아예 부르지 않는다.
-        // Tibero 저장소는 행 검색 자체를 지원하지 않아(매번 422) 역시 부르지 않는다(WD-79).
+        // 행 검색이 꺼진 테넌트(예: platform 조합의 Tibero)도 매번 422 라 부르지 않는다(WD-79 → WD-744: 방언 대신 플래그).
         const searchIndex =
-          result.storageType === 'TABLE' && !isTibero
+          result.storageType === 'TABLE' && rowSearch
             ? await apiClient.getDatasetSearchIndex(args.id).catch(() => null)
             : null;
         return jsonResult({ ...result, searchIndex });

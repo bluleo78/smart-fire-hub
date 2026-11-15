@@ -9,6 +9,7 @@ import com.smartfirehub.proactive.dto.ProactiveResult;
 import com.smartfirehub.proactive.exception.ProactiveJobException;
 import com.smartfirehub.securitylevel.ai.AiCallContext;
 import com.smartfirehub.settings.model.AiCredential;
+import com.smartfirehub.vectorstore.VectorStoreFeatures;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
@@ -32,6 +33,7 @@ public class ProactiveAiClient {
   private final WebClient webClient;
   private final ObjectMapper objectMapper;
   private final DataStoreResolver dataStoreResolver;
+  private final VectorStoreFeatures vectorStoreFeatures;
 
   @Value("${agent.internal-token}")
   private String internalToken;
@@ -39,7 +41,8 @@ public class ProactiveAiClient {
   public ProactiveAiClient(
       @Value("${agent.url}") String agentUrl,
       ObjectMapper objectMapper,
-      DataStoreResolver dataStoreResolver) {
+      DataStoreResolver dataStoreResolver,
+      VectorStoreFeatures vectorStoreFeatures) {
     HttpClient httpClient = HttpClient.create().responseTimeout(TIMEOUT);
     this.webClient =
         WebClient.builder()
@@ -49,6 +52,7 @@ public class ProactiveAiClient {
             .build();
     this.objectMapper = objectMapper;
     this.dataStoreResolver = dataStoreResolver;
+    this.vectorStoreFeatures = vectorStoreFeatures;
   }
 
   /**
@@ -98,7 +102,11 @@ public class ProactiveAiClient {
       body.put("tenantId", tenantId);
       // 테넌트 데이터 저장소 방언(WD-79) — ai-agent 가 리포트 생성 프롬프트에 SQL 방언 지침을 넣는 근거.
       // 바디의 tenantId 와 같은 값으로 판정해 둘이 어긋나지 않게 한다.
-      body.put("dbDialect", DataStoreBackend.dialectOf(dataStoreResolver.backendFor(tenantId)));
+      DataStoreBackend backend = dataStoreResolver.backendFor(tenantId);
+      body.put("dbDialect", DataStoreBackend.dialectOf(backend));
+      // 「행 검색 가능」(WD-744) — 채팅(AiChatRequestBuilder)과 같은 판정. ai-agent 가 행 검색 도구 노출을 방언 대신 이 값으로
+      // 가른다.
+      body.put("rowSearch", vectorStoreFeatures.supportsRowSearch(backend));
       // 리포트는 발송(공유)된다 — ai-agent 가 이 값을 읽어 실행 중 MCP 호출에 X-AI-Purpose: share 를 실어, API 가 AI 판정에
       // 더해 SHARE 정책(공유 금지 등급 제외)까지 걸게 한다(스펙 §4.3 Proactive 행).
       body.put("aiPurpose", AiCallContext.PURPOSE_SHARE);

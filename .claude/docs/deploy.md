@@ -680,7 +680,7 @@ Tibero 테넌트의 파이프라인 SQL 단계는 api 가 새 서비스 `db-exec
   3. 기능 응답을 본다: `GET /api/v1/platform-db/capabilities` → `{"vectorSearch":true,"trigramSearch":true,"vectorStoreAvailable":true}`.
   4. DB 기록을 본다: `SELECT value FROM system_settings WHERE key = 'vector_store.install_type'` → `qdrant`.
   5. 테넌트에서 임베딩을 설정하고 문서를 하나 올린 뒤 문서 검색이 결과를 내는지 본다.
-  6. 행 검색(데이터 저장소가 PostgreSQL·Tibero 인 테넌트): 데이터셋 「검색」 탭에서 필드를 지정하고 1~2분 뒤 상태가 IDLE 인지, `curl -s -H "api-key: $KEY" http://qdrant:6333/collections` 에 `fh_rows_t<테넌트>_kw` 가 생겼는지 본다. Tibero 데이터 저장소 테넌트도 같다(WD-723) — 증분 책갈피를 db-executor 로 읽으므로 db-executor 가 떠 있어야 하고, 내려가 있으면 그 테넌트 데이터셋이 동기화 실패(백오프)로 표시된다. 에이전트의 행 검색 도구는 Tibero 테넌트에서 아직 숨겨져 있다(WD-744).
+  6. 행 검색(데이터 저장소가 PostgreSQL·Tibero 인 테넌트): 데이터셋 「검색」 탭에서 필드를 지정하고 1~2분 뒤 상태가 IDLE 인지, `curl -s -H "api-key: $KEY" http://qdrant:6333/collections` 에 `fh_rows_t<테넌트>_kw` 가 생겼는지 본다. Tibero 데이터 저장소 테넌트도 같다(WD-723) — 증분 책갈피를 db-executor 로 읽으므로 db-executor 가 떠 있어야 하고, 내려가 있으면 그 테넌트 데이터셋이 동기화 실패(백오프)로 표시된다. 에이전트도 같은 판정으로 행 검색 도구를 쓴다(WD-744) — Tibero 테넌트 채팅에서 「내용으로 찾아줘」가 `search_dataset_rows` 를 부르는지 본다.
 - **장애 동작**
   - Qdrant 에 **닿지 못하면**(접속 거부·제한 시간 초과) api 는 경고 `Qdrant 에 접속하지 못했습니다 — 「저장소 일시 중단」으로 기동…` 만 남기고 뜬다. 그동안 `vectorStoreAvailable=false` 이고, 검색은 5xx 대신 빈 목록을 주며 웹 문서 검색·ai-agent 검색 도구가 「검색 저장소 일시 중단」을 안내한다. 15초마다 다시 준비하므로 Qdrant 가 돌아오면 재기동 없이 컬렉션을 만들고 검색이 돌아온다.
   - 장애 중에 생긴 삭제는 아웃박스(`vector_outbox`)에, 쓰기는 표시 열 백로그에 남아 복구 뒤 워커·스윕이 따라잡는다. 재임베딩 잡은 실패로 기록하지 않고 보류한다(복구 뒤 백로그 스윕이 다시 넣는다).

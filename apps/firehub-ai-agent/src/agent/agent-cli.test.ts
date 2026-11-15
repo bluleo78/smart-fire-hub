@@ -1209,29 +1209,36 @@ describe('executeCliAgent — #240 subagent registration', () => {
   });
 
   // WD-79: Tibero 테넌트는 Tibero 메인 프롬프트와 Tibero 서브에이전트 정의를 받는다(PG 는 그대로).
+  // WD-744: 행 검색 안내는 방언이 아니라 rowSearch 플래그를 따른다 — 없으면 방언 기준(PG 켬·Tibero 끔).
   it.each([
-    ['TIBERO', true],
-    [undefined, false],
-  ] as const)('dbDialect=%s → 메인 프롬프트·서브에이전트 로드가 방언을 따른다 (WD-79)', async (dbDialect, tibero) => {
-    const loadSpy = vi.mocked(loadSubagents);
-    loadSpy.mockClear();
-    capturedSystemPromptFile = null;
-    const gen = executeCliAgent({
-      message: 'test',
-      tenantId: 1,
-      userId: 1,
-      useSubscription: false,
-      apiKey: 'sk-test',
-      ...(dbDialect ? { dbDialect } : {}),
-    });
-    for await (const _ev of gen) {
-      // drain
-    }
-    const systemPrompt = capturedSystemPromptFile!.content;
-    expect(systemPrompt.includes(TIBERO_SQL_GUIDE) && TIBERO_SQL_GUIDE.length > 0).toBe(tibero);
-    expect(systemPrompt.includes('search_dataset_rows')).toBe(!tibero);
-    expect(loadSpy).toHaveBeenCalledWith(undefined, tibero ? 'TIBERO' : undefined);
-  });
+    ['TIBERO', undefined, true, false],
+    ['TIBERO', true, true, true],
+    [undefined, undefined, false, true],
+    [undefined, false, false, false],
+  ] as const)(
+    'dbDialect=%s · rowSearch=%s → 메인 프롬프트·서브에이전트 로드가 방언·플래그를 따른다 (WD-79·WD-744)',
+    async (dbDialect, rowSearch, tibero, rowSearchShown) => {
+      const loadSpy = vi.mocked(loadSubagents);
+      loadSpy.mockClear();
+      capturedSystemPromptFile = null;
+      const gen = executeCliAgent({
+        message: 'test',
+        tenantId: 1,
+        userId: 1,
+        useSubscription: false,
+        apiKey: 'sk-test',
+        ...(dbDialect ? { dbDialect } : {}),
+        ...(rowSearch !== undefined ? { rowSearch } : {}),
+      });
+      for await (const _ev of gen) {
+        // drain
+      }
+      const systemPrompt = capturedSystemPromptFile!.content;
+      expect(systemPrompt.includes(TIBERO_SQL_GUIDE) && TIBERO_SQL_GUIDE.length > 0).toBe(tibero);
+      expect(systemPrompt.includes('search_dataset_rows')).toBe(rowSearchShown);
+      expect(loadSpy).toHaveBeenCalledWith(undefined, tibero ? 'TIBERO' : undefined, rowSearch);
+    },
+  );
 });
 
 describe('executeCliAgent — #277 비용 가드레일', () => {
@@ -2259,6 +2266,17 @@ describe('buildMcpConfig — DB_DIALECT(WD-79)', () => {
     expect(t.mcpServers.firehub.env.DB_DIALECT).toBe('TIBERO');
     const none = buildMcpConfig(7, 3, 'http://api', 'tok', { apiKey: 'k' }) as Cfg;
     expect('DB_DIALECT' in none.mcpServers.firehub.env).toBe(false);
+  });
+
+  // WD-744: 행 검색 플래그는 9번째 인자 — 값이 있으면(false 포함) 문자열로 싣고, 없으면 키가 없다(stdio 가 방언 기준으로 떨어진다).
+  it('rowSearch 가 있으면 env 에 ROW_SEARCH 를 싣고, 없으면 키 자체가 없다 (WD-744)', async () => {
+    const { buildMcpConfig } = await import('./agent-cli.js');
+    const on = buildMcpConfig(7, 3, 'http://api', 'tok', { apiKey: 'k' }, undefined, undefined, 'TIBERO', true) as Cfg;
+    expect(on.mcpServers.firehub.env.ROW_SEARCH).toBe('true');
+    const off = buildMcpConfig(7, 3, 'http://api', 'tok', { apiKey: 'k' }, undefined, undefined, 'POSTGRESQL', false) as Cfg;
+    expect(off.mcpServers.firehub.env.ROW_SEARCH).toBe('false');
+    const none = buildMcpConfig(7, 3, 'http://api', 'tok', { apiKey: 'k' }, undefined, undefined, 'TIBERO') as Cfg;
+    expect('ROW_SEARCH' in none.mcpServers.firehub.env).toBe(false);
   });
 });
 

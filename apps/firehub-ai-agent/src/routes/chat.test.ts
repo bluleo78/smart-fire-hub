@@ -310,6 +310,17 @@ describe('Chat routes — integration tests', () => {
       expect(((await run({ dbDialect: 'tibero' })) as { dbDialect?: string }).dbDialect).toBe('POSTGRESQL');
     });
 
+    // WD-744: 「행 검색 가능」 플래그 — 불리언만 넘기고, 없거나 모르는 값은 undefined(방언 기준으로 떨어진다).
+    it('바디의 rowSearch 불리언을 provider.execute 의 rowSearch 로 넘긴다 (WD-744)', async () => {
+      expect(((await run({ dbDialect: 'TIBERO', rowSearch: true })) as { rowSearch?: boolean }).rowSearch).toBe(true);
+      mockExecute.mockClear();
+      expect(((await run({ rowSearch: false })) as { rowSearch?: boolean }).rowSearch).toBe(false);
+      mockExecute.mockClear();
+      expect(((await run({})) as { rowSearch?: boolean }).rowSearch).toBeUndefined();
+      mockExecute.mockClear();
+      expect(((await run({ rowSearch: 'yes' })) as { rowSearch?: boolean }).rowSearch).toBeUndefined();
+    });
+
     it("'none' 등 다른 값은 버린다 — LLM 실행에서 AI 판정을 끄면 안 된다", async () => {
       expect((await run({ aiPurpose: 'none' })).aiPurpose).toBeUndefined();
       mockExecute.mockClear();

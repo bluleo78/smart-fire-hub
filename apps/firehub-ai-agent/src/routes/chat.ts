@@ -8,7 +8,7 @@ import type { AgentType, ProviderConfig } from '../providers/index.js';
 // 가져오면 목이 정의하지 않은 값이라 undefined 가 되어 라우트가 깨진다.
 import { AGENT_RUN_SETTING_SUPPORT, isKnownAgentType } from '../providers/types.js';
 import { parseSharePurpose } from '../mcp/api-client.js';
-import { parseDbDialect } from '../agent/db-dialect.js';
+import { parseDbDialect, parseRowSearch } from '../agent/db-dialect.js';
 import { internalAuth } from '../middleware/auth.js';
 import { authedJsonBody, CHAT_BODY_LIMIT } from '../http/json-body.js';
 import { readSessionTranscript } from '../agent/transcript-reader.js';
@@ -60,6 +60,7 @@ router.post('/chat', ...authedJsonBody({ limit: CHAT_BODY_LIMIT }), async (req: 
     screenContext,
     aiPurpose,
     dbDialect,
+    rowSearch,
   } = req.body;
 
   const hasMessage = message && typeof message === 'string';
@@ -180,6 +181,8 @@ router.post('/chat', ...authedJsonBody({ limit: CHAT_BODY_LIMIT }), async (req: 
       aiPurpose: parseSharePurpose(aiPurpose),
       // WD-79: 테넌트 저장소 방언 — 'TIBERO' 만 Tibero, 나머지는 PG(기존 동작 유지).
       dbDialect: parseDbDialect(dbDialect),
+      // WD-744: 「행 검색 가능」 플래그 — 불리언만 값이고, 없거나 모르는 값이면 방언 기준(PG 켬·Tibero 끔)으로 떨어진다.
+      rowSearch: parseRowSearch(rowSearch),
     });
 
     for await (const event of events) {

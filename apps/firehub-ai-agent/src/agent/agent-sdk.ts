@@ -78,6 +78,8 @@ export interface AgentOptions {
   proactiveExecutionId?: number;
   /** WD-79: 테넌트 저장소 방언 — MCP 도구 노출·설명에 반영한다(ChatProviderOptions.dbDialect 참고). */
   dbDialect?: DbDialect;
+  /** WD-744: 「행 검색 가능」 플래그(ChatProviderOptions.rowSearch 참고). */
+  rowSearch?: boolean;
 }
 
 export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEvent> {
@@ -136,6 +138,7 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
   const firehubServer = createFireHubMcpServer(apiClient, {
     userPermissions,
     dbDialect: options.dbDialect,
+    rowSearch: options.rowSearch,
     credentials: { apiKey, oauthToken },
   });
 
@@ -227,11 +230,11 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
 
   // Load subagents and build dynamic delegation guide
   // WD-79: Tibero 테넌트는 메인 프롬프트·서브에이전트 모두 Tibero 문법 판을 받는다(PG 는 기존과 바이트 동일).
-  const subagents = loadSubagents(undefined, options.dbDialect);
+  const subagents = loadSubagents(undefined, options.dbDialect, options.rowSearch);
   const subagentGuide = buildSubagentGuide(subagents);
   // #260: 파일 첨부 가이드는 fileIds가 있는 요청에만 동적 첨부 (cold cache_creation 945 토큰 절감)
   const fileAttachmentGuide = fileIds?.length ? FILE_ATTACHMENT_PROMPT : '';
-  const basePrompt = `${systemPromptFor(options.dbDialect)}${subagentGuide}${fileAttachmentGuide}`;
+  const basePrompt = `${systemPromptFor(options.dbDialect, options.rowSearch)}${subagentGuide}${fileAttachmentGuide}`;
 
   const effectiveSystemPrompt = resolveSystemPrompt(basePrompt, systemPrompt, overrideSystemPrompt);
 

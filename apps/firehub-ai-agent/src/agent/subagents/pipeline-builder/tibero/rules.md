@@ -37,7 +37,7 @@
 7. 나눗셈은 정수끼리도 소수가 나온다(`7/3` → 2.33…) — 형변환 없이 `ROUND(x, 2)` 로 자른다. NULL 대체는 `NVL(x, 0)`·`COALESCE(x, 0)`.
 8. `GROUP BY` 에는 열 별칭이나 위치 번호를 쓰지 않고 식을 그대로 다시 쓴다(`SELECT TRUNC(d, 'MM') AS mon, COUNT(*) AS cnt … GROUP BY TRUNC(d, 'MM') ORDER BY 1`) — `GROUP BY 1` 은 상수 1 로 묶는다는 뜻이 된다. `ORDER BY` 는 별칭·위치 번호를 써도 된다.
 9. `WITH … SELECT`(CTE)와 윈도 함수 `LAG(x) OVER (ORDER BY x)`·`SUM(x) OVER ()`·`RANK() OVER (ORDER BY x DESC)` 는 그대로 쓴다. 월별 증감은 CTE 에서 월별로 집계한 뒤 바깥 SELECT 에서 `LAG(total) OVER (ORDER BY mon)` 처럼 CTE 의 열로 계산한다(같은 SELECT 의 별칭은 OVER 안에서 쓰지 않는다).
-10. 이 테넌트에서 쓸 수 없는 것: 공간 함수(`ST_*`)·공간 컬럼, 행 검색(내용 검색) 도구, `jsonb`·`generate_series` 같은 PostgreSQL 전용 기능.
+10. 이 테넌트에서 쓸 수 없는 것: 공간 함수(`ST_*`)·공간 컬럼, `jsonb`·`generate_series` 같은 PostgreSQL 전용 기능. 행 검색(내용 검색) 도구는 테넌트 설정에 따라 없을 수 있다 — 도구 목록에 있을 때만 쓴다.
 11. 오류 자기 교정 — PostgreSQL 오류 상태 코드 규칙은 이 테넌트에 맞지 않는다. api 가 준 안내 문구와 음수 오류 코드(`JDBC-NNNN:` 원문)를 읽고 1턴 안에 고친다. 같은 SQL 을 그대로 다시 실행하지 않는다.
    - "SQL 에서 참조한 테이블이 없습니다. 테이블 이름과 스키마 한정자를 확인하세요." (원인 `JDBC-8033`) → `get_data_schema` 의 `schema`·`tableName` 과 대조해 고친다. 권한이 없는 테이블도 같은 코드로 온다 — 스키마 한정자를 지우지 않는다.
    - "Tibero 오류: JDBC-8006:…"(구문 오류, 예: Missing FROM keyword) → `::` 같은 PostgreSQL 문법이 남았는지, 상수 조회에 `FROM DUAL` 을 빠뜨렸는지 본다.

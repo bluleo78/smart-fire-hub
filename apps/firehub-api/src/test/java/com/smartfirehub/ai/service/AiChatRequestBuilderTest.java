@@ -11,6 +11,7 @@ import com.smartfirehub.settings.model.AiBehaviorDefaults;
 import com.smartfirehub.settings.model.AiCredential;
 import com.smartfirehub.settings.service.AiCredentialService;
 import com.smartfirehub.settings.service.SettingsService;
+import com.smartfirehub.vectorstore.VectorStoreFeatures;
 import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -29,6 +30,7 @@ class AiChatRequestBuilderTest {
   @Mock private SettingsService settingsService;
   @Mock private AiCredentialService aiCredentialService;
   @Mock private DataStoreResolver dataStoreResolver;
+  @Mock private VectorStoreFeatures vectorStoreFeatures;
   @InjectMocks private AiChatRequestBuilder builder;
 
   @Test
@@ -106,5 +108,28 @@ class AiChatRequestBuilderTest {
 
     assertThat(builder.prepare(7L, 42L, "", "hi", true).body())
         .containsEntry("dbDialect", "POSTGRESQL");
+  }
+
+  @Test
+  @DisplayName("WD-744 — 행 검색 가능 판정을 rowSearch 로 싣는다(qdrant 조합 Tibero 는 true)")
+  void prepare_sendsRowSearchFromVectorStoreFeatures() {
+    when(settingsService.getAsMap("ai")).thenReturn(Map.of("ai.model", "claude-sonnet-5"));
+    when(aiCredentialService.resolve()).thenReturn(new AiCredential.CliApi("sk-live"));
+    when(dataStoreResolver.backendFor(7L)).thenReturn(DataStoreBackend.TIBERO);
+    when(vectorStoreFeatures.supportsRowSearch(DataStoreBackend.TIBERO)).thenReturn(true);
+
+    assertThat(builder.prepare(7L, 42L, "", "hi").body())
+        .containsEntry("dbDialect", "TIBERO")
+        .containsEntry("rowSearch", true);
+  }
+
+  @Test
+  @DisplayName("WD-744 — 행 검색이 안 되는 조합이면 rowSearch=false")
+  void prepare_sendsRowSearchFalseWhenUnsupported() {
+    when(settingsService.getAsMap("ai")).thenReturn(Map.of("ai.model", "claude-sonnet-5"));
+    when(aiCredentialService.resolve()).thenReturn(new AiCredential.CliApi("sk-live"));
+    when(dataStoreResolver.backendFor(7L)).thenReturn(DataStoreBackend.TIBERO);
+
+    assertThat(builder.prepare(7L, 42L, "", "hi").body()).containsEntry("rowSearch", false);
   }
 }

@@ -5,9 +5,9 @@ import {
   filterToolsByPermissions,
   createSafeTool,
   safeTool,
-  TIBERO_UNSUPPORTED_TOOLS,
-  isToolAvailableForDialect,
+  isToolAvailableForTenant,
 } from './firehub-mcp-server.js';
+import { ROW_SEARCH_TOOLS } from '../agent/db-dialect.js';
 import { FireHubApiClient } from './api-client.js';
 import { createTracker, FAILURE_WARN_SENTINEL } from '../agent/failure-streak.js';
 
@@ -44,12 +44,63 @@ describe('방언별 도구 노출 (WD-79)', () => {
     expect(names({ dbDialect: 'POSTGRESQL' })).toContain('search_dataset_rows');
     expect(names()).toContain('search_dataset_rows');
   });
-  it('isToolAvailableForDialect 판정', () => {
-    expect(TIBERO_UNSUPPORTED_TOOLS.has('search_dataset_rows')).toBe(true);
-    expect(isToolAvailableForDialect('search_dataset_rows', 'TIBERO')).toBe(false);
-    expect(isToolAvailableForDialect('search_dataset_rows', 'POSTGRESQL')).toBe(true);
-    expect(isToolAvailableForDialect('search_dataset_rows', undefined)).toBe(true);
-    expect(isToolAvailableForDialect('list_datasets', 'TIBERO')).toBe(true);
+  it('isToolAvailableForTenant 판정 — 플래그가 없으면 방언 기준(후방호환)', () => {
+    expect(ROW_SEARCH_TOOLS.has('search_dataset_rows')).toBe(true);
+    expect(isToolAvailableForTenant('search_dataset_rows', 'TIBERO')).toBe(false);
+    expect(isToolAvailableForTenant('search_dataset_rows', 'POSTGRESQL')).toBe(true);
+    expect(isToolAvailableForTenant('search_dataset_rows', undefined)).toBe(true);
+    expect(isToolAvailableForTenant('list_datasets', 'TIBERO')).toBe(true);
+  });
+});
+
+describe('행 검색 플래그별 도구 노출 (WD-744)', () => {
+  const names = (opts?: Parameters<typeof buildAllMcpTools>[1]) =>
+    buildAllMcpTools(createMockClient(), opts).map((t) => t.name);
+
+  // 방언 × 플래그 4조합 — 행 검색 도구 노출은 플래그만 따른다.
+  it.each([
+    ['TIBERO', true, true],
+    ['TIBERO', false, false],
+    ['POSTGRESQL', true, true],
+    ['POSTGRESQL', false, false],
+  ] as const)('%s · rowSearch=%s → 노출 %s', (dbDialect, rowSearch, shown) => {
+    const list = names({ dbDialect, rowSearch });
+    expect(list.includes('search_dataset_rows')).toBe(shown);
+    // 행 검색 외 도구는 플래그와 무관하다.
+    expect(list).toContain('list_datasets');
+  });
+
+  it('isToolAvailableForTenant — 플래그가 방언보다 앞선다', () => {
+    expect(isToolAvailableForTenant('search_dataset_rows', 'TIBERO', true)).toBe(true);
+    expect(isToolAvailableForTenant('search_dataset_rows', 'POSTGRESQL', false)).toBe(false);
+    expect(isToolAvailableForTenant('list_datasets', 'POSTGRESQL', false)).toBe(true);
+  });
+
+  it('Tibero·rowSearch=true 의 get_dataset 은 TABLE 데이터셋의 searchIndex 를 조회한다', async () => {
+    const client = createMockClient();
+    (client.getDataset as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 1, storageType: 'TABLE' });
+    (client.getDatasetSearchIndex as ReturnType<typeof vi.fn>).mockResolvedValue({ enabled: true });
+    const server = createFireHubMcpServer(client, { dbDialect: 'TIBERO', rowSearch: true });
+    const res = await invokeTool(server, 'get_dataset', { id: 1 });
+    expect(client.getDatasetSearchIndex).toHaveBeenCalledWith(1);
+    expect(JSON.parse(res.content[0].text).searchIndex).toEqual({ enabled: true });
+  });
+
+  it('Tibero·플래그 없음의 get_dataset 은 searchIndex 를 조회하지 않는다(후방호환)', async () => {
+    const client = createMockClient();
+    (client.getDataset as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 1, storageType: 'TABLE' });
+    const server = createFireHubMcpServer(client, { dbDialect: 'TIBERO' });
+    const res = await invokeTool(server, 'get_dataset', { id: 1 });
+    expect(client.getDatasetSearchIndex).not.toHaveBeenCalled();
+    expect(JSON.parse(res.content[0].text).searchIndex).toBeNull();
+  });
+
+  it('PG·rowSearch=false 의 get_dataset 도 searchIndex 를 조회하지 않는다', async () => {
+    const client = createMockClient();
+    (client.getDataset as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 1, storageType: 'TABLE' });
+    const server = createFireHubMcpServer(client, { dbDialect: 'POSTGRESQL', rowSearch: false });
+    await invokeTool(server, 'get_dataset', { id: 1 });
+    expect(client.getDatasetSearchIndex).not.toHaveBeenCalled();
   });
 });
 

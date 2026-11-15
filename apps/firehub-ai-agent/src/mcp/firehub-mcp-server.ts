@@ -8,7 +8,7 @@ import { createTracker, FAILURE_WARN_HINT, type FailureTracker } from '../agent/
 import { FireHubApiClient } from './api-client.js';
 import { policyBlockedOf, policyBlockedResultText } from './policy-blocked.js';
 import { MCP_SERVER_NAME, MCP_SERVER_VERSION } from '../constants.js';
-import type { DbDialect } from '../agent/db-dialect.js';
+import { ROW_SEARCH_TOOLS, resolveRowSearch, type DbDialect } from '../agent/db-dialect.js';
 import { registerCategoryTools } from './tools/category-tools.js';
 import { registerDatasetTools } from './tools/dataset-tools.js';
 import { registerDataTools } from './tools/data-tools.js';
@@ -220,25 +220,25 @@ export function isToolPermitted(name: string, userPermissions: string[] | undefi
 }
 
 /**
- * Tibero 테넌트 저장소에서 아직 지원하지 않아 숨기는 도구(WD-79/WD-80).
- * 행 검색(search_dataset_rows)은 platform(pgvector) 조합이면 api 가 422 로 거절하므로, 에이전트가 헛걸음하지 않게 목록에서 뺀다.
- * qdrant 조합은 Tibero 도 행 검색이 되지만(WD-723) 에이전트는 그 조합을 아직 모른다 — 플래그 분리는 WD-744.
+ * 테넌트에서 도구를 노출할지 판정한다(WD-79 → WD-744). 지금 이 판정으로 숨기는 것은 행 검색 도구뿐이고,
+ * 그 기준은 방언이 아니라 「행 검색 가능」 플래그다({@link resolveRowSearch} — 플래그가 없으면 방언으로 후방호환:
+ * PG 노출·Tibero 숨김). stdio 경로는 등록 시점에 이 판정을 직접 쓴다(isToolPermitted 와 같은 이유).
  */
-export const TIBERO_UNSUPPORTED_TOOLS: ReadonlySet<string> = new Set(['search_dataset_rows']);
-
-/**
- * 도구가 해당 방언에서 노출 가능한지 판정한다. 방언이 없거나 PG 면 항상 true(후방호환).
- * stdio 경로는 등록 시점에 이 판정을 직접 쓴다(isToolPermitted 와 같은 이유).
- */
-export function isToolAvailableForDialect(name: string, dialect: DbDialect | undefined): boolean {
-  if (dialect !== 'TIBERO') return true;
-  return !TIBERO_UNSUPPORTED_TOOLS.has(name);
+export function isToolAvailableForTenant(
+  name: string,
+  dialect: DbDialect | undefined,
+  rowSearch?: boolean,
+): boolean {
+  if (!ROW_SEARCH_TOOLS.has(name)) return true;
+  return resolveRowSearch(dialect, rowSearch);
 }
 
 /** registerAllTools/buildAllMcpTools의 공통 옵션 */
 export interface BuildToolsOptions {
-  /** WD-79: 테넌트 저장소 방언. 없으면 PG 로 본다(도구 숨김·설명 모두 기존 그대로). */
+  /** WD-79: 테넌트 저장소 방언. 없으면 PG 로 본다(도구 설명은 방언, 행 검색 노출은 아래 rowSearch 로 가른다). */
   dbDialect?: DbDialect;
+  /** WD-744: 「행 검색 가능」 플래그. 없으면 방언 기준(PG 노출·Tibero 숨김). */
+  rowSearch?: boolean;
   /**
    * 세션 사용자의 권한 목록. `undefined`면 모든 도구 허용(후방호환),
    * `[]`면 권한 요구가 있는 도구는 전부 제외(fail-closed).
@@ -273,7 +273,13 @@ export function registerAllTools(
   const dialect = options.dbDialect;
   const allTools = [
     ...registerCategoryTools(apiClient, safeToolFn, jsonResultFn),
-    ...registerDatasetTools(apiClient, safeToolFn, jsonResultFn, dialect),
+    ...registerDatasetTools(
+      apiClient,
+      safeToolFn,
+      jsonResultFn,
+      dialect,
+      resolveRowSearch(dialect, options.rowSearch),
+    ),
     ...registerFindDatasetTools(apiClient, safeToolFn, jsonResultFn),
     ...registerDataImportTools(apiClient, safeToolFn, jsonResultFn),
     ...registerDataTools(apiClient, safeToolFn, jsonResultFn, dialect),
@@ -290,9 +296,9 @@ export function registerAllTools(
     ...registerAuditTools(apiClient, safeToolFn, jsonResultFn),
     ...registerGraphragTools(apiClient, safeToolFn, jsonResultFn, options.credentials),
   ];
-  // 권한 필터 다음에 방언 필터 — Tibero 미지원 도구는 목록에서 뺀다. PG·옵션 없음이면 판정이 항상 true 라 목록이 그대로다.
+  // 권한 필터 다음에 테넌트 필터 — 행 검색이 꺼진 테넌트는 행 검색 도구를 목록에서 뺀다(WD-744).
   return filterToolsByPermissions(allTools, options.userPermissions).filter((t) =>
-    isToolAvailableForDialect(t.name, options.dbDialect),
+    isToolAvailableForTenant(t.name, options.dbDialect, options.rowSearch),
   );
 }
 

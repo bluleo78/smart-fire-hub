@@ -7,7 +7,8 @@ import { readFileSync } from 'node:fs';
 import { z } from 'zod/v4';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { registerAllTools, jsonResult, TIBERO_UNSUPPORTED_TOOLS } from './firehub-mcp-server.js';
+import { registerAllTools, jsonResult } from './firehub-mcp-server.js';
+import { ROW_SEARCH_TOOLS } from '../agent/db-dialect.js';
 import { FireHubApiClient } from './api-client.js';
 import type { DbDialect } from '../agent/db-dialect.js';
 
@@ -113,7 +114,7 @@ describe('Tibero 도구 설명', () => {
       'execute_analytics_query', 'execute_sql_query', 'create_dataset', 'add_dataset_column', 'create_pipeline', 'update_pipeline',
     ]);
     for (const [n, v] of Object.entries(fixture)) {
-      if (changed.has(n) || TIBERO_UNSUPPORTED_TOOLS.has(n)) continue;
+      if (changed.has(n) || ROW_SEARCH_TOOLS.has(n)) continue;
       expect(t[n], n).toEqual(v);
     }
   });
