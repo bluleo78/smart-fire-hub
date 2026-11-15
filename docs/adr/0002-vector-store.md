@@ -1,6 +1,6 @@
 # ADR 0002 — 벡터 저장소를 설치 옵션으로 분리
 
-- 상태: **제안** (2026-11-12 — 1~5번 방향은 사용자가 정함, 세부 설계는 검토 대기. 2026-11-14 — WD-720 구현에 맞춰 결정 3·4③·5·6·7 과 열린 질문을 고침. 같은 날 WD-721 구현에 맞춰 결정 6 을, WD-724 구현에 맞춰 결정 3·11 을, WD-722 구현·사용자 결정(행 테넌트 격리)에 맞춰 결정 2·3·5·7·9 를 고침)
+- 상태: **제안** (2026-11-12 — 1~5번 방향은 사용자가 정함, 세부 설계는 검토 대기. 2026-11-14 — WD-720 구현에 맞춰 결정 3·4③·5·6·7 과 열린 질문을 고침. 같은 날 WD-721 구현에 맞춰 결정 6 을, WD-724 구현에 맞춰 결정 3·11 을, WD-722 구현·사용자 결정(행 테넌트 격리)에 맞춰 결정 2·3·5·7·9 를 고침. 2026-11-15 — WD-723 구현에 맞춰 결정 2 표·3·9 를 고침)
 - 날짜: 2026-11-12
 - 이슈: WD-715 (에픽 WD-714, 하위 WD-716~724)
 - 관련: ADR 0001(플랫폼 DB Tibero), WD-495(검색 기능 상태 API), WD-80(행 검색)
@@ -97,7 +97,7 @@ OpenSearch 는 한국어 키워드(특히 오타 — 퍼지 질의)가 문제가
 |---|---|---|---|
 | PG | platform | Pg | Pg(데이터 저장소가 PG 인 테넌트만) |
 | Tibero | platform | Off | Pg(데이터 저장소가 PG 인 테넌트만) |
-| PG | qdrant | Qdrant | Qdrant(모든 테넌트, 단 Tibero 데이터 저장소는 단계 8 이후) |
+| PG | qdrant | Qdrant | Qdrant(데이터 저장소가 PG·Tibero 인 테넌트, WD-723) |
 | Tibero | qdrant | Qdrant | 위와 같음 |
 
 ### 3. 기능 판정 — 한 곳으로 모은다
@@ -105,7 +105,7 @@ OpenSearch 는 한국어 키워드(특히 오타 — 퍼지 질의)가 문제가
 - `VECTOR_SEARCH`·`TRIGRAM_SEARCH` 판정을 `PlatformDbFeatures` 에서 떼어 `VectorStoreFeatures` 로 옮긴다. 근거가 "플랫폼 DB 종류" 에서 "벡터 저장소 설정" 으로 바뀐다. 서비스의 건너뛰기 분기는 그대로 두고 물어보는 대상만 바꾼다.
 - `supportsRowSearch()` 를 쓰는 **세 곳**(`RowSearchBackendGuard`, `RowSearchSweepScheduler`, `DataStoreCapabilitiesController`)도 `VectorStoreFeatures` 에 묻게 한다.
 - **카탈로그·청크 판정과 행 판정을 나눈다.** 지금 `AiVectorPurgeService` 는 플랫폼 DB 기능이 꺼지면 행 검색 정리까지 건너뛴다. 그래서 Tibero 플랫폼 + PG 데이터 저장소 조합에서는 행 색인 외부 벡터가 즉시 정리되지 않고 다음 스윕을 기다린다(기존 결함 — 단계 3 에서 함께 고친다).
-- **qdrant 조합의 행 검색(WD-722)은 데이터 저장소가 PostgreSQL 이고 `QDRANT_API_KEY` 가 있을 때만 켠다**(`QdrantVectorStoreFeatures.supportsRowSearch`). 원본 읽기·필터 평가가 아직 PG 전용이라 Tibero 데이터 저장소는 WD-723 까지 꺼짐이다. API 키가 없으면 테넌트 컬렉션 토큰(결정 5)을 서명할 수 없어 끈다 — 서버 강제 격리 없이 마스터 키로 대신하지 않는다. 행 검색 장애 중 응답은 결과 없이 색인 상태 `UNAVAILABLE` 이다.
+- **qdrant 조합의 행 검색(WD-722)은 데이터 저장소가 PostgreSQL·Tibero(WD-723)이고 `QDRANT_API_KEY` 가 있을 때만 켠다**(`QdrantVectorStoreFeatures.supportsRowSearch`). 원본 읽기 구현이 없는 저장소는 꺼짐이다. platform(pgvector) 조합은 색인을 원본과 같은 PG 에서 조인하므로 지금처럼 PG 데이터 저장소만 켠다. API 키가 없으면 테넌트 컬렉션 토큰(결정 5)을 서명할 수 없어 끈다 — 서버 강제 격리 없이 마스터 키로 대신하지 않는다. 행 검색 장애 중 응답은 결과 없이 색인 상태 `UNAVAILABLE` 이다.
 - **기능 응답에 "저장소 일시 중단" 을 더한다(WD-724 구현).** 기존 응답(`vectorSearch`·`trigramSearch`, `rowSearch`)은 "설치본이 지원하는가" 만 나타내고 그대로 둔다. `GET /platform-db/capabilities` 에 `vectorStoreAvailable` 을 더했다 — `VectorStoreFeatures.available()` 이 답하고, pgvector·꺼짐 조합은 늘 참, Qdrant 조합은 상태 점검 + 컬렉션 준비 완료를 5초 캐시해 답한다.
   - **장애 중 검색은 200 빈 목록**이다(2026-11-14 사용자 결정, 503 대신). 검색 서비스는 가용성이 거짓이면 질의 임베딩도 부르지 않고 그 단계를 빈 목록으로 두고, 캐시가 아직 참인 사이 내려가 `VectorStoreUnavailableException`(포트 수준 예외, `QdrantAccessException` 의 부모)이 나면 그 단계만 뺀다.
   - 웹 문서 검색은 `vectorStoreAvailable=false` 면 「검색 저장소 일시 중단」 배너를 띄우고 검색 버튼을 막는다. 기능 상태는 30초가 지나면 다시 묻고, 일시 중단 동안 15초마다 다시 물으며, 검색이 빈 결과면 바로 다시 묻는다. ai-agent 검색 도구(문서·데이터셋·GraphRAG 시드)는 검색 API 를 부르지 않고 「찾지 못했다고 답하지 말라」는 안내문을 정상 결과로 돌려준다(기능 상태 캐시: 정상 1분, 일시 중단 30초).
@@ -255,11 +255,14 @@ OpenSearch 는 한국어 키워드(특히 오타 — 퍼지 질의)가 문제가
 - 필터 1단계 상한은 1만, 사후 확인 경로는 `max(limit×10, 200)` 개를 받는다. 필터가 없을 때 정확 검색 기준은 지금 세대 점 수 추정치 ≤ `row-search.search.exact-scan-max-rows`(10만)이다.
 - 저장소 장애: 검색은 `UNAVAILABLE`, 동기화는 실패로 기록하지 않고 건너뛰며, 스윕은 가용성이 거짓이면 주기를 쉰다.
 
-**Tibero 데이터 저장소 테넌트도 행 검색이 되려면** 데이터 저장소 쪽에 Tibero 짝이 필요하다(단계 8).
+**Tibero 데이터 저장소 테넌트(구현, WD-723):**
 
-- `SearchSourceReader`: 원문 읽기뿐 아니라 `currentOid`(`regclass`), `countRows`, `fetchRows`, `fetchChanged`(`timestamptz`)가 PG 전용이다.
-- `RowFilterCompiler`: `= ANY(?)`, `t."col"` 등 PG SQL.
-- 증분 책갈피: `RowSearchSyncService` 가 PG 함수를 부르는 `IncrementalCursorService` 를 직접 쓴다. 이미 있는 `TiberoIncrementalCursor` 로 갈아 끼운다.
+- `SearchSourceReader` 는 파사드가 됐다. 현재 테넌트 백엔드로 `SearchSourceStore` 구현(`PgSearchSourceStore`·`TiberoSearchSourceStore`)을 호출마다 고른다 — 한 JVM 에 두 저장소 테넌트가 함께 있어 빈 조건으로 가를 수 없다. 행 수는 이미 백엔드별로 위임하는 `DataTableRowService.countRows` 를 그대로 쓴다.
+- Tibero 원본 읽기: 테이블 실체 식별자는 `ALL_OBJECTS.OBJECT_ID`, 자르기는 `ORDER BY` 인라인 뷰 + `ROWNUM`, id 목록은 `IN (…)` 을 1000 개씩 나눈다. `_UPDATED_AT` 은 서버 벽시계 TIMESTAMP 라 UTC 책갈피를 파이프라인 증분과 같은 식(`TiberoTimestamps.serverWallClockLiteral`)으로 서버 시간대로 옮겨 비교한다.
+- 세대 재구축 경로: Tibero 테이블 재생성(보관 이름 바꾸기 → 새 테이블·새 시퀀스)은 OBJECT_ID 가 바뀌고 ID 가 1 부터 다시 매겨져 PG swap 과 같이 새 세대를 연다. 교체 적재(REPLACE)는 같은 테이블에 `DELETE FROM` + 시퀀스 INSERT 라 OBJECT_ID 가 그대로이고 ID 가 이어진다(재사용 없음) — 새 ID 가 변경분으로 다시 색인되고(재사용 없이 다시 임베딩), 옛 ID 의 점은 원본 대조가 지운다. 그 사이에도 원본 조회에서 빠져 결과가 틀리지 않는다.
+- `RowFilterCompiler` 는 검증·값 변환을 하나로 두고 SQL 모양만 방언으로 고른다(`RowQueryFilter.toTibero()` — 대문자 물리 컬럼, in 은 값마다 자리표시자, 바인딩은 `TiberoValues.bind`). Tibero 는 빈 문자열을 NULL 로 저장하므로 `eq ""` 는 어떤 행과도 맞지 않는다.
+- 증분 책갈피 후보는 저장소별(`SearchSourceStore.captureCursorCandidate`)이다. Tibero 는 `TiberoIncrementalCursor`(db-executor 경유)라 db-executor 가 내려가 있으면 Tibero 테넌트 동기화가 실패(백오프)로 남는다.
+- ai-agent 는 아직 방언(`dbDialect=TIBERO`)을 「행 검색 없음」으로 써서 Tibero 테넌트에서 행 검색 도구를 숨긴다 — 「행 검색 가능」 플래그를 방언과 나누는 일은 WD-744.
 
 ### 10. 새 설치만 — 설치 후 바꾸기 금지
 

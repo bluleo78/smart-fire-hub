@@ -18,8 +18,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 데이터셋 행 검색(Tibero 테넌트는 네 엔드포인트 모두 {@link RowSearchBackendGuard} 에서 422): 검색 설정(검색 탭)과 행 검색(에이전트
- * 도구) 엔드포인트.
+ * 데이터셋 행 검색(지원하지 않는 저장소 조합 — pgvector 조합의 Tibero 테넌트 — 은 네 엔드포인트 모두 {@link RowSearchBackendGuard}
+ * 에서 422): 검색 설정(검색 탭)과 행 검색(에이전트 도구) 엔드포인트.
  */
 // WD-601: 행 검색·색인 설정도 경로 데이터셋의 테이블만 다룬다 — 삭제 경합의 「테이블 없음」은 404 「데이터셋 없음」으로 답한다.
 @TranslatesMissingDatasetTable

@@ -8,7 +8,6 @@ import com.smartfirehub.embedding.EmbeddingNotConfiguredException;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import com.smartfirehub.global.tenant.TenantContext;
-import com.smartfirehub.pipeline.service.IncrementalCursorService;
 import com.smartfirehub.securitylevel.ai.EmbeddingAiGate;
 import com.smartfirehub.vectorstore.VectorStoreUnavailableException;
 import java.time.Duration;
@@ -27,9 +26,9 @@ import org.springframework.stereotype.Service;
  * <p>트랜잭션을 걸지 않는다 — 임베딩 호출(외부 서버)을 DB 트랜잭션 밖에 두고, DB 쓰기는 각 저장소의 짧은 트랜잭션으로 나눈다. 실패하면 책갈피를 전진시키지 않아
  * 다음 주기가 같은 구간을 다시 처리한다(source_hash 로 중복 임베딩 흡수).
  *
- * <p><b>크로스 도메인 의존:</b> 책갈피 후보 캡처는 {@code pipeline.service.IncrementalCursorService} 를 그대로 재사용한다 —
- * "처리 직전에, 커밋 안 된 가장 오래된 트랜잭션 시작 시각 이하로 잡는다"는 불변식이 파이프라인 증분 처리와 같기 때문이다. 이 서비스가 다른 패키지로 옮겨지면 여기
- * import 도 함께 고친다.
+ * <p><b>책갈피 후보:</b> {@link SearchSourceReader#captureCursorCandidate} 로 잡는다 — 데이터 저장소 시계(PG 는 파이프라인
+ * 증분과 같은 {@code IncrementalCursorService}, Tibero 는 {@code TiberoIncrementalCursor})에서 "처리 직전에, 커밋
+ * 안 된 가장 오래된 트랜잭션 시작 시각 이하로" 잡는 불변식이 파이프라인 증분 처리와 같다(WD-723 에서 저장소별로 고르게 했다).
  */
 @Slf4j
 @Service
@@ -70,7 +69,6 @@ public class RowSearchSyncService {
   private final SearchSourceReader reader;
   private final DatasetRepository datasetRepository;
   private final EmbeddingProviderFactory embeddingFactory;
-  private final IncrementalCursorService cursorService;
   private final EmbeddingAiGate aiGate;
   private final int maxRowsPerCycle;
   private final int batchSize;
@@ -83,7 +81,6 @@ public class RowSearchSyncService {
       SearchSourceReader reader,
       DatasetRepository datasetRepository,
       EmbeddingProviderFactory embeddingFactory,
-      IncrementalCursorService cursorService,
       EmbeddingAiGate aiGate,
       @Value("${row-search.sync.max-rows-per-cycle:5000}") int maxRowsPerCycle,
       @Value("${row-search.sync.batch-size:200}") int batchSize) {
@@ -93,7 +90,6 @@ public class RowSearchSyncService {
     this.reader = reader;
     this.datasetRepository = datasetRepository;
     this.embeddingFactory = embeddingFactory;
-    this.cursorService = cursorService;
     this.aiGate = aiGate;
     this.maxRowsPerCycle = maxRowsPerCycle;
     this.batchSize = batchSize;
@@ -199,12 +195,12 @@ public class RowSearchSyncService {
     // 재색인·세대 시작으로 상태가 바뀌었을 수 있다 — 아래 쓰기는 지금 세대를 실은 참조로 한다.
     ref = IndexRef.of(ref.tenantId(), datasetId, ref.sourceTable(), state);
 
-    // 2) 책갈피 후보 — 패스 시작 시에만 캡처(IncrementalCursorService 불변식: 실행 직전).
+    // 2) 책갈피 후보 — 패스 시작 시에만 캡처(책갈피 후보 불변식: 실행 직전).
     //    패스 시작이면 원본 전체 행 수도 함께 기록해 여러 주기에 걸친 색인 중에도 진행률(분모)이 보이게 한다.
     //    (resetForFullPass·markSourceOid 는 pass_cursor 를 비우고 state 를 다시 읽으므로 이 판정이 맞다.)
     if (state.passCursor() == null) {
       states.startPassIfNeeded(
-          datasetId, cursorService.captureCandidate(), reader.countRows(ref.sourceTable()));
+          datasetId, reader.captureCursorCandidate(), reader.countRows(ref.sourceTable()));
     }
 
     // 3) 변경분 처리

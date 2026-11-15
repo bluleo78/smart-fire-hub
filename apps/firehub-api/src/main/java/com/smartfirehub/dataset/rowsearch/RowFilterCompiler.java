@@ -1,6 +1,7 @@
 package com.smartfirehub.dataset.rowsearch;
 
 import com.smartfirehub.dataset.service.ColumnPhysicalType;
+import com.smartfirehub.dataset.storage.tibero.TiberoNames;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -14,6 +15,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 
 /**
  * 구조화 필터를 원본 테이블 별칭 t 기준 WHERE 조각으로 컴파일한다.
@@ -38,6 +40,27 @@ public final class RowFilterCompiler {
   private RowFilterCompiler() {}
 
   /**
+   * 데이터 저장소 방언 — 검증·값 변환은 같고 SQL 모양만 다르다(WD-723).
+   *
+   * <p>PostgreSQL: 컬럼은 소문자 메타데이터 이름 그대로 인용({@code t."col"}), in 은 타입 배열 하나({@code = ANY(?)}).
+   * Tibero: 컬럼은 대문자 물리 이름({@code t."COL"}), 배열 바인딩이 없어 in 은 값마다 자리표시자({@code IN (?, ?)}). 값은 Java
+   * 타입 그대로 두고 바인딩은 각 저장소가 한다(Tibero 는 {@code TiberoValues.bind} 가 BOOLEAN 을 1/0 으로 바꾼다).
+   *
+   * <p>Tibero 는 빈 문자열을 NULL 로 저장하므로 {@code eq ""} 는 어떤 행과도 맞지 않는다(PG 는 빈 문자열 행과 맞는다) — 저장소 의미 차이라
+   * 바꾸지 않는다.
+   */
+  public enum Dialect {
+    POSTGRES(name -> "t.\"" + name + "\""),
+    TIBERO(name -> "t." + TiberoNames.column(name));
+
+    private final Function<String, String> column;
+
+    Dialect(Function<String, String> column) {
+      this.column = column;
+    }
+  }
+
+  /**
    * 필터를 검증하고 WHERE 조각(원본 별칭 t 기준)과 바인딩 값으로 컴파일한다.
    *
    * @param filter 에이전트가 넘긴 조건(AND 결합). null·빈 필터면 {@link CompiledFilter#none()}
@@ -45,6 +68,16 @@ public final class RowFilterCompiler {
    * @throws IllegalArgumentException 알 수 없는 컬럼·GEOMETRY 컬럼·미지원 연산자·타입 변환 실패 시(몇 번째 조건인지 포함)
    */
   public static CompiledFilter compile(RowFilter filter, Map<String, String> columnTypes) {
+    return compile(filter, columnTypes, Dialect.POSTGRES);
+  }
+
+  /**
+   * {@link #compile(RowFilter, Map)} 와 같되 저장소 방언을 고른다(WD-723). 검증 규칙·오류 문구는 방언과 무관하게 같다.
+   *
+   * @param dialect WHERE 조각을 실행할 데이터 저장소
+   */
+  public static CompiledFilter compile(
+      RowFilter filter, Map<String, String> columnTypes, Dialect dialect) {
     if (filter == null || filter.isEmpty()) return CompiledFilter.none();
     List<String> parts = new ArrayList<>();
     List<Object> params = new ArrayList<>();
@@ -67,7 +100,7 @@ public final class RowFilterCompiler {
       if (c.op() == null || !OPS.contains(c.op())) {
         throw new IllegalArgumentException(at + "지원하지 않는 연산자 '" + c.op() + "' (" + OPS + ")");
       }
-      String col = "t.\"" + c.column() + "\"";
+      String col = dialect.column.apply(c.column());
       switch (c.op()) {
         case "is_null" -> parts.add(col + " IS NULL");
         case "is_not_null" -> parts.add(col + " IS NOT NULL");
@@ -79,9 +112,19 @@ public final class RowFilterCompiler {
           }
           List<Object> converted = new ArrayList<>();
           for (Object v : values) converted.add(convert(v, type, at));
-          parts.add(col + " = ANY(?)");
-          // jOOQ 는 배열 원소 타입으로 PG 배열 타입을 정한다 — Object[] 면 text[] 로 묶여 bigint = text[] 오류가 난다.
-          params.add(typedArray(converted, type));
+          if (dialect == Dialect.TIBERO) {
+            // Tibero JDBC 는 배열 바인딩이 없다 — 값마다 자리표시자(최대 MAX_IN=100 개라 IN 목록 상한 1000 안쪽).
+            parts.add(
+                col
+                    + " IN ("
+                    + String.join(", ", java.util.Collections.nCopies(converted.size(), "?"))
+                    + ")");
+            params.addAll(converted);
+          } else {
+            parts.add(col + " = ANY(?)");
+            // jOOQ 는 배열 원소 타입으로 PG 배열 타입을 정한다 — Object[] 면 text[] 로 묶여 bigint = text[] 오류가 난다.
+            params.add(typedArray(converted, type));
+          }
         }
         default -> {
           parts.add(col + " " + sqlOp(c.op()) + " ?");

@@ -14,7 +14,6 @@ import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.repository.SearchColumnRepository;
 import com.smartfirehub.dataset.repository.SearchIndexStateRepository;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
-import com.smartfirehub.pipeline.service.IncrementalCursorService;
 import com.smartfirehub.securitylevel.ai.EmbeddingAiGate;
 import java.time.Duration;
 import java.time.OffsetDateTime;
@@ -44,7 +43,6 @@ class RowSearchSyncServiceLeaseOrderTest {
   @Mock private SearchSourceReader reader;
   @Mock private DatasetRepository datasetRepository;
   @Mock private EmbeddingProviderFactory embeddingFactory;
-  @Mock private IncrementalCursorService cursorService;
   @Mock private EmbeddingAiGate aiGate;
 
   private RowSearchSyncService sync;
@@ -59,7 +57,6 @@ class RowSearchSyncServiceLeaseOrderTest {
             reader,
             datasetRepository,
             embeddingFactory,
-            cursorService,
             aiGate,
             4,
             2);
@@ -124,6 +121,6 @@ class RowSearchSyncServiceLeaseOrderTest {
     assertThat(sync.sync(ID)).isEqualTo(RowSearchSyncService.Outcome.SKIPPED);
 
     verify(states).releaseLease(ID);
-    verifyNoInteractions(datasetRepository, index, reader, embeddingFactory, cursorService, aiGate);
+    verifyNoInteractions(datasetRepository, index, reader, embeddingFactory, aiGate);
   }
 }

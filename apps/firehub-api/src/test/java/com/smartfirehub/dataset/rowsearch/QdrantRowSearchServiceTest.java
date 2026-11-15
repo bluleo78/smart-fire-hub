@@ -88,10 +88,11 @@ class QdrantRowSearchServiceTest extends RowSearchServiceTest {
   }
 
   @Test
-  void qdrantImplementationIsWiredAndRowSearchIsOnForPostgresDataStore() {
+  void qdrantImplementationIsWiredAndRowSearchIsOnForPgAndTiberoDataStores() {
     assertThat(rowIndex).isInstanceOf(QdrantRowSearchIndex.class);
     assertThat(features.supportsRowSearch(DataStoreBackend.POSTGRESQL)).isTrue();
-    assertThat(features.supportsRowSearch(DataStoreBackend.TIBERO)).isFalse();
+    assertThat(features.supportsRowSearch(DataStoreBackend.TIBERO)).isTrue(); // WD-723
+    assertThat(features.supportsRowSearch(DataStoreBackend.MYSQL)).isFalse();
     assertThat(List.of(rowIndex)).hasSize(1);
   }
 }

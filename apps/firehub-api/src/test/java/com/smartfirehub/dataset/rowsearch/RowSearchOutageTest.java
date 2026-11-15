@@ -23,7 +23,6 @@ import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import com.smartfirehub.global.platformdb.PlatformDbFeature;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantScopedRunner;
-import com.smartfirehub.pipeline.service.IncrementalCursorService;
 import com.smartfirehub.securitylevel.ai.EmbeddingAiGate;
 import com.smartfirehub.vectorstore.VectorStoreFeatures;
 import com.smartfirehub.vectorstore.VectorStoreUnavailableException;
@@ -101,7 +100,6 @@ class RowSearchOutageTest {
             reader,
             datasets,
             embeddings,
-            mock(IncrementalCursorService.class),
             mock(EmbeddingAiGate.class),
             4,
             2);

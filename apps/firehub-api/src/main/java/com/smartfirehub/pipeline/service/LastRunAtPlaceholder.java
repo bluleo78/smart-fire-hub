@@ -2,7 +2,6 @@ package com.smartfirehub.pipeline.service;
 
 import com.smartfirehub.dataset.storage.DataStoreBackend;
 import java.time.OffsetDateTime;
-import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -100,10 +99,6 @@ public final class LastRunAtPlaceholder {
       return TIBERO_MINIMUM;
     }
     // 열이 서버 벽시계라서, UTC 로 표현한 instant 를 서버 지역 시간대로 옮긴 뒤 시간대를 떼어 비교한다(Ruling 13, WD-234).
-    return "CAST(TIMESTAMP '"
-        + value.withOffsetSameInstant(ZoneOffset.UTC).format(TiberoTimestamps.UTC_MICROS)
-        + " +00:00' AT TIME ZONE "
-        + TiberoTimestamps.SERVER_ZONE_SQL
-        + " AS TIMESTAMP)";
+    return TiberoTimestamps.serverWallClockLiteral(value);
   }
 }

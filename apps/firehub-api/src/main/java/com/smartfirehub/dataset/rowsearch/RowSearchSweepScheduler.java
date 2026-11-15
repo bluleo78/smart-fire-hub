@@ -86,7 +86,7 @@ public class RowSearchSweepScheduler {
     AtomicBoolean hasMore = new AtomicBoolean(false);
     tenantRunner.forEachActiveTenant(
         tenantId -> {
-          // 행 검색을 지원하지 않는 저장소(Tibero)는 색인이 없다(WD-80) — pgvector 접근 자체를 하지 않도록 건너뛴다.
+          // 행 검색을 지원하지 않는 저장소 조합(pgvector 조합의 Tibero, WD-80)은 색인이 없다 — 색인 접근 자체를 하지 않도록 건너뛴다.
           if (!vectorStoreFeatures.supportsRowSearch(dataStoreResolver.backendFor(tenantId)))
             return;
           for (Long datasetId : states.findDueDatasetIds()) {

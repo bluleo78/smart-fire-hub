@@ -140,11 +140,11 @@ class VectorStoreTypeWiringTest {
   }
 
   /**
-   * qdrant 조합의 행 검색(WD-722)은 데이터 저장소가 PostgreSQL 이고 API 키가 있을 때만 켜진다. Tibero 데이터 저장소는 WD-723 전까지
-   * 꺼짐, 키가 없으면 테넌트 컬렉션 토큰을 서명할 수 없어 꺼짐.
+   * qdrant 조합의 행 검색(WD-722)은 데이터 저장소가 PostgreSQL·Tibero(WD-723)이고 API 키가 있을 때만 켜진다. 원본 읽기 구현이 없는
+   * 저장소(MySQL)는 꺼짐, 키가 없으면 테넌트 컬렉션 토큰을 서명할 수 없어 꺼짐.
    */
   @Test
-  void qdrant_조합의_행_검색은_PG_데이터_저장소와_API_키가_있을_때만() {
+  void qdrant_조합의_행_검색은_PG_Tibero_데이터_저장소와_API_키가_있을_때만() {
     var withKey =
         new com.smartfirehub.vectorstore.qdrant.QdrantRowClients(
             new com.smartfirehub.vectorstore.qdrant.QdrantProperties(
@@ -157,7 +157,8 @@ class VectorStoreTypeWiringTest {
       for (DataStoreBackend backend : DataStoreBackend.values()) {
         assertThat(new QdrantVectorStoreFeatures(null, withKey).supportsRowSearch(backend))
             .as("%s", backend)
-            .isEqualTo(backend == DataStoreBackend.POSTGRESQL);
+            .isEqualTo(
+                backend == DataStoreBackend.POSTGRESQL || backend == DataStoreBackend.TIBERO);
         assertThat(new QdrantVectorStoreFeatures(null, noKey).supportsRowSearch(backend))
             .as("키 없음 %s", backend)
             .isFalse();

@@ -33,7 +33,10 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 
-/** Tibero 테넌트는 행 검색 네 엔드포인트 모두 판정·DB 접근 전에 422 로 막고, PostgreSQL 은 기존대로 위임한다(WD-80). */
+/**
+ * platform(pgvector) 조합에서 Tibero 테넌트는 행 검색 네 엔드포인트 모두 판정·DB 접근 전에 422 로 막고, PostgreSQL 은 기존대로
+ * 위임한다(WD-80). qdrant 조합은 Tibero 도 허용한다(WD-723 — {@code VectorStoreTypeWiringTest}).
+ */
 @SuppressWarnings("null")
 @WebMvcTest(RowSearchController.class)
 @Import({

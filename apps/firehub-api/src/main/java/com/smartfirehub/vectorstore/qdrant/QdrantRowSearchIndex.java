@@ -7,7 +7,6 @@ import static com.smartfirehub.vectorstore.qdrant.QdrantSupport.tenant;
 import static com.smartfirehub.vectorstore.qdrant.QdrantSupport.tenantKey;
 import static io.qdrant.client.ValueFactory.value;
 
-import com.smartfirehub.dataset.rowsearch.CompiledFilter;
 import com.smartfirehub.dataset.rowsearch.IndexRef;
 import com.smartfirehub.dataset.rowsearch.IndexedRow;
 import com.smartfirehub.dataset.rowsearch.RowHit;
@@ -483,8 +482,8 @@ public class QdrantRowSearchIndex implements RowSearchIndex {
     if (filter.isEmpty()) {
       return run(ref, builder.build(conditions, limit, useExact(ref, collection, gen)));
     }
-    CompiledFilter compiled = filter.toPostgres();
-    List<Long> ids = reader.matchingIds(ref.sourceTable(), compiled, filterIdCap + 1);
+    // 필터 평가는 데이터 저장소가 한다 — 리더가 테넌트 백엔드(PG·Tibero)의 방언으로 컴파일한다(WD-723).
+    List<Long> ids = reader.matchingIds(ref.sourceTable(), filter, filterIdCap + 1);
     if (ids.isEmpty()) return List.of();
     if (ids.size() <= filterIdCap) {
       conditions.add(anyOf(QdrantCollectionSpec.ROW_ID, ids));
@@ -496,7 +495,7 @@ public class QdrantRowSearchIndex implements RowSearchIndex {
         run(ref, builder.build(conditions, pool, useExact(ref, collection, gen)));
     Set<Long> pass =
         reader.filterIds(
-            ref.sourceTable(), candidates.stream().map(RowHit::rowId).toList(), compiled);
+            ref.sourceTable(), candidates.stream().map(RowHit::rowId).toList(), filter);
     return candidates.stream().filter(h -> pass.contains(h.rowId())).limit(limit).toList();
   }
 

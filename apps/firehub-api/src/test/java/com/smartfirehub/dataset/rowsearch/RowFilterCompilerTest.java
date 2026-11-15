@@ -153,4 +153,54 @@ class RowFilterCompilerTest {
     return RowFilterCompiler.compile(
         new RowFilter(List.of(new RowFilter.Condition(col, op, v))), types);
   }
+
+  /**
+   * Tibero 방언(WD-723): 컬럼은 대문자 물리 이름으로 인용하고, 배열 바인딩이 없으므로 in 은 값마다 자리표시자를 둔다. 값 변환(타입·순서)은 PG 와 같다
+   * — 바인딩은 저장소({@code TiberoValues.bind})가 한다.
+   */
+  @Test
+  void tiberoDialect_upperCaseColumns_andExpandedIn() {
+    var f =
+        new RowFilter(
+            List.of(
+                new RowFilter.Condition("status", "eq", "미처리"),
+                new RowFilter.Condition("cnt", "in", List.of(1, "2", 3.0)),
+                new RowFilter.Condition("done", "eq", "true"),
+                new RowFilter.Condition("ts", "lt", "2025-12-01 10:00"),
+                new RowFilter.Condition("amount", "is_not_null", null)));
+
+    CompiledFilter c = RowFilterCompiler.compile(f, types, RowFilterCompiler.Dialect.TIBERO);
+
+    assertThat(c.sql())
+        .isEqualTo(
+            "t.\"STATUS\" = ? AND t.\"CNT\" IN (?, ?, ?) AND t.\"DONE\" = ? AND t.\"TS\" < ?"
+                + " AND t.\"AMOUNT\" IS NOT NULL");
+    assertThat(c.params())
+        .containsExactly("미처리", 1L, 2L, 3L, true, LocalDateTime.parse("2025-12-01T10:00"));
+  }
+
+  /** 검증은 방언과 무관하다 — Tibero 로 컴파일해도 같은 오류로 거부한다. */
+  @Test
+  void tiberoDialect_rejectsLikePostgres() {
+    var unknown = new RowFilter(List.of(new RowFilter.Condition("nope", "eq", "x")));
+    assertThatThrownBy(
+            () -> RowFilterCompiler.compile(unknown, types, RowFilterCompiler.Dialect.TIBERO))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("알 수 없는 컬럼");
+    var geom = new RowFilter(List.of(new RowFilter.Condition("geom", "is_null", null)));
+    assertThatThrownBy(
+            () -> RowFilterCompiler.compile(geom, types, RowFilterCompiler.Dialect.TIBERO))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("GEOMETRY");
+  }
+
+  /** {@link RowQueryFilter#toTibero()} 는 Tibero 방언, 조건이 없으면 빈 조각. */
+  @Test
+  void rowQueryFilter_toTibero() {
+    var q =
+        RowQueryFilter.validated(
+            new RowFilter(List.of(new RowFilter.Condition("status", "neq", "x"))), types);
+    assertThat(q.toTibero().sql()).isEqualTo("t.\"STATUS\" <> ?");
+    assertThat(RowQueryFilter.none().toTibero().isEmpty()).isTrue();
+  }
 }

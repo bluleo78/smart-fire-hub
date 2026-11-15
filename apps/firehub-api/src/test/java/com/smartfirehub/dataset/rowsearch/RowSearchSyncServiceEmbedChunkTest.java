@@ -18,7 +18,6 @@ import com.smartfirehub.dataset.repository.SearchIndexStateRepository;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import com.smartfirehub.global.tenant.TenantContext;
-import com.smartfirehub.pipeline.service.IncrementalCursorService;
 import com.smartfirehub.securitylevel.ai.EmbeddingAiGate;
 import java.time.Duration;
 import java.time.OffsetDateTime;
@@ -55,7 +54,6 @@ class RowSearchSyncServiceEmbedChunkTest {
   @Mock private SearchSourceReader reader;
   @Mock private DatasetRepository datasetRepository;
   @Mock private EmbeddingProviderFactory embeddingFactory;
-  @Mock private IncrementalCursorService cursorService;
   @Mock private EmbeddingAiGate aiGate;
 
   private final List<Integer> callSizes = new ArrayList<>();
@@ -167,7 +165,6 @@ class RowSearchSyncServiceEmbedChunkTest {
         reader,
         datasetRepository,
         embeddingFactory,
-        cursorService,
         aiGate,
         5000,
         batchSize);

@@ -56,7 +56,7 @@ class PlatformDbAccessArchitectureTest {
           "com.smartfirehub.analytics.service.AnalyticsQueryExecutionService",
           "com.smartfirehub.dataimport.service.StagingTableCleanupService",
           "com.smartfirehub.dataset.rowsearch.PgRowSearchIndex",
-          "com.smartfirehub.dataset.rowsearch.SearchSourceReader",
+          "com.smartfirehub.dataset.rowsearch.PgSearchSourceStore",
           "com.smartfirehub.dataset.service.DataTableQueryService",
           "com.smartfirehub.dataset.service.PostgresDataRowStore",
           "com.smartfirehub.dataset.service.PostgresDataTableStore",

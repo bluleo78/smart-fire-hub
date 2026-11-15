@@ -221,7 +221,8 @@ export function isToolPermitted(name: string, userPermissions: string[] | undefi
 
 /**
  * Tibero 테넌트 저장소에서 아직 지원하지 않아 숨기는 도구(WD-79/WD-80).
- * 행 검색(search_dataset_rows)은 api 가 422 로 거절하므로, 에이전트가 헛걸음하지 않게 목록에서 뺀다.
+ * 행 검색(search_dataset_rows)은 platform(pgvector) 조합이면 api 가 422 로 거절하므로, 에이전트가 헛걸음하지 않게 목록에서 뺀다.
+ * qdrant 조합은 Tibero 도 행 검색이 되지만(WD-723) 에이전트는 그 조합을 아직 모른다 — 플래그 분리는 WD-744.
  */
 export const TIBERO_UNSUPPORTED_TOOLS: ReadonlySet<string> = new Set(['search_dataset_rows']);
 
