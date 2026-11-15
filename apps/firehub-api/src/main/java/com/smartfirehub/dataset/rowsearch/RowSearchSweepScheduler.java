@@ -66,8 +66,8 @@ public class RowSearchSweepScheduler {
       fixedDelayString = "${row-search.sync.interval-ms:60000}")
   public void sweep() {
     if (!enabled) return;
-    // 벡터 저장소가 일시 중단이면(Qdrant 장애, WD-724·722) 이번 주기를 쉰다 — 데이터셋마다 실패·백오프가 쌓여 오류로 보이지 않게.
-    if (!vectorStoreFeatures.available()) return;
+    // 벡터 저장소 일시 중단(Qdrant 장애, WD-724·722)은 테넌트마다 본다(WD-742) — 행 색인이 테넌트 전용 인스턴스에 있을 수 있어, 공유 저장소가
+    // 내려가도 전용 테넌트는 돌고 전용 인스턴스가 내려가도 다른 테넌트는 돈다. 쉬는 테넌트는 데이터셋마다 실패·백오프가 쌓이지 않는다.
     long startedAt = System.nanoTime();
     Set<Long> settled = new HashSet<>();
     boolean hasMore;
@@ -89,6 +89,7 @@ public class RowSearchSweepScheduler {
           // 행 검색을 지원하지 않는 저장소 조합(pgvector 조합의 Tibero, WD-80)은 색인이 없다 — 색인 접근 자체를 하지 않도록 건너뛴다.
           if (!vectorStoreFeatures.supportsRowSearch(dataStoreResolver.backendFor(tenantId)))
             return;
+          if (!vectorStoreFeatures.rowSearchAvailable(tenantId)) return;
           for (Long datasetId : states.findDueDatasetIds()) {
             if (settled.contains(datasetId)) continue;
             try {

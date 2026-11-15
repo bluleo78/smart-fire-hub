@@ -32,17 +32,30 @@ public class QdrantOutboxApplier {
   private final QdrantProperties props;
   private final QdrantRowClients rowClients;
 
+  /** 테넌트 전용 Qdrant 해석(WD-742). 없으면(시험) 모든 테넌트의 행이 공유 Qdrant 에 있다고 본다. */
+  private final QdrantRowTargets targets;
+
   /** 카탈로그·청크 종류만 반영하는 생성자 — 시험용. 행 종류가 오면 거부한다. */
   public QdrantOutboxApplier(QdrantClient client, QdrantProperties props) {
-    this(client, props, null);
+    this(client, props, null, null);
+  }
+
+  /** 공유 Qdrant 만 쓰는 생성자 — 시험용. */
+  public QdrantOutboxApplier(
+      QdrantClient client, QdrantProperties props, QdrantRowClients rowClients) {
+    this(client, props, rowClients, null);
   }
 
   @Autowired
   public QdrantOutboxApplier(
-      QdrantClient client, QdrantProperties props, QdrantRowClients rowClients) {
+      QdrantClient client,
+      QdrantProperties props,
+      QdrantRowClients rowClients,
+      QdrantRowTargets targets) {
     this.client = client;
     this.props = props;
     this.rowClients = rowClients;
+    this.targets = targets;
   }
 
   /**
@@ -95,6 +108,22 @@ public class QdrantOutboxApplier {
    * @param withKeyword 키워드 컬렉션도 지울지(전체 삭제). 거짓이면 dense 만
    */
   private void deleteRows(long tenantId, boolean withKeyword, List<Condition> must) {
+    // 테넌트 전용 Qdrant(WD-742)면 그 인스턴스에서 나열·삭제한다. 그 인스턴스가 내려가 있으면 여기서 던져 이 테넌트의 이번 회차만 멈춘다(워커 설명).
+    QdrantRowTargets.RowTarget dedicated = targets == null ? null : targets.forTenant(tenantId);
+    if (dedicated != null && dedicated.dedicated()) {
+      String kw = QdrantCollectionSpec.rowsKeywordName(tenantId);
+      List<String> names =
+          dedicated.rowCollections(tenantId).stream()
+              .filter(n -> withKeyword || !n.equals(kw))
+              .toList();
+      if (names.isEmpty()) return;
+      QdrantClient c = dedicated.forCollections(names);
+      Filter f = allOf(must.toArray(Condition[]::new));
+      for (String name : names) {
+        await(c.deleteAsync(name, f, props.timeout()), props.timeout(), name + " 행 아웃박스 삭제(전용)");
+      }
+      return;
+    }
     if (rowClients == null || !rowClients.enabled()) {
       // API 키가 없으면 행 검색이 꺼져 있어 행 점이 생긴 적이 없다 — 지울 것이 없으므로 반영한 것으로 친다. 여기서 던지면 데이터셋 삭제마다 쌓이는
       // 행 아웃박스가 그 테넌트의 다른 삭제(카탈로그·청크)까지 영영 막는다.

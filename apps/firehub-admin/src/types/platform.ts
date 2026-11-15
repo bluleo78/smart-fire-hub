@@ -82,6 +82,39 @@ export interface CreateTenantRequest {
   name: string;
   ownerUserId: number;
   dataStore?: DataStoreSetupRequest;
+  /** 테넌트 전용 Qdrant(WD-742). 없으면(키를 보내지 않으면) 공유 Qdrant 를 쓴다. */
+  vectorStore?: VectorStoreSetupRequest;
+}
+
+/**
+ * 테넌트 전용 벡터 저장소(Qdrant) 입력. 서버 `VectorStoreSetupRequest` 와 1:1 — 생성 요청과 연결 확인 요청이 같이 쓴다.
+ * grpcPort 는 gRPC 포트다(Qdrant 기본 6334, REST 6333 이 아니다).
+ */
+export interface VectorStoreSetupRequest {
+  host: string;
+  grpcPort: number;
+  tls: boolean;
+  apiKey: string;
+}
+
+/** `GET /tenants/vector-store/options` 응답. 설치가 Qdrant 를 쓸 때만 전용 인스턴스를 고를 수 있다. */
+export interface VectorStoreOptions {
+  dedicatedSupported: boolean;
+}
+
+/** `POST /tenants/vector-store/test` 응답. 접속 실패도 200 + ok=false 로 온다. */
+export interface VectorStoreTestResult {
+  ok: boolean;
+  serverVersion: string | null;
+  message: string;
+}
+
+/** `GET /tenants/{id}/vector-store` 응답. 비밀(API 키)은 오지 않는다. 공유면 나머지가 null 이다. */
+export interface TenantVectorStoreResponse {
+  dedicated: boolean;
+  host: string | null;
+  grpcPort: number | null;
+  tls: boolean | null;
 }
 
 /** `POST /tenants` 응답. SCRIPT 모드일 때만 `dataStoreSetupScript` 가 온다(1회만 표시되는 비밀 포함). */

@@ -763,4 +763,151 @@ test.describe('테넌트 생성', () => {
       await expect(page).toHaveURL('/tenants/new');
     });
   });
+
+  test.describe('전용 벡터 저장소 선택 (WD-742)', () => {
+    const OPTIONS_PATH = '/api/platform/tenants/vector-store/options';
+    const TEST_PATH = '/api/platform/tenants/vector-store/test';
+
+    /** 이름·식별자·Owner 를 채운다. */
+    async function fillBasics(page: Page) {
+      await expect(page.getByRole('heading', { name: '테넌트 생성' })).toBeVisible();
+      await page.getByLabel('이름').fill('한빛소방서');
+      await page.getByLabel('식별자').fill('hanbit');
+      await page.getByLabel('초기 Owner').fill('박소');
+      await page.waitForTimeout(400);
+      await page.getByRole('option', { name: /박소유/ }).click();
+    }
+
+    /** 전용 Qdrant 를 켜고 접속 정보를 채운다(포트는 기본 6334 를 그대로 둔다). */
+    async function fillDedicated(page: Page) {
+      await page.getByRole('switch', { name: '전용 Qdrant 사용' }).click();
+      await expect(page.getByLabel('gRPC 포트')).toHaveValue('6334');
+      await page.getByLabel('Qdrant 호스트').fill('qdrant.tenant-a.internal');
+      await page.getByLabel('Qdrant API 키').fill('qdrant-secret');
+    }
+
+    test('Qdrant 를 쓰지 않는 설치에서는 섹션이 보이지 않는다', async ({ authenticatedPage: page }) => {
+      await mockApi(page, 'GET', OPTIONS_PATH, { dedicatedSupported: false });
+      await page.goto('/tenants/new');
+
+      // 데이터셋 저장소 섹션이 그려진 뒤에도 벡터 저장소 섹션은 없어야 한다.
+      await expect(page.getByTestId('data-store-fields')).toBeVisible();
+      await page.waitForTimeout(300);
+      await expect(page.getByTestId('vector-store-fields')).toHaveCount(0);
+      await expect(page.getByRole('switch', { name: '전용 Qdrant 사용' })).toHaveCount(0);
+    });
+
+    test('기본은 공유 Qdrant — 켜기 전에는 입력란이 없고 vectorStore 를 보내지 않는다', async ({
+      authenticatedPage: page,
+    }) => {
+      await mockApi(page, 'GET', OPTIONS_PATH, { dedicatedSupported: true });
+      await mockApi(page, 'GET', '/api/platform/users', [createPlatformUser({ id: 42 })]);
+      const capture = await mockApi(page, 'POST', '/api/platform/tenants', createTenant({ id: 7 }), {
+        status: 201,
+        capture: true,
+      });
+      await page.goto('/tenants/new');
+
+      await expect(page.getByRole('switch', { name: '전용 Qdrant 사용' })).not.toBeChecked();
+      await expect(page.getByLabel('Qdrant 호스트')).toHaveCount(0);
+      await expect(
+        page.getByText('서버에 API 키와 JWT RBAC(QDRANT__SERVICE__JWT_RBAC=true)가 켜져 있어야 합니다.', {
+          exact: false,
+        }),
+      ).toHaveCount(0);
+      await fillBasics(page);
+      await page.getByRole('button', { name: '테넌트 생성' }).click();
+
+      const req = await capture.waitForRequest();
+      expect(req.payload).toEqual({ name: '한빛소방서', slug: 'hanbit', ownerUserId: 42 });
+    });
+
+    test('연결 확인 성공·실패 결과를 보여 준다', async ({ authenticatedPage: page }) => {
+      await mockApi(page, 'GET', OPTIONS_PATH, { dedicatedSupported: true });
+      const okCapture = await mockApi(
+        page,
+        'POST',
+        TEST_PATH,
+        { ok: true, serverVersion: '1.13.4', message: '연결되었습니다.' },
+        { capture: true },
+      );
+      await page.goto('/tenants/new');
+      await fillDedicated(page);
+      await expect(page.getByText('QDRANT__SERVICE__JWT_RBAC=true', { exact: false })).toBeVisible();
+
+      await page.getByRole('button', { name: '연결 확인' }).click();
+      const okBanner = page.locator('[data-slot="inline-banner"][data-variant="success"]');
+      await expect(okBanner).toContainText('1.13.4');
+      const req = await okCapture.waitForRequest();
+      expect(req.payload).toEqual({
+        host: 'qdrant.tenant-a.internal',
+        grpcPort: 6334,
+        tls: false,
+        apiKey: 'qdrant-secret',
+      });
+
+      await mockApi(page, 'POST', TEST_PATH, {
+        ok: false,
+        serverVersion: null,
+        message: 'API 키가 거부되었습니다.',
+      });
+      await page.getByRole('button', { name: '연결 확인' }).click();
+      await expect(page.getByText('API 키가 거부되었습니다.')).toBeVisible();
+      await expect(page.getByText('1.13.4')).toHaveCount(0);
+    });
+
+    test('규칙 밖 호스트·포트·빈 API 키는 필드 오류를 보이고 연결 확인을 부르지 않는다', async ({
+      authenticatedPage: page,
+    }) => {
+      await mockApi(page, 'GET', OPTIONS_PATH, { dedicatedSupported: true });
+      const capture = await mockApi(page, 'POST', TEST_PATH, { ok: true, serverVersion: '1', message: '' }, {
+        capture: true,
+      });
+      await page.goto('/tenants/new');
+      await page.getByRole('switch', { name: '전용 Qdrant 사용' }).click();
+      await page.getByLabel('Qdrant 호스트').fill('bad host!');
+      await page.getByLabel('gRPC 포트').fill('70000');
+
+      await page.getByRole('button', { name: '연결 확인' }).click();
+      await expect(page.getByText('호스트를 올바르게 입력하세요.')).toBeVisible();
+      await expect(page.getByText('포트는 1~65535 범위여야 합니다.')).toBeVisible();
+      await expect(page.getByText('API 키를 입력하세요.')).toBeVisible();
+      await page.waitForTimeout(300);
+      expect(capture.lastRequest()).toBeUndefined();
+    });
+
+    test('전용 Qdrant 를 켜고 만들면 vectorStore 를 보낸다', async ({ authenticatedPage: page }) => {
+      await mockApi(page, 'GET', OPTIONS_PATH, { dedicatedSupported: true });
+      await mockApi(page, 'GET', '/api/platform/users', [createPlatformUser({ id: 42 })]);
+      const capture = await mockApi(page, 'POST', '/api/platform/tenants', createTenant({ id: 7 }), {
+        status: 201,
+        capture: true,
+      });
+      await mockApi(page, 'GET', '/api/platform/tenants/7', createTenant({ id: 7 }));
+      await mockApi(page, 'GET', '/api/platform/tenants/7/members', []);
+      await mockApi(page, 'GET', '/api/platform/tenants/7/data-store', { backend: 'POSTGRESQL', accountUsernames: [] });
+      await mockApi(page, 'GET', '/api/platform/tenants/7/vector-store', {
+        dedicated: true,
+        host: 'qdrant.tenant-a.internal',
+        grpcPort: 6334,
+        tls: true,
+      });
+      await page.goto('/tenants/new');
+
+      await fillBasics(page);
+      await fillDedicated(page);
+      await page.getByRole('switch', { name: 'TLS 사용' }).click();
+      await page.getByRole('button', { name: '테넌트 생성' }).click();
+
+      const req = await capture.waitForRequest();
+      expect(req.payload).toEqual({
+        name: '한빛소방서',
+        slug: 'hanbit',
+        ownerUserId: 42,
+        vectorStore: { host: 'qdrant.tenant-a.internal', grpcPort: 6334, tls: true, apiKey: 'qdrant-secret' },
+      });
+      await expect(page).toHaveURL('/tenants/7');
+      await expect(page.getByTestId('vector-store-card')).toContainText('qdrant.tenant-a.internal:6334');
+    });
+  });
 });

@@ -10,6 +10,7 @@ import { MembershipRoleBadge } from '@/components/MembershipRoleBadge';
 import { MembershipStatusBadge } from '@/components/MembershipStatusBadge';
 import { PermissionDeniedBanner } from '@/components/PermissionDeniedBanner';
 import { TenantDataStoreCard } from '@/components/tenant/TenantDataStoreCard';
+import { TenantVectorStoreCard } from '@/components/tenant/TenantVectorStoreCard';
 import { TenantStatusBadge } from '@/components/TenantStatusBadge';
 import {
   AlertDialog,
@@ -221,6 +222,9 @@ export default function TenantDetailPage() {
         tenantId={tenantId}
         canManage={hasPermission('platform:tenant:create')}
       />
+
+      {/* WD-742: 벡터 저장소(공유/전용 Qdrant). 설치가 Qdrant 가 아니면 그리지 않는다. */}
+      <TenantVectorStoreCard tenantId={tenantId} />
 
       <Card>
         <CardHeader>

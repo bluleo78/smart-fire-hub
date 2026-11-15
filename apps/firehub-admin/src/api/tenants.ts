@@ -7,6 +7,10 @@ import type {
   TenantDataStoreResponse,
   TenantMemberResponse,
   TenantSummaryResponse,
+  TenantVectorStoreResponse,
+  VectorStoreOptions,
+  VectorStoreSetupRequest,
+  VectorStoreTestResult,
 } from '../types/platform';
 import { client } from './client';
 
@@ -35,4 +39,11 @@ export const tenantsApi = {
   /** PENDING 에서만(409 DATA_STORE_NOT_PENDING). 계정 비밀번호가 교체되고 새 스크립트가 온다. */
   reissueDataStoreScript: (id: number) =>
     client.post<{ script: string }>(`/tenants/${id}/data-store/script`),
+  /** 전용 Qdrant 선택 가능 여부(WD-742). 설치가 Qdrant 가 아니면 dedicatedSupported=false. */
+  vectorStoreOptions: () => client.get<VectorStoreOptions>('/tenants/vector-store/options'),
+  /** 생성 전 전용 Qdrant 연결 확인. 접속 실패도 200 + ok=false 로 온다. */
+  testVectorStore: (req: VectorStoreSetupRequest) =>
+    client.post<VectorStoreTestResult>('/tenants/vector-store/test', req),
+  getTenantVectorStore: (id: number) =>
+    client.get<TenantVectorStoreResponse>(`/tenants/${id}/vector-store`),
 };

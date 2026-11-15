@@ -48,7 +48,19 @@ class VectorStoreTypeWiringTest {
               QdrantVectorStoreLifecycle.class,
               // 행 검색 판정이 API 키 유무를 묻는다(WD-722).
               com.smartfirehub.vectorstore.qdrant.QdrantRowClients.class,
-              QdrantVectorStoreFeatures.class);
+              // 행 검색 가용성은 테넌트별 대상(공유/전용 Qdrant)에 묻는다(WD-742).
+              com.smartfirehub.vectorstore.qdrant.QdrantRowTargets.class,
+              QdrantVectorStoreFeatures.class)
+          .withBean(
+              com.smartfirehub.vectorstore.tenant.TenantVectorStoreRepository.class,
+              () ->
+                  org.mockito.Mockito.mock(
+                      com.smartfirehub.vectorstore.tenant.TenantVectorStoreRepository.class))
+          .withBean(
+              com.smartfirehub.apiconnection.service.EncryptionService.class,
+              () ->
+                  org.mockito.Mockito.mock(
+                      com.smartfirehub.apiconnection.service.EncryptionService.class));
 
   @AfterEach
   void restoreTimeZone() {
@@ -155,11 +167,11 @@ class VectorStoreTypeWiringTest {
                 "http://localhost:1", "", 6, true, java.time.Duration.ofSeconds(1)));
     try {
       for (DataStoreBackend backend : DataStoreBackend.values()) {
-        assertThat(new QdrantVectorStoreFeatures(null, withKey).supportsRowSearch(backend))
+        assertThat(new QdrantVectorStoreFeatures(null, withKey, null).supportsRowSearch(backend))
             .as("%s", backend)
             .isEqualTo(
                 backend == DataStoreBackend.POSTGRESQL || backend == DataStoreBackend.TIBERO);
-        assertThat(new QdrantVectorStoreFeatures(null, noKey).supportsRowSearch(backend))
+        assertThat(new QdrantVectorStoreFeatures(null, noKey, null).supportsRowSearch(backend))
             .as("키 없음 %s", backend)
             .isFalse();
       }

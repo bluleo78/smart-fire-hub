@@ -475,4 +475,39 @@ test.describe('테넌트 상세', () => {
       await expect(page.getByRole('button', { name: '연결 확인' })).toHaveCount(0);
     });
   });
+
+  test.describe('벡터 저장소 카드 (WD-742)', () => {
+    async function openDetail(page: Page, dedicatedSupported: boolean, store: unknown) {
+      await mockApi(page, 'GET', '/api/platform/tenants/1', ACTIVE);
+      await mockApi(page, 'GET', '/api/platform/tenants/1/members', MEMBERS);
+      await mockApi(page, 'GET', '/api/platform/tenants/1/data-store', createDataStore());
+      await mockApi(page, 'GET', '/api/platform/tenants/vector-store/options', { dedicatedSupported });
+      await mockApi(page, 'GET', '/api/platform/tenants/1/vector-store', store);
+      await page.goto('/tenants/1');
+      await expect(page.getByTestId('data-store-card')).toBeVisible();
+    }
+
+    test('전용 Qdrant 테넌트는 접속 정보와 TLS 여부를 보인다', async ({ authenticatedPage: page }) => {
+      await openDetail(page, true, { dedicated: true, host: 'qdrant.tenant-a.internal', grpcPort: 6334, tls: true });
+      const card = page.getByTestId('vector-store-card');
+      await expect(card).toContainText('벡터 저장소');
+      await expect(card).toContainText('전용 Qdrant');
+      await expect(card).toContainText('qdrant.tenant-a.internal:6334');
+      await expect(card).toContainText('TLS');
+      await expect(card).toContainText('사용');
+      await expect(card).not.toContainText('사용 안 함');
+    });
+
+    test('공유 Qdrant 테넌트는 공유만 보이고 접속 정보는 없다', async ({ authenticatedPage: page }) => {
+      await openDetail(page, true, { dedicated: false, host: null, grpcPort: null, tls: null });
+      const card = page.getByTestId('vector-store-card');
+      await expect(card).toContainText('공유 Qdrant');
+      await expect(card).not.toContainText('접속 정보');
+    });
+
+    test('Qdrant 를 쓰지 않는 설치에서는 카드를 그리지 않는다', async ({ authenticatedPage: page }) => {
+      await openDetail(page, false, { dedicated: false, host: null, grpcPort: null, tls: null });
+      await expect(page.getByTestId('vector-store-card')).toHaveCount(0);
+    });
+  });
 });

@@ -75,6 +75,9 @@ class TenantSchemaConformanceTest extends IntegrationTestBase {
    * <p>{@code tenant_data_store}·{@code tenant_data_store_account}(V138, WD-73)가 영구로 들어가는 이유: 테넌트
    * 생성이 운영자 컨텍스트(테넌트 미선택)에서 실행되고 연결 정보는 플랫폼 운영자 소관인 전역 설정 테이블이라 RLS 를 걸면 생성·백엔드 해석이 0행/실패가 된다.
    *
+   * <p>{@code tenant_vector_store}(V165, WD-742)가 영구로 들어가는 이유: {@code tenant_data_store} 와 같은 전역
+   * 설정(테넌트 전용 Qdrant 접속 정보) — 테넌트 생성(운영자 컨텍스트)과 배경 작업의 대상 인스턴스 해석이 테넌트 컨텍스트 밖에서 읽는다.
+   *
    * <p>{@code python_read_unconfirmed_slot}(V159, WD-701 4차)이 영구로 들어가는 이유: 플랫폼 메타데이터가 아니라 PG 데이터
    * 저장소 객체(PYTHON 읽기 슬롯 세션 끊기 미확인 표식)다 — 분리 설치에서는 데이터 저장소 DB 에 있다. 커밋 콜백·실행기 버림 콜백처럼 테넌트 컨텍스트가 없을 수
    * 있는 곳에서 쓰고, 행에는 슬롯 번호·시각뿐이며 모든 질의가 tenant_id 를 명시한다.
@@ -85,6 +88,7 @@ class TenantSchemaConformanceTest extends IntegrationTestBase {
           "oauth_state",
           "tenant_data_store",
           "tenant_data_store_account",
+          "tenant_vector_store",
           "python_read_unconfirmed_slot");
 
   /**

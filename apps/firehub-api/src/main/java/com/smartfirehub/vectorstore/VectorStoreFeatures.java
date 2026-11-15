@@ -47,4 +47,12 @@ public interface VectorStoreFeatures {
   default boolean available() {
     return true;
   }
+
+  /**
+   * 이 테넌트의 행 검색 색인 저장소가 지금 응답하는가(WD-742). 행 검색 색인은 테넌트 전용 인스턴스에 있을 수 있어 {@link #available()}(설치본 공유
+   * 저장소)과 따로 묻는다 — 전용 인스턴스가 내려가도 다른 테넌트의 행 검색은 그대로다. 기본은 공유 저장소 판정이다.
+   */
+  default boolean rowSearchAvailable(long tenantId) {
+    return available();
+  }
 }

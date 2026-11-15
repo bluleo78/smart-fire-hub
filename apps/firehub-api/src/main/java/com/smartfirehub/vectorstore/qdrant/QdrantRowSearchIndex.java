@@ -95,8 +95,12 @@ public class QdrantRowSearchIndex implements RowSearchIndex {
   /** 테넌트 컬렉션 목록을 기억하는 시간 — 목록은 전역 권한 호출이라 행마다 부르지 않는다. */
   static final long COLLECTIONS_CACHE_MS = 30_000;
 
-  private final QdrantRowClients rowClients;
-  private final QdrantVectorStoreLifecycle lifecycle;
+  /** 공유 Qdrant 대상(전용 설정이 없는 테넌트). */
+  private final QdrantRowTargets.RowTarget sharedTarget;
+
+  /** 테넌트별 대상 해석(WD-742). 없으면(시험) 모든 테넌트가 공유 대상이다. */
+  private final QdrantRowTargets targets;
+
   private final QdrantProperties props;
   private final VectorOutboxRepository outbox;
   private final SearchSourceReader reader;
@@ -114,6 +118,7 @@ public class QdrantRowSearchIndex implements RowSearchIndex {
   public QdrantRowSearchIndex(
       QdrantRowClients rowClients,
       QdrantVectorStoreLifecycle lifecycle,
+      QdrantRowTargets targets,
       QdrantProperties props,
       VectorOutboxRepository outbox,
       SearchSourceReader reader,
@@ -126,6 +131,7 @@ public class QdrantRowSearchIndex implements RowSearchIndex {
     this(
         rowClients,
         lifecycle,
+        targets,
         props,
         outbox,
         reader,
@@ -135,6 +141,7 @@ public class QdrantRowSearchIndex implements RowSearchIndex {
         FILTER_ID_CAP);
   }
 
+  /** 시험용 — 전용 대상 해석 없이 모든 테넌트를 공유 Qdrant 로 본다. */
   QdrantRowSearchIndex(
       QdrantRowClients rowClients,
       QdrantVectorStoreLifecycle lifecycle,
@@ -145,8 +152,32 @@ public class QdrantRowSearchIndex implements RowSearchIndex {
       long orphanSweepIntervalMs,
       LongSupplier clock,
       int filterIdCap) {
-    this.rowClients = rowClients;
-    this.lifecycle = lifecycle;
+    this(
+        rowClients,
+        lifecycle,
+        null,
+        props,
+        outbox,
+        reader,
+        exactScanMaxRows,
+        orphanSweepIntervalMs,
+        clock,
+        filterIdCap);
+  }
+
+  QdrantRowSearchIndex(
+      QdrantRowClients rowClients,
+      QdrantVectorStoreLifecycle lifecycle,
+      QdrantRowTargets targets,
+      QdrantProperties props,
+      VectorOutboxRepository outbox,
+      SearchSourceReader reader,
+      long exactScanMaxRows,
+      long orphanSweepIntervalMs,
+      LongSupplier clock,
+      int filterIdCap) {
+    this.sharedTarget = QdrantRowTargets.shared(lifecycle, rowClients);
+    this.targets = targets;
     this.props = props;
     this.outbox = outbox;
     this.reader = reader;
@@ -630,7 +661,7 @@ public class QdrantRowSearchIndex implements RowSearchIndex {
         && before.contains(QdrantCollectionSpec.rowsKeywordName(tenantId))) {
       return;
     }
-    lifecycle.ensureRowCollections(tenantId, dim);
+    target(tenantId).ensureRowCollections(tenantId, dim);
     collections.remove(tenantId);
   }
 
@@ -639,7 +670,7 @@ public class QdrantRowSearchIndex implements RowSearchIndex {
     long now = clock.getAsLong();
     CachedCollections c = collections.get(tenantId);
     if (c != null && now - c.at() < COLLECTIONS_CACHE_MS) return c.names();
-    List<String> names = lifecycle.rowCollections(tenantId);
+    List<String> names = target(tenantId).rowCollections(tenantId);
     collections.put(tenantId, new CachedCollections(names, now));
     return names;
   }
@@ -655,7 +686,12 @@ public class QdrantRowSearchIndex implements RowSearchIndex {
     if (names.isEmpty()) {
       names = List.of(QdrantCollectionSpec.rowsKeywordName(tenantId));
     }
-    return rowClients.forCollections(names);
+    return target(tenantId).forCollections(names);
+  }
+
+  /** 이 테넌트 행 색인이 놓인 Qdrant(WD-742) — 전용 설정이 있으면 그 인스턴스, 없으면 공유. */
+  private QdrantRowTargets.RowTarget target(long tenantId) {
+    return targets == null ? sharedTarget : targets.forTenant(tenantId);
   }
 
   /**

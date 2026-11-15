@@ -36,6 +36,8 @@ public class PlatformTenantService {
   private final TenantPipelineRoleProvisioner pipelineRoleProvisioner;
   private final PlatformAuditRecorder auditRecorder;
   private final TenantDataStoreSetupService dataStoreSetupService;
+  // 테넌트 전용 벡터 저장소(Qdrant) — 생성 때만 정한다(WD-742)
+  private final TenantVectorStoreSetupService vectorStoreSetupService;
   // 정지 해제 시 그 워크스페이스의 예약(트리거·스마트 작업)을 커밋 뒤 다시 등록한다(WD-174)
   private final TenantScheduleResumer scheduleResumer;
   // 정지 시 그 워크스페이스로 연 알림 연결을 커밋 뒤 전부 닫는다(WD-190)
@@ -102,6 +104,8 @@ public class PlatformTenantService {
     }
     // 저장소 선택 검증은 테넌트 행을 만들기 전에 한다 — 사용할 수 없는 백엔드·필수값 누락이면 아무것도 만들지 않는다.
     dataStoreSetupService.validate(request.dataStore());
+    // 전용 벡터 저장소 입력은 Qdrant 설치본에서만 받는다(WD-742) — 쓸 수 없으면 아무것도 만들기 전에 거절한다.
+    vectorStoreSetupService.validate(request.vectorStore());
 
     long tenantId = tenantRepository.insertTenant(request.slug(), request.name());
     // 순서 의존: provisionDefaults 는 역할을 정의한 뒤 OWNER 멤버십을 읽어 소유자에게 ADMIN 을
@@ -119,6 +123,8 @@ public class PlatformTenantService {
     auditDetails.put("tenantName", request.name());
     // 외부 저장소일 때만 백엔드·호스트·모드가 붙는다(비밀 제외).
     auditDetails.putAll(dataStore.auditDetails());
+    // 전용 벡터 저장소 행 저장(같은 트랜잭션, 외부 부수효과 없음) — 감사에는 주소만(키 제외).
+    auditDetails.putAll(vectorStoreSetupService.setUp(tenantId, request.vectorStore()));
     auditRecorder.record(
         operatorId,
         "TENANT_CREATE",

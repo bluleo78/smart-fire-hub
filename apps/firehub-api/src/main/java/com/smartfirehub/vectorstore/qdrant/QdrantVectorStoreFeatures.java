@@ -22,11 +22,13 @@ public class QdrantVectorStoreFeatures implements VectorStoreFeatures {
 
   private final QdrantVectorStoreLifecycle lifecycle;
   private final QdrantRowClients rowClients;
+  private final QdrantRowTargets targets;
 
   public QdrantVectorStoreFeatures(
-      QdrantVectorStoreLifecycle lifecycle, QdrantRowClients rowClients) {
+      QdrantVectorStoreLifecycle lifecycle, QdrantRowClients rowClients, QdrantRowTargets targets) {
     this.lifecycle = lifecycle;
     this.rowClients = rowClients;
+    this.targets = targets;
   }
 
   @Override
@@ -50,5 +52,11 @@ public class QdrantVectorStoreFeatures implements VectorStoreFeatures {
   @Override
   public boolean available() {
     return lifecycle.available();
+  }
+
+  /** 테넌트 행 색인이 놓인 인스턴스(전용이면 그 인스턴스, 아니면 공유)가 응답하는가(WD-742). */
+  @Override
+  public boolean rowSearchAvailable(long tenantId) {
+    return targets.available(tenantId);
   }
 }

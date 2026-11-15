@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  tenant_vector_store 문장(WD-742) — JooqTenantVectorStoreRepository 와 같은 의미. 규칙은 MyBatisPlatformConfig javadoc.
+  정책(RLS) 없는 전역 테이블이라 tenant_id 를 DEFAULT·정책이 채우지 않는다 — 모든 문장이 tenant_id 를 인자로 건다.
+  벤더 차이: 불리언. PG 는 BOOLEAN, Tibero 는 NUMBER(1). 쓰기는 sqlTrue/sqlFalse 조각, 읽기는 CASE 로 0/1 정수로 맞춘다.
+-->
+<mapper namespace="com.smartfirehub.vectorstore.repository.mybatis.TenantVectorStoreMapper">
+
+  <resultMap id="row" type="com.smartfirehub.vectorstore.repository.mybatis.TenantVectorStoreMapper$Row">
+    <constructor>
+      <arg column="tenant_id" javaType="_long"/>
+      <arg column="host" javaType="java.lang.String"/>
+      <arg column="grpc_port" javaType="_int"/>
+      <arg column="use_tls_int" javaType="_int"/>
+      <arg column="api_key_enc" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <insert id="insert">
+    INSERT INTO tenant_vector_store (tenant_id, host, grpc_port, use_tls, api_key_enc)
+    VALUES (#{tenantId}, #{host}, #{grpcPort},
+            <choose>
+              <when test="useTls"><include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/></when>
+              <otherwise><include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlFalse"/></otherwise>
+            </choose>,
+            #{apiKeyEnc})
+  </insert>
+
+  <select id="select" resultMap="row">
+    SELECT tenant_id, host, grpc_port,
+           CASE WHEN use_tls = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/> THEN 1 ELSE 0 END AS use_tls_int,
+           api_key_enc
+      FROM tenant_vector_store
+     WHERE tenant_id = #{tenantId}
+  </select>
+
+  <select id="selectTenantIds" resultType="java.lang.Long">
+    SELECT tenant_id FROM tenant_vector_store ORDER BY tenant_id
+  </select>
+</mapper>

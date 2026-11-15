@@ -11,10 +11,15 @@ import com.smartfirehub.platform.dto.TenantCreatedResponse;
 import com.smartfirehub.platform.dto.TenantDataStoreResponse;
 import com.smartfirehub.platform.dto.TenantMemberResponse;
 import com.smartfirehub.platform.dto.TenantSummaryResponse;
+import com.smartfirehub.platform.dto.TenantVectorStoreResponse;
+import com.smartfirehub.platform.dto.VectorStoreSetupRequest;
 import com.smartfirehub.platform.service.PlatformTenantService;
 import com.smartfirehub.platform.service.TenantDataStoreSetupService;
+import com.smartfirehub.platform.service.TenantVectorStoreSetupService;
+import com.smartfirehub.vectorstore.tenant.VectorStoreConnectionTestResult;
 import jakarta.validation.Valid;
 import java.util.List;
+import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -43,6 +48,7 @@ public class PlatformTenantController {
 
   private final PlatformTenantService tenantService;
   private final TenantDataStoreSetupService dataStoreService;
+  private final TenantVectorStoreSetupService vectorStoreSetupService;
 
   @GetMapping
   @RequirePermission("platform:tenant:read")
@@ -106,6 +112,29 @@ public class PlatformTenantController {
   }
 
   /** 테넌트의 저장소 설정(비밀 없음). */
+  /** 이 설치본에서 테넌트 전용 벡터 저장소(Qdrant)를 쓸 수 있는가(WD-742) — 생성 화면이 입력칸을 보일지 정한다. */
+  @GetMapping("/vector-store/options")
+  @RequirePermission("platform:tenant:create")
+  public ResponseEntity<Map<String, Boolean>> vectorStoreOptions() {
+    return ResponseEntity.ok(
+        Map.of("dedicatedSupported", vectorStoreSetupService.dedicatedSupported()));
+  }
+
+  /** 테넌트 전용 벡터 저장소 연결 확인(WD-742) — 저장하지 않는다. 실패도 200 + ok=false 다. */
+  @PostMapping("/vector-store/test")
+  @RequirePermission("platform:tenant:create")
+  public ResponseEntity<VectorStoreConnectionTestResult> testVectorStoreConnection(
+      @Valid @RequestBody VectorStoreSetupRequest request) {
+    return ResponseEntity.ok(vectorStoreSetupService.testConnection(request));
+  }
+
+  /** 테넌트 벡터 저장소 정보(WD-742) — 비밀 제외. */
+  @GetMapping("/{tenantId}/vector-store")
+  @RequirePermission("platform:tenant:read")
+  public ResponseEntity<TenantVectorStoreResponse> vectorStore(@PathVariable long tenantId) {
+    return ResponseEntity.ok(vectorStoreSetupService.detail(tenantId));
+  }
+
   @GetMapping("/{tenantId}/data-store")
   @RequirePermission("platform:tenant:read")
   public ResponseEntity<TenantDataStoreResponse> dataStore(@PathVariable long tenantId) {

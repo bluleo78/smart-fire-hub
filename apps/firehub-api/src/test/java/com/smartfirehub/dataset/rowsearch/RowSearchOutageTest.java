@@ -120,10 +120,19 @@ class RowSearchOutageTest {
     DataStoreResolver resolver = mock(DataStoreResolver.class);
     when(resolver.backendFor(anyLong())).thenReturn(DataStoreBackend.POSTGRESQL);
     features.available = false;
+    // 쉬기는 테넌트마다 판정한다(WD-742 — 행 색인이 테넌트 전용 인스턴스에 있을 수 있다). 러너가 테넌트를 돌려도 그 테넌트는 쉰다.
+    org.mockito.Mockito.doAnswer(
+            inv -> {
+              inv.<java.util.function.Consumer<Long>>getArgument(0).accept(1L);
+              return null;
+            })
+        .when(runner)
+        .forEachActiveTenant(any());
+    when(states.findDueDatasetIds()).thenReturn(List.of(ID));
 
     new RowSearchSweepScheduler(runner, states, sync, resolver, features, true, 60_000).sweep();
 
-    verify(runner, never()).forEachActiveTenant(any());
+    verify(states, never()).findDueDatasetIds();
     verify(sync, never()).sync(anyLong());
   }
 

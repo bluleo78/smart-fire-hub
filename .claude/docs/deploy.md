@@ -690,6 +690,11 @@ Tibero 테넌트의 파이프라인 SQL 단계는 api 가 새 서비스 `db-exec
 - **노드 늘리기(자동 아님)**: 새 노드에 같은 `api_key`·클러스터 모드로 `--bootstrap http://qdrant-0.qdrant:6335` 를 주어 붙인 뒤, 컬렉션마다 `POST /collections/<이름>/cluster` 의 `move_shard`(`shard_id`·`from_peer_id`·`to_peer_id`)로 샤드를 옮긴다. 피어 id 는 `GET /cluster` 로 본다. 단일 노드는 HA 가 없다 — 내려간 동안은 위 「일시 중단」 안내로 버틴다.
 - **폐쇄망 반입 목록**: `qdrant/qdrant:v1.20.0`(amd64, gzip 약 61MB), `curlimages/curl:8.10.1`(스냅샷 CronJob). 사설 레지스트리면 `qdrant.image`·`qdrant.snapshot.image`·`qdrant.imagePullSecret` 을 바꾼다.
 - **롤백**: 새 설치에서만 켜는 기능이라 끄는 롤백은 없다(켠 뒤 끄면 `platform` 기록과 어긋나 기동이 멈춘다). 이미지 롤백은 다른 서비스와 같다.
+- **테넌트 전용 Qdrant(WD-742, 선택)**: 행 검색 색인을 고객 인프라의 Qdrant 에 둘 수 있다(데이터 저장소가 테넌트 전용 DB 인 고객용). 공유 Qdrant 를 켠 설치본(`FIREHUB_VECTOR_STORE_TYPE=qdrant`)에서만 되고, **테넌트를 만들 때만** 정한다(나중에 바꾸거나 공유로 되돌릴 수 없다).
+  - 고객 쪽 Qdrant 는 공유와 같은 조건으로 띄운다: 버전 `qdrant/qdrant:v1.20.0` 고정, 클러스터 모드, `QDRANT__SERVICE__API_KEY`, **`QDRANT__SERVICE__JWT_RBAC=true`(필수)**, 블록 스토리지 PV. api 파드에서 그 인스턴스의 gRPC 포트(6334)만 닿으면 된다. 반입 목록은 위 폐쇄망 목록과 같다.
+  - 운영자 화면 「테넌트 만들기」 → 「전용 Qdrant 사용」에 호스트·gRPC 포트·TLS·API 키를 넣고 「연결 확인」이 성공해야 만든다(API 키 오류·JWT RBAC 꺼짐을 여기서 잡는다). 키는 암호화해 `tenant_vector_store` 에 둔다.
+  - 그 테넌트의 행 검색 컬렉션(`fh_rows_t<테넌트>_*`)만 전용 인스턴스에 생기고, 카탈로그·문서 검색은 공유 Qdrant 를 쓴다. 전용 인스턴스가 내려가면 그 테넌트 행 검색만 `UNAVAILABLE` 이고 다른 테넌트는 그대로다.
+  - 백업은 고객 인프라 소관이다 — 공유 쪽 스냅샷 CronJob 은 전용 인스턴스를 뜨지 않는다. 같은 방식(`POST /collections/<이름>/snapshots`)으로 고객이 뜬다. 잃어도 원본에서 다시 색인할 수 있다(검색 설정을 껐다 켜면 전체 재색인).
 
 ### 부분 배포 (빌드+push 완료 후 컨테이너만 재시작)
 

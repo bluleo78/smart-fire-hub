@@ -53,6 +53,7 @@ class PlatformTenantServiceRoleProvisioningTest {
   @Mock TenantPipelineRoleProvisioner pipelineRoleProvisioner;
   @Mock PlatformAuditRecorder auditRecorder;
   @Mock TenantDataStoreSetupService dataStoreSetupService;
+  @Mock com.smartfirehub.platform.service.TenantVectorStoreSetupService vectorStoreSetupService;
   @Mock TenantScheduleResumer scheduleResumer;
   @Mock SseEmitterRegistry sseEmitterRegistry;
 

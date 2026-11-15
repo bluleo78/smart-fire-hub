@@ -54,6 +54,39 @@ export const dataStoreSchema = z
 
 export type DataStoreFormData = z.infer<typeof dataStoreSchema>;
 
+/** API 키 길이 상한. 서버 `VectorStoreSetupRequest.apiKey` 의 @Size(max=512) 와 같다. */
+const API_KEY_MAX = 512;
+
+/**
+ * 테넌트 전용 벡터 저장소(Qdrant) 입력 검증(WD-742).
+ *
+ * **서버 `VectorStoreSetupRequest` 와 같아야 한다**: host `^[A-Za-z0-9.-]{1,255}$`(저장소 host 와 같은 규칙),
+ * grpcPort 1–65535, apiKey 공백 아님·512자 이하. `dataStoreSchema` 와 같은 이유로 평평한 객체 + superRefine 을 쓴다 —
+ * 「전용 Qdrant 사용」을 껐다 켜도 입력한 값이 남고, 꺼져 있을 때는 아무 규칙도 걸지 않는다(제출 때 vectorStore 를 뺀다).
+ */
+export const vectorStoreSchema = z
+  .object({
+    enabled: z.boolean(),
+    host: z.string(),
+    grpcPort: z.string(),
+    tls: z.boolean(),
+    apiKey: z.string(),
+  })
+  .superRefine((v, ctx) => {
+    if (!v.enabled) return;
+    const fail = (path: string, message: string) => ctx.addIssue({ code: 'custom', path: [path], message });
+    if (!HOST_PATTERN.test(v.host.trim())) fail('host', '호스트를 올바르게 입력하세요.');
+    const portText = v.grpcPort.trim();
+    const port = Number(portText);
+    if (!PORT_PATTERN.test(portText) || port < 1 || port > 65535) {
+      fail('grpcPort', '포트는 1~65535 범위여야 합니다.');
+    }
+    if (v.apiKey.trim() === '') fail('apiKey', 'API 키를 입력하세요.');
+    else if (v.apiKey.length > API_KEY_MAX) fail('apiKey', `API 키는 ${API_KEY_MAX}자 이하여야 합니다.`);
+  });
+
+export type VectorStoreFormData = z.infer<typeof vectorStoreSchema>;
+
 /**
  * 테넌트 생성 폼 검증. 경계는 서버 `CreateTenantRequest` 의 Bean Validation 과 **같아야** 한다
  * (@Size(max=64) slug / @Size(max=255) name / @Pattern(^[a-z0-9][a-z0-9-]*$)).
@@ -78,6 +111,7 @@ export const createTenantSchema = z.object({
    */
   ownerUserId: z.number({ error: 'Owner 사용자를 선택하세요.' }),
   dataStore: dataStoreSchema,
+  vectorStore: vectorStoreSchema,
 });
 
 export type CreateTenantFormData = z.infer<typeof createTenantSchema>;

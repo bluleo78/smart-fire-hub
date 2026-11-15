@@ -13,15 +13,23 @@ import jakarta.validation.constraints.Size;
  *     난다
  * @param ownerUserId 초기 Owner. 존재하는 사용자여야 한다 — Owner 없는 테넌트는 아무도 들어갈 수 없어 운영자 SQL 로만 고칠 수 있다
  * @param dataStore 데이터셋 저장소 선택(WD-73). null 이면 기본 PostgreSQL 이라 기존 요청이 그대로 동작한다
+ * @param vectorStore 테넌트 전용 벡터 저장소(Qdrant, WD-742). null 이면 설치본 공유 벡터 저장소
  */
 public record CreateTenantRequest(
     @NotBlank @Size(max = 64) @Pattern(regexp = "^[a-z0-9][a-z0-9-]*$") String slug,
     @NotBlank @Size(max = 255) String name,
     @NotNull Long ownerUserId,
-    @Valid DataStoreSetupRequest dataStore) {
+    @Valid DataStoreSetupRequest dataStore,
+    @Valid VectorStoreSetupRequest vectorStore) {
 
   /** 저장소 선택 없는 기존 3인자 형태(기본 PostgreSQL). */
   public CreateTenantRequest(String slug, String name, Long ownerUserId) {
-    this(slug, name, ownerUserId, null);
+    this(slug, name, ownerUserId, null, null);
+  }
+
+  /** 벡터 저장소 선택 없는 4인자 형태(공유 벡터 저장소). */
+  public CreateTenantRequest(
+      String slug, String name, Long ownerUserId, DataStoreSetupRequest dataStore) {
+    this(slug, name, ownerUserId, dataStore, null);
   }
 }

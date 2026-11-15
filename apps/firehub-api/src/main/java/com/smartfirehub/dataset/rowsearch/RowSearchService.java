@@ -101,7 +101,8 @@ public class RowSearchService {
     }
 
     // 벡터 저장소 일시 중단(Qdrant 장애)이면 색인을 부르지 않고 알린다 — 가용성은 짧게 캐시돼 요청마다 저장소를 기다리지 않는다.
-    if (!vectorStoreFeatures.available()) {
+    // 테넌트 전용 Qdrant(WD-742)면 그 인스턴스의 상태로 판정한다 — 공유 저장소와 서로 영향을 주지 않는다.
+    if (!vectorStoreFeatures.rowSearchAvailable(ref.tenantId())) {
       return empty(state, UNAVAILABLE);
     }
     try {

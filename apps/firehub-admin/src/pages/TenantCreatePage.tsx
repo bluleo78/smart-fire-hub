@@ -10,6 +10,7 @@ import { tenantsApi } from '@/api/tenants';
 import { OwnerPicker } from '@/components/OwnerPicker';
 import { DataStoreFields } from '@/components/tenant/DataStoreFields';
 import { DataStoreScriptDialog } from '@/components/tenant/DataStoreScriptDialog';
+import { VectorStoreFields } from '@/components/tenant/VectorStoreFields';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { FormField } from '@/components/ui/form-field';
@@ -57,6 +58,8 @@ export default function TenantCreatePage() {
         dbaUsername: '',
         dbaPassword: '',
       },
+      // 벡터 저장소 기본값: 공유 Qdrant(WD-742). 전용을 켜면 gRPC 기본 포트 6334 가 미리 채워져 있다.
+      vectorStore: { enabled: false, host: '', grpcPort: '6334', tls: false, apiKey: '' },
     },
   });
   const {
@@ -139,7 +142,7 @@ export default function TenantCreatePage() {
   // zod 가 이미 `ownerUserId` 를 포함해 전부 통과시킨 뒤에만 호출된다 — 여기서 다시 검사하지 않는다.
   const onSubmit = (data: CreateTenantFormData) => {
     setServerFieldError(null);
-    const { dataStore: ds, ...base } = data;
+    const { dataStore: ds, vectorStore: vs, ...base } = data;
     const request: CreateTenantRequest = { ...base };
     // PostgreSQL 이면 dataStore 키를 아예 보내지 않는다 — 기존 페이로드와 바이트 단위로 같게 유지한다.
     if (ds.backend !== 'POSTGRESQL') {
@@ -155,6 +158,15 @@ export default function TenantCreatePage() {
         ...(ds.mode === 'DBA_AUTO'
           ? { dba: { username: ds.dbaUsername.trim(), password: ds.dbaPassword } }
           : {}),
+      };
+    }
+    // 공유 Qdrant(기본)면 vectorStore 키를 아예 보내지 않는다 — dataStore 와 같이 기존 페이로드를 그대로 유지한다.
+    if (vs.enabled) {
+      request.vectorStore = {
+        host: vs.host.trim(),
+        grpcPort: Number(vs.grpcPort.trim()),
+        tls: vs.tls,
+        apiKey: vs.apiKey,
       };
     }
     createMutation.mutate(request);
@@ -206,6 +218,9 @@ export default function TenantCreatePage() {
 
             {/* 생성이 성공하면 연결 테스트 뮤테이션(DBA 비밀번호를 변수로 보관)을 비운다. */}
             <DataStoreFields submitted={createMutation.isSuccess} />
+
+            {/* WD-742: 설치가 Qdrant 일 때만 그려진다(아니면 null). 성공 시 연결 확인 변수(API 키)를 비운다. */}
+            <VectorStoreFields submitted={createMutation.isSuccess} />
 
             {serverFieldError && <p className="text-sm text-destructive">{serverFieldError}</p>}
           </CardContent>

@@ -324,10 +324,21 @@ public class QdrantVectorStoreLifecycle implements VectorStoreLifecycle, Initial
     if (!QdrantRowClients.enabled(props)) {
       return;
     }
-    QdrantProperties.Endpoint ep = props.endpoint();
+    verifyCollectionTokens(props.endpoint(), props.apiKey(), props.timeout());
+  }
+
+  /**
+   * {@link #verifyCollectionTokens()} 의 본체 — 테넌트 전용 인스턴스 연결 확인(WD-742)도 같은 판정을 쓴다. 없는 컬렉션 하나만 허용한
+   * 토큰으로 목록을 읽어 빈 목록이면 통과다.
+   *
+   * @throws IllegalStateException 토큰을 거부(JWT RBAC 꺼짐)하거나 허용하지 않은 컬렉션을 보여 줄 때(설정 오류)
+   * @throws QdrantAccessException 일시 장애일 때
+   */
+  static void verifyCollectionTokens(
+      QdrantProperties.Endpoint ep, String apiKey, java.time.Duration timeout) {
     String token =
         QdrantCollectionToken.issue(
-            props.apiKey(),
+            apiKey,
             List.of(JWT_PROBE_COLLECTION),
             java.time.Instant.now(),
             QdrantRowClients.TOKEN_TTL);
@@ -335,10 +346,11 @@ public class QdrantVectorStoreLifecycle implements VectorStoreLifecycle, Initial
     try (QdrantClient probe =
         new QdrantClient(
             io.qdrant.client.QdrantGrpcClient.newBuilder(ep.host(), ep.port(), ep.tls(), false)
-                .withTimeout(props.timeout())
+                .withTimeout(timeout)
                 .withApiKey(token)
                 .build())) {
-      List<String> visible = await(probe.listCollectionsAsync(), "컬렉션 토큰 확인");
+      List<String> visible =
+          QdrantSupport.await(probe.listCollectionsAsync(), timeout, "Qdrant 컬렉션 토큰 확인");
       if (!visible.isEmpty()) {
         throw new IllegalStateException(
             "Qdrant 컬렉션 토큰이 허용하지 않은 컬렉션을 보여 줍니다 — 행 검색 테넌트 격리가 서지 않습니다: " + visible);
