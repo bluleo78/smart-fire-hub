@@ -46,4 +46,14 @@ class TextChunkerTest {
     List<Chunk> chunks = chunker.chunk("줄1\n\n\n\n줄2");
     assertThat(chunks.get(0).content()).isEqualTo("줄1\n\n줄2");
   }
+
+  /** WD-741 — 청크가 Tibero document_chunk.content(VARCHAR2(65532) 바이트)에 못 들어갈 크기면 기동 때 거부한다. */
+  @Test
+  void chunkSizeOverTiberoLimit_isRejected() {
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> new TextChunker(21_845, 200))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("21844");
+    org.assertj.core.api.Assertions.assertThatCode(() -> new TextChunker(21_844, 200))
+        .doesNotThrowAnyException();
+  }
 }

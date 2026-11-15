@@ -1,6 +1,7 @@
 package com.smartfirehub.document.service;
 
 import com.smartfirehub.document.dto.Chunk;
+import com.smartfirehub.global.platformdb.mybatis.TiberoTextLimits;
 import java.util.ArrayList;
 import java.util.List;
 import org.springframework.beans.factory.annotation.Value;
@@ -24,6 +25,16 @@ public class TextChunker {
       @Value("${app.rag.chunk-overlap:200}") int overlap) {
     if (overlap >= chunkSize) {
       throw new IllegalArgumentException("overlap 은 chunkSize 보다 작아야 합니다");
+    }
+    // 청크 본문은 Tibero 플랫폼 DB 의 document_chunk.content(VARCHAR2(65532) 바이트)에 들어가야 한다(WD-741). 기본
+    // 1500자는 넉넉하지만
+    // 설정으로 키울 수 있어, 어떤 글자로도 들어가는 상한(char 하나 최대 3바이트)을 넘으면 기동 때 막는다 — 실행 중 저장 실패로 문서가 빠지지 않게.
+    if (chunkSize > TiberoTextLimits.MAX_TRUNCATE_CHARS) {
+      throw new IllegalArgumentException(
+          "app.rag.chunk-size 는 "
+              + TiberoTextLimits.MAX_TRUNCATE_CHARS
+              + " 자 이하여야 합니다: "
+              + chunkSize);
     }
     this.chunkSize = chunkSize;
     this.overlap = overlap;
