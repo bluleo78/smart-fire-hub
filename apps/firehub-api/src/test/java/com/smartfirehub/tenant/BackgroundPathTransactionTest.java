@@ -205,6 +205,9 @@ class BackgroundPathTransactionTest extends IntegrationTestBase {
           // 테넌트별 외부 저장소 설정(V138, WD-73). tenant_data_store(_account) 두 전역 테이블만 만지고
           // 둘 다 RLS 가 없다 — 운영자 컨텍스트(테넌트 미선택)에서도 읽고 써야 하기 때문이다.
           "JooqTenantDataStoreRepository",
+          // 테넌트 전용 Qdrant 설정(V165, WD-742). tenant_vector_store 전역 테이블 하나만 만지고 RLS 가 없다 —
+          // 운영자 컨텍스트(테넌트 생성)와 배경 스윕·아웃박스 워커(테넌트별 대상 고르기)가 모두 읽어야 하기 때문이다.
+          "JooqTenantVectorStoreRepository",
           // 운영자 평면 사용자 검색(P7-c2a Task 5). "user" 하나만 만지고 그 테이블은 tenant_id
           // 컬럼도 RLS 정책도 없는 전역 테이블이다(V1 이후 변경 없음) — 로그인이 테넌트 결정
           // 이전에 사용자를 찾아야 하고 한 사람이 여러 테넌트에 속할 수 있어야 하기 때문이다.
