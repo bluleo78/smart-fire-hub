@@ -75,6 +75,13 @@ public class TiberoSearchSourceStore implements SearchSourceStore {
   }
 
   @Override
+  public boolean replaceKeepsTable() {
+    // 교체 적재는 같은 테이블을 DELETE FROM 으로 비우고 시퀀스로 새 ID 를 매겨 다시 넣는다(TiberoDataRowStore) — OBJECT_ID
+    // 그대로(WD-745).
+    return true;
+  }
+
+  @Override
   public long currentOid(String table) {
     Ctx c = ctx();
     String physical = TiberoNames.physical(table);

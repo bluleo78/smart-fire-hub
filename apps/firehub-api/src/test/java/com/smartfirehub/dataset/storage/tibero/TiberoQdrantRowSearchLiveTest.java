@@ -109,6 +109,9 @@ class TiberoQdrantRowSearchLiveTest extends com.smartfirehub.support.Integration
   private long datasetId;
   private Long userId;
 
+  /** 가짜 공급자가 받은 원문 — 교체 적재 뒤 임베딩이 바뀐 원문 수만큼만 일어나는지 센다(WD-745). */
+  private final List<String> embedded = java.util.Collections.synchronizedList(new ArrayList<>());
+
   private static final List<String> COLUMNS = List.of("content", "status", "cnt", "done", "day");
   private static final Map<String, String> TYPES =
       Map.of(
@@ -151,6 +154,7 @@ class TiberoQdrantRowSearchLiveTest extends com.smartfirehub.support.Integration
             inv ->
                 new EmbeddingProvider() {
                   public List<float[]> embed(List<String> texts) {
+                    embedded.addAll(texts);
                     return texts.stream()
                         .map(
                             t -> {
@@ -203,6 +207,7 @@ class TiberoQdrantRowSearchLiveTest extends com.smartfirehub.support.Integration
             });
     settings.update(datasetId, List.of("content"));
     assertThat(sync.sync(datasetId)).isEqualTo(RowSearchSyncService.Outcome.COMPLETED);
+    embedded.clear();
   }
 
   @AfterEach
@@ -321,6 +326,36 @@ class TiberoQdrantRowSearchLiveTest extends com.smartfirehub.support.Integration
     assertThat(after.indexStatus().status()).isEqualTo("IDLE");
     assertThat(after.hits()).extracting(h -> h.row().get("content")).containsExactly("전혀 다른 행");
     assertThat(service.search(datasetId, req("누수", "KEYWORD", null)).hits()).isEmpty();
+  }
+
+  /**
+   * 교체 적재(REPLACE)는 같은 테이블을 {@code DELETE FROM} 으로 비우고 새 ID 로 다시 넣는다 — OBJECT_ID 그대로라 세대가 바뀌지 않는다.
+   * 같은 원문은 지금 세대 벡터를 복사하고 바뀐 원문만 임베딩한다. 옛 ID 점은 그 동기화에서 바로 정리돼 색인 행 수가 원본과 같다(WD-745).
+   */
+  @Test
+  void replaceReusesVectorsAndSweepsOldIds() {
+    long oid = reader.currentOid(SRC);
+    long oldId = idOf("파이프 누수 신고");
+    rowStore.truncateTable(SRC);
+    insert(
+        row("파이프 누수 신고", "미처리", 1L, false, LocalDate.parse("2025-12-01")),
+        row("소음 민원 A-1023", "완료", 2L, true, LocalDate.parse("2025-12-02")),
+        row("새로 들어온 정전 D-5", "완료", 4L, true, LocalDate.parse("2025-12-04")));
+    assertThat(reader.currentOid(SRC)).isEqualTo(oid);
+    assertThat(idOf("파이프 누수 신고")).isNotEqualTo(oldId);
+
+    assertThat(sync.sync(datasetId)).isEqualTo(RowSearchSyncService.Outcome.COMPLETED);
+
+    // 같은 원문 둘은 재사용 — 바뀐(새) 원문 하나만 임베딩한다.
+    // 원문은 「표시 이름: 값」 꼴이다(SearchConfig.buildSourceText).
+    assertThat(embedded).containsExactly("내용: 새로 들어온 정전 D-5");
+    var status = service.search(datasetId, req("누수", null, null)).indexStatus();
+    assertThat(status.status()).isEqualTo("IDLE");
+    assertThat(status.indexedRows()).isEqualTo(3);
+    // 재사용한 벡터로 의미 검색이 그대로 되고, 옛 ID(지운 '누수 재발' 포함)는 결과에 없다.
+    var semantic = service.search(datasetId, req("배관 문제", "SEMANTIC", null));
+    assertThat(semantic.hits().get(0).row().get("content")).isEqualTo("파이프 누수 신고");
+    assertThat(service.search(datasetId, req("재발", "KEYWORD", null)).hits()).isEmpty();
   }
 
   /** id 목록이 IN 상한(1000)을 넘어도 나눠 묻는다 — 원본 대조·필터 2단계·원본 조회가 큰 후보를 받는 경로. */

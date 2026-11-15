@@ -194,6 +194,57 @@ class RowSearchSyncServiceEmbedChunkTest {
     assertThat(upserted).extracting(IndexedRow::rowId).allMatch(id -> id % 2 == 0);
   }
 
+  /**
+   * WD-745 — 교체 적재가 테이블을 그대로 두는 저장소(Tibero)는 세대가 그대로라도 새 ID 행을 지금 세대의 같은 원문 벡터로 재사용한다. 이미 색인에 있던
+   * 행(원문이 바뀜)은 후보가 아니다. 재사용이 있었고 색인이 원본보다 많으면 옛 ID 점 정리를 주기 제한 없이 앞당긴다.
+   */
+  @Test
+  void replaceKeepsTable_reusesNewRowsWithinGeneration_andSweepsNow() {
+    prepare("m", 1024);
+    when(aiGate.datasetAllowed(ID)).thenReturn(true);
+    when(embeddingFactory.current()).thenReturn(recordingProvider());
+    when(reader.replaceKeepsTable()).thenReturn(true);
+    // 1~10 행은 이미 색인에 있고 원문이 바뀌었다(해시 다름) — 같은 세대 재사용 후보가 아니다.
+    Map<Long, String> existing = new java.util.HashMap<>();
+    for (long i = 1; i <= 10; i++) existing.put(i, "old");
+    when(index.existingHashes(any(), any())).thenReturn(existing);
+    when(index.upsertReusingSameGeneration(any(), any(), eq("m")))
+        .thenAnswer(
+            inv -> {
+              List<ReuseCandidate> c = inv.getArgument(1);
+              assertThat(c).extracting(ReuseCandidate::rowId).allMatch(id -> id > 10);
+              assertThat(c).hasSize(ROWS - 10);
+              return Set.copyOf(c.stream().map(ReuseCandidate::rowId).toList());
+            });
+    // 옛 ID 점이 남아 색인(130)이 원본(70)보다 많다. 주기 제한 안이라 deleteMissing 은 0.
+    when(index.count(any())).thenReturn(130L, 70L);
+    when(reader.countRows("src")).thenReturn((long) ROWS);
+
+    assertThat(service().sync(ID)).isEqualTo(RowSearchSyncService.Outcome.COMPLETED);
+
+    verify(index, times(1)).upsertReusingSameGeneration(any(), any(), eq("m"));
+    // 원문이 바뀐 10행만 임베딩한다.
+    assertThat(callSizes.stream().mapToInt(Integer::intValue).sum()).isEqualTo(10);
+    verify(index, times(1)).deleteMissingNow(any());
+    verify(states).markCompleted(ID, 70L, (long) ROWS);
+  }
+
+  /** WD-745 — 교체 적재가 swap 인 저장소(PG)는 같은 세대 재사용·즉시 정리를 하지 않는다(조회 1번을 늘리지 않는다). */
+  @Test
+  void swapStore_doesNotTrySameGenerationReuse() {
+    prepare("m", 1024);
+    when(aiGate.datasetAllowed(ID)).thenReturn(true);
+    when(embeddingFactory.current()).thenReturn(recordingProvider());
+    when(index.count(any())).thenReturn(130L);
+    when(reader.countRows("src")).thenReturn((long) ROWS);
+
+    assertThat(service().sync(ID)).isEqualTo(RowSearchSyncService.Outcome.COMPLETED);
+
+    verify(index, never()).upsertReusingSameGeneration(any(), any(), anyString());
+    verify(index, never()).deleteMissingNow(any());
+    assertThat(callSizes.stream().mapToInt(Integer::intValue).sum()).isEqualTo(ROWS);
+  }
+
   @Test
   void largeBatch_isEmbeddedInChunksOfAtMost32() {
     // 설정·모델·차원·OID 가 모두 같아 재색인 없이 증분 패스만 돈다(패스 커서도 이미 잡혀 있음).

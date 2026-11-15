@@ -59,6 +59,11 @@ public class SearchSourceReader {
     return store().currentOid(table);
   }
 
+  /** {@link SearchSourceStore#replaceKeepsTable} — 현재 테넌트 저장소가 교체 적재 때 테이블을 그대로 두는지(WD-745). */
+  public boolean replaceKeepsTable() {
+    return store().replaceKeepsTable();
+  }
+
   /** 원본 테이블 전체 행 수 — 진행률 분모(total_rows). 데이터 테이블 행 수의 정본(이미 백엔드별로 위임하는 파사드)을 그대로 쓴다. */
   public long countRows(String table) {
     return dataTableRowService.countRows(table);

@@ -205,6 +205,49 @@ class QdrantRowSearchIndexTest extends IntegrationTestBase {
   }
 
   @Test
+  @DisplayName("같은 세대 재사용(WD-745) — 교체 적재로 새 ID 가 된 같은 원문은 지금 세대 벡터를 복사하고, 이전 세대·다른 모델은 찾지 않는다")
+  void sameGenerationReuseCopiesVectorsWithinGeneration() {
+    // 세대는 그대로(Tibero 교체 적재) — 옛 1 의 원문이 새 ID 20 으로 들어왔다.
+    assertThat(
+            index.upsertReusingSameGeneration(
+                gen1,
+                List.of(
+                    new ReuseCandidate(20, "배관 누수 발생", "h1"),
+                    new ReuseCandidate(21, "새 내용", "nope")),
+                "fake"))
+        .containsExactly(20L);
+    assertThat(
+            index.upsertReusingSameGeneration(
+                gen1, List.of(new ReuseCandidate(22, "소음 민원", "h2")), "other-model"))
+        .isEmpty();
+    // 복사된 점은 지금 세대에 원래 벡터로 들어가 의미 검색에서 옛 1 과 같은 축으로 찾힌다.
+    assertThat(index.existingHashes(gen1, List.of(20L))).containsEntry(20L, "h1");
+    assertThat(index.semantic(gen1, axis(0), RowQueryFilter.none(), 2))
+        .extracting(RowHit::rowId)
+        .containsExactlyInAnyOrder(1L, 20L);
+
+    // 다음 세대에서 같은 세대 재사용은 이전 세대(gen1) 점을 보지 않는다 — 그건 upsertReusing 의 몫이다.
+    index.startGeneration(gen2, DIM);
+    assertThat(
+            index.upsertReusingSameGeneration(
+                gen2, List.of(new ReuseCandidate(30, "소음 민원", "h2")), "fake"))
+        .isEmpty();
+  }
+
+  @Test
+  @DisplayName("deleteMissingNow(WD-745) — 원본 대조 주기 제한 안에서도 지금 정리한다")
+  void deleteMissingNowIgnoresInterval() {
+    inTenantFixture(
+        () -> dataDsl.execute("DELETE FROM " + DataSchema.qualify(SRC) + " WHERE id = 2"));
+    assertThat(index.deleteMissing(gen1)).isEqualTo(1);
+    inTenantFixture(
+        () -> dataDsl.execute("DELETE FROM " + DataSchema.qualify(SRC) + " WHERE id IN (3, 4)"));
+    assertThat(index.deleteMissing(gen1)).isZero(); // 간격 안
+    assertThat(index.deleteMissingNow(gen1)).isEqualTo(2);
+    assertThat(index.count(gen1)).isEqualTo(2);
+  }
+
+  @Test
   @DisplayName("데이터셋 삭제·벡터 비우기는 아웃박스로 쌓이고 워커가 반영한다 — 벡터만 비우면 키워드 검색은 남는다")
   void dropAndClearGoThroughOutbox() {
     VectorOutboxWorker worker =

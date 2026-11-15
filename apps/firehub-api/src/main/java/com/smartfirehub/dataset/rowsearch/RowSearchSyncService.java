@@ -208,6 +208,10 @@ public class RowSearchSyncService {
 
     // 3) 변경분 처리
     boolean reusing = index.hasPreviousGeneration(ref);
+    // 교체 적재가 테이블을 그대로 두는 저장소(Tibero)는 REPLACE 뒤에도 세대가 그대로라 위 재사용이 일어나지 않는다 — 새 ID 행은 지금 세대
+    // 안에서도 원문 해시로 벡터를 찾는다(WD-745). 키워드 전용(provider 없음)은 아낄 임베딩이 없어 하지 않는다.
+    boolean sameGenerationReuse = provider != null && reader.replaceKeepsTable();
+    long sameGenerationReused = 0;
     long afterId = state.resumeAfterId() == null ? 0L : state.resumeAfterId();
     int processed = 0;
     boolean completed = false;
@@ -226,10 +230,12 @@ public class RowSearchSyncService {
         completed = true;
         break;
       }
-      long added = processBatch(ref, config, rows, provider, model, reusing);
+      BatchResult batch =
+          processBatch(ref, config, rows, provider, model, reusing, sameGenerationReuse);
+      sameGenerationReused += batch.sameGenerationReused();
       afterId = rows.get(rows.size() - 1).id();
       processed += rows.size();
-      states.saveProgress(datasetId, afterId, added);
+      states.saveProgress(datasetId, afterId, batch.added());
       if (rows.size() < batchSize) {
         completed = true;
         break;
@@ -245,9 +251,18 @@ public class RowSearchSyncService {
     if (!completed) return Outcome.PARTIAL;
 
     // 4) 삭제분 정리 + 5) 마무리
-    index.deleteMissing(ref);
+    int swept = index.deleteMissing(ref);
     if (reusing) index.dropPreviousGenerations(ref);
-    states.markCompleted(datasetId, index.count(ref), reader.countRows(ref.sourceTable()));
+    long indexed = index.count(ref);
+    long total = reader.countRows(ref.sourceTable());
+    if (sameGenerationReused > 0 && indexed > total && swept == 0) {
+      // 교체 적재 뒤(같은 세대 재사용이 있었고 색인이 원본보다 많다) — 옛 ID 점이 한꺼번에 남았다. 원본 대조 정리는 비용 때문에 주기 제한(Qdrant
+      // 30분)이 있지만, 이 경우는 지금 정리해 indexed_rows 가 원본보다 크게 보이는 시간을 없앤다(WD-745). 지우기만 잦은 데이터셋은 재사용이 없어
+      // 이 길을 타지 않는다.
+      index.deleteMissingNow(ref);
+      indexed = index.count(ref);
+    }
+    states.markCompleted(datasetId, indexed, total);
     return Outcome.COMPLETED;
   }
 
@@ -257,16 +272,20 @@ public class RowSearchSyncService {
    * <p>{@code provider} 가 null 이면 키워드 전용 색인(S3)이다 — 임베딩 호출 없이 벡터 NULL 로 넣는다. 재사용(upsertReusing)은
    * 벡터가 있는 행만 복사하므로 키워드 전용에서는 늘 실패해 이 경로로 온다.
    *
-   * @return 색인 행 수 증감(새로 들어간 행 − 지운 행). 진행률(indexed_rows)을 count(*) 없이 갱신하는 데 쓴다 — 이미 색인에 있던 행의 갱신은
-   *     0 이다.
+   * <p>{@code sameGenerationReuse} 이면 남은 행 중 색인에 처음 들어가는 행(새 ID)을 지금 세대의 같은 원문 벡터로 한 번 더
+   * 재사용한다(WD-745 — Tibero 교체 적재). 이미 색인에 있던 행의 원문이 바뀐 경우는 새 원문이라 찾지 않는다.
+   *
+   * @return 색인 행 수 증감(새로 들어간 행 − 지운 행 — 진행률 indexed_rows 를 count(*) 없이 갱신하는 데 쓴다, 이미 색인에 있던 행의 갱신은
+   *     0)과 같은 세대 재사용으로 복사한 행 수
    */
-  private long processBatch(
+  private BatchResult processBatch(
       IndexRef ref,
       SearchConfig config,
       List<SearchSourceReader.SourceRow> rows,
       EmbeddingProvider provider,
       String model,
-      boolean reusing) {
+      boolean reusing,
+      boolean sameGenerationReuse) {
     Map<Long, String> existing =
         index.existingHashes(ref, rows.stream().map(SearchSourceReader.SourceRow::id).toList());
     List<Long> toDelete = new ArrayList<>();
@@ -281,8 +300,9 @@ public class RowSearchSyncService {
       }
       String hash = SearchConfig.sha256(text);
       if (hash.equals(existing.get(row.id()))) continue; // 검색 대상 아닌 컬럼만 바뀜
-      if (!existing.containsKey(row.id())) added++; // 이 배치에서 색인에 새로 들어가는 행(재사용·임베딩 모두)
-      pending.add(new Pending(row.id(), text, hash));
+      boolean isNew = !existing.containsKey(row.id());
+      if (isNew) added++; // 이 배치에서 색인에 새로 들어가는 행(재사용·임베딩 모두)
+      pending.add(new Pending(row.id(), text, hash, isNew));
     }
     index.deleteRows(ref, toDelete);
     added -= toDelete.size();
@@ -295,14 +315,27 @@ public class RowSearchSyncService {
               model);
       if (!reused.isEmpty()) pending.removeIf(p -> reused.contains(p.rowId()));
     }
-    if (pending.isEmpty()) return added;
+    long sameGenerationReused = 0;
+    List<ReuseCandidate> fresh =
+        sameGenerationReuse
+            ? pending.stream()
+                .filter(Pending::isNew)
+                .map(p -> new ReuseCandidate(p.rowId(), p.text(), p.hash()))
+                .toList()
+            : List.of();
+    if (!fresh.isEmpty()) {
+      Set<Long> reused = index.upsertReusingSameGeneration(ref, fresh, model);
+      if (!reused.isEmpty()) pending.removeIf(p -> reused.contains(p.rowId()));
+      sameGenerationReused = reused.size();
+    }
+    if (pending.isEmpty()) return new BatchResult(added, sameGenerationReused);
     if (provider == null) {
       List<IndexedRow> textOnly = new ArrayList<>(pending.size());
       for (Pending p : pending) {
         textOnly.add(new IndexedRow(p.rowId(), p.text(), p.hash(), null, model));
       }
       index.upsert(ref, textOnly);
-      return added;
+      return new BatchResult(added, sameGenerationReused);
     }
     // 트랜잭션 밖에서, 한 호출이 너무 커지지 않도록 EMBED_CHUNK_SIZE 씩 나눠 임베딩한다(순서 유지).
     List<String> texts = pending.stream().map(Pending::text).toList();
@@ -317,9 +350,12 @@ public class RowSearchSyncService {
       upserts.add(new IndexedRow(p.rowId(), p.text(), p.hash(), vectors.get(i), model));
     }
     index.upsert(ref, upserts);
-    return added;
+    return new BatchResult(added, sameGenerationReused);
   }
 
-  /** 임베딩이 필요한 행 하나(재사용되지 않고 새로 임베딩할 대상). */
-  private record Pending(long rowId, String text, String hash) {}
+  /** 임베딩이 필요한 행 하나(재사용되지 않고 새로 임베딩할 대상). {@code isNew} 는 색인에 아직 없던 행(새 ID)인지. */
+  private record Pending(long rowId, String text, String hash, boolean isNew) {}
+
+  /** 배치 하나의 결과 — 색인 행 수 증감과 같은 세대 재사용으로 복사한 행 수(교체 적재 뒤 정리를 앞당길지 판단, WD-745). */
+  private record BatchResult(long added, long sameGenerationReused) {}
 }

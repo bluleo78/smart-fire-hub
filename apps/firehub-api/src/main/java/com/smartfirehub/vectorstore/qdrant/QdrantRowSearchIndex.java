@@ -275,7 +275,26 @@ public class QdrantRowSearchIndex implements RowSearchIndex {
   @Override
   public Set<Long> upsertReusing(IndexRef ref, List<ReuseCandidate> rows, String model) {
     requireCurrentTenant(ref);
-    long gen = ref.requireGeneration();
+    return reuseVectors(ref, rows, model, generationBelow(ref.requireGeneration()));
+  }
+
+  /**
+   * 지금 세대의 다른 행에서 같은 원문의 벡터를 찾는다(WD-745 — Tibero 교체 적재). 같은 세대라도 후보 행 자신의 점은 아직 없거나(새 ID) 해시가 달라
+   * 걸리지 않는다.
+   */
+  @Override
+  public Set<Long> upsertReusingSameGeneration(
+      IndexRef ref, List<ReuseCandidate> rows, String model) {
+    requireCurrentTenant(ref);
+    return reuseVectors(ref, rows, model, generationIs(ref.requireGeneration()));
+  }
+
+  /**
+   * 재사용 공통 — {@code generation} 조건(이전 세대 또는 지금 세대)에 맞는 점에서 해시별 첫 dense 벡터를 모아 지금 세대로 쓴다. 쓰기는 늘 지금
+   * 세대({@link #upsert})다.
+   */
+  private Set<Long> reuseVectors(
+      IndexRef ref, List<ReuseCandidate> rows, String model, Condition generation) {
     if (rows.isEmpty()) return Set.of();
     Set<String> wanted = new HashSet<>();
     for (ReuseCandidate r : rows) wanted.add(r.sourceHash());
@@ -291,7 +310,7 @@ public class QdrantRowSearchIndex implements RowSearchIndex {
                 .setFilter(
                     allOf(
                         baseConditions(ref),
-                        generationBelow(gen),
+                        generation,
                         ConditionFactory.matchKeywords(QdrantCollectionSpec.SOURCE_HASH, missing),
                         ConditionFactory.matchKeyword(QdrantCollectionSpec.MODEL, model)))
                 .setLimit(REUSE_SCROLL_PAGE)
@@ -412,12 +431,23 @@ public class QdrantRowSearchIndex implements RowSearchIndex {
    */
   @Override
   public int deleteMissing(IndexRef ref) {
+    return sweepOrphans(ref, false);
+  }
+
+  /** 교체 적재 뒤 옛 ID 점이 한꺼번에 남았을 때 — 주기 제한을 건너뛰고 지금 원본과 대조한다(WD-745). */
+  @Override
+  public int deleteMissingNow(IndexRef ref) {
+    return sweepOrphans(ref, true);
+  }
+
+  /** 원본 대조 정리. {@code force} 가 거짓이면 주기 제한({@code row-orphan-sweep-interval-ms})을 지킨다. */
+  private int sweepOrphans(IndexRef ref, boolean force) {
     requireCurrentTenant(ref);
     long gen = ref.requireGeneration();
     String key = ref.tenantId() + ":" + ref.datasetId();
     long now = clock.getAsLong();
     Long last = lastOrphanSweep.get(key);
-    if (last != null && now - last < orphanSweepIntervalMs) return 0;
+    if (!force && last != null && now - last < orphanSweepIntervalMs) return 0;
     String kw = QdrantCollectionSpec.rowsKeywordName(ref.tenantId());
     if (!tenantCollections(ref.tenantId()).contains(kw)) return 0;
     QdrantClient c = client(ref.tenantId());

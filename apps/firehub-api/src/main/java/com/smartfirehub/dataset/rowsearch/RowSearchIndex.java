@@ -50,6 +50,17 @@ public interface RowSearchIndex {
    */
   Set<Long> upsertReusing(IndexRef ref, List<ReuseCandidate> rows, String model);
 
+  /**
+   * {@link #upsertReusing} 과 같되 <b>지금 세대</b>의 다른 행에서 같은 원문 해시·같은 모델의 벡터를 찾는다(WD-745). 교체 적재가 테이블을
+   * 그대로 두는 저장소(Tibero)는 REPLACE 뒤에도 세대가 바뀌지 않아, 새 ID 로 다시 들어온 같은 원문을 이 길로 재사용한다.
+   *
+   * <p>기본값은 아무것도 재사용하지 않는다 — PG 색인은 PG 데이터 저장소에서만 쓰이고, PG 의 교체 적재는 swap(세대 재구축)이라 이 길을 타지 않는다.
+   */
+  default Set<Long> upsertReusingSameGeneration(
+      IndexRef ref, List<ReuseCandidate> rows, String model) {
+    return Set.of();
+  }
+
   /** 임베딩까지 끝난 행들을 넣는다. 같은 (row_id, chunk_no) 가 있으면 텍스트·해시·벡터·모델을 덮어쓴다. */
   void upsert(IndexRef ref, List<IndexedRow> rows);
 
@@ -64,6 +75,14 @@ public interface RowSearchIndex {
 
   /** 원본에 없는 row_id 를 지운다. 지운 행 수. */
   int deleteMissing(IndexRef ref);
+
+  /**
+   * {@link #deleteMissing} 을 주기 제한 없이 지금 한다(WD-745). 교체 적재 뒤 옛 ID 의 행이 한꺼번에 남았을 때 부른다. 주기 제한이 없는
+   * 구현(PG)은 기본값 그대로 {@link #deleteMissing} 과 같다.
+   */
+  default int deleteMissingNow(IndexRef ref) {
+    return deleteMissing(ref);
+  }
 
   /** 색인 행 수. 색인 테이블이 아직 없으면 0. */
   long count(IndexRef ref);

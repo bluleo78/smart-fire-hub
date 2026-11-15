@@ -27,6 +27,16 @@ public interface SearchSourceStore {
   long currentOid(String table);
 
   /**
+   * 교체 적재(REPLACE)가 원본 테이블을 그대로 두고 행만 지우고 다시 넣는지(WD-745). 그러면 {@link #currentOid} 가 바뀌지 않아 세대
+   * 재구축(이전 세대 벡터 재사용)이 일어나지 않고, 새 ID 의 행이 모두 변경분이 된다. 참이면 동기화가 새 행의 벡터를 지금 세대 안에서도 원문 해시로 찾아 다시 쓴다.
+   *
+   * <p>PG 는 임시 테이블 swap 이라 OID 가 바뀌므로 거짓(기본값), Tibero 는 같은 테이블에 {@code DELETE FROM} 뒤 다시 넣어 참이다.
+   */
+  default boolean replaceKeepsTable() {
+    return false;
+  }
+
+  /**
    * _updated_at >= cursor(없으면 전체) 이고 id > afterId 인 행을 id 순으로 limit 개. cursor 는 이 저장소 시계로 잡은 값이다.
    */
   List<SourceRow> fetchChanged(
