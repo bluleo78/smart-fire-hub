@@ -35,7 +35,13 @@ class TiberoTenantPolicyCatalogLiveTest {
 
   /** tenant_id 가 있지만 정책을 걸지 않는 테이블(PG 와 같음) — 로그인·테넌트 해석이 테넌트를 넘어 읽는다(설계 §4). */
   private static final Set<String> NO_POLICY =
-      Set.of("MEMBERSHIP", "OAUTH_STATE", "TENANT_DATA_STORE", "TENANT_DATA_STORE_ACCOUNT");
+      Set.of(
+          "MEMBERSHIP",
+          "OAUTH_STATE",
+          "TENANT_DATA_STORE",
+          "TENANT_DATA_STORE_ACCOUNT",
+          // 테넌트 전용 Qdrant 설정(V165, WD-742) — PG 도 RLS 없는 전역 테이블.
+          "TENANT_VECTOR_STORE");
 
   /** Tibero 기준선에 없는 PG 벡터 테이블(WD-495) — PG 쪽 집합에서 뺀다. */
   private static final Set<String> VECTOR_TABLES =

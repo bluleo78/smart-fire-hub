@@ -388,7 +388,7 @@ SELECT STATUS FROM DBA_OBJECTS
 
 #### 정책·DEFAULT
 
-- 정책은 PG 정책 61개에서 벡터 테이블 4개(Tibero 에 없음)를 뺀 **57개 테이블**에 PG 정책 이름 그대로 건다. `SELECT,INSERT,UPDATE,DELETE` + `update_check`(다른 테넌트 행 쓰기는 -10067). 정책 없이 두는 `tenant_id` 테이블은 PG 와 같은 4개(`membership`, `oauth_state`, `tenant_data_store`, `tenant_data_store_account`)이고, 카탈로그 시험이 「`TENANT_ID` 가 있는 테이블은 모두 정책이 있다」를 고정한다.
+- 정책은 PG 정책 61개에서 벡터 테이블 4개(Tibero 에 없음)를 뺀 **57개 테이블**에 PG 정책 이름 그대로 건다. `SELECT,INSERT,UPDATE,DELETE` + `update_check`(다른 테넌트 행 쓰기는 -10067). 정책 없이 두는 `tenant_id` 테이블은 PG 와 같은 4개(`membership`, `oauth_state`, `tenant_data_store`, `tenant_data_store_account`)이고(이후 WD-742 의 `tenant_vector_store` 가 더해져 5개 — 운영자 컨텍스트·배경 워커가 테넌트를 넘어 읽는 전역 설정), 카탈로그 시험이 「`TENANT_ID` 가 있는 테이블은 모두 정책이 있다」를 고정한다.
 - 정책은 **동적**(`static_policy => FALSE`)이다. 술어가 세션 사용자(소유자는 걸러지지 않음)·`BYPASS` 에 따라 달라 캐시되면 안 되기 때문이다. 정책 함수가 문장마다 불리므로 성능 영향은 WD-498 에서 실측한다(필요하면 context-sensitive 로).
 - `tenant_id` 열 DEFAULT 는 **58곳**이 `SYS_CONTEXT('<컨텍스트>','TENANT_ID')` 다(PG 62곳에서 벡터 4개를 뺀 수). NOT NULL 은 유지하므로 테넌트 없이 넣으면 NOT NULL 위반(-10005)으로 실패한다(fail-closed). `dataset.security_level_id`·`role.max_security_level_id` 의 PG DEFAULT(사용자 함수)는 BEFORE INSERT 트리거가 소유자 함수 `FH_DEFAULT_SECURITY_LEVEL`(런타임에 EXECUTE 없음)로 대신한다.
 - `audit_log` 는 테넌트가 없으면 `tenant_id IS NULL` 행만 보인다(PG `IS NOT DISTINCT FROM` 과 같은 의미).

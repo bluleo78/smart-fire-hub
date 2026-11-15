@@ -146,7 +146,9 @@ class SearchEmbeddingPredicateGoldenTest {
                     + " WHERE de.source_text %> ?"
                     + " AND "
                     + oldVis
-                    + " ORDER BY score DESC LIMIT ?",
+                    // 정렬은 WD-725 에서 거리 순 색인 스캔(GiST KNN)으로 바뀌었다 — 술어(가시성)는 그대로다.
+                    + " ORDER BY de.source_text <->> ? LIMIT ?",
+                "화재",
                 "화재",
                 "화재",
                 7));
@@ -193,9 +195,11 @@ class SearchEmbeddingPredicateGoldenTest {
                     + oldVis
                     + " AND dc.dataset_id IN (?)"
                     + " AND dc.content %> ?"
-                    + " ORDER BY score DESC LIMIT ?",
+                    // 정렬은 WD-725 에서 거리 순 색인 스캔(GiST KNN)으로 바뀌었다 — 술어(가시성)는 그대로다.
+                    + " ORDER BY dc.content <->> ? LIMIT ?",
                 "질의",
                 3L,
+                "질의",
                 "질의",
                 5));
   }
