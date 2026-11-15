@@ -96,6 +96,7 @@ import com.smartfirehub.jooq.tables.TenantCanary;
 import com.smartfirehub.jooq.tables.TenantDataStore;
 import com.smartfirehub.jooq.tables.TenantDataStoreAccount;
 import com.smartfirehub.jooq.tables.TenantSettings;
+import com.smartfirehub.jooq.tables.TenantVectorStore;
 import com.smartfirehub.jooq.tables.TriggerEvent;
 import com.smartfirehub.jooq.tables.UploadedFiles;
 import com.smartfirehub.jooq.tables.User;
@@ -1017,6 +1018,11 @@ public class Public extends SchemaImpl {
     public final TenantSettings TENANT_SETTINGS = TenantSettings.TENANT_SETTINGS;
 
     /**
+     * 테넌트 전용 Qdrant(행 검색 색인) — 전역, RLS 미적용. 행이 없으면 공유 Qdrant
+     */
+    public final TenantVectorStore TENANT_VECTOR_STORE = TenantVectorStore.TENANT_VECTOR_STORE;
+
+    /**
      * The table <code>public.trigger_event</code>.
      */
     public final TriggerEvent TRIGGER_EVENT = TriggerEvent.TRIGGER_EVENT;
@@ -1166,6 +1172,7 @@ public class Public extends SchemaImpl {
             TenantDataStore.TENANT_DATA_STORE,
             TenantDataStoreAccount.TENANT_DATA_STORE_ACCOUNT,
             TenantSettings.TENANT_SETTINGS,
+            TenantVectorStore.TENANT_VECTOR_STORE,
             TriggerEvent.TRIGGER_EVENT,
             UploadedFiles.UPLOADED_FILES,
             User.USER,

@@ -64,6 +64,7 @@ import com.smartfirehub.jooq.tables.SecurityLevel.SecurityLevelPath;
 import com.smartfirehub.jooq.tables.SlackWorkspace.SlackWorkspacePath;
 import com.smartfirehub.jooq.tables.TenantDataStore.TenantDataStorePath;
 import com.smartfirehub.jooq.tables.TenantSettings.TenantSettingsPath;
+import com.smartfirehub.jooq.tables.TenantVectorStore.TenantVectorStorePath;
 import com.smartfirehub.jooq.tables.TriggerEvent.TriggerEventPath;
 import com.smartfirehub.jooq.tables.UploadedFiles.UploadedFilesPath;
 import com.smartfirehub.jooq.tables.User.UserPath;
@@ -1021,6 +1022,19 @@ public class Tenant extends TableImpl<TenantRecord> {
             _tenantSettings = new TenantSettingsPath(this, null, Keys.TENANT_SETTINGS__TENANT_SETTINGS_TENANT_ID_FKEY.getInverseKey());
 
         return _tenantSettings;
+    }
+
+    private transient TenantVectorStorePath _tenantVectorStore;
+
+    /**
+     * Get the implicit to-many join path to the
+     * <code>public.tenant_vector_store</code> table
+     */
+    public TenantVectorStorePath tenantVectorStore() {
+        if (_tenantVectorStore == null)
+            _tenantVectorStore = new TenantVectorStorePath(this, null, Keys.TENANT_VECTOR_STORE__TENANT_VECTOR_STORE_TENANT_ID_FKEY.getInverseKey());
+
+        return _tenantVectorStore;
     }
 
     private transient UserChannelBindingPath _userChannelBinding;

@@ -96,6 +96,7 @@ import com.smartfirehub.jooq.tables.TenantCanary;
 import com.smartfirehub.jooq.tables.TenantDataStore;
 import com.smartfirehub.jooq.tables.TenantDataStoreAccount;
 import com.smartfirehub.jooq.tables.TenantSettings;
+import com.smartfirehub.jooq.tables.TenantVectorStore;
 import com.smartfirehub.jooq.tables.TriggerEvent;
 import com.smartfirehub.jooq.tables.UploadedFiles;
 import com.smartfirehub.jooq.tables.User;
@@ -1001,6 +1002,11 @@ public class Tables {
      * P7-b 테넌트 설정 오버라이드. 행이 없으면 system_settings(플랫폼 기본값)로 폴백한다.
      */
     public static final TenantSettings TENANT_SETTINGS = TenantSettings.TENANT_SETTINGS;
+
+    /**
+     * 테넌트 전용 Qdrant(행 검색 색인) — 전역, RLS 미적용. 행이 없으면 공유 Qdrant
+     */
+    public static final TenantVectorStore TENANT_VECTOR_STORE = TenantVectorStore.TENANT_VECTOR_STORE;
 
     /**
      * The table <code>public.trigger_event</code>.
