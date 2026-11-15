@@ -23,6 +23,12 @@ public interface RowSearchIndex {
    */
   void startGeneration(IndexRef ref, int dim);
 
+  /**
+   * 옛 판으로 만든 지금 세대 색인을 지금 판 키워드 색인으로 올린다(WD-725 — PG 는 GIN → GiST). 동기화가 쓰기 전에 부르고, 구현은 한 번 올린 색인을
+   * 기억해 다시 묻지 않는다. 할 일이 없는 구현(Qdrant)은 기본값 그대로 아무것도 하지 않는다.
+   */
+  default void ensureKeywordIndex(IndexRef ref) {}
+
   /** 이전 세대가 남아 있는지(재구축 중 — 재사용을 시도할지). */
   boolean hasPreviousGeneration(IndexRef ref);
 

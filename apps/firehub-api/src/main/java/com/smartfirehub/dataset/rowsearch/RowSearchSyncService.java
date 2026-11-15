@@ -195,6 +195,8 @@ public class RowSearchSyncService {
     }
     // 재색인·세대 시작으로 상태가 바뀌었을 수 있다 — 아래 쓰기는 지금 세대를 실은 참조로 한다.
     ref = IndexRef.of(ref.tenantId(), datasetId, ref.sourceTable(), state);
+    // 옛 판 키워드 색인(GIN)을 거리 순 색인 스캔이 되는 GiST 로 한 번 올린다(WD-725). 임대를 쥔 쓰기 경로라 여기서 한다.
+    index.ensureKeywordIndex(ref);
 
     // 2) 책갈피 후보 — 패스 시작 시에만 캡처(책갈피 후보 불변식: 실행 직전).
     //    패스 시작이면 원본 전체 행 수도 함께 기록해 여러 주기에 걸친 색인 중에도 진행률(분모)이 보이게 한다.

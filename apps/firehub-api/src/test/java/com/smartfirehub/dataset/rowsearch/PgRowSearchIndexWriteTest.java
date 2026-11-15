@@ -185,4 +185,70 @@ class PgRowSearchIndexWriteTest extends IntegrationTestBase {
     index.dropPreviousGenerations(ref);
     assertThat(index.hasPreviousGeneration(ref)).isFalse();
   }
+
+  /** 색인 테이블의 trgm 색인 접근 방법(gist·gin) 목록. */
+  private List<String> trgmIndexMethods() {
+    return dataDsl
+        .fetch(
+            "SELECT am.amname FROM pg_index i JOIN pg_class ic ON ic.oid = i.indexrelid"
+                + " JOIN pg_am am ON am.oid = ic.relam JOIN pg_opclass oc ON oc.oid = i.indclass[0]"
+                + " WHERE i.indrelid = to_regclass(?) AND oc.opcname IN ('gist_trgm_ops', 'gin_trgm_ops')",
+            DataSchema.qualify(ref.indexTable()))
+        .map(r -> r.get(0, String.class));
+  }
+
+  /** WD-725 — 새 색인 테이블의 키워드 색인은 GiST 라 거리 연산자(<->>) 정렬이 색인 스캔(Order By)으로 풀린다. */
+  @Test
+  void recreate_makesGistKeywordIndex_usableForDistanceOrder() {
+    index.recreate(ref, 1024);
+    assertThat(trgmIndexMethods()).containsExactly("gist");
+
+    String q = DataSchema.qualify(ref.indexTable());
+    String plan =
+        dataDsl.transactionResult(
+            cfg -> {
+              DSLContext tx = org.jooq.impl.DSL.using(cfg);
+              // 행이 적어 비용상 seq·bitmap scan 을 고르므로 끄고, 색인이 거리 정렬(Order By)을 맡을 수 있는지만 본다.
+              tx.execute("SET LOCAL enable_seqscan = off");
+              tx.execute("SET LOCAL enable_bitmapscan = off");
+              return String.join(
+                  "\n",
+                  tx.fetch(
+                          "EXPLAIN SELECT row_id FROM "
+                              + q
+                              + " s WHERE s.source_text %> ? ORDER BY s.source_text <->> ? LIMIT 5",
+                          "배관",
+                          "배관")
+                      .map(r -> r.get(0, String.class)));
+            });
+    assertThat(plan).contains("Order By").contains("Index Scan");
+  }
+
+  /** WD-725 — 이 변경 전에 만든 GIN 색인 테이블은 동기화가 한 번 GiST 로 올리고 GIN 을 지운다. 키워드 검색 결과는 그대로다. */
+  @Test
+  void ensureKeywordIndex_upgradesLegacyGinTable() {
+    index.recreate(ref, 1024);
+    String q = DataSchema.qualify(ref.indexTable());
+    // 옛 판처럼 GIN 키워드 색인만 남긴다.
+    for (var r :
+        dataDsl.fetch(
+            "SELECT ic.relname FROM pg_index i JOIN pg_class ic ON ic.oid = i.indexrelid"
+                + " JOIN pg_opclass oc ON oc.oid = i.indclass[0]"
+                + " WHERE i.indrelid = to_regclass(?) AND oc.opcname = 'gist_trgm_ops'",
+            q)) {
+      dataDsl.execute("DROP INDEX " + DataSchema.current() + ".\"" + r.get(0, String.class) + "\"");
+    }
+    dataDsl.execute("CREATE INDEX ON " + q + " USING gin (source_text public.gin_trgm_ops)");
+    assertThat(trgmIndexMethods()).containsExactly("gin");
+    index.upsert(ref, List.of(new IndexedRow(1, "배관 누수 발생", "h1", vec(0.1f), "fake")));
+
+    index.ensureKeywordIndex(ref);
+    assertThat(trgmIndexMethods()).containsExactly("gist");
+    // 두 번째 호출은 기억으로 건너뛴다(색인이 늘지 않는다).
+    index.ensureKeywordIndex(ref);
+    assertThat(trgmIndexMethods()).containsExactly("gist");
+    assertThat(index.keyword(ref, "배관", RowQueryFilter.none(), 5))
+        .extracting(RowHit::rowId)
+        .containsExactly(1L);
+  }
 }

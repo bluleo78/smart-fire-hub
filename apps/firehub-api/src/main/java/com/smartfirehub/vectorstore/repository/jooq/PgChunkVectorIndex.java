@@ -113,6 +113,10 @@ public class PgChunkVectorIndex implements ChunkVectorIndex {
    * %>} 를 쓴다 ({@code content %> q} ≡ {@code q <% content} ≡ {@code word_similarity(q, content) >
    * 임계값}). {@code %>} 는 pg_trgm.word_similarity_threshold GUC(기본 0.6)를 임계값으로 쓰므로, 기존 0.1 floor 를
    * 유지하려면 같은 트랜잭션에서 SET LOCAL 로 0.1 로 낮춰야 한다.
+   *
+   * <p>WD-725: 색인을 GiST(gist_trgm_ops, V164)로 바꾸고 정렬을 거리 연산자 {@code content <->> q}(= 1 -
+   * word_similarity)로 한다 — 임계값 0.1 은 거의 모든 행을 통과시켜 score 정렬이 seq scan + 행마다 계산이 됐다. 거리 순 색인 스캔은 상위
+   * k 개만 읽고 순위는 같다.
    */
   @Override
   public List<DocumentSearchHit> keyword(
@@ -135,10 +139,13 @@ public class PgChunkVectorIndex implements ChunkVectorIndex {
           .append(")");
       params.addAll(datasetIds);
     }
-    // content %> query 는 GIN trigram 인덱스를 탄다(컬럼 좌변). 임계값은 아래 SET LOCAL 의 0.1.
+    // content %> query 는 GiST trigram 인덱스를 탄다(컬럼 좌변, V164). 임계값은 아래 SET LOCAL 의 0.1.
     sql.append(" AND dc.content %> ?");
     params.add(query); // %> 우변(질의)
-    sql.append(" ORDER BY score DESC LIMIT ?");
+    // 거리 순 색인 스캔(KNN, WD-725) — 상위 k 개만 읽는다. ORDER BY score DESC 와 순위가 같다(거리 = 1 -
+    // word_similarity).
+    sql.append(" ORDER BY dc.content <->> ? LIMIT ?");
+    params.add(query);
     params.add(topK);
 
     String finalSql = sql.toString();

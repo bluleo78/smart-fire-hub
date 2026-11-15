@@ -15,14 +15,17 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import lombok.extern.slf4j.Slf4j;
 import org.jooq.DSLContext;
+import org.jooq.Record;
 import org.jooq.impl.DSL;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * pgvector(HNSW) + pg_trgm(GIN) 기반 행 검색 색인.
+ * pgvector(HNSW) + pg_trgm(GiST, WD-725) 기반 행 검색 색인.
  *
  * <p>색인 테이블은 원본과 같은 테넌트 데이터 스키마에 둔다(스키마 단위 테넌트 격리를 그대로 따른다). FK 는 두지 않는다 — TRUNCATE·swap 이 깨지기
  * 때문(설계 3.4). vector/pg_trgm 은 public 에 있고 일부 경로의 search_path 에 public 이 없으므로 타입·연산자 클래스를 public.
@@ -30,6 +33,7 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>벡터 저장소가 {@code platform} 일 때만 뜬다. qdrant 설치본은 {@code QdrantRowSearchIndex} 가 대신한다(WD-722).
  */
+@Slf4j
 @Repository
 @Transactional
 @ConditionalOnPlatformVectorStore
@@ -90,6 +94,50 @@ public class PgRowSearchIndex implements RowSearchIndex {
     }
     // _prev 는 원래 createIndexTable 로 만든 테이블을 개명한 것이라 권한 회수 상태(ACL)가 그대로 따라온다.
     createIndexTable(ref, dim);
+  }
+
+  /** GiST 키워드 색인을 확인(또는 만든) 색인 테이블 — 「테넌트:스키마.테이블」. 확인은 JVM 마다 테이블당 한 번이다. */
+  private final Set<String> keywordIndexChecked = ConcurrentHashMap.newKeySet();
+
+  /**
+   * 옛 GIN 키워드 색인 테이블을 GiST 로 올린다(WD-725). 이 변경 전에 만든 색인 테이블은 GIN 이라 거리 순 색인 스캔(KNN)을 못 해 키워드 검색이
+   * seq scan 이다. 새 테이블은 {@link #createIndexTable} 이 GiST 로 만들므로, 여기서는 GiST 가 없을 때만 만들고 GIN 을 지운다.
+   *
+   * <p>동기화(임대를 쥔 쓰기 경로)에서만 부른다 — 색인을 만드는 동안 이 테이블 쓰기만 잠기고 검색(읽기)은 된다. 테이블을 만든 롤과 같은 연결이라 소유자 권한이
+   * 있다.
+   */
+  @Override
+  public void ensureKeywordIndex(IndexRef ref) {
+    requireCurrentTenant(ref);
+    String q = DataSchema.qualify(ref.indexTable());
+    String key = ref.tenantId() + ":" + q;
+    if (keywordIndexChecked.contains(key) || !tableExists(ref.indexTable())) return;
+    // 이 테이블의 trgm 색인을 접근 방법(gist·gin)별로 찾는다.
+    List<Record> trgm =
+        dsl.fetch(
+            "SELECT ic.relname, am.amname FROM pg_index i"
+                + " JOIN pg_class ic ON ic.oid = i.indexrelid"
+                + " JOIN pg_am am ON am.oid = ic.relam"
+                + " JOIN pg_opclass oc ON oc.oid = i.indclass[0]"
+                + " WHERE i.indrelid = to_regclass(?) AND oc.opcname IN ('gist_trgm_ops', 'gin_trgm_ops')",
+            q);
+    boolean hasGist = trgm.stream().anyMatch(r -> "gist".equals(r.get(1, String.class)));
+    if (!hasGist) {
+      dsl.execute("CREATE INDEX ON " + q + " USING gist (source_text public.gist_trgm_ops)");
+      log.info("행 검색 키워드 색인을 GiST 로 올림: tenant={} table={}", ref.tenantId(), q);
+    }
+    // GIN 은 거르기도 GiST 가 맡게 되어 쓰기 비용만 남으므로 지운다. 색인은 테이블과 같은 스키마에 있다.
+    for (Record r : trgm) {
+      if ("gin".equals(r.get(1, String.class))) {
+        dsl.execute(
+            "DROP INDEX IF EXISTS "
+                + DataSchema.current()
+                + ".\""
+                + r.get(0, String.class).replace("\"", "\"\"")
+                + "\"");
+      }
+    }
+    keywordIndexChecked.add(key);
   }
 
   @Override
@@ -305,10 +353,12 @@ public class PgRowSearchIndex implements RowSearchIndex {
             .append(" s");
     List<Object> params = new ArrayList<>();
     params.add(query);
-    // %> 는 컬럼이 좌변이어야 GIN trgm 인덱스를 탄다(DocumentChunkRepository 실측 주석 참고).
+    // %> 는 컬럼이 좌변이어야 trgm 인덱스를 탄다(DocumentChunkRepository 실측 주석 참고).
     appendFilter(ref, filter, sql, params, " WHERE s.source_text %> ?");
     params.add(1, query); // %> 우변 — WHERE 절 첫 바인딩(필터 바인딩보다 앞)
-    sql.append(" ORDER BY score DESC LIMIT ?");
+    // 거리 순 색인 스캔(GiST KNN, WD-725) — 상위 limit 개만 읽는다. score 내림차순과 순위가 같다(거리 = 1 - word_similarity).
+    sql.append(" ORDER BY s.source_text <->> ? LIMIT ?");
+    params.add(query);
     params.add(limit);
     return dsl.transactionResult(
         cfg -> {
@@ -374,7 +424,10 @@ public class PgRowSearchIndex implements RowSearchIndex {
             + " indexed_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (row_id, chunk_no))");
     // 인덱스 이름은 자동 명명 — startGeneration 이 테이블을 _prev 로 바꿔도 새 테이블 인덱스와 충돌하지 않는다.
     dsl.execute("CREATE INDEX ON " + q + " USING hnsw (embedding public.vector_cosine_ops)");
-    dsl.execute("CREATE INDEX ON " + q + " USING gin (source_text public.gin_trgm_ops)");
+    // 같은 이름으로 새로 만든 테이블이라 「확인함」 기억을 지운다 — 다음 ensureKeywordIndex 가 한 번 다시 본다(새 테이블은 GiST 라 할 일 없음).
+    keywordIndexChecked.remove(ref.tenantId() + ":" + q);
+    // 키워드 색인은 GiST — 거리 순 색인 스캔(KNN)으로 상위 k 개만 읽는다(WD-725). 옛 GIN 테이블은 ensureKeywordIndex 가 올린다.
+    dsl.execute("CREATE INDEX ON " + q + " USING gist (source_text public.gist_trgm_ops)");
     dsl.execute("CREATE INDEX ON " + q + " (source_hash)");
     revokeFromPipelineExecutor(ref, q);
   }

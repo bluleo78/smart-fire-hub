@@ -1,0 +1,3 @@
+-- V164: 키워드 검색 색인 GIN → GiST (WD-725) — PG V164 와 짝(MigrationParityTest).
+--
+-- Tibero 플랫폼 DB 에는 pg_trgm 이 없고 키워드·벡터 검색이 꺼져 있어(Tibero 기준선에 trigram 색인 없음) 할 일이 없다. 번호만 맞추는 주석 파일이다(MigrationParityTest 규칙).

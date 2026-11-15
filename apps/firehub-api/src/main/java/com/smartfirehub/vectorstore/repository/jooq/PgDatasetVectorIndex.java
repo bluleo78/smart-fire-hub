@@ -107,11 +107,12 @@ public class PgDatasetVectorIndex implements DatasetVectorIndex {
    * pg_trgm word_similarity 기준 키워드 top-K 데이터셋 조회. word_similarity(query, source_text) 는 짧은 질의를 긴
    * 본문의 일부와 매칭해 0~1 점수를 준다.
    *
-   * <p>{@code source_text %> ?} 교환 연산자로 source_text 의 GIN trigram 인덱스
-   * (idx_dataset_embedding_source_trgm)를 타게 한다(컬럼이 좌변이어야 인덱스 사용). {@code %>} 는
-   * pg_trgm.word_similarity_threshold GUC(기본 0.6)를 임계값으로 쓰므로, DocumentChunkRepository 와 동일하게 같은
-   * 트랜잭션에서 SET LOCAL 로 0.1 로 낮춘다(LOCAL 은 tx 종료 시 자동 복원). source_text 만 보므로 벡터가 없는 행도 검색되어 가시성이
-   * 보장된다. storageType 이 null 이면 저장유형 필터를 적용하지 않는다.
+   * <p>{@code source_text %> ?} 교환 연산자로 source_text 의 GiST trigram 인덱스
+   * (idx_dataset_embedding_source_trgm, V164)를 타게 한다(컬럼이 좌변이어야 인덱스 사용). 정렬은 거리 연산자 {@code <->>}(= 1
+   * - word_similarity)로 해 GiST 거리 순 색인 스캔(KNN)으로 상위 k 개만 읽는다(WD-725 — score 내림차순 정렬은 임계값 0.1 이 거의
+   * 모든 행을 통과시켜 seq scan 이었다). 순위는 같다. {@code %>} 는 pg_trgm.word_similarity_threshold GUC(기본 0.6)를
+   * 임계값으로 쓰므로, DocumentChunkRepository 와 동일하게 같은 트랜잭션에서 SET LOCAL 로 0.1 로 낮춘다(LOCAL 은 tx 종료 시 자동
+   * 복원). source_text 만 보므로 벡터가 없는 행도 검색되어 가시성이 보장된다. storageType 이 null 이면 저장유형 필터를 적용하지 않는다.
    */
   @Override
   public List<DatasetSearchHit> keyword(
@@ -133,7 +134,9 @@ public class PgDatasetVectorIndex implements DatasetVectorIndex {
       sql.append(" AND d.storage_type = ?");
       params.add(storageType);
     }
-    sql.append(" ORDER BY score DESC LIMIT ?");
+    // 거리 순 색인 스캔(KNN) — ORDER BY score DESC 와 순위가 같다(거리 = 1 - word_similarity).
+    sql.append(" ORDER BY de.source_text <->> ? LIMIT ?");
+    params.add(query);
     params.add(topK);
 
     String finalSql = sql.toString();
