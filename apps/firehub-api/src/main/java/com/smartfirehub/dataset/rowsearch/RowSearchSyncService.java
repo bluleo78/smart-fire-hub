@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -279,11 +280,19 @@ public class RowSearchSyncService {
       String hash = SearchConfig.sha256(text);
       if (hash.equals(existing.get(row.id()))) continue; // 검색 대상 아닌 컬럼만 바뀜
       if (!existing.containsKey(row.id())) added++; // 이 배치에서 색인에 새로 들어가는 행(재사용·임베딩 모두)
-      if (reusing && index.upsertReusing(ref, row.id(), text, hash, model)) continue;
       pending.add(new Pending(row.id(), text, hash));
     }
     index.deleteRows(ref, toDelete);
     added -= toDelete.size();
+    if (reusing && !pending.isEmpty()) {
+      // 재구축 중이면 이전 세대 벡터를 배치째 재사용하고(WD-743 — 행마다 왕복하지 않는다), 복사된 행은 임베딩 대상에서 뺀다.
+      Set<Long> reused =
+          index.upsertReusing(
+              ref,
+              pending.stream().map(p -> new ReuseCandidate(p.rowId(), p.text(), p.hash())).toList(),
+              model);
+      if (!reused.isEmpty()) pending.removeIf(p -> reused.contains(p.rowId()));
+    }
     if (pending.isEmpty()) return added;
     if (provider == null) {
       List<IndexedRow> textOnly = new ArrayList<>(pending.size());

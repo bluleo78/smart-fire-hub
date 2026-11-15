@@ -9,6 +9,7 @@ import static io.qdrant.client.ValueFactory.value;
 
 import com.smartfirehub.dataset.rowsearch.IndexRef;
 import com.smartfirehub.dataset.rowsearch.IndexedRow;
+import com.smartfirehub.dataset.rowsearch.ReuseCandidate;
 import com.smartfirehub.dataset.rowsearch.RowHit;
 import com.smartfirehub.dataset.rowsearch.RowQueryFilter;
 import com.smartfirehub.dataset.rowsearch.RowSearchIndex;
@@ -42,6 +43,7 @@ import io.qdrant.client.grpc.Points.VectorOutput;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -230,40 +232,67 @@ public class QdrantRowSearchIndex implements RowSearchIndex {
     return result;
   }
 
-  /** 이전 세대에서 같은 원문·같은 모델의 dense 벡터를 읽어 지금 세대로 다시 쓴다(서버 쪽 복사가 없다). 키워드 점은 원문으로 새로 만든다. */
+  /** 재사용 조회 한 쪽(scroll 페이지)의 점 수 — 같은 원문이 여러 행·여러 세대에 있으면 해시 하나에 점이 여럿이라 페이지로 나눠 읽는다. */
+  static final int REUSE_SCROLL_PAGE = 256;
+
+  /**
+   * 이전 세대에서 같은 원문·같은 모델의 dense 벡터를 읽어 지금 세대로 다시 쓴다(서버 쪽 복사가 없다). 키워드 점은 원문으로 새로 만든다.
+   *
+   * <p>배치째 처리한다(WD-743): dense 컬렉션마다 배치의 해시 전부를 {@code source_hash in (…)} 한 조건으로 scroll 해 해시별 첫
+   * 벡터를 모으고, 찾은 행을 {@link #upsert} 한 번(dense·키워드 쓰기 각 한 번)으로 넣는다. 해시를 다 찾으면 남은 페이지·컬렉션은 읽지 않는다.
+   */
   @Override
-  public boolean upsertReusing(
-      IndexRef ref, long rowId, String sourceText, String sourceHash, String model) {
+  public Set<Long> upsertReusing(IndexRef ref, List<ReuseCandidate> rows, String model) {
     requireCurrentTenant(ref);
     long gen = ref.requireGeneration();
+    if (rows.isEmpty()) return Set.of();
+    Set<String> wanted = new HashSet<>();
+    for (ReuseCandidate r : rows) wanted.add(r.sourceHash());
+    Map<String, float[]> found = new HashMap<>();
     for (String c : denseCollections(ref.tenantId())) {
-      ScrollResponse found =
-          await(
-              client(ref.tenantId())
-                  .scrollAsync(
-                      ScrollPoints.newBuilder()
-                          .setCollectionName(c)
-                          .setFilter(
-                              allOf(
-                                  baseConditions(ref),
-                                  generationBelow(gen),
-                                  ConditionFactory.matchKeyword(
-                                      QdrantCollectionSpec.SOURCE_HASH, sourceHash),
-                                  ConditionFactory.matchKeyword(QdrantCollectionSpec.MODEL, model)))
-                          .setLimit(1)
-                          .setWithVectors(WithVectorsSelectorFactory.enable(true))
-                          .setWithPayload(WithPayloadSelectorFactory.enable(false))
-                          .build(),
-                      props.timeout()),
-              props.timeout(),
-              "행 벡터 재사용 조회");
-      if (found.getResultCount() == 0) continue;
-      float[] vec = denseOf(found.getResult(0));
-      if (vec == null) continue;
-      upsert(ref, List.of(new IndexedRow(rowId, sourceText, sourceHash, vec, model)));
-      return true;
+      if (found.size() == wanted.size()) break;
+      List<String> missing = wanted.stream().filter(h -> !found.containsKey(h)).toList();
+      PointId offset = null;
+      do {
+        ScrollPoints.Builder req =
+            ScrollPoints.newBuilder()
+                .setCollectionName(c)
+                .setFilter(
+                    allOf(
+                        baseConditions(ref),
+                        generationBelow(gen),
+                        ConditionFactory.matchKeywords(QdrantCollectionSpec.SOURCE_HASH, missing),
+                        ConditionFactory.matchKeyword(QdrantCollectionSpec.MODEL, model)))
+                .setLimit(REUSE_SCROLL_PAGE)
+                .setWithVectors(WithVectorsSelectorFactory.enable(true))
+                .setWithPayload(
+                    WithPayloadSelectorFactory.include(List.of(QdrantCollectionSpec.SOURCE_HASH)));
+        if (offset != null) req.setOffset(offset);
+        ScrollResponse page =
+            await(
+                client(ref.tenantId()).scrollAsync(req.build(), props.timeout()),
+                props.timeout(),
+                "행 벡터 재사용 조회");
+        for (RetrievedPoint p : page.getResultList()) {
+          Value hash = p.getPayloadMap().get(QdrantCollectionSpec.SOURCE_HASH);
+          if (hash == null || found.containsKey(hash.getStringValue())) continue;
+          float[] vec = denseOf(p);
+          if (vec != null) found.put(hash.getStringValue(), vec);
+        }
+        offset = page.hasNextPageOffset() ? page.getNextPageOffset() : null;
+      } while (offset != null && found.size() < wanted.size());
     }
-    return false;
+    if (found.isEmpty()) return Set.of();
+    List<IndexedRow> copies = new ArrayList<>();
+    Set<Long> reused = new HashSet<>();
+    for (ReuseCandidate r : rows) {
+      float[] vec = found.get(r.sourceHash());
+      if (vec == null) continue;
+      copies.add(new IndexedRow(r.rowId(), r.sourceText(), r.sourceHash(), vec, model));
+      reused.add(r.rowId());
+    }
+    upsert(ref, copies);
+    return reused;
   }
 
   @Override

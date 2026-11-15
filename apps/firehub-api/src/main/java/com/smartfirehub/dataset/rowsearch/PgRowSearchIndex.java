@@ -10,9 +10,11 @@ import com.smartfirehub.vectorstore.ConditionalOnPlatformVectorStore;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import org.jooq.DSLContext;
 import org.jooq.impl.DSL;
 import org.springframework.beans.factory.annotation.Value;
@@ -124,25 +126,39 @@ public class PgRowSearchIndex implements RowSearchIndex {
   }
 
   @Override
-  public boolean upsertReusing(
-      IndexRef ref, long rowId, String sourceText, String sourceHash, String model) {
+  public Set<Long> upsertReusing(IndexRef ref, List<ReuseCandidate> rows, String model) {
     requireCurrentTenant(ref);
-    // _prev 에서 같은 내용·같은 모델의 벡터를 한 건 골라 복사한다(swap 후 전량 재임베딩 방지).
-    int inserted =
-        dsl.execute(
+    if (rows.isEmpty()) return Set.of();
+    // _prev 에서 같은 내용·같은 모델의 벡터를 후보마다 한 건 골라 한 문장으로 복사한다(swap 후 전량 재임베딩 방지, WD-743).
+    // 후보는 배열 셋을 unnest 로 펼치고, LATERAL 로 해시마다 이전 세대 벡터 한 건을 고른다 — 없는 후보는 조인에서 빠진다.
+    Long[] ids = new Long[rows.size()];
+    String[] texts = new String[rows.size()];
+    String[] hashes = new String[rows.size()];
+    for (int i = 0; i < rows.size(); i++) {
+      ReuseCandidate c = rows.get(i);
+      ids[i] = c.rowId();
+      texts[i] = c.sourceText();
+      hashes[i] = c.sourceHash();
+    }
+    Set<Long> reused = new HashSet<>();
+    dsl.fetch(
             "INSERT INTO "
                 + DataSchema.qualify(ref.indexTable())
                 + " (row_id, chunk_no, source_text, source_hash, embedding, embedding_model, indexed_at)"
-                + " SELECT ?, 0, ?, ?, p.embedding, p.embedding_model, now() FROM "
+                + " SELECT c.row_id, 0, c.source_text, c.source_hash, p.embedding, p.embedding_model, now()"
+                + " FROM unnest(?::bigint[], ?::text[], ?::text[]) AS c(row_id, source_text, source_hash)"
+                + " CROSS JOIN LATERAL (SELECT q.embedding, q.embedding_model FROM "
                 + DataSchema.qualify(ref.prevTable())
-                + " p WHERE p.source_hash = ? AND p.embedding_model = ? AND p.embedding IS NOT NULL LIMIT 1"
-                + ON_CONFLICT_UPDATE,
-            rowId,
-            sourceText,
-            sourceHash,
-            sourceHash,
-            model);
-    return inserted > 0;
+                + " q WHERE q.source_hash = c.source_hash AND q.embedding_model = ?"
+                + " AND q.embedding IS NOT NULL LIMIT 1) p"
+                + ON_CONFLICT_UPDATE
+                + " RETURNING row_id",
+            ids,
+            texts,
+            hashes,
+            model)
+        .forEach(r -> reused.add(r.get(0, Long.class)));
+    return reused;
   }
 
   @Override

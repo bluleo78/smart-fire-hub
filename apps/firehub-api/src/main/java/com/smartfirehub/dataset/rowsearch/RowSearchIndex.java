@@ -3,6 +3,7 @@ package com.smartfirehub.dataset.rowsearch;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 행 검색 색인 엔진 경계. 구현체는 row_id 와 점수만 반환하고 원본 행 조회는 호출자가 한다 — 조인에 의존하지 않아 외부 벡터 DB 구현체로 교체해도 호출처가 바뀌지
@@ -35,9 +36,13 @@ public interface RowSearchIndex {
   /** row_id 별 현재 source_hash. 없는 행은 맵에 없다. */
   Map<Long, String> existingHashes(IndexRef ref, Collection<Long> rowIds);
 
-  /** 이전 세대에서 같은 source_hash·같은 모델의 벡터를 찾아 지금 세대로 복사한다. 복사했으면 true. */
-  boolean upsertReusing(
-      IndexRef ref, long rowId, String sourceText, String sourceHash, String model);
+  /**
+   * 이전 세대에서 같은 source_hash·같은 모델의 벡터를 찾아 지금 세대로 복사한다. 복사한 row_id 집합을 돌려준다 — 나머지는 호출자가 새로 임베딩한다.
+   *
+   * <p>배치 단위인 이유(WD-743): 행마다 부르면 swap 재구축이 행 수만큼 왕복한다(Qdrant 는 조회 1번·쓰기 2번). 구현은 배치 크기와 무관한 횟수로
+   * 처리한다 — PG 는 한 문장, Qdrant 는 해시 묶음 조회 + dense·키워드 쓰기 한 번씩.
+   */
+  Set<Long> upsertReusing(IndexRef ref, List<ReuseCandidate> rows, String model);
 
   /** 임베딩까지 끝난 행들을 넣는다. 같은 (row_id, chunk_no) 가 있으면 텍스트·해시·벡터·모델을 덮어쓴다. */
   void upsert(IndexRef ref, List<IndexedRow> rows);

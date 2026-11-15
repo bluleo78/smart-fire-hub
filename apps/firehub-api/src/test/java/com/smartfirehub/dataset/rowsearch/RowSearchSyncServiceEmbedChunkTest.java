@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -25,6 +26,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.LongStream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -129,9 +131,7 @@ class RowSearchSyncServiceEmbedChunkTest {
             })
         .when(index)
         .upsert(any(), any());
-    lenient()
-        .when(index.upsertReusing(any(), anyLong(), anyString(), anyString(), anyString()))
-        .thenReturn(false);
+    lenient().when(index.upsertReusing(any(), any(), anyString())).thenReturn(Set.of());
     return config;
   }
 
@@ -168,6 +168,30 @@ class RowSearchSyncServiceEmbedChunkTest {
         aiGate,
         5000,
         batchSize);
+  }
+
+  /** WD-743 — 재구축 중(이전 세대 있음)이면 배치째 한 번 재사용을 묻고, 복사된 행은 임베딩하지 않는다. 배치(70행)마다 재사용 호출은 1번이다. */
+  @Test
+  void rebuild_reusesWholeBatchOnce_andEmbedsOnlyTheRest() {
+    prepare("m", 1024);
+    when(aiGate.datasetAllowed(ID)).thenReturn(true);
+    when(embeddingFactory.current()).thenReturn(recordingProvider());
+    when(index.hasPreviousGeneration(any())).thenReturn(true);
+    // 홀수 행은 이전 세대에 같은 원문 벡터가 있다고 답한다.
+    when(index.upsertReusing(any(), any(), eq("m")))
+        .thenAnswer(
+            inv -> {
+              List<ReuseCandidate> c = inv.getArgument(1);
+              assertThat(c).hasSize(ROWS);
+              return Set.copyOf(
+                  c.stream().map(ReuseCandidate::rowId).filter(id -> id % 2 == 1).toList());
+            });
+
+    assertThat(service().sync(ID)).isEqualTo(RowSearchSyncService.Outcome.COMPLETED);
+
+    verify(index, times(1)).upsertReusing(any(), any(), eq("m"));
+    assertThat(callSizes.stream().mapToInt(Integer::intValue).sum()).isEqualTo(ROWS / 2);
+    assertThat(upserted).extracting(IndexedRow::rowId).allMatch(id -> id % 2 == 0);
   }
 
   @Test

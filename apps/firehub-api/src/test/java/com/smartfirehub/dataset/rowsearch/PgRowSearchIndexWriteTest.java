@@ -163,10 +163,24 @@ class PgRowSearchIndexWriteTest extends IntegrationTestBase {
     assertThat(index.hasPreviousGeneration(ref)).isTrue();
     assertThat(index.count(ref)).isZero();
     // 새 row_id=3 이 같은 내용(해시)이면 벡터를 복사한다. 모델이 다르면 복사하지 않는다.
-    assertThat(index.upsertReusing(ref, 3, "a", "same-hash", "fake")).isTrue();
-    assertThat(index.upsertReusing(ref, 2, "a", "same-hash", "other-model")).isFalse();
-    assertThat(index.upsertReusing(ref, 2, "b", "unknown-hash", "fake")).isFalse();
-    assertThat(index.existingHashes(ref, List.of(3L))).containsEntry(3L, "same-hash");
+    // 배치째(WD-743): 같은 해시의 두 행(3·4)은 모두 복사되고, 모르는 해시(2)는 빠진다 — 한 문장으로 처리한다.
+    assertThat(
+            index.upsertReusing(
+                ref,
+                List.of(
+                    new ReuseCandidate(3, "a", "same-hash"),
+                    new ReuseCandidate(4, "a", "same-hash"),
+                    new ReuseCandidate(2, "b", "unknown-hash")),
+                "fake"))
+        .containsExactlyInAnyOrder(3L, 4L);
+    assertThat(
+            index.upsertReusing(
+                ref, List.of(new ReuseCandidate(5, "a", "same-hash")), "other-model"))
+        .isEmpty();
+    assertThat(index.upsertReusing(ref, List.of(), "fake")).isEmpty();
+    assertThat(index.existingHashes(ref, List.of(2L, 3L, 4L, 5L)))
+        .containsOnlyKeys(3L, 4L)
+        .containsEntry(3L, "same-hash");
 
     index.dropPreviousGenerations(ref);
     assertThat(index.hasPreviousGeneration(ref)).isFalse();

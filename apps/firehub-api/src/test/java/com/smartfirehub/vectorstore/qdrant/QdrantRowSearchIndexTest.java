@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.rowsearch.IndexRef;
 import com.smartfirehub.dataset.rowsearch.IndexedRow;
+import com.smartfirehub.dataset.rowsearch.ReuseCandidate;
 import com.smartfirehub.dataset.rowsearch.RowFilter;
 import com.smartfirehub.dataset.rowsearch.RowHit;
 import com.smartfirehub.dataset.rowsearch.RowQueryFilter;
@@ -177,9 +178,19 @@ class QdrantRowSearchIndexTest extends IntegrationTestBase {
     index.startGeneration(gen2, DIM);
     assertThat(index.hasPreviousGeneration(gen2)).isTrue();
     // 새 세대에서 row_id 가 바뀌었다(10 ← 옛 1). 같은 해시·모델이면 벡터를 재사용한다.
-    assertThat(index.upsertReusing(gen2, 10, "배관 누수 발생", "h1", "fake")).isTrue();
-    assertThat(index.upsertReusing(gen2, 11, "새 내용", "nope", "fake")).isFalse();
-    assertThat(index.upsertReusing(gen2, 12, "소음 민원", "h2", "other-model")).isFalse();
+    // 배치째(WD-743): 해시 묶음 조회 한 번으로 h1 을 찾고, 모르는 해시(11)는 빠진다.
+    assertThat(
+            index.upsertReusing(
+                gen2,
+                List.of(
+                    new ReuseCandidate(10, "배관 누수 발생", "h1"),
+                    new ReuseCandidate(11, "새 내용", "nope")),
+                "fake"))
+        .containsExactly(10L);
+    assertThat(
+            index.upsertReusing(
+                gen2, List.of(new ReuseCandidate(12, "소음 민원", "h2")), "other-model"))
+        .isEmpty();
 
     // 새 세대 검색에는 옛 세대 점이 섞이지 않는다
     assertThat(index.semantic(gen2, axis(0), RowQueryFilter.none(), 10))
