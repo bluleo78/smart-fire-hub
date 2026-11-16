@@ -1321,3 +1321,61 @@ describe('processMessage — 공급자 오류 (#711)', () => {
     expect(events.some((e) => e.type === 'error')).toBe(false);
   });
 });
+
+// WD-765: 리포트 저장 도구는 위임 전용이다 — SDK 스트림에서 메인 top-level(parent_tool_use_id 없음) 호출은 정책 오류로
+// 끊고, report-writer 하위 에이전트 안(parent_tool_use_id 있음) 호출은 통과시킨다(agent-sdk 가 parent_tool_use_id 를
+// checkToolPolicy 에 넘기는지 고정한다).
+describe('executeAgent — 리포트 저장 도구 위임 전용 (WD-765)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  /** write_report_file tool_use 를 parent 와 함께 흘린 뒤 이벤트를 모은다. */
+  const run = async (parent: string | null) => {
+    const { query } = await import('@anthropic-ai/claude-agent-sdk');
+    async function* fakeStream() {
+      yield {
+        type: 'assistant',
+        parent_tool_use_id: parent,
+        message: {
+          content: [
+            {
+              type: 'tool_use',
+              id: 'toolu_write_1',
+              name: 'mcp__firehub__write_report_file',
+              input: { fileName: 'report.html', content: '<!DOCTYPE html>' },
+            },
+          ],
+        },
+      };
+      yield {
+        type: 'result',
+        subtype: 'success',
+        session_id: 'sess-report',
+        usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+      };
+    }
+    vi.mocked(query).mockReturnValue(fakeStream() as unknown as ReturnType<typeof query>);
+    const { executeAgent } = await import('./agent-sdk.js');
+    const events: { type: string; message?: unknown }[] = [];
+    for await (const event of executeAgent({ message: '리포트', tenantId: 1, userId: 1, apiKey: 'sk-test-key' })) {
+      events.push(event as { type: string; message?: unknown });
+    }
+    return events;
+  };
+
+  it('메인이 직접 호출하면 정책 오류로 스트림을 끊는다', async () => {
+    const events = await run(null);
+    const errs = events.filter((e) => e.type === 'error');
+    expect(errs).toHaveLength(1);
+    expect(String(errs[0].message)).toMatch(/blocked by policy \(WD-765\)/);
+    expect(events.some((e) => e.type === 'done')).toBe(false);
+  });
+
+  it('report-writer 하위 에이전트 안(parent_tool_use_id 있음)의 호출은 통과한다', async () => {
+    const events = await run('toolu_delegate_report');
+    expect(events.filter((e) => e.type === 'error')).toHaveLength(0);
+    expect(events.some((e) => e.type === 'done')).toBe(true);
+  });
+});

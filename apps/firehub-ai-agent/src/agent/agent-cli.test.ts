@@ -2364,3 +2364,65 @@ describe('executeCliAgent — 최대 턴 수(--max-turns, WD-59)', () => {
     expect(await spawnArgs({ maxTurns: 0 })).not.toContain('--max-turns');
   });
 });
+
+// WD-765: 리포트 저장 도구는 위임 전용이다 — CLI 스트림에서 메인 top-level(parent_tool_use_id 없음) 호출은 막고(child 종료),
+// report-writer 하위 에이전트 안(parent_tool_use_id 있음) 호출은 통과시킨다. 형식·개인정보 가림 규칙이 하위 에이전트
+// 규칙에만 있어, 메인이 직접 저장하면 그 규칙이 우회되기 때문이다.
+describe('executeCliAgent — 리포트 저장 도구 위임 전용 (WD-765)', () => {
+  beforeEach(() => {
+    spawnMock.mockReset();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  /** write_report_file tool_use 한 줄을 parent 와 함께 흘린 뒤 이벤트를 모은다. */
+  const run = async (parent: string | null) => {
+    const lines: string[] = [
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: parent,
+        message: {
+          content: [
+            {
+              type: 'tool_use',
+              id: 'toolu_write_1',
+              name: 'mcp__firehub__write_report_file',
+              input: { fileName: 'report.html', content: '<!DOCTYPE html>' },
+            },
+          ],
+        },
+      }),
+      JSON.stringify({ type: 'result', subtype: 'success' }),
+    ];
+    const child = makeFakeChildWithLines(lines);
+    spawnMock.mockReturnValue(child);
+    const events: Array<{ type: string; message?: unknown }> = [];
+    for await (const ev of executeCliAgent({
+      message: '리포트',
+      tenantId: 1,
+      userId: 1,
+      useSubscription: false,
+      apiKey: 'sk-test',
+    } as never)) {
+      events.push(ev as { type: string; message?: unknown });
+    }
+    return { events, child };
+  };
+
+  it('메인이 직접 호출하면 정책 오류를 내고 child 를 종료한다', async () => {
+    const { events, child } = await run(null);
+    const errs = events.filter((e) => e.type === 'error');
+    expect(errs).toHaveLength(1);
+    expect(String(errs[0].message)).toMatch(/blocked by policy \(WD-765\)/);
+    expect(child.kill).toHaveBeenCalled();
+  });
+
+  it('report-writer 하위 에이전트 안(parent_tool_use_id 있음)의 호출은 통과한다', async () => {
+    const { events } = await run('toolu_delegate_report');
+    // 정책 오류가 없고, 도구 호출이 그대로 tool_use 이벤트로 흘러간다(child 종료는 스트림 정리로도 일어나 판정에 쓰지 않는다)
+    expect(events.filter((e) => e.type === 'error')).toHaveLength(0);
+    expect(events.some((e) => e.type === 'tool_use')).toBe(true);
+  });
+});

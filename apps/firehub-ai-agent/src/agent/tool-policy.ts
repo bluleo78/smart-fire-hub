@@ -89,6 +89,11 @@ export const DELEGATION_ONLY_TOOLS: readonly string[] = [
   'mcp__firehub__execute_proactive_job',
   'mcp__firehub__list_job_executions',
   'mcp__firehub__get_execution',
+  // WD-765: 스마트 작업 리포트 저장 도구. 형식(HTML·마크다운·요약 세 파일)·개인정보 가림 규칙은 report-writer 하위
+  // 에이전트의 agent.md 에만 있어, 메인이 위임 없이 직접 저장하면 그 규칙이 통째로 우회된다. 그래서 SDK·CLI 의 메인
+  // top-level 호출은 막고 report-writer 내부(parentToolUseId 존재)의 저장만 통과시킨다. 위임이 없는 opencode 는 메인이
+  // 직접 저장하지만(WD-62) agent-opencode 는 이 정책 검사를 거치지 않으므로 영향이 없다.
+  'mcp__firehub__write_report_file',
 ] as const;
 
 /**
@@ -112,6 +117,8 @@ const DELEGATION_ONLY_REASONS: Readonly<Record<string, string>> = {
     'admin-only tool blocked by policy (#614): smart job execution history lookups must be delegated to the smart job management subagent',
   'mcp__firehub__get_execution':
     'admin-only tool blocked by policy (#614): smart job execution result lookups must be delegated to the smart job management subagent',
+  'mcp__firehub__write_report_file':
+    'tool blocked by policy (WD-765): report file saving must be delegated to the report writing subagent',
 };
 
 /**

@@ -300,6 +300,8 @@ describe('Proactive routes — integration tests', () => {
     expect(res.body).toHaveProperty('error');
   });
 
+  // WD-765: 리포트 파일 없이 rawText 를 리포트로 파싱하는 건 위임이 없는 opencode 뿐이다(sdk·cli 는 파일이 없으면 저장
+  // 실패 502). 그래서 rawText 파싱을 다루는 시험(TC3·TC4·TC7·줄바꿈 묶음)은 opencode 로 보낸다.
   it('TC3: POST /agent/proactive with template returns structured 3-section response with cards', async () => {
     const cardsData = [
       { title: '카드1', value: '100', description: '설명1' },
@@ -326,7 +328,7 @@ describe('Proactive routes — integration tests', () => {
       {
         prompt: '데이터를 분석해주세요',
         tenantId: 1,
-        agentType: 'sdk',
+        agentType: 'opencode',
         context: { metric: 42 },
         template: {
           sections: [
@@ -373,7 +375,7 @@ describe('Proactive routes — integration tests', () => {
         createApp(),
         'POST',
         '/agent/proactive',
-        { prompt: 'p', tenantId: 1, agentType: 'sdk', context: {}, template },
+        { prompt: 'p', tenantId: 1, agentType: 'opencode', context: {}, template },
         { Authorization: `Internal ${VALID_TOKEN}` },
       );
     };
@@ -523,7 +525,7 @@ describe('Proactive routes — integration tests', () => {
       {
         prompt: '간단히 분석해주세요',
         tenantId: 1,
-        agentType: 'sdk',
+        agentType: 'opencode',
         context: { value: 'test' },
       },
       { Authorization: `Internal ${VALID_TOKEN}` },
@@ -718,8 +720,9 @@ describe('Proactive routes — integration tests', () => {
     expect((res.body as { code: string }).code).toBe('AGENT_EMPTY_OUTPUT');
   });
 
-  // WD-765: 위임 경로(sdk·cli)에서 report-writer 가 파일을 저장하지 못하면 원인(저장 실패)을 api 에 알린다 — 502 는
-  // AGENT_REPORT_NOT_SAVED 코드로, 200 은 reportFilesMissing 플래그로. 인증·한도 신호는 언제나 우선이다.
+  // WD-765: 위임 경로(sdk·cli)에서 report-writer 가 파일을 저장하지 못하면 본문 글(rawText)과 상관없이 502
+  // AGENT_REPORT_NOT_SAVED 로 실패한다 — 그 글은 리포트가 아니라 메인 에이전트의 설명(저장 실패 문장 등)이라 CHAT/EMAIL
+  // 로 나가면 안 된다. 인증·한도 신호는 언제나 우선이고, 위임이 없는 opencode 는 rawText 로 대신 응답한다.
   describe('리포트 파일 저장 실패 안내 (WD-765)', () => {
     type Events = Array<Record<string, unknown>>;
     /** events 를 흘리는 실행. writeFiles 가 있으면 실행 중에 reportDir 에 그 파일들을 저장한다(report-writer 흉내). */
@@ -744,7 +747,7 @@ describe('Proactive routes — integration tests', () => {
         { Authorization: `Internal ${VALID_TOKEN}` },
       );
     };
-    type Body = { code?: string; reportFilesMissing?: boolean; rawText?: string };
+    type Body = { code?: string; rawText?: string };
 
     it.each(['sdk', 'cli'])('(a) %s: 파일도 rawText 도 없으면 502 + AGENT_REPORT_NOT_SAVED', async (agentType) => {
       const res = await post(agentType, []);
@@ -758,28 +761,42 @@ describe('Proactive routes — integration tests', () => {
       expect((res.body as Body).code).toBe('AGENT_AUTH_OR_QUOTA_FAILURE');
     });
 
-    it('(c) sdk: 파일이 없고 rawText 가 있으면 200 + reportFilesMissing: true (rawText 리포트는 그대로 성공)', async () => {
-      const res = await post('sdk', [{ type: 'text', content: '분석 결과 본문' }]);
-      expect(res.status).toBe(200);
+    it.each(['sdk', 'cli'])('(c) %s: 파일이 없으면 rawText 가 있어도 502 + AGENT_REPORT_NOT_SAVED (본문 글을 리포트로 내보내지 않는다)', async (agentType) => {
+      const res = await post(agentType, [
+        { type: 'text', content: '리포트 저장에 실패했습니다. report-writer 가 파일을 저장하지 못했습니다.' },
+      ]);
+      expect(res.status).toBe(502);
       const body = res.body as Body;
-      expect(body.reportFilesMissing).toBe(true);
-      expect(body.rawText).toBe('분석 결과 본문');
+      expect(body.code).toBe('AGENT_REPORT_NOT_SAVED');
+      // 메인 에이전트가 쓴 글은 응답에 싣지 않는다
+      expect(body.rawText).toBeUndefined();
     });
 
-    it('(d) sdk: 리포트 파일이 있으면 reportFilesMissing 이 참이 아니다', async () => {
+    it('(d) sdk: 리포트 파일이 있으면 200 이고 파일 내용으로 응답한다', async () => {
       const res = await post('sdk', [{ type: 'text', content: '생성 완료' }], {
         'report.html': '<h1>리포트</h1>',
         'report.md': '## 요약\n내용',
         'summary.md': '요약',
       });
       expect(res.status).toBe(200);
-      expect((res.body as Body).reportFilesMissing).not.toBe(true);
+      expect((res.body as Body).rawText).toBe('<h1>리포트</h1>');
     });
 
-    it('(e) opencode: 파일이 없고 rawText 가 있으면 200 이고 reportFilesMissing 이 참이 아니다', async () => {
+    it('(d2) sdk: report.md 만 있어도(report.html 없음) 저장된 것으로 보고 200 이다', async () => {
+      const res = await post('sdk', [{ type: 'text', content: '생성 완료' }], { 'report.md': '## 요약\n내용' });
+      expect(res.status).toBe(200);
+    });
+
+    it('(e) opencode: 파일이 없고 rawText 가 있으면 200 으로 rawText 를 그대로 응답한다', async () => {
       const res = await post('opencode', [{ type: 'text', content: '분석 결과 본문' }]);
       expect(res.status).toBe(200);
-      expect((res.body as Body).reportFilesMissing).not.toBe(true);
+      expect((res.body as Body).rawText).toBe('분석 결과 본문');
+    });
+
+    it('(f) opencode: 파일이 없고 rawText 가 인증 실패 신호면 AGENT_AUTH_OR_QUOTA_FAILURE 다', async () => {
+      const res = await post('opencode', [{ type: 'text', content: 'Failed to authenticate. API Error: 401 invalid' }]);
+      expect(res.status).toBe(502);
+      expect((res.body as Body).code).toBe('AGENT_AUTH_OR_QUOTA_FAILURE');
     });
   });
 
@@ -804,7 +821,7 @@ describe('Proactive routes — integration tests', () => {
       app,
       'POST',
       '/agent/proactive',
-      { prompt: '운영 리포트', tenantId: 1, agentType: 'sdk', context: { value: 'test' } },
+      { prompt: '운영 리포트', tenantId: 1, agentType: 'opencode', context: { value: 'test' } },
       { Authorization: `Internal ${VALID_TOKEN}` },
     );
 

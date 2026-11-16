@@ -254,9 +254,7 @@ public class ProactiveJobAsyncRunner {
           // 내부 사유(오류 원문 포함 가능)는 로그에만 남기고, 저장·노출 메시지는 번역된 문구를 쓴다.
           log.error(
               "Proactive job {} produced an undeliverable result: {}", jobId, rejection.get());
-          // WD-765: 리포트 파일이 저장되지 않은 결과면 「AI 인증 정보 확인」 대신 저장 실패를 안내한다.
-          throw new ProactiveJobException(
-              ProactiveResultValidator.userFacingRejectionMessage(result));
+          throw new ProactiveJobException(ProactiveResultValidator.USER_FACING_FAILURE_MESSAGE);
         }
 
         // 결과 저장

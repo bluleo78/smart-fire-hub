@@ -40,28 +40,11 @@ public final class ProactiveResultValidator {
 
   /**
    * WD-765: AI(report-writer)가 리포트 파일을 저장하지 못해 실패했을 때 사용자에게 노출할 문구. 인증 문제가 아닌데 「AI 인증 정보 확인」으로 안내하면
-   * 사용자가 멀쩡한 자격증명을 고치게 된다. ai-agent 502 코드 {@code AGENT_REPORT_NOT_SAVED}(ProactiveAiClient)와
-   * {@code reportFilesMissing} 결과 거절(ProactiveJobAsyncRunner) 두 경로가 이 상수 하나를 쓴다.
+   * 사용자가 멀쩡한 자격증명을 고치게 된다. ai-agent 는 위임 경로(sdk·cli)에서 리포트 파일이 없으면 본문 글과 상관없이 502 코드 {@code
+   * AGENT_REPORT_NOT_SAVED} 로 실패하고, ProactiveAiClient 가 그 코드로 이 문구를 고른다.
    */
   public static final String REPORT_NOT_SAVED_MESSAGE =
       "AI가 리포트 파일을 저장하지 못해 리포트를 만들지 못했습니다. 잠시 뒤 다시 실행하고, 계속되면 관리자에게 문의해 주세요.";
-
-  /**
-   * 거절된 결과에 보여줄 문구를 고른다 — 거절 판정({@link #findRejectionReason}) 자체와는 별개다.
-   *
-   * <p>저장 실패 문구(WD-765)는 「인증·한도 실패 서명이 아닌 거절(빈 결과) + reportFilesMissing=true」일 때만 쓴다. 본문이 인증·한도 실패
-   * 서명으로 시작하면 파일이 없었어도 그 실패가 진짜 원인이므로 기존 인증 문구가 우선이다(ai-agent 의 「인증·한도 신호가 늘 우선」 규칙과 같다). 그 밖에는 기존
-   * 인증 문구다.
-   */
-  public static String userFacingRejectionMessage(ProactiveResult result) {
-    if (result == null || !result.reportFilesMissing()) {
-      return USER_FACING_FAILURE_MESSAGE;
-    }
-    // 인증·한도 서명이 있으면 저장 실패보다 인증 안내가 우선
-    return matchedFailureSignature(result).isPresent()
-        ? USER_FACING_FAILURE_MESSAGE
-        : REPORT_NOT_SAVED_MESSAGE;
-  }
 
   /**
    * 결과를 COMPLETED로 기록하고 발송해도 되는지 검증한다.
@@ -82,18 +65,13 @@ public final class ProactiveResultValidator {
     // 2) 본문이 에이전트 실패 메시지로 시작하는 결과 — 오류 원문이 리포트로 둔갑한 경우.
     // startsWith로 맨 앞에서만 매칭한다: 리포트는 장애를 *서술*하면서 본문에 같은 문구를 인용할 수
     // 있으므로 contains로 검사하면 정상 리포트가 FAILED가 되는 회귀가 생긴다.
-    return matchedFailureSignature(result)
-        .map(signature -> "agent failure text in report body: " + signature);
-  }
-
-  /** 본문(사용자에게 보이는 요약 경로 우선)이 에이전트 실패 서명으로 시작하면 그 서명을 돌려준다. 거절 판정과 거절 문구 선택이 같은 기준을 쓰도록 한곳에 둔다. */
-  private static Optional<String> matchedFailureSignature(ProactiveResult result) {
     String head = firstContent(result).toLowerCase(Locale.ROOT);
     for (String signature : AGENT_FAILURE_SIGNATURES) {
       if (head.startsWith(signature)) {
-        return Optional.of(signature);
+        return Optional.of("agent failure text in report body: " + signature);
       }
     }
+
     return Optional.empty();
   }
 

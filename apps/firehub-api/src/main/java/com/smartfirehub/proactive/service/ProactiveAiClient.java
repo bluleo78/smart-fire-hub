@@ -203,9 +203,6 @@ public class ProactiveAiClient {
     // 리포트 요약 텍스트 (채팅/이메일 미리보기에 사용)
     String summary = (String) responseMap.getOrDefault("summary", null);
 
-    // WD-765: 위임 경로에서 리포트 파일이 저장되지 않았다는 표시(없으면 false) — 실행기가 결과를 거절할 때 안내 문구를 가른다.
-    boolean reportFilesMissing = Boolean.TRUE.equals(responseMap.get("reportFilesMissing"));
-
-    return new ProactiveResult(title, sections, usage, htmlContent, summary, reportFilesMissing);
+    return new ProactiveResult(title, sections, usage, htmlContent, summary);
   }
 }

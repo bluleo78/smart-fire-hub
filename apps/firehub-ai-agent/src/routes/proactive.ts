@@ -80,17 +80,12 @@ interface ProactiveResponse {
     inputTokens: number;
     outputTokens: number;
   };
-  /**
-   * WD-765: 위임 경로(sdk·cli)에서 리포트 파일(report.html·report.md)이 하나도 저장되지 않아 rawText 로 대신 응답했을 때만 true.
-   * firehub-api 가 이 결과를 거절(실패 서명·빈 결과)하면 「AI 인증 정보 확인」 대신 저장 실패 문구를 고르는 근거다.
-   * 파일이 있거나 opencode 면 싣지 않는다.
-   */
-  reportFilesMissing?: boolean;
 }
 
 /**
- * WD-765: 위임 경로에서 리포트 파일이 저장되지 않았고 대신 쓸 출력도 없을 때의 502 코드. firehub-api ProactiveAiClient 가
- * 이 코드로 「AI가 리포트 파일을 저장하지 못해…」 안내를 고른다.
+ * WD-765: 위임 경로(sdk·cli)에서 리포트 파일(report.html·report.md)이 하나도 저장되지 않았을 때의 502 코드 — 본문 글(rawText)이
+ * 있어도 이 코드로 실패한다(인증·한도 서명이 있으면 그 코드가 우선). firehub-api ProactiveAiClient 가 이 코드로
+ * 「AI가 리포트 파일을 저장하지 못해…」 안내를 고른다.
  */
 export const AGENT_REPORT_NOT_SAVED = 'AGENT_REPORT_NOT_SAVED';
 
@@ -257,7 +252,7 @@ function buildTemplateSectionList(template: Template): string {
 
 /**
  * report-writer 하위 에이전트에게 리포트 저장을 위임하는 경로(sdk·cli·cli-api)인지 — opencode 만 위임 없이 직접 저장한다.
- * 프롬프트 선택과 WD-765 의 「파일 없음」 안내(502 코드·reportFilesMissing)가 같은 기준을 쓰도록 한 곳에 둔다.
+ * 프롬프트 선택과 WD-765 의 「파일 없음 = 저장 실패(502 AGENT_REPORT_NOT_SAVED)」 판정이 같은 기준을 쓰도록 한 곳에 둔다.
  */
 function isDelegationPath(agentType: AgentType): boolean {
   return agentType !== 'opencode';
@@ -555,26 +550,27 @@ router.post('/proactive', ...authedJsonBody(), async (req: Request, res: Respons
     if (htmlContent) console.log(`[Proactive] HTML report: ${htmlContent.length} bytes`);
     if (mdContent) console.log(`[Proactive] MD report: ${mdContent.length} bytes`);
     if (summary) console.log(`[Proactive] Summary: ${summary.length} bytes`);
-    if (!fromFile) console.warn(`[Proactive] No report files found in ${reportDir}, falling back to rawText`);
+    if (!fromFile) console.warn(`[Proactive] No report files found in ${reportDir}`);
 
     // 리포트 파일이 하나도 없는데 rawText마저 비었거나 에이전트 실패 메시지라면,
     // 이 실행은 분석을 전혀 수행하지 못한 것이다. 200으로 응답하면 백엔드가 COMPLETED로
     // 기록하고 오류 원문을 리포트 본문 삼아 CHAT/EMAIL로 발송한다 (이슈 #350).
     // 리포트 파일이 하나라도 생성됐다면 정상 실행이므로 이 게이트를 타지 않는다.
-    // WD-765: 위임 경로(sdk·cli)에서 파일이 없다는 건 report-writer 가 저장하지 못했다는 뜻이다 — 사용자 안내가 진짜 원인
-    // (저장 실패)을 말하도록 502 코드와 200 의 reportFilesMissing 을 이 값으로 정한다.
-    const reportFilesMissing = !fromFile && isDelegationPath(agentType);
+    // WD-765: 위임 경로(sdk·cli)에서 파일이 없다는 건 report-writer 가 저장하지 못했다는 뜻이다 — 이때 rawText 는 리포트가
+    // 아니라 메인 에이전트의 설명(위임 프롬프트 규칙에 따라 쓴 「저장 실패」 문장 등)이므로, 글이 있어도 리포트로 내보내지
+    // 않고 저장 실패로 응답한다. 파일 없이 rawText 로 대신 응답하는 건 위임이 없는 opencode 뿐이다.
     if (!fromFile) {
       const failureSignature = detectAgentFailure(rawText);
-      if (failureSignature || !rawText.trim()) {
+      const reportNotSaved = isDelegationPath(agentType);
+      if (failureSignature || reportNotSaved || !rawText.trim()) {
         // 원문(에러 메시지·request_id 포함)은 서버 로그에만 남기고 응답 본문에는 싣지 않는다.
-        console.error(
-          `[Proactive] Agent produced no usable report (signature=${failureSignature ?? 'empty-output'}). raw: ${rawText.slice(0, 500)}`,
-        );
-        // 인증·한도 신호가 언제나 우선이다(진짜 인증 실패 안내는 그대로). 그 밖의 빈 출력은 위임 경로면 저장 실패로 안내한다.
+        const reason = failureSignature ?? (reportNotSaved ? 'report-not-saved' : 'empty-output');
+        console.error(`[Proactive] Agent produced no usable report (signature=${reason}). raw: ${rawText.slice(0, 500)}`);
+        // 인증·한도 신호가 언제나 우선이다(진짜 인증 실패 안내는 그대로). 그 밖에는 위임 경로면 저장 실패,
+        // opencode 의 빈 출력이면 기존 빈 출력 코드로 안내한다.
         const code = failureSignature
           ? AGENT_AUTH_OR_QUOTA_FAILURE
-          : reportFilesMissing
+          : reportNotSaved
             ? AGENT_REPORT_NOT_SAVED
             : 'AGENT_EMPTY_OUTPUT';
         respondNoUsableReport(res, code);
@@ -582,7 +578,7 @@ router.post('/proactive', ...authedJsonBody(), async (req: Request, res: Respons
       }
     }
 
-    // sections: PDF/이메일에서 사용. report.md → parseSections, 없으면 rawText 폴백
+    // sections: PDF/이메일에서 사용. report.md → parseSections, 없으면 rawText 폴백(파일 없이 여기 오는 건 opencode 뿐)
     const sections = mdContent
       ? parseSections(mdContent, body.template)
       : fromFile
@@ -599,8 +595,6 @@ router.post('/proactive', ...authedJsonBody(), async (req: Request, res: Respons
         inputTokens: totalInputTokens,
         outputTokens: totalOutputTokens,
       },
-      // 파일이 있거나 opencode 면 필드를 싣지 않는다 — 기존 응답 모양을 그대로 둔다.
-      ...(reportFilesMissing ? { reportFilesMissing: true } : {}),
     };
 
     res.json(result);

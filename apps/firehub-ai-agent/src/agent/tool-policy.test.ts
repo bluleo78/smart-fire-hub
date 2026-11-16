@@ -285,5 +285,25 @@ describe('tool-policy (#256, #266)', () => {
         checkToolPolicy('mcp__firehub__write_report_file', { fileName: 'report.html', content: '<!DOCTYPE html>' }, ['report-writer'], 'toolu_parent'),
       ).toBeNull();
     });
+
+    // 리포트 형식·개인정보 가림 규칙은 report-writer 규칙에만 있으므로, 메인이 위임 없이 직접 저장하는 길은 막는다.
+    it('DELEGATION_ONLY_TOOLS 에 write_report_file 이 포함된다 (회귀 가드)', () => {
+      expect(DELEGATION_ONLY_TOOLS).toContain('mcp__firehub__write_report_file');
+    });
+
+    it('메인이 parent_tool_use_id 없이 write_report_file 을 직접 호출하면 차단된다 (null·undefined 모두)', () => {
+      const input = { fileName: 'report.html', content: '<!DOCTYPE html>' };
+      expect(checkToolPolicy('mcp__firehub__write_report_file', input, ['report-writer'], null)).toMatch(
+        /blocked by policy \(WD-765\)/,
+      );
+      expect(checkToolPolicy('mcp__firehub__write_report_file', input, ['report-writer'])).toMatch(/blocked by policy/);
+    });
+
+    it('차단 메시지에 mcp__firehub__* 도구 식별자·하위 에이전트 코드명을 노출하지 않는다 (L2 준수)', () => {
+      const r = checkToolPolicy('mcp__firehub__write_report_file', undefined, undefined, null) ?? '';
+      expect(r).not.toContain('mcp__firehub__');
+      expect(r).not.toContain('write_report_file');
+      expect(r).not.toContain('report-writer');
+    });
   });
 });

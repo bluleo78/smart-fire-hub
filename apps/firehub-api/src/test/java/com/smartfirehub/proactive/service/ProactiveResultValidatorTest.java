@@ -2,11 +2,8 @@ package com.smartfirehub.proactive.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.proactive.dto.ProactiveResult;
 import java.util.List;
-import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -95,66 +92,5 @@ class ProactiveResultValidatorTest {
         .doesNotContain("request_id")
         .doesNotContain("authentication_error")
         .contains("AI 인증 정보");
-  }
-
-  /**
-   * WD-765: reportFilesMissing 은 ai-agent→api 사이 내부 신호라 저장·응답 JSON 에 남기지 않는다. 실행기가 저장하는 결과
-   * 맵(updateResult)에는 필드가 없고, 필드가 있는 옛 결과 행·필드가 없는 결과 행 모두 컨트롤러처럼 다시 읽을 수 있다(늘 false). 5인자 보조 생성자가
-   * 있어도 Jackson 은 레코드 정식 생성자를 써야 한다.
-   */
-  @Test
-  void 결과_맵에는_reportFilesMissing_이_저장되지_않고_다시_읽으면_false다() {
-    ObjectMapper mapper = new ObjectMapper();
-    ProactiveResult saved = new ProactiveResult("리포트", List.of(), null, "<p>x</p>", "요약", true);
-    Map<String, Object> savedMap = mapper.convertValue(saved, new TypeReference<>() {});
-    assertThat(savedMap).doesNotContainKey("reportFilesMissing").containsEntry("summary", "요약");
-    ProactiveResult reread = mapper.convertValue(savedMap, ProactiveResult.class);
-    assertThat(reread.reportFilesMissing()).isFalse();
-    assertThat(reread.htmlContent()).isEqualTo("<p>x</p>");
-
-    // 이 변경 전에 저장돼 필드가 남아 있는 행도 실패 없이 읽히고, 값은 무시된다
-    Map<String, Object> rowWithFlag =
-        Map.of("title", "리포트", "htmlContent", "<p>x</p>", "reportFilesMissing", true);
-    ProactiveResult withFlag = mapper.convertValue(rowWithFlag, ProactiveResult.class);
-    assertThat(withFlag.reportFilesMissing()).isFalse();
-    assertThat(withFlag.htmlContent()).isEqualTo("<p>x</p>");
-
-    Map<String, Object> legacyRow = Map.of("title", "리포트", "htmlContent", "<p>x</p>");
-    ProactiveResult legacy = mapper.convertValue(legacyRow, ProactiveResult.class);
-    assertThat(legacy.reportFilesMissing()).isFalse();
-    assertThat(legacy.htmlContent()).isEqualTo("<p>x</p>");
-  }
-
-  /**
-   * WD-765: 저장 실패 문구는 「서명이 아닌 거절(빈 결과) + reportFilesMissing=true」일 때만이다. 인증·한도 실패 서명으로 거절된 결과는 파일이
-   * 없었어도 인증 문구가 우선이다(ai-agent 의 「인증·한도 신호가 늘 우선」 규칙과 같다). 사용자 문구에 오류 원문이 섞이지 않는다.
-   */
-  @Test
-  void userFacingRejectionMessage_빈_결과이고_리포트_파일이_없을_때만_저장_실패_문구다() {
-    // 빈 결과 + true → 저장 실패
-    assertThat(
-            ProactiveResultValidator.userFacingRejectionMessage(
-                new ProactiveResult("t", List.of(), null, null, null, true)))
-        .isEqualTo(ProactiveResultValidator.REPORT_NOT_SAVED_MESSAGE)
-        .contains("리포트 파일을 저장하지 못해")
-        .doesNotContain("인증");
-    // 인증·한도 서명 + true → 인증 문구 우선
-    assertThat(
-            ProactiveResultValidator.userFacingRejectionMessage(
-                new ProactiveResult(
-                    "t", List.of(section("API Error: 429 rate limited")), null, null, null, true)))
-        .isEqualTo(ProactiveResultValidator.USER_FACING_FAILURE_MESSAGE);
-    assertThat(
-            ProactiveResultValidator.userFacingRejectionMessage(
-                new ProactiveResult("t", List.of(), null, null, "Failed to authenticate.", true)))
-        .isEqualTo(ProactiveResultValidator.USER_FACING_FAILURE_MESSAGE);
-    // 빈 결과 + false → 인증 문구
-    assertThat(
-            ProactiveResultValidator.userFacingRejectionMessage(
-                new ProactiveResult("t", List.of(), null, null, null)))
-        .isEqualTo(ProactiveResultValidator.USER_FACING_FAILURE_MESSAGE);
-    // null → 인증 문구
-    assertThat(ProactiveResultValidator.userFacingRejectionMessage(null))
-        .isEqualTo(ProactiveResultValidator.USER_FACING_FAILURE_MESSAGE);
   }
 }

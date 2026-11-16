@@ -1,12 +1,10 @@
 package com.smartfirehub.proactive.service;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.*;
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
-import com.smartfirehub.proactive.dto.ProactiveResult;
 import com.smartfirehub.proactive.exception.ProactiveJobException;
 import com.smartfirehub.settings.model.AiCredential;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -238,41 +236,5 @@ class ProactiveAiClientTest extends IntegrationTestBase {
                     null))
         .isInstanceOf(ProactiveJobException.class)
         .hasMessage(ProactiveResultValidator.USER_FACING_FAILURE_MESSAGE);
-  }
-
-  /**
-   * WD-765: 200 응답의 reportFilesMissing 을 결과에 옮긴다 — 실행기가 이 결과를 거절할 때 저장 실패 문구를 고르는 근거다. 필드가 없는 응답
-   * (파일이 있거나 opencode)은 false 다.
-   */
-  @Test
-  void execute_200_응답의_reportFilesMissing을_결과에_옮긴다() {
-    wireMock.stubFor(
-        post(urlEqualTo("/agent/proactive"))
-            .willReturn(okJson("{\"sections\":[],\"reportFilesMissing\":true}")));
-    ProactiveResult missing =
-        client.execute(
-            1L,
-            "prompt",
-            "{}",
-            new AiCredential.Sdk("oat-test", "sk-x"),
-            null,
-            null,
-            Map.of(),
-            null);
-    assertThat(missing.reportFilesMissing()).isTrue();
-
-    wireMock.resetAll();
-    wireMock.stubFor(post(urlEqualTo("/agent/proactive")).willReturn(okJson("{\"sections\":[]}")));
-    ProactiveResult present =
-        client.execute(
-            1L,
-            "prompt",
-            "{}",
-            new AiCredential.Sdk("oat-test", "sk-x"),
-            null,
-            null,
-            Map.of(),
-            null);
-    assertThat(present.reportFilesMissing()).isFalse();
   }
 }
