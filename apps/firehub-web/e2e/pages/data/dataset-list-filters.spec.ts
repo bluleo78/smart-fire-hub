@@ -158,6 +158,113 @@ test.describe('데이터셋 목록 — 필터 및 미리보기', () => {
       .toBeTruthy();
   });
 
+  /**
+   * WD-760 — 저장방식 필터에 「파일」이 없어 FILE 데이터셋만 골라 볼 수 없었다.
+   * 선택지는 이제 저장 방식 라벨 맵에서 만들어지므로 순서는 기존(전체·테이블·문서) 뒤에 「파일」이 붙고,
+   * 각 선택이 URL·목록 API 의 storageType 으로 이어져 그 저장 방식 데이터셋만 보이는지 확인한다.
+   */
+  test.describe('저장방식 필터 — 파일 (WD-760)', () => {
+    const mixed = [
+      createDataset({ id: 21, name: '출동 통계 테이블', storageType: 'TABLE', originType: 'SOURCE', tags: [] }),
+      createDataset({ id: 22, name: '점검 보고서 문서', storageType: 'DOCUMENT', originType: 'SOURCE', tags: [] }),
+      createDataset({ id: 23, name: '현장 사진 파일', storageType: 'FILE', originType: 'SOURCE', tags: [] }),
+    ];
+
+    /** 목록 API 모킹 — 서버처럼 storageType 파라미터로 걸러 돌려주고, 요청 URL 을 모은다 */
+    async function mockFilteredList(page: import('@playwright/test').Page) {
+      const urls: URL[] = [];
+      await page.route(
+        (url) => url.pathname === '/api/v1/datasets',
+        (route) => {
+          const url = new URL(route.request().url());
+          urls.push(url);
+          const storageType = url.searchParams.get('storageType');
+          const content = storageType ? mixed.filter((d) => d.storageType === storageType) : mixed;
+          return route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify(createPageResponse(content)),
+          });
+        },
+      );
+      return urls;
+    }
+
+    /** 저장방식 필터에서 옵션을 고른다 */
+    async function chooseStorage(page: import('@playwright/test').Page, label: string) {
+      await page.getByRole('combobox', { name: '저장 방식 필터' }).click();
+      await page.getByRole('option', { name: label, exact: true }).click();
+    }
+
+    test('선택지는 전체 저장방식·테이블·문서·파일 순서다', async ({ authenticatedPage: page }) => {
+      await setupCommon(page);
+      await mockFilteredList(page);
+      await page.goto('/data/datasets');
+
+      await page.getByRole('combobox', { name: '저장 방식 필터' }).click();
+      await expect(page.getByRole('option')).toHaveText(['전체 저장방식', '테이블', '문서', '파일']);
+    });
+
+    test('「파일」 선택 시 URL·API 에 storageType=FILE 이 실리고 FILE 데이터셋만 보인다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupCommon(page);
+      const urls = await mockFilteredList(page);
+      await page.goto('/data/datasets');
+      // 필터 전에는 세 저장 방식이 모두 보인다
+      await expect(page.getByRole('row', { name: /출동 통계 테이블/ })).toBeVisible();
+      await expect(page.getByRole('row', { name: /현장 사진 파일/ })).toBeVisible();
+
+      await chooseStorage(page, '파일');
+
+      // 화면 URL 과 목록 API 요청 모두 storageType=FILE
+      await expect(page).toHaveURL(/[?&]storageType=FILE(&|$)/);
+      await expect.poll(() => urls.some((u) => u.searchParams.get('storageType') === 'FILE')).toBeTruthy();
+      // 목록에는 FILE 데이터셋만 남고, 저장 방식 배지는 「파일」
+      const fileRow = page.getByRole('row', { name: /현장 사진 파일/ });
+      await expect(fileRow).toBeVisible();
+      await expect(fileRow.getByText('파일', { exact: true })).toBeVisible();
+      await expect(page.getByRole('row', { name: /출동 통계 테이블/ })).toHaveCount(0);
+      await expect(page.getByRole('row', { name: /점검 보고서 문서/ })).toHaveCount(0);
+      // 고른 값이 필터 상자에 보인다
+      await expect(page.getByRole('combobox', { name: '저장 방식 필터' })).toHaveText('파일');
+    });
+
+    test('「테이블」·「문서」 선택도 그대로 storageType 으로 거른다', async ({ authenticatedPage: page }) => {
+      await setupCommon(page);
+      const urls = await mockFilteredList(page);
+      await page.goto('/data/datasets');
+      await expect(page.getByRole('row', { name: /현장 사진 파일/ })).toBeVisible();
+
+      await chooseStorage(page, '테이블');
+      await expect(page).toHaveURL(/[?&]storageType=TABLE(&|$)/);
+      await expect.poll(() => urls.some((u) => u.searchParams.get('storageType') === 'TABLE')).toBeTruthy();
+      await expect(page.getByRole('row', { name: /출동 통계 테이블/ })).toBeVisible();
+      await expect(page.getByRole('row', { name: /현장 사진 파일/ })).toHaveCount(0);
+      await expect(page.getByRole('row', { name: /점검 보고서 문서/ })).toHaveCount(0);
+
+      await chooseStorage(page, '문서');
+      await expect(page).toHaveURL(/[?&]storageType=DOCUMENT(&|$)/);
+      await expect.poll(() => urls.some((u) => u.searchParams.get('storageType') === 'DOCUMENT')).toBeTruthy();
+      await expect(page.getByRole('row', { name: /점검 보고서 문서/ })).toBeVisible();
+      await expect(page.getByRole('row', { name: /출동 통계 테이블/ })).toHaveCount(0);
+      await expect(page.getByRole('row', { name: /현장 사진 파일/ })).toHaveCount(0);
+    });
+
+    test('URL 로 storageType=FILE 을 열면 필터가 「파일」로 복원되고 API 에도 실린다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupCommon(page);
+      const urls = await mockFilteredList(page);
+      await page.goto('/data/datasets?storageType=FILE');
+
+      await expect(page.getByRole('combobox', { name: '저장 방식 필터' })).toHaveText('파일');
+      await expect.poll(() => urls.some((u) => u.searchParams.get('storageType') === 'FILE')).toBeTruthy();
+      await expect(page.getByRole('row', { name: /현장 사진 파일/ })).toBeVisible();
+      await expect(page.getByRole('row', { name: /출동 통계 테이블/ })).toHaveCount(0);
+    });
+  });
+
   test('즐겨찾기 필터 버튼 클릭 시 API 에 favoriteOnly=true 가 전달된다', async ({
     authenticatedPage: page,
   }) => {

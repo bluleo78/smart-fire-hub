@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { ChevronDown, ChevronsUpDown,ChevronUp, Loader2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
-import { parseUtcDate } from '@/lib/formatters';
+import { getOriginTypeLabel, getStorageTypeLabel, parseUtcDate } from '@/lib/formatters';
 
 import { datasetsApi } from '../../../api/datasets';
 import { toCsvCell } from '../../../lib/csv';
@@ -19,13 +19,6 @@ import { WidgetShell } from './WidgetShell';
 interface ShowDatasetInput {
   datasetId: number;
 }
-
-const DATASET_TYPE_LABEL: Record<string, string> = {
-  SOURCE: '원본',
-  DERIVED: '파생',
-  TEMP: '임시',
-  DOCUMENT: '문서', // 비정형 문서 데이터셋 레이블
-};
 
 const PAGE_SIZE = 20;
 
@@ -176,7 +169,14 @@ export default function DatasetWidget({ input, onNavigate, displayMode }: Widget
     <WidgetShell
       title={dataset.name}
       icon="📦"
-      subtitle={dataset.storageType === 'DOCUMENT' ? '문서' : DATASET_TYPE_LABEL[dataset.originType]}
+      // 보조 라벨: 테이블이 아닌 저장 방식(문서·파일)은 저장 방식 라벨, 테이블은 출처 라벨(WD-760).
+      // 예전에는 DOCUMENT 만 골라내 파일(FILE) 데이터셋이 「원본」 같은 출처 라벨로 보여 테이블과 구분되지 않았다.
+      // 라벨은 공용 formatters 맵을 써 데이터셋 목록·홈과 같은 이름으로 보인다.
+      subtitle={
+        dataset.storageType !== 'TABLE'
+          ? getStorageTypeLabel(dataset.storageType)
+          : getOriginTypeLabel(dataset.originType)
+      }
       navigateTo={`/data/datasets/${dataset.id}`}
       onNavigate={onNavigate}
       displayMode={displayMode}

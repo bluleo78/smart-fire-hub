@@ -44,6 +44,7 @@ import {
   formatDateOnly,
   formatDateTimeMinute,
   formatRelativeTime,
+  STORAGE_TYPE_OPTIONS,
   type TypeLabelInfo,
 } from '../../lib/formatters';
 import { getPageAfterDelete, parseNonNegativeInt } from '../../lib/pagination';
@@ -339,8 +340,12 @@ export default function DatasetListPage() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="__all__">전체 저장방식</SelectItem>
-              <SelectItem value="TABLE">테이블</SelectItem>
-              <SelectItem value="DOCUMENT">문서</SelectItem>
+              {/* 선택지는 저장 방식 라벨 맵에서 만든다(WD-760) — 하드코딩하면 새 저장 방식(파일)이 빠져 거를 수 없었다 */}
+              {STORAGE_TYPE_OPTIONS.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
           {/* 출처 필터 */}

@@ -446,6 +446,31 @@ test.describe('홈 페이지', () => {
   });
 
   /**
+   * 회귀: WD-760 — 배지가 DOCUMENT 만 골라내 파일(FILE) 데이터셋이 「원본」 같은 출처 라벨로 보여 테이블과 구분되지 않았다.
+   * 테이블이 아닌 저장 방식은 저장 방식 라벨(파일), 테이블은 지금처럼 출처 라벨로 보인다.
+   */
+  test('최근 데이터셋 — 파일 데이터셋은 출처 대신 「파일」로 보인다 (WD-760)', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/datasets', {
+      content: [
+        { id: 31, name: '현장 사진 묶음', storageType: 'FILE', originType: 'SOURCE', createdAt: '2026-04-03T00:00:00' },
+        { id: 32, name: '소방서 위치 데이터', storageType: 'TABLE', originType: 'SOURCE', createdAt: '2026-04-02T00:00:00' },
+      ],
+      page: 0,
+      size: 5,
+      totalElements: 2,
+      totalPages: 1,
+    });
+
+    await page.goto('/');
+
+    const row = (name: string) => page.getByRole('button').filter({ hasText: name });
+    await expect(row('현장 사진 묶음')).toContainText('파일');
+    await expect(row('현장 사진 묶음')).not.toContainText('원본');
+    // 테이블은 지금처럼 출처 라벨
+    await expect(row('소방서 위치 데이터')).toContainText('원본');
+  });
+
+  /**
    * 회귀: WD-332 — 모바일(390px)에서 최근 데이터셋에 긴 이름이 있으면 그리드 칸이 내용 최소 너비만큼 늘어나,
    * 최근 대시보드·최근 데이터셋 카드가 화면보다 넓어지고 「전체 보기」·배지가 오른쪽에서 잘렸다.
    * 카드는 화면 폭 안에 있고, 긴 이름은 말줄임되며, 본문이 가로로 스크롤되지 않아야 한다.
