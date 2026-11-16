@@ -908,11 +908,14 @@ describe('Proactive routes — integration tests', () => {
   });
 
   // WD-766: 정상 응답이 끝난 뒤의 close(응답 완료 후 소켓 정리)는 abort 가 아니다.
+  // 정상 완료(200)이려면 위임 경로는 리포트 파일을 저장해야 한다(WD-765 — 없으면 502) — report-writer 처럼 report.md 를 쓴다.
   it('WD-766: 응답을 다 보낸 뒤의 연결 종료는 실행을 abort 하지 않는다', async () => {
     let receivedSignal: AbortSignal | undefined;
-    mockExecute.mockImplementation((opts: { abortSignal?: AbortSignal }) => {
+    mockExecute.mockImplementation((opts: { abortSignal?: AbortSignal; reportDir: string }) => {
       receivedSignal = opts.abortSignal;
       return (async function* () {
+        await fsp.mkdir(opts.reportDir, { recursive: true });
+        await fsp.writeFile(path.join(opts.reportDir, 'report.md'), '## 요약\n내용', 'utf-8');
         yield { type: 'text', content: '결과' };
         yield { type: 'done', inputTokens: 1, outputTokens: 1 };
       })();
