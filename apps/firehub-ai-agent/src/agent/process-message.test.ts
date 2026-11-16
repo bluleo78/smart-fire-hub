@@ -96,6 +96,22 @@ describe('processMessage', () => {
     expect(result).toEqual([]);
   });
 
+  // WD-767: tool_use 블록의 id 가 toolUseId 로 실려 tool_result 와 짝지을 수 있다
+  it('PM-07b: assistant tool_use block id is carried as toolUseId', () => {
+    const msg = {
+      type: 'assistant',
+      message: {
+        content: [{ type: 'tool_use', id: 'toolu_1', name: 'list_categories', input: { page: 1 } }],
+      },
+    } as unknown as SDKMessage;
+
+    const result = processMessage(msg, tag, false);
+
+    expect(result).toEqual([
+      { type: 'tool_use', toolName: 'list_categories', input: { page: 1 }, toolUseId: 'toolu_1' },
+    ]);
+  });
+
   // PM-07: assistant/tool_use — tool_use 이벤트 반환
   it('PM-07: assistant tool_use block emits tool_use event with name and input', () => {
     const msg = {

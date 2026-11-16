@@ -9,15 +9,17 @@
  * - COMPLETED: 요약(마크다운) + HTML 리포트(iframe) 또는 마크다운 섹션 폴백
  */
 
-import { ArrowLeft, FileDown, Loader2, Printer } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, FileDown, Loader2, Printer } from 'lucide-react';
 import { useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { useParams } from 'react-router-dom';
 import remarkGfm from 'remark-gfm';
 
+import { getNumberCheck } from '@/api/proactive';
 import ReportIframe from '@/components/ai/ReportIframe';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { InlineBanner } from '@/components/ui/inline-banner';
 import { SecurityLevelBadge } from '@/components/ui/SecurityLevelBadge';
 import { useExecution, useExecutionHtml } from '@/hooks/queries/useProactiveMessages';
 import { useJobGoBack } from '@/hooks/useGoBack';
@@ -149,6 +151,11 @@ function ExecutionDetailContent({ jobIdNum, executionIdNum }: { jobIdNum: number
     ? (execution.result.summary as string | undefined)
     : undefined;
 
+  // 수치 출처 검증 결과(WD-767) — 검증을 마쳤고(checked) 미확인 수치가 있을 때만 값을 남겨 경고를 보인다.
+  // 옛 실행은 필드가 없어 null 이므로 배너가 뜨지 않는다.
+  const checkResult = execution.status === 'COMPLETED' ? getNumberCheck(execution.result) : null;
+  const numberCheck = checkResult?.checked && checkResult.unverifiedTotal > 0 ? checkResult : null;
+
   // HTML이 없을 때 마크다운 섹션 폴백용
   const sections = execution.status === 'COMPLETED' && execution.result && !rawHtml
     ? getSections(execution.result)
@@ -258,6 +265,37 @@ function ExecutionDetailContent({ jobIdNum, executionIdNum }: { jobIdNum: number
           )}
           <p className="text-sm text-muted-foreground">{outcome.guide}</p>
         </div>
+      )}
+
+      {/* 출처를 확인하지 못한 수치 경고 — 요약 카드 위에 둔다(WD-767).
+          정적 안내이므로 InlineBanner 기본 role=status/aria-live 를 role=note 로 덮어쓴다. */}
+      {numberCheck && (
+        <InlineBanner
+          variant="warning"
+          role="note"
+          aria-live="off"
+          data-testid="number-check-banner"
+          icon={<AlertTriangle />}
+          title={`출처를 확인하지 못한 수치 ${numberCheck.unverifiedTotal}개`}
+        >
+          <p>
+            리포트의 아래 수치를 이 실행의 조회 결과에서 찾지 못했습니다. 계산하거나 지어낸 값일 수 있으니 확인하세요.
+          </p>
+          <ul className="mt-2 space-y-1">
+            {numberCheck.unverified.map((item, i) => (
+              <li key={`${item.text}-${i}`}>
+                <span className="font-bold">{item.text}</span>
+                {item.context && <span className="ml-2 text-muted-foreground">{item.context}</span>}
+              </li>
+            ))}
+          </ul>
+          {/* 목록은 최대 20개로 잘려 있다 — 나머지 개수를 알린다 */}
+          {numberCheck.unverifiedTotal - numberCheck.unverified.length > 0 && (
+            <p className="mt-1 text-muted-foreground">
+              외 {numberCheck.unverifiedTotal - numberCheck.unverified.length}개
+            </p>
+          )}
+        </InlineBanner>
       )}
 
       {/* COMPLETED 요약 섹션 — 마크다운으로 렌더링.

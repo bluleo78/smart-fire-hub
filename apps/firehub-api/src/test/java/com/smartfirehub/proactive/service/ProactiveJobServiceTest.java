@@ -142,6 +142,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
         List.of(new ProactiveResult.Section("summary", "요약", "요약 내용", null, null)),
         new ProactiveResult.Usage(100, 50, 150),
         null,
+        null,
         null);
   }
 
@@ -1052,7 +1053,8 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
                     null)),
             new ProactiveResult.Usage(0, 0, 0),
             "",
-            "");
+            "",
+            null);
 
     when(proactiveContextCollector.collectContext(any(), any(), any())).thenReturn("{}");
     when(proactiveAiClient.execute(

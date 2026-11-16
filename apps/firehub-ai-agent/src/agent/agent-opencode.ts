@@ -337,6 +337,7 @@ export function parseOpenCodeEvent(msg: Record<string, unknown>): SSEEvent[] {
   const part = (msg.part ?? {}) as {
     text?: unknown;
     tool?: unknown;
+    callID?: unknown;
     state?: { status?: unknown; input?: unknown; output?: unknown; error?: unknown };
     tokens?: { input?: unknown; output?: unknown };
     reason?: unknown;
@@ -361,9 +362,12 @@ export function parseOpenCodeEvent(msg: Record<string, unknown>): SSEEvent[] {
       // 문자열이 아니면(형태 변경 대비) JSON 으로 — "[object Object]" 로 뭉개지면 서로 다른 오류가
       // failure-streak 에서 같은 키로 합산돼 엉뚱하게 중단된다.
       const result = typeof raw === 'string' ? raw : raw == null ? '' : isError ? JSON.stringify(raw) : String(raw);
+      // WD-767: 호출 id(part.callID)가 있으면 두 이벤트에 toolUseId 로 싣는다 — 프로액티브 수치 대조가 결과를
+      // 호출한 도구와 id 로 짝짓는다(SDK·CLI 경로와 같은 계약). 없으면(형태 변경 대비) 싣지 않는다.
+      const idField = typeof part.callID === 'string' && part.callID ? { toolUseId: part.callID } : {};
       return [
-        { type: 'tool_use', toolName, input: part.state?.input },
-        { type: 'tool_result', toolName, result, ...(isError ? { isError: true } : {}) },
+        { type: 'tool_use', toolName, input: part.state?.input, ...idField },
+        { type: 'tool_result', toolName, result, ...(isError ? { isError: true } : {}), ...idField },
       ];
     }
     case 'step_finish': {

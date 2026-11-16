@@ -1,10 +1,12 @@
 package com.smartfirehub.proactive.service;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.*;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
+import com.smartfirehub.proactive.dto.ProactiveResult;
 import com.smartfirehub.proactive.exception.ProactiveJobException;
 import com.smartfirehub.settings.model.AiCredential;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -236,5 +238,66 @@ class ProactiveAiClientTest extends IntegrationTestBase {
                     null))
         .isInstanceOf(ProactiveJobException.class)
         .hasMessage(ProactiveResultValidator.USER_FACING_FAILURE_MESSAGE);
+  }
+
+  /** WD-767: 응답의 numberCheck 가 ProactiveResult 로 그대로 매핑된다. */
+  @Test
+  void execute_응답의_numberCheck를_결과에_매핑한다() {
+    wireMock.stubFor(
+        post(urlEqualTo("/agent/proactive"))
+            .willReturn(
+                okJson(
+                    "{\"sections\":[],\"numberCheck\":{\"checked\":true,"
+                        + "\"unverified\":[{\"text\":\"3.5억\",\"context\":\"매출 3.5억\"}],"
+                        + "\"unverifiedTotal\":3}}")));
+
+    ProactiveResult result =
+        client.execute(
+            1L,
+            "prompt",
+            "{}",
+            new AiCredential.Sdk("oat-test", "sk-x"),
+            null,
+            null,
+            Map.of(),
+            null);
+
+    assertThat(result.numberCheck()).isNotNull();
+    assertThat(result.numberCheck().checked()).isTrue();
+    assertThat(result.numberCheck().unverifiedTotal()).isEqualTo(3);
+    assertThat(result.numberCheck().unverified())
+        .containsExactly(new ProactiveResult.UnverifiedNumber("3.5억", "매출 3.5억"));
+  }
+
+  /** 이전 응답(필드 없음)이나 형이 다른 값은 null 로 받아 실행이 깨지지 않는다. */
+  @Test
+  void execute_numberCheck가_없거나_형이_다르면_null() {
+    wireMock.stubFor(post(urlEqualTo("/agent/proactive")).willReturn(okJson("{\"sections\":[]}")));
+    ProactiveResult none =
+        client.execute(
+            1L,
+            "prompt",
+            "{}",
+            new AiCredential.Sdk("oat-test", "sk-x"),
+            null,
+            null,
+            Map.of(),
+            null);
+    assertThat(none.numberCheck()).isNull();
+
+    wireMock.stubFor(
+        post(urlEqualTo("/agent/proactive"))
+            .willReturn(okJson("{\"sections\":[],\"numberCheck\":\"bad\"}")));
+    ProactiveResult bad =
+        client.execute(
+            1L,
+            "prompt",
+            "{}",
+            new AiCredential.Sdk("oat-test", "sk-x"),
+            null,
+            null,
+            Map.of(),
+            null);
+    assertThat(bad.numberCheck()).isNull();
   }
 }

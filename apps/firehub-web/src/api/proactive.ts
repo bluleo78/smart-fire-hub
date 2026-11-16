@@ -104,6 +104,38 @@ export interface AnomalyEventRecord {
   detectedAt: string;
 }
 
+/**
+ * 리포트 수치 출처 검증 결과(WD-767) — api 가 실행 result.numberCheck 에 저장한다.
+ * unverified 는 최대 20개만 담기고, 전체 개수는 unverifiedTotal 이다. 옛 실행에는 필드가 없다.
+ */
+export interface ProactiveNumberCheck {
+  checked: boolean;
+  unverified: { text: string; context: string }[];
+  unverifiedTotal: number;
+}
+
+/**
+ * 실행 result 에서 numberCheck 를 안전하게 꺼낸다.
+ * 옛 실행·형이 다른 값은 화면을 깨지 않도록 null 로 돌리고, 문자열이 아닌 text 항목은 건너뛴다.
+ */
+export function getNumberCheck(
+  result: Record<string, unknown> | null | undefined,
+): ProactiveNumberCheck | null {
+  const raw = result?.numberCheck;
+  if (raw == null || typeof raw !== 'object') return null;
+  const { checked, unverified, unverifiedTotal } = raw as Record<string, unknown>;
+  if (typeof checked !== 'boolean' || !Array.isArray(unverified)) return null;
+  if (typeof unverifiedTotal !== 'number' || !Number.isFinite(unverifiedTotal)) return null;
+  const items: { text: string; context: string }[] = [];
+  for (const item of unverified) {
+    if (item == null || typeof item !== 'object') continue;
+    const { text, context } = item as Record<string, unknown>;
+    if (typeof text !== 'string') continue;
+    items.push({ text, context: typeof context === 'string' ? context : '' });
+  }
+  return { checked, unverified: items, unverifiedTotal };
+}
+
 export interface ProactiveJobExecution {
   id: number;
   jobId: number;

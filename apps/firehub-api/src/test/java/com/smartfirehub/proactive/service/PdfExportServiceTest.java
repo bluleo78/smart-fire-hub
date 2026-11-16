@@ -41,6 +41,7 @@ class PdfExportServiceTest extends IntegrationTestBase {
             List.of(new ProactiveResult.Section("summary", "요약", "테스트 내용입니다.", "text", null)),
             new ProactiveResult.Usage(100, 200, 300),
             null,
+            null,
             null);
 
     // when
@@ -76,6 +77,7 @@ class PdfExportServiceTest extends IntegrationTestBase {
             "통계 리포트",
             List.of(new ProactiveResult.Section("stats", "통계", null, "cards", null)),
             new ProactiveResult.Usage(50, 100, 150),
+            null,
             null,
             null);
 
@@ -113,7 +115,8 @@ class PdfExportServiceTest extends IntegrationTestBase {
             List.of(),
             new ProactiveResult.Usage(10, 20, 30),
             null,
-            "이번 주 처리량이 지난주 대비 증가했습니다.");
+            "이번 주 처리량이 지난주 대비 증가했습니다.",
+            null);
 
     byte[] pdf = pdfExportService.generatePdf(result, "요약 Job");
 
@@ -143,6 +146,7 @@ class PdfExportServiceTest extends IntegrationTestBase {
             List.of(new ProactiveResult.Section("detail", "상세", "중복되면 안 되는 본문", "text", null)),
             new ProactiveResult.Usage(10, 20, 30),
             null,
+            null,
             null);
 
     String text = extractText(pdfExportService.generatePdf(result, "요약 없는 Job"));
@@ -160,7 +164,8 @@ class PdfExportServiceTest extends IntegrationTestBase {
     when(reportRenderUtils.buildTemplateSections(any())).thenReturn(new ArrayList<>());
     when(reportRenderUtils.renderChartImages(anyList())).thenReturn(List.of());
     ProactiveResult result =
-        new ProactiveResult("시각 리포트", List.of(), new ProactiveResult.Usage(1, 1, 2), null, null);
+        new ProactiveResult(
+            "시각 리포트", List.of(), new ProactiveResult.Usage(1, 1, 2), null, null, null);
     LocalDateTime completedAtUtc = LocalDateTime.of(2026, 10, 28, 13, 6, 18);
 
     String first =
@@ -191,7 +196,8 @@ class PdfExportServiceTest extends IntegrationTestBase {
     when(reportRenderUtils.renderChartImages(anyList())).thenReturn(List.of());
 
     ProactiveResult result =
-        new ProactiveResult("빈 리포트", List.of(), new ProactiveResult.Usage(10, 20, 30), null, null);
+        new ProactiveResult(
+            "빈 리포트", List.of(), new ProactiveResult.Usage(10, 20, 30), null, null, null);
 
     // when
     byte[] pdf = pdfExportService.generatePdf(result, "빈 Job");

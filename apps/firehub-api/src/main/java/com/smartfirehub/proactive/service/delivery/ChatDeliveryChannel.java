@@ -60,7 +60,7 @@ public class ChatDeliveryChannel implements DeliveryChannel {
       String title = result.effectiveTitle(job.name());
       Map<String, Object> contentMap = new HashMap<>();
       contentMap.put("title", title);
-      contentMap.put("summary", result.effectiveSummary());
+      contentMap.put("summary", result.notificationSummary());
       contentMap.put("executionId", String.valueOf(executionId));
       contentMap.put("jobId", String.valueOf(job.id()));
 
