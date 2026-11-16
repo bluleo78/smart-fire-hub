@@ -1967,3 +1967,39 @@ def test_extra_header_short_value_not_scrubbed():
 
     resolved = _resolve_auth({"extraHeader:X-S": "abc"})
     assert errors.scrub_secret("echo abc", resolved.sent_secrets) == "echo abc"
+
+
+# ---------------------------------------------------------------------------
+# WD-772: 추가 인증 헤더 값 앞뒤 공백·접두어 대소문자 — Java 와 같은 규칙
+# ---------------------------------------------------------------------------
+
+
+def test_extra_header_value_surrounding_spaces_stripped_when_sent():
+    # 정리 규칙 전에 저장된 앞뒤 공백 값도 잘라 보낸다(WD-772) — 그대로 보내면 httpx(h11)가 「Illegal header value」 로 요청을 만들지 못했다.
+    # 가운데 공백은 값의 일부라 그대로다.
+    req = make_request(
+        url="https://a.example.com/api",
+        auth={"authType": "BEARER", "token": "tok12345", "extraHeader:X-Id": " \tkeyid 4567 \t"},
+    )
+    result, client, _ = _run_with_responses(req, [mock_response({"items": []})])
+
+    assert result.success is True
+    _, headers = _sent(client, 0)
+    assert _header_values(headers, "X-Id") == ["keyid 4567"]
+
+
+def test_extra_header_prefix_case_insensitive_when_sent():
+    # 접두어는 대소문자를 가리지 않는다(WD-772) — 정리 규칙 전에 「ExtraHeader:」·「extraheader:」 로 저장된 키도 추가 헤더로 보낸다.
+    # 접두어 비슷한 키(「extraHeaders:」·「headerExtra:」)나 메인 키는 추가 헤더가 아니다.
+    headers: Dict[str, str] = {}
+    auth = {
+        "authType": "BEARER",
+        "token": "tok12345",
+        "ExtraHeader: X-Id ": " id-9999 ",
+        "extraheader:X-A": "aaaa1",
+        "extraHeaders:X-Plural": "p",
+        "headerExtra:X-C": "c",
+    }
+    assert apply_auth(auth, headers, {}) is None
+    # 원래 키 정렬 순서(「ExtraHeader…」 < 「extraheader…」)대로, 메인 인증 뒤에 들어간다.
+    assert list(headers.items()) == [("Authorization", "Bearer tok12345"), ("X-Id", "id-9999"), ("X-A", "aaaa1")]

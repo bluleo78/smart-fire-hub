@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.smartfirehub.apiconnection.exception.ApiConnectionException;
 import com.smartfirehub.pipeline.service.executor.ApiCallAuth;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -389,7 +390,7 @@ class AuthConfigValidatorTest {
 
   /**
    * 저장 정리는 추가 헤더 키를 앞뒤 공백을 뗀 이름으로 다시 쓴다(WD-753 리뷰) — 화면은 정리한 이름으로 가린 값을 되돌려 보내므로 저장 키가 같아야 저장값을 유지할
-   * 수 있다. 값은 손대지 않는다.
+   * 수 있다. 값도 앞뒤 공백을 뗀다(WD-772).
    */
   @Test
   void validateAndNormalize_rewritesExtraHeaderKeyToStrippedName() {
@@ -398,9 +399,206 @@ class AuthConfigValidatorTest {
             "BEARER", Map.of("token", "tok12345", "extraHeader: X-Id ", " keyid-4567"));
 
     assertThat(normalized)
-        .containsEntry("extraHeader:X-Id", " keyid-4567")
+        .containsEntry("extraHeader:X-Id", "keyid-4567")
         .doesNotContainKey("extraHeader: X-Id ")
         .containsEntry("token", "tok12345");
+  }
+
+  // -------------------------------------------------------------------------
+  // WD-772: 추가 인증 헤더 값 앞뒤 공백·접두어 대소문자
+  // -------------------------------------------------------------------------
+
+  /**
+   * 저장 정리는 추가 헤더 값의 앞뒤 공백을 뗀다(WD-772) — 그대로 저장하면 연결 확인(Java)은 통과하고 Python 실행기(httpx)만 「Illegal
+   * header value」 로 실패했다. 값 가운데 공백은 값의 일부라 그대로 둔다.
+   */
+  @Test
+  void validateAndNormalize_stripsExtraHeaderValueKeepingInnerSpaces() {
+    Map<String, String> normalized =
+        AuthConfigValidator.validateAndNormalize(
+            "BEARER", Map.of("token", "tok12345", "extraHeader:X-Id", " \tkey id 4567 \t"));
+
+    assertThat(normalized).containsEntry("extraHeader:X-Id", "key id 4567");
+  }
+
+  /** 공백만인 추가 헤더 값은 자른 뒤 빈 값이라 지금처럼 「값을 입력하세요」 로 거절한다(WD-772). */
+  @Test
+  void validateAndNormalize_whitespaceOnlyExtraHeaderValue_rejected() {
+    assertThatThrownBy(
+            () ->
+                AuthConfigValidator.validateAndNormalize(
+                    "BEARER", Map.of("token", "tok12345", "extraHeader:X-Id", " \t ")))
+        .isInstanceOf(ApiConnectionException.class)
+        .hasMessage("추가 헤더 X-Id 값을 입력하세요");
+  }
+
+  /**
+   * 접두어는 대소문자와 상관없이 알아본다(WD-772) — 「ExtraHeader:X-Id」 는 예전에 저장은 되지만 보내지지도 가려지지도 않았다. 메인 키·접두어 비슷한
+   * 키는 추가 헤더가 아니다.
+   */
+  @ParameterizedTest
+  @CsvSource({
+    "'extraHeader:X-Id', true",
+    "'ExtraHeader:X-Id', true",
+    "'extraheader:X-Id', true",
+    "'EXTRAHEADER: X-Id', true",
+    "'ExtraHeader:', true",
+    "'apiKey', false",
+    "'token', false",
+    "'extraHeader', false",
+    "'extraHeaders:X-Id', false",
+    // 앞 공백이 붙은 키는 접두어로 시작하지 않는다 — 따옴표로 감싸 공백을 살린다.
+    "' extraHeader:X-Id', false",
+    "'headerExtra:X-Id', false"
+  })
+  void isExtraHeaderKey_ignoresPrefixCase(String key, boolean expected) {
+    assertThat(AuthConfigValidator.isExtraHeaderKey(key)).isEqualTo(expected);
+  }
+
+  /** 키가 null 이면 추가 헤더가 아니다(CsvSource 로는 null 을 깔끔히 넣기 어려워 따로 둔다). */
+  @Test
+  void isExtraHeaderKey_null_false() {
+    assertThat(AuthConfigValidator.isExtraHeaderKey(null)).isFalse();
+  }
+
+  /** 저장 정리는 대소문자가 다른 접두어를 정식 「extraHeader:」 로 바꾸고, 이름 앞뒤 공백도 뗀다(WD-772). */
+  @Test
+  void validateAndNormalize_rewritesPrefixCaseToCanonical() {
+    Map<String, String> config = new HashMap<>();
+    config.put("token", "tok12345");
+    config.put("ExtraHeader:X-Id", "keyid-4567");
+    config.put("EXTRAHEADER: X-A", "a-value-1");
+    config.put("extraheader:X-B", "b-value-2");
+
+    Map<String, String> normalized = AuthConfigValidator.validateAndNormalize("BEARER", config);
+
+    assertThat(normalized)
+        .containsEntry("extraHeader:X-Id", "keyid-4567")
+        .containsEntry("extraHeader:X-A", "a-value-1")
+        .containsEntry("extraHeader:X-B", "b-value-2")
+        .doesNotContainKeys("ExtraHeader:X-Id", "EXTRAHEADER: X-A", "extraheader:X-B")
+        .containsEntry("token", "tok12345");
+    assertThat(AuthConfigValidator.normalizeExtraHeaderKey("ExtraHeader: X-A "))
+        .isEqualTo("extraHeader:X-A");
+  }
+
+  /** 접두어 대소문자만 다른 두 키는 같은 헤더라 겹침으로 거절한다(WD-772) — 합치면 한쪽 값이 말없이 사라진다. */
+  @Test
+  void describeProblem_prefixCaseOnlyDiffers_rejectedAsDuplicate() {
+    Map<String, String> config = new HashMap<>();
+    config.put("token", "tok12345");
+    config.put("ExtraHeader:X-A", "first-value-1");
+    config.put("extraHeader:X-A", "second-value-2");
+
+    assertThat(AuthConfigValidator.describeProblem("BEARER", config))
+        .isEqualTo("추가 헤더 이름이 겹칩니다: X-A")
+        .doesNotContain("first-value-1")
+        .doesNotContain("second-value-2");
+  }
+
+  /** 대소문자가 다른 접두어만 있고 이름이 없으면 「추가 헤더 이름을 입력하세요」 다(WD-772) — 조용히 버리지 않는다. */
+  @Test
+  void describeProblem_mixedCasePrefixWithoutName_rejected() {
+    assertThat(
+            AuthConfigValidator.describeProblem(
+                "BEARER", Map.of("token", "tok12345", "ExtraHeader:", "v1234")))
+        .isEqualTo("추가 헤더 이름을 입력하세요");
+  }
+
+  /** 모으기(전송·검사 공용)는 대소문자가 다른 접두어도 모으고, 값의 앞뒤 공백을 뗀다(WD-772) — 정리 전에 저장된 값도 잘린 값으로 나간다. */
+  @Test
+  void extraHeaders_collectsMixedCasePrefixAndStripsValue() {
+    Map<String, String> config = new HashMap<>();
+    config.put("apiKey", "k");
+    config.put("ExtraHeader: X-Id", " keyid 4567 ");
+    config.put("extraheader:X-B", "v2\t");
+
+    assertThat(AuthConfigValidator.extraHeaders(config))
+        .hasSize(2)
+        .containsEntry("X-Id", "keyid 4567")
+        .containsEntry("X-B", "v2");
+  }
+
+  /** 대소문자가 다른 접두어 키도 이름과 상관없이 비밀 필드다(WD-772) — 예전에는 「X-Id」 처럼 이름에 key·token 이 없으면 평문으로 돌아갔다. */
+  @Test
+  void isSensitiveKey_mixedCaseExtraHeaderPrefix() {
+    assertThat(ApiConnectionReader.isSensitiveKey("ExtraHeader:X-Id")).isTrue();
+    assertThat(ApiConnectionReader.isSensitiveKey("extraheader:X-Id")).isTrue();
+  }
+
+  /** 변경 비교는 값 앞뒤 공백·접두어 대소문자만 다른 저장을 같은 설정으로 본다(WD-772) — 보내는 헤더가 같다. */
+  @Test
+  void comparableConfig_normalizesExtraHeaderValueAndPrefixCase() {
+    assertThat(
+            AuthConfigValidator.comparableConfig(
+                "BEARER", Map.of("token", "t", "ExtraHeader:X-Id", " v1 ")))
+        .isEqualTo(
+            AuthConfigValidator.comparableConfig(
+                "BEARER", Map.of("token", "t", "extraHeader:X-Id", "v1")));
+  }
+
+  /** 추가 헤더 값에 ASCII 밖 글자가 있을 때의 안내(WD-772 리뷰) — 값 원문은 싣지 않는다. */
+  private static final String NON_ASCII_X_ID =
+      "추가 헤더 X-Id 값에는 영문·숫자·기호(ASCII)만 쓸 수 있습니다 — 한글·특수 공백(NBSP 등)·제어 문자는 넣을 수 없습니다";
+
+  /**
+   * 추가 헤더 값에 출력 가능한 ASCII(0x20~0x7E)·탭 밖 글자가 있으면 거절한다(WD-772 리뷰) — Java {@code strip()} 은 NBSP 를
+   * 공백으로 보지 않아 남기는데, 연결 확인(Java)은 통과하고 Python 실행기(httpx)는 비ASCII 헤더 값을 만들지 못해 실패했다.
+   * 한글·NBSP(가운데·앞뒤)·제어 문자(DEL 포함)가 모두 같은 안내다.
+   */
+  @Test
+  void extraHeadersProblem_nonAsciiOrControlValue_rejected() {
+    for (String value : List.of("key id", " keyid ", "키아이디", "key\u0001id", "key\u007fid")) {
+      assertThat(AuthConfigValidator.extraHeadersProblem(Map.of("X-Id", value), null))
+          .as("value %s", value.codePoints().boxed().toList())
+          .isEqualTo(NON_ASCII_X_ID)
+          .doesNotContain(value);
+    }
+  }
+
+  /**
+   * 값 가운데 탭·공백·ASCII 기호는 HTTP 헤더 값으로 쓸 수 있어 통과한다(WD-772 리뷰 — RFC 9110 field-content 는 HTAB 을 허용).
+   */
+  @Test
+  void extraHeadersProblem_asciiWithInnerTab_allowed() {
+    assertThat(
+            AuthConfigValidator.extraHeadersProblem(
+                Map.of("X-Id", "key\tid 4567 ~!@#$%^&*()_+-={}[]|\\:;\"'<>,.?/`"), null))
+        .isNull();
+  }
+
+  /** 줄바꿈은 지금처럼 줄바꿈 안내가 먼저다(WD-772 리뷰) — 더 구체적인 안내라 ASCII 검사보다 앞에 둔다. */
+  @Test
+  void extraHeadersProblem_lineBreakStillLineBreakMessage() {
+    assertThat(AuthConfigValidator.extraHeadersProblem(Map.of("X-Id", "key\nid"), null))
+        .isEqualTo("추가 헤더 X-Id 값에 줄바꿈을 넣을 수 없습니다 — 한 줄로 입력하세요");
+  }
+
+  /** 저장 검사는 앞뒤 공백을 정리한 뒤에도 남는 비ASCII 값을 400 으로 거절한다(WD-772 리뷰). */
+  @Test
+  void validateAndNormalize_nonAsciiExtraHeaderValue_rejected() {
+    assertThatThrownBy(
+            () ->
+                AuthConfigValidator.validateAndNormalize(
+                    "BEARER", Map.of("token", "tok12345", "extraHeader:X-Id", " keyid 4567 ")))
+        .isInstanceOf(ApiConnectionException.class)
+        .hasMessage(NON_ASCII_X_ID);
+  }
+
+  /**
+   * 이미 저장된 비ASCII 값은 보내는 값 검사(연결 테스트·상태 점검)와 API_CALL 호출 전 검사가 같은 안내로 잡는다(WD-772 리뷰) — 호출하지 않으므로
+   * 「Java 는 성공, Python 은 실패」 가 생기지 않는다.
+   */
+  @Test
+  void sentValueAndCallProblem_storedNonAsciiExtraHeaderValue_rejected() {
+    Map<String, String> stored =
+        Map.of("authType", "BEARER", "token", "tok12345", "extraHeader:X-Id", "keyid 4567");
+    ApiCallAuth.ResolvedAuth auth = ApiCallAuth.resolve(stored);
+
+    assertThat(AuthConfigValidator.describeSentValueProblem(auth, stored))
+        .isEqualTo(NON_ASCII_X_ID);
+    assertThat(ApiCallAuth.describeProblem(auth, stored, "WD772"))
+        .isEqualTo("API 연결 「WD772」의 " + NON_ASCII_X_ID + " — API 연결 화면에서 이 연결의 추가 헤더를 고치세요.");
   }
 
   /** 접두어 거르기 공용 helper — 추가 헤더 키만 원래 키 그대로 키 정렬 순서로 담는다. null·null 키는 건너뛴다. */

@@ -6,6 +6,7 @@ import {
   extraHeaderRowErrors,
   extraHeaderRowsFromConfig,
   extraHeadersToConfig,
+  isExtraHeaderKey,
   keptStoredMasked,
   MAX_EXTRA_HEADERS,
   newExtraHeaderRow,
@@ -124,5 +125,39 @@ describe('api-connection-extra-headers', () => {
     expect(keptStoredMasked({ ...legacy, name: 'X-Id' })).toBe('****4567');
     // 저장값이 없는 새 행은 유지할 것이 없다
     expect(keptStoredMasked(newExtraHeaderRow())).toBeUndefined();
+  });
+
+  // WD-772 리뷰: 접두어는 서버(AuthConfigValidator.isExtraHeaderKey)·Python 실행기·AI 도구처럼 대소문자를 가리지 않는다.
+  it.each([
+    ['extraHeader:X-Id', true],
+    ['ExtraHeader:X-Id', true],
+    ['extraheader:X-Id', true],
+    ['EXTRAHEADER: X-Id', true],
+    ['ExtraHeader:', true],
+    ['apiKey', false],
+    ['extraHeader', false],
+    ['extraHeaders:X-Id', false],
+    [' extraHeader:X-Id', false],
+    ['headerExtra:X-Id', false],
+  ] as const)(
+    '추가 헤더 키 판정은 접두어 대소문자를 가리지 않는다 — 접두어 비슷한 키·앞 공백은 아니다: %j → %s',
+    (key, expected) => {
+      expect(isExtraHeaderKey(key)).toBe(expected);
+    },
+  );
+
+  it('대소문자가 다른 접두어로 저장된 추가 헤더도 행으로 꺼내고, 고치지 않고 저장하면 정식 접두어 키로 가린 값을 보낸다', () => {
+    const rows = extraHeaderRowsFromConfig({ apiKey: '****abcd', 'ExtraHeader:X-Id': '****4567' });
+    expect(rows.map(({ name, value, storedMasked, storedName }) => ({ name, value, storedMasked, storedName }))).toEqual([
+      { name: 'X-Id', value: '', storedMasked: '****4567', storedName: 'X-Id' },
+    ]);
+    // 서버는 저장 키를 정식 접두어로 맞춰 가린 값을 찾으므로(normalizeExtraHeaderKey) 정식 키로 보내도 저장 원문이 유지된다
+    expect(extraHeadersToConfig(rows)).toEqual({ 'extraHeader:X-Id': '****4567' });
+  });
+
+  it('메인 인증 칸 계산용 config 에서 대소문자가 다른 접두어 키도 뺀다', () => {
+    expect(withoutExtraHeaders({ apiKey: '****abcd', 'ExtraHeader:X-A': '****1234', 'extraheader:X-B': '****5678' })).toEqual({
+      apiKey: '****abcd',
+    });
   });
 });

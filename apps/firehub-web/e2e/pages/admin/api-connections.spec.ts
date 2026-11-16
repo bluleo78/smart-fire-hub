@@ -2608,6 +2608,44 @@ test.describe('WD-753 추가 헤더', () => {
     });
   });
 
+  test('상세 — 대소문자가 다른 접두어(ExtraHeader:)로 저장된 추가 헤더도 행으로 보이고, 인증 저장 payload 에 남는다 (WD-772 리뷰)', async ({
+    authenticatedPage: page,
+  }) => {
+    // AI 챗·API 로 접두어 대소문자를 달리 넣어 저장된 연결 — 서버는 이 키도 추가 헤더로 보내고 가린다(접두어 대소문자 무시).
+    const legacy = createApiConnection({
+      id: 1,
+      name: '네이버 API HUB',
+      maskedAuthConfig: {
+        placement: 'header',
+        headerName: 'X-NCP-APIGW-API-KEY',
+        apiKey: '****abcd',
+        [`ExtraHeader:${KEY_ID_HEADER}`]: '****4567',
+      },
+    });
+    await mockApi(page, 'GET', '/api/v1/api-connections/1', legacy);
+    const capture = await mockApi(page, 'PUT', '/api/v1/api-connections/1', legacy, { capture: true });
+
+    await page.goto('/admin/api-connections/1');
+    // 읽기 보기에 추가 헤더로 보인다
+    await expect(page.getByText(`${KEY_ID_HEADER}: ****4567`)).toBeVisible();
+    await page.getByRole('button', { name: '인증 정보 변경' }).click();
+    await expect(page.getByLabel('추가 헤더 이름 1')).toHaveValue(KEY_ID_HEADER);
+    await expect(page.getByLabel('추가 헤더 값 1')).toHaveAttribute('placeholder', '저장된 값 유지 (****4567)');
+    await page.getByRole('button', { name: '인증 저장' }).click();
+
+    // 정식 접두어 키로 가린 값을 보내 서버가 저장값을 유지한다 — 예전에는 행이 없어 authConfig 에서 빠져 조용히 지워졌다
+    const req = await capture.waitForRequest();
+    const payload = req.payload as { authConfig: Record<string, string> };
+    // 대소문자 다른 옛 키가 메인 인증 칸 값으로 섞여 함께 나가지도 않는다(키 전체를 비교)
+    expect(payload.authConfig).toEqual({
+      authType: 'API_KEY',
+      placement: 'header',
+      headerName: 'X-NCP-APIGW-API-KEY',
+      apiKey: '****abcd',
+      [EXTRA_KEY]: '****4567',
+    });
+  });
+
   test('상세 — 새 값을 넣으면 그 값을, 행을 지우면 키 없이 보낸다', async ({ authenticatedPage: page }) => {
     await mockApi(page, 'GET', '/api/v1/api-connections/1', connectionWithExtraHeader());
     const capture = await mockApi(page, 'PUT', '/api/v1/api-connections/1', connectionWithExtraHeader(), {

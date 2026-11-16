@@ -13,8 +13,22 @@
 import { focusFirstError, withoutKeys } from '@/lib/api-connection-form';
 import { isBlankLikeServer, javaStrip } from '@/lib/api-connection-secret';
 
-/** authConfig 의 추가 헤더 키 접두어 — 서버 AuthConfigValidator.EXTRA_HEADER_PREFIX 와 같다. */
+/** authConfig 의 추가 헤더 키 접두어 — 서버 AuthConfigValidator.EXTRA_HEADER_PREFIX 와 같다. 보낼 때 쓰는 정식 모양이고, 판정은 isExtraHeaderKey 로 한다. */
 export const EXTRA_HEADER_PREFIX = 'extraHeader:';
+
+/** 접두어 판정용 소문자 모양 — 접두어 글자가 모두 ASCII 라 소문자로 맞춰 비교해도 서버 regionMatches(ignoreCase) 와 같다. */
+const EXTRA_HEADER_PREFIX_LOWER = EXTRA_HEADER_PREFIX.toLowerCase();
+
+/**
+ * authConfig 키가 추가 헤더 키인지 — 접두어는 대소문자를 가리지 않는다(WD-772 리뷰).
+ *
+ * 서버(AuthConfigValidator.isExtraHeaderKey)·Python 실행기·AI 도구가 모두 대소문자 무시로 판정한다. 화면만 가리면 AI 챗·API 로 저장된
+ * 「ExtraHeader:X-Id」 가 추가 헤더 행에 안 보이고, 인증 저장 때 authConfig 가 통째로 바뀌어 그 헤더가 조용히 지워졌다. 행 꺼내기·메인 칸 거르기가
+ * 이 판정 하나를 쓴다.
+ */
+export function isExtraHeaderKey(key: string): boolean {
+  return key.slice(0, EXTRA_HEADER_PREFIX.length).toLowerCase() === EXTRA_HEADER_PREFIX_LOWER;
+}
 
 /** 연결 하나에 둘 수 있는 추가 헤더 수 — 서버 상한과 같다(넘으면 「헤더 추가」를 끈다). */
 export const MAX_EXTRA_HEADERS = 10;
@@ -53,12 +67,14 @@ export function newExtraHeaderRow(): ExtraHeaderRow {
 
 /**
  * 조회한 가린 config 에서 추가 헤더 행을 만든다 — 값은 비우고 가린 값은 storedMasked 에 둔다(편집 시작·편집 취소 때 쓴다).
- * 이름은 키 그대로(접두어만 뗀다) 두어, 고치지 않고 저장하면 같은 키로 돌아가 서버가 가린 값을 저장 원문으로 되돌린다.
+ * 이름은 키 그대로(접두어만 뗀다) 두어, 고치지 않고 저장하면 같은 이름으로 돌아가 서버가 가린 값을 저장 원문으로 되돌린다.
+ * 접두어는 대소문자와 상관없이 알아보고(isExtraHeaderKey, WD-772 리뷰), 저장할 때는 정식 접두어로 보낸다 — 서버가 저장 키의 접두어도 정식 모양으로
+ * 맞춰 가린 값을 찾으므로(normalizeExtraHeaderKey) 「ExtraHeader:X-Id」 로 저장된 값도 유지된다.
  */
 export function extraHeaderRowsFromConfig(config: Record<string, string> | undefined): ExtraHeaderRow[] {
   if (!config) return [];
   return Object.entries(config)
-    .filter(([key]) => key.startsWith(EXTRA_HEADER_PREFIX))
+    .filter(([key]) => isExtraHeaderKey(key))
     .map(([key, masked]) => {
       const name = key.slice(EXTRA_HEADER_PREFIX.length);
       return { ...newExtraHeaderRow(), name, storedMasked: masked, storedName: name };
@@ -96,10 +112,10 @@ export function extraHeadersToConfig(rows: ExtraHeaderRow[]): Record<string, str
 
 /**
  * 추가 헤더 키를 뺀 새 config — 가린 config 로 메인 인증 칸(위치·헤더 이름·키 등)을 채우거나 보일 때,
- * 접두어 키가 메인 인증 값으로 섞이지 않게 한다. 원본은 건드리지 않는다.
+ * 접두어 키(대소문자 무관, isExtraHeaderKey)가 메인 인증 값으로 섞이지 않게 한다. 원본은 건드리지 않는다.
  */
 export function withoutExtraHeaders(config: Record<string, string>): Record<string, string> {
-  return Object.fromEntries(Object.entries(config).filter(([key]) => !key.startsWith(EXTRA_HEADER_PREFIX)));
+  return Object.fromEntries(Object.entries(config).filter(([key]) => !isExtraHeaderKey(key)));
 }
 
 /**

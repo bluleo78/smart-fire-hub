@@ -224,8 +224,9 @@ class ApiCallAuthVectorsTest {
   }
 
   /**
-   * 추가 인증 헤더 모으기(WD-753) — {@code extraHeader:<이름>} 키를 이름(앞뒤 공백 뗌)→값(원문)으로, 원래 키의 정렬 순서로 모은다. 인증
-   * 방식과 상관없고 접두어 없는 키는 무시한다. Python {@code _resolve_auth} 가 같은 표로 같은 이름·값·순서를 내야 두 실행기가 같은 헤더를 보낸다.
+   * 추가 인증 헤더 모으기(WD-753) — {@code extraHeader:<이름>} 키를 이름(앞뒤 공백 뗌)→값(앞뒤 Java 공백 뗌, WD-772)으로, 원래 키의
+   * 정렬 순서로 모은다. 인증 방식과 상관없고, 접두어는 대소문자를 가리지 않으며(WD-772), 접두어 없는 키는 무시한다. Python {@code
+   * _resolve_auth} 가 같은 표로 같은 이름·값·순서를 내야 두 실행기가 같은 헤더를 보낸다.
    */
   @ParameterizedTest(name = "{0}")
   @MethodSource("extraHeaders")

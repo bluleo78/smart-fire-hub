@@ -109,8 +109,26 @@ public final class AuthConfigValidator {
    * API HUB 처럼 헤더 둘(키 ID·키)이 필요한 API 를 연결 하나로 인증하려고 둔다. authConfig 는 암호화된 평평한 Map 이라 접두어 키로 두면
    * 저장·암호화·가림· Python 전달 구조를 바꾸지 않고 기존 키 단위 규칙을 그대로 탄다. 콜론은 헤더 이름(HTTP 토큰)에 쓸 수 없어 접두어와 이름의 경계가 깨지지
    * 않는다.
+   *
+   * <p>정식 모양(저장 정리가 쓰는 모양)이다. 키 판정은 대소문자를 가리지 않는다({@link #isExtraHeaderKey}, WD-772).
    */
   public static final String EXTRA_HEADER_PREFIX = "extraHeader:";
+
+  /**
+   * authConfig 키가 추가 인증 헤더 키({@link #EXTRA_HEADER_PREFIX} 로 시작)인지 — 접두어는 대소문자를 가리지 않는다(WD-772).
+   *
+   * <p>예전에는 대소문자를 가려 AI 챗·API 로 넣은 「ExtraHeader:X-Id」 가 저장은 되지만 보내지지 않았고, 이름에 key·token 이 없으면 조회 때
+   * 평문으로 돌아갔다. 검증·저장 정리·가림({@code ApiConnectionReader.isSensitiveKey})·전송({@link #extraHeaders} →
+   * {@code ApiCallAuth})이 모두 이 판정 하나를 쓴다 — 하나라도 따로 판정하면 「저장은 되는데 안 보내짐」 같은 어긋남이 다시 생긴다. 저장은 정식 접두어로
+   * 고쳐 쓰지만({@link #normalizeExtraHeaderKey}), 정리 전에 저장된 변형 키도 이 판정으로 보내고 가린다. Python 실행기 ({@code
+   * _is_extra_header_key})·AI 도구({@code isExtraHeaderField})도 같은 규칙이다.
+   *
+   * @param key authConfig 키(null 이면 false)
+   */
+  public static boolean isExtraHeaderKey(String key) {
+    return key != null
+        && key.regionMatches(true, 0, EXTRA_HEADER_PREFIX, 0, EXTRA_HEADER_PREFIX.length());
+  }
 
   /** 연결 하나에 둘 수 있는 추가 인증 헤더 수 상한(WD-753) — 화면·요청이 지나치게 커지지 않게. */
   public static final int MAX_EXTRA_HEADERS = 10;
@@ -165,8 +183,9 @@ public final class AuthConfigValidator {
   static Map<String, String> comparableConfig(String authType, Map<String, String> config) {
     Map<String, String> copy = new HashMap<>(config == null ? Map.of() : config);
     copy.remove("authType");
-    // 추가 인증 헤더 키는 저장과 같이 정리한 키로 맞춘다(WD-753 리뷰) — 정리 전에 저장된 「extraHeader: X-Id」 를 같은 값으로 다시 저장하면
-    // 키 모양만 바뀔 뿐 보내는 헤더는 같다.
+    // 추가 인증 헤더 키·값은 저장과 같이 정리해 맞춘다(WD-753 리뷰, WD-772) — 정리 전에 저장된 키(이름 앞뒤 공백·
+    // 접두어 대소문자)나 앞뒤 공백 값을 같은 값으로 다시 저장하면 모양만 바뀔 뿐 보내는 헤더는 같다(전송도 같은 정리를 거친다).
+    stripExtraHeaderValues(copy);
     normalizeExtraHeaderKeys(copy);
     if ("BEARER".equals(authType)) {
       copy.computeIfPresent("token", (k, token) -> normalizeBearerToken(token));
@@ -265,7 +284,8 @@ public final class AuthConfigValidator {
    *
    * @param authType 검증을 마친 인증 방식(API_KEY·BEARER·BASIC)
    * @param config 가린 값을 저장 원문으로 채운 authConfig. null 이면 비밀 필드 없음으로 거절한다
-   * @return 정리한 새 Map — BEARER 토큰 앞의 「Bearer 」 를 뗀다(요청 Map 은 불변일 수 있어 건드리지 않는다)
+   * @return 정리한 새 Map — BEARER 토큰 앞의 「Bearer 」 를 떼고, 추가 인증 헤더 키를 정식 모양으로·값의 앞뒤 공백을 뗀다(요청 Map 은 불변일
+   *     수 있어 건드리지 않는다)
    */
   public static Map<String, String> validateAndNormalize(
       String authType, Map<String, String> config) {
@@ -273,6 +293,10 @@ public final class AuthConfigValidator {
     if (normalized != null && "BEARER".equals(authType)) {
       normalized.computeIfPresent("token", (k, token) -> normalizeBearerToken(token));
     }
+    // 추가 인증 헤더 값의 앞뒤 공백을 잘라 저장한다(WD-772) — 그대로 두면 연결 확인(Java)은 통과하고 Python 실행기(httpx)만
+    // 헤더 값 오류(Illegal header value)로 실패했다. HTTP 도 헤더 값 앞뒤 공백(OWS)은 값이 아니다. 자른 뒤 빈 값은 아래 검사가
+    // 「값을 입력하세요」 로 거절한다.
+    stripExtraHeaderValues(normalized);
     // describeProblem 은 비밀 필드 빈 값을 가장 먼저 본다 — config 가 null 이어도 「… 입력하세요」 로 거절한다(WD-623).
     String problem = describeProblem(authType, normalized);
     if (problem != null) {
@@ -302,23 +326,38 @@ public final class AuthConfigValidator {
   }
 
   /**
-   * 추가 인증 헤더 키를 정리한다(WD-753 리뷰) — 접두어 뒤 이름의 앞뒤 공백을 뗀 {@code extraHeader:<이름>}. 추가 헤더 키가 아니면 그대로
-   * 돌려준다. 저장({@link #validateAndNormalize})·가린 값 되돌리기({@code
+   * authConfig 의 추가 인증 헤더 값의 앞뒤 공백(Java {@link String#strip})을 뗀다(WD-772). 가운데 공백은 값의 일부라 그대로다. 키는
+   * 손대지 않는다({@link #normalizeExtraHeaderKeys}). 저장 정리({@link #validateAndNormalize})·변경 비교({@link
+   * #comparableConfig})가 쓴다 — 가린 값 되돌리기({@code ApiConnectionService.resolveMaskedSecrets})는 저장값의 가린
+   * 모양을 원문 그대로 만들어야 화면이 되돌려 보낸 값과 맞으므로 쓰지 않는다(되돌린 원문은 저장 정리에서 잘린다).
+   *
+   * @param config 바꿔 쓸 수정 가능한 Map. null 이면 아무것도 하지 않는다
+   */
+  private static void stripExtraHeaderValues(Map<String, String> config) {
+    if (config == null) return;
+    config.replaceAll(
+        (key, value) -> isExtraHeaderKey(key) && value != null ? value.strip() : value);
+  }
+
+  /**
+   * 추가 인증 헤더 키를 정리한다(WD-753 리뷰) — 접두어 뒤 이름의 앞뒤 공백을 뗀 {@code extraHeader:<이름>}. 대소문자가 다른 접두어
+   * (「ExtraHeader:」 등, {@link #isExtraHeaderKey})도 정식 접두어로 바꾼다(WD-772). 추가 헤더 키가 아니면 그대로 돌려준다.
+   * 저장({@link #validateAndNormalize})·가린 값 되돌리기({@code
    * ApiConnectionService.resolveMaskedSecrets})·변경 비교({@link #comparableConfig})가 같은 키 정리를 쓴다 — 호출이
    * 보내는 이름({@link #extraHeaders})과도 같다.
    *
    * @param key authConfig 키(null 이면 null)
    */
   public static String normalizeExtraHeaderKey(String key) {
-    if (key == null || !key.startsWith(EXTRA_HEADER_PREFIX)) return key;
+    if (!isExtraHeaderKey(key)) return key;
     return EXTRA_HEADER_PREFIX + key.substring(EXTRA_HEADER_PREFIX.length()).strip();
   }
 
   /**
-   * authConfig 에서 추가 인증 헤더 키({@link #EXTRA_HEADER_PREFIX} 로 시작)만 원래 키→값으로 골라 키 정렬 순서로 담는다(WD-753
-   * 리뷰). 추가 헤더 모으기({@link #extraHeaders})·원래 키 겹침 검사({@link #rawExtraHeaderNameCollision})·키
-   * 정리·저장값에서 추가 헤더만 고르기({@code ApiConnectionService})가 접두어 거르기를 이 한 곳에서 한다. TreeMap 은 null 키를 받지 않아
-   * null 키는 건너뛴다.
+   * authConfig 에서 추가 인증 헤더 키({@link #isExtraHeaderKey} — 접두어 대소문자 무시, WD-772)만 원래 키→값으로 골라 키 정렬 순서로
+   * 담는다(WD-753 리뷰). 추가 헤더 모으기({@link #extraHeaders})·원래 키 겹침 검사({@link
+   * #rawExtraHeaderNameCollision})·키 정리·저장값에서 추가 헤더만 고르기({@code ApiConnectionService})가 접두어 거르기를 이
+   * 한 곳에서 한다. TreeMap 은 null 키를 받지 않아 null 키는 건너뛴다.
    *
    * @param config authConfig(null 이면 빈 맵)
    * @return 원래 키→값(키 정렬 순서, 수정 가능한 새 맵)
@@ -328,7 +367,7 @@ public final class AuthConfigValidator {
     if (config == null) return sorted;
     config.forEach(
         (key, value) -> {
-          if (key != null && key.startsWith(EXTRA_HEADER_PREFIX)) sorted.put(key, value);
+          if (isExtraHeaderKey(key)) sorted.put(key, value);
         });
     return sorted;
   }
@@ -361,8 +400,9 @@ public final class AuthConfigValidator {
 
   /**
    * 원래 키 기준 추가 헤더 이름 겹침(WD-753 리뷰) — {@code "extraHeader: X-A"} 와 {@code "extraHeader:X-A"} 처럼 앞뒤
-   * 공백(·대소문자)만 다른 키는 {@link #extraHeaders} 가 한 이름으로 합쳐 한쪽 값을 말없이 버린다. 저장 검사는 원래 authConfig 를 보므로
-   * 여기서 겹침으로 거절한다. 빈 이름은 건너뛴다 — 「추가 헤더 이름을 입력하세요」({@link #extraHeadersProblem})가 더 정확한 안내다.
+   * 공백(·이름이나 접두어의 대소문자, WD-772)만 다른 키는 {@link #extraHeaders} 가 한 이름으로 합쳐 한쪽 값을 말없이 버린다. 저장 검사는 원래
+   * authConfig 를 보므로 여기서 겹침으로 거절한다. 빈 이름은 건너뛴다 — 「추가 헤더 이름을 입력하세요」({@link #extraHeadersProblem})가 더
+   * 정확한 안내다.
    *
    * <p>API_CALL 호출 전 검사({@code ApiCallAuth.describeCallProblem}·미리보기)와 저장된 연결 테스트({@link
    * #describeSentValueProblem(ApiCallAuth.ResolvedAuth, Map)})도 원래 Map 이 있는 곳에서 같은 겹침을 보도록
@@ -455,8 +495,9 @@ public final class AuthConfigValidator {
   /**
    * authConfig 에서 추가 인증 헤더({@link #EXTRA_HEADER_PREFIX} 키)를 이름→값으로 모은다(WD-753).
    *
-   * <p>이름은 접두어 뒤를 앞뒤 공백을 떼고 쓰고(인증 헤더 이름과 같은 정리, WD-657), 값은 원문 그대로다(비밀 값은 손대지 않는다 — 공백만인 값은 검사가
-   * 거절한다). 이름이 빈 키({@code "extraHeader:"})도 빈 이름으로 넣는다 — 조용히 버리면 저장한 값이 말없이 사라지므로 {@link
+   * <p>접두어는 대소문자를 가리지 않는다({@link #isExtraHeaderKey}, WD-772). 이름은 접두어 뒤를 앞뒤 공백을 떼고 쓰고(인증 헤더 이름과 같은
+   * 정리, WD-657), 값도 앞뒤 공백을 뗀다(WD-772 — 저장 정리 전에 저장된 값도 잘린 값으로 보내고 검사한다. 공백만인 값은 빈 값이 돼 검사가 거절한다).
+   * 가운데 공백은 그대로다. 이름이 빈 키({@code "extraHeader:"})도 빈 이름으로 넣는다 — 조용히 버리면 저장한 값이 말없이 사라지므로 {@link
    * #extraHeadersProblem} 이 「추가 헤더 이름을 입력하세요」 로 거절하게 둔다. 순서는 원래 키의 정렬 순서(TreeMap)라 Map 구현과 상관없이 늘
    * 같다 — Python 실행기도 같은 순서로 보낸다(공용 사례 표 {@code extraHeaders}).
    *
@@ -467,7 +508,10 @@ public final class AuthConfigValidator {
     LinkedHashMap<String, String> out = new LinkedHashMap<>();
     rawExtraHeaderEntries(config)
         .forEach(
-            (key, value) -> out.put(key.substring(EXTRA_HEADER_PREFIX.length()).strip(), value));
+            (key, value) ->
+                out.put(
+                    key.substring(EXTRA_HEADER_PREFIX.length()).strip(),
+                    value != null ? value.strip() : null));
     return out;
   }
 
@@ -478,7 +522,8 @@ public final class AuthConfigValidator {
    * <ol>
    *   <li>개수 {@link #MAX_EXTRA_HEADERS} 초과
    *   <li>헤더마다 차례로: 이름이 빔 → 이름 규칙({@link #headerNameProblem}, 앞에 「추가 헤더 」) → 추가 헤더끼리 이름 겹침(대소문자 무시)
-   *       → 메인 인증 헤더와 이름 같음(대소문자 무시) → 값이 빔(공백만 포함) → 값에 줄바꿈
+   *       → 메인 인증 헤더와 이름 같음(대소문자 무시) → 값이 빔(공백만 포함) → 값에 줄바꿈 → 값에 ASCII 밖 글자({@link
+   *       #nonAsciiValueProblem}, WD-772 리뷰)
    * </ol>
    *
    * <p>이름이 겹치면 같은 헤더가 두 번 나가 대상이 어느 값을 쓸지 알 수 없다 — 그래서 거절한다. 문구에는 헤더 이름만 싣고 값(비밀)은 싣지 않는다.
@@ -507,6 +552,27 @@ public final class AuthConfigValidator {
       if (value == null || value.isBlank()) return "추가 헤더 " + name + " 값을 입력하세요";
       String lineBreak = lineBreakProblem(value, "추가 헤더 " + name + " 값");
       if (lineBreak != null) return lineBreak;
+      String nonAscii = nonAsciiValueProblem(value, "추가 헤더 " + name + " 값");
+      if (nonAscii != null) return nonAscii;
+    }
+    return null;
+  }
+
+  /**
+   * 헤더 값에 HTTP 헤더로 그대로 보낼 수 없는 글자가 있는지 본다(WD-772 리뷰) — 허용은 출력 가능한 ASCII(0x20~0x7E)와 탭(0x09)뿐이다.
+   *
+   * <p>Java {@link String#strip} 은 NBSP(U+00A0) 같은 특수 공백을 공백으로 보지 않아 앞뒤 정리 뒤에도 남는다. 그런 값은 연결
+   * 확인(Java)은 통과하지만 Python 실행기(httpx)는 헤더 값을 ASCII 로만 만들 수 있어 실패했다 — 「Java 는 성공, Python 은 실패」.
+   * 저장·연결 테스트·호출 전 검사가 모두 이 규칙으로 거절해 어느 실행기로 보내도 결과가 같게 한다. 탭은 RFC 9110 field-content 가 값 가운데에
+   * 허용하고(앞뒤 탭은 정리에서 잘린다) httpx·Java 모두 보낼 수 있어 허용한다. 그 밖의 제어 문자(DEL 포함)는 HTTP 헤더 값에 쓸 수 없어 함께 거절한다.
+   * 줄바꿈은 더 구체적인 {@link #lineBreakProblem} 이 먼저 안내한다. 메인 인증 값(API 키·토큰·비밀번호)은 이 검사 범위가 아니다.
+   *
+   * @param label 문구 앞 칸 이름 — 값(비밀)은 문구에 싣지 않는다
+   * @return 문제 사유(한국어) 또는 문제가 없으면 null
+   */
+  private static String nonAsciiValueProblem(String value, String label) {
+    if (value != null && value.chars().anyMatch(c -> c != '\t' && (c < 0x20 || c > 0x7E))) {
+      return label + "에는 영문·숫자·기호(ASCII)만 쓸 수 있습니다 — 한글·특수 공백(NBSP 등)·제어 문자는 넣을 수 없습니다";
     }
     return null;
   }
