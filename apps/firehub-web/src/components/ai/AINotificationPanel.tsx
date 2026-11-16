@@ -168,7 +168,7 @@ function DetailView({
   return (
     <div className="flex flex-col h-full">
       {/* Detail header — WD-648: 여러 줄 제목에서도 뒤로 가기·시각을 첫 줄 옆에 둔다(items-start + 제목·시각 mt-1 로 버튼 가운데에 맞춤). */}
-      <div className="flex items-start gap-2 px-3 py-2 border-b border-border/40">
+      <div className="flex items-start gap-2 px-3 py-2 border-b">
         <button
           type="button"
           onClick={onBack}
@@ -218,7 +218,7 @@ function DetailView({
       </div>
 
       {/* Footer — 리포트 보기(작성자) 또는 열람 안내(받은 사람) + AI에게 물어보기 */}
-      <div className="px-3 py-2.5 border-t border-border/40 space-y-1.5">
+      <div className="px-3 py-2.5 border-t space-y-1.5">
         {/* 받은 사람: 전문을 열 수 없으므로 버튼 대신 이유를 알린다 (WD-162) */}
         {hasReport && !canOpenReport && !message.reportLevelBlocked && (
           <RestrictedNotice message={REPORT_OWNER_ONLY_NOTICE} data-testid="report-owner-only-notice" />
@@ -432,7 +432,7 @@ export function AINotificationPanel({ onClose, onAskAI }: AINotificationPanelPro
         // List view
         <>
           {/* Panel header */}
-          <div className="flex items-center justify-between px-3 py-2.5 border-b border-border/40 shrink-0">
+          <div className="flex items-center justify-between px-3 py-2.5 border-b shrink-0">
             <div className="flex items-center gap-2">
               <Bell className="h-3.5 w-3.5" style={{ color: 'var(--primary)' }} />
               <span className="text-sm font-semibold text-foreground">AI 인사이트</span>
@@ -478,7 +478,7 @@ export function AINotificationPanel({ onClose, onAskAI }: AINotificationPanelPro
 
           {/* #520: 전체/안 읽음 필터 탭 — 안 읽은 알림만 골라볼 방법이 없던 문제 해소 */}
           <div
-            className="flex items-center gap-1 px-3 py-1.5 border-b border-border/40 shrink-0"
+            className="flex items-center gap-1 px-3 py-1.5 border-b shrink-0"
             role="tablist"
             aria-label="알림 필터"
           >
@@ -525,7 +525,7 @@ export function AINotificationPanel({ onClose, onAskAI }: AINotificationPanelPro
             ) : messages.length === 0 ? (
               <EmptyState unreadOnly={filter === 'unread'} />
             ) : (
-              <div className="divide-y divide-border/30" role="list">
+              <div className="divide-y" role="list">
                 {messages.map((msg) => (
                   <div key={msg.id} role="listitem">
                     <NotificationItem

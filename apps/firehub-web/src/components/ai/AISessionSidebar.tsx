@@ -25,8 +25,9 @@ export function AISessionSidebar() {
     });
   };
 
+  // WD-755: 세션 목록 면은 알파 없는 단색 bg-muted(/30 은 대화 영역과 갈리지 않는다) — 현재 세션(bg-accent)은 muted 보다 한 단계 위라 갈린다
   return (
-    <div className="flex flex-col h-full w-64 border-r bg-muted/30">
+    <div className="flex flex-col h-full w-64 border-r bg-muted">
       {/* New Chat Button */}
       <div className="p-3 border-b">
         <Button

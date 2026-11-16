@@ -207,7 +207,7 @@ export default function DatasetWidget({ input, onNavigate, displayMode }: Widget
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
-              <tr className="border-b border-border bg-muted/30">
+              <tr className="border-b border-border bg-muted">
                 {visibleCols.map(col => (
                   <th
                     key={col.id}
@@ -266,7 +266,7 @@ export default function DatasetWidget({ input, onNavigate, displayMode }: Widget
                 rows.map((row, rowIdx) => (
                   <tr
                     key={rowIdx}
-                    className="border-b border-border/50 last:border-0 hover:bg-muted/20 transition-colors duration-150"
+                    className="row-divider hover:bg-muted/20 transition-colors duration-150"
                   >
                     {visibleCols.map(col => (
                       <td key={col.id} className="max-w-[160px] truncate px-3 py-2">

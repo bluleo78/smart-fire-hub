@@ -237,7 +237,7 @@ export function InlineChartWidget({
   return (
     <div className="my-2 rounded-lg border border-border bg-card overflow-hidden min-w-[min(400px,100%)]">
       {/* Header */}
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-muted/30">
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-muted">
         <span className="text-sm font-medium text-card-foreground" data-testid="inline-chart-title">
           {headerLabel}
         </span>
@@ -315,7 +315,7 @@ export function InlineChartWidget({
 
       {/* Footer — 컬럼 누락 안내가 보일 때는 깨진 설정을 저장하지 못하게 숨긴다(WD-88) */}
       {!hasMissingColumns && (
-        <div className="flex justify-end px-3 py-2 border-t border-border bg-muted/20">
+        <div className="flex justify-end px-3 py-2 border-t border-border bg-muted">
           <Button
             size="sm"
             variant="outline"

@@ -93,7 +93,7 @@ export default function OntologyManageDialog({ open, onOpenChange, onSelect }: O
                 <Fragment key={`group-${group.status}`}>
                   {/* 섹션 헤더 — 상태 그룹 경계를 표로 보여준다. colSpan은 헤더 컬럼 수(6)와 맞춘다. */}
                   <TableRow key={`group-${group.status}`} className="hover:bg-transparent">
-                    <TableCell colSpan={6} className="bg-muted/50 py-1.5 text-xs font-medium text-muted-foreground">
+                    <TableCell colSpan={6} className="bg-muted py-1.5 text-xs font-medium text-muted-foreground">
                       {group.label} {group.items.length}
                     </TableCell>
                   </TableRow>

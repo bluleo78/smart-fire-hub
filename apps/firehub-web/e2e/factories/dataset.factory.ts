@@ -6,6 +6,7 @@
 
 import type {
   CategoryResponse,
+  ColumnStatsResponse,
   DatasetColumnResponse,
   DatasetDetailResponse,
   DatasetReferencesResponse,
@@ -161,4 +162,50 @@ export function createDatasetReferences(overrides?: Partial<DatasetReferencesRes
         base.proactiveJobs.length +
         base.triggers.length,
   };
+}
+
+/**
+ * 컬럼 통계 응답(GET /datasets/{id}/stats) 생성 — 기본 상세(createDatasetDetail)의 두 컬럼 id(INTEGER)·name(TEXT) 통계.
+ * overrides 는 컬럼 이름별로 특정 필드만 덮어쓴다(예: name 을 100% NULL 로 — WD-755 경계 단계 E2E).
+ */
+export function createColumnStats(overrides?: {
+  id?: Partial<ColumnStatsResponse>;
+  name?: Partial<ColumnStatsResponse>;
+}): ColumnStatsResponse[] {
+  return [
+    {
+      columnName: 'id',
+      dataType: 'INTEGER',
+      totalCount: 100,
+      nullCount: 0,
+      nullPercent: 0,
+      distinctCount: 100,
+      minValue: '1',
+      maxValue: '100',
+      avgValue: 50.5,
+      topValues: [
+        { value: '1', count: 1 },
+        { value: '2', count: 1 },
+      ],
+      sampled: false,
+      ...overrides?.id,
+    },
+    {
+      columnName: 'name',
+      dataType: 'TEXT',
+      totalCount: 100,
+      nullCount: 5,
+      nullPercent: 5.0,
+      distinctCount: 95,
+      minValue: null,
+      maxValue: null,
+      avgValue: null,
+      topValues: [
+        { value: '항목 A', count: 10 },
+        { value: '항목 B', count: 8 },
+      ],
+      sampled: false,
+      ...overrides?.name,
+    },
+  ];
 }

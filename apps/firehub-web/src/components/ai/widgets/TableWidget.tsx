@@ -149,7 +149,8 @@ export default function TableWidget({ input, onNavigate, displayMode }: WidgetPr
         type="button"
         title="SQL 보기"
         onClick={() => setSqlOpen((v) => !v)}
-        className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-xs transition-colors hover:bg-muted ${sqlOpen ? 'text-primary' : 'text-muted-foreground'}`}
+        // WD-755: 머리 띠(bg-muted) 안이라 hover 는 띠와 갈리는 hover 면(accent) — design-tokens §1-7
+        className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-xs transition-colors hover:bg-accent ${sqlOpen ? 'text-primary' : 'text-muted-foreground'}`}
       >
         <Code2 className="h-3.5 w-3.5" />
         SQL
@@ -185,7 +186,7 @@ export default function TableWidget({ input, onNavigate, displayMode }: WidgetPr
     >
       {/* SQL collapse */}
       {sqlOpen && (
-        <div className="border-b border-border bg-muted/20 px-3 py-2">
+        <div className="border-b border-border bg-muted px-3 py-2">
           <SyntaxHighlighter
             style={oneDark}
             language="sql"
@@ -208,7 +209,7 @@ export default function TableWidget({ input, onNavigate, displayMode }: WidgetPr
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead>
-            <tr className="border-b border-border bg-muted/30">
+            <tr className="border-b border-border bg-muted">
               {columns.map((col) => {
                 const isActive = sortCol === col;
                 const dir = isActive ? sortDir : null;
@@ -253,9 +254,10 @@ export default function TableWidget({ input, onNavigate, displayMode }: WidgetPr
               </tr>
             ) : (
               pageRows.map((row, i) => (
+                // WD-755: 흐린 줄무늬(odd:bg-background·even:bg-muted/10) 대신 행 아래 row-divider 로 가른다
                 <tr
                   key={i}
-                  className="border-b border-border/50 transition-colors duration-150 hover:bg-muted/20 odd:bg-background even:bg-muted/10"
+                  className="row-divider transition-colors duration-150 hover:bg-muted/20"
                 >
                   {columns.map((col) => (
                     <td key={col} className="whitespace-nowrap px-3 py-2 text-foreground">

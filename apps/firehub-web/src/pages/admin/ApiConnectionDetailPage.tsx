@@ -567,7 +567,7 @@ export default function ApiConnectionDetailPage() {
                   <table className="w-full text-xs">
                     <tbody>
                       {Object.entries(lastTestResult.responseHeaders).map(([k, v]) => (
-                        <tr key={k} className="border-b last:border-b-0">
+                        <tr key={k} className="row-divider">
                           <td className="px-2 py-1 font-mono text-muted-foreground whitespace-nowrap align-top">
                             {k}
                           </td>

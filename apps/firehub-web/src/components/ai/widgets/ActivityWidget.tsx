@@ -72,7 +72,7 @@ export default function ActivityWidget({ input, onNavigate, displayMode }: Widge
       {items.length === 0 ? (
         <div className="flex items-center justify-center py-6 text-sm text-muted-foreground">활동 내역이 없습니다.</div>
       ) : (
-        <div className="divide-y divide-border/50">
+        <div className="divide-y">
           {items.map((item) => (
             <button
               key={item.id}

@@ -156,8 +156,10 @@ const STATUS_CONFIG_DARK: Record<NonNullable<StepNodeData['executionStatus']>, S
     label: '대기',
     Icon: Clock,
     bg: 'oklch(1 0 0 / 5%)',
-    color: 'oklch(0.6 0 0)',
-    border: 'oklch(1 0 0 / 6%)',
+    // WD-755: 보조 글자는 하드코딩 회색 대신 토큰 — 다크 --muted-foreground 가 두 겹 표면에서 4.5:1 을 지킨다
+    color: 'var(--muted-foreground)',
+    // WD-755: 무채색 배지 테두리도 CANCELLED 와 같이 --border — 흰 6% 는 노드 면 위에서 보이지 않았다
+    border: 'var(--border)',
   },
   RUNNING: {
     label: '실행 중',
@@ -192,7 +194,7 @@ const STATUS_CONFIG_DARK: Record<NonNullable<StepNodeData['executionStatus']>, S
     Icon: Ban,
     bg: 'oklch(1 0 0 / 5%)',
     color: 'oklch(0.7 0 0)',
-    border: 'oklch(1 0 0 / 10%)',
+    border: 'var(--border)',
   },
 };
 
@@ -204,15 +206,6 @@ const STATUS_CARD_BG_LIGHT: Record<NonNullable<StepNodeData['executionStatus']>,
   FAILED: 'rgba(249,250,251,0.6)',
   SKIPPED: 'rgba(249,250,251,0.6)',
   CANCELLED: 'rgba(249,250,251,0.6)',
-};
-
-const STATUS_CARD_BG_DARK: Record<NonNullable<StepNodeData['executionStatus']>, string> = {
-  PENDING: 'oklch(1 0 0 / 3%)',
-  RUNNING: 'oklch(1 0 0 / 3%)',
-  COMPLETED: 'oklch(1 0 0 / 3%)',
-  FAILED: 'oklch(1 0 0 / 3%)',
-  SKIPPED: 'oklch(1 0 0 / 3%)',
-  CANCELLED: 'oklch(1 0 0 / 3%)',
 };
 
 export const StepNode = memo(function StepNode({ data }: NodeProps<StepNodeType>) {
@@ -237,17 +230,18 @@ export const StepNode = memo(function StepNode({ data }: NodeProps<StepNodeType>
     : null;
   const StatusIcon = statusConfig?.Icon;
 
-  const statusCardBg = isDark ? STATUS_CARD_BG_DARK : STATUS_CARD_BG_LIGHT;
-
-  const cardBg = data.executionStatus
-    ? statusCardBg[data.executionStatus]
-    : isDark ? 'oklch(1 0 0 / 3%)' : 'oklch(1 0 0)';
+  // WD-755: 노드 카드 면은 카드 단계 토큰(--card) — 테마를 따라간다. 라이트에서만 실행 상태별 옅은 상태 색을 깐다
+  // (다크 하드코딩 흰 3% 는 캔버스 바탕과 갈라지지 않았다).
+  const cardBg = data.executionStatus && !isDark
+    ? STATUS_CARD_BG_LIGHT[data.executionStatus]
+    : 'var(--card)';
 
   const borderColor = data.hasError
     ? (isDark ? 'oklch(0.704 0.191 22.216)' : 'oklch(0.45 0 0)')
     : data.isSelected
       ? typeConfig.color
-      : (isDark ? 'oklch(1 0 0 / 6%)' : 'oklch(0.9 0 0)');
+      // WD-755: 노드 카드 외곽선은 덩어리 외곽(--border) — 다크 흰 6% 는 캔버스 위에서 거의 보이지 않았다
+      : 'var(--border)';
 
   const outlineStyle: React.CSSProperties = data.hasError
     ? { outline: `2px solid ${isDark ? 'oklch(0.704 0.191 22.216)' : 'oklch(0.45 0 0)'}`, outlineOffset: '2px' }
@@ -266,7 +260,7 @@ export const StepNode = memo(function StepNode({ data }: NodeProps<StepNodeType>
           ...outlineStyle,
         }}
       >
-        {/* ReactFlow handles */}
+        {/* ReactFlow handles — WD-755: 핸들 둘레 링은 외곽선 토큰(--border) */}
         <Handle
           type="target"
           position={Position.Left}
@@ -276,7 +270,7 @@ export const StepNode = memo(function StepNode({ data }: NodeProps<StepNodeType>
             backgroundColor: typeConfig.color,
             border: `2px solid ${isDark ? 'oklch(0.13 0.015 280)' : 'oklch(1 0 0)'}`,
             left: -5,
-            boxShadow: `0 0 0 1px ${isDark ? 'oklch(1 0 0 / 10%)' : 'oklch(0.85 0 0)'}`,
+            boxShadow: '0 0 0 1px var(--border)',
           }}
         />
         <Handle
@@ -288,7 +282,7 @@ export const StepNode = memo(function StepNode({ data }: NodeProps<StepNodeType>
             backgroundColor: typeConfig.color,
             border: `2px solid ${isDark ? 'oklch(0.13 0.015 280)' : 'oklch(1 0 0)'}`,
             right: -5,
-            boxShadow: `0 0 0 1px ${isDark ? 'oklch(1 0 0 / 10%)' : 'oklch(0.85 0 0)'}`,
+            boxShadow: '0 0 0 1px var(--border)',
           }}
         />
 
@@ -312,7 +306,7 @@ export const StepNode = memo(function StepNode({ data }: NodeProps<StepNodeType>
           className="flex items-center justify-between gap-1 px-3 py-1.5"
           style={{
             backgroundColor: data.isSelected ? typeConfig.bgHeaderSelected : typeConfig.bgHeader,
-            borderBottom: `1px solid ${data.isSelected ? `${typeConfig.color}33` : (isDark ? 'oklch(1 0 0 / 8%)' : 'oklch(0.93 0 0)')}`,
+            borderBottom: `1px solid ${data.isSelected ? `${typeConfig.color}33` : 'var(--divider)'}`,
           }}
         >
           {/* Type icon + label */}
@@ -394,7 +388,7 @@ export const StepNode = memo(function StepNode({ data }: NodeProps<StepNodeType>
             style={{
               color: data.label && data.label !== '(이름 없음)'
                 ? (isDark ? 'oklch(0.93 0 0)' : 'oklch(0.145 0 0)')
-                : (isDark ? 'oklch(0.6 0 0)' : 'oklch(0.556 0 0)'),
+                : (isDark ? 'var(--muted-foreground)' : 'oklch(0.556 0 0)'),
             }}
             title={data.label || '(이름 없음)'}
           >

@@ -215,8 +215,9 @@ export function ColumnExpandedStats({
 
   const maxTopCount = stats.topValues.length > 0 ? Math.max(...stats.topValues.map((v) => v.count)) : 1;
 
+  // WD-755: 펼친 통계 면은 카드보다 한 단계 들어간 background — 안의 분포 트랙(bg-muted)이 보이고 요약 칸(bg-card)이 떠 보인다
   return (
-    <div className="p-4 bg-muted/30 space-y-4">
+    <div className="p-4 bg-background space-y-4">
       {/* Common: null summary */}
       <div className="space-y-1">
         <div className="text-xs font-medium text-muted-foreground">
@@ -247,7 +248,7 @@ export function ColumnExpandedStats({
               value: stats.avgValue != null ? Number(stats.avgValue).toFixed(2) : '-',
             },
           ].map(({ label, value }) => (
-            <div key={label} className="rounded-md border bg-background p-3 text-center">
+            <div key={label} className="rounded-md border bg-card p-3 text-center">
               <div className="text-xs text-muted-foreground mb-1">{label}</div>
               <div className="text-sm font-semibold font-mono">{value}</div>
             </div>

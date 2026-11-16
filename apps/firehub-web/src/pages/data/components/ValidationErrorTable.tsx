@@ -11,7 +11,8 @@ export function ValidationErrorTable({ errors }: { errors: ValidationErrorDetail
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
-          <tr className="text-left text-muted-foreground">
+          {/* WD-755: 머리 행 아래만 외곽 border, 본문 행은 row-divider(design-tokens §1-7) */}
+          <tr className="border-b border-border text-left text-muted-foreground">
             <th className="py-1 pr-4">행</th>
             <th className="py-1 pr-4">컬럼</th>
             <th className="py-1 pr-4">값</th>
@@ -20,7 +21,7 @@ export function ValidationErrorTable({ errors }: { errors: ValidationErrorDetail
         </thead>
         <tbody>
           {errors.map((e, i) => (
-            <tr key={i} className="border-t border-border">
+            <tr key={i} className="row-divider">
               <td className="py-1 pr-4">{e.rowNumber}</td>
               <td className="py-1 pr-4">{e.columnName}</td>
               <td className="py-1 pr-4 font-mono">{e.value}</td>

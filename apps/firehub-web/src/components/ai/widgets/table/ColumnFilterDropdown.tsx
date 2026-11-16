@@ -2,6 +2,7 @@ import { ListFilter } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 import { cn } from '../../../../lib/utils';
+import { Input } from '../../../ui/input';
 
 interface ColumnFilterDropdownProps {
   columnName: string;
@@ -70,13 +71,14 @@ export function ColumnFilterDropdown({
       {open && (
         <div className="absolute left-0 top-5 z-50 w-44 rounded-md border border-border bg-popover shadow-md">
           <div className="border-b border-border p-1.5">
-            <input
+            {/* WD-755: 검색란은 공용 Input(폼 컨트롤 경계 border-input·바탕) — 작은 팝오버에 맞춰 높이·글자·포커스 링만 줄인다 */}
+            <Input
               type="text"
               placeholder="검색..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               autoFocus
-              className="w-full rounded border border-border bg-muted/30 px-2 py-0.5 text-xs placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+              className="h-auto rounded px-2 py-0.5 text-xs shadow-none md:text-xs focus-visible:border-input focus-visible:ring-1 focus-visible:ring-primary"
             />
           </div>
 

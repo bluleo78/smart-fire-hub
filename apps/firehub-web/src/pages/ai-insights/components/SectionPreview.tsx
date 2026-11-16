@@ -190,7 +190,7 @@ function renderSection(section: TemplateSection, index: number, depth = 0): Reac
     return (
       <div key={section.key || index} style={{ marginLeft: indent }}>
         {/* 그룹 헤더 */}
-        <div className={`flex items-center gap-2 py-1.5 px-2 rounded border-l-3 ${def?.color ?? 'border-l-violet-500'} bg-muted/30 mb-2`}>
+        <div className={`flex items-center gap-2 py-1.5 px-2 rounded border-l-3 ${def?.color ?? 'border-l-violet-500'} bg-muted mb-2`}>
           <span className="text-sm">{def?.icon}</span>
           <span className="text-sm font-semibold flex-1">{section.label || '그룹'}</span>
           {section.required && <span className="w-1.5 h-1.5 rounded-full bg-warning shrink-0" title="필수 섹션" />}
@@ -211,10 +211,12 @@ function renderSection(section: TemplateSection, index: number, depth = 0): Reac
   }
 
   // 일반 섹션 — 타입별 플레이스홀더 렌더링
+  // WD-755: 섹션 면은 card + 외곽선 — 안의 플레이스홀더 막대가 bg-muted 라 섹션을 muted 로 깔면 막대가 사라지고,
+  // 그룹 머리(bg-muted)와도 단계가 갈라진다
   return (
     <div
       key={section.key || index}
-      className={`flex flex-col gap-2 py-2 px-2 rounded border-l-3 ${def?.color ?? 'border-l-gray-500'} bg-muted/20`}
+      className={`flex flex-col gap-2 py-2 px-2 rounded border border-l-3 ${def?.color ?? 'border-l-gray-500'} bg-card`}
       style={{ marginLeft: indent }}
     >
       {/* 섹션 헤더: 아이콘, 레이블, 필수 표시, 타입 뱃지 */}

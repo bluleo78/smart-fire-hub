@@ -358,7 +358,7 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
                       } : undefined}
                     >
                       <td
-                        style={{ width: 40, padding: '0 8px', textAlign: 'center', borderBottom: '1px solid var(--border)', verticalAlign: 'middle' }}
+                        style={{ width: 40, padding: '0 8px', textAlign: 'center', borderBottom: '1px solid var(--divider)', verticalAlign: 'middle' }}
                         onDoubleClick={(e) => e.stopPropagation()}
                       >
                         <Checkbox
@@ -379,7 +379,8 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
                             style={{
                               padding: '0 12px',
                               fontSize: '0.875rem',
-                              borderBottom: '1px solid var(--border)',
+                              // WD-755: 가상 스크롤 행 아래 선은 행 구분선(divider) — 머리(th) 아래만 외곽 border
+                              borderBottom: '1px solid var(--divider)',
                               verticalAlign: 'middle',
                               overflow: 'hidden',
                               textOverflow: 'ellipsis',

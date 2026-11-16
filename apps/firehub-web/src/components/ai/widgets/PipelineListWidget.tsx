@@ -36,7 +36,7 @@ export default function PipelineListWidget({ input, onNavigate, displayMode }: W
       {items.length === 0 ? (
         <div className="flex items-center justify-center py-6 text-sm text-muted-foreground">파이프라인이 없습니다.</div>
       ) : (
-        <div className="divide-y divide-border/50">
+        <div className="divide-y">
           {items.map((item) => (
             <button
               key={item.id}

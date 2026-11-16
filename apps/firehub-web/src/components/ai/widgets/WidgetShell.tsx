@@ -15,7 +15,9 @@ export function WidgetShell({
 }: WidgetShellProps) {
   return (
     <div className="my-1 overflow-hidden rounded-lg border border-border">
-      <div className="flex items-center justify-between gap-2 border-b border-border bg-muted/50 px-3 py-1.5">
+      {/* WD-755: 머리 띠는 본문과 갈라지는 구조 띠라 알파 없는 단색 bg-muted(§1-7 — /50 은 상태 표시에만).
+          그래서 띠 안 동작 버튼(actions)의 hover·열림은 bg-muted 가 아니라 띠보다 밝은 bg-card 로 둔다(TableWidget·ExportDropdown). */}
+      <div className="flex items-center justify-between gap-2 border-b border-border bg-muted px-3 py-1.5">
         <div className="flex items-center gap-2 min-w-0">
           <span className="shrink-0">{icon}</span>
           <span className="truncate font-medium text-sm">{title}</span>

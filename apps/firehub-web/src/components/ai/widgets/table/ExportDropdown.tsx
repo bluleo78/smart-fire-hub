@@ -35,11 +35,12 @@ export function ExportDropdown({ onExport }: ExportDropdownProps) {
         type="button"
         title="내보내기"
         onClick={() => setOpen((v) => !v)}
+        // WD-755: 머리 띠(bg-muted) 안이라 열림·hover 는 띠와 갈리는 hover 면(accent) — design-tokens §1-7
         className={cn(
           'flex items-center gap-1 rounded px-1.5 py-0.5 text-xs transition-colors',
           open
-            ? 'bg-muted text-foreground'
-            : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+            ? 'bg-accent text-foreground'
+            : 'text-muted-foreground hover:bg-accent hover:text-foreground',
         )}
       >
         <Download className="h-3.5 w-3.5" />

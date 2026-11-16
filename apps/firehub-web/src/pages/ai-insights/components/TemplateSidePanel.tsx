@@ -14,10 +14,12 @@ function GuideTab() {
 
   return (
     <div className="space-y-2">
+      {/* WD-755: 항목 면은 card — 흐린 muted 면 대신 외곽선이 항목을 가르고, 안쪽 예시 코드(bg-muted)와 hover 가 그 위에서 구분된다.
+          hover 는 단색 — design-tokens §1-7 */}
       {SECTION_TYPES.map((st) => (
         <div
           key={st.type}
-          className="p-3 bg-muted/30 rounded-md border border-border cursor-pointer hover:bg-muted/50 transition-colors"
+          className="p-3 bg-card rounded-md border border-border cursor-pointer hover:bg-muted transition-colors"
           onClick={() => setExpandedType(expandedType === st.type ? null : st.type)}
         >
           <div className="flex items-center justify-between">

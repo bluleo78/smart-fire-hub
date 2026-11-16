@@ -218,7 +218,7 @@ export function PipelineCanvas({
 
   if (state.steps.length === 0) {
     return (
-      <div className="relative flex h-full w-full flex-col items-center justify-center gap-4 rounded-lg border-2 border-dashed border-border bg-muted/20">
+      <div className="relative flex h-full w-full flex-col items-center justify-center gap-4 rounded-lg border-2 border-dashed border-border bg-muted">
         <p className="text-muted-foreground">첫 번째 스텝을 추가하세요</p>
         {!readOnly && (
           <button

@@ -102,7 +102,7 @@ export function SqlQueryEditor({ datasetId, columns }: SqlQueryEditorProps) {
       {/* Editor */}
       <Suspense
         fallback={
-          <div className="flex items-center justify-center h-[150px] border rounded-md bg-muted/30">
+          <div className="flex items-center justify-center h-[150px] border rounded-md bg-muted">
             <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
           </div>
         }
@@ -143,7 +143,7 @@ export function SqlQueryEditor({ datasetId, columns }: SqlQueryEditorProps) {
                 /* scroll-pt-10: sticky thead 뒤로 행이 숨지 않도록 */
                 <div className="rounded-md border overflow-x-auto max-h-[300px] overflow-y-auto overscroll-contain scroll-pt-10">
                   <table className="w-full text-sm" style={{ borderCollapse: 'collapse' }}>
-                    <thead className="bg-muted/50 sticky top-0">
+                    <thead className="bg-muted sticky top-0">
                       <tr>
                         {result.columns.map((col) => (
                           <th

@@ -105,10 +105,13 @@
 | 기본 텍스트 | `text-foreground` |
 | 보조 텍스트 | `text-muted-foreground` |
 | 카드 배경 | `bg-card` |
-| 테두리 | `border-border` |
+| 카드 안 머리 띠·영역 구분 면 | `bg-muted` |
+| 덩어리 외곽선(카드·패널·섹션) | `border` (`border-border`) |
+| 목록·표 행 사이 선 | `divide-y` / `divide-x`(기본 색 `--divider`), 표 `tr`·가상 목록 행은 `row-divider` |
+| 구조 경계 알파 | 테두리(`border-border/50`·`divide-border/30`)는 값과 무관하게 금지. 면 `bg-muted/NN`은 50 미만 금지(`bg-muted/30` ✗), 50 이상은 상태 표시에만 — 머리·바닥 띠 같은 구조 띠는 단색 `bg-muted` ([01 §1-7 알파 규칙](./01-design-tokens.md#알파-규칙--게이트-기준)) |
 | 기본 버튼 | `bg-primary text-primary-foreground` |
 | 위험/삭제 | `bg-destructive text-destructive-foreground` |
-| hover 배경 | `bg-accent` / `bg-muted/50` |
+| hover 배경 | `bg-accent` / `bg-muted/50` — 쉬는 면이 `bg-card`인 요소는 단색 `hover:bg-muted`·`hover:bg-accent`, 단색 `bg-muted` 띠 안 버튼은 기본 `hover:bg-accent`(머리 띠보다 한 단계 위) |
 | Focus ring | `ring-ring/50` |
 
 ### Status Colors (구현 완료)

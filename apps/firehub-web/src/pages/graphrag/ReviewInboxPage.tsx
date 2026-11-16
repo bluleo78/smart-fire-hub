@@ -489,7 +489,7 @@ function ReviewRow(props: {
         <TableRow>
           {/* 토글이 aria-controls로 가리키는 패널 컨테이너. 로딩 → 결과 전환이 비동기로 조용히 일어나므로
               aria-live/aria-busy로 고지한다(#338, SC 4.1.3). */}
-          <TableCell colSpan={canDecide ? 4 : 3} className="bg-muted/40">
+          <TableCell colSpan={canDecide ? 4 : 3} className="bg-muted">
             {/* id/live region은 <td>가 아니라 내부 div에 둔다 — td에 role을 덮으면 표 셀 시맨틱이 깨진다. */}
             <div id={evidencePanelId} aria-label={`${targetSummary} 원문 근거`} role="group">
               <EvidencePanel id={row.id} />

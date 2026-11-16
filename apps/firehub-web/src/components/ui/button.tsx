@@ -1,9 +1,11 @@
-import * as React from "react"
 import { cva, type VariantProps } from "class-variance-authority"
 import { Slot } from "radix-ui"
+import * as React from "react"
 
 import { cn } from "@/lib/utils"
 
+// WD-755: outline 쉬는 면은 bg-transparent(Input·Textarea 와 같다) — 라이트 --background 가 이제 카드보다 어두운
+// 페이지 바탕이라 카드·머리 띠 위 outline 버튼이 회색 조각으로 보였다. 다크는 기존대로 dark:bg-input/30.
 const buttonVariants = cva(
   "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-all disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 shrink-0 [&_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive",
   {
@@ -13,7 +15,7 @@ const buttonVariants = cva(
         destructive:
           "bg-destructive text-white hover:bg-destructive/90 focus-visible:ring-destructive dark:bg-destructive/60",
         outline:
-          "border bg-background shadow-xs hover:bg-accent hover:text-accent-foreground dark:bg-input/30 dark:border-input dark:hover:bg-input/50",
+          "border bg-transparent shadow-xs hover:bg-accent hover:text-accent-foreground dark:bg-input/30 dark:border-input dark:hover:bg-input/50",
         secondary:
           "bg-secondary text-secondary-foreground hover:bg-secondary/80",
         ghost:
@@ -61,4 +63,5 @@ function Button({
   )
 }
 
+// eslint-disable-next-line react-refresh/only-export-components -- shadcn 관례: 변형 함수를 함께 내보낸다(badge·tabs 와 같음, WD-755 에서 스테이징되며 드러남)
 export { Button, buttonVariants }

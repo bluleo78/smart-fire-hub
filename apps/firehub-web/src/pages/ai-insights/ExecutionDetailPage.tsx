@@ -246,7 +246,7 @@ function ExecutionDetailContent({ jobIdNum, executionIdNum }: { jobIdNum: number
         <div
           className={
             isSkipped
-              ? 'rounded-lg border bg-muted/40 p-6 space-y-3'
+              ? 'rounded-lg border bg-muted p-6 space-y-3'
               : 'rounded-lg border border-destructive/50 bg-destructive/5 p-6 space-y-3'
           }
           data-testid={isSkipped ? 'execution-skipped' : 'execution-error'}
@@ -303,7 +303,8 @@ function ExecutionDetailContent({ jobIdNum, executionIdNum }: { jobIdNum: number
           이전에는 rawHtml 분기 안에만 있어서, htmlContent 없이 sections만 있는
           폴백 경로에서는 AI가 만든 총평이 화면 어디에도 나오지 않았다. */}
       {execution.status === 'COMPLETED' && summary && (
-        <div className="rounded-lg border bg-muted/50 p-6" data-testid="execution-summary">
+        // WD-755: 요약은 아래 리포트와 갈라지는 영역 면이라 알파 없는 단색 bg-muted(§1-7 — /50 은 상태 표시에만)
+        <div className="rounded-lg border bg-muted p-6" data-testid="execution-summary">
           <h2 className="text-sm font-semibold mb-3">요약</h2>
           <div className={PROSE_CLASSES}>
             <ReactMarkdown remarkPlugins={REMARK_PLUGINS}>{summary}</ReactMarkdown>
@@ -317,7 +318,7 @@ function ExecutionDetailContent({ jobIdNum, executionIdNum }: { jobIdNum: number
           {/* HTML 리포트 영역 — 상단 바에 인쇄/PDF 버튼 + iframe */}
           <div className="rounded-lg border overflow-hidden">
             {/* 헤더 바: 리포트 제목 + 액션 버튼들 */}
-            <div className="flex items-center justify-between px-4 py-2 border-b bg-muted/30">
+            <div className="flex items-center justify-between px-4 py-2 border-b bg-muted">
               <h2 className="text-sm font-semibold">리포트</h2>
               <div className="flex items-center gap-2">
                 <Button

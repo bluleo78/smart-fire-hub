@@ -95,7 +95,7 @@ export default function PipelineStatusWidget({ input, onNavigate, displayMode }:
 
       {/* Step list */}
       {pipeline.steps.length > 0 && (
-        <div className="divide-y divide-border/50">
+        <div className="divide-y">
           {pipeline.steps.map((step) => (
             <div key={step.id} className="flex items-center gap-2 px-3 py-2 hover:bg-muted/20 transition-colors duration-150">
               <span className="h-2 w-2 shrink-0 rounded-full bg-muted-foreground" />

@@ -70,10 +70,12 @@ export default function ReportTemplatesTab() {
         </div>
         {/* 동일 행의 카드 높이를 균일하게 맞추기 위해 items-stretch(기본값) 유지 */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {/* WD-755: 기본 템플릿은 점선 외곽선으로 표시하고 면은 card 그대로 — bg-muted 로 깔면 안의 「기본」 secondary 배지가
+              라이트에서 muted 와 같은 값이라 사라진다. hover 는 단색 — design-tokens §1-7 */}
           {builtins.map((t) => (
             <Card
               key={t.id}
-              className="bg-muted/20 border-dashed cursor-pointer hover:bg-muted/30 transition-colors flex flex-col"
+              className="border-dashed cursor-pointer hover:bg-muted transition-colors flex flex-col"
               onClick={() => navigate(`/ai-insights/templates/${t.id}`)}
             >
               <CardHeader className="pb-2 flex-shrink-0">

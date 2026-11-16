@@ -408,9 +408,9 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
         </div>
       )}
 
-      {/* 목표 기반 모드 UI */}
+      {/* 목표 기반 모드 UI — WD-755: 영역 면은 알파 없는 단색 bg-muted(/30 은 카드와 갈리지 않는다) */}
       {isNew && creationMode === 'goal' && (
-        <div className="space-y-4 rounded-lg border p-4 bg-muted/30">
+        <div className="space-y-4 rounded-lg border p-4 bg-muted">
           <div className="space-y-2">
             <Label htmlFor="business-question">비즈니스 질문</Label>
             <Textarea

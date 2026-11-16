@@ -50,8 +50,11 @@ export function Pagination({
 
   const pageNumbers = buildPageNumbers(currentPage, totalPages);
 
+  // WD-755: 바닥 띠는 border-t 로만 가르고 채움은 두지 않는다(투명) — 위젯 면(card)이 그대로 비친다.
+  // bg-muted 로 깔면 안쪽 페이지 버튼의 hover:bg-muted 가 사라지고, bg-card 를 또 깔면 다크에서 반투명 card 가
+  // 한 겹 더 쌓여 위젯 머리 띠보다 밝아진다.
   return (
-    <div className="flex items-center justify-between border-t border-border bg-muted/20 px-3 py-1.5">
+    <div className="flex items-center justify-between border-t border-border px-3 py-1.5">
       <span className="text-xs text-muted-foreground">
         {totalItems === 0
           ? '결과 없음'

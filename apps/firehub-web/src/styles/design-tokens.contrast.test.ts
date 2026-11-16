@@ -97,14 +97,18 @@ const withAlpha = (c: Rgba, alpha: number): Rgba => ({ ...c, a: c.a * alpha });
 
 const css = readFileSync(CSS_PATH, 'utf8');
 
-/** 셀렉터 블록 하나에서 `--토큰: 값;` 쌍을 모두 뽑는다. */
-function readBlock(selector: string): Record<string, string> {
+/** 셀렉터 블록 하나의 본문(`{` 와 `}` 사이)을 돌려준다 — 토큰 블록과 그라디언트 블록이 같이 쓴다. */
+function blockBody(selector: string): string {
   const idx = css.indexOf(selector + ' {');
   if (idx < 0) throw new Error(`셀렉터를 찾지 못했다: ${selector}`);
   const start = css.indexOf('{', idx) + 1;
-  const end = css.indexOf('}', start);
+  return css.slice(start, css.indexOf('}', start));
+}
+
+/** 셀렉터 블록 하나에서 `--토큰: 값;` 쌍을 모두 뽑는다. */
+function readBlock(selector: string): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const line of css.slice(start, end).split('\n')) {
+  for (const line of blockBody(selector).split('\n')) {
     const m = line.match(/^\s*(--[\w-]+)\s*:\s*([^;]+);/);
     if (m) out[m[1]] = m[2].trim();
   }
@@ -318,8 +322,7 @@ describe('#366 muted-foreground', () => {
     expect(contrast(fg, token(theme, '--background'))).toBeGreaterThanOrEqual(4.5);
     expect(contrast(fg, cardSurface(theme))).toBeGreaterThanOrEqual(4.5);
     // `bg-muted`는 페이지 배경 위에 놓이는 표면이다. 카드 안에 다시 muted를 겹치는
-    // 중첩 조합(다크 4.39:1)은 디자이너가 이연한 경계값 항목이라 여기서 단언하지 않는다
-    // (→ docs/design-system/13-migration-backlog.md).
+    // 중첩 조합은 아래 「경계 단계 (WD-755)」가 두 겹 카드 위 머리 띠·hover 로 단언한다.
     expect(
       contrast(fg, composite(token(theme, '--muted'), token(theme, '--background')))
     ).toBeGreaterThanOrEqual(4.5);
@@ -526,5 +529,127 @@ describe('InlineBanner 경계 대비', () => {
     const surface = cardSurface(theme);
     const faded = composite(withAlpha(token(theme, '--warning'), 0.2), surface);
     expect(contrast(faded, surface)).toBeLessThan(3);
+  });
+});
+
+// ----------------------------------------------------------------------------
+// 10. WD-755 — 경계 단계(배경 3단 · 테두리 3단)
+//    무엇: 페이지(background) < 패널·카드(card) < 머리 띠(muted) 의 배경 3단과
+//          행 구분선(divider) < 덩어리 외곽(border) < 입력(input) 의 테두리 3단이
+//          6개 테마 조합 전부에서 눈에 보이는 단계로 갈라지는지 고정한다.
+//    왜:   페이지와 카드가 거의 같고(1.02:1 안팎) 외곽선이 옅어(1.1~1.2:1) 카드·패널·목록·입력이
+//          한 면에 붙어 보였다. 값을 누가 다시 옅게 되돌리면 여기서 red 가 된다.
+//    hover·선택 면(accent)은 머리 띠(muted)보다 한 단계 위 — 띠 안 버튼·메뉴의 hover 가 띠에 묻히지 않게.
+//    다크의 card·muted·border·divider·accent 는 반투명이므로 **바탕부터 차례로 겹쳐** 잰다
+//    (바탕 → 카드 → 토큰). 불투명 토큰(라이트 전부, 다크 --input)은 겹쳐도 자기 색이 된다.
+//    참고 구현: smart-workplace WP-1051 boundaryTokens.test.
+// ----------------------------------------------------------------------------
+
+/** 토큰을 아래에서 위로 차례로 합성한 실색 — 첫 토큰(페이지 바탕)은 불투명이어야 한다. */
+function stacked(theme: string, layers: readonly string[]): Rgba {
+  const [base, ...rest] = layers;
+  return rest.reduce((below, name) => composite(token(theme, name), below), token(theme, base));
+}
+
+describe('경계 단계 (WD-755)', () => {
+  /** 카드 위에 겹친 선·면과 카드 표면의 대비 */
+  const onCard = (theme: string, name: string) =>
+    contrast(stacked(theme, ['--background', '--card', name]), cardSurface(theme));
+  /** 페이지 바탕 위에 겹친 선과 바탕의 대비 */
+  const onPage = (theme: string, name: string) =>
+    contrast(stacked(theme, ['--background', name]), token(theme, '--background'));
+
+  it.each(ALL_THEMES)('%s: 카드가 페이지 바탕과 갈라진다(≥ 1.04)', (theme) => {
+    expect(contrast(cardSurface(theme), token(theme, '--background'))).toBeGreaterThanOrEqual(1.04);
+  });
+
+  it.each(ALL_THEMES)('%s: 머리 띠(muted)가 카드와 갈라진다(≥ 1.12)', (theme) => {
+    expect(onCard(theme, '--muted')).toBeGreaterThanOrEqual(1.12);
+  });
+
+  // 머리 띠 안 outline·ghost 버튼과 메뉴의 hover(accent)가 띠와 같은 색이면 hover 가 사라진다 —
+  // 화면마다 hover:bg-card 같은 예외를 붙이지 않도록 토큰 단계에서 갈라 둔다. 다크는 반투명이라 띠 위에 겹친 실색으로 잰다.
+  it.each(ALL_THEMES)('%s: hover 면(accent)이 머리 띠(muted) 위에서 갈라진다(≥ 1.04)', (theme) => {
+    const band = stacked(theme, ['--background', '--card', '--muted']);
+    const hover = stacked(theme, ['--background', '--card', '--muted', '--accent']);
+    expect(contrast(hover, band), `${theme} 띠=${hex(band)} hover=${hex(hover)}`).toBeGreaterThanOrEqual(1.04);
+  });
+
+  it.each(ALL_THEMES)('%s: 외곽선(border)이 카드 위 ≥ 1.4, 페이지 위 ≥ 1.3', (theme) => {
+    expect(onCard(theme, '--border')).toBeGreaterThanOrEqual(1.4);
+    expect(onPage(theme, '--border')).toBeGreaterThanOrEqual(1.3);
+  });
+
+  it.each(ALL_THEMES)('%s: 행 구분선(divider)은 보이되(≥ 1.2) 외곽선보다 옅다', (theme) => {
+    expect(onCard(theme, '--divider')).toBeGreaterThanOrEqual(1.2);
+    expect(onCard(theme, '--divider')).toBeLessThan(onCard(theme, '--border'));
+  });
+
+  it.each(ALL_THEMES)('%s: 입력 경계(input)가 가장 강한 단계다(외곽선보다 진하다, #376 값 그대로)', (theme) => {
+    expect(onCard(theme, '--input')).toBeGreaterThan(onCard(theme, '--border'));
+    expect(onPage(theme, '--input')).toBeGreaterThan(onPage(theme, '--border'));
+  });
+
+  // 표면을 진하게 해도 보조 글자는 4.5:1 — 카드가 두 겹 깔린 곳(홈 요약 칸 등)의 머리 띠·hover 가 최악 조건이다.
+  // (#366 이 이연했던 「카드 안 muted 중첩」 조합을 여기서 단언한다.)
+  it.each(
+    ALL_THEMES.flatMap((theme) => [
+      { theme, where: '두 겹 카드 위 머리 띠', layers: ['--background', '--card', '--card', '--muted'] },
+      { theme, where: '두 겹 카드 위 hover', layers: ['--background', '--card', '--card', '--accent'] },
+      { theme, where: '카드 위 머리 띠 위 hover', layers: ['--background', '--card', '--muted', '--accent'] },
+    ])
+  )('$theme: muted-foreground 가 $where 에서 ≥ 4.5', ({ theme, layers }) => {
+    const fg = token(theme, '--muted-foreground');
+    const surface = stacked(theme, layers);
+    expect(contrast(fg, surface), `${theme} 표면=${hex(surface)}`).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it('행 구분선 토큰이 Tailwind 색으로 매핑된다(border-divider·divide-divider)', () => {
+    expect(css).toContain('--color-divider: var(--divider);');
+    expect(LIGHT['--divider']).toBeDefined();
+    expect(DARK_OVERRIDES['--divider']).toBeDefined();
+  });
+
+  // 목록 행 사이 선(divide-y·divide-x)의 기본 색이 divider 인지 — 화면마다 divide-* 색을 따로 주지 않아도
+  // 옅은 구분선이 되게 한다. 선택자 전체가 :where() 라 특이도 0, base 레이어라 화면이 준 divide-* 색 유틸리티가 이긴다.
+  // Tailwind v4 의 divide-y 는 border-bottom, divide-x 는 border-inline-end 만 그리므로 그 쪽 색만 바꾼다(WD-755) —
+  // border-block-color·border-inline-color 처럼 양쪽을 바꾸면 자식이 스스로 그린 위·왼쪽 외곽선까지 옅어진다.
+  it('divide-y·divide-x 의 기본 색이 divider 다(특이도 0, 그리는 쪽만)', () => {
+    expect(css).toMatch(/:where\(\.divide-y > :not\(:last-child\)\) \{\s*border-bottom-color: var\(--divider\);\s*\}/);
+    expect(css).toMatch(/:where\(\.divide-x > :not\(:last-child\)\) \{\s*border-inline-end-color: var\(--divider\);\s*\}/);
+  });
+
+  // 메인 영역(AppLayout main)은 .bg-gradient-main 위에 카드를 올린다. 그라디언트의 가장 밝은 지점이 흰색이면
+  // 상단의 흰 카드가 흰 바탕에 붙어(1.00:1) 경계 단계가 무너진다 — 그라디언트도 카드 / 바탕 1.04 를 지켜야 한다.
+  const GRADIENTS: Record<string, string> = {
+    'indigo-light': ':root .bg-gradient-main',
+    'ocean-light': '.theme-ocean .bg-gradient-main',
+    'sunset-light': '.theme-sunset .bg-gradient-main',
+    'indigo-dark': '.dark .bg-gradient-main',
+    'ocean-dark': '.dark .theme-ocean .bg-gradient-main, .theme-ocean.dark .bg-gradient-main',
+    'sunset-dark': '.dark .theme-sunset .bg-gradient-main, .theme-sunset.dark .bg-gradient-main',
+  };
+  /** 그라디언트 블록의 색 지점 중 가장 밝은 것(카드와 대비가 가장 작아지는 최악 지점). `var(--토큰)` 지점은 그 테마 값으로 푼다. */
+  function lightestGradientStop(theme: string): Rgba {
+    const body = blockBody(GRADIENTS[theme]);
+    const stops = [...body.matchAll(/oklch\([^)]*\)|var\((--[\w-]+)\)/g)].map((m) =>
+      m[1] ? token(theme, m[1]) : parseOklch(m[0])
+    );
+    expect(stops.length, GRADIENTS[theme]).toBeGreaterThanOrEqual(2);
+    return stops.reduce((a, b) => (luminance(b) > luminance(a) ? b : a));
+  }
+
+  it.each(ALL_THEMES)('%s: 메인 그라디언트의 가장 밝은 지점 위에서도 카드가 갈라진다(≥ 1.04)', (theme) => {
+    const stop = lightestGradientStop(theme);
+    const card = composite(token(theme, '--card'), stop);
+    expect(contrast(card, stop), `${theme} 지점=${hex(stop)} 카드=${hex(card)}`).toBeGreaterThanOrEqual(1.04);
+  });
+
+  // divide-y 를 못 쓰는 행(표 tr·가상 목록 등)의 아래 선은 row-divider 유틸리티 하나로 쓴다.
+  // divide-y 와 같은 뜻으로 마지막 행에는 그리지 않는다 — 호출부가 last:border-b-0 을 따로 붙이지 않게.
+  it('row-divider 유틸리티가 마지막 행을 뺀 행 아래 선을 divider 색으로 그린다', () => {
+    expect(css).toMatch(
+      /@utility row-divider \{\s*&:not\(:last-child\) \{\s*border-bottom-width: 1px;\s*border-bottom-color: var\(--divider\);\s*\}\s*\}/
+    );
   });
 });

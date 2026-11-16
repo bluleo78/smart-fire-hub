@@ -144,7 +144,8 @@ export function AISidePanel() {
     <div
       ref={panelRef}
       className={cn(
-        'relative z-10 border-l bg-background transition-[width] duration-200 ease-in-out shrink-0',
+        // 면은 카드 단계 — 페이지 바탕과 같은 면이라 패널·말풍선 단계가 읽히지 않던 것(WD-755)
+        'relative z-10 border-l bg-card transition-[width] duration-200 ease-in-out shrink-0',
         isOpen ? 'w-auto' : 'w-0 overflow-hidden border-l-0'
       )}
       style={{ width: isOpen ? width : 0 }}

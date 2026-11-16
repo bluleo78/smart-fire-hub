@@ -663,7 +663,8 @@ export default function HomePage() {
                 {activityItems.map((item) => (
                   <div
                     key={`${item.eventType}-${item.id}`}
-                    className={`flex items-start gap-2.5 py-2 border-b last:border-0 row-hover ${
+                    // WD-755: 행 아래 선은 row-divider(design-tokens §1-7)
+                    className={`flex items-start gap-2.5 py-2 row-divider row-hover ${
                       !item.isResolved ? 'border-l-2 border-l-destructive pl-2.5' : 'pl-[12px]'
                     }`}
                   >

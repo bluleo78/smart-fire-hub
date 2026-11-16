@@ -419,7 +419,7 @@ export function ChannelCard({ setting }: ChannelCardProps) {
               - 성공 시 채널 목록 invalidate → "연결됨" 상태로 전환
             */}
             {showSlackLinkUser && (
-              <div className="rounded-md border border-border bg-muted/40 p-3 space-y-2">
+              <div className="rounded-md border border-border bg-muted p-3 space-y-2">
                 <div className="space-y-1">
                   <p className="text-xs font-medium">Slack 회원 ID 연동</p>
                   <p className="text-xs text-muted-foreground leading-relaxed">

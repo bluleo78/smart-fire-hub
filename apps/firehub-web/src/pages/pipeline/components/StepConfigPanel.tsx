@@ -250,8 +250,9 @@ export default function StepConfigPanel({
 
   if (!step) {
     return (
-      /* 모바일: 전체 너비 + 상단 보더, 높이는 내용만큼(바깥 탭이 스크롤 — WD-456), lg+: 고정 400px 너비 + 좌측 보더 + 안쪽 스크롤 */
-      <div className="w-full shrink-0 border-t flex flex-col lg:w-[400px] lg:h-full lg:border-l lg:border-t-0 lg:overflow-hidden">
+      /* 모바일: 전체 너비 + 상단 보더, 높이는 내용만큼(바깥 탭이 스크롤 — WD-456), lg+: 고정 400px 너비 + 좌측 보더 + 안쪽 스크롤.
+         면은 카드 단계(bg-card) — 캔버스(바탕)와 선 하나로만 나뉘던 것을 면으로도 구분한다(WD-755). */
+      <div className="w-full shrink-0 border-t flex flex-col bg-card lg:w-[400px] lg:h-full lg:border-l lg:border-t-0 lg:overflow-hidden">
         <div className="flex items-center px-4 py-3 border-b shrink-0">
           <span className="font-medium text-sm">파이프라인 정보</span>
         </div>
@@ -379,7 +380,7 @@ export default function StepConfigPanel({
     /* 모바일: 전체 너비 + 상단 보더, 높이는 내용만큼(바깥 탭이 스크롤 — WD-456), lg+: 고정 400px 너비 + 좌측 보더 + 안쪽 스크롤 */
     <div
       ref={panelRootRef}
-      className="w-full shrink-0 border-t flex flex-col lg:w-[400px] lg:h-full lg:border-l lg:border-t-0 lg:overflow-hidden"
+      className="w-full shrink-0 border-t flex flex-col bg-card lg:w-[400px] lg:h-full lg:border-l lg:border-t-0 lg:overflow-hidden"
     >
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b shrink-0">

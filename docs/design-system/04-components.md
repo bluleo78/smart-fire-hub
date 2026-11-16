@@ -438,8 +438,8 @@ DatasetWidget과 TableWidget이 공유하는 테이블 UI 컴포넌트.
 
 **행 스타일**:
 - 패딩: `py-2` (8px)
-- hover: `hover:bg-muted/20 transition-colors duration-150`
-- 구분선: `border-border/50`
+- hover: `hover:bg-muted/20 transition-colors duration-150` (상태 표시라 알파 허용 — 단 놓인 바탕과 구분돼야 한다)
+- 구분선: `row-divider` (`--divider` 색). 구조 경계에 알파를 붙인 `border-border/50`은 쓰지 않는다 — `boundary-alpha-gate.test.ts`가 막는다 ([01 §1-7](./01-design-tokens.md#1-7-영역-경계-단계-boundary-scale), WD-755)
 
 **내보내기**:
 - 헤더 액션 영역에 다운로드 아이콘 → CSV / JSON 드롭다운

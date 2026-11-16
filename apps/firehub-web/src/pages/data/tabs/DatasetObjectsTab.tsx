@@ -276,7 +276,7 @@ export function DatasetObjectsTab({ datasetId, exportAllowed }: { datasetId: num
           {/* S3 스타일 목록: 이름 / 크기 / 수정일 / 다운로드. 폴더 행이 먼저, 그다음 파일 행.
               차단이어도 4번째 칸은 비워 둔다 — 행마다 열 폭이 달라져 크기·수정일 정렬이 흔들리지 않게. */}
           <div data-testid="object-list" className="overflow-hidden rounded-md border">
-            <div className={`grid gap-4 border-b bg-muted/50 px-4 py-2 text-xs font-medium text-muted-foreground ${ROW_GRID}`}>
+            <div className={`grid gap-4 border-b bg-muted px-4 py-2 text-xs font-medium text-muted-foreground ${ROW_GRID}`}>
               <span>이름</span>
               <span className="text-right">크기</span>
               <span className="hidden text-right sm:block">수정일</span>
@@ -287,7 +287,7 @@ export function DatasetObjectsTab({ datasetId, exportAllowed }: { datasetId: num
               <div
                 key={`folder:${f.path}`}
                 data-testid="folder-row"
-                className={`grid min-h-10 items-center gap-4 border-b px-4 text-sm last:border-b-0 hover:bg-accent ${ROW_GRID}`}
+                className={`grid min-h-10 items-center gap-4 row-divider px-4 text-sm hover:bg-accent ${ROW_GRID}`}
               >
                 <button
                   type="button"
@@ -307,7 +307,7 @@ export function DatasetObjectsTab({ datasetId, exportAllowed }: { datasetId: num
               <div
                 key={o.key}
                 data-testid="file-row"
-                className={`grid min-h-10 items-center gap-4 border-b px-4 text-sm last:border-b-0 hover:bg-accent ${ROW_GRID}`}
+                className={`grid min-h-10 items-center gap-4 row-divider px-4 text-sm hover:bg-accent ${ROW_GRID}`}
               >
                 {isSearch ? (
                   // 검색 결과: 어느 폴더의 파일인지 알도록 전체 상대 경로를 보이고, 누르면 그 파일이 있는 폴더로 간다.
