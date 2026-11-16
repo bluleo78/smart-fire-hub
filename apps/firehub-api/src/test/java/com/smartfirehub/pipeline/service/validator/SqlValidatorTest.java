@@ -1522,7 +1522,10 @@ class SqlValidatorTest {
         "SELECT a FROM data.t WHERE CUBE(a) = 1",
         "SELECT a FROM data.t GROUP BY a ORDER BY ROLLUP(a)",
         "SELECT a, COUNT(*) FROM data.t GROUP BY ROLLUP(pg_sleep(1))",
-        "SELECT a, COUNT(*) FROM data.t GROUP BY CUBE(a, pg_sleep(1))"
+        "SELECT a, COUNT(*) FROM data.t GROUP BY CUBE(a, pg_sleep(1))",
+        // 목록 전체를 괄호로 묶으면 PG 에서는 그룹화 문법이 아니라 rollup/cube 함수 호출이다
+        "SELECT a, COUNT(*) FROM data.t GROUP BY (ROLLUP(a))",
+        "SELECT a, COUNT(*) FROM data.t GROUP BY (a, CUBE(a))"
       })
   void wd768_stillRejectsMisplacedOrDangerous(String sql) {
     assertThatThrownBy(() -> new SqlValidator("data", false).validate(sql))

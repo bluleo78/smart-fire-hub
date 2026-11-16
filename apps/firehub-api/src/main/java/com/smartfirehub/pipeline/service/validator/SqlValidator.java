@@ -40,6 +40,7 @@ import net.sf.jsqlparser.JSQLParserException;
 import net.sf.jsqlparser.expression.AnalyticExpression;
 import net.sf.jsqlparser.expression.Function;
 import net.sf.jsqlparser.expression.StringValue;
+import net.sf.jsqlparser.expression.operators.relational.ParenthesedExpressionList;
 import net.sf.jsqlparser.parser.CCJSqlParserConstants;
 import net.sf.jsqlparser.parser.CCJSqlParserUtil;
 import net.sf.jsqlparser.parser.ParseException;
@@ -2219,6 +2220,11 @@ public class SqlValidator {
     private void registerGroupByGroupingFunctions(PlainSelect plainSelect) {
       GroupByElement groupBy = plainSelect.getGroupBy();
       if (groupBy == null || groupBy.getGroupByExpressionList() == null) {
+        return;
+      }
+      // 목록 전체를 괄호로 묶은 GROUP BY((ROLLUP(a)), (a, CUBE(a)))는 PG 에서 그룹화 문법이 아니라 일반
+      // rollup/cube 함수 호출이다. 아무것도 등록하지 않아 함수 허용목록 검사를 그대로 받게 한다(WD-768 리뷰).
+      if (groupBy.getGroupByExpressionList() instanceof ParenthesedExpressionList<?>) {
         return;
       }
       for (Object expr : groupBy.getGroupByExpressionList()) {

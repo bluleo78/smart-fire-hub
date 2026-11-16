@@ -539,7 +539,10 @@ class SqlValidatorTiberoTest {
   @ValueSource(
       strings = {
         "SELECT ROLLUP(a) FROM genia_t5.t",
-        "SELECT a, COUNT(*) FROM genia_t5.t GROUP BY ROLLUP(pg_sleep(1))"
+        "SELECT a, COUNT(*) FROM genia_t5.t GROUP BY ROLLUP(pg_sleep(1))",
+        // 목록 전체를 괄호로 묶으면 그룹화 문법이 아니라 rollup/cube 함수 호출이다
+        "SELECT a, COUNT(*) FROM genia_t5.t GROUP BY (ROLLUP(a))",
+        "SELECT a, COUNT(*) FROM genia_t5.t GROUP BY (a, CUBE(a))"
       })
   void wd768_stillRejectsMisplacedOrDangerous(String sql) {
     assertThatThrownBy(() -> validator.validate(sql))
