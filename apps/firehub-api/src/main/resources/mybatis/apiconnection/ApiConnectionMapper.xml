@@ -112,6 +112,16 @@
      WHERE id = #{id}
   </update>
 
+  <!-- 헬스체크 경로를 비운 연결의 마지막 점검 결과를 지운다(WD-753). PG·Tibero 공통 문장. -->
+  <update id="clearHealth">
+    UPDATE api_connection
+       SET last_status = NULL,
+           last_checked_at = NULL,
+           last_latency_ms = NULL,
+           last_error_message = NULL
+     WHERE id = #{id}
+  </update>
+
   <select id="selectHealthCheckable" resultMap="healthCheckTarget" databaseId="postgresql">
     SELECT ac.id, ac.name FROM api_connection ac
      WHERE ac.health_check_path IS NOT NULL AND ac.health_check_path &lt;&gt; ''

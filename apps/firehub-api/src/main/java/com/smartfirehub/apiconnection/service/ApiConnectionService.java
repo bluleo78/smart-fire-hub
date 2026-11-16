@@ -258,10 +258,14 @@ public class ApiConnectionService {
       // 방식 변경은 새 방식의 비밀이 반드시 함께 와야 한다(WD-180). 가린 값 거절·헤더 이름 등 다른 사유보다 먼저 본다 — 무엇을 빠뜨렸는지가 가장
       // 중요한 안내다(WD-623).
       requireSecretForNewAuthType(effectiveAuthType, requested);
-      // authType 이 바뀌면 같은 이름의 필드라도 뜻이 달라지므로 저장값을 쓰지 않는다 — 가린 값은 모두 거절된다(WD-179).
+      // authType 이 바뀌면 같은 이름의 필드라도 뜻이 달라지므로 메인 인증의 저장값은 쓰지 않는다 — 그 가린 값은 모두 거절된다(WD-179).
+      // 추가 인증 헤더(extraHeader:… 키)는 방식과 상관없이 붙는 헤더라 저장값에서 가린 값을 되돌린다(WD-753) — 방식만 바꾸려는 사용자가
+      // 추가 헤더 값을 다시 입력하지 않아도 되게. 넘기는 저장값을 추가 헤더 키로만 좁혀 메인 비밀의 가린 값은 지금처럼 거절된다.
+      Map<String, String> storedExtraHeaders =
+          AuthConfigValidator.rawExtraHeaderEntries(reader.getDecryptedAuthConfig(id));
       Map<String, String> resolved =
           AuthConfigValidator.validateAndNormalize(
-              effectiveAuthType, resolveMaskedSecrets(requested, null, true));
+              effectiveAuthType, resolveMaskedSecrets(requested, storedExtraHeaders, true));
       encryptedConfig = serializeAndEncrypt(resolved);
     } else if (request.authConfig() != null
         || baseUrl.moved() != null
@@ -317,6 +321,14 @@ public class ApiConnectionService {
         encryptedConfig,
         normalizedBaseUrl,
         normalizedHealthCheckPath);
+    // 헬스체크 경로를 이번 수정으로 비웠으면(전에 있었고 이번에 빈 값) 마지막 점검 결과도 지운다(WD-753) — 경로가 없는 연결은 주기 점검 대상에서
+    // 빠지므로, 지우지 않으면 마지막 「이상」이 고칠 길 없이 계속 보인다. 경로를 다른 값으로 바꾸거나 보내지 않은(null) 수정은 결과를 그대로 둔다 —
+    // 다음 점검이 덮어쓴다. 같은 트랜잭션이라 수정이 롤백되면 함께 롤백된다.
+    if ("".equals(normalizedHealthCheckPath)
+        && existing.healthCheckPath() != null
+        && !existing.healthCheckPath().isBlank()) {
+      repository.clearHealthStatus(id);
+    }
 
     auditUpdate(
         userId,
@@ -415,7 +427,8 @@ public class ApiConnectionService {
     TestConnectionResponse result =
         callHealthCheck(
             UrlUtils.joinUrl(conn.baseUrl(), conn.healthCheckPath()),
-            ApiCallAuth.resolve(conn, rawConfig));
+            ApiCallAuth.resolve(conn, rawConfig),
+            rawConfig);
     // 성공·HTTP 오류·연결 실패·주소 차단 모두 같은 규칙으로 저장한다.
     recordHealthResult(id, conn.name(), result, actorUserId);
     return result;
@@ -479,7 +492,8 @@ public class ApiConnectionService {
     // 저장 전이라 연결 행이 없다 — 요청의 방식을 연결 컬럼처럼 보고 같은 규칙으로 푼다(WD-657).
     return callHealthCheck(
         UrlUtils.joinUrl(normalizedBaseUrl, normalizedPath),
-        ApiCallAuth.resolveWithAuthType(request.authType(), rawConfig));
+        ApiCallAuth.resolveWithAuthType(request.authType(), rawConfig),
+        rawConfig);
   }
 
   /**
@@ -506,8 +520,11 @@ public class ApiConnectionService {
    *
    * @param targetUrl 인증 쿼리를 붙이기 전 호출 URL(기준 URL + 헬스체크 경로)
    * @param auth 실행과 같은 규칙으로 푼 인증 설정
+   * @param rawConfig {@code auth} 를 푼 원래 authConfig — 공백만 다른 추가 헤더 키 겹침을 보려고 쓴다(WD-753 리뷰). 푼 값에서는
+   *     이미 합쳐져 보이지 않는다
    */
-  private TestConnectionResponse callHealthCheck(String targetUrl, ApiCallAuth.ResolvedAuth auth) {
+  private TestConnectionResponse callHealthCheck(
+      String targetUrl, ApiCallAuth.ResolvedAuth auth, Map<String, String> rawConfig) {
     // 응답 본문·헤더·오류 문구에서 가릴 값 — 실제로 보내는 비밀 전부다(쿼리 키뿐 아니라 헤더 키·Bearer 토큰, WD-657).
     // BASIC 은 비밀번호와 Basic 헤더의 Base64 덩어리 둘 다 가린다(WD-681).
     AuthQueryMasker.SentSecrets secret = auth.sentSecrets();
@@ -519,7 +536,8 @@ public class ApiConnectionService {
     // 이미 저장된 인증 값이 HTTP 요청에 쓸 수 없는 것이면(WD-392 전에 저장된 띄어쓰기 헤더 이름 등) 호출하지 않고 그 사유를 보인다 —
     // 호출하면 클라이언트 예외가 「대상 서버에 연결하지 못했습니다」로 안내돼 주소·네트워크를 의심하게 된다.
     // 검사도 보내는 값으로 한다(WD-657) — 문구는 연결 화면용(「… 입력하세요」)이다.
-    String authProblem = AuthConfigValidator.describeSentValueProblem(auth);
+    // 원래 authConfig 의 추가 헤더 키 겹침도 함께 본다(WD-753 리뷰) — 검사 전에 저장된 값 대비.
+    String authProblem = AuthConfigValidator.describeSentValueProblem(auth, rawConfig);
     if (authProblem != null) {
       return new TestConnectionResponse(
           false, null, 0L, authProblem, displayUrl, null, Map.of(), null);
@@ -1029,8 +1047,8 @@ public class ApiConnectionService {
    *       여기서 놓친다).
    *   <li>가린 값이 저장된 같은 필드의 가린 형태와 <b>정확히</b> 같으면 저장 원문으로 채운다 — 조회 결과를 그대로 되돌려 보내도 비밀이 바뀌지 않고, 비밀이
    *       아닌 필드(placement, paramName 등)만 바꾸는 수정이 가능하다.
-   *   <li>그 밖의 가린 값(끝 4자가 다름, 저장값 없음, authType 변경, 생성·저장 전 테스트)은 400 으로 거절한다. 문구에는 필드 이름만 싣고 저장
-   *       원문이나 그 가린 형태는 싣지 않는다.
+   *   <li>그 밖의 가린 값(끝 4자가 다름, 저장값 없음, authType 변경의 메인 비밀, 생성·저장 전 테스트)은 400 으로 거절한다. 문구에는 필드 이름만 싣고
+   *       저장 원문이나 그 가린 형태는 싣지 않는다.
    * </ul>
    *
    * <p>예외는 {@link IllegalArgumentException} 이다 — 전역 처리기가 400 으로 바꾼다(WD-179 당시 {@link
@@ -1038,7 +1056,8 @@ public class ApiConnectionService {
    * #validateAndNormalizeBaseUrl} 의 try 블록 안에서 부르면 그쪽 catch 가 다른 예외로 감싸므로 반드시 밖에서 부른다.
    *
    * @param requested 요청 authConfig(null 이면 null 을 그대로 돌려준다)
-   * @param stored 현재 저장된 복호화 authConfig. 저장값이 없거나(생성·저장 전 테스트) authType 이 바뀌면 null
+   * @param stored 현재 저장된 복호화 authConfig. 저장값이 없으면(생성·저장 전 테스트) null, authType 이 바뀌면 추가 인증 헤더 키만 담은
+   *     저장값({@link AuthConfigValidator#rawExtraHeaderEntries}, WD-753)
    * @param updating 수정 경로인지 — 거절 문구의 「그대로 두는 방법」 안내에만 쓴다
    * @return 가린 값을 저장 원문으로 채운 새 Map(요청 Map 은 불변일 수 있어 건드리지 않는다)
    * @throws IllegalArgumentException 유지할 수 없는 가린 값이 비밀 필드에 있을 때
@@ -1047,6 +1066,13 @@ public class ApiConnectionService {
       Map<String, String> requested, Map<String, String> stored, boolean updating) {
     if (requested == null) return null;
     Map<String, String> resolved = new HashMap<>(requested);
+    // 저장값의 추가 인증 헤더 키를 한 번만 정리해 둔다(WD-753 리뷰) — 정리 규칙 전에 「extraHeader: X-Id」 로 저장된 값에 화면이 앞뒤 공백을 뗀
+    // 「extraHeader:X-Id」 로 가린 값을 되돌려 보내도, 요청 키를 정리한 키로 이 맵에서 바로 저장 원문을 찾는다. 그 밖의 키는 그대로 찾는다.
+    Map<String, String> storedByKey = null;
+    if (stored != null) {
+      storedByKey = new HashMap<>(stored);
+      AuthConfigValidator.normalizeExtraHeaderKeys(storedByKey);
+    }
     for (Map.Entry<String, String> entry : requested.entrySet()) {
       String key = entry.getKey();
       String value = entry.getValue();
@@ -1057,7 +1083,10 @@ public class ApiConnectionService {
         continue;
       }
       String comparable = AuthConfigValidator.maskComparable(key, value);
-      String storedValue = stored != null ? stored.get(key) : null;
+      String storedValue =
+          storedByKey == null
+              ? null
+              : storedByKey.get(AuthConfigValidator.normalizeExtraHeaderKey(key));
       if (storedValue != null
           // 저장값의 가린 모양은 응답과 같은 함수로 만든다(WD-681 리뷰) — 비밀번호는 고정 ****, 키·토큰은 ****+끝 4자.
           && AuthConfigValidator.maskComparable(key, reader.maskSecretValue(key, storedValue))

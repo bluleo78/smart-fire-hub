@@ -174,6 +174,27 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
     assertThat(created.maskedAuthConfig().get("token")).doesNotContain("eyJhbGciOiJIUzI1NiJ9");
   }
 
+  /**
+   * 추가 인증 헤더(WD-753) 값은 이름에 key/token 조각이 없어도 비밀 — 응답에서 API 키 규칙(****+끝 4자)으로 가리고, 저장값(복호화)은 원문이다.
+   */
+  @Test
+  void createAndGet_extraHeaderValueMasked() {
+    CreateApiConnectionRequest req =
+        new CreateApiConnectionRequest(
+            "WD753 extra header",
+            null,
+            "BEARER",
+            Map.of("token", "tok12345", "extraHeader:X-Tenant", "tenant-9999"),
+            "https://wd753.example.com",
+            null);
+
+    ApiConnectionResponse created = apiConnectionService.create(req, testUserId);
+
+    assertThat(created.maskedAuthConfig()).containsEntry("extraHeader:X-Tenant", "****9999");
+    assertThat(apiConnectionService.getDecryptedAuthConfig(created.id()))
+        .containsEntry("extraHeader:X-Tenant", "tenant-9999");
+  }
+
   @Test
   void getDecryptedAuthConfig_returnsPlaintext() {
     Map<String, String> authConfig = Map.of("token", "plaintext-bearer-token-xyz");
@@ -2228,5 +2249,274 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
     assertThat(apiConnectionService.getDecryptedAuthConfig(id))
         .containsEntry("username", "svc")
         .containsEntry("password", "Pw4");
+  }
+
+  // ── WD-753: 추가 인증 헤더 — 방식 변경 시 가린 값·변경 감지·응답 가림, 상태 점검 경로 비우기 ──────────────────────
+
+  /** API_KEY 연결 + 추가 헤더 X-Id(keyid-4567). 상태 점검 경로를 받아 경로 비우기 TC 도 같이 쓴다. */
+  private ApiConnectionResponse createApiKeyWithExtraHeader(String label, String healthCheckPath) {
+    return apiConnectionService.create(
+        new CreateApiConnectionRequest(
+            "WD753 " + label + " " + System.nanoTime(),
+            null,
+            "API_KEY",
+            Map.of(
+                "placement",
+                "header",
+                "headerName",
+                "X-Key",
+                "apiKey",
+                "wd753-apikey-1111",
+                "extraHeader:X-Id",
+                "keyid-4567"),
+            "https://wd753.example.com",
+            healthCheckPath),
+        testUserId);
+  }
+
+  /** 방식을 바꾸는 수정에서도 추가 헤더의 가린 값(조회 결과 그대로)은 저장 원문으로 되돌린다 — 추가 헤더는 인증 방식과 상관없이 붙는 헤더다. */
+  @Test
+  void update_authTypeChange_keepsMaskedExtraHeaderFromStored() {
+    ApiConnectionResponse created = createApiKeyWithExtraHeader("type-change", null);
+
+    apiConnectionService.update(
+        created.id(),
+        new UpdateApiConnectionRequest(
+            null,
+            null,
+            "BEARER",
+            Map.of("token", "newtoken-1", "extraHeader:X-Id", "****4567"),
+            null,
+            null),
+        testUserId);
+
+    Map<String, String> decrypted = apiConnectionService.getDecryptedAuthConfig(created.id());
+    assertThat(decrypted)
+        .containsEntry("authType", "BEARER")
+        .containsEntry("token", "newtoken-1")
+        .containsEntry("extraHeader:X-Id", "keyid-4567");
+  }
+
+  /** 방식을 바꾸는 수정에서 메인 비밀의 가린 값은 지금처럼 거절한다 — 추가 헤더 되돌리기가 메인 비밀까지 넓어지지 않는다. */
+  @Test
+  void update_authTypeChange_maskedMainSecret_stillRejected() {
+    ApiConnectionResponse created = createApiKeyWithExtraHeader("type-change-masked", null);
+
+    assertThatThrownBy(
+            () ->
+                apiConnectionService.update(
+                    created.id(),
+                    new UpdateApiConnectionRequest(
+                        null,
+                        null,
+                        "BEARER",
+                        Map.of("token", "****1111", "extraHeader:X-Id", "****4567"),
+                        null,
+                        null),
+                    testUserId))
+        .isExactlyInstanceOf(ApiConnectionException.class)
+        .hasMessage("인증 방식을 BEARER(으)로 바꾸려면 새 방식의 인증 정보(authConfig.token)를 함께 입력하세요");
+
+    assertAuthUnchanged(created.id(), "API_KEY", "apiKey", "wd753-apikey-1111");
+  }
+
+  /** 방식을 바꾸는 수정에서 저장값과 끝 4자가 다른 추가 헤더 가린 값은 거절한다 — 필드 이름만 싣고 값은 싣지 않는다. */
+  @Test
+  void update_authTypeChange_foreignMaskedExtraHeader_rejected() {
+    ApiConnectionResponse created = createApiKeyWithExtraHeader("type-change-foreign", null);
+
+    assertThatThrownBy(
+            () ->
+                apiConnectionService.update(
+                    created.id(),
+                    new UpdateApiConnectionRequest(
+                        null,
+                        null,
+                        "BEARER",
+                        Map.of("token", "newtoken-1", "extraHeader:X-Id", "****9999"),
+                        null,
+                        null),
+                    testUserId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageStartingWith("authConfig.extraHeader:X-Id 에 가려진 값(****…)은 저장할 수 없습니다")
+        .hasMessageNotContaining("keyid-4567");
+
+    assertAuthUnchanged(created.id(), "API_KEY", "apiKey", "wd753-apikey-1111");
+  }
+
+  /** 같은 방식에서 추가 헤더 값만 바꾸면 인증 정보 변경이다 — 감사에는 true 만 남고 새 값·옛 값은 어디에도 없다. */
+  @Test
+  void update_extraHeaderChanged_marksCredentialsChanged() throws Exception {
+    ApiConnectionResponse created = createApiKeyWithExtraHeader("extra-change", null);
+
+    apiConnectionService.update(
+        created.id(),
+        new UpdateApiConnectionRequest(
+            null,
+            null,
+            null,
+            Map.of(
+                "placement",
+                "header",
+                "headerName",
+                "X-Key",
+                "apiKey",
+                "****1111",
+                "extraHeader:X-Id",
+                "keyid-new-8642"),
+            null,
+            null),
+        testUserId);
+
+    assertThat(apiConnectionService.getDecryptedAuthConfig(created.id()))
+        .containsEntry("apiKey", "wd753-apikey-1111")
+        .containsEntry("extraHeader:X-Id", "keyid-new-8642");
+    List<Record> rows = connectionAudits("UPDATE", created.id());
+    assertThat(rows).hasSize(1);
+    JsonNode meta = auditMetadata(rows.get(0));
+    assertThat(meta.get("credentialsChanged").asBoolean()).isTrue();
+    assertThat(jsonTexts(meta.get("changedFields"))).containsExactly("authConfig");
+    assertThat(allAuditText(created.id()))
+        .doesNotContain("keyid-new-8642")
+        .doesNotContain("keyid-4567")
+        .doesNotContain("8642")
+        .doesNotContain("X-Id");
+  }
+
+  /** 조회 응답의 추가 헤더 값은 API 키 규칙(****+끝 4자)으로 가린다 — 연결 조회·AI 챗이 같은 응답을 쓴다. */
+  @Test
+  void getById_masksExtraHeaderValue() {
+    ApiConnectionResponse created = createApiKeyWithExtraHeader("get-mask", null);
+
+    ApiConnectionResponse fetched = apiConnectionService.getById(created.id());
+
+    assertThat(fetched.maskedAuthConfig()).containsEntry("extraHeader:X-Id", "****4567");
+    assertThat(fetched.maskedAuthConfig().values()).doesNotContain("keyid-4567");
+  }
+
+  /**
+   * 상태 점검 경로를 비우면 마지막 점검 결과(상태·시각·지연·오류)도 지운다 — 점검하지 않는 연결에 옛 「이상」이 계속 남지 않게. 경로를 다른 값으로 바꾸거나 요청에
+   * 경로가 없으면(미변경) 결과를 그대로 둔다.
+   */
+  @Test
+  void update_clearHealthCheckPath_resetsLastStatus() {
+    ApiConnectionResponse cleared = createApiKeyWithExtraHeader("hc-clear", "/health");
+    ApiConnectionResponse repathed = createApiKeyWithExtraHeader("hc-repath", "/health");
+    ApiConnectionResponse untouched = createApiKeyWithExtraHeader("hc-untouched", "/health");
+    for (Long id : List.of(cleared.id(), repathed.id(), untouched.id())) {
+      tx.executeWithoutResult(
+          s -> apiConnectionRepository.updateHealthStatus(id, "DOWN", 12L, "HTTP 401"));
+    }
+
+    apiConnectionService.update(
+        cleared.id(), new UpdateApiConnectionRequest(null, null, null, null, null, ""), testUserId);
+    apiConnectionService.update(
+        repathed.id(),
+        new UpdateApiConnectionRequest(null, null, null, null, null, "/ping"),
+        testUserId);
+    apiConnectionService.update(
+        untouched.id(),
+        new UpdateApiConnectionRequest(
+            "WD753 renamed " + System.nanoTime(), null, null, null, null, null),
+        testUserId);
+
+    ApiConnectionResponse afterClear = apiConnectionService.getById(cleared.id());
+    assertThat(afterClear.healthCheckPath()).isNull();
+    assertThat(afterClear.lastStatus()).isNull();
+    assertThat(afterClear.lastCheckedAt()).isNull();
+    assertThat(afterClear.lastLatencyMs()).isNull();
+    assertThat(afterClear.lastErrorMessage()).isNull();
+
+    for (Long id : List.of(repathed.id(), untouched.id())) {
+      ApiConnectionResponse kept = apiConnectionService.getById(id);
+      assertThat(kept.lastStatus()).isEqualTo("DOWN");
+      assertThat(kept.lastCheckedAt()).isNotNull();
+      assertThat(kept.lastLatencyMs()).isEqualTo(12L);
+      assertThat(kept.lastErrorMessage()).isEqualTo("HTTP 401");
+    }
+  }
+
+  /** 저장 전 테스트도 저장과 같은 규칙이다 — BEARER 연결의 추가 헤더가 인증 헤더(Authorization)와 이름이 같으면 대상을 부르지 않고 400. */
+  @Test
+  void testConnectionPayload_rejectsExtraHeaderSameAsMain() {
+    assertThatThrownBy(
+            () ->
+                apiConnectionService.testConnectionPayload(
+                    new CreateApiConnectionRequest(
+                        "WD753 payload",
+                        null,
+                        "BEARER",
+                        Map.of("token", "tok-753", "extraHeader:Authorization", "dup-secret-753"),
+                        "https://wd753-payload.example.com",
+                        "/health")))
+        .isExactlyInstanceOf(ApiConnectionException.class)
+        .hasMessage("추가 헤더 Authorization 은(는) 인증 헤더와 이름이 같습니다 — 인증 칸에 이미 있는 헤더입니다")
+        .hasMessageNotContaining("dup-secret-753");
+    verify(ssrfProtectionService, never()).validateUrl(anyString());
+  }
+
+  /**
+   * AI 챗·API 로 이름 앞에 공백을 넣어 만든 추가 헤더(WD-753 리뷰) — 저장은 정리한 키(extraHeader:X-Id)로 한다. 화면이 정리한 키로 가린 값을
+   * 되돌려 보내는 수정은 성공하고 저장값을 유지한다.
+   */
+  @Test
+  void update_extraHeaderCreatedWithSpacedName_maskedEchoWithStrippedKey_keepsValue() {
+    ApiConnectionResponse created =
+        apiConnectionService.create(
+            new CreateApiConnectionRequest(
+                "WD753 spaced " + System.nanoTime(),
+                null,
+                "BEARER",
+                Map.of("token", "tok-spaced-1", "extraHeader: X-Id", "keyid-4567"),
+                "https://wd753.example.com",
+                null),
+            testUserId);
+    assertThat(created.maskedAuthConfig())
+        .containsEntry("extraHeader:X-Id", "****4567")
+        .doesNotContainKey("extraHeader: X-Id");
+
+    apiConnectionService.update(
+        created.id(),
+        new UpdateApiConnectionRequest(
+            null,
+            null,
+            null,
+            Map.of("token", "****ed-1", "extraHeader:X-Id", "****4567"),
+            null,
+            null),
+        testUserId);
+
+    assertThat(apiConnectionService.getDecryptedAuthConfig(created.id()))
+        .containsEntry("extraHeader:X-Id", "keyid-4567")
+        .containsEntry("token", "tok-spaced-1")
+        .doesNotContainKey("extraHeader: X-Id");
+  }
+
+  /**
+   * 정리 규칙 전에 「extraHeader: X-Id」 로 저장된 연결(WD-753 리뷰) — 화면이 정리한 키로 가린 값을 되돌려 보내도 저장값을 같은 정리 키로 찾아
+   * 유지하고, 정리한 키로 다시 저장한다. 키 모양만 바뀌었으므로 감사의 인증 정보 변경은 false 다.
+   */
+  @Test
+  void update_legacySpacedExtraHeaderKey_maskedEchoWithStrippedKey_keepsValue() throws Exception {
+    Long id =
+        saveLegacy("BEARER", Map.of("token", "tok-legacy-1", "extraHeader: X-Id", "keyid-4567"));
+
+    apiConnectionService.update(
+        id,
+        new UpdateApiConnectionRequest(
+            null,
+            null,
+            null,
+            Map.of("token", "****cy-1", "extraHeader:X-Id", "****4567"),
+            null,
+            null),
+        testUserId);
+
+    assertThat(apiConnectionService.getDecryptedAuthConfig(id))
+        .containsEntry("extraHeader:X-Id", "keyid-4567")
+        .containsEntry("token", "tok-legacy-1")
+        .doesNotContainKey("extraHeader: X-Id");
+    // 키 모양만 바뀌어 인증 정보 변경이 아니다 — 바뀐 칸이 없으면 감사 기록 자체를 남기지 않는다(auditUpdate).
+    assertThat(connectionAudits("UPDATE", id)).isEmpty();
   }
 }

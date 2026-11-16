@@ -361,4 +361,148 @@ class ApiCallAuthTest {
     // 오류 문구: 지운다(끝 글자 없는 고정 가림)
     assertThat(word.scrubText("bad admin")).isEqualTo("bad ****");
   }
+
+  // -------------------------------------------------------------------------
+  // WD-753: 추가 인증 헤더 — 메인 인증 뒤에 붙이고, 자격 증명 헤더로 보고, 응답에서 가린다
+  // -------------------------------------------------------------------------
+
+  /**
+   * 문자열 모양에는 비밀(토큰·비밀번호·Basic 덩어리·추가 헤더 값)이 없다(WD-753 리뷰) — 예외 문구·로그·디버거에 푼 인증이 찍혀도 원문이 새지 않게. 추가
+   * 헤더는 이름만 보인다.
+   */
+  @Test
+  void toString_hidesSecretsAndExtraHeaderValues() {
+    ApiCallAuth.ResolvedAuth bearer =
+        ApiCallAuth.resolve(
+            Map.of(
+                "authType", "BEARER", "token", "tok12345", "extraHeader:X-Tenant", "tenant-9999"));
+    ApiCallAuth.ResolvedAuth basic =
+        ApiCallAuth.resolve(
+            Map.of(
+                "authType",
+                "BASIC",
+                "username",
+                "alice",
+                "password",
+                "s3cretPw",
+                "extraHeader:X-Id",
+                "secret-value-1234"));
+
+    assertThat(bearer.toString())
+        .doesNotContain("tok12345")
+        .doesNotContain("tenant-9999")
+        .contains("BEARER")
+        .contains("X-Tenant")
+        .contains("****");
+    assertThat(basic.toString())
+        .doesNotContain("s3cretPw")
+        .doesNotContain(basic.basicCredentials())
+        .doesNotContain("secret-value-1234")
+        .contains("alice")
+        .contains("X-Id");
+  }
+
+  /** 추가 헤더는 메인 인증 헤더 다음에 붙는다. */
+  @Test
+  void resolve_extraHeaders_appliedAfterMainAuth() {
+    ApiCallAuth.ResolvedAuth auth =
+        ApiCallAuth.resolve(
+            Map.of(
+                "authType", "BEARER", "token", "tok12345", "extraHeader:X-Tenant", "tenant-9999"));
+    java.util.List<String> names = new java.util.ArrayList<>();
+    java.util.List<String> values = new java.util.ArrayList<>();
+    auth.applyHeaders(
+        (name, value) -> {
+          names.add(name);
+          values.add(value);
+        });
+
+    assertThat(names).containsExactly("Authorization", "X-Tenant");
+    assertThat(values).containsExactly("Bearer tok12345", "tenant-9999");
+    assertThat(auth.extraHeaders()).containsExactly(Map.entry("X-Tenant", "tenant-9999"));
+  }
+
+  /** 추가 헤더 이름은 자격 증명 헤더다(대소문자 무시) — 다른 출처 홉에서 같은 이름의 스텝 헤더까지 뗀다. */
+  @Test
+  void isCredentialHeader_extraHeaderName_caseInsensitive() {
+    ApiCallAuth.ResolvedAuth auth =
+        ApiCallAuth.resolve(
+            Map.of(
+                "authType", "BEARER", "token", "tok12345", "extraHeader:X-Tenant", "tenant-9999"));
+
+    assertThat(auth.isCredentialHeader("x-tenant")).isTrue();
+    assertThat(auth.isExtraHeaderName("X-TENANT")).isTrue();
+    assertThat(auth.isExtraHeaderName("X-Trace")).isFalse();
+    assertThat(auth.isCredentialHeader("X-Trace")).isFalse();
+  }
+
+  /** BASIC 에서도 추가 헤더 값을 가린다 — API 키 규칙(****+끝 4자). */
+  @Test
+  void sentSecrets_includeExtraHeaderValues_forBasicToo() {
+    AuthQueryMasker.SentSecrets secrets =
+        ApiCallAuth.resolve(
+                Map.of(
+                    "authType",
+                    "BASIC",
+                    "username",
+                    "alice",
+                    "password",
+                    "s3cretPw",
+                    "extraHeader:X-Id",
+                    "secret-value-1234"))
+            .sentSecrets();
+
+    assertThat(secrets.scrubText("echo secret-value-1234"))
+        .doesNotContain("secret-value-1234")
+        .contains("****1234");
+    // 인증 방식이 없어도 추가 헤더만 있으면 가릴 비밀이 있다
+    assertThat(ApiCallAuth.resolve(Map.of("extraHeader:X-Id", "only-extra-5678")).sentSecrets())
+        .isNotEqualTo(AuthQueryMasker.SentSecrets.NONE);
+  }
+
+  /** 인라인 인증의 추가 헤더도 호출 전에 검사한다 — 예약 헤더 이름은 스텝 설정 위치를 짚어 안내한다. */
+  @Test
+  void describeProblem_inlineExtraHeaderReserved() {
+    String problem =
+        ApiCallAuth.describeCallProblem(
+            null, Map.of("authType", "API_KEY", "apiKey", "k1234", "extraHeader:Host", "v"));
+
+    assertThat(problem).startsWith("스텝 인증 설정의 추가 헤더 ").endsWith(" — 파이프라인 편집에서 이 스텝의 인증 설정을 고치세요.");
+  }
+
+  /** 저장 연결의 추가 헤더 문제는 연결 화면에서 고치라고 안내한다. */
+  @Test
+  void describeProblem_savedConnectionExtraHeaderBlank() {
+    String problem =
+        ApiCallAuth.describeCallProblem(
+            conn("BEARER"), Map.of("token", "tok12345", "extraHeader:X-Tenant", " "));
+
+    assertThat(problem)
+        .isEqualTo("API 연결 「공공 API」의 추가 헤더 X-Tenant 값을 입력하세요 — API 연결 화면에서 이 연결의 추가 헤더를 고치세요.");
+  }
+
+  /**
+   * 원래 인증 Map 의 추가 헤더 키가 앞뒤 공백만 달라 합쳐지면(WD-753 리뷰) 호출 전 검사가 겹침으로 막는다 — 푼 값에서는 한쪽 값이 이미 사라져 보이지 않는다.
+   * 인라인은 스텝 설정, 저장 연결은 연결 화면을 고칠 곳으로 짚고, 값은 싣지 않는다.
+   */
+  @Test
+  void describeCallProblem_rawExtraHeaderKeysCollide() {
+    Map<String, String> inline = new java.util.HashMap<>();
+    inline.put("authType", "BEARER");
+    inline.put("token", "tok12345");
+    inline.put("extraHeader: X-A", "first-value-1");
+    inline.put("extraHeader:X-A", "second-value-2");
+
+    assertThat(ApiCallAuth.describeCallProblem(null, inline))
+        .isEqualTo("스텝 인증 설정의 추가 헤더 이름이 겹칩니다: X-A — 파이프라인 편집에서 이 스텝의 인증 설정을 고치세요.")
+        .doesNotContain("first-value-1")
+        .doesNotContain("second-value-2");
+    assertThat(ApiCallAuth.describeCallProblem(conn("BEARER"), inline))
+        .isEqualTo("API 연결 「공공 API」의 추가 헤더 이름이 겹칩니다: X-A — API 연결 화면에서 이 연결의 추가 헤더를 고치세요.");
+    // 미리보기 입구(푼 값 + 원래 Map)도 같은 문구다. 원래 Map 이 없으면 합쳐진 값만 보여 겹침을 알 수 없다.
+    ApiCallAuth.ResolvedAuth resolved = ApiCallAuth.resolve(inline);
+    assertThat(ApiCallAuth.describeProblem(resolved, inline, null))
+        .isEqualTo(ApiCallAuth.describeCallProblem(null, inline));
+    assertThat(ApiCallAuth.describeProblem(resolved, null, null)).isNull();
+  }
 }

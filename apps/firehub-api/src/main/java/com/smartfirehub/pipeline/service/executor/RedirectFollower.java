@@ -353,6 +353,9 @@ public final class RedirectFollower {
    * Authorization·Proxy-Authorization·Cookie 와 인증 헤더와 같은 이름({@link
    * ApiCallAuth.ResolvedAuth#isCredentialHeader}). Python {@code _do_request} 도 같은 규칙이다. 본문을 버린 홉이면
    * 본문 헤더({@link #BODY_HEADERS})도 뺀다.
+   *
+   * <p>인증을 보내는 홉에서 사용자 헤더가 추가 인증 헤더(WD-753)와 이름이 같으면(대소문자 무시) 사용자 헤더를 빼고 추가 헤더만 보낸다 — WebClient 의
+   * {@code header} 는 같은 이름 값을 덧붙여, 스텝 헤더로 키 ID 를 넣어 돌던 파이프라인이 연결에 같은 헤더를 더하면 두 값이 나가 깨진다.
    */
   private static void applyHeaders(
       WebClient.RequestHeadersSpec<?> spec,
@@ -367,7 +370,10 @@ public final class RedirectFollower {
                 if (dropBodyHeaders && BODY_HEADERS.contains(name.toLowerCase(Locale.ROOT))) {
                   return;
                 }
-                if (sendAuth || !auth.isCredentialHeader(name)) {
+                if (sendAuth) {
+                  // 추가 인증 헤더가 이긴다(WD-753) — 같은 이름 스텝 헤더는 보내지 않는다.
+                  if (!auth.isExtraHeaderName(name)) spec.header(name, value);
+                } else if (!auth.isCredentialHeader(name)) {
                   spec.header(name, value);
                 }
               });

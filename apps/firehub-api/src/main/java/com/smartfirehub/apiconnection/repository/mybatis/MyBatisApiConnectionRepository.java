@@ -104,6 +104,12 @@ public class MyBatisApiConnectionRepository implements ApiConnectionRepository {
     return previous.lastStatus();
   }
 
+  /** 마지막 헬스체크 결과 네 열을 NULL 로 지운다(WD-753) — jOOQ 판과 같은 의미. 상태 전환이 아니므로 잠금 조회 없이 한 문장이다. */
+  @Override
+  public void clearHealthStatus(Long id) {
+    mapper.clearHealth(id);
+  }
+
   @Override
   public List<HealthCheckTarget> findHealthCheckable() {
     return mapper.selectHealthCheckable();

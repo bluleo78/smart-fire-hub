@@ -346,8 +346,13 @@ def _do_request(
     req_params = dict(query_params)
     auth_headers: Dict[str, str] = {}
     auth_query = _apply_resolved_auth(auth, auth_headers, req_params)
-    req_headers = {**headers, **auth_headers}
+    # 스텝 헤더 중 추가 인증 헤더와 같은 이름(대소문자 무시)은 보내지 않는다(WD-753) — 추가 헤더가 이긴다. 그대로 합치면 대소문자만 다른
+    # 두 키가 모두 나가 같은 헤더가 두 번 실린다(Java 는 RedirectFollower 가 같은 규칙으로 스텝 쪽을 뺀다).
+    extra_names = {name.lower() for name in auth.extra_headers}
+    step_headers = {k: v for k, v in headers.items() if k.lower() not in extra_names}
+    req_headers = {**step_headers, **auth_headers}
     # 다른 출처 홉에 보낼 헤더 — 자격 증명을 실을 수 있는 사용자 헤더(표준 자격 증명 헤더·인증 헤더와 같은 이름, 대소문자 무시)를 뺀다.
+    # auth_headers 에는 추가 인증 헤더(WD-753)도 들어 있어 그 이름과 같은 스텝 헤더도 함께 빠진다.
     dropped = _CREDENTIAL_HEADERS | {name.lower() for name in auth_headers}
     cross_origin_headers = {k: v for k, v in headers.items() if k.lower() not in dropped}
 
@@ -540,6 +545,9 @@ class _ResolvedAuth(NamedTuple):
     # Basic 인증 헤더 값의 Base64 덩어리 — ``base64(utf8(아이디:비밀번호))``(RFC 7617, WD-681). Java ``basicCredentials`` 와 같은
     # 바이트다. 풀 때(``_resolve_auth``) 한 번만 계산해 헤더·가림이 같은 값을 쓴다. BASIC 이 아니면 None.
     basic_credentials: Optional[str] = None
+    # 추가 인증 헤더 이름→값(WD-753) — 인증 방식과 상관없이 메인 인증 뒤에 붙는다. 이름은 앞뒤 공백을 뗀 것이고 순서는 원래 키의 정렬 순서다
+    # (Java ``AuthConfigValidator.extraHeaders`` 결과와 같다). 풀 때(``_resolve_auth``) 한 번만 모아 전송·가림이 같은 값을 쓴다.
+    extra_headers: Dict[str, str] = {}
 
     @property
     def is_query_api_key(self) -> bool:
@@ -561,10 +569,38 @@ class _ResolvedAuth(NamedTuple):
     def sent_secrets(self) -> "errors.SentSecrets":
         """오류 문구·로그에서 가릴 비밀과 그 규칙(WD-681 리뷰, Java ``sentSecrets`` 와 같다). BASIC 은 Base64 덩어리(늘 고정 ``****``)와
         비밀번호(SMTP 규칙 — 짧아 지울 수 없으면 문장을 통째로 가림) — 되울린 「Authorization: Basic …」 을 풀면 아이디·비밀번호가 그대로
-        나온다. 그 밖에는 ``sent_secret`` 하나를 API 키 규칙으로 가린다."""
+        나온다. 그 밖에는 ``sent_secret`` 하나를 API 키 규칙으로 가린다.
+
+        추가 인증 헤더 값(WD-753)은 방식과 상관없이(BASIC 포함, 인증 방식이 없어도) 모두 API 키 규칙으로 함께 가린다.
+        """
+        extra = tuple(self.extra_headers.values())
         if self.is_basic:
-            return errors.SentSecrets(None, self.basic_credentials, self.secret)
-        return errors.SentSecrets(self.sent_secret, None, None)
+            return errors.SentSecrets(None, self.basic_credentials, self.secret, extra)
+        return errors.SentSecrets(self.sent_secret, None, None, extra)
+
+
+# 추가 인증 헤더가 저장된 authConfig 키의 접두어(WD-753) — 「extraHeader:<헤더 이름>」. Java ``AuthConfigValidator.EXTRA_HEADER_PREFIX`` 와
+# 같고 대소문자를 구분한다(「extraheader:」 는 접두어가 아니다).
+EXTRA_HEADER_PREFIX = "extraHeader:"
+
+
+def _collect_extra_headers(auth: dict) -> Dict[str, str]:
+    """인증 설정에서 추가 인증 헤더를 모은다(WD-753) — Java ``AuthConfigValidator.extraHeaders`` 와 같은 규칙.
+
+    접두어(``EXTRA_HEADER_PREFIX``)로 시작하는 키만 모으고, 이름은 접두어 뒤 글자에서 앞뒤 Java 공백을 뗀 것·값은 원문 그대로다. 순서는
+    원래 키의 정렬 순서다 — Java TreeMap 은 UTF-16 코드 단위 순으로 비교하므로 여기서도 같은 순서로 정렬한다(ASCII 키면 ``sorted`` 와 같다).
+    이름이 빈 것도 그대로 둔다(거절은 저장·호출 전 검사의 몫이라 실행기는 검증하지 않는다). 인증 방식과 상관없이 모은다. 이름이 같아지는
+    키가 둘 이상이면(공백만 다른 경우) 뒤 키의 값이 앞 키 자리에 덮인다 — Java LinkedHashMap 과 같다.
+    """
+    keys = sorted(
+        (k for k in auth if isinstance(k, str) and k.startswith(EXTRA_HEADER_PREFIX)),
+        key=lambda k: k.encode("utf-16-be"),
+    )
+    extra: Dict[str, str] = {}
+    for key in keys:
+        value = auth[key]
+        extra[key[len(EXTRA_HEADER_PREFIX):].strip(_JAVA_WHITESPACE)] = "" if value is None else str(value)
+    return extra
 
 
 def _resolve_auth(auth: Optional[dict]) -> _ResolvedAuth:
@@ -590,7 +626,9 @@ def _resolve_auth(auth: Optional[dict]) -> _ResolvedAuth:
     else:
         # API 키는 원문 그대로 보낸다(Java ApiCallAuth.resolve 와 같다).
         secret = a.get("apiKey") or a.get("key_value") or a.get("value") or ""
-    return _ResolvedAuth(auth_type, placement, header_name, param_name, secret, username, basic_credentials)
+    return _ResolvedAuth(
+        auth_type, placement, header_name, param_name, secret, username, basic_credentials, _collect_extra_headers(a)
+    )
 
 
 # 다른 출처 홉에서 인증 방식과 상관없이 빼는 표준 자격 증명 헤더(소문자, WD-657) — Java ApiCallExecutor.CREDENTIAL_HEADERS 와 같다.
@@ -722,8 +760,9 @@ def _apply_resolved_auth(
     키·우선순위·정리는 Java ``ApiCallAuth.resolve`` 와 같다(WD-647). 쿼리 인증(API_KEY + placement=query)은 ``params`` 에
     넣지 않고 ``(파라미터 이름, 키 원문)`` 을 돌려준다(WD-182) — ``params`` 는 httpx 식으로 인코딩되므로, 키는
     ``_build_request_url`` 이 공용 규칙으로 따로 붙인다. 같은 이름의 정적 파라미터가 있으면 ``params`` 에서 지운다(Java 처럼 그
-    이름으로는 키 하나만 나간다 — 위치는 맨 끝). 그 밖에는 None.
+    이름으로는 키 하나만 나간다 — 위치는 맨 끝). 그 밖에는 None. 추가 인증 헤더(WD-753)는 방식과 상관없이 메인 인증 뒤에 ``headers`` 에 붙는다.
     """
+    query_auth: Optional[Tuple[str, str]] = None
     if resolved.auth_type == "BEARER":
         headers["Authorization"] = f"Bearer {resolved.secret}"
     elif resolved.is_basic:
@@ -732,9 +771,13 @@ def _apply_resolved_auth(
     elif resolved.auth_type == "API_KEY":
         if resolved.placement == "QUERY":
             params.pop(resolved.param_name, None)
-            return (resolved.param_name, resolved.secret)
-        headers[resolved.header_name] = resolved.secret
-    return None
+            query_auth = (resolved.param_name, resolved.secret)
+        else:
+            headers[resolved.header_name] = resolved.secret
+    # 추가 인증 헤더(WD-753)는 메인 인증 뒤에 모은 순서대로 붙인다 — 쿼리 인증·인증 없음이어도 붙는다(방식과 상관없는 헤더다).
+    # 다른 출처 홉에서는 auth_headers 에 든 이름이라 메인 인증 헤더처럼 떼진다(_do_request).
+    headers.update(resolved.extra_headers)
+    return query_auth
 
 
 # ---------------------------------------------------------------------------

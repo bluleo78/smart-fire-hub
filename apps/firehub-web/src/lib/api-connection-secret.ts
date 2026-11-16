@@ -34,8 +34,8 @@ const JAVA_STRIP = new RegExp(`^[${JAVA_WHITESPACE}]+|[${JAVA_WHITESPACE}]+$`, '
  */
 const BEARER_PREFIX = /^(bearer([ \t\n\v\f\r]+|$))+/i;
 
-/** Java `String.strip()` 과 같은 앞뒤 공백 제거. */
-function javaStrip(value: string): string {
+/** Java `String.strip()` 과 같은 앞뒤 공백 제거 — 서버가 이름·경로 등을 정리하는 칸을 화면이 같은 공백 집합으로 비교할 때도 쓴다. */
+export function javaStrip(value: string): string {
   return value.replace(JAVA_STRIP, '');
 }
 

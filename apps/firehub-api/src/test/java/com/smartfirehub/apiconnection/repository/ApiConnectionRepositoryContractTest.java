@@ -23,7 +23,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataAccessException;
 
 /**
- * ApiConnectionRepository 계약 테스트 — 공개 메서드 12 개 전부를 구현마다 하위 클래스로 실행한다(WD-485·WD-708). jOOQ·MyBatis 는
+ * ApiConnectionRepository 계약 테스트 — 공개 메서드 13 개 전부를 구현마다 하위 클래스로 실행한다(WD-485·WD-708). jOOQ·MyBatis 는
  * PG, TiberoMyBatis 는 Tibero 실서버(두 계정 RLS)다.
  *
  * <p>시험마다 새 테넌트 둘(A·B)을 만들고, 리포지토리 호출은 테넌트 범위(inA/inB)로 감싼다. 저장 상태는 소유자 시점 픽스처({@code
@@ -173,6 +173,46 @@ abstract class ApiConnectionRepositoryContractTest extends TenantPairContractBas
     assertThat(down.lastStatus()).isEqualTo("DOWN");
     assertThat(down.lastLatencyMs()).isNull();
     assertThat(down.lastErrorMessage()).isEqualTo("Connection refused");
+  }
+
+  /**
+   * clearHealthStatus 는 마지막 점검 결과(상태·시각·지연·오류)를 모두 NULL 로 지운다(WD-753) — 상태 점검 경로를 비운 연결에 옛 「이상」이 남지
+   * 않게. 다른 테넌트의 행은 지우지 못하고, 다른 열(경로·인증 정보 등)은 건드리지 않는다.
+   */
+  @Test
+  @DisplayName("clearHealthStatus 는 마지막 점검 결과만 지우고 다른 테넌트 행은 건드리지 않는다")
+  void clearHealthStatus_nullsLastStatusFields() {
+    long id = saveA("clearhc", "/health");
+    long other =
+        inB(
+            () ->
+                repository()
+                    .save(
+                        prefix + "-clearhc-b",
+                        null,
+                        "API_KEY",
+                        "enc",
+                        user,
+                        "https://clearhc-b.example.com",
+                        "/h"));
+    inA(() -> repository().updateHealthStatus(id, "DOWN", 7L, "HTTP 401"));
+    inB(() -> repository().updateHealthStatus(other, "DOWN", 8L, "HTTP 403"));
+
+    runA(() -> repository().clearHealthStatus(id));
+    runA(() -> repository().clearHealthStatus(other));
+
+    ApiConnectionStored cleared = fx.apiConnectionStored(id);
+    assertThat(cleared.lastStatus()).isNull();
+    assertThat(cleared.lastCheckedAt()).isNull();
+    assertThat(cleared.lastLatencyMs()).isNull();
+    assertThat(cleared.lastErrorMessage()).isNull();
+    assertThat(cleared.healthCheckPath()).isEqualTo("/health");
+    assertThat(cleared.authConfig()).isEqualTo("enc-clearhc");
+
+    ApiConnectionStored untouched = fx.apiConnectionStored(other);
+    assertThat(untouched.lastStatus()).isEqualTo("DOWN");
+    assertThat(untouched.lastLatencyMs()).isEqualTo(8L);
+    assertThat(untouched.lastErrorMessage()).isEqualTo("HTTP 403");
   }
 
   /** findHealthCheckable은 health_check_path가 NOT NULL이고 비어 있지 않은 레코드만 반환해야 한다. */

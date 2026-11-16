@@ -2416,3 +2416,320 @@ test.describe('API 연결 BASIC 인증 (WD-681)', () => {
     await expect(page.getByText(message)).toBeVisible();
   });
 });
+
+/**
+ * WD-753 — API 연결 추가 인증 헤더와 「점검 안 함」 배지.
+ * 네이버 API HUB 처럼 인증 헤더가 둘 이상 필요한 API 를 연결 하나로 인증하도록, 연결 authConfig 에 `extraHeader:<이름>` 키로 비밀 헤더를 둔다.
+ * 값은 비밀이라 화면에는 서버가 가린 값만 보이고, 편집에서 값을 비우면 가린 값을 그대로 되돌려 보내 저장값을 유지한다.
+ */
+test.describe('WD-753 추가 헤더', () => {
+  const KEY_ID_HEADER = 'X-NCP-APIGW-API-KEY-ID';
+  const EXTRA_KEY = `extraHeader:${KEY_ID_HEADER}`;
+
+  /** 저장된 API 키·추가 헤더 하나를 가진 연결 — 서버는 두 값 모두 「****」+끝 4자로 가려 내려준다. */
+  const connectionWithExtraHeader = () =>
+    createApiConnection({
+      id: 1,
+      name: '네이버 API HUB',
+      maskedAuthConfig: {
+        placement: 'header',
+        headerName: 'X-NCP-APIGW-API-KEY',
+        apiKey: '****abcd',
+        [EXTRA_KEY]: '****4567',
+      },
+    });
+
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+  });
+
+  /** 생성 대화상자를 열고 이름·Base URL·API 키 헤더 이름·키 값을 채운다. */
+  async function openCreateFilled(page: Page) {
+    await page.goto('/admin/api-connections');
+    await page.getByRole('button', { name: '새 연결' }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await page.getByPlaceholder('예: Make.com API').fill('네이버 API HUB');
+    await page.getByPlaceholder('https://api.example.com').fill('https://naveropenapi.apigw.ntruss.com');
+    await page.getByPlaceholder('Authorization').fill('X-NCP-APIGW-API-KEY');
+    await page.getByPlaceholder('API 키를 입력하세요').fill('secret-key-abcd');
+  }
+
+  test('만들기 — 추가 헤더 이름·값을 authConfig 의 extraHeader: 키로 보낸다', async ({ authenticatedPage: page }) => {
+    await setupApiConnectionListMocks(page);
+    const capture = await mockApi(page, 'POST', '/api/v1/api-connections', connectionWithExtraHeader(), {
+      capture: true,
+    });
+
+    await openCreateFilled(page);
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByText('추가 헤더', { exact: true })).toBeVisible();
+    await expect(
+      dialog.getByText(
+        '인증 헤더가 둘 이상 필요한 API(예: 네이버 API HUB 키 ID)에 씁니다. 값은 암호화해 저장하고 화면에는 가려 보입니다.',
+      ),
+    ).toBeVisible();
+    await dialog.getByRole('button', { name: '헤더 추가' }).click();
+    await page.getByLabel('추가 헤더 이름 1').fill(KEY_ID_HEADER);
+    const value = page.getByLabel('추가 헤더 값 1');
+    // 비밀 값이라 가린 입력이다
+    await expect(value).toHaveAttribute('type', 'password');
+    await value.fill('keyid-4567');
+    await page.getByRole('button', { name: '만들기' }).click();
+
+    const req = await capture.waitForRequest();
+    expect(req.payload).toMatchObject({
+      authType: 'API_KEY',
+      authConfig: { headerName: 'X-NCP-APIGW-API-KEY', apiKey: 'secret-key-abcd', [EXTRA_KEY]: 'keyid-4567' },
+    });
+  });
+
+  test('만들기 — 연결 테스트도 추가 헤더를 실어 보낸다', async ({ authenticatedPage: page }) => {
+    await setupApiConnectionListMocks(page);
+    const capture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/api-connections/test',
+      {
+        ok: true,
+        status: 200,
+        latencyMs: 30,
+        errorMessage: null,
+        requestUrl: 'https://naveropenapi.apigw.ntruss.com',
+        responseBodyPreview: null,
+        responseHeaders: {},
+        responseContentType: null,
+      },
+      { capture: true },
+    );
+
+    await openCreateFilled(page);
+    await page.getByRole('button', { name: '헤더 추가' }).click();
+    await page.getByLabel('추가 헤더 이름 1').fill(KEY_ID_HEADER);
+    await page.getByLabel('추가 헤더 값 1').fill('keyid-4567');
+    await page.getByRole('button', { name: '연결 테스트' }).click();
+
+    const req = await capture.waitForRequest();
+    expect(req.payload).toMatchObject({ authConfig: { [EXTRA_KEY]: 'keyid-4567' } });
+  });
+
+  test('만들기 — 이름 없이 값만 넣거나 값이 비거나 이름이 겹치면 행에 오류를 달고 보내지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupApiConnectionListMocks(page);
+    const capture = await mockApi(page, 'POST', '/api/v1/api-connections', {}, { capture: true });
+
+    await openCreateFilled(page);
+    const add = page.getByRole('button', { name: '헤더 추가' });
+    await add.click();
+    await page.getByLabel('추가 헤더 값 1').fill('value-only');
+    await page.getByRole('button', { name: '만들기' }).click();
+    const name1 = page.getByLabel('추가 헤더 이름 1');
+    await expect(name1).toHaveAccessibleDescription('헤더 이름을 입력하세요');
+    await expect(name1).toBeFocused();
+
+    await name1.fill('X-A');
+    await add.click();
+    await page.getByLabel('추가 헤더 이름 2').fill('x-a');
+    await page.getByRole('button', { name: '만들기' }).click();
+    await expect(page.getByLabel('추가 헤더 이름 2')).toHaveAccessibleDescription('이름이 겹칩니다');
+
+    await page.getByLabel('추가 헤더 이름 2').fill('X-B');
+    await page.getByRole('button', { name: '만들기' }).click();
+    const value2 = page.getByLabel('추가 헤더 값 2');
+    await expect(value2).toHaveAccessibleDescription('값을 입력하세요');
+    await expect(value2).toBeFocused();
+    expect(capture.requests?.length ?? 0).toBe(0);
+  });
+
+  test('만들기 — 추가 헤더는 10개까지, 10개면 「헤더 추가」가 꺼진다', async ({ authenticatedPage: page }) => {
+    await setupApiConnectionListMocks(page);
+    await openCreateFilled(page);
+    const add = page.getByRole('button', { name: '헤더 추가' });
+    for (let i = 0; i < 10; i++) await add.click();
+    await expect(page.getByLabel('추가 헤더 이름 10')).toBeVisible();
+    await expect(add).toBeDisabled();
+    // 하나 지우면 다시 켜진다
+    await page.getByRole('button', { name: '추가 헤더 10 삭제' }).click();
+    await expect(add).toBeEnabled();
+  });
+
+  test('상세 — 읽기 보기에 추가 헤더 이름과 가린 값만 보이고 원문은 없다', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/api-connections/1', connectionWithExtraHeader());
+    await page.goto('/admin/api-connections/1');
+    await expect(page.getByRole('heading', { name: 'API 연결 상세' })).toBeVisible();
+    await expect(page.getByText('추가 헤더', { exact: true })).toBeVisible();
+    await expect(page.getByText(`${KEY_ID_HEADER}: ****4567`)).toBeVisible();
+    await expect(page.getByText('keyid-4567')).toHaveCount(0);
+    // 추가 헤더 키가 메인 인증 칸(헤더 이름·키 값)으로 새지 않는다
+    await expect(page.getByText('X-NCP-APIGW-API-KEY', { exact: true })).toBeVisible();
+    await expect(page.getByText('****abcd', { exact: true })).toBeVisible();
+  });
+
+  test('상세 — 값을 비운 채 저장하면 가린 값을 그대로 보내 저장값을 유지한다', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/api-connections/1', connectionWithExtraHeader());
+    const capture = await mockApi(page, 'PUT', '/api/v1/api-connections/1', connectionWithExtraHeader(), {
+      capture: true,
+    });
+
+    await page.goto('/admin/api-connections/1');
+    await page.getByRole('button', { name: '인증 정보 변경' }).click();
+    await expect(page.getByLabel('추가 헤더 이름 1')).toHaveValue(KEY_ID_HEADER);
+    const value = page.getByLabel('추가 헤더 값 1');
+    await expect(value).toHaveValue('');
+    await expect(value).toHaveAttribute('placeholder', '저장된 값 유지 (****4567)');
+    await page.getByRole('button', { name: '인증 저장' }).click();
+
+    const req = await capture.waitForRequest();
+    expect(req.payload).toMatchObject({
+      authType: 'API_KEY',
+      authConfig: { apiKey: '****abcd', [EXTRA_KEY]: '****4567' },
+    });
+  });
+
+  test('상세 — 새 값을 넣으면 그 값을, 행을 지우면 키 없이 보낸다', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/api-connections/1', connectionWithExtraHeader());
+    const capture = await mockApi(page, 'PUT', '/api/v1/api-connections/1', connectionWithExtraHeader(), {
+      capture: true,
+    });
+
+    await page.goto('/admin/api-connections/1');
+    await page.getByRole('button', { name: '인증 정보 변경' }).click();
+    await page.getByLabel('추가 헤더 값 1').fill('keyid-9999');
+    await page.getByRole('button', { name: '인증 저장' }).click();
+    const first = await capture.waitForRequest();
+    expect(first.payload).toMatchObject({ authConfig: { [EXTRA_KEY]: 'keyid-9999' } });
+
+    await page.getByRole('button', { name: '인증 정보 변경' }).click();
+    await page.getByRole('button', { name: '추가 헤더 1 삭제' }).click();
+    await expect(page.getByLabel('추가 헤더 이름 1')).toHaveCount(0);
+    await page.getByRole('button', { name: '인증 저장' }).click();
+    await expect.poll(() => capture.requests.length).toBe(2);
+    const second = capture.requests[1].payload as { authConfig: Record<string, string> };
+    expect(second.authConfig).not.toHaveProperty(EXTRA_KEY);
+    expect(second.authConfig).toMatchObject({ apiKey: '****abcd' });
+  });
+
+  test('상세 — 저장된 헤더의 이름을 바꾸면 새 헤더라 저장값 유지가 풀리고 새 값을 요구한다', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(page, 'GET', '/api/v1/api-connections/1', connectionWithExtraHeader());
+    const capture = await mockApi(page, 'PUT', '/api/v1/api-connections/1', connectionWithExtraHeader(), {
+      capture: true,
+    });
+
+    await page.goto('/admin/api-connections/1');
+    await page.getByRole('button', { name: '인증 정보 변경' }).click();
+    await page.getByLabel('추가 헤더 이름 1').fill('X-Renamed');
+    const value = page.getByLabel('추가 헤더 값 1');
+    // 가린 값은 원래 이름의 저장값이라 새 이름으로 되돌릴 수 없다 — 유지 자리표시가 사라진다
+    await expect(value).toHaveAttribute('placeholder', '값을 입력하세요');
+    await page.getByRole('button', { name: '인증 저장' }).click();
+    await expect(value).toHaveAccessibleDescription('값을 입력하세요');
+    await expect(value).toBeFocused();
+    expect(capture.requests.length).toBe(0);
+  });
+
+  test('상세 — 바꾼 이름을 원래 이름(앞뒤 공백 무시)으로 되돌리면 다시 「저장된 값 유지」가 되고 가린 값을 보낸다 (WD-753 리뷰)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(page, 'GET', '/api/v1/api-connections/1', connectionWithExtraHeader());
+    const capture = await mockApi(page, 'PUT', '/api/v1/api-connections/1', connectionWithExtraHeader(), {
+      capture: true,
+    });
+
+    await page.goto('/admin/api-connections/1');
+    await page.getByRole('button', { name: '인증 정보 변경' }).click();
+    const name = page.getByLabel('추가 헤더 이름 1');
+    const value = page.getByLabel('추가 헤더 값 1');
+    await name.fill('X-Renamed');
+    await expect(value).toHaveAttribute('placeholder', '값을 입력하세요');
+    // 원래 이름으로 되돌린다 — 앞뒤 공백은 서버도 떼므로 같은 헤더다
+    await name.fill(` ${KEY_ID_HEADER} `);
+    await expect(value).toHaveAttribute('placeholder', '저장된 값 유지 (****4567)');
+    await page.getByRole('button', { name: '인증 저장' }).click();
+
+    const req = await capture.waitForRequest();
+    expect(req.payload).toMatchObject({ authConfig: { [EXTRA_KEY]: '****4567' } });
+  });
+
+  test('상세 — 인증 편집 중 기본 정보를 저장해 연결이 다시 불러와져도 고치던 추가 헤더 행이 남는다 (WD-753 리뷰)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(page, 'GET', '/api/v1/api-connections/1', connectionWithExtraHeader());
+    await page.goto('/admin/api-connections/1');
+    await page.getByRole('button', { name: '인증 정보 변경' }).click();
+    await page.getByLabel('추가 헤더 값 1').fill('keyid-new-1');
+    await page.getByRole('button', { name: '헤더 추가' }).click();
+    await page.getByLabel('추가 헤더 이름 2').fill('X-Tenant');
+    await page.getByLabel('추가 헤더 값 2').fill('tenant-1');
+
+    // 기본 정보 저장 뒤 다시 불러온 연결은 이름만 바뀌었다(추가 헤더 저장값은 그대로) — 나중에 등록한 route 가 이긴다
+    const renamed = { ...connectionWithExtraHeader(), name: '네이버 API HUB 2' };
+    await mockApi(page, 'GET', '/api/v1/api-connections/1', renamed);
+    const capture = await mockApi(page, 'PUT', '/api/v1/api-connections/1', renamed, { capture: true });
+    const refetched = page.waitForResponse(
+      (res) => res.request().method() === 'GET' && new URL(res.url()).pathname === '/api/v1/api-connections/1',
+    );
+    await page.getByLabel('연결 이름').fill('네이버 API HUB 2');
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+    await capture.waitForRequest();
+    await refetched;
+    await expect(page.getByText('연결 정보가 업데이트되었습니다.')).toBeVisible();
+
+    // 편집하던 행은 저장값으로 덮이지 않는다
+    await expect(page.getByLabel('추가 헤더 이름 1')).toHaveValue(KEY_ID_HEADER);
+    await expect(page.getByLabel('추가 헤더 값 1')).toHaveValue('keyid-new-1');
+    await expect(page.getByLabel('추가 헤더 이름 2')).toHaveValue('X-Tenant');
+    await expect(page.getByLabel('추가 헤더 값 2')).toHaveValue('tenant-1');
+
+    await page.getByRole('button', { name: '인증 저장' }).click();
+    await expect.poll(() => capture.requests.length).toBe(2);
+    expect(capture.requests[1].payload).toMatchObject({
+      authConfig: { [EXTRA_KEY]: 'keyid-new-1', 'extraHeader:X-Tenant': 'tenant-1' },
+    });
+  });
+
+  test('목록 — 헬스체크 경로가 없으면 상태와 상관없이 「점검 안 함」, 경로가 있고 상태가 없으면 「미확인」', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.setViewportSize({ width: 1024, height: 800 });
+    await setupApiConnectionListMocks(page);
+    await mockApi(page, 'GET', '/api/v1/api-connections', [
+      createApiConnection({ id: 1, name: '점검 없는 연결', healthCheckPath: null, lastStatus: null, lastCheckedAt: null }),
+      createApiConnection({ id: 2, name: '아직 안 본 연결', lastStatus: null, lastCheckedAt: null }),
+      // 경로를 비우기 전 점검 결과(이상)가 남은 연결 — 점검하지 않으니 지난 「이상」 대신 「점검 안 함」(WD-753 리뷰)
+      createApiConnection({ id: 3, name: '경로 비운 연결', healthCheckPath: null, lastStatus: 'DOWN' }),
+    ]);
+    await page.goto('/admin/api-connections');
+
+    const noCheckRow = page.getByRole('row').filter({ hasText: '점검 없는 연결' });
+    const badge = noCheckRow.getByText('점검 안 함', { exact: true });
+    await expect(badge).toBeVisible();
+    await expect(badge).toHaveAttribute('title', '헬스체크 경로가 없어 자동 점검하지 않습니다');
+    // 상태 칸 선언 폭(--k) 안에 배지가 들어가야 표가 넘치지 않는다(WD-650 규칙)
+    await expectBadgesFitDeclaredWidth(
+      noCheckRow.getByRole('cell').filter({ has: page.getByText('점검 안 함', { exact: true }) }),
+    );
+    await expectKMatchesDeclaredWidths(badge);
+    const pendingRow = page.getByRole('row').filter({ hasText: '아직 안 본 연결' });
+    await expect(pendingRow.getByText('미확인', { exact: true })).toBeVisible();
+    const clearedRow = page.getByRole('row').filter({ hasText: '경로 비운 연결' });
+    await expect(clearedRow.getByText('점검 안 함', { exact: true })).toBeVisible();
+    await expect(clearedRow.getByText('이상', { exact: true })).toHaveCount(0);
+  });
+
+  test('상세 — 헬스체크 경로가 없으면 지난 상태(이상)가 있어도 「점검 안 함」 배지를 보인다', async ({ authenticatedPage: page }) => {
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/api-connections/1',
+      createApiConnection({ id: 1, healthCheckPath: null, lastStatus: 'DOWN', lastLatencyMs: null }),
+    );
+    await page.goto('/admin/api-connections/1');
+    const badge = page.getByText('점검 안 함', { exact: true });
+    await expect(badge).toBeVisible();
+    await expect(badge).toHaveAttribute('title', '헬스체크 경로가 없어 자동 점검하지 않습니다');
+    await expect(page.getByText('미확인', { exact: true })).toHaveCount(0);
+    await expect(page.getByText('이상', { exact: true })).toHaveCount(0);
+  });
+});

@@ -293,6 +293,53 @@ describe('API Connection MCP Tools', () => {
     });
   });
 
+  // WD-753: 인증 헤더가 둘 이상 필요한 API 용 추가 헤더 키(`extraHeader:<헤더 이름>`) — 에이전트가 키 형식을 알고 보내게 하는 안내와 통과 경로
+  describe('추가 인증 헤더 키 안내 (WD-753)', () => {
+    const EXTRA_HEADER_GUIDE =
+      '인증 헤더가 둘 이상 필요한 API 는 authConfig 에 "extraHeader:<헤더 이름>": "<값>" 키를 더합니다(모든 인증 방식, 최대 10개, 값은 비밀이라 조회 시 가려짐).';
+
+    it.each(['create_api_connection', 'update_api_connection'])(
+      '%s 설명에 extraHeader: 키 안내 문장이 들어 있다',
+      (toolName) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const description: string = (server.instance as any)._registeredTools[toolName].description;
+        expect(description).toContain('extraHeader:');
+        expect(description).toContain(EXTRA_HEADER_GUIDE);
+      },
+    );
+
+    it('create: extraHeader 키가 든 authConfig 가 더미 검사를 통과해 API 로 그대로 전달된다', async () => {
+      const args = {
+        name: 'naver-cloud',
+        authType: 'API_KEY',
+        authConfig: {
+          apiKey: 'k9Qx2LmZp7Rt4VbN8cWd',
+          headerName: 'X-NCP-APIGW-API-KEY',
+          'extraHeader:X-NCP-APIGW-API-KEY-ID': 'a7Fh3Kd9Lq2Zx5Mn8Pw1',
+        },
+        baseUrl: 'https://naveropenapi.apigw.ntruss.com',
+      };
+      const result = await invokeTool(server, 'create_api_connection', args);
+      expect(result.isError).toBeFalsy();
+      expect(client.createApiConnection).toHaveBeenCalledWith(args);
+    });
+
+    it('extraHeader 값은 비밀이라 더미 검사에서 면제되지 않는다 — 더미 값은 거절', async () => {
+      const result = await invokeTool(server, 'create_api_connection', {
+        name: 'naver-cloud',
+        authType: 'API_KEY',
+        authConfig: {
+          apiKey: 'k9Qx2LmZp7Rt4VbN8cWd',
+          headerName: 'X-NCP-APIGW-API-KEY',
+          'extraHeader:X-NCP-APIGW-API-KEY-ID': 'dummyvalue12345',
+        },
+        baseUrl: 'https://naveropenapi.apigw.ntruss.com',
+      });
+      expect(result.isError).toBe(true);
+      expect(client.createApiConnection).not.toHaveBeenCalled();
+    });
+  });
+
   describe('update_api_connection', () => {
     it('calls apiClient.updateApiConnection with id and data', async () => {
       const args = { id: 3, name: '수정된 연결', baseUrl: 'https://new.example.com' };

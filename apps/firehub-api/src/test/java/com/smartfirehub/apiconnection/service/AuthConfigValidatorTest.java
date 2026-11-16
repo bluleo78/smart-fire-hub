@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.apiconnection.exception.ApiConnectionException;
+import com.smartfirehub.pipeline.service.executor.ApiCallAuth;
 import java.util.HashMap;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -212,17 +213,251 @@ class AuthConfigValidatorTest {
     assertThat(
             AuthConfigValidator.describeSentValueProblem(
                 com.smartfirehub.pipeline.service.executor.ApiCallAuth.resolveWithAuthType(
-                    "BASIC", Map.of("password", "pw"))))
+                    "BASIC", Map.of("password", "pw")),
+                null))
         .isEqualTo("아이디를 입력하세요 (authConfig.username)");
     assertThat(
             AuthConfigValidator.describeSentValueProblem(
                 com.smartfirehub.pipeline.service.executor.ApiCallAuth.resolveWithAuthType(
-                    "BASIC", Map.of("username", "alice"))))
+                    "BASIC", Map.of("username", "alice")),
+                null))
         .isEqualTo("비밀번호를 입력하세요 (authConfig.password)");
     assertThat(
             AuthConfigValidator.describeSentValueProblem(
                 com.smartfirehub.pipeline.service.executor.ApiCallAuth.resolveWithAuthType(
-                    "BASIC", Map.of("username", "alice", "password", "pw"))))
+                    "BASIC", Map.of("username", "alice", "password", "pw")),
+                null))
         .isNull();
+  }
+
+  // -------------------------------------------------------------------------
+  // WD-753: 추가 인증 헤더(extraHeader:<이름>) 모으기·검증
+  // -------------------------------------------------------------------------
+
+  /** 접두어 키만 모으고 이름의 앞뒤 공백을 뗀다 — 접두어 없는 키(apiKey)는 추가 헤더가 아니다. */
+  @Test
+  void extraHeaders_collectsPrefixedKeysStrippingName() {
+    Map<String, String> config = new HashMap<>();
+    config.put("apiKey", "k");
+    config.put("extraHeader: X-Id ", "v1");
+    config.put("extraHeader:X-B", "v2");
+
+    Map<String, String> extra = AuthConfigValidator.extraHeaders(config);
+
+    assertThat(extra).hasSize(2).containsEntry("X-B", "v2").containsEntry("X-Id", "v1");
+    assertThat(AuthConfigValidator.extraHeaders(null)).isEmpty();
+  }
+
+  /** 이름이 빈 접두어 키도 빈 이름으로 모아 검증이 거절하게 둔다(조용히 버리면 저장한 값이 사라진다). */
+  @Test
+  void extraHeadersProblem_emptyName() {
+    Map<String, String> extra = AuthConfigValidator.extraHeaders(Map.of("extraHeader:", "v1234"));
+    assertThat(AuthConfigValidator.extraHeadersProblem(extra, null)).isEqualTo("추가 헤더 이름을 입력하세요");
+  }
+
+  /** 이름 규칙은 인증 헤더 이름과 같다(HTTP 토큰·예약 헤더) — 문구 앞에 「추가 헤더 」 를 붙인다. */
+  @Test
+  void extraHeadersProblem_invalidAndReservedName() {
+    assertThat(AuthConfigValidator.extraHeadersProblem(Map.of("X Id", "secret-val-1"), null))
+        .startsWith("추가 헤더 헤더 이름이 올바르지 않습니다")
+        .doesNotContain("secret-val-1");
+    assertThat(AuthConfigValidator.extraHeadersProblem(Map.of("Host", "secret-val-2"), null))
+        .startsWith("추가 헤더 헤더 이름으로 Host 은(는) 쓸 수 없습니다")
+        .doesNotContain("secret-val-2");
+  }
+
+  /** 추가 헤더끼리 대소문자만 다른 이름은 같은 헤더라 거절한다 — 같은 헤더가 두 번 나간다. */
+  @Test
+  void extraHeadersProblem_duplicateNameIgnoringCase() {
+    Map<String, String> config = new HashMap<>();
+    config.put("extraHeader:X-Id", "dup-value-1");
+    config.put("extraHeader:x-id", "dup-value-2");
+    String problem =
+        AuthConfigValidator.extraHeadersProblem(AuthConfigValidator.extraHeaders(config), null);
+    assertThat(problem)
+        .startsWith("추가 헤더 이름이 겹칩니다: ")
+        .doesNotContain("dup-value-1")
+        .doesNotContain("dup-value-2");
+  }
+
+  /** 메인 인증 헤더와 같은 이름(대소문자 무시)은 거절한다 — BEARER·BASIC 은 Authorization, API_KEY 헤더는 정한 이름. */
+  @Test
+  void extraHeadersProblem_sameAsMainAuthHeader() {
+    assertThat(
+            AuthConfigValidator.describeProblem(
+                "BEARER", Map.of("token", "tok12345", "extraHeader:authorization", "abc-9999")))
+        .isEqualTo("추가 헤더 authorization 은(는) 인증 헤더와 이름이 같습니다 — 인증 칸에 이미 있는 헤더입니다");
+    assertThat(
+            AuthConfigValidator.describeProblem(
+                "API_KEY",
+                Map.of(
+                    "placement",
+                    "header",
+                    "headerName",
+                    "X-NCP-APIGW-API-KEY",
+                    "apiKey",
+                    "secretkey123",
+                    "extraHeader:x-ncp-apigw-api-key",
+                    "abc-9999")))
+        .isEqualTo("추가 헤더 x-ncp-apigw-api-key 은(는) 인증 헤더와 이름이 같습니다 — 인증 칸에 이미 있는 헤더입니다")
+        .doesNotContain("abc-9999");
+  }
+
+  /** 값이 비었거나(공백만) 줄바꿈이 있으면 거절한다 — 문구에 값은 싣지 않는다. */
+  @Test
+  void extraHeadersProblem_blankOrMultilineValue() {
+    assertThat(AuthConfigValidator.extraHeadersProblem(Map.of("X-Id", " "), null))
+        .isEqualTo("추가 헤더 X-Id 값을 입력하세요");
+    assertThat(AuthConfigValidator.extraHeadersProblem(Map.of("X-Id", "a\nb"), null))
+        .isEqualTo("추가 헤더 X-Id 값에 줄바꿈을 넣을 수 없습니다 — 한 줄로 입력하세요");
+  }
+
+  /** 11개 이상이면 개수부터 거절한다. */
+  @Test
+  void extraHeadersProblem_moreThanTen() {
+    Map<String, String> extra = new java.util.LinkedHashMap<>();
+    for (int i = 0; i < AuthConfigValidator.MAX_EXTRA_HEADERS + 1; i++) {
+      extra.put("X-H" + i, "value-" + i);
+    }
+    assertThat(AuthConfigValidator.extraHeadersProblem(extra, null))
+        .isEqualTo("추가 헤더는 최대 10개까지 넣을 수 있습니다");
+    assertThat(AuthConfigValidator.EXTRA_HEADER_PREFIX).isEqualTo("extraHeader:");
+  }
+
+  /** 네이버 API HUB 모양 — API 키 헤더 + 키 ID 추가 헤더는 문제없다(저장 검사·보내는 값 검사 모두). */
+  @Test
+  void describeProblem_apiKeyWithExtraHeader_ok() {
+    Map<String, String> config =
+        Map.of(
+            "placement",
+            "header",
+            "headerName",
+            "X-NCP-APIGW-API-KEY",
+            "apiKey",
+            "secretkey123",
+            "extraHeader:X-NCP-APIGW-API-KEY-ID",
+            "abcd1234");
+    assertThat(AuthConfigValidator.describeProblem("API_KEY", config)).isNull();
+    assertThat(
+            AuthConfigValidator.describeSentValueProblem(
+                com.smartfirehub.pipeline.service.executor.ApiCallAuth.resolveWithAuthType(
+                    "API_KEY", config),
+                null))
+        .isNull();
+  }
+
+  /** 보내는 값 검사(연결 테스트·상태 점검)도 추가 헤더를 본다 — 메인 인증이 문제없어도 추가 헤더 값이 비면 거절. */
+  @Test
+  void describeSentValueProblem_checksExtraHeaders() {
+    assertThat(
+            AuthConfigValidator.describeSentValueProblem(
+                com.smartfirehub.pipeline.service.executor.ApiCallAuth.resolveWithAuthType(
+                    "BEARER", Map.of("token", "tok12345", "extraHeader:X-Tenant", "")),
+                null))
+        .isEqualTo("추가 헤더 X-Tenant 값을 입력하세요");
+  }
+
+  /**
+   * 원래 키가 앞뒤 공백만 다른 추가 헤더(WD-753 리뷰)는 모으면 한 이름으로 합쳐져 한쪽 값이 말없이 사라진다 — 저장 검사가 원래 키를 보고 겹침으로
+   * 거절한다(대소문자 무시).
+   */
+  @Test
+  void describeProblem_rawKeysCollideAfterStrip_rejectedAsDuplicate() {
+    Map<String, String> spaced = new HashMap<>();
+    spaced.put("token", "tok12345");
+    spaced.put("extraHeader: X-A", "first-value-1");
+    spaced.put("extraHeader:X-A", "second-value-2");
+    assertThat(AuthConfigValidator.describeProblem("BEARER", spaced))
+        .isEqualTo("추가 헤더 이름이 겹칩니다: X-A")
+        .doesNotContain("first-value-1")
+        .doesNotContain("second-value-2");
+
+    Map<String, String> spacedAndCase = new HashMap<>();
+    spacedAndCase.put("token", "tok12345");
+    spacedAndCase.put("extraHeader:X-A ", "first-value-1");
+    spacedAndCase.put("extraHeader:x-a", "second-value-2");
+    assertThat(AuthConfigValidator.describeProblem("BEARER", spacedAndCase))
+        .startsWith("추가 헤더 이름이 겹칩니다: ");
+  }
+
+  /** 추가 헤더 키는 이름과 상관없이 비밀 필드다 — 응답에서 API 키 규칙(****+끝 4자)으로 가린다. */
+  @Test
+  void isSensitiveKey_extraHeaderPrefix() {
+    assertThat(ApiConnectionReader.isSensitiveKey("extraHeader:X-Tenant")).isTrue();
+    assertThat(ApiConnectionReader.isSensitiveKey("headerName")).isFalse();
+  }
+
+  /**
+   * 저장 정리는 추가 헤더 키를 앞뒤 공백을 뗀 이름으로 다시 쓴다(WD-753 리뷰) — 화면은 정리한 이름으로 가린 값을 되돌려 보내므로 저장 키가 같아야 저장값을 유지할
+   * 수 있다. 값은 손대지 않는다.
+   */
+  @Test
+  void validateAndNormalize_rewritesExtraHeaderKeyToStrippedName() {
+    Map<String, String> normalized =
+        AuthConfigValidator.validateAndNormalize(
+            "BEARER", Map.of("token", "tok12345", "extraHeader: X-Id ", " keyid-4567"));
+
+    assertThat(normalized)
+        .containsEntry("extraHeader:X-Id", " keyid-4567")
+        .doesNotContainKey("extraHeader: X-Id ")
+        .containsEntry("token", "tok12345");
+  }
+
+  /** 접두어 거르기 공용 helper — 추가 헤더 키만 원래 키 그대로 키 정렬 순서로 담는다. null·null 키는 건너뛴다. */
+  @Test
+  void rawExtraHeaderEntries_keepsRawKeysSorted() {
+    Map<String, String> config = new HashMap<>();
+    config.put("apiKey", "k");
+    config.put("extraHeader:X-B", "v2");
+    config.put("extraHeader: X-A", "v1");
+    config.put(null, "x");
+
+    assertThat(AuthConfigValidator.rawExtraHeaderEntries(config))
+        .containsExactly(Map.entry("extraHeader: X-A", "v1"), Map.entry("extraHeader:X-B", "v2"));
+    assertThat(AuthConfigValidator.rawExtraHeaderEntries(null)).isEmpty();
+    assertThat(AuthConfigValidator.normalizeExtraHeaderKey("extraHeader: X-A "))
+        .isEqualTo("extraHeader:X-A");
+    assertThat(AuthConfigValidator.normalizeExtraHeaderKey("apiKey")).isEqualTo("apiKey");
+  }
+
+  /** 변경 비교는 추가 헤더 키를 정리해 맞춘다 — 키 모양만 다르고 값이 같으면 같은 설정이다(감사 credentialsChanged 오판 방지). */
+  @Test
+  void comparableConfig_normalizesExtraHeaderKeys() {
+    assertThat(
+            AuthConfigValidator.comparableConfig(
+                "BEARER", Map.of("token", "t", "extraHeader: X-Id", "v1")))
+        .isEqualTo(
+            AuthConfigValidator.comparableConfig(
+                "BEARER", Map.of("token", "t", "extraHeader:X-Id", "v1")));
+  }
+
+  /**
+   * 메인 인증 헤더 이름은 전송 규칙(ApiCallAuth.resolveWithAuthType)으로 고른다(WD-753 리뷰) — headerName 이 없고 key_name
+   * 이 있으면 실제로 key_name 헤더로 나가므로, 그 이름과 같은 추가 헤더를 거절한다.
+   */
+  @Test
+  void describeProblem_mainHeaderNameFollowsSendRule() {
+    Map<String, String> config = new HashMap<>();
+    config.put("placement", "header");
+    config.put("key_name", "X-Legacy-Key");
+    config.put("apiKey", "secretkey123");
+    config.put("extraHeader:x-legacy-key", "abc-9999");
+
+    assertThat(AuthConfigValidator.describeProblem("API_KEY", config))
+        .isEqualTo("추가 헤더 x-legacy-key 은(는) 인증 헤더와 이름이 같습니다 — 인증 칸에 이미 있는 헤더입니다");
+  }
+
+  /** 저장된 연결 테스트·상태 점검도 원래 authConfig 의 공백만 다른 추가 헤더 키 겹침을 본다(WD-753 리뷰) — 푼 값에서는 이미 합쳐져 보이지 않는다. */
+  @Test
+  void describeSentValueProblem_rawConfigCollision() {
+    Map<String, String> raw = new HashMap<>();
+    raw.put("token", "tok12345");
+    raw.put("extraHeader: X-A", "first-value-1");
+    raw.put("extraHeader:X-A", "second-value-2");
+    ApiCallAuth.ResolvedAuth auth = ApiCallAuth.resolveWithAuthType("BEARER", raw);
+
+    assertThat(AuthConfigValidator.describeSentValueProblem(auth, null)).isNull();
+    assertThat(AuthConfigValidator.describeSentValueProblem(auth, raw))
+        .isEqualTo("추가 헤더 이름이 겹칩니다: X-A");
   }
 }

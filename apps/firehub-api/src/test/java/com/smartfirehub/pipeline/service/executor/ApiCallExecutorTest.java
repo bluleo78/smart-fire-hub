@@ -1888,6 +1888,73 @@ class ApiCallExecutorTest {
             .withHeader("X-Trace", equalTo("t657")));
   }
 
+  // -------------------------------------------------------------------------
+  // WD-753: 연결의 추가 인증 헤더 — 스텝 헤더와 이름이 같으면 추가 헤더만, 다른 출처 홉에는 떼기
+  // -------------------------------------------------------------------------
+
+  /** 네이버 API HUB 모양 연결 — API 키 헤더 + 키 ID 추가 헤더. */
+  private ApiConnectionResponse naverHubConnection() {
+    return new ApiConnectionResponse(
+        1L, "wd753", null, "API_KEY", Map.of(), baseUrl(), null, null, null, null, null, 1L, null,
+        null);
+  }
+
+  private static Map<String, String> naverHubAuth() {
+    return Map.of(
+        "placement",
+        "header",
+        "headerName",
+        "X-NCP-APIGW-API-KEY",
+        "apiKey",
+        "secretkey123",
+        "extraHeader:X-NCP-APIGW-API-KEY-ID",
+        "keyid-4567");
+  }
+
+  /**
+   * 스텝 헤더에 같은 이름(대소문자만 다름)으로 옛 키 ID 가 남아 있어도 추가 헤더 값 하나만 나간다 — 연결에 추가 헤더를 더한 뒤 같은 헤더가 두 번 나가 깨지지
+   * 않게(WebClient.header 는 값을 덧붙인다).
+   */
+  @Test
+  void execute_extraHeader_winsOverSameNamedStepHeader_sentOnce() {
+    stubEmptyItems("/w753/items");
+    ApiCallConfig config =
+        withHeaders(
+            withConnectionPath(simpleGetConfig("/unused"), 1L, "/w753/items"),
+            Map.of("x-ncp-apigw-api-key-id", "old-step-id"));
+
+    executor.execute(config, "t", naverHubAuth(), "APPEND", null, naverHubConnection());
+
+    List<LoggedRequest> requests = wireMock.findAll(getRequestedFor(urlPathEqualTo("/w753/items")));
+    assertThat(requests).hasSize(1);
+    assertThat(requests.get(0).header("X-NCP-APIGW-API-KEY-ID").values())
+        .containsExactly("keyid-4567");
+    assertThat(requests.get(0).header("X-NCP-APIGW-API-KEY").values())
+        .containsExactly("secretkey123");
+  }
+
+  /** 다른 출처로 3xx 하면 추가 헤더(와 같은 이름의 스텝 헤더)도 떼고 따라간다 — 추가 헤더도 자격 증명이다. */
+  @Test
+  void execute_crossOriginRedirect_dropsExtraHeader() {
+    stubRedirect("/w753/start", otherOrigin() + "/w753/other");
+    stubEmptyItems("/w753/other");
+    ApiCallConfig config =
+        withHeaders(
+            withConnectionPath(simpleGetConfig("/unused"), 1L, "/w753/start"),
+            Map.of("x-ncp-apigw-api-key-id", "old-step-id", "X-Trace", "t753"));
+
+    executor.execute(config, "t", naverHubAuth(), "APPEND", null, naverHubConnection());
+
+    wireMock.verify(
+        getRequestedFor(urlPathEqualTo("/w753/start"))
+            .withHeader("X-NCP-APIGW-API-KEY-ID", equalTo("keyid-4567")));
+    wireMock.verify(
+        getRequestedFor(urlPathEqualTo("/w753/other"))
+            .withoutHeader("X-NCP-APIGW-API-KEY-ID")
+            .withoutHeader("X-NCP-APIGW-API-KEY")
+            .withHeader("X-Trace", equalTo("t753")));
+  }
+
   /**
    * http→https 승격(같은 호스트·기본 포트)은 같은 출처라 쿼리 키를 그대로 두고, https→http 강등은 다른 출처라 뗀다. 이 실행기는 HTTPS 시험 서버를
    * 붙일 수 없어(인증서 신뢰를 주입할 곳이 없다) 리다이렉트 대상 조정만 직접 본다 — 헤더는 같은 판정(isSameAuthOrigin)으로 붙인다.

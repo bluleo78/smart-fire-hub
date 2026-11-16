@@ -3,9 +3,12 @@ package com.smartfirehub.apiconnection.service;
 import com.smartfirehub.apiconnection.exception.ApiConnectionException;
 import com.smartfirehub.pipeline.service.executor.ApiCallAuth;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.regex.Pattern;
 
 /**
@@ -101,6 +104,17 @@ public final class AuthConfigValidator {
     return BEARER_PREFIX.matcher(token.strip()).replaceFirst("");
   }
 
+  /**
+   * 추가 인증 헤더 키의 접두어(WD-753) — authConfig 의 {@code extraHeader:<헤더 이름>} 키가 그 이름으로 함께 보낼 비밀 헤더다. 네이버
+   * API HUB 처럼 헤더 둘(키 ID·키)이 필요한 API 를 연결 하나로 인증하려고 둔다. authConfig 는 암호화된 평평한 Map 이라 접두어 키로 두면
+   * 저장·암호화·가림· Python 전달 구조를 바꾸지 않고 기존 키 단위 규칙을 그대로 탄다. 콜론은 헤더 이름(HTTP 토큰)에 쓸 수 없어 접두어와 이름의 경계가 깨지지
+   * 않는다.
+   */
+  public static final String EXTRA_HEADER_PREFIX = "extraHeader:";
+
+  /** 연결 하나에 둘 수 있는 추가 인증 헤더 수 상한(WD-753) — 화면·요청이 지나치게 커지지 않게. */
+  public static final int MAX_EXTRA_HEADERS = 10;
+
   /** API_KEY + placement=header 에서 헤더 이름을 비워 둘 때 쓰는 기본 헤더 — 검사·호출·비교가 같은 기본값을 보도록 한 곳에 둔다. */
   public static final String DEFAULT_API_KEY_HEADER = "X-API-Key";
 
@@ -151,6 +165,9 @@ public final class AuthConfigValidator {
   static Map<String, String> comparableConfig(String authType, Map<String, String> config) {
     Map<String, String> copy = new HashMap<>(config == null ? Map.of() : config);
     copy.remove("authType");
+    // 추가 인증 헤더 키는 저장과 같이 정리한 키로 맞춘다(WD-753 리뷰) — 정리 전에 저장된 「extraHeader: X-Id」 를 같은 값으로 다시 저장하면
+    // 키 모양만 바뀔 뿐 보내는 헤더는 같다.
+    normalizeExtraHeaderKeys(copy);
     if ("BEARER".equals(authType)) {
       copy.computeIfPresent("token", (k, token) -> normalizeBearerToken(token));
     } else if ("API_KEY".equals(authType)) {
@@ -196,15 +213,33 @@ public final class AuthConfigValidator {
    *   <li>비밀이 비었는지(정리한 뒤) — 가장 먼저
    *   <li>API_KEY 헤더 이름을 쓸 수 있는지 — 헤더로 보낼 때만
    *   <li>비밀에 줄바꿈이 있는지
+   *   <li>추가 인증 헤더({@link #extraHeadersProblem}, WD-753) — 메인 인증 검사를 통과한 뒤
    * </ol>
    *
    * <p>파이프라인 실행·미리보기의 호출 전 검사({@link ApiCallAuth#describeProblem})는 1·2 만 본다 — 줄바꿈 검사는 연결 테스트에만 있다.
    * 실행에 넣으면 지금 돌던 파이프라인의 동작이 바뀌어 일부러 맞추지 않았다.
    *
+   * <p>원래 authConfig 의 추가 헤더 키 겹침({@link #rawExtraHeaderNameCollision}) 검사도 더한다(WD-753 리뷰). 푼
+   * 값({@code auth.extraHeaders()})에서는 공백만 다른 두 키가 이미 한 이름으로 합쳐져 한쪽 값이 사라졌으므로, 원래 Map 이 있는 저장된 연결
+   * 테스트·상태 점검은 그 Map 을 함께 넘긴다. 겹침은 메인 인증 검사를 통과한 뒤, 다른 추가 헤더 검사보다 먼저 본다(저장 검사 {@link
+   * #describeProblem} 과 같은 순서).
+   *
    * @param auth 실행과 같은 규칙으로 푼 인증 설정. 모르는 방식이면 문제없음
+   * @param rawConfig {@code auth} 를 푼 원래 authConfig. null 이면 겹침 검사를 하지 않는다
    * @return 문제 사유(한국어) 또는 문제가 없으면 null
    */
-  public static String describeSentValueProblem(ApiCallAuth.ResolvedAuth auth) {
+  public static String describeSentValueProblem(
+      ApiCallAuth.ResolvedAuth auth, Map<String, String> rawConfig) {
+    String problem = describeSentMainProblem(auth);
+    if (problem != null) return problem;
+    String collision = rawExtraHeaderNameCollision(rawConfig);
+    if (collision != null) return collision;
+    // 추가 인증 헤더(WD-753)는 메인 인증 검사를 통과한 뒤 본다 — 메인 인증 헤더 이름(쿼리 인증·인증 없음이면 null)과 겹치는지도 본다.
+    return extraHeadersProblem(auth.extraHeaders(), auth.authHeaderName());
+  }
+
+  /** {@link #describeSentValueProblem} 의 메인 인증(방식별 비밀·헤더 이름·줄바꿈) 검사 — WD-753 전 규칙 그대로다. */
+  private static String describeSentMainProblem(ApiCallAuth.ResolvedAuth auth) {
     String authType = auth.authType();
     String secret = auth.secret();
     // BASIC 은 아이디를 비밀번호보다 먼저 본다(WD-681) — 화면 칸 순서(아이디 → 비밀번호)와 같다.
@@ -243,7 +278,59 @@ public final class AuthConfigValidator {
     if (problem != null) {
       throw new ApiConnectionException(problem);
     }
+    // 추가 인증 헤더 키를 정리한 이름으로 다시 쓴다(WD-753 리뷰) — 겹침 검사를 통과한 뒤라 정리해도 두 키가 하나로 합쳐지지 않는다.
+    // 「extraHeader: X-Id」 로 저장하면 화면은 앞뒤 공백을 뗀 이름으로 가린 값을 되돌려 보내 저장 키와 맞지 않았다 — 저장 키를 화면·호출이
+    // 쓰는 이름과 같게 둔다.
+    normalizeExtraHeaderKeys(normalized);
     return normalized;
+  }
+
+  /**
+   * authConfig 의 추가 인증 헤더 키를 {@link #normalizeExtraHeaderKey} 로 바꿔 쓴다(WD-753 리뷰). 값은 손대지 않는다. 같은 정리
+   * 키로 모이는 키가 둘 이상이면(겹침 검사 전 호출) 원래 키 정렬 순서의 마지막 값이 남는다 — 저장 경로는 겹침을 먼저 거절하므로 그런 일이 없다.
+   *
+   * <p>저장 정리({@link #validateAndNormalize})와 가린 값 되돌리기 저장값 조회({@code
+   * ApiConnectionService.resolveMaskedSecrets})가 같은 정리를 쓰도록 공개한다.
+   *
+   * @param config 바꿔 쓸 수정 가능한 Map. null 이면 아무것도 하지 않는다
+   */
+  public static void normalizeExtraHeaderKeys(Map<String, String> config) {
+    if (config == null) return;
+    TreeMap<String, String> raw = rawExtraHeaderEntries(config);
+    raw.keySet().forEach(config::remove);
+    raw.forEach((key, value) -> config.put(normalizeExtraHeaderKey(key), value));
+  }
+
+  /**
+   * 추가 인증 헤더 키를 정리한다(WD-753 리뷰) — 접두어 뒤 이름의 앞뒤 공백을 뗀 {@code extraHeader:<이름>}. 추가 헤더 키가 아니면 그대로
+   * 돌려준다. 저장({@link #validateAndNormalize})·가린 값 되돌리기({@code
+   * ApiConnectionService.resolveMaskedSecrets})·변경 비교({@link #comparableConfig})가 같은 키 정리를 쓴다 — 호출이
+   * 보내는 이름({@link #extraHeaders})과도 같다.
+   *
+   * @param key authConfig 키(null 이면 null)
+   */
+  public static String normalizeExtraHeaderKey(String key) {
+    if (key == null || !key.startsWith(EXTRA_HEADER_PREFIX)) return key;
+    return EXTRA_HEADER_PREFIX + key.substring(EXTRA_HEADER_PREFIX.length()).strip();
+  }
+
+  /**
+   * authConfig 에서 추가 인증 헤더 키({@link #EXTRA_HEADER_PREFIX} 로 시작)만 원래 키→값으로 골라 키 정렬 순서로 담는다(WD-753
+   * 리뷰). 추가 헤더 모으기({@link #extraHeaders})·원래 키 겹침 검사({@link #rawExtraHeaderNameCollision})·키
+   * 정리·저장값에서 추가 헤더만 고르기({@code ApiConnectionService})가 접두어 거르기를 이 한 곳에서 한다. TreeMap 은 null 키를 받지 않아
+   * null 키는 건너뛴다.
+   *
+   * @param config authConfig(null 이면 빈 맵)
+   * @return 원래 키→값(키 정렬 순서, 수정 가능한 새 맵)
+   */
+  public static TreeMap<String, String> rawExtraHeaderEntries(Map<String, String> config) {
+    TreeMap<String, String> sorted = new TreeMap<>();
+    if (config == null) return sorted;
+    config.forEach(
+        (key, value) -> {
+          if (key != null && key.startsWith(EXTRA_HEADER_PREFIX)) sorted.put(key, value);
+        });
+    return sorted;
   }
 
   /**
@@ -253,10 +340,49 @@ public final class AuthConfigValidator {
    * 거절하지만, 그 전에 빈 비밀로 저장된 연결은 연결 테스트·10분 주기 상태 점검에서 빈 인증으로 대상을 부르고 대상의 401/403 만 보였다. 이제 호출하지 않고
    * 「Bearer 토큰을 입력하세요」 처럼 무엇을 채워야 하는지 보인다.
    *
+   * <p>메인 인증 검사를 통과하면 추가 인증 헤더({@link #extraHeadersProblem}, WD-753)를 본다 — 인증 방식과 상관없이 붙는 헤더라 방식이
+   * 없어도 본다.
+   *
    * @param config 정리한 authConfig. null 이면 비밀 필드가 없는 것으로 본다
    * @return 문제 사유(한국어) 또는 문제가 없으면 null
    */
   public static String describeProblem(String authType, Map<String, String> config) {
+    String problem = describeMainProblem(authType, config);
+    if (problem != null) return problem;
+    // 추가 인증 헤더(WD-753)는 메인 인증 검사를 통과한 뒤 본다. 원래 키가 공백만 달라 모으면 합쳐지는 겹침을 먼저 본다 — 모은 맵에서는 이미
+    // 한쪽 값이 사라져 보이지 않는다. 메인 헤더 이름은 호출이 실제로 붙이는 이름과 같게 전송 규칙({@link
+    // ApiCallAuth#resolveWithAuthType})으로
+    // 고른다(WD-753 리뷰) — 검사와 전송이 따로 규칙을 들면(기본 헤더·key_name 대체 키·공백 정리) 어긋난다.
+    String collision = rawExtraHeaderNameCollision(config);
+    if (collision != null) return collision;
+    return extraHeadersProblem(
+        extraHeaders(config), ApiCallAuth.resolveWithAuthType(authType, config).authHeaderName());
+  }
+
+  /**
+   * 원래 키 기준 추가 헤더 이름 겹침(WD-753 리뷰) — {@code "extraHeader: X-A"} 와 {@code "extraHeader:X-A"} 처럼 앞뒤
+   * 공백(·대소문자)만 다른 키는 {@link #extraHeaders} 가 한 이름으로 합쳐 한쪽 값을 말없이 버린다. 저장 검사는 원래 authConfig 를 보므로
+   * 여기서 겹침으로 거절한다. 빈 이름은 건너뛴다 — 「추가 헤더 이름을 입력하세요」({@link #extraHeadersProblem})가 더 정확한 안내다.
+   *
+   * <p>API_CALL 호출 전 검사({@code ApiCallAuth.describeCallProblem}·미리보기)와 저장된 연결 테스트({@link
+   * #describeSentValueProblem(ApiCallAuth.ResolvedAuth, Map)})도 원래 Map 이 있는 곳에서 같은 겹침을 보도록
+   * 공개한다(WD-753 리뷰) — 인라인 인증·검사 전에 저장된 값은 저장 검사를 거치지 않는다.
+   *
+   * @return 겹침 문구(정리한 이름, 값 없음) 또는 겹침이 없으면 null
+   */
+  public static String rawExtraHeaderNameCollision(Map<String, String> config) {
+    // 원래 키 정렬 순서로 보아 어느 Map 구현이든 같은 이름을 문구에 싣는다.
+    Set<String> seen = new HashSet<>();
+    for (String key : rawExtraHeaderEntries(config).keySet()) {
+      String name = key.substring(EXTRA_HEADER_PREFIX.length()).strip();
+      if (name.isEmpty()) continue;
+      if (!seen.add(name.toLowerCase(Locale.ROOT))) return "추가 헤더 이름이 겹칩니다: " + name;
+    }
+    return null;
+  }
+
+  /** {@link #describeProblem} 의 메인 인증(방식별 비밀·헤더 이름·위치·줄바꿈) 검사 — WD-753 전 규칙 그대로다. */
+  private static String describeMainProblem(String authType, Map<String, String> config) {
     // BASIC 은 아이디(비밀 아님)부터 본다(WD-681) — 화면 칸 순서와 같고, 아이디가 없으면 비밀번호가 있어도 인증할 수 없다.
     if ("BASIC".equals(authType)) {
       String problem = basicUsernameProblem(config != null ? config.get(BASIC_USERNAME_KEY) : null);
@@ -322,6 +448,65 @@ public final class AuthConfigValidator {
     }
     if (RESERVED_HEADER_NAMES.contains(headerName.toLowerCase(Locale.ROOT))) {
       return "헤더 이름으로 " + headerName + " 은(는) 쓸 수 없습니다 — 요청이 쓰는 예약 헤더입니다";
+    }
+    return null;
+  }
+
+  /**
+   * authConfig 에서 추가 인증 헤더({@link #EXTRA_HEADER_PREFIX} 키)를 이름→값으로 모은다(WD-753).
+   *
+   * <p>이름은 접두어 뒤를 앞뒤 공백을 떼고 쓰고(인증 헤더 이름과 같은 정리, WD-657), 값은 원문 그대로다(비밀 값은 손대지 않는다 — 공백만인 값은 검사가
+   * 거절한다). 이름이 빈 키({@code "extraHeader:"})도 빈 이름으로 넣는다 — 조용히 버리면 저장한 값이 말없이 사라지므로 {@link
+   * #extraHeadersProblem} 이 「추가 헤더 이름을 입력하세요」 로 거절하게 둔다. 순서는 원래 키의 정렬 순서(TreeMap)라 Map 구현과 상관없이 늘
+   * 같다 — Python 실행기도 같은 순서로 보낸다(공용 사례 표 {@code extraHeaders}).
+   *
+   * @param config 저장 authConfig 또는 인라인 인증. null 이면 빈 맵
+   * @return 이름→값(순서 유지, 수정 가능한 새 맵)
+   */
+  public static LinkedHashMap<String, String> extraHeaders(Map<String, String> config) {
+    LinkedHashMap<String, String> out = new LinkedHashMap<>();
+    rawExtraHeaderEntries(config)
+        .forEach(
+            (key, value) -> out.put(key.substring(EXTRA_HEADER_PREFIX.length()).strip(), value));
+    return out;
+  }
+
+  /**
+   * 추가 인증 헤더를 보낼 수 있는지 본다(WD-753) — 저장 검사({@link #describeProblem})·보내는 값 검사({@link
+   * #describeSentValueProblem})·API_CALL 호출 전 검사({@code ApiCallAuth.describeProblem})가 같은 규칙을 쓴다.
+   *
+   * <ol>
+   *   <li>개수 {@link #MAX_EXTRA_HEADERS} 초과
+   *   <li>헤더마다 차례로: 이름이 빔 → 이름 규칙({@link #headerNameProblem}, 앞에 「추가 헤더 」) → 추가 헤더끼리 이름 겹침(대소문자 무시)
+   *       → 메인 인증 헤더와 이름 같음(대소문자 무시) → 값이 빔(공백만 포함) → 값에 줄바꿈
+   * </ol>
+   *
+   * <p>이름이 겹치면 같은 헤더가 두 번 나가 대상이 어느 값을 쓸지 알 수 없다 — 그래서 거절한다. 문구에는 헤더 이름만 싣고 값(비밀)은 싣지 않는다.
+   *
+   * @param extraHeaders {@link #extraHeaders} 결과(이름→값). null 이면 문제없음
+   * @param mainAuthHeaderName 메인 인증이 붙이는 헤더 이름. 헤더로 인증하지 않으면 null
+   * @return 문제 사유(한국어) 또는 문제가 없으면 null
+   */
+  public static String extraHeadersProblem(
+      Map<String, String> extraHeaders, String mainAuthHeaderName) {
+    if (extraHeaders == null || extraHeaders.isEmpty()) return null;
+    if (extraHeaders.size() > MAX_EXTRA_HEADERS) {
+      return "추가 헤더는 최대 " + MAX_EXTRA_HEADERS + "개까지 넣을 수 있습니다";
+    }
+    Set<String> seen = new HashSet<>();
+    for (Map.Entry<String, String> e : extraHeaders.entrySet()) {
+      String name = e.getKey();
+      String value = e.getValue();
+      if (name == null || name.isBlank()) return "추가 헤더 이름을 입력하세요";
+      String nameProblem = headerNameProblem(name);
+      if (nameProblem != null) return "추가 헤더 " + nameProblem;
+      if (!seen.add(name.toLowerCase(Locale.ROOT))) return "추가 헤더 이름이 겹칩니다: " + name;
+      if (mainAuthHeaderName != null && mainAuthHeaderName.equalsIgnoreCase(name)) {
+        return "추가 헤더 " + name + " 은(는) 인증 헤더와 이름이 같습니다 — 인증 칸에 이미 있는 헤더입니다";
+      }
+      if (value == null || value.isBlank()) return "추가 헤더 " + name + " 값을 입력하세요";
+      String lineBreak = lineBreakProblem(value, "추가 헤더 " + name + " 값");
+      if (lineBreak != null) return lineBreak;
     }
     return null;
   }

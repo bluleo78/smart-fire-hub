@@ -1858,3 +1858,112 @@ def test_304_without_body_is_not_followed_and_fails_as_not_json():
     assert result.success is False
     assert result.error == errors.not_json_message()
     assert client.request.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# WD-753: 추가 인증 헤더 — Java 와 같은 규칙(스텝 헤더 대신 추가 헤더·다른 출처에서 뗌·비밀 가림)
+# ---------------------------------------------------------------------------
+
+_EXTRA_AUTH = {
+    "authType": "API_KEY",
+    "headerName": "X-NCP-APIGW-API-KEY",
+    "apiKey": "secretkey123",
+    "extraHeader:X-NCP-APIGW-API-KEY-ID": "keyid-4567",
+}
+
+
+def _header_values(headers, name):
+    """대소문자 무시로 이름이 ``name`` 인 헤더 값 목록 — 같은 헤더가 두 번 나가는지 본다."""
+    return [v for k, v in headers.items() if k.lower() == name.lower()]
+
+
+def test_extra_header_sent_after_main_auth_for_every_auth_type():
+    # 추가 헤더는 방식과 상관없이 메인 인증 뒤에 붙는다(WD-753) — 쿼리 인증·인증 없음이어도 붙는다.
+    headers: Dict[str, str] = {}
+    params: Dict[str, str] = {}
+    auth = {"authType": "BEARER", "token": "tok12345", "extraHeader:X-Id": "id-9999", "extraHeader:X-A": "aaaa1"}
+    assert apply_auth(auth, headers, params) is None
+    # 키 정렬 순서(X-A → X-Id)대로, 메인 인증(Authorization) 뒤에 들어간다.
+    assert list(headers.items()) == [("Authorization", "Bearer tok12345"), ("X-A", "aaaa1"), ("X-Id", "id-9999")]
+
+    only_extra: Dict[str, str] = {}
+    assert apply_auth({"extraHeader:X-Only": "only-extra-5678"}, only_extra, {}) is None
+    assert only_extra == {"X-Only": "only-extra-5678"}
+
+
+def test_extra_header_overrides_step_header_case_insensitive():
+    # 스텝 헤더가 추가 헤더와 같은 이름(대소문자 무시)이면 스텝 쪽은 보내지 않는다 — 한 값만 나간다(WD-753, Java 와 같다).
+    req = make_request(
+        url="https://a.example.com/api",
+        headers={"x-ncp-apigw-api-key-id": "step-value", "X-Trace": "t1"},
+        auth=_EXTRA_AUTH,
+    )
+    result, client, _ = _run_with_responses(req, [mock_response({"items": []})])
+
+    assert result.success is True
+    _, headers = _sent(client, 0)
+    assert _header_values(headers, "x-ncp-apigw-api-key-id") == ["keyid-4567"]
+    assert headers["X-Trace"] == "t1"
+    assert headers["X-NCP-APIGW-API-KEY"] == "secretkey123"
+
+
+def test_extra_header_dropped_on_cross_origin_redirect():
+    # 다른 출처 홉에서는 추가 헤더와, 같은 이름의 스텝 헤더(대소문자 무시)를 함께 뗀다. 처음 출처로 돌아오면 다시 붙는다(WD-753).
+    req = make_request(
+        url="https://a.example.com/api",
+        headers={"x-ncp-apigw-api-key-id": "step-value", "X-Trace": "t1"},
+        auth=_EXTRA_AUTH,
+    )
+    result, client, _ = _run_with_responses(
+        req,
+        [
+            _redirect(302, "https://b.example.com/next"),
+            _redirect(302, "https://a.example.com/back"),
+            mock_response({"items": []}),
+        ],
+    )
+
+    assert result.success is True
+    _, first = _sent(client, 0)
+    assert _header_values(first, "x-ncp-apigw-api-key-id") == ["keyid-4567"]
+    url, other = _sent(client, 1)
+    assert url == "https://b.example.com/next"
+    assert {k.lower() for k in other} == {"x-trace"}
+    _, back = _sent(client, 2)
+    assert _header_values(back, "x-ncp-apigw-api-key-id") == ["keyid-4567"]
+
+
+@pytest.mark.parametrize(
+    "main",
+    [
+        {"authType": "API_KEY", "headerName": "X-Key", "apiKey": "mainKey9999"},
+        {"authType": "BASIC", "username": "alice", "password": "BasicPw753"},
+    ],
+    ids=["api_key", "basic"],
+)
+def test_extra_header_value_scrubbed_in_error_and_summary(main, caplog):
+    # 추가 헤더 값은 API 키처럼(****+끝 4자) 오류 문구·로그·실행 기록 요약에서 가린다 — BASIC 이어도 가린다(WD-753).
+    auth = {**main, "extraHeader:X-Tenant": "tenant-LeakValue-9999"}
+    failing = make_request(
+        retry=RetryConfig(max_retries=1, initial_backoff_ms=0, max_backoff_ms=0), auth=auth
+    )
+    with caplog.at_level("WARNING"):
+        result, _, _ = _run_with_responses(failing, [RuntimeError("upstream echoed tenant-LeakValue-9999")])
+    assert result.success is False
+    assert "tenant-LeakValue-9999" not in result.error
+    assert "****9999" in result.error
+    assert "tenant-LeakValue-9999" not in caplog.text
+
+    ok = make_request(url="http://public.example.com/api/data?t=tenant-LeakValue-9999", auth=auth)
+    result, _, _ = _run_with_responses(ok, [mock_response({"items": []})])
+    assert result.success is True
+    assert "tenant-LeakValue-9999" not in result.execution_log
+    assert "****9999" in result.execution_log
+
+
+def test_extra_header_short_value_not_scrubbed():
+    # 4자 미만 값은 API 키 규칙대로 가리지 않는다(문장 곳곳이 가려지는 것을 막는다, Java 와 같다).
+    from app.services.api_call_executor import _resolve_auth
+
+    resolved = _resolve_auth({"extraHeader:X-S": "abc"})
+    assert errors.scrub_secret("echo abc", resolved.sent_secrets) == "echo abc"

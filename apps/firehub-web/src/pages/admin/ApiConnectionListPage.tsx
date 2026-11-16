@@ -12,6 +12,13 @@ import { TableEmptyRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { TruncatedText } from '@/components/ui/truncated-text';
 import {
+  type ExtraHeaderRow,
+  extraHeaderRowErrors,
+  extraHeadersToConfig,
+  focusFirstExtraHeaderError,
+  withoutChangedRowErrors,
+} from '@/lib/api-connection-extra-headers';
+import {
   AUTH_FIELD_KEYS,
   AUTH_TYPE_LABEL,
   AUTH_TYPE_OPTIONS,
@@ -69,6 +76,7 @@ import {
 import { useMyPermissions } from '../../hooks/queries/useMyPermissions';
 import type { CreateApiConnectionRequest } from '../../types/api-connection';
 import { BasicAuthFields } from './components/BasicAuthFields';
+import { ExtraHeadersFields } from './components/ExtraHeadersFields';
 
 /** 새 연결 다이얼로그에서 인라인 오류를 보일 수 있는 칸 (WD-561) — 선언 순서가 곧 화면 순서(첫 오류 포커스 기준)다. */
 const CREATE_FIELD_ORDER = ['name', 'baseUrl', 'healthCheckPath', ...AUTH_FIELD_KEYS] as const;
@@ -129,6 +137,9 @@ export default function ApiConnectionListPage() {
   const [testing, setTesting] = useState(false);
   // (WD-561) 칸별 검증 오류 — 예전엔 첫 실패 하나만 사라지는 토스트로 알려 어느 칸이 틀렸는지 알기 어려웠다.
   const [errors, setErrors] = useState<CreateFieldErrors>({});
+  // (WD-753) 추가 인증 헤더 행과 행별 오류(행 id → 문구) — 인증 방식과 무관하게 모든 방식에 붙는다
+  const [extraHeaders, setExtraHeaders] = useState<ExtraHeaderRow[]>([]);
+  const [extraHeaderErrors, setExtraHeaderErrors] = useState<Record<string, string>>({});
 
   /** 칸 key → 입력 id. 첫 오류 칸으로 포커스를 옮길 때 쓴다(FormField htmlFor 와 같은 값). */
   const fieldId: Record<CreateFieldKey, string> = {
@@ -171,6 +182,16 @@ export default function ApiConnectionListPage() {
     setTestResult(null);
     setTesting(false);
     setErrors({});
+    setExtraHeaders([]);
+    setExtraHeaderErrors({});
+  };
+
+  /**
+   * 추가 헤더 행을 고친다(WD-753) — 고친 행의 오류만 지운다(다른 행 오류는 고칠 때까지 남긴다). 지운 행의 오류는 행과 함께 사라진다.
+   */
+  const handleExtraHeadersChange = (next: ExtraHeaderRow[]) => {
+    setExtraHeaderErrors((prev) => withoutChangedRowErrors(prev, extraHeaders, next));
+    setExtraHeaders(next);
   };
 
   /**
@@ -192,6 +213,7 @@ export default function ApiConnectionListPage() {
    * 지금 보이는 인증 방식의 칸만 담은 authConfig 를 만든다 — 저장 전 테스트·만들기가 같이 쓴다(WD-681).
    * 다른 방식의 칸 값은 싣지 않는다(서버는 authConfig 를 통째로 저장한다). Basic 아이디·비밀번호는 서버가 그대로 쓰므로 정리하지 않는다.
    * omitBlankAuthName: 저장 전 테스트는 헤더·파라미터 이름 칸을 검사하지 않으므로, 비어 있으면 빼서 서버가 기본값·사유로 안내하게 한다.
+   * (WD-753) 추가 헤더는 방식과 무관하게 `extraHeader:<이름>` 키로 함께 싣는다 — 저장 전 테스트도 저장과 같은 헤더를 보내야 결과가 같다.
    */
   const buildAuthConfig = ({ omitBlankAuthName }: { omitBlankAuthName: boolean }): Record<string, string> => {
     const authConfig: Record<string, string> = { authType };
@@ -207,7 +229,7 @@ export default function ApiConnectionListPage() {
     } else {
       authConfig.token = token;
     }
-    return authConfig;
+    return { ...authConfig, ...extraHeadersToConfig(extraHeaders) };
   };
 
   /**
@@ -230,8 +252,12 @@ export default function ApiConnectionListPage() {
       healthCheckPath: healthCheckPathError(healthCheckPath),
       ...secretFieldErrors(),
     };
+    // (WD-753) 추가 헤더 행도 같은 규칙으로 검사한다 — 화면 순서상 메인 칸 다음이라 메인 칸 오류가 먼저 포커스를 받는다
+    const nextExtraErrors = extraHeaderRowErrors(extraHeaders);
     setErrors(nextErrors);
+    setExtraHeaderErrors(nextExtraErrors);
     if (focusFirstError(CREATE_FIELD_ORDER, nextErrors, fieldId)) return;
+    if (focusFirstExtraHeaderError(extraHeaders, nextExtraErrors)) return;
 
     // 위에서 비밀 값이 비지 않았음을 확인했으므로 그대로 싣는다. 비어 있는 헤더·파라미터 이름은 빼서 서버 기본값을 쓰게 한다.
     const authConfig = buildAuthConfig({ omitBlankAuthName: true });
@@ -276,8 +302,11 @@ export default function ApiConnectionListPage() {
       nextErrors.authName = authNameError(placement, placement === 'header' ? headerName : paramName);
     }
 
+    const nextExtraErrors = extraHeaderRowErrors(extraHeaders);
     setErrors(nextErrors);
+    setExtraHeaderErrors(nextExtraErrors);
     if (focusFirstError(CREATE_FIELD_ORDER, nextErrors, fieldId)) return;
+    if (focusFirstExtraHeaderError(extraHeaders, nextExtraErrors)) return;
 
     // 만들기는 위에서 헤더·파라미터 이름도 검사했으므로 그대로 싣는다
     const authConfig = buildAuthConfig({ omitBlankAuthName: false });
@@ -519,6 +548,13 @@ export default function ApiConnectionListPage() {
                     />
                   )}
 
+                  {/* (WD-753) 추가 인증 헤더 — 인증 방식과 무관하게 메인 인증 칸 아래에 둔다 */}
+                  <ExtraHeadersFields
+                    rows={extraHeaders}
+                    onChange={handleExtraHeadersChange}
+                    errors={extraHeaderErrors}
+                  />
+
                   {/* (#90) 인라인 연결 테스트 결과 표시 */}
                   {testResult && (
                     <div
@@ -579,15 +615,16 @@ export default function ApiConnectionListPage() {
       </div>
 
       {/* WD-634: 긴 값 상한 = (표 폭 100cqw − --k) × 몫. --k = 짧은 칸 선언 폭(인증 유형·상태·생성일·삭제) + 긴 값 칸 여백
-          WD-650: 상태 칸은 한 번도 확인하지 않은 연결의 「미확인」(가장 넓은 배지, 약 65px)이 들어가도록 4.5rem */}
-      <div className="@container [--k:calc(5.25rem_+_4.5rem_+_5.75rem_+_3.75rem_+_3rem)] rounded-md border">
+          WD-650: 상태 칸은 가장 넓은 배지가 들어가도록 둔다 — WD-753 부터 헬스체크 경로 없는 연결의 「점검 안 함」(배지+칸 여백 약 84px)이
+          가장 넓어 4.5rem(「미확인」 기준)에서 5.25rem 으로 넓혔다 */}
+      <div className="@container [--k:calc(5.25rem_+_5.25rem_+_5.75rem_+_3.75rem_+_3rem)] rounded-md border">
         <Table>
           <TableHeader>
             <TableRow>
               <TableHead>이름</TableHead>
               <TableHead className="w-[5.25rem]">인증 유형</TableHead>
               <TableHead>Base URL</TableHead>
-              <TableHead className="w-[4.5rem]">상태</TableHead>
+              <TableHead className="w-[5.25rem]">상태</TableHead>
               <TableHead>설명</TableHead>
               <TableHead className="w-[5.75rem]">생성일</TableHead>
               <TableHead className="w-[3.75rem]" />
@@ -618,7 +655,7 @@ export default function ApiConnectionListPage() {
                     <TruncatedText value={conn.baseUrl} className="max-w-[min(24rem,calc((100cqw_-_var(--k))_*_0.47))]" />
                   </TableCell>
                   <TableCell>
-                    <StatusBadge status={conn.lastStatus} checkedAt={conn.lastCheckedAt} />
+                    <StatusBadge status={conn.lastStatus} checkedAt={conn.lastCheckedAt} healthCheckPath={conn.healthCheckPath} />
                   </TableCell>
                   <TableCell className="text-muted-foreground">
                     <TruncatedText value={conn.description} className="max-w-[min(14rem,calc((100cqw_-_var(--k))_*_0.23))]" />

@@ -1167,4 +1167,63 @@ class ApiConnectionTestUrlMaskingTest extends IntegrationTestBase {
     wireMock.verify(
         1, getRequestedFor(urlEqualTo("/health")).withHeader("X-Key", equalTo("k681key")));
   }
+
+  // ── WD-753: 추가 인증 헤더 ─────────────────────────────────────────────────────
+
+  /**
+   * 저장된 연결 테스트는 메인 인증 헤더와 추가 헤더를 함께 보낸다 — 대상은 둘 다 있어야 200(없으면 401)이다. 대상이 받은 헤더 값을 본문으로 되울려도 결과 본문
+   * 미리보기에는 두 값 모두 가려져 나간다.
+   */
+  @Test
+  void testConnection_sendsExtraHeaders_andMasksEcho() {
+    String apiKey = "wd753-main-key-1357";
+    String keyId = "wd753-keyid-2468";
+    wireMock.stubFor(
+        get(urlPathEqualTo("/health")).atPriority(5).willReturn(aResponse().withStatus(401)));
+    wireMock.stubFor(
+        get(urlPathEqualTo("/health"))
+            .atPriority(1)
+            .withHeader("X-Key", equalTo(apiKey))
+            .withHeader("X-Id", equalTo(keyId))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("{\"X-Key\":\"" + apiKey + "\",\"X-Id\":\"" + keyId + "\"}")));
+    ApiConnectionResponse created =
+        apiConnectionService.create(
+            new CreateApiConnectionRequest(
+                "WD753 extra header test",
+                null,
+                "API_KEY",
+                Map.of(
+                    "placement",
+                    "header",
+                    "headerName",
+                    "X-Key",
+                    "apiKey",
+                    apiKey,
+                    "extraHeader:X-Id",
+                    keyId),
+                wireMockBase(),
+                "/health"),
+            testUserId);
+
+    TestConnectionResponse result = apiConnectionService.testConnection(created.id(), testUserId);
+
+    assertThat(result.ok()).isTrue();
+    assertThat(result.status()).isEqualTo(200);
+    wireMock.verify(
+        1,
+        getRequestedFor(urlEqualTo("/health"))
+            .withHeader("X-Key", equalTo(apiKey))
+            .withHeader("X-Id", equalTo(keyId)));
+    assertThat(result.responseBodyPreview())
+        .isNotNull()
+        .doesNotContain(apiKey)
+        .doesNotContain(keyId)
+        .contains("****2468");
+    result.responseHeaders().values().forEach(v -> assertNoSecret(v, keyId));
+    assertThat(readStatus(created.id()).get(AC_LAST_STATUS)).isEqualTo("UP");
+  }
 }

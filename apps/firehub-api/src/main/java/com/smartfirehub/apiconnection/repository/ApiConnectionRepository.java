@@ -89,6 +89,17 @@ public interface ApiConnectionRepository {
   String updateHealthStatus(Long id, String status, Long latencyMs, String errorMessage);
 
   /**
+   * 마지막 헬스체크 결과(last_status·last_checked_at·last_latency_ms·last_error_message)를 모두 NULL 로
+   * 지운다(WD-753).
+   *
+   * <p>수정으로 헬스체크 경로를 비운 연결은 더 이상 주기 점검 대상이 아니다 — 지우지 않으면 마지막 「이상」 결과가 고칠 길 없이 화면에 계속 남는다. 상태 전환이
+   * 아니라 「점검 안 함」으로 돌아가는 것이므로 알림·STATUS_CHANGE 감사는 남기지 않는다. 다른 테넌트의 행은 RLS 로 0 행이 된다.
+   *
+   * @param id API 연결 ID
+   */
+  void clearHealthStatus(Long id);
+
+  /**
    * 헬스체크 대상 API 연결 목록을 반환한다. health_check_path가 설정된 레코드만 포함한다. 조회 열은 예전 그대로 두고(SQL 불변) 호출자가 읽는
    * id·이름만 돌려준다.
    */

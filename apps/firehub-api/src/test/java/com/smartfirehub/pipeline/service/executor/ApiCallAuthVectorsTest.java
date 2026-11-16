@@ -96,7 +96,8 @@ class ApiCallAuthVectorsTest {
             "maskUserInfo",
             "basicScrub",
             "redirectFollow",
-            "scrubUrlUserInfo")) {
+            "scrubUrlUserInfo",
+            "extraHeaders")) {
       assertThat(section(name).size()).as(name).isGreaterThanOrEqualTo(4);
     }
   }
@@ -216,6 +217,24 @@ class ApiCallAuthVectorsTest {
     assertThat(once).isEqualTo(c.get("expected").asText());
     // 두 번 가려도 같다 — 이미 가린 문구(****)를 다시 가리지 않는다.
     assertThat(secrets.scrubText(once)).isEqualTo(once);
+  }
+
+  static Stream<Arguments> extraHeaders() throws IOException {
+    return cases("extraHeaders");
+  }
+
+  /**
+   * 추가 인증 헤더 모으기(WD-753) — {@code extraHeader:<이름>} 키를 이름(앞뒤 공백 뗌)→값(원문)으로, 원래 키의 정렬 순서로 모은다. 인증
+   * 방식과 상관없고 접두어 없는 키는 무시한다. Python {@code _resolve_auth} 가 같은 표로 같은 이름·값·순서를 내야 두 실행기가 같은 헤더를 보낸다.
+   */
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("extraHeaders")
+  void extraHeaders_matchesVector(String name, JsonNode c) {
+    Map<String, String> auth = MAPPER.convertValue(c.get("auth"), new TypeReference<>() {});
+    Map<String, String> expected =
+        MAPPER.convertValue(
+            c.get("expected"), new TypeReference<java.util.LinkedHashMap<String, String>>() {});
+    assertThat(ApiCallAuth.resolve(auth).extraHeaders()).containsExactlyEntriesOf(expected);
   }
 
   /** 실행 기록·응답에 남기는 URL 의 사용자 정보 가림(WD-681) — Python 실행기 요약 줄과 같은 모양이다. */

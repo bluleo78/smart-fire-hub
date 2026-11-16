@@ -249,6 +249,20 @@ public class JooqApiConnectionRepository implements ApiConnectionRepository {
   }
 
   /**
+   * 마지막 헬스체크 결과 네 열을 NULL 로 지운다(WD-753) — 헬스체크 경로를 비운 연결에 옛 결과가 남지 않게. 상태 전환이 아니므로 직전 상태를 읽지 않는다.
+   */
+  @Override
+  public void clearHealthStatus(Long id) {
+    dsl.update(API_CONNECTION)
+        .setNull(AC_LAST_STATUS)
+        .setNull(AC_LAST_CHECKED_AT)
+        .setNull(AC_LAST_LATENCY_MS)
+        .setNull(AC_LAST_ERROR_MESSAGE)
+        .where(AC_ID.eq(id))
+        .execute();
+  }
+
+  /**
    * 헬스체크 대상 API 연결 목록을 반환한다. health_check_path가 설정된 레코드만 포함한다. 조회 열은 예전 그대로 두고(SQL 불변) 호출자가 읽는
    * id·이름만 돌려준다.
    */

@@ -238,7 +238,12 @@ public final class AuthQueryMasker {
    *       비밀번호가 응답의 같은 글자를 모두 바꿔 결과 행이 망가졌다. 대신 결과 행에서는 값 전체가 비밀번호와 같은 칸만 가린다({@link #maskRows}).
    * </ul>
    *
-   * <p>지우개(형태 목록·가림 문자열)는 만들 때 한 번만 계산한다 — 응답 헤더마다·문장마다 다시 만들지 않는다. 같음 비교는 세 비밀 값으로만 한다.
+   * <p>지우개(형태 목록·가림 문자열)는 만들 때 한 번만 계산한다 — 응답 헤더마다·문장마다 다시 만들지 않는다. 같음 비교는 비밀 값(세 비밀 + 추가 비밀 목록)으로만
+   * 한다.
+   *
+   * <p><b>추가 비밀({@code extraSecrets}, WD-753)</b>: 연결의 추가 인증 헤더 값들. API 키와 같은 규칙({@code ****}+끝 4자,
+   * 4자 미만이면 손대지 않음)으로 자유 문장·본문·화면 원문에서 key 다음에 차례로 가린다 — 대상이 받은 헤더를 응답에 되울려도(httpbin /headers 등) 값이
+   * 그대로 보이지 않게.
    */
   public static final class SentSecrets {
 
@@ -252,13 +257,27 @@ public final class AuthQueryMasker {
     private final Scrubber tokenScrubber;
     private final Scrubber passwordBodyScrubber;
     private final PasswordScrub passwordScrub;
+    private final List<String> extraSecrets;
+    private final List<Scrubber> extraScrubbers;
 
     /**
+     * 추가 비밀 없이 만든다 — WD-753 전 호출처(연결 테스트·공용 사례 표 등)가 그대로 쓴다.
+     *
      * @param key API 키·Bearer 토큰(없으면 null)
      * @param basicToken Basic 덩어리(BASIC 이 아니면 null)
      * @param password Basic 비밀번호(BASIC 이 아니면 null)
      */
     public SentSecrets(String key, String basicToken, String password) {
+      this(key, basicToken, password, List.of());
+    }
+
+    /**
+     * @param key API 키·Bearer 토큰(없으면 null)
+     * @param basicToken Basic 덩어리(BASIC 이 아니면 null)
+     * @param password Basic 비밀번호(BASIC 이 아니면 null)
+     * @param extraSecrets 추가 인증 헤더 값들(WD-753, 보낸 순서). null 이면 없음. 원소 null·4자 미만은 지우개 없이 둔다
+     */
+    public SentSecrets(String key, String basicToken, String password, List<String> extraSecrets) {
       this.key = key;
       this.basicToken = basicToken;
       this.password = password;
@@ -266,10 +285,26 @@ public final class AuthQueryMasker {
       this.tokenScrubber = Scrubber.of(basicToken, PASSWORD_MASK);
       this.passwordBodyScrubber = Scrubber.of(password, PASSWORD_MASK);
       this.passwordScrub = PasswordScrub.of(password);
+      // List.copyOf 는 null 원소를 받지 않는다 — 값이 빈 추가 헤더도 그대로 두고 지우개만 건너뛴다.
+      this.extraSecrets =
+          extraSecrets == null
+              ? List.of()
+              : java.util.Collections.unmodifiableList(new ArrayList<>(extraSecrets));
+      List<Scrubber> scrubbers = new ArrayList<>();
+      for (String secret : this.extraSecrets) {
+        Scrubber scrubber = Scrubber.of(secret);
+        if (scrubber != null) scrubbers.add(scrubber);
+      }
+      this.extraScrubbers = List.copyOf(scrubbers);
     }
 
     public String key() {
       return key;
+    }
+
+    /** 추가 인증 헤더 값들(WD-753, 수정할 수 없는 목록). */
+    public List<String> extraSecrets() {
+      return extraSecrets;
     }
 
     public String basicToken() {
@@ -292,6 +327,8 @@ public final class AuthQueryMasker {
       if (text == null) return null;
       String out = BaseUrlUserInfo.maskInText(text);
       out = keyScrubber != null ? keyScrubber.scrub(out) : out;
+      // 추가 인증 헤더 값(WD-753)은 key 와 같은 규칙으로 key 다음에 차례로 지운다.
+      for (Scrubber extra : extraScrubbers) out = extra.scrub(out);
       out = tokenScrubber != null ? tokenScrubber.scrub(out) : out;
       return passwordScrub.apply(out, PASSWORD_WITHHELD);
     }
@@ -301,7 +338,10 @@ public final class AuthQueryMasker {
      * 포함). Basic 비밀번호 원문은 건드리지 않는다(구조 데이터 보존, 위 설명).
      */
     public String maskBody(String body) {
-      return maskBodyWith(tokenScrubber, maskBodyWith(keyScrubber, body));
+      String out = maskBodyWith(keyScrubber, body);
+      // 추가 인증 헤더 값(WD-753)도 JSON 이스케이프까지 key 와 같은 본문 규칙으로 가린다.
+      for (Scrubber extra : extraScrubbers) out = maskBodyWith(extra, out);
+      return maskBodyWith(tokenScrubber, out);
     }
 
     /** 화면에 그대로 보이는 응답 원문(rawJson·연결 테스트 본문)을 가린다 — {@link #maskBody} 에 비밀번호 규칙을 더한다. */
@@ -342,18 +382,25 @@ public final class AuthQueryMasker {
       return o instanceof SentSecrets other
           && Objects.equals(key, other.key)
           && Objects.equals(basicToken, other.basicToken)
-          && Objects.equals(password, other.password);
+          && Objects.equals(password, other.password)
+          && extraSecrets.equals(other.extraSecrets);
     }
 
     @Override
     public int hashCode() {
-      return Objects.hash(key, basicToken, password);
+      return Objects.hash(key, basicToken, password, extraSecrets);
     }
 
-    /** 비밀 값을 담지 않는다 — 로그·디버거에 원문이 찍히지 않게. */
+    /** 비밀 값을 담지 않는다 — 로그·디버거에 원문이 찍히지 않게. 추가 비밀(WD-753)은 개수만 싣는다. */
     @Override
     public String toString() {
-      return "SentSecrets[key=" + (key != null) + ", basic=" + (basicToken != null) + "]";
+      return "SentSecrets[key="
+          + (key != null)
+          + ", basic="
+          + (basicToken != null)
+          + ", extra="
+          + extraSecrets.size()
+          + "]";
     }
   }
 

@@ -18,7 +18,7 @@ import errno
 import re
 import socket
 from decimal import Decimal
-from typing import NamedTuple, Optional
+from typing import NamedTuple, Optional, Tuple
 from urllib.parse import quote_plus, unquote_plus, urlsplit
 
 import httpx
@@ -273,6 +273,8 @@ class SentSecrets(NamedTuple):
     - ``basic_token``(base64(아이디:비밀번호)): 언제나 고정 ``****`` — 끝 4자는 비밀번호 끝 3바이트를 드러낸다.
     - ``password``(Basic 비밀번호): SMTP 비밀번호와 같은 규칙(Java ``AuthQueryMasker.scrubPassword``) — 원문·인코딩형·Base64 형을
       고정 ``****`` 로 지우고, 지운 뒤에도 남으면(4자 미만) 문장을 ``PASSWORD_WITHHELD`` 로 바꾼다.
+    - ``extra``(추가 인증 헤더 값들, WD-753): 방식과 상관없이 API 키와 같은 규칙(``****``+끝 4자, 4자 미만이면 손대지 않음)으로 가린다.
+      대상 서버가 되울린 추가 헤더 값이 오류 문구·실행 기록에 그대로 실리지 않게 한다. 넘긴 순서대로 지운다.
 
     공용 사례 표 ``api-call-auth-vectors.json`` 의 ``basicScrub`` 으로 Java 와 같은 결과인지 본다.
     """
@@ -280,6 +282,7 @@ class SentSecrets(NamedTuple):
     key: Optional[str] = None
     basic_token: Optional[str] = None
     password: Optional[str] = None
+    extra: Tuple[str, ...] = ()
 
     def scrub(self, text: Optional[str]) -> Optional[str]:
         """오류 문구·실행 로그 같은 자유 문장을 가린다(Java ``SentSecrets.scrubText``)."""
@@ -289,6 +292,9 @@ class SentSecrets(NamedTuple):
         # 비밀 목록에 없어, 분류하지 못한 원문·응답 헤더에 URL 이 실리면 그대로 나갔다. Java SentSecrets.scrubText 와 같은 순서다.
         out = mask_urls_userinfo_in_text(text)
         out = _scrub_one(out, self.key, None)
+        # 추가 인증 헤더 값(WD-753)은 API 키 다음에 같은 규칙으로 가린다 — Java SentSecrets.scrubText 와 같은 순서다.
+        for extra_value in self.extra:
+            out = _scrub_one(out, extra_value, None)
         out = _scrub_one(out, self.basic_token, PASSWORD_MASK)
         if not self.password:
             return out
