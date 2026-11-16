@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, UserPlus } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -9,6 +9,7 @@ import { AccountDisabledBadge } from '@/components/AccountDisabledBadge';
 import { MembershipRoleBadge } from '@/components/MembershipRoleBadge';
 import { MembershipStatusBadge } from '@/components/MembershipStatusBadge';
 import { PermissionDeniedBanner } from '@/components/PermissionDeniedBanner';
+import { AddTenantMemberDialog } from '@/components/tenant/AddTenantMemberDialog';
 import { TenantDataStoreCard } from '@/components/tenant/TenantDataStoreCard';
 import { TenantVectorStoreCard } from '@/components/tenant/TenantVectorStoreCard';
 import { TenantStatusBadge } from '@/components/TenantStatusBadge';
@@ -54,6 +55,7 @@ export default function TenantDetailPage() {
   const queryClient = useQueryClient();
   const { hasPermission } = useAuth();
   const [isSuspendDialogOpen, setIsSuspendDialogOpen] = useState(false);
+  const [isAddMemberOpen, setIsAddMemberOpen] = useState(false);
 
   // 4xx(권한 없음 등)는 재시도해도 결과가 같다 — 이 사실은 화면이 아니라 상태코드의
   // 성질이므로 전역 기본값(main.tsx 의 `retry`)이 판정한다. 화면별로 `retry: false` 를
@@ -69,24 +71,27 @@ export default function TenantDetailPage() {
   });
 
   /**
-   * 정지/활성화 성공 후 무효화 대상.
-   *
-   * <b>`platform-tenant-members` 를 넣지 않는 것은 의도다.</b> 정지/활성화는 `tenant.status` 만
-   * 바꾸고 멤버십 행은 건드리지 않는다 — 멤버 목록·역할·인원수 어느 것도 달라지지 않으므로
-   * 무효화하면 같은 응답을 다시 받아 오는 낭비일 뿐이다. (`memberCount` 는 멤버 쿼리가 아니라
-   * `platform-tenant` 응답의 필드라 이미 갱신된다.) 리뷰어가 "누락"으로 보고 고치지 않도록
-   * 여기 근거를 남긴다. 멤버를 바꾸는 엔드포인트가 생기면 그때 이 목록에 더한다.
+   * 정지/활성화 성공 후 무효화 대상 — 테넌트 상태(상세·목록)만 바뀐다. 멤버십 행은 그대로라 멤버 목록은 다시 읽지 않는다.
    */
-  const invalidate = () => {
+  const invalidateTenant = () => {
     void queryClient.invalidateQueries({ queryKey: ['platform-tenant', tenantId] });
     void queryClient.invalidateQueries({ queryKey: ['platform-tenants'] });
+  };
+
+  /**
+   * 멤버 추가(WD-750) 성공 후 무효화 대상 — 멤버 표와 인원수(`memberCount` — `platform-tenant`·`platform-tenants` 응답의 필드)를
+   * 함께 바꾸므로 테넌트 쿼리에 더해 멤버 목록도 무효화한다.
+   */
+  const invalidateAfterMemberAdd = () => {
+    invalidateTenant();
+    void queryClient.invalidateQueries({ queryKey: ['platform-tenant-members', tenantId] });
   };
 
   const suspendMutation = useMutation({
     mutationFn: () => tenantsApi.suspend(tenantId),
     onSuccess: () => {
       toast.success('테넌트를 정지했습니다.');
-      invalidate();
+      invalidateTenant();
     },
     onError: () => toast.error('테넌트 정지에 실패했습니다.'),
   });
@@ -95,7 +100,7 @@ export default function TenantDetailPage() {
     mutationFn: () => tenantsApi.activate(tenantId),
     onSuccess: () => {
       toast.success('테넌트를 활성화했습니다.');
-      invalidate();
+      invalidateTenant();
     },
     onError: () => toast.error('테넌트 활성화에 실패했습니다.'),
   });
@@ -156,6 +161,8 @@ export default function TenantDetailPage() {
 
   const tenant = tenantQuery.data;
   const isActive = tenant.status === 'ACTIVE';
+  // 멤버 추가 엔드포인트는 테넌트 생성과 같은 권한(platform:tenant:create)을 요구하고, 활성 테넌트에만 넣을 수 있다.
+  const canAddMember = isActive && hasPermission('platform:tenant:create');
 
   return (
     <div className="space-y-6">
@@ -227,8 +234,15 @@ export default function TenantDetailPage() {
       <TenantVectorStoreCard tenantId={tenantId} />
 
       <Card>
-        <CardHeader>
+        <CardHeader className="flex flex-row items-center justify-between gap-2">
           <CardTitle>멤버 ({tenant.memberCount})</CardTitle>
+          {/* WD-750: 정지된 테넌트에는 서버가 TENANT_SUSPENDED 로 거절한다 — 누를 수 없는 버튼을 보이지 않는다. */}
+          {canAddMember && (
+            <Button size="sm" variant="outline" onClick={() => setIsAddMemberOpen(true)}>
+              <UserPlus className="h-4 w-4" aria-hidden="true" />
+              멤버 추가
+            </Button>
+          )}
         </CardHeader>
         <CardContent className="space-y-3">
           {membersQuery.isError && isForbidden(membersQuery.error) ? (
@@ -295,6 +309,14 @@ export default function TenantDetailPage() {
           )}
         </CardContent>
       </Card>
+
+      <AddTenantMemberDialog
+        tenantId={tenantId}
+        tenantName={tenant.name}
+        open={isAddMemberOpen}
+        onOpenChange={setIsAddMemberOpen}
+        onAdded={invalidateAfterMemberAdd}
+      />
 
       {/*
         DeleteConfirmDialog 를 쓰지 않는다 — 그 고정 문구의 "되돌릴 수 없습니다"가 거짓이다.

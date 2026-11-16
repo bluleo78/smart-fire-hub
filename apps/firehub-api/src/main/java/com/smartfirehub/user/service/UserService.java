@@ -27,14 +27,11 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
-import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -60,7 +57,7 @@ public class UserService {
   private final MembershipRepository membershipRepository;
   private final AuditLogService auditLogService;
   private final RefreshTokenRepository refreshTokenRepository;
-  private final TemporaryAccountCreator temporaryAccountCreator;
+  private final TenantMemberAdder tenantMemberAdder;
   private final RoleGrantGuard roleGrantGuard;
   // 정지·제거된 멤버의 그 워크스페이스 알림 스트림을 닫는다(WD-187)
   private final SseEmitterRegistry sseEmitterRegistry;
@@ -267,7 +264,6 @@ public class UserService {
   @Transactional
   public AddMemberResponse addMember(AddMemberRequest request, Long callerId) {
     long tenantId = TenantContext.require("멤버 추가");
-    String email = request.email().trim().toLowerCase(Locale.ROOT);
     Set<Long> chosen = validateRequestedRoles(request.roleIds());
     // USER 를 항상 넣는 이유: USER 는 워크스페이스 기본 역할이다. 초대된 멤버가 권한을 하나도 갖지 않는 상태를 만들지 않는다(사용자 결정, 계획
     // "판단 사항 1"). 선택 역할은 USER 에 추가된다. USER id 는 한 번만 조회해 합치기·범위 검사 제외에 함께 쓴다.
@@ -278,23 +274,18 @@ public class UserService {
     chosen.remove(userRoleId);
     roleGrantGuard.assertCanChangeRoles(callerId, chosen);
 
-    Optional<UserResponse> existing = userRepository.findByUsernameIgnoreCase(email);
-    boolean created = existing.isEmpty();
-    existing.ifPresent(u -> rejectIfAlreadyMember(u.id(), tenantId));
-    UserResponse user;
-    try {
-      user = existing.orElseGet(() -> createWithTemporaryPassword(email, request));
-      membershipRepository.insertMember(user.id(), tenantId);
-      for (Long roleId : roleIds) {
-        userRepository.addRole(user.id(), roleId);
-      }
-    } catch (DuplicateKeyException e) {
-      // 사전 검사(rejectIfAlreadyMember) 와 INSERT 사이에 같은 요청이 동시에 들어오면 유니크 제약이 먼저 잡는다.
-      // 영어 "Data integrity violation" 이 그대로 노출되지 않도록 서비스 경계에서 같은 409 로 번역한다.
-      // CodedApiException(런타임) 을 던지므로 @Transactional 이 롤백한다 — 부분 생성된 계정/멤버십은 남지 않는다.
-      throw new CodedApiException(
-          HttpStatus.CONFLICT, "MEMBER_ALREADY_EXISTS", "이미 이 워크스페이스의 멤버입니다");
-    }
+    // 계정 확보·멤버십·역할·중복 409 번역·이메일 정규화는 운영자 콘솔 경로와 공유하는 TenantMemberAdder 가 맡는다(WD-750).
+    // 같은 트랜잭션에 합류한다. 웹은 기존 계정에 추가 검사가 없다(비활성 계정 거부는 플랫폼 경로만 — 웹 동작 불변).
+    TenantMemberAdder.Result added =
+        tenantMemberAdder.add(
+            tenantId,
+            request.email(),
+            request.name(),
+            request.temporaryPassword(),
+            roleIds,
+            existing -> {});
+    UserResponse user = added.user();
+    boolean created = added.created();
     audit(
         callerId,
         "MEMBER_ADD",
@@ -306,31 +297,6 @@ public class UserService {
     // 새 멤버십이라 이 테넌트의 변경 전 역할은 없다.
     auditRoleAssign(callerId, user.id(), List.of(), roleRepository.findByUserId(user.id()));
     return new AddMemberResponse(user.id(), created);
-  }
-
-  /** 이미 이 테넌트 멤버면 409. 정지 멤버는 코드로 구분하고 userId 를 실어 웹의 상세 링크를 돕는다. */
-  private void rejectIfAlreadyMember(Long userId, long tenantId) {
-    Optional<TenantMembership> membership = membershipRepository.findInTenant(userId, tenantId);
-    if (membership.isEmpty()) {
-      return;
-    }
-    if (membership.get().isActive()) {
-      throw new CodedApiException(
-          HttpStatus.CONFLICT, "MEMBER_ALREADY_EXISTS", "이미 이 워크스페이스의 멤버입니다");
-    }
-    throw new CodedApiException(
-        HttpStatus.CONFLICT,
-        "MEMBER_SUSPENDED",
-        "이미 이 워크스페이스의 멤버입니다(정지됨). 상세에서 재활성화하세요",
-        Map.of("userId", String.valueOf(userId)));
-  }
-
-  /**
-   * 계정이 없을 때 임시 비밀번호(변경 강제 표식 on)로 새 계정을 만든다. username = 소문자 이메일. 규칙은 운영자 계정 생성(WD-46)과 공유하는 {@link
-   * TemporaryAccountCreator} 에 있다.
-   */
-  private UserResponse createWithTemporaryPassword(String email, AddMemberRequest request) {
-    return temporaryAccountCreator.create(email, request.name(), request.temporaryPassword());
   }
 
   /**

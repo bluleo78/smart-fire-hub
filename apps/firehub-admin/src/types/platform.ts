@@ -52,6 +52,28 @@ export interface TenantMemberResponse {
   accountActive: boolean;
 }
 
+/**
+ * `POST /api/platform/tenants/{id}/members` 요청(WD-750). 서버 `PlatformAddMemberRequest` 와 1:1. 두 경로가 있다.
+ * - 기존 계정: `userId` 만(+ `admin`) 보낸다. username 과 email 은 별개 값이라(email 은 없을 수도 있다) 이메일로
+ *   다시 찾으면 엉뚱한 새 계정이 생긴다 — 검색 결과에서 고른 계정은 반드시 id 로 지정한다.
+ * - 새 계정/이메일: `userId` 없이 email·name·temporaryPassword 를 모두 보낸다. 그 이메일이 이미 계정이면 서버는
+ *   name·temporaryPassword 를 무시하고 멤버십만 붙인다(기존 계정을 덮어쓰지 않는다).
+ * USER 역할은 항상 붙고, `admin` 이 true 면 ADMIN 역할도 붙는다.
+ */
+export interface AddTenantMemberRequest {
+  userId?: number;
+  email?: string;
+  name?: string;
+  temporaryPassword?: string;
+  admin: boolean;
+}
+
+/** 멤버 추가 201 응답. `created` 가 true 면 새 계정을 만들었다는 뜻 — 화면이 임시 비밀번호를 한 번 보여 준다. */
+export interface AddTenantMemberResponse {
+  userId: number;
+  created: boolean;
+}
+
 /** 데이터셋 저장소 백엔드. 서버 `DataStoreBackend` 와 1:1. */
 export type DataStoreBackend = 'POSTGRESQL' | 'TIBERO' | 'MYSQL';
 
