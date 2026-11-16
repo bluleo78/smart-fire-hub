@@ -4,11 +4,16 @@ import type { FireHubApiClient } from '../api-client.js';
 import type { SafeToolFn, JsonResultFn } from '../firehub-mcp-server.js';
 
 /**
+ * 추가 인증 헤더 키 접두어(WD-753) — authConfig 의 `extraHeader:<헤더 이름>` 키. 서버 AuthConfigValidator.EXTRA_HEADER_PREFIX 와
+ * 같은 값이어야 한다(다른 앱이라 상수를 공유하지 못해 여기 둔다). 도구 안내 문구와 더미 검사의 면제 판정이 이 한 값을 쓴다.
+ */
+export const EXTRA_HEADER_KEY_PREFIX = 'extraHeader:';
+
+/**
  * 추가 인증 헤더 안내(WD-753) — 생성·수정 도구 설명에 똑같이 들어간다. 한 곳에 두어 두 설명이 어긋나지 않게 한다.
  * 서버 AuthConfigValidator 의 규칙(접두어 `extraHeader:`·최대 10개·값은 비밀)과 같이 고친다.
  */
-const EXTRA_HEADER_GUIDE =
-  '인증 헤더가 둘 이상 필요한 API 는 authConfig 에 "extraHeader:<헤더 이름>": "<값>" 키를 더합니다(모든 인증 방식, 최대 10개, 값은 비밀이라 조회 시 가려짐).';
+const EXTRA_HEADER_GUIDE = `인증 헤더가 둘 이상 필요한 API 는 authConfig 에 "${EXTRA_HEADER_KEY_PREFIX}<헤더 이름>": "<값>" 키를 더합니다(모든 인증 방식, 최대 10개, 값은 비밀이라 조회 시 가려짐).`;
 
 /**
  * 명백한 더미·placeholder 자격증명 토큰 패턴.
@@ -98,6 +103,16 @@ function isRepeatedOrSequentialPattern(value: string): boolean {
 const NON_SECRET_IDENTITY_FIELDS = new Set(['username']);
 
 /**
+ * 추가 인증 헤더 값(`extraHeader:<이름>` 키)인지 — 빈 값·문자열 아님만 거르고 더미 비밀 규칙(정확일치 placeholder·접두사·반복/순차·3자
+ * 미만)은 모두 건너뛴다(WD-753 리뷰). 추가 헤더에는 `X-Api-Version: 1`·`X-Env: test`·`X-Debug: none` 처럼 짧거나 사전 단어인
+ * 실제 값이 흔해, 무작위 비밀(apiKey·token)의 기준을 걸면 정상 헤더를 AI 경로로 넣지 못한다. 값은 서버에서 비밀로 암호화되므로
+ * 오류 메시지에는 값 원문을 싣지 않는다.
+ */
+function isExtraHeaderField(field: string): boolean {
+  return field.startsWith(EXTRA_HEADER_KEY_PREFIX);
+}
+
+/**
  * authConfig가 명백히 placeholder/더미 값을 포함하는지 검증한다.
  * 빈 문자열·공백만·`none`/`dummy` 등 placeholder는 거부.
  * authType별 필수 필드(API_KEY: apiKey+headerName, BEARER: token, BASIC: username+password)도 함께 확인.
@@ -113,8 +128,17 @@ export function assertAuthConfigNotPlaceholder(
 ): void {
   if (!authConfig) return; // update에서 authConfig 미제공 시는 통과
 
-  // 1) 빈/공백/placeholder 값 거부 — 모든 필드 공통
+  // 1) 빈/공백/placeholder 값 거부 — 모든 필드 공통(추가 인증 헤더는 빈 값·문자열 아님만 검사)
   for (const [field, value] of Object.entries(authConfig)) {
+    // 추가 인증 헤더(WD-753): 빈 값·문자열 아님만 거르고 더미 비밀 규칙은 건너뛴다 — 오류에 값 원문을 싣지 않는다
+    if (isExtraHeaderField(field)) {
+      if (typeof value !== 'string' || value.trim().length === 0) {
+        throw new Error(
+          `authConfig.${field}(추가 인증 헤더)의 값이 비었거나 문자열이 아닙니다. 사용자에게 이 헤더의 실제 값을 받아 문자열로 보내세요 — 빈 값·더미 값으로 우회 등록 금지 (#255).`,
+        );
+      }
+      continue;
+    }
     if (typeof value !== 'string') {
       throw new Error(
         `authConfig.${field}는 문자열이어야 합니다. 사용자에게 실제 인증 정보를 다시 요청하세요. (#255 더미 자격증명 합성 방지)`,

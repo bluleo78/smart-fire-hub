@@ -324,19 +324,67 @@ describe('API Connection MCP Tools', () => {
       expect(client.createApiConnection).toHaveBeenCalledWith(args);
     });
 
-    it('extraHeader 값은 비밀이라 더미 검사에서 면제되지 않는다 — 더미 값은 거절', async () => {
-      const result = await invokeTool(server, 'create_api_connection', {
+    // WD-753 리뷰: 추가 헤더 값은 빈 값·문자열 아님만 거른다 — 짧거나 사전 단어인 실제 헤더 값(버전·환경 이름 등)을 막지 않는다.
+    const createWithExtra = (extra: Record<string, string>, apiKey = 'k9Qx2LmZp7Rt4VbN8cWd') =>
+      invokeTool(server, 'create_api_connection', {
         name: 'naver-cloud',
         authType: 'API_KEY',
-        authConfig: {
-          apiKey: 'k9Qx2LmZp7Rt4VbN8cWd',
-          headerName: 'X-NCP-APIGW-API-KEY',
-          'extraHeader:X-NCP-APIGW-API-KEY-ID': 'dummyvalue12345',
-        },
+        authConfig: { apiKey, headerName: 'X-NCP-APIGW-API-KEY', ...extra },
         baseUrl: 'https://naveropenapi.apigw.ntruss.com',
       });
+
+    it('extraHeader:X-Api-Version = "1" 처럼 짧은 값은 통과해 API 로 그대로 전달된다', async () => {
+      const result = await createWithExtra({ 'extraHeader:X-Api-Version': '1' });
+      expect(result.isError).toBeFalsy();
+      expect(client.createApiConnection).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(['test', 'none', '0', 'v2', 'aaaa', '1234'])(
+      'extraHeader 값 "%s" 는 정확일치 placeholder·접두사·반복/순차·길이 규칙을 걸지 않아 통과한다',
+      async (value) => {
+        const result = await createWithExtra({ 'extraHeader:X-Env': value });
+        expect(result.isError, value).toBeFalsy();
+      },
+    );
+
+    it.each(['', '   '])('extraHeader 값이 빈 값("%s")이면 거절하고 API 를 부르지 않는다', async (value) => {
+      const result = await createWithExtra({ 'extraHeader:X-Api-Version': value });
       expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('extraHeader:X-Api-Version');
+      expect(result.content[0].text).toContain('추가 인증 헤더');
       expect(client.createApiConnection).not.toHaveBeenCalled();
+    });
+
+    it('extraHeader 값이 문자열이 아니면 거절하고, 오류 메시지에 값 원문을 싣지 않는다', async () => {
+      const { assertAuthConfigNotPlaceholder } = await import('./api-connection-tools.js');
+      const secret = 98765432;
+      let message = '';
+      try {
+        assertAuthConfigNotPlaceholder('API_KEY', {
+          apiKey: 'k9Qx2LmZp7Rt4VbN8cWd',
+          headerName: 'X-NCP-APIGW-API-KEY',
+          'extraHeader:X-Tenant': secret as unknown as string,
+        });
+      } catch (e) {
+        message = (e as Error).message;
+      }
+      expect(message).toContain('추가 인증 헤더');
+      expect(message).not.toContain(String(secret));
+    });
+
+    it('메인 비밀(apiKey)은 추가 헤더가 있어도 여전히 더미 규칙을 받는다 — 짧은 값·더미 접두사는 거절', async () => {
+      for (const apiKey of ['ab', 'dummyvalue12345']) {
+        const result = await createWithExtra({ 'extraHeader:X-Api-Version': '1' }, apiKey);
+        expect(result.isError, apiKey).toBe(true);
+      }
+      expect(client.createApiConnection).not.toHaveBeenCalled();
+    });
+
+    it('update: 조회 결과의 가린 추가 헤더 값(****…)은 막지 않고 서버로 그대로 보낸다', async () => {
+      const authConfig = { 'extraHeader:X-Api-Version': '****' };
+      const result = await invokeTool(server, 'update_api_connection', { id: 5, authConfig });
+      expect(result.isError).toBeFalsy();
+      expect(client.updateApiConnection).toHaveBeenCalledWith(5, { authConfig });
     });
   });
 
