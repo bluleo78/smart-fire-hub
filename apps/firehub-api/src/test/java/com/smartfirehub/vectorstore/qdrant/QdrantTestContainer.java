@@ -9,6 +9,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import org.testcontainers.qdrant.QdrantContainer;
 
@@ -25,6 +26,15 @@ public final class QdrantTestContainer {
 
   static final String API_KEY = "test-key";
 
+  /**
+   * 시험 컨테이너의 저장소를 메모리(tmpfs)에 둔다(WD-758).
+   *
+   * <p>클러스터 모드는 컬렉션 생성·삭제마다 합의 로그를 디스크에 동기 쓰기(fsync)한다. 여러 세션의 시험이 겹치는 공유 개발 서버에서는 동기 쓰기가 건당 100ms
+   * 를 넘어 컬렉션 하나 만드는 데 5~10초가 걸리고, 10초 합의 제한에 걸려 Qdrant 시험이 모두 실패했다. 시험 데이터는 컨테이너 수명 동안만 필요하고 멈췄다 다시
+   * 띄워 이어 쓰는 시험도 없으므로 디스크에 둘 까닭이 없다. 운영 설정과는 무관하다.
+   */
+  public static final Map<String, String> STORAGE_TMPFS = Map.of("/qdrant/storage", "rw");
+
   private static QdrantContainer container;
 
   private QdrantTestContainer() {}
@@ -35,6 +45,7 @@ public final class QdrantTestContainer {
       QdrantContainer c =
           new QdrantContainer(IMAGE)
               .withApiKey(API_KEY)
+              .withTmpFs(STORAGE_TMPFS)
               .withEnv("QDRANT__CLUSTER__ENABLED", "true")
               // 행 검색 테넌트 컬렉션 토큰(WD-722) — 운영과 같게 켠다. 꺼져 있으면 기동 확인이 설정 오류로 멈춘다.
               .withEnv("QDRANT__SERVICE__JWT_RBAC", "true")
