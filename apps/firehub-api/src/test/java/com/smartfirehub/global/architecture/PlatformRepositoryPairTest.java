@@ -15,7 +15,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.config.BeanDefinition;
 import org.springframework.context.annotation.ClassPathScanningCandidateComponentProvider;
 import org.springframework.core.type.filter.AnnotationTypeFilter;
-import org.springframework.stereotype.Repository;
+import org.springframework.stereotype.Component;
 
 /**
  * 플랫폼 리포지토리 구현 짝 검사(WD-706).
@@ -26,10 +26,10 @@ import org.springframework.stereotype.Repository;
  * <p>왜: Tibero 설치본은 jOOQ 구현을 빼고 MyBatis 구현만 쓴다. 인터페이스에 MyBatis 구현이 빠진 채 남으면 Tibero 기동 때 주입 실패로 터진다.
  * 도메인 묶음(WD-706~712)이 하나씩 짝을 만들 때마다 이 목록에서 지운다. 짝이 생겼는데 목록에 남은 항목은 실패시켜 목록이 낡지 않게 한다.
  *
- * <p>범위 한계: 이 검사는 {@code ..repository.jooq..} 의 {@code @Repository} 클래스와 그 {@code ..repository}
- * 인터페이스만 본다. 빈 PENDING 이 WD-491 완료를 뜻하지는 않는다 — jOOQ {@code @Component} 클래스(예:
- * dataset/repository/jooq/JooqDatasetMetaReader)와 {@code DSLContext} 를 직접 쓰는 서비스는 검사 밖이며, 이후 묶음과
- * WD-494 가 따로 추적한다.
+ * <p>범위: {@code ..repository.jooq..} 의 컴포넌트 클래스({@code @Repository}·{@code @Component} — 앞의 것도 뒤의
+ * 것을 메타로 단다)와 그 {@code ..repository} 인터페이스를 본다. 예전에는 {@code @Repository} 만 봐서 {@code @Component} 였던
+ * {@code JooqDatasetMetaReader} 가 짝 없이 Tibero 에서도 떠, Tibero 설치본의 데이터셋 생성이 전부 실패했다(WD-746, WD-498 검증
+ * 설치에서 발견). {@code DSLContext} 를 직접 쓰는 서비스는 여전히 이 검사 밖이다.
  */
 class PlatformRepositoryPairTest {
 
@@ -70,9 +70,12 @@ class PlatformRepositoryPairTest {
     return result;
   }
 
-  /** {@code ..repository.jooq..} 의 {@code @Repository} 구현 클래스. */
+  /**
+   * {@code ..repository.jooq..} 의 컴포넌트 구현 클래스 — {@code @Component} 로 스캔하면 메타 애노테이션으로
+   * {@code @Repository} 도 함께 잡힌다(WD-746: {@code @Component} jOOQ 구현이 검사를 빠져나가지 않게).
+   */
   private static List<Class<?>> jooqImpls() throws ClassNotFoundException {
-    return annotated(Repository.class).stream()
+    return annotated(Component.class).stream()
         .filter(c -> c.getPackageName().contains(".repository.jooq"))
         .toList();
   }
@@ -142,7 +145,9 @@ class PlatformRepositoryPairTest {
         bogus.add(iface.getName());
       }
     }
-    assertThat(bogus).as("jOOQ @Repository 구현이 없는 PENDING 항목").isEmpty();
+    assertThat(bogus)
+        .as("jOOQ 구현(repository.jooq 의 @Repository·@Component)이 없는 PENDING 항목")
+        .isEmpty();
   }
 
   /** 짝이 있는 인터페이스의 jOOQ 구현은 PG 전용이어야 한다 — Tibero 설치본에서 두 구현이 함께 주입 후보가 되면 안 된다. */

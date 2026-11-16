@@ -9,7 +9,8 @@ import java.util.List;
  * <p>jOOQ 필드 참조 방식은 {@code DatasetRepository} 와 동일하게 {@code field(name(...))} 동적 참조를 쓴다 (생성 코드 의존
  * 없이 public 스키마 테이블을 직접 가리킴).
  *
- * <p>구현은 {@code JooqDatasetMetaReader}(jOOQ/PostgreSQL) 이다 — WD-485.
+ * <p>구현은 {@code JooqDatasetMetaReader}(jOOQ, PostgreSQL 플랫폼 — WD-485)와 {@code
+ * MyBatisDatasetMetaReader}(MyBatis, Tibero 플랫폼 — WD-746) 두 벌이다.
  */
 public interface DatasetMetaReader {
 

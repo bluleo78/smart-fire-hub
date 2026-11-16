@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  검색 합본 입력용 데이터셋 메타(WD-746) — JooqDatasetMetaReader 와 같은 의미. 규칙은 MyBatisPlatformConfig javadoc.
+  모두 PG·Tibero 공통 문장(databaseId 분기 없음). 테넌트 정책(RLS) 대상 표라 tenant_id 를 쓰지 않는다.
+  예전에는 jOOQ 구현만 있어 Tibero 설치본에서도 jOOQ 가 "dataset"(따옴표 소문자)로 질의해 표를 못 찾았다(데이터셋 생성 404).
+-->
+<mapper namespace="com.smartfirehub.dataset.repository.mybatis.DatasetMetaMapper">
+
+  <resultMap id="metaRow" type="com.smartfirehub.dataset.repository.mybatis.DatasetMetaMapper$MetaRow">
+    <constructor>
+      <arg column="name" javaType="java.lang.String"/>
+      <arg column="description" javaType="java.lang.String"/>
+      <arg column="table_name" javaType="java.lang.String"/>
+      <arg column="category_name" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <resultMap id="columnTextRow" type="com.smartfirehub.dataset.repository.mybatis.DatasetMetaMapper$ColumnTextRow">
+    <constructor>
+      <arg column="column_name" javaType="java.lang.String"/>
+      <arg column="display_name" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <select id="selectMeta" resultMap="metaRow">
+    SELECT d.name, d.description, d.table_name, c.name AS category_name
+      FROM dataset d
+      LEFT JOIN dataset_category c ON c.id = d.category_id
+     WHERE d.id = #{datasetId}
+  </select>
+
+  <select id="selectColumnTexts" resultMap="columnTextRow">
+    SELECT col.column_name, col.display_name
+      FROM dataset_column col
+     WHERE col.dataset_id = #{datasetId}
+     ORDER BY col.column_order, col.id
+  </select>
+
+  <select id="selectTagNames" resultType="java.lang.String">
+    SELECT t.tag_name FROM dataset_tag t WHERE t.dataset_id = #{datasetId} ORDER BY t.tag_name
+  </select>
+
+  <select id="selectAllIds" resultType="java.lang.Long">
+    SELECT d.id FROM dataset d ORDER BY d.id
+  </select>
+</mapper>

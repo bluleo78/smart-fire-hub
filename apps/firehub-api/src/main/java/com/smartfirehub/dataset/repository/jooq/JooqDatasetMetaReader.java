@@ -6,13 +6,14 @@ import static org.jooq.impl.DSL.table;
 
 import com.smartfirehub.dataset.repository.DatasetMetaReader;
 import com.smartfirehub.dataset.search.DatasetSourceTextBuilder;
+import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import java.util.ArrayList;
 import java.util.List;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Record4;
 import org.jooq.Table;
-import org.springframework.stereotype.Component;
+import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -22,8 +23,13 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>jOOQ 필드 참조 방식은 {@code DatasetRepository} 와 동일하게 {@code field(name(...))} 동적 참조를 쓴다 (생성 코드 의존
  * 없이 public 스키마 테이블을 직접 가리킴).
+ *
+ * <p>PG 플랫폼 전용이다 — Tibero 설치본은 짝 {@code MyBatisDatasetMetaReader}(WD-746)를 쓴다. 예전에는 PG 조건 없는
+ * {@code @Component} 라 Tibero 에서도 이 빈이 떠 데이터셋 생성이 실패했고, 짝 검사({@code PlatformRepositoryPairTest})도
+ * {@code @Repository} 만 봐서 놓쳤다.
  */
-@Component
+@Repository
+@ConditionalOnPostgresPlatformDb
 // 배경 잡(JobRunr/@Async/@Scheduled)은 앰비언트 트랜잭션이 없다. RLS GUC 는 트랜잭션 시작
 // 시점에만 주입되므로, 트랜잭션이 없으면 TenantContext 를 세워도 정책이 전 행을 차단한다.
 // REQUIRED 라 서비스가 이미 연 트랜잭션에는 합류한다(기존 경로 동작 불변).
