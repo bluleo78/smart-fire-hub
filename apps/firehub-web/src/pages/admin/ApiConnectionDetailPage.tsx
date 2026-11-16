@@ -1,5 +1,5 @@
 import { ArrowLeft, Copy, HelpCircle } from 'lucide-react';
-import { useEffect, useEffectEvent, useId, useMemo, useRef, useState } from 'react';
+import { useEffect, useEffectEvent, useId, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -32,7 +32,6 @@ import {
 } from '@/lib/api-connection-form';
 import { missingSecretMessage } from '@/lib/api-connection-secret';
 import { handleApiError } from '@/lib/api-error';
-import { isSameFormValue } from '@/lib/form-equality';
 import { formatDate } from '@/lib/formatters';
 import { parseRouteId } from '@/lib/route-id';
 import { MAX_DESCRIPTION_LENGTH } from '@/lib/validations/description';
@@ -82,9 +81,9 @@ type InfoFieldKey = (typeof INFO_FIELD_ORDER)[number];
 type AuthFieldKey = (typeof AUTH_FIELD_KEYS)[number];
 
 /**
- * 인증 칸을 채운 값 스냅샷(WD-763 리뷰) — 인증 편집의 기준이다.
- * 편집 중 「고쳤는지」(미저장 경고·재조회 값을 받을지)와 비밀 유지 판단(가린 키·비밀번호)을 지금 connection 이 아니라 이 값으로 본다.
- * 편집 중 재조회가 와서 connection 만 바뀌면 화면 칸과 기준이 어긋나, 고치지 않은 칸을 고친 것으로 보거나 다른 응답의 가린 값을 보낼 수 있었다.
+ * 인증 칸 기준 스냅샷(WD-763 리뷰·WD-777) — 인증 편집의 기준이다. 늘 마지막으로 받은 서버 응답으로 만든다.
+ * 편집 중 「고쳤는지」(미저장 경고·재조회 때 칸별 병합)와 비밀 유지 판단(가린 키·비밀번호)을 이 값으로 본다.
+ * 재조회 때마다 새 응답으로 바꿔(칸별 병합과 함께) 옛 응답의 가린 키를 보내지 않는다(WD-777 결함 2).
  */
 interface AuthSeed {
   authType: StoredApiConnectionAuthType;
@@ -92,7 +91,7 @@ interface AuthSeed {
   headerName: string;
   paramName: string;
   username: string;
-  /** 채운 추가 헤더 행 — 칸에도 같은 참조를 넣어, 행을 건드렸는지(빈 행 추가 등)를 참조 비교로 안다. 고쳤는지는 이 행의 authConfig 조각과 비교한다(WD-753) */
+  /** 기준 추가 헤더 행 — 고쳤는지는 행 내용(행 수·행별 이름·값)으로 비교한다(rowsEqual·EXTRA_ROW_CONTENT_KEYS, WD-777) */
   extraHeaderRows: ExtraHeaderRow[];
   /** 키 칸을 비워 두면 유지할 저장 키(가린 값) — API_KEY 로 저장됐고 가린 키가 있을 때만(WD-480·WD-666) */
   maskedKey?: string;
@@ -100,11 +99,18 @@ interface AuthSeed {
   maskedPassword?: string;
 }
 
+/** 인증 기준 스냅샷과 그것을 만든 연결 응답(WD-777) — 편집 중 새 응답이 왔는지(참조가 from 과 다른지) 알려고 함께 둔다. */
+interface AuthSnapshot {
+  seed: AuthSeed;
+  from: ApiConnectionResponse;
+}
+
 /**
  * 조회한 연결로 인증 칸 스냅샷을 만든다(WD-763 리뷰).
  * 메인 인증 칸은 추가 헤더 키(extraHeader:…)를 뺀 값으로 채운다(WD-753) — 추가 헤더는 행(extraHeaderRows)으로 따로 둔다.
+ * 추가 헤더 행은 인자 응답에서 바로 만든다(WD-777) — 다른 응답에서 만든 행이 섞이지 않게 한다.
  */
-function authSeedFrom(connection: ApiConnectionResponse, extraHeaderRows: ExtraHeaderRow[]): AuthSeed {
+function authSeedFrom(connection: ApiConnectionResponse): AuthSeed {
   const mc = withoutExtraHeaders(connection.maskedAuthConfig);
   return {
     authType: connection.authType,
@@ -113,20 +119,67 @@ function authSeedFrom(connection: ApiConnectionResponse, extraHeaderRows: ExtraH
     paramName: mc.paramName ?? '',
     // (WD-681) 아이디는 비밀이 아니라 가리지 않고 내려온다 — 그대로 채운다
     username: mc.username ?? '',
-    extraHeaderRows,
+    extraHeaderRows: extraHeaderRowsFromConfig(connection.maskedAuthConfig),
     maskedKey: connection.authType === 'API_KEY' ? mc.apiKey || undefined : undefined,
     maskedPassword: connection.authType === 'BASIC' ? mc.password || undefined : undefined,
   };
 }
 
 /**
- * 추가 헤더를 더하거나 지우거나 이름·값을 고쳤는지(WD-753) — 보낼 authConfig 조각을 채운 행의 조각과 키 순서 없이 비교한다.
- * isSameFormValue 는 빈 값('')을 없는 키와 같게 보므로, 이름만 넣고 값을 비운 새 행도 고친 것으로 잡으려고 키 수를 함께 본다.
+ * 재조회 병합의 칸 하나(WD-777) — 3-way: 기준이 없거나(첫 응답) 지금 값이 이전 기준과 같으면(고치지 않음) 새 값으로 바꾼다.
+ * 값이 실제로 달라질 때만 set 하고 true 를 돌려줘, 부르는 쪽이 그 칸 오류만 지울 수 있게 한다(오류 key 가 없는 칸은 반환값을 무시한다).
  */
-function extraHeadersChanged(rows: ExtraHeaderRow[], seededRows: ExtraHeaderRow[]): boolean {
-  const current = extraHeadersToConfig(rows);
-  const seeded = extraHeadersToConfig(seededRows);
-  return Object.keys(current).length !== Object.keys(seeded).length || !isSameFormValue(current, seeded);
+function mergeField<T>(cur: T, prev: T | undefined, next: T, set: (value: T) => void): boolean {
+  if (prev !== undefined && cur !== prev) return false;
+  if (cur === next) return false;
+  set(next);
+  return true;
+}
+
+/** 추가 헤더 행 「내용」 비교 키 — 고쳤는지(미저장 경고·재조회 때 덩어리를 지킬지)를 본다(WD-777). */
+const EXTRA_ROW_CONTENT_KEYS = ['name', 'value'] as const;
+/**
+ * 추가 헤더 행 「저장값까지」 비교 키(WD-777) — 고치지 않은 행을 새 행으로 바꿀지 볼 때 쓴다.
+ * 이름·값이 같아도 서버의 가린 값이 바뀌었으면 새 행으로 바꿔야 저장 때 새 가린 값을 보낸다.
+ */
+const EXTRA_ROW_STORED_KEYS = ['name', 'value', 'storedMasked', 'storedName'] as const;
+
+/**
+ * 추가 헤더 행 목록이 같은지(WD-777) — 행 수와 행별 keys 값이 같으면 같다(화면 안 id 는 무시, 빈 행도 한 행으로 센다).
+ * 내용 키로 「건드렸는지」와 「고쳤는지」를 한 번에 본다 — 빈 행을 더하면 고친 것(미저장 경고), 더했다 지우면 처음과 같아 고치지 않은 것이다.
+ * 예전엔 배열 참조로 건드림을 봐서, 빈 행을 더했다 지워도 계속 「건드림」이라 재조회 값을 받지 못하고 덮어썼다(WD-777 결함 3).
+ */
+function rowsEqual(
+  a: ExtraHeaderRow[],
+  b: ExtraHeaderRow[],
+  keys: readonly (keyof ExtraHeaderRow)[],
+): boolean {
+  return a.length === b.length && a.every((row, i) => keys.every((key) => row[key] === b[i][key]));
+}
+
+/**
+ * 고친 추가 헤더 덩어리 안에서 손대지 않은 저장 행의 가린 값을 새 기준 행 값으로 맞춘다(WD-777 리뷰).
+ * 손대지 않은 저장 행 = 저장된 행(storedName 있음)이고, 이전 기준에 이름·값·원래 이름이 같은 행이 있는 행이다.
+ * 새 기준에서 원래 이름이 같은 행을 찾아 가린 값만 바꾼다(없으면 그대로). 바꿀 것이 없으면 같은 배열 참조를 돌려준다.
+ */
+function syncUntouchedStoredMasks(
+  rows: ExtraHeaderRow[],
+  prevRows: ExtraHeaderRow[],
+  nextRows: ExtraHeaderRow[],
+): ExtraHeaderRow[] {
+  let changed = false;
+  const synced = rows.map((row) => {
+    if (row.storedName === undefined) return row;
+    const untouched = prevRows.some(
+      (p) => p.storedName === row.storedName && p.name === row.name && p.value === row.value,
+    );
+    if (!untouched) return row;
+    const fresh = nextRows.find((n) => n.storedName === row.storedName);
+    if (!fresh || fresh.storedMasked === row.storedMasked) return row;
+    changed = true;
+    return { ...row, storedMasked: fresh.storedMasked };
+  });
+  return changed ? synced : rows;
 }
 
 /**
@@ -204,10 +257,12 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
   };
 
   /**
-   * 인증 칸을 마지막으로 채운 값(WD-763 리뷰) — 편집을 열 때와 편집 중 재조회 때 칸과 함께 채운다(applyAuthSeed).
+   * 인증 기준 스냅샷과 그 응답(WD-763 리뷰·WD-777) — 편집을 열 때(applyAuthSeed)와 편집 중 재조회 때(mergeAuthFields) 새 응답으로 바꾼다.
    * 렌더 중 비교(고쳤는지·비밀 유지 판단)에 쓰므로 ref 가 아닌 state 로 둔다(react-hooks/refs 룰, 기본 정보의 initialInfo 와 같다).
+   * 기준과 그 응답을 한 state 로 묶어, 예전 authSeededFromRef(응답)와 authSeed(기준)가 따로 어긋날 틈을 없앤다.
    */
-  const [authSeed, setAuthSeed] = useState<AuthSeed | null>(null);
+  const [authSnapshot, setAuthSnapshot] = useState<AuthSnapshot | null>(null);
+  const authSeed = authSnapshot?.seed ?? null;
 
   // 키·비밀번호 칸을 비워 두면 유지할 저장 가린 값 — 필수 표시·유지 안내·저장 판단이 이 값 하나를 본다(WD-480·WD-666·WD-681, 칸을 채운 스냅샷 기준)
   const storedMaskedKey = authSeed?.maskedKey;
@@ -216,31 +271,26 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
   const passwordHintId = `${baseId}-password-keep-hint`;
 
   /**
-   * 저장된 추가 헤더 행(WD-753 리뷰) — 조회한 가린 config 가 바뀔 때만 한 번 만든다.
-   * 읽기 보기와 인증 칸 채우기(스냅샷)가 같은 값을 쓴다. 예전엔 렌더마다 다시 만들어 행 id 순번을 계속 올렸다(렌더 중 부수효과).
+   * 저장된 추가 헤더 행(WD-753 리뷰) — 조회한 가린 config 가 바뀔 때만 한 번 만든다(읽기 보기용).
+   * 예전엔 렌더마다 다시 만들어 행 id 순번을 계속 올렸다(렌더 중 부수효과). 인증 칸 스냅샷은 응답에서 따로 만든다(authSeedFrom, WD-777).
    */
   const storedExtraHeaderRows = useMemo(
     () => extraHeaderRowsFromConfig(connection?.maskedAuthConfig),
     [connection?.maskedAuthConfig],
   );
 
-  /** 인증 칸을 마지막으로 채운 연결 응답(WD-763) — 편집 중 새 응답이 왔는지 알려고 둔다(렌더에 쓰지 않아 ref 로 둔다). */
-  const authSeededFromRef = useRef<ApiConnectionResponse | null>(null);
-
   /**
-   * 인증 칸(인증 방식·키 위치·헤더/파라미터 이름·Basic 아이디·추가 헤더 행)과 그 스냅샷(authSeed)을 연결 응답으로 채우고 인라인 오류를 비운다
-   * (WD-753 리뷰·WD-763). 편집을 열 때(startAuthEdit)와 편집 중 재조회 때(아래 효과) 쓴다 — 닫힌 동안은 읽기 보기가 connection 을 바로 그려 채우지 않는다.
+   * 인증 칸(인증 방식·키 위치·헤더/파라미터 이름·Basic 아이디·추가 헤더 행)과 그 스냅샷을 연결 응답으로 모두 채우고 인라인 오류를 비운다
+   * (WD-753 리뷰·WD-763). 편집을 열 때(startAuthEdit) 쓴다 — 편집 중 재조회는 칸별 병합(mergeAuthFields)을 쓰고, 닫힌 동안은 읽기 보기가 connection 을 바로 그려 채우지 않는다.
    */
   const applyAuthSeed = (conn: ApiConnectionResponse) => {
-    authSeededFromRef.current = conn;
-    const seed = authSeedFrom(conn, storedExtraHeaderRows);
-    setAuthSeed(seed);
+    const seed = authSeedFrom(conn);
+    setAuthSnapshot({ seed, from: conn });
     setAuthType(seed.authType);
     setPlacement(seed.placement);
     setHeaderName(seed.headerName);
     setParamName(seed.paramName);
     setUsername(seed.username);
-    // 추가 헤더는 스냅샷과 같은 행 참조로 채운다 — 행을 건드렸는지 참조로 안다(keepAuthEdits)
     setExtraHeaders(seed.extraHeaderRows);
     // 인증 칸을 새 값으로 다시 채우면 이전 값에 대한 인라인 오류도 비운다(WD-666) — 지난 오류 문구가 남지 않게 한다.
     setAuthErrors({});
@@ -288,30 +338,42 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
     navigate('/admin/api-connections');
   }, [isError, isInvalidId, navigate]);
 
-  /* eslint-disable react-hooks/set-state-in-effect -- 서버 응답으로 폼 초기값 시드. connection 참조는 TanStack Query가 id 동일 시 공유하므로 실제 재호출은 첫 조회·재조회 때만 발생. */
+  /**
+   * 연결 응답을 기본 정보 칸에 칸별로 병합한다(WD-777) — 효과 안에서 부르는 effect event 라 늘 지금 칸 값·기준(initialInfo)을 읽는다.
+   * - 처음 받은 응답(기준 없음)이면 모두 채운다.
+   * - 재조회면 칸마다: 지금 값 == 이전 기준 값(고치지 않음)이면 새 값으로 바꾸고, 다르면(고침) 지금 값을 둔다.
+   *   예전엔 재조회마다 모두 서버 값으로 덮어, 저장 안 한 설명이 인증 저장 뒤 사라졌다(WD-777 결함 1).
+   * - 기준은 새 응답 값으로 바꾼다 — 고친 칸은 여전히 「고침」이라 미저장 경고가 남는다(#551).
+   * - 새 값으로 바꾼 칸의 인라인 오류만 지운다(WD-666·WD-777 결함 5) — 지킨 칸은 여전히 틀릴 수 있어 오류를 둔다.
+   */
+  const mergeInfoFields = useEffectEvent((conn: ApiConnectionResponse) => {
+    const next = {
+      name: conn.name,
+      description: conn.description ?? '',
+      baseUrl: conn.baseUrl,
+      healthCheckPath: conn.healthCheckPath ?? '',
+    };
+    // 기준이 없으면(첫 응답) 모든 칸을 채운다 — mergeField 가 prev 없음을 「새 값으로 채움」으로 본다
+    const prev = initialInfo ?? undefined;
+    // 새 값으로 바꾼(값이 실제로 달라진) 칸 — 그 칸 오류만 지운다
+    const replaced: InfoFieldKey[] = [];
+    if (mergeField(name, prev?.name, next.name, setName)) replaced.push('name');
+    mergeField(description, prev?.description, next.description, setDescription);
+    if (mergeField(baseUrl, prev?.baseUrl, next.baseUrl, setBaseUrl)) replaced.push('baseUrl');
+    mergeField(healthCheckPath, prev?.healthCheckPath, next.healthCheckPath, setHealthCheckPath);
+    if (replaced.length > 0) setInfoErrors((errs) => withoutKeys(errs, ...replaced));
+    // dirty 비교 기준 스냅샷 갱신 (#551) — 저장 없이 사이드바 이동 시 유실 경고용
+    setInitialInfo(next);
+  });
+
+  /**
+   * 연결 응답이 새로 오면(첫 조회·재조회) 기본 정보를 칸별로 병합한다(WD-777). connection 참조는 TanStack Query 가 같은 응답이면 공유하므로
+   * 실제로는 첫 조회·재조회 때만 실행된다. 인증 칸은 여기서 채우지 않는다(WD-763) — 편집을 열 때와 편집 중 재조회 때(아래 효과)만 채운다.
+   */
   useEffect(() => {
     if (!connection) return;
-    const initialName = connection.name;
-    const initialDescription = connection.description ?? '';
-    const initialBaseUrl = connection.baseUrl;
-    const initialHealthCheckPath = connection.healthCheckPath ?? '';
-    setName(initialName);
-    setDescription(initialDescription);
-    setBaseUrl(initialBaseUrl);
-    setHealthCheckPath(initialHealthCheckPath);
-    // 폼을 새 연결 값으로 다시 채우면 이전 값에 대한 기본 정보 인라인 오류도 비운다(WD-666) — 재조회돼도
-    // 지난 오류 문구가 새 값 옆에 남아 「틀린 칸」처럼 보이지 않게 한다.
-    // 인증 칸·인증 칸 오류는 여기서 채우지 않는다(WD-763) — 편집을 열 때(startAuthEdit)와 편집 중 재조회 때(아래 효과)만 채워, 고치던 값을 덮지 않는다.
-    setInfoErrors({});
-    // dirty 비교 기준 스냅샷 갱신 (#551) — 저장 없이 사이드바 이동 시 유실 경고용
-    setInitialInfo({
-      name: initialName,
-      description: initialDescription,
-      baseUrl: initialBaseUrl,
-      healthCheckPath: initialHealthCheckPath,
-    });
+    mergeInfoFields(connection);
   }, [connection]);
-  /* eslint-enable react-hooks/set-state-in-effect */
 
   // 기본 정보 폼이 로드된 초기값과 달라졌는지 여부 (#551)
   const isInfoDirty =
@@ -323,11 +385,12 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
   /** 편집 중일 때의 스냅샷 — 닫혀 있으면 null 이라 아래 판정이 모두 거짓이 된다 */
   const editingSeed = isEditingAuth ? authSeed : null;
   /**
-   * 메인 인증 칸에서 고친 것이 있는지(WD-763 리뷰) — 칸을 채운 스냅샷(authSeed)과 비교한다.
-   * - 메인 인증 칸(방식·위치·헤더/파라미터 이름)이나 Basic 아이디가 채운 값과 다르다(예전엔 아이디만 봐서, 헤더 이름만 바꾸고 나가면 경고가 없었다).
+   * 인증 편집에서 고친 것이 있는지 — 미저장 경고(#551) 판단에 쓴다. 기준 스냅샷(늘 마지막 응답)과 비교한다(WD-763 리뷰·WD-777).
+   * - 메인 인증 칸(방식·위치·헤더/파라미터 이름)이나 Basic 아이디가 기준과 다르다.
    * - 새 키·토큰·비밀번호를 입력했다(#551·WD-681).
+   * - 추가 헤더 행 내용(행 수·이름·값, 빈 행 포함)이 기준과 다르다(WD-753·WD-777).
    */
-  const mainAuthDirty =
+  const isAuthDirty =
     editingSeed !== null &&
     (authType !== editingSeed.authType ||
       placement !== editingSeed.placement ||
@@ -336,31 +399,59 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
       username !== editingSeed.username ||
       apiKey.trim() !== '' ||
       token.trim() !== '' ||
-      password !== '');
-  /** 추가 헤더 행을 건드렸는지(WD-763) — 채운 행 참조를 그대로 두면 건드리지 않은 것이다(이름·값이 빈 행 추가처럼 보낼 조각엔 안 잡히는 변경도 잡는다). */
-  const extraRowsTouched = editingSeed !== null && extraHeaders !== editingSeed.extraHeaderRows;
-  /** 인증 편집에서 고친 것이 있는지 — 미저장 경고(#551) 판단에 쓴다. 추가 헤더는 행을 건드렸을 때만 보낼 조각을 비교한다(WD-753). */
-  const isAuthDirty =
-    mainAuthDirty ||
-    (extraRowsTouched && editingSeed !== null && extraHeadersChanged(extraHeaders, editingSeed.extraHeaderRows));
-  /** 재조회 값을 받지 않고 지금 인증 칸을 지킬지(WD-763) — 메인 칸을 고쳤거나 추가 헤더 행을 건드렸으면 지킨다. 아무것도 건드리지 않았으면 재조회 값을 받는다. */
-  const keepAuthEdits = mainAuthDirty || extraRowsTouched;
+      password !== '' ||
+      !rowsEqual(extraHeaders, editingSeed.extraHeaderRows, EXTRA_ROW_CONTENT_KEYS));
 
-  /** 편집 중 재조회 때 인증 칸을 다시 채운다 — 효과 안에서 부르는 effect event 라 늘 최신 applyAuthSeed(최신 추가 헤더 행)를 쓴다. */
-  const refillAuthFields = useEffectEvent(applyAuthSeed);
   /**
-   * 편집 중 연결이 다시 불러와지면 인증 칸을 새 응답으로 다시 채운다(WD-763).
+   * 편집 중 새 연결 응답을 인증 칸에 칸별로 병합한다(WD-777) — 효과 안에서 부르는 effect event 라 늘 지금 칸 값·스냅샷을 읽는다.
+   * 같은 응답(스냅샷의 from 과 같은 참조)이면 아무것도 하지 않는다 — 편집을 연 직후(startAuthEdit 가 이미 채움)도 여기에 걸린다.
+   * - 인증 방식·키 위치·헤더 이름·파라미터 이름·Basic 아이디: 칸마다 지금 값 == 이전 기준 값이면 새 값, 다르면(고침) 지금 값을 둔다.
+   * - 추가 헤더 행: 한 덩어리로 — 지금 행 내용이 이전 기준과 같으면 새 행으로 바꾼다(행에 서버 쪽 안정 id 가 없어 행끼리 짝지을 수 없다).
+   * - 비밀 칸(키·토큰·비밀번호)은 채우지 않는다 — 입력한 비밀은 서버 값과 비교할 수 없다. 비워 두면 유지할 가린 값은 새 기준의 값이다(결함 2).
+   * - 기준은 새 응답으로 바꾼다 — 고친 칸은 여전히 「고침」이라 미저장 경고가 남는다.
+   * - 새 값으로 바꾼 칸의 오류만 지운다(결함 5): 헤더/파라미터 이름·키 위치 → authName, 아이디 → username, 추가 헤더를 바꿨을 때만 행 오류 전체.
+   */
+  const mergeAuthFields = useEffectEvent((conn: ApiConnectionResponse) => {
+    if (!authSnapshot || authSnapshot.from === conn) return;
+    const prev = authSnapshot.seed;
+    const next = authSeedFrom(conn);
+    // 새 값으로 바꾼(값이 실제로 달라진) 칸의 오류 key
+    const cleared: AuthFieldKey[] = [];
+    mergeField(authType, prev.authType, next.authType, setAuthType);
+    // 위치가 바뀌면 이름 칸이 헤더 이름 ↔ 파라미터 이름으로 바뀌어, 지난 이름 칸 오류가 다른 칸에 붙지 않게 지운다
+    if (mergeField(placement, prev.placement, next.placement, setPlacement)) cleared.push('authName');
+    if (mergeField(headerName, prev.headerName, next.headerName, setHeaderName)) cleared.push('authName');
+    if (mergeField(paramName, prev.paramName, next.paramName, setParamName)) cleared.push('authName');
+    if (mergeField(username, prev.username, next.username, setUsername)) cleared.push('username');
+    // 추가 헤더는 덩어리로 — 고치지 않았고 새 행이 (가린 값까지) 다를 때만 바꾸고 행 오류를 비운다(행 id 가 바뀌어 지난 오류가 남지 않게)
+    if (rowsEqual(extraHeaders, prev.extraHeaderRows, EXTRA_ROW_CONTENT_KEYS)) {
+      if (!rowsEqual(extraHeaders, next.extraHeaderRows, EXTRA_ROW_STORED_KEYS)) {
+        setExtraHeaders(next.extraHeaderRows);
+        setExtraHeaderErrors({});
+      }
+    } else {
+      // 고친 덩어리는 지키되, 그 안의 손대지 않은 저장 행(이전 기준 행과 이름·값이 같은 행)의 가린 값은 새 기준의 같은 이름 행 값으로 맞춘다
+      // (WD-777 리뷰) — 메인 키처럼 「기준은 늘 최신」이라, 옛 응답의 가린 값을 보내 서버가 400 으로 거절하는 일을 막는다.
+      // 사용자가 새로 쓴 값·이름을 바꾼 행은 건드리지 않고, 새 기준에 그 이름이 없으면 그대로 둔다. 행 id 는 그대로라 행 오류도 둔다.
+      const synced = syncUntouchedStoredMasks(extraHeaders, prev.extraHeaderRows, next.extraHeaderRows);
+      if (synced !== extraHeaders) setExtraHeaders(synced);
+    }
+    if (cleared.length > 0) setAuthErrors((errs) => withoutKeys(errs, ...cleared));
+    setAuthSnapshot({ seed: next, from: conn });
+  });
+
+  /**
+   * 편집 중 연결이 다시 불러와지면 인증 칸을 칸별로 병합한다(WD-763·WD-777).
    * 연결은 기본 정보 저장·인증 저장 뒤 무효화(invalidateQueries — 저장 응답이 끝나도 재조회는 기다리지 않는다)와, 마운트 때 staleTime(30초)이
    * 지난 캐시로 그린 뒤의 배경 재조회로 다시 불러와진다(창 포커스 재조회는 main.tsx 에서 꺼 두었다).
    * - 닫혀 있으면 채우지 않는다 — 읽기 보기는 connection 을 바로 그리고, 열 때(startAuthEdit) 그때의 연결로 채운다.
-   * - 편집 중이면 고친 것이 없고 새 응답이 왔을 때만 채운다 — 저장 직후 재조회가 오기 전에 다시 연 편집이나 옛 캐시로 연 편집이
-   *   옛 값에 고정돼 그대로 저장하면 옛 값을 되써 넣던 일을 막는다. 고친 것이 있으면 덮지 않는다(그대로 저장하면 원래 값이 저장되던 WD-763 결함).
+   * - 의존성은 연결 응답과 편집 여부뿐이다 — 타이핑(고친 칸을 기준 값으로 되돌림 등)으로 다시 채우지 않는다(WD-777 결함 4).
    * 다른 연결로 옮기면 페이지가 그 id 로 다시 마운트돼(바깥 ApiConnectionDetailPage 의 key) 편집이 닫히고 입력한 비밀도 사라진다.
    */
   useEffect(() => {
-    if (!connection || !isEditingAuth || keepAuthEdits || authSeededFromRef.current === connection) return;
-    refillAuthFields(connection);
-  }, [connection, isEditingAuth, keepAuthEdits]);
+    if (!connection || !isEditingAuth) return;
+    mergeAuthFields(connection);
+  }, [connection, isEditingAuth]);
 
   const { dialog: unsavedChangesDialog, requestNavigate } = useUnsavedChangesGuard(
     isInfoDirty || isAuthDirty,
