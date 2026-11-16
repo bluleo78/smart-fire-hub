@@ -615,7 +615,8 @@ cmd_seed() {
   else
     log "이미 사용자가 있다 — 가입 생략(signup-status=$status_json)"
   fi
-  # admin 콘솔(/api/platform) 로그인은 플랫폼 운영자 롤이 필요하다. 공개 가입은 테넌트 ADMIN 만 주므로,
+  # admin 콘솔(/api/platform) 로그인은 플랫폼 운영자 롤이 필요하다. WD-748 부터 첫 가입이 SUPER_ADMIN 을 함께 주므로 새 DB 에서는
+  # 아래 INSERT 가 아무것도 하지 않는다 — 그 전 코드의 브랜치를 띄우거나 --keep-data 로 옛 DB 를 재사용할 때를 위한 보정으로 남긴다.
   # 내 격리 DB 에 한해 소유자 롤(app)로 SUPER_ADMIN 을 직접 부여한다(멱등). 공유 서버라도 내 DB 에만 접속한다.
   db_psql -d "$WL_DB_NAME" -c \
     "INSERT INTO platform_user_role (user_id, platform_role_id)
