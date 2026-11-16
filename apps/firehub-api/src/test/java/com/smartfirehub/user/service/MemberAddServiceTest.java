@@ -2,6 +2,7 @@ package com.smartfirehub.user.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.doReturn;
 
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.tenant.MissingTenantScopeException;
@@ -17,12 +18,14 @@ import com.smartfirehub.user.dto.MemberLookupResponse;
 import com.smartfirehub.user.repository.UserRepository;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
 /**
  * 멤버 추가(WD-2) 서비스 계약. 비트랜잭션 — 새 테넌트 A·B 를 만들어 테넌트 경계를 실제 RLS 로 검증한다. 프로덕션 호출은 {@code
@@ -36,7 +39,13 @@ class MemberAddServiceTest extends IntegrationTestBase {
   @Autowired private DSLContext dsl;
   @Autowired private PasswordEncoder passwordEncoder;
   @Autowired private UserService userService;
-  @Autowired private UserRepository userRepository;
+
+  /**
+   * 스파이 — 조회와 추가 사이에 계정이 생기는 경합(WD-771)을 재현하려고 첫 계정 조회만 「없음」으로 돌린다. 다른 테스트에서는 실제 메서드를 그대로
+   * 부른다(MembershipLifecycleServiceTest 와 같은 스파이라 스프링 컨텍스트도 함께 쓴다).
+   */
+  @MockitoSpyBean private UserRepository userRepository;
+
   @Autowired private MembershipRepository membershipRepository;
   @Autowired private TenantProvisioningService provisioningService;
 
@@ -385,8 +394,97 @@ class MemberAddServiceTest extends IntegrationTestBase {
     MemberLookupResponse res = lookupInA("  " + username.toUpperCase(java.util.Locale.ROOT) + " ");
 
     assertThat(res.status()).isEqualTo(MemberLookupResponse.Status.EXISTING);
-    assertThat(res.userId()).isEqualTo(existing);
+    assertThat(res.userId()).isNull(); // WD-771: 비멤버 계정 id 는 싣지 않는다
     assertThat(res.name()).isEqualTo("other");
+  }
+
+  /** 계정을 전역 비활성으로 만든다(is_active=false). */
+  private void deactivate(long userId) {
+    dsl.execute("update \"user\" set is_active = false where id = ?", userId);
+  }
+
+  /** WD-771: 비활성 비멤버 → INACTIVE, userId 는 null, 이름은 있다. */
+  @Test
+  void lookupMember_inactiveNonMember_inactiveWithoutUserId() {
+    long existing = newMember(tenantB, "inact");
+    deactivate(existing);
+    String username = userRepository.findById(existing).orElseThrow().username();
+
+    MemberLookupResponse res = lookupInA(username);
+
+    assertThat(res.status()).isEqualTo(MemberLookupResponse.Status.INACTIVE);
+    assertThat(res.userId()).isNull();
+    assertThat(res.name()).isEqualTo("inact");
+  }
+
+  /** WD-771: 멤버십이 있으면 계정이 비활성이어도 MEMBER(INACTIVE 는 비멤버 전용). */
+  @Test
+  void lookupMember_inactiveButMember_member() {
+    long member = newMember(tenantA, "inactmem");
+    deactivate(member);
+    String username = userRepository.findById(member).orElseThrow().username();
+
+    MemberLookupResponse res = lookupInA(username);
+
+    assertThat(res.status()).isEqualTo(MemberLookupResponse.Status.MEMBER);
+    assertThat(res.userId()).isEqualTo(member);
+  }
+
+  /** WD-771: 비활성 비멤버를 웹에서 추가하면 409 ACCOUNT_INACTIVE, 멤버십·감사 로그 없음. */
+  @Test
+  void addMember_inactiveNonMember_conflictAndNothingWritten() {
+    long existing = newMember(tenantB, "inactadd");
+    deactivate(existing);
+    String username = userRepository.findById(existing).orElseThrow().username();
+
+    assertThatThrownBy(() -> addInA(new AddMemberRequest(username, null, null, List.of())))
+        .isInstanceOfSatisfying(
+            CodedApiException.class,
+            e -> {
+              assertThat(e.code()).isEqualTo("ACCOUNT_INACTIVE");
+              assertThat(e.getMessage()).isEqualTo("비활성화된 계정은 멤버로 추가할 수 없습니다. 먼저 계정을 활성화하세요");
+            });
+    assertThat(membershipRepository.findInTenant(existing, tenantA)).isEmpty();
+    assertThat(
+            dsl.fetchValue(
+                "select count(*) from audit_log where action_type = 'MEMBER_ADD' and resource_id = ?",
+                String.valueOf(existing)))
+        .isEqualTo(0L);
+  }
+
+  /**
+   * WD-771: 새 계정 경로 경합 — UserService 가 계정을 찾을 때는 없었는데 TenantMemberAdder.add 가 다시 찾을 때는 (비활성 비멤버)
+   * 계정이 있다. 그 경로에서도 비활성 계정을 붙이지 않고 409 ACCOUNT_INACTIVE 로 거부해야 한다.
+   */
+  @Test
+  void addMember_accountAppearsInactiveDuringNewAccountPath_conflictAndNothingWritten() {
+    long existing = newMember(tenantB, "inactrace");
+    deactivate(existing);
+    String username = userRepository.findById(existing).orElseThrow().username();
+    // 첫 조회(UserService)만 「계정 없음」 — 두 번째 조회(TenantMemberAdder.add)는 실제 계정을 찾는다.
+    doReturn(Optional.empty())
+        .doCallRealMethod()
+        .when(userRepository)
+        .findByUsernameIgnoreCase(username);
+
+    assertThatThrownBy(() -> addInA(new AddMemberRequest(username, "x", TEMP, List.of())))
+        .isInstanceOf(CodedApiException.class)
+        .extracting("code")
+        .isEqualTo("ACCOUNT_INACTIVE");
+    assertThat(membershipRepository.findInTenant(existing, tenantA)).isEmpty();
+  }
+
+  /** WD-771: 비활성 + 이미 멤버면 기존 멤버 중복 409 가 우선. */
+  @Test
+  void addMember_inactiveButAlreadyMember_memberConflictWins() {
+    long member = newMember(tenantA, "inactdup");
+    deactivate(member);
+    String username = userRepository.findById(member).orElseThrow().username();
+
+    assertThatThrownBy(() -> addInA(new AddMemberRequest(username, "x", TEMP, List.of())))
+        .isInstanceOf(CodedApiException.class)
+        .extracting("code")
+        .isEqualTo("MEMBER_ALREADY_EXISTS");
   }
 
   /** WD-751: 이 워크스페이스의 활성 멤버면 MEMBER. */

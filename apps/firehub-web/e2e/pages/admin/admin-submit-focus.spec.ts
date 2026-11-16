@@ -51,13 +51,21 @@ test.describe('멤버 추가 — 제출 중 포커스 (WD-637)', () => {
   });
 
   test('이미 멤버(409): 포커스가 다이얼로그 안의 이메일 칸으로 옮겨진다', async ({ authenticatedPage: page }) => {
-    await mockApi(page, 'POST', '/api/v1/users', { status: 409, message: '이미 이 워크스페이스의 멤버입니다' }, { status: 409 });
+    await mockApi(
+      page,
+      'POST',
+      '/api/v1/users',
+      { status: 409, message: '이미 이 워크스페이스의 멤버입니다', code: 'MEMBER_ALREADY_EXISTS' },
+      { status: 409 },
+    );
     const dialog = await openAndFill(page);
 
     await dialog.getByRole('button', { name: '추가', exact: true }).focus();
     await page.keyboard.press('Enter');
 
-    await expect(dialog.getByText('이미 이 워크스페이스의 멤버입니다')).toBeVisible();
+    // 409 뒤 판정이 MEMBER 로 바뀌어 이미 멤버 배너가 보인다 — 같은 문구의 칸 오류는 두지 않는다(WD-771).
+    await expect(dialog.getByRole('status').filter({ hasText: '이미 이 워크스페이스의 멤버입니다' })).toBeVisible();
+    await expect(dialog.locator('#member-email-error')).toHaveCount(0);
     await expect(dialog.getByLabel('이메일')).toBeFocused();
     expect(await focusInsideDialog(page)).toBe(true);
   });

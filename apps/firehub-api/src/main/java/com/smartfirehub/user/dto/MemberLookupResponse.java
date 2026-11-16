@@ -4,8 +4,10 @@ package com.smartfirehub.user.dto;
  * 멤버 추가 전 이메일 존재 확인 결과(WD-751). 웹 멤버 추가 대화상자가 이 판정으로 이름·임시 비밀번호 칸을 보일지 정한다.
  *
  * @param status 판정. JSON 에는 enum 이름 그대로("NEW" 등) 실린다
- * @param userId 계정 id. NEW 면 null. SUSPENDED 면 웹이 상세 링크({@code /admin/users/<userId>})를 만든다
- * @param name 계정 표시 이름. NEW 면 null. EXISTING 이면 웹이 「누구를 붙이는지」 보여 준다
+ * @param userId 계정 id. 이 워크스페이스 멤버(MEMBER·SUSPENDED)일 때만 싣는다 — SUSPENDED 면 웹이 상세 링크({@code
+ *     /admin/users/<userId>})를 만든다. NEW·EXISTING·INACTIVE 는 null: 비멤버 계정의 내부 id 를 워크스페이스 관리자에게 알려
+ *     주지 않는다
+ * @param name 계정 표시 이름. NEW 면 null. EXISTING·INACTIVE 면 웹이 「누구인지」 보여 준다
  */
 public record MemberLookupResponse(Status status, Long userId, String name) {
 
@@ -15,6 +17,8 @@ public record MemberLookupResponse(Status status, Long userId, String name) {
     NEW,
     /** 계정 있음 + 이 워크스페이스 비멤버 — 멤버십·역할만 붙인다. */
     EXISTING,
+    /** 계정 있음 + 비멤버 + 비활성 — 멤버로 추가할 수 없다(활성화는 플랫폼 운영자만 할 수 있다). */
+    INACTIVE,
     /** 이미 이 워크스페이스의 활성 멤버. */
     MEMBER,
     /** 이미 이 워크스페이스의 멤버지만 정지됨 — 상세에서 재활성화한다. */

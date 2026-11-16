@@ -89,6 +89,21 @@ const resolveNewAccount = zodResolver(addMemberSchema);
 const resolveExistingAccount = zodResolver(addExistingMemberSchema);
 
 /** 클립보드 복사 + 디자인 시스템 토스트 규칙(06 §D: 복사 확인은 toast.info). */
+/**
+ * 제출 뒤 409 코드별로 바꿀 판정과, 응답 사이 이메일을 고쳐 판정을 두지 못했을 때 버튼 위에 보일 문구(WD-771).
+ * MEMBER_SUSPENDED 는 상세 링크·칸 오류가 따로 있어 여기 두지 않는다. 새 코드는 한 줄만 더한다.
+ */
+const VERDICT_CONFLICTS: Record<string, { status: 'INACTIVE' | 'MEMBER'; submittedMessage: (email: string) => string }> = {
+  ACCOUNT_INACTIVE: {
+    status: 'INACTIVE',
+    submittedMessage: (email) => `제출한 이메일(${email})은 비활성화된 계정이라 추가하지 못했습니다`,
+  },
+  MEMBER_ALREADY_EXISTS: {
+    status: 'MEMBER',
+    submittedMessage: (email) => `제출한 이메일(${email})은 이미 이 워크스페이스의 멤버입니다`,
+  },
+};
+
 async function copyText(text: string) {
   try {
     await navigator.clipboard.writeText(text);
@@ -104,7 +119,8 @@ async function copyText(text: string) {
  * <p>두 단계: 입력 폼 → (새 계정이면) 자격 증명 1회 표시. 기존 계정이면 토스트만 띄우고 닫는다.
  *
  * <p>이메일 확인(WD-751): 이메일 칸을 벗어나면(형식이 맞을 때) 서버에 존재 여부를 묻는다. 새 계정이면 지금처럼 이름·임시 비밀번호를 받고,
- * 기존 계정이면 그 칸을 숨긴 채 「기존 계정 추가」로 안내하며(서버가 쓰지 않는 값을 묻지 않는다), 이미 멤버·정지 멤버면 안내만 하고 제출을 잠근다.
+ * 기존 계정이면 그 칸을 숨긴 채 「기존 계정 추가」로 안내하며(서버가 쓰지 않는 값을 묻지 않는다), 이미 멤버·정지 멤버·비활성 계정(WD-771)이면
+ * 안내만 하고 제출을 잠근다. 제출 뒤 409 를 받으면 판정을 서버 답의 코드(이미 멤버·정지 멤버·비활성)대로 바꾼다(WD-771).
  * 확인이 실패하면 판정 없이 모든 칸을 받는다 — 서버의 409·400 처리는 판정과 제출 사이에 상태가 바뀌는 경우를 위해 그대로 둔다.
  * USER 는 워크스페이스 기본 역할로 서버가 항상 붙이므로 체크·비활성(해제 불가)으로 보여 주고 전송 목록에는
  * 넣지 않는다. 선택 역할은 USER 에 추가된다. 문구는 스펙 §4 인용문 기준(pre-flight F8).
@@ -126,15 +142,20 @@ export function AddMemberDialog({ canAssignRoles, canReadRoles }: { canAssignRol
   const [checkingOnSubmit, setCheckingOnSubmit] = useState(false);
   const verdict = lookup?.result.status ?? null;
   const isExistingAccount = verdict === 'EXISTING';
-  // 이미 멤버(활성·정지)면 다시 추가할 수 없다 — 제출을 잠근다.
-  const isAlreadyMember = verdict === 'MEMBER' || verdict === 'SUSPENDED';
-  // 기존 계정이면(멤버 여부와 무관) 이름·임시 비밀번호는 쓰이지 않으므로 숨긴다.
-  const hidesAccountFields = isExistingAccount || isAlreadyMember;
+  // 비활성 계정(비멤버)은 추가할 수 없다(WD-771) — 서버가 409 ACCOUNT_INACTIVE 로 거부하고, 워크스페이스 관리자는 계정을 활성화할 수 없다.
+  const isInactiveAccount = verdict === 'INACTIVE';
+  // 제출을 잠그는 판정 — 이미 멤버(활성·정지)이거나 비활성 계정이면 다시 추가할 수 없다.
+  const blocksSubmit = verdict === 'MEMBER' || verdict === 'SUSPENDED' || isInactiveAccount;
+  // 기존 계정이면(멤버 여부·활성 여부와 무관) 이름·임시 비밀번호는 쓰이지 않으므로 숨긴다.
+  const hidesAccountFields = isExistingAccount || blocksSubmit;
   const emailRef = useRef<HTMLInputElement | null>(null);
   // 진행 중 존재 확인(정규화 이메일 기준) — 이메일을 쓰고 바로 「추가」를 누르면 blur 확인과 제출 확인이 겹치는데, 두 번 묻지 않고 하나를 나눠 기다린다.
   const inFlightLookupRef = useRef<InFlightLookup | null>(null);
   // 대화상자를 열고 닫을 때마다 올린다 — 닫기 전에 보낸 확인의 응답이 다시 연 대화상자(같은 이메일이어도)에 반영되거나 제출로 이어지지 않게.
   const sessionRef = useRef(0);
+  // 제출 전 확인을 기다리는 제출을 닫기와 함께 끝내는 함수(WD-771). 확인만 도는 동안에는 닫을 수 있는데, 붙잡힌 확인 응답을 계속 기다리면
+  // 제출 잠금(useSubmitGuard)이 풀리지 않아 다시 연 대화상자의 제출이 무시된다 — 닫을 때 그 기다림을 「낡음」으로 바로 끝낸다.
+  const cancelCheckRef = useRef<(() => void) | null>(null);
   // 기존 계정 → 새 계정으로 판정이 바뀐 뒤 다시 보일 칸에 붙일 서버 칸 오류(WD-751). 칸이 숨겨진 동안 setError 하면 칸이 다시 마운트·등록될 때
   // 오류가 사라지므로, 칸이 그려진 뒤(아래 effect) 붙인다.
   const pendingFieldErrorsRef = useRef<Partial<Record<'name' | 'temporaryPassword', string>> | null>(null);
@@ -174,6 +195,7 @@ export function AddMemberDialog({ canAssignRoles, canReadRoles }: { canAssignRol
     control,
     setValue,
     setError,
+    setFocus,
     trigger,
     reset,
     formState: { errors, isSubmitting },
@@ -265,17 +287,42 @@ export function AddMemberDialog({ canAssignRoles, canReadRoles }: { canAssignRol
 
   /** 열 때마다 새 임시 비밀번호로 초기화, 닫을 때 결과·오류·입력을 모두 버린다(비밀번호 재노출 방지). */
   const handleOpenChange = (next: boolean) => {
-    // 제출 중(제출 전 존재 확인 포함) 닫으면 응답이 닫힌 뒤 도착해 결과 화면 상태가 남는다 — 응답을 기다린다.
-    if (!next && (isSubmitting || checkingOnSubmit)) return;
+    // 실제 제출 중 닫으면 응답이 닫힌 뒤 도착해 결과 화면 상태가 남는다 — 응답을 기다린다.
+    // 제출 전 존재 확인(checkingOnSubmit)만 도는 동안에는 닫을 수 있다(WD-771) — 늦은 확인 응답은 세션이 바뀌어 버려진다.
+    if (!next && isSubmitting) return;
     // 진행 중 확인은 이 세션의 것이 아니게 된다 — 응답이 와도 stale 로 버려진다(runLookup).
     sessionRef.current += 1;
     inFlightLookupRef.current = null;
     pendingFieldErrorsRef.current = null;
+    // 확인을 기다리던 제출을 끝내 잠금을 풀고, 진행 중 표시도 지운다(그 제출의 finally 는 세션이 바뀌어 상태를 건드리지 않는다).
+    cancelCheckRef.current?.();
+    cancelCheckRef.current = null;
+    setCheckingOnSubmit(false);
     setOpen(next);
     setCreated(null);
     setSuspendedUserId(null);
     setLookup(null);
     reset(next ? { ...EMPTY_FORM, temporaryPassword: generateTemporaryPassword() } : EMPTY_FORM);
+  };
+
+  /**
+   * 제출 뒤 서버 답(409)에 맞춰 판정을 바꾼다(WD-771). 응답을 기다리는 사이 이메일을 고쳤으면 그 이메일의 판정이 아니므로 두지 않는다.
+   * userId 는 SUSPENDED 일 때만 싣는다(409 MEMBER_SUSPENDED 본문의 errors.userId — 상세 링크용). 나머지 409 본문에는 없다.
+   *
+   * @returns 판정을 바꿨으면 true, 이메일이 바뀌어 두지 않았으면 false — 호출부가 무반응으로 두지 않고 따로 알리게.
+   */
+  const replaceVerdict = (
+    submittedEmail: string,
+    status: 'INACTIVE' | 'MEMBER' | 'SUSPENDED',
+    userId: number | null = null,
+  ): boolean => {
+    const requested = normalizeEmail(submittedEmail);
+    if (normalizeEmail(form.getValues('email')) !== requested) return false;
+    setLookup((prev) => ({
+      email: requested,
+      result: { status, userId, name: prev?.email === requested ? prev.result.name : null },
+    }));
+    return true;
   };
 
   const onSubmit = async (values: AddMemberFormData) => {
@@ -301,10 +348,28 @@ export function AddMemberDialog({ canAssignRoles, canReadRoles }: { canAssignRol
       const response = axios.isAxiosError(error) ? error.response : undefined;
       const data = response?.data as ErrorResponse | undefined;
       // 정지된 멤버: 다시 추가가 아니라 상세에서 재활성화해야 한다 — 이메일 아래에 상세 링크.
+      // 판정도 SUSPENDED 로 바꿔 제출을 잠근다(WD-771) — EXISTING 으로 남으면 「기존 계정 추가」를 또 누르게 된다. 안내는 칸 오류·링크가 맡고,
+      // 같은 내용의 정지 멤버 배너는 칸 오류가 있는 동안 그리지 않는다(아래 showSuspendedBanner).
       if (data?.code === 'MEMBER_SUSPENDED') {
-        const userId = Number(data.errors?.userId);
-        setSuspendedUserId(Number.isFinite(userId) ? userId : null);
+        const parsedUserId = Number(data.errors?.userId);
+        const userId = data.errors?.userId && Number.isFinite(parsedUserId) ? parsedUserId : null;
+        setSuspendedUserId(userId);
+        replaceVerdict(email, 'SUSPENDED', userId);
         setError('email', { message: '이미 이 워크스페이스의 멤버입니다(정지됨)' }, { shouldFocus: true });
+        return;
+      }
+      // 판정과 제출 사이에 상태가 바뀌었다(409 ACCOUNT_INACTIVE·MEMBER_ALREADY_EXISTS, WD-771) — 서버가 이미 답했으므로 다시 묻지 않고
+      // 판정을 바꿔 그 안내(배너)를 보이고 제출을 잠근다. 같은 문구를 칸 오류로 또 보이지 않는다. 이름은 확인 때 받은 것을 쓴다.
+      const conflict =
+        data?.code && Object.hasOwn(VERDICT_CONFLICTS, data.code) ? VERDICT_CONFLICTS[data.code] : undefined;
+      if (conflict) {
+        if (replaceVerdict(email, conflict.status)) {
+          // 버튼이 잠기며 포커스가 사라지지 않게 이메일 칸으로 옮긴다(이메일을 고치는 것이 다음 행동).
+          setFocus('email');
+        } else {
+          // 응답을 기다리는 사이 이메일을 고쳤다 — 지금 이메일의 판정은 아니지만, 무반응이면 왜 추가되지 않았는지 알 수 없다.
+          setError('root', { message: conflict.submittedMessage(email) });
+        }
         return;
       }
       // 기존 계정으로 판정해 이름·임시 비밀번호 없이 보냈는데 그사이 계정이 사라졌다(400 NEW_ACCOUNT_FIELDS_REQUIRED, WD-751).
@@ -318,7 +383,7 @@ export function AddMemberDialog({ canAssignRoles, canReadRoles }: { canAssignRol
         setError('root', { message: '계정을 다시 확인했더니 새 계정입니다 — 이름과 임시 비밀번호를 입력해 주세요' });
         return;
       }
-      // 그 밖의 409(이미 멤버)는 이메일 입력의 문제다. 다른 계정의 프로필 이메일과 같은 것은 막지 않는다(WD-271).
+      // 코드를 모르는 409 는 판정을 바꾸지 않고 서버 문구를 이메일 아래에 보인다(WD-771 이전 동작). 다른 계정의 프로필 이메일과 같은 것은 막지 않는다(WD-271).
       if (response?.status === 409) {
         setError('email', { message: data?.message ?? '이미 이 워크스페이스의 멤버입니다' }, { shouldFocus: true });
         return;
@@ -339,12 +404,21 @@ export function AddMemberDialog({ canAssignRoles, canReadRoles }: { canAssignRol
    */
   const submitForm = useSubmitGuard()(async (event) => {
     event?.preventDefault();
-    if (isAlreadyMember) return;
+    if (blocksSubmit) return;
     const email = form.getValues('email');
     if (!lookup && isLookupableEmail(email)) {
       const session = sessionRef.current;
       setCheckingOnSubmit(true);
-      const outcome = await runLookup(email).finally(() => setCheckingOnSubmit(false));
+      // 닫으면(handleOpenChange) 확인 응답을 기다리지 않고 「낡음」으로 끝난다 — 제출 잠금이 붙잡힌 응답에 묶이지 않게(WD-771).
+      const closed = new Promise<LookupOutcome>((resolve) => {
+        cancelCheckRef.current = () => resolve({ kind: 'stale' });
+      });
+      const outcome = await Promise.race([runLookup(email), closed]).finally(() => {
+        // 닫았다 다시 연 뒤라면 새 세션의 진행 중 표시·닫기 함수를 건드리지 않는다.
+        if (sessionRef.current !== session) return;
+        cancelCheckRef.current = null;
+        setCheckingOnSubmit(false);
+      });
       if (outcome.kind === 'stale') return;
       // 공유한 확인이 끝난 뒤에도 한 번 더 본다 — 기다리는 사이 이메일이 바뀌었거나 닫혔으면 멈춘다.
       if (sessionRef.current !== session || normalizeEmail(form.getValues('email')) !== normalizeEmail(email)) return;
@@ -353,6 +427,8 @@ export function AddMemberDialog({ canAssignRoles, canReadRoles }: { canAssignRol
     await form.handleSubmit(onSubmit)();
   });
   const pending = isSubmitting || checkingOnSubmit;
+  // 정지 멤버 배너는 409 MEMBER_SUSPENDED 의 칸 오류(같은 문구·같은 링크)가 떠 있는 동안 그리지 않는다 — 안내와 링크가 두 번 나오지 않게.
+  const showSuspendedBanner = verdict === 'SUSPENDED' && !errors.email;
 
   const roles = rolesQuery.data ?? [];
 
@@ -473,19 +549,36 @@ export function AddMemberDialog({ canAssignRoles, canReadRoles }: { canAssignRol
                   </p>
                 </InlineBanner>
               )}
+              {/* 비활성 계정(WD-771) — 이름이 없으면(확인이 실패한 채 제출해 409 로 알게 됨) 이름 자리를 뺀다. */}
+              {isInactiveAccount && (
+                <InlineBanner variant="warning" icon={<AlertTriangle />}>
+                  <p className="break-keep">
+                    비활성화된 계정입니다
+                    {lookup?.result.name && (
+                      <>
+                        {' — '}
+                        <span className="font-medium">{lookup.result.name}</span>
+                      </>
+                    )}
+                    . 계정이 다시 활성화되기 전에는 멤버로 추가할 수 없습니다. 플랫폼 운영자에게 활성화를 요청하세요.
+                  </p>
+                </InlineBanner>
+              )}
               {verdict === 'MEMBER' && (
                 <InlineBanner variant="warning" icon={<AlertTriangle />} title="이미 이 워크스페이스의 멤버입니다" />
               )}
-              {verdict === 'SUSPENDED' && lookup && (
+              {showSuspendedBanner && lookup && (
                 <InlineBanner variant="warning" icon={<AlertTriangle />} title="이미 이 워크스페이스의 멤버입니다(정지됨)">
-                  {/* 기존 409(MEMBER_SUSPENDED) 처리의 링크와 같은 경로·문구 */}
-                  <Link
-                    to={`/admin/users/${lookup.result.userId}`}
-                    className="rounded-sm whitespace-nowrap text-primary hover:underline focus-visible:ring-[3px] focus-visible:ring-ring focus-visible:outline-none"
-                    onClick={() => handleOpenChange(false)}
-                  >
-                    상세에서 재활성화 →
-                  </Link>
+                  {/* 기존 409(MEMBER_SUSPENDED) 처리의 링크와 같은 경로·문구. userId 를 모르면 링크를 그리지 않는다. */}
+                  {lookup.result.userId !== null && (
+                    <Link
+                      to={`/admin/users/${lookup.result.userId}`}
+                      className="rounded-sm whitespace-nowrap text-primary hover:underline focus-visible:ring-[3px] focus-visible:ring-ring focus-visible:outline-none"
+                      onClick={() => handleOpenChange(false)}
+                    >
+                      상세에서 재활성화 →
+                    </Link>
+                  )}
                 </InlineBanner>
               )}
               {/* 기존 계정이면 이름·임시 비밀번호 칸을 숨긴다(비활성이 아니라 숨김 — 쓰지 않는 칸이 보이면 무엇을 넣어야 할지 헷갈린다). */}
@@ -638,12 +731,12 @@ export function AddMemberDialog({ canAssignRoles, canReadRoles }: { canAssignRol
               </p>
             )}
             <DialogFooter>
-              {/* 제출 전 존재 확인 중에도 잠근다 — 닫은 뒤 확인 응답이 제출로 이어지지 않게(WD-751). */}
-              <Button type="button" variant="outline" disabled={pending} onClick={() => handleOpenChange(false)}>
+              {/* 실제 제출 중에만 잠근다. 제출 전 존재 확인만 도는 동안에는 닫을 수 있다 — 닫힌 뒤 확인 응답은 버려지고 제출로 이어지지 않는다(WD-771). */}
+              <Button type="button" variant="outline" disabled={isSubmitting} onClick={() => handleOpenChange(false)}>
                 취소
               </Button>
-              {/* 이미 멤버면 진행 중 잠금(pending)이 아니라 제출 불가라 disabled 로 잠근다(PendingButton 규칙). */}
-              <PendingSubmitButton pending={pending} disabled={isAlreadyMember}>
+              {/* 이미 멤버·비활성 계정이면 진행 중 잠금(pending)이 아니라 제출 불가라 disabled 로 잠근다(PendingButton 규칙). */}
+              <PendingSubmitButton pending={pending} disabled={blocksSubmit}>
                 {pending && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
                 {isExistingAccount ? '기존 계정 추가' : '추가'}
               </PendingSubmitButton>
