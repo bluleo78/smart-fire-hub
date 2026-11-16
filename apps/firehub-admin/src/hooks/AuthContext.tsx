@@ -3,8 +3,13 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { AUTH_FLAG_KEY, cancelQueuedRequests, setAccessToken } from '../api/client';
 import { platformAuthApi } from '../api/platform-auth';
-import type { PlatformMeResponse, PlatformTokenResponse } from '../types/platform';
+import type {
+  PlatformMeResponse,
+  PlatformSignupRequest,
+  PlatformTokenResponse,
+} from '../types/platform';
 import { AuthContext } from './auth-context-value';
+import { SignupSessionError } from './signup-session-error';
 
 // React StrictMode(dev)에서 useEffect 가 두 번 실행되어 refresh 가 중복 호출되는 것을 막는다.
 let pendingRefresh: Promise<{ data: PlatformTokenResponse }> | null = null;
@@ -62,15 +67,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const login = useCallback(async (username: string, password: string) => {
-    const { data: tokens } = await platformAuthApi.login({ username, password });
+  /**
+   * 로그인·가입 공통 마무리 — 토큰 저장 → me 확정 → 플래그 → setMe 순서다.
+   * 플래그는 me() 성공 뒤에 세운다(L2) — 먼저 세우면 me() 실패 시 `hasAdminSession=true`
+   * 인데 `me===null` 인 어긋난 상태가 남는다.
+   */
+  const establishSession = useCallback(async (tokens: PlatformTokenResponse) => {
     setAccessToken(tokens.accessToken);
     const { data: identity } = await platformAuthApi.me();
-    // 플래그는 me() 성공 뒤에 세운다(L2) — 먼저 세우면 me() 실패 시 `hasAdminSession=true`
-    // 인데 `me===null` 인 어긋난 상태가 남는다.
     localStorage.setItem(AUTH_FLAG_KEY, 'true');
     setMe(identity);
   }, []);
+
+  const login = useCallback(
+    async (username: string, password: string) => {
+      const { data: tokens } = await platformAuthApi.login({ username, password });
+      await establishSession(tokens);
+    },
+    [establishSession],
+  );
+
+  /**
+   * 첫 운영자 가입(WD-749) — 응답이 로그인과 같아 곧바로 세션을 연다.
+   * 가입 요청의 실패는 그대로 던지고, 가입 성공 뒤 세션 확정(me)이 실패하면 {@link SignupSessionError} 로
+   * 감싼다 — 그때 계정은 이미 있으므로 화면이 "로그인해 주세요" 로 안내해야 한다.
+   */
+  const signup = useCallback(
+    async (data: PlatformSignupRequest) => {
+      const { data: tokens } = await platformAuthApi.signup(data);
+      try {
+        await establishSession(tokens);
+      } catch (error) {
+        // 반쯤 열린 세션(토큰만 있는 상태)을 남기지 않는다.
+        setAccessToken(null);
+        throw new SignupSessionError(error);
+      }
+    },
+    [establishSession],
+  );
 
   const logout = useCallback(async () => {
     try {
@@ -91,8 +125,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const ctxValue = useMemo(
-    () => ({ me, permissions, isLoading, isAuthenticated, login, logout, hasPermission }),
-    [me, permissions, isLoading, isAuthenticated, login, logout, hasPermission],
+    () => ({ me, permissions, isLoading, isAuthenticated, login, signup, logout, hasPermission }),
+    [me, permissions, isLoading, isAuthenticated, login, signup, logout, hasPermission],
   );
 
   return <AuthContext value={ctxValue}>{children}</AuthContext>;

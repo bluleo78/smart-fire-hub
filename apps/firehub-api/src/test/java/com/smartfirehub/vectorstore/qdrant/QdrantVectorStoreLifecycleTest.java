@@ -324,6 +324,9 @@ class QdrantVectorStoreLifecycleTest {
     try (org.testcontainers.qdrant.QdrantContainer off =
         new org.testcontainers.qdrant.QdrantContainer(QdrantTestContainer.IMAGE)
             .withApiKey("rbac-off-key")
+            // 하네스와 같은 까닭으로 저장소를 메모리에 둔다(WD-758) — 느린 디스크에서 payload 색인 생성이 제한 시간을 넘으면 일시 장애로
+            // 분류돼 기동이 멈추지 않고, 이 시험이 보려는 JWT 거부 판정까지 가지 못한다.
+            .withTmpFs(QdrantTestContainer.STORAGE_TMPFS)
             // 훅처럼 여러 빌드가 겹치면 도커 API 가 응답 없이 끊길 때가 있다(NoHttpResponse) — 띄우기만 다시 시도한다.
             .withStartupAttempts(3)) {
       off.start();

@@ -15,6 +15,7 @@
 - 백엔드 API(`/api/platform/**`)는 firehub-api가 이미 제공하며 별도 서비스가 아니다. firehub-admin 이미지 자체 nginx.conf가 `/api/` 를 컨테이너 네트워크의 `api:8080`으로 프록시하므로, 운영 compose에는 볼륨 마운트나 별도 env 없이 이미지 그대로 등록하면 된다(web처럼 게이트웨이용 `./nginx.conf`를 덮어쓸 필요 없음).
 - 운영 포트: `ADMIN_PORT`(기본 `8889`, `.env`) → 컨테이너 80. web과 동일하게 전체 공개 바인딩.
 - 첫 배포 전 확인: `docker compose up -d admin` 실행 후 `http://<host>:${ADMIN_PORT:-8889}` 접속, 운영자 로그인 화면이 뜨는지 확인.
+- **새 설치본의 첫 운영자 계정(WD-749)**: 설치 직후(사용자 0명) admin 로그인 화면에 「첫 운영자 계정 만들기」가 보인다. 거기서 가입하면 그 계정이 플랫폼 SUPER_ADMIN(기본 워크스페이스 ADMIN·USER 겸)이 되고 바로 콘솔에 들어간다. 먼저 가입한 사람이 운영자가 되므로 **가입을 마치기 전에는 외부에 노출하지 않는다**. 사용자가 한 명이라도 있으면 진입점이 보이지 않고 `POST /api/platform/auth/signup` 은 403 `SIGNUP_DISABLED` 다(web 첫 가입과 같은 잠금·판정 — 둘 중 한 곳에서만 성공). SQL 로 `platform_user_role` 을 직접 넣던 우회는 더 이상 필요 없다.
 
 ## Docker 빌드 규칙 (중요)
 
@@ -209,6 +210,7 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
 - V132 는 `"user".must_change_password BOOLEAN NOT NULL DEFAULT false` 한 컬럼 추가 — 기존 행 무영향, 잠금 짧음. 배포 전 스냅샷 규칙(V122 이상)은 그대로 따른다.
 - **배포 즉시 운영의 공개 가입이 닫힌다**(사용자가 이미 있으므로). 이후 계정은 각 워크스페이스 관리자가 사용자 관리 > 멤버 추가로 만든다. 기존 계정은 영향 없음.
 - **새 설치본(PG·Tibero)의 첫 가입자는 기본 워크스페이스 ADMIN 에 더해 플랫폼 SUPER_ADMIN 을 받아 운영자 콘솔 관리자가 된다(WD-748)** — 사람이 가입하기 전에 노출하지 않는다. 사용자가 이미 있는 기존 설치본(V82 승격으로 SUPER_ADMIN 보유)에는 영향 없음.
+- **admin 첫 가입(WD-749)**: 새 공개 경로 `GET /api/platform/auth/bootstrap-status`·`POST /api/platform/auth/signup`(가입 즉시 플랫폼 로그인, 로그인 IP 게이트 적용). admin 화면이 이 경로를 부르므로 **api + admin 동시 배포**. 사용자가 있는 기존 설치본에서는 진입점이 보이지 않아 동작 변화 없음.
 - 사용자 상세의 "활성" 스위치 의미가 바뀐다: 전역 계정 비활성화 → **이 워크스페이스 멤버십 정지**. 배포 후 **전역 계정 비활성화 수단이 없다**(운영자 콘솔 후속 이슈). 기존에 전역 `is_active=false` 로 막아 둔 계정은 그대로 막혀 있다.
 - 정지는 그 테넌트 권한을 즉시 0 으로 만든다(권한 조회가 ACTIVE 멤버십을 조인) — 진행 중 세션도 다음 요청부터 403.
 - 정지·제거의 "마지막 활성 ADMIN" 판정은 테넌트별 advisory lock 으로 직렬화된다(동시 요청으로 ADMIN 이 0명이 되는 것을 방지).

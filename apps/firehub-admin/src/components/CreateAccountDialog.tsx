@@ -1,11 +1,13 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
-import { AlertTriangle, CheckCircle2, Copy, Info, Loader2, RefreshCw } from 'lucide-react';
-import { type RefObject, useEffect, useRef, useState } from 'react';
+import { Info, Loader2 } from 'lucide-react';
+import { type RefObject, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 
 import { accountsApi } from '@/api/accounts';
+import { CredentialsResult } from '@/components/CredentialsResult';
+import { TemporaryPasswordField } from '@/components/TemporaryPasswordField';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -18,10 +20,9 @@ import {
 import { FormField } from '@/components/ui/form-field';
 import { InlineBanner } from '@/components/ui/inline-banner';
 import { Input } from '@/components/ui/input';
-import { PasswordInput } from '@/components/ui/password-input';
-import { copyText } from '@/lib/clipboard';
+import { PLATFORM_USER_SEARCH_KEY } from '@/hooks/usePlatformUserSearch';
 import { applyServerFieldErrors, isForbidden, serverMessage } from '@/lib/http-errors';
-import { generateTemporaryPassword, PASSWORD_HELP_TEXT, PASSWORD_MAX_BYTES } from '@/lib/temp-password';
+import { generateTemporaryPassword } from '@/lib/temp-password';
 import type { CreateAccountFormData } from '@/lib/validations/account';
 import { createAccountSchema } from '@/lib/validations/account';
 import type { ErrorResponse, PlatformAccountResponse } from '@/types/platform';
@@ -64,29 +65,24 @@ function CreateAccountDialogBody({
   const [created, setCreated] = useState<{ account: PlatformAccountResponse; password: string } | null>(null);
   const emailRef = useRef<HTMLInputElement | null>(null);
   const nameRef = useRef<HTMLInputElement | null>(null);
-  const copyAllRef = useRef<HTMLButtonElement | null>(null);
+  // 열 때(마운트) 한 번만 만든다 — useForm 의 defaultValues 인자는 렌더마다 평가되므로 거기서 바로 만들면 렌더마다 버려지는 비밀번호를 생성한다.
+  const [initialPassword] = useState(generateTemporaryPassword);
 
-  const {
-    register,
-    handleSubmit,
-    setValue,
-    setError,
-    getValues,
-    formState: { errors, isSubmitting },
-  } = useForm<CreateAccountFormData>({
+  const form = useForm<CreateAccountFormData>({
     resolver: zodResolver(createAccountSchema),
     mode: 'onBlur',
     reValidateMode: 'onChange',
-    // 마운트 시 한 번만 계산된다 — 열 때마다 새 비밀번호.
-    defaultValues: { email: initialEmail ?? '', name: '', temporaryPassword: generateTemporaryPassword() },
+    // 열 때마다 새로 마운트되므로 열 때마다 새 비밀번호다.
+    defaultValues: { email: initialEmail ?? '', name: '', temporaryPassword: initialPassword },
   });
+  const {
+    register,
+    handleSubmit,
+    setError,
+    formState: { errors, isSubmitting },
+  } = form;
   const emailField = register('email');
   const nameField = register('name');
-
-  // 결과 화면으로 바뀌면 제출 버튼이 사라져 포커스가 컨테이너로 떨어진다 — 다음 행동(복사)으로 옮긴다.
-  useEffect(() => {
-    if (created) copyAllRef.current?.focus();
-  }, [created]);
 
   /** 닫기 요청 — 제출 중(응답이 닫힌 뒤 도착)이거나 결과 화면(비밀번호를 다시 볼 수 없음)이면 무시한다. */
   const requestClose = (next: boolean) => {
@@ -110,7 +106,7 @@ function CreateAccountDialogBody({
       });
       // 계정 목록과 Owner 검색 캐시를 둘 다 무효화한다 — 남아 있으면 방금 만든 계정이 검색에 안 보여 중복 생성을 시도하게 된다.
       void queryClient.invalidateQueries({ queryKey: ['platform-accounts'] });
-      void queryClient.invalidateQueries({ queryKey: ['platform-user-search'] });
+      void queryClient.invalidateQueries({ queryKey: [PLATFORM_USER_SEARCH_KEY] });
       setCreated({ account: data, password: values.temporaryPassword });
     } catch (error) {
       const response = axios.isAxiosError(error) ? error.response : undefined;
@@ -159,51 +155,16 @@ function CreateAccountDialogBody({
         }}
       >
         {created ? (
-          <>
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">
-                <CheckCircle2 className="h-5 w-5 text-success" aria-hidden="true" />
-                계정을 만들었습니다
-              </DialogTitle>
-              <DialogDescription className="sr-only">새 계정의 아이디와 임시 비밀번호입니다.</DialogDescription>
-            </DialogHeader>
-            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto">
-              <InlineBanner variant="warning" icon={<AlertTriangle />} title="이 화면을 닫으면 비밀번호를 다시 볼 수 없습니다.">
-                <span className="break-keep">지금 복사해 본인에게 직접 전달하세요. 첫 로그인 시 비밀번호를 바꿔야 합니다.</span>
-              </InlineBanner>
-              <dl className="grid grid-cols-[auto_1fr] items-center gap-x-4 gap-y-2 text-sm">
-                <dt className="text-muted-foreground">아이디</dt>
-                <dd className="min-w-0">
-                  <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-sm break-all select-all">
-                    {created.account.username}
-                  </code>
-                </dd>
-                <dt className="text-muted-foreground">임시 비밀번호</dt>
-                <dd className="min-w-0">
-                  <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-sm break-all select-all">
-                    {created.password}
-                  </code>
-                </dd>
-              </dl>
-              <Button
-                ref={copyAllRef}
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() =>
-                  void copyText(`아이디: ${created.account.username}\n임시 비밀번호: ${created.password}`)
-                }
-              >
-                <Copy className="h-4 w-4" aria-hidden="true" />
-                아이디·비밀번호 함께 복사
-              </Button>
-            </div>
-            <DialogFooter>
-              <Button type="button" onClick={finish}>
-                {finishLabel}
-              </Button>
-            </DialogFooter>
-          </>
+          <CredentialsResult
+            title="계정을 만들었습니다"
+            description="새 계정의 아이디와 임시 비밀번호입니다."
+            warningTitle="이 화면을 닫으면 비밀번호를 다시 볼 수 없습니다."
+            idLabel="아이디"
+            idValue={created.account.username}
+            password={created.password}
+            finishLabel={finishLabel}
+            onFinish={finish}
+          />
         ) : (
           <form
             // 다이얼로그는 포털로 그려지지만 React 이벤트는 React 트리를 따라 올라간다 — 테넌트 생성 폼 안의 OwnerPicker 에서
@@ -262,56 +223,7 @@ function CreateAccountDialogBody({
                   }}
                 />
               </FormField>
-              <FormField
-                label="임시 비밀번호"
-                htmlFor="account-password"
-                error={errors.temporaryPassword?.message}
-                required
-              >
-                <div className="flex gap-2">
-                  <div className="min-w-0 flex-1">
-                    <PasswordInput
-                      id="account-password"
-                      className="font-mono"
-                      autoComplete="new-password"
-                      spellCheck={false}
-                      // maxLength 는 글자 수라 바이트 상한을 다 표현하지 못한다 — 72자로 1차 차단하고 한글 등 다바이트는 스키마가 막는다 (WD-605)
-                      maxLength={PASSWORD_MAX_BYTES}
-                      aria-invalid={!!errors.temporaryPassword}
-                      aria-describedby={
-                        errors.temporaryPassword ? 'account-password-help account-password-error' : 'account-password-help'
-                      }
-                      {...register('temporaryPassword')}
-                    />
-                  </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() =>
-                      setValue('temporaryPassword', generateTemporaryPassword(), {
-                        shouldValidate: true,
-                        shouldDirty: true,
-                      })
-                    }
-                  >
-                    <RefreshCw className="h-4 w-4" aria-hidden="true" />
-                    재생성
-                  </Button>
-                  {/* aria-label 에 "임시 비밀번호" 를 넣지 않는다 — 입력란 라벨과 이름이 겹쳐 보조기기에서 구분되지 않는다. */}
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    aria-label="비밀번호 복사"
-                    onClick={() => void copyText(getValues('temporaryPassword'))}
-                  >
-                    <Copy className="h-4 w-4" aria-hidden="true" />
-                  </Button>
-                </div>
-                <p id="account-password-help" className="text-[13px] text-muted-foreground break-keep">
-                  {PASSWORD_HELP_TEXT}. 열 때마다 자동으로 만들어집니다.
-                </p>
-              </FormField>
+              <TemporaryPasswordField idPrefix="account" form={form} error={errors.temporaryPassword?.message} />
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" disabled={isSubmitting} onClick={() => requestClose(false)}>

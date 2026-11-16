@@ -20,9 +20,15 @@ public final class PlatformAuthPaths {
   /** 운영자 평면 전체의 경로 접두어 패턴. */
   public static final String PLATFORM_PATTERN = "/api/platform/**";
 
-  /** 인증 없이 호출되는 운영자 경로. 로그인과 토큰 갱신뿐이다. */
+  /**
+   * 인증 없이 호출되는 운영자 경로. 로그인·토큰 갱신, 그리고 최초 운영자 부트스트랩 가입·가능 여부 조회(WD-749)다. 가입은 서비스가 사용자 0명일 때만 허용한다.
+   */
   public static final List<String> PUBLIC_PATTERNS =
-      List.of("/api/platform/auth/login", "/api/platform/auth/refresh");
+      List.of(
+          "/api/platform/auth/login",
+          "/api/platform/auth/refresh",
+          "/api/platform/auth/signup",
+          "/api/platform/auth/bootstrap-status");
 
   private PlatformAuthPaths() {}
 }

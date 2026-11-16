@@ -1,6 +1,6 @@
 import { createContext } from 'react';
 
-import type { PlatformMeResponse } from '../types/platform';
+import type { PlatformMeResponse, PlatformSignupRequest } from '../types/platform';
 
 export interface AuthContextValue {
   me: PlatformMeResponse | null;
@@ -9,6 +9,8 @@ export interface AuthContextValue {
   isLoading: boolean;
   isAuthenticated: boolean;
   login: (username: string, password: string) => Promise<void>;
+  /** 사용자 0명일 때 첫 운영자를 만들고 곧바로 로그인 상태가 된다(WD-749). */
+  signup: (data: PlatformSignupRequest) => Promise<void>;
   logout: () => Promise<void>;
   hasPermission: (code: string) => boolean;
 }

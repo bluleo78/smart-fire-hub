@@ -20,7 +20,9 @@ import com.smartfirehub.user.dto.UserResponse;
 import com.smartfirehub.user.exception.UserDeactivatedException;
 import com.smartfirehub.user.repository.UserRepository;
 import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -46,6 +48,9 @@ public class PlatformAuthService {
   private final LoginAttemptService loginAttemptService;
   private final PlatformRoleRepository platformRoleRepository;
   private final RefreshTokenRotation refreshTokenRotation;
+
+  /** 부트스트랩 가입 감사(WD-749) — 계정 조치와 같은 플랫폼 감사 형태로 남긴다. */
+  private final PlatformAuditRecorder auditRecorder;
 
   /** 같은 IP 에서 여러 계정에 돌려 보는 비밀번호 스프레이를 막는 IP 기준 제한(WD-578) — 테넌트 로그인과 같은 정책·같은 카운터. */
   private final LoginIpThrottleService loginIpThrottleService;
@@ -115,6 +120,38 @@ public class PlatformAuthService {
 
     loginAttemptService.loginSucceeded(username);
     return issue(user.id(), user.username(), UUID.randomUUID());
+  }
+
+  /**
+   * 최초 운영자 부트스트랩 가입의 후처리(WD-749): 플랫폼 감사를 남기고 그 username 의 로그인 실패 카운터를 비운다.
+   *
+   * <p>컨트롤러는 트랜잭션이 없고 {@link PlatformAuditRecorder} 는 호출자 트랜잭션에 합류하므로, 여기서 작은 트랜잭션을 연다(기존 계정 조치가
+   * 서비스 트랜잭션 안에서 부르는 것과 같은 방식). 가입 직후·로그인 전에 부르므로 이어지는 로그인이 실패해도 감사는 남는다.
+   *
+   * <p>카운터를 비우는 이유: 가입 전에 같은 username 으로 쌓인 로그인 실패는 "없던 계정" 에 대한 것이라, 그대로 두면 방금 만든 운영자가 잠금(429)에 걸려
+   * 가입 직후 로그인이 막힌다.
+   *
+   * @param created 방금 가입한 사용자
+   */
+  @Transactional
+  public void afterBootstrapSignup(UserResponse created) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("username", created.username());
+    // 요청 컨텍스트가 없으면 null — 그때는 ip 를 넣지 않는다.
+    String ip = clientIpExtractor.currentRequestIp();
+    if (ip != null) {
+      details.put("ip", ip);
+    }
+    // 가입 규칙이 부여하는 롤 — 감사만 보고도 "누가 최고 권한을 얻었는가" 를 알 수 있게 한다.
+    details.put("roles", List.of("SUPER_ADMIN", "ADMIN", "USER"));
+    auditRecorder.record(
+        created.id(),
+        "BOOTSTRAP_SIGNUP",
+        "user",
+        String.valueOf(created.id()),
+        "첫 운영자 계정 가입(부트스트랩)",
+        details);
+    loginAttemptService.loginSucceeded(userRepository.resolveLoginUsername(created.username()));
   }
 
   /**

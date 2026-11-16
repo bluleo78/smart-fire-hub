@@ -77,6 +77,8 @@ class QdrantDedicatedRowTargetTest extends IntegrationTestBase {
     dedicatedContainer =
         new QdrantContainer(QdrantTestContainer.IMAGE)
             .withApiKey(DEDICATED_KEY)
+            // 하네스와 같은 까닭으로 저장소를 메모리에 둔다(WD-758 — 느린 디스크의 동기 쓰기 회피).
+            .withTmpFs(QdrantTestContainer.STORAGE_TMPFS)
             .withEnv("QDRANT__SERVICE__JWT_RBAC", "true")
             .withStartupAttempts(3);
     dedicatedContainer.start();

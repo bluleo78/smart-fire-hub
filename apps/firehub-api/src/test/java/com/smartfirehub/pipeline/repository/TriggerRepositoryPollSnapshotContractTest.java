@@ -43,6 +43,13 @@ public abstract class TriggerRepositoryPollSnapshotContractTest extends TenantPa
 
   @BeforeEach
   void createWatchingTrigger() {
+    // 테넌트 A 를 정지 상태로 둔다(WD-769). 데이터셋 변경 폴러(TriggerEventService.pollDatasetChanges, 30초 주기)는 ACTIVE
+    // 테넌트를 모두 돌며, 이 시험의 트리거가 감시하는 가짜 데이터셋 id(101·102·7 …)를 「지워진 데이터셋」으로 보고
+    // removeWatchedDataset 으로 먼저 빼 버린다 — 부하가 큰 전체 실행에서 수·켜짐 단언이 간헐적으로 어긋났다. 저장소 호출은
+    // 테넌트 범위(GUC)로 그대로 실행되므로(상태는 보지 않는다) 계약의 의미는 바뀌지 않는다. 트리거를 만들기 전에 정지해야 틈이 없다.
+    // 다른 테넌트 시나리오의 테넌트 B 트리거도 같은 이유로 폴러에서 뺀다.
+    fx.setTenantStatus(tenantA, "SUSPENDED");
+    fx.setTenantStatus(tenantB, "SUSPENDED");
     pipelineId = fx.createPipeline(tenantA, prefix + "-p", true);
     triggerId = watchTrigger(pipelineId, "{\"datasetIds\":[101,102]}", POLLER_STATE);
   }

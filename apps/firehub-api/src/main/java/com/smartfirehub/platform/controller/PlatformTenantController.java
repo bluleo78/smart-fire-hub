@@ -7,15 +7,18 @@ import com.smartfirehub.platform.dto.DataStoreBackendOption;
 import com.smartfirehub.platform.dto.DataStoreConnectionTestRequest;
 import com.smartfirehub.platform.dto.DataStoreScriptResponse;
 import com.smartfirehub.platform.dto.DataStoreVerifyResponse;
+import com.smartfirehub.platform.dto.PlatformAddMemberRequest;
 import com.smartfirehub.platform.dto.TenantCreatedResponse;
 import com.smartfirehub.platform.dto.TenantDataStoreResponse;
 import com.smartfirehub.platform.dto.TenantMemberResponse;
 import com.smartfirehub.platform.dto.TenantSummaryResponse;
 import com.smartfirehub.platform.dto.TenantVectorStoreResponse;
 import com.smartfirehub.platform.dto.VectorStoreSetupRequest;
+import com.smartfirehub.platform.service.PlatformTenantMemberService;
 import com.smartfirehub.platform.service.PlatformTenantService;
 import com.smartfirehub.platform.service.TenantDataStoreSetupService;
 import com.smartfirehub.platform.service.TenantVectorStoreSetupService;
+import com.smartfirehub.user.dto.AddMemberResponse;
 import com.smartfirehub.vectorstore.tenant.VectorStoreConnectionTestResult;
 import jakarta.validation.Valid;
 import java.util.List;
@@ -49,6 +52,8 @@ public class PlatformTenantController {
   private final PlatformTenantService tenantService;
   private final TenantDataStoreSetupService dataStoreService;
   private final TenantVectorStoreSetupService vectorStoreSetupService;
+  // 운영자 콘솔 멤버 추가(WD-750)
+  private final PlatformTenantMemberService memberService;
 
   @GetMapping
   @RequirePermission("platform:tenant:read")
@@ -90,6 +95,23 @@ public class PlatformTenantController {
   @RequirePermission("platform:member:read")
   public ResponseEntity<List<TenantMemberResponse>> members(@PathVariable long tenantId) {
     return ResponseEntity.ok(tenantService.members(tenantId));
+  }
+
+  /**
+   * 테넌트에 멤버를 추가한다(WD-750). {@code userId} 가 있으면 그 기존 계정을 붙이고, 없으면 이메일로 찾아 계정이 없을 때만 임시 비밀번호로 만든다.
+   * 비활성 계정은 409 {@code ACCOUNT_INACTIVE}.
+   *
+   * <p>권한을 {@code platform:tenant:create} 로 두는 이유: 테넌트를 만들 수 있는 운영자가 그 테넌트의 첫 멤버를 넣을 수 있어야 생성 직후 바로
+   * 쓸 수 있는 테넌트가 된다. 조회 전용 {@code platform:member:read} 로는 쓰기를 허용하지 않는다.
+   */
+  @PostMapping("/{tenantId}/members")
+  @RequirePermission("platform:tenant:create")
+  public ResponseEntity<AddMemberResponse> addMember(
+      @PathVariable long tenantId,
+      @Valid @RequestBody PlatformAddMemberRequest request,
+      Authentication authentication) {
+    return ResponseEntity.status(HttpStatus.CREATED)
+        .body(memberService.addMember(tenantId, request, (Long) authentication.getPrincipal()));
   }
 
   // ── 데이터셋 저장소(WD-73) ────────────────────────────────────────────────

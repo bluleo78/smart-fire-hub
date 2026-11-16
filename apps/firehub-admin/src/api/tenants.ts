@@ -1,4 +1,6 @@
 import type {
+  AddTenantMemberRequest,
+  AddTenantMemberResponse,
   ConnectionTestResult,
   CreateTenantRequest,
   DataStoreBackendOption,
@@ -23,6 +25,12 @@ export const tenantsApi = {
   suspend: (id: number) => client.post<void>(`/tenants/${id}/suspend`),
   activate: (id: number) => client.post<void>(`/tenants/${id}/activate`),
   members: (id: number) => client.get<TenantMemberResponse[]>(`/tenants/${id}/members`),
+  /**
+   * 테넌트에 멤버를 넣는다(WD-750). 201 `{ userId, created }`. 409 code: MEMBER_ALREADY_EXISTS·MEMBER_SUSPENDED(errors.userId)·
+   * TENANT_SUSPENDED. 권한 `platform:tenant:create`.
+   */
+  addMember: (id: number, body: AddTenantMemberRequest) =>
+    client.post<AddTenantMemberResponse>(`/tenants/${id}/members`, body),
   /** 선택 가능한 저장소 백엔드 목록. 플래그가 꺼진 백엔드는 available=false. */
   dataStoreBackends: () => client.get<DataStoreBackendOption[]>('/tenants/data-store/backends'),
   /** 생성 전 연결 테스트(DBA_AUTO 전용). 접속 실패도 200 + ok=false 로 온다. */
