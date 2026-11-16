@@ -696,6 +696,69 @@ Tibero 테넌트의 파이프라인 SQL 단계는 api 가 새 서비스 `db-exec
   - 그 테넌트의 행 검색 컬렉션(`fh_rows_t<테넌트>_*`)만 전용 인스턴스에 생기고, 카탈로그·문서 검색은 공유 Qdrant 를 쓴다. 전용 인스턴스가 내려가면 그 테넌트 행 검색만 `UNAVAILABLE` 이고 다른 테넌트는 그대로다.
   - 백업은 고객 인프라 소관이다 — 공유 쪽 스냅샷 CronJob 은 전용 인스턴스를 뜨지 않는다. 같은 방식(`POST /collections/<이름>/snapshots`)으로 고객이 뜬다. 잃어도 원본에서 다시 색인할 수 있다(검색 설정을 껐다 켜면 전체 재색인).
 
+### Tibero 플랫폼 DB 설치·운영 (ADR 0001, WD-498 — 새 설치만)
+
+플랫폼 메타데이터(사용자·테넌트·데이터셋 정의·파이프라인·작업 큐)를 PostgreSQL 대신 Tibero 에 두는 설치본이다. 테넌트 데이터는 PG 데이터 저장소(분리 모드)에 두고, 테넌트마다 Tibero 데이터 저장소를 고를 수도 있다(위 「Tibero DB 실행기」). 결정과 근거는 `docs/adr/0001-platform-db-tibero.md`.
+
+- **새 설치만.** 데이터가 든 PG 설치본을 Tibero 플랫폼으로 옮기는 길은 없다. PG 설치본은 `tibero` 프로필을 켜지 않으므로 Tibero 코드·마이그레이션(`db/migration-tibero`)을 쓰지 않는다 — 이미지는 하나다.
+- **요구 사항**
+  - Tibero 7.2(JDBC `tibero7-jdbc-17.jar` 가 api·db-executor 이미지에 들어 있다). 판은 Enterprise 에서만 확인했다 — 다른 판이면 아래 점검의 `DBMS_RLS` 가 VALID 인지부터 본다.
+  - 세션: 설치본 하나가 `플랫폼 풀(poolSize, 기본 5 — 최소 유휴 = 최대라 상시) + JobRunr 풀(jobrunrPoolSize, 최대 4) + 기동 때 Flyway 1~2` 를 쓴다(기본 약 11). 아웃박스(`notification.outbox.enabled`, 기본 꺼짐)를 켰으면 깨우기(DBMS_ALERT) 세션 1개가 더해진다. 트라이얼·데모 라이선스는 세션 상한이 20 이라 같은 인스턴스를 쓰는 다른 설치본·팀과 나눠 쓴다. 빠듯하면 `platformDb.tibero.poolSize: 3`, `jobrunrPoolSize: 2`, 아웃박스를 켠 설치본은 `listenNotify: false`(깨우기 세션 없이 30초 폴링).
+  - api JVM 시간대 UTC(`-Duser.timezone=UTC`, `TZ=UTC`) — 아니면 `PlatformDbStartupGuard` 가 기동을 멈춘다(JobRunr 가 KST JVM 에서 깨진다, ADR 결정 6). Helm 이 넣어 준다.
+  - 데이터 저장소 PG: 빈 DB. 소유자 계정은 superuser(`CREATE EXTENSION postgis`)·`pg_read_all_stats`·`app_tenant` ADMIN OPTION 이 필요하다 — 공식 postgres 이미지의 `POSTGRES_USER` 가 이를 채운다(ADR 결정 4 「분리 모드」).
+- **설치 전 점검(DBA)** — `~/k8s/smart-fire-hub/tibero/create-platform-accounts.sql` 1) 절: 판 `enterprise`, `DBMS_RLS`·`DBMS_LOCK`·`DBMS_ALERT` 가 VALID, `V$LICENSE.EXPIRE_DATE`, 세션 여유(`MAX_SESSION_COUNT` − 현재 세션 ≥ poolSize + jobrunrPoolSize + 2), 같은 이름 계정 없음.
+- **계정 두 개(ADR 결정 7)** — 같은 SQL 파일 2)·3) 절을 DBA 가 실행한다.
+
+  | 계정 | Helm 값 | 권한 |
+  |---|---|---|
+  | 소유자(Flyway, 스키마) | `platformDb.tibero.ownerUsername` / `secrets.tiberoOwnerPassword` | `CREATE SESSION·TABLE·SEQUENCE·VIEW·PROCEDURE·TRIGGER`, `CREATE ANY CONTEXT`, `EXECUTE ON SYS.DBMS_RLS`, 기본 테이블스페이스 할당량 |
+  | 런타임(앱 풀) | `platformDb.tibero.runtimeUsername` / `secrets.tiberoRuntimePassword` | `CREATE SESSION`, `EXECUTE ON SYS.DBMS_LOCK`, `EXECUTE ON SYS.DBMS_ALERT`. 소유자 객체 권한은 api 가 기동마다 준다 |
+
+  두 이름이 같으면 테넌트 격리가 꺼지므로 Helm 렌더가 실패한다. 테넌트 컨텍스트 이름은 소유자 스키마 해시로 설치본마다 달라 한 인스턴스에 설치본 여럿을 둘 수 있다.
+- **Helm(`~/k8s/smart-fire-hub`, 저장소 밖)** — 기본 `platformDb.type: postgres` 렌더는 이 기능을 넣기 전과 같다. `values.tibero.yaml` 이 예시 오버레이다.
+
+  | 값 | 내용 |
+  |---|---|
+  | `platformDb.type` | `tibero` 면 api 에 `SPRING_PROFILES_ACTIVE=prod,tibero`, UTC, 아래 접속 env 가 들어간다 |
+  | `platformDb.tibero.url` | `jdbc:tibero:thin:@<호스트>:8629:<SID>` → `SPRING_DATASOURCE_URL`·`SPRING_FLYWAY_URL` |
+  | `platformDb.tibero.ownerUsername` / `runtimeUsername` | → `SPRING_FLYWAY_USER` / `SPRING_DATASOURCE_USERNAME` |
+  | `platformDb.tibero.poolSize` / `jobrunrPoolSize` / `listenNotify` | → `PLATFORM_DB_POOL_SIZE` / `JOBRUNR_POOL_SIZE` / `-Dnotification.worker.listen_notify=false`(아웃박스를 켠 설치본만 의미) |
+  | `api.appBaseUrl`·`api.corsAllowedOrigins`·`config.minioPublicEndpoint` | 기본값은 기존 설치본 호스트다 — **반드시 이 설치본 주소로 덮는다**(그대로면 파일 presign·메일 링크가 다른 설치본을 가리킨다). 인그레스 없이 점검할 때는 web port-forward 주소 하나(web nginx 가 api·MinIO 를 프록시) |
+  | `secrets.tiberoOwnerPassword` / `tiberoRuntimePassword` | 시크릿 키 `TIBERO_OWNER_PASSWORD`·`TIBERO_RUNTIME_PASSWORD` → `secretKeyRef` 로만 주입. 비면 렌더 실패 |
+  | (자동) `DATA_STORE_PG_*` | 같은 네임스페이스 `db`: URL `jdbc:postgresql://db:5432/<postgresDb>`, 소유자 `config.postgresUser`/`secrets.postgresPassword`, 런타임 `app_tenant`/`secrets.postgresRuntimePassword` |
+
+  비밀값은 `values.secret.tibero.example.yaml` 을 복사해 **새 값으로** 채운다(다른 설치본의 JWT·암호화 키를 재사용하지 않는다).
+- **설치 순서**
+  1. 이미지 확인: 쓸 api 이미지의 `app.jar` 안 `db/migration-tibero` 최신 파일이 저장소 main 과 같은지 본다 — `c=$(docker create --platform linux/amd64 <레지스트리>/api:<태그>); docker cp $c:/app/app.jar api.jar; docker rm $c; unzip -l api.jar | grep -oE 'db/migration-tibero/V[0-9.]+__[^ ]+' | sort -V | tail`.
+  2. 설치 전 점검 → 계정 SQL(DBA).
+  3. 네임스페이스와 neo4j pull secret: `kubectl create namespace <ns>` 후 기존 네임스페이스와 같은 방법으로 `dhi-pull` 시크릿을 만든다(`values.cloudia.yaml` 주석).
+  4. `helm install <release> ~/k8s/smart-fire-hub -n <ns> -f values.yaml -f values.cloudia.yaml -f values.tibero.yaml -f values.secret.tibero.yaml`.
+  5. api 기동 로그: Tibero Flyway 가 `V155` 부터 최신까지 적용, `TiberoRuntimeGrantCallback` 의 런타임 권한 부여, 단일 계정 경고(「런타임 계정이 없어 테넌트 격리가 꺼져 있습니다」)가 **없어야** 한다. 첫 기동은 기준선 적용 때문에 PG 보다 오래 걸린다(startupProbe 여유 ~600s).
+  6. 끝-끝 점검: 가입 → 플랫폼 롤 → 테넌트 생성 → 데이터셋 업로드·조회 → SQL 파이프라인 실행 → (Qdrant 를 켰으면) 위 Qdrant 「설치 순서와 점검」 3~5.
+- **꺼지는 기능(ADR 결정 3)**: Qdrant 를 켜지 않은 Tibero 설치본은 벡터·키워드(트라이그램) 검색이 비활성이다(화면은 숨기지 않고 안내). Qdrant 를 켜면 Tibero 플랫폼에서도 검색이 동작한다(ADR 0002). **Qdrant 데이터 PV 는 반드시 블록 스토리지** — 2026-11-16 PoC 클러스터(NFS StorageClass 뿐)에서 Qdrant 를 NFS 에 두자 기동 때 `NFS may cause data corruption` 을 내고 두 번째 컬렉션 생성이 끝나지 않아, api 는 「저장소 일시 중단」으로만 떴다(검색 외 기능은 정상).
+- **백업·복구** — 두 DB 는 원자적이지 않다(분리 모드는 데이터 저장소를 먼저 커밋한다). 그래서 **api·executor 를 0 으로 줄인 같은 정지 창에서** 둘을 뜨고, 되살릴 때도 둘을 같은 시점 것으로 맞춘다.
+  - Tibero: 소유자 스키마 단위 `tbexport`(옵션 문법은 설치된 Tibero 매뉴얼로 확인)(예: `tbexport username=<DBA> password=… sid=<SID> user=<소유자> file=<경로>.dat`, 되살리기는 `tbimport … fromuser=<소유자> touser=<소유자>`). 런타임 계정 권한은 api 가 기동마다 다시 주므로 따로 뜨지 않는다. 테넌트 컨텍스트(`FH_TENANT_<해시>`)는 인스턴스 전역 객체라 스키마 덤프에 들어가지 않을 수 있다 — 빈 인스턴스로 되살리면 api 기동 전에 컨텍스트를 다시 만든다. 이름은 백업 전에 `SELECT NAMESPACE FROM DBA_CONTEXT WHERE SCHEMA = '<소유자>'` 로 적어 두고(또는 되살린 스키마에서 `SELECT DISTINCT TEXT FROM USER_SOURCE WHERE TEXT LIKE '%FH_TENANT\_%' ESCAPE '\'` 로 찾고), 소유자로 `CREATE OR REPLACE CONTEXT <이름> USING FH_TENANT;` 를 실행한다.
+  - PG 데이터 저장소: `pg_dump -Fc -U <POSTGRES_USER> <postgresDb>` 와 **롤도 함께** `pg_dumpall --roles-only -U <POSTGRES_USER>`(롤은 클러스터 전역이라 `pg_dump` 에 들어가지 않는다). 되살리기는 새 PG 에 롤 덤프를 먼저 적용한 뒤 빈 DB 에 `pg_restore` 한다 — `app_tenant`·`pipeline_executor` 는 데이터 저장소 V1 만 만들고, 되살린 이력상 V1 은 이미 적용돼 다시 돌지 않으므로 롤이 없으면 복원의 `GRANT … TO app_tenant` 가 실패하고 기동 때 비밀번호 맞추기(`ALTER ROLE`)가 실패해 api 가 뜨지 않는다. postgis 이미지가 initdb 때 만든 확장에 대한 `CREATE EXTENSION … already exists` 오류는 무시해도 된다. 테넌트 파이프라인 롤(`pipeline_executor_t<id>`)도 롤 덤프에 들어 있다.
+  - Qdrant 를 켰으면 위 Qdrant 「백업」(벡터는 파생 데이터라 다시 색인으로도 복구된다). MinIO 버킷은 PG 설치본과 같다.
+- **업그레이드와 마이그레이션 실패 복구**
+  - 업그레이드 = 새 이미지로 api 재기동. 기동 때 Flyway 가 `db/migration-tibero` 의 새 파일을 적용한다. Tibero DDL 은 암묵 커밋이라 **업그레이드 전 백업(위 절차)** 을 뜬다.
+  - 실패하면 api 가 기동하지 않는다. 로그에서 실패한 버전·문장을 보고, 남은 객체를 확인한 뒤 원인을 고친다(파일 수정·멱등화는 새 이미지로). 증분 Tibero 마이그레이션은 1파일 1DDL 또는 멱등 블록이라 다시 돌려도 같은 끝 상태로 모인다(ADR 결정 2).
+  - **첫 설치의 기준선(`V155`·`V155.1`)이 실패했으면** 이어 붙이지 않고 처음부터 한다: api 를 내리고 두 계정을 DROP·재생성(계정 SQL 의 철거 절 → 2)·3) 절, 남은 `FH_TENANT_<해시>` 컨텍스트도 DROP)한 뒤 다시 기동한다(ADR 결정 2 「설치 기준선이 실패하면 스키마를 비우고 처음부터」).
+  - Flyway CLI 는 Tibero 플러그인이 없어 쓸 수 없다. `repair` 대신 실패 이력 행을 손으로 지운다(소유자 계정, tbsql):
+    ```sql
+    SELECT "installed_rank", "version", "description", "success" FROM "flyway_schema_history" WHERE "success" = 0;
+    DELETE FROM "flyway_schema_history" WHERE "success" = 0;
+    COMMIT;
+    ```
+    그 뒤 고친 이미지로 재기동하면 그 버전부터 다시 적용한다. 이미 성공한 버전의 파일을 고쳐 체크섬이 달라졌다는 오류(`Migration checksum mismatch`)면 파일을 되돌리는 것이 원칙이다 — 불가피하면 그 행의 `"checksum"` 을 오류 메시지의 새 값으로 `UPDATE` 한다.
+  - WD-740 메모: 롤링 배포 중 `V162.2`(복사) 뒤·`V162.3`(교체) 전에 옛 파드가 행을 넣으면 `V162.3` 이 `-20740` 으로 멈춘다(데이터 손실 없음). 메시지의 `UPDATE <표> SET sql_text_new = sql_text WHERE sql_text_new IS NULL` 을 소유자로 실행·커밋하고 재기동한다.
+- **라이선스(데모·트라이얼)**
+  - 라이선스는 호스트명에 묶인다. 클러스터 Tibero 는 Deployment + `spec.hostname`(지금 `wm-management`)으로 호스트명을 고정한다 — StatefulSet 은 `<이름>-N` 이라 쓰지 않는다.
+  - 만료 확인: `SELECT EDITION, EXPIRE_DATE FROM V$LICENSE;` 실서버 시험 하네스는 7일 안이면 경고, 지나면 건너뛴다(WD-497). 만료되면 Tibero 가 접속을 받지 않아 api 가 내려간다.
+  - 갱신(매달, 사람이 신청): TmaxTech 사이트에서 같은 호스트명으로 데모 라이선스를 받는다 → `license.xml` 로 클러스터 Secret(`tibero-license`)을 바꾼다 → Tibero 파드를 재기동한다. **이미지 함정**: 새 파드가 `/tmp/tibero.tar.gz` 로 DB 를 새로 만들 수 있다 — `/opt/tibero7` 이 PVC 이고 래퍼가 설치를 건너뛰는지 확인한 뒤 재기동한다(`~/k8s/tibero/tibero.yaml`). 갱신 전에 위 백업을 뜬다.
+- **보안 메모(WD-365, 미해결)**: 파이프라인 Python 단계는 샌드박스 안에서 내부 주소에 직접 연결할 수 있다. Tibero·PG·Qdrant 는 앱과 같은 신뢰 경계(같은 내부망)에만 두고, 여러 설치본이 Tibero 인스턴스 하나를 쓰면 한 설치본의 테넌트 Python 이 그 인스턴스 포트에 닿을 수 있음을 감안한다(계정·격리 정책은 그대로 막는다).
+- **설치본 철거**: `helm uninstall` → 계정 SQL 파일 맨 아래 절(DROP USER 두 개, 남는 `FH_TENANT_<해시>` 컨텍스트 DROP). 사람이 확인하고 실행한다.
+
 ### 부분 배포 (빌드+push 완료 후 컨테이너만 재시작)
 
 ```bash
