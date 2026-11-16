@@ -58,3 +58,12 @@ export const addMemberSchema = z.object({
   roleIds: z.array(z.number()),
 });
 export type AddMemberFormData = z.infer<typeof addMemberSchema>;
+
+/**
+ * 기존 계정 추가 검증(WD-751) — 이메일 확인 결과가 기존 계정이면 이름·임시 비밀번호 칸을 숨기고 보내지도 않으므로 검사하지 않는다.
+ * 숨긴 칸에 남은 값(새 계정이라 생각하고 미리 쓴 것)이 형식 오류로 제출을 막지 않게 한다. 폼 값 타입은 새 계정 폼과 같다.
+ */
+export const addExistingMemberSchema = addMemberSchema.extend({
+  name: z.string(),
+  temporaryPassword: z.string(),
+});

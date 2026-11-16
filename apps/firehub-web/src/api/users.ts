@@ -4,6 +4,7 @@ import type {
   AddMemberRequest,
   AddMemberResponse,
   ChangePasswordRequest,
+  MemberLookupResponse,
   SetActiveRequest,
   SetRolesRequest,
   UpdateProfileRequest,
@@ -22,6 +23,11 @@ export const usersApi = {
   setUserActive: (id: number, data: SetActiveRequest) => client.put(`/users/${id}/active`, data),
   /** 멤버 추가(WD-2) — 새 계정이면 임시 비밀번호로 만들고, 기존 계정이면 이 워크스페이스에 붙인다. */
   addMember: (data: AddMemberRequest) => client.post<AddMemberResponse>('/users', data),
+  /**
+   * 멤버 추가 전 이메일 존재 확인(WD-751) — 새 계정/기존 계정/이미 멤버/정지 멤버.
+   * 이메일(개인정보)이 접근 로그의 URL 에 남지 않도록 GET 쿼리가 아니라 POST 본문으로 보낸다.
+   */
+  lookupMember: (email: string) => client.post<MemberLookupResponse>('/users/member-lookup', { email }),
   /** 이 워크스페이스에서 제거 — 계정과 만든 데이터는 남는다. */
   removeMember: (id: number) => client.delete(`/users/${id}/membership`),
 };

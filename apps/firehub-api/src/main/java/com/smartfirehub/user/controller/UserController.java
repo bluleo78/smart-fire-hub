@@ -110,6 +110,19 @@ public class UserController {
     return ResponseEntity.status(HttpStatus.CREATED).body(userService.addMember(request, callerId));
   }
 
+  /**
+   * 멤버 추가 전 이메일 존재 확인(WD-751). 새 계정 / 기존 계정(비멤버) / 이미 멤버 / 정지 멤버를 돌려준다.
+   *
+   * <p>멤버 추가와 같은 {@code user:write} 로 막는다 — 계정 존재 여부는 멤버를 추가할 수 있는 사람에게만 알려 준다. 이메일(개인정보)이 접근
+   * 로그·프록시 로그의 URL 에 남지 않도록 GET 쿼리가 아니라 POST 본문으로 받는다. 상태를 바꾸지 않으므로 200.
+   */
+  @PostMapping("/member-lookup")
+  @RequirePermission("user:write")
+  public ResponseEntity<MemberLookupResponse> lookupMember(
+      @Valid @RequestBody MemberLookupRequest request) {
+    return ResponseEntity.ok(userService.lookupMember(request.email()));
+  }
+
   @GetMapping("/{id}")
   @RequirePermission("user:read")
   public ResponseEntity<UserDetailResponse> getUserById(@PathVariable Long id) {

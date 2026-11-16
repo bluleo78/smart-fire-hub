@@ -572,6 +572,77 @@ class UserControllerTest {
     verify(userService, never()).addMember(any(), any());
   }
 
+  /** WD-751: 기존 계정 추가는 이름·임시 비밀번호 없이 보낸다 — DTO 검증이 막지 않고 서비스로 넘긴다(필수 여부는 서비스가 새 계정일 때만 본다). */
+  @Test
+  void addMember_withoutNameAndPassword_passesValidation() throws Exception {
+    mockAuthentication("user:write");
+    when(userService.addMember(any(), eq(1L))).thenReturn(new AddMemberResponse(9L, false));
+
+    mockMvc
+        .perform(
+            post("/api/v1/users")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"email\":\"old@acme.io\",\"roleIds\":[]}"))
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$.userId").value(9))
+        .andExpect(jsonPath("$.created").value(false));
+    verify(userService)
+        .addMember(argThat(r -> r.name() == null && r.temporaryPassword() == null), eq(1L));
+  }
+
+  /** WD-751: 이메일 존재 확인 — user:write 가 있으면 서비스 판정을 그대로 돌려준다. */
+  @Test
+  void memberLookup_withUserWrite_returnsStatus() throws Exception {
+    mockAuthentication("user:write");
+    when(userService.lookupMember("old@acme.io"))
+        .thenReturn(new MemberLookupResponse(MemberLookupResponse.Status.EXISTING, 5L, "기존이"));
+
+    mockMvc
+        .perform(
+            post("/api/v1/users/member-lookup")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"email\":\"old@acme.io\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("EXISTING"))
+        .andExpect(jsonPath("$.userId").value(5))
+        .andExpect(jsonPath("$.name").value("기존이"));
+  }
+
+  /** WD-751: user:write 없는 호출자는 403 — 계정 존재 여부를 흘리지 않도록 서비스를 부르지 않는다. */
+  @Test
+  void memberLookup_withoutUserWrite_forbidden() throws Exception {
+    mockAuthentication("user:read");
+
+    mockMvc
+        .perform(
+            post("/api/v1/users/member-lookup")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"email\":\"old@acme.io\"}"))
+        .andExpect(status().isForbidden())
+        .andExpect(
+            jsonPath("$.message").value("이 작업을 할 권한이 없습니다. 관리자에게 권한을 요청하세요. (필요 권한: user:write)"));
+    verify(userService, never()).lookupMember(any());
+  }
+
+  /** WD-751: 이메일 형식 검증은 멤버 추가와 같다 — 잘못된 형식이면 400, 서비스 호출 없음. */
+  @Test
+  void memberLookup_invalidEmail_badRequest() throws Exception {
+    mockAuthentication("user:write");
+
+    mockMvc
+        .perform(
+            post("/api/v1/users/member-lookup")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"email\":\"not-an-email\"}"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.email").value("올바른 이메일 형식이 아닙니다"));
+    verify(userService, never()).lookupMember(any());
+  }
+
   @Test
   void removeMember_withPermission_returnsNoContent() throws Exception {
     mockAuthentication("user:write");
