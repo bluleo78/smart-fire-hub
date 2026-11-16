@@ -40,6 +40,7 @@ import net.sf.jsqlparser.JSQLParserException;
 import net.sf.jsqlparser.expression.AnalyticExpression;
 import net.sf.jsqlparser.expression.Function;
 import net.sf.jsqlparser.expression.StringValue;
+import net.sf.jsqlparser.expression.operators.relational.ParenthesedExpressionList;
 import net.sf.jsqlparser.parser.CCJSqlParserConstants;
 import net.sf.jsqlparser.parser.CCJSqlParserUtil;
 import net.sf.jsqlparser.parser.ParseException;
@@ -52,6 +53,7 @@ import net.sf.jsqlparser.statement.create.table.ColDataType;
 import net.sf.jsqlparser.statement.delete.Delete;
 import net.sf.jsqlparser.statement.insert.Insert;
 import net.sf.jsqlparser.statement.select.AllTableColumns;
+import net.sf.jsqlparser.statement.select.GroupByElement;
 import net.sf.jsqlparser.statement.select.PlainSelect;
 import net.sf.jsqlparser.statement.select.Select;
 import net.sf.jsqlparser.statement.select.SelectItem;
@@ -456,6 +458,8 @@ public class SqlValidator {
   private static final Set<String> SQL_STANDARD_FUNCTIONS =
       Set.of(
           // 집계
+          // WD-768 — GROUPING(col) 은 ROLLUP/CUBE 결과의 소계 행 여부를 알려 주는 표준 집계형 함수(부작용 없음)
+          "grouping",
           "count",
           "sum",
           "avg",
@@ -939,7 +943,10 @@ public class SqlValidator {
     // 규칙).
     requireDataSchemaOnly(collected.tableFqns(writeTargetsOf(statement, collected)));
     requireNoBlockedFunctions(collected.functions(), collected.analyticFunctionNames());
-    requireOnlyKnownFunctions(collected.functions(), collected.analyticFunctionNames());
+    requireOnlyKnownFunctions(
+        collected.functions(),
+        collected.analyticFunctionNames(),
+        collected.groupByGroupingFunctions());
     requireNoReservedPseudoColumns(collected.columns());
     requireNoOidAliasTypes(collected.colDataTypes(), collected.selectItems());
     requireNoSelectInto(collected.plainSelects());
@@ -1563,10 +1570,17 @@ public class SqlValidator {
    * {@link #SEQUENCE_FUNCTIONS} 특례는 적용하지 않는다 — 이름 검사만 한다.
    */
   private void requireOnlyKnownFunctions(
-      List<Function> functions, List<String> analyticFunctionNames) {
+      List<Function> functions,
+      List<String> analyticFunctionNames,
+      Set<Function> groupByGroupingFunctions) {
     for (Function function : functions) {
       String fnName = function.getName();
       if (fnName == null) {
+        continue;
+      }
+      // WD-768 — GROUP BY 최상위의 ROLLUP/CUBE 는 함수가 아니라 그룹화 문법이다. 이름 허용목록 대조만 건너뛰고
+      // (식별자 형태·인자 검사는 그대로), 그 인자 안의 함수 호출은 별도 노드로 수집돼 계속 검사된다.
+      if (groupByGroupingFunctions.contains(function)) {
         continue;
       }
       String unquoted = simpleFunctionName(fnName);
@@ -1927,6 +1941,15 @@ public class SqlValidator {
     private final Set<Object> visited = Collections.newSetFromMap(new IdentityHashMap<>());
     private final List<Function> functions = new ArrayList<>();
     private final List<String> analyticFunctionNames = new ArrayList<>();
+
+    /**
+     * WD-768 — GROUP BY 절의 최상위 요소로 놓인 {@code ROLLUP(...)}/{@code CUBE(...)} Function 노드(동일성 비교).
+     * JSqlParser 5.0 은 이를 일반 Function 으로 파싱하므로, 위치(GROUP BY 최상위)로 한정해야 {@code SELECT rollup(x)} 같은
+     * 다른 위치의 사용은 계속 허용목록에서 거부된다.
+     */
+    private final Set<Function> groupByGroupingFunctions =
+        Collections.newSetFromMap(new IdentityHashMap<>());
+
     private final List<Column> columns = new ArrayList<>();
     private final List<PlainSelect> plainSelects = new ArrayList<>();
 
@@ -1962,6 +1985,10 @@ public class SqlValidator {
 
     List<Function> functions() {
       return functions;
+    }
+
+    Set<Function> groupByGroupingFunctions() {
+      return groupByGroupingFunctions;
     }
 
     /**
@@ -2148,6 +2175,7 @@ public class SqlValidator {
         tables.add(new TableRef(table, activeAliases));
       } else if (node instanceof PlainSelect plainSelect) {
         plainSelects.add(plainSelect);
+        registerGroupByGroupingFunctions(plainSelect);
       } else if (node instanceof Column column) {
         columns.add(column);
       } else if (node instanceof ColDataType colDataType) {
@@ -2184,6 +2212,27 @@ public class SqlValidator {
       } finally {
         if (pushedCteScope) {
           cteScopeStack.pop();
+        }
+      }
+    }
+
+    /** GROUP BY 최상위의 ROLLUP/CUBE 호출만 골라 {@link #groupByGroupingFunctions} 에 등록한다(WD-768). */
+    private void registerGroupByGroupingFunctions(PlainSelect plainSelect) {
+      GroupByElement groupBy = plainSelect.getGroupBy();
+      if (groupBy == null || groupBy.getGroupByExpressionList() == null) {
+        return;
+      }
+      // 목록 전체를 괄호로 묶은 GROUP BY((ROLLUP(a)), (a, CUBE(a)))는 PG 에서 그룹화 문법이 아니라 일반
+      // rollup/cube 함수 호출이다. 아무것도 등록하지 않아 함수 허용목록 검사를 그대로 받게 한다(WD-768 리뷰).
+      if (groupBy.getGroupByExpressionList() instanceof ParenthesedExpressionList<?>) {
+        return;
+      }
+      for (Object expr : groupBy.getGroupByExpressionList()) {
+        if (expr instanceof Function f && f.getName() != null) {
+          String n = f.getName().toLowerCase(Locale.ROOT);
+          if (n.equals("rollup") || n.equals("cube")) {
+            groupByGroupingFunctions.add(f);
+          }
         }
       }
     }
