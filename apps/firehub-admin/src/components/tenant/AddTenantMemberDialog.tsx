@@ -1,11 +1,12 @@
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import axios from 'axios';
 import { Loader2 } from 'lucide-react';
 import { type Ref, useId, useRef, useState } from 'react';
-import { type FieldErrors, useForm, type UseFormReturn } from 'react-hook-form';
+import { type FieldErrors, useForm, type UseFormReturn, useWatch } from 'react-hook-form';
 import { toast } from 'sonner';
 
+import { accountsApi } from '@/api/accounts';
 import { tenantsApi } from '@/api/tenants';
 import { CredentialsResult } from '@/components/CredentialsResult';
 import { TemporaryPasswordField } from '@/components/TemporaryPasswordField';
@@ -19,6 +20,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { FormField } from '@/components/ui/form-field';
+import { InlineBanner } from '@/components/ui/inline-banner';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -122,6 +124,8 @@ function AddTenantMemberDialogBody({ tenantId, tenantName, onOpenChange, onAdded
   const [admin, setAdmin] = useState(false);
   const [picked, setPicked] = useState<PlatformUserResponse | null>(null);
   const [created, setCreated] = useState<CreatedCredentials | null>(null);
+  // 「새 계정」 탭에서 이메일 blur 시 확인한 정규화 이메일 — 탭을 오가도(NewAccountTab 언마운트) 확인 결과가 유지되도록 본체에 둔다.
+  const [checkedEmail, setCheckedEmail] = useState('');
   // 열 때(마운트) 한 번만 만든다 — useForm 의 defaultValues 인자는 렌더마다 평가되므로 거기서 바로 만들면 렌더마다 버려지는 비밀번호를 생성한다.
   const [initialPassword] = useState(generateTemporaryPassword);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
@@ -150,9 +154,16 @@ function AddTenantMemberDialogBody({ tenantId, tenantName, onOpenChange, onAdded
     onSuccess: (data, { displayName, credentials }) => {
       onAdded();
       // created=true 는 새 계정 탭(email·임시 비밀번호를 보낸 요청)에서만 온다 — userId 경로는 계정을 만들지 않는다.
-      // 새 계정 탭이라도 이미 있는 계정이면 created=false 라 기존 계정처럼 토스트 후 닫는다.
+      // 새 계정 탭이라도 이미 있는 계정이면 created=false 라 경고 토스트 후 닫는다(위 분기).
       if (data.created && credentials) {
         setCreated(credentials);
+      } else if (credentials) {
+        // 새 계정 탭 요청이 이미 있는 계정에 붙었다(사전 확인이 놓친 경우) — 서버는 입력한 이름·임시 비밀번호를 쓰지 않았다.
+        // 운영자가 복사해 둔 비밀번호가 적용됐다고 오해하지 않게 경고하고, 서버가 이름을 주지 않으므로 실제 로그인 아이디를 보인다.
+        toast.warning(
+          `이미 있는 계정(${credentials.email})이라 기존 계정으로 추가했습니다 — 입력한 이름·임시 비밀번호는 쓰지 않았습니다`,
+        );
+        onOpenChange(false);
       } else {
         toast.success(`${displayName}님을 멤버로 추가했습니다`);
         onOpenChange(false);
@@ -183,7 +194,7 @@ function AddTenantMemberDialogBody({ tenantId, tenantName, onOpenChange, onAdded
     submit({
       body: { email, name, temporaryPassword: values.temporaryPassword, admin },
       displayName: name,
-      // 서버는 아이디를 소문자·공백 제거 이메일로 만든다 — 결과 화면도 실제 로그인 아이디를 보인다.
+      // 서버는 아이디를 소문자·공백 제거 이메일로 만든다 — 결과 화면·안전망 문구도 실제 로그인 아이디를 보인다.
       credentials: { email: email.toLowerCase(), password: values.temporaryPassword },
     });
   };
@@ -278,7 +289,19 @@ function AddTenantMemberDialogBody({ tenantId, tenantName, onOpenChange, onAdded
                 </TabsContent>
 
                 <TabsContent value="new" className="space-y-4 pt-2">
-                  <NewAccountTab form={form} errors={errors} />
+                  <NewAccountTab
+                    form={form}
+                    errors={errors}
+                    submitting={submitting}
+                    checkedEmail={checkedEmail}
+                    onCheckedEmailChange={setCheckedEmail}
+                    onUseExisting={(user) => {
+                      // 사전 안내의 「기존 계정으로 추가」 — 그 계정을 골라 둔 채 「기존 계정」 탭으로 바꾼다(ADMIN 체크는 그대로).
+                      setPicked(user);
+                      setMode('existing');
+                      clearErrors();
+                    }}
+                  />
                 </TabsContent>
               </Tabs>
 
@@ -354,11 +377,58 @@ function ExistingAccountTab({ picked, onPick, disabled, inputRef }: ExistingAcco
 interface NewAccountTabProps {
   form: UseFormReturn<CreateAccountFormData>;
   errors: FieldErrors<CreateAccountFormData>;
+  /** 제출 중이면 안내 버튼도 막는다(탭 트리거와 같다). */
+  submitting: boolean;
+  /** blur 시 확인한 정규화 이메일(본체가 들고 있어 탭을 오가도 유지된다). */
+  checkedEmail: string;
+  onCheckedEmailChange: (email: string) => void;
+  /** 사전 안내에서 「기존 계정으로 추가」를 눌렀을 때 — 부모가 그 계정을 고르고 탭을 바꾼다. */
+  onUseExisting: (user: PlatformUserResponse) => void;
 }
 
-/** 「새 계정」 탭 — 이메일·이름·임시 비밀번호(`createAccountSchema` 를 그대로 쓴다 — 서버 검증 경계가 같다). */
-function NewAccountTab({ form, errors }: NewAccountTabProps) {
-  const { register } = form;
+/** 서버가 아이디(username)로 쓰는 정규화 형태 — 공백 제거·소문자. */
+const normalizeEmail = (value: string) => value.trim().toLowerCase();
+
+/**
+ * 「새 계정」 탭 — 이메일·이름·임시 비밀번호(`createAccountSchema` 를 그대로 쓴다 — 서버 검증 경계가 같다).
+ *
+ * 이메일 칸에서 포커스가 빠지면(형식이 맞을 때) 플랫폼 사용자 검색으로 이미 그 이메일의 계정이 있는지 본다. 있으면 서버가
+ * 새 계정을 만들지 않고 입력한 이름·비밀번호를 버리므로, 제출 전에 기존 계정으로 추가하라고 안내한다. 검색 실패·진행 중에는
+ * 안내하지 않고(안전망은 제출 뒤 토스트) 제출을 막지도 않는다.
+ */
+function NewAccountTab({
+  form,
+  errors,
+  submitting,
+  checkedEmail,
+  onCheckedEmailChange,
+  onUseExisting,
+}: NewAccountTabProps) {
+  const { register, control } = form;
+  const emailRegistration = register('email');
+  // watch 대신 useWatch — 키 입력마다 대화상자 전체가 아니라 이 탭만 다시 그린다.
+  // 입력값이 checkedEmail 과 달라지면 이전 확인 결과의 안내가 즉시 숨는다.
+  const currentEmail = normalizeEmail(useWatch({ control, name: 'email' }) ?? '');
+  // 형식이 틀린 값으로는 검색하지 않는다(서버 400 방지 + 안내 대상 아님).
+  const checkable = createAccountSchema.shape.email.safeParse(checkedEmail).success;
+  // 서버가 기존 계정을 찾는 규칙(username = 정규화 이메일)과 맞추려고 username 을 주는 계정 목록 조회를 쓴다(비활성 포함, 같은 권한).
+  // 사용자 검색 캐시(PLATFORM_USER_SEARCH_KEY)와 결과 모양이 달라 이 대화상자 전용 키를 쓴다.
+  const lookup = useQuery({
+    queryKey: ['member-add-email-check', checkedEmail],
+    // 부분일치 검색 앞 20건만 보므로 그 이메일을 포함하는 다른 계정이 20건 넘게 있으면 놓칠 수 있다 — 그때는 제출 뒤 created=false 경고가 덮는다.
+    queryFn: () => accountsApi.list({ q: checkedEmail, page: 0, size: 20 }).then((r) => r.data),
+    enabled: checkable,
+    retry: false,
+    // 같은 이메일 blur·탭 왕복 때 다시 조회하지 않게 한다.
+    staleTime: 30_000,
+  });
+  // username 이 정규화 이메일과 정확히 같은 활성 계정만 — 부분일치·다른 아이디 계정을 기존 계정으로 오인하지 않는다.
+  // 비활성이면 안내하지 않는다(제출 시 서버 409 ACCOUNT_INACTIVE 안내가 뜬다). 지금 입력값이 확인한 값과 같을 때만 보인다.
+  const match =
+    checkable && currentEmail === checkedEmail
+      ? lookup.data?.content.find((a) => a.username === checkedEmail)
+      : undefined;
+  const existing = match?.active ? match : undefined;
   return (
     <>
       <FormField label="이메일(로그인 아이디)" htmlFor="member-email" error={errors.email?.message} required>
@@ -369,9 +439,32 @@ function NewAccountTab({ form, errors }: NewAccountTabProps) {
           maxLength={50}
           aria-invalid={!!errors.email}
           aria-describedby={errors.email ? 'member-email-error' : undefined}
-          {...register('email')}
+          {...emailRegistration}
+          onBlur={(e) => {
+            // react-hook-form 의 onBlur 검증을 유지한 채 기존 계정 확인 값을 갱신한다.
+            void emailRegistration.onBlur(e);
+            onCheckedEmailChange(normalizeEmail(e.target.value));
+          }}
         />
       </FormField>
+      {existing && (
+        <InlineBanner
+          variant="info"
+          actions={
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={submitting}
+              onClick={() => onUseExisting({ id: existing.id, email: existing.email, name: existing.name })}
+            >
+              기존 계정으로 추가
+            </Button>
+          }
+        >
+          {`이미 가입된 계정입니다 — ${existing.name}(${existing.username}). 새 계정을 만들지 않고 이 계정을 멤버로 추가합니다.`}
+        </InlineBanner>
+      )}
       <FormField label="이름" htmlFor="member-name" error={errors.name?.message} required>
         <Input
           id="member-name"

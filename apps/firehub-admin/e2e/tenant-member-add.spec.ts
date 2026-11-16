@@ -1,4 +1,6 @@
-import { createMember, createPlatformUser, createTenant } from './factories/platform.factory';
+import type { Page } from '@playwright/test';
+
+import { createAccount, createAccountPage, createMember, createPlatformUser, createTenant } from './factories/platform.factory';
 import { mockApi } from './fixtures/api-mock';
 import { expect, loginAs, test } from './fixtures/auth.fixture';
 
@@ -254,5 +256,143 @@ test.describe('테넌트 멤버 추가 (WD-750)', () => {
 
     await expect(page.getByRole('cell', { name: 'kim@example.com' })).toBeVisible();
     await expect(page.getByRole('button', { name: '멤버 추가' })).toHaveCount(0);
+  });
+
+  test.describe('새 계정 탭 기존 이메일 안내 (WD-770)', () => {
+    // 사전 확인은 계정 목록(username 기준)을 쓴다 — 서버가 기존 계정을 찾는 규칙과 같다.
+    const KIM = createAccount({ id: 42, username: 'kim@example.com', email: 'kim@example.com', name: '김철수', active: true });
+    const ACCOUNTS = '/api/platform/accounts';
+    const NOTICE = '이미 가입된 계정입니다 — 김철수(kim@example.com). 새 계정을 만들지 않고 이 계정을 멤버로 추가합니다.';
+
+    /** 테넌트 상세에서 멤버 추가 대화상자를 열어 「새 계정」 탭까지 간다 — 이 묶음의 시험이 공통으로 쓰는 준비. */
+    async function openNewAccountTab(page: Page) {
+      await mockApi(page, 'GET', '/api/platform/tenants/1', ACTIVE);
+      await mockApi(page, 'GET', '/api/platform/tenants/1/members', MEMBERS);
+      await page.goto('/tenants/1');
+      await page.getByRole('button', { name: '멤버 추가' }).click();
+      const dialog = page.getByRole('dialog');
+      await dialog.getByRole('tab', { name: '새 계정' }).click();
+      return dialog;
+    }
+
+    test('새 계정 탭에 기존 이메일을 넣으면 기존 계정으로 추가하라고 안내한다', async ({ authenticatedPage: page }) => {
+      await mockApi(page, 'GET', ACCOUNTS, createAccountPage([KIM]));
+      const capture = await mockApi(
+        page,
+        'POST',
+        '/api/platform/tenants/1/members',
+        { userId: 42, created: false },
+        { status: 201, capture: true },
+      );
+      const dialog = await openNewAccountTab(page);
+
+      const email = dialog.getByLabel('이메일(로그인 아이디)');
+      await email.fill('Kim@Example.com ');
+      await email.blur();
+      await expect(dialog.getByText(NOTICE)).toBeVisible();
+
+      await dialog.getByRole('button', { name: '기존 계정으로 추가' }).click();
+      await expect(dialog.getByRole('tab', { name: '기존 계정' })).toHaveAttribute('aria-selected', 'true');
+      await expect(dialog.getByRole('group', { name: '추가할 계정' })).toContainText('김철수');
+
+      await dialog.getByRole('button', { name: '추가', exact: true }).click();
+      const request = await capture.waitForRequest();
+      expect(request.payload).toEqual({ userId: 42, admin: false });
+      for (const key of ['email', 'name', 'temporaryPassword']) {
+        expect(request.payload as Record<string, unknown>).not.toHaveProperty(key);
+      }
+    });
+
+    test('이메일을 고치면 이전 안내가 사라진다', async ({ authenticatedPage: page }) => {
+      // 검색어에 따라 다른 결과 — kim 은 일치 계정, 그 밖은 빈 목록.
+      await page.route('**/api/platform/accounts?*', async (route) => {
+        const q = new URL(route.request().url()).searchParams.get('q');
+        const body = createAccountPage(q === 'kim@example.com' ? [KIM] : []);
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+      });
+      const dialog = await openNewAccountTab(page);
+
+      const email = dialog.getByLabel('이메일(로그인 아이디)');
+      await email.fill('kim@example.com');
+      await email.blur();
+      await expect(dialog.getByText(NOTICE)).toBeVisible();
+
+      await email.fill('other@example.com');
+      // 고치는 즉시(blur 전에도) 이전 확인 결과의 안내는 남지 않는다.
+      await expect(dialog.getByText(NOTICE)).toHaveCount(0);
+      await email.blur();
+      await expect(dialog.getByText(NOTICE)).toHaveCount(0);
+      await expect(dialog.getByRole('button', { name: '기존 계정으로 추가' })).toHaveCount(0);
+    });
+
+    test('검색이 실패해도 새 계정으로 추가할 수 있다', async ({ authenticatedPage: page }) => {
+      await mockApi(page, 'GET', ACCOUNTS, {}, { status: 500 });
+      await mockApi(page, 'POST', '/api/platform/tenants/1/members', { userId: 77, created: true }, { status: 201 });
+      const dialog = await openNewAccountTab(page);
+
+      const email = dialog.getByLabel('이메일(로그인 아이디)');
+      await email.fill('new@example.com');
+      await email.blur();
+      await dialog.getByLabel('이름').fill('신규자');
+      await expect(dialog.getByText('이미 가입된 계정입니다', { exact: false })).toHaveCount(0);
+
+      await dialog.getByRole('button', { name: '추가', exact: true }).click();
+      await expect(dialog.getByText('이 비밀번호는 다시 볼 수 없습니다', { exact: false })).toBeVisible();
+    });
+
+    test('새 계정 탭 요청이 기존 계정에 붙으면 비밀번호가 쓰이지 않았다고 경고한다', async ({
+      authenticatedPage: page,
+    }) => {
+      await mockApi(page, 'GET', ACCOUNTS, createAccountPage([]));
+      await mockApi(page, 'POST', '/api/platform/tenants/1/members', { userId: 9, created: false }, { status: 201 });
+      const dialog = await openNewAccountTab(page);
+
+      const email = dialog.getByLabel('이메일(로그인 아이디)');
+      await email.fill('Old@Example.com');
+      await email.blur();
+      await dialog.getByLabel('이름').fill('기존인');
+      await dialog.getByRole('button', { name: '추가', exact: true }).click();
+
+      await expect(
+        page.getByText(
+          '이미 있는 계정(old@example.com)이라 기존 계정으로 추가했습니다 — 입력한 이름·임시 비밀번호는 쓰지 않았습니다',
+        ),
+      ).toBeVisible();
+      await expect(page.getByText('이 비밀번호는 다시 볼 수 없습니다', { exact: false })).toHaveCount(0);
+      await expect(page.getByRole('dialog')).toHaveCount(0);
+    });
+
+    // 안내가 없어야 하는 경우 — 조회 응답을 기다린 뒤에도 안내가 없는지 본다(고정 대기 없이).
+    const NO_NOTICE_CASES = [
+      { title: 'username 이 이메일과 다른 계정은 안내하지 않는다', account: createAccount({ ...KIM, username: 'jdoe' }) },
+      { title: '비활성 계정은 안내하지 않는다', account: createAccount({ ...KIM, active: false }) },
+    ];
+    for (const { title, account } of NO_NOTICE_CASES) {
+      test(title, async ({ authenticatedPage: page }) => {
+        await mockApi(page, 'GET', ACCOUNTS, createAccountPage([account]));
+        const dialog = await openNewAccountTab(page);
+
+        const email = dialog.getByLabel('이메일(로그인 아이디)');
+        await email.fill('kim@example.com');
+        const lookup = page.waitForResponse((r) => new URL(r.url()).pathname === ACCOUNTS);
+        await email.blur();
+        await lookup;
+        await expect(dialog.getByText('이미 가입된 계정입니다', { exact: false })).toHaveCount(0);
+      });
+    }
+
+    test('탭을 오가도 안내가 유지된다', async ({ authenticatedPage: page }) => {
+      await mockApi(page, 'GET', ACCOUNTS, createAccountPage([KIM]));
+      const dialog = await openNewAccountTab(page);
+
+      const email = dialog.getByLabel('이메일(로그인 아이디)');
+      await email.fill('kim@example.com');
+      await email.blur();
+      await expect(dialog.getByText(NOTICE)).toBeVisible();
+
+      await dialog.getByRole('tab', { name: '기존 계정' }).click();
+      await dialog.getByRole('tab', { name: '새 계정' }).click();
+      await expect(dialog.getByText(NOTICE)).toBeVisible();
+    });
   });
 });

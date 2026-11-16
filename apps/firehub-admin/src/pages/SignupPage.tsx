@@ -38,7 +38,7 @@ const SERVER_FIELDS = ['username', 'name', 'email', 'password'] as const;
 export default function SignupPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { signup, isAuthenticated } = useAuth();
+  const { signup, isAuthenticated, isLoading } = useAuth();
   const [serverError, setServerError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   // 그 사이 다른 사람이 가입해 서버가 가입을 닫은 경우 — 폼을 안내로 바꾼다.
@@ -112,8 +112,17 @@ export default function SignupPage() {
     }
   };
 
-  // 이미 세션이 열렸으면(가입 직후 이동 중) 가입 불가 판정으로 /login 에 되돌려 보내지 않는다.
-  if (!signupClosed && !createdNeedsLogin && !isAuthenticated) {
+  // 새로고침 직후 세션 복원(refresh→me) 중에는 isAuthenticated 가 아직 false 라 판정이 틀린다 — 복원이 끝날 때까지 기다린다.
+  // isLoading 은 마운트 때만 true 였다가 한 번 false 가 되므로 가입 제출 중·직후(isSubmitting, signupClosed, createdNeedsLogin)의 폼을 지우지 않는다.
+  if (isLoading) return <PageSkeleton />;
+
+  // 로그인한 운영자가 /signup 을 직접 열면 첫 가입 폼을 보일 이유가 없다 — 콘솔로 보낸다.
+  // 단 「가입은 됐는데 로그인 실패」 안내(createdNeedsLogin)는 세션이 없을 때만 뜨므로 이 조건과 겹치지 않고,
+  // 가입 직후 세션이 열린 경우는 onSubmit 의 navigate('/tenants') 와 같은 곳으로 간다.
+  if (isAuthenticated && !createdNeedsLogin) return <Navigate to="/tenants" replace />;
+
+  // 세션이 없을 때만 가입 가능 여부를 본다 — 가입 불가면 /login 으로 돌려보낸다.
+  if (!signupClosed && !createdNeedsLogin) {
     if (status.isPending) return <PageSkeleton />;
     if (status.isError || !status.data.available) return <Navigate to="/login" replace />;
   }
