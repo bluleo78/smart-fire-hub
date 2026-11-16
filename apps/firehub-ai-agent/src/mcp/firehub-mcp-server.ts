@@ -26,6 +26,7 @@ import { registerDataImportTools } from './tools/dataimport-tools.js';
 import { registerAdminTools } from './tools/admin-tools.js';
 import { registerAuditTools } from './tools/audit-tools.js';
 import { registerGraphragTools } from './tools/graphrag-tools.js';
+import { registerReportFileTools } from './tools/report-file-tools.js';
 import type { ProviderConfig } from '../providers/types.js';
 
 /**
@@ -253,6 +254,12 @@ export interface BuildToolsOptions {
    * #30) — 없으면 createCompleter 가 기본 Claude SDK 경로로 간다(llm-completer.ts 참고).
    */
   credentials?: GraphragCredentials;
+  /**
+   * WD-765: 스마트 작업(Proactive) 리포트 디렉터리. 있으면 write_report_file 을 등록해 report-writer 하위 에이전트가
+   * 이 디렉터리의 세 파일(report.html·report.md·summary.md)에만 저장하게 한다. 없으면(일반 채팅) 도구 자체가 없다.
+   * SDK 는 실행 옵션에서, stdio 서버(opencode·CLI)는 부모가 주입한 env(FIREHUB_REPORT_DIR)에서 채운다.
+   */
+  reportDir?: string;
 }
 
 /**
@@ -295,6 +302,9 @@ export function registerAllTools(
     ...registerAdminTools(apiClient, safeToolFn, jsonResultFn),
     ...registerAuditTools(apiClient, safeToolFn, jsonResultFn),
     ...registerGraphragTools(apiClient, safeToolFn, jsonResultFn, options.credentials),
+    // 리포트 저장 도구는 스마트 작업 리포트 실행(reportDir 있음)에만 연다. 권한 표(TOOL_PERMISSION_REQUIREMENTS)에 없는
+    // 도구라 권한 조회가 실패(fail-closed, [])해도 남는다 — 플랫폼 데이터가 아니라 이 실행의 리포트 디렉터리에만 쓴다.
+    ...(options.reportDir ? registerReportFileTools(options.reportDir, safeToolFn, jsonResultFn) : []),
   ];
   // 권한 필터 다음에 테넌트 필터 — 행 검색이 꺼진 테넌트는 행 검색 도구를 목록에서 뺀다(WD-744).
   return filterToolsByPermissions(allTools, options.userPermissions).filter((t) =>

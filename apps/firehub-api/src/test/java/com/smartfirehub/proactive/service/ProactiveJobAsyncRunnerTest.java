@@ -666,4 +666,63 @@ class ProactiveJobAsyncRunnerTest {
       releaseRunnerLogs(logs);
     }
   }
+
+  /**
+   * WD-765: 위임 경로에서 리포트 파일이 저장되지 않아(reportFilesMissing=true) 결과를 거절하면, 「AI 인증 정보 확인」 대신 저장 실패 문구로
+   * FAILED 를 남긴다. 거절 판정(빈 결과·실패 서명) 자체는 그대로다.
+   */
+  @Test
+  void 리포트_파일이_저장되지_않은_결과를_거절하면_저장_실패_문구로_기록한다() {
+    when(aiCredentialService.resolve()).thenReturn(new AiCredential.Sdk("", "sk-test"));
+    // 빈 결과 — 기존에도 거절되는 결과에 reportFilesMissing 만 참
+    when(aiClient.execute(any(), any(), any(), any(), any(), any(), any(), any()))
+        .thenReturn(new ProactiveResult("리포트", List.of(), null, null, null, true));
+
+    assertThatThrownBy(() -> runner.executeJob(JOB_ID, USER_ID))
+        .isInstanceOf(ProactiveJobException.class);
+
+    verify(executionRepository)
+        .updateError(EXECUTION_ID, ProactiveResultValidator.REPORT_NOT_SAVED_MESSAGE);
+    verify(executionRepository, never()).updateResult(any(), any(), any(), any());
+  }
+
+  /**
+   * WD-765: 인증·한도 실패 서명으로 거절된 결과는 reportFilesMissing=true 여도 기존 「AI 인증 정보 확인」 문구다 — 파일이 없던 진짜 원인이
+   * 인증·한도 실패라서다(ai-agent 의 「인증·한도 신호가 늘 우선」 규칙과 같다).
+   */
+  @Test
+  void 실패_서명으로_거절되면_리포트_파일이_없었어도_인증_문구로_기록한다() {
+    when(aiCredentialService.resolve()).thenReturn(new AiCredential.Sdk("", "sk-test"));
+    when(aiClient.execute(any(), any(), any(), any(), any(), any(), any(), any()))
+        .thenReturn(
+            new ProactiveResult(
+                "리포트",
+                List.of(
+                    new ProactiveResult.Section(
+                        "content", "분석 결과", "API Error: 429 rate limited", null, null)),
+                null,
+                null,
+                null,
+                true));
+
+    assertThatThrownBy(() -> runner.executeJob(JOB_ID, USER_ID))
+        .isInstanceOf(ProactiveJobException.class);
+
+    verify(executionRepository)
+        .updateError(EXECUTION_ID, ProactiveResultValidator.USER_FACING_FAILURE_MESSAGE);
+  }
+
+  /** WD-765 회귀 방지: 리포트 파일 문제와 무관한(reportFilesMissing=false) 거절은 기존 「AI 인증 정보 확인」 문구 그대로다. */
+  @Test
+  void 리포트_파일_문제가_아닌_거절은_기존_인증_문구로_기록한다() {
+    when(aiCredentialService.resolve()).thenReturn(new AiCredential.Sdk("", "sk-test"));
+    when(aiClient.execute(any(), any(), any(), any(), any(), any(), any(), any()))
+        .thenReturn(new ProactiveResult("리포트", List.of(), null, null, null, false));
+
+    assertThatThrownBy(() -> runner.executeJob(JOB_ID, USER_ID))
+        .isInstanceOf(ProactiveJobException.class);
+
+    verify(executionRepository)
+        .updateError(EXECUTION_ID, ProactiveResultValidator.USER_FACING_FAILURE_MESSAGE);
+  }
 }

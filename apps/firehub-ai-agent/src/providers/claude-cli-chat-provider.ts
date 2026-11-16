@@ -32,6 +32,8 @@ export class ClaudeCliChatProvider implements ChatProvider {
       proactiveExecutionId: options.proactiveExecutionId,
       dbDialect: options.dbDialect,
       rowSearch: options.rowSearch,
+      // WD-765: 스마트 작업 리포트 실행이면 MCP 프로세스가 write_report_file 을 이 디렉터리 전용으로 연다.
+      reportDir: options.reportDir,
     };
     yield* executeCliAgent(cliOptions);
   }

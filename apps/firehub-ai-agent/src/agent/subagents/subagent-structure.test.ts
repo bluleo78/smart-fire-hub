@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { loadSubagents } from '../subagent-loader.js';
 
 /**
  * 11개 subagent rules.md/agent.md 의 4 레이어 구조 일관성 검증 (refs #260 PR-5).
@@ -77,6 +78,34 @@ describe('11개 subagent 4 레이어 구조 일관성 (refs #260 PR-5)', () => {
       const userFacingPermKey = content.match(/"[^"]*(?:user|role|audit|admin):(?:read|write|assign)[^"]*권한[^"]*"/g);
       expect(userFacingPermKey, `${sa}: 사용자 응답에 권한 키 평문 노출 금지`).toBeNull();
     }
+  });
+});
+
+/**
+ * report-writer 저장 도구 회귀 가드 (WD-765).
+ *
+ * report-writer 는 스마트 작업 리포트 세 파일을 전용 MCP 도구 write_report_file 로만 저장한다 — 범용 Write 는
+ * 모든 경로에서 차단(tool-policy DISALLOWED_TOOLS)이라 tools 에 Write 가 남아 있으면 저장을 한 번도 못 한다.
+ * 도구 오류를 「생성 완료」로 답하지 않는 규칙도 본문에 고정한다.
+ */
+describe('report-writer 저장 도구 (WD-765)', () => {
+  // 실제 실행과 같은 로더로 읽는다 — frontmatter 파싱·본문(prompt) 조립을 테스트가 따로 흉내 내지 않는다.
+  const reportWriter = loadSubagents()['report-writer'];
+
+  it('tools 는 mcp__firehub__write_report_file 하나이고 firehub MCP 서버를 쓴다', () => {
+    expect(reportWriter.tools).toEqual(['mcp__firehub__write_report_file']);
+    expect(reportWriter.mcpServers).toContain('firehub');
+  });
+
+  it('본문이 Write 도구로 저장하라고 안내하지 않고, 전용 도구의 인자(fileName·content)를 안내한다', () => {
+    expect(reportWriter.prompt).not.toMatch(/Write ?도구|Write로|Write 로/);
+    expect(reportWriter.prompt).toContain('write_report_file');
+    expect(reportWriter.prompt).toContain('fileName');
+    expect(reportWriter.prompt).toContain('content');
+  });
+
+  it('도구가 오류를 돌려주면 성공이라 답하지 말고 실패한 파일·오류를 답하라고 한다', () => {
+    expect(reportWriter.prompt).toMatch(/오류[\s\S]*?(성공|생성 완료)[\s\S]*?(답하지|말고)/);
   });
 });
 

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   createFireHubMcpServer,
   buildAllMcpTools,
@@ -10,6 +10,11 @@ import {
 import { ROW_SEARCH_TOOLS } from '../agent/db-dialect.js';
 import { FireHubApiClient } from './api-client.js';
 import { createTracker, FAILURE_WARN_SENTINEL } from '../agent/failure-streak.js';
+import { mkdtemp, readFile, rm } from 'fs/promises';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { PROACTIVE_REPORT_ROOT } from '../agent/tenant-paths.js';
+import { WRITE_REPORT_FILE_TOOL } from './tools/report-file-tools.js';
 
 function createMockClient(): FireHubApiClient {
   const client = Object.create(FireHubApiClient.prototype);
@@ -386,9 +391,9 @@ describe('destructive tool filtering', () => {
     expect(tools.find((t) => t.name === 'drop_dataset_column')).toBeDefined();
   });
 
-  // WD-62: SDK 경로는 report-writer 하위 에이전트의 Write 로 리포트를 쓴다 — 리포트 쓰기 MCP 도구는
-  // reportDir 을 주입받는 stdio 서버 전용이라 SDK 인메모리 서버에는 절대 실리지 않아야 한다.
-  it('SDK 도구 목록에는 write_report_file 이 없다 (WD-62)', () => {
+  // WD-62·WD-765: 리포트 쓰기 도구는 스마트 작업 리포트 실행(reportDir 있음)에만 실린다 — 일반 채팅의 SDK 도구
+  // 목록에는 절대 없어야 한다(반목표: 일반 채팅에서 write_report_file 이 보이는 것).
+  it('reportDir 이 없으면 SDK 도구 목록에 write_report_file 이 없다 (WD-62)', () => {
     expect(buildAllMcpTools(client).find((t) => t.name === 'write_report_file')).toBeUndefined();
   });
 
@@ -570,5 +575,50 @@ describe('POLICY_BLOCKED 도구 결과 표식(S3)', () => {
     await def.handler({});
     const second = await def.handler({});
     expect(second.content.map((c) => c.text).join('')).toContain(FAILURE_WARN_SENTINEL);
+  });
+});
+
+// WD-765: SDK 경로의 report-writer 도 opencode(WD-62)와 같은 전용 저장 도구로 리포트를 쓴다 — 인메모리 MCP 서버가
+// reportDir 이 있을 때만 write_report_file 을 등록하고, 그 도구는 reportDir 안 허용된 세 파일에만 쓴다.
+describe('SDK 리포트 저장 도구 (WD-765)', () => {
+  let base: string;
+  let reportDir: string;
+
+  beforeEach(async () => {
+    base = await mkdtemp(join(tmpdir(), 'wd765-'));
+    reportDir = join(base, PROACTIVE_REPORT_ROOT, 't1', '1-100');
+  });
+
+  afterEach(async () => {
+    await rm(base, { recursive: true, force: true });
+  });
+
+  it('reportDir 이 있으면 도구 목록에 write_report_file 이 있고, 없으면 없다', () => {
+    const names = (opts?: Parameters<typeof buildAllMcpTools>[1]) =>
+      buildAllMcpTools(createMockClient(), opts).map((t) => t.name);
+    expect(names({ reportDir })).toContain(WRITE_REPORT_FILE_TOOL);
+    expect(names()).not.toContain(WRITE_REPORT_FILE_TOOL);
+    // 권한이 비어 있어도(fail-closed) 리포트 저장 도구는 남는다 — 저장은 권한 게이팅 대상인 플랫폼 변경이 아니다.
+    expect(names({ reportDir, userPermissions: [] })).toContain(WRITE_REPORT_FILE_TOOL);
+  });
+
+  it('createFireHubMcpServer 의 도구는 reportDir 안 report.html 에 저장한다', async () => {
+    const server = createFireHubMcpServer(createMockClient(), { reportDir });
+    const res = await invokeTool(server, WRITE_REPORT_FILE_TOOL, { fileName: 'report.html', content: '<!DOCTYPE html><p>ok</p>' });
+    expect(res.isError).toBeFalsy();
+    expect(await readFile(join(reportDir, 'report.html'), 'utf-8')).toBe('<!DOCTYPE html><p>ok</p>');
+  });
+
+  it('허용되지 않은 파일 이름은 오류 결과를 돌려준다', async () => {
+    const server = createFireHubMcpServer(createMockClient(), { reportDir });
+    const res = await invokeTool(server, WRITE_REPORT_FILE_TOOL, { fileName: '../evil.html', content: 'x' });
+    expect(res.isError).toBe(true);
+  });
+
+  it('reportDir 이 없는 서버에는 도구가 등록되지 않는다', async () => {
+    const server = createFireHubMcpServer(createMockClient());
+    await expect(invokeTool(server, WRITE_REPORT_FILE_TOOL, { fileName: 'report.html', content: 'x' })).rejects.toThrow(
+      /not found/,
+    );
   });
 });

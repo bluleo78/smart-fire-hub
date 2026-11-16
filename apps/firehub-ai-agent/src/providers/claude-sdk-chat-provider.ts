@@ -29,7 +29,7 @@ export class ClaudeSdkChatProvider implements ChatProvider {
       proactiveExecutionId: options.proactiveExecutionId,
       dbDialect: options.dbDialect,
       rowSearch: options.rowSearch,
-      // 프로액티브 리포트 실행이면 report-writer 의 reportDir 저장(Write)을 연다.
+      // WD-765: 프로액티브 리포트 실행이면 인메모리 MCP 서버에 write_report_file 을 이 디렉터리 전용으로 연다.
       reportDir: options.reportDir,
     };
     yield* executeAgent(agentOptions);

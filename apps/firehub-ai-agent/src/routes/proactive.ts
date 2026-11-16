@@ -80,7 +80,19 @@ interface ProactiveResponse {
     inputTokens: number;
     outputTokens: number;
   };
+  /**
+   * WD-765: 위임 경로(sdk·cli)에서 리포트 파일(report.html·report.md)이 하나도 저장되지 않아 rawText 로 대신 응답했을 때만 true.
+   * firehub-api 가 이 결과를 거절(실패 서명·빈 결과)하면 「AI 인증 정보 확인」 대신 저장 실패 문구를 고르는 근거다.
+   * 파일이 있거나 opencode 면 싣지 않는다.
+   */
+  reportFilesMissing?: boolean;
 }
+
+/**
+ * WD-765: 위임 경로에서 리포트 파일이 저장되지 않았고 대신 쓸 출력도 없을 때의 502 코드. firehub-api ProactiveAiClient 가
+ * 이 코드로 「AI가 리포트 파일을 저장하지 못해…」 안내를 고른다.
+ */
+export const AGENT_REPORT_NOT_SAVED = 'AGENT_REPORT_NOT_SAVED';
 
 const MAX_AGENT_TURNS = 15;
 
@@ -177,8 +189,14 @@ interface ProactivePromptParts {
   footer: string;
 }
 
-/** sdk/cli: report-writer 하위 에이전트에게 reportDir 저장을 위임한다(기존 동작 — 문구를 바꾸지 않는다). */
-function delegationPromptParts(reportDir: string): ProactivePromptParts {
+/**
+ * sdk/cli: report-writer 하위 에이전트에게 리포트 저장을 위임한다.
+ *
+ * <p>WD-765: 하위 에이전트는 호스트 Write 대신 전용 도구 write_report_file(fileName·content)로만 저장하고,
+ * 저장 위치는 도구가 이 실행의 reportDir 로 정한다. 그래서 전체 경로는 프롬프트에 싣지 않고 파일 이름만
+ * 안내한다 — 경로가 보이면 모델이 경로를 인자로 넣거나 Write 로 직접 쓰려 한다.
+ */
+function delegationPromptParts(): ProactivePromptParts {
   return {
     header:
       '당신은 프로액티브 AI 분석가입니다. 응답은 반드시 한국어로 작성하세요.\n\n' +
@@ -191,14 +209,15 @@ function delegationPromptParts(reportDir: string): ProactivePromptParts {
       'Agent 도구로 report-writer를 호출하세요. 프롬프트에 다음을 **모두** 포함하세요:\n\n' +
       '1. **분석 결과**: 수집/분석한 데이터와 인사이트\n' +
       '2. **리포트 양식**: 아래 제공되는 섹션 구조와 지시문\n' +
-      `3. **파일 저장 디렉토리**: ${reportDir}\n` +
-      `   - HTML 리포트: ${reportDir}/report.html (웹 뷰어용)\n` +
-      `   - 마크다운 리포트: ${reportDir}/report.md (PDF/이메일용, HTML과 동일 내용)\n` +
-      `   - 요약 텍스트: ${reportDir}/summary.md (채팅 알림용, 3~5줄)\n\n` +
-      '**중요**: generate_report, show_chart 등 UI 도구를 호출하지 마세요. 리포트 생성은 반드시 report-writer에게 위임하세요.\n\n',
+      '3. **저장할 파일**: report-writer 는 write_report_file 도구(인자 fileName·content)로만 저장합니다. 경로는 지정하지 않습니다.\n' +
+      '   - fileName=report.html — HTML 리포트 (웹 뷰어용)\n' +
+      '   - fileName=report.md — 마크다운 리포트 (PDF/이메일용, HTML과 동일 내용)\n' +
+      '   - fileName=summary.md — 요약 텍스트 (채팅 알림용, 3~5줄)\n\n' +
+      '**중요**: generate_report, show_chart 등 UI 도구를 호출하지 마세요. 리포트 생성은 반드시 report-writer에게 위임하세요.\n' +
+      '**저장 확인**: report-writer 결과에 저장 실패·오류가 있으면 생성 완료라고 쓰지 말고 실패를 그대로 적으세요.\n\n',
     templateHeading: '## 리포트 양식 (report-writer에게 전달할 것)\n\n',
     noTemplate: '## 리포트 양식\n\n양식 없음. 자유 형식으로 분석 결과 리포트를 작성하도록 위임하세요.\n',
-    footer: `\n리포트 저장 디렉토리: ${reportDir}\n`,
+    footer: '',
   };
 }
 
@@ -237,20 +256,28 @@ function buildTemplateSectionList(template: Template): string {
 }
 
 /**
+ * report-writer 하위 에이전트에게 리포트 저장을 위임하는 경로(sdk·cli·cli-api)인지 — opencode 만 위임 없이 직접 저장한다.
+ * 프롬프트 선택과 WD-765 의 「파일 없음」 안내(502 코드·reportFilesMissing)가 같은 기준을 쓰도록 한 곳에 둔다.
+ */
+function isDelegationPath(agentType: AgentType): boolean {
+  return agentType !== 'opencode';
+}
+
+/**
  * 프로액티브 실행의 시스템 프롬프트를 만든다.
  *
- * <p>sdk/cli 는 report-writer 하위 에이전트에게 reportDir 저장을 위임하고(기존 동작), opencode 는 위임이
- * 불가능하므로 {@link OPENCODE_REPORT_GUIDE} 로 직접 작성·write_report_file 저장을 지시한다(WD-62).
+ * <p>sdk/cli 는 report-writer 하위 에이전트에게 리포트 작성을 위임하고, 하위 에이전트는 write_report_file 도구에
+ * 파일 이름(fileName)만 넘겨 저장한다 — 저장 위치(reportDir)는 도구가 정하므로 프롬프트에 경로를 싣지 않는다(WD-765).
+ * opencode 는 위임이 불가능하므로 {@link OPENCODE_REPORT_GUIDE} 로 직접 작성·write_report_file 저장을 지시한다(WD-62).
  *
  * <p>dialect 가 TIBERO 면 끝(footer 뒤)에 {@link TIBERO_SQL_GUIDE} 를 붙인다(WD-79). PG 결과는 변경 전과 같다.
  */
 export function buildProactiveSystemPrompt(
   template: Template | undefined,
-  reportDir: string,
   agentType: AgentType,
   dialect: DbDialect = DEFAULT_DB_DIALECT,
 ): string {
-  const parts = agentType === 'opencode' ? OPENCODE_PROMPT_PARTS : delegationPromptParts(reportDir);
+  const parts = isDelegationPath(agentType) ? delegationPromptParts() : OPENCODE_PROMPT_PARTS;
   const body = template ? parts.templateHeading + buildTemplateSectionList(template) : parts.noTemplate;
   const prompt = parts.header + body + parts.footer;
   // WD-79: Proactive 는 overrideSystemPrompt 라 메인 프롬프트(Tibero SQL 규칙 포함)가 들어가지 않는다 — Tibero
@@ -310,7 +337,8 @@ export function detectAgentFailure(rawText: string): string | null {
 
 /**
  * 리포트를 만들지 못한 실행의 502 응답. firehub-api ProactiveAiClient 는 본문의 `code` 로 사용자 안내를
- * 고른다(AGENT_AUTH_OR_QUOTA_FAILURE → "AI 인증 정보 확인"). 오류 원문은 응답에 싣지 않는다.
+ * 고른다(AGENT_AUTH_OR_QUOTA_FAILURE → "AI 인증 정보 확인", WD-765 AGENT_REPORT_NOT_SAVED → "리포트 파일 저장
+ * 실패"). 오류 원문은 응답에 싣지 않는다.
  */
 function respondNoUsableReport(res: Response, code: string): void {
   res.status(502).json({ error: 'Agent produced no usable report', code });
@@ -432,10 +460,12 @@ router.post('/proactive', ...authedJsonBody(), async (req: Request, res: Respons
   const reportDir = proactiveReportDir(tenantId, userId, Date.now());
   // WD-79: 테넌트 저장소 방언 — 같은 값을 프롬프트(아래)와 provider(MCP 도구 노출·서브에이전트 사본)에 함께 쓴다.
   const dbDialect = parseDbDialect(body.dbDialect);
-  const systemPrompt = buildProactiveSystemPrompt(body.template, reportDir, agentType, dbDialect);
+  const systemPrompt = buildProactiveSystemPrompt(body.template, agentType, dbDialect);
   const initialUserMessage = `${body.prompt}\n\n컨텍스트:\n${JSON.stringify(body.context)}`;
 
   let rawText = '';
+  // WD-765: 직전 이벤트가 text 였는지 — text 블록 경계(사이에 tool_use·tool_result 등이 끼었는지) 판정용.
+  let prevWasText = false;
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
 
@@ -475,12 +505,18 @@ router.post('/proactive', ...authedJsonBody(), async (req: Request, res: Respons
       dbDialect,
       // WD-744: 행 검색 도구 노출·서브에이전트 tools 를 방언 대신 이 플래그로 가른다.
       rowSearch: parseRowSearch(body.rowSearch),
-      // WD-62: opencode 실행기가 이 값을 MCP 프로세스 env 로 넘겨 write_report_file 을 이 디렉터리 전용으로 연다.
+      // 실행기가 write_report_file 을 이 디렉터리 전용으로 연다 — opencode(WD-62)·cli(WD-765)는 MCP 프로세스
+      // env FIREHUB_REPORT_DIR 로 넘기고, sdk(WD-765)는 in-process MCP 서버에 이 디렉터리로 도구를 등록한다.
       reportDir,
     });
 
     for await (const event of events) {
       if (event.type === 'text') {
+        // WD-765: 도구 호출(tool_use·tool_result 등) 사이로 끊긴 text 블록은 서로 다른 단락이다. 그냥 이어
+        // 붙이면 「앞 설명## 요약」처럼 헤더가 줄 머리에서 벗어나 parseSections 가 섹션을 못 찾는다.
+        // 그래서 직전 이벤트가 text 가 아니었고 앞 내용이 줄바꿈으로 끝나지 않을 때만 빈 줄을 넣는다.
+        // 같은 블록의 델타(직전도 text)는 그대로 붙이고, rawText 가 비면 앞에 넣지 않는다.
+        if (!prevWasText && rawText !== '' && !rawText.endsWith('\n')) rawText += '\n\n';
         rawText += event.content;
       } else if (event.type === 'done' || event.type === 'error') {
         totalInputTokens = (event.inputTokens as number) || 0;
@@ -498,6 +534,7 @@ router.post('/proactive', ...authedJsonBody(), async (req: Request, res: Respons
           throw new Error((event.message as string) || 'Agent execution failed');
         }
       }
+      prevWasText = event.type === 'text';
     }
 
     // report-writer가 디렉토리에 3개 파일을 생성:
@@ -524,6 +561,9 @@ router.post('/proactive', ...authedJsonBody(), async (req: Request, res: Respons
     // 이 실행은 분석을 전혀 수행하지 못한 것이다. 200으로 응답하면 백엔드가 COMPLETED로
     // 기록하고 오류 원문을 리포트 본문 삼아 CHAT/EMAIL로 발송한다 (이슈 #350).
     // 리포트 파일이 하나라도 생성됐다면 정상 실행이므로 이 게이트를 타지 않는다.
+    // WD-765: 위임 경로(sdk·cli)에서 파일이 없다는 건 report-writer 가 저장하지 못했다는 뜻이다 — 사용자 안내가 진짜 원인
+    // (저장 실패)을 말하도록 502 코드와 200 의 reportFilesMissing 을 이 값으로 정한다.
+    const reportFilesMissing = !fromFile && isDelegationPath(agentType);
     if (!fromFile) {
       const failureSignature = detectAgentFailure(rawText);
       if (failureSignature || !rawText.trim()) {
@@ -531,7 +571,13 @@ router.post('/proactive', ...authedJsonBody(), async (req: Request, res: Respons
         console.error(
           `[Proactive] Agent produced no usable report (signature=${failureSignature ?? 'empty-output'}). raw: ${rawText.slice(0, 500)}`,
         );
-        respondNoUsableReport(res, failureSignature ? AGENT_AUTH_OR_QUOTA_FAILURE : 'AGENT_EMPTY_OUTPUT');
+        // 인증·한도 신호가 언제나 우선이다(진짜 인증 실패 안내는 그대로). 그 밖의 빈 출력은 위임 경로면 저장 실패로 안내한다.
+        const code = failureSignature
+          ? AGENT_AUTH_OR_QUOTA_FAILURE
+          : reportFilesMissing
+            ? AGENT_REPORT_NOT_SAVED
+            : 'AGENT_EMPTY_OUTPUT';
+        respondNoUsableReport(res, code);
         return;
       }
     }
@@ -553,6 +599,8 @@ router.post('/proactive', ...authedJsonBody(), async (req: Request, res: Respons
         inputTokens: totalInputTokens,
         outputTokens: totalOutputTokens,
       },
+      // 파일이 있거나 opencode 면 필드를 싣지 않는다 — 기존 응답 모양을 그대로 둔다.
+      ...(reportFilesMissing ? { reportFilesMissing: true } : {}),
     };
 
     res.json(result);

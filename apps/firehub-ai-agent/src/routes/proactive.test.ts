@@ -356,6 +356,63 @@ describe('Proactive routes — integration tests', () => {
     expect(body.usage.outputTokens).toBe(200);
   });
 
+  // WD-765: 도구 호출 사이로 끊긴 text 블록이 줄바꿈 없이 붙으면 「앞 설명## 요약」이 되어 헤더 정규식(^)에 안 잡힌다.
+  describe('rawText 블록 사이 줄바꿈 (WD-765)', () => {
+    const TEMPLATE = {
+      sections: [{ key: 'summary', label: '요약', required: true }],
+      output_format: 'structured',
+    };
+    const post = (events: Array<Record<string, unknown>>, template?: unknown) => {
+      mockExecute.mockReturnValue(
+        (async function* () {
+          for (const e of events) yield e;
+          yield { type: 'done', inputTokens: 1, outputTokens: 1 };
+        })(),
+      );
+      return makeRequest(
+        createApp(),
+        'POST',
+        '/agent/proactive',
+        { prompt: 'p', tenantId: 1, agentType: 'sdk', context: {}, template },
+        { Authorization: `Internal ${VALID_TOKEN}` },
+      );
+    };
+    type Body = { sections: Array<{ key: string; content: string }>; rawText: string };
+
+    it('text → tool_use → text 사이에 빈 줄을 넣어 「## 요약」 섹션이 잡힌다', async () => {
+      const res = await post(
+        [
+          { type: 'text', content: '앞 설명' },
+          { type: 'tool_use', toolName: 'x', input: {} },
+          { type: 'text', content: '## 요약\n내용' },
+        ],
+        TEMPLATE,
+      );
+      const body = res.body as Body;
+      expect(body.rawText).toBe('앞 설명\n\n## 요약\n내용');
+      expect(body.sections.map((s) => s.key)).toEqual(['summary']);
+      expect(body.sections[0].content).toBe('내용');
+    });
+
+    it('같은 블록의 델타 text 는 사이에 다른 이벤트가 없으면 그대로 붙는다', async () => {
+      const res = await post([
+        { type: 'text', content: '안녕' },
+        { type: 'text', content: '하세요' },
+      ]);
+      expect((res.body as Body).rawText).toBe('안녕하세요');
+    });
+
+    it('앞 text 가 이미 줄바꿈으로 끝나면 더 넣지 않고, rawText 가 비었으면 앞에 넣지 않는다', async () => {
+      const res = await post([
+        { type: 'tool_use', toolName: 'a', input: {} },
+        { type: 'text', content: '첫 줄\n' },
+        { type: 'tool_result', content: 'ok' },
+        { type: 'text', content: '둘째 줄' },
+      ]);
+      expect((res.body as Body).rawText).toBe('첫 줄\n둘째 줄');
+    });
+  });
+
   // S3: api(ProactiveAiClient)가 실은 aiPurpose 'share' 를 실행 옵션으로 넘겨 MCP 호출이 SHARE 판정을 받게 한다.
   describe('aiPurpose 전달(S3)', () => {
     const run = async (extra: Record<string, unknown>) => {
@@ -638,7 +695,9 @@ describe('Proactive routes — integration tests', () => {
     expect((res.body as { code?: string }).code).toBeUndefined();
   });
 
-  it('TC6: 리포트 파일도 없고 출력 텍스트도 비면 502로 실패 처리한다 (#350)', async () => {
+  // WD-765: 위임 경로(sdk·cli)의 같은 상황은 아래 「리포트 파일 저장 실패 안내」에서 AGENT_REPORT_NOT_SAVED 로 본다 —
+  // 이 TC 는 위임이 없는 opencode 경로에서 기존 코드가 그대로인지 지킨다.
+  it('TC6: 리포트 파일도 없고 출력 텍스트도 비면 502로 실패 처리한다 (#350, opencode)', async () => {
     mockExecute.mockReturnValue(
       (async function* () {
         yield { type: 'init', sessionId: 'test-session' };
@@ -651,12 +710,77 @@ describe('Proactive routes — integration tests', () => {
       app,
       'POST',
       '/agent/proactive',
-      { prompt: '일간 KPI 리포트', tenantId: 1, agentType: 'sdk', context: { value: 'test' } },
+      { prompt: '일간 KPI 리포트', tenantId: 1, agentType: 'opencode', apiKey: 'k', context: { value: 'test' } },
       { Authorization: `Internal ${VALID_TOKEN}` },
     );
 
     expect(res.status).toBe(502);
     expect((res.body as { code: string }).code).toBe('AGENT_EMPTY_OUTPUT');
+  });
+
+  // WD-765: 위임 경로(sdk·cli)에서 report-writer 가 파일을 저장하지 못하면 원인(저장 실패)을 api 에 알린다 — 502 는
+  // AGENT_REPORT_NOT_SAVED 코드로, 200 은 reportFilesMissing 플래그로. 인증·한도 신호는 언제나 우선이다.
+  describe('리포트 파일 저장 실패 안내 (WD-765)', () => {
+    type Events = Array<Record<string, unknown>>;
+    /** events 를 흘리는 실행. writeFiles 가 있으면 실행 중에 reportDir 에 그 파일들을 저장한다(report-writer 흉내). */
+    const post = (agentType: string, events: Events, writeFiles?: Record<string, string>) => {
+      mockExecute.mockImplementation((opts: { reportDir: string }) =>
+        (async function* () {
+          if (writeFiles) {
+            await fs.promises.mkdir(opts.reportDir, { recursive: true });
+            for (const [name, content] of Object.entries(writeFiles)) {
+              await fs.promises.writeFile(path.join(opts.reportDir, name), content, 'utf-8');
+            }
+          }
+          for (const e of events) yield e;
+          yield { type: 'done', inputTokens: 1, outputTokens: 1 };
+        })(),
+      );
+      return makeRequest(
+        createApp(),
+        'POST',
+        '/agent/proactive',
+        { prompt: 'p', tenantId: 1, agentType, apiKey: 'k', oauthToken: 'o', context: {} },
+        { Authorization: `Internal ${VALID_TOKEN}` },
+      );
+    };
+    type Body = { code?: string; reportFilesMissing?: boolean; rawText?: string };
+
+    it.each(['sdk', 'cli'])('(a) %s: 파일도 rawText 도 없으면 502 + AGENT_REPORT_NOT_SAVED', async (agentType) => {
+      const res = await post(agentType, []);
+      expect(res.status).toBe(502);
+      expect((res.body as Body).code).toBe('AGENT_REPORT_NOT_SAVED');
+    });
+
+    it.each(['sdk', 'cli'])('(b) %s: 파일이 없어도 rawText 가 인증 실패 신호면 AGENT_AUTH_OR_QUOTA_FAILURE 가 우선', async (agentType) => {
+      const res = await post(agentType, [{ type: 'text', content: 'Failed to authenticate. API Error: 401 invalid' }]);
+      expect(res.status).toBe(502);
+      expect((res.body as Body).code).toBe('AGENT_AUTH_OR_QUOTA_FAILURE');
+    });
+
+    it('(c) sdk: 파일이 없고 rawText 가 있으면 200 + reportFilesMissing: true (rawText 리포트는 그대로 성공)', async () => {
+      const res = await post('sdk', [{ type: 'text', content: '분석 결과 본문' }]);
+      expect(res.status).toBe(200);
+      const body = res.body as Body;
+      expect(body.reportFilesMissing).toBe(true);
+      expect(body.rawText).toBe('분석 결과 본문');
+    });
+
+    it('(d) sdk: 리포트 파일이 있으면 reportFilesMissing 이 참이 아니다', async () => {
+      const res = await post('sdk', [{ type: 'text', content: '생성 완료' }], {
+        'report.html': '<h1>리포트</h1>',
+        'report.md': '## 요약\n내용',
+        'summary.md': '요약',
+      });
+      expect(res.status).toBe(200);
+      expect((res.body as Body).reportFilesMissing).not.toBe(true);
+    });
+
+    it('(e) opencode: 파일이 없고 rawText 가 있으면 200 이고 reportFilesMissing 이 참이 아니다', async () => {
+      const res = await post('opencode', [{ type: 'text', content: '분석 결과 본문' }]);
+      expect(res.status).toBe(200);
+      expect((res.body as Body).reportFilesMissing).not.toBe(true);
+    });
   });
 
   // 회귀 방지(negative control): 장애를 *서술*하는 정상 리포트는 본문에 오류 문구가 들어 있어도
@@ -832,7 +956,9 @@ describe('parseSections', () => {
 
 // WD-62: opencode 경로는 report-writer 위임이 불가능(task deny·Write 비활성)하므로 프롬프트가 갈린다.
 describe('buildProactiveSystemPrompt', () => {
-  const DIR = '/tmp/proactive-report/t3/7-1';
+  // 프롬프트는 리포트 경로를 받지 않는다(WD-765) — 저장 위치는 write_report_file 도구가 정한다. 그래도 리포트 폴더
+  // 이름이 문구에 새어 들어가지 않는지(모델이 경로를 인자로 넣으려 하지 않게) 이 패턴으로 확인한다.
+  const REPORT_PATH = /proactive-report\//;
   const TEMPLATE = {
     sections: [
       { key: 'summary', label: '요약', type: 'text' },
@@ -841,27 +967,36 @@ describe('buildProactiveSystemPrompt', () => {
     output_format: 'html',
   };
 
-  it('sdk/cli 는 기존대로 report-writer 위임과 저장 디렉터리를 지시한다(동작 불변)', () => {
+  it('sdk/cli 는 report-writer 위임을 지시하되 전체 경로 대신 파일 이름(fileName)으로 안내한다 (WD-765)', () => {
     for (const agentType of ['sdk', 'cli', 'cli-api'] as const) {
-      const p = buildProactiveSystemPrompt(TEMPLATE, DIR, agentType);
+      const p = buildProactiveSystemPrompt(TEMPLATE, agentType);
       expect(p).toContain('report-writer');
-      expect(p).toContain(`${DIR}/report.html`);
-      expect(p).not.toContain('write_report_file');
+      // 하위 에이전트는 write_report_file(fileName·content)로만 저장한다 — 경로를 보여 주면 경로를 인자로 넣으려 한다.
+      expect(p).not.toMatch(REPORT_PATH);
+      for (const name of ['report.html', 'report.md', 'summary.md']) expect(p).toContain(`fileName=${name}`);
+    }
+  });
+
+  it('sdk/cli 위임 프롬프트는 저장 실패를 생성 완료라고 보고하지 말라고 지시한다 (WD-765)', () => {
+    for (const agentType of ['sdk', 'cli', 'cli-api'] as const) {
+      const p = buildProactiveSystemPrompt(TEMPLATE, agentType);
+      expect(p).toContain('저장 실패');
+      expect(p).toContain('생성 완료라고 쓰지');
     }
   });
 
   it('opencode 는 위임·Agent 도구를 언급하지 않고 write_report_file 로 세 파일을 저장하게 한다', () => {
-    const p = buildProactiveSystemPrompt(TEMPLATE, DIR, 'opencode');
+    const p = buildProactiveSystemPrompt(TEMPLATE, 'opencode');
     // 막힌 위임을 언급하면 약한 모델이 `<call:Agent ...>` 를 텍스트로 흉내 낸다(2026-06-24 인시던트).
     expect(p).not.toMatch(/report-writer|위임|Agent 도구|WebSearch/);
     expect(p).toContain('firehub_write_report_file');
     for (const name of ['report.html', 'report.md', 'summary.md']) expect(p).toContain(name);
     // 도구는 파일명만 받는다 — 절대경로를 보여 주면 모델이 경로를 인자로 넣으려 한다.
-    expect(p).not.toContain(DIR);
+    expect(p).not.toMatch(REPORT_PATH);
   });
 
   it('opencode 프롬프트에 report-writer 의 핵심 작성 규칙을 요약해 담는다', () => {
-    const p = buildProactiveSystemPrompt(TEMPLATE, DIR, 'opencode');
+    const p = buildProactiveSystemPrompt(TEMPLATE, 'opencode');
     expect(p).toContain('<!DOCTYPE html>');
     expect(p).toMatch(/CSS 2\.1/);
     expect(p).toMatch(/flex/i);
@@ -881,7 +1016,7 @@ describe('buildProactiveSystemPrompt', () => {
   });
 
   it('opencode 에서 양식이 없으면 자유 형식 지시를 위임 문구 없이 쓴다', () => {
-    const p = buildProactiveSystemPrompt(undefined, DIR, 'opencode');
+    const p = buildProactiveSystemPrompt(undefined, 'opencode');
     expect(p).toContain('자유 형식');
     expect(p).not.toMatch(/위임/);
   });
@@ -890,12 +1025,11 @@ describe('buildProactiveSystemPrompt', () => {
 /**
  * 방언별 Proactive 프롬프트(WD-79).
  *
- * PG 는 변경 전과 바이트 동일해야 한다 — 픽스처(`src/agent/__fixtures__/pg-prompts/proactive-*.txt`)는 변경 전
- * 코드에서 아래 RICH_TEMPLATE·DIR 로 덤프했다(정적·구분선·그룹·스타일까지 거치도록).
+ * PG 는 픽스처(`src/agent/__fixtures__/pg-prompts/proactive-*.txt`)와 바이트 동일해야 한다 — 픽스처는 아래
+ * RICH_TEMPLATE 로 만든 기대 출력이다(정적·구분선·그룹·스타일까지 거치도록). 프롬프트 문구를 의도해 바꾸면 픽스처도 함께 고친다.
  * Tibero 는 PG 프롬프트 끝(footer 뒤)에 TIBERO_SQL_GUIDE 를 붙인다.
  */
 describe('buildProactiveSystemPrompt — 방언별 (WD-79)', () => {
-  const DIR = '/tmp/proactive-report/t3/7-1';
   const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'agent', '__fixtures__', 'pg-prompts');
   const fixture = (name: string) => fs.readFileSync(path.join(FIXTURES, name), 'utf-8');
   const RICH_TEMPLATE = {
@@ -926,12 +1060,12 @@ describe('buildProactiveSystemPrompt — 방언별 (WD-79)', () => {
   ] as const;
 
   it.each(CASES)('PG(%s) — 방언 생략·POSTGRESQL 모두 변경 전과 바이트 동일 (%#)', (agentType, template, file) => {
-    expect(buildProactiveSystemPrompt(template, DIR, agentType)).toBe(fixture(file));
-    expect(buildProactiveSystemPrompt(template, DIR, agentType, 'POSTGRESQL')).toBe(fixture(file));
+    expect(buildProactiveSystemPrompt(template, agentType)).toBe(fixture(file));
+    expect(buildProactiveSystemPrompt(template, agentType, 'POSTGRESQL')).toBe(fixture(file));
   });
 
   it.each(CASES)('TIBERO(%s) — PG 프롬프트 뒤에 TIBERO_SQL_GUIDE 를 붙인다 (%#)', (agentType, template, file) => {
-    const p = buildProactiveSystemPrompt(template, DIR, agentType, 'TIBERO');
+    const p = buildProactiveSystemPrompt(template, agentType, 'TIBERO');
     expect(TIBERO_SQL_GUIDE.length).toBeGreaterThan(0);
     expect(p.startsWith(fixture(file))).toBe(true);
     expect(p.endsWith(TIBERO_SQL_GUIDE)).toBe(true);
@@ -940,8 +1074,8 @@ describe('buildProactiveSystemPrompt — 방언별 (WD-79)', () => {
   });
 
   it('cli 경로도 sdk 와 같은 Tibero 규칙을 받는다', () => {
-    expect(buildProactiveSystemPrompt(undefined, DIR, 'cli', 'TIBERO')).toBe(
-      buildProactiveSystemPrompt(undefined, DIR, 'sdk', 'TIBERO'),
+    expect(buildProactiveSystemPrompt(undefined, 'cli', 'TIBERO')).toBe(
+      buildProactiveSystemPrompt(undefined, 'sdk', 'TIBERO'),
     );
   });
 });

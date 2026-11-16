@@ -574,6 +574,57 @@ describe('executeAgent', () => {
     }
   });
 
+  // WD-765: 스마트 작업 리포트 실행(reportDir)은 인메모리 MCP 서버에 전용 저장 도구를 싣는다. Write 는 어느 경로에서도
+  // 차단이고 리포트 저장은 write_report_file 만 한다. 일반 채팅(reportDir 없음)은 MCP 서버에 reportDir 을 넘기지 않는다.
+  it('AS-WD765: reportDir 을 MCP 서버로 넘기고 disallowedTools 의 Write 차단은 유지한다', async () => {
+    const { query } = await import('@anthropic-ai/claude-agent-sdk');
+    const { createFireHubMcpServer } = await import('../mcp/firehub-mcp-server.js');
+    const mockQuery = vi.mocked(query);
+    const reportDir = '/tmp/proactive-report/t1/1-100';
+
+    async function* fakeStream() {
+      yield {
+        type: 'result',
+        subtype: 'success',
+        session_id: 'sess-report',
+        usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+      };
+    }
+    mockQuery.mockReturnValue(fakeStream() as unknown as ReturnType<typeof query>);
+    const { executeAgent } = await import('./agent-sdk.js');
+
+    for await (const _event of executeAgent({ message: 'hello', tenantId: 1, userId: 1, apiKey: 'sk-test-key', reportDir })) {
+      // drain
+    }
+
+    const serverOpts = vi.mocked(createFireHubMcpServer).mock.calls.at(-1)?.[1] as { reportDir?: string } | undefined;
+    expect(serverOpts?.reportDir).toBe(reportDir);
+    const callArgs = mockQuery.mock.calls.at(-1)?.[0] as { options?: { disallowedTools?: string[] } };
+    expect(callArgs.options?.disallowedTools).toContain('Write');
+  });
+
+  it('AS-WD765: 일반 채팅(reportDir 없음)은 MCP 서버에 reportDir 을 넘기지 않는다', async () => {
+    const { query } = await import('@anthropic-ai/claude-agent-sdk');
+    const { createFireHubMcpServer } = await import('../mcp/firehub-mcp-server.js');
+    async function* fakeStream() {
+      yield {
+        type: 'result',
+        subtype: 'success',
+        session_id: 'sess-chat',
+        usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+      };
+    }
+    vi.mocked(query).mockReturnValue(fakeStream() as unknown as ReturnType<typeof query>);
+    const { executeAgent } = await import('./agent-sdk.js');
+
+    for await (const _event of executeAgent({ message: 'hello', tenantId: 1, userId: 1, apiKey: 'sk-test-key' })) {
+      // drain
+    }
+
+    const serverOpts = vi.mocked(createFireHubMcpServer).mock.calls.at(-1)?.[1] as { reportDir?: string } | undefined;
+    expect(serverOpts?.reportDir).toBeUndefined();
+  });
+
   // AS-23: 동일 도구가 동일 오류로 8회 연속 실패하면 Tier2 강제중단
   it('AS-23: 동일 도구가 동일 오류로 8회 실패하면 강제중단 + error emit', async () => {
     const { query } = await import('@anthropic-ai/claude-agent-sdk');

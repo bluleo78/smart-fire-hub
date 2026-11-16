@@ -1182,6 +1182,33 @@ describe('executeCliAgent — #240 subagent registration', () => {
     expect(argv).toContain('--disable-slash-commands');
   });
 
+  // WD-765: 스마트 작업 리포트 실행(reportDir)은 mcp.json 의 firehub env 로 reportDir 을 넘겨 전용 저장 도구를 연다.
+  // Write 는 어느 경로에서도 차단(--disallowed-tools)이고 리포트 저장은 write_report_file 만 한다.
+  it('reportDir 이 있으면 mcp.json env 에 FIREHUB_REPORT_DIR 를 싣고 Write 는 계속 차단한다 (WD-765)', async () => {
+    const reportDir = '/tmp/proactive-report/t1/9998-100';
+    for await (const _ev of executeCliAgent({
+      message: 'test',
+      tenantId: 1,
+      userId: 9998,
+      useSubscription: false,
+      apiKey: 'sk-test',
+      reportDir,
+    })) {
+      // drain
+    }
+
+    const [, args, opts] = spawnMock.mock.calls[0];
+    const argv = args as string[];
+    const disallowedValue = argv[argv.indexOf('--disallowed-tools') + 1];
+    expect(disallowedValue.split(',')).toContain('Write');
+
+    const cwd = (opts as { cwd: string }).cwd;
+    const cfg = JSON.parse(readFileSync(join(cwd, 'mcp.json'), 'utf-8')) as {
+      mcpServers: { firehub: { env: Record<string, string> } };
+    };
+    expect(cfg.mcpServers.firehub.env.FIREHUB_REPORT_DIR).toBe(reportDir);
+  });
+
   it('system-prompt-file 의 내용에 buildSubagentGuide 결과가 부착되어야 한다 (#259)', async () => {
     const gen = executeCliAgent({
       message: 'test',
@@ -2277,6 +2304,21 @@ describe('buildMcpConfig — DB_DIALECT(WD-79)', () => {
     expect(off.mcpServers.firehub.env.ROW_SEARCH).toBe('false');
     const none = buildMcpConfig(7, 3, 'http://api', 'tok', { apiKey: 'k' }, undefined, undefined, 'TIBERO') as Cfg;
     expect('ROW_SEARCH' in none.mcpServers.firehub.env).toBe(false);
+  });
+});
+
+// WD-765: 스마트 작업 리포트 실행이면 stdio MCP 프로세스 env 에 FIREHUB_REPORT_DIR 를 심는다 — stdio-server.ts main 이
+// 그 env 가 있을 때만 write_report_file 을 등록한다(opencode WD-62 와 같은 경로). 일반 채팅은 키 자체가 없어 도구가 안 보인다.
+describe('buildMcpConfig — FIREHUB_REPORT_DIR(WD-765)', () => {
+  type Cfg = { mcpServers: { firehub: { env: Record<string, string> } } };
+  it('reportDir 이 있으면 env 에 FIREHUB_REPORT_DIR 를 싣고, 없으면 키 자체가 없다', async () => {
+    const { buildMcpConfig } = await import('./agent-cli.js');
+    const reportDir = '/tmp/proactive-report/t3/7-100';
+    // 10번째 인자 — rowSearch(9번째) 뒤.
+    const run = buildMcpConfig(7, 3, 'http://api', 'tok', { apiKey: 'k' }, 'share', 55, undefined, undefined, reportDir) as Cfg;
+    expect(run.mcpServers.firehub.env.FIREHUB_REPORT_DIR).toBe(reportDir);
+    const chat = buildMcpConfig(7, 3, 'http://api', 'tok', { apiKey: 'k' }) as Cfg;
+    expect('FIREHUB_REPORT_DIR' in chat.mcpServers.firehub.env).toBe(false);
   });
 });
 

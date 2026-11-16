@@ -1,5 +1,3 @@
-import path from 'node:path';
-
 /**
  * 메인 에이전트 도구 정책 (single source of truth — #256, #266).
  *
@@ -60,35 +58,6 @@ export const DISALLOWED_TOOLS: readonly string[] = [
   // 영어 내부 독백으로 사용자에게 노출했다(#614). Monitor 를 아예 차단해 이 경로 자체를 없앤다.
   'Monitor',
 ] as const;
-
-/**
- * 이번 실행에 SDK/CLI 로 넘길 차단 목록.
- *
- * 프로액티브 리포트 실행(reportDir 있음)은 Write 만 목록에서 뺀다 — report-writer 하위 에이전트의 유일한 도구가
- * Write 인데, disallowedTools 는 하위 에이전트에도 걸려 리포트 파일을 한 번도 저장하지 못했다(리포트 목록·HTML·PDF 가
- * 비고 실행이 실패하거나 본문 텍스트로만 남음). 목록에서 빼도 무제한 허용은 아니다 — {@link checkToolPolicy} 가 하위
- * 에이전트 안에서, 이 실행의 reportDir 아래 경로에 쓰는 Write 만 통과시키고 나머지는 스트림을 끊는다.
- */
-export function disallowedToolsFor(reportDir?: string): string[] {
-  return reportDir ? DISALLOWED_TOOLS.filter((t) => t !== 'Write') : [...DISALLOWED_TOOLS];
-}
-
-/**
- * 프로액티브 리포트 저장 Write 인지 — 하위 에이전트(parentToolUseId 있음)가 reportDir 바로 아래·하위 경로에 쓰는 경우만 참.
- * `..` 로 디렉터리를 벗어나는 경로는 path.resolve 로 정규화해 막는다.
- */
-function isReportWrite(
-  toolName: string,
-  input: Record<string, unknown> | undefined,
-  parentToolUseId: string | null | undefined,
-  reportDir: string | undefined,
-): boolean {
-  if (toolName !== 'Write' || !reportDir || !parentToolUseId) return false;
-  const filePath = input?.file_path;
-  if (typeof filePath !== 'string' || !filePath) return false;
-  const root = path.resolve(reportDir);
-  return path.resolve(root, filePath).startsWith(root + path.sep);
-}
 
 /**
  * 위임 전용(delegation-only) 도구 — 메인이 \`Agent\` 위임 없이 직접 호출하면 차단한다 (#588).
@@ -183,7 +152,6 @@ export const ALLOWED_TOOLS: readonly string[] = [
  *        제공 시 화이트리스트 강제, 미제공 시 빌트인 \`general-purpose\` 만 차단(방어 하한선).
  * @param parentToolUseId (선택) SDK/CLI 메시지의 \`parent_tool_use_id\`. null/undefined 면 메인의
  *        top-level 호출, 값이 있으면 이미 위임된 subagent 내부에서 발생한 호출이다(#588).
- * @param reportDir (선택) 프로액티브 리포트 디렉터리 — 있으면 하위 에이전트가 이 안에 쓰는 Write 만 허용한다.
  * @returns 차단 사유 문자열(차단해야 할 때) 또는 null(허용)
  */
 export function checkToolPolicy(
@@ -191,11 +159,10 @@ export function checkToolPolicy(
   input?: Record<string, unknown>,
   validSubagentTypes?: readonly string[],
   parentToolUseId?: string | null,
-  reportDir?: string,
 ): string | null {
   if (!toolName) return null; // 빈 이름은 파싱 노이즈
-  // 프로액티브 리포트 저장(하위 에이전트 → reportDir 안)만 Write 차단의 예외 — disallowedToolsFor 참고.
-  if (isReportWrite(toolName, input, parentToolUseId, reportDir)) return null;
+  // WD-765: Write 는 어느 경로(프로액티브 리포트 실행 포함)에서도 차단한다 — 리포트 저장은 파일 이름·디렉터리가
+  // 고정된 MCP 도구 write_report_file 만 한다.
   for (const pat of DISALLOWED_TOOLS) {
     if (matchToolPattern(pat, toolName)) {
       return `host tool blocked by policy (#256): ${toolName}`;
