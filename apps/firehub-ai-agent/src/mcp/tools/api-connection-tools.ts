@@ -9,6 +9,9 @@ import type { SafeToolFn, JsonResultFn } from '../firehub-mcp-server.js';
  */
 export const EXTRA_HEADER_KEY_PREFIX = 'extraHeader:';
 
+/** 접두어 판정용 소문자 모양(WD-772) — 접두어 글자가 모두 ASCII 라 소문자로 맞춰 비교해도 서버 regionMatches(ignoreCase) 와 같다. */
+const EXTRA_HEADER_KEY_PREFIX_LOWER = EXTRA_HEADER_KEY_PREFIX.toLowerCase();
+
 /**
  * 추가 인증 헤더 안내(WD-753) — 생성·수정 도구 설명에 똑같이 들어간다. 한 곳에 두어 두 설명이 어긋나지 않게 한다.
  * 서버 AuthConfigValidator 의 규칙(접두어 `extraHeader:`·최대 10개·값은 비밀)과 같이 고친다.
@@ -107,9 +110,15 @@ const NON_SECRET_IDENTITY_FIELDS = new Set(['username']);
  * 미만)은 모두 건너뛴다(WD-753 리뷰). 추가 헤더에는 `X-Api-Version: 1`·`X-Env: test`·`X-Debug: none` 처럼 짧거나 사전 단어인
  * 실제 값이 흔해, 무작위 비밀(apiKey·token)의 기준을 걸면 정상 헤더를 AI 경로로 넣지 못한다. 값은 서버에서 비밀로 암호화되므로
  * 오류 메시지에는 값 원문을 싣지 않는다.
+ *
+ * 접두어는 대소문자를 가리지 않는다(WD-772) — 서버(AuthConfigValidator.isExtraHeaderKey)·Python 실행기가 `ExtraHeader:X-Id` 도
+ * 추가 헤더로 보고 정식 `extraHeader:` 로 고쳐 저장·전송하므로, 여기서만 메인 비밀로 보고 더미 규칙(3자 미만 등)으로 막으면 어긋난다.
+ * 접두어 글자가 모두 ASCII 라 앞 글자 수만큼 잘라 소문자로 맞춰 본다.
  */
 function isExtraHeaderField(field: string): boolean {
-  return field.startsWith(EXTRA_HEADER_KEY_PREFIX);
+  return (
+    field.slice(0, EXTRA_HEADER_KEY_PREFIX.length).toLowerCase() === EXTRA_HEADER_KEY_PREFIX_LOWER
+  );
 }
 
 /**

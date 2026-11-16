@@ -129,8 +129,9 @@ def test_scrub_url_userinfo_matches_vector(case):
 
 @pytest.mark.parametrize("case", _DATA["extraHeaders"], ids=_ids("extraHeaders"))
 def test_extra_headers_match_vector(case):
-    # 추가 인증 헤더 모으기(WD-753) — 접두어(「extraHeader:」, 대소문자 구분)가 붙은 키만, 이름은 앞뒤 Java 공백을 떼고 값은 원문 그대로,
-    # 순서는 원래 키 정렬. Java ``ApiCallAuthVectorsTest.extraHeaders_matchesVector`` 와 같은 표다. 인증 방식이 없어도 모은다.
+    # 추가 인증 헤더 모으기(WD-753) — 접두어(「extraHeader:」, 대소문자 무시 — WD-772)가 붙은 키만, 이름·값 모두 앞뒤 Java 공백을 떼고
+    # (값은 WD-772, 가운데 공백은 그대로), 순서는 원래 키 정렬. Java ``ApiCallAuthVectorsTest.extraHeaders_matchesVector`` 와 같은 표다. 인증 방식이 없어도 모은다.
+    # NBSP 등 ASCII 밖 값은 Java 저장·호출 전 검사가 거절해 실행기로 오지 않으므로 표에 두지 않는다(WD-772 리뷰).
     resolved = api_call_executor._resolve_auth(case["auth"])
     assert resolved.extra_headers == case["expected"]
     assert list(resolved.extra_headers) == list(case["expected"])

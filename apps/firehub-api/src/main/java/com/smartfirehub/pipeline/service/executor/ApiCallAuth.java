@@ -63,8 +63,8 @@ public final class ApiCallAuth {
    * @param basicCredentials Basic 인증 헤더 값의 Base64 덩어리 — {@code base64(utf8(아이디:비밀번호))}(RFC 7617,
    *     WD-681). Python 실행기({@code _basic_credentials})와 같은 바이트다. 풀 때 한 번만 계산해 헤더·가림이 같은 값을 쓴다.
    *     BASIC 이 아니면 null
-   * @param extraHeaders 추가 인증 헤더 이름→값(WD-753, {@link AuthConfigValidator#extraHeaders} 결과). 인증 방식과
-   *     상관없이 메인 인증 뒤에 붙인다. 수정할 수 없는 순서 유지 사본이고, null 이면 빈 맵
+   * @param extraHeaders 추가 인증 헤더 이름→값(WD-753, {@link AuthConfigValidator#extraHeaders} 결과 — 값은 앞뒤
+   *     공백을 뗀 것, WD-772). 인증 방식과 상관없이 메인 인증 뒤에 붙인다. 수정할 수 없는 순서 유지 사본이고, null 이면 빈 맵
    */
   public record ResolvedAuth(
       String authType,
@@ -299,7 +299,7 @@ public final class ApiCallAuth {
    *       password(WD-681)
    *   <li>BASIC 아이디: username(WD-681) — 아이디·비밀번호 모두 원문 그대로(앞뒤 공백도 떼지 않는다) 보낸다
    *   <li>추가 인증 헤더: {@code extraHeader:<이름>} 키 모두(WD-753, {@link AuthConfigValidator#extraHeaders})
-   *       — 방식과 상관없이 모은다
+   *       — 방식과 상관없이 모은다. 접두어는 대소문자를 가리지 않고 값은 앞뒤 공백을 떼어 보낸다(WD-772 — 정리 전에 저장된 값도)
    * </ul>
    *
    * <p>비밀은 Python {@code or} 와 똑같이 null·빈 문자열만 건너뛰어 고른 뒤, BEARER 면 저장 검사와 같은 정리({@link

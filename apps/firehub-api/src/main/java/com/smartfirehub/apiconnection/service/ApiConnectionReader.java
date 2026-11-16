@@ -7,12 +7,15 @@ import com.smartfirehub.apiconnection.dto.ApiConnectionResponse;
 import com.smartfirehub.apiconnection.exception.ApiConnectionNotFoundException;
 import com.smartfirehub.apiconnection.repository.ApiConnectionRepository;
 import com.smartfirehub.apiconnection.repository.ApiConnectionRepository.ApiConnectionRow;
+import com.smartfirehub.global.exception.CryptoException;
 import com.smartfirehub.global.exception.SerializationException;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -27,6 +30,7 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>여기에는 <b>조회·복호화·마스킹만</b> 둔다. 외부 HTTP 호출은 여전히 {@code ApiConnectionService} 쪽 트랜잭션 밖에 남아 있어야 하며,
  * 이 클래스로 들어와서는 안 된다(HTTP 5초를 트랜잭션이 물면 커넥션 풀이 고갈된다).
  */
+@Slf4j
 @Service
 @Transactional(readOnly = true)
 @RequiredArgsConstructor
@@ -95,6 +99,26 @@ public class ApiConnectionReader {
   }
 
   /**
+   * {@link #getDecryptedAuthConfig} 와 같지만, 저장값을 읽을 수 없으면(복호화 실패 {@link CryptoException}·JSON 아님
+   * {@link SerializationException}) 예외 대신 빈 값을 돌려준다(WD-772 리뷰).
+   *
+   * <p>연결 수정은 저장값을 읽지 못해도 진행할 수 있는 경우가 있다 — 가린 값이 없으면 저장값 없이 요청값으로 덮고, 가린 값이 있으면 「다시 입력하세요」 400 으로
+   * 안내한다. 수정 트랜잭션 안에서 이 클래스(트랜잭션 프록시)가 던진 런타임 예외는 바깥 트랜잭션을 롤백 전용으로 표시해, 호출자가 잡고 계속해도 커밋이 실패한다. 그래서
+   * 프록시 안에서 잡아 빈 값으로 바꾼다. 잡는 것은 저장 데이터를 읽지 못한 두 타입뿐이고, 연결 없음 등 다른 예외는 그대로 나간다. 로그에는 연결 id 와 예외 종류만
+   * 남긴다(복호화 원문·값은 남기지 않는다).
+   *
+   * @return 복호화한 authConfig(authType 포함), 읽을 수 없으면 빈 값
+   */
+  public Optional<Map<String, String>> findReadableDecryptedAuthConfig(Long id) {
+    try {
+      return Optional.of(getDecryptedAuthConfig(id));
+    } catch (CryptoException | SerializationException e) {
+      log.warn("API 연결 {} 의 저장된 인증 정보를 읽지 못했습니다: {}", id, e.getClass().getSimpleName());
+      return Optional.empty();
+    }
+  }
+
+  /**
    * API 연결 행 → 응답 DTO 변환. 목록 조회(ApiConnectionService.getAll)도 같은 변환이 필요하므로 공개한다 — 서비스에 복호화/마스킹 로직을
    * 중복시키지 않기 위함이다.
    */
@@ -129,10 +153,26 @@ public class ApiConnectionReader {
         r.updatedAt());
   }
 
-  /** 암호문을 복호화해 Map 으로 되돌린다. */
+  /**
+   * 암호문을 복호화해 Map 으로 되돌린다.
+   *
+   * <p>읽지 못하면 두 가지 예외만 나간다(WD-772 리뷰) — 복호화 실패는 {@link CryptoException}, JSON 이 아니면 {@link
+   * SerializationException}. 둘 다 저장 데이터 문제(서버 쪽, 500)다. 수정 경로용 {@link
+   * #findReadableDecryptedAuthConfig} 는 이 두 타입만 잡아 빈 값으로 돌려주고, 400(가린 값을 되돌릴 수 없음)으로 안내할지는 서비스가
+   * 정한다.
+   */
   private Map<String, String> decryptToMap(String encryptedConfig) {
+    String json;
     try {
-      String json = encryptionService.decrypt(encryptedConfig);
+      json = encryptionService.decrypt(encryptedConfig);
+    } catch (IllegalArgumentException e) {
+      // 「iv:암호문」 형식이 아니거나 Base64 가 깨진 암호문(WD-772 리뷰). EncryptionService 는 이를
+      // IllegalArgumentException 으로 던지는데, 그대로 두면 전역 처리기가 입력 오류(400)로 보인다. 저장 데이터 손상이라
+      // 키 변경(GCM 태그 불일치)과 같은 CryptoException 으로 바꾼다. 원래 문구(암호문 조각이 실릴 수 있다)는 원인으로만 남긴다.
+      // EncryptionService 자체는 다른 기능도 쓰므로 바꾸지 않는다.
+      throw new CryptoException("저장된 API 연결 인증 정보를 복호화하지 못했습니다", e);
+    }
+    try {
       return objectMapper.readValue(json, new TypeReference<Map<String, String>>() {});
     } catch (JsonProcessingException e) {
       // 저장 데이터 손상(서버 쪽 문제)이라 입력 오류(400)가 아니다 — 500(SerializationException)으로 나가게 하고, 파서 원문(값 조각이
@@ -151,11 +191,12 @@ public class ApiConnectionReader {
    *
    * <p>추가 인증 헤더 키({@link AuthConfigValidator#EXTRA_HEADER_PREFIX}, WD-753)는 헤더 이름과 상관없이 비밀이다 —
    * 「X-Tenant」 처럼 이름에 위 조각이 없어도 값은 함께 보내는 비밀 헤더다. 가린 모양은 API 키 규칙({@code ****}+끝 4자, {@link
-   * #maskSecretValue}).
+   * #maskSecretValue}). 접두어는 대소문자를 가리지 않는다({@link AuthConfigValidator#isExtraHeaderKey}, WD-772) —
+   * 정리 전에 저장된 「ExtraHeader:X-Id」 도 평문으로 돌아가지 않게.
    */
   static boolean isSensitiveKey(String key) {
     if (key == null) return false;
-    if (key.startsWith(AuthConfigValidator.EXTRA_HEADER_PREFIX)) return true;
+    if (AuthConfigValidator.isExtraHeaderKey(key)) return true;
     String lower = key.toLowerCase(Locale.ROOT);
     return SENSITIVE_KEY_PARTS.stream().anyMatch(lower::contains);
   }

@@ -17,6 +17,7 @@ import com.smartfirehub.apiconnection.dto.UpdateApiConnectionRequest;
 import com.smartfirehub.apiconnection.exception.ApiConnectionException;
 import com.smartfirehub.apiconnection.exception.ApiConnectionNotFoundException;
 import com.smartfirehub.apiconnection.repository.ApiConnectionRepository;
+import com.smartfirehub.global.exception.CryptoException;
 import com.smartfirehub.pipeline.service.executor.SsrfProtectionService;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.util.ArrayList;
@@ -1114,19 +1115,29 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
 
   // ── WD-623 코드리뷰: 오류 우선순위·저장된 빈 비밀·입력 검증 순서 ──────────────────────
 
-  /** 검사 없이(예전 버전에서) 저장된 연결을 흉내 낸다 — 서비스 검사를 거치지 않고 암호화한 authConfig 를 바로 저장한다. */
-  private Long saveLegacy(String authType, Map<String, String> authConfig) throws Exception {
-    String encrypted = encryptionService.encrypt(objectMapper.writeValueAsString(authConfig));
+  /**
+   * 서비스 검사를 거치지 않고 저장소에 바로 저장한다 — 옛 저장분·읽을 수 없는 저장값을 흉내 내는 helper 들이 함께 쓴다. 이름은 접두어 뒤에 시각을 붙여 테스트끼리
+   * 겹치지 않게 한다.
+   *
+   * @param encryptedConfig 저장할 authConfig 암호문(그대로 저장한다)
+   */
+  private Long saveRaw(String namePrefix, String authType, String encryptedConfig, String baseUrl) {
     return tx.execute(
         s ->
             apiConnectionRepository.save(
-                "WD623 legacy " + System.nanoTime(),
+                namePrefix + System.nanoTime(),
                 null,
                 authType,
-                encrypted,
+                encryptedConfig,
                 testUserId,
-                "https://wd623-legacy.example.com",
+                baseUrl,
                 null));
+  }
+
+  /** 검사 없이(예전 버전에서) 저장된 연결을 흉내 낸다 — 서비스 검사를 거치지 않고 암호화한 authConfig 를 바로 저장한다. */
+  private Long saveLegacy(String authType, Map<String, String> authConfig) throws Exception {
+    String encrypted = encryptionService.encrypt(objectMapper.writeValueAsString(authConfig));
+    return saveRaw("WD623 legacy ", authType, encrypted, "https://wd623-legacy.example.com");
   }
 
   /**
@@ -1852,16 +1863,7 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
   private Long saveLegacyWithBaseUrl(
       String authType, Map<String, String> authConfig, String baseUrl) throws Exception {
     String encrypted = encryptionService.encrypt(objectMapper.writeValueAsString(authConfig));
-    return tx.execute(
-        s ->
-            apiConnectionRepository.save(
-                "WD681 legacy " + System.nanoTime(),
-                null,
-                authType,
-                encrypted,
-                testUserId,
-                baseUrl,
-                null));
+    return saveRaw("WD681 legacy ", authType, encrypted, baseUrl);
   }
 
   /** DB 에 저장된 base_url 원문을 읽는다(응답은 가리므로 저장값은 직접 본다). */
@@ -2518,5 +2520,259 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
         .doesNotContainKey("extraHeader: X-Id");
     // 키 모양만 바뀌어 인증 정보 변경이 아니다 — 바뀐 칸이 없으면 감사 기록 자체를 남기지 않는다(auditUpdate).
     assertThat(connectionAudits("UPDATE", id)).isEmpty();
+  }
+
+  // ── WD-772: 추가 인증 헤더 값 앞뒤 공백·접두어 대소문자·방식 변경 복호화 ──────────────────────────────
+
+  /** 추가 헤더 값의 앞뒤 공백은 잘라 저장한다(WD-772) — 가운데 공백은 값의 일부라 그대로다. 공백만이면 거절한다. */
+  @Test
+  void create_extraHeaderValueWithSurroundingSpaces_storedStripped() {
+    ApiConnectionResponse created =
+        apiConnectionService.create(
+            new CreateApiConnectionRequest(
+                "WD772 strip " + System.nanoTime(),
+                null,
+                "BEARER",
+                Map.of("token", "tok-772-1", "extraHeader:X-Id", "  keyid 4567\t "),
+                "https://wd772.example.com",
+                null),
+            testUserId);
+
+    assertThat(apiConnectionService.getDecryptedAuthConfig(created.id()))
+        .containsEntry("extraHeader:X-Id", "keyid 4567");
+    assertThat(created.maskedAuthConfig()).containsEntry("extraHeader:X-Id", "****4567");
+
+    assertThatThrownBy(
+            () ->
+                apiConnectionService.create(
+                    new CreateApiConnectionRequest(
+                        "WD772 blank " + System.nanoTime(),
+                        null,
+                        "BEARER",
+                        Map.of("token", "tok-772-1", "extraHeader:X-Id", " \t "),
+                        "https://wd772.example.com",
+                        null),
+                    testUserId))
+        .isInstanceOf(ApiConnectionException.class)
+        .hasMessage("추가 헤더 X-Id 값을 입력하세요");
+  }
+
+  /** 대소문자가 다른 접두어(「ExtraHeader:」)는 정식 「extraHeader:」 키로 저장하고 조회에서 가린다(WD-772) — 예전에는 평문으로 돌아갔다. */
+  @Test
+  void create_mixedCaseExtraHeaderPrefix_storedCanonicalAndMasked() {
+    ApiConnectionResponse created =
+        apiConnectionService.create(
+            new CreateApiConnectionRequest(
+                "WD772 prefix " + System.nanoTime(),
+                null,
+                "BEARER",
+                Map.of("token", "tok-772-1", "ExtraHeader:X-Id", "keyid-4567"),
+                "https://wd772.example.com",
+                null),
+            testUserId);
+
+    assertThat(apiConnectionService.getDecryptedAuthConfig(created.id()))
+        .containsEntry("extraHeader:X-Id", "keyid-4567")
+        .doesNotContainKey("ExtraHeader:X-Id");
+    assertThat(apiConnectionService.getById(created.id()).maskedAuthConfig())
+        .containsEntry("extraHeader:X-Id", "****4567")
+        .doesNotContainValue("keyid-4567");
+  }
+
+  /** 정리 규칙 전에 「ExtraHeader:X-Id」 로 저장된 연결도 조회에서 값을 가린다(WD-772) — 이름에 key·token 이 없어도 비밀이다. */
+  @Test
+  void getById_legacyMixedCaseExtraHeaderKey_masked() throws Exception {
+    Long id =
+        saveLegacy("BEARER", Map.of("token", "tok-legacy-1", "ExtraHeader:X-Id", "keyid-4567"));
+
+    assertThat(apiConnectionService.getById(id).maskedAuthConfig())
+        .containsEntry("ExtraHeader:X-Id", "****4567")
+        .doesNotContainValue("keyid-4567");
+  }
+
+  /**
+   * 정리 규칙 전에 「ExtraHeader:X-Id」 로 저장된 연결에 화면이 정식 키로 가린 값을 되돌려 보내면 저장값을 찾아 유지하고, 정식 키로 다시
+   * 저장한다(WD-772).
+   */
+  @Test
+  void update_legacyMixedCasePrefix_maskedEchoWithCanonicalKey_keepsValue() throws Exception {
+    Long id =
+        saveLegacy("BEARER", Map.of("token", "tok-legacy-1", "ExtraHeader:X-Id", "keyid-4567"));
+
+    apiConnectionService.update(
+        id,
+        new UpdateApiConnectionRequest(
+            null,
+            null,
+            null,
+            Map.of("token", "****cy-1", "extraHeader:X-Id", "****4567"),
+            null,
+            null),
+        testUserId);
+
+    assertThat(apiConnectionService.getDecryptedAuthConfig(id))
+        .containsEntry("extraHeader:X-Id", "keyid-4567")
+        .doesNotContainKey("ExtraHeader:X-Id");
+  }
+
+  /** 복호화할 수 없는 저장값(키 변경 — GCM 태그 불일치)·읽을 수 없는 저장값(깨진 JSON)을 가진 연결을 만든다(WD-772). */
+  private Long saveUnreadable(String authType, String encryptedConfig) {
+    return saveRaw(
+        "WD772 unreadable ", authType, encryptedConfig, "https://wd772-unreadable.example.com");
+  }
+
+  /** 복호화 실패(키가 바뀐 암호문·암호문 형식 깨짐)와 JSON 깨짐 세 경우의 저장 암호문. */
+  private List<String> unreadableCiphertexts() {
+    return List.of(
+        // 형식은 맞지만(iv:암호문) 이 키로 만든 것이 아니라 GCM 태그 검사에서 실패한다.
+        "AAAAAAAAAAAAAAAA:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        // 「iv:암호문」 형식이 아니다(EncryptionService 가 IllegalArgumentException 을 던진다 — 리뷰 반영 WD-772).
+        "not-a-ciphertext",
+        // 복호화는 되지만 JSON 이 아니다.
+        encryptionService.encrypt("not-json{"));
+  }
+
+  /**
+   * 저장값을 읽을 수 없는 연결도 인증 방식을 바꾸며 새 비밀을 넣어 고칠 수 있다(WD-772) — 가린 추가 헤더가 없으면 되돌릴 저장값이 필요 없으므로 저장값을 읽지
+   * 않는다. 예전에는 늘 복호화해 500 으로 막혀 고칠 길이 없었다.
+   */
+  @Test
+  void update_authTypeChange_unreadableStored_withoutMaskedExtraHeader_succeeds() {
+    for (String ciphertext : unreadableCiphertexts()) {
+      Long id = saveUnreadable("API_KEY", ciphertext);
+
+      apiConnectionService.update(
+          id,
+          new UpdateApiConnectionRequest(
+              null,
+              null,
+              "BEARER",
+              Map.of("token", "newtoken-772", "extraHeader:X-Id", "keyid-new-8642"),
+              null,
+              null),
+          testUserId);
+
+      assertThat(apiConnectionService.getDecryptedAuthConfig(id))
+          .containsEntry("authType", "BEARER")
+          .containsEntry("token", "newtoken-772")
+          .containsEntry("extraHeader:X-Id", "keyid-new-8642");
+    }
+  }
+
+  /**
+   * 저장값을 읽을 수 없는데 가린 추가 헤더 값을 되돌려 보내면 되돌릴 원문이 없어 400 으로 거절한다(WD-772) — 조용히 버리고 성공하지 않으며, 저장된 연결은
+   * 그대로다. 문구는 필드 이름과 다시 입력하라는 안내만 싣는다.
+   */
+  @Test
+  void update_authTypeChange_unreadableStored_withMaskedExtraHeader_rejected() {
+    for (String ciphertext : unreadableCiphertexts()) {
+      Long id = saveUnreadable("API_KEY", ciphertext);
+
+      assertThatThrownBy(
+              () ->
+                  apiConnectionService.update(
+                      id,
+                      new UpdateApiConnectionRequest(
+                          null,
+                          null,
+                          "BEARER",
+                          Map.of("token", "newtoken-772", "ExtraHeader:X-Id", "****4567"),
+                          null,
+                          null),
+                      testUserId))
+          .isExactlyInstanceOf(ApiConnectionException.class)
+          .hasMessage(
+              "저장된 인증 정보를 읽을 수 없어 가려진 값(****…)을 되돌릴 수 없습니다 — authConfig.ExtraHeader:X-Id 에"
+                  + " 실제 값을 다시 입력하세요");
+
+      ApiConnectionRepository.ApiConnectionRow row =
+          apiConnectionRepository.findById(id).orElseThrow();
+      assertThat(row.authType()).isEqualTo("API_KEY");
+      assertThat(row.authConfig()).isEqualTo(ciphertext);
+    }
+  }
+
+  // ── WD-772 리뷰 반영: 같은 방식 수정도 가린 값이 있을 때만 저장값을 복호화 ──────────────────────────────
+
+  /**
+   * 저장 암호문 형식이 깨진 연결의 복호화 실패는 저장 데이터 손상(서버 쪽 문제)이라 {@link CryptoException} 으로 나간다(WD-772 리뷰) — 예전에는
+   * {@link IllegalArgumentException} 이 그대로 나가 입력 오류(400)처럼 보였고, 수정 경로가 이를 잡으려고 넓은 예외까지 잡아야 했다.
+   */
+  @Test
+  void getDecryptedAuthConfig_malformedCiphertext_throwsCryptoException() {
+    Long id = saveUnreadable("BEARER", "not-a-ciphertext");
+
+    assertThatThrownBy(() -> apiConnectionService.getDecryptedAuthConfig(id))
+        .isExactlyInstanceOf(CryptoException.class)
+        .hasMessageNotContaining("not-a-ciphertext");
+  }
+
+  /**
+   * 같은 방식 수정도 가린 값이 없으면 저장값을 복호화하지 않아도 된다(WD-772 리뷰) — 저장값을 읽을 수 없는 연결에 모든 비밀을 새로 넣으면 고쳐진다. 예전에는 늘
+   * 복호화해 500 으로 막혔다. 옛 값을 읽을 수 없어 변경 비교는 할 수 없으므로 감사에는 「인증 정보 바뀜」(credentialsChanged=true)으로 남긴다.
+   */
+  @Test
+  void update_sameAuthType_unreadableStored_withoutMaskedValue_succeeds() throws Exception {
+    for (String ciphertext : unreadableCiphertexts()) {
+      Long id = saveUnreadable("BEARER", ciphertext);
+
+      apiConnectionService.update(
+          id,
+          new UpdateApiConnectionRequest(
+              null,
+              null,
+              null,
+              Map.of("token", "newtoken-772", "extraHeader:X-Id", "keyid-new-8642"),
+              null,
+              null),
+          testUserId);
+
+      assertThat(apiConnectionService.getDecryptedAuthConfig(id))
+          .containsEntry("authType", "BEARER")
+          .containsEntry("token", "newtoken-772")
+          .containsEntry("extraHeader:X-Id", "keyid-new-8642");
+      List<Record> rows = connectionAudits("UPDATE", id);
+      assertThat(rows).hasSize(1);
+      JsonNode meta = auditMetadata(rows.get(0));
+      assertThat(meta.get("credentialsChanged").asBoolean()).isTrue();
+      assertThat(jsonTexts(meta.get("changedFields"))).containsExactly("authConfig");
+    }
+  }
+
+  /**
+   * 같은 방식 수정에 가린 값(메인 비밀·추가 헤더)을 되돌려 보냈는데 저장값을 읽을 수 없으면 되돌릴 원문이 없어 400 으로 거절한다(WD-772 리뷰) — 방식 변경
+   * 경로와 같은 안내다. 저장된 연결은 그대로다.
+   */
+  @Test
+  void update_sameAuthType_unreadableStored_withMaskedValue_rejected() {
+    List<Map.Entry<Map<String, String>, String>> requests =
+        List.of(
+            Map.entry(Map.of("token", "****1234", "extraHeader:X-Id", "keyid-new-8642"), "token"),
+            Map.entry(
+                Map.of("token", "newtoken-772", "ExtraHeader:X-Id", "****4567"),
+                "ExtraHeader:X-Id"));
+    for (String ciphertext : unreadableCiphertexts()) {
+      for (Map.Entry<Map<String, String>, String> request : requests) {
+        Long id = saveUnreadable("BEARER", ciphertext);
+
+        assertThatThrownBy(
+                () ->
+                    apiConnectionService.update(
+                        id,
+                        new UpdateApiConnectionRequest(
+                            null, null, null, request.getKey(), null, null),
+                        testUserId))
+            .isExactlyInstanceOf(ApiConnectionException.class)
+            .hasMessage(
+                "저장된 인증 정보를 읽을 수 없어 가려진 값(****…)을 되돌릴 수 없습니다 — authConfig."
+                    + request.getValue()
+                    + " 에 실제 값을 다시 입력하세요");
+
+        ApiConnectionRepository.ApiConnectionRow row =
+            apiConnectionRepository.findById(id).orElseThrow();
+        assertThat(row.authType()).isEqualTo("BEARER");
+        assertThat(row.authConfig()).isEqualTo(ciphertext);
+      }
+    }
   }
 }

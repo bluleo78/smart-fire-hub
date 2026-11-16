@@ -545,8 +545,8 @@ class _ResolvedAuth(NamedTuple):
     # Basic 인증 헤더 값의 Base64 덩어리 — ``base64(utf8(아이디:비밀번호))``(RFC 7617, WD-681). Java ``basicCredentials`` 와 같은
     # 바이트다. 풀 때(``_resolve_auth``) 한 번만 계산해 헤더·가림이 같은 값을 쓴다. BASIC 이 아니면 None.
     basic_credentials: Optional[str] = None
-    # 추가 인증 헤더 이름→값(WD-753) — 인증 방식과 상관없이 메인 인증 뒤에 붙는다. 이름은 앞뒤 공백을 뗀 것이고 순서는 원래 키의 정렬 순서다
-    # (Java ``AuthConfigValidator.extraHeaders`` 결과와 같다). 풀 때(``_resolve_auth``) 한 번만 모아 전송·가림이 같은 값을 쓴다.
+    # 추가 인증 헤더 이름→값(WD-753) — 인증 방식과 상관없이 메인 인증 뒤에 붙는다. 이름·값 모두 앞뒤 공백을 뗀 것이고(값은 WD-772)
+    # 순서는 원래 키의 정렬 순서다(Java ``AuthConfigValidator.extraHeaders`` 결과와 같다). 풀 때(``_resolve_auth``) 한 번만 모아 전송·가림이 같은 값을 쓴다.
     extra_headers: Dict[str, str] = {}
 
     @property
@@ -580,26 +580,40 @@ class _ResolvedAuth(NamedTuple):
 
 
 # 추가 인증 헤더가 저장된 authConfig 키의 접두어(WD-753) — 「extraHeader:<헤더 이름>」. Java ``AuthConfigValidator.EXTRA_HEADER_PREFIX`` 와
-# 같고 대소문자를 구분한다(「extraheader:」 는 접두어가 아니다).
+# 같다. 판정은 대소문자를 가리지 않는다(``_is_extra_header_key``, WD-772).
 EXTRA_HEADER_PREFIX = "extraHeader:"
+_EXTRA_HEADER_PREFIX_LOWER = EXTRA_HEADER_PREFIX.lower()
+
+
+def _is_extra_header_key(key: object) -> bool:
+    """authConfig 키가 추가 인증 헤더 키인지 — 접두어는 대소문자를 가리지 않는다(WD-772, Java ``AuthConfigValidator.isExtraHeaderKey`` 와 같다).
+
+    예전에는 대소문자를 가려 「ExtraHeader:X-Id」 처럼 저장된 키를 보내지 않았다. 접두어 글자가 모두 ASCII 라 앞 글자 수만큼 잘라 소문자로
+    맞춰 본다(Java ``regionMatches(ignoreCase)`` 와 같은 판정 — 이 접두어 글자로 접히는 비ASCII 글자는 없다).
+    """
+    return isinstance(key, str) and key[: len(EXTRA_HEADER_PREFIX)].lower() == _EXTRA_HEADER_PREFIX_LOWER
 
 
 def _collect_extra_headers(auth: dict) -> Dict[str, str]:
     """인증 설정에서 추가 인증 헤더를 모은다(WD-753) — Java ``AuthConfigValidator.extraHeaders`` 와 같은 규칙.
 
-    접두어(``EXTRA_HEADER_PREFIX``)로 시작하는 키만 모으고, 이름은 접두어 뒤 글자에서 앞뒤 Java 공백을 뗀 것·값은 원문 그대로다. 순서는
-    원래 키의 정렬 순서다 — Java TreeMap 은 UTF-16 코드 단위 순으로 비교하므로 여기서도 같은 순서로 정렬한다(ASCII 키면 ``sorted`` 와 같다).
-    이름이 빈 것도 그대로 둔다(거절은 저장·호출 전 검사의 몫이라 실행기는 검증하지 않는다). 인증 방식과 상관없이 모은다. 이름이 같아지는
-    키가 둘 이상이면(공백만 다른 경우) 뒤 키의 값이 앞 키 자리에 덮인다 — Java LinkedHashMap 과 같다.
+    접두어(``EXTRA_HEADER_PREFIX``, 대소문자 무시 — WD-772)로 시작하는 키만 모으고, 이름은 접두어 뒤 글자에서 앞뒤 Java 공백을 뗀 것,
+    값도 앞뒤 Java 공백을 뗀 것이다(WD-772 — 앞뒤 공백 값은 httpx(h11)가 「Illegal header value」 로 거절해 요청을 만들지 못했다. 가운데
+    공백은 그대로). NBSP 등 ASCII 밖 값은 httpx 가 헤더로 만들지 못하므로 Java 저장·호출 전 검사가 거절해 여기 오지 않는다(WD-772 리뷰). 순서는 원래 키의 정렬 순서다 — Java TreeMap 은 UTF-16 코드 단위 순으로 비교하므로 여기서도 같은 순서로
+    정렬한다(ASCII 키면 ``sorted`` 와 같다). 이름이 빈 것도 그대로 둔다(거절은 저장·호출 전 검사의 몫이라 실행기는 검증하지 않는다). 인증
+    방식과 상관없이 모은다. 이름이 같아지는 키가 둘 이상이면(공백·접두어 대소문자만 다른 경우) 뒤 키의 값이 앞 키 자리에 덮인다 — Java
+    LinkedHashMap 과 같다.
     """
     keys = sorted(
-        (k for k in auth if isinstance(k, str) and k.startswith(EXTRA_HEADER_PREFIX)),
+        (k for k in auth if _is_extra_header_key(k)),
         key=lambda k: k.encode("utf-16-be"),
     )
     extra: Dict[str, str] = {}
     for key in keys:
         value = auth[key]
-        extra[key[len(EXTRA_HEADER_PREFIX):].strip(_JAVA_WHITESPACE)] = "" if value is None else str(value)
+        extra[key[len(EXTRA_HEADER_PREFIX):].strip(_JAVA_WHITESPACE)] = (
+            "" if value is None else str(value).strip(_JAVA_WHITESPACE)
+        )
     return extra
 
 

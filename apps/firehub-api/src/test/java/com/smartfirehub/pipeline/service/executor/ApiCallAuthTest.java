@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.smartfirehub.apiconnection.dto.ApiConnectionResponse;
 import com.smartfirehub.apiconnection.service.AuthQueryMasker;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
@@ -352,9 +354,8 @@ class ApiCallAuthTest {
     // 화면 원문: 비밀번호를 고정 **** 로
     assertThat(word.maskRawText(body)).doesNotContain("admin").contains("****");
     // 결과 행: 값 전체가 비밀번호인 칸만
-    java.util.List<java.util.Map<String, Object>> rows =
-        java.util.List.of(
-            new java.util.LinkedHashMap<>(Map.of("role", "admin user", "echo", "admin")));
+    List<Map<String, Object>> rows =
+        List.of(new java.util.LinkedHashMap<>(Map.of("role", "admin user", "echo", "admin")));
     assertThat(word.maskRows(rows).get(0))
         .containsEntry("role", "admin user")
         .containsEntry("echo", "****");
@@ -409,8 +410,8 @@ class ApiCallAuthTest {
         ApiCallAuth.resolve(
             Map.of(
                 "authType", "BEARER", "token", "tok12345", "extraHeader:X-Tenant", "tenant-9999"));
-    java.util.List<String> names = new java.util.ArrayList<>();
-    java.util.List<String> values = new java.util.ArrayList<>();
+    List<String> names = new ArrayList<>();
+    List<String> values = new ArrayList<>();
     auth.applyHeaders(
         (name, value) -> {
           names.add(name);
@@ -420,6 +421,29 @@ class ApiCallAuthTest {
     assertThat(names).containsExactly("Authorization", "X-Tenant");
     assertThat(values).containsExactly("Bearer tok12345", "tenant-9999");
     assertThat(auth.extraHeaders()).containsExactly(Map.entry("X-Tenant", "tenant-9999"));
+  }
+
+  /**
+   * 정리 규칙 전에 저장된 값(WD-772) — 접두어 대소문자가 다른 키(「ExtraHeader:」)도 추가 헤더로 보내고, 값의 앞뒤 공백은 떼어 보낸다(가운데 공백은
+   * 그대로). 예전에는 이런 키가 보내지지 않았고, 앞뒤 공백 값은 Python 실행기에서 「Illegal header value」 로 실패했다.
+   */
+  @Test
+  void resolve_extraHeaders_mixedCasePrefixAndSpacedValue_sentStripped() {
+    ApiCallAuth.ResolvedAuth auth =
+        ApiCallAuth.resolve(
+            Map.of(
+                "authType", "BEARER", "token", "tok12345", "ExtraHeader:X-Id", " keyid 4567\t "));
+    List<String> names = new ArrayList<>();
+    List<String> values = new ArrayList<>();
+    auth.applyHeaders(
+        (name, value) -> {
+          names.add(name);
+          values.add(value);
+        });
+
+    assertThat(names).containsExactly("Authorization", "X-Id");
+    assertThat(values).containsExactly("Bearer tok12345", "keyid 4567");
+    assertThat(auth.sentSecrets().scrubText("echo keyid 4567")).doesNotContain("keyid 4567");
   }
 
   /** 추가 헤더 이름은 자격 증명 헤더다(대소문자 무시) — 다른 출처 홉에서 같은 이름의 스텝 헤더까지 뗀다. */

@@ -347,6 +347,33 @@ describe('API Connection MCP Tools', () => {
       },
     );
 
+    // WD-772: 접두어는 서버·Python 실행기와 같이 대소문자를 가리지 않는다 — 서버가 「extraHeader:」 로 고쳐 저장·전송하는 키를 AI 도구만
+    // 메인 비밀로 보고 더미 규칙(3자 미만 등)으로 막지 않게.
+    it.each(['ExtraHeader:X-Version', 'extraheader:X-Version', 'EXTRAHEADER: X-Version'])(
+      '접두어 대소문자가 다른 %s = "1" 도 추가 헤더로 보아 더미 규칙을 걸지 않고 그대로 전달한다',
+      async (key) => {
+        const result = await createWithExtra({ [key]: '1' });
+        expect(result.isError, key).toBeFalsy();
+        expect(client.createApiConnection).toHaveBeenCalledTimes(1);
+      },
+    );
+
+    it('접두어 대소문자가 달라도 빈 값은 추가 인증 헤더 문구로 거절한다', async () => {
+      const result = await createWithExtra({ 'ExtraHeader:X-Version': ' ' });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('추가 인증 헤더');
+      expect(client.createApiConnection).not.toHaveBeenCalled();
+    });
+
+    it.each(['extraHeaders:X-Version', 'headerExtra:X-Version', 'extraHeader'])(
+      '접두어가 아닌 키 %s 는 추가 헤더가 아니라 더미 규칙(3자 미만)을 그대로 받는다',
+      async (key) => {
+        const result = await createWithExtra({ [key]: '1' });
+        expect(result.isError, key).toBe(true);
+        expect(client.createApiConnection).not.toHaveBeenCalled();
+      },
+    );
+
     it.each(['', '   '])('extraHeader 값이 빈 값("%s")이면 거절하고 API 를 부르지 않는다', async (value) => {
       const result = await createWithExtra({ 'extraHeader:X-Api-Version': value });
       expect(result.isError).toBe(true);
