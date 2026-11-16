@@ -18,10 +18,23 @@ describe('datasetApi (via FireHubApiClient)', () => {
     nock.cleanAll();
   });
 
-  it('listDatasets calls GET /datasets with params', async () => {
+  // WD-754: 서버 목록 기본값이 임시(TEMP) 숨김으로 바뀌어도 AI 도구 결과가 바뀌지 않게 includeTemp=true 를 늘 싣는다.
+  it('listDatasets calls GET /datasets with params and includeTemp=true', async () => {
     const mock = { content: [], totalElements: 0 };
-    nock(BASE_URL).get('/datasets').query({ page: '0', size: '10' }).reply(200, mock);
+    const scope = nock(BASE_URL)
+      .get('/datasets')
+      .query({ page: '0', size: '10', includeTemp: 'true' })
+      .reply(200, mock);
     const result = await client.listDatasets({ page: 0, size: 10 });
+    expect(scope.isDone()).toBe(true);
+    expect(result).toEqual(mock);
+  });
+
+  it('listDatasets lets the caller turn includeTemp off explicitly', async () => {
+    const mock = { content: [], totalElements: 0 };
+    const scope = nock(BASE_URL).get('/datasets').query({ includeTemp: 'false' }).reply(200, mock);
+    const result = await client.listDatasets({ includeTemp: false });
+    expect(scope.isDone()).toBe(true);
     expect(result).toEqual(mock);
   });
 
@@ -65,10 +78,11 @@ describe('datasetApi (via FireHubApiClient)', () => {
     expect(result).toEqual({ success: true });
   });
 
-  it('listDatasets calls GET /datasets without params', async () => {
+  it('listDatasets without params still sends includeTemp=true', async () => {
     const mock = { content: [], totalElements: 0 };
-    nock(BASE_URL).get('/datasets').reply(200, mock);
+    const scope = nock(BASE_URL).get('/datasets').query({ includeTemp: 'true' }).reply(200, mock);
     const result = await client.listDatasets();
+    expect(scope.isDone()).toBe(true);
     expect(result).toEqual(mock);
   });
 

@@ -16,11 +16,19 @@ import java.util.Optional;
  */
 public interface DatasetRepository {
 
-  /** 필터(카테고리·저장유형·출처·검색어·상태·즐겨찾기·보안등급)와 열람 가시성을 적용해 데이터셋 목록을 페이지 단위로 조회한다. */
+  /**
+   * 필터(카테고리·저장유형·출처·검색어·상태·즐겨찾기·보안등급)와 열람 가시성을 적용해 데이터셋 목록을 페이지 단위로 조회한다.
+   *
+   * <p>WD-754 임시(TEMP) 숨김: 출처 필터({@code originType})가 비어 있고 {@code includeTemp=false} 면 {@code
+   * origin_type <> 'TEMP'} 를 건다 — 파이프라인 중간 결과가 목록을 덮지 않게 하되, 건수·페이지도 숨긴 결과 기준이 되도록 화면이 아닌 여기서 거른다.
+   * 출처 필터가 있으면 그 필터가 이긴다(TEMP 를 직접 고르면 includeTemp 와 상관없이 TEMP 만 — 두 조건이 겹쳐 빈 결과가 되지 않게).
+   * origin_type 은 두 DB 모두 NOT NULL·CHECK(SOURCE·DERIVED·TEMP) 라 NULL 처리 없이 단순 비교로 충분하다.
+   */
   List<DatasetResponse> findAll(
       Long categoryId,
       String storageType,
       String originType,
+      boolean includeTemp,
       String search,
       int page,
       int size,
@@ -30,11 +38,12 @@ public interface DatasetRepository {
       Long securityLevelId,
       DatasetVisibility access);
 
-  /** {@link #findAll} 과 같은 필터·가시성을 적용한 전체 건수를 센다. */
+  /** {@link #findAll} 과 같은 필터·가시성(임시 숨김 포함)을 적용한 전체 건수를 센다 — 목록과 조건이 어긋나면 페이지가 틀어진다. */
   long count(
       Long categoryId,
       String storageType,
       String originType,
+      boolean includeTemp,
       String search,
       Long currentUserId,
       String status,

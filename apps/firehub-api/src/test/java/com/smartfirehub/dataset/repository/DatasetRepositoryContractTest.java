@@ -52,6 +52,7 @@ public abstract class DatasetRepositoryContractTest extends TenantPairContractBa
                     null,
                     null,
                     null,
+                    false,
                     search,
                     0,
                     100,
@@ -74,6 +75,7 @@ public abstract class DatasetRepositoryContractTest extends TenantPairContractBa
                     null,
                     null,
                     null,
+                    false,
                     search,
                     null,
                     null,
@@ -477,6 +479,7 @@ public abstract class DatasetRepositoryContractTest extends TenantPairContractBa
                     null,
                     null,
                     null,
+                    false,
                     search,
                     page,
                     size,
@@ -525,6 +528,7 @@ public abstract class DatasetRepositoryContractTest extends TenantPairContractBa
                         null,
                         null,
                         null,
+                        false,
                         null,
                         userA,
                         null,
@@ -540,6 +544,7 @@ public abstract class DatasetRepositoryContractTest extends TenantPairContractBa
                         null,
                         "DOCUMENT",
                         null,
+                        false,
                         null,
                         userA,
                         null,
@@ -555,6 +560,7 @@ public abstract class DatasetRepositoryContractTest extends TenantPairContractBa
                         category,
                         null,
                         null,
+                        false,
                         null,
                         null,
                         "NONE",
@@ -571,6 +577,7 @@ public abstract class DatasetRepositoryContractTest extends TenantPairContractBa
                         null,
                         null,
                         null,
+                        false,
                         null,
                         null,
                         null,
@@ -594,6 +601,7 @@ public abstract class DatasetRepositoryContractTest extends TenantPairContractBa
                     categoryId,
                     storageType,
                     originType,
+                    false,
                     null,
                     0,
                     100,
@@ -624,7 +632,8 @@ public abstract class DatasetRepositoryContractTest extends TenantPairContractBa
         inA(
             () ->
                 repository()
-                    .findAll(null, null, null, null, 0, 10, userA, null, false, null, rank2()));
+                    .findAll(
+                        null, null, null, false, null, 0, 10, userA, null, false, null, rank2()));
     assertThat(visible).extracting(DatasetResponse::id).containsExactly(open);
     DatasetResponse row = visible.get(0);
     assertThat(row.tags()).containsExactly("at", "zt");
@@ -634,7 +643,8 @@ public abstract class DatasetRepositoryContractTest extends TenantPairContractBa
     assertThat(
             inA(
                 () ->
-                    repository().count(null, null, null, null, userA, null, false, null, rank2())))
+                    repository()
+                        .count(null, null, null, false, null, userA, null, false, null, rank2())))
         .isEqualTo(1);
 
     List<DatasetResponse> unrestricted =
@@ -645,6 +655,7 @@ public abstract class DatasetRepositoryContractTest extends TenantPairContractBa
                         null,
                         null,
                         null,
+                        false,
                         null,
                         0,
                         10,
@@ -666,9 +677,92 @@ public abstract class DatasetRepositoryContractTest extends TenantPairContractBa
             inA(
                 () ->
                     repository()
-                        .findAll(null, null, null, null, 0, 10, null, null, false, null, none)))
+                        .findAll(
+                            null, null, null, false, null, 0, 10, null, null, false, null, none)))
         .isEmpty();
-    assertThat(inA(() -> repository().count(null, null, null, null, null, null, false, null, none)))
+    assertThat(
+            inA(
+                () ->
+                    repository()
+                        .count(null, null, null, false, null, null, null, false, null, none)))
         .isZero();
+  }
+
+  @Test
+  @DisplayName(
+      "WD-754 임시(TEMP) 숨김 — 출처 필터가 없고 includeTemp=false 면 목록·건수·페이지에서 TEMP 를 빼고, 출처 TEMP 를 직접 고르면 늘 보인다")
+  void findAll_hidesTempUnlessIncludedOrChosen() {
+    long dSource = fx.createDataset(tenantA, prefix + " source");
+    long dDerived = fx.createDataset(tenantA, prefix + " derived");
+    fx.setDatasetField(dDerived, "origin_type", "DERIVED");
+    long dTemp = fx.createDataset(tenantA, prefix + " temp");
+    fx.setDatasetField(dTemp, "origin_type", "TEMP");
+
+    // 기본(includeTemp=false, 출처 필터 없음): TEMP 를 빼고, 건수도 뺀 기준이다(요구 4 — 서버에서 거른다).
+    assertThat(originIds(null, false, null, 0, 100)).containsExactly(dSource, dDerived);
+    assertThat(originCount(null, false, null)).isEqualTo(2);
+    // includeTemp=true: 모두 보인다(파이프라인 입력 선택 등 지금 동작 유지).
+    assertThat(originIds(null, true, null, 0, 100)).containsExactly(dSource, dDerived, dTemp);
+    assertThat(originCount(null, true, null)).isEqualTo(3);
+    // 출처 TEMP 를 직접 고르면 includeTemp 와 상관없이 TEMP 만 — 두 조건이 겹쳐 빈 결과가 되면 안 된다(요구 3).
+    assertThat(originIds("TEMP", false, null, 0, 100)).containsExactly(dTemp);
+    assertThat(originCount("TEMP", false, null)).isEqualTo(1);
+    assertThat(originIds("TEMP", true, null, 0, 100)).containsExactly(dTemp);
+    // 다른 출처를 고르면 그 출처만(TEMP 는 어차피 안 나온다).
+    assertThat(originIds("SOURCE", true, null, 0, 100)).containsExactly(dSource);
+    assertThat(originCount("SOURCE", true, null)).isEqualTo(1);
+    assertThat(originIds("DERIVED", false, null, 0, 100)).containsExactly(dDerived);
+    // 빈·공백 출처는 필터 없음과 같다 — 숨김이 걸린다.
+    assertThat(originIds(" ", false, null, 0, 100)).containsExactly(dSource, dDerived);
+    assertThat(originCount("", false, null)).isEqualTo(2);
+    // 검색어(컬럼·태그 조인 경로)와 함께여도 같은 숨김.
+    assertThat(originIds(null, false, prefix, 0, 100)).containsExactly(dSource, dDerived);
+    assertThat(originCount(null, false, prefix)).isEqualTo(2);
+    // 페이지는 숨긴 뒤 기준으로 자른다 — 2번째 쪽에 TEMP 가 끼지 않는다.
+    assertThat(originIds(null, false, null, 0, 1)).containsExactly(dSource);
+    assertThat(originIds(null, false, null, 1, 1)).containsExactly(dDerived);
+    assertThat(originIds(null, false, null, 2, 1)).isEmpty();
+  }
+
+  /** 출처·임시 포함 여부·검색어로 읽은 목록 한 쪽의 id(제한 없는 가시성, 다른 필터 없음). */
+  private List<Long> originIds(
+      String originType, boolean includeTemp, String search, int page, int size) {
+    return inA(
+        () ->
+            repository()
+                .findAll(
+                    null,
+                    null,
+                    originType,
+                    includeTemp,
+                    search,
+                    page,
+                    size,
+                    null,
+                    null,
+                    false,
+                    null,
+                    DatasetVisibility.UNRESTRICTED)
+                .stream()
+                .map(DatasetResponse::id)
+                .toList());
+  }
+
+  /** {@link #originIds} 와 같은 조건의 건수. */
+  private long originCount(String originType, boolean includeTemp, String search) {
+    return inA(
+        () ->
+            repository()
+                .count(
+                    null,
+                    null,
+                    originType,
+                    includeTemp,
+                    search,
+                    null,
+                    null,
+                    false,
+                    null,
+                    DatasetVisibility.UNRESTRICTED));
   }
 }

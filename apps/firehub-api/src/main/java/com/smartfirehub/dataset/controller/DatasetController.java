@@ -46,12 +46,20 @@ public class DatasetController {
   /** 감사 등급(audit_access) 데이터셋 행 조회 기록(스펙 §4.6). */
   private final SecurityAuditRecorder auditRecorder;
 
+  /**
+   * 데이터셋 목록(필터·페이지).
+   *
+   * <p>WD-754: {@code includeTemp}(기본 false)를 주지 않으면 파이프라인 중간 결과인 임시(TEMP) 데이터셋을 목록·건수에서 뺀다 — 사용자가
+   * 직접 관리하는 데이터셋이 임시 결과에 묻히지 않게. 단 {@code originType=TEMP} 를 직접 고르면 includeTemp 와 상관없이 임시만 보인다.
+   * 파이프라인 편집기 입력 선택·이름 중복 검사·AI 에이전트는 {@code includeTemp=true} 로 지금 동작을 유지한다.
+   */
   @GetMapping
   @RequirePermission("dataset:read")
   public ResponseEntity<PageResponse<DatasetResponse>> getDatasets(
       @RequestParam(required = false) Long categoryId,
       @RequestParam(required = false) String storageType,
       @RequestParam(required = false) String originType,
+      @RequestParam(defaultValue = "false") boolean includeTemp,
       @RequestParam(required = false) String search,
       @RequestParam(defaultValue = "0") int page,
       @RequestParam(defaultValue = "20") int size,
@@ -67,6 +75,7 @@ public class DatasetController {
             categoryId,
             storageType,
             originType,
+            includeTemp,
             search,
             page,
             size,

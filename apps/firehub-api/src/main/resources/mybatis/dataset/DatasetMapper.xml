@@ -98,7 +98,12 @@
     <if test="securityLevelId != null">AND d.security_level_id = #{securityLevelId}</if>
     <if test="categoryId != null">AND d.category_id = #{categoryId}</if>
     <if test="storageType != null">AND d.storage_type = #{storageType}</if>
-    <if test="originType != null">AND d.origin_type = #{originType}</if>
+    <!-- WD-754: 출처 필터가 있으면 그 값만, 없고 includeTemp=false 면 임시(TEMP)를 뺀다 — jOOQ buildCondition 과 같은 규칙.
+         choose 로 둔 이유: 출처 TEMP 를 직접 고른 요청에 숨김 조건이 겹쳐 빈 결과가 되지 않게. origin_type 은 NOT NULL 이라 단순 비교. -->
+    <choose>
+      <when test="originType != null">AND d.origin_type = #{originType}</when>
+      <when test="!includeTemp">AND d.origin_type &lt;&gt; 'TEMP'</when>
+    </choose>
     <if test="status != null">AND d.status = #{status}</if>
     <if test="pattern != null">
       AND (<include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.likeIgnoreCase"><property name="col" value="d.name"/></include>

@@ -754,7 +754,11 @@ describe('FireHubApiClient', () => {
 
   // --- Error message format ---
   it('should format error message as "API 오류 (status): message"', async () => {
-    nock(BASE_URL).get('/datasets').reply(500, { message: 'Internal Server Error' });
+    // WD-754: 목록 호출은 늘 includeTemp=true 를 싣는다(dataset-api 참고).
+    nock(BASE_URL)
+      .get('/datasets')
+      .query({ includeTemp: 'true' })
+      .reply(500, { message: 'Internal Server Error' });
 
     await expect(client.listDatasets()).rejects.toThrow(/API 오류 \(500\): Internal Server Error/);
   });

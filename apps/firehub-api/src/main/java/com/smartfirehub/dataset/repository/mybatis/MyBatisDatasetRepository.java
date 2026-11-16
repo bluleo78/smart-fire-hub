@@ -78,12 +78,18 @@ public class MyBatisDatasetRepository implements DatasetRepository {
     return favoriteOnly && currentUserId != null ? currentUserId : null;
   }
 
-  /** 목록 한 쪽 — 가시성·필터·검색어를 건 id 한 쪽을 먼저 고른 뒤 응답 행·태그·즐겨찾기·등급을 모아 조립한다(jOOQ 판과 같은 모양·순서). */
+  /**
+   * 목록 한 쪽 — 가시성·필터·검색어를 건 id 한 쪽을 먼저 고른 뒤 응답 행·태그·즐겨찾기·등급을 모아 조립한다(jOOQ 판과 같은 모양·순서).
+   *
+   * <p>WD-754: 출처 필터가 빈 문자열이면 null 로 바꿔 넘기므로, 매퍼는 "출처 필터 없음 + includeTemp=false" 일 때만 TEMP 를
+   * 숨긴다(jOOQ 판과 같은 규칙).
+   */
   @Override
   public List<DatasetResponse> findAll(
       Long categoryId,
       String storageType,
       String originType,
+      boolean includeTemp,
       String search,
       int page,
       int size,
@@ -98,6 +104,7 @@ public class MyBatisDatasetRepository implements DatasetRepository {
             categoryId,
             PlatformText.blankToNull(storageType),
             PlatformText.blankToNull(originType),
+            includeTemp,
             PlatformText.blankToNull(status),
             securityLevelId,
             PlatformText.searchPattern(search),
@@ -124,6 +131,7 @@ public class MyBatisDatasetRepository implements DatasetRepository {
       Long categoryId,
       String storageType,
       String originType,
+      boolean includeTemp,
       String search,
       Long currentUserId,
       String status,
@@ -134,6 +142,7 @@ public class MyBatisDatasetRepository implements DatasetRepository {
         categoryId,
         PlatformText.blankToNull(storageType),
         PlatformText.blankToNull(originType),
+        includeTemp,
         PlatformText.blankToNull(status),
         securityLevelId,
         PlatformText.searchPattern(search),

@@ -57,6 +57,9 @@ public class JooqDatasetRepository implements DatasetRepository {
   /** advisory 잠금 창구 — 이름·테이블명 검사 직렬화 잠금(WD-540)에 쓴다. */
   private final PlatformLocks locks;
 
+  /** 파이프라인 중간 결과(임시) 데이터셋의 출처 값 — 목록 기본 숨김(WD-754)에 쓴다. */
+  private static final String ORIGIN_TEMP = "TEMP";
+
   private static final Table<?> DATASET = table(name("dataset"));
   private static final Field<Long> DS_ID = field(name("dataset", "id"), Long.class);
   private static final Field<String> DS_NAME = field(name("dataset", "name"), String.class);
@@ -203,6 +206,7 @@ public class JooqDatasetRepository implements DatasetRepository {
       Long categoryId,
       String storageType,
       String originType,
+      boolean includeTemp,
       String search,
       String status,
       Long securityLevelId,
@@ -221,6 +225,10 @@ public class JooqDatasetRepository implements DatasetRepository {
     }
     if (originType != null && !originType.isBlank()) {
       condition = condition.and(DS_ORIGIN_TYPE.eq(originType));
+    } else if (!includeTemp) {
+      // WD-754: 출처 필터가 없을 때만 임시(TEMP)를 숨긴다 — 출처 TEMP 를 직접 고른 요청과 겹쳐 빈 결과가 되지 않게 else 로 둔다.
+      // count 도 같은 buildCondition 을 쓰므로 건수·페이지가 숨긴 결과 기준이 된다(origin_type 은 NOT NULL).
+      condition = condition.and(DS_ORIGIN_TYPE.ne(ORIGIN_TEMP));
     }
     if (status != null && !status.isBlank()) {
       condition = condition.and(DS_STATUS.eq(status));
@@ -250,6 +258,7 @@ public class JooqDatasetRepository implements DatasetRepository {
       Long categoryId,
       String storageType,
       String originType,
+      boolean includeTemp,
       String search,
       int page,
       int size,
@@ -260,7 +269,14 @@ public class JooqDatasetRepository implements DatasetRepository {
       DatasetVisibility access) {
     Condition condition =
         buildCondition(
-            categoryId, storageType, originType, search, status, securityLevelId, access);
+            categoryId,
+            storageType,
+            originType,
+            includeTemp,
+            search,
+            status,
+            securityLevelId,
+            access);
 
     // First get the distinct IDs for the page
     var idQuery =
@@ -331,6 +347,7 @@ public class JooqDatasetRepository implements DatasetRepository {
       Long categoryId,
       String storageType,
       String originType,
+      boolean includeTemp,
       String search,
       Long currentUserId,
       String status,
@@ -339,7 +356,14 @@ public class JooqDatasetRepository implements DatasetRepository {
       DatasetVisibility access) {
     Condition condition =
         buildCondition(
-            categoryId, storageType, originType, search, status, securityLevelId, access);
+            categoryId,
+            storageType,
+            originType,
+            includeTemp,
+            search,
+            status,
+            securityLevelId,
+            access);
 
     var countQuery =
         dsl.select(countDistinct(DS_ID))

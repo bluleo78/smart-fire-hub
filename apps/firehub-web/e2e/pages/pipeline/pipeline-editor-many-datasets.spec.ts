@@ -24,9 +24,14 @@ const ALL_DATASETS = Array.from({ length: 102 }, (_, i) =>
 const OUTPUT_ID = 102;
 const INPUT_ID = 101;
 
-/** 서버처럼 size 를 100 으로 자르고 page 에 맞는 조각을 돌려주는 데이터셋 목록 모킹 */
-async function mockPagedDatasets(page: Page) {
+/**
+ * 서버처럼 size 를 100 으로 자르고 page 에 맞는 조각을 돌려주는 데이터셋 목록 모킹.
+ * WD-754: 서버처럼 includeTemp=true 가 없으면 임시(TEMP) 데이터셋을 빼고(건수·페이지도 뺀 결과 기준) 돌려준다.
+ * 요청마다 includeTemp 값을 남겨, 선택 목록이 임시까지 받으려 하는지 확인할 수 있게 한다.
+ */
+async function mockPagedDatasets(page: Page, datasets = ALL_DATASETS) {
   const requestedSizes: number[] = [];
+  const includeTempValues: Array<string | null> = [];
   await page.route(
     (url) => url.pathname === '/api/v1/datasets',
     (route) => {
@@ -34,9 +39,12 @@ async function mockPagedDatasets(page: Page) {
       const params = new URL(route.request().url()).searchParams;
       const reqSize = Number(params.get('size') ?? 20);
       requestedSizes.push(reqSize);
+      includeTempValues.push(params.get('includeTemp'));
+      const visible =
+        params.get('includeTemp') === 'true' ? datasets : datasets.filter((d) => d.originType !== 'TEMP');
       const size = Math.max(1, Math.min(reqSize, SERVER_MAX_SIZE));
       const pageNo = Math.max(0, Number(params.get('page') ?? 0));
-      const content = ALL_DATASETS.slice(pageNo * size, pageNo * size + size);
+      const content = visible.slice(pageNo * size, pageNo * size + size);
       return route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -44,16 +52,16 @@ async function mockPagedDatasets(page: Page) {
           content,
           page: pageNo,
           size,
-          totalElements: ALL_DATASETS.length,
-          totalPages: Math.ceil(ALL_DATASETS.length / size),
+          totalElements: visible.length,
+          totalPages: Math.ceil(visible.length / size),
         }),
       });
     },
   );
-  return requestedSizes;
+  return { requestedSizes, includeTempValues };
 }
 
-async function setupMocks(page: Page) {
+async function setupMocks(page: Page, datasets = ALL_DATASETS) {
   const step = createStep({
     id: 5,
     scriptContent: 'SELECT 1 AS v',
@@ -76,7 +84,7 @@ async function setupMocks(page: Page) {
       columns: [createColumn({ id: 1, columnName: 'v', columnOrder: 0 })],
     }),
   );
-  return mockPagedDatasets(page);
+  return mockPagedDatasets(page, datasets);
 }
 
 test.describe('파이프라인 에디터 — 데이터셋 100개 초과 (#732)', () => {
@@ -88,7 +96,7 @@ test.describe('파이프라인 에디터 — 데이터셋 100개 초과 (#732)',
   test('두 번째 페이지에만 있는 출력/입력 데이터셋이 스텝에 이름으로 표시된다', async ({
     authenticatedPage: page,
   }) => {
-    const requestedSizes = await setupMocks(page);
+    const { requestedSizes } = await setupMocks(page);
 
     await page.goto('/pipelines/1');
     await page.getByRole('button', { name: '수정' }).click();
@@ -125,5 +133,28 @@ test.describe('파이프라인 에디터 — 데이터셋 100개 초과 (#732)',
     const req = await putCapture.waitForRequest();
     const payload = req.payload as { steps: Array<{ outputDatasetId: number | null }> };
     expect(payload.steps[0].outputDatasetId).toBe(101);
+  });
+
+  /**
+   * WD-754: 서버가 목록에서 임시(TEMP) 데이터셋을 기본으로 숨기게 됐다. 파이프라인은 다른 단계의 임시 결과를
+   * 입력으로 읽으므로 선택 목록(useAllDatasets)은 includeTemp=true 로 임시까지 받아야 한다 — 빠지면 임시 입력이 빈 칸이 된다.
+   */
+  test('입력이 임시(TEMP) 데이터셋이어도 선택 목록이 includeTemp=true 로 받아 이름으로 표시한다 (WD-754)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 입력 데이터셋(101, 두 번째 페이지)을 앞 단계가 만든 임시 결과로 둔다
+    const withTempInput = ALL_DATASETS.map((d) =>
+      d.id === INPUT_ID ? { ...d, name: '임시 결과 101', originType: 'TEMP' as const } : d,
+    );
+    const requests = await setupMocks(page, withTempInput);
+
+    await page.goto('/pipelines/1');
+    await page.getByRole('button', { name: '수정' }).click();
+    await page.locator('.react-flow__node').first().click();
+
+    await expect(page.getByRole('combobox', { name: '입력 데이터셋' })).toContainText('임시 결과 101');
+    // 목록 요청(페이지 순회 전부)이 includeTemp=true 를 실었다
+    expect(requests.includeTempValues.length).toBeGreaterThan(0);
+    expect(requests.includeTempValues.every((v) => v === 'true')).toBe(true);
   });
 });

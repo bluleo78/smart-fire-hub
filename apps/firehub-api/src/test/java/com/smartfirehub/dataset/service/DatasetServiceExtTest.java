@@ -161,10 +161,10 @@ class DatasetServiceExtTest extends IntegrationTestBase {
 
     PageResponse<DatasetResponse> certified =
         datasetService.getDatasets(
-            null, null, null, null, 0, 10, testUserId, "CERTIFIED", false, null);
+            null, null, null, false, null, 0, 10, testUserId, "CERTIFIED", false, null);
     PageResponse<DatasetResponse> deprecated =
         datasetService.getDatasets(
-            null, null, null, null, 0, 10, testUserId, "DEPRECATED", false, null);
+            null, null, null, false, null, 0, 10, testUserId, "DEPRECATED", false, null);
 
     List<Long> certIds = certified.content().stream().map(DatasetResponse::id).toList();
     assertThat(certIds).contains(ds.id());
@@ -181,7 +181,8 @@ class DatasetServiceExtTest extends IntegrationTestBase {
     datasetFavoriteService.toggleFavorite(fav.id(), testUserId);
 
     PageResponse<DatasetResponse> result =
-        datasetService.getDatasets(null, null, null, null, 0, 10, testUserId, null, true, null);
+        datasetService.getDatasets(
+            null, null, null, false, null, 0, 10, testUserId, null, true, null);
 
     List<Long> ids = result.content().stream().map(DatasetResponse::id).toList();
     assertThat(ids).contains(fav.id());
@@ -194,10 +195,62 @@ class DatasetServiceExtTest extends IntegrationTestBase {
 
     PageResponse<DatasetResponse> result =
         datasetService.getDatasets(
-            null, null, null, "SearchMeExt", 0, 10, testUserId, null, false, null);
+            null, null, null, false, "SearchMeExt", 0, 10, testUserId, null, false, null);
 
     assertThat(result.content()).hasSize(1);
     assertThat(result.content().get(0).name()).isEqualTo("SearchMeExt");
+  }
+
+  /**
+   * WD-754: 출처가 섞인 목록에서 임시(TEMP) 데이터셋은 기본으로 숨고 건수(totalElements)·쪽 수도 숨긴 결과 기준이다. includeTemp=true
+   * 면 모두, 출처 TEMP 를 직접 고르면 includeTemp 와 상관없이 TEMP 만, 다른 출처 + includeTemp=true 는 그 출처만 보인다.
+   */
+  @Test
+  void getDatasets_tempHiddenByDefault_andShownWhenIncludedOrChosen() {
+    Long source = createSimpleDataset("wd754 source", "wd754_source_ext").id();
+    Long derived = createSimpleDataset("wd754 derived", "wd754_derived_ext").id();
+    Long temp = createSimpleDataset("wd754 temp", "wd754_temp_ext").id();
+    // 출처는 생성 API 로 TEMP 를 만들 수 없어(파이프라인 러너 예약) 행을 직접 바꾼다.
+    dsl.update(DATASET).set(DATASET.ORIGIN_TYPE, "DERIVED").where(DATASET.ID.eq(derived)).execute();
+    dsl.update(DATASET).set(DATASET.ORIGIN_TYPE, "TEMP").where(DATASET.ID.eq(temp)).execute();
+
+    // 기본: TEMP 없음, 건수도 TEMP 를 뺀 수.
+    PageResponse<DatasetResponse> hidden =
+        datasetService.getDatasets(
+            null, null, null, false, "wd754", 0, 10, testUserId, null, false, null);
+    assertThat(hidden.content()).extracting(DatasetResponse::id).containsExactly(source, derived);
+    assertThat(hidden.totalElements()).isEqualTo(2);
+    assertThat(hidden.totalPages()).isEqualTo(1);
+
+    // includeTemp=true: 모두.
+    PageResponse<DatasetResponse> all =
+        datasetService.getDatasets(
+            null, null, null, true, "wd754", 0, 10, testUserId, null, false, null);
+    assertThat(all.content())
+        .extracting(DatasetResponse::id)
+        .containsExactly(source, derived, temp);
+    assertThat(all.totalElements()).isEqualTo(3);
+
+    // originType=TEMP(includeTemp 없이): TEMP 만 — 빈 결과가 아니다.
+    PageResponse<DatasetResponse> onlyTemp =
+        datasetService.getDatasets(
+            null, null, "TEMP", false, "wd754", 0, 10, testUserId, null, false, null);
+    assertThat(onlyTemp.content()).extracting(DatasetResponse::id).containsExactly(temp);
+    assertThat(onlyTemp.totalElements()).isEqualTo(1);
+
+    // originType=SOURCE + includeTemp=true: SOURCE 만.
+    PageResponse<DatasetResponse> onlySource =
+        datasetService.getDatasets(
+            null, null, "SOURCE", true, "wd754", 0, 10, testUserId, null, false, null);
+    assertThat(onlySource.content()).extracting(DatasetResponse::id).containsExactly(source);
+    assertThat(onlySource.totalElements()).isEqualTo(1);
+
+    // 쪽 나눔도 숨긴 결과 기준 — 크기 1 이면 2쪽이고 두 번째 쪽은 DERIVED 다.
+    PageResponse<DatasetResponse> secondPage =
+        datasetService.getDatasets(
+            null, null, null, false, "wd754", 1, 1, testUserId, null, false, null);
+    assertThat(secondPage.content()).extracting(DatasetResponse::id).containsExactly(derived);
+    assertThat(secondPage.totalPages()).isEqualTo(2);
   }
 
   // =========================================================================

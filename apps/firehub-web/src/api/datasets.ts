@@ -23,8 +23,27 @@ export const categoriesApi = {
 /** 참조 조회 시간 제한 — 넘으면 조회 실패로 보고 안내만 남긴 채 삭제를 허용한다(조회가 삭제를 무한정 막지 않게, WD-143). */
 export const DATASET_REFERENCES_TIMEOUT_MS = 10_000;
 
+/**
+ * 데이터셋 목록 조회(GET /datasets) 파라미터.
+ * includeTemp(WD-754): 서버 기본값 false 라 파이프라인이 만든 임시(TEMP) 데이터셋은 빠진다(건수·페이지도 뺀 결과 기준).
+ * 임시까지 받아야 하는 곳(파이프라인 입력 선택 목록·이름 중복 검사·목록 화면 「임시 데이터셋 보기」)만 true 를 넘긴다.
+ * originType 을 직접 고르면 서버는 그 값을 우선한다 — originType=TEMP 면 includeTemp 와 상관없이 임시만 온다.
+ */
+export interface DatasetListParams {
+  categoryId?: number;
+  storageType?: string;
+  originType?: string;
+  search?: string;
+  page?: number;
+  size?: number;
+  favoriteOnly?: boolean;
+  status?: string;
+  securityLevelId?: number;
+  includeTemp?: boolean;
+}
+
 export const datasetsApi = {
-  getDatasets: (params: { categoryId?: number; storageType?: string; originType?: string; search?: string; page?: number; size?: number; favoriteOnly?: boolean; status?: string; securityLevelId?: number }) =>
+  getDatasets: (params: DatasetListParams) =>
     client.get<PageResponse<DatasetResponse>>('/datasets', { params }),
   getDatasetById: (id: number) => client.get<DatasetDetailResponse>(`/datasets/${id}`),
   createDataset: (data: CreateDatasetRequest) => client.post<DatasetDetailResponse>('/datasets', data),

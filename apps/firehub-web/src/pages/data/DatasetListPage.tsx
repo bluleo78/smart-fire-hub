@@ -1,4 +1,4 @@
-import { BarChart3, Download, Eye, History, Info, Plus, Star, Trash2 } from 'lucide-react';
+import { BarChart3, Download, Eye, History, Hourglass, Info, Plus, Star, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useNavigationType, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { TruncatedLink } from '../../components/TruncatedLink';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
+import { ExportBlockedTooltip } from '../../components/ui/ExportBlockedTooltip';
 import { SearchInput } from '../../components/ui/search-input';
 import { SecurityLevelBadge } from '../../components/ui/SecurityLevelBadge';
 import {
@@ -57,6 +58,9 @@ import { ExportDialog } from './components/ExportDialog';
 
 type SortKey = 'name' | 'createdAt';
 
+/** 출처 필터가 「임시」일 때 「임시 데이터셋 보기」를 비활성으로 두는 이유(WD-754) */
+const TEMP_ORIGIN_HINT = '출처 필터가 임시라 늘 보입니다';
+
 /** 이름 옆 상태 배지 — 상태별 문구·색 (NONE 은 배지 없음) */
 const STATUS_BADGES: Partial<Record<DatasetResponse['status'], { label: string; variant: 'success' | 'destructive' }>> = {
   CERTIFIED: { label: '✓ Certified', variant: 'success' },
@@ -95,6 +99,16 @@ export default function DatasetListPage() {
   // 손으로 고친·낡은 주소(?page=abc, ?page=-1)는 첫 페이지로 읽는다 — 그대로 보내면 서버 400 이 빈 목록처럼 보였다(WD-146)
   const page = parseNonNegativeInt(searchParams.get('page'), 0);
   const favoriteOnly = searchParams.get('favorite') === 'true';
+  /**
+   * 보기 옵션 「임시 데이터셋 보기」(WD-754) — URL ?showTemp=1.
+   * 서버 목록은 파이프라인이 스텝마다 만드는 임시(TEMP) 데이터셋을 기본으로 숨긴다(includeTemp=false).
+   * 켜면 includeTemp=true 로 함께 받는다. 거르는 일은 서버가 하므로 건수·페이지도 서버 응답 그대로 쓴다.
+   */
+  const showTemp = searchParams.get('showTemp') === '1';
+  /** 출처 필터가 「임시」면 서버가 originType 을 우선해 늘 임시만 준다 — 이때 보기 옵션은 의미가 없어 비활성으로 둔다. */
+  const tempOriginSelected = originType === 'TEMP';
+  /** 지금 목록에 임시가 보이는가 — 토글을 켰거나 출처가 「임시」면 보인다. 토글의 눌림 표시를 실제 목록과 맞춘다. */
+  const tempShown = showTemp || tempOriginSelected;
   const statusFilter = searchParams.get('status') || '';
   // 보안 등급 필터 — 서버 쿼리(페이지 내 정렬 한계 회피, 목업 s2). URL 값은 등급 id.
   const securityLevelParam = searchParams.get('securityLevel');
@@ -199,6 +213,9 @@ export default function DatasetListPage() {
     favoriteOnly: favoriteOnly || undefined,
     status: statusFilter || undefined,
     securityLevelId,
+    // 꺼져 있으면 싣지 않고 서버 기본(임시 숨김)에 맡긴다. 출처 필터가 있으면 서버가 그쪽을 우선해 무시하므로
+    // 싣지 않는다 — 같은 결과에 캐시 키만 달라져 요청이 한 번 더 나가지 않게(WD-754)
+    includeTemp: (showTemp && !originType) || undefined,
   });
   const { data: levels } = useSecurityLevels();
   const deleteDataset = useDeleteDataset();
@@ -415,6 +432,24 @@ export default function DatasetListPage() {
             <Star className={`h-4 w-4 ${favoriteOnly ? 'fill-current' : ''}`} />
             즐겨찾기
           </Button>
+
+          {/* 보기 옵션 「임시 데이터셋 보기」(WD-754) — 즐겨찾기 토글과 같은 모양·aria-pressed.
+              출처 필터가 「임시」면 서버가 임시만 주므로 충돌하지 않게 비활성으로 두고, 공용 비활성 사유 래퍼로
+              포커스·호버 때 이유를 툴팁으로 알린다. */}
+          <ExportBlockedTooltip blocked={tempOriginSelected} message={TEMP_ORIGIN_HINT} label="임시 데이터셋 보기">
+            <Button
+              variant={tempShown ? 'default' : 'outline'}
+              size="sm"
+              aria-pressed={tempShown}
+              onClick={() => {
+                patchParams({ showTemp: !showTemp ? '1' : null, page: null });
+              }}
+              className="gap-1.5"
+            >
+              <Hourglass className="h-4 w-4" />
+              임시 데이터셋 보기
+            </Button>
+          </ExportBlockedTooltip>
         </div>
 
         {/* Category Chip Filter — 칩은 button 이라 Tab·Enter 로 거른다(WD-396). 고른 칩은 색만이 아니라
@@ -681,7 +716,8 @@ export default function DatasetListPage() {
             ) : (
               <TableEmptyRow
                 colSpan={8}
-                message="데이터셋이 없습니다."
+                // 임시가 숨겨진 상태면 0건이어도 임시 데이터셋은 있을 수 있다 — 어디서 보는지 함께 알린다(WD-754)
+                message={tempShown ? '데이터셋이 없습니다.' : '데이터셋이 없습니다. 임시 데이터셋은 「임시 데이터셋 보기」를 켜면 보입니다.'}
                 searchKeyword={search || undefined}
                 onResetSearch={search ? () => { patchParams({ q: null, page: null }); } : undefined}
                 // 만들 권한이 없으면 안내 문구만 둔다 — "데이터셋이 없습니다." 는 버튼 없이도 그대로 읽힌다(WD-144)
