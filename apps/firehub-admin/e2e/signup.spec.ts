@@ -179,4 +179,17 @@ test.describe('첫 운영자 가입', () => {
 
     await expect(page.getByRole('status')).toHaveText('요청이 몰리고 있습니다. 잠시 후 다시 시도해 주세요.');
   });
+
+  test('로그인한 운영자가 /signup 을 열면 콘솔로 보낸다', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/platform/tenants', []);
+    // 세션 복원(refresh/me) 응답을 bootstrap-status(available:false) 보다 늦게 준다 — 복원 전에 판정하면 /login 으로 튕기는 경합을 재현한다.
+    await page.route('**/api/platform/auth/refresh', async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      await route.fallback();
+    });
+    await page.goto('/signup');
+
+    await expect(page).toHaveURL('/tenants');
+    await expect(page.getByRole('heading', { name: '첫 운영자 계정 만들기' })).toHaveCount(0);
+  });
 });
