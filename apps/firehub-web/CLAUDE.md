@@ -203,8 +203,7 @@ test('데이터셋 목록이 렌더링된다', { tag: '@smoke' }, async ({ authe
 - 이슈/에지는 그 다음 또는 별도 describe 블록으로 분리
 
 ### 게이트 동작 (#257)
-- `src/pages/<domain>/` 단독 변경: 해당 도메인 e2e + `@smoke`
-- 공유 영역(components/api/lib/hooks/types) 또는 매핑 모호: 전체 E2E
+- 커밋 훅(`pre-commit`): web 코드를 바꾸면 `@smoke` + 바꾼 도메인(`src/pages/<domain>/`) spec + 바꾼 spec 파일을 playwright 한 번에 돈다. 공유 영역(components/api/lib/hooks/types)·e2e 헬퍼·매핑 밖 페이지도 `@smoke` 만 — 전체 E2E 는 커밋 때 돌지 않고 push 게이트가 한 번 돈다 (WD-764)
 - 비코드 단독: ~5s 통과
 - push 시점(`pre-push`): 전체 E2E + gradle 풀 회귀 (안전망)
 

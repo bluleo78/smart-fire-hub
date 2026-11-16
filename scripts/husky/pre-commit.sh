@@ -3,8 +3,8 @@
 # - 가벼운 정합성 검사는 항상 실행 (lint-staged, typecheck)
 # - 무거운 회귀(E2E + gradle)는 변경 영역 분석으로 선택 실행
 #   - 비코드 단독: skip
-#   - 공유 영역/매핑 모호: 전체 E2E
-#   - 도메인 단독: 전역 smoke + 해당 도메인 non-smoke (중복 0)
+#   - firehub-web 코드 변경: @smoke + 바꾼 도메인 spec + 바꾼 spec 파일을 한 번에 (공유 영역·매핑 밖도 @smoke).
+#     전체 E2E 는 커밋 때 돌지 않고 push 게이트가 한 번 돈다 (WD-764)
 #   - firehub-web 외만 변경: E2E skip
 #   - gradle: api 변경이 있을 때만, 바뀐 테스트·이름 규칙 매칭 테스트만(없으면 compileTestJava) (WD-459)
 # - 풀 회귀 안전망은 .husky/pre-push 가 담당
@@ -48,44 +48,74 @@ fi
 # typecheck 는 코드 변경이 있을 때만 — 문서만 바꾼 커밋에서 전체 앱 타입 검사를 돌지 않게 (WD-459)
 [ -n "$PRECOMMIT_CHANGED_FILES" ] || pnpm typecheck
 
+# web 코드 변경 = apps/firehub-web/ 아래이면서 비코드(README·CLAUDE 등)가 아닌 파일 — vitest·E2E 판정이 함께 쓴다.
+WEB_CODE=$(printf '%s\n' "$NEEDS_REGRESSION" | grep -E '^apps/firehub-web/' || true)
+
 # firehub-web 코드를 바꿨으면 web 단위 테스트(vitest)도 — 디자인·알파 게이트가 정적 검사라 E2E 로는 못 잡는다(WD-668).
-# 전체가 10초 안쪽이라 관련 파일만 고르지 않고 다 돈다.
-if printf '%s\n' "$CHANGED" | grep -qE '^apps/firehub-web/'; then
+# 전체가 10초 안쪽이라 관련 파일만 고르지 않고 다 돈다. e2e/ 만 바꾼 커밋(spec·e2e 헬퍼)은 vitest 대상이 아니라 건너뛴다.
+if printf '%s\n' "$WEB_CODE" | grep -vE '^apps/firehub-web/e2e/' | grep -q .; then
   echo "[pre-commit] firehub-web 변경 — web 단위 테스트(vitest) 실행"
   [ -n "$PRECOMMIT_DRY_RUN" ] || (cd apps/firehub-web && pnpm exec vitest run)
 fi
 
-# 3) 공유 영역 또는 매핑 외 코드 변경 → 전체 풀
-# 도메인 = src/pages/<d>/ 와 e2e/pages/<d>/ 가 모두 있는 폴더 — 목록을 고정하면 새 도메인(graphrag 등)이 빠져 전체 E2E 로 간다 (WD-459).
-WEB_DOMAINS_RE=$(for d in apps/firehub-web/src/pages/*/; do d=$(basename "$d"); [ -d "apps/firehub-web/e2e/pages/$d" ] && printf '%s\n' "$d"; done | paste -sd'|' -)
-[ -n "$WEB_DOMAINS_RE" ] || WEB_DOMAINS_RE='^$'
-
-FORCE_FULL=$(printf '%s\n' "$CHANGED" | grep -E '^apps/firehub-web/(src/(components|api|lib|hooks|types|main\.tsx|App\.tsx|index\.css|router\.tsx|vite-env\.d\.ts|setupTests\.ts)|(vite|playwright|eslint|postcss|tailwind)\.config\.(ts|js|cjs|mjs)|tsconfig.*\.json|package\.json|e2e/|scripts/)' 2>/dev/null | head -1 || true)
-
-WEB_PAGE_CHANGES=$(printf '%s\n' "$CHANGED" | grep -E '^apps/firehub-web/src/pages/' || true)
-NON_DOMAIN_PAGE=$(printf '%s\n' "$WEB_PAGE_CHANGES" | grep -vE "^apps/firehub-web/src/pages/($WEB_DOMAINS_RE)/" || true)
-
-if [ -n "$FORCE_FULL" ] || [ -n "$NON_DOMAIN_PAGE" ]; then
-  echo "[pre-commit] 공유 영역/매핑 외 변경 감지 — 전체 E2E 실행"
-  # 전체 스위트는 빌드(~15초)보다 dev 서버 온디맨드 트랜스폼 비용이 훨씬 커서 preview 서버로 실행한다(playwright.config.ts 참조).
-  # 도메인 한정 실행(아래)은 소수 spec 이라 dev 서버를 유지한다.
-  [ -n "$PRECOMMIT_DRY_RUN" ] || (cd apps/firehub-web && run_locked env E2E_SERVER=preview pnpm test:e2e)
-elif [ -n "$WEB_PAGE_CHANGES" ]; then
-  # 4) 도메인 단독 변경 → 전역 smoke + 해당 도메인 spec
-  # 다중 도메인 지원: newline → '|' 정규화
-  DOMAIN_RE=$(printf '%s\n' "$WEB_PAGE_CHANGES" | sed -E 's|^apps/firehub-web/src/pages/([^/]+)/.*$|\1|' | sort -u | paste -sd'|' -)
-  echo "[pre-commit] 도메인 한정 변경 감지: ${DOMAIN_RE} — 전역 smoke + 해당 도메인 spec 실행"
-
-  # 전역 smoke + 해당 도메인 spec 을 playwright 1회 호출로 실행 (WD-459, smart-workplace WP-76 이식).
-  # grep 은 파일 경로(e2e/ 기준)가 포함된 전체 타이틀에 매칭되므로 "@smoke|pages/<도메인>/" 하나로 두 집합의
-  # 합집합을 고른다(겹치는 도메인 smoke 도 1회만). 2회 호출하면 서버 기동·락 대기가 두 번 든다.
-  [ -n "$PRECOMMIT_DRY_RUN" ] || (cd apps/firehub-web && run_locked npx playwright test --grep "@smoke|pages/($DOMAIN_RE)/")
-else
-  # 5) firehub-web 외 변경 (api 단독 등) — E2E skip
+# 3) web E2E — 커밋 때는 전체를 돌지 않고 @smoke + 바꾼 도메인 + 바꾼 spec 만 한 번에 (WD-764)
+# 전체 E2E 는 push 게이트(full-regression.sh)가 한 번 돈다. 커밋마다 전체(수 분)를 돌면 커밋이 느려지고
+# 같은 커밋을 push 때 또 돌게 되므로, 커밋 때는 빠른 피드백만 주고 안전망은 push 에 맡긴다.
+if [ -z "$WEB_CODE" ]; then
   echo "[pre-commit] firehub-web 변경 없음 — E2E skip"
+else
+  # 도메인 = src/pages/<d>/ 와 e2e/pages/<d>/ 가 모두 있는 폴더 — 목록을 고정하면 새 도메인(graphrag 등)이 빠진다 (WD-459).
+  WEB_DOMAINS_RE=$(for d in apps/firehub-web/src/pages/*/; do
+    d=${d%/}
+    d=${d##*/}
+    [ -d "apps/firehub-web/e2e/pages/$d" ] && printf '%s\n' "$d"
+  done | paste -sd'|' -)
+  [ -n "$WEB_DOMAINS_RE" ] || WEB_DOMAINS_RE='^$'
+
+  # 바꾼 도메인 페이지(매핑에 드는 src/pages/<d>/ 아래)와 바꾼 spec 파일 — 아래 grep 식과 안내가 모두 이 둘에서 나온다.
+  DOMAIN_PAGES=$(printf '%s\n' "$WEB_CODE" | grep -E "^apps/firehub-web/src/pages/($WEB_DOMAINS_RE)/" || true)
+  WEB_SPECS=$(printf '%s\n' "$WEB_CODE" | grep -E '^apps/firehub-web/e2e/.*\.spec\.ts$' || true)
+
+  # 바꾼 도메인 이름 (다중 도메인은 '|' 로 합친다)
+  DOMAIN_RE=$(printf '%s\n' "$DOMAIN_PAGES" | sed -E 's|^apps/firehub-web/src/pages/([^/]+)/.*$|\1|' | sort -u | paste -sd'|' -)
+
+  # 바꾼 spec 파일: e2e/ 접두어를 떼고 정규식 메타문자를 이스케이프한다 (playwright --grep 은 e2e 기준 경로를 포함한 제목에 매칭).
+  # 대괄호 식은 ']' 를 맨 앞에, '.' 를 '[' 앞에 둬야 POSIX·BSD sed 모두에서 안전하다.
+  SPEC_RE=$(printf '%s\n' "$WEB_SPECS" | sed -e 's|^apps/firehub-web/e2e/||' -e 's/[].[+*?(){}|^$\\]/\\&/g' | paste -sd'|' -)
+
+  # 도메인 페이지·spec 어디에도 짝이 없는 web 코드(공용 영역·e2e 헬퍼·설정·매핑 밖 페이지 등)는 영향받는 spec 이 모호하다 —
+  # 커밋 때는 @smoke 가 맡고 전체는 push 게이트가 본다. 안내는 실제로 고른 것과 맞춘다.
+  # 빈 패턴 줄은 grep -F 구현마다 다르게 다룰 수 있어 빼고 넘긴다.
+  PAIRED=$(printf '%s\n%s\n' "$DOMAIN_PAGES" "$WEB_SPECS" | sed '/^$/d')
+  if [ -n "$PAIRED" ]; then
+    UNPAIRED=$(printf '%s\n' "$WEB_CODE" | grep -vxF "$PAIRED" || true)
+  else
+    UNPAIRED=$WEB_CODE
+  fi
+  if [ -n "$UNPAIRED" ]; then
+    echo "[pre-commit] 도메인·spec 에 짝이 없는 web 변경(공용 영역·e2e 헬퍼·매핑 밖 페이지 등) — 커밋 때는 @smoke, 전체 E2E 는 push 게이트"
+  elif [ -z "$DOMAIN_PAGES" ]; then
+    echo "[pre-commit] e2e spec 변경 — 커밋 때는 @smoke + 바꾼 spec, 전체 E2E 는 push 게이트"
+  fi
+
+  # @smoke + 바꾼 도메인 + 바꾼 spec 을 playwright 1회 호출로 — 합집합이라 겹쳐도 한 번만 돌고 서버 기동·락 대기도 한 번이다 (WD-459).
+  GREP_EXPR="@smoke"
+  if [ -n "$DOMAIN_RE" ]; then
+    GREP_EXPR="$GREP_EXPR|pages/($DOMAIN_RE)/"
+  fi
+  if [ -n "$SPEC_RE" ]; then
+    GREP_EXPR="$GREP_EXPR|($SPEC_RE)"
+  fi
+  echo "[pre-commit] firehub-web 변경 — E2E: @smoke + 바꾼 도메인(${DOMAIN_RE:-없음}) + 바꾼 spec 만 실행"
+  if [ -n "$PRECOMMIT_DRY_RUN" ]; then
+    echo "[pre-commit][dry-run] playwright --grep \"$GREP_EXPR\""
+  else
+    # 소수 spec 이라 dev 서버를 유지한다(전체용 preview 는 push 게이트가 쓴다).
+    (cd apps/firehub-web && run_locked pnpm exec playwright test --grep "$GREP_EXPR")
+  fi
 fi
 
-# 6) Gradle — 변경분 기반 선택 실행 (WD-459, smart-workplace pre-commit 이식). 풀 회귀는 pre-push 가 담당.
+# 4) Gradle — 변경분 기반 선택 실행 (WD-459, smart-workplace pre-commit 이식). 풀 회귀는 pre-push 가 담당.
 #    - 변경된 Java 에서 실행할 테스트 클래스를 도출:
 #        · 테스트 파일 변경 → 그 클래스 자신(--tests "*Xxx")
 #        · 메인 파일 변경   → 이름 규칙(Foo*Test/Foo*Tests/Foo*IT) 매칭 테스트를 파일시스템에서 검색

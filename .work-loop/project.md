@@ -42,6 +42,7 @@ cd apps/firehub-api
 ./gradlew test --tests "*.AuthServiceTest.login_success"                    # 단일 메서드
 ./gradlew test --tests "com.smartfirehub.pipeline.*"                        # 패키지 단위
 ./gradlew test                                                              # 전체(오래 걸림 — 범위 지정 우선)
+# 병렬 포크: -PtestForks=N 또는 환경변수 FIREHUB_TEST_FORKS=N(기본 2, 1 이상 정수 — 아니면 설정 단계 실패). 포크마다 힙 1.5GB+컨테이너가 따로 떠서 메모리가 작은 환경(맥 16GB 등)은 FIREHUB_TEST_FORKS=1. 실측은 「오래 걸리는 작업」 표(WD-764)
 ./gradlew compileJava compileTestJava                                       # 빠른 컴파일 확인
 ```
 - 같은 테스트를 다시 돌려 "증거"로 삼을 때는 `cleanTest` 를 붙인다(`./gradlew cleanTest test --tests ...`). 안 붙이면 UP-TO-DATE 로 실제 실행이 안 될 수 있다.
@@ -84,7 +85,7 @@ PW_PORT=6151 pnpm exec playwright test           # E2E (기본 5051 — 다른 �
 ### 커밋 훅·push 게이트 (WD-459)
 - **커밋 훅**(`scripts/husky/pre-commit.sh`): lint-staged → (코드 변경이 있으면) 전체 typecheck → web 변경 영역별 E2E → api 변경분 gradle.
   - 문서만(`scripts/husky/noncode.sh` — `docs/`·루트 `.md`·`README/CLAUDE/AGENTS.md`·`.claude/`·`.work-loop/`) 바꾸면 모두 건너뛴다. `apps/` 아래 다른 `.md` 는 코드다.
-  - web 공유 영역(components/api/lib/hooks/types, `e2e/`, 설정)을 바꾸면 전체 E2E, 도메인(`src/pages/<d>/`)만 바꾸면 `@smoke` + 그 도메인 spec.
+  - web 코드를 바꾸면 커밋 때는 `@smoke` + 바꾼 도메인(`src/pages/<d>/`) spec + 바꾼 spec 파일(`e2e/**/*.spec.ts`)만 playwright 한 번에 돈다. 공유 영역(components/api/lib/hooks/types, `e2e/` 헬퍼, 설정)·매핑 밖 페이지도 `@smoke` 만 — 전체 E2E 는 커밋 때 돌지 않고 push 게이트가 한 번 돈다 (WD-764).
   - gradle 은 api 를 바꿨을 때만 — 바뀐 테스트 클래스와 이름 규칙(`Foo*Test`·`Foo*Tests`·`Foo*IT`) 매칭 테스트만, 없으면 `compileTestJava`. 전체는 push 게이트.
   - 훅 파일(`scripts/husky/`·`.husky/`·`scripts/check-migration-versions*`)을 바꾸면 판정 테스트 `pnpm test:hooks` 가 먼저 돈다 — `scripts/husky/*.test.sh` 전부(`hooks.test.sh`·기차 `train.test.sh`)와 `node --test scripts/check-migration-versions.test.mjs`.
 - **push 게이트**(`pnpm test:full` = `scripts/husky/full-regression.sh`, pre-push 가 부른다): web E2E 전체(preview) → api `gradlew test` 전체(JaCoCo 끔).
@@ -101,17 +102,19 @@ push 게이트가 커밋 훅보다 더 돌리는 것은 web E2E 전체와 api gr
 
 ### 오래 걸리는 작업 (`process-issue.md` 「오래 걸리는 작업」·9번, WD-506)
 
-work-loop 는 아래 명령을 기다리지 않고 백그라운드(`bg-job`)로 돌린다. 예상 시간은 notes 의 `끝날 시각`·`nextRunAt` 을 잡는 기준이다 — 리눅스 호스트(여러 AI 클론이 함께 도는 상태)에서 2026-11-06 에 잰 값이고, 게이트 락 대기는 빠져 있다.
+work-loop 는 아래 명령을 기다리지 않고 백그라운드(`bg-job`)로 돌린다. 예상 시간은 notes 의 `끝날 시각`·`nextRunAt` 을 잡는 기준이다 — 리눅스 호스트(여러 AI 클론이 함께 도는 상태, load 2~9)에서 잰 값이고, 게이트 락 대기는 빠져 있다.
 
 | 명령 | 예상 시간 | 근거 |
 |---|---|---|
 | `pnpm test:full`(push 게이트) — 전체(web E2E + api gradle) | 60분 | 아래 둘의 합 |
-| `pnpm test:full` — web 만 바꾼 범위(gradle 빠짐) | 20분 | 기차 `integ/developer2-4` 게이트, E2E 2444건 16.6분 |
+| `pnpm test:full` — web 만 바꾼 범위(gradle 빠짐) | 25분 | 기차 `integ/developer2-29` 게이트, E2E 2951건 24.1분(2026-11-17) |
 | 기차 출발 게이트(`pnpm test:full`, 기차 워크트리) | 실린 이슈들의 범위에 따라 위와 같음 | |
-| web E2E 전체(`apps/firehub-web`, `PW_PORT=<빈 포트> pnpm exec playwright test`) | 17분 | 위 게이트의 E2E 단계 |
-| `./gradlew test`(api 전체, `apps/firehub-api`) | 42분 | WD-506 실측 2501초 |
+| web E2E 전체(`apps/firehub-web`, `PW_PORT=<빈 포트> pnpm exec playwright test`) | 24분 | 위 게이트의 E2E 단계, WD-772 커밋 훅 2939건 23.2분 |
+| `./gradlew test`(api 전체, `apps/firehub-api`) — 기본 포크 2 | 35분 | WD-764 실측 2070초(12,9xx건, 실패 0, 2026-11-17) |
+| `./gradlew test -PtestForks=1`(api 전체, 포크 1) | 43분 | WD-764 같은 커밋 실측 2571초(실패 1 — 포크 2 에서는 통과) |
 
-- 한 번에 `test:full` 하나만 돈다(전역 락). 다른 이슈의 게이트를 띄우면 락을 기다리느라 그만큼 늦게 끝난다.
+- 포크 2 는 포크 1 보다 남은 메모리(`free` available 최저)가 13.3GB → 11.5GB 로 1.8GB 줄었고 스왑 사용은 늘지 않았다(31GB 호스트). 메모리가 작은 환경은 `FIREHUB_TEST_FORKS=1`.
+- 한 번에 `test:full` 하나만 돈다. 락(`firehub-test-gate.lock`)은 git common dir 에 있어 **한 클론(= AI 하나) 안의 워크트리·세션끼리만** 공유한다 — 다른 AI 의 클론과는 락이 아니라 CPU·메모리를 나눠 쓴다. 내 이슈의 커밋 훅·기차 게이트·측정을 한꺼번에 띄우면 서로 락을 기다리느라 그만큼 늦게 끝난다.
 
 ## 4. 격리 라이브 스택
 
