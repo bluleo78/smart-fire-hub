@@ -5,7 +5,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.reset;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.auth.dto.SignupRequest;
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.tenant.TenantContext;
@@ -24,11 +26,16 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.test.web.servlet.MockMvc;
 
 /**
- * 공개 가입 폐쇄(WD-2): 사용자 0명일 때만 가입, 그 첫 사용자는 기본 테넌트 ADMIN.
+ * 공개 가입 폐쇄(WD-2): 사용자 0명일 때만 가입, 그 첫 사용자는 기본 테넌트 ADMIN 이자 플랫폼 SUPER_ADMIN(WD-748 — 새 설치본에 운영자 콘솔
+ * 관리자가 생기게).
  *
  * <p><b>"사용자 0명" 을 어떻게 만드나:</b> 공유 Testcontainers DB 에는 다른 테스트의 사용자가 항상 있고 지울 수 없다. 그래서 {@code
  * existsAnyUser()} 만 스파이로 바꿔 "기준선(max id) 이후에 생긴 사용자가 있는가" 로 판정하게 한다. 실제 쿼리를 쓰므로 advisory lock
@@ -39,6 +46,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
  * 일정 시간 지연시켜(= 첫 트랜잭션이 판정 후 삽입 전에 머무는 구간을 인위로 늘려) 두 트랜잭션이 반드시 겹치게 만든다. advisory lock 이 있으면 두 번째
  * 스레드는 잠금에서 기다렸다가 첫 스레드의 커밋을 본 뒤 403 이 된다. 잠금이 없으면 두 번째 스레드가 그 지연 구간에 "사용자 없음" 을 보고 둘 다 생성되어 실패한다.
  */
+@AutoConfigureMockMvc
 class SignupClosureTest extends IntegrationTestBase {
 
   /** 판정 직후(삽입 전) 지연 시간. 0 이면 지연 없음. 동시성 테스트만 켠다. */
@@ -48,6 +56,8 @@ class SignupClosureTest extends IntegrationTestBase {
   @Autowired private AuthService authService;
   @Autowired private DSLContext dsl;
   @Autowired private PasswordEncoder passwordEncoder;
+  @Autowired private MockMvc mockMvc;
+  @Autowired private ObjectMapper objectMapper;
 
   private long baselineMaxId;
   private final List<Long> created = new CopyOnWriteArrayList<>();
@@ -115,6 +125,58 @@ class SignupClosureTest extends IntegrationTestBase {
         .isTrue();
   }
 
+  /** 사용자가 가진 플랫폼 역할 이름(전역 테이블이라 테넌트 컨텍스트와 무관). */
+  private List<String> platformRoleNames(long userId) {
+    return dsl.fetch(
+            "select pr.name from platform_user_role pur join platform_role pr on pr.id = pur.platform_role_id"
+                + " where pur.user_id = ? order by pr.name",
+            userId)
+        .getValues(0, String.class);
+  }
+
+  /**
+   * 기준선(max id) 이후에 생긴 사용자의 플랫폼 역할 행 수 — 거부된 가입이 새 운영자를 만들지 않았는지 본다. 이 시험이 만든 사용자만 범위에 들어가
+   * 결정적이다(픽스처로 만든 기존 회원은 플랫폼 역할이 없다).
+   */
+  private int platformRoleRowsAfterBaseline() {
+    return dsl.fetchCount(
+        dsl.selectOne().from("platform_user_role").where("user_id > ?", baselineMaxId));
+  }
+
+  @Test
+  void firstSignup_grantsPlatformSuperAdmin() {
+    TenantContext.clear(); // 가입은 permitAll — 컨텍스트 없이 들어온다
+
+    var user = authService.signup(req("first-op"));
+    created.add(user.id());
+
+    // 새 설치본의 첫 가입자가 운영자 콘솔 관리자다(WD-748) — 플랫폼 역할은 정확히 SUPER_ADMIN 하나.
+    assertThat(platformRoleNames(user.id())).containsExactly("SUPER_ADMIN");
+  }
+
+  @Test
+  void firstSignup_canLogInToPlatformConsole() throws Exception {
+    TenantContext.clear();
+    SignupRequest request = req("first-console");
+    created.add(authService.signup(request).id());
+
+    // 가입 때의 비밀번호 그대로 운영자 로그인이 된다 — 플랫폼 롤이 없으면 이 엔드포인트는 401 로 거부한다.
+    MockHttpServletResponse response =
+        mockMvc
+            .perform(
+                post("/api/platform/auth/login")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(
+                        "{\"username\":\"%s\",\"password\":\"%s\"}"
+                            .formatted(request.username(), request.password())))
+            .andReturn()
+            .getResponse();
+
+    assertThat(response.getStatus()).isEqualTo(200);
+    assertThat(objectMapper.readTree(response.getContentAsString()).get("accessToken").asText())
+        .isNotBlank();
+  }
+
   @Test
   void signup_whenUsersExist_forbiddenWithCode_evenForTakenUsername() {
     // 신선한 DB 에는 사용자가 없을 수 있으므로 직접 삽입으로 한 명 보장하고, 스파이를 풀어 실제 판정을 쓴다.
@@ -142,6 +204,9 @@ class SignupClosureTest extends IntegrationTestBase {
         .isInstanceOf(CodedApiException.class)
         .extracting("code")
         .isEqualTo("SIGNUP_DISABLED");
+    // 거부된 가입은 플랫폼 역할 부여에 닿지 않는다 — 새 운영자가 생기지 않는다(WD-748).
+    // 전역 테이블 전체 행 수가 아니라 기준선 이후 사용자의 행만 본다 — 공유 DB 의 다른 시험이 같은 테이블에 쓰거나 지워도 흔들리지 않는다.
+    assertThat(platformRoleRowsAfterBaseline()).isZero();
   }
 
   @Test
