@@ -10,6 +10,7 @@ import { AGENT_RUN_SETTING_SUPPORT, isKnownAgentType } from '../providers/types.
 import { parseSharePurpose } from '../mcp/api-client.js';
 import { parseDbDialect, parseRowSearch } from '../agent/db-dialect.js';
 import { internalAuth } from '../middleware/auth.js';
+import { sanitizeScreenContext } from './screen-context.js';
 import { authedJsonBody, CHAT_BODY_LIMIT } from '../http/json-body.js';
 import { readSessionTranscript } from '../agent/transcript-reader.js';
 import { checkSessionOwnership } from '../agent/session-owner.js';
@@ -167,7 +168,8 @@ router.post('/chat', ...authedJsonBody({ limit: CHAT_BODY_LIMIT }), async (req: 
       fileIds: hasFileIds ? (fileIds as number[]) : undefined,
       model,
       maxTurns: reqMaxTurns ?? (Number(process.env.MAX_TURNS) || 10),
-      systemPrompt: [systemPrompt, navigationContext, screenContext]
+      // WD-759: 화면 컨텍스트에는 사용자가 붙인 이름이 들어 있어, 붙이기 직전에 한 줄·태그 흉내 제거·길이 상한으로 정리한다.
+      systemPrompt: [systemPrompt, navigationContext, sanitizeScreenContext(screenContext)]
         .filter(Boolean)
         .join('\n\n') || undefined,
       temperature: support.temperature ? temperature : undefined,
