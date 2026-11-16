@@ -29,8 +29,8 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>리포트 양식 저장소.
  *
  * <p>클래스 레벨 {@code @Transactional} 이 필요한 이유: V99 로 {@code report_template} 에 RLS 정책이 걸렸는데, 이 저장소의
- * 유일한 배경 호출자인 {@code ProactiveJobAsyncRunner.executeJob} 에는 {@code @Async("pipelineExecutor")} 만 있고
- * 트랜잭션이 없다. RLS 격리 값은 트랜잭션-로컬 GUC 이고 그 GUC 는 {@code TenantAwareTransactionManager.doBegin} 에서만
+ * 유일한 배경 호출자인 {@code ProactiveJobAsyncRunner.executeJob} 에는 {@code @Async("proactiveExecutor")} 만
+ * 있고 트랜잭션이 없다. RLS 격리 값은 트랜잭션-로컬 GUC 이고 그 GUC 는 {@code TenantAwareTransactionManager.doBegin} 에서만
  * 주입되므로, 트랜잭션이 없으면 예외도 로그도 없이 0행이 되어 사용자의 sections·style 없이 리포트가 생성된다. 전파는 REQUIRED 이므로 컨트롤러 경로(이미
  * 트랜잭션 안)의 동작은 불변이다.
  *

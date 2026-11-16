@@ -102,6 +102,18 @@ describe('classifyError', () => {
       expect(result.guide).not.toContain('잠시 후 수동 실행');
     });
 
+    it.each([
+      'AI 응답이 제한 시간(15분)을 넘겨 리포트를 만들지 못했습니다. 잠시 후 다시 시도하거나 작업 범위를 줄여 주세요.',
+      'AI 응답이 제한 시간(45초)을 넘겨 리포트를 만들지 못했습니다. 잠시 후 다시 시도하거나 작업 범위를 줄여 주세요.',
+    ])('AI 응답 시간 초과는 기타 오류가 아니라 일시 오류(다시 실행·범위 줄이기)로 분류한다 (WD-766): %s', (reason) => {
+      const result = classifyError(reason);
+      expect(result.type).toBe('ai-transient');
+      expect(result.label).toBe('AI 응답 시간 초과');
+      expect(result.guide).toContain('잠시 후 다시 실행');
+      // 설정 문제가 아니므로 AI 인증 정보 확인으로 보내지 않는다
+      expect(result.guide).not.toContain('AI 인증 정보');
+    });
+
     it('AI 에이전트 호출 실패는 일시 오류(잠시 후 재실행)로 분류한다', () => {
       const result = classifyError(AI_TRANSIENT_REASON);
       expect(result.type).toBe('ai-transient');

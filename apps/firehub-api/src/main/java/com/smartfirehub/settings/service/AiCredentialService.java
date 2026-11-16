@@ -148,7 +148,7 @@ public class AiCredentialService {
         readTenantRaw(slot.key())
             .map(AiCredentialDocument::parse)
             .orElseGet(() -> AiCredentialDocument.empty(DEFAULT_AGENT_TYPE));
-    return toCredential(doc);
+    return toCredential(doc, this::decryptOrEmpty);
   }
 
   /** 채팅 슬롯 화면용 읽기. */
@@ -572,7 +572,8 @@ public class AiCredentialService {
   public Optional<ClassifyBinding> resolveClassify() {
     Optional<String> raw = readTenantRaw(AiCredentialSlot.CLASSIFY.key());
     if (raw.isEmpty()) return Optional.empty();
-    AiCredential credential = toCredential(AiCredentialDocument.parse(raw.get()));
+    AiCredential credential =
+        toCredential(AiCredentialDocument.parse(raw.get()), this::decryptOrEmpty);
     String model =
         readTenantRaw(AiCredentialSlot.CLASSIFY_MODEL_KEY)
             .map(String::trim)
@@ -601,9 +602,9 @@ public class AiCredentialService {
    * 따로 커밋한다 — 두 upsert 가 각자 커밋되면 두 번째가 실패할 때 모델 없는 자격증명(= {@link #resolveClassify} 가 fail-closed 로
    * 막는 손상 상태)이 남는다.
    *
-   * <p>검사 순서: 모델 공백(400) → 자격증명 병합·검증(채팅과 같은 규칙) → opencode 모델 형식. 전부 쓰기 전에 끝나므로 거부되면 아무 행도 바뀌지
-   * 않는다. 채팅과 달리 슬래시 없는 opencode 모델을 통과시키지 않는다 — 채팅이 그걸 허용하는 이유(자격증명 먼저 저장해야 모델을 고를 수 있는 순환 잠금)가
-   * 분류에는 없다(모델이 같은 요청에 실린다).
+   * <p>검사 순서: 모델 공백(400) → 자격증명 병합·검증(채팅과 같은 규칙) → 유형별 모델 형식({@link AiCredential#modelProblem}). 전부
+   * 쓰기 전에 끝나므로 거부되면 아무 행도 바뀌지 않는다. 채팅과 달리 슬래시 없는 opencode 모델을 통과시키지 않는다 — 채팅이 그걸 허용하는 이유(자격증명 먼저
+   * 저장해야 모델을 고를 수 있는 순환 잠금)가 분류에는 없다(모델이 같은 요청에 실린다).
    */
   @Transactional
   public void saveClassify(AiCredentialUpsert req, String model, Long userId) {
@@ -615,7 +616,9 @@ public class AiCredentialService {
     String modelBefore = readTenantRaw(AiCredentialSlot.CLASSIFY_MODEL_KEY).orElse("");
     Merged merged = mergeForSave(AiCredentialSlot.CLASSIFY, req);
     AiCredentialDocument doc = merged.doc();
-    String problem = opencodeModelProblem(doc, trimmedModel);
+    // 실행 시점 가드와 같은 규칙(WD-766 — Claude 계열의 opencode 형식 값도 막는다). 판정은 payload 만 보므로 비밀은
+    // 복호화하지 않는다(손상된 옛 암호문이 저장 경로를 막지 않게).
+    String problem = toCredential(doc, cipher -> "").modelProblem(trimmedModel);
     if (problem != null) {
       throw new IllegalArgumentException(problem);
     }
@@ -650,18 +653,6 @@ public class AiCredentialService {
     }
   }
 
-  /**
-   * opencode 문서면 모델이 {@code providerId/모델} 형식이고 공급자가 일치하는지 본다. 판정과 문구는 실행 시점 가드({@link
-   * AiCredential#modelProblem})와 같은 한 곳에서 온다. payload 만 쓰므로 비밀을 복호화하지 않는다(손상된 옛 암호문이 저장 경로를 막지 않게).
-   */
-  private static String opencodeModelProblem(AiCredentialDocument doc, String model) {
-    if (!"opencode".equals(doc.agentType())) return null;
-    JsonNode payload = doc.payload();
-    return new AiCredential.Opencode(
-            payload.path("providerId").asText(""), payload.path("baseURL").asText(""), "", "")
-        .modelProblem(model);
-  }
-
   // ---- 내부 헬퍼 ----
 
   /**
@@ -677,9 +668,12 @@ public class AiCredentialService {
    * 문서를 타입 있는 {@link AiCredential} 로 바꾼다. {@code agentType} 을 문자열로 비교하지만, switch 라 새 유형이 늘 때 이 메서드를
    * 안 고치면 컴파일이 아니라 런타임에 default 로 떨어진다 — {@link AiCredential} 자체의 sealed switch 와 달리 여기는 "저장된 문자열"을
    * 판별하는 자리라 컴파일 강제가 되지 않는다. 유형이 늘면 이 switch 도 함께 늘려야 한다.
+   *
+   * @param decrypt 암호문 → 비밀. 실행 경로는 {@link #decryptOrEmpty}, 비밀이 필요 없는 저장 시점 모델 검사는 빈 값을 준다(WD-766)
    */
-  private AiCredential toCredential(AiCredentialDocument doc) {
-    UnaryOperator<String> secretOf = name -> decryptOrEmpty(doc.secretCipher(name));
+  private static AiCredential toCredential(
+      AiCredentialDocument doc, UnaryOperator<String> decrypt) {
+    UnaryOperator<String> secretOf = name -> decrypt.apply(doc.secretCipher(name));
     JsonNode payload = doc.payload();
 
     return switch (doc.agentType()) {

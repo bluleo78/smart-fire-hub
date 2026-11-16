@@ -456,7 +456,8 @@ router.post('/proactive', ...authedJsonBody(), async (req: Request, res: Respons
   // 실패한다(sdk: 키·토큰 둘 다 없음, cli: 토큰 없음, cli-api: 키 없음).
   const apiKey = body.apiKey || '';
 
-  const model = body.model || 'claude-haiku-4-5';
+  // 모델은 firehub-api 가 실은 테넌트 ai.model 을 그대로 쓴다(WD-766). 없으면 채팅처럼 공급자 기본 모델(DEFAULT_MODEL)이 정한다.
+  const model = body.model || undefined;
   const userId = body.userId ?? (Number(req.headers['x-on-behalf-of']) || 0);
   // 챗과 같은 이유로 fail-closed — 전역 경로 폴백을 두지 않는다. 판정은 경로 파생과 같은
   // 술어를 쓴다(복제하면 여기가 느슨해져 400 대신 500 이 된다).
@@ -484,6 +485,16 @@ router.post('/proactive', ...authedJsonBody(), async (req: Request, res: Respons
   // tool_result 는 tool_use_id 만 싣는 공급자(sdk·cli)가 있어 id → 도구 이름 맵으로 짝짓는다.
   const sourceNumbers = new Set<number>();
   const toolNames = createToolNameResolver();
+
+  // WD-766: 호출자(firehub-api)가 응답 전에 연결을 끊으면(제한 시간 초과) 실행을 멈춘다 — 결과를 받을 곳이 그 연결뿐이라
+  // 계속 돌면 토큰만 쓴다. 응답을 다 쓴 뒤의 close(writableEnded)는 정상 종료라 제외한다.
+  const abortController = new AbortController();
+  res.on('close', () => {
+    if (!res.writableEnded) {
+      console.warn('[Proactive] Caller closed the connection before the response — aborting agent run');
+      abortController.abort();
+    }
+  });
 
   try {
     const providerConfig: ProviderConfig = {
@@ -524,9 +535,13 @@ router.post('/proactive', ...authedJsonBody(), async (req: Request, res: Respons
       // 실행기가 write_report_file 을 이 디렉터리 전용으로 연다 — opencode(WD-62)·cli(WD-765)는 MCP 프로세스
       // env FIREHUB_REPORT_DIR 로 넘기고, sdk(WD-765)는 in-process MCP 서버에 이 디렉터리로 도구를 등록한다.
       reportDir,
+      // WD-766: 호출자가 끊으면(위 close 핸들러) 공급자 실행을 멈춘다.
+      abortSignal: abortController.signal,
     });
 
     for await (const event of events) {
+      // WD-766: 끊긴 뒤에는 빠져나온다(break 가 제너레이터를 닫아 공급자 정리가 돈다).
+      if (abortController.signal.aborted) break;
       if (event.type === 'text') {
         // WD-765: 도구 호출(tool_use·tool_result 등) 사이로 끊긴 text 블록은 서로 다른 단락이다. 그냥 이어
         // 붙이면 「앞 설명## 요약」처럼 헤더가 줄 머리에서 벗어나 parseSections 가 섹션을 못 찾는다.
@@ -558,6 +573,12 @@ router.post('/proactive', ...authedJsonBody(), async (req: Request, res: Respons
         }
       }
       prevWasText = event.type === 'text';
+    }
+
+    // WD-766: 호출자가 떠났으면 응답을 쓰지 않는다.
+    if (abortController.signal.aborted) {
+      console.warn('[Proactive] Run aborted after caller disconnect — skipping response');
+      return;
     }
 
     // report-writer가 디렉토리에 3개 파일을 생성:
@@ -649,6 +670,8 @@ router.post('/proactive', ...authedJsonBody(), async (req: Request, res: Respons
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error('[Proactive] Error:', errorMessage);
+    // WD-766: 호출자가 끊어 abort 된 실행의 뒤늦은 오류는 응답할 곳이 없다 — 로그만 남긴다.
+    if (abortController.signal.aborted) return;
     // 자격증명 없음(createChatProvider 가 동기적으로 던짐)·인증 실패는 이벤트 경로와 같은 502 + 코드로
     // 응답한다 — firehub-api 가 이 코드로 "AI 인증 정보 확인" 안내를 고른다. 그 밖의 예외는 500.
     if (isAiCredentialFailure(error)) {

@@ -16,9 +16,9 @@ import java.util.Map;
  * 곳에는 아예 없었다. 다섯 번째 유형이 생기면 세 곳을 손으로 맞춰야 하는데 이미 달라서 리뷰로는 잡히지 않는 상태였다.
  *
  * <p>그래서 유형에 따라 갈리는 동작을 <b>전부</b> 인터페이스 메서드로 내렸다 — {@link #agentType()}, {@link #isComplete()},
- * {@link #incompleteMessage()}, {@link #applyTo(Map)}, {@link #modelProblem(String)}, {@link
- * #modelToSend}. 소비처의 {@code switch} 도 {@code instanceof} 도 사라지므로 드리프트할 자리 자체가 없고, 새 변형을 추가하면 "메서드를
- * 구현하지 않았다"는 <b>컴파일 오류</b>로 막힌다 — 소스 텍스트를 읽는 가드 ({@code AiCredentialSwitchGuardTest})보다 강한 보장이다.
+ * {@link #incompleteMessage()}, {@link #applyTo(Map)}, {@link #modelProblem(String)}. 소비처의 {@code
+ * switch} 도 {@code instanceof} 도 사라지므로 드리프트할 자리 자체가 없고, 새 변형을 추가하면 "메서드를 구현하지 않았다"는 <b>컴파일 오류</b>로
+ * 막힌다 — 소스 텍스트를 읽는 가드 ({@code AiCredentialSwitchGuardTest})보다 강한 보장이다.
  *
  * <p><b>"전부"가 중요하다.</b> 첫 리팩터링은 모델 형식 검사만 밖에 남겨 소비처 세 곳이 {@code instanceof AiCredential.Opencode} 를
  * 들고 있었는데, 그 가드 테스트는 {@code case AiCredential.} 표식으로 대상을 <b>발견</b>하므로 세 파일이 감시 대상에서 통째로 빠졌다 — 하나를
@@ -59,15 +59,19 @@ public sealed interface AiCredential {
    * <p>세 소비처(채팅/분류/프로액티브)가 모두 이 메서드를 쓴다 — 필드 이름은 ai-agent 가 읽는 이름이라 세 경로에서 같아야 한다. 빈 문자열은 "설정 안
    * 함"이므로 키 자체를 생략한다 (ai-agent 의 세 라우트 모두 {@code body.x || ''} 로 읽어 생략과 빈 문자열을 같게 다룬다).
    *
-   * <p>{@code model} 은 여기서 다루지 않는다 — 프로액티브는 sdk/cli/cli-api 에서 모델을 아예 보내지 않고 ai-agent 의 고정 기본값을
-   * 쓰는데(비용 차이가 있는 의도된 gap), 여기에 넣으면 그 gap 이 조용히 넓어진다. 모델은 소비처가 각자 싣는다.
+   * <p>{@code model} 은 여기서 다루지 않는다 — 모델은 자격증명이 아니라 평면 설정 키({@code ai.model}, 분류는 전용 모델도 있다)라 소비처가
+   * 각자 읽어 유형과 무관하게 싣는다.
    */
   void applyTo(Map<String, Object> body);
 
   /**
    * 이 자격증명으로 {@code model} 을 쓸 수 있는가. 쓸 수 있으면 {@code null}, 아니면 사용자에게 보일 문구를 돌려준다.
    *
-   * <p>대부분의 유형은 모델 형식에 제약이 없어 기본 구현이 항상 {@code null} 이다 — {@link Opencode} 만 재정의한다.
+   * <p>유형마다 규칙이 있어 기본 구현을 두지 않는다 — 새 유형이 규칙을 정하지 않으면 컴파일 오류로 드러난다. {@link Opencode} 는 「공급자/모델」 형식과
+   * 공급자 일치를, Claude 계열({@link ClaudeFamily})은 opencode 형식 값이 남아 있지 않은지를 본다(WD-766).
+   *
+   * <p><b>같은 검사·같은 문구.</b> 채팅({@code AiChatRequestBuilder})·분류({@code AiAgentClient})·프로액티브({@code
+   * ProactiveJobAsyncRunner})·리포트 양식 생성이 모두 이 메서드로 막으므로, 한 테넌트의 같은 설정 오류는 어느 경로에서든 같은 안내가 나간다.
    *
    * <p><b>왜 {@code instanceof} 가 아니라 메서드인가 (이슈 #695 리뷰).</b> 처음 리팩터링에서는 이 검사만 sealed 타입 밖에 남아 세
    * 소비처가 각각 {@code instanceof AiCredential.Opencode} 를 들고 있었다. 그런데 {@code
@@ -75,9 +79,7 @@ public sealed interface AiCredential {
    * instanceof 로 바꾼 그 순간 세 파일이 가드의 시야에서 통째로 빠졌다 — 즉 이 검사는 리팩터링 전보다 오히려 덜 보호받는 상태가 됐었다. 메서드로 내리면 변형
    * 추가가 다시 컴파일 문제로 드러나고, 규칙의 사본이 하나뿐이 된다.
    */
-  default String modelProblem(String model) {
-    return null;
-  }
+  String modelProblem(String model);
 
   /** {@link #modelProblem} 이 문구를 돌려주면 던진다 — 예외로 끝내는 경로(분류·프로액티브)가 쓴다. */
   default void requireModelUsable(String model) {
@@ -85,18 +87,6 @@ public sealed interface AiCredential {
     if (problem != null) {
       throw new IllegalStateException(problem);
     }
-  }
-
-  /**
-   * ai-agent 요청에 함께 실어 보낼 모델. {@code null} 이면 보내지 않는다는 뜻이다.
-   *
-   * <p>기본값이 {@code null} 인 이유: sdk/cli/cli-api 의 프로액티브 경로는 지금까지 모델을 보낸 적이 없고 ai-agent 라우트의 고정 기본값을
-   * 쓴다(비용 차이가 있는 의도된 gap). {@link Opencode} 만 반드시 보내야 한다 — 안 보내면 그 고정 기본값(슬래시 없음)이 형식 위반이 된다.
-   *
-   * <p>값을 {@link java.util.function.Supplier} 로 받는 이유는 모델이 필요 없는 유형에서 설정 조회 자체를 하지 않기 위해서다.
-   */
-  default String modelToSend(java.util.function.Supplier<String> configuredModel) {
-    return null;
   }
 
   /**
@@ -142,8 +132,27 @@ public sealed interface AiCredential {
     }
   }
 
+  /** Claude 계열(sdk·cli·cli-api) — 모델 검사 규칙을 함께 쓴다(WD-766). */
+  sealed interface ClaudeFamily extends AiCredential {
+
+    /**
+     * Claude 모델 이름에는 {@code /} 가 없으므로, 공급자 접두가 있는 값(opencode 형식, 예 {@code openai/gpt-4o})은 「다시 선택」
+     * 안내로 막는다. {@code null} 은 「설정 안 함」이라 통과한다(기본값은 ai-agent 몫).
+     */
+    @Override
+    default String modelProblem(String model) {
+      if (model == null || model.indexOf('/') < 0) {
+        return null;
+      }
+      return "AI 모델("
+          + model
+          + ")이 opencode 형식(공급자/모델)으로 남아 있어 Claude 실행형태에서 쓸 수 없습니다."
+          + " 관리자 설정에서 모델을 다시 선택하세요.";
+    }
+  }
+
   /** Claude Agent SDK 실행형태. OAuth 토큰과 API 키를 동시에 들고 다닐 수 있다(우선순위는 소비처 책임). */
-  record Sdk(String oauthToken, String apiKey) implements AiCredential {
+  record Sdk(String oauthToken, String apiKey) implements ClaudeFamily {
     @Override
     public String agentType() {
       return "sdk";
@@ -169,7 +178,7 @@ public sealed interface AiCredential {
   }
 
   /** Claude Code CLI(OAuth) 실행형태. */
-  record Cli(String oauthToken) implements AiCredential {
+  record Cli(String oauthToken) implements ClaudeFamily {
     @Override
     public String agentType() {
       return "cli";
@@ -193,7 +202,7 @@ public sealed interface AiCredential {
   }
 
   /** Claude Code CLI(API 키) 실행형태. */
-  record CliApi(String apiKey) implements AiCredential {
+  record CliApi(String apiKey) implements ClaudeFamily {
     @Override
     public String agentType() {
       return "cli-api";
@@ -269,12 +278,6 @@ public sealed interface AiCredential {
     @Override
     public String modelProblem(String model) {
       return matchesModel(model) ? null : modelFormatMessage(model);
-    }
-
-    /** opencode 는 모델을 반드시 함께 보내야 한다 — 그 이유는 인터페이스 쪽 javadoc 참고. */
-    @Override
-    public String modelToSend(java.util.function.Supplier<String> configuredModel) {
-      return configuredModel.get();
     }
 
     /**

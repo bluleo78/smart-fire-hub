@@ -104,7 +104,7 @@ Package base: `com.smartfirehub`. Feature-sliced 도메인 모듈, 각 모듈은
 - **Jobrunr**: 데이터 임포트 비동기 처리. `@Job` 어노테이션. Dashboard: localhost:5040 (local 프로필)
 - **AsyncJobService**: JVM 내 `ConcurrentHashMap<UUID, List<SseEmitter>>` 기반 실시간 추적
 - **AI 프록시**: `AiAgentProxyService`가 외부 ai-agent 서비스(localhost:5020)로 SSE 스트리밍 중계
-- **비동기 설정**: `AsyncConfig` — pipelineExecutor (core=5, max=10, queue=25)
+- **비동기 설정**: `AsyncConfig` — pipelineExecutor (core=5, max=10, queue=25), proactiveExecutor (core=3, max=5, queue=50, 프로액티브 실행 전용)
 
 ### Encryption
 

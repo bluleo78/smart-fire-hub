@@ -17,6 +17,7 @@ import com.smartfirehub.dataset.storage.DataStoreResolver;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.settings.model.AiCredential;
 import com.smartfirehub.vectorstore.VectorStoreFeatures;
+import java.time.Duration;
 import java.util.Map;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
@@ -60,7 +61,11 @@ class ProactiveAiClientDialectTest {
     when(features.supportsRowSearch(backend)).thenReturn(rowSearch);
     ProactiveAiClient client =
         new ProactiveAiClient(
-            "http://localhost:" + wireMock.port(), new ObjectMapper(), resolver, features);
+            "http://localhost:" + wireMock.port(),
+            new ObjectMapper(),
+            resolver,
+            features,
+            Duration.ofSeconds(30));
     ReflectionTestUtils.setField(client, "internalToken", "t");
     wireMock.stubFor(post(urlEqualTo("/agent/proactive")).willReturn(okJson("{\"sections\":[]}")));
     TenantContext.set(5L);

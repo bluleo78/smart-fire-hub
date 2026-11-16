@@ -677,6 +677,21 @@ class AiCredentialServiceTest extends IntegrationTestBase {
     assertThat(rawTenant(AiCredentialSlot.CLASSIFY.key())).isEmpty();
   }
 
+  /** [WD-766] 저장 검사도 실행 시점과 같은 규칙 — Claude 계열(sdk)에 opencode 형식 모델은 저장 전에 거부한다. */
+  @Test
+  void saveClassify_sdk_에_opencode_형식_모델이면_400으로_거부한다() {
+    assertThatThrownBy(
+            () ->
+                service.saveClassify(
+                    upsert("sdk", Map.of(), Map.of("apiKey", "sk-classify")),
+                    "openai/gpt-4o",
+                    USER))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("모델을 다시 선택");
+    assertThat(rawTenant(AiCredentialSlot.CLASSIFY.key())).isEmpty();
+    assertThat(rawTenant(AiCredentialSlot.CLASSIFY_MODEL_KEY)).isEmpty();
+  }
+
   @Test
   void clearClassify_는_멱등이다() {
     service.clearClassify(USER);

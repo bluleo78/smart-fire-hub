@@ -22,14 +22,18 @@ import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
+import reactor.core.publisher.Mono;
 import reactor.netty.http.client.HttpClient;
 
 @Component
 @Slf4j
 public class ProactiveAiClient {
 
-  // HTML 리포트 생성은 SVG 차트/카드 레이아웃 등 복잡한 작업이므로 충분한 시간 필요
-  private static final Duration TIMEOUT = Duration.ofMinutes(5);
+  /**
+   * ai-agent 프로액티브 호출의 제한 시간 — 설정 {@code app.proactive.agent-timeout}(기본 15분, WD-766). ai-agent 쪽에는
+   * 응답 제한이 없어 이 값이 실질 상한이고, 걸리면 연결을 닫아 ai-agent 도 실행을 멈춘다(proactive.ts 의 close 감지).
+   */
+  private final Duration timeout;
 
   private final WebClient webClient;
   private final ObjectMapper objectMapper;
@@ -43,8 +47,11 @@ public class ProactiveAiClient {
       @Value("${agent.url}") String agentUrl,
       ObjectMapper objectMapper,
       DataStoreResolver dataStoreResolver,
-      VectorStoreFeatures vectorStoreFeatures) {
-    HttpClient httpClient = HttpClient.create().responseTimeout(TIMEOUT);
+      VectorStoreFeatures vectorStoreFeatures,
+      @Value("${app.proactive.agent-timeout:PT15M}") Duration timeout) {
+    this.timeout = timeout;
+    // 제한은 아래 Mono.timeout 하나로 건다 — Netty responseTimeout 을 함께 두면 어느 쪽이 먼저 걸렸는지 예외로 다시 가려야 한다.
+    HttpClient httpClient = HttpClient.create();
     this.webClient =
         WebClient.builder()
             .baseUrl(agentUrl)
@@ -64,9 +71,7 @@ public class ProactiveAiClient {
    * 바디를 조립</b>했는데, 그 조립 규칙이 채팅·분류 경로와 따로 유지되는 세 번째 방언이었다 — 실제로 필드 누락과 빈 값 처리 차이가 생겨 있었다. 이제 필드 조립은
    * {@link AiCredential#applyTo(Map)} 하나뿐이다.
    *
-   * @param model opencode 에서만 실어 보낼 {@code ai.model}. {@code null} 이면 생략하고 ai-agent 라우트의 고정 기본값을 쓴다
-   *     — sdk/cli/cli-api 는 지금까지 모델을 보낸 적이 없고, 여기서 보내기 시작하면 그 테넌트들의 프로액티브 비용이 조용히 바뀐다(의도된 gap, 별도
-   *     이슈).
+   * @param model 테넌트 {@code ai.model}. 채팅·분류와 같이 모든 유형에 싣는다(WD-766). {@code null} 이면 생략한다
    * @param executionId 이 호출을 일으킨 실행 id(WD-198) — ai-agent 가 MCP 호출 헤더로 되돌려 보내 리포트 등급 기록에 쓴다. null
    *     이면 싣지 않는다
    */
@@ -88,9 +93,7 @@ public class ProactiveAiClient {
       // 안 되고, 알 수 없는 유형은 ai-agent 의 isKnownAgentType 가드가 400 으로 막게 둔다.
       credential.applyTo(body);
       body.put("config", config != null ? config : Map.of());
-      // opencode 는 buildOpenCodeConfig 가 top-level model(providerId/modelId 형식)을 필수로
-      // 요구한다 — 비어 있으면 ai-agent 라우트의 고정 기본값(claude-haiku-4-5, 슬래시 없음)이
-      // 대신 실려 형식 위반으로 실행이 깨진다. 호출부가 opencode 일 때만 값을 넘긴다.
+      // 모델은 유형과 무관하게 싣는다(WD-766) — 테넌트가 고른 모델로 리포트를 만들게 한다.
       if (model != null) {
         body.put("model", model);
       }
@@ -128,11 +131,21 @@ public class ProactiveAiClient {
               .bodyValue(body)
               .retrieve()
               .bodyToMono(String.class)
-              .timeout(TIMEOUT)
+              // 시간 초과는 도메인 예외로 바로 낸다(WD-766) — 구독 취소로 연결이 닫혀 ai-agent 도 멈춘다.
+              .timeout(
+                  timeout,
+                  Mono.error(
+                      () -> {
+                        log.error("AI agent proactive request timed out after {}", timeout);
+                        return new ProactiveJobException(timeoutMessage(timeout));
+                      }))
               .block();
 
       return parseResponse(responseBody);
 
+    } catch (ProactiveJobException e) {
+      // 위 시간 초과 예외는 그 문구 그대로 올린다 — 아래 일반 문구로 덮지 않는다.
+      throw e;
     } catch (WebClientResponseException e) {
       // 원문 응답 본문(오류 메시지·request_id 등 내부 정보 포함)은 서버 로그에만 남긴다.
       // 여기서 throw한 메시지는 execution.error로 저장되어 사용자 화면에 그대로 노출되므로
@@ -146,9 +159,24 @@ public class ProactiveAiClient {
     }
   }
 
-  /** 에이전트 호출 자체가 실패했을 때(네트워크·타임아웃·5xx) 사용자에게 보여줄 문구. */
+  /** 에이전트 호출 자체가 실패했을 때(네트워크·5xx 등) 사용자에게 보여줄 문구. 시간 초과는 {@link #timeoutMessage}(WD-766). */
   static final String AGENT_CALL_FAILED_MESSAGE =
       "AI 에이전트 호출에 실패해 리포트를 생성하지 못했습니다. 잠시 후 다시 시도하거나 관리 > 설정에서 AI 설정을 확인해 주세요.";
+
+  /**
+   * 제한 시간 {@code limit} 을 넘겼을 때의 문구. 시간은 설정값에서 만든다 — 상수 「15분」 을 박아 두면 설정을 바꾼 뒤 문구가 거짓말을 한다(WD-766).
+   */
+  static String timeoutMessage(Duration limit) {
+    return "AI 응답이 제한 시간("
+        + limitLabel(limit)
+        + ")을 넘겨 리포트를 만들지 못했습니다. 잠시 후 다시 시도하거나 작업 범위를 줄여 주세요.";
+  }
+
+  /** 제한 시간 표기 — 분 단위로 나누어떨어지면 「N분」, 아니면 「N초」(최소 1초 — 「0초」는 원인을 가린다). */
+  private static String limitLabel(Duration limit) {
+    long s = Math.max(1, limit.toSeconds());
+    return s % 60 == 0 ? (s / 60) + "분" : s + "초";
+  }
 
   /**
    * 에이전트 오류 응답 본문의 {@code code}를 보고 사용자 문구를 고른다.

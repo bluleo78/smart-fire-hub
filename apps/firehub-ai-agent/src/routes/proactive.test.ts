@@ -472,6 +472,25 @@ describe('Proactive routes — integration tests', () => {
       expect(pg.systemPrompt).not.toContain('Tibero');
     });
 
+    // WD-766: 라우트는 api 가 실은 model 을 바꾸지 않고 provider 설정과 실행 옵션 양쪽에 그대로 넘긴다.
+    it.each(['sdk', 'cli', 'cli-api', 'opencode'])(
+      'WD-766: %s 에서 바디의 model 을 ProviderConfig·execute 로 그대로 넘긴다',
+      async (agentType) => {
+        const { ProviderFactory } = await import('../providers/index.js');
+        const model = agentType === 'opencode' ? 'openai/gpt-4o' : 'claude-opus-4-1';
+        const opts = (await run({ agentType, oauthToken: 't', model })) as { model?: string };
+        expect(opts.model).toBe(model);
+        expect(vi.mocked(ProviderFactory.createChatProvider).mock.calls[0][0].model).toBe(model);
+      },
+    );
+
+    // WD-766: model 이 없으면 haiku 로 채우지 않고 비워 둔다 — 채팅처럼 공급자 기본 모델이 정한다.
+    it('WD-766: 바디에 model 이 없으면 model 을 비워 공급자 기본값에 맡긴다', async () => {
+      const { ProviderFactory } = await import('../providers/index.js');
+      expect(((await run({})) as { model?: string }).model).toBeUndefined();
+      expect(vi.mocked(ProviderFactory.createChatProvider).mock.calls[0][0].model).toBeUndefined();
+    });
+
     it("'none' 등 다른 값은 버린다 — LLM 실행에서 AI 판정을 끄면 안 된다", async () => {
       expect((await run({ aiPurpose: 'none' })).aiPurpose).toBeUndefined();
     });
@@ -829,6 +848,87 @@ describe('Proactive routes — integration tests', () => {
 
     expect(res.status).toBe(200);
     expect((res.body as { rawText: string }).rawText).toBe(report);
+  });
+
+  // WD-766: firehub-api 가 제한 시간(15분)에 연결을 끊으면 api 는 이미 FAILED 로 기록했다 — ai-agent 가 계속 돌면
+  // 아무도 받지 않을 리포트에 토큰·MCP 호출을 쓴다. 응답 전에 연결이 닫히면 실행을 abort 하고, 이벤트 루프를
+  // 빠져나와 이후 이벤트·응답을 쓰지 않아야 한다.
+  it('WD-766: 응답 전에 연결이 닫히면 provider 실행을 abort 하고 이후 이벤트를 소비하지 않는다', async () => {
+    let receivedSignal: AbortSignal | undefined;
+    let eventsAfterAbort = 0;
+    let generatorFinished = false;
+    mockExecute.mockImplementation((opts: { abortSignal?: AbortSignal }) => {
+      receivedSignal = opts.abortSignal;
+      return (async function* () {
+        try {
+          yield { type: 'text', content: '진행 중' };
+          // 실제 provider 처럼 abort 될 때까지(또는 오래) 일한다 — 신호가 없으면 시험 제한 시간까지 끝나지 않는다.
+          await new Promise<void>((resolve) => {
+            if (opts.abortSignal?.aborted) resolve();
+            opts.abortSignal?.addEventListener('abort', () => resolve(), { once: true });
+          });
+          for (let i = 0; i < 3; i++) {
+            eventsAfterAbort++;
+            yield { type: 'text', content: `abort 뒤 ${i}` };
+          }
+          yield { type: 'done', inputTokens: 1, outputTokens: 1 };
+        } finally {
+          generatorFinished = true;
+        }
+      })();
+    });
+
+    const app = createApp();
+    const server = app.listen(0);
+    try {
+      await new Promise<void>((resolve) => server.once('listening', () => resolve()));
+      const addr = server.address() as { port: number };
+      const client = new AbortController();
+      const pending = fetch(`http://localhost:${addr.port}/agent/proactive`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Internal ${VALID_TOKEN}` },
+        body: JSON.stringify({ prompt: 'p', tenantId: 1, agentType: 'sdk', apiKey: 'k', context: {} }),
+        signal: client.signal,
+      }).catch(() => undefined);
+
+      // 실행이 시작된 뒤에 api 쪽(클라이언트)이 끊는다 — 15분 제한에 걸린 상황.
+      await vi.waitFor(() => expect(mockExecute).toHaveBeenCalled());
+      expect(receivedSignal).toBeDefined();
+      expect(receivedSignal?.aborted).toBe(false);
+      client.abort();
+      await pending;
+
+      await vi.waitFor(() => expect(receivedSignal?.aborted).toBe(true));
+      await vi.waitFor(() => expect(generatorFinished).toBe(true));
+      // 루프는 abort 뒤 첫 이벤트에서 빠져나온다 — 나머지 이벤트를 끝까지 소비하지 않는다.
+      expect(eventsAfterAbort).toBeLessThanOrEqual(1);
+    } finally {
+      server.close();
+    }
+  });
+
+  // WD-766: 정상 응답이 끝난 뒤의 close(응답 완료 후 소켓 정리)는 abort 가 아니다.
+  it('WD-766: 응답을 다 보낸 뒤의 연결 종료는 실행을 abort 하지 않는다', async () => {
+    let receivedSignal: AbortSignal | undefined;
+    mockExecute.mockImplementation((opts: { abortSignal?: AbortSignal }) => {
+      receivedSignal = opts.abortSignal;
+      return (async function* () {
+        yield { type: 'text', content: '결과' };
+        yield { type: 'done', inputTokens: 1, outputTokens: 1 };
+      })();
+    });
+
+    const res = await makeRequest(
+      createApp(),
+      'POST',
+      '/agent/proactive',
+      { prompt: 'p', tenantId: 1, agentType: 'sdk', apiKey: 'k', context: {} },
+      { Authorization: `Internal ${VALID_TOKEN}` },
+    );
+
+    expect(res.status).toBe(200);
+    expect(receivedSignal).toBeDefined();
+    expect(receivedSignal?.aborted).toBe(false);
   });
 });
 
