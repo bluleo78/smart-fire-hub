@@ -3,8 +3,10 @@
 FROM imresamu/postgis:16-3.5
 
 USER root
-# 재현성을 위해 현재 PGDG bookworm에서 제공하는 pgvector 버전을 고정한다.
+# 재현성을 위해 pgvector 의 업스트림 버전(0.8.7)을 고정한다.
+# 데비안 리비전(-1.pgdg12+N)까지 고정하지 않는 이유: PGDG 는 같은 업스트림의 옛 리비전을 저장소에서 내려(0.8.6-1.pgdg12+1 이 사라져 이미지 빌드가 깨졌다)
+# 리비전 고정은 다음 재빌드 때 다시 깨진다. 리비전은 패키징 수정뿐이라 업스트림 버전만 고정해도 확장 동작은 같다.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends postgresql-16-pgvector=0.8.6-1.pgdg12+1 \
+    && apt-get install -y --no-install-recommends postgresql-16-pgvector=0.8.7-* \
     && rm -rf /var/lib/apt/lists/*
 USER postgres

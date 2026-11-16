@@ -8,7 +8,7 @@ import org.apache.ibatis.annotations.Param;
  * 플랫폼 운영자 RBAC(platform_user_role·platform_role_permission·permission) MyBatis 매퍼(WD-706). SQL 은
  * {@code mybatis/platform/PlatformRoleMapper.xml}.
  *
- * <p>세 테이블 모두 테넌트 경계 위의 전역 테이블(tenant_id·정책 없음)이라 테넌트 컨텍스트 없이 읽는다.
+ * <p>세 테이블 모두 테넌트 경계 위의 전역 테이블(tenant_id·정책 없음)이라 테넌트 컨텍스트 없이 읽고 쓴다.
  */
 @PlatformMapper
 public interface PlatformRoleMapper {
@@ -18,4 +18,8 @@ public interface PlatformRoleMapper {
 
   /** 사용자가 가진 플랫폼 롤 수. */
   int countPlatformRoles(@Param("userId") Long userId);
+
+  /** 이름으로 찾은 플랫폼 역할을 사용자에게 준다(WD-748). 넣은 행 수 — 그 이름의 역할이 없으면 0. */
+  int insertPlatformUserRoleByName(
+      @Param("userId") Long userId, @Param("roleName") String roleName);
 }

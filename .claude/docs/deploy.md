@@ -208,6 +208,7 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
 - **api + web 동시 배포 필수.** 새 응답 필드(`TokenResponse.mustChangePassword`, `ErrorResponse.code`), 403 `PASSWORD_CHANGE_REQUIRED`, `GET /auth/signup-status` 를 웹이 처리해야 한다. api 만 먼저 나가면 구 웹의 로그인 화면이 가입 링크를 계속 보여 주고(제출 시 403), 임시 비밀번호 사용자는 원인 표시 없는 403 만 본다. ai-agent 는 이번에 바뀌지 않는다(admin-manager 의 `set_user_active` 안내 문구는 후속 이슈).
 - V132 는 `"user".must_change_password BOOLEAN NOT NULL DEFAULT false` 한 컬럼 추가 — 기존 행 무영향, 잠금 짧음. 배포 전 스냅샷 규칙(V122 이상)은 그대로 따른다.
 - **배포 즉시 운영의 공개 가입이 닫힌다**(사용자가 이미 있으므로). 이후 계정은 각 워크스페이스 관리자가 사용자 관리 > 멤버 추가로 만든다. 기존 계정은 영향 없음.
+- **새 설치본(PG·Tibero)의 첫 가입자는 기본 워크스페이스 ADMIN 에 더해 플랫폼 SUPER_ADMIN 을 받아 운영자 콘솔 관리자가 된다(WD-748)** — 사람이 가입하기 전에 노출하지 않는다. 사용자가 이미 있는 기존 설치본(V82 승격으로 SUPER_ADMIN 보유)에는 영향 없음.
 - 사용자 상세의 "활성" 스위치 의미가 바뀐다: 전역 계정 비활성화 → **이 워크스페이스 멤버십 정지**. 배포 후 **전역 계정 비활성화 수단이 없다**(운영자 콘솔 후속 이슈). 기존에 전역 `is_active=false` 로 막아 둔 계정은 그대로 막혀 있다.
 - 정지는 그 테넌트 권한을 즉시 0 으로 만든다(권한 조회가 ACTIVE 멤버십을 조인) — 진행 중 세션도 다음 요청부터 403.
 - 정지·제거의 "마지막 활성 ADMIN" 판정은 테넌트별 advisory lock 으로 직렬화된다(동시 요청으로 ADMIN 이 0명이 되는 것을 방지).
@@ -728,13 +729,13 @@ Tibero 테넌트의 파이프라인 SQL 단계는 api 가 새 서비스 `db-exec
   | (자동) `DATA_STORE_PG_*` | 같은 네임스페이스 `db`: URL `jdbc:postgresql://db:5432/<postgresDb>`, 소유자 `config.postgresUser`/`secrets.postgresPassword`, 런타임 `app_tenant`/`secrets.postgresRuntimePassword` |
 
   비밀값은 `values.secret.tibero.example.yaml` 을 복사해 **새 값으로** 채운다(다른 설치본의 JWT·암호화 키를 재사용하지 않는다).
-- **설치 순서**
+- **설치 순서** — **새 설치본의 첫 가입자가 운영자 콘솔 관리자가 된다(WD-748)**: 사람이 가입하기 전에는 외부(인그레스)에 노출하지 않는다(먼저 가입한 누구든 기본 워크스페이스 ADMIN 과 플랫폼 SUPER_ADMIN 을 함께 받는다).
   1. 이미지 확인: 쓸 api 이미지의 `app.jar` 안 `db/migration-tibero` 최신 파일이 저장소 main 과 같은지 본다 — `c=$(docker create --platform linux/amd64 <레지스트리>/api:<태그>); docker cp $c:/app/app.jar api.jar; docker rm $c; unzip -l api.jar | grep -oE 'db/migration-tibero/V[0-9.]+__[^ ]+' | sort -V | tail`.
   2. 설치 전 점검 → 계정 SQL(DBA).
   3. 네임스페이스와 neo4j pull secret: `kubectl create namespace <ns>` 후 기존 네임스페이스와 같은 방법으로 `dhi-pull` 시크릿을 만든다(`values.cloudia.yaml` 주석).
   4. `helm install <release> ~/k8s/smart-fire-hub -n <ns> -f values.yaml -f values.cloudia.yaml -f values.tibero.yaml -f values.secret.tibero.yaml`.
   5. api 기동 로그: Tibero Flyway 가 `V155` 부터 최신까지 적용, `TiberoRuntimeGrantCallback` 의 런타임 권한 부여, 단일 계정 경고(「런타임 계정이 없어 테넌트 격리가 꺼져 있습니다」)가 **없어야** 한다. 첫 기동은 기준선 적용 때문에 PG 보다 오래 걸린다(startupProbe 여유 ~600s).
-  6. 끝-끝 점검: 가입 → 플랫폼 롤 → 테넌트 생성 → 데이터셋 업로드·조회 → SQL 파이프라인 실행 → (Qdrant 를 켰으면) 위 Qdrant 「설치 순서와 점검」 3~5.
+  6. 끝-끝 점검: 첫 가입(첫 가입자 = 운영자 콘솔 관리자, SUPER_ADMIN 자동 부여) → 테넌트 생성 → 데이터셋 업로드·조회 → SQL 파이프라인 실행 → (Qdrant 를 켰으면) 위 Qdrant 「설치 순서와 점검」 3~5.
 - **꺼지는 기능(ADR 결정 3)**: Qdrant 를 켜지 않은 Tibero 설치본은 벡터·키워드(트라이그램) 검색이 비활성이다(화면은 숨기지 않고 안내). Qdrant 를 켜면 Tibero 플랫폼에서도 검색이 동작한다(ADR 0002). **Qdrant 데이터 PV 는 반드시 블록 스토리지** — Qdrant 는 NFS 위에서 기동할 때 `NFS may cause data corruption` 으로 데이터 손상 가능성을 스스로 경고한다. 또 NFS 에서는 첫 기동의 컬렉션 생성이 매우 느리거나 멈출 수 있다: 2026-11-16 PoC 클러스터(NFS StorageClass 뿐)에서 첫 기동 때는 컬렉션 생성이 끝나지 않아 api 가 「저장소 일시 중단」(`vectorStoreAvailable=false`, 검색 외 기능은 정상)으로 떴고, 다음 기동(api 재기동)에서는 준비 완료됐다. 확인할 곳: api 로그의 `Qdrant 컬렉션 준비` 줄(예: `Qdrant 컬렉션 준비 완료: 6개(스키마 버전 1)`), `GET /api/v1/platform-db/capabilities` 의 `vectorStoreAvailable`.
 - **백업·복구** — 두 DB 는 원자적이지 않다(분리 모드는 데이터 저장소를 먼저 커밋한다). 그래서 **api·executor 를 0 으로 줄인 같은 정지 창에서** 둘을 뜨고, 되살릴 때도 둘을 같은 시점 것으로 맞춘다.
   - Tibero: 소유자 스키마 단위 `tbexport`(옵션 문법은 설치된 Tibero 매뉴얼로 확인)(예: `tbexport username=<DBA> password=… sid=<SID> user=<소유자> file=<경로>.dat`, 되살리기는 `tbimport … fromuser=<소유자> touser=<소유자>`). 런타임 계정 권한은 api 가 기동마다 다시 주므로 따로 뜨지 않는다. 테넌트 컨텍스트(`FH_TENANT_<해시>`)는 인스턴스 전역 객체라 스키마 덤프에 들어가지 않을 수 있다 — 빈 인스턴스로 되살리면 api 기동 전에 컨텍스트를 다시 만든다. 이름은 백업 전에 `SELECT NAMESPACE FROM DBA_CONTEXT WHERE SCHEMA = '<소유자>'` 로 적어 두고(또는 되살린 스키마에서 `SELECT DISTINCT TEXT FROM USER_SOURCE WHERE TEXT LIKE '%FH_TENANT\_%' ESCAPE '\'` 로 찾고), 소유자로 `CREATE OR REPLACE CONTEXT <이름> USING FH_TENANT;` 를 실행한다.

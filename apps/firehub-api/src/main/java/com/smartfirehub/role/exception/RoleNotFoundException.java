@@ -27,4 +27,13 @@ public class RoleNotFoundException extends RuntimeException {
   public static RoleNotFoundException systemRole(String name) {
     return new RoleNotFoundException("기본 역할(" + name + ")을 찾을 수 없습니다. 워크스페이스 구성을 확인해 주세요.");
   }
+
+  /**
+   * 플랫폼(운영자) 기본 역할(SUPER_ADMIN)이 없을 때의 예외(WD-748) — 테넌트 역할이 아니라 플랫폼 DB 마이그레이션 시드({@code
+   * platform_role}) 누락이라, 운영자가 엉뚱하게 워크스페이스 설정을 뒤지지 않게 가리키는 곳을 다르게 적는다.
+   */
+  public static RoleNotFoundException platformRole(String name) {
+    return new RoleNotFoundException(
+        "플랫폼 기본 역할(" + name + ")을 찾을 수 없습니다. 플랫폼 DB 마이그레이션(platform_role 시드)을 확인해 주세요.");
+  }
 }

@@ -12,7 +12,8 @@ import org.junit.jupiter.api.Test;
  * PlatformRoleRepository 계약 테스트 — 구현마다 하위 클래스로 실행한다(WD-706).
  *
  * <p>인증 필터가 운영자 토큰을 검증하는 경로라 모든 호출을 테넌트 컨텍스트 없이 한다(리뷰 포인트 1). 플랫폼 RBAC 테이블은 정책 없는 전역 테이블이라 Tibero
- * 런타임 계정도 컨텍스트 없이 같은 결과를 내야 한다. 인터페이스에 쓰기가 없어 행은 픽스처가 만든다.
+ * 런타임 계정도 컨텍스트 없이 같은 결과를 내야 한다. 조회용 행은 픽스처가 만들고, 유일한 쓰기 {@code grantPlatformRole}(WD-748 첫 가입자
+ * SUPER_ADMIN 부여)도 같은 방식으로 컨텍스트 없이 부른다.
  */
 public abstract class PlatformRoleRepositoryContractTest extends AccessContractBase {
 
@@ -79,5 +80,32 @@ public abstract class PlatformRoleRepositoryContractTest extends AccessContractB
     assertThat(call(() -> repository().hasAnyPlatformRole(roleWithoutPermissions))).isTrue();
     assertThat(call(() -> repository().hasAnyPlatformRole(nobody))).isFalse();
     assertThat(call(() -> repository().hasAnyPlatformRole(-1L))).isFalse();
+  }
+
+  @Test
+  @DisplayName("grantPlatformRole 은 이름으로 찾은 역할을 주고 true — 그 뒤 롤 보유·권한 코드에 반영된다(WD-748)")
+  void grantPlatformRole_byName_grantsRole() {
+    assertThat(call(() -> repository().grantPlatformRole(nobody, prefix + "-r1"))).isTrue();
+
+    assertThat(call(() -> repository().hasAnyPlatformRole(nobody))).isTrue();
+    assertThat(call(() -> repository().findPlatformPermissionCodes(nobody)))
+        .containsExactlyInAnyOrder(codeA, codeB);
+  }
+
+  @Test
+  @DisplayName("grantPlatformRole 은 그 이름의 역할이 없으면 예외가 아니라 false — 행도 생기지 않는다(WD-748)")
+  void grantPlatformRole_missingRole_returnsFalse() {
+    assertThat(call(() -> repository().grantPlatformRole(nobody, prefix + "-missing"))).isFalse();
+
+    assertThat(call(() -> repository().hasAnyPlatformRole(nobody))).isFalse();
+  }
+
+  @Test
+  @DisplayName("시드된 SUPER_ADMIN 을 이름으로 줄 수 있다 — 플랫폼 권한(platform:tenant:create)이 생긴다(WD-748)")
+  void grantPlatformRole_seededSuperAdmin() {
+    assertThat(call(() -> repository().grantPlatformRole(nobody, "SUPER_ADMIN"))).isTrue();
+
+    assertThat(call(() -> repository().findPlatformPermissionCodes(nobody)))
+        .contains("platform:tenant:create");
   }
 }

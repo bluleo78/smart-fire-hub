@@ -18,4 +18,11 @@
   <select id="countPlatformRoles" resultType="_int">
     SELECT COUNT(*) FROM platform_user_role WHERE user_id = #{userId}
   </select>
+
+  <!-- 첫 가입자에게 플랫폼 역할을 이름으로 찾아 준다(WD-748). id 를 숫자로 박지 않고, 그 이름의 역할이 없으면 0행(호출자가 판단).
+       표준 INSERT ... SELECT 라 두 벤더 공통. -->
+  <insert id="insertPlatformUserRoleByName">
+    INSERT INTO platform_user_role (user_id, platform_role_id)
+    SELECT #{userId}, id FROM platform_role WHERE name = #{roleName}
+  </insert>
 </mapper>
