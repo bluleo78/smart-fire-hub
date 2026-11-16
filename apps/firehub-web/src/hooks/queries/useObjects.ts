@@ -28,11 +28,14 @@ export function useObjectList(datasetId: number, filter: ObjectListFilter = {}, 
   });
 }
 
-/** 업로드 배치 결과 — 총 시도 수/성공 수 + 실패한 항목(재시도 대상) + 올린 폴더. */
+/** 업로드 배치 결과 — 총 시도 수/성공 수 + 실패한 항목(재시도 대상) + 발급 거부 항목 + 올린 폴더. */
 export interface UploadResult {
   total: number;
   succeeded: number;
+  /** PUT 이 실패한 항목 — 네트워크 등 일시 오류일 수 있어 재시도 대상이다. */
   failedItems: UploadItem[];
+  /** 서버가 파일별 검증에서 거부해 URL 이 없는 항목 + 사유(WD-776) — 다시 올려도 같으므로 재시도 대상이 아니다. */
+  rejectedItems: { item: UploadItem; reason: string }[];
   /**
    * 이 배치를 올린 폴더('' = 루트, WD-761). 재시도는 훅의 현재 폴더로 가므로, 화면은 이 값이 지금 폴더와 같을 때만
    * 재시도를 띄워 실패분이 다른 폴더로 올라가지 않게 한다.
@@ -45,7 +48,8 @@ export interface UploadResult {
  * ① upload-urls로 항목 수만큼 presigned PUT 대상 발급(각 항목의 상대경로를 filename으로 전송 → 폴더 구조 보존) →
  * ② 각 파일을 MinIO에 직접 PUT → ③ 성공/실패와 무관하게 목록을 무효화하여 성공분을 즉시 반영한다.
  * PUT은 Promise.allSettled로 독립 처리 — 일부가 실패해도 전체를 에러로 만들지 않고,
- * 실패한 항목만 모아 재시도할 수 있게 한다(전부-아니면-전무 방지). upload-urls 발급 자체가
+ * 실패한 항목만 모아 재시도할 수 있게 한다(전부-아니면-전무 방지). 서버가 파일별로 거부한 항목은 사유와 함께
+ * rejectedItems 로 따로 모은다(WD-776 — 규칙은 서버 ObjectKeyGenerator.generateKey). upload-urls 발급 자체가
  * 실패하는 총 실패만 throw되어 mutation error(isError)로 전파된다.
  * folderPath 는 올릴 폴더(지금 보는 폴더, WD-761) — 루트('' 또는 생략)면 본문에 싣지 않아 예전 요청과 같다.
  */
@@ -59,8 +63,12 @@ export function useUploadObjects(datasetId: number, folderPath?: string) {
         files: items.map((it) => ({ filename: it.path })),
       });
       // 응답 targets는 요청 순서를 유지하므로 인덱스로 짝지어 업로드한다.
+      // URL 이 없는 자리는 서버가 그 파일만 거부한 것이다(WD-776) — PUT 하지 않고 사유와 함께 거부 항목으로 모은다.
+      const rejectedItems = data.targets.flatMap((t, i) =>
+        t.uploadUrl ? [] : [{ item: items[i], reason: t.error ?? '업로드 URL을 받지 못했습니다' }],
+      );
       const results = await Promise.allSettled(
-        data.targets.map((t, i) => putToPresignedUrl(t.uploadUrl, items[i].file)),
+        data.targets.map((t, i) => (t.uploadUrl ? putToPresignedUrl(t.uploadUrl, items[i].file) : Promise.resolve())),
       );
       // 실패한(rejected) 인덱스의 원본 항목만 골라 재시도 대상으로 반환한다.
       const failedItems = results
@@ -68,8 +76,9 @@ export function useUploadObjects(datasetId: number, folderPath?: string) {
         .filter((it): it is UploadItem => it !== null);
       return {
         total: data.targets.length,
-        succeeded: data.targets.length - failedItems.length,
+        succeeded: data.targets.length - failedItems.length - rejectedItems.length,
         failedItems,
+        rejectedItems,
         folderPath: folderPath ?? '',
       };
     },

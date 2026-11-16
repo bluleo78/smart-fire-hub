@@ -62,18 +62,24 @@ export async function openObjectInNewTab(
  */
 
 /**
- * URL ?path= 값이나 서버 폴더 path 를 탭이 쓰는 폴더 값(앞뒤 / 없음, 루트는 '')으로 맞춘다.
- * 서버 정규화(ObjectKeyGenerator.normalizeFolderPath)와 같은 분해 규칙을 쓴다 — '\\'→'/', 빈(공백뿐인)·'.' 세그먼트 흡수,
- * 이름은 다듬지 않음. 그래야 ?path=a//b 처럼 손으로 고친 값도 서버가 실제로 연 폴더와 같은 값이 되어 경로 표시·이름 줄이기·
- * 캐시 키가 어긋나지 않는다. '..'·제어문자는 고치지 않고 그대로 보낸다 — 안전 판정은 서버(400)가 맡고 화면은 그 오류를 보인다.
+ * 손으로 고친 URL ?path= 값을 탭이 쓰는 폴더 값(앞뒤 / 없음, 루트는 '')으로 정리한다 — ?path=a//b 같은 값도 서버가 실제로 연 폴더와 같은
+ * 값이 되어 경로 표시·이름 줄이기·캐시 키가 어긋나지 않게. 서버 정규화와 같게 빈·'.' 세그먼트만 흡수하고 이름('\\'·공백)은 그대로 둔다
+ * (WD-776 — 규칙은 서버 ObjectKeyGenerator.normalizeFolderPath·isOpenableFolder 참고). '..'·제어문자는 그대로 보내 서버가 400 으로 판정한다.
  */
 export function toFolderParam(raw: string | null | undefined): string {
   if (!raw) return '';
   return raw
-    .replace(/\\/g, '/')
     .split('/')
-    .filter((seg) => seg.trim() !== '' && seg !== '.')
+    .filter((seg) => seg !== '' && seg !== '.')
     .join('/');
+}
+
+/**
+ * 폴더 이름을 화면에 보일 글자로 바꾼다(WD-776). 공백뿐인 이름은 그대로 그리면 빈 버튼·빈 경로 조각이 되어 눌러야 할 곳이 보이지 않으므로
+ * 「(공백)」으로 보인다. 이동 대상(path)은 바꾸지 않는다 — 표시만 다르다.
+ */
+export function folderDisplayName(name: string): string {
+  return name.trim() === '' ? '(공백)' : name;
 }
 
 /** 경로 표시 한 조각 — 보이는 이름 + 누르면 이동할 폴더 값. */
@@ -84,7 +90,7 @@ export interface FolderCrumb {
 
 /**
  * 폴더 값('제품/Tibero7')을 경로 표시 조각들로 나눈다 — 각 조각은 그 지점까지의 폴더로 이동한다.
- * 루트('')는 조각이 없다(화면이 「전체」를 따로 붙인다). 빈 세그먼트는 서버 정규화와 같게 건너뛴다.
+ * 루트('')는 조각이 없다(화면이 「전체」를 따로 붙인다). 빈 세그먼트는 서버 정규화와 같게 건너뛰고, 공백뿐인 세그먼트는 한 폴더라 남긴다(WD-776).
  */
 export function folderBreadcrumbs(path: string): FolderCrumb[] {
   const segments = path.split('/').filter((s) => s.length > 0);

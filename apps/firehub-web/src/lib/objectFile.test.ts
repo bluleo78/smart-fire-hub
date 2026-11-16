@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { objectsApi } from '../api/objects';
 import {
   folderBreadcrumbs,
+  folderDisplayName,
   formatObjectDate,
   formatObjectSize,
   nameInFolder,
@@ -147,12 +148,29 @@ describe('toFolderParam', () => {
     expect(toFolderParam('../x')).toBe('../x');
   });
 
-  it('서버 정규화와 같게 빈·. 세그먼트를 흡수하고 \\ 를 / 로 바꾸되 이름은 다듬지 않는다', () => {
+  it('서버 정규화와 같게 빈·. 세그먼트를 흡수하되 이름은 다듬지 않는다', () => {
     expect(toFolderParam('a//b')).toBe('a/b');
     expect(toFolderParam('a/./b')).toBe('a/b');
-    expect(toFolderParam('a\\b')).toBe('a/b');
-    expect(toFolderParam('a/ /b')).toBe('a/b');
     expect(toFolderParam('report /2026')).toBe('report /2026');
+  });
+
+  // WD-776: 목록에 보이는 폴더는 그 이름 그대로 들어가야 한다 — 서버 normalizeFolderPath 와 같은 규칙.
+  it('\\ 를 / 로 바꾸지 않고 공백뿐인 세그먼트를 버리지 않는다', () => {
+    expect(toFolderParam('report\\2024/')).toBe('report\\2024');
+    expect(toFolderParam('a\\b')).toBe('a\\b');
+    expect(toFolderParam(' /')).toBe(' ');
+    expect(toFolderParam('a/ /b')).toBe('a/ /b');
+    expect(toFolderParam('   ')).toBe('   ');
+  });
+});
+
+describe('folderDisplayName', () => {
+  // WD-776: 공백뿐인 폴더 이름은 그대로 그리면 빈 버튼이 된다 — 보이는 이름을 따로 준다.
+  it('공백뿐인 이름은 (공백)으로, 그 밖은 그대로 보인다', () => {
+    expect(folderDisplayName(' ')).toBe('(공백)');
+    expect(folderDisplayName('   ')).toBe('(공백)');
+    expect(folderDisplayName('report\\2024')).toBe('report\\2024');
+    expect(folderDisplayName(' report')).toBe(' report');
   });
 });
 
@@ -172,6 +190,13 @@ describe('folderBreadcrumbs', () => {
     expect(folderBreadcrumbs('a//b')).toEqual([
       { name: 'a', path: 'a' },
       { name: 'b', path: 'a/b' },
+    ]);
+  });
+
+  it('공백뿐인 세그먼트도 한 조각이다(WD-776)', () => {
+    expect(folderBreadcrumbs('a/ ')).toEqual([
+      { name: 'a', path: 'a' },
+      { name: ' ', path: 'a/ ' },
     ]);
   });
 });

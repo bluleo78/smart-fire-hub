@@ -592,7 +592,6 @@ test.describe('데이터셋 목록 — 임시 데이터셋 보기 (WD-754)', () 
     await expect.poll(() => urls.at(-1)?.searchParams.get('originType')).toBe('SOURCE');
     expect(urls.at(-1)?.searchParams.get('includeTemp')).toBeNull();
     await expect(page).toHaveURL(/showTemp=1/);
-    await expect(toggle).toHaveAttribute('aria-pressed', 'true');
   });
 
   test('출처 필터가 「임시」면 보기 옵션이 비활성·안내되고 요청 originType=TEMP 로 임시만 보인다', async ({
@@ -615,7 +614,7 @@ test.describe('데이터셋 목록 — 임시 데이터셋 보기 (WD-754)', () 
     await expect(page.getByText('총 2건')).toBeVisible();
     await expect(toggle).toBeDisabled();
     // 비활성 버튼은 포인터 이벤트가 없어 공용 래퍼(span role=group, 이름 '동작 — 사유')에 호버하면 사유 툴팁이 뜬다
-    const hint = '출처 필터가 임시라 늘 보입니다';
+    const hint = '출처 필터를 고르면 그 출처의 데이터셋만 보여 이 옵션은 쓰이지 않습니다';
     await page.getByRole('group', { name: `${SHOW_TEMP} — ${hint}`, exact: true }).hover();
     await expect(page.getByRole('tooltip')).toHaveText(hint);
     // 지금 목록에 임시가 보이므로 눌린 모양으로 보인다 — 실제 목록과 표시가 어긋나지 않게
@@ -630,6 +629,54 @@ test.describe('데이터셋 목록 — 임시 데이터셋 보기 (WD-754)', () 
     await expect(toggle).toHaveAttribute('aria-pressed', 'false');
     await expect(page.getByRole('group', { name: `${SHOW_TEMP} — ${hint}`, exact: true })).toHaveCount(0);
     await expectRowNames(page, nonTempNames, tempNames);
+  });
+
+  /**
+   * WD-776 — 출처 필터가 「임시」가 아닌 값이어도 서버가 그 출처만 주고 includeTemp 를 무시한다.
+   * 눌러도 목록이 바뀌지 않는 토글이 되지 않게 비활성 + 이유 툴팁을 보이고, 빈 목록 안내에서 「켜면 보입니다」 문장을 뺀다.
+   */
+  test('출처 필터가 「원본」이면 보기 옵션이 비활성·이유 안내되고, 빈 목록 안내에 토글 문장이 없다 (WD-776)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupCommon(page);
+    // 임시만 있는 테넌트 — 출처 「원본」으로 거르면 0건이 된다
+    const urls = await mockServerLikeList(
+      page,
+      all.filter((d) => d.originType === 'TEMP'),
+    );
+
+    await page.goto('/data/datasets');
+    const toggle = page.getByRole('button', { name: SHOW_TEMP });
+    await expect(toggle).toBeEnabled();
+    const toggleHint = page.getByText('임시 데이터셋은 「임시 데이터셋 보기」를 켜면 보입니다.');
+    await expect(toggleHint).toBeVisible();
+
+    await page.getByRole('combobox', { name: '출처 필터' }).click();
+    await page.getByRole('option', { name: '원본' }).click();
+
+    // 요청은 출처만 싣고 includeTemp 는 싣지 않는다(지금과 같다)
+    await expect.poll(() => urls.at(-1)?.searchParams.get('originType')).toBe('SOURCE');
+    expect(urls.at(-1)?.searchParams.get('includeTemp')).toBeNull();
+
+    // 토글: 비활성 + 눌리지 않음 + 이유(접근 이름·툴팁)
+    await expect(toggle).toBeDisabled();
+    await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    const reason = '출처 필터를 고르면 그 출처의 데이터셋만 보여 이 옵션은 쓰이지 않습니다';
+    const wrapper = page.getByRole('group', { name: `${SHOW_TEMP} — ${reason}`, exact: true });
+    await wrapper.hover();
+    await expect(page.getByRole('tooltip')).toHaveText(reason);
+
+    // 빈 목록 안내: 「데이터셋이 없습니다.」만 — 따를 수 없는 「켜면 보입니다」 문장은 없다
+    await expect(page.getByText('데이터셋이 없습니다.', { exact: true })).toBeVisible();
+    await expect(toggleHint).toHaveCount(0);
+
+    // 출처를 「전체」로 되돌리면 토글이 살아나고 안내 문장도 돌아온다
+    await page.getByRole('combobox', { name: '출처 필터' }).click();
+    await page.getByRole('option', { name: '전체 출처' }).click();
+    await expect(page).not.toHaveURL(/originType=/);
+    await expect(toggle).toBeEnabled();
+    await expect(wrapper).toHaveCount(0);
+    await expect(toggleHint).toBeVisible();
   });
 
   test('임시만 있어 기본 목록이 비면 「임시 데이터셋 보기」로 볼 수 있다고 안내하고, 켜면 안내 없이 임시가 보인다', async ({

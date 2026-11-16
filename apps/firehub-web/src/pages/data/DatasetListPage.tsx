@@ -58,8 +58,8 @@ import { ExportDialog } from './components/ExportDialog';
 
 type SortKey = 'name' | 'createdAt';
 
-/** 출처 필터가 「임시」일 때 「임시 데이터셋 보기」를 비활성으로 두는 이유(WD-754) */
-const TEMP_ORIGIN_HINT = '출처 필터가 임시라 늘 보입니다';
+/** 출처 필터가 골라져 있을 때 「임시 데이터셋 보기」를 비활성으로 두는 이유(WD-754·WD-776) */
+const ORIGIN_FILTER_HINT = '출처 필터를 고르면 그 출처의 데이터셋만 보여 이 옵션은 쓰이지 않습니다';
 
 /** 이름 옆 상태 배지 — 상태별 문구·색 (NONE 은 배지 없음) */
 const STATUS_BADGES: Partial<Record<DatasetResponse['status'], { label: string; variant: 'success' | 'destructive' }>> = {
@@ -105,10 +105,15 @@ export default function DatasetListPage() {
    * 켜면 includeTemp=true 로 함께 받는다. 거르는 일은 서버가 하므로 건수·페이지도 서버 응답 그대로 쓴다.
    */
   const showTemp = searchParams.get('showTemp') === '1';
-  /** 출처 필터가 「임시」면 서버가 originType 을 우선해 늘 임시만 준다 — 이때 보기 옵션은 의미가 없어 비활성으로 둔다. */
-  const tempOriginSelected = originType === 'TEMP';
-  /** 지금 목록에 임시가 보이는가 — 토글을 켰거나 출처가 「임시」면 보인다. 토글의 눌림 표시를 실제 목록과 맞춘다. */
-  const tempShown = showTemp || tempOriginSelected;
+  /**
+   * 출처 필터가 무엇이든 골라져 있으면 서버가 그 출처만 주고 includeTemp 를 무시한다 — 보기 옵션이 목록을 바꾸지 못하므로 비활성으로 둔다
+   * (WD-754 는 「임시」만 막았는데, 「원본」에서도 눌러도 아무 일이 없는 토글이었다 — WD-776). 아래 두 값도 이것으로 유도한다:
+   * showTempEffective = 보기 옵션이 실제로 목록에 반영되는가(요청 includeTemp 와 같은 값), tempShown = 지금 목록에 임시가 보이는가
+   * (출처 「임시」이거나 반영된 보기 옵션 — 토글의 눌림 표시를 실제 목록과 맞춰, 출처 「원본」 + 주소 showTemp=1 이어도 눌림으로 보이지 않게).
+   */
+  const tempToggleBlocked = originType !== '';
+  const showTempEffective = showTemp && !tempToggleBlocked;
+  const tempShown = originType === 'TEMP' || showTempEffective;
   const statusFilter = searchParams.get('status') || '';
   // 보안 등급 필터 — 서버 쿼리(페이지 내 정렬 한계 회피, 목업 s2). URL 값은 등급 id.
   const securityLevelParam = searchParams.get('securityLevel');
@@ -215,7 +220,7 @@ export default function DatasetListPage() {
     securityLevelId,
     // 꺼져 있으면 싣지 않고 서버 기본(임시 숨김)에 맡긴다. 출처 필터가 있으면 서버가 그쪽을 우선해 무시하므로
     // 싣지 않는다 — 같은 결과에 캐시 키만 달라져 요청이 한 번 더 나가지 않게(WD-754)
-    includeTemp: (showTemp && !originType) || undefined,
+    includeTemp: showTempEffective || undefined,
   });
   const { data: levels } = useSecurityLevels();
   const deleteDataset = useDeleteDataset();
@@ -435,9 +440,13 @@ export default function DatasetListPage() {
           </Button>
 
           {/* 보기 옵션 「임시 데이터셋 보기」(WD-754) — 즐겨찾기 토글과 같은 모양·aria-pressed.
-              출처 필터가 「임시」면 서버가 임시만 주므로 충돌하지 않게 비활성으로 두고, 공용 비활성 사유 래퍼로
-              포커스·호버 때 이유를 툴팁으로 알린다. */}
-          <ExportBlockedTooltip blocked={tempOriginSelected} message={TEMP_ORIGIN_HINT} label="임시 데이터셋 보기">
+              출처 필터가 골라져 있으면(WD-776 — 「임시」뿐 아니라 무엇이든) 서버가 그 출처만 주므로 비활성으로 두고,
+              공용 비활성 사유 래퍼로 포커스·호버 때 이유를 툴팁으로 알린다. */}
+          <ExportBlockedTooltip
+            blocked={tempToggleBlocked}
+            message={ORIGIN_FILTER_HINT}
+            label="임시 데이터셋 보기"
+          >
             <Button
               variant={tempShown ? 'default' : 'outline'}
               size="sm"
@@ -717,8 +726,13 @@ export default function DatasetListPage() {
             ) : (
               <TableEmptyRow
                 colSpan={8}
-                // 임시가 숨겨진 상태면 0건이어도 임시 데이터셋은 있을 수 있다 — 어디서 보는지 함께 알린다(WD-754)
-                message={tempShown ? '데이터셋이 없습니다.' : '데이터셋이 없습니다. 임시 데이터셋은 「임시 데이터셋 보기」를 켜면 보입니다.'}
+                // 임시가 숨겨진 상태면 0건이어도 임시 데이터셋은 있을 수 있다 — 어디서 보는지 함께 알린다(WD-754).
+                // 출처 필터가 골라져 있으면 토글이 비활성이라 「켜면 보입니다」는 따를 수 없는 안내다 — 빼고 그대로 둔다(WD-776).
+                message={
+                  showTemp || tempToggleBlocked
+                    ? '데이터셋이 없습니다.'
+                    : '데이터셋이 없습니다. 임시 데이터셋은 「임시 데이터셋 보기」를 켜면 보입니다.'
+                }
                 searchKeyword={search || undefined}
                 onResetSearch={search ? () => { patchParams({ q: null, page: null }); } : undefined}
                 // 만들 권한이 없으면 안내 문구만 둔다 — "데이터셋이 없습니다." 는 버튼 없이도 그대로 읽힌다(WD-144)

@@ -115,6 +115,57 @@ function breadcrumb(page: Page) {
   return page.getByRole('navigation', { name: '폴더 경로' });
 }
 
+/** upload-urls 요청 본문 — 올릴 폴더(path, 루트면 없음)와 파일 상대 경로들 */
+type UploadBody = { path?: string; files: { filename: string }[] };
+
+/**
+ * upload-urls 와 MinIO PUT 을 모킹하고 요청 본문·PUT URL 을 모은다. 대상 키는 서버 계약대로 prefix + path/ + filename,
+ * PUT URL 은 묶음 안 순서(put/<i>)다.
+ * @param rejectReason - 파일 이름을 받아 서버가 그 파일만 거부할 사유를 준다(WD-776 — 그 자리는 key·uploadUrl 없이 error 만). 없으면 모두 발급.
+ * @param putStatus - n 번째(0부터) MinIO PUT 의 응답 상태 — 기본 200.
+ */
+async function mockUploadUrls(
+  page: Page,
+  options: { rejectReason?: (filename: string) => string | undefined; putStatus?: (n: number) => number } = {},
+) {
+  const payloads: UploadBody[] = [];
+  const puts: string[] = [];
+  await page.route(
+    (url) => url.pathname === `/api/v1/datasets/${DATASET_ID}/objects/upload-urls`,
+    (route) => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      const body = route.request().postDataJSON() as UploadBody;
+      payloads.push(body);
+      const base = body.path ? `${body.path}/` : '';
+      const targets = body.files.map((f, i) => {
+        const error = options.rejectReason?.(f.filename);
+        return error ? { error } : { key: `${PREFIX}${base}${f.filename}`, uploadUrl: `https://minio.example.com/put/${i}` };
+      });
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ targets, expiresInSeconds: 900 }),
+      });
+    },
+  );
+  await page.route('https://minio.example.com/**', (route) => {
+    const status = options.putStatus?.(puts.length) ?? 200;
+    puts.push(route.request().url());
+    return route.fulfill({ status, body: '' });
+  });
+  return { payloads, puts };
+}
+
+/** 업로드 드롭존 — 누르면 파일 선택, 안에 파일 인풋이 있다. 문구 앞에 올라갈 폴더가 붙을 수 있다. */
+function dropzone(page: Page) {
+  return page.getByRole('button', { name: /파일·폴더를 드래그하거나 클릭하여 업로드/ });
+}
+
+/** 드롭존의 파일 인풋으로 파일을 고른다(= 업로드 시작). */
+function chooseFiles(page: Page, files: Parameters<ReturnType<Page['locator']>['setInputFiles']>[0]) {
+  return dropzone(page).locator('input[type="file"]').setInputFiles(files);
+}
+
 test.describe('FILE 오브젝트 탭 — 폴더 탐색', () => {
   test('폴더를 눌러 들어가고 경로 표시로 올라온다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     const mock = await setupFileDataset(page);
@@ -262,6 +313,10 @@ test.describe('FILE 오브젝트 탭 — 폴더 탐색', () => {
 
     await page.getByRole('button', { name: '더 보기' }).click();
     await expect(page.getByRole('alert')).toBeVisible();
+    // WD-776: 다음 쪽 실패는 「다음 목록」 문구 — 첫 쪽 재조회 실패 문구·「다시 불러오기」는 나오지 않는다(「더 보기」가 재시도).
+    await expect(page.getByRole('alert')).toContainText('다음 목록을 불러오지 못했습니다. 다시 시도하세요.');
+    await expect(page.getByRole('alert')).not.toContainText('목록을 새로 불러오지 못했습니다');
+    await expect(page.getByRole('button', { name: '다시 불러오기' })).toHaveCount(0);
     // 실패해도 불러온 폴더·파일 행은 그대로다.
     await expect(list.getByRole('button', { name: '제품' })).toBeVisible();
     await expect(list.getByRole('button', { name: 'a.txt', exact: true })).toBeVisible();
@@ -407,43 +462,17 @@ test.describe('FILE 오브젝트 탭 — 현재 폴더로 업로드', () => {
     await grantDatasetPermissions(page);
   });
 
-  /** upload-urls 를 모킹하고 요청 본문을 모은다 — 대상 키는 서버 계약대로 prefix + path/ + filename. */
-  async function mockUploadUrls(page: Page) {
-    const payloads: { path?: string; files: { filename: string }[] }[] = [];
-    await page.route(
-      (url) => url.pathname === `/api/v1/datasets/${DATASET_ID}/objects/upload-urls`,
-      (route) => {
-        if (route.request().method() !== 'POST') return route.fallback();
-        const body = route.request().postDataJSON() as { path?: string; files: { filename: string }[] };
-        payloads.push(body);
-        const base = body.path ? `${body.path}/` : '';
-        const targets = body.files.map((f, i) => ({
-          key: `${PREFIX}${base}${f.filename}`,
-          uploadUrl: `https://minio.example.com/put/${i}`,
-        }));
-        return route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify({ targets, expiresInSeconds: 900 }),
-        });
-      },
-    );
-    await page.route('https://minio.example.com/**', (route) => route.fulfill({ status: 200, body: '' }));
-    return payloads;
-  }
-
   test('폴더 안에서 올린 파일은 upload-urls 본문에 현재 폴더 path 를 싣는다', async ({ authenticatedPage: page }) => {
     const mock = await setupFileDataset(page);
-    const payloads = await mockUploadUrls(page);
+    const { payloads } = await mockUploadUrls(page);
     await page.goto(`/data/datasets/${DATASET_ID}?tab=objects&path=${encodeURIComponent('제품/Tibero7')}`);
     await expect(objectList(page).getByRole('button', { name: '설치.pdf', exact: true })).toBeVisible();
 
     // 드롭존 문구가 올라갈 폴더를 알린다.
-    const dropzone = page.getByRole('button', { name: /파일·폴더를 드래그하거나 클릭하여 업로드/ });
-    await expect(dropzone).toContainText('제품/Tibero7 폴더에');
+    await expect(dropzone(page)).toContainText('제품/Tibero7 폴더에');
     const getsBefore = mock.requests.length;
 
-    await dropzone.locator('input[type="file"]').setInputFiles({
+    await chooseFiles(page, {
       name: 'new.txt',
       mimeType: 'text/plain',
       buffer: Buffer.from('hello'),
@@ -459,13 +488,12 @@ test.describe('FILE 오브젝트 탭 — 현재 폴더로 업로드', () => {
 
   test('루트에서 올리면 path 를 싣지 않고 드롭존 문구도 그대로다', async ({ authenticatedPage: page }) => {
     await setupFileDataset(page);
-    const payloads = await mockUploadUrls(page);
+    const { payloads } = await mockUploadUrls(page);
     await page.goto(`/data/datasets/${DATASET_ID}?tab=objects`);
     await expect(objectList(page).getByRole('button', { name: 'readme.txt' })).toBeVisible();
 
-    const dropzone = page.getByRole('button', { name: '파일·폴더를 드래그하거나 클릭하여 업로드' });
-    await expect(dropzone).toHaveText('파일·폴더를 드래그하거나 클릭하여 업로드');
-    await dropzone.locator('input[type="file"]').setInputFiles({
+    await expect(dropzone(page)).toHaveText('파일·폴더를 드래그하거나 클릭하여 업로드');
+    await chooseFiles(page, {
       name: 'root.txt',
       mimeType: 'text/plain',
       buffer: Buffer.from('r'),
@@ -477,7 +505,7 @@ test.describe('FILE 오브젝트 탭 — 현재 폴더로 업로드', () => {
 
   test('폴더를 올리면 현재 폴더 아래로 하위 상대 경로를 유지한다', async ({ authenticatedPage: page }) => {
     await setupFileDataset(page);
-    const payloads = await mockUploadUrls(page);
+    const { payloads } = await mockUploadUrls(page);
 
     // 실제 중첩 디렉터리를 webkitdirectory 인풋에 넘긴다 → 브라우저가 webkitRelativePath 를 채운다.
     const root = mkdtempSync(join(tmpdir(), 'fh-wd761-'));
@@ -499,5 +527,173 @@ test.describe('FILE 오브젝트 탭 — 현재 폴더로 업로드', () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+/**
+ * WD-776 — 오브젝트 탭 후속.
+ * - 목록에 보이는 폴더는 이름 그대로 들어간다: 「report\2024」(\ 를 / 로 바꾸지 않음)·공백뿐인 폴더(버리지 않음, 화면엔 「(공백)」).
+ *   들어가면 그 이름 그대로 목록 API path 로 묻고, 경로 표시가 맞으며, 그 폴더에서 올리면 upload-urls 본문 path 도 그 값이다.
+ * - upload-urls 가 파일별 실패(error)를 주면 그 파일만 실패로(이유와 함께) 보이고 나머지는 올라간다.
+ * - 업로드 뒤 첫 쪽 재조회가 실패하면 「다음 목록」이 아니라 「목록을 새로 불러오지 못했습니다」로 알리고 다시 불러올 수 있다.
+ */
+test.describe('FILE 오브젝트 탭 — 폴더 이름 보존·파일별 업로드 실패·재조회 실패 (WD-776)', () => {
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await grantDatasetPermissions(page);
+  });
+
+  const BACKSLASH_FOLDER = 'report\\2024';
+  const BLANK_FOLDER = ' ';
+  const TREE_776: Record<string, ObjectListResponse> = {
+    '': folderPage([`${BACKSLASH_FOLDER}/`, `${BLANK_FOLDER}/`], [file('readme.txt', 100)]),
+    [BACKSLASH_FOLDER]: folderPage([], [file(`${BACKSLASH_FOLDER}/q1.csv`)]),
+    [BLANK_FOLDER]: folderPage([], [file(`${BLANK_FOLDER}/memo.txt`)]),
+  };
+
+  // 예전엔 \ 를 / 로 바꿔(report/2024) 또는 공백뿐인 세그먼트를 버려(루트) 다른 폴더가 열렸다. 같은 흐름이라 한 본문으로 돈다.
+  for (const { title, folder, label, child } of [
+    { title: '\\ 가 든 폴더', folder: BACKSLASH_FOLDER, label: BACKSLASH_FOLDER, child: 'q1.csv' },
+    { title: '공백뿐인 폴더', folder: BLANK_FOLDER, label: '(공백)', child: 'memo.txt' },
+  ]) {
+    test(`${title}는 「${label}」로 보이고, 누르면 이름 그대로 들어가 그 폴더로 올린다`, async ({ authenticatedPage: page }) => {
+      const mock = await setupFileDataset(page, { tree: TREE_776 });
+      const { payloads } = await mockUploadUrls(page);
+      await page.goto(`/data/datasets/${DATASET_ID}?tab=objects`);
+      const list = objectList(page);
+
+      // 빈 버튼이 아니라 보이는 이름이 있다.
+      await list.getByRole('button', { name: label, exact: true }).click();
+
+      // URL·목록 요청 path 모두 이름 그대로이고, 다른 폴더(루트·report/2024)가 아니라 그 폴더의 파일이 보인다.
+      await expect.poll(() => queryOf(page, 'path')).toBe(folder);
+      await expect.poll(() => mock.requests.map((r) => r.get('path'))).toContain(folder);
+      await expect(list.getByRole('button', { name: child, exact: true })).toBeVisible();
+      await expect(list.getByRole('button', { name: 'readme.txt' })).toHaveCount(0);
+      await expect(breadcrumb(page).getByRole('button')).toHaveText(['전체', label]);
+      await expect(breadcrumb(page).getByRole('button', { name: label })).toHaveAttribute('aria-current', 'page');
+
+      // 그 폴더에서 올리면 upload-urls 본문 path 도 그 이름 그대로다.
+      await expect(dropzone(page)).toContainText(`${label} 폴더에`);
+      await chooseFiles(page, { name: 'new.txt', mimeType: 'text/plain', buffer: Buffer.from('n') });
+      await expect.poll(() => payloads.length).toBe(1);
+      expect(payloads[0]).toEqual({ path: folder, files: [{ filename: 'new.txt' }] });
+    });
+  }
+
+  // 서버 사유 — 폴더 안에서는 긴 이름을 자르지 않고 그 파일만 거부한다(앞부분이 같은 이름끼리 말없이 덮어쓰지 않게).
+  const TOO_LONG_REASON = '폴더 경로와 합친 이름이 너무 깁니다(최대 900바이트) — 이름을 줄여 다시 올려 주세요';
+
+  test('upload-urls 가 한 파일만 실패로 주면 그 파일만 이유와 함께 실패로 보이고 나머지는 올라간다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupFileDataset(page);
+    const longName = `${'b'.repeat(120)}.jpg`;
+    const { payloads, puts } = await mockUploadUrls(page, {
+      rejectReason: (name) => (name === longName ? TOO_LONG_REASON : undefined),
+    });
+    await page.goto(`/data/datasets/${DATASET_ID}?tab=objects&path=${encodeURIComponent('제품')}`);
+    await expect(objectList(page).getByRole('button', { name: '개요.pdf', exact: true })).toBeVisible();
+
+    await chooseFiles(page, [
+      { name: longName, mimeType: 'image/jpeg', buffer: Buffer.from('x') },
+      { name: 'ok.txt', mimeType: 'text/plain', buffer: Buffer.from('y') },
+    ]);
+
+    await expect.poll(() => payloads.length).toBe(1);
+    expect(payloads[0].files.map((f) => f.filename)).toEqual([longName, 'ok.txt']);
+    // 발급된 파일(ok.txt, 인덱스 1)만 MinIO 에 PUT 한다.
+    await expect.poll(() => puts).toEqual(['https://minio.example.com/put/1']);
+
+    // 묶음 요약: 2개 중 1개 실패 — 다시 올려도 같은 이유로 실패하므로 재시도 버튼은 없다(PUT 실패가 없다).
+    const banner = page.getByTestId('upload-failure');
+    await expect(banner).toContainText('2개 중 1개 업로드 실패');
+    await expect(banner.getByRole('button', { name: '실패건 재시도' })).toHaveCount(0);
+    // 거부 파일은 이유와 함께 따로 보인다.
+    const rejectedBox = page.getByTestId('upload-rejected');
+    await expect(rejectedBox).toContainText('올리지 못한 파일 1개');
+    const rejected = rejectedBox.getByRole('list', { name: '올리지 못한 파일' }).getByRole('listitem');
+    await expect(rejected).toHaveCount(1);
+    await expect(rejected).toContainText(longName);
+    await expect(rejected).toContainText(TOO_LONG_REASON);
+    await expect(dropzone(page)).not.toContainText('업로드 실패 — 다시 시도하세요');
+
+    // 닫으면 사라진다.
+    await page.getByRole('button', { name: '올리지 못한 파일 안내 닫기' }).click();
+    await expect(page.getByTestId('upload-rejected')).toHaveCount(0);
+  });
+
+  test('거부 1 + PUT 실패 1 묶음에서 실패건 재시도가 성공해도 거부 파일과 이유는 남는다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupFileDataset(page);
+    const longName = `${'c'.repeat(120)}.png`;
+    // 첫 PUT(flaky.txt) 은 500, 재시도 PUT 은 200.
+    const { payloads, puts } = await mockUploadUrls(page, {
+      rejectReason: (name) => (name === longName ? TOO_LONG_REASON : undefined),
+      putStatus: (n) => (n === 0 ? 500 : 200),
+    });
+    await page.goto(`/data/datasets/${DATASET_ID}?tab=objects&path=${encodeURIComponent('제품')}`);
+    await expect(objectList(page).getByRole('button', { name: '개요.pdf', exact: true })).toBeVisible();
+
+    await chooseFiles(page, [
+      { name: longName, mimeType: 'image/png', buffer: Buffer.from('x') },
+      { name: 'flaky.txt', mimeType: 'text/plain', buffer: Buffer.from('y') },
+    ]);
+
+    const banner = page.getByTestId('upload-failure');
+    await expect(banner).toContainText('2개 중 2개 업로드 실패');
+    const rejectedBox = page.getByTestId('upload-rejected');
+    await expect(rejectedBox).toContainText(longName);
+
+    // 재시도는 PUT 이 실패한 flaky.txt 만 다시 요청한다(거부 파일은 빼고).
+    await banner.getByRole('button', { name: '실패건 재시도' }).click();
+    await expect.poll(() => payloads.length).toBe(2);
+    expect(payloads[1].files.map((f) => f.filename)).toEqual(['flaky.txt']);
+    await expect.poll(() => puts.length).toBe(2);
+
+    // 재시도 성공 → 실패 요약은 사라지지만, 거부 파일과 이유는 그대로 남는다.
+    await expect(page.getByTestId('upload-failure')).toHaveCount(0);
+    await expect(rejectedBox).toContainText('올리지 못한 파일 1개');
+    await expect(rejectedBox).toContainText(longName);
+    await expect(rejectedBox).toContainText(TOO_LONG_REASON);
+
+    // 새 업로드를 시작하면 지난 거부 목록은 비운다.
+    await chooseFiles(page, { name: 'next.txt', mimeType: 'text/plain', buffer: Buffer.from('z') });
+    await expect.poll(() => payloads.length).toBe(3);
+    await expect(page.getByTestId('upload-rejected')).toHaveCount(0);
+  });
+
+  test('업로드 뒤 첫 쪽 재조회가 실패하면 「목록을 새로 불러오지 못했습니다」로 알리고, 다시 불러오면 사라진다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupFileDataset(page);
+    await mockUploadUrls(page);
+    // failList 동안 목록 GET 은 500 — 앱의 자동 재시도까지 실패하게 한다. 나중 등록 라우트가 이기고, 끄면 fallback 으로 정상 모킹이 받는다.
+    let failList = false;
+    await page.route(
+      (url) => url.pathname === `/api/v1/datasets/${DATASET_ID}/objects`,
+      (route) =>
+        failList && route.request().method() === 'GET'
+          ? route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ status: 500 }) })
+          : route.fallback(),
+    );
+    await page.goto(`/data/datasets/${DATASET_ID}?tab=objects`);
+    const list = objectList(page);
+    await expect(list.getByRole('button', { name: 'readme.txt' })).toBeVisible();
+
+    // 업로드 성공 → 목록 무효화 → 첫 쪽 재조회가 실패한다.
+    failList = true;
+    await chooseFiles(page, { name: 'new.txt', mimeType: 'text/plain', buffer: Buffer.from('n') });
+
+    const alert = page.getByRole('alert');
+    await expect(alert).toContainText('목록을 새로 불러오지 못했습니다. 다시 시도하세요.', { timeout: 10_000 });
+    await expect(alert).not.toContainText('다음 목록');
+    // 이미 불러온 목록은 그대로 둔다.
+    await expect(list.getByRole('button', { name: 'readme.txt' })).toBeVisible();
+
+    failList = false;
+    await page.getByRole('button', { name: '다시 불러오기' }).click();
+    await expect(page.getByRole('alert')).toHaveCount(0);
+    await expect(list.getByRole('button', { name: 'readme.txt' })).toBeVisible();
   });
 });
