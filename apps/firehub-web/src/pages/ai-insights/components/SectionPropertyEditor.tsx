@@ -1,8 +1,10 @@
+import { AlertTriangle } from 'lucide-react';
 import { useId } from 'react';
 
 import type { SectionType,TemplateSection } from '@/api/proactive';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { linkedAriaProps } from '@/components/ui/form-field-aria';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -15,6 +17,11 @@ import {
 import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
+import {
+  findUnsupportedValueWords,
+  formatUnsupportedValueHint,
+  REPORT_NUMBER_SOURCE_GUIDE,
+} from '@/lib/report-instruction-hints';
 import { getSectionTypeDef,SECTION_TYPES } from '@/lib/template-section-types';
 
 const TEMPLATE_VARIABLES = [
@@ -52,6 +59,18 @@ export function SectionPropertyEditor({ section, onUpdate }: SectionPropertyEdit
 
   // Key validation: snake_case
   const isValidKey = /^[a-z][a-z0-9_]*$/.test(section.key);
+
+  // 지시가 데이터에 없는 값을 요구할 때의 주의 문구 — 낱말·이유는 report-instruction-hints 참고 (WD-774).
+  // 저장을 막는 검증이 아니라 가벼운 주의라 폼 검증과 엮지 않는다. 낱말이 없으면 빈 문자열이다.
+  const unsupportedHint = formatUnsupportedValueHint(findUnsupportedValueWords(section.instruction ?? ''));
+  // 도움말 → 수치 출처 안내 → 주의(보일 때만) 순으로 지시 칸에 잇는다 — FormField 와 같은 규칙(WD-660)
+  const instructionAria = linkedAriaProps(
+    {
+      desc: `${baseId}-instruction-guide`,
+      hint: unsupportedHint ? `${baseId}-instruction-unsupported` : undefined,
+    },
+    { 'aria-describedby': `${baseId}-instruction-help` },
+  );
 
   return (
     <Card>
@@ -142,12 +161,30 @@ export function SectionPropertyEditor({ section, onUpdate }: SectionPropertyEdit
               placeholder="이 섹션에서 AI가 분석할 내용을 지시하세요..."
               rows={4}
               className="resize-none"
-              aria-describedby={`${baseId}-instruction-help`}
+              {...instructionAria}
             />
             {/* 도움말 문구 — aria-describedby 로 Textarea 에 연결 (§J) */}
             <p id={`${baseId}-instruction-help`} className="text-xs text-muted-foreground">
               이 지시는 AI 프롬프트에 포함되어 섹션 내용 생성을 안내합니다.
             </p>
+            {/* 수치 출처 안내 — 리포트 수치는 조회(SQL) 결과에서만 오므로, 지시를 쓰기 전에 늘 보이게 둔다 (WD-774) */}
+            <p id={`${baseId}-instruction-guide`} className="text-xs text-muted-foreground">
+              {REPORT_NUMBER_SOURCE_GUIDE}
+            </p>
+            {/* 주의 문구 자리 — 라이브 영역을 늘 마운트해 두어 입력 중 주의가 생기거나 바뀔 때 읽히게 하고,
+                key 로 섹션을 바꿀 때만 새로 마운트해 이미 저장돼 있던 주의를 「변경」으로 읽지 않게 한다 (WD-774) */}
+            <div key={section.key} role="status" aria-live="polite">
+              {unsupportedHint && (
+                <p
+                  id={`${baseId}-instruction-unsupported`}
+                  data-testid="instruction-unsupported-hint"
+                  className="flex items-start gap-1.5 text-xs text-warning"
+                >
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                  <span className="min-w-0">{unsupportedHint}</span>
+                </p>
+              )}
+            </div>
           </div>
         )}
 
