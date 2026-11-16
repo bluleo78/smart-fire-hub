@@ -35,8 +35,10 @@ export default function DatasetFilesWidget({
     enabled: !!datasetId,
   });
 
+  // recursive: 오브젝트 탭의 기본이 폴더 모드로 바뀌어도(WD-761) 채팅 카드는 하위 전체를 평면으로 보이던 동작을 유지한다.
+  // 카드에는 폴더 이동 UI 가 없어 폴더 모드면 루트 파일만 보이게 된다.
   const { data, isLoading, isError, hasNextPage, fetchNextPage, isFetchingNextPage } =
-    useObjectList(datasetId);
+    useObjectList(datasetId, { recursive: true });
   // 무한쿼리 페이지들을 단일 목록으로 평탄화한다.
   const items = data?.pages.flatMap((p) => p.objects) ?? [];
 

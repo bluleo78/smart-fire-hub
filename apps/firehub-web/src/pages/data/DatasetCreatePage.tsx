@@ -157,13 +157,16 @@ export default function DatasetCreatePage() {
 
   // 백엔드 search 파라미터로 부분 일치 결과를 받아 클라이언트에서 정확 일치를 검사한다 (#103).
   // 전용 check-name 엔드포인트가 없는 현재 환경에서 useDatasets 결과를 활용해 중복 여부를 판정.
+  // includeTemp: 서버 목록은 임시 데이터셋을 기본으로 숨기지만, 임시와 겹치는 이름·테이블명도 만들면 충돌하므로 함께 찾는다(WD-754).
   const { data: nameSearchData } = useDatasets({
     search: debouncedName,
     size: 20,
+    includeTemp: true,
   });
   const { data: tableNameSearchData } = useDatasets({
     search: debouncedTableName,
     size: 20,
+    includeTemp: true,
   });
 
   const isNameDuplicate =

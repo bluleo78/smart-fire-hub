@@ -123,6 +123,21 @@ export interface TypeLabelInfo {
 
 /** 알려진 저장 방식 enum → 라벨 (get/describe 두 함수의 단일 출처. 목록 유형 칸 배지가 「알 수 없는 값」만 말줄임하는 기준) */
 const STORAGE_TYPE_LABELS: Readonly<Record<string, string>> = { TABLE: '테이블', DOCUMENT: '문서', FILE: '파일' };
+/** 저장 방식 선택지 한 칸 — 필터 등 Select 가 value(서버 enum)·label(화면 이름)로 그린다 */
+export interface StorageTypeOption {
+  value: string;
+  label: string;
+}
+
+/**
+ * 저장 방식 선택지 목록 (WD-760) — STORAGE_TYPE_LABELS 의 선언 순서(테이블·문서·파일) 그대로.
+ * 필터 선택지를 화면마다 하드코딩하면 새 저장 방식(FILE)이 빠져 그 데이터셋을 거를 수 없었으므로,
+ * 라벨 맵 한 곳에서 파생해 저장 방식이 늘면 선택지도 함께 늘게 한다.
+ */
+export const STORAGE_TYPE_OPTIONS: readonly StorageTypeOption[] = Object.entries(STORAGE_TYPE_LABELS).map(
+  ([value, label]) => ({ value, label }),
+);
+
 /** 알려진 출처 enum → 라벨 (get/describe 두 함수의 단일 출처) */
 const ORIGIN_TYPE_LABELS: Readonly<Record<string, string>> = { SOURCE: '원본', DERIVED: '파생', TEMP: '임시' };
 

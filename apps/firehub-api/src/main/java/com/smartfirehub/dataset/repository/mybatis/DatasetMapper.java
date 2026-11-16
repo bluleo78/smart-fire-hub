@@ -23,12 +23,14 @@ public interface DatasetMapper {
 
   /**
    * 목록 한 쪽의 데이터셋 id(중복 제거, id 오름차순). pattern 은 {@code LikePatternUtils.containsPattern} 로 이스케이프한 검색
-   * 패턴(null 이면 검색하지 않음), favoriteUserId 는 즐겨찾기만 볼 때의 사용자(null 이면 거르지 않음).
+   * 패턴(null 이면 검색하지 않음), favoriteUserId 는 즐겨찾기만 볼 때의 사용자(null 이면 거르지 않음). includeTemp 가 false 이고
+   * originType 이 null 이면 임시(TEMP) 데이터셋을 뺀다(WD-754 — 출처 필터가 있으면 그 필터가 이긴다).
    */
   List<Long> selectPageIds(
       @Param("categoryId") Long categoryId,
       @Param("storageType") String storageType,
       @Param("originType") String originType,
+      @Param("includeTemp") boolean includeTemp,
       @Param("status") String status,
       @Param("securityLevelId") Long securityLevelId,
       @Param("pattern") String pattern,
@@ -42,6 +44,7 @@ public interface DatasetMapper {
       @Param("categoryId") Long categoryId,
       @Param("storageType") String storageType,
       @Param("originType") String originType,
+      @Param("includeTemp") boolean includeTemp,
       @Param("status") String status,
       @Param("securityLevelId") Long securityLevelId,
       @Param("pattern") String pattern,

@@ -1,14 +1,17 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { type QueryClient, type QueryKey, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { aiApi, AIChatHttpError, streamAIChat } from '../../api/ai';
 import { client as apiClient } from '../../api/client';
 import { uploadFiles } from '../../api/files';
-import { buildScreenContext } from '../../components/ai/screen-context';
+import { buildScreenContext, type ScreenEntityKind, type ScreenNameLookup } from '../../components/ai/screen-context';
 import { getInvalidationKeys } from '../../components/ai/widgets/invalidationMap';
 import { buildNavigationContext } from '../../components/ai/widgets/routes';
 import type { AIAttachment, AIMessage, AIStreamEvent, CanvasLayout } from '../../types/ai';
+import { dashboardDetailKey } from './useAnalytics';
+import { datasetDetailKey } from './useDatasets';
+import { pipelineDetailKey } from './usePipelines';
 
 // ai_session.title 컬럼은 DB에서 VARCHAR(255) — 서버가 한 번 더 방어하지만(WD-58), 애초에
 // 과도하게 긴 원문을 그대로 보내지 않도록 전송 전 여기서도 안전하게 잘라낸다.
@@ -19,6 +22,26 @@ function buildSessionTitle(content: string): string {
   const trimmed = content.trim();
   if (trimmed.length <= SESSION_TITLE_MAX_LENGTH) return trimmed;
   return `${trimmed.slice(0, SESSION_TITLE_MAX_LENGTH)}…`;
+}
+
+/**
+ * 화면 대상 종류별 상세 캐시 키 (WD-759).
+ * 각 상세 훅이 쓰는 키 함수를 그대로 써서 어긋나지 않게 한다
+ * (id 는 모두 parseRouteId 로 읽은 number — 상세 화면도 같은 방식으로 읽는다).
+ */
+const SCREEN_DETAIL_KEY: Record<ScreenEntityKind, (id: number) => QueryKey> = {
+  dataset: datasetDetailKey,
+  pipeline: pipelineDetailKey,
+  dashboard: dashboardDetailKey,
+};
+
+/**
+ * 화면 컨텍스트에 붙일 이름을 TanStack Query 캐시에서만 찾는 lookup 을 만든다 (WD-759).
+ * 상세 화면이 이미 불러온 단건 데이터를 다시 쓰므로 새 네트워크 요청이 없다 — 캐시에 없으면 undefined(ID 만 전달).
+ */
+function createCachedScreenNameLookup(queryClient: QueryClient): ScreenNameLookup {
+  // 세 상세 응답 모두 name 을 가지므로 name 만 읽는다
+  return (kind, id) => queryClient.getQueryData<{ name?: string }>(SCREEN_DETAIL_KEY[kind](id))?.name;
 }
 
 export function useAISessions(page = 0, size = 20) {
@@ -261,7 +284,8 @@ export function useAIChat(options?: {
     // 새 세션일 때만 네비게이션 컨텍스트 전달
     const navContext = !currentSessionId ? buildNavigationContext() : undefined;
     // 매 메시지마다 현재 화면 컨텍스트 전달 (useLocation 대신 직접 읽어 불필요한 리렌더 방지)
-    const screen = buildScreenContext(window.location.pathname);
+    // 상세 화면이면 캐시에 있는 이름을 붙여 에이전트가 질문과 화면 대상의 관련성을 판단하게 한다 (WD-759)
+    const screen = buildScreenContext(window.location.pathname, createCachedScreenNameLookup(queryClient));
 
     abortControllerRef.current = streamAIChat(
       content,

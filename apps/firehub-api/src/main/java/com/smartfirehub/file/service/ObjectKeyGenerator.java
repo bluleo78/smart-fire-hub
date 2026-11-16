@@ -13,6 +13,8 @@ import org.springframework.stereotype.Component;
  *
  * <p>폴더 업로드를 지원하기 위해 하위 경로(세그먼트)는 보존하되, 상위경로("..")로의 이탈은 차단한다. 키는 항상 앱이 prefix를 앞에 붙여 결정하고 정제된 경로만
  * 이어붙이므로 프리픽스 밖으로 나갈 수 없다 — 즉 이 클래스의 {@link #sanitizeFilename}이 프리픽스 격리의 유일한 방어선이다.
+ *
+ * <p>폴더 탐색·폴더 지정 업로드(WD-761)에서 쓰는 폴더 경로도 같은 세그먼트 규칙의 {@link #normalizeFolderPath}로만 정규화한다.
  */
 @Component
 public class ObjectKeyGenerator {
@@ -34,17 +36,9 @@ public class ObjectKeyGenerator {
    * 결과가 비면 빈 문자열을 반환(호출부에서 400으로 거부).
    */
   public String sanitizeFilename(String filename) {
-    if (filename == null) return "";
     // 경로 구분자 정규화 후 세그먼트 단위 정제 — 폴더 구조는 살리고 상위경로 이탈은 막는다.
-    String normalized = filename.replace('\\', '/');
-    List<String> segments = new ArrayList<>();
-    for (String raw : normalized.split("/")) {
-      String seg = raw.replaceAll("\\p{Cntrl}", "").trim();
-      if (seg.isEmpty() || seg.equals(".")) continue; // 빈/현재디렉터리 세그먼트 흡수
-      if (seg.equals("..")) return ""; // 상위경로 → traversal 시도로 전체 거부
-      segments.add(seg);
-    }
-    if (segments.isEmpty()) return "";
+    List<String> segments = splitSegments(filename, true);
+    if (segments == null || segments.isEmpty()) return ""; // null = ".." → traversal 시도로 전체 거부
     return truncateUtf8PreservingExt(String.join("/", segments), MAX_KEY_SUFFIX_BYTES);
   }
 
@@ -53,7 +47,82 @@ public class ObjectKeyGenerator {
    * (FileDatasetConfig에서 보장). 파일명이 정제 후 비면 prefix만 반환하므로, 호출부에서 이를 400으로 거부해야 한다.
    */
   public String generateKey(String prefix, String filename) {
-    return prefix + sanitizeFilename(filename);
+    return generateKey(prefix, "", filename);
+  }
+
+  /**
+   * 폴더 지정 업로드 키: "&lt;prefix&gt;&lt;folderPath&gt;&lt;정제한 파일 상대경로&gt;"(WD-761 — 지금 보는 폴더에 올리기).
+   *
+   * <p>folderPath 는 {@link #normalizeFolderPath} 결과("" 또는 "a/b/")여야 한다. 파일명이 정제 후 비면 폴더를 붙이지 않고
+   * prefix 만 반환해 기존 2인자와 같이 호출부가 400 으로 거부하게 한다. 폴더 + 파일 상대경로 합이 상한을 넘으면 조용히 자르지 않고 거부한다 — 잘라내면 폴더
+   * 경로나 파일명이 사용자가 고르지 않은 값으로 바뀐다.
+   *
+   * @throws IllegalArgumentException 폴더 + 파일 상대경로가 {@value #MAX_KEY_SUFFIX_BYTES}바이트를 넘을 때(400)
+   */
+  public String generateKey(String prefix, String folderPath, String filename) {
+    String sanitized = sanitizeFilename(filename);
+    if (sanitized.isEmpty()) return prefix;
+    String folder = folderPath == null ? "" : folderPath;
+    // 폴더 없이 올리면 기존 동작(파일명만 상한 내로 자름)과 같아야 한다 — 폴더가 있을 때만 합계를 검사한다.
+    if (!folder.isEmpty() && utf8Length(folder + sanitized) > MAX_KEY_SUFFIX_BYTES) {
+      throw new IllegalArgumentException(
+          "폴더 경로와 파일 경로를 합친 길이가 너무 깁니다(최대 " + MAX_KEY_SUFFIX_BYTES + "바이트): " + filename);
+    }
+    return prefix + folder + sanitized;
+  }
+
+  /**
+   * 목록·업로드 대상 폴더 경로 정규화(WD-761). 데이터셋 prefix 뒤에 이어 붙일 상대 경로를 만든다.
+   *
+   * <ul>
+   *   <li>null·공백·'/' 만 → "" (데이터셋 루트).
+   *   <li>{@link #sanitizeFilename}과 같은 분해 규칙: '\'→'/', 빈(공백뿐인) 세그먼트·"." 흡수, ".." 거부.
+   *   <li>다만 세그먼트 이름은 <b>다듬지 않는다</b>(앞뒤 공백 유지) — 폴더 경로는 목록이 돌려준 실제 S3 폴더(common prefix)를 가리켜야 해서,
+   *       파이프라인·직접 동기화로 생긴 「report 」 같은 폴더도 열 수 있어야 한다. 대신 제어문자가 들어 있으면 지우지 않고 거부한다.
+   *   <li>".." 세그먼트가 있으면 prefix 밖으로 나가려는 시도로 보고 거부한다(Spring 이 %2e%2e 를 미리 디코드하므로 여기서 함께 잡힌다).
+   *   <li>상한({@value #MAX_KEY_SUFFIX_BYTES}바이트)을 넘으면 거부 — 파일명과 달리 잘라내면 다른 폴더를 가리키게 된다.
+   * </ul>
+   *
+   * @return "" 또는 끝에 '/' 가 붙은 상대 경로(예 "a/b/")
+   * @throws IllegalArgumentException ".." 세그먼트가 있거나 상한을 넘을 때(GlobalExceptionHandler 가 400 으로 응답)
+   */
+  public String normalizeFolderPath(String path) {
+    List<String> segments = splitSegments(path, false);
+    if (segments == null) {
+      throw new IllegalArgumentException("폴더 경로에 상위 경로(..)를 쓸 수 없습니다");
+    }
+    if (segments.isEmpty()) return "";
+    if (segments.stream().anyMatch(seg -> seg.chars().anyMatch(Character::isISOControl))) {
+      throw new IllegalArgumentException("폴더 경로에 제어문자를 쓸 수 없습니다");
+    }
+    String normalized = String.join("/", segments) + "/";
+    if (utf8Length(normalized) > MAX_KEY_SUFFIX_BYTES) {
+      throw new IllegalArgumentException("폴더 경로가 너무 깁니다(최대 " + MAX_KEY_SUFFIX_BYTES + "바이트)");
+    }
+    return normalized;
+  }
+
+  /**
+   * 경로를 '/' 세그먼트로 나눈다 — 파일명 정제와 폴더 경로 정규화가 같은 분해 규칙(프리픽스 격리의 방어선)을 한곳에서 쓰게 한다.
+   *
+   * <p>'\' 는 '/' 로 바꾸고, 빈(공백뿐인) 세그먼트와 "." 는 흡수한다. clean 이면 세그먼트의 제어문자를 지우고 앞뒤 공백을 다듬는다(업로드 파일명용).
+   * ".." 세그먼트가 하나라도 있으면 null 을 돌려준다(호출부가 거부).
+   */
+  private static List<String> splitSegments(String path, boolean clean) {
+    List<String> segments = new ArrayList<>();
+    if (path == null) return segments;
+    for (String raw : path.replace('\\', '/').split("/")) {
+      String seg = clean ? raw.replaceAll("\\p{Cntrl}", "").trim() : raw;
+      if (seg.isBlank() || seg.equals(".")) continue; // 빈/현재디렉터리 세그먼트 흡수
+      if (seg.equals("..")) return null; // 상위경로 → traversal 시도
+      segments.add(seg);
+    }
+    return segments;
+  }
+
+  /** UTF-8 바이트 길이 — S3 키 상한이 바이트 기준이라 문자 수가 아닌 바이트로 잰다. */
+  private static int utf8Length(String s) {
+    return s.getBytes(StandardCharsets.UTF_8).length;
   }
 
   /** UTF-8 바이트 상한 내로 파일명을 자르되 확장자(마지막 '.') 이후는 보존한다. 멀티바이트 문자가 쪼개지지 않게 문자 단위로 줄인다. */

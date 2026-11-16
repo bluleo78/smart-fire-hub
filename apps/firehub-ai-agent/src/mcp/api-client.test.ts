@@ -711,7 +711,8 @@ describe('FireHubApiClient', () => {
 
   // --- FILE(오브젝트) 데이터셋 ---
   describe('FILE object dataset endpoints', () => {
-    it('listDatasetObjects: GET /datasets/{id}/objects 를 token·size 쿼리와 함께 호출한다', async () => {
+    // 서버 목록 기본이 폴더 모드(WD-761)라, 에이전트는 recursive=true 로 데이터셋 전체 평면 목록을 받아야 한다.
+    it('listDatasetObjects: GET /datasets/{id}/objects 를 token·size·recursive 쿼리와 함께 호출한다', async () => {
       const mockResp = {
         objects: [{ key: 'pfx/a.csv', name: 'a.csv', size: 12, lastModified: '2026-07-01T00:00:00Z' }],
         nextToken: 'pfx/a.csv',
@@ -719,7 +720,7 @@ describe('FireHubApiClient', () => {
       };
       const scope = nock(BASE_URL)
         .get('/datasets/7/objects')
-        .query({ token: 'tok', size: '100' })
+        .query({ token: 'tok', size: '100', recursive: 'true' })
         .reply(200, mockResp);
 
       const result = await client.listDatasetObjects(7, 'tok', 100);
@@ -727,9 +728,11 @@ describe('FireHubApiClient', () => {
       expect(scope.isDone()).toBe(true);
     });
 
-    it('listDatasetObjects: 인자 생략 시 쿼리 없이 호출한다', async () => {
+    it('listDatasetObjects: 인자 생략 시 recursive=true 만 넘긴다', async () => {
+      // query 가 정확히 일치해야 nock 이 응답한다 — recursive 가 빠지면(폴더 모드 회귀) 매칭되지 않아 실패한다.
       const scope = nock(BASE_URL)
         .get('/datasets/7/objects')
+        .query({ recursive: 'true' })
         .reply(200, { objects: [], nextToken: null, hasMore: false });
 
       await client.listDatasetObjects(7);
@@ -751,7 +754,11 @@ describe('FireHubApiClient', () => {
 
   // --- Error message format ---
   it('should format error message as "API 오류 (status): message"', async () => {
-    nock(BASE_URL).get('/datasets').reply(500, { message: 'Internal Server Error' });
+    // WD-754: 목록 호출은 늘 includeTemp=true 를 싣는다(dataset-api 참고).
+    nock(BASE_URL)
+      .get('/datasets')
+      .query({ includeTemp: 'true' })
+      .reply(500, { message: 'Internal Server Error' });
 
     await expect(client.listDatasets()).rejects.toThrow(/API 오류 \(500\): Internal Server Error/);
   });

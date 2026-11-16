@@ -1,7 +1,7 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { dataImportsApi } from '../../api/dataImports';
-import { categoriesApi,datasetsApi } from '../../api/datasets';
+import { categoriesApi, type DatasetListParams, datasetsApi } from '../../api/datasets';
 import { fetchAllPages } from '../../lib/fetch-all-pages';
 import type { ColumnMappingEntry, ImportMode,ImportResponse, ImportStartResponse } from '../../types/dataImport';
 import type { ApiImportRequest,CloneDatasetRequest } from '../../types/dataset';
@@ -54,7 +54,8 @@ export const DATASET_LIST_KEY = ['datasets', 'list'] as const;
 /** 전체 데이터셋 목록(useAllDatasets) 키 — 캐시를 직접 읽는 곳(파이프라인 검증)도 같은 키를 쓰게 내보낸다 */
 export const ALL_DATASETS_QUERY_KEY = [...DATASET_LIST_KEY, 'all'] as const;
 
-export function useDatasets(params: { categoryId?: number; storageType?: string; originType?: string; search?: string; page?: number; size?: number; favoriteOnly?: boolean; status?: string; securityLevelId?: number }) {
+/** 데이터셋 목록 한 페이지 조회 — includeTemp 를 넘기지 않으면 서버 기본(임시 숨김)을 따른다(WD-754). */
+export function useDatasets(params: DatasetListParams) {
   return useQuery({
     queryKey: [...DATASET_LIST_KEY, params],
     queryFn: () => datasetsApi.getDatasets(params).then(r => r.data),
@@ -71,21 +72,30 @@ const ALL_DATASETS_PAGE_SIZE = 100;
  * 101 번째 이후 데이터셋이 목록에서 빠지고, 그 데이터셋을 이미 참조하는 스텝은 빈 칸으로 보였다.
  * 서버 상한(보호 장치)은 그대로 두고, `fetchAllPages` 로 `totalPages` 만큼 페이지를 순회해 전부 모은다.
  * queryKey 가 'datasets' 로 시작하므로 데이터셋 생성·삭제 시의 기존 무효화에 함께 걸린다.
+ *
+ * includeTemp: true (WD-754) — 서버 목록은 임시(TEMP) 데이터셋을 기본으로 숨기지만, 파이프라인은 다른 스텝이 만든
+ * 임시 결과를 입력으로 읽고 출력이 임시인지도 이 목록으로 판정하므로(StepConfigPanel, WD-224) 지금처럼 전부 받는다.
  */
 export function useAllDatasets() {
   return useQuery({
     queryKey: ALL_DATASETS_QUERY_KEY,
     queryFn: () =>
       fetchAllPages(
-        (page, size) => datasetsApi.getDatasets({ page, size }).then((r) => r.data),
+        (page, size) => datasetsApi.getDatasets({ page, size, includeTemp: true }).then((r) => r.data),
         ALL_DATASETS_PAGE_SIZE,
       ),
   });
 }
 
+/**
+ * 데이터셋 단건 조회 캐시 키 (WD-759).
+ * useDataset 과 AI 화면 컨텍스트의 캐시 이름 조회(useAIChat)가 같은 키를 쓰도록 한곳에 둔다 — 키가 어긋나면 조용히 이름이 빠진다.
+ */
+export const datasetDetailKey = (id: number) => ['datasets', id] as const;
+
 export function useDataset(id: number) {
   return useQuery({
-    queryKey: ['datasets', id],
+    queryKey: datasetDetailKey(id),
     queryFn: () => datasetsApi.getDatasetById(id).then(r => r.data),
     enabled: !!id,
   });

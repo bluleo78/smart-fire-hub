@@ -22,7 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '../../../components/ui/select';
-import { useDatasetPermissions, useUpdateDataset } from '../../../hooks/queries/useDatasets';
+import { datasetDetailKey, useDatasetPermissions, useUpdateDataset } from '../../../hooks/queries/useDatasets';
 import { useEditModeFocus } from '../../../hooks/useEditModeFocus';
 import { guardFormSubmit, useSubmitGuard } from '../../../hooks/useSubmitGuard';
 import { isEditConflict } from '../../../lib/api-error';
@@ -134,7 +134,7 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
   const handleReloadLatest = useCallback(async () => {
     try {
       const latest = await queryClient.fetchQuery({
-        queryKey: ['datasets', datasetId],
+        queryKey: datasetDetailKey(datasetId),
         queryFn: () => datasetsApi.getDatasetById(datasetId).then((r) => r.data),
         staleTime: 0,
       });

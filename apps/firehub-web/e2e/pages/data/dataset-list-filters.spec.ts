@@ -158,6 +158,113 @@ test.describe('데이터셋 목록 — 필터 및 미리보기', () => {
       .toBeTruthy();
   });
 
+  /**
+   * WD-760 — 저장방식 필터에 「파일」이 없어 FILE 데이터셋만 골라 볼 수 없었다.
+   * 선택지는 이제 저장 방식 라벨 맵에서 만들어지므로 순서는 기존(전체·테이블·문서) 뒤에 「파일」이 붙고,
+   * 각 선택이 URL·목록 API 의 storageType 으로 이어져 그 저장 방식 데이터셋만 보이는지 확인한다.
+   */
+  test.describe('저장방식 필터 — 파일 (WD-760)', () => {
+    const mixed = [
+      createDataset({ id: 21, name: '출동 통계 테이블', storageType: 'TABLE', originType: 'SOURCE', tags: [] }),
+      createDataset({ id: 22, name: '점검 보고서 문서', storageType: 'DOCUMENT', originType: 'SOURCE', tags: [] }),
+      createDataset({ id: 23, name: '현장 사진 파일', storageType: 'FILE', originType: 'SOURCE', tags: [] }),
+    ];
+
+    /** 목록 API 모킹 — 서버처럼 storageType 파라미터로 걸러 돌려주고, 요청 URL 을 모은다 */
+    async function mockFilteredList(page: import('@playwright/test').Page) {
+      const urls: URL[] = [];
+      await page.route(
+        (url) => url.pathname === '/api/v1/datasets',
+        (route) => {
+          const url = new URL(route.request().url());
+          urls.push(url);
+          const storageType = url.searchParams.get('storageType');
+          const content = storageType ? mixed.filter((d) => d.storageType === storageType) : mixed;
+          return route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify(createPageResponse(content)),
+          });
+        },
+      );
+      return urls;
+    }
+
+    /** 저장방식 필터에서 옵션을 고른다 */
+    async function chooseStorage(page: import('@playwright/test').Page, label: string) {
+      await page.getByRole('combobox', { name: '저장 방식 필터' }).click();
+      await page.getByRole('option', { name: label, exact: true }).click();
+    }
+
+    test('선택지는 전체 저장방식·테이블·문서·파일 순서다', async ({ authenticatedPage: page }) => {
+      await setupCommon(page);
+      await mockFilteredList(page);
+      await page.goto('/data/datasets');
+
+      await page.getByRole('combobox', { name: '저장 방식 필터' }).click();
+      await expect(page.getByRole('option')).toHaveText(['전체 저장방식', '테이블', '문서', '파일']);
+    });
+
+    test('「파일」 선택 시 URL·API 에 storageType=FILE 이 실리고 FILE 데이터셋만 보인다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupCommon(page);
+      const urls = await mockFilteredList(page);
+      await page.goto('/data/datasets');
+      // 필터 전에는 세 저장 방식이 모두 보인다
+      await expect(page.getByRole('row', { name: /출동 통계 테이블/ })).toBeVisible();
+      await expect(page.getByRole('row', { name: /현장 사진 파일/ })).toBeVisible();
+
+      await chooseStorage(page, '파일');
+
+      // 화면 URL 과 목록 API 요청 모두 storageType=FILE
+      await expect(page).toHaveURL(/[?&]storageType=FILE(&|$)/);
+      await expect.poll(() => urls.some((u) => u.searchParams.get('storageType') === 'FILE')).toBeTruthy();
+      // 목록에는 FILE 데이터셋만 남고, 저장 방식 배지는 「파일」
+      const fileRow = page.getByRole('row', { name: /현장 사진 파일/ });
+      await expect(fileRow).toBeVisible();
+      await expect(fileRow.getByText('파일', { exact: true })).toBeVisible();
+      await expect(page.getByRole('row', { name: /출동 통계 테이블/ })).toHaveCount(0);
+      await expect(page.getByRole('row', { name: /점검 보고서 문서/ })).toHaveCount(0);
+      // 고른 값이 필터 상자에 보인다
+      await expect(page.getByRole('combobox', { name: '저장 방식 필터' })).toHaveText('파일');
+    });
+
+    test('「테이블」·「문서」 선택도 그대로 storageType 으로 거른다', async ({ authenticatedPage: page }) => {
+      await setupCommon(page);
+      const urls = await mockFilteredList(page);
+      await page.goto('/data/datasets');
+      await expect(page.getByRole('row', { name: /현장 사진 파일/ })).toBeVisible();
+
+      await chooseStorage(page, '테이블');
+      await expect(page).toHaveURL(/[?&]storageType=TABLE(&|$)/);
+      await expect.poll(() => urls.some((u) => u.searchParams.get('storageType') === 'TABLE')).toBeTruthy();
+      await expect(page.getByRole('row', { name: /출동 통계 테이블/ })).toBeVisible();
+      await expect(page.getByRole('row', { name: /현장 사진 파일/ })).toHaveCount(0);
+      await expect(page.getByRole('row', { name: /점검 보고서 문서/ })).toHaveCount(0);
+
+      await chooseStorage(page, '문서');
+      await expect(page).toHaveURL(/[?&]storageType=DOCUMENT(&|$)/);
+      await expect.poll(() => urls.some((u) => u.searchParams.get('storageType') === 'DOCUMENT')).toBeTruthy();
+      await expect(page.getByRole('row', { name: /점검 보고서 문서/ })).toBeVisible();
+      await expect(page.getByRole('row', { name: /출동 통계 테이블/ })).toHaveCount(0);
+      await expect(page.getByRole('row', { name: /현장 사진 파일/ })).toHaveCount(0);
+    });
+
+    test('URL 로 storageType=FILE 을 열면 필터가 「파일」로 복원되고 API 에도 실린다', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupCommon(page);
+      const urls = await mockFilteredList(page);
+      await page.goto('/data/datasets?storageType=FILE');
+
+      await expect(page.getByRole('combobox', { name: '저장 방식 필터' })).toHaveText('파일');
+      await expect.poll(() => urls.some((u) => u.searchParams.get('storageType') === 'FILE')).toBeTruthy();
+      await expect(page.getByRole('row', { name: /현장 사진 파일/ })).toBeVisible();
+      await expect(page.getByRole('row', { name: /출동 통계 테이블/ })).toHaveCount(0);
+    });
+  });
+
   test('즐겨찾기 필터 버튼 클릭 시 API 에 favoriteOnly=true 가 전달된다', async ({
     authenticatedPage: page,
   }) => {
@@ -353,5 +460,194 @@ test.describe('데이터셋 목록 — 필터 및 미리보기', () => {
     await page.getByRole('option', { name: '원본' }).click();
     await expect.poll(() => urls.some((u) => u.searchParams.get('originType') === 'SOURCE')).toBeTruthy();
     await expect(page.getByRole('combobox', { name: '출처 필터' })).toHaveText('원본');
+  });
+});
+
+/**
+ * WD-754 — 임시(TEMP) 데이터셋 기본 숨김 + 「임시 데이터셋 보기」 보기 옵션
+ *
+ * 서버는 includeTemp 기본값 false 로 TEMP 를 숨기고, originType 을 직접 고르면 그 값이 우선한다.
+ * 모킹 서버가 이 계약대로 파라미터를 읽어 거르게 해, 화면이 보내는 요청 파라미터와 그 결과(행·건수)를 함께 검증한다.
+ */
+test.describe('데이터셋 목록 — 임시 데이터셋 보기 (WD-754)', () => {
+  const all = [
+    createDataset({ id: 11, name: '화재 출동 원본', originType: 'SOURCE', tags: [] }),
+    createDataset({ id: 12, name: '월별 출동 집계', originType: 'DERIVED', tags: [] }),
+    createDataset({ id: 13, name: 'tmp_step_정제', originType: 'TEMP', tags: [] }),
+    createDataset({ id: 14, name: 'tmp_step_조인', originType: 'TEMP', tags: [] }),
+  ];
+  const tempNames = ['tmp_step_정제', 'tmp_step_조인'];
+  const nonTempNames = ['화재 출동 원본', '월별 출동 집계'];
+  const SHOW_TEMP = '임시 데이터셋 보기';
+
+  /** 서버 계약대로 거르는 목록 모킹 — originType 우선, 없으면 includeTemp=true 일 때만 TEMP 포함. 요청 URL 을 모두 남긴다. */
+  async function mockServerLikeList(page: import('@playwright/test').Page, datasets = all) {
+    const urls: URL[] = [];
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets',
+      (route) => {
+        const url = new URL(route.request().url());
+        urls.push(url);
+        const origin = url.searchParams.get('originType');
+        const includeTemp = url.searchParams.get('includeTemp') === 'true';
+        const content = origin
+          ? datasets.filter((d) => d.originType === origin)
+          : datasets.filter((d) => includeTemp || d.originType !== 'TEMP');
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(createPageResponse(content)),
+        });
+      },
+    );
+    return urls;
+  }
+
+  async function setupCommon(page: import('@playwright/test').Page) {
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', []);
+    await mockApi(page, 'GET', '/api/v1/datasets/tags', []);
+  }
+
+  /** 목록 표의 데이터 행 이름들이 기대와 정확히 같은지(순서 무관) 확인 */
+  async function expectRowNames(page: import('@playwright/test').Page, visible: string[], hidden: string[]) {
+    const table = page.getByRole('table', { name: '데이터셋 목록' });
+    for (const name of visible) await expect(table.getByRole('link', { name, exact: true })).toBeVisible();
+    for (const name of hidden) await expect(table.getByRole('link', { name, exact: true })).toHaveCount(0);
+  }
+
+  test('기본 목록은 includeTemp 를 싣지 않고 임시 데이터셋을 보이지 않으며 건수도 숨긴 결과 기준이다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupCommon(page);
+    const urls = await mockServerLikeList(page);
+
+    await page.goto('/data/datasets');
+
+    await expectRowNames(page, nonTempNames, tempNames);
+    await expect(page.getByText('총 2건')).toBeVisible();
+    // 보기 옵션은 꺼진 상태로 보인다
+    await expect(page.getByRole('button', { name: SHOW_TEMP })).toHaveAttribute('aria-pressed', 'false');
+    // 모든 목록 요청이 includeTemp 없이(서버 기본 false) 나갔다
+    expect(urls.length).toBeGreaterThan(0);
+    expect(urls.every((u) => u.searchParams.get('includeTemp') === null)).toBe(true);
+    await expect(page).not.toHaveURL(/showTemp=/);
+  });
+
+  test('「임시 데이터셋 보기」를 켜면 URL showTemp=1·요청 includeTemp=true 로 임시 데이터셋이 함께 보이고, 끄면 다시 숨는다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupCommon(page);
+    const urls = await mockServerLikeList(page);
+
+    await page.goto('/data/datasets');
+    await expectRowNames(page, nonTempNames, tempNames);
+
+    const toggle = page.getByRole('button', { name: SHOW_TEMP });
+    await toggle.click();
+
+    await expect(page).toHaveURL(/[?&]showTemp=1(&|$)/);
+    await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    await expect.poll(() => urls.at(-1)?.searchParams.get('includeTemp')).toBe('true');
+    await expectRowNames(page, [...nonTempNames, ...tempNames], []);
+    await expect(page.getByText('총 4건')).toBeVisible();
+    // 임시 행의 출처 배지가 「임시」로 그려진다
+    await expect(page.getByRole('row', { name: /tmp_step_정제/ }).getByText('임시', { exact: true })).toBeVisible();
+
+    // 다시 누르면 URL 에서 빠지고 처음(includeTemp 없음) 결과로 돌아가 임시가 숨는다.
+    // 같은 조건의 첫 응답이 TanStack Query 캐시(staleTime 30s)에 있어 재요청은 안 나갈 수 있으므로 화면 결과로 확인한다.
+    await toggle.click();
+    await expect(page).not.toHaveURL(/showTemp=/);
+    await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    await expectRowNames(page, nonTempNames, tempNames);
+    await expect(page.getByText('총 2건')).toBeVisible();
+  });
+
+  test('?showTemp=1 로 직접 들어오거나 새로고침해도 보기 옵션이 켜진 채 다른 필터와 함께 요청된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupCommon(page);
+    const urls = await mockServerLikeList(page);
+
+    await page.goto('/data/datasets?showTemp=1&storageType=TABLE');
+
+    const toggle = page.getByRole('button', { name: SHOW_TEMP });
+    await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    await expectRowNames(page, [...nonTempNames, ...tempNames], []);
+    await expect.poll(() => urls.at(-1)?.searchParams.get('includeTemp')).toBe('true');
+    expect(urls.at(-1)?.searchParams.get('storageType')).toBe('TABLE');
+
+    // 새로고침 — URL 이 단일 진실 소스라 그대로 복원된다
+    const before = urls.length;
+    await page.reload();
+    await expect.poll(() => urls.length).toBeGreaterThan(before);
+    await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    expect(urls.at(-1)?.searchParams.get('includeTemp')).toBe('true');
+    expect(urls.at(-1)?.searchParams.get('storageType')).toBe('TABLE');
+    await expectRowNames(page, [...nonTempNames, ...tempNames], []);
+    await expect(page).toHaveURL(/showTemp=1/);
+
+    // 출처 필터를 고르면 서버가 그쪽을 우선하므로 includeTemp 는 싣지 않는다 — 같은 결과로 요청·캐시가 갈리지 않게
+    await page.getByRole('combobox', { name: '출처 필터' }).click();
+    await page.getByRole('option', { name: '원본' }).click();
+    await expect.poll(() => urls.at(-1)?.searchParams.get('originType')).toBe('SOURCE');
+    expect(urls.at(-1)?.searchParams.get('includeTemp')).toBeNull();
+    await expect(page).toHaveURL(/showTemp=1/);
+    await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  test('출처 필터가 「임시」면 보기 옵션이 비활성·안내되고 요청 originType=TEMP 로 임시만 보인다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupCommon(page);
+    const urls = await mockServerLikeList(page);
+
+    await page.goto('/data/datasets');
+    const toggle = page.getByRole('button', { name: SHOW_TEMP });
+    await expect(toggle).toBeEnabled();
+
+    await page.getByRole('combobox', { name: '출처 필터' }).click();
+    await page.getByRole('option', { name: '임시' }).click();
+
+    // 출처 「임시」가 보기 옵션보다 우선 — 보기 옵션은 꺼져 있어도 임시만 보인다
+    await expect.poll(() => urls.at(-1)?.searchParams.get('originType')).toBe('TEMP');
+    expect(urls.at(-1)?.searchParams.get('includeTemp')).toBeNull();
+    await expectRowNames(page, tempNames, nonTempNames);
+    await expect(page.getByText('총 2건')).toBeVisible();
+    await expect(toggle).toBeDisabled();
+    // 비활성 버튼은 포인터 이벤트가 없어 공용 래퍼(span role=group, 이름 '동작 — 사유')에 호버하면 사유 툴팁이 뜬다
+    const hint = '출처 필터가 임시라 늘 보입니다';
+    await page.getByRole('group', { name: `${SHOW_TEMP} — ${hint}`, exact: true }).hover();
+    await expect(page.getByRole('tooltip')).toHaveText(hint);
+    // 지금 목록에 임시가 보이므로 눌린 모양으로 보인다 — 실제 목록과 표시가 어긋나지 않게
+    await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+
+    // 출처를 「전체」로 되돌리면 보기 옵션이 다시 살아나고 임시는 숨는다
+    await page.getByRole('combobox', { name: '출처 필터' }).click();
+    await page.getByRole('option', { name: '전체 출처' }).click();
+    // 첫 진입 응답이 캐시에 있어 재요청은 안 나갈 수 있다 — URL 과 화면 결과로 확인한다
+    await expect(page).not.toHaveURL(/originType=/);
+    await expect(toggle).toBeEnabled();
+    await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    await expect(page.getByRole('group', { name: `${SHOW_TEMP} — ${hint}`, exact: true })).toHaveCount(0);
+    await expectRowNames(page, nonTempNames, tempNames);
+  });
+
+  test('임시만 있어 기본 목록이 비면 「임시 데이터셋 보기」로 볼 수 있다고 안내하고, 켜면 안내 없이 임시가 보인다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupCommon(page);
+    // 임시 데이터셋만 있는 테넌트 — 서버 계약대로 기본은 0건
+    await mockServerLikeList(
+      page,
+      all.filter((d) => d.originType === 'TEMP'),
+    );
+
+    await page.goto('/data/datasets');
+    const hint = page.getByText('임시 데이터셋은 「임시 데이터셋 보기」를 켜면 보입니다.');
+    await expect(hint).toBeVisible();
+
+    await page.getByRole('button', { name: SHOW_TEMP }).click();
+    await expectRowNames(page, tempNames, []);
+    await expect(hint).toHaveCount(0);
   });
 });

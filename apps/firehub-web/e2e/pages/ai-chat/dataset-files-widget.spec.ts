@@ -113,14 +113,21 @@ test.describe('AI 챗 show_dataset_files 위젯', () => {
     await mockDatasetMeta(page);
 
     // 파일 목록 mock — 표시명은 prefix 제외 상대경로(S3 방식), 폴더 구조 보존.
-    await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/objects`, {
-      objects: [
-        { key: 'equip/보고서.md', name: '보고서.md', size: 2048, lastModified: '2026-07-20T00:00:00Z' },
-        { key: 'equip/2026/photo.jpg', name: '2026/photo.jpg', size: 1048576, lastModified: null },
-      ],
-      nextToken: null,
-      hasMore: false,
-    });
+    // 요청을 캡처해 위젯이 재귀 평면 목록(recursive=true)을 묻는지 본다 — 서버 기본이 폴더 모드가 돼도 카드는 하위 전체를 보인다(WD-761).
+    const objectsReq = await mockApi(
+      page,
+      'GET',
+      `/api/v1/datasets/${DATASET_ID}/objects`,
+      {
+        objects: [
+          { key: 'equip/보고서.md', name: '보고서.md', size: 2048, lastModified: '2026-07-20T00:00:00Z' },
+          { key: 'equip/2026/photo.jpg', name: '2026/photo.jpg', size: 1048576, lastModified: null },
+        ],
+        nextToken: null,
+        hasMore: false,
+      },
+      { capture: true },
+    );
 
     await openChatPanel(page);
 
@@ -137,6 +144,9 @@ test.describe('AI 챗 show_dataset_files 위젯', () => {
     // 크기가 사람이 읽는 단위로 표기된다.
     await expect(page.getByText('2.0 KB')).toBeVisible();
     await expect(page.getByText('1.0 MB')).toBeVisible();
+    // 위젯은 recursive=true 로 묻는다(폴더 path·검색어 없이).
+    expect(objectsReq.lastRequest()?.searchParams.get('recursive')).toBe('true');
+    expect(objectsReq.lastRequest()?.searchParams.get('path')).toBeNull();
   });
 
   test('파일 클릭 시 presigned GET URL을 발급해 새 탭으로 연다', async ({

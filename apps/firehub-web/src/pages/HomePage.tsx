@@ -34,7 +34,7 @@ import {
 import { useDatasetPermissions, useDatasets } from '../hooks/queries/useDatasets';
 import { usePipelinePermissions } from '../hooks/queries/usePipelines';
 import { useAuth } from '../hooks/useAuth';
-import { getOriginTypeLabel, getStatusBadgeVariant, getStatusLabel, timeAgo } from '../lib/formatters';
+import { getOriginTypeLabel, getStatusBadgeVariant, getStatusLabel, getStorageTypeLabel, timeAgo } from '../lib/formatters';
 
 function ActivityIcon({ eventType }: { eventType: string }) {
   const t = eventType.toUpperCase();
@@ -490,8 +490,10 @@ export default function HomePage() {
                         <FreshnessBar lastUpdated={ds.createdAt} className="shrink-0" />
                         <Badge variant="outline" className="shrink-0 text-xs px-1.5 py-0">
                           {/* 출처 라벨은 데이터셋 목록과 같은 매핑을 쓴다(WD-296) — 예전에는 DERIVED 밖을 모두 「원본」으로 보여
-                              파이프라인 자동 생성 임시(TEMP) 데이터셋이 사용자가 올린 원본처럼 보였다. */}
-                          {ds.storageType === 'DOCUMENT' ? '문서' : getOriginTypeLabel(ds.originType)}
+                              파이프라인 자동 생성 임시(TEMP) 데이터셋이 사용자가 올린 원본처럼 보였다.
+                              테이블이 아닌 저장 방식(문서·파일)은 저장 방식 라벨을 보인다(WD-760) — 예전에는 DOCUMENT 만
+                              골라내 파일(FILE) 데이터셋이 「원본」 같은 출처 라벨로 보여 테이블과 구분되지 않았다. */}
+                          {ds.storageType !== 'TABLE' ? getStorageTypeLabel(ds.storageType) : getOriginTypeLabel(ds.originType)}
                         </Badge>
                       </div>
                     </button>

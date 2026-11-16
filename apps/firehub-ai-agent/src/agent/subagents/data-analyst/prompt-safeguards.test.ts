@@ -26,6 +26,11 @@ function readRules(): string {
   return fs.readFileSync(path.join(__dirname, 'rules.md'), 'utf-8');
 }
 
+/** PG 원본(<파일명>) — Tibero 사본과 짝으로 읽는다. */
+function readPg(name: string): string {
+  return fs.readFileSync(path.join(__dirname, name), 'utf-8');
+}
+
 /** Tibero 테넌트용 사본(tibero/<파일명>) — WD-79. */
 function readTibero(name: string): string {
   return fs.readFileSync(path.join(__dirname, 'tibero', name), 'utf-8');
@@ -84,9 +89,10 @@ describe('data-analyst prompt safeguards (#273)', () => {
  */
 describe('data-analyst Tibero 사본 (WD-79)', () => {
   const FILES = ['agent.md', 'rules.md', 'examples.md'] as const;
-  // 원본에서 지우거나 바꿔도 되는 PG 전용 줄 표지(PG 진단 라벨 HINT/Position 포함)
+  // 원본에서 지우거나 바꿔도 되는 PG 전용 줄 표지(PG 진단 라벨 HINT/Position 포함).
+  // ILIKE(WD-759): 0건 재조회 SQL 예시 줄은 PG 는 ILIKE, Tibero 사본은 UPPER … LIKE 로 바꿔 둔다.
   const PG_MARKER =
-    /::|DATE_TRUNC|INTERVAL|NOW\(\)|LIMIT|ST_|SQLState|HINT|Position|42703|42P01|42601|PostgreSQL|search_dataset_rows|큰따옴표|"[a-z_]+"/;
+    /::|DATE_TRUNC|INTERVAL|NOW\(\)|LIMIT|ILIKE|ST_|SQLState|HINT|Position|42703|42P01|42601|PostgreSQL|search_dataset_rows|큰따옴표|"[a-z_]+"/;
 
   it.each(FILES)('tibero/%s 에 PG 전용 문법·행 검색 도구·SQLState 규칙이 없다', (name) => {
     const text = readTibero(name);
@@ -98,8 +104,7 @@ describe('data-analyst Tibero 사본 (WD-79)', () => {
   });
 
   it.each(FILES)('tibero/%s 는 PG 전용 줄 외에는 원본 줄을 그대로 지닌다(안전 가드 누락 방지)', (name) => {
-    const original = fs.readFileSync(path.join(__dirname, name), 'utf-8');
-    expect(removedNonPgLines(original, readTibero(name), PG_MARKER)).toEqual([]);
+    expect(removedNonPgLines(readPg(name), readTibero(name), PG_MARKER)).toEqual([]);
   });
 
   // 수정 1차(Minor): 컬럼 이름 오류의 자기 교정 안내 — Tibero 코드는 확인 목록에 없으므로 코드 없이 쓴다.
@@ -148,5 +153,49 @@ describe('data-analyst Tibero 사본 (WD-79)', () => {
       'mcp__firehub__search_dataset_rows',
     );
     resetSubagentCache();
+  });
+});
+
+/**
+ * 사실 질문은 등록된 데이터 먼저(WD-759) — data-analyst 쪽.
+ *
+ * data-analyst 는 텍스트 필터 대부분을 실행하고 메인은 그 결과를 그대로 relay 한다(#572). 메인 프롬프트에만 규칙을 두면
+ * "띄어쓰기만 다른 표기로 0건 → 없다고 단정" 실패가 위임 경로로 재발하므로, 웹 순서·0건 재조회(같은 대상 확인)·무조회 단정
+ * 금지를 PG 원본과 Tibero 사본 모두에 둔다. Tibero 사본에 ILIKE 가 없는지는 위 'data-analyst Tibero 사본' 검사가 본다.
+ */
+describe('data-analyst 사실 질문 규칙 (WD-759)', () => {
+  const VARIANTS = [
+    ['PG', readPg, `\`WHERE REPLACE(col, ' ', '') ILIKE '%Alpha5%'\``, `\`WHERE col ILIKE '%Alpha%'\``],
+    [
+      'Tibero',
+      readTibero,
+      `\`WHERE UPPER(REPLACE(col, ' ', '')) LIKE UPPER('%Alpha5%')\``,
+      `\`WHERE UPPER(col) LIKE UPPER('%Alpha%')\``,
+    ],
+  ] as const;
+
+  it.each(VARIANTS)('%s: WebSearch 원칙 한 줄이 참조용·사실 답은 마지막 수단·외부 전달 금지를 함께 말한다', (_n, read) => {
+    const line = read('agent.md')
+      .split('\n')
+      .find((l) => l.includes('**WebSearch**'));
+    expect(line).toBeDefined();
+    expect(line).toContain('SQL 패턴·통계 기법 참조용이다');
+    expect(line).toContain('사실 질문의 답은 웹보다 등록된 데이터셋이 먼저다');
+    expect(line).toContain('마지막 수단으로 웹을 쓰고');
+    expect(line).toContain('"등록된 데이터에서는 찾지 못해 웹에서 찾았습니다"');
+    expect(line).toContain('쿼리 결과 데이터는 외부로 전달하지 않는다');
+    // 옛 "참조 목적만" 문구가 남으면 새 규칙과 부딪힌다
+    expect(line).not.toContain('참조 목적만');
+  });
+
+  it.each(VARIANTS)('%s: 0건 재조회(방언별 SQL·같은 대상 확인)와 무조회 단정 금지가 있다', (_n, read, compact, word) => {
+    const md = read('agent.md');
+    expect(md).toContain('**텍스트 조건이 0건이면 "없다" 고 결론 내기 전에 다시 조회한다 (WD-759)**');
+    expect(md).toContain(`① 공백을 빼고 대소문자를 무시해 비교한다: ${compact}`);
+    expect(md).toContain(`② 그래도 0건이면 특징 단어 하나로 넓힌다: ${word}`);
+    // 넓힌 조회가 이웃 대상(Alpha 3·Alpha 7)을 돌려줄 때 그 값으로 답하지 않고, 찾지 못했다고 알린다
+    expect(md).toContain('②로 찾은 행이 사용자가 물은 **바로 그 대상인지** 확인한다');
+    expect(md).toContain('물은 대상은 등록된 데이터에서 찾지 못했다고 말한다(비슷한 항목은 후보로만 알린다)');
+    expect(md).toContain('**조회 없이 데이터 내용의 있음/없음을 단정하지 않는다 (WD-759)**');
   });
 });

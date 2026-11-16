@@ -238,7 +238,7 @@ class DatasetServiceTest extends IntegrationTestBase {
     // When
     PageResponse<DatasetResponse> result =
         datasetService.getDatasets(
-            testCategoryId, null, null, null, 0, 10, testUserId, null, false, null);
+            testCategoryId, null, null, false, null, 0, 10, testUserId, null, false, null);
 
     // Then
     assertThat(result.content()).hasSize(1);
@@ -264,7 +264,7 @@ class DatasetServiceTest extends IntegrationTestBase {
 
     PageResponse<DatasetResponse> result =
         datasetService.getDatasets(
-            null, null, null, "zztagkw", 0, 10, testUserId, null, false, null);
+            null, null, null, false, "zztagkw", 0, 10, testUserId, null, false, null);
 
     assertThat(result.content()).hasSize(1);
     assertThat(result.content().get(0).id()).isEqualTo(tagged.id());
@@ -293,7 +293,7 @@ class DatasetServiceTest extends IntegrationTestBase {
 
     PageResponse<DatasetResponse> result =
         datasetService.getDatasets(
-            null, null, null, "zzcatkw", 0, 10, testUserId, null, false, null);
+            null, null, null, false, "zzcatkw", 0, 10, testUserId, null, false, null);
 
     assertThat(result.content()).hasSize(1);
     assertThat(result.content().get(0).id()).isEqualTo(inCat.id());

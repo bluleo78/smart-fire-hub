@@ -1,4 +1,4 @@
-import { createDatasetDetail } from '../../factories/dataset.factory';
+import { createDataset, createDatasetDetail } from '../../factories/dataset.factory';
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { grantDatasetPermissions, setupDatasetMocks } from '../../fixtures/dataset.fixture';
@@ -240,5 +240,46 @@ test.describe('데이터셋 생성 페이지', () => {
     await expect(page.getByRole('heading', { name: /^칼럼 \d+$/ })).toHaveCount(1);
     await expect(page.getByRole('button', { name: '칼럼 2 삭제' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: '칼럼 1 삭제' })).toBeDisabled();
+  });
+});
+
+/**
+ * WD-754 — 서버 목록이 임시(TEMP) 데이터셋을 기본으로 숨기게 됐지만, 이름·테이블명 중복 검사는
+ * 임시와 겹치는 이름도 알려야 한다(만들면 서버 409). 그래서 중복 검색은 includeTemp=true 로 조회한다.
+ */
+test.describe('데이터셋 생성 — 임시 데이터셋과의 이름 중복 (WD-754)', () => {
+  test('임시 데이터셋과 같은 이름·테이블명이면 includeTemp=true 로 찾아 「이미 사용 중」을 알린다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDatasetMocks(page);
+    const temp = createDataset({ id: 77, name: '임시 정제 결과', tableName: 'tmp_clean_result', originType: 'TEMP' });
+    // 서버 계약대로 includeTemp=true 일 때만 TEMP 를 돌려주는 목록 모킹 (setupDatasetMocks 의 목록 모킹보다 나중에 등록해 우선한다)
+    const urls: URL[] = [];
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets',
+      (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        const url = new URL(route.request().url());
+        urls.push(url);
+        const content = url.searchParams.get('includeTemp') === 'true' ? [temp] : [];
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(createPageResponse(content)),
+        });
+      },
+    );
+
+    await page.goto('/data/datasets/new');
+    await page.getByLabel('데이터셋 이름').fill('임시 정제 결과');
+    await page.getByLabel('테이블명').fill('tmp_clean_result');
+
+    await expect(page.getByText('이미 사용 중인 이름입니다.')).toBeVisible();
+    await expect(page.getByText('이미 사용 중인 테이블명입니다.')).toBeVisible();
+    // 두 중복 검색 모두 includeTemp=true 를 실었다
+    const nameReq = urls.find((u) => u.searchParams.get('search') === '임시 정제 결과');
+    const tableReq = urls.find((u) => u.searchParams.get('search') === 'tmp_clean_result');
+    expect(nameReq?.searchParams.get('includeTemp')).toBe('true');
+    expect(tableReq?.searchParams.get('includeTemp')).toBe('true');
   });
 });

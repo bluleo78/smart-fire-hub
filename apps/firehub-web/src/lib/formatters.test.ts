@@ -24,6 +24,7 @@ import {
   getStorageTypeLabel,
   isNullValue,
   relativeOrShortDate,
+  STORAGE_TYPE_OPTIONS,
   timeAgo,
 } from './formatters';
 
@@ -433,6 +434,23 @@ describe('formatIpAddress', () => {
 describe('getStorageTypeLabel', () => {
   it('TABLE → 테이블', () => expect(getStorageTypeLabel('TABLE')).toBe('테이블'));
   it('DOCUMENT → 문서', () => expect(getStorageTypeLabel('DOCUMENT')).toBe('문서'));
+  it('FILE → 파일 (WD-760)', () => expect(getStorageTypeLabel('FILE')).toBe('파일'));
+});
+
+/** WD-760 — 필터 선택지가 라벨 맵에서 파생돼 파일(FILE)이 빠지지 않고, 기존 순서(테이블·문서) 뒤에 붙는다 */
+describe('STORAGE_TYPE_OPTIONS (WD-760)', () => {
+  it('테이블·문서·파일 순서로 value·label 을 가진다', () =>
+    expect(STORAGE_TYPE_OPTIONS).toEqual([
+      { value: 'TABLE', label: '테이블' },
+      { value: 'DOCUMENT', label: '문서' },
+      { value: 'FILE', label: '파일' },
+    ]));
+  it('각 선택지의 라벨은 getStorageTypeLabel 과 같다(단일 출처)', () => {
+    for (const option of STORAGE_TYPE_OPTIONS) {
+      expect(getStorageTypeLabel(option.value)).toBe(option.label);
+      expect(describeStorageType(option.value).known).toBe(true);
+    }
+  });
 });
 
 describe('describeStorageType / describeOriginType (WD-650)', () => {

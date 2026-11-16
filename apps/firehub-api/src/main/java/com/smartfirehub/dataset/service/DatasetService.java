@@ -574,11 +574,19 @@ public class DatasetService {
     }
   }
 
+  /**
+   * 데이터셋 목록 한 쪽과 전체 건수를 돌려준다.
+   *
+   * <p>WD-754: {@code includeTemp=false}(API 기본)면 출처 필터가 없을 때 임시(TEMP) 데이터셋을 목록·건수 모두에서 뺀다. 출처 필터가
+   * 있으면 그 필터가 이긴다(규칙은 {@link DatasetRepository#findAll} 참고). 파이프라인 입력 선택처럼 임시 결과가 필요한 호출자는 {@code
+   * includeTemp=true} 를 넘긴다.
+   */
   @Transactional(readOnly = true)
   public PageResponse<DatasetResponse> getDatasets(
       Long categoryId,
       String storageType,
       String originType,
+      boolean includeTemp,
       String search,
       int page,
       int size,
@@ -593,6 +601,7 @@ public class DatasetService {
             categoryId,
             storageType,
             originType,
+            includeTemp,
             search,
             page,
             size,
@@ -606,6 +615,7 @@ public class DatasetService {
             categoryId,
             storageType,
             originType,
+            includeTemp,
             search,
             currentUserId,
             status,

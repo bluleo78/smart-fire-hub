@@ -124,7 +124,17 @@ class DatasetControllerTest {
     PageResponse<DatasetResponse> page = new PageResponse<>(List.of(dataset), 0, 20, 1, 1);
 
     when(datasetService.getDatasets(
-            any(), any(), any(), any(), anyInt(), anyInt(), anyLong(), any(), anyBoolean(), any()))
+            any(),
+            any(),
+            any(),
+            anyBoolean(),
+            any(),
+            anyInt(),
+            anyInt(),
+            anyLong(),
+            any(),
+            anyBoolean(),
+            any()))
         .thenReturn(page);
 
     mockMvc
@@ -132,6 +142,73 @@ class DatasetControllerTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.content[0].name").value("Orders"))
         .andExpect(jsonPath("$.totalElements").value(1));
+  }
+
+  /** WD-754: includeTemp 를 주지 않으면 서비스에 false(임시 데이터셋 숨김)로 넘긴다 — 목록 화면의 기본값. */
+  @Test
+  void getDatasets_withoutIncludeTemp_passesFalse() throws Exception {
+    when(datasetService.getDatasets(
+            any(),
+            any(),
+            any(),
+            anyBoolean(),
+            any(),
+            anyInt(),
+            anyInt(),
+            anyLong(),
+            any(),
+            anyBoolean(),
+            any()))
+        .thenReturn(new PageResponse<>(List.of(), 0, 20, 0, 0));
+
+    mockMvc
+        .perform(get("/api/v1/datasets").header("Authorization", "Bearer test-token"))
+        .andExpect(status().isOk());
+
+    verify(datasetService)
+        .getDatasets(
+            isNull(), isNull(), isNull(), eq(false), isNull(), eq(0), eq(20), anyLong(), isNull(),
+            eq(false), isNull());
+  }
+
+  /** WD-754: includeTemp=true 와 originType 을 그대로 서비스에 넘긴다(우선순위 판단은 리포지토리 몫). */
+  @Test
+  void getDatasets_withIncludeTempAndOriginType_passesThrough() throws Exception {
+    when(datasetService.getDatasets(
+            any(),
+            any(),
+            any(),
+            anyBoolean(),
+            any(),
+            anyInt(),
+            anyInt(),
+            anyLong(),
+            any(),
+            anyBoolean(),
+            any()))
+        .thenReturn(new PageResponse<>(List.of(), 0, 20, 0, 0));
+
+    mockMvc
+        .perform(
+            get("/api/v1/datasets")
+                .param("includeTemp", "true")
+                .param("originType", "SOURCE")
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isOk());
+
+    verify(datasetService)
+        .getDatasets(
+            isNull(),
+            isNull(),
+            eq("SOURCE"),
+            eq(true),
+            isNull(),
+            eq(0),
+            eq(20),
+            anyLong(),
+            isNull(),
+            eq(false),
+            isNull());
   }
 
   @Test

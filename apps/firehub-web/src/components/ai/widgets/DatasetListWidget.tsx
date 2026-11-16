@@ -1,4 +1,4 @@
-import { parseUtcDate } from '@/lib/formatters';
+import { getStorageTypeLabel, parseUtcDate } from '@/lib/formatters';
 
 import type { WidgetProps } from './types';
 import { WidgetShell } from './WidgetShell';
@@ -15,11 +15,6 @@ interface DatasetListItem {
 
 interface ShowDatasetListInput {
   items: DatasetListItem[];
-}
-
-/** 저장 방식 라벨 — DatasetListPage와 동일하게 테이블/문서로 표시 */
-function storageLabel(storageType?: string): string {
-  return storageType === 'DOCUMENT' ? '문서' : '테이블';
 }
 
 /** 출처 라벨 — 원본/파생/임시 */
@@ -61,10 +56,12 @@ export default function DatasetListWidget({ input, onNavigate, displayMode }: Wi
             >
               <div className="flex items-center gap-2">
                 <span className="flex-1 truncate text-sm font-medium">{item.name}</span>
-                {/* 저장 방식 + 출처를 두 배지로 분리 표시 — DatasetListPage와 일관 */}
+                {/* 저장 방식 + 출처를 두 배지로 분리 표시 — DatasetListPage와 일관.
+                    저장 방식 라벨은 공용 라벨 맵을 쓴다(WD-760) — 예전 자체 판정은 DOCUMENT 밖을 모두 「테이블」로 보여
+                    파일(FILE) 데이터셋이 테이블로 잘못 보였다. 모르는 값은 원본 enum 그대로 보인다. */}
                 {item.storageType && (
                   <span className="shrink-0 rounded-full px-2 py-0.5 text-xs font-medium bg-secondary/10 text-secondary-foreground">
-                    {storageLabel(item.storageType)}
+                    {getStorageTypeLabel(item.storageType)}
                   </span>
                 )}
                 {item.originType && (

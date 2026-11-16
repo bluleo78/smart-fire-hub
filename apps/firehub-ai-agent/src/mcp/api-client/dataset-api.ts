@@ -80,17 +80,24 @@ export interface BindOntologyResult {
 
 export function createDatasetApi(client: AxiosInstance) {
   return {
+    /**
+     * 데이터셋 목록. WD-754: 서버 기본값은 임시(TEMP) 데이터셋 숨김(includeTemp=false)이지만, AI 도구 결과가 바뀌지 않도록
+     * 호출자가 따로 정하지 않으면 includeTemp=true 를 실어 지금처럼 임시까지 받는다(AI 쪽 기본값 변경은 후속 판단).
+     */
     async listDatasets(params?: {
       categoryId?: number;
       storageType?: string;
       originType?: string;
+      includeTemp?: boolean;
       search?: string;
       status?: string;
       favoriteOnly?: boolean;
       page?: number;
       size?: number;
     }): Promise<unknown> {
-      const response = await client.get('/datasets', { params });
+      const response = await client.get('/datasets', {
+        params: { ...params, includeTemp: params?.includeTemp ?? true },
+      });
       return response.data;
     },
     async getDataset(id: number): Promise<unknown> {

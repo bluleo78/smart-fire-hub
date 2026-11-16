@@ -311,10 +311,12 @@ export class FireHubApiClient {
     return this._categories.updateCategory(id, data);
   }
 
+  /** 데이터셋 목록 — includeTemp 를 주지 않으면 임시(TEMP)까지 받는다(WD-754, dataset-api 참고). */
   listDatasets(params?: {
     categoryId?: number;
     storageType?: string;
     originType?: string;
+    includeTemp?: boolean;
     search?: string;
     status?: string;
     favoriteOnly?: boolean;
