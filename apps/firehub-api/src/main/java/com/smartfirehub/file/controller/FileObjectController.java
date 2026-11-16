@@ -39,6 +39,12 @@ public class FileObjectController {
   // 업로드 배치 상한: 대량 유입 대비 1회 다건 발급을 허용하되 남용을 막는다.
   private static final int MAX_UPLOAD_BATCH = 1000;
 
+  /**
+   * 검색 모드에서 한 요청이 훑는 오브젝트 수 상한(WD-761). S3 에는 이름 검색이 없어 목록을 훑어 거르므로, 파일이 아주 많은 데이터셋에서 한 요청이 끝없이
+   * 길어지지 않게 막는다. 닿으면 응답이 truncated=true 다. 시험에서 작게 줄 수 있게 서비스 인자로 넘긴다.
+   */
+  static final int SEARCH_SCAN_LIMIT = 10_000;
+
   public FileObjectController(
       FileObjectStorageService storage,
       FileDatasetConfigRepository configRepo,
@@ -50,7 +56,18 @@ public class FileObjectController {
     this.guard = guard;
   }
 
-  /** 데이터셋 프리픽스 하위 오브젝트 목록(페이지네이션). */
+  /**
+   * 데이터셋 프리픽스 하위 오브젝트 목록(페이지네이션). 세 가지 모드가 있다(WD-761).
+   *
+   * <ul>
+   *   <li>검색: q 가 공백이 아니면 데이터셋 전체를 재귀로 훑어 상대 경로에 q 가 들어간 파일(path 무시, 상한 {@link
+   *       #SEARCH_SCAN_LIMIT}).
+   *   <li>재귀: q 없이 recursive=true 면 기존 평면 목록 — AI 에이전트·채팅 파일 위젯이 데이터셋 전체를 보던 동작 호환.
+   *   <li>폴더(기본): path 폴더 바로 아래의 하위 폴더(folders)와 파일(objects).
+   * </ul>
+   *
+   * path 는 모드와 무관하게 정규화·검증한다 — ".." 등은 400 이라 어떤 모드로도 다른 데이터셋 prefix 로 나갈 수 없다.
+   */
   // RLS 가 걸린 file_dataset_config 를 config()로 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
   // config()는 private 자기호출이라 그쪽엔 붙일 수 없고, 호출자인 이 메서드에 붙여야 한다.
   @Transactional(readOnly = true)
@@ -58,12 +75,27 @@ public class FileObjectController {
   @RequirePermission("dataset:read")
   public ResponseEntity<ObjectListResponse> list(
       @PathVariable Long datasetId,
+      @RequestParam(required = false) String path,
+      @RequestParam(required = false) String q,
       @RequestParam(required = false) String token,
-      @RequestParam(defaultValue = "50") int size) {
+      @RequestParam(defaultValue = "50") int size,
+      @RequestParam(defaultValue = "false") boolean recursive) {
+    // 잘못된 path 는 config 조회 전에 거부한다(입력 오류가 DB 조회 없이 400).
+    String folderPath = keyGenerator.normalizeFolderPath(path);
     FileDatasetConfig cfg = config(datasetId);
     // 악의적/실수로 지나치게 크거나 0 이하인 size 가 전달되어도 안전하도록 1~200 범위로 클램프한다.
     int cappedSize = Math.min(Math.max(size, 1), 200);
-    return ResponseEntity.ok(storage.listObjects(cfg.bucket(), cfg.prefix(), token, cappedSize));
+    if (q != null && !q.isBlank()) {
+      // 입력창 앞뒤 공백은 검색어가 아니다 — 떼고 찾는다.
+      return ResponseEntity.ok(
+          storage.searchObjects(
+              cfg.bucket(), cfg.prefix(), q.strip(), token, cappedSize, SEARCH_SCAN_LIMIT));
+    }
+    if (recursive) {
+      return ResponseEntity.ok(storage.listObjects(cfg.bucket(), cfg.prefix(), token, cappedSize));
+    }
+    return ResponseEntity.ok(
+        storage.listFolder(cfg.bucket(), cfg.prefix(), folderPath, token, cappedSize));
   }
 
   /**
@@ -106,6 +138,8 @@ public class FileObjectController {
   public ResponseEntity<UploadUrlResponse> createUploadUrls(
       @PathVariable Long datasetId, @RequestBody UploadUrlRequest request) {
     FileDatasetConfig cfg = config(datasetId);
+    // 지금 보는 폴더에 올린다(WD-761). ".."·상한 초과는 여기서 400 — 키는 항상 prefix + 정규화한 폴더 아래다.
+    String folderPath = keyGenerator.normalizeFolderPath(request.path());
     List<FileSpec> files = request.files();
     // files는 1개 이상 MAX_UPLOAD_BATCH 이하만 허용(0개/초과는 잘못된 요청).
     if (files == null || files.isEmpty() || files.size() > MAX_UPLOAD_BATCH) {
@@ -119,8 +153,9 @@ public class FileObjectController {
     int expiry = storage.defaultUploadPresignExpiry();
     List<UploadTarget> targets = new ArrayList<>();
     for (FileSpec f : files) {
-      // 앱이 prefix를 붙여 "<prefix><파일명>" 키 생성(S3 방식) → 해당 키에 대한 presigned PUT URL 발급.
-      String key = keyGenerator.generateKey(cfg.prefix(), f.filename());
+      // 앱이 prefix를 붙여 "<prefix><폴더><파일명>" 키 생성(S3 방식) → 해당 키에 대한 presigned PUT URL 발급.
+      // 폴더 + 파일 상대경로가 상한을 넘으면 generateKey 가 IllegalArgumentException(400)을 던진다.
+      String key = keyGenerator.generateKey(cfg.prefix(), folderPath, f.filename());
       // 파일명이 정제 후 비면 key가 prefix와 같아진다(빈/경로만/무의미 이름). 유효 파일명 요구로 400 응답.
       if (key.equals(cfg.prefix())) {
         throw new IllegalArgumentException("유효한 파일명이 필요합니다: " + f.filename());

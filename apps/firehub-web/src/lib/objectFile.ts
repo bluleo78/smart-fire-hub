@@ -54,3 +54,56 @@ export async function openObjectInNewTab(
     }
   }
 }
+
+/*
+ * WD-761 폴더 탐색 보조 함수.
+ * 오브젝트 탭은 현재 폴더를 URL ?path=a/b(앞뒤 / 없이)로 들고, 서버는 폴더 path 를 'a/b/'(끝 /)로,
+ * 파일 name 을 데이터셋 prefix 를 뺀 전체 상대 경로로 준다. 이 표기 차이를 화면 한 곳에서 맞추려고 모았다.
+ */
+
+/**
+ * URL ?path= 값이나 서버 폴더 path 를 탭이 쓰는 폴더 값(앞뒤 / 없음, 루트는 '')으로 맞춘다.
+ * 서버 정규화(ObjectKeyGenerator.normalizeFolderPath)와 같은 분해 규칙을 쓴다 — '\\'→'/', 빈(공백뿐인)·'.' 세그먼트 흡수,
+ * 이름은 다듬지 않음. 그래야 ?path=a//b 처럼 손으로 고친 값도 서버가 실제로 연 폴더와 같은 값이 되어 경로 표시·이름 줄이기·
+ * 캐시 키가 어긋나지 않는다. '..'·제어문자는 고치지 않고 그대로 보낸다 — 안전 판정은 서버(400)가 맡고 화면은 그 오류를 보인다.
+ */
+export function toFolderParam(raw: string | null | undefined): string {
+  if (!raw) return '';
+  return raw
+    .replace(/\\/g, '/')
+    .split('/')
+    .filter((seg) => seg.trim() !== '' && seg !== '.')
+    .join('/');
+}
+
+/** 경로 표시 한 조각 — 보이는 이름 + 누르면 이동할 폴더 값. */
+export interface FolderCrumb {
+  name: string;
+  path: string;
+}
+
+/**
+ * 폴더 값('제품/Tibero7')을 경로 표시 조각들로 나눈다 — 각 조각은 그 지점까지의 폴더로 이동한다.
+ * 루트('')는 조각이 없다(화면이 「전체」를 따로 붙인다). 빈 세그먼트는 서버 정규화와 같게 건너뛴다.
+ */
+export function folderBreadcrumbs(path: string): FolderCrumb[] {
+  const segments = path.split('/').filter((s) => s.length > 0);
+  return segments.map((name, i) => ({ name, path: segments.slice(0, i + 1).join('/') }));
+}
+
+/**
+ * 파일의 전체 상대 경로(name)에서 현재 폴더 접두를 떼어 그 폴더 안 이름만 돌려준다.
+ * 폴더 모드 서버 응답이면 마지막 세그먼트와 같다. 접두가 맞지 않으면(폴더를 모르는 예전 응답·다른 폴더) 이름을 그대로 둬
+ * 정보가 사라지지 않게 한다. 접두는 끝 '/' 까지 맞춰 '제품2/…' 를 '제품' 안으로 잘못 자르지 않는다.
+ */
+export function nameInFolder(name: string, path: string): string {
+  if (!path) return name;
+  const prefix = `${path}/`;
+  return name.startsWith(prefix) && name.length > prefix.length ? name.slice(prefix.length) : name;
+}
+
+/** 파일의 전체 상대 경로에서 그 파일이 있는 폴더 값(앞뒤 / 없음, 루트는 '')을 구한다 — 검색 결과에서 폴더로 이동할 때 쓴다. */
+export function parentFolderOf(name: string): string {
+  const idx = name.lastIndexOf('/');
+  return idx < 0 ? '' : toFolderParam(name.slice(0, idx));
+}

@@ -2,6 +2,7 @@ package com.smartfirehub.file.service;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import org.junit.jupiter.api.Test;
 
@@ -72,5 +73,81 @@ class ObjectKeyGeneratorTest {
     assertThat(gen.generateKey("equip/", "..")).isEqualTo("equip/");
     assertThat(gen.generateKey("equip/", "../secret")).isEqualTo("equip/");
     assertThat(gen.generateKey("equip/", null)).isEqualTo("equip/");
+  }
+
+  /** 폴더 경로 정규화(WD-761): 루트를 뜻하는 값(null·공백·'/' 만)은 빈 문자열이다. */
+  @Test
+  void normalizeFolderPath_rootValuesBecomeEmpty() {
+    assertThat(gen.normalizeFolderPath(null)).isEmpty();
+    assertThat(gen.normalizeFolderPath("")).isEmpty();
+    assertThat(gen.normalizeFolderPath("   ")).isEmpty();
+    assertThat(gen.normalizeFolderPath("/")).isEmpty();
+    assertThat(gen.normalizeFolderPath("//./")).isEmpty();
+  }
+
+  /** 폴더 경로는 세그먼트 단위로 정제하고 끝에 '/' 를 하나 붙여 돌려준다 — prefix 뒤에 그대로 이어 붙일 수 있게. */
+  @Test
+  void normalizeFolderPath_normalizesSegmentsAndAppendsSlash() {
+    assertThat(gen.normalizeFolderPath("a/b")).isEqualTo("a/b/");
+    assertThat(gen.normalizeFolderPath("a/b/")).isEqualTo("a/b/");
+    // 선행 '/', 중복 '//', '.' 세그먼트는 흡수한다.
+    assertThat(gen.normalizeFolderPath("/a//./b/")).isEqualTo("a/b/");
+    // '\' 는 '/' 로 정규화한다(Windows 경로 대비).
+    assertThat(gen.normalizeFolderPath("a\\b")).isEqualTo("a/b/");
+    // 한글 보존. 세그먼트 이름은 다듬지 않는다 — 목록이 돌려준 실제 폴더(예: 끝에 공백이 붙은 「report 」)를 그대로 열 수 있어야 한다.
+    assertThat(gen.normalizeFolderPath("제품/Tibero7")).isEqualTo("제품/Tibero7/");
+    assertThat(gen.normalizeFolderPath("report /2026")).isEqualTo("report /2026/");
+  }
+
+  /** 폴더 경로의 제어문자는 지우지 않고 거부한다 — 지우면 사용자가 고르지 않은 다른 폴더를 가리키게 된다. */
+  @Test
+  void normalizeFolderPath_rejectsControlCharacters() {
+    assertThatThrownBy(() -> gen.normalizeFolderPath("제품\u0000/Tibero7"))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> gen.normalizeFolderPath("a/b\n"))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  /** '..' 세그먼트는 데이터셋 prefix 밖으로 나가려는 시도이므로 400(IllegalArgumentException)으로 거부한다. */
+  @Test
+  void normalizeFolderPath_rejectsTraversal() {
+    assertThatThrownBy(() -> gen.normalizeFolderPath(".."))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> gen.normalizeFolderPath("../x"))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> gen.normalizeFolderPath("a/../../b"))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> gen.normalizeFolderPath("a\\..\\b"))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  /** 900바이트(UTF-8) 상한을 넘는 폴더 경로는 잘라내지 않고 거부한다 — 잘린 경로는 다른 폴더를 가리키게 된다. */
+  @Test
+  void normalizeFolderPath_rejectsOverByteLimit() {
+    // 한글 300자 = 900B, 끝 '/' 를 붙이면 901B → 거부.
+    assertThatThrownBy(() -> gen.normalizeFolderPath("가".repeat(300)))
+        .isInstanceOf(IllegalArgumentException.class);
+    // 899B + '/' = 900B 는 허용.
+    assertThat(gen.normalizeFolderPath("a".repeat(899))).isEqualTo("a".repeat(899) + "/");
+  }
+
+  /** 폴더 지정 업로드 키: "&lt;prefix&gt;&lt;폴더&gt;&lt;파일 상대경로&gt;". 폴더가 없으면 기존 2인자 결과와 같다. */
+  @Test
+  void generateKey_withFolderPathPrependsFolder() {
+    assertThat(gen.generateKey("equip/", "제품/Tibero7/", "a.jpg"))
+        .isEqualTo("equip/제품/Tibero7/a.jpg");
+    // 폴더 업로드의 하위 상대경로도 그대로 이어진다.
+    assertThat(gen.generateKey("equip/", "a/", "sub/b.jpg")).isEqualTo("equip/a/sub/b.jpg");
+    assertThat(gen.generateKey("equip/", "", "a.jpg")).isEqualTo("equip/a.jpg");
+    // 파일명이 정제 후 비면 prefix 만 — 호출부가 400 으로 거부한다(폴더가 붙지 않는다).
+    assertThat(gen.generateKey("equip/", "a/", "..")).isEqualTo("equip/");
+  }
+
+  /** 폴더 + 파일 상대경로 합이 900B 를 넘으면 조용히 자르지 않고 400 으로 거부한다. */
+  @Test
+  void generateKey_withFolderPathRejectsOverByteLimit() {
+    String folder = "a".repeat(500) + "/";
+    assertThatThrownBy(() -> gen.generateKey("equip/", folder, "b".repeat(400) + ".jpg"))
+        .isInstanceOf(IllegalArgumentException.class);
   }
 }

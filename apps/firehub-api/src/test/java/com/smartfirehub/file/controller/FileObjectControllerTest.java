@@ -5,12 +5,15 @@ import static org.hamcrest.Matchers.containsString;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.smartfirehub.file.dto.ObjectFolderResponse;
 import com.smartfirehub.file.dto.ObjectItemResponse;
 import com.smartfirehub.file.dto.ObjectListResponse;
 import com.smartfirehub.file.dto.PresignedUrlResponse;
@@ -21,6 +24,9 @@ import com.smartfirehub.file.service.FileObjectStorageService;
 import com.smartfirehub.file.service.ObjectKeyGenerator;
 import com.smartfirehub.global.exception.GlobalExceptionHandler;
 import com.smartfirehub.global.security.RequirePermission;
+import java.lang.reflect.Method;
+import java.net.URI;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
@@ -57,7 +63,8 @@ class FileObjectControllerTest {
   void listObjects_usesDatasetConfigPrefix() throws Exception {
     when(configRepo.findByDatasetId(7L))
         .thenReturn(Optional.of(new FileDatasetConfig(7L, "firehub-files", "equip/")));
-    when(storage.listObjects(eq("firehub-files"), eq("equip/"), any(), anyInt()))
+    // 기본 요청(쿼리 없음)은 루트 폴더("") 폴더 모드로 위임된다(WD-761).
+    when(storage.listFolder(eq("firehub-files"), eq("equip/"), eq(""), any(), anyInt()))
         .thenReturn(
             new ObjectListResponse(
                 List.of(
@@ -234,5 +241,198 @@ class FileObjectControllerTest {
     assertThat(ann).isNotNull();
     // RequirePermission.value()는 String[] — 단일 값 "dataset:write" 배열인지 확인한다.
     assertThat(ann.value()).containsExactly("dataset:write");
+  }
+
+  // ---------------------------------------------------------------------------------------
+  // 목록 모드 분기(WD-761): 기본 = 폴더 모드, q 가 있으면 검색, recursive=true 면 기존 평면 목록.
+  // ---------------------------------------------------------------------------------------
+
+  /** 기본 요청은 폴더 모드로 위임하고, path 는 정규화(선행·중복 '/' 흡수, 끝 '/')한 값으로 넘긴다. */
+  @Test
+  void list_defaultDelegatesToFolderModeWithNormalizedPath() throws Exception {
+    givenEquipConfig();
+    when(storage.listFolder("firehub-files", "equip/", "제품/Tibero7/", null, 50))
+        .thenReturn(
+            new ObjectListResponse(
+                List.of(
+                    new ObjectItemResponse("equip/제품/Tibero7/a.jpg", "제품/Tibero7/a.jpg", 1L, null)),
+                List.of(new ObjectFolderResponse("제품/Tibero7/sub/", "sub")),
+                null,
+                false,
+                false));
+
+    mvc.perform(get("/api/v1/datasets/7/objects").param("path", "/제품//Tibero7"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.folders[0].path").value("제품/Tibero7/sub/"))
+        .andExpect(jsonPath("$.folders[0].name").value("sub"))
+        .andExpect(jsonPath("$.objects[0].name").value("제품/Tibero7/a.jpg"))
+        .andExpect(jsonPath("$.truncated").value(false));
+  }
+
+  /** path 가 없으면 루트("")로 폴더 모드 위임. */
+  @Test
+  void list_withoutPathListsRootFolder() throws Exception {
+    givenEquipConfig();
+    when(storage.listFolder("firehub-files", "equip/", "", "equip/a/", 20))
+        .thenReturn(new ObjectListResponse(List.of(), null, false));
+
+    mvc.perform(get("/api/v1/datasets/7/objects").param("token", "equip/a/").param("size", "20"))
+        .andExpect(status().isOk());
+
+    verify(storage).listFolder("firehub-files", "equip/", "", "equip/a/", 20);
+  }
+
+  /** path 에 '..' 세그먼트가 있으면 데이터셋 prefix 밖으로 나가려는 시도 — 400, 스토리지는 부르지 않는다. */
+  @Test
+  void list_rejectsTraversalPath() throws Exception {
+    givenEquipConfig();
+
+    mvc.perform(get("/api/v1/datasets/7/objects").param("path", "../x"))
+        .andExpect(status().isBadRequest());
+    // 퍼센트 인코딩된 '..'(%2e%2e)도 Spring 이 디코드한 뒤 같은 규칙으로 거부된다.
+    mvc.perform(get(URI.create("/api/v1/datasets/7/objects?path=%2e%2e%2Fother")))
+        .andExpect(status().isBadRequest());
+    mvc.perform(get("/api/v1/datasets/7/objects").param("path", "a\\..\\..\\b"))
+        .andExpect(status().isBadRequest());
+
+    verify(storage, never()).listFolder(any(), any(), any(), any(), anyInt());
+  }
+
+  /** q 가 공백이 아니면 검색 모드로 위임한다 — 앞뒤 공백을 떼고, path 는 무시, 훑기 상한은 SEARCH_SCAN_LIMIT. */
+  @Test
+  void list_withQueryDelegatesToSearch() throws Exception {
+    givenEquipConfig();
+    when(storage.searchObjects(
+            "firehub-files", "equip/", "Tibero", null, 50, FileObjectController.SEARCH_SCAN_LIMIT))
+        .thenReturn(new ObjectListResponse(List.of(), List.of(), null, false, true));
+
+    mvc.perform(get("/api/v1/datasets/7/objects").param("q", " Tibero ").param("path", "a"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.truncated").value(true))
+        .andExpect(jsonPath("$.hasMore").value(false));
+
+    assertThat(FileObjectController.SEARCH_SCAN_LIMIT).isEqualTo(10_000);
+    verify(storage, never()).listFolder(any(), any(), any(), any(), anyInt());
+  }
+
+  /** 공백만인 q 는 검색이 아니다 — 폴더 모드. */
+  @Test
+  void list_blankQueryIsFolderMode() throws Exception {
+    givenEquipConfig();
+    when(storage.listFolder("firehub-files", "equip/", "", null, 50))
+        .thenReturn(new ObjectListResponse(List.of(), null, false));
+
+    mvc.perform(get("/api/v1/datasets/7/objects").param("q", "   ")).andExpect(status().isOk());
+
+    verify(storage).listFolder("firehub-files", "equip/", "", null, 50);
+    verify(storage, never()).searchObjects(any(), any(), any(), any(), anyInt(), anyInt());
+  }
+
+  /** recursive=true 면 기존 재귀 평면 목록(listObjects)으로 위임한다 — AI 에이전트·채팅 위젯 호환. */
+  @Test
+  void list_recursiveDelegatesToFlatListing() throws Exception {
+    givenEquipConfig();
+    when(storage.listObjects("firehub-files", "equip/", null, 50))
+        .thenReturn(
+            new ObjectListResponse(
+                List.of(new ObjectItemResponse("equip/a/b.jpg", "a/b.jpg", 1L, null)),
+                null,
+                false));
+
+    mvc.perform(get("/api/v1/datasets/7/objects").param("recursive", "true"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.objects[0].name").value("a/b.jpg"))
+        // 3인자 응답은 folders=[] · truncated=false 로 직렬화된다.
+        .andExpect(jsonPath("$.folders.length()").value(0))
+        .andExpect(jsonPath("$.truncated").value(false));
+
+    verify(storage, never()).listFolder(any(), any(), any(), any(), anyInt());
+  }
+
+  /** 목록 권한은 그대로 dataset:read 다. */
+  @Test
+  void list_requiresDatasetReadPermission() {
+    Method list =
+        Arrays.stream(FileObjectController.class.getMethods())
+            .filter(m -> m.getName().equals("list"))
+            .findFirst()
+            .orElseThrow();
+    RequirePermission ann = list.getAnnotation(RequirePermission.class);
+    assertThat(ann).isNotNull();
+    assertThat(ann.value()).containsExactly("dataset:read");
+  }
+
+  // ---------------------------------------------------------------------------------------
+  // 업로드 대상 폴더(WD-761): 본문 path 가 키의 prefix 바로 뒤에 붙는다.
+  // ---------------------------------------------------------------------------------------
+
+  /** upload-urls 의 path 가 키 앞에 붙는다: "&lt;prefix&gt;&lt;정규화한 path&gt;&lt;파일 상대경로&gt;". */
+  @Test
+  void createUploadUrls_prependsFolderPathToKeys() throws Exception {
+    givenEquipConfig();
+    givenPresignedPut();
+
+    mvc.perform(
+            post("/api/v1/datasets/7/objects/upload-urls")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"path\":\"/제품/Tibero7\",\"files\":[{\"filename\":\"a.jpg\"},"
+                        + "{\"filename\":\"sub/b.jpg\"}]}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.targets[0].key").value("equip/제품/Tibero7/a.jpg"))
+        // 폴더 업로드의 하위 상대경로는 지정 폴더 아래 그대로 유지된다.
+        .andExpect(jsonPath("$.targets[1].key").value("equip/제품/Tibero7/sub/b.jpg"));
+  }
+
+  /** upload-urls 의 path 에 '..' 가 있으면 400, presigned URL 은 발급하지 않는다. */
+  @Test
+  void createUploadUrls_rejectsTraversalFolderPath() throws Exception {
+    givenEquipConfig();
+    givenPresignedPut();
+
+    mvc.perform(
+            post("/api/v1/datasets/7/objects/upload-urls")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"path\":\"a/../../other\",\"files\":[{\"filename\":\"x.jpg\"}]}"))
+        .andExpect(status().isBadRequest());
+
+    verify(storage, never()).presignedPutUrl(any(), any(), anyInt());
+  }
+
+  /** path + 파일 상대경로 합이 900B 를 넘으면 조용히 자르지 않고 400 으로 거부한다. */
+  @Test
+  void createUploadUrls_rejectsFolderPathPlusFilenameOverByteLimit() throws Exception {
+    givenEquipConfig();
+    givenPresignedPut();
+    String folder = "a".repeat(500);
+    String filename = "b".repeat(450) + ".jpg";
+
+    mvc.perform(
+            post("/api/v1/datasets/7/objects/upload-urls")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"path\":\""
+                        + folder
+                        + "\",\"files\":[{\"filename\":\""
+                        + filename
+                        + "\"}]}"))
+        .andExpect(status().isBadRequest());
+
+    verify(storage, never()).presignedPutUrl(any(), any(), anyInt());
+  }
+
+  /** 데이터셋 7 = 버킷 firehub-files, prefix equip/. */
+  private void givenEquipConfig() {
+    when(configRepo.findByDatasetId(7L))
+        .thenReturn(Optional.of(new FileDatasetConfig(7L, "firehub-files", "equip/")));
+  }
+
+  /** presigned PUT 은 키를 그대로 URL 에 담아 돌려준다(키 검증용). */
+  private void givenPresignedPut() {
+    when(storage.defaultUploadPresignExpiry()).thenReturn(900);
+    when(storage.presignedPutUrl(eq("firehub-files"), any(), eq(900)))
+        .thenAnswer(
+            inv ->
+                new PresignedUrlResponse("http://minio/" + inv.getArgument(1) + "?sig=put", 900));
   }
 }

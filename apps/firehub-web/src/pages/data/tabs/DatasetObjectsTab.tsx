@@ -1,27 +1,125 @@
-import { Download } from 'lucide-react';
+import { Download, Folder } from 'lucide-react';
 import { useCallback, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 
 import { Button } from '../../../components/ui/button';
+import { InlineBanner } from '../../../components/ui/inline-banner';
+import { SearchInput } from '../../../components/ui/search-input';
 import { useDatasetPermissions } from '../../../hooks/queries/useDatasets';
 import { useObjectList, useUploadObjects } from '../../../hooks/queries/useObjects';
-import { formatObjectDate, formatObjectSize, openObjectInNewTab } from '../../../lib/objectFile';
+import { extractApiError } from '../../../lib/api-error';
+import {
+  folderBreadcrumbs,
+  formatObjectDate,
+  formatObjectSize,
+  nameInFolder,
+  openObjectInNewTab,
+  parentFolderOf,
+  toFolderParam,
+} from '../../../lib/objectFile';
 import { collectEntries, filesToItems } from '../../../lib/uploadTree';
+
+/** 검색어 입력이 멈춘 뒤 서버에 묻기까지 기다리는 시간(ms) — 타이핑마다 데이터셋 전체를 훑지 않게 한다. */
+const SEARCH_DEBOUNCE_MS = 300;
+
+/** 목록 그리드 열 — 이름 / 크기 / (sm 이상)수정일 / 다운로드. 모바일(<sm)은 수정일 칸을 빼 이름 칸이 0폭으로 눌리지 않게 한다. */
+const ROW_GRID = 'grid-cols-[1fr_5rem_2.5rem] sm:grid-cols-[1fr_6rem_12rem_2.5rem]';
+
+/**
+ * 현재 폴더 경로 표시 — 「전체 › 제품 › Tibero7」(WD-761 A안).
+ * 각 조각은 그 지점의 폴더로 이동하는 버튼이고, 마지막 조각은 현재 위치라 aria-current="page" 로 알린다.
+ */
+function ObjectBreadcrumb({ path, onNavigate }: { path: string; onNavigate: (path: string) => void }) {
+  const crumbs = [{ name: '전체', path: '' }, ...folderBreadcrumbs(path)];
+  return (
+    <nav aria-label="폴더 경로" className="flex min-w-0 items-center gap-2 text-sm">
+      <Folder className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+      <ol className="flex min-w-0 flex-wrap items-center gap-1">
+        {crumbs.map((c, i) => {
+          const isCurrent = i === crumbs.length - 1;
+          return (
+            <li key={c.path} className="flex min-w-0 items-center gap-1">
+              {/* 구분자는 장식 — 조각 사이 관계는 목록 순서가 전한다. */}
+              {i > 0 && (
+                <span aria-hidden="true" className="text-muted-foreground">
+                  ›
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={() => onNavigate(c.path)}
+                aria-current={isCurrent ? 'page' : undefined}
+                // 긴 폴더 이름은 잘려 보이므로 마우스를 올리면 전체 이름을 볼 수 있게 한다.
+                title={c.name}
+                className={`max-w-[16rem] truncate rounded px-1 hover:underline ${
+                  isCurrent ? 'font-medium text-foreground' : 'text-muted-foreground'
+                }`}
+              >
+                {c.name}
+              </button>
+            </li>
+          );
+        })}
+      </ol>
+    </nav>
+  );
+}
 
 /**
  * FILE 데이터셋 오브젝트 브라우저 탭 — 업로드(드래그앤드롭) + S3 스타일 목록(이름/크기/수정일) + 무한스크롤.
- * 실제 S3처럼 키의 마지막 세그먼트를 파일명으로 표시한다. 이름 클릭은 inline(브라우저에서 열기), 다운로드 아이콘은
- * attachment(파일 저장) presign 을 요청한다 — attachment 는 서버가 내보내기 정책을 판정하므로(S4) 조회자 기준
- * 내보내기 불가(exportAllowed=false)면 아이콘을 숨긴다(보조 다운로드 → 숨김, 스펙 §5-4).
+ *
+ * 폴더 탐색(WD-761 A안): 현재 폴더는 URL ?path=a/b(앞뒤 / 없이)에 두어 뒤로가기·직접 진입·공유가 되게 하고, 서버에 그대로 넘긴다.
+ * 기본 목록은 그 폴더의 하위 폴더(먼저) + 파일이고, 폴더를 누르면 들어가며 경로 표시로 올라온다.
+ * 이름 검색어가 있으면 데이터셋 전체를 서버가 부분 일치로 찾은 결과(전체 상대 경로)를 보이고, 결과를 누르면 그 파일이 있는 폴더로 간다.
+ * 업로드는 지금 보는 폴더로 간다.
+ *
+ * 파일 이름 클릭은 inline(브라우저에서 열기), 다운로드 아이콘은 attachment(파일 저장) presign 을 요청한다 — attachment 는 서버가
+ * 내보내기 정책을 판정하므로(S4) 조회자 기준 내보내기 불가(exportAllowed=false)면 아이콘을 숨긴다(보조 다운로드 → 숨김, 스펙 §5-4).
  */
 export function DatasetObjectsTab({ datasetId, exportAllowed }: { datasetId: number; exportAllowed: boolean }) {
-  const { data, isLoading, hasNextPage, fetchNextPage, isFetchingNextPage } =
-    useObjectList(datasetId);
-  const upload = useUploadObjects(datasetId);
+  const [searchParams, setSearchParams] = useSearchParams();
+  // 현재 폴더 — URL 값을 앞뒤 / 없이 맞춘다. 가운데 값(.. 등)의 안전 판정은 서버(400)가 하고 화면은 그 오류를 보인다.
+  const path = toFolderParam(searchParams.get('path'));
+  // 검색어 — SearchInput 이 입력이 멈춘 뒤(300ms)에만 넘겨 주고 한글 조합 중에는 넘기지 않는다. URL 에는 두지 않는다(?path= 만 요구).
+  const [search, setSearch] = useState('');
+  // 폴더가 바뀌면(폴더 클릭·경로 표시·브라우저 뒤로가기 모두) 검색을 끝낸다 — 뒤로가기로 경로 표시·업로드 대상은 바뀌었는데
+  // 목록만 지난 검색 결과로 남지 않게. 렌더 중 이전 값과 비교해 바로 맞추는 React 권장 방식(effect 한 번 늦게 그리지 않는다).
+  const [searchFolder, setSearchFolder] = useState(path);
+  if (searchFolder !== path) {
+    setSearchFolder(path);
+    setSearch('');
+  }
+  // 공백만인 검색어는 검색이 아니다(서버 계약과 같다).
+  const q = search.trim();
+  const isSearch = q.length > 0;
+
+  // 검색 모드는 데이터셋 전체를 훑으므로 path 를 싣지 않는다 — 폴더를 옮겨도 같은 검색 캐시를 쓴다.
+  const { data, isLoading, isError, error, hasNextPage, fetchNextPage, isFetchingNextPage } = useObjectList(
+    datasetId,
+    isSearch ? { q } : { path },
+  );
+  const upload = useUploadObjects(datasetId, path);
   const inputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
   const [dragOver, setDragOver] = useState(false);
   // 업로드 URL 발급(POST upload-urls)은 dataset:write — 없으면 드롭존·폴더 선택·재시도를 숨기고 목록만 보인다 (WD-139)
   const { canWriteDataset } = useDatasetPermissions();
+
+  /**
+   * 폴더로 이동한다 — ?path= 만 바꾸고 다른 쿼리(?tab= 등)는 지우지 않게 함수형으로 갱신한다.
+   * 기본 push 라 브라우저 뒤로가기가 이전 폴더로 돌아간다. 폴더 이동은 검색을 끝낸다(검색 결과에서 폴더로 가는 경우 포함).
+   * 이미 그 폴더면 기록을 쌓지 않는다(경로 표시의 현재 조각 클릭 등).
+   */
+  const goToFolder = (next: string) => {
+    setSearch('');
+    if (next === path) return;
+    setSearchParams((prev) => {
+      const params = new URLSearchParams(prev);
+      if (next) params.set('path', next);
+      else params.delete('path');
+      return params;
+    });
+  };
 
   // webkitdirectory는 표준 타입에 없어 JSX 속성으로 못 준다 → 인풋이 붙는 순간 콜백 ref로 부여(폴더 선택 인풋).
   const attachFolderInput = useCallback((el: HTMLInputElement | null) => {
@@ -29,7 +127,7 @@ export function DatasetObjectsTab({ datasetId, exportAllowed }: { datasetId: num
     el?.setAttribute('webkitdirectory', '');
   }, []);
 
-  // 파일/폴더 선택 공통 처리 — webkitRelativePath가 있으면 상대경로로, 없으면 파일명으로 업로드한다.
+  // 파일/폴더 선택 공통 처리 — webkitRelativePath가 있으면 상대경로로, 없으면 파일명으로 업로드한다(지금 폴더 아래로).
   const handleFiles = (files: FileList | null) => {
     if (!files || files.length === 0) return;
     upload.mutate(filesToItems(Array.from(files)));
@@ -52,15 +150,43 @@ export function DatasetObjectsTab({ datasetId, exportAllowed }: { datasetId: num
   };
 
   // 부분 실패한 항목 목록 — 있으면 배너 + 재시도(실패건만 재업로드)를 노출한다.
-  const failedItems = upload.data?.failedItems ?? [];
+  // 재시도는 훅의 현재 폴더로 올라가므로, 실패한 배치를 올린 폴더를 보고 있을 때만 띄운다(다른 폴더로 잘못 올라가지 않게).
+  const failedItems = upload.data && upload.data.folderPath === path ? upload.data.failedItems : [];
 
-  const items = data?.pages.flatMap((p) => p.objects) ?? [];
+  const pages = data?.pages ?? [];
+  // 폴더 행은 검색 모드에 없다. 예전 응답(folders 없음)도 받도록 기본값을 준다. 불러온 폴더를 모두 파일보다 먼저 보인다.
+  const folders = isSearch ? [] : pages.flatMap((p) => p.folders ?? []);
+  const items = pages.flatMap((p) => p.objects);
+  // 검색이 요청당 훑는 상한에 닿아 일부만 찾았다 — 서버가 이어 보기(hasMore)를 끄므로 안내로 알린다.
+  const truncated = isSearch && pages.some((p) => p.truncated ?? false);
+
+  const emptyMessage = isSearch
+    ? `「${q}」와 일치하는 파일이 없습니다.`
+    : path
+      ? '이 폴더에 파일이 없습니다.'
+      : '오브젝트가 없습니다.';
+  const uploadHint = `${path ? `${path} 폴더에 ` : ''}파일·폴더를 드래그하거나 클릭하여 업로드`;
 
   return (
     <div className="space-y-4 p-2">
+      {/* 위치·검색 도구 줄: 경로 표시(현재 폴더) + 이름 검색. 좁은 화면은 두 줄로 내려간다. */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <ObjectBreadcrumb path={path} onNavigate={goToFolder} />
+        {/* key=path: 폴더가 바뀌면 입력을 새로 그려 남은 입력 대기 타이머(300ms)를 버린다 — 치자마자 폴더를 눌러도
+            뒤늦게 검색 모드가 켜지지 않게. */}
+        <SearchInput
+          key={path}
+          placeholder="파일 이름 검색"
+          value={search}
+          onChange={setSearch}
+          debounceMs={SEARCH_DEBOUNCE_MS}
+          className="sm:max-w-xs"
+        />
+      </div>
+
       {canWriteDataset && (
       <>
-      {/* 업로드 드롭존: 클릭 시 파일 선택, 드롭 시 즉시 업로드 */}
+      {/* 업로드 드롭존: 클릭 시 파일 선택, 드롭 시 즉시 업로드. 폴더 안이면 올라갈 폴더를 문구로 알린다. */}
       <div
         role="button"
         tabIndex={0}
@@ -82,7 +208,7 @@ export function DatasetObjectsTab({ datasetId, exportAllowed }: { datasetId: num
           ? '업로드 중…'
           : upload.isError
             ? '업로드 실패 — 다시 시도하세요'
-            : '파일·폴더를 드래그하거나 클릭하여 업로드'}
+            : uploadHint}
         <input
           ref={inputRef}
           type="file"
@@ -92,7 +218,7 @@ export function DatasetObjectsTab({ datasetId, exportAllowed }: { datasetId: num
         />
       </div>
 
-      {/* 폴더 선택: webkitdirectory 인풋으로 디렉터리 전체(하위 구조 포함)를 선택해 업로드한다. */}
+      {/* 폴더 선택: webkitdirectory 인풋으로 디렉터리 전체(하위 구조 포함)를 선택해 지금 폴더 아래로 업로드한다. */}
       <div className="text-center text-sm">
         <button
           type="button"
@@ -128,35 +254,82 @@ export function DatasetObjectsTab({ datasetId, exportAllowed }: { datasetId: num
       </>
       )}
 
+      {/* 검색 상한 안내 — 결과가 없어도 보인다(「없음」이 전체를 훑은 결과가 아님을 알린다). InlineBanner 는 role=status. */}
+      {truncated && (
+        <InlineBanner variant="warning">
+          일부만 검색됨 — 파일이 많아 검색을 중간에 멈췄습니다. 검색어를 더 구체적으로 입력하세요.
+        </InlineBanner>
+      )}
+
       {isLoading ? (
         <div className="p-6 text-muted-foreground">불러오는 중…</div>
-      ) : items.length === 0 ? (
-        <div className="p-6 text-muted-foreground">오브젝트가 없습니다.</div>
+      ) : isError && !data ? (
+        // 서버가 폴더 경로를 거부(400, 손으로 고친 ?path=../ 등)하거나 조회가 실패했다 — 빈 목록으로 오인시키지 않고 서버 문구를 보인다.
+        // 경로 표시는 그대로 있어 「전체」로 빠져나올 수 있다.
+        <div role="alert" className="p-6 text-sm text-destructive">
+          {extractApiError(error, '파일 목록을 불러오지 못했습니다.')}
+        </div>
+      ) : folders.length === 0 && items.length === 0 ? (
+        <div className="p-6 text-muted-foreground">{emptyMessage}</div>
       ) : (
         <>
-          {/* S3 스타일 목록: 이름 / 크기 / 수정일 / 다운로드. 이름 클릭은 열기(inline), 아이콘은 저장(attachment).
-              차단이어도 4번째 칸은 비워 둔다 — 행마다 열 폭이 달라져 크기·수정일 정렬이 흔들리지 않게.
-              모바일(<sm)은 수정일 칸을 빼 이름 칸이 0폭으로 눌리지 않게 한다. */}
-          <div className="overflow-hidden rounded-md border">
-            <div className="grid grid-cols-[1fr_5rem_2.5rem] gap-4 border-b bg-muted/50 px-4 py-2 text-xs font-medium text-muted-foreground sm:grid-cols-[1fr_6rem_12rem_2.5rem]">
+          {/* S3 스타일 목록: 이름 / 크기 / 수정일 / 다운로드. 폴더 행이 먼저, 그다음 파일 행.
+              차단이어도 4번째 칸은 비워 둔다 — 행마다 열 폭이 달라져 크기·수정일 정렬이 흔들리지 않게. */}
+          <div data-testid="object-list" className="overflow-hidden rounded-md border">
+            <div className={`grid gap-4 border-b bg-muted/50 px-4 py-2 text-xs font-medium text-muted-foreground ${ROW_GRID}`}>
               <span>이름</span>
               <span className="text-right">크기</span>
               <span className="hidden text-right sm:block">수정일</span>
               <span aria-hidden="true" />
             </div>
-            {items.map((o) => (
+            {/* 폴더 행 — 누르면 그 폴더로 들어간다. 폴더는 크기·수정일이 없어(접두일 뿐) 「—」로 둔다. */}
+            {folders.map((f) => (
               <div
-                key={o.key}
-                className="grid min-h-10 grid-cols-[1fr_5rem_2.5rem] items-center gap-4 border-b px-4 text-sm last:border-b-0 hover:bg-accent sm:grid-cols-[1fr_6rem_12rem_2.5rem]"
+                key={`folder:${f.path}`}
+                data-testid="folder-row"
+                className={`grid min-h-10 items-center gap-4 border-b px-4 text-sm last:border-b-0 hover:bg-accent ${ROW_GRID}`}
               >
                 <button
                   type="button"
-                  onClick={() => openObjectInNewTab(datasetId, o.key, 'inline')}
-                  title={o.key}
-                  className="truncate py-2 text-left hover:underline"
+                  onClick={() => goToFolder(toFolderParam(f.path))}
+                  title={f.name}
+                  className="flex min-w-0 items-center gap-2 py-2 text-left hover:underline"
                 >
-                  {o.name}
+                  <Folder className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                  <span className="truncate">{f.name}</span>
                 </button>
+                <span className="text-right text-muted-foreground">—</span>
+                <span className="hidden text-right text-muted-foreground sm:block">—</span>
+                <span aria-hidden="true" />
+              </div>
+            ))}
+            {items.map((o) => (
+              <div
+                key={o.key}
+                data-testid="file-row"
+                className={`grid min-h-10 items-center gap-4 border-b px-4 text-sm last:border-b-0 hover:bg-accent ${ROW_GRID}`}
+              >
+                {isSearch ? (
+                  // 검색 결과: 어느 폴더의 파일인지 알도록 전체 상대 경로를 보이고, 누르면 그 파일이 있는 폴더로 간다.
+                  <button
+                    type="button"
+                    onClick={() => goToFolder(parentFolderOf(o.name))}
+                    title={`${o.key} — 이 파일이 있는 폴더로 이동`}
+                    className="truncate py-2 text-left hover:underline"
+                  >
+                    {o.name}
+                  </button>
+                ) : (
+                  // 폴더 모드: 현재 폴더 안 이름만(서버 폴더 모드면 마지막 세그먼트) 보이고, 전체 키는 title 로 준다.
+                  <button
+                    type="button"
+                    onClick={() => openObjectInNewTab(datasetId, o.key, 'inline')}
+                    title={o.key}
+                    className="truncate py-2 text-left hover:underline"
+                  >
+                    {nameInFolder(o.name, path)}
+                  </button>
+                )}
                 <span className="text-right text-muted-foreground">{formatObjectSize(o.size)}</span>
                 <span className="hidden text-right text-muted-foreground sm:block">{formatObjectDate(o.lastModified)}</span>
                 <span className="flex justify-end">
@@ -175,6 +348,12 @@ export function DatasetObjectsTab({ datasetId, exportAllowed }: { datasetId: num
               </div>
             ))}
           </div>
+          {/* 다음 페이지만 실패했으면 이미 불러온 목록은 그대로 두고 알린다 — 「더 보기」로 다시 시도할 수 있다. */}
+          {isError && (
+            <p role="alert" className="text-center text-sm text-destructive">
+              {extractApiError(error, '다음 목록을 불러오지 못했습니다. 다시 시도하세요.')}
+            </p>
+          )}
           {hasNextPage && (
             <button
               type="button"

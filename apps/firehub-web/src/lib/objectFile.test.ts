@@ -2,7 +2,15 @@ import { AxiosError, type AxiosResponse } from 'axios';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { objectsApi } from '../api/objects';
-import { formatObjectDate, formatObjectSize, openObjectInNewTab } from './objectFile';
+import {
+  folderBreadcrumbs,
+  formatObjectDate,
+  formatObjectSize,
+  nameInFolder,
+  openObjectInNewTab,
+  parentFolderOf,
+  toFolderParam,
+} from './objectFile';
 
 // objectsApi.presignedUrl 과 sonner toast 를 모킹하여 다운로드 흐름을 격리 검증한다.
 vi.mock('../api/objects', () => ({
@@ -116,5 +124,83 @@ describe('openObjectInNewTab', () => {
 
     expect(fakeWin.close).toHaveBeenCalled();
     expect(toastError).toHaveBeenCalledWith('다운로드 URL 발급에 실패했습니다');
+  });
+});
+
+// WD-761 폴더 탐색 — URL ?path= 값과 서버 응답 이름을 화면 표시·이동 대상으로 바꾸는 순수 함수들.
+describe('toFolderParam', () => {
+  it('없거나 빈 값·슬래시만이면 루트(빈 문자열)다', () => {
+    expect(toFolderParam(null)).toBe('');
+    expect(toFolderParam(undefined)).toBe('');
+    expect(toFolderParam('')).toBe('');
+    expect(toFolderParam('/')).toBe('');
+    expect(toFolderParam('///')).toBe('');
+  });
+
+  it('앞뒤 슬래시를 떼어 a/b 꼴로 맞춘다(서버 폴더 path 의 끝 / 포함)', () => {
+    expect(toFolderParam('제품/Tibero7/')).toBe('제품/Tibero7');
+    expect(toFolderParam('/a/b/')).toBe('a/b');
+    expect(toFolderParam('a')).toBe('a');
+  });
+
+  it('가운데 값은 건드리지 않는다 — .. 같은 값의 판정은 서버(400) 몫이다', () => {
+    expect(toFolderParam('../x')).toBe('../x');
+  });
+
+  it('서버 정규화와 같게 빈·. 세그먼트를 흡수하고 \\ 를 / 로 바꾸되 이름은 다듬지 않는다', () => {
+    expect(toFolderParam('a//b')).toBe('a/b');
+    expect(toFolderParam('a/./b')).toBe('a/b');
+    expect(toFolderParam('a\\b')).toBe('a/b');
+    expect(toFolderParam('a/ /b')).toBe('a/b');
+    expect(toFolderParam('report /2026')).toBe('report /2026');
+  });
+});
+
+describe('folderBreadcrumbs', () => {
+  it('루트면 조각이 없다', () => {
+    expect(folderBreadcrumbs('')).toEqual([]);
+  });
+
+  it('세그먼트마다 이름과 그 지점까지의 경로를 준다', () => {
+    expect(folderBreadcrumbs('제품/Tibero7')).toEqual([
+      { name: '제품', path: '제품' },
+      { name: 'Tibero7', path: '제품/Tibero7' },
+    ]);
+  });
+
+  it('빈 세그먼트(연속 슬래시)는 건너뛴다', () => {
+    expect(folderBreadcrumbs('a//b')).toEqual([
+      { name: 'a', path: 'a' },
+      { name: 'b', path: 'a/b' },
+    ]);
+  });
+});
+
+describe('nameInFolder', () => {
+  it('현재 폴더 접두를 떼어 그 폴더 안의 이름만 보인다', () => {
+    expect(nameInFolder('제품/Tibero7/설치.pdf', '제품/Tibero7')).toBe('설치.pdf');
+  });
+
+  it('루트에서는 이름 그대로다(폴더를 모르는 예전 응답의 상대 경로도 유지)', () => {
+    expect(nameInFolder('보고서.md', '')).toBe('보고서.md');
+    expect(nameInFolder('2026/photo.jpg', '')).toBe('2026/photo.jpg');
+  });
+
+  it('접두가 맞지 않으면(다른 폴더) 이름을 그대로 둔다', () => {
+    expect(nameInFolder('기타/a.txt', '제품')).toBe('기타/a.txt');
+  });
+
+  it('폴더 이름의 앞부분만 같은 경우(제품2/…)는 떼지 않는다', () => {
+    expect(nameInFolder('제품2/a.txt', '제품')).toBe('제품2/a.txt');
+  });
+});
+
+describe('parentFolderOf', () => {
+  it('상대 경로에서 파일이 있는 폴더(앞뒤 / 없이)를 준다', () => {
+    expect(parentFolderOf('제품/Tibero7/설치.pdf')).toBe('제품/Tibero7');
+  });
+
+  it('루트 파일이면 빈 문자열이다', () => {
+    expect(parentFolderOf('보고서.md')).toBe('');
   });
 });

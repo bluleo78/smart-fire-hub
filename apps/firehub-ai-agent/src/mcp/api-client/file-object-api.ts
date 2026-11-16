@@ -41,6 +41,9 @@ export function createFileObjectApi(client: AxiosInstance) {
     /**
      * FILE 데이터셋의 오브젝트 한 페이지를 조회한다.
      *
+     * 서버 목록 API 의 기본은 폴더 모드(지정 폴더 바로 아래만, WD-761)다. 에이전트는 데이터셋 전체를 평면으로
+     * 훑어야 하므로 recursive=true 를 넘겨 기존 재귀 평면 목록을 받는다(그렇지 않으면 루트 폴더만 보인다).
+     *
      * @param datasetId FILE 데이터셋 ID
      * @param token     continuation 토큰(이전 응답의 nextToken). 첫 페이지는 생략.
      * @param size      페이지 크기(백엔드에서 1~200 클램프, 생략 시 50)
@@ -51,7 +54,7 @@ export function createFileObjectApi(client: AxiosInstance) {
       size?: number,
     ): Promise<ObjectListResponse> {
       const response = await client.get(`/datasets/${datasetId}/objects`, {
-        params: { token: token ?? undefined, size: size ?? undefined },
+        params: { token: token ?? undefined, size: size ?? undefined, recursive: true },
       });
       return response.data;
     },
