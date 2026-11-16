@@ -49,7 +49,8 @@ export interface ChatProviderOptions {
   rowSearch?: boolean;
   /**
    * WD-62: Proactive 실행의 리포트 산출 디렉터리. opencode 실행기만 읽어 MCP 프로세스 env 로 주입한다
-   * (write_report_file 도구가 이 디렉터리에만 쓴다). SDK·CLI 는 report-writer 하위 에이전트 경로를 쓰므로 무시한다.
+   * (write_report_file 도구가 이 디렉터리에만 쓴다). SDK 는 report-writer 하위 에이전트가 이 디렉터리 안에만 Write 로 저장하게
+   * 차단 목록에서 Write 를 빼고 경로를 검사한다(tool-policy disallowedToolsFor·checkToolPolicy). CLI 는 아직 무시한다.
    */
   reportDir?: string;
 }

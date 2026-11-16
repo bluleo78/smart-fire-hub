@@ -6,7 +6,7 @@
  * 새 호스트 도구는 자동 허용되어 "tool not in allow list" 무응답 회귀를 막는다.
  */
 import { describe, it, expect } from 'vitest';
-import { DISALLOWED_TOOLS, ALLOWED_TOOLS, DELEGATION_ONLY_TOOLS, checkToolPolicy } from './tool-policy.js';
+import { DISALLOWED_TOOLS, ALLOWED_TOOLS, DELEGATION_ONLY_TOOLS, checkToolPolicy, disallowedToolsFor } from './tool-policy.js';
 
 describe('tool-policy (#256, #266)', () => {
   it('DISALLOWED_TOOLS 의 명시 차단 도구가 유지된다 (회귀 가드)', () => {
@@ -269,6 +269,45 @@ describe('tool-policy (#256, #266)', () => {
 
     it('list_proactive_jobs(단순 목록 조회)는 이 정책의 영향을 받지 않는다 (agent.md 담당표)', () => {
       expect(checkToolPolicy('mcp__firehub__list_proactive_jobs', undefined, undefined, null)).toBeNull();
+    });
+  });
+
+  describe('프로액티브 리포트 저장 Write 예외', () => {
+    const dir = '/tmp/proactive-report/t2/2-100';
+
+    it('reportDir 이 없으면 차단 목록에 Write 가 그대로 있다', () => {
+      expect(disallowedToolsFor()).toContain('Write');
+      expect(disallowedToolsFor(undefined)).toEqual([...DISALLOWED_TOOLS]);
+    });
+
+    it('reportDir 이 있으면 Write 만 빠지고 나머지 차단은 유지된다', () => {
+      const list = disallowedToolsFor(dir);
+      expect(list).not.toContain('Write');
+      expect(list).toContain('Edit');
+      expect(list).toContain('Monitor');
+      expect(list.length).toBe(DISALLOWED_TOOLS.length - 1);
+    });
+
+    it('하위 에이전트가 reportDir 안에 쓰는 Write 는 허용한다', () => {
+      expect(checkToolPolicy('Write', { file_path: `${dir}/report.html` }, undefined, 'toolu_parent', dir)).toBeNull();
+      expect(checkToolPolicy('Write', { file_path: `${dir}/summary.md` }, undefined, 'toolu_parent', dir)).toBeNull();
+    });
+
+    it('reportDir 밖·상위 경로 탈출·형제 디렉터리 이름은 차단한다', () => {
+      expect(checkToolPolicy('Write', { file_path: '/etc/passwd' }, undefined, 'toolu_parent', dir)).toMatch(/blocked/);
+      expect(checkToolPolicy('Write', { file_path: `${dir}/../../x.html` }, undefined, 'toolu_parent', dir)).toMatch(/blocked/);
+      expect(checkToolPolicy('Write', { file_path: `${dir}-evil/report.html` }, undefined, 'toolu_parent', dir)).toMatch(/blocked/);
+      expect(checkToolPolicy('Write', { file_path: dir }, undefined, 'toolu_parent', dir)).toMatch(/blocked/);
+    });
+
+    it('메인(top-level) Write·reportDir 없는 실행·file_path 없는 입력은 차단한다', () => {
+      expect(checkToolPolicy('Write', { file_path: `${dir}/report.html` }, undefined, null, dir)).toMatch(/blocked/);
+      expect(checkToolPolicy('Write', { file_path: `${dir}/report.html` }, undefined, 'toolu_parent')).toMatch(/blocked/);
+      expect(checkToolPolicy('Write', {}, undefined, 'toolu_parent', dir)).toMatch(/blocked/);
+    });
+
+    it('reportDir 이 있어도 Edit 등 다른 차단 도구는 그대로 막는다', () => {
+      expect(checkToolPolicy('Edit', { file_path: `${dir}/report.html` }, undefined, 'toolu_parent', dir)).toMatch(/blocked/);
     });
   });
 });

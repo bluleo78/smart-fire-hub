@@ -26,7 +26,7 @@ import {
   saveSessionAttachments,
   formatAttachmentLine,
 } from './file-downloader.js';
-import { DISALLOWED_TOOLS, checkToolPolicy } from './tool-policy.js';
+import { checkToolPolicy, disallowedToolsFor } from './tool-policy.js';
 import { claimSession } from './session-owner.js';
 import { sdkChatFilesDir } from './tenant-paths.js';
 import { createTracker, buildHaltMessage } from './failure-streak.js';
@@ -80,6 +80,8 @@ export interface AgentOptions {
   dbDialect?: DbDialect;
   /** WD-744: 「행 검색 가능」 플래그(ChatProviderOptions.rowSearch 참고). */
   rowSearch?: boolean;
+  /** 프로액티브 리포트 디렉터리 — 있으면 report-writer 하위 에이전트가 이 안에만 Write 로 리포트 파일을 저장할 수 있다. */
+  reportDir?: string;
 }
 
 export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEvent> {
@@ -271,7 +273,8 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
       // SDK 의 isToolSearchEnabled 는 disallowedTools 에 ToolSearch 가 있으면
       // 곧바로 비활성으로 폴백한다 (cli.js XOq 체크 — "may have been disallowed via
       // disallowedTools"). 정책은 ./tool-policy.ts 가 single source of truth — CLI 프로바이더도 동일 리스트 적용.
-      disallowedTools: [...DISALLOWED_TOOLS],
+      // 프로액티브 리포트 실행(reportDir)만 Write 를 풀어 report-writer 가 저장하게 한다 — 경로는 checkToolPolicy 가 reportDir 안으로 제한.
+      disallowedTools: disallowedToolsFor(options.reportDir),
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
       includePartialMessages: true,
@@ -377,6 +380,7 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
             event.input as Record<string, unknown> | undefined,
             Object.keys(subagents),
             parentToolUseId,
+            options.reportDir,
           );
           if (policyDeny) {
             console.warn(`${tag()} [policy] ${policyDeny} — aborting stream`);
