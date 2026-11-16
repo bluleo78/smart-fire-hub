@@ -1,10 +1,12 @@
 import { zodResolver } from '@hookform/resolvers/zod';
+import { useQuery } from '@tanstack/react-query';
 import axios from 'axios';
 import { Flame } from 'lucide-react';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 
+import { platformAuthApi } from '@/api/platform-auth';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { FormField } from '@/components/ui/form-field';
@@ -26,6 +28,13 @@ import type { ErrorResponse } from '@/types/platform';
 export default function LoginPage() {
   const navigate = useNavigate();
   const { login } = useAuth();
+  // 사용자 0명일 때만 첫 운영자 가입 진입점을 보인다(WD-749). 조회 실패는 "없음"으로 취급해
+  // 진입점을 숨긴다 — 일시 장애로 가입 문을 잘못 열어 보이지 않게 하고, 로그인은 그대로 쓸 수 있다.
+  const bootstrap = useQuery({
+    queryKey: ['platform-auth', 'bootstrap-status'],
+    queryFn: async () => (await platformAuthApi.bootstrapStatus()).data,
+    retry: false,
+  });
   const [serverError, setServerError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -108,7 +117,16 @@ export default function LoginPage() {
           </CardContent>
         </Card>
 
-        {/* 회원가입·비밀번호 찾기 링크를 두지 않는다 — 운영자 계정은 승격으로만 생긴다. */}
+        {/* 비밀번호 찾기 링크는 두지 않는다. 가입 링크는 사용자가 한 명도 없을 때(첫 운영자 부트스트랩)만 보이고,
+            그 뒤 운영자 계정은 승격으로만 생긴다. */}
+        {bootstrap.data?.available === true && (
+          <p className="text-center text-sm text-muted-foreground">
+            아직 운영자 계정이 없습니다.{' '}
+            <Link to="/signup" className="font-medium text-foreground underline">
+              첫 운영자 계정 만들기
+            </Link>
+          </p>
+        )}
         <p className="text-center text-sm text-muted-foreground">
           이 콘솔은 플랫폼 운영자 전용입니다. 워크스페이스 사용자는 조직 주소로 로그인하세요.
         </p>

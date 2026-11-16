@@ -4,6 +4,8 @@ import { expect, test } from './fixtures/auth.fixture';
 
 test.describe('운영자 로그인', () => {
   test('로그인 전 화면이 콘솔 정체성을 못 박는다', async ({ authMockedPage: page }) => {
+    // 사용자가 이미 있는 상태(부트스트랩 불가) — 가입 진입점이 없어야 한다(WD-749).
+    await mockApi(page, 'GET', '/api/platform/auth/bootstrap-status', { available: false });
     await page.goto('/login');
 
     await expect(page).toHaveTitle('운영자 콘솔 · Smart Fire Hub');
@@ -15,7 +17,7 @@ test.describe('운영자 로그인', () => {
       ),
     ).toBeVisible();
 
-    // 회원가입·비밀번호 찾기 링크는 존재하지 않는다 — 운영자 계정은 승격으로만 생긴다.
+    // 회원가입·비밀번호 찾기 링크는 존재하지 않는다 — 사용자가 있으면 운영자 계정은 승격으로만 생긴다.
     await expect(page.getByRole('link')).toHaveCount(0);
   });
 

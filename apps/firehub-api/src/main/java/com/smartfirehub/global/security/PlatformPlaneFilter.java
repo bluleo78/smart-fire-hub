@@ -55,9 +55,9 @@ public class PlatformPlaneFilter extends OncePerRequestFilter {
    * 평면 검사 면제 경로. {@link PlatformAuthPaths} 를 통해 {@code SecurityConfig} 의 permitAll 목록과 <b>같은
    * 출처</b>를 공유한다 — 한쪽만 고치는 실수가 아예 불가능해진다.
    *
-   * <p>왜 면제가 필요한가: 이 두 경로는 인증 없이 호출되는 것이 정상이지만, 같은 호스트에서 firehub-web 을 열어 둔 브라우저는 살아 있는 <b>테넌트</b>
-   * Bearer 를 함께 보낸다. 그러면 {@code auth != null} 인데 평면이 어긋나 403 이 되고, 운영자가 로그인 자체를 못 한다 — 실제로 밟게 되는
-   * 경로다.
+   * <p>왜 면제가 필요한가: 이 공개 경로(로그인·갱신·부트스트랩 가입·가입 가능 여부)는 인증 없이 호출되는 것이 정상이지만, 같은 호스트에서 firehub-web 을
+   * 열어 둔 브라우저는 살아 있는 <b>테넌트</b> Bearer 를 함께 보낸다. 그러면 {@code auth != null} 인데 평면이 어긋나 403 이 되고, 운영자가
+   * 로그인 자체를 못 한다 — 실제로 밟게 되는 경로다.
    */
   private static final List<RequestMatcher> PLANE_CHECK_EXEMPT =
       PlatformAuthPaths.PUBLIC_PATTERNS.stream()
@@ -86,7 +86,7 @@ public class PlatformPlaneFilter extends OncePerRequestFilter {
     filterChain.doFilter(request, response);
   }
 
-  /** 면제 경로 여부. 목록이 두 개뿐이라 순회로 충분하다. */
+  /** 면제 경로 여부. 목록이 네 개뿐이라 순회로 충분하다. */
   private static boolean isExempt(HttpServletRequest request) {
     for (RequestMatcher exempt : PLANE_CHECK_EXEMPT) {
       if (exempt.matches(request)) return true;

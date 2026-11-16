@@ -9,6 +9,7 @@ import { Toaster } from './components/ui/sonner';
 import { AuthProvider } from './hooks/AuthContext';
 
 const LoginPage = lazy(() => import('./pages/LoginPage'));
+const SignupPage = lazy(() => import('./pages/SignupPage'));
 const TenantListPage = lazy(() => import('./pages/TenantListPage'));
 const TenantCreatePage = lazy(() => import('./pages/TenantCreatePage'));
 const TenantDetailPage = lazy(() => import('./pages/TenantDetailPage'));
@@ -36,6 +37,15 @@ function App() {
               element={
                 <Suspense fallback={<PageSkeleton />}>
                   <LoginPage />
+                </Suspense>
+              }
+            />
+            {/* 첫 운영자 가입(WD-749) — 셸 밖 공개 화면. 사용자가 있으면 화면이 스스로 /login 으로 보낸다. */}
+            <Route
+              path="/signup"
+              element={
+                <Suspense fallback={<PageSkeleton />}>
+                  <SignupPage />
                 </Suspense>
               }
             />

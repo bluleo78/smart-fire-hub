@@ -15,6 +15,8 @@ async function setupAuthMocks(page: Page, permissions?: string[]) {
   await mockApi(page, 'POST', '/api/platform/auth/refresh', createTokenResponse());
   await mockApi(page, 'POST', '/api/platform/auth/logout', {});
   await mockApi(page, 'GET', '/api/platform/auth/me', me);
+  // 부트스트랩 가입 가능 여부 기본값 — 가입 진입점이 없는 일반 상태. 개별 시험의 명시 모의가 나중에 등록되어 우선한다.
+  await mockApi(page, 'GET', '/api/platform/auth/bootstrap-status', { available: false });
 }
 
 async function enterAuthenticatedState(page: Page) {

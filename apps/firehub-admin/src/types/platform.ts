@@ -17,6 +17,19 @@ export interface PlatformTokenResponse {
   permissions: string[];
 }
 
+/** `GET /auth/bootstrap-status` — 사용자가 0명이라 첫 운영자 가입이 열려 있는지(WD-749). */
+export interface PlatformBootstrapStatus {
+  available: boolean;
+}
+
+/** `POST /auth/signup` 요청(WD-749). email 은 선택이라 비어 있으면 아예 보내지 않는다. */
+export interface PlatformSignupRequest {
+  username: string;
+  name: string;
+  email?: string;
+  password: string;
+}
+
 export interface PlatformMeResponse {
   userId: number;
   username: string;
