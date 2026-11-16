@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test';
 
+import type { ApiConnectionResponse } from '../../../src/types/api-connection';
 import { createApiConnection, createApiConnections, createBasicApiConnection } from '../../factories/admin.factory';
 import {
   setupAdminAuth,
@@ -7,8 +8,9 @@ import {
   setupApiConnectionListMocks,
   setupBasicApiConnectionDetailMocks,
 } from '../../fixtures/admin.fixture';
-import { mockApi } from '../../fixtures/api-mock';
+import { mockApi, type MockApiCapture } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { holdApi } from '../../fixtures/hold-api';
 import {
   expectBadgesFitDeclaredWidth,
   expectKMatchesDeclaredWidths,
@@ -17,6 +19,26 @@ import {
   expectValueNotTruncated,
   TABLE_LAYOUT_WIDTHS,
 } from '../../fixtures/table-layout';
+
+/**
+ * 인증 편집 중 기본 정보를 저장해 연결을 다시 불러오게 한다(WD-753 리뷰·WD-763) — 이름 칸에 refetched.name 을 넣고 「저장」을 누른다.
+ * 저장 PUT·이후 GET 이 refetched 를 돌려준다(나중에 등록한 route 가 이긴다). 재조회 응답이 도착하고 저장 토스트가 보일 때까지 기다린 뒤,
+ * PUT 캡처(이어서 하는 인증 저장 payload 검증용)를 돌려준다.
+ */
+async function saveInfoAndRefetch(page: Page, refetched: ApiConnectionResponse) {
+  const path = `/api/v1/api-connections/${refetched.id}`;
+  await mockApi(page, 'GET', path, refetched);
+  const capture = await mockApi(page, 'PUT', path, refetched, { capture: true });
+  const refetchedResponse = page.waitForResponse(
+    (res) => res.request().method() === 'GET' && new URL(res.url()).pathname === path,
+  );
+  await page.getByLabel('연결 이름').fill(refetched.name);
+  await page.getByRole('button', { name: '저장', exact: true }).click();
+  await capture.waitForRequest();
+  await refetchedResponse;
+  await expect(page.getByText('연결 정보가 업데이트되었습니다.')).toBeVisible();
+  return capture;
+}
 
 /**
  * API 연결 페이지 E2E 테스트
@@ -2663,18 +2685,8 @@ test.describe('WD-753 추가 헤더', () => {
     await page.getByLabel('추가 헤더 이름 2').fill('X-Tenant');
     await page.getByLabel('추가 헤더 값 2').fill('tenant-1');
 
-    // 기본 정보 저장 뒤 다시 불러온 연결은 이름만 바뀌었다(추가 헤더 저장값은 그대로) — 나중에 등록한 route 가 이긴다
-    const renamed = { ...connectionWithExtraHeader(), name: '네이버 API HUB 2' };
-    await mockApi(page, 'GET', '/api/v1/api-connections/1', renamed);
-    const capture = await mockApi(page, 'PUT', '/api/v1/api-connections/1', renamed, { capture: true });
-    const refetched = page.waitForResponse(
-      (res) => res.request().method() === 'GET' && new URL(res.url()).pathname === '/api/v1/api-connections/1',
-    );
-    await page.getByLabel('연결 이름').fill('네이버 API HUB 2');
-    await page.getByRole('button', { name: '저장', exact: true }).click();
-    await capture.waitForRequest();
-    await refetched;
-    await expect(page.getByText('연결 정보가 업데이트되었습니다.')).toBeVisible();
+    // 기본 정보 저장 뒤 다시 불러온 연결은 이름만 바뀌었다(추가 헤더 저장값은 그대로)
+    const capture = await saveInfoAndRefetch(page, { ...connectionWithExtraHeader(), name: '네이버 API HUB 2' });
 
     // 편집하던 행은 저장값으로 덮이지 않는다
     await expect(page.getByLabel('추가 헤더 이름 1')).toHaveValue(KEY_ID_HEADER);
@@ -2731,5 +2743,230 @@ test.describe('WD-753 추가 헤더', () => {
     await expect(badge).toHaveAttribute('title', '헬스체크 경로가 없어 자동 점검하지 않습니다');
     await expect(page.getByText('미확인', { exact: true })).toHaveCount(0);
     await expect(page.getByText('이상', { exact: true })).toHaveCount(0);
+  });
+});
+
+/**
+ * WD-763 — 인증 편집 중 연결이 다시 불러와져도(기본 정보·인증 저장 뒤 무효화, 마운트 뒤 staleTime 이 지난 배경 재조회) 고친 메인 인증 칸을 저장값으로 덮지 않는다.
+ * 고치지 않은 칸은 재조회 값을 받고(옛 값에 고정돼 되써 넣지 않게), 메인 인증 칸만 고쳐도 미저장 경고가 뜨며, 다른 연결로 옮기면 편집을 닫는다(리뷰 후속).
+ * 예전엔 인증 방식·키 위치·헤더 이름·파라미터 이름·Basic 아이디를 재조회 때마다 저장값으로 덮어,
+ * 그대로 「인증 저장」을 누르면 고치던 값이 아니라 원래 값이 저장됐다(WD-753 은 추가 헤더 행만 지켰다).
+ */
+test.describe('WD-763 인증 편집 중 재조회', () => {
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+  });
+
+  /** 기본 정보 저장으로 다시 불러올 때 쓰는 새 이름 — 다시 불러온 연결은 이름만 바뀐 같은 연결이다 */
+  const RENAMED = '이름만 바뀐 연결';
+
+  /** 헤더 X-Old·가린 키 ****abcd 로 저장된 API_KEY 연결 */
+  function storedApiKeyConnection(headerName = 'X-Old', apiKey = '****abcd') {
+    return createApiConnection({ id: 1, maskedAuthConfig: { placement: 'header', headerName, apiKey } });
+  }
+
+  /** 저장된 연결(기본: storedApiKeyConnection)을 모킹하고 상세를 연 뒤 「인증 정보 변경」으로 편집을 연다. */
+  async function openAuthEdit(page: Page, stored: ApiConnectionResponse = storedApiKeyConnection()) {
+    await mockApi(page, 'GET', '/api/v1/api-connections/1', stored);
+    await page.goto('/admin/api-connections/1');
+    await page.getByRole('button', { name: '인증 정보 변경' }).click();
+    return stored;
+  }
+
+  /** 「인증 저장」을 누르고, PUT 캡처의 두 번째 요청(첫 요청은 앞선 저장) payload 가 expected 를 담는지 본다. */
+  async function saveAuthAndExpectPayload(page: Page, capture: MockApiCapture, expected: Record<string, unknown>) {
+    await page.getByRole('button', { name: '인증 저장' }).click();
+    await expect.poll(() => capture.requests.length).toBe(2);
+    expect(capture.requests[1].payload).toMatchObject(expected);
+  }
+
+  test('API_KEY — 헤더 이름을 고치던 중 재조회돼도 그 값이 남고, 인증 저장 payload 에도 고친 값이 실린다', async ({
+    authenticatedPage: page,
+  }) => {
+    const stored = await openAuthEdit(page);
+    await expect(page.getByPlaceholder('Authorization')).toHaveValue('X-Old');
+    await page.getByPlaceholder('Authorization').fill('X-New');
+
+    const capture = await saveInfoAndRefetch(page, { ...stored, name: RENAMED });
+
+    // 재조회 뒤에도 고치던 헤더 이름이 저장값(X-Old)으로 돌아가지 않는다
+    await expect(page.getByPlaceholder('Authorization')).toHaveValue('X-New');
+    await saveAuthAndExpectPayload(page, capture, {
+      authType: 'API_KEY',
+      // 키 칸은 비워 뒀으니 가린 값을 그대로 보내 저장 키를 유지한다
+      authConfig: { headerName: 'X-New', apiKey: '****abcd' },
+    });
+  });
+
+  test('API_KEY — 키 위치를 Query 로 바꾸고 파라미터 이름을 고치던 중 재조회돼도 둘 다 남는다', async ({
+    authenticatedPage: page,
+  }) => {
+    const stored = await openAuthEdit(page);
+    await page.getByLabel('위치', { exact: true }).click();
+    await page.getByRole('option', { name: 'Query Parameter' }).click();
+    await page.getByPlaceholder('api_key').fill('my_param');
+
+    const capture = await saveInfoAndRefetch(page, { ...stored, name: RENAMED });
+
+    // 위치가 header 로 되돌아가 파라미터 칸이 사라지면 안 된다
+    await expect(page.getByPlaceholder('api_key')).toHaveValue('my_param');
+    await saveAuthAndExpectPayload(page, capture, {
+      authType: 'API_KEY',
+      authConfig: { placement: 'query', paramName: 'my_param' },
+    });
+  });
+
+  test('BASIC — 아이디를 고치던 중 재조회돼도 그 값이 남고, 인증 저장 payload 에 실린다', async ({
+    authenticatedPage: page,
+  }) => {
+    const stored = await openAuthEdit(page, createBasicApiConnection({ id: 1 }));
+    await expect(page.getByLabel('아이디')).toHaveValue('svc-user');
+    await page.getByLabel('아이디').fill('svc-user-2');
+
+    const capture = await saveInfoAndRefetch(page, { ...stored, name: RENAMED });
+
+    await expect(page.getByLabel('아이디')).toHaveValue('svc-user-2');
+    await saveAuthAndExpectPayload(page, capture, {
+      authType: 'BASIC',
+      authConfig: { username: 'svc-user-2', password: '****' },
+    });
+  });
+
+  test('인증 방식을 API_KEY → BEARER 로 바꾸고 토큰을 넣던 중 재조회돼도 방식이 유지되고 BEARER 로 저장된다', async ({
+    authenticatedPage: page,
+  }) => {
+    const stored = await openAuthEdit(page);
+    await page.getByLabel('인증 유형', { exact: true }).click();
+    await page.getByRole('option', { name: 'Bearer Token' }).click();
+    await page.getByPlaceholder('새 토큰을 입력하세요').fill('my-bearer-token-xyz');
+
+    const capture = await saveInfoAndRefetch(page, { ...stored, name: RENAMED });
+
+    // 방식이 저장값(API_KEY)으로 되돌아가 토큰 칸이 사라지면 안 된다
+    await expect(page.getByPlaceholder('새 토큰을 입력하세요')).toHaveValue('my-bearer-token-xyz');
+    await saveAuthAndExpectPayload(page, capture, {
+      authType: 'BEARER',
+      authConfig: { token: 'my-bearer-token-xyz' },
+    });
+  });
+
+  test('인증 편집을 취소하면 고치던 값이 저장값으로 돌아가고, 닫힌 뒤 재조회는 저장값을 반영한다', async ({
+    authenticatedPage: page,
+  }) => {
+    await openAuthEdit(page);
+    await page.getByPlaceholder('Authorization').fill('X-New');
+    await page.getByRole('button', { name: '취소' }).click();
+
+    // 편집을 닫은 뒤 재조회로 서버 값이 X-Changed 로 바뀌면 다시 열었을 때 그 저장값이 보인다
+    await saveInfoAndRefetch(page, { ...storedApiKeyConnection('X-Changed'), name: RENAMED });
+
+    await page.getByRole('button', { name: '인증 정보 변경' }).click();
+    await expect(page.getByPlaceholder('Authorization')).toHaveValue('X-Changed');
+  });
+
+  test('인증 저장 뒤 재조회 응답이 오기 전에 편집을 다시 열어도, 응답이 오면 칸이 새 저장값으로 바뀌고 다시 저장해도 옛 값을 되써 넣지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    const saved = storedApiKeyConnection('X-New');
+    await openAuthEdit(page);
+    await page.getByPlaceholder('Authorization').fill('X-New');
+
+    // 인증 저장 뒤 무효화로 오는 재조회 GET 을 붙잡아 둔다 — 저장 직후 편집을 다시 여는 틈을 만든다
+    const capture = await mockApi(page, 'PUT', '/api/v1/api-connections/1', saved, { capture: true });
+    const refetch = await holdApi(page, 'GET', '/api/v1/api-connections/1', 200, saved);
+    await page.getByRole('button', { name: '인증 저장' }).click();
+    await expect(page.getByText('인증 정보가 업데이트되었습니다.')).toBeVisible();
+    await expect.poll(() => refetch.requests.length).toBeGreaterThan(0);
+
+    // 재조회가 아직 안 와 다시 연 편집은 옛 저장값(X-Old)으로 시작한다 — 고치지 않은 채로 둔다
+    await page.getByRole('button', { name: '인증 정보 변경' }).click();
+    await expect(page.getByPlaceholder('Authorization')).toHaveValue('X-Old');
+
+    // 재조회 응답이 오면 고치지 않은 칸은 새 저장값을 받는다
+    refetch.release();
+    await expect(page.getByPlaceholder('Authorization')).toHaveValue('X-New');
+
+    // 그대로 다시 저장하면 새 저장값이 실린다(옛 값 X-Old 를 되써 넣지 않는다)
+    await saveAuthAndExpectPayload(page, capture, {
+      authType: 'API_KEY',
+      authConfig: { headerName: 'X-New', apiKey: '****abcd' },
+    });
+  });
+
+  test('편집 중 아무것도 고치지 않았으면, 기본 정보 저장 재조회가 가져온 바뀐 인증 값(다른 관리자가 바꾼 헤더 이름)으로 칸이 바뀐다', async ({
+    authenticatedPage: page,
+  }) => {
+    await openAuthEdit(page);
+    await expect(page.getByPlaceholder('Authorization')).toHaveValue('X-Old');
+
+    // 그사이 다른 관리자가 헤더 이름을 X-Other 로 바꿨다 — 기본 정보 저장 뒤 재조회가 그 값을 가져온다
+    const capture = await saveInfoAndRefetch(page, { ...storedApiKeyConnection('X-Other', '****wxyz'), name: RENAMED });
+
+    // 편집은 열린 채, 고치지 않은 칸은 서버의 새 값으로 바뀐다
+    await expect(page.getByRole('button', { name: '인증 저장' })).toBeVisible();
+    await expect(page.getByPlaceholder('Authorization')).toHaveValue('X-Other');
+    // 키 칸을 비워 두면 새로 받은 연결의 가린 키로 유지한다
+    await saveAuthAndExpectPayload(page, capture, {
+      authType: 'API_KEY',
+      authConfig: { headerName: 'X-Other', apiKey: '****wxyz' },
+    });
+  });
+
+  test('인증 편집에서 헤더 이름만 고치고 사이드바로 나가려 하면 미저장 경고가 뜬다', async ({
+    authenticatedPage: page,
+  }) => {
+    await openAuthEdit(page);
+    await page.getByPlaceholder('Authorization').fill('X-New');
+
+    await page.getByRole('navigation').getByRole('link', { name: '사용자 관리' }).click();
+
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+    await expect(page.getByText('저장하지 않은 변경사항이 있습니다. 이탈하시겠습니까?')).toBeVisible();
+    expect(new URL(page.url()).pathname).toBe('/admin/api-connections/1');
+    // 남기를 고르면 고치던 값이 그대로다
+    await page.getByRole('button', { name: '취소' }).click();
+    await expect(page.getByPlaceholder('Authorization')).toHaveValue('X-New');
+  });
+
+  test('인증 편집 중 앱 안에서 다른 연결 주소로 옮기면 편집이 닫히고, 입력하던 키가 새 연결에 남지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    const first = createApiConnection({
+      id: 1,
+      name: '첫 번째 연결',
+      maskedAuthConfig: { placement: 'header', headerName: 'X-First', apiKey: '****abcd' },
+    });
+    const second = createApiConnection({
+      id: 2,
+      name: '두 번째 연결',
+      maskedAuthConfig: { placement: 'header', headerName: 'X-Second', apiKey: '****wxyz' },
+    });
+    await mockApi(page, 'GET', '/api/v1/api-connections/1', first);
+    await mockApi(page, 'GET', '/api/v1/api-connections/2', second);
+    await page.goto('/admin/api-connections/1');
+    await page.getByRole('button', { name: '인증 정보 변경' }).click();
+    await page.getByLabel('키 값').fill('secret-for-first');
+
+    // 라우트 요소는 :id 로 key 되지 않는다 — 페이지가 본문을 새 id 로 다시 마운트하는지, 앱 안 링크(검색·AI 패널 등)로 옮기는 경우를 흉내 내 본다
+    await page.evaluate(() => {
+      const link = document.createElement('a');
+      link.href = '/admin/api-connections/2';
+      link.textContent = '두 번째 연결로';
+      document.body.appendChild(link);
+    });
+    await page.getByRole('link', { name: '두 번째 연결로' }).click();
+    // 키를 입력 중이라 미저장 경고가 먼저 뜬다 — 이탈을 고른다
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+    await page.getByRole('button', { name: '이탈' }).click();
+
+    await expect(page).toHaveURL(/\/admin\/api-connections\/2$/);
+    await expect(page.getByLabel('연결 이름')).toHaveValue('두 번째 연결');
+    // 편집이 닫혀 읽기 보기로 돌아온다
+    await expect(page.getByRole('button', { name: '인증 정보 변경' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '인증 저장' })).toHaveCount(0);
+    // 다시 열면 새 연결 값으로 시작하고, 첫 연결용으로 입력하던 키는 비어 있다
+    await page.getByRole('button', { name: '인증 정보 변경' }).click();
+    await expect(page.getByPlaceholder('Authorization')).toHaveValue('X-Second');
+    await expect(page.getByLabel('키 값')).toHaveValue('');
   });
 });

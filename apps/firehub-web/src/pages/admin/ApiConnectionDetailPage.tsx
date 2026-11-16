@@ -1,5 +1,5 @@
 import { ArrowLeft, Copy, HelpCircle } from 'lucide-react';
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useEffect, useEffectEvent, useId, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -32,6 +32,7 @@ import {
 } from '@/lib/api-connection-form';
 import { missingSecretMessage } from '@/lib/api-connection-secret';
 import { handleApiError } from '@/lib/api-error';
+import { isSameFormValue } from '@/lib/form-equality';
 import { formatDate } from '@/lib/formatters';
 import { parseRouteId } from '@/lib/route-id';
 import { MAX_DESCRIPTION_LENGTH } from '@/lib/validations/description';
@@ -66,6 +67,7 @@ import { useMyPermissions } from '../../hooks/queries/useMyPermissions';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import type {
   ApiConnectionAuthType,
+  ApiConnectionResponse,
   StoredApiConnectionAuthType,
   TestConnectionResponse,
 } from '../../types/api-connection';
@@ -79,12 +81,69 @@ type InfoFieldKey = (typeof INFO_FIELD_ORDER)[number];
 /** 인증 편집 칸 (WD-561) — 유형·위치에 따라 보이는 칸만 검사한다. 순서·key 는 생성 대화상자와 같은 공용 상수다(WD-666). */
 type AuthFieldKey = (typeof AUTH_FIELD_KEYS)[number];
 
-/** API 연결 상세 페이지 — 기본 정보/인증/연결 상태 확인/삭제 */
+/**
+ * 인증 칸을 채운 값 스냅샷(WD-763 리뷰) — 인증 편집의 기준이다.
+ * 편집 중 「고쳤는지」(미저장 경고·재조회 값을 받을지)와 비밀 유지 판단(가린 키·비밀번호)을 지금 connection 이 아니라 이 값으로 본다.
+ * 편집 중 재조회가 와서 connection 만 바뀌면 화면 칸과 기준이 어긋나, 고치지 않은 칸을 고친 것으로 보거나 다른 응답의 가린 값을 보낼 수 있었다.
+ */
+interface AuthSeed {
+  authType: StoredApiConnectionAuthType;
+  placement: string;
+  headerName: string;
+  paramName: string;
+  username: string;
+  /** 채운 추가 헤더 행 — 칸에도 같은 참조를 넣어, 행을 건드렸는지(빈 행 추가 등)를 참조 비교로 안다. 고쳤는지는 이 행의 authConfig 조각과 비교한다(WD-753) */
+  extraHeaderRows: ExtraHeaderRow[];
+  /** 키 칸을 비워 두면 유지할 저장 키(가린 값) — API_KEY 로 저장됐고 가린 키가 있을 때만(WD-480·WD-666) */
+  maskedKey?: string;
+  /** 비밀번호 칸을 비워 두면 유지할 저장 비밀번호(가린 값) — BASIC 으로 저장됐고 가린 비밀번호가 있을 때만(WD-681) */
+  maskedPassword?: string;
+}
+
+/**
+ * 조회한 연결로 인증 칸 스냅샷을 만든다(WD-763 리뷰).
+ * 메인 인증 칸은 추가 헤더 키(extraHeader:…)를 뺀 값으로 채운다(WD-753) — 추가 헤더는 행(extraHeaderRows)으로 따로 둔다.
+ */
+function authSeedFrom(connection: ApiConnectionResponse, extraHeaderRows: ExtraHeaderRow[]): AuthSeed {
+  const mc = withoutExtraHeaders(connection.maskedAuthConfig);
+  return {
+    authType: connection.authType,
+    placement: mc.placement ?? 'header',
+    headerName: mc.headerName ?? '',
+    paramName: mc.paramName ?? '',
+    // (WD-681) 아이디는 비밀이 아니라 가리지 않고 내려온다 — 그대로 채운다
+    username: mc.username ?? '',
+    extraHeaderRows,
+    maskedKey: connection.authType === 'API_KEY' ? mc.apiKey || undefined : undefined,
+    maskedPassword: connection.authType === 'BASIC' ? mc.password || undefined : undefined,
+  };
+}
+
+/**
+ * 추가 헤더를 더하거나 지우거나 이름·값을 고쳤는지(WD-753) — 보낼 authConfig 조각을 채운 행의 조각과 키 순서 없이 비교한다.
+ * isSameFormValue 는 빈 값('')을 없는 키와 같게 보므로, 이름만 넣고 값을 비운 새 행도 고친 것으로 잡으려고 키 수를 함께 본다.
+ */
+function extraHeadersChanged(rows: ExtraHeaderRow[], seededRows: ExtraHeaderRow[]): boolean {
+  const current = extraHeadersToConfig(rows);
+  const seeded = extraHeadersToConfig(seededRows);
+  return Object.keys(current).length !== Object.keys(seeded).length || !isSameFormValue(current, seeded);
+}
+
+/**
+ * API 연결 상세 페이지 — 주소 id 를 읽어 본문을 그 id 로 key 해 그린다(WD-763 리뷰, UserDetailPage·ReportTemplateDetailPage 와 같은 방식).
+ * 라우트 요소는 :id 로 key 되지 않아, 앱 안 링크로 다른 연결로 옮기면 같은 컴포넌트가 남은 채 id 만 바뀐다.
+ * 그러면 인증 편집 상태·입력한 키·토큰·비밀번호·최근 테스트 결과가 새 연결 화면에 남는다 — key 로 다시 만들어 모든 상태를 새로 시작한다.
+ */
 export default function ApiConnectionDetailPage() {
   const { id } = useParams<{ id: string }>();
+  // 숫자가 아닌 id(WD-434)는 null — 본문이 조회 없이 「불러오기 실패」로 안내한다(:id 라우트라 id 가 없는 경우는 없다)
+  return <ApiConnectionDetailView key={id} connectionId={parseRouteId(id) ?? null} />;
+}
+
+/** API 연결 상세 본문 — 기본 정보/인증/연결 상태 확인/삭제. connectionId 가 null 이면 잘못된 주소 id 다. */
+function ApiConnectionDetailView({ connectionId }: { connectionId: number | null }) {
   const navigate = useNavigate();
   // 숫자가 아닌 id(WD-434)는 조회가 꺼져 로딩·오류·데이터가 모두 없는 빈 화면이 됐다 — 없는 id 와 같게 안내한다
-  const connectionId = parseRouteId(id);
   const isInvalidId = connectionId == null;
   const { data: connection, isLoading, isError } = useApiConnection(connectionId);
   const updateMutation = useUpdateApiConnection();
@@ -145,50 +204,65 @@ export default function ApiConnectionDetailPage() {
   };
 
   /**
-   * 키 칸을 비워 두면 유지할 저장 키(가린 값) — 이미 API_KEY 로 저장됐고 가린 키가 있을 때만 있다(WD-480).
-   * WD-666: 키 칸의 필수(*) 표시·「비워 두면 저장된 키 유지」 안내·저장 때 유지 판단이 모두 이 값 하나를 본다.
-   * 예전엔 필수 표시만 「인증 방식이 API_KEY 인가」로 따로 정해, 저장된 키가 없는 API_KEY 연결에서 칸이 선택처럼 보이다가 저장 때 거절됐다.
+   * 인증 칸을 마지막으로 채운 값(WD-763 리뷰) — 편집을 열 때와 편집 중 재조회 때 칸과 함께 채운다(applyAuthSeed).
+   * 렌더 중 비교(고쳤는지·비밀 유지 판단)에 쓰므로 ref 가 아닌 state 로 둔다(react-hooks/refs 룰, 기본 정보의 initialInfo 와 같다).
    */
-  const storedMaskedKey =
-    connection?.authType === 'API_KEY' ? connection.maskedAuthConfig.apiKey || undefined : undefined;
+  const [authSeed, setAuthSeed] = useState<AuthSeed | null>(null);
+
+  // 키·비밀번호 칸을 비워 두면 유지할 저장 가린 값 — 필수 표시·유지 안내·저장 판단이 이 값 하나를 본다(WD-480·WD-666·WD-681, 칸을 채운 스냅샷 기준)
+  const storedMaskedKey = authSeed?.maskedKey;
   const apiKeyHintId = `${baseId}-api-key-keep-hint`;
-
-  /**
-   * 비밀번호 칸을 비워 두면 유지할 저장 비밀번호(가린 값) — 이미 BASIC 으로 저장됐고 가린 비밀번호가 있을 때만 있다(WD-681).
-   * 키 칸(storedMaskedKey)과 같은 규칙: 가린 값을 그대로 보내면 서버(resolveMaskedSecrets)가 저장 원문을 유지하고,
-   * 다른 방식에서 BASIC 으로 바꾸면 유지할 비밀번호가 없어 새로 받아야 한다.
-   */
-  const storedMaskedPassword =
-    connection?.authType === 'BASIC' ? connection.maskedAuthConfig.password || undefined : undefined;
+  const storedMaskedPassword = authSeed?.maskedPassword;
   const passwordHintId = `${baseId}-password-keep-hint`;
-  /** 조회로 받은 Basic 아이디 — 편집 칸 초기값·편집 취소 시 되돌릴 값이다(아이디는 비밀이 아니라 가리지 않고 내려온다). */
-  const storedUsername = connection?.maskedAuthConfig.username ?? '';
 
   /**
-   * 저장된 추가 헤더 행·그 authConfig 조각(WD-753 리뷰) — 조회한 가린 config 가 바뀔 때만 한 번 만든다.
-   * 읽기 보기·편집 시작/취소·미저장 변경(dirty) 비교가 같은 값을 쓴다. 예전엔 렌더마다 다시 만들어 행 id 순번을 계속 올렸다(렌더 중 부수효과).
+   * 저장된 추가 헤더 행(WD-753 리뷰) — 조회한 가린 config 가 바뀔 때만 한 번 만든다.
+   * 읽기 보기와 인증 칸 채우기(스냅샷)가 같은 값을 쓴다. 예전엔 렌더마다 다시 만들어 행 id 순번을 계속 올렸다(렌더 중 부수효과).
    */
   const storedExtraHeaderRows = useMemo(
     () => extraHeaderRowsFromConfig(connection?.maskedAuthConfig),
     [connection?.maskedAuthConfig],
   );
-  const storedExtraHeaderConfig = useMemo(
-    () => extraHeadersToConfig(storedExtraHeaderRows),
-    [storedExtraHeaderRows],
-  );
 
-  /** 인증 편집을 닫는다 — 입력한 키·토큰과 인증 칸 오류를 함께 비워, 다시 열었을 때 지난 오류가 남지 않게 한다. */
+  /** 인증 칸을 마지막으로 채운 연결 응답(WD-763) — 편집 중 새 응답이 왔는지 알려고 둔다(렌더에 쓰지 않아 ref 로 둔다). */
+  const authSeededFromRef = useRef<ApiConnectionResponse | null>(null);
+
+  /**
+   * 인증 칸(인증 방식·키 위치·헤더/파라미터 이름·Basic 아이디·추가 헤더 행)과 그 스냅샷(authSeed)을 연결 응답으로 채우고 인라인 오류를 비운다
+   * (WD-753 리뷰·WD-763). 편집을 열 때(startAuthEdit)와 편집 중 재조회 때(아래 효과) 쓴다 — 닫힌 동안은 읽기 보기가 connection 을 바로 그려 채우지 않는다.
+   */
+  const applyAuthSeed = (conn: ApiConnectionResponse) => {
+    authSeededFromRef.current = conn;
+    const seed = authSeedFrom(conn, storedExtraHeaderRows);
+    setAuthSeed(seed);
+    setAuthType(seed.authType);
+    setPlacement(seed.placement);
+    setHeaderName(seed.headerName);
+    setParamName(seed.paramName);
+    setUsername(seed.username);
+    // 추가 헤더는 스냅샷과 같은 행 참조로 채운다 — 행을 건드렸는지 참조로 안다(keepAuthEdits)
+    setExtraHeaders(seed.extraHeaderRows);
+    // 인증 칸을 새 값으로 다시 채우면 이전 값에 대한 인라인 오류도 비운다(WD-666) — 지난 오류 문구가 남지 않게 한다.
+    setAuthErrors({});
+    setExtraHeaderErrors({});
+  };
+
+  /** 인증 편집을 연다 — 지금 연결 값으로 칸을 채운다(WD-763 리뷰 — 취소·저장으로 닫았다 다시 열어도 저장값으로 시작한다). */
+  const startAuthEdit = () => {
+    if (!connection) return;
+    applyAuthSeed(connection);
+    setIsEditingAuth(true);
+  };
+
+  /**
+   * 인증 편집을 닫는다 — 입력한 키·토큰·비밀번호를 비운다(남은 비밀이 다음 편집에 실리지 않게).
+   * 다른 칸과 오류는 다음에 열 때(startAuthEdit) 저장값으로 다시 채운다.
+   */
   const closeAuthEdit = () => {
     setIsEditingAuth(false);
     setApiKey('');
     setToken('');
-    // 아이디는 저장된 값으로 되돌리고 비밀번호는 비운다(WD-681)
-    setUsername(storedUsername);
     setPassword('');
-    setAuthErrors({});
-    // 추가 헤더는 저장된 행(이름·가린 값)으로 되돌린다(WD-753) — 지운 행·새 행·입력한 값을 버린다
-    setExtraHeaders(storedExtraHeaderRows);
-    setExtraHeaderErrors({});
   };
 
   /** 추가 헤더 행을 고친다(WD-753) — 고치거나 지운 행의 오류만 지운다. */
@@ -214,7 +288,7 @@ export default function ApiConnectionDetailPage() {
     navigate('/admin/api-connections');
   }, [isError, isInvalidId, navigate]);
 
-  /* eslint-disable react-hooks/set-state-in-effect -- 서버 응답으로 폼 초기값 시드. connection 참조는 TanStack Query가 id 동일 시 공유하므로 실제 재호출은 라우트/리패치 변경 시에만 발생. */
+  /* eslint-disable react-hooks/set-state-in-effect -- 서버 응답으로 폼 초기값 시드. connection 참조는 TanStack Query가 id 동일 시 공유하므로 실제 재호출은 첫 조회·재조회 때만 발생. */
   useEffect(() => {
     if (!connection) return;
     const initialName = connection.name;
@@ -225,17 +299,10 @@ export default function ApiConnectionDetailPage() {
     setDescription(initialDescription);
     setBaseUrl(initialBaseUrl);
     setHealthCheckPath(initialHealthCheckPath);
-    setAuthType(connection.authType);
-    // 메인 인증 칸은 추가 헤더 키(extraHeader:…)를 뺀 값으로 채운다(WD-753) — 추가 헤더는 아래 행으로 따로 채운다
-    const mc = withoutExtraHeaders(connection.maskedAuthConfig);
-    setPlacement(mc.placement ?? 'header');
-    setHeaderName(mc.headerName ?? '');
-    setParamName(mc.paramName ?? '');
-    setUsername(mc.username ?? '');
-    // 폼을 새 연결 값으로 다시 채우면 이전 값에 대한 인라인 오류도 비운다(WD-666) — 재조회·다른 id 로 옮겨 가도
+    // 폼을 새 연결 값으로 다시 채우면 이전 값에 대한 기본 정보 인라인 오류도 비운다(WD-666) — 재조회돼도
     // 지난 오류 문구가 새 값 옆에 남아 「틀린 칸」처럼 보이지 않게 한다.
+    // 인증 칸·인증 칸 오류는 여기서 채우지 않는다(WD-763) — 편집을 열 때(startAuthEdit)와 편집 중 재조회 때(아래 효과)만 채워, 고치던 값을 덮지 않는다.
     setInfoErrors({});
-    setAuthErrors({});
     // dirty 비교 기준 스냅샷 갱신 (#551) — 저장 없이 사이드바 이동 시 유실 경고용
     setInitialInfo({
       name: initialName,
@@ -244,22 +311,6 @@ export default function ApiConnectionDetailPage() {
       healthCheckPath: initialHealthCheckPath,
     });
   }, [connection]);
-
-  /** 추가 헤더 행을 마지막으로 채운 연결 id(WD-753 리뷰) — 다른 연결로 옮겨 갔는지 알려고 둔다(렌더에 쓰지 않아 ref 로 둔다). */
-  const extraHeadersSeededForRef = useRef<number | null>(null);
-  /**
-   * 추가 헤더 행을 저장값으로 채운다(WD-753 리뷰) — 인증 편집 중이 아니거나 연결 id 가 바뀔 때만.
-   * 인증 편집 중에 기본 정보 저장·창 포커스 등으로 연결이 다시 불러와지면(refetch) 위 효과가 다시 돌아 고치던 행(새 행·지운 행·바꾼 이름·
-   * 입력한 값)을 저장값으로 덮었다. 편집을 닫으면(isEditingAuth → false) 다시 저장값으로 맞춘다.
-   */
-  useEffect(() => {
-    if (!connection) return;
-    const idChanged = extraHeadersSeededForRef.current !== connection.id;
-    if (isEditingAuth && !idChanged) return;
-    extraHeadersSeededForRef.current = connection.id;
-    setExtraHeaders(storedExtraHeaderRows);
-    setExtraHeaderErrors({});
-  }, [connection, storedExtraHeaderRows, isEditingAuth]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   // 기본 정보 폼이 로드된 초기값과 달라졌는지 여부 (#551)
@@ -269,19 +320,48 @@ export default function ApiConnectionDetailPage() {
       description !== initialInfo.description ||
       baseUrl !== initialInfo.baseUrl ||
       healthCheckPath !== initialInfo.healthCheckPath);
-  // 인증 정보 편집 모드에서 새 키/토큰을 입력 중인 경우도 미저장 변경으로 간주 (#551)
-  // (WD-681) 비밀번호를 입력했거나 Basic 아이디를 고친 것도 미저장 변경이다.
-  // (WD-753) 추가 헤더를 더하거나 지우거나 이름·값을 고친 것도 미저장 변경이다 — 보낼 조각을 저장된 행의 조각과 비교한다.
-  const isExtraHeadersDirty =
-    isEditingAuth &&
-    JSON.stringify(extraHeadersToConfig(extraHeaders)) !== JSON.stringify(storedExtraHeaderConfig);
-  const isAuthDirty =
-    isEditingAuth &&
-    (apiKey.trim() !== '' ||
+  /** 편집 중일 때의 스냅샷 — 닫혀 있으면 null 이라 아래 판정이 모두 거짓이 된다 */
+  const editingSeed = isEditingAuth ? authSeed : null;
+  /**
+   * 메인 인증 칸에서 고친 것이 있는지(WD-763 리뷰) — 칸을 채운 스냅샷(authSeed)과 비교한다.
+   * - 메인 인증 칸(방식·위치·헤더/파라미터 이름)이나 Basic 아이디가 채운 값과 다르다(예전엔 아이디만 봐서, 헤더 이름만 바꾸고 나가면 경고가 없었다).
+   * - 새 키·토큰·비밀번호를 입력했다(#551·WD-681).
+   */
+  const mainAuthDirty =
+    editingSeed !== null &&
+    (authType !== editingSeed.authType ||
+      placement !== editingSeed.placement ||
+      headerName !== editingSeed.headerName ||
+      paramName !== editingSeed.paramName ||
+      username !== editingSeed.username ||
+      apiKey.trim() !== '' ||
       token.trim() !== '' ||
-      password !== '' ||
-      username !== storedUsername ||
-      isExtraHeadersDirty);
+      password !== '');
+  /** 추가 헤더 행을 건드렸는지(WD-763) — 채운 행 참조를 그대로 두면 건드리지 않은 것이다(이름·값이 빈 행 추가처럼 보낼 조각엔 안 잡히는 변경도 잡는다). */
+  const extraRowsTouched = editingSeed !== null && extraHeaders !== editingSeed.extraHeaderRows;
+  /** 인증 편집에서 고친 것이 있는지 — 미저장 경고(#551) 판단에 쓴다. 추가 헤더는 행을 건드렸을 때만 보낼 조각을 비교한다(WD-753). */
+  const isAuthDirty =
+    mainAuthDirty ||
+    (extraRowsTouched && editingSeed !== null && extraHeadersChanged(extraHeaders, editingSeed.extraHeaderRows));
+  /** 재조회 값을 받지 않고 지금 인증 칸을 지킬지(WD-763) — 메인 칸을 고쳤거나 추가 헤더 행을 건드렸으면 지킨다. 아무것도 건드리지 않았으면 재조회 값을 받는다. */
+  const keepAuthEdits = mainAuthDirty || extraRowsTouched;
+
+  /** 편집 중 재조회 때 인증 칸을 다시 채운다 — 효과 안에서 부르는 effect event 라 늘 최신 applyAuthSeed(최신 추가 헤더 행)를 쓴다. */
+  const refillAuthFields = useEffectEvent(applyAuthSeed);
+  /**
+   * 편집 중 연결이 다시 불러와지면 인증 칸을 새 응답으로 다시 채운다(WD-763).
+   * 연결은 기본 정보 저장·인증 저장 뒤 무효화(invalidateQueries — 저장 응답이 끝나도 재조회는 기다리지 않는다)와, 마운트 때 staleTime(30초)이
+   * 지난 캐시로 그린 뒤의 배경 재조회로 다시 불러와진다(창 포커스 재조회는 main.tsx 에서 꺼 두었다).
+   * - 닫혀 있으면 채우지 않는다 — 읽기 보기는 connection 을 바로 그리고, 열 때(startAuthEdit) 그때의 연결로 채운다.
+   * - 편집 중이면 고친 것이 없고 새 응답이 왔을 때만 채운다 — 저장 직후 재조회가 오기 전에 다시 연 편집이나 옛 캐시로 연 편집이
+   *   옛 값에 고정돼 그대로 저장하면 옛 값을 되써 넣던 일을 막는다. 고친 것이 있으면 덮지 않는다(그대로 저장하면 원래 값이 저장되던 WD-763 결함).
+   * 다른 연결로 옮기면 페이지가 그 id 로 다시 마운트돼(바깥 ApiConnectionDetailPage 의 key) 편집이 닫히고 입력한 비밀도 사라진다.
+   */
+  useEffect(() => {
+    if (!connection || !isEditingAuth || keepAuthEdits || authSeededFromRef.current === connection) return;
+    refillAuthFields(connection);
+  }, [connection, isEditingAuth, keepAuthEdits]);
+
   const { dialog: unsavedChangesDialog, requestNavigate } = useUnsavedChangesGuard(
     isInfoDirty || isAuthDirty,
   );
@@ -683,7 +763,7 @@ export default function ApiConnectionDetailPage() {
           <div className="flex items-center justify-between">
             <CardTitle>인증 설정</CardTitle>
             {canWrite && !isEditingAuth && (
-              <Button variant="outline" size="sm" onClick={() => setIsEditingAuth(true)}>
+              <Button variant="outline" size="sm" onClick={startAuthEdit}>
                 인증 정보 변경
               </Button>
             )}
