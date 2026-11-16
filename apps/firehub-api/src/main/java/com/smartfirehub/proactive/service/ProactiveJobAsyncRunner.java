@@ -51,8 +51,7 @@ public class ProactiveJobAsyncRunner {
   private final ProactiveContextCollector contextCollector;
   private final ProactiveAiClient aiClient;
   private final AiCredentialService aiCredentialService;
-  // opencode 자격증명일 때만 ai.model 을 읽는다 — OpencodeFields.model javadoc 참고
-  // (buildOpenCodeConfig 가 top-level model 을 필수로 요구하게 되면서 새로 필요해졌다).
+  // 테넌트 ai.model 을 읽는다 — 채팅·분류와 같이 모든 유형에 싣는다(WD-766).
   private final SettingsService settingsService;
   private final ObjectMapper objectMapper;
   private final List<DeliveryChannel> deliveryChannels;
@@ -92,13 +91,13 @@ public class ProactiveJobAsyncRunner {
   /**
    * Proactive Job을 비동기로 실행한다.
    *
-   * <p>이 메서드는 {@code pipelineExecutor} 스레드풀에서 실행되므로 이벤트 리스너 스레드나 HTTP 요청 스레드를 블록하지 않는다. AI 호출, 컨텍스트
-   * 수집, 결과 저장, 알림 발송을 순차 수행한다.
+   * <p>전용 풀({@link com.smartfirehub.global.config.AsyncConfig#proactiveExecutor})에서 돌아 이벤트 리스너·HTTP
+   * 요청 스레드를 블록하지 않는다. AI 호출, 컨텍스트 수집, 결과 저장, 알림 발송을 순차 수행한다.
    *
    * @param jobId 실행할 Proactive Job ID
    * @param userId 실행 요청 사용자 ID
    */
-  @Async("pipelineExecutor")
+  @Async("proactiveExecutor")
   public void executeJob(Long jobId, Long userId) {
     runJob(jobId, userId, null);
   }
@@ -108,7 +107,7 @@ public class ProactiveJobAsyncRunner {
    *
    * @param anomaly 실행을 일으킨 이상 탐지 이벤트
    */
-  @Async("pipelineExecutor")
+  @Async("proactiveExecutor")
   public void executeJob(Long jobId, Long userId, AnomalyEvent anomaly) {
     runJob(jobId, userId, anomaly);
   }
@@ -224,15 +223,11 @@ public class ProactiveJobAsyncRunner {
         // baseUrl 이 비어 있는 테넌트에게 "모델을 다시 선택하세요"라는 엉뚱한 안내가 나간다(리뷰 3b).
         AiCredential credential = aiCredentialService.resolve().requireComplete();
 
-        // 모델은 그것을 실제로 쓰는 유형(opencode)에서만 조회한다(Supplier) — sdk/cli/cli-api 는
-        // 모델을 보낸 적이 없고 ai-agent 라우트의 고정 기본값을 쓴다(비용 차이가 있는 의도된 gap).
-        // ai.model 은 테넌트 값 → 코드 기본값으로 항상 해석된다(SettingsService.getValue).
-        String opencodeModel =
-            credential.modelToSend(() -> settingsService.getValue("ai.model").orElseThrow());
-        // 모델 접두사 가드(이슈 #695) — 채팅·분류에는 있었으나 이 경로에만 없어서, ai.model 이 낡은
-        // opencode 테넌트의 잡은 ai-agent 안쪽에서 원인 불명으로 실패했다. 모델을 보내지 않는
-        // 유형에서는 null 이 넘어가 no-op 이다(세 경로 같은 검사·같은 문구).
-        credential.requireModelUsable(opencodeModel);
+        // 모델은 유형과 무관하게 채팅·분류와 같은 테넌트 ai.model 을 싣는다(WD-766).
+        // 테넌트 값 → 코드 기본값으로 해석되므로 비지 않는다(SettingsService.getValue).
+        String model = settingsService.getValue("ai.model").orElseThrow();
+        // 모델 형식 가드(이슈 #695) — 채팅·분류와 같은 검사·같은 문구(AiCredential.modelProblem).
+        credential.requireModelUsable(model);
 
         // AI 실행
         ProactiveResult result =
@@ -241,7 +236,7 @@ public class ProactiveJobAsyncRunner {
                 job.prompt(),
                 context,
                 credential,
-                opencodeModel,
+                model,
                 template,
                 job.config(),
                 executionId);

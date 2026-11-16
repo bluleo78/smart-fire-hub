@@ -14,6 +14,7 @@
    - 1-4. Semantic Status Tokens
    - 1-5. Theme Variants (ocean / sunset)
    - 1-6. Domain & Accent Tokens
+   - 1-7. 영역 경계 단계 (Boundary Scale) — 배경 3단·테두리 3단
 2. [Hard-coded Color Audit — 하드코딩 색상 감사](#2-hard-coded-color-audit--하드코딩-색상-감사)
 3. [Border Radius Scale — 모서리 반경 스케일](#3-border-radius-scale--모서리-반경-스케일)
 4. [Z-Index Scale — 레이어 순서 스케일](#4-z-index-scale--레이어-순서-스케일)
@@ -49,13 +50,13 @@ Smart Fire Hub의 색상 시스템은 CSS 커스텀 프로퍼티(CSS Custom Prop
 ### 1-1. Light Theme (`:root`)
 
 라이트 모드의 기본 색상 토큰이다. `:root` 선택자에 정의되며 기본값으로 적용된다.
-아래 값은 `apps/firehub-web/src/index.css`의 현행 정의와 일치한다(#365·#367·#370 반영).
+아래 값은 `apps/firehub-web/src/index.css`의 현행 정의와 일치한다(#365·#367·#370·#376·WD-755 반영).
 
 #### Core UI Tokens
 
 | Token | OKLch 값 | 근사 색상 | 용도 |
 |-------|----------|-----------|------|
-| `--background` | `oklch(0.985 0.002 264)` | Near-white(살짝 푸른) | 페이지 전체 배경 |
+| `--background` | `oklch(0.975 0.003 264)` | Near-white(살짝 푸른) | 페이지 전체 배경 — 흰 카드·패널이 한 단계 떠 보이게 카드보다 한 단계 어둡다(WD-755, [1-7](#1-7-영역-경계-단계-boundary-scale)) |
 | `--foreground` | `oklch(0.145 0 0)` | Near-black | 기본 본문 텍스트 |
 | `--card` | `oklch(1 0 0)` | 흰색 | 카드 컴포넌트 배경 |
 | `--card-foreground` | `oklch(0.145 0 0)` | Near-black | 카드 내 텍스트 |
@@ -68,11 +69,11 @@ Smart Fire Hub의 색상 시스템은 CSS 커스텀 프로퍼티(CSS Custom Prop
 |-------|----------|-----------|------|
 | `--primary` | `oklch(0.45 0.2 264)` | 인디고 | 기본 브랜드 색상, CTA 버튼 배경 |
 | `--primary-foreground` | `oklch(0.985 0 0)` | Near-white | Primary 위 텍스트 (대비 7.54:1) |
-| `--secondary` | `oklch(0.965 0.005 264)` | 연한 회색 | 보조 버튼, 보조 배경 |
+| `--secondary` | `oklch(0.958 0.006 264)` | 연한 회색 | 보조 버튼, 보조 배경 |
 | `--secondary-foreground` | `oklch(0.25 0 0)` | 어두운 회색 | Secondary 위 텍스트 |
-| `--muted` | `oklch(0.965 0.005 264)` | 연한 회색 | 음소거 배경, 비활성 영역 |
+| `--muted` | `oklch(0.958 0.006 264)` | 연한 회색 | 카드 안 머리 띠(표 헤더·패널 헤더), 음소거·비활성 영역 — 카드 위에서 구분되는 세 번째 배경 단계(WD-755) |
 | `--muted-foreground` | `oklch(0.5 0 0)` | 중간 회색 | 플레이스홀더, 부가 설명 텍스트 |
-| `--accent` | `oklch(0.955 0.01 264)` | 연한 회색 | hover·active 상태 배경 |
+| `--accent` | `oklch(0.93 0.01 264)` | 연한 회색 | hover·active 상태 배경 — 머리 띠(`muted`)보다 한 단계 진하다(WD-755, 이전 0.955). ocean·sunset 라이트도 같은 L 0.93 |
 | `--accent-foreground` | `oklch(0.25 0 0)` | 어두운 회색 | Accent 위 텍스트 |
 | `--destructive` | `oklch(0.53 0.22 27.325)` | 빨간색 | 위험·삭제 액션, 에러 상태 |
 | `--destructive-foreground` | `oklch(1 0 0)` | 흰색 | Destructive 배경 위 텍스트 (5.83:1) |
@@ -81,8 +82,9 @@ Smart Fire Hub의 색상 시스템은 CSS 커스텀 프로퍼티(CSS Custom Prop
 
 | Token | OKLch 값 | 근사 색상 | 용도 |
 |-------|----------|-----------|------|
-| `--border` | `oklch(0.94 0.005 264)` | 연한 회색 | 일반 테두리 |
-| `--input` | `oklch(0.92 0.005 264)` | 연한 회색 | Input 컴포넌트 테두리 |
+| `--border` | `oklch(0.88 0.006 264)` | 한색 회색 | 카드·패널·섹션 등 덩어리 외곽 테두리 (WD-755) |
+| `--divider` | `oklch(0.93 0.005 264)` | 연한 회색 | 목록·표 행 사이 구분선 — `divide-y`·`divide-x` 기본 색, 행 아래 선은 `row-divider` 유틸리티. 외곽 테두리보다 옅다 (WD-755) |
+| `--input` | `oklch(0.64 0.005 264)` | 중간 회색 | 폼 컨트롤 경계 — 흰 표면 대비 3.37:1, 경계 단계 중 가장 진하다 (#376) |
 | `--ring` | `oklch(0.55 0.15 264)` | 인디고 | 키보드 Focus ring (배경 대비 4.76~4.98:1) |
 | `--radius` | `0.625rem` | — | 모서리 반경 기준값 |
 
@@ -106,7 +108,7 @@ Smart Fire Hub의 색상 시스템은 CSS 커스텀 프로퍼티(CSS Custom Prop
 | `--sidebar-primary-foreground` | `oklch(0.985 0 0)` | Near-white | 사이드바 선택 항목 텍스트 |
 | `--sidebar-accent` | `oklch(0.955 0.015 264)` | 연한 회색 | 사이드바 hover 배경 |
 | `--sidebar-accent-foreground` | `oklch(0.25 0 0)` | 어두운 회색 | 사이드바 hover 텍스트 |
-| `--sidebar-border` | `oklch(0.94 0.005 264)` | 연한 회색 | 사이드바 테두리 |
+| `--sidebar-border` | `var(--border)` | 한색 회색 | 사이드바 테두리 — `--border`를 따라간다(다크 포함, WD-755) |
 | `--sidebar-ring` | `oklch(0.55 0.15 264)` | 인디고 | 사이드바 focus ring |
 
 ---
@@ -114,7 +116,7 @@ Smart Fire Hub의 색상 시스템은 CSS 커스텀 프로퍼티(CSS Custom Prop
 ### 1-2. Dark Theme (`.dark`)
 
 `.dark` 클래스가 `<html>`에 적용될 때 오버라이드되는 토큰이다.
-다크의 표면 토큰(`--card`·`--secondary`·`--muted`·`--accent`·`--border`·`--input`)은 **흰색 알파 합성**으로 정의되어, 어떤 테마 배경 위에서도 같은 위계를 만든다.
+다크의 표면·경계 토큰(`--card`·`--secondary`·`--muted`·`--accent`·`--border`·`--divider`)은 **흰색 알파 합성**으로 정의되어, 어떤 테마 배경 위에서도 같은 위계를 만든다. `--input`만은 표면마다 합성 결과가 달라지면 3:1을 보장할 수 없어 불투명 값으로 고정한다(#376).
 
 #### Core UI Tokens (Dark)
 
@@ -122,7 +124,7 @@ Smart Fire Hub의 색상 시스템은 CSS 커스텀 프로퍼티(CSS Custom Prop
 |-------|----------|------|
 | `--background` | `oklch(0.13 0.015 280)` | Near-black(보라 기미) |
 | `--foreground` | `oklch(0.93 0 0)` | Near-white |
-| `--card` | `oklch(1 0 0 / 3%)` | 배경 위 흰색 3% — 실색은 테마마다 다르다 |
+| `--card` | `oklch(1 0 0 / 4.5%)` | 배경 위 흰색 4.5% — 실색은 테마마다 다르다. 페이지 바탕과 1.04:1 이상 벌어지게 3%에서 올렸다 (WD-755) |
 | `--card-foreground` | `oklch(0.93 0 0)` | Near-white |
 | `--popover` | `oklch(0.18 0.015 280)` | 불투명(팝오버는 뒤가 비치면 안 된다) |
 | `--popover-foreground` | `oklch(0.93 0 0)` | Near-white |
@@ -135,9 +137,9 @@ Smart Fire Hub의 색상 시스템은 CSS 커스텀 프로퍼티(CSS Custom Prop
 | `--primary-foreground` | `oklch(0.17 0.02 280)` | **근검정.** 밝은 액센트 위에 얹는 색 (#365, 5.64:1) |
 | `--secondary` | `oklch(1 0 0 / 5%)` | 흰색 5% |
 | `--secondary-foreground` | `oklch(0.93 0 0)` | Near-white |
-| `--muted` | `oklch(1 0 0 / 5%)` | 흰색 5% |
-| `--muted-foreground` | `oklch(0.6 0 0)` | 중간 회색 (배경 대비 5.09:1) |
-| `--accent` | `oklch(1 0 0 / 7%)` | 흰색 7% |
+| `--muted` | `oklch(1 0 0 / 6.5%)` | 흰색 6.5% — 카드 위 머리 띠가 카드와 구분되게 secondary 보다 한 단계 진하다 (WD-755) |
+| `--muted-foreground` | **`oklch(0.7 0 0)`** (이전 `oklch(0.6 0 0)`) | 중간 회색 — 가장 밝은 표면(두 겹 카드 위 hover, 카드 위 머리 띠 위 hover)에서도 12px 글자가 4.5:1 이 되게 잡는다 (WD-755) |
+| `--accent` | `oklch(1 0 0 / 9%)` | 흰색 9% — 머리 띠(6.5%)보다 확실히 높게(WD-755, 이전 7%). ocean·sunset 다크는 브랜드 색 9% |
 | `--accent-foreground` | `oklch(0.93 0 0)` | Near-white |
 | `--destructive` | `oklch(0.704 0.191 22.216)` | 밝은 빨강 |
 | `--destructive-foreground` | `oklch(0.17 0.02 280)` | 근검정 (#367, 6.64:1) |
@@ -146,8 +148,9 @@ Smart Fire Hub의 색상 시스템은 CSS 커스텀 프로퍼티(CSS Custom Prop
 
 | Token | OKLch 값 | 비고 |
 |-------|----------|------|
-| `--border` | `oklch(1 0 0 / 10%)` | 흰색 10% 알파 |
-| `--input` | `oklch(1 0 0 / 12%)` | 흰색 12% 알파 |
+| `--border` | `oklch(1 0 0 / 16%)` | 흰색 16% 알파 — 덩어리 외곽 테두리 (WD-755) |
+| `--divider` | `oklch(1 0 0 / 9%)` | 흰색 9% 알파 — 목록·표 행 사이 구분선, 외곽보다 옅다 (WD-755) |
+| `--input` | `oklch(0.52 0.01 280)` | **불투명** — 알파 12%는 실측 1.32:1 이었다. 3테마 배경·카드·팝오버 전부에서 3.4:1 이상 (#376) |
 | `--ring` | `oklch(0.65 0.2 264)` | `--primary`와 동일 값 (배경 대비 5.54~5.92:1) |
 
 #### Chart Tokens (Dark)
@@ -172,7 +175,7 @@ Smart Fire Hub의 색상 시스템은 CSS 커스텀 프로퍼티(CSS Custom Prop
 | `--sidebar-primary-foreground` | `oklch(0.17 0.02 280)` | 근검정 (#365) |
 | `--sidebar-accent` | `oklch(1 0 0 / 7%)` | 흰색 7% |
 | `--sidebar-accent-foreground` | `oklch(0.93 0 0)` | Near-white |
-| `--sidebar-border` | `oklch(1 0 0 / 10%)` | 흰색 10% 알파 |
+| `--sidebar-border` | `var(--border)` (상속) | `--border`를 따라간다 (WD-755) |
 | `--sidebar-ring` | `oklch(0.65 0.2 264)` | 밝은 인디고 |
 
 ---
@@ -187,10 +190,17 @@ Smart Fire Hub의 색상 시스템은 CSS 커스텀 프로퍼티(CSS Custom Prop
                    → 흰 카드 및 X/10 · X-subtle 틴트 위에서 4.5:1을 만족해야 한다.
 --X-foreground   : --X를 배경으로 깔았을 때 그 위에 올리는 색. 4.5:1.
 --X-subtle       : 배경 전용. 절대 전경으로 쓰지 않는다.
---input          : 폼 컨트롤 경계 전용. 장식 구분선(--border)과 계약이 다르다.
+--input          : 폼 컨트롤 경계 전용. 영역 외곽(--border)·행 구분선(--divider)과 계약이 다르다.
                    → 컨트롤이 앉는 모든 표면(배경·카드·팝오버) 위에서 합성 후 3:1.
+--border         : 카드·패널·섹션 외곽선.  --divider : 목록·표 행 사이 선.
+                   → 경계 단계 기준(§1-7)을 진다. 단계는 divider < border < input.
 알파 수식자      : text-* / ring-* / outline-* 에 금지.
-                   bg-* / border-* 에는 허용(장식·틴트 용도).
+                   구조 경계(외곽선·행 구분선·영역 구분 면)에도 금지 —
+                   테두리는 값과 무관하게 ✗(border-border/50 · divide-border/30),
+                   면은 bg-muted/·bg-secondary/·bg-accent/ 50 미만 ✗(bg-muted/30),
+                   50 이상은 상태 표시에만 — 구조 띠는 단색 bg-muted (WD-755).
+                   bg-* / border-* 의 알파는 틴트(bg-X/10·border-X/30)와
+                   상태 표시(hover: · data-[state]: 등)에만 허용.
 ```
 
 **결과적으로 지켜야 하는 것들**
@@ -201,6 +211,7 @@ Smart Fire Hub의 색상 시스템은 CSS 커스텀 프로퍼티(CSS Custom Prop
 - 라이트에서 `--X`는 "밝은 배경색"이 아니라 "흰 배경 위에서 읽히는 색"이다. 밝은 앰버를 `--warning`에 넣으면 도트가 1.66:1로 SC 1.4.11조차 못 넘긴다.
 - **`text-X` 전경 아래 깔리는 `bg-X` 틴트는 10%를 넘지 않는다 (#372).** 계약이 4.5:1을 보장하는 범위가 `X/10`까지다. 틴트가 진해질수록 전경과 배경이 같은 색으로 수렴한다 — `bg-primary/30 text-primary`는 light/ocean에서 3.68:1이다. 상태 위계는 배경 농도가 아니라 **보더 농도·글로우**로 표현한다. 전경이 텍스트가 아니라 아이콘이면 SC 1.4.11(3:1)이 적용되므로 예외이며, 테스트 allowlist에 사유와 함께 적는다.
 - **컨트롤 경계 보더는 합성 후 3:1 (#376).** `input`/`textarea`/`select`의 배경은 표면과 1.00~1.06:1로 사실상 같으므로, 보더가 "여기가 입력란이다"를 알리는 **유일한 시각 정보**다 → SC 1.4.11 적용 대상. `--input`을 `--border`와 같은 "옅은 구분선" 명도로 잡으면 안 된다(라이트 0.92 = 1.21:1이었다). 알파를 쓸지 여부가 기준이 아니라 **표면 위에 합성한 뒤의 대비값**이 기준이며, 다크는 표면마다 합성 결과가 달라지므로 불투명 값으로 고정한다. `--input`은 `bg-input`(스위치 트랙)·`dark:bg-input/30`(컨트롤 배경)도 함께 움직이므로 아웃라인 버튼·스위치의 인상이 같이 바뀐다 — 의도된 것이다.
+- **구조 경계는 알파 없이 역할 토큰으로 (WD-755).** 덩어리 외곽선은 `border`(`border-border`), 목록·표 행 사이 선은 `divide-y`·`divide-x`(기본 색이 `--divider`) 또는 `row-divider`, 영역 구분 면(머리·바닥 띠·요약 면·표 푸터·사이드 영역)은 알파 없는 단색 `bg-muted`를 쓴다. `border-border/50`·`divide-border/30`·`bg-muted/30`처럼 알파로 흐리게 하면 경계 단계([1-7](#1-7-영역-경계-단계-boundary-scale))가 화면마다 무너져 "영역이 한 면에 붙어 보이는" 문제가 다시 생긴다. 게이트 기준은 [1-7 「알파 규칙」](#알파-규칙--게이트-기준)과 같다. 상태 표시(`hover:bg-muted/50`, `data-[state=selected]:bg-muted` 등)의 알파는 허용하되, 그 상태가 **놓인 바탕과 구분되는지**는 확인한다. 불가피한 예외는 `boundary-alpha-gate.test.ts`의 allowlist에 파일·유틸·사유와 함께 적는다.
 - **예외(문서화된 것)**: `aria-invalid:ring-destructive/20` 계열. 포커스 표시가 아니라 오류 상태 보조 표시이고, 같은 요소의 `aria-invalid:border-destructive`가 3:1을 담당한다.
 
 **자동 검증**
@@ -208,7 +219,9 @@ Smart Fire Hub의 색상 시스템은 CSS 커스텀 프로퍼티(CSS Custom Prop
 | 검사 | 위치 |
 |---|---|
 | 토큰 값 대비(라이트·다크 × indigo/ocean/sunset 6조합) | `apps/firehub-web/src/styles/design-tokens.contrast.test.ts` |
+| 영역 경계 단계(배경 3단·테두리 3단, 6조합) | `apps/firehub-web/src/styles/design-tokens.contrast.test.ts` 「경계 단계」 |
 | 알파 수식자 금지 게이트(allowlist 포함) | `apps/firehub-web/src/styles/alpha-utility-gate.test.ts` |
+| 흐린 경계 금지 게이트 — 구조 테두리·영역 구분 면의 알파(allowlist 포함) | `apps/firehub-web/src/styles/boundary-alpha-gate.test.ts` |
 | 포커스 링 실렌더 불투명도 + 테마 모드 버튼 a11y | `apps/firehub-web/e2e/pages/a11y-focus-theme-controls.spec.ts` |
 
 > 과거 이 문서는 "채도 0의 의도적 무채색 팔레트"를 기술했으나, 현재 팔레트는 인디고 브랜드 기반의 **유채색**이며 테마 변형(ocean/sunset)까지 갖고 있다. 무채색 서술은 폐기됐다.
@@ -303,7 +316,7 @@ Smart Fire Hub의 색상 시스템은 CSS 커스텀 프로퍼티(CSS Custom Prop
 
 사용자가 사이드바 사용자 메뉴에서 고르는 색 테마. `<html>`에 `theme-ocean` / `theme-sunset` 클래스가 붙는다(기본 indigo는 클래스 없음 — `:root`/`.dark`의 기본값이 곧 indigo다).
 
-변형 블록은 `--primary` · `--ring` · `--sidebar-primary` · `--sidebar-ring` · `--chart-1` · `--accent` 계열만 덮어쓴다.
+변형 블록은 `--primary` · `--ring` · `--sidebar-primary` · `--sidebar-ring` · `--chart-1` · `--accent` 계열만 덮어쓴다. 다크 변형은 여기에 바탕 계열(`--background`·`--card`·`--popover`·`--sidebar`)을 테마 색조로 더 덮어쓴다 — 다크 `--card`는 브랜드 색 4.5% 알파(ocean `oklch(0.75 0.12 195 / 4.5%)`, sunset `oklch(0.72 0.15 50 / 4.5%)`)로, indigo 와 같은 경계 단계를 지킨다(WD-755, [1-7](#1-7-영역-경계-단계-boundary-scale)).
 
 | 조합 | `--primary` | hex | `--primary-foreground` 대비 | `bg-primary/10` 틴트 위 `text-primary` |
 |---|---|---|---|---|
@@ -401,6 +414,99 @@ orange 계열 주의/경고 색상. warning(amber)보다 강한 주의를 표현
 <span className="text-dtype-number">#</span> {/* 숫자 계열 */}
 <span className="text-dtype-date">D</span>   {/* 날짜/시간 */}
 ```
+
+---
+
+### 1-7. 영역 경계 단계 (Boundary Scale)
+
+페이지 바탕과 카드가 거의 같고 테두리가 옅어서 카드·패널·목록 행·입력 영역이 한 면에 붙어 보이던 문제(WD-755)를 막기 위해, 바탕과 테두리를 각각 **세 단계**로 정하고 단계 사이 대비를 시험으로 고정한다. 화면은 단계를 직접 만들지 말고(알파 수식자 금지, [1-3](#1-3-역할-계약-role-contract--토큰을-쓰기-전에-반드시-읽을-것)) 역할에 맞는 토큰을 고른다.
+
+값은 [§1-1](#1-1-light-theme-root)·[§1-2](#1-2-dark-theme-dark)(테마 변형은 [§1-5](#1-5-theme-variants--테마-변형-ocean--sunset))가 기준이다. 여기는 단계 순서와 대비 기준만 적는다.
+
+#### 배경 3단 — 페이지 `background` < 카드 `card` < 머리 띠 `muted` (+ hover 면 `accent`)
+
+| 단계 | 토큰 | 쓰는 곳 |
+|---|---|---|
+| 1 | `--background` | 페이지 바탕 |
+| 2 | `--card` | 카드·패널·섹션 |
+| 3 | `--muted` | 카드 안 머리 띠(표 헤더·패널 헤더)·영역 구분 면 |
+| 상태 | `--accent` | hover·선택·열림 면 — 머리 띠보다 한 단계 위라 띠 안 버튼·메뉴의 hover 도 보인다 |
+
+라이트 `--secondary`는 `--muted`와 같은 값이다. 라이트는 카드가 바탕보다 밝아 "떠 있고", 머리 띠는 카드보다 어둡게 들어가 있으며 hover 면은 그보다 한 단계 더 어둡다. 다크는 흰색 알파가 쌓일수록 밝아지는 고도 모델([11-dark-mode.md](./11-dark-mode.md) §C)이라 바탕 → 카드 → 머리 띠 → hover 순으로 밝아진다.
+
+#### 테두리 3단 — 행 구분선 `divider` < 외곽 `border` < 입력 `input`
+
+| 단계 | 토큰 | 쓰는 곳 |
+|---|---|---|
+| 1 | `--divider` | 목록·표 행 사이 선 |
+| 2 | `--border` · `--sidebar-border`(= `var(--border)`) | 카드·패널·섹션·사이드바 외곽선 |
+| 3 | `--input` | 폼 컨트롤 경계 — 다크도 불투명, 값은 #376 계약 그대로 |
+
+#### 단계 대비 기준
+
+다크 반투명 토큰은 **바탕 → 카드 → 토큰** 순으로 실제로 겹쳐 합성한 뒤 잰다. 6조합(라이트·다크 × indigo/ocean/sunset) 모두에서 지켜야 한다.
+
+| 관계 | 기준 |
+|---|---|
+| 카드 / 페이지 바탕 | 1.04:1 이상 |
+| 카드 / 메인 그라디언트(`.bg-gradient-main`)의 가장 밝은 지점 | 1.04:1 이상 — 라이트 그라디언트는 흰색이 아니라 `--background`(L 0.975)에서 시작한다(WD-755) |
+| 머리 띠(`muted`) / 카드 | 1.12:1 이상 |
+| hover 면(`accent`) / 머리 띠(`muted`) | 1.04:1 이상 — 다크는 카드 위 띠 위에 겹친 실색으로 잰다 |
+| 외곽 `border` / 카드 | 1.4:1 이상 |
+| 외곽 `border` / 페이지 바탕 | 1.3:1 이상 |
+| 행 구분선 `divider` / 카드 | 1.2:1 이상, 그리고 `border`보다 옅다 |
+| 입력 `input` | 세 테두리 중 가장 진하다(합성 후 3:1 은 #376 이 따로 지킨다) |
+| `muted-foreground` / 두 겹 카드 위 머리 띠·hover, 카드 위 머리 띠 위 hover | 4.5:1 이상 — 표면·hover 를 진하게 하며 줄어든 글자 대비를 다크 `--muted-foreground`를 올려 지킨다 |
+
+`--border`·`--divider`는 SC 1.4.11(3:1) 대상인 "컨트롤 식별 경계"가 아니라 **영역을 나누는 선**이라 위 단계 기준을 따른다. 컨트롤 경계는 `--input`(3:1)이 맡는다.
+
+#### 알파 규칙 — 게이트 기준
+
+`boundary-alpha-gate.test.ts`가 지키는 기준과 문서 규칙은 같다.
+
+| 대상 | 규칙 |
+|---|---|
+| 구조 테두리 색 — `border(-t/-b/-x…)-{border,divider,muted,muted-foreground,input,sidebar-border}/NN`, `divide(-x/-y)-…/NN` | 알파 값과 무관하게 **금지** |
+| 면 — `bg-muted/NN`·`bg-secondary/NN`·`bg-accent/NN`, NN **50 미만** | **금지** (게이트가 잡는다) |
+| 면 — 같은 유틸, NN **50 이상** | 게이트는 잡지 않지만 **상태 표시에만** 쓴다(hover·선택·펼침 등). 영역을 가르는 구조 띠(머리·바닥 띠, 요약 면, 표 푸터)는 단색 `bg-muted` |
+| 상태 접두(`hover:`·`focus:`·`data-[state=…]:`·`aria-selected:`·`group-hover:`·`peer-*:` 등)가 붙은 것 | 게이트 대상 아님 — 단 놓인 바탕과 구분되는지 확인한다 |
+
+상태와 바탕이 구분되는지 볼 때 자주 틀리는 두 경우:
+
+- **hover 는 단색.** 쉬는 면이 `bg-card`(또는 `Card`)인 요소의 hover 는 단색(`hover:bg-muted`·`hover:bg-accent`)으로 준다. `hover:bg-muted/50`·`hover:bg-accent/50`은 면을 덧칠하는 게 아니라 **갈아 끼우므로**, 다크에서 머리 띠·hover 알파의 절반이 되어 쉬는 카드(흰 4.5%)와 같거나 더 어두워진다 — hover 가 사라지거나 거꾸로 보인다. 화면 주석은 `// hover 는 단색 — design-tokens §1-7 (WD-755)` 한 줄로 이 절을 가리킨다.
+- **단색 `bg-muted` 띠 안의 버튼 hover·열림**은 기본 hover 면 `bg-accent`(outline·ghost 버튼의 기본값)로 충분하다 — `accent`가 `muted`보다 한 단계 위라 띠 위에서 갈린다. `hover:bg-muted`는 띠와 같은 색이라 쓰지 않고, `hover:bg-card` 같은 화면별 예외도 붙이지 않는다(WD-755 정리에서 걷어냈다).
+
+#### 행 구분선 — `divide-*` 기본 색과 `row-divider`
+
+- `divide-y`·`divide-x`는 색을 주지 않으면 `--divider`를 쓴다(`index.css` `@layer base`의 `:where(.divide-y > :not(:last-child))`·`:where(.divide-x > :not(:last-child))` 규칙). Tailwind v4의 `divide-y`는 자식의 아래 테두리(`border-bottom`), `divide-x`는 `border-inline-end`만 그리므로 규칙도 그 쪽 색만 바꾼다 — 자식이 스스로 그린 위·왼쪽 외곽선은 `border` 단계로 남는다. 선택자 전체가 `:where()`라 특이도가 0이고 base 레이어라, 화면이 `divide-border` 등 색 유틸리티를 주면 그쪽이 이긴다 — 행 사이가 아니라 덩어리 사이를 가르는 곳에서만 그렇게 쓴다. (`divide-y-reverse`를 쓰면 선이 위쪽으로 옮겨 가 이 기본 색이 적용되지 않는다 — 그때는 `divide-divider`를 직접 준다.)
+- 표 `tr`·가상 목록 행처럼 부모에 `divide-*`를 걸기 어려운 행의 아래 선은 `row-divider` 유틸리티(아래 1px 선 + `--divider` 색)를 쓴다. `border-b border-border/50` 으로 흉내 내지 않는다.
+- `row-divider`는 `divide-y`와 같은 뜻으로 **마지막 자식에는 선을 그리지 않는다**(`&:not(:last-child)`). 호출부에 `last:border-b-0`·`last:border-0`을 붙이지 않는다 — 특히 `last:border-0`은 행 왼쪽 표식(`border-l-*`)까지 지운다. 표에서는 `td`가 아니라 `tr`에 붙인다(`td`에 붙이면 마지막 열에서 선이 빠진다).
+
+```tsx
+{/* ✅ 목록: 부모에 divide-y — 행 사이 선은 자동으로 --divider */}
+<ul className="divide-y rounded-lg border bg-card">…</ul>
+
+{/* ✅ 표 행·가상 목록 행 */}
+<tr className="row-divider hover:bg-muted/50">…</tr>
+
+{/* ✅ 카드 안 머리 띠 */}
+<div className="border-b bg-muted px-4 py-2 text-xs text-muted-foreground">…</div>
+
+{/* ❌ 구조 경계에 알파 — boundary-alpha-gate 가 막는다 */}
+<tr className="border-b border-border/50">…</tr>
+<div className="bg-muted/30">…</div>
+
+{/* ❌ 게이트는 통과하지만 규칙 위반 — 구조 띠에 /50. 단색 bg-muted 로 */}
+<div className="border-b bg-muted/50 px-3 py-1.5">…</div>
+```
+
+#### 자동 검증
+
+| 검사 | 위치 |
+|---|---|
+| 배경 3단·테두리 3단 대비, hover 면(`accent`) / 머리 띠, 두 겹 카드·머리 띠 위 hover 의 `muted-foreground` 4.5:1, `row-divider`·`divide-*` 규칙 모양 | `apps/firehub-web/src/styles/design-tokens.contrast.test.ts` 「경계 단계」 |
+| 렌더된 화면의 카드 면·표 선(본문 행 `--divider`, 머리 행 `--border`, 마지막 행 선 없음·왼쪽 표식 유지) — 라이트·다크 | `apps/firehub-web/e2e/pages/design/boundary-tokens.spec.ts` |
+| 흐린 경계 금지 게이트 — 구조 테두리 알파(`border-border/NN`·`divide-border/NN` 등, 값 무관)와 50 미만의 흐린 면(`bg-muted/NN`·`bg-secondary/NN`·`bg-accent/NN`)을 `src/` 전체에서 찾아 allowlist(파일·유틸·사유) 밖이면 실패. 50 이상의 구조 띠는 게이트 밖이라 리뷰가 본다(「알파 규칙」). `hover:`·`data-[state=…]:`·`group-hover:` 등 상태 접두가 붙은 것은 대상이 아니다 | `apps/firehub-web/src/styles/boundary-alpha-gate.test.ts` |
 
 ---
 
@@ -610,3 +716,4 @@ Tailwind 클래스 외에 **인라인 스타일의 hex/rgb 하드코딩**이 잔
 | 날짜 | 버전 | 내용 |
 |------|------|------|
 | 2026-03-02 | v1.0 | 최초 작성 — Color, Border Radius, Z-Index, Shadow 토큰 현황 감사 및 권장 방향 정의 |
+| 2026-11-16 | v1.1 | 영역 경계 단계(WD-755, §1-7): 배경 3단(background .975 < card < muted .958)·테두리 3단(divider < border .88 < input), 행 구분선 토큰 `--divider` 신설(`divide-*` 기본 색·`row-divider` 유틸), 다크 card 4.5%(ocean·sunset 포함)·muted 6.5%·border 16%·divider 9%. `--input`은 #376 값 유지(표의 옛 0.92·12% 를 현행 값으로 바로잡음). 구조 경계 알파 금지 규칙과 `boundary-alpha-gate.test.ts` 추가. hover 면 `--accent`를 머리 띠보다 한 단계 위로(라이트 0.955 → 0.93, 다크 7% → 9%)·다크 `--muted-foreground` 0.7, `row-divider`가 마지막 행을 스스로 뺀다 |

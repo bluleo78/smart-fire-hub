@@ -9,6 +9,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
@@ -84,8 +85,8 @@ class AiCredentialSwitchGuardTest {
    * instanceof} 로 바꿨고, 그 순간 세 파일이 시야에서 빠졌다.
    *
    * <p>그래서 표식 기반 스캔과 <b>반대 방향</b>의 단언을 하나 더 둔다: 유형별로 갈리는 동작은 전부 {@link AiCredential} 의 메서드여야
-   * 하고({@code applyTo}/{@code isComplete}/ {@code modelProblem}/{@code modelToSend}), 소비처는 타입을 물어보지
-   * 않는다. 정의 파일 자신만 예외다(javadoc 과 구현이 그 이름을 쓴다).
+   * 하고({@code applyTo}/{@code isComplete}/ {@code modelProblem}), 소비처는 타입을 물어보지 않는다. 정의 파일 자신만
+   * 예외다(javadoc 과 구현이 그 이름을 쓴다).
    */
   @Test
   void 유형별_동작은_소비처의_instanceof_가_아니라_AiCredential_의_메서드여야_한다() {
@@ -112,6 +113,13 @@ class AiCredentialSwitchGuardTest {
     } catch (IOException e) {
       throw new UncheckedIOException("생산 소스 스캔 실패: " + root, e);
     }
+  }
+
+  /** 봉인 계층의 말단 변형(레코드)만 — 중간 sealed 인터페이스(ClaudeFamily)는 펼친다(WD-766). switch 의 case 는 말단을 적는다. */
+  private static Stream<Class<?>> leafVariants(Class<?> type) {
+    return type.isSealed()
+        ? Arrays.stream(type.getPermittedSubclasses()).flatMap(t -> leafVariants(t))
+        : Stream.of(type);
   }
 
   /** {@code src/main/java} 아래에서 {@link #SWITCH_MARKER} 를 담은 파일을 전부 찾는다. */
@@ -154,7 +162,7 @@ class AiCredentialSwitchGuardTest {
             name)
         .doesNotContainPattern("default\\s*(->|:)");
 
-    for (Class<?> variant : AiCredential.class.getPermittedSubclasses()) {
+    for (Class<?> variant : leafVariants(AiCredential.class).toList()) {
       assertThat(source)
           .as(
               "%s 에 `case AiCredential.%s` 가 없다 — AiCredential 에 변형이 늘 때마다 이 파일도"

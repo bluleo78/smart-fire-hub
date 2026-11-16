@@ -132,7 +132,7 @@ export function TemplateJsonEditor({ value, onChange, readonly = false }: Templa
   return (
     <div className="flex flex-col">
       {!readonly && (
-        <div className="flex items-center gap-1.5 p-2 bg-muted/50 border border-b-0 border-border rounded-t-md flex-wrap">
+        <div className="flex items-center gap-1.5 p-2 bg-muted border border-b-0 border-border rounded-t-md flex-wrap">
           <span className="text-xs text-muted-foreground mr-1">섹션 추가:</span>
           {SECTION_TYPES.map((st) => (
             <Button

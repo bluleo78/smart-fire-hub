@@ -134,7 +134,7 @@ public class AiAgentClient {
     // opencode 모델 형식 가드(전체 브랜치 리뷰 I3) — 기본값 AiBehaviorDefaults.MODEL(슬래시 없음)은
     // opencode 형식이 아니라, 가드 없이 그대로 보내면 OpenAI 호환 호스트가 이유를 알 수 없는 상류
     // 오류로만 실패한다. 여기서 먼저 걸러 분명한 설정 오류로 바꾼다 — 검사와 문구는
-    // AiCredential.modelProblem 하나에서 온다(세 경로 공통). 모델 제약이 없는 유형에서는 no-op 이다.
+    // AiCredential.modelProblem 하나에서 온다(세 경로 공통). Claude 계열은 opencode 형식 값이 남아 있으면 막는다(WD-766).
     credential.requireModelUsable(model);
     return new AiClassifyTarget.ResolvedBinding(model, credential);
   }

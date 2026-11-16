@@ -149,7 +149,9 @@ export const DatasetColumnsTab = React.memo(function DatasetColumnsTab({
               // (#91) NULL 비율 100% → 행 좌측에 destructive 보더 + 미세한 배경, "비어있음" 배지 노출
               const isAllNull = !!stats && stats.nullPercent >= 100;
               const rowClass = [
-                isExpanded ? 'bg-muted/20' : '',
+                // WD-755: 펼친 행은 단색 bg-muted — TableRow 의 hover(hover:bg-muted/50)와 같은 값이면
+                // 펼침 상태와 마우스 hover 를 구분할 수 없어서 한 단계 진한 면으로 둔다.
+                isExpanded ? 'bg-muted' : '',
                 isAllNull ? 'border-l-4 border-l-destructive bg-destructive/5' : '',
               ]
                 .filter(Boolean)

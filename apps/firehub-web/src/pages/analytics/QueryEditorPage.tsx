@@ -923,7 +923,7 @@ export default function QueryEditorPage() {
               : 'hidden md:flex md:w-0 md:border-0'
           )}
         >
-          <div className="flex items-center justify-between px-3 py-2 border-b bg-muted/30 shrink-0">
+          <div className="flex items-center justify-between px-3 py-2 border-b bg-muted shrink-0">
             <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
               테이블 목록
             </span>

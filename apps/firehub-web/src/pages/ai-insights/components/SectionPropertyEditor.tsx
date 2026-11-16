@@ -204,7 +204,7 @@ export function SectionPropertyEditor({ section, onUpdate }: SectionPropertyEdit
           <div className="space-y-1.5">
             {/* 아래는 입력이 아니라 정적 안내 블록이므로 label 이 아니라 span 이다 (#432) */}
             <span className="block text-sm leading-none font-medium">타입 가이드</span>
-            <div className="bg-muted/40 rounded-md p-3 text-xs text-muted-foreground">
+            <div className="bg-muted rounded-md p-3 text-xs text-muted-foreground">
               <span className="font-medium" style={{ color: 'var(--primary)' }}>
                 {typeDef.icon} {typeDef.label}
               </span>

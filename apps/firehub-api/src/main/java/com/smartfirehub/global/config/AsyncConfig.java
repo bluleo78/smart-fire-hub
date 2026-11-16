@@ -38,6 +38,30 @@ public class AsyncConfig {
     return executor;
   }
 
+  /**
+   * 스마트 작업(프로액티브) 리포트 실행 전용 풀({@code ProactiveJobAsyncRunner.executeJob} 의 {@code @Async} 대상,
+   * WD-766).
+   *
+   * <p>리포트 한 건은 ai-agent 응답을 최대 15분({@code app.proactive.agent-timeout}) 블로킹으로 기다리므로, {@link
+   * #pipelineExecutor()} 를 함께 쓰면 파이프라인 실행이 큐에서 밀린다 — 그래서 나눈다. 동시 리포트 수만큼 ai-agent 쪽 LLM 호출이 늘어
+   * 작게(코어 3·최대 5) 잡고, 정각 등에 몰리는 예약 실행은 큐 50 에서 차례를 기다린다.
+   *
+   * <p>넘치면 <b>거절</b>한다(기본 AbortPolicy) — 수동 실행은 컨트롤러가 거절을 받아 실행 슬롯을 놓는다(#149). CallerRuns 면 요청·스케줄러
+   * 스레드가 리포트 하나를 직접 돌게 된다.
+   */
+  @Bean(name = "proactiveExecutor")
+  public Executor proactiveExecutor() {
+    ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+    executor.setCorePoolSize(3);
+    executor.setMaxPoolSize(5);
+    executor.setQueueCapacity(50);
+    executor.setThreadNamePrefix("proactive-exec-");
+    // 테넌트 승계 — 없으면 러너가 RLS 아래에서 조용히 0행이 된다(클래스 javadoc). initialize() 앞이어야 한다.
+    executor.setTaskDecorator(new TenantContextTaskDecorator());
+    executor.initialize();
+    return executor;
+  }
+
   @Bean(name = "exportExecutor")
   public Executor exportExecutor() {
     ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();

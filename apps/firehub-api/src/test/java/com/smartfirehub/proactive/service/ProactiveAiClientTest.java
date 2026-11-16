@@ -18,6 +18,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.util.ReflectionTestUtils;
 
 /**
  * ProactiveAiClient 단위 기능 테스트. WireMock으로 ai-agent 서비스를 스텁하여 execute() 호출 시 HTTP body에 OAuth 토큰이
@@ -52,6 +53,13 @@ class ProactiveAiClientTest extends IntegrationTestBase {
   }
 
   @Autowired private ProactiveAiClient client;
+
+  /** [WD-766] 운영 빈의 제한 시간은 설정 {@code app.proactive.agent-timeout}(기본 15분)에서 온다. */
+  @Test
+  void 제한_시간은_설정값_15분이다() {
+    org.assertj.core.api.Assertions.assertThat(ReflectionTestUtils.getField(client, "timeout"))
+        .isEqualTo(java.time.Duration.ofMinutes(15));
+  }
 
   @Test
   void execute_withOauthToken_putsOauthTokenInBody() {
@@ -168,9 +176,31 @@ class ProactiveAiClientTest extends IntegrationTestBase {
         postRequestedFor(urlEqualTo("/agent/proactive")).withRequestBody(notMatching(".*model.*")));
   }
 
+  /**
+   * [WD-766] 모델은 유형과 무관하게 실린다 — sdk·cli·cli-api 도 호출부가 넘긴 테넌트 ai.model 이 바디의 top-level model 로 간다.
+   */
+  @Test
+  void execute_sdk_cli_cliApi도_model을_바디에_싣는다() {
+    wireMock.stubFor(post(urlEqualTo("/agent/proactive")).willReturn(okJson("{\"sections\":[]}")));
+
+    for (AiCredential credential :
+        java.util.List.<AiCredential>of(
+            new AiCredential.Sdk("oat-test", "sk-x"),
+            new AiCredential.Cli("oat-cli"),
+            new AiCredential.CliApi("sk-cli-api"))) {
+      wireMock.resetRequests();
+      client.execute(1L, "prompt", "{}", credential, "claude-opus-4-1", null, Map.of(), null);
+
+      wireMock.verify(
+          postRequestedFor(urlEqualTo("/agent/proactive"))
+              .withRequestBody(matchingJsonPath("$.agentType", equalTo(credential.agentType())))
+              .withRequestBody(matchingJsonPath("$.model", equalTo("claude-opus-4-1"))));
+    }
+  }
+
   /** opencode 가 아닌 유형이면 provider 전용 네 필드를 모두 생략한다 — sdk/cli/cli-api 호출부. */
   @Test
-  void execute_opencode가_아니면_providerId_baseUrl_model_reasoningEffort를_생략한다() {
+  void execute_opencode가_아니면_providerId_baseUrl_reasoningEffort를_생략한다() {
     wireMock.stubFor(post(urlEqualTo("/agent/proactive")).willReturn(okJson("{\"sections\":[]}")));
 
     client.execute(

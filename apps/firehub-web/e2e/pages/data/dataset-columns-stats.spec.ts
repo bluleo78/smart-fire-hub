@@ -1,4 +1,4 @@
-import { createDatasetDetail } from '../../factories/dataset.factory';
+import { createColumnStats, createDatasetDetail } from '../../factories/dataset.factory';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { grantDatasetPermissions, setupDatasetDetailMocks } from '../../fixtures/dataset.fixture';
@@ -11,44 +11,6 @@ import { grantDatasetPermissions, setupDatasetDetailMocks } from '../../fixtures
  */
 
 const DATASET_ID = 1;
-
-/** 컬럼 통계 모킹 데이터 — id(INTEGER), name(TEXT) 컬럼 각각 통계 포함 */
-function createColumnStats() {
-  return [
-    {
-      columnName: 'id',
-      dataType: 'INTEGER',
-      totalCount: 100,
-      nullCount: 0,
-      nullPercent: 0,
-      distinctCount: 100,
-      minValue: '1',
-      maxValue: '100',
-      avgValue: 50.5,
-      topValues: [
-        { value: '1', count: 1 },
-        { value: '2', count: 1 },
-      ],
-      sampled: false,
-    },
-    {
-      columnName: 'name',
-      dataType: 'TEXT',
-      totalCount: 100,
-      nullCount: 5,
-      nullPercent: 5.0,
-      distinctCount: 95,
-      minValue: null,
-      maxValue: null,
-      avgValue: null,
-      topValues: [
-        { value: '항목 A', count: 10 },
-        { value: '항목 B', count: 8 },
-      ],
-      sampled: false,
-    },
-  ];
-}
 
 /** 기본 모킹 + 컬럼 통계 API 포함 설정 */
 async function setupMocksWithStats(page: import('@playwright/test').Page) {

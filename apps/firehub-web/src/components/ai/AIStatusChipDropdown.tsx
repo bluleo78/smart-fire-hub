@@ -1,6 +1,7 @@
 import { type MutableRefObject,useEffect, useRef, useState } from 'react';
 
 import type { AIMessage,AIMode } from '../../types/ai';
+import { Input } from '../ui/input';
 import { FullscreenIcon,SideIcon } from './AIChipIcons';
 
 interface AIStatusChipDropdownProps {
@@ -58,7 +59,8 @@ function TokenProgressBar({ contextTokens }: { contextTokens: number | null }) {
         <span>토큰 사용량</span>
         <span>{used > 0 ? `${(used / 1000).toFixed(1)}K / 200K` : '- / 200K'}</span>
       </div>
-      <div className="h-1 w-full rounded-full bg-muted/50 overflow-hidden">
+      {/* WD-755: 세션 정보 면(bg-muted) 안의 트랙이라 한 단계 밝은 card — 같은 muted 계열이면 트랙이 사라진다 */}
+      <div className="h-1 w-full rounded-full bg-card overflow-hidden">
         <div
           className="h-full rounded-full transition-all duration-300"
           style={{
@@ -123,7 +125,8 @@ function QuickInput({
 
   return (
     <div className="flex items-center gap-2">
-      <input
+      {/* WD-755: 입력란은 공용 Input(폼 컨트롤 경계 border-input·바탕) — 칩 드롭다운 크기에 맞춰 높이·글자·포커스 링만 줄인다 */}
+      <Input
         ref={inputRef}
         type="text"
         value={value}
@@ -137,7 +140,7 @@ function QuickInput({
           }
         }}
         placeholder="AI에게 질문하기..."
-        className="flex-1 rounded-lg border border-border/50 bg-muted/30 px-3 py-1.5 text-xs text-foreground placeholder:text-muted-foreground outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary transition-colors"
+        className="h-auto flex-1 rounded-lg px-3 py-1.5 text-xs text-foreground shadow-none md:text-xs focus-visible:border-primary/50 focus-visible:ring-1 focus-visible:ring-primary"
       />
       <button
         type="button"
@@ -218,8 +221,8 @@ export function AIStatusChipDropdown({
           <StatusIndicator isStreaming={isStreaming} isThinking={isThinking} />
         </div>
 
-        {/* Session info */}
-        <div className="rounded-lg bg-muted/30 p-2.5 space-y-2">
+        {/* Session info — WD-755: 드롭다운(팝오버) 안에서 갈라지는 정보 면이라 머리 띠 단계 bg-muted, 안쪽 줄 구분은 divider */}
+        <div className="rounded-lg bg-muted p-2.5 space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-[10px] text-muted-foreground uppercase tracking-wider">현재 세션</span>
             <span className="text-xs text-foreground">
@@ -231,7 +234,7 @@ export function AIStatusChipDropdown({
             <span className="text-xs text-foreground">{messages.length}건</span>
           </div>
           {isAIOpen && lastPreview && (
-            <div className="pt-1 border-t border-border/30">
+            <div className="pt-1 border-t border-divider">
               <span className="text-[10px] text-muted-foreground">마지막 응답</span>
               <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed truncate">{lastPreview}</p>
             </div>
@@ -311,7 +314,7 @@ export function AIStatusChipDropdown({
         )}
 
         {/* Footer */}
-        <div className="flex items-center justify-center gap-2 pt-1 border-t border-border/30">
+        <div className="flex items-center justify-center gap-2 pt-1 border-t">
           <span className="text-[11px] text-muted-foreground">
             {isAIOpen ? '⌘K 사이드 토글 | 클릭 모드 순환' : '⌘K 사이드 토글'}
           </span>

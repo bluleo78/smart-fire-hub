@@ -46,7 +46,7 @@ export default function DatasetListWidget({ input, onNavigate, displayMode }: Wi
       {items.length === 0 ? (
         <div className="flex items-center justify-center py-6 text-sm text-muted-foreground">데이터셋이 없습니다.</div>
       ) : (
-        <div className="divide-y divide-border/50">
+        <div className="divide-y">
           {items.map((item) => (
             <button
               key={item.id}
@@ -60,7 +60,7 @@ export default function DatasetListWidget({ input, onNavigate, displayMode }: Wi
                     저장 방식 라벨은 공용 라벨 맵을 쓴다(WD-760) — 예전 자체 판정은 DOCUMENT 밖을 모두 「테이블」로 보여
                     파일(FILE) 데이터셋이 테이블로 잘못 보였다. 모르는 값은 원본 enum 그대로 보인다. */}
                 {item.storageType && (
-                  <span className="shrink-0 rounded-full px-2 py-0.5 text-xs font-medium bg-secondary/10 text-secondary-foreground">
+                  <span className="shrink-0 rounded-full px-2 py-0.5 text-xs font-medium bg-secondary text-secondary-foreground">
                     {getStorageTypeLabel(item.storageType)}
                   </span>
                 )}

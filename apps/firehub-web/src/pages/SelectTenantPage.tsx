@@ -57,8 +57,9 @@ export function SelectTenantPage() {
     return () => { ignore = true; };
   }, [tenantOptions.length]);
 
+  // WD-755: 화면 전체 바탕은 페이지 단계(background) — 그 위 카드(card)가 한 단계 떠 보인다
   return (
-    <div className="flex min-h-dvh items-center justify-center bg-muted/30 p-4">
+    <div className="flex min-h-dvh items-center justify-center bg-background p-4">
       {/* URL 은 원래 가려던 경로 그대로라 경로 기반 탭 제목이 엉뚱한 화면 이름이 된다 — 선택 화면 이름으로 덮어쓴다(WD-580) */}
       <PageTitleOverride label={SELECT_TENANT_TITLE} />
       <div className="w-full max-w-md space-y-4">

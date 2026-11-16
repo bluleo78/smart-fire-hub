@@ -98,7 +98,8 @@ export function FileUploadZone({
       className={cn(
         'flex flex-col items-center justify-center rounded-lg border-2 border-dashed p-8 transition-colors cursor-pointer',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
-        isDragOver ? 'border-primary bg-primary/5' : 'border-muted-foreground/25',
+        // WD-755: 눌러서 파일을 고르는 컨트롤이라 경계는 폼 컨트롤 단계(border-input, #376 3:1)
+        isDragOver ? 'border-primary bg-primary/5' : 'border-input',
         disabled && 'opacity-50 cursor-not-allowed'
       )}
     >

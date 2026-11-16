@@ -314,12 +314,13 @@ export default function DatasetListPage() {
             <span>최근 접근</span>
           </div>
           <div className="flex overflow-x-auto gap-3 pb-2">
-            {/* 키보드 접근성(WD-396): 카드는 상세 링크다 — Tab 으로 닿고 Enter 로 열린다(예전엔 div onClick 이라 마우스로만 열렸다). */}
+            {/* 키보드 접근성(WD-396): 카드는 상세 링크다 — Tab 으로 닿고 Enter 로 열린다(예전엔 div onClick 이라 마우스로만 열렸다).
+                WD-755: hover 는 단색 — design-tokens §1-7 */}
             {recents.map((recent) => (
               <Link
                 key={recent.id}
                 to={`/data/datasets/${recent.id}`}
-                className="block p-3 min-w-[200px] max-w-[250px] cursor-pointer hover:bg-accent/50 transition-colors flex-shrink-0 rounded-lg border bg-card shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="block p-3 min-w-[200px] max-w-[250px] cursor-pointer hover:bg-accent transition-colors flex-shrink-0 rounded-lg border bg-card shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <p className="font-medium truncate">{recent.name}</p>
                 <p className="text-xs text-muted-foreground font-mono truncate mt-0.5">
@@ -627,7 +628,7 @@ export default function DatasetListPage() {
                     <div className="flex max-w-[6rem] gap-1">
                       <DatasetTypeBadge
                         info={describeStorageType(dataset.storageType)}
-                        className="bg-secondary/10 text-secondary-foreground"
+                        className="bg-secondary text-secondary-foreground"
                       />
                       <DatasetTypeBadge info={describeOriginType(dataset.originType)} className="bg-primary/10 text-primary" />
                     </div>

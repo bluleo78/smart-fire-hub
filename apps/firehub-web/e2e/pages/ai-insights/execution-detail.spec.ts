@@ -147,6 +147,36 @@ test.describe('실행 상세 페이지', () => {
     await expect(page.locator('[data-slot="badge"]').filter({ hasText: '실패' })).toBeVisible();
   });
 
+  /**
+   * WD-766 — 리포트 실행이 제한 시간을 넘기면 서버가 「AI 응답이 제한 시간(N분)을 넘겨 …」를 남긴다.
+   * 분류기가 이 문구를 몰라 「기타 오류 / 관리자에게 문의」로 보이던 것을, 다시 실행·범위 줄이기 안내로 보이게 한다.
+   */
+  test('AI 응답 시간 초과 실패는 기타 오류가 아니라 다시 실행·범위 줄이기를 안내한다 (WD-766)', async ({ authenticatedPage: page }) => {
+    const reason = 'AI 응답이 제한 시간(15분)을 넘겨 리포트를 만들지 못했습니다. 잠시 후 다시 시도하거나 작업 범위를 줄여 주세요.';
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/proactive/jobs/1/executions/7',
+      createJobExecution({ id: 7, jobId: 1, status: 'FAILED', errorMessage: reason, deliveredChannels: [] }),
+    );
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+
+    await page.goto('/ai-insights/jobs/1/executions/7');
+
+    const card = page.getByTestId('execution-error');
+    await expect(card).toBeVisible();
+    await expect(card.getByRole('heading', { name: 'AI 응답 시간 초과' })).toBeVisible();
+    // 서버 원문 사유는 그대로 보인다
+    await expect(card.getByText(reason)).toBeVisible();
+    await expect(card).toContainText('잠시 후 다시 실행');
+    await expect(card).toContainText('데이터·기간을 줄여');
+    // 예전 오분류(기타 오류 + 관리자 문의)·설정 확인 안내가 아니어야 한다
+    await expect(card).not.toContainText('기타 오류');
+    await expect(card).not.toContainText('관리자에게 문의');
+    await expect(card).not.toContainText('AI 인증 정보');
+    await expect(page.locator('[data-slot="badge"]').filter({ hasText: '실패' })).toBeVisible();
+  });
+
   test('작업 주인 정지로 건너뛴 실행은 오류가 아닌 건너뜀으로 보인다 (WD-191)', async ({ authenticatedPage: page }) => {
     // 서버는 건너뜀도 status=FAILED 로 남긴다 — 사유 문구로 건너뜀을 가려내야 한다
     const reason = '작업 주인이 정지됐거나 워크스페이스에서 제거돼 실행하지 않았습니다';

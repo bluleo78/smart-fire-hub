@@ -84,9 +84,9 @@ public class AiChatRequestBuilder {
     // 걸러낸다. 비밀 값은 아래 credential.applyTo() 로만 바디에 들어간다.
     Map<String, String> aiSettings = settingsService.getAsMap("ai");
 
-    // ai.model 은 유형과 무관하게 한 번 읽어 넘긴다 — 모델 제약이 없는 유형에서는 modelProblem 이
-    // 항상 null 이다. opencode 에서 형식이 틀린 모델은 ai-agent 가 SSE 헤더를 보낸 뒤에야 실패해
-    // 원인이 사라지므로 여기서 먼저 막는다.
+    // ai.model 은 유형과 무관하게 한 번 읽어 넘긴다. 형식이 틀린 모델(opencode 의 공급자 불일치, Claude 계열에 남은
+    // opencode 형식 값 — WD-766)은 ai-agent 가 SSE 헤더를 보낸 뒤에야 실패해 원인이 사라지므로 여기서 먼저 막는다.
+    // 프로액티브·분류와 같은 검사·같은 문구다(AiCredential.modelProblem).
     String model = aiSettings.get("ai.model");
     String problem = credential.modelProblem(model);
     if (problem != null) {

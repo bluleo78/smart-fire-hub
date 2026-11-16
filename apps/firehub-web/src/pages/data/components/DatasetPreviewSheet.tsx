@@ -98,7 +98,7 @@ export function DatasetPreviewSheet({ datasetId, datasetName, open, onOpenChange
             <div className="overflow-x-auto rounded-md border">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b bg-muted/50">
+                  <tr className="border-b bg-muted">
                     {previewData.columns.map((col) => (
                       <th key={col.columnName} className="px-3 py-2 text-left font-medium text-muted-foreground whitespace-nowrap">
                         {/* 컬럼명 + 타입 보조 표시 (#111) — 사용자가 데이터 형태를 빠르게 파악 */}
@@ -114,7 +114,7 @@ export function DatasetPreviewSheet({ datasetId, datasetName, open, onOpenChange
                 </thead>
                 <tbody>
                   {previewData.rows.map((row, i) => (
-                    <tr key={i} className="border-b last:border-0 hover:bg-muted/30">
+                    <tr key={i} className="row-divider hover:bg-muted/30">
                       {previewData.columns.map((col) => (
                         <td key={col.columnName} className="px-3 py-2 whitespace-nowrap max-w-[200px] truncate">
                           {row[col.columnName] == null ? (

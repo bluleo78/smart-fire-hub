@@ -236,7 +236,7 @@ function ToolCallDisplay({ toolCall, isStreaming }: { toolCall: AIToolCall; isSt
       // 차단 행만 경고 톤 카드로 칠해 여러 도구 행 사이에서 눈에 띄게 하고, 같은 경고색인 "실행 중..."과도 구분한다
       className={cn(
         'my-1 rounded border px-2 py-1 text-xs',
-        blocked ? 'border-warning bg-warning-subtle' : 'border-border/50 bg-background/50',
+        blocked ? 'border-warning bg-warning-subtle' : 'border-border bg-background/50',
       )}
     >
       {/* 아이콘 칸과 본문 칸을 나눈다 — 차단 사유 줄이 본문 칸 안에 들어가 패딩 없이 라벨 시작선에 맞는다(이모지 폭 무관) */}

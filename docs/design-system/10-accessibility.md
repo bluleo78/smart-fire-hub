@@ -11,7 +11,7 @@
 | 일반 텍스트 (< 18px) | 4.5:1 | foreground oklch(0.145) on background oklch(1) ≈ 19:1 ✅ |
 | 큰 텍스트 (≥ 18px bold) | 3:1 | ✅ |
 | muted-foreground on background | 4.5:1 | oklch(0.556) on oklch(1) ≈ 5.3:1 ✅ |
-| UI 컴포넌트 (테두리, 아이콘) | 3:1 | border oklch(0.922) on oklch(1) ≈ 1.2:1 ⚠️ (비필수 테두리로 허용 가능) |
+| UI 컴포넌트 (테두리, 아이콘) | 3:1 | 폼 컨트롤 경계 `--input` oklch(0.64) on oklch(1) ≈ 3.37:1 ✅ (#376). 영역 외곽 `--border`·행 구분선 `--divider`는 컨트롤 식별 경계가 아니라 영역을 나누는 선이라 3:1 대신 경계 단계 기준(카드 위 1.4:1·1.2:1 이상)을 따른다 — [01 §1-7](./01-design-tokens.md#1-7-영역-경계-단계-boundary-scale) (WD-755) |
 | 비활성(Disabled) 상태 | N/A | 의도적으로 낮은 대비 |
 
 ---

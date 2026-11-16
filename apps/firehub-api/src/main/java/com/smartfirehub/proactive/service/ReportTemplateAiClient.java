@@ -22,9 +22,9 @@ import reactor.netty.http.client.HttpClient;
 /**
  * ai-agent 의 리포트 양식 섹션 생성 엔드포인트({@code POST /agent/template-sections/generate}) 클라이언트(WD-455).
  *
- * <p>프로액티브 실행용 {@link ProactiveAiClient}(5분 상한)와 따로 둔 이유: 이 호출은 사용자가 화면에서 버튼을 누르고 기다리는 동기 요청이라 훨씬
- * 짧은 상한이 필요하고, 실패하면 화면이 고정 구성으로 대신한다. 자격증명·모델은 분류({@code AiAgentClient})와 같은 방식으로 테넌트 설정에서 해석해 바디로
- * 넘긴다 — 필드 조립은 {@link AiCredential#applyTo(Map)} 하나뿐이다.
+ * <p>프로액티브 실행용 {@link ProactiveAiClient}(상한은 설정값, 기본 15분)와 따로 둔 이유: 이 호출은 사용자가 화면에서 버튼을 누르고 기다리는 동기
+ * 요청이라 훨씬 짧은 상한이 필요하고, 실패하면 화면이 고정 구성으로 대신한다. 자격증명·모델은 분류({@code AiAgentClient})와 같은 방식으로 테넌트 설정에서
+ * 해석해 바디로 넘긴다 — 필드 조립은 {@link AiCredential#applyTo(Map)} 하나뿐이다.
  */
 @Slf4j
 @Component

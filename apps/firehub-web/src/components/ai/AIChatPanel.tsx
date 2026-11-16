@@ -56,7 +56,8 @@ export function AIChatPanel({ showModeSwitch = true, showSessionSwitcher = true,
 
   return (
     // data-ai-chat-panel: ChatInput 열림 포커스 가드의 패널 경계(WD-579)
-    <div data-ai-chat-panel className={`flex flex-col h-full bg-background ${className || ''}`}>
+    // 채팅 면은 카드 단계(WD-755) — 사이드·떠 있는 패널이 페이지 바탕과 한 면으로 붙지 않고, muted 말풍선이 한 단계 위로 읽힌다
+    <div data-ai-chat-panel className={`flex flex-col h-full bg-card ${className || ''}`}>
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b gap-2">
         <div className="flex items-center gap-2 min-w-0">

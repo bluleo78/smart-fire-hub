@@ -173,6 +173,10 @@ class ProactiveJobAsyncRunnerTest {
     lenient().when(executionRepository.updateError(eq(EXECUTION_ID), anyString())).thenReturn(true);
     // 이상 탐지 실행(WD-171)은 4인자 수집을 쓰므로 이 기본 스텁을 쓰지 않는다 — lenient
     lenient().when(contextCollector.collectContext(any(), eq(JOB_ID), any())).thenReturn("{}");
+    // WD-766: 러너는 유형과 무관하게 ai.model 을 읽는다 — 운영처럼 코드 기본값을 돌려준다(opencode 테스트는 덮어쓴다).
+    lenient()
+        .when(settingsService.getValue("ai.model"))
+        .thenReturn(Optional.of(AiBehaviorDefaults.MODEL));
   }
 
   /**
@@ -182,7 +186,7 @@ class ProactiveJobAsyncRunnerTest {
    * 빈 채로 조립돼 프로액티브 리포트 생성이 깨진다.
    *
    * <p>이슈 #695 이후 이 러너는 평면 문자열로 풀어내지 않고 {@link AiCredential} 을 그대로 넘긴다 — 바디 조립은 {@code applyTo()} 한
-   * 곳이 맡는다. 그래서 여기서는 "해석된 자격증명이 손상 없이 그대로 전달되는가"와 "opencode 에서만 모델이 함께 실리는가"를 본다.
+   * 곳이 맡는다. 그래서 여기서는 "해석된 자격증명이 손상 없이 그대로 전달되는가"와 "테넌트 ai.model 이 함께 실리는가"(WD-766 부터 모든 유형)를 본다.
    */
   @Test
   void opencode_자격증명이면_에이전트에_자격증명과_모델이_그대로_전달된다() {
@@ -441,18 +445,34 @@ class ProactiveJobAsyncRunnerTest {
     verify(aiClient, never()).execute(any(), any(), any(), any(), any(), any(), any(), any());
   }
 
-  /** sdk 자격증명이면 모델을 아예 보내지 않는다 — ai-agent 라우트의 고정 기본값이 그대로 산다. */
+  /** [WD-766] sdk·cli·cli-api 도 채팅과 같은 테넌트 {@code ai.model} 을 싣는다(고정 haiku 가 아니다). */
   @Test
-  void sdk_자격증명이면_모델을_보내지_않는다() {
-    when(aiCredentialService.resolve()).thenReturn(new AiCredential.Sdk("", "sk-anthropic"));
-    when(aiClient.execute(
-            eq(USER_ID), anyString(), anyString(), any(), isNull(), any(), any(), any()))
+  void sdk_cli_cliApi_자격증명도_테넌트_ai모델을_싣는다() {
+    when(settingsService.getValue("ai.model")).thenReturn(Optional.of("claude-opus-4-1"));
+    when(aiClient.execute(any(), any(), any(), any(), any(), any(), any(), any()))
         .thenReturn(new ProactiveResult("제목", List.of(), null, null, "요약 내용", null));
 
-    runner.executeJob(JOB_ID, USER_ID);
+    for (AiCredential credential :
+        List.<AiCredential>of(
+            new AiCredential.Sdk("", "sk-anthropic"),
+            new AiCredential.Cli("oat-cli"),
+            new AiCredential.CliApi("sk-cli-api"))) {
+      clearInvocations(aiClient);
+      when(aiCredentialService.resolve()).thenReturn(credential);
 
-    verify(aiClient)
-        .execute(eq(USER_ID), anyString(), anyString(), any(), isNull(), any(), any(), any());
+      runner.executeJob(JOB_ID, USER_ID);
+
+      verify(aiClient)
+          .execute(
+              eq(USER_ID),
+              anyString(),
+              anyString(),
+              eq(credential),
+              eq("claude-opus-4-1"),
+              any(),
+              any(),
+              any());
+    }
   }
 
   /**

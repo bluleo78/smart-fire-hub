@@ -81,7 +81,7 @@ export default function DatasetFilesWidget({
           {/* S3 스타일 목록: 이름 / 크기. 행 클릭으로 열기/다운로드.
               좁은 챗 사이드 패널에서 이름이 0폭으로 눌리지 않도록 고정폭 그리드 대신
               flex(이름=flex-1 truncate + 크기=shrink-0)를 쓴다. 수정일은 tooltip(title)로 제공한다. */}
-          <div className="flex items-center gap-2 border-b border-border bg-muted/30 px-3 py-1.5 text-xs font-medium text-muted-foreground">
+          <div className="flex items-center gap-2 border-b border-border bg-muted px-3 py-1.5 text-xs font-medium text-muted-foreground">
             <span className="min-w-0 flex-1">이름</span>
             <span className="shrink-0">크기</span>
           </div>
@@ -91,7 +91,7 @@ export default function DatasetFilesWidget({
               type="button"
               onClick={() => openObjectInNewTab(datasetId, o.key)}
               title={`${o.key} · ${formatObjectDate(o.lastModified)}`}
-              className="flex w-full items-center gap-2 border-b border-border/50 px-3 py-1.5 text-left text-xs last:border-0 hover:bg-muted/20"
+              className="flex w-full items-center gap-2 row-divider px-3 py-1.5 text-left text-xs hover:bg-muted/20"
             >
               <span className="min-w-0 flex-1 truncate">{o.name}</span>
               <span className="shrink-0 text-muted-foreground">{formatObjectSize(o.size)}</span>

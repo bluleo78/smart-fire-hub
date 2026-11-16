@@ -37,6 +37,8 @@
   /* #367: 이 매핑이 없어 `text-destructive-foreground`가 무효값이 되고 --foreground를 상속했다 */
   --color-destructive-foreground: var(--destructive-foreground);
   --color-border: var(--border);
+  /* WD-755: 목록 행 사이 구분선 — border-divider·divide-divider 유틸리티로 쓴다 */
+  --color-divider: var(--divider);
   --color-input: var(--input);
   --color-ring: var(--ring);
   --color-chart-1: var(--chart-1);
@@ -88,7 +90,10 @@
 
 :root {
   --radius: 0.625rem;
-  --background: oklch(0.985 0.002 264);
+  /* WD-755: 경계 단계 — 배경 3단(페이지 background < 패널·카드 card < 머리 띠 muted)과 테두리 3단(행 구분선 divider < 덩어리 외곽 border < 입력 input).
+     예전에는 페이지(.985)와 카드(1.0)가 거의 같고 테두리(.94)가 옅어 카드·패널·목록·입력이 한 면에 붙어 보였다.
+     단계 사이 대비는 design-tokens.contrast.test 「경계 단계 (WD-755)」가 고정한다(참고 구현 smart-workplace WP-1051). */
+  --background: oklch(0.975 0.003 264);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.145 0 0);
@@ -96,16 +101,24 @@
   --popover-foreground: oklch(0.145 0 0);
   --primary: oklch(0.45 0.2 264);
   --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.965 0.005 264);
+  /* WD-755: muted 와 같은 단계로 함께 내린다(.965 → .958) — 보조 버튼·배지 채움이 흰 카드에서 묻히지 않게. */
+  --secondary: oklch(0.958 0.006 264);
   --secondary-foreground: oklch(0.25 0 0);
-  --muted: oklch(0.965 0.005 264);
+  /* WD-755: 머리 띠(표 머리·카드 머리)가 흰 카드와 갈라지게 .965 → .958 (카드 대비 1.11 → 1.12 이상). */
+  --muted: oklch(0.958 0.006 264);
   --muted-foreground: oklch(0.5 0 0);
-  --accent: oklch(0.955 0.01 264);
+  /* WD-755: hover·선택 면(accent)은 머리 띠(muted)보다 한 단계 진하게 .955 → .93 — muted(.958)와 거의 같아
+     머리 띠 안 outline·ghost 버튼과 메뉴의 hover 가 띠에 묻혔다(accent / muted ≥ 1.04 를 경계 단계 시험이 고정). */
+  --accent: oklch(0.93 0.01 264);
   --accent-foreground: oklch(0.25 0 0);
   /* #367: 흰 카드/틴트 위 텍스트·아이콘 대비 확보 (4.77 → 5.83) */
   --destructive: oklch(0.53 0.22 27.325);
   --destructive-foreground: oklch(1 0 0);
-  --border: oklch(0.94 0.005 264);
+  /* WD-755: 덩어리 외곽선 .94 → .88 — 카드 위 1.19 → 1.4 이상, 페이지 위 1.3 이상으로 카드·패널 경계가 보이게 한다. */
+  --border: oklch(0.88 0.006 264);
+  /* WD-755: 목록 행 사이 구분선(새 토큰) — 외곽(border)보다 옅게 두어 촘촘한 목록·표에서 줄이 과해 보이지 않게 한다.
+     divide-y·divide-x 의 기본 색이고(아래 @layer base), 행 아래 선은 row-divider 유틸리티로 쓴다. */
+  --divider: oklch(0.93 0.005 264);
   /*
    * #376: `--input`은 장식성 구분선(`--border`)이 아니라 **폼 컨트롤의 경계**다.
    * 컨트롤 배경이 표면과 1.00~1.06:1로 사실상 동일해 보더가 유일한 식별 단서인데,
@@ -116,7 +129,7 @@
   --ring: oklch(0.55 0.15 264);
   /*
    * 스크롤바 thumb — UA 기본 스크롤바(macOS 마우스 연결 시 15px)를 8px로 재정의하는 대신
-   * 작성자가 지각 가능성을 책임진다(SC 1.4.11 3:1). `--border`(장식 구분선, 흰 표면 대비 1.2:1)를
+   * 작성자가 지각 가능성을 책임진다(SC 1.4.11 3:1). `--border`(장식 구분선, 흰 표면 대비 1.4:1 남짓)를
    * 재사용하면 얇아진 thumb이 사실상 안 보이므로 `--input`과 같은 계약의 전용 토큰을 둔다.
    * -active는 스크롤 중 강조값이다 — 유휴에서도 3:1을 유지하므로 "스크롤 가능" 어포던스가 사라지지 않는다
    * (smart-dcim SD-326은 유휴 완전 투명이지만 firehub는 의도적으로 다르게 간다).
@@ -165,7 +178,8 @@
   --sidebar-primary-foreground: oklch(0.985 0 0);
   --sidebar-accent: oklch(0.955 0.015 264);
   --sidebar-accent-foreground: oklch(0.25 0 0);
-  --sidebar-border: oklch(0.94 0.005 264);
+  /* WD-755: 사이드바 경계는 외곽선(border)과 같은 단계 — 값을 복사하지 않고 따라간다(다크도 상속) */
+  --sidebar-border: var(--border);
   --sidebar-ring: oklch(0.55 0.15 264);
   /*
    * #367/#370 역할 계약: `--X`는 배경(도트/바/보더)이자 `text-X` 전경으로 함께 쓰이므로
@@ -207,7 +221,9 @@
 .dark {
   --background: oklch(0.13 0.015 280);
   --foreground: oklch(0.93 0 0);
-  --card: oklch(1 0 0 / 3%);
+  /* WD-755: 다크 경계 단계 — 카드 흰 3% → 4.5%, 머리 띠 5% → 6.5%, 외곽선 10% → 16%, 행 구분선은 9%(외곽보다 옅게).
+     반투명이라 바탕 → 카드 → 토큰 순서로 겹쳐 잰다. 입력(--input)은 #376 불투명 값 그대로 — 이미 가장 강한 단계다. */
+  --card: oklch(1 0 0 / 4.5%);
   --card-foreground: oklch(0.93 0 0);
   --popover: oklch(0.18 0.015 280);
   --popover-foreground: oklch(0.93 0 0);
@@ -221,13 +237,18 @@
   --primary-foreground: oklch(0.17 0.02 280);
   --secondary: oklch(1 0 0 / 5%);
   --secondary-foreground: oklch(0.93 0 0);
-  --muted: oklch(1 0 0 / 5%);
-  --muted-foreground: oklch(0.6 0 0);
-  --accent: oklch(1 0 0 / 7%);
+  --muted: oklch(1 0 0 / 6.5%);
+  /* WD-755: 0.6 → 0.7 — 보조 글자가 가장 밝은 표면(두 겹 카드 위 hover, 카드 위 머리 띠 위 hover)에서도 4.5:1 이어야 한다.
+     0.6 은 예전 표면에서도 4.07·3.87 이었고, 카드·머리 띠·hover(accent)를 진하게 하면 더 떨어진다.
+     accent 9% 에서 0.7 이 4.84·4.57 로 기준을 넘는 최소값. 경계 단계 테스트가 고정한다. */
+  --muted-foreground: oklch(0.7 0 0);
+  /* WD-755: hover·선택 면을 머리 띠(muted 6.5%)보다 확실히 높게 7% → 9% — 7% 는 muted 와 거의 같아 나란히 놓이면 갈리지 않았다. */
+  --accent: oklch(1 0 0 / 9%);
   --accent-foreground: oklch(0.93 0 0);
   --destructive: oklch(0.704 0.191 22.216);
   --destructive-foreground: oklch(0.17 0.02 280); /* #367: 다크 99+ 배지 2.36 → 6.64 */
-  --border: oklch(1 0 0 / 10%);
+  --border: oklch(1 0 0 / 16%);
+  --divider: oklch(1 0 0 / 9%);
   /*
    * #376: 알파 12%는 어떤 표면 위에 얹히느냐에 따라 합성 결과가 달라져 대비를 예측할 수 없고,
    * 실측 1.32:1이었다. 불투명 값으로 고정해 3테마 배경·카드·팝오버 전부에서 3.4:1 이상을 만든다.
@@ -273,7 +294,6 @@
   --sidebar-primary-foreground: oklch(0.17 0.02 280); /* #365 */
   --sidebar-accent: oklch(1 0 0 / 7%);
   --sidebar-accent-foreground: oklch(0.93 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.65 0.2 264);
   /*
    * #370 역할 계약: 다크의 액센트 배경은 밝으므로 그 위에 얹는 -foreground는 근검정이어야 한다.
@@ -310,9 +330,30 @@
   --dtype-uuid: oklch(0.7 0.1 200);
 }
 
+/* WD-755: 목록 행 아래 구분선 — 행마다 border-b + 색을 따로 주지 않고 역할 이름 하나로 쓴다(divide-y 를 못 쓰는 행: 표 tr·가상 목록 등).
+   divide-y 와 같은 뜻으로 마지막 행에는 선을 그리지 않는다 — 호출부가 last:border-b-0 을 따로 붙이지 않아도 되고,
+   border-0 처럼 행 왼쪽 표식(border-l-*)까지 지우지 않는다. */
+@utility row-divider {
+  &:not(:last-child) {
+    border-bottom-width: 1px;
+    border-bottom-color: var(--divider);
+  }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring;
+  }
+  /* WD-755: 목록 행 사이 선은 외곽(border)보다 옅은 divider — divide-y·divide-x 의 기본 색.
+     Tailwind v4 의 divide-y 는 자식의 border-bottom, divide-x 는 border-inline-end 만 그리므로(reverse 를 안 쓸 때) 그 쪽 색만 바꾼다 —
+     자식이 스스로 그린 다른 쪽 외곽(border-t·border-l 등)은 border 단계로 남는다.
+     선택자 전체를 :where() 로 감싸 특이도 0(Tailwind 의 divide-* 색 유틸리티와 같은 모양)이고 base 레이어라,
+     화면이 divide-border 등 색 유틸리티를 주면 레이어 순서로 그쪽이 이긴다. */
+  :where(.divide-y > :not(:last-child)) {
+    border-bottom-color: var(--divider);
+  }
+  :where(.divide-x > :not(:last-child)) {
+    border-inline-end-color: var(--divider);
   }
   body {
     @apply bg-background text-foreground;
@@ -399,20 +440,22 @@ html {
   --ring: oklch(0.46 0.14 195);
   --sidebar-primary: oklch(0.46 0.14 195);
   --sidebar-ring: oklch(0.46 0.14 195);
-  --accent: oklch(0.96 0.01 195);
+  /* WD-755: accent 는 머리 띠(muted .958)보다 한 단계 진하게 — 기본 테마와 같은 .93(sunset 도 같다) */
+  --accent: oklch(0.93 0.01 195);
   --sidebar-accent: oklch(0.96 0.01 195);
 }
 .theme-ocean.dark, .dark .theme-ocean {
   --primary: oklch(0.75 0.12 195);
   --ring: oklch(0.75 0.12 195);
   --background: oklch(0.12 0.015 210);
-  --card: oklch(0.75 0.12 195 / 3%);
+  /* WD-755: 기본 다크와 같이 card 3% → 4.5%(카드가 바탕과 1.04:1 이상 갈라지게), accent 7% → 9%(머리 띠보다 한 단계 위). sunset 도 같다. */
+  --card: oklch(0.75 0.12 195 / 4.5%);
   --popover: oklch(0.17 0.015 210);
   --sidebar: oklch(0.13 0.02 210);
   --sidebar-primary: oklch(0.75 0.12 195);
   --sidebar-ring: oklch(0.75 0.12 195);
   --sidebar-accent: oklch(0.75 0.12 195 / 7%);
-  --accent: oklch(0.75 0.12 195 / 7%);
+  --accent: oklch(0.75 0.12 195 / 9%);
 }
 
 /* ===== SUNSET THEME ===== */
@@ -422,40 +465,43 @@ html {
   --ring: oklch(0.5 0.18 50);
   --sidebar-primary: oklch(0.5 0.18 50);
   --sidebar-ring: oklch(0.5 0.18 50);
-  --accent: oklch(0.96 0.01 50);
+  --accent: oklch(0.93 0.01 50);
   --sidebar-accent: oklch(0.96 0.01 50);
 }
 .theme-sunset.dark, .dark .theme-sunset {
   --primary: oklch(0.72 0.15 50);
   --ring: oklch(0.72 0.15 50);
   --background: oklch(0.12 0.015 40);
-  --card: oklch(0.72 0.15 50 / 3%);
+  --card: oklch(0.72 0.15 50 / 4.5%);
   --popover: oklch(0.17 0.015 40);
   --sidebar: oklch(0.13 0.02 40);
   --sidebar-primary: oklch(0.72 0.15 50);
   --sidebar-ring: oklch(0.72 0.15 50);
   --sidebar-accent: oklch(0.72 0.15 50 / 7%);
-  --accent: oklch(0.72 0.15 50 / 7%);
+  --accent: oklch(0.72 0.15 50 / 9%);
 }
 
 /* Background gradient */
+/* WD-755: 라이트 그라디언트의 가장 밝은 점을 흰색(1.0)에서 페이지 바탕(--background, L 0.975)으로 내린다.
+   흰 카드가 흰 바탕 위에 붙어(1.00:1) 경계 단계가 무너졌기 때문 — 카드 / 바탕 1.04 이상을 그라디언트 전 구간에서 지킨다.
+   테마별 색조(hue)는 유지하고, 바깥 점(L 0.97)은 가운데 점보다 밝지 않게 둔다. */
 .bg-gradient-main {
   background: radial-gradient(ellipse at top center, var(--background), var(--background));
 }
 :root .bg-gradient-main {
-  background: radial-gradient(ellipse at top center, oklch(1 0 0), oklch(0.97 0.003 264));
+  background: radial-gradient(ellipse at top center, var(--background), oklch(0.97 0.003 264));
 }
 .dark .bg-gradient-main {
   background: radial-gradient(ellipse at top center, oklch(0.16 0.02 280), oklch(0.11 0.015 280));
 }
 .theme-ocean .bg-gradient-main {
-  background: radial-gradient(ellipse at top center, oklch(1 0 0), oklch(0.97 0.005 195));
+  background: radial-gradient(ellipse at top center, oklch(0.975 0.005 195), oklch(0.97 0.005 195));
 }
 .dark .theme-ocean .bg-gradient-main, .theme-ocean.dark .bg-gradient-main {
   background: radial-gradient(ellipse at top center, oklch(0.15 0.02 210), oklch(0.10 0.015 210));
 }
 .theme-sunset .bg-gradient-main {
-  background: radial-gradient(ellipse at top center, oklch(1 0 0), oklch(0.97 0.005 50));
+  background: radial-gradient(ellipse at top center, oklch(0.975 0.005 50), oklch(0.97 0.005 50));
 }
 .dark .theme-sunset .bg-gradient-main, .theme-sunset.dark .bg-gradient-main {
   background: radial-gradient(ellipse at top center, oklch(0.15 0.02 40), oklch(0.10 0.015 40));
@@ -583,7 +629,8 @@ html {
   --xy-controls-button-background-color-hover-default: oklch(0.25 0.015 280);
   --xy-controls-button-color-default: oklch(0.7 0 0);
   --xy-controls-button-color-hover-default: oklch(0.9 0 0);
-  --xy-controls-button-border-color-default: oklch(1 0 0 / 10%);
+  /* WD-755: 하드코딩 흰 10% 대신 외곽선 토큰 — 경계 단계를 바꾸면 함께 따라온다 */
+  --xy-controls-button-border-color-default: var(--border);
   --xy-controls-box-shadow-default: 0 2px 8px rgba(0,0,0,0.3);
 }
 .dark .react-flow__minimap {

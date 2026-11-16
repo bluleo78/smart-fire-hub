@@ -88,7 +88,7 @@ export function CanvasArea({ pages, activePageIndex, onPageChange, onRemoveWidge
 
       {/* Page label */}
       {activePage && pages.length > 0 && (
-        <div className="flex items-center justify-between px-4 py-1.5 border-b border-border/50 shrink-0">
+        <div className="flex items-center justify-between px-4 py-1.5 border-b shrink-0">
           <span className="text-xs font-medium text-muted-foreground">
             {activePage.label}
           </span>

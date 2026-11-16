@@ -12,6 +12,7 @@
  * - AI 인증·설정: AiCredential.*.incompleteMessage()/modelProblem(), UnknownAgentTypeException,
  *   AiCredentialDocument.parse(), EncryptionService(복호화 실패), ProactiveResultValidator.USER_FACING_FAILURE_MESSAGE
  * - AI 호출 실패: ProactiveAiClient.AGENT_CALL_FAILED_MESSAGE
+ * - AI 응답 시간 초과: ProactiveAiClient.timeoutMessage() — 「AI 응답이 제한 시간(N분)을 넘겨 …」(WD-766)
  * ai-agent 가 돌려준 오류 원문은 실행 이력에 저장되지 않는다 — ProactiveAiClient 가 위 두 문구 중 하나로 바꿔 남긴다.
  */
 export interface ClassifiedError {
@@ -79,6 +80,15 @@ const ERROR_PATTERNS: ErrorPattern[] = [
     icon: '🟠',
     label: 'AI 에이전트 호출 실패',
     guide: `일시적인 문제일 수 있습니다. 잠시 후 다시 실행해 보고, 계속 실패하면 ${AI_SETTINGS_PATH} 탭에서 AI 인증 정보를 확인하세요.`,
+  },
+  {
+    // 제한 시간(app.proactive.agent-timeout) 안에 AI 응답이 끝나지 않음 — 설정 문제가 아니라 작업이 길었던 것이라
+    // 「AI 인증 정보 확인」 대신 다시 실행·범위 줄이기를 안내한다(WD-766). 「제한 시간(15분)」처럼 시간이 끼어 앵커는 뒤쪽 문구.
+    type: 'ai-transient',
+    keywords: ['을 넘겨 리포트를 만들지 못했습니다'],
+    icon: '🟠',
+    label: 'AI 응답 시간 초과',
+    guide: '리포트 작성이 제한 시간 안에 끝나지 않았습니다. 잠시 후 다시 실행하거나, 작업이 다루는 데이터·기간을 줄여 보세요.',
   },
   // ── 아래는 예전 영어 사유용 규칙(기존 실행 이력 행). 순서·키워드를 바꾸지 않는다. ──
   {

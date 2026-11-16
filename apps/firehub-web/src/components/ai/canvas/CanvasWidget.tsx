@@ -54,7 +54,7 @@ export function CanvasWidget({ widget, onRemove }: CanvasWidgetProps) {
       </button>
       {entry ? (
         <WidgetErrorBoundary>
-          <Suspense fallback={<div className="h-20 animate-pulse bg-muted/30 rounded" />}>
+          <Suspense fallback={<div className="h-20 animate-pulse bg-muted rounded" />}>
             <entry.component
               input={widget.input}
               onNavigate={(path, state) => navigate(path, state ? { state } : undefined)}

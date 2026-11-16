@@ -145,7 +145,7 @@ export default function ApiCallPreview({ result }: ApiCallPreviewProps) {
     <div className="mt-3 space-y-3">
       {/* 실제 호출 URL */}
       {result.resolvedUrl && (
-        <div className="rounded border bg-muted/30 px-2 py-1.5">
+        <div className="rounded border bg-muted px-2 py-1.5">
           <p className="text-xs text-muted-foreground mb-0.5">호출 URL</p>
           <p className="text-xs font-mono break-all text-foreground">{result.resolvedUrl}</p>
         </div>
@@ -168,7 +168,7 @@ export default function ApiCallPreview({ result }: ApiCallPreviewProps) {
           </Button>
         </CollapsibleTrigger>
         <CollapsibleContent>
-          <div className="rounded border bg-muted/40 p-2 overflow-auto max-h-48">
+          <div className="rounded border bg-muted p-2 overflow-auto max-h-48">
             {parsedJson !== null ? (
               <pre className="text-xs font-mono">
                 <JsonTreeNode value={parsedJson} path="$" depth={0} />
@@ -191,7 +191,7 @@ export default function ApiCallPreview({ result }: ApiCallPreviewProps) {
         <div className="overflow-auto rounded border">
           <table className="w-full text-xs border-collapse">
             <thead>
-              <tr className="bg-muted/60">
+              <tr className="bg-muted">
                 {result.columns.map((col) => (
                   <th
                     key={col}
@@ -204,9 +204,10 @@ export default function ApiCallPreview({ result }: ApiCallPreviewProps) {
             </thead>
             <tbody>
               {displayRows.map((row, i) => (
-                <tr key={i} className="even:bg-muted/20">
+                // WD-755: 흐린 줄무늬(even:bg-muted/20) 대신 행 아래 row-divider 로 가른다
+                <tr key={i} className="row-divider">
                   {result.columns.map((col) => (
-                    <td key={col} className="border-b px-2 py-1 whitespace-nowrap">
+                    <td key={col} className="px-2 py-1 whitespace-nowrap">
                       {row[col] == null ? (
                         <span className="text-muted-foreground">null</span>
                       ) : (
