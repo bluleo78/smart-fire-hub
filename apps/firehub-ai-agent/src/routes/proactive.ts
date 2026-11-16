@@ -95,16 +95,55 @@ export const AGENT_REPORT_NOT_SAVED = 'AGENT_REPORT_NOT_SAVED';
 const MAX_AGENT_TURNS = 15;
 
 /**
+ * WD-775: 글자 흐름 안에 들어가는 인라인 태그가 이어진 묶음. 화면에서도 앞뒤 글자와 붙어 보이므로 공백 없이 지운다 —
+ * 공백으로 바꾸면 「<strong>3.5</strong>억」이 「3.5 억」으로 끊겨 단위 없는 3.5 로 읽혀 거짓 경고가 난다.
+ * 단, 묶음 양쪽이 숫자–숫자로 맞닿는 곳(「<span>1234</span><span>12.5%</span>」「<del>1,200</del>1,350」)은 서로 다른
+ * 값이라 공백으로 떨어뜨린다 — 붙이면 「123412.5%」 한 수로 읽혀 거짓 경고가 난다.
+ */
+const INLINE_TAGS = /(?:<\/?(?:a|abbr|b|bdi|bdo|cite|code|data|del|dfn|em|font|i|ins|kbd|mark|q|s|samp|small|span|strike|strong|sub|sup|time|tt|u|var|wbr)\b[^>]*>)+/gi;
+
+/**
  * WD-767: HTML 에서 script·style·svg 블록과 태그를 걷어 본문 텍스트만 남긴다(수치 대조용 — md 가 없을 때).
  * svg 의 <text> 는 차트 축 눈금·좌표 라벨이라 리포트 수치가 아닌데도 출처 없는 수치로 경고되므로 통째로 지운다.
+ * WD-775: 인라인 태그는 INLINE_TAGS 규칙으로 지우고, 그 밖의 블록 태그(p·td·h2·br …)는 줄바꿈으로 바꾼다. 줄바꿈으로 바꾸는
+ * 건 칸·문단 사이 숫자(「12</td><td>34」)가 붙지 않게 하면서, 제목 블록의 「11. 권고사항」이 줄 첫머리에 와 목차 번호로
+ * 건너뛰어지게 하려는 것이다(문맥 표시는 줄바꿈을 공백으로 바꾸므로 보이는 모양은 같다).
  */
 export function htmlToText(html: string): string {
   return html
     .replace(/<(script|style|svg)\b[\s\S]*?<\/\1>/gi, ' ')
-    .replace(/<[^>]+>/g, ' ')
+    .replace(INLINE_TAGS, (m: string, i: number, s: string) =>
+      /\d/.test(s[i - 1] ?? '') && /\d/.test(s[i + m.length] ?? '') ? ' ' : '',
+    )
+    .replace(/<[^>]+>/g, '\n')
     // HTML 엔티티: 숫자 엔티티(&#123; &#x1F;)는 숫자로 읽히므로 통째로 지우고, 이름 엔티티는 공백으로 바꾼다.
     .replace(/&#x?[0-9a-f]+;/gi, ' ')
     .replace(/&[a-z]+;/gi, ' ');
+}
+
+/**
+ * WD-775: 양식·컨텍스트 값에서 숫자가 든 문자열·숫자·객체 키를 원래 글자 그대로 out 에 모은다(허용 텍스트용, 같은 값은 한 번).
+ * JSON.stringify 로 넘기면 문자열 안 줄바꿈이 글자 `\n` 이 되어, 줄 첫머리 숫자(「…\n5,000건」)가 영문자 n 뒤에 붙은
+ * 숫자로 보여 「000」만 잡히고, 리포트의 「5,000건」이 허용되지 않았다. 그래서 직렬화하지 않고 값을 하나씩 넘긴다.
+ */
+export function collectStrings(value: unknown, out: Set<string> = new Set()): Set<string> {
+  const add = (t: string) => {
+    if (/\d/.test(t)) out.add(t);
+  };
+  if (typeof value === 'string') {
+    add(value);
+  } else if (typeof value === 'number') {
+    add(String(value));
+  } else if (Array.isArray(value)) {
+    for (const v of value) collectStrings(v, out);
+  } else if (value && typeof value === 'object') {
+    for (const [k, v] of Object.entries(value)) {
+      // 키에도 숫자가 들어갈 수 있다(「2024」 같은 연도 키)
+      add(k);
+      collectStrings(v, out);
+    }
+  }
+  return out;
 }
 
 export function buildSectionPrompt(sections: TemplateSection[], depth = 1): string {
@@ -641,14 +680,13 @@ router.post('/proactive', ...authedJsonBody(), async (req: Request, res: Respons
       // md 가 있으면 md, 없으면 HTML 의 본문 텍스트(스타일·스크립트·svg 숫자 제외), 리포트 파일이 하나도 없으면
       // 응답의 리포트가 되는 rawText. 요약은 항상 포함한다. 전부 공백이면 checkReportNumbers 가 checked=false 로 둔다.
       const reportTexts = [mdContent || htmlToText(htmlContent) || (fromFile ? '' : rawText), summary];
-      // 대조할 출처나 본문이 없으면 checkReportNumbers 가 바로 끝내므로 허용 텍스트(컨텍스트 직렬화)를 만들지 않는다.
+      // 대조할 출처나 본문이 없으면 checkReportNumbers 가 바로 끝내므로 허용 텍스트(양식·컨텍스트 값 모으기)를 만들지 않는다.
       if (sourceNumbers.size > 0 && reportTexts.some((t) => t.trim())) {
-        numberCheck = checkReportNumbers({
-          reportTexts,
-          sourceNumbers,
-          // 양식·프롬프트·컨텍스트에 원래 있던 숫자는 출처 없이도 허용한다.
-          allowedTexts: [body.prompt, JSON.stringify(body.template ?? ''), JSON.stringify(body.context)],
-        });
+        // 양식·프롬프트·컨텍스트에 원래 있던 숫자는 출처 없이도 허용한다 (WD-775: 값을 직렬화하지 않고 그대로 모은다).
+        const allowedTexts = new Set([body.prompt]);
+        collectStrings(body.template, allowedTexts);
+        collectStrings(body.context, allowedTexts);
+        numberCheck = checkReportNumbers({ reportTexts, sourceNumbers, allowedTexts: [...allowedTexts] });
       }
     } catch (e) {
       console.error('[Proactive] number check failed:', e instanceof Error ? e.message : String(e));

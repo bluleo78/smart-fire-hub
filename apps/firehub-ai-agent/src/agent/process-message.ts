@@ -384,6 +384,9 @@ export function processMessage(
                 toolName: toolId,
                 result: resultStr,
                 isError,
+                // WD-775: 짝지을 id 를 toolUseId 로도 싣는다(opencode·tool_use 와 같은 필드) — 소비자가 toolName 자리 값을
+                // id 로 추측하지 않게. id 가 없으면('unknown') 싣지 않는다. toolName 자리 값은 SSE 계약상 그대로 둔다.
+                ...('tool_use_id' in block ? { toolUseId: toolId } : {}),
               });
             }
             // #573: 이 tool_result 가 동기(run_in_background:false) Agent 위임의 결과라면, subagent

@@ -5,6 +5,8 @@
  * 계산하거나 지어낸 값일 수 있는 수치를 경고 목록으로 돌려준다. LLM 호출 없이 규칙만으로 판정한다.
  */
 
+import { ROW_SEARCH_TOOLS } from './db-dialect.js';
+
 /** 출처를 못 찾은 수치 하나 (표기와 앞뒤 문맥) */
 export interface UnverifiedNumber {
   text: string;
@@ -29,8 +31,21 @@ const MAX_UNVERIFIED = 20;
 const CONTEXT_CHARS = 15;
 const EPSILON = 1e-9;
 
-/** 데이터 조회 도구의 끝 이름 (접두사 mcp__firehub__·firehub_ 는 무시) */
-const DATA_QUERY_TOOLS = new Set(['execute_analytics_query', 'execute_sql_query', 'query_dataset_data']);
+/**
+ * 결과에 데이터 값이 실리는 조회 도구의 끝 이름 (접두사 mcp__firehub__·firehub_ 는 무시).
+ * 빠진 도구의 결과로 쓴 수치는 모두 출처 없는 수치로 경고된다 (WD-775).
+ */
+const DATA_QUERY_TOOLS = new Set([
+  'execute_analytics_query',
+  'execute_sql_query',
+  'query_dataset_data',
+  'run_saved_query',
+  'get_chart_data',
+  'get_row_count',
+  'summarize_dataset_files',
+  'graphrag_structured_query',
+  ...ROW_SEARCH_TOOLS,
+]);
 
 /** 표시 단위 → 배수 */
 const UNIT_MULTIPLIER: Record<string, number> = {
@@ -52,15 +67,69 @@ export function isDataQueryTool(toolName: string): boolean {
   return DATA_QUERY_TOOLS.has(toolName.replace(/^(mcp__firehub__|firehub_)/, ''));
 }
 
-/** 날짜·시각·분기 표기는 수치 검증 대상이 아니므로 같은 길이의 공백으로 가린다. */
+/**
+ * WD-775: 짧은 날짜 뒤에 바로 붙으면 날짜가 아니라 분수·범위(「10/20건」「3-15건」)로 보는 개수 단위.
+ * 날짜 뒤에 흔히 붙는 낱말(11/16대비·11/16회의·11/16개최·11/16종합 …)은 단위가 아니므로 뒤 글자로 걸러 계속 날짜로 가린다.
+ */
+const COUNT_UNIT_AFTER_DATE = '건(?![강설의])|개(?![최시장강막통편선])|명(?![단절])|곳|회(?![의차담견])|종(?![합료])|가구|대(?![비상회책응])';
+
+/**
+ * WD-775: 조문 번호(「제3조」「제 3조」「제13조의2」)와 「제N」 서수는 금액·개수가 아니라 번호다. 「조」를 조(兆) 단위로 읽어
+ * 「3조」 경고를 내지 않도록 통째로 가린다. 「제」 뒤 공백 한 칸(「제 3조」)도 같은 표기로 본다. 앞에 한글이 붙은 경우
+ * (「규제 3조원」「경제3조원」처럼 「제」가 낱말 끝)는 접두사가 아니라 가리지 않는다.
+ */
+const ORDINAL_JE = /(?<![가-힣])제[ \t]?\d+(?:조(?:의\d+)?)?/g;
+
+/** WD-775: 줄 첫머리 — 앞에 공백·마크다운 제목 `#` 만 있는 자리. 목차·절 번호 판정에 함께 쓰고, 이 부분은 가리지 않고 남긴다. */
+const LINE_LEAD = String.raw`^([ \t]*(?:#+[ \t]*)?)`;
+
+/**
+ * WD-775: 줄 첫머리의 「11. 」「## 12. 」 같은 목차·목록 번호. 마침표 뒤에 공백이 와야 하므로 「11.5%」(소수)는 해당하지
+ * 않고, 줄 첫머리가 아닌 문장 안 「11. 」도 그대로 대조한다.
+ */
+const LIST_NUMBER = new RegExp(String.raw`${LINE_LEAD}(\d+\.)(?=[ \t])`, 'gm');
+
+/**
+ * WD-775: 줄 첫머리의 다단계 절 번호 「## 3.1 출동 현황」「### 2.4 소결」「12.3. 기타」「4.10.2 세부」.
+ * 소수처럼 생겨 예전엔 출처 없는 수치로 경고됐다. 번호 뒤에 공백이 오고, 그 다음이 숫자·%·금액 단위(「13.5 억」
+ * 「3.5 천만원」처럼 천·만·억·조·원이 한글 없이 끝나는 낱말)가 아닐 때만 번호로 본다 — 「3.5억 원」「12.5% 증가」는
+ * 숫자 뒤에 공백이 없어 해당하지 않고, 「원인」「조사」「만족도」 같은 제목 낱말은 단위가 아니라 번호로 가린다.
+ */
+const SECTION_NUMBER = new RegExp(
+  String.raw`${LINE_LEAD}(\d+(?:\.\d+)+\.?)(?=[ \t]+(?![\d%]|(?:[천만억조]+원?|원)(?![가-힣]))\S)`,
+  'gm',
+);
+
+/**
+ * 짧은 날짜(MM-DD, MM/DD, M/D): 월 1~12, 일 1~31 일 때만 (소수·쉼표 숫자의 일부는 제외).
+ * WD-775: 뒤에 개수 단위가 바로 붙으면(「10/20건」) 분수·범위라 가리지 않는다. 호출마다 정규식을 새로 만들지 않게
+ * 모듈 상수로 둔다(g 플래그지만 String.replace 만 쓰므로 lastIndex 가 호출 사이에 남지 않는다).
+ */
+const SHORT_DATE = new RegExp(
+  String.raw`(?<![\d.,/-])(?:1[0-2]|0?[1-9])[-/](?:3[01]|[12]\d|0?[1-9])(?![\d/-]|\.\d|[조억만천%원]|${COUNT_UNIT_AFTER_DATE})`,
+  'g',
+);
+
+/** 가린 자리의 글자 위치가 그대로 남도록 같은 길이의 공백으로 바꾼다 (토큰 문맥 위치가 원문과 맞게). */
+function blank(m: string): string {
+  return ' '.repeat(m.length);
+}
+
+/** WD-775: LINE_LEAD 로 시작하는 번호 정규식의 치환 — 앞의 공백·# 은 남기고 번호만 공백으로 가린다. */
+function blankNumberKeepLead(_m: string, lead: string, num: string): string {
+  return lead + blank(num);
+}
+
+/** 날짜·시각·분기·조문 번호·목차 번호 표기는 수치 검증 대상이 아니므로 같은 길이의 공백으로 가린다. */
 function maskNonNumbers(text: string): string {
-  const blank = (m: string) => ' '.repeat(m.length);
   return text
     .replace(/\d{4}[-./]\d{1,2}[-./]\d{1,2}/g, blank)
-    // 짧은 날짜(MM-DD, MM/DD, M/D): 월 1~12, 일 1~31 일 때만 (소수·쉼표 숫자의 일부는 제외)
-    .replace(/(?<![\d.,/-])(?:1[0-2]|0?[1-9])[-/](?:3[01]|[12]\d|0?[1-9])(?![\d/-]|\.\d|[조억만천%원])/g, blank)
+    .replace(SHORT_DATE, blank)
     .replace(/\b\d{1,2}:\d{2}(?::\d{2})?\b/g, blank)
-    .replace(/\bQ[1-4]\b/gi, blank);
+    .replace(/\bQ[1-4]\b/gi, blank)
+    .replace(ORDINAL_JE, blank)
+    .replace(LIST_NUMBER, blankNumberKeepLead)
+    .replace(SECTION_NUMBER, blankNumberKeepLead);
 }
 
 interface Token {
@@ -82,6 +151,13 @@ const SKIP_SUFFIX_NOUN = /^(차량|차로|시설|시군|분석|분야|분류|일
 // 숫자 바로 뒤의 표시 단위. 뒤에 단위가 아닌 단어(만큼·천천히·조금·억지 등)가 이어질 때만 단위가 아니다.
 // 조사(은·이고·의 …)·개수 단위·원·한글 아닌 문자·끝이 오면 단위로 본다 (「3.5억이고」「5억은」).
 const UNIT_RE = /^(?:(?:십만|백만|천만)(?!큼)|(?:십억|백억|천억)(?!지)|만(?!큼)|천(?!천히)|조(?!금|사|건|치|정|회|직)|억(?!지))/;
+
+/**
+ * WD-775: 조(組, 모둠) 쓰임이 분명한 「조」 뒷말. 조(兆)와 글자만으로는 가를 수 없어, 이 뒷말이 오고 앞 수가 10 이하
+ * 정수일 때만(조 편성·교대 인원은 작은 수) 단위에서 뺀다 — 「추경 15조 편성」은 조(兆)로 읽고, 「3조 편성」 예산은 경고
+ * 전용이라 놓치는 쪽을 감수한다. 「조가」「조로」 단독은 금액 쓰임(「3조가 투입」「2조로 늘어」)이 훨씬 흔해 넣지 않는다.
+ */
+const JO_GROUP_FOLLOW = /^(?:\s*(?:편성|편제|교대|근무|구성|분할|순환|\d+교대)|으?로\s*(?:나누|나눠|편성|구성|분할))/;
 
 /**
  * 「3만5천」「1억2천만」처럼 큰 단위 바로 뒤(공백 없이)에 더 작은 단위의 수가 이어지면 한 수로 합친다.
@@ -117,14 +193,19 @@ function tokenize(raw: string, skip: boolean): Token[] {
     const frac = m[2] ?? '';
     let end = m.index + m[0].length;
     const rest = text.slice(end);
-    const unitChar = UNIT_RE.exec(rest)?.[0];
+    // 쉼표·소수 없는 정수인가, 그중 10 이하인가 — 조(組)·연도·작은 정수 판정에 함께 쓴다 (WD-775)
+    const plainInt = !frac && !m[1].includes(',');
+    const small = plainInt && Number(intPart) <= 10;
+    let unitChar = UNIT_RE.exec(rest)?.[0];
+    // WD-775: 작은 정수 + 조(組) 쓰임(「2조 편성」)은 조(兆) 단위가 아니다 (JO_GROUP_FOLLOW 주석 참고)
+    if (unitChar === '조' && small && JO_GROUP_FOLLOW.test(rest.slice(1))) unitChar = undefined;
     const percent = !unitChar && rest.startsWith('%');
     if (skip && !unitChar && !percent) {
       if (SKIP_SUFFIX.test(rest) && !SKIP_SUFFIX_NOUN.test(rest)) continue;
       // 연도: 19xx·20xx 단독 4자리 (쉼표·소수 없음)
-      if (!frac && !m[1].includes(',') && /^(19|20)\d{2}$/.test(m[1])) continue;
+      if (plainInt && /^(19|20)\d{2}$/.test(m[1])) continue;
       // 단위·% 없는 0~10 정수는 개수·서수로 본다
-      if (!frac && Number(intPart) <= 10) continue;
+      if (small) continue;
     }
     if (unitChar) end += unitChar.length;
     else if (percent) end += 1;
@@ -154,10 +235,9 @@ function tokenize(raw: string, skip: boolean): Token[] {
   return tokens;
 }
 
-/** 소수 k자리 반올림 (부동소수 오차를 EPSILON 으로 흡수) */
-function roundTo(x: number, k: number): number {
-  const p = 10 ** k;
-  return Math.round(x * p + EPSILON) / p;
+/** 소수 k자리 반올림 값을 10^k 배한 정수 키 (부동소수 오차를 EPSILON 으로 흡수). 소수끼리 오차 비교를 피한다 (WD-775). */
+function roundKey(x: number, k: number): number {
+  return Math.round(x * 10 ** k + EPSILON);
 }
 
 /**
@@ -188,18 +268,39 @@ export function collectSourceNumbers(text: string, into: Set<number>): void {
   }
 }
 
-/** 표시값이 출처 값 중 하나를 표시 자릿수로 반올림한 값과 같은지 본다. */
-function matchesSource(token: Token, sources: Iterable<number>): boolean {
-  const k = token.decimals;
-  const d = roundTo(token.value, k);
-  for (const s of sources) {
-    if (token.percent) {
-      if (Math.abs(roundTo(s, k) - d) < EPSILON || Math.abs(roundTo(s * 100, k) - d) < EPSILON) return true;
-    } else if (Math.abs(roundTo(s / token.multiplier, k) - d) < EPSILON) {
-      return true;
+/**
+ * 숫자 집합들을 토큰 표시 방식(퍼센트 여부·단위 배수·소수 자릿수)별 반올림 키로 찾는 색인 (WD-775).
+ * 토큰마다 숫자 전체를 훑으면(토큰 수 × 숫자 수) 출처가 수만 개일 때 수 초가 걸려, 조합마다 처음 쓰일 때 한 번만 키 Set 을
+ * 만들어 둔다. 여러 Set(출처·허용 숫자)을 복사하지 않고 받아 빌드할 때 모두 훑는다.
+ */
+class NumberIndex {
+  private readonly cache = new Map<string, Set<number>>();
+
+  constructor(private readonly sets: Iterable<number>[]) {}
+
+  /** 표시값이 숫자 중 하나를 표시 자릿수로 반올림한 값과 같은지 본다. */
+  matches(token: Token): boolean {
+    const k = token.decimals;
+    // 퍼센트 토큰은 단위가 붙지 않아 배수가 늘 1 이지만, 키를 분명히 가르려고 p/n 접두사를 따로 둔다
+    const key = `${token.percent ? 'p' : 'n'}:${token.multiplier}:${k}`;
+    let keys = this.cache.get(key);
+    if (!keys) {
+      keys = new Set<number>();
+      for (const set of this.sets) {
+        for (const s of set) {
+          if (token.percent) {
+            // 퍼센트는 출처가 비율(0.123 → 12.3%)이든 이미 퍼센트 값(12.3)이든 맞는 것으로 본다
+            keys.add(roundKey(s, k));
+            keys.add(roundKey(s * 100, k));
+          } else {
+            keys.add(roundKey(s / token.multiplier, k));
+          }
+        }
+      }
+      this.cache.set(key, keys);
     }
+    return keys.has(roundKey(token.value, k));
   }
-  return false;
 }
 
 /** 줄바꿈을 공백으로 바꾼 토큰 앞뒤 15자 문맥 */
@@ -225,13 +326,19 @@ export function checkReportNumbers(input: {
   if (input.sourceNumbers.size === 0 || input.reportTexts.every((t) => !t.trim())) {
     return emptyNumberCheck();
   }
-  const allowed = new Set(input.allowedTexts.flatMap((t) => tokenize(t, false).map((x) => x.text)));
+  // WD-775: 양식·프롬프트·컨텍스트의 숫자는 값으로 허용한다(「1234」 → 리포트 「1,234개」). 허용 텍스트는 JSON 이 아닌 날 글자라
+  // JSON 지향인 collectSourceNumbers(따옴표 밖 「1,234」를 1·234 로 나눔) 대신 리포트와 같은 tokenize 로 값(표시값 × 단위 배수,
+  // % 는 그 값)을 모은다. 위의 checked 판정은 sourceNumbers 만 본다.
+  const allowedNumbers = new Set<number>();
+  for (const t of input.allowedTexts) {
+    for (const x of tokenize(t, false)) allowedNumbers.add(x.percent ? x.value : x.value * x.multiplier);
+  }
+  const index = new NumberIndex([input.sourceNumbers, allowedNumbers]);
   const seen = new Set<string>();
   const unverified: UnverifiedNumber[] = [];
   for (const report of input.reportTexts) {
     for (const token of tokenize(report, true)) {
-      if (seen.has(token.text)) continue;
-      if (allowed.has(token.text) || matchesSource(token, input.sourceNumbers)) continue;
+      if (seen.has(token.text) || index.matches(token)) continue;
       seen.add(token.text);
       if (unverified.length < MAX_UNVERIFIED) {
         unverified.push({ text: token.text, context: contextOf(report, token) });
@@ -242,8 +349,8 @@ export function checkReportNumbers(input: {
 }
 
 /**
- * tool_use ↔ tool_result 짝짓기 (WD-767). tool_result 는 tool_use_id 만 싣는 공급자(sdk·cli)가 있어
- * id → 도구 이름 맵으로 결과가 어느 도구의 것인지 정한다.
+ * tool_use ↔ tool_result 짝짓기 (WD-767). 병렬 호출이면 결과 순서가 tool_use 순서와 달라, id → 도구 이름 맵으로
+ * 결과가 어느 도구의 것인지 정한다. WD-775: sdk·cli·opencode(callID 있을 때) 모두 tool_result 에 toolUseId 를 싣는다.
  */
 export function createToolNameResolver() {
   const nameById = new Map<string, string>();
@@ -257,14 +364,17 @@ export function createToolNameResolver() {
       if (id) nameById.set(id, lastToolName);
     },
     /**
-     * tool_result 가 속한 도구 이름. 결과가 id(toolUseId, 또는 sdk·cli 처럼 toolName 자리에 실린 tool_use_id)로
-     * 맵에 있으면 그 도구다. id 를 명시해 실었는데 맵에 없으면 알 수 없는 호출이라 빈 문자열(출처로 치지 않음).
-     * id 가 전혀 없는 공급자일 때만 직전 tool_use 이름으로 판단한다(경고 전용이라 비데이터 결과가 섞여도 감수).
+     * tool_result 가 속한 도구 이름.
+     * - toolUseId 가 있으면 그 id 로만 찾는다 — 맵에 없으면 알 수 없는 호출이라 빈 문자열(출처로 치지 않음).
+     * - 없으면 toolName 자리 값: 실제 도구 이름(opencode, callID 없음)이면 그대로, 맵의 id(toolUseId 를 싣기 전 모양)면
+     *   그 도구. sdk 의 'unknown' 같은 그 밖의 값은 데이터 조회 도구 이름이 아니라 출처가 되지 않는다.
+     * - 둘 다 없는 공급자일 때만 직전 tool_use 이름으로 판단한다(경고 전용이라 비데이터 결과가 섞여도 감수).
      */
     resolve(event: Record<string, unknown>): string {
       const explicitId = idOf(event);
-      const mapped = nameById.get(explicitId || String(event.toolName ?? ''));
-      return mapped ?? (explicitId ? '' : lastToolName);
+      if (explicitId) return nameById.get(explicitId) ?? '';
+      const nameField = String(event.toolName ?? '');
+      return nameField ? (nameById.get(nameField) ?? nameField) : lastToolName;
     },
   };
 }

@@ -138,7 +138,20 @@ describe('processMessage', () => {
     const result = processMessage(msg, tag, false);
 
     // #206/#265: tool_result 페이로드는 항상 isError 필드를 포함한다 (safeTool 에러 전파용)
-    expect(result).toEqual([{ type: 'tool_result', toolName: 'id-1', result: 'ok', isError: false }]);
+    // WD-775: 짝지을 tool_use_id 를 toolUseId 로도 싣는다 (toolName 자리 값은 SSE 계약상 그대로)
+    expect(result).toEqual([{ type: 'tool_result', toolName: 'id-1', result: 'ok', isError: false, toolUseId: 'id-1' }]);
+  });
+
+  // WD-775: tool_use_id 가 없는 블록은 toolUseId 를 싣지 않는다 — 'unknown' 은 짝지을 id 가 아니다
+  it('PM-08b: tool_use_id 없는 tool_result 는 toolUseId 를 싣지 않는다 (WD-775)', () => {
+    const msg = {
+      type: 'user',
+      message: { content: [{ type: 'tool_result', content: 'ok' }] },
+    } as unknown as SDKMessage;
+
+    const result = processMessage(msg, tag, false);
+
+    expect(result).toEqual([{ type: 'tool_result', toolName: 'unknown', result: 'ok', isError: false }]);
   });
 
   // PM-09: user/tool_result(array content) — 텍스트 블록들을 \n으로 결합
@@ -159,7 +172,7 @@ describe('processMessage', () => {
 
     const result = processMessage(msg, tag, false);
 
-    expect(result).toEqual([{ type: 'tool_result', toolName: 'id-2', result: 'line1\nline2', isError: false }]);
+    expect(result).toEqual([{ type: 'tool_result', toolName: 'id-2', result: 'line1\nline2', isError: false, toolUseId: 'id-2' }]);
   });
 
   // PM-09b: safeTool 에러 path — is_error: true → isError: true 전파 (refs #206/#265)
@@ -179,7 +192,7 @@ describe('processMessage', () => {
     const result = processMessage(msg, tag, false);
 
     expect(result).toEqual([
-      { type: 'tool_result', toolName: 'id-err', result: 'tool failed: 404', isError: true },
+      { type: 'tool_result', toolName: 'id-err', result: 'tool failed: 404', isError: true, toolUseId: 'id-err' },
     ]);
   });
 

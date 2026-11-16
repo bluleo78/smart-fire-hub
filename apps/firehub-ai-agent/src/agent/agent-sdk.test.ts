@@ -191,7 +191,8 @@ describe('processMessage', () => {
 
     // #206/#265: tool_result 페이로드는 항상 isError 필드를 포함한다 (safeTool 에러 전파용)
     expect(result).toEqual([
-      { type: 'tool_result', toolName: 'tool1', result: 'result text', isError: false },
+      // WD-775: 짝지을 tool_use_id 를 toolUseId 로도 싣는다
+      { type: 'tool_result', toolName: 'tool1', result: 'result text', isError: false, toolUseId: 'tool1' },
     ]);
   });
 
@@ -216,7 +217,7 @@ describe('processMessage', () => {
     const result = processMessage(msg, mockTag, false);
 
     expect(result).toEqual([
-      { type: 'tool_result', toolName: 'tool2', result: 'line1\nline2', isError: false },
+      { type: 'tool_result', toolName: 'tool2', result: 'line1\nline2', isError: false, toolUseId: 'tool2' },
     ]);
   });
 
@@ -232,7 +233,7 @@ describe('processMessage', () => {
     const result = processMessage(msg, mockTag, false);
 
     expect(result).toEqual([
-      { type: 'tool_result', toolName: 'tool3', result: undefined, isError: false },
+      { type: 'tool_result', toolName: 'tool3', result: undefined, isError: false, toolUseId: 'tool3' },
     ]);
   });
 
@@ -462,7 +463,7 @@ describe('executeAgent', () => {
 
     const { executeAgent } = await import('./agent-sdk.js');
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+     
     for await (const _event of executeAgent({
       message: 'hello',
       tenantId: 1,
@@ -527,7 +528,7 @@ describe('executeAgent', () => {
 
     const { executeAgent } = await import('./agent-sdk.js');
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+     
     for await (const _event of executeAgent({
       message: 'hello',
       tenantId: 1,

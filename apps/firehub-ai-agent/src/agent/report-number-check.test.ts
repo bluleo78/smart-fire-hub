@@ -230,3 +230,177 @@ describe('createToolNameResolver', () => {
     expect(r.resolve({})).toBe('execute_sql_query');
   });
 });
+
+// WD-775: 오탐 6·누락 2·성능 1 다듬기
+
+/** WD-775: 대조해 경고된 수치 표기만 돌려준다 (아래 시험들의 반복을 줄인다). */
+function unverifiedTexts(...args: Parameters<typeof run>): string[] {
+  return run(...args).unverified.map((u) => u.text);
+}
+
+describe('WD-775 데이터 조회 도구 범위', () => {
+  it('저장 쿼리 실행·차트 데이터·행 개수 도구 결과도 출처다', () => {
+    expect(isDataQueryTool('mcp__firehub__run_saved_query')).toBe(true);
+    expect(isDataQueryTool('mcp__firehub__get_chart_data')).toBe(true);
+    expect(isDataQueryTool('firehub_get_row_count')).toBe(true);
+  });
+
+  it('행 검색 도구(search_dataset_rows) 결과도 원본 행 값이라 출처다', () => {
+    expect(isDataQueryTool('mcp__firehub__search_dataset_rows')).toBe(true);
+  });
+
+  it('파일 데이터셋 요약(총 개수·용량)·그래프 구조 질의(속성값) 결과도 출처다', () => {
+    expect(isDataQueryTool('mcp__firehub__summarize_dataset_files')).toBe(true);
+    expect(isDataQueryTool('mcp__firehub__graphrag_structured_query')).toBe(true);
+  });
+});
+
+describe('WD-775 허용 텍스트 값 비교', () => {
+  it('context 의 1234 는 리포트 「1,234개」를 허용한다', () => {
+    expect(run('대상 1,234개', ['{"n":1}'], ['{"total":1234}']).unverifiedTotal).toBe(0);
+  });
+
+  it('context 의 0.5 는 리포트 「50%」를, 350000000 은 「3.5억」을 허용한다', () => {
+    expect(run('비율 50%, 매출 3.5억', ['{"n":1}'], ['{"r":0.5,"amt":350000000}']).unverifiedTotal).toBe(0);
+  });
+
+  it('허용 숫자만 있고 출처 숫자가 없으면 여전히 검증하지 않는다', () => {
+    expect(run('대상 1,234개', ['[]'], ['{"total":1234}']).checked).toBe(false);
+  });
+
+  it('허용 텍스트는 날 글자로 읽어 따옴표 밖 「1,234」도 1234 한 값이다', () => {
+    expect(run('대상 1234건', ['{"n":1}'], ['1,234']).unverifiedTotal).toBe(0);
+    expect(unverifiedTexts('대상 1,234건 분석 결과 234건', ['{"n":1}'], ['대상 1,234건 분석'])).toEqual(['234']);
+  });
+
+  it('허용 텍스트의 단위·% 표기는 그 값으로 허용한다', () => {
+    expect(run('매출 350,000,000원, 비율 12.5%', ['{"n":1}'], ['목표 3.5억, 비율 12.5%']).unverifiedTotal).toBe(0);
+  });
+
+  it('같은 표기도 값 비교로 허용된다', () => {
+    expect(run('상위 15개', [SRC], ['상위 15개']).unverifiedTotal).toBe(0);
+  });
+});
+
+describe('WD-775 「조」 단위 판정', () => {
+  it('「제3조」 조문 번호는 경고하지 않는다', () => {
+    expect(run('근거는 제13조와 제3조의12 이다', ['{"n":1}']).unverifiedTotal).toBe(0);
+  });
+
+  it('「제 13조」처럼 제 뒤에 공백이 있어도 조문 번호로 가린다', () => {
+    expect(run('근거는 제 13조와 제 15조의12', ['{"n":1}']).unverifiedTotal).toBe(0);
+    // 「제」가 낱말 끝(규제)이면 조문 번호가 아니라 조(兆) 금액이다
+    expect(unverifiedTexts('규제 3조원 절감', ['{"n":1}'])).toEqual(['3조']);
+  });
+
+  it('「2조 편성」「2조 2교대」「3조로 나누어」처럼 작은 정수 + 조(組) 쓰임은 조 단위로 읽지 않는다', () => {
+    expect(run('2조 편성, 2조 2교대, 3조로 나누어 운영', ['{"n":12}']).unverifiedTotal).toBe(0);
+  });
+
+  it('「추경 15조 편성」「1.5조 편성」은 조(兆) 예산이다 — 10 넘는 수·소수는 조(組) 예외를 쓰지 않는다', () => {
+    expect(run('추경 15조 편성', ['15000000000000']).unverifiedTotal).toBe(0);
+    expect(unverifiedTexts('추경 15조 편성', ['15'])).toEqual(['15조']);
+    expect(run('추경 1.5조 편성', ['1500000000000']).unverifiedTotal).toBe(0);
+    expect(unverifiedTexts('추경 1.5조 편성', ['15'])).toEqual(['1.5조']);
+  });
+
+  it('「3조 원」「1.2조」「3조5천억」은 여전히 조 단위로 읽는다', () => {
+    expect(run('예산 3조 원', ['3000000000000']).unverifiedTotal).toBe(0);
+    expect(unverifiedTexts('예산 3조 원', ['3'])).toEqual(['3조']);
+    expect(run('1.2조', ['1200000000000']).unverifiedTotal).toBe(0);
+    expect(unverifiedTexts('1.2조', ['12'])).toEqual(['1.2조']);
+    expect(run('3조5천억', ['3500000000000']).unverifiedTotal).toBe(0);
+    expect(unverifiedTexts('3조가 투입', ['3'])).toEqual(['3조']);
+    expect(unverifiedTexts('예산 2조로 늘어', ['2'])).toEqual(['2조']);
+    expect(unverifiedTexts('3조원', ['3'])).toEqual(['3조']);
+  });
+});
+
+describe('WD-775 목차 번호', () => {
+  it('줄 첫머리의 「11. 권고사항」「## 12. 부록」은 번호라 건너뛴다', () => {
+    expect(run('11. 권고사항\n## 12. 부록\n  13. 기타', ['{"n":1}']).unverifiedTotal).toBe(0);
+  });
+
+  it('줄 첫머리 다단계 절 번호 「## 3.1 출동 현황」「### 2.4 소결」「12.3. 기타」는 건너뛴다', () => {
+    expect(run('## 3.1 출동 현황\n### 2.4 소결\n12.3. 기타\n  4.10.2 세부', ['{"n":1}']).unverifiedTotal).toBe(0);
+  });
+
+  it('줄 첫머리 「3.5억 원」「12.5% 증가」「3.5 억」과 문장 안 「3.1」은 계속 대조한다', () => {
+    expect(unverifiedTexts('3.5억 원\n12.5% 증가\n13.5 억\n증가율 3.1 수준', ['{"n":1}'])).toEqual([
+      '3.5억',
+      '12.5%',
+      '13.5',
+      '3.1',
+    ]);
+  });
+
+  it('소수·퍼센트·문장 안 「11. 」은 그대로 대조한다', () => {
+    expect(unverifiedTexts('11.5%\n증가율 11.5', ['{"n":1}'])).toEqual(['11.5%', '11.5']);
+    expect(unverifiedTexts('증가는 11. 그리고', ['{"n":1}'])).toEqual(['11']);
+  });
+});
+
+describe('WD-775 분수·범위는 날짜로 가리지 않는다', () => {
+  it('개수 단위가 바로 붙은 「10/20건」「3-15건」은 대조한다', () => {
+    expect(unverifiedTexts('처리 10/20건', ['{"n":1}'])).toEqual(['20']);
+    expect(unverifiedTexts('범위 3-15건', ['{"n":1}'])).toEqual(['15']);
+    expect(run('처리 10/20건', ['20']).unverifiedTotal).toBe(0);
+  });
+
+  it('단위 없는 짧은 날짜는 지금처럼 가린다', () => {
+    expect(run('11/16 기준, 3-15 사이, 11/16대비 증가, 11/16회의', ['{"n":1}']).unverifiedTotal).toBe(0);
+  });
+});
+
+describe('WD-775 tool_result 짝짓기', () => {
+  it('모르는 id·\'unknown\' 은 직전 도구 이름으로 넘어가지 않아 출처가 아니다', () => {
+    const r = createToolNameResolver();
+    r.onUse({ toolName: 'mcp__firehub__execute_sql_query', toolUseId: 'toolu_a' });
+    expect(r.resolve({ toolName: 'toolu_x', toolUseId: 'toolu_x' })).toBe('');
+    expect(isDataQueryTool(r.resolve({ toolName: 'toolu_x' }))).toBe(false);
+    expect(isDataQueryTool(r.resolve({ toolName: 'unknown' }))).toBe(false);
+    expect(r.resolve({ toolName: 'toolu_a', toolUseId: 'toolu_a' })).toBe('mcp__firehub__execute_sql_query');
+  });
+
+  it('id 도 이름 자리 값도 없으면 직전 도구 이름이다', () => {
+    const r = createToolNameResolver();
+    r.onUse({ toolName: 'mcp__firehub__execute_sql_query', toolUseId: 'toolu_a' });
+    expect(r.resolve({})).toBe('mcp__firehub__execute_sql_query');
+    expect(r.resolve({ toolName: '' })).toBe('mcp__firehub__execute_sql_query');
+  });
+
+  it('실제 도구 이름을 싣는 공급자(opencode, callID 없음)는 그 이름으로 판정한다', () => {
+    const r = createToolNameResolver();
+    r.onUse({ toolName: 'mcp__firehub__execute_sql_query' });
+    expect(r.resolve({ toolName: 'mcp__firehub__execute_sql_query' })).toBe('mcp__firehub__execute_sql_query');
+    r.onUse({ toolName: 'mcp__firehub__list_datasets' });
+    expect(r.resolve({ toolName: 'mcp__firehub__list_datasets' })).toBe('mcp__firehub__list_datasets');
+  });
+});
+
+describe('WD-775 대조 성능', () => {
+  // 벽시계 단정이 부하에 흔들리지 않도록(WD-235 유형) 작업량을 크게 잡고 한도는 넉넉히 둔다 — 토큰마다 출처 전체를
+  // 훑던 예전 방식은 이 작업량(출처 20만 × 토큰 2만 1천)에서 실측 약 15초로 한도를 크게 넘고, 색인 방식은 약 0.1초라
+  // 부하로 수십 배 느려져도 한도 안이다.
+  it('출처 20만 개 + 서로 다른 토큰 2만여 개를 3초 안에 대조한다', () => {
+    const sourceNumbers = new Set<number>();
+    for (let i = 0; i < 200_000; i++) sourceNumbers.add(i * 7 + 0.123);
+    const parts: string[] = [];
+    for (let i = 0; i < 7000; i++) parts.push(`${1000 + i}.${i % 10}`, `${2000 + i}억`, `${i + 11}.5%`);
+    const report = parts.join(' ');
+    const t0 = performance.now();
+    const r = checkReportNumbers({ reportTexts: [report], sourceNumbers, allowedTexts: [] });
+    const elapsed = performance.now() - t0;
+    expect(r.checked).toBe(true);
+    expect(elapsed).toBeLessThan(3000);
+  });
+
+  it('퍼센트·배수·자릿수 조합을 섞지 않는다', () => {
+    // 0.123 → 12.3% 또는 0.123%, 350000000 → 3.5억 은 맞고, 3.5% 는 아니다
+    expect(run('12.3% 0.12% 3.5억').unverifiedTotal).toBe(0);
+    expect(unverifiedTexts('3.5%')).toEqual(['3.5%']);
+    expect(run('35000만').unverifiedTotal).toBe(0);
+    expect(run('3.50억').unverifiedTotal).toBe(0);
+    expect(unverifiedTexts('3.6억')).toEqual(['3.6억']);
+  });
+});

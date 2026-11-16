@@ -980,6 +980,8 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
                 toolName: block.tool_use_id ?? '',
                 result: resultText,
                 isError,
+                // WD-775: SDK 경로와 같이 짝지을 id 를 toolUseId 로도 싣는다(id 가 없으면 싣지 않음)
+                ...(block.tool_use_id ? { toolUseId: block.tool_use_id } : {}),
               };
             }
             // Tier2: 연속 실패 기록 + 강제중단
