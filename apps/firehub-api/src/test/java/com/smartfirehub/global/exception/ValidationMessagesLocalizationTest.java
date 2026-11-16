@@ -100,12 +100,18 @@ class ValidationMessagesLocalizationTest extends IntegrationTestBase {
     assertThat(body.path("errors").path("name").asText()).isEqualTo("100자 이하로 입력하세요.");
   }
 
-  /** DTO 에 명시한 한국어 message= (사용자 추가)는 기본 번들이 덮어쓰지 않는다. */
+  /**
+   * DTO 에 명시한 한국어 message= (사용자 추가)는 기본 번들이 덮어쓰지 않는다.
+   *
+   * <p>이름은 WD-751 부터 「새 계정일 때만 필수」라 DTO 에 @NotBlank 가 없다(필수 판정은 서비스가 한다). 그래서 이름 쪽은 아직 DTO 에 남은
+   * 명시 문구인 길이 제한(@Size message=)으로 같은 성질을 확인한다.
+   */
   @Test
   void createUser_explicitKoreanMessage_unchanged() throws Exception {
-    JsonNode body = assert400(postJson("/api/v1/users", "{}", "en"));
+    String json = objectMapper.writeValueAsString(java.util.Map.of("name", "a".repeat(51)));
+    JsonNode body = assert400(postJson("/api/v1/users", json, "en"));
     assertThat(body.path("errors").path("email").asText()).isEqualTo("이메일은 필수입니다");
-    assertThat(body.path("errors").path("name").asText()).isEqualTo("이름은 필수입니다");
+    assertThat(body.path("errors").path("name").asText()).isEqualTo("이름은 50자 이하여야 합니다");
   }
 
   /**

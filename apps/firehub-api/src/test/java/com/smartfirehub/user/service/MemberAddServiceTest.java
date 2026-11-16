@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.smartfirehub.global.exception.CodedApiException;
+import com.smartfirehub.global.tenant.MissingTenantScopeException;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantProvisioningService;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -12,6 +13,7 @@ import com.smartfirehub.support.TestUsers;
 import com.smartfirehub.tenant.repository.MembershipRepository;
 import com.smartfirehub.user.dto.AddMemberRequest;
 import com.smartfirehub.user.dto.AddMemberResponse;
+import com.smartfirehub.user.dto.MemberLookupResponse;
 import com.smartfirehub.user.repository.UserRepository;
 import java.util.ArrayList;
 import java.util.List;
@@ -283,5 +285,146 @@ class MemberAddServiceTest extends IntegrationTestBase {
                         String.valueOf(res.userId()))
                     .toString());
     assertThat(metadata).contains("\"before\": []").contains("\"ADMIN\"");
+  }
+
+  // ── WD-751: 이름·임시 비밀번호는 새 계정일 때만 필수, 이메일 존재 확인(member-lookup) ──
+
+  /** WD-751: 기존 계정(비멤버)은 이름·임시 비밀번호 없이도 붙는다 — 서버가 어차피 무시하는 값이라 묻지 않는다. */
+  @Test
+  void addMember_existingAccountWithoutNameAndPassword_attachesMembership() {
+    long existing = newMember(tenantB, "nofields");
+    String username = userRepository.findById(existing).orElseThrow().username();
+
+    AddMemberResponse res = addInA(new AddMemberRequest(username, null, null, List.of()));
+
+    assertThat(res.created()).isFalse();
+    assertThat(res.userId()).isEqualTo(existing);
+    assertThat(membershipRepository.findInTenant(existing, tenantA)).isPresent();
+  }
+
+  /** WD-751: 새 계정인데 이름이 없으면 400 NEW_ACCOUNT_FIELDS_REQUIRED, 계정은 만들어지지 않는다. */
+  @Test
+  void addMember_newAccountWithoutName_badRequestAndNothingCreated() {
+    String email = "noname-" + System.nanoTime() + "@acme.io";
+
+    assertThatThrownBy(() -> addInA(new AddMemberRequest(email, null, TEMP, List.of())))
+        .isInstanceOfSatisfying(
+            CodedApiException.class,
+            e -> {
+              assertThat(e.code()).isEqualTo("NEW_ACCOUNT_FIELDS_REQUIRED");
+              assertThat(e.details()).containsEntry("name", "이름은 필수입니다");
+              assertThat(e.details()).doesNotContainKey("temporaryPassword");
+            });
+    assertThat(userRepository.findByUsernameIgnoreCase(email)).isEmpty();
+  }
+
+  /** WD-751: 새 계정인데 임시 비밀번호가 없으면 400, 계정은 만들어지지 않는다. */
+  @Test
+  void addMember_newAccountWithoutPassword_badRequestAndNothingCreated() {
+    String email = "nopass-" + System.nanoTime() + "@acme.io";
+
+    assertThatThrownBy(() -> addInA(new AddMemberRequest(email, "이름", null, List.of())))
+        .isInstanceOfSatisfying(
+            CodedApiException.class,
+            e -> {
+              assertThat(e.code()).isEqualTo("NEW_ACCOUNT_FIELDS_REQUIRED");
+              assertThat(e.details()).containsEntry("temporaryPassword", "임시 비밀번호는 필수입니다");
+            });
+    assertThat(userRepository.findByUsernameIgnoreCase(email)).isEmpty();
+  }
+
+  /** WD-751: 공백만 있는 이름·비밀번호는 「없음」으로 본다 — 새 계정이면 둘 다 필드 오류로 400. */
+  @Test
+  void addMember_newAccountWithBlankFields_badRequestWithBothFieldErrors() {
+    String email = "blank-" + System.nanoTime() + "@acme.io";
+
+    assertThatThrownBy(() -> addInA(new AddMemberRequest(email, "   ", "  ", List.of())))
+        .isInstanceOfSatisfying(
+            CodedApiException.class,
+            e -> {
+              assertThat(e.code()).isEqualTo("NEW_ACCOUNT_FIELDS_REQUIRED");
+              assertThat(e.details())
+                  .containsEntry("name", "이름은 필수입니다")
+                  .containsEntry("temporaryPassword", "임시 비밀번호는 필수입니다");
+            });
+    assertThat(userRepository.findByUsernameIgnoreCase(email)).isEmpty();
+  }
+
+  /** WD-751: 판정 순서 — 이미 멤버면 필드가 비어 있어도 400 이 아니라 409 다(기존 계정 판정이 먼저). */
+  @Test
+  void addMember_alreadyMemberWithoutFields_stillConflict() {
+    long member = newMember(tenantA, "dupnofields");
+    String username = userRepository.findById(member).orElseThrow().username();
+
+    assertThatThrownBy(() -> addInA(new AddMemberRequest(username, null, null, List.of())))
+        .isInstanceOf(CodedApiException.class)
+        .extracting("code")
+        .isEqualTo("MEMBER_ALREADY_EXISTS");
+  }
+
+  private MemberLookupResponse lookupInA(String email) {
+    return TenantContext.runScopedGet(tenantA, () -> userService.lookupMember(email));
+  }
+
+  /** WD-751: 계정이 없으면 NEW, userId·name 은 비운다. */
+  @Test
+  void lookupMember_noAccount_new() {
+    MemberLookupResponse res = lookupInA("ghost-" + System.nanoTime() + "@acme.io");
+
+    assertThat(res.status()).isEqualTo(MemberLookupResponse.Status.NEW);
+    assertThat(res.userId()).isNull();
+    assertThat(res.name()).isNull();
+  }
+
+  /** WD-751: 다른 워크스페이스에만 있는 계정은 EXISTING + 계정 이름. 대소문자·앞뒤 공백이 섞여도 같은 판정(addMember 와 같은 정규화). */
+  @Test
+  void lookupMember_existingNonMember_existingWithNameCaseInsensitive() {
+    long existing = newMember(tenantB, "other");
+    String username = userRepository.findById(existing).orElseThrow().username();
+
+    MemberLookupResponse res = lookupInA("  " + username.toUpperCase(java.util.Locale.ROOT) + " ");
+
+    assertThat(res.status()).isEqualTo(MemberLookupResponse.Status.EXISTING);
+    assertThat(res.userId()).isEqualTo(existing);
+    assertThat(res.name()).isEqualTo("other");
+  }
+
+  /** WD-751: 이 워크스페이스의 활성 멤버면 MEMBER. */
+  @Test
+  void lookupMember_activeMember_member() {
+    long member = newMember(tenantA, "act");
+    String username = userRepository.findById(member).orElseThrow().username();
+
+    MemberLookupResponse res = lookupInA(username.toUpperCase(java.util.Locale.ROOT));
+
+    assertThat(res.status()).isEqualTo(MemberLookupResponse.Status.MEMBER);
+    assertThat(res.userId()).isEqualTo(member);
+  }
+
+  /** WD-751: 정지 멤버면 SUSPENDED + userId(웹이 상세 링크를 만든다). */
+  @Test
+  void lookupMember_suspendedMember_suspendedWithUserId() {
+    long member = newMember(tenantA, "susp");
+    membershipRepository.updateStatus(member, tenantA, "SUSPENDED");
+    String username = userRepository.findById(member).orElseThrow().username();
+
+    MemberLookupResponse res = lookupInA(" " + username + " ");
+
+    assertThat(res.status()).isEqualTo(MemberLookupResponse.Status.SUSPENDED);
+    assertThat(res.userId()).isEqualTo(member);
+  }
+
+  /** WD-751: 테넌트 컨텍스트 없이 부르면 판정을 돌려주지 않고 실패한다(존재 여부 노출 방지). */
+  @Test
+  void lookupMember_withoutTenant_throws() {
+    long existing = newMember(tenantB, "notenant");
+    String username = userRepository.findById(existing).orElseThrow().username();
+    TenantContext.clear();
+    try {
+      assertThatThrownBy(() -> userService.lookupMember(username))
+          .isInstanceOf(MissingTenantScopeException.class);
+    } finally {
+      TenantContext.set(DEFAULT_TEST_TENANT_ID);
+    }
   }
 }

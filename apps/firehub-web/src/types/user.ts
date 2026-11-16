@@ -37,12 +37,28 @@ export interface SetActiveRequest {
   active: boolean;
 }
 
-/** 멤버 추가 요청(POST /users). USER 역할은 서버가 항상 더한다. */
+/**
+ * 멤버 추가 요청(POST /users). USER 역할은 서버가 항상 더한다.
+ * name·temporaryPassword 는 새 계정일 때만 필수다(WD-751) — 기존 계정이면 서버가 쓰지 않으므로 키째 뺀다.
+ */
 export interface AddMemberRequest {
   email: string;
-  name: string;
-  temporaryPassword: string;
+  name?: string;
+  temporaryPassword?: string;
   roleIds: number[];
+}
+
+/**
+ * 멤버 추가 전 이메일 존재 확인 결과(POST /users/member-lookup, WD-751).
+ * NEW = 계정 없음, EXISTING = 계정 있음·이 워크스페이스 비멤버, MEMBER = 활성 멤버, SUSPENDED = 정지 멤버.
+ */
+export type MemberLookupStatus = 'NEW' | 'EXISTING' | 'MEMBER' | 'SUSPENDED';
+
+/** userId·name 은 NEW 면 null. SUSPENDED 의 userId 로 상세 링크를 만든다. */
+export interface MemberLookupResponse {
+  status: MemberLookupStatus;
+  userId: number | null;
+  name: string | null;
 }
 
 /** created=true 면 새 계정(임시 비밀번호 1회 표시), false 면 기존 계정을 붙였다. */

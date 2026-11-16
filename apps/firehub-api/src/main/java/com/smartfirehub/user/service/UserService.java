@@ -15,6 +15,7 @@ import com.smartfirehub.tenant.dto.TenantMembership;
 import com.smartfirehub.tenant.repository.MembershipRepository;
 import com.smartfirehub.user.dto.AddMemberRequest;
 import com.smartfirehub.user.dto.AddMemberResponse;
+import com.smartfirehub.user.dto.MemberLookupResponse;
 import com.smartfirehub.user.dto.UserDetailResponse;
 import com.smartfirehub.user.dto.UserListResponse;
 import com.smartfirehub.user.dto.UserResponse;
@@ -27,8 +28,10 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
@@ -264,6 +267,7 @@ public class UserService {
   @Transactional
   public AddMemberResponse addMember(AddMemberRequest request, Long callerId) {
     long tenantId = TenantContext.require("멤버 추가");
+    String email = normalizeMemberEmail(request.email());
     Set<Long> chosen = validateRequestedRoles(request.roleIds());
     // USER 를 항상 넣는 이유: USER 는 워크스페이스 기본 역할이다. 초대된 멤버가 권한을 하나도 갖지 않는 상태를 만들지 않는다(사용자 결정, 계획
     // "판단 사항 1"). 선택 역할은 USER 에 추가된다. USER id 는 한 번만 조회해 합치기·범위 검사 제외에 함께 쓴다.
@@ -274,16 +278,20 @@ public class UserService {
     chosen.remove(userRoleId);
     roleGrantGuard.assertCanChangeRoles(callerId, chosen);
 
-    // 계정 확보·멤버십·역할·중복 409 번역·이메일 정규화는 운영자 콘솔 경로와 공유하는 TenantMemberAdder 가 맡는다(WD-750).
-    // 같은 트랜잭션에 합류한다. 웹은 기존 계정에 추가 검사가 없다(비활성 계정 거부는 플랫폼 경로만 — 웹 동작 불변).
-    TenantMemberAdder.Result added =
-        tenantMemberAdder.add(
-            tenantId,
-            request.email(),
-            request.name(),
-            request.temporaryPassword(),
-            roleIds,
-            existing -> {});
+    // 계정 확보·멤버십·역할·중복 409 번역은 운영자 콘솔 경로와 공유하는 TenantMemberAdder 가 맡는다(WD-750). 같은 트랜잭션에 합류한다.
+    // 새 계정일 때만 이름·임시 비밀번호가 필요하다(WD-751) — 기존 계정이면 둘 다 쓰지 않으므로 DTO 는 선택값으로 받고, 계정 유무를 먼저
+    // 갈라 새 계정 경로에서만 계정을 만들기 전에 막는다. 판정 순서: 역할 검증 → 역할 범위 → 이미 멤버(409, 기존 계정) → 새 계정 필드(400) → 생성.
+    // 웹은 기존 계정에 추가 검사가 없다(비활성 계정 거부는 플랫폼 경로만 — 웹 동작 불변).
+    Optional<UserResponse> existing = userRepository.findByUsernameIgnoreCase(email);
+    TenantMemberAdder.Result added;
+    if (existing.isPresent()) {
+      added = tenantMemberAdder.addExisting(tenantId, existing.get(), roleIds);
+    } else {
+      requireNewAccountFields(request);
+      added =
+          tenantMemberAdder.add(
+              tenantId, email, request.name(), request.temporaryPassword(), roleIds, account -> {});
+    }
     UserResponse user = added.user();
     boolean created = added.created();
     audit(
@@ -297,6 +305,73 @@ public class UserService {
     // 새 멤버십이라 이 테넌트의 변경 전 역할은 없다.
     auditRoleAssign(callerId, user.id(), List.of(), roleRepository.findByUserId(user.id()));
     return new AddMemberResponse(user.id(), created);
+  }
+
+  /**
+   * 멤버 추가 전 이메일 존재 확인(WD-751). 웹 멤버 추가 대화상자가 이 판정으로 이름·임시 비밀번호 칸을 보일지 정한다.
+   *
+   * <p>정규화·판정은 {@link #addMember} 와 같은 {@link #normalizeMemberEmail}·{@link #findMemberCandidate} 를
+   * 쓴다 — 한쪽만 소문자로 바꾸면 화면 판정(기존 계정)과 실제 추가 결과(새 계정)가 갈린다. 테넌트 컨텍스트가 없으면 판정하지 않고 실패한다(멤버 여부는 테넌트
+   * 기준이고, 컨텍스트 없는 호출에 계정 존재 여부를 알려 주지 않는다). 읽기라 감사 로그는 남기지 않는다.
+   */
+  @Transactional(readOnly = true)
+  public MemberLookupResponse lookupMember(String rawEmail) {
+    long tenantId = TenantContext.require("멤버 존재 확인");
+    MemberCandidate candidate = findMemberCandidate(normalizeMemberEmail(rawEmail), tenantId);
+    if (candidate.account().isEmpty()) {
+      return new MemberLookupResponse(MemberLookupResponse.Status.NEW, null, null);
+    }
+    UserResponse user = candidate.account().get();
+    MemberLookupResponse.Status status;
+    if (candidate.membership().isEmpty()) {
+      status = MemberLookupResponse.Status.EXISTING;
+    } else if (candidate.membership().get().isActive()) {
+      status = MemberLookupResponse.Status.MEMBER;
+    } else {
+      status = MemberLookupResponse.Status.SUSPENDED;
+    }
+    return new MemberLookupResponse(status, user.id(), user.name());
+  }
+
+  /** 멤버 추가·존재 확인 공용 이메일 정규화(trim + 소문자, Locale.ROOT). 새 계정의 username 도 이 값이다. */
+  private static String normalizeMemberEmail(String rawEmail) {
+    return rawEmail.trim().toLowerCase(Locale.ROOT);
+  }
+
+  /**
+   * 정규화한 이메일의 계정과 이 테넌트 멤버십(ACTIVE·SUSPENDED). {@link #addMember}·{@link #lookupMember} 가 같은 판정을
+   * 쓰도록 한 곳에 둔다.
+   */
+  private MemberCandidate findMemberCandidate(String normalizedEmail, long tenantId) {
+    Optional<UserResponse> account = userRepository.findByUsernameIgnoreCase(normalizedEmail);
+    Optional<TenantMembership> membership =
+        account.flatMap(u -> membershipRepository.findInTenant(u.id(), tenantId));
+    return new MemberCandidate(account, membership);
+  }
+
+  /** 이메일 판정 결과 — 계정(없으면 empty)과 이 테넌트 멤버십(비멤버·계정 없음이면 empty). */
+  private record MemberCandidate(
+      Optional<UserResponse> account, Optional<TenantMembership> membership) {}
+
+  /**
+   * 새 계정을 만들 때 이름·임시 비밀번호가 있는지 본다(WD-751). null 이거나 공백뿐이면 「없음」이다 — 공백 이름으로 계정이 생기지 않게. 빠진 칸마다 필드
+   * 오류를 {@code errors} 에 실어 웹이 검증 400 처럼 칸 아래에 보이게 한다(형식 규칙은 값이 있을 때 DTO 가 이미 봤다).
+   */
+  private static void requireNewAccountFields(AddMemberRequest request) {
+    Map<String, String> missing = new LinkedHashMap<>();
+    if (request.name() == null || request.name().isBlank()) {
+      missing.put("name", "이름은 필수입니다");
+    }
+    if (request.temporaryPassword() == null || request.temporaryPassword().isBlank()) {
+      missing.put("temporaryPassword", "임시 비밀번호는 필수입니다");
+    }
+    if (!missing.isEmpty()) {
+      throw new CodedApiException(
+          HttpStatus.BAD_REQUEST,
+          "NEW_ACCOUNT_FIELDS_REQUIRED",
+          "새 계정은 이름과 임시 비밀번호가 필요합니다",
+          missing);
+    }
   }
 
   /**

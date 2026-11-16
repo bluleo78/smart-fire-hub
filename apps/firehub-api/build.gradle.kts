@@ -159,6 +159,11 @@ sourceSets {
     }
 }
 
+// Testcontainers 1.20.4(내장 docker-java)가 Docker 에 요청할 API 버전(WD-762). 정하지 않으면 1.32 로 요청하는데,
+// 최신 Docker 데몬은 최소 API(1.40~1.44) 미만을 거절해 "Could not find a valid Docker environment" 로 모든 컨테이너 테스트가 죽는다.
+// 1.44 는 Docker 25 이상이 필요하다. 테스트 JVM 과 generateJooq 가 같은 값을 쓰도록 여기 한 곳에 둔다.
+val testcontainersDockerApiVersion = "1.44"
+
 // 스키마 변경 시 `./gradlew generateJooq`로 생성 소스를 갱신한다. 생성 소스는 저장소에 추적한다.
 // 코드는 일회용 PostGIS + pgvector 컨테이너에 전체 Flyway 마이그레이션을 적용한 뒤 생성한다.
 // DB 접속 정보를 설정 시점에 고정하는 nu.studer 플러그인 대신 동적 JDBC URL을 받는 GenerationTool을 쓴다.
@@ -170,13 +175,15 @@ tasks.register("generateJooq") {
     val postgresDockerfile = rootProject.projectDir.toPath()
         .resolve("../../docker/postgres/Dockerfile")
         .normalize()
+    // 구성 캐시가 스크립트 객체를 직렬화하지 못하므로, doLast 가 스크립트 수준 val 대신 지역 변수를 읽게 복사한다.
+    val dockerApiVersion = testcontainersDockerApiVersion
     inputs.dir(migrationDir)
     inputs.file(postgresDockerfile)
     inputs.property("jooqCodegenVersion", "3.19.16")
     outputs.dir(outputDir)
 
     doLast {
-        System.setProperty("api.version", "1.41")
+        System.setProperty("api.version", dockerApiVersion)
 
         // Gradle 태스크는 테스트 JVM 밖에서 실행되므로 OrbStack 소켓을 Testcontainers 사용자 설정으로 전달한다.
         if (System.getenv("DOCKER_HOST") == null) {
@@ -272,6 +279,8 @@ tasks.withType<Test> {
         environment("DOCKER_HOST", "unix://${orbStackSocket.absolutePath}")
         environment("TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE", "/var/run/docker.sock")
     }
+    // 테스트 JVM 의 Testcontainers 가 데몬이 받는 API 버전으로 요청하게 한다(기본 1.32 는 거절됨, WD-762).
+    systemProperty("api.version", testcontainersDockerApiVersion)
     // 저장소 루트(apps/firehub-api 의 두 단계 위). Docker 빌드(/app)처럼 조부모가 없는 경로에서도
     // 설정 단계가 NPE 로 죽지 않도록 parentFile 체인 대신 경로 정규화로 계산한다.
     systemProperty(

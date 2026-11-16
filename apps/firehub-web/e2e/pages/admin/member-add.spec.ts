@@ -1,3 +1,5 @@
+import type { MemberLookupResponse } from '@/types/user';
+
 import { createRole, createUser } from '../../factories/auth.factory';
 import { setupAdminAuth } from '../../fixtures/admin.fixture';
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
@@ -13,6 +15,10 @@ const ROLES = [
   createRole({ id: 2, name: 'ADMIN', description: '시스템 관리자', isSystem: true }),
 ];
 
+/** 멤버 추가 전 이메일 존재 확인(WD-751). 이메일이 URL 에 남지 않게 POST 본문으로 보낸다. */
+const LOOKUP_PATH = '/api/v1/users/member-lookup';
+const LOOKUP_NEW: MemberLookupResponse = { status: 'NEW', userId: null, name: null };
+
 test.describe('멤버 추가', () => {
   test.beforeEach(async ({ authenticatedPage: page }) => {
     await setupAdminAuth(page);
@@ -26,6 +32,8 @@ test.describe('멤버 추가', () => {
         createUser({ id: 3, name: '박민호', username: 'minho@acme.io', email: 'minho@acme.io', isActive: false }),
       ]),
     );
+    // 이메일 칸을 벗어나면 존재 확인을 부른다(WD-751) — 기본은 「새 계정」. 확인 상태별 화면은 아래 WD-751 묶음에서 본다.
+    await mockApi(page, 'POST', LOOKUP_PATH, LOOKUP_NEW);
   });
 
   test('새 계정: 입력값이 그대로 전송되고 임시 비밀번호를 1회 보여 준다', { tag: '@smoke' }, async ({ authenticatedPage: page, context }) => {
@@ -348,6 +356,7 @@ test.describe('멤버 추가 — 위임 관리자 역할 잠금 (WD-291)', () =>
     await mockApi(page, 'GET', '/api/v1/auth/me/permissions', ['user:read', 'user:write', 'role:read', 'role:assign']);
     await mockApi(page, 'GET', '/api/v1/users', createPageResponse([createUser({ id: 1, name: '양동희' })]));
     await mockApi(page, 'GET', '/api/v1/roles', DELEGATE_ROLES);
+    await mockApi(page, 'POST', LOOKUP_PATH, LOOKUP_NEW); // WD-751 존재 확인 — 새 계정
   });
 
   test('서버가 부여 불가로 준 역할은 잠기고 까닭이 보이며, 범위 안 역할만 전송된다', async ({ authenticatedPage: page }) => {
@@ -440,5 +449,297 @@ test.describe('멤버 추가 — 위임 관리자 역할 잠금 (WD-291)', () =>
     const alertBox = await alert.boundingBox();
     const submitBox = await submit.boundingBox();
     expect(alertBox!.y + alertBox!.height).toBeLessThanOrEqual(submitBox!.y);
+  });
+});
+
+/**
+ * 멤버 추가 — 이메일을 먼저 확인해 새 계정 / 기존 계정 / 이미 멤버 / 정지 멤버를 미리 보여 준다(WD-751).
+ *
+ * 기존 계정이면 서버가 이름·임시 비밀번호를 쓰지 않으므로 그 칸을 숨기고 「기존 계정 추가」로 안내한다. 숨긴 칸의 값은 요청에 실리지 않는다.
+ */
+test.describe('멤버 추가 — 기존 계정 확인 (WD-751)', () => {
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+    await mockApi(page, 'GET', '/api/v1/roles', ROLES);
+  });
+
+  test('새 계정: 이메일 확인 뒤 이름·임시 비밀번호를 받아 추가한다', async ({ authenticatedPage: page }) => {
+    const lookup = await mockApi(page, 'POST', LOOKUP_PATH, LOOKUP_NEW, { capture: true });
+    const capture = await mockApi(page, 'POST', '/api/v1/users', { userId: 9, created: true }, { status: 201, capture: true });
+
+    const dialog = await openAddMember(page);
+    await dialog.getByLabel('이메일').fill('newbie@acme.io');
+    await dialog.getByLabel('이메일').blur();
+    expect((await lookup.waitForRequest()).payload).toEqual({ email: 'newbie@acme.io' });
+    // 이메일은 URL(쿼리)에 실리지 않는다 — 접근 로그에 개인정보가 남지 않게.
+    expect(lookup.lastRequest()!.url.search).toBe('');
+
+    await expect(dialog.getByLabel('이름')).toBeVisible();
+    await expect(dialog.getByLabel('임시 비밀번호')).toBeVisible();
+    await expect(dialog.getByText('이미 가입된 계정입니다 — 이 워크스페이스에 추가합니다')).toHaveCount(0);
+    await dialog.getByLabel('이름').fill('뉴비');
+    const password = await dialog.getByLabel('임시 비밀번호').inputValue();
+    await dialog.getByRole('button', { name: '추가', exact: true }).click();
+
+    expect((await capture.waitForRequest()).payload).toEqual({
+      email: 'newbie@acme.io',
+      name: '뉴비',
+      temporaryPassword: password,
+      roleIds: [],
+    });
+    await expect(page.getByRole('dialog').getByRole('heading', { name: '계정을 만들었습니다' })).toBeVisible();
+  });
+
+  test('기존 계정: 안내와 계정 이름을 보이고 이름·비밀번호 칸 없이 「기존 계정 추가」로 붙인다', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'POST', LOOKUP_PATH, { status: 'EXISTING', userId: 5, name: '김지수' } satisfies MemberLookupResponse);
+    const capture = await mockApi(page, 'POST', '/api/v1/users', { userId: 5, created: false }, { status: 201, capture: true });
+
+    const dialog = await openAddMember(page);
+    // 확인 전에 이름을 먼저 써 두어도(새 계정이라 생각하고) 기존 계정으로 판정되면 요청에 섞이지 않아야 한다.
+    await dialog.getByLabel('이름').fill('먼저 쓴 이름');
+    await dialog.getByLabel('이메일').fill('Jisu@Other.io');
+    await dialog.getByLabel('이메일').blur();
+
+    await expect(dialog.getByText('이미 가입된 계정입니다 — 이 워크스페이스에 추가합니다')).toBeVisible();
+    await expect(dialog.getByText('김지수', { exact: true })).toBeVisible();
+    await expect(dialog.getByLabel('이름')).toHaveCount(0);
+    await expect(dialog.getByLabel('임시 비밀번호')).toHaveCount(0);
+    await expect(dialog.getByRole('button', { name: '추가', exact: true })).toHaveCount(0);
+    await dialog.getByRole('checkbox', { name: /ADMIN/ }).check(); // 역할 선택은 그대로
+    await dialog.getByRole('button', { name: '기존 계정 추가' }).click();
+
+    const req = await capture.waitForRequest();
+    expect(req.payload).toEqual({ email: 'Jisu@Other.io', roleIds: [2] });
+    await expect(page.getByText('이미 가입된 계정을 이 워크스페이스에 추가했습니다. 기존 비밀번호로 로그인합니다', { exact: true })).toBeVisible();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+  });
+
+  test('이미 멤버: 안내를 보이고 제출 버튼을 잠근다', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'POST', LOOKUP_PATH, { status: 'MEMBER', userId: 7, name: '이미' } satisfies MemberLookupResponse);
+    const capture = await mockApi(page, 'POST', '/api/v1/users', { userId: 7, created: false }, { status: 201, capture: true });
+
+    const dialog = await openAddMember(page);
+    await dialog.getByLabel('이메일').fill('member@acme.io');
+    await dialog.getByLabel('이메일').blur();
+
+    await expect(dialog.getByText('이미 이 워크스페이스의 멤버입니다', { exact: true })).toBeVisible();
+    await expect(dialog.getByLabel('이름')).toHaveCount(0);
+    await expect(dialog.getByLabel('임시 비밀번호')).toHaveCount(0);
+    await expect(dialog.getByRole('button', { name: '추가', exact: true })).toBeDisabled();
+    // 이메일 칸에서 Enter 를 눌러도 제출되지 않는다.
+    await dialog.getByLabel('이메일').press('Enter');
+    await expect(dialog.getByText('이미 이 워크스페이스의 멤버입니다', { exact: true })).toBeVisible();
+    expect(capture.requests).toHaveLength(0);
+  });
+
+  test('정지 멤버: 안내와 상세 링크를 보이고 제출 버튼을 잠근다', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'POST', LOOKUP_PATH, { status: 'SUSPENDED', userId: 3, name: '박민호' } satisfies MemberLookupResponse);
+
+    const dialog = await openAddMember(page);
+    await dialog.getByLabel('이메일').fill('minho@acme.io');
+    await dialog.getByLabel('이메일').blur();
+
+    await expect(dialog.getByText('이미 이 워크스페이스의 멤버입니다(정지됨)')).toBeVisible();
+    await expect(dialog.getByRole('link', { name: '상세에서 재활성화 →' })).toHaveAttribute('href', '/admin/users/3');
+    await expect(dialog.getByRole('button', { name: '추가', exact: true })).toBeDisabled();
+    await expect(dialog.getByLabel('이름')).toHaveCount(0);
+  });
+
+  test('이메일을 고치면 확인 결과가 사라지고 처음 상태로 돌아간다', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'POST', LOOKUP_PATH, { status: 'EXISTING', userId: 5, name: '김지수' } satisfies MemberLookupResponse);
+
+    const dialog = await openAddMember(page);
+    await dialog.getByLabel('이메일').fill('jisu@other.io');
+    await dialog.getByLabel('이메일').blur();
+    await expect(dialog.getByRole('button', { name: '기존 계정 추가' })).toBeVisible();
+
+    await dialog.getByLabel('이메일').fill('jisu2@other.io');
+    await expect(dialog.getByText('이미 가입된 계정입니다 — 이 워크스페이스에 추가합니다')).toHaveCount(0);
+    await expect(dialog.getByLabel('이름')).toBeVisible();
+    await expect(dialog.getByLabel('임시 비밀번호')).toBeVisible();
+    await expect(dialog.getByRole('button', { name: '추가', exact: true })).toBeEnabled();
+    await expect(dialog.getByRole('button', { name: '기존 계정 추가' })).toHaveCount(0);
+  });
+
+  test('확인 없이 제출하면 먼저 확인하고, 기존 계정이면 화면만 바꾼 채 멈춘다', async ({ authenticatedPage: page }) => {
+    const lookup = await mockApi(page, 'POST', LOOKUP_PATH, { status: 'EXISTING', userId: 5, name: '김지수' } satisfies MemberLookupResponse, { capture: true });
+    const capture = await mockApi(page, 'POST', '/api/v1/users', { userId: 5, created: false }, { status: 201, capture: true });
+
+    const dialog = await openAddMember(page);
+    await dialog.getByLabel('이메일').fill('jisu@other.io');
+    // 칸을 벗어나지 않고 Enter — blur 확인이 없던 상태의 제출.
+    await dialog.getByLabel('이메일').press('Enter');
+
+    await expect(dialog.getByRole('button', { name: '기존 계정 추가' })).toBeVisible();
+    expect(lookup.requests).toHaveLength(1);
+    expect(capture.requests).toHaveLength(0); // 사용자가 바뀐 화면을 보고 다시 누른다
+
+    await dialog.getByRole('button', { name: '기존 계정 추가' }).click();
+    expect((await capture.waitForRequest()).payload).toEqual({ email: 'jisu@other.io', roleIds: [] });
+  });
+
+  test('확인이 실패하면 모든 칸을 받고 그대로 추가한다', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'POST', LOOKUP_PATH, { status: 500, message: '서버 오류' }, { status: 500 });
+    const capture = await mockApi(page, 'POST', '/api/v1/users', { userId: 9, created: true }, { status: 201, capture: true });
+
+    const dialog = await openAddMember(page);
+    await dialog.getByLabel('이메일').fill('n@acme.io');
+    await dialog.getByLabel('이메일').blur();
+    await dialog.getByLabel('이름').fill('N');
+    const password = await dialog.getByLabel('임시 비밀번호').inputValue();
+    await dialog.getByRole('button', { name: '추가', exact: true }).click();
+
+    expect((await capture.waitForRequest()).payload).toEqual({ email: 'n@acme.io', name: 'N', temporaryPassword: password, roleIds: [] });
+  });
+
+  test('늦게 온 앞선 확인 응답은 지금 이메일의 판정을 덮어쓰지 않는다', async ({ authenticatedPage: page }) => {
+    let releaseFirst: () => void = () => {};
+    const firstHeld = new Promise<void>((r) => {
+      releaseFirst = r;
+    });
+    await page.route(
+      (url) => url.pathname === LOOKUP_PATH,
+      async (route) => {
+        const { email } = route.request().postDataJSON() as { email: string };
+        if (email === 'old@acme.io') {
+          await firstHeld; // 먼저 보낸 확인은 늦게 도착한다
+          return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ status: 'EXISTING', userId: 5, name: '옛 계정' }) });
+        }
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(LOOKUP_NEW) });
+      },
+    );
+    const firstResponse = page.waitForResponse((r) => new URL(r.url()).pathname === LOOKUP_PATH && r.request().postDataJSON()?.email === 'old@acme.io');
+
+    const dialog = await openAddMember(page);
+    await dialog.getByLabel('이메일').fill('old@acme.io');
+    await dialog.getByLabel('이메일').blur();
+    await dialog.getByLabel('이메일').fill('fresh@acme.io');
+    await dialog.getByLabel('이메일').blur();
+    await expect(dialog.getByLabel('이름')).toBeVisible();
+
+    releaseFirst();
+    await firstResponse;
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => r(null))));
+    await expect(dialog.getByText('이미 가입된 계정입니다 — 이 워크스페이스에 추가합니다')).toHaveCount(0);
+    await expect(dialog.getByLabel('이름')).toBeVisible();
+    await expect(dialog.getByRole('button', { name: '추가', exact: true })).toBeEnabled();
+  });
+
+  test('판정 뒤 다른 사람이 먼저 추가했으면(409) 서버 오류를 이메일 아래에 보인다', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'POST', LOOKUP_PATH, { status: 'EXISTING', userId: 5, name: '김지수' } satisfies MemberLookupResponse);
+    await mockApi(
+      page,
+      'POST',
+      '/api/v1/users',
+      { status: 409, error: 'Conflict', message: '이미 이 워크스페이스의 멤버입니다', code: 'MEMBER_ALREADY_EXISTS' },
+      { status: 409 },
+    );
+
+    const dialog = await openAddMember(page);
+    await dialog.getByLabel('이메일').fill('jisu@other.io');
+    await dialog.getByLabel('이메일').blur();
+    await dialog.getByRole('button', { name: '기존 계정 추가' }).click();
+
+    await expect(dialog.locator('#member-email-error')).toHaveText('이미 이 워크스페이스의 멤버입니다');
+    await expect(dialog.getByLabel('이메일')).toHaveAttribute('aria-invalid', 'true');
+  });
+
+  test('기존 계정으로 보냈는데 그사이 계정이 사라졌으면(400) 새 계정 칸을 다시 보이고 오류를 그 칸에 붙인다', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'POST', LOOKUP_PATH, { status: 'EXISTING', userId: 5, name: '김지수' } satisfies MemberLookupResponse);
+    // 첫 요청은 「새 계정 필드 필요」 400, 두 번째(칸을 채운 뒤)는 새 계정 생성.
+    const payloads: unknown[] = [];
+    await page.route(
+      (url) => url.pathname === '/api/v1/users',
+      async (route) => {
+        if (route.request().method() !== 'POST') return route.fallback();
+        payloads.push(route.request().postDataJSON());
+        if (payloads.length === 1) {
+          return route.fulfill({
+            status: 400,
+            contentType: 'application/json',
+            body: JSON.stringify({
+              status: 400,
+              error: 'Bad Request',
+              message: '새 계정은 이름과 임시 비밀번호가 필요합니다',
+              code: 'NEW_ACCOUNT_FIELDS_REQUIRED',
+              errors: { name: '이름은 필수입니다', temporaryPassword: '임시 비밀번호는 필수입니다' },
+            }),
+          });
+        }
+        return route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ userId: 11, created: true }) });
+      },
+    );
+
+    const dialog = await openAddMember(page);
+    await dialog.getByLabel('이메일').fill('gone@acme.io');
+    await dialog.getByLabel('이메일').blur();
+    await dialog.getByRole('button', { name: '기존 계정 추가' }).click();
+
+    // 폼 상단(버튼 위) 오류로 까닭을 알린다 — 칸 오류도 role=alert 라 문구로 집는다.
+    await expect(
+      dialog.getByRole('alert').filter({ hasText: '계정을 다시 확인했더니 새 계정입니다 — 이름과 임시 비밀번호를 입력해 주세요' }),
+    ).toBeVisible();
+    await expect(dialog.getByText('이미 가입된 계정입니다 — 이 워크스페이스에 추가합니다')).toHaveCount(0);
+    await expect(dialog.getByLabel('이름')).toBeVisible();
+    await expect(dialog.locator('#member-name-error')).toHaveText('이름은 필수입니다');
+    await expect(dialog.getByLabel('이름')).toHaveAttribute('aria-invalid', 'true');
+    await expect(dialog.getByLabel('이름')).toBeFocused();
+    await expect(dialog.getByLabel('임시 비밀번호')).toBeVisible();
+    // 임시 비밀번호는 열 때 자동 생성된 값이 남아 있어 「필수」 오류를 붙이지 않는다.
+    await expect(dialog.getByLabel('임시 비밀번호')).not.toHaveValue('');
+    await expect(dialog.locator('#member-password-error')).toHaveCount(0);
+    expect(payloads[0]).toEqual({ email: 'gone@acme.io', roleIds: [] });
+
+    await dialog.getByLabel('이름').fill('다시 온 사람');
+    const password = await dialog.getByLabel('임시 비밀번호').inputValue();
+    await dialog.getByRole('button', { name: '추가', exact: true }).click();
+    await expect(page.getByRole('dialog').getByRole('heading', { name: '계정을 만들었습니다' })).toBeVisible();
+    expect(payloads[1]).toEqual({ email: 'gone@acme.io', name: '다시 온 사람', temporaryPassword: password, roleIds: [] });
+  });
+
+  test('제출 전 확인을 기다리는 사이 이메일을 바꾸면 추가하지 않고, 그동안 취소 버튼은 잠긴다', async ({ authenticatedPage: page }) => {
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    await page.route(
+      (url) => url.pathname === LOOKUP_PATH,
+      async (route) => {
+        await held;
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(LOOKUP_NEW) });
+      },
+    );
+    const capture = await mockApi(page, 'POST', '/api/v1/users', { userId: 9, created: true }, { status: 201, capture: true });
+
+    const dialog = await openAddMember(page);
+    await dialog.getByLabel('이름').fill('N');
+    await dialog.getByLabel('이메일').fill('first@acme.io');
+    const lookupDone = page.waitForResponse((r) => new URL(r.url()).pathname === LOOKUP_PATH);
+    await dialog.getByLabel('이메일').press('Enter'); // 판정 없이 제출 → 확인 요청이 잡혀 있다
+    await expect(dialog.getByRole('button', { name: '취소' })).toBeDisabled();
+
+    await dialog.getByLabel('이메일').fill('second@acme.io');
+    release();
+    await lookupDone;
+    await expect(dialog.getByRole('button', { name: '취소' })).toBeEnabled();
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => r(null))));
+    expect(capture.requests).toHaveLength(0); // 확인하지 않은 이메일은 보내지 않는다
+    await expect(dialog.getByLabel('이메일')).toHaveValue('second@acme.io');
+  });
+
+  test('이메일을 쓰고 바로 「추가」를 누르면 확인 요청은 한 번만 보낸다', async ({ authenticatedPage: page }) => {
+    // 응답을 늦춰 blur 확인이 진행 중일 때 제출이 일어나게 한다.
+    const lookup = await mockApi(page, 'POST', LOOKUP_PATH, LOOKUP_NEW, { capture: true, delayMs: 500 });
+    const capture = await mockApi(page, 'POST', '/api/v1/users', { userId: 9, created: true }, { status: 201, capture: true });
+
+    const dialog = await openAddMember(page);
+    await dialog.getByLabel('이름').fill('N');
+    await dialog.getByLabel('이메일').fill('once@acme.io');
+    // 클릭이 이메일 칸 blur(확인 시작)와 제출(같은 확인을 기다림)을 함께 일으킨다.
+    await dialog.getByRole('button', { name: '추가', exact: true }).click();
+
+    const req = await capture.waitForRequest();
+    expect(req.payload).toMatchObject({ email: 'once@acme.io', name: 'N' });
+    expect(lookup.requests).toHaveLength(1);
   });
 });
