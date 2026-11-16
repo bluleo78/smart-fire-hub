@@ -1492,4 +1492,41 @@ class SqlValidatorTest {
         .as(sql)
         .isInstanceOf(UnsafeSqlException.class);
   }
+
+  // ---------------------------------------------------------------------------------------------
+  // WD-768 — GROUP BY 의 ROLLUP/CUBE/GROUPING SETS 와 GROUPING() 허용(합계 행을 SQL 로 구하게 한다)
+  // ---------------------------------------------------------------------------------------------
+
+  /** ROLLUP/CUBE/GROUPING SETS 는 GROUP BY 그룹화 문법, GROUPING() 은 표준 집계형 함수라 허용한다. */
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "SELECT stage, COUNT(*) FROM data.t GROUP BY ROLLUP(stage)",
+        "SELECT a, b, COUNT(*) FROM data.t GROUP BY ROLLUP(a, b)",
+        "SELECT a, b, COUNT(*) FROM data.t GROUP BY CUBE(a, b)",
+        "SELECT a, b, COUNT(*) FROM data.t GROUP BY GROUPING SETS ((a), (b), ())",
+        "SELECT stage, GROUPING(stage), COUNT(*) FROM data.t GROUP BY ROLLUP(stage)",
+        "SELECT stage, COUNT(*) FROM data.t GROUP BY ROLLUP(stage) HAVING GROUPING(stage) = 1",
+        "SELECT stage, COUNT(*) FROM data.t GROUP BY ROLLUP(stage) ORDER BY GROUPING(stage)"
+      })
+  void wd768_allowsGroupingConstructs(String sql) {
+    assertThat(new SqlValidator("data", false).validate(sql))
+        .isEqualTo(SqlValidator.StatementKind.QUERY);
+  }
+
+  /** 위치 한정 — GROUP BY 밖의 rollup/cube 호출, ROLLUP 인자 속 위험 함수는 여전히 거부한다. */
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "SELECT ROLLUP(a) FROM data.t",
+        "SELECT a FROM data.t WHERE CUBE(a) = 1",
+        "SELECT a FROM data.t GROUP BY a ORDER BY ROLLUP(a)",
+        "SELECT a, COUNT(*) FROM data.t GROUP BY ROLLUP(pg_sleep(1))",
+        "SELECT a, COUNT(*) FROM data.t GROUP BY CUBE(a, pg_sleep(1))"
+      })
+  void wd768_stillRejectsMisplacedOrDangerous(String sql) {
+    assertThatThrownBy(() -> new SqlValidator("data", false).validate(sql))
+        .as(sql)
+        .isInstanceOf(UnsafeSqlException.class);
+  }
 }

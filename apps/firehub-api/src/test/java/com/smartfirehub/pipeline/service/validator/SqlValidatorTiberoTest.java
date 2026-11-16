@@ -519,4 +519,31 @@ class SqlValidatorTiberoTest {
                     + " GROUP BY code"))
         .isNotEmpty();
   }
+
+  // WD-768 — GROUP BY 의 ROLLUP/CUBE/GROUPING SETS 와 GROUPING() 허용(Tibero 도 모두 지원한다)
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "SELECT NVL(stage, '합계') 단계, COUNT(*) FROM genia_t5.v_opportunity GROUP BY ROLLUP(stage)",
+        "SELECT a, b, COUNT(*) FROM genia_t5.t GROUP BY ROLLUP(a, b)",
+        "SELECT a, b, COUNT(*) FROM genia_t5.t GROUP BY CUBE(a, b)",
+        "SELECT a, b, COUNT(*) FROM genia_t5.t GROUP BY GROUPING SETS ((a), (b), ())",
+        "SELECT stage, GROUPING(stage), COUNT(*) FROM genia_t5.t GROUP BY ROLLUP(stage)",
+        "SELECT stage, COUNT(*) FROM genia_t5.t GROUP BY ROLLUP(stage) HAVING GROUPING(stage) = 1"
+      })
+  void wd768_allowsGroupingConstructs(String sql) {
+    assertThat(validator.validate(sql)).isEqualTo(SqlValidator.StatementKind.QUERY);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "SELECT ROLLUP(a) FROM genia_t5.t",
+        "SELECT a, COUNT(*) FROM genia_t5.t GROUP BY ROLLUP(pg_sleep(1))"
+      })
+  void wd768_stillRejectsMisplacedOrDangerous(String sql) {
+    assertThatThrownBy(() -> validator.validate(sql))
+        .as(sql)
+        .isInstanceOf(UnsafeSqlException.class);
+  }
 }
