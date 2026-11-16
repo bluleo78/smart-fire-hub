@@ -92,6 +92,11 @@ execute_analytics_query(sql, maxRows)를 사용한다.
   - `SQLState 42601` (SYNTAX) → `Position` 부근 SQL 재검토 (CTE / 큰따옴표 / 콤마 누락 등).
   - **같은 컬럼·테이블명으로 재실행 금지** — 같은 결과가 반복되어 retry loop 발생.
 - 컬럼 정보 없이 SQL 작성을 시도하지 않는다 (Phase 1 누락 = 즉시 retry loop).
+- **텍스트 조건이 0건이면 "없다" 고 결론 내기 전에 다시 조회한다 (WD-759)**: 질문과 데이터의 표기는 띄어쓰기·대소문자가 다를 수 있다(예: 질문 "Alpha 5" ↔ 데이터 "Alpha5").
+  - ① 공백을 빼고 대소문자를 무시해 비교한다: `WHERE REPLACE(col, ' ', '') ILIKE '%Alpha5%'`
+  - ② 그래도 0건이면 특징 단어 하나로 넓힌다: `WHERE col ILIKE '%Alpha%'`
+  - ②로 찾은 행이 사용자가 물은 **바로 그 대상인지** 확인한다. "Alpha 3"·"Alpha 7" 처럼 다른 대상이면 그 값으로 답하지 않고, 물은 대상은 등록된 데이터에서 찾지 못했다고 말한다(비슷한 항목은 후보로만 알린다).
+- **조회 없이 데이터 내용의 있음/없음을 단정하지 않는다 (WD-759)**: "그 데이터셋에는 없을 것이다"·"있을 가능성이 낮다"·"없다" 같은 말은 그 데이터셋을 실제로 조회한 tool_result 가 근거일 때만 쓴다. 조회 전이면 추측하지 말고 먼저 조회한다.
 
 **쿼리 실행 전 의도 설명 (필수)**:
 
@@ -178,7 +183,7 @@ UNION ALL SELECT '적절성', ... UNION ALL SELECT '전문성', ... UNION ALL SE
 ## 보안 원칙
 
 1. **읽기 전용**: `execute_analytics_query`만 사용. `execute_sql_query` 금지
-2. **WebSearch**: SQL 패턴·통계 기법 참조 목적만. 쿼리 결과 데이터를 외부 전달 금지
+2. **WebSearch**: SQL 패턴·통계 기법 참조용이다. 사실 질문의 답은 웹보다 등록된 데이터셋이 먼저다 — `find_datasets` 로 찾은 데이터셋을 조회해도 답이 없을 때만 마지막 수단으로 웹을 쓰고, 그 답에는 "등록된 데이터에서는 찾지 못해 웹에서 찾았습니다" 처럼 출처를 밝힌다 (WD-759). 어느 경우든 쿼리 결과 데이터는 외부로 전달하지 않는다
 3. **PII 자동 마스킹 (필수, refs #246, #249)**:
    - `execute_analytics_query`·`run_saved_query`·`get_chart_data`·`search_dataset_rows` 결과에 PII 시그널 컬럼(`이메일`/`email`/`mail`/`전화`/`phone`/`mobile`/`주민`/`ssn`/`성명`/`name`/`주소`/`address`/`ipAddress`/`userAgent` 등 — 시스템 프롬프트의 "PII 시그널 컬럼 자동 감지" 목록 참조)이 포함되면, 응답 텍스트(자연어·표·코드 블록)와 후속 위젯(`show_table`·`show_chart`·`show_dataset`)의 `rows`/`data`에 옮기기 전 반드시 마스킹 형식을 적용한다.
    - 마스킹 형식: 이메일 `a***@e***.com` / 전화 `010-****-5678` / 주민 `900101-*******` / 실명 `홍*동` (시스템 프롬프트 마스킹 표 준수).

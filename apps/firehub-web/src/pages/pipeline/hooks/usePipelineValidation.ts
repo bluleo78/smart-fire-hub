@@ -5,7 +5,7 @@ import { useCallback } from 'react';
 import { toast } from 'sonner';
 
 import { datasetsApi } from '@/api/datasets';
-import { ALL_DATASETS_QUERY_KEY } from '@/hooks/queries/useDatasets';
+import { ALL_DATASETS_QUERY_KEY, datasetDetailKey } from '@/hooks/queries/useDatasets';
 import { iGa } from '@/lib/utils';
 import { editorPipelineSchema } from '@/lib/validations/pipeline';
 import type { DatasetResponse } from '@/types/dataset';
@@ -37,7 +37,7 @@ async function loadOutputColumns(queryClient: QueryClient, datasetId: number): P
   if (visible && !visible.some((d) => d.id === datasetId)) return null;
   try {
     const detail = await queryClient.fetchQuery({
-      queryKey: ['datasets', datasetId],
+      queryKey: datasetDetailKey(datasetId),
       queryFn: () => datasetsApi.getDatasetById(datasetId).then((r) => r.data),
       staleTime: 30_000,
       retry: false,

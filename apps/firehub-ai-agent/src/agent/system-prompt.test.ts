@@ -923,3 +923,130 @@ describe('방언별 프롬프트 (WD-79)', () => {
     });
   });
 });
+
+/**
+ * 사실 질문은 등록된 데이터 먼저(WD-759).
+ *
+ * 등록된 데이터셋("회사 연혁")에 답이 있는 사실 질문을 상식으로 보고 웹 검색으로 먼저 답했고, 사용자가 "데이터셋에 있다"고
+ * 해도 웹 검색을 이어 갔으며, 조회도 하지 않고 "데이터셋에 있을 가능성이 낮다"고 단정했다. 마지막에 조회했을 때는 질문 표기
+ * ("X 5")와 데이터 표기("X5")가 띄어쓰기만 달라 0건이 나왔다. 네 경로(SDK·opencode × PG·Tibero) 프롬프트가 같은 네 규칙을
+ * 담는지, 재조회 SQL 이 방언에 맞는지(Tibero 에 ILIKE·:: 없음) 고정한다.
+ */
+describe('사실 질문은 등록된 데이터 먼저 (WD-759)', () => {
+  const SECTION = '사실 질문은 등록된 데이터 먼저 (WD-759)';
+  /** 헤더(### 또는 ##)부터 다음 같은 수준 이상 헤더 전까지를 잘라 규칙 절만 본다. */
+  const section = (prompt: string): string => {
+    const start = prompt.indexOf(SECTION);
+    expect(start, '규칙 절이 있어야 한다').toBeGreaterThan(-1);
+    const rest = prompt.slice(start + SECTION.length);
+    const end = rest.search(/\n##+ /);
+    return end === -1 ? rest : rest.slice(0, end);
+  };
+
+  const PROMPTS = [
+    ['SDK PG', systemPromptFor('POSTGRESQL'), 'POSTGRESQL', 'find_datasets(query=핵심 질의)'],
+    ['SDK Tibero', systemPromptFor('TIBERO'), 'TIBERO', 'find_datasets(query=핵심 질의)'],
+    ['opencode PG', opencodeSystemPromptFor('POSTGRESQL'), 'POSTGRESQL', 'firehub_find_datasets'],
+    ['opencode Tibero', opencodeSystemPromptFor('TIBERO'), 'TIBERO', 'firehub_find_datasets'],
+  ] as const;
+
+  it.each(PROMPTS)('%s: 규칙 1 — 상식처럼 보여도 사실 질문은 등록된 데이터 먼저(화면 데이터셋 → find_datasets)', (_n, prompt, _d, findTool) => {
+    const s = section(prompt);
+    expect(s).toContain('상식·일반 지식처럼 보여도 등록된 데이터에서 먼저 찾는다');
+    // 화면 컨텍스트 줄과 순서가 하나로 맞아야 한다 — 화면 데이터셋 먼저, 없거나 답이 없으면 find_datasets
+    expect(s).toContain(
+      `화면 컨텍스트에 데이터셋이 있으면 그 데이터셋을 먼저 보고, 없거나 거기에 답이 없으면 \`${findTool}`,
+    );
+    expect(s).toContain('"데이터 질문인지" 를 스스로 판단해');
+  });
+
+  it.each(PROMPTS)('%s: 규칙 1 예외 — 사용법·잡담·생성, 플랫폼 리소스 자체 질문, 지식 그래프 관계 질문', (_n, prompt) => {
+    const s = section(prompt);
+    // 예외가 좁으면 플랫폼 리소스 조회·GraphRAG 관계 질문까지 find_datasets 로 끌려간다
+    expect(s).toMatch(/예외: 플랫폼 사용법 안내·인사 같은 잡담 \/ 생성·(구축 작업|설계 요청)/);
+    expect(s).toContain('플랫폼 리소스 자체에 대한 질문(파이프라인·트리거·대시보드·사용자 등');
+    expect(s).toContain('"파이프라인 18 상태", "트리거 몇 개야?"');
+    expect(s).toMatch(/관계·연결·경로를 묻는 지식 그래프 질문\(.*graphrag_query/);
+  });
+
+  it.each(PROMPTS)('%s: 규칙 2 — 데이터 밖(웹) 답은 마지막, 출처 표기, "데이터셋에 있다" 면 즉시 내부 조회', (_n, prompt) => {
+    const s = section(prompt);
+    expect(s).toContain('결과가 비었거나 무관할 때, 또는 찾은 데이터셋을 실제로 조회했는데 답이 없을 때만 쓴다');
+    expect(s).toContain('"등록된 데이터에서는 찾지 못');
+    expect(s).toContain('"데이터셋에 있다"');
+  });
+
+  it('SDK 규칙 2 는 웹 도구 이름과 "웹에서 찾았습니다" 출처 문구를 담는다 (opencode 는 웹 도구가 꺼져 있어 담지 않는다)', () => {
+    for (const p of [systemPromptFor('POSTGRESQL'), systemPromptFor('TIBERO')]) {
+      const s = section(p);
+      expect(s).toContain('**웹(WebSearch/WebFetch)은 마지막이다**');
+      expect(s).toContain('"등록된 데이터에서는 찾지 못해 웹에서 찾았습니다"');
+      expect(s).toContain('웹 검색을 멈추고 즉시');
+    }
+    for (const p of [opencodeSystemPromptFor('POSTGRESQL'), opencodeSystemPromptFor('TIBERO')]) {
+      expect(section(p)).not.toContain('WebSearch');
+    }
+  });
+
+  it.each(PROMPTS)('%s: 규칙 3 — 텍스트 조건 0건이면 공백 제거·대소문자 무시, 특징 단어로 넓혀 재조회', (_n, prompt) => {
+    const s = section(prompt);
+    expect(s).toContain('텍스트 조건이 0건이면 "없다" 고 결론 내기 전에 다시 조회한다');
+    expect(s).toContain('공백을 빼고 대소문자를 무시해 비교한다');
+    expect(s).toContain('특징 단어 하나로 넓힌다');
+    // 넓힌 조회가 이웃 대상(Alpha 3·Alpha 7)을 돌려줄 때 그 값으로 답하지 않는다
+    expect(s).toContain('②로 찾은 행이 사용자가 물은 **바로 그 대상인지** 확인한다');
+    expect(s).toContain('다른 대상이면 그 값으로 답하지 않고');
+    expect(s).toContain('비슷한 항목은 후보로만 알린다');
+  });
+
+  it.each(PROMPTS)('%s: 규칙 3 SQL 이 방언에 맞다 — PG 는 ILIKE, Tibero 는 UPPER … LIKE UPPER(…)', (_n, prompt, dialect) => {
+    const s = section(prompt);
+    if (dialect === 'POSTGRESQL') {
+      expect(s).toContain(`\`WHERE REPLACE(col, ' ', '') ILIKE '%Alpha5%'\``);
+      expect(s).toContain(`\`WHERE col ILIKE '%Alpha%'\``);
+      expect(s).not.toContain('UPPER(');
+    } else {
+      expect(s).toContain(`\`WHERE UPPER(REPLACE(col, ' ', '')) LIKE UPPER('%Alpha5%')\``);
+      expect(s).toContain(`\`WHERE UPPER(col) LIKE UPPER('%Alpha%')\``);
+      // ILIKE·:: 가 없는지는 위 '방언별 프롬프트 (WD-79)' 의 findPgOnlySyntax 검사가 프롬프트 전체로 본다
+    }
+  });
+
+  it.each(PROMPTS)('%s: 규칙 4 — 조회 없이 데이터 내용의 있음/없음을 단정하지 않는다', (_n, prompt) => {
+    // SDK·opencode 모두 기존 #574 규칙 아래 하위 항목으로 둔다 — 어느 쪽이든 문구가 같아야 한다
+    expect(prompt).toContain('"그 데이터셋에는 없을 것이다"·"있을 가능성이 낮다"·"없다"');
+    expect(prompt).toContain('tool_result 가 근거일 때만 쓴다. 조회 전이면 추측하지 말고 먼저 조회한다.');
+  });
+
+  it('SDK 규칙 4 는 기존 #574(데이터셋 ID) 규칙 바로 아래 하위 항목으로 그 규칙을 데이터 내용으로 넓힌다', () => {
+    for (const p of [systemPromptFor('POSTGRESQL'), systemPromptFor('TIBERO')]) {
+      const lines = p.split('\n');
+      const id574 = lines.findIndex((l) => l.startsWith('- **무검증 확인 진술 금지 (#574)**'));
+      expect(id574).toBeGreaterThan(-1);
+      expect(lines[id574 + 1]).toMatch(/^ {2}- \*\*조회 없이 데이터 내용의 있음\/없음을 단정하지 않는다 \(#574 확장, WD-759\)\*\*/);
+      // 새 절에는 두 벌로 두지 않는다
+      expect(section(p)).not.toContain('조회 없이 데이터 내용의 있음/없음을 단정하지 않는다');
+    }
+  });
+
+  it.each(PROMPTS)('%s: 화면 컨텍스트 데이터셋은 "생략" 이 아니다 — 옛 줄은 규칙 1 의 순서를 가리키기만 한다', (_n, prompt) => {
+    expect(prompt).not.toContain('`find_datasets` 를 생략하고 그 ID를 사용한다');
+    expect(prompt).not.toContain('화면 컨텍스트에 데이터셋 ID가 있으면 이 단계 생략');
+    expect(prompt).toMatch(/화면 컨텍스트(\(screenContext\))?의 데이터셋은 (아래 "|위 ')사실 질문은 등록된 데이터 먼저("|') 순서대로 본다/);
+    // 순서 문장("먼저 보고, 없거나 거기에 답이 없으면")은 규칙 1 한 곳에만 둔다
+    expect(prompt.split('없거나 거기에 답이 없으면').length - 1).toBe(1);
+  });
+
+  it('SDK 규칙 1 은 분석 위임 규칙(L1·#572)을 바꾸지 않는다 — 분석·집계·차트는 그대로 data-analyst 위임', () => {
+    const s = section(SYSTEM_PROMPT);
+    expect(s).toContain('분석·집계·차트 요청은 이 규칙과 무관하게 위 L1 대로 data-analyst 에 위임한다(위임 tool_use 단독, #572)');
+  });
+
+  it('규칙 절은 "데이터셋 찾기" 절 뒤, 조회 흐름보다 앞에 온다', () => {
+    const p = SYSTEM_PROMPT;
+    expect(p.indexOf('### 데이터셋 찾기')).toBeLessThan(p.indexOf(SECTION));
+    expect(p.indexOf(SECTION)).toBeLessThan(p.indexOf('조회 흐름 (순서 엄수)'));
+    const o = OPENCODE_SYSTEM_PROMPT;
+    expect(o.indexOf(SECTION)).toBeLessThan(o.indexOf('## 데이터 조회·분석 흐름 (순서 엄수)'));
+  });
+});

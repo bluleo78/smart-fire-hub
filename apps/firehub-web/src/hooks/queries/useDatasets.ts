@@ -83,9 +83,15 @@ export function useAllDatasets() {
   });
 }
 
+/**
+ * 데이터셋 단건 조회 캐시 키 (WD-759).
+ * useDataset 과 AI 화면 컨텍스트의 캐시 이름 조회(useAIChat)가 같은 키를 쓰도록 한곳에 둔다 — 키가 어긋나면 조용히 이름이 빠진다.
+ */
+export const datasetDetailKey = (id: number) => ['datasets', id] as const;
+
 export function useDataset(id: number) {
   return useQuery({
-    queryKey: ['datasets', id],
+    queryKey: datasetDetailKey(id),
     queryFn: () => datasetsApi.getDatasetById(id).then(r => r.data),
     enabled: !!id,
   });

@@ -2,6 +2,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useCallback, useReducer, useRef } from 'react';
 
 import { pipelinesApi } from '@/api/pipelines';
+import { pipelineDetailKey } from '@/hooks/queries/usePipelines';
 import type { PipelineDetailResponse } from '@/types/pipeline';
 
 import type { PipelineEditorState } from './pipelineEditorReducer';
@@ -62,7 +63,7 @@ export function usePipelineEditor(pipelineId?: number) {
   const reloadLatest = useCallback(async () => {
     if (!pipelineId) return;
     const detail = await queryClient.fetchQuery({
-      queryKey: ['pipelines', pipelineId],
+      queryKey: pipelineDetailKey(pipelineId),
       queryFn: () => pipelinesApi.getPipelineById(pipelineId).then((r) => r.data),
       staleTime: 0,
     });

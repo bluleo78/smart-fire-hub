@@ -365,11 +365,18 @@ export function useAllDashboards() {
   });
 }
 
+/**
+ * 대시보드 단건 조회 캐시 키 (WD-759).
+ * useDashboard 와 AI 화면 컨텍스트의 캐시 이름 조회(useAIChat)가 같은 키를 쓰도록 한곳에 둔다 — 키가 어긋나면 조용히 이름이 빠진다.
+ * 조회하지 않는 잘못된 id 는 useDashboard 가 null 로 넘긴다.
+ */
+export const dashboardDetailKey = (id: number | null) => ['analytics', 'dashboards', id] as const;
+
 /** 대시보드 단건 조회. id 가 없으면(null·undefined — 잘못된 주소 id) skipToken 으로 조회하지 않는다(WD-661). */
 export function useDashboard(id: number | null | undefined) {
   return useQuery({
     // 양의 정수가 아니면(0·NaN 포함) 조회하지 않는다(WD-667)
-    queryKey: ['analytics', 'dashboards', isValidId(id) ? id : null],
+    queryKey: dashboardDetailKey(isValidId(id) ? id : null),
     queryFn: isValidId(id) ? () => analyticsApi.getDashboard(id).then((r) => r.data) : skipToken,
   });
 }
