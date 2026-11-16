@@ -136,6 +136,45 @@ public abstract class PlatformUserRepositoryContractTest extends AccessContractB
     assertThat(p1.size()).isEqualTo(4);
   }
 
+  /**
+   * WD-773: 운영자 콘솔 멤버 추가 「새 계정」 탭은 정규화 이메일로 {@code findAccounts(q, 0, 20)} 을 불러 username 이 정확히 같은
+   * 계정을 찾는다(서버가 기존 계정을 username 으로 찾으므로). 부분일치가 20건을 넘고 그 계정이 이메일 순으로 뒤에 있으면 첫 쪽에 없어 놓쳤다 — username
+   * 정확일치를 맨 앞으로 올려 첫 쪽 첫 행에 오게 한다.
+   *
+   * <p>부분일치 21명은 이메일이 "a…"+q 라 이메일 오름차순으로 앞서고, 정확일치 계정은 이메일이 q 를 포함하지 않는 "z…" 라 이메일 순으로는 맨 뒤다.
+   */
+  @Test
+  @DisplayName("findAccounts(검색어) 는 username 정확일치를 부분일치 20건 너머에 있어도 첫 쪽 첫 행에 둔다")
+  void findAccounts_exactUsernameFirst_beyondFirstPage() {
+    String q = prefix + "-kim@x.io";
+    for (int i = 0; i < 21; i++) {
+      // 두 자리 번호로 이메일 순서를 결정적으로 — 모두 q 를 포함해 부분일치에 걸린다.
+      user("p" + i, "a" + String.format("%02d", i) + q, "n");
+    }
+    long exact = fx.createUser(q, "z" + userPrefix + "@x.io");
+
+    PageResponse<PlatformAccountResponse> p0 = call(() -> repository().findAccounts(q, 0, 20));
+
+    assertThat(p0.totalElements()).isEqualTo(22);
+    assertThat(accountIds(p0).get(0)).isEqualTo(exact);
+  }
+
+  /**
+   * WD-773: 서버의 기존 계정 찾기({@code findByUsernameIgnoreCase})와 같은 뜻으로 username 정확일치는 대소문자를 무시한다 — 대문자가
+   * 섞여 저장된 username 도 소문자 검색어에 맨 앞이다. 이메일 정확일치 계정보다도 앞선다(멤버 추가가 붙일 계정은 username 으로 정해지므로).
+   */
+  @Test
+  @DisplayName("findAccounts(검색어) 의 username 정확일치는 대소문자를 무시하고 이메일 정확일치보다 앞선다")
+  void findAccounts_exactUsernameIgnoringCase_beforeExactEmail() {
+    String q = prefix + "-kim@x.io";
+    // 이메일이 검색어와 정확히 같은 다른 계정 — 지금까지의 정렬이면 이 계정이 맨 앞이었다.
+    long exactEmail = user("byemail", q, "n");
+    long exactUsername = fx.createUser(prefix + "-Kim@X.io", "z" + userPrefix + "@x.io");
+
+    assertThat(accountIds(call(() -> repository().findAccounts(q, 0, 20))))
+        .containsExactly(exactUsername, exactEmail);
+  }
+
   @Test
   @DisplayName("findAccounts 는 활성·운영자 여부·소속 수(정지 포함)·생성 시각을 싣는다")
   void findAccounts_fields() {

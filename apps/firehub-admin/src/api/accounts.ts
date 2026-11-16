@@ -6,6 +6,12 @@ import type {
 } from '../types/platform';
 import { client } from './client';
 
+/**
+ * 계정 목록 쿼리 키의 머리(WD-773). 계정 화면·멤버 추가 사전 확인이 이 접두 아래에 두고, 계정을 바꾸는 곳(생성·비활성화·멤버 추가)이
+ * 이 접두로 무효화한다 — 한쪽만 고치면 낡은 캐시로 안내가 조용히 어긋나므로 한 곳에 둔다(`PLATFORM_USER_SEARCH_KEY` 와 같은 판단).
+ */
+export const PLATFORM_ACCOUNTS_KEY = 'platform-accounts';
+
 /** 운영자 콘솔 전역 계정 API(#784). 경로·동사는 테넌트 정지/활성화(`tenants.ts`)와 같은 형태다. */
 export const accountsApi = {
   /**

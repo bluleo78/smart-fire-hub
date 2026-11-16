@@ -16,6 +16,12 @@ import type {
 } from '../types/platform';
 import { client } from './client';
 
+/**
+ * 테넌트 멤버 목록 쿼리 키의 머리 — `[TENANT_MEMBERS_KEY, tenantId]`. 테넌트 상세의 멤버 표와 멤버 추가 대화상자가 같은 캐시를
+ * 쓰고, 멤버 추가 뒤 무효화도 이 키로 한다(WD-773).
+ */
+export const TENANT_MEMBERS_KEY = 'platform-tenant-members';
+
 export const tenantsApi = {
   /** 쿼리 파라미터가 없다 — 검색·정렬·페이징은 전부 클라이언트 몫이다. */
   list: () => client.get<TenantSummaryResponse[]>('/tenants'),

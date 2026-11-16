@@ -4,7 +4,8 @@ import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
-import { tenantsApi } from '@/api/tenants';
+import { PLATFORM_ACCOUNTS_KEY } from '@/api/accounts';
+import { TENANT_MEMBERS_KEY, tenantsApi } from '@/api/tenants';
 import { AccountDisabledBadge } from '@/components/AccountDisabledBadge';
 import { MembershipRoleBadge } from '@/components/MembershipRoleBadge';
 import { MembershipStatusBadge } from '@/components/MembershipStatusBadge';
@@ -66,7 +67,7 @@ export default function TenantDetailPage() {
   });
 
   const membersQuery = useQuery({
-    queryKey: ['platform-tenant-members', tenantId],
+    queryKey: [TENANT_MEMBERS_KEY, tenantId],
     queryFn: () => tenantsApi.members(tenantId).then((r) => r.data),
   });
 
@@ -81,10 +82,16 @@ export default function TenantDetailPage() {
   /**
    * 멤버 추가(WD-750) 성공 후 무효화 대상 — 멤버 표와 인원수(`memberCount` — `platform-tenant`·`platform-tenants` 응답의 필드)를
    * 함께 바꾸므로 테넌트 쿼리에 더해 멤버 목록도 무효화한다.
+   *
+   * 계정 목록(`platform-accounts` 접두)도 무효화한다(WD-773) — 새 계정 탭이 계정을 만들거나 소속 수(`membershipCount`)가 바뀌었고,
+   * 멤버 추가 대화상자의 기존 계정 사전 확인도 이 접두 아래라 다음 열림에 「계정 없음」 캐시로 안내를 놓치지 않게 한다.
+   * `refetchType: 'none'` — 낡음 표시만 한다. 이 시점에는 대화상자의 사전 확인 쿼리가 아직 마운트돼 있어 바로 다시 읽으면 곧 사라질
+   * 화면을 위한 낭비 요청이 된다. 다음에 마운트될 때(다시 열기·계정 화면 진입) 낡은 쿼리라 다시 읽는다.
    */
   const invalidateAfterMemberAdd = () => {
     invalidateTenant();
-    void queryClient.invalidateQueries({ queryKey: ['platform-tenant-members', tenantId] });
+    void queryClient.invalidateQueries({ queryKey: [TENANT_MEMBERS_KEY, tenantId] });
+    void queryClient.invalidateQueries({ queryKey: [PLATFORM_ACCOUNTS_KEY], refetchType: 'none' });
   };
 
   const suspendMutation = useMutation({

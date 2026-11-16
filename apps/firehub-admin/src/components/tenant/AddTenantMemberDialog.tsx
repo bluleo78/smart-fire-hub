@@ -6,8 +6,8 @@ import { type Ref, useId, useRef, useState } from 'react';
 import { type FieldErrors, useForm, type UseFormReturn, useWatch } from 'react-hook-form';
 import { toast } from 'sonner';
 
-import { accountsApi } from '@/api/accounts';
-import { tenantsApi } from '@/api/tenants';
+import { accountsApi, PLATFORM_ACCOUNTS_KEY } from '@/api/accounts';
+import { TENANT_MEMBERS_KEY, tenantsApi } from '@/api/tenants';
 import { CredentialsResult } from '@/components/CredentialsResult';
 import { TemporaryPasswordField } from '@/components/TemporaryPasswordField';
 import { Button } from '@/components/ui/button';
@@ -30,7 +30,12 @@ import { applyServerFieldErrors, isForbidden, isNotFound, serverMessage } from '
 import { generateTemporaryPassword } from '@/lib/temp-password';
 import type { CreateAccountFormData } from '@/lib/validations/account';
 import { createAccountSchema } from '@/lib/validations/account';
-import type { AddTenantMemberRequest, ErrorResponse, PlatformUserResponse } from '@/types/platform';
+import type {
+  AddTenantMemberRequest,
+  ErrorResponse,
+  PlatformAccountResponse,
+  PlatformUserResponse,
+} from '@/types/platform';
 
 interface AddTenantMemberDialogProps {
   tenantId: number;
@@ -295,6 +300,7 @@ function AddTenantMemberDialogBody({ tenantId, tenantName, onOpenChange, onAdded
                     submitting={submitting}
                     checkedEmail={checkedEmail}
                     onCheckedEmailChange={setCheckedEmail}
+                    tenantId={tenantId}
                     onUseExisting={(user) => {
                       // 사전 안내의 「기존 계정으로 추가」 — 그 계정을 골라 둔 채 「기존 계정」 탭으로 바꾼다(ADMIN 체크는 그대로).
                       setPicked(user);
@@ -382,6 +388,8 @@ interface NewAccountTabProps {
   /** blur 시 확인한 정규화 이메일(본체가 들고 있어 탭을 오가도 유지된다). */
   checkedEmail: string;
   onCheckedEmailChange: (email: string) => void;
+  /** 멤버 여부를 판정할 테넌트(WD-773). */
+  tenantId: number;
   /** 사전 안내에서 「기존 계정으로 추가」를 눌렀을 때 — 부모가 그 계정을 고르고 탭을 바꾼다. */
   onUseExisting: (user: PlatformUserResponse) => void;
 }
@@ -390,11 +398,24 @@ interface NewAccountTabProps {
 const normalizeEmail = (value: string) => value.trim().toLowerCase();
 
 /**
+ * 「새 계정」 탭 사전 확인 쿼리 키(WD-773). `['platform-accounts']` 접두 아래에 둬서 계정 생성(`CreateAccountDialog`)·비활성화·
+ * 재활성화(`AccountListPage`)·멤버 추가(`TenantDetailPage`)의 접두 무효화에 함께 걸리게 한다 — 접두 밖 전용 키였을 때는 방금
+ * 비활성화한 계정을 30초 캐시로 계속 「기존 계정으로 추가」하라고 안내했다. 두 번째 요소가 문자열이라 계정 화면의 객체 키
+ * (`[PLATFORM_ACCOUNTS_KEY, params]`)와 겹치지 않는다.
+ */
+const emailCheckKey = (email: string) => [PLATFORM_ACCOUNTS_KEY, 'email-check', email] as const;
+
+/**
  * 「새 계정」 탭 — 이메일·이름·임시 비밀번호(`createAccountSchema` 를 그대로 쓴다 — 서버 검증 경계가 같다).
  *
- * 이메일 칸에서 포커스가 빠지면(형식이 맞을 때) 플랫폼 사용자 검색으로 이미 그 이메일의 계정이 있는지 본다. 있으면 서버가
- * 새 계정을 만들지 않고 입력한 이름·비밀번호를 버리므로, 제출 전에 기존 계정으로 추가하라고 안내한다. 검색 실패·진행 중에는
- * 안내하지 않고(안전망은 제출 뒤 토스트) 제출을 막지도 않는다.
+ * 이메일 칸에서 포커스가 빠지면(형식이 맞을 때) 계정 목록(`GET /api/platform/accounts?q=<정규화 이메일>&page=0&size=20`)으로
+ * username 이 그 이메일과 같은(대소문자 무시) 계정이 있는지 본다 — 서버가 새 계정 요청에서 기존 계정을 찾는 규칙
+ * (`findByUsernameIgnoreCase`)과 같다. 결과에 따라(WD-773):
+ * - 이미 이 테넌트의 멤버(정지 포함)면 「이미 이 테넌트의 멤버입니다」만 알린다 — 제출해도 409 라 「기존 계정으로 추가」를 두지 않는다.
+ * - 멤버가 아닌 활성 계정이면 서버가 새 계정을 만들지 않고 입력한 이름·비밀번호를 버리므로 기존 계정으로 추가하라고 안내한다.
+ * - 비활성 계정(멤버여도)·조회 실패·조회 중(무효화 뒤 다시 읽는 중 포함)·멤버 목록을 모르거나 다시 읽는 중일 때는 안내하지 않는다
+ *   (안전망은 제출 뒤 토스트·409 안내).
+ * 어느 경우에도 제출을 막지는 않는다.
  */
 function NewAccountTab({
   form,
@@ -402,6 +423,7 @@ function NewAccountTab({
   submitting,
   checkedEmail,
   onCheckedEmailChange,
+  tenantId,
   onUseExisting,
 }: NewAccountTabProps) {
   const { register, control } = form;
@@ -412,23 +434,45 @@ function NewAccountTab({
   // 형식이 틀린 값으로는 검색하지 않는다(서버 400 방지 + 안내 대상 아님).
   const checkable = createAccountSchema.shape.email.safeParse(checkedEmail).success;
   // 서버가 기존 계정을 찾는 규칙(username = 정규화 이메일)과 맞추려고 username 을 주는 계정 목록 조회를 쓴다(비활성 포함, 같은 권한).
-  // 사용자 검색 캐시(PLATFORM_USER_SEARCH_KEY)와 결과 모양이 달라 이 대화상자 전용 키를 쓴다.
+  // 사용자 검색 캐시(PLATFORM_USER_SEARCH_KEY)와 결과 모양이 달라 그 키는 쓰지 않는다. 키는 계정 목록 무효화 접두 아래다(emailCheckKey).
   const lookup = useQuery({
-    queryKey: ['member-add-email-check', checkedEmail],
-    // 부분일치 검색 앞 20건만 보므로 그 이메일을 포함하는 다른 계정이 20건 넘게 있으면 놓칠 수 있다 — 그때는 제출 뒤 created=false 경고가 덮는다.
+    queryKey: emailCheckKey(checkedEmail),
+    // 첫 쪽 20건만 본다 — 서버가 검색 결과에서 username 정확일치(대소문자 무시)를 맨 앞에 두므로(WD-773) 부분일치가 20건을 넘어도
+    // 그 계정은 첫 행에 온다.
     queryFn: () => accountsApi.list({ q: checkedEmail, page: 0, size: 20 }).then((r) => r.data),
     enabled: checkable,
     retry: false,
-    // 같은 이메일 blur·탭 왕복 때 다시 조회하지 않게 한다.
+    // 같은 이메일 blur·탭 왕복 때 다시 조회하지 않게 한다. 계정이 바뀌면 접두 무효화가 이 캐시를 바로 낡게 만든다.
     staleTime: 30_000,
   });
-  // username 이 정규화 이메일과 정확히 같은 활성 계정만 — 부분일치·다른 아이디 계정을 기존 계정으로 오인하지 않는다.
-  // 비활성이면 안내하지 않는다(제출 시 서버 409 ACCOUNT_INACTIVE 안내가 뜬다). 지금 입력값이 확인한 값과 같을 때만 보인다.
+  // 무효화된(낡은) 결과를 다시 읽는 중이면 그 결과로 안내하지 않는다 — 다시 마운트할 때 캐시가 먼저 보이므로, 방금 비활성화한 계정에
+  // 「기존 계정으로 추가」가 잠깐 뜨지 않게 한다. 조회 실패(이전 데이터가 남아 있어도 status=error)에도 안내하지 않는다.
+  const settled = lookup.isSuccess && !(lookup.isFetching && lookup.isStale);
+  // username 이 정규화 이메일과 정확히 같은 계정만(대소문자 무시 — checkedEmail 은 이미 소문자, 서버 findByUsernameIgnoreCase 와 같은 뜻)
+  // — 부분일치·다른 아이디 계정을 기존 계정으로 오인하지 않는다. 지금 입력값이 확인한 값과 같을 때만 보인다.
+  // username 유일 제약은 대소문자를 가려 대소문자만 다른 계정이 여럿일 수 있다 — 서버는 그중 id 가 가장 작은 계정을 붙이므로 같은
+  // 기준(최소 id)으로 고른다(WD-773). 서버 검색은 정확일치를 첫 쪽에 모아 줄 뿐 그 안의 순서는 보장하지 않는다.
   const match =
-    checkable && currentEmail === checkedEmail
-      ? lookup.data?.content.find((a) => a.username === checkedEmail)
+    checkable && currentEmail === checkedEmail && settled
+      ? lookup.data?.content
+          .filter((a) => a.username.toLowerCase() === checkedEmail)
+          .reduce<PlatformAccountResponse | undefined>((min, a) => (min && min.id < a.id ? min : a), undefined)
       : undefined;
-  const existing = match?.active ? match : undefined;
+  // 비활성 계정이면 멤버 여부와 무관하게 어떤 안내도 하지 않는다(WD-773) — 서버가 이미 멤버인지보다 비활성(409 ACCOUNT_INACTIVE)을
+  // 먼저 거부하므로, 「이미 멤버」라고 알리면 제출 뒤 다른 오류가 떠 안내와 어긋난다. 제출 시 서버 안내가 뜬다.
+  const activeMatch = match?.active ? match : undefined;
+  // 멤버 여부는 테넌트 전체 멤버 목록(페이지 없음, ACTIVE·SUSPENDED 모두)에서 계정 id 로 본다. 멤버 표와 같은 캐시를 쓰되, 탭이
+  // 마운트될 때마다 다시 읽고 그동안·실패 시에는 모름(undefined)으로 둔다 — 화면을 연 뒤 다른 곳에서 바뀐 멤버십을 낡은 캐시로
+  // 판정해 이미 멤버인 계정에 「기존 계정으로 추가」를 권하지 않게 한다(WD-773).
+  const membersQuery = useQuery({
+    queryKey: [TENANT_MEMBERS_KEY, tenantId],
+    queryFn: () => tenantsApi.members(tenantId).then((r) => r.data),
+    refetchOnMount: 'always',
+  });
+  const members = membersQuery.isFetching || membersQuery.isError ? undefined : membersQuery.data;
+  const membership = members && activeMatch ? members.find((m) => m.userId === activeMatch.id) : undefined;
+  // 멤버가 아닌 것이 확실한 활성 계정만 「기존 계정으로 추가」를 권한다.
+  const existing = members && !membership ? activeMatch : undefined;
   return (
     <>
       <FormField label="이메일(로그인 아이디)" htmlFor="member-email" error={errors.email?.message} required>
@@ -447,6 +491,16 @@ function NewAccountTab({
           }}
         />
       </FormField>
+      {activeMatch && membership && (
+        // 이미 멤버 — 「기존 계정으로 추가」는 409(MEMBER_ALREADY_EXISTS·MEMBER_SUSPENDED)로 끝나므로 버튼 없이 사실만 알린다.
+        // 어휘는 콘솔 오류 안내(ERROR_MESSAGES)와 같은 「테넌트」. 「정지됨」은 SUSPENDED 일 때만 붙인다 — 그 밖의 상태를 정지로
+        // 잘못 부르지 않게 다른 상태는 꼬리표 없는 일반 문구로 둔다.
+        <InlineBanner variant="info">
+          {membership.status === 'SUSPENDED'
+            ? `이미 이 테넌트의 멤버입니다(정지됨) — ${activeMatch.name}(${activeMatch.username}). 멤버 상태를 확인하세요.`
+            : `이미 이 테넌트의 멤버입니다 — ${activeMatch.name}(${activeMatch.username}).`}
+        </InlineBanner>
+      )}
       {existing && (
         <InlineBanner
           variant="info"
