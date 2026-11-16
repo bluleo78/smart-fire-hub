@@ -148,7 +148,10 @@
   "report-writer": {
     "description": "분석 데이터와 리포트 양식을 받아 HTML 리포트 + 요약 텍스트를 생성하는 전문 에이전트. 데이터 수집/분석은 하지 않고 리포트 작성만 담당.",
     "tools": [
-      "Write"
+      "mcp__firehub__write_report_file"
+    ],
+    "mcpServers": [
+      "firehub"
     ],
     "maxTurns": 5
   },

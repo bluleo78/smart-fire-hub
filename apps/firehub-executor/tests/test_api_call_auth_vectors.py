@@ -39,6 +39,7 @@ def test_fixture_is_loaded():
         "basicScrub",
         "redirectFollow",
         "scrubUrlUserInfo",
+        "extraHeaders",
     ):
         assert len(_DATA[section]) >= 4, section
 
@@ -124,3 +125,17 @@ def test_scrub_url_userinfo_matches_vector(case):
     once = errors.scrub_secret(case["text"], secrets)
     assert once == case["expected"]
     assert errors.scrub_secret(once, secrets) == once
+
+
+@pytest.mark.parametrize("case", _DATA["extraHeaders"], ids=_ids("extraHeaders"))
+def test_extra_headers_match_vector(case):
+    # 추가 인증 헤더 모으기(WD-753) — 접두어(「extraHeader:」, 대소문자 구분)가 붙은 키만, 이름은 앞뒤 Java 공백을 떼고 값은 원문 그대로,
+    # 순서는 원래 키 정렬. Java ``ApiCallAuthVectorsTest.extraHeaders_matchesVector`` 와 같은 표다. 인증 방식이 없어도 모은다.
+    resolved = api_call_executor._resolve_auth(case["auth"])
+    assert resolved.extra_headers == case["expected"]
+    assert list(resolved.extra_headers) == list(case["expected"])
+    # 보낼 때는 메인 인증 헤더 뒤에 같은 이름·값으로 붙는다.
+    headers: dict = {}
+    api_call_executor._apply_resolved_auth(resolved, headers, {})
+    sent_extra = {k: v for k, v in headers.items() if k in case["expected"]}
+    assert sent_extra == case["expected"]

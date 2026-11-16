@@ -4,6 +4,18 @@ import type { FireHubApiClient } from '../api-client.js';
 import type { SafeToolFn, JsonResultFn } from '../firehub-mcp-server.js';
 
 /**
+ * 추가 인증 헤더 키 접두어(WD-753) — authConfig 의 `extraHeader:<헤더 이름>` 키. 서버 AuthConfigValidator.EXTRA_HEADER_PREFIX 와
+ * 같은 값이어야 한다(다른 앱이라 상수를 공유하지 못해 여기 둔다). 도구 안내 문구와 더미 검사의 면제 판정이 이 한 값을 쓴다.
+ */
+export const EXTRA_HEADER_KEY_PREFIX = 'extraHeader:';
+
+/**
+ * 추가 인증 헤더 안내(WD-753) — 생성·수정 도구 설명에 똑같이 들어간다. 한 곳에 두어 두 설명이 어긋나지 않게 한다.
+ * 서버 AuthConfigValidator 의 규칙(접두어 `extraHeader:`·최대 10개·값은 비밀)과 같이 고친다.
+ */
+const EXTRA_HEADER_GUIDE = `인증 헤더가 둘 이상 필요한 API 는 authConfig 에 "${EXTRA_HEADER_KEY_PREFIX}<헤더 이름>": "<값>" 키를 더합니다(모든 인증 방식, 최대 10개, 값은 비밀이라 조회 시 가려짐).`;
+
+/**
  * 명백한 더미·placeholder 자격증명 토큰 패턴.
  * 모델이 "인증 없는 공개 API"를 처리할 때 임의로 합성하는 값을 차단하기 위한 서버측 가드.
  * 회귀 이슈 #255 (api-connection-manager 가짜 자격증명 합성) 참조.
@@ -91,6 +103,16 @@ function isRepeatedOrSequentialPattern(value: string): boolean {
 const NON_SECRET_IDENTITY_FIELDS = new Set(['username']);
 
 /**
+ * 추가 인증 헤더 값(`extraHeader:<이름>` 키)인지 — 빈 값·문자열 아님만 거르고 더미 비밀 규칙(정확일치 placeholder·접두사·반복/순차·3자
+ * 미만)은 모두 건너뛴다(WD-753 리뷰). 추가 헤더에는 `X-Api-Version: 1`·`X-Env: test`·`X-Debug: none` 처럼 짧거나 사전 단어인
+ * 실제 값이 흔해, 무작위 비밀(apiKey·token)의 기준을 걸면 정상 헤더를 AI 경로로 넣지 못한다. 값은 서버에서 비밀로 암호화되므로
+ * 오류 메시지에는 값 원문을 싣지 않는다.
+ */
+function isExtraHeaderField(field: string): boolean {
+  return field.startsWith(EXTRA_HEADER_KEY_PREFIX);
+}
+
+/**
  * authConfig가 명백히 placeholder/더미 값을 포함하는지 검증한다.
  * 빈 문자열·공백만·`none`/`dummy` 등 placeholder는 거부.
  * authType별 필수 필드(API_KEY: apiKey+headerName, BEARER: token, BASIC: username+password)도 함께 확인.
@@ -106,8 +128,17 @@ export function assertAuthConfigNotPlaceholder(
 ): void {
   if (!authConfig) return; // update에서 authConfig 미제공 시는 통과
 
-  // 1) 빈/공백/placeholder 값 거부 — 모든 필드 공통
+  // 1) 빈/공백/placeholder 값 거부 — 모든 필드 공통(추가 인증 헤더는 빈 값·문자열 아님만 검사)
   for (const [field, value] of Object.entries(authConfig)) {
+    // 추가 인증 헤더(WD-753): 빈 값·문자열 아님만 거르고 더미 비밀 규칙은 건너뛴다 — 오류에 값 원문을 싣지 않는다
+    if (isExtraHeaderField(field)) {
+      if (typeof value !== 'string' || value.trim().length === 0) {
+        throw new Error(
+          `authConfig.${field}(추가 인증 헤더)의 값이 비었거나 문자열이 아닙니다. 사용자에게 이 헤더의 실제 값을 받아 문자열로 보내세요 — 빈 값·더미 값으로 우회 등록 금지 (#255).`,
+        );
+      }
+      continue;
+    }
     if (typeof value !== 'string') {
       throw new Error(
         `authConfig.${field}는 문자열이어야 합니다. 사용자에게 실제 인증 정보를 다시 요청하세요. (#255 더미 자격증명 합성 방지)`,
@@ -194,7 +225,7 @@ export function registerApiConnectionTools(
 
     safeTool(
       'create_api_connection',
-      '새 API 연결을 생성합니다. baseUrl은 필수, healthCheckPath는 선택. 인증 정보는 AES-256-GCM 암호화되어 저장됩니다. 아이디·비밀번호 인증은 authType BASIC + authConfig { username, password } 로 보내고, baseUrl 에 사용자 정보(아이디:비밀번호@)를 넣지 마세요.',
+      '새 API 연결을 생성합니다. baseUrl은 필수, healthCheckPath는 선택. 인증 정보는 AES-256-GCM 암호화되어 저장됩니다. 아이디·비밀번호 인증은 authType BASIC + authConfig { username, password } 로 보내고, baseUrl 에 사용자 정보(아이디:비밀번호@)를 넣지 마세요. ' + EXTRA_HEADER_GUIDE,
       {
         name: z.string().describe('연결 이름 (예: Make.com API)'),
         description: descriptionParam('API 연결'),
@@ -229,7 +260,7 @@ export function registerApiConnectionTools(
       // WD-179: authConfig 는 통째로 교체된다. 조회 결과의 가린 값(****…)을 그대로 보내면 서버가 저장값을 유지하고,
       // 그 밖의 ****… 값(지어낸 값·다른 연결 값)은 서버가 400 으로 거절한다. 클라이언트에서 ****… 를 막지 않는 이유:
       // 비밀은 그대로 두고 placement/paramName 같은 다른 필드만 바꾸는 유일한 경로가 「가린 값 그대로 보내기」이기 때문이다.
-      'API 연결을 수정합니다. authConfig를 제공하면 인증 정보 전체가 교체됩니다(빠진 필드는 지워짐). baseUrl/healthCheckPath도 변경 가능. 인증 정보를 바꾸지 않으면 authConfig를 생략하세요. 가려진 값(****…)을 새 값처럼 지어내 보내지 마세요 — get_api_connection 결과의 가린 값과 정확히 같을 때만 기존 값이 유지되고, 그 외의 ****… 값은 거절됩니다. 비밀 값을 바꾸려면 사용자에게 실제 값을 받으세요. BASIC 은 authConfig { username, password } 이며 password 도 가린 값 규칙이 같습니다. 조회한 baseUrl 이 아이디:****@ 처럼 가려져 있으면 옛 연결의 사용자 정보이므로 고치려 하지 말고, baseUrl 을 바꾸지 않을 때는 생략하세요.',
+      'API 연결을 수정합니다. authConfig를 제공하면 인증 정보 전체가 교체됩니다(빠진 필드는 지워짐). baseUrl/healthCheckPath도 변경 가능. 인증 정보를 바꾸지 않으면 authConfig를 생략하세요. 가려진 값(****…)을 새 값처럼 지어내 보내지 마세요 — get_api_connection 결과의 가린 값과 정확히 같을 때만 기존 값이 유지되고, 그 외의 ****… 값은 거절됩니다. 비밀 값을 바꾸려면 사용자에게 실제 값을 받으세요. BASIC 은 authConfig { username, password } 이며 password 도 가린 값 규칙이 같습니다. 조회한 baseUrl 이 아이디:****@ 처럼 가려져 있으면 옛 연결의 사용자 정보이므로 고치려 하지 말고, baseUrl 을 바꾸지 않을 때는 생략하세요. ' + EXTRA_HEADER_GUIDE,
       {
         id: z.number().describe('API 연결 ID'),
         name: z.string().optional().describe('연결 이름'),

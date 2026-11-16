@@ -1,9 +1,11 @@
 package com.smartfirehub.proactive.service;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.*;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
+import com.smartfirehub.proactive.exception.ProactiveJobException;
 import com.smartfirehub.settings.model.AiCredential;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.util.Map;
@@ -177,5 +179,62 @@ class ProactiveAiClientTest extends IntegrationTestBase {
             .withRequestBody(notMatching(".*providerId.*"))
             .withRequestBody(notMatching(".*baseUrl.*"))
             .withRequestBody(notMatching(".*reasoningEffort.*")));
+  }
+
+  /**
+   * WD-765: 위임 경로에서 리포트 파일이 저장되지 않아 ai-agent 가 502 + AGENT_REPORT_NOT_SAVED 로 답하면, 「AI 에이전트 호출 실패」가
+   * 아니라 저장 실패 문구로 안내한다 — 진짜 원인을 말해야 사용자가 인증 정보를 헛되이 고치지 않는다.
+   */
+  @Test
+  void execute_502_리포트_미저장_코드면_저장_실패_문구로_안내한다() {
+    wireMock.stubFor(
+        post(urlEqualTo("/agent/proactive"))
+            .willReturn(
+                aResponse()
+                    .withStatus(502)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody(
+                        "{\"error\":\"Agent produced no usable report\",\"code\":\"AGENT_REPORT_NOT_SAVED\"}")));
+
+    assertThatThrownBy(
+            () ->
+                client.execute(
+                    1L,
+                    "prompt",
+                    "{}",
+                    new AiCredential.Sdk("oat-test", "sk-x"),
+                    null,
+                    null,
+                    Map.of(),
+                    null))
+        .isInstanceOf(ProactiveJobException.class)
+        .hasMessage(ProactiveResultValidator.REPORT_NOT_SAVED_MESSAGE);
+  }
+
+  /** WD-765 회귀 방지: 진짜 인증·한도 실패(AGENT_AUTH_OR_QUOTA_FAILURE)는 기존 「AI 인증 정보 확인」 문구 그대로다. */
+  @Test
+  void execute_502_인증_한도_코드면_기존_인증_문구로_안내한다() {
+    wireMock.stubFor(
+        post(urlEqualTo("/agent/proactive"))
+            .willReturn(
+                aResponse()
+                    .withStatus(502)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody(
+                        "{\"error\":\"Agent produced no usable report\",\"code\":\"AGENT_AUTH_OR_QUOTA_FAILURE\"}")));
+
+    assertThatThrownBy(
+            () ->
+                client.execute(
+                    1L,
+                    "prompt",
+                    "{}",
+                    new AiCredential.Sdk("oat-test", "sk-x"),
+                    null,
+                    null,
+                    Map.of(),
+                    null))
+        .isInstanceOf(ProactiveJobException.class)
+        .hasMessage(ProactiveResultValidator.USER_FACING_FAILURE_MESSAGE);
   }
 }

@@ -26,7 +26,7 @@ import {
   saveSessionAttachments,
   formatAttachmentLine,
 } from './file-downloader.js';
-import { checkToolPolicy, disallowedToolsFor } from './tool-policy.js';
+import { checkToolPolicy, DISALLOWED_TOOLS } from './tool-policy.js';
 import { claimSession } from './session-owner.js';
 import { sdkChatFilesDir } from './tenant-paths.js';
 import { createTracker, buildHaltMessage } from './failure-streak.js';
@@ -80,7 +80,10 @@ export interface AgentOptions {
   dbDialect?: DbDialect;
   /** WD-744: 「행 검색 가능」 플래그(ChatProviderOptions.rowSearch 참고). */
   rowSearch?: boolean;
-  /** 프로액티브 리포트 디렉터리 — 있으면 report-writer 하위 에이전트가 이 안에만 Write 로 리포트 파일을 저장할 수 있다. */
+  /**
+   * 프로액티브 리포트 디렉터리 — 있으면 인메모리 MCP 서버에 write_report_file 을 실어 report-writer 하위 에이전트가
+   * 이 안의 세 파일에만 저장하게 한다(WD-765). Write 는 이 실행에서도 차단된다.
+   */
   reportDir?: string;
 }
 
@@ -142,6 +145,8 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
     dbDialect: options.dbDialect,
     rowSearch: options.rowSearch,
     credentials: { apiKey, oauthToken },
+    // WD-765: 스마트 작업 리포트 실행이면 전용 저장 도구(write_report_file)를 이 실행의 reportDir 에 고정해 연다.
+    reportDir: options.reportDir,
   });
 
   const abortController = new AbortController();
@@ -273,8 +278,8 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
       // SDK 의 isToolSearchEnabled 는 disallowedTools 에 ToolSearch 가 있으면
       // 곧바로 비활성으로 폴백한다 (cli.js XOq 체크 — "may have been disallowed via
       // disallowedTools"). 정책은 ./tool-policy.ts 가 single source of truth — CLI 프로바이더도 동일 리스트 적용.
-      // 프로액티브 리포트 실행(reportDir)만 Write 를 풀어 report-writer 가 저장하게 한다 — 경로는 checkToolPolicy 가 reportDir 안으로 제한.
-      disallowedTools: disallowedToolsFor(options.reportDir),
+      // WD-765: 프로액티브 리포트 실행도 Write 를 풀지 않는다 — report-writer 는 MCP 의 write_report_file 로만 저장한다.
+      disallowedTools: [...DISALLOWED_TOOLS],
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
       includePartialMessages: true,
@@ -380,7 +385,6 @@ export async function* executeAgent(options: AgentOptions): AsyncGenerator<SSEEv
             event.input as Record<string, unknown> | undefined,
             Object.keys(subagents),
             parentToolUseId,
-            options.reportDir,
           );
           if (policyDeny) {
             console.warn(`${tag()} [policy] ${policyDeny} — aborting stream`);

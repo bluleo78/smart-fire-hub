@@ -148,9 +148,14 @@ public class ApiConnectionReader {
    * <p>응답 가리기({@link #maskAuthConfig})와 저장 시 가린 값 거절·유지(WD-179, {@code ApiConnectionService})가 반드시
    * 같은 기준을 써야 한다 — 기준이 어긋나면 응답에 {@code ****} 로 나간 필드가 수정 때는 비밀로 인식되지 않아 가린 값이 그대로 저장된다. 그래서 판정을 이 한
    * 곳에 둔다.
+   *
+   * <p>추가 인증 헤더 키({@link AuthConfigValidator#EXTRA_HEADER_PREFIX}, WD-753)는 헤더 이름과 상관없이 비밀이다 —
+   * 「X-Tenant」 처럼 이름에 위 조각이 없어도 값은 함께 보내는 비밀 헤더다. 가린 모양은 API 키 규칙({@code ****}+끝 4자, {@link
+   * #maskSecretValue}).
    */
   static boolean isSensitiveKey(String key) {
     if (key == null) return false;
+    if (key.startsWith(AuthConfigValidator.EXTRA_HEADER_PREFIX)) return true;
     String lower = key.toLowerCase(Locale.ROOT);
     return SENSITIVE_KEY_PARTS.stream().anyMatch(lower::contains);
   }

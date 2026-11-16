@@ -8,14 +8,14 @@ import type { SafeToolFn, JsonResultFn } from '../firehub-mcp-server.js';
 /**
  * 스마트 작업(Proactive) 리포트 파일 쓰기 도구 (WD-62).
  *
- * <p>왜 필요한가: SDK 경로는 report-writer 하위 에이전트가 Write 도구로 report.html·report.md·summary.md 를
- * 쓰고 proactive 라우트가 그 파일을 읽는다. opencode 경로는 보안상 호스트 Write 를 끄고 task 위임도 막았으므로
- * 세 파일을 쓸 방법이 없어 항상 원문 폴백/502 로 떨어졌다. 호스트 Write 를 다시 여는 대신, 쓸 수 있는 곳을
- * "그 실행의 reportDir 안 세 파일"로 못 박은 전용 도구만 연다.
+ * <p>왜 필요한가: proactive 라우트는 reportDir 의 report.html·report.md·summary.md 를 읽는다. 호스트 Write 는
+ * 보안상 모든 실행기에서 차단이라(tool-policy DISALLOWED_TOOLS) 쓸 수 있는 곳을 "그 실행의 reportDir 안 세 파일"로
+ * 못 박은 전용 도구만 연다. opencode(직접 작성, WD-62)와 SDK·CLI 의 report-writer 하위 에이전트(WD-765)가 모두
+ * 이 도구로만 리포트를 저장한다.
  *
- * <p>reportDir 은 모델 인자가 아니라 부모(agent-opencode)가 MCP 프로세스 env({@link REPORT_DIR_ENV})로
- * 주입한다 — 모델은 파일명(열거형)과 내용만 고를 수 있어 경로 탈출 인자가 원천적으로 없다. env 가 없으면
- * (일반 채팅·CLI) stdio-server 가 이 도구를 등록하지 않는다.
+ * <p>reportDir 은 모델 인자가 아니라 부모가 고정한다 — opencode·CLI 는 MCP 프로세스 env({@link REPORT_DIR_ENV}),
+ * SDK 는 인메모리 서버 옵션(BuildToolsOptions.reportDir). 모델은 파일명(열거형)과 내용만 고를 수 있어 경로 탈출
+ * 인자가 원천적으로 없다. reportDir 이 없으면(일반 채팅) 어느 경로에서도 이 도구를 등록하지 않는다.
  */
 
 /** 도구 이름. opencode 트랜스크립트가 이 도구의 content 를 생략할 때도 같은 상수를 쓴다(이름이 갈리면 생략이 조용히 꺼진다). */
@@ -95,7 +95,7 @@ export async function writeReportFile(
   return { saved: fileName as ReportFileName, bytes };
 }
 
-/** reportDir 에 고정된 write_report_file 도구를 등록한다. stdio-server 가 env 주입 시에만 부른다. */
+/** reportDir 에 고정된 write_report_file 도구를 등록한다. registerAllTools 가 options.reportDir 이 있을 때만 부른다. */
 export function registerReportFileTools(reportDir: string, safeTool: SafeToolFn, jsonResult: JsonResultFn) {
   return [
     safeTool(

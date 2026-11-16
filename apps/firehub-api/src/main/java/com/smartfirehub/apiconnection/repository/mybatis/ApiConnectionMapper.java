@@ -51,6 +51,9 @@ public interface ApiConnectionMapper {
       @Param("latencyMs") Long latencyMs,
       @Param("errorMessage") String errorMessage);
 
+  /** 마지막 헬스체크 결과(상태·시각·지연·오류)를 NULL 로 지운다(WD-753 — 헬스체크 경로를 비운 연결). */
+  int clearHealth(@Param("id") Long id);
+
   /** 헬스체크 경로가 있는 연결 목록. */
   List<HealthCheckTarget> selectHealthCheckable();
 

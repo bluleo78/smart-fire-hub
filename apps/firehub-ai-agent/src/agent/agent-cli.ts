@@ -37,6 +37,7 @@ import {
 import { isPositiveInteger } from '../utils.js';
 import { FireHubApiClient, type SharePurpose } from '../mcp/api-client.js';
 import { DB_DIALECT_ENV, ROW_SEARCH_ENV, type DbDialect } from './db-dialect.js';
+import { REPORT_DIR_ENV } from '../mcp/tools/report-file-tools.js';
 import {
   downloadChatFiles,
   cleanupChatFiles,
@@ -163,6 +164,8 @@ export async function writeCliTranscript(
 /**
  * @param tenantId 원요청 테넌트. `TENANT_ID` 로 stdio MCP 프로세스에 주입해야 그 프로세스가 테넌트
  *   헤더를 붙인다(누락 시 api 동작은 FireHubApiClient 생성자 주석 참고).
+ * @param reportDir WD-765: 스마트 작업 리포트 디렉터리. 있으면 `FIREHUB_REPORT_DIR` 로 심어 stdio MCP 프로세스가
+ *   write_report_file 을 이 디렉터리 전용으로 등록하게 한다(opencode WD-62 와 같은 env). 없으면 키 자체를 싣지 않는다.
  */
 export function buildMcpConfig(
   userId: number,
@@ -174,6 +177,7 @@ export function buildMcpConfig(
   proactiveExecutionId?: number,
   dbDialect?: DbDialect,
   rowSearch?: boolean,
+  reportDir?: string,
 ): object {
   const { command, args } = getStdioServerCommand();
   // stdio MCP 서버는 별도 프로세스이고 env 를 여기서 명시적으로 구성한다.
@@ -194,6 +198,8 @@ export function buildMcpConfig(
     ...(dbDialect ? { [DB_DIALECT_ENV]: dbDialect } : {}),
     // WD-744: 「행 검색 가능」 플래그 — 없으면 심지 않아 stdio 쪽이 방언 기준으로 떨어진다.
     ...(rowSearch !== undefined ? { [ROW_SEARCH_ENV]: String(rowSearch) } : {}),
+    // WD-765: 스마트 작업 리포트 실행이면 report-writer 의 전용 저장 도구를 이 디렉터리에 고정해 연다(stdio-server.ts main).
+    ...(reportDir ? { [REPORT_DIR_ENV]: reportDir } : {}),
   };
   if (credentials?.oauthToken?.trim()) {
     env.CLAUDE_CODE_OAUTH_TOKEN = credentials.oauthToken;
@@ -253,6 +259,7 @@ export interface CliAgentOptions extends AgentOptions {
   useSubscription?: boolean;
   /** DB에서 복호화된 OAuth 토큰 (구독 모드에서 CLAUDE_CODE_OAUTH_TOKEN으로 설정) */
   oauthToken?: string;
+  // reportDir(WD-765)은 AgentOptions 에서 물려받는다 — CLI 는 buildMcpConfig 가 MCP 프로세스 env 로 넘긴다.
 }
 
 export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator<SSEEvent> {
@@ -273,6 +280,7 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
     proactiveExecutionId,
     dbDialect,
     rowSearch,
+    reportDir,
   } = options;
 
   // #708: 자격증명이 없으면 어떤 부수효과(세션 표식·파일 다운로드·임시 파일)도 만들기 전에
@@ -476,6 +484,7 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
         proactiveExecutionId,
         dbDialect,
         rowSearch,
+        reportDir,
       ),
       null,
       2,

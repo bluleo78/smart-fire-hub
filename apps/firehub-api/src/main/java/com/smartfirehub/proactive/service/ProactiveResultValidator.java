@@ -39,6 +39,14 @@ public final class ProactiveResultValidator {
       "AI 분석을 완료하지 못해 리포트를 생성하지 못했습니다. 관리 > 설정에서 AI 인증 정보를 확인해 주세요.";
 
   /**
+   * WD-765: AI(report-writer)가 리포트 파일을 저장하지 못해 실패했을 때 사용자에게 노출할 문구. 인증 문제가 아닌데 「AI 인증 정보 확인」으로 안내하면
+   * 사용자가 멀쩡한 자격증명을 고치게 된다. ai-agent 는 위임 경로(sdk·cli)에서 리포트 파일이 없으면 본문 글과 상관없이 502 코드 {@code
+   * AGENT_REPORT_NOT_SAVED} 로 실패하고, ProactiveAiClient 가 그 코드로 이 문구를 고른다.
+   */
+  public static final String REPORT_NOT_SAVED_MESSAGE =
+      "AI가 리포트 파일을 저장하지 못해 리포트를 만들지 못했습니다. 잠시 뒤 다시 실행하고, 계속되면 관리자에게 문의해 주세요.";
+
+  /**
    * 결과를 COMPLETED로 기록하고 발송해도 되는지 검증한다.
    *
    * @param result AI 에이전트 실행 결과

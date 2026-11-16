@@ -35,7 +35,7 @@ import { resolveStdioCredentials } from './stdio-credentials.js';
 import type { AnyZodRawShape, InferShape } from '@anthropic-ai/claude-agent-sdk';
 import { createTracker, type FailureTracker } from '../agent/failure-streak.js';
 import { isOpenCodeSchemaCompat, sanitizeOutgoingMessage } from './schema-compat.js';
-import { REPORT_DIR_ENV, registerReportFileTools } from './tools/report-file-tools.js';
+import { REPORT_DIR_ENV } from './tools/report-file-tools.js';
 
 /** stdio 서버의 권한 조회 타임아웃(ms) — main() 의 주석 참고 */
 const STDIO_PERMISSIONS_TIMEOUT_MS = 3_000;
@@ -248,13 +248,10 @@ async function main(): Promise<void> {
     dbDialect,
     rowSearch,
     credentials: resolveStdioCredentials(process.env),
+    // WD-62·WD-765: 부모가 스마트 작업 리포트 실행(opencode·CLI)이면 그 실행의 reportDir 을 env 로 심는다 —
+    // 있으면 registerAllTools 가 write_report_file 을 등록하고, 없으면(일반 채팅) 도구 자체가 없다.
+    reportDir: process.env[REPORT_DIR_ENV],
   });
-
-  // WD-62: 리포트 파일 쓰기 도구는 부모가 그 실행의 reportDir 을 주입한 경우(opencode Proactive)에만 연다.
-  // 일반 채팅·CLI 는 env 가 없어 도구 자체가 없다 — SDK 경로(registerAllTools 공용)도 영향받지 않게
-  // registerAllTools 밖에서 등록한다.
-  const reportDir = process.env[REPORT_DIR_ENV];
-  if (reportDir) registerReportFileTools(reportDir, safeTool, jsonResult);
 
   const transport = new StdioServerTransport();
 

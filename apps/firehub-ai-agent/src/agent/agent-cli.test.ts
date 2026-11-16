@@ -1182,6 +1182,33 @@ describe('executeCliAgent — #240 subagent registration', () => {
     expect(argv).toContain('--disable-slash-commands');
   });
 
+  // WD-765: 스마트 작업 리포트 실행(reportDir)은 mcp.json 의 firehub env 로 reportDir 을 넘겨 전용 저장 도구를 연다.
+  // Write 는 어느 경로에서도 차단(--disallowed-tools)이고 리포트 저장은 write_report_file 만 한다.
+  it('reportDir 이 있으면 mcp.json env 에 FIREHUB_REPORT_DIR 를 싣고 Write 는 계속 차단한다 (WD-765)', async () => {
+    const reportDir = '/tmp/proactive-report/t1/9998-100';
+    for await (const _ev of executeCliAgent({
+      message: 'test',
+      tenantId: 1,
+      userId: 9998,
+      useSubscription: false,
+      apiKey: 'sk-test',
+      reportDir,
+    })) {
+      // drain
+    }
+
+    const [, args, opts] = spawnMock.mock.calls[0];
+    const argv = args as string[];
+    const disallowedValue = argv[argv.indexOf('--disallowed-tools') + 1];
+    expect(disallowedValue.split(',')).toContain('Write');
+
+    const cwd = (opts as { cwd: string }).cwd;
+    const cfg = JSON.parse(readFileSync(join(cwd, 'mcp.json'), 'utf-8')) as {
+      mcpServers: { firehub: { env: Record<string, string> } };
+    };
+    expect(cfg.mcpServers.firehub.env.FIREHUB_REPORT_DIR).toBe(reportDir);
+  });
+
   it('system-prompt-file 의 내용에 buildSubagentGuide 결과가 부착되어야 한다 (#259)', async () => {
     const gen = executeCliAgent({
       message: 'test',
@@ -2280,6 +2307,21 @@ describe('buildMcpConfig — DB_DIALECT(WD-79)', () => {
   });
 });
 
+// WD-765: 스마트 작업 리포트 실행이면 stdio MCP 프로세스 env 에 FIREHUB_REPORT_DIR 를 심는다 — stdio-server.ts main 이
+// 그 env 가 있을 때만 write_report_file 을 등록한다(opencode WD-62 와 같은 경로). 일반 채팅은 키 자체가 없어 도구가 안 보인다.
+describe('buildMcpConfig — FIREHUB_REPORT_DIR(WD-765)', () => {
+  type Cfg = { mcpServers: { firehub: { env: Record<string, string> } } };
+  it('reportDir 이 있으면 env 에 FIREHUB_REPORT_DIR 를 싣고, 없으면 키 자체가 없다', async () => {
+    const { buildMcpConfig } = await import('./agent-cli.js');
+    const reportDir = '/tmp/proactive-report/t3/7-100';
+    // 10번째 인자 — rowSearch(9번째) 뒤.
+    const run = buildMcpConfig(7, 3, 'http://api', 'tok', { apiKey: 'k' }, 'share', 55, undefined, undefined, reportDir) as Cfg;
+    expect(run.mcpServers.firehub.env.FIREHUB_REPORT_DIR).toBe(reportDir);
+    const chat = buildMcpConfig(7, 3, 'http://api', 'tok', { apiKey: 'k' }) as Cfg;
+    expect('FIREHUB_REPORT_DIR' in chat.mcpServers.firehub.env).toBe(false);
+  });
+});
+
 // WD-59: 설정 › AI 에이전트의 최대 턴 수를 claude CLI 의 --max-turns 로 넘긴다.
 // `claude --help` 에는 없지만 CLI 가 받는 숨은 옵션이다(Agent SDK 의 maxTurns 도 이 인자로 CLI 에 전달된다).
 describe('executeCliAgent — 최대 턴 수(--max-turns, WD-59)', () => {
@@ -2320,5 +2362,67 @@ describe('executeCliAgent — 최대 턴 수(--max-turns, WD-59)', () => {
     expect(await spawnArgs({})).not.toContain('--max-turns');
     spawnMock.mockReset();
     expect(await spawnArgs({ maxTurns: 0 })).not.toContain('--max-turns');
+  });
+});
+
+// WD-765: 리포트 저장 도구는 위임 전용이다 — CLI 스트림에서 메인 top-level(parent_tool_use_id 없음) 호출은 막고(child 종료),
+// report-writer 하위 에이전트 안(parent_tool_use_id 있음) 호출은 통과시킨다. 형식·개인정보 가림 규칙이 하위 에이전트
+// 규칙에만 있어, 메인이 직접 저장하면 그 규칙이 우회되기 때문이다.
+describe('executeCliAgent — 리포트 저장 도구 위임 전용 (WD-765)', () => {
+  beforeEach(() => {
+    spawnMock.mockReset();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  /** write_report_file tool_use 한 줄을 parent 와 함께 흘린 뒤 이벤트를 모은다. */
+  const run = async (parent: string | null) => {
+    const lines: string[] = [
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: parent,
+        message: {
+          content: [
+            {
+              type: 'tool_use',
+              id: 'toolu_write_1',
+              name: 'mcp__firehub__write_report_file',
+              input: { fileName: 'report.html', content: '<!DOCTYPE html>' },
+            },
+          ],
+        },
+      }),
+      JSON.stringify({ type: 'result', subtype: 'success' }),
+    ];
+    const child = makeFakeChildWithLines(lines);
+    spawnMock.mockReturnValue(child);
+    const events: Array<{ type: string; message?: unknown }> = [];
+    for await (const ev of executeCliAgent({
+      message: '리포트',
+      tenantId: 1,
+      userId: 1,
+      useSubscription: false,
+      apiKey: 'sk-test',
+    } as never)) {
+      events.push(ev as { type: string; message?: unknown });
+    }
+    return { events, child };
+  };
+
+  it('메인이 직접 호출하면 정책 오류를 내고 child 를 종료한다', async () => {
+    const { events, child } = await run(null);
+    const errs = events.filter((e) => e.type === 'error');
+    expect(errs).toHaveLength(1);
+    expect(String(errs[0].message)).toMatch(/blocked by policy \(WD-765\)/);
+    expect(child.kill).toHaveBeenCalled();
+  });
+
+  it('report-writer 하위 에이전트 안(parent_tool_use_id 있음)의 호출은 통과한다', async () => {
+    const { events } = await run('toolu_delegate_report');
+    // 정책 오류가 없고, 도구 호출이 그대로 tool_use 이벤트로 흘러간다(child 종료는 스트림 정리로도 일어나 판정에 쓰지 않는다)
+    expect(events.filter((e) => e.type === 'error')).toHaveLength(0);
+    expect(events.some((e) => e.type === 'tool_use')).toBe(true);
   });
 });

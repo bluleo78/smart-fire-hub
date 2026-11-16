@@ -1,5 +1,5 @@
 import { ArrowLeft, Copy, HelpCircle } from 'lucide-react';
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -7,6 +7,15 @@ import { StatusBadge } from '@/components/api-connection/StatusBadge';
 import { DetailPageTitle } from '@/components/PageTitleSync';
 import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
 import { FormField } from '@/components/ui/form-field';
+import {
+  type ExtraHeaderRow,
+  extraHeaderRowErrors,
+  extraHeaderRowsFromConfig,
+  extraHeadersToConfig,
+  focusFirstExtraHeaderError,
+  withoutChangedRowErrors,
+  withoutExtraHeaders,
+} from '@/lib/api-connection-extra-headers';
 import {
   AUTH_FIELD_KEYS,
   AUTH_TYPE_LABEL,
@@ -62,6 +71,7 @@ import type {
 } from '../../types/api-connection';
 import type { UpdateApiConnectionRequest } from '../../types/api-connection';
 import { BasicAuthFields } from './components/BasicAuthFields';
+import { ExtraHeadersFields } from './components/ExtraHeadersFields';
 
 /** 기본 정보 카드에서 인라인 오류를 보일 수 있는 칸 (WD-561) — 선언 순서가 화면 순서(첫 오류 포커스 기준)다. */
 const INFO_FIELD_ORDER = ['name', 'baseUrl'] as const;
@@ -112,6 +122,9 @@ export default function ApiConnectionDetailPage() {
   // (WD-681) Basic 인증 — 아이디는 조회값(가리지 않음)으로 채우고, 비밀번호는 다른 비밀처럼 비워 둔 채 시작한다
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  // (WD-753) 추가 인증 헤더 행 — 저장된 헤더는 이름과 가린 값(storedMasked)으로 시작하고 값 칸은 비운다
+  const [extraHeaders, setExtraHeaders] = useState<ExtraHeaderRow[]>([]);
+  const [extraHeaderErrors, setExtraHeaderErrors] = useState<Record<string, string>>({});
 
   // (WD-561) 칸별 검증 오류 — 예전엔 토스트로만 알려 어느 칸이 틀렸는지 알기 어려웠다.
   // 기본 정보와 인증은 저장 버튼이 따로라 오류도 따로 둔다(한쪽 저장이 다른 쪽 오류를 건드리지 않게).
@@ -151,6 +164,19 @@ export default function ApiConnectionDetailPage() {
   /** 조회로 받은 Basic 아이디 — 편집 칸 초기값·편집 취소 시 되돌릴 값이다(아이디는 비밀이 아니라 가리지 않고 내려온다). */
   const storedUsername = connection?.maskedAuthConfig.username ?? '';
 
+  /**
+   * 저장된 추가 헤더 행·그 authConfig 조각(WD-753 리뷰) — 조회한 가린 config 가 바뀔 때만 한 번 만든다.
+   * 읽기 보기·편집 시작/취소·미저장 변경(dirty) 비교가 같은 값을 쓴다. 예전엔 렌더마다 다시 만들어 행 id 순번을 계속 올렸다(렌더 중 부수효과).
+   */
+  const storedExtraHeaderRows = useMemo(
+    () => extraHeaderRowsFromConfig(connection?.maskedAuthConfig),
+    [connection?.maskedAuthConfig],
+  );
+  const storedExtraHeaderConfig = useMemo(
+    () => extraHeadersToConfig(storedExtraHeaderRows),
+    [storedExtraHeaderRows],
+  );
+
   /** 인증 편집을 닫는다 — 입력한 키·토큰과 인증 칸 오류를 함께 비워, 다시 열었을 때 지난 오류가 남지 않게 한다. */
   const closeAuthEdit = () => {
     setIsEditingAuth(false);
@@ -160,6 +186,15 @@ export default function ApiConnectionDetailPage() {
     setUsername(storedUsername);
     setPassword('');
     setAuthErrors({});
+    // 추가 헤더는 저장된 행(이름·가린 값)으로 되돌린다(WD-753) — 지운 행·새 행·입력한 값을 버린다
+    setExtraHeaders(storedExtraHeaderRows);
+    setExtraHeaderErrors({});
+  };
+
+  /** 추가 헤더 행을 고친다(WD-753) — 고치거나 지운 행의 오류만 지운다. */
+  const handleExtraHeadersChange = (next: ExtraHeaderRow[]) => {
+    setExtraHeaderErrors((prev) => withoutChangedRowErrors(prev, extraHeaders, next));
+    setExtraHeaders(next);
   };
 
   // 서버에서 로드된 기본 정보 초기값 스냅샷 — 이탈 가드용 dirty 비교 기준 (#551)
@@ -191,7 +226,8 @@ export default function ApiConnectionDetailPage() {
     setBaseUrl(initialBaseUrl);
     setHealthCheckPath(initialHealthCheckPath);
     setAuthType(connection.authType);
-    const mc = connection.maskedAuthConfig;
+    // 메인 인증 칸은 추가 헤더 키(extraHeader:…)를 뺀 값으로 채운다(WD-753) — 추가 헤더는 아래 행으로 따로 채운다
+    const mc = withoutExtraHeaders(connection.maskedAuthConfig);
     setPlacement(mc.placement ?? 'header');
     setHeaderName(mc.headerName ?? '');
     setParamName(mc.paramName ?? '');
@@ -208,6 +244,22 @@ export default function ApiConnectionDetailPage() {
       healthCheckPath: initialHealthCheckPath,
     });
   }, [connection]);
+
+  /** 추가 헤더 행을 마지막으로 채운 연결 id(WD-753 리뷰) — 다른 연결로 옮겨 갔는지 알려고 둔다(렌더에 쓰지 않아 ref 로 둔다). */
+  const extraHeadersSeededForRef = useRef<number | null>(null);
+  /**
+   * 추가 헤더 행을 저장값으로 채운다(WD-753 리뷰) — 인증 편집 중이 아니거나 연결 id 가 바뀔 때만.
+   * 인증 편집 중에 기본 정보 저장·창 포커스 등으로 연결이 다시 불러와지면(refetch) 위 효과가 다시 돌아 고치던 행(새 행·지운 행·바꾼 이름·
+   * 입력한 값)을 저장값으로 덮었다. 편집을 닫으면(isEditingAuth → false) 다시 저장값으로 맞춘다.
+   */
+  useEffect(() => {
+    if (!connection) return;
+    const idChanged = extraHeadersSeededForRef.current !== connection.id;
+    if (isEditingAuth && !idChanged) return;
+    extraHeadersSeededForRef.current = connection.id;
+    setExtraHeaders(storedExtraHeaderRows);
+    setExtraHeaderErrors({});
+  }, [connection, storedExtraHeaderRows, isEditingAuth]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   // 기본 정보 폼이 로드된 초기값과 달라졌는지 여부 (#551)
@@ -219,9 +271,17 @@ export default function ApiConnectionDetailPage() {
       healthCheckPath !== initialInfo.healthCheckPath);
   // 인증 정보 편집 모드에서 새 키/토큰을 입력 중인 경우도 미저장 변경으로 간주 (#551)
   // (WD-681) 비밀번호를 입력했거나 Basic 아이디를 고친 것도 미저장 변경이다.
+  // (WD-753) 추가 헤더를 더하거나 지우거나 이름·값을 고친 것도 미저장 변경이다 — 보낼 조각을 저장된 행의 조각과 비교한다.
+  const isExtraHeadersDirty =
+    isEditingAuth &&
+    JSON.stringify(extraHeadersToConfig(extraHeaders)) !== JSON.stringify(storedExtraHeaderConfig);
   const isAuthDirty =
     isEditingAuth &&
-    (apiKey.trim() !== '' || token.trim() !== '' || password !== '' || username !== storedUsername);
+    (apiKey.trim() !== '' ||
+      token.trim() !== '' ||
+      password !== '' ||
+      username !== storedUsername ||
+      isExtraHeadersDirty);
   const { dialog: unsavedChangesDialog, requestNavigate } = useUnsavedChangesGuard(
     isInfoDirty || isAuthDirty,
   );
@@ -300,10 +360,19 @@ export default function ApiConnectionDetailPage() {
       authConfig.token = token;
     }
 
+    // (WD-753) 추가 헤더 행도 검사한다 — 메인 인증 칸 다음 화면 순서라 메인 칸 오류가 먼저 포커스를 받는다
+    const nextExtraErrors = extraHeaderRowErrors(extraHeaders);
     setAuthErrors(nextErrors);
+    setExtraHeaderErrors(nextExtraErrors);
     if (focusFirstError(AUTH_FIELD_KEYS, nextErrors, authFieldId)) return;
+    if (focusFirstExtraHeaderError(extraHeaders, nextExtraErrors)) return;
 
-    const data: UpdateApiConnectionRequest = { authType, authConfig };
+    // 서버는 authConfig 를 통째로 바꿔 저장하므로 추가 헤더 조각을 반드시 함께 싣는다 — 빼면 저장된 추가 헤더가 지워진다.
+    // 값을 비운 저장 행은 가린 값을 보내 서버가 저장 원문을 유지한다(방식을 바꾸는 저장도 같다).
+    const data: UpdateApiConnectionRequest = {
+      authType,
+      authConfig: { ...authConfig, ...extraHeadersToConfig(extraHeaders) },
+    };
     try {
       await updateMutation.mutateAsync({ id: connectionId, data });
       toast.success('인증 정보가 업데이트되었습니다.');
@@ -385,7 +454,8 @@ export default function ApiConnectionDetailPage() {
 
   if (!connection) return null;
 
-  const mc = connection.maskedAuthConfig;
+  // 읽기 보기의 메인 인증 칸은 추가 헤더 키를 뺀 값, 추가 헤더는 이름·가린 값 행(storedExtraHeaderRows, 훅 구간의 useMemo)으로 따로 보인다(WD-753)
+  const mc = withoutExtraHeaders(connection.maskedAuthConfig);
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
@@ -413,7 +483,11 @@ export default function ApiConnectionDetailPage() {
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="flex items-center gap-3">
-            <StatusBadge status={connection.lastStatus} checkedAt={connection.lastCheckedAt} />
+            <StatusBadge
+              status={connection.lastStatus}
+              checkedAt={connection.lastCheckedAt}
+              healthCheckPath={connection.healthCheckPath}
+            />
             {connection.lastLatencyMs !== null && (
               <p className="text-sm text-muted-foreground">지연: {connection.lastLatencyMs}ms</p>
             )}
@@ -698,6 +772,19 @@ export default function ApiConnectionDetailPage() {
                   </div>
                 </>
               )}
+              {/* (WD-753) 추가 인증 헤더 — 이름과 서버가 가린 값만 보인다(원문은 화면에 오지 않는다) */}
+              {storedExtraHeaderRows.length > 0 && (
+                <div className="grid grid-cols-[120px_1fr] gap-2 text-sm">
+                  <span className="text-muted-foreground">추가 헤더</span>
+                  <ul className="space-y-1">
+                    {storedExtraHeaderRows.map((header) => (
+                      <li key={header.name} className="font-mono break-all">
+                        {`${header.name}: ${header.storedMasked}`}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           ) : (
             /* 편집 모드 */
@@ -830,6 +917,13 @@ export default function ApiConnectionDetailPage() {
                   keepPasswordHintId={storedMaskedPassword ? passwordHintId : undefined}
                 />
               )}
+
+              {/* (WD-753) 추가 인증 헤더 — 방식과 무관하게 메인 인증 칸 아래에 둔다. 값을 비운 저장 행은 저장값을 유지한다 */}
+              <ExtraHeadersFields
+                rows={extraHeaders}
+                onChange={handleExtraHeadersChange}
+                errors={extraHeaderErrors}
+              />
 
               <div className="flex gap-2">
                 <Button onClick={handleSaveAuth} disabled={updateMutation.isPending}>

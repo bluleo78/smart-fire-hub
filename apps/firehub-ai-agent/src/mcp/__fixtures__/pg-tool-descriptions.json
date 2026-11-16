@@ -153,7 +153,7 @@
     }
   },
   "create_api_connection": {
-    "description": "새 API 연결을 생성합니다. baseUrl은 필수, healthCheckPath는 선택. 인증 정보는 AES-256-GCM 암호화되어 저장됩니다. 아이디·비밀번호 인증은 authType BASIC + authConfig { username, password } 로 보내고, baseUrl 에 사용자 정보(아이디:비밀번호@)를 넣지 마세요.",
+    "description": "새 API 연결을 생성합니다. baseUrl은 필수, healthCheckPath는 선택. 인증 정보는 AES-256-GCM 암호화되어 저장됩니다. 아이디·비밀번호 인증은 authType BASIC + authConfig { username, password } 로 보내고, baseUrl 에 사용자 정보(아이디:비밀번호@)를 넣지 마세요. 인증 헤더가 둘 이상 필요한 API 는 authConfig 에 \"extraHeader:<헤더 이름>\": \"<값>\" 키를 더합니다(모든 인증 방식, 최대 10개, 값은 비밀이라 조회 시 가려짐).",
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -4098,7 +4098,7 @@
     }
   },
   "update_api_connection": {
-    "description": "API 연결을 수정합니다. authConfig를 제공하면 인증 정보 전체가 교체됩니다(빠진 필드는 지워짐). baseUrl/healthCheckPath도 변경 가능. 인증 정보를 바꾸지 않으면 authConfig를 생략하세요. 가려진 값(****…)을 새 값처럼 지어내 보내지 마세요 — get_api_connection 결과의 가린 값과 정확히 같을 때만 기존 값이 유지되고, 그 외의 ****… 값은 거절됩니다. 비밀 값을 바꾸려면 사용자에게 실제 값을 받으세요. BASIC 은 authConfig { username, password } 이며 password 도 가린 값 규칙이 같습니다. 조회한 baseUrl 이 아이디:****@ 처럼 가려져 있으면 옛 연결의 사용자 정보이므로 고치려 하지 말고, baseUrl 을 바꾸지 않을 때는 생략하세요.",
+    "description": "API 연결을 수정합니다. authConfig를 제공하면 인증 정보 전체가 교체됩니다(빠진 필드는 지워짐). baseUrl/healthCheckPath도 변경 가능. 인증 정보를 바꾸지 않으면 authConfig를 생략하세요. 가려진 값(****…)을 새 값처럼 지어내 보내지 마세요 — get_api_connection 결과의 가린 값과 정확히 같을 때만 기존 값이 유지되고, 그 외의 ****… 값은 거절됩니다. 비밀 값을 바꾸려면 사용자에게 실제 값을 받으세요. BASIC 은 authConfig { username, password } 이며 password 도 가린 값 규칙이 같습니다. 조회한 baseUrl 이 아이디:****@ 처럼 가려져 있으면 옛 연결의 사용자 정보이므로 고치려 하지 말고, baseUrl 을 바꾸지 않을 때는 생략하세요. 인증 헤더가 둘 이상 필요한 API 는 authConfig 에 \"extraHeader:<헤더 이름>\": \"<값>\" 키를 더합니다(모든 인증 방식, 최대 10개, 값은 비밀이라 조회 시 가려짐).",
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",

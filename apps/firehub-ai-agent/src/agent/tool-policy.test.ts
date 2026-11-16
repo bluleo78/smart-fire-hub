@@ -6,7 +6,7 @@
  * 새 호스트 도구는 자동 허용되어 "tool not in allow list" 무응답 회귀를 막는다.
  */
 import { describe, it, expect } from 'vitest';
-import { DISALLOWED_TOOLS, ALLOWED_TOOLS, DELEGATION_ONLY_TOOLS, checkToolPolicy, disallowedToolsFor } from './tool-policy.js';
+import { DISALLOWED_TOOLS, ALLOWED_TOOLS, DELEGATION_ONLY_TOOLS, checkToolPolicy } from './tool-policy.js';
 
 describe('tool-policy (#256, #266)', () => {
   it('DISALLOWED_TOOLS 의 명시 차단 도구가 유지된다 (회귀 가드)', () => {
@@ -272,42 +272,38 @@ describe('tool-policy (#256, #266)', () => {
     });
   });
 
-  describe('프로액티브 리포트 저장 Write 예외', () => {
-    const dir = '/tmp/proactive-report/t2/2-100';
-
-    it('reportDir 이 없으면 차단 목록에 Write 가 그대로 있다', () => {
-      expect(disallowedToolsFor()).toContain('Write');
-      expect(disallowedToolsFor(undefined)).toEqual([...DISALLOWED_TOOLS]);
+  // WD-765: 범용 Write 는 어느 경로(하위 에이전트·프로액티브 실행 포함)에서도 차단하고, 리포트 저장은 전용 MCP 도구
+  // write_report_file(파일 이름 3개·reportDir 고정)만 통과한다.
+  describe('프로액티브 리포트 저장 — Write 는 늘 차단, 전용 도구만 통과 (WD-765)', () => {
+    it('report-writer 하위 에이전트의 Write 도 차단한다', () => {
+      const dir = '/tmp/proactive-report/t2/2-100';
+      expect(checkToolPolicy('Write', { file_path: `${dir}/report.html` }, ['report-writer'], 'toolu_parent')).toMatch(/blocked/);
     });
 
-    it('reportDir 이 있으면 Write 만 빠지고 나머지 차단은 유지된다', () => {
-      const list = disallowedToolsFor(dir);
-      expect(list).not.toContain('Write');
-      expect(list).toContain('Edit');
-      expect(list).toContain('Monitor');
-      expect(list.length).toBe(DISALLOWED_TOOLS.length - 1);
+    it('report-writer 의 전용 저장 도구(mcp__firehub__write_report_file)는 통과한다', () => {
+      expect(
+        checkToolPolicy('mcp__firehub__write_report_file', { fileName: 'report.html', content: '<!DOCTYPE html>' }, ['report-writer'], 'toolu_parent'),
+      ).toBeNull();
     });
 
-    it('하위 에이전트가 reportDir 안에 쓰는 Write 는 허용한다', () => {
-      expect(checkToolPolicy('Write', { file_path: `${dir}/report.html` }, undefined, 'toolu_parent', dir)).toBeNull();
-      expect(checkToolPolicy('Write', { file_path: `${dir}/summary.md` }, undefined, 'toolu_parent', dir)).toBeNull();
+    // 리포트 형식·개인정보 가림 규칙은 report-writer 규칙에만 있으므로, 메인이 위임 없이 직접 저장하는 길은 막는다.
+    it('DELEGATION_ONLY_TOOLS 에 write_report_file 이 포함된다 (회귀 가드)', () => {
+      expect(DELEGATION_ONLY_TOOLS).toContain('mcp__firehub__write_report_file');
     });
 
-    it('reportDir 밖·상위 경로 탈출·형제 디렉터리 이름은 차단한다', () => {
-      expect(checkToolPolicy('Write', { file_path: '/etc/passwd' }, undefined, 'toolu_parent', dir)).toMatch(/blocked/);
-      expect(checkToolPolicy('Write', { file_path: `${dir}/../../x.html` }, undefined, 'toolu_parent', dir)).toMatch(/blocked/);
-      expect(checkToolPolicy('Write', { file_path: `${dir}-evil/report.html` }, undefined, 'toolu_parent', dir)).toMatch(/blocked/);
-      expect(checkToolPolicy('Write', { file_path: dir }, undefined, 'toolu_parent', dir)).toMatch(/blocked/);
+    it('메인이 parent_tool_use_id 없이 write_report_file 을 직접 호출하면 차단된다 (null·undefined 모두)', () => {
+      const input = { fileName: 'report.html', content: '<!DOCTYPE html>' };
+      expect(checkToolPolicy('mcp__firehub__write_report_file', input, ['report-writer'], null)).toMatch(
+        /blocked by policy \(WD-765\)/,
+      );
+      expect(checkToolPolicy('mcp__firehub__write_report_file', input, ['report-writer'])).toMatch(/blocked by policy/);
     });
 
-    it('메인(top-level) Write·reportDir 없는 실행·file_path 없는 입력은 차단한다', () => {
-      expect(checkToolPolicy('Write', { file_path: `${dir}/report.html` }, undefined, null, dir)).toMatch(/blocked/);
-      expect(checkToolPolicy('Write', { file_path: `${dir}/report.html` }, undefined, 'toolu_parent')).toMatch(/blocked/);
-      expect(checkToolPolicy('Write', {}, undefined, 'toolu_parent', dir)).toMatch(/blocked/);
-    });
-
-    it('reportDir 이 있어도 Edit 등 다른 차단 도구는 그대로 막는다', () => {
-      expect(checkToolPolicy('Edit', { file_path: `${dir}/report.html` }, undefined, 'toolu_parent', dir)).toMatch(/blocked/);
+    it('차단 메시지에 mcp__firehub__* 도구 식별자·하위 에이전트 코드명을 노출하지 않는다 (L2 준수)', () => {
+      const r = checkToolPolicy('mcp__firehub__write_report_file', undefined, undefined, null) ?? '';
+      expect(r).not.toContain('mcp__firehub__');
+      expect(r).not.toContain('write_report_file');
+      expect(r).not.toContain('report-writer');
     });
   });
 });

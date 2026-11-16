@@ -153,11 +153,15 @@ public class ProactiveAiClient {
    * 에이전트 오류 응답 본문의 {@code code}를 보고 사용자 문구를 고른다.
    *
    * <p>ai-agent는 인증/쿼터 실패를 {@code AGENT_AUTH_OR_QUOTA_FAILURE} 코드로 구분해 알려준다. 이 경우 사용자가 실제로 취할 수 있는
-   * 조치(인증 정보 확인)를 안내한다.
+   * 조치(인증 정보 확인)를 안내한다. WD-765: 위임 경로에서 리포트 파일이 저장되지 않으면 {@code AGENT_REPORT_NOT_SAVED} 를 보내므로 「호출
+   * 실패」 대신 저장 실패 문구를 고른다.
    */
   private String userFacingMessageFor(String responseBody) {
     if (responseBody != null && responseBody.contains("AGENT_AUTH_OR_QUOTA_FAILURE")) {
       return ProactiveResultValidator.USER_FACING_FAILURE_MESSAGE;
+    }
+    if (responseBody != null && responseBody.contains("AGENT_REPORT_NOT_SAVED")) {
+      return ProactiveResultValidator.REPORT_NOT_SAVED_MESSAGE;
     }
     return AGENT_CALL_FAILED_MESSAGE;
   }

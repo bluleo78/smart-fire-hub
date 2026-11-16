@@ -9,6 +9,7 @@ import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -62,6 +63,8 @@ public final class ApiCallAuth {
    * @param basicCredentials Basic 인증 헤더 값의 Base64 덩어리 — {@code base64(utf8(아이디:비밀번호))}(RFC 7617,
    *     WD-681). Python 실행기({@code _basic_credentials})와 같은 바이트다. 풀 때 한 번만 계산해 헤더·가림이 같은 값을 쓴다.
    *     BASIC 이 아니면 null
+   * @param extraHeaders 추가 인증 헤더 이름→값(WD-753, {@link AuthConfigValidator#extraHeaders} 결과). 인증 방식과
+   *     상관없이 메인 인증 뒤에 붙인다. 수정할 수 없는 순서 유지 사본이고, null 이면 빈 맵
    */
   public record ResolvedAuth(
       String authType,
@@ -70,16 +73,26 @@ public final class ApiCallAuth {
       String paramName,
       String secret,
       String username,
-      String basicCredentials) {
+      String basicCredentials,
+      Map<String, String> extraHeaders) {
 
-    /** Basic 덩어리를 방식·아이디·비밀번호로 한 번 계산해 채운다(WD-681) — 쓸 때마다 다시 인코딩하지 않는다. */
+    /** 추가 헤더(WD-753)를 순서 유지 불변 사본으로 둔다 — 넘긴 맵을 나중에 바꿔도 보낼 값이 바뀌지 않게. */
+    public ResolvedAuth {
+      extraHeaders =
+          extraHeaders == null
+              ? Map.of()
+              : Collections.unmodifiableMap(new LinkedHashMap<>(extraHeaders));
+    }
+
+    /** Basic 덩어리를 계산해 채우고 추가 헤더(WD-753)를 함께 싣는다 — {@link ApiCallAuth#resolveWithAuthType} 가 쓴다. */
     public ResolvedAuth(
         String authType,
         String placement,
         String headerName,
         String paramName,
         String secret,
-        String username) {
+        String username,
+        Map<String, String> extraHeaders) {
       this(
           authType,
           placement,
@@ -90,7 +103,39 @@ public final class ApiCallAuth {
           "BASIC".equals(authType)
               ? Base64.getEncoder()
                   .encodeToString((username + ":" + secret).getBytes(StandardCharsets.UTF_8))
-              : null);
+              : null,
+          extraHeaders);
+    }
+
+    /**
+     * 비밀 없는 문자열 모양(WD-753 리뷰) — record 기본 toString 은 비밀(토큰·비밀번호)·Basic 덩어리·추가 헤더 값을 그대로 담아 예외
+     * 문구·로그·디버거로 원문이 샐 수 있었다. 비밀 칸은 있을 때만 {@code ****}(없으면 빈 값), 추가 헤더는 이름만 싣는다. 아이디는 비밀이 아니라 그대로
+     * 둔다.
+     */
+    @Override
+    public String toString() {
+      return "ResolvedAuth[authType="
+          + authType
+          + ", placement="
+          + placement
+          + ", headerName="
+          + headerName
+          + ", paramName="
+          + paramName
+          + ", secret="
+          + masked(secret)
+          + ", username="
+          + username
+          + ", basicCredentials="
+          + masked(basicCredentials)
+          + ", extraHeaderNames="
+          + extraHeaders.keySet()
+          + "]";
+    }
+
+    /** 값이 있으면 고정 {@code ****}, 없으면(null·빈 값) 그대로 — 비밀이 있었는지만 알 수 있게. */
+    private static String masked(String value) {
+      return value == null || value.isEmpty() ? value : "****";
     }
 
     /** Authorization: Basic 헤더를 붙이는 설정인지(WD-681). */
@@ -103,13 +148,16 @@ public final class ApiCallAuth {
      * 덩어리(늘 고정 {@code ****})와 비밀번호(SMTP 와 같은 규칙 — 짧아 지울 수 없으면 문장을 통째로 가린다) — 대상이 「Authorization:
      * Basic …」 헤더를 되울리면(httpbin /headers 등) 덩어리를 풀어 아이디·비밀번호를 그대로 알 수 있기 때문이다. 그 밖에는 {@link
      * #sentSecret} 하나를 API 키 규칙으로 가린다.
+     *
+     * <p>추가 인증 헤더 값(WD-753)은 방식과 상관없이 모두 함께 가린다(API 키 규칙) — 인증 방식이 없어도 추가 헤더가 있으면 {@code NONE} 이
+     * 아니다.
      */
     public AuthQueryMasker.SentSecrets sentSecrets() {
-      if (isBasic()) return new AuthQueryMasker.SentSecrets(null, basicCredentials, secret);
+      List<String> extra = new ArrayList<>(extraHeaders.values());
+      if (isBasic()) return new AuthQueryMasker.SentSecrets(null, basicCredentials, secret, extra);
       String one = sentSecret();
-      return one != null
-          ? new AuthQueryMasker.SentSecrets(one, null, null)
-          : AuthQueryMasker.SentSecrets.NONE;
+      if (one == null && extra.isEmpty()) return AuthQueryMasker.SentSecrets.NONE;
+      return new AuthQueryMasker.SentSecrets(one, null, null, extra);
     }
 
     /** API_KEY 를 쿼리 파라미터로 붙이는 설정인지. */
@@ -151,6 +199,20 @@ public final class ApiCallAuth {
         // 뗀다(authHeaderName).
         header.accept("Authorization", "Basic " + basicCredentials);
       }
+      // 추가 인증 헤더(WD-753) — 메인 인증 뒤에 모은 순서대로 붙인다. 쿼리 인증·인증 없음이어도 붙인다(방식과 상관없는 헤더다).
+      extraHeaders.forEach(header);
+    }
+
+    /**
+     * 이 이름이 추가 인증 헤더 이름인지(대소문자 무시, WD-753). 스텝 헤더에 같은 이름이 있으면 인증을 보내는 홉에서 스텝 쪽을 빼 추가 헤더만 나가게
+     * 쓴다({@code RedirectFollower}) — WebClient 는 같은 이름 헤더 값을 덧붙여 두 번 나간다.
+     */
+    public boolean isExtraHeaderName(String name) {
+      if (name == null) return false;
+      for (String extra : extraHeaders.keySet()) {
+        if (extra.equalsIgnoreCase(name)) return true;
+      }
+      return false;
     }
 
     /**
@@ -169,10 +231,13 @@ public final class ApiCallAuth {
      * 사용자 헤더가 자격 증명을 실을 수 있는 헤더인지(WD-657) — 다른 출처 홉에서 뺄 헤더다. 표준 자격 증명 헤더({@link
      * #CREDENTIAL_HEADERS})이거나 인증 헤더와 이름이 같으면(대소문자 무시) 그렇다. 쿼리 인증이어도 사용자가 Authorization 을 직접 넣었을 수
      * 있어 방식과 상관없이 본다. Python {@code _CREDENTIAL_HEADERS} 와 같은 규칙이다.
+     *
+     * <p>추가 인증 헤더 이름(WD-753)도 자격 증명 헤더다 — 다른 출처 홉에서 추가 헤더와 같은 이름의 스텝 헤더까지 뗀다.
      */
     public boolean isCredentialHeader(String name) {
       if (name == null) return false;
       if (CREDENTIAL_HEADERS.contains(name.toLowerCase(Locale.ROOT))) return true;
+      if (isExtraHeaderName(name)) return true;
       String authHeader = authHeaderName();
       return authHeader != null && authHeader.equalsIgnoreCase(name);
     }
@@ -233,6 +298,8 @@ public final class ApiCallAuth {
    *   <li>비밀: BEARER 는 token → value, API_KEY 는 apiKey → key_value → value, BASIC 은
    *       password(WD-681)
    *   <li>BASIC 아이디: username(WD-681) — 아이디·비밀번호 모두 원문 그대로(앞뒤 공백도 떼지 않는다) 보낸다
+   *   <li>추가 인증 헤더: {@code extraHeader:<이름>} 키 모두(WD-753, {@link AuthConfigValidator#extraHeaders})
+   *       — 방식과 상관없이 모은다
    * </ul>
    *
    * <p>비밀은 Python {@code or} 와 똑같이 null·빈 문자열만 건너뛰어 고른 뒤, BEARER 면 저장 검사와 같은 정리({@link
@@ -275,19 +342,21 @@ public final class ApiCallAuth {
         headerName != null ? headerName : AuthConfigValidator.DEFAULT_API_KEY_HEADER,
         paramName != null ? paramName : DEFAULT_API_KEY_PARAM,
         secret != null ? secret : "",
-        username != null ? username : "");
+        username != null ? username : "",
+        AuthConfigValidator.extraHeaders(a));
   }
 
   /**
    * 모든 API_CALL 경로(미리보기·실행)가 부르는 호출 전 검사 진입점 — 저장 연결과 설정을 {@link #resolve(ApiConnectionResponse,
-   * Map)} 로 풀어 {@link #describeProblem(ResolvedAuth, String)} 를 부른다.
+   * Map)} 로 풀어 {@link #describeProblem(ResolvedAuth, Map, String)} 를 부른다. 원래 설정 Map 을 함께 넘겨 공백만 다른
+   * 추가 헤더 키 겹침(WD-753 리뷰)도 본다.
    *
    * @param conn 스텝이 참조한 저장 연결. 인라인 인증·인증 없음이면 null
    * @param auth 호출에 쓸 인증 설정 — 저장 연결의 복호화 authConfig 또는 인라인 인증(null 가능)
    * @return 안내 문구 또는 문제가 없으면 null
    */
   public static String describeCallProblem(ApiConnectionResponse conn, Map<String, String> auth) {
-    return describeProblem(resolve(conn, auth), conn != null ? conn.name() : null);
+    return describeProblem(resolve(conn, auth), auth, conn != null ? conn.name() : null);
   }
 
   /**
@@ -298,16 +367,26 @@ public final class ApiCallAuth {
    *   <li>API_KEY 헤더 이름을 쓸 수 있는지(WD-647) — 저장 연결과 같은 규칙({@link
    *       AuthConfigValidator#headerNameProblem}). 인라인 key_name 은 저장 검사를 거치지 않아 Host 같은 예약 헤더·공백 든
    *       이름이 그대로 나갈 수 있었다.
+   *   <li>추가 인증 헤더(WD-753) — 저장 연결과 같은 규칙({@link AuthConfigValidator#extraHeadersProblem}). 인라인 인증의
+   *       추가 헤더도 저장 검사를 거치지 않아 여기서 막는다.
    * </ol>
    *
    * <p>운영자(실행 기록·미리보기 결과를 보는 사람)용 문구다 — 관리 화면 입력 칸 안내(「… 입력하세요 (authConfig.token)」)가 아니라 어디서 고치는지를
    * 알린다. 방식이 없거나 모르는 값이면 인증 헤더를 붙이지 않는 설정이라 검사하지 않는다.
    *
+   * <p>원래 인증 설정의 추가 헤더 키 겹침 검사도 더한다(WD-753 리뷰). {@code "extraHeader: X-A"} 와 {@code
+   * "extraHeader:X-A"} 처럼 앞뒤 공백만 다른 키는 푼 값({@code auth.extraHeaders()})에서 이미 한 이름으로 합쳐져 한쪽 값이 말없이
+   * 버려진다. 인라인 인증·검사 전에 저장된 연결은 저장 검사를 거치지 않으므로, 원래 Map 이 있는 호출 전 검사 입구(실행 러너·미리보기)에서 {@link
+   * AuthConfigValidator#rawExtraHeaderNameCollision} 로 막는다. 메인 인증 검사를 통과한 뒤, 다른 추가 헤더 검사보다 먼저 본다(저장
+   * 검사와 같은 순서). 문구 모양은 다른 추가 헤더 문제와 같다(누구의 + 문제 + 고칠 곳).
+   *
    * @param auth {@link #resolve} 결과 — 실제로 보낼 값
+   * @param rawAuth {@code auth} 를 푼 원래 인증 설정. null 이면 겹침 검사를 하지 않는다
    * @param connectionName 저장 연결 이름. 인라인 인증이면 null
    * @return 안내 문구 또는 문제가 없으면 null
    */
-  public static String describeProblem(ResolvedAuth auth, String connectionName) {
+  public static String describeProblem(
+      ResolvedAuth auth, Map<String, String> rawAuth, String connectionName) {
     // 원인 위치(WD-657): 인증 값은 저장 연결이 있으면 연결에서만, 없으면 스텝 설정(인라인 인증)에서만 온다 — 문구도 그 위치를 짚는다. 빈 비밀은
     // 「저장」, 헤더 이름은 「고치기」로 할 일을 나눈다(예전엔 헤더 이름 문제에도 「인증 정보를 저장하세요」였다).
     boolean saved = connectionName != null;
@@ -340,6 +419,17 @@ public final class ApiCallAuth {
         String fixWhere = saved ? "API 연결 화면에서 이 연결의 헤더 이름을 고치세요." : fixStep;
         return owner + "API 키 헤더 이름을 쓸 수 없습니다(" + problem + ") — " + fixWhere;
       }
+    }
+    // 추가 인증 헤더(WD-753) — 원래 키 겹침(WD-753 리뷰)을 먼저, 이어서 메인 인증 헤더 이름과 겹치는지까지 본다. 고칠 곳은 저장 연결이면
+    // 연결 화면의 추가 헤더, 인라인이면 스텝 설정이다.
+    String extraProblem = AuthConfigValidator.rawExtraHeaderNameCollision(rawAuth);
+    if (extraProblem == null) {
+      extraProblem =
+          AuthConfigValidator.extraHeadersProblem(auth.extraHeaders(), auth.authHeaderName());
+    }
+    if (extraProblem != null) {
+      String fixWhere = saved ? "API 연결 화면에서 이 연결의 추가 헤더를 고치세요." : fixStep;
+      return owner + extraProblem + " — " + fixWhere;
     }
     return null;
   }

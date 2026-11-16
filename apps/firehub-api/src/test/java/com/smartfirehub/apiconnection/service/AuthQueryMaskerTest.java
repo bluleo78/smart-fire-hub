@@ -248,6 +248,29 @@ class AuthQueryMaskerTest {
     assertThat(containsSecret(body, secret)).as("%s / %s", body, secret).isEqualTo(treeChanges);
   }
 
+  /**
+   * 추가 헤더 값(WD-753)도 API 키 규칙으로 가린다 — JSON 본문(이스케이프 포함)·자유 문장·화면 원문 모두. 같음 비교·toString 에도 들어가되
+   * toString 에는 값 없이 개수만 싣는다.
+   */
+  @Test
+  void sentSecrets_extraSecrets_maskJsonBody() {
+    AuthQueryMasker.SentSecrets secrets =
+        new AuthQueryMasker.SentSecrets(
+            "main-key-0001", null, null, java.util.List.of("extra-secret-5678"));
+
+    assertThat(secrets.maskBody("{\"h\":\"extra-secret-5678\"}")).isEqualTo("{\"h\":\"****5678\"}");
+    assertThat(secrets.scrubText("echo extra-secret-5678 / main-key-0001"))
+        .isEqualTo("echo ****5678 / ****0001");
+    assertThat(secrets.maskRawText("raw extra-secret-5678")).isEqualTo("raw ****5678");
+    assertThat(secrets.extraSecrets()).containsExactly("extra-secret-5678");
+    assertThat(secrets.toString()).doesNotContain("extra-secret-5678").contains("extra=1");
+    // 3인자 생성자는 추가 비밀 없음과 같다
+    assertThat(new AuthQueryMasker.SentSecrets("main-key-0001", null, null))
+        .isEqualTo(
+            new AuthQueryMasker.SentSecrets("main-key-0001", null, null, java.util.List.of()))
+        .isNotEqualTo(secrets);
+  }
+
   /** 스트리밍 판정을 비밀 문자열로 부른다 — 테스트에서 쓰는 비밀은 모두 최소 길이 이상이라 Scrubber 가 있다. */
   private static boolean containsSecret(String body, String secret) {
     return AuthQueryMasker.jsonValuesContainSecret(body, AuthQueryMasker.Scrubber.of(secret));

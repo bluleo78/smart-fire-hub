@@ -1,5 +1,3 @@
-import path from 'node:path';
-
 /**
  * 메인 에이전트 도구 정책 (single source of truth — #256, #266).
  *
@@ -62,35 +60,6 @@ export const DISALLOWED_TOOLS: readonly string[] = [
 ] as const;
 
 /**
- * 이번 실행에 SDK/CLI 로 넘길 차단 목록.
- *
- * 프로액티브 리포트 실행(reportDir 있음)은 Write 만 목록에서 뺀다 — report-writer 하위 에이전트의 유일한 도구가
- * Write 인데, disallowedTools 는 하위 에이전트에도 걸려 리포트 파일을 한 번도 저장하지 못했다(리포트 목록·HTML·PDF 가
- * 비고 실행이 실패하거나 본문 텍스트로만 남음). 목록에서 빼도 무제한 허용은 아니다 — {@link checkToolPolicy} 가 하위
- * 에이전트 안에서, 이 실행의 reportDir 아래 경로에 쓰는 Write 만 통과시키고 나머지는 스트림을 끊는다.
- */
-export function disallowedToolsFor(reportDir?: string): string[] {
-  return reportDir ? DISALLOWED_TOOLS.filter((t) => t !== 'Write') : [...DISALLOWED_TOOLS];
-}
-
-/**
- * 프로액티브 리포트 저장 Write 인지 — 하위 에이전트(parentToolUseId 있음)가 reportDir 바로 아래·하위 경로에 쓰는 경우만 참.
- * `..` 로 디렉터리를 벗어나는 경로는 path.resolve 로 정규화해 막는다.
- */
-function isReportWrite(
-  toolName: string,
-  input: Record<string, unknown> | undefined,
-  parentToolUseId: string | null | undefined,
-  reportDir: string | undefined,
-): boolean {
-  if (toolName !== 'Write' || !reportDir || !parentToolUseId) return false;
-  const filePath = input?.file_path;
-  if (typeof filePath !== 'string' || !filePath) return false;
-  const root = path.resolve(reportDir);
-  return path.resolve(root, filePath).startsWith(root + path.sep);
-}
-
-/**
  * 위임 전용(delegation-only) 도구 — 메인이 \`Agent\` 위임 없이 직접 호출하면 차단한다 (#588).
  *
  * 배경: audit-analyst 전용 안전장치(Phase 1.5 관리자 권한 고지, 4단계 워크플로, PII 마스킹
@@ -120,6 +89,11 @@ export const DELEGATION_ONLY_TOOLS: readonly string[] = [
   'mcp__firehub__execute_proactive_job',
   'mcp__firehub__list_job_executions',
   'mcp__firehub__get_execution',
+  // WD-765: 스마트 작업 리포트 저장 도구. 형식(HTML·마크다운·요약 세 파일)·개인정보 가림 규칙은 report-writer 하위
+  // 에이전트의 agent.md 에만 있어, 메인이 위임 없이 직접 저장하면 그 규칙이 통째로 우회된다. 그래서 SDK·CLI 의 메인
+  // top-level 호출은 막고 report-writer 내부(parentToolUseId 존재)의 저장만 통과시킨다. 위임이 없는 opencode 는 메인이
+  // 직접 저장하지만(WD-62) agent-opencode 는 이 정책 검사를 거치지 않으므로 영향이 없다.
+  'mcp__firehub__write_report_file',
 ] as const;
 
 /**
@@ -143,6 +117,8 @@ const DELEGATION_ONLY_REASONS: Readonly<Record<string, string>> = {
     'admin-only tool blocked by policy (#614): smart job execution history lookups must be delegated to the smart job management subagent',
   'mcp__firehub__get_execution':
     'admin-only tool blocked by policy (#614): smart job execution result lookups must be delegated to the smart job management subagent',
+  'mcp__firehub__write_report_file':
+    'tool blocked by policy (WD-765): report file saving must be delegated to the report writing subagent',
 };
 
 /**
@@ -183,7 +159,6 @@ export const ALLOWED_TOOLS: readonly string[] = [
  *        제공 시 화이트리스트 강제, 미제공 시 빌트인 \`general-purpose\` 만 차단(방어 하한선).
  * @param parentToolUseId (선택) SDK/CLI 메시지의 \`parent_tool_use_id\`. null/undefined 면 메인의
  *        top-level 호출, 값이 있으면 이미 위임된 subagent 내부에서 발생한 호출이다(#588).
- * @param reportDir (선택) 프로액티브 리포트 디렉터리 — 있으면 하위 에이전트가 이 안에 쓰는 Write 만 허용한다.
  * @returns 차단 사유 문자열(차단해야 할 때) 또는 null(허용)
  */
 export function checkToolPolicy(
@@ -191,11 +166,10 @@ export function checkToolPolicy(
   input?: Record<string, unknown>,
   validSubagentTypes?: readonly string[],
   parentToolUseId?: string | null,
-  reportDir?: string,
 ): string | null {
   if (!toolName) return null; // 빈 이름은 파싱 노이즈
-  // 프로액티브 리포트 저장(하위 에이전트 → reportDir 안)만 Write 차단의 예외 — disallowedToolsFor 참고.
-  if (isReportWrite(toolName, input, parentToolUseId, reportDir)) return null;
+  // WD-765: Write 는 어느 경로(프로액티브 리포트 실행 포함)에서도 차단한다 — 리포트 저장은 파일 이름·디렉터리가
+  // 고정된 MCP 도구 write_report_file 만 한다.
   for (const pat of DISALLOWED_TOOLS) {
     if (matchToolPattern(pat, toolName)) {
       return `host tool blocked by policy (#256): ${toolName}`;

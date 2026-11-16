@@ -574,6 +574,57 @@ describe('executeAgent', () => {
     }
   });
 
+  // WD-765: 스마트 작업 리포트 실행(reportDir)은 인메모리 MCP 서버에 전용 저장 도구를 싣는다. Write 는 어느 경로에서도
+  // 차단이고 리포트 저장은 write_report_file 만 한다. 일반 채팅(reportDir 없음)은 MCP 서버에 reportDir 을 넘기지 않는다.
+  it('AS-WD765: reportDir 을 MCP 서버로 넘기고 disallowedTools 의 Write 차단은 유지한다', async () => {
+    const { query } = await import('@anthropic-ai/claude-agent-sdk');
+    const { createFireHubMcpServer } = await import('../mcp/firehub-mcp-server.js');
+    const mockQuery = vi.mocked(query);
+    const reportDir = '/tmp/proactive-report/t1/1-100';
+
+    async function* fakeStream() {
+      yield {
+        type: 'result',
+        subtype: 'success',
+        session_id: 'sess-report',
+        usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+      };
+    }
+    mockQuery.mockReturnValue(fakeStream() as unknown as ReturnType<typeof query>);
+    const { executeAgent } = await import('./agent-sdk.js');
+
+    for await (const _event of executeAgent({ message: 'hello', tenantId: 1, userId: 1, apiKey: 'sk-test-key', reportDir })) {
+      // drain
+    }
+
+    const serverOpts = vi.mocked(createFireHubMcpServer).mock.calls.at(-1)?.[1] as { reportDir?: string } | undefined;
+    expect(serverOpts?.reportDir).toBe(reportDir);
+    const callArgs = mockQuery.mock.calls.at(-1)?.[0] as { options?: { disallowedTools?: string[] } };
+    expect(callArgs.options?.disallowedTools).toContain('Write');
+  });
+
+  it('AS-WD765: 일반 채팅(reportDir 없음)은 MCP 서버에 reportDir 을 넘기지 않는다', async () => {
+    const { query } = await import('@anthropic-ai/claude-agent-sdk');
+    const { createFireHubMcpServer } = await import('../mcp/firehub-mcp-server.js');
+    async function* fakeStream() {
+      yield {
+        type: 'result',
+        subtype: 'success',
+        session_id: 'sess-chat',
+        usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+      };
+    }
+    vi.mocked(query).mockReturnValue(fakeStream() as unknown as ReturnType<typeof query>);
+    const { executeAgent } = await import('./agent-sdk.js');
+
+    for await (const _event of executeAgent({ message: 'hello', tenantId: 1, userId: 1, apiKey: 'sk-test-key' })) {
+      // drain
+    }
+
+    const serverOpts = vi.mocked(createFireHubMcpServer).mock.calls.at(-1)?.[1] as { reportDir?: string } | undefined;
+    expect(serverOpts?.reportDir).toBeUndefined();
+  });
+
   // AS-23: 동일 도구가 동일 오류로 8회 연속 실패하면 Tier2 강제중단
   it('AS-23: 동일 도구가 동일 오류로 8회 실패하면 강제중단 + error emit', async () => {
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
@@ -1268,5 +1319,63 @@ describe('processMessage — 공급자 오류 (#711)', () => {
       false,
     );
     expect(events.some((e) => e.type === 'error')).toBe(false);
+  });
+});
+
+// WD-765: 리포트 저장 도구는 위임 전용이다 — SDK 스트림에서 메인 top-level(parent_tool_use_id 없음) 호출은 정책 오류로
+// 끊고, report-writer 하위 에이전트 안(parent_tool_use_id 있음) 호출은 통과시킨다(agent-sdk 가 parent_tool_use_id 를
+// checkToolPolicy 에 넘기는지 고정한다).
+describe('executeAgent — 리포트 저장 도구 위임 전용 (WD-765)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  /** write_report_file tool_use 를 parent 와 함께 흘린 뒤 이벤트를 모은다. */
+  const run = async (parent: string | null) => {
+    const { query } = await import('@anthropic-ai/claude-agent-sdk');
+    async function* fakeStream() {
+      yield {
+        type: 'assistant',
+        parent_tool_use_id: parent,
+        message: {
+          content: [
+            {
+              type: 'tool_use',
+              id: 'toolu_write_1',
+              name: 'mcp__firehub__write_report_file',
+              input: { fileName: 'report.html', content: '<!DOCTYPE html>' },
+            },
+          ],
+        },
+      };
+      yield {
+        type: 'result',
+        subtype: 'success',
+        session_id: 'sess-report',
+        usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+      };
+    }
+    vi.mocked(query).mockReturnValue(fakeStream() as unknown as ReturnType<typeof query>);
+    const { executeAgent } = await import('./agent-sdk.js');
+    const events: { type: string; message?: unknown }[] = [];
+    for await (const event of executeAgent({ message: '리포트', tenantId: 1, userId: 1, apiKey: 'sk-test-key' })) {
+      events.push(event as { type: string; message?: unknown });
+    }
+    return events;
+  };
+
+  it('메인이 직접 호출하면 정책 오류로 스트림을 끊는다', async () => {
+    const events = await run(null);
+    const errs = events.filter((e) => e.type === 'error');
+    expect(errs).toHaveLength(1);
+    expect(String(errs[0].message)).toMatch(/blocked by policy \(WD-765\)/);
+    expect(events.some((e) => e.type === 'done')).toBe(false);
+  });
+
+  it('report-writer 하위 에이전트 안(parent_tool_use_id 있음)의 호출은 통과한다', async () => {
+    const events = await run('toolu_delegate_report');
+    expect(events.filter((e) => e.type === 'error')).toHaveLength(0);
+    expect(events.some((e) => e.type === 'done')).toBe(true);
   });
 });
