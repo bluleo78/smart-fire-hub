@@ -2426,3 +2426,65 @@ describe('executeCliAgent — 리포트 저장 도구 위임 전용 (WD-765)', (
     expect(events.some((e) => e.type === 'tool_use')).toBe(true);
   });
 });
+
+/**
+ * WD-767: CLI 공급자도 SDK 경로(process-message)와 같은 모양으로 tool_use 에 toolUseId 를, tool_result 에
+ * 실제 tool_use_id(toolName 자리)와 isError 를 싣는다 — 프로액티브 수치 대조가 병렬 호출 결과를 바른 도구와
+ * 짝짓고 실패한 조회를 출처에서 빼려면 필요하다.
+ */
+describe('executeCliAgent — tool_use/tool_result id·isError 전달 (WD-767)', () => {
+  beforeEach(() => {
+    spawnMock.mockReset();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('tool_use 에 toolUseId, tool_result 에 짝지은 tool_use_id 와 isError 를 싣는다', async () => {
+    const lines = [
+      JSON.stringify({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          content: [
+            { type: 'tool_use', id: 'toolu_q', name: 'mcp__firehub__execute_analytics_query', input: { sql: 'q' } },
+            { type: 'tool_use', id: 'toolu_w', name: 'mcp__firehub__list_datasets', input: {} },
+          ],
+        },
+      }),
+      // 결과 순서가 발행 순서와 다르다 — 마지막 tool_use 로 짝지으면 틀린다
+      JSON.stringify({
+        type: 'user',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_w', content: 'boom', is_error: true }] },
+      }),
+      JSON.stringify({
+        type: 'user',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_q', content: '[{"n":1234}]' }] },
+      }),
+      JSON.stringify({ type: 'result', subtype: 'success', result: '' }),
+    ];
+    spawnMock.mockReturnValue(makeFakeChildWithLines(lines));
+
+    const events: Array<Record<string, unknown>> = [];
+    for await (const ev of executeCliAgent({
+      message: 'test',
+      tenantId: 1,
+      userId: 1,
+      useSubscription: false,
+      apiKey: 'sk-test',
+    } as never)) {
+      events.push(ev as Record<string, unknown>);
+    }
+
+    const uses = events.filter((e) => e.type === 'tool_use');
+    expect(uses.map((e) => e.toolUseId)).toEqual(['toolu_q', 'toolu_w']);
+    const results = events.filter((e) => e.type === 'tool_result');
+    expect(results).toEqual([
+      { type: 'tool_result', toolName: 'toolu_w', result: 'boom', isError: true },
+      { type: 'tool_result', toolName: 'toolu_q', result: '[{"n":1234}]', isError: false },
+    ]);
+  });
+});

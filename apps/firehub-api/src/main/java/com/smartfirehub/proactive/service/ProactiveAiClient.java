@@ -11,6 +11,7 @@ import com.smartfirehub.securitylevel.ai.AiCallContext;
 import com.smartfirehub.settings.model.AiCredential;
 import com.smartfirehub.vectorstore.VectorStoreFeatures;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -203,6 +204,33 @@ public class ProactiveAiClient {
     // 리포트 요약 텍스트 (채팅/이메일 미리보기에 사용)
     String summary = (String) responseMap.getOrDefault("summary", null);
 
-    return new ProactiveResult(title, sections, usage, htmlContent, summary);
+    return new ProactiveResult(
+        title,
+        sections,
+        usage,
+        htmlContent,
+        summary,
+        parseNumberCheck(responseMap.get("numberCheck")));
+  }
+
+  /** 응답의 numberCheck를 안전하게 변환한다. 필드가 없거나 형이 다르면 null을 반환해 이전 응답과 호환되며, 검증 표식 때문에 실행이 실패하지 않게 한다. */
+  private ProactiveResult.NumberCheck parseNumberCheck(Object raw) {
+    if (!(raw instanceof Map<?, ?> map)) {
+      return null;
+    }
+    boolean checked = Boolean.TRUE.equals(map.get("checked"));
+    List<ProactiveResult.UnverifiedNumber> unverified = new ArrayList<>();
+    if (map.get("unverified") instanceof List<?> items) {
+      for (Object item : items) {
+        if (item instanceof Map<?, ?> m && m.get("text") instanceof String text) {
+          unverified.add(
+              new ProactiveResult.UnverifiedNumber(
+                  text, m.get("context") instanceof String c ? c : ""));
+        }
+      }
+    }
+    int total = map.get("unverifiedTotal") instanceof Number n ? n.intValue() : unverified.size();
+    // 음수 total 은 notificationSummary 가 표식 없음으로 취급한다.
+    return new ProactiveResult.NumberCheck(checked, unverified, total);
   }
 }

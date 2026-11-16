@@ -16,6 +16,7 @@ import {
   isAiCredentialFailure,
   leadingProviderErrorSignature,
 } from '../agent/ai-auth-failure.js';
+import { checkReportNumbers, collectSourceNumbers, createToolNameResolver, emptyNumberCheck, isDataQueryTool, type NumberCheck } from '../agent/report-number-check.js';
 
 const router = Router();
 
@@ -76,6 +77,8 @@ interface ProactiveResponse {
   summary: string;               // 요약 텍스트 (report-writer가 생성한 summary.md)
   sections: OutputSection[];     // 하위 호환용 (deprecated, htmlContent가 없을 때 사용)
   rawText: string;
+  /** WD-767: 리포트 숫자를 데이터 조회 결과와 대조한 결과 — 경고용이며 발송·저장은 막지 않는다. */
+  numberCheck?: NumberCheck;
   usage: {
     inputTokens: number;
     outputTokens: number;
@@ -90,6 +93,19 @@ interface ProactiveResponse {
 export const AGENT_REPORT_NOT_SAVED = 'AGENT_REPORT_NOT_SAVED';
 
 const MAX_AGENT_TURNS = 15;
+
+/**
+ * WD-767: HTML 에서 script·style·svg 블록과 태그를 걷어 본문 텍스트만 남긴다(수치 대조용 — md 가 없을 때).
+ * svg 의 <text> 는 차트 축 눈금·좌표 라벨이라 리포트 수치가 아닌데도 출처 없는 수치로 경고되므로 통째로 지운다.
+ */
+export function htmlToText(html: string): string {
+  return html
+    .replace(/<(script|style|svg)\b[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    // HTML 엔티티: 숫자 엔티티(&#123; &#x1F;)는 숫자로 읽히므로 통째로 지우고, 이름 엔티티는 공백으로 바꾼다.
+    .replace(/&#x?[0-9a-f]+;/gi, ' ')
+    .replace(/&[a-z]+;/gi, ' ');
+}
 
 export function buildSectionPrompt(sections: TemplateSection[], depth = 1): string {
   let prompt = '';
@@ -171,8 +187,9 @@ const OPENCODE_REPORT_GUIDE =
   '## summary.md 작성 규칙\n\n' +
   '- 마크다운 3~5줄, 첫 줄부터 내용(인사말 금지): **주요 발견** 1~2줄 + **권고사항** 1~2줄.\n\n' +
   '## 작성 원칙\n\n' +
-  '- 데이터 나열이 아닌 인사이트 중심으로, 변화는 절대값과 변화율(%)을 함께 제시하세요.\n' +
+  '- 데이터 나열이 아닌 인사이트 중심으로, 변화는 데이터에 변화율이 있을 때만 절대값과 변화율(%)을 함께 제시하세요(없으면 계산해 채우지 마세요).\n' +
   '- 확신이 낮으면 "~로 보입니다"로 표현하고, 조회하지 않은 수치는 지어내지 마세요.\n' +
+  '- 본문 숫자는 조회 결과의 값만 쓰고, 계산한 값·목표·전망 수치는 넣지 마세요.\n' +
   '- 비밀번호·토큰·개인식별정보는 리포트에 넣지 말고 마스킹하거나 집계로 대체하세요.\n' +
   '- 저장 전에 HTML 의 `<section>` 수가 양식 섹션 수와 같은지 확인하세요.\n\n';
 
@@ -202,7 +219,7 @@ function delegationPromptParts(): ProactivePromptParts {
       '2. **리포트 작성 위임**: 분석이 완료되면 **report-writer** 에이전트에게 리포트 작성을 위임하세요.\n\n' +
       '## report-writer 위임 방법\n\n' +
       'Agent 도구로 report-writer를 호출하세요. 프롬프트에 다음을 **모두** 포함하세요:\n\n' +
-      '1. **분석 결과**: 수집/분석한 데이터와 인사이트\n' +
+      '1. **분석 결과와 원본 데이터**: 수집/분석한 인사이트와 함께, 조회 도구가 돌려준 결과를 요약·재서술하지 말고 JSON 그대로 `원본 데이터` 블록에 붙이세요. 계산이 필요한 값은 위임 전에 SQL 로 다시 조회하세요.\n' +
       '2. **리포트 양식**: 아래 제공되는 섹션 구조와 지시문\n' +
       '3. **저장할 파일**: report-writer 는 write_report_file 도구(인자 fileName·content)로만 저장합니다. 경로는 지정하지 않습니다.\n' +
       '   - fileName=report.html — HTML 리포트 (웹 뷰어용)\n' +
@@ -463,6 +480,10 @@ router.post('/proactive', ...authedJsonBody(), async (req: Request, res: Respons
   let prevWasText = false;
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
+  // WD-767: 수치 대조의 출처 — 데이터 조회 도구의 성공 결과에서 숫자만 그때그때 모은다(원문은 들고 있지 않는다).
+  // tool_result 는 tool_use_id 만 싣는 공급자(sdk·cli)가 있어 id → 도구 이름 맵으로 짝짓는다.
+  const sourceNumbers = new Set<number>();
+  const toolNames = createToolNameResolver();
 
   try {
     const providerConfig: ProviderConfig = {
@@ -513,6 +534,13 @@ router.post('/proactive', ...authedJsonBody(), async (req: Request, res: Respons
         // 같은 블록의 델타(직전도 text)는 그대로 붙이고, rawText 가 비면 앞에 넣지 않는다.
         if (!prevWasText && rawText !== '' && !rawText.endsWith('\n')) rawText += '\n\n';
         rawText += event.content;
+      } else if (event.type === 'tool_use') {
+        toolNames.onUse(event);
+      } else if (event.type === 'tool_result') {
+        // 실패한 조회의 오류문 숫자(줄 번호 등)는 출처가 아니다
+        if (!event.isError && typeof event.result === 'string' && isDataQueryTool(toolNames.resolve(event))) {
+          collectSourceNumbers(event.result, sourceNumbers);
+        }
       } else if (event.type === 'done' || event.type === 'error') {
         totalInputTokens = (event.inputTokens as number) || 0;
         totalOutputTokens = (event.outputTokens as number) || 0;
@@ -586,11 +614,31 @@ router.post('/proactive', ...authedJsonBody(), async (req: Request, res: Respons
         : parseSections(rawText, body.template);
     console.log(`[Proactive] sections=${sections.length}, htmlContent=${htmlContent.length}B`);
 
+    // WD-767: 리포트 숫자 대조 — 경고용 부가 정보라 어떤 실패도 실행을 깨뜨리지 않는다.
+    let numberCheck: NumberCheck = emptyNumberCheck();
+    try {
+      // md 가 있으면 md, 없으면 HTML 의 본문 텍스트(스타일·스크립트·svg 숫자 제외), 리포트 파일이 하나도 없으면
+      // 응답의 리포트가 되는 rawText. 요약은 항상 포함한다. 전부 공백이면 checkReportNumbers 가 checked=false 로 둔다.
+      const reportTexts = [mdContent || htmlToText(htmlContent) || (fromFile ? '' : rawText), summary];
+      // 대조할 출처나 본문이 없으면 checkReportNumbers 가 바로 끝내므로 허용 텍스트(컨텍스트 직렬화)를 만들지 않는다.
+      if (sourceNumbers.size > 0 && reportTexts.some((t) => t.trim())) {
+        numberCheck = checkReportNumbers({
+          reportTexts,
+          sourceNumbers,
+          // 양식·프롬프트·컨텍스트에 원래 있던 숫자는 출처 없이도 허용한다.
+          allowedTexts: [body.prompt, JSON.stringify(body.template ?? ''), JSON.stringify(body.context)],
+        });
+      }
+    } catch (e) {
+      console.error('[Proactive] number check failed:', e instanceof Error ? e.message : String(e));
+    }
+
     const result: ProactiveResponse = {
       htmlContent,
       summary,
       sections,
       rawText: htmlContent || rawText,
+      numberCheck,
       usage: {
         inputTokens: totalInputTokens,
         outputTokens: totalOutputTokens,

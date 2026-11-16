@@ -93,7 +93,7 @@ public final class ProactiveJobNotificationMapper {
   private static Payload buildPayload(
       ProactiveJobResponse job, Long executionId, ProactiveResult result) {
     String title = result.effectiveTitle(job.name());
-    String summary = result.effectiveSummary();
+    String summary = result.notificationSummary();
 
     Map<String, Object> metadata = new HashMap<>();
     metadata.put("executionId", executionId);

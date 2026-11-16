@@ -16,7 +16,7 @@ class ProactiveResultValidatorTest {
 
   private static ProactiveResult result(
       String htmlContent, String summary, List<ProactiveResult.Section> sections) {
-    return new ProactiveResult("리포트", sections, null, htmlContent, summary);
+    return new ProactiveResult("리포트", sections, null, htmlContent, summary, null);
   }
 
   private static ProactiveResult.Section section(String content) {

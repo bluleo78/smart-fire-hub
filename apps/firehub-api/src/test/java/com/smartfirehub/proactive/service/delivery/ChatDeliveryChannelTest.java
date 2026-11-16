@@ -1,5 +1,6 @@
 package com.smartfirehub.proactive.service.delivery;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -20,6 +21,7 @@ import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
@@ -84,8 +86,39 @@ class ChatDeliveryChannelTest extends IntegrationTestBase {
         .create(anyLong(), anyLong(), anyString(), any(), anyString());
   }
 
+  /** WD-767: 출처 미확인 수치가 있으면 채팅 메시지 contentMap summary 에 경고 한 줄이 붙는다. */
+  @Test
+  @SuppressWarnings("unchecked")
+  void deliver_미확인수치가_있으면_summary에_경고를_붙인다() {
+    Map<String, Object> config =
+        Map.of(
+            "channels",
+            List.of(
+                Map.of(
+                    "type", "CHAT",
+                    "recipientUserIds", List.of(10),
+                    "recipientEmails", List.of())));
+    when(messageRepository.create(anyLong(), anyLong(), anyString(), any(), anyString()))
+        .thenReturn(100L);
+    ProactiveResult result =
+        new ProactiveResult(
+            "Test Report",
+            List.of(),
+            null,
+            null,
+            "요약",
+            new ProactiveResult.NumberCheck(true, List.of(), 3));
+
+    chatDeliveryChannel.deliver(makeJob(99L, config), 1L, result);
+
+    ArgumentCaptor<Map<String, Object>> content = ArgumentCaptor.forClass(Map.class);
+    verify(messageRepository).create(eq(10L), eq(1L), anyString(), content.capture(), anyString());
+    assertThat(content.getValue().get("summary"))
+        .isEqualTo("⚠ 출처를 확인하지 못한 수치 3개가 있습니다 — 실행 결과 화면에서 확인하세요.\n\n요약");
+  }
+
   private ProactiveResult makeResult() {
-    return new ProactiveResult("Test Report", List.of(), null, null, null);
+    return new ProactiveResult("Test Report", List.of(), null, null, null, null);
   }
 
   /**

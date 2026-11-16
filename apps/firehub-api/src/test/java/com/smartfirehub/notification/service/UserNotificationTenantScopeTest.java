@@ -174,7 +174,9 @@ class UserNotificationTenantScopeTest {
         T1,
         () ->
             channel.deliver(
-                reportJob(), 1L, new ProactiveResult("T1 주간 인사 리포트", List.of(), null, null, null)));
+                reportJob(),
+                1L,
+                new ProactiveResult("T1 주간 인사 리포트", List.of(), null, null, null, null)));
 
     assertThat(t1Conn.sent.get()).isEqualTo(1);
     assertThat(t2Conn.sent.get()).isZero();

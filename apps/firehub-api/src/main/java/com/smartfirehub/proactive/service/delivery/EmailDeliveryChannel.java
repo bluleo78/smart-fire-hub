@@ -291,7 +291,7 @@ public class EmailDeliveryChannel implements DeliveryChannel {
     ctx.setVariable("generatedAt", LocalDateTime.now().format(DISPLAY_FORMATTER));
     ctx.setVariable("sections", templateSections);
     // summary 마크다운을 HTML로 변환하여 이메일에서 굵게, 목록 등이 렌더링되도록 한다
-    ctx.setVariable("summary", reportRenderUtils.markdownToHtml(result.effectiveSummary()));
+    ctx.setVariable("summary", reportRenderUtils.markdownToHtml(result.notificationSummary()));
     ctx.setVariable("reportUrl", reportUrl);
     // 화이트라벨링: 템플릿 푸터의 브랜드명 표기에 사용
     ctx.setVariable("brandName", brandName);

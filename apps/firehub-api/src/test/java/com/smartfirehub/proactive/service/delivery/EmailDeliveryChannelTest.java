@@ -98,7 +98,7 @@ class EmailDeliveryChannelTest {
   }
 
   private ProactiveResult makeResult() {
-    return new ProactiveResult("Test Report", List.of(), null, null, null);
+    return new ProactiveResult("Test Report", List.of(), null, null, null, null);
   }
 
   private ProactiveJobResponse makeJob(Long userId, Map<String, Object> config) {
@@ -177,6 +177,40 @@ class EmailDeliveryChannelTest {
 
     // Verify owner email was resolved
     verify(recipientResolver).activeUsers(List.of(1L));
+  }
+
+  /** WD-767: 출처 미확인 수치가 있으면 이메일 summary 템플릿 변수에 경고 한 줄이 포함된다. */
+  @Test
+  void deliver_미확인수치가_있으면_summary변수에_경고를_포함한다() {
+    when(settingsService.getSmtpConfig())
+        .thenReturn(
+            Map.of(
+                "smtp.host", "smtp.example.com",
+                "smtp.port", "587"));
+    when(recipientResolver.activeUsers(List.of(1L)))
+        .thenReturn(List.of(makeUser(1L, "Owner", "owner@example.com")));
+    when(templateEngine.process(anyString(), any(IContext.class))).thenReturn("<html/>");
+    when(reportRenderUtils.markdownToHtml(anyString())).thenReturn("<p/>");
+    Map<String, Object> config =
+        Map.of(
+            "channels",
+            List.of(
+                Map.of(
+                    "type", "EMAIL",
+                    "recipientUserIds", List.of(),
+                    "recipientEmails", List.of())));
+    ProactiveResult result =
+        new ProactiveResult(
+            "Test Report",
+            List.of(),
+            null,
+            null,
+            "요약",
+            new ProactiveResult.NumberCheck(true, List.of(), 3));
+
+    emailDeliveryChannel.deliver(makeJob(1L, config), 1L, result);
+
+    verify(reportRenderUtils).markdownToHtml("⚠ 출처를 확인하지 못한 수치 3개가 있습니다 — 실행 결과 화면에서 확인하세요.\n\n요약");
   }
 
   @Test

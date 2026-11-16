@@ -461,6 +461,23 @@ describe('parseOpenCodeEvent', () => {
     expect(evs[1]).toEqual({ type: 'tool_result', toolName: 'mcp__firehub__list_categories', result: 'result' });
   });
 
+  it('part.callID 가 있으면 tool_use·tool_result 에 toolUseId 로 싣는다 (WD-767)', () => {
+    // 프로액티브 수치 대조가 결과를 호출한 도구와 id 로 짝짓는다(SDK·CLI 경로와 같은 계약).
+    const evs = parseOpenCodeEvent({
+      type: 'tool_use',
+      part: {
+        type: 'tool',
+        tool: 'firehub_execute_analytics_query',
+        callID: 'call_0',
+        state: { status: 'completed', input: {}, output: '[1]' },
+      },
+    });
+    expect(evs).toEqual([
+      { type: 'tool_use', toolName: 'mcp__firehub__execute_analytics_query', input: {}, toolUseId: 'call_0' },
+      { type: 'tool_result', toolName: 'mcp__firehub__execute_analytics_query', result: '[1]', toolUseId: 'call_0' },
+    ]);
+  });
+
   it('firehub_ 도구명을 mcp__firehub__ 로 정규화한다 (위젯 렌더링 계약)', () => {
     // 프론트 WidgetRegistry 는 mcp__firehub__ 접두사만 벗겨 show_chart 등으로 매칭한다.
     expect(normalizeFirehubToolName('firehub_show_chart')).toBe('mcp__firehub__show_chart');

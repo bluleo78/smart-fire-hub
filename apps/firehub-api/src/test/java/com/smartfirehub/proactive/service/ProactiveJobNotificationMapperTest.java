@@ -137,6 +137,20 @@ class ProactiveJobNotificationMapperTest {
         .containsEntry("messageType", "REPORT");
   }
 
+  /** WD-767: 출처 미확인 수치가 있으면 알림 payload summary 에 경고 한 줄이 붙는다. */
+  @Test
+  void payload_summary에_미확인수치_경고가_붙는다() {
+    ProactiveJobResponse job = sampleJob(Map.of("channels", List.of("CHAT")), 99L);
+    ProactiveResult result =
+        new ProactiveResult(
+            "제목", List.of(), null, null, "요약", new ProactiveResult.NumberCheck(true, List.of(), 3));
+
+    NotificationRequest req = ProactiveJobNotificationMapper.toRequest(job, 555L, result);
+
+    assertThat(req.standardPayload().summary())
+        .isEqualTo("⚠ 출처를 확인하지 못한 수치 3개가 있습니다 — 실행 결과 화면에서 확인하세요.\n\n요약");
+  }
+
   private ProactiveJobResponse sampleJob(Map<String, Object> config, long ownerUserId) {
     return new ProactiveJobResponse(
         42L,
@@ -158,6 +172,6 @@ class ProactiveJobNotificationMapperTest {
   }
 
   private ProactiveResult sampleResult() {
-    return new ProactiveResult("제목", List.of(), null, null, "요약");
+    return new ProactiveResult("제목", List.of(), null, null, "요약", null);
   }
 }

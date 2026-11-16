@@ -191,7 +191,7 @@ class ProactiveJobAsyncRunnerTest {
     when(aiCredentialService.resolve()).thenReturn(credential);
     when(settingsService.getValue("ai.model")).thenReturn(Optional.of("openai/gpt-4o"));
     when(aiClient.execute(eq(USER_ID), anyString(), anyString(), any(), any(), any(), any(), any()))
-        .thenReturn(new ProactiveResult("제목", List.of(), null, null, "요약 내용"));
+        .thenReturn(new ProactiveResult("제목", List.of(), null, null, "요약 내용", null));
 
     runner.executeJob(JOB_ID, USER_ID);
 
@@ -242,7 +242,7 @@ class ProactiveJobAsyncRunnerTest {
         .thenReturn(new AiCredential.Opencode("openai", "https://api.openai.com/v1", "", "sk"));
     when(settingsService.getValue("ai.model")).thenReturn(Optional.of("openai/gpt-4o"));
     when(aiClient.execute(eq(USER_ID), anyString(), anyString(), any(), any(), any(), any(), any()))
-        .thenReturn(new ProactiveResult("제목", List.of(), null, null, "요약 내용"));
+        .thenReturn(new ProactiveResult("제목", List.of(), null, null, "요약 내용", null));
 
     // 소유자 범위 밖 → 양식 없이
     when(reportTemplateRepository.findVisibleTo(templateId, USER_ID)).thenReturn(Optional.empty());
@@ -289,7 +289,7 @@ class ProactiveJobAsyncRunnerTest {
         .thenReturn(new AiCredential.Opencode("openai", "https://api.openai.com/v1", "", "sk"));
     when(settingsService.getValue("ai.model")).thenReturn(Optional.of("openai/gpt-4o"));
     when(aiClient.execute(eq(USER_ID), any(), any(), any(), any(), any(), any(), any()))
-        .thenReturn(new ProactiveResult("제목", List.of(), null, null, "요약 내용"));
+        .thenReturn(new ProactiveResult("제목", List.of(), null, null, "요약 내용", null));
     AnomalyEvent event =
         new AnomalyEvent(
             JOB_ID, USER_ID, "m1", "실패율", 0.9, 0.1, 0.05, 16.0, "high", List.of(0.1, 0.12));
@@ -409,6 +409,7 @@ class ProactiveJobAsyncRunnerTest {
                 List.of(new ProactiveResult.Section("summary", "요약", "내용", null, null)),
                 null,
                 null,
+                null,
                 null));
     doThrow(new RuntimeException("DB 끊김"))
         .when(proactiveJobRepository)
@@ -446,7 +447,7 @@ class ProactiveJobAsyncRunnerTest {
     when(aiCredentialService.resolve()).thenReturn(new AiCredential.Sdk("", "sk-anthropic"));
     when(aiClient.execute(
             eq(USER_ID), anyString(), anyString(), any(), isNull(), any(), any(), any()))
-        .thenReturn(new ProactiveResult("제목", List.of(), null, null, "요약 내용"));
+        .thenReturn(new ProactiveResult("제목", List.of(), null, null, "요약 내용", null));
 
     runner.executeJob(JOB_ID, USER_ID);
 
@@ -527,6 +528,7 @@ class ProactiveJobAsyncRunnerTest {
                 List.of(new ProactiveResult.Section("summary", "요약", "내용", null, null)),
                 null,
                 null,
+                null,
                 null));
 
     runner.executeJob(JOB_ID, USER_ID);
@@ -544,7 +546,7 @@ class ProactiveJobAsyncRunnerTest {
         .thenAnswer(
             ignored -> {
               assertThat(executionRegistry.snapshot()).containsEntry(EXECUTION_ID, TENANT_ID);
-              return new ProactiveResult("리포트", List.of(), null, null, "요약 내용");
+              return new ProactiveResult("리포트", List.of(), null, null, "요약 내용", null);
             });
     when(executionRepository.updateResult(eq(EXECUTION_ID), eq("COMPLETED"), any(), any()))
         .thenReturn(false);
@@ -594,7 +596,7 @@ class ProactiveJobAsyncRunnerTest {
   void 완료_뒤_뒤단계_실패는_경합이_아니라_ERROR로_남긴다() {
     when(aiCredentialService.resolve()).thenReturn(new AiCredential.Sdk("", "sk-test"));
     when(aiClient.execute(any(), any(), any(), any(), any(), any(), any(), any()))
-        .thenReturn(new ProactiveResult("리포트", List.of(), null, null, "요약 내용"));
+        .thenReturn(new ProactiveResult("리포트", List.of(), null, null, "요약 내용", null));
     RuntimeException deliveredFailure = new IllegalStateException("전달 채널 기록 실패");
     doThrow(deliveredFailure)
         .when(executionRepository)

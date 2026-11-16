@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import fs from 'fs';
+import fsp from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { TIBERO_SQL_GUIDE } from '../agent/tibero-sql-guide.js';
@@ -10,6 +11,7 @@ import proactiveRouter, {
   parseSections,
   detectAgentFailure,
   buildProactiveSystemPrompt,
+  htmlToText,
 } from './proactive.js';
 
 const mockExecute = vi.hoisted(() => vi.fn());
@@ -1094,5 +1096,146 @@ describe('buildProactiveSystemPrompt — 방언별 (WD-79)', () => {
     expect(buildProactiveSystemPrompt(undefined, 'cli', 'TIBERO')).toBe(
       buildProactiveSystemPrompt(undefined, 'sdk', 'TIBERO'),
     );
+  });
+});
+
+/**
+ * WD-767: 리포트 수치 출처 대조 — 데이터 조회 도구 결과와 리포트 본문 숫자를 맞춰 응답에 싣는다.
+ * 모킹한 공급자가 reportDir 에 실제 리포트 파일을 쓰게 해 라우트의 파일 읽기 경로까지 거친다.
+ */
+describe('POST /agent/proactive — numberCheck (WD-767)', () => {
+  const VALID_TOKEN = 'test-internal-token';
+
+  beforeEach(() => {
+    process.env.INTERNAL_SERVICE_TOKEN = VALID_TOKEN;
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    delete process.env.INTERNAL_SERVICE_TOKEN;
+  });
+
+  /** events 를 내고, md 가 있으면 호출 시점에 받은 reportDir 에 report.md 를 쓰는 공급자 목. */
+  function mockRun(events: Record<string, unknown>[], md?: string) {
+    mockExecute.mockImplementation((opts: { reportDir: string }) =>
+      (async function* () {
+        for (const e of events) yield e;
+        if (md !== undefined) {
+          await fsp.mkdir(opts.reportDir, { recursive: true });
+          await fsp.writeFile(`${opts.reportDir}/report.md`, md);
+          await fsp.writeFile(`${opts.reportDir}/summary.md`, '요약');
+        }
+        yield { type: 'done', inputTokens: 1, outputTokens: 1 };
+      })(),
+    );
+  }
+
+  // agentType 기본은 sdk. 파일 없이 rawText 가 리포트가 되는 경로는 위임이 없는 opencode 뿐이라(WD-765) 그 시험만 opencode 로 보낸다.
+  async function run(agentType: 'sdk' | 'opencode' = 'sdk') {
+    return makeRequest(
+      createApp(),
+      'POST',
+      '/agent/proactive',
+      { prompt: '분석', context: { data: 'test' }, tenantId: 1, agentType },
+      { Authorization: `Internal ${VALID_TOKEN}` },
+    );
+  }
+
+  it('데이터 조회 결과에 없는 수치만 numberCheck.unverified 에 싣는다', async () => {
+    mockRun(
+      [
+        { type: 'tool_use', toolName: 'mcp__firehub__execute_analytics_query', toolUseId: 't1', input: {} },
+        { type: 'tool_result', toolName: 't1', result: '[{"amt":350000000}]' },
+      ],
+      '매출은 3.5억 원이고 목표는 4.5억 원입니다.',
+    );
+    const res = await run();
+    expect(res.status).toBe(200);
+    const nc = (res.body as { numberCheck: { checked: boolean; unverified: { text: string }[] } }).numberCheck;
+    expect(nc.checked).toBe(true);
+    expect(nc.unverified.map((u) => u.text)).toEqual(['4.5억']);
+  });
+
+  it('데이터 조회 결과가 없으면 checked=false', async () => {
+    mockRun([], '매출은 3.5억입니다.');
+    const res = await run();
+    const nc = (res.body as { numberCheck: { checked: boolean; unverifiedTotal: number } }).numberCheck;
+    expect(nc.checked).toBe(false);
+    expect(nc.unverifiedTotal).toBe(0);
+  });
+
+  it('비데이터 도구(Write) 결과의 숫자는 출처로 치지 않는다', async () => {
+    mockRun(
+      [
+        { type: 'tool_use', toolName: 'Write', toolUseId: 'w1', input: {} },
+        { type: 'tool_result', toolName: 'w1', result: '350000000 written' },
+      ],
+      '매출은 3.5억입니다.',
+    );
+    const res = await run();
+    expect((res.body as { numberCheck: { checked: boolean } }).numberCheck.checked).toBe(false);
+  });
+
+  it('리포트 파일 없이 rawText 가 리포트가 되면(opencode) rawText 를 대조한다', async () => {
+    mockRun([
+      { type: 'tool_use', toolName: 'mcp__firehub__execute_analytics_query', toolUseId: 't1', input: {} },
+      { type: 'tool_result', toolName: 't1', result: '[{"amt":350000000}]' },
+      { type: 'text', content: '매출은 3.5억 원이고 목표는 4.5억 원입니다.' },
+    ]);
+    const res = await run('opencode');
+    expect(res.status).toBe(200);
+    const nc = (res.body as { numberCheck: { checked: boolean; unverified: { text: string }[] } }).numberCheck;
+    expect(nc.checked).toBe(true);
+    expect(nc.unverified.map((u) => u.text)).toEqual(['4.5억']);
+  });
+
+  it('id 로 짝지은 결과는 직전 tool_use 가 아니라 실제 호출 도구로 판정한다 (CLI 병렬 호출)', async () => {
+    // 데이터 조회와 Write 를 한 배치로 발행 — 결과 순서가 tool_use 순서와 달라도 id 로 짝짓는다
+    mockRun(
+      [
+        { type: 'tool_use', toolName: 'mcp__firehub__execute_analytics_query', toolUseId: 'q1', input: {} },
+        { type: 'tool_use', toolName: 'Write', toolUseId: 'w1', input: {} },
+        { type: 'tool_result', toolName: 'q1', result: '[{"amt":350000000}]', isError: false },
+        { type: 'tool_result', toolName: 'w1', result: '450000000 written', isError: false },
+      ],
+      '매출은 3.5억 원이고 목표는 4.5억 원입니다.',
+    );
+    const res = await run();
+    const nc = (res.body as { numberCheck: { checked: boolean; unverified: { text: string }[] } }).numberCheck;
+    expect(nc.checked).toBe(true);
+    expect(nc.unverified.map((u) => u.text)).toEqual(['4.5억']);
+  });
+
+  it('isError 인 데이터 조회 결과는 출처로 쓰지 않는다', async () => {
+    mockRun(
+      [
+        { type: 'tool_use', toolName: 'mcp__firehub__execute_sql_query', toolUseId: 'e1', input: {} },
+        { type: 'tool_result', toolName: 'e1', result: 'error at line 350000000', isError: true },
+      ],
+      '매출은 3.5억입니다.',
+    );
+    const res = await run();
+    expect((res.body as { numberCheck: { checked: boolean } }).numberCheck.checked).toBe(false);
+  });
+
+  it('위임 프롬프트가 원본 데이터를 JSON 그대로 붙이게 지시한다', () => {
+    const p = buildProactiveSystemPrompt(undefined, 'sdk');
+    expect(p).toContain('원본 데이터');
+    expect(p).toContain('JSON 그대로');
+  });
+});
+
+describe('htmlToText (WD-767)', () => {
+  it('script·style·태그와 HTML 엔티티(숫자 엔티티 포함)를 제거해 엔티티 숫자가 리포트 수치로 읽히지 않는다', () => {
+    const t = htmlToText('<style>a{width:99px}</style><p>매출 3.5억&nbsp;원 &amp; 비용&#123;&#x1F;</p>');
+    expect(t).not.toMatch(/99|123|1F|&/);
+    expect(t).toContain('3.5억');
+  });
+
+  it('svg 블록(축 눈금·좌표 텍스트)을 통째로 지운다', () => {
+    const t = htmlToText('<p>매출 3.5억</p><svg viewBox="0 0 400 300"><text x="40">1200</text><g><text>800</text></g></svg><p>끝</p>');
+    expect(t).not.toMatch(/1200|800|400/);
+    expect(t).toContain('3.5억');
+    expect(t).toContain('끝');
   });
 });

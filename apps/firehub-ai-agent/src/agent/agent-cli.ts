@@ -884,6 +884,9 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
               type: 'tool_use',
               toolName,
               input: block.input,
+              // WD-767: SDK 경로(process-message)와 같은 모양 — tool_result 가 이 id 로 호출 도구와 짝지어진다
+              // (프로액티브 수치 대조가 병렬 호출 결과를 직전 tool_use 가 아닌 실제 도구로 판정하려고).
+              toolUseId: block.id,
             };
           } else if (block.type === 'text' && block.text) {
             // #572 2차 수정: 동기 위임 tool_result 대기 중(`pendingSyncAgentResultText` 세팅됨)
@@ -972,8 +975,11 @@ export async function* executeCliAgent(options: CliAgentOptions): AsyncGenerator
             if (!isHiddenNoop) {
               yield {
                 type: 'tool_result',
-                toolName: '',
+                // WD-767: SDK 경로와 같이 toolName 자리에 짝지을 tool_use_id 를 싣고, 실패 여부(isError)도 함께 싣는다
+                // — 소비자가 결과를 호출한 도구와 짝짓고 실패한 조회 결과를 출처에서 뺄 수 있게.
+                toolName: block.tool_use_id ?? '',
                 result: resultText,
+                isError,
               };
             }
             // Tier2: 연속 실패 기록 + 강제중단

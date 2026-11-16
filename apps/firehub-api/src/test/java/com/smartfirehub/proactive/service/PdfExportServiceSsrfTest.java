@@ -85,6 +85,7 @@ class PdfExportServiceSsrfTest {
         List.of(new ProactiveResult.Section("s1", "본문", content, "text", null)),
         new ProactiveResult.Usage(1, 1, 2),
         null,
+        null,
         null);
   }
 

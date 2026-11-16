@@ -341,6 +341,9 @@ export function processMessage(
               type: 'tool_use',
               toolName: block.name,
               input,
+              // WD-767: tool_result 는 tool_use_id 만 싣는다 — 소비자(프로액티브 수치 대조)가 결과를 호출한
+              // 도구 이름과 짝지을 수 있게 블록 id 를 함께 내보낸다.
+              toolUseId: 'id' in block ? String((block as { id: string }).id) : undefined,
             });
           } else {
             console.log(`${tag()} ◀ Assistant block: ${block.type}`);
