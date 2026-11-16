@@ -73,7 +73,7 @@ public class PlatformTenantMemberAddTransaction {
                   () ->
                       new CodedApiException(
                           HttpStatus.NOT_FOUND, "USER_NOT_FOUND", "계정을 찾을 수 없습니다"));
-      rejectIfInactive(user);
+      TenantMemberAdder.rejectIfInactive(user);
       result = tenantMemberAdder.addExisting(tenantId, user, roleIds);
     } else {
       // 이메일 경로: adder 가 이메일(= username)로 계정을 한 번만 찾는다. 기존 계정이면 붙이기 전에 활성 검사를 부르고, 없으면 새로 만든다.
@@ -84,20 +84,9 @@ public class PlatformTenantMemberAddTransaction {
               request.name(),
               request.temporaryPassword(),
               roleIds,
-              PlatformTenantMemberAddTransaction::rejectIfInactive);
+              TenantMemberAdder::rejectIfInactive);
     }
     return new Added(result.user(), result.created(), roleNames);
-  }
-
-  /**
-   * 비활성 계정이면 409 {@code ACCOUNT_INACTIVE}. 비활성 계정은 로그인할 수 없어 멤버로 붙여도 들어가지 못한다 — 테넌트 생성이 비활성 Owner 를
-   * 거부하는 것(WD-316)과 같은 판단이다. 웹 멤버 추가 동작은 바꾸지 않으려고 플랫폼 경로에만 둔다.
-   */
-  private static void rejectIfInactive(UserResponse user) {
-    if (!user.isActive()) {
-      throw new CodedApiException(
-          HttpStatus.CONFLICT, "ACCOUNT_INACTIVE", "비활성화된 계정은 멤버로 추가할 수 없습니다. 먼저 계정을 활성화하세요");
-    }
   }
 
   /** 현재(대상) 테넌트의 시스템 역할. 없으면 프로비저닝 손상이라 시스템 역할 전용 문구로 알린다. */

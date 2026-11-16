@@ -46,6 +46,18 @@ public class TenantMemberAdder {
   public record Result(UserResponse user, boolean created) {}
 
   /**
+   * 비활성 계정이면 409 {@code ACCOUNT_INACTIVE}. 비활성 계정은 로그인할 수 없어 멤버로 붙여도 들어가지 못한다 — 테넌트 생성이 비활성 Owner 를
+   * 거부하는 것(WD-316)과 같은 판단이다. 계정 활성화는 플랫폼 운영자만 할 수 있어, 웹(워크스페이스 관리자)·운영자 콘솔 두 경로가 같은 코드·문구를 쓰도록 여기 한
+   * 곳에 둔다(WD-771).
+   */
+  public static void rejectIfInactive(UserResponse user) {
+    if (!user.isActive()) {
+      throw new CodedApiException(
+          HttpStatus.CONFLICT, "ACCOUNT_INACTIVE", "비활성화된 계정은 멤버로 추가할 수 없습니다. 먼저 계정을 활성화하세요");
+    }
+  }
+
+  /**
    * 계정을 확보해 대상 테넌트의 멤버로 붙이고 역할을 부여한다.
    *
    * <ul>

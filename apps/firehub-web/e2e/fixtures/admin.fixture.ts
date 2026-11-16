@@ -8,6 +8,7 @@ import type {
   AiCredentialUpsertPayload,
   ResolvedSettingResponse,
 } from '@/types/settings';
+import type { MemberLookupResponse } from '@/types/user';
 
 import type { EmbeddingConfigView, EmbeddingStatus } from '../../src/api/embedding';
 import {
@@ -41,6 +42,18 @@ import { createPageResponse, mockApi } from './api-mock';
  */
 
 /**
+ * 멤버 추가 전 이메일 존재 확인(POST /users/member-lookup, WD-751)의 기본 모킹 — 「새 계정」(WD-771).
+ * 왜: 멤버 추가 대화상자는 이메일 칸을 벗어나거나 제출할 때 이 확인을 부른다. 모킹이 없으면 실네트워크로 빠져
+ *   실패(=판정 없음) 경로로만 시험하게 된다. 기본은 새 계정이라 기존 흐름(이름·임시 비밀번호 입력)이 그대로 이어진다.
+ * 우선순위: Playwright 는 나중에 등록한 route 가 먼저 받는다. 이 기본 모킹은 setupAdminAuth·setupUserListMocks 안에서
+ *   (보통 beforeEach 첫머리에) 등록되므로, 개별 spec 이 그 뒤에 등록한 확인 모킹이 이긴다. 메서드가 다르면 route.fallback 으로 넘긴다(mockApi).
+ */
+export async function mockMemberLookupNew(page: Page) {
+  const body: MemberLookupResponse = { status: 'NEW', userId: null, name: null };
+  await mockApi(page, 'POST', '/api/v1/users/member-lookup', body);
+}
+
+/**
  * 관리자 권한으로 users/me를 오버라이드한다.
  * - authenticatedPage는 기본적으로 USER 역할·빈 권한이라 관리 화면에서 권한 안내만 보인다(apiconnection:read 도 없음).
  * - 이 함수를 beforeEach에서 호출하여 ADMIN 역할 사용자로 전환한다.
@@ -60,6 +73,8 @@ export async function setupAdminAuth(page: Page) {
     'audit:read', 'apiconnection:read', 'apiconnection:write', 'apiconnection:delete',
     'security:settings', 'dataset:read', 'dataset:classify', 'dataset:grant',
   ]);
+  // 멤버 추가 대화상자의 이메일 확인 기본값(WD-771) — 개별 spec 이 뒤에 등록하면 그쪽이 이긴다.
+  await mockMemberLookupNew(page);
 }
 
 /**
@@ -72,6 +87,8 @@ export async function setupUserListMocks(page: Page, count = 3) {
     createUser({ id: i + 1, name: `사용자 ${i + 1}`, username: `user${i + 1}`, email: `user${i + 1}@example.com` }),
   );
   await mockApi(page, 'GET', '/api/v1/users', createPageResponse(users));
+  // 사용자 목록에서 여는 멤버 추가 대화상자의 이메일 확인 기본값(WD-771) — setupAdminAuth 를 쓰지 않는 권한별 spec 용.
+  await mockMemberLookupNew(page);
 }
 
 /**
