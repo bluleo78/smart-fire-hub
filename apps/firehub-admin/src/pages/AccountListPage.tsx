@@ -27,6 +27,7 @@ import { TableEmptyRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { useAuth } from '@/hooks/useAuth';
 import { useDebounceValue } from '@/hooks/useDebounceValue';
+import { PLATFORM_USER_SEARCH_KEY } from '@/hooks/usePlatformUserSearch';
 import { formatDateOnly } from '@/lib/formatters';
 import { isForbidden, serverMessage } from '@/lib/http-errors';
 import { MAX_QUERY_LENGTH } from '@/lib/search-limits';
@@ -99,12 +100,12 @@ export default function AccountListPage() {
   });
 
   /**
-   * 성공 후 무효화. Owner 검색(`platform-user-search`)도 넣는 이유: 그 검색은 비활성 계정을 빼므로, 캐시가 남아
+   * 성공 후 무효화. Owner 검색(`PLATFORM_USER_SEARCH_KEY`)도 넣는 이유: 그 검색은 비활성 계정을 빼므로, 캐시가 남아
    * 있으면 방금 비활성화한 계정을 테넌트 Owner 로 고를 수 있다(아무도 못 들어가는 테넌트).
    */
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: [PLATFORM_ACCOUNTS_KEY] });
-    void queryClient.invalidateQueries({ queryKey: ['platform-user-search'] });
+    void queryClient.invalidateQueries({ queryKey: [PLATFORM_USER_SEARCH_KEY] });
   };
 
   const deactivateMutation = useAccountMutation(

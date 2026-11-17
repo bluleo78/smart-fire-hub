@@ -372,7 +372,10 @@ export function processMessage(
             } else if (rawContent !== undefined) {
               resultStr = JSON.stringify(rawContent);
             }
-            const toolId = 'tool_use_id' in block ? String(block.tool_use_id) : 'unknown';
+            // WD-783: 문자열일 때만 id 로 쓴다 — undefined·null 을 String() 하면 'undefined'·'null' 이 id 처럼 실린다
+            const rawToolUseId = 'tool_use_id' in block ? block.tool_use_id : undefined;
+            const toolUseId = typeof rawToolUseId === 'string' ? rawToolUseId : undefined;
+            const toolId = toolUseId ?? 'unknown';
             // is_error 필드 추출: safeTool()이 에러 발생 시 isError: true를 반환하므로 SSE 이벤트에 포함
             const isError = 'is_error' in block ? Boolean((block as { is_error?: unknown }).is_error) : false;
             console.log(`${tag()} ◀ Tool result [${toolId}]${isError ? ' (ERROR)' : ''}: ${truncate(resultStr ?? '(empty)')}`);
@@ -386,7 +389,7 @@ export function processMessage(
                 isError,
                 // WD-775: 짝지을 id 를 toolUseId 로도 싣는다(opencode·tool_use 와 같은 필드) — 소비자가 toolName 자리 값을
                 // id 로 추측하지 않게. id 가 없으면('unknown') 싣지 않는다. toolName 자리 값은 SSE 계약상 그대로 둔다.
-                ...('tool_use_id' in block ? { toolUseId: toolId } : {}),
+                ...(toolUseId ? { toolUseId } : {}),
               });
             }
             // #573: 이 tool_result 가 동기(run_in_background:false) Agent 위임의 결과라면, subagent

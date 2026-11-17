@@ -494,9 +494,12 @@ class FileObjectControllerTest {
     verify(storage, times(1)).presignedPutUrl(any(), any(), anyInt());
   }
 
-  /** WD-776: 루트에 올리는 긴 이름(한글 300자 + ".txt")은 파일명 세그먼트를 255B 이내로 잘라 발급한다 — 확장자 보존. */
+  /**
+   * WD-783: 루트에 올리는 255B 초과 이름(한글 300자 + ".txt")은 자르지 않고 그 파일만 error 로 싣는다 — 잘라 올리면 앞부분이 같은 이름끼리 같은
+   * 키가 되어 서로 덮어쓴다. presign 은 하지 않는다.
+   */
   @Test
-  void createUploadUrls_rootTruncatesFilenameSegmentTo255Bytes() throws Exception {
+  void createUploadUrls_rootRejectsFilenameOver255BytesWithoutTruncating() throws Exception {
     givenEquipConfig();
     givenPresignedPut();
 
@@ -505,8 +508,10 @@ class FileObjectControllerTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"files\":[{\"filename\":\"" + "가".repeat(300) + ".txt\"}]}"))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.targets[0].key").value("equip/" + "가".repeat(83) + ".txt"))
-        .andExpect(jsonPath("$.targets[0].error").doesNotExist());
+        .andExpect(jsonPath("$.targets[0].key").doesNotExist())
+        .andExpect(jsonPath("$.targets[0].error").value(containsString("255바이트")));
+
+    verify(storage, times(0)).presignedPutUrl(any(), any(), anyInt());
   }
 
   /** WD-776: 폴더 경로의 세그먼트 하나가 255B 를 넘으면 그런 폴더는 MinIO 에 있을 수 없으므로 400 — presign 하지 않는다. */

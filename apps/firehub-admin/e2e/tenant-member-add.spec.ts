@@ -549,10 +549,38 @@ test.describe('테넌트 멤버 추가 (WD-750)', () => {
       members = [...MEMBERS, kimMember()];
 
       const dialog = await openDialogNewTab(page);
-      await expect.poll(() => memberRequests).toBeGreaterThan(before);
+      // 일치하는 계정이 생겼을 때(WD-783) 비로소 다시 읽는다 — 탭을 연 것만으로는 읽지 않는다.
+      expect(memberRequests).toBe(before);
       await checkEmail(dialog, 'kim@example.com');
+      await expect.poll(() => memberRequests).toBeGreaterThan(before);
       await expect(dialog.getByText('이미 이 테넌트의 멤버입니다 — 김철수(kim@example.com).')).toBeVisible();
       await expect(dialog.getByRole('button', { name: '기존 계정으로 추가' })).toHaveCount(0);
+    });
+
+    test('「새 계정」 탭을 열고 이메일을 넣기 전에는 멤버 목록을 다시 읽지 않고, 일치 계정이 생기면 한 번 읽어 안내한다 (WD-783)', async ({
+      authenticatedPage: page,
+    }) => {
+      let memberRequests = 0;
+      await page.route('**/api/platform/tenants/1/members', async (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        memberRequests += 1;
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(MEMBERS) });
+      });
+      await mockApi(page, 'GET', '/api/platform/tenants/1', ACTIVE);
+      await mockApi(page, 'GET', ACCOUNTS, createAccountPage([KIM]));
+      await page.goto('/tenants/1');
+      await expect(page.getByRole('cell', { name: 'kimsb' })).toBeVisible();
+      const before = memberRequests;
+
+      const dialog = await openDialogNewTab(page);
+      await expect(dialog.getByLabel('이메일(로그인 아이디)')).toBeVisible();
+      // 요청이 나간다면 마운트 직후이므로 잠시 기다린 뒤 센다.
+      await page.waitForTimeout(500);
+      expect(memberRequests).toBe(before);
+
+      await checkEmail(dialog, 'kim@example.com');
+      await expect(dialog.getByText(NOTICE)).toBeVisible();
+      expect(memberRequests).toBe(before + 1);
     });
 
     test('새 계정을 만들어 추가한 뒤 다시 열면 낭비 요청 없이 새로 확인해 그 계정을 안내한다', async ({

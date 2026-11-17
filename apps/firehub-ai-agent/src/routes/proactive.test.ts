@@ -1395,7 +1395,33 @@ describe('htmlToText 인라인 태그 (WD-775)', () => {
   });
 
   it('제목 블록이 줄을 나눠 「11. 권고사항」 목차 번호가 줄 첫머리에 온다', () => {
-    expect(htmlToText('<p>끝</p><h2>11. 권고사항</h2>')).toMatch(/^11\. 권고사항/m);
+    // WD-783: 제목 블록은 줄 첫머리에 `# ` 표지를 단다
+    expect(htmlToText('<p>끝</p><h2>11. 권고사항</h2>')).toMatch(/^# 11\. 권고사항/m);
+  });
+});
+
+describe('htmlToText 제목 표지 (WD-783)', () => {
+  /** 실제 htmlToText 를 거친 HTML 본문을 출처와 대조해 미확인 표기만 돌려준다. */
+  function unverifiedOfHtml(html: string): string[] {
+    const sourceNumbers = new Set<number>();
+    collectSourceNumbers('{"n":1}', sourceNumbers);
+    return checkReportNumbers({ reportTexts: [htmlToText(html)], sourceNumbers, allowedTexts: [] }).unverified.map((u) => u.text);
+  }
+
+  it('<h1>~<h6> 내용 앞에 `# ` 표지를 달아 줄 첫머리에 둔다', () => {
+    expect(htmlToText('<h3>3.1 개요</h3>')).toBe('\n# 3.1 개요\n');
+    expect(htmlToText('<H6 class="x">2.4 소결</H6>')).toBe('\n# 2.4 소결\n');
+    expect(htmlToText('<p>3.2 배 증가</p>')).not.toContain('#');
+  });
+
+  it('제목 「<h3>3.1 개요</h3>」는 절 번호로 가리고, 「<p>3.2 배 증가</p>」「<td>4.5 시간</td>」는 소수로 대조한다', () => {
+    expect(unverifiedOfHtml('<h3>3.1 개요</h3><h2><strong>2.4</strong> 소결</h2>')).toEqual([]);
+    expect(unverifiedOfHtml('<h3>3.1 개요</h3><p>3.2 배 증가</p><table><tr><td>4.5 시간</td></tr></table>')).toEqual(['3.2', '4.5']);
+  });
+
+  it('여는 태그 뒤 줄바꿈·들여쓰기가 있는 제목(「<h3>\\n  3.1 개요\\n</h3>」)도 표지가 번호와 같은 줄에 붙어 가린다', () => {
+    expect(htmlToText('<h3>\n  3.1 개요\n</h3>')).toBe('\n# 3.1 개요\n\n');
+    expect(unverifiedOfHtml('<h3>\n  3.1 개요\n</h3>\n<h2>  <strong>2.4</strong> 소결</h2>\n<p>\n  3.2 배 증가\n</p>')).toEqual(['3.2']);
   });
 });
 

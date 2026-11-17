@@ -15,10 +15,12 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
 /** MinIO(S3 호환) 오브젝트 스토리지 접근 서비스. 대량 파일 바이트는 앱을 통과하지 않으며, 목록 조회와 presigned GET URL 발급만 담당한다. */
+@Slf4j
 @Service
 public class FileObjectStorageService {
 
@@ -147,10 +149,13 @@ public class FileObjectStorageService {
    * <ul>
    *   <li>페이지가 maxKeys 로 차면 hasMore = 더 남았는지, nextToken = 마지막으로 훑은 키(다음 요청은 새 상한으로 이어 훑는다).
    *   <li>페이지를 못 채우고 상한에 닿았는데 더 남았으면 truncated=true, 이어 보기는 없다(hasMore=false, nextToken=null).
-   *   <li>상한에 닿았으면 「더 남았는지」를 이터레이터에 묻지 않는다(WD-776) — SDK 이터레이터는 상한(S3 한 쪽 1000 의 배수)에서 hasNext() 가
-   *       다음 S3 쪽을 통째로 받아 오므로, 버릴 목록 요청이 한 번 더 나간다. 대신 「더 있을 수 있음」으로 본다: 페이지가 찼으면 이어 보기를 주고(정말
-   *       끝이었으면 다음 요청이 빈 쪽 + hasMore=false 로 끝난다), 못 채웠으면 truncated=true(목록이 딱 상한에서 끝났어도 「일부만
-   *       검색됨」으로 보인다).
+   *   <li>페이지가 찬 채 상한에 닿았으면 「더 남았는지」를 이터레이터에 묻지 않는다(WD-776) — SDK 이터레이터는 상한(S3 한 쪽 1000 의 배수)에서
+   *       hasNext() 가 다음 S3 쪽을 통째로 받아 오므로, 버릴 목록 요청이 한 번 더 나간다. 대신 「더 있을 수 있음」으로 보고 이어 보기를 준다(정말
+   *       끝이었으면 다음 요청이 빈 쪽 + hasMore=false 로 끝난다).
+   *   <li>페이지를 못 채우고 상한에 닿았을 때만(WD-783) 정말 남았는지 따로 묻는다 — 딱 상한 개수에서 목록이 끝났는데 「일부만 검색됨」으로 잘못 알리지 않기
+   *       위해서다. 이때 이어 보기가 없어 다음 요청으로 바로잡을 수 없으므로 정확히 판정하는 편이 낫다. 단 본 이터레이터의 hasNext() 는 위와 같이 1000
+   *       키 쪽을 통째로 받으므로 쓰지 않고, maxKeys=1·startAfter=마지막으로 훑은 키인 엿보기 요청 하나로 묻는다. 엿보기가 실패하면 검색 전체를
+   *       실패시키지 않고 모은 결과를 truncated=true(보수적)로 돌려준다.
    * </ul>
    *
    * @param query 공백이 아닌 검색어(컨트롤러가 앞뒤 공백을 뗀다)
@@ -174,7 +179,6 @@ public class FileObjectStorageService {
     List<ObjectItemResponse> items = new ArrayList<>();
     String lastScannedKey = null;
     int scanned = 0;
-    boolean remaining;
     try {
       Iterator<Result<Item>> it = minioClient.listObjects(builder.build()).iterator();
       // 상한 검사를 hasNext() 보다 먼저 한다(이유는 Javadoc).
@@ -191,20 +195,52 @@ public class FileObjectStorageService {
           items.add(toItem(item, prefix));
         }
       }
-      // 상한에 닿았으면 묻지 않고 「더 있을 수 있음」(WD-776 — Javadoc).
-      remaining = scanned >= scanLimit || it.hasNext();
+      // 페이지가 찼으면 이어 보기 — 상한에 닿았으면 묻지 않고 「더 있을 수 있음」(WD-776), 아니면 정확히 묻는다.
+      // 상한과 동시에 닿았어도 다음 요청이 그 뒤부터 새 상한으로 훑으면 되므로 잘림이 아니다.
+      if (items.size() >= maxKeys) {
+        boolean remaining = scanned >= scanLimit || it.hasNext();
+        return new ObjectListResponse(
+            items, List.of(), remaining ? lastScannedKey : null, remaining, false);
+      }
     } catch (Exception e) {
       throw new RuntimeException("오브젝트 검색 실패: " + e.getMessage(), e);
     }
 
-    // 페이지가 찼으면 이어 보기 — 상한과 동시에 닿았어도 다음 요청이 그 뒤부터 새 상한으로 훑으면 되므로 잘림이 아니다.
-    if (items.size() >= maxKeys) {
-      return new ObjectListResponse(
-          items, List.of(), remaining ? lastScannedKey : null, remaining, false);
-    }
-    // 페이지를 못 채운 채 상한에 닿았으면 일부만 찾았을 수 있다 — 이어 보기를 주지 않고 잘림만 알린다.
-    boolean truncated = scanned >= scanLimit;
+    // 페이지를 못 채운 채 상한에 닿았고 정말 더 남았을 때만(WD-783) 잘림 — 이어 보기 없이 잘림만 알린다.
+    // 상한 미달로 루프가 끝났다면 이미 hasNext()==false 였으므로 다시 묻지 않는다(상한에 닿았으면 lastScannedKey 는 null 이 아니다).
+    boolean truncated = scanned >= scanLimit && hasObjectAfter(bucket, prefix, lastScannedKey);
     return new ObjectListResponse(items, List.of(), null, false, truncated);
+  }
+
+  /**
+   * prefix 아래에 afterKey 보다 뒤인 오브젝트가 하나라도 있는지 maxKeys=1 목록 요청 하나로 엿본다(WD-783).
+   *
+   * <p>검색 루프의 이터레이터에 hasNext() 를 물으면 SDK 가 다음 S3 쪽(최대 1000 키)을 통째로 받아 오므로(WD-776 이 없앤 낭비), 키 하나만 받는
+   * 별도 요청으로 판정한다. 이 판정은 「일부만 검색됨」 안내에만 쓰이므로, 실패해도 이미 모은 검색 결과까지 버리지 않는다 — WARN 으로 남기고 남았다고 본다(보수적:
+   * 잘림을 숨기는 것보다 「일부만 검색됨」을 한 번 더 보이는 편이 낫다).
+   *
+   * @param afterKey 이 키 뒤부터 엿본다. null·빈 값이면 prefix 처음부터
+   */
+  private boolean hasObjectAfter(String bucket, String prefix, String afterKey) {
+    ListObjectsArgs.Builder peek =
+        ListObjectsArgs.builder().bucket(bucket).prefix(prefix).recursive(true).maxKeys(1);
+    if (afterKey != null && !afterKey.isBlank()) {
+      peek.startAfter(afterKey);
+    }
+    try {
+      Iterator<Result<Item>> it = minioClient.listObjects(peek.build()).iterator();
+      if (!it.hasNext()) return false;
+      it.next().get(); // 응답 오류(Result 안 예외)도 여기서 드러나 아래 catch 로 간다
+      return true;
+    } catch (Exception e) {
+      log.warn(
+          "오브젝트 검색 잘림 판정(엿보기) 실패 — 남은 오브젝트가 있다고 보고 truncated=true 로 응답: bucket={}, prefix={}, after={}",
+          bucket,
+          prefix,
+          afterKey,
+          e);
+      return true;
+    }
   }
 
   /**

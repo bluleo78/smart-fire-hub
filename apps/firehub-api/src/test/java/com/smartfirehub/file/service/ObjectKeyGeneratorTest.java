@@ -12,50 +12,67 @@ class ObjectKeyGeneratorTest {
   final ObjectKeyGenerator gen = new ObjectKeyGenerator();
 
   @Test
-  void sanitizeFilename_preservesRelativePathAndNormalizesSeparators() {
+  void generateKey_preservesRelativePathAndNormalizesSeparators() {
     // 폴더 구조(하위 경로)는 그대로 보존한다.
-    assertThat(gen.sanitizeFilename("sub/dir/photo.jpg")).isEqualTo("sub/dir/photo.jpg");
+    assertThat(gen.generateKey("p/", "sub/dir/photo.jpg")).isEqualTo("p/sub/dir/photo.jpg");
     // '\\'는 '/'로 정규화된다(Windows 경로 대비).
-    assertThat(gen.sanitizeFilename("a\\b\\c.md")).isEqualTo("a/b/c.md");
+    assertThat(gen.generateKey("p/", "a\\b\\c.md")).isEqualTo("p/a/b/c.md");
     // 선행 '/'(절대경로), 중복 '//', '.'(현재 디렉터리) 세그먼트는 흡수·제거된다.
-    assertThat(gen.sanitizeFilename("/a//b/./c.txt")).isEqualTo("a/b/c.txt");
+    assertThat(gen.generateKey("p/", "/a//b/./c.txt")).isEqualTo("p/a/b/c.txt");
     // 각 세그먼트 앞뒤 공백 정리.
-    assertThat(gen.sanitizeFilename("  report.md  ")).isEqualTo("report.md");
+    assertThat(gen.generateKey("p/", "  report.md  ")).isEqualTo("p/report.md");
   }
 
   @Test
-  void sanitizeFilename_rejectsTraversalSegments() {
-    // ".." 세그먼트가 하나라도 있으면 traversal 시도로 보고 전체를 거부한다(빈 문자열 → 호출부 400).
-    assertThat(gen.sanitizeFilename("../../etc/passwd")).isEmpty();
-    assertThat(gen.sanitizeFilename("sub/../secret")).isEmpty();
-    assertThat(gen.sanitizeFilename("a/b/../../../c")).isEmpty();
+  void generateKey_rejectsTraversalSegments() {
+    // ".." 세그먼트가 하나라도 있으면 traversal 시도로 보고 전체를 거부한다.
+    for (String bad : new String[] {"../../etc/passwd", "sub/../secret", "a/b/../../../c"}) {
+      assertThatThrownBy(() -> gen.generateKey("p/", bad))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
   }
 
   @Test
-  void sanitizeFilename_emptyForNullBlankOrMeaninglessNames() {
-    assertThat(gen.sanitizeFilename(null)).isEmpty();
-    assertThat(gen.sanitizeFilename("")).isEmpty();
-    assertThat(gen.sanitizeFilename("   ")).isEmpty();
-    assertThat(gen.sanitizeFilename(".")).isEmpty();
-    assertThat(gen.sanitizeFilename("..")).isEmpty();
-    assertThat(gen.sanitizeFilename("/")).isEmpty();
-    assertThat(gen.sanitizeFilename("//./")).isEmpty();
+  void generateKey_rejectsNullBlankOrMeaninglessNames() {
+    for (String bad : new String[] {null, "", "   ", ".", "..", "/", "//./"}) {
+      assertThatThrownBy(() -> gen.generateKey("p/", bad))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
   }
 
   @Test
-  void sanitizeFilename_preservesKoreanAndDotfileAndNestedKorean() {
-    assertThat(gen.sanitizeFilename("보고서.md")).isEqualTo("보고서.md");
-    assertThat(gen.sanitizeFilename(".gitignore")).isEqualTo(".gitignore");
+  void generateKey_preservesKoreanAndDotfileAndNestedKorean() {
+    assertThat(gen.generateKey("p/", "보고서.md")).isEqualTo("p/보고서.md");
+    assertThat(gen.generateKey("p/", ".gitignore")).isEqualTo("p/.gitignore");
     // 한글 폴더 경로도 그대로 보존.
-    assertThat(gen.sanitizeFilename("사진/2026/보고서.md")).isEqualTo("사진/2026/보고서.md");
+    assertThat(gen.generateKey("p/", "사진/2026/보고서.md")).isEqualTo("p/사진/2026/보고서.md");
   }
 
+  /** WD-783: 앞부분이 같은 긴 이름 둘을 루트에서 자르면 같은 키가 되어 덮어쓴다 — 자르지 않고 둘 다 거부한다. */
   @Test
-  void sanitizeFilename_capsUtf8BytesPreservingExtension() {
-    // 한글 400자(1200B) + ".md" → 파일명 세그먼트 상한 255B 내로 잘리되 확장자는 보존한다(WD-776 — MinIO 세그먼트 상한).
-    String out = gen.sanitizeFilename("가".repeat(400) + ".md");
-    assertThat(out.getBytes(UTF_8).length).isLessThanOrEqualTo(255);
-    assertThat(out).endsWith(".md");
+  void rootLongNamesWithSamePrefixAreRejectedNotTruncated() {
+    for (String suffix : new String[] {"_v1.csv", "_v2.csv"}) {
+      assertThatThrownBy(() -> gen.generateKey("equip/", "", "A".repeat(260) + suffix))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("255바이트");
+    }
+  }
+
+  /** WD-783: 딱 255B 파일명은 루트에서도 그대로 받는다(경계). */
+  @Test
+  void rootSegmentExactly255BytesIsKeptAsIs() {
+    String name = "x".repeat(251) + ".csv";
+    assertThat(name.getBytes(UTF_8)).hasSize(255);
+    assertThat(gen.generateKey("equip/", "", name)).isEqualTo("equip/" + name);
+  }
+
+  /** WD-783: 루트에서도 상대경로 합계가 900B 를 넘으면 자르지 않고 거부한다. */
+  @Test
+  void rootFolderTreeOver900BytesIsRejected() {
+    String dirs = ("d".repeat(250) + "/").repeat(4); // 4×251 = 1004B > 900B (세그먼트는 각각 255B 이하)
+    assertThatThrownBy(() -> gen.generateKey("equip/", "", dirs + "x.csv"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("900바이트");
   }
 
   @Test
@@ -192,7 +209,7 @@ class ObjectKeyGeneratorTest {
             () ->
                 gen.generateKey("equip/", folder, "x".repeat(200) + "/" + "b".repeat(200) + ".jpg"))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("폴더 경로와 합친 이름이 너무 깁니다");
+        .hasMessageContaining("경로가 너무 깁니다");
     // 하위 경로가 붙은 폴더 업로드도 같다(하위 폴더·파일명 어느 쪽도 자르지 않는다).
     assertThatThrownBy(
             () ->
@@ -202,36 +219,6 @@ class ObjectKeyGeneratorTest {
     // 딱 900B 는 그대로 받는다(500 + 200 + 1 + 199).
     String exact = "c".repeat(200) + "/" + "d".repeat(195) + ".jpg";
     assertThat(gen.generateKey("equip/", folder, exact)).isEqualTo("equip/" + folder + exact);
-  }
-
-  /** WD-776: 루트 업로드의 자르기는 그대로 두되 서로게이트 쌍(이모지)을 쪼개지 않는다. */
-  @Test
-  void sanitizeFilename_truncationDoesNotSplitSurrogatePairs() {
-    // 예산 251B(세그먼트 상한 255 - ".txt") — 이모지 62개(248B) 뒤에 반쪽 서로게이트('?' 1B 로 인코딩)가 끼어들 수 있는 경계다.
-    String out = gen.sanitizeFilename("😀".repeat(300) + ".txt");
-
-    assertThat(out).endsWith(".txt");
-    String base = out.substring(0, out.length() - ".txt".length());
-    assertThat(base).isEqualTo("😀".repeat(62));
-    assertThat(out.getBytes(UTF_8).length).isLessThanOrEqualTo(255);
-  }
-
-  /**
-   * WD-776: 루트 자르기의 확장자는 마지막 세그먼트(파일명) 안에서만 찾는다 — 하위 폴더 이름의 '.'(「aaa….d/」)를 확장자로 읽으면 폴더 이름이 잘려 다른
-   * 폴더가 된다. 확장자 없는 파일명은 뒤에서부터 잘린다.
-   */
-  @Test
-  void sanitizeFilename_extensionIsSearchedOnlyInLastSegment() {
-    // 하위 폴더 세그먼트는 각각 253B(255B 이하), 셋이면 759B — 파일명은 255B 로 잘린 뒤 합계 900B 상한에 맞춰 한 번 더 잘린다.
-    String dir = ("a".repeat(250) + ".d/").repeat(3);
-    String out = gen.sanitizeFilename(dir + "n".repeat(500));
-
-    assertThat(out).startsWith(dir);
-    assertThat(out).isEqualTo(dir + "n".repeat(141));
-    // 파일명에 확장자가 있으면 그 확장자만 보존한다.
-    String withExt = gen.sanitizeFilename(dir + "n".repeat(500) + ".txt");
-    assertThat(withExt).startsWith(dir).endsWith(".txt");
-    assertThat(withExt.getBytes(UTF_8)).hasSize(900);
   }
 
   /**
@@ -249,31 +236,6 @@ class ObjectKeyGeneratorTest {
     assertThat(ObjectKeyGenerator.isOpenableFolder("x\u0001/")).isFalse();
     assertThat(ObjectKeyGenerator.isOpenableFolder("a//")).isFalse();
     assertThat(ObjectKeyGenerator.isOpenableFolder("a".repeat(900) + "/")).isFalse();
-  }
-
-  /**
-   * WD-776: MinIO 는 키의 한 세그먼트가 255B 를 넘으면 거부한다(XMinioInvalidObjectName). 루트 업로드는 파일명을 255B 이내로 자르되
-   * 확장자를 지키고 글자를 쪼개지 않는다 — 한글 300자(900B) + ".txt" 가 예전엔 898B 로 잘려 PUT 이 400 이었다.
-   */
-  @Test
-  void generateKey_rootTruncatesFilenameSegmentTo255Bytes() {
-    String key = gen.generateKey("equip/", "", "가".repeat(300) + ".txt");
-
-    assertThat(key).startsWith("equip/").endsWith(".txt");
-    String name = key.substring("equip/".length());
-    assertThat(name).doesNotContain("/");
-    assertThat(name.getBytes(UTF_8).length).isLessThanOrEqualTo(255);
-    // 쪼개진 글자 없이 한글만 남는다(UTF-8 왕복이 같다) — 251B 예산에 한글 83자(249B).
-    assertThat(new String(name.getBytes(UTF_8), UTF_8)).isEqualTo(name);
-    assertThat(name).isEqualTo("가".repeat(83) + ".txt");
-  }
-
-  /** WD-776: 루트 폴더 업로드(하위 경로)도 파일명 세그먼트만 255B 로 자르고 하위 폴더 이름은 그대로 둔다. */
-  @Test
-  void generateKey_rootTruncatesOnlyLastSegmentOfRelativePath() {
-    String key = gen.generateKey("equip/", "", "sub/" + "나".repeat(100) + ".csv");
-
-    assertThat(key).isEqualTo("equip/sub/" + "나".repeat(83) + ".csv");
   }
 
   /**

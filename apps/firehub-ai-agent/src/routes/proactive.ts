@@ -108,6 +108,7 @@ const INLINE_TAGS = /(?:<\/?(?:a|abbr|b|bdi|bdo|cite|code|data|del|dfn|em|font|i
  * WD-775: 인라인 태그는 INLINE_TAGS 규칙으로 지우고, 그 밖의 블록 태그(p·td·h2·br …)는 줄바꿈으로 바꾼다. 줄바꿈으로 바꾸는
  * 건 칸·문단 사이 숫자(「12</td><td>34」)가 붙지 않게 하면서, 제목 블록의 「11. 권고사항」이 줄 첫머리에 와 목차 번호로
  * 건너뛰어지게 하려는 것이다(문맥 표시는 줄바꿈을 공백으로 바꾸므로 보이는 모양은 같다).
+ * WD-783: <h1>~<h6> 여는 태그는 줄바꿈 뒤에 `# ` 표지를 달아 「<h3>3.1 개요</h3>」를 절 번호로 가린다(수치 대조 입력 전용).
  */
 export function htmlToText(html: string): string {
   return html
@@ -115,6 +116,7 @@ export function htmlToText(html: string): string {
     .replace(INLINE_TAGS, (m: string, i: number, s: string) =>
       /\d/.test(s[i - 1] ?? '') && /\d/.test(s[i + m.length] ?? '') ? ' ' : '',
     )
+    .replace(/<h[1-6]\b[^>]*>\s*/gi, '\n# ')
     .replace(/<[^>]+>/g, '\n')
     // HTML 엔티티: 숫자 엔티티(&#123; &#x1F;)는 숫자로 읽히므로 통째로 지우고, 이름 엔티티는 공백으로 바꾼다.
     .replace(/&#x?[0-9a-f]+;/gi, ' ')

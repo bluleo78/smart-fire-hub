@@ -94,9 +94,11 @@ const LIST_NUMBER = new RegExp(String.raw`${LINE_LEAD}(\d+\.)(?=[ \t])`, 'gm');
  * 소수처럼 생겨 예전엔 출처 없는 수치로 경고됐다. 번호 뒤에 공백이 오고, 그 다음이 숫자·%·금액 단위(「13.5 억」
  * 「3.5 천만원」처럼 천·만·억·조·원이 한글 없이 끝나는 낱말)가 아닐 때만 번호로 본다 — 「3.5억 원」「12.5% 증가」는
  * 숫자 뒤에 공백이 없어 해당하지 않고, 「원인」「조사」「만족도」 같은 제목 낱말은 단위가 아니라 번호로 가린다.
+ * WD-783: 줄 첫머리 2단계 「N.N」은 표지(`#`)·끝 마침표가 없으면 소수로 보고 대조한다(「<td>4.5 시간</td>」을 놓치지 않으려는 것 —
+ * 표지 없는 「3.1 개요」는 경고될 수 있으나 경고 전용이라 감수). 3단계 이상은 늘 번호다.
  */
 const SECTION_NUMBER = new RegExp(
-  String.raw`${LINE_LEAD}(\d+(?:\.\d+)+\.?)(?=[ \t]+(?![\d%]|(?:[천만억조]+원?|원)(?![가-힣]))\S)`,
+  String.raw`${LINE_LEAD}((?<=#[ \t]*)\d+(?:\.\d+)+\.?|\d+(?:\.\d+){2,}\.?|\d+(?:\.\d+)+\.)(?=[ \t]+(?![\d%]|(?:[천만억조]+원?|원)(?![가-힣]))\S)`,
   'gm',
 );
 
@@ -269,14 +271,15 @@ export function collectSourceNumbers(text: string, into: Set<number>): void {
 }
 
 /**
- * 숫자 집합들을 토큰 표시 방식(퍼센트 여부·단위 배수·소수 자릿수)별 반올림 키로 찾는 색인 (WD-775).
+ * 출처 숫자를 토큰 표시 방식(퍼센트 여부·단위 배수·소수 자릿수)별 반올림 키로 찾는 색인 (WD-775).
  * 토큰마다 숫자 전체를 훑으면(토큰 수 × 숫자 수) 출처가 수만 개일 때 수 초가 걸려, 조합마다 처음 쓰일 때 한 번만 키 Set 을
- * 만들어 둔다. 여러 Set(출처·허용 숫자)을 복사하지 않고 받아 빌드할 때 모두 훑는다.
+ * 만들어 둔다. 숫자는 복사하지 않고 받아 빌드할 때 훑는다.
+ * WD-783: 출처 숫자(sourceNumbers)만 받는다 — 허용 숫자는 반올림하면 무관한 값까지 허용돼 AllowedValues 로 따로 본다.
  */
 class NumberIndex {
   private readonly cache = new Map<string, Set<number>>();
 
-  constructor(private readonly sets: Iterable<number>[]) {}
+  constructor(private readonly numbers: Iterable<number>) {}
 
   /** 표시값이 숫자 중 하나를 표시 자릿수로 반올림한 값과 같은지 본다. */
   matches(token: Token): boolean {
@@ -286,20 +289,54 @@ class NumberIndex {
     let keys = this.cache.get(key);
     if (!keys) {
       keys = new Set<number>();
-      for (const set of this.sets) {
-        for (const s of set) {
-          if (token.percent) {
-            // 퍼센트는 출처가 비율(0.123 → 12.3%)이든 이미 퍼센트 값(12.3)이든 맞는 것으로 본다
-            keys.add(roundKey(s, k));
-            keys.add(roundKey(s * 100, k));
-          } else {
-            keys.add(roundKey(s / token.multiplier, k));
-          }
+      for (const s of this.numbers) {
+        if (token.percent) {
+          // 퍼센트는 출처가 비율(0.123 → 12.3%)이든 이미 퍼센트 값(12.3)이든 맞는 것으로 본다
+          keys.add(roundKey(s, k));
+          keys.add(roundKey(s * 100, k));
+        } else {
+          keys.add(roundKey(s / token.multiplier, k));
         }
       }
       this.cache.set(key, keys);
     }
     return keys.has(roundKey(token.value, k));
+  }
+}
+
+/**
+ * WD-783: 양식·프롬프트·컨텍스트에서 모은 허용 값. 출처와 달리 표시 자릿수 반올림으로 맞추지 않고, 토큰 값이 허용 값과
+ * 같을 때(상대오차 EPSILON 이내)만 허용한다. 허용 텍스트에는 datasetId·페이지 크기 같은 값과 무관한 숫자가 섞여, 반올림으로
+ * 맞추면 「1024」가 「1천명」을 허용하는 식으로 지어낸 반올림 수치를 놓친다. 정렬 배열 + 이진 탐색으로 토큰마다 O(log n).
+ */
+class AllowedValues {
+  private readonly sorted: number[];
+
+  constructor(values: Iterable<number>) {
+    this.sorted = [...values].sort((a, b) => a - b);
+  }
+
+  /** 리포트 토큰의 실제 값(퍼센트는 표시값, 그 밖엔 표시값 × 단위 배수)이 허용 값 중 하나와 같은지 본다. */
+  matches(token: Token): boolean {
+    if (token.percent) {
+      // 퍼센트는 허용 값이 이미 퍼센트(12.5)든 비율(0.125)이든 같은 값으로 본다 (출처 색인과 같은 규칙)
+      return this.has(token.value) || this.has(token.value / 100);
+    }
+    return this.has(token.value * token.multiplier);
+  }
+
+  /** v 와 상대오차 EPSILON 이내인 값이 있는가 — v 이상 첫 값과 그 바로 앞 값만 보면 된다. */
+  private has(v: number): boolean {
+    const a = this.sorted;
+    let lo = 0;
+    let hi = a.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (a[mid] < v) lo = mid + 1;
+      else hi = mid;
+    }
+    const near = (x: number | undefined) => x !== undefined && Math.abs(x - v) <= EPSILON * Math.max(Math.abs(x), Math.abs(v));
+    return near(a[lo]) || near(a[lo - 1]);
   }
 }
 
@@ -317,6 +354,9 @@ function contextOf(text: string, token: Token): string {
  * - 출처 숫자가 하나도 없을 때 — 데이터 조회 결과가 없거나, 있어도 숫자가 하나도 없으면(빈 결과 등)
  *   모든 수치가 경고가 되는 소음이 나므로 대조하지 않는다.
  * - 대조할 리포트 본문이 전부 비었거나 공백일 때 — 대조하지 않은 것을 「경고 없음(검증 통과)」로 보이지 않게 한다.
+ *
+ * 출처 숫자는 리포트 표시 자릿수로 반올림해 맞추고(「1,234,567」 → 「123만」), 허용 텍스트 숫자는 같은 값일 때만 허용한다
+ * (WD-783 — AllowedValues 주석 참고).
  */
 export function checkReportNumbers(input: {
   reportTexts: string[];
@@ -329,16 +369,18 @@ export function checkReportNumbers(input: {
   // WD-775: 양식·프롬프트·컨텍스트의 숫자는 값으로 허용한다(「1234」 → 리포트 「1,234개」). 허용 텍스트는 JSON 이 아닌 날 글자라
   // JSON 지향인 collectSourceNumbers(따옴표 밖 「1,234」를 1·234 로 나눔) 대신 리포트와 같은 tokenize 로 값(표시값 × 단위 배수,
   // % 는 그 값)을 모은다. 위의 checked 판정은 sourceNumbers 만 본다.
+  // WD-783: 허용 값은 반올림 색인(NumberIndex)에 넣지 않고 같은 값일 때만 허용한다 — datasetId 1024 가 「1천명」을 풀어 주지 않게.
   const allowedNumbers = new Set<number>();
   for (const t of input.allowedTexts) {
     for (const x of tokenize(t, false)) allowedNumbers.add(x.percent ? x.value : x.value * x.multiplier);
   }
-  const index = new NumberIndex([input.sourceNumbers, allowedNumbers]);
+  const index = new NumberIndex(input.sourceNumbers);
+  const allowed = new AllowedValues(allowedNumbers);
   const seen = new Set<string>();
   const unverified: UnverifiedNumber[] = [];
   for (const report of input.reportTexts) {
     for (const token of tokenize(report, true)) {
-      if (seen.has(token.text) || index.matches(token)) continue;
+      if (seen.has(token.text) || index.matches(token) || allowed.matches(token)) continue;
       seen.add(token.text);
       if (unverified.length < MAX_UNVERIFIED) {
         unverified.push({ text: token.text, context: contextOf(report, token) });

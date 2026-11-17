@@ -663,6 +663,44 @@ test.describe('FILE 오브젝트 탭 — 폴더 이름 보존·파일별 업로�
     await expect(page.getByTestId('upload-rejected')).toHaveCount(0);
   });
 
+  test('재시도에서 서버가 거부한 파일도 「올리지 못한 파일」에 더해 보인다 (WD-783)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupFileDataset(page);
+    const longName = `${'c'.repeat(120)}.png`;
+    // b.txt 는 첫 요청에서는 발급되지만(PUT 500), 재시도 요청에서는 서버가 거부한다.
+    let bRequests = 0;
+    const { payloads } = await mockUploadUrls(page, {
+      rejectReason: (name) => {
+        if (name === longName) return TOO_LONG_REASON;
+        if (name === 'b.txt') {
+          bRequests += 1;
+          return bRequests >= 2 ? '재시도에서 거부된 사유' : undefined;
+        }
+        return undefined;
+      },
+      putStatus: (n) => (n === 0 ? 500 : 200),
+    });
+    await page.goto(`/data/datasets/${DATASET_ID}?tab=objects&path=${encodeURIComponent('제품')}`);
+    await expect(objectList(page).getByRole('button', { name: '개요.pdf', exact: true })).toBeVisible();
+
+    await chooseFiles(page, [
+      { name: longName, mimeType: 'image/png', buffer: Buffer.from('x') },
+      { name: 'b.txt', mimeType: 'text/plain', buffer: Buffer.from('y') },
+    ]);
+    const rejectedBox = page.getByTestId('upload-rejected');
+    await expect(rejectedBox).toContainText('올리지 못한 파일 1개');
+
+    await page.getByTestId('upload-failure').getByRole('button', { name: '실패건 재시도' }).click();
+    await expect.poll(() => payloads.length).toBe(2);
+
+    // 재시도에서 거부된 b.txt 가 기존 거부 파일(긴 이름)에 이어 붙어 둘 다 보인다.
+    await expect(rejectedBox).toContainText('올리지 못한 파일 2개');
+    await expect(rejectedBox).toContainText(longName);
+    await expect(rejectedBox).toContainText('b.txt');
+    await expect(rejectedBox).toContainText('재시도에서 거부된 사유');
+  });
+
   test('업로드 뒤 첫 쪽 재조회가 실패하면 「목록을 새로 불러오지 못했습니다」로 알리고, 다시 불러오면 사라진다', async ({
     authenticatedPage: page,
   }) => {

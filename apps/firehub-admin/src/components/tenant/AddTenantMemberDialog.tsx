@@ -468,8 +468,15 @@ function NewAccountTab({
     queryKey: [TENANT_MEMBERS_KEY, tenantId],
     queryFn: () => tenantsApi.members(tenantId).then((r) => r.data),
     refetchOnMount: 'always',
+    // 활성 일치 계정이 생길 때만 읽고(WD-783), 그 시점의 재조회를 보장하려고 전역 staleTime(30초) 대신 0 으로 둔다.
+    // 짧게 열리는 다이얼로그라 재연결 재조회는 끄고, 제출 때 서버가 다시 판정한다.
+    enabled: !!activeMatch,
+    staleTime: 0,
+    refetchOnReconnect: false,
   });
-  const members = membersQuery.isFetching || membersQuery.isError ? undefined : membersQuery.data;
+  // 이 마운트의 첫 조회가 끝나기 전·실패 시에는 모름(undefined) — 낡은 캐시로 판정하지 않는다(WD-773).
+  // 첫 조회 뒤의 배경 재조회 중에는 직전 결과를 써 안내가 깜빡이지 않게 한다(WD-783).
+  const members = membersQuery.isFetchedAfterMount && !membersQuery.isError ? membersQuery.data : undefined;
   const membership = members && activeMatch ? members.find((m) => m.userId === activeMatch.id) : undefined;
   // 멤버가 아닌 것이 확실한 활성 계정만 「기존 계정으로 추가」를 권한다.
   const existing = members && !membership ? activeMatch : undefined;
