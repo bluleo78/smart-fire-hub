@@ -1,9 +1,13 @@
 import type { Locator, Page } from '@playwright/test';
 
-import { createColumnStats } from '../../factories/dataset.factory';
+import { createCategories, createColumnStats, createDatasetDetail } from '../../factories/dataset.factory';
+import { createLevelSummary } from '../../factories/security-level.factory';
+import { setupAdminAuth } from '../../fixtures/admin.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { grantDatasetPermissions, setupDatasetDetailMocks, setupDatasetMocks } from '../../fixtures/dataset.fixture';
+import { clickToolbarAddStep, grantPipelinePermissions } from '../../fixtures/pipeline.fixture';
+import { setupSecurityLevelMocks } from '../../fixtures/security-level.fixture';
 
 /**
  * 영역 경계 단계 회귀 (WD-755)
@@ -185,5 +189,156 @@ test.describe('표 마지막 행 — 아래 선만 끄고 왼쪽 표식은 남�
         }),
       )
       .toEqual({ left: '4px', leftColor: destructive, bottom: '0px' });
+  });
+});
+
+/** 요소의 계산된 배경색을 투명한 1px 캔버스에 칠해 본 알파(0~255) — oklch·rgb 등 표기와 상관없이 불투명한지 잰다. */
+async function paintedAlpha(target: Locator): Promise<number> {
+  return target.evaluate((el) => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1;
+    canvas.height = 1;
+    const ctx = canvas.getContext('2d')!;
+    ctx.clearRect(0, 0, 1, 1);
+    ctx.fillStyle = getComputedStyle(el).backgroundColor;
+    ctx.fillRect(0, 0, 1, 1);
+    return ctx.getImageData(0, 0, 1, 1).data[3];
+  });
+}
+
+test.describe('캔버스 위에 떠 있는 버튼 — 불투명한 면 (WD-778)', () => {
+  /**
+   * 공용 outline 버튼은 WD-755 부터 쉬는 면이 투명이라, ReactFlow 캔버스 위에 떠 있으면 팬할 때 노드·엣지·점 격자가
+   * 글자 뒤로 비친다. 캔버스 위 버튼만 페이지 바탕(--background)으로 칠해 가린다(공용 outline 은 투명 그대로).
+   * 다크 outline 은 dark:bg-input/30(반투명)이라 다크에서도 같은 문제가 있어 두 테마를 다 본다.
+   */
+  for (const theme of THEMES) {
+    test(`${theme}: 「자동 정렬」·「스텝 추가」 버튼 면이 불투명한 --background 이고 hover 면도 불투명하다`, async ({ authenticatedPage: page }) => {
+      await grantPipelinePermissions(page);
+      await mockApi(page, 'GET', '/api/v1/datasets', { content: [], page: 0, size: 1000, totalElements: 0, totalPages: 0 });
+      await useTheme(page, theme);
+      await page.goto('/pipelines/new');
+      await expectThemeApplied(page, theme);
+
+      // 빈 상태의 「스텝 추가」로 첫 스텝을 만들어야 캔버스와 우상단 떠 있는 버튼이 나타난다
+      await clickToolbarAddStep(page);
+      const autoLayout = page.getByRole('button', { name: '자동 정렬' });
+      await expect(autoLayout).toBeVisible();
+      // 캔버스 위 버튼 묶음(우상단) 안의 「스텝 추가」 — 자동 정렬과 같은 부모에 있다
+      const addStep = autoLayout.locator('xpath=..').getByRole('button', { name: '스텝 추가', exact: true });
+      await expect(addStep).toBeVisible();
+      // 쉬는 면을 잰다 — 방금 누른 자리의 포인터가 버튼 위에 남아 hover 면(accent·input/50)을 재지 않게 치운다
+      await page.mouse.move(0, 0);
+
+      for (const button of [autoLayout, addStep]) {
+        const { '--background': background } = await resolvedVars(button, ['--background']);
+        // 버튼에 transition-all 이 있어 hover 가 풀리는 동안 색이 섞일 수 있다 — 전환이 끝날 때까지 기다린다
+        await expect.poll(() => button.evaluate((el) => getComputedStyle(el).backgroundColor)).toBe(background);
+        expect(await paintedAlpha(button)).toBe(255);
+      }
+
+      // hover 면도 불투명해야 한다(WD-778) — 다크 outline 의 dark:hover:bg-input/50·다크 --accent 는 반투명이라 hover 때 캔버스가 비쳤다.
+      // 라이트는 불투명한 --accent, 다크는 한 단계 떠 있는 불투명 --popover 로 칠하고, 쉬는 면(--background)과 달라 hover 가 보여야 한다.
+      const hoverVar = theme === 'dark' ? '--popover' : '--accent';
+      for (const button of [autoLayout, addStep]) {
+        const vars = await resolvedVars(button, ['--background', hoverVar]);
+        await button.hover();
+        await expect.poll(() => button.evaluate((el) => getComputedStyle(el).backgroundColor)).toBe(vars[hoverVar]);
+        expect(vars[hoverVar]).not.toBe(vars['--background']);
+        expect(await paintedAlpha(button)).toBe(255);
+        await page.mouse.move(0, 0);
+      }
+    });
+  }
+});
+
+test.describe('카드 안의 표 — 감싸개가 칠하지 않는다 (WD-778)', () => {
+  /**
+   * 표 감싸개는 바탕 위 목록 표를 위해 bg-card 로 칠한다. 다크 --card 는 반투명(흰 4.5%)이라 카드 안에서 또 칠하면
+   * 9% 남짓으로 겹쳐 표만 밝은 사각형으로 떠 보인다 — 카드 안(data-slot="card" 조상)에서는 감싸개가 투명이어야 한다.
+   * 바탕 위 목록 표가 여전히 --card 인지는 위 「데이터셋 목록」 describe 의 「표 면」 단계가 지킨다.
+   */
+  for (const theme of THEMES) {
+    test(`${theme}: 보안 탭 허용 목록 표의 감싸개는 투명하고 카드 면은 --card 다`, async ({ authenticatedPage: page }) => {
+      await setupAdminAuth(page);
+      await setupDatasetDetailMocks(page, 1);
+      await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
+      await mockApi(page, 'GET', '/api/v1/datasets/tags', []);
+      await mockApi(
+        page,
+        'GET',
+        '/api/v1/datasets/1',
+        createDatasetDetail({ id: 1, name: '인사_평가_2026', securityLevel: createLevelSummary('기밀') }),
+      );
+      await setupSecurityLevelMocks(page);
+      await mockApi(page, 'GET', '/api/v1/datasets/1/access-grants', [
+        { id: 11, type: 'ROLE', subjectId: 5, subjectName: '인사팀', grantedByName: '양동희', grantedAt: '2026-10-07T10:00:00' },
+      ]);
+      await useTheme(page, theme);
+      await page.goto('/data/datasets/1?tab=security');
+      await expectThemeApplied(page, theme);
+
+      const table = page.getByRole('table').filter({ hasText: '인사팀' });
+      await expect(table).toBeVisible();
+      const card = table.locator('xpath=ancestor::*[@data-slot="card"][1]');
+      await expect(card).toHaveCount(1);
+
+      // <table> 을 감싼 스크롤 상자(table-container)의 바깥 상자가 표 면(감싸개)이다
+      const surface = table.locator('xpath=../..');
+      expect(await paintedAlpha(surface)).toBe(0);
+
+      const { '--card': cardColor } = await resolvedVars(card, ['--card']);
+      expect(await card.evaluate((el) => getComputedStyle(el).backgroundColor)).toBe(cardColor);
+    });
+  }
+});
+
+test.describe('row-divider — 한 클래스 덮어쓰기가 이긴다 (WD-778)', () => {
+  /**
+   * row-divider 가 특이도 0,2,0(.row-divider:not(:last-child))이거나 유틸리티 순서상 뒤에 찍히면, 행에 준 border-b-0 같은
+   * 한 클래스 덮어쓰기와 두 줄 머리(thead)의 [&_tr]:border-border 가 진다. 실제 컴파일된 CSS 로 확인하려고 이미 열린
+   * 화면에 표를 직접 만들어 넣는다(이 조합을 쓰는 실제 화면은 아직 없다). 쓰는 클래스는 모두 src 에 있는 것만 쓴다.
+   */
+  test('border-b-0 행은 선이 없고, 두 줄 머리의 첫 행은 --border, 나머지 행 선은 그대로다', async ({ authenticatedPage: page }) => {
+    await grantDatasetPermissions(page);
+    await setupDatasetMocks(page);
+    await useTheme(page, 'light');
+    await page.goto('/data/datasets');
+    await expect(page.getByRole('table', { name: '데이터셋 목록' })).toBeVisible();
+
+    await page.evaluate(() => {
+      const host = document.createElement('div');
+      host.innerHTML = `
+        <table data-testid="row-divider-probe">
+          <thead class="[&_tr]:border-b [&_tr]:border-border">
+            <tr class="row-divider" data-testid="head-1"><th>머리 1</th></tr>
+            <tr class="row-divider" data-testid="head-2"><th>머리 2</th></tr>
+          </thead>
+          <tbody>
+            <tr class="row-divider" data-testid="body-1"><td>본문 1</td></tr>
+            <tr class="row-divider border-b-0" data-testid="body-2"><td>본문 2</td></tr>
+            <tr class="row-divider" data-testid="body-3"><td>본문 3</td></tr>
+          </tbody>
+        </table>`;
+      document.body.appendChild(host);
+    });
+
+    const probe = page.getByTestId('row-divider-probe');
+    const bottom = (id: string) =>
+      page.getByTestId(id).evaluate((el) => {
+        const st = getComputedStyle(el);
+        return { width: st.borderBottomWidth, color: st.borderBottomColor };
+      });
+    const vars = await resolvedVars(probe, ['--divider', '--border']);
+
+    // 덮어쓰기가 없는 본문 행은 그대로 row-divider 선(--divider 1px)
+    expect(await bottom('body-1')).toEqual({ width: '1px', color: vars['--divider'] });
+    // 한 클래스 덮어쓰기(border-b-0)가 이긴다 — 마지막 행이 아니어도 선이 없다
+    expect((await bottom('body-2')).width).toBe('0px');
+    // 마지막 행은 여전히 선이 없다
+    expect((await bottom('body-3')).width).toBe('0px');
+    // 두 줄 머리: 첫 행은 마지막 자식이 아니지만 머리 색([&_tr]:border-border)이 이긴다
+    expect(await bottom('head-1')).toEqual({ width: '1px', color: vars['--border'] });
+    expect(await bottom('head-2')).toEqual({ width: '1px', color: vars['--border'] });
   });
 });

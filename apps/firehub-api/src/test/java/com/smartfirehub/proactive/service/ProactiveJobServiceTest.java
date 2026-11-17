@@ -927,7 +927,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
     when(chatDeliveryChannel.type()).thenReturn("CHAT");
 
     // when — @Async 프록시를 우회한 raw 빈으로 직접 호출하여 동기 실행 보장 (이슈 #192)
-    rawAsyncRunner.executeJob(created.id(), testUserId);
+    rawAsyncRunner.executeJob(created.id(), testUserId, null);
 
     // then: execution row should exist and be COMPLETED
     var executions = executionRepository.findByJobId(created.id(), 10, 0);
@@ -950,7 +950,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
         .thenThrow(new RuntimeException("AI Agent 연결 실패"));
 
     // when / then — @Async 프록시를 우회한 raw 빈으로 직접 호출 (이슈 #192)
-    assertThatThrownBy(() -> rawAsyncRunner.executeJob(created.id(), testUserId))
+    assertThatThrownBy(() -> rawAsyncRunner.executeJob(created.id(), testUserId, null))
         .isInstanceOf(ProactiveJobException.class)
         .hasMessageContaining("Job 실행 실패");
 
@@ -984,7 +984,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
             anyLong(), anyString(), anyString(), any(), any(), any(), any(), any()))
         .thenThrow(new RuntimeException("AI Agent 연결 실패"));
 
-    assertThatThrownBy(() -> rawAsyncRunner.executeJob(created.id(), testUserId))
+    assertThatThrownBy(() -> rawAsyncRunner.executeJob(created.id(), testUserId, null))
         .isInstanceOf(ProactiveJobException.class);
 
     LocalDateTime now = ProactiveTime.nowUtc();
@@ -1063,7 +1063,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
     when(chatDeliveryChannel.type()).thenReturn("CHAT");
 
     // when / then
-    assertThatThrownBy(() -> rawAsyncRunner.executeJob(created.id(), testUserId))
+    assertThatThrownBy(() -> rawAsyncRunner.executeJob(created.id(), testUserId, null))
         .isInstanceOf(ProactiveJobException.class);
 
     var executions = executionRepository.findByJobId(created.id(), 10, 0);
@@ -1093,7 +1093,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
     when(chatDeliveryChannel.type()).thenReturn("CHAT");
 
     // when — @Async 프록시를 우회한 raw 빈으로 직접 호출 (이슈 #192)
-    rawAsyncRunner.executeJob(created.id(), testUserId);
+    rawAsyncRunner.executeJob(created.id(), testUserId, null);
 
     // then: ChatDeliveryChannel.deliver() was called once
     verify(chatDeliveryChannel, times(1)).deliver(any(), anyLong(), any());
@@ -1115,7 +1115,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
         .deliver(any(), anyLong(), any());
 
     // when — @Async 프록시를 우회한 raw 빈으로 직접 호출 (이슈 #192)
-    rawAsyncRunner.executeJob(created.id(), testUserId);
+    rawAsyncRunner.executeJob(created.id(), testUserId, null);
 
     // then: execution is still COMPLETED
     var executions = executionRepository.findByJobId(created.id(), 10, 0);
@@ -1251,7 +1251,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
     // asyncRunner 경유 실행 확인: onAnomalyDetected가 tryAcquireRunSlot 후 asyncRunner를 호출했으면
     // runningJobs 슬롯이 점유되거나 이미 비동기 실행이 시작된 상태여야 한다.
     // 여기서는 rawAsyncRunner로 직접 실행하여 실행 레코드가 정상 생성됨을 확인한다.
-    rawAsyncRunner.executeJob(job.id(), testUserId);
+    rawAsyncRunner.executeJob(job.id(), testUserId, null);
 
     var executions = executionRepository.findByJobId(job.id(), 10, 0);
     // onAnomalyDetected의 async 호출(1건) + rawAsyncRunner 직접 호출(1건) = 최소 1건
@@ -1296,7 +1296,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
 
     revoke.run();
     // 예외 없이 끝난다 — 예정된 건너뜀이라 오류로 다시 던지지 않는다
-    rawAsyncRunner.executeJob(created.id(), testUserId);
+    rawAsyncRunner.executeJob(created.id(), testUserId, null);
 
     var skipped = executionRepository.findByJobId(created.id(), 10, 0);
     assertThat(skipped).hasSize(1);
@@ -1314,7 +1314,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
 
     // 자격을 되돌리면 다음 실행은 저절로 정상
     restore.run();
-    rawAsyncRunner.executeJob(created.id(), testUserId);
+    rawAsyncRunner.executeJob(created.id(), testUserId, null);
 
     var resumed = executionRepository.findByJobId(created.id(), 10, 0);
     assertThat(resumed).hasSize(2);
@@ -1365,7 +1365,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
         proactiveJobService.createJob(buildCreateRequest("자격 있는 주인 작업"), testUserId);
     stubSuccessfulRun();
 
-    rawAsyncRunner.executeJob(created.id(), testUserId);
+    rawAsyncRunner.executeJob(created.id(), testUserId, null);
 
     var executions = executionRepository.findByJobId(created.id(), 10, 0);
     assertThat(executions).hasSize(1);
@@ -1465,7 +1465,7 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
         proactiveJobService.createJob(buildCreateRequest("다른 워크스페이스 권한 작업"), testUserId);
     stubSuccessfulRun();
 
-    rawAsyncRunner.executeJob(created.id(), testUserId);
+    rawAsyncRunner.executeJob(created.id(), testUserId, null);
 
     var executions = executionRepository.findByJobId(created.id(), 10, 0);
     assertThat(executions).hasSize(1);

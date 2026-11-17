@@ -1,5 +1,6 @@
 package com.smartfirehub.settings.controller;
 
+import com.smartfirehub.settings.model.AiCredential;
 import com.smartfirehub.settings.service.OpencodeProbeService.ProbeResult;
 import com.smartfirehub.settings.service.OpencodeProbeService.ProbeResult.Reason;
 import java.util.LinkedHashMap;
@@ -109,6 +110,24 @@ public final class OpencodeCredentialValidation {
                   + ") 와 다르다"));
     }
     return Optional.empty();
+  }
+
+  /**
+   * 요청이 <b>명시적으로</b> 실은 채팅 모델과 요청 {@code providerId} 의 엄격한 짝 검사(WD-778) — 네트워크 없음. 판정·문구는 채팅 실행 직전
+   * 검사({@link AiCredential.Opencode#modelProblem})와 같다: 형식이 {@code 공급자/모델} 이고 접두가 {@code
+   * providerId} 와 같아야 한다.
+   *
+   * <p><b>왜 {@link #checkProviderConsistency} 를 쓰지 않나.</b> 그 메서드는 슬래시 없는 값을 통과시키는데, 그 완화는
+   * <b>저장된</b> 묵은 모델 때문에 opencode 첫 저장이 막히는 순환 잠금을 피하려는 것이다. 요청이 지금 고른 모델에는 그 이유가 없다 — 통과시키면 저장은 되고
+   * 이후 모든 채팅이 「모델을 다시 선택하세요」로 실패한다. {@code providerId} 가 비어 있으면 판정하지 않는다(필수 필드 400 은 {@code
+   * AiCredentialService#save} 몫).
+   */
+  public static Optional<Problem> checkExplicitModel(String requestProviderId, String model) {
+    if (requestProviderId == null || requestProviderId.isBlank() || model == null) {
+      return Optional.empty();
+    }
+    String problem = new AiCredential.Opencode(requestProviderId, "", "", "").modelProblem(model);
+    return Optional.ofNullable(problem).map(msg -> new Problem(HttpStatus.BAD_REQUEST, msg));
   }
 
   /**

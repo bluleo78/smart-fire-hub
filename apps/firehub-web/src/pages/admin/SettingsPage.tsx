@@ -237,13 +237,6 @@ function AdminSettingsPage() {
   /** 동작 설정(6키) 저장 후 재조회가 실패했을 때의 지속 안내 — 옛 `useAiSettingsForm.staleNotice`
    * 를 대체한다. 자격증명 쪽의 같은 안내는 `cred.staleNotice`(별도 자원, 별도 슬롯)가 갖는다. */
   const [behaviorStaleNotice, setBehaviorStaleNotice] = useState<string | null>(null);
-  /**
-   * 자격증명 저장이 거부됐는데 함께 저장한 모델을 되돌리지도 못했을 때의 지속 안내(#720). 서버에
-   * 남은 모델이 자격증명과 어긋나 AI 채팅이 실패할 수 있다는 사실을 토스트가 사라진 뒤에도 남긴다.
-   * `behaviorStaleNotice` 와 슬롯을 나눈 이유: 그쪽은 메타 재조회가 성공하면 지워지는데, 이 안내는
-   * 다음 저장이 성공해 두 자원이 다시 맞을 때까지 남아야 한다.
-   */
-  const [modelRollbackNotice, setModelRollbackNotice] = useState<string | null>(null);
   /** 유형 전환 저장 확인 다이얼로그 열림 여부 — `handleSaveClick` 이 열고, 확인/취소가 닫는다. */
   const [saveConfirmOpen, setSaveConfirmOpen] = useState(false);
 
@@ -307,9 +300,8 @@ function AdminSettingsPage() {
     updateField,
     handleReset,
     buildChangedPayload,
-    original,
     commitSaved,
-    restoreOriginal,
+    commitSavedKey,
     refreshMeta,
   } = behavior;
 
@@ -374,40 +366,6 @@ function AdminSettingsPage() {
     }
   }, [errors, errorFocusRequest]);
 
-  /**
-   * 실제 저장 실행 — 확인 다이얼로그(필요한 경우)를 지난 뒤에만 호출된다.
-   *
-   * <b>순서: 동작 설정(6키) 먼저, 자격증명(`ai.credential`) 다음.</b> 반대로 하면 opencode
-   * 공급자·모델을 <b>같은 저장에서 함께 바꾸는</b> 흔한 경로가 막힌다 — 자격증명 PUT 의 opencode
-   * 검증(`OpencodeCredentialValidation.checkProviderConsistency`, `AiCredentialController
-   * .validateOpencode` 137-148행)은 <b>지금 DB 에 저장된 `ai.model`</b>을 읽어 요청의 새
-   * `providerId` 와 비교한다. 자격증명을 먼저 저장하면 이 비교가 "새 providerId vs 아직 안 바뀐
-   * 옛 `ai.model`" 이 되어 정당한 공급자 전환 + 모델 재선택 조합이 400 으로 막힌다. 동작 설정을
-   * 먼저 저장하면 그 시점에 `ai.model` 이 이미 새 값으로 확정되므로 뒤이은 자격증명 검증이 항상
-   * 최신 상태와 비교한다. (반대 방향 — opencode→sdk 전환 — 은 순서와 무관하게 안전하다: 그
-   * 검사는 `agentType==='opencode'` 요청에만 걸린다, 같은 컨트롤러 70행.)
-   *
-   * <b>원자성은 없지만, 모델만은 보상한다(#720).</b> 두 자원이 별도 엔드포인트인 이상 트랜잭션은
-   * 없다(Ruling #10 이 설정 저장 전반의 트랜잭션 부재를 파킹했다). 동작 설정 저장이 실패해도
-   * 자격증명 저장은 계속 시도한다(독립 자원). 다만 <b>`ai.model` 은 독립이 아니다</b> — 모델 형식이
-   * 자격증명 유형·공급자에 묶여 있어(opencode 는 `공급자/모델`, Claude 유형은 Claude 모델 id),
-   * 모델만 저장되고 자격증명이 거부되면 "새 유형 형식의 모델 + 옛 유형 자격증명"이 남아 AI 채팅이
-   * 즉시 깨진다. 자격증명 PUT 은 서버가 프로브를 다시 돌려 흔히 거부되므로(잘못된 키·타임아웃·
-   * 미해석 호스트) 이 경로는 드물지 않다. 그래서 이번 저장에서 `ai.model` 을 썼고 자격증명 저장이
-   * 거부되면 <b>`ai.model` 만</b> 저장 전 값으로 되돌리는 보상 PUT 을 보낸다(`rollbackModel`).
-   * 나머지 5키는 자격증명과 무관한 독립 편집이라 그대로 둔다. 폼에는 사용자가 고른 모델이 남고
-   * `original` 만 이전 값으로 돌아가므로, 자격증명을 고친 뒤 그대로 다시 저장할 수 있다.
-   *
-   * 보상의 한계: 키 단위 삭제 통로가 없어, 저장한 적 없던(`overridden:false`) 모델도 보상 뒤에는
-   * "기본값과 같은 값이 저장된" 상태가 된다(동작은 같다). 보상 PUT 자체가 실패하면 되돌릴 방법이
-   * 없으므로 지속 배너(`modelRollbackNotice`)로 어긋난 상태를 알린다.
-   *
-   * <b>토스트 두 번은 의도적이다</b> — 두 자원은 독립적이고 사용자는 둘의 결과를 각각 알아야
-   * 한다. `cred.save()` 는 훅 내부에서 스스로 성공/실패 토스트를 띄우고, 쓰기 성공 여부를
-   * boolean 으로도 돌려준다(Ruling #42) — 이 함수는 그 값으로 `verifyAuth()` 호출과 모델 보상을
-   * 가른다. 단 모델을 자격증명과 함께 저장하는 경우에는 "설정이 저장되었습니다" 를 자격증명 결과가
-   * 나올 때까지 미룬다 — 곧 되돌릴 수도 있는 저장을 성공이라고 먼저 알리면 거부 토스트와 모순된다.
-   */
   /** 동작 설정 저장 뒤 메타(기본값 힌트)를 다시 읽는다 — 실패하면 낡음 안내를 세운다. */
   const refreshBehaviorMeta = useCallback(() => {
     refreshMeta().catch(() => {
@@ -419,100 +377,107 @@ function AdminSettingsPage() {
   }, [refreshMeta]);
 
   /**
-   * 자격증명 저장이 거부됐을 때 방금 저장한 `ai.model` 을 저장 전 값으로 되돌린다(#720, 보상 PUT).
-   * 성공하면 `original` 의 모델만 이전 값으로 돌려 폼의 새 모델이 다시 "미저장 변경"이 되게 한다.
-   * 실패하면(또는 되돌릴 이전 값이 비어 있으면) 서버에는 어긋난 모델이 남으므로 지속 배너를 세운다.
+   * 자격증명 쓰기가 성공한 뒤의 인증 배지 처리. Claude 계열이면 새 자격증명으로 인증 확인을 다시 돌리고,
+   * opencode 면 배지를 지운다 — opencode 로 저장하면 서버가 이전 유형의 비밀을 폐기하므로(유형이 바뀐 경우)
+   * 이전 유형의 "✓ 인증됨" 배지를 남겨 두면, 사용자가 Select 를 다시 sdk/cli/cli-api 로 로컬에서만 돌렸을 때
+   * 이미 사라진 자격증명 옆에 낡은 성공 배지가 붙는다. 실패한 쓰기 뒤에는 부르지 않는다(Ruling #42 — 낡은
+   * 자격증명을 검사해 사용자를 혼란스럽게 한다).
    */
-  const rollbackModel = useCallback(
-    async (previousModel: string, attemptedModel: string, otherKeysSaved: boolean) => {
-      try {
-        // 빈 값은 서버가 저장을 거부한다(조회 실패로 이전 값을 모르는 경우) — 보내지 않고 실패로 다룬다.
-        if (previousModel.trim() === '') throw new Error('이전 모델 값을 알 수 없다');
-        await settingsApi.update({ settings: { 'ai.model': previousModel } });
-        restoreOriginal('ai.model', previousModel);
-        toast.error(
-          '자격증명 저장이 거부되어 모델 변경도 저장하지 않았습니다. 자격증명을 고친 뒤 다시 저장하세요.',
-        );
-        if (otherKeysSaved) toast.success('모델을 제외한 설정이 저장되었습니다.');
-      } catch {
-        const message = `자격증명 저장이 거부됐는데 모델 변경을 되돌리지 못했습니다. 저장된 모델(${attemptedModel})이 현재 자격증명과 맞지 않아 AI 채팅이 실패할 수 있습니다 — 자격증명을 고쳐 다시 저장하거나, 모델을 다시 선택해 저장하세요.`;
-        setModelRollbackNotice(message);
-        toast.error(message);
-      }
-    },
-    [restoreOriginal],
-  );
+  const afterCredentialSaved = useCallback(() => {
+    if (cred.agentType !== 'opencode') {
+      verifyAuth();
+    } else {
+      setAuthStatus(null);
+    }
+  }, [cred.agentType, verifyAuth]);
 
+  /**
+   * 실제 저장 실행 — 확인 다이얼로그(필요한 경우)를 지난 뒤에만 호출된다.
+   *
+   * AI 탭은 두 서버 자원을 갖는다 — 동작 설정 6키(`PUT /settings`)와 채팅 자격증명(`PUT /settings/ai-credential`).
+   * 저장은 바뀐 것에 따라 세 갈래다(WD-778):
+   *
+   * 1. <b>자격증명(유형·payload·비밀)과 모델을 함께 바꿨다</b> → 자격증명 PUT <b>하나</b>에 `model` 을 실어 보낸다.
+   *    둘 다 저장되거나 둘 다 안 된다(이유는 서버 `SettingsService.saveChatCredential` 참고) — 그래서 이 경우에는
+   *    순서·되돌리기(#720 보상 PUT)가 없다. 묶음이 거부되면 나머지 동작 설정도 보내지 않고
+   *    멈춘다(거부 사유 토스트에 「다른 설정도 저장하지 않았습니다」를 덧붙여 알리고 폼 편집은 그대로 남는다). 묶음이 저장되면 모델을 뺀 나머지
+   *    동작 설정 키(있으면)를 `PUT /settings` 로 보낸다 — 자격증명과 무관한 독립 편집이다.
+   * 2. <b>모델 등 동작 설정만 바꿨다</b> → `PUT /settings` 만(서버가 저장된 자격증명 기준으로 모델을 검사한다).
+   * 3. <b>자격증명만 바꿨다</b> → 자격증명 PUT(모델 없이). 서버는 저장된 모델과 짝을 지어 검사한다 — 자격증명만
+   *    Claude 계열로 바꾸는데 저장된 모델이 `openai/gpt-4o` 같은 opencode 형식이면 400 으로 알린다.
+   *
+   * 동작 설정과 자격증명(모델 없는 경우)은 독립 자원이라 한쪽이 실패해도 다른 쪽은 계속 시도한다. 빈 칸으로
+   * 지운 동작 설정 키가 있으면 `PUT /settings` 는 보내지 않는다(서버가 빈 값을 거부한다). 다만 새로 고른
+   * 모델(빈 칸이 아님)은 그와 무관하게 자격증명과 함께 1번 갈래로 묶는다 — 묶지 않으면 자격증명이 3번 갈래로 가
+   * 서버가 새로 고른 모델이 아니라 <b>저장된</b> 모델과 짝을 지어 검사·저장한다.
+   *
+   * <b>토스트 두 번은 의도적이다</b> — `cred.save()` 는 훅 내부에서 스스로 성공/실패 토스트를 띄우고, 쓰기 성공
+   * 여부를 boolean 으로도 돌려준다(Ruling #42) — 이 함수는 그 값으로 `verifyAuth()` 호출을 가른다.
+   */
   const performSave = useCallback(async () => {
     setIsSaving(true);
     try {
-      // 이번 저장에서 `ai.model` 을 자격증명과 함께 썼는가 — 그렇다면 자격증명 결과가 나온 뒤에
-      // 성공 안내(또는 모델 보상)를 한다. null 이면 보상 대상이 아니다.
-      let pendingModel: { previous: string; attempted: string; otherKeysSaved: boolean } | null = null;
-      let behaviorSaved = false;
-
-      if (behaviorHasChanges) {
-        const { payload, droppedChangedKeys } = buildChangedPayload();
-        if (droppedChangedKeys.length > 0) {
-          const names = droppedChangedKeys.map((key) => AI_FIELD_LABELS[key]).join(', ');
-          toast.error(`${names}을(를) 비워 둔 채로는 저장할 수 없습니다.`);
-        } else {
-          try {
-            await settingsApi.update({ settings: payload });
-            commitSaved();
-            behaviorSaved = true;
-            if ('ai.model' in payload && cred.hasUnsavedInput) {
-              pendingModel = {
-                previous: original['ai.model'],
-                attempted: payload['ai.model'],
-                otherKeysSaved: Object.keys(payload).length > 1,
-              };
-            } else {
-              toast.success('설정이 저장되었습니다.');
-              refreshBehaviorMeta();
-            }
-          } catch (err) {
-            // 동작 설정 저장 실패 — 자격증명은 별도 자원이므로 아래에서 계속 시도한다(주석 참고).
-            // 서버가 알려준 거부 사유를 그대로 보여준다(#727).
-            toast.error(extractApiError(err, '설정 저장에 실패했습니다.'));
-          }
-        }
+      // 바뀐(빈 칸이 아닌) 동작 설정 키 — 빈 칸으로 지운 키는 buildChangedPayload 가 이미 뺐다.
+      const { payload: changedPayload, droppedChangedKeys } = behaviorHasChanges
+        ? buildChangedPayload()
+        : { payload: {} as Record<string, string>, droppedChangedKeys: [] as (keyof AIBehaviorForm)[] };
+      const hasDroppedKeys = droppedChangedKeys.length > 0;
+      if (hasDroppedKeys) {
+        const names = droppedChangedKeys.map((key) => AI_FIELD_LABELS[key]).join(', ');
+        toast.error(`${names}을(를) 비워 둔 채로는 저장할 수 없습니다.`);
       }
 
-      let credSaved: boolean | null = null;
-      if (cred.hasUnsavedInput) {
-        // `cred.save()` 가 쓰기(PUT) 성공 여부를 boolean 으로 돌려준다(Ruling #42, fix
-        // round 1) — 실패한 쓰기 뒤에 `verifyAuth()` 를 돌리면 여전히 낡은(그러나 여전히 유효할
-        // 수 있는) 자격증명을 검사해 사용자를 혼란스럽게 한다. 성공했을 때만 부른다.
-        const saved = await cred.save();
-        credSaved = saved;
-        if (pendingModel) {
-          if (saved) {
-            toast.success('설정이 저장되었습니다.');
-          } else {
-            // 자격증명이 거부됐다 — 모델만 새 형식으로 남지 않게 저장 전 값으로 되돌린다(#720).
-            await rollbackModel(pendingModel.previous, pendingModel.attempted, pendingModel.otherKeysSaved);
-          }
-          // 보상까지 끝난 최종 상태의 메타를 읽는다(먼저 읽으면 되돌리기 전 값을 본다).
+      // 1번 갈래(WD-778) — 자격증명과 모델을 함께 바꿨으면 모델을 동작 설정에서 떼어 자격증명 PUT 에 싣는다.
+      // 빈 칸으로 지운 다른 키가 있어도 모델은 묶는다(위 javadoc) — 그 키들만 빠지고 나머지 동작 설정은 보내지 않는다.
+      const { 'ai.model': bundledModel, ...otherKeys }: Record<string, string> = changedPayload;
+      // 보낼 동작 설정 — null 이면 보내지 않는다(변경 없음 또는 빈 칸으로 지운 키가 있음).
+      let behaviorPayload: Record<string, string> | null =
+        behaviorHasChanges && !hasDroppedKeys ? changedPayload : null;
+      const bundled = cred.hasUnsavedInput && bundledModel !== undefined;
+      if (bundled) {
+        // 묶음이 거부되면 함께 보내려던 다른 동작 설정(온도 등)도 보내지 않는다 — 사용자가 그 사실을 알 수 있게
+        // 거부 토스트에 덧붙인다. 빈 칸 때문에 어차피 보내지 않는 경우는 위 토스트가 이미 알렸다.
+        const othersPending = !hasDroppedKeys && Object.keys(otherKeys).length > 0;
+        const saved = await cred.save({
+          model: bundledModel,
+          ...(othersPending && { failureNote: '다른 설정도 저장하지 않았습니다.' }),
+        });
+        if (!saved) {
+          // 서버가 자격증명·모델 어느 쪽도 저장하지 않았다(한 트랜잭션). 거부 사유는 훅이 이미 토스트로
+          // 알렸다 — 나머지 동작 설정도 보내지 않고 멈춘다. 폼 편집은 그대로 남아 고친 뒤 다시 저장할 수 있다.
+          return;
+        }
+        // 모델은 서버에 저장됐다 — 이 키의 저장 기준값(original)만 확정한다. 나머지 키는 아래 PUT 결과로 정한다.
+        commitSavedKey('ai.model', bundledModel);
+        afterCredentialSaved();
+        if (othersPending) {
+          behaviorPayload = otherKeys;
+        } else {
+          behaviorPayload = null;
+          // 빈 칸 때문에 나머지 동작 설정을 보내지 않았으면 「설정이 저장되었습니다」는 띄우지 않는다 — 위의 「비워 둔 채로는
+          // 저장할 수 없습니다」와 어긋난다. 자격증명·모델 저장 성공은 훅의 토스트가 이미 알렸다.
+          if (!hasDroppedKeys) toast.success('설정이 저장되었습니다.');
           refreshBehaviorMeta();
         }
-        if (!saved) {
-          // 쓰기 자체가 실패했다 — 훅이 이미 자체 토스트로 알렸다. 인증 확인도, opencode 배지
-          // 초기화도 여기서는 의미가 없다(둘 다 "쓰기가 성공했다"를 전제한다).
-        } else if (cred.agentType !== 'opencode') {
-          verifyAuth();
-        } else {
-          // opencode 로 저장하면 서버가 이전 유형의 비밀을 폐기한다(유형이 바뀐 경우) — 이전
-          // 유형의 "✓ 인증됨" 배지를 그대로 두면, 사용자가 Select 를 다시 sdk/cli/cli-api 로
-          // 로컬에서만 돌렸을 때 이미 사라진 자격증명 옆에 낡은 성공 배지가 붙는다.
-          setAuthStatus(null);
+      }
+
+      if (behaviorPayload) {
+        try {
+          await settingsApi.update({ settings: behaviorPayload });
+          commitSaved();
+          toast.success('설정이 저장되었습니다.');
+          refreshBehaviorMeta();
+        } catch (err) {
+          // 동작 설정 저장 실패 — 자격증명만 바꾼 경우(3번 갈래)는 별도 자원이라 아래에서 계속 시도한다.
+          // 서버가 알려준 거부 사유를 그대로 보여준다(#727).
+          toast.error(extractApiError(err, '설정 저장에 실패했습니다.'));
         }
       }
 
-      // 어긋남 안내는 두 자원 중 하나라도 새로 저장돼 상태가 바뀌었고, 이번에 실패한 쓰기가 없을
-      // 때 지운다(방금 `rollbackModel` 이 세운 안내는 credSaved=false 라 여기서 지워지지 않는다).
-      if ((behaviorSaved || credSaved === true) && credSaved !== false) {
-        setModelRollbackNotice(null);
+      // 3번 갈래 — 자격증명만(모델 없이). 실패하면 훅이 자체 토스트로 알렸다.
+      if (!bundled && cred.hasUnsavedInput) {
+        const saved = await cred.save();
+        if (saved) afterCredentialSaved();
       }
     } finally {
       setIsSaving(false);
@@ -521,11 +486,10 @@ function AdminSettingsPage() {
     behaviorHasChanges,
     buildChangedPayload,
     commitSaved,
-    original,
+    commitSavedKey,
     refreshBehaviorMeta,
-    rollbackModel,
+    afterCredentialSaved,
     cred,
-    verifyAuth,
   ]);
 
   /**
@@ -690,7 +654,6 @@ function AdminSettingsPage() {
                   뭉뚱그리면 동작 설정 저장 실패가 자격증명 문제로 잘못 읽힌다(그 반대도 마찬가지). */}
               {behaviorStaleNotice && <InlineBanner variant="warning">{behaviorStaleNotice}</InlineBanner>}
               {cred.staleNotice && <InlineBanner variant="warning">{cred.staleNotice}</InlineBanner>}
-              {modelRollbackNotice && <InlineBanner variant="warning">{modelRollbackNotice}</InlineBanner>}
 
               <AiCredentialFieldset
                 cred={cred}

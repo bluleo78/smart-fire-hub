@@ -4,6 +4,7 @@ import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantScopedRunner;
 import com.smartfirehub.global.util.DstAwareCron;
 import com.smartfirehub.proactive.dto.ProactiveJobResponse;
+import com.smartfirehub.proactive.exception.ProactiveJobAlreadyRunningException;
 import com.smartfirehub.proactive.repository.ProactiveJobRepository;
 import com.smartfirehub.proactive.util.ProactiveCron;
 import com.smartfirehub.tenant.repository.TenantRepository;
@@ -216,11 +217,45 @@ public class ProactiveJobSchedulerService {
     }
     try {
       // system execution — userId를 job owner로 단일 조회
-      proactiveJobRepository
-          .findById(jobId)
-          .ifPresent(job -> proactiveJobService.executeJob(jobId, job.userId()));
+      proactiveJobRepository.findById(jobId).ifPresent(job -> startScheduledRun(jobId, job));
     } catch (Exception e) {
       log.error("Scheduled proactive job {} execution failed", jobId, e);
+    }
+  }
+
+  /**
+   * 예약 실행 한 회차(WD-778). 「다음 실행」 시각을 먼저 다음 회차로 옮긴 뒤 {@link ProactiveJobService#startRun} 으로 시작한다.
+   *
+   * <p>시각은 결과와 상관없이 옮긴다 — 이번 회차로 저장된 값이 소진됐는데, 건너뜀(이미 실행 중)·제출 거절은 러너를 거치지 않아 실행 뒤 기록이 돌지 않는다. 계산식은
+   * {@link #registerSchedule} 과 같다. 이미 돌고 있으면(앞 회차·수동 실행) 그 회차는 건너뛰고 log.info 한 줄로 끝낸다 — 예정된 건너뜀이라
+   * 스택을 남기지 않는다. 제출 거절 등 그 밖의 예외는 바깥 catch 가 로그로 남기고, 크론은 그대로라 다음 주기에 다시 돈다.
+   */
+  private void startScheduledRun(Long jobId, ProactiveJobResponse job) {
+    advanceNextExecuteAt(jobId, job);
+    try {
+      proactiveJobService.startRun(jobId, job.userId(), null);
+    } catch (ProactiveJobAlreadyRunningException e) {
+      log.info("Scheduled proactive job {} skipped: previous run still in progress", jobId);
+    }
+  }
+
+  /**
+   * 「다음 실행」 시각을 다음 회차로 옮긴다(WD-778). 부가 정보라 실패해도 경고만 남기고 실행은 그대로 시작한다.
+   *
+   * <p>러너의 {@code recordAttempt} 와 같은 가드 — 활성이고 값이 이미 있는(스케줄러에 등록된) 잡만 옮긴다. 발화와 거의 같은 순간에 비활성화·스케줄
+   * 해제({@link #unregisterSchedule} 이 값을 비움)가 끝났다면 방금 읽은 행이 그 상태를 보여 주므로, 오지 않을 다음 실행 시각을 비활성 잡에 다시
+   * 써넣지 않는다.
+   */
+  private void advanceNextExecuteAt(Long jobId, ProactiveJobResponse job) {
+    if (!Boolean.TRUE.equals(job.enabled()) || job.nextExecuteAt() == null) {
+      return;
+    }
+    try {
+      proactiveJobRepository.updateNextExecuteAt(
+          jobId,
+          ProactiveCron.nextExecuteAtUtc(job.cronExpression(), job.timezone(), clock.instant()));
+    } catch (Exception e) {
+      log.warn("Proactive job {} 다음 실행 시각 갱신 실패: {}", jobId, e.getMessage(), e);
     }
   }
 

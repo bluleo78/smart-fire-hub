@@ -4,8 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.jooq.impl.DSL.field;
 import static org.jooq.impl.DSL.name;
 import static org.jooq.impl.DSL.table;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -170,12 +172,12 @@ class ProactiveJobOwnershipTest extends IntegrationTestBase {
     // 남의 작업 · 없는 작업 → 조회와 같은 404
     assertThat(execute(jobId, otherToken)).isEqualTo(404);
     assertThat(execute(99_999_999L, otherToken)).isEqualTo(404);
-    verify(asyncRunner, never()).executeJob(anyLong(), anyLong());
+    verify(asyncRunner, never()).executeJob(anyLong(), anyLong(), any());
     assertThat(executionRows()).isZero();
 
     // 양성 대조: 주인은 곧바로 실행된다 — 남의 시도가 실행 슬롯을 잡아 409 로 막지 않았다는 뜻이기도 하다
     assertThat(execute(jobId, ownerToken)).isEqualTo(202);
-    verify(asyncRunner, times(1)).executeJob(eq(jobId), eq(owner));
+    verify(asyncRunner, times(1)).executeJob(eq(jobId), eq(owner), isNull());
   }
 
   private int send(MockHttpServletRequestBuilder req, String token, String body) throws Exception {
@@ -359,7 +361,7 @@ class ProactiveJobOwnershipTest extends IntegrationTestBase {
     assertThat(send(put(url), ownerToken, "{\"name\":\"고침\"}")).isEqualTo(403);
     assertThat(send(put(url), ownerToken, "{\"enabled\":true}")).isEqualTo(403);
     assertThat(execute(activeJob, ownerToken)).isEqualTo(403);
-    verify(asyncRunner, never()).executeJob(anyLong(), anyLong());
+    verify(asyncRunner, never()).executeJob(anyLong(), anyLong(), any());
 
     // 끄기는 읽기 권한만으로 된다 — 예약 실행도 함께 해제된다
     assertThat(send(post(url + "/disable"), ownerToken, null)).isEqualTo(204);
@@ -461,7 +463,7 @@ class ProactiveJobOwnershipTest extends IntegrationTestBase {
     assertThat(send(put(ownerUrl), adminToken, "{\"enabled\":true}")).isEqualTo(404);
     assertThat(execute(activeJob, adminToken)).isEqualTo(404);
     assertThat(send(post(ownerUrl + "/disable"), adminToken, null)).isEqualTo(404);
-    verify(asyncRunner, never()).executeJob(anyLong(), anyLong());
+    verify(asyncRunner, never()).executeJob(anyLong(), anyLong(), any());
     assertThat(jobEnabled(DEFAULT_TEST_TENANT_ID, activeJob)).isTrue();
 
     // 관리자 끄기 — 감사 로그가 남고 예약 실행이 해제된다

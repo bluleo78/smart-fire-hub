@@ -48,11 +48,23 @@ public class SettingsService {
    */
   public static final int SYSTEM_PROMPT_MAX_LENGTH = 20_000;
 
+  /**
+   * 빈 {@code ai.model} 거부 문구(#727). 채팅 자격증명 PUT 이 모델을 함께 받을 때(WD-778) opencode 검증보다 먼저 같은 문구로 끊으려고
+   * 공개한다 — 두 통로가 같은 거부에 다른 말을 쓰지 않게.
+   */
+  public static final String MSG_MODEL_BLANK = "모델은 비어있을 수 없습니다";
+
   private final SettingsRepository settingsRepository;
   private final EncryptionService encryptionService;
   private final TenantSettingsRepository tenantSettingsRepository;
   // AI 설정·SMTP 설정 변경 감사(WD-465) — 저장과 같은 트랜잭션에서 남긴다.
   private final SettingsAuditRecorder auditRecorder;
+
+  /**
+   * {@code ai.model} 을 채팅 자격증명과 짝으로 검사·저장하는 데 쓴다(WD-778). 반대 방향(AiCredentialService →
+   * SettingsService)을 주입하면 순환 의존이 되므로 그쪽에 SettingsService 를 넣지 말 것.
+   */
+  private final AiCredentialService aiCredentialService;
 
   /** 프리픽스에 속한 플랫폼 행 중 플랫폼 평면이 있는 키만. 테넌트 네임스페이스({@code "ai"}·{@code "smtp"})면 조회 자체를 생략한다. */
   private List<SettingResponse> platformRows(String prefix) {
@@ -348,12 +360,16 @@ public class SettingsService {
     validateSmtpHost(payload);
     validateSmtpFromAddress(payload);
     validateSmtpStarttls(payload);
+    validateModelAgainstCredential(payload);
     Map<String, String> toWrite = encryptSecrets(payload);
 
     // 감사용 변경 판정(WD-465)은 쓰기 전에 저장된 값과 비교해 모은다. 마스크 센티널은 이미
     // 떨어졌으므로 "안 고친 비밀번호"가 변경으로 잡히지 않는다. 키 순서는 감사 문구가 요청마다
     // 흔들리지 않게 정렬한다.
-    boolean smtpExisted = SettingsOverridePolicy.smtpKeys().stream().anyMatch(this::hasTenantValue);
+    // SMTP 키가 없는 저장(예: ai.model 만)은 smtpChanged 가 비어 감사가 생략되므로 「첫 등록」 판정 조회도 하지 않는다.
+    boolean smtpExisted =
+        payload.keySet().stream().anyMatch(key -> key.startsWith("smtp."))
+            && SettingsOverridePolicy.smtpKeys().stream().anyMatch(this::hasTenantValue);
     List<String> aiChanged = new ArrayList<>();
     List<String> smtpChanged = new ArrayList<>();
     payload.keySet().stream()
@@ -384,6 +400,52 @@ public class SettingsService {
     // 한 요청에 AI·SMTP 키가 섞여 오면 묶음별로 한 행씩 남긴다(바뀐 것이 없는 묶음은 기록하지 않는다).
     auditRecorder.aiSettingsUpdated(userId, aiChanged);
     auditRecorder.smtpSaved(userId, !smtpExisted, smtpChanged);
+  }
+
+  /**
+   * 채팅 자격증명을 저장한다 — {@code model} 이 실리면 {@code ai.model} 과 <b>한 트랜잭션으로</b> 함께 저장한다(WD-778, 채팅 자격증명
+   * PUT 의 유일한 저장 진입점).
+   *
+   * <p><b>왜 한 요청·한 트랜잭션인가.</b> 유형·공급자와 모델을 함께 바꾸는 저장을 두 요청({@code PUT /settings} → 자격증명 PUT, 또는
+   * 반대)으로 나누면 어느 순서든 중간 상태(새 자격증명 × 옛 모델, 또는 옛 자격증명 × 새 모델)가 검사돼 정당한 저장이 막히거나(묵은 {@code 공급자/모델} 이
+   * 남은 sdk → opencode 전환), 검사를 건너뛰었다(Claude 계열 → opencode 에서 새 모델의 공급자 일치·목록 확인 누락). 그래서 <b>바뀐 뒤의
+   * 짝</b>(새 유형 × 실효 모델, {@link #effectiveChatModel})으로 한 번 검사하고 둘을 함께 쓴다 — 분류 묶음 저장({@link
+   * AiCredentialService#saveClassify})과 같은 모양이다. 자격증명만 Claude 계열로 바꾸는데 저장된 모델이 {@code
+   * openai/gpt-4o} 처럼 opencode 형식이면 400 이다 — 그대로 저장되면 이후 모든 채팅이 실패한다(WD-766 상태).
+   *
+   * <p>순서: 자격증명 병합·검증·저장 → 저장된 짝 검사 한 번({@code model} 이 있으면 {@link #updateSettings} — {@code PUT
+   * /settings} 와 같은 값 검증·<b>엄격한</b> 짝 검사·감사 — opencode 도 형식·공급자 일치를 본다, 없으면 저장된 모델을 새 자격증명과 대조하되
+   * opencode 는 순환 잠금 완화로 건너뛴다 — {@link AiCredentialService#storedChatModelProblemKeepingModel}). 짝
+   * 검사가 던지면 트랜잭션이 앞의 쓰기(자격증명 행·감사 행)를 함께 되돌린다 — 둘 다 저장되거나 둘 다 저장되지 않는다. opencode 의 목록 소속 확인은 네트워크
+   * 프로브라 호출부(컨트롤러의 {@code OpencodePutValidator})가 같은 실효 모델로 먼저 끝낸다.
+   *
+   * @param credential 저장할 자격증명(생략 secret=유지 등 병합 규칙은 {@link AiCredentialService#save} 그대로)
+   * @param model 함께 저장할 {@code ai.model}. null 이면 자격증명만 저장한다
+   * @param userId 행위자(감사용)
+   */
+  @Transactional
+  public void saveChatCredential(
+      AiCredentialService.AiCredentialUpsert credential, String model, Long userId) {
+    aiCredentialService.save(credential, userId);
+    if (model != null) {
+      updateSettings(Map.of("ai.model", model), userId);
+    } else {
+      // 모델을 고르지 않은 저장 — 저장된(미설정이면 기본) 모델과 대조하되 opencode 는 완화 규칙을 쓴다.
+      rejectIfPresent(
+          aiCredentialService.storedChatModelProblemKeepingModel(effectiveChatModel(null)));
+    }
+  }
+
+  /**
+   * 채팅 자격증명과 짝을 지을 실효 모델(WD-778) — 요청에 실린 {@code model}, 없으면 저장된 {@code ai.model}, 그것도 없으면 코드
+   * 기본값({@code AiBehaviorDefaults}, 예 {@code claude-sonnet-5}). 기본값이 없는 경우에만 null.
+   *
+   * <p><b>미설정 모델을 기본값으로 메우는 것은 의도다.</b> 채팅({@code AiChatRequestBuilder} 의 {@code getAsMap("ai")})도
+   * 미설정 이면 같은 기본값으로 실행하므로, 짝 검사는 실제로 실행될 모델로 해야 한다 — 예를 들어 Claude 계열 기본값은 opencode 자격증명과 짝이 맞지 않는다.
+   * (그 경우 모델 생략 저장은 순환 잠금 완화로 통과하고, 실행 직전 검사가 「모델을 다시 선택하세요」로 알린다.)
+   */
+  public String effectiveChatModel(String requestModel) {
+    return requestModel != null ? requestModel : getValue("ai.model").orElse(null);
   }
 
   /** 이 키에 현재 테넌트 저장 행이 있는가(감사용 — SMTP 첫 등록 판정). */
@@ -790,6 +852,25 @@ public class SettingsService {
     }
   }
 
+  /**
+   * {@code ai.model} 이 실리면 저장된 채팅 자격증명 유형으로 채팅 경로와 같은 검사({@code AiCredential.modelProblem})를 해, 맞지
+   * 않으면 그 문구 그대로 400(IllegalArgumentException)으로 거부한다(WD-778). 예: sdk 자격증명에 {@code
+   * anthropic/claude-sonnet-4}.
+   *
+   * <p>opencode 자격증명도 검사한다(형식 {@code 공급자/모델}·접두가 저장된 공급자와 같음) — 모델을 명시적으로 고르는 저장이라 순환 잠금 완화가 필요 없다.
+   * 자격증명이 없으면 검사하지 않는다 — 이유는 {@link AiCredentialService#storedChatModelProblem} 참고. 빈 값은 이미 {@link
+   * #validateValues} 가 거부했다. {@link #saveChatCredential} 은 자격증명을 같은 트랜잭션에 먼저 쓴 뒤 이 검사를 지나므로 바뀐 뒤의
+   * 짝으로 검사된다.
+   */
+  private void validateModelAgainstCredential(Map<String, String> settings) {
+    rejectIfPresent(aiCredentialService.storedChatModelProblem(settings.get("ai.model")));
+  }
+
+  /** 검사 문구가 있으면 그대로 400(IllegalArgumentException)으로 거부한다. */
+  private static void rejectIfPresent(Optional<String> problem) {
+    if (problem.isPresent()) throw new IllegalArgumentException(problem.get());
+  }
+
   private void validateValues(Map<String, String> settings) {
     settings.forEach(
         (key, value) -> {
@@ -845,7 +926,7 @@ public class SettingsService {
               // (빈 칸은 페이로드에서 빼고 저장을 막는다), 빈 모델이 저장되면 채팅 요청이 모델 없이
               // 나간다. API 직접 호출로만 도달하던 구멍이다(#727).
               if (value == null || value.isBlank())
-                throw new IllegalArgumentException("모델은 비어있을 수 없습니다");
+                throw new IllegalArgumentException(MSG_MODEL_BLANK);
             }
             default -> {
               /* 값 검증이 없는 키(SMTP 문자열 키 등) */

@@ -645,11 +645,16 @@ describe('경계 단계 (WD-755)', () => {
     expect(contrast(card, stop), `${theme} 지점=${hex(stop)} 카드=${hex(card)}`).toBeGreaterThanOrEqual(1.04);
   });
 
-  // divide-y 를 못 쓰는 행(표 tr·가상 목록 등)의 아래 선은 row-divider 유틸리티 하나로 쓴다.
+  // divide-y 를 못 쓰는 행(표 tr·가상 목록 등)의 아래 선은 row-divider 클래스(@layer components) 하나로 쓴다.
   // divide-y 와 같은 뜻으로 마지막 행에는 그리지 않는다 — 호출부가 last:border-b-0 을 따로 붙이지 않게.
-  it('row-divider 유틸리티가 마지막 행을 뺀 행 아래 선을 divider 색으로 그린다', () => {
+  // WD-778: 화면이 한 클래스(border-b-0·border-b-2·border-primary 등)로 덮어쓸 수 있어야 한다 —
+  // components 레이어(유틸리티 레이어가 특이도와 상관없이 이긴다) + :where() 로 특이도 0,1,0 인지 모양으로 지킨다.
+  // 실제로 덮어쓰기가 이기는지는 e2e boundary-tokens.spec.ts 가 렌더된 결과로 확인한다.
+  it('row-divider 컴포넌트 클래스가 마지막 행을 뺀 행 아래 선을 divider 색으로 그린다', () => {
     expect(css).toMatch(
-      /@utility row-divider \{\s*&:not\(:last-child\) \{\s*border-bottom-width: 1px;\s*border-bottom-color: var\(--divider\);\s*\}\s*\}/
+      /@layer components \{\s*\.row-divider:where\(:not\(:last-child\)\) \{\s*border-bottom-width: 1px;\s*border-bottom-color: var\(--divider\);\s*\}\s*\}/
     );
+    // @utility 로 두면 Tailwind 가 같은 특이도의 border-b-0 보다 뒤에 찍어 덮어쓰기가 진다
+    expect(css).not.toMatch(/@utility row-divider\b/);
   });
 });

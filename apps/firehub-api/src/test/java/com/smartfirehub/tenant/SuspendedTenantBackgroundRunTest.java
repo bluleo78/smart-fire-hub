@@ -7,6 +7,7 @@ import static org.jooq.impl.DSL.table;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -272,7 +273,7 @@ class SuspendedTenantBackgroundRunTest extends IntegrationTestBase {
     runWithoutTenantContext(lastRegisteredCallback(proactiveSchedulerMock));
     Thread.sleep(500); // 제출됐다면 비동기 실행이 실행 행을 만들 틈
 
-    verify(proactiveJobService, never()).executeJob(anyLong(), anyLong());
+    verify(proactiveJobService, never()).startRun(anyLong(), anyLong(), any());
     assertThat(proactiveExecutionCount()).as("정지 중 예약 실행은 실행 이력을 쌓지 않는다").isZero();
     verify(proactiveAiClient, never())
         .execute(any(), any(), any(), any(), any(), any(), any(), any());
@@ -348,7 +349,7 @@ class SuspendedTenantBackgroundRunTest extends IntegrationTestBase {
         .andExpect(jsonPath("$.executionId").isNumber());
 
     assertThat(firedEventCount()).as("예약 콜백 1 + 외부 API 1").isEqualTo(2);
-    verify(proactiveJobService, times(1)).executeJob(eq(jobId), eq(creator));
+    verify(proactiveJobService, times(1)).startRun(eq(jobId), eq(creator), isNull());
     verify(creatorSkipNotifier, never()).notifyIfFirstSkip(any(), anyLong(), any(), any());
   }
 
@@ -359,7 +360,7 @@ class SuspendedTenantBackgroundRunTest extends IntegrationTestBase {
     runWithoutTenantContext(lastRegisteredCallback(proactiveSchedulerMock));
 
     assertThat(firedEventCount()).isEqualTo(1);
-    verify(proactiveJobService, times(1)).executeJob(eq(jobId), eq(creator));
+    verify(proactiveJobService, times(1)).startRun(eq(jobId), eq(creator), isNull());
   }
 
   // ── 헬퍼 ──────────────────────────────────────────────────────────────

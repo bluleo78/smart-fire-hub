@@ -642,9 +642,9 @@ public class ProactiveJobService {
   }
 
   /**
-   * 동시 실행 방지 슬롯을 획득한다. @Async 메서드 호출 전에 반드시 이 메서드를 먼저 호출해야 한다. 이미 실행 중인 경우
-   * ProactiveJobAlreadyRunningException(→ 409 Conflict)을 던진다. 이 메서드는 동기(non-@Async)로 호출되어 예외가 HTTP
-   * 호출자에게 정상 전파된다.
+   * 동시 실행 방지 슬롯을 획득한다. 이미 실행 중인 경우 ProactiveJobAlreadyRunningException(→ 409 Conflict)을 던진다.
+   *
+   * <p>실행을 시작하는 경로는 이 메서드 대신 {@link #startRun} 을 쓴다(WD-778). 공개로 남긴 것은 시험이 「지금 잡혀 있는가」를 확인하기 위해서다.
    */
   public void tryAcquireRunSlot(Long jobId) {
     AtomicBoolean running = runningJobs.computeIfAbsent(jobId, k -> new AtomicBoolean(false));
@@ -654,8 +654,8 @@ public class ProactiveJobService {
   }
 
   /**
-   * 동시 실행 방지 슬롯을 강제 해제한다. executeJob 비동기 제출이 실패(RejectedExecutionException 등)한 경우 컨트롤러에서 호출하여 슬롯이
-   * 영구 점유되는 것을 방지한다.
+   * 동시 실행 방지 슬롯을 강제 해제한다. {@link #startRun} 이 비동기 제출 실패(TaskRejectedException 등) 때 불러 슬롯이 영구 점유되지
+   * 않게 한다. 정상 실행의 해제는 러너({@link ProactiveJobAsyncRunner}) 의 {@code finally} 가 맡는다.
    */
   public void releaseRunSlot(Long jobId) {
     AtomicBoolean running = runningJobs.get(jobId);
@@ -665,16 +665,32 @@ public class ProactiveJobService {
   }
 
   /**
-   * Proactive Job을 비동기로 실행한다.
+   * 스마트 작업 한 번을 시작한다 — 실행 슬롯 획득 → 비동기 제출 → 제출이 실패하면 슬롯 해제(WD-778).
    *
-   * <p>실제 실행 로직은 {@link ProactiveJobAsyncRunner#executeJob}에 위임한다. Spring AOP @Async 프록시를 우회하는
-   * self-call 문제를 방지하기 위해 별도 빈(asyncRunner)을 통해 호출한다 (이슈 #192).
+   * <p><b>왜 한 메서드인가</b>: 지금 실행(컨트롤러)·예약 실행(스케줄러)·이상 감지 세 경로가 각자 획득·해제를 하던 때, 예약 실행은 슬롯을 아예 잡지 않아 같은
+   * 작업이 자기 자신·수동 실행과 겹쳐 돌았고, 러너의 {@code finally} 해제가 남(수동 실행)의 슬롯을 풀었다. 이상 감지는 제출이 거절되면(큐 가득) 로그만
+   * 남기고 슬롯을 쥔 채라 재시작 전까지 그 작업이 「이미 실행 중」(409)으로 막혔다. 모든 경로가 여기서 슬롯을 잡은 뒤 제출하므로 러너 {@code finally} 의
+   * 해제는 늘 자기 슬롯이다.
    *
-   * @param jobId 실행할 Proactive Job ID
-   * @param userId 실행 요청 사용자 ID
+   * <p>실행 자체는 {@link ProactiveJobAsyncRunner} 에 위임한다 — Spring AOP {@code @Async} 프록시를 거치도록 별도 빈을
+   * 부른다 (self-call 우회 방지, 이슈 #192). 이 메서드는 동기라 아래 예외가 호출부에 그대로 전파된다.
+   *
+   * @param jobId 실행할 작업 ID
+   * @param userId 실행 사용자(예약·이상 감지는 작업 주인)
+   * @param anomaly 이상 감지로 시작된 실행이면 그 이벤트(리포트 컨텍스트에 싣는다, WD-171), 아니면 {@code null}
+   * @throws ProactiveJobAlreadyRunningException 이미 실행 중 — 컨트롤러는 409 로 알리고, 예약·이상 감지는 그 회차를 건너뛴다
+   * @throws RuntimeException 비동기 제출 실패(TaskRejectedException 등) — 이때 슬롯은 이미 놓았다
    */
-  public void executeJob(Long jobId, Long userId) {
-    asyncRunner.executeJob(jobId, userId);
+  public void startRun(Long jobId, Long userId, AnomalyEvent anomaly) {
+    tryAcquireRunSlot(jobId);
+    try {
+      // 이상 없는 실행은 anomaly 가 null 인 채로 같은 진입점을 지난다 — 러너가 null 이면 이상 컨텍스트를 싣지 않는다
+      asyncRunner.executeJob(jobId, userId, anomaly);
+    } catch (RuntimeException e) {
+      // 제출이 안 됐으면 러너의 finally 도 돌지 않는다 — 여기서 놓지 않으면 슬롯이 영구 점유된다
+      releaseRunSlot(jobId);
+      throw e;
+    }
   }
 
   /**
@@ -791,21 +807,22 @@ public class ProactiveJobService {
           e.getMessage());
     }
 
-    // 중복 실행 슬롯 획득 후 비동기 실행 — 이미 실행 중이면 조용히 skip
-    // asyncRunner.executeJob()을 호출하여 Spring AOP 프록시를 통한 @Async 실행을 보장한다 (이슈 #192)
+    // 감지된 이상을 함께 넘겨 리포트가 무엇 때문에 왔는지 설명하게 한다(WD-171). 이미 실행 중이면 조용히 건너뛴다(WD-778).
     try {
-      tryAcquireRunSlot(event.jobId());
+      startRun(event.jobId(), event.userId(), event);
     } catch (ProactiveJobAlreadyRunningException e) {
       log.info("Anomaly-triggered execution skipped for job {} (already running)", event.jobId());
       return;
-    }
-    try {
-      // 감지된 이상을 함께 넘겨 리포트가 무엇 때문에 왔는지 설명하게 한다(WD-171)
-      asyncRunner.executeJob(event.jobId(), event.userId(), event);
-      recordCooldown(event.jobId());
     } catch (Exception e) {
-      log.warn("Anomaly-triggered execution failed for job {}: {}", event.jobId(), e.getMessage());
+      // 제출 거절(큐 가득) 등 — 슬롯은 startRun 이 이미 놓았다. 쿨다운은 남기지 않는다: 실행되지 않았으므로 다음 이상에서 다시 시도한다.
+      log.warn(
+          "Anomaly-triggered execution not submitted for job {}: {}",
+          event.jobId(),
+          e.getMessage());
+      return;
     }
+    // 쿨다운은 제출이 성공했을 때만 기록한다
+    recordCooldown(event.jobId());
   }
 
   private boolean isInCooldown(Long jobId) {

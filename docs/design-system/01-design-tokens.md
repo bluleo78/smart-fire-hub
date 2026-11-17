@@ -83,7 +83,7 @@ Smart Fire Hub의 색상 시스템은 CSS 커스텀 프로퍼티(CSS Custom Prop
 | Token | OKLch 값 | 근사 색상 | 용도 |
 |-------|----------|-----------|------|
 | `--border` | `oklch(0.88 0.006 264)` | 한색 회색 | 카드·패널·섹션 등 덩어리 외곽 테두리 (WD-755) |
-| `--divider` | `oklch(0.93 0.005 264)` | 연한 회색 | 목록·표 행 사이 구분선 — `divide-y`·`divide-x` 기본 색, 행 아래 선은 `row-divider` 유틸리티. 외곽 테두리보다 옅다 (WD-755) |
+| `--divider` | `oklch(0.93 0.005 264)` | 연한 회색 | 목록·표 행 사이 구분선 — `divide-y`·`divide-x` 기본 색, 행 아래 선은 `row-divider` 클래스(`@layer components`). 외곽 테두리보다 옅다 (WD-755, WD-778) |
 | `--input` | `oklch(0.64 0.005 264)` | 중간 회색 | 폼 컨트롤 경계 — 흰 표면 대비 3.37:1, 경계 단계 중 가장 진하다 (#376) |
 | `--ring` | `oklch(0.55 0.15 264)` | 인디고 | 키보드 Focus ring (배경 대비 4.76~4.98:1) |
 | `--radius` | `0.625rem` | — | 모서리 반경 기준값 |
@@ -479,8 +479,9 @@ orange 계열 주의/경고 색상. warning(amber)보다 강한 주의를 표현
 #### 행 구분선 — `divide-*` 기본 색과 `row-divider`
 
 - `divide-y`·`divide-x`는 색을 주지 않으면 `--divider`를 쓴다(`index.css` `@layer base`의 `:where(.divide-y > :not(:last-child))`·`:where(.divide-x > :not(:last-child))` 규칙). Tailwind v4의 `divide-y`는 자식의 아래 테두리(`border-bottom`), `divide-x`는 `border-inline-end`만 그리므로 규칙도 그 쪽 색만 바꾼다 — 자식이 스스로 그린 위·왼쪽 외곽선은 `border` 단계로 남는다. 선택자 전체가 `:where()`라 특이도가 0이고 base 레이어라, 화면이 `divide-border` 등 색 유틸리티를 주면 그쪽이 이긴다 — 행 사이가 아니라 덩어리 사이를 가르는 곳에서만 그렇게 쓴다. (`divide-y-reverse`를 쓰면 선이 위쪽으로 옮겨 가 이 기본 색이 적용되지 않는다 — 그때는 `divide-divider`를 직접 준다.)
-- 표 `tr`·가상 목록 행처럼 부모에 `divide-*`를 걸기 어려운 행의 아래 선은 `row-divider` 유틸리티(아래 1px 선 + `--divider` 색)를 쓴다. `border-b border-border/50` 으로 흉내 내지 않는다.
-- `row-divider`는 `divide-y`와 같은 뜻으로 **마지막 자식에는 선을 그리지 않는다**(`&:not(:last-child)`). 호출부에 `last:border-b-0`·`last:border-0`을 붙이지 않는다 — 특히 `last:border-0`은 행 왼쪽 표식(`border-l-*`)까지 지운다. 표에서는 `td`가 아니라 `tr`에 붙인다(`td`에 붙이면 마지막 열에서 선이 빠진다).
+- 표 `tr`·가상 목록 행처럼 부모에 `divide-*`를 걸기 어려운 행의 아래 선은 `row-divider` 클래스(아래 1px 선 + `--divider` 색, `@layer components` — 유틸리티가 아니다)를 쓴다. `border-b border-border/50` 으로 흉내 내지 않는다.
+- `row-divider`는 `divide-y`와 같은 뜻으로 **마지막 자식에는 선을 그리지 않는다**(`.row-divider:where(:not(:last-child))`). 호출부에 `last:border-b-0`·`last:border-0`을 붙이지 않는다 — 특히 `last:border-0`은 행 왼쪽 표식(`border-l-*`)까지 지운다. 표에서는 `td`가 아니라 `tr`에 붙인다(`td`에 붙이면 마지막 열에서 선이 빠진다).
+- `row-divider`는 `@layer components`의 `.row-divider:where(:not(:last-child))`(특이도 0,1,0)라 **어떤 유틸리티든 한 클래스로 덮어쓴다** — `border-b-0`(선 빼기)·`border-b-2 border-primary`(강조)·두 줄 머리의 `[&_tr]:border-border`가 이긴다. `@utility`로 두면 Tailwind 가 같은 특이도의 `border-b-0` 보다 뒤에 찍어 덮어쓰기가 지므로 컴포넌트 레이어에 둔다(WD-778). 대신 유틸리티가 아니라서 `hover:row-divider`·`md:row-divider` 같은 변형도, `@apply row-divider` 도 쓸 수 없다 — 필요하면 요소에 클래스를 직접 붙인다.
 
 ```tsx
 {/* ✅ 목록: 부모에 divide-y — 행 사이 선은 자동으로 --divider */}
@@ -716,4 +717,5 @@ Tailwind 클래스 외에 **인라인 스타일의 hex/rgb 하드코딩**이 잔
 | 날짜 | 버전 | 내용 |
 |------|------|------|
 | 2026-03-02 | v1.0 | 최초 작성 — Color, Border Radius, Z-Index, Shadow 토큰 현황 감사 및 권장 방향 정의 |
-| 2026-11-16 | v1.1 | 영역 경계 단계(WD-755, §1-7): 배경 3단(background .975 < card < muted .958)·테두리 3단(divider < border .88 < input), 행 구분선 토큰 `--divider` 신설(`divide-*` 기본 색·`row-divider` 유틸), 다크 card 4.5%(ocean·sunset 포함)·muted 6.5%·border 16%·divider 9%. `--input`은 #376 값 유지(표의 옛 0.92·12% 를 현행 값으로 바로잡음). 구조 경계 알파 금지 규칙과 `boundary-alpha-gate.test.ts` 추가. hover 면 `--accent`를 머리 띠보다 한 단계 위로(라이트 0.955 → 0.93, 다크 7% → 9%)·다크 `--muted-foreground` 0.7, `row-divider`가 마지막 행을 스스로 뺀다 |
+| 2026-11-16 | v1.1 | 영역 경계 단계(WD-755, §1-7): 배경 3단(background .975 < card < muted .958)·테두리 3단(divider < border .88 < input), 행 구분선 토큰 `--divider` 신설(`divide-*` 기본 색·`row-divider` — v1.2 부터 컴포넌트 클래스), 다크 card 4.5%(ocean·sunset 포함)·muted 6.5%·border 16%·divider 9%. `--input`은 #376 값 유지(표의 옛 0.92·12% 를 현행 값으로 바로잡음). 구조 경계 알파 금지 규칙과 `boundary-alpha-gate.test.ts` 추가. hover 면 `--accent`를 머리 띠보다 한 단계 위로(라이트 0.955 → 0.93, 다크 7% → 9%)·다크 `--muted-foreground` 0.7, `row-divider`가 마지막 행을 스스로 뺀다 |
+| 2026-11-17 | v1.2 | `row-divider`를 `@utility`에서 `@layer components`의 `.row-divider:where(:not(:last-child))`(특이도 0,1,0)로 옮김 — 어떤 유틸리티든(`border-b-0`·`border-b-2 border-primary`·`[&_tr]:border-border`) 덮어쓴다. 변형(`hover:row-divider`)·`@apply`는 쓸 수 없다 (WD-778) |
