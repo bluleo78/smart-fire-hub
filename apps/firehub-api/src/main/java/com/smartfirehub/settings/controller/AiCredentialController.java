@@ -78,8 +78,19 @@ public class AiCredentialController {
     }
     Optional<String> opencodeWarning = Optional.empty();
     if ("opencode".equals(request.agentType())) {
-      // 바뀐 뒤의 짝(실효 모델)으로 검사한다(WD-778). 모델 생략 시 슬래시 없는 저장 모델을 통과시키는 순환 잠금 완화는 그대로 —
-      // OpencodeCredentialValidation 참고.
+      // 요청이 모델을 실었으면 순환 잠금 완화 없이 엄격하게 본다 — 형식(공급자/모델)·접두가 요청 providerId 와 같아야 한다(WD-778).
+      // 네트워크 없이 끊으므로 프로브보다 먼저 둔다. 같은 판정이 저장 트랜잭션 안에서도 한 번 더 돈다(saveChatCredential).
+      if (requestModel != null) {
+        Optional<OpencodeCredentialValidation.Problem> modelProblem =
+            OpencodeCredentialValidation.checkExplicitModel(
+                OpencodeCredentialValidation.strOrEmpty(request.payload().get("providerId")),
+                requestModel);
+        if (modelProblem.isPresent()) {
+          return OpencodeCredentialValidation.problemResponse(modelProblem.get());
+        }
+      }
+      // 바뀐 뒤의 짝(실효 모델)으로 검사한다(WD-778). 모델을 생략했을 때만 슬래시 없는 저장 모델을 통과시키는 순환 잠금 완화가
+      // 의미를 갖는다 — OpencodeCredentialValidation#checkProviderConsistency 참고.
       OpencodePutValidator.ValidationOutcome outcome =
           opencodePutValidator.validate(
               request.payload(),

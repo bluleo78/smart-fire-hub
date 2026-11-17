@@ -95,6 +95,11 @@ class ProactiveRunSlotTest {
 
   /** 「다음 실행」 값이 있는(스케줄러에 등록된) 활성 작업 행 — 매일 09:00 Asia/Seoul(= 00:00 UTC). */
   private static ProactiveJobResponse job(LocalDateTime nextExecuteAt) {
+    return job(true, nextExecuteAt);
+  }
+
+  /** 활성 여부까지 정하는 작업 행 — 비활성·스케줄 해제 상태를 흉내 낼 때 쓴다. */
+  private static ProactiveJobResponse job(boolean enabled, LocalDateTime nextExecuteAt) {
     return new ProactiveJobResponse(
         JOB_ID,
         OWNER_ID,
@@ -104,7 +109,7 @@ class ProactiveRunSlotTest {
         "프롬프트",
         "0 0 9 * * *",
         "Asia/Seoul",
-        true,
+        enabled,
         null,
         Map.of(),
         null,
@@ -223,6 +228,20 @@ class ProactiveRunSlotTest {
 
     assertThatCode(() -> scheduler.runScheduledJob(JOB_ID)).doesNotThrowAnyException();
     verify(jobRepository).updateNextExecuteAt(JOB_ID, NEXT_SLOT);
+  }
+
+  /**
+   * 발화 직후 읽은 행이 이미 비활성·스케줄 해제(「다음 실행」 비움) 상태면 「다음 실행」을 써넣지 않는다 — 러너의 실행 뒤 기록과 같은 가드. 비활성 잡에 오지 않을
+   * 다음 실행 시각이 다시 생기지 않게 한다.
+   */
+  @Test
+  void 예약_실행은_비활성_작업에_다음_실행_시각을_쓰지_않는다() {
+    when(jobRepository.findById(JOB_ID)).thenReturn(Optional.of(job(false, null)));
+    scheduler.setClockForTest(Clock.fixed(Instant.parse("2026-11-16T00:00:01Z"), ZoneOffset.UTC));
+
+    scheduler.runScheduledJob(JOB_ID);
+
+    verify(jobRepository, never()).updateNextExecuteAt(anyLong(), any());
   }
 
   @Test

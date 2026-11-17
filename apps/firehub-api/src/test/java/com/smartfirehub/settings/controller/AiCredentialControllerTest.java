@@ -616,16 +616,36 @@ class AiCredentialControllerTest extends IntegrationTestBase {
   }
 
   /**
-   * opencode 자격증명이 저장돼 있으면 {@code PUT /settings} 는 모델을 검사하지 않는다 — opencode 쪽 공급자 일치·목록 확인은 네트워크
-   * 프로브라 자격증명 PUT({@code OpencodePutValidator})이 지킨다(WD-778).
+   * opencode(openai) 자격증명이 저장돼 있을 때 {@code PUT /settings} 로 모델만 바꾸면 채팅 실행 직전과 같은 오프라인 검사(형식 {@code
+   * 공급자/모델}·접두가 저장된 providerId 와 같음)를 해 400 이다(WD-778 리뷰 MUST 2). 수정 전에는 opencode 면 검사를 건너뛰어 저장은
+   * 204 로 되고 이후 모든 채팅이 「모델을 다시 선택하세요」로 실패했다. 순환 잠금 완화는 자격증명을 바꾸는 저장에만 필요하다. 저장된 모델은 그대로 남는다.
    */
   @Test
-  void PUT_settings_는_opencode_자격증명이면_모델을_검사하지_않는다() throws Exception {
+  void PUT_settings_는_opencode_자격증명과_공급자가_다르거나_형식이_아닌_모델이면_400이다() throws Exception {
+    saveTenantCredential("opencode", "https://api.openai.com/v1", "sk-tenant");
+    setTenantAiModel("openai/gpt-4o");
+    long userId = tenantUserWithAiSettings();
+
+    putAiModel(userId, "anthropic/claude-x")
+        .andExpect(status().isBadRequest())
+        .andExpect(
+            jsonPath("$.message").value(opencodeModelProblem("openai", "anthropic/claude-x")));
+    putAiModel(userId, "claude-sonnet-5")
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(opencodeModelProblem("openai", "claude-sonnet-5")));
+
+    assertThat(storedTenantAiModel()).isEqualTo("openai/gpt-4o");
+  }
+
+  /** 같은 opencode(openai) 자격증명에 공급자가 맞는 {@code openai/…} 모델은 그대로 저장된다(양성 대조). */
+  @Test
+  void PUT_settings_는_opencode_자격증명과_공급자가_같은_모델이면_저장된다() throws Exception {
     saveTenantCredential("opencode", "https://api.openai.com/v1", "sk-tenant");
     long userId = tenantUserWithAiSettings();
 
-    putAiModel(userId, "anthropic/claude-sonnet-4").andExpect(status().isNoContent());
-    putAiModel(userId, "claude-sonnet-4").andExpect(status().isNoContent());
+    putAiModel(userId, "openai/gpt-4o-mini").andExpect(status().isNoContent());
+
+    assertThat(storedTenantAiModel()).isEqualTo("openai/gpt-4o-mini");
   }
 
   /** 자격증명이 아직 없으면 검사하지 않는다 — 모델을 먼저 고르고 자격증명을 나중에 넣는 순서를 막지 않는다. */
@@ -658,6 +678,14 @@ class AiCredentialControllerTest extends IntegrationTestBase {
   /** Claude 계열 자격증명에 {@code model} 을 짝지을 때 채팅 경로가 내는 거부 문구(서버와 같은 {@code modelProblem}). */
   private static String claudeModelProblem(String model) {
     return new AiCredential.Sdk("", "x").modelProblem(model);
+  }
+
+  /**
+   * opencode 자격증명({@code providerId})에 {@code model} 을 짝지을 때 채팅 경로가 내는 거부 문구(서버와 같은 {@code
+   * modelProblem}).
+   */
+  private static String opencodeModelProblem(String providerId, String model) {
+    return new AiCredential.Opencode(providerId, "", "", "").modelProblem(model);
   }
 
   /** 지금 테넌트에 저장된 채팅 자격증명 유형. */
@@ -727,6 +755,25 @@ class AiCredentialControllerTest extends IntegrationTestBase {
 
     putCredential(userId, opencodeBody("openai", "anthropic/claude-sonnet-4"))
         .andExpect(status().isBadRequest());
+
+    assertThat(storedCredentialType()).isEqualTo("sdk");
+    assertThat(storedTenantAiModel()).isEqualTo("claude-sonnet-4");
+  }
+
+  /**
+   * 요청이 <b>명시적으로</b> 실은 모델이 슬래시 없는 Claude 이름이면(opencode/openai + {@code claude-sonnet-5}) 400 이고
+   * 아무것도 저장되지 않는다(WD-778 리뷰 MUST 1). 슬래시 없는 값을 통과시키는 순환 잠금 완화는 <b>저장된</b> 묵은 모델용이라 요청 모델에는 적용하지 않는다
+   * — 수정 전에는 204 로 저장되고 이후 모든 채팅이 실패했다.
+   */
+  @Test
+  void PUT_credential_은_요청_model_이_슬래시_없으면_400이고_아무것도_저장하지_않는다() throws Exception {
+    saveTenantCredential("sdk", null, "sk-ant-tenant");
+    setTenantAiModel("claude-sonnet-4");
+    long userId = tenantUserWithAiSettings();
+
+    putCredential(userId, opencodeBody("openai", "claude-sonnet-5"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(opencodeModelProblem("openai", "claude-sonnet-5")));
 
     assertThat(storedCredentialType()).isEqualTo("sdk");
     assertThat(storedTenantAiModel()).isEqualTo("claude-sonnet-4");

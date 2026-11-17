@@ -515,6 +515,18 @@ describe('useAiCredentialForm', () => {
     expect(resolved).toBe(true);
   });
 
+  /** WD-778 리뷰 SHOULD 5 — `failureNote` 를 주면 실패 토스트의 서버 사유 끝에 덧붙인다(토스트는 하나). */
+  it('save({ failureNote }) 가 실패하면 실패 토스트 끝에 그 안내를 덧붙인다', async () => {
+    const { result } = await renderLoaded();
+    mockedPut.mockRejectedValueOnce(new Error('500'));
+
+    await act(async () => {
+      await result.current.save({ model: 'openai/gpt-4o', failureNote: '다른 설정도 저장하지 않았습니다.' });
+    });
+    expect(vi.mocked(toast.error)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(toast.error).mock.calls[0][0]).toMatch(/ 다른 설정도 저장하지 않았습니다\.$/);
+  });
+
   it('PUT 이 실패하면 save() 는 false 를 돌려준다', async () => {
     const { result } = await renderLoaded();
     mockedPut.mockRejectedValueOnce(new Error('500'));

@@ -1709,4 +1709,31 @@ test.describe('AI 설정 저장 — 자격증명과 모델은 한 요청으로(W
     await expect(page.getByRole('button', { name: '저장' })).toBeEnabled();
     await page.screenshot({ path: screenshotPath('wd778-pair-rejected.png'), fullPage: true });
   });
+
+  /**
+   * 리뷰 SHOULD 5 — 묶음과 함께 다른 동작 설정(최대 턴 수)도 바꿨는데 묶음이 거부되면, 그 설정도 보내지 않았다는 사실을 거부 사유와
+   * 같은 토스트로 알린다. 수정 전에는 거부 사유만 보여 사용자는 최대 턴 수가 저장됐다고 여길 수 있었다.
+   */
+  test('묶음 자격증명 PUT 이 거부되면 함께 바꾼 다른 설정도 저장하지 않았다고 알린다', async ({
+    authenticatedPage: page,
+  }) => {
+    const rec = await recordSaves(page, {
+      credential: OPENCODE_OPENAI_CREDENTIAL,
+      initialModel: 'openai/gpt-4o',
+      credentialStatus: () => 400,
+    });
+    await page.goto('/admin/settings');
+
+    await switchToSdkWithApiKey(page);
+    await page.locator('#ai-model').click();
+    await page.getByRole('option', { name: 'Claude Sonnet 5', exact: true }).click();
+    await page.locator('#ai-max-turns').fill('20');
+    await save(page, true);
+
+    await expect(page.getByText(`${PAIR_REJECTION} 다른 설정도 저장하지 않았습니다.`)).toBeVisible();
+    expect(rec.order).toEqual(['credential']);
+    expect(rec.settingsPuts).toHaveLength(0);
+    await expect(page.getByText('설정이 저장되었습니다.')).toHaveCount(0);
+    await page.screenshot({ path: screenshotPath('wd778-pair-rejected-others-unsaved.png'), fullPage: true });
+  });
 });

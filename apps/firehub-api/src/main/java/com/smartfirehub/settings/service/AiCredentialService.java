@@ -407,19 +407,38 @@ public class AiCredentialService {
    * 이후 모든 채팅이 「모델을 다시 선택하세요」로 실패했다. 분류 묶음 저장({@link #saveClassify})처럼 비밀은 복호화하지 않는다(판정은 유형·payload
    * 만 본다).
    *
+   * <p><b>모델을 명시적으로 저장할 때</b>({@code PUT /settings} 의 {@code ai.model}, 채팅 자격증명 PUT 에 실린 {@code
+   * model}) 쓰는 엄격한 판정이다 — opencode 도 검사한다(형식 {@code 공급자/모델} 이고 접두가 저장된 {@code providerId} 와 같아야 함,
+   * 네트워크 없음). 순환 잠금 완화(슬래시 없는 모델 통과)는 모델을 <b>고르는</b> 저장에는 필요 없다 — 지금 고르는 값이 틀리면 그대로 이후 모든 채팅이 실패할
+   * 뿐이다. 완화가 필요한 쪽(자격증명만 바꾸고 모델은 저장된 값을 쓰는 저장)은 {@link #storedChatModelProblemKeepingModel}.
+   *
    * <ul>
-   *   <li>{@code model} 이 null 이거나 행이 없으면(미설정) 검사하지 않는다 — 모델을 먼저 고르고 자격증명을 나중에 넣는 순서를 막지 않는다.
-   *   <li>opencode 면 검사하지 않는다 — 공급자 일치·목록 소속 확인은 네트워크 프로브라 자격증명 PUT 의 {@code OpencodePutValidator}
-   *       가 맡고, 채팅은 슬래시 없는 모델을 통과시키는 완화 규칙을 쓴다(순환 잠금 — {@code OpencodeCredentialValidation} 참고).
+   *   <li>{@code model} 이 null 이거나 자격증명 행이 없으면(미설정) 검사하지 않는다 — 모델을 먼저 고르고 자격증명을 나중에 넣는 순서를 막지 않는다.
    *   <li>손상된 행·모르는 유형도 검사하지 않는다 — 모델 저장을 막을 근거가 없고, 실행 경로가 그 손상을 따로 알린다.
    * </ul>
    */
   public Optional<String> storedChatModelProblem(String model) {
+    return chatModelProblem(model, true);
+  }
+
+  /**
+   * 자격증명만 바꾸고 모델은 저장된 값(미설정이면 채팅이 실제로 쓰는 코드 기본값)을 그대로 쓰는 저장의 짝 검사(WD-778). {@link
+   * #storedChatModelProblem} 과 같되 <b>opencode 는 검사하지 않는다</b> — 저장된 모델이 아직 슬래시 없는 Claude 이름이어도
+   * opencode 로 처음 전환하는 저장을 막으면 순환 잠금이 된다({@code
+   * OpencodeCredentialValidation#checkProviderConsistency} 참고). 대조 가능한 경우(슬래시 있는 저장 모델)의 공급자 일치·목록
+   * 확인은 컨트롤러의 {@code OpencodePutValidator} 가 맡는다.
+   */
+  public Optional<String> storedChatModelProblemKeepingModel(String model) {
+    return chatModelProblem(model, false);
+  }
+
+  /** 두 판정의 공통 본체. {@code checkOpencode} 가 거짓이면 opencode 자격증명은 검사하지 않는다(순환 잠금 완화). */
+  private Optional<String> chatModelProblem(String model, boolean checkOpencode) {
     if (model == null) return Optional.empty();
     String key = AiCredentialSlot.CHAT.key();
     return readTenantRaw(key)
         .flatMap(raw -> tryParse(raw, key, "MODEL_CHECK"))
-        .filter(doc -> !"opencode".equals(doc.agentType()))
+        .filter(doc -> checkOpencode || !"opencode".equals(doc.agentType()))
         .flatMap(
             doc -> {
               try {

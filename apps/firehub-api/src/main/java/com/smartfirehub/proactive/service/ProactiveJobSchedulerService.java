@@ -239,8 +239,17 @@ public class ProactiveJobSchedulerService {
     }
   }
 
-  /** 「다음 실행」 시각을 다음 회차로 옮긴다(WD-778). 부가 정보라 실패해도 경고만 남기고 실행은 그대로 시작한다. */
+  /**
+   * 「다음 실행」 시각을 다음 회차로 옮긴다(WD-778). 부가 정보라 실패해도 경고만 남기고 실행은 그대로 시작한다.
+   *
+   * <p>러너의 {@code recordAttempt} 와 같은 가드 — 활성이고 값이 이미 있는(스케줄러에 등록된) 잡만 옮긴다. 발화와 거의 같은 순간에 비활성화·스케줄
+   * 해제({@link #unregisterSchedule} 이 값을 비움)가 끝났다면 방금 읽은 행이 그 상태를 보여 주므로, 오지 않을 다음 실행 시각을 비활성 잡에 다시
+   * 써넣지 않는다.
+   */
   private void advanceNextExecuteAt(Long jobId, ProactiveJobResponse job) {
+    if (!Boolean.TRUE.equals(job.enabled()) || job.nextExecuteAt() == null) {
+      return;
+    }
     try {
       proactiveJobRepository.updateNextExecuteAt(
           jobId,

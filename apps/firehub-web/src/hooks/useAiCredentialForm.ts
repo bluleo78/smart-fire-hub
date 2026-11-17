@@ -52,6 +52,11 @@ function payloadFieldValue(payload: Record<string, string>, name: string): strin
  */
 export interface AiCredentialSaveOptions {
   model?: string;
+  /**
+   * 저장이 거부됐을 때 실패 토스트 끝에 덧붙일 안내(WD-778). 묶음 저장이 거부되면 호출부가 함께 보내려던 다른
+   * 설정도 보내지 않으므로, 그 사실을 같은 토스트로 알린다(토스트를 하나 더 띄우면 거부 사유와 따로 읽힌다).
+   */
+  failureNote?: string;
 }
 
 /** 저장 직후 서버가 확정한 값 — dirty 판정과 `canLoadModels` 의 "저장된 키" 가드에 쓴다. */
@@ -548,7 +553,8 @@ export function useAiCredentialForm<R extends AiCredentialResponse = AiCredentia
       saveWarning = response.data?.warning;
     } catch (err) {
       // 서버 400(비밀 필수 규칙 등)의 한국어 메시지를 그대로 보여준다.
-      toast.error(extractApiError(err, '저장에 실패했습니다.'));
+      const reason = extractApiError(err, '저장에 실패했습니다.');
+      toast.error(options?.failureNote ? `${reason} ${options.failureNote}` : reason);
       return false;
     }
 

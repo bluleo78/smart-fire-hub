@@ -400,15 +400,16 @@ function AdminSettingsPage() {
    * 1. <b>자격증명(유형·payload·비밀)과 모델을 함께 바꿨다</b> → 자격증명 PUT <b>하나</b>에 `model` 을 실어 보낸다.
    *    둘 다 저장되거나 둘 다 안 된다(이유는 서버 `SettingsService.saveChatCredential` 참고) — 그래서 이 경우에는
    *    순서·되돌리기(#720 보상 PUT)가 없다. 묶음이 거부되면 나머지 동작 설정도 보내지 않고
-   *    멈춘다(거부 사유는 훅이 토스트로 알리고 폼 편집은 그대로 남는다). 묶음이 저장되면 모델을 뺀 나머지
+   *    멈춘다(거부 사유 토스트에 「다른 설정도 저장하지 않았습니다」를 덧붙여 알리고 폼 편집은 그대로 남는다). 묶음이 저장되면 모델을 뺀 나머지
    *    동작 설정 키(있으면)를 `PUT /settings` 로 보낸다 — 자격증명과 무관한 독립 편집이다.
    * 2. <b>모델 등 동작 설정만 바꿨다</b> → `PUT /settings` 만(서버가 저장된 자격증명 기준으로 모델을 검사한다).
    * 3. <b>자격증명만 바꿨다</b> → 자격증명 PUT(모델 없이). 서버는 저장된 모델과 짝을 지어 검사한다 — 자격증명만
    *    Claude 계열로 바꾸는데 저장된 모델이 `openai/gpt-4o` 같은 opencode 형식이면 400 으로 알린다.
    *
    * 동작 설정과 자격증명(모델 없는 경우)은 독립 자원이라 한쪽이 실패해도 다른 쪽은 계속 시도한다. 빈 칸으로
-   * 지운 동작 설정 키가 있으면 동작 설정은 보내지 않는다(서버가 빈 값을 거부한다) — 이때는 모델도 함께
-   * 보내지 않으므로 자격증명은 3번 갈래로 간다.
+   * 지운 동작 설정 키가 있으면 `PUT /settings` 는 보내지 않는다(서버가 빈 값을 거부한다). 다만 새로 고른
+   * 모델(빈 칸이 아님)은 그와 무관하게 자격증명과 함께 1번 갈래로 묶는다 — 묶지 않으면 자격증명이 3번 갈래로 가
+   * 서버가 새로 고른 모델이 아니라 <b>저장된</b> 모델과 짝을 지어 검사·저장한다.
    *
    * <b>토스트 두 번은 의도적이다</b> — `cred.save()` 는 훅 내부에서 스스로 성공/실패 토스트를 띄우고, 쓰기 성공
    * 여부를 boolean 으로도 돌려준다(Ruling #42) — 이 함수는 그 값으로 `verifyAuth()` 호출을 가른다.
@@ -416,23 +417,31 @@ function AdminSettingsPage() {
   const performSave = useCallback(async () => {
     setIsSaving(true);
     try {
-      // 보낼 동작 설정 — null 이면 보내지 않는다(변경 없음 또는 빈 칸으로 지운 키가 있음).
-      let behaviorPayload: Record<string, string> | null = null;
-      if (behaviorHasChanges) {
-        const { payload, droppedChangedKeys } = buildChangedPayload();
-        if (droppedChangedKeys.length > 0) {
-          const names = droppedChangedKeys.map((key) => AI_FIELD_LABELS[key]).join(', ');
-          toast.error(`${names}을(를) 비워 둔 채로는 저장할 수 없습니다.`);
-        } else {
-          behaviorPayload = payload;
-        }
+      // 바뀐(빈 칸이 아닌) 동작 설정 키 — 빈 칸으로 지운 키는 buildChangedPayload 가 이미 뺐다.
+      const { payload: changedPayload, droppedChangedKeys } = behaviorHasChanges
+        ? buildChangedPayload()
+        : { payload: {} as Record<string, string>, droppedChangedKeys: [] as (keyof AIBehaviorForm)[] };
+      const hasDroppedKeys = droppedChangedKeys.length > 0;
+      if (hasDroppedKeys) {
+        const names = droppedChangedKeys.map((key) => AI_FIELD_LABELS[key]).join(', ');
+        toast.error(`${names}을(를) 비워 둔 채로는 저장할 수 없습니다.`);
       }
 
       // 1번 갈래(WD-778) — 자격증명과 모델을 함께 바꿨으면 모델을 동작 설정에서 떼어 자격증명 PUT 에 싣는다.
-      const { 'ai.model': bundledModel, ...otherKeys }: Record<string, string> = behaviorPayload ?? {};
+      // 빈 칸으로 지운 다른 키가 있어도 모델은 묶는다(위 javadoc) — 그 키들만 빠지고 나머지 동작 설정은 보내지 않는다.
+      const { 'ai.model': bundledModel, ...otherKeys }: Record<string, string> = changedPayload;
+      // 보낼 동작 설정 — null 이면 보내지 않는다(변경 없음 또는 빈 칸으로 지운 키가 있음).
+      let behaviorPayload: Record<string, string> | null =
+        behaviorHasChanges && !hasDroppedKeys ? changedPayload : null;
       const bundled = cred.hasUnsavedInput && bundledModel !== undefined;
       if (bundled) {
-        const saved = await cred.save({ model: bundledModel });
+        // 묶음이 거부되면 함께 보내려던 다른 동작 설정(온도 등)도 보내지 않는다 — 사용자가 그 사실을 알 수 있게
+        // 거부 토스트에 덧붙인다. 빈 칸 때문에 어차피 보내지 않는 경우는 위 토스트가 이미 알렸다.
+        const othersPending = !hasDroppedKeys && Object.keys(otherKeys).length > 0;
+        const saved = await cred.save({
+          model: bundledModel,
+          ...(othersPending && { failureNote: '다른 설정도 저장하지 않았습니다.' }),
+        });
         if (!saved) {
           // 서버가 자격증명·모델 어느 쪽도 저장하지 않았다(한 트랜잭션). 거부 사유는 훅이 이미 토스트로
           // 알렸다 — 나머지 동작 설정도 보내지 않고 멈춘다. 폼 편집은 그대로 남아 고친 뒤 다시 저장할 수 있다.
@@ -441,11 +450,13 @@ function AdminSettingsPage() {
         // 모델은 서버에 저장됐다 — 이 키의 저장 기준값(original)만 확정한다. 나머지 키는 아래 PUT 결과로 정한다.
         commitSavedKey('ai.model', bundledModel);
         afterCredentialSaved();
-        if (Object.keys(otherKeys).length > 0) {
+        if (othersPending) {
           behaviorPayload = otherKeys;
         } else {
           behaviorPayload = null;
-          toast.success('설정이 저장되었습니다.');
+          // 빈 칸 때문에 나머지 동작 설정을 보내지 않았으면 「설정이 저장되었습니다」는 띄우지 않는다 — 위의 「비워 둔 채로는
+          // 저장할 수 없습니다」와 어긋난다. 자격증명·모델 저장 성공은 훅의 토스트가 이미 알렸다.
+          if (!hasDroppedKeys) toast.success('설정이 저장되었습니다.');
           refreshBehaviorMeta();
         }
       }

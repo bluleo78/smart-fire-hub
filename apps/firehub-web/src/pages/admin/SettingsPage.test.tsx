@@ -250,7 +250,8 @@ describe('SettingsPage — 저장 갈래: 자격증명과 모델은 한 요청�
 
     await waitFor(() => expect(mockedUpdate).toHaveBeenCalledOnce());
     expect(order).toEqual(['cred.save', 'settingsApi.update']);
-    expect(cred.save).toHaveBeenCalledWith({ model: 'openai/gpt-4o' });
+    // 함께 보내려던 다른 키가 있으므로 거부되면 그 사실을 알리라는 안내도 넘긴다(성공하면 쓰이지 않는다).
+    expect(cred.save).toHaveBeenCalledWith({ model: 'openai/gpt-4o', failureNote: '다른 설정도 저장하지 않았습니다.' });
     expect(mockedUpdate.mock.calls[0][0]).toEqual({ settings: { 'ai.max_turns': '20' } });
     await waitFor(() => expect(behavior.commitSaved).toHaveBeenCalledOnce());
   });
@@ -275,6 +276,64 @@ describe('SettingsPage — 저장 갈래: 자격증명과 모델은 한 요청�
     expect(behavior.commitSaved).not.toHaveBeenCalled();
     expect(mockedVerifyAuthStatus).not.toHaveBeenCalled();
     expect(vi.mocked(toast.success)).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 리뷰 SHOULD 5 — 묶음이 거부되면 함께 보내려던 다른 동작 설정(최대 턴 수 등)도 보내지 않는다. 사용자가 그 사실을 알 수 있게
+   * 거부 토스트(훅이 띄움)에 「다른 설정도 저장하지 않았습니다」를 덧붙이라고 넘긴다. 다른 키가 없으면 덧붙일 것도 없다.
+   */
+  it('묶음 저장에 다른 동작 설정이 딸려 있으면 거부 토스트에 덧붙일 안내를 넘기고, 없으면 넘기지 않는다', async () => {
+    const user = userEvent.setup();
+    const cred = makeCred({ agentType: 'opencode', hasUnsavedInput: true, save: vi.fn(async () => false) });
+    mockedUseAiCredentialForm.mockReturnValue(cred);
+    mockedUseSettingsOverrideForm.mockReturnValue(
+      behaviorChanging({ 'ai.model': 'openai/gpt-4o', 'ai.max_turns': '20' }),
+    );
+
+    const { unmount } = render(<SettingsPage />);
+    await user.click(screen.getByRole('button', { name: '저장' }));
+    await waitFor(() => expect(cred.save).toHaveBeenCalledOnce());
+    expect(cred.save).toHaveBeenCalledWith({ model: 'openai/gpt-4o', failureNote: '다른 설정도 저장하지 않았습니다.' });
+    unmount();
+
+    const modelOnly = makeCred({ agentType: 'opencode', hasUnsavedInput: true, save: vi.fn(async () => false) });
+    mockedUseAiCredentialForm.mockReturnValue(modelOnly);
+    mockedUseSettingsOverrideForm.mockReturnValue(behaviorChanging({ 'ai.model': 'openai/gpt-4o' }));
+    render(<SettingsPage />);
+    await user.click(screen.getByRole('button', { name: '저장' }));
+    await waitFor(() => expect(modelOnly.save).toHaveBeenCalledOnce());
+    expect(modelOnly.save).toHaveBeenCalledWith({ model: 'openai/gpt-4o' });
+  });
+
+  /**
+   * 리뷰 SHOULD 4 — 다른 동작 설정 키 하나를 빈 칸으로 지웠어도 새로 고른 모델은 자격증명 PUT 에 묶는다.
+   * <b>변종(수정 전): 빈 칸이 있으면 모델을 묶지 않는다</b> → 자격증명이 모델 없이 나가 서버가 새 모델이 아니라 저장된 모델과
+   * 짝을 짓는다. 빈 칸 키 때문에 `PUT /settings` 는 보내지 않고, 그 사실은 「비워 둔 채로는 저장할 수 없습니다」로 알린다.
+   */
+  it('빈 칸으로 지운 동작 설정 키가 있어도 모델은 자격증명 PUT 에 묶고 PUT /settings 는 보내지 않는다', async () => {
+    const user = userEvent.setup();
+    const cred = makeCred({ agentType: 'opencode', hasUnsavedInput: true });
+    const behavior = makeBehavior({
+      hasChanges: true,
+      original: { 'ai.model': 'claude-sonnet-5' } as never,
+      buildChangedPayload: vi.fn(() => ({
+        payload: { 'ai.model': 'openai/gpt-4o', 'ai.temperature': '0.2' },
+        droppedChangedKeys: ['ai.max_turns'],
+      })) as never,
+    });
+    mockedUseAiCredentialForm.mockReturnValue(cred);
+    mockedUseSettingsOverrideForm.mockReturnValue(behavior);
+
+    render(<SettingsPage />);
+    await user.click(screen.getByRole('button', { name: '저장' }));
+
+    await waitFor(() => expect(cred.save).toHaveBeenCalledOnce());
+    expect(cred.save).toHaveBeenCalledWith({ model: 'openai/gpt-4o' });
+    expect(mockedUpdate).not.toHaveBeenCalled();
+    expect(behavior.commitSavedKey).toHaveBeenCalledWith('ai.model', 'openai/gpt-4o');
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith('최대 턴 수을(를) 비워 둔 채로는 저장할 수 없습니다.');
+    // 빈 칸 때문에 동작 설정은 저장하지 않았다 — 「설정이 저장되었습니다」로 뭉개지 않는다.
+    expect(vi.mocked(toast.success)).not.toHaveBeenCalledWith('설정이 저장되었습니다.');
   });
 
   it('모델만 바꾸면(자격증명 변경 없음) PUT /settings 만 보낸다', async () => {

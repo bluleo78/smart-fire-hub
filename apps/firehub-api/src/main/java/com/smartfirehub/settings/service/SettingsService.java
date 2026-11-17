@@ -414,9 +414,10 @@ public class SettingsService {
    * openai/gpt-4o} 처럼 opencode 형식이면 400 이다 — 그대로 저장되면 이후 모든 채팅이 실패한다(WD-766 상태).
    *
    * <p>순서: 자격증명 병합·검증·저장 → 저장된 짝 검사 한 번({@code model} 이 있으면 {@link #updateSettings} — {@code PUT
-   * /settings} 와 같은 값 검증·짝 검사·감사, 없으면 저장된 모델을 새 자격증명과 대조). 짝 검사가 던지면 트랜잭션이 앞의 쓰기(자격증명 행·감사 행)를 함께
-   * 되돌린다 — 둘 다 저장되거나 둘 다 저장되지 않는다. opencode 의 공급자 일치·목록 확인은 네트워크 프로브라 호출부(컨트롤러의 {@code
-   * OpencodePutValidator})가 같은 실효 모델로 먼저 끝낸다.
+   * /settings} 와 같은 값 검증·<b>엄격한</b> 짝 검사·감사 — opencode 도 형식·공급자 일치를 본다, 없으면 저장된 모델을 새 자격증명과 대조하되
+   * opencode 는 순환 잠금 완화로 건너뛴다 — {@link AiCredentialService#storedChatModelProblemKeepingModel}). 짝
+   * 검사가 던지면 트랜잭션이 앞의 쓰기(자격증명 행·감사 행)를 함께 되돌린다 — 둘 다 저장되거나 둘 다 저장되지 않는다. opencode 의 목록 소속 확인은 네트워크
+   * 프로브라 호출부(컨트롤러의 {@code OpencodePutValidator})가 같은 실효 모델로 먼저 끝낸다.
    *
    * @param credential 저장할 자격증명(생략 secret=유지 등 병합 규칙은 {@link AiCredentialService#save} 그대로)
    * @param model 함께 저장할 {@code ai.model}. null 이면 자격증명만 저장한다
@@ -429,13 +430,19 @@ public class SettingsService {
     if (model != null) {
       updateSettings(Map.of("ai.model", model), userId);
     } else {
-      rejectIfPresent(aiCredentialService.storedChatModelProblem(effectiveChatModel(null)));
+      // 모델을 고르지 않은 저장 — 저장된(미설정이면 기본) 모델과 대조하되 opencode 는 완화 규칙을 쓴다.
+      rejectIfPresent(
+          aiCredentialService.storedChatModelProblemKeepingModel(effectiveChatModel(null)));
     }
   }
 
   /**
-   * 채팅 자격증명과 짝을 지을 실효 모델(WD-778) — 요청에 실린 {@code model}, 없으면 저장된 {@code ai.model}(없으면 코드 기본값 — 채팅이
-   * 실제로 쓰는 값). 기본값도 없으면 null.
+   * 채팅 자격증명과 짝을 지을 실효 모델(WD-778) — 요청에 실린 {@code model}, 없으면 저장된 {@code ai.model}, 그것도 없으면 코드
+   * 기본값({@code AiBehaviorDefaults}, 예 {@code claude-sonnet-5}). 기본값이 없는 경우에만 null.
+   *
+   * <p><b>미설정 모델을 기본값으로 메우는 것은 의도다.</b> 채팅({@code AiChatRequestBuilder} 의 {@code getAsMap("ai")})도
+   * 미설정 이면 같은 기본값으로 실행하므로, 짝 검사는 실제로 실행될 모델로 해야 한다 — 예를 들어 Claude 계열 기본값은 opencode 자격증명과 짝이 맞지 않는다.
+   * (그 경우 모델 생략 저장은 순환 잠금 완화로 통과하고, 실행 직전 검사가 「모델을 다시 선택하세요」로 알린다.)
    */
   public String effectiveChatModel(String requestModel) {
     return requestModel != null ? requestModel : getValue("ai.model").orElse(null);
@@ -850,9 +857,10 @@ public class SettingsService {
    * 않으면 그 문구 그대로 400(IllegalArgumentException)으로 거부한다(WD-778). 예: sdk 자격증명에 {@code
    * anthropic/claude-sonnet-4}.
    *
-   * <p>자격증명이 없거나 opencode 면 검사하지 않는다 — 이유는 {@link AiCredentialService#storedChatModelProblem} 참고. 빈
-   * 값은 이미 {@link #validateValues} 가 거부했다. {@link #saveChatCredential} 은 자격증명을 같은 트랜잭션에 먼저 쓴 뒤 이 검사를
-   * 지나므로 바뀐 뒤의 짝으로 검사된다.
+   * <p>opencode 자격증명도 검사한다(형식 {@code 공급자/모델}·접두가 저장된 공급자와 같음) — 모델을 명시적으로 고르는 저장이라 순환 잠금 완화가 필요 없다.
+   * 자격증명이 없으면 검사하지 않는다 — 이유는 {@link AiCredentialService#storedChatModelProblem} 참고. 빈 값은 이미 {@link
+   * #validateValues} 가 거부했다. {@link #saveChatCredential} 은 자격증명을 같은 트랜잭션에 먼저 쓴 뒤 이 검사를 지나므로 바뀐 뒤의
+   * 짝으로 검사된다.
    */
   private void validateModelAgainstCredential(Map<String, String> settings) {
     rejectIfPresent(aiCredentialService.storedChatModelProblem(settings.get("ai.model")));
