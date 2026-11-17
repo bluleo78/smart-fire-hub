@@ -263,31 +263,12 @@ class DocumentChunkVectorStoreTest extends IntegrationTestBase {
             ChunkSeeds.insertWithVectors(
                 repo, docA.fileId(), docA.datasetId(), target, targetVec, S1024));
 
-    List<Object> params = new ArrayList<>();
-    String sql =
-        chunkIndex.semanticSql(
-            S1024, List.of(), vectorLiteral(axis(1024, queryAxis)), 5, params, ALL_VISIBLE_SQL);
-    int without =
-        inTenantFixture(
-            tenantA,
-            () -> {
-              dsl.execute("SET LOCAL enable_seqscan = off");
-              // 테넌트 btree 로 몇 행을 읽고 Sort 하는 계획도 막는다 — 정렬을 HNSW 가 맡는 계획만 남긴다.
-              dsl.execute("SET LOCAL enable_sort = off");
-              dsl.execute("SET LOCAL hnsw.ef_search = 10");
-              return dsl.fetch(sql, params.toArray()).size();
-            });
-    int with =
-        inTenantFixture(
-            tenantA,
-            () -> {
-              dsl.execute("SET LOCAL enable_seqscan = off");
-              // 테넌트 btree 로 몇 행을 읽고 Sort 하는 계획도 막는다 — 정렬을 HNSW 가 맡는 계획만 남긴다.
-              dsl.execute("SET LOCAL enable_sort = off");
-              com.smartfirehub.embedding.repository.jooq.HnswSearch.relaxIterativeScan(dsl);
-              dsl.execute("SET LOCAL hnsw.ef_search = 10"); // relax 가 200 으로 올린 값을 다시 낮춘다
-              return dsl.fetch(sql, params.toArray()).size();
-            });
+    // "without"/"with" 시연은 공유 HNSW 색인이 아니라 트랜잭션 안 임시 테이블에서 한다(WD-784). document_chunk_vec_1024 의 색인은
+    // 같은 포크의 모든 테스트가 함께 쓰고, 앞선 테스트의 벡터와 cleanup 이 지웠지만 VACUUM 전이라 그래프에 남은 죽은 튜플이 그래프
+    // 모양을 바꿔 ef_search=10 결과 수가 테스트 실행 순서에 따라 흔들렸다. 임시 테이블은 이 20+5 벡터만 담으므로 결정적이다.
+    String queryLiteral = vectorLiteral(axis(1024, queryAxis));
+    int without = tempTableTopK(queryLiteral, nearVec, targetVec, false);
+    int with = tempTableTopK(queryLiteral, nearVec, targetVec, true);
     assertThat(without).isLessThan(5);
     assertThat(with).isEqualTo(5);
     // 실제 경로도 5건을 채운다(ef_search 200 + iterative scan).
@@ -318,6 +299,47 @@ class DocumentChunkVectorStoreTest extends IntegrationTestBase {
     SQLException sql = TenantRlsTestSupport.findSqlException(thrown);
     assertThat((Object) sql).as("SQLException 이 감싸져 있어야 SQLSTATE 를 단언할 수 있다").isNotNull();
     assertThat(sql.getSQLState()).isEqualTo("23503");
+  }
+
+  /**
+   * 한 트랜잭션 안의 임시 테이블(ON COMMIT DROP)에 다른 모델 벡터와 목표 벡터를 넣고 HNSW 색인을 만든 뒤, 모델 필터가 걸린 top-5 조회가 돌려주는 행
+   * 수를 센다. relaxed 가 참이면 {@code HnswSearch.relaxIterativeScan} 으로 iterative scan 을 켠 다음 ef_search 를
+   * 10 으로 되돌리고, 거짓이면 iterative scan 을 끈 채 ef_search 10 으로 조회한다.
+   */
+  private int tempTableTopK(
+      String queryLiteral, List<float[]> nearVec, List<float[]> targetVec, boolean relaxed) {
+    return dsl.transactionResult(
+        cfg -> {
+          DSLContext tx = DSL.using(cfg);
+          tx.execute(
+              "CREATE TEMP TABLE tmp_iter_scan (id int, model text, embedding vector(1024)) ON COMMIT DROP");
+          for (int i = 0; i < nearVec.size(); i++) {
+            tx.execute(
+                "INSERT INTO tmp_iter_scan (id, model, embedding) VALUES (?, 'other', ?::vector)",
+                i,
+                vectorLiteral(nearVec.get(i)));
+          }
+          for (int i = 0; i < targetVec.size(); i++) {
+            tx.execute(
+                "INSERT INTO tmp_iter_scan (id, model, embedding) VALUES (?, 'target', ?::vector)",
+                100 + i,
+                vectorLiteral(targetVec.get(i)));
+          }
+          tx.execute("CREATE INDEX ON tmp_iter_scan USING hnsw (embedding vector_cosine_ops)");
+          // 행이 적어 seq scan·Sort 계획이 되면 차이가 사라지므로 HNSW 가 정렬을 맡는 계획만 남긴다.
+          tx.execute("SET LOCAL enable_seqscan = off");
+          tx.execute("SET LOCAL enable_sort = off");
+          if (relaxed) {
+            com.smartfirehub.embedding.repository.jooq.HnswSearch.relaxIterativeScan(tx);
+          } else {
+            tx.execute("SET LOCAL hnsw.iterative_scan = off");
+          }
+          tx.execute("SET LOCAL hnsw.ef_search = 10"); // relax 가 200 으로 올린 값을 다시 낮춘다
+          return tx.fetch(
+                  "SELECT id FROM tmp_iter_scan WHERE model = 'target' ORDER BY embedding <=> ?::vector LIMIT 5",
+                  queryLiteral)
+              .size();
+        });
   }
 
   private String explain(EmbeddingSpace space) {

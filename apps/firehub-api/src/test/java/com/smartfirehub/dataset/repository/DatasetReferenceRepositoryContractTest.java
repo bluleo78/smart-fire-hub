@@ -14,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.StringJoiner;
 import java.util.function.Supplier;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -30,6 +31,17 @@ import org.junit.jupiter.api.Test;
 public abstract class DatasetReferenceRepositoryContractTest extends TenantPairContractBase {
 
   protected abstract DatasetReferenceRepository repository();
+
+  @BeforeEach
+  void suspendTenantsFromChangePoller() {
+    // 두 테넌트를 정지 상태로 둔다(WD-784, WD-769 와 같은 방법). 데이터셋 변경 폴러(TriggerEventService.pollDatasetChanges,
+    // 30초 주기)는 ACTIVE 테넌트를 모두 돌며, 이 계약의 트리거가 감시하는 가짜 데이터셋 id(7·8·9_000_000_000+i)를 「지워진
+    // 데이터셋」으로 보고 removeWatchedDataset 으로 빼 버린다 — 부하가 큰 전체 실행에서 findDatasetChangeTriggers 단언이
+    // 간헐적으로 빈 결과가 됐다. 저장소 호출은 테넌트 범위(GUC)로 그대로 실행되므로(상태는 보지 않는다) 계약의 의미는 바뀌지 않는다.
+    // 상위 @BeforeEach(createTenantPair)가 테넌트를 먼저 만든다.
+    fx.setTenantStatus(tenantA, "SUSPENDED");
+    fx.setTenantStatus(tenantB, "SUSPENDED");
+  }
 
   private long pipeline(String name) {
     return fx.createPipeline(tenantA, prefix + name, true);
