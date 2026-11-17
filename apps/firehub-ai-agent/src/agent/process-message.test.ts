@@ -154,6 +154,21 @@ describe('processMessage', () => {
     expect(result).toEqual([{ type: 'tool_result', toolName: 'unknown', result: 'ok', isError: false }]);
   });
 
+  // WD-783: tool_use_id 가 문자열이 아니면(undefined·null) 'undefined'·'null' 을 id 로 싣지 않는다
+  it('PM-08c: tool_use_id 가 undefined·null 이면 toolUseId 를 싣지 않는다 (WD-783)', () => {
+    for (const id of [undefined, null]) {
+      const msg = {
+        type: 'user',
+        message: { content: [{ type: 'tool_result', tool_use_id: id, content: 'ok' }] },
+      } as unknown as SDKMessage;
+
+      const result = processMessage(msg, tag, false);
+
+      expect(result).toEqual([{ type: 'tool_result', toolName: 'unknown', result: 'ok', isError: false }]);
+      expect('toolUseId' in result[0]).toBe(false);
+    }
+  });
+
   // PM-09: user/tool_result(array content) — 텍스트 블록들을 \n으로 결합
   it('PM-09: user tool_result with array content joins text lines with newline', () => {
     const msg = {

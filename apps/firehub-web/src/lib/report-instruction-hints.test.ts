@@ -37,6 +37,27 @@ describe('findUnsupportedValueWords (WD-774)', () => {
     expect(findUnsupportedValueWords('   \n\t')).toEqual([]);
   });
 
+  it('「않」이 들어도 요청 문장이면 주의한다 — 「달성하지 않은 지점의 달성률을 보여 주세요」 (WD-783)', () => {
+    expect(findUnsupportedValueWords('목표를 달성하지 않은 지점의 달성률을 보여 주세요')).toEqual(['목표', '달성률']);
+  });
+
+  it('「쓰지 않」·「포함하지 않」 같은 금지 표현은 주의하지 않는다 (WD-783)', () => {
+    expect(findUnsupportedValueWords('목표 수치는 쓰지 않습니다')).toEqual([]);
+    expect(findUnsupportedValueWords('전망은 포함하지 않도록 하세요')).toEqual([]);
+    expect(findUnsupportedValueWords('전망은 포함하지 않도록')).toEqual([]);
+  });
+
+  it('「넣지 않고」·「포함하지 않는」처럼 쓰기·포함 동사의 부정은 어떤 어미든 금지로 본다 (WD-783)', () => {
+    expect(findUnsupportedValueWords('목표·전망 수치는 넣지 않고 실적만 요약해 주세요')).toEqual([]);
+    expect(findUnsupportedValueWords('예측값을 포함하지 않는 요약을 작성')).toEqual([]);
+    expect(findUnsupportedValueWords('목표 대비 비교는 하지 않는다')).toEqual([]);
+  });
+
+  it('「않게」·「않음」은 서술을 끝맺는 금지가 아니므로 요청 문장으로 보고 주의한다 (WD-783)', () => {
+    expect(findUnsupportedValueWords('목표를 달성하지 않게 된 지점의 달성률을 보여 주세요')).toEqual(['목표', '달성률']);
+    expect(findUnsupportedValueWords('달성 여부(달성/않음)별 달성률을 보여 주세요')).toEqual(['달성률']);
+  });
+
   it('금지하는 문장(「~는 쓰지 마세요」)의 낱말은 주의하지 않는다', () => {
     expect(findUnsupportedValueWords('계산한 값·목표·전망 수치는 쓰지 마세요')).toEqual([]);
     expect(findUnsupportedValueWords('예측값은 제외하고 실적만 요약')).toEqual([]);

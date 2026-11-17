@@ -149,12 +149,27 @@ export function DatasetObjectsTab({ datasetId, exportAllowed }: { datasetId: num
     startUpload(filesToItems(Array.from(files)));
   };
 
-  /** 새 업로드 — 지난 거부 목록을 비우고, 이번 묶음에서 서버가 거부한 파일을 따로 들어 둔다(WD-776). */
-  function startUpload(items: UploadItem[]) {
-    setRejected(null);
+  /**
+   * 업로드 시작 — 새 업로드와 「실패건 재시도」가 함께 쓴다 (WD-776, WD-783).
+   * - 새 업로드(기본): 지난 거부 목록을 비우고, 이번 묶음에서 서버가 거부한 파일을 따로 들어 둔다.
+   * - append(재시도): 목록을 먼저 비우지 않고, 새로 거부된 파일을 기존 「올리지 못한 파일」 목록에 이어 붙인다 —
+   *   지난 거부 파일이 사라지면 안 되므로. 같은 폴더면 같은 경로는 새 이유로 교체(중복 없이), 다른 폴더면 새 것으로 바꾼다.
+   * 두 갈래를 한 함수로 둬 mutate·거부 목록 갱신 규칙이 어긋나지 않게 한다(WD-783).
+   */
+  function startUpload(items: UploadItem[], opts?: { append?: boolean }) {
+    const append = opts?.append ?? false;
+    if (!append) setRejected(null);
     upload.mutate(items, {
-      onSuccess: (r) =>
-        setRejected(r.rejectedItems.length > 0 ? { folderPath: r.folderPath, items: r.rejectedItems } : null),
+      onSuccess: (r) => {
+        // 새 거부가 없으면 기존 목록을 둔다(재시도는 그대로, 새 업로드는 위에서 이미 비웠다).
+        if (r.rejectedItems.length === 0) return;
+        setRejected((prev) =>
+          // 재시도 대상은 이미 거부된 파일을 뺀 것이라 같은 경로가 prev 에 있을 수 없다 — 이어 붙이기만 한다.
+          append && prev && prev.folderPath === r.folderPath
+            ? { folderPath: r.folderPath, items: [...prev.items, ...r.rejectedItems] }
+            : { folderPath: r.folderPath, items: r.rejectedItems },
+        );
+      },
     });
   }
 
@@ -277,7 +292,7 @@ export function DatasetObjectsTab({ datasetId, exportAllowed }: { datasetId: num
           title={`${uploadResult.total}개 중 ${failedCount}개 업로드 실패`}
           actions={
             failedItems.length > 0 ? (
-              <Button variant="outline" size="sm" onClick={() => upload.mutate(failedItems)}>
+              <Button variant="outline" size="sm" onClick={() => startUpload(failedItems, { append: true })}>
                 실패건 재시도
               </Button>
             ) : undefined

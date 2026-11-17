@@ -34,7 +34,25 @@ const UNSUPPORTED_VALUE_PATTERN = new RegExp(UNSUPPORTED_VALUE_WORDS.join('|'), 
  * 금지·제외를 뜻하는 표지 (WD-774).
  * 「목표·전망 수치는 쓰지 마세요」처럼 그 값을 쓰지 말라는 문장은 오히려 바른 지시이므로 주의하지 않는다.
  */
-const PROHIBITION_MARKERS = ['마세요', '말 것', '말고', '금지', '제외', '않'] as const;
+const PROHIBITION_MARKERS = ['마세요', '말 것', '말고', '금지', '제외'] as const;
+
+/**
+ * 「지 않」 부정이 금지를 뜻하는 꼴 (WD-783). 둘 중 하나면 그 문장은 금지로 본다.
+ *
+ * (가) 쓰기·포함 동사의 부정 — 「넣지 않고 실적만」「포함하지 않는 요약」처럼 어미가 무엇이든 그 값을 쓰지 말라는 뜻이다.
+ *      어미만 보면 「않고」「않는(관형형)」이 요청 문장에도 나오므로, 동사 줄기로 금지를 가린다.
+ * (나) 그 밖의 「지 않」은 서술·연결을 끝맺는 어미(는다·습니다·도록·아요·아야·고·기·겠)일 때만 금지다.
+ *      「달성하지 않은 지점」「달성하지 않게 된 지점」처럼 관형·부사형(은·는·을·게·음·으면)은 대상을 가리키는 요청이라 뺀다.
+ *      「고」는 「않고 」「않고,」처럼 연결이 끝날 때만 본다(「않고서는」 같은 더 긴 꼴과 섞이지 않게).
+ * 「달성/않음」처럼 「지」 없는 「않」은 부정 서술이 아니므로 어느 쪽에도 걸리지 않는다.
+ */
+const WRITING_VERB_NEGATION = /(?:쓰|넣|포함하|언급하|적|표시하|다루|보여 ?주|만들|기재하|제시하)지 않/;
+const NEGATIVE_CLAUSE_ENDING = /지 않(?:는다|습니다|도록|아요|아야|고(?=\s|,|$)|기|겠)/;
+
+/** 문장이 「지 않」 부정으로 금지를 뜻하는지 — 위 두 꼴 중 하나라도 맞으면 금지다 (WD-783). */
+function isNegatedProhibition(sentence: string): boolean {
+  return WRITING_VERB_NEGATION.test(sentence) || NEGATIVE_CLAUSE_ENDING.test(sentence);
+}
 
 /** 문장 경계 — 금지 표지를 문장 단위로 보기 위해 지시를 나눈다 (WD-774). */
 const SENTENCE_BOUNDARY = /[.。!?\n]/;
@@ -50,7 +68,7 @@ const SENTENCE_BOUNDARY = /[.。!?\n]/;
 export function findUnsupportedValueWords(instruction: string): string[] {
   const found = new Set<string>();
   for (const sentence of instruction.toLowerCase().split(SENTENCE_BOUNDARY)) {
-    if (PROHIBITION_MARKERS.some((marker) => sentence.includes(marker))) continue;
+    if (PROHIBITION_MARKERS.some((marker) => sentence.includes(marker)) || isNegatedProhibition(sentence)) continue;
     for (const match of sentence.matchAll(UNSUPPORTED_VALUE_PATTERN)) found.add(match[0]);
   }
   return [...found];

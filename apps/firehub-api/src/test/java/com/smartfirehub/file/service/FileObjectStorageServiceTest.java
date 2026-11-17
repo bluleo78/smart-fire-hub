@@ -427,7 +427,7 @@ class FileObjectStorageServiceTest {
   /** 훑는 오브젝트 수 상한에 닿았는데 더 남았으면 truncated=true 이고, 이어 보기는 없다(hasMore=false, nextToken=null). */
   @Test
   void searchObjects_truncatedWhenScanLimitReachedWithMoreLeft() throws Exception {
-    givenListing(
+    givenListingWithPeek(
         item("equip/x1.txt", 1L, false),
         item("equip/x2.txt", 1L, false),
         item("equip/a.txt", 1L, false));
@@ -438,6 +438,32 @@ class FileObjectStorageServiceTest {
     assertThat(resp.truncated()).isTrue();
     assertThat(resp.hasMore()).isFalse();
     assertThat(resp.nextToken()).isNull();
+  }
+
+  /** WD-783: 객체가 딱 scanLimit 개이고 페이지 미달이면 엿보기(maxKeys 1)가 빈 결과라 남은 게 없으므로 truncated=false 다. */
+  @Test
+  void searchExactlyScanLimitObjectsIsNotTruncated() throws Exception {
+    givenListingWithPeek(item("equip/x1.txt", 1L, false), item("equip/a.txt", 1L, false));
+
+    ObjectListResponse resp = service().searchObjects("firehub-files", "equip/", "a", null, 10, 2);
+
+    assertThat(resp.objects()).extracting("name").containsExactly("a.txt");
+    assertThat(resp.truncated()).isFalse();
+    assertThat(resp.hasMore()).isFalse();
+  }
+
+  /** WD-783: scanLimit+1 개면 엿보기가 남은 하나를 돌려주므로 truncated=true 다. */
+  @Test
+  void searchMoreThanScanLimitIsTruncated() throws Exception {
+    givenListingWithPeek(
+        item("equip/x1.txt", 1L, false),
+        item("equip/a.txt", 1L, false),
+        item("equip/x3.txt", 1L, false));
+
+    ObjectListResponse resp = service().searchObjects("firehub-files", "equip/", "a", null, 10, 2);
+
+    assertThat(resp.truncated()).isTrue();
+    assertThat(resp.hasMore()).isFalse();
   }
 
   /** 상한보다 적게 훑고 목록이 끝났으면 잘린 게 아니다. */
@@ -453,25 +479,64 @@ class FileObjectStorageServiceTest {
   }
 
   /**
-   * WD-776: 상한에 닿으면 더 남았는지 묻지(hasNext) 않는다 — S3 목록은 지연 이터레이터라 상한(1000 의 배수)에서 hasNext() 가 다음 S3 쪽을
-   * 한 번 더 받는다. 남은 게 있는지 모르므로 「더 있을 수 있음」으로 truncated=true 를 알린다(목록이 딱 상한에서 끝났어도 같다).
+   * WD-783: 페이지를 못 채우고 상한에 닿으면 정말 남았는지 따로 maxKeys=1 엿보기 요청(startAfter=마지막으로 훑은 키)으로 묻는다 — 본 이터레이터의
+   * hasNext() 는 다음 S3 쪽(최대 1000 키)을 통째로 받아 오므로 쓰지 않는다(WD-776 이 없앤 낭비). 남은 게 있으면 truncated=true 이고
+   * 이어 보기는 없다.
    */
   @Test
-  void searchObjects_doesNotFetchNextS3PageAfterScanLimit() throws Exception {
-    PagedListing listing =
-        new PagedListing(
-            2,
-            item("equip/x1.txt", 1L, false),
-            item("equip/x2.txt", 1L, false),
-            item("equip/x3.txt", 1L, false),
-            item("equip/x4.txt", 1L, false));
-    when(minioClient.listObjects(any(ListObjectsArgs.class))).thenReturn(listing);
+  void searchObjects_notFullPageAtScanLimitPeeksWithSingleKeyRequest() throws Exception {
+    Item[] all = {
+      item("equip/x1.txt", 1L, false),
+      item("equip/x2.txt", 1L, false),
+      item("equip/x3.txt", 1L, false),
+      item("equip/x4.txt", 1L, false)
+    };
+    PagedListing listing = new PagedListing(2, all);
+    List<ListObjectsArgs> calls = new java.util.ArrayList<>();
+    when(minioClient.listObjects(any(ListObjectsArgs.class)))
+        .thenAnswer(
+            inv -> {
+              ListObjectsArgs args = inv.getArgument(0);
+              calls.add(args);
+              return args.maxKeys() == 1 ? peekResults(args, all) : listing;
+            });
 
     ObjectListResponse resp = service().searchObjects("firehub-files", "equip/", "a", null, 10, 2);
 
-    // 첫 S3 쪽(2개)만 받는다 — 상한 뒤 두 번째 쪽을 받지 않는다.
+    // 본 목록은 첫 S3 쪽만 받고, 남았는지는 1 키 엿보기 요청 한 번으로 안다.
     assertThat(listing.pagesFetched).isEqualTo(1);
+    assertThat(calls).hasSize(2);
+    ListObjectsArgs peek = calls.get(1);
+    assertThat(peek.maxKeys()).isEqualTo(1);
+    assertThat(peek.startAfter()).isEqualTo("equip/x2.txt");
+    assertThat(peek.prefix()).isEqualTo("equip/");
+    assertThat(peek.recursive()).isTrue();
     assertThat(resp.objects()).isEmpty();
+    assertThat(resp.truncated()).isTrue();
+    assertThat(resp.hasMore()).isFalse();
+    assertThat(resp.nextToken()).isNull();
+  }
+
+  /**
+   * WD-783: 엿보기 요청이 실패해도 검색 전체를 실패시키지 않는다 — 이미 모은 결과를 돌려주고, 남았는지 모르므로 보수적으로 truncated=true 로 알린다.
+   */
+  @Test
+  void searchObjects_peekFailureReturnsCollectedResultsAsTruncated() throws Exception {
+    List<Result<Item>> main =
+        List.of(
+            new Result<>(item("equip/a1.txt", 1L, false)),
+            new Result<>(item("equip/x2.txt", 1L, false)));
+    when(minioClient.listObjects(any(ListObjectsArgs.class)))
+        .thenAnswer(
+            inv -> {
+              ListObjectsArgs args = inv.getArgument(0);
+              if (args.maxKeys() == 1) throw new IllegalStateException("peek boom");
+              return main;
+            });
+
+    ObjectListResponse resp = service().searchObjects("firehub-files", "equip/", "a", null, 10, 2);
+
+    assertThat(resp.objects()).extracting("key").containsExactly("equip/a1.txt");
     assertThat(resp.truncated()).isTrue();
     assertThat(resp.hasMore()).isFalse();
     assertThat(resp.nextToken()).isNull();
@@ -563,6 +628,39 @@ class FileObjectStorageServiceTest {
   private void givenListing(Item... items) {
     List<Result<Item>> results = java.util.Arrays.stream(items).map(Result::new).toList();
     when(minioClient.listObjects(any(ListObjectsArgs.class))).thenReturn(results);
+  }
+
+  /**
+   * 검색의 잘림 판정 엿보기(WD-783)까지 흉내 내는 스텁 — maxKeys=1 요청에는 startAfter 뒤 첫 항목 하나(없으면 빈 목록)를, 그 밖의 요청에는
+   * 전체를 돌려준다. 같은 목록을 모든 호출에 돌려주면 엿보기가 늘 「남았음」으로 보여 딱 상한 개수인 경우를 가릴 수 없다.
+   */
+  private void givenListingWithPeek(Item... items) {
+    List<Result<Item>> results = java.util.Arrays.stream(items).map(Result::new).toList();
+    when(minioClient.listObjects(any(ListObjectsArgs.class)))
+        .thenAnswer(
+            inv -> {
+              ListObjectsArgs args = inv.getArgument(0);
+              return args.maxKeys() == 1 ? peekResults(args, items) : results;
+            });
+  }
+
+  /**
+   * 엿보기 요청 응답 — 목록 순서에서 startAfter 키 바로 다음 항목 하나만 돌려준다(WD-783). 픽스처 키가 사전순이 아닌 경우가 있어(x1 다음 a) 문자열
+   * 비교가 아니라 주어진 목록 순서(S3 가 돌려주는 순서로 본다)를 따른다. startAfter 가 없으면 첫 항목이다.
+   */
+  private static List<Result<Item>> peekResults(ListObjectsArgs args, Item[] items) {
+    String after = args.startAfter();
+    int from = 0;
+    if (after != null) {
+      from = items.length;
+      for (int i = 0; i < items.length; i++) {
+        if (items[i].objectName().equals(after)) {
+          from = i + 1;
+          break;
+        }
+      }
+    }
+    return java.util.Arrays.stream(items).skip(from).limit(1).map(Result::new).toList();
   }
 
   /**
