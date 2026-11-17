@@ -32,7 +32,10 @@ public interface PlatformUserMapper {
   /** 계정 목록 총 건수(검색어 없으면 전체). */
   long countAccounts(@Param("pattern") String pattern);
 
-  /** 계정 목록 한 쪽. pattern 이 null 이면 생성 최신순, 아니면 검색 순. */
+  /**
+   * 계정 목록 한 쪽. pattern 이 null 이면 생성 최신순, 아니면 검색 순(username 정확일치 → 이메일 정확일치 → 이메일 → 이름 →
+   * id, WD-773).
+   */
   List<PlatformAccountResponse> selectAccounts(
       @Param("q") String q,
       @Param("pattern") String pattern,

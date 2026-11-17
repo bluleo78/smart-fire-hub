@@ -440,16 +440,113 @@ class FileObjectStorageServiceTest {
     assertThat(resp.nextToken()).isNull();
   }
 
-  /** 상한과 같은 수만큼 훑고 목록이 끝났으면 잘린 게 아니다. */
+  /** 상한보다 적게 훑고 목록이 끝났으면 잘린 게 아니다. */
   @Test
-  void searchObjects_notTruncatedWhenListingEndsAtScanLimit() throws Exception {
+  void searchObjects_notTruncatedWhenListingEndsBeforeScanLimit() throws Exception {
     givenListing(item("equip/x1.txt", 1L, false), item("equip/a.txt", 1L, false));
 
-    ObjectListResponse resp = service().searchObjects("firehub-files", "equip/", "a", null, 10, 2);
+    ObjectListResponse resp = service().searchObjects("firehub-files", "equip/", "a", null, 10, 3);
 
     assertThat(resp.objects()).extracting("name").containsExactly("a.txt");
     assertThat(resp.truncated()).isFalse();
     assertThat(resp.hasMore()).isFalse();
+  }
+
+  /**
+   * WD-776: 상한에 닿으면 더 남았는지 묻지(hasNext) 않는다 — S3 목록은 지연 이터레이터라 상한(1000 의 배수)에서 hasNext() 가 다음 S3 쪽을
+   * 한 번 더 받는다. 남은 게 있는지 모르므로 「더 있을 수 있음」으로 truncated=true 를 알린다(목록이 딱 상한에서 끝났어도 같다).
+   */
+  @Test
+  void searchObjects_doesNotFetchNextS3PageAfterScanLimit() throws Exception {
+    PagedListing listing =
+        new PagedListing(
+            2,
+            item("equip/x1.txt", 1L, false),
+            item("equip/x2.txt", 1L, false),
+            item("equip/x3.txt", 1L, false),
+            item("equip/x4.txt", 1L, false));
+    when(minioClient.listObjects(any(ListObjectsArgs.class))).thenReturn(listing);
+
+    ObjectListResponse resp = service().searchObjects("firehub-files", "equip/", "a", null, 10, 2);
+
+    // 첫 S3 쪽(2개)만 받는다 — 상한 뒤 두 번째 쪽을 받지 않는다.
+    assertThat(listing.pagesFetched).isEqualTo(1);
+    assertThat(resp.objects()).isEmpty();
+    assertThat(resp.truncated()).isTrue();
+    assertThat(resp.hasMore()).isFalse();
+    assertThat(resp.nextToken()).isNull();
+  }
+
+  /**
+   * WD-776: 페이지가 찬 순간이 상한과 겹쳐도 다음 S3 쪽을 받지 않는다 — 「더 있을 수 있음」으로 이어 보기(hasMore·nextToken=마지막으로 훑은 키)를
+   * 준다. 정말 끝이었다면 다음 요청이 빈 쪽 + hasMore=false 로 끝난다.
+   */
+  @Test
+  void searchObjects_pageFullAtScanLimitOffersContinuationWithoutPeeking() throws Exception {
+    PagedListing listing =
+        new PagedListing(
+            2,
+            item("equip/a1.txt", 1L, false),
+            item("equip/a2.txt", 1L, false),
+            item("equip/a3.txt", 1L, false));
+    when(minioClient.listObjects(any(ListObjectsArgs.class))).thenReturn(listing);
+
+    ObjectListResponse resp = service().searchObjects("firehub-files", "equip/", "a", null, 2, 2);
+
+    assertThat(listing.pagesFetched).isEqualTo(1);
+    assertThat(resp.objects()).extracting("key").containsExactly("equip/a1.txt", "equip/a2.txt");
+    assertThat(resp.hasMore()).isTrue();
+    assertThat(resp.nextToken()).isEqualTo("equip/a2.txt");
+    assertThat(resp.truncated()).isFalse();
+  }
+
+  /** 상한 전에 페이지가 차면 지금처럼 hasNext() 로 정확히 판정한다 — 더 없으면 이어 보기를 주지 않는다. */
+  @Test
+  void searchObjects_pageFullBeforeScanLimitPeeksForExactHasMore() throws Exception {
+    PagedListing listing =
+        new PagedListing(2, item("equip/a1.txt", 1L, false), item("equip/a2.txt", 1L, false));
+    when(minioClient.listObjects(any(ListObjectsArgs.class))).thenReturn(listing);
+
+    ObjectListResponse resp = service().searchObjects("firehub-files", "equip/", "a", null, 2, 100);
+
+    assertThat(resp.objects()).hasSize(2);
+    assertThat(resp.hasMore()).isFalse();
+    assertThat(resp.nextToken()).isNull();
+  }
+
+  // ---------------------------------------------------------------------------------------
+  // WD-776: 폴더 이름 보존 — 목록에 보이는 폴더는 들어갈 수 있어야 한다.
+  // ---------------------------------------------------------------------------------------
+
+  /**
+   * '\' 가 든 폴더·공백뿐인 폴더는 이름 그대로 보이고(들어갈 때 서버가 그대로 prefix 로 쓴다), 폴더 경로 정규화가 거부하거나 다른 값으로 바꾸는 이름은 모두
+   * 뺀다 — 목록에 보이면 반드시 열려야 한다. '.'·'..'(MinIO SDK 가 presign 을 거부하고 URL 점 세그먼트가 접힌다), '\' 로 나눈 조각이
+   * '..' 인 이름, 제어문자가 든 이름이 그렇다(검색으로는 찾을 수 있다).
+   */
+  @Test
+  void listFolder_hidesFoldersThatNormalizeFolderPathWouldNotOpen() throws Exception {
+    givenListing(
+        item("equip/ /", 0L, true),
+        item("equip/./", 0L, true),
+        item("equip/../", 0L, true),
+        item("equip/a\\..\\b/", 0L, true),
+        item("equip/bad\u0001name/", 0L, true),
+        item("equip/report\\2024/", 0L, true));
+
+    ObjectListResponse resp = service().listFolder("firehub-files", "equip/", "", null, 10);
+
+    assertThat(resp.folders()).extracting("path").containsExactly(" /", "report\\2024/");
+    assertThat(resp.folders()).extracting("name").containsExactly(" ", "report\\2024");
+  }
+
+  /** 그런 폴더 안 목록은 정규화한 폴더 값을 그대로 이어 붙인 prefix 로 S3 에 묻는다. */
+  @Test
+  void listFolder_usesBackslashAndBlankFolderAsPrefix() throws Exception {
+    givenListing();
+
+    service().listFolder("firehub-files", "equip/", "report\\2024/ /", null, 10);
+
+    assertThat(captureListArgs().prefix()).isEqualTo("equip/report\\2024/ /");
   }
 
   /** listObjects 에 넘긴 인자를 꺼낸다(호출이 정확히 한 번이어야 한다). */
@@ -479,6 +576,45 @@ class FileObjectStorageServiceTest {
     org.mockito.Mockito.lenient().when(item.size()).thenReturn(size);
     org.mockito.Mockito.lenient().when(item.lastModified()).thenReturn(null);
     return item;
+  }
+
+  /**
+   * MinIO SDK listObjects 처럼 S3 쪽(page)을 지연으로 받는 목록(WD-776). 버퍼가 비었을 때 hasNext() 를 부르면 남은 항목이 있으면
+   * 다음 쪽을 받고(pagesFetched 증가), 없으면 받지 않고 false 다(S3 가 isTruncated=false 를 이미 알려 준 것과 같다).
+   */
+  private static final class PagedListing implements Iterable<Result<Item>> {
+    private final List<Item> all;
+    private final int pageSize;
+    int pagesFetched = 0;
+
+    PagedListing(int pageSize, Item... items) {
+      this.all = List.of(items);
+      this.pageSize = pageSize;
+    }
+
+    @Override
+    public java.util.Iterator<Result<Item>> iterator() {
+      return new java.util.Iterator<>() {
+        private int fetchedUpTo = 0; // 받아 온 항목 수
+        private int cursor = 0; // 소비한 항목 수
+
+        @Override
+        public boolean hasNext() {
+          if (cursor < fetchedUpTo) return true;
+          if (fetchedUpTo >= all.size()) return false;
+          // 버퍼가 비었고 더 있다 → 다음 S3 쪽을 받는다.
+          fetchedUpTo = Math.min(fetchedUpTo + pageSize, all.size());
+          pagesFetched++;
+          return true;
+        }
+
+        @Override
+        public Result<Item> next() {
+          if (!hasNext()) throw new java.util.NoSuchElementException();
+          return new Result<>(all.get(cursor++));
+        }
+      };
+    }
   }
 
   private static String signature(String url) {

@@ -104,8 +104,17 @@ public class JooqPlatformUserRepository implements PlatformUserRepository {
               .likeIgnoreCase(pattern, '\\')
               .or(nameField.likeIgnoreCase(pattern, '\\'))
               .or(usernameField.likeIgnoreCase(pattern, '\\'));
+      // WD-773: username 정확일치(대소문자 무시)를 맨 앞에 — 이유는 PlatformUserRepository.findAccounts 정렬 설명.
+      Field<Integer> exactUsernameMatchRank =
+          when(usernameField.equalIgnoreCase(q), 0).otherwise(1);
       Field<Integer> exactEmailMatchRank = when(emailField.equalIgnoreCase(q), 0).otherwise(1);
-      order = List.of(exactEmailMatchRank.asc(), emailField.asc(), nameField.asc(), idField.asc());
+      order =
+          List.of(
+              exactUsernameMatchRank.asc(),
+              exactEmailMatchRank.asc(),
+              emailField.asc(),
+              nameField.asc(),
+              idField.asc());
     } else {
       order = List.of(createdAtField.desc(), idField.desc());
     }

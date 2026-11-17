@@ -3,7 +3,7 @@ import { Plus } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 
-import { accountsApi } from '@/api/accounts';
+import { accountsApi, PLATFORM_ACCOUNTS_KEY } from '@/api/accounts';
 import { AccountStatusBadge } from '@/components/AccountStatusBadge';
 import { CreateAccountDialog } from '@/components/CreateAccountDialog';
 import { PermissionDeniedBanner } from '@/components/PermissionDeniedBanner';
@@ -92,7 +92,7 @@ export default function AccountListPage() {
 
   const params = { q: debounced || undefined, page: effectivePage, size: PAGE_SIZE };
   const query = useQuery({
-    queryKey: ['platform-accounts', params],
+    queryKey: [PLATFORM_ACCOUNTS_KEY, params],
     queryFn: () => accountsApi.list(params).then((r) => r.data),
     // 페이지 이동 중 이전 결과를 유지해 표·페이지네이션이 사라졌다 나타나지 않게 한다.
     placeholderData: keepPreviousData,
@@ -103,7 +103,7 @@ export default function AccountListPage() {
    * 있으면 방금 비활성화한 계정을 테넌트 Owner 로 고를 수 있다(아무도 못 들어가는 테넌트).
    */
   const invalidate = () => {
-    void queryClient.invalidateQueries({ queryKey: ['platform-accounts'] });
+    void queryClient.invalidateQueries({ queryKey: [PLATFORM_ACCOUNTS_KEY] });
     void queryClient.invalidateQueries({ queryKey: ['platform-user-search'] });
   };
 

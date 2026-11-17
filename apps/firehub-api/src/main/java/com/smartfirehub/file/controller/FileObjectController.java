@@ -81,7 +81,7 @@ public class FileObjectController {
       @RequestParam(defaultValue = "50") int size,
       @RequestParam(defaultValue = "false") boolean recursive) {
     // 잘못된 path 는 config 조회 전에 거부한다(입력 오류가 DB 조회 없이 400).
-    String folderPath = keyGenerator.normalizeFolderPath(path);
+    String folderPath = ObjectKeyGenerator.normalizeFolderPath(path);
     FileDatasetConfig cfg = config(datasetId);
     // 악의적/실수로 지나치게 크거나 0 이하인 size 가 전달되어도 안전하도록 1~200 범위로 클램프한다.
     int cappedSize = Math.min(Math.max(size, 1), 200);
@@ -129,7 +129,10 @@ public class FileObjectController {
         storage.presignedGetUrl(cfg.bucket(), key, storage.defaultPresignExpiry(), disposition));
   }
 
-  /** 업로드용 presigned PUT URL을 배치로 발급한다. 앱이 키를 생성하여 프리픽스 격리·규약을 강제한다. */
+  /**
+   * 업로드용 presigned PUT URL을 배치로 발급한다. 앱이 키를 생성하여 프리픽스 격리·규약을 강제한다. 응답 targets 는 요청 files 와 같은
+   * 순서·개수이고, 파일별 검증에 실패한 자리는 key·uploadUrl 없이 error 만 싣는다(WD-776). 묶음 자체가 잘못되면(폴더 경로·개수) 400.
+   */
   // RLS 가 걸린 file_dataset_config 를 config()로 읽는다 — 트랜잭션이 없으면 GUC 미설정으로 조용히 0행이 된다.
   // (presigned URL 발급만 하고 DB에는 쓰지 않으므로 readOnly)
   @Transactional(readOnly = true)
@@ -139,7 +142,7 @@ public class FileObjectController {
       @PathVariable Long datasetId, @RequestBody UploadUrlRequest request) {
     FileDatasetConfig cfg = config(datasetId);
     // 지금 보는 폴더에 올린다(WD-761). ".."·상한 초과는 여기서 400 — 키는 항상 prefix + 정규화한 폴더 아래다.
-    String folderPath = keyGenerator.normalizeFolderPath(request.path());
+    String folderPath = ObjectKeyGenerator.normalizeFolderPath(request.path());
     List<FileSpec> files = request.files();
     // files는 1개 이상 MAX_UPLOAD_BATCH 이하만 허용(0개/초과는 잘못된 요청).
     if (files == null || files.isEmpty() || files.size() > MAX_UPLOAD_BATCH) {
@@ -154,11 +157,13 @@ public class FileObjectController {
     List<UploadTarget> targets = new ArrayList<>();
     for (FileSpec f : files) {
       // 앱이 prefix를 붙여 "<prefix><폴더><파일명>" 키 생성(S3 방식) → 해당 키에 대한 presigned PUT URL 발급.
-      // 폴더 + 파일 상대경로가 상한을 넘으면 generateKey 가 IllegalArgumentException(400)을 던진다.
-      String key = keyGenerator.generateKey(cfg.prefix(), folderPath, f.filename());
-      // 파일명이 정제 후 비면 key가 prefix와 같아진다(빈/경로만/무의미 이름). 유효 파일명 요구로 400 응답.
-      if (key.equals(cfg.prefix())) {
-        throw new IllegalArgumentException("유효한 파일명이 필요합니다: " + f.filename());
+      // 파일별 검증 실패는 그 파일 자리에 error 만 싣고 계속한다(WD-776 — 규칙은 ObjectKeyGenerator.generateKey 참고).
+      String key;
+      try {
+        key = keyGenerator.generateKey(cfg.prefix(), folderPath, f.filename());
+      } catch (IllegalArgumentException e) {
+        targets.add(UploadTarget.failed(e.getMessage()));
+        continue;
       }
       String url = storage.presignedPutUrl(cfg.bucket(), key, expiry).url();
       targets.add(new UploadTarget(key, url));

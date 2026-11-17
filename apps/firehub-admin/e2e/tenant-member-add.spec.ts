@@ -1,5 +1,6 @@
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 
+import type { TenantMemberResponse } from '../src/types/platform';
 import { createAccount, createAccountPage, createMember, createPlatformUser, createTenant } from './factories/platform.factory';
 import { mockApi } from './fixtures/api-mock';
 import { expect, loginAs, test } from './fixtures/auth.fixture';
@@ -264,16 +265,35 @@ test.describe('테넌트 멤버 추가 (WD-750)', () => {
     const ACCOUNTS = '/api/platform/accounts';
     const NOTICE = '이미 가입된 계정입니다 — 김철수(kim@example.com). 새 계정을 만들지 않고 이 계정을 멤버로 추가합니다.';
 
-    /** 테넌트 상세에서 멤버 추가 대화상자를 열어 「새 계정」 탭까지 간다 — 이 묶음의 시험이 공통으로 쓰는 준비. */
-    async function openNewAccountTab(page: Page) {
+    /**
+     * 테넌트 상세에서 멤버 추가 대화상자를 열어 「새 계정」 탭까지 간다 — 이 묶음의 시험이 공통으로 쓰는 준비.
+     * `members` 로 멤버 목록 응답을 바꿀 수 있다(WD-773 이미 멤버 안내).
+     */
+    async function openNewAccountTab(page: Page, members: TenantMemberResponse[] = MEMBERS) {
       await mockApi(page, 'GET', '/api/platform/tenants/1', ACTIVE);
-      await mockApi(page, 'GET', '/api/platform/tenants/1/members', MEMBERS);
+      await mockApi(page, 'GET', '/api/platform/tenants/1/members', members);
       await page.goto('/tenants/1');
+      return openDialogNewTab(page);
+    }
+
+    /** 이미 열린 테넌트 상세에서 멤버 추가 대화상자를 열어 「새 계정」 탭으로 간다(직접 목을 건 시험·다시 열기용). */
+    async function openDialogNewTab(page: Page) {
       await page.getByRole('button', { name: '멤버 추가' }).click();
       const dialog = page.getByRole('dialog');
       await dialog.getByRole('tab', { name: '새 계정' }).click();
       return dialog;
     }
+
+    /** 이메일 칸에 값을 넣고 포커스를 빼 사전 확인을 부른다(WD-773). */
+    async function checkEmail(dialog: Locator, value: string) {
+      const email = dialog.getByLabel('이메일(로그인 아이디)');
+      await email.fill(value);
+      await email.blur();
+    }
+
+    /** 이 테넌트의 멤버가 된 kim(계정 id 42) — 멤버십 상태만 바꿔 쓴다(WD-773). */
+    const kimMember = (status = 'ACTIVE') =>
+      createMember({ userId: 42, username: 'kim@example.com', role: 'MEMBER', status });
 
     test('새 계정 탭에 기존 이메일을 넣으면 기존 계정으로 추가하라고 안내한다', async ({ authenticatedPage: page }) => {
       await mockApi(page, 'GET', ACCOUNTS, createAccountPage([KIM]));
@@ -393,6 +413,215 @@ test.describe('테넌트 멤버 추가 (WD-750)', () => {
       await dialog.getByRole('tab', { name: '기존 계정' }).click();
       await dialog.getByRole('tab', { name: '새 계정' }).click();
       await expect(dialog.getByText(NOTICE)).toBeVisible();
+    });
+
+    // ── WD-773: 사전 확인 정확도 ─────────────────────────────────────────────
+
+    test('username 이 대소문자만 다른 계정도 기존 계정으로 안내하고, 정규화 이메일로 첫 쪽 20건을 조회한다', async ({
+      authenticatedPage: page,
+    }) => {
+      // 서버는 username 을 대소문자 무시로 찾는다(findByUsernameIgnoreCase) — 대문자가 섞여 저장된 username 도 같은 계정이다.
+      const mixed = createAccount({ ...KIM, username: 'Kim@Example.com' });
+      const capture = await mockApi(page, 'GET', ACCOUNTS, createAccountPage([mixed]), { capture: true });
+      const dialog = await openNewAccountTab(page);
+
+      await checkEmail(dialog, ' KIM@example.com');
+      await expect(
+        dialog.getByText('이미 가입된 계정입니다 — 김철수(Kim@Example.com). 새 계정을 만들지 않고 이 계정을 멤버로 추가합니다.'),
+      ).toBeVisible();
+      await expect(dialog.getByRole('button', { name: '기존 계정으로 추가' })).toBeVisible();
+
+      const request = capture.lastRequest();
+      expect(request?.searchParams.get('q')).toBe('kim@example.com');
+      expect(request?.searchParams.get('page')).toBe('0');
+      expect(request?.searchParams.get('size')).toBe('20');
+    });
+
+    test('계정을 비활성화하면(계정 목록 무효화) 다시 확인한 결과로 안내가 사라진다', async ({ authenticatedPage: page }) => {
+      // 계정 목록 응답은 비활성화 전후로 바뀐다 — 비활성화 POST 가 오면 그 뒤 GET 은 비활성 계정을 준다.
+      let active = true;
+      const emailChecks: string[] = [];
+      await page.route('**/api/platform/accounts?*', async (route) => {
+        const q = new URL(route.request().url()).searchParams.get('q');
+        if (q === 'kim@example.com') emailChecks.push(q);
+        const body = createAccountPage([createAccount({ ...KIM, active })]);
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+      });
+      await page.route('**/api/platform/accounts/42/deactivate', async (route) => {
+        active = false;
+        await route.fulfill({ status: 204, body: '' });
+      });
+      const dialog = await openNewAccountTab(page);
+
+      await checkEmail(dialog, 'kim@example.com');
+      await expect(dialog.getByText(NOTICE)).toBeVisible();
+      await dialog.getByRole('button', { name: '취소' }).click();
+      await expect(page.getByRole('dialog')).toHaveCount(0);
+
+      // 같은 앱 안에서(쿼리 캐시 유지) 계정 화면으로 가 비활성화한다 — 계정 화면은 ['platform-accounts'] 접두로 무효화한다.
+      await page.getByRole('link', { name: '계정' }).click();
+      await page.getByRole('button', { name: '김철수 계정 비활성화' }).click();
+      await page.getByRole('alertdialog').getByRole('button', { name: '비활성화' }).click();
+      await expect(page.getByText('계정을 비활성화했습니다.')).toBeVisible();
+      await page.goBack();
+
+      const reopened = await openDialogNewTab(page);
+      await checkEmail(reopened, 'kim@example.com');
+      // 30초 캐시가 남아 있어도 무효화됐으므로 다시 조회한다 — 그 응답(비활성)으로는 안내하지 않는다.
+      await expect.poll(() => emailChecks.length).toBe(2);
+      await expect(reopened.getByText('이미 가입된 계정입니다', { exact: false })).toHaveCount(0);
+      await expect(reopened.getByRole('button', { name: '기존 계정으로 추가' })).toHaveCount(0);
+    });
+
+    // 이미 이 테넌트의 멤버면 「기존 계정으로 추가」는 409 로 끝난다 — 멤버라는 사실만 알리고 버튼을 두지 않는다.
+    const MEMBER_CASES = [
+      { status: 'ACTIVE', text: '이미 이 테넌트의 멤버입니다 — 김철수(kim@example.com).' },
+      {
+        status: 'SUSPENDED',
+        text: '이미 이 테넌트의 멤버입니다(정지됨) — 김철수(kim@example.com). 멤버 상태를 확인하세요.',
+      },
+    ];
+    for (const { status, text } of MEMBER_CASES) {
+      test(`이미 멤버(${status})면 멤버라고 안내하고 「기존 계정으로 추가」를 두지 않는다`, async ({ authenticatedPage: page }) => {
+        await mockApi(page, 'GET', ACCOUNTS, createAccountPage([KIM]));
+        const members = [...MEMBERS, kimMember(status)];
+        const dialog = await openNewAccountTab(page, members);
+
+        await checkEmail(dialog, 'kim@example.com');
+        await expect(dialog.getByText(text)).toBeVisible();
+        await expect(dialog.getByText('이미 가입된 계정입니다', { exact: false })).toHaveCount(0);
+        await expect(dialog.getByRole('button', { name: '기존 계정으로 추가' })).toHaveCount(0);
+      });
+    }
+
+    test('대소문자만 다른 username 계정이 여럿이면 서버처럼 id 가 가장 작은 계정을 안내한다', async ({ authenticatedPage: page }) => {
+      // 응답 순서가 id 순이 아니어도(뒤 계정이 먼저 와도) 서버 findByUsernameIgnoreCase 가 붙일 최소 id 계정을 고른다.
+      const newer = createAccount({ ...KIM, id: 50, username: 'kim@example.com', name: '김나중' });
+      const older = createAccount({ ...KIM, id: 42, username: 'Kim@Example.com', email: null, name: '김먼저' });
+      await mockApi(page, 'GET', ACCOUNTS, createAccountPage([newer, older]));
+      const dialog = await openNewAccountTab(page);
+
+      await checkEmail(dialog, 'kim@example.com');
+      await expect(dialog.getByText('이미 가입된 계정입니다 — 김먼저(Kim@Example.com).', { exact: false })).toBeVisible();
+    });
+
+    test('비활성 계정은 이 테넌트의 멤버여도 안내하지 않는다', async ({ authenticatedPage: page }) => {
+      // 서버는 이미 멤버인지보다 비활성(409 ACCOUNT_INACTIVE)을 먼저 본다 — 비활성이면 멤버 여부와 무관하게 사전 안내를 두지 않는다.
+      await mockApi(page, 'GET', ACCOUNTS, createAccountPage([createAccount({ ...KIM, active: false })]));
+      const members = [...MEMBERS, kimMember()];
+      const dialog = await openNewAccountTab(page, members);
+
+      const email = dialog.getByLabel('이메일(로그인 아이디)');
+      await email.fill('kim@example.com');
+      const lookup = page.waitForResponse((r) => new URL(r.url()).pathname === ACCOUNTS);
+      await email.blur();
+      await lookup;
+      await expect(dialog.getByText('이미 이 테넌트의 멤버입니다', { exact: false })).toHaveCount(0);
+      await expect(dialog.getByText('이미 가입된 계정입니다', { exact: false })).toHaveCount(0);
+    });
+
+    test('정지·활성이 아닌 다른 멤버십 상태는 상태 꼬리표 없이 멤버라고만 안내한다', async ({ authenticatedPage: page }) => {
+      await mockApi(page, 'GET', ACCOUNTS, createAccountPage([KIM]));
+      const members = [...MEMBERS, kimMember('PENDING')];
+      const dialog = await openNewAccountTab(page, members);
+
+      await checkEmail(dialog, 'kim@example.com');
+      await expect(dialog.getByText('이미 이 테넌트의 멤버입니다 — 김철수(kim@example.com).', { exact: true })).toBeVisible();
+      await expect(dialog.getByText('정지됨', { exact: false })).toHaveCount(0);
+    });
+
+    test('「새 계정」 탭을 열 때 멤버 목록을 다시 읽어, 화면을 연 뒤 추가된 멤버도 이미 멤버로 안내한다', async ({
+      authenticatedPage: page,
+    }) => {
+      // 테넌트 상세를 연 뒤 다른 곳(웹 관리자 등)에서 kim 이 멤버가 됐다 — 처음 읽은 멤버 목록 캐시로 판정하면 「기존 계정으로 추가」를 잘못 권한다.
+      let members = MEMBERS;
+      let memberRequests = 0;
+      await page.route('**/api/platform/tenants/1/members', async (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        memberRequests += 1;
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(members) });
+      });
+      await mockApi(page, 'GET', '/api/platform/tenants/1', ACTIVE);
+      await mockApi(page, 'GET', ACCOUNTS, createAccountPage([KIM]));
+      await page.goto('/tenants/1');
+      await expect(page.getByRole('cell', { name: 'kimsb' })).toBeVisible();
+      const before = memberRequests;
+      members = [...MEMBERS, kimMember()];
+
+      const dialog = await openDialogNewTab(page);
+      await expect.poll(() => memberRequests).toBeGreaterThan(before);
+      await checkEmail(dialog, 'kim@example.com');
+      await expect(dialog.getByText('이미 이 테넌트의 멤버입니다 — 김철수(kim@example.com).')).toBeVisible();
+      await expect(dialog.getByRole('button', { name: '기존 계정으로 추가' })).toHaveCount(0);
+    });
+
+    test('새 계정을 만들어 추가한 뒤 다시 열면 낭비 요청 없이 새로 확인해 그 계정을 안내한다', async ({
+      authenticatedPage: page,
+    }) => {
+      // 추가 전에는 계정이 없고, 추가 뒤에는 kim 이 계정이자 멤버다.
+      let added = false;
+      let emailChecks = 0;
+      let memberRequests = 0;
+      await page.route('**/api/platform/accounts?*', async (route) => {
+        if (new URL(route.request().url()).searchParams.get('q') === 'kim@example.com') emailChecks += 1;
+        const body = createAccountPage(added ? [KIM] : []);
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+      });
+      await page.route('**/api/platform/tenants/1/members', async (route) => {
+        if (route.request().method() === 'POST') {
+          added = true;
+          await route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ userId: 42, created: true }) });
+          return;
+        }
+        memberRequests += 1;
+        const body = added ? [...MEMBERS, kimMember()] : MEMBERS;
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+      });
+      await mockApi(page, 'GET', '/api/platform/tenants/1', ACTIVE);
+      await page.goto('/tenants/1');
+      const dialog = await openDialogNewTab(page);
+      await checkEmail(dialog, 'kim@example.com');
+      await expect.poll(() => emailChecks).toBe(1);
+      await dialog.getByLabel('이름').fill('김철수');
+      const beforeAdd = memberRequests;
+      await dialog.getByRole('button', { name: '추가', exact: true }).click();
+      await expect(dialog.getByText('이 비밀번호는 다시 볼 수 없습니다', { exact: false })).toBeVisible();
+      // 추가 성공 무효화(멤버 목록 재조회)가 끝난 시점에 확인 쿼리는 낡음 표시만 되고 다시 조회되지 않았다(refetchType none).
+      await expect.poll(() => memberRequests).toBeGreaterThan(beforeAdd);
+      expect(emailChecks).toBe(1);
+      await dialog.getByRole('button', { name: '확인' }).click();
+      await expect(page.getByRole('dialog')).toHaveCount(0);
+
+      const reopened = await openDialogNewTab(page);
+      await checkEmail(reopened, 'kim@example.com');
+      // 30초 캐시 안이지만 낡음 표시가 돼 있어 다시 조회한다 — 「계정 없음」 캐시로 안내를 놓치지 않는다.
+      await expect.poll(() => emailChecks).toBe(2);
+      await expect(reopened.getByText('이미 이 테넌트의 멤버입니다 — 김철수(kim@example.com).')).toBeVisible();
+    });
+
+    test('멤버 목록을 읽지 못했으면 멤버 여부를 모르므로 기존 계정 안내를 띄우지 않는다', async ({
+      authenticatedPage: page,
+    }) => {
+      // 멤버인지 모르는 채 「기존 계정으로 추가」를 권하면 이미 멤버인 계정에 409 를 부를 수 있다 — 아무 안내도 하지 않는다(안전망은 제출 뒤 안내).
+      await mockApi(page, 'GET', ACCOUNTS, createAccountPage([KIM]));
+      await mockApi(page, 'GET', '/api/platform/tenants/1', ACTIVE);
+      await mockApi(
+        page,
+        'GET',
+        '/api/platform/tenants/1/members',
+        { status: 403, error: 'Forbidden', message: '권한이 없습니다' },
+        { status: 403 },
+      );
+      await page.goto('/tenants/1');
+      const dialog = await openDialogNewTab(page);
+
+      const email = dialog.getByLabel('이메일(로그인 아이디)');
+      await email.fill('kim@example.com');
+      const lookup = page.waitForResponse((r) => new URL(r.url()).pathname === ACCOUNTS);
+      await email.blur();
+      await lookup;
+      await expect(dialog.getByText('이미 가입된 계정입니다', { exact: false })).toHaveCount(0);
+      await expect(dialog.getByText('이미 이 테넌트의 멤버입니다', { exact: false })).toHaveCount(0);
     });
   });
 });

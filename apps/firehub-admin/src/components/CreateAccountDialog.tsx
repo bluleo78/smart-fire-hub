@@ -5,7 +5,7 @@ import { Info, Loader2 } from 'lucide-react';
 import { type RefObject, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 
-import { accountsApi } from '@/api/accounts';
+import { accountsApi, PLATFORM_ACCOUNTS_KEY } from '@/api/accounts';
 import { CredentialsResult } from '@/components/CredentialsResult';
 import { TemporaryPasswordField } from '@/components/TemporaryPasswordField';
 import { Button } from '@/components/ui/button';
@@ -105,7 +105,7 @@ function CreateAccountDialogBody({
         temporaryPassword: values.temporaryPassword,
       });
       // 계정 목록과 Owner 검색 캐시를 둘 다 무효화한다 — 남아 있으면 방금 만든 계정이 검색에 안 보여 중복 생성을 시도하게 된다.
-      void queryClient.invalidateQueries({ queryKey: ['platform-accounts'] });
+      void queryClient.invalidateQueries({ queryKey: [PLATFORM_ACCOUNTS_KEY] });
       void queryClient.invalidateQueries({ queryKey: [PLATFORM_USER_SEARCH_KEY] });
       setCreated({ account: data, password: values.temporaryPassword });
     } catch (error) {

@@ -53,10 +53,16 @@ export interface PresignedUrlResponse {
 /** presigned GET 의 응답 처리 방식 — inline: 브라우저에서 열기, attachment: 파일로 저장(내보내기 정책 대상) */
 export type ObjectDisposition = 'inline' | 'attachment';
 
-/** 업로드 대상 — 앱이 생성한 키 + 클라이언트가 PUT할 presigned URL */
+/**
+ * 업로드 대상 — 앱이 생성한 키 + 클라이언트가 PUT할 presigned URL.
+ * 요청 files 와 같은 순서·개수로 온다. 그 파일이 서버의 파일별 검증에 실패했으면 key·uploadUrl 없이 error(사유)만 온다
+ * (WD-776 — 규칙은 서버 ObjectKeyGenerator.generateKey). 그 파일만 실패로 보이고 나머지는 올린다.
+ */
 export interface UploadTarget {
-  key: string;
-  uploadUrl: string;
+  key?: string;
+  uploadUrl?: string;
+  /** 이 파일을 발급하지 못한 이유(성공이면 없음) */
+  error?: string;
 }
 
 /** 업로드 URL 발급 응답 — 대상 목록 + 만료(초) */

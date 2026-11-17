@@ -119,8 +119,8 @@ public class FileObjectStorageService {
         String relative = relativeName(key, prefix);
         if (item.isDir()) {
           String name = lastSegment(relative);
-          // "a//" 처럼 빈 세그먼트로 끝나는 prefix 는 이름이 없어 들어갈 수 없는 빈 줄이 된다 — 건너뛴다(검색으로는 찾을 수 있다).
-          if (name.isEmpty()) continue;
+          // 목록에 보이면 반드시 열리는 폴더만 싣는다(WD-776 — 규칙은 ObjectKeyGenerator.isOpenableFolder 참고).
+          if (!ObjectKeyGenerator.isOpenableFolder(relative)) continue;
           folders.add(new ObjectFolderResponse(relative, name));
         } else {
           items.add(toItem(item, prefix));
@@ -128,7 +128,7 @@ public class FileObjectStorageService {
         lastKey = key;
       }
       // 토큰 폴더·현재 폴더 표식은 맨 앞에만 오므로, 페이지를 채운 뒤 남은 원소가 있으면 다음 페이지가 있다.
-      // (남은 것이 이름 빈 "a//" 뿐인 드문 경우엔 다음 페이지가 비어 오고 hasMore=false 로 끝난다.)
+      // (남은 것이 목록에서 빼는 폴더뿐인 드문 경우엔 다음 페이지가 비어 오고 hasMore=false 로 끝난다.)
       hasMore = it.hasNext();
     } catch (Exception e) {
       throw new RuntimeException("오브젝트 목록 조회 실패: " + e.getMessage(), e);
@@ -147,6 +147,10 @@ public class FileObjectStorageService {
    * <ul>
    *   <li>페이지가 maxKeys 로 차면 hasMore = 더 남았는지, nextToken = 마지막으로 훑은 키(다음 요청은 새 상한으로 이어 훑는다).
    *   <li>페이지를 못 채우고 상한에 닿았는데 더 남았으면 truncated=true, 이어 보기는 없다(hasMore=false, nextToken=null).
+   *   <li>상한에 닿았으면 「더 남았는지」를 이터레이터에 묻지 않는다(WD-776) — SDK 이터레이터는 상한(S3 한 쪽 1000 의 배수)에서 hasNext() 가
+   *       다음 S3 쪽을 통째로 받아 오므로, 버릴 목록 요청이 한 번 더 나간다. 대신 「더 있을 수 있음」으로 본다: 페이지가 찼으면 이어 보기를 주고(정말
+   *       끝이었으면 다음 요청이 빈 쪽 + hasMore=false 로 끝난다), 못 채웠으면 truncated=true(목록이 딱 상한에서 끝났어도 「일부만
+   *       검색됨」으로 보인다).
    * </ul>
    *
    * @param query 공백이 아닌 검색어(컨트롤러가 앞뒤 공백을 뗀다)
@@ -173,7 +177,7 @@ public class FileObjectStorageService {
     boolean remaining;
     try {
       Iterator<Result<Item>> it = minioClient.listObjects(builder.build()).iterator();
-      // 상한 검사를 hasNext() 보다 먼저 한다 — 상한(1000 의 배수)에 닿은 뒤 hasNext() 가 다음 S3 페이지를 한 번 더 받지 않게.
+      // 상한 검사를 hasNext() 보다 먼저 한다(이유는 Javadoc).
       while (scanned < scanLimit && items.size() < maxKeys && it.hasNext()) {
         Item item = it.next().get();
         scanned++;
@@ -187,7 +191,8 @@ public class FileObjectStorageService {
           items.add(toItem(item, prefix));
         }
       }
-      remaining = it.hasNext();
+      // 상한에 닿았으면 묻지 않고 「더 있을 수 있음」(WD-776 — Javadoc).
+      remaining = scanned >= scanLimit || it.hasNext();
     } catch (Exception e) {
       throw new RuntimeException("오브젝트 검색 실패: " + e.getMessage(), e);
     }
@@ -197,8 +202,8 @@ public class FileObjectStorageService {
       return new ObjectListResponse(
           items, List.of(), remaining ? lastScannedKey : null, remaining, false);
     }
-    // 페이지를 못 채운 채 상한에 닿았는데 더 남았으면 일부만 찾은 것이다 — 이어 보기를 주지 않고 잘림만 알린다.
-    boolean truncated = scanned >= scanLimit && remaining;
+    // 페이지를 못 채운 채 상한에 닿았으면 일부만 찾았을 수 있다 — 이어 보기를 주지 않고 잘림만 알린다.
+    boolean truncated = scanned >= scanLimit;
     return new ObjectListResponse(items, List.of(), null, false, truncated);
   }
 

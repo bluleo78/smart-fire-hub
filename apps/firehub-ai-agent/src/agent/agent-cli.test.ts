@@ -2482,9 +2482,10 @@ describe('executeCliAgent — tool_use/tool_result id·isError 전달 (WD-767)',
     const uses = events.filter((e) => e.type === 'tool_use');
     expect(uses.map((e) => e.toolUseId)).toEqual(['toolu_q', 'toolu_w']);
     const results = events.filter((e) => e.type === 'tool_result');
+    // WD-775: tool_result 에도 toolUseId 를 싣는다 (toolName 자리 값은 SSE 계약상 그대로)
     expect(results).toEqual([
-      { type: 'tool_result', toolName: 'toolu_w', result: 'boom', isError: true },
-      { type: 'tool_result', toolName: 'toolu_q', result: '[{"n":1234}]', isError: false },
+      { type: 'tool_result', toolName: 'toolu_w', result: 'boom', isError: true, toolUseId: 'toolu_w' },
+      { type: 'tool_result', toolName: 'toolu_q', result: '[{"n":1234}]', isError: false, toolUseId: 'toolu_q' },
     ]);
   });
 });

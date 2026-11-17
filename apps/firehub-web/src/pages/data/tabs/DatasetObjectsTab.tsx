@@ -6,10 +6,11 @@ import { Button } from '../../../components/ui/button';
 import { InlineBanner } from '../../../components/ui/inline-banner';
 import { SearchInput } from '../../../components/ui/search-input';
 import { useDatasetPermissions } from '../../../hooks/queries/useDatasets';
-import { useObjectList, useUploadObjects } from '../../../hooks/queries/useObjects';
+import { type UploadResult, useObjectList, useUploadObjects } from '../../../hooks/queries/useObjects';
 import { extractApiError } from '../../../lib/api-error';
 import {
   folderBreadcrumbs,
+  folderDisplayName,
   formatObjectDate,
   formatObjectSize,
   nameInFolder,
@@ -17,7 +18,7 @@ import {
   parentFolderOf,
   toFolderParam,
 } from '../../../lib/objectFile';
-import { collectEntries, filesToItems } from '../../../lib/uploadTree';
+import { collectEntries, filesToItems, type UploadItem } from '../../../lib/uploadTree';
 
 /** 검색어 입력이 멈춘 뒤 서버에 묻기까지 기다리는 시간(ms) — 타이핑마다 데이터셋 전체를 훑지 않게 한다. */
 const SEARCH_DEBOUNCE_MS = 300;
@@ -37,6 +38,8 @@ function ObjectBreadcrumb({ path, onNavigate }: { path: string; onNavigate: (pat
       <ol className="flex min-w-0 flex-wrap items-center gap-1">
         {crumbs.map((c, i) => {
           const isCurrent = i === crumbs.length - 1;
+          // 공백뿐인 폴더 이름은 빈 조각이 되지 않게 「(공백)」으로 보인다(WD-776).
+          const label = folderDisplayName(c.name);
           return (
             <li key={c.path} className="flex min-w-0 items-center gap-1">
               {/* 구분자는 장식 — 조각 사이 관계는 목록 순서가 전한다. */}
@@ -50,12 +53,12 @@ function ObjectBreadcrumb({ path, onNavigate }: { path: string; onNavigate: (pat
                 onClick={() => onNavigate(c.path)}
                 aria-current={isCurrent ? 'page' : undefined}
                 // 긴 폴더 이름은 잘려 보이므로 마우스를 올리면 전체 이름을 볼 수 있게 한다.
-                title={c.name}
+                title={label}
                 className={`max-w-[16rem] truncate rounded px-1 hover:underline ${
                   isCurrent ? 'font-medium text-foreground' : 'text-muted-foreground'
                 }`}
               >
-                {c.name}
+                {label}
               </button>
             </li>
           );
@@ -94,14 +97,27 @@ export function DatasetObjectsTab({ datasetId, exportAllowed }: { datasetId: num
   const isSearch = q.length > 0;
 
   // 검색 모드는 데이터셋 전체를 훑으므로 path 를 싣지 않는다 — 폴더를 옮겨도 같은 검색 캐시를 쓴다.
-  const { data, isLoading, isError, error, hasNextPage, fetchNextPage, isFetchingNextPage } = useObjectList(
-    datasetId,
-    isSearch ? { q } : { path },
-  );
+  const {
+    data,
+    isLoading,
+    isError,
+    error,
+    hasNextPage,
+    fetchNextPage,
+    isFetchingNextPage,
+    isFetchNextPageError,
+    refetch,
+    isRefetching,
+  } = useObjectList(datasetId, isSearch ? { q } : { path });
   const upload = useUploadObjects(datasetId, path);
   const inputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  /**
+   * 서버가 파일별 검증에서 거부한 파일과 이유(WD-776) — 첫 묶음 결과에서 따로 들어 「실패건 재시도」(upload.data 를 바꾼다) 뒤에도 남긴다.
+   * 새 업로드를 시작하거나 사용자가 닫으면 비운다.
+   */
+  const [rejected, setRejected] = useState<{ folderPath: string; items: UploadResult['rejectedItems'] } | null>(null);
   // 업로드 URL 발급(POST upload-urls)은 dataset:write — 없으면 드롭존·폴더 선택·재시도를 숨기고 목록만 보인다 (WD-139)
   const { canWriteDataset } = useDatasetPermissions();
 
@@ -130,8 +146,17 @@ export function DatasetObjectsTab({ datasetId, exportAllowed }: { datasetId: num
   // 파일/폴더 선택 공통 처리 — webkitRelativePath가 있으면 상대경로로, 없으면 파일명으로 업로드한다(지금 폴더 아래로).
   const handleFiles = (files: FileList | null) => {
     if (!files || files.length === 0) return;
-    upload.mutate(filesToItems(Array.from(files)));
+    startUpload(filesToItems(Array.from(files)));
   };
+
+  /** 새 업로드 — 지난 거부 목록을 비우고, 이번 묶음에서 서버가 거부한 파일을 따로 들어 둔다(WD-776). */
+  function startUpload(items: UploadItem[]) {
+    setRejected(null);
+    upload.mutate(items, {
+      onSuccess: (r) =>
+        setRejected(r.rejectedItems.length > 0 ? { folderPath: r.folderPath, items: r.rejectedItems } : null),
+    });
+  }
 
   // 드롭 처리 — 폴더가 섞이면 FileSystemEntry로 재귀 순회해 하위 파일까지 상대경로로 수집한다.
   // 엔트리는 드롭 이벤트 동안에만 유효하므로 동기적으로 먼저 확보한 뒤 비동기로 순회한다.
@@ -145,13 +170,18 @@ export function DatasetObjectsTab({ datasetId, exportAllowed }: { datasetId: num
     const flatFiles = Array.from(dt.files); // 엔트리 API 미지원 브라우저 폴백용
     void (async () => {
       const items = entries.length > 0 ? await collectEntries(entries) : filesToItems(flatFiles);
-      if (items.length > 0) upload.mutate(items);
+      if (items.length > 0) startUpload(items);
     })();
   };
 
   // 부분 실패한 항목 목록 — 있으면 배너 + 재시도(실패건만 재업로드)를 노출한다.
   // 재시도는 훅의 현재 폴더로 올라가므로, 실패한 배치를 올린 폴더를 보고 있을 때만 띄운다(다른 폴더로 잘못 올라가지 않게).
-  const failedItems = upload.data && upload.data.folderPath === path ? upload.data.failedItems : [];
+  const uploadResult = upload.data && upload.data.folderPath === path ? upload.data : undefined;
+  const failedItems = uploadResult?.failedItems ?? [];
+  // 마지막 묶음에서 실패한 수 — PUT 실패 + 서버가 거부한 파일(WD-776, 거부 파일은 재시도에서 빼고 아래 목록으로 따로 보인다).
+  const failedCount = uploadResult ? uploadResult.total - uploadResult.succeeded : 0;
+  // 거부 목록은 그 묶음을 올린 폴더를 보고 있을 때만 보인다(다른 폴더에서 엉뚱한 안내가 남지 않게).
+  const rejectedItems = rejected && rejected.folderPath === path ? rejected.items : [];
 
   const pages = data?.pages ?? [];
   // 폴더 행은 검색 모드에 없다. 예전 응답(folders 없음)도 받도록 기본값을 준다. 불러온 폴더를 모두 파일보다 먼저 보인다.
@@ -165,7 +195,9 @@ export function DatasetObjectsTab({ datasetId, exportAllowed }: { datasetId: num
     : path
       ? '이 폴더에 파일이 없습니다.'
       : '오브젝트가 없습니다.';
-  const uploadHint = `${path ? `${path} 폴더에 ` : ''}파일·폴더를 드래그하거나 클릭하여 업로드`;
+  // 올라갈 폴더 표시 — 공백뿐인 폴더 이름은 「(공백)」으로 보여 빈칸이 되지 않게 한다(WD-776).
+  const pathLabel = path.split('/').map(folderDisplayName).join('/');
+  const uploadHint = `${path ? `${pathLabel} 폴더에 ` : ''}파일·폴더를 드래그하거나 클릭하여 업로드`;
 
   return (
     <div className="space-y-4 p-2">
@@ -236,20 +268,49 @@ export function DatasetObjectsTab({ datasetId, exportAllowed }: { datasetId: num
         />
       </div>
 
-      {/* 부분 실패 배너: 일부 업로드 실패 시 실패 건수 표시 + 실패건만 재시도. 재시도 중엔 숨김. */}
-      {!upload.isPending && failedItems.length > 0 && (
-        <div className="flex items-center justify-between rounded-md border border-destructive/50 bg-destructive/10 px-4 py-2 text-sm text-destructive">
-          <span>
-            {upload.data!.total}개 중 {failedItems.length}개 업로드 실패
-          </span>
-          <button
-            type="button"
-            onClick={() => upload.mutate(failedItems)}
-            className="rounded-md border border-destructive/50 px-3 py-1 hover:bg-destructive/20"
-          >
-            실패건 재시도
-          </button>
-        </div>
+      {/* 부분 실패 배너: 마지막 묶음의 실패 건수 + PUT 이 실패한 파일만 재시도. 재시도 중엔 숨김.
+          서버가 거부한 파일(WD-776)은 건수에 넣되 재시도에서 빼고 아래 「올리지 못한 파일」에 이유와 함께 보인다. */}
+      {!upload.isPending && uploadResult && failedCount > 0 && (
+        <InlineBanner
+          variant="destructive"
+          data-testid="upload-failure"
+          title={`${uploadResult.total}개 중 ${failedCount}개 업로드 실패`}
+          actions={
+            failedItems.length > 0 ? (
+              <Button variant="outline" size="sm" onClick={() => upload.mutate(failedItems)}>
+                실패건 재시도
+              </Button>
+            ) : undefined
+          }
+        />
+      )}
+
+      {/* 올리지 못한 파일(WD-776): 서버가 파일별 검증에서 거부한 파일과 이유. 실패건 재시도를 해도 남고, 닫거나 새로 올리면 사라진다. */}
+      {rejectedItems.length > 0 && (
+        <InlineBanner
+          variant="destructive"
+          data-testid="upload-rejected"
+          title={`올리지 못한 파일 ${rejectedItems.length}개 — 이유를 확인해 고친 뒤 다시 올려 주세요`}
+          actions={
+            <Button
+              variant="outline"
+              size="sm"
+              aria-label="올리지 못한 파일 안내 닫기"
+              onClick={() => setRejected(null)}
+            >
+              닫기
+            </Button>
+          }
+        >
+          <ul aria-label="올리지 못한 파일" className="space-y-1 text-xs">
+            {rejectedItems.map((r, i) => (
+              // 긴 경로가 화면 밖으로 넘치지 않게 아무 곳에서나 줄을 바꾼다.
+              <li key={`${i}:${r.item.path}`} className="break-all">
+                <span className="font-medium">{r.item.path}</span> — {r.reason}
+              </li>
+            ))}
+          </ul>
+        </InlineBanner>
       )}
       </>
       )}
@@ -291,12 +352,14 @@ export function DatasetObjectsTab({ datasetId, exportAllowed }: { datasetId: num
               >
                 <button
                   type="button"
-                  onClick={() => goToFolder(toFolderParam(f.path))}
-                  title={f.name}
+                  // 서버는 열리는 폴더만 준다(WD-776 — ObjectKeyGenerator.isOpenableFolder) — 끝 '/' 만 떼고 그대로 쓴다.
+                  onClick={() => goToFolder(f.path.replace(/\/$/, ''))}
+                  title={folderDisplayName(f.name)}
                   className="flex min-w-0 items-center gap-2 py-2 text-left hover:underline"
                 >
                   <Folder className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-                  <span className="truncate">{f.name}</span>
+                  {/* 공백뿐인 폴더 이름은 빈 줄이 되지 않게 「(공백)」으로 보인다(WD-776). */}
+                  <span className="truncate">{folderDisplayName(f.name)}</span>
                 </button>
                 <span className="text-right text-muted-foreground">—</span>
                 <span className="hidden text-right text-muted-foreground sm:block">—</span>
@@ -348,11 +411,23 @@ export function DatasetObjectsTab({ datasetId, exportAllowed }: { datasetId: num
               </div>
             ))}
           </div>
-          {/* 다음 페이지만 실패했으면 이미 불러온 목록은 그대로 두고 알린다 — 「더 보기」로 다시 시도할 수 있다. */}
+          {/* 불러온 목록이 있는데 조회가 실패했으면 목록은 그대로 두고 알린다(WD-776 — 다음 쪽 실패와 첫 쪽 재조회 실패를 구분해야
+              「더 보기」를 누르지 않은 사용자도 무엇이 실패했는지 안다). 다음 쪽은 「더 보기」, 재조회는 「다시 불러오기」로 다시 시도한다.
+              서버 사유가 있으면 아래 줄에 덧붙이고, 없으면 그 줄을 숨긴다(empty:hidden). */}
           {isError && (
-            <p role="alert" className="text-center text-sm text-destructive">
-              {extractApiError(error, '다음 목록을 불러오지 못했습니다. 다시 시도하세요.')}
-            </p>
+            <div role="alert" className="flex flex-col items-center gap-2 text-center text-sm text-destructive">
+              <p>
+                {isFetchNextPageError
+                  ? '다음 목록을 불러오지 못했습니다. 다시 시도하세요.'
+                  : '목록을 새로 불러오지 못했습니다. 다시 시도하세요.'}
+              </p>
+              <p className="text-xs empty:hidden">{extractApiError(error, '')}</p>
+              {!isFetchNextPageError && (
+                <Button variant="outline" size="sm" onClick={() => void refetch()} disabled={isRefetching}>
+                  {isRefetching ? '불러오는 중…' : '다시 불러오기'}
+                </Button>
+              )}
+            </div>
           )}
           {hasNextPage && (
             <button

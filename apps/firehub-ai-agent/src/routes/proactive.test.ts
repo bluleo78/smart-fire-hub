@@ -4,6 +4,7 @@ import fs from 'fs';
 import fsp from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { checkReportNumbers, collectSourceNumbers } from '../agent/report-number-check.js';
 import { TIBERO_SQL_GUIDE } from '../agent/tibero-sql-guide.js';
 import { findPgOnlySyntax, hasTiberoCoreRules } from '../agent/tibero-prompt-lint.fixture.js';
 import proactiveRouter, {
@@ -12,6 +13,7 @@ import proactiveRouter, {
   detectAgentFailure,
   buildProactiveSystemPrompt,
   htmlToText,
+  collectStrings,
 } from './proactive.js';
 
 const mockExecute = vi.hoisted(() => vi.fn());
@@ -1234,12 +1236,12 @@ describe('POST /agent/proactive — numberCheck (WD-767)', () => {
   }
 
   // agentType 기본은 sdk. 파일 없이 rawText 가 리포트가 되는 경로는 위임이 없는 opencode 뿐이라(WD-765) 그 시험만 opencode 로 보낸다.
-  async function run(agentType: 'sdk' | 'opencode' = 'sdk') {
+  async function run(agentType: 'sdk' | 'opencode' = 'sdk', context: Record<string, unknown> = { data: 'test' }) {
     return makeRequest(
       createApp(),
       'POST',
       '/agent/proactive',
-      { prompt: '분석', context: { data: 'test' }, tenantId: 1, agentType },
+      { prompt: '분석', context, tenantId: 1, agentType },
       { Authorization: `Internal ${VALID_TOKEN}` },
     );
   }
@@ -1321,6 +1323,20 @@ describe('POST /agent/proactive — numberCheck (WD-767)', () => {
     expect((res.body as { numberCheck: { checked: boolean } }).numberCheck.checked).toBe(false);
   });
 
+  it('컨텍스트 문자열의 줄 첫머리 숫자(「…\\n5,000건」)는 허용 텍스트로 리포트 「5,000건」을 허용한다 (WD-775)', async () => {
+    mockRun(
+      [
+        { type: 'tool_use', toolName: 'mcp__firehub__execute_analytics_query', toolUseId: 't1', input: {} },
+        { type: 'tool_result', toolName: 't1', result: '[{"amt":350000000}]' },
+      ],
+      '매출 3.5억 원, 접수 5,000건.',
+    );
+    const res = await run('sdk', { note: '지난주 현황\n5,000건 접수' });
+    const nc = (res.body as { numberCheck: { checked: boolean; unverified: { text: string }[] } }).numberCheck;
+    expect(nc.checked).toBe(true);
+    expect(nc.unverified).toEqual([]);
+  });
+
   it('위임 프롬프트가 원본 데이터를 JSON 그대로 붙이게 지시한다', () => {
     const p = buildProactiveSystemPrompt(undefined, 'sdk');
     expect(p).toContain('원본 데이터');
@@ -1340,5 +1356,70 @@ describe('htmlToText (WD-767)', () => {
     expect(t).not.toMatch(/1200|800|400/);
     expect(t).toContain('3.5억');
     expect(t).toContain('끝');
+  });
+});
+
+describe('htmlToText 인라인 태그 (WD-775)', () => {
+  it('인라인 태그는 공백 없이 지워 「<strong>3.5</strong>억」이 「3.5억」으로 읽힌다', () => {
+    expect(htmlToText('<p>매출 <strong>3.5</strong>억 원</p>')).toContain('3.5억');
+    expect(htmlToText('<p><b>1,234</b><span class="u">건</span>, <a href="#x">12.3</a><em>%</em></p>')).toMatch(/1,234건.*12\.3%/);
+  });
+
+  it('붙어 있는 인라인 요소끼리 숫자–숫자로 맞닿으면 떨어뜨린다', () => {
+    const t1 = htmlToText('<td><span>1234</span><span>12.5%</span></td>');
+    expect(t1).not.toContain('123412');
+    expect(t1).toMatch(/1234 12\.5%/);
+    const t2 = htmlToText('<p><del>1,200</del>1,350</p>');
+    expect(t2).toMatch(/1,200 1,350/);
+    // 숫자와 단위처럼 숫자–숫자가 아닌 맞닿음은 그대로 붙인다
+    expect(htmlToText('<p><strong>3.5</strong>억 <b>1,234</b><i>건</i></p>')).toMatch(/3\.5억 1,234건/);
+  });
+
+  it('맞닿은 인라인 숫자가 각각 출처와 대조된다', () => {
+    const sourceNumbers = new Set<number>();
+    collectSourceNumbers('[{"n":1234,"r":0.125,"a":1200,"b":1350}]', sourceNumbers);
+    const nc = checkReportNumbers({
+      reportTexts: [htmlToText('<td><span>1234</span><span>12.5%</span></td><p><del>1,200</del>1,350</p>')],
+      sourceNumbers,
+      allowedTexts: [],
+    });
+    expect(nc.checked).toBe(true);
+    expect(nc.unverified).toEqual([]);
+  });
+
+  it('블록 태그(표 칸·문단) 사이 숫자는 여전히 떨어진다', () => {
+    const t = htmlToText('<table><tr><td>12</td><td>34</td></tr></table><p>5</p><p>6</p>');
+    expect(t).not.toContain('1234');
+    expect(t).not.toContain('56');
+    expect(t).toMatch(/12\s+34/);
+  });
+
+  it('제목 블록이 줄을 나눠 「11. 권고사항」 목차 번호가 줄 첫머리에 온다', () => {
+    expect(htmlToText('<p>끝</p><h2>11. 권고사항</h2>')).toMatch(/^11\. 권고사항/m);
+  });
+});
+
+describe('collectStrings (WD-775)', () => {
+  it('객체·배열의 숫자 든 문자열·숫자·키를 원래 글자 그대로 모은다 (줄바꿈이 \\n 글자로 바뀌지 않는다)', () => {
+    const out = [...collectStrings({ note: '현황\n5,000건', list: [{ n: 1234 }, '탭\t7,000'], 2024: 'x', flag: true, none: null })];
+    expect(out).toContain('현황\n5,000건');
+    expect(out).toContain('탭\t7,000');
+    expect(out).toContain('1234');
+    expect(out).toContain('2024');
+    expect(out.join(' ')).not.toContain('\\n');
+  });
+
+  it('숫자 없는 문자열·키는 넣지 않고 같은 값은 한 번만 모은다', () => {
+    expect([...collectStrings({ note: '설명', a: '12건', b: '12건', c: 12 })]).toEqual(['12건', '12']);
+    expect([...collectStrings('양식')]).toEqual([]);
+    expect([...collectStrings('양식 3개')]).toEqual(['양식 3개']);
+    expect([...collectStrings(undefined)]).toEqual([]);
+  });
+
+  it('out 으로 받은 모음에 이어 모은다', () => {
+    const out = new Set(['프롬프트 1']);
+    collectStrings({ a: '2' }, out);
+    collectStrings(['3', '2'], out);
+    expect([...out]).toEqual(['프롬프트 1', '2', '3']);
   });
 });

@@ -46,6 +46,15 @@
      <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.pageClause"/>
   </select>
 
+  <!--
+    계정 화면 검색 정렬(WD-773) — username 정확일치(대소문자 무시)를 맨 앞에, 그다음 Owner 검색과 같은 순서(이유는
+    PlatformUserRepository.findAccounts). Owner 검색(search)은 username 을 맞추지 않으므로 searchOrder 를 그대로 둔다.
+  -->
+  <sql id="accountSearchOrder">
+    ORDER BY CASE WHEN LOWER(u.username) = LOWER(#{q}) THEN 0 ELSE 1 END ASC,
+             CASE WHEN LOWER(u.email) = LOWER(#{q}) THEN 0 ELSE 1 END ASC, u.email ASC, u.name ASC, u.id ASC
+  </sql>
+
   <!-- 계정 화면 검색은 비활성도 포함하고 username 까지 맞춘다. -->
   <sql id="accountFilter">
     <if test="pattern != null">
@@ -67,7 +76,7 @@
            u.created_at
       <include refid="fromUser"/> <include refid="accountFilter"/>
      <choose>
-       <when test="pattern != null"><include refid="searchOrder"/></when>
+       <when test="pattern != null"><include refid="accountSearchOrder"/></when>
        <otherwise>ORDER BY u.created_at DESC, u.id DESC</otherwise>
      </choose>
      <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.pageClause"/>

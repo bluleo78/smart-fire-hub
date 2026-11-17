@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -155,30 +156,32 @@ class FileObjectControllerTest {
         .andExpect(jsonPath("$.targets[0].key").value("equip/site-A/2026/cam1/img001.jpg"));
   }
 
-  /** upload-urls: ".." 세그먼트가 섞인 경로는 traversal 방어로 거부된다(정제 후 빈 → 400). */
+  /**
+   * WD-776: 파일 하나의 검증 실패(정제 후 빈 이름 "..", traversal "sub/../../x")는 묶음 전체 400 대신 그 파일 자리에만 error 를
+   * 싣고 presign 하지 않는다 — 나머지는 그대로 발급한다. 실패한 파일은 키를 만들지 않으므로 prefix 격리는 그대로다.
+   */
   @Test
-  void createUploadUrls_rejectsTraversalPath() throws Exception {
-    when(configRepo.findByDatasetId(7L))
-        .thenReturn(Optional.of(new FileDatasetConfig(7L, "firehub-files", "equip/")));
-    when(storage.defaultUploadPresignExpiry()).thenReturn(900);
-    mvc.perform(
-            post("/api/v1/datasets/7/objects/upload-urls")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"files\":[{\"filename\":\"sub/../../etc/passwd\"}]}"))
-        .andExpect(status().is4xxClientError());
-  }
+  void createUploadUrls_reportsInvalidFilenamesAsPerFileFailuresAndIssuesRest() throws Exception {
+    givenEquipConfig();
+    givenPresignedPut();
 
-  /** 파일명이 정제 후 비면(공백/경로만/무의미) 키가 prefix와 같아지므로 400으로 거부한다. */
-  @Test
-  void createUploadUrls_rejectsBlankFilename() throws Exception {
-    when(configRepo.findByDatasetId(7L))
-        .thenReturn(Optional.of(new FileDatasetConfig(7L, "firehub-files", "equip/")));
-    when(storage.defaultUploadPresignExpiry()).thenReturn(900);
     mvc.perform(
             post("/api/v1/datasets/7/objects/upload-urls")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"files\":[{\"filename\":\"..\"}]}"))
-        .andExpect(status().is4xxClientError());
+                .content(
+                    "{\"files\":[{\"filename\":\"a.txt\"},{\"filename\":\"..\"},"
+                        + "{\"filename\":\"sub/../../etc/passwd\"}]}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.targets.length()").value(3))
+        .andExpect(jsonPath("$.targets[0].key").value("equip/a.txt"))
+        .andExpect(jsonPath("$.targets[0].error").doesNotExist())
+        .andExpect(jsonPath("$.targets[1].key").doesNotExist())
+        .andExpect(jsonPath("$.targets[1].uploadUrl").doesNotExist())
+        .andExpect(jsonPath("$.targets[1].error").value(containsString("유효한 파일명")))
+        .andExpect(jsonPath("$.targets[2].key").doesNotExist())
+        .andExpect(jsonPath("$.targets[2].error").value(containsString("유효한 파일명")));
+
+    verify(storage, times(1)).presignedPutUrl(any(), any(), anyInt());
   }
 
   /** files가 비면 400. */
@@ -399,13 +402,17 @@ class FileObjectControllerTest {
     verify(storage, never()).presignedPutUrl(any(), any(), anyInt());
   }
 
-  /** path + 파일 상대경로 합이 900B 를 넘으면 조용히 자르지 않고 400 으로 거부한다. */
+  /**
+   * WD-776: path + 파일 상대경로 합이 900B 를 넘으면 자르지 않고 그 파일만 실패로 싣는다(같은 순서 자리에 key·uploadUrl 없이 error) —
+   * 잘라 올리면 앞부분이 같은 이름끼리 같은 키가 되어 말없이 덮어쓰고 화면은 성공으로 보인다. 묶음의 나머지는 발급한다.
+   */
   @Test
-  void createUploadUrls_rejectsFolderPathPlusFilenameOverByteLimit() throws Exception {
+  void createUploadUrls_rejectsTooLongNameInFolderPerFileAndIssuesRest() throws Exception {
     givenEquipConfig();
     givenPresignedPut();
-    String folder = "a".repeat(500);
-    String filename = "b".repeat(450) + ".jpg";
+    // 세그먼트는 모두 255B 이하(MinIO 세그먼트 상한) — 합계 900B 규칙만 본다. 폴더 500B + 파일 405B = 905B.
+    String folder = ("a".repeat(249) + "/").repeat(2);
+    String filename = "x".repeat(200) + "/" + "b".repeat(200) + ".jpg";
 
     mvc.perform(
             post("/api/v1/datasets/7/objects/upload-urls")
@@ -415,7 +422,106 @@ class FileObjectControllerTest {
                         + folder
                         + "\",\"files\":[{\"filename\":\""
                         + filename
-                        + "\"}]}"))
+                        + "\"},{\"filename\":\"short.txt\"}]}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.targets.length()").value(2))
+        .andExpect(jsonPath("$.targets[0].key").doesNotExist())
+        .andExpect(jsonPath("$.targets[0].uploadUrl").doesNotExist())
+        .andExpect(jsonPath("$.targets[0].error").value(containsString("너무 깁니다")))
+        .andExpect(jsonPath("$.targets[1].key").value("equip/" + folder + "short.txt"))
+        .andExpect(jsonPath("$.targets[1].uploadUrl").value(containsString("sig=put")))
+        .andExpect(jsonPath("$.targets[1].error").doesNotExist());
+
+    // 실패한 파일은 presign 하지 않는다 — 발급은 나머지 1건뿐.
+    verify(storage, times(1)).presignedPutUrl(any(), any(), anyInt());
+  }
+
+  /** WD-776: '\' 가 든 폴더·공백뿐인 폴더 경로는 바뀌지 않고 그대로 목록 prefix 로 간다. */
+  @Test
+  void list_preservesBackslashAndBlankFolderPath() throws Exception {
+    givenEquipConfig();
+    when(storage.listFolder(any(), any(), any(), any(), anyInt()))
+        .thenReturn(new ObjectListResponse(List.of(), null, false));
+
+    mvc.perform(get("/api/v1/datasets/7/objects").param("path", "report\\2024"))
+        .andExpect(status().isOk());
+    mvc.perform(get("/api/v1/datasets/7/objects").param("path", " ")).andExpect(status().isOk());
+
+    verify(storage).listFolder("firehub-files", "equip/", "report\\2024/", null, 50);
+    verify(storage).listFolder("firehub-files", "equip/", " /", null, 50);
+  }
+
+  /** WD-776: 그 폴더에서 올리면 키도 같은 폴더 아래다. */
+  @Test
+  void createUploadUrls_usesBackslashAndBlankFolderPathInKey() throws Exception {
+    givenEquipConfig();
+    givenPresignedPut();
+
+    mvc.perform(
+            post("/api/v1/datasets/7/objects/upload-urls")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"path\":\"report\\\\2024/ \",\"files\":[{\"filename\":\"a.jpg\"}]}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.targets[0].key").value("equip/report\\2024/ /a.jpg"));
+  }
+
+  /**
+   * WD-776: MinIO 는 키의 한 세그먼트가 255B 를 넘으면 PUT 을 400(XMinioInvalidObjectName)으로 거부한다. 폴더 안에서 255B 를
+   * 넘는 파일명(한글 100자 + ".txt" = 304B)은 자르지 않고 그 파일만 error 로 싣고, 묶음의 다른 파일은 발급한다.
+   */
+  @Test
+  void createUploadUrls_rejectsFilenameSegmentOver255BytesInFolderPerFile() throws Exception {
+    givenEquipConfig();
+    givenPresignedPut();
+    String longName = "다".repeat(100) + ".txt";
+
+    mvc.perform(
+            post("/api/v1/datasets/7/objects/upload-urls")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"path\":\"report\\\\2024\",\"files\":[{\"filename\":\""
+                        + longName
+                        + "\"},{\"filename\":\"ok.txt\"}]}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.targets.length()").value(2))
+        .andExpect(jsonPath("$.targets[0].key").doesNotExist())
+        .andExpect(jsonPath("$.targets[0].uploadUrl").doesNotExist())
+        .andExpect(jsonPath("$.targets[0].error").value(containsString("파일 이름이 너무 깁니다(최대 255바이트)")))
+        .andExpect(jsonPath("$.targets[1].key").value("equip/report\\2024/ok.txt"))
+        .andExpect(jsonPath("$.targets[1].uploadUrl").value(containsString("sig=put")))
+        .andExpect(jsonPath("$.targets[1].error").doesNotExist());
+
+    verify(storage, times(1)).presignedPutUrl(any(), any(), anyInt());
+  }
+
+  /** WD-776: 루트에 올리는 긴 이름(한글 300자 + ".txt")은 파일명 세그먼트를 255B 이내로 잘라 발급한다 — 확장자 보존. */
+  @Test
+  void createUploadUrls_rootTruncatesFilenameSegmentTo255Bytes() throws Exception {
+    givenEquipConfig();
+    givenPresignedPut();
+
+    mvc.perform(
+            post("/api/v1/datasets/7/objects/upload-urls")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"files\":[{\"filename\":\"" + "가".repeat(300) + ".txt\"}]}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.targets[0].key").value("equip/" + "가".repeat(83) + ".txt"))
+        .andExpect(jsonPath("$.targets[0].error").doesNotExist());
+  }
+
+  /** WD-776: 폴더 경로의 세그먼트 하나가 255B 를 넘으면 그런 폴더는 MinIO 에 있을 수 없으므로 400 — presign 하지 않는다. */
+  @Test
+  void createUploadUrls_rejectsFolderSegmentOver255Bytes() throws Exception {
+    givenEquipConfig();
+    givenPresignedPut();
+
+    mvc.perform(
+            post("/api/v1/datasets/7/objects/upload-urls")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"path\":\"ok/"
+                        + "a".repeat(256)
+                        + "\",\"files\":[{\"filename\":\"x.jpg\"}]}"))
         .andExpect(status().isBadRequest());
 
     verify(storage, never()).presignedPutUrl(any(), any(), anyInt());
