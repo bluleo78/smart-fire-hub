@@ -475,8 +475,12 @@ describe('checkReportNumbers — 단위 값 출처·계산한 증감률 (WD-781)
     expect(run('0 → 28.8시간 (+50.0%)', ['[0,28.8]']).unverified.map((u) => u.text)).toEqual(['50.0%']);
   });
 
-  it('같은 값 쌍(a=b)의 0% 는 계산값으로 인정한다', () => {
-    expect(run('전년 28.8시간 → 올해 28.8시간 (0.0%)', [HOURS_SRC]).unverifiedTotal).toBe(0);
+  it('같은 값 쌍(a=b)으로는 0%·100% 를 계산값으로 인정하지 않는다 — 같은 값이 둘만 있으면 어떤 0%·100% 든 통과해서 (WD-788)', () => {
+    expect(run('전년 28.8시간 → 올해 28.8시간 (0.0%)', [HOURS_SRC]).unverified.map((u) => u.text)).toEqual(['0.0%']);
+    expect(run('전년 28.8시간 → 올해 28.8시간 (100.0%)', [HOURS_SRC]).unverified.map((u) => u.text)).toEqual(['100.0%']);
+    expect(run('전년 28.8시간 → 올해 28.8시간 (0%)', [HOURS_SRC]).unverified.map((u) => u.text)).toEqual(['0%']);
+    // 값이 다른 쌍의 계산은 지금처럼 통과한다
+    expect(run('전년 111.8시간 → 올해 28.8시간 (-74.2%)', [HOURS_SRC]).unverifiedTotal).toBe(0);
   });
 
   it('단위 값 그대로 비교는 소수가 있는 표기만 — 정수(「15억」)는 흔한 개수 값에 우연히 맞지 않게 경고한다', () => {
@@ -484,13 +488,25 @@ describe('checkReportNumbers — 단위 값 출처·계산한 증감률 (WD-781)
     expect(run('매출 15억', ['[{"매출억":15}]']).unverified.map((u) => u.text)).toEqual(['15억']);
   });
 
-  it('한 줄에 확인된 수치가 상한(30개)을 넘으면 증감률 판정을 하지 않는다 — 쌍이 폭증하고 우연히 맞기 쉬워서', () => {
-    const many = Array.from({ length: 31 }, (_, i) => 100 + i);
-    const src = JSON.stringify(many.map((v) => ({ v })));
-    // 100 → 130 은 30.0% 증가지만, 같은 줄 재료가 31개라 판정하지 않아 경고된다
-    expect(run(`${many.join(' ')} (30.0%)`, [src]).unverified.map((u) => u.text)).toEqual(['30.0%']);
-    // 재료가 상한 이하면 같은 계산이 통과한다
+  it('한 줄에 확인된 수치가 9개 이상이면 증감률 판정을 하지 않는다 — 쌍이 폭증하고 우연히 맞기 쉬워서 (WD-788)', () => {
+    // 100 → 130 은 30.0% 증가. 재료 9개(100·130·101~107)인 줄에서는 판정하지 않아 경고된다
+    const nine = [100, 130, 101, 102, 103, 104, 105, 106, 107];
+    const src = JSON.stringify(nine.map((v) => ({ v })));
+    expect(run(`${nine.join(' ')} (30.0%)`, [src]).unverified.map((u) => u.text)).toEqual(['30.0%']);
+    // 재료가 상한(8개) 이하면 같은 계산이 통과한다
+    expect(run(`${nine.slice(0, 8).join(' ')} (30.0%)`, [src]).unverifiedTotal).toBe(0);
     expect(run('100 → 130 (30.0%)', [src]).unverifiedTotal).toBe(0);
+  });
+
+  it('재료가 4개를 넘는 줄에서는 정수 % 를 계산값으로 인정하지 않는다 — 지어낸 둥근 % 가 우연히 맞기 쉬워서 (WD-788)', () => {
+    const five = [100, 130, 150, 200, 250];
+    const src = JSON.stringify(five.map((v) => ({ v })));
+    // 130/100 → 30% 로 맞지만 재료 5개 줄의 정수 % 는 경고한다
+    expect(run(`${five.join(' ')} (30%)`, [src]).unverified.map((u) => u.text)).toEqual(['30%']);
+    // 같은 줄이라도 소수 자릿수가 있는 % 는 계산값으로 인정한다
+    expect(run(`${five.join(' ')} (30.0%)`, [src]).unverifiedTotal).toBe(0);
+    // 재료가 4개 이하인 줄의 정수 % 는 지금처럼 인정한다 (「1억2천만 → 1억8천만 (+50%)」 같은 실제 사례)
+    expect(run(`${five.slice(0, 4).join(' ')} (30%)`, [src]).unverifiedTotal).toBe(0);
   });
 
   it('출처 % 값과 이미 맞는 % 토큰은 지금처럼 통과한다', () => {

@@ -359,12 +359,12 @@ export function AddMemberDialog({ canAssignRoles, canReadRoles }: { canAssignRol
     } catch (error) {
       const response = axios.isAxiosError(error) ? error.response : undefined;
       const data = response?.data as ErrorResponse | undefined;
-      // 코드별 처리 표(CONFLICTS) — 모르는 코드면 undefined.
+      // 코드별 처리 표(CONFLICTS) — 모르는 코드면 undefined. 아래 갈래(정지 멤버·계정 생성 경합·판정 교체)가 모두 이 한 번 꺼낸 값을 쓴다(WD-788).
       const conflict = data?.code && Object.hasOwn(CONFLICTS, data.code) ? CONFLICTS[data.code] : undefined;
       // 정지된 멤버: 다시 추가가 아니라 상세에서 재활성화해야 한다 — 이메일 아래에 상세 링크.
       // 판정도 SUSPENDED 로 바꿔 제출을 잠근다(WD-771) — EXISTING 으로 남으면 「기존 계정 추가」를 또 누르게 된다. 안내는 칸 오류·링크가 맡고,
       // 같은 내용의 정지 멤버 배너는 칸 오류가 있는 동안 그리지 않는다(아래 showSuspendedBanner).
-      if (data?.code === 'MEMBER_SUSPENDED') {
+      if (conflict && data?.code === 'MEMBER_SUSPENDED') {
         const parsedUserId = Number(data.errors?.userId);
         const userId = data.errors?.userId && Number.isFinite(parsedUserId) ? parsedUserId : null;
         if (replaceVerdict(email, 'SUSPENDED', userId)) {
@@ -372,13 +372,13 @@ export function AddMemberDialog({ canAssignRoles, canReadRoles }: { canAssignRol
           setError('email', { message: '이미 이 워크스페이스의 멤버입니다(정지됨)' }, { shouldFocus: true });
         } else {
           // 응답을 기다리는 사이 이메일을 고쳤다(WD-779) — 칸 오류·상세 링크는 지금 이메일의 것이 아니므로 달지 않고, 제출한 이메일에 대해 버튼 위에 알린다.
-          setError('root', { message: CONFLICTS.MEMBER_SUSPENDED.submittedMessage(email) });
+          setError('root', { message: conflict.submittedMessage(email) });
         }
         return;
       }
       // 새 계정으로 보냈는데 그사이 같은 이메일의 계정이 만들어졌다(409 ACCOUNT_ALREADY_EXISTS, WD-779). 판정(NEW)이 낡았으므로
       // 그 이메일로 한 번 다시 확인해 판정을 바꾼다(기존 계정이면 이름·임시 비밀번호 칸이 숨겨진다). 기존 확인 함수를 그대로 써 세대 확인·진행 중 공유를 따른다.
-      if (data?.code === 'ACCOUNT_ALREADY_EXISTS') {
+      if (conflict && data?.code === 'ACCOUNT_ALREADY_EXISTS') {
         const session = sessionRef.current;
         // 응답 사이 이메일을 고쳤으면 다시 확인하지 않고 낡음으로 본다 — 다시 확인 중 이메일을 고친 경우와 함께 아래 한곳에서 알린다.
         const outcome: LookupOutcome =
@@ -387,7 +387,7 @@ export function AddMemberDialog({ canAssignRoles, canReadRoles }: { canAssignRol
         if (sessionRef.current !== session) return;
         if (outcome.kind === 'stale') {
           // 제출한 이메일이 지금 이메일이 아니다 — 판정은 두지 않고 제출한 이메일로 알린다(다른 409 와 같은 규칙).
-          setError('root', { message: CONFLICTS.ACCOUNT_ALREADY_EXISTS.submittedMessage(email) });
+          setError('root', { message: conflict.submittedMessage(email) });
           return;
         }
         // 다시 확인이 실패하면 낡은 NEW 판정을 버리고 판정 없이 오류만 남긴다(결과면 runLookup 이 판정을 이미 바꿨다).

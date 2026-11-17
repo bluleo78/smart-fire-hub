@@ -64,6 +64,10 @@ class QdrantPlatformSearchIntegrationTest extends IntegrationTestBase {
     // 컨텍스트가 뜨기 전에 공유 Qdrant 를 비운다(WD-784). 앱 빈(QdrantVectorStoreLifecycle)은 기동 때 컬렉션 구성을 대조하고
     // 다르면 기동을 멈추는데, 같은 JVM 의 다른 시험(QdrantDedicatedRowTargetTest 의 샤드 1·양자화 없음 등)이 남긴 컬렉션이
     // 있으면 컨텍스트가 뜨지 않아 이 클래스 전체가 실행 순서에 따라 실패했다. @BeforeEach 의 정리는 컨텍스트가 뜬 뒤라 늦다.
+    // 「이 시험 것만」 지우지 않고 모두 지우는 이유(WD-788): 컬렉션 이름은 QdrantCollectionSpec 의 고정 이름이고 접두사 설정이 없어, 이 시험이
+    // 쓰는 이름을 지우는 것이 곧 모든 Qdrant 시험의 같은 이름을 지우는 것이다. 그래서 캐시된 다른 컨텍스트의 시험은 기동 때 준비에 기대지 말고
+    // 시험 전에 스스로 다시 준비해야 한다 — 대부분 @BeforeEach 에서 지우고 준비하며, QdrantRowSearchServiceTest 는 setUp 재정의로
+    // 같은 구성의 prepare()(멱등)를 먼저 부른다.
     try (QdrantClient cleaner = QdrantClientConfig.create(PROPS)) {
       QdrantTestContainer.deleteAllCollections(cleaner);
     }

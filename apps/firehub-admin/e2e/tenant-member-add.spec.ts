@@ -505,20 +505,22 @@ test.describe('테넌트 멤버 추가 (WD-750)', () => {
       await expect(dialog.getByText('이미 가입된 계정입니다 — 김먼저(Kim@Example.com).', { exact: false })).toBeVisible();
     });
 
-    test('비활성 계정은 이 테넌트의 멤버여도 안내하지 않는다', async ({ authenticatedPage: page }) => {
-      // 서버는 이미 멤버인지보다 비활성(409 ACCOUNT_INACTIVE)을 먼저 본다 — 비활성이면 멤버 여부와 무관하게 사전 안내를 두지 않는다.
-      await mockApi(page, 'GET', ACCOUNTS, createAccountPage([createAccount({ ...KIM, active: false })]));
-      const members = [...MEMBERS, kimMember()];
-      const dialog = await openNewAccountTab(page, members);
+    // 서버는 「이미 멤버 → 비활성」 순서로 판정한다(WD-788) — 비활성 계정이어도 이미 멤버면 409 MEMBER_ALREADY_EXISTS·MEMBER_SUSPENDED 라,
+    // 활성 계정과 같은 「이미 멤버」 안내를 보인다. 비활성이라 「기존 계정으로 추가」는 여전히 두지 않는다.
+    for (const { status, text } of MEMBER_CASES) {
+      test(`비활성 계정이어도 이미 멤버(${status})면 멤버라고 안내하고 「기존 계정으로 추가」를 두지 않는다 (WD-788)`, async ({
+        authenticatedPage: page,
+      }) => {
+        await mockApi(page, 'GET', ACCOUNTS, createAccountPage([createAccount({ ...KIM, active: false })]));
+        const members = [...MEMBERS, kimMember(status)];
+        const dialog = await openNewAccountTab(page, members);
 
-      const email = dialog.getByLabel('이메일(로그인 아이디)');
-      await email.fill('kim@example.com');
-      const lookup = page.waitForResponse((r) => new URL(r.url()).pathname === ACCOUNTS);
-      await email.blur();
-      await lookup;
-      await expect(dialog.getByText('이미 이 테넌트의 멤버입니다', { exact: false })).toHaveCount(0);
-      await expect(dialog.getByText('이미 가입된 계정입니다', { exact: false })).toHaveCount(0);
-    });
+        await checkEmail(dialog, 'kim@example.com');
+        await expect(dialog.getByText(text)).toBeVisible();
+        await expect(dialog.getByText('이미 가입된 계정입니다', { exact: false })).toHaveCount(0);
+        await expect(dialog.getByRole('button', { name: '기존 계정으로 추가' })).toHaveCount(0);
+      });
+    }
 
     test('정지·활성이 아닌 다른 멤버십 상태는 상태 꼬리표 없이 멤버라고만 안내한다', async ({ authenticatedPage: page }) => {
       await mockApi(page, 'GET', ACCOUNTS, createAccountPage([KIM]));
