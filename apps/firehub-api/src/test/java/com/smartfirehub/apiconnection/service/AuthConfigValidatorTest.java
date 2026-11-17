@@ -598,7 +598,10 @@ class AuthConfigValidatorTest {
     assertThat(AuthConfigValidator.describeSentValueProblem(auth, stored))
         .isEqualTo(NON_ASCII_X_ID);
     assertThat(ApiCallAuth.describeProblem(auth, stored, "WD772"))
-        .isEqualTo("API 연결 「WD772」의 " + NON_ASCII_X_ID + " — API 연결 화면에서 이 연결의 추가 헤더를 고치세요.");
+        .isEqualTo(
+            "API 연결 「WD772」에 저장된 인증 정보의 "
+                + NON_ASCII_X_ID
+                + " — API 연결 화면에서 이 연결의 추가 헤더를 다시 입력하세요.");
   }
 
   /** 접두어 거르기 공용 helper — 추가 헤더 키만 원래 키 그대로 키 정렬 순서로 담는다. null·null 키는 건너뛴다. */

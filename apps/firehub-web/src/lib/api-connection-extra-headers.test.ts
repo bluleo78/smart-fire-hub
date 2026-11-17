@@ -7,6 +7,7 @@ import {
   extraHeaderRowsFromConfig,
   extraHeadersToConfig,
   isExtraHeaderKey,
+  isExtraHeaderValueError,
   keptStoredMasked,
   MAX_EXTRA_HEADERS,
   newExtraHeaderRow,
@@ -95,6 +96,34 @@ describe('api-connection-extra-headers', () => {
       f: '이름이 겹칩니다',
     });
     expect(extraHeaderRowErrors([row('a', 'X-A', 'v')])).toEqual({});
+  });
+
+  it('행 오류 — 값은 서버와 같은 ASCII 규칙(0x20~0x7E·탭)만 통과하고, 값을 비운 저장 행(가린 값 유지)은 검사하지 않으며, 「****」로 시작해도 친 값은 검사한다 (WD-780)', () => {
+    expect(
+      extraHeaderRowErrors([
+        row('a', 'X-Ko', '키아이디'),
+        row('b', 'X-Nbsp', 'key\u00a0id'),
+        row('c', 'X-Ctrl', 'key\u0001id'),
+        row('d', 'X-Del', 'key\u007fid'),
+        row('e', 'X-Tab', 'key\tid 4567 ~!@#$%^&*()_+-={}[]|\\:;"\'<>,.?/`'),
+        row('f', 'X-Trim', '  keyid  '),
+        row('g', 'X-Kept', '', '****한글값'),
+        row('h', 'X-Echo', '****한글값'),
+      ]),
+    ).toEqual({
+      a: '영문·숫자·기호(ASCII)만 쓸 수 있습니다',
+      b: '영문·숫자·기호(ASCII)만 쓸 수 있습니다',
+      c: '영문·숫자·기호(ASCII)만 쓸 수 있습니다',
+      d: '영문·숫자·기호(ASCII)만 쓸 수 있습니다',
+      h: '영문·숫자·기호(ASCII)만 쓸 수 있습니다',
+    });
+    // 값 칸의 오류라 문구 연결·포커스도 값 칸이다
+    expect(isExtraHeaderValueError('영문·숫자·기호(ASCII)만 쓸 수 있습니다')).toBe(true);
+    // 이름 빠짐·겹침이 먼저다(한 행에 오류 하나)
+    expect(extraHeaderRowErrors([row('a', '', '한글'), row('b', 'X-A', 'v'), row('c', 'x-a', '한글')])).toEqual({
+      a: '헤더 이름을 입력하세요',
+      c: '이름이 겹칩니다',
+    });
   });
 
   it('고치거나 지운 행의 오류만 지우고, 지울 것이 없으면 같은 참조를 돌려준다', () => {

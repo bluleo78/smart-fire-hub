@@ -494,7 +494,10 @@ class ApiCallAuthTest {
     assertThat(problem).startsWith("스텝 인증 설정의 추가 헤더 ").endsWith(" — 파이프라인 편집에서 이 스텝의 인증 설정을 고치세요.");
   }
 
-  /** 저장 연결의 추가 헤더 문제는 연결 화면에서 고치라고 안내한다. */
+  /**
+   * 저장 연결의 추가 헤더 문제는 연결에 저장된 인증 정보의 문제임을 밝히고, API 연결 화면에서 다시 입력하라고 안내한다(WD-780) — 어제 돌던 파이프라인이 새
+   * 규칙(ASCII·접두어 대소문자)으로 막혔을 때 운영자가 스텝이 아니라 저장값을 고쳐야 함을 알 수 있게.
+   */
   @Test
   void describeProblem_savedConnectionExtraHeaderBlank() {
     String problem =
@@ -502,7 +505,9 @@ class ApiCallAuthTest {
             conn("BEARER"), Map.of("token", "tok12345", "extraHeader:X-Tenant", " "));
 
     assertThat(problem)
-        .isEqualTo("API 연결 「공공 API」의 추가 헤더 X-Tenant 값을 입력하세요 — API 연결 화면에서 이 연결의 추가 헤더를 고치세요.");
+        .isEqualTo(
+            "API 연결 「공공 API」에 저장된 인증 정보의 추가 헤더 X-Tenant 값을 입력하세요 — API 연결 화면에서 이 연결의"
+                + " 추가 헤더를 다시 입력하세요.");
   }
 
   /**
@@ -522,7 +527,9 @@ class ApiCallAuthTest {
         .doesNotContain("first-value-1")
         .doesNotContain("second-value-2");
     assertThat(ApiCallAuth.describeCallProblem(conn("BEARER"), inline))
-        .isEqualTo("API 연결 「공공 API」의 추가 헤더 이름이 겹칩니다: X-A — API 연결 화면에서 이 연결의 추가 헤더를 고치세요.");
+        .isEqualTo(
+            "API 연결 「공공 API」에 저장된 인증 정보의 추가 헤더 이름이 겹칩니다: X-A — API 연결 화면에서 이 연결의"
+                + " 추가 헤더를 다시 입력하세요.");
     // 미리보기 입구(푼 값 + 원래 Map)도 같은 문구다. 원래 Map 이 없으면 합쳐진 값만 보여 겹침을 알 수 없다.
     ApiCallAuth.ResolvedAuth resolved = ApiCallAuth.resolve(inline);
     assertThat(ApiCallAuth.describeProblem(resolved, inline, null))

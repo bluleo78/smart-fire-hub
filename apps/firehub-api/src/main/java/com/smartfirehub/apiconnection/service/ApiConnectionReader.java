@@ -156,20 +156,19 @@ public class ApiConnectionReader {
   /**
    * 암호문을 복호화해 Map 으로 되돌린다.
    *
-   * <p>읽지 못하면 두 가지 예외만 나간다(WD-772 리뷰) — 복호화 실패는 {@link CryptoException}, JSON 이 아니면 {@link
-   * SerializationException}. 둘 다 저장 데이터 문제(서버 쪽, 500)다. 수정 경로용 {@link
+   * <p>읽지 못하면 두 가지 예외만 나간다(WD-772 리뷰) — 복호화 실패(키 변경·형식·Base64 오류, WD-780)는 {@link CryptoException},
+   * JSON 이 아니면 {@link SerializationException}. 둘 다 저장 데이터 문제(서버 쪽, 500)다. 수정 경로용 {@link
    * #findReadableDecryptedAuthConfig} 는 이 두 타입만 잡아 빈 값으로 돌려주고, 400(가린 값을 되돌릴 수 없음)으로 안내할지는 서비스가
    * 정한다.
    */
   private Map<String, String> decryptToMap(String encryptedConfig) {
+    // 형식이 틀리거나 Base64 가 깨진 암호문도 EncryptionService 가 CryptoException 으로 던진다(WD-780). 그
+    // 문구(「Decryption failed」)는
+    // 여러 기능이 함께 쓰는 영문이라, API 연결 화면·실행 오류에는 예전처럼 한국어 문구를 싣고 원래 예외는 원인으로만 남긴다(타입은 그대로).
     String json;
     try {
       json = encryptionService.decrypt(encryptedConfig);
-    } catch (IllegalArgumentException e) {
-      // 「iv:암호문」 형식이 아니거나 Base64 가 깨진 암호문(WD-772 리뷰). EncryptionService 는 이를
-      // IllegalArgumentException 으로 던지는데, 그대로 두면 전역 처리기가 입력 오류(400)로 보인다. 저장 데이터 손상이라
-      // 키 변경(GCM 태그 불일치)과 같은 CryptoException 으로 바꾼다. 원래 문구(암호문 조각이 실릴 수 있다)는 원인으로만 남긴다.
-      // EncryptionService 자체는 다른 기능도 쓰므로 바꾸지 않는다.
+    } catch (CryptoException e) {
       throw new CryptoException("저장된 API 연결 인증 정보를 복호화하지 못했습니다", e);
     }
     try {

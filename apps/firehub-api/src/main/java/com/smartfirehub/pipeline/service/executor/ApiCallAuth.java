@@ -422,14 +422,20 @@ public final class ApiCallAuth {
     }
     // 추가 인증 헤더(WD-753) — 원래 키 겹침(WD-753 리뷰)을 먼저, 이어서 메인 인증 헤더 이름과 겹치는지까지 본다. 고칠 곳은 저장 연결이면
     // 연결 화면의 추가 헤더, 인라인이면 스텝 설정이다.
+    // 저장 연결이면 문제가 「이미 저장된 인증 정보」에 있음을 밝히고 API 연결 화면에서 다시 입력하라고 안내한다(WD-780) — 규칙이 엄격해져(WD-772:
+    // ASCII 밖 값·접두어 대소문자 겹침) 어제 돌던 파이프라인이 여기서 막힐 수 있는데, 운영자가 스텝이 아니라 연결의 저장값을 고쳐야 함을 알 수
+    // 있게. 저장 검사 문구(사용자가 지금 넣은 값, AuthConfigValidator)는 그대로다.
     String extraProblem = AuthConfigValidator.rawExtraHeaderNameCollision(rawAuth);
     if (extraProblem == null) {
       extraProblem =
           AuthConfigValidator.extraHeadersProblem(auth.extraHeaders(), auth.authHeaderName());
     }
     if (extraProblem != null) {
-      String fixWhere = saved ? "API 연결 화면에서 이 연결의 추가 헤더를 고치세요." : fixStep;
-      return owner + extraProblem + " — " + fixWhere;
+      // 다른 분기처럼 주어·fixWhere 로 만든다 — 저장 연결이면 「…에 저장된 인증 정보의」로 문제 위치를 밝히고, 고칠 곳 문구는 다른 분기와 같은
+      // 「API 연결 화면에서」로 맞춘다.
+      String where = saved ? "API 연결 「" + connectionName + "」에 저장된 인증 정보의 " : owner;
+      String fixWhere = saved ? "API 연결 화면에서 이 연결의 추가 헤더를 다시 입력하세요." : fixStep;
+      return where + extraProblem + " — " + fixWhere;
     }
     return null;
   }

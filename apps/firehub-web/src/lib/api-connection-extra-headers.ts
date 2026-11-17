@@ -7,7 +7,7 @@
  *
  * 생성 대화상자(ApiConnectionListPage)와 상세 편집(ApiConnectionDetailPage)이 같은 규칙을 쓰도록 이 파일 한 곳에 둔다.
  * 최종 검사(헤더 이름 토큰·예약 헤더·메인 인증 헤더와 겹침·개수 상한·줄바꿈)는 서버(AuthConfigValidator)가 하고 400 문구로 안내한다 —
- * 화면은 흔한 실수(이름 빠짐·값 빠짐·이름 겹침)만 먼저 막는다.
+ * 화면은 흔한 실수(이름 빠짐·값 빠짐·이름 겹침·ASCII 밖 값)만 먼저 막는다.
  */
 
 import { focusFirstError, withoutKeys } from '@/lib/api-connection-form';
@@ -55,6 +55,24 @@ const NAME_MISSING = '헤더 이름을 입력하세요';
 const VALUE_MISSING = '값을 입력하세요';
 /** 행 오류 문구 — 다른 행과 이름이 겹칠 때(HTTP 헤더 이름은 대소문자를 가리지 않는다) */
 const NAME_DUPLICATE = '이름이 겹칩니다';
+/** 행 오류 문구 — 값에 HTTP 헤더로 보낼 수 없는 글자(한글·특수 공백·제어 문자)가 있을 때(WD-780) */
+const VALUE_NON_ASCII = '영문·숫자·기호(ASCII)만 쓸 수 있습니다';
+
+/**
+ * 추가 헤더 값에 HTTP 헤더로 그대로 보낼 수 없는 글자가 있는지(WD-780) — 서버 AuthConfigValidator 의 값 검사(줄바꿈·ASCII 밖 글자)를
+ * 한 문구로 먼저 막는다.
+ *
+ * 허용은 출력 가능한 ASCII(0x20~0x7E)와 탭(0x09)뿐이다. 서버는 앞뒤 공백을 Java strip 으로 뗀 값을 보므로 여기서도 javaStrip 뒤에 본다 —
+ * NBSP(U+00A0)는 Java 공백이 아니라 앞뒤에 있어도 남아 거절된다(서버와 같다). 줄바꿈(CR·LF)은 서버가 「줄바꿈」 문구로 따로 알리지만, 값 칸은 한 줄
+ * 입력이라 붙여 넣기로만 들어오므로 화면은 같은 ASCII 문구로 묶는다. 예전에는 화면이 이 규칙을 몰라, 저장하면 서버 400 이 토스트로만 보이고 어느
+ * 행인지 표시·포커스가 없었다.
+ *
+ * 값 칸에는 사용자가 새로 입력한 값만 있다 — 저장된 행의 가린 값은 storedMasked 에 따로 두고 값 칸은 비운 채 시작하므로, 「****」로 시작하는 값도
+ * 사용자가 친 값이라 그대로 검사한다(접두어로 건너뛰면 「****한글」이 화면 검사를 지나 서버 가린 값 오류로 바뀐다).
+ */
+function hasNonAsciiHeaderValue(value: string): boolean {
+  return /[^\t\x20-\x7e]/.test(javaStrip(value));
+}
 
 /** 화면 안 행 id 순번 — crypto.randomUUID 는 http(비보안 출처)에서 없을 수 있어 단순 순번을 쓴다. */
 let rowSeq = 0;
@@ -120,7 +138,8 @@ export function withoutExtraHeaders(config: Record<string, string>): Record<stri
 
 /**
  * 행 id → 오류 문구. 오류가 없는 행은 키가 없다.
- * 한 행에는 하나만 단다 — 이름 빠짐 → 이름 겹침(앞 행과 대소문자 무시로 같으면 뒤 행에) → 값 빠짐(유지할 저장값이 없을 때) 순.
+ * 한 행에는 하나만 단다 — 이름 빠짐 → 이름 겹침(앞 행과 대소문자 무시로 같으면 뒤 행에) → 값 빠짐(유지할 저장값이 없을 때)
+ * → 값의 ASCII 밖 글자(hasNonAsciiHeaderValue, 서버 규칙과 같다 — WD-780) 순.
  * 이름·값이 모두 빈 행은 보내지 않으므로 오류도 없다.
  */
 export function extraHeaderRowErrors(rows: ExtraHeaderRow[]): Record<string, string> {
@@ -139,7 +158,12 @@ export function extraHeaderRowErrors(rows: ExtraHeaderRow[]): Record<string, str
       continue;
     }
     seen.add(lower);
-    if (valueBlank && !keptStoredMasked(row)) errors[row.id] = VALUE_MISSING;
+    // 값을 비운 저장 행은 가린 값을 보내 저장 원문을 유지하므로 ASCII 검사는 새로 입력한 값에만 한다.
+    if (valueBlank) {
+      if (!keptStoredMasked(row)) errors[row.id] = VALUE_MISSING;
+    } else if (hasNonAsciiHeaderValue(row.value)) {
+      errors[row.id] = VALUE_NON_ASCII;
+    }
   }
   return errors;
 }
@@ -172,13 +196,13 @@ export function extraHeaderValueInputId(rowId: string): string {
   return `${rowId}-value`;
 }
 
-/** 행 오류가 값 칸의 것인지(값 빠짐) — 그 밖(이름 빠짐·겹침)은 이름 칸의 오류다. 오류 문구 연결·포커스 칸을 고를 때 쓴다. */
+/** 행 오류가 값 칸의 것인지(값 빠짐·ASCII 밖 값) — 그 밖(이름 빠짐·겹침)은 이름 칸의 오류다. 오류 문구 연결·포커스 칸을 고를 때 쓴다. */
 export function isExtraHeaderValueError(message: string | undefined): boolean {
-  return message === VALUE_MISSING;
+  return message === VALUE_MISSING || message === VALUE_NON_ASCII;
 }
 
 /**
- * 화면 순서상 첫 오류 행의 해당 입력(값 빠짐이면 값 칸, 그 밖은 이름 칸)으로 포커스를 옮긴다. 오류가 있었으면 true —
+ * 화면 순서상 첫 오류 행의 해당 입력(값 빠짐·ASCII 밖 값이면 값 칸, 그 밖은 이름 칸)으로 포커스를 옮긴다. 오류가 있었으면 true —
  * 호출자는 메인 칸(focusFirstError) 다음에 불러, 둘 중 하나라도 참이면 저장·호출을 멈춘다.
  * 첫 오류 찾기·포커스는 메인 칸과 같은 공용 focusFirstError 를 쓰고, 행 id → 입력 id 매핑에서 오류 종류별 칸(값/이름)을 고른다.
  */
