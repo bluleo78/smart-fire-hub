@@ -1485,35 +1485,51 @@ class TiberoPythonReadGrantSyncTest extends IntegrationTestBase {
 
   // ------------------------------------------------ WD-664 6: 커밋 직전 좁히기의 시간 상한
 
-  /** 테스트용 짧은 상한 — 전체 1초·접속 0.6초·문장 0.5초(초 단위 queryTimeout 은 1초로 올림). */
+  /**
+   * 테스트용 짧은 상한 — 전체 3초·접속 0.6초·문장 0.5초(초 단위 queryTimeout 은 1초로 올림).
+   *
+   * <p>예산은 좁히기 진입부터 흘러 앞쪽 PG 일(등급·테이블 이름·잠금)까지 센다 — 1초는 부하 아래 그 일만으로 바닥났다(WD-785). 그래서 3초로 두고, 흉내
+   * 낸 느린 일({@link #SLOWER_THAN_BUDGET_MS})을 예산보다 길게 잡아 「그 일 하나에서 예산을 넘긴다」를 부하와 무관하게 만든다. 세 시험 모두 실패 때
+   * 원인이 보이도록 관측 신호 단언을 시간 단언보다 앞에 둔다.
+   */
   private static final PreCommitDeadline.Bounds SHORT_BOUNDS =
       new PreCommitDeadline.Bounds(
-          Duration.ofSeconds(1), Duration.ofMillis(600), Duration.ofMillis(500));
+          Duration.ofSeconds(3), Duration.ofMillis(600), Duration.ofMillis(500));
 
-  /** 등급 변경 트랜잭션 안에서 공개 → 민감 좁히기를 부르고, 결과와 걸린 시간(ms)을 돌려준다. */
+  /** 전체 예산(3초)보다 긴, 흉내 낸 느린 일 하나의 시간(ms) — 문장 하나·재판정 조회 하나에서 예산을 넘기게 한다(WD-785). */
+  private static final long SLOWER_THAN_BUDGET_MS = 4_000;
+
+  /**
+   * 등급 변경 트랜잭션 안에서 공개 → 민감 좁히기를 부르고, 결과와 좁히기 호출에 걸린 시간(ms)을 돌려준다.
+   *
+   * <p>시간은 람다 안에서 {@code sync.narrowDatasetInCurrentTx(...)} 호출만 감싸 잰다(WD-785). 트랜잭션 시작·픽스처 {@code
+   * dsl.update(DATASET)}·커밋은 시험 대상이 아닌데, 호스트 부하(load 10~18) 아래 공용 Testcontainers PG 에서 수 초씩 늦어져 시간
+   * 상한을 넘기곤 했다. 예외가 나면 테스트가 실패로 끝나므로 finally 로 경과를 남길 필요는 없다.
+   */
   private NarrowResult narrowPublicToSensitive(long id, long[] elapsedMs) {
     long from = fx.levelId("공개");
     long to = fx.levelId("민감");
-    long start = System.nanoTime();
-    NarrowResult r =
-        TenantRlsTestSupport.runInTenantTransaction(
-            fixtureTransactionTemplate,
-            DEFAULT_TEST_TENANT_ID,
-            () -> {
-              dsl.update(DATASET)
-                  .set(DATASET.SECURITY_LEVEL_ID, to)
-                  .where(DATASET.ID.eq(id))
-                  .execute();
-              return sync.narrowDatasetInCurrentTx(id, from, to);
-            });
-    elapsedMs[0] = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
-    return r;
+    return TenantRlsTestSupport.runInTenantTransaction(
+        fixtureTransactionTemplate,
+        DEFAULT_TEST_TENANT_ID,
+        () -> {
+          dsl.update(DATASET).set(DATASET.SECURITY_LEVEL_ID, to).where(DATASET.ID.eq(id)).execute();
+          // 시험 대상(커밋 직전 좁히기)만 잰다 — 픽스처 갱신·커밋 지연은 경과에서 뺀다(WD-785)
+          long start = System.nanoTime();
+          NarrowResult r = sync.narrowDatasetInCurrentTx(id, from, to);
+          elapsedMs[0] =
+              java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+          return r;
+        });
   }
 
   /**
    * WD-664 6 — 커밋 직전 좁히기의 Tibero 직결 접속이 느리면(예전 상한 10초) 접속 상한(전체 예산 안)에서 포기하고 "확인 못 함" 으로 돌아온다 —
-   * 리스너가 대체 경로(토큰 무효화 + 커밋 뒤 비동기 좁히기)로 막는다. 커밋은 상한 안에 진행된다. 고치기 전에는 상한 없는 접속을 끝까지 기다려(여기서는 3초) 시간
-   * 단언이 깨지고, 늦게라도 접속돼 "확인됨" 이 됐다.
+   * 리스너가 대체 경로(토큰 무효화 + 커밋 뒤 비동기 좁히기)로 막는다. 고치기 전에는 상한 없는 접속을 끝까지 기다려(흉내 낸 접속 지연만큼) 시간 단언이
+   * 깨지고, 늦게라도 접속돼 "확인됨" 이 됐다.
+   *
+   * <p>WD-785: 경과는 좁히기 호출만 잰다(커밋 시간은 이 시험이 보지 않는다 — 커밋 단계를 붙잡는 일은 리스너 시험의 몫). 시간 단언 2.5초는 「접속 상한
+   * 0.6초 + 부하 여유」이고, 접속 지연(5초)을 끝까지 기다리거나 남은 예산(3초)을 다 쓰고서야 포기하는 회귀는 넘는다.
    */
   @Test
   void narrowBeforeCommit_slowConnect_givesUpWithinBudget_andFallsBack() {
@@ -1521,24 +1537,26 @@ class TiberoPythonReadGrantSyncTest extends IntegrationTestBase {
     sync.syncTenant();
     long id = datasets.get(0);
     sync.preCommitBoundsForTest(SHORT_BOUNDS);
-    connectDelayMs = 3_000;
+    connectDelayMs = 5_000;
     executed.clear();
     long[] elapsed = {0};
 
     NarrowResult narrowed = narrowPublicToSensitive(id, elapsed);
 
-    assertThat(elapsed[0]).as("접속 상한(0.6초) 안에서 포기 — 커밋을 붙잡지 않는다").isLessThan(2_000L);
     assertThat(narrowed.confirmed()).as("대체 경로로 간다").isFalse();
     assertThat(narrowed.exposedSlots()).as("새 등급에서 못 읽는 슬롯을 막는다").containsAll(Set.of(1, 2));
     assertThat(connectTimeouts).as("접속 상한을 넘겼다").hasSize(1);
     assertThat(connectTimeouts.get(0)).isLessThanOrEqualTo(SHORT_BOUNDS.connect());
     assertThat(executed).as("접속을 못 했으니 문장도 없다").isEmpty();
+    assertThat(elapsed[0])
+        .as("접속 상한(0.6초)에서 바로 포기 — 접속 지연(5초)도 남은 예산(3초)도 다 기다리지 않는다")
+        .isLessThan(2_500L);
   }
 
   /**
    * WD-664 6 — REVOKE 문장 하나가 느리면(드라이버가 queryTimeout 을 지키지 않는 최악의 경우까지) 전체 예산을 넘긴 뒤 나머지 문장은 보내지 않고
    * "확인 못 함" 으로 돌아온다. 문장마다 queryTimeout(남은 예산, 초 단위 올림)을 건다. 고치기 전에는 REVOKE 두 개를 모두 끝까지 기다려(2 ×
-   * 1.5초) "확인됨" 이었다.
+   * 느린 문장) "확인됨" 이었다. 느린 문장(4초)이 전체 예산(3초)보다 길어, 앞쪽 PG 일이 부하로 늦어져도 첫 REVOKE 에서 예산을 넘긴다(WD-785).
    */
   @Test
   void narrowBeforeCommit_slowRevoke_stopsAtBudget_andFallsBack() {
@@ -1547,7 +1565,7 @@ class TiberoPythonReadGrantSyncTest extends IntegrationTestBase {
     long id = datasets.get(0);
     sync.preCommitBoundsForTest(SHORT_BOUNDS);
     slowStatementFragment = "REVOKE";
-    slowStatementMs = 1_500;
+    slowStatementMs = SLOWER_THAN_BUDGET_MS;
     executed.clear();
     queryTimeouts.clear();
     long[] elapsed = {0};
@@ -1557,16 +1575,19 @@ class TiberoPythonReadGrantSyncTest extends IntegrationTestBase {
     assertThat(narrowed.confirmed()).as("예산을 넘겨 대체 경로로 간다").isFalse();
     assertThat(narrowed.exposedSlots()).containsAll(Set.of(1, 2));
     assertThat(executed).as("예산을 넘긴 뒤의 REVOKE 는 보내지 않는다").containsExactly(revokeSql(t, 1));
-    assertThat(elapsed[0]).as("느린 문장 하나 + 여유 — 문장마다 끝까지 기다리지 않는다").isLessThan(2_800L);
     assertThat(queryTimeouts)
         .as("모든 문장·질의에 queryTimeout 을 건다")
         .isNotEmpty()
         .allMatch(sec -> sec == 1);
+    assertThat(elapsed[0])
+        .as("느린 문장 하나(4초) + 여유 — 두 번째 문장까지 기다리면(8초) 넘는다")
+        .isLessThan(6_000L);
   }
 
   /**
    * WD-664 6 — 첫 판 REVOKE 가 실패해 재판정(WD-645, 테넌트 전체 조회)이 돌 때 그 조회가 느리면 예산을 넘긴 뒤 더 진행하지 않고 "확인 못 함"
-   * 으로 돌아온다. 고치기 전에는 느린 재판정을 끝까지 기다려 다시 회수하고 "확인됨" 이 됐다(커밋을 그만큼 붙잡았다).
+   * 으로 돌아온다. 고치기 전에는 느린 재판정을 끝까지 기다려 다시 회수하고 "확인됨" 이 됐다(커밋을 그만큼 붙잡았다). 재판정 조회(4초)가 전체
+   * 예산(3초)보다 길어, 앞쪽 PG 일이 부하로 늦어져도 그 조회에서 예산을 넘긴다(WD-785).
    */
   @Test
   void narrowBeforeCommit_slowRejudge_stopsAtBudget_andFallsBack() {
@@ -1578,18 +1599,27 @@ class TiberoPythonReadGrantSyncTest extends IntegrationTestBase {
     String transientFail = revokeSql(t, 1);
     failingFragments.add(transientFail);
     onFailingStatement = () -> failingFragments.remove(transientFail);
-    tenantWideGrantQueryDelayMs = 2_500;
+    tenantWideGrantQueryDelayMs = SLOWER_THAN_BUDGET_MS;
     executed.clear();
+    grantQueryTables.clear(); // 좁히기 중의 슬롯 GRANT 조회만 센다(WD-785)
     long[] elapsed = {0};
 
     NarrowResult narrowed = narrowPublicToSensitive(id, elapsed);
 
     assertThat(narrowed.confirmed()).isFalse();
     assertThat(narrowed.exposedSlots()).containsAll(Set.of(1, 2));
-    assertThat(elapsed[0]).as("재판정 조회 하나 + 여유 — 그 뒤로 더 진행하지 않는다").isLessThan(3_800L);
+    // 시나리오 확인(WD-785): 재판정이 실제로 느린 테넌트 전체 조회(빈 테이블 목록)까지 갔다 — 그 전에 예산이 바닥나 이 시험이 다른 경로를 보는 일을
+    // 막는다. 그 뒤로 더 나아가지 않았는지는 아래 executed 단언이 본다.
+    assertThat(grantQueryTables)
+        .as("재판정의 테넌트 전체 조회까지 갔다")
+        .filteredOn(List::isEmpty)
+        .hasSize(1);
     assertThat(executed)
         .as("재판정 조회 뒤 예산을 넘겨 재판정의 REVOKE 는 보내지 않는다")
         .containsExactly(revokeSql(t, 2));
+    assertThat(elapsed[0])
+        .as("재판정 조회 하나(4초) + 여유 — 그 뒤로 더 진행하지 않는다")
+        .isLessThan(6_000L);
   }
 
   /** WD-664 6 — 예산 안에 끝나면 상한이 결과를 바꾸지 않는다(확인됨). 접속·문장에 상한 값이 실린다. */
