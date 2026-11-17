@@ -291,6 +291,19 @@ tasks.withType<Test> {
     // 기본값(512MB)은 Spring Boot+Testcontainers+jOOQ+JaCoCo 계측이 겹친 통합테스트에는 작아서,
     // 다른 세션들과 자원을 나눠 쓰는 부하 상황에서 워커 JVM이 OutOfMemoryError로 죽는 원인이 됐다.
     maxHeapSize = "1536m"
+    // 병렬 포크 수(WD-764): gradle 속성 testForks → 환경변수 FIREHUB_TEST_FORKS → 기본 2 순서로 고른다.
+    // 기본 2 는 AI 클론 여럿이 함께 도는 리눅스 에이전트 호스트 실측으로 정했다. 포크마다 힙 1.5GB+ 에 Testcontainers
+    // 컨테이너가 따로 뜨므로, 메모리가 작은 환경(맥 16GB 등)은 FIREHUB_TEST_FORKS=1 로 낮춘다.
+    // 수치는 .work-loop/project.md 「오래 걸리는 작업」 표를 본다.
+    val forksRaw = providers.gradleProperty("testForks").orNull
+        ?: providers.environmentVariable("FIREHUB_TEST_FORKS").orNull
+        ?: "2"
+    val forks = forksRaw.trim().toIntOrNull()
+    if (forks == null || forks < 1) {
+        // 잘못된 값(0·음수·문자)을 조용히 1 로 바꾸면 의도와 다른 실행이 되므로 설정 단계에서 바로 실패시킨다.
+        throw GradleException("testForks(또는 FIREHUB_TEST_FORKS)는 1 이상의 정수여야 합니다: $forksRaw")
+    }
+    maxParallelForks = forks
     jvmArgs(
         "--add-opens", "java.base/java.lang=ALL-UNNAMED",
         "--add-opens", "java.base/java.lang.reflect=ALL-UNNAMED",
@@ -334,6 +347,9 @@ val separateDataStoreTest by tasks.registering(Test::class) {
     testClassesDirs = sourceSets["test"].output.classesDirs
     classpath = sourceSets["test"].runtimeClasspath
     systemProperty("smartfirehub.separateDataStore", "true")
+    // 단일 포크: 포크마다 PG 컨테이너를 두 개(플랫폼·데이터 저장소) 띄우고, 포크 2 로는 재 보지 않았다 —
+    // 기본 test 의 testForks 설정(기본 2)을 물려받지 않게 tiberoTest 처럼 1 로 고정한다.
+    maxParallelForks = 1
     filter {
         includeTestsMatching("com.smartfirehub.dataset.*")
         includeTestsMatching("com.smartfirehub.dataimport.*")

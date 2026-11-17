@@ -14,6 +14,16 @@ run_locked() {
     echo "[test-lock] flock 명령이 없습니다. 'brew install flock' 후 다시 시도하세요." >&2
     exit 1
   }
+  # macOS 는 유휴 잠자기로 30초짜리 테스트가 250~495초 걸려 게이트가 타임아웃으로 실패했다 (WD-764).
+  # caffeinate 로 유휴 잠자기를 막되, 명령을 감싸지 않고 훅 셸($$)을 지켜보는 백그라운드로 띄운다.
+  #  - -w $$: 훅 셸이 끝나면 caffeinate 도 스스로 끝난다(따로 정리할 필요 없음). 그래서 run_locked 를 여러 번 불러
+  #    caffeinate 가 여럿 떠도 모두 훅 셸과 함께 끝나 해가 없다.
+  #  - 명령의 종료 코드가 caffeinate 를 거치지 않는다 — 아래 flock 이 명령 자신의 코드를 그대로 돌려준다.
+  #  - 락을 얻기 전에 띄워 다른 세션을 기다리는 시간도 잠자기에서 지킨다.
+  # 리눅스·파드·CI 는 caffeinate 가 없어 아무 일도 하지 않는다. 잠자기 방지 assertion 은 프로세스별이라 다른 세션과 간섭하지 않는다.
+  if command -v caffeinate >/dev/null 2>&1; then
+    caffeinate -i -w $$ >/dev/null 2>&1 &
+  fi
   # 즉시 획득 못 하면 대기 중임을 알린다(조용히 멈춘 것처럼 보이지 않게).
   if ! flock -n "$TEST_GATE_LOCK" true; then
     echo "[test-lock] 다른 세션이 테스트 게이트 실행 중 — 대기합니다 (락: $TEST_GATE_LOCK)"
