@@ -280,24 +280,19 @@ public class UserService {
 
     // 계정 확보·멤버십·역할·중복 409 번역은 운영자 콘솔 경로와 공유하는 TenantMemberAdder 가 맡는다(WD-750). 같은 트랜잭션에 합류한다.
     // 새 계정일 때만 이름·임시 비밀번호가 필요하다(WD-751) — 기존 계정이면 둘 다 쓰지 않으므로 DTO 는 선택값으로 받고, 계정 유무를 먼저
-    // 갈라 새 계정 경로에서만 계정을 만들기 전에 막는다. 판정 순서: 역할 검증 → 역할 범위 → 이미 멤버(409, 기존 계정) → 비활성(409) → 새 계정
-    // 필드(400) → 생성.
+    // 갈라 새 계정 경로에서만 계정을 만들기 전에 막는다. 모든 경로의 판정 순서는 하나다(WD-779): 역할 검증 → 역할 범위 → 이미 멤버(409) →
+    // 비활성(409) → 새 계정 필드(400) → 생성. 멤버십 조회는 addExisting 안에서 한 번만 한다(여기서 따로 조회하지 않는다).
     // 비활성 계정은 웹 경로에서도 거부한다(WD-771): 로그인할 수 없는 계정을 붙여도 들어가지 못하고, 워크스페이스 관리자는 플랫폼 계정을 활성화할 수
-    // 없어 화면에서 풀 방법이 없다. 이미 멤버면 비활성이어도 기존 409(멤버 중복)가 우선이라, 멤버십이 없을 때만 비활성 거부를 건다.
-    // 계정·멤버십은 존재 확인(lookupMember)과 같은 findMemberCandidate 로 한 번에 얻는다 — 두 판정이 같은 조회를 쓰게.
-    // addExisting 안의 멤버 중복 검사는 운영자 콘솔과 공유하는 단계라 그대로 둔다.
-    MemberCandidate candidate = findMemberCandidate(email, tenantId);
+    // 없어 화면에서 풀 방법이 없다 — 그래서 웹 전용 문구(플랫폼 운영자에게 요청)를 쓴다.
+    Optional<UserResponse> account = userRepository.findByUsernameIgnoreCase(email);
     TenantMemberAdder.Result added;
-    if (candidate.account().isPresent()) {
-      UserResponse account = candidate.account().get();
-      if (candidate.membership().isEmpty()) {
-        TenantMemberAdder.rejectIfInactive(account);
-      }
-      added = tenantMemberAdder.addExisting(tenantId, account, roleIds);
+    if (account.isPresent()) {
+      added =
+          tenantMemberAdder.addExisting(
+              tenantId, account.get(), roleIds, TenantMemberAdder.WEB_INACTIVE_CHECK);
     } else {
       requireNewAccountFields(request);
-      // 조회와 추가 사이에 같은 이메일의 계정이 생겼으면 add 가 기존 계정 경로로 간다 — 그때도 비활성 계정은 거부한다(WD-771).
-      // 이 드문 경합 경로에서는 add 의 순서대로 비활성 검사가 멤버 중복 검사보다 먼저 온다(위 일반 경로와 순서가 다를 수 있다).
+      // 조회와 추가 사이에 같은 이메일의 계정이 생겼으면 add 가 기존 계정 경로로 간다 — 같은 순서(이미 멤버 → 비활성)·같은 웹 문구를 쓴다.
       added =
           tenantMemberAdder.add(
               tenantId,
@@ -305,7 +300,7 @@ public class UserService {
               request.name(),
               request.temporaryPassword(),
               roleIds,
-              TenantMemberAdder::rejectIfInactive);
+              TenantMemberAdder.WEB_INACTIVE_CHECK);
     }
     UserResponse user = added.user();
     boolean created = added.created();

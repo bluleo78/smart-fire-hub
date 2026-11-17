@@ -73,8 +73,10 @@ public class PlatformTenantMemberAddTransaction {
                   () ->
                       new CodedApiException(
                           HttpStatus.NOT_FOUND, "USER_NOT_FOUND", "계정을 찾을 수 없습니다"));
-      TenantMemberAdder.rejectIfInactive(user);
-      result = tenantMemberAdder.addExisting(tenantId, user, roleIds);
+      // 이미 멤버 → 비활성 순서(웹과 같음)로 판정한다.
+      result =
+          tenantMemberAdder.addExisting(
+              tenantId, user, roleIds, TenantMemberAdder.CONSOLE_INACTIVE_CHECK);
     } else {
       // 이메일 경로: adder 가 이메일(= username)로 계정을 한 번만 찾는다. 기존 계정이면 붙이기 전에 활성 검사를 부르고, 없으면 새로 만든다.
       result =
@@ -84,7 +86,7 @@ public class PlatformTenantMemberAddTransaction {
               request.name(),
               request.temporaryPassword(),
               roleIds,
-              TenantMemberAdder::rejectIfInactive);
+              TenantMemberAdder.CONSOLE_INACTIVE_CHECK);
     }
     return new Added(result.user(), result.created(), roleNames);
   }
