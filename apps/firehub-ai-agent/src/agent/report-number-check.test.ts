@@ -426,3 +426,74 @@ describe('WD-783 허용 값은 반올림하지 않고 같은 값만 허용', () 
     expect(run('비율 12.5%', ['{"n":5}'], ['12.5%']).unverifiedTotal).toBe(0);
   });
 });
+
+describe('checkReportNumbers — 단위 값 출처·계산한 증감률 (WD-781)', () => {
+  const UNIT_SRC = '[{"올해억":1.3,"전년동기억":0.3},{"올해억":11.7,"전년동기억":7.7}]';
+  const HOURS_SRC = '[{"전년":111.8,"올해":28.8}]';
+
+  it('이미 억 단위로 집계된 출처 값과 같은 줄 확인된 두 값으로 계산한 증감률은 경고하지 않는다 (이슈 재현)', () => {
+    const r = run(
+      '- 구독 전년 동기 0.3억 → 1.3억\n- 기술 서비스 7.7억 → 11.7억\n- 평균 해결 시간 111.8 → 28.8시간 (-74.2%)',
+      [UNIT_SRC, HOURS_SRC],
+    );
+    expect(r.checked).toBe(true);
+    expect(r.unverified).toEqual([]);
+    expect(r.unverifiedTotal).toBe(0);
+  });
+
+  it('같은 줄 확인된 두 값의 비율(b/a)도 허용한다', () => {
+    // 28.8 / 111.8 × 100 = 25.76… → 25.8%
+    const r = run('올해 28.8시간은 전년 111.8시간의 25.8% 수준', [HOURS_SRC]);
+    expect(r.unverifiedTotal).toBe(0);
+  });
+
+  it('복합 단위 실제 값으로 증감률을 계산한다', () => {
+    // 1억2천만 → 1억8천만: (1.8e8 − 1.2e8) / 1.2e8 = 50%
+    const r = run('매출 1억2천만 → 1억8천만 (+50%)', ['[120000000,180000000]']);
+    expect(r.unverifiedTotal).toBe(0);
+  });
+
+  it('틀린 증감률은 여전히 경고한다', () => {
+    const r = run('평균 해결 시간 111.8 → 28.8시간 (-70.0%)', [HOURS_SRC]);
+    expect(r.unverified.map((u) => u.text)).toEqual(['70.0%']);
+  });
+
+  it('출처로 확인되지 않은 수치끼리 만든 비율은 경고한다', () => {
+    // 50·200 은 출처에 없으므로 300.0% 를 계산값으로 인정하지 않는다
+    const r = run('지표 50 → 200 (+300.0%)', [HOURS_SRC]);
+    expect(r.unverified.map((u) => u.text)).toEqual(['50', '200', '300.0%']);
+  });
+
+  it('다른 줄의 값으로 만든 증감률은 경고한다', () => {
+    const r = run('전년 111.8시간\n올해 28.8시간 (-74.2%)', [HOURS_SRC]);
+    expect(r.unverified.map((u) => u.text)).toEqual(['74.2%']);
+  });
+
+  it('줄에 확인된 수치가 하나뿐이거나 0 인 값만 있으면 증감률로 인정하지 않는다', () => {
+    expect(run('올해 28.8시간 (-74.2%)', [HOURS_SRC]).unverified.map((u) => u.text)).toEqual(['74.2%']);
+    // a=0 이면 나눗셈을 하지 않는다 (0 → 28.8 의 증감률은 정의되지 않음). 반대 방향(28.8 → 0)의 -100%·0% 만 맞는다.
+    expect(run('0 → 28.8시간 (+50.0%)', ['[0,28.8]']).unverified.map((u) => u.text)).toEqual(['50.0%']);
+  });
+
+  it('같은 값 쌍(a=b)의 0% 는 계산값으로 인정한다', () => {
+    expect(run('전년 28.8시간 → 올해 28.8시간 (0.0%)', [HOURS_SRC]).unverifiedTotal).toBe(0);
+  });
+
+  it('단위 값 그대로 비교는 소수가 있는 표기만 — 정수(「15억」)는 흔한 개수 값에 우연히 맞지 않게 경고한다', () => {
+    expect(run('매출 15.5억', ['[{"매출억":15.5}]']).unverifiedTotal).toBe(0);
+    expect(run('매출 15억', ['[{"매출억":15}]']).unverified.map((u) => u.text)).toEqual(['15억']);
+  });
+
+  it('한 줄에 확인된 수치가 상한(30개)을 넘으면 증감률 판정을 하지 않는다 — 쌍이 폭증하고 우연히 맞기 쉬워서', () => {
+    const many = Array.from({ length: 31 }, (_, i) => 100 + i);
+    const src = JSON.stringify(many.map((v) => ({ v })));
+    // 100 → 130 은 30.0% 증가지만, 같은 줄 재료가 31개라 판정하지 않아 경고된다
+    expect(run(`${many.join(' ')} (30.0%)`, [src]).unverified.map((u) => u.text)).toEqual(['30.0%']);
+    // 재료가 상한 이하면 같은 계산이 통과한다
+    expect(run('100 → 130 (30.0%)', [src]).unverifiedTotal).toBe(0);
+  });
+
+  it('출처 % 값과 이미 맞는 % 토큰은 지금처럼 통과한다', () => {
+    expect(run('전환율 12.3%').unverifiedTotal).toBe(0);
+  });
+});
