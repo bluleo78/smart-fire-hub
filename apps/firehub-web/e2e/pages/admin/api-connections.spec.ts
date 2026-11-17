@@ -21,6 +21,13 @@ import {
 } from '../../fixtures/table-layout';
 
 /**
+ * 연결 재조회(path 로 가는 GET) 응답을 기다리는 Promise(WD-777) — 재조회를 일으키는 동작 전에 만들어 두고, 동작 뒤 await 한다.
+ */
+function waitForRefetch(page: Page, path: string) {
+  return page.waitForResponse((res) => res.request().method() === 'GET' && new URL(res.url()).pathname === path);
+}
+
+/**
  * 인증 편집 중 기본 정보를 저장해 연결을 다시 불러오게 한다(WD-753 리뷰·WD-763) — 이름 칸에 refetched.name 을 넣고 「저장」을 누른다.
  * 저장 PUT·이후 GET 이 refetched 를 돌려준다(나중에 등록한 route 가 이긴다). 재조회 응답이 도착하고 저장 토스트가 보일 때까지 기다린 뒤,
  * PUT 캡처(이어서 하는 인증 저장 payload 검증용)를 돌려준다.
@@ -29,9 +36,7 @@ async function saveInfoAndRefetch(page: Page, refetched: ApiConnectionResponse) 
   const path = `/api/v1/api-connections/${refetched.id}`;
   await mockApi(page, 'GET', path, refetched);
   const capture = await mockApi(page, 'PUT', path, refetched, { capture: true });
-  const refetchedResponse = page.waitForResponse(
-    (res) => res.request().method() === 'GET' && new URL(res.url()).pathname === path,
-  );
+  const refetchedResponse = waitForRefetch(page, path);
   await page.getByLabel('연결 이름').fill(refetched.name);
   await page.getByRole('button', { name: '저장', exact: true }).click();
   await capture.waitForRequest();
@@ -2092,7 +2097,8 @@ test.describe('API 연결 인라인 오류 후속 (WD-666)', () => {
   test('상세 화면 — 연결을 다시 불러와 폼이 새 값으로 채워지면 이전 값의 인라인 오류가 남지 않는다', async ({
     authenticatedPage: page,
   }) => {
-    // 조회할 때마다 수정 시각·이름이 바뀐 연결을 돌려준다 — 저장 뒤 재조회가 폼을 실제로 다시 채우게 한다
+    // 조회할 때마다 수정 시각·이름이 바뀐 연결을 돌려준다 — 저장 뒤 재조회가 폼을 실제로 다시 채우게 한다.
+    // 첫 조회는 이름이 빈 연결이다(WD-777) — 재조회는 칸별 병합이라 고치지 않은 칸만 새 값을 받으므로, 오류도 「고치지 않은 칸」(서버가 준 빈 이름)에서 만든다.
     let fetchCount = 0;
     await page.route(
       (url) => url.pathname === '/api/v1/api-connections/1',
@@ -2105,7 +2111,7 @@ test.describe('API 연결 인라인 오류 후속 (WD-666)', () => {
             body: JSON.stringify(
               createApiConnection({
                 id: 1,
-                name: `서버 이름 ${fetchCount}`,
+                name: fetchCount === 1 ? '' : `서버 이름 ${fetchCount}`,
                 updatedAt: `2024-01-0${fetchCount}T00:00:00Z`,
               }),
             ),
@@ -2119,10 +2125,10 @@ test.describe('API 연결 인라인 오류 후속 (WD-666)', () => {
     );
     await page.goto('/admin/api-connections/1');
     const nameInput = page.getByLabel(/^연결 이름/);
-    await expect(nameInput).toHaveValue('서버 이름 1');
+    await expect(nameInput).toHaveValue('');
+    await expect(page.getByLabel('Base URL')).toHaveValue('https://api.example.com');
 
-    // 기본 정보 오류(이름 비움)를 만든다
-    await nameInput.fill('');
+    // 기본 정보 오류(빈 이름)를 고치지 않은 채 저장해 만든다
     await page.getByRole('button', { name: '저장', exact: true }).click();
     await expect(nameInput).toHaveAccessibleDescription('연결 이름을 입력하세요.');
 
@@ -3033,5 +3039,192 @@ test.describe('WD-763 인증 편집 중 재조회', () => {
     await page.getByRole('button', { name: '인증 정보 변경' }).click();
     await expect(page.getByPlaceholder('Authorization')).toHaveValue('X-Second');
     await expect(page.getByLabel('키 값')).toHaveValue('');
+  });
+});
+
+/**
+ * WD-777 — 재조회 때 기본 정보·인증 칸을 칸별로 병합한다(3-way: 지금 값 == 이전 기준이면 새 값, 다르면 내 값).
+ * 기준(스냅샷)은 늘 마지막으로 받은 서버 응답이라, 옛 가린 키를 보내지 않고, 추가 헤더는 내용으로 비교하며, 바뀐 칸 오류만 지운다.
+ * 예전엔 기본 정보를 재조회마다 통째로 덮고, 인증은 「하나라도 고쳤으면 전체 보존」이라 고치지 않은 칸의 새 값·새 가린 키를 받지 못했다.
+ */
+test.describe('WD-777 재조회 칸별 병합', () => {
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+  });
+
+  const PATH = '/api/v1/api-connections/1';
+  /** 기본 정보 저장으로 다시 불러올 때 쓰는 새 이름 */
+  const RENAMED = '이름만 바뀐 연결';
+  /** 다른 관리자가 그사이 더한 추가 헤더(가린 값) */
+  const TENANT_HEADER = { 'extraHeader:X-Tenant': '****t001' };
+
+  /** 헤더 headerName·가린 키 apiKey 로 저장된 API_KEY 연결 */
+  function storedApiKeyConnection(headerName = 'X-Old', apiKey = '****abcd', extra: Record<string, string> = {}) {
+    return createApiConnection({ id: 1, maskedAuthConfig: { placement: 'header', headerName, apiKey, ...extra } });
+  }
+
+  /** 저장된 연결을 모킹하고 상세를 연 뒤 「인증 정보 변경」으로 편집을 연다. */
+  async function openAuthEdit(page: Page, stored: ApiConnectionResponse = storedApiKeyConnection()) {
+    await mockApi(page, 'GET', PATH, stored);
+    await page.goto('/admin/api-connections/1');
+    await page.getByRole('button', { name: '인증 정보 변경' }).click();
+    return stored;
+  }
+
+  test('설명을 고친 채 인증 저장 → 재조회 뒤에도 설명은 내 값·미저장 경고, 고치지 않은 이름은 새 값', async ({
+    authenticatedPage: page,
+  }) => {
+    const stored = await openAuthEdit(page);
+    await page.getByLabel('설명 (선택)', { exact: true }).fill('저장 안 한 설명');
+
+    // 인증 저장 뒤 재조회가 다른 관리자가 바꾼 이름을 가져온다(설명은 서버 값 그대로)
+    const refetched = { ...stored, name: '다른 관리자가 바꾼 이름' };
+    await mockApi(page, 'GET', PATH, refetched);
+    await mockApi(page, 'PUT', PATH, refetched);
+    const refetchedResponse = waitForRefetch(page, PATH);
+    await page.getByRole('button', { name: '인증 저장' }).click();
+    await refetchedResponse;
+    await expect(page.getByText('인증 정보가 업데이트되었습니다.')).toBeVisible();
+
+    // 고치지 않은 이름은 새 값을 받고, 고친 설명은 내 값이 남는다
+    await expect(page.getByLabel('연결 이름')).toHaveValue('다른 관리자가 바꾼 이름');
+    await expect(page.getByLabel('설명 (선택)', { exact: true })).toHaveValue('저장 안 한 설명');
+    // 설명은 여전히 저장 안 한 변경 — 나가려 하면 경고가 뜬다
+    await page.getByRole('navigation').getByRole('link', { name: '사용자 관리' }).click();
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+  });
+
+  test('새 키 저장 뒤 재조회가 늦을 때 편집을 열고 헤더 이름만 바꿔도, 재조회가 오면 저장 payload 가 새 가린 키를 보낸다', async ({
+    authenticatedPage: page,
+  }) => {
+    // 첫 저장 키는 ****abcd, 새 키 저장 뒤 서버는 ****wxyz 로 가려 내려준다
+    const saved = storedApiKeyConnection('X-Old', '****wxyz');
+    await openAuthEdit(page);
+    await page.getByLabel('키 값').fill('brand-new-key-wxyz');
+
+    const capture = await mockApi(page, 'PUT', PATH, saved, { capture: true });
+    const refetch = await holdApi(page, 'GET', PATH, 200, saved);
+    await page.getByRole('button', { name: '인증 저장' }).click();
+    await expect(page.getByText('인증 정보가 업데이트되었습니다.')).toBeVisible();
+    await expect.poll(() => refetch.requests.length).toBeGreaterThan(0);
+
+    // 재조회 전에 다시 연 편집에서 헤더 이름만 바꾼다(옛 응답 기준)
+    await page.getByRole('button', { name: '인증 정보 변경' }).click();
+    await page.getByPlaceholder('Authorization').fill('X-New');
+
+    const refetchedResponse = waitForRefetch(page, PATH);
+    refetch.release();
+    await refetchedResponse;
+    // 고친 헤더 이름은 남는다
+    await expect(page.getByPlaceholder('Authorization')).toHaveValue('X-New');
+
+    await page.getByRole('button', { name: '인증 저장' }).click();
+    await expect.poll(() => capture.requests.length).toBe(2);
+    // 키 칸을 비웠으니 새 응답의 가린 키(****wxyz)를 보낸다 — 옛 ****abcd 를 보내면 서버가 400 으로 거절한다
+    expect(capture.requests[1].payload).toMatchObject({
+      authType: 'API_KEY',
+      authConfig: { headerName: 'X-New', apiKey: '****wxyz' },
+    });
+  });
+
+  test('헤더 추가 → 빈 행 삭제 뒤 다른 추가 헤더로 재조회되면 추가 헤더가 새 값으로 바뀐다', async ({
+    authenticatedPage: page,
+  }) => {
+    const stored = await openAuthEdit(page);
+    await page.getByRole('button', { name: '헤더 추가' }).click();
+    await page.getByRole('button', { name: '추가 헤더 1 삭제' }).click();
+    await expect(page.getByLabel('추가 헤더 이름 1')).toHaveCount(0);
+
+    await saveInfoAndRefetch(page, {
+      ...stored,
+      name: RENAMED,
+      maskedAuthConfig: { ...stored.maskedAuthConfig, ...TENANT_HEADER },
+    });
+
+    // 행 내용이 처음과 같으니(빈 목록) 고치지 않은 것 — 새 추가 헤더를 받는다
+    await expect(page.getByLabel('추가 헤더 이름 1')).toHaveValue('X-Tenant');
+  });
+
+  test('헤더 이름을 고치는 중 재조회되면 헤더 이름은 내 값, 다른 칸은 새 값이고, 헤더 이름을 되돌려도 다시 채우지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    await openAuthEdit(page);
+    await page.getByPlaceholder('Authorization').fill('X-New');
+
+    // 서버가 헤더 이름과 추가 헤더를 바꿨다
+    await saveInfoAndRefetch(page, { ...storedApiKeyConnection('X-Server', '****abcd', TENANT_HEADER), name: RENAMED });
+
+    await expect(page.getByPlaceholder('Authorization')).toHaveValue('X-New');
+    await expect(page.getByLabel('추가 헤더 이름 1')).toHaveValue('X-Tenant');
+
+    // 추가 헤더 값을 입력한 뒤 헤더 이름을 처음 값으로 되돌린다 — 되돌린 순간 칸을 다시 채우지 않는다
+    await page.getByLabel('추가 헤더 값 1').fill('tenant-typed');
+    await page.getByPlaceholder('Authorization').fill('X-Old');
+    await expect(page.getByPlaceholder('Authorization')).toHaveValue('X-Old');
+    await expect(page.getByLabel('추가 헤더 값 1')).toHaveValue('tenant-typed');
+    // 지금 기준 값(재조회로 온 X-Server)으로 되돌려도 마찬가지다(WD-777 리뷰) — 헤더 이름이 기준과 같아진 순간에도 다시 채우지 않는다
+    await page.getByPlaceholder('Authorization').fill('X-Server');
+    await expect(page.getByPlaceholder('Authorization')).toHaveValue('X-Server');
+    await expect(page.getByLabel('추가 헤더 이름 1')).toHaveValue('X-Tenant');
+    await expect(page.getByLabel('추가 헤더 값 1')).toHaveValue('tenant-typed');
+  });
+
+  test('추가 헤더 행을 하나 더한 채 재조회돼도, 손대지 않은 저장 헤더는 새 가린 값으로 저장 요청에 실린다 (WD-777 리뷰)', async ({
+    authenticatedPage: page,
+  }) => {
+    const stored = await openAuthEdit(page, storedApiKeyConnection('X-Old', '****abcd', { 'extraHeader:X-Key-Id': '****k001' }));
+    await page.getByRole('button', { name: '헤더 추가' }).click();
+    await page.getByLabel('추가 헤더 이름 2').fill('X-Extra');
+    await page.getByLabel('추가 헤더 값 2').fill('extra-1');
+
+    // 그사이 X-Key-Id 값이 새로 저장돼 재조회가 새 가린 값(****k002)을 가져온다
+    const capture = await saveInfoAndRefetch(page, {
+      ...stored,
+      name: RENAMED,
+      maskedAuthConfig: { ...stored.maskedAuthConfig, 'extraHeader:X-Key-Id': '****k002' },
+    });
+    // 행을 더해 고친 덩어리라 내가 더한 행은 남는다
+    await expect(page.getByLabel('추가 헤더 이름 2')).toHaveValue('X-Extra');
+
+    await page.getByRole('button', { name: '인증 저장' }).click();
+    await expect.poll(() => capture.requests.length).toBe(2);
+    // 손대지 않은 X-Key-Id 는 새 가린 값을 보낸다 — 옛 ****k001 을 보내면 서버가 400 으로 거절한다
+    expect(capture.requests[1].payload).toMatchObject({
+      authConfig: { 'extraHeader:X-Key-Id': '****k002', 'extraHeader:X-Extra': 'extra-1' },
+    });
+  });
+
+  test('빈 추가 헤더 행만 더해도 고친 것이라 나가려 하면 미저장 경고가 뜬다 (WD-777)', async ({
+    authenticatedPage: page,
+  }) => {
+    await openAuthEdit(page);
+    await page.getByRole('button', { name: '헤더 추가' }).click();
+    await expect(page.getByLabel('추가 헤더 이름 1')).toHaveValue('');
+
+    await page.getByRole('navigation').getByRole('link', { name: '사용자 관리' }).click();
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+    expect(new URL(page.url()).pathname).toBe('/admin/api-connections/1');
+  });
+
+  test('헤더 이름 오류를 띄운 채 다른 칸만 바뀐 재조회가 와도 헤더 이름 오류가 남는다', async ({
+    authenticatedPage: page,
+  }) => {
+    // 헤더 이름이 비어 저장된 연결 — 칸을 비운 채 인증 저장을 눌러 인라인 오류를 띄운다
+    const stored = await openAuthEdit(page, storedApiKeyConnection(''));
+    const headerInput = page.getByPlaceholder('Authorization');
+    await expect(headerInput).toHaveValue('');
+    await page.getByRole('button', { name: '인증 저장' }).click();
+    await expect(headerInput).toHaveAccessibleDescription('헤더 이름을 입력하세요.');
+
+    // 재조회는 이름·추가 헤더만 바꾼다(헤더 이름은 그대로 빈 값)
+    await saveInfoAndRefetch(page, {
+      ...stored,
+      name: RENAMED,
+      maskedAuthConfig: { ...stored.maskedAuthConfig, ...TENANT_HEADER },
+    });
+    await expect(page.getByLabel('추가 헤더 이름 1')).toHaveValue('X-Tenant');
+
+    // 바뀌지 않은 헤더 이름 칸은 여전히 틀려 오류가 남는다
+    await expect(headerInput).toHaveAccessibleDescription('헤더 이름을 입력하세요.');
   });
 });

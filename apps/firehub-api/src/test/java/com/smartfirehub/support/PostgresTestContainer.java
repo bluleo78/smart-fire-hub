@@ -2,6 +2,7 @@ package com.smartfirehub.support;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import javax.sql.DataSource;
 import org.postgresql.ds.PGSimpleDataSource;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -83,7 +84,11 @@ public final class PostgresTestContainer {
         .withDatabaseName(databaseName)
         .withUsername("app")
         .withPassword("app")
-        .withCommand("postgres", "-c", "max_connections=200");
+        .withCommand("postgres", "-c", "max_connections=200")
+        // 기동 대기 상한을 기본 60초에서 5분으로 늘린다(WD-784). 여러 세션이 한 호스트를 나눠 쓰는 push 게이트(load 10~15)에서
+        // PostGIS 초기화가 60초를 넘겨 「ready to accept connections」 대기가 끝나면, 그 포크의 시험 전체(약 6천 건)가 한꺼번에
+        // 실패했다. 정상일 때는 몇 초 안에 떠 상한이 늘어도 시간이 더 들지 않는다.
+        .withStartupTimeout(Duration.ofMinutes(5));
   }
 
   /** Gradle 및 IDE 실행 위치에 관계없이 모노레포의 기존 PostgreSQL Dockerfile을 찾는다. */

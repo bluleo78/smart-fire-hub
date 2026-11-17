@@ -281,26 +281,40 @@ class NumberIndex {
 
   constructor(private readonly numbers: Iterable<number>) {}
 
-  /** 표시값이 숫자 중 하나를 표시 자릿수로 반올림한 값과 같은지 본다. */
+  /**
+   * 표시값이 숫자 중 하나를 표시 자릿수로 반올림한 값과 같은지 본다.
+   * 단위(천·만·억·조·복합)가 붙은 토큰은 숫자 ÷ 배수 외에 숫자 그대로도 비교한다 (WD-781) — 조회가 이미 그 단위로
+   * 집계한 열(「올해억: 1.3」)을 「1.3억」으로 옮겨 적은 경우를 거짓 경고하지 않기 위해서다. 다만 소수가 있는 표시값만
+   * 이렇게 본다 — 정수(「5억」「15조」)는 출처에 흔한 개수·순서 값(5·15)에 우연히 맞아 지어낸 금액이 통과하기 쉬워서다.
+   */
   matches(token: Token): boolean {
+    if (this.keysFor(token.percent, token.multiplier, token.decimals).has(roundKey(token.value, token.decimals))) {
+      return true;
+    }
     const k = token.decimals;
+    if (token.percent || token.multiplier <= 1 || k === 0) return false;
+    return this.keysFor(false, 1, k).has(roundKey(token.value, k));
+  }
+
+  /** (퍼센트 여부·배수·자릿수) 조합의 반올림 키 Set — 처음 쓰일 때 한 번만 만든다. */
+  private keysFor(percent: boolean, multiplier: number, k: number): Set<number> {
     // 퍼센트 토큰은 단위가 붙지 않아 배수가 늘 1 이지만, 키를 분명히 가르려고 p/n 접두사를 따로 둔다
-    const key = `${token.percent ? 'p' : 'n'}:${token.multiplier}:${k}`;
+    const key = `${percent ? 'p' : 'n'}:${multiplier}:${k}`;
     let keys = this.cache.get(key);
     if (!keys) {
       keys = new Set<number>();
       for (const s of this.numbers) {
-        if (token.percent) {
+        if (percent) {
           // 퍼센트는 출처가 비율(0.123 → 12.3%)이든 이미 퍼센트 값(12.3)이든 맞는 것으로 본다
           keys.add(roundKey(s, k));
           keys.add(roundKey(s * 100, k));
         } else {
-          keys.add(roundKey(s / token.multiplier, k));
+          keys.add(roundKey(s / multiplier, k));
         }
       }
       this.cache.set(key, keys);
     }
-    return keys.has(roundKey(token.value, k));
+    return keys;
   }
 }
 
@@ -340,6 +354,45 @@ class AllowedValues {
   }
 }
 
+/**
+ * % 토큰이 같은 줄의 확인된 두 수치로 계산한 증감률·비율인지 본다 (WD-781).
+ * 순서쌍 (a, b) 마다 증감률 (b−a)/a×100 과 비율 b/a×100 의 절댓값을 표시 자릿수로 반올림해 표시값과 비교한다.
+ * 「-74.2%」의 부호는 토큰에 들어가지 않으므로 절댓값으로 비교하고, a=0 은 나눗셈이 정의되지 않아 건너뛴다.
+ * verifiedValues 에는 출처·허용 텍스트로 확인된 값만 넣는다 — 지어낸 두 값으로 만든 비율을 통과시키지 않기 위해서다.
+ */
+function matchesComputedRate(token: Token, verifiedValues: number[]): boolean {
+  const k = token.decimals;
+  const d = roundKey(token.value, k);
+  for (let i = 0; i < verifiedValues.length; i++) {
+    const a = verifiedValues[i];
+    if (a === 0) continue;
+    for (let j = 0; j < verifiedValues.length; j++) {
+      if (i === j) continue;
+      const b = verifiedValues[j];
+      if (roundKey(Math.abs(((b - a) / a) * 100), k) === d || roundKey(Math.abs((b / a) * 100), k) === d) return true;
+    }
+  }
+  return false;
+}
+
+/** 위치 pos 가 몇 번째 줄(0부터)에 있는지. lineStarts 는 각 줄의 시작 위치(오름차순)라 이분 탐색한다(긴 리포트에서 토큰마다 줄을 훑지 않게). */
+function lineIndexOf(lineStarts: number[], pos: number): number {
+  let lo = 0;
+  let hi = lineStarts.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (lineStarts[mid] <= pos) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo;
+}
+
+/**
+ * 계산한 증감률 판정에 쓰는 한 줄의 재료 수 상한 (WD-781). 순서쌍 수가 재료 수의 제곱이라, 넓은 표 행처럼 한 줄에 수치가
+ * 아주 많으면 판정을 하지 않고(경고는 남는다) 대조 시간이 늘지 않게 한다. 또 재료가 많을수록 지어낸 % 가 우연히 맞기 쉬워진다.
+ */
+const MAX_RATE_OPERANDS = 30;
+
 /** 줄바꿈을 공백으로 바꾼 토큰 앞뒤 15자 문맥 */
 function contextOf(text: string, token: Token): string {
   const from = Math.max(0, token.start - CONTEXT_CHARS);
@@ -378,9 +431,37 @@ export function checkReportNumbers(input: {
   const allowed = new AllowedValues(allowedNumbers);
   const seen = new Set<string>();
   const unverified: UnverifiedNumber[] = [];
+  // WD-783 이후 허용 값은 반올림 색인이 아니라 AllowedValues(같은 값만)로 본다 — 증감률 재료 판정도 같은 기준을 쓴다
+  const isVerified = (token: Token) => index.matches(token) || allowed.matches(token);
   for (const report of input.reportTexts) {
+    // 계산한 증감률·비율 판정의 재료 — 줄마다 확인된 % 아닌 수치의 실제 값(value × multiplier) (WD-781).
+    // 날짜·시각·분기만 가리고 접미사·작은 정수는 건너뛰지 않는다: 「28.8시간」처럼 대조 대상에서 빠지는 수치도 출처와 맞으면
+    // 증감률의 재료가 되기 때문이다. 줄(표 한 행·목록 한 항목) 안에서만 짝을 짓고, 확인 안 된 % 가 나온 줄만 늦게 계산한다.
+    const lineStarts = [0];
+    for (let i = 0; i < report.length; i++) if (report[i] === '\n') lineStarts.push(i + 1);
+    let candidatesByLine: Map<number, Token[]> | null = null;
+    const operandsByLine = new Map<number, number[]>();
+    const operandsOf = (line: number): number[] => {
+      let values = operandsByLine.get(line);
+      if (values) return values;
+      if (!candidatesByLine) {
+        candidatesByLine = new Map();
+        for (const t of tokenize(maskNonNumbers(report), false)) {
+          if (t.percent) continue;
+          const l = lineIndexOf(lineStarts, t.start);
+          const list = candidatesByLine.get(l) ?? [];
+          list.push(t);
+          candidatesByLine.set(l, list);
+        }
+      }
+      const verified = (candidatesByLine.get(line) ?? []).filter(isVerified);
+      values = verified.length > MAX_RATE_OPERANDS ? [] : verified.map((t) => t.value * t.multiplier);
+      operandsByLine.set(line, values);
+      return values;
+    };
     for (const token of tokenize(report, true)) {
-      if (seen.has(token.text) || index.matches(token) || allowed.matches(token)) continue;
+      if (seen.has(token.text) || isVerified(token)) continue;
+      if (token.percent && matchesComputedRate(token, operandsOf(lineIndexOf(lineStarts, token.start)))) continue;
       seen.add(token.text);
       if (unverified.length < MAX_UNVERIFIED) {
         unverified.push({ text: token.text, context: contextOf(report, token) });

@@ -60,7 +60,13 @@ class QdrantPlatformSearchIntegrationTest extends IntegrationTestBase {
   @TempDir static Path uploadDir;
 
   @DynamicPropertySource
-  static void qdrant(DynamicPropertyRegistry r) {
+  static void qdrant(DynamicPropertyRegistry r) throws Exception {
+    // 컨텍스트가 뜨기 전에 공유 Qdrant 를 비운다(WD-784). 앱 빈(QdrantVectorStoreLifecycle)은 기동 때 컬렉션 구성을 대조하고
+    // 다르면 기동을 멈추는데, 같은 JVM 의 다른 시험(QdrantDedicatedRowTargetTest 의 샤드 1·양자화 없음 등)이 남긴 컬렉션이
+    // 있으면 컨텍스트가 뜨지 않아 이 클래스 전체가 실행 순서에 따라 실패했다. @BeforeEach 의 정리는 컨텍스트가 뜬 뒤라 늦다.
+    try (QdrantClient cleaner = QdrantClientConfig.create(PROPS)) {
+      QdrantTestContainer.deleteAllCollections(cleaner);
+    }
     // 공유 테스트 DB 는 다른 테스트가 먼저 띄운 컨텍스트로 설치 종류가 platform 으로 기록돼 있다(ADR 0002 결정 10 가드).
     // 이 컨텍스트가 뜨기 전에 qdrant 로 바꿔 두고, 끝나면 되돌려 뒤에 뜨는 platform 컨텍스트가 막히지 않게 한다.
     QdrantTestContainer.recordInstallType("qdrant");

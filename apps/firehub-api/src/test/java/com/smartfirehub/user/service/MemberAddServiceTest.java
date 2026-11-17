@@ -442,7 +442,8 @@ class MemberAddServiceTest extends IntegrationTestBase {
             CodedApiException.class,
             e -> {
               assertThat(e.code()).isEqualTo("ACCOUNT_INACTIVE");
-              assertThat(e.getMessage()).isEqualTo("비활성화된 계정은 멤버로 추가할 수 없습니다. 먼저 계정을 활성화하세요");
+              assertThat(e.getMessage())
+                  .isEqualTo("비활성화된 계정은 멤버로 추가할 수 없습니다. 플랫폼 운영자에게 계정 활성화를 요청하세요");
             });
     assertThat(membershipRepository.findInTenant(existing, tenantA)).isEmpty();
     assertThat(
@@ -471,6 +472,27 @@ class MemberAddServiceTest extends IntegrationTestBase {
         .isInstanceOf(CodedApiException.class)
         .extracting("code")
         .isEqualTo("ACCOUNT_INACTIVE");
+    assertThat(membershipRepository.findInTenant(existing, tenantA)).isEmpty();
+  }
+
+  /**
+   * WD-779: 계정 조회는 「없음」인데 그 사이 같은 이메일 계정이 생긴 경합 — 계정 생성의 username 유니크 위반은 「이미 멤버」 가 아니라 409
+   * ACCOUNT_ALREADY_EXISTS 로 알린다.
+   */
+  @Test
+  void addMember_accountCreatedConcurrently_accountAlreadyExists() {
+    long existing = newMember(tenantB, "raceacct");
+    String username = userRepository.findById(existing).orElseThrow().username();
+    // 항상 「계정 없음」 — 새 계정 경로로 가서 생성 INSERT 가 기존 username 과 부딪친다.
+    doReturn(Optional.empty()).when(userRepository).findByUsernameIgnoreCase(username);
+
+    assertThatThrownBy(() -> addInA(new AddMemberRequest(username, "x", TEMP, List.of())))
+        .isInstanceOfSatisfying(
+            CodedApiException.class,
+            e -> {
+              assertThat(e.code()).isEqualTo("ACCOUNT_ALREADY_EXISTS");
+              assertThat(e.getMessage()).isEqualTo("같은 이메일의 계정이 방금 만들어졌습니다. 다시 확인한 뒤 추가하세요");
+            });
     assertThat(membershipRepository.findInTenant(existing, tenantA)).isEmpty();
   }
 

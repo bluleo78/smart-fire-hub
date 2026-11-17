@@ -439,6 +439,24 @@ class PlatformTenantMemberAddTest extends IntegrationTestBase {
     assertInactiveRejected(response, inactiveId, tenantId);
   }
 
+  /** WD-779: 비활성 계정이 이미 멤버면 id 경로도 「이미 멤버」 가 우선(웹과 같은 판정 순서). */
+  @Test
+  void addMember_inactiveButAlreadyMemberById_memberConflictWins() throws Exception {
+    long tenantId = createTenant();
+    long id =
+        TenantRlsTestSupport.insertUserWithPassword(
+            dsl, "wd779-inactmem-" + System.nanoTime(), "{noop}x");
+    createdUsers.add(id);
+    assertThat(addMemberById(tenantId, id).getStatus()).isEqualTo(201);
+    dsl.execute("update \"user\" set is_active = false where id = ?", id);
+
+    MockHttpServletResponse response = addMemberById(tenantId, id);
+
+    assertThat(response.getStatus()).isEqualTo(409);
+    assertThat(objectMapper.readTree(response.getContentAsString()).get("code").asText())
+        .isEqualTo("MEMBER_ALREADY_EXISTS");
+  }
+
   // ── 헬퍼 ────────────────────────────────────────────────────────────────────
 
   /** 플랫폼 API 로 테넌트를 만든다 — 실제 프로비저닝(USER·ADMIN 역할 시드)을 거쳐야 역할 조회 경로가 실전과 같다. */
