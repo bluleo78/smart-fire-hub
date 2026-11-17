@@ -209,7 +209,7 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
 - **api + web 동시 배포 필수.** 새 응답 필드(`TokenResponse.mustChangePassword`, `ErrorResponse.code`), 403 `PASSWORD_CHANGE_REQUIRED`, `GET /auth/signup-status` 를 웹이 처리해야 한다. api 만 먼저 나가면 구 웹의 로그인 화면이 가입 링크를 계속 보여 주고(제출 시 403), 임시 비밀번호 사용자는 원인 표시 없는 403 만 본다. ai-agent 는 이번에 바뀌지 않는다(admin-manager 의 `set_user_active` 안내 문구는 후속 이슈).
 - V132 는 `"user".must_change_password BOOLEAN NOT NULL DEFAULT false` 한 컬럼 추가 — 기존 행 무영향, 잠금 짧음. 배포 전 스냅샷 규칙(V122 이상)은 그대로 따른다.
 - **배포 즉시 운영의 공개 가입이 닫힌다**(사용자가 이미 있으므로). 이후 계정은 각 워크스페이스 관리자가 사용자 관리 > 멤버 추가로 만든다. 기존 계정은 영향 없음.
-- **새 설치본(PG·Tibero)의 첫 가입자는 기본 워크스페이스 ADMIN 에 더해 플랫폼 SUPER_ADMIN 을 받아 운영자 콘솔 관리자가 된다(WD-748)** — 사람이 가입하기 전에 노출하지 않는다. 사용자가 이미 있는 기존 설치본(V82 승격으로 SUPER_ADMIN 보유)에는 영향 없음.
+- **새 설치본(PG·Tibero)의 첫 가입자는 기본 워크스페이스 ADMIN 에 더해 플랫폼 SUPER_ADMIN 을 받아 운영자 콘솔 관리자가 된다(WD-748)** — 사람이 가입하기 전에 노출하지 않는다. 사용자가 이미 있는 기존 설치본에는 이 경로가 닿지 않는다. 그중 운영자(`platform_user_role`)가 한 명도 없는 설치본(V82 가 빈 DB 에서 돈 PG 설치본, V155 기준선으로 시작한 Tibero 설치본)은 V166 이 기본 워크스페이스의 가장 먼저 만든 활성 ADMIN 한 명을 SUPER_ADMIN 으로 올린다 — 아래 「V166 운영자 없는 기존 설치본 SUPER_ADMIN 보정」 절. 운영자가 이미 있는 설치본(V82 승격 등)에는 영향 없음.
 - **admin 첫 가입(WD-749)**: 새 공개 경로 `GET /api/platform/auth/bootstrap-status`·`POST /api/platform/auth/signup`(가입 즉시 플랫폼 로그인, 로그인 IP 게이트 적용). admin 화면이 이 경로를 부르므로 **api + admin 동시 배포**. 사용자가 있는 기존 설치본에서는 진입점이 보이지 않아 동작 변화 없음.
 - 사용자 상세의 "활성" 스위치 의미가 바뀐다: 전역 계정 비활성화 → **이 워크스페이스 멤버십 정지**. 배포 후 **전역 계정 비활성화 수단이 없다**(운영자 콘솔 후속 이슈). 기존에 전역 `is_active=false` 로 막아 둔 계정은 그대로 막혀 있다.
 - 정지는 그 테넌트 권한을 즉시 0 으로 만든다(권한 조회가 ACTIVE 멤버십을 조인) — 진행 중 세션도 다음 요청부터 403.
@@ -575,6 +575,34 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
   - `등급 정의 변경(kind=…) 뒤 PYTHON 읽기 전체 동기화를 끝내 하지 못하고 버렸다 — … REDEFINED·REDEFINED_APPLIED … (tenant= slots=1~10)` (ERROR). 그 표식은 다음 등급 정의 변경 동기화만 지운다 — 원인을 해소한 뒤 등급 정의를 다시 저장한다. 그 전까지 일반 동기화(일 1회 포함)는 표식 슬롯을 넓히지 않는다(실행 준비는 계속 넓히므로 PYTHON 실행은 된다).
   - `PYTHON 슬롯 미확인 표식을 데이터 저장소에 끝내 쓰지 못했다(…) — 이 인스턴스 메모리 표식만 남아 … (tenant= slots= kind=)` (ERROR). 그 표식은 이 인스턴스만 본다(재기동하면 사라진다) — 데이터 저장소 연결을 확인한다.
 - 배포: api 단독(V159 는 표·함수·GRANT 만 만든다). 롤백: 이미지만 되돌린다 — 표·함수는 남겨도 무해하다(구 코드는 쓰지 않는다).
+
+### V166 운영자 없는 기존 설치본 SUPER_ADMIN 보정 (WD-757)
+- 무엇이 바뀌나: `platform_user_role` 이 **비어 있는 설치본에서만**, 기본 워크스페이스(테넌트 id=1)의 테넌트 역할 ADMIN 보유자 중 계정 활성(`"user".is_active`)·멤버십 활성(`membership.status='ACTIVE'`)인 사람 가운데 **가장 먼저 만든 한 명**(`created_at`, 같으면 id 작은 쪽)에게 플랫폼 SUPER_ADMIN 을 준다. 공개 가입이 닫혀 첫 가입(WD-748)·첫 운영자 만들기(WD-749)에 닿지 않던 설치본에 운영자 콘솔 계정을 만들어 주려는 것이다. ADMIN 전원이 아니라 한 명만 — 다른 운영자는 콘솔에서 추가한다.
+- 운영자가 한 명이라도 있으면(V82 승격·WD-748/749 로 생긴 설치본 포함) 아무것도 하지 않는다. 대상이 없거나 SUPER_ADMIN 시드가 없어도 실패하지 않고 넘어간다. PG·Tibero 같은 번호(V166) 두 벌.
+- 배포: api 단독. 롤백: 이미지만 되돌린다 — 준 역할은 남는다(지우려면 아래 쿼리).
+- 배포 후 누가 받았는지 확인(**소유자 계정으로**):
+  ```sql
+  -- PG (docker exec <db> psql -U app -d smartfirehub)
+  SELECT u.id, u.username, u.name, u.created_at
+  FROM platform_user_role pur
+  JOIN platform_role pr ON pr.id = pur.platform_role_id AND pr.name = 'SUPER_ADMIN'
+  JOIN "user" u ON u.id = pur.user_id;
+  -- Tibero (소유자 스키마로 접속)
+  SELECT u.id, u.username, u.name, u.created_at
+  FROM platform_user_role pur
+  JOIN platform_role pr ON pr.id = pur.platform_role_id AND pr.name = 'SUPER_ADMIN'
+  JOIN "USER" u ON u.id = pur.user_id;
+  ```
+  0행이면 대상(기본 워크스페이스의 활성 ADMIN)이 없었던 것이다 — 아래처럼 직접 넣는다.
+- 다른 사람이 운영자여야 하면: 그 사람을 넣고(콘솔에 들어갈 수 있으면 콘솔의 운영자 추가로 해도 된다), 필요하면 자동으로 받은 사람을 뺀다. 두 DB 모두 같은 SQL(Tibero 는 끝에 `COMMIT;`).
+  ```sql
+  INSERT INTO platform_user_role (user_id, platform_role_id)
+  SELECT <새 운영자 user id>, id FROM platform_role WHERE name = 'SUPER_ADMIN';
+  DELETE FROM platform_user_role
+  WHERE user_id = <자동으로 받은 user id>
+    AND platform_role_id = (SELECT id FROM platform_role WHERE name = 'SUPER_ADMIN');
+  ```
+  운영자를 0명으로 만들지 않는다 — 콘솔에 들어갈 계정이 없어진다(V166 은 다시 돌지 않는다).
 
 ### opencode baseURL 사설망 점검 (이슈 #698)
 
