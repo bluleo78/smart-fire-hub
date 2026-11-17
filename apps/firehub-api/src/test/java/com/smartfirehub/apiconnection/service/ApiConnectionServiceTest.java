@@ -2775,4 +2775,150 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
       }
     }
   }
+
+  // ── WD-780: 가린 키 모두 나열·BASIC 기준 URL 사용자 정보 경로의 읽을 수 없는 저장값 400 ──────────────────
+
+  /**
+   * 저장값을 읽을 수 없는데 가린 값을 여러 칸에 되돌려 보내면, 400 이 가린 칸을 모두 알린다(WD-780) — 예전에는 키 정렬 첫 칸만 알려, 셋을 다 고치려면 세
+   * 번 보내야 했다(AI 도구가 조회 결과를 그대로 되돌려 보내는 경우). 문구에는 칸 이름만 싣고 가린 값은 싣지 않는다. 저장된 연결은 그대로다.
+   */
+  @Test
+  void update_sameAuthType_unreadableStored_multipleMaskedKeys_listsAllKeys() {
+    for (String ciphertext : unreadableCiphertexts()) {
+      Long id = saveUnreadable("BEARER", ciphertext);
+
+      assertThatThrownBy(
+              () ->
+                  apiConnectionService.update(
+                      id,
+                      new UpdateApiConnectionRequest(
+                          null,
+                          null,
+                          null,
+                          Map.of(
+                              "token", "****abcd",
+                              "extraHeader:X-Id", "****1234",
+                              "extraHeader:X-Tenant", "****5678"),
+                          null,
+                          null),
+                      testUserId))
+          .isExactlyInstanceOf(ApiConnectionException.class)
+          .hasMessage(
+              "저장된 인증 정보를 읽을 수 없어 가려진 값(****…)을 되돌릴 수 없습니다 — authConfig.extraHeader:X-Id,"
+                  + " authConfig.extraHeader:X-Tenant, authConfig.token 에 실제 값을 다시 입력하세요")
+          .hasMessageNotContaining("abcd")
+          .hasMessageNotContaining("1234")
+          .hasMessageNotContaining("5678");
+
+      ApiConnectionRepository.ApiConnectionRow row =
+          apiConnectionRepository.findById(id).orElseThrow();
+      assertThat(row.authType()).isEqualTo("BEARER");
+      assertThat(row.authConfig()).isEqualTo(ciphertext);
+    }
+  }
+
+  /**
+   * 인증 방식을 바꾸는 수정도 같은 도우미로 가린 칸을 모두 알린다(WD-780) — 가린 추가 헤더가 둘이면 둘 다, 방식 변경이라 어차피 쓸 수 없는 가린 메인 비밀도
+   * 함께 알려 한 번에 고치게 한다.
+   */
+  @Test
+  void update_authTypeChange_unreadableStored_multipleMaskedKeys_listsAllKeys() {
+    for (String ciphertext : unreadableCiphertexts()) {
+      Long id = saveUnreadable("API_KEY", ciphertext);
+
+      assertThatThrownBy(
+              () ->
+                  apiConnectionService.update(
+                      id,
+                      new UpdateApiConnectionRequest(
+                          null,
+                          null,
+                          "BEARER",
+                          Map.of(
+                              "token", "newtoken-780",
+                              "extraHeader:X-A", "****1111",
+                              "extraHeader:X-B", "****2222"),
+                          null,
+                          null),
+                      testUserId))
+          .isExactlyInstanceOf(ApiConnectionException.class)
+          .hasMessage(
+              "저장된 인증 정보를 읽을 수 없어 가려진 값(****…)을 되돌릴 수 없습니다 — authConfig.extraHeader:X-A,"
+                  + " authConfig.extraHeader:X-B 에 실제 값을 다시 입력하세요");
+
+      ApiConnectionRepository.ApiConnectionRow row =
+          apiConnectionRepository.findById(id).orElseThrow();
+      assertThat(row.authType()).isEqualTo("API_KEY");
+      assertThat(row.authConfig()).isEqualTo(ciphertext);
+    }
+  }
+
+  /**
+   * authConfig 없이 BASIC 연결의 baseUrl 에 사용자 정보만 넣는 수정은 저장된 나머지 설정을 이어 써야 해서 저장값이 꼭 필요하다. 읽을 수 없으면
+   * 예전에는 {@code CryptoException}(500)이었다 — 이제 다른 수정 경로처럼 400 으로 authConfig 를 함께 보내라고 안내한다(WD-780).
+   * 저장된 연결은 그대로고, 문구에 입력한 비밀번호는 싣지 않는다.
+   */
+  @Test
+  void update_basicBaseUrlUserInfoOnly_unreadableStored_rejectedWith400() {
+    for (String ciphertext : unreadableCiphertexts()) {
+      Long id = saveUnreadable("BASIC", ciphertext);
+
+      assertThatThrownBy(
+              () ->
+                  apiConnectionService.update(
+                      id,
+                      new UpdateApiConnectionRequest(
+                          null,
+                          null,
+                          null,
+                          null,
+                          "https://svc:NewPw780@wd772-unreadable.example.com",
+                          null),
+                      testUserId))
+          .isExactlyInstanceOf(ApiConnectionException.class)
+          .hasMessage(BASIC_USERINFO_UNREADABLE_MESSAGE)
+          .hasMessageNotContaining("NewPw780");
+
+      ApiConnectionRepository.ApiConnectionRow row =
+          apiConnectionRepository.findById(id).orElseThrow();
+      assertThat(row.authType()).isEqualTo("BASIC");
+      assertThat(row.authConfig()).isEqualTo(ciphertext);
+      assertThat(storedBaseUrl(id)).isEqualTo("https://wd772-unreadable.example.com");
+    }
+  }
+
+  /**
+   * 저장된 baseUrl 에 옛 사용자 정보가 남은 BASIC 연결은 baseUrl 을 보내지 않는 수정(이름만 바꾸기)도 그 사용자 정보를 인증 설정으로 옮기려고 저장값을
+   * 읽는다. 읽을 수 없으면 500 이 아니라 같은 400 안내다(WD-780).
+   */
+  @Test
+  void update_basicStoredBaseUrlUserInfo_unreadableStored_rejectedWith400() {
+    for (String ciphertext : unreadableCiphertexts()) {
+      Long id =
+          saveRaw(
+              "WD780 basic legacy ",
+              "BASIC",
+              ciphertext,
+              "https://svc:LegacyPw780@wd780-basic.example.com");
+
+      assertThatThrownBy(
+              () ->
+                  apiConnectionService.update(
+                      id,
+                      new UpdateApiConnectionRequest(
+                          "WD780 renamed " + System.nanoTime(), null, null, null, null, null),
+                      testUserId))
+          .isExactlyInstanceOf(ApiConnectionException.class)
+          .hasMessage(BASIC_USERINFO_UNREADABLE_MESSAGE)
+          .hasMessageNotContaining("LegacyPw780");
+
+      assertThat(apiConnectionRepository.findById(id).orElseThrow().authConfig())
+          .isEqualTo(ciphertext);
+    }
+  }
+
+  /** BASIC 기준 URL 사용자 정보 경로에서 저장값을 읽을 수 없을 때의 안내(WD-780). */
+  private static final String BASIC_USERINFO_UNREADABLE_MESSAGE =
+      "저장된 인증 정보를 읽을 수 없어 기준 URL 의 아이디·비밀번호(새로 입력했거나 이 연결의 기준 URL 에 남아 있던 것)를 인증 정보로 옮길 수"
+          + " 없습니다 — 이 연결을 수정하려면 authConfig 에 username·password(추가 헤더가 있으면 함께)를 모두 다시 입력하세요";
 }

@@ -37,6 +37,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.Executor;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -264,14 +265,14 @@ public class ApiConnectionService {
       // 추가 헤더 값을 다시 입력하지 않아도 되게. 넘기는 저장값을 추가 헤더 키로만 좁혀 메인 비밀의 가린 값은 지금처럼 거절된다.
       // 저장값은 요청에 가린 추가 헤더 값이 있을 때만 읽는다(WD-772) — 되돌릴 값이 없으면 저장값이 필요 없고, 늘 읽으면 복호화할 수 없는
       // 연결(키 변경·깨진 JSON)을 새 비밀로 덮어써 고치는 길까지 500 으로 막힌다. 빈 맵을 넘겨도 메인 비밀·그 밖의 가린 값은 지금처럼 거절된다.
-      // 가린 키는 한 번만 찾아 읽기 여부와 거절 문구에 함께 쓴다.
-      String maskedExtraHeaderKey =
-          firstMaskedSecretKey(AuthConfigValidator.rawExtraHeaderEntries(requested));
+      // 가린 키는 한 번만 찾아 읽기 여부와 거절 문구(가린 칸 모두, WD-780)에 함께 쓴다. 읽기·거절은 같은 방식 수정과 같은 도우미다.
+      List<String> maskedExtraHeaderKeys =
+          maskedSecretKeys(AuthConfigValidator.rawExtraHeaderEntries(requested));
       Map<String, String> storedExtraHeaders =
-          maskedExtraHeaderKey != null
-              ? AuthConfigValidator.rawExtraHeaderEntries(
-                  readStoredForMasked(id, maskedExtraHeaderKey))
-              : Map.of();
+          maskedExtraHeaderKeys.isEmpty()
+              ? Map.of()
+              : AuthConfigValidator.rawExtraHeaderEntries(
+                  readStoredOrReject(id, maskedExtraHeaderKeys));
       Map<String, String> resolved =
           AuthConfigValidator.validateAndNormalize(
               effectiveAuthType, resolveMaskedSecrets(requested, storedExtraHeaders, true));
@@ -288,12 +289,8 @@ public class ApiConnectionService {
         Map<String, String> requested = mergeUserInfo(requestedConfig, baseUrl.moved());
         // 저장값이 꼭 필요한 것은 요청에 가린 값(메인 비밀·추가 헤더 등 비밀 필드)이 있을 때뿐이다(WD-772 리뷰). 그때 읽을 수 없으면 되돌릴 원문이
         // 없어 방식 변경과 같은 400 으로 안내한다. 가린 값이 없으면 요청값으로 덮으므로 저장값을 읽지 못해도 수정을 막지 않는다. 가린 값이
-        // 없어도 읽을 수 있으면 읽는 것은 변경 비교(감사) 때문이다.
-        String maskedKey = firstMaskedSecretKey(requested);
-        stored = reader.findReadableDecryptedAuthConfig(id).orElse(null);
-        if (stored == null && maskedKey != null) {
-          throw unreadableMasked(maskedKey);
-        }
+        // 없어도 읽을 수 있으면 읽는 것은 변경 비교(감사) 때문이다. 거절 문구는 가린 칸을 모두 알린다(WD-780).
+        stored = readStoredOrReject(id, maskedSecretKeys(requested));
         // 조회 결과(maskedAuthConfig)를 그대로 되돌려 보낸 비밀 필드는 저장 원문으로 채운다(WD-179).
         // stored 가 null 이면 가린 값이 없으므로 두 호출 모두 저장값을 보지 않는다.
         rejectMaskedEchoOfEmptyStoredSecret(effectiveAuthType, requested, stored);
@@ -301,8 +298,13 @@ public class ApiConnectionService {
       } else {
         // authConfig 없이 BASIC 연결의 baseUrl 에 사용자 정보만 넣은(또는 되살린) 수정(WD-681 리뷰) — 그 사용자 정보가 저장된
         // 아이디·비밀번호를 바꾼다(저장값과 다르다고 충돌로 보지 않는다 — 이번 요청이 입력한 값은 baseUrl 하나뿐이다). 나머지 설정은 저장값을
-        // 그대로 이어 쓰므로 저장값이 꼭 있어야 한다(읽을 수 없으면 지금처럼 500).
-        stored = reader.getDecryptedAuthConfig(id);
+        // 그대로 이어 쓰므로 저장값이 꼭 있어야 한다. 읽을 수 없으면(키 변경·깨진 암호문·깨진 JSON) 예전에는 500 이었다 — 다른 수정 경로처럼
+        // 새 값으로 덮어 고칠 수 있도록 authConfig 를 함께 보내라는 400 으로 안내한다(WD-780). 그 요청은 위 분기(authConfig 있음)로
+        // 간다.
+        stored =
+            reader
+                .findReadableDecryptedAuthConfig(id)
+                .orElseThrow(() -> new ApiConnectionException(BASIC_USERINFO_UNREADABLE_MESSAGE));
         base = new HashMap<>(stored);
         base.remove("authType");
         base.putAll(userInfoFields(baseUrl.moved() != null ? baseUrl.moved() : restoredUserInfo));
@@ -875,6 +877,18 @@ public class ApiConnectionService {
           + " BASIC 으로 골라 아이디·비밀번호를 입력하세요";
 
   /**
+   * authConfig 없이 BASIC 연결의 baseUrl 사용자 정보만 바꾸거나(또는 저장된 옛 사용자 정보를 옮기는) 수정인데 저장된 인증 정보를 읽을 수 없을 때의
+   * 안내(WD-780). 그 경로는 저장된 나머지 설정(추가 헤더 등)에 아이디·비밀번호를 덮어써야 해서 저장값이 꼭 필요하다. 사용자가 고칠 수 있는 길은
+   * authConfig 를 통째로 새로 보내는 것이다. 입력한 아이디·비밀번호는 싣지 않는다.
+   *
+   * <p>기준 URL 에 옛 사용자 정보가 남은 연결은 이름·설명만 바꾸는 수정도 이 경로로 와서(사용자 정보를 인증 정보로 옮기는 수정) 이 안내를 받는다 — 그래서 문구가
+   * 「새로 입력한 것」만이 아니라 「기준 URL 에 남아 있던 것」도 말한다. 저장값 없이 이름만 바꾸게 두면 옮길 수 없는 사용자 정보가 baseUrl 에 남는다.
+   */
+  static final String BASIC_USERINFO_UNREADABLE_MESSAGE =
+      "저장된 인증 정보를 읽을 수 없어 기준 URL 의 아이디·비밀번호(새로 입력했거나 이 연결의 기준 URL 에 남아 있던 것)를 인증 정보로 옮길 수"
+          + " 없습니다 — 이 연결을 수정하려면 authConfig 에 username·password(추가 헤더가 있으면 함께)를 모두 다시 입력하세요";
+
+  /**
    * 사용자 정보 규칙을 적용한 baseUrl 과 옮길 사용자 정보.
    *
    * @param baseUrl 검증할 baseUrl(BASIC 이면 사용자 정보를 뗀 값). 요청에 없으면 null
@@ -1126,28 +1140,30 @@ public class ApiConnectionService {
 
   /**
    * authConfig 에서 가린 값({@link AuthConfigValidator#isMaskedSecret})이 실린 비밀 필드({@link
-   * ApiConnectionReader#isSensitiveKey}) 중 키 정렬 순서로 첫 키(WD-772 리뷰). {@link #resolveMaskedSecrets} 가
-   * 저장값으로 되돌릴 대상과 같은 판정이라, 이 키가 없으면 저장값 없이도 가린 값 처리 결과가 같다. 추가 인증 헤더 키는 접두어 대소문자와 상관없이 비밀 필드다.
+   * ApiConnectionReader#isSensitiveKey})를 키 정렬 순서로 모두 모은다(WD-772 리뷰, WD-780). {@link
+   * #resolveMaskedSecrets} 가 저장값으로 되돌릴 대상과 같은 판정이라, 이 목록이 비면 저장값 없이도 가린 값 처리 결과가 같다. 추가 인증 헤더 키는
+   * 접두어 대소문자와 상관없이 비밀 필드다.
    *
-   * <p>수정 경로는 이 결과 하나로 「저장값을 읽어야 하는지」와 「읽을 수 없을 때 어느 칸을 다시 입력하라고 할지」를 함께 정한다.
+   * <p>수정 경로는 이 결과 하나로 「저장값을 읽어야 하는지」와 「읽을 수 없을 때 어느 칸을 다시 입력하라고 할지」를 함께 정한다. 예전에는 첫 키만 돌려줘, 가린 칸이
+   * 여럿이면 400 이 하나씩만 알려 여러 번 고쳐 보내야 했다(WD-780). 정렬은 Map 구현과 상관없이 문구를 늘 같게 하려는 것이다.
    *
-   * @param config 요청 authConfig(또는 그 추가 헤더 부분). null 이면 null
-   * @return 그런 키가 없으면 null
+   * @param config 요청 authConfig(또는 그 추가 헤더 부분). null 이면 빈 목록
+   * @return 가린 값이 실린 비밀 필드 키(정렬, 수정 불가). 없으면 빈 목록
    */
-  private static String firstMaskedSecretKey(Map<String, String> config) {
-    if (config == null) return null;
+  private static List<String> maskedSecretKeys(Map<String, String> config) {
+    if (config == null) return List.of();
     // null 키는 isSensitiveKey 가 false 라 따로 거르지 않는다.
     return config.entrySet().stream()
         .filter(e -> isMaskedSensitive(e.getKey(), e.getValue()))
         .map(Map.Entry::getKey)
-        .min(Comparator.naturalOrder())
-        .orElse(null);
+        .sorted(Comparator.naturalOrder())
+        .toList();
   }
 
   /**
    * 저장 원문으로 되돌려야 하는 가린 값인지 — 비밀 필드({@link ApiConnectionReader#isSensitiveKey})에 가린 값({@link
-   * AuthConfigValidator#isMaskedSecret})이 실렸는지 본다. {@link #firstMaskedSecretKey}(저장값을 읽을지 정함)와
-   * {@link #resolveMaskedSecrets}(실제로 되돌림)가 같은 판정을 써야 「읽지 않았는데 되돌릴 값이 있는」 어긋남이 생기지 않으므로 한곳에 둔다.
+   * AuthConfigValidator#isMaskedSecret})이 실렸는지 본다. {@link #maskedSecretKeys}(저장값을 읽을지 정함)와 {@link
+   * #resolveMaskedSecrets}(실제로 되돌림)가 같은 판정을 써야 「읽지 않았는데 되돌릴 값이 있는」 어긋남이 생기지 않으므로 한곳에 둔다.
    */
   private static boolean isMaskedSensitive(String key, String value) {
     return ApiConnectionReader.isSensitiveKey(key)
@@ -1155,34 +1171,42 @@ public class ApiConnectionService {
   }
 
   /**
-   * 요청의 가린 추가 헤더 값을 저장 원문으로 되돌리려고 저장값을 읽는다(WD-772) — 인증 방식을 바꾸는 수정에서 쓴다.
+   * 수정 경로의 「저장값 읽기 또는 가린 값 거절」 도우미 하나(WD-780) — 방식 변경·같은 방식 수정·BASIC 기준 URL 사용자 정보 경로가 모두 이것을 쓴다.
+   * 예전에는 방식 변경과 같은 방식 분기가 같은 규칙을 따로 써, 문구·잡는 예외가 갈라질 수 있었다.
    *
-   * <p>저장값을 읽을 수 없으면(복호화 실패·JSON 아님 — {@link ApiConnectionReader#findReadableDecryptedAuthConfig} 가
-   * 그 두 경우만 빈 값으로 바꾼다) 되돌릴 원문이 없다. 사용자가 고칠 수 있는 입력 문제(가린 값 대신 실제 값을 넣으면 된다)라 400({@link
-   * #unreadableMasked})으로 어느 칸을 다시 입력할지 알린다. 가린 값을 조용히 버리고 성공하지는 않는다. 원인 로그(연결 id·예외 종류)는 reader 가
-   * 남긴다.
+   * <ul>
+   *   <li>저장값을 읽을 수 있으면 복호화한 authConfig(authType 포함)를 돌려준다.
+   *   <li>읽을 수 없고(복호화 실패·JSON 아님 — {@link ApiConnectionReader#findReadableDecryptedAuthConfig} 가 그
+   *       두 경우만 빈 값으로 바꾼다) 요청에 가린 값이 있으면, 되돌릴 원문이 없다. 사용자가 고칠 수 있는 입력 문제(가린 값 대신 실제 값을 넣으면 된다)라
+   *       400({@link #unreadableMasked})으로 가린 칸을 모두 알린다. 가린 값을 조용히 버리고 성공하지는 않는다.
+   *   <li>읽을 수 없고 가린 값이 없으면 null — 요청값으로 덮으면 되므로 수정을 막지 않는다(저장값이 꼭 필요한 호출자는 null 을 보고 따로 안내한다).
+   * </ul>
    *
-   * @param maskedKey 요청에서 가린 값이 실린 칸({@link #firstMaskedSecretKey}) — 거절 문구에 싣는다
-   * @return 복호화한 저장 authConfig
-   * @throws ApiConnectionException 저장값을 읽을 수 없을 때(400)
+   * <p>원인 로그(연결 id·예외 종류)는 reader 가 남긴다. 읽기는 reader 프록시 안에서 예외를 잡으므로 바깥 수정 트랜잭션이 롤백 전용이 되지 않는다.
+   *
+   * @param maskedKeys 요청에서 가린 값이 실린 칸({@link #maskedSecretKeys}) — 거절 문구에 싣는다
+   * @return 복호화한 저장 authConfig, 읽을 수 없고 가린 값이 없으면 null
+   * @throws ApiConnectionException 저장값을 읽을 수 없는데 가린 값이 있을 때(400)
    */
-  private Map<String, String> readStoredForMasked(Long id, String maskedKey) {
-    return reader
-        .findReadableDecryptedAuthConfig(id)
-        .orElseThrow(() -> unreadableMasked(maskedKey));
+  private Map<String, String> readStoredOrReject(Long id, List<String> maskedKeys) {
+    Map<String, String> stored = reader.findReadableDecryptedAuthConfig(id).orElse(null);
+    if (stored == null && !maskedKeys.isEmpty()) {
+      throw unreadableMasked(maskedKeys);
+    }
+    return stored;
   }
 
   /**
-   * 저장값을 읽을 수 없어 가린 값을 되돌리지 못할 때의 400 예외. 방식 변경·같은 방식 수정이 같은 문구를 쓰도록 한곳에서 만든다. 문구에는 칸 이름만 싣고 값은 싣지
-   * 않는다.
+   * 저장값을 읽을 수 없어 가린 값을 되돌리지 못할 때의 400 예외. 가린 칸을 모두 「authConfig.<키>」 로 쉼표로 이어 싣는다(WD-780) — 한 번에 모두
+   * 고쳐 보낼 수 있게. 문구에는 칸 이름만 싣고 값은 싣지 않는다.
    *
-   * @param maskedKey 요청에서 가린 값이 실린 칸 — 다시 입력할 곳으로 안내한다
+   * @param maskedKeys 요청에서 가린 값이 실린 칸(정렬, 비어 있지 않음) — 다시 입력할 곳으로 안내한다
    */
-  private static ApiConnectionException unreadableMasked(String maskedKey) {
+  private static ApiConnectionException unreadableMasked(List<String> maskedKeys) {
+    String fields =
+        maskedKeys.stream().map(key -> "authConfig." + key).collect(Collectors.joining(", "));
     return new ApiConnectionException(
-        "저장된 인증 정보를 읽을 수 없어 가려진 값(****…)을 되돌릴 수 없습니다 — authConfig."
-            + maskedKey
-            + " 에 실제 값을 다시 입력하세요");
+        "저장된 인증 정보를 읽을 수 없어 가려진 값(****…)을 되돌릴 수 없습니다 — " + fields + " 에 실제 값을 다시 입력하세요");
   }
 
   /**

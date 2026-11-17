@@ -3,6 +3,7 @@ package com.smartfirehub.apiconnection.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.smartfirehub.global.exception.CryptoException;
 import java.util.Base64;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -83,5 +84,34 @@ class EncryptionServiceTest {
   @Test
   void maskValue_exactly4Chars() {
     assertThat(service.maskValue("abcd")).isEqualTo("****abcd");
+  }
+
+  /**
+   * 「iv:암호문」 형식이 아닌 저장값은 저장 데이터 손상이라 {@link CryptoException} 이다(WD-780) — 예전에는 {@link
+   * IllegalArgumentException} 이 그대로 나가 전역 처리기가 입력 오류(400)로 답하고 영문 내부 문구가 샐 수 있었다. 문구에 암호문은 싣지 않는다.
+   */
+  @Test
+  void decrypt_withoutSeparator_throwsCryptoExceptionWithoutCiphertext() {
+    assertThatThrownBy(() -> service.decrypt("not-a-ciphertext-780"))
+        .isExactlyInstanceOf(CryptoException.class)
+        .hasMessageNotContaining("not-a-ciphertext-780")
+        .hasMessageNotContaining("Invalid encrypted format");
+  }
+
+  /** Base64 가 깨진 저장값도 같은 {@link CryptoException} 이다(WD-780). 문구에 암호문 조각은 싣지 않는다. */
+  @Test
+  void decrypt_withInvalidBase64_throwsCryptoExceptionWithoutCiphertext() {
+    assertThatThrownBy(() -> service.decrypt("@@iv780@@:##cipher780##"))
+        .isExactlyInstanceOf(CryptoException.class)
+        .hasMessageNotContaining("iv780")
+        .hasMessageNotContaining("cipher780");
+  }
+
+  /** 다른 키로 만든 암호문(GCM 태그 불일치)은 예전처럼 {@link CryptoException} 이다 — 세 경우가 한 타입으로 모인다(WD-780). */
+  @Test
+  void decrypt_withWrongKey_throwsCryptoException() {
+    String encrypted = new EncryptionService(DIFFERENT_KEY_BASE64).encrypt("confidential");
+
+    assertThatThrownBy(() -> service.decrypt(encrypted)).isExactlyInstanceOf(CryptoException.class);
   }
 }

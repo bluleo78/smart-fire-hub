@@ -2563,6 +2563,33 @@ test.describe('WD-753 추가 헤더', () => {
     expect(capture.requests?.length ?? 0).toBe(0);
   });
 
+  test('만들기 — 한글 값은 행에 ASCII 오류를 달고 값 칸으로 포커스하며 보내지 않고, 탭이 든 값은 그대로 보낸다 (WD-780)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupApiConnectionListMocks(page);
+    const capture = await mockApi(page, 'POST', '/api/v1/api-connections', connectionWithExtraHeader(), {
+      capture: true,
+    });
+
+    await openCreateFilled(page);
+    await page.getByRole('button', { name: '헤더 추가' }).click();
+    await page.getByLabel('추가 헤더 이름 1').fill(KEY_ID_HEADER);
+    const value = page.getByLabel('추가 헤더 값 1');
+    // 서버(AuthConfigValidator)가 400 으로 거절할 값 — 화면이 먼저 그 행에 오류를 달고 값 칸으로 포커스한다
+    await value.fill('키아이디-4567');
+    await page.getByRole('button', { name: '만들기' }).click();
+    await expect(value).toHaveAccessibleDescription('영문·숫자·기호(ASCII)만 쓸 수 있습니다');
+    await expect(value).toBeFocused();
+    expect(capture.requests?.length ?? 0).toBe(0);
+
+    // 값 가운데 탭은 HTTP 헤더 값으로 보낼 수 있어 서버처럼 통과한다
+    await value.fill('keyid\t4567');
+    await expect(value).not.toHaveAccessibleDescription('영문·숫자·기호(ASCII)만 쓸 수 있습니다');
+    await page.getByRole('button', { name: '만들기' }).click();
+    const req = await capture.waitForRequest();
+    expect(req.payload).toMatchObject({ authConfig: { [EXTRA_KEY]: 'keyid\t4567' } });
+  });
+
   test('만들기 — 추가 헤더는 10개까지, 10개면 「헤더 추가」가 꺼진다', async ({ authenticatedPage: page }) => {
     await setupApiConnectionListMocks(page);
     await openCreateFilled(page);
