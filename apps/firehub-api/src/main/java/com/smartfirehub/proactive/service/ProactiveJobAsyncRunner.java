@@ -94,18 +94,12 @@ public class ProactiveJobAsyncRunner {
    * <p>전용 풀({@link com.smartfirehub.global.config.AsyncConfig#proactiveExecutor})에서 돌아 이벤트 리스너·HTTP
    * 요청 스레드를 블록하지 않는다. AI 호출, 컨텍스트 수집, 결과 저장, 알림 발송을 순차 수행한다.
    *
-   * @param jobId 실행할 Proactive Job ID
-   * @param userId 실행 요청 사용자 ID
-   */
-  @Async("proactiveExecutor")
-  public void executeJob(Long jobId, Long userId) {
-    runJob(jobId, userId, null);
-  }
-
-  /**
-   * 이상 탐지로 시작된 실행 — 감지된 이상을 리포트 컨텍스트에 함께 싣는다(WD-171).
+   * <p>진입점은 이것 하나다(WD-778) — 예전에는 이상 없는 실행용 2인자 판이 따로 있어 {@link ProactiveJobService#startRun} 이
+   * {@code anomaly == null} 로 갈라 불렀지만, 두 판 모두 같은 {@code runJob} 에 닿을 뿐이라 가르는 의미가 없었다.
    *
-   * @param anomaly 실행을 일으킨 이상 탐지 이벤트
+   * @param jobId 실행할 Proactive Job ID
+   * @param userId 실행 요청 사용자 ID(예약·이상 감지는 작업 주인)
+   * @param anomaly 이상 탐지로 시작된 실행이면 그 이벤트 — 리포트 컨텍스트에 함께 싣는다(WD-171). 지금 실행·예약 실행은 {@code null}
    */
   @Async("proactiveExecutor")
   public void executeJob(Long jobId, Long userId, AnomalyEvent anomaly) {
@@ -113,9 +107,8 @@ public class ProactiveJobAsyncRunner {
   }
 
   private void runJob(Long jobId, Long userId, AnomalyEvent anomaly) {
-    // 슬롯 획득은 tryAcquireRunSlot()에서 사전 수행됨.
-    // @Async 특성상 이 메서드 내부에서 throw한 예외는 호출자에게 전파되지 않으므로
-    // 중복 실행 방지 체크는 동기 컨텍스트(컨트롤러/이벤트 리스너)에서 미리 처리한다.
+    // 슬롯 획득(중복 실행 방지)은 ProactiveJobService.startRun() 이 제출 전에 동기로 한다(WD-778) —
+    // @Async 특성상 이 메서드 내부에서 throw한 예외는 호출자에게 전파되지 않기 때문이다.
     AtomicBoolean running =
         runningJobs != null
             ? runningJobs.computeIfAbsent(jobId, k -> new AtomicBoolean(false))

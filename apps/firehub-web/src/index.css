@@ -117,7 +117,7 @@
   /* WD-755: 덩어리 외곽선 .94 → .88 — 카드 위 1.19 → 1.4 이상, 페이지 위 1.3 이상으로 카드·패널 경계가 보이게 한다. */
   --border: oklch(0.88 0.006 264);
   /* WD-755: 목록 행 사이 구분선(새 토큰) — 외곽(border)보다 옅게 두어 촘촘한 목록·표에서 줄이 과해 보이지 않게 한다.
-     divide-y·divide-x 의 기본 색이고(아래 @layer base), 행 아래 선은 row-divider 유틸리티로 쓴다. */
+     divide-y·divide-x 의 기본 색이고(아래 @layer base), 행 아래 선은 row-divider 클래스(@layer components — 유틸리티가 아니다, 아래 정의 참고)로 쓴다. */
   --divider: oklch(0.93 0.005 264);
   /*
    * #376: `--input`은 장식성 구분선(`--border`)이 아니라 **폼 컨트롤의 경계**다.
@@ -332,9 +332,17 @@
 
 /* WD-755: 목록 행 아래 구분선 — 행마다 border-b + 색을 따로 주지 않고 역할 이름 하나로 쓴다(divide-y 를 못 쓰는 행: 표 tr·가상 목록 등).
    divide-y 와 같은 뜻으로 마지막 행에는 선을 그리지 않는다 — 호출부가 last:border-b-0 을 따로 붙이지 않아도 되고,
-   border-0 처럼 행 왼쪽 표식(border-l-*)까지 지우지 않는다. */
-@utility row-divider {
-  &:not(:last-child) {
+   border-0 처럼 행 왼쪽 표식(border-l-*)까지 지우지 않는다.
+   WD-778: 화면이 한 클래스로 덮어쓸 수 있어야 한다(border-b-0 으로 선 빼기, border-b-2 border-primary 로 강조, 두 줄 머리의
+   [&_tr]:border-border). 그래서
+   - 특이도를 한 클래스(0,1,0)로 낮춘다 — :not(:last-child) 를 :where() 로 감싼다(옛 .row-divider:not(:last-child) 는 0,2,0 이라
+     [&_tr]:border-border(0,1,1)까지 이겼다).
+   - @utility 가 아니라 @layer components 에 둔다 — 특이도가 같아도 @utility 는 Tailwind 가 유틸리티 레이어 안에서 정렬해
+     border-b-0·border-b-2 보다 **뒤**에 찍으므로(4.1.18 컴파일 결과로 확인) 덮어쓰기가 진다. components 레이어는 cascade layer
+     순서상 utilities 레이어보다 앞이라, 특이도·찍힌 순서와 상관없이 모든 유틸리티가 이긴다(Tailwind 문서의 「컴포넌트 클래스」 자리).
+     base 레이어(* { border-border })보다는 뒤라 행 선 색은 여전히 --divider 다. 대신 유틸리티가 아니라서 hover:row-divider 같은 변형도, @apply row-divider 도 쓸 수 없다(쓰는 곳 없음). */
+@layer components {
+  .row-divider:where(:not(:last-child)) {
     border-bottom-width: 1px;
     border-bottom-color: var(--divider);
   }

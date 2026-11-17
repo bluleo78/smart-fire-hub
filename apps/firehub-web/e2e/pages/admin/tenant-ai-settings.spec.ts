@@ -3,6 +3,8 @@ import { fileURLToPath } from 'node:url';
 
 import type { Page } from '@playwright/test';
 
+import type { AiCredentialResponse } from '@/types/settings';
+
 import { createAiCredential, createAiSettings } from '../../factories/admin.factory';
 import {
   AI_AUTH_STATUS_PATH,
@@ -1139,12 +1141,12 @@ test.describe('AI 실행 설정 — 공급자별 반영 여부(WD-59)', () => {
 });
 
 /**
- * 이슈 #720 — 모델(`ai.model`, `PUT /settings`)과 자격증명(`PUT /settings/ai-credential`)은 별도
- * 요청으로 순서대로 저장된다. 앞의 것이 성공하고 뒤의 것이 거부되면 "새 유형 형식의 모델 + 옛 유형
- * 자격증명"이 남아 AI 채팅이 깨졌다. 화면은 자격증명이 거부되면 방금 저장한 모델을 저장 전 값으로
- * 되돌리는 보상 PUT 을 보내야 한다.
+ * 이슈 #720 — 모델(`ai.model`)과 자격증명을 별도 요청으로 저장하던 때, 앞의 것이 성공하고 뒤의 것이
+ * 거부되면 "새 유형 형식의 모델 + 옛 유형 자격증명"이 남아 AI 채팅이 깨졌다(보상 PUT 으로 막았다).
+ * WD-778 부터 둘을 함께 바꾸면 자격증명 PUT 하나에 `model` 을 실어 보내고 서버가 한 트랜잭션으로
+ * 저장하므로, 자격증명이 거부되면 모델도 저장되지 않는다 — 보상할 것이 없다.
  */
-test.describe('AI 설정 저장 — 자격증명이 거부되면 모델도 되돌린다(#720)', () => {
+test.describe('AI 설정 저장 — 자격증명이 거부되면 모델도 저장되지 않는다(#720·WD-778)', () => {
   test.beforeEach(async ({ authenticatedPage: page }) => {
     await setupAdminAuth(page);
   });
@@ -1152,14 +1154,16 @@ test.describe('AI 설정 저장 — 자격증명이 거부되면 모델도 되�
   /**
    * 이슈의 재현 경로 그대로다: Claude → OpenCode 전환 + 프로브 실패 → 직접 입력 → 저장 → 자격증명 502.
    *
-   * <b>서버 상태를 흉내 낸다</b> — `PUT /settings` 가 `serverModel` 을 실제로 바꾸고 GET 이 그 값을
-   * 돌려준다. 단언의 중심은 토스트가 아니라 <b>끝났을 때 서버에 남은 `ai.model`</b> 과 두 번째 PUT 의
-   * 본문이다(토스트만 보면 보상이 빠져도 초록이다).
+   * 모델은 자격증명 PUT 바디의 `model` 로만 나가고(WD-778), 그 PUT 이 거부되면 `PUT /settings` 는 하나도 나가지
+   * 않는다 — 서버에는 저장 전 모델이 그대로 남는다.
    *
-   * <b>뮤테이션 대상</b>: `SettingsPage.performSave` 의 `rollbackModel` 호출을 지우면 `settingsPuts`
-   * 길이·`serverModel` 단언이 빨개진다(수정 전 동작: 서버에 `openai/gpt-4o` 가 남는다).
+   * <b>서버 상태를 흉내 낸다</b> — `PUT /settings` 가 `serverModel` 을 실제로 바꾸고 GET 이 그 값을
+   * 돌려준다. 단언의 중심은 토스트가 아니라 <b>끝났을 때 서버에 남은 `ai.model`</b> 이다.
+   *
+   * <b>뮤테이션 대상</b>: `SettingsPage.performSave` 가 모델을 `PUT /settings` 로 따로 보내면 `settingsPuts`
+   * 길이 단언이, 자격증명 PUT 에 `model` 을 싣지 않으면 바디 단언이 빨개진다.
    */
-  test('자격증명 PUT 이 502 로 거부되면 ai.model 을 저장 전 값으로 되돌리는 PUT 을 보내고 편집은 남긴다', async ({
+  test('Claude→OpenCode 전환에서 모델을 실은 자격증명 PUT 이 502 로 거부되면 다른 PUT 은 없고 편집은 남는다', async ({
     authenticatedPage: page,
   }) => {
     // 서버가 들고 있는 ai.model — 저장한 적 없는(기본값) 상태에서 시작한다.
@@ -1184,11 +1188,13 @@ test.describe('AI 설정 저장 — 자격증명이 거부되면 모델도 되�
     // 나중에 등록한 라우트가 먼저 잡는다 — 자격증명 PUT 만 502 로 거부한다(서버의 저장 시 재프로브 실패).
     const rejection = '호스트를 확인할 수 없습니다';
     let rejectedCredPuts = 0;
+    const rejectedBodies: unknown[] = [];
     await page.route(
       (url) => url.pathname === '/api/v1/settings/ai-credential',
       (route) => {
         if (route.request().method() !== 'PUT') return route.fallback();
         rejectedCredPuts += 1;
+        rejectedBodies.push(route.request().postDataJSON());
         return route.fulfill({
           status: 502,
           contentType: 'application/json',
@@ -1218,25 +1224,23 @@ test.describe('AI 설정 저장 — 자격증명이 거부되면 모델도 되�
     await page.getByRole('button', { name: '저장' }).click();
     await page.getByRole('alertdialog').getByRole('button', { name: '저장' }).click();
 
-    // 1) 모델 저장 → 2) 자격증명 거부 → 3) 모델 보상(저장 전 값, 모델 한 키만)
-    await expect.poll(() => settingsPuts.length).toBe(2);
-    expect(rejectedCredPuts).toBe(1);
+    // 모델을 실은 자격증명 PUT 하나가 거부된다 → 다른 요청(모델 PUT·보상 PUT)은 없다(WD-778).
+    await expect.poll(() => rejectedCredPuts).toBe(1);
+    expect(rejectedBodies[0]).toMatchObject({ agentType: 'opencode', model: 'openai/gpt-4o' });
+    expect(settingsPuts).toHaveLength(0);
     expect(calls.puts).toHaveLength(0);
-    expect(settingsPuts[0]).toEqual({ 'ai.model': 'openai/gpt-4o' });
-    expect(settingsPuts[1]).toEqual({ 'ai.model': 'claude-sonnet-5' });
-    // 서버에 남은 모델은 옛 유형(Claude) 자격증명과 맞는 값이다 — 이것이 결함의 본체다.
+    // 서버에 남은 모델은 옛 유형(Claude) 자격증명과 맞는 값이다 — #720 결함의 본체가 다시 생기지 않는다.
     expect(serverModel.value).toBe('claude-sonnet-5');
 
-    // 거부 사유와 "모델도 저장하지 않았다"는 안내가 뜨고, 모순되는 성공 토스트는 없다.
+    // 거부 사유가 뜨고, 모순되는 성공 토스트는 없다.
     await expect(page.getByText(rejection).first()).toBeVisible();
-    await expect(page.getByText('자격증명 저장이 거부되어 모델 변경도 저장하지 않았습니다.', { exact: false })).toBeVisible();
     await expect(page.getByText('설정이 저장되었습니다.')).toHaveCount(0);
 
     // 편집은 그대로 남아 다시 저장할 수 있다(모델 입력 유지, 저장 버튼 활성).
     await expect(page.getByPlaceholder('예: gpt-4o')).toHaveValue('gpt-4o');
     await expect(page.getByRole('button', { name: '저장' })).toBeEnabled();
 
-    await page.screenshot({ path: screenshotPath('credential-rejected-model-rolled-back.png'), fullPage: true });
+    await page.screenshot({ path: screenshotPath('credential-rejected-model-not-saved.png'), fullPage: true });
 
     // 되돌리기 → 저장된 상태(Claude SDK + claude-sonnet-5)로 온전히 돌아온다. 모델 칸은 빈 칸이 아니다.
     await page.getByRole('button', { name: '되돌리기' }).click();
@@ -1440,5 +1444,269 @@ test.describe('OpenCode 모델 불러오기 — 요청 중 입력이 바뀌면 �
     await expect(page.getByText('✓ 모델 3개')).toBeVisible();
     await expect(page.getByRole('button', { name: '모델 불러오기' })).toBeEnabled();
     expect(probe.hits()).toBe(1);
+  });
+});
+
+/**
+ * WD-778 — 자격증명(유형·공급자·비밀)과 모델을 한 번에 바꾸면 자격증명 PUT <b>하나</b>에 `model` 을 실어 보낸다.
+ * 서버가 바뀐 뒤의 짝으로 검사해 한 트랜잭션에 함께 저장한다. 두 요청으로 나누던 때는 어느 순서든 중간 상태가 옛 짝으로
+ * 검사돼 막히거나(묵은 `공급자/모델` 이 남은 sdk → opencode), 검사를 건너뛰고(Claude → opencode 새 모델),
+ * 되돌리기 보상 PUT 이 다시 거부될 수 있었다.
+ *
+ * - 자격증명 + 모델 → 자격증명 PUT 하나(바디에 `model`), `PUT /settings` 없음.
+ * - 모델만 → `PUT /settings` 하나.
+ * - 자격증명만 → 자격증명 PUT 하나(바디에 `model` 키 없음).
+ *
+ * 각 시험은 나간 PUT 을 한 배열로 기록해 비교한다(토스트만 보면 갈래가 바뀌어도 초록이다).
+ */
+test.describe('AI 설정 저장 — 자격증명과 모델은 한 요청으로(WD-778)', () => {
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+  });
+
+  /**
+   * 나간 PUT 의 순서·본문을 기록하는 라우트를 건다. 자격증명 PUT 의 상태 코드는 함수로 정한다. 서버가 들고 있는 모델
+   * (`server.model`)은 성공한 `PUT /settings` 나, `model` 을 실은 성공한 자격증명 PUT 만 바꾼다(실제 서버처럼).
+   */
+  async function recordSaves(
+    page: Page,
+    options: {
+      credential: AiCredentialResponse;
+      initialModel: string;
+      credentialStatus?: () => number;
+    },
+  ) {
+    const order: string[] = [];
+    const settingsPuts: Record<string, string>[] = [];
+    const credentialPuts: Record<string, unknown>[] = [];
+    const server = { model: options.initialModel };
+    await setupSettingsMocks(page, {
+      ai: () => createAiSettings({ 'ai.model': { value: server.model, overridden: true } }),
+    });
+    await page.route(
+      (url) => url.pathname === '/api/v1/settings',
+      (route) => {
+        if (route.request().method() !== 'PUT') return route.fallback();
+        const { settings } = route.request().postDataJSON() as { settings: Record<string, string> };
+        order.push('settings');
+        settingsPuts.push(settings);
+        if (settings['ai.model'] !== undefined) server.model = settings['ai.model'];
+        return route.fulfill({ status: 204, body: '' });
+      },
+    );
+    // 저장된 자격증명도 흉내 낸다 — 성공한 PUT 뒤 재조회는 방금 저장한 유형·공급자를 돌려준다(실제 서버처럼).
+    let storedCredential = options.credential;
+    await mockAiCredential(page, () => storedCredential);
+    // 나중에 등록한 라우트가 먼저 잡는다 — 자격증명 PUT 을 기록하고 상태를 정한다.
+    await page.route(
+      (url) => url.pathname === '/api/v1/settings/ai-credential',
+      (route) => {
+        if (route.request().method() !== 'PUT') return route.fallback();
+        const body = route.request().postDataJSON() as {
+          agentType: AiCredentialResponse['agentType'];
+          payload: Record<string, unknown>;
+          secret: Record<string, string>;
+          model?: string;
+        };
+        order.push('credential');
+        credentialPuts.push(body);
+        const status = options.credentialStatus?.() ?? 204;
+        if (status >= 400) {
+          // 한 트랜잭션 — 거부되면 자격증명도 모델도 바뀌지 않는다.
+          return route.fulfill({
+            status,
+            contentType: 'application/json',
+            body: JSON.stringify({ status, message: PAIR_REJECTION }),
+          });
+        }
+        storedCredential = createAiCredential({
+          agentType: body.agentType,
+          configured: true,
+          payload: body.payload,
+          secretFieldNames: Object.keys(body.secret ?? {}),
+        });
+        if (body.model !== undefined) server.model = body.model;
+        return route.fulfill({ status: 204, body: '' });
+      },
+    );
+    // 모델 목록은 늘 실패시켜 직접 입력으로 모델을 넣는다(#720 시험과 같은 경로).
+    await mockApi(page, 'POST', '/api/v1/settings/ai-credential/probe', {
+      ok: false,
+      models: [],
+      message: '목록을 불러오지 못했습니다',
+    });
+    return { order, settingsPuts, credentialPuts, server };
+  }
+
+  /** 서버의 400 거부 문구(AiCredential.modelProblem 과 같은 모양). 시험이 보는 것은 화면이 서버 문구를 그대로 보이는가다 — 내용은 시나리오와 무관하다. */
+  const PAIR_REJECTION =
+    'AI 모델(anthropic/claude-sonnet-4)이 opencode 형식(공급자/모델)으로 남아 있어 Claude 실행형태에서 쓸 수 없습니다. 관리자 설정에서 모델을 다시 선택하세요.';
+
+  const SDK_CREDENTIAL = createAiCredential({
+    agentType: 'sdk',
+    configured: true,
+    payload: {},
+    secretFieldNames: ['oauthToken'],
+  });
+
+  const OPENCODE_OPENAI_CREDENTIAL = createAiCredential({
+    agentType: 'opencode',
+    configured: true,
+    payload: { providerId: 'openai', baseURL: 'https://api.openai.com/v1' },
+    secretFieldNames: ['apiKey'],
+  });
+
+  /** OpenCode 로 바꾸고 OpenAI·URL·키를 넣은 뒤 직접 입력으로 `gpt-4o` 를 고른다. */
+  async function switchToOpencodeWithGpt4o(page: Page) {
+    await page.locator('#ai-cred-agent-type').click();
+    await page.getByRole('option', { name: 'OpenCode', exact: true }).click();
+    await fillOpencodeOpenAiWithGpt4o(page);
+  }
+
+  /** OpenCode 폼에서 공급자 OpenAI·URL·키를 넣고, 목록 실패 → 직접 입력으로 `gpt-4o` 를 고른다. */
+  async function fillOpencodeOpenAiWithGpt4o(page: Page) {
+    await credentialGroup(page).getByRole('combobox', { name: '공급자' }).click();
+    await page.getByRole('option', { name: 'OpenAI', exact: true }).click();
+    await credentialGroup(page).getByRole('textbox', { name: '기본 URL' }).fill('https://gateway-b.example.com/v1');
+    await credentialGroup(page).getByRole('textbox', { name: 'API 키' }).fill('sk-test-778');
+    await page.getByRole('button', { name: '모델 불러오기' }).click();
+    await page.getByRole('button', { name: '직접 입력으로 전환' }).click();
+    await page.getByPlaceholder('예: gpt-4o').fill('gpt-4o');
+  }
+
+  /** OpenCode → Claude Agent SDK 로 바꾸고 API 키를 넣는다. */
+  async function switchToSdkWithApiKey(page: Page) {
+    await page.locator('#ai-cred-agent-type').click();
+    await page.getByRole('option', { name: 'Claude Agent SDK', exact: true }).click();
+    await credentialGroup(page).getByRole('textbox', { name: 'API 키' }).fill('sk-ant-778');
+  }
+
+  /** 저장 → (유형이 바뀌면) 확인 다이얼로그의 저장. */
+  async function save(page: Page, typeChanged: boolean) {
+    await page.getByRole('button', { name: '저장' }).click();
+    if (typeChanged) {
+      await page.getByRole('alertdialog').getByRole('button', { name: '저장' }).click();
+    }
+  }
+
+  test('Claude(sdk) → OpenCode + openai/gpt-4o 는 model 을 실은 자격증명 PUT 하나만 보낸다', async ({
+    authenticatedPage: page,
+  }) => {
+    const rec = await recordSaves(page, { credential: SDK_CREDENTIAL, initialModel: 'claude-sonnet-5' });
+    await page.goto('/admin/settings');
+
+    await switchToOpencodeWithGpt4o(page);
+    await save(page, true);
+
+    await expect.poll(() => rec.order).toEqual(['credential']);
+    expect(rec.credentialPuts[0]).toMatchObject({
+      agentType: 'opencode',
+      payload: { providerId: 'openai' },
+      model: 'openai/gpt-4o',
+    });
+    expect(rec.settingsPuts).toHaveLength(0);
+    expect(rec.server.model).toBe('openai/gpt-4o');
+    await expect(page.getByText('설정이 저장되었습니다.')).toBeVisible();
+    // 저장이 끝나면 미저장 변경이 남지 않는다(모델의 저장 기준값도 확정됐다).
+    await expect(page.getByRole('button', { name: '저장' })).toBeDisabled();
+    await page.screenshot({ path: screenshotPath('wd778-pair-saved-in-one-put.png'), fullPage: true });
+  });
+
+  test('OpenCode → Claude(sdk) + Claude 모델도 model 을 실은 자격증명 PUT 하나만 보낸다', async ({
+    authenticatedPage: page,
+  }) => {
+    const rec = await recordSaves(page, { credential: OPENCODE_OPENAI_CREDENTIAL, initialModel: 'openai/gpt-4o' });
+    await page.goto('/admin/settings');
+
+    await switchToSdkWithApiKey(page);
+    await page.locator('#ai-model').click();
+    await page.getByRole('option', { name: 'Claude Sonnet 5', exact: true }).click();
+    await save(page, true);
+
+    await expect.poll(() => rec.order).toEqual(['credential']);
+    expect(rec.credentialPuts[0]).toMatchObject({ agentType: 'sdk', model: 'claude-sonnet-5' });
+    expect(rec.server.model).toBe('claude-sonnet-5');
+    await expect(page.getByText('설정이 저장되었습니다.')).toBeVisible();
+  });
+
+  /** OpenCode 공급자 바꾸기(anthropic → openai) + 모델 변경 — 순서 문제 없이 한 PUT 으로 간다. */
+  test('OpenCode 공급자를 바꾸며 모델도 바꾸면 model 을 실은 자격증명 PUT 하나만 보낸다', async ({
+    authenticatedPage: page,
+  }) => {
+    const rec = await recordSaves(page, {
+      credential: createAiCredential({
+        agentType: 'opencode',
+        configured: true,
+        payload: { providerId: 'anthropic', baseURL: 'https://gateway-a.example.com/v1' },
+        secretFieldNames: ['apiKey'],
+      }),
+      initialModel: 'anthropic/claude-sonnet-4',
+    });
+    await page.goto('/admin/settings');
+
+    await fillOpencodeOpenAiWithGpt4o(page);
+    await save(page, false);
+
+    await expect.poll(() => rec.order).toEqual(['credential']);
+    expect(rec.credentialPuts[0]).toMatchObject({
+      agentType: 'opencode',
+      payload: { providerId: 'openai' },
+      model: 'openai/gpt-4o',
+    });
+    expect(rec.server.model).toBe('openai/gpt-4o');
+  });
+
+  test('모델만 바꾸면 PUT /settings 하나만 보낸다', async ({ authenticatedPage: page }) => {
+    const rec = await recordSaves(page, { credential: SDK_CREDENTIAL, initialModel: 'openai/gpt-4o' });
+    await page.goto('/admin/settings');
+
+    await page.locator('#ai-model').click();
+    await page.getByRole('option', { name: 'Claude Sonnet 5', exact: true }).click();
+    await save(page, false);
+
+    await expect.poll(() => rec.order).toEqual(['settings']);
+    expect(rec.settingsPuts[0]).toEqual({ 'ai.model': 'claude-sonnet-5' });
+    await expect(page.getByText('설정이 저장되었습니다.')).toBeVisible();
+  });
+
+  test('자격증명만 바꾸면 model 키 없는 자격증명 PUT 하나만 보낸다', async ({ authenticatedPage: page }) => {
+    const rec = await recordSaves(page, { credential: SDK_CREDENTIAL, initialModel: 'claude-sonnet-5' });
+    await page.goto('/admin/settings');
+
+    await credentialGroup(page).getByRole('textbox', { name: 'API 키' }).fill('sk-ant-only-key');
+    await save(page, false);
+
+    await expect.poll(() => rec.order).toEqual(['credential']);
+    expect(rec.credentialPuts[0]).toMatchObject({ agentType: 'sdk', secret: { apiKey: 'sk-ant-only-key' } });
+    expect(rec.credentialPuts[0]).not.toHaveProperty('model');
+    expect(rec.server.model).toBe('claude-sonnet-5');
+  });
+
+  /**
+   * 서버가 묶음을 400 으로 거부하면(짝 검사 실패) 그 사유를 보이고 다른 요청은 보내지 않는다 — 보상 PUT·모델 PUT 이 없다.
+   * 거부는 한 트랜잭션이라 서버에는 아무것도 바뀌지 않았고, 편집은 그대로 남아 고친 뒤 다시 저장할 수 있다.
+   */
+  test('묶음 자격증명 PUT 이 400 이면 오류를 보이고 다른 PUT 은 보내지 않는다', async ({ authenticatedPage: page }) => {
+    const rec = await recordSaves(page, {
+      credential: OPENCODE_OPENAI_CREDENTIAL,
+      initialModel: 'openai/gpt-4o',
+      credentialStatus: () => 400,
+    });
+    await page.goto('/admin/settings');
+
+    await switchToSdkWithApiKey(page);
+    await page.locator('#ai-model').click();
+    await page.getByRole('option', { name: 'Claude Sonnet 5', exact: true }).click();
+    await save(page, true);
+
+    await expect(page.getByText(PAIR_REJECTION).first()).toBeVisible();
+    expect(rec.order).toEqual(['credential']);
+    expect(rec.credentialPuts[0]).toMatchObject({ agentType: 'sdk', model: 'claude-sonnet-5' });
+    expect(rec.settingsPuts).toHaveLength(0);
+    expect(rec.server.model).toBe('openai/gpt-4o');
+    await expect(page.getByText('설정이 저장되었습니다.')).toHaveCount(0);
+    // 편집은 남아 다시 저장할 수 있다.
+    await expect(page.getByRole('button', { name: '저장' })).toBeEnabled();
+    await page.screenshot({ path: screenshotPath('wd778-pair-rejected.png'), fullPage: true });
   });
 });

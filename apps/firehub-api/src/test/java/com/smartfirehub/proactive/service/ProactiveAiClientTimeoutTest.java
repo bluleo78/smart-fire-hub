@@ -5,6 +5,8 @@ import static com.github.tomakehurst.wiremock.client.WireMock.okJson;
 import static com.github.tomakehurst.wiremock.client.WireMock.post;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowableOfType;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -67,7 +69,10 @@ class ProactiveAiClientTimeoutTest {
     wireMock.resetAll();
   }
 
-  /** 지정한 주소·제한 시간으로 클라이언트를 만든다(저장소 판정은 목). */
+  /**
+   * 지정한 주소·제한 시간으로 클라이언트를 만든다(저장소 판정은 목). 10초 하한(WD-778)은 빈 초기화({@code @PostConstruct})에서만 보므로 생성자로
+   * 짧은 제한 시간을 그대로 쓴다.
+   */
   private static ProactiveAiClient clientFor(String baseUrl, Duration timeout) {
     DataStoreResolver resolver = mock(DataStoreResolver.class);
     when(resolver.backendFor(5L)).thenReturn(DataStoreBackend.POSTGRESQL);
@@ -174,5 +179,31 @@ class ProactiveAiClientTimeoutTest {
 
     assertThat(e).isNotNull();
     assertThat(e.getMessage()).isEqualTo(ProactiveAiClient.AGENT_CALL_FAILED_MESSAGE);
+  }
+
+  /**
+   * WD-778: {@code app.proactive.agent-timeout} 이 10초 미만(0·음수 포함)이면 기동이 실패한다. 0 이면 모든 리포트가 곧바로 「시간
+   * 초과」로 끝나고 음수는 Reactor 가 호출 때마다 예외를 던진다 — 둘 다 기동은 성공한 채 스마트 작업 전체가 조용히 실패하므로, 설정 키와 받은 값을 문구에 담아
+   * 기동 시점에 멈춘다.
+   */
+  @Test
+  void 제한_시간이_10초_미만이면_기동이_실패한다() {
+    for (String value : new String[] {"PT0S", "PT0.5S", "PT9.999S", "-PT1M"}) {
+      Duration timeout = Duration.parse(value);
+      // 받은 값은 Duration 표기 그대로 싣는다(음수 -PT1M 은 PT-1M 으로 찍힌다)
+      assertThatThrownBy(() -> ProactiveAiClient.requireMinimumTimeout(timeout))
+          .as(value)
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("app.proactive.agent-timeout")
+          .hasMessageContaining(timeout.toString());
+    }
+  }
+
+  @Test
+  void 제한_시간이_10초_이상이면_기동한다() {
+    assertThatCode(() -> ProactiveAiClient.requireMinimumTimeout(Duration.ofSeconds(10)))
+        .doesNotThrowAnyException();
+    assertThatCode(() -> clientFor("http://localhost:1", Duration.parse("PT15M")).validateTimeout())
+        .doesNotThrowAnyException();
   }
 }

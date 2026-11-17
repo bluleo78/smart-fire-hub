@@ -5,10 +5,10 @@
  * `cred` prop 주입으로 검증한다. 이 파일은 그 아래 <b>페이지가 직접 소유한</b> 두 결정을
  * 검증한다 — 어느 컴포넌트 테스트로도 닿지 않는 로직이다:
  *
- * 1. <b>저장 순서</b>(동작 설정 6키 → 자격증명). `performSave()` 안의 두 `if` 블록 순서가
- *    바뀌어도(자문이 먼저 제안했다가 `AiCredentialController.validateOpencode` 를 직접 읽고
- *    뒤집은 그 순서) 컴포넌트 트리 모양은 전혀 달라지지 않는다 — 오직 두 API 호출이 일어나는
- *    <b>순서</b>만 문제가 된다.
+ * 1. <b>저장 갈래</b>(WD-778). 자격증명과 모델을 함께 바꾸면 자격증명 PUT 하나에 `model` 을 실어 보내고
+ *    `PUT /settings` 로는 모델을 보내지 않는다. 모델만 바꾸면 `PUT /settings`, 자격증명만 바꾸면 모델 없는
+ *    자격증명 PUT 이다. 컴포넌트 트리 모양은 갈래와 무관하므로 <b>어느 API 가 어떤 인자로</b> 불렸는지만이
+ *    이 결정을 드러낸다.
  * 2. <b>확인 다이얼로그 게이팅</b>. `handleSaveClick` 이 `cred.typeChanged` 면
  *    다이얼로그를 열고 `performSave` 를 <b>보류</b>해야 한다 — `AiCredentialFieldset.test.tsx`
  *    는 `typeChangeConfirmDescription` 자체(순수 함수)만 봤을 뿐,
@@ -168,7 +168,7 @@ function makeBehavior(overrides: Partial<ReturnType<typeof useSettingsOverrideFo
     handleReset: vi.fn(),
     buildChangedPayload: vi.fn(() => ({ payload: {}, droppedChangedKeys: [] })),
     commitSaved: vi.fn(),
-    restoreOriginal: vi.fn(),
+    commitSavedKey: vi.fn(),
     refreshMeta: vi.fn().mockResolvedValue({}),
     retryInitialLoad: vi.fn(),
   };
@@ -197,19 +197,42 @@ describe('SettingsPage — 저장 확인 다이얼로그 게이팅', () => {
   });
 });
 
-describe('SettingsPage — 저장 순서(동작 설정 → 자격증명)', () => {
+describe('SettingsPage — 저장 갈래: 자격증명과 모델은 한 요청으로(WD-778)', () => {
+  /** 저장 전 모델이 `claude-sonnet-5` 인 동작 설정 폼 — `payload` 가 이번 저장에서 바뀐 키다. */
+  const behaviorChanging = (payload: Record<string, string>) =>
+    makeBehavior({
+      hasChanges: true,
+      original: { 'ai.model': 'claude-sonnet-5' } as never,
+      buildChangedPayload: vi.fn(() => ({ payload, droppedChangedKeys: [] })),
+    });
+
   /**
-   * <b>변종: `performSave` 안의 두 `if` 블록 순서를 바꾼다(자격증명 먼저, 동작 설정 다음)</b>.
-   * `AiCredentialController.validateOpencode` 가 <b>지금 DB 에 저장된 `ai.model`</b> 을 새
-   * `providerId` 와 비교하므로(코드 확인, 보고서 참고), 자격증명을 먼저 저장하면 opencode
-   * 공급자 전환 + 모델 재선택을 한 저장에서 같이 할 때 거짓 400 이 난다 — 동작 설정을 먼저
-   * 끝내야 이 비교가 항상 최신 상태를 본다.
+   * <b>변종: 모델을 `PUT /settings` 로 따로 보낸다(수정 전 동작).</b> 그러면 어느 순서든 중간 상태가 옛 짝으로
+   * 검사돼 막히거나 검사를 건너뛴다. 단언: 자격증명 저장이 `{ model }` 을 받고, `PUT /settings` 는 나가지 않는다.
    */
-  it('저장 시 settingsApi.update(동작 설정) 가 cred.save() 보다 먼저 호출된다', async () => {
+  it('자격증명과 모델을 함께 바꾸면 cred.save({ model }) 한 번만 보내고 PUT /settings 는 보내지 않는다', async () => {
+    const user = userEvent.setup();
+    const cred = makeCred({ agentType: 'opencode', hasUnsavedInput: true });
+    const behavior = behaviorChanging({ 'ai.model': 'openai/gpt-4o' });
+    mockedUseAiCredentialForm.mockReturnValue(cred);
+    mockedUseSettingsOverrideForm.mockReturnValue(behavior);
+
+    render(<SettingsPage />);
+    await user.click(screen.getByRole('button', { name: '저장' }));
+
+    await waitFor(() => expect(cred.save).toHaveBeenCalledOnce());
+    expect(cred.save).toHaveBeenCalledWith({ model: 'openai/gpt-4o' });
+    expect(mockedUpdate).not.toHaveBeenCalled();
+    // 모델은 서버에 저장됐다 — 그 키의 저장 기준값만 확정한다.
+    expect(behavior.commitSavedKey).toHaveBeenCalledWith('ai.model', 'openai/gpt-4o');
+    expect(vi.mocked(toast.success)).toHaveBeenCalledWith('설정이 저장되었습니다.');
+  });
+
+  /** 모델 말고 다른 동작 설정도 바꿨으면 묶음 저장 뒤 그 나머지 키만 `PUT /settings` 로 보낸다(모델은 싣지 않는다). */
+  it('다른 동작 설정 키도 바꿨으면 묶음 저장 뒤 모델을 뺀 나머지만 PUT /settings 로 보낸다', async () => {
     const user = userEvent.setup();
     const order: string[] = [];
-
-    const cred = makeCred({ hasUnsavedInput: true });
+    const cred = makeCred({ agentType: 'opencode', hasUnsavedInput: true });
     cred.save = vi.fn(async () => {
       order.push('cred.save');
       return true;
@@ -218,23 +241,72 @@ describe('SettingsPage — 저장 순서(동작 설정 → 자격증명)', () =>
       order.push('settingsApi.update');
       return {} as never;
     });
-
+    const behavior = behaviorChanging({ 'ai.model': 'openai/gpt-4o', 'ai.max_turns': '20' });
     mockedUseAiCredentialForm.mockReturnValue(cred);
-    mockedUseSettingsOverrideForm.mockReturnValue(
-      makeBehavior({
-        hasChanges: true,
-        buildChangedPayload: vi.fn(() => ({ payload: { 'ai.model': 'openai/gpt-4o' }, droppedChangedKeys: [] })),
-      }),
-    );
+    mockedUseSettingsOverrideForm.mockReturnValue(behavior);
+
+    render(<SettingsPage />);
+    await user.click(screen.getByRole('button', { name: '저장' }));
+
+    await waitFor(() => expect(mockedUpdate).toHaveBeenCalledOnce());
+    expect(order).toEqual(['cred.save', 'settingsApi.update']);
+    expect(cred.save).toHaveBeenCalledWith({ model: 'openai/gpt-4o' });
+    expect(mockedUpdate.mock.calls[0][0]).toEqual({ settings: { 'ai.max_turns': '20' } });
+    await waitFor(() => expect(behavior.commitSaved).toHaveBeenCalledOnce());
+  });
+
+  /**
+   * <b>변종: 묶음이 거부된 뒤에도 나머지 동작 설정을 보내거나, 모델을 되돌리는 보상 PUT 을 보낸다.</b> 서버는 한
+   * 트랜잭션이라 아무것도 저장하지 않았으므로 되돌릴 것이 없다 — 더 보내지 않고 멈춘다.
+   */
+  it('묶음 저장이 거부되면 PUT /settings 도 보상 PUT 도 보내지 않고 성공을 알리지 않는다', async () => {
+    const user = userEvent.setup();
+    const cred = makeCred({ agentType: 'opencode', hasUnsavedInput: true, save: vi.fn(async () => false) });
+    const behavior = behaviorChanging({ 'ai.model': 'openai/gpt-4o', 'ai.max_turns': '20' });
+    mockedUseAiCredentialForm.mockReturnValue(cred);
+    mockedUseSettingsOverrideForm.mockReturnValue(behavior);
 
     render(<SettingsPage />);
     await user.click(screen.getByRole('button', { name: '저장' }));
 
     await waitFor(() => expect(cred.save).toHaveBeenCalledOnce());
-    expect(order).toEqual(['settingsApi.update', 'cred.save']);
+    expect(mockedUpdate).not.toHaveBeenCalled();
+    expect(behavior.commitSavedKey).not.toHaveBeenCalled();
+    expect(behavior.commitSaved).not.toHaveBeenCalled();
+    expect(mockedVerifyAuthStatus).not.toHaveBeenCalled();
+    expect(vi.mocked(toast.success)).not.toHaveBeenCalled();
   });
 
-  it('동작 설정에 변경이 없으면 settingsApi.update 를 부르지 않고 자격증명만 저장한다', async () => {
+  it('모델만 바꾸면(자격증명 변경 없음) PUT /settings 만 보낸다', async () => {
+    const user = userEvent.setup();
+    const cred = makeCred({ hasUnsavedInput: false });
+    mockedUseAiCredentialForm.mockReturnValue(cred);
+    mockedUseSettingsOverrideForm.mockReturnValue(behaviorChanging({ 'ai.model': 'claude-opus-4' }));
+
+    render(<SettingsPage />);
+    await user.click(screen.getByRole('button', { name: '저장' }));
+
+    await waitFor(() => expect(mockedUpdate).toHaveBeenCalledOnce());
+    expect(mockedUpdate.mock.calls[0][0]).toEqual({ settings: { 'ai.model': 'claude-opus-4' } });
+    expect(cred.save).not.toHaveBeenCalled();
+  });
+
+  it('자격증명과 모델 아닌 키를 바꾸면 PUT /settings 와 모델 없는 자격증명 저장을 따로 보낸다', async () => {
+    const user = userEvent.setup();
+    const cred = makeCred({ hasUnsavedInput: true });
+    mockedUseAiCredentialForm.mockReturnValue(cred);
+    mockedUseSettingsOverrideForm.mockReturnValue(behaviorChanging({ 'ai.max_turns': '20' }));
+
+    render(<SettingsPage />);
+    await user.click(screen.getByRole('button', { name: '저장' }));
+
+    await waitFor(() => expect(cred.save).toHaveBeenCalledOnce());
+    expect(cred.save).toHaveBeenCalledWith();
+    expect(mockedUpdate).toHaveBeenCalledOnce();
+    expect(mockedUpdate.mock.calls[0][0]).toEqual({ settings: { 'ai.max_turns': '20' } });
+  });
+
+  it('동작 설정에 변경이 없으면 settingsApi.update 를 부르지 않고 자격증명만(모델 없이) 저장한다', async () => {
     const user = userEvent.setup();
     const cred = makeCred({ hasUnsavedInput: true });
     mockedUseAiCredentialForm.mockReturnValue(cred);
@@ -244,6 +316,7 @@ describe('SettingsPage — 저장 순서(동작 설정 → 자격증명)', () =>
     await user.click(screen.getByRole('button', { name: '저장' }));
 
     await waitFor(() => expect(cred.save).toHaveBeenCalledOnce());
+    expect(cred.save).toHaveBeenCalledWith();
     expect(mockedUpdate).not.toHaveBeenCalled();
   });
 });
@@ -355,99 +428,6 @@ describe('SettingsPage — verifyAuth 는 자격증명 저장이 실제로 성�
     await user.click(screen.getByRole('button', { name: '저장' }));
 
     await waitFor(() => expect(mockedVerifyAuthStatus).toHaveBeenCalledOnce());
-  });
-});
-
-describe('SettingsPage — 자격증명 저장이 거부되면 함께 저장한 모델을 되돌린다(#720)', () => {
-  /** 모델을 `claude-sonnet-5` → `openai/gpt-4o` 로 바꾼 동작 설정 폼(저장 전 값은 `original`). */
-  const behaviorWithModelChange = (payload: Record<string, string>) =>
-    makeBehavior({
-      hasChanges: true,
-      original: { 'ai.model': 'claude-sonnet-5' } as never,
-      buildChangedPayload: vi.fn(() => ({ payload, droppedChangedKeys: [] })),
-    });
-
-  /**
-   * <b>변종: `performSave` 가 `cred.save()` 실패 뒤 보상 PUT 을 보내지 않는다(수정 전 동작).</b>
-   * 그러면 서버에는 새 유형 형식의 모델(`openai/gpt-4o`)과 옛 유형(Claude) 자격증명이 함께 남아
-   * AI 채팅이 즉시 깨진다. 단언은 "두 번째 PUT 의 본문이 저장 전 모델인가"다 — 토스트만 보면
-   * 서버 상태가 복구됐는지 알 수 없다.
-   */
-  it('cred.save() 가 false 면 ai.model 만 저장 전 값으로 되돌리는 PUT 을 보내고 original 을 되돌린다', async () => {
-    const user = userEvent.setup();
-    const cred = makeCred({ agentType: 'opencode', hasUnsavedInput: true, save: vi.fn(async () => false) });
-    const behavior = behaviorWithModelChange({ 'ai.model': 'openai/gpt-4o', 'ai.max_turns': '20' });
-    mockedUseAiCredentialForm.mockReturnValue(cred);
-    mockedUseSettingsOverrideForm.mockReturnValue(behavior);
-
-    render(<SettingsPage />);
-    await user.click(screen.getByRole('button', { name: '저장' }));
-
-    await waitFor(() => expect(mockedUpdate).toHaveBeenCalledTimes(2));
-    expect(mockedUpdate.mock.calls[0][0]).toEqual({
-      settings: { 'ai.model': 'openai/gpt-4o', 'ai.max_turns': '20' },
-    });
-    // 보상은 모델 한 키만 — 함께 저장한 다른 키(max_turns)는 독립 편집이라 되돌리지 않는다.
-    expect(mockedUpdate.mock.calls[1][0]).toEqual({ settings: { 'ai.model': 'claude-sonnet-5' } });
-    await waitFor(() =>
-      expect(behavior.restoreOriginal).toHaveBeenCalledWith('ai.model', 'claude-sonnet-5'),
-    );
-    // 곧 되돌린 저장을 "저장되었습니다" 로 알리지 않는다.
-    expect(vi.mocked(toast.success)).not.toHaveBeenCalledWith('설정이 저장되었습니다.');
-    expect(vi.mocked(toast.success)).toHaveBeenCalledWith('모델을 제외한 설정이 저장되었습니다.');
-  });
-
-  it('cred.save() 가 true 면 보상 PUT 없이 저장 성공을 알린다', async () => {
-    const user = userEvent.setup();
-    const cred = makeCred({ agentType: 'opencode', hasUnsavedInput: true, save: vi.fn(async () => true) });
-    const behavior = behaviorWithModelChange({ 'ai.model': 'openai/gpt-4o' });
-    mockedUseAiCredentialForm.mockReturnValue(cred);
-    mockedUseSettingsOverrideForm.mockReturnValue(behavior);
-
-    render(<SettingsPage />);
-    await user.click(screen.getByRole('button', { name: '저장' }));
-
-    await waitFor(() =>
-      expect(vi.mocked(toast.success)).toHaveBeenCalledWith('설정이 저장되었습니다.'),
-    );
-    expect(mockedUpdate).toHaveBeenCalledOnce();
-    expect(behavior.restoreOriginal).not.toHaveBeenCalled();
-  });
-
-  it('이번 저장에 ai.model 이 없으면 자격증명이 거부돼도 보상 PUT 을 보내지 않는다', async () => {
-    const user = userEvent.setup();
-    const cred = makeCred({ hasUnsavedInput: true, save: vi.fn(async () => false) });
-    const behavior = behaviorWithModelChange({ 'ai.max_turns': '20' });
-    mockedUseAiCredentialForm.mockReturnValue(cred);
-    mockedUseSettingsOverrideForm.mockReturnValue(behavior);
-
-    render(<SettingsPage />);
-    await user.click(screen.getByRole('button', { name: '저장' }));
-
-    await waitFor(() => expect(cred.save).toHaveBeenCalledOnce());
-    expect(mockedUpdate).toHaveBeenCalledOnce();
-    expect(behavior.restoreOriginal).not.toHaveBeenCalled();
-    expect(vi.mocked(toast.success)).toHaveBeenCalledWith('설정이 저장되었습니다.');
-  });
-
-  /**
-   * <b>변종: 보상 PUT 실패를 삼킨다.</b> 되돌리지 못했으면 서버에는 어긋난 모델이 남는다 — 토스트가
-   * 사라진 뒤에도 그 사실이 화면에 남아야 하고, `original` 을 이전 값으로 돌려서는 안 된다(서버
-   * 값은 새 모델이므로, 돌리면 dirty 판정이 서버와 어긋난다).
-   */
-  it('보상 PUT 이 실패하면 지속 배너로 어긋난 모델을 알리고 original 은 건드리지 않는다', async () => {
-    const user = userEvent.setup();
-    const cred = makeCred({ agentType: 'opencode', hasUnsavedInput: true, save: vi.fn(async () => false) });
-    const behavior = behaviorWithModelChange({ 'ai.model': 'openai/gpt-4o' });
-    mockedUseAiCredentialForm.mockReturnValue(cred);
-    mockedUseSettingsOverrideForm.mockReturnValue(behavior);
-    mockedUpdate.mockResolvedValueOnce({} as never).mockRejectedValueOnce(new Error('network'));
-
-    render(<SettingsPage />);
-    await user.click(screen.getByRole('button', { name: '저장' }));
-
-    expect(await screen.findByText(/모델 변경을 되돌리지 못했습니다.*openai\/gpt-4o/)).toBeInTheDocument();
-    expect(behavior.restoreOriginal).not.toHaveBeenCalled();
   });
 });
 

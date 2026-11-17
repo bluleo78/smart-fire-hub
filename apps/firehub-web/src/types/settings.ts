@@ -60,6 +60,8 @@ export interface AiCredentialUpsertPayload {
   agentType: string;
   payload: Record<string, string>;
   secret: Record<string, string>;
+  /** 함께 저장할 채팅 `ai.model`(선택, WD-778) — 이유는 서버 `SettingsService.saveChatCredential` 참고. */
+  model?: string;
 }
 
 /** `POST /settings/ai-credential/probe` 요청 바디 — opencode 전용 모델 목록 조회. */

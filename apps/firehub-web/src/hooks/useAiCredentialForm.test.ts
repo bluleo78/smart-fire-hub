@@ -620,6 +620,37 @@ describe('useAiCredentialForm — 엔드포인트 주입(#707 분류 탭 재사�
     expect(mockedPut).not.toHaveBeenCalled();
   });
 
+  /**
+   * WD-778 — 페이지가 유형·자격증명과 모델을 한 번에 바꾸면 `save({ model })` 로 같은 PUT 에 모델을 싣는다.
+   * 모델을 주지 않은 `save()` 바디에는 `model` 키 자체가 없어야 한다(서버는 키가 있으면 모델도 저장한다).
+   */
+  it('save({ model }) 은 같은 PUT 바디에 model 을 싣고, save() 는 model 키를 싣지 않는다', async () => {
+    const api = {
+      get: vi.fn(async () => ({ data: { agentType: 'sdk', payload: {}, secretFieldNames: [], configured: false } })),
+      put: vi.fn(async () => ({})),
+      probe: vi.fn(),
+    };
+    const { result } = renderHook(() => useAiCredentialForm({ api }));
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    act(() => result.current.setSecretInput('apiKey', 'sk-x'));
+    await act(async () => {
+      await result.current.save({ model: 'claude-sonnet-5' });
+    });
+    expect(api.put).toHaveBeenLastCalledWith({
+      agentType: 'sdk',
+      payload: {},
+      secret: { apiKey: 'sk-x' },
+      model: 'claude-sonnet-5',
+    });
+
+    act(() => result.current.setSecretInput('apiKey', 'sk-y'));
+    await act(async () => {
+      await result.current.save();
+    });
+    expect(api.put).toHaveBeenCalledTimes(2);
+    expect((api.put.mock.calls[1] as unknown[])[0]).not.toHaveProperty('model');
+  });
+
   it('reload 는 주입된 api.get 을 다시 불러 서버 상태로 재시드한다 — 분류 탭의 "설정 해제" 뒤 경로다', async () => {
     // 폼 밖의 쓰기(DELETE)가 서버 문서를 바꾼 뒤, 화면이 낡은 값을 그대로 보여주면 안 된다.
     const get = vi

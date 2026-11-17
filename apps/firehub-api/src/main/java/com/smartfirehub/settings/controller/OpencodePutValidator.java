@@ -20,8 +20,8 @@ import org.springframework.stereotype.Component;
  * 컨트롤러마다 사본을 두면 한쪽에만 새 가드가 들어가는 드리프트가 생긴다. 채팅 경로의 동작은 추출 전과 같다({@code AiCredentialControllerTest}).
  * 단 하나의 예외는 userinfo 거부({@link #MSG_BASE_URL_USERINFO})로, 추출과 함께 두 경로 모두에 더해졌다.
  *
- * <p>차이는 인자로만 표현한다: {@code model} 은 채팅이면 저장된 {@code ai.model}, 분류면 요청의 모델이고, {@code slot} 은 프로브를 어느
- * 자격증명 슬롯의 행위로 부를지다(채팅/분류).
+ * <p>차이는 인자로만 표현한다: {@code model} 은 채팅이면 실효 모델(요청에 실린 모델, 없으면 저장된 {@code ai.model} — WD-778), 분류면
+ * 요청의 모델이고, {@code slot} 은 프로브를 어느 자격증명 슬롯의 행위로 부를지다(채팅/분류).
  */
 @Component
 @RequiredArgsConstructor
@@ -95,7 +95,7 @@ public class OpencodePutValidator {
    *
    * @param payload 요청 payload(비공개 필드 제외)
    * @param secret 요청 secret(생략 = 저장값 유지)
-   * @param model 공급자 정합성·소속 검사에 쓸 모델 — 채팅은 저장된 {@code ai.model}, 분류는 요청 모델
+   * @param model 공급자 정합성·소속 검사에 쓸 모델 — 채팅은 실효 모델(요청 모델, 없으면 저장된 {@code ai.model}), 분류는 요청 모델
    * @param slot 프로브를 부를 자격증명 슬롯(채팅/분류). {@code apiKey} 가 실려 있을 때만 프로브까지 오므로 여기서 이 슬롯의 저장 키를 대신 읽는
    *     폴백 분기는 돌지 않는다 — 슬롯은 프로브 호출을 어느 자격증명의 행위로 기록·해석할지만 정한다
    * @return 막아야 하면 {@code block} 에 그 응답을 담은 {@link ValidationOutcome}, 통과(필요하면 경고와 함께)하면 {@code

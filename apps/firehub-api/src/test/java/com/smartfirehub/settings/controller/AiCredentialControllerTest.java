@@ -1,6 +1,7 @@
 package com.smartfirehub.settings.controller;
 
 import static com.smartfirehub.support.SettingsTestSupport.upsertSystemSetting;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -15,9 +16,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.apiconnection.service.EncryptionService;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.settings.model.AiCredential;
 import com.smartfirehub.settings.repository.TenantSettingsRepository;
 import com.smartfirehub.settings.service.AiCredentialService;
 import com.smartfirehub.settings.service.AiCredentialService.AiCredentialUpsert;
+import com.smartfirehub.settings.service.SettingsService;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.SettingsTestSupport;
 import com.smartfirehub.support.TenantRlsTestSupport;
@@ -573,5 +576,272 @@ class AiCredentialControllerTest extends IntegrationTestBase {
                 .header("Authorization", "Bearer " + tenantToken(userId)))
         .andExpect(jsonPath("$.agentType").value("cli-api"))
         .andExpect(jsonPath("$.configured").value(true));
+  }
+
+  // -------------------------------------------------------------------------
+  // PUT /settings 의 ai.model — 저장된 채팅 자격증명과 맞는지(WD-778)
+  // -------------------------------------------------------------------------
+
+  /** {@code PUT /api/v1/settings} 로 {@code ai.model} 하나를 저장한다. */
+  private org.springframework.test.web.servlet.ResultActions putAiModel(long userId, String model)
+      throws Exception {
+    return mockMvc.perform(
+        put("/api/v1/settings")
+            .header("Authorization", "Bearer " + tenantToken(userId))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(json(Map.of("settings", Map.of("ai.model", model)))));
+  }
+
+  /**
+   * Claude 계열(sdk) 자격증명이 저장된 테넌트에 opencode 형식(공급자/모델) 모델을 저장하면 400 이다 — 채팅 경로와 같은 검사·같은 문구. 수정 전에는
+   * 저장은 204 로 되고 이후 모든 채팅이 「모델을 다시 선택하세요」로 실패했다.
+   */
+  @Test
+  void PUT_settings_는_sdk_자격증명에_opencode_형식_모델이면_400이다() throws Exception {
+    saveTenantCredential("sdk", null, "sk-ant-tenant");
+    long userId = tenantUserWithAiSettings();
+
+    putAiModel(userId, "anthropic/claude-sonnet-4")
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(claudeModelProblem("anthropic/claude-sonnet-4")));
+  }
+
+  /** 같은 sdk 자격증명이라도 Claude 모델 이름(슬래시 없음)은 그대로 저장된다 — 검사가 정상 저장을 막지 않는다(양성 대조). */
+  @Test
+  void PUT_settings_는_sdk_자격증명에_Claude_모델이면_저장된다() throws Exception {
+    saveTenantCredential("sdk", null, "sk-ant-tenant");
+    long userId = tenantUserWithAiSettings();
+
+    putAiModel(userId, "claude-sonnet-4").andExpect(status().isNoContent());
+  }
+
+  /**
+   * opencode 자격증명이 저장돼 있으면 {@code PUT /settings} 는 모델을 검사하지 않는다 — opencode 쪽 공급자 일치·목록 확인은 네트워크
+   * 프로브라 자격증명 PUT({@code OpencodePutValidator})이 지킨다(WD-778).
+   */
+  @Test
+  void PUT_settings_는_opencode_자격증명이면_모델을_검사하지_않는다() throws Exception {
+    saveTenantCredential("opencode", "https://api.openai.com/v1", "sk-tenant");
+    long userId = tenantUserWithAiSettings();
+
+    putAiModel(userId, "anthropic/claude-sonnet-4").andExpect(status().isNoContent());
+    putAiModel(userId, "claude-sonnet-4").andExpect(status().isNoContent());
+  }
+
+  /** 자격증명이 아직 없으면 검사하지 않는다 — 모델을 먼저 고르고 자격증명을 나중에 넣는 순서를 막지 않는다. */
+  @Test
+  void PUT_settings_는_자격증명이_없으면_모델을_검사하지_않는다() throws Exception {
+    long userId = tenantUserWithAiSettings();
+
+    putAiModel(userId, "anthropic/claude-sonnet-4").andExpect(status().isNoContent());
+  }
+
+  // -------------------------------------------------------------------------
+  // 채팅 자격증명 PUT 의 선택적 model — 자격증명과 ai.model 을 한 짝으로 검사·저장(WD-778)
+  // -------------------------------------------------------------------------
+
+  /** {@code PUT /api/v1/settings/ai-credential} 로 임의 바디를 보낸다(model 포함 여부는 호출부가 정한다). */
+  private org.springframework.test.web.servlet.ResultActions putCredential(
+      long userId, Map<String, ?> body) throws Exception {
+    return mockMvc.perform(
+        put("/api/v1/settings/ai-credential")
+            .header("Authorization", "Bearer " + tenantToken(userId))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(json(body)));
+  }
+
+  /** 지금 테넌트에 저장된 {@code ai.model} 행(없으면 null) — 기본값으로 메우지 않은 실제 저장 값. */
+  private String storedTenantAiModel() {
+    return inTenantFixture(() -> tenantSettingsRepository.findValue("ai.model").orElse(null));
+  }
+
+  /** Claude 계열 자격증명에 {@code model} 을 짝지을 때 채팅 경로가 내는 거부 문구(서버와 같은 {@code modelProblem}). */
+  private static String claudeModelProblem(String model) {
+    return new AiCredential.Sdk("", "x").modelProblem(model);
+  }
+
+  /** 지금 테넌트에 저장된 채팅 자격증명 유형. */
+  private String storedCredentialType() {
+    return inTenantFixture(() -> aiCredentialService.read().agentType());
+  }
+
+  /**
+   * opencode 자격증명 바디 — apiKey 를 생략해 프로브(네트워크)를 건너뛴다. baseURL 은 공인 IP 리터럴(8.8.8.8)이라 SSRF 가드를 DNS 조회
+   * 없이 결정적으로 통과한다(위 「PUT_opencode_전환시_슬래시_없는_ai_model은_막지_않는다」와 같은 이유).
+   */
+  private static Map<String, Object> opencodeBody(String providerId, String model) {
+    Map<String, Object> body = new java.util.HashMap<>();
+    body.put("agentType", "opencode");
+    body.put("payload", Map.of("providerId", providerId, "baseURL", "https://8.8.8.8/v1"));
+    if (model != null) body.put("model", model);
+    return body;
+  }
+
+  /**
+   * 리뷰 구멍 (1) — sdk 자격증명 + 묵은 opencode 형식 모델({@code anthropic/claude-sonnet-4})에서 OpenCode(openai)
+   * + {@code openai/gpt-4o} 로 바꾸는 한 번 저장. 수정 전에는 자격증명 PUT 이 <b>저장된</b> 묵은 모델과 새 공급자를 대조해 400, 모델을
+   * 먼저 보내면 저장된 sdk 로 검사돼 400 이라 어느 순서로도 저장할 수 없었다. 이제 요청의 model 과 대조해 둘 다 저장된다.
+   */
+  @Test
+  void PUT_credential_은_묵은_모델이_있어도_요청_model_과_짝으로_검사해_둘다_저장한다() throws Exception {
+    saveTenantCredential("sdk", null, "sk-ant-tenant");
+    setTenantAiModel("anthropic/claude-sonnet-4");
+    long userId = tenantUserWithAiSettings();
+
+    putCredential(userId, opencodeBody("openai", "openai/gpt-4o"))
+        .andExpect(status().isNoContent());
+
+    assertThat(storedCredentialType()).isEqualTo("opencode");
+    assertThat(storedTenantAiModel()).isEqualTo("openai/gpt-4o");
+  }
+
+  /** OpenCode 공급자 바꾸기(anthropic → openai) + 모델 변경을 한 PUT 으로 — 요청 모델과 새 공급자가 맞으므로 저장된다. */
+  @Test
+  void PUT_credential_은_opencode_공급자_바꾸기와_모델을_한번에_저장한다() throws Exception {
+    aiCredentialService.save(
+        new AiCredentialUpsert(
+            "opencode",
+            Map.of("providerId", "anthropic", "baseURL", "https://8.8.8.8/v1"),
+            Map.of("apiKey", "sk-tenant")),
+        USER);
+    setTenantAiModel("anthropic/claude-sonnet-4");
+    long userId = tenantUserWithAiSettings();
+
+    putCredential(userId, opencodeBody("openai", "openai/gpt-4o"))
+        .andExpect(status().isNoContent());
+
+    assertThat(storedTenantAiModel()).isEqualTo("openai/gpt-4o");
+    mockMvc
+        .perform(
+            get("/api/v1/settings/ai-credential")
+                .header("Authorization", "Bearer " + tenantToken(userId)))
+        .andExpect(jsonPath("$.payload.providerId").value("openai"));
+  }
+
+  /** 요청 model 이 새 공급자와 어긋나면(opencode/openai + anthropic/…) 400 이고 아무것도 저장되지 않는다 — 검사가 요청 모델로 돈다. */
+  @Test
+  void PUT_credential_은_요청_model_이_새_공급자와_다르면_400이고_아무것도_저장하지_않는다() throws Exception {
+    saveTenantCredential("sdk", null, "sk-ant-tenant");
+    setTenantAiModel("claude-sonnet-4");
+    long userId = tenantUserWithAiSettings();
+
+    putCredential(userId, opencodeBody("openai", "anthropic/claude-sonnet-4"))
+        .andExpect(status().isBadRequest());
+
+    assertThat(storedCredentialType()).isEqualTo("sdk");
+    assertThat(storedTenantAiModel()).isEqualTo("claude-sonnet-4");
+  }
+
+  /**
+   * 리뷰 구멍 (3) — 자격증명만 OpenCode → sdk 로 바꾸는 PUT 인데 저장된 모델이 {@code openai/gpt-4o} 면 400 이다(채팅 경로와 같은
+   * 문구). 수정 전에는 저장이 되고 이후 모든 채팅이 「모델을 다시 선택하세요」로 실패했다(WD-766 상태).
+   */
+  @Test
+  void PUT_credential_만_Claude_계열로_바꾸는데_저장된_모델이_opencode_형식이면_400이고_저장하지_않는다() throws Exception {
+    saveTenantCredential("opencode", "https://8.8.8.8/v1", "sk-tenant");
+    setTenantAiModel("openai/gpt-4o");
+    long userId = tenantUserWithAiSettings();
+
+    putCredential(
+            userId,
+            Map.of("agentType", "sdk", "payload", Map.of(), "secret", Map.of("apiKey", "sk-ant-x")))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(claudeModelProblem("openai/gpt-4o")));
+
+    assertThat(storedCredentialType()).isEqualTo("opencode");
+    assertThat(storedTenantAiModel()).isEqualTo("openai/gpt-4o");
+  }
+
+  /** 같은 OpenCode → sdk 전환이라도 Claude 모델을 함께 보내면 한 번에 둘 다 저장된다(화면의 정상 경로). */
+  @Test
+  void PUT_credential_은_Claude_계열_전환과_Claude_모델을_한번에_저장한다() throws Exception {
+    saveTenantCredential("opencode", "https://8.8.8.8/v1", "sk-tenant");
+    setTenantAiModel("openai/gpt-4o");
+    long userId = tenantUserWithAiSettings();
+
+    putCredential(
+            userId,
+            Map.of(
+                "agentType",
+                "sdk",
+                "payload",
+                Map.of(),
+                "secret",
+                Map.of("apiKey", "sk-ant-x"),
+                "model",
+                "claude-sonnet-4"))
+        .andExpect(status().isNoContent());
+
+    assertThat(storedCredentialType()).isEqualTo("sdk");
+    assertThat(storedTenantAiModel()).isEqualTo("claude-sonnet-4");
+  }
+
+  /**
+   * 자격증명 + 모델을 함께 보냈는데 모델 검사가 실패하면(sdk + {@code anthropic/claude-sonnet-4}) 400 이고 <b>자격증명도 모델도</b>
+   * 저장되지 않는다 — 둘 중 하나만 남으면 그 자체로 채팅이 깨지는 어긋난 짝이다.
+   */
+  @Test
+  void PUT_credential_과_model_중_모델_검사가_실패하면_400이고_둘다_저장하지_않는다() throws Exception {
+    saveTenantCredential("opencode", "https://8.8.8.8/v1", "sk-tenant");
+    setTenantAiModel("openai/gpt-4o");
+    long userId = tenantUserWithAiSettings();
+
+    putCredential(
+            userId,
+            Map.of(
+                "agentType",
+                "sdk",
+                "payload",
+                Map.of(),
+                "secret",
+                Map.of("apiKey", "sk-ant-x"),
+                "model",
+                "anthropic/claude-sonnet-4"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(claudeModelProblem("anthropic/claude-sonnet-4")));
+
+    assertThat(storedCredentialType()).isEqualTo("opencode");
+    assertThat(storedTenantAiModel()).isEqualTo("openai/gpt-4o");
+  }
+
+  /** 빈 model 은 opencode 검증보다 먼저 400 이고 아무것도 저장하지 않는다(PUT /settings 와 같은 문구). */
+  @Test
+  void PUT_credential_의_빈_model_은_400이고_저장하지_않는다() throws Exception {
+    saveTenantCredential("sdk", null, "sk-ant-tenant");
+    setTenantAiModel("claude-sonnet-4");
+    long userId = tenantUserWithAiSettings();
+
+    putCredential(userId, opencodeBody("openai", "  "))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(SettingsService.MSG_MODEL_BLANK));
+
+    assertThat(storedCredentialType()).isEqualTo("sdk");
+    assertThat(storedTenantAiModel()).isEqualTo("claude-sonnet-4");
+  }
+
+  /**
+   * 함께 저장한 모델은 {@code PUT /settings} 로 저장한 것과 같은 AI 설정 감사(「AI 설정 수정 (바뀐 항목: 모델)」)를 남긴다 — 저장 통로가
+   * 바뀌어도 감사가 빠지지 않는다.
+   */
+  @Test
+  void PUT_credential_과_함께_저장한_모델은_AI_설정_감사를_남긴다() throws Exception {
+    saveTenantCredential("sdk", null, "sk-ant-tenant");
+    setTenantAiModel("anthropic/claude-sonnet-4");
+    long userId = tenantUserWithAiSettings();
+
+    putCredential(userId, opencodeBody("openai", "openai/gpt-4o"))
+        .andExpect(status().isNoContent());
+
+    Integer aiSettingsAudits =
+        inTenantFixture(
+            () ->
+                dsl.fetchCount(
+                    dsl.selectFrom("audit_log")
+                        .where(
+                            "user_id = ? AND resource = ?",
+                            userId,
+                            com.smartfirehub.settings.service.SettingsAuditRecorder
+                                .RESOURCE_AI_SETTINGS)));
+    assertThat(aiSettingsAudits).isEqualTo(1);
   }
 }

@@ -44,15 +44,20 @@ public class AsyncConfig {
    *
    * <p>리포트 한 건은 ai-agent 응답을 최대 15분({@code app.proactive.agent-timeout}) 블로킹으로 기다리므로, {@link
    * #pipelineExecutor()} 를 함께 쓰면 파이프라인 실행이 큐에서 밀린다 — 그래서 나눈다. 동시 리포트 수만큼 ai-agent 쪽 LLM 호출이 늘어
-   * 작게(코어 3·최대 5) 잡고, 정각 등에 몰리는 예약 실행은 큐 50 에서 차례를 기다린다.
+   * 작게(5) 잡고, 정각 등에 몰리는 예약 실행은 큐 50 에서 차례를 기다린다.
    *
-   * <p>넘치면 <b>거절</b>한다(기본 AbortPolicy) — 수동 실행은 컨트롤러가 거절을 받아 실행 슬롯을 놓는다(#149). CallerRuns 면 요청·스케줄러
-   * 스레드가 리포트 하나를 직접 돌게 된다.
+   * <p><b>코어 = 최대 = 5 인 이유</b>(WD-778): {@link ThreadPoolTaskExecutor} 는 큐가 <b>가득 찬 뒤에야</b> 코어를 넘어
+   * 스레드를 늘린다. 예전 설정(코어 3·최대 5·큐 50)은 큐 50 이 다 차기 전까지 실제 동시 실행이 3 이었다 — 최대 5 는 거의 쓰이지 않았다. 작업마다 실행
+   * 슬롯이 하나라 큐에 쌓이는 것은 서로 다른 작업 5개가 동시에 돌 때뿐이다.
+   *
+   * <p>넘치면 <b>거절</b>한다(기본 AbortPolicy) — 잡았던 실행 슬롯은 {@code ProactiveJobService.startRun} 이
+   * 놓는다(WD-778, #149). CallerRuns 면 요청·스케줄러 스레드가 리포트 하나를 직접 돌게 된다.
    */
   @Bean(name = "proactiveExecutor")
   public Executor proactiveExecutor() {
     ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-    executor.setCorePoolSize(3);
+    // 코어 = 최대 — 큐가 차기 전에도 5개가 함께 돈다(위 javadoc, WD-778)
+    executor.setCorePoolSize(5);
     executor.setMaxPoolSize(5);
     executor.setQueueCapacity(50);
     executor.setThreadNamePrefix("proactive-exec-");

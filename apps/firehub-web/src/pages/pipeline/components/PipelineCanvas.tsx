@@ -31,6 +31,14 @@ interface EdgeSelection {
 }
 const NO_EDGES: ReadonlySet<string> = new Set();
 
+/**
+ * 캔버스 위에 떠 있는 outline 버튼의 칠(WD-778) — 공용 outline 은 쉬는 면·hover 면이 투명/반투명이라 팬할 때 노드·격자가 비친다.
+ * 불투명 바탕(bg-background)·hover 면(라이트 accent, 다크 popover)으로 칠하되, tailwind-merge 가 variant 의
+ * dark:bg-input/30·dark:hover:bg-input/50 을 걷어내도록 dark:·dark:hover: 클래스를 직접 준다.
+ */
+const FLOATING_BUTTON_CLASS =
+  'h-8 gap-1.5 bg-background shadow-sm hover:bg-accent dark:bg-background dark:hover:bg-popover';
+
 interface PipelineCanvasProps {
   state: PipelineEditorState;
   dispatch: React.Dispatch<EditorAction>;
@@ -273,15 +281,15 @@ export function PipelineCanvas({
         </div>
       )}
 
-      {/* 자동 정렬 + 스텝 추가 (우상단, 실행 상세에서는 숨김) */}
+      {/* 자동 정렬 + 스텝 추가 (우상단, 실행 상세에서는 숨김) — 칠은 FLOATING_BUTTON_CLASS 참고(WD-778) */}
       {!executionData && (
         <div className="absolute right-3 top-3 z-10 flex items-center gap-1.5">
-          <Button variant="outline" size="sm" className="h-8 gap-1.5 shadow-sm" onClick={handleAutoLayout}>
+          <Button variant="outline" size="sm" className={FLOATING_BUTTON_CLASS} onClick={handleAutoLayout}>
             <LayoutGrid className="h-3.5 w-3.5" />
             자동 정렬
           </Button>
           {!readOnly && (
-            <Button variant="outline" size="sm" className="h-8 gap-1.5 shadow-sm" onClick={handleAddStep}>
+            <Button variant="outline" size="sm" className={FLOATING_BUTTON_CLASS} onClick={handleAddStep}>
               <Plus className="h-3.5 w-3.5" />
               스텝 추가
             </Button>

@@ -63,18 +63,29 @@ public class AiCredentialController {
   /**
    * 저장. opencode 는 서비스에 넘기기 전에 {@link OpencodePutValidator} 로 몇 가지를 더 검증한다(설계서 "저장 시 검증" 절 — 유형별 필수
    * 필드 자체는 {@link AiCredentialService#save} 가 여전히 지킨다).
+   *
+   * <p>선택적 {@code model} 은 자격증명과 한 짝으로 검사·저장한다 — {@link
+   * SettingsService#saveChatCredential}(WD-778). 빈 {@code model} 은 opencode 검증(프로브)보다 먼저 400 으로
+   * 끊는다(분류 PUT 과 같은 이유 — 모델 형식·목록 문구가 먼저 나가면 원인이 흐려진다).
    */
   @PutMapping
   @RequirePermission("ai:settings")
   public ResponseEntity<?> put(
       Authentication authentication, @RequestBody AiCredentialUpsertRequest request) {
+    String requestModel = request.model();
+    if (requestModel != null && requestModel.isBlank()) {
+      return ResponseEntity.badRequest().body(Map.of("message", SettingsService.MSG_MODEL_BLANK));
+    }
     Optional<String> opencodeWarning = Optional.empty();
     if ("opencode".equals(request.agentType())) {
-      // 채팅 경로는 저장된 ai.model 과 대조한다(순환 잠금 이유 — OpencodeCredentialValidation 참고).
-      String storedAiModel = settingsService.getValue("ai.model").orElse(null);
+      // 바뀐 뒤의 짝(실효 모델)으로 검사한다(WD-778). 모델 생략 시 슬래시 없는 저장 모델을 통과시키는 순환 잠금 완화는 그대로 —
+      // OpencodeCredentialValidation 참고.
       OpencodePutValidator.ValidationOutcome outcome =
           opencodePutValidator.validate(
-              request.payload(), request.secret(), storedAiModel, AiCredentialSlot.CHAT);
+              request.payload(),
+              request.secret(),
+              settingsService.effectiveChatModel(requestModel),
+              AiCredentialSlot.CHAT);
       if (outcome.block().isPresent()) return outcome.block().get();
       opencodeWarning = outcome.warning();
     }
@@ -87,7 +98,8 @@ public class AiCredentialController {
         aiCredentialService.previewHostingOutcome(AiCredentialSlot.CHAT, upsert);
     hostingDeclarationPolicy.requireChangeAllowed(
         userId, before, outcome.after(), outcome.targetChanged());
-    aiCredentialService.save(upsert, userId);
+    // 자격증명(과 실린 경우 ai.model)을 한 트랜잭션으로 저장한다(WD-778).
+    settingsService.saveChatCredential(upsert, requestModel, userId);
     // 저장이 성공한 뒤 저장된 값끼리 비교해 바뀌었을 때만 감사(R3) — 유형 변경으로 외부로 돌아가는 것도 변경이다.
     hostingChangeAuditor.recordIfChanged(
         userId,

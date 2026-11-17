@@ -401,6 +401,35 @@ public class AiCredentialService {
     }
   }
 
+  /**
+   * 저장하려는 {@code ai.model} 이 <b>저장된</b> 채팅 자격증명과 맞지 않으면 그 문구(WD-778). 판정은 채팅 실행 직전({@code
+   * AiChatRequestBuilder})과 같은 {@link AiCredential#modelProblem} 이고 문구도 그대로다 — 저장 때 막지 않으면 저장은 성공하고
+   * 이후 모든 채팅이 「모델을 다시 선택하세요」로 실패했다. 분류 묶음 저장({@link #saveClassify})처럼 비밀은 복호화하지 않는다(판정은 유형·payload
+   * 만 본다).
+   *
+   * <ul>
+   *   <li>{@code model} 이 null 이거나 행이 없으면(미설정) 검사하지 않는다 — 모델을 먼저 고르고 자격증명을 나중에 넣는 순서를 막지 않는다.
+   *   <li>opencode 면 검사하지 않는다 — 공급자 일치·목록 소속 확인은 네트워크 프로브라 자격증명 PUT 의 {@code OpencodePutValidator}
+   *       가 맡고, 채팅은 슬래시 없는 모델을 통과시키는 완화 규칙을 쓴다(순환 잠금 — {@code OpencodeCredentialValidation} 참고).
+   *   <li>손상된 행·모르는 유형도 검사하지 않는다 — 모델 저장을 막을 근거가 없고, 실행 경로가 그 손상을 따로 알린다.
+   * </ul>
+   */
+  public Optional<String> storedChatModelProblem(String model) {
+    if (model == null) return Optional.empty();
+    String key = AiCredentialSlot.CHAT.key();
+    return readTenantRaw(key)
+        .flatMap(raw -> tryParse(raw, key, "MODEL_CHECK"))
+        .filter(doc -> !"opencode".equals(doc.agentType()))
+        .flatMap(
+            doc -> {
+              try {
+                return Optional.ofNullable(toCredential(doc, cipher -> "").modelProblem(model));
+              } catch (UnknownAgentTypeException e) {
+                return Optional.empty();
+              }
+            });
+  }
+
   // ---- 공급자 호스팅 위치(S3 §3·§4.3) ----
 
   /**

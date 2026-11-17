@@ -10,6 +10,7 @@ import com.smartfirehub.proactive.exception.ProactiveJobException;
 import com.smartfirehub.securitylevel.ai.AiCallContext;
 import com.smartfirehub.settings.model.AiCredential;
 import com.smartfirehub.vectorstore.VectorStoreFeatures;
+import jakarta.annotation.PostConstruct;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -43,6 +44,16 @@ public class ProactiveAiClient {
   @Value("${agent.internal-token}")
   private String internalToken;
 
+  /** 제한 시간 설정 키 — 기동 실패 문구에 그대로 싣는다(WD-778). */
+  static final String TIMEOUT_PROPERTY = "app.proactive.agent-timeout";
+
+  /**
+   * 제한 시간 하한(WD-778). 0 이면 모든 리포트가 곧바로 「시간 초과」로 끝나고, 음수는 Reactor {@code Mono.timeout} 이 호출마다 예외를
+   * 던진다 — 둘 다 기동은 성공한 채 스마트 작업 전체가 조용히 실패한다. 리포트 한 건은 ai-agent 의 LLM·도구 호출 여러 번이라 몇 초 안에 끝날 수 없으므로
+   * 10초 미만은 오타(예: 단위 누락)로 보고 기동을 멈춘다.
+   */
+  static final Duration MIN_TIMEOUT = Duration.ofSeconds(10);
+
   public ProactiveAiClient(
       @Value("${agent.url}") String agentUrl,
       ObjectMapper objectMapper,
@@ -61,6 +72,27 @@ public class ProactiveAiClient {
     this.objectMapper = objectMapper;
     this.dataStoreResolver = dataStoreResolver;
     this.vectorStoreFeatures = vectorStoreFeatures;
+  }
+
+  /** 운영 빈의 제한 시간 하한 검사(WD-778) — 생성자가 아니라 여기서 해, 시험은 생성자로 짧은 제한 시간(300ms 등)을 그대로 쓸 수 있다. */
+  @PostConstruct
+  void validateTimeout() {
+    requireMinimumTimeout(timeout);
+  }
+
+  /**
+   * 제한 시간이 {@link #MIN_TIMEOUT}(10초) 이상인지 본다(WD-778). 아니면 설정 키와 받은 값을 담은 {@link
+   * IllegalStateException} 으로 빈 생성을 — 곧 기동을 — 실패시킨다. 운영자가 로그 한 줄로 어느 설정을 어떻게 고칠지 알 수 있게 한다.
+   */
+  static void requireMinimumTimeout(Duration timeout) {
+    if (timeout == null || timeout.compareTo(MIN_TIMEOUT) < 0) {
+      throw new IllegalStateException(
+          TIMEOUT_PROPERTY
+              + " 은 "
+              + MIN_TIMEOUT.toSeconds()
+              + "초 이상이어야 합니다(환경변수 PROACTIVE_AGENT_TIMEOUT, 예: PT15M). 받은 값: "
+              + timeout);
+    }
   }
 
   /**

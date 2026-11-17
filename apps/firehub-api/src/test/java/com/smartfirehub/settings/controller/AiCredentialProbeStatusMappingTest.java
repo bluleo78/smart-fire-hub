@@ -96,6 +96,8 @@ class AiCredentialProbeStatusMappingTest {
     when(okCheck.ok()).thenReturn(true);
     when(opencodeProbeService.validateTargetOnly(org.mockito.ArgumentMatchers.anyString()))
         .thenReturn(okCheck);
+    // 실효 모델(요청 모델, 없으면 저장된 ai.model)은 실제 규칙 그대로 — 저장값은 시험마다 getValue 스텁이 정한다(WD-778).
+    when(settingsService.effectiveChatModel(any())).thenCallRealMethod();
     // 컨트롤러가 저장 전 호스팅 결과(선언·전송 대상 변경)를 묻는다 — 목 기본값 null 이면 NPE 라, 매핑과 무관한 외부·불변 결과를 깐다.
     when(aiCredentialService.previewHostingOutcome(
             org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
@@ -198,7 +200,7 @@ class AiCredentialProbeStatusMappingTest {
                 .content(content(opencodeBody())))
         .andExpect(status().isUnprocessableEntity());
 
-    verify(aiCredentialService, org.mockito.Mockito.never()).save(any(), any());
+    verify(settingsService, org.mockito.Mockito.never()).saveChatCredential(any(), any(), any());
   }
 
   /**
@@ -224,7 +226,7 @@ class AiCredentialProbeStatusMappingTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.warning").exists());
 
-    verify(aiCredentialService).save(any(), eq(1L));
+    verify(settingsService).saveChatCredential(any(), isNull(), eq(1L));
   }
 
   /**
@@ -286,9 +288,10 @@ class AiCredentialProbeStatusMappingTest {
   }
 
   /**
-   * PUT 성공 경로가 실제로 {@code save} 를 인증된 사용자 id 로 부르는지 확인한다 — 상태 코드(204) 만 보는 테스트는 "저장을 부르지 않고 204 만
-   * 돌려주는" 뮤테이션을 잡지 못한다. {@code sdk} 처럼 프로브가 필요 없는 유형으로 가장 단순한 성공 경로를 만든다. (예전엔 여기서 테넌트/플랫폼 평면 플래그를
-   * 단언했지만, #706 으로 저장 위치가 테넌트 하나뿐이라 그 인자 자체가 사라졌다.)
+   * PUT 성공 경로가 실제로 저장({@code SettingsService.saveChatCredential} — WD-778 부터 채팅 자격증명 저장의 진입점)을 인증된
+   * 사용자 id 로 부르는지 확인한다 — 상태 코드(204) 만 보는 테스트는 "저장을 부르지 않고 204 만 돌려주는" 뮤테이션을 잡지 못한다. {@code sdk} 처럼
+   * 프로브가 필요 없는 유형으로 가장 단순한 성공 경로를 만든다. (예전엔 여기서 테넌트/플랫폼 평면 플래그를 단언했지만, #706 으로 저장 위치가 테넌트 하나뿐이라 그
+   * 인자 자체가 사라졌다.)
    */
   @Test
   void PUT_은_인증된_사용자로_저장을_위임한다() throws Exception {
@@ -310,7 +313,7 @@ class AiCredentialProbeStatusMappingTest {
                             Map.of("apiKey", "sk-x")))))
         .andExpect(status().isNoContent());
 
-    verify(aiCredentialService).save(any(), eq(1L));
+    verify(settingsService).saveChatCredential(any(), isNull(), eq(1L));
   }
 
   /**
@@ -359,8 +362,11 @@ class AiCredentialProbeStatusMappingTest {
                 .content(content(opencodeBody())))
         .andExpect(status().isUnprocessableEntity());
 
-    org.mockito.Mockito.verify(aiCredentialService, org.mockito.Mockito.never())
-        .save(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+    org.mockito.Mockito.verify(settingsService, org.mockito.Mockito.never())
+        .saveChatCredential(
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any());
   }
 
   /**
@@ -383,5 +389,63 @@ class AiCredentialProbeStatusMappingTest {
         .andExpect(jsonPath("$.ok").value(true));
 
     verify(opencodeProbeService).probe("https://evil.example/v1", null);
+  }
+
+  // -------------------------------------------------------------------------
+  // 요청 model(WD-778) — opencode 공급자 일치·목록 소속은 저장된 모델이 아니라 요청 모델로 검사한다
+  // -------------------------------------------------------------------------
+
+  /** {@link #opencodeBody()} 에 model 을 더한 바디. */
+  private Map<String, Object> opencodeBodyWithModel(String model) {
+    Map<String, Object> body = new java.util.HashMap<>(opencodeBody());
+    body.put("model", model);
+    return body;
+  }
+
+  /**
+   * 리뷰 구멍 (1)·(2) — 저장된 모델이 묵은 {@code anthropic/claude-sonnet-4} 여도 요청 model({@code
+   * openai/gpt-4o})이 새 공급자·목록과 맞으면 저장으로 간다. 저장은 모델과 짝으로 한 트랜잭션에 맡긴다({@code
+   * SettingsService.saveChatCredential}).
+   */
+  @Test
+  void PUT_요청_model_이_목록에_있으면_저장된_묵은_모델과_무관하게_짝으로_저장한다() throws Exception {
+    mockAuth("ai:settings");
+    when(settingsService.getValue("ai.model")).thenReturn(Optional.of("anthropic/claude-sonnet-4"));
+    when(opencodeProbeService.probe(
+            eq(AiCredentialSlot.CHAT), any(OpencodeProbeService.TargetCheck.class), any()))
+        .thenReturn(new ProbeResult(true, List.of("gpt-4o"), null, Reason.OK));
+
+    mockMvc
+        .perform(
+            put("/api/v1/settings/ai-credential")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(content(opencodeBodyWithModel("openai/gpt-4o"))))
+        .andExpect(status().isNoContent());
+
+    verify(settingsService).saveChatCredential(any(), eq("openai/gpt-4o"), eq(1L));
+  }
+
+  /**
+   * 요청 model 이 프로브 목록에 없으면 422 — 소속 검사가 저장된 모델이 아니라 <b>요청 모델</b>로 돈다(저장된 {@code openai/gpt-4o} 는
+   * 목록에 있으므로, 저장된 값으로 검사하면 통과해 버린다). 저장은 부르지 않는다.
+   */
+  @Test
+  void PUT_요청_model_이_목록에_없으면_422이고_저장하지_않는다() throws Exception {
+    mockAuth("ai:settings");
+    when(settingsService.getValue("ai.model")).thenReturn(Optional.of("openai/gpt-4o"));
+    when(opencodeProbeService.probe(
+            eq(AiCredentialSlot.CHAT), any(OpencodeProbeService.TargetCheck.class), any()))
+        .thenReturn(new ProbeResult(true, List.of("gpt-4o"), null, Reason.OK));
+
+    mockMvc
+        .perform(
+            put("/api/v1/settings/ai-credential")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(content(opencodeBodyWithModel("openai/does-not-exist"))))
+        .andExpect(status().isUnprocessableEntity());
+
+    verify(settingsService, org.mockito.Mockito.never()).saveChatCredential(any(), any(), any());
   }
 }

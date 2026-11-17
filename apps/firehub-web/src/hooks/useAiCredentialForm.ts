@@ -46,6 +46,14 @@ function payloadFieldValue(payload: Record<string, string>, name: string): strin
   return name === 'hosting' ? normalizeHosting(payload.hosting) : (payload[name] ?? '');
 }
 
+/**
+ * `save()` 선택 인자(WD-778). `model` 을 주면 같은 자격증명 PUT 에 실어 자격증명과 `ai.model` 을 한 짝으로
+ * 저장한다 — 이유는 서버 `SettingsService.saveChatCredential` 참고.
+ */
+export interface AiCredentialSaveOptions {
+  model?: string;
+}
+
 /** 저장 직후 서버가 확정한 값 — dirty 판정과 `canLoadModels` 의 "저장된 키" 가드에 쓴다. */
 interface OriginalSnapshot {
   agentType: AgentType;
@@ -218,7 +226,7 @@ export interface UseAiCredentialFormResult {
    * 증명을 검사해 사용자를 혼란스럽게 한다. 이전에는 이 값이 없어(반환 타입이 `void`) 무조건
    * 다시 불렀다.
    */
-  save: () => Promise<boolean>;
+  save: (options?: AiCredentialSaveOptions) => Promise<boolean>;
   /**
    * 저장은 성공했지만 재조회가 실패했을 때 세우는 지속 안내. SMTP/AI 다른 탭과 같은 어휘를
    * 쓴다 — 같은 사건에 화면마다 다른 말을 쓰면 사용자가 둘을 다른 사건으로 읽는다.
@@ -507,7 +515,7 @@ export function useAiCredentialForm<R extends AiCredentialResponse = AiCredentia
       .some((field) => payloadFieldValue(payload, field.name) !== payloadFieldValue(original.payload, field.name)) ||
     Object.values(secretInputs).some((value) => value.trim() !== '');
 
-  const save = useCallback(async (): Promise<boolean> => {
+  const save = useCallback(async (options?: AiCredentialSaveOptions): Promise<boolean> => {
     // 현재 유형의 필드만 골라 보낸다. 다른 유형의 필드가 로컬 상태에 남아 있어도(정상적으로는
     // setAgentType 이 비우므로 없어야 한다) 여기서 다시 한번 CREDENTIAL_FIELDS 로 걸러 싣지 않는다.
     const fields = CREDENTIAL_FIELDS[agentType];
@@ -528,7 +536,13 @@ export function useAiCredentialForm<R extends AiCredentialResponse = AiCredentia
       });
     let saveWarning: string | undefined;
     try {
-      const response = await api.put({ agentType, payload: payloadOut, secret: secretOut });
+      // 모델은 함께 저장하라고 받았을 때만 싣는다(WD-778) — 키 자체가 없으면 서버는 자격증명만 저장한다.
+      const response = await api.put({
+        agentType,
+        payload: payloadOut,
+        secret: secretOut,
+        ...(options?.model !== undefined && { model: options.model }),
+      });
       // WD-52: 무경고 저장은 204(바디 없음)라 response.data 가 undefined 다 — 경고가 있을 때만
       // 서버가 200 + {warning} 을 준다(PROVIDER_REJECTED 등 완전 검증은 못 했지만 저장은 한 경우).
       saveWarning = response.data?.warning;

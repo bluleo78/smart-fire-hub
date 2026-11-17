@@ -10,9 +10,12 @@ import java.util.Map;
  * NPE 가 나(계약은 400) 서비스 내부 전용으로 남겨두고, 이 클래스가 정규화를 맡는다. 화면이 "유형만 바꾸는" 요청처럼 {@code payload}/{@code
  * secret} 을 통째로 생략해 보낼 수 있으므로, 정식 캐노니컬 접근자를 오버라이드해 {@code null} 을 빈 맵으로 바꾼다(레코드 컴포넌트 접근자는 명시적으로
  * 재정의할 수 있다).
+ *
+ * <p>{@code model}(선택, WD-778) — 채팅 {@code ai.model} 을 자격증명과 한 짝으로 저장할 때 싣는다. 생략(null)하면 자격증명만
+ * 저장한다. 이유는 {@code SettingsService#saveChatCredential} 참고.
  */
 public record AiCredentialUpsertRequest(
-    String agentType, Map<String, Object> payload, Map<String, String> secret) {
+    String agentType, Map<String, Object> payload, Map<String, String> secret, String model) {
 
   @Override
   public Map<String, Object> payload() {

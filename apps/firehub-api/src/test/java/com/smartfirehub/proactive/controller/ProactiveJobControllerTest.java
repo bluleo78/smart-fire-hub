@@ -251,8 +251,7 @@ class ProactiveJobControllerTest {
   @Test
   void executeJob_returnsAccepted() throws Exception {
     mockAuth("proactive:write");
-    doNothing().when(proactiveJobService).tryAcquireRunSlot(10L);
-    doNothing().when(proactiveJobService).executeJob(10L, 1L);
+    doNothing().when(proactiveJobService).startRun(10L, 1L, null);
 
     mockMvc
         .perform(
@@ -261,15 +260,15 @@ class ProactiveJobControllerTest {
   }
 
   /**
-   * Job이 이미 실행 중일 때 tryAcquireRunSlot이 ProactiveJobAlreadyRunningException을 던지면 409 Conflict를 반환해야
-   * 한다 (#149).
+   * Job이 이미 실행 중일 때 startRun(슬롯 획득 + 제출, WD-778)이 ProactiveJobAlreadyRunningException을 던지면 409
+   * Conflict를 반환해야 한다 (#149).
    */
   @Test
   void executeJob_whenAlreadyRunning_returnsConflict() throws Exception {
     mockAuth("proactive:write");
     doThrow(new ProactiveJobAlreadyRunningException())
         .when(proactiveJobService)
-        .tryAcquireRunSlot(10L);
+        .startRun(10L, 1L, null);
 
     mockMvc
         .perform(

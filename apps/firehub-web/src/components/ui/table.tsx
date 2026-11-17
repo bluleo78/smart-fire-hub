@@ -12,10 +12,13 @@ function Table({ className, ...props }: React.ComponentProps<"table">) {
   const overflow = useHorizontalOverflow(container)
 
   // 표 면은 카드 단계(bg-card) — 목록 화면처럼 표가 바탕(--background) 위에 바로 놓여도 행 구분선(--divider)·머리 띠(--muted)가
-  // 설계한 카드 위 단계로 읽히게 한다(스크롤 페이드도 card 색). 카드 안의 표는 같은 색이라 바뀌지 않는다.
+  // 설계한 카드 위 단계로 읽히게 한다(스크롤 페이드도 card 색).
+  // WD-778: 카드(Card, data-slot="card") 안의 표는 칠하지 않는다(in-data-[slot=card]:bg-transparent). 다크 --card 는 반투명
+  // (흰 4.5%)이라 카드 위에 또 칠하면 9% 남짓으로 겹쳐 표만 밝은 사각형으로 떠 보인다 — 카드 면이 이미 표 면 역할을 한다.
+  // 이 변형은 `:where([data-slot=card]) &` 로 찍혀 특이도가 bg-card 와 같고(0,1,0) 변형 유틸이라 뒤에 오므로 카드 안에서는 이긴다.
   // rounded-[inherit]: 바깥 「rounded-md border」 상자의 모서리 밖으로 면이 삐져나오지 않게(WD-755).
   return (
-    <div className="relative w-full rounded-[inherit] bg-card">
+    <div className="relative w-full rounded-[inherit] bg-card in-data-[slot=card]:bg-transparent">
       <div
         ref={setContainer}
         data-slot="table-container"

@@ -133,9 +133,8 @@ public class ProactiveJobController {
   }
 
   /**
-   * Job을 즉시 실행한다. 중복 실행 방지를 위해 먼저 동기 메서드로 실행 슬롯을 획득한다. 슬롯 획득 실패 시
-   * ProactiveJobAlreadyRunningException이 던져져 409 Conflict로 응답된다. @Async 제출 자체가
-   * 실패(RejectedExecutionException 등)하면 슬롯을 즉시 해제한다 (#149).
+   * Job을 즉시 실행한다. 이미 실행 중이면 ProactiveJobAlreadyRunningException → 409 Conflict(#149). 슬롯·제출은 {@link
+   * ProactiveJobService#startRun} 참고(WD-778).
    */
   @PostMapping("/{id}/execute")
   @RequirePermission("proactive:write")
@@ -143,16 +142,8 @@ public class ProactiveJobController {
     Long userId = (Long) authentication.getPrincipal();
     // 남의 작업·없는 작업은 슬롯을 잡기 전에 404 — 주인의 실행 이력·슬롯에 흔적을 남기지 않는다 (WD-164)
     proactiveJobService.requireOwnJob(id, userId);
-    // 동기 컨텍스트에서 중복 실행 체크 — @Async 내부에서 throw하면 호출자에 전파되지 않으므로
-    // 슬롯 획득을 @Async 호출 이전에 수행한다 (#149)
-    proactiveJobService.tryAcquireRunSlot(id);
-    try {
-      proactiveJobService.executeJob(id, userId);
-    } catch (Exception e) {
-      // @Async 제출 실패(executor 큐 포화 등) 시 슬롯을 해제하여 영구 점유를 방지한다
-      proactiveJobService.releaseRunSlot(id);
-      throw e;
-    }
+    // 동기 호출이라 409 가 호출자에게 전파된다(#149, WD-778).
+    proactiveJobService.startRun(id, userId, null);
     return ResponseEntity.accepted().build();
   }
 

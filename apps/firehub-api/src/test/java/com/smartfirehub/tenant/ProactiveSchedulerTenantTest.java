@@ -180,7 +180,7 @@ class ProactiveSchedulerTenantTest extends IntegrationTestBase {
    *
    * <p>등록된 {@code Runnable} 을 꺼내 <b>테넌트 컨텍스트가 비워진 별도 스레드</b>에서 실행한다 — 실제 cron 발화(다른 풀 스레드, 몇 시간 뒤)와
    * 같은 조건이다. 감싸지 않았다면 여기서 null 이 관측되거나(승계 없음), 멤버십 추론에 의존하던 옛 구현에서는 소유자 A 의 멤버십이 모호해 {@code
-   * executeJob} 호출 자체가 일어나지 않는다.
+   * startRun} 호출 자체가 일어나지 않는다.
    */
   @Test
   @DisplayName("발화 콜백은 등록 시점 테넌트 안에서 실행된다 (멤버십 추론에 의존하지 않는다)")
@@ -201,7 +201,7 @@ class ProactiveSchedulerTenantTest extends IntegrationTestBase {
 
     assertThat(observedTenantByJob)
         .as(
-            "발화 콜백이 테넌트 없이 executeJob 을 부르면 RLS 가 걸린 report_template 조회가 0행이 되어"
+            "발화 콜백이 테넌트 없이 startRun 을 부르면 RLS 가 걸린 report_template 조회가 0행이 되어"
                 + " 양식 없는 리포트가 조용히 생성된다 (-1 은 컨텍스트 없음, 키 부재는 아예 미실행)")
         .containsEntry(jobA, tenantA)
         .containsEntry(jobB, tenantB);
@@ -223,7 +223,7 @@ class ProactiveSchedulerTenantTest extends IntegrationTestBase {
         .isFalse();
   }
 
-  /** executeJob 이 불린 순간의 테넌트를 jobId 별로 기록한다. 배선이 없으면 -1(컨텍스트 없음)이 남는다. */
+  /** startRun(WD-778 전 executeJob) 이 불린 순간의 테넌트를 jobId 별로 기록한다. 배선이 없으면 -1(컨텍스트 없음)이 남는다. */
   private Map<Long, Long> observeExecuteJobTenant() {
     Map<Long, Long> observed = new ConcurrentHashMap<>();
     Mockito.doAnswer(
@@ -234,7 +234,7 @@ class ProactiveSchedulerTenantTest extends IntegrationTestBase {
               return null;
             })
         .when(proactiveJobService)
-        .executeJob(Mockito.anyLong(), Mockito.anyLong());
+        .startRun(Mockito.anyLong(), Mockito.anyLong(), Mockito.any());
     return observed;
   }
 

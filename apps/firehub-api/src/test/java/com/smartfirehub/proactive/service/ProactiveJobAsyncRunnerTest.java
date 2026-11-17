@@ -93,7 +93,7 @@ class ProactiveJobAsyncRunnerTest {
     // 잡 조회까지 가지 않는 경로라 공통 스텁을 지운다(엄격 스텁의 미사용 경고 방지).
     reset(proactiveJobRepository);
 
-    assertThatThrownBy(() -> runner.executeJob(JOB_ID, USER_ID))
+    assertThatThrownBy(() -> runner.executeJob(JOB_ID, USER_ID, null))
         .isInstanceOf(RuntimeException.class);
 
     assertThat(slots.get(JOB_ID).get()).isFalse();
@@ -109,7 +109,7 @@ class ProactiveJobAsyncRunnerTest {
     reset(proactiveJobRepository, executionRepository);
     when(executionRepository.create(JOB_ID)).thenThrow(new IllegalStateException("db down"));
 
-    assertThatThrownBy(() -> runner.executeJob(JOB_ID, USER_ID))
+    assertThatThrownBy(() -> runner.executeJob(JOB_ID, USER_ID, null))
         .isInstanceOf(IllegalStateException.class);
 
     assertThat(slots.get(JOB_ID).get()).isFalse();
@@ -197,7 +197,7 @@ class ProactiveJobAsyncRunnerTest {
     when(aiClient.execute(eq(USER_ID), anyString(), anyString(), any(), any(), any(), any(), any()))
         .thenReturn(new ProactiveResult("제목", List.of(), null, null, "요약 내용", null));
 
-    runner.executeJob(JOB_ID, USER_ID);
+    runner.executeJob(JOB_ID, USER_ID, null);
 
     ArgumentCaptor<AiCredential> credentialCaptor = ArgumentCaptor.forClass(AiCredential.class);
     ArgumentCaptor<String> modelCaptor = ArgumentCaptor.forClass(String.class);
@@ -250,7 +250,7 @@ class ProactiveJobAsyncRunnerTest {
 
     // 소유자 범위 밖 → 양식 없이
     when(reportTemplateRepository.findVisibleTo(templateId, USER_ID)).thenReturn(Optional.empty());
-    runner.executeJob(JOB_ID, USER_ID);
+    runner.executeJob(JOB_ID, USER_ID, null);
 
     // 양성 대조: 소유자 범위 안 → 양식이 실린다
     when(reportTemplateRepository.findVisibleTo(templateId, USER_ID))
@@ -266,7 +266,7 @@ class ProactiveJobAsyncRunnerTest {
                     false,
                     LocalDateTime.now(),
                     LocalDateTime.now())));
-    runner.executeJob(JOB_ID, USER_ID);
+    runner.executeJob(JOB_ID, USER_ID, null);
 
     @SuppressWarnings("unchecked")
     ArgumentCaptor<Map<String, Object>> templateCaptor = ArgumentCaptor.forClass(Map.class);
@@ -331,7 +331,7 @@ class ProactiveJobAsyncRunnerTest {
         .thenReturn(new AiCredential.Opencode("openai", "https://api.openai.com/v1", "", "sk-oai"));
     when(settingsService.getValue("ai.model")).thenReturn(Optional.of(AiBehaviorDefaults.MODEL));
 
-    assertThatThrownBy(() -> runner.executeJob(JOB_ID, USER_ID))
+    assertThatThrownBy(() -> runner.executeJob(JOB_ID, USER_ID, null))
         .isInstanceOf(ProactiveJobException.class);
 
     verify(aiClient, never()).execute(any(), any(), any(), any(), any(), any(), any(), any());
@@ -353,7 +353,7 @@ class ProactiveJobAsyncRunnerTest {
         .thenReturn(new AiCredential.Opencode("openai", "https://api.openai.com/v1", "", "sk-oai"));
     when(settingsService.getValue("ai.model")).thenReturn(Optional.of(AiBehaviorDefaults.MODEL));
 
-    assertThatThrownBy(() -> runner.executeJob(JOB_ID, USER_ID))
+    assertThatThrownBy(() -> runner.executeJob(JOB_ID, USER_ID, null))
         .isInstanceOf(ProactiveJobException.class);
 
     verify(executionRepository).updateError(eq(EXECUTION_ID), anyString());
@@ -375,7 +375,7 @@ class ProactiveJobAsyncRunnerTest {
         .thenReturn(new AiCredential.Opencode("openai", "https://api.openai.com/v1", "", "sk-oai"));
     when(settingsService.getValue("ai.model")).thenReturn(Optional.of(AiBehaviorDefaults.MODEL));
 
-    assertThatThrownBy(() -> runner.executeJob(JOB_ID, USER_ID))
+    assertThatThrownBy(() -> runner.executeJob(JOB_ID, USER_ID, null))
         .isInstanceOf(ProactiveJobException.class);
 
     verify(proactiveJobRepository).updateLastExecuted(eq(JOB_ID), notNull(), isNull());
@@ -419,7 +419,7 @@ class ProactiveJobAsyncRunnerTest {
         .when(proactiveJobRepository)
         .updateLastExecuted(any(), any(), any());
 
-    runner.executeJob(JOB_ID, USER_ID);
+    runner.executeJob(JOB_ID, USER_ID, null);
 
     verify(executionRepository).updateResult(eq(EXECUTION_ID), eq("COMPLETED"), any(), any());
     verify(executionRepository, never()).updateError(any(), any());
@@ -435,7 +435,7 @@ class ProactiveJobAsyncRunnerTest {
   void opencode_공급자설정이_비어있으면_모델안내가_아니라_공급자안내로_실패한다() {
     when(aiCredentialService.resolve()).thenReturn(new AiCredential.Opencode("", "", "", "sk-oai"));
 
-    assertThatThrownBy(() -> runner.executeJob(JOB_ID, USER_ID))
+    assertThatThrownBy(() -> runner.executeJob(JOB_ID, USER_ID, null))
         .isInstanceOf(ProactiveJobException.class);
 
     ArgumentCaptor<String> errorCaptor = ArgumentCaptor.forClass(String.class);
@@ -460,7 +460,7 @@ class ProactiveJobAsyncRunnerTest {
       clearInvocations(aiClient);
       when(aiCredentialService.resolve()).thenReturn(credential);
 
-      runner.executeJob(JOB_ID, USER_ID);
+      runner.executeJob(JOB_ID, USER_ID, null);
 
       verify(aiClient)
           .execute(
@@ -487,7 +487,7 @@ class ProactiveJobAsyncRunnerTest {
   void 알수없는_유형이면_빈_자격증명으로_계속하지_않고_FAILED로_기록된다() {
     when(aiCredentialService.resolve()).thenThrow(new UnknownAgentTypeException("martian"));
 
-    assertThatThrownBy(() -> runner.executeJob(JOB_ID, USER_ID))
+    assertThatThrownBy(() -> runner.executeJob(JOB_ID, USER_ID, null))
         .isInstanceOf(ProactiveJobException.class);
 
     verify(aiClient, never()).execute(any(), any(), any(), any(), any(), any(), any(), any());
@@ -509,7 +509,7 @@ class ProactiveJobAsyncRunnerTest {
       when(ownerEligibility.findIneligibilityReason(USER_ID)).thenReturn(Optional.of(reason));
 
       // 예외 없이 끝난다
-      runner.executeJob(JOB_ID, USER_ID);
+      runner.executeJob(JOB_ID, USER_ID, null);
 
       verify(executionRepository).updateError(EXECUTION_ID, reason);
       verify(executionRepository, never()).updateResult(any(), any(), any(), any());
@@ -527,7 +527,7 @@ class ProactiveJobAsyncRunnerTest {
   void 워크스페이스가_정지됐으면_주인_자격을_보기_전에_정지_사유로_멈춘다() {
     when(tenantRepository.isActive(TENANT_ID)).thenReturn(false);
 
-    runner.executeJob(JOB_ID, USER_ID);
+    runner.executeJob(JOB_ID, USER_ID, null);
 
     verify(executionRepository)
         .updateError(EXECUTION_ID, ProactiveJobAsyncRunner.REASON_TENANT_SUSPENDED);
@@ -551,7 +551,7 @@ class ProactiveJobAsyncRunnerTest {
                 null,
                 null));
 
-    runner.executeJob(JOB_ID, USER_ID);
+    runner.executeJob(JOB_ID, USER_ID, null);
 
     verify(ownerEligibility).findIneligibilityReason(USER_ID);
     verify(executionRepository).updateResult(eq(EXECUTION_ID), eq("COMPLETED"), any(), any());
@@ -571,7 +571,7 @@ class ProactiveJobAsyncRunnerTest {
     when(executionRepository.updateResult(eq(EXECUTION_ID), eq("COMPLETED"), any(), any()))
         .thenReturn(false);
 
-    runner.executeJob(JOB_ID, USER_ID);
+    runner.executeJob(JOB_ID, USER_ID, null);
 
     verify(chatChannel, never()).deliver(any(), any(), any());
     verifyNoInteractions(notificationDispatcher);
@@ -626,7 +626,7 @@ class ProactiveJobAsyncRunnerTest {
         .thenReturn(Optional.of(executionWithStatus("COMPLETED")));
     var logs = captureRunnerLogs();
     try {
-      assertThatThrownBy(() -> runner.executeJob(JOB_ID, USER_ID))
+      assertThatThrownBy(() -> runner.executeJob(JOB_ID, USER_ID, null))
           .isInstanceOf(ProactiveJobException.class);
 
       assertThat(logs.list)
@@ -657,7 +657,7 @@ class ProactiveJobAsyncRunnerTest {
         .thenReturn(Optional.of(executionWithStatus("FAILED")));
     var logs = captureRunnerLogs();
     try {
-      assertThatThrownBy(() -> runner.executeJob(JOB_ID, USER_ID))
+      assertThatThrownBy(() -> runner.executeJob(JOB_ID, USER_ID, null))
           .isInstanceOf(ProactiveJobException.class);
 
       assertThat(logs.list)
@@ -681,7 +681,7 @@ class ProactiveJobAsyncRunnerTest {
     when(executionRepository.findById(EXECUTION_ID)).thenThrow(new IllegalStateException("DB 끊김"));
     var logs = captureRunnerLogs();
     try {
-      assertThatThrownBy(() -> runner.executeJob(JOB_ID, USER_ID))
+      assertThatThrownBy(() -> runner.executeJob(JOB_ID, USER_ID, null))
           .isInstanceOf(ProactiveJobException.class)
           .hasMessageContaining("AI 실패");
     } finally {
