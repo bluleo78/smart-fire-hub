@@ -69,6 +69,13 @@ public class SsrfSafeHttpClientFactory {
     /**
      * 지금 전역 자원({@link HttpResources#get()})으로 만든 기본 해석기 그룹. 자원이 그대로면 같은 그룹을 돌려주고(앱 전체에서 하나), 폐기 뒤 새
      * 자원이 생겼으면 새로 만들고 옛 그룹을 닫는다 — 옛 그룹의 해석기는 이미 종료된 이벤트 루프에 묶여 쓸 수 없다.
+     *
+     * <p>WD-804: 옛 그룹을 닫아도 진행 중인 해석을 끊지 않는다는 것은 「새 전역 자원은 옛 자원의 루프가 종료된 뒤에야 생긴다」는 가정에 기댄다. 이 가정을
+     * 지키는 경로는 Spring 컨텍스트 종료의 {@code ReactorResourceFactory.stop()}(전역 자원 폐기를 {@code block()} 으로
+     * 기다려 루프가 종료된 뒤에야 다음 {@code HttpResources.get()} 이 새 자원을 만든다)뿐이다. {@code HttpResources.reset()}
+     * 이나 {@code HttpResources.disposeLoopsAndConnectionsLater()} 를 기다리지 않고 부르는 경로로 자원을 바꾸면 옛 루프가 아직
+     * 도는 동안 새 자원이 생겨 여기서 옛 그룹을 닫을 수 있고, 그때 옛 루프에서 진행 중이던 해석은 실패할 수 있다. 지금 앱·시험 코드는 그런 경로를 부르지
+     * 않는다(전역 자원을 폐기하는 시험도 {@code ReactorResourceFactory.stop()} 을 쓴다).
      */
     static AddressResolverGroup<InetSocketAddress> current() {
       HttpResources resources = HttpResources.get();
@@ -123,6 +130,10 @@ public class SsrfSafeHttpClientFactory {
   /**
    * 지금 쓸 검사 해석기 그룹. delegate(기본이면 지금 전역 자원의 해석기)가 마지막 그룹과 같으면 그대로 쓰고, 바뀌었으면 새로 만들고 옛 그룹을 닫는다 —
    * 인스턴스당 그룹 하나를 유지하되(요청마다 만들면 이벤트 루프별 해석기·종료 리스너가 쌓인다) 전역 자원 교체는 따라간다.
+   *
+   * <p>WD-804: 여기서 옛 검사 그룹을 {@code close()} 해도 진행 중인 해석은 영향이 없다. 그룹 close 는 캐시한 해석기를 비우고 닫을 뿐이고,
+   * 캐시된 해석기({@code GuardedResolver})의 close 는 아무 일도 하지 않는다(진행 중 해석은 이미 해석기·delegate 참조를 쥐고 있다). 실제
+   * delegate 를 닫는 곳은 {@link DefaultDns#current()} 뿐이다.
    */
   private synchronized SsrfGuardedAddressResolverGroup resolverGroup() {
     AddressResolverGroup<InetSocketAddress> dns =
@@ -148,9 +159,21 @@ public class SsrfSafeHttpClientFactory {
    * 해석기만 바꾼 것이라, 호출부는 예전처럼 리다이렉트·타임아웃·압축 등을 이어서 설정한다.
    *
    * <p><b>돌려준 클라이언트를 필드에 오래 두지 않는다(WD-797).</b> 클라이언트에는 부른 시점의 검사 그룹이 들어가므로, 전역 루프 자원이 바뀐 뒤(컨텍스트
-   * 재시작)에는 종료된 루프의 해석기에 걸린다. 호출부는 요청마다 이 메서드로 새로 만든다(예: {@code ApiCallPreviewService.client()}).
-   * 들고 있는 클라이언트도 따라가게 그룹을 고정하고 delegate 를 실행기마다 찾는 방식은 리뷰에서 실행기 재사용 시 닫힌 delegate 고착·이벤트 루프 스레드에서의
-   * 전역 자원 생성 위험이 나와 하지 않았다.
+   * 재시작)에는 종료된 루프의 해석기에 걸린다. 호출부는 요청마다 이 메서드로 새로 만든다(예: {@code ApiCallPreviewService.client()}). 들고
+   * 있는 클라이언트도 따라가게 그룹을 고정하고 delegate 를 실행기마다 찾는 방식은 리뷰에서 실행기 재사용 시 닫힌 delegate 고착·이벤트 루프 스레드에서의 전역
+   * 자원 생성 위험이 나와 하지 않았다.
+   *
+   * <p>WD-804: 지금 호출처({@code ApiConnectionService.healthCheckClient}, {@code
+   * ApiCallPreviewService.client}, {@code ApiCallExecutor.noRedirectClient}, {@code
+   * OpencodeProbeService.doRequest})는 모두 요청마다 이 메서드를 불러 새로 만들므로 낡은 그룹에 묶일 위험은 없다. 다만 이것은 「낡은 그룹」에
+   * 대한 말일 뿐 호출처가 스레드 안전하다는 뜻은 아니다 — {@code OpencodeProbeService.doRequest} 는 받은 클라이언트를 주입받은 공유
+   * {@code WebClient.Builder} 필드에 {@code clone()} 없이 써 넣고 build 하므로, 동시에 도는 프로브끼리 서로의
+   * 커넥터·exchangeStrategies 로 만들어질 수 있다(같은 설정이라 지금은 드러나지 않지만 요청마다 다른 값을 넣으면 깨진다, {@link
+   * RedirectFollower#withoutAutoRedirect} 는 그래서 복제한다). 별도 이슈(WD-808)로 다룬다.
+   *
+   * <p>근본 해결(기본 해석기 + {@code resolvedAddressesSelector})은 설계(WD-797)에서 미루기로 했던 것으로, reactor-netty
+   * 1.2.18 에서 IP 리터럴 경로의 selector 예외가 채널을 닫지 않아(소켓 누수 가능) 하지 않았다. WD-792(Boot 4 / reactor-netty
+   * 1.3)에서 다시 검토한다.
    */
   public HttpClient httpClient() {
     return HttpClient.create().resolver(resolverGroup());

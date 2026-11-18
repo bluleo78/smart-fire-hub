@@ -82,17 +82,23 @@ class QdrantRowSearchServiceTest extends RowSearchServiceTest {
   @SuppressWarnings("unchecked")
   private void restoreCollectionsWipedByOtherTests() {
     // WD-796: 필드 이름이 바뀌면 getField 가 그 이름을 담은 IllegalArgumentException 을 던져 시험이 바로 실패한다
-    // (ready 는 final newKeySet 이라 null 이 되지 않아, 조용히 아무것도 하지 않는 경우는 없다).
+    // WD-804: ready 가 null 이면(프록시·필드 구조 변경) 아래 containsAll 의 NPE 가 「컬렉션 목록을 읽지 못했습니다」로
+    // 둔갑하지 않도록 null 판정은 try 밖에서 필드 이름을 적어 실패시키고, try 는 목록 조회 한 줄로만 좁힌다.
     Set<String> ready = (Set<String>) ReflectionTestUtils.getField(lifecycle, "ready");
+    if (ready == null) {
+      throw new IllegalStateException(
+          "QdrantVectorStoreLifecycle.ready 필드가 null 입니다 — 필드 구조가 바뀌었는지 확인하세요");
+    }
+    List<String> existing;
     try {
-      List<String> existing =
+      existing =
           client
               .listCollectionsAsync()
               .get(QdrantTestContainer.CALL_TIMEOUT.toSeconds(), TimeUnit.SECONDS);
-      if (existing.containsAll(ready)) return;
     } catch (Exception e) {
       throw new IllegalStateException("Qdrant 컬렉션 목록을 읽지 못했습니다", e);
     }
+    if (existing.containsAll(ready)) return;
     ready.clear();
     lifecycle.prepare();
   }

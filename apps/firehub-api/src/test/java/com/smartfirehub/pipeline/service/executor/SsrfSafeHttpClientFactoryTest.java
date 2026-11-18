@@ -191,6 +191,11 @@ class SsrfSafeHttpClientFactoryTest {
           .hasMessageStartingWith("내부망 주소는 호출할 수 없습니다(루프백): ");
 
       // 컨텍스트 종료와 같은 일 — 전역 루프·연결 풀을 폐기한다(다음 HttpResources.get() 이 새로 만든다).
+      // WD-804: 전역(JVM 공용) 자원을 폐기해야만 재현된다 — 기본 해석기(DefaultDns.current())가 HttpResources.get() 을 보므로
+      // setUseGlobalResources(false) 로는 교체가 일어나지 않고, 정체성만 바꾸면 루프가 살아 있어 시간 초과가 재현되지 않는다.
+      // 같은 포크 JVM 영향: HttpClient.create() 기반 클라이언트는 접속 때 다시 봐서 회복하지만, Boot 자동 구성 WebClient.Builder
+      // 커넥터는 시작 때 잡은 루프를 쥔 채 회복하지 못한다(캐시된 컨텍스트가 이 시험 뒤에 실제 HTTP 를 쓰면 깨질 수 있는 잠재 위험).
+      // 별도 JVM 분리는 시험 인프라 변경이라 WD-804 범위 밖이다.
       resources.stop();
       resources.destroy();
     }

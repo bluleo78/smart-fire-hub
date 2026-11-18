@@ -181,6 +181,7 @@ interface SyncedStoredRows {
  *   앞선 저장 행 바로 뒤에 이어진 사용자 새 행은 건너뛰어 그 뒤에 넣는다(써 둔 행이 자리를 옮기지 않게).
  *   「새 기준에만」= 이전 기준에도, 맞춘 결과에도 그 원래 이름이 없는 행이다 — 사용자가 덩어리에서 지운 저장 헤더는 이전 기준에 있으므로
  *   재조회로 되살리지 않는다. 이름은 서버 키(storedName) 그대로 비교해, 대소문자만 다른 사용자 새 행과 합치지 않는다(저장 때 중복 검증이 잡는다).
+ *   예외(WD-804): 이전 기준에 대소문자만 다른 같은 헤더가 있었는데 지금 행에 그 저장 행이 없으면 사용자가 지운 것으로 보고 되살리지 않는다.
  */
 function syncStoredRows(
   rows: ExtraHeaderRow[],
@@ -224,6 +225,14 @@ function syncStoredRows(
     if (fresh.storedName === undefined) return;
     const name = fresh.storedName;
     if (prevRows.some((p) => p.storedName === name)) return;
+    // (WD-804) 사용자가 덩어리에서 지운 헤더가 다른 곳에서 대소문자만 바뀐 이름(X-Id → x-id)으로 오면 같은 HTTP 헤더이므로 되살리지 않는다.
+    // 「지웠다」= 이전 기준에 대소문자 무시로 같은 저장 헤더가 있었는데 지금 행에는 그 저장 행이 없다. 손대지 않은 X-Id 행이 아직 있으면
+    // 지운 게 아니므로 이름 변경(지워짐+더해짐)으로 그대로 더한다.
+    const lowerName = name.toLowerCase();
+    const hasStoredIgnoringCase = (list: ExtraHeaderRow[]) =>
+      list.some((r) => r.storedName?.toLowerCase() === lowerName);
+    const deletedByUser = hasStoredIgnoringCase(prevRows) && !hasStoredIgnoringCase(rows);
+    if (deletedByUser) return;
     if (synced.some((s) => s.storedName === name)) return;
     changed = true;
     addedNames.push(name);
@@ -549,13 +558,15 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
       }
       if (synced.removedNames.length > 0) {
         toast.info(`다른 곳에서 추가 헤더(${synced.removedNames.join(', ')})가 지워져 목록을 맞췄습니다.`, {
-          id: 'api-connection-extra-headers-removed',
+          // 이름 목록을 id 에 넣어 다른 안내는 서로 덮어쓰지 않고 같은 병합의 이중 실행(StrictMode)은 하나로 모은다(WD-804)
+          id: `api-connection-extra-headers-removed:${synced.removedNames.join(',')}`,
         });
       }
       // (WD-796) 다른 곳에서 더한 헤더를 목록(새 기준 순서 자리)에 넣었음을 알린다 — 이름 변경이면 위의 「지워짐」과 함께 떠 바뀐 것을 둘 다 보게 한다
       if (synced.addedNames.length > 0) {
         toast.info(`다른 곳에서 추가 헤더(${synced.addedNames.join(', ')})가 더해져 목록에 넣었습니다.`, {
-          id: 'api-connection-extra-headers-added',
+          // 이름 목록을 id 에 넣는다 — 4초 안의 두 번째 재조회 안내가 첫 안내를 덮어쓰지 않게(WD-804)
+          id: `api-connection-extra-headers-added:${synced.addedNames.join(',')}`,
         });
       }
     }
