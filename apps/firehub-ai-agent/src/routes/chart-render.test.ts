@@ -2,25 +2,24 @@
  * 차트 렌더링 라우트 통합 테스트
  *
  * POST /agent/chart-render 엔드포인트에 대한 테스트.
- * ChartJSNodeCanvas는 vi.mock으로 대체하여 실제 Canvas 렌더링을 수행하지 않는다.
+ * renderChartPng(./chart-png.js)는 vi.mock으로 대체하여 실제 Canvas 렌더링을 수행하지 않는다.
+ * (실제 렌더링은 chart-png.test.ts 에서 검증 — WD-806)
  *
  * 주의: vi.mock 팩토리는 호이스팅되므로 외부 변수를 참조할 수 없다.
- * vi.hoisted()로 mock 함수를 미리 선언하고, ChartJSNodeCanvas를 class로 모킹해야 한다.
+ * vi.hoisted()로 mock 함수를 미리 선언해야 한다.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 
 // vi.hoisted()로 mock 함수를 팩토리 호이스팅 전에 선언
-const { mockRenderToBuffer } = vi.hoisted(() => {
-  const mockRenderToBuffer = vi.fn();
-  return { mockRenderToBuffer };
+const { mockRenderChartPng } = vi.hoisted(() => {
+  const mockRenderChartPng = vi.fn();
+  return { mockRenderChartPng };
 });
 
-// ChartJSNodeCanvas 모킹 — class로 모킹하여 new 연산자 지원
-vi.mock('chartjs-node-canvas', () => ({
-  ChartJSNodeCanvas: class {
-    renderToBuffer = mockRenderToBuffer;
-  },
+// renderChartPng 모킹
+vi.mock('./chart-png.js', () => ({
+  renderChartPng: mockRenderChartPng,
 }));
 
 // 모킹 설정 후 라우터를 임포트
@@ -173,7 +172,7 @@ describe('POST /agent/chart-render', () => {
   it('should return 200 with images array on valid request', async () => {
     // 가짜 PNG 버퍼 반환
     const fakePngBuffer = Buffer.from('fake-png-data');
-    mockRenderToBuffer.mockResolvedValue(fakePngBuffer);
+    mockRenderChartPng.mockResolvedValue(fakePngBuffer);
 
     const app = createApp();
     const res = await makeRequest(
@@ -190,13 +189,13 @@ describe('POST /agent/chart-render', () => {
     expect(body.images[0]).toHaveProperty('id', 'chart-0');
     expect(body.images[0]).toHaveProperty('mimeType', 'image/png');
     expect(body.images[0]).toHaveProperty('base64', fakePngBuffer.toString('base64'));
-    expect(mockRenderToBuffer).toHaveBeenCalledOnce();
+    expect(mockRenderChartPng).toHaveBeenCalledOnce();
   });
 
   // 시나리오 7: 여러 차트 한번에 렌더링
   it('should render multiple charts and return images for each', async () => {
     const fakePngBuffer = Buffer.from('fake-png');
-    mockRenderToBuffer.mockResolvedValue(fakePngBuffer);
+    mockRenderChartPng.mockResolvedValue(fakePngBuffer);
 
     const multiChartBody = {
       charts: [
@@ -225,12 +224,12 @@ describe('POST /agent/chart-render', () => {
     expect(body.images).toHaveLength(2);
     expect(body.images[0].id).toBe('chart-0');
     expect(body.images[1].id).toBe('chart-1');
-    expect(mockRenderToBuffer).toHaveBeenCalledTimes(2);
+    expect(mockRenderChartPng).toHaveBeenCalledTimes(2);
   });
 
-  // 시나리오 8: renderToBuffer 오류 → 500
-  it('should return 500 when renderToBuffer throws an error', async () => {
-    mockRenderToBuffer.mockRejectedValue(new Error('Canvas rendering failed'));
+  // 시나리오 8: renderChartPng 오류 → 500
+  it('should return 500 when renderChartPng throws an error', async () => {
+    mockRenderChartPng.mockRejectedValue(new Error('Canvas rendering failed'));
 
     const app = createApp();
     const res = await makeRequest(
@@ -242,5 +241,47 @@ describe('POST /agent/chart-render', () => {
     expect(res.status).toBe(500);
     expect(res.body).toHaveProperty('error', 'Chart rendering failed');
     expect(res.body).toHaveProperty('details');
+  });
+
+  // WD-806 리뷰: 런타임 type·크기 검증 → 400 (렌더 호출 전)
+  const authHeaders = { Authorization: `Internal ${VALID_TOKEN}` };
+  const chartWith = (extra: Record<string, unknown>) => ({
+    charts: [{ ...validBody.charts[0], ...extra }],
+  });
+
+  // 잘못된 type·width·height 를 [필드, 값, 기대 오류] 표 하나로 확인한다.
+  const invalidCases: Array<[string, unknown, RegExp]> = [
+    ...['scatter', 'radar', '', 123, null].map((v): [string, unknown, RegExp] => ['type', v, /type must be one of/]),
+    ...[0, -1, 2001, 1.5, '600', null].map((v): [string, unknown, RegExp] => ['width', v, /width must be an integer/]),
+    ...[0, -1, 2001, 1.5, '400', null].map((v): [string, unknown, RegExp] => ['height', v, /height must be an integer/]),
+  ];
+
+  it.each(invalidCases)('should return 400 for invalid %s %j', async (field, value, expected) => {
+    const res = await makeRequest(createApp(), chartWith({ [field]: value }), authHeaders);
+    expect(res.status).toBe(400);
+    expect((res.body as { error: string }).error).toMatch(expected);
+    expect(mockRenderChartPng).not.toHaveBeenCalled();
+  });
+
+  it('should reject the whole request before rendering when a later chart is invalid', async () => {
+    const body = { charts: [validBody.charts[0], { ...validBody.charts[0], type: 'scatter' }] };
+    const res = await makeRequest(createApp(), body, authHeaders);
+    expect(res.status).toBe(400);
+    expect((res.body as { error: string }).error).toContain('charts[1]');
+    expect(mockRenderChartPng).not.toHaveBeenCalled();
+  });
+
+  it('should accept boundary sizes 1 and 2000 and pass them through', async () => {
+    mockRenderChartPng.mockResolvedValue(Buffer.from('x'));
+    const res = await makeRequest(createApp(), chartWith({ width: 2000, height: 1 }), authHeaders);
+    expect(res.status).toBe(200);
+    expect(mockRenderChartPng).toHaveBeenCalledWith(expect.anything(), 2000, 1);
+  });
+
+  it('should use default 600x400 when width/height are omitted', async () => {
+    mockRenderChartPng.mockResolvedValue(Buffer.from('x'));
+    const res = await makeRequest(createApp(), validBody, authHeaders);
+    expect(res.status).toBe(200);
+    expect(mockRenderChartPng).toHaveBeenCalledWith(expect.anything(), 600, 400);
   });
 });
