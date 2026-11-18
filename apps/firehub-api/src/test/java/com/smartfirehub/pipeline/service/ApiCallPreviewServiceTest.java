@@ -23,6 +23,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.client.ReactorResourceFactory;
 import org.springframework.web.reactive.function.client.WebClient;
 
 /**
@@ -62,11 +63,16 @@ class ApiCallPreviewServiceTest {
   /** 테스트 대상 서비스 인스턴스 */
   ApiCallPreviewService service;
 
+  /**
+   * 사전 검사(validateUrl)만 끈 SsrfProtectionService — 접속 시점 검사(validateResolvedAddress)는 실제 판정 그대로다.
+   */
+  SsrfProtectionService noOpSsrf;
+
   @BeforeEach
   void setUp() {
     // SSRF 검사를 우회하는 테스트용 no-op SsrfProtectionService
     // (WireMock localhost 접근을 허용)
-    SsrfProtectionService noOpSsrf =
+    noOpSsrf =
         new SsrfProtectionService() {
           @Override
           public void validateUrl(String url) {
@@ -1886,5 +1892,77 @@ class ApiCallPreviewServiceTest {
 
     assertThat(response.success()).isFalse();
     assertThat(response.errorMessage()).isEqualTo("대상 서버 오류(HTTP 503)");
+  }
+
+  /**
+   * Spring 컨텍스트가 닫혀 전역 루프 자원이 폐기·재생성된 뒤에도 미리보기의 접속 시점 SSRF 검사가 동작한다(WD-797).
+   *
+   * <p>서비스(와 그 팩토리)를 반복 <b>밖에서 한 번</b> 만든다 — 운영의 싱글턴 빈처럼 오래 사는 서비스를 재현하려는 것이다. 예전 미리보기는 생성자에서
+   * WebClient 를 한 번 만들어, 그때 넣은 접속 검사 해석기가 첫 자원의 이벤트 루프에 묶였다. 자원이 바뀐 뒤에는 이름 해석이 종료된 루프에 걸려 막지도 접속하지도
+   * 못하고 시간 초과로 끝났다. 매 반복에서 서비스를 새로 만들면 그 낡음이 드러나지 않는다.
+   *
+   * <p>URL 은 IP 리터럴이 아니라 호스트 이름({@code localhost})이다 — IP 리터럴은 검사 해석기가 delegate DNS 를 거치지 않고 바로
+   * 검사하므로, 낡은 DNS 해석기 문제를 재현하지 못한다.
+   *
+   * <p>막는 쪽({@code blocking}): 사전 검사를 끄고 실제 판정의 접속 검사만 둔다 — 루프백이라 접속 검사가 막아야 한다. 허용 쪽({@code
+   * allowing}): 접속 검사도 허용해 같은 이름이 실제로 풀려 응답을 받는지 본다. 자원을 세 번 갈아도 두 판정이 매번 같아야 하고, 막힌 요청은 서버에 닿지 않아야
+   * 한다.
+   */
+  @Test
+  void preview_keepsSsrfConnectCheckAfterGlobalReactorResourcesAreReplaced() throws Exception {
+    wireMock.stubFor(
+        get(urlEqualTo("/wd797"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"id\":1}]")));
+    String url = baseUrl() + "/wd797";
+
+    // 반복 밖에서 한 번만 만든다 — 오래 사는 서비스(싱글턴 빈) 재현.
+    ApiCallPreviewService blocking =
+        new ApiCallPreviewService(
+            noOpSsrf,
+            new JsonResponseParser(),
+            apiConnectionService,
+            WebClient.builder(),
+            new SsrfSafeHttpClientFactory(new SsrfProtectionService()));
+    ApiCallPreviewService allowing =
+        new ApiCallPreviewService(
+            noOpSsrf,
+            new JsonResponseParser(),
+            apiConnectionService,
+            WebClient.builder(),
+            new SsrfSafeHttpClientFactory(address -> {}));
+
+    for (int cycle = 0; cycle < 3; cycle++) {
+      ReactorResourceFactory resources = new ReactorResourceFactory();
+      resources.afterPropertiesSet();
+      resources.start();
+      try {
+        ApiCallPreviewResponse blocked =
+            blocking.preview(
+                new ApiCallPreviewRequest(
+                    url, "GET", null, null, null, "$", null, null, null, 3000));
+        assertThat(blocked.success()).as("자원 교체 %d번째 — 막는 쪽은 실패해야 한다", cycle).isFalse();
+        assertThat(blocked.errorMessage())
+            .as("자원 교체 %d번째 — 시간 초과가 아니라 접속 검사로 막혀야 한다", cycle)
+            .startsWith("내부망 주소는 호출할 수 없습니다(루프백): ");
+
+        ApiCallPreviewResponse allowed =
+            allowing.preview(
+                new ApiCallPreviewRequest(
+                    url, "GET", null, null, null, "$", null, null, null, 3000));
+        assertThat(allowed.success())
+            .as("자원 교체 %d번째 — 허용 쪽은 응답을 받아야 한다: %s", cycle, allowed.errorMessage())
+            .isTrue();
+      } finally {
+        // 컨텍스트 종료와 같은 일 — 전역 루프·연결 풀을 폐기한다(다음 HttpResources.get() 이 새로 만든다).
+        resources.stop();
+        resources.destroy();
+      }
+    }
+    // 허용 쪽 3번만 서버에 닿고, 막힌 요청은 하나도 닿지 않는다.
+    wireMock.verify(3, getRequestedFor(urlEqualTo("/wd797")));
   }
 }
