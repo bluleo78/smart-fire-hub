@@ -15,6 +15,13 @@ const router = Router();
 /** Puppeteer 브라우저 인스턴스 — 재사용하여 매 요청마다 브라우저를 띄우는 비용을 절약 */
 let browser: Browser | null = null;
 
+/**
+ * HTML 로드(load)와 이어지는 네트워크 유휴 대기를 합친 렌더 기한(ms) — WD-790.
+ * api 의 PDF 요청 시간 제한(PdfExportService PDF_TIMEOUT 60초)보다 넉넉히 짧아야 api 가 먼저 끊지 않고
+ * 이쪽 오류가 api 로 전달된다. 그래서 두 대기를 각각 30초가 아니라 합쳐서 30초로 묶는다.
+ */
+export const RENDER_TIMEOUT_MS = 30000;
+
 /** 브라우저 인스턴스를 가져오거나 새로 생성한다 (lazy initialization) */
 async function getBrowser(): Promise<Browser> {
   if (!browser || !browser.connected) {
@@ -74,7 +81,7 @@ router.post('/html-to-pdf', ...authedJsonBody({ limit: PDF_BODY_LIMIT }), async 
       // SSRF 차단(WD-617): 이 라우트가 보안 경계다. 리포트 HTML 은 사용자 프롬프트로 조종될 수 있는
       // AI 산출물이라, 렌더러가 내부망·메타데이터 주소로 요청을 보내지 못하게 모든 요청을 가로채
       // data:/blob:/about: 만 통과시키고 나머지(iframe·이동·리다이렉트 포함)는 즉시 abort 한다.
-      // 즉시 abort 되므로 networkidle0 은 30초를 기다리지 않고 바로 안정된다.
+      // 즉시 abort 되므로 네트워크 유휴 대기가 30초를 기다리지 않고 바로 끝난다.
       await page.setRequestInterception(true);
       // 메인 프레임이 다른 문서로 이동하려 했는지 기록한다. setContent 는 현재 about:blank 문서에 HTML 을
       // 써 넣을 뿐 이동 요청을 만들지 않으므로(실측), 메인 프레임 이동 요청은 모두 HTML 안의 meta refresh 등이
@@ -97,17 +104,45 @@ router.post('/html-to-pdf', ...authedJsonBody({ limit: PDF_BODY_LIMIT }), async 
       // 가로채기 대상 밖인 WebSocket·WebRTC 같은 경로까지 원천 차단하려고 JS 를 끈다(심층 방어).
       await page.setJavaScriptEnabled(false);
 
-      // HTML을 페이지에 로드 — waitUntil: 'networkidle0'으로 (허용된 자기완결형) 리소스 로드 완료 대기
-      await page.setContent(body.html, { waitUntil: 'networkidle0', timeout: 30000 });
+      // HTML을 페이지에 로드하고(load), 이어서 진행 중 요청 0건으로 500ms 조용해질 때까지 기다린다. 유휴 조건 자체
+      // (0건·500ms)는 예전 networkidle0 과 같지만, 재는 시점이 load 이후라는 점이 다르다.
+      // Puppeteer 25 는 setContent 의 waitUntil 에서 networkidle0/2 를 뺐다(#14940). 그래서 load 까지 기다린 뒤
+      // waitForNetworkIdle 로 같은 유휴 대기를 따로 건다(WD-790). load 만 기다리면 meta refresh 의 이동 요청이 나오기 전에
+      // 끝나 아래 이동 차단 판정(422)을 놓친다 — 실브라우저 시험(pdf.ssrf.test.ts)이 이를 잡았다.
+      // 두 대기에 각각 30초를 주면 최악이 60초가 되어 api 의 PDF 요청 시간 제한(PdfExportService PDF_TIMEOUT 60초)에
+      // 닿는다. 그래서 둘을 합쳐 하나의 30초 기한으로 묶고, 유휴 대기에는 load 뒤 남은 시간만 준다.
+      const renderStartedAt = Date.now();
+      await page.setContent(body.html, { waitUntil: 'load', timeout: RENDER_TIMEOUT_MS });
+      // 남은 시간이 0 이하이면 Puppeteer 가 0 을 「무제한」으로 해석하므로 최소한의 양수(1ms)를 준다
+      const remainingMs = Math.max(1, RENDER_TIMEOUT_MS - (Date.now() - renderStartedAt));
+      await page.waitForNetworkIdle({ idleTime: 500, concurrency: 0, timeout: remainingMs });
 
-      // 메인 프레임이 원래 문서(about:blank)를 벗어났으면 우리 HTML 이 아닌 오류 페이지가 찍히므로 PDF 를 만들지 않는다.
-      // 렌더링 실패가 아니라 입력 HTML 문제이므로 422 로 알린다(api 는 이때 Flying Saucer 폴백으로 넘어간다).
-      if (mainFrameNavigationBlocked || page.url() !== 'about:blank') {
+      // 이동 거부 응답(422) — 렌더링 실패가 아니라 입력 HTML 문제라 422 로 알린다(api 는 이때 Flying Saucer 폴백으로 넘어간다)
+      const rejectNavigation = () => {
         console.warn('[html-to-pdf] 메인 프레임 이동 시도를 차단해 PDF 생성을 거부했다:', page.url());
         res.status(422).json({
           error: 'PDF generation rejected',
           details: 'HTML 이 다른 주소로 이동하려 해(meta refresh 등) PDF 를 만들 수 없습니다. 외부 이동 없는 자기완결형 HTML 이어야 합니다.',
         });
+      };
+
+      // meta refresh 는 유휴 대기만으로는 잡히지 않는다(WD-790 실측): 갓 뜬 렌더러에서는 0초 refresh 의 이동 요청이
+      // load 뒤 300~800ms(그 이상도)에 나와, load+500ms 에 끝나는 유휴 대기보다 늦다. 그러면 아래 판정을 통과한 뒤
+      // page.pdf() 도중 이동이 일어나 Chrome 오류 페이지가 200 PDF 로 나갔다. 그래서 문서에 meta refresh 가 있는지
+      // DOM 으로 직접 본다. 이동이 이미 일어났다면 이동 요청 이벤트(가로채기)가 오류 페이지 커밋보다 먼저 와
+      // mainFrameNavigationBlocked 가 서 있고, 아직이라면 우리 문서에 meta 가 남아 있으므로, 두 순서 모두 422 로 잡힌다.
+      // ($$eval 은 DevTools 평가라 페이지 JS 를 꺼도 동작한다. 속성값 비교는 Chrome 처럼 대소문자 무시)
+      // 이 DOM 판정이 빈틈없는 것은 위에서 페이지 JS 를 껐기(setJavaScriptEnabled(false)) 때문이다. JS 를 다시 켜면
+      // location.href 대입 같은 스크립트 이동은 DOM 에 흔적이 없어 여기서 잡히지 않는다 — 그 경우의 일반 방어는
+      // page.pdf() 뒤의 이동 판정이다.
+      const metaRefreshCount = await page.$$eval('meta[http-equiv="refresh" i]', (els) => els.length);
+
+      // 메인 프레임이 이동을 시도했거나 원래 문서(about:blank)를 벗어났는지 — PDF 전후 두 판정이 같은 조건을 쓴다
+      const navigatedAway = () => mainFrameNavigationBlocked || page.url() !== 'about:blank';
+
+      // 메인 프레임이 원래 문서(about:blank)를 벗어났으면 우리 HTML 이 아닌 오류 페이지가 찍히므로 PDF 를 만들지 않는다.
+      if (navigatedAway() || metaRefreshCount > 0) {
+        rejectNavigation();
         return;
       }
 
@@ -118,6 +153,12 @@ router.post('/html-to-pdf', ...authedJsonBody({ limit: PDF_BODY_LIMIT }), async 
         printBackground: true, // 배경색/배경이미지 포함
         margin: { top: '15mm', bottom: '15mm', left: '10mm', right: '10mm' },
       });
+
+      // 심층 방어: 위 판정 뒤 PDF 를 찍는 사이에 다른 경로로 메인 프레임 이동이 일어났으면 찍힌 것이 오류 페이지일 수 있어 버린다
+      if (navigatedAway()) {
+        rejectNavigation();
+        return;
+      }
 
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Length', pdfBuffer.length);
