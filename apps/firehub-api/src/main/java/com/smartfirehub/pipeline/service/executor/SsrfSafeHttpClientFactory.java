@@ -146,6 +146,11 @@ public class SsrfSafeHttpClientFactory {
   /**
    * 접속 시점 주소 검사가 걸린 새 {@link HttpClient}. {@code HttpClient.create()} 와 같은 기본값(전역 연결 풀·이벤트 루프)에
    * 해석기만 바꾼 것이라, 호출부는 예전처럼 리다이렉트·타임아웃·압축 등을 이어서 설정한다.
+   *
+   * <p><b>돌려준 클라이언트를 필드에 오래 두지 않는다(WD-797).</b> 클라이언트에는 부른 시점의 검사 그룹이 들어가므로, 전역 루프 자원이 바뀐 뒤(컨텍스트
+   * 재시작)에는 종료된 루프의 해석기에 걸린다. 호출부는 요청마다 이 메서드로 새로 만든다(예: {@code ApiCallPreviewService.client()}).
+   * 들고 있는 클라이언트도 따라가게 그룹을 고정하고 delegate 를 실행기마다 찾는 방식은 리뷰에서 실행기 재사용 시 닫힌 delegate 고착·이벤트 루프 스레드에서의
+   * 전역 자원 생성 위험이 나와 하지 않았다.
    */
   public HttpClient httpClient() {
     return HttpClient.create().resolver(resolverGroup());

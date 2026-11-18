@@ -5,12 +5,13 @@ import java.util.Properties
 buildscript {
     repositories { mavenCentral() }
     dependencies {
-        // flyway·jooq-codegen 은 buildscript 클래스패스라 Spring Boot BOM 밖이다. 런타임 BOM(Boot 3.5.16: flyway 11.7.2,
-        // jooq 3.19.35)과 직접 맞춰 고정해야 하며, 특히 코드젠 jOOQ 가 런타임과 어긋나면 생성 소스가 달라진다(drift).
-        classpath("org.testcontainers:postgresql:1.20.4")
+        // buildscript 클래스패스는 Boot BOM 밖이라 generateJooq 용으로 Boot BOM 값(Boot 3.5.16: flyway 11.7.2, jooq 3.19.35,
+        // postgresql 42.7.11, testcontainers 1.21.4)을 손으로 따라 맞춘다 — Boot 를 올릴 때 함께 올린다(WD-797).
+        // 특히 코드젠 jOOQ 가 런타임과 어긋나면 생성 소스가 달라진다(drift).
+        classpath("org.testcontainers:postgresql:1.21.4")
         classpath("org.flywaydb:flyway-core:11.7.2")
         classpath("org.flywaydb:flyway-database-postgresql:11.7.2")
-        classpath("org.postgresql:postgresql:42.7.4")
+        classpath("org.postgresql:postgresql:42.7.11")
         classpath("org.jooq:jooq-codegen:3.19.35")
     }
 }
@@ -167,7 +168,7 @@ sourceSets {
     }
 }
 
-// Testcontainers 1.20.4(내장 docker-java)가 Docker 에 요청할 API 버전(WD-762). 정하지 않으면 1.32 로 요청하는데,
+// Testcontainers 1.21.4(내장 docker-java, buildscript 값은 Boot BOM 을 손으로 따라 맞춘 것 — Boot 올릴 때 함께 올린다, WD-797)가 Docker 에 요청할 API 버전(WD-762). 정하지 않으면 1.32 로 요청하는데,
 // 최신 Docker 데몬은 최소 API(1.40~1.44) 미만을 거절해 "Could not find a valid Docker environment" 로 모든 컨테이너 테스트가 죽는다.
 // 1.44 는 Docker 25 이상이 필요하다. 테스트 JVM 과 generateJooq 가 같은 값을 쓰도록 여기 한 곳에 둔다.
 val testcontainersDockerApiVersion = "1.44"

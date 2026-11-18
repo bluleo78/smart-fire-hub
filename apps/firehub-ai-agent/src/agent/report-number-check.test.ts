@@ -509,6 +509,22 @@ describe('checkReportNumbers — 단위 값 출처·계산한 증감률 (WD-781)
     expect(run(`${five.slice(0, 4).join(' ')} (30%)`, [src]).unverifiedTotal).toBe(0);
   });
 
+  it('같은 값이 여러 번 나와도 서로 다른 값 수로 재료 상한을 센다 — 100·100·100·100 → 130 (+30%) 는 계산값이다 (WD-796)', () => {
+    const src = JSON.stringify([{ v: 100 }, { v: 130 }]);
+    expect(run('100 · 100 · 100 · 100 → 130 (+30%)', [src]).unverified.map((u) => u.text)).not.toContain('30%');
+  });
+
+  it('서로 다른 값이 9개 이상이면 여전히 판정하지 않는다 (WD-796)', () => {
+    const nine = [100, 130, 101, 102, 103, 104, 105, 106, 107];
+    const src = JSON.stringify(nine.map((v) => ({ v })));
+    // 같은 값을 반복해도 서로 다른 값이 9개이면 판정하지 않는다
+    expect(run(`100 100 ${nine.join(' ')} (30.0%)`, [src]).unverified.map((u) => u.text)).toEqual(['30.0%']);
+  });
+
+  it('값이 모두 같은 줄은 쌍이 없어 % 를 계산값으로 인정하지 않는다 (WD-796)', () => {
+    expect(run('100 · 100 · 100 (0%)', [JSON.stringify([{ v: 100 }])]).unverified.map((u) => u.text)).toEqual(['0%']);
+  });
+
   it('출처 % 값과 이미 맞는 % 토큰은 지금처럼 통과한다', () => {
     expect(run('전환율 12.3%').unverifiedTotal).toBe(0);
   });

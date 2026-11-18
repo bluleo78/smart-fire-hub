@@ -373,7 +373,7 @@ class AllowedValues {
  * WD-788: 지어낸 % 가 우연히 맞는 일을 줄이려고 두 가지를 더 좁힌다.
  * - 값이 같은 쌍(상대오차 EPSILON 이내)은 건너뛴다. 같은 값 둘은 늘 0%(증감률)·100%(비율)를 만들어, 같은 값이 두 번 나온 줄의
  *   지어낸 「0%」「100%」가 계산값으로 통과하기 때문이다. 「28.8 → 28.8 (0.0%)」 같은 실제 무변동 표기는 경고되지만 경고 전용이라 감수한다.
- * - 재료가 MAX_INTEGER_RATE_OPERANDS 를 넘는 줄에서는 소수 자릿수가 있는 % 만 계산값으로 본다. 정수 % 는 반올림 폭이 넓어
+ * - 서로 다른 재료 값이 MAX_INTEGER_RATE_OPERANDS 를 넘는 줄에서는 소수 자릿수가 있는 % 만 계산값으로 본다. 정수 % 는 반올림 폭이 넓어
  *   (±0.5%p) 재료가 많으면 순서쌍 가운데 하나가 지어낸 둥근 값(「30%」)에 맞기 쉽다.
  */
 function matchesComputedRate(token: Token, verifiedValues: number[]): boolean {
@@ -407,7 +407,7 @@ function lineIndexOf(lineStarts: number[], pos: number): number {
 }
 
 /**
- * 계산한 증감률 판정에 쓰는 한 줄의 재료 수 상한 (WD-781). 순서쌍 수가 재료 수의 제곱이라, 넓은 표 행처럼 한 줄에 수치가
+ * 계산한 증감률 판정에 쓰는 한 줄의 서로 다른 재료 값 수 상한 (WD-781, WD-796). 순서쌍 수가 재료 수의 제곱이라, 넓은 표 행처럼 한 줄에 수치가
  * 아주 많으면 판정을 하지 않고(경고는 남는다) 대조 시간이 늘지 않게 한다. 또 재료가 많을수록 지어낸 % 가 우연히 맞기 쉬워진다.
  * WD-788: 30 에서 8 로 낮춘다 — 30개면 순서쌍 870개 × 공식 2개로 거의 어떤 % 든 맞았다. 실제 사례(「전년 → 올해 (증감률)」,
  * 표 한 행의 몇 개 열)는 한 줄 재료가 몇 개뿐이라 8개(순서쌍 56개)면 충분하다.
@@ -415,7 +415,7 @@ function lineIndexOf(lineStarts: number[], pos: number): number {
 const MAX_RATE_OPERANDS = 8;
 
 /**
- * WD-788: 정수 % 를 계산값으로 인정하는 한 줄의 재료 수 상한. 이보다 재료가 많은 줄은 소수 자릿수가 있는 % 만 계산값으로 본다
+ * WD-788: 정수 % 를 계산값으로 인정하는 한 줄의 서로 다른 재료 값 수 상한 (WD-796). 이보다 재료가 많은 줄은 소수 자릿수가 있는 % 만 계산값으로 본다
  * (matchesComputedRate 주석 참고). 4개(순서쌍 12개)까지는 「1억2천만 → 1억8천만 (+50%)」처럼 정수 % 를 쓰는 실제 사례를 그대로 받는다.
  */
 const MAX_INTEGER_RATE_OPERANDS = 4;
@@ -482,7 +482,17 @@ export function checkReportNumbers(input: {
         }
       }
       const verified = (candidatesByLine.get(line) ?? []).filter(isVerified);
-      values = verified.length > MAX_RATE_OPERANDS ? [] : verified.map((t) => t.value * t.multiplier);
+      // WD-796: 재료 상한은 같은 값(nearlyEqual)을 합친 「서로 다른 값 수」로 센다. 같은 값은 쌍에서 어차피 건너뛰므로
+      // 판정 여지를 늘리지 않는데, 개수로 세면 「100 · 100 · 100 · 100 → 130 (+30%)」 같은 정당한 줄이 상한에 걸린다.
+      // 서로 다른 값이 상한을 넘으면 바로 중단해 아주 넓은 줄에서도 중복 제거 비용이 커지지 않게 한다.
+      const distinct: number[] = [];
+      for (const t of verified) {
+        const v = t.value * t.multiplier;
+        if (distinct.some((d) => nearlyEqual(d, v))) continue;
+        distinct.push(v);
+        if (distinct.length > MAX_RATE_OPERANDS) break;
+      }
+      values = distinct.length > MAX_RATE_OPERANDS ? [] : distinct;
       operandsByLine.set(line, values);
       return values;
     };

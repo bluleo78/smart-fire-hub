@@ -32,15 +32,11 @@ public class ApiCallPreviewService {
   private final JsonResponseParser jsonResponseParser;
   private final ApiConnectionService apiConnectionService;
 
-  /**
-   * 자동 리다이렉트를 끈 클라이언트 — 따라가기는 {@link RedirectFollower} 가 홉마다 검사하며 한다(WD-693). 설정이 요청마다 같아(응답 크기 제한
-   * 없음) 서비스가 만들어질 때 한 번만 만든다. withoutAutoRedirect 가 주입받은 공유 빌더를 복제해 쓴다.
-   *
-   * <p>커넥터는 {@link SsrfSafeHttpClientFactory} 의 HttpClient 다(WD-613) — 첫 요청과 모든 리다이렉트 홉에서 접속할 IP 를
-   * 다시 검사해, 사전 검사(validateUrl) 뒤 DNS 재바인딩으로 내부 주소가 나와도 접속하지 않는다. 막히면 RedirectFollower 가 사전 검사와 같은
-   * 문구의 SsrfException 으로 낸다.
-   */
-  private final WebClient client;
+  /** 미리보기 클라이언트의 바탕 빌더(공유 빌더) — {@link #client()} 가 요청마다 복제해 쓴다. */
+  private final WebClient.Builder webClientBuilder;
+
+  /** 접속 시점 SSRF 검사가 걸린 HttpClient 를 주는 팩토리 — {@link #client()} 가 요청마다 부른다(WD-797). */
+  private final SsrfSafeHttpClientFactory ssrfSafeHttpClientFactory;
 
   public ApiCallPreviewService(
       SsrfProtectionService ssrfProtectionService,
@@ -51,8 +47,26 @@ public class ApiCallPreviewService {
     this.ssrfProtectionService = ssrfProtectionService;
     this.jsonResponseParser = jsonResponseParser;
     this.apiConnectionService = apiConnectionService;
-    this.client =
-        RedirectFollower.withoutAutoRedirect(webClientBuilder, ssrfSafeHttpClientFactory).build();
+    this.webClientBuilder = webClientBuilder;
+    this.ssrfSafeHttpClientFactory = ssrfSafeHttpClientFactory;
+  }
+
+  /**
+   * 자동 리다이렉트를 끈 클라이언트 — 따라가기는 {@link RedirectFollower} 가 홉마다 검사하며 한다(WD-693). withoutAutoRedirect 가
+   * 주입받은 공유 빌더를 복제해 쓴다.
+   *
+   * <p>커넥터는 {@link SsrfSafeHttpClientFactory} 의 HttpClient 다(WD-613) — 첫 요청과 모든 리다이렉트 홉에서 접속할 IP 를
+   * 다시 검사해, 사전 검사(validateUrl) 뒤 DNS 재바인딩으로 내부 주소가 나와도 접속하지 않는다. 막히면 RedirectFollower 가 사전 검사와 같은
+   * 문구의 SsrfException 으로 낸다.
+   *
+   * <p><b>요청마다 새로 만든다(WD-797).</b> 예전에는 서비스가 만들어질 때 한 번 만들어, 그때 넣은 접속 검사 해석기가 Spring 컨텍스트 재시작(전역 루프
+   * 자원 폐기·재생성) 뒤 종료된 이벤트 루프에 묶여 미리보기가 시간 초과로 실패했다. API 연결 테스트({@code
+   * ApiConnectionService.healthCheckClient()})와 같은 모양이다 — HttpClient 는 전역 연결 풀·이벤트 루프를 공유하고 빌더는 복제라
+   * 비용이 작다.
+   */
+  private WebClient client() {
+    return RedirectFollower.withoutAutoRedirect(webClientBuilder, ssrfSafeHttpClientFactory)
+        .build();
   }
 
   public ApiCallPreviewResponse preview(ApiCallPreviewRequest request) {
@@ -211,7 +225,7 @@ public class ApiCallPreviewService {
     String method = request.method() != null ? request.method().toUpperCase(Locale.ROOT) : "GET";
     return RedirectFollower.follow(
             new RedirectFollower.Request(
-                client,
+                client(),
                 ssrfProtectionService,
                 method,
                 uri,
