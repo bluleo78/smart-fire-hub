@@ -125,10 +125,11 @@ public class TenantAwareTransactionManager extends JdbcTransactionManager {
   /**
    * 롤백하되, 커밋에 이르지 못한 작업의 연결이 이미 닫혀 롤백하지 못한 경우는 경고만 남기고 넘어간다(WD-727).
    *
-   * <p>왜: Tibero 드라이버는 queryTimeout 취소를 {@code SQLTimeoutException}(-12040)으로 보내고, HikariCP 5 는 이
-   * 예외를 받은 연결을 고장으로 보고 닫는다(풀에서 빼고 실제 연결을 닫음). 그 뒤의 롤백은 「Connection is closed」로 실패하고, 스프링은 그 실패를
-   * {@code TransactionSystemException} 으로 던지면서 원래 예외(시간 초과)를 {@code getApplicationException()} 에만
-   * 남긴다. 원인 사슬만 보는 호출자(배경 작업·마감 판정·{@code PythonReadGrantBackend.isTransient} 등)와 오류 응답이 모두 원인을
+   * <p>왜: Tibero 드라이버는 queryTimeout 취소를 {@code SQLTimeoutException}(-12040)으로 보내고, 풀은 이 예외를 받은 연결을
+   * 고장으로 보고 닫는다(풀에서 빼고 실제 연결을 닫음 — HikariCP 5 의 기본 동작이었고, 6 에서는 빠져 {@code
+   * HikariTimeoutEvictionOverride} 로 되살렸다, WD-791). 그 뒤의 롤백은 「Connection is closed」로 실패하고, 스프링은 그
+   * 실패를 {@code TransactionSystemException} 으로 던지면서 원래 예외(시간 초과)를 {@code getApplicationException()}
+   * 에만 남긴다. 원인 사슬만 보는 호출자(배경 작업·마감 판정·{@code PythonReadGrantBackend.isTransient} 등)와 오류 응답이 모두 원인을
    * 잃었다. 닫힌 연결에서는 어차피 롤백할 수 없고, 커밋되지 않은 작업은 연결이 닫히며 서버가 버린다(실서버 확인: TiberoQueryTimeoutLiveTest — 취소
    * 전에 바꾼 행이 커밋되지 않았다). 그래서 이 경우의 롤백 실패를 삼켜 원래 예외가 그대로 전파되게 한다.
    *

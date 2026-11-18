@@ -1,5 +1,6 @@
 package com.smartfirehub.global.datastore;
 
+import com.smartfirehub.global.config.HikariTimeoutEvictionOverride;
 import com.zaxxer.hikari.HikariDataSource;
 import javax.sql.DataSource;
 import org.jooq.DSLContext;
@@ -66,6 +67,7 @@ public class SeparateDataStoreDbConfig {
     // 600000ms)은 Hikari 기본이라 운영 동작은 그대로다.
     ds.setMinimumIdle(minimumIdle);
     ds.setIdleTimeout(idleTimeoutMs);
+    HikariTimeoutEvictionOverride.applyTo(ds);
     return ds;
   }
 

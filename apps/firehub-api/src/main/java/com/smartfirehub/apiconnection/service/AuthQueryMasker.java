@@ -535,8 +535,8 @@ public final class AuthQueryMasker {
     if (node.isObject()) {
       List<Map.Entry<String, JsonNode>> entries = new ArrayList<>();
       boolean changed = false;
-      for (var it = node.fields(); it.hasNext(); ) {
-        Map.Entry<String, JsonNode> e = it.next();
+      // fields() 는 Jackson 3(Boot 4)에서 사라지므로 같은 순서를 주는 properties() 로 순회한다.
+      for (Map.Entry<String, JsonNode> e : node.properties()) {
         String key = scrubber.scrub(e.getKey());
         JsonNode value = maskNode(e.getValue(), scrubber);
         if (!key.equals(e.getKey()) || value != e.getValue()) changed = true;

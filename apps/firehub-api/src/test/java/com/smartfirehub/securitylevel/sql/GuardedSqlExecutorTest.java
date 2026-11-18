@@ -59,6 +59,7 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionManager;
 import org.springframework.transaction.annotation.AnnotationTransactionAttributeSource;
 import org.springframework.transaction.interceptor.TransactionInterceptor;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -691,7 +692,8 @@ class GuardedSqlExecutorTest extends IntegrationTestBase {
     ProxyFactory pf = new ProxyFactory(target);
     pf.setProxyTargetClass(true);
     pf.addAdvice(
-        new TransactionInterceptor(transactionManager, new AnnotationTransactionAttributeSource()));
+        new TransactionInterceptor(
+            (TransactionManager) transactionManager, new AnnotationTransactionAttributeSource()));
     AnalyticsQueryExecutionService proxied = (AnalyticsQueryExecutionService) pf.getProxy();
     GuardedSqlExecutor gate =
         new GuardedSqlExecutor(

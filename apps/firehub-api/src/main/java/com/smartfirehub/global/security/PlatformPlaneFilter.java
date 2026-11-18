@@ -6,10 +6,10 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.util.List;
-import org.springframework.lang.NonNull;
+import org.jspecify.annotations.NonNull;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.web.util.matcher.AntPathRequestMatcher;
+import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher;
 import org.springframework.security.web.util.matcher.RequestMatcher;
 import org.springframework.web.filter.OncePerRequestFilter;
 
@@ -32,24 +32,12 @@ import org.springframework.web.filter.OncePerRequestFilter;
 public class PlatformPlaneFilter extends OncePerRequestFilter {
 
   /**
-   * 평면 판정을 <b>{@code SecurityConfig} 와 같은 Ant 패턴 문법·같은 디코딩된 경로</b>로 한다.
-   *
-   * <p>직접 {@code getRequestURI().startsWith("/api/platform/")} 로 대조하면 안 된다. {@code getRequestURI()}
-   * 는 <b>디코딩되지 않은</b> 원본 URI 인데, 이 스택의 다른 모든 판정 ({@code SecurityConfig} 의 {@code requestMatchers},
-   * MVC 핸들러 매핑)은 <b>디코딩된</b> 경로를 본다. 그래서 {@code GET /api/%70latform/tenants} 는 이 필터에게는 "플랫폼 경로가
-   * 아님"으로, 시큐리티와 MVC 에게는 "플랫폼 경로"로 보인다 — 테넌트 토큰이 평면 검사를 건너뛰고 운영자 컨트롤러에 도달하는 우회로다({@code %70} =
-   * {@code p}, StrictHttpFirewall 차단 대상 아님). 남는 방어는 권한 검사뿐인데, 이 클래스의 존재 이유가 바로 "권한 검사로는 부족하다"다.
-   *
-   * <p>매처를 쓰면 {@code server.servlet.context-path} 설정(원본 URI 에는 컨텍스트 경로가 포함되지만 매처는 그것을 제외한 경로를 본다)과
-   * 대소문자·트레일링 슬래시 처리까지 시큐리티 설정과 자동으로 일치한다.
-   *
-   * <p>패턴 문자열은 {@link PlatformAuthPaths} 에서 가져와 {@code SecurityConfig} 와 공유한다. 단, {@code
-   * HttpSecurity.requestMatchers(String)} 이 만드는 매처는 이 클래스가 쓰는 {@link AntPathRequestMatcher} 와 <b>같은
-   * 구현이 아니다</b>(기본 루트 서블릿 매핑에서는 동작이 같다). 즉 <b>목록</b>의 어긋남은 상수 공유가 막고, <b>매처 동작</b>의 어긋남은 {@code
-   * PlatformPlaneIsolationTest.platformAuthPathsAreExemptFromPlaneCheck} 가 잡는다.
+   * 평면 판정 매처 — {@code SecurityConfig} 와 같은 패턴 문자열({@link PlatformAuthPaths})을 쓰고, 디코딩된 애플리케이션 내 경로로
+   * 대조한다(DispatcherServlet 이 루트에 매핑돼 있어 시큐리티·MVC 판정과 어긋나지 않는다). 그래서 {@code /api/%70latform/tenants}
+   * 도 걸리며, 원본 URI 를 직접 {@code startsWith} 로 대조하면 이 우회가 생기므로 쓰지 않는다. 매처 동작의 어긋남은 {@code
+   * PlatformPlaneIsolationTest} 가 잡는다.
    */
-  private static final RequestMatcher PLATFORM_PLANE =
-      new AntPathRequestMatcher(PlatformAuthPaths.PLATFORM_PATTERN);
+  private static final RequestMatcher PLATFORM_PLANE = matcher(PlatformAuthPaths.PLATFORM_PATTERN);
 
   /**
    * 평면 검사 면제 경로. {@link PlatformAuthPaths} 를 통해 {@code SecurityConfig} 의 permitAll 목록과 <b>같은
@@ -60,9 +48,12 @@ public class PlatformPlaneFilter extends OncePerRequestFilter {
    * 로그인 자체를 못 한다 — 실제로 밟게 되는 경로다.
    */
   private static final List<RequestMatcher> PLANE_CHECK_EXEMPT =
-      PlatformAuthPaths.PUBLIC_PATTERNS.stream()
-          .map(pattern -> (RequestMatcher) new AntPathRequestMatcher(pattern))
-          .toList();
+      PlatformAuthPaths.PUBLIC_PATTERNS.stream().map(PlatformPlaneFilter::matcher).toList();
+
+  /** 패턴 문자열로 {@link PathPatternRequestMatcher} 를 만든다 — 두 매처가 같은 생성 방식을 쓰게 한다. */
+  private static RequestMatcher matcher(String pattern) {
+    return PathPatternRequestMatcher.withDefaults().matcher(pattern);
+  }
 
   @Override
   protected void doFilterInternal(

@@ -5,7 +5,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.function.UnaryOperator;
@@ -97,9 +96,8 @@ public final class AiCredentialDocument {
    */
   public List<String> secretNames(UnaryOperator<String> decrypt) {
     List<String> names = new ArrayList<>();
-    Iterator<Map.Entry<String, JsonNode>> fields = secret().fields();
-    while (fields.hasNext()) {
-      Map.Entry<String, JsonNode> entry = fields.next();
+    // fields() 는 Jackson 3(Boot 4)에서 사라지므로 같은 순서를 주는 properties() 로 순회한다.
+    for (Map.Entry<String, JsonNode> entry : secret().properties()) {
       String cipher = entry.getValue().asText("");
       if (!decrypt.apply(cipher).isEmpty()) {
         names.add(entry.getKey());

@@ -29,7 +29,6 @@ import com.smartfirehub.dbexecutor.web.dto.SqlExecuteResponse;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -115,8 +114,8 @@ class ExecutorContractVectorsTest {
     assertThat(names(endpoints.get("load").get("requestFields")))
         .containsExactly("tenantId", "table", "rows", "column_type_map", "timeout_seconds");
     int checked = 0;
-    for (Iterator<Map.Entry<String, JsonNode>> it = endpoints.fields(); it.hasNext(); ) {
-      Map.Entry<String, JsonNode> e = it.next();
+    // fields() 는 Jackson 3(Boot 4)에서 사라지므로 properties() 로 순회한다.
+    for (Map.Entry<String, JsonNode> e : endpoints.properties()) {
       JsonNode ep = e.getValue();
       for (JsonNode ex : ep.get("examples")) {
         if (ex.has("backend") && !ex.get("backend").asText().equals("db-executor")) {

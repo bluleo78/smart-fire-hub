@@ -2,10 +2,10 @@ package com.smartfirehub.auth.controller;
 
 import com.smartfirehub.global.security.JwtProperties;
 import jakarta.servlet.http.HttpServletResponse;
+import org.jspecify.annotations.NonNull;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseCookie;
-import org.springframework.lang.NonNull;
 import org.springframework.stereotype.Component;
 
 /**

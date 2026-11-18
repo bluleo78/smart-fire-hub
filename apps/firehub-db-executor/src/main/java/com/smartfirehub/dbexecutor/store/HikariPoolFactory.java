@@ -92,6 +92,8 @@ public class HikariPoolFactory implements Function<StoreDescriptor, DataSource> 
     ds.setAutoCommit(false);
     ds.setInitializationFailTimeout(-1);
     ds.setPoolName("tibero-tenant-" + d.tenantId() + "-" + a.username());
+    // 문장 시간 초과(SQLTimeoutException) 커넥션 퇴출 — HikariCP 6 가 뺀 5.x 동작을 되살린다(WD-791).
+    ds.setExceptionOverrideClassName(HikariTimeoutEvictionOverride.class.getName());
     return ds;
   }
 }

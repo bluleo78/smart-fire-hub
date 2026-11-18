@@ -4,17 +4,19 @@ import java.util.Properties
 buildscript {
     repositories { mavenCentral() }
     dependencies {
+        // flyway·jooq-codegen 은 buildscript 클래스패스라 Spring Boot BOM 밖이다. 런타임 BOM(Boot 3.5.16: flyway 11.7.2,
+        // jooq 3.19.35)과 직접 맞춰 고정해야 하며, 특히 코드젠 jOOQ 가 런타임과 어긋나면 생성 소스가 달라진다(drift).
         classpath("org.testcontainers:postgresql:1.20.4")
-        classpath("org.flywaydb:flyway-core:10.20.1")
-        classpath("org.flywaydb:flyway-database-postgresql:10.20.1")
+        classpath("org.flywaydb:flyway-core:11.7.2")
+        classpath("org.flywaydb:flyway-database-postgresql:11.7.2")
         classpath("org.postgresql:postgresql:42.7.4")
-        classpath("org.jooq:jooq-codegen:3.19.16")
+        classpath("org.jooq:jooq-codegen:3.19.35")
     }
 }
 
 plugins {
     java
-    id("org.springframework.boot") version "3.4.1"
+    id("org.springframework.boot") version "3.5.16"
     id("io.spring.dependency-management") version "1.1.7"
     id("com.diffplug.spotless") version "6.25.0"
     jacoco
@@ -69,18 +71,21 @@ dependencies {
     testCompileOnly("org.projectlombok:lombok:1.18.44")
     testAnnotationProcessor("org.projectlombok:lombok:1.18.44")
 
+    // Spring @NonNull 대신 쓰는 JSpecify 를 전이 의존성(micrometer 등)에 기대지 않으려고 명시한다.
+    // 1.0.0 은 compileClasspath 에서 이미 해석되는 버전이다(Spring 6.2·Boot 3.5 와 같다).
+    implementation("org.jspecify:jspecify:1.0.0")
     implementation("org.springframework.boot:spring-boot-starter-web")
     implementation("org.springframework.boot:spring-boot-starter-validation")
     implementation("org.springframework.boot:spring-boot-starter-jooq")
     // WD-487 PoC - MyBatis (starter 는 쓰지 않는다: DataSource 가 여럿이라 자동 구성이 잘못 붙을 수 있고, 팩토리 생성을 Tibero 하네스와 공유해야 한다)
-    implementation("org.mybatis:mybatis:3.5.16")
-    implementation("org.mybatis:mybatis-spring:3.0.4")
+    implementation("org.mybatis:mybatis:3.5.19")
+    implementation("org.mybatis:mybatis-spring:3.0.6")
     // 관측성 — Micrometer + 헬스체크/메트릭 endpoints (Task 13)
     implementation("org.springframework.boot:spring-boot-starter-actuator")
     implementation("org.flywaydb:flyway-core")
     implementation("org.flywaydb:flyway-database-postgresql")
     // Tibero 플랫폼 DB 용 Flyway 플러그인(WD-488)의 기반 — Flyway 는 Tibero 를 지원하지 않아 Oracle 모듈을 상속해 제품명·사전 뷰 차이만 덮어쓴다.
-    // 버전은 Spring Boot BOM 이 flyway-core 와 같은 값으로 맞춘다(10.20.1).
+    // 버전은 Spring Boot BOM 이 flyway-core 와 같은 값으로 맞춘다(11.7.2).
     implementation("org.flywaydb:flyway-database-oracle")
     implementation("org.springframework.boot:spring-boot-starter-security")
     implementation("io.jsonwebtoken:jjwt-api:0.12.6")
@@ -97,7 +102,10 @@ dependencies {
     implementation("org.apache.pdfbox:pdfbox:2.0.32")
     implementation("com.opencsv:opencsv:5.9")
     // Jobrunr - 비동기 작업 스케줄링
-    implementation("org.jobrunr:jobrunr-spring-boot-3-starter:7.3.2")
+    // 7.x 최고 버전 7.5.3 — 7.3.2 와 SQL 마이그레이션 목록이 같아 저장소 스키마(Flyway V85/V155)를 바꿀 필요가 없다.
+    // 8.x 이상은 jobrunr_jobs_stats 뷰에 awaiting 컬럼을 더하는 마이그레이션(v016)이 붙고 JobStatsView 가 그 컬럼을 읽는다.
+    // 테이블은 Flyway 가 관리(skip-create)하므로 PG·Tibero 마이그레이션과 jOOQ 재생성이 필요해 Boot 4 작업(WD-792)으로 미룬다.
+    implementation("org.jobrunr:jobrunr-spring-boot-3-starter:7.5.3")
     // WebFlux for SSE proxy + WebClient for API calls
     implementation("org.springframework.boot:spring-boot-starter-webflux")
     // JSONPath for API response parsing
@@ -121,18 +129,14 @@ dependencies {
     implementation("io.minio:minio:8.5.17")
     // Qdrant 공식 Java 클라이언트(gRPC) — 벡터 저장소를 Qdrant 로 고른 설치본용(ADR 0002, WD-719). 서버는 v1.20 이상.
     implementation("io.qdrant:client:1.20.0")
-    // 키워드 바이그램 해시(murmur3)에 직접 쓴다. 버전은 Spring Boot BOM 관리값(33.3.1-jre) — gRPC 가 요구하는 33.6 보다 낮지만
-    // 같은 33.x 라 API 가 호환되고, 다른 의존성(minio 등)과 버전을 하나로 맞춘다.
+    // 키워드 바이그램 해시(murmur3)에 직접 쓴다. Spring Boot BOM 은 guava 를 관리하지 않으므로 버전은 의존성 충돌 해결로 정해진다 —
+    // gRPC(Qdrant 클라이언트 경유)가 요구하는 33.6.0-android 가 minio 의 33.3.1-jre 를 이겨 33.6.0-android 로 해석된다(같은 33.x 라 API 호환).
+    // 버전 문자열은 -android 지만 실제로 고르는 변형은 JRE 판이다 — guava 의 Gradle 모듈 메타데이터가 standard-jvm 요청에
+    // jreRuntimeElements 변형을 내준다(dependencyInsight --configuration runtimeClasspath 로 확인, WD-791).
     implementation("com.google.guava:guava")
 
-    testImplementation("org.springframework.boot:spring-boot-starter-test") {
-        exclude(group = "org.mockito")
-        exclude(group = "net.bytebuddy")
-    }
-    testImplementation("org.mockito:mockito-core:5.15.2")
-    testImplementation("org.mockito:mockito-junit-jupiter:5.15.2")
-    testImplementation("net.bytebuddy:byte-buddy:1.17.5")
-    testImplementation("net.bytebuddy:byte-buddy-agent:1.17.5")
+    // Mockito·byte-buddy 는 Spring Boot BOM(Mockito 5.17.0, byte-buddy 1.17.8)이 관리하는 버전을 그대로 쓴다.
+    testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.springframework.security:spring-security-test")
     // Testcontainers — 통합 테스트용 격리 PostgreSQL 컨테이너.
     testImplementation("org.testcontainers:junit-jupiter")
@@ -141,8 +145,11 @@ dependencies {
     testImplementation("org.testcontainers:qdrant")
     // WireMock for API call integration tests
     testImplementation("org.wiremock:wiremock-standalone:3.10.0")
-    // MockWebServer for embedding provider unit tests (버전은 Spring Boot BOM이 관리)
-    testImplementation("com.squareup.okhttp3:mockwebserver")
+    // MockWebServer for embedding provider unit tests.
+    // Spring Boot 3.5 BOM 이 okhttp 버전 관리를 없애 버전이 비게 되므로, 3.4.1 BOM 이 관리하던 4.12.0 으로 직접 고정한다.
+    // 이 값은 minio 8.5.17 이 끌어오는 okhttp(런타임 클래스패스 4.12.0)와 같아야 한다 — mockwebserver 는 같은 버전의 okhttp 를
+    // 요구하므로, 어긋나면 시험 클래스패스에서 okhttp 가 올라가 minio 가 운영과 다른 okhttp 로 시험된다. minio 를 올리면 함께 맞춘다.
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     // SQL 실행 단일 관문(GuardedSqlExecutor) 우회 금지 규칙(스펙 §4.1). 로컬 Gradle 캐시에 있는 버전.
     testImplementation("com.tngtech.archunit:archunit:1.3.0")
     testRuntimeOnly("org.postgresql:postgresql")
@@ -179,7 +186,7 @@ tasks.register("generateJooq") {
     val dockerApiVersion = testcontainersDockerApiVersion
     inputs.dir(migrationDir)
     inputs.file(postgresDockerfile)
-    inputs.property("jooqCodegenVersion", "3.19.16")
+    inputs.property("jooqCodegenVersion", "3.19.35")
     outputs.dir(outputDir)
 
     doLast {

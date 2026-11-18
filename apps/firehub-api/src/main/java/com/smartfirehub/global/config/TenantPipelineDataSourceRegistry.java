@@ -203,6 +203,7 @@ public class TenantPipelineDataSourceRegistry {
     // pipeline_executor_t{id} 비밀번호는 RolePasswordSyncCallback 이 Flyway migrate 직후 동기화한다.
     // 그 시점 이전에 이 풀이 즉시 접속을 검증하면 동기화 전 상태로 실패할 수 있어 지연 검증으로 둔다.
     dataSource.setInitializationFailTimeout(-1);
+    HikariTimeoutEvictionOverride.applyTo(dataSource);
 
     // PipelineSandboxDataSourceConfig#pipelineDslContext 와 동일한 패턴: 이 커넥션은 테넌트 GUC/RLS
     // 가 아니라 스키마+롤 분리로 격리되므로 TenantAware 트랜잭션 매니저가 필요 없다("고려했지만

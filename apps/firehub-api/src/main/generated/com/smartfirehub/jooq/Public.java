@@ -394,7 +394,7 @@ public class Public extends SchemaImpl {
     public final OntologyRelation ONTOLOGY_RELATION = OntologyRelation.ONTOLOGY_RELATION;
 
     /**
-     * The table <code>public.outbox_tenant_ids</code>.
+     * p_statuses text[]
      */
     public final OutboxTenantIds OUTBOX_TENANT_IDS = OutboxTenantIds.OUTBOX_TENANT_IDS;
 
@@ -488,7 +488,7 @@ public class Public extends SchemaImpl {
     public final PlatformUserRole PLATFORM_USER_ROLE = PlatformUserRole.PLATFORM_USER_ROLE;
 
     /**
-     * The table <code>public.postgis_srs</code>.
+     * auth_name text, auth_srid text
      */
     public final PostgisSrs POSTGIS_SRS = PostgisSrs.POSTGIS_SRS;
 
@@ -556,7 +556,7 @@ public class Public extends SchemaImpl {
     }
 
     /**
-     * The table <code>public.postgis_srs_codes</code>.
+     * auth_name text
      */
     public final PostgisSrsCodes POSTGIS_SRS_CODES = PostgisSrsCodes.POSTGIS_SRS_CODES;
 
@@ -595,7 +595,7 @@ public class Public extends SchemaImpl {
     }
 
     /**
-     * The table <code>public.postgis_srs_search</code>.
+     * bounds geometry, authname text DEFAULT 'EPSG'::text
      */
     public final PostgisSrsSearch POSTGIS_SRS_SEARCH = PostgisSrsSearch.POSTGIS_SRS_SEARCH;
 
@@ -698,7 +698,7 @@ public class Public extends SchemaImpl {
     public final ReportTemplate REPORT_TEMPLATE = ReportTemplate.REPORT_TEMPLATE;
 
     /**
-     * The table <code>public.resolve_slack_workspace_tenant_by_team_id</code>.
+     * p_team_id text
      */
     public final ResolveSlackWorkspaceTenantByTeamId RESOLVE_SLACK_WORKSPACE_TENANT_BY_TEAM_ID = ResolveSlackWorkspaceTenantByTeamId.RESOLVE_SLACK_WORKSPACE_TENANT_BY_TEAM_ID;
 
@@ -739,7 +739,7 @@ public class Public extends SchemaImpl {
     }
 
     /**
-     * The table <code>public.resolve_trigger_tenant_by_token_hash</code>.
+     * p_token_hash text
      */
     public final ResolveTriggerTenantByTokenHash RESOLVE_TRIGGER_TENANT_BY_TOKEN_HASH = ResolveTriggerTenantByTokenHash.RESOLVE_TRIGGER_TENANT_BY_TOKEN_HASH;
 
@@ -778,7 +778,7 @@ public class Public extends SchemaImpl {
     }
 
     /**
-     * The table <code>public.resolve_trigger_tenant_by_webhook_id</code>.
+     * p_webhook_id text
      */
     public final ResolveTriggerTenantByWebhookId RESOLVE_TRIGGER_TENANT_BY_WEBHOOK_ID = ResolveTriggerTenantByWebhookId.RESOLVE_TRIGGER_TENANT_BY_WEBHOOK_ID;
 
@@ -847,7 +847,8 @@ public class Public extends SchemaImpl {
     public final SpatialRefSys SPATIAL_REF_SYS = SpatialRefSys.SPATIAL_REF_SYS;
 
     /**
-     * The table <code>public.st_hexagongrid</code>.
+     * size double precision, bounds geometry, OUT geom geometry, OUT i integer,
+     * OUT j integer
      */
     public final StHexagongrid ST_HEXAGONGRID = StHexagongrid.ST_HEXAGONGRID;
 
@@ -892,7 +893,8 @@ public class Public extends SchemaImpl {
     }
 
     /**
-     * The table <code>public.st_squaregrid</code>.
+     * size double precision, bounds geometry, OUT geom geometry, OUT i integer,
+     * OUT j integer
      */
     public final StSquaregrid ST_SQUAREGRID = StSquaregrid.ST_SQUAREGRID;
 
@@ -937,7 +939,8 @@ public class Public extends SchemaImpl {
     }
 
     /**
-     * The table <code>public.st_subdivide</code>.
+     * geom geometry, maxvertices integer DEFAULT 256, gridsize double precision
+     * DEFAULT '-1.0'::numeric
      */
     public final StSubdivide ST_SUBDIVIDE = StSubdivide.ST_SUBDIVIDE;
 

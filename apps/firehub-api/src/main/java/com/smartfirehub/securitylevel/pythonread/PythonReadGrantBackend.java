@@ -27,6 +27,7 @@ import java.util.function.Function;
 import java.util.function.IntFunction;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
+import org.springframework.dao.QueryTimeoutException;
 import org.springframework.dao.RecoverableDataAccessException;
 import org.springframework.dao.TransientDataAccessException;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -217,6 +218,8 @@ interface PythonReadGrantBackend {
    *   <li>{@link SessionKillFailed} — 회수 커밋 뒤 슬롯 세션 끊기 실패(WD-664 1b)
    * </ul>
    *
+   * <p>예외: PG 57014(문장 취소)는 영구 실패로 유지한다 — {@link #hasPgQueryCanceledCause} 참고.
+   *
    * <p>그 밖의 DB 예외(문법·권한·제약 위반 등)와 프로그램 오류는 다시 해도 같으므로 영구 실패다 — 실행기가 곧바로 버리고 ERROR 로 남긴다. 예전처럼 모든
    * DataAccessException·SQLException 을 일시 실패로 보면 영구 오류가 재시도 횟수만큼 헛돌았다.
    */
@@ -225,6 +228,10 @@ interface PythonReadGrantBackend {
       if (t instanceof SessionKillFailed) {
         return true; // 회수 뒤 끊기 실패 — 원인과 무관하게 다시 해 본다(WD-664 1b)
       }
+      // PG 57014 는 QueryTimeoutException 이어도 영구 실패로 유지한다 — hasPgQueryCanceledCause 참고.
+      if (t instanceof QueryTimeoutException && hasPgQueryCanceledCause(t)) {
+        continue;
+      }
       if (t instanceof TransientDataAccessException
           || t instanceof RecoverableDataAccessException
           || t instanceof SQLTransientException
@@ -232,6 +239,27 @@ interface PythonReadGrantBackend {
         return true;
       }
       if (t instanceof SQLException sql && isTransientSqlState(sql.getSQLState())) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * 원인 사슬에 PG 의 query_canceled(57014) SQLException 이 있는가 — JDBC 표준 시간 초과 예외(SQLTimeoutException)는
+   * 제외한다.
+   *
+   * <p>왜: Spring 6.2 후반 패치(6.2.19 확인; 6.2.1 은 아님)부터 SQLState 57014 는 {@code
+   * QueryTimeoutException}(일시 예외 계열)으로 번역된다. 그 전에는 DataAccessResourceFailureException(영구)이어서 PG 의
+   * 문장 취소는 영구 실패로 분류했고, 그 분류를 지키려고 이 경우는 일시 실패로 보지 않는다. JDBC 가 직접 낸 {@link
+   * java.sql.SQLTimeoutException}(Tibero 문장 취소 등)은 {@link SQLTransientException} 이므로 예전처럼 일시 실패다.
+   */
+  private static boolean hasPgQueryCanceledCause(Throwable e) {
+    for (Throwable c = e.getCause(); c != null; c = c.getCause()) {
+      if (c instanceof SQLTransientException) {
+        return false;
+      }
+      if (c instanceof SQLException sql && "57014".equals(sql.getSQLState())) {
         return true;
       }
     }
