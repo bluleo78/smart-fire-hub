@@ -533,8 +533,11 @@ public class OpencodeProbeService {
             .followRedirect(false)
             .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, (int) timeout.toMillis());
 
+    // (WD-808) 주입된 webClientBuilder 는 모든 요청이 공유하고 Builder 는 스레드 안전하지 않다 — 원본에 얹으면
+    // 동시 점검이 같은 객체를 경합하며 바꾼다. RedirectFollower.withoutAutoRedirect(WD-693)처럼 요청마다 clone() 한다.
     WebClient client =
         webClientBuilder
+            .clone()
             .clientConnector(new ReactorClientHttpConnector(reactorClient))
             .exchangeStrategies(strategies)
             .build();

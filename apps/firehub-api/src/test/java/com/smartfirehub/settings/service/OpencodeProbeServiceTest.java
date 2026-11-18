@@ -103,8 +103,14 @@ class OpencodeProbeServiceTest {
 
   private OpencodeProbeService wireMockService(
       AiCredentialService aiCredentialService, Duration timeout) {
+    return wireMockService(aiCredentialService, timeout, WebClient.builder());
+  }
+
+  /** 주입할 WebClient.Builder 를 지정하는 오버로드 — 공유 builder 를 변조하지 않는지(WD-808) 확인할 때 쓴다. */
+  private OpencodeProbeService wireMockService(
+      AiCredentialService aiCredentialService, Duration timeout, WebClient.Builder builder) {
     return new OpencodeProbeService(
-        aiCredentialService, new SsrfProtectionService(), WebClient.builder(), timeout) {
+        aiCredentialService, new SsrfProtectionService(), builder, timeout) {
       @Override
       protected void validateTarget(URI uri) {
         // no-op: WireMock 은 127.0.0.1 에서 뜬다 — 실제 가드라면 언제나 차단한다.
@@ -464,6 +470,23 @@ class OpencodeProbeServiceTest {
         Reason.REDIRECT_BLOCKED);
 
     wireMock.verify(0, getRequestedFor(urlEqualTo("/v1/models-if-followed")));
+  }
+
+  @Test
+  void 공유_WebClient_Builder_는_점검마다_clone_해서_쓰고_원본은_바꾸지_않는다() {
+    // (WD-808) 서비스는 싱글톤이라 builder 가 공유된다 — 원본을 직접 바꾸면 동시 점검이 서로의 커넥터로 만들 수 있다.
+    WebClient.Builder shared = mock(WebClient.Builder.class);
+    when(shared.clone()).thenAnswer(inv -> WebClient.builder());
+    wireMock.stubFor(get("/v1/models").willReturn(okJson("{\"data\":[{\"id\":\"m1\"}]}")));
+
+    OpencodeProbeService service =
+        wireMockService(mock(AiCredentialService.class), Duration.ofSeconds(10), shared);
+
+    assertThat(service.probe(wireMockUrl("/v1"), "k").ok()).isTrue();
+    assertThat(service.probe(wireMockUrl("/v1"), "k").ok()).isTrue();
+
+    verify(shared, times(2)).clone();
+    verifyNoMoreInteractions(shared);
   }
 
   @Test

@@ -166,10 +166,9 @@ public class SsrfSafeHttpClientFactory {
    * <p>WD-804: 지금 호출처({@code ApiConnectionService.healthCheckClient}, {@code
    * ApiCallPreviewService.client}, {@code ApiCallExecutor.noRedirectClient}, {@code
    * OpencodeProbeService.doRequest})는 모두 요청마다 이 메서드를 불러 새로 만들므로 낡은 그룹에 묶일 위험은 없다. 다만 이것은 「낡은 그룹」에
-   * 대한 말일 뿐 호출처가 스레드 안전하다는 뜻은 아니다 — {@code OpencodeProbeService.doRequest} 는 받은 클라이언트를 주입받은 공유
-   * {@code WebClient.Builder} 필드에 {@code clone()} 없이 써 넣고 build 하므로, 동시에 도는 프로브끼리 서로의
-   * 커넥터·exchangeStrategies 로 만들어질 수 있다(같은 설정이라 지금은 드러나지 않지만 요청마다 다른 값을 넣으면 깨진다, {@link
-   * RedirectFollower#withoutAutoRedirect} 는 그래서 복제한다). 별도 이슈(WD-808)로 다룬다.
+   * 대한 말일 뿐 호출처가 스레드 안전하다는 뜻은 아니다 — 받은 클라이언트를 주입받은 공유 {@code WebClient.Builder} 에 얹는 호출처는
+   * 요청마다 {@code clone()} 한 복사본에 얹어야 한다({@link RedirectFollower#withoutAutoRedirect}, {@code
+   * OpencodeProbeService.doRequest} — WD-808 에서 맞춤).
    *
    * <p>근본 해결(기본 해석기 + {@code resolvedAddressesSelector})은 설계(WD-797)에서 미루기로 했던 것으로, reactor-netty
    * 1.2.18 에서 IP 리터럴 경로의 selector 예외가 채널을 닫지 않아(소켓 누수 가능) 하지 않았다. WD-792(Boot 4 / reactor-netty
