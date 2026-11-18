@@ -231,6 +231,6 @@ public class ProactiveJobExecutionRecord extends UpdatableRecordImpl<ProactiveJo
         setTenantId(tenantId);
         setSecurityLevelId(securityLevelId);
         setHeartbeatAt(heartbeatAt);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

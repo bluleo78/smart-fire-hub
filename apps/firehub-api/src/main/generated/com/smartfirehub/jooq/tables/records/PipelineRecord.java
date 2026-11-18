@@ -181,6 +181,6 @@ public class PipelineRecord extends UpdatableRecordImpl<PipelineRecord> {
         setUpdatedAt(updatedAt);
         setUpdatedBy(updatedBy);
         setTenantId(tenantId);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

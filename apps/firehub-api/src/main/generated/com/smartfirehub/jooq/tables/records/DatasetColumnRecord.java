@@ -239,6 +239,6 @@ public class DatasetColumnRecord extends UpdatableRecordImpl<DatasetColumnRecord
         setIsPrimaryKey(isPrimaryKey);
         setTenantId(tenantId);
         setIsSearchable(isSearchable);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

@@ -129,6 +129,6 @@ public class PythonReadUnconfirmedSlotRecord extends UpdatableRecordImpl<PythonR
         setKind(kind);
         setMarkedAt(markedAt);
         setMarkVersion(markVersion);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

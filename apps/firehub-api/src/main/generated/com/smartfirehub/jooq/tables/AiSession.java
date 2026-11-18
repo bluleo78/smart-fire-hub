@@ -30,10 +30,10 @@ import org.jooq.QueryPart;
 import org.jooq.Record;
 import org.jooq.SQL;
 import org.jooq.Schema;
-import org.jooq.Select;
 import org.jooq.Stringly;
 import org.jooq.Table;
 import org.jooq.TableField;
+import org.jooq.TableLike;
 import org.jooq.TableOptions;
 import org.jooq.UniqueKey;
 import org.jooq.impl.DSL;
@@ -66,7 +66,7 @@ public class AiSession extends TableImpl<AiSessionRecord> {
     /**
      * The column <code>public.ai_session.id</code>.
      */
-    public final TableField<AiSessionRecord, Long> ID = createField(DSL.name("id"), SQLDataType.BIGINT.nullable(false).identity(true), this, "");
+    public final TableField<AiSessionRecord, Long> ID = createField(DSL.name("id"), SQLDataType.BIGINT.nullable(false).generatedByDefaultAsIdentity(), this, "");
 
     /**
      * The column <code>public.ai_session.user_id</code>.
@@ -290,7 +290,7 @@ public class AiSession extends TableImpl<AiSessionRecord> {
      */
     @Override
     public AiSession where(Condition condition) {
-        return new AiSession(getQualifiedName(), aliased() ? this : null, null, condition);
+        return new AiSession(getQualifiedName(), aliased() ? this : null, null, Internal.condition(this, condition));
     }
 
     /**
@@ -357,7 +357,7 @@ public class AiSession extends TableImpl<AiSessionRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public AiSession whereExists(Select<?> select) {
+    public AiSession whereExists(TableLike<?> select) {
         return where(DSL.exists(select));
     }
 
@@ -365,7 +365,7 @@ public class AiSession extends TableImpl<AiSessionRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public AiSession whereNotExists(Select<?> select) {
+    public AiSession whereNotExists(TableLike<?> select) {
         return where(DSL.notExists(select));
     }
 }

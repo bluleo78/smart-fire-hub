@@ -27,10 +27,10 @@ import org.jooq.QueryPart;
 import org.jooq.Record;
 import org.jooq.SQL;
 import org.jooq.Schema;
-import org.jooq.Select;
 import org.jooq.Stringly;
 import org.jooq.Table;
 import org.jooq.TableField;
+import org.jooq.TableLike;
 import org.jooq.TableOptions;
 import org.jooq.UniqueKey;
 import org.jooq.impl.DSL;
@@ -280,7 +280,7 @@ public class TenantDataStore extends TableImpl<TenantDataStoreRecord> {
      */
     @Override
     public TenantDataStore where(Condition condition) {
-        return new TenantDataStore(getQualifiedName(), aliased() ? this : null, null, condition);
+        return new TenantDataStore(getQualifiedName(), aliased() ? this : null, null, Internal.condition(this, condition));
     }
 
     /**
@@ -347,7 +347,7 @@ public class TenantDataStore extends TableImpl<TenantDataStoreRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public TenantDataStore whereExists(Select<?> select) {
+    public TenantDataStore whereExists(TableLike<?> select) {
         return where(DSL.exists(select));
     }
 
@@ -355,7 +355,7 @@ public class TenantDataStore extends TableImpl<TenantDataStoreRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public TenantDataStore whereNotExists(Select<?> select) {
+    public TenantDataStore whereNotExists(TableLike<?> select) {
         return where(DSL.notExists(select));
     }
 }

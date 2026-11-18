@@ -135,6 +135,6 @@ public class DatasetEmbeddingVec_1024Record extends UpdatableRecordImpl<DatasetE
         setEmbedding(embedding);
         setEmbeddingModel(embeddingModel);
         setUpdatedAt(updatedAt);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

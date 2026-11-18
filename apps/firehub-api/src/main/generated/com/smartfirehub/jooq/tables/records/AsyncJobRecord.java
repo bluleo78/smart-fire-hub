@@ -242,6 +242,6 @@ public class AsyncJobRecord extends UpdatableRecordImpl<AsyncJobRecord> {
         setCreatedAt(createdAt);
         setUpdatedAt(updatedAt);
         setTenantId(tenantId);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

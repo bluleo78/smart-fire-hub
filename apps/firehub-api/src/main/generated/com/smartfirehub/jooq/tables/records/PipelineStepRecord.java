@@ -305,6 +305,6 @@ public class PipelineStepRecord extends UpdatableRecordImpl<PipelineStepRecord> 
         setTenantId(tenantId);
         setLastRunAt(lastRunAt);
         setFullRebuildPending(fullRebuildPending);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

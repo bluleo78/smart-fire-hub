@@ -26,10 +26,10 @@ import org.jooq.QueryPart;
 import org.jooq.Record;
 import org.jooq.SQL;
 import org.jooq.Schema;
-import org.jooq.Select;
 import org.jooq.Stringly;
 import org.jooq.Table;
 import org.jooq.TableField;
+import org.jooq.TableLike;
 import org.jooq.TableOptions;
 import org.jooq.UniqueKey;
 import org.jooq.impl.DSL;
@@ -234,7 +234,7 @@ public class TenantVectorStore extends TableImpl<TenantVectorStoreRecord> {
      */
     @Override
     public TenantVectorStore where(Condition condition) {
-        return new TenantVectorStore(getQualifiedName(), aliased() ? this : null, null, condition);
+        return new TenantVectorStore(getQualifiedName(), aliased() ? this : null, null, Internal.condition(this, condition));
     }
 
     /**
@@ -301,7 +301,7 @@ public class TenantVectorStore extends TableImpl<TenantVectorStoreRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public TenantVectorStore whereExists(Select<?> select) {
+    public TenantVectorStore whereExists(TableLike<?> select) {
         return where(DSL.exists(select));
     }
 
@@ -309,7 +309,7 @@ public class TenantVectorStore extends TableImpl<TenantVectorStoreRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public TenantVectorStore whereNotExists(Select<?> select) {
+    public TenantVectorStore whereNotExists(TableLike<?> select) {
         return where(DSL.notExists(select));
     }
 }

@@ -15,10 +15,9 @@ spring:
     user: ${POSTGRES_USER:app}
     password: ${POSTGRES_PASSWORD}
 
-org:
-  jobrunr:
-    dashboard:
-      enabled: false
+jobrunr:
+  dashboard:
+    enabled: false
 
 app:
   base-url: ${APP_BASE_URL:}

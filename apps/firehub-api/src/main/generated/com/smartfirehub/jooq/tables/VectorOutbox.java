@@ -27,13 +27,14 @@ import org.jooq.QueryPart;
 import org.jooq.Record;
 import org.jooq.SQL;
 import org.jooq.Schema;
-import org.jooq.Select;
 import org.jooq.Stringly;
 import org.jooq.Table;
 import org.jooq.TableField;
+import org.jooq.TableLike;
 import org.jooq.TableOptions;
 import org.jooq.UniqueKey;
 import org.jooq.impl.DSL;
+import org.jooq.impl.Internal;
 import org.jooq.impl.SQLDataType;
 import org.jooq.impl.TableImpl;
 
@@ -237,7 +238,7 @@ public class VectorOutbox extends TableImpl<VectorOutboxRecord> {
      */
     @Override
     public VectorOutbox where(Condition condition) {
-        return new VectorOutbox(getQualifiedName(), aliased() ? this : null, null, condition);
+        return new VectorOutbox(getQualifiedName(), aliased() ? this : null, null, Internal.condition(this, condition));
     }
 
     /**
@@ -304,7 +305,7 @@ public class VectorOutbox extends TableImpl<VectorOutboxRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public VectorOutbox whereExists(Select<?> select) {
+    public VectorOutbox whereExists(TableLike<?> select) {
         return where(DSL.exists(select));
     }
 
@@ -312,7 +313,7 @@ public class VectorOutbox extends TableImpl<VectorOutboxRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public VectorOutbox whereNotExists(Select<?> select) {
+    public VectorOutbox whereNotExists(TableLike<?> select) {
         return where(DSL.notExists(select));
     }
 }

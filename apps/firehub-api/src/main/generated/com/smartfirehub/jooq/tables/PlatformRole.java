@@ -29,13 +29,14 @@ import org.jooq.QueryPart;
 import org.jooq.Record;
 import org.jooq.SQL;
 import org.jooq.Schema;
-import org.jooq.Select;
 import org.jooq.Stringly;
 import org.jooq.Table;
 import org.jooq.TableField;
+import org.jooq.TableLike;
 import org.jooq.TableOptions;
 import org.jooq.UniqueKey;
 import org.jooq.impl.DSL;
+import org.jooq.impl.Internal;
 import org.jooq.impl.SQLDataType;
 import org.jooq.impl.TableImpl;
 
@@ -64,7 +65,7 @@ public class PlatformRole extends TableImpl<PlatformRoleRecord> {
     /**
      * The column <code>public.platform_role.id</code>.
      */
-    public final TableField<PlatformRoleRecord, Long> ID = createField(DSL.name("id"), SQLDataType.BIGINT.nullable(false).identity(true), this, "");
+    public final TableField<PlatformRoleRecord, Long> ID = createField(DSL.name("id"), SQLDataType.BIGINT.nullable(false).generatedByDefaultAsIdentity(), this, "");
 
     /**
      * The column <code>public.platform_role.name</code>.
@@ -254,7 +255,7 @@ public class PlatformRole extends TableImpl<PlatformRoleRecord> {
      */
     @Override
     public PlatformRole where(Condition condition) {
-        return new PlatformRole(getQualifiedName(), aliased() ? this : null, null, condition);
+        return new PlatformRole(getQualifiedName(), aliased() ? this : null, null, Internal.condition(this, condition));
     }
 
     /**
@@ -321,7 +322,7 @@ public class PlatformRole extends TableImpl<PlatformRoleRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public PlatformRole whereExists(Select<?> select) {
+    public PlatformRole whereExists(TableLike<?> select) {
         return where(DSL.exists(select));
     }
 
@@ -329,7 +330,7 @@ public class PlatformRole extends TableImpl<PlatformRoleRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public PlatformRole whereNotExists(Select<?> select) {
+    public PlatformRole whereNotExists(TableLike<?> select) {
         return where(DSL.notExists(select));
     }
 }

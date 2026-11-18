@@ -331,6 +331,6 @@ public class DatasetRecord extends UpdatableRecordImpl<DatasetRecord> {
         setTenantId(tenantId);
         setSecurityLevelId(securityLevelId);
         setSecurityLevelAutoRaisedAt(securityLevelAutoRaisedAt);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

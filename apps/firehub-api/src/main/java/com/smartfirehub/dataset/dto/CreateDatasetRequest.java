@@ -17,10 +17,12 @@ public record CreateDatasetRequest(
     String originType,
     // WD-587: 요소(null)·요소 안 필드(@Valid 로 중첩 검증)를 요청 경계에서 400 으로 거부한다 — 그대로 두면 서비스 검증
     // (DataTableService.validateNewColumns)이 null 을 역참조해 500 이 났다. 기본 문구(WD-570)보다 구체적인 한국어 문구를
-    // 명시한다.
-    @Valid
-        List<@NotNull(message = DatasetColumnRequest.COLUMN_REQUIRED_MESSAGE) DatasetColumnRequest>
-            columns,
+    // 명시한다. @Valid 는 목록이 아니라 요소 형식에 둔다 — Hibernate Validator 9 가 컨테이너(List)에 붙인 @Valid 를
+    // 사용 중단(HV000271 경고)으로 보기 때문이다(WD-792). 중첩 검증 동작은 같다.
+    List<
+            @NotNull(message = DatasetColumnRequest.COLUMN_REQUIRED_MESSAGE) @Valid
+            DatasetColumnRequest>
+        columns,
     Long sourcePipelineStepId,
     String bucket, // FILE 전용: MinIO 버킷 (null이면 기본 버킷 사용)
     String prefix) { // 지정 불가(서버가 datasets/<id>/ 로 생성) — 값이 있으면 400 FILE_PREFIX_NOT_ALLOWED

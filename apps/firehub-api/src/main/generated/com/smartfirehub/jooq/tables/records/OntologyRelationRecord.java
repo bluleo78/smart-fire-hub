@@ -164,6 +164,6 @@ public class OntologyRelationRecord extends UpdatableRecordImpl<OntologyRelation
         setSubjectTypeId(subjectTypeId);
         setObjectTypeId(objectTypeId);
         setTenantId(tenantId);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

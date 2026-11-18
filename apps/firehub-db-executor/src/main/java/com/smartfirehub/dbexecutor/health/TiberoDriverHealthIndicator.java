@@ -5,8 +5,8 @@ import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.actuate.health.Health;
-import org.springframework.boot.actuate.health.HealthIndicator;
+import org.springframework.boot.health.contributor.Health;
+import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.stereotype.Component;
 
 /** Tibero JDBC 드라이버 클래스가 클래스패스에 있는지 본다. jar 는 저장소에 없으므로 빠지기 쉬운 배포 실수를 헬스와 기동 로그로 드러낸다. */

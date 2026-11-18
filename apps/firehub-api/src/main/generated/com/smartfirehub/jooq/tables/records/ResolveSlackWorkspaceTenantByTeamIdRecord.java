@@ -10,7 +10,8 @@ import org.jooq.impl.TableRecordImpl;
 
 
 /**
- * p_team_id text
+ * Slack team_id → (workspace_id, tenant_id) 해석(RLS 우회, 읽기 전용). 해지된 워크스페이스는 해석하지
+ * 않는다.
  */
 @SuppressWarnings({ "all", "unchecked", "rawtypes", "this-escape" })
 public class ResolveSlackWorkspaceTenantByTeamIdRecord extends TableRecordImpl<ResolveSlackWorkspaceTenantByTeamIdRecord> {
@@ -68,6 +69,6 @@ public class ResolveSlackWorkspaceTenantByTeamIdRecord extends TableRecordImpl<R
 
         setWorkspaceId(workspaceId);
         setTenantId(tenantId);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

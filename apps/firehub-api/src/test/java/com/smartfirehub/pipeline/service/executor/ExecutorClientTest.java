@@ -10,6 +10,7 @@ import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import com.smartfirehub.global.tenant.MissingTenantScopeException;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.util.AdhocSqlErrorMessages;
+import com.smartfirehub.global.util.Jackson2WebClientCodecs;
 import com.smartfirehub.pipeline.service.PipelineSqlErrorMessages;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -22,7 +23,6 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.web.reactive.function.client.WebClient;
 
 class ExecutorClientTest {
 
@@ -67,8 +67,10 @@ class ExecutorClientTest {
 
   /** 응답 바이트 한도·선행 상한만 바꿔 끼운 클라이언트(Python 시간 제한은 기본 1800초). 생성자 직접 호출은 여기 한 곳이다. */
   private ExecutorClient client(int maxResponseBytes, int preStatementTimeoutSeconds) {
+    // 운영은 자동 구성 빌더(spring.http.codecs.preferred-json-mapper: jackson2)를 받는다. 날 builder() 는
+    // Spring 7 에서 Jackson 3 코덱을 골라 응답 DTO 디코딩이 어긋나므로 운영과 같게 Jackson 2 코덱을 건다(WD-792).
     return new ExecutorClient(
-        WebClient.builder(),
+        Jackson2WebClientCodecs.webClientBuilder(),
         "http://localhost:" + wireMock.port(),
         "test-token",
         maxResponseBytes,

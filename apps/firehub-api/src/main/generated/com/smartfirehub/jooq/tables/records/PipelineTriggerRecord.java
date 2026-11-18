@@ -242,6 +242,6 @@ public class PipelineTriggerRecord extends UpdatableRecordImpl<PipelineTriggerRe
         setCreatedAt(createdAt);
         setUpdatedAt(updatedAt);
         setTenantId(tenantId);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

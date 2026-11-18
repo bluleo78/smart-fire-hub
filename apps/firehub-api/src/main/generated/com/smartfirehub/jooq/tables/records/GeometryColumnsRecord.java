@@ -139,6 +139,6 @@ public class GeometryColumnsRecord extends TableRecordImpl<GeometryColumnsRecord
         setCoordDimension(coordDimension);
         setSrid(srid);
         setType(type);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

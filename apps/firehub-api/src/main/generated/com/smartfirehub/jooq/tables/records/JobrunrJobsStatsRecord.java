@@ -22,113 +22,141 @@ public class JobrunrJobsStatsRecord extends TableRecordImpl<JobrunrJobsStatsReco
     /**
      * Setter for <code>public.jobrunr_jobs_stats.total</code>.
      */
-    public void setTotal(Long value) {
+    public void setTotal(BigDecimal value) {
         set(0, value);
     }
 
     /**
      * Getter for <code>public.jobrunr_jobs_stats.total</code>.
      */
-    public Long getTotal() {
-        return (Long) get(0);
+    public BigDecimal getTotal() {
+        return (BigDecimal) get(0);
+    }
+
+    /**
+     * Setter for <code>public.jobrunr_jobs_stats.awaiting</code>.
+     */
+    public void setAwaiting(BigDecimal value) {
+        set(1, value);
+    }
+
+    /**
+     * Getter for <code>public.jobrunr_jobs_stats.awaiting</code>.
+     */
+    public BigDecimal getAwaiting() {
+        return (BigDecimal) get(1);
     }
 
     /**
      * Setter for <code>public.jobrunr_jobs_stats.scheduled</code>.
      */
-    public void setScheduled(Long value) {
-        set(1, value);
+    public void setScheduled(BigDecimal value) {
+        set(2, value);
     }
 
     /**
      * Getter for <code>public.jobrunr_jobs_stats.scheduled</code>.
      */
-    public Long getScheduled() {
-        return (Long) get(1);
+    public BigDecimal getScheduled() {
+        return (BigDecimal) get(2);
     }
 
     /**
      * Setter for <code>public.jobrunr_jobs_stats.enqueued</code>.
      */
-    public void setEnqueued(Long value) {
-        set(2, value);
+    public void setEnqueued(BigDecimal value) {
+        set(3, value);
     }
 
     /**
      * Getter for <code>public.jobrunr_jobs_stats.enqueued</code>.
      */
-    public Long getEnqueued() {
-        return (Long) get(2);
+    public BigDecimal getEnqueued() {
+        return (BigDecimal) get(3);
     }
 
     /**
      * Setter for <code>public.jobrunr_jobs_stats.processing</code>.
      */
-    public void setProcessing(Long value) {
-        set(3, value);
+    public void setProcessing(BigDecimal value) {
+        set(4, value);
     }
 
     /**
      * Getter for <code>public.jobrunr_jobs_stats.processing</code>.
      */
-    public Long getProcessing() {
-        return (Long) get(3);
+    public BigDecimal getProcessing() {
+        return (BigDecimal) get(4);
+    }
+
+    /**
+     * Setter for <code>public.jobrunr_jobs_stats.processed</code>.
+     */
+    public void setProcessed(BigDecimal value) {
+        set(5, value);
+    }
+
+    /**
+     * Getter for <code>public.jobrunr_jobs_stats.processed</code>.
+     */
+    public BigDecimal getProcessed() {
+        return (BigDecimal) get(5);
     }
 
     /**
      * Setter for <code>public.jobrunr_jobs_stats.failed</code>.
      */
-    public void setFailed(Long value) {
-        set(4, value);
+    public void setFailed(BigDecimal value) {
+        set(6, value);
     }
 
     /**
      * Getter for <code>public.jobrunr_jobs_stats.failed</code>.
      */
-    public Long getFailed() {
-        return (Long) get(4);
+    public BigDecimal getFailed() {
+        return (BigDecimal) get(6);
     }
 
     /**
      * Setter for <code>public.jobrunr_jobs_stats.succeeded</code>.
      */
-    public void setSucceeded(Long value) {
-        set(5, value);
+    public void setSucceeded(BigDecimal value) {
+        set(7, value);
     }
 
     /**
      * Getter for <code>public.jobrunr_jobs_stats.succeeded</code>.
      */
-    public Long getSucceeded() {
-        return (Long) get(5);
+    public BigDecimal getSucceeded() {
+        return (BigDecimal) get(7);
     }
 
     /**
      * Setter for <code>public.jobrunr_jobs_stats.alltimesucceeded</code>.
      */
     public void setAlltimesucceeded(BigDecimal value) {
-        set(6, value);
+        set(8, value);
     }
 
     /**
      * Getter for <code>public.jobrunr_jobs_stats.alltimesucceeded</code>.
      */
     public BigDecimal getAlltimesucceeded() {
-        return (BigDecimal) get(6);
+        return (BigDecimal) get(8);
     }
 
     /**
      * Setter for <code>public.jobrunr_jobs_stats.deleted</code>.
      */
-    public void setDeleted(Long value) {
-        set(7, value);
+    public void setDeleted(BigDecimal value) {
+        set(9, value);
     }
 
     /**
      * Getter for <code>public.jobrunr_jobs_stats.deleted</code>.
      */
-    public Long getDeleted() {
-        return (Long) get(7);
+    public BigDecimal getDeleted() {
+        return (BigDecimal) get(9);
     }
 
     /**
@@ -136,7 +164,7 @@ public class JobrunrJobsStatsRecord extends TableRecordImpl<JobrunrJobsStatsReco
      * <code>public.jobrunr_jobs_stats.nbrofbackgroundjobservers</code>.
      */
     public void setNbrofbackgroundjobservers(Long value) {
-        set(8, value);
+        set(10, value);
     }
 
     /**
@@ -144,21 +172,21 @@ public class JobrunrJobsStatsRecord extends TableRecordImpl<JobrunrJobsStatsReco
      * <code>public.jobrunr_jobs_stats.nbrofbackgroundjobservers</code>.
      */
     public Long getNbrofbackgroundjobservers() {
-        return (Long) get(8);
+        return (Long) get(10);
     }
 
     /**
      * Setter for <code>public.jobrunr_jobs_stats.nbrofrecurringjobs</code>.
      */
     public void setNbrofrecurringjobs(Long value) {
-        set(9, value);
+        set(11, value);
     }
 
     /**
      * Getter for <code>public.jobrunr_jobs_stats.nbrofrecurringjobs</code>.
      */
     public Long getNbrofrecurringjobs() {
-        return (Long) get(9);
+        return (Long) get(11);
     }
 
     // -------------------------------------------------------------------------
@@ -175,19 +203,21 @@ public class JobrunrJobsStatsRecord extends TableRecordImpl<JobrunrJobsStatsReco
     /**
      * Create a detached, initialised JobrunrJobsStatsRecord
      */
-    public JobrunrJobsStatsRecord(Long total, Long scheduled, Long enqueued, Long processing, Long failed, Long succeeded, BigDecimal alltimesucceeded, Long deleted, Long nbrofbackgroundjobservers, Long nbrofrecurringjobs) {
+    public JobrunrJobsStatsRecord(BigDecimal total, BigDecimal awaiting, BigDecimal scheduled, BigDecimal enqueued, BigDecimal processing, BigDecimal processed, BigDecimal failed, BigDecimal succeeded, BigDecimal alltimesucceeded, BigDecimal deleted, Long nbrofbackgroundjobservers, Long nbrofrecurringjobs) {
         super(JobrunrJobsStats.JOBRUNR_JOBS_STATS);
 
         setTotal(total);
+        setAwaiting(awaiting);
         setScheduled(scheduled);
         setEnqueued(enqueued);
         setProcessing(processing);
+        setProcessed(processed);
         setFailed(failed);
         setSucceeded(succeeded);
         setAlltimesucceeded(alltimesucceeded);
         setDeleted(deleted);
         setNbrofbackgroundjobservers(nbrofbackgroundjobservers);
         setNbrofrecurringjobs(nbrofrecurringjobs);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

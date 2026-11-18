@@ -91,6 +91,6 @@ public class PipelineStepDependencyRecord extends UpdatableRecordImpl<PipelineSt
         setStepId(stepId);
         setDependsOnStepId(dependsOnStepId);
         setTenantId(tenantId);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

@@ -32,10 +32,10 @@ import org.jooq.QueryPart;
 import org.jooq.Record;
 import org.jooq.SQL;
 import org.jooq.Schema;
-import org.jooq.Select;
 import org.jooq.Stringly;
 import org.jooq.Table;
 import org.jooq.TableField;
+import org.jooq.TableLike;
 import org.jooq.TableOptions;
 import org.jooq.UniqueKey;
 import org.jooq.impl.DSL;
@@ -68,7 +68,7 @@ public class DatasetAccessGrant extends TableImpl<DatasetAccessGrantRecord> {
     /**
      * The column <code>public.dataset_access_grant.id</code>.
      */
-    public final TableField<DatasetAccessGrantRecord, Long> ID = createField(DSL.name("id"), SQLDataType.BIGINT.nullable(false).identity(true), this, "");
+    public final TableField<DatasetAccessGrantRecord, Long> ID = createField(DSL.name("id"), SQLDataType.BIGINT.nullable(false).generatedByDefaultAsIdentity(), this, "");
 
     /**
      * The column <code>public.dataset_access_grant.tenant_id</code>.
@@ -293,7 +293,7 @@ public class DatasetAccessGrant extends TableImpl<DatasetAccessGrantRecord> {
      */
     @Override
     public DatasetAccessGrant where(Condition condition) {
-        return new DatasetAccessGrant(getQualifiedName(), aliased() ? this : null, null, condition);
+        return new DatasetAccessGrant(getQualifiedName(), aliased() ? this : null, null, Internal.condition(this, condition));
     }
 
     /**
@@ -360,7 +360,7 @@ public class DatasetAccessGrant extends TableImpl<DatasetAccessGrantRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public DatasetAccessGrant whereExists(Select<?> select) {
+    public DatasetAccessGrant whereExists(TableLike<?> select) {
         return where(DSL.exists(select));
     }
 
@@ -368,7 +368,7 @@ public class DatasetAccessGrant extends TableImpl<DatasetAccessGrantRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public DatasetAccessGrant whereNotExists(Select<?> select) {
+    public DatasetAccessGrant whereNotExists(TableLike<?> select) {
         return where(DSL.notExists(select));
     }
 }

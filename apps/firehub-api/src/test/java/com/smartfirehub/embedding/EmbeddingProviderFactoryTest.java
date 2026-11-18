@@ -9,6 +9,7 @@ import com.smartfirehub.embedding.config.EmbeddingConfig;
 import com.smartfirehub.embedding.config.EmbeddingConfigService;
 import com.smartfirehub.embedding.config.EmbeddingProviderType;
 import com.smartfirehub.embedding.config.EmbeddingTargetGuard;
+import com.smartfirehub.global.util.Jackson2WebClientCodecs;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -19,7 +20,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.web.reactive.function.client.WebClient;
 
 /** EmbeddingProviderFactory — 현재 테넌트 설정 문서로 provider 를 만들고, 미설정이면 명확히 멈춘다. */
 @ExtendWith(MockitoExtension.class)
@@ -32,7 +32,10 @@ class EmbeddingProviderFactoryTest {
 
   @BeforeEach
   void setUp() {
-    factory = new EmbeddingProviderFactory(configService, WebClient.builder(), targetGuard);
+    // 운영은 자동 구성 빌더(Jackson 2 우선)를 받는다 — 같게 Jackson 2 코덱을 건 빌더를 준다(WD-792).
+    factory =
+        new EmbeddingProviderFactory(
+            configService, Jackson2WebClientCodecs.webClientBuilder(), targetGuard);
   }
 
   @Test

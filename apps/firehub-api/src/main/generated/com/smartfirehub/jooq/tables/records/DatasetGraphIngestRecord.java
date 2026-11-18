@@ -214,6 +214,6 @@ public class DatasetGraphIngestRecord extends UpdatableRecordImpl<DatasetGraphIn
         setStatus(status);
         setMetadata(metadata);
         setTenantId(tenantId);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

@@ -137,6 +137,6 @@ public class AnalyticsQueryRunRecord extends UpdatableRecordImpl<AnalyticsQueryR
         setSqlText(sqlText);
         setMaxRows(maxRows);
         setCreatedAt(createdAt);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

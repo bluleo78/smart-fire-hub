@@ -10,7 +10,8 @@ import org.jooq.impl.TableRecordImpl;
 
 
 /**
- * p_statuses text[]
+ * 주어진 상태의 아웃박스 행을 가진 테넌트 id 목록(RLS 우회, 읽기 전용). 호출자는 이 목록으로 테넌트별 컨텍스트를 열고 실제 작업은
+ * RLS 하에서 한다.
  */
 @SuppressWarnings({ "all", "unchecked", "rawtypes", "this-escape" })
 public class OutboxTenantIdsRecord extends TableRecordImpl<OutboxTenantIdsRecord> {
@@ -49,6 +50,6 @@ public class OutboxTenantIdsRecord extends TableRecordImpl<OutboxTenantIdsRecord
         super(OutboxTenantIds.OUTBOX_TENANT_IDS);
 
         setOutboxTenantIds(outboxTenantIds);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

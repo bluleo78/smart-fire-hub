@@ -783,7 +783,7 @@ cmd_up() {
     --app.pipeline.datasource.url="$db" \
     --app.pipeline.datasource.password="$WL_PIPELINE_EXECUTOR_PASSWORD" \
     --app.pipeline.role-password-secret="$WL_ROLE_PASSWORD_SECRET" \
-    --org.jobrunr.dashboard.enabled=false \
+    --jobrunr.dashboard.enabled=false \
     --agent.url="http://127.0.0.1:$WL_AGENT_PORT" \
     --agent.internal-token="$internal_token" \
     --app.base-url="$web_origin" \

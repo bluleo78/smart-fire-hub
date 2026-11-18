@@ -3,6 +3,7 @@ package com.smartfirehub.settings.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.apiconnection.service.UrlUtils;
+import com.smartfirehub.global.util.Jackson2WebClientCodecs;
 import com.smartfirehub.pipeline.service.executor.SsrfException;
 import com.smartfirehub.pipeline.service.executor.SsrfProtectionService;
 import com.smartfirehub.pipeline.service.executor.SsrfSafeHttpClientFactory;
@@ -505,10 +506,7 @@ public class OpencodeProbeService {
   // -------------------------------------------------------------------------
 
   private ProbeResult doRequest(URI uri, String apiKey) {
-    ExchangeStrategies strategies =
-        ExchangeStrategies.builder()
-            .codecs(c -> c.defaultCodecs().maxInMemorySize(MAX_RESPONSE_BYTES))
-            .build();
+    ExchangeStrategies strategies = Jackson2WebClientCodecs.exchangeStrategies(MAX_RESPONSE_BYTES);
 
     // followRedirect(false): 리다이렉트를 절대 따라가지 않는다 — 공개 호스트가 302 로
     // 169.254.169.254(클라우드 메타데이터) 같은 내부 주소로 돌려보내는 공격을 애초에 차단한다.

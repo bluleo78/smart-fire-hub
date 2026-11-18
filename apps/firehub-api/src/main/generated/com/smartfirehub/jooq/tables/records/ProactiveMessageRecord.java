@@ -197,6 +197,6 @@ public class ProactiveMessageRecord extends UpdatableRecordImpl<ProactiveMessage
         setReadAt(readAt);
         setCreatedAt(createdAt);
         setTenantId(tenantId);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

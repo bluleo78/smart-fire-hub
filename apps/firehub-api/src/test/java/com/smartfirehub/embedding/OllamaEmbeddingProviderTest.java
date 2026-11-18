@@ -3,6 +3,7 @@ package com.smartfirehub.embedding;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.smartfirehub.global.util.Jackson2WebClientCodecs;
 import java.util.List;
 import okhttp3.mockwebserver.MockResponse;
 import okhttp3.mockwebserver.MockWebServer;
@@ -27,7 +28,9 @@ class OllamaEmbeddingProviderTest {
   }
 
   private OllamaEmbeddingProvider provider(int dimension) {
-    WebClient client = WebClient.builder().baseUrl(server.url("/").toString()).build();
+    // 운영(자동 구성 빌더)과 같은 Jackson 2 코덱을 건다(WD-792).
+    WebClient client =
+        Jackson2WebClientCodecs.webClientBuilder().baseUrl(server.url("/").toString()).build();
     return new OllamaEmbeddingProvider(client, "bge-m3", dimension);
   }
 
@@ -80,7 +83,7 @@ class OllamaEmbeddingProviderTest {
             .setBody("{\"embeddings\":[[0.1,0.2,0.3]]}"));
     OllamaEmbeddingProvider p =
         new OllamaEmbeddingProvider(
-            WebClient.builder().baseUrl(server.url("/").toString()).build(),
+            Jackson2WebClientCodecs.webClientBuilder().baseUrl(server.url("/").toString()).build(),
             "bge-m3",
             EmbeddingProviderFactory.UNCHECKED_DIMENSION);
     assertThat(p.embed(List.of("a")).get(0)).hasSize(3);

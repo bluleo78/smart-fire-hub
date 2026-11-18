@@ -271,6 +271,6 @@ public class DocumentFileRecord extends UpdatableRecordImpl<DocumentFileRecord> 
         setCreatedAt(createdAt);
         setCompletedAt(completedAt);
         setTenantId(tenantId);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

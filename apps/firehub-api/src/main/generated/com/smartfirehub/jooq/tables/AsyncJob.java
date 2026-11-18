@@ -29,13 +29,14 @@ import org.jooq.QueryPart;
 import org.jooq.Record;
 import org.jooq.SQL;
 import org.jooq.Schema;
-import org.jooq.Select;
 import org.jooq.Stringly;
 import org.jooq.Table;
 import org.jooq.TableField;
+import org.jooq.TableLike;
 import org.jooq.TableOptions;
 import org.jooq.UniqueKey;
 import org.jooq.impl.DSL;
+import org.jooq.impl.Internal;
 import org.jooq.impl.SQLDataType;
 import org.jooq.impl.TableImpl;
 
@@ -276,7 +277,7 @@ public class AsyncJob extends TableImpl<AsyncJobRecord> {
      */
     @Override
     public AsyncJob where(Condition condition) {
-        return new AsyncJob(getQualifiedName(), aliased() ? this : null, null, condition);
+        return new AsyncJob(getQualifiedName(), aliased() ? this : null, null, Internal.condition(this, condition));
     }
 
     /**
@@ -343,7 +344,7 @@ public class AsyncJob extends TableImpl<AsyncJobRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public AsyncJob whereExists(Select<?> select) {
+    public AsyncJob whereExists(TableLike<?> select) {
         return where(DSL.exists(select));
     }
 
@@ -351,7 +352,7 @@ public class AsyncJob extends TableImpl<AsyncJobRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public AsyncJob whereNotExists(Select<?> select) {
+    public AsyncJob whereNotExists(TableLike<?> select) {
         return where(DSL.notExists(select));
     }
 }

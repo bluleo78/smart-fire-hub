@@ -10,4 +10,5 @@ public record CreatePipelineRequest(
     @NotBlank @Size(max = 100, message = "파이프라인 이름은 100자 이내여야 합니다") String name,
     @Size(max = DescriptionLimits.MAX_LENGTH, message = DescriptionLimits.PIPELINE_TOO_LONG)
         String description,
-    @Valid List<PipelineStepRequest> steps) {}
+    // @Valid 는 요소 형식에 둔다 — 컨테이너에 붙이면 Hibernate Validator 9 가 HV000271 경고를 낸다(WD-792).
+    List<@Valid PipelineStepRequest> steps) {}

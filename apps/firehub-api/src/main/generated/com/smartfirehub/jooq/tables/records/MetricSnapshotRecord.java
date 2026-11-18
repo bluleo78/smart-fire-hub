@@ -136,6 +136,6 @@ public class MetricSnapshotRecord extends UpdatableRecordImpl<MetricSnapshotReco
         setValue(value);
         setCollectedAt(collectedAt);
         setTenantId(tenantId);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

@@ -2,6 +2,7 @@ package com.smartfirehub.proactive.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.global.util.Jackson2WebClientCodecs;
 import com.smartfirehub.proactive.dto.ProactiveResult;
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -58,7 +59,7 @@ public class ReportRenderUtils {
             .build();
     HttpClient httpClient = HttpClient.create().responseTimeout(CHART_TIMEOUT);
     this.agentWebClient =
-        WebClient.builder()
+        Jackson2WebClientCodecs.webClientBuilder()
             .baseUrl(agentUrl)
             .clientConnector(new ReactorClientHttpConnector(httpClient))
             .codecs(c -> c.defaultCodecs().maxInMemorySize(10 * 1024 * 1024))

@@ -2,6 +2,7 @@ package com.smartfirehub.notification.channels.kakao;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.global.util.Jackson2WebClientCodecs;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.util.LinkedMultiValueMap;
@@ -21,8 +22,10 @@ public class KakaoApiClient {
   private final ObjectMapper objectMapper;
 
   public KakaoApiClient(ObjectMapper objectMapper) {
-    this.authClient = WebClient.builder().baseUrl("https://kauth.kakao.com").build();
-    this.apiClient = WebClient.builder().baseUrl("https://kapi.kakao.com").build();
+    this.authClient =
+        Jackson2WebClientCodecs.webClientBuilder().baseUrl("https://kauth.kakao.com").build();
+    this.apiClient =
+        Jackson2WebClientCodecs.webClientBuilder().baseUrl("https://kapi.kakao.com").build();
     this.objectMapper = objectMapper;
   }
 

@@ -196,6 +196,6 @@ public class DashboardWidgetRecord extends UpdatableRecordImpl<DashboardWidgetRe
         setCreatedAt(createdAt);
         setUpdatedAt(updatedAt);
         setTenantId(tenantId);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

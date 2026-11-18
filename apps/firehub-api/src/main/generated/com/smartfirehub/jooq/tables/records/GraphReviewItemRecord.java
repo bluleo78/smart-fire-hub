@@ -242,6 +242,6 @@ public class GraphReviewItemRecord extends UpdatableRecordImpl<GraphReviewItemRe
         setDecidedAt(decidedAt);
         setCreatedAt(createdAt);
         setTenantId(tenantId);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

@@ -187,7 +187,7 @@ Flyway 는 community edition 이라 **undo 가 없다** — 한번 적용된 마
   상태별 조치: **ENQUEUED/PROCESSING** 은 배포 전 옛 api 이미지가 클래스를 가진 채로 마저 처리되길
   기다린다(급하면 배포를 잠깐 미룬다). **SCHEDULED**(재시도 대기)는 배포 전에 `DELETE` 한다 — 배포 후엔
   옛 클래스를 못 찾아 영구 실패한다. 이미 **FAILED**(재시도 소진)로 끝난 것은 무해하니 그대로 둬도 된다.
-  대시보드는 꺼져 있으므로(`org.jobrunr.dashboard.enabled: false`) SQL 로만 확인·정리한다.
+  대시보드는 꺼져 있으므로(`jobrunr.dashboard.enabled: false` — JobRunr 8 부터 접두가 `jobrunr.` 다. 옛 `org.jobrunr.` 는 경고 없이 무시된다) SQL 로만 확인·정리한다.
 - **배포 전 확인(운영 DB, 소유자 롤 `app` 으로 — `app_tenant` 는 RLS 때문에 0행)**:
   ```sql
   -- 0) 최신 마이그레이션이 V130 인가

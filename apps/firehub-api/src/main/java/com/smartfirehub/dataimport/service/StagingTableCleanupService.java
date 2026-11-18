@@ -238,8 +238,11 @@ public class StagingTableCleanupService {
    */
   private boolean hasActiveJobs() {
     // "활성" = 대기/예약/실행 중. 이 중 하나라도 있으면 정리를 건너뛴다.
+    // AWAITING 은 JobRunr 8 에서 생긴 상태(선행 조건·탄소 인지 처리 대기 — 곧 실행될 작업)라 활성으로 센다.
+    // 거짓 음성(살아있는 임포트의 staging DROP)이 치명적이고 과보수는 무해하므로 더 넓게 본다(WD-792).
     JobStats stats = storageProvider.getJobStats();
-    return stats.getScheduled() + stats.getEnqueued() + stats.getProcessing() > 0;
+    return stats.getAwaiting() + stats.getScheduled() + stats.getEnqueued() + stats.getProcessing()
+        > 0;
   }
 
   /**

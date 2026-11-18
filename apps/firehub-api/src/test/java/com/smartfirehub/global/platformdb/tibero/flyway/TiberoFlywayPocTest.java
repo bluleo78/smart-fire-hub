@@ -17,13 +17,15 @@ import javax.sql.DataSource;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.output.RepairResult;
 import org.flywaydb.core.api.output.ValidateResult;
+import org.flywaydb.core.internal.database.DatabaseType;
+import org.flywaydb.core.internal.database.DatabaseTypeRegister;
 import org.jobrunr.jobs.states.StateName;
 import org.jobrunr.storage.sql.oracle.OracleStorageProvider;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
-import org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration;
+import org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.jdbc.datasource.DelegatingDataSource;
 
@@ -344,15 +346,21 @@ class TiberoFlywayPocTest {
               write("spring boot startup failure: " + failure);
               assertThat(ctx).hasNotFailed();
               Flyway fw = ctx.getBean(Flyway.class);
+              // Flyway 12 는 Configuration.getDatabaseType() 을 없앴다 — 연결로 고른 타입을 등록부에서 직접 받는다(Flyway
+              // 가 쓰는 같은 경로).
+              DatabaseType databaseType;
+              try (Connection c = fw.getConfiguration().getDataSource().getConnection()) {
+                databaseType =
+                    DatabaseTypeRegister.getDatabaseTypeForConnection(c, fw.getConfiguration());
+              }
               write(
                   "spring boot databaseType="
-                      + fw.getConfiguration().getDatabaseType().getName()
+                      + databaseType.getName()
                       + " locations="
                       + Arrays.toString(fw.getConfiguration().getLocations())
                       + " info="
                       + states(fw));
-              assertThat(fw.getConfiguration().getDatabaseType())
-                  .isInstanceOf(TiberoFlywayDatabaseType.class);
+              assertThat(databaseType).isInstanceOf(TiberoFlywayDatabaseType.class);
               // 실측: Spring Boot 3.4 의 DatabaseDriver 에 Tibero 가 없어(UNKNOWN) {vendor} 가 글자 그대로 남는다.
               assertThat(fw.getConfiguration().getLocations()[0].getDescriptor())
                   .contains("{vendor}");

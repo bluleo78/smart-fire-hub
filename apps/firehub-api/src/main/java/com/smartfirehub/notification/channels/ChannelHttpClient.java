@@ -1,5 +1,6 @@
 package com.smartfirehub.notification.channels;
 
+import com.smartfirehub.global.util.Jackson2WebClientCodecs;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.slf4j.Logger;
@@ -23,7 +24,7 @@ public class ChannelHttpClient {
   public ChannelHttpClient(
       @Value("${channel.service.url:http://firehub-channel:3002}") String channelServiceUrl,
       @Value("${channel.internal-token:}") String channelInternalToken) {
-    this.webClient = WebClient.builder().baseUrl(channelServiceUrl).build();
+    this.webClient = Jackson2WebClientCodecs.webClientBuilder().baseUrl(channelServiceUrl).build();
     this.channelInternalToken = channelInternalToken;
   }
 

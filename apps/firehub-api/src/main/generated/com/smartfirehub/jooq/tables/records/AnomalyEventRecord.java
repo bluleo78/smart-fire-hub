@@ -211,6 +211,6 @@ public class AnomalyEventRecord extends UpdatableRecordImpl<AnomalyEventRecord> 
         setSensitivity(sensitivity);
         setDetectedAt(detectedAt);
         setTenantId(tenantId);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

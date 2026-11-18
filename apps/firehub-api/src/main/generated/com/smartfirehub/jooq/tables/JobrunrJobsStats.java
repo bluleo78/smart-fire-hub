@@ -17,12 +17,13 @@ import org.jooq.PlainSQL;
 import org.jooq.QueryPart;
 import org.jooq.SQL;
 import org.jooq.Schema;
-import org.jooq.Select;
 import org.jooq.Stringly;
 import org.jooq.Table;
 import org.jooq.TableField;
+import org.jooq.TableLike;
 import org.jooq.TableOptions;
 import org.jooq.impl.DSL;
+import org.jooq.impl.Internal;
 import org.jooq.impl.SQLDataType;
 import org.jooq.impl.TableImpl;
 
@@ -51,32 +52,42 @@ public class JobrunrJobsStats extends TableImpl<JobrunrJobsStatsRecord> {
     /**
      * The column <code>public.jobrunr_jobs_stats.total</code>.
      */
-    public final TableField<JobrunrJobsStatsRecord, Long> TOTAL = createField(DSL.name("total"), SQLDataType.BIGINT, this, "");
+    public final TableField<JobrunrJobsStatsRecord, BigDecimal> TOTAL = createField(DSL.name("total"), SQLDataType.NUMERIC, this, "");
+
+    /**
+     * The column <code>public.jobrunr_jobs_stats.awaiting</code>.
+     */
+    public final TableField<JobrunrJobsStatsRecord, BigDecimal> AWAITING = createField(DSL.name("awaiting"), SQLDataType.NUMERIC, this, "");
 
     /**
      * The column <code>public.jobrunr_jobs_stats.scheduled</code>.
      */
-    public final TableField<JobrunrJobsStatsRecord, Long> SCHEDULED = createField(DSL.name("scheduled"), SQLDataType.BIGINT, this, "");
+    public final TableField<JobrunrJobsStatsRecord, BigDecimal> SCHEDULED = createField(DSL.name("scheduled"), SQLDataType.NUMERIC, this, "");
 
     /**
      * The column <code>public.jobrunr_jobs_stats.enqueued</code>.
      */
-    public final TableField<JobrunrJobsStatsRecord, Long> ENQUEUED = createField(DSL.name("enqueued"), SQLDataType.BIGINT, this, "");
+    public final TableField<JobrunrJobsStatsRecord, BigDecimal> ENQUEUED = createField(DSL.name("enqueued"), SQLDataType.NUMERIC, this, "");
 
     /**
      * The column <code>public.jobrunr_jobs_stats.processing</code>.
      */
-    public final TableField<JobrunrJobsStatsRecord, Long> PROCESSING = createField(DSL.name("processing"), SQLDataType.BIGINT, this, "");
+    public final TableField<JobrunrJobsStatsRecord, BigDecimal> PROCESSING = createField(DSL.name("processing"), SQLDataType.NUMERIC, this, "");
+
+    /**
+     * The column <code>public.jobrunr_jobs_stats.processed</code>.
+     */
+    public final TableField<JobrunrJobsStatsRecord, BigDecimal> PROCESSED = createField(DSL.name("processed"), SQLDataType.NUMERIC, this, "");
 
     /**
      * The column <code>public.jobrunr_jobs_stats.failed</code>.
      */
-    public final TableField<JobrunrJobsStatsRecord, Long> FAILED = createField(DSL.name("failed"), SQLDataType.BIGINT, this, "");
+    public final TableField<JobrunrJobsStatsRecord, BigDecimal> FAILED = createField(DSL.name("failed"), SQLDataType.NUMERIC, this, "");
 
     /**
      * The column <code>public.jobrunr_jobs_stats.succeeded</code>.
      */
-    public final TableField<JobrunrJobsStatsRecord, Long> SUCCEEDED = createField(DSL.name("succeeded"), SQLDataType.BIGINT, this, "");
+    public final TableField<JobrunrJobsStatsRecord, BigDecimal> SUCCEEDED = createField(DSL.name("succeeded"), SQLDataType.NUMERIC, this, "");
 
     /**
      * The column <code>public.jobrunr_jobs_stats.alltimesucceeded</code>.
@@ -86,7 +97,7 @@ public class JobrunrJobsStats extends TableImpl<JobrunrJobsStatsRecord> {
     /**
      * The column <code>public.jobrunr_jobs_stats.deleted</code>.
      */
-    public final TableField<JobrunrJobsStatsRecord, Long> DELETED = createField(DSL.name("deleted"), SQLDataType.BIGINT, this, "");
+    public final TableField<JobrunrJobsStatsRecord, BigDecimal> DELETED = createField(DSL.name("deleted"), SQLDataType.NUMERIC, this, "");
 
     /**
      * The column
@@ -105,36 +116,41 @@ public class JobrunrJobsStats extends TableImpl<JobrunrJobsStatsRecord> {
 
     private JobrunrJobsStats(Name alias, Table<JobrunrJobsStatsRecord> aliased, Field<?>[] parameters, Condition where) {
         super(alias, null, aliased, parameters, DSL.comment(""), TableOptions.view("""
-        create view "jobrunr_jobs_stats" as  WITH job_stat_results AS (
+        CREATE VIEW "jobrunr_jobs_stats" AS  WITH job_stat_results AS (
                 SELECT jobrunr_jobs.state,
                    count(*) AS count
                   FROM jobrunr_jobs
-                 GROUP BY ROLLUP(jobrunr_jobs.state)
+                 GROUP BY jobrunr_jobs.state
                )
-        SELECT COALESCE(( SELECT job_stat_results.count
+        SELECT COALESCE(( SELECT sum(job_stat_results.count) AS sum
+                  FROM job_stat_results), (0)::numeric) AS total,
+           COALESCE(( SELECT sum(job_stat_results.count) AS sum
                   FROM job_stat_results
-                 WHERE (job_stat_results.state IS NULL)), (0)::bigint) AS total,
-           COALESCE(( SELECT job_stat_results.count
+                 WHERE ((job_stat_results.state)::text = 'AWAITING'::text)), (0)::numeric) AS awaiting,
+           COALESCE(( SELECT sum(job_stat_results.count) AS sum
                   FROM job_stat_results
-                 WHERE ((job_stat_results.state)::text = 'SCHEDULED'::text)), (0)::bigint) AS scheduled,
-           COALESCE(( SELECT job_stat_results.count
+                 WHERE ((job_stat_results.state)::text = 'SCHEDULED'::text)), (0)::numeric) AS scheduled,
+           COALESCE(( SELECT sum(job_stat_results.count) AS sum
                   FROM job_stat_results
-                 WHERE ((job_stat_results.state)::text = 'ENQUEUED'::text)), (0)::bigint) AS enqueued,
-           COALESCE(( SELECT job_stat_results.count
+                 WHERE ((job_stat_results.state)::text = 'ENQUEUED'::text)), (0)::numeric) AS enqueued,
+           COALESCE(( SELECT sum(job_stat_results.count) AS sum
                   FROM job_stat_results
-                 WHERE ((job_stat_results.state)::text = 'PROCESSING'::text)), (0)::bigint) AS processing,
-           COALESCE(( SELECT job_stat_results.count
+                 WHERE ((job_stat_results.state)::text = 'PROCESSING'::text)), (0)::numeric) AS processing,
+           COALESCE(( SELECT sum(job_stat_results.count) AS sum
                   FROM job_stat_results
-                 WHERE ((job_stat_results.state)::text = 'FAILED'::text)), (0)::bigint) AS failed,
-           COALESCE(( SELECT job_stat_results.count
+                 WHERE ((job_stat_results.state)::text = 'PROCESSED'::text)), (0)::numeric) AS processed,
+           COALESCE(( SELECT sum(job_stat_results.count) AS sum
                   FROM job_stat_results
-                 WHERE ((job_stat_results.state)::text = 'SUCCEEDED'::text)), (0)::bigint) AS succeeded,
+                 WHERE ((job_stat_results.state)::text = 'FAILED'::text)), (0)::numeric) AS failed,
+           COALESCE(( SELECT sum(job_stat_results.count) AS sum
+                  FROM job_stat_results
+                 WHERE ((job_stat_results.state)::text = 'SUCCEEDED'::text)), (0)::numeric) AS succeeded,
            COALESCE(( SELECT ((jm.value)::character(10))::numeric(10,0) AS value
                   FROM jobrunr_metadata jm
                  WHERE ((jm.id)::text = 'succeeded-jobs-counter-cluster'::text)), (0)::numeric) AS alltimesucceeded,
-           COALESCE(( SELECT job_stat_results.count
+           COALESCE(( SELECT sum(job_stat_results.count) AS sum
                   FROM job_stat_results
-                 WHERE ((job_stat_results.state)::text = 'DELETED'::text)), (0)::bigint) AS deleted,
+                 WHERE ((job_stat_results.state)::text = 'DELETED'::text)), (0)::numeric) AS deleted,
            ( SELECT count(*) AS count
                   FROM jobrunr_backgroundjobservers) AS nbrofbackgroundjobservers,
            ( SELECT count(*) AS count
@@ -212,7 +228,7 @@ public class JobrunrJobsStats extends TableImpl<JobrunrJobsStatsRecord> {
      */
     @Override
     public JobrunrJobsStats where(Condition condition) {
-        return new JobrunrJobsStats(getQualifiedName(), aliased() ? this : null, null, condition);
+        return new JobrunrJobsStats(getQualifiedName(), aliased() ? this : null, null, Internal.condition(this, condition));
     }
 
     /**
@@ -279,7 +295,7 @@ public class JobrunrJobsStats extends TableImpl<JobrunrJobsStatsRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public JobrunrJobsStats whereExists(Select<?> select) {
+    public JobrunrJobsStats whereExists(TableLike<?> select) {
         return where(DSL.exists(select));
     }
 
@@ -287,7 +303,7 @@ public class JobrunrJobsStats extends TableImpl<JobrunrJobsStatsRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public JobrunrJobsStats whereNotExists(Select<?> select) {
+    public JobrunrJobsStats whereNotExists(TableLike<?> select) {
         return where(DSL.notExists(select));
     }
 }

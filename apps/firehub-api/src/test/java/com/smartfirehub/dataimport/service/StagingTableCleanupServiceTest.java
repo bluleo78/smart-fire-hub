@@ -64,11 +64,20 @@ class StagingTableCleanupServiceTest extends IntegrationTestBase {
         .getJobStats();
   }
 
-  /** 활성 작업 수만 채운 JobStats — 나머지 집계는 게이트가 보지 않으므로 0 이다. */
+  /** 활성 작업 수만 채운 JobStats(실행 중으로 싣는다) — 나머지 집계는 게이트가 보지 않으므로 0 이다. */
   private static JobStats activeJobStats(long active) {
-    // 인자 순서: 시각, total, scheduled, enqueued, processing, failed, succeeded, allTimeSucceeded,
-    // deleted, 반복 작업 수, 서버 수.
-    return new JobStats(Instant.now(), active, 0L, 0L, active, 0L, 0L, 0L, 0L, 0, 0);
+    return jobStats(0L, active);
+  }
+
+  /**
+   * 기다리는(AWAITING) 작업·실행 중(PROCESSING) 작업 수만 채운 JobStats. 위치 인자 12개의 순서를 이 한 곳에서만 맞춘다.
+   *
+   * <p>인자 순서(JobRunr 8): 시각, total, awaiting, scheduled, enqueued, processing, failed, succeeded,
+   * allTimeSucceeded, deleted, 반복 작업 수, 서버 수. awaiting 은 8.x 에서 생겼다(v016 뷰 열).
+   */
+  private static JobStats jobStats(long awaiting, long processing) {
+    return new JobStats(
+        Instant.now(), awaiting + processing, awaiting, 0L, 0L, processing, 0L, 0L, 0L, 0L, 0, 0);
   }
 
   /** stg_import_ + 32 hex 형태의 물리 테이블을 data 스키마에 생성한다(고아 시뮬레이션). */
@@ -117,6 +126,35 @@ class StagingTableCleanupServiceTest extends IntegrationTestBase {
   /** ACTIVE 테넌트 수 — 순회가 두 번 이상 돌 수 있는지(테스트가 공허하지 않은지) 확인용. */
   private long countActiveTenants() {
     return dsl.fetchOne("SELECT count(*) FROM tenant WHERE status = 'ACTIVE'").get(0, Long.class);
+  }
+
+  /**
+   * JobRunr 8 의 AWAITING(다른 작업을 기다리는 작업)도 활성으로 보아 정리를 건너뛴다(WD-792). 8.x 에서 생긴 상태라, 게이트가 이 값을 빼먹으면
+   * 기다리던 가져오기의 staging 테이블을 지운다.
+   */
+  @Test
+  void 기다리는_작업만_있어도_정리를_건너뛴다() {
+    createStagingTable(STAGING_TABLE);
+    Mockito.doAnswer(invocation -> jobStats(1L, 0L)).when(storageProvider).getJobStats();
+
+    int dropped = cleanupService.sweepOrphanedStagingTables();
+
+    assertThat(dropped).isZero();
+    assertThat(tableExists(STAGING_TABLE)).isTrue();
+  }
+
+  /**
+   * 게이트가 묻는 실제 {@code getJobStats()} 가 이 스키마에서 동작한다 — JobRunr 8 은 통계 뷰의 awaiting 열을 읽으므로 V167(뷰
+   * 갱신)이 빠지거나 틀리면 여기서 예외가 난다(WD-792). 다른 시험은 이 메서드를 가로채므로 실제 뷰를 읽는 곳은 여기뿐이다.
+   */
+  @Test
+  void 실제_작업_통계를_V167_뷰에서_읽는다() {
+    Mockito.doCallRealMethod().when(storageProvider).getJobStats();
+
+    JobStats stats = storageProvider.getJobStats();
+
+    assertThat(stats.getAwaiting()).isGreaterThanOrEqualTo(0L);
+    assertThat(stats.getProcessing()).isGreaterThanOrEqualTo(0L);
   }
 
   @Test

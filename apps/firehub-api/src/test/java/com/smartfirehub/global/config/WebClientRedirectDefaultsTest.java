@@ -10,21 +10,22 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
-import org.springframework.boot.autoconfigure.http.client.reactive.ClientHttpConnectorAutoConfiguration;
-import org.springframework.boot.autoconfigure.web.reactive.function.client.WebClientAutoConfiguration;
+import org.springframework.boot.http.client.autoconfigure.HttpClientAutoConfiguration;
+import org.springframework.boot.http.client.autoconfigure.reactive.ReactiveHttpClientAutoConfiguration;
 import org.springframework.boot.test.context.ConfigDataApplicationContextInitializer;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.boot.webclient.autoconfigure.WebClientAutoConfiguration;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.web.reactive.function.client.WebClient;
 
 /**
  * 자동 구성 {@link WebClient.Builder} 의 리다이렉트 기본값 고정 시험(WD-791).
  *
- * <p>Boot 3.4.1 의 주입 빌더는 3xx 를 따라가지 않았다(Reactor Netty 기본값). Boot 3.5 는 {@code
- * spring.http.reactiveclient.redirects} 가 비면 FOLLOW_WHEN_POSSIBLE 로 채워 따라간다. 주입 빌더를 쓰는 임베딩 호출이 SSRF
- * 가드가 검사한 baseUrl 밖으로 리다이렉트를 따라 나가면 안 되므로 {@code application.yml} 이 {@code dont-follow} 로 되돌린다. 이
- * 시험은 실제 {@code application.yml} 을 읽어 그 설정이 살아 있는지, 그리고 설정이 없으면 Boot 3.5 가 정말 따라가는지(설정이 왜 필요한지)를 함께
- * 확인한다.
+ * <p>Boot 3.4.1 의 주입 빌더는 3xx 를 따라가지 않았다(Reactor Netty 기본값). Boot 3.5 부터는 리다이렉트 설정(Boot 4: {@code
+ * spring.http.clients.redirects}, 3.5: {@code spring.http.reactiveclient.redirects})이 비면
+ * FOLLOW_WHEN_POSSIBLE 로 채워 따라간다(WD-792 에서 Boot 4.1 에서도 같음을 이 시험으로 확인). 주입 빌더를 쓰는 임베딩 호출이 SSRF 가드가
+ * 검사한 baseUrl 밖으로 리다이렉트를 따라 나가면 안 되므로 {@code application.yml} 이 {@code dont-follow} 로 되돌린다. 이 시험은
+ * 실제 {@code application.yml} 을 읽어 그 설정이 살아 있는지, 그리고 설정이 없으면 Boot 가 정말 따라가는지(설정이 왜 필요한지)를 함께 확인한다.
  */
 class WebClientRedirectDefaultsTest {
 
@@ -35,7 +36,9 @@ class WebClientRedirectDefaultsTest {
       new ApplicationContextRunner()
           .withConfiguration(
               AutoConfigurations.of(
-                  ClientHttpConnectorAutoConfiguration.class, WebClientAutoConfiguration.class));
+                  HttpClientAutoConfiguration.class,
+                  ReactiveHttpClientAutoConfiguration.class,
+                  WebClientAutoConfiguration.class));
 
   @BeforeEach
   void setUp() throws Exception {
@@ -86,8 +89,8 @@ class WebClientRedirectDefaultsTest {
   }
 
   @Test
-  void 설정이_없으면_Boot_3_5_기본값은_302를_따라간다() {
-    // 설정 파일 없이 띄우면 Boot 3.5 기본값(FOLLOW_WHEN_POSSIBLE)이 된다 — application.yml 설정이 필요한 이유.
+  void 설정이_없으면_Boot_기본값은_302를_따라간다() {
+    // 설정 파일 없이 띄우면 Boot 기본값(3.5·4.1 모두 FOLLOW_WHEN_POSSIBLE)이 된다 — application.yml 설정이 필요한 이유.
     enqueueRedirect();
     runner.run(
         ctx -> {

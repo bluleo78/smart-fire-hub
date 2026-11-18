@@ -272,6 +272,6 @@ public class ProactiveJobRecord extends UpdatableRecordImpl<ProactiveJobRecord> 
         setUpdatedAt(updatedAt);
         setTriggerType(triggerType);
         setTenantId(tenantId);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

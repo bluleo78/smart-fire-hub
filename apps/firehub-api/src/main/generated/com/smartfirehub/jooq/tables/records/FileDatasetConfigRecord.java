@@ -121,6 +121,6 @@ public class FileDatasetConfigRecord extends UpdatableRecordImpl<FileDatasetConf
         setPrefix(prefix);
         setCreatedAt(createdAt);
         setTenantId(tenantId);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

@@ -121,6 +121,6 @@ public class TenantSettingsRecord extends UpdatableRecordImpl<TenantSettingsReco
         setValue(value);
         setUpdatedBy(updatedBy);
         setUpdatedAt(updatedAt);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

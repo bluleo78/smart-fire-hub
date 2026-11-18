@@ -16,12 +16,13 @@ import org.jooq.PlainSQL;
 import org.jooq.QueryPart;
 import org.jooq.SQL;
 import org.jooq.Schema;
-import org.jooq.Select;
 import org.jooq.Stringly;
 import org.jooq.Table;
 import org.jooq.TableField;
+import org.jooq.TableLike;
 import org.jooq.TableOptions;
 import org.jooq.impl.DSL;
+import org.jooq.impl.Internal;
 import org.jooq.impl.SQLDataType;
 import org.jooq.impl.TableImpl;
 
@@ -88,7 +89,7 @@ public class GeometryColumns extends TableImpl<GeometryColumnsRecord> {
 
     private GeometryColumns(Name alias, Table<GeometryColumnsRecord> aliased, Field<?>[] parameters, Condition where) {
         super(alias, null, aliased, parameters, DSL.comment(""), TableOptions.view("""
-        create view "geometry_columns" as  SELECT (current_database())::character varying(256) AS f_table_catalog,
+        CREATE VIEW "geometry_columns" AS  SELECT (current_database())::character varying(256) AS f_table_catalog,
           n.nspname AS f_table_schema,
           c.relname AS f_table_name,
           a.attname AS f_geometry_column,
@@ -203,7 +204,7 @@ public class GeometryColumns extends TableImpl<GeometryColumnsRecord> {
      */
     @Override
     public GeometryColumns where(Condition condition) {
-        return new GeometryColumns(getQualifiedName(), aliased() ? this : null, null, condition);
+        return new GeometryColumns(getQualifiedName(), aliased() ? this : null, null, Internal.condition(this, condition));
     }
 
     /**
@@ -270,7 +271,7 @@ public class GeometryColumns extends TableImpl<GeometryColumnsRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public GeometryColumns whereExists(Select<?> select) {
+    public GeometryColumns whereExists(TableLike<?> select) {
         return where(DSL.exists(select));
     }
 
@@ -278,7 +279,7 @@ public class GeometryColumns extends TableImpl<GeometryColumnsRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public GeometryColumns whereNotExists(Select<?> select) {
+    public GeometryColumns whereNotExists(TableLike<?> select) {
         return where(DSL.notExists(select));
     }
 }

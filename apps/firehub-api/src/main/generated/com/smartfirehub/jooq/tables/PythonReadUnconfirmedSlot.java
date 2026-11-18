@@ -21,10 +21,10 @@ import org.jooq.PlainSQL;
 import org.jooq.QueryPart;
 import org.jooq.SQL;
 import org.jooq.Schema;
-import org.jooq.Select;
 import org.jooq.Stringly;
 import org.jooq.Table;
 import org.jooq.TableField;
+import org.jooq.TableLike;
 import org.jooq.TableOptions;
 import org.jooq.UniqueKey;
 import org.jooq.impl.DSL;
@@ -177,7 +177,7 @@ public class PythonReadUnconfirmedSlot extends TableImpl<PythonReadUnconfirmedSl
      */
     @Override
     public PythonReadUnconfirmedSlot where(Condition condition) {
-        return new PythonReadUnconfirmedSlot(getQualifiedName(), aliased() ? this : null, null, condition);
+        return new PythonReadUnconfirmedSlot(getQualifiedName(), aliased() ? this : null, null, Internal.condition(this, condition));
     }
 
     /**
@@ -244,7 +244,7 @@ public class PythonReadUnconfirmedSlot extends TableImpl<PythonReadUnconfirmedSl
      * Create an inline derived table from this table
      */
     @Override
-    public PythonReadUnconfirmedSlot whereExists(Select<?> select) {
+    public PythonReadUnconfirmedSlot whereExists(TableLike<?> select) {
         return where(DSL.exists(select));
     }
 
@@ -252,7 +252,7 @@ public class PythonReadUnconfirmedSlot extends TableImpl<PythonReadUnconfirmedSl
      * Create an inline derived table from this table
      */
     @Override
-    public PythonReadUnconfirmedSlot whereNotExists(Select<?> select) {
+    public PythonReadUnconfirmedSlot whereNotExists(TableLike<?> select) {
         return where(DSL.notExists(select));
     }
 }

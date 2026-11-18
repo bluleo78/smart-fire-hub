@@ -183,6 +183,6 @@ public class UserRecord extends UpdatableRecordImpl<UserRecord> {
         setCreatedAt(createdAt);
         setUpdatedAt(updatedAt);
         setMustChangePassword(mustChangePassword);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

@@ -333,6 +333,6 @@ public class DatasetSearchIndexRecord extends UpdatableRecordImpl<DatasetSearchI
         setLastError(lastError);
         setUpdatedAt(updatedAt);
         setGeneration(generation);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

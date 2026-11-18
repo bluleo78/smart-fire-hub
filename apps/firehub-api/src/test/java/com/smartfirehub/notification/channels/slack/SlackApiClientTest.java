@@ -7,6 +7,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
+import com.smartfirehub.global.util.Jackson2WebClientCodecs;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -41,7 +42,11 @@ class SlackApiClientTest {
 
   private SlackApiClient client() {
     // 테스트용 생성자: WireMock baseUrl + 기본 ObjectMapper 주입
-    WebClient wc = WebClient.builder().baseUrl("http://localhost:" + wireMock.port()).build();
+    // 운영 생성자처럼 Jackson 2 코덱을 건다 — 날 builder() 는 Spring 7 에서 Jackson 3 코덱을 골라 디코딩이 어긋난다(WD-792).
+    WebClient wc =
+        Jackson2WebClientCodecs.webClientBuilder()
+            .baseUrl("http://localhost:" + wireMock.port())
+            .build();
     return new SlackApiClient(wc, new com.fasterxml.jackson.databind.ObjectMapper());
   }
 

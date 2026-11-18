@@ -29,7 +29,7 @@ nohup java -Dintro-data-api-marker=1 -Duser.timezone=UTC -jar "$JAR" \
   --app.pipeline.datasource.url="$DB_URL" \
   --app.base-url="http://localhost:$WEB_PORT" \
   --app.cors.allowed-origins="http://localhost:$WEB_PORT,http://localhost:5020" \
-  --org.jobrunr.dashboard.enabled=false \
+  --jobrunr.dashboard.enabled=false \
   >"$LOG" 2>&1 &
 # 헬스체크가 아니라 로그인 엔드포인트가 응답할 때까지 기다린다(마이그레이션 132개라 1~2분 걸린다).
 for _ in $(seq 1 150); do

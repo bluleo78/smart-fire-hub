@@ -260,6 +260,6 @@ public class PipelineExecutionRecord extends UpdatableRecordImpl<PipelineExecuti
         setCancelRequestedAt(cancelRequestedAt);
         setCancelRequestedBy(cancelRequestedBy);
         setHeartbeatAt(heartbeatAt);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

@@ -30,10 +30,10 @@ import org.jooq.QueryPart;
 import org.jooq.Record;
 import org.jooq.SQL;
 import org.jooq.Schema;
-import org.jooq.Select;
 import org.jooq.Stringly;
 import org.jooq.Table;
 import org.jooq.TableField;
+import org.jooq.TableLike;
 import org.jooq.TableOptions;
 import org.jooq.UniqueKey;
 import org.jooq.impl.DSL;
@@ -66,7 +66,7 @@ public class Membership extends TableImpl<MembershipRecord> {
     /**
      * The column <code>public.membership.id</code>.
      */
-    public final TableField<MembershipRecord, Long> ID = createField(DSL.name("id"), SQLDataType.BIGINT.nullable(false).identity(true), this, "");
+    public final TableField<MembershipRecord, Long> ID = createField(DSL.name("id"), SQLDataType.BIGINT.nullable(false).generatedByDefaultAsIdentity(), this, "");
 
     /**
      * The column <code>public.membership.user_id</code>.
@@ -262,7 +262,7 @@ public class Membership extends TableImpl<MembershipRecord> {
      */
     @Override
     public Membership where(Condition condition) {
-        return new Membership(getQualifiedName(), aliased() ? this : null, null, condition);
+        return new Membership(getQualifiedName(), aliased() ? this : null, null, Internal.condition(this, condition));
     }
 
     /**
@@ -329,7 +329,7 @@ public class Membership extends TableImpl<MembershipRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public Membership whereExists(Select<?> select) {
+    public Membership whereExists(TableLike<?> select) {
         return where(DSL.exists(select));
     }
 
@@ -337,7 +337,7 @@ public class Membership extends TableImpl<MembershipRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public Membership whereNotExists(Select<?> select) {
+    public Membership whereNotExists(TableLike<?> select) {
         return where(DSL.notExists(select));
     }
 }

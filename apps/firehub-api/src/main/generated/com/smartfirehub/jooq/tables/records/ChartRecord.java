@@ -227,6 +227,6 @@ public class ChartRecord extends UpdatableRecordImpl<ChartRecord> {
         setCreatedAt(createdAt);
         setUpdatedAt(updatedAt);
         setTenantId(tenantId);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

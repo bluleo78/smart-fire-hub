@@ -242,6 +242,6 @@ public class SavedQueryRecord extends UpdatableRecordImpl<SavedQueryRecord> {
         setCreatedAt(createdAt);
         setUpdatedAt(updatedAt);
         setTenantId(tenantId);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

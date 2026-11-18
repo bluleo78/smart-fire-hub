@@ -28,10 +28,10 @@ import org.jooq.QueryPart;
 import org.jooq.Record;
 import org.jooq.SQL;
 import org.jooq.Schema;
-import org.jooq.Select;
 import org.jooq.Stringly;
 import org.jooq.Table;
 import org.jooq.TableField;
+import org.jooq.TableLike;
 import org.jooq.TableOptions;
 import org.jooq.UniqueKey;
 import org.jooq.impl.DSL;
@@ -64,7 +64,7 @@ public class UserChannelPreference extends TableImpl<UserChannelPreferenceRecord
     /**
      * The column <code>public.user_channel_preference.id</code>.
      */
-    public final TableField<UserChannelPreferenceRecord, Long> ID = createField(DSL.name("id"), SQLDataType.BIGINT.nullable(false).identity(true), this, "");
+    public final TableField<UserChannelPreferenceRecord, Long> ID = createField(DSL.name("id"), SQLDataType.BIGINT.nullable(false).generatedByDefaultAsIdentity(), this, "");
 
     /**
      * The column <code>public.user_channel_preference.user_id</code>.
@@ -255,7 +255,7 @@ public class UserChannelPreference extends TableImpl<UserChannelPreferenceRecord
      */
     @Override
     public UserChannelPreference where(Condition condition) {
-        return new UserChannelPreference(getQualifiedName(), aliased() ? this : null, null, condition);
+        return new UserChannelPreference(getQualifiedName(), aliased() ? this : null, null, Internal.condition(this, condition));
     }
 
     /**
@@ -322,7 +322,7 @@ public class UserChannelPreference extends TableImpl<UserChannelPreferenceRecord
      * Create an inline derived table from this table
      */
     @Override
-    public UserChannelPreference whereExists(Select<?> select) {
+    public UserChannelPreference whereExists(TableLike<?> select) {
         return where(DSL.exists(select));
     }
 
@@ -330,7 +330,7 @@ public class UserChannelPreference extends TableImpl<UserChannelPreferenceRecord
      * Create an inline derived table from this table
      */
     @Override
-    public UserChannelPreference whereNotExists(Select<?> select) {
+    public UserChannelPreference whereNotExists(TableLike<?> select) {
         return where(DSL.notExists(select));
     }
 }

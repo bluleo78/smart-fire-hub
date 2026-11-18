@@ -3,6 +3,7 @@ package com.smartfirehub.proactive.service;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.exception.ExternalServiceException;
+import com.smartfirehub.global.util.Jackson2WebClientCodecs;
 import com.smartfirehub.settings.model.AiCredential;
 import com.smartfirehub.settings.service.AiCredentialService;
 import com.smartfirehub.settings.service.SettingsService;
@@ -54,7 +55,7 @@ public class ReportTemplateAiClient {
       AiCredentialService aiCredentialService) {
     HttpClient httpClient = HttpClient.create().responseTimeout(TIMEOUT);
     this.webClient =
-        WebClient.builder()
+        Jackson2WebClientCodecs.webClientBuilder()
             .baseUrl(agentUrl)
             .clientConnector(new ReactorClientHttpConnector(httpClient))
             .build();

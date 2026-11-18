@@ -89,6 +89,6 @@ public class JobrunrMigrationsRecord extends UpdatableRecordImpl<JobrunrMigratio
         setId(id);
         setScript(script);
         setInstalledon(installedon);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

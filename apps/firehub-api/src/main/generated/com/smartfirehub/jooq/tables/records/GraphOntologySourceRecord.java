@@ -106,6 +106,6 @@ public class GraphOntologySourceRecord extends UpdatableRecordImpl<GraphOntology
         setOntologyId(ontologyId);
         setDatasetId(datasetId);
         setFirstWrittenAt(firstWrittenAt);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

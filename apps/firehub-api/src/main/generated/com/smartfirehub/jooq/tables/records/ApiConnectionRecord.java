@@ -301,6 +301,6 @@ public class ApiConnectionRecord extends UpdatableRecordImpl<ApiConnectionRecord
         setLastLatencyMs(lastLatencyMs);
         setLastErrorMessage(lastErrorMessage);
         setTenantId(tenantId);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

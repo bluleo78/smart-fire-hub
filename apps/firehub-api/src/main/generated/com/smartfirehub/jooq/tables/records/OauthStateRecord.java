@@ -168,6 +168,6 @@ public class OauthStateRecord extends UpdatableRecordImpl<OauthStateRecord> {
         setConsumedAt(consumedAt);
         setCreatedAt(createdAt);
         setTenantId(tenantId);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

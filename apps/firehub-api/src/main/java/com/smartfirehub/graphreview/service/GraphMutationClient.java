@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.exception.ExternalServiceException;
 import com.smartfirehub.global.security.DelegationHeaders;
+import com.smartfirehub.global.util.Jackson2WebClientCodecs;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
@@ -38,7 +39,7 @@ public class GraphMutationClient {
       @Value("${agent.url}") String agentUrl,
       @Value("${agent.internal-token}") String internalToken) {
     this.webClient =
-        WebClient.builder()
+        Jackson2WebClientCodecs.webClientBuilder()
             .baseUrl(agentUrl)
             .defaultHeader("Authorization", "Internal " + internalToken)
             .build();

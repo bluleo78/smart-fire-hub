@@ -18,7 +18,8 @@ public record UpdatePipelineRequest(
     @Size(max = DescriptionLimits.MAX_LENGTH, message = DescriptionLimits.PIPELINE_TOO_LONG)
         String description,
     Boolean isActive,
-    @Valid List<PipelineStepRequest> steps, // full replacement
+    // 전체 교체. @Valid 는 요소 형식에 둔다 — 컨테이너에 붙이면 Hibernate Validator 9 가 HV000271 경고를 낸다(WD-792).
+    List<@Valid PipelineStepRequest> steps,
     LocalDateTime expectedUpdatedAt) {
 
   /** 기준 버전 없이 만드는 기존 호출부용 — 비교하지 않는다. */

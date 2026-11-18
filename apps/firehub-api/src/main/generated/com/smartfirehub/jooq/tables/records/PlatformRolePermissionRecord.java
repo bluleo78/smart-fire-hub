@@ -74,6 +74,6 @@ public class PlatformRolePermissionRecord extends UpdatableRecordImpl<PlatformRo
 
         setPlatformRoleId(platformRoleId);
         setPermissionId(permissionId);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

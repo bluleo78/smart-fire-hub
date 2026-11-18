@@ -163,6 +163,6 @@ public class PostgisSrsAllRecord extends TableRecordImpl<PostgisSrsAllRecord> {
         setProj4text(proj4text);
         setPointSw(pointSw);
         setPointNe(pointNe);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

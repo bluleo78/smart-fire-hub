@@ -16,11 +16,10 @@ spring:
     user: app
     password: app
 
-org:
-  jobrunr:
-    dashboard:
-      enabled: true
-      port: 5040
+jobrunr:
+  dashboard:
+    enabled: true
+    port: 5040
 
 app:
   base-url: http://localhost:5173

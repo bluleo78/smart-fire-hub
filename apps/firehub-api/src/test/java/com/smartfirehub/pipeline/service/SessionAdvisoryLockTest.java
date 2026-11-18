@@ -34,7 +34,7 @@ import javax.sql.DataSource;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.autoconfigure.jdbc.DataSourceProperties;
+import org.springframework.boot.jdbc.autoconfigure.DataSourceProperties;
 
 /**
  * 세션 범위 advisory 잠금 공통 장치({@link SessionAdvisoryLock})의 계약 — 실제 DB 로 확인한다. 지금 운영 호출자는 증분 스텝 잠금(플랫폼

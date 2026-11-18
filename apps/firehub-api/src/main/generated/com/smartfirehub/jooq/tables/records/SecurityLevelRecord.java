@@ -271,6 +271,6 @@ public class SecurityLevelRecord extends UpdatableRecordImpl<SecurityLevelRecord
         setCreatedBy(createdBy);
         setUpdatedAt(updatedAt);
         setUpdatedBy(updatedBy);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

@@ -19,7 +19,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.BeanFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.flyway.FlywayConfigurationCustomizer;
+import org.springframework.boot.flyway.autoconfigure.FlywayConfigurationCustomizer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -77,9 +77,9 @@ public class TiberoPlatformDbConfig {
    * JobRunr 저장소를 Oracle 구현으로 고정한다. JobRunr 의 SQL 자동 설정은 DB 제품명으로 구현을 고르는데 "Tibero" 는 모르므로 직접 둔다(자동
    * 설정은 같은 타입 빈이 있으면 물러난다). 테이블은 Flyway 가 만든다(skip-create, WD-490 기준선) — 런타임 계정에 DDL 권한을 주지 않는다.
    *
-   * <p>자동 설정과 같은 설정 키를 따른다: {@code org.jobrunr.database.datasource}(이름으로 고른 DataSource, 없으면 기본),
-   * {@code table-prefix}, {@code skip-create}. Oracle 구현이 Tibero 에서 등록 → 실패 → 재시도 → 성공 한 바퀴를 도는 것은
-   * WD-488 실서버 PoC 로 확인했다(UTC JVM 전제).
+   * <p>자동 설정과 같은 설정 키를 따른다: {@code jobrunr.database.datasource}(이름으로 고른 DataSource, 없으면 기본), {@code
+   * table-prefix}, {@code skip-create}. Oracle 구현이 Tibero 에서 등록 → 실패 → 재시도 → 성공 한 바퀴를 도는 것은 WD-488
+   * 실서버 PoC 로 확인했다(UTC JVM 전제).
    */
   @Bean(destroyMethod = "close")
   StorageProvider storageProvider(

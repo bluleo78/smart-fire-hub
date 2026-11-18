@@ -182,6 +182,6 @@ public class ReportTemplateRecord extends UpdatableRecordImpl<ReportTemplateReco
         setUpdatedAt(updatedAt);
         setStyle(style);
         setTenantId(tenantId);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

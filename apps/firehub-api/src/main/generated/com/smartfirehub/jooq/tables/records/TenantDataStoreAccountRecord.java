@@ -104,6 +104,6 @@ public class TenantDataStoreAccountRecord extends UpdatableRecordImpl<TenantData
         setAccountRole(accountRole);
         setUsername(username);
         setPasswordEnc(passwordEnc);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

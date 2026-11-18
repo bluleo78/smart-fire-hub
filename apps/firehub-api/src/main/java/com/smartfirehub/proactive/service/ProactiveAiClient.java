@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataset.storage.DataStoreBackend;
 import com.smartfirehub.dataset.storage.DataStoreResolver;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.global.util.Jackson2WebClientCodecs;
 import com.smartfirehub.proactive.dto.ProactiveResult;
 import com.smartfirehub.proactive.exception.ProactiveJobException;
 import com.smartfirehub.securitylevel.ai.AiCallContext;
@@ -64,7 +65,7 @@ public class ProactiveAiClient {
     // 제한은 아래 Mono.timeout 하나로 건다 — Netty responseTimeout 을 함께 두면 어느 쪽이 먼저 걸렸는지 예외로 다시 가려야 한다.
     HttpClient httpClient = HttpClient.create();
     this.webClient =
-        WebClient.builder()
+        Jackson2WebClientCodecs.webClientBuilder()
             .baseUrl(agentUrl)
             .clientConnector(new ReactorClientHttpConnector(httpClient))
             .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(10 * 1024 * 1024))

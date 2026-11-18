@@ -148,6 +148,6 @@ public class DocumentChunkVec_1536Record extends UpdatableRecordImpl<DocumentChu
         setEmbedding(embedding);
         setEmbeddingModel(embeddingModel);
         setCreatedAt(createdAt);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

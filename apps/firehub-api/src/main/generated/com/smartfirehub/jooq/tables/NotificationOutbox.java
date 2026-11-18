@@ -31,10 +31,10 @@ import org.jooq.QueryPart;
 import org.jooq.Record;
 import org.jooq.SQL;
 import org.jooq.Schema;
-import org.jooq.Select;
 import org.jooq.Stringly;
 import org.jooq.Table;
 import org.jooq.TableField;
+import org.jooq.TableLike;
 import org.jooq.TableOptions;
 import org.jooq.UniqueKey;
 import org.jooq.impl.DSL;
@@ -67,7 +67,7 @@ public class NotificationOutbox extends TableImpl<NotificationOutboxRecord> {
     /**
      * The column <code>public.notification_outbox.id</code>.
      */
-    public final TableField<NotificationOutboxRecord, Long> ID = createField(DSL.name("id"), SQLDataType.BIGINT.nullable(false).identity(true), this, "");
+    public final TableField<NotificationOutboxRecord, Long> ID = createField(DSL.name("id"), SQLDataType.BIGINT.nullable(false).generatedByDefaultAsIdentity(), this, "");
 
     /**
      * The column <code>public.notification_outbox.idempotency_key</code>.
@@ -346,7 +346,7 @@ public class NotificationOutbox extends TableImpl<NotificationOutboxRecord> {
      */
     @Override
     public NotificationOutbox where(Condition condition) {
-        return new NotificationOutbox(getQualifiedName(), aliased() ? this : null, null, condition);
+        return new NotificationOutbox(getQualifiedName(), aliased() ? this : null, null, Internal.condition(this, condition));
     }
 
     /**
@@ -413,7 +413,7 @@ public class NotificationOutbox extends TableImpl<NotificationOutboxRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public NotificationOutbox whereExists(Select<?> select) {
+    public NotificationOutbox whereExists(TableLike<?> select) {
         return where(DSL.exists(select));
     }
 
@@ -421,7 +421,7 @@ public class NotificationOutbox extends TableImpl<NotificationOutboxRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public NotificationOutbox whereNotExists(Select<?> select) {
+    public NotificationOutbox whereNotExists(TableLike<?> select) {
         return where(DSL.notExists(select));
     }
 }

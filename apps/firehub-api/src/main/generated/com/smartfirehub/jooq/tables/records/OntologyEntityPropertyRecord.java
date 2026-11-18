@@ -164,6 +164,6 @@ public class OntologyEntityPropertyRecord extends UpdatableRecordImpl<OntologyEn
         setUnit(unit);
         setSortOrder(sortOrder);
         setTenantId(tenantId);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }
