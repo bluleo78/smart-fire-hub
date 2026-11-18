@@ -14,6 +14,7 @@ import okhttp3.mockwebserver.RecordedRequest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.client.ReactorResourceFactory;
 import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientRequestException;
@@ -157,6 +158,42 @@ class SsrfSafeHttpClientFactoryTest {
     assertThat(SsrfException.findIn(error))
         .isNotNull()
         .hasMessageStartingWith("내부망 주소는 호출할 수 없습니다(루프백): ");
+    assertThat(server.getRequestCount()).isZero();
+  }
+
+  /**
+   * Spring 컨텍스트가 닫혀 전역 루프 자원이 폐기·재생성된 뒤에도 기본 해석기가 동작한다(WD-791). 컨텍스트마다 붙는 {@link
+   * ReactorResourceFactory} 는 멈출 때 전역 {@link reactor.netty.http.HttpResources} 를 폐기한다. 기본 해석기를 처음
+   * 자원에 묶어 두면 그 뒤의 모든 요청이 종료된 이벤트 루프에서 이름을 풀지 못해 차단도 접속도 없이 시간 초과로 끝났다(전체 시험에서 컨텍스트가 하나 닫힌 뒤
+   * opencode 프로브·API 호출 시험이 줄줄이 실패). 자원을 세 번 갈아도 루프백이 매번 같은 문구로 막혀야 한다.
+   */
+  @Test
+  void defaultFactory_keepsResolvingAfterContextDisposesGlobalLoopResources() throws Exception {
+    String url = "http://localhost:" + server.getPort() + "/secret";
+    for (int cycle = 0; cycle < 3; cycle++) {
+      ReactorResourceFactory resources = new ReactorResourceFactory();
+      resources.afterPropertiesSet();
+      resources.start();
+
+      Throwable error =
+          catchThrowable(
+              () ->
+                  new SsrfSafeHttpClientFactory(new SsrfProtectionService())
+                      .httpClient()
+                      .get()
+                      .uri(url)
+                      .response()
+                      .block(Duration.ofSeconds(10)));
+
+      assertThat(SsrfException.findIn(error))
+          .as("자원 교체 %d번째 — 시간 초과가 아니라 접속 검사로 막혀야 한다", cycle)
+          .isNotNull()
+          .hasMessageStartingWith("내부망 주소는 호출할 수 없습니다(루프백): ");
+
+      // 컨텍스트 종료와 같은 일 — 전역 루프·연결 풀을 폐기한다(다음 HttpResources.get() 이 새로 만든다).
+      resources.stop();
+      resources.destroy();
+    }
     assertThat(server.getRequestCount()).isZero();
   }
 }
