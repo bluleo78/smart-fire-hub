@@ -69,7 +69,10 @@ class QdrantVectorStoreLifecycleTest {
   void createsAllCollectionsWithExpectedConfigOnEmptyStore() throws Exception {
     lifecycle(6, true).prepare();
 
-    assertThat(client.listCollectionsAsync().get(30, TimeUnit.SECONDS))
+    assertThat(
+            client
+                .listCollectionsAsync()
+                .get(QdrantTestContainer.CALL_TIMEOUT.toSeconds(), TimeUnit.SECONDS))
         .containsExactlyInAnyOrder(
             "fh_datasets_1024",
             "fh_datasets_1536",
@@ -145,7 +148,7 @@ class QdrantVectorStoreLifecycleTest {
         .createCollectionAsync(
             "fh_datasets_1024",
             VectorParams.newBuilder().setSize(768).setDistance(Distance.Dot).build())
-        .get(30, TimeUnit.SECONDS);
+        .get(QdrantTestContainer.CALL_TIMEOUT.toSeconds(), TimeUnit.SECONDS);
     assertThatThrownBy(() -> lifecycle(6, true).prepare())
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("fh_datasets_1024")
@@ -158,7 +161,9 @@ class QdrantVectorStoreLifecycleTest {
     QdrantProperties props = QdrantTestContainer.properties(6, true);
     QdrantCollectionSpec spec = QdrantCollectionSpec.chunks(EmbeddingDimension.D1536);
     CreateCollection req = spec.toCreateRequest(props);
-    client.createCollectionAsync(req).get(30, TimeUnit.SECONDS);
+    client
+        .createCollectionAsync(req)
+        .get(QdrantTestContainer.CALL_TIMEOUT.toSeconds(), TimeUnit.SECONDS);
     assertThat(info(spec.name()).getPayloadSchemaMap()).isEmpty();
 
     lifecycle(6, true).prepare();
@@ -243,7 +248,10 @@ class QdrantVectorStoreLifecycleTest {
           Thread.sleep(500);
           lc.retryPrepare();
         }
-        assertThat(client.listCollectionsAsync().get(30, TimeUnit.SECONDS))
+        assertThat(
+                client
+                    .listCollectionsAsync()
+                    .get(QdrantTestContainer.CALL_TIMEOUT.toSeconds(), TimeUnit.SECONDS))
             .contains(EmbeddingDimension.D1024.datasetCollection(), "fh_chunks_kw");
         now.addAndGet(QdrantVectorStoreLifecycle.AVAILABILITY_CACHE_MS);
         assertThat(lc.available()).isTrue();
@@ -297,9 +305,17 @@ class QdrantVectorStoreLifecycleTest {
   @Test
   void availablePreparesWhenHealthyButNotPrepared() throws Exception {
     QdrantVectorStoreLifecycle lc = lifecycle(6, true); // afterPropertiesSet 을 부르지 않은 상태
-    assertThat(client.listCollectionsAsync().get(30, TimeUnit.SECONDS)).isEmpty();
+    assertThat(
+            client
+                .listCollectionsAsync()
+                .get(QdrantTestContainer.CALL_TIMEOUT.toSeconds(), TimeUnit.SECONDS))
+        .isEmpty();
     assertThat(lc.available()).isTrue();
-    assertThat(client.listCollectionsAsync().get(30, TimeUnit.SECONDS)).hasSize(6);
+    assertThat(
+            client
+                .listCollectionsAsync()
+                .get(QdrantTestContainer.CALL_TIMEOUT.toSeconds(), TimeUnit.SECONDS))
+        .hasSize(6);
   }
 
   /** API 키가 틀리면 설정 오류로 보고 기동을 멈춘다(2026-11-14 사용자 결정). */
@@ -414,7 +430,7 @@ class QdrantVectorStoreLifecycleTest {
                             QdrantCollectionSpec.TENANT_ID, ValueFactory.value("7"),
                             QdrantCollectionSpec.DATASET_ID, ValueFactory.value(42L)))
                     .build()))
-        .get(30, TimeUnit.SECONDS);
+        .get(QdrantTestContainer.CALL_TIMEOUT.toSeconds(), TimeUnit.SECONDS);
 
     // 저장된 sparse id 를 부호 없는 값으로 읽으면 생성기가 낸 값과 같다
     RetrievedPoint stored =
@@ -425,7 +441,7 @@ class QdrantVectorStoreLifecycleTest {
                 false,
                 true,
                 null)
-            .get(30, TimeUnit.SECONDS)
+            .get(QdrantTestContainer.CALL_TIMEOUT.toSeconds(), TimeUnit.SECONDS)
             .get(0);
     List<Long> storedIds =
         stored
@@ -466,7 +482,7 @@ class QdrantVectorStoreLifecycleTest {
                             ConditionFactory.matchKeyword(QdrantCollectionSpec.TENANT_ID, tenant)))
                 .setLimit(10)
                 .build())
-        .get(30, TimeUnit.SECONDS)
+        .get(QdrantTestContainer.CALL_TIMEOUT.toSeconds(), TimeUnit.SECONDS)
         .stream()
         .map(p -> java.util.UUID.fromString(p.getId().getUuid()))
         .toList();
@@ -478,6 +494,8 @@ class QdrantVectorStoreLifecycleTest {
   }
 
   private static CollectionInfo info(String name) throws Exception {
-    return client.getCollectionInfoAsync(name).get(30, TimeUnit.SECONDS);
+    return client
+        .getCollectionInfoAsync(name)
+        .get(QdrantTestContainer.CALL_TIMEOUT.toSeconds(), TimeUnit.SECONDS);
   }
 }

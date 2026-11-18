@@ -430,8 +430,8 @@ class QdrantVectorConsistencyTest extends IntegrationTestBase {
       return client
           .retrieveAsync(
               GetPoints.newBuilder().setCollectionName(collection).addIds(id).build(),
-              Duration.ofSeconds(30))
-          .get(30, TimeUnit.SECONDS);
+              QdrantTestContainer.CALL_TIMEOUT)
+          .get(QdrantTestContainer.CALL_TIMEOUT.toSeconds(), TimeUnit.SECONDS);
     } catch (Exception e) {
       throw new IllegalStateException(e);
     }
@@ -453,7 +453,7 @@ class QdrantVectorConsistencyTest extends IntegrationTestBase {
                                 QdrantCollectionSpec.DENSE, VectorFactory.vector(axis(1024, 0)))))
                     .putAllPayload(payload)
                     .build()))
-        .get(30, TimeUnit.SECONDS);
+        .get(QdrantTestContainer.CALL_TIMEOUT.toSeconds(), TimeUnit.SECONDS);
   }
 
   private List<Long> semantic(float[] q) {

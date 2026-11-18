@@ -352,7 +352,7 @@ class QdrantRowSearchIndexTest extends IntegrationTestBase {
                 .setQuery(QueryFactory.nearest(axis(0)))
                 .setLimit(1)
                 .build())
-        .get(30, TimeUnit.SECONDS);
+        .get(QdrantTestContainer.CALL_TIMEOUT.toSeconds(), TimeUnit.SECONDS);
     // 다른 테넌트 컬렉션은 앱 필터와 상관없이 서버가 막는다
     assertThatThrownBy(
             () ->
@@ -364,7 +364,7 @@ class QdrantRowSearchIndexTest extends IntegrationTestBase {
                             .setQuery(QueryFactory.nearest(axis(0)))
                             .setLimit(1)
                             .build())
-                    .get(30, TimeUnit.SECONDS))
+                    .get(QdrantTestContainer.CALL_TIMEOUT.toSeconds(), TimeUnit.SECONDS))
         .isInstanceOf(ExecutionException.class)
         .cause()
         .isInstanceOfSatisfying(

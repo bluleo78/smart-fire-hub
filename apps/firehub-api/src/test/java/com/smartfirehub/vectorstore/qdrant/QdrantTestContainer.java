@@ -35,6 +35,17 @@ public final class QdrantTestContainer {
    */
   public static final Map<String, String> STORAGE_TMPFS = Map.of("/qdrant/storage", "rw");
 
+  /**
+   * 시험에서 Qdrant 호출 한 번을 기다리는 상한(WD-803).
+   *
+   * <p>여러 세션이 겹치는 공유 개발 서버(load average 128)에서는 gRPC 응답이 30초를 넘겨 {@code
+   * QdrantVectorStoreLifecycleTest} 의
+   * restartWithSameConfigPassesVerification·missingPayloadIndexesAreFilledOnNextStartup 이 실패했다. 하네스
+   * 클라이언트 호출의 대기 상한을 한 곳으로 모아 넉넉히(120초) 잡는다. 시험 전용이며 운영 기본값(QDRANT_TIMEOUT 10초)과는 무관하다. 호출마다 상한이
+   * 있으므로 진짜 멈춤이 있어도 전체 실행이 끝없이 걸리지는 않는다.
+   */
+  public static final Duration CALL_TIMEOUT = Duration.ofSeconds(120);
+
   private static QdrantContainer container;
 
   private QdrantTestContainer() {}
@@ -65,14 +76,15 @@ public final class QdrantTestContainer {
         API_KEY,
         shardNumber,
         quantization,
-        Duration.ofSeconds(30));
+        CALL_TIMEOUT);
   }
 
   /** 모든 컬렉션을 지운다. 테스트마다 빈 저장소에서 시작하게 한다. */
   public static void deleteAllCollections(QdrantClient client) throws Exception {
-    List<String> names = client.listCollectionsAsync().get(30, TimeUnit.SECONDS);
+    List<String> names =
+        client.listCollectionsAsync().get(CALL_TIMEOUT.toSeconds(), TimeUnit.SECONDS);
     for (String name : names) {
-      client.deleteCollectionAsync(name).get(30, TimeUnit.SECONDS);
+      client.deleteCollectionAsync(name).get(CALL_TIMEOUT.toSeconds(), TimeUnit.SECONDS);
     }
   }
 

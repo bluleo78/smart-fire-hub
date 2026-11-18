@@ -139,7 +139,8 @@ class QdrantDedicatedRowTargetTest extends IntegrationTestBase {
   }
 
   private static List<String> collections(QdrantClient c) throws Exception {
-    return c.listCollectionsAsync().get(30, TimeUnit.SECONDS);
+    return c.listCollectionsAsync()
+        .get(QdrantTestContainer.CALL_TIMEOUT.toSeconds(), TimeUnit.SECONDS);
   }
 
   @Test
