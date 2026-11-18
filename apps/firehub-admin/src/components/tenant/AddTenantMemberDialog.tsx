@@ -411,9 +411,10 @@ const emailCheckKey = (email: string) => [PLATFORM_ACCOUNTS_KEY, 'email-check', 
  * 이메일 칸에서 포커스가 빠지면(형식이 맞을 때) 계정 목록(`GET /api/platform/accounts?q=<정규화 이메일>&page=0&size=20`)으로
  * username 이 그 이메일과 같은(대소문자 무시) 계정이 있는지 본다 — 서버가 새 계정 요청에서 기존 계정을 찾는 규칙
  * (`findByUsernameIgnoreCase`)과 같다. 결과에 따라(WD-773):
- * - 이미 이 테넌트의 멤버(정지 포함)면 「이미 이 테넌트의 멤버입니다」만 알린다 — 제출해도 409 라 「기존 계정으로 추가」를 두지 않는다.
+ * - 이미 이 테넌트의 멤버(정지 포함)면 계정이 비활성이어도 「이미 이 테넌트의 멤버입니다」만 알린다 — 서버가 「이미 멤버 → 비활성」 순서로
+ *   판정해(WD-788) 제출하면 이미 멤버 409 가 나므로 「기존 계정으로 추가」를 두지 않는다.
  * - 멤버가 아닌 활성 계정이면 서버가 새 계정을 만들지 않고 입력한 이름·비밀번호를 버리므로 기존 계정으로 추가하라고 안내한다.
- * - 비활성 계정(멤버여도)·조회 실패·조회 중(무효화 뒤 다시 읽는 중 포함)·멤버 목록을 모르거나 다시 읽는 중일 때는 안내하지 않는다
+ * - 멤버가 아닌 비활성 계정·조회 실패·조회 중(무효화 뒤 다시 읽는 중 포함)·멤버 목록을 모르거나 다시 읽는 중일 때는 안내하지 않는다
  *   (안전망은 제출 뒤 토스트·409 안내).
  * 어느 경우에도 제출을 막지는 않는다.
  */
@@ -458,8 +459,9 @@ function NewAccountTab({
           .filter((a) => a.username.toLowerCase() === checkedEmail)
           .reduce<PlatformAccountResponse | undefined>((min, a) => (min && min.id < a.id ? min : a), undefined)
       : undefined;
-  // 비활성 계정이면 멤버 여부와 무관하게 어떤 안내도 하지 않는다(WD-773) — 서버가 이미 멤버인지보다 비활성(409 ACCOUNT_INACTIVE)을
-  // 먼저 거부하므로, 「이미 멤버」라고 알리면 제출 뒤 다른 오류가 떠 안내와 어긋난다. 제출 시 서버 안내가 뜬다.
+  // 「기존 계정으로 추가」는 활성 계정에만 권한다 — 비활성 계정은 붙일 수 없다(409 ACCOUNT_INACTIVE).
+  // 「이미 멤버」 안내는 비활성 계정에도 한다(WD-788) — 서버가 「이미 멤버 → 비활성」 순서로 판정해, 비활성이어도 이미 멤버면 제출 결과가
+  // 이미 멤버 409(MEMBER_ALREADY_EXISTS·MEMBER_SUSPENDED)라 안내와 어긋나지 않는다. 예전엔 비활성을 먼저 거부해 비활성이면 아무 안내도 하지 않았다.
   const activeMatch = match?.active ? match : undefined;
   // 멤버 여부는 테넌트 전체 멤버 목록(페이지 없음, ACTIVE·SUSPENDED 모두)에서 계정 id 로 본다. 멤버 표와 같은 캐시를 쓰되, 탭이
   // 마운트될 때마다 다시 읽고 그동안·실패 시에는 모름(undefined)으로 둔다 — 화면을 연 뒤 다른 곳에서 바뀐 멤버십을 낡은 캐시로
@@ -468,16 +470,17 @@ function NewAccountTab({
     queryKey: [TENANT_MEMBERS_KEY, tenantId],
     queryFn: () => tenantsApi.members(tenantId).then((r) => r.data),
     refetchOnMount: 'always',
-    // 활성 일치 계정이 생길 때만 읽고(WD-783), 그 시점의 재조회를 보장하려고 전역 staleTime(30초) 대신 0 으로 둔다.
-    // 짧게 열리는 다이얼로그라 재연결 재조회는 끄고, 제출 때 서버가 다시 판정한다.
-    enabled: !!activeMatch,
+    // 일치 계정이 생길 때만 읽고(WD-783 — 비활성 계정도 이미 멤버 안내를 위해 읽는다, WD-788), 그 시점의 재조회를 보장하려고
+    // 전역 staleTime(30초) 대신 0 으로 둔다. 짧게 열리는 다이얼로그라 재연결 재조회는 끄고, 제출 때 서버가 다시 판정한다.
+    enabled: !!match,
     staleTime: 0,
     refetchOnReconnect: false,
   });
   // 이 마운트의 첫 조회가 끝나기 전·실패 시에는 모름(undefined) — 낡은 캐시로 판정하지 않는다(WD-773).
   // 첫 조회 뒤의 배경 재조회 중에는 직전 결과를 써 안내가 깜빡이지 않게 한다(WD-783).
   const members = membersQuery.isFetchedAfterMount && !membersQuery.isError ? membersQuery.data : undefined;
-  const membership = members && activeMatch ? members.find((m) => m.userId === activeMatch.id) : undefined;
+  // 일치 계정(활성·비활성 모두)의 멤버십 — 있으면 「이미 멤버」 안내를 보인다(WD-788).
+  const membership = members && match ? members.find((m) => m.userId === match.id) : undefined;
   // 멤버가 아닌 것이 확실한 활성 계정만 「기존 계정으로 추가」를 권한다.
   const existing = members && !membership ? activeMatch : undefined;
   return (
@@ -498,14 +501,14 @@ function NewAccountTab({
           }}
         />
       </FormField>
-      {activeMatch && membership && (
+      {match && membership && (
         // 이미 멤버 — 「기존 계정으로 추가」는 409(MEMBER_ALREADY_EXISTS·MEMBER_SUSPENDED)로 끝나므로 버튼 없이 사실만 알린다.
         // 어휘는 콘솔 오류 안내(ERROR_MESSAGES)와 같은 「테넌트」. 「정지됨」은 SUSPENDED 일 때만 붙인다 — 그 밖의 상태를 정지로
         // 잘못 부르지 않게 다른 상태는 꼬리표 없는 일반 문구로 둔다.
         <InlineBanner variant="info">
           {membership.status === 'SUSPENDED'
-            ? `이미 이 테넌트의 멤버입니다(정지됨) — ${activeMatch.name}(${activeMatch.username}). 멤버 상태를 확인하세요.`
-            : `이미 이 테넌트의 멤버입니다 — ${activeMatch.name}(${activeMatch.username}).`}
+            ? `이미 이 테넌트의 멤버입니다(정지됨) — ${match.name}(${match.username}). 멤버 상태를 확인하세요.`
+            : `이미 이 테넌트의 멤버입니다 — ${match.name}(${match.username}).`}
         </InlineBanner>
       )}
       {existing && (

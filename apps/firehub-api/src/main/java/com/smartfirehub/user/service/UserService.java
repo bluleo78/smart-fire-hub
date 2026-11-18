@@ -320,9 +320,12 @@ public class UserService {
   /**
    * 멤버 추가 전 이메일 존재 확인(WD-751). 웹 멤버 추가 대화상자가 이 판정으로 이름·임시 비밀번호 칸을 보일지 정한다.
    *
-   * <p>정규화·판정은 {@link #addMember} 와 같은 {@link #normalizeMemberEmail}·{@link #findMemberCandidate} 를
-   * 쓴다 — 한쪽만 소문자로 바꾸면 화면 판정(기존 계정)과 실제 추가 결과(새 계정)가 갈린다. 테넌트 컨텍스트가 없으면 판정하지 않고 실패한다(멤버 여부는 테넌트
-   * 기준이고, 컨텍스트 없는 호출에 계정 존재 여부를 알려 주지 않는다). 읽기라 감사 로그는 남기지 않는다.
+   * <p>정규화와 계정 판정은 {@link #addMember} 와 같다 — 둘 다 {@link #normalizeMemberEmail} 로 정규화하고 {@code
+   * userRepository.findByUsernameIgnoreCase} 로 같은 계정을 고른다(WD-788). 한쪽만 소문자로 바꾸거나 다른 조회를 쓰면 화면 판정(기존
+   * 계정)과 실제 추가 결과(새 계정)가 갈린다. 멤버십 판정은 다르게 한다: 여기서는 {@link #findMemberCandidate} 가 멤버십까지 조회해 상태를 알려
+   * 주고, {@link #addMember} 는 {@link TenantMemberAdder#addExisting} 안에서 한 번만 조회해 409 로 거부한다(WD-779).
+   * 테넌트 컨텍스트가 없으면 판정하지 않고 실패한다(멤버 여부는 테넌트 기준이고, 컨텍스트 없는 호출에 계정 존재 여부를 알려 주지 않는다). 읽기라 감사 로그는 남기지
+   * 않는다.
    */
   @Transactional(readOnly = true)
   public MemberLookupResponse lookupMember(String rawEmail) {
@@ -355,8 +358,9 @@ public class UserService {
   }
 
   /**
-   * 정규화한 이메일의 계정과 이 테넌트 멤버십(ACTIVE·SUSPENDED). {@link #addMember}·{@link #lookupMember} 가 같은 판정을
-   * 쓰도록 한 곳에 둔다.
+   * 정규화한 이메일의 계정과 이 테넌트 멤버십(ACTIVE·SUSPENDED). {@link #lookupMember} 용이다 — 계정은 {@link #addMember} 와
+   * 같은 {@code findByUsernameIgnoreCase} 로 찾는다(멤버십은 addMember 쪽에서는 {@link TenantMemberAdder} 가 따로
+   * 본다).
    */
   private MemberCandidate findMemberCandidate(String normalizedEmail, long tenantId) {
     Optional<UserResponse> account = userRepository.findByUsernameIgnoreCase(normalizedEmail);

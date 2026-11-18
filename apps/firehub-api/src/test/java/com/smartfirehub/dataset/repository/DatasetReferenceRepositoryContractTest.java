@@ -39,6 +39,12 @@ public abstract class DatasetReferenceRepositoryContractTest extends TenantPairC
     // 데이터셋」으로 보고 removeWatchedDataset 으로 빼 버린다 — 부하가 큰 전체 실행에서 findDatasetChangeTriggers 단언이
     // 간헐적으로 빈 결과가 됐다. 저장소 호출은 테넌트 범위(GUC)로 그대로 실행되므로(상태는 보지 않는다) 계약의 의미는 바뀌지 않는다.
     // 상위 @BeforeEach(createTenantPair)가 테넌트를 먼저 만든다.
+    //
+    // 전제(WD-788): 이 계약의 저장소 메서드는 테넌트 상태(ACTIVE·SUSPENDED)로 거르지 않는다 — 그래서 정지 상태에서 돌아도 운영(ACTIVE)과
+    // 같은 결과를 고정한다. 이 전제는 아래 단언들이 이미 지킨다: 정지된 테넌트 A 에서 findDatasetChangeTriggers 가 트리거를 내는 단언
+    // (findDatasetChangeTriggers_arrayContains 등)과 나머지 조회 단언이 빈 결과가 아니어야 통과한다. 저장소가 상태로 거르게 바뀌면
+    // 그 단언들이 깨질 것이니, 그때는 이 정지를 다시 보라(폴러를 끄는 설정은 없다 — @Scheduled(fixedDelay = 30000) 고정이고, 시험만을
+    // 위한 운영 스위치는 두지 않기로 했다).
     fx.setTenantStatus(tenantA, "SUSPENDED");
     fx.setTenantStatus(tenantB, "SUSPENDED");
   }

@@ -31,6 +31,11 @@ const MAX_UNVERIFIED = 20;
 const CONTEXT_CHARS = 15;
 const EPSILON = 1e-9;
 
+/** 두 값이 상대오차 EPSILON 이내로 같은지 — 허용 값 탐색과 증감률의 같은 값 쌍 판정이 같은 기준을 쓴다(WD-788). */
+function nearlyEqual(a: number, b: number): boolean {
+  return Math.abs(a - b) <= EPSILON * Math.max(Math.abs(a), Math.abs(b));
+}
+
 /**
  * 결과에 데이터 값이 실리는 조회 도구의 끝 이름 (접두사 mcp__firehub__·firehub_ 는 무시).
  * 빠진 도구의 결과로 쓴 수치는 모두 출처 없는 수치로 경고된다 (WD-775).
@@ -286,6 +291,11 @@ class NumberIndex {
    * 단위(천·만·억·조·복합)가 붙은 토큰은 숫자 ÷ 배수 외에 숫자 그대로도 비교한다 (WD-781) — 조회가 이미 그 단위로
    * 집계한 열(「올해억: 1.3」)을 「1.3억」으로 옮겨 적은 경우를 거짓 경고하지 않기 위해서다. 다만 소수가 있는 표시값만
    * 이렇게 본다 — 정수(「5억」「15조」)는 출처에 흔한 개수·순서 값(5·15)에 우연히 맞아 지어낸 금액이 통과하기 쉬워서다.
+   *
+   * 남는 위험 (WD-788): 숫자 그대로 비교는 출처의 어느 숫자와도 맞춘다 — 「1.3억」이 출처의 관계없는 비율·평균 1.3 에 맞아 통과할
+   * 수 있다. 열 이름(「…억」 열인지)으로 좁히려면 출처 숫자가 열 이름과 함께 와야 하는데, 지금 collectSourceNumbers 는 열 이름 없이
+   * Set<number> 로만 모아(라우트가 결과 원문을 들고 있지 않게) 구조부터 바꿔야 한다. 이 대조는 경고 전용(차단 아님)이라 놓치는
+   * 쪽을 받아들이고, 소수 표시값만 이렇게 보는 것으로 우연한 일치를 줄인다.
    */
   matches(token: Token): boolean {
     if (this.keysFor(token.percent, token.multiplier, token.decimals).has(roundKey(token.value, token.decimals))) {
@@ -349,7 +359,7 @@ class AllowedValues {
       if (a[mid] < v) lo = mid + 1;
       else hi = mid;
     }
-    const near = (x: number | undefined) => x !== undefined && Math.abs(x - v) <= EPSILON * Math.max(Math.abs(x), Math.abs(v));
+    const near = (x: number | undefined) => x !== undefined && nearlyEqual(x, v);
     return near(a[lo]) || near(a[lo - 1]);
   }
 }
@@ -359,9 +369,16 @@ class AllowedValues {
  * 순서쌍 (a, b) 마다 증감률 (b−a)/a×100 과 비율 b/a×100 의 절댓값을 표시 자릿수로 반올림해 표시값과 비교한다.
  * 「-74.2%」의 부호는 토큰에 들어가지 않으므로 절댓값으로 비교하고, a=0 은 나눗셈이 정의되지 않아 건너뛴다.
  * verifiedValues 에는 출처·허용 텍스트로 확인된 값만 넣는다 — 지어낸 두 값으로 만든 비율을 통과시키지 않기 위해서다.
+ *
+ * WD-788: 지어낸 % 가 우연히 맞는 일을 줄이려고 두 가지를 더 좁힌다.
+ * - 값이 같은 쌍(상대오차 EPSILON 이내)은 건너뛴다. 같은 값 둘은 늘 0%(증감률)·100%(비율)를 만들어, 같은 값이 두 번 나온 줄의
+ *   지어낸 「0%」「100%」가 계산값으로 통과하기 때문이다. 「28.8 → 28.8 (0.0%)」 같은 실제 무변동 표기는 경고되지만 경고 전용이라 감수한다.
+ * - 재료가 MAX_INTEGER_RATE_OPERANDS 를 넘는 줄에서는 소수 자릿수가 있는 % 만 계산값으로 본다. 정수 % 는 반올림 폭이 넓어
+ *   (±0.5%p) 재료가 많으면 순서쌍 가운데 하나가 지어낸 둥근 값(「30%」)에 맞기 쉽다.
  */
 function matchesComputedRate(token: Token, verifiedValues: number[]): boolean {
   const k = token.decimals;
+  if (k === 0 && verifiedValues.length > MAX_INTEGER_RATE_OPERANDS) return false;
   const d = roundKey(token.value, k);
   for (let i = 0; i < verifiedValues.length; i++) {
     const a = verifiedValues[i];
@@ -369,6 +386,8 @@ function matchesComputedRate(token: Token, verifiedValues: number[]): boolean {
     for (let j = 0; j < verifiedValues.length; j++) {
       if (i === j) continue;
       const b = verifiedValues[j];
+      // WD-788: 같은 값 쌍은 0%·100% 만 만들어 지어낸 값을 풀어 주므로 건너뛴다 (a ≠ 0 이라 상대오차 기준이 정의된다)
+      if (nearlyEqual(a, b)) continue;
       if (roundKey(Math.abs(((b - a) / a) * 100), k) === d || roundKey(Math.abs((b / a) * 100), k) === d) return true;
     }
   }
@@ -390,8 +409,16 @@ function lineIndexOf(lineStarts: number[], pos: number): number {
 /**
  * 계산한 증감률 판정에 쓰는 한 줄의 재료 수 상한 (WD-781). 순서쌍 수가 재료 수의 제곱이라, 넓은 표 행처럼 한 줄에 수치가
  * 아주 많으면 판정을 하지 않고(경고는 남는다) 대조 시간이 늘지 않게 한다. 또 재료가 많을수록 지어낸 % 가 우연히 맞기 쉬워진다.
+ * WD-788: 30 에서 8 로 낮춘다 — 30개면 순서쌍 870개 × 공식 2개로 거의 어떤 % 든 맞았다. 실제 사례(「전년 → 올해 (증감률)」,
+ * 표 한 행의 몇 개 열)는 한 줄 재료가 몇 개뿐이라 8개(순서쌍 56개)면 충분하다.
  */
-const MAX_RATE_OPERANDS = 30;
+const MAX_RATE_OPERANDS = 8;
+
+/**
+ * WD-788: 정수 % 를 계산값으로 인정하는 한 줄의 재료 수 상한. 이보다 재료가 많은 줄은 소수 자릿수가 있는 % 만 계산값으로 본다
+ * (matchesComputedRate 주석 참고). 4개(순서쌍 12개)까지는 「1억2천만 → 1억8천만 (+50%)」처럼 정수 % 를 쓰는 실제 사례를 그대로 받는다.
+ */
+const MAX_INTEGER_RATE_OPERANDS = 4;
 
 /** 줄바꿈을 공백으로 바꾼 토큰 앞뒤 15자 문맥 */
 function contextOf(text: string, token: Token): string {

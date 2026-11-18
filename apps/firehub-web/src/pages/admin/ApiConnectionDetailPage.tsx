@@ -157,29 +157,57 @@ function rowsEqual(
   return a.length === b.length && a.every((row, i) => keys.every((key) => row[key] === b[i][key]));
 }
 
+/** 고친 추가 헤더 덩어리를 새 기준에 맞춘 결과(WD-788) — rows 는 바꿀 것이 없으면 입력과 같은 배열 참조다. */
+interface SyncedStoredRows {
+  rows: ExtraHeaderRow[];
+  /** 새 기준에 없어(다른 곳에서 지워져) 빼거나 새 행으로 바꾼 저장 행의 원래 이름 — 토스트 안내용 */
+  removedNames: string[];
+}
+
 /**
- * 고친 추가 헤더 덩어리 안에서 손대지 않은 저장 행의 가린 값을 새 기준 행 값으로 맞춘다(WD-777 리뷰).
- * 손대지 않은 저장 행 = 저장된 행(storedName 있음)이고, 이전 기준에 이름·값·원래 이름이 같은 행이 있는 행이다.
- * 새 기준에서 원래 이름이 같은 행을 찾아 가린 값만 바꾼다(없으면 그대로). 바꿀 것이 없으면 같은 배열 참조를 돌려준다.
+ * 고친 추가 헤더 덩어리 안의 저장 행(storedName 있음)을 새 기준에 맞춘다(WD-777 리뷰·WD-788).
+ * 손대지 않은 저장 행 = 이전 기준에 원래 이름·이름·값이 같은 행이 있는 행이다.
+ * - 새 기준에 원래 이름이 같은 행이 있으면: 값을 비워 둔 행(손대지 않은 행·이름 공백만 바꾼 행)은 가린 값을 새 값으로 바꾼다(옛 가린 값을 보내 서버가 400 으로 거절하지 않게).
+ * - 새 기준에 그 이름이 없으면(다른 곳에서 지워짐, WD-788):
+ *   - 손대지 않은 행은 목록에서 뺀다 — 지워진 헤더를 다시 보내지 않게 한다.
+ *   - 손댄 행은 storedName·storedMasked 를 지워 새 행으로 바꾼다 — 사용자가 쓴 이름·값은 지키고, 지워진 헤더의 가린 값은 절대 보내지 않는다
+ *     (예전엔 이름 앞뒤 공백만 바꾼 행이 값을 비워도 옛 가린 값을 보내 서버가 거절했다). 값이 비면 저장 때 행 검증이 「값 필수」로 잡는다.
+ *   행 id 는 그대로라 남은 행의 오류는 둔다(뺀 행의 오류는 부르는 쪽이 지운다).
  */
-function syncUntouchedStoredMasks(
+function syncStoredRows(
   rows: ExtraHeaderRow[],
   prevRows: ExtraHeaderRow[],
   nextRows: ExtraHeaderRow[],
-): ExtraHeaderRow[] {
+): SyncedStoredRows {
   let changed = false;
-  const synced = rows.map((row) => {
-    if (row.storedName === undefined) return row;
-    const untouched = prevRows.some(
-      (p) => p.storedName === row.storedName && p.name === row.name && p.value === row.value,
-    );
-    if (!untouched) return row;
+  const removedNames: string[] = [];
+  const synced: ExtraHeaderRow[] = [];
+  for (const row of rows) {
+    if (row.storedName === undefined) {
+      synced.push(row);
+      continue;
+    }
     const fresh = nextRows.find((n) => n.storedName === row.storedName);
-    if (!fresh || fresh.storedMasked === row.storedMasked) return row;
-    changed = true;
-    return { ...row, storedMasked: fresh.storedMasked };
-  });
-  return changed ? synced : rows;
+    if (!fresh) {
+      // 서버에서 지워진 헤더(WD-788) — 손대지 않았으면 빼고, 손댔으면 저장값 없는 새 행으로 바꾼다
+      const untouched = prevRows.some(
+        (p) => p.storedName === row.storedName && p.name === row.name && p.value === row.value,
+      );
+      changed = true;
+      removedNames.push(row.storedName);
+      if (!untouched) synced.push({ id: row.id, name: row.name, value: row.value });
+      continue;
+    }
+    // 값을 비워 둔 행은 저장 때 가린 값을 그대로 보낼 수 있다(이름 앞뒤 공백만 바꾼 행 포함 — keptStoredMasked) — 그래서 손댔는지와
+    // 상관없이 값이 비었으면 가린 값을 새 기준으로 맞춘다(WD-788 코드 리뷰). 값을 쓴 행은 그 값을 보내므로 가린 값과 무관하다.
+    if (row.value === '' && fresh.storedMasked !== row.storedMasked) {
+      changed = true;
+      synced.push({ ...row, storedMasked: fresh.storedMasked });
+      continue;
+    }
+    synced.push(row);
+  }
+  return { rows: changed ? synced : rows, removedNames };
 }
 
 /**
@@ -286,16 +314,31 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
   const applyAuthSeed = (conn: ApiConnectionResponse) => {
     const seed = authSeedFrom(conn);
     setAuthSnapshot({ seed, from: conn });
-    setAuthType(seed.authType);
-    setPlacement(seed.placement);
-    setHeaderName(seed.headerName);
-    setParamName(seed.paramName);
-    setUsername(seed.username);
+    fillMainAuthFields(seed);
     setExtraHeaders(seed.extraHeaderRows);
     // 인증 칸을 새 값으로 다시 채우면 이전 값에 대한 인라인 오류도 비운다(WD-666) — 지난 오류 문구가 남지 않게 한다.
     setAuthErrors({});
     setExtraHeaderErrors({});
   };
+
+  /**
+   * 메인 인증 칸(방식·키 위치·헤더/파라미터 이름·Basic 아이디)을 스냅샷 값으로 채운다 — 편집을 열 때와, 재조회로 인증 방식이 바뀔 때(WD-788)
+   * 함께 쓴다. 칸 목록을 한 곳에 둬 새 인증 칸을 더할 때 한쪽만 빠지지 않게 한다. 추가 헤더·비밀 칸은 부르는 쪽이 정한다.
+   */
+  function fillMainAuthFields(seed: AuthSeed) {
+    setAuthType(seed.authType);
+    setPlacement(seed.placement);
+    setHeaderName(seed.headerName);
+    setParamName(seed.paramName);
+    setUsername(seed.username);
+  }
+
+  /** 입력한 비밀(키·토큰·비밀번호)을 비운다 — 편집을 닫을 때와 재조회로 인증 방식이 바뀔 때(WD-788) 쓴다. */
+  function clearSecretInputs() {
+    setApiKey('');
+    setToken('');
+    setPassword('');
+  }
 
   /** 인증 편집을 연다 — 지금 연결 값으로 칸을 채운다(WD-763 리뷰 — 취소·저장으로 닫았다 다시 열어도 저장값으로 시작한다). */
   const startAuthEdit = () => {
@@ -310,9 +353,7 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
    */
   const closeAuthEdit = () => {
     setIsEditingAuth(false);
-    setApiKey('');
-    setToken('');
-    setPassword('');
+    clearSecretInputs();
   };
 
   /** 추가 헤더 행을 고친다(WD-753) — 고치거나 지운 행의 오류만 지운다. */
@@ -382,6 +423,22 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
       description !== initialInfo.description ||
       baseUrl !== initialInfo.baseUrl ||
       healthCheckPath !== initialInfo.healthCheckPath);
+  /**
+   * 방식에 딸린 메인 인증 칸(위치·헤더/파라미터 이름·Basic 아이디)이 기준과 다르거나 새 비밀을 입력했는지(WD-788).
+   * 미저장 경고(isAuthDirty)와 재조회로 방식이 바뀔 때의 안내(mergeAuthFields)가 같은 칸 목록으로 보게 한 곳에 둔다.
+   */
+  function mainAuthEdited(seed: AuthSeed): boolean {
+    return (
+      placement !== seed.placement ||
+      headerName !== seed.headerName ||
+      paramName !== seed.paramName ||
+      username !== seed.username ||
+      apiKey.trim() !== '' ||
+      token.trim() !== '' ||
+      password !== ''
+    );
+  }
+
   /** 편집 중일 때의 스냅샷 — 닫혀 있으면 null 이라 아래 판정이 모두 거짓이 된다 */
   const editingSeed = isEditingAuth ? authSeed : null;
   /**
@@ -393,13 +450,7 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
   const isAuthDirty =
     editingSeed !== null &&
     (authType !== editingSeed.authType ||
-      placement !== editingSeed.placement ||
-      headerName !== editingSeed.headerName ||
-      paramName !== editingSeed.paramName ||
-      username !== editingSeed.username ||
-      apiKey.trim() !== '' ||
-      token.trim() !== '' ||
-      password !== '' ||
+      mainAuthEdited(editingSeed) ||
       !rowsEqual(extraHeaders, editingSeed.extraHeaderRows, EXTRA_ROW_CONTENT_KEYS));
 
   /**
@@ -410,6 +461,7 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
    * - 비밀 칸(키·토큰·비밀번호)은 채우지 않는다 — 입력한 비밀은 서버 값과 비교할 수 없다. 비워 두면 유지할 가린 값은 새 기준의 값이다(결함 2).
    * - 기준은 새 응답으로 바꾼다 — 고친 칸은 여전히 「고침」이라 미저장 경고가 남는다.
    * - 새 값으로 바꾼 칸의 오류만 지운다(결함 5): 헤더/파라미터 이름·키 위치 → authName, 아이디 → username, 추가 헤더를 바꿨을 때만 행 오류 전체.
+   * - 사용자는 방식을 고치지 않았는데 재조회로 방식이 바뀌면(WD-788), 방식에 딸린 칸은 칸별 병합하지 않고 모두 새 기준 값으로 바꾼다(아래 주석).
    */
   const mergeAuthFields = useEffectEvent((conn: ApiConnectionResponse) => {
     if (!authSnapshot || authSnapshot.from === conn) return;
@@ -417,12 +469,30 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
     const next = authSeedFrom(conn);
     // 새 값으로 바꾼(값이 실제로 달라진) 칸의 오류 key
     const cleared: AuthFieldKey[] = [];
-    mergeField(authType, prev.authType, next.authType, setAuthType);
-    // 위치가 바뀌면 이름 칸이 헤더 이름 ↔ 파라미터 이름으로 바뀌어, 지난 이름 칸 오류가 다른 칸에 붙지 않게 지운다
-    if (mergeField(placement, prev.placement, next.placement, setPlacement)) cleared.push('authName');
-    if (mergeField(headerName, prev.headerName, next.headerName, setHeaderName)) cleared.push('authName');
-    if (mergeField(paramName, prev.paramName, next.paramName, setParamName)) cleared.push('authName');
-    if (mergeField(username, prev.username, next.username, setUsername)) cleared.push('username');
+    if (authType === prev.authType && next.authType !== prev.authType) {
+      // (WD-788) 다른 곳에서 인증 방식이 바뀌었다 — 옛 방식에서 고친 칸(헤더 이름 등)을 지키면 새 방식 화면에서 숨은 채 남아,
+      // 저장할 수 없는 미저장 경고가 계속 뜨고 옛 방식의 키를 새 방식에 보낼 수 있다. 그래서 딸린 칸(위치·헤더/파라미터 이름·아이디)은
+      // 새 기준 값으로, 입력한 비밀(키·토큰·비밀번호)은 비운다. 추가 헤더는 방식과 무관해 아래 규칙 그대로 둔다.
+      const editedDependent = mainAuthEdited(prev);
+      fillMainAuthFields(next);
+      clearSecretInputs();
+      // 칸이 모두 새 방식 값으로 바뀌어 지난 인증 칸 오류는 어느 칸에도 맞지 않는다
+      cleared.push(...AUTH_FIELD_KEYS);
+      // 고친 것을 말없이 버리지 않게 알린다 — StrictMode 이중 실행에도 하나만 남게 id 를 준다
+      if (editedDependent) {
+        toast.info(
+          `다른 곳에서 인증 방식이 ${authTypeLabel(next.authType, 'full')}으로 바뀌어, 고친 인증 칸을 새 값으로 바꿨습니다.`,
+          { id: 'api-connection-auth-type-changed' },
+        );
+      }
+    } else {
+      mergeField(authType, prev.authType, next.authType, setAuthType);
+      // 위치가 바뀌면 이름 칸이 헤더 이름 ↔ 파라미터 이름으로 바뀌어, 지난 이름 칸 오류가 다른 칸에 붙지 않게 지운다
+      if (mergeField(placement, prev.placement, next.placement, setPlacement)) cleared.push('authName');
+      if (mergeField(headerName, prev.headerName, next.headerName, setHeaderName)) cleared.push('authName');
+      if (mergeField(paramName, prev.paramName, next.paramName, setParamName)) cleared.push('authName');
+      if (mergeField(username, prev.username, next.username, setUsername)) cleared.push('username');
+    }
     // 추가 헤더는 덩어리로 — 고치지 않았고 새 행이 (가린 값까지) 다를 때만 바꾸고 행 오류를 비운다(행 id 가 바뀌어 지난 오류가 남지 않게)
     if (rowsEqual(extraHeaders, prev.extraHeaderRows, EXTRA_ROW_CONTENT_KEYS)) {
       if (!rowsEqual(extraHeaders, next.extraHeaderRows, EXTRA_ROW_STORED_KEYS)) {
@@ -432,9 +502,18 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
     } else {
       // 고친 덩어리는 지키되, 그 안의 손대지 않은 저장 행(이전 기준 행과 이름·값이 같은 행)의 가린 값은 새 기준의 같은 이름 행 값으로 맞춘다
       // (WD-777 리뷰) — 메인 키처럼 「기준은 늘 최신」이라, 옛 응답의 가린 값을 보내 서버가 400 으로 거절하는 일을 막는다.
-      // 사용자가 새로 쓴 값·이름을 바꾼 행은 건드리지 않고, 새 기준에 그 이름이 없으면 그대로 둔다. 행 id 는 그대로라 행 오류도 둔다.
-      const synced = syncUntouchedStoredMasks(extraHeaders, prev.extraHeaderRows, next.extraHeaderRows);
-      if (synced !== extraHeaders) setExtraHeaders(synced);
+      // 값을 쓴 행은 그 값을 보내므로 가린 값을 건드리지 않는다(값을 비운 행은 손댔어도 맞춘다 — syncStoredRows). 새 기준에 그 이름이 없으면(다른 곳에서 지워짐) 손대지 않은 행은 빼고
+      // 손댄 행은 새 행으로 바꾼다(WD-788). 남은 행은 id 가 그대로라 행 오류도 두고, 뺀 행의 오류만 지운다.
+      const synced = syncStoredRows(extraHeaders, prev.extraHeaderRows, next.extraHeaderRows);
+      if (synced.rows !== extraHeaders) {
+        setExtraHeaderErrors((errs) => withoutChangedRowErrors(errs, extraHeaders, synced.rows));
+        setExtraHeaders(synced.rows);
+      }
+      if (synced.removedNames.length > 0) {
+        toast.info(`다른 곳에서 추가 헤더(${synced.removedNames.join(', ')})가 지워져 목록을 맞췄습니다.`, {
+          id: 'api-connection-extra-headers-removed',
+        });
+      }
     }
     if (cleared.length > 0) setAuthErrors((errs) => withoutKeys(errs, ...cleared));
     setAuthSnapshot({ seed: next, from: conn });
