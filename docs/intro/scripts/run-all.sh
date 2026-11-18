@@ -13,5 +13,7 @@ node docs/intro/scripts/seed-demo.mjs
 # 조직 이름 — 워크스페이스 이름 변경 API 가 없어 촬영용 DB 에서만 직접 바꾼다(사이드바 하단 표시).
 docker exec intro-data-db psql -U app -d smartfirehub -qc "update tenant set name='㈜누리테크' where id=1"
 node docs/intro/scripts/seed-ai.mjs
+# 보안 등급은 AI 작업 뒤에 매긴다 — 민감 등급은 외부 AI 가 읽지 못한다(seed-security.mjs 참고).
+node docs/intro/scripts/seed-security.mjs
 node docs/intro/scripts/capture-screens.mjs
 node docs/intro/scripts/build-pdf.mjs
