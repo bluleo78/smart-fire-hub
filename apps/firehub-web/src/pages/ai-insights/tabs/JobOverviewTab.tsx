@@ -1,6 +1,6 @@
 import { ChevronDown, Sparkles } from 'lucide-react';
 import { useCallback, useId, useMemo, useRef, useState } from 'react';
-import { type UseFormReturn } from 'react-hook-form';
+import { type UseFormReturn, useWatch } from 'react-hook-form';
 
 import { proactiveApi, type ProactiveJob, type ReportTemplateSummary, type TemplateSection, type TriggerType } from '@/api/proactive';
 import { Badge } from '@/components/ui/badge';
@@ -130,6 +130,13 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
       void form.trigger(field);
     },
   });
+  // 새 작업 폼에서 「만들기」가 꺼진 이유를 칸 아래에 안내하려고 이름·프롬프트 값을 구독한다(WD-812).
+  // watch() 대신 useWatch 를 쓴다 — React Compiler 린트가 watch() 를 막는다. 안내에는 「비었는가」만 필요하므로
+  // compute 로 불리언만 구독해, 값이 비었다↔찼다로 바뀔 때만 다시 그린다.
+  const nameEmpty = useWatch({ control: form.control, name: 'name', compute: (v) => !(v ?? '').trim() });
+  const promptEmpty = useWatch({ control: form.control, name: 'prompt', compute: (v) => !(v ?? '').trim() });
+  // 안내는 새 작업에서만, 칸이 비어 있고 오류 문구가 없을 때만 보인다 — 오류 문구(공백만 입력 등)와 겹치지 않게 한다.
+  const showPromptHint = isNew && promptEmpty && !errors.prompt;
   const channels = watch('config.channels');
   const cronExpression = watch('cronExpression');
   const timezone = watch('timezone');
@@ -151,6 +158,14 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
   const [businessQuestion, setBusinessQuestion] = useState('');
   const [autoSections, setAutoSections] = useState<TemplateSection[] | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  // 목표 모드는 프롬프트가 「템플릿 자동 생성」으로 채워진다 — 채워지기 전까지 질문 칸 아래에 안내한다.
+  // 생성 중에는 이미 누른 뒤라 「누르면 만들 수 있습니다」가 맞지 않으므로 감춘다(WD-812).
+  const isGoalNew = isNew && creationMode === 'goal';
+  const showGoalHint = isGoalNew && promptEmpty && !isGenerating;
+  // 이름 안내는 목표 모드에서 프롬프트가 채워지기 전·생성 중에 감춘다(WD-812) — 목표 모드에서는 이름만 써도
+  // 「만들기」가 켜지지 않고 「템플릿 자동 생성」이 이름도 채워 주므로, 이름 안내가 「이름만 쓰면 된다」는 오해를 부른다.
+  // 생성 중(목표 안내도 감춤)에도 이름 안내가 되살아나지 않게 showGoalHint 가 아니라 모드·생성 상태로 판단한다.
+  const showNameHint = isNew && nameEmpty && !errors.name && !(isGoalNew && (promptEmpty || isGenerating));
   const [previewOpen, setPreviewOpen] = useState(true);
   // AI 생성이 실패해 고정 구성으로 대신했는지(WD-455) — 사용자에게 그 사실을 알린다.
   const [usedFallback, setUsedFallback] = useState(false);
@@ -422,6 +437,7 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
               id="business-question"
               rows={3}
               placeholder="예: 이번 달 매출 하락의 원인을 분석하고 싶습니다"
+              aria-describedby={showGoalHint ? 'business-question-hint' : undefined}
               // 질문이 그대로 분석 프롬프트가 되므로 같은 상한을 둔다 — 넘으면 생성 버튼이 안내 없이 비활성화된다(WD-425)
               maxLength={MAX_JOB_PROMPT_LENGTH}
               value={businessQuestion}
@@ -436,6 +452,11 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
                 }
               }}
             />
+            {showGoalHint && (
+              <p id="business-question-hint" className="text-xs text-muted-foreground">
+                비즈니스 질문을 쓰고 「템플릿 자동 생성」을 누르면 만들 수 있습니다.
+              </p>
+            )}
           </div>
 
           <Button
@@ -496,9 +517,15 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
           id="job-name"
           placeholder="일일 파이프라인 리포트"
           maxLength={200}
+          aria-describedby={showNameHint ? 'job-name-hint' : undefined}
           {...register('name', validatedField('name'))}
         />
         {errors.name && <p className="text-xs text-destructive">{errors.name.message}</p>}
+        {showNameHint && (
+          <p id="job-name-hint" className="text-xs text-muted-foreground">
+            작업 이름을 입력하면 만들 수 있습니다.
+          </p>
+        )}
       </div>
 
       {/* 수동 모드 전용 필드 (템플릿, 프롬프트) */}
@@ -586,9 +613,15 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
             placeholder="어제 파이프라인 실행 결과를 분석하고 주요 이슈를 알려주세요."
             // 서버 상한과 같은 길이까지만 입력받는다 — 넘으면 저장이 400 으로 거부된다(WD-425)
             maxLength={MAX_JOB_PROMPT_LENGTH}
+            aria-describedby={showPromptHint ? 'job-prompt-hint' : undefined}
             {...register('prompt', validatedField('prompt'))}
           />
           {errors.prompt && <p className="text-xs text-destructive">{errors.prompt.message}</p>}
+          {showPromptHint && (
+            <p id="job-prompt-hint" className="text-xs text-muted-foreground">
+              분석 프롬프트를 입력하면 만들 수 있습니다.
+            </p>
+          )}
         </div>
       )}
 

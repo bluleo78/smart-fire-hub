@@ -21,6 +21,7 @@ import { useEditModeFocus } from '@/hooks/useEditModeFocus';
 import { syncOverflowTitle } from '@/lib/overflow-title';
 
 import type { EditorAction,PipelineEditorState } from '../hooks/usePipelineEditor';
+import { PIPELINE_NAME_REQUIRED_MESSAGE } from '../hooks/usePipelineValidation';
 import type { ExecutionCancelState } from '../utils/execution-cancel';
 
 interface EditorHeaderProps {
@@ -79,6 +80,8 @@ export function EditorHeader({
   const { canExecutePipeline, canWritePipeline } = usePipelinePermissions();
   // 「수정」으로 이름 칸이 편집 가능해지면 그 칸으로, 「취소」·「저장」 뒤에는 「수정」 버튼으로 포커스를 옮긴다(WD-415)
   const { editButtonRef, editRegionRef } = useEditModeFocus(isEditing);
+  // 편집 중 이름이 비었으면(공백만도 비어 있음) 이름 칸 아래에 입력 안내를 보인다(WD-812)
+  const showNameHint = !readOnly && !state.name.trim();
 
   function handleExecuteClick() {
     if (state.isDirty) {
@@ -140,14 +143,25 @@ export function EditorHeader({
             placeholder="파이프라인 이름"
             // 화면에 보이는 라벨이 없어 placeholder 만 이름 역할을 하던 것을 고친다(WD-590) — 입력하면 사라진다.
             aria-label="파이프라인 이름"
+            // 안내가 그려질 때만 이름 칸에 잇는다 — 스크린리더가 이름이 비어 있음을 함께 읽는다(WD-812)
+            aria-describedby={showNameHint ? 'pipeline-name-hint' : undefined}
             maxLength={100}
             className="font-semibold text-lg border-transparent hover:border-input focus:border-input min-w-0 sm:min-w-[200px] max-w-[400px] h-8 px-2"
           />
         )}
-        {state.isDirty && (
+        {(showNameHint || state.isDirty) && (
+          // 머리글이 56px 라 두 줄이 겹치면 넘치므로 한 줄에 모은다(WD-812). 이름이 비어도 편집 중이면
+          // 「미저장 변경사항」을 잃지 않게 표시를 앞에, 이름 안내를 뒤에 함께 그린다.
+          // aria-describedby 는 안내 글자만 가리키도록 안내를 자기 span(id)에 둔다.
           <span className="text-xs text-muted-foreground flex items-center gap-1 px-2">
-            <span className="text-muted-foreground">●</span>
-            미저장 변경사항
+            {state.isDirty && (
+              <>
+                <span className="text-muted-foreground">●</span>
+                미저장 변경사항
+              </>
+            )}
+            {state.isDirty && showNameHint && <span aria-hidden="true">·</span>}
+            {showNameHint && <span id="pipeline-name-hint">{PIPELINE_NAME_REQUIRED_MESSAGE}</span>}
           </span>
         )}
       </div>

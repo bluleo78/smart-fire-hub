@@ -49,6 +49,12 @@ async function loadOutputColumns(queryClient: QueryClient, datasetId: number): P
 }
 
 /**
+ * 파이프라인 이름이 비었을 때의 안내 문구(WD-812) — 저장 시 토스트와 편집기 머리글의 이름 칸 안내가
+ * 같은 문장을 쓰도록 한 곳에 둔다(한쪽만 고쳐져 어긋나는 것을 막는다).
+ */
+export const PIPELINE_NAME_REQUIRED_MESSAGE = '파이프라인 이름을 입력하세요.';
+
+/**
  * 편집기 저장 전 검증. 출력 데이터셋 컬럼을 조회해야 하는 검사(WD-154)가 있어 비동기다 — usePipelineSave 가 await 한다.
  * 오류가 있으면 SET_VALIDATION_ERRORS 로 스텝별 오류(DAG 노드 배지·스텝 설정 패널 인라인 문구)를 채우고 false 를 돌려준다.
  */
@@ -61,7 +67,7 @@ export function usePipelineValidation(
     const errors: ValidationError[] = [];
 
     if (!state.name.trim()) {
-      toast.error('파이프라인 이름을 입력하세요.');
+      toast.error(PIPELINE_NAME_REQUIRED_MESSAGE);
       return false;
     }
 

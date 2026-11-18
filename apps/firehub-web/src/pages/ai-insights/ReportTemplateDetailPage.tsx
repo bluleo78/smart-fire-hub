@@ -1,7 +1,7 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { ArrowLeft, Copy, Pencil, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useForm } from 'react-hook-form';
+import { useForm, useWatch } from 'react-hook-form';
 import { type NavigateFunction, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -29,6 +29,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { FormField } from '@/components/ui/form-field';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -249,6 +250,13 @@ function ReportTemplateDetailContent({ templateId }: { templateId: number | null
     mode: 'all',
     values: template ? { name: template.name, description: template.description ?? '' } : { name: '', description: '' },
   });
+
+  // WD-812: 새 양식에서 이름이 비어 「만들기」가 꺼져 있을 때 그 이유를 칸 아래 안내로 보인다.
+  // watch() 대신 useWatch 를 쓴다 — React Compiler 린트가 watch() 를 막는다. 큰 페이지라 이름 글자마다 다시 그리지 않게
+  // compute 로 「비었는가」만 구독한다(비었다↔찼다로 바뀔 때만 다시 그린다).
+  const nameEmpty = useWatch({ control: form.control, name: 'name', compute: (v) => !(v ?? '').trim() });
+  // 오류 문구가 이미 보이면 안내를 그리지 않는다(겹침 방지). 공백만 넣어도 오류가 뜨므로 그때는 오류만 보인다.
+  const showNameHint = isNew && nameEmpty && !form.formState.errors.name;
 
   // 템플릿 로드 시 구조/스타일 동기화 — 렌더링 중 state 조정 (React 권장 패턴)
   // 주의(#633): 이 비교는 참조 동일성(!==)에 의존한다. `template`을 만들어내는 계산(위 fallbackTemplate 등)이
@@ -703,8 +711,14 @@ function ReportTemplateDetailContent({ templateId }: { templateId: number | null
         >
           <CardContent className="pt-6">
             <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="tpl-name">이름</Label>
+              {/* 필수 표시(*)·오류·안내 연결을 FormField 에 맡긴다(WD-812) — 오류 문구도 이름 칸에 이어진다 */}
+              <FormField
+                label="이름"
+                htmlFor="tpl-name"
+                required
+                error={form.formState.errors.name?.message}
+                hint={showNameHint ? '이름을 입력하면 만들 수 있습니다.' : undefined}
+              >
                 <Input
                   id="tpl-name"
                   {...form.register('name', {
@@ -712,10 +726,7 @@ function ReportTemplateDetailContent({ templateId }: { templateId: number | null
                   })}
                   placeholder="리포트 템플릿 이름"
                 />
-                {form.formState.errors.name && (
-                  <p className="text-sm text-destructive">{form.formState.errors.name.message}</p>
-                )}
-              </div>
+              </FormField>
               <div className="space-y-2">
                 <Label htmlFor="tpl-desc">설명 (선택)</Label>
                 <Input
