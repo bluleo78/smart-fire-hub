@@ -25,10 +25,13 @@ const TOKEN = 'test-internal-token-pdf-ssrf';
 /** 렌더 결과 확인용 문서 제목 — Chrome 은 이를 PDF 메타데이터 /Title 에 그대로 싣는다 */
 const REPORT_TITLE = 'WD617-REPORT-TITLE';
 
-/** Puppeteer 가 지금 설정으로 실행할 Chrome 이 실제로 있는지 — 없으면 executablePath() 가 던지거나 없는 경로를 준다 */
-function puppeteerChromeExists(): boolean {
+/**
+ * Puppeteer 가 지금 설정으로 실행할 Chrome 이 실제로 있는지 — 없으면 executablePath() 가 거부되거나 없는 경로를 준다.
+ * Puppeteer 25 부터 executablePath() 는 Promise 를 돌려준다(WD-790).
+ */
+async function puppeteerChromeExists(): Promise<boolean> {
   try {
-    return existsSync(puppeteer.executablePath());
+    return existsSync(await puppeteer.executablePath());
   } catch {
     return false;
   }
@@ -40,7 +43,12 @@ function puppeteerChromeExists(): boolean {
  * 로컬에는 Puppeteer 전용 Chrome 이 보통 없다. 대신 E2E 용 Playwright chromium 은 대개 깔려 있어 이를 쓴다.
  */
 function findPlaywrightChromium(): string | null {
-  const root = path.join(homedir(), '.cache', 'ms-playwright');
+  // Playwright 와 같은 규칙으로 브라우저 폴더를 찾는다 — PLAYWRIGHT_BROWSERS_PATH 가 있으면 그곳(공용 캐시를 쓰는
+  // 에이전트·CI 머신), 없으면 기본 ~/.cache/ms-playwright. 이를 무시하면 Chrome 이 있는데도 시험이 통째로 건너뛰어진다.
+  // ('0' 은 Playwright 에서 「node_modules 안」을 뜻해 여기서는 다루지 않고 기본 위치로 떨어진다)
+  const browsersPath = process.env.PLAYWRIGHT_BROWSERS_PATH;
+  const root =
+    browsersPath && browsersPath !== '0' ? browsersPath : path.join(homedir(), '.cache', 'ms-playwright');
   if (!existsSync(root)) return null;
   // chromium-1243 처럼 리비전 번호가 붙으므로 숫자 내림차순으로 최신부터 본다(chromium_headless_shell-* 등은 제외)
   const revisions = readdirSync(root)
@@ -58,22 +66,30 @@ function findPlaywrightChromium(): string | null {
 /**
  * 실브라우저 테스트에 쓸 Chrome 을 준비하고, 하나라도 있으면 true 를 돌려준다.
  * PUPPETEER_EXECUTABLE_PATH 가 명시돼 있으면 그대로 따르고, 없을 때 Puppeteer 전용 Chrome 이 없으면
- * Playwright chromium 으로 대체한다. Puppeteer 는 이 환경변수를 import 시점에 설정으로 굳히므로
- * (getConfiguration), 이미 import 된 뒤인 여기서는 환경변수와 함께 설정값도 직접 바꿔야 라우터의 launch 에 반영된다.
- * 그 설정값(configuration)은 공개 타입에서 빠진 내부 필드라 필요한 모양으로만 좁혀 접근한다.
+ * Playwright chromium 으로 대체한다. Puppeteer 25 는 설정(getConfiguration)을 launch·executablePath 호출마다
+ * 다시 읽으므로(WD-790 — 24 는 import 시점에 굳혔다) 환경변수만 바꾸면 라우터의 launch 에도 반영된다.
  */
-function chromeAvailable(): boolean {
-  if (puppeteerChromeExists()) return true;
+async function chromeAvailable(): Promise<boolean> {
+  if (await puppeteerChromeExists()) return true;
   // 경로를 명시했는데 거기에 없으면 설정 오류이므로 몰래 다른 브라우저로 바꾸지 않는다
   if (process.env.PUPPETEER_EXECUTABLE_PATH) return false;
   const fallback = findPlaywrightChromium();
   if (!fallback) return false;
   process.env.PUPPETEER_EXECUTABLE_PATH = fallback;
-  (
-    puppeteer as unknown as { configuration: { executablePath?: string } }
-  ).configuration.executablePath = fallback;
-  return puppeteerChromeExists();
+  // 대체 Chrome 이 실제로 있는데도 Puppeteer 가 그것을 보지 못하면, 건너뛰지 않고 크게 실패시킨다(WD-790).
+  // 조용히 skip 하면 Puppeteer 의 설정 읽기 방식이 바뀐 회귀(예: 환경변수를 다시 읽지 않음)가 생겨도
+  // 실브라우저 SSRF 시험이 통째로 빠진 채 초록으로 지나간다. 건너뛰는 것은 Chrome 이 아예 없을 때뿐이다.
+  if (!(await puppeteerChromeExists())) {
+    throw new Error(
+      `실브라우저 SSRF 시험: 대체 Chrome(${fallback})을 PUPPETEER_EXECUTABLE_PATH 로 지정했는데 ` +
+        'Puppeteer 가 그 실행 파일을 보지 못한다 — Puppeteer 설정 읽기 방식이 바뀌었는지 확인하라',
+    );
+  }
+  return true;
 }
+
+/** describe.skipIf 는 동기 값이 필요해 모듈 최상위에서 미리 판정해 둔다(ESM top-level await) */
+const chromeReady = await chromeAvailable();
 
 /** 서버를 임의 포트로 띄우고 포트를 돌려준다 */
 function listen(server: http.Server): Promise<number> {
@@ -90,7 +106,7 @@ function closeServer(server: http.Server): Promise<void> {
   });
 }
 
-describe.skipIf(!chromeAvailable())('POST /agent/html-to-pdf — 실브라우저 SSRF 차단', () => {
+describe.skipIf(!chromeReady)('POST /agent/html-to-pdf — 실브라우저 SSRF 차단', () => {
   /** 내부 서비스 흉내 — 렌더러가 보낸 요청 경로를 모두 기록한다 */
   const hits: string[] = [];
   const victim = http.createServer((req, res) => {
@@ -171,7 +187,7 @@ describe.skipIf(!chromeAvailable())('POST /agent/html-to-pdf — 실브라우저
     // 렌더러가 내부 리스너에 단 한 건도 요청·연결하지 않아야 한다
     expect(hits).toEqual([]);
     expect(connections).toBe(0);
-    // 차단된 요청이 networkidle0 을 30초 타임아웃까지 붙잡지 않아야 한다
+    // 차단된 요청이 네트워크 유휴 대기를 30초 타임아웃까지 붙잡지 않아야 한다
     expect(elapsed).toBeLessThan(15000);
   }, 40000);
 

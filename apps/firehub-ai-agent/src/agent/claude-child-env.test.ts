@@ -98,6 +98,13 @@ describe('buildClaudeChildEnv', () => {
   it('CCE-07: opencode 의 HARD_DENIED 이름은 전부 차단된다(방어선 공유)', () => {
     for (const name of HARD_DENIED) expect(isDeniedClaudeChildEnvName(name), name).toBe(true);
   });
+
+  // WD-790: 런타임 이미지에서 npm 을 지웠으므로 Dockerfile 이 DISABLE_AUTOUPDATER=1 을 둔다. 이 값이 차단 목록에
+  // 걸려 자식에 닿지 않으면 claude 자식마다 npm 자동 업데이트를 시도하다 실패하므로, 그대로 전달됨을 고정한다.
+  it('CCE-08: 자동 업데이트 끄기(DISABLE_AUTOUPDATER)는 자식 env 에 그대로 전달된다', () => {
+    const env = buildClaudeChildEnv({ ...AMBIENT, DISABLE_AUTOUPDATER: '1' }, { apiKey: 'sk' });
+    expect(env.DISABLE_AUTOUPDATER).toBe('1');
+  });
 });
 
 describe('resolveClaudeCredential', () => {

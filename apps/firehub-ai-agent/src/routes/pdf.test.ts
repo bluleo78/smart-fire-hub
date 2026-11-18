@@ -14,6 +14,7 @@ import express from 'express';
 const {
   mockPdf,
   mockSetContent,
+  mockWaitForNetworkIdle,
   mockClose,
   mockNewPage,
   mockLaunch,
@@ -22,9 +23,13 @@ const {
   mockOn,
   mockUrl,
   mockMainFrame,
+  mockEvalMetaRefresh,
+  createMockPage,
 } = vi.hoisted(() => {
   const mockPdf = vi.fn();
   const mockSetContent = vi.fn();
+  // WD-790: Puppeteer 25 에서 setContent 의 networkidle0 대신 따로 거는 네트워크 유휴 대기
+  const mockWaitForNetworkIdle = vi.fn();
   const mockClose = vi.fn();
   // WD-617: 요청 가로채기·JS 비활성화 호출을 검증하기 위한 mock
   const mockSetRequestInterception = vi.fn();
@@ -33,8 +38,12 @@ const {
   // WD-617: 메인 프레임 이동 감지용 — 기본은 이동 없이 about:blank 에 머문 상태
   const mockUrl = vi.fn();
   const mockMainFrame = {};
-  const mockPage = {
+  // WD-790: 문서 안 meta refresh 개수 조회($$eval) — 기본은 0개
+  const mockEvalMetaRefresh = vi.fn();
+  // 위 mock 함수들로 page 객체를 만든다 — 초기 선언과 beforeEach 재설정이 같은 모양을 쓰도록 한 곳에 둔다
+  const createMockPage = () => ({
     setContent: mockSetContent,
+    waitForNetworkIdle: mockWaitForNetworkIdle,
     pdf: mockPdf,
     close: mockClose,
     setRequestInterception: mockSetRequestInterception,
@@ -42,8 +51,9 @@ const {
     on: mockOn,
     url: mockUrl,
     mainFrame: () => mockMainFrame,
-  };
-  const mockNewPage = vi.fn().mockResolvedValue(mockPage);
+    $$eval: mockEvalMetaRefresh,
+  });
+  const mockNewPage = vi.fn().mockResolvedValue(createMockPage());
   const mockBrowser = {
     newPage: mockNewPage,
     connected: true,
@@ -52,6 +62,7 @@ const {
   return {
     mockPdf,
     mockSetContent,
+    mockWaitForNetworkIdle,
     mockClose,
     mockNewPage,
     mockLaunch,
@@ -60,6 +71,8 @@ const {
     mockOn,
     mockUrl,
     mockMainFrame,
+    mockEvalMetaRefresh,
+    createMockPage,
   };
 });
 
@@ -71,7 +84,7 @@ vi.mock('puppeteer', () => ({
 }));
 
 // 모킹 설정 후 라우터를 동적으로 임포트
-import pdfRouter from './pdf.js';
+import pdfRouter, { RENDER_TIMEOUT_MS } from './pdf.js';
 
 const VALID_TOKEN = 'test-internal-token-pdf';
 
@@ -140,18 +153,9 @@ describe('POST /agent/html-to-pdf', () => {
     vi.clearAllMocks();
 
     // Puppeteer mock 기본값 재설정
-    const mockPage = {
-      setContent: mockSetContent,
-      pdf: mockPdf,
-      close: mockClose,
-      setRequestInterception: mockSetRequestInterception,
-      setJavaScriptEnabled: mockSetJavaScriptEnabled,
-      on: mockOn,
-      url: mockUrl,
-      mainFrame: () => mockMainFrame,
-    };
     mockUrl.mockReturnValue('about:blank');
-    mockNewPage.mockResolvedValue(mockPage);
+    mockEvalMetaRefresh.mockResolvedValue(0);
+    mockNewPage.mockResolvedValue(createMockPage());
     mockLaunch.mockResolvedValue({ newPage: mockNewPage, connected: true });
     mockSetContent.mockResolvedValue(undefined);
     mockClose.mockResolvedValue(undefined);
@@ -160,6 +164,27 @@ describe('POST /agent/html-to-pdf', () => {
   afterEach(() => {
     delete process.env.INTERNAL_SERVICE_TOKEN;
   });
+
+  /**
+   * load(setContent)가 loadMs 만큼 걸린 것처럼 시계를 움직이며 PDF 요청을 한 번 보내고,
+   * 응답과 waitForNetworkIdle 에 넘어간 timeout 을 돌려준다(WD-790 단일 렌더 기한 시험용).
+   * Date.now 를 직접 흉내 내므로 끝나면 반드시 원래대로 되돌린다.
+   */
+  async function renderWithLoadTaking(loadMs: number) {
+    mockPdf.mockResolvedValue(Buffer.from('%PDF-1.4 fake'));
+    let now = 1_000_000;
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    mockSetContent.mockImplementation(async () => {
+      now += loadMs;
+    });
+    try {
+      const res = await makeRequest(createApp(), { html: '<p>x</p>' }, { Authorization: `Internal ${VALID_TOKEN}` });
+      const idleTimeout = mockWaitForNetworkIdle.mock.calls[0][0].timeout as number;
+      return { res, idleTimeout };
+    } finally {
+      nowSpy.mockRestore();
+    }
+  }
 
   // 시나리오 1: Authorization 헤더 누락 → 401
   it('should return 401 when Authorization header is missing', async () => {
@@ -220,9 +245,33 @@ describe('POST /agent/html-to-pdf', () => {
     expect(res.headers['content-type']).toContain('application/pdf');
     // page.setContent와 page.pdf가 호출되었는지 확인
     expect(mockSetContent).toHaveBeenCalledOnce();
+    // 예전 networkidle0 과 같은 조건(진행 중 요청 0건으로 500ms)으로 렌더 안정을 기다린 뒤 PDF 를 만든다(WD-790)
+    expect(mockWaitForNetworkIdle).toHaveBeenCalledWith(expect.objectContaining({ idleTime: 500, concurrency: 0 }));
+    expect(mockWaitForNetworkIdle.mock.invocationCallOrder[0]).toBeGreaterThan(mockSetContent.mock.invocationCallOrder[0]);
+    expect(mockWaitForNetworkIdle.mock.invocationCallOrder[0]).toBeLessThan(mockPdf.mock.invocationCallOrder[0]);
     expect(mockPdf).toHaveBeenCalledOnce();
     // 페이지는 반드시 닫혀야 함 (finally 블록)
     expect(mockClose).toHaveBeenCalledOnce();
+  });
+
+  // 시나리오 5-1 (WD-790): load 와 네트워크 유휴 대기가 각각 30초씩(최악 60초 — api PDF_TIMEOUT 60초에 닿음) 쓰지 않고
+  // 하나의 30초 기한을 나눠 쓴다 — 유휴 대기의 timeout 은 load 가 쓰고 남은 시간이어야 한다
+  it('should give waitForNetworkIdle only the time left from the single render deadline', async () => {
+    // load(setContent)가 12초 걸린 상황
+    const { res, idleTimeout } = await renderWithLoadTaking(12_000);
+    expect(res.status).toBe(200);
+
+    expect(RENDER_TIMEOUT_MS).toBeLessThanOrEqual(30000);
+    expect(mockSetContent).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ timeout: RENDER_TIMEOUT_MS }));
+    // 남은 예산 = 30초 - load 에 쓴 12초
+    expect(idleTimeout).toBe(RENDER_TIMEOUT_MS - 12_000);
+  });
+
+  // 시나리오 5-2 (WD-790): load 가 기한을 다 써도 유휴 대기 timeout 은 0(Puppeteer 에서 무제한)이 아닌 양수여야 한다
+  it('should never pass a non-positive (unlimited) timeout to waitForNetworkIdle', async () => {
+    // load 가 기한을 5초 넘겨 쓴 상황
+    const { idleTimeout } = await renderWithLoadTaking(RENDER_TIMEOUT_MS + 5_000);
+    expect(idleTimeout).toBeGreaterThan(0);
   });
 
   // 시나리오 6: format 옵션 전달 → pdf()에 전달되는지 확인
@@ -364,6 +413,55 @@ describe('POST /agent/html-to-pdf', () => {
     expect(res.body).toHaveProperty('error', 'PDF generation rejected');
     expect(mockPdf).not.toHaveBeenCalled();
     // 거부해도 페이지는 닫혀야 한다
+    expect(mockClose).toHaveBeenCalledOnce();
+  });
+
+  // 시나리오 11 (WD-790): 갓 뜬 렌더러에서는 meta refresh 이동 요청이 유휴 대기보다 늦게 나온다 —
+  // 판정 시점에 이동 요청이 아직 없어도 문서에 meta refresh 가 있으면 PDF 를 찍지 않고 422
+  it('should return 422 when the document has a meta refresh even before its navigation request fires', async () => {
+    mockPdf.mockResolvedValue(Buffer.from('%PDF-1.4 fake'));
+    mockEvalMetaRefresh.mockResolvedValue(1);
+
+    const app = createApp();
+    const res = await makeRequest(
+      app,
+      { html: '<meta http-equiv="refresh" content="0;url=https://example.com/"><h1>x</h1>' },
+      { Authorization: `Internal ${VALID_TOKEN}` },
+    );
+
+    expect(res.status).toBe(422);
+    expect(res.body).toHaveProperty('error', 'PDF generation rejected');
+    // 대소문자 무시 선택자로 meta refresh 를 찾는다(Chrome 처럼 Refresh·REFRESH 도 같다)
+    expect(mockEvalMetaRefresh).toHaveBeenCalledWith('meta[http-equiv="refresh" i]', expect.any(Function));
+    expect(mockPdf).not.toHaveBeenCalled();
+    expect(mockClose).toHaveBeenCalledOnce();
+  });
+
+  // 시나리오 12 (WD-790): 판정을 통과한 뒤 PDF 를 찍는 사이에 메인 프레임 이동이 일어나면 찍힌 PDF 를 버리고 422
+  it('should discard the PDF and return 422 when the main frame navigates while printing', async () => {
+    mockPdf.mockImplementation(async () => {
+      const handler = mockOn.mock.calls.find(([event]) => event === 'request')?.[1] as (
+        req: unknown,
+      ) => void;
+      handler({
+        url: () => 'https://example.com/',
+        isNavigationRequest: () => true,
+        frame: () => mockMainFrame,
+        continue: vi.fn().mockResolvedValue(undefined),
+        abort: vi.fn().mockResolvedValue(undefined),
+      });
+      return Buffer.from('%PDF-1.4 error page');
+    });
+
+    const app = createApp();
+    const res = await makeRequest(
+      app,
+      { html: '<h1>x</h1>' },
+      { Authorization: `Internal ${VALID_TOKEN}` },
+    );
+
+    expect(res.status).toBe(422);
+    expect(res.body).toHaveProperty('error', 'PDF generation rejected');
     expect(mockClose).toHaveBeenCalledOnce();
   });
 });
