@@ -218,6 +218,23 @@ class PythonReadGrantBackendTest {
     assertThat(LockMode.forExecutorWait(Duration.ofMillis(1))).isEqualTo(LockMode.WAIT_BOUNDED);
   }
 
+  /** PG 57014 문장 취소는 Spring 6.2.19 가 QueryTimeoutException 으로 번역해도 영구 실패로 유지한다. */
+  @Test
+  void isTransient_pgQueryCanceledStaysPermanent_butJdbcTimeoutIsTransient() {
+    // Spring 6.2 는 PG 57014 를 QueryTimeoutException 으로 번역하지만 재시도 분류는 예전(영구 실패)을 지킨다.
+    assertThat(
+            PythonReadGrantBackend.isTransient(
+                new org.springframework.dao.QueryTimeoutException(
+                    "취소", new SQLException("canceling statement", "57014"))))
+        .isFalse();
+    // JDBC 표준 시간 초과(Tibero 문장 취소 등)는 예전처럼 일시 실패다.
+    assertThat(
+            PythonReadGrantBackend.isTransient(
+                new org.springframework.dao.QueryTimeoutException(
+                    "취소", new java.sql.SQLTimeoutException("timeout", "57014"))))
+        .isTrue();
+  }
+
   /** 일시 실패로 보는 것 — 정해진 예외 종류와 SQLState(08·40001·40P01·57P01·53) 뿐. */
   @Test
   void isTransient_acceptsOnlyRetryableKinds() {

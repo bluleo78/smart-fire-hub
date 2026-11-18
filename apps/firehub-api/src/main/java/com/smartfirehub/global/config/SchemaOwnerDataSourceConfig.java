@@ -52,6 +52,7 @@ public class SchemaOwnerDataSourceConfig {
     config.setInitializationFailTimeout(-1); // 풀 생성 시 즉시 검증 커넥션(checkFailFast)을 끈다.
     config.setIdleTimeout(30_000); // 실제로 쓰인 커넥션도 30초 후에는 반납한다.
     config.setPoolName("schema-owner");
+    HikariTimeoutEvictionOverride.applyTo(config);
     return new HikariDataSource(config);
   }
 }

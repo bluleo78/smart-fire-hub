@@ -13,6 +13,7 @@ import org.springframework.aop.framework.ProxyFactory;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
+import org.springframework.transaction.TransactionManager;
 import org.springframework.transaction.annotation.AnnotationTransactionAttributeSource;
 import org.springframework.transaction.interceptor.TransactionInterceptor;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -178,7 +179,8 @@ public final class TiberoPlatformSchema {
     factory.setTarget(target);
     factory.addInterface(iface);
     factory.addAdvice(
-        new TransactionInterceptor(transactionManager, new AnnotationTransactionAttributeSource()));
+        new TransactionInterceptor(
+            (TransactionManager) transactionManager, new AnnotationTransactionAttributeSource()));
     return iface.cast(factory.getProxy(TiberoPlatformSchema.class.getClassLoader()));
   }
 }

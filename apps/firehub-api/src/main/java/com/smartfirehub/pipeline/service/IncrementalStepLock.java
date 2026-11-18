@@ -1,6 +1,7 @@
 package com.smartfirehub.pipeline.service;
 
 import com.smartfirehub.dataset.storage.tibero.TiberoDialect;
+import com.smartfirehub.global.config.HikariTimeoutEvictionOverride;
 import com.smartfirehub.global.platformdb.PlatformLocks;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.pipeline.service.executor.ExecutionCancelCheck;
@@ -125,6 +126,7 @@ public class IncrementalStepLock implements DisposableBean {
         config.setIdleTimeout(60_000);
         config.setConnectionTimeout(POOL_CONNECTION_TIMEOUT_MS);
         config.setInitializationFailTimeout(-1);
+        HikariTimeoutEvictionOverride.applyTo(config);
         ownedPool = new HikariDataSource(config);
       }
       return ownedPool;

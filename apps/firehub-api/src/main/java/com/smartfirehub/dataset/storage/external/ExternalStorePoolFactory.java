@@ -1,6 +1,7 @@
 package com.smartfirehub.dataset.storage.external;
 
 import com.smartfirehub.dataset.storage.tibero.TiberoDialect;
+import com.smartfirehub.global.config.HikariTimeoutEvictionOverride;
 import com.zaxxer.hikari.HikariDataSource;
 import java.sql.Connection;
 import java.time.Duration;
@@ -49,6 +50,7 @@ public class ExternalStorePoolFactory {
     ds.setConnectionInitSql(TiberoDialect.SESSION_INIT_SQL);
     ds.setInitializationFailTimeout(-1);
     ds.setPoolName("tibero-tenant-" + tenantId + "-owner");
+    HikariTimeoutEvictionOverride.applyTo(ds);
     return ds;
   }
 

@@ -9,6 +9,7 @@ import com.smartfirehub.dataset.storage.DataStoreProvisionMode;
 import com.smartfirehub.dataset.storage.StoredAccount;
 import com.smartfirehub.dataset.storage.TenantDataStoreRow;
 import com.smartfirehub.dataset.storage.TenantDataStoreStatus;
+import com.smartfirehub.securitylevel.pythonread.PythonReadRetryClassification;
 import com.smartfirehub.user.repository.TenantPairContractBase;
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -31,6 +32,15 @@ abstract class TenantDataStoreRepositoryContractTest extends TenantPairContractB
 
   /** 계약 대상 리포지토리 — 구현별 하위 클래스가 제공한다. */
   protected abstract TenantDataStoreRepository repository();
+
+  /**
+   * 잠금 대기 시간 초과로 번역된 예외를 재시도 분류({@code PythonReadGrantBackend.isTransient})가 일시 실패로 보는가(WD-791). PG
+   * 는 문장 취소(SQLState 57014)라 Spring 번역이 바뀌어도(6.2.19 의 QueryTimeoutException) 예전처럼 영구 실패여야 하고,
+   * Tibero 는 JDBC SQLTimeoutException 이라 예전처럼 일시 실패다. 기본은 PG 기대값이고 Tibero 하위 클래스가 바꾼다.
+   */
+  protected boolean lockWaitTimeoutIsTransient() {
+    return false;
+  }
 
   /** 저장소 행이 없는 테넌트. */
   private long tenantC;
@@ -264,13 +274,16 @@ abstract class TenantDataStoreRepositoryContractTest extends TenantPairContractB
           return null;
         });
 
-    // 스프링 번역 결과가 DB 마다 다르다(실측): PG 는 SQLState 57014 가 자원 실패로, Tibero 는 SQLTimeoutException 이
-    // QueryTimeoutException 으로 번역된다.
-    assertThat(observed[0])
-        .isInstanceOf(
-            emptyStringIsNull()
-                ? org.springframework.dao.QueryTimeoutException.class
-                : org.springframework.dao.DataAccessResourceFailureException.class);
+    // Spring 6.2.19(Boot 3.5)는 PG 의 SQLState 57014(query_canceled)도
+    // QueryTimeoutException 으로 번역해 PG·Tibero 가 같은 예외다.
+    // (Boot 3.4.1 의 Spring 6.2.1 은 PG 를 DataAccessResourceFailureException 으로 번역했다.)
+    // 호출부(PreCommitDeadline.exceededBy)는 두 예외를 모두 시간 초과로 취급하고,
+    // 재시도 판정(PythonReadGrantBackend.isTransient)은 PG 57014 를 예전처럼 영구 실패로 유지한다.
+    assertThat(observed[0]).isInstanceOf(org.springframework.dao.QueryTimeoutException.class);
+    // 실제 번역된 예외를 재시도 분류기에 대어, 번역 변경(Spring 6.2.19)이 재시도 판정을 뒤집지 않았음을 묶어 둔다.
+    assertThat(PythonReadRetryClassification.isTransient(observed[0]))
+        .as("잠금 대기 시간 초과의 재시도 분류")
+        .isEqualTo(lockWaitTimeoutIsTransient());
     // 1200ms 는 2초로 올림한다 — 제한이 적용돼 잠금을 무한정 기다리지 않아야 하고(상한), 즉시 실패하지도 않아야 한다(하한).
     assertThat(elapsedMs[0]).isBetween(1_000L, 15_000L);
     assertThat(repository().findScriptTokenEpoch(tenantA)).contains(0L);

@@ -40,4 +40,10 @@ class TiberoMyBatisTenantDataStoreRepositoryContractTest
   protected AccessFixtures newFixtures() {
     return new TiberoAccessFixtures(poc);
   }
+
+  /** Tibero 문장 취소는 JDBC SQLTimeoutException(일시 예외)이라 재시도 분류는 일시 실패다(WD-791, 예전과 같음). */
+  @Override
+  protected boolean lockWaitTimeoutIsTransient() {
+    return true;
+  }
 }
