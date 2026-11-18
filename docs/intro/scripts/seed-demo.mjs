@@ -375,6 +375,7 @@ async function seed() {
   const ids = { sales: dsSales.id, purchase: dsPurchase.id, customer: dsCustomer.id, inquiry: dsInquiry.id, catFin: catFin.id, catCust: catCust.id };
   await seedAssets(token, ids);
   await seedKnowledge(token, ids);
+  await seedFiles(token, ids);
   return { token, ids };
 }
 
@@ -499,17 +500,6 @@ ORDER BY 3 DESC`,
   const cHeat = await chart('권역·제품군별 매출', qHeat.id, 'HEATMAP', { xAxis: '제품군', yAxis: ['권역'], valueColumn: '매출' });
   const cCollect = await chart('수금률(최근 90일 만기)', qCollect.id, 'GAUGE', { xAxis: '수금률', yAxis: ['수금률'], min: 0, max: 100, target: 90 });
   await chart('거래처별 매출과 이익률', qScatter.id, 'SCATTER', { xAxis: '매출', yAxis: ['이익률'] });
-  // AI 분류 결과를 원문과 나란히 보는 쿼리 — 결과 테이블은 파이프라인 실행(seed-ai.mjs) 뒤에 채워진다
-  await q(
-    '오늘 고객 문의 긴급도(AI 분류)',
-    `SELECT to_char(c.received_at, 'HH24:MI') AS 접수시각, c.customer_name AS 거래처, c.inquiry_text AS 문의내용,
-       t.urgency AS 긴급도, t.category AS 유형, t.reason AS 판단근거
-FROM customer_inquiries c
-JOIN inquiry_triage t ON t.source_id = c.id
-ORDER BY c.received_at`,
-    '파이프라인의 AI 분류 단계가 판정한 결과를 문의 원문과 함께 본다',
-  );
-
   const dash = await call(token, 'POST', '/analytics/dashboards', {
     name: '매출·수금 현황',
     description: '매출·매입 추이, 제품군 비중, 수금률, 거래처 분포를 한 화면에서 본다',
@@ -557,6 +547,18 @@ ORDER BY c.received_at`,
       { columnName: 'reason', displayName: '판단 근거', dataType: 'TEXT' },
     ]),
   });
+  // AI 분류 결과를 원문과 나란히 보는 쿼리 — 결과 테이블은 파이프라인 실행(seed-ai.mjs) 뒤에 채워진다.
+  // SQL 관문이 모르는 테이블 참조를 막으므로(DATASET_SQL_ACCESS_DENIED) 출력 데이터셋(inquiry_triage)을 만든 뒤에 저장한다.
+  await q(
+    '오늘 고객 문의 긴급도(AI 분류)',
+    `SELECT to_char(c.received_at, 'HH24:MI') AS 접수시각, c.customer_name AS 거래처, c.inquiry_text AS 문의내용,
+       t.urgency AS 긴급도, t.category AS 유형, t.reason AS 판단근거
+FROM customer_inquiries c
+JOIN inquiry_triage t ON t.source_id = c.id
+ORDER BY c.received_at`,
+    '파이프라인의 AI 분류 단계가 판정한 결과를 문의 원문과 함께 본다',
+  );
+
   const pipeline = await call(token, 'POST', '/pipelines', {
     name: '매출 데이터 일일 마감',
     description: '매일 새벽 매출 전표를 권역·제품군별로 집계하고, 당일 고객 문의의 긴급도를 AI 로 분류한다',
@@ -623,7 +625,7 @@ GROUP BY 1, 2, 3`,
   await call(token, 'POST', '/proactive/jobs', {
     name: '주간 매출·수금 브리핑',
     prompt:
-      '매출 전표(sales_ledger)에서 최근 7일과 그 전 7일을 비교해 제품군별 매출·매출총이익 증감과 권역별 매출을 분석하고, 만기(due_date)가 지났는데 입금일(paid_date)이 비어 있는 연체 거래처 상위 5곳을 찾아 양식에 맞춰 보고서를 작성한다. 리포트 파일(report.html·report.md·summary.md)은 하위 에이전트에 맡기지 말고 직접 Bash 로 저장 경로를 만든(mkdir -p) 뒤 세 파일을 모두 저장하고 마친다.',
+      '매출 전표(sales_ledger)에서 최근 7일과 그 전 7일을 비교해 제품군별 매출·매출총이익 증감과 권역별 매출을 분석하고, 만기(due_date)가 지났는데 입금일(paid_date)이 비어 있는 연체 거래처 상위 5곳을 찾아 양식에 맞춰 보고서를 작성한다.',
     cronExpression: '0 0 8 * * MON',
     timezone: 'Asia/Seoul',
     templateId: template.id,
@@ -654,7 +656,9 @@ async function poll(label, check, { intervalMs = 3000, timeoutMs = 10 * 60 * 100
  */
 async function seedKnowledge(token, ids) {
   // 1) 임베딩 — 운영과 같은 Ollama(bge-m3, 1024차원). 저장할 때 서버가 실제로 한 번 임베딩해 차원을 잰다.
-  await call(token, 'PUT', '/settings/embedding', { provider: 'OLLAMA', model: 'bge-m3', baseUrl: OLLAMA_URL });
+  // 호스팅 위치는 「자체 호스팅」으로 선언한다 — 시연 시나리오에서 임베딩 서버는 조직이 직접 운영하는 서버다. 외부로 선언하면
+  // 민감 등급 데이터셋(seed-security.mjs)의 벡터가 지워져 행 검색이 키워드로만 돈다(보안 등급의 AI 정책 「자체 호스팅만」).
+  await call(token, 'PUT', '/settings/embedding', { provider: 'OLLAMA', model: 'bge-m3', baseUrl: OLLAMA_URL, hosting: 'SELF_HOSTED' });
 
   // 2) 행 검색(검색 탭) — 거래처 정보의 글자 컬럼을 의미 검색 대상으로 켠다. 색인은 1분 주기 스윕이 만든다.
   await call(token, 'PUT', `/datasets/${ids.customer}/search-index`, { fields: ['customer_name', 'industry', 'region', 'contact_name'] });
@@ -738,6 +742,66 @@ async function seedKnowledge(token, ids) {
   // 문서 데이터셋도 같은 지식 모델에 묶는다 — AI 가 문서에서 거래처·이슈를 뽑아 같은 그래프에 잇는다(seed-ai.mjs).
   await call(token, 'PUT', `/datasets/${dsDocs.id}/ontology`, { ontologyId });
   console.log('  임베딩·행 검색·지식 모델·매핑 준비');
+}
+
+/**
+ * 파일 데이터셋 — 검사 장비가 내보내는 측정 CSV 를 「월/라인」 폴더 구조 그대로 올린다(오브젝트 탭의 폴더 탐색 장면).
+ * 업로드는 화면과 같은 경로다: API 가 presigned PUT URL 을 발급하고, 파일은 오브젝트 저장소(MinIO)에 직접 올린다.
+ * 측정값은 별도 고정 시드 난수로 만들어, 앞 데이터셋 숫자에 영향을 주지 않고 다시 돌려도 같은 파일이 나온다.
+ */
+async function seedFiles(token, ids) {
+  const catQa = await call(token, 'POST', '/dataset-categories', { name: '품질·생산', description: '검사 장비 측정 자료와 품질 기록' });
+  const ds = await call(token, 'POST', '/datasets', {
+    name: '품질 검사 측정 자료',
+    tableName: 'qa_measurements',
+    storageType: 'FILE',
+    description: '조립 라인 검사 장비가 날마다 내보내는 측정 파일(CSV). 월별·라인별 폴더로 보관한다.',
+    categoryId: catQa.id,
+  });
+  ids.files = ds.id;
+  const r = rng(20261118);
+  const lines = ['조립1라인', '조립2라인'];
+  const products = [['CB', '제어 보드'], ['SM', '센서 모듈'], ['CN', '커넥터']];
+  // 최근 3개월(이번 달 포함) — 월마다 평일 측정 파일 몇 개씩
+  const months = [];
+  for (let k = 2; k >= 0; k--) {
+    const d = new Date(TODAY + 'T00:00:00Z');
+    d.setUTCDate(1);
+    d.setUTCMonth(d.getUTCMonth() - k);
+    months.push(d.toISOString().slice(0, 7));
+  }
+  let total = 0;
+  for (const month of months) {
+    for (const line of lines) {
+      const files = [];
+      for (let dd = 1; dd <= 28; dd += 3) {
+        const date = `${month}-${pad(dd)}`;
+        if (date > TODAY) break;
+        const wd = new Date(date + 'T00:00:00Z').getUTCDay();
+        if (wd === 0 || wd === 6) continue;
+        const [code] = products[Math.floor(r() * products.length)];
+        const rows = ['측정시각,제품코드,시리얼,전압(V),저항(Ω),판정'];
+        const n = 40 + Math.floor(r() * 80);
+        for (let i = 0; i < n; i++) {
+          const v = 12 + (r() - 0.5) * 0.6;
+          const ohm = 470 + (r() - 0.5) * 18;
+          const ng = Math.abs(v - 12) > 0.27 || Math.abs(ohm - 470) > 8.6;
+          rows.push(`${date}T${pad(8 + Math.floor(i / 12))}:${pad((i * 5) % 60)}:00,${code},${code}${date.replace(/-/g, '').slice(2)}${String(i + 1).padStart(4, '0')},${v.toFixed(3)},${ohm.toFixed(1)},${ng ? 'NG' : 'OK'}`);
+        }
+        files.push({ name: `${date}_${code}_측정.csv`, body: rows.join('\n') + '\n' });
+      }
+      if (!files.length) continue;
+      const folder = `${month}/${line}/`;
+      const { targets } = await call(token, 'POST', `/datasets/${ds.id}/objects/upload-urls`, { path: folder, files: files.map((f) => ({ filename: f.name })) });
+      for (let i = 0; i < files.length; i++) {
+        if (targets[i].error) throw new Error(`파일 키 발급 실패(${files[i].name}): ${targets[i].error}`);
+        const res = await fetch(targets[i].uploadUrl, { method: 'PUT', headers: { 'Content-Type': 'text/csv' }, body: files[i].body });
+        if (!res.ok) throw new Error(`파일 업로드 실패(${files[i].name}) → ${res.status} ${await res.text()}`);
+      }
+      total += files.length;
+    }
+  }
+  console.log(`  품질 검사 측정 파일 ${total}건`);
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {

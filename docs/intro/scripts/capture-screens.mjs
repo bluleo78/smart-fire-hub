@@ -176,9 +176,13 @@ async function main() {
     await settle(page, 2000);
     await soft(mark(page, 'datasets', 'filters', page.getByPlaceholder('데이터셋 검색...').locator('xpath=..')));
     await soft(mark(page, 'datasets', 'table', page.locator('table').first()));
-    await soft(mark(page, 'datasets', 'add', page.getByRole('button', { name: /데이터셋 추가/ })));
+    await soft(mark(page, 'datasets', 'add', page.getByRole('button', { name: /새 데이터셋|데이터셋 추가/ })));
+    // 행 위에 마우스가 있으면 동작 아이콘이 생성일을 가린다 — 빈 곳으로 옮긴 뒤 찍는다
+    await page.mouse.move(1000, 760);
+    await settle(page, 500);
+    await soft(mark(page, 'datasets', 'level', page.getByText('보안 등급: 전체').first()));
     await shoot(page, 'datasets');
-    await page.getByRole('button', { name: /데이터셋 추가/ }).first().click();
+    await page.getByRole('button', { name: /새 데이터셋|데이터셋 추가/ }).first().click();
     await page.getByRole('dialog').waitFor({ timeout: 10000 });
     await settle(page, 800);
     await soft(mark(page, 'dataset-type', 'dialog', page.getByRole('dialog')));
@@ -399,12 +403,61 @@ async function main() {
     await shoot(page, 'report');
   });
 
+  // 파일 데이터셋: 검사 장비 측정 파일을 월·라인 폴더로 탐색한다(오브젝트 탭)
+  await scene('files', async () => {
+    await page.goto(`${WEB}/data/datasets/${dsId('품질 검사 측정 자료')}`);
+    await settle(page);
+    await page.getByRole('tab', { name: '오브젝트' }).click();
+    await settle(page, 1500);
+    await soft(mark(page, 'files-root', 'list', page.getByTestId('object-list')));
+    await shoot(page, 'files-root');
+    // 가장 최근 달 → 조립1라인 폴더로 들어가 경로(빵 부스러기)와 파일 목록을 함께 보인다
+    await page.getByTestId('folder-row').last().click();
+    await settle(page, 1200);
+    await page.getByTestId('folder-row').first().click();
+    await settle(page, 1500);
+    await soft(mark(page, 'files-folder', 'crumbs', page.getByRole('navigation', { name: '폴더 경로' })));
+    await soft(mark(page, 'files-folder', 'list', page.getByTestId('object-list')));
+    await soft(mark(page, 'files-folder', 'search', page.getByPlaceholder('파일 이름 검색')));
+    await shoot(page, 'files-folder');
+  });
+
+  // 데이터 보안 등급: 설정 › 데이터 보안(등급 정의), 데이터셋 › 보안 탭, 역할의 데이터 열람 등급
+  await scene('security', async () => {
+    await page.goto(`${WEB}/admin/settings`);
+    await settle(page, 1500);
+    await page.getByRole('tab', { name: '데이터 보안' }).click();
+    await settle(page, 2000);
+    // 「민감」 등급을 펼쳐 내보내기·AI·공유 정책과 감사 기록 설정이 보이게 한다
+    await page.getByRole('button', { name: '민감 펼치기' }).click();
+    await settle(page, 1200);
+    await soft(mark(page, 'security-levels', 'levels', page.getByText('보안 등급', { exact: true }).first().locator('xpath=ancestor::*[@data-slot="card"][1]')));
+    await shoot(page, 'security-levels');
+    await page.goto(`${WEB}/data/datasets/${dsId('거래처 정보')}`);
+    await settle(page);
+    await page.getByRole('tab', { name: '보안' }).click();
+    await settle(page, 1500);
+    await shoot(page, 'dataset-security');
+    const roles = list(await call(token, 'GET', '/roles'));
+    const userRole = roles.find((r) => r.name === 'USER') ?? roles[0];
+    await page.goto(`${WEB}/admin/roles/${userRole.id}`);
+    await settle(page, 1500);
+    const card = page.getByText('데이터 열람 등급', { exact: true }).first();
+    await card.scrollIntoViewIfNeeded();
+    await settle(page, 800);
+    await soft(mark(page, 'role-clearance', 'card', card.locator('xpath=ancestor::*[@data-slot="card"][1]')));
+    await shoot(page, 'role-clearance');
+  });
+
   // 권한·감사
   await scene('admin', async () => {
     const roles = list(await call(token, 'GET', '/roles'));
     const userRole = roles.find((r) => r.name === 'USER') ?? roles[0];
     await page.goto(`${WEB}/admin/roles/${userRole.id}`);
     await settle(page, 1500);
+    // 역할 상세 위쪽은 역할 정보·데이터 열람 등급 카드(보안 등급 장에서 쓴다) — 권한 체크박스가 보이게 「권한 할당」 카드를 위로 올린다
+    await page.getByText('권한 할당', { exact: true }).first().evaluate((el) => el.scrollIntoView({ block: 'start' }));
+    await settle(page, 800);
     await shoot(page, 'roles');
     await page.goto(`${WEB}/admin/audit-logs`);
     await settle(page, 2000);

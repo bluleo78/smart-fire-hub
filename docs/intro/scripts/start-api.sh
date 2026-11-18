@@ -17,6 +17,8 @@ sleep 1
 # 임베딩(문서 검색·지식그래프)은 운영과 같은 외부 Ollama(bge-m3)를 쓴다 — 평문 http 라 허용 목록에 있어야 저장된다.
 OLLAMA_URL="${INTRO_OLLAMA_URL:-http://bluelion.iptime.org:11434}"
 # JVM 시간대는 운영 컨테이너와 같은 UTC — 로컬(KST) JVM 이면 생성·수정 시각이 화면에서 9시간 밀려 보인다.
+# 파일 데이터셋 저장소 — reset-stack.sh 가 띄운 intro-data-minio(9010).
+MINIO_ENDPOINT="http://localhost:${INTRO_MINIO_PORT:-9010}" \
 APP_BRANDING_NAME="Gen:iA Data" \
 nohup java -Dintro-data-api-marker=1 -Duser.timezone=UTC -jar "$JAR" \
   --app.embedding.ollama-allowed-base-urls="$OLLAMA_URL" \
