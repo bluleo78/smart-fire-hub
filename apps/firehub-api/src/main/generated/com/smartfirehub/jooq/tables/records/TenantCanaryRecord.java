@@ -89,6 +89,6 @@ public class TenantCanaryRecord extends UpdatableRecordImpl<TenantCanaryRecord> 
         setId(id);
         setTenantId(tenantId);
         setVal(val);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

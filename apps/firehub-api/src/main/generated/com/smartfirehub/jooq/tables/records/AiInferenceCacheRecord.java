@@ -137,6 +137,6 @@ public class AiInferenceCacheRecord extends UpdatableRecordImpl<AiInferenceCache
         setCreatedAt(createdAt);
         setResultJson(resultJson);
         setTenantId(tenantId);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

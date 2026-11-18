@@ -34,10 +34,10 @@ import org.jooq.QueryPart;
 import org.jooq.Record;
 import org.jooq.SQL;
 import org.jooq.Schema;
-import org.jooq.Select;
 import org.jooq.Stringly;
 import org.jooq.Table;
 import org.jooq.TableField;
+import org.jooq.TableLike;
 import org.jooq.TableOptions;
 import org.jooq.UniqueKey;
 import org.jooq.impl.DSL;
@@ -70,7 +70,7 @@ public class PipelineTrigger extends TableImpl<PipelineTriggerRecord> {
     /**
      * The column <code>public.pipeline_trigger.id</code>.
      */
-    public final TableField<PipelineTriggerRecord, Long> ID = createField(DSL.name("id"), SQLDataType.BIGINT.nullable(false).identity(true), this, "");
+    public final TableField<PipelineTriggerRecord, Long> ID = createField(DSL.name("id"), SQLDataType.BIGINT.nullable(false).generatedByDefaultAsIdentity(), this, "");
 
     /**
      * The column <code>public.pipeline_trigger.pipeline_id</code>.
@@ -346,7 +346,7 @@ public class PipelineTrigger extends TableImpl<PipelineTriggerRecord> {
      */
     @Override
     public PipelineTrigger where(Condition condition) {
-        return new PipelineTrigger(getQualifiedName(), aliased() ? this : null, null, condition);
+        return new PipelineTrigger(getQualifiedName(), aliased() ? this : null, null, Internal.condition(this, condition));
     }
 
     /**
@@ -413,7 +413,7 @@ public class PipelineTrigger extends TableImpl<PipelineTriggerRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public PipelineTrigger whereExists(Select<?> select) {
+    public PipelineTrigger whereExists(TableLike<?> select) {
         return where(DSL.exists(select));
     }
 
@@ -421,7 +421,7 @@ public class PipelineTrigger extends TableImpl<PipelineTriggerRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public PipelineTrigger whereNotExists(Select<?> select) {
+    public PipelineTrigger whereNotExists(TableLike<?> select) {
         return where(DSL.notExists(select));
     }
 }

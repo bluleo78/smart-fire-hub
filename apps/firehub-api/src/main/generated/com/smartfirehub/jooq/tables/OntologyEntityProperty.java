@@ -27,10 +27,10 @@ import org.jooq.QueryPart;
 import org.jooq.Record;
 import org.jooq.SQL;
 import org.jooq.Schema;
-import org.jooq.Select;
 import org.jooq.Stringly;
 import org.jooq.Table;
 import org.jooq.TableField;
+import org.jooq.TableLike;
 import org.jooq.TableOptions;
 import org.jooq.UniqueKey;
 import org.jooq.impl.DSL;
@@ -63,7 +63,7 @@ public class OntologyEntityProperty extends TableImpl<OntologyEntityPropertyReco
     /**
      * The column <code>public.ontology_entity_property.id</code>.
      */
-    public final TableField<OntologyEntityPropertyRecord, Long> ID = createField(DSL.name("id"), SQLDataType.BIGINT.nullable(false).identity(true), this, "");
+    public final TableField<OntologyEntityPropertyRecord, Long> ID = createField(DSL.name("id"), SQLDataType.BIGINT.nullable(false).generatedByDefaultAsIdentity(), this, "");
 
     /**
      * The column <code>public.ontology_entity_property.entity_type_id</code>.
@@ -265,7 +265,7 @@ public class OntologyEntityProperty extends TableImpl<OntologyEntityPropertyReco
      */
     @Override
     public OntologyEntityProperty where(Condition condition) {
-        return new OntologyEntityProperty(getQualifiedName(), aliased() ? this : null, null, condition);
+        return new OntologyEntityProperty(getQualifiedName(), aliased() ? this : null, null, Internal.condition(this, condition));
     }
 
     /**
@@ -332,7 +332,7 @@ public class OntologyEntityProperty extends TableImpl<OntologyEntityPropertyReco
      * Create an inline derived table from this table
      */
     @Override
-    public OntologyEntityProperty whereExists(Select<?> select) {
+    public OntologyEntityProperty whereExists(TableLike<?> select) {
         return where(DSL.exists(select));
     }
 
@@ -340,7 +340,7 @@ public class OntologyEntityProperty extends TableImpl<OntologyEntityPropertyReco
      * Create an inline derived table from this table
      */
     @Override
-    public OntologyEntityProperty whereNotExists(Select<?> select) {
+    public OntologyEntityProperty whereNotExists(TableLike<?> select) {
         return where(DSL.notExists(select));
     }
 }

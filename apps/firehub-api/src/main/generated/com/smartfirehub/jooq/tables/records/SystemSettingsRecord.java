@@ -121,6 +121,6 @@ public class SystemSettingsRecord extends UpdatableRecordImpl<SystemSettingsReco
         setDescription(description);
         setUpdatedAt(updatedAt);
         setUpdatedBy(updatedBy);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

@@ -151,6 +151,6 @@ public class TenantVectorStoreRecord extends UpdatableRecordImpl<TenantVectorSto
         setApiKeyEnc(apiKeyEnc);
         setCreatedAt(createdAt);
         setUpdatedAt(updatedAt);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

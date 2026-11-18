@@ -104,6 +104,6 @@ public class JobrunrRecurringJobsRecord extends UpdatableRecordImpl<JobrunrRecur
         setVersion(version);
         setJobasjson(jobasjson);
         setCreatedat(createdat);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

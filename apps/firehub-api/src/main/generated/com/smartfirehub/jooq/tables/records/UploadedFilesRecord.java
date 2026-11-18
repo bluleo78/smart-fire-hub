@@ -211,6 +211,6 @@ public class UploadedFilesRecord extends UpdatableRecordImpl<UploadedFilesRecord
         setCreatedAt(createdAt);
         setExpiresAt(expiresAt);
         setTenantId(tenantId);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

@@ -257,6 +257,6 @@ public class AuditLogRecord extends UpdatableRecordImpl<AuditLogRecord> {
         setErrorMessage(errorMessage);
         setMetadata(metadata);
         setTenantId(tenantId);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

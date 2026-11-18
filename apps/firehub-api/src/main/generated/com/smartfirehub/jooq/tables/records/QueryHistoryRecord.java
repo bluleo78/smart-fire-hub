@@ -211,6 +211,6 @@ public class QueryHistoryRecord extends UpdatableRecordImpl<QueryHistoryRecord> 
         setErrorMessage(errorMessage);
         setExecutedAt(executedAt);
         setTenantId(tenantId);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

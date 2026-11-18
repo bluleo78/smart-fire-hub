@@ -166,6 +166,6 @@ public class RoleRecord extends UpdatableRecordImpl<RoleRecord> {
         setUpdatedAt(updatedAt);
         setTenantId(tenantId);
         setMaxSecurityLevelId(maxSecurityLevelId);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

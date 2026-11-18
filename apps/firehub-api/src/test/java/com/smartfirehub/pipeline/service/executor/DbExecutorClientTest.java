@@ -13,6 +13,7 @@ import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import com.smartfirehub.global.tenant.MissingTenantScopeException;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.global.util.Jackson2WebClientCodecs;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import java.io.IOException;
 import java.sql.Types;
@@ -63,8 +64,15 @@ class DbExecutorClientTest {
   }
 
   private static DbExecutorClient client(String baseUrl, Duration timeout) {
+    // 운영은 자동 구성 빌더(Jackson 2 우선)를 받는다 — 날 builder() 는 Spring 7 에서 Jackson 3 코덱을 고르므로
+    // 운영과 같게 Jackson 2 코덱을 건다(WD-792).
     return new DbExecutorClient(
-        WebClient.builder(), baseUrl, "test-token", timeout, timeout, timeout);
+        Jackson2WebClientCodecs.webClientBuilder(),
+        baseUrl,
+        "test-token",
+        timeout,
+        timeout,
+        timeout);
   }
 
   private static void stubJson(String path, String body) {
@@ -422,7 +430,8 @@ class DbExecutorClientTest {
     Duration shortWait = Duration.ofMillis(300);
     DbExecutorClient client =
         new DbExecutorClient(
-            WebClient.builder(),
+            // 운영과 같은 Jackson 2 코덱(WD-792)
+            Jackson2WebClientCodecs.webClientBuilder(),
             "http://localhost:" + wireMock.port(),
             "test-token",
             shortWait,

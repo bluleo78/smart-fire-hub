@@ -111,6 +111,6 @@ public class DatasetOntologyRecord extends TableRecordImpl<DatasetOntologyRecord
         setBoundAt(boundAt);
         setBoundBy(boundBy);
         setTenantId(tenantId);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

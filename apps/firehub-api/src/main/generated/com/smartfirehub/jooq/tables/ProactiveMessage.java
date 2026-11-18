@@ -31,13 +31,14 @@ import org.jooq.QueryPart;
 import org.jooq.Record;
 import org.jooq.SQL;
 import org.jooq.Schema;
-import org.jooq.Select;
 import org.jooq.Stringly;
 import org.jooq.Table;
 import org.jooq.TableField;
+import org.jooq.TableLike;
 import org.jooq.TableOptions;
 import org.jooq.UniqueKey;
 import org.jooq.impl.DSL;
+import org.jooq.impl.Internal;
 import org.jooq.impl.SQLDataType;
 import org.jooq.impl.TableImpl;
 
@@ -66,7 +67,7 @@ public class ProactiveMessage extends TableImpl<ProactiveMessageRecord> {
     /**
      * The column <code>public.proactive_message.id</code>.
      */
-    public final TableField<ProactiveMessageRecord, Long> ID = createField(DSL.name("id"), SQLDataType.BIGINT.nullable(false).identity(true), this, "");
+    public final TableField<ProactiveMessageRecord, Long> ID = createField(DSL.name("id"), SQLDataType.BIGINT.nullable(false).generatedByDefaultAsIdentity(), this, "");
 
     /**
      * The column <code>public.proactive_message.user_id</code>.
@@ -281,7 +282,7 @@ public class ProactiveMessage extends TableImpl<ProactiveMessageRecord> {
      */
     @Override
     public ProactiveMessage where(Condition condition) {
-        return new ProactiveMessage(getQualifiedName(), aliased() ? this : null, null, condition);
+        return new ProactiveMessage(getQualifiedName(), aliased() ? this : null, null, Internal.condition(this, condition));
     }
 
     /**
@@ -348,7 +349,7 @@ public class ProactiveMessage extends TableImpl<ProactiveMessageRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public ProactiveMessage whereExists(Select<?> select) {
+    public ProactiveMessage whereExists(TableLike<?> select) {
         return where(DSL.exists(select));
     }
 
@@ -356,7 +357,7 @@ public class ProactiveMessage extends TableImpl<ProactiveMessageRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public ProactiveMessage whereNotExists(Select<?> select) {
+    public ProactiveMessage whereNotExists(TableLike<?> select) {
         return where(DSL.notExists(select));
     }
 }

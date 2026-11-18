@@ -38,31 +38,43 @@ spring:
       # 코드로 만드는 풀은 HikariTimeoutEvictionOverride.applyTo 로 건다.
       exception-override-class-name: com.smartfirehub.global.config.HikariTimeoutEvictionOverride
   http:
-    reactiveclient:
+    clients:
       # 자동 구성 WebClient.Builder 가 3xx 리다이렉트를 따라가지 않게 한다(WD-791).
-      # Boot 3.4.1 은 Reactor Netty 기본값(따라가지 않음)을 그대로 썼는데, Boot 3.5 는 이 값이 비면
+      # Boot 3.4.1 은 Reactor Netty 기본값(따라가지 않음)을 그대로 썼는데, Boot 3.5 부터는 이 값이 비면
       # FOLLOW_WHEN_POSSIBLE 로 채워 리다이렉트를 따라간다. 주입 빌더를 쓰는 임베딩 호출(EmbeddingProviderFactory)이
       # SSRF 가드(EmbeddingTargetGuard)가 검사한 baseUrl 밖으로 3xx 를 따라 나가지 않도록 3.4 동작으로 되돌린다.
-      # (블로킹 쪽 spring.http.client.redirects 기본값은 3.4.1·3.5 모두 follow-when-possible 이라 바뀐 것이 없다.)
+      # Boot 4 는 블로킹·리액티브 키(spring.http.client.redirects·spring.http.reactiveclient.redirects)를 이 하나로 합쳤다(WD-792).
+      # 그래서 자동 구성 RestClient/RestTemplate 도 따라가지 않게 되지만, 이 앱은 그것들을 쓰지 않는다(블로킹 HTTP 는 직접 만든 클라이언트).
       redirects: dont-follow
+    # Jackson 2 유지(WD-792, Jackson 3 전환은 WD-793). Boot 4 는 Jackson 3 이 있으면 그것을 HTTP JSON 에 쓰는데, Flyway 12·웹 스타터가
+    # Jackson 3 을 끌어와 클래스패스에서 뺄 수 없다. 서블릿 응답·요청 본문(converters)과 자동 구성 WebClient(codecs)를 Jackson 2 로 고정해
+    # @JsonSerialize(StorageZoneDateTimeSerializer 등)·날짜 형식·속성 순서를 Boot 3 때와 같게 둔다. 직접 만드는 WebClient 는
+    # Jackson2WebClientCodecs 로 같은 일을 한다.
+    converters:
+      preferred-json-mapper: jackson2
+    codecs:
+      preferred-json-mapper: jackson2
 
 server:
   port: 8080
 
-org:
-  jobrunr:
-    # 테이블 생성은 Flyway(V85)가 담당한다 — 런타임 롤(app_tenant)은 DDL 권한이 없다.
-    database:
-      skip-create: true
-      # JobRunr 저장소는 업무 풀과 분리된 전용 풀을 쓴다(WD-555, JobRunrDataSourceConfig). 업무 풀이 고갈돼도
-      # 생존 신호 쓰기가 막혀 BackgroundJobServer 가 스스로 꺼지는 일을 막는다.
-      datasource: jobRunrDataSource
-    background-job-server:
-      enabled: true
-      delete-succeeded-jobs-after: 720h
-      permanently-delete-deleted-jobs-after: 2160h
-    dashboard:
-      enabled: false
+# JobRunr 8 은 설정 접두를 org.jobrunr → jobrunr 로 바꿨다(WD-792). 옛 접두는 아무 경고 없이 무시되므로(skip-create 가 꺼져
+# 런타임 롤이 CREATE TABLE 을 하다 기동 실패) 이 키들을 옛 이름으로 되돌리지 말 것.
+jobrunr:
+  # 테이블 생성은 Flyway(V85·V167)가 담당한다 — 런타임 롤(app_tenant)은 DDL 권한이 없다.
+  database:
+    skip-create: true
+    # JobRunr 저장소는 업무 풀과 분리된 전용 풀을 쓴다(WD-555, JobRunrDataSourceConfig). 업무 풀이 고갈돼도
+    # 생존 신호 쓰기가 막혀 BackgroundJobServer 가 스스로 꺼지는 일을 막는다.
+    datasource: jobRunrDataSource
+  background-job-server:
+    enabled: true
+  jobs:
+    # JobRunr 8 에서 background-job-server.* 아래에서 jobs.* 로 옮겨졌다(옛 키는 deprecated).
+    delete-succeeded-jobs-after: 720h
+    permanently-delete-deleted-jobs-after: 2160h
+  dashboard:
+    enabled: false
 
 app:
   security:

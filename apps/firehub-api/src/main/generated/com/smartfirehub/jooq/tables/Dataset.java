@@ -46,10 +46,10 @@ import org.jooq.QueryPart;
 import org.jooq.Record;
 import org.jooq.SQL;
 import org.jooq.Schema;
-import org.jooq.Select;
 import org.jooq.Stringly;
 import org.jooq.Table;
 import org.jooq.TableField;
+import org.jooq.TableLike;
 import org.jooq.TableOptions;
 import org.jooq.UniqueKey;
 import org.jooq.impl.DSL;
@@ -82,7 +82,7 @@ public class Dataset extends TableImpl<DatasetRecord> {
     /**
      * The column <code>public.dataset.id</code>.
      */
-    public final TableField<DatasetRecord, Long> ID = createField(DSL.name("id"), SQLDataType.BIGINT.nullable(false).identity(true), this, "");
+    public final TableField<DatasetRecord, Long> ID = createField(DSL.name("id"), SQLDataType.BIGINT.nullable(false).generatedByDefaultAsIdentity(), this, "");
 
     /**
      * The column <code>public.dataset.name</code>.
@@ -584,7 +584,7 @@ public class Dataset extends TableImpl<DatasetRecord> {
      */
     @Override
     public Dataset where(Condition condition) {
-        return new Dataset(getQualifiedName(), aliased() ? this : null, null, condition);
+        return new Dataset(getQualifiedName(), aliased() ? this : null, null, Internal.condition(this, condition));
     }
 
     /**
@@ -651,7 +651,7 @@ public class Dataset extends TableImpl<DatasetRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public Dataset whereExists(Select<?> select) {
+    public Dataset whereExists(TableLike<?> select) {
         return where(DSL.exists(select));
     }
 
@@ -659,7 +659,7 @@ public class Dataset extends TableImpl<DatasetRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public Dataset whereNotExists(Select<?> select) {
+    public Dataset whereNotExists(TableLike<?> select) {
         return where(DSL.notExists(select));
     }
 }

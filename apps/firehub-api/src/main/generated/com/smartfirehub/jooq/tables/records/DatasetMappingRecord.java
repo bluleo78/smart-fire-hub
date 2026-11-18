@@ -167,6 +167,6 @@ public class DatasetMappingRecord extends UpdatableRecordImpl<DatasetMappingReco
         setUpdatedAt(updatedAt);
         setUpdatedBy(updatedBy);
         setTenantId(tenantId);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

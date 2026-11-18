@@ -106,6 +106,6 @@ public class LoginAttemptsRecord extends UpdatableRecordImpl<LoginAttemptsRecord
         setAttempts(attempts);
         setExpiresAt(expiresAt);
         setUpdatedAt(updatedAt);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

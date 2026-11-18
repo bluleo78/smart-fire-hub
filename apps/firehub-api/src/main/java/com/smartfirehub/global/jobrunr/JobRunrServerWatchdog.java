@@ -17,11 +17,11 @@ import org.springframework.stereotype.Component;
  * 내리고 되살리지 않는다. 그러면 임포트·예약 작업이 PENDING 으로 영구 정지한다(사용자에게 오류도 없다). 이 감시자가 주기적으로 {@link
  * BackgroundJobServer#isRunning()} 을 보고 꺼져 있으면 다시 켠다.
  *
- * <p>JobRunr 서버가 꺼진 환경({@code org.jobrunr.background-job-server.enabled} 가 true 가 아님 — 테스트 등)에서는 빈
- * 자체가 만들어지지 않는다.
+ * <p>JobRunr 서버가 꺼진 환경({@code jobrunr.background-job-server.enabled} 가 true 가 아님 — 테스트 등)에서는 빈 자체가
+ * 만들어지지 않는다.
  */
 @Component
-@ConditionalOnProperty(name = "org.jobrunr.background-job-server.enabled", havingValue = "true")
+@ConditionalOnProperty(name = "jobrunr.background-job-server.enabled", havingValue = "true")
 public class JobRunrServerWatchdog {
 
   private static final Logger log = LoggerFactory.getLogger(JobRunrServerWatchdog.class);

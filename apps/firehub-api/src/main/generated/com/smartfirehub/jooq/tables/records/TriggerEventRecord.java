@@ -167,6 +167,6 @@ public class TriggerEventRecord extends UpdatableRecordImpl<TriggerEventRecord> 
         setDetail(detail);
         setCreatedAt(createdAt);
         setTenantId(tenantId);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

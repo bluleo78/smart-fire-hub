@@ -16,6 +16,7 @@ import com.smartfirehub.apiconnection.repository.ApiConnectionRepository.ApiConn
 import com.smartfirehub.apiconnection.repository.ApiConnectionRepository.HealthCheckTarget;
 import com.smartfirehub.audit.service.AuditLogService;
 import com.smartfirehub.global.exception.SerializationException;
+import com.smartfirehub.global.util.Jackson2WebClientCodecs;
 import com.smartfirehub.job.service.AsyncJobService;
 import com.smartfirehub.pipeline.service.executor.ApiCallAuth;
 import com.smartfirehub.pipeline.service.executor.ApiCallErrorMessages;
@@ -643,7 +644,8 @@ public class ApiConnectionService {
    * HttpClient 는 전역 연결 풀·이벤트 루프를 공유하므로 연결을 새로 열지 않는다.
    */
   private WebClient healthCheckClient() {
-    return RedirectFollower.withoutAutoRedirect(WebClient.builder(), ssrfSafeHttpClientFactory)
+    return RedirectFollower.withoutAutoRedirect(
+            Jackson2WebClientCodecs.webClientBuilder(), ssrfSafeHttpClientFactory)
         .build();
   }
 

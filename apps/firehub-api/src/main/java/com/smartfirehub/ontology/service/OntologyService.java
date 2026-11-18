@@ -7,6 +7,7 @@ import com.smartfirehub.audit.service.AuditLogService;
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.exception.ExternalServiceException;
 import com.smartfirehub.global.security.DelegationHeaders;
+import com.smartfirehub.global.util.Jackson2WebClientCodecs;
 import com.smartfirehub.ontology.OntologyRules;
 import com.smartfirehub.ontology.dto.CreateOntologyRequest;
 import com.smartfirehub.ontology.dto.GraphAccessResponse;
@@ -72,7 +73,7 @@ public class OntologyService {
       AiHostingResolver aiHostingResolver,
       GraphOntologySourceRepository sourceRepository) {
     this.webClient =
-        WebClient.builder()
+        Jackson2WebClientCodecs.webClientBuilder()
             .baseUrl(agentUrl)
             // 지식그래프(/agent/graph)는 한 온톨로지를 페이지네이션 없이 한 번에 내려주므로 응답이
             // 수 MB까지 커진다(운영 기준 노드 3천/엣지 7천 ≈ 1.5MB, 요소당 약 148B). WebClient 기본

@@ -29,10 +29,10 @@ import org.jooq.QueryPart;
 import org.jooq.Record;
 import org.jooq.SQL;
 import org.jooq.Schema;
-import org.jooq.Select;
 import org.jooq.Stringly;
 import org.jooq.Table;
 import org.jooq.TableField;
+import org.jooq.TableLike;
 import org.jooq.TableOptions;
 import org.jooq.UniqueKey;
 import org.jooq.impl.DSL;
@@ -65,7 +65,7 @@ public class OntologyEntityType extends TableImpl<OntologyEntityTypeRecord> {
     /**
      * The column <code>public.ontology_entity_type.id</code>.
      */
-    public final TableField<OntologyEntityTypeRecord, Long> ID = createField(DSL.name("id"), SQLDataType.BIGINT.nullable(false).identity(true), this, "");
+    public final TableField<OntologyEntityTypeRecord, Long> ID = createField(DSL.name("id"), SQLDataType.BIGINT.nullable(false).generatedByDefaultAsIdentity(), this, "");
 
     /**
      * The column <code>public.ontology_entity_type.ontology_id</code>.
@@ -307,7 +307,7 @@ public class OntologyEntityType extends TableImpl<OntologyEntityTypeRecord> {
      */
     @Override
     public OntologyEntityType where(Condition condition) {
-        return new OntologyEntityType(getQualifiedName(), aliased() ? this : null, null, condition);
+        return new OntologyEntityType(getQualifiedName(), aliased() ? this : null, null, Internal.condition(this, condition));
     }
 
     /**
@@ -374,7 +374,7 @@ public class OntologyEntityType extends TableImpl<OntologyEntityTypeRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public OntologyEntityType whereExists(Select<?> select) {
+    public OntologyEntityType whereExists(TableLike<?> select) {
         return where(DSL.exists(select));
     }
 
@@ -382,7 +382,7 @@ public class OntologyEntityType extends TableImpl<OntologyEntityTypeRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public OntologyEntityType whereNotExists(Select<?> select) {
+    public OntologyEntityType whereNotExists(TableLike<?> select) {
         return where(DSL.notExists(select));
     }
 }

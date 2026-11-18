@@ -139,6 +139,6 @@ public class GeographyColumnsRecord extends TableRecordImpl<GeographyColumnsReco
         setCoordDimension(coordDimension);
         setSrid(srid);
         setType(type);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

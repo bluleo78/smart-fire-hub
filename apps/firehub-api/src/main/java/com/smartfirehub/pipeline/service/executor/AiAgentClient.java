@@ -2,6 +2,7 @@ package com.smartfirehub.pipeline.service.executor;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.global.util.Jackson2WebClientCodecs;
 import com.smartfirehub.settings.model.AiCredential;
 import com.smartfirehub.settings.service.AiCredentialService;
 import com.smartfirehub.settings.service.SettingsService;
@@ -46,7 +47,7 @@ public class AiAgentClient {
       AiCredentialService aiCredentialService) {
     HttpClient httpClient = HttpClient.create().responseTimeout(TIMEOUT);
     this.webClient =
-        WebClient.builder()
+        Jackson2WebClientCodecs.webClientBuilder()
             .baseUrl(agentUrl)
             .clientConnector(new ReactorClientHttpConnector(httpClient))
             .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(10 * 1024 * 1024))

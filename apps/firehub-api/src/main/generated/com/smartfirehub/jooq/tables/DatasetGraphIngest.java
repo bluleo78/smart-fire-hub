@@ -29,13 +29,14 @@ import org.jooq.QueryPart;
 import org.jooq.Record;
 import org.jooq.SQL;
 import org.jooq.Schema;
-import org.jooq.Select;
 import org.jooq.Stringly;
 import org.jooq.Table;
 import org.jooq.TableField;
+import org.jooq.TableLike;
 import org.jooq.TableOptions;
 import org.jooq.UniqueKey;
 import org.jooq.impl.DSL;
+import org.jooq.impl.Internal;
 import org.jooq.impl.SQLDataType;
 import org.jooq.impl.TableImpl;
 
@@ -64,7 +65,7 @@ public class DatasetGraphIngest extends TableImpl<DatasetGraphIngestRecord> {
     /**
      * The column <code>public.dataset_graph_ingest.id</code>.
      */
-    public final TableField<DatasetGraphIngestRecord, Long> ID = createField(DSL.name("id"), SQLDataType.BIGINT.nullable(false).identity(true), this, "");
+    public final TableField<DatasetGraphIngestRecord, Long> ID = createField(DSL.name("id"), SQLDataType.BIGINT.nullable(false).generatedByDefaultAsIdentity(), this, "");
 
     /**
      * The column <code>public.dataset_graph_ingest.dataset_id</code>.
@@ -262,7 +263,7 @@ public class DatasetGraphIngest extends TableImpl<DatasetGraphIngestRecord> {
      */
     @Override
     public DatasetGraphIngest where(Condition condition) {
-        return new DatasetGraphIngest(getQualifiedName(), aliased() ? this : null, null, condition);
+        return new DatasetGraphIngest(getQualifiedName(), aliased() ? this : null, null, Internal.condition(this, condition));
     }
 
     /**
@@ -329,7 +330,7 @@ public class DatasetGraphIngest extends TableImpl<DatasetGraphIngestRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public DatasetGraphIngest whereExists(Select<?> select) {
+    public DatasetGraphIngest whereExists(TableLike<?> select) {
         return where(DSL.exists(select));
     }
 
@@ -337,7 +338,7 @@ public class DatasetGraphIngest extends TableImpl<DatasetGraphIngestRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public DatasetGraphIngest whereNotExists(Select<?> select) {
+    public DatasetGraphIngest whereNotExists(TableLike<?> select) {
         return where(DSL.notExists(select));
     }
 }

@@ -3,6 +3,7 @@ package com.smartfirehub.notification.channels.slack;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.global.util.Jackson2WebClientCodecs;
 import java.util.HashMap;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
@@ -34,7 +35,8 @@ public class SlackApiClient {
    */
   @Autowired
   public SlackApiClient(ObjectMapper objectMapper) {
-    this.webClient = WebClient.builder().baseUrl("https://slack.com/api").build();
+    this.webClient =
+        Jackson2WebClientCodecs.webClientBuilder().baseUrl("https://slack.com/api").build();
     this.objectMapper = objectMapper;
   }
 

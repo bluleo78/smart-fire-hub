@@ -6,20 +6,21 @@ import java.util.Properties
 buildscript {
     repositories { mavenCentral() }
     dependencies {
-        // buildscript 클래스패스는 Boot BOM 밖이라 generateJooq 용으로 Boot BOM 값(Boot 3.5.16: flyway 11.7.2, jooq 3.19.35,
-        // postgresql 42.7.11, testcontainers 1.21.4)을 손으로 따라 맞춘다 — Boot 를 올릴 때 함께 올린다(WD-797).
-        // 특히 코드젠 jOOQ 가 런타임과 어긋나면 생성 소스가 달라진다(drift).
-        classpath("org.testcontainers:postgresql:1.21.4")
-        classpath("org.flywaydb:flyway-core:11.7.2")
-        classpath("org.flywaydb:flyway-database-postgresql:11.7.2")
-        classpath("org.postgresql:postgresql:42.7.11")
-        classpath("org.jooq:jooq-codegen:3.19.35")
+        // flyway·jooq-codegen·testcontainers·postgresql 은 buildscript 클래스패스라 Spring Boot BOM 밖이다. 런타임 BOM
+        // (Boot 4.1.2: flyway 12.4.0, jooq 3.21.9, testcontainers 2.0.5, postgresql 42.7.14)과 직접 맞춰 고정해야 하며,
+        // 특히 코드젠 jOOQ 가 런타임과 어긋나면 생성 소스가 달라진다(drift). Boot 를 올리면 이 값들도 함께 맞춘다.
+        // Testcontainers 2 는 모듈 아티팩트 이름에 testcontainers- 접두가 붙었다(postgresql → testcontainers-postgresql).
+        classpath("org.testcontainers:testcontainers-postgresql:2.0.5")
+        classpath("org.flywaydb:flyway-core:12.4.0")
+        classpath("org.flywaydb:flyway-database-postgresql:12.4.0")
+        classpath("org.postgresql:postgresql:42.7.14")
+        classpath("org.jooq:jooq-codegen:3.21.9")
     }
 }
 
 plugins {
     java
-    id("org.springframework.boot") version "3.5.16"
+    id("org.springframework.boot") version "4.1.2"
     id("io.spring.dependency-management") version "1.1.7"
     id("com.diffplug.spotless") version "6.25.0"
     jacoco
@@ -75,20 +76,26 @@ dependencies {
     testAnnotationProcessor("org.projectlombok:lombok:1.18.44")
 
     // Spring @NonNull 대신 쓰는 JSpecify 를 전이 의존성(micrometer 등)에 기대지 않으려고 명시한다.
-    // 1.0.0 은 compileClasspath 에서 이미 해석되는 버전이다(Spring 6.2·Boot 3.5 와 같다).
+    // 1.0.0 은 compileClasspath 에서 이미 해석되는 버전이다(Spring 7·Boot 4.1 과 같다).
     implementation("org.jspecify:jspecify:1.0.0")
-    implementation("org.springframework.boot:spring-boot-starter-web")
+    // Boot 4 에서 spring-boot-starter-web 은 spring-boot-starter-webmvc 로 이름이 바뀌었다(옛 이름은 deprecated 별칭).
+    implementation("org.springframework.boot:spring-boot-starter-webmvc")
+    // Jackson 2 유지(WD-792) — Boot 4 기본은 Jackson 3 이라, Jackson 2 ObjectMapper 빈·HTTP 메시지 변환기 자동 구성을 이 모듈이 따로 준다.
+    // 코드 전반이 com.fasterxml ObjectMapper 를 주입받으므로 없으면 컨텍스트가 뜨지 않는다. Jackson 3 전환은 WD-793.
+    implementation("org.springframework.boot:spring-boot-jackson2")
     implementation("org.springframework.boot:spring-boot-starter-validation")
     implementation("org.springframework.boot:spring-boot-starter-jooq")
     // WD-487 PoC - MyBatis (starter 는 쓰지 않는다: DataSource 가 여럿이라 자동 구성이 잘못 붙을 수 있고, 팩토리 생성을 Tibero 하네스와 공유해야 한다)
+    // mybatis-spring 3.x 는 Spring 6 까지라 Spring 7(Boot 4)을 지원하는 4.x 로 올린다. 4.1.0 은 Boot 4.1 기준으로 만든 판이다.
     implementation("org.mybatis:mybatis:3.5.19")
-    implementation("org.mybatis:mybatis-spring:3.0.6")
+    implementation("org.mybatis:mybatis-spring:4.1.0")
     // 관측성 — Micrometer + 헬스체크/메트릭 endpoints (Task 13)
     implementation("org.springframework.boot:spring-boot-starter-actuator")
-    implementation("org.flywaydb:flyway-core")
+    // Boot 4 는 Flyway 자동 구성을 별도 모듈로 뺐다 — flyway-core 만 두면 자동 구성이 없어 마이그레이션이 조용히 건너뛰어진다.
+    implementation("org.springframework.boot:spring-boot-starter-flyway")
     implementation("org.flywaydb:flyway-database-postgresql")
     // Tibero 플랫폼 DB 용 Flyway 플러그인(WD-488)의 기반 — Flyway 는 Tibero 를 지원하지 않아 Oracle 모듈을 상속해 제품명·사전 뷰 차이만 덮어쓴다.
-    // 버전은 Spring Boot BOM 이 flyway-core 와 같은 값으로 맞춘다(11.7.2).
+    // 버전은 Spring Boot BOM 이 flyway-core 와 같은 값으로 맞춘다(12.4.0).
     implementation("org.flywaydb:flyway-database-oracle")
     implementation("org.springframework.boot:spring-boot-starter-security")
     implementation("io.jsonwebtoken:jjwt-api:0.12.6")
@@ -105,12 +112,15 @@ dependencies {
     implementation("org.apache.pdfbox:pdfbox:2.0.32")
     implementation("com.opencsv:opencsv:5.9")
     // Jobrunr - 비동기 작업 스케줄링
-    // 7.x 최고 버전 7.5.3 — 7.3.2 와 SQL 마이그레이션 목록이 같아 저장소 스키마(Flyway V85/V155)를 바꿀 필요가 없다.
-    // 8.x 이상은 jobrunr_jobs_stats 뷰에 awaiting 컬럼을 더하는 마이그레이션(v016)이 붙고 JobStatsView 가 그 컬럼을 읽는다.
-    // 테이블은 Flyway 가 관리(skip-create)하므로 PG·Tibero 마이그레이션과 jOOQ 재생성이 필요해 Boot 4 작업(WD-792)으로 미룬다.
-    implementation("org.jobrunr:jobrunr-spring-boot-3-starter:7.5.3")
+    // Boot 4 스타터(jobrunr-spring-boot-4-starter)는 8.3.0 부터 있다. 8.x 는 7.x 대비 jobrunr_jobs_stats 뷰에 awaiting 컬럼을 더하는
+    // 마이그레이션(v016) 하나만 붙고, 9.x 는 거기에 v017 을 더한다(PG·Oracle 은 빈 파일, MySQL 계열만 뷰 재생성). 저장소 스키마 변경이
+    // 가장 적고 메이저를 한 단계만 넘는 8.x 최신판을 고른다(WD-792). 테이블은 Flyway 가 관리(skip-create)하므로 v016 은 우리 마이그레이션
+    // V167(PG·Tibero)로 반영했다. JobRunr 를 올릴 때는 jar 의 org/jobrunr/storage/sql/{common,oracle}/migrations 목록을 다시 비교한다.
+    implementation("org.jobrunr:jobrunr-spring-boot-4-starter:8.8.2")
     // WebFlux for SSE proxy + WebClient for API calls
     implementation("org.springframework.boot:spring-boot-starter-webflux")
+    // Boot 4 는 WebClient.Builder 자동 구성(spring.http.clients.reactive.*)을 별도 스타터로 뺐다 — 임베딩 호출 등이 주입받는다.
+    implementation("org.springframework.boot:spring-boot-starter-webclient")
     // JSONPath for API response parsing
     implementation("com.jayway.jsonpath:json-path:2.9.0")
     // Caffeine cache — analytics dashboard query result caching
@@ -127,32 +137,45 @@ dependencies {
     // PDF 생성 (Flying Saucer — HTML/CSS → PDF)
     implementation("org.xhtmlrenderer:flying-saucer-pdf-openpdf:9.4.0")
     // HTML5 → XHTML 변환 (AI 생성 HTML을 Flying Saucer에 전달하기 위함)
-    implementation("org.jsoup:jsoup:1.18.3")
+    // 1.23.2: 1.18.3 의 DoS(CVE-2026-75140, 깊게 중첩된 HTML) 수정판(WD-792 trivy).
+    implementation("org.jsoup:jsoup:1.23.2")
     // MinIO(S3 호환) 오브젝트 스토리지 — FILE 데이터셋
-    implementation("io.minio:minio:8.5.17")
+    // 8.6.0: 8.5.17 의 XML 태그 취약점(CVE-2025-59952) 수정판(WD-792 trivy). 이 판부터 okhttp 5 를 끌어온다 — 아래 mockwebserver 도 맞춘다.
+    implementation("io.minio:minio:8.6.0")
     // Qdrant 공식 Java 클라이언트(gRPC) — 벡터 저장소를 Qdrant 로 고른 설치본용(ADR 0002, WD-719). 서버는 v1.20 이상.
     implementation("io.qdrant:client:1.20.0")
-    // 키워드 바이그램 해시(murmur3)에 직접 쓴다. Spring Boot BOM 은 guava 를 관리하지 않으므로 버전은 의존성 충돌 해결로 정해진다 —
-    // gRPC(Qdrant 클라이언트 경유)가 요구하는 33.6.0-android 가 minio 의 33.3.1-jre 를 이겨 33.6.0-android 로 해석된다(같은 33.x 라 API 호환).
-    // 버전 문자열은 -android 지만 실제로 고르는 변형은 JRE 판이다 — guava 의 Gradle 모듈 메타데이터가 standard-jvm 요청에
-    // jreRuntimeElements 변형을 내준다(dependencyInsight --configuration runtimeClasspath 로 확인, WD-791).
-    implementation("com.google.guava:guava")
+    // 키워드 바이그램 해시(murmur3)에 직접 쓴다. Spring Boot BOM 은 guava 를 관리하지 않는다. 전이로 오는 33.6.0(gRPC·Qdrant 경유)에
+    // DoS(CVE-2026-102554)가 있어 수정판 33.7.2-jre 를 직접 고정한다(WD-792 trivy) — 같은 33.x 라 gRPC·minio 와 API 호환.
+    // guava 의 Gradle 모듈 메타데이터가 standard-jvm 요청에 JRE 변형을 내주므로 -android 가 와도 실제는 JRE 판이다(WD-791).
+    implementation("com.google.guava:guava:33.7.2-jre")
+    // 전이 의존성 보안 수정판 고정(WD-792 trivy, 수정판 있는 HIGH·CRITICAL 0 목표). 직접 쓰지 않으므로 constraints 로 버전만 올린다.
+    constraints {
+        // minio 경유. 1.78.1/1.81 은 CVE-2025-14813(CRITICAL)·CVE-2026-8763·13506·5598 — 1.85 가 모두 고친 판이다.
+        implementation("org.bouncycastle:bcprov-jdk18on:1.85")
+        // minio 경유. 1.1.10.7 은 CVE-2026-108106·93451.
+        implementation("org.xerial.snappy:snappy-java:1.1.10.9")
+        // opencsv 5.9 경유. 1.9.4 는 CVE-2025-48734.
+        implementation("commons-beanutils:commons-beanutils:1.11.0")
+    }
 
-    // Mockito·byte-buddy 는 Spring Boot BOM(Mockito 5.17.0, byte-buddy 1.17.8)이 관리하는 버전을 그대로 쓴다.
+    // Mockito·byte-buddy 는 Spring Boot BOM(Mockito 5.23.0, byte-buddy 1.18.15)이 관리하는 버전을 그대로 쓴다.
     testImplementation("org.springframework.boot:spring-boot-starter-test")
-    testImplementation("org.springframework.security:spring-security-test")
-    // Testcontainers — 통합 테스트용 격리 PostgreSQL 컨테이너.
-    testImplementation("org.testcontainers:junit-jupiter")
-    testImplementation("org.testcontainers:postgresql")
+    // Boot 4 는 테스트 자동 구성도 기술별 모듈로 나눴다. @WebMvcTest·@AutoConfigureMockMvc 는 webmvc-test 에, MockMvc 에 보안 필터를
+    // 거는 자동 구성은 security-test 에 있다(없으면 @WebMvcTest 가 보안 없이 떠서 401/403 기대 시험이 무더기로 어긋난다).
+    testImplementation("org.springframework.boot:spring-boot-starter-webmvc-test")
+    testImplementation("org.springframework.boot:spring-boot-starter-security-test")
+    // Testcontainers 2 — 모듈 아티팩트 이름에 testcontainers- 접두가 붙었다. 통합 테스트용 격리 PostgreSQL 컨테이너.
+    testImplementation("org.testcontainers:testcontainers-junit-jupiter")
+    testImplementation("org.testcontainers:testcontainers-postgresql")
     // Qdrant 하네스(WD-719) — 기동 시 컬렉션 생성·확인 테스트
-    testImplementation("org.testcontainers:qdrant")
+    testImplementation("org.testcontainers:testcontainers-qdrant")
     // WireMock for API call integration tests
     testImplementation("org.wiremock:wiremock-standalone:3.10.0")
     // MockWebServer for embedding provider unit tests.
-    // Spring Boot 3.5 BOM 이 okhttp 버전 관리를 없애 버전이 비게 되므로, 3.4.1 BOM 이 관리하던 4.12.0 으로 직접 고정한다.
-    // 이 값은 minio 8.5.17 이 끌어오는 okhttp(런타임 클래스패스 4.12.0)와 같아야 한다 — mockwebserver 는 같은 버전의 okhttp 를
-    // 요구하므로, 어긋나면 시험 클래스패스에서 okhttp 가 올라가 minio 가 운영과 다른 okhttp 로 시험된다. minio 를 올리면 함께 맞춘다.
-    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    // Spring Boot BOM 은 okhttp 버전을 관리하지 않으므로 직접 고정한다. 이 값은 minio 8.6.0 이 끌어오는 okhttp(런타임 클래스패스 5.1.0)와
+    // 같아야 한다 — mockwebserver 는 같은 버전의 okhttp 를 요구하므로, 어긋나면 시험 클래스패스에서 okhttp 가 바뀌어 minio 가 운영과
+    // 다른 okhttp 로 시험된다. minio 를 올리면 함께 맞춘다. 5.x 의 mockwebserver 아티팩트는 옛 okhttp3.mockwebserver API 를 그대로 둔다.
+    testImplementation("com.squareup.okhttp3:mockwebserver:5.1.0")
     // SQL 실행 단일 관문(GuardedSqlExecutor) 우회 금지 규칙(스펙 §4.1). 로컬 Gradle 캐시에 있는 버전.
     testImplementation("com.tngtech.archunit:archunit:1.3.0")
     testRuntimeOnly("org.postgresql:postgresql")
@@ -169,8 +192,9 @@ sourceSets {
     }
 }
 
-// Testcontainers 1.21.4(내장 docker-java, buildscript 값은 Boot BOM 을 손으로 따라 맞춘 것 — Boot 올릴 때 함께 올린다, WD-797)가 Docker 에 요청할 API 버전(WD-762). 정하지 않으면 1.32 로 요청하는데,
-// 최신 Docker 데몬은 최소 API(1.40~1.44) 미만을 거절해 "Could not find a valid Docker environment" 로 모든 컨테이너 테스트가 죽는다.
+// Testcontainers(내장 docker-java)가 Docker 에 요청할 API 버전(WD-762). 1.20.4 는 정하지 않으면 1.32 로 요청해, 최신 Docker 데몬이
+// 최소 API(1.40~1.44) 미만을 거절하며 "Could not find a valid Docker environment" 로 모든 컨테이너 테스트가 죽었다. Testcontainers 2 도
+// 같은 api.version 시스템 속성을 읽으므로, 데몬마다 협상 결과가 달라지지 않게 값을 계속 명시한다.
 // 1.44 는 Docker 25 이상이 필요하다. 테스트 JVM 과 generateJooq 가 같은 값을 쓰도록 여기 한 곳에 둔다.
 val testcontainersDockerApiVersion = "1.44"
 
@@ -273,7 +297,7 @@ tasks.register("generateJooq") {
     val dockerApiVersion = testcontainersDockerApiVersion
     inputs.dir(migrationDir)
     inputs.file(postgresDockerfile)
-    inputs.property("jooqCodegenVersion", "3.19.35")
+    inputs.property("jooqCodegenVersion", "3.21.9")
     outputs.dir(outputDir)
 
     doLast {

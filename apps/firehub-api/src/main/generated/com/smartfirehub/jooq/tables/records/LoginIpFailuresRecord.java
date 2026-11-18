@@ -97,6 +97,6 @@ public class LoginIpFailuresRecord extends UpdatableRecordImpl<LoginIpFailuresRe
         setIpKey(ipKey);
         setUsername(username);
         setExpiresAt(expiresAt);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

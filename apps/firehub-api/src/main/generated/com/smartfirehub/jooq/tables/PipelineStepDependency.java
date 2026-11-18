@@ -28,10 +28,10 @@ import org.jooq.QueryPart;
 import org.jooq.Record;
 import org.jooq.SQL;
 import org.jooq.Schema;
-import org.jooq.Select;
 import org.jooq.Stringly;
 import org.jooq.Table;
 import org.jooq.TableField;
+import org.jooq.TableLike;
 import org.jooq.TableOptions;
 import org.jooq.UniqueKey;
 import org.jooq.impl.DSL;
@@ -251,7 +251,7 @@ public class PipelineStepDependency extends TableImpl<PipelineStepDependencyReco
      */
     @Override
     public PipelineStepDependency where(Condition condition) {
-        return new PipelineStepDependency(getQualifiedName(), aliased() ? this : null, null, condition);
+        return new PipelineStepDependency(getQualifiedName(), aliased() ? this : null, null, Internal.condition(this, condition));
     }
 
     /**
@@ -318,7 +318,7 @@ public class PipelineStepDependency extends TableImpl<PipelineStepDependencyReco
      * Create an inline derived table from this table
      */
     @Override
-    public PipelineStepDependency whereExists(Select<?> select) {
+    public PipelineStepDependency whereExists(TableLike<?> select) {
         return where(DSL.exists(select));
     }
 
@@ -326,7 +326,7 @@ public class PipelineStepDependency extends TableImpl<PipelineStepDependencyReco
      * Create an inline derived table from this table
      */
     @Override
-    public PipelineStepDependency whereNotExists(Select<?> select) {
+    public PipelineStepDependency whereNotExists(TableLike<?> select) {
         return where(DSL.notExists(select));
     }
 }

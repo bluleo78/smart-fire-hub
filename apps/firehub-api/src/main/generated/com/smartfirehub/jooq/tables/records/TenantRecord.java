@@ -123,6 +123,6 @@ public class TenantRecord extends UpdatableRecordImpl<TenantRecord> {
         setName(name);
         setStatus(status);
         setCreatedAt(createdAt);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

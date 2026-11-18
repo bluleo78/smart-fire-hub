@@ -10,7 +10,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.actuate.health.Status;
+import org.springframework.boot.health.contributor.Status;
 
 /** 드라이버 유무에 따른 health 상태와 기동 시 ERROR 로그. 실제 Class.forName 경로를 클래스 이름 주입으로 검증한다. */
 class TiberoDriverHealthIndicatorTest {

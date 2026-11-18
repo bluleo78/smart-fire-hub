@@ -241,6 +241,6 @@ public class AiSessionRecord extends UpdatableRecordImpl<AiSessionRecord> {
         setSlackChannelId(slackChannelId);
         setSlackThreadTs(slackThreadTs);
         setTenantId(tenantId);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

@@ -151,6 +151,6 @@ public class DatasetAccessGrantRecord extends UpdatableRecordImpl<DatasetAccessG
         setRoleId(roleId);
         setGrantedBy(grantedBy);
         setGrantedAt(grantedAt);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

@@ -234,6 +234,6 @@ public class TenantDataStoreRecord extends UpdatableRecordImpl<TenantDataStoreRe
         setCreatedAt(createdAt);
         setUpdatedAt(updatedAt);
         setScriptTokenEpoch(scriptTokenEpoch);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

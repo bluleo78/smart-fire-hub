@@ -164,6 +164,6 @@ public class OntologyEntityTypeRecord extends UpdatableRecordImpl<OntologyEntity
         setResolution(resolution);
         setSortOrder(sortOrder);
         setTenantId(tenantId);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

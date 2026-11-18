@@ -242,6 +242,6 @@ public class DocumentChunkRecord extends UpdatableRecordImpl<DocumentChunkRecord
         setEmbeddedModel(embeddedModel);
         setContentHash(contentHash);
         setKeywordMarker(keywordMarker);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

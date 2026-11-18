@@ -181,6 +181,6 @@ public class JobrunrJobsRecord extends UpdatableRecordImpl<JobrunrJobsRecord> {
         setUpdatedat(updatedat);
         setScheduledat(scheduledat);
         setRecurringjobid(recurringjobid);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

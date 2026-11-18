@@ -256,6 +256,6 @@ public class UserChannelBindingRecord extends UpdatableRecordImpl<UserChannelBin
         setCreatedAt(createdAt);
         setUpdatedAt(updatedAt);
         setTenantId(tenantId);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

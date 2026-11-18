@@ -136,6 +136,6 @@ public class DatasetCategoryRecord extends UpdatableRecordImpl<DatasetCategoryRe
         setCreatedAt(createdAt);
         setUpdatedAt(updatedAt);
         setTenantId(tenantId);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

@@ -425,6 +425,6 @@ public class NotificationOutboxRecord extends UpdatableRecordImpl<NotificationOu
         setCreatedAt(createdAt);
         setCreatedByUserId(createdByUserId);
         setTenantId(tenantId);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

@@ -5,7 +5,7 @@ import static org.mockito.Mockito.*;
 
 import org.jobrunr.server.BackgroundJobServer;
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.actuate.health.Status;
+import org.springframework.boot.health.contributor.Status;
 
 /** JobRunr 서버 감시자·헬스 인디케이터 단위 테스트 — BackgroundJobServer 를 Mockito 가짜로 둔다. */
 class JobRunrServerWatchdogTest {

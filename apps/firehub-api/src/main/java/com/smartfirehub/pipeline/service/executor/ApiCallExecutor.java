@@ -7,6 +7,7 @@ import com.smartfirehub.apiconnection.service.UrlUtils;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.dataset.service.DatasetDataWriteLock;
+import com.smartfirehub.global.util.Jackson2WebClientCodecs;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -452,9 +453,7 @@ public class ApiCallExecutor {
    */
   private WebClient noRedirectClient(int maxResponseSizeMb) {
     ExchangeStrategies exchangeStrategies =
-        ExchangeStrategies.builder()
-            .codecs(c -> c.defaultCodecs().maxInMemorySize(maxResponseSizeMb * 1024 * 1024))
-            .build();
+        Jackson2WebClientCodecs.exchangeStrategies(maxResponseSizeMb * 1024 * 1024);
     return RedirectFollower.withoutAutoRedirect(webClientBuilder, ssrfSafeHttpClientFactory)
         .exchangeStrategies(exchangeStrategies)
         .build();

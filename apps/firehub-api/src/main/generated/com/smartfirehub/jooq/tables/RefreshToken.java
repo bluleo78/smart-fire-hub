@@ -30,10 +30,10 @@ import org.jooq.QueryPart;
 import org.jooq.Record;
 import org.jooq.SQL;
 import org.jooq.Schema;
-import org.jooq.Select;
 import org.jooq.Stringly;
 import org.jooq.Table;
 import org.jooq.TableField;
+import org.jooq.TableLike;
 import org.jooq.TableOptions;
 import org.jooq.UniqueKey;
 import org.jooq.impl.DSL;
@@ -66,7 +66,7 @@ public class RefreshToken extends TableImpl<RefreshTokenRecord> {
     /**
      * The column <code>public.refresh_token.id</code>.
      */
-    public final TableField<RefreshTokenRecord, Long> ID = createField(DSL.name("id"), SQLDataType.BIGINT.nullable(false).identity(true), this, "");
+    public final TableField<RefreshTokenRecord, Long> ID = createField(DSL.name("id"), SQLDataType.BIGINT.nullable(false).generatedByDefaultAsIdentity(), this, "");
 
     /**
      * The column <code>public.refresh_token.user_id</code>.
@@ -258,7 +258,7 @@ public class RefreshToken extends TableImpl<RefreshTokenRecord> {
      */
     @Override
     public RefreshToken where(Condition condition) {
-        return new RefreshToken(getQualifiedName(), aliased() ? this : null, null, condition);
+        return new RefreshToken(getQualifiedName(), aliased() ? this : null, null, Internal.condition(this, condition));
     }
 
     /**
@@ -325,7 +325,7 @@ public class RefreshToken extends TableImpl<RefreshTokenRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public RefreshToken whereExists(Select<?> select) {
+    public RefreshToken whereExists(TableLike<?> select) {
         return where(DSL.exists(select));
     }
 
@@ -333,7 +333,7 @@ public class RefreshToken extends TableImpl<RefreshTokenRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public RefreshToken whereNotExists(Select<?> select) {
+    public RefreshToken whereNotExists(TableLike<?> select) {
         return where(DSL.notExists(select));
     }
 }

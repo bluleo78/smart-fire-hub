@@ -136,6 +136,6 @@ public class UserChannelPreferenceRecord extends UpdatableRecordImpl<UserChannel
         setEnabled(enabled);
         setUpdatedAt(updatedAt);
         setTenantId(tenantId);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

@@ -167,6 +167,6 @@ public class RefreshTokenRecord extends UpdatableRecordImpl<RefreshTokenRecord> 
         setCreatedAt(createdAt);
         setFamilyId(familyId);
         setPlane(plane);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

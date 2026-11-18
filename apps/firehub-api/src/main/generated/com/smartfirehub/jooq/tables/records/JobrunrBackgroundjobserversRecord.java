@@ -313,6 +313,6 @@ public class JobrunrBackgroundjobserversRecord extends UpdatableRecordImpl<Jobru
         setDeletesucceededjobsafter(deletesucceededjobsafter);
         setPermanentlydeletejobsafter(permanentlydeletejobsafter);
         setName(name);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

@@ -136,6 +136,6 @@ public class OntologyRecord extends UpdatableRecordImpl<OntologyRecord> {
         setUpdatedAt(updatedAt);
         setStatus(status);
         setTenantId(tenantId);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

@@ -166,6 +166,6 @@ public class VectorOutboxRecord extends UpdatableRecordImpl<VectorOutboxRecord> 
         setAttempts(attempts);
         setLastError(lastError);
         setCreatedAt(createdAt);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

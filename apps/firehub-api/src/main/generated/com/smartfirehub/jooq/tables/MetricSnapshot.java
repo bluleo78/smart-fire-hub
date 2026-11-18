@@ -29,13 +29,14 @@ import org.jooq.QueryPart;
 import org.jooq.Record;
 import org.jooq.SQL;
 import org.jooq.Schema;
-import org.jooq.Select;
 import org.jooq.Stringly;
 import org.jooq.Table;
 import org.jooq.TableField;
+import org.jooq.TableLike;
 import org.jooq.TableOptions;
 import org.jooq.UniqueKey;
 import org.jooq.impl.DSL;
+import org.jooq.impl.Internal;
 import org.jooq.impl.SQLDataType;
 import org.jooq.impl.TableImpl;
 
@@ -64,7 +65,7 @@ public class MetricSnapshot extends TableImpl<MetricSnapshotRecord> {
     /**
      * The column <code>public.metric_snapshot.id</code>.
      */
-    public final TableField<MetricSnapshotRecord, Long> ID = createField(DSL.name("id"), SQLDataType.BIGINT.nullable(false).identity(true), this, "");
+    public final TableField<MetricSnapshotRecord, Long> ID = createField(DSL.name("id"), SQLDataType.BIGINT.nullable(false).generatedByDefaultAsIdentity(), this, "");
 
     /**
      * The column <code>public.metric_snapshot.job_id</code>.
@@ -247,7 +248,7 @@ public class MetricSnapshot extends TableImpl<MetricSnapshotRecord> {
      */
     @Override
     public MetricSnapshot where(Condition condition) {
-        return new MetricSnapshot(getQualifiedName(), aliased() ? this : null, null, condition);
+        return new MetricSnapshot(getQualifiedName(), aliased() ? this : null, null, Internal.condition(this, condition));
     }
 
     /**
@@ -314,7 +315,7 @@ public class MetricSnapshot extends TableImpl<MetricSnapshotRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public MetricSnapshot whereExists(Select<?> select) {
+    public MetricSnapshot whereExists(TableLike<?> select) {
         return where(DSL.exists(select));
     }
 
@@ -322,7 +323,7 @@ public class MetricSnapshot extends TableImpl<MetricSnapshotRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public MetricSnapshot whereNotExists(Select<?> select) {
+    public MetricSnapshot whereNotExists(TableLike<?> select) {
         return where(DSL.notExists(select));
     }
 }

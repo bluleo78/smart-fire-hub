@@ -136,6 +136,6 @@ public class DatasetTagRecord extends UpdatableRecordImpl<DatasetTagRecord> {
         setCreatedBy(createdBy);
         setCreatedAt(createdAt);
         setTenantId(tenantId);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

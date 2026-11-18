@@ -20,7 +20,8 @@ import org.jooq.impl.TableImpl;
 
 
 /**
- * p_team_id text
+ * Slack team_id → (workspace_id, tenant_id) 해석(RLS 우회, 읽기 전용). 해지된 워크스페이스는 해석하지
+ * 않는다.
  */
 @SuppressWarnings({ "all", "unchecked", "rawtypes", "this-escape" })
 public class ResolveSlackWorkspaceTenantByTeamId extends TableImpl<ResolveSlackWorkspaceTenantByTeamIdRecord> {
@@ -64,7 +65,7 @@ public class ResolveSlackWorkspaceTenantByTeamId extends TableImpl<ResolveSlackW
     }
 
     private ResolveSlackWorkspaceTenantByTeamId(Name alias, Table<ResolveSlackWorkspaceTenantByTeamIdRecord> aliased, Field<?>[] parameters, Condition where) {
-        super(alias, null, aliased, parameters, DSL.comment("p_team_id text"), TableOptions.function(), where);
+        super(alias, null, aliased, parameters, DSL.comment("Slack team_id → (workspace_id, tenant_id) 해석(RLS 우회, 읽기 전용). 해지된 워크스페이스는 해석하지 않는다."), TableOptions.function(), where);
     }
 
     /**

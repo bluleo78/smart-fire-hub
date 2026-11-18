@@ -27,7 +27,7 @@ import org.junit.jupiter.api.Test;
 @TiberoLive
 class TiberoJobRunrRuntimeAccountLiveTest {
 
-  /** {@code org.jobrunr.database.table-prefix} — application.yml 에 없다. */
+  /** {@code jobrunr.database.table-prefix} — application.yml 에 없다. */
   private static final String TABLE_PREFIX = null;
 
   @Test

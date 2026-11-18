@@ -121,6 +121,6 @@ public class PlatformRoleRecord extends UpdatableRecordImpl<PlatformRoleRecord> 
         setDescription(description);
         setIsSystem(isSystem);
         setCreatedAt(createdAt);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

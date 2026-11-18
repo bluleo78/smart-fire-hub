@@ -19,7 +19,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -103,8 +103,8 @@ class ValidationMessagesLocalizationTest extends IntegrationTestBase {
   /**
    * DTO 에 명시한 한국어 message= (사용자 추가)는 기본 번들이 덮어쓰지 않는다.
    *
-   * <p>이름은 WD-751 부터 「새 계정일 때만 필수」라 DTO 에 @NotBlank 가 없다(필수 판정은 서비스가 한다). 그래서 이름 쪽은 아직 DTO 에 남은
-   * 명시 문구인 길이 제한(@Size message=)으로 같은 성질을 확인한다.
+   * <p>이름은 WD-751 부터 「새 계정일 때만 필수」라 DTO 에 @NotBlank 가 없다(필수 판정은 서비스가 한다). 그래서 이름 쪽은 아직 DTO 에 남은 명시
+   * 문구인 길이 제한(@Size message=)으로 같은 성질을 확인한다.
    */
   @Test
   void createUser_explicitKoreanMessage_unchanged() throws Exception {

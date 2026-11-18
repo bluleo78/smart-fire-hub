@@ -181,6 +181,6 @@ public class DatasetEmbeddingRecord extends UpdatableRecordImpl<DatasetEmbedding
         setSourceHash(sourceHash);
         setEmbeddedHash(embeddedHash);
         setKeywordMarker(keywordMarker);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

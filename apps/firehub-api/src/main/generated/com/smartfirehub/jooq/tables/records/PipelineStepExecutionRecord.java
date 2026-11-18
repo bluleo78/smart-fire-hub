@@ -229,6 +229,6 @@ public class PipelineStepExecutionRecord extends UpdatableRecordImpl<PipelineSte
         setTenantId(tenantId);
         setInjectedLastRunAt(injectedLastRunAt);
         setStepName(stepName);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

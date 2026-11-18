@@ -151,6 +151,6 @@ public class EmbeddingReembedStateRecord extends UpdatableRecordImpl<EmbeddingRe
         setLeaseUntil(leaseUntil);
         setLastError(lastError);
         setUpdatedAt(updatedAt);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

@@ -89,6 +89,6 @@ public class PipelineStepInputRecord extends UpdatableRecordImpl<PipelineStepInp
         setStepId(stepId);
         setDatasetId(datasetId);
         setTenantId(tenantId);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

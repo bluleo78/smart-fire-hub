@@ -33,10 +33,10 @@ import org.jooq.QueryPart;
 import org.jooq.Record;
 import org.jooq.SQL;
 import org.jooq.Schema;
-import org.jooq.Select;
 import org.jooq.Stringly;
 import org.jooq.Table;
 import org.jooq.TableField;
+import org.jooq.TableLike;
 import org.jooq.TableOptions;
 import org.jooq.UniqueKey;
 import org.jooq.impl.DSL;
@@ -69,7 +69,7 @@ public class Chart extends TableImpl<ChartRecord> {
     /**
      * The column <code>public.chart.id</code>.
      */
-    public final TableField<ChartRecord, Long> ID = createField(DSL.name("id"), SQLDataType.BIGINT.nullable(false).identity(true), this, "");
+    public final TableField<ChartRecord, Long> ID = createField(DSL.name("id"), SQLDataType.BIGINT.nullable(false).generatedByDefaultAsIdentity(), this, "");
 
     /**
      * The column <code>public.chart.name</code>.
@@ -327,7 +327,7 @@ public class Chart extends TableImpl<ChartRecord> {
      */
     @Override
     public Chart where(Condition condition) {
-        return new Chart(getQualifiedName(), aliased() ? this : null, null, condition);
+        return new Chart(getQualifiedName(), aliased() ? this : null, null, Internal.condition(this, condition));
     }
 
     /**
@@ -394,7 +394,7 @@ public class Chart extends TableImpl<ChartRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public Chart whereExists(Select<?> select) {
+    public Chart whereExists(TableLike<?> select) {
         return where(DSL.exists(select));
     }
 
@@ -402,7 +402,7 @@ public class Chart extends TableImpl<ChartRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public Chart whereNotExists(Select<?> select) {
+    public Chart whereNotExists(TableLike<?> select) {
         return where(DSL.notExists(select));
     }
 }

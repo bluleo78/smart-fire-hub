@@ -121,6 +121,6 @@ public class DatasetFavoriteRecord extends UpdatableRecordImpl<DatasetFavoriteRe
         setDatasetId(datasetId);
         setCreatedAt(createdAt);
         setTenantId(tenantId);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

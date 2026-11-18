@@ -29,13 +29,14 @@ import org.jooq.QueryPart;
 import org.jooq.Record;
 import org.jooq.SQL;
 import org.jooq.Schema;
-import org.jooq.Select;
 import org.jooq.Stringly;
 import org.jooq.Table;
 import org.jooq.TableField;
+import org.jooq.TableLike;
 import org.jooq.TableOptions;
 import org.jooq.UniqueKey;
 import org.jooq.impl.DSL;
+import org.jooq.impl.Internal;
 import org.jooq.impl.SQLDataType;
 import org.jooq.impl.TableImpl;
 
@@ -64,7 +65,7 @@ public class AnomalyEvent extends TableImpl<AnomalyEventRecord> {
     /**
      * The column <code>public.anomaly_event.id</code>.
      */
-    public final TableField<AnomalyEventRecord, Long> ID = createField(DSL.name("id"), SQLDataType.BIGINT.nullable(false).identity(true), this, "");
+    public final TableField<AnomalyEventRecord, Long> ID = createField(DSL.name("id"), SQLDataType.BIGINT.nullable(false).generatedByDefaultAsIdentity(), this, "");
 
     /**
      * The column <code>public.anomaly_event.job_id</code>.
@@ -272,7 +273,7 @@ public class AnomalyEvent extends TableImpl<AnomalyEventRecord> {
      */
     @Override
     public AnomalyEvent where(Condition condition) {
-        return new AnomalyEvent(getQualifiedName(), aliased() ? this : null, null, condition);
+        return new AnomalyEvent(getQualifiedName(), aliased() ? this : null, null, Internal.condition(this, condition));
     }
 
     /**
@@ -339,7 +340,7 @@ public class AnomalyEvent extends TableImpl<AnomalyEventRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public AnomalyEvent whereExists(Select<?> select) {
+    public AnomalyEvent whereExists(TableLike<?> select) {
         return where(DSL.exists(select));
     }
 
@@ -347,7 +348,7 @@ public class AnomalyEvent extends TableImpl<AnomalyEventRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public AnomalyEvent whereNotExists(Select<?> select) {
+    public AnomalyEvent whereNotExists(TableLike<?> select) {
         return where(DSL.notExists(select));
     }
 }

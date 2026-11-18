@@ -20,10 +20,10 @@ import org.jooq.PlainSQL;
 import org.jooq.QueryPart;
 import org.jooq.SQL;
 import org.jooq.Schema;
-import org.jooq.Select;
 import org.jooq.Stringly;
 import org.jooq.Table;
 import org.jooq.TableField;
+import org.jooq.TableLike;
 import org.jooq.TableOptions;
 import org.jooq.UniqueKey;
 import org.jooq.impl.DSL;
@@ -168,7 +168,7 @@ public class SpatialRefSys extends TableImpl<SpatialRefSysRecord> {
      */
     @Override
     public SpatialRefSys where(Condition condition) {
-        return new SpatialRefSys(getQualifiedName(), aliased() ? this : null, null, condition);
+        return new SpatialRefSys(getQualifiedName(), aliased() ? this : null, null, Internal.condition(this, condition));
     }
 
     /**
@@ -235,7 +235,7 @@ public class SpatialRefSys extends TableImpl<SpatialRefSysRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public SpatialRefSys whereExists(Select<?> select) {
+    public SpatialRefSys whereExists(TableLike<?> select) {
         return where(DSL.exists(select));
     }
 
@@ -243,7 +243,7 @@ public class SpatialRefSys extends TableImpl<SpatialRefSysRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public SpatialRefSys whereNotExists(Select<?> select) {
+    public SpatialRefSys whereNotExists(TableLike<?> select) {
         return where(DSL.notExists(select));
     }
 }

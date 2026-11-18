@@ -3,6 +3,7 @@ package com.smartfirehub.ai.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.global.util.Jackson2WebClientCodecs;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.LinkedHashMap;
@@ -77,7 +78,7 @@ public class AiAgentProxyService {
     HttpClient httpClient =
         HttpClient.create().responseTimeout(Duration.ofMinutes(5)).keepAlive(true);
     this.webClient =
-        WebClient.builder()
+        Jackson2WebClientCodecs.webClientBuilder()
             .baseUrl(agentUrl)
             .clientConnector(new ReactorClientHttpConnector(httpClient))
             .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(10 * 1024 * 1024))

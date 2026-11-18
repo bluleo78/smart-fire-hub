@@ -230,6 +230,6 @@ public class SlackWorkspaceRecord extends UpdatableRecordImpl<SlackWorkspaceReco
         setInstalledAt(installedAt);
         setRevokedAt(revokedAt);
         setTenantId(tenantId);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

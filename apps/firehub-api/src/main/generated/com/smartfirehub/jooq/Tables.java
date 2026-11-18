@@ -380,7 +380,8 @@ public class Tables {
     public static final OntologyRelation ONTOLOGY_RELATION = OntologyRelation.ONTOLOGY_RELATION;
 
     /**
-     * p_statuses text[]
+     * 주어진 상태의 아웃박스 행을 가진 테넌트 id 목록(RLS 우회, 읽기 전용). 호출자는 이 목록으로 테넌트별 컨텍스트를 열고 실제
+     * 작업은 RLS 하에서 한다.
      */
     public static final OutboxTenantIds OUTBOX_TENANT_IDS = OutboxTenantIds.OUTBOX_TENANT_IDS;
 
@@ -474,7 +475,7 @@ public class Tables {
     public static final PlatformUserRole PLATFORM_USER_ROLE = PlatformUserRole.PLATFORM_USER_ROLE;
 
     /**
-     * auth_name text, auth_srid text
+     * The table <code>public.postgis_srs</code>.
      */
     public static final PostgisSrs POSTGIS_SRS = PostgisSrs.POSTGIS_SRS;
 
@@ -542,7 +543,7 @@ public class Tables {
     }
 
     /**
-     * auth_name text
+     * The table <code>public.postgis_srs_codes</code>.
      */
     public static final PostgisSrsCodes POSTGIS_SRS_CODES = PostgisSrsCodes.POSTGIS_SRS_CODES;
 
@@ -581,7 +582,7 @@ public class Tables {
     }
 
     /**
-     * bounds geometry, authname text DEFAULT 'EPSG'::text
+     * The table <code>public.postgis_srs_search</code>.
      */
     public static final PostgisSrsSearch POSTGIS_SRS_SEARCH = PostgisSrsSearch.POSTGIS_SRS_SEARCH;
 
@@ -626,7 +627,8 @@ public class Tables {
     }
 
     /**
-     * The table <code>public.proactive_active_execution_tenant_ids</code>.
+     * 활성(PENDING·RUNNING) 프로액티브 실행이 있는 테넌트 id 목록(RLS 우회, 읽기 전용). 호출자는 이 목록으로
+     * 테넌트별 컨텍스트를 열고 실제 작업은 RLS 하에서 한다(WD-258).
      */
     public static final ProactiveActiveExecutionTenantIds PROACTIVE_ACTIVE_EXECUTION_TENANT_IDS = ProactiveActiveExecutionTenantIds.PROACTIVE_ACTIVE_EXECUTION_TENANT_IDS;
 
@@ -684,7 +686,8 @@ public class Tables {
     public static final ReportTemplate REPORT_TEMPLATE = ReportTemplate.REPORT_TEMPLATE;
 
     /**
-     * p_team_id text
+     * Slack team_id → (workspace_id, tenant_id) 해석(RLS 우회, 읽기 전용). 해지된 워크스페이스는
+     * 해석하지 않는다.
      */
     public static final ResolveSlackWorkspaceTenantByTeamId RESOLVE_SLACK_WORKSPACE_TENANT_BY_TEAM_ID = ResolveSlackWorkspaceTenantByTeamId.RESOLVE_SLACK_WORKSPACE_TENANT_BY_TEAM_ID;
 
@@ -725,7 +728,7 @@ public class Tables {
     }
 
     /**
-     * p_token_hash text
+     * The table <code>public.resolve_trigger_tenant_by_token_hash</code>.
      */
     public static final ResolveTriggerTenantByTokenHash RESOLVE_TRIGGER_TENANT_BY_TOKEN_HASH = ResolveTriggerTenantByTokenHash.RESOLVE_TRIGGER_TENANT_BY_TOKEN_HASH;
 
@@ -764,7 +767,7 @@ public class Tables {
     }
 
     /**
-     * p_webhook_id text
+     * The table <code>public.resolve_trigger_tenant_by_webhook_id</code>.
      */
     public static final ResolveTriggerTenantByWebhookId RESOLVE_TRIGGER_TENANT_BY_WEBHOOK_ID = ResolveTriggerTenantByWebhookId.RESOLVE_TRIGGER_TENANT_BY_WEBHOOK_ID;
 
@@ -833,8 +836,7 @@ public class Tables {
     public static final SpatialRefSys SPATIAL_REF_SYS = SpatialRefSys.SPATIAL_REF_SYS;
 
     /**
-     * size double precision, bounds geometry, OUT geom geometry, OUT i integer,
-     * OUT j integer
+     * The table <code>public.st_hexagongrid</code>.
      */
     public static final StHexagongrid ST_HEXAGONGRID = StHexagongrid.ST_HEXAGONGRID;
 
@@ -879,8 +881,7 @@ public class Tables {
     }
 
     /**
-     * size double precision, bounds geometry, OUT geom geometry, OUT i integer,
-     * OUT j integer
+     * The table <code>public.st_squaregrid</code>.
      */
     public static final StSquaregrid ST_SQUAREGRID = StSquaregrid.ST_SQUAREGRID;
 
@@ -925,8 +926,7 @@ public class Tables {
     }
 
     /**
-     * geom geometry, maxvertices integer DEFAULT 256, gridsize double precision
-     * DEFAULT '-1.0'::numeric
+     * The table <code>public.st_subdivide</code>.
      */
     public static final StSubdivide ST_SUBDIVIDE = StSubdivide.ST_SUBDIVIDE;
 

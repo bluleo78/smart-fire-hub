@@ -5,6 +5,7 @@ package com.smartfirehub.jooq;
 
 
 import org.jooq.Sequence;
+import org.jooq.impl.DSL;
 import org.jooq.impl.Internal;
 import org.jooq.impl.SQLDataType;
 
@@ -18,5 +19,5 @@ public class Sequences {
     /**
      * The sequence <code>public.vector_seq</code>
      */
-    public static final Sequence<Long> VECTOR_SEQ = Internal.createSequence("vector_seq", Public.PUBLIC, SQLDataType.BIGINT.nullable(false), null, null, null, null, false, null);
+    public static final Sequence<Long> VECTOR_SEQ = Internal.createSequence("vector_seq", Public.PUBLIC, DSL.comment(""), SQLDataType.BIGINT.nullable(false), null, null, null, null, false, null);
 }

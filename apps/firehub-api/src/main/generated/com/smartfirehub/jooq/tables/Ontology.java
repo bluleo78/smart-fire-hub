@@ -34,10 +34,10 @@ import org.jooq.QueryPart;
 import org.jooq.Record;
 import org.jooq.SQL;
 import org.jooq.Schema;
-import org.jooq.Select;
 import org.jooq.Stringly;
 import org.jooq.Table;
 import org.jooq.TableField;
+import org.jooq.TableLike;
 import org.jooq.TableOptions;
 import org.jooq.UniqueKey;
 import org.jooq.impl.DSL;
@@ -70,7 +70,7 @@ public class Ontology extends TableImpl<OntologyRecord> {
     /**
      * The column <code>public.ontology.id</code>.
      */
-    public final TableField<OntologyRecord, Long> ID = createField(DSL.name("id"), SQLDataType.BIGINT.nullable(false).identity(true), this, "");
+    public final TableField<OntologyRecord, Long> ID = createField(DSL.name("id"), SQLDataType.BIGINT.nullable(false).generatedByDefaultAsIdentity(), this, "");
 
     /**
      * The column <code>public.ontology.domain</code>.
@@ -312,7 +312,7 @@ public class Ontology extends TableImpl<OntologyRecord> {
      */
     @Override
     public Ontology where(Condition condition) {
-        return new Ontology(getQualifiedName(), aliased() ? this : null, null, condition);
+        return new Ontology(getQualifiedName(), aliased() ? this : null, null, Internal.condition(this, condition));
     }
 
     /**
@@ -379,7 +379,7 @@ public class Ontology extends TableImpl<OntologyRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public Ontology whereExists(Select<?> select) {
+    public Ontology whereExists(TableLike<?> select) {
         return where(DSL.exists(select));
     }
 
@@ -387,7 +387,7 @@ public class Ontology extends TableImpl<OntologyRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public Ontology whereNotExists(Select<?> select) {
+    public Ontology whereNotExists(TableLike<?> select) {
         return where(DSL.notExists(select));
     }
 }

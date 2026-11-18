@@ -31,13 +31,14 @@ import org.jooq.QueryPart;
 import org.jooq.Record;
 import org.jooq.SQL;
 import org.jooq.Schema;
-import org.jooq.Select;
 import org.jooq.Stringly;
 import org.jooq.Table;
 import org.jooq.TableField;
+import org.jooq.TableLike;
 import org.jooq.TableOptions;
 import org.jooq.UniqueKey;
 import org.jooq.impl.DSL;
+import org.jooq.impl.Internal;
 import org.jooq.impl.SQLDataType;
 import org.jooq.impl.TableImpl;
 
@@ -66,7 +67,7 @@ public class ReportTemplate extends TableImpl<ReportTemplateRecord> {
     /**
      * The column <code>public.report_template.id</code>.
      */
-    public final TableField<ReportTemplateRecord, Long> ID = createField(DSL.name("id"), SQLDataType.BIGINT.nullable(false).identity(true), this, "");
+    public final TableField<ReportTemplateRecord, Long> ID = createField(DSL.name("id"), SQLDataType.BIGINT.nullable(false).generatedByDefaultAsIdentity(), this, "");
 
     /**
      * The column <code>public.report_template.name</code>.
@@ -276,7 +277,7 @@ public class ReportTemplate extends TableImpl<ReportTemplateRecord> {
      */
     @Override
     public ReportTemplate where(Condition condition) {
-        return new ReportTemplate(getQualifiedName(), aliased() ? this : null, null, condition);
+        return new ReportTemplate(getQualifiedName(), aliased() ? this : null, null, Internal.condition(this, condition));
     }
 
     /**
@@ -343,7 +344,7 @@ public class ReportTemplate extends TableImpl<ReportTemplateRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public ReportTemplate whereExists(Select<?> select) {
+    public ReportTemplate whereExists(TableLike<?> select) {
         return where(DSL.exists(select));
     }
 
@@ -351,7 +352,7 @@ public class ReportTemplate extends TableImpl<ReportTemplateRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public ReportTemplate whereNotExists(Select<?> select) {
+    public ReportTemplate whereNotExists(TableLike<?> select) {
         return where(DSL.notExists(select));
     }
 }

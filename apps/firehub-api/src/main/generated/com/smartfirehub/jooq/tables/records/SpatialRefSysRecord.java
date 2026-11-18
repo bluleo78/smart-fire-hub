@@ -119,6 +119,6 @@ public class SpatialRefSysRecord extends UpdatableRecordImpl<SpatialRefSysRecord
         setAuthSrid(authSrid);
         setSrtext(srtext);
         setProj4text(proj4text);
-        resetChangedOnNotNull();
+        resetTouchedOnNotNull();
     }
 }

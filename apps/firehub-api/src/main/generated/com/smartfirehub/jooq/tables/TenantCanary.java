@@ -22,13 +22,14 @@ import org.jooq.PlainSQL;
 import org.jooq.QueryPart;
 import org.jooq.SQL;
 import org.jooq.Schema;
-import org.jooq.Select;
 import org.jooq.Stringly;
 import org.jooq.Table;
 import org.jooq.TableField;
+import org.jooq.TableLike;
 import org.jooq.TableOptions;
 import org.jooq.UniqueKey;
 import org.jooq.impl.DSL;
+import org.jooq.impl.Internal;
 import org.jooq.impl.SQLDataType;
 import org.jooq.impl.TableImpl;
 
@@ -57,7 +58,7 @@ public class TenantCanary extends TableImpl<TenantCanaryRecord> {
     /**
      * The column <code>public.tenant_canary.id</code>.
      */
-    public final TableField<TenantCanaryRecord, Long> ID = createField(DSL.name("id"), SQLDataType.BIGINT.nullable(false).identity(true), this, "");
+    public final TableField<TenantCanaryRecord, Long> ID = createField(DSL.name("id"), SQLDataType.BIGINT.nullable(false).generatedByDefaultAsIdentity(), this, "");
 
     /**
      * The column <code>public.tenant_canary.tenant_id</code>.
@@ -162,7 +163,7 @@ public class TenantCanary extends TableImpl<TenantCanaryRecord> {
      */
     @Override
     public TenantCanary where(Condition condition) {
-        return new TenantCanary(getQualifiedName(), aliased() ? this : null, null, condition);
+        return new TenantCanary(getQualifiedName(), aliased() ? this : null, null, Internal.condition(this, condition));
     }
 
     /**
@@ -229,7 +230,7 @@ public class TenantCanary extends TableImpl<TenantCanaryRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public TenantCanary whereExists(Select<?> select) {
+    public TenantCanary whereExists(TableLike<?> select) {
         return where(DSL.exists(select));
     }
 
@@ -237,7 +238,7 @@ public class TenantCanary extends TableImpl<TenantCanaryRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public TenantCanary whereNotExists(Select<?> select) {
+    public TenantCanary whereNotExists(TableLike<?> select) {
         return where(DSL.notExists(select));
     }
 }

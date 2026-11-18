@@ -34,13 +34,14 @@ import org.jooq.QueryPart;
 import org.jooq.Record;
 import org.jooq.SQL;
 import org.jooq.Schema;
-import org.jooq.Select;
 import org.jooq.Stringly;
 import org.jooq.Table;
 import org.jooq.TableField;
+import org.jooq.TableLike;
 import org.jooq.TableOptions;
 import org.jooq.UniqueKey;
 import org.jooq.impl.DSL;
+import org.jooq.impl.Internal;
 import org.jooq.impl.SQLDataType;
 import org.jooq.impl.TableImpl;
 
@@ -69,7 +70,7 @@ public class ProactiveJob extends TableImpl<ProactiveJobRecord> {
     /**
      * The column <code>public.proactive_job.id</code>.
      */
-    public final TableField<ProactiveJobRecord, Long> ID = createField(DSL.name("id"), SQLDataType.BIGINT.nullable(false).identity(true), this, "");
+    public final TableField<ProactiveJobRecord, Long> ID = createField(DSL.name("id"), SQLDataType.BIGINT.nullable(false).generatedByDefaultAsIdentity(), this, "");
 
     /**
      * The column <code>public.proactive_job.user_id</code>.
@@ -348,7 +349,7 @@ public class ProactiveJob extends TableImpl<ProactiveJobRecord> {
      */
     @Override
     public ProactiveJob where(Condition condition) {
-        return new ProactiveJob(getQualifiedName(), aliased() ? this : null, null, condition);
+        return new ProactiveJob(getQualifiedName(), aliased() ? this : null, null, Internal.condition(this, condition));
     }
 
     /**
@@ -415,7 +416,7 @@ public class ProactiveJob extends TableImpl<ProactiveJobRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public ProactiveJob whereExists(Select<?> select) {
+    public ProactiveJob whereExists(TableLike<?> select) {
         return where(DSL.exists(select));
     }
 
@@ -423,7 +424,7 @@ public class ProactiveJob extends TableImpl<ProactiveJobRecord> {
      * Create an inline derived table from this table
      */
     @Override
-    public ProactiveJob whereNotExists(Select<?> select) {
+    public ProactiveJob whereNotExists(TableLike<?> select) {
         return where(DSL.notExists(select));
     }
 }
