@@ -2,7 +2,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import axios from 'axios';
 import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import { useForm } from 'react-hook-form';
+import { useForm, useWatch } from 'react-hook-form';
 import { toast } from 'sonner';
 import { z } from 'zod';
 
@@ -142,6 +142,12 @@ export default function CategoryListPage() {
     resolver: zodResolver(categorySchema),
     mode: 'onChange',
   });
+
+  // (WD-809) 생성 버튼이 꺼진 이유 안내 — 이름이 (공백 제외) 비어 있고 아직 오류 문구가 없을 때만 보인다.
+  // 오류 문구와 겹치지 않게 하고, #49 의 비활성 동작은 그대로 두면서 이유를 문구로 알린다.
+  // watch() 대신 useWatch 를 써서 React Compiler 린트 경고(메모이즈 불가)를 피한다.
+  const createNameValue = useWatch({ control: createForm.control, name: 'name' });
+  const showCreateNameHint = !(createNameValue ?? '').trim() && !createForm.formState.errors.name;
 
   // mode: 'onChange' — 수정 폼도 동일하게 실시간 유효성 반영
   const editForm = useForm<CategoryFormData>({
@@ -326,6 +332,8 @@ export default function CategoryListPage() {
             <FormField
               label="이름"
               htmlFor="create-name"
+              required
+              hint={showCreateNameHint ? '이름을 입력하면 만들 수 있습니다.' : undefined}
               error={createForm.formState.errors.name?.message}
             >
               <Input
@@ -345,7 +353,7 @@ export default function CategoryListPage() {
               <Button type="button" variant="outline" onClick={() => setIsCreateOpen(false)}>
                 취소
               </Button>
-              {/* isValid: 필수 필드(이름)가 비어 있으면 버튼 비활성화 */}
+              {/* isValid: 필수 필드(이름)가 비어 있으면 버튼 비활성화(#49 유지). 이유는 이름 칸의 안내 문구로 보인다 (WD-809) */}
               <Button type="submit" disabled={createCategory.isPending || !createForm.formState.isValid}>
                 만들기
               </Button>
@@ -365,6 +373,7 @@ export default function CategoryListPage() {
             <FormField
               label="이름"
               htmlFor="edit-name"
+              required
               error={editForm.formState.errors.name?.message}
             >
               <Input
