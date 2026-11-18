@@ -1,5 +1,6 @@
 import java.io.File
 import java.security.MessageDigest
+import java.time.Duration
 import java.util.Properties
 
 buildscript {
@@ -173,6 +174,92 @@ sourceSets {
 // 1.44 는 Docker 25 이상이 필요하다. 테스트 JVM 과 generateJooq 가 같은 값을 쓰도록 여기 한 곳에 둔다.
 val testcontainersDockerApiVersion = "1.44"
 
+// 시험용 PostgreSQL 이미지(docker/postgres/Dockerfile)의 경로. generateJooq 와 모든 Test 태스크가 같은 파일을 입력으로 쓴다.
+val testPostgresDockerfile: File = rootProject.projectDir.toPath()
+    .resolve("../../docker/postgres/Dockerfile")
+    .normalize()
+    .toFile()
+
+/**
+ * 시험용 PostgreSQL 이미지를 준비하는 한 곳(WD-798). 이름 규칙·빌드 인자·빌드 여부 판단을 여기에만 둔다 —
+ * 예전(WD-794)에는 PostgresTestContainer 와 generateJooq 가 같은 규칙을 따로 들고 있었고, 시험 JVM 포크마다 빌드를 불렀다.
+ *
+ * - 이름: `firehub-test-postgres:<Dockerfile SHA-256 앞 12자>` — Dockerfile 이 같은 동안 이미지를 다시 쓰고, 바뀌면 새 이름으로 새로 빌드한다.
+ * - 빌드 인자 OS_PATCH=skip: 시험 이미지는 apt upgrade(~15분)를 건너뛴다. Dockerfile 기본값은 「패치함」이라 운영·손 빌드는 upgrade 한다.
+ * - 이미 있으면 빌드하지 않는다: 층 캐시로도 빌드 컨텍스트 전송·층 확인에 몇 초가 드는데, 이름이 내용 해시라 있으면 같은 이미지다.
+ *
+ * 구성 캐시(--configuration-cache)에서 태스크 액션이 스크립트 객체를 잡지 않도록 스크립트 함수가 아니라 object 로 두고,
+ * 호출하는 쪽은 지역 변수(경로·API 버전)만 넘긴다. Docker 는 이 함수가 불릴 때(generateJooq·Test 실행)만 쓰여, compileJava 같은
+ * 다른 태스크는 Docker 없이도 돈다.
+ */
+object TestPostgresImage {
+    /** 시험 이미지 빌드 인자 — 이름(해시)과 빌드가 같은 값을 쓰도록 한 곳에 둔다. */
+    private val BUILD_ARGS = mapOf("OS_PATCH" to "skip")
+
+    /**
+     * 이미지를 준비하고(없으면 빌드) 이름을 돌려준다. Docker 데몬에 닿을 수 없으면 null — 부르는 쪽이 「Docker 없음」
+     * (Test 는 경고만, generateJooq 는 실패)을 정한다. Docker 는 있는데 빌드가 실패하면 예외를 그대로 던진다.
+     */
+    fun prepare(dockerfile: File, dockerApiVersion: String, logger: org.gradle.api.logging.Logger): String? {
+        // Gradle 데몬 안의 Testcontainers 가 데몬이 받는 API 버전으로 요청하게 한다(WD-762).
+        System.setProperty("api.version", dockerApiVersion)
+        configureOrbStackSocket()
+        if (!org.testcontainers.DockerClientFactory.instance().isDockerAvailable) return null
+
+        // 해시 입력에 빌드 인자도 넣는다 — 인자만 바꿔도(예: OS_PATCH 값) 이름이 바뀌어, 다르게 빌드된 옛 이미지를 그대로 믿지 않는다.
+        val digest = MessageDigest.getInstance("SHA-256")
+        digest.update(dockerfile.readBytes())
+        BUILD_ARGS.toSortedMap().forEach { (key, value) -> digest.update("\n--build-arg $key=$value".toByteArray()) }
+        val tag = digest.digest()
+            .joinToString("") { "%02x".format(it) }
+            .substring(0, 12)
+        val imageName = "firehub-test-postgres:$tag"
+
+        val client = org.testcontainers.DockerClientFactory.instance().client()
+        val exists = try {
+            client.inspectImageCmd(imageName).exec()
+            true
+        } catch (e: com.github.dockerjava.api.exception.NotFoundException) {
+            false
+        }
+        if (exists) {
+            logger.lifecycle("시험용 PostgreSQL 이미지 $imageName 이 이미 있어 빌드를 건너뜁니다")
+            return imageName
+        }
+
+        logger.lifecycle("시험용 PostgreSQL 이미지 $imageName 을 빌드합니다($BUILD_ARGS)")
+        val started = System.nanoTime()
+        // deleteOnExit=false: 이름 붙인 이미지를 남겨 다음 실행이 다시 쓰게 한다(WD-794).
+        org.testcontainers.images.builder.ImageFromDockerfile(imageName, false)
+            .withDockerfile(dockerfile.toPath())
+            .withBuildArgs(BUILD_ARGS)
+            .get()
+        logger.lifecycle("시험용 PostgreSQL 이미지 $imageName 빌드 완료(${(System.nanoTime() - started) / 1_000_000}ms)")
+        return imageName
+    }
+
+    /**
+     * Gradle 태스크는 시험 JVM 밖(데몬)에서 Docker 를 부르므로, DOCKER_HOST 가 없고 OrbStack 소켓이 있으면
+     * Testcontainers 사용자 설정(~/.testcontainers.properties)에 그 소켓을 적어 데몬도 찾게 한다(맥 개발 PC).
+     */
+    private fun configureOrbStackSocket() {
+        if (System.getenv("DOCKER_HOST") != null) return
+        val orbStackSocket = File(System.getProperty("user.home"), ".orbstack/run/docker.sock")
+        if (!orbStackSocket.exists()) return
+        val userConfigFile = File(System.getProperty("user.home"), ".testcontainers.properties")
+        val properties = Properties()
+        if (userConfigFile.exists()) {
+            userConfigFile.inputStream().use { properties.load(it) }
+        }
+        if (properties.getProperty("docker.host") == null) {
+            properties.setProperty("docker.host", "unix://${orbStackSocket.absolutePath}")
+            userConfigFile.outputStream().use {
+                properties.store(it, "smart-fire-hub: OrbStack 자동 감지(시험용 PostgreSQL 이미지 준비)")
+            }
+        }
+    }
+}
+
 // 스키마 변경 시 `./gradlew generateJooq`로 생성 소스를 갱신한다. 생성 소스는 저장소에 추적한다.
 // 코드는 일회용 PostGIS + pgvector 컨테이너에 전체 Flyway 마이그레이션을 적용한 뒤 생성한다.
 // DB 접속 정보를 설정 시점에 고정하는 nu.studer 플러그인 대신 동적 JDBC URL을 받는 GenerationTool을 쓴다.
@@ -181,10 +268,8 @@ tasks.register("generateJooq") {
     description = "Testcontainers PostgreSQL에 마이그레이션 적용 후 jOOQ 소스를 생성"
     val migrationDir = layout.projectDirectory.dir("src/main/resources/db/migration").asFile.absolutePath
     val outputDir = layout.projectDirectory.dir("src/main/generated").asFile.absolutePath
-    val postgresDockerfile = rootProject.projectDir.toPath()
-        .resolve("../../docker/postgres/Dockerfile")
-        .normalize()
     // 구성 캐시가 스크립트 객체를 직렬화하지 못하므로, doLast 가 스크립트 수준 val 대신 지역 변수를 읽게 복사한다.
+    val postgresDockerfile = testPostgresDockerfile
     val dockerApiVersion = testcontainersDockerApiVersion
     inputs.dir(migrationDir)
     inputs.file(postgresDockerfile)
@@ -192,34 +277,9 @@ tasks.register("generateJooq") {
     outputs.dir(outputDir)
 
     doLast {
-        System.setProperty("api.version", dockerApiVersion)
-
-        // Gradle 태스크는 테스트 JVM 밖에서 실행되므로 OrbStack 소켓을 Testcontainers 사용자 설정으로 전달한다.
-        if (System.getenv("DOCKER_HOST") == null) {
-            val orbStackSocket = File(System.getProperty("user.home"), ".orbstack/run/docker.sock")
-            if (orbStackSocket.exists()) {
-                val userConfigFile = File(System.getProperty("user.home"), ".testcontainers.properties")
-                val properties = Properties()
-                if (userConfigFile.exists()) {
-                    userConfigFile.inputStream().use { properties.load(it) }
-                }
-                if (properties.getProperty("docker.host") == null) {
-                    properties.setProperty("docker.host", "unix://${orbStackSocket.absolutePath}")
-                    userConfigFile.outputStream().use {
-                        properties.store(it, "smart-fire-hub: OrbStack 자동 감지(generateJooq)")
-                    }
-                }
-            }
-        }
-
-        // 시험과 같은 이름 규칙(Dockerfile 내용 해시)으로 이미지를 남겨 층 캐시를 다시 쓴다 — PostgresTestContainer.testImage 참고(WD-794)
-        val dockerfileTag = MessageDigest.getInstance("SHA-256")
-            .digest(postgresDockerfile.toFile().readBytes())
-            .joinToString("") { "%02x".format(it) }
-            .substring(0, 12)
-        val imageName = org.testcontainers.images.builder.ImageFromDockerfile("firehub-test-postgres:$dockerfileTag", false)
-            .withDockerfile(postgresDockerfile)
-            .get()
+        // 시험과 같은 이미지(같은 이름·빌드 인자)를 쓴다 — 이미 있으면 빌드하지 않는다(WD-798, TestPostgresImage).
+        val imageName = TestPostgresImage.prepare(postgresDockerfile, dockerApiVersion, logger)
+            ?: throw GradleException("Docker 를 쓸 수 없어 jOOQ 생성용 PostgreSQL 이미지를 준비하지 못했습니다 — Docker 데몬을 켜세요")
         val container = org.testcontainers.containers.PostgreSQLContainer(
             org.testcontainers.utility.DockerImageName.parse(imageName).asCompatibleSubstituteFor("postgres")
         )
@@ -227,6 +287,9 @@ tasks.register("generateJooq") {
             .withUsername("app")
             .withPassword("app")
             .withCommand("postgres", "-c", "max_connections=200")
+            // 기동 대기 상한을 시험(PostgresTestContainer, WD-784)과 같은 5분으로 둔다 — 여러 세션이 한 호스트를 나눠 쓰는
+            // 부하에서는 PostGIS 초기화가 기본 60초를 넘겨 generateJooq 가 실패했다(WD-798 확인 중 실측).
+            .withStartupTimeout(Duration.ofMinutes(5))
 
         container.start()
         try {
@@ -295,12 +358,32 @@ tasks.withType<Test> {
     }
     // 테스트 JVM 의 Testcontainers 가 데몬이 받는 API 버전으로 요청하게 한다(기본 1.32 는 거절됨, WD-762).
     systemProperty("api.version", testcontainersDockerApiVersion)
-    // 저장소 루트(apps/firehub-api 의 두 단계 위). Docker 빌드(/app)처럼 조부모가 없는 경로에서도
-    // 설정 단계가 NPE 로 죽지 않도록 parentFile 체인 대신 경로 정규화로 계산한다.
-    systemProperty(
-        "smartfirehub.repositoryRoot",
-        rootProject.projectDir.toPath().resolve("../..").normalize().toFile().absolutePath
-    )
+    // 시험용 PostgreSQL 이미지는 포크를 띄우기 전에 Gradle 이 한 번 준비하고, 이름을 시스템 속성으로 넘긴다(WD-798).
+    // 예전에는 포크(JVM)마다 PostgresTestContainer 가 빌드를 불러 포크 2 면 같은 빌드가 두 번 돌았다.
+    // tasks.withType<Test> 라 기본 test 뿐 아니라 tiberoTest·separateDataStoreTest 도 같은 이미지를 받는다.
+    // Dockerfile 을 입력에 넣어, 바뀌면 시험이 다시 돈다(이미지 이름도 바뀐다).
+    // doFirst 는 구성 캐시가 스크립트 객체를 잡지 않게 지역 변수만 읽는다(generateJooq 와 같은 방식).
+    val postgresDockerfile = testPostgresDockerfile
+    val dockerApiVersion = testcontainersDockerApiVersion
+    // 저장소 밖에서 앱 폴더만 쓰는 곳(api 이미지 빌드 컨텍스트 등)에는 ../../docker 가 없다 — 없는 파일을 입력으로 걸면
+    // 태스크 검증이 실패하므로 있을 때만 건다.
+    val hasPostgresDockerfile = postgresDockerfile.exists()
+    if (hasPostgresDockerfile) {
+        inputs.file(postgresDockerfile)
+    }
+    doFirst {
+        // Docker 를 쓸 수 없거나 Dockerfile 이 없으면 태스크 전체를 멈추지 않고 경고만 낸다 — DB 가 필요 없는 단위 시험
+        // (--tests 로 고른 것)은 Docker 없이도 돌아야 한다. 통합 시험은 속성이 없어 PostgresTestContainer 가 이유를 적은 오류로 실패한다.
+        // Docker 는 있는데 빌드가 실패하면(네트워크·PGDG 판 내려감 등) 삼키지 않고 태스크를 실패시킨다 — 경고 한 줄로 바꾸면
+        // 진짜 원인이 수천 건의 「속성 없음」 시험 실패에 묻힌다.
+        val imageName =
+            if (hasPostgresDockerfile) TestPostgresImage.prepare(postgresDockerfile, dockerApiVersion, logger) else null
+        if (imageName != null) {
+            (this as Test).systemProperty("smartfirehub.testPostgresImage", imageName)
+        } else {
+            logger.warn("Docker 를 쓸 수 없거나 Dockerfile($postgresDockerfile)이 없어 시험용 PostgreSQL 이미지를 준비하지 못했습니다 — DB 를 쓰는 통합 시험은 실패합니다")
+        }
+    }
     useJUnitPlatform()
     // 기본값(512MB)은 Spring Boot+Testcontainers+jOOQ+JaCoCo 계측이 겹친 통합테스트에는 작아서,
     // 다른 세션들과 자원을 나눠 쓰는 부하 상황에서 워커 JVM이 OutOfMemoryError로 죽는 원인이 됐다.

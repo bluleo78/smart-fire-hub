@@ -72,8 +72,11 @@ build_and_push() {
       docker buildx build --pull "${OS_PATCH_ARG[@]}" --platform "$PLATFORM" -t "$REGISTRY/admin:latest" -f apps/firehub-admin/Dockerfile --push .
       ;;
     db)
-      # 옛 볼륨을 새 베이스로 처음 열 때 손으로 할 절차가 있어 잊지 않게 알린다(WD-794)
-      warn "db 베이스가 PostGIS 3.6.1·debian 13 입니다 — 옛 볼륨에 처음 배포하면 .claude/docs/deploy.md 의 WD-794 전환 절차(스냅샷·postgis_extensions_upgrade·REINDEX)를 먼저 따르세요"
+      # 옛 볼륨을 새 베이스로 처음 열 때 손으로 할 절차가 있어 잊지 않게 알린다(WD-794).
+      # 떠 있는 db 의 PostGIS 확장이 이미 3.6.1 이면 전환을 마친 볼륨이라 알리지 않는다(WD-798) — 판을 못 읽으면 알린다.
+      if [ "$(current_postgis_version)" != "3.6.1" ]; then
+        warn "db 베이스가 PostGIS 3.6.1·debian 13 입니다 — 옛 볼륨에 처음 배포하면 .claude/docs/deploy.md 의 WD-794 전환 절차(스냅샷·postgis_extensions_upgrade·REINDEX)를 먼저 따르세요"
+      fi
       log "Building + pushing $app (context: project root, image tag: postgres)"
       docker buildx build --pull "${OS_PATCH_ARG[@]}" --platform "$PLATFORM" -t "$REGISTRY/postgres:latest" -f docker/postgres/Dockerfile --push .
       ;;
@@ -84,6 +87,19 @@ build_and_push() {
       error "Unknown app: $app (valid: api, web, ai-agent, executor, db-executor, channel, admin, db, minio)"
       ;;
   esac
+}
+
+# 떠 있는 운영 db 의 PostGIS 확장 판(pg_extension.extversion)을 출력한다(WD-798). db 배포 때 WD-794 전환 절차 경고를
+# 이미 전환한 볼륨에는 내지 않으려는 것이다. 사용자·DB 이름은 db 컨테이너 자신의 POSTGRES_USER·POSTGRES_DB 를 쓴다(운영 .env 를
+# 따로 읽지 않는다). db 가 떠 있지 않거나 psql 이 실패하면 빈 문자열을 낸다 — set -e 아래에서도 배포를 멈추지 않고, 판을 모르면
+# 경고를 내는 쪽으로 간다. db 가 떠 있지만 멈춰 있으면(복구 중·잠금) psql 이 끝나지 않아 배포 전체가 멈추므로 10초로 자른다
+# (timeout 이 없는 맥 기본 셸이면 명령이 실패해 판 모름 → 경고로 간다).
+current_postgis_version() {
+  local version
+  version=$(cd "$PROD_DIR" 2>/dev/null \
+    && timeout 10 docker compose exec -T db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "$1"' sh \
+      "select extversion from pg_extension where extname = 'postgis'" 2>/dev/null) || true
+  echo "$version" | tr -d '[:space:]'
 }
 
 # 빌드 키(api/web/ai-agent/executor/channel)를 운영 docker-compose 서비스명으로 매핑.

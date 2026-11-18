@@ -8,19 +8,26 @@
 FROM imresamu/postgis:16-3.6.1-trixie
 
 USER root
-# 베이스 태그도 자주 다시 빌드되지 않아(16-3.6.1-trixie 는 2026-02 빌드) 그 뒤에 나온 debian 보안 수정(openssl·gnutls·perl·
-# mariadb 라이브러리 등)이 빠져 있다 — apt-get upgrade 로 받는다(WD-794). postgis 패키지는 hold 해 PostGIS 를 3.6.1 그대로 둔다:
-# PGDG 가 더 새 PostGIS 를 내면 upgrade 가 확장 판을 올려 운영 DB 에 ALTER EXTENSION 이 다시 필요해지기 때문이다.
+# postgis 패키지를 hold 해 PostGIS 를 3.6.1 그대로 둔다: PGDG 가 더 새 PostGIS 를 내면 upgrade·install 이 확장 판을 올려
+# 운영 DB 에 ALTER EXTENSION 이 다시 필요해지고 postgis-safe-functions.txt 허용목록도 어긋나기 때문이다.
+# hold 를 upgrade 와 다른 층(그 앞)에 두는 이유(WD-798): upgrade 를 건너뛰는 시험 빌드(OS_PATCH=skip)에서도 아래 pgvector 층의
+# apt-get install 이 의존성을 따라 PostGIS 를 올리지 못하게 하려는 것이다. apt-mark 는 dpkg 상태만 바꿔 apt 목록 없이도 된다.
 # postgresql-16 은 hold 하지 않는다 — PG 마이너 판(16.x)은 보안 수정이라 받는 쪽이 낫고 데이터 디렉터리 호환도 같다.
+RUN apt-mark hold postgis postgresql-16-postgis-3 postgresql-16-postgis-3-scripts
+# 베이스 태그도 자주 다시 빌드되지 않아(16-3.6.1-trixie 는 2026-02 빌드) 그 뒤에 나온 debian 보안 수정(openssl·gnutls·perl·
+# mariadb 라이브러리 등)이 빠져 있다 — apt-get upgrade 로 받는다(WD-794).
+# 기본값은 「패치함」(OS_PATCH=apply)이다(WD-798): 인자 없는 빌드(운영 compose 의 db, scripts/work-loop/compose.shared.yml,
+# 손 빌드)가 모두 보안 수정을 받게 하려는 것이다. 건너뛰기(OS_PATCH=skip)는 시험 이미지만 쓴다 — Gradle(build.gradle.kts 의
+# 시험 이미지 준비)이 넘기며, upgrade(~15분)를 시험마다 기다리지 않게 한다. 그래서 시험 이미지는 PostGIS(3.6.1, hold)·pgvector 판은
+# 운영과 같지만 PG 마이너(16.x)·GEOS·PROJ 같은 라이브러리가 운영보다 옛 판일 수 있다(.claude/docs/deploy.md 「Docker 빌드 규칙」).
+# OS_PATCH_DATE 는 이 층의 캐시 무효화 키일 뿐이다(값과 상관없이 upgrade 한다) — 이유는 scripts/deploy.sh 머리 주석.
 # --force-unsafe-io 는 dpkg 의 fsync 를 끄는 빌드 속도용 옵션이다(이미지 내용은 같다).
-# OS_PATCH_DATE 는 이 층의 캐시 무효화 키다 — 이유는 scripts/deploy.sh 머리 주석. 기본값(static)인 개발·시험 빌드는
-# upgrade 를 건너뛴다(이유·시험과 운영의 판 차이는 .claude/docs/deploy.md 「Docker 빌드 규칙」, WD-794).
+ARG OS_PATCH=apply
 ARG OS_PATCH_DATE=static
-RUN if [ "${OS_PATCH_DATE}" = "static" ]; then echo "os patch: skipped (OS_PATCH_DATE=static)"; exit 0; fi \
+RUN if [ "${OS_PATCH}" = "skip" ]; then echo "os patch: skipped (OS_PATCH=skip, test image)"; exit 0; fi \
     && echo "os patch date: ${OS_PATCH_DATE}" \
     && export DEBIAN_FRONTEND=noninteractive \
     && apt-get update \
-    && apt-mark hold postgis postgresql-16-postgis-3 postgresql-16-postgis-3-scripts \
     && apt-get upgrade -y --no-install-recommends \
        -o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-unsafe-io \
     && rm -rf /var/lib/apt/lists/*
