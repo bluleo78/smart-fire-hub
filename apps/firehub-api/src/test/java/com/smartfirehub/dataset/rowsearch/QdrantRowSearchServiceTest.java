@@ -81,10 +81,12 @@ class QdrantRowSearchServiceTest extends RowSearchServiceTest {
   /** 앱 빈이 준비됐다고 기억하는 컬렉션 중 실제로 없는 것이 있으면 기억을 비우고 다시 준비한다(WD-788, {@link #setUp} 주석). */
   @SuppressWarnings("unchecked")
   private void restoreCollectionsWipedByOtherTests() {
+    // WD-796: 필드 이름이 바뀌면 getField 가 그 이름을 담은 IllegalArgumentException 을 던져 시험이 바로 실패한다
+    // (ready 는 final newKeySet 이라 null 이 되지 않아, 조용히 아무것도 하지 않는 경우는 없다).
     Set<String> ready = (Set<String>) ReflectionTestUtils.getField(lifecycle, "ready");
     try {
       List<String> existing = client.listCollectionsAsync().get(30, TimeUnit.SECONDS);
-      if (ready == null || existing.containsAll(ready)) return;
+      if (existing.containsAll(ready)) return;
     } catch (Exception e) {
       throw new IllegalStateException("Qdrant 컬렉션 목록을 읽지 못했습니다", e);
     }
@@ -130,16 +132,17 @@ class QdrantRowSearchServiceTest extends RowSearchServiceTest {
   }
 
   /**
-   * 다른 시험이 컬렉션을 모두 지운 뒤에도 앱 빈이 행 컬렉션을 다시 만든다(WD-788 회귀). 빈의 「준비됨」 기억을 비우지 않으면 {@code
-   * ensureRowCollections} 가 기억만 보고 돌아가 행 컬렉션이 없는 채로 남는다.
+   * 다른 시험이 행 컬렉션을 지운 뒤에도 앱 빈이 행 컬렉션을 다시 만든다(WD-788 회귀, WD-796 — 공유 Qdrant 의 다른 컬렉션은 건드리지 않는다). 빈의
+   * 「준비됨」 기억을 비우지 않으면 {@code ensureRowCollections} 가 기억만 보고 돌아가 행 컬렉션이 없는 채로 남는다.
    */
   @Test
-  void rowCollectionsAreRecreatedAfterAnotherTestWipedEverything() throws Exception {
+  void rowCollectionIsRecreatedAfterAnotherTestDeletedIt() throws Exception {
     String keyword = QdrantCollectionSpec.rowsKeywordName(DEFAULT_TEST_TENANT_ID);
     // setUp 의 색인으로 행 키워드 컬렉션이 만들어졌고 빈이 그것을 기억한다
     assertThat(client.collectionExistsAsync(keyword).get(30, TimeUnit.SECONDS)).isTrue();
 
-    QdrantTestContainer.deleteAllCollections(client);
+    // WD-796: 전체 삭제 대신 이 시험의 컬렉션만 지운다(공유 Qdrant 의 다른 시험 컬렉션 보호)
+    client.deleteCollectionAsync(keyword).get(30, TimeUnit.SECONDS);
     restoreCollectionsWipedByOtherTests();
     lifecycle.ensureRowCollections(DEFAULT_TEST_TENANT_ID, 1);
 

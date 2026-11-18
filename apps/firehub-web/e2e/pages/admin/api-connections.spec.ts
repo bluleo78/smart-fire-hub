@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test';
 
+import { isExtraHeaderKey } from '../../../src/lib/api-connection-extra-headers';
 import type { ApiConnectionResponse } from '../../../src/types/api-connection';
 import { createApiConnection, createApiConnections, createBasicApiConnection } from '../../factories/admin.factory';
 import {
@@ -25,6 +26,15 @@ import {
  */
 function waitForRefetch(page: Page, path: string) {
   return page.waitForResponse((res) => res.request().method() === 'GET' && new URL(res.url()).pathname === path);
+}
+
+/**
+ * 캡처한 PUT 중 index 번째(기본 0 이 아니라 1 — 첫 번째는 기본 정보 저장)의 authConfig 에서 추가 헤더 키만 꺼낸다(WD-788·WD-796).
+ * 추가 헤더 키 판정은 화면과 같은 isExtraHeaderKey 를 써, 접두사 규칙이 바뀌어도 시험이 따로 어긋나지 않게 한다.
+ */
+function savedExtraHeaders(capture: { requests: { payload: unknown }[] }, index = 1) {
+  const authConfig = (capture.requests[index].payload as { authConfig: Record<string, string> }).authConfig;
+  return Object.fromEntries(Object.entries(authConfig).filter(([key]) => isExtraHeaderKey(key)));
 }
 
 /**
@@ -3297,8 +3307,7 @@ test.describe('WD-788 재조회 병합 후속', () => {
     await page.getByLabel('추가 헤더 값 2').fill('b-typed');
     await page.getByRole('button', { name: '인증 저장' }).click();
     await expect.poll(() => capture.requests.length).toBe(2);
-    const authConfig = (capture.requests[1].payload as { authConfig: Record<string, string> }).authConfig;
-    expect(Object.fromEntries(Object.entries(authConfig).filter(([key]) => key.startsWith('extraHeader:')))).toEqual({
+    expect(savedExtraHeaders(capture)).toEqual({
       'extraHeader:X-Key-Id': '****k001',
       'extraHeader:X-Gone-B': 'b-typed',
     });
@@ -3339,7 +3348,7 @@ test.describe('WD-788 재조회 병합 후속', () => {
     const capture = await editHeaderThenRefetchAsBasic(page);
 
     await expect(
-      page.getByText('다른 곳에서 인증 방식이 Basic Auth으로 바뀌어, 고친 인증 칸을 새 값으로 바꿨습니다.'),
+      page.getByText('다른 곳에서 인증 방식이 바뀌어(Basic Auth), 고친 인증 칸을 새 값으로 바꿨습니다.'),
     ).toBeVisible();
     await expect(page.getByLabel('아이디')).toHaveValue('svc-user');
 
@@ -3361,5 +3370,213 @@ test.describe('WD-788 재조회 병합 후속', () => {
     await page.getByRole('navigation').getByRole('link', { name: '사용자 관리' }).click();
     await expect(page).toHaveURL(/\/admin\/users/);
     await expect(page.getByRole('alertdialog')).toHaveCount(0);
+  });
+});
+
+/**
+ * WD-796 — 편집 중 재조회 병합 후속(PR #1047 리뷰).
+ * - 고친 추가 헤더 덩어리에서, 다른 곳이 더한 저장 헤더(이름 변경의 새 이름 포함)는 새 기준 순서 자리에 넣고 알린다 — 예전엔 버려져 인증 저장이 그 헤더를 지웠다.
+ * - 사용자가 덩어리에서 지운 저장 헤더는 이전 기준에 있으므로 재조회로 되살리지 않는다.
+ * - 인증 방식이 바뀌었다는 안내는 방식 이름을 괄호로 감싸 조사가 틀리지 않게 한다(「API Key으로」가 아니다).
+ */
+test.describe('WD-796 재조회 병합 후속', () => {
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+  });
+
+  const PATH = '/api/v1/api-connections/1';
+  /** 기본 정보 저장으로 다시 불러올 때 쓰는 새 이름 */
+  const RENAMED = '이름만 바뀐 연결';
+  /** 메인 인증 칸(헤더 X-Old·가린 키 ****abcd) — 재조회 응답도 같은 값을 써 추가 헤더만 바뀌게 한다 */
+  const MAIN_AUTH = { placement: 'header', headerName: 'X-Old', apiKey: '****abcd' };
+
+  /** 메인 인증 칸과 추가 헤더 extra 로 저장된 API_KEY 연결 */
+  function storedApiKeyConnection(extra: Record<string, string> = {}) {
+    return createApiConnection({ id: 1, maskedAuthConfig: { ...MAIN_AUTH, ...extra } });
+  }
+
+  /** 저장된 연결을 모킹하고 상세를 연 뒤 「인증 정보 변경」으로 편집을 연다. */
+  async function openAuthEdit(page: Page, stored: ApiConnectionResponse) {
+    await mockApi(page, 'GET', PATH, stored);
+    await page.goto('/admin/api-connections/1');
+    await page.getByRole('button', { name: '인증 정보 변경' }).click();
+    return stored;
+  }
+
+  test('재조회로 인증 방식이 API Key 로 바뀌면 안내가 「바뀌어(API Key)」로 뜨고 「API Key으로」가 없다 (WD-796)', async ({
+    authenticatedPage: page,
+  }) => {
+    // BASIC 편집에서 아이디를 고친 뒤, 다른 관리자가 API_KEY 로 바꾼 연결로 재조회된다
+    await openAuthEdit(page, createBasicApiConnection({ id: 1 }));
+    await page.getByLabel('아이디').fill('other-user');
+    await saveInfoAndRefetch(page, { ...storedApiKeyConnection(), name: RENAMED });
+
+    await expect(
+      page.getByText('다른 곳에서 인증 방식이 바뀌어(API Key), 고친 인증 칸을 새 값으로 바꿨습니다.'),
+    ).toBeVisible();
+    await expect(page.getByText(/API Key으로/)).toHaveCount(0);
+    // 딸린 칸은 새 방식의 기준 값이다
+    await expect(page.getByPlaceholder('Authorization')).toHaveValue('X-Old');
+  });
+
+  test('고친 추가 헤더 덩어리에서 다른 곳이 더한 헤더는 목록에 들어가고 알리며, 저장 payload 에 남는다 (WD-796)', async ({
+    authenticatedPage: page,
+  }) => {
+    const stored = await openAuthEdit(page, storedApiKeyConnection({ 'extraHeader:X-A': '****a001' }));
+    await expect(page.getByLabel('추가 헤더 이름 1')).toHaveValue('X-A');
+    // X-A 값을 고쳐 덩어리를 「고침」으로 만든다
+    await page.getByLabel('추가 헤더 값 1').fill('a-typed');
+
+    // 그사이 다른 관리자가 X-B 를 더했다
+    const capture = await saveInfoAndRefetch(page, {
+      ...stored,
+      name: RENAMED,
+      maskedAuthConfig: { ...MAIN_AUTH, 'extraHeader:X-A': '****a001', 'extraHeader:X-B': '****bbbb' },
+    });
+
+    await expect(page.getByText('다른 곳에서 추가 헤더(X-B)가 더해져 목록에 넣었습니다.')).toBeVisible();
+    // 고친 X-A 는 그대로, 더한 X-B 는 새 기준 순서대로 X-A 뒤에 저장값 유지 행으로 들어간다
+    await expect(page.getByLabel('추가 헤더 이름 1')).toHaveValue('X-A');
+    await expect(page.getByLabel('추가 헤더 값 1')).toHaveValue('a-typed');
+    await expect(page.getByLabel('추가 헤더 이름 2')).toHaveValue('X-B');
+    await expect(page.getByLabel('추가 헤더 값 2')).toHaveAttribute('placeholder', '저장된 값 유지 (****bbbb)');
+
+    // 인증 저장 — X-B 는 가린 값(유지 의미)으로 실려 다른 곳에서 더한 헤더를 지우지 않는다
+    await page.getByRole('button', { name: '인증 저장' }).click();
+    await expect.poll(() => capture.requests.length).toBe(2);
+    expect(savedExtraHeaders(capture)).toEqual({
+      'extraHeader:X-A': 'a-typed',
+      'extraHeader:X-B': '****bbbb',
+    });
+  });
+
+  test('다른 곳에서 이름을 바꾼 추가 헤더(X-Id → x-id)는 지워짐·더해짐을 함께 알리고, 새 이름 행이 남는다 (WD-796)', async ({
+    authenticatedPage: page,
+  }) => {
+    const stored = await openAuthEdit(
+      page,
+      storedApiKeyConnection({ 'extraHeader:X-A': '****a001', 'extraHeader:X-Id': '****i001' }),
+    );
+    await expect(page.getByLabel('추가 헤더 이름 2')).toHaveValue('X-Id');
+    // X-A 만 고친다 — X-Id 행은 손대지 않는다
+    await page.getByLabel('추가 헤더 값 1').fill('a-typed');
+
+    // 그사이 다른 관리자가 X-Id 를 x-id 로 바꿔 저장했다(서버 키가 바뀐다)
+    const capture = await saveInfoAndRefetch(page, {
+      ...stored,
+      name: RENAMED,
+      maskedAuthConfig: { ...MAIN_AUTH, 'extraHeader:X-A': '****a001', 'extraHeader:x-id': '****i002' },
+    });
+
+    await expect(page.getByText('다른 곳에서 추가 헤더(X-Id)가 지워져 목록을 맞췄습니다.')).toBeVisible();
+    await expect(page.getByText('다른 곳에서 추가 헤더(x-id)가 더해져 목록에 넣었습니다.')).toBeVisible();
+    // 손대지 않은 옛 이름 행은 빠지고 새 이름 행이 남는다
+    await expect(page.getByLabel('추가 헤더 이름 1')).toHaveValue('X-A');
+    await expect(page.getByLabel('추가 헤더 이름 2')).toHaveValue('x-id');
+    await expect(page.getByLabel('추가 헤더 이름 3')).toHaveCount(0);
+
+    // 저장 payload 에 옛 이름(X-Id)은 없고 새 이름이 새 가린 값으로 실린다
+    await page.getByRole('button', { name: '인증 저장' }).click();
+    await expect.poll(() => capture.requests.length).toBe(2);
+    expect(savedExtraHeaders(capture)).toEqual({
+      'extraHeader:X-A': 'a-typed',
+      'extraHeader:x-id': '****i002',
+    });
+  });
+
+  test('사용자가 같은 이름의 새 행을 써 둔 채 그 헤더가 더해지면 행이 둘이 되어 저장이 중복 오류로 막힌다 (WD-796)', async ({
+    authenticatedPage: page,
+  }) => {
+    const stored = await openAuthEdit(page, storedApiKeyConnection({ 'extraHeader:X-A': '****a001' }));
+    // 사용자가 X-B 새 행을 써 둔다(저장 전)
+    await page.getByRole('button', { name: '헤더 추가' }).click();
+    await page.getByLabel('추가 헤더 이름 2').fill('X-B');
+    await page.getByLabel('추가 헤더 값 2').fill('b-typed');
+
+    // 그사이 다른 관리자가 같은 이름 X-B 를 더했다
+    const capture = await saveInfoAndRefetch(page, {
+      ...stored,
+      name: RENAMED,
+      maskedAuthConfig: { ...MAIN_AUTH, 'extraHeader:X-A': '****a001', 'extraHeader:X-B': '****bbbb' },
+    });
+
+    await expect(page.getByText('다른 곳에서 추가 헤더(X-B)가 더해져 목록에 넣었습니다.')).toBeVisible();
+    // 사용자 새 행과 합치지 않아 X-B 가 두 행이다
+    await expect(page.getByLabel('추가 헤더 이름 2')).toHaveValue('X-B');
+    await expect(page.getByLabel('추가 헤더 값 2')).toHaveValue('b-typed');
+    await expect(page.getByLabel('추가 헤더 이름 3')).toHaveValue('X-B');
+
+    // 저장하면 뒤 행에 중복 오류가 붙고 인증 PUT 은 나가지 않는다 — 사용자가 어느 값을 남길지 고른다
+    // PUT 이 늦게 나가는 경우도 잡게, 저장을 누르기 전부터 1초 동안 인증 PUT 을 지켜본다 — 오지 않아야 한다(WD-796)
+    const lateAuthPut = page.waitForRequest(
+      (req) => req.method() === 'PUT' && new URL(req.url()).pathname === PATH,
+      { timeout: 1000 },
+    );
+    // 아래 단언이 1초를 넘겨도 처리되지 않은 rejection 으로 남지 않게 미리 받아 둔다 — 결과는 아래 rejects 단언이 본다(WD-796)
+    lateAuthPut.catch(() => {});
+    await page.getByRole('button', { name: '인증 저장' }).click();
+    await expect(page.getByLabel('추가 헤더 이름 3')).toHaveAccessibleDescription('이름이 겹칩니다');
+    await expect(lateAuthPut).rejects.toThrow();
+    expect(capture.requests).toHaveLength(1);
+  });
+
+  test('다른 곳이 더한 헤더는 새 기준 순서 자리에 들어가, 고친 행을 되돌리면 나가도 미저장 경고가 뜨지 않는다 (WD-796)', async ({
+    authenticatedPage: page,
+  }) => {
+    const stored = await openAuthEdit(page, storedApiKeyConnection({ 'extraHeader:X-A': '****a001' }));
+    await expect(page.getByLabel('추가 헤더 이름 1')).toHaveValue('X-A');
+    // X-A 값을 고쳐 덩어리를 「고침」으로 만든다
+    await page.getByLabel('추가 헤더 값 1').fill('a-typed');
+
+    // 그사이 다른 관리자가 X-0 을 더했다 — 응답 키 순서(= extraHeaderRowsFromConfig 의 행 순서)에서 X-0 이 X-A 앞이다
+    await saveInfoAndRefetch(page, {
+      ...stored,
+      name: RENAMED,
+      maskedAuthConfig: { ...MAIN_AUTH, 'extraHeader:X-0': '****0000', 'extraHeader:X-A': '****a001' },
+    });
+    await expect(page.getByText('다른 곳에서 추가 헤더(X-0)가 더해져 목록에 넣었습니다.')).toBeVisible();
+
+    // 끝이 아니라 새 기준 순서 자리(X-A 앞)에 들어간다
+    await expect(page.getByLabel('추가 헤더 이름 1')).toHaveValue('X-0');
+    await expect(page.getByLabel('추가 헤더 값 1')).toHaveAttribute('placeholder', '저장된 값 유지 (****0000)');
+    await expect(page.getByLabel('추가 헤더 이름 2')).toHaveValue('X-A');
+    await expect(page.getByLabel('추가 헤더 값 2')).toHaveValue('a-typed');
+
+    // X-A 값을 비워 원래대로 되돌리면 새 기준과 순서까지 같아져, 나가도 미저장 경고가 뜨지 않는다
+    await page.getByLabel('추가 헤더 값 2').fill('');
+    await page.getByRole('navigation').getByRole('link', { name: '사용자 관리' }).click();
+    await expect(page).toHaveURL(/\/admin\/users/);
+    await expect(page.getByRole('alertdialog')).toHaveCount(0);
+  });
+
+  test('사용자가 덩어리에서 지운 저장 헤더는 재조회로 되살아나지 않는다 (WD-796)', async ({
+    authenticatedPage: page,
+  }) => {
+    const stored = await openAuthEdit(
+      page,
+      storedApiKeyConnection({ 'extraHeader:X-A': '****a001', 'extraHeader:X-Del': '****d001' }),
+    );
+    await expect(page.getByLabel('추가 헤더 이름 2')).toHaveValue('X-Del');
+    // 사용자가 저장 헤더 X-Del 행을 지운다
+    await page.getByRole('button', { name: '추가 헤더 2 삭제' }).click();
+    await expect(page.getByLabel('추가 헤더 이름 2')).toHaveCount(0);
+
+    // 재조회 응답에는 X-Del 이 (값이 바뀐 채) 여전히 있다 — 이전 기준에도 있던 헤더라 「더해진」 것이 아니다
+    const capture = await saveInfoAndRefetch(page, {
+      ...stored,
+      name: RENAMED,
+      maskedAuthConfig: { ...MAIN_AUTH, 'extraHeader:X-A': '****a001', 'extraHeader:X-Del': '****d002' },
+    });
+    await expect(page.getByLabel('연결 이름')).toHaveValue(RENAMED);
+
+    // 지운 행은 돌아오지 않고, 더해졌다는 안내도 없다
+    await expect(page.getByLabel('추가 헤더 이름 1')).toHaveValue('X-A');
+    await expect(page.getByLabel('추가 헤더 이름 2')).toHaveCount(0);
+    await expect(page.getByText(/가 더해져 목록에 넣었습니다/)).toHaveCount(0);
+
+    // 저장 payload 에도 X-Del 이 없다
+    await page.getByRole('button', { name: '인증 저장' }).click();
+    await expect.poll(() => capture.requests.length).toBe(2);
+    expect(savedExtraHeaders(capture)).toEqual({ 'extraHeader:X-A': '****a001' });
   });
 });

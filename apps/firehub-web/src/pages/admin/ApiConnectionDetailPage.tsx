@@ -162,6 +162,8 @@ interface SyncedStoredRows {
   rows: ExtraHeaderRow[];
   /** 새 기준에 없어(다른 곳에서 지워져) 빼거나 새 행으로 바꾼 저장 행의 원래 이름 — 토스트 안내용 */
   removedNames: string[];
+  /** 이전 기준에 없고 새 기준에만 있어(다른 곳에서 더함·이름 변경의 새 이름) 새 기준 순서 자리에 넣은 저장 행의 이름 — 토스트 안내용(WD-796) */
+  addedNames: string[];
 }
 
 /**
@@ -173,6 +175,12 @@ interface SyncedStoredRows {
  *   - 손댄 행은 storedName·storedMasked 를 지워 새 행으로 바꾼다 — 사용자가 쓴 이름·값은 지키고, 지워진 헤더의 가린 값은 절대 보내지 않는다
  *     (예전엔 이름 앞뒤 공백만 바꾼 행이 값을 비워도 옛 가린 값을 보내 서버가 거절했다). 값이 비면 저장 때 행 검증이 「값 필수」로 잡는다.
  *   행 id 는 그대로라 남은 행의 오류는 둔다(뺀 행의 오류는 부르는 쪽이 지운다).
+ * - 새 기준에만 있는 저장 헤더(다른 곳에서 더함·이름 변경의 새 이름)는 새 기준 순서 자리에 넣는다(WD-796) — 새 기준에서 그 행보다 앞에 있는
+ *   저장 이름 중 결과에 있는 마지막 것 바로 뒤, 그런 것이 없으면 맨 앞이다. 끝에 붙이면 새 기준(서버 순서)과 행 순서가 어긋나, 사용자가 고친 행을
+ *   원래대로 되돌려도 순서까지 비교하는 미저장 판정(rowsEqual)이 계속 「다름」으로 봐 경고가 남는다. 사용자 새 행은 섞여 있어도 상대 순서만 지키고,
+ *   앞선 저장 행 바로 뒤에 이어진 사용자 새 행은 건너뛰어 그 뒤에 넣는다(써 둔 행이 자리를 옮기지 않게).
+ *   「새 기준에만」= 이전 기준에도, 맞춘 결과에도 그 원래 이름이 없는 행이다 — 사용자가 덩어리에서 지운 저장 헤더는 이전 기준에 있으므로
+ *   재조회로 되살리지 않는다. 이름은 서버 키(storedName) 그대로 비교해, 대소문자만 다른 사용자 새 행과 합치지 않는다(저장 때 중복 검증이 잡는다).
  */
 function syncStoredRows(
   rows: ExtraHeaderRow[],
@@ -181,6 +189,7 @@ function syncStoredRows(
 ): SyncedStoredRows {
   let changed = false;
   const removedNames: string[] = [];
+  const addedNames: string[] = [];
   const synced: ExtraHeaderRow[] = [];
   for (const row of rows) {
     if (row.storedName === undefined) {
@@ -207,7 +216,35 @@ function syncStoredRows(
     }
     synced.push(row);
   }
-  return { rows: changed ? synced : rows, removedNames };
+  // (WD-796) 다른 곳에서 더한 저장 헤더 — 예전엔 고친 덩어리를 지키느라 새 헤더를 버려, 인증 저장이 그 헤더를 말없이 지웠다.
+  // 그래서 목록에 넣고 알린다. 행 id 는 새 기준의 것(extraHeaderRowsFromConfig 가 만든 새 id)이라 남은 행 id 와 겹치지 않는다.
+  // 넣는 자리는 새 기준 순서를 따른다 — 되돌리면 새 기준과 순서까지 같아져 미저장 경고가 풀리게 한다(WD-796).
+  // 새 기준 순서대로 처리하므로 앞서 넣은 행도 「결과에 있는 것」으로 보아 그 뒤에 이어 넣는다.
+  nextRows.forEach((fresh, freshIndex) => {
+    if (fresh.storedName === undefined) return;
+    const name = fresh.storedName;
+    if (prevRows.some((p) => p.storedName === name)) return;
+    if (synced.some((s) => s.storedName === name)) return;
+    changed = true;
+    addedNames.push(name);
+    // 새 기준에서 이 행 앞에 있는 저장 이름을 가까운 것부터 보며, 결과에 있는 첫 행(= 결과에 있는 마지막 앞선 행) 바로 뒤에 넣는다
+    let insertAt = 0;
+    for (let i = freshIndex - 1; i >= 0; i--) {
+      const before = nextRows[i].storedName;
+      const pos = synced.findIndex((s) => s.storedName !== undefined && s.storedName === before);
+      if (pos >= 0) {
+        insertAt = pos + 1;
+        break;
+      }
+    }
+    // 앞선 저장 행 바로 뒤에 이어진 사용자 새 행(storedName 없음)은 건너뛴다 — 사용자가 써 둔 행이 자리를 옮기지 않게 한다
+    // (같은 이름의 새 행이면 저장 때 중복 오류가 뒤의 더한 행에 붙는다). 새 행은 새 기준에 없어 순서 비교·되돌리기와 무관하다.
+    if (insertAt > 0) {
+      while (insertAt < synced.length && synced[insertAt].storedName === undefined) insertAt++;
+    }
+    synced.splice(insertAt, 0, fresh);
+  });
+  return { rows: changed ? synced : rows, removedNames, addedNames };
 }
 
 /**
@@ -478,10 +515,11 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
       clearSecretInputs();
       // 칸이 모두 새 방식 값으로 바뀌어 지난 인증 칸 오류는 어느 칸에도 맞지 않는다
       cleared.push(...AUTH_FIELD_KEYS);
-      // 고친 것을 말없이 버리지 않게 알린다 — StrictMode 이중 실행에도 하나만 남게 id 를 준다
+      // 고친 것을 말없이 버리지 않게 알린다 — StrictMode 이중 실행에도 하나만 남게 id 를 준다.
+      // 방식 이름은 괄호로 감싼다(WD-796) — 「API Key으로」처럼 이름 끝소리에 따라 조사가 틀리지 않게 조사를 이름에 붙이지 않는다.
       if (editedDependent) {
         toast.info(
-          `다른 곳에서 인증 방식이 ${authTypeLabel(next.authType, 'full')}으로 바뀌어, 고친 인증 칸을 새 값으로 바꿨습니다.`,
+          `다른 곳에서 인증 방식이 바뀌어(${authTypeLabel(next.authType, 'full')}), 고친 인증 칸을 새 값으로 바꿨습니다.`,
           { id: 'api-connection-auth-type-changed' },
         );
       }
@@ -512,6 +550,12 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
       if (synced.removedNames.length > 0) {
         toast.info(`다른 곳에서 추가 헤더(${synced.removedNames.join(', ')})가 지워져 목록을 맞췄습니다.`, {
           id: 'api-connection-extra-headers-removed',
+        });
+      }
+      // (WD-796) 다른 곳에서 더한 헤더를 목록(새 기준 순서 자리)에 넣었음을 알린다 — 이름 변경이면 위의 「지워짐」과 함께 떠 바뀐 것을 둘 다 보게 한다
+      if (synced.addedNames.length > 0) {
+        toast.info(`다른 곳에서 추가 헤더(${synced.addedNames.join(', ')})가 더해져 목록에 넣었습니다.`, {
+          id: 'api-connection-extra-headers-added',
         });
       }
     }
