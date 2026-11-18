@@ -32,12 +32,48 @@
 - **firehub-web/ai-agent**: `COPY apps/firehub-web/ ...` 절대 경로 → context가 프로젝트 루트(`.`)여야 함
 - **절대로** `docker build -f apps/firehub-api/Dockerfile .`으로 빌드하지 않는다 (소스 누락)
 - 빌드 캐시는 buildx 가 자동 사용 (525849d 이후). 캐시를 강제로 무시할 필요가 있을 때만 `--no-cache` 추가.
+- `deploy.sh` 는 모든 빌드에 `--pull` 을 준다(WD-794) — 빌더 캐시에 남은 옛 베이스 이미지(`nginx:alpine`·`node`·postgis 등)를 쓰지 않고 태그의 최신 digest 를 받아, 베이스의 보안 수정이 운영 이미지에 들어가게 한다. 베이스가 그대로면 레이어 캐시는 그대로 쓴다. 손으로 빌드할 때도 `--pull` 을 붙인다.
+- web·admin(nginx)·db 는 베이스 태그 뒤에 나온 OS 패키지 수정까지 `apk/apt upgrade` 로 받는다. 이 층은 `OS_PATCH_DATE` 빌드 인자가 바뀔 때만 다시 돌므로 `deploy.sh` 가 빌드 날짜를 넘긴다(손 빌드도 `--build-arg OS_PATCH_DATE=$(date +%F)`). db 는 기본값(`static`)이면 upgrade 를 건너뛴다 — 시험(PostgresTestContainer·generateJooq)이 이 Dockerfile 을 빌드하는데, upgrade(~15분)는 운영 이미지에만 필요하기 때문이다. 그래서 PostGIS(3.6.1, hold)·pgvector 판은 운영과 같지만 PG 마이너(16.x)·GEOS·PROJ 같은 라이브러리는 운영 이미지가 더 새로울 수 있다. 시험 이미지는 Dockerfile 내용 해시 이름(`firehub-test-postgres:<해시>`)으로 남아 Dockerfile 이 같은 동안 다시 빌드하지 않는다(Dockerfile 이 바뀔 때마다 하나씩 남으니 가끔 `docker image prune` 대상이다). web·admin 은 시험에서 빌드하지 않고 `apk upgrade` 가 몇 초라 기본값에서도 돈다.
 
 ## 운영 환경
 
 - 이미지 레지스트리: `ghcr.io/bluleo78/smart-fire-hub/{api,web,ai-agent}:latest`
 - 운영 디렉토리: `~/prod/smart-fire-hub/` — **로컬 머신** (`$HOME/prod/smart-fire-hub/`). SSH 불필요.
 - 배포 후: `docker compose up -d --force-recreate {app}`
+
+### postgres 베이스를 PostGIS 3.6·debian 13 으로 옮긴 뒤 첫 `db` 배포 (필수 — WD-794)
+
+`docker/postgres/Dockerfile` 의 베이스가 `imresamu/postgis:16-3.5`(debian 12, glibc 2.36, PostGIS 3.5.3)에서
+`imresamu/postgis:16-3.6.1-trixie`(debian 13, glibc 2.41, PostGIS 3.6.1) 위에 `apt-get upgrade` 를 얹은 것으로 바뀌었다(trivy CRITICAL 30 → 6, 수정판 있는 CRITICAL 26 → 1). 옛 태그는 2025-09 뒤로 갱신되지 않아
+`--pull` 로도 보안 수정을 받지 못했기 때문이다. PG 는 16 그대로라 데이터 디렉터리는 그대로 열리지만, **두 가지를 손으로 맞춰야 한다**:
+
+- **콜레이션**: glibc 가 바뀌어 기본 콜레이션(`en_US.utf8`)으로 만든 text 인덱스의 정렬 순서가 어긋날 수 있다. 기동하면 DB 마다
+  `database "…" has a collation version mismatch (2.36 → 2.41)` 경고가 난다. 인덱스를 다시 만들지 않으면 그 인덱스를 쓰는 조회·유일성 검사가 조용히 틀릴 수 있다.
+- **PostGIS 확장**: 라이브러리는 3.6.1 인데 카탈로그의 확장은 3.5.3 이다(`postgis_full_version()` 에 `need upgrade`).
+
+절차(점검 시간에, api·executor·db-executor 를 멈춘 채):
+
+1. 스냅샷: 위 「DB 마이그레이션 배포 전 스냅샷」대로 `pg_dumpall` 을 떠 둔다. **확장을 3.6 으로 올린 뒤에는 옛 이미지로 되돌릴 수 없다** — 되돌림은 이 덤프로 한다.
+2. 새 이미지로 db 를 다시 띄운다. 운영 compose 의 `db` 가 무엇을 쓰는지 먼저 본다 — 저장소의 `docker-compose.prod.yml` 처럼 `build:` 만 있으면
+   `deploy.sh db` 의 `docker compose pull db` 는 받을 것이 없고 `up --force-recreate` 는 옛 로컬 이미지를 그대로 쓴다. 그 경우
+   `docker compose build --pull --build-arg OS_PATCH_DATE=$(date +%F) db` 뒤 `docker compose up -d --force-recreate db` 로 띄운다.
+   `image: ghcr.io/…/postgres:latest` 를 쓰면 `./scripts/deploy.sh db` 로 된다. 어느 쪽이든 `docker compose exec db cat /etc/debian_version` 이 `13.x` 인지 확인한다(12.x 면 옛 이미지다 — 3번으로 가지 않는다).
+3. 접속할 수 있는 DB 마다(`SELECT datname FROM pg_database WHERE datallowconn` 이 내는 것 전부 — 운영 DB·`postgres`·`template1`·postgis 이미지가 만든 `template_postgis` 등) 그 DB 에 접속해 실행한다:
+   ```sql
+   SELECT postgis_extensions_upgrade();   -- postgis 가 있는 DB 만. postgis_topology·tiger_geocoder 까지 3.6.1 로 올린다
+   REINDEX DATABASE <db>;                  -- 그 DB 의 사용자 인덱스 전부(크기에 비례해 걸린다)
+   ALTER DATABASE <db> REFRESH COLLATION VERSION;
+   ```
+   접속할 수 없는 `template0` 은 다른 DB 에서 `ALTER DATABASE template0 REFRESH COLLATION VERSION;` 만 실행한다 — 사용자 인덱스가 없어 재색인은 필요 없지만, 버전을 맞추지 않으면 `TEMPLATE template0` 으로 새로 만드는 DB 마다 같은 경고가 따라온다.
+4. 확인: `SELECT postgis_full_version();` 에 `need upgrade` 가 없고, `docker compose logs db` 에 새 `collation version mismatch` 경고가 없다.
+
+- 분리 설치(Tibero 플랫폼)의 데이터 저장소 PG·Helm 의 `db` 도 이 이미지를 쓰면 같은 절차다.
+- 재색인으로 고쳐지지 않는 콜레이션 의존 객체(text 범위 파티션 경계·text 정렬에 기대는 CHECK 등)는 지금 스키마에 없다(마이그레이션에 범위 파티션 없음, WD-794 확인) — 새로 만들면 이 절차에 더한다.
+- 개발 PC: `pnpm db:up`(`docker compose up`)은 이미 만든 로컬 이미지를 다시 빌드하지 않는다 — 먼저 `docker compose build --pull db db-test` 로 새 이미지를 만든 뒤 `pnpm db:up` 한다. 새 이미지로 옛 데이터를 열면 위와 같은 경고가 난다. 데이터가 필요하면 위 3번을 실행하고, 필요 없으면 `pnpm db:down` 뒤 바인드 마운트 폴더 `./db-data`·`./db-test-data` 를 지우고 다시 띄운다(`pnpm db:reset` 의 `down -v` 는 이름 있는 볼륨만 지워 이 폴더는 그대로 남는다). 개발 빌드는 apt upgrade 를 건너뛴다(위 「Docker 빌드 규칙」).
+- work-loop 공유 바탕 Postgres(`work-loop-firehub-postgres:local`, `scripts/work-loop-stack.sh`)는 이미지를 다시 빌드하지 않아 머지 뒤에도 옛 PostGIS 3.5 로 남는다. 새 이미지로 바꾸려면 사람이 그 스크립트의 `shared-down` 으로 내린 뒤 이미지를 지우고 다시 띄운다(남은 저장소 DB 가 있으면 `shared-down` 이 거부한다 — 그 목록을 보고 정한다).
+- 확인 기록: 옛 이미지로 만든 볼륨(텍스트·gist·hnsw 인덱스)을 새 이미지로 열어 위 절차를 돌려 경고가 사라지고 공간·벡터 조회가 그대로인 것을 봤다(WD-794).
+- 베이스 태그는 PostGIS 판(`16-3.6.1-trixie`)까지 고정했고 postgis 패키지는 `apt-mark hold` 다 — PostGIS 판을 올리는 것은 이 절차가 다시 필요한 일이라 Dockerfile·허용목록을 함께 바꾸는 별도 작업으로 한다. PG 마이너(16.x)는 `apt-get upgrade` 로 따라 오른다(데이터 디렉터리 호환).
+- `apps/firehub-api/src/main/resources/sql-validator/postgis-safe-functions.txt` 는 PostGIS 판이 바뀌면 다시 생성해야 한다(`PostgisSafeFunctionsConformanceTest` 가 어긋남을 잡는다) — 3.6 에서 3개가 늘었다.
 
 ### DB 마이그레이션 배포 전 스냅샷 (필수 — V122 이상)
 

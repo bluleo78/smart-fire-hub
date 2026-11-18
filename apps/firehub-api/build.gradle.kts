@@ -1,4 +1,5 @@
 import java.io.File
+import java.security.MessageDigest
 import java.util.Properties
 
 buildscript {
@@ -210,7 +211,12 @@ tasks.register("generateJooq") {
             }
         }
 
-        val imageName = org.testcontainers.images.builder.ImageFromDockerfile()
+        // 시험과 같은 이름 규칙(Dockerfile 내용 해시)으로 이미지를 남겨 층 캐시를 다시 쓴다 — PostgresTestContainer.testImage 참고(WD-794)
+        val dockerfileTag = MessageDigest.getInstance("SHA-256")
+            .digest(postgresDockerfile.toFile().readBytes())
+            .joinToString("") { "%02x".format(it) }
+            .substring(0, 12)
+        val imageName = org.testcontainers.images.builder.ImageFromDockerfile("firehub-test-postgres:$dockerfileTag", false)
             .withDockerfile(postgresDockerfile)
             .get()
         val container = org.testcontainers.containers.PostgreSQLContainer(

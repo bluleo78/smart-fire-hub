@@ -1,8 +1,12 @@
 package com.smartfirehub.support;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
+import java.util.HexFormat;
 import javax.sql.DataSource;
 import org.postgresql.ds.PGSimpleDataSource;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -77,7 +81,7 @@ public final class PostgresTestContainer {
     // Docker 데몬의 API 버전 자동 협상이 OrbStack 에서 실패하지 않도록 지원 버전을 고정한다.
     System.setProperty("api.version", "1.41");
 
-    String imageName = new ImageFromDockerfile().withDockerfile(findPostgresDockerfile()).get();
+    String imageName = testImage(findPostgresDockerfile()).get();
 
     return new PostgreSQLContainer<>(
             DockerImageName.parse(imageName).asCompatibleSubstituteFor("postgres"))
@@ -89,6 +93,23 @@ public final class PostgresTestContainer {
         // PostGIS 초기화가 60초를 넘겨 「ready to accept connections」 대기가 끝나면, 그 포크의 시험 전체(약 6천 건)가 한꺼번에
         // 실패했다. 정상일 때는 몇 초 안에 떠 상한이 늘어도 시간이 더 들지 않는다.
         .withStartupTimeout(Duration.ofMinutes(5));
+  }
+
+  /**
+   * 시험용 PostgreSQL 이미지를 Dockerfile 내용 해시로 이름 붙여 남기는 빌더(WD-794). 이름 없는 {@code new
+   * ImageFromDockerfile()} 은 JVM 이 끝나면 이미지와 중간 층을 지워 다음 JVM 이 pgvector 설치까지 처음부터 다시 빌드했다 — 이름을 고정하고
+   * 지우지 않으면 같은 Dockerfile 인 동안 층 캐시를 그대로 써 몇 초에 끝난다. Dockerfile 이 바뀌면 이름도 바뀌어 새로 빌드한다.
+   * generateJooq(build.gradle.kts)도 같은 이름 규칙을 쓴다.
+   */
+  static ImageFromDockerfile testImage(Path dockerfile) {
+    try {
+      byte[] digest = MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(dockerfile));
+      String tag = HexFormat.of().formatHex(digest).substring(0, 12);
+      return new ImageFromDockerfile("firehub-test-postgres:" + tag, false)
+          .withDockerfile(dockerfile);
+    } catch (IOException | NoSuchAlgorithmException e) {
+      throw new IllegalStateException("시험용 PostgreSQL Dockerfile 을 읽을 수 없습니다: " + dockerfile, e);
+    }
   }
 
   /** Gradle 및 IDE 실행 위치에 관계없이 모노레포의 기존 PostgreSQL Dockerfile을 찾는다. */

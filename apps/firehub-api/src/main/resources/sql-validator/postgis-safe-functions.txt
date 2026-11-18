@@ -16,7 +16,9 @@
 # 하나라도 volatile(부작용 있음)이면 그 이름 전체를 제외했다(HAVING bool_and(...)). 실측: 이 필터로
 # dropgeometrycolumn/addgeometrycolumn/createtopology/droptopology/updategeometrysrid/addtosearchpath
 # 등 스키마를 변경하는 위험 함수(all volatile)가 전부 제외됐고, ST_AsGeoJSON/ST_X/ST_Area 등 순수
-# 계산 함수(immutable/stable)만 남았다(전체 643개 중 아래 개수, 2026-08-17 test DB PostGIS 버전 기준).
+# 계산 함수(immutable/stable)만 남았다(전체 649개 중 아래 개수, 2026-11-18 PostGIS 3.6.1 기준).
+# 갱신 이력: 2026-08-17 PostGIS 3.5.3 로 처음 생성(전체 643개) → 2026-11-18 베이스를 16-3.6.1-trixie 로 옮기며
+# 다시 생성(WD-794) — st_coverageclean(immutable)·totaltopologysize·validatetopologyprecision(stable, 읽기 전용) 3개가 늘었다.
 # postgis_topology 의 관리용 함수도 volatile 이라 자동으로 빠진다.
 #
 # 왜 pg_catalog(표준 SQL 내장 함수)는 이렇게 유도하지 않는가: current_setting/pg_get_viewdef/
@@ -304,6 +306,7 @@ st_contains
 st_containsproperly
 st_convexhull
 st_coorddim
+st_coverageclean
 st_coverageinvalidedges
 st_coveragesimplify
 st_coverageunion
@@ -550,3 +553,5 @@ topoelement
 topoelementarray_agg
 topoelementarray_append
 topologysummary
+totaltopologysize
+validatetopologyprecision

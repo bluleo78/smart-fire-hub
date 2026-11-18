@@ -22,6 +22,10 @@ RUN pnpm --filter @smart-fire-hub/firehub-admin build
 # === Stage 2: Nginx ===
 FROM nginx:alpine
 
+# 베이스 태그 뒤에 나온 alpine 보안 수정을 받는다(WD-794). OS_PATCH_DATE 는 이 층의 캐시 무효화 키 — 이유는 scripts/deploy.sh 머리 주석.
+ARG OS_PATCH_DATE=static
+RUN echo "os patch date: ${OS_PATCH_DATE}" && apk upgrade --no-cache
+
 # 빌드된 정적 파일 복사
 COPY --from=build /app/apps/firehub-admin/dist /usr/share/nginx/html
 

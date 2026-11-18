@@ -24,6 +24,12 @@ error() { echo -e "${RED}[error]${NC} $1"; exit 1; }
 # API: context = apps/firehub-api/ (Dockerfile이 상대경로 COPY 사용)
 # WEB, AI-AGENT: context = . (프로젝트 루트, Dockerfile이 apps/ 절대경로 COPY 사용)
 PLATFORM="linux/amd64,linux/arm64"
+# 모든 빌드에 --pull 을 준다(WD-794): 빌더 캐시에 남은 옛 베이스 이미지(nginx:alpine·node·postgis 등)를 그대로 쓰면
+# 베이스의 보안 수정이 운영 이미지에 들어가지 않는다. --pull 은 베이스 태그의 최신 digest 를 받아 오고,
+# 베이스가 바뀌지 않았으면 레이어 캐시는 그대로 쓰므로 빌드 시간은 거의 늘지 않는다.
+# web·admin·db 는 OS 패키지 갱신 단계(apk/apt upgrade)가 있어, 빌드 날짜를 OS_PATCH_DATE 로 넘겨 그 층만 날마다 다시 돌린다
+# (베이스 digest 가 그대로면 캐시된 옛 갱신 층이 재사용돼 그 뒤 나온 보안 수정이 빠지기 때문이다).
+OS_PATCH_ARG=(--build-arg "OS_PATCH_DATE=$(date +%F)")
 
 ensure_builder() {
   if ! docker buildx inspect multiplatform &>/dev/null; then
@@ -39,35 +45,37 @@ build_and_push() {
   case $app in
     api)
       log "Building + pushing $app (context: apps/firehub-api/)"
-      docker buildx build --platform "$PLATFORM" -t "$REGISTRY/api:latest" --push apps/firehub-api/
+      docker buildx build --pull --platform "$PLATFORM" -t "$REGISTRY/api:latest" --push apps/firehub-api/
       ;;
     web)
       log "Building + pushing $app (context: project root)"
-      docker buildx build --platform "$PLATFORM" -t "$REGISTRY/web:latest" -f apps/firehub-web/Dockerfile --push .
+      docker buildx build --pull "${OS_PATCH_ARG[@]}" --platform "$PLATFORM" -t "$REGISTRY/web:latest" -f apps/firehub-web/Dockerfile --push .
       ;;
     ai-agent)
       log "Building + pushing $app (context: project root)"
-      docker buildx build --platform "$PLATFORM" -t "$REGISTRY/ai-agent:latest" -f apps/firehub-ai-agent/Dockerfile --push .
+      docker buildx build --pull --platform "$PLATFORM" -t "$REGISTRY/ai-agent:latest" -f apps/firehub-ai-agent/Dockerfile --push .
       ;;
     executor)
       log "Building + pushing $app (context: apps/firehub-executor/)"
-      docker buildx build --platform "$PLATFORM" -t "$REGISTRY/executor:latest" --push apps/firehub-executor/
+      docker buildx build --pull --platform "$PLATFORM" -t "$REGISTRY/executor:latest" --push apps/firehub-executor/
       ;;
     db-executor)
       log "Building + pushing $app (context: apps/firehub-db-executor/)"
-      docker buildx build --platform "$PLATFORM" -t "$REGISTRY/db-executor:latest" --push apps/firehub-db-executor/
+      docker buildx build --pull --platform "$PLATFORM" -t "$REGISTRY/db-executor:latest" --push apps/firehub-db-executor/
       ;;
     channel)
       log "Building + pushing $app (context: apps/firehub-channel/)"
-      docker buildx build --platform "$PLATFORM" -t "$REGISTRY/channel:latest" --push apps/firehub-channel/
+      docker buildx build --pull --platform "$PLATFORM" -t "$REGISTRY/channel:latest" --push apps/firehub-channel/
       ;;
     admin)
       log "Building + pushing $app (context: project root)"
-      docker buildx build --platform "$PLATFORM" -t "$REGISTRY/admin:latest" -f apps/firehub-admin/Dockerfile --push .
+      docker buildx build --pull "${OS_PATCH_ARG[@]}" --platform "$PLATFORM" -t "$REGISTRY/admin:latest" -f apps/firehub-admin/Dockerfile --push .
       ;;
     db)
+      # 옛 볼륨을 새 베이스로 처음 열 때 손으로 할 절차가 있어 잊지 않게 알린다(WD-794)
+      warn "db 베이스가 PostGIS 3.6.1·debian 13 입니다 — 옛 볼륨에 처음 배포하면 .claude/docs/deploy.md 의 WD-794 전환 절차(스냅샷·postgis_extensions_upgrade·REINDEX)를 먼저 따르세요"
       log "Building + pushing $app (context: project root, image tag: postgres)"
-      docker buildx build --platform "$PLATFORM" -t "$REGISTRY/postgres:latest" -f docker/postgres/Dockerfile --push .
+      docker buildx build --pull "${OS_PATCH_ARG[@]}" --platform "$PLATFORM" -t "$REGISTRY/postgres:latest" -f docker/postgres/Dockerfile --push .
       ;;
     minio)
       log "$app is a public image (cgr.dev/chainguard/minio — MinIO 공식 이미지 배포 중단) — skip build/push, pull only"
