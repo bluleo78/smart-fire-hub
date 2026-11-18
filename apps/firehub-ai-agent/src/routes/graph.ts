@@ -17,7 +17,7 @@ import { addEntity, AddEntityInput } from '../graphrag/entity-add.js';
 import { addRelation } from '../graphrag/relation-add.js';
 import { EntityType, RelationType } from '../graphrag/ontology.js';
 import { GraphMutationRejectedError } from '../graphrag/graph-mutation-guard.js';
-import { resolveDatasetOntology, resolveReadableOntologyById } from '../graphrag/ontology-source.js';
+import { OntologyNotBoundError, resolveDatasetOntology, resolveReadableOntologyById } from '../graphrag/ontology-source.js';
 import { FireHubApiClient } from '../mcp/api-client.js';
 
 /**
@@ -54,15 +54,19 @@ function delegationClient(res: Response): FireHubApiClient {
  * 그래프 변경 실패를 상태코드로 나눠 응답한다(#310).
  * - GraphMutationRejectedError 계열: "지금 이 요청으로는 반영 불가"인 상태 → 409 + 사용자용 사유.
  *   대상 노드 부재(GraphTargetMissingError, #310)와 정정값 형식 위반(PropertyValueInvalidError, #311)이 여기 해당한다.
+ *   데이터셋의 온톨로지 미연결(OntologyNotBoundError, WD-807)·온톨로지 위반(OntologyConformanceError)도 같다.
  *   firehub-api가 이 사유를 그대로 ErrorResponse.message로 올려 검수 UI 토스트에 노출하고, 항목은 pending으로 남는다.
  * - 그 외: 진짜 장애 → 502(무로그 502 금지 #308 — 항상 로그를 남긴다).
  */
 function respondMutationError(res: import('express').Response, opLabel: string, fallback: string, e: unknown): void {
-  console.error(`[graph] ${opLabel} 실패:`, e);
-  if (e instanceof GraphMutationRejectedError) {
+  if (e instanceof GraphMutationRejectedError || e instanceof OntologyNotBoundError) {
+    // 사람이 고칠 거절은 예상된 결과라 장애 경보와 섞이지 않게 warn + 사유만 남긴다(스택 없음) — 같은 항목을 여러 번
+    // 눌러도 error 스택이 쌓이지 않게.
+    console.warn(`[graph] ${opLabel} 거절: ${e.message}`);
     res.status(409).json({ error: 'graph mutation rejected', message: e.message });
     return;
   }
+  console.error(`[graph] ${opLabel} 실패:`, e);
   res.status(502).json({ error: fallback });
 }
 
@@ -211,10 +215,10 @@ router.post('/graph/add-entity', ...authedJsonBody({ afterAuth: [requireDelegati
     });
     res.status(204).send();
   } catch (e) {
-    // add-entity는 409 매핑 대상이 아니다(#310) — 노드 MERGE는 MATCH 없이 항상 생성되므로 무음 유실이 없고,
-    // 끝점이 아직 없는 보류 관계를 건너뛰는 것은 "양쪽 보류는 마지막 승인 때 생성"이라는 설계상 정상 동작이다.
-    console.error('[graph] add-entity 실패:', e);
-    res.status(502).json({ error: 'add entity failed' });
+    // 노드 MERGE는 MATCH 없이 항상 생성되므로 대상 부재(GraphTargetMissingError)는 여기서 나지 않는다(#310).
+    // 다만 온톨로지 미연결(WD-807)·타입 없음(WD-429) 같은 거절은 다른 변경 라우트와 같이 409 + 사유로 돌려야
+    // 검수 UI 가 「잠시 후 다시 시도」 대신 조치 안내를 보여 준다 — 그래서 공통 매핑을 쓴다.
+    respondMutationError(res, 'add-entity', 'add entity failed', e);
   }
 });
 

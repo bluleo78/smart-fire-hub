@@ -8,16 +8,19 @@ import type { FireHubApiClient } from '../mcp/api-client.js';
 // merge-entities/add-entity/add-relation 핸들러가 entityType→typeId 변환용 온톨로지를 fetch한다 —
 // 실제 HTTP 호출 없이 고정 온톨로지로 대체. datasetId 는 이제 필수 필드라(#678) "기본 온톨로지" 폴백은 없다.
 // vi.mock 팩토리는 호이스팅되므로, 팩토리 안에서 참조하는 값도 vi.hoisted로 함께 끌어올려야 한다.
-const { mergeEntitiesMock, setEntityPropertyMock, addEntityMock, boundOntology } = vi.hoisted(() => ({
+const { mergeEntitiesMock, setEntityPropertyMock, addEntityMock, addRelationMock, boundOntology } = vi.hoisted(() => ({
   mergeEntitiesMock: vi.fn(), setEntityPropertyMock: vi.fn(), addEntityMock: vi.fn(),
+  addRelationMock: vi.fn().mockResolvedValue(undefined),
   boundOntology: { domain: 'bound', schemaVersion: 2, entities: [], relations: [] },
 }));
 vi.mock('../graphrag/synonym-merge.js', () => ({ mergeEntities: mergeEntitiesMock }));
 vi.mock('../graphrag/property-mutation.js', () => ({ setEntityProperty: setEntityPropertyMock }));
 vi.mock('../graphrag/entity-add.js', () => ({ addEntity: addEntityMock }));
-vi.mock('../graphrag/relation-add.js', () => ({ addRelation: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('../graphrag/relation-add.js', () => ({ addRelation: addRelationMock }));
 vi.mock('../graphrag/neo4j-client.js', () => ({ readWholeGraph: vi.fn() }));
-vi.mock('../graphrag/ontology-source.js', () => ({
+vi.mock('../graphrag/ontology-source.js', async (importOriginal) => ({
+  // 라우트가 instanceof 로 고르는 실제 오류 클래스는 그대로 쓴다(WD-807).
+  OntologyNotBoundError: (await importOriginal<typeof import('../graphrag/ontology-source.js')>()).OntologyNotBoundError,
   // 쓰기 라우트용 해소 — 테넌트 경계만, 그래프 읽기 판정 없음(WD-28).
   resolveDatasetOntology: vi.fn().mockResolvedValue({ ontology: boundOntology, ontologyId: 42 }),
   // GET /graph 는 읽기 지점 전용 해소(=RLS 경계 + 읽기 판정)를 거친다 — 읽기 전용이라고 예외를 두지 않는다.
@@ -27,7 +30,8 @@ vi.mock('../graphrag/ontology-source.js', () => ({
 process.env.INTERNAL_SERVICE_TOKEN = 'test-internal-token';
 
 import { readWholeGraph } from '../graphrag/neo4j-client.js';
-import { resolveDatasetOntology, resolveReadableOntologyById } from '../graphrag/ontology-source.js';
+import { OntologyNotBoundError, resolveDatasetOntology, resolveReadableOntologyById } from '../graphrag/ontology-source.js';
+import { OntologyConformanceError } from '../graphrag/graph-mutation-guard.js';
 import graphRouter from './graph.js';
 
 const app = express();
@@ -352,5 +356,55 @@ describe('그래프 라우트의 대행 목적(S3)', () => {
       .send({ entityType: 'Cause', nameA: 'a', nameB: 'b', datasetId: 900 });
     expect(res.status).toBe(204);
     expect(scope.isDone()).toBe(true);
+  });
+});
+
+// WD-807: 데이터셋이 온톨로지에 연결되지 않았으면 승인 계열 변경(적재·동의어 병합·속성 정정·관계 적재)이 모두
+// 502 가 아니라 409 + 한국어 조치 안내로 끝나야 한다 — api 의 GraphMutationClient 는 409 사유만 검수 UI 까지 올리고,
+// 502 는 「잠시 후 다시 시도」로 바꿔 원인을 지운다.
+describe('온톨로지 미연결 데이터셋의 그래프 변경 (WD-807)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const unboundMessage = '데이터셋 900은(는) 온톨로지에 연결되어 있지 않습니다. 먼저 온톨로지를 연결하세요.';
+
+  it.each([
+    ['/agent/graph/add-entity', { entityType: 'Inspection', name: '점검', datasetId: 900 }],
+    ['/agent/graph/merge-entities', { entityType: 'Cause', nameA: 'a', nameB: 'b', datasetId: 900 }],
+    ['/agent/graph/set-property', { entityKey: '1:점검', propertyName: 'p', dataType: 'text', value: 'v', datasetId: 900 }],
+    ['/agent/graph/add-relation', { subjectKey: '1:a', relType: 'CAUSES', objectKey: '2:b', datasetId: 900 }],
+  ])('%s 는 409 와 미연결 사유를 돌려준다', async (path, body) => {
+    vi.mocked(resolveDatasetOntology).mockRejectedValueOnce(new OntologyNotBoundError(unboundMessage));
+    const res = await request(app).post(path).set(authHeader).send(body);
+
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({ error: 'graph mutation rejected', message: unboundMessage });
+    expect(addEntityMock).not.toHaveBeenCalled();
+    expect(mergeEntitiesMock).not.toHaveBeenCalled();
+    expect(setEntityPropertyMock).not.toHaveBeenCalled();
+    expect(addRelationMock).not.toHaveBeenCalled();
+  });
+
+  // add-entity 도 다른 변경 라우트와 같은 매핑을 쓴다 — 타입 없음(WD-429) 거절도 409 사유로 올라가야 한다.
+  it('add-entity 의 온톨로지 위반 거절도 409 + 사유다', async () => {
+    addEntityMock.mockRejectedValueOnce(new OntologyConformanceError("지식 모델에 'X' 타입이 없습니다"));
+    const res = await request(app)
+      .post('/agent/graph/add-entity')
+      .set(authHeader)
+      .send({ entityType: 'X', name: '점검', datasetId: 900 });
+
+    expect(res.status).toBe(409);
+    expect(res.body.message).toBe("지식 모델에 'X' 타입이 없습니다");
+  });
+
+  // 진짜 장애는 여전히 502 다 — 사유를 노출하지 않고 api 가 재시도 안내로 바꾼다.
+  it('add-entity 의 일반 장애는 여전히 502 다', async () => {
+    addEntityMock.mockRejectedValueOnce(new Error('neo4j down'));
+    const res = await request(app)
+      .post('/agent/graph/add-entity')
+      .set(authHeader)
+      .send({ entityType: 'Inspection', name: '점검', datasetId: 900 });
+
+    expect(res.status).toBe(502);
+    expect(res.body).toEqual({ error: 'add entity failed' });
   });
 });
