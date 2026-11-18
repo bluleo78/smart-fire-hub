@@ -26,10 +26,11 @@
 | **firehub-api** | `apps/firehub-api/` (자체 디렉토리) | `docker build apps/firehub-api/` |
 | **firehub-web** | `.` (프로젝트 루트) | `docker build -f apps/firehub-web/Dockerfile .` |
 | **firehub-ai-agent** | `.` (프로젝트 루트) | `docker build -f apps/firehub-ai-agent/Dockerfile .` |
+| **firehub-channel** | `.` (프로젝트 루트, WD-799 부터) | `docker build -f apps/firehub-channel/Dockerfile .` (루트 lockfile·`pnpm.overrides` 로 `--frozen-lockfile` 설치) |
 | **db (postgres)** | `.` (프로젝트 루트) | `docker build -f docker/postgres/Dockerfile .` (이미지 태그는 `postgres`, 빌드 키는 `db`) |
 
 - **firehub-api**: Dockerfile 내부에서 `COPY src/ src/` 상대 경로 → context가 `apps/firehub-api/`여야 함
-- **firehub-web/ai-agent**: `COPY apps/firehub-web/ ...` 절대 경로 → context가 프로젝트 루트(`.`)여야 함
+- **firehub-web/ai-agent/channel**: `COPY apps/firehub-web/ ...` 절대 경로 → context가 프로젝트 루트(`.`)여야 함
 - **절대로** `docker build -f apps/firehub-api/Dockerfile .`으로 빌드하지 않는다 (소스 누락)
 - 빌드 캐시는 buildx 가 자동 사용 (525849d 이후). 캐시를 강제로 무시할 필요가 있을 때만 `--no-cache` 추가.
 - `deploy.sh` 는 모든 빌드에 `--pull` 을 준다(WD-794) — 빌더 캐시에 남은 옛 베이스 이미지(`nginx:alpine`·`node`·postgis 등)를 쓰지 않고 태그의 최신 digest 를 받아, 베이스의 보안 수정이 운영 이미지에 들어가게 한다. 베이스가 그대로면 레이어 캐시는 그대로 쓴다. 손으로 빌드할 때도 `--pull` 을 붙인다.

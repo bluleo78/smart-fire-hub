@@ -64,8 +64,9 @@ build_and_push() {
       docker buildx build --pull --platform "$PLATFORM" -t "$REGISTRY/db-executor:latest" --push apps/firehub-db-executor/
       ;;
     channel)
-      log "Building + pushing $app (context: apps/firehub-channel/)"
-      docker buildx build --pull --platform "$PLATFORM" -t "$REGISTRY/channel:latest" --push apps/firehub-channel/
+      # 루트 컨텍스트(WD-799): 루트 pnpm-lock.yaml·pnpm.overrides 로 --frozen-lockfile 설치해 시험한 판 그대로 이미지에 넣는다
+      log "Building + pushing $app (context: project root)"
+      docker buildx build --pull --platform "$PLATFORM" -t "$REGISTRY/channel:latest" -f apps/firehub-channel/Dockerfile --push .
       ;;
     admin)
       log "Building + pushing $app (context: project root)"

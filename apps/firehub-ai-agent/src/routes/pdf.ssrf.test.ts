@@ -124,11 +124,19 @@ describe.skipIf(!chromeReady)('POST /agent/html-to-pdf — 실브라우저 SSRF 
   const appServer = http.createServer(express().use('/agent', pdfRouter));
   let appPort = 0;
 
+  /**
+   * 측정하는 요청보다 먼저 같은 라우트·브라우저로 한 번 렌더해 둔다(예열, WD-799).
+   * 왜: 갓 뜬 Chrome 의 첫 렌더는 브라우저 기동·렌더러 프로세스 생성까지 떠안아 부하가 큰 머신에서 15초를 넘기곤 했다.
+   * 이를 시험마다의 시간 상한을 늘려 흡수하면 「유휴 대기가 렌더 기한까지 붙잡히는」 회귀를 잡는 힘이 약해지므로,
+   * 기동 비용은 여기서 치르고 아래 시험들은 예열된 브라우저의 렌더 시간만 잰다.
+   */
   beforeAll(async () => {
     process.env.INTERNAL_SERVICE_TOKEN = TOKEN;
     victimPort = await listen(victim);
     appPort = await listen(appServer);
-  });
+    const warmup = await renderPdf(`<!DOCTYPE html><html><head><title>warmup</title></head><body>예열</body></html>`);
+    await warmup.res.arrayBuffer();
+  }, 60000);
 
   // 실브라우저 종료(browser.close)는 부하가 큰 머신에서 수 초(실측 최대 7초)가 걸려 기본 훅 제한 10초를
   // 넘기곤 한다 — 테스트 본문과 같은 수준의 여유를 준다(WD-702 에서 이 파일이 실제로 돌기 시작하며 드러남)
@@ -187,7 +195,7 @@ describe.skipIf(!chromeReady)('POST /agent/html-to-pdf — 실브라우저 SSRF 
     // 렌더러가 내부 리스너에 단 한 건도 요청·연결하지 않아야 한다
     expect(hits).toEqual([]);
     expect(connections).toBe(0);
-    // 차단된 요청이 네트워크 유휴 대기를 30초 타임아웃까지 붙잡지 않아야 한다
+    // 차단된 요청이 네트워크 유휴 대기를 30초 렌더 기한까지 붙잡지 않아야 한다(브라우저는 beforeAll 에서 예열해 기동 시간은 빠진다)
     expect(elapsed).toBeLessThan(15000);
   }, 40000);
 
@@ -206,6 +214,28 @@ describe.skipIf(!chromeReady)('POST /agent/html-to-pdf — 실브라우저 SSRF 
     expect(hits).toEqual([]);
     expect(connections).toBe(0);
   }, 40000);
+
+  /**
+   * 주소 없는 refresh(WD-799): content="0"·"1" 처럼 URL 이 없으면 메인 프레임이 about:blank 를 다시 읽는다.
+   * 가로채기에 보이지 않는 이 교체는 라우트의 loaderId 비교만으로 잡힌다 — 실제 Chrome 에서 그 판정이 서는지
+   * (그리고 정상 HTML 의 setContent 를 교체로 오인하지 않는지는 위 200 시험이) 확인한다. 예전에는 200 빈 PDF 가 나갔다.
+   */
+  it.each(['0', '1'])(
+    '주소 없는 meta refresh(content="%s")도 빈 PDF 대신 422 로 거부한다',
+    async (delay) => {
+      const html = `<!DOCTYPE html><html><head><title>${REPORT_TITLE}</title>
+      <meta http-equiv="refresh" content="${delay}">
+      </head><body><h1>리포트</h1></body></html>`;
+
+      const { res } = await renderPdf(html);
+
+      expect(res.status).toBe(422);
+      expect(res.headers.get('content-type')).toContain('application/json');
+      expect(hits).toEqual([]);
+      expect(connections).toBe(0);
+    },
+    40000,
+  );
 
   /**
    * IP 리터럴 대상 TCP 연결 차단 (WD-697)
@@ -331,6 +361,7 @@ describe.skipIf(!chromeReady)('POST /agent/html-to-pdf — 실브라우저 SSRF 
         expect(pdf.includes(Buffer.from(REPORT_TITLE))).toBe(true);
         expect(tcp4!.accepted).toBe(0);
         expect(tcp6?.accepted ?? 0).toBe(0);
+        // 위 「내부 주소 하위 리소스」 시험과 같은 상한 — 30초 렌더 기한까지 붙잡히는 회귀를 잡는다
         expect(elapsed).toBeLessThan(15000);
       },
       40000,
