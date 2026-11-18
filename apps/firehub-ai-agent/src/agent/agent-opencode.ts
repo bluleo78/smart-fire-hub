@@ -64,6 +64,14 @@ import { totalInputTokens } from './token-usage.js';
  */
 export interface OpenCodeConfig {
   $schema: string;
+  /**
+   * WD-799: opencode 자동 업데이트 — 항상 false. 이 이유 설명의 단일 출처다(Dockerfile ENV·반환부·시험은 여기를 가리킨다).
+   * 이미지에서 npm·npx 를 지웠으므로(WD-790) 업데이트는 실패만 하고, CLI 판은 이미지 빌드로만 바꾼다(Claude CLI 의
+   * DISABLE_AUTOUPDATER=1 과 같은 심층 방어). 이미지 ENV(OPENCODE_DISABLE_AUTOUPDATE)는 자식 env 허용 목록
+   * (opencode-child-env.ts)에 걸러져 spawn 된 opencode 에 닿지 않으므로, 요청마다 반드시 전달되는 이 설정
+   * (OPENCODE_CONFIG_CONTENT)이 유일하게 확실한 경로다. 실제 동작은 이미지 안 npm/npx shim 시험으로 호출 0건을 확인했다.
+   */
+  autoupdate: false;
   model: string;
   provider: Record<
     string,
@@ -212,6 +220,8 @@ export function buildOpenCodeConfig(options: BuildOpenCodeConfigOptions): OpenCo
 
   return {
     $schema: 'https://opencode.ai/config.json',
+    // WD-799: 자동 업데이트를 끈다 — 이유는 OpenCodeConfig.autoupdate 주석 참고
+    autoupdate: false,
     // 테넌트가 고른 provider/model 을 명시한다. 비우면 배포 측 전역 opencode 설정(PVC 마운트,
     // 예: Bedrock 게이트웨이)의 model 이 여전히 이겨 아래 provider 블록이 죽은 코드가 된다.
     model: resolvedModel,

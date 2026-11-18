@@ -26,14 +26,18 @@
 | **firehub-api** | `apps/firehub-api/` (자체 디렉토리) | `docker build apps/firehub-api/` |
 | **firehub-web** | `.` (프로젝트 루트) | `docker build -f apps/firehub-web/Dockerfile .` |
 | **firehub-ai-agent** | `.` (프로젝트 루트) | `docker build -f apps/firehub-ai-agent/Dockerfile .` |
+| **firehub-channel** | `.` (프로젝트 루트, WD-799 부터) | `docker build -f apps/firehub-channel/Dockerfile .` (루트 lockfile·`pnpm.overrides` 로 `--frozen-lockfile` 설치) |
 | **db (postgres)** | `.` (프로젝트 루트) | `docker build -f docker/postgres/Dockerfile .` (이미지 태그는 `postgres`, 빌드 키는 `db`) |
 
 - **firehub-api**: Dockerfile 내부에서 `COPY src/ src/` 상대 경로 → context가 `apps/firehub-api/`여야 함
-- **firehub-web/ai-agent**: `COPY apps/firehub-web/ ...` 절대 경로 → context가 프로젝트 루트(`.`)여야 함
+- **firehub-web/ai-agent/channel**: `COPY apps/firehub-web/ ...` 절대 경로 → context가 프로젝트 루트(`.`)여야 함
 - **절대로** `docker build -f apps/firehub-api/Dockerfile .`으로 빌드하지 않는다 (소스 누락)
 - 빌드 캐시는 buildx 가 자동 사용 (525849d 이후). 캐시를 강제로 무시할 필요가 있을 때만 `--no-cache` 추가.
 - `deploy.sh` 는 모든 빌드에 `--pull` 을 준다(WD-794) — 빌더 캐시에 남은 옛 베이스 이미지(`nginx:alpine`·`node`·postgis 등)를 쓰지 않고 태그의 최신 digest 를 받아, 베이스의 보안 수정이 운영 이미지에 들어가게 한다. 베이스가 그대로면 레이어 캐시는 그대로 쓴다. 손으로 빌드할 때도 `--pull` 을 붙인다.
-- web·admin(nginx)·db 는 베이스 태그 뒤에 나온 OS 패키지 수정까지 `apk/apt upgrade` 로 받는다. 이 층은 `OS_PATCH_DATE` 빌드 인자가 바뀔 때만 다시 돌므로 `deploy.sh` 가 빌드 날짜를 넘긴다(손 빌드도 `--build-arg OS_PATCH_DATE=$(date +%F)`). db 는 기본값(`static`)이면 upgrade 를 건너뛴다 — 시험(PostgresTestContainer·generateJooq)이 이 Dockerfile 을 빌드하는데, upgrade(~15분)는 운영 이미지에만 필요하기 때문이다. 그래서 PostGIS(3.6.1, hold)·pgvector 판은 운영과 같지만 PG 마이너(16.x)·GEOS·PROJ 같은 라이브러리는 운영 이미지가 더 새로울 수 있다. 시험 이미지는 Dockerfile 내용 해시 이름(`firehub-test-postgres:<해시>`)으로 남아 Dockerfile 이 같은 동안 다시 빌드하지 않는다(Dockerfile 이 바뀔 때마다 하나씩 남으니 가끔 `docker image prune` 대상이다). web·admin 은 시험에서 빌드하지 않고 `apk upgrade` 가 몇 초라 기본값에서도 돈다.
+- web·admin(nginx)·db 는 베이스 태그 뒤에 나온 OS 패키지 수정까지 `apk/apt upgrade` 로 받는다. 이 층은 `OS_PATCH_DATE` 빌드 인자가 바뀔 때만 다시 돌므로(값은 캐시 무효화 키일 뿐) `deploy.sh` 가 빌드 날짜를 넘긴다(손 빌드도 `--build-arg OS_PATCH_DATE=$(date +%F)`). 인자 없이 빌드해도 upgrade 는 한다 — 처음 빌드하거나 층 캐시가 없으면 받고, 있으면 그때 받은 층을 다시 쓴다.
+- db(`docker/postgres/Dockerfile`)의 기본값은 「패치함」(`OS_PATCH=apply`)이다(WD-798) — 운영 compose 의 `db`, `scripts/work-loop/compose.shared.yml`, 손 빌드 모두 upgrade(~15분)를 한다. `OS_PATCH=skip` 은 **시험 이미지 전용**이다: Gradle(`apps/firehub-api/build.gradle.kts` 의 `TestPostgresImage`)이 시험(모든 Test 태스크·`generateJooq`) 전에 이 인자로 빌드해 시험마다 upgrade 를 기다리지 않는다. 그래서 시험 이미지는 PostGIS(3.6.1, hold — skip 경로에도 걸린다)·pgvector 판은 운영과 같지만 PG 마이너(16.x)·GEOS·PROJ 같은 라이브러리는 운영 이미지가 더 새로울 수 있다. web·admin 은 시험에서 빌드하지 않고 `apk upgrade` 가 몇 초라 늘 돈다.
+- 시험 이미지 이름은 `firehub-test-postgres:<Dockerfile SHA-256 앞 12자>` 다. Gradle 이 포크를 띄우기 전에 **한 번** 준비해 이름을 시험 JVM 에 시스템 속성(`smartfirehub.testPostgresImage`)으로 넘기고, 그 이름의 이미지가 **이미 있으면 빌드를 건너뛴다**(로그 「…이 이미 있어 빌드를 건너뜁니다」). 없을 때만 빌드하는데, Dockerfile 이 바뀐 직후라도 바뀌지 않은 층은 층 캐시를 써 그 아래만 다시 돈다(첫 빌드는 베이스 받기·pgvector 설치로 몇 분, 층 캐시가 다 있으면 몇 초). 시험은 Gradle 로만 돌린다 — 속성 없이(IDE 의 JUnit 직접 실행 등) 돌리면 `PostgresTestContainer` 가 「Gradle 로 실행하세요」 오류를 낸다.
+- Dockerfile 이 바뀔 때마다 옛 해시 이미지가 하나씩 남는다. 가끔 정리한다: `docker image ls firehub-test-postgres` 로 보고, 지금 해시(`sha256sum docker/postgres/Dockerfile | cut -c1-12`)가 아닌 태그를 `docker image rm firehub-test-postgres:<옛 해시>` 로 지운다(다른 워크트리·클론이 옛 Dockerfile 로 시험 중이면 그 해시는 남긴다 — 지워도 다음 실행이 다시 빌드할 뿐이다).
 
 ## 운영 환경
 
@@ -69,7 +73,7 @@
 
 - 분리 설치(Tibero 플랫폼)의 데이터 저장소 PG·Helm 의 `db` 도 이 이미지를 쓰면 같은 절차다.
 - 재색인으로 고쳐지지 않는 콜레이션 의존 객체(text 범위 파티션 경계·text 정렬에 기대는 CHECK 등)는 지금 스키마에 없다(마이그레이션에 범위 파티션 없음, WD-794 확인) — 새로 만들면 이 절차에 더한다.
-- 개발 PC: `pnpm db:up`(`docker compose up`)은 이미 만든 로컬 이미지를 다시 빌드하지 않는다 — 먼저 `docker compose build --pull db db-test` 로 새 이미지를 만든 뒤 `pnpm db:up` 한다. 새 이미지로 옛 데이터를 열면 위와 같은 경고가 난다. 데이터가 필요하면 위 3번을 실행하고, 필요 없으면 `pnpm db:down` 뒤 바인드 마운트 폴더 `./db-data`·`./db-test-data` 를 지우고 다시 띄운다(`pnpm db:reset` 의 `down -v` 는 이름 있는 볼륨만 지워 이 폴더는 그대로 남는다). 개발 빌드는 apt upgrade 를 건너뛴다(위 「Docker 빌드 규칙」).
+- 개발 PC: `pnpm db:up`(`docker compose up`)은 이미 만든 로컬 이미지를 다시 빌드하지 않는다 — 먼저 `docker compose build --pull db db-test` 로 새 이미지를 만든 뒤 `pnpm db:up` 한다. 새 이미지로 옛 데이터를 열면 위와 같은 경고가 난다. 데이터가 필요하면 위 3번을 실행하고, 필요 없으면 `pnpm db:down` 뒤 바인드 마운트 폴더 `./db-data`·`./db-test-data` 를 지우고 다시 띄운다(`pnpm db:reset` 의 `down -v` 는 이름 있는 볼륨만 지워 이 폴더는 그대로 남는다). 개발 빌드도 인자 없이는 apt upgrade 를 한다(WD-798 — 처음 한 번 ~15분, 그 뒤는 층 캐시). 급하면 `docker compose build --pull --build-arg OS_PATCH=skip db db-test` 로 건너뛸 수 있다(위 「Docker 빌드 규칙」).
 - work-loop 공유 바탕 Postgres(`work-loop-firehub-postgres:local`, `scripts/work-loop-stack.sh`)는 이미지를 다시 빌드하지 않아 머지 뒤에도 옛 PostGIS 3.5 로 남는다. 새 이미지로 바꾸려면 사람이 그 스크립트의 `shared-down` 으로 내린 뒤 이미지를 지우고 다시 띄운다(남은 저장소 DB 가 있으면 `shared-down` 이 거부한다 — 그 목록을 보고 정한다).
 - 확인 기록: 옛 이미지로 만든 볼륨(텍스트·gist·hnsw 인덱스)을 새 이미지로 열어 위 절차를 돌려 경고가 사라지고 공간·벡터 조회가 그대로인 것을 봤다(WD-794).
 - 베이스 태그는 PostGIS 판(`16-3.6.1-trixie`)까지 고정했고 postgis 패키지는 `apt-mark hold` 다 — PostGIS 판을 올리는 것은 이 절차가 다시 필요한 일이라 Dockerfile·허용목록을 함께 바꾸는 별도 작업으로 한다. PG 마이너(16.x)는 `apt-get upgrade` 로 따라 오른다(데이터 디렉터리 호환).

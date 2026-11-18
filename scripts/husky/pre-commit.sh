@@ -123,7 +123,7 @@ fi
 #    - api 변경은 있으나 매칭 테스트 없음 → compileTestJava 만(전체 test 는 pre-push 위임)
 #    - api 변경 없음 → skip
 #    spotlessCheck 는 넣지 않는다 — main 에 이미 포맷 드리프트가 있어 무관한 커밋까지 막는다.
-# docker/postgres/ 는 api 통합 테스트의 Testcontainers 이미지라 api 변경으로 본다(build.gradle.kts smartfirehub.repositoryRoot)
+# docker/postgres/ 는 api 통합 테스트의 Testcontainers 이미지라 api 변경으로 본다(build.gradle.kts TestPostgresImage)
 API_CHANGED=$(printf '%s\n' "$CHANGED" | grep -E '^(apps/firehub-api/|docker/postgres/)' || true)
 if [ -z "$API_CHANGED" ]; then
   echo "[pre-commit] firehub-api 변경 없음 — gradle skip"

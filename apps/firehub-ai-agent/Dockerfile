@@ -64,6 +64,11 @@ ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser \
 # 이 값은 SDK·CLI·검증 라우트의 모든 claude 자식에 그대로 전달된다(claude-child-env.test.ts CCE-08).
 ENV DISABLE_AUTOUPDATER=1
 
+# OpenCode CLI 의 자동 업데이트도 끈다(WD-799 — 이유는 agent-opencode.ts 의 OpenCodeConfig.autoupdate 주석).
+# 앱이 spawn 하는 opencode 에는 이 ENV 가 닿지 않아 요청 설정 autoupdate:false 로 끄고, 이 ENV 는 운영자가 컨테이너 안에서
+# opencode 를 직접 실행하는 경로를 위한 것이다(이름은 설치된 opencode-ai 바이너리에서 확인).
+ENV OPENCODE_DISABLE_AUTOUPDATE=1
+
 # Create non-root user (Claude Code blocks --dangerously-skip-permissions as root)
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 

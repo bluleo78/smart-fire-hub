@@ -29,6 +29,12 @@ const BASE: Parameters<typeof buildOpenCodeConfig>[0] = {
 };
 
 describe('buildOpenCodeConfig', () => {
+  // WD-799: 요청 설정으로 opencode 자동 업데이트를 항상 끈다 — 이유는 OpenCodeConfig.autoupdate 주석 참고
+  it('autoupdate 를 항상 false 로 둔다 (WD-799)', () => {
+    expect(buildOpenCodeConfig(BASE).autoupdate).toBe(false);
+    expect(buildOpenCodeConfig({ ...BASE, maxTurns: 5, temperature: 0.2 }).autoupdate).toBe(false);
+  });
+
   it('mcp.firehub 에 USER_ID 등 환경변수를 주입한다', () => {
     const cfg = buildOpenCodeConfig(BASE);
     expect(cfg.mcp.firehub.type).toBe('local');
