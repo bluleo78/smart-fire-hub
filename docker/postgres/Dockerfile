@@ -13,9 +13,11 @@ USER root
 # PGDG 가 더 새 PostGIS 를 내면 upgrade 가 확장 판을 올려 운영 DB 에 ALTER EXTENSION 이 다시 필요해지기 때문이다.
 # postgresql-16 은 hold 하지 않는다 — PG 마이너 판(16.x)은 보안 수정이라 받는 쪽이 낫고 데이터 디렉터리 호환도 같다.
 # --force-unsafe-io 는 dpkg 의 fsync 를 끄는 빌드 속도용 옵션이다(이미지 내용은 같다).
-# OS_PATCH_DATE 는 이 층의 캐시 무효화 키다 — 이유는 scripts/deploy.sh 머리 주석. 기본값이면 개발·시험 빌드는 캐시를 쓴다.
+# OS_PATCH_DATE 는 이 층의 캐시 무효화 키다 — 이유는 scripts/deploy.sh 머리 주석. 기본값(static)인 개발·시험 빌드는
+# upgrade 를 건너뛴다(이유·시험과 운영의 판 차이는 .claude/docs/deploy.md 「Docker 빌드 규칙」, WD-794).
 ARG OS_PATCH_DATE=static
-RUN echo "os patch date: ${OS_PATCH_DATE}" \
+RUN if [ "${OS_PATCH_DATE}" = "static" ]; then echo "os patch: skipped (OS_PATCH_DATE=static)"; exit 0; fi \
+    && echo "os patch date: ${OS_PATCH_DATE}" \
     && export DEBIAN_FRONTEND=noninteractive \
     && apt-get update \
     && apt-mark hold postgis postgresql-16-postgis-3 postgresql-16-postgis-3-scripts \

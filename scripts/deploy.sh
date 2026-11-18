@@ -72,6 +72,8 @@ build_and_push() {
       docker buildx build --pull "${OS_PATCH_ARG[@]}" --platform "$PLATFORM" -t "$REGISTRY/admin:latest" -f apps/firehub-admin/Dockerfile --push .
       ;;
     db)
+      # 옛 볼륨을 새 베이스로 처음 열 때 손으로 할 절차가 있어 잊지 않게 알린다(WD-794)
+      warn "db 베이스가 PostGIS 3.6.1·debian 13 입니다 — 옛 볼륨에 처음 배포하면 .claude/docs/deploy.md 의 WD-794 전환 절차(스냅샷·postgis_extensions_upgrade·REINDEX)를 먼저 따르세요"
       log "Building + pushing $app (context: project root, image tag: postgres)"
       docker buildx build --pull "${OS_PATCH_ARG[@]}" --platform "$PLATFORM" -t "$REGISTRY/postgres:latest" -f docker/postgres/Dockerfile --push .
       ;;
