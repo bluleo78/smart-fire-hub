@@ -1,4 +1,4 @@
-import { Bell, FileDown, Info, Mail, MessageSquare, Slack } from 'lucide-react';
+import { Bell, FileDown, Mail, MessageSquare, Slack } from 'lucide-react';
 import { useId } from 'react';
 
 import { Badge } from '@/components/ui/badge';
@@ -7,7 +7,12 @@ import { Label } from '@/components/ui/label';
 import UserCombobox from '@/components/UserCombobox';
 import { useRecipientsByIds } from '@/hooks/queries/useProactiveMessages';
 import { countEmailRecipients } from '@/lib/email-recipients';
-import type { ChannelConfigValues } from '@/lib/validations/proactive-job';
+import { cn } from '@/lib/utils';
+import {
+  type ChannelConfigValues,
+  UNSUPPORTED_CHANNEL_SAVE_MESSAGE,
+  UNSUPPORTED_DELIVERY_CHANNELS,
+} from '@/lib/validations/proactive-job';
 
 import EmailTagInput from './EmailTagInput';
 
@@ -44,12 +49,16 @@ const CHANNEL_META: Record<
   },
 };
 
+/** 미지원 채널 카드의 안내 문구 — 선택 여부와 관계없이 항상 보인다 (WD-805) */
+const UNSUPPORTED_DESCRIPTION =
+  '스마트 작업 결과 전달은 아직 지원하지 않습니다 — 채팅·이메일로 받을 수 있습니다.';
+
 /**
  * 채널 수신자 편집 컴포넌트
- * - CHAT/EMAIL/KAKAO/SLACK 4개 채널 체크박스 + 수신자 설정
+ * - CHAT/EMAIL 채널 체크박스 + 수신자 설정, KAKAO/SLACK 은 「준비 중」 카드
  * - CHAT 채널은 항상 활성화 (disabled, 체크 해제 불가)
- * - KAKAO/SLACK: 수신자 사용자 ID 지정 + 미연동 안내 문구 표시
- *   (TODO: 백엔드 bulk binding 조회 API 추가 시 "N명 미연동" 배지로 교체)
+ * - KAKAO/SLACK: 서버가 받지 않으므로 새로 켤 수 없고 「준비 중」 사유를 보인다.
+ *   예전에 저장된 설정에 들어 있으면 해제만 할 수 있다(저장은 폼 스키마가 막아 400 방지) (WD-805)
  */
 export default function ChannelRecipientEditor({
   channels,
@@ -75,6 +84,8 @@ export default function ChannelRecipientEditor({
    */
   const toggleChannel = (type: ChannelConfigValues['type'], enabled: boolean) => {
     if (type === 'CHAT') return; // CHAT은 항상 활성화
+    // 미지원 채널(Slack·카카오)은 새로 켤 수 없고 해제만 가능하다 (WD-805)
+    if (enabled && UNSUPPORTED_DELIVERY_CHANNELS.has(type)) return;
     if (enabled) {
       onChange([...channels, { type, recipientUserIds: [], recipientEmails: [] }]);
     } else {
@@ -98,10 +109,10 @@ export default function ChannelRecipientEditor({
       {renderEmailChannel()}
 
       {/* 카카오 채널 */}
-      {renderOAuthChannel('KAKAO')}
+      {renderUnsupportedChannel('KAKAO')}
 
       {/* Slack 채널 */}
-      {renderOAuthChannel('SLACK')}
+      {renderUnsupportedChannel('SLACK')}
     </div>
   );
 
@@ -243,76 +254,53 @@ export default function ChannelRecipientEditor({
   }
 
   /**
-   * OAuth 채널(KAKAO/SLACK) 렌더링
-   * - 수신자 사용자 ID 지정 가능
-   * - 미연동 사용자 안내: MVP 단계에서는 설정 페이지 안내 문구로 대체
-   *   TODO: 백엔드 bulk binding 조회 API(POST /api/v1/channels/users/binding-summary) 추가 시
-   *         "수신자 중 N명 미연동" 배지로 교체
+   * 서버가 받지 않는 채널(KAKAO/SLACK) 렌더링 (WD-805)
+   * - 서버 화이트리스트(#594)가 거절하고 기본 발송 경로에 구현이 없어 새로 켤 수 없다 — 「준비 중」 배지와 사유만 보인다.
+   * - 예전에 저장된 설정에 들어 있으면 체크가 남아 있어, 해제만 할 수 있고 경고 문구를 아래에 붙인다
+   *   (남은 채 저장하는 것은 폼 스키마가 막는다).
+   * - 수신자 UI·연동 안내는 지원 채널이 되면 그때 다시 만든다(git 이력 참고).
    */
-  function renderOAuthChannel(type: 'KAKAO' | 'SLACK') {
-    const channel = getChannel(type);
+  function renderUnsupportedChannel(type: 'KAKAO' | 'SLACK') {
     const enabled = isEnabled(type);
-    const { label, description, Icon } = CHANNEL_META[type];
+    const { label, Icon } = CHANNEL_META[type];
     const checkboxId = `ch-${type.toLowerCase()}`;
+    const descId = `${checkboxId}-desc`;
+    const warnId = `${checkboxId}-warn`;
+    // 켤 수 없는 상태(미선택)에서는 클릭이 먹지 않으므로 커서도 기본으로 둔다
+    const canToggle = !disabled && enabled;
 
     return (
-      <div className="rounded-lg border p-4">
+      <div className="rounded-lg border p-4" data-testid={`channel-card-${type.toLowerCase()}`}>
         <div className="flex items-center gap-2">
           <Checkbox
             id={checkboxId}
             checked={enabled}
-            disabled={disabled}
+            // 새로 켤 수 없다 — 이미 켜진 것은 해제할 수 있어야 하므로 enabled 일 때만 활성
+            disabled={!canToggle}
+            aria-describedby={enabled ? `${descId} ${warnId}` : descId}
             onCheckedChange={(checked) => toggleChannel(type, !!checked)}
           />
           <Label
             htmlFor={checkboxId}
-            className="flex items-center gap-1.5 cursor-pointer font-medium"
+            className={cn('flex items-center gap-1.5 font-medium', canToggle ? 'cursor-pointer' : 'cursor-default')}
           >
             <Icon className="h-4 w-4" />
             {label}
           </Label>
-          {enabled && channel && channel.recipientUserIds.length > 0 && (
-            <Badge variant="secondary" className="ml-1">
-              {channel.recipientUserIds.length}
-            </Badge>
-          )}
+          <Badge variant="secondary" className="ml-1">
+            준비 중
+          </Badge>
         </div>
 
-        <p className="mt-1.5 text-xs text-muted-foreground">{description}</p>
+        <p id={descId} className="mt-1.5 text-xs text-muted-foreground">
+          {UNSUPPORTED_DESCRIPTION}
+        </p>
 
-        {enabled && channel && (
-          <div className="mt-3 space-y-2">
-            <p className="text-xs text-muted-foreground">
-              {channel.recipientUserIds.length === 0
-                ? '수신자를 지정하지 않으면 본인에게만 전달됩니다'
-                : `${channel.recipientUserIds.length}명에게 전달됩니다`}
-            </p>
-            <UserCombobox
-              selectedUserIds={channel.recipientUserIds}
-              onChange={(ids) => updateChannel(type, { recipientUserIds: ids })}
-              placeholder="사용자 검색 (이름 또는 이메일)"
-              // 콤보박스 접근 이름 — 채널 라벨 + 「수신자」(WD-512)
-              aria-label={`${label} 수신자`}
-              disabled={disabled}
-            />
-
-            {/* 미연동 안내 — 백엔드 bulk API 추가 전 임시 안내 문구 */}
-            <div className="flex items-start gap-1.5 rounded-md bg-muted/50 px-3 py-2">
-              <Info className="h-3.5 w-3.5 mt-0.5 shrink-0 text-muted-foreground" />
-              <p className="text-xs text-muted-foreground">
-                수신자의 {label} 연동 상태는{' '}
-                <a
-                  href="/settings/channels"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="underline underline-offset-2 hover:text-foreground"
-                >
-                  설정 &gt; 채널 연동
-                </a>
-                에서 확인하세요.
-              </p>
-            </div>
-          </div>
+        {/* 예전에 저장된 미지원 채널 — 정적 안내(role=alert 아님) */}
+        {enabled && (
+          <p id={warnId} className="mt-1.5 text-xs text-destructive">
+            {UNSUPPORTED_CHANNEL_SAVE_MESSAGE}
+          </p>
         )}
       </div>
     );

@@ -76,45 +76,41 @@ test.describe('ChannelRecipientEditor — 4채널 확장', () => {
     await expect(chatCheckbox).toBeDisabled();
   });
 
-  test('KAKAO 체크박스 활성화 시 수신자 UI와 미연동 안내가 표시된다', async ({ authenticatedPage: page }) => {
-    // CHAT만 활성화된 상태에서 시작
+  /** 미지원 채널 카드 — 바깥 래퍼와 겹치지 않게 카드별 data-testid 로 찾는다 (WD-805) */
+  const cardOf = (page: Page, type: 'kakao' | 'slack') => page.getByTestId(`channel-card-${type}`);
+  const KAKAO_NAME = /카카오 알림톡/;
+  const SLACK_NAME = /slack/i;
+  // 두 채널 공통 문구라 각 카드로 범위를 좁혀 단언한다
+  const NOT_SELECTED = '스마트 작업 결과 전달은 아직 지원하지 않습니다 — 채팅·이메일로 받을 수 있습니다.';
+  const WARN = '이 채널은 아직 지원하지 않아 저장할 수 없습니다 — 체크를 해제하세요.';
+
+  // WD-805: 서버 화이트리스트(CHAT/EMAIL/WEBHOOK, #594)가 Slack·카카오를 400 으로 거절하므로 켤 수 없어야 한다.
+  test('미지원 채널(카카오·Slack)은 비활성이고 준비 중 사유가 보인다 (WD-805)', async ({ authenticatedPage: page }) => {
     await setupAndNavigateToNotifyTab(page, {
       config: {
         channels: [{ type: 'CHAT', recipientUserIds: [], recipientEmails: [] }],
       },
     });
 
-    // KAKAO 체크박스 체크 — 비활성 상태에서 클릭
-    const kakaoCheckbox = page.getByRole('checkbox', { name: /카카오 알림톡/i });
-    await expect(kakaoCheckbox).toBeVisible({ timeout: 5000 });
+    const kakaoCheckbox = page.getByRole('checkbox', { name: KAKAO_NAME });
+    const slackCheckbox = page.getByRole('checkbox', { name: SLACK_NAME });
+    await expect(kakaoCheckbox).toBeDisabled({ timeout: 5000 });
     await expect(kakaoCheckbox).not.toBeChecked();
-    await kakaoCheckbox.click();
-
-    // 체크 후 UserCombobox 플레이스홀더(버튼 내 span) 텍스트가 표시되어야 한다
-    await expect(page.getByText('사용자 검색 (이름 또는 이메일)').first()).toBeVisible({ timeout: 3000 });
-
-    // 미연동 안내 문구 확인
-    await expect(page.getByText(/수신자의 카카오 알림톡 연동 상태는/)).toBeVisible();
-    await expect(page.getByRole('link', { name: /설정.*채널 연동/i })).toBeVisible();
-  });
-
-  test('SLACK 체크박스 활성화 시 수신자 UI와 미연동 안내가 표시된다', async ({ authenticatedPage: page }) => {
-    await setupAndNavigateToNotifyTab(page, {
-      config: {
-        channels: [{ type: 'CHAT', recipientUserIds: [], recipientEmails: [] }],
-      },
-    });
-
-    const slackCheckbox = page.getByRole('checkbox', { name: /slack/i });
+    await expect(slackCheckbox).toBeDisabled();
     await expect(slackCheckbox).not.toBeChecked();
-    await slackCheckbox.click();
 
-    // 미연동 안내 문구 확인 (Slack 레이블)
-    await expect(page.getByText(/수신자의 Slack 연동 상태는/)).toBeVisible({ timeout: 3000 });
-    await expect(page.getByRole('link', { name: /설정.*채널 연동/i })).toBeVisible();
+    const kakaoCard = cardOf(page, 'kakao');
+    await expect(kakaoCard.getByText('준비 중', { exact: true })).toBeVisible();
+    await expect(kakaoCard.getByText(NOT_SELECTED)).toBeVisible();
+    await expect(kakaoCard.getByText('사용자 검색 (이름 또는 이메일)')).toHaveCount(0);
+
+    const slackCard = cardOf(page, 'slack');
+    await expect(slackCard.getByText('준비 중', { exact: true })).toBeVisible();
+    await expect(slackCard.getByText(NOT_SELECTED)).toBeVisible();
+    await expect(slackCard.getByText('사용자 검색 (이름 또는 이메일)')).toHaveCount(0);
   });
 
-  test('KAKAO 활성화 후 비활성화 시 수신자 UI가 사라진다', async ({ authenticatedPage: page }) => {
+  test('예전 설정의 카카오는 해제만 할 수 있다 (WD-805)', async ({ authenticatedPage: page }) => {
     await setupAndNavigateToNotifyTab(page, {
       config: {
         channels: [
@@ -124,21 +120,82 @@ test.describe('ChannelRecipientEditor — 4채널 확장', () => {
       },
     });
 
-    // KAKAO 이미 활성화 상태
-    const kakaoCheckbox = page.getByRole('checkbox', { name: /카카오 알림톡/i });
+    const kakaoCheckbox = page.getByRole('checkbox', { name: KAKAO_NAME });
+    const kakaoCard = cardOf(page, 'kakao');
     await expect(kakaoCheckbox).toBeChecked({ timeout: 5000 });
+    await expect(kakaoCheckbox).toBeEnabled();
+    await expect(kakaoCard.getByText(WARN)).toBeVisible();
+    // 체크돼 있어도 원래 설명(「카카오 알림톡으로 …」)은 보이지 않고 미지원 설명 아래에 경고가 붙는다
+    await expect(kakaoCard.getByText(NOT_SELECTED)).toBeVisible();
+    await expect(kakaoCard.getByText('카카오 알림톡으로 분석 결과를 전달합니다.')).toHaveCount(0);
 
-    // 미연동 안내가 표시 중
-    await expect(page.getByText(/수신자의 카카오 알림톡 연동 상태는/)).toBeVisible();
-
-    // 체크 해제
     await kakaoCheckbox.click();
 
-    // 수신자 UI와 안내 문구가 사라져야 한다
-    await expect(page.getByText(/수신자의 카카오 알림톡 연동 상태는/)).not.toBeVisible();
+    // 해제하면 다시 켤 수 없고, 경고는 사라지며 미선택 설명이 보인다
+    await expect(kakaoCheckbox).not.toBeChecked();
+    await expect(kakaoCheckbox).toBeDisabled();
+    await expect(kakaoCard.getByText(WARN)).toHaveCount(0);
+    await expect(kakaoCard.getByText(NOT_SELECTED)).toBeVisible();
   });
 
-  test('이메일/카카오/슬랙 동시 활성화 시 각 채널 UI가 모두 표시된다', async ({ authenticatedPage: page }) => {
+  // 보기 모드 단언은 두지 않는다 — 보기 화면(JobOverviewTab 의 !isEditing 분기)은 이 편집기를 그리지 않아
+  // 편집 버튼을 누르기 전에는 Slack 체크박스 자체가 없으므로 「보기 모드에서 해제 불가」를 확인할 대상이 없다 (WD-805).
+  test('예전 설정의 Slack 을 해제하고 저장하면 요청에서 빠진다 (WD-805)', async ({ authenticatedPage: page }) => {
+    const save = await mockApi(page, 'PUT', '/api/v1/proactive/jobs/1', createJob({ id: 1 }), {
+      capture: true,
+    });
+    await setupAndNavigateToNotifyTab(page, {
+      config: {
+        channels: [
+          { type: 'CHAT', recipientUserIds: [], recipientEmails: [] },
+          { type: 'SLACK', recipientUserIds: [], recipientEmails: [] },
+        ],
+      },
+    });
+
+    const slackCheckbox = page.getByRole('checkbox', { name: SLACK_NAME });
+    await expect(slackCheckbox).toBeChecked({ timeout: 5000 });
+    await slackCheckbox.click();
+    await expect(slackCheckbox).not.toBeChecked();
+
+    await page.getByRole('button', { name: '저장' }).click();
+    const req = await save.waitForRequest();
+    const types = (req.payload as { config: { channels: { type: string }[] } }).config.channels.map(
+      (c) => c.type,
+    );
+    expect(types).toContain('CHAT');
+    expect(types).not.toContain('SLACK');
+  });
+
+  // WD-805: 예전에 Slack 이 저장된 작업은 체크가 남아 있는 동안 저장 전에 화면에서 막혀 서버 400 까지 가지 않는다.
+  test('예전 설정의 Slack 이 체크된 채로는 저장되지 않고 사유가 보인다 (WD-805)', async ({ authenticatedPage: page }) => {
+    const save = await mockApi(page, 'PUT', '/api/v1/proactive/jobs/1', createJob({ id: 1 }), {
+      capture: true,
+    });
+    await setupAndNavigateToNotifyTab(page, {
+      config: {
+        channels: [
+          { type: 'CHAT', recipientUserIds: [], recipientEmails: [] },
+          { type: 'SLACK', recipientUserIds: [], recipientEmails: [] },
+        ],
+      },
+    });
+
+    const slackCheckbox = page.getByRole('checkbox', { name: SLACK_NAME });
+    await expect(slackCheckbox).toBeChecked({ timeout: 5000 });
+    // 그 채널 카드가 저장할 수 없는 이유를 보이고 저장 버튼은 눌리지 않는다
+    await expect(cardOf(page, 'slack').getByText(WARN)).toBeVisible();
+    const saveButton = page.getByRole('button', { name: '저장' });
+    await expect(saveButton).toBeDisabled();
+    // 저장 버튼이 막혀 있으므로 요청은 나가지 않는다
+    expect(save.requests.length).toBe(0);
+
+    // 해제하면 오류가 사라지고 저장할 수 있다
+    await slackCheckbox.click();
+    await expect(saveButton).toBeEnabled();
+  });
+
+  test('이메일/카카오/슬랙 동시 선택 작업은 이메일 입력과 미지원 경고가 보인다 (WD-805)', async ({ authenticatedPage: page }) => {
     await setupAndNavigateToNotifyTab(page, {
       config: {
         channels: [
@@ -153,9 +210,10 @@ test.describe('ChannelRecipientEditor — 4채널 확장', () => {
     // EMAIL 섹션: 외부 이메일 입력 플레이스홀더 확인
     await expect(page.getByPlaceholder('이메일 입력 후 Enter')).toBeVisible({ timeout: 5000 });
 
-    // KAKAO/SLACK 미연동 안내 모두 표시
-    await expect(page.getByText(/수신자의 카카오 알림톡 연동 상태는/)).toBeVisible();
-    await expect(page.getByText(/수신자의 Slack 연동 상태는/)).toBeVisible();
+    // KAKAO/SLACK 카드는 각각 경고 문구만 보이고 연동 안내는 없다
+    await expect(cardOf(page, 'kakao').getByText(WARN)).toBeVisible();
+    await expect(cardOf(page, 'slack').getByText(WARN)).toBeVisible();
+    await expect(page.getByText(/수신자의 .* 연동 상태는/)).toHaveCount(0);
   });
 
   // 회귀 테스트 (#554): 이메일 채널은 CHAT/KAKAO/SLACK과 달리 안내 문구가 조건부로
@@ -231,9 +289,9 @@ test.describe('ChannelRecipientEditor — 4채널 확장', () => {
     await expect(page.getByPlaceholder('이름 또는 이메일로 검색...')).toBeVisible();
   });
 
-  // 회귀 테스트 (#555): 저장된 SLACK 채널 수신자가 검색을 거치지 않고 마운트된 selectedUserIds라서
+  // 회귀 테스트 (#555): 저장된 채널 수신자(Slack 이 켜지지 않게 된 WD-805 이후로는 채팅 채널로 검증)가 검색을 거치지 않고 마운트된 selectedUserIds라서
   // UserCombobox 내부 캐시(userCache)에 없어, 배지 카운트는 맞는데 이름 칩이 빈 채로 보이던 결함.
-  test('SLACK 채널 수신자를 저장 후 재오픈하면 이름 칩이 하이드레이션된다 (#555)', async ({
+  test('채팅 채널 수신자를 저장 후 재오픈하면 이름 칩이 하이드레이션된다 (#555, WD-805 에서 채팅으로 옮김)', async ({
     authenticatedPage: page,
   }) => {
     await mockApi(page, 'GET', '/api/v1/proactive/jobs/recipients', [
@@ -243,26 +301,25 @@ test.describe('ChannelRecipientEditor — 4채널 확장', () => {
     await setupAndNavigateToNotifyTab(page, {
       config: {
         channels: [
-          { type: 'CHAT', recipientUserIds: [], recipientEmails: [] },
-          { type: 'SLACK', recipientUserIds: [42], recipientEmails: [] },
+          { type: 'CHAT', recipientUserIds: [42], recipientEmails: [] },
         ],
       },
     });
 
-    const slackSection = page
+    const chatSection = page
       .locator('div.rounded-lg.border')
-      .filter({ has: page.getByRole('checkbox', { name: /slack/i }) });
+      .filter({ has: page.getByRole('checkbox', { name: '채팅 채널 (항상 활성화)' }) });
 
     // 배지 카운트는 기존에도 정상 — 회귀 전에도 통과하던 부분
-    await expect(slackSection.getByText('1명에게 전달됩니다')).toBeVisible({ timeout: 5000 });
+    await expect(chatSection.getByText('1명에게 전달됩니다')).toBeVisible({ timeout: 5000 });
 
     // 수정 전: 검색을 하지 않았으므로 콤보박스는 placeholder만 보이고 이름 칩이 없었다.
     // 수정 후: 마운트 시 하이드레이션되어 "DongHee" 칩이 곧바로 렌더링되어야 한다.
-    await expect(slackSection.getByText('DongHee')).toBeVisible({ timeout: 5000 });
-    await expect(slackSection.getByText('사용자 검색 (이름 또는 이메일)')).not.toBeVisible();
-    // WD-512: OAuth 채널 콤보박스도 「<채널> 수신자」 이름을 갖고, 칩의 × 는 누구를 빼는지 이름으로 알린다
-    await expect(slackSection.getByRole('combobox', { name: 'Slack 수신자' })).toBeVisible();
-    await expect(slackSection.getByRole('button', { name: 'DongHee 빼기' })).toBeVisible();
+    await expect(chatSection.getByText('DongHee')).toBeVisible({ timeout: 5000 });
+    await expect(chatSection.getByText('사용자 검색 (이름 또는 이메일)')).not.toBeVisible();
+    // WD-512: 채널 콤보박스도 「<채널> 수신자」 이름을 갖고, 칩의 × 는 누구를 빼는지 이름으로 알린다
+    await expect(chatSection.getByRole('combobox', { name: '채팅 수신자' })).toBeVisible();
+    await expect(chatSection.getByRole('button', { name: 'DongHee 빼기' })).toBeVisible();
   });
   // WD-172: 정지·제거된 수신자는 수신자 조회(현재 워크스페이스 ACTIVE 멤버만)에서 빠져 칩이 사라졌고, 그래서 관리자가 뺄 수 없었다.
   // 이름을 찾지 못한 id 는 「받을 수 없는 사용자」 칩으로 보이고, 빼고 저장하면 그 id 가 요청에서 빠져야 한다.
