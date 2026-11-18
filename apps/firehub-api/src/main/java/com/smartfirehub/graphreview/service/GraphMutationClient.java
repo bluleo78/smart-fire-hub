@@ -21,7 +21,8 @@ import org.springframework.web.reactive.function.client.WebClientResponseExcepti
 /**
  * 검수 승인 시 Neo4j 소유자인 ai-agent에 그래프 변경을 위임한다(역방향 통신 — 기존 Internal 인증 재사용). 실패는 예외로 전파해,
  * 호출자(ReviewItemService)가 이 예외 시 DB 상태를 갱신하지 않도록 함으로써 "실패 시 pending 유지"를 트랜잭션 없이 보장한다. 실패는 두 종류로
- * 나뉜다(#310): 대상 노드 부재(ai-agent 409) → {@link IllegalStateException}(409 + 사유 노출), 그 외 장애 → {@link
+ * 나뉜다(#310): 사람이 고칠 거절(ai-agent 409 — 대상 노드 부재·온톨로지 위반·데이터셋 온톨로지 미연결(WD-807) 등) → {@link
+ * IllegalStateException}(409 + 사유 노출), 그 외 장애 → {@link
  * ExternalServiceException}(502).
  */
 @Component
@@ -137,7 +138,8 @@ public class GraphMutationClient {
   /**
    * 임의 JSON 바디 POST.
    *
-   * <p>ai-agent가 409를 주면 "대상 노드가 그래프에 없어 반영할 수 없음"이라는 상태 충돌이다(#310). 이때는 장애(502)가 아니라 사용자에게 사유를 그대로
+   * <p>ai-agent가 409를 주면 "지금 이 요청 그대로는 그래프에 반영할 수 없음"이라는 거절이다 — 대상 노드 부재(#310), 온톨로지 위반(#319·WD-429),
+   * 데이터셋 온톨로지 미연결(WD-807) 등. 이때는 장애(502)가 아니라 사용자에게 사유를 그대로
    * 보여줘야 하므로, 응답 바디의 message를 담은 {@link IllegalStateException}으로 바꿔 던진다(GlobalExceptionHandler가 409
    * + 해당 메시지로 응답). 그 외 실패는 {@link ExternalServiceException}(502). 어느 쪽이든 예외가 나가면
    * 호출자(ReviewItemService)는 status를 갱신하지 않아 항목이 pending으로 남는다.

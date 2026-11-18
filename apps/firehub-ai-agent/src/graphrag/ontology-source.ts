@@ -6,6 +6,21 @@ import { Ontology, deserializeOntology } from './ontology.js';
 import type { GraphReadVerdict } from './graph-read-gate.js';
 import { GraphReadableOntologyId, VerifiedOntologyId } from './verified-ontology-id.js';
 
+/**
+ * 데이터셋이 온톨로지에 연결(바인딩)되어 있지 않은 상태(WD-807).
+ *
+ * <p>해소 함수는 적재(채팅 graphrag_ingest)·평가(run-eval)·검수 승인(그래프 변경 라우트)이 함께 쓰므로 변경 전용 거절 타입
+ * (GraphMutationRejectedError)이 아니라 이 중립 타입을 던진다. 그래프 변경 라우트는 이 타입을 따로 골라 409 + 사유로
+ * 돌린다 — 일반 Error 였을 때는 502 가 되어 firehub-api 가 「잠시 후 다시 시도해 주세요」로 바꿨고, 몇 번을 다시 해도
+ * 같은 실패인데 검수자는 원인(미연결)과 조치(온톨로지 연결)를 알 수 없었다.
+ */
+export class OntologyNotBoundError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'OntologyNotBoundError';
+  }
+}
+
 /** 해소 결과 — 테넌트 경계(RLS)를 통과한 온톨로지. 쓰기·스키마 경로가 쓴다. */
 export interface ResolvedOntology {
   ontology: Ontology;
@@ -86,7 +101,8 @@ async function judgeGraphReadable(
  *
  * 바인딩 조회 자체가 실패하면(네트워크 오류 등) 그대로 전파한다 — 조용히 진행하면 어떤 온톨로지로
  * 적재/조회했는지 알 수 없는 상태가 되고, 그 실수는 그래프가 이미 잘못 적재된 뒤에야 드러난다.
- * 바인딩이 없으면(ontologyId === null) 사용자에게 그대로 보여줄 수 있는 에러를 던진다.
+ * 바인딩이 없으면(ontologyId === null) 사용자에게 그대로 보여줄 수 있는 OntologyNotBoundError 를 던진다 —
+ * 그래프 변경 라우트가 이 타입을 409 + 사유로 돌려 검수 UI 에 조치 안내가 보인다(WD-807).
  *
  * 쓰기·스키마 경로용이라 그래프 읽기 판정(WD-28)은 하지 않는다 — 읽기 지점은 resolveReadableOntologyById 를 쓴다.
  */
@@ -96,9 +112,11 @@ export async function resolveDatasetOntology(
 ): Promise<ResolvedOntology> {
   const { ontologyId } = await apiClient.getDatasetOntology(datasetId);
   if (ontologyId == null) {
-    throw new Error(
+    // 문구는 검수 UI 토스트(사람)에도 그대로 보이므로 내부 도구 이름을 넣지 않는다 — 채팅 에이전트는 dataset-manager
+    // 프롬프트의 연결 절차(graphrag_bind_ontology)를 따로 안다.
+    throw new OntologyNotBoundError(
       `데이터셋 ${datasetId}은(는) 온톨로지에 연결되어 있지 않습니다. `
-        + '먼저 온톨로지를 연결하세요(graphrag_bind_ontology 또는 데이터셋 상세 화면의 "온톨로지 연결").',
+        + '데이터셋 상세 화면의 「온톨로지 연결」에서 먼저 온톨로지를 연결하세요.',
     );
   }
   return resolveOntologyById(apiClient, ontologyId);

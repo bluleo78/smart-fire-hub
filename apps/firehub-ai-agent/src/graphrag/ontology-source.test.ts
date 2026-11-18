@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { resolveDatasetOntology, resolveOntologyById, resolveReadableOntologyById } from './ontology-source.js';
+import { OntologyNotBoundError, resolveDatasetOntology, resolveOntologyById, resolveReadableOntologyById } from './ontology-source.js';
 
 // 백엔드 OntologyResponse 최소 형태 — deserializeOntology 가 받아들이는 모양.
 const BOUND_RESPONSE = {
@@ -33,6 +33,21 @@ describe('resolveDatasetOntology', () => {
 
     await expect(resolveDatasetOntology(apiClient as never, 7)).rejects.toThrow(/온톨로지에 연결되어 있지 않습니다/);
     expect(apiClient.getOntologyById).not.toHaveBeenCalled();
+  });
+
+  // WD-807: 미연결은 사람이 고칠 설정 문제라 그래프 변경 라우트가 골라 409 + 사유로 돌릴 수 있게 전용 타입이어야 한다
+  // (일반 Error 면 502 → api 가 「잠시 후 다시 시도」로 바꿔 조치 안내가 사라진다). 문구는 검수 UI 에 그대로 보이므로
+  // 내부 도구 이름이 없어야 한다.
+  it('미바인딩 거부는 OntologyNotBoundError 이고 사람이 따라 할 조치만 담는다', async () => {
+    const apiClient = {
+      getDatasetOntology: vi.fn().mockResolvedValue({ datasetId: 7, ontologyId: null }),
+      getOntologyById: vi.fn(),
+    };
+
+    const err = await resolveDatasetOntology(apiClient as never, 7).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(OntologyNotBoundError);
+    expect((err as Error).message).toContain('먼저 온톨로지를 연결하세요');
+    expect((err as Error).message).not.toContain('graphrag_');
   });
 
   it('바인딩 조회 자체가 실패하면 폴백하지 않고 그대로 전파한다', async () => {
