@@ -13,6 +13,19 @@ export const channelConfigSchema = z.object({
   attachPdf: z.boolean().optional(),
 });
 
+/**
+ * 서버가 받지 않아 켤 수 없는 전달 채널 (WD-805).
+ * 서버 화이트리스트(CHAT/EMAIL/WEBHOOK, #594)가 Slack·카카오를 400 으로 거절하고,
+ * 기본 발송 경로에 Slack·카카오 발송기 구현이 없기 때문이다. 편집기(켜기 막기)와 스키마(저장 막기)가 같이 쓴다.
+ * 나중에 서버가 지원하면 이 목록에서 빼면 된다.
+ */
+export const UNSUPPORTED_DELIVERY_CHANNELS: ReadonlySet<z.infer<typeof channelConfigSchema>['type']> =
+  new Set(['KAKAO', 'SLACK']);
+
+/** 예전 설정에 미지원 채널이 남은 채 저장하려 할 때 보이는 문구 (WD-805) */
+export const UNSUPPORTED_CHANNEL_SAVE_MESSAGE =
+  '이 채널은 아직 지원하지 않아 저장할 수 없습니다 — 체크를 해제하세요.';
+
 export const anomalyMetricConfigSchema = z.object({
   id: z.string(),
   name: z.string().min(1, '메트릭 이름을 입력하세요'),
@@ -50,7 +63,12 @@ export const proactiveJobSchema = z
     timezone: z.string().min(1),
     triggerType: z.enum(['SCHEDULE', 'ANOMALY', 'BOTH']).optional(),
     config: z.object({
-      channels: z.array(channelConfigSchema),
+      // 미지원 채널(Slack·카카오)이 남아 있으면 서버 400 대신 저장 전에 막는다(WD-805)
+      channels: z
+        .array(channelConfigSchema)
+        .refine((chs) => !chs.some((c) => UNSUPPORTED_DELIVERY_CHANNELS.has(c.type)), {
+          message: UNSUPPORTED_CHANNEL_SAVE_MESSAGE,
+        }),
       anomaly: anomalyConfigSchema.optional(),
     }),
   })

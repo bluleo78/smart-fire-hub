@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { MAX_JOB_PROMPT_LENGTH, proactiveJobSchema } from './proactive-job';
+import { MAX_JOB_PROMPT_LENGTH, proactiveJobSchema, UNSUPPORTED_CHANNEL_SAVE_MESSAGE } from './proactive-job';
 
 /**
  * 스마트 작업 이름·분석 프롬프트 공백 검증 (WD-500) — 공백만 채운 값은 빈 값과 같이 거부하고, 앞뒤 공백은 잘라 저장하는지 고정한다.
@@ -57,5 +57,22 @@ describe('스마트 작업 이름·프롬프트 공백 검증 (WD-500)', () => {
     ).toBe('분석 프롬프트는 10,000자 이내여야 합니다');
     // trim 후 길이로 상한을 본다 — 앞뒤 공백 때문에 상한을 넘었다고 거부하지 않는다
     expect(proactiveJobSchema.safeParse(job('이름', ` ${'x'.repeat(MAX_JOB_PROMPT_LENGTH)} `)).success).toBe(true);
+  });
+});
+
+describe('미지원 전달 채널 저장 막기 (WD-805)', () => {
+  const withChannels = (types: ('CHAT' | 'SLACK' | 'KAKAO')[]) => ({
+    ...job('이름', '프롬프트'),
+    config: { channels: types.map((type) => ({ type, recipientUserIds: [], recipientEmails: [] })) },
+  });
+
+  it('Slack·카카오가 남은 작업은 안내 문구로 거부된다', () => {
+    const r = proactiveJobSchema.safeParse(withChannels(['CHAT', 'SLACK']));
+    expect(r.success).toBe(false);
+    expect(messageAt(r, 'channels')).toBe(UNSUPPORTED_CHANNEL_SAVE_MESSAGE);
+  });
+
+  it('채팅만 있는 작업은 통과한다', () => {
+    expect(proactiveJobSchema.safeParse(withChannels(['CHAT'])).success).toBe(true);
   });
 });

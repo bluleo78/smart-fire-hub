@@ -32,7 +32,12 @@ import { getExecutionDisplayStatus } from '@/lib/error-classifier';
 import { formatDate, getStatusBadgeVariant, getStatusLabel } from '@/lib/formatters';
 import { formatNextRun } from '@/lib/next-run';
 import { describeTimezone, TIMEZONE_OPTIONS } from '@/lib/timezone-data';
-import { goalTemplateName, MAX_JOB_PROMPT_LENGTH, type ProactiveJobFormValues } from '@/lib/validations/proactive-job';
+import {
+  goalTemplateName,
+  MAX_JOB_PROMPT_LENGTH,
+  type ProactiveJobFormValues,
+  UNSUPPORTED_DELIVERY_CHANNELS,
+} from '@/lib/validations/proactive-job';
 
 import ChannelRecipientEditor from '../components/ChannelRecipientEditor';
 import { SectionPreview } from '../components/SectionPreview';
@@ -683,7 +688,11 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
           channels={channels}
           onChange={(updated) => {
             markDirty();
-            setValue('config.channels', updated);
+            // 미지원 채널(Slack·카카오)이 남아 있던 경우에만 바로 다시 검증해, 해제하면 저장 버튼이 풀리게 한다 —
+            // 수신자 편집마다 폼 전체를 검증하지 않으려고 조건을 둔다. 이유 문구는 그 채널 카드가 보인다 (WD-805)
+            setValue('config.channels', updated, {
+              shouldValidate: channels.some((c) => UNSUPPORTED_DELIVERY_CHANNELS.has(c.type)),
+            });
           }}
         />
       </div>
