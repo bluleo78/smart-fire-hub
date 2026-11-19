@@ -41,4 +41,8 @@ EXPOSE 8080
 # 컨테이너 메모리 인지 힙 설정: 파드/컨테이너 memory limit의 75%를 최대 힙으로 사용.
 # JVM 기본값은 limit의 25%(≈384MB@1536Mi)라 대용량 임포트 스트리밍 중에도 힙이 부족해지기 쉽다.
 # 스트리밍(배치 처리)으로 근본 해소하되, 이미지에 힙 헤드룸을 baking해 k8s 매니페스트 변경 없이도 방어한다.
-ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75.0", "-jar", "app.jar"]
+# -XX:-UseBASE64Intrinsics: CVE-2026-114938(Java4Shell) 완화. x86 AVX-512 VBMI CPU 에서 java.util.Base64 디코드
+# 인트린직이 힙 밖으로 쓴다. 고객사 설치본처럼 호스트 CPU 를 고를 수 없는 곳까지 막으려고 이미지에 박는다.
+# JAVA_TOOL_OPTIONS(k8s·compose 가 덮어씀)가 아니라 커맨드라인에 둬서 배포 설정과 무관하게 항상 적용된다.
+# 수정판 JDK(21.0.13.1+) 베이스로 바꾼 뒤에도 남겨 둬도 된다 — Base64 처리만 순수 Java 로 돌아 조금 느려진다.
+ENTRYPOINT ["java", "-XX:-UseBASE64Intrinsics", "-XX:MaxRAMPercentage=75.0", "-jar", "app.jar"]
