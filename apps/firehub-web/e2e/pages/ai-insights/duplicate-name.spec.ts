@@ -236,15 +236,22 @@ test.describe('이름 중복 409 — 스마트 작업·리포트 양식 (WD-824)
     await expect(page.getByText(JOB_MSG)).toHaveCount(1);
   });
 
-  test('양식 목록: 커스텀 카드에 수정 일시가 보인다', async ({ authenticatedPage: page }) => {
-    await mockApi(page, 'GET', '/api/v1/proactive/templates', [
-      createTemplate({ id: 1, name: '기본 양식', builtin: true }),
-      createTemplate({ id: 2, name: '내 양식', builtin: false, updatedAt: '2026-03-15T01:07:00' }),
-    ]);
-    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
-    await page.goto('/ai-insights/templates');
+  // 서버 시각(UTC LocalDateTime)을 브라우저 시간대로 바꿔 보이므로, 시간대를 고정해야 PC 시간대와 무관하게 같은 값을 기대할 수 있다(WD-839).
+  // 고정하지 않으면 시스템 시간대가 UTC 인 곳에서만 통과하고 KST PC 에서는 늘 실패해 push 게이트를 막았다.
+  test.describe('브라우저 시간대 Asia/Seoul 고정', () => {
+    test.use({ timezoneId: 'Asia/Seoul' });
 
-    const card = page.locator('[data-slot="card"]').filter({ hasText: '내 양식' });
-    await expect(card).toContainText('수정 2026-03-15 01:07');
+    test('양식 목록: 커스텀 카드에 수정 일시가 보인다', async ({ authenticatedPage: page }) => {
+      await mockApi(page, 'GET', '/api/v1/proactive/templates', [
+        createTemplate({ id: 1, name: '기본 양식', builtin: true }),
+        createTemplate({ id: 2, name: '내 양식', builtin: false, updatedAt: '2026-03-15T01:07:00' }),
+      ]);
+      await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+      await page.goto('/ai-insights/templates');
+
+      // UTC 01:07 → KST 10:07
+      const card = page.locator('[data-slot="card"]').filter({ hasText: '내 양식' });
+      await expect(card).toContainText('수정 2026-03-15 10:07');
+    });
   });
 });
