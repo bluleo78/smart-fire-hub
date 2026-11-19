@@ -12,7 +12,7 @@ import type {
   UpdateReportTemplateRequest,
 } from '../../api/proactive';
 import { proactiveApi } from '../../api/proactive';
-import { cloneName } from '../../lib/clone-name';
+import { createWithUniqueCloneName } from '../../lib/clone-name';
 import { isValidId } from '../../lib/route-id';
 import { useMyPermissions } from './useMyPermissions';
 
@@ -258,22 +258,25 @@ export function cloneSuccessMessage(name: string) {
 export function useCloneProactiveJob() {
   const queryClient = useQueryClient();
   return useMutation({
+    // 서버에 복제 API 가 없어 이름을 웹이 만든다 — 같은 이름이 이미 있으면(409 DUPLICATE_NAME) 「(복사본 2)」… 로 번호를 올려 다시 시도한다(WD-824)
     mutationFn: (job: Pick<ProactiveJob, 'name' | 'prompt' | 'templateId' | 'cronExpression' | 'timezone' | 'triggerType' | 'config'>) =>
-      proactiveApi.createJob({
-        // 200자에 가까운 이름도 복제되게 접미사가 들어갈 만큼 원래 이름을 자른다(WD-430)
-        name: cloneName(job.name, '(복사본)'),
-        prompt: job.prompt,
-        templateId: job.templateId,
-        cronExpression: job.cronExpression,
-        timezone: job.timezone,
-        // triggerType을 넘기지 않으면 백엔드 기본값(SCHEDULE)으로 복제돼 원본이 이상 탐지
-        // 트리거였어도 복사본은 조용히 스케줄 트리거로 바뀌는 문제가 있었다 (#655 관련 수정)
-        triggerType: job.triggerType,
-        config: job.config,
-        // 복사본은 원본 상태와 상관없이 늘 꺼진 채로 만든다 — 기본값(활성)으로 만들면 원본과 같은 시각·같은
-        // 수신자로 곧바로 예약돼, 편집하다 취소한 복제 한 번으로 같은 리포트가 두 번 발송된다 (WD-300)
-        enabled: false,
-      }).then((r) => r.data),
+      createWithUniqueCloneName(job.name, '복사본', (name) =>
+        proactiveApi.createJob({
+          // 200자에 가까운 이름도 복제되게 접미사가 들어갈 만큼 원래 이름을 자른다(WD-430)
+          name,
+          prompt: job.prompt,
+          templateId: job.templateId,
+          cronExpression: job.cronExpression,
+          timezone: job.timezone,
+          // triggerType을 넘기지 않으면 백엔드 기본값(SCHEDULE)으로 복제돼 원본이 이상 탐지
+          // 트리거였어도 복사본은 조용히 스케줄 트리거로 바뀌는 문제가 있었다 (#655 관련 수정)
+          triggerType: job.triggerType,
+          config: job.config,
+          // 복사본은 원본 상태와 상관없이 늘 꺼진 채로 만든다 — 기본값(활성)으로 만들면 원본과 같은 시각·같은
+          // 수신자로 곧바로 예약돼, 편집하다 취소한 복제 한 번으로 같은 리포트가 두 번 발송된다 (WD-300)
+          enabled: false,
+        }).then((r) => r.data),
+      ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: KEYS.jobs });
     },

@@ -46,6 +46,7 @@ class SavedQueryServiceSaveGateTest {
     service =
         new SavedQueryService(
             repo,
+            mock(com.smartfirehub.global.naming.ResourceNameGuard.class),
             null,
             resolver,
             guard,

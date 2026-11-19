@@ -262,4 +262,10 @@ public class MyBatisChartRepository implements ChartRepository {
       return Map.of();
     }
   }
+
+  /** 같은 소유자·같은 이름(lower(trim) 비교) 존재 여부(WD-824). */
+  @Override
+  public boolean existsByOwnerAndName(long ownerId, String name, Long excludeId) {
+    return mapper.countByOwnerAndName(ownerId, name, excludeId) > 0;
+  }
 }

@@ -60,6 +60,7 @@ class AnalyticsDashboardServiceUnitTest {
     dashboardService =
         new AnalyticsDashboardService(
             dashboardRepository,
+            mock(com.smartfirehub.global.naming.ResourceNameGuard.class),
             widgetRepository,
             chartService,
             chartRepository,

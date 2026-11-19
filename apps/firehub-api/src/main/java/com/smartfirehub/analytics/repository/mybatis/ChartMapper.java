@@ -97,4 +97,10 @@ public interface ChartMapper {
 
   /** 주인의 차트를 지운다(위젯은 FK CASCADE). 지운 행 수. */
   int deleteByIdAndOwner(@Param("id") Long id, @Param("userId") Long userId);
+
+  /** 같은 소유자·같은 이름(앞뒤 공백·대소문자 무시)의 차트 수(WD-824). excludeId 가 null 이면 제외 없음. */
+  long countByOwnerAndName(
+      @Param("ownerId") long ownerId,
+      @Param("name") String name,
+      @Param("excludeId") Long excludeId);
 }

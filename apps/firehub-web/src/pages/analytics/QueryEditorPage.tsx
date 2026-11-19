@@ -72,7 +72,7 @@ import { useInvalidateListsOnEntryNotFound } from '../../hooks/queries/useInvali
 import { useIsOwner } from '../../hooks/useIsOwner';
 import { useMediaQuery } from '../../hooks/useMediaQuery';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
-import { extractApiError, handleApiError, handleApiErrorAsync, isEditConflict } from '../../lib/api-error';
+import { extractApiError, handleApiError, handleApiErrorAsync, isDuplicateName, isEditConflict } from '../../lib/api-error';
 import { downloadBlob, filenameFromContentDisposition, localDateStamp } from '../../lib/download';
 import { parseRouteId } from '../../lib/route-id';
 import { sqlRunShortcut } from '../../lib/sql-run-shortcut';
@@ -297,6 +297,8 @@ interface SaveDialogProps {
   isEdit: boolean;
   /** 저장 시 발생한 오류 메시지 — 다이얼로그 내 인라인 표시용 */
   error?: string | null;
+  /** 이름 중복 409(WD-824)의 서버 문구 — 이름 칸 아래에 보인다 */
+  nameError?: string | null;
 }
 
 function SaveDialog({
@@ -315,6 +317,7 @@ function SaveDialog({
   isSaving,
   isEdit,
   error,
+  nameError,
 }: SaveDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -338,7 +341,14 @@ function SaveDialog({
               onChange={(e) => onNameChange(e.target.value)}
               placeholder="쿼리 이름을 입력하세요"
               maxLength={200}
+              aria-invalid={nameError ? true : undefined}
+              aria-describedby={nameError ? 'query-name-error' : undefined}
             />
+            {nameError && (
+              <p id="query-name-error" role="alert" className="text-sm text-destructive">
+                {nameError}
+              </p>
+            )}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="query-description">설명</Label>
@@ -443,6 +453,8 @@ export default function QueryEditorPage() {
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
   // 저장 다이얼로그 내 인라인 오류 메시지 상태 (이슈 #195)
   const [saveError, setSaveError] = useState<string | null>(null);
+  // 이름 중복 409(WD-824)의 서버 문구 — 이름 칸 아래에 보이고 이름을 고치면 사라진다. saveError(창 위 한 줄)와 따로 둔다
+  const [nameError, setNameError] = useState<string | null>(null);
   const [saveForm, setSaveForm] = useState({
     name: '',
     description: '',
@@ -616,6 +628,7 @@ export default function QueryEditorPage() {
     }
     // 다이얼로그 열 때 이전 오류 초기화 (이슈 #195)
     setSaveError(null);
+    setNameError(null);
     setSaveDialogOpen(true);
   };
 
@@ -631,6 +644,7 @@ export default function QueryEditorPage() {
 
     savingRef.current = true;
     setSaveError(null);
+    setNameError(null);
 
     try {
       if (isNew) {
@@ -674,6 +688,11 @@ export default function QueryEditorPage() {
       // 편집 충돌은 인라인 오류·토스트 대신 안내 창으로 — 사용자가 다시 불러올지 덮어쓸지 고른다(WD-364)
       if (isEditConflict(error)) {
         setEditConflict(true);
+        return;
+      }
+      // 이름 중복(409 DUPLICATE_NAME, WD-824)은 서버 문구를 이름 칸 아래에 보이고 토스트는 생략한다 — 같은 문구가 두 번 보이지 않게
+      if (isDuplicateName(error)) {
+        setNameError(extractApiError(error, '이미 있는 쿼리 이름입니다. 다른 이름을 입력하세요.'));
         return;
       }
       // API 오류 발생 시 다이얼로그 내에 인라인으로 오류 메시지를 표시한다 (이슈 #195)
@@ -1055,7 +1074,11 @@ export default function QueryEditorPage() {
         open={saveDialogOpen}
         onOpenChange={setSaveDialogOpen}
         name={saveForm.name}
-        onNameChange={(v) => setSaveForm((p) => ({ ...p, name: v }))}
+        onNameChange={(v) => {
+          setSaveForm((p) => ({ ...p, name: v }));
+          // 이름을 고치면 중복 안내는 낡은 것이다(WD-824)
+          setNameError(null);
+        }}
         description={saveForm.description}
         onDescriptionChange={(v) => setSaveForm((p) => ({ ...p, description: v }))}
         folder={saveForm.folder}
@@ -1067,6 +1090,7 @@ export default function QueryEditorPage() {
         isSaving={isSaving}
         isEdit={!isNew}
         error={saveError}
+        nameError={nameError}
       />
 
       {/* 편집 충돌 안내 창(WD-364) — 저장이 409 EDIT_CONFLICT 로 거부되면 저장 창 위에 뜬다 */}

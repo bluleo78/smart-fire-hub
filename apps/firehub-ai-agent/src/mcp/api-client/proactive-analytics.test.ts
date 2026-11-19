@@ -256,6 +256,67 @@ describe('proactiveApi (via FireHubApiClient)', () => {
     });
   });
 
+  // WD-824 — 작업 이름에서 만든 자동 양식 이름이 겹치면(작업을 지워도 양식은 남는다) 번호를 붙여 다시 시도한다.
+  const dupBody = {
+    status: 409,
+    error: 'Conflict',
+    code: 'DUPLICATE_NAME',
+    message: '이미 있는 리포트 양식 이름입니다.',
+  };
+  const smartJobArgs = {
+    name: 'n',
+    prompt: 'p',
+    templateName: 'n 양식',
+    templateStructure: { sections: [{ key: 'k', label: 'l' }], output_format: 'markdown' },
+  };
+
+  it('createSmartJobWithTemplate retries the template with a numbered name on 409 DUPLICATE_NAME (WD-824)', async () => {
+    const names: string[] = [];
+    nock(BASE_URL)
+      .post('/proactive/templates', (b: Record<string, unknown>) => {
+        names.push(b.name as string);
+        return true;
+      })
+      .times(2)
+      .reply(function () {
+        return names.length === 1 ? [409, dupBody] : [201, { id: 70 }];
+      });
+    const jobScope = nock(BASE_URL).post('/proactive/jobs', (b: Record<string, unknown>) => b.templateId === 70).reply(201, { id: 9 });
+
+    const result = (await client.createSmartJobWithTemplate(smartJobArgs)) as { job: { id: number } };
+
+    expect(names).toEqual(['n 양식', 'n 양식 (2)']);
+    expect(result.job.id).toBe(9);
+    expect(jobScope.isDone()).toBe(true);
+  });
+
+  it('createSmartJobWithTemplate does not retry non-duplicate template errors (WD-824)', async () => {
+    let calls = 0;
+    nock(BASE_URL)
+      .post('/proactive/templates', () => {
+        calls += 1;
+        return true;
+      })
+      .reply(400, { message: 'bad sections' });
+
+    await expect(client.createSmartJobWithTemplate(smartJobArgs)).rejects.toThrow();
+    expect(calls).toBe(1);
+  });
+
+  it('createSmartJobWithTemplate gives up after 20 duplicate attempts (WD-824)', async () => {
+    let calls = 0;
+    nock(BASE_URL)
+      .post('/proactive/templates', () => {
+        calls += 1;
+        return true;
+      })
+      .times(25)
+      .reply(409, dupBody);
+
+    await expect(client.createSmartJobWithTemplate(smartJobArgs)).rejects.toThrow();
+    expect(calls).toBe(20);
+  });
+
   it('createSmartJobWithTemplate rolls back (deletes) the template when job creation fails (#603)', async () => {
     const template = { id: 55, name: 'orphan-candidate' };
     nock(BASE_URL).post('/proactive/templates').reply(201, template);

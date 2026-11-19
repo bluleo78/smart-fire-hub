@@ -214,6 +214,7 @@ class ChartDashboardRejudgeTest extends IntegrationTestBase {
   private ChartService chartService(TxRecordingInteractiveGate gate) {
     return new ChartService(
         chartRepository,
+        org.mockito.Mockito.mock(com.smartfirehub.global.naming.ResourceNameGuard.class),
         savedQueryRepository,
         guardedSqlExecutor,
         clearanceResolver,
@@ -229,6 +230,7 @@ class ChartDashboardRejudgeTest extends IntegrationTestBase {
   private AnalyticsDashboardService dashboardService(TxRecordingInteractiveGate gate) {
     return new AnalyticsDashboardService(
         dashboardRepository,
+        org.mockito.Mockito.mock(com.smartfirehub.global.naming.ResourceNameGuard.class),
         widgetRepository,
         chartService(gate),
         chartRepository,

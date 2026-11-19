@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { MAX_JOB_PROMPT_LENGTH, proactiveJobSchema, UNSUPPORTED_CHANNEL_SAVE_MESSAGE } from './proactive-job';
+import {
+  MAX_JOB_PROMPT_LENGTH,
+  numberedGoalTemplateName,
+  proactiveJobSchema,
+  UNSUPPORTED_CHANNEL_SAVE_MESSAGE,
+} from './proactive-job';
 
 /**
  * 스마트 작업 이름·분석 프롬프트 공백 검증 (WD-500) — 공백만 채운 값은 빈 값과 같이 거부하고, 앞뒤 공백은 잘라 저장하는지 고정한다.
@@ -74,5 +79,30 @@ describe('미지원 전달 채널 저장 막기 (WD-805)', () => {
 
   it('채팅만 있는 작업은 통과한다', () => {
     expect(proactiveJobSchema.safeParse(withChannels(['CHAT'])).success).toBe(true);
+  });
+});
+
+/** 자동 양식 이름의 번호 후보(WD-824) — 긴 작업 이름은 작업 이름 쪽을 잘라 「양식」 꼬리를 지킨다. */
+describe('numberedGoalTemplateName (WD-824)', () => {
+  it('1번째는 「<작업> 양식」, 2번째부터 「<작업> 양식 (n)」', () => {
+    expect(numberedGoalTemplateName('A', 1)).toBe('A 양식');
+    expect(numberedGoalTemplateName('A', 2)).toBe('A 양식 (2)');
+    expect(numberedGoalTemplateName('  A  ', 3)).toBe('A 양식 (3)');
+  });
+
+  it('199자 작업 이름도 200자 안에서 항상 「양식」/「양식 (n)」 으로 끝난다', () => {
+    const job = '가'.repeat(199);
+    for (const n of [1, 2, 10, 20]) {
+      const name = numberedGoalTemplateName(job, n);
+      expect(name.length).toBeLessThanOrEqual(200);
+      expect(name.endsWith(n === 1 ? ' 양식' : ` 양식 (${n})`)).toBe(true);
+    }
+  });
+
+  it('자르는 자리의 공백은 지우고 서로게이트 쌍은 가르지 않는다', () => {
+    expect(numberedGoalTemplateName('a'.repeat(190) + ' '.repeat(9), 2)).toBe(`${'a'.repeat(190)} 양식 (2)`);
+    const emoji = numberedGoalTemplateName('😀'.repeat(250), 2);
+    expect(emoji.length).toBeLessThanOrEqual(200);
+    expect(emoji).not.toMatch(/[\ud800-\udbff] 양식/);
   });
 });

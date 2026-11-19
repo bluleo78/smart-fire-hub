@@ -95,4 +95,14 @@
     DELETE FROM report_template WHERE id = #{id} AND user_id = #{userId}
   </delete>
 
+  <!-- WD-824: 본인 양식 + 기본 양식 이름 중복 검사(lower(trim) 비교). excludeId 는 수정 시 자기 자신 제외. -->
+  <select id="countByOwnerAndName" resultType="_long">
+    SELECT COUNT(*) FROM report_template t
+     WHERE (t.user_id = #{ownerId} OR t.user_id IS NULL)
+       AND lower(trim(t.name)) = lower(trim(#{name}))
+    <if test="excludeId != null">
+       AND t.id &lt;&gt; #{excludeId}
+    </if>
+  </select>
+
 </mapper>

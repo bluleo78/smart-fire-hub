@@ -2,6 +2,8 @@ package com.smartfirehub.proactive.service;
 
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.exception.EditConflictException;
+import com.smartfirehub.global.naming.ResourceKind;
+import com.smartfirehub.global.naming.ResourceNameGuard;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.notification.dto.NotificationEvent;
 import com.smartfirehub.notification.service.SseEmitterRegistry;
@@ -76,6 +78,8 @@ public class ProactiveJobService {
   private final ProactiveReportLevelRecorder levelRecorder;
   // 작성자 본인의 생성·수정·삭제·켜기/끄기 감사(WD-464)
   private final ProactiveAuditRecorder auditRecorder;
+  // 같은 소유자 안 이름 중복 방지(WD-824)
+  private final ResourceNameGuard nameGuard;
 
   /**
    * 수정 감사의 바뀐 항목 키 → 설명용 라벨(WD-464). 켜기/끄기는 따로 STATUS_CHANGE 로 남기므로 여기 없다. 프롬프트·cron·설정(전달
@@ -117,7 +121,8 @@ public class ProactiveJobService {
       TenantRepository tenantRepository,
       ClearanceResolver clearanceResolver,
       ProactiveReportLevelRecorder levelRecorder,
-      ProactiveAuditRecorder auditRecorder) {
+      ProactiveAuditRecorder auditRecorder,
+      ResourceNameGuard nameGuard) {
     this.proactiveJobRepository = proactiveJobRepository;
     this.executionRepository = executionRepository;
     this.schedulerService = schedulerService;
@@ -132,6 +137,7 @@ public class ProactiveJobService {
     this.clearanceResolver = clearanceResolver;
     this.levelRecorder = levelRecorder;
     this.auditRecorder = auditRecorder;
+    this.nameGuard = nameGuard;
     // asyncRunner가 runningJobs 맵을 공유하여 슬롯 해제가 동일한 맵에 반영되도록 한다
     asyncRunner.setRunningJobs(this.runningJobs);
   }
@@ -347,6 +353,12 @@ public class ProactiveJobService {
     // 보안 등급(S2): 메트릭 SQL 이 작성자가 볼 수 없는 데이터셋을 참조하면 거부(스펙 §4.2 6행). update 도 같은 검사 — 우회로 차단.
     metricSqlAccessChecker.requireMetricQueriesAllowed(request.config(), userId);
     requireUsableTemplate(request.templateId(), userId);
+    // 같은 소유자에게 같은 이름이 이미 있으면 409(WD-824) — 잠금 아래에서 검사해 동시 생성 둘이 모두 통과하지 못한다.
+    nameGuard.requireUnused(
+        ResourceKind.PROACTIVE_JOB,
+        userId,
+        request.name(),
+        () -> proactiveJobRepository.existsByOwnerAndName(userId, request.name(), null));
 
     Long id =
         proactiveJobRepository.create(
@@ -420,6 +432,13 @@ public class ProactiveJobService {
     // 보안 등급(S2): 메트릭 SQL 이 작성자가 볼 수 없는 데이터셋을 참조하면 거부(스펙 §4.2 6행). update 도 같은 검사 — 우회로 차단.
     metricSqlAccessChecker.requireMetricQueriesAllowed(request.config(), userId);
     requireUsableTemplate(request.templateId(), userId);
+    // 이름이 바뀐 저장만 중복을 검사한다(WD-824) — 판정 기준·이유는 ResourceNameGuard.requireUnusedOnRename 참고. 기준값은 행 잠금 뒤에 읽은 값이다.
+    nameGuard.requireUnusedOnRename(
+        ResourceKind.PROACTIVE_JOB,
+        userId,
+        before.name(),
+        request.name(),
+        () -> proactiveJobRepository.existsByOwnerAndName(userId, request.name(), id));
 
     LocalDateTime savedUpdatedAt =
         proactiveJobRepository.update(

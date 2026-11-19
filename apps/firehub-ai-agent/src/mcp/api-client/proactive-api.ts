@@ -1,5 +1,52 @@
 import type { AxiosInstance } from 'axios';
 
+/** 자동 양식 이름 겹침 재시도 상한(WD-824) — 웹 NAME_RETRY_MAX_ATTEMPTS 와 같다. */
+const TEMPLATE_NAME_MAX_ATTEMPTS = 20;
+/** 양식 이름 길이 한도(서버 varchar(200)). */
+const TEMPLATE_NAME_MAX_LENGTH = 200;
+
+/**
+ * 409 + code DUPLICATE_NAME 인지 본다(WD-824) — 다른 409·오류는 재시도 대상이 아니다.
+ * api-client 응답 인터셉터가 오류를 `status`·`response`(원본 axios 응답)를 가진 Error 로 다시 던지므로 그 모양을 읽는다.
+ */
+function isDuplicateNameError(error: unknown): boolean {
+  const e = error as { status?: number; response?: { data?: { code?: string } } } | null;
+  return e?.status === 409 && e.response?.data?.code === 'DUPLICATE_NAME';
+}
+
+/**
+ * 시도 번호별 양식 이름 — 1번째는 그대로, 2번째부터 「이름 (2)」「이름 (3)」 …(WD-824)
+ * 200자(코드 포인트, 서버 varchar 기준)를 넘으면 이름 쪽만 잘라 맞추고, 「 양식」 꼬리와 번호는 항상 남긴다.
+ * 자르는 자리의 공백은 지운다. 웹 numberedGoalTemplateName 과 같은 모양이다.
+ */
+export function numberedTemplateName(base: string, attempt: number): string {
+  const kept = base.endsWith(' 양식') ? ' 양식' : '';
+  const stem = kept ? base.slice(0, -kept.length) : base;
+  const tail = kept + (attempt <= 1 ? '' : ` (${attempt})`);
+  const chars = Array.from(stem);
+  const room = TEMPLATE_NAME_MAX_LENGTH - Array.from(tail).length;
+  if (chars.length <= room) return stem + tail;
+  return chars.slice(0, room).join('').trimEnd() + tail;
+}
+
+/**
+ * 번호 붙인 양식 이름으로 생성하고, 409 DUPLICATE_NAME 이면 다음 번호 이름으로 다시 시도한다(WD-824).
+ * 양식 이름은 작업 이름에서 파생된 것이라 사용자가 정한 적이 없다 — 작업을 지워도 양식은 남아 있어 같은 이름으로 다시 만들면 겹친다.
+ * 다른 오류와 시도 상한을 넘긴 마지막 오류는 그대로 던진다.
+ */
+async function createWithNumberedTemplateName<T>(
+  base: string,
+  create: (name: string) => Promise<T>,
+): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await create(numberedTemplateName(base, attempt));
+    } catch (error) {
+      if (!isDuplicateNameError(error) || attempt >= TEMPLATE_NAME_MAX_ATTEMPTS) throw error;
+    }
+  }
+}
+
 export function createProactiveApi(client: AxiosInstance) {
   return {
     async listSmartJobs(): Promise<unknown> {
@@ -110,12 +157,14 @@ export function createProactiveApi(client: AxiosInstance) {
       templateStyle?: string;
     }): Promise<unknown> {
       // 1. Create template — 백엔드는 sections를 최상위로 받으므로 structure 래퍼를 평탄화한다. (#245)
-      const template = await client.post('/proactive/templates', {
-        name: data.templateName,
-        description: `AI 자동 생성 — "${data.prompt}"`,
-        style: data.templateStyle,
-        sections: data.templateStructure.sections,
-      });
+      const template = await createWithNumberedTemplateName(data.templateName, (name) =>
+        client.post('/proactive/templates', {
+          name,
+          description: `AI 자동 생성 — "${data.prompt}"`,
+          style: data.templateStyle,
+          sections: data.templateStructure.sections,
+        }),
+      );
       const templateId = (template.data as { id: number }).id;
       // 2. Create smart job
       const jobPayload: Record<string, unknown> = {

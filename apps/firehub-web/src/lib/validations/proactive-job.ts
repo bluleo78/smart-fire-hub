@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import type { TemplateSection } from '@/api/proactive';
+import { cloneName } from '@/lib/clone-name';
 import { cronTooFrequentMessage } from '@/lib/cron-frequency';
 
 /** 분석 프롬프트 길이 상한(자) — 서버 CreateProactiveJobRequest.PROMPT_MAX_LENGTH 와 같다(WD-425). */
@@ -98,6 +99,17 @@ const GOAL_TEMPLATE_SUFFIX = ' 양식';
  */
 export function goalTemplateName(jobName: string): string {
   return jobName.trim().slice(0, TEMPLATE_NAME_MAX - GOAL_TEMPLATE_SUFFIX.length) + GOAL_TEMPLATE_SUFFIX;
+}
+
+/**
+ * 자동 양식 이름의 번호 후보(WD-824) — 1번째는 「<작업> 양식」, 2번째부터 「<작업> 양식 (2)」 …
+ * 번호를 붙인 이름 전체를 다시 자르면 긴 작업 이름에서 「 양식」 꼬리가 사라지므로, 자르기는 작업 이름 쪽에만 적용하고
+ * 꼬리(「 양식」+번호)는 항상 남긴다. 자르는 자리의 공백은 지우고 서로게이트 쌍은 가르지 않는다.
+ */
+export function numberedGoalTemplateName(jobName: string, attempt: number): string {
+  const tail = attempt <= 1 ? GOAL_TEMPLATE_SUFFIX : `${GOAL_TEMPLATE_SUFFIX} (${attempt})`;
+  // cloneName 은 「이름 + 구분자 + 접미사」를 만들고 자르는 자리(UTF-16·서로게이트·공백)를 한곳에서 처리한다 — 꼬리의 맨 앞 공백을 구분자로 넘긴다.
+  return cloneName(jobName.trim(), tail.slice(1), TEMPLATE_NAME_MAX);
 }
 
 export type ProactiveJobFormValues = z.infer<typeof proactiveJobSchema>;

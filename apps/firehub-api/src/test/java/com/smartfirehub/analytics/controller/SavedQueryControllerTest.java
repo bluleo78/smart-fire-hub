@@ -171,6 +171,27 @@ class SavedQueryControllerTest {
         .andExpect(jsonPath("$.name").value("테스트 쿼리"));
   }
 
+  /** WD-824: 같은 소유자의 중복 이름은 409 + code=DUPLICATE_NAME + 종류별 문구로 응답한다. */
+  @Test
+  void createQuery_duplicateName_returnsConflictWithCode() throws Exception {
+    CreateSavedQueryRequest request =
+        new CreateSavedQueryRequest("테스트 쿼리", "설명", "SELECT 1", null, "reports", false);
+    when(savedQueryService.create(any(CreateSavedQueryRequest.class), anyLong()))
+        .thenThrow(
+            new com.smartfirehub.global.exception.DuplicateResourceNameException(
+                com.smartfirehub.global.naming.ResourceKind.SAVED_QUERY));
+
+    mockMvc
+        .perform(
+            post("/api/v1/analytics/queries")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("DUPLICATE_NAME"))
+        .andExpect(jsonPath("$.message").value("이미 있는 쿼리 이름입니다. 다른 이름을 입력하세요."));
+  }
+
   @Test
   void createQuery_withoutAuth_returnsUnauthorized() throws Exception {
     CreateSavedQueryRequest request =

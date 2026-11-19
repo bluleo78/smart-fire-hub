@@ -276,6 +276,21 @@ export function isEditConflict(error: unknown): boolean {
   );
 }
 
+/** 이름 중복 코드(WD-824) — api DuplicateResourceNameException.CODE 와 같은 값. */
+const DUPLICATE_NAME_CODE = 'DUPLICATE_NAME';
+
+/**
+ * 같은 소유자 안에서 이름이 겹쳐 거절됐는가(409 + code, WD-824) — 쿼리·차트·대시보드·스마트 작업·리포트 양식 생성·이름 변경이 같은 코드를 쓴다.
+ * 같은 409 인 편집 충돌(EDIT_CONFLICT)과 코드로 구분한다 — 이름 중복이면 서버 문구(자원별)를 이름 칸 오류로 보이고, 충돌이면 충돌 안내 창을 띄운다.
+ */
+export function isDuplicateName(error: unknown): boolean {
+  return (
+    axios.isAxiosError(error) &&
+    error.response?.status === 409 &&
+    (error.response.data as ErrorResponse | undefined)?.code === DUPLICATE_NAME_CODE
+  );
+}
+
 /** 스마트 작업 중복 실행 코드(WD-368) — api ProactiveJobAlreadyRunningException.CODE 와 같은 값. */
 const JOB_ALREADY_RUNNING_CODE = 'PROACTIVE_JOB_ALREADY_RUNNING';
 
@@ -289,4 +304,16 @@ export function isJobAlreadyRunning(error: unknown): boolean {
     error.response?.status === 409 &&
     (error.response.data as ErrorResponse | undefined)?.code === JOB_ALREADY_RUNNING_CODE
   );
+}
+
+/**
+ * 이름 중복 409(WD-824)를 폼의 `name` 칸 오류로 옮긴다 — 서버 문구(자원별 「이미 있는 … 이름입니다…」)를 칸 아래에 보이고, 호출부는 같은 문구가
+ * 토스트로 또 보이지 않게 일반 오류 토스트를 건너뛴다.
+ *
+ * @returns 처리했으면 true(이름 중복이었음)
+ */
+export function applyDuplicateNameError<T extends FieldValues>(setError: UseFormSetError<T>, err: unknown): boolean {
+  if (!isDuplicateName(err)) return false;
+  setError('name' as Path<T>, { message: extractApiError(err, '이미 있는 이름입니다. 다른 이름을 입력하세요.') });
+  return true;
 }

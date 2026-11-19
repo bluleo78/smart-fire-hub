@@ -76,4 +76,10 @@ public interface ReportTemplateRepository {
    * @return 지운 행 수 — 동시 삭제에서 진 쪽은 0 이라 호출자가 404 로 바꾼다(WD-584)
    */
   int delete(Long id, Long userId);
+
+  /**
+   * 내가 쓸 수 있는 양식(본인 것 + 기본 양식, user_id NULL) 중 같은 이름(앞뒤 공백·대소문자 무시)이 있는지(WD-824). 기본 양식은 모두에게 보이므로 내 양식이
+   * 기본 양식과 같은 이름을 가질 수 없게 하려고 기본 양식도 포함한다. excludeId 가 있으면 그 행은 뺀다(수정 시 자기 자신).
+   */
+  boolean existsByOwnerAndName(long ownerId, String name, Long excludeId);
 }

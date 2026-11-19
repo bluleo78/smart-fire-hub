@@ -59,7 +59,7 @@ import {
 import { useInvalidateListsOnEntryNotFound } from '../../hooks/queries/useInvalidateListsOnEntryNotFound';
 import { useIsOwner } from '../../hooks/useIsOwner';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
-import { handleApiError, isEditConflict } from '../../lib/api-error';
+import { extractApiError, handleApiError, isDuplicateName, isEditConflict } from '../../lib/api-error';
 import {
   exportChartAsPng,
   exportChartAsSvg,
@@ -245,6 +245,8 @@ interface SaveDialogProps {
   isEdit: boolean;
   /** 설정이 가려진 차트(WD-31②) — 이름·설명·공유만 바뀐다는 것을 보이는 설명으로 알린다. */
   configWithheld?: boolean;
+  /** 이름 중복 409(WD-824)의 서버 문구 — 이름 칸 아래에 보인다 */
+  nameError?: string | null;
 }
 
 function SaveDialog({
@@ -260,6 +262,7 @@ function SaveDialog({
   isSaving,
   isEdit,
   configWithheld = false,
+  nameError,
 }: SaveDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -284,7 +287,14 @@ function SaveDialog({
               onChange={(e) => onNameChange(e.target.value)}
               placeholder="차트 이름을 입력하세요"
               maxLength={200}
+              aria-invalid={nameError ? true : undefined}
+              aria-describedby={nameError ? 'chart-name-error' : undefined}
             />
+            {nameError && (
+              <p id="chart-name-error" role="alert" className="text-sm text-destructive">
+                {nameError}
+              </p>
+            )}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="chart-description">설명</Label>
@@ -487,6 +497,8 @@ export default function ChartBuilderPage() {
   // 서버가 true 를 준 경우만 허용(fail-closed).
   const [exportAllowed, setExportAllowed] = useState(false);
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
+  // 이름 중복 409(WD-824)의 서버 문구 — 이름 칸 아래에 보이고 이름을 고치거나 다시 저장하면 사라진다
+  const [nameError, setNameError] = useState<string | null>(null);
   // 대시보드 추가 다이얼로그 상태 (#97)
   const [addToDashboardOpen, setAddToDashboardOpen] = useState(false);
   const [saveForm, setSaveForm] = useState({
@@ -668,6 +680,7 @@ export default function ChartBuilderPage() {
         isShared: existingChart.isShared,
       });
     }
+    setNameError(null);
     setSaveDialogOpen(true);
   };
 
@@ -702,6 +715,7 @@ export default function ChartBuilderPage() {
   /** force: 기준 버전을 보내지 않아 서버가 비교하지 않는다 — 편집 충돌 뒤 「내 변경으로 덮어쓰기」(WD-364) */
   const handleSave = async (force = false) => {
     if (!saveForm.name.trim()) return;
+    setNameError(null);
     if (!selectedQueryId) {
       toast.error('쿼리를 선택하세요.');
       return;
@@ -823,6 +837,11 @@ export default function ChartBuilderPage() {
       // 편집 충돌은 토스트 대신 안내 창으로 — 사용자가 다시 불러올지 덮어쓸지 고른다(WD-364)
       if (isEditConflict(error)) {
         setEditConflict(true);
+        return;
+      }
+      // 이름 중복(409 DUPLICATE_NAME, WD-824)은 서버 문구를 이름 칸 아래에 보이고 토스트는 생략한다
+      if (isDuplicateName(error)) {
+        setNameError(extractApiError(error, '이미 있는 차트 이름입니다. 다른 이름을 입력하세요.'));
         return;
       }
       handleApiError(error, '차트 저장에 실패했습니다.');
@@ -1191,7 +1210,12 @@ export default function ChartBuilderPage() {
         open={saveDialogOpen}
         onOpenChange={setSaveDialogOpen}
         name={saveForm.name}
-        onNameChange={(v) => setSaveForm((p) => ({ ...p, name: v }))}
+        onNameChange={(v) => {
+          setSaveForm((p) => ({ ...p, name: v }));
+          // 이름을 고치면 중복 안내는 낡은 것이다(WD-824)
+          setNameError(null);
+        }}
+        nameError={nameError}
         description={saveForm.description}
         onDescriptionChange={(v) => setSaveForm((p) => ({ ...p, description: v }))}
         isShared={saveForm.isShared}

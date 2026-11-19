@@ -15,6 +15,8 @@ import com.smartfirehub.analytics.repository.SavedQueryRepository;
 import com.smartfirehub.global.config.TransactionTemplateConfig;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.exception.EditConflictException;
+import com.smartfirehub.global.naming.ResourceKind;
+import com.smartfirehub.global.naming.ResourceNameGuard;
 import com.smartfirehub.pipeline.service.PipelineDataSchema;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
@@ -37,6 +39,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 public class ChartService {
 
   private final ChartRepository chartRepository;
+  // 같은 소유자 안 이름 중복 방지(WD-824)
+  private final ResourceNameGuard nameGuard;
   private final SavedQueryRepository savedQueryRepository;
   private final GuardedSqlExecutor guardedSqlExecutor;
   private final ClearanceResolver clearanceResolver;
@@ -106,6 +110,12 @@ public class ChartService {
     // 종류·config 값 타입 검사(WD-413) — 잘못된 config 가 저장돼 편집 화면이 깨지거나 빈 차트가 되지 않게 400 으로 막는다.
     ChartConfigValidator.validateType(req.chartType());
     ChartConfigValidator.validateConfig(req.chartType(), req.config());
+    // 같은 소유자에게 같은 이름이 이미 있으면 409(WD-824) — 잠금 아래에서 검사해 동시 생성 둘이 모두 통과하지 못한다.
+    nameGuard.requireUnused(
+        ResourceKind.CHART,
+        userId,
+        req.name(),
+        () -> chartRepository.existsByOwnerAndName(userId, req.name(), null));
     Long id = chartRepository.insert(req, userId);
     ChartResponse created =
         chartRepository
@@ -157,6 +167,13 @@ public class ChartService {
         chartRepository
             .findByIdForOwner(id, userId)
             .orElseThrow(() -> new ChartNotFoundException());
+    // 이름이 바뀐 저장만 중복을 검사한다(WD-824) — 판정 기준·이유는 ResourceNameGuard.requireUnusedOnRename 참고. 기준값은 행 잠금 뒤에 읽은 값이다.
+    nameGuard.requireUnusedOnRename(
+        ResourceKind.CHART,
+        userId,
+        auditBefore.name(),
+        req.name(),
+        () -> chartRepository.existsByOwnerAndName(userId, req.name(), id));
     String effectiveType = req.chartType() != null ? req.chartType() : existing.chartType();
     java.util.Map<String, Object> effectiveConfig =
         req.config() != null ? req.config() : existing.config();

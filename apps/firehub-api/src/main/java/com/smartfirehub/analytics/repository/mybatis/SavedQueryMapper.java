@@ -95,4 +95,10 @@ public interface SavedQueryMapper {
   /** 쿼리를 쓰는 차트 중 ownerId 가 아닌 사용자가 만든 것의 수. ownerId 는 null 이 아니다(구현이 null 을 0 으로 먼저 끝낸다). */
   long countOtherUserCharts(
       @Param("savedQueryId") Long savedQueryId, @Param("ownerId") Long ownerId);
+
+  /** 같은 소유자·같은 이름(앞뒤 공백·대소문자 무시)의 쿼리 수(WD-824). excludeId 가 null 이면 제외 없음. */
+  long countByOwnerAndName(
+      @Param("ownerId") long ownerId,
+      @Param("name") String name,
+      @Param("excludeId") Long excludeId);
 }

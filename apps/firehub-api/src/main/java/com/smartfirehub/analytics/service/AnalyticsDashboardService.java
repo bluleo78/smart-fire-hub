@@ -24,6 +24,8 @@ import com.smartfirehub.analytics.repository.SavedQueryRepository;
 import com.smartfirehub.global.config.TransactionTemplateConfig;
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.exception.EditConflictException;
+import com.smartfirehub.global.naming.ResourceKind;
+import com.smartfirehub.global.naming.ResourceNameGuard;
 import com.smartfirehub.pipeline.service.PipelineDataSchema;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
@@ -52,6 +54,8 @@ public class AnalyticsDashboardService {
       DashboardGridLimits.MAX_WIDGETS_PER_DASHBOARD;
 
   private final AnalyticsDashboardRepository dashboardRepository;
+  // 같은 소유자 안 이름 중복 방지(WD-824)
+  private final ResourceNameGuard nameGuard;
   private final DashboardWidgetRepository widgetRepository;
   private final ChartService chartService;
   private final ChartRepository chartRepository;
@@ -109,6 +113,12 @@ public class AnalyticsDashboardService {
 
   @Transactional
   public DashboardResponse create(CreateDashboardRequest req, Long userId) {
+    // 같은 소유자에게 같은 이름이 이미 있으면 409(WD-824) — 잠금 아래에서 검사해 동시 생성 둘이 모두 통과하지 못한다.
+    nameGuard.requireUnused(
+        ResourceKind.DASHBOARD,
+        userId,
+        req.name(),
+        () -> dashboardRepository.existsByOwnerAndName(userId, req.name(), null));
     Long id = dashboardRepository.insert(req, userId);
     List<DashboardResponse.DashboardWidgetResponse> widgets = viewerWidgets(id, userId);
     DashboardResponse created =
@@ -160,6 +170,13 @@ public class AnalyticsDashboardService {
         dashboardRepository
             .findByIdForOwner(id, userId)
             .orElseThrow(() -> new DashboardNotFoundException());
+    // 이름이 바뀐 저장만 중복을 검사한다(WD-824) — 판정 기준·이유는 ResourceNameGuard.requireUnusedOnRename 참고. 기준값은 행 잠금 뒤에 읽은 값이다.
+    nameGuard.requireUnusedOnRename(
+        ResourceKind.DASHBOARD,
+        userId,
+        before.name(),
+        req.name(),
+        () -> dashboardRepository.existsByOwnerAndName(userId, req.name(), id));
     dashboardRepository.update(id, req, userId);
 
     // 대시보드를 공유하면 위젯이 쓰는 차트·쿼리 중 요청자 본인 것만 함께 공유한다(WD-194).

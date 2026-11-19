@@ -99,4 +99,9 @@ public interface ChartRepository {
   List<Long> findSavedQueryIdsByChartIds(List<Long> chartIds);
 
   boolean deleteById(Long id, Long userId);
+
+  /**
+   * 같은 소유자에게 같은 이름(앞뒤 공백·대소문자 무시)의 차트가 있는지(WD-824). excludeId 가 있으면 그 행은 뺀다(수정 시 자기 자신).
+   */
+  boolean existsByOwnerAndName(long ownerId, String name, Long excludeId);
 }

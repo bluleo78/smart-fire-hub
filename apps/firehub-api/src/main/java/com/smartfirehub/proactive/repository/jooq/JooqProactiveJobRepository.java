@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
+import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.JSONB;
@@ -419,5 +420,16 @@ public class JooqProactiveJobRepository implements ProactiveJobRepository {
     } catch (Exception e) {
       throw new RuntimeException("Failed to deserialize config", e);
     }
+  }
+
+  /** 같은 소유자·같은 이름(lower(trim) 비교) 존재 여부(WD-824). */
+  @Override
+  public boolean existsByOwnerAndName(long ownerId, String name, Long excludeId) {
+    Condition c =
+        PJ_USER_ID.eq(ownerId).and(lower(trim(PJ_NAME)).eq(lower(trim(val(name, String.class)))));
+    if (excludeId != null) {
+      c = c.and(PJ_ID.ne(excludeId));
+    }
+    return dsl.fetchExists(dsl.selectOne().from(PROACTIVE_JOB).where(c));
   }
 }

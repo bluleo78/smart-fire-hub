@@ -1,6 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { cloneName } from './clone-name';
+import {
+  cloneName,
+  createWithNumberedName,
+  createWithUniqueCloneName,
+  NAME_RETRY_MAX_ATTEMPTS,
+  numberedCloneName,
+  numberedName,
+} from './clone-name';
 import { DATASET_NAME_MAX_LENGTH, datasetNameSchema } from './validations/dataset';
 
 describe('cloneName (WD-430)', () => {
@@ -72,3 +79,95 @@ describe('cloneName (WD-430)', () => {
   });
 });
 
+
+/** 이름 중복 409 모양의 axios 오류 — isDuplicateName 이 인정하는 최소 형태 */
+function duplicateError() {
+  return { isAxiosError: true, response: { status: 409, data: { status: 409, code: 'DUPLICATE_NAME', message: 'x' } } };
+}
+
+describe('numberedCloneName (WD-824)', () => {
+  it('1번째는 「 (복사본)」, 2번째부터 「 (복사본 N)」 — 서버 ResourceNameGuard.copyName 과 같은 모양', () => {
+    expect(numberedCloneName('일일 리포트', '복사본', 1)).toBe('일일 리포트 (복사본)');
+    expect(numberedCloneName('일일 리포트', '복사본', 2)).toBe('일일 리포트 (복사본 2)');
+    expect(numberedCloneName('일일 리포트', '복사본', 13)).toBe('일일 리포트 (복사본 13)');
+  });
+
+  it('번호가 붙어 접미사가 길어져도 원래 이름 쪽을 잘라 200자를 넘지 않는다', () => {
+    const first = numberedCloneName('가'.repeat(200), '복사본', 1);
+    expect(first).toBe(`${'가'.repeat(194)} (복사본)`);
+    const third = numberedCloneName('가'.repeat(200), '복사본', 3);
+    expect(third).toBe(`${'가'.repeat(192)} (복사본 3)`);
+    expect(third.length).toBe(200);
+  });
+
+  it('잘린 끝의 공백은 지운다', () => {
+    const name = `${'a'.repeat(192)} bcdef`;
+    expect(numberedCloneName(name, '복사본', 2)).toBe(`${'a'.repeat(192)} (복사본 2)`);
+  });
+});
+
+describe('createWithUniqueCloneName (WD-824)', () => {
+  it('처음 이름이 받아들여지면 한 번만 만든다', async () => {
+    const create = vi.fn(async (name: string) => ({ name }));
+    await expect(createWithUniqueCloneName('A', '복사본', create)).resolves.toEqual({ name: 'A (복사본)' });
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it('DUPLICATE_NAME 이면 다음 번호로 다시 시도한다', async () => {
+    const create = vi
+      .fn<(name: string) => Promise<{ name: string }>>()
+      .mockRejectedValueOnce(duplicateError())
+      .mockRejectedValueOnce(duplicateError())
+      .mockImplementation(async (name) => ({ name }));
+    await expect(createWithUniqueCloneName('A', '복사본', create)).resolves.toEqual({ name: 'A (복사본 3)' });
+    expect(create.mock.calls.map((c) => c[0])).toEqual(['A (복사본)', 'A (복사본 2)', 'A (복사본 3)']);
+  });
+
+  it('이름 중복이 아닌 오류는 다시 시도하지 않고 그대로 던진다', async () => {
+    const editConflict = { isAxiosError: true, response: { status: 409, data: { code: 'EDIT_CONFLICT' } } };
+    const create = vi.fn().mockRejectedValue(editConflict);
+    await expect(createWithUniqueCloneName('A', '복사본', create)).rejects.toBe(editConflict);
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it('시도 상한까지 계속 겹치면 마지막 오류를 던진다', async () => {
+    const err = duplicateError();
+    const create = vi.fn().mockRejectedValue(err);
+    await expect(createWithUniqueCloneName('A', '복사본', create)).rejects.toBe(err);
+    expect(create).toHaveBeenCalledTimes(NAME_RETRY_MAX_ATTEMPTS);
+  });
+});
+
+describe('numberedName / createWithNumberedName (WD-824)', () => {
+  it('1번째는 기본 이름 그대로, 2번째부터 「 (N)」을 붙인다', () => {
+    expect(numberedName('A 양식', 1)).toBe('A 양식');
+    expect(numberedName('A 양식', 2)).toBe('A 양식 (2)');
+    expect(numberedName('A 양식', 10)).toBe('A 양식 (10)');
+  });
+
+  it('번호가 붙어도 200자를 넘지 않게 앞쪽을 자른다', () => {
+    expect(numberedName('a'.repeat(200), 2).length).toBe(200);
+    expect(numberedName('a'.repeat(200), 2).endsWith(' (2)')).toBe(true);
+  });
+
+  it('DUPLICATE_NAME 이면 다음 번호 이름으로 다시 시도한다', async () => {
+    const create = vi
+      .fn<(name: string) => Promise<string>>()
+      .mockRejectedValueOnce(duplicateError())
+      .mockImplementation(async (name) => name);
+    await expect(createWithNumberedName((n) => numberedName('A 양식', n), create)).resolves.toBe('A 양식 (2)');
+    expect(create.mock.calls.map((c) => c[0])).toEqual(['A 양식', 'A 양식 (2)']);
+  });
+
+  it('이름 중복이 아닌 오류는 그대로 던지고, 상한까지 겹치면 마지막 오류를 던진다', async () => {
+    const other = new Error('boom');
+    const failing = vi.fn().mockRejectedValue(other);
+    await expect(createWithNumberedName((n) => numberedName('A', n), failing)).rejects.toBe(other);
+    expect(failing).toHaveBeenCalledTimes(1);
+
+    const dup = duplicateError();
+    const always = vi.fn().mockRejectedValue(dup);
+    await expect(createWithNumberedName((n) => numberedName('A', n), always)).rejects.toBe(dup);
+    expect(always).toHaveBeenCalledTimes(NAME_RETRY_MAX_ATTEMPTS);
+  });
+});
