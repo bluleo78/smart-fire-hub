@@ -151,4 +151,14 @@
     DELETE FROM dashboard WHERE id = #{id} AND created_by = #{userId}
   </delete>
 
+  <!-- WD-824: 같은 소유자·같은 이름(lower(trim) 비교) 대시보드 수. excludeId 는 수정 시 자기 자신 제외. -->
+  <select id="countByOwnerAndName" resultType="_long">
+    SELECT COUNT(*) FROM dashboard t
+     WHERE t.created_by = #{ownerId}
+       AND lower(trim(t.name)) = lower(trim(#{name}))
+    <if test="excludeId != null">
+       AND t.id &lt;&gt; #{excludeId}
+    </if>
+  </select>
+
 </mapper>

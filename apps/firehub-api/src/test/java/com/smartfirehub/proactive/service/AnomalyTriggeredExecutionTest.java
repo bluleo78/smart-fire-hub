@@ -82,6 +82,7 @@ class AnomalyTriggeredExecutionTest {
             suspended,
             null,
             null,
+            null,
             null);
     AnomalyEvent event =
         new AnomalyEvent(
@@ -111,6 +112,7 @@ class AnomalyTriggeredExecutionTest {
             mock(ReportTemplateRepository.class),
             mock(ProactiveOwnerEligibility.class),
             activeTenant(),
+            null,
             null,
             null,
             null);
@@ -148,6 +150,7 @@ class AnomalyTriggeredExecutionTest {
             activeTenant(),
             null,
             null,
+            null,
             null);
     AnomalyEvent event =
         new AnomalyEvent(
@@ -180,6 +183,7 @@ class AnomalyTriggeredExecutionTest {
             mock(ReportTemplateRepository.class),
             mock(ProactiveOwnerEligibility.class),
             activeTenant(),
+            null,
             null,
             null,
             null);

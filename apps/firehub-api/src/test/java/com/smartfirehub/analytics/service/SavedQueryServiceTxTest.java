@@ -85,6 +85,7 @@ class SavedQueryServiceTxTest extends IntegrationTestBase {
     SavedQueryService service =
         new SavedQueryService(
             repo,
+            mock(com.smartfirehub.global.naming.ResourceNameGuard.class),
             executor,
             resolver,
             mock(DatasetAccessGuard.class),

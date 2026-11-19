@@ -34,7 +34,7 @@ export function registerProactiveTools(
 
     safeTool(
       'create_proactive_job',
-      '새 스마트 작업을 생성합니다. cron 스케줄에 따라 AI가 자동으로 분석을 실행하고 결과를 전달합니다.',
+      '새 스마트 작업을 생성합니다. cron 스케줄에 따라 AI가 자동으로 분석을 실행하고 결과를 전달합니다. 같은 이름이 이미 있으면 409(DUPLICATE_NAME)로 거절된다 — 사용자에게 알리고 다른 이름으로 다시 시도한다.',
       {
         name: z.string().describe('작업 이름'),
         prompt: z.string().describe('AI 분석 프롬프트 (어떤 분석을 수행할지 기술)'),
@@ -71,7 +71,7 @@ export function registerProactiveTools(
 
     safeTool(
       'update_proactive_job',
-      '스마트 작업을 수정합니다. 활성화/비활성화, 스케줄, 프롬프트 등을 변경할 수 있습니다.',
+      '스마트 작업을 수정합니다. 활성화/비활성화, 스케줄, 프롬프트 등을 변경할 수 있습니다. 같은 이름이 이미 있으면 409(DUPLICATE_NAME)로 거절된다 — 사용자에게 알리고 다른 이름으로 다시 시도한다.',
       {
         id: z.number().describe('스마트 작업 ID'),
         name: z.string().optional().describe('작업 이름'),
@@ -149,7 +149,7 @@ export function registerProactiveTools(
 
     safeTool(
       'create_report_template',
-      '커스텀 리포트 양식을 생성합니다. 스마트 작업의 AI 분석 결과를 구조화된 형식으로 출력하는 데 사용됩니다.',
+      '커스텀 리포트 양식을 생성합니다. 스마트 작업의 AI 분석 결과를 구조화된 형식으로 출력하는 데 사용됩니다. 같은 이름이 이미 있으면 409(DUPLICATE_NAME)로 거절된다 — 사용자에게 알리고 다른 이름으로 다시 시도한다.',
       {
         name: z.string().describe('양식 이름'),
         description: descriptionParam('리포트 양식'),
@@ -274,7 +274,7 @@ export function registerProactiveTools(
 
     safeTool(
       'update_report_template',
-      '리포트 양식을 수정합니다. 이름, 설명, 스타일, 섹션 구조를 변경할 수 있습니다.',
+      '리포트 양식을 수정합니다. 이름, 설명, 스타일, 섹션 구조를 변경할 수 있습니다. 같은 이름이 이미 있으면 409(DUPLICATE_NAME)로 거절된다 — 사용자에게 알리고 다른 이름으로 다시 시도한다.',
       {
         id: z.number(),
         name: z.string().optional(),
@@ -366,7 +366,7 @@ export function registerProactiveTools(
 
     safeTool(
       'save_as_smart_job',
-      '챗에서 생성한 분석을 스마트 작업 + 리포트 양식으로 저장합니다.',
+      '챗에서 생성한 분석을 스마트 작업 + 리포트 양식으로 저장합니다. 같은 이름이 이미 있으면 409(DUPLICATE_NAME)로 거절된다 — 사용자에게 알리고 다른 이름으로 다시 시도한다.',
       {
         name: z.string().describe('스마트 작업 이름'),
         templateStructure: z

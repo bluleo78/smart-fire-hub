@@ -25,9 +25,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cloneSuccessMessage, useCanWriteProactive,useCloneProactiveJob, useCreateProactiveJob, useCreateProactiveTemplate, useDeleteProactiveJob, useDeleteProactiveTemplate, useDisableProactiveJob, useExecuteProactiveJob, useFetchLatestProactiveJob, useProactiveJob, useProactiveTemplates, useUpdateProactiveJob } from '@/hooks/queries/useProactiveMessages';
 import { useEditModeFocus } from '@/hooks/useEditModeFocus';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
-import { extractApiError, handleApiError, isEditConflict, isForbiddenError, isJobAlreadyRunning } from '@/lib/api-error';
+import { applyDuplicateNameError, extractApiError, handleApiError, isEditConflict, isForbiddenError, isJobAlreadyRunning } from '@/lib/api-error';
+import { createWithNumberedName } from '@/lib/clone-name';
 import { parseRouteId } from '@/lib/route-id';
-import { goalTemplateName, type ProactiveJobFormValues,proactiveJobSchema } from '@/lib/validations/proactive-job';
+import { numberedGoalTemplateName, type ProactiveJobFormValues,proactiveJobSchema } from '@/lib/validations/proactive-job';
 
 import { OwnerIneligibleBadge } from './components/OwnerIneligibleBadge';
 import { ProactiveReadForbiddenNotice } from './components/ProactiveReadForbiddenNotice';
@@ -231,6 +232,7 @@ export default function ProactiveJobDetailPage() {
     }
   };
 
+
   // handleSubmit 을 렌더 중이 아니라 클릭 때 부른다 — 콜백이 isCreatingRef 를 읽기 때문이다(react-hooks/refs).
   /** force: 기준 버전을 보내지 않아 서버가 비교하지 않는다 — 편집 충돌 뒤 「내 변경으로 덮어쓰기」(WD-364) */
   const submitJob = (force: boolean) => (e?: React.BaseSyntheticEvent) => form.handleSubmit(async (values) => {
@@ -251,11 +253,18 @@ export default function ProactiveJobDetailPage() {
       let goalTemplateId: number | null = null;
       if (values.generatedSections?.length) {
         try {
-          const template = await createTemplateMutation.mutateAsync({
-            name: goalTemplateName(values.name),
-            description: `목표 기반 작업 「${values.name}」의 질문으로 만든 양식`,
-            sections: values.generatedSections,
-          });
+          // 양식 이름은 작업 이름에서 파생된 것이라 사용자가 정한 적이 없다 — 작업을 지워도 양식은 남아 같은 작업 이름을 다시 쓰면 겹친다(WD-824).
+          // 409 DUPLICATE_NAME 이면 「<작업> 양식 (2)」 … 로 번호를 올려 다시 저장하고, 그 밖의 오류는 아래 catch 로 넘긴다.
+          const sections = values.generatedSections;
+          const template = await createWithNumberedName(
+            (attempt) => numberedGoalTemplateName(values.name, attempt),
+            (templateName) =>
+              createTemplateMutation.mutateAsync({
+                name: templateName,
+                description: `목표 기반 작업 「${values.name}」의 질문으로 만든 양식`,
+                sections,
+              }),
+          );
           goalTemplateId = template.id;
         } catch (err) {
           isCreatingRef.current = false;
@@ -278,6 +287,8 @@ export default function ProactiveJobDetailPage() {
           // 서버가 거절한 경우에만 작업 없이 남는 양식을 지운다(삭제 실패는 사용자 오류 안내가 먼저라 조용히 넘긴다).
           // 응답 없는 실패(시간 초과·연결 끊김)는 서버가 작업을 이미 만들었을 수 있어 지우지 않는다 — 지우면 그 작업의 양식이 끊긴다(ON DELETE SET NULL).
           if (goalTemplateId != null && axios.isAxiosError(err) && err.response) deleteTemplateMutation.mutate(goalTemplateId);
+          // 이름 중복 409(WD-824)는 서버 문구를 이름 칸 오류로 붙이고 토스트는 생략한다
+          if (applyDuplicateNameError(form.setError, err)) return;
           handleApiError(err, '작업 생성에 실패했습니다.');
         },
       });
@@ -309,6 +320,7 @@ export default function ProactiveJobDetailPage() {
               setEditConflict(true);
               return;
             }
+            if (applyDuplicateNameError(form.setError, err)) return;
             handleApiError(err, '작업 저장에 실패했습니다.');
           },
         },

@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { SearchInput } from '@/components/ui/search-input';
 import { useCanWriteProactive,useProactiveTemplates } from '@/hooks/queries/useProactiveMessages';
 import { isForbiddenError } from '@/lib/api-error';
+import { formatDateTimeMinute } from '@/lib/formatters';
 
 import { ProactiveReadForbiddenNotice } from '../components/ProactiveReadForbiddenNotice';
 import { ProactiveWriteNotice } from '../components/ProactiveWriteNotice';
@@ -185,6 +186,10 @@ export default function ReportTemplatesTab() {
                     {/* flex-1로 설정하여 카드 높이가 늘어날 때 콘텐츠 영역이 확장되도록 함 */}
                     <CardContent className="flex-1">
                       <p className="text-xs text-muted-foreground">섹션 {t.sectionCount}개</p>
+                      {/* 같은 이름의 양식을 서로 구분하도록 수정 일시(분 단위)를 보인다(WD-824) — 같은 날 고친 양식도 구분되게 한다 */}
+                      {t.updatedAt && (
+                        <p className="text-xs text-muted-foreground mt-0.5">수정 {formatDateTimeMinute(t.updatedAt)}</p>
+                      )}
                     </CardContent>
                   </Card>
                 ))}

@@ -469,4 +469,17 @@ public class JooqChartRepository implements ChartRepository {
   private static String blankToNull(String value) {
     return value == null || value.isBlank() ? null : value;
   }
+
+  /** 같은 소유자·같은 이름(lower(trim) 비교) 존재 여부(WD-824). */
+  @Override
+  public boolean existsByOwnerAndName(long ownerId, String name, Long excludeId) {
+    Condition c =
+        C_CREATED_BY
+            .eq(ownerId)
+            .and(lower(trim(C_NAME)).eq(lower(trim(val(name, String.class)))));
+    if (excludeId != null) {
+      c = c.and(C_ID.ne(excludeId));
+    }
+    return dsl.fetchExists(dsl.selectOne().from(C).where(c));
+  }
 }

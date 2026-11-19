@@ -316,4 +316,17 @@ public class JooqAnalyticsDashboardRepository implements AnalyticsDashboardRepos
   private static String blankToNull(String value) {
     return value == null || value.isBlank() ? null : value;
   }
+
+  /** 같은 소유자·같은 이름(lower(trim) 비교) 존재 여부(WD-824). */
+  @Override
+  public boolean existsByOwnerAndName(long ownerId, String name, Long excludeId) {
+    Condition c =
+        D_CREATED_BY
+            .eq(ownerId)
+            .and(lower(trim(D_NAME)).eq(lower(trim(val(name, String.class)))));
+    if (excludeId != null) {
+      c = c.and(D_ID.ne(excludeId));
+    }
+    return dsl.fetchExists(dsl.selectOne().from(D).where(c));
+  }
 }

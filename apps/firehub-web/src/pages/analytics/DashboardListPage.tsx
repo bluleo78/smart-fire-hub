@@ -53,7 +53,7 @@ import {
 } from '../../hooks/queries/useAnalytics';
 import { useIsOwner } from '../../hooks/useIsOwner';
 import { useSubmitGuard } from '../../hooks/useSubmitGuard';
-import { handleApiError, isEditConflict } from '../../lib/api-error';
+import { extractApiError, handleApiError, isDuplicateName, isEditConflict } from '../../lib/api-error';
 import { formatDateShort, formatRelativeTime } from '../../lib/formatters';
 import { getPageAfterDelete } from '../../lib/pagination';
 import { iGa } from '../../lib/utils';
@@ -95,6 +95,8 @@ function CreateDashboardDialog({ open, onOpenChange, onCreated }: CreateDialogPr
   const [description, setDescription] = useState('');
   const [isShared, setIsShared] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState('');
+  // 이름 중복 409(WD-824)의 서버 문구 — 이름 칸 아래에 보이고 이름을 고치면 사라진다
+  const [nameError, setNameError] = useState<string | null>(null);
   const createDashboard = useCreateDashboard();
   // isPending은 mutateAsync 호출 후 리렌더를 거쳐야 반영되는 비동기 상태라,
   // 같은 틱에 도착하는 빠른 연속 클릭(더블클릭)을 막지 못한다(#546).
@@ -103,6 +105,7 @@ function CreateDashboardDialog({ open, onOpenChange, onCreated }: CreateDialogPr
 
   const handleSubmit = guardSubmit(async () => {
     if (!name.trim()) return;
+    setNameError(null);
     const parsedAutoRefresh = parseAutoRefreshInput(autoRefresh);
     if ('error' in parsedAutoRefresh) {
       toast.error(parsedAutoRefresh.error);
@@ -124,6 +127,11 @@ function CreateDashboardDialog({ open, onOpenChange, onCreated }: CreateDialogPr
       setIsShared(false);
       setAutoRefresh('');
     } catch (error) {
+      // 이름 중복(409 DUPLICATE_NAME, WD-824)은 서버 문구를 이름 칸 아래에 보이고 토스트는 생략한다
+      if (isDuplicateName(error)) {
+        setNameError(extractApiError(error, '이미 있는 대시보드 이름입니다. 다른 이름을 입력하세요.'));
+        return;
+      }
       handleApiError(error, '대시보드 생성에 실패했습니다.');
     }
   });
@@ -142,9 +150,19 @@ function CreateDashboardDialog({ open, onOpenChange, onCreated }: CreateDialogPr
               id="dash-name"
               placeholder="대시보드 이름"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={(e) => {
+                setName(e.target.value);
+                setNameError(null);
+              }}
               maxLength={200}
+              aria-invalid={nameError ? true : undefined}
+              aria-describedby={nameError ? 'dash-name-error' : undefined}
             />
+            {nameError && (
+              <p id="dash-name-error" role="alert" className="text-sm text-destructive">
+                {nameError}
+              </p>
+            )}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="dash-desc">설명</Label>
@@ -207,6 +225,8 @@ function EditDashboardDialog({ dashboard, onClose }: EditDialogProps) {
   const [autoRefresh, setAutoRefresh] = useState(
     dashboard?.autoRefreshSeconds != null ? String(dashboard.autoRefreshSeconds) : '',
   );
+  // 이름 중복 409(WD-824)의 서버 문구 — 이름 칸 아래에 보이고 이름을 고치면 사라진다
+  const [nameError, setNameError] = useState<string | null>(null);
   const updateDashboard = useUpdateDashboard();
   // 공유 스위치 안내용 영향 개수(WD-325) — 창이 열려 있을 때만 센다. 실패하면 개수 없는 안내로 물러난다
   const { data: shareImpact } = useDashboardShareImpact(dashboard?.id);
@@ -241,6 +261,7 @@ function EditDashboardDialog({ dashboard, onClose }: EditDialogProps) {
     // 폼을 채운 목록 행의 버전이 기준이다(WD-364)
     setBaseUpdatedAt(dashboard.updatedAt);
     setEditConflict(false);
+    setNameError(null);
   } else if (!dashboard && prevDashboard) {
     setPrevDashboard(null);
   }
@@ -248,6 +269,7 @@ function EditDashboardDialog({ dashboard, onClose }: EditDialogProps) {
   /** force: 기준 버전을 보내지 않아 서버가 비교하지 않는다 — 편집 충돌 뒤 「내 변경으로 덮어쓰기」(WD-364) */
   const submitSettings = async (force: boolean) => {
     if (!dashboard || !name.trim()) return;
+    setNameError(null);
     const parsedAutoRefresh = parseAutoRefreshInput(autoRefresh);
     if ('error' in parsedAutoRefresh) {
       toast.error(parsedAutoRefresh.error);
@@ -276,6 +298,11 @@ function EditDashboardDialog({ dashboard, onClose }: EditDialogProps) {
       // 편집 충돌은 토스트 대신 안내 창으로 — 사용자가 다시 불러올지 덮어쓸지 고른다(WD-364)
       if (isEditConflict(error)) {
         setEditConflict(true);
+        return;
+      }
+      // 이름 중복(409 DUPLICATE_NAME, WD-824)은 서버 문구를 이름 칸 아래에 보이고 토스트는 생략한다
+      if (isDuplicateName(error)) {
+        setNameError(extractApiError(error, '이미 있는 대시보드 이름입니다. 다른 이름을 입력하세요.'));
         return;
       }
       handleApiError(error, '대시보드 수정에 실패했습니다.');
@@ -326,9 +353,19 @@ function EditDashboardDialog({ dashboard, onClose }: EditDialogProps) {
               id="edit-dash-name"
               placeholder="대시보드 이름"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={(e) => {
+                setName(e.target.value);
+                setNameError(null);
+              }}
               maxLength={200}
+              aria-invalid={nameError ? true : undefined}
+              aria-describedby={nameError ? 'edit-dash-name-error' : undefined}
             />
+            {nameError && (
+              <p id="edit-dash-name-error" role="alert" className="text-sm text-destructive">
+                {nameError}
+              </p>
+            )}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="edit-dash-desc">설명</Label>

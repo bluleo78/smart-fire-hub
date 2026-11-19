@@ -14,6 +14,8 @@ import com.smartfirehub.dataset.exception.SqlQueryException;
 import com.smartfirehub.global.config.TransactionTemplateConfig;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.exception.EditConflictException;
+import com.smartfirehub.global.naming.ResourceKind;
+import com.smartfirehub.global.naming.ResourceNameGuard;
 import com.smartfirehub.global.util.NormalizedSql;
 import com.smartfirehub.pipeline.exception.TiberoUnqualifiedTableException;
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
@@ -41,6 +43,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 public class SavedQueryService {
 
   private final SavedQueryRepository savedQueryRepository;
+  // 같은 소유자 안 이름 중복 방지(WD-824)
+  private final ResourceNameGuard nameGuard;
   private final GuardedSqlExecutor guardedSqlExecutor;
   private final ClearanceResolver clearanceResolver;
   private final DatasetAccessGuard datasetAccessGuard;
@@ -128,6 +132,12 @@ public class SavedQueryService {
     }
     // SQL 이 참조하는 표도 작성자가 볼 수 있어야 한다(WD-409) — insert 전에 판정해 거부되면 행이 생기지 않는다.
     requireSqlSavable(viewer, req.sqlText());
+    // 같은 소유자에게 같은 이름이 이미 있으면 409(WD-824) — 잠금 아래에서 검사해 동시 생성 둘이 모두 통과하지 못한다.
+    nameGuard.requireUnused(
+        ResourceKind.SAVED_QUERY,
+        userId,
+        req.name(),
+        () -> savedQueryRepository.existsByOwnerAndName(userId, req.name(), null));
     Long id = savedQueryRepository.insert(req, userId);
     SavedQueryResponse created =
         savedQueryRepository
@@ -202,6 +212,13 @@ public class SavedQueryService {
         savedQueryRepository
             .findByIdForOwner(id, userId, DatasetVisibility.UNRESTRICTED)
             .orElseThrow(() -> new SavedQueryNotFoundException());
+    // 이름이 바뀐 저장만 중복을 검사한다(WD-824) — 판정 기준·이유는 ResourceNameGuard.requireUnusedOnRename 참고. 기준값은 행 잠금 뒤에 읽은 값이다.
+    nameGuard.requireUnusedOnRename(
+        ResourceKind.SAVED_QUERY,
+        userId,
+        auditBefore.name(),
+        req.name(),
+        () -> savedQueryRepository.existsByOwnerAndName(userId, req.name(), id));
 
     // 연결 데이터셋을 바꾸는 경우만 판정한다(create 와 같은 404) — 웹 편집기가 기존 값(편집자가 자격을 잃은 숨김 id 포함)을 그대로 되돌려
     // 보내는 저장은 막지 않는다(왕복 보존).
@@ -291,24 +308,6 @@ public class SavedQueryService {
         charts, dashboardRepository.findImpactByChartIds(chartIds, userId));
   }
 
-  /** 저장 쿼리 이름 한도(DB varchar(200)) */
-  static final int NAME_MAX_LENGTH = 200;
-
-  private static final String CLONE_SUFFIX = " (복사본)";
-
-  /**
-   * 복제본 이름 — 원래 이름 뒤에 「 (복사본)」을 붙이되, 200자를 넘으면 접미사가 들어가도록 원래 이름 끝을 잘라 낸다(WD-430). 예전에는 194자를 넘는 이름의
-   * 쿼리를 복제하면 길이 오류(400)로 실패해, 공유받은 사람은 사본을 만들 방법이 없었다. 글자 수는 DB 와 같게 코드 포인트로 센다.
-   */
-  static String cloneName(String originalName) {
-    int room = NAME_MAX_LENGTH - CLONE_SUFFIX.length();
-    String base = originalName;
-    if (originalName.codePointCount(0, originalName.length()) > room) {
-      base = originalName.substring(0, originalName.offsetByCodePoints(0, room)).stripTrailing();
-    }
-    return base + CLONE_SUFFIX;
-  }
-
   /**
    * Clone a saved query. The clone is private (is_shared=false) and belongs to the requesting user.
    */
@@ -326,10 +325,19 @@ public class SavedQueryService {
       throw new SavedQueryNotFoundException();
     }
 
+    // 복제 이름(WD-824) — 「 (복사본)」, 쓰이면 「 (복사본 2)」… 200자 안으로 원래 이름을 잘라 맞춘다(WD-430). 후보마다 그 이름의 잠금을 먼저 잡고
+    // 존재를 확인해, 실제로 넣는 이름이 항상 잠겨 있게 한다(같은 원본의 동시 복제가 같은 이름을 고르지 못하게). 잠금은 커밋 때 풀리므로 몇 개 쥐어도 된다.
     String originalName = raw.name();
+    String cloneName =
+        ResourceNameGuard.copyName(
+            originalName,
+            n -> {
+              nameGuard.lock(ResourceKind.SAVED_QUERY, userId, n);
+              return savedQueryRepository.existsByOwnerAndName(userId, n, null);
+            });
     CreateSavedQueryRequest cloneReq =
         new CreateSavedQueryRequest(
-            cloneName(originalName),
+            cloneName,
             raw.description(),
             raw.sqlText(),
             raw.datasetId(),

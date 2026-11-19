@@ -38,8 +38,8 @@ import { useCanWriteProactive,useCreateProactiveTemplate, useDeleteProactiveTemp
 import { useEditModeFocus } from '@/hooks/useEditModeFocus';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
-import { applyFieldErrors, handleApiError, isEditConflict, isForbiddenError } from '@/lib/api-error';
-import { cloneName } from '@/lib/clone-name';
+import { applyDuplicateNameError, applyFieldErrors, handleApiError, isEditConflict, isForbiddenError } from '@/lib/api-error';
+import { createWithUniqueCloneName } from '@/lib/clone-name';
 import { parseUtcDate } from '@/lib/formatters';
 import { parseRouteId } from '@/lib/route-id';
 import { parseTemplateSections, validateSectionKeys } from '@/lib/template-section-types';
@@ -339,6 +339,7 @@ function ReportTemplateDetailContent({ templateId }: { templateId: number | null
     [activeTab, structureJson, tree],
   );
 
+
   /**
    * 서버 검증 400 의 필드 오류를 이름·설명 입력 아래로 옮긴다(WD-501, WD-270 패턴) — 토스트로만 띄우면 어느 칸인지 모른다.
    * 폼에 입력이 없는 필드(섹션·스타일)의 문구(root)는 지금처럼 토스트로 띄운다 — 폼 안에 두면 섹션을 고쳐도 지워지지 않고
@@ -346,6 +347,7 @@ function ReportTemplateDetailContent({ templateId }: { templateId: number | null
    * @returns 처리했으면 true — 호출부는 자체 폴백 토스트를 건너뛴다.
    */
   const applyTemplateFieldErrors = (err: unknown) =>
+    applyDuplicateNameError(form.setError, err) ||
     applyFieldErrors<ReportTemplateFormValues>(
       err,
       (name, error, options) => (name === 'root' ? toast.error(error.message) : form.setError(name, error, options)),
@@ -466,24 +468,26 @@ function ReportTemplateDetailContent({ templateId }: { templateId: number | null
     setDeleteDialogOpen(false);
   };
 
-  const handleClone = () => {
+  /**
+   * 양식 복제 — 서버에 복제 API 가 없어 이름을 웹이 만들어 일반 생성 API 로 보낸다. 「<이름> (복사본)」이 이미 있으면(409 DUPLICATE_NAME)
+   * 「(복사본 2)」… 로 번호를 올려 다시 시도한다(WD-824). 200자에 가까운 이름도 접미사가 들어갈 만큼 잘라 보낸다(WD-430).
+   */
+  const handleClone = async () => {
     if (!template) return;
-    createMutation.mutate(
-      {
-        // 200자에 가까운 이름도 복제되게 접미사가 들어갈 만큼 원래 이름을 자른다(WD-430)
-        name: cloneName(template.name, '(사본)'),
-        description: template.description ?? undefined,
-        sections: Array.isArray(template.sections) ? template.sections : [],
-        style: template.style ?? undefined,
-      },
-      {
-        onSuccess: (created) => {
-          toast.success(`"${created.name}" 템플릿이 복제되었습니다.`);
-          navigate(`/ai-insights/templates/${created.id}`);
-        },
-        onError: (err) => handleApiError(err, '템플릿 복제에 실패했습니다.'),
-      },
-    );
+    try {
+      const created = await createWithUniqueCloneName(template.name, '복사본', (name) =>
+        createMutation.mutateAsync({
+          name,
+          description: template.description ?? undefined,
+          sections: Array.isArray(template.sections) ? template.sections : [],
+          style: template.style ?? undefined,
+        }),
+      );
+      toast.success(`"${created.name}" 템플릿이 복제되었습니다.`);
+      navigate(`/ai-insights/templates/${created.id}`);
+    } catch (err) {
+      handleApiError(err, '템플릿 복제에 실패했습니다.');
+    }
   };
 
   // 편집 취소 본 동작 — 폼/구조/스타일/탭 초기화 (이슈 #58: dirty 가드 분리)

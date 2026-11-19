@@ -180,7 +180,7 @@ export function registerAnalyticsTools(
     // 2. 저장된 쿼리 생성
     safeTool(
       'create_saved_query',
-      'SQL 쿼리를 저장합니다. 차트의 데이터 소스로 사용할 수 있습니다.',
+      'SQL 쿼리를 저장합니다. 차트의 데이터 소스로 사용할 수 있습니다. 같은 이름이 이미 있으면 409(DUPLICATE_NAME)로 거절된다 — 사용자에게 알리고 다른 이름으로 다시 시도한다.',
       {
         name: z.string().describe('쿼리 이름'),
         sqlText: z.string().describe('저장할 SQL 쿼리 텍스트'),
@@ -253,7 +253,7 @@ export function registerAnalyticsTools(
     // 6. 차트 생성
     safeTool(
       'create_chart',
-      '저장된 쿼리를 기반으로 차트를 생성합니다.',
+      '저장된 쿼리를 기반으로 차트를 생성합니다. 같은 이름이 이미 있으면 409(DUPLICATE_NAME)로 거절된다 — 사용자에게 알리고 다른 이름으로 다시 시도한다.',
       {
         name: z.string().describe('차트 이름'),
         savedQueryId: z.number().describe('데이터 소스로 사용할 저장된 쿼리 ID'),
@@ -322,7 +322,7 @@ export function registerAnalyticsTools(
     // 9. 대시보드 생성
     safeTool(
       'create_dashboard',
-      '새 대시보드를 생성합니다.',
+      '새 대시보드를 생성합니다. 같은 이름이 이미 있으면 409(DUPLICATE_NAME)로 거절된다 — 사용자에게 알리고 다른 이름으로 다시 시도한다.',
       {
         name: z.string().describe('대시보드 이름'),
         description: descriptionParam('대시보드'),

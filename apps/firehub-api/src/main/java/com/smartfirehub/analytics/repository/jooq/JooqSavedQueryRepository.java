@@ -400,6 +400,19 @@ public class JooqSavedQueryRepository implements SavedQueryRepository {
         .fetchOne(0, Long.class);
   }
 
+  /** 같은 소유자·같은 이름(lower(trim) 비교) 존재 여부(WD-824). */
+  @Override
+  public boolean existsByOwnerAndName(long ownerId, String name, Long excludeId) {
+    Condition c =
+        SQ_CREATED_BY
+            .eq(ownerId)
+            .and(lower(trim(SQ_NAME)).eq(lower(trim(val(name, String.class)))));
+    if (excludeId != null) {
+      c = c.and(SQ_ID.ne(excludeId));
+    }
+    return dsl.fetchExists(dsl.selectOne().from(SQ).where(c));
+  }
+
   private SavedQueryResponse mapToResponse(Record r) {
     return new SavedQueryResponse(
         r.get(SQ_ID),

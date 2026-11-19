@@ -77,6 +77,7 @@ class ProactiveRunSlotTest {
             tenantRepository,
             null,
             null,
+            null,
             null);
     scheduler =
         new ProactiveJobSchedulerService(

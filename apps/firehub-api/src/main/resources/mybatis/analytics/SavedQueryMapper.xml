@@ -199,4 +199,14 @@
        AND c.created_by &lt;&gt; #{ownerId}
   </select>
 
+  <!-- WD-824: 같은 소유자·같은 이름(lower(trim) 비교) 쿼리 수. excludeId 는 수정 시 자기 자신 제외. -->
+  <select id="countByOwnerAndName" resultType="_long">
+    SELECT COUNT(*) FROM saved_query sq
+     WHERE sq.created_by = #{ownerId}
+       AND lower(trim(sq.name)) = lower(trim(#{name}))
+    <if test="excludeId != null">
+       AND sq.id &lt;&gt; #{excludeId}
+    </if>
+  </select>
+
 </mapper>

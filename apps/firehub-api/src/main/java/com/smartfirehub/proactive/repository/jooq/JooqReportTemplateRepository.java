@@ -239,4 +239,18 @@ public class JooqReportTemplateRepository implements ReportTemplateRepository {
       throw new RuntimeException("Failed to deserialize sections", e);
     }
   }
+
+  /** 본인 양식 + 기본 양식(user_id NULL) 중 같은 이름(lower(trim) 비교) 존재 여부(WD-824). */
+  @Override
+  public boolean existsByOwnerAndName(long ownerId, String name, Long excludeId) {
+    Condition c =
+        RT_USER_ID
+            .isNull()
+            .or(RT_USER_ID.eq(ownerId))
+            .and(lower(trim(RT_NAME)).eq(lower(trim(val(name, String.class)))));
+    if (excludeId != null) {
+      c = c.and(RT_ID.ne(excludeId));
+    }
+    return dsl.fetchExists(dsl.selectOne().from(REPORT_TEMPLATE).where(c));
+  }
 }

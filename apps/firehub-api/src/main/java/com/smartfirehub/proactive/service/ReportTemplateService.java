@@ -1,6 +1,8 @@
 package com.smartfirehub.proactive.service;
 
 import com.smartfirehub.global.exception.EditConflictException;
+import com.smartfirehub.global.naming.ResourceKind;
+import com.smartfirehub.global.naming.ResourceNameGuard;
 import com.smartfirehub.proactive.dto.CreateReportTemplateRequest;
 import com.smartfirehub.proactive.dto.ReportTemplateResponse;
 import com.smartfirehub.proactive.dto.ReportTemplateSummaryResponse;
@@ -26,6 +28,8 @@ public class ReportTemplateService {
 
   /** 작성자 본인의 생성·수정·삭제 감사(WD-464). */
   private final ProactiveAuditRecorder auditRecorder;
+  // 같은 소유자(+기본 양식) 안 이름 중복 방지(WD-824)
+  private final ResourceNameGuard nameGuard;
 
   /**
    * 수정 감사의 바뀐 항목 키 → 설명용 라벨(WD-464). 섹션은 무엇이 바뀌었든(추가·삭제·순서·내용) "sections" 하나로만 남긴다 — 섹션 내용·스타일 값은
@@ -56,6 +60,12 @@ public class ReportTemplateService {
   public ReportTemplateResponse createTemplate(CreateReportTemplateRequest request, Long userId) {
     // 섹션 검증(WD-298) — 화면 밖(API·AI 도구)에서 들어온 깨진 섹션을 저장 전에 400 으로 거절한다.
     ReportTemplateSectionValidator.validate(request.sections());
+    // 내가 쓸 수 있는 양식(본인 + 기본 양식)에 같은 이름이 있으면 409(WD-824) — 잠금 아래에서 검사해 동시 생성 둘이 모두 통과하지 못한다.
+    nameGuard.requireUnused(
+        ResourceKind.REPORT_TEMPLATE,
+        userId,
+        request.name(),
+        () -> reportTemplateRepository.existsByOwnerAndName(userId, request.name(), null));
     Long id =
         reportTemplateRepository.create(
             request.name(), request.description(), request.sections(), request.style(), userId);
@@ -102,6 +112,13 @@ public class ReportTemplateService {
         request.expectedUpdatedAt(), currentUpdatedAt, EDIT_CONFLICT_MESSAGE);
     // 감사 비교용 저장 전 값(WD-464) — 행 잠금 뒤에 다시 읽어, 기준 버전 없이 들어온 저장(AI 도구)도 동시 저장의 값이 섞이지 않게 한다.
     ReportTemplateResponse before = reportTemplateRepository.findById(id).orElse(template);
+    // 이름이 바뀐 저장만 중복을 검사한다(WD-824) — 판정 기준·이유는 ResourceNameGuard.requireUnusedOnRename 참고. 기준값은 행 잠금 뒤에 읽은 값이다.
+    nameGuard.requireUnusedOnRename(
+        ResourceKind.REPORT_TEMPLATE,
+        userId,
+        before.name(),
+        request.name(),
+        () -> reportTemplateRepository.existsByOwnerAndName(userId, request.name(), id));
     LocalDateTime savedUpdatedAt =
         reportTemplateRepository.update(
             id, userId, request.name(), request.description(), request.sections(), request.style());

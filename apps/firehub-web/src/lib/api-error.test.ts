@@ -8,6 +8,7 @@ import {
   GRAPH_READ_RESTRICTED_MESSAGE,
   handleApiError,
   isBadCredentialsError,
+  isDuplicateName,
   isGraphReadRestricted,
   isMemberGoneError,
   isWrongCurrentPasswordError,
@@ -199,5 +200,20 @@ describe('isWrongCurrentPasswordError (WD-572)', () => {
     expect(isWrongCurrentPasswordError(axiosErrorWithStatus(429, {}))).toBe(false);
     expect(isWrongCurrentPasswordError(axiosErrorWithStatus(500, {}))).toBe(false);
     expect(isWrongCurrentPasswordError({ isAxiosError: true })).toBe(false);
+  });
+});
+
+describe('isDuplicateName (WD-824)', () => {
+  it('code DUPLICATE_NAME 인 409 만 참이다', () => {
+    expect(isDuplicateName(axiosErrorWithStatus(409, { status: 409, error: 'Conflict', code: 'DUPLICATE_NAME', message: '이미 있는 쿼리 이름입니다. 다른 이름을 입력하세요.' }))).toBe(true);
+  });
+
+  it('편집 충돌 409·code 없는 409·다른 상태·네트워크 오류는 아니다', () => {
+    // 같은 409 라도 EDIT_CONFLICT 는 충돌 안내 창 몫이다
+    expect(isDuplicateName(axiosErrorWithStatus(409, { status: 409, code: 'EDIT_CONFLICT', message: 'x' }))).toBe(false);
+    expect(isDuplicateName(axiosErrorWithStatus(409, { status: 409, message: 'x' }))).toBe(false);
+    expect(isDuplicateName(axiosErrorWithStatus(400, { code: 'DUPLICATE_NAME' }))).toBe(false);
+    expect(isDuplicateName({ isAxiosError: true })).toBe(false);
+    expect(isDuplicateName(new Error('x'))).toBe(false);
   });
 });

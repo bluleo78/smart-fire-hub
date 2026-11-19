@@ -120,6 +120,7 @@ final class AnalyticsServiceFixtures {
     ChartService service =
         new ChartService(
             repo,
+            mock(com.smartfirehub.global.naming.ResourceNameGuard.class),
             mock(SavedQueryRepository.class),
             executor,
             resolver,
@@ -253,6 +254,7 @@ final class AnalyticsServiceFixtures {
     AnalyticsDashboardService service =
         new AnalyticsDashboardService(
             dashRepo,
+            mock(com.smartfirehub.global.naming.ResourceNameGuard.class),
             widgetRepo,
             chartService,
             chartRepo,

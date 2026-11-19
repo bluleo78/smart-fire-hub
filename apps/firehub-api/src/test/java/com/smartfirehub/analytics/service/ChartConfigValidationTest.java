@@ -11,6 +11,7 @@ import com.smartfirehub.support.IntegrationTestBase;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import org.jooq.DSLContext;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.BeforeEach;
@@ -59,8 +60,11 @@ class ChartConfigValidationTest extends IntegrationTestBase {
   }
 
   private ChartResponse create(String type, Map<String, Object> config) {
+    // 같은 소유자 안 이름 중복은 409(WD-824) — 한 시험에서 여러 번 만들어도 겹치지 않게 호출마다 다른 이름을 쓴다.
     return chartService.create(
-        new CreateChartRequest("Cfg Chart", null, savedQueryId, type, config, false), ownerUserId);
+        new CreateChartRequest(
+            "Cfg Chart " + UUID.randomUUID(), null, savedQueryId, type, config, false),
+        ownerUserId);
   }
 
   @Test

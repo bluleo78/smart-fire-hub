@@ -331,11 +331,11 @@ test.describe('리포트 템플릿 상세 페이지', () => {
       page,
       'POST',
       '/api/v1/proactive/templates',
-      createTemplate({ id: 10, name: '기본 리포트 템플릿 (사본)', builtin: false }),
+      createTemplate({ id: 10, name: '기본 리포트 템플릿 (복사본)', builtin: false }),
       { capture: true },
     );
     // 복제 후 이동할 새 템플릿 상세 페이지 모킹
-    await mockApi(page, 'GET', '/api/v1/proactive/templates/10', createTemplate({ id: 10, name: '기본 리포트 템플릿 (사본)', builtin: false }));
+    await mockApi(page, 'GET', '/api/v1/proactive/templates/10', createTemplate({ id: 10, name: '기본 리포트 템플릿 (복사본)', builtin: false }));
 
     await page.goto('/ai-insights/templates/1');
     await expect(page.getByRole('heading', { name: '기본 리포트 템플릿' })).toBeVisible({ timeout: 10000 });
@@ -343,13 +343,13 @@ test.describe('리포트 템플릿 상세 페이지', () => {
     // 복제 버튼 클릭
     await page.getByRole('button', { name: '복제' }).click();
 
-    // POST API 호출 확인 — 이름에 "(사본)" 포함
+    // POST API 호출 확인 — 이름에 "(복사본)" 포함
     const req = await cloneCapture.waitForRequest();
-    expect(req.payload).toMatchObject({ name: '기본 리포트 템플릿 (사본)' });
+    expect(req.payload).toMatchObject({ name: '기본 리포트 템플릿 (복사본)' });
   });
 
-  // WD-430: 200자에 가까운 이름은 「 (사본)」을 붙이면 한도를 넘어 복제가 「예기치 않은 오류」로 실패했다
-  test('이름이 200자인 양식을 복제하면 원래 이름을 잘라 200자 안의 「(사본)」 이름으로 보낸다', async ({
+  // WD-430: 200자에 가까운 이름은 「 (복사본)」을 붙이면 한도를 넘어 복제가 「예기치 않은 오류」로 실패했다
+  test('이름이 200자인 양식을 복제하면 원래 이름을 잘라 200자 안의 「(복사본)」 이름으로 보낸다', async ({
     authenticatedPage: page,
   }) => {
     await setupTemplateDetailMocks(page, 1);
@@ -360,10 +360,10 @@ test.describe('리포트 템플릿 상세 페이지', () => {
       page,
       'POST',
       '/api/v1/proactive/templates',
-      createTemplate({ id: 11, name: `${'가'.repeat(195)} (사본)`, builtin: false }),
+      createTemplate({ id: 11, name: `${'가'.repeat(194)} (복사본)`, builtin: false }),
       { capture: true },
     );
-    await mockApi(page, 'GET', '/api/v1/proactive/templates/11', createTemplate({ id: 11, name: `${'가'.repeat(195)} (사본)`, builtin: false }));
+    await mockApi(page, 'GET', '/api/v1/proactive/templates/11', createTemplate({ id: 11, name: `${'가'.repeat(194)} (복사본)`, builtin: false }));
 
     await page.goto('/ai-insights/templates/1');
     await page.getByRole('button', { name: '복제' }).click();
@@ -371,7 +371,7 @@ test.describe('리포트 템플릿 상세 페이지', () => {
     const req = await cloneCapture.waitForRequest();
     const sentName = (req.payload as { name: string }).name;
     expect(Array.from(sentName)).toHaveLength(200);
-    expect(sentName).toBe(`${'가'.repeat(195)} (사본)`);
+    expect(sentName).toBe(`${'가'.repeat(194)} (복사본)`);
     await expect(page).toHaveURL(/\/ai-insights\/templates\/11/);
   });
 

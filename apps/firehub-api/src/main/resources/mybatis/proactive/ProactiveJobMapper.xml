@@ -163,4 +163,14 @@
     DELETE FROM proactive_job WHERE id = #{id} AND tenant_id = #{tenantId}
   </delete>
 
+  <!-- WD-824: 같은 소유자 스마트 작업 이름 중복 검사(lower(trim) 비교). excludeId 는 수정 시 자기 자신 제외. -->
+  <select id="countByOwnerAndName" resultType="_long">
+    SELECT COUNT(*) FROM proactive_job t
+     WHERE t.user_id = #{ownerId}
+       AND lower(trim(t.name)) = lower(trim(#{name}))
+    <if test="excludeId != null">
+       AND t.id &lt;&gt; #{excludeId}
+    </if>
+  </select>
+
 </mapper>

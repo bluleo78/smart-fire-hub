@@ -1,3 +1,4 @@
+import axios from 'axios';
 import type { ReactNode } from 'react';
 import { Component, useMemo, useState } from 'react';
 import sql from 'react-syntax-highlighter/dist/esm/languages/prism/sql';
@@ -6,7 +7,8 @@ import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { toast } from 'sonner';
 
 import { analyticsApi } from '../../api/analytics';
-import { handleApiError } from '../../lib/api-error';
+import { extractApiError, handleApiError, isDuplicateName } from '../../lib/api-error';
+import { createWithNumberedName, numberedName } from '../../lib/clone-name';
 import { normalizeChartConfig } from '../../lib/normalize-chart-config';
 import { MAX_DESCRIPTION_LENGTH } from '../../lib/validations/description';
 import type { ChartConfig, ChartType } from '../../types/analytics';
@@ -83,18 +85,32 @@ function SaveDialog({ open, onOpenChange, sql, chartType, config }: SaveDialogPr
   const [description, setDescription] = useState('');
   const [isShared, setIsShared] = useState(false);
   const [saving, setSaving] = useState(false);
+  // 차트 이름 중복 409 의 서버 문구 — 이름 칸 아래에 보인다(WD-824)
+  const [nameError, setNameError] = useState<string | null>(null);
 
   async function handleSave() {
     if (!chartName.trim()) return;
     setSaving(true);
+    setNameError(null);
+    // 이 저장이 만든 쿼리 id — 차트 생성이 실패하면 지워 고아로 남기지 않는다(WD-824)
+    let createdQueryId: number | null = null;
+    // 차트 생성 요청을 보낸 뒤인지 — 이름 중복 409 가 쿼리 이름(자동 파생)에서 났는지 차트 이름에서 났는지 가른다(WD-824)
+    let chartStep = false;
     try {
-      const queryResponse = await analyticsApi.createQuery({
-        name: `AI 생성: ${chartName}`,
-        description: description || undefined,
-        sqlText: sql,
-        isShared,
-      });
+      // 쿼리 이름은 차트 이름에서 파생한 것이라 사용자가 정한 적이 없다 — 예전 고아 등으로 겹치면 「… (2)」 로 번호를 올려 다시 만든다(WD-824)
+      const queryResponse = await createWithNumberedName(
+        (attempt) => numberedName(`AI 생성: ${chartName}`, attempt),
+        (queryName) =>
+          analyticsApi.createQuery({
+            name: queryName,
+            description: description || undefined,
+            sqlText: sql,
+            isShared,
+          }),
+      );
       const savedQueryId = queryResponse.data.id;
+      createdQueryId = savedQueryId;
+      chartStep = true;
       await analyticsApi.createChart({
         name: chartName,
         description: description || undefined,
@@ -116,8 +132,18 @@ function SaveDialog({ open, onOpenChange, sql, chartType, config }: SaveDialogPr
       setDescription('');
       setIsShared(false);
     } catch (err: unknown) {
-      // 서버가 준 사유(예: 차트 설정 400)를 그대로 보인다
-      handleApiError(err, '저장 중 오류가 발생했습니다.');
+      // 서버가 차트 생성을 거절한 경우에만 방금 만든 쿼리를 지운다(보상, WD-824) — 남기면 다음 저장이 그 쿼리 이름에 걸린다. 삭제 실패는 원래 오류를 가리지 않게 삼킨다.
+      // 응답 없는 실패(시간 초과·연결 끊김)는 서버가 차트를 이미 만들었을 수 있고, chart.saved_query_id 가 ON DELETE CASCADE 라 쿼리를 지우면 그 차트도 사라지므로 지우지 않는다.
+      if (createdQueryId != null && axios.isAxiosError(err) && err.response) {
+        await analyticsApi.deleteQuery(createdQueryId).catch(() => undefined);
+      }
+      if (chartStep && isDuplicateName(err)) {
+        // 차트 이름 중복 409 는 서버 문구를 이름 칸 아래에 보이고 토스트는 생략한다. 쿼리 이름 409(재시도 소진)는 사용자가 정한 이름이 아니라 아래 토스트로 알린다.
+        setNameError(extractApiError(err, '이미 있는 이름입니다. 다른 이름을 입력하세요.'));
+      } else {
+        // 서버가 준 사유(예: 차트 설정 400)를 그대로 보인다
+        handleApiError(err, '저장 중 오류가 발생했습니다.');
+      }
     } finally {
       setSaving(false);
     }
@@ -139,8 +165,18 @@ function SaveDialog({ open, onOpenChange, sql, chartType, config }: SaveDialogPr
               id="chart-name"
               placeholder="차트 이름을 입력하세요"
               value={chartName}
-              onChange={(e) => setChartName(e.target.value)}
+              onChange={(e) => {
+                setChartName(e.target.value);
+                setNameError(null);
+              }}
+              aria-invalid={nameError != null}
+              aria-describedby={nameError ? 'chart-name-error' : undefined}
             />
+            {nameError && (
+              <p id="chart-name-error" role="alert" className="text-sm text-destructive">
+                {nameError}
+              </p>
+            )}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="chart-desc">설명 (선택)</Label>
