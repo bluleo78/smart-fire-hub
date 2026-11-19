@@ -67,6 +67,17 @@ describe('InlineChartWidget 헤더 라벨', () => {
     rerender(<InlineChartWidget {...baseProps} title="   " />);
     expect(screen.getByTestId('inline-chart-title')).toHaveTextContent('파이 차트');
   });
+
+  it('상속 이름 차트 타입(toString·constructor)은 함수가 아니라 타입 키 그대로 헤더에 쓴다 (WD-831)', () => {
+    const { rerender } = render(<InlineChartWidget {...baseProps} chartType={'toString' as unknown as 'PIE'} />);
+    expect(screen.getByTestId('inline-chart-title')).toHaveTextContent('toString');
+
+    rerender(
+      <InlineChartWidget {...baseProps} chartType={'constructor' as unknown as 'PIE'} title="분석" />,
+    );
+    expect(screen.getByTestId('inline-chart-sublabel')).toHaveTextContent('constructor · 5건');
+    expect(screen.getByTestId('inline-chart-sublabel').textContent).not.toContain('function');
+  });
 });
 
 /**

@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest';
 import type { ChartConfig, ChartType } from '../../types/analytics';
 import {
   findMissingChartColumns,
+  getChartTypeLabel,
   getChartUsedColumns,
   isKnownChartType,
   normalizeYAxis,
@@ -258,5 +259,12 @@ describe('모르는 차트 타입 (WD-831)', () => {
     expect(isKnownChartType('BAR')).toBe(true);
     expect(isKnownChartType('toString')).toBe(false);
     expect(isKnownChartType('NOPE')).toBe(false);
+  });
+
+  it('getChartTypeLabel 은 아는 타입은 표시 이름, 모르는 타입·상속 이름은 키 그대로 돌려준다 (WD-831)', () => {
+    expect(getChartTypeLabel('PIE')).toBe('파이 차트');
+    expect(getChartTypeLabel('toString')).toBe('toString');
+    expect(getChartTypeLabel('constructor')).toBe('constructor');
+    expect(getChartTypeLabel('SANKEY')).toBe('SANKEY');
   });
 });

@@ -74,6 +74,28 @@ test.describe('차트 목록 페이지', () => {
     await expect(page.locator('[data-slot="badge"]').filter({ hasText: '막대' })).toBeVisible();
   });
 
+  test('상속 이름·모르는 차트 타입은 함수가 아니라 타입 키 그대로 뱃지에 쓴다 (WD-831)', async ({ authenticatedPage: page }) => {
+    // 서버가 돌려준 chartType 이 'constructor'·'SANKEY' 처럼 표에 없는 값이어도 목록이 깨지지 않아야 한다
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/analytics/charts',
+      createPageResponse([
+        createChartListItem({ id: 1, name: '상속 이름 차트', chartType: 'constructor' as unknown as 'BAR' }),
+        createChartListItem({ id: 2, name: '모르는 타입 차트', chartType: 'SANKEY' as unknown as 'BAR' }),
+      ]),
+    );
+
+    await page.goto('/analytics/charts');
+
+    const firstRow = page.getByRole('row', { name: /상속 이름 차트/ });
+    await expect(firstRow.locator('[data-slot="badge"]')).toHaveText('constructor');
+    const secondRow = page.getByRole('row', { name: /모르는 타입 차트/ });
+    await expect(secondRow.locator('[data-slot="badge"]')).toHaveText('SANKEY');
+    // Object.prototype.constructor 함수 소스가 화면에 새어 나오지 않는다
+    await expect(page.getByText('[native code]')).toHaveCount(0);
+  });
+
   test('삭제 버튼 클릭 시 확인 다이얼로그가 열리고 DELETE API가 호출된다', async ({ authenticatedPage: page }) => {
     await setupChartListMocks(page, 2);
     await page.goto('/analytics/charts');

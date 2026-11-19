@@ -60,10 +60,14 @@ export interface ChartDataTable {
 export function formatChartCellValue(value: unknown): string {
   if (value === null || value === undefined) return '';
   // 문자열·숫자 등 원시 값은 자르지 않는다 — 긴 카테고리 라벨이 잘리면 값을 구분할 수 없다
-  // 단, 유한한 숫자는 유효숫자 15자리로 다듬어 부동소수 잡음(0.30000000000000004 → 0.3)을 없앤다(WD-831).
+  // 단, 소수는 유효숫자 15자리로 다듬어 부동소수 잡음(0.30000000000000004 → 0.3)을 없앤다(WD-831).
+  // 정수는 다듬지 않는다 — 16~17자리 정수(타임스탬프·ID, 1731999999123456)를 toPrecision(15) 하면 끝자리가 바뀐다.
   // 천 단위 구분(toLocaleString)은 쓰지 않는다 — 연도·ID 같은 라벨 숫자가 축(2024)과 달리 2,024 로 읽히고 보는 사람 로캘에 따라 바뀐다.
   // 작은 소수(0.0004)도 그대로 남는다. NaN·Infinity 는 그대로 문자열화한다.
-  if (typeof value === 'number') return Number.isFinite(value) ? String(Number(value.toPrecision(15))) : String(value);
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || Number.isInteger(value)) return String(value);
+    return String(Number(value.toPrecision(15)));
+  }
   if (typeof value !== 'object') return String(value);
   // 객체(GEOMETRY 등)만 JSON 으로 쓰고, 표가 비대해지지 않도록 80자를 넘으면 …로 줄인다
   let text: string;

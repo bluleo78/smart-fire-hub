@@ -107,6 +107,18 @@ describe('formatChartCellValue (WD-826)', () => {
     expect(formatChartCellValue(false)).toBe('false');
   });
 
+  it('16~17자리 정수(타임스탬프·ID)는 끝자리를 바꾸지 않는다 (WD-831)', () => {
+    expect(formatChartCellValue(1731999999123456)).toBe('1731999999123456');
+    expect(formatChartCellValue(Number.MAX_SAFE_INTEGER)).toBe('9007199254740991');
+    expect(formatChartCellValue(-1731999999123456)).toBe('-1731999999123456');
+  });
+
+  it('소수는 부동소수 잡음만 다듬고 작은 소수는 남긴다 (WD-831)', () => {
+    expect(formatChartCellValue(0.1 + 0.2)).toBe('0.3');
+    expect(formatChartCellValue(0.0004)).toBe('0.0004');
+    expect(formatChartCellValue(NaN)).toBe('NaN');
+  });
+
   it('객체는 JSON 으로 쓰고 길면 80자 + …로 자른다', () => {
     expect(formatChartCellValue({ type: 'Point', coordinates: [1, 2] })).toBe(
       '{"type":"Point","coordinates":[1,2]}',

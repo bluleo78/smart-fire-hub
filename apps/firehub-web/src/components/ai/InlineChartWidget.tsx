@@ -10,8 +10,7 @@ import { handleApiError } from '../../lib/api-error';
 import { normalizeChartConfig } from '../../lib/normalize-chart-config';
 import { MAX_DESCRIPTION_LENGTH } from '../../lib/validations/description';
 import type { ChartConfig, ChartType } from '../../types/analytics';
-import { CHART_TYPE_LABELS } from '../../types/analytics';
-import { findMissingChartColumns, isKnownChartType } from '../analytics/chart-missing-columns';
+import { findMissingChartColumns, getChartTypeLabel, isKnownChartType } from '../analytics/chart-missing-columns';
 import { ChartRenderer } from '../analytics/ChartRenderer';
 import { Button } from '../ui/button';
 import {
@@ -226,13 +225,15 @@ export function InlineChartWidget({
   }
 
   // 헤더 표시 우선순위: title > 차트 유형명. 둘 다 trim 후 비어 있으면 chartType 키 그대로.
+  // 유형명은 아는 타입일 때만 찾는다 — 'toString'·'constructor' 같은 상속 이름이 함수로 풀려 JSX 에 들어가지 않게(WD-831).
+  const chartTypeLabel = getChartTypeLabel(chartType);
   const trimmedTitle = title?.trim();
   const headerLabel = trimmedTitle && trimmedTitle.length > 0
     ? trimmedTitle
-    : (CHART_TYPE_LABELS[chartType] ?? chartType);
+    : chartTypeLabel;
   // title이 있으면 차트 유형명을 보조 라벨로 표시(맥락 유지). 없으면 행수만 표시.
   const subLabel = trimmedTitle && trimmedTitle.length > 0
-    ? `${CHART_TYPE_LABELS[chartType] ?? chartType} · ${rows.length}건`
+    ? `${chartTypeLabel} · ${rows.length}건`
     : `${rows.length}건`;
 
   return (

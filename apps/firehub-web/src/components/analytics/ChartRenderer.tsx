@@ -282,12 +282,18 @@ export function ChartRenderer({
     case 'CANDLESTICK':
       chart = <CandlestickChartView data={data} config={config} height={fillParent ? undefined : height} />;
       break;
-    default:
+    default: {
+      // 모르는 타입은 위 isKnownChartType 조기 반환이 이미 막는다 — 여기는 ChartType 에 새 타입을 더하고
+      // case 를 빠뜨렸을 때 타입 검사가 잡도록 never 검사를 둔다(WD-831). 런타임에 혹시 닿아도 타입 문자열을
+      // 그림 자리에 그리지 않고 같은 안내를 보인다.
+      const unhandled: never = chartType;
+      void unhandled;
       return (
         <ChartMessage height={height} fillParent={fillParent}>
           지원하지 않는 차트 타입입니다.
         </ChartMessage>
       );
+    }
   }
 
   // TABLE 은 자체가 표라 대체 표가 필요 없다 — 기존 방식 그대로 둔다.

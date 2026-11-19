@@ -1,5 +1,5 @@
 import { normalizeChartConfig } from '../../lib/normalize-chart-config';
-import type { ChartConfig, ChartType } from '../../types/analytics';
+import { CHART_TYPE_LABELS, type ChartConfig, type ChartType } from '../../types/analytics';
 
 /**
  * yAxis 를 항상 배열로 맞춘 설정 사본을 돌려준다(WD-88).
@@ -94,6 +94,16 @@ const USED_COLUMN_FIELDS: Record<ChartType, UsedColumnFields> = {
  */
 export function isKnownChartType(chartType: string): chartType is ChartType {
   return Object.hasOwn(USED_COLUMN_FIELDS, chartType);
+}
+
+/**
+ * 차트 타입의 표시 이름을 돌려준다 — 모르는 타입이면 타입 키 그대로(WD-831).
+ *
+ * `CHART_TYPE_LABELS[t] ?? t` 로 바로 찾으면 'toString'·'constructor' 같은 상속 이름이 함수로 풀려 JSX 에 들어간다.
+ * 아는 타입 판정을 isKnownChartType 한 곳에 맡겨 헤더·목록이 같은 규칙을 쓴다.
+ */
+export function getChartTypeLabel(chartType: string): string {
+  return isKnownChartType(chartType) ? CHART_TYPE_LABELS[chartType] : String(chartType);
 }
 
 /**
