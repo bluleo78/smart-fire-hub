@@ -106,16 +106,26 @@ export function computeGaugeReading(data: Record<string, unknown>[], config: Cha
  * recharts Pie 는 숫자 타입만 값으로 세고 문자열('30', DB NUMERIC)은 0 으로 그려, 표의 비율과 그림이 어긋났다(WD-831).
  * nonNumericCount 는 빠진 결측 중 값이 비어 있지 않은데 숫자가 아닌 행('서울' 등, WD-838) — missingCount 의 부분집합이다.
  * 뷰가 「값 컬럼 전체가 숫자 아님」(그릴 행·음수 없이 nonNumericCount > 0)을 가려 컬럼 선택 안내를 내는 데 쓴다.
+ * total 은 그릴 행(pieData) 값의 합이다(WD-841) — 뷰의 「그릴 것 없음」 판정과 대체 표의 비율·빈 표 판정이 같은 합을 쓰게 여기서 한 번 낸다.
+ * emptyReason(WD-841)은 그릴 것이 없는 이유다 — 뷰(안내)와 스크린리더 표(캡션)가 둘 다 이 값을 읽으므로 판정이 서로 어긋나지 않는다.
  * 행마다 값을 한 번만 읽는다. 늘 새 배열을 돌려주므로 뷰는 useMemo 로 감싼다.
  */
 export function splitPieData(
   data: Record<string, unknown>[],
   valueKey: string,
-): { pieData: Record<string, unknown>[]; negativeCount: number; missingCount: number; nonNumericCount: number } {
+): {
+  pieData: Record<string, unknown>[];
+  negativeCount: number;
+  missingCount: number;
+  nonNumericCount: number;
+  total: number;
+  emptyReason: 'nonNumeric' | 'nothing' | null;
+} {
   const pieData: Record<string, unknown>[] = [];
   let negativeCount = 0;
   let missingCount = 0;
   let nonNumericCount = 0;
+  let total = 0;
   for (const row of data) {
     const n = toPlotNumber(row[valueKey]);
     // 결측은 0 으로 바꾸지 않고 뺀다(WD-835) — 음수도 뺀다, 나머지만 그린다
@@ -124,9 +134,15 @@ export function splitPieData(
       // WD-838: 비어 있진 않은데 숫자가 아닌 값(문자 등)은 따로 센다
       if (isNonNumericValue(row[valueKey])) nonNumericCount++;
     } else if (n < 0) negativeCount++;
-    else pieData.push({ ...row, [valueKey]: n });
+    else {
+      pieData.push({ ...row, [valueKey]: n });
+      total += n;
+    }
   }
-  return { pieData, negativeCount, missingCount, nonNumericCount };
+  // 그릴 것이 없는 이유 — 값 컬럼 전체가 숫자 아님이면 'nonNumeric', 그 밖에 합이 0 이하면 'nothing'
+  const emptyReason =
+    pieData.length === 0 && negativeCount === 0 && nonNumericCount > 0 ? 'nonNumeric' : total <= 0 ? 'nothing' : null;
+  return { pieData, negativeCount, missingCount, nonNumericCount, total, emptyReason };
 }
 
 /**

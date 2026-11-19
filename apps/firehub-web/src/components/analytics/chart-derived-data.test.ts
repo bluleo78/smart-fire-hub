@@ -52,8 +52,20 @@ describe('splitPieData', () => {
     expect(pieData.map((r) => r.v)).toEqual([0, 0, 5]);
   });
 
+  it('total 은 그릴 행(pieData)의 값 합이다 — 음수·결측은 더하지 않는다(WD-841)', () => {
+    expect(splitPieData([{ v: 3 }, { v: -1 }, { v: null }, { v: 2 }], 'v').total).toBe(5);
+    expect(splitPieData([{ v: 0 }, { v: '0' }], 'v').total).toBe(0);
+    expect(splitPieData([], 'v').total).toBe(0);
+  });
+
+  it('emptyReason: 전부 숫자 아님 → nonNumeric, 합 0 → nothing, 그릴 값 있음 → null(WD-841)', () => {
+    expect(splitPieData([{ v: '서울' }, { v: null }], 'v').emptyReason).toBe('nonNumeric');
+    expect(splitPieData([{ v: 0 }, { v: -1 }], 'v').emptyReason).toBe('nothing');
+    expect(splitPieData([{ v: 3 }, { v: '서울' }], 'v').emptyReason).toBeNull();
+  });
+
   it('모두 결측·음수면 빈 배열', () => {
-    expect(splitPieData([{ v: null }, { v: -1 }], 'v')).toEqual({ pieData: [], negativeCount: 1, missingCount: 1, nonNumericCount: 0 });
+    expect(splitPieData([{ v: null }, { v: -1 }], 'v')).toEqual({ pieData: [], negativeCount: 1, missingCount: 1, nonNumericCount: 0, total: 0, emptyReason: 'nothing' });
   });
 
   it('nonNumericCount: 값이 전부 문자열이면 그릴 행·음수 없이 문자 개수만 센다(WD-838)', () => {
