@@ -10,7 +10,7 @@
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "test:full": "sh scripts/husky/full-regression.sh",
-    "test:hooks": "for t in scripts/husky/*.test.sh; do sh \"$t\" || exit 1; done && node --test scripts/check-migration-versions.test.mjs",
+    "test:hooks": "for t in scripts/husky/*.test.sh; do sh \"$t\" || exit 1; done && node --test scripts/check-migration-versions.test.mjs scripts/check-zod-single-version.test.mjs",
     "train": "sh scripts/husky/train.sh",
     "check:migrations": "node scripts/check-migration-versions.mjs",
     "test:e2e": "pnpm --filter firehub-web test:e2e",
@@ -27,7 +27,8 @@
   "devDependencies": {
     "husky": "^9.1.7",
     "lint-staged": "^16.4.0",
-    "turbo": "^2.5.0"
+    "turbo": "^2.5.0",
+    "zod": "^4.6.6"
   },
   "lint-staged": {
     "apps/firehub-web/{src,e2e}/**/*.{ts,tsx}": [

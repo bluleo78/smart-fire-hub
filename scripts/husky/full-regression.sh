@@ -52,6 +52,9 @@ echo "[full-regression] 범위: $GATE_SCOPE — $STAGES"
 if [ -n "$FULL_REGRESSION_CMD" ]; then
   sh -c "$FULL_REGRESSION_CMD"
 else
+  # zod 단일 판 가드를 먼저 — 머지·rebase·--no-verify 커밋은 pre-commit 을 거치지 않아 lockfile 의 zod 판이 갈린 채 올라올 수 있다 (WD-829).
+  # lockfile 만 읽어 1초 안에 끝나므로 락 밖에서 늘 돈다.
+  node --test scripts/check-zod-single-version.test.mjs
   # 게이트 전체를 저장소 전역 락 하나로 감싼다 — 워크트리 간 동시 실행이 겹치면 여기서 대기 (WD-257).
   # 단계별로 락을 잡으면 사이사이 다른 세션이 끼어들어 한 게이트가 길게 늘어지므로 통째로 잡는다.
   . "$HOOK_DIR/test-lock.sh"
