@@ -3746,12 +3746,13 @@ test.describe('WD-796 재조회 병합 후속', () => {
     await expectNoRenameNotice(page);
   });
 
-  test('지운 X-Id 가 있는 채 재조회가 X-Id 와 x-id 를 함께 돌려주면 이름이 바뀐 게 아니므로 이름 변경 안내를 띄우지 않는다 (WD-804 반려)', async ({
+  test('지운 X-Id 가 있는 채 재조회가 X-Id 와 x-id 를 함께 돌려주면 이름 변경이 아니라 x-id 가 더해진 것이라 목록에 넣고 알리며, 저장 payload 에 x-id 가 남는다 (WD-804 반려)', async ({
     authenticatedPage: page,
   }) => {
     const stored = await openAuthEditAndDeleteXId(page);
 
-    await saveInfoAndRefetch(page, {
+    // 다른 관리자가 X-Id 는 그대로 두고 x-id 를 더했다 — 사용자가 지운 X-Id 는 지운 대로 두되, 더해진 x-id 는 말없이 지워지면 안 된다
+    const capture = await saveInfoAndRefetch(page, {
       ...stored,
       name: RENAMED,
       maskedAuthConfig: {
@@ -3763,10 +3764,21 @@ test.describe('WD-796 재조회 병합 후속', () => {
     });
     await expect(page.getByLabel('연결 이름')).toHaveValue(RENAMED);
 
-    // 결정적 신호: 지운 행은 돌아오지 않고 병합이 끝났다(X-Id 는 이전 기준에도 있어 더해진 것이 아니다)
+    // 더해진 x-id 는 새 기준 순서대로 X-A 뒤(2번)에 저장값 유지 행으로 들어가고, 지운 X-Id 는 돌아오지 않는다
+    await expect(page.getByText('다른 곳에서 추가 헤더(x-id)가 더해져 목록에 넣었습니다.')).toBeVisible();
     await expect(page.getByLabel('추가 헤더 이름 1')).toHaveValue('X-A');
-    await expect(page.getByLabel('추가 헤더 이름 2')).toHaveCount(0);
+    await expect(page.getByLabel('추가 헤더 이름 2')).toHaveValue('x-id');
+    await expect(page.getByLabel('추가 헤더 값 2')).toHaveAttribute('placeholder', '저장된 값 유지 (****i003)');
+    await expect(page.getByLabel('추가 헤더 이름 3')).toHaveCount(0);
+    // 이름이 바뀐 게 아니므로 이름 변경 안내는 없다
     await expectNoRenameNotice(page);
+
+    // 인증 저장 — x-id 는 가린 값(유지 의미)으로 실리고, 사용자가 지운 X-Id 는 실리지 않는다
+    await page.getByRole('button', { name: '인증 저장' }).click();
+    await expect.poll(() => capture.requests.length).toBe(2);
+    const headers = savedExtraHeaders(capture);
+    expect(headers).toEqual({ 'extraHeader:X-A': '****a001', 'extraHeader:x-id': '****i003' });
+    expect(headers).not.toHaveProperty('extraHeader:X-Id');
   });
 
   test('지운 X-Id 가 x-id 로 바뀌고 X-New 가 더해진 재조회는 「더해져」 안내와 이름 변경 안내를 함께 보인다 (WD-804 반려)', async ({

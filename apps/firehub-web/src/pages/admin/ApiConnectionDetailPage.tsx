@@ -243,15 +243,19 @@ function syncStoredRows(
       list.some((r) => r.storedName?.toLowerCase() === lowerName);
     const prev = prevRows.find((p) => p.storedName?.toLowerCase() === lowerName);
     if (prev?.storedName !== undefined && !hasStoredIgnoringCase(rows)) {
-      // 되살리지 않되 조용히 넘기지 않는다 — 이름 변경을 알릴 수 있게 모은다
       const from = prev.storedName;
-      // 새 기준에 옛 이름이 그대로 남아 있으면(X-Id·x-id 함께) 바뀐 게 아니라 더해진 것이다 — 값싼 이 검사를 먼저 한다
+      // 새 기준에 옛 이름이 그대로 남아 있으면(X-Id·x-id 함께) 바뀐 게 아니라 더해진 것이다 — 값싼 이 검사를 먼저 한다.
+      // 이 경우 지운 X-Id 는 지운 대로 두되, 더해진 x-id 는 아래 「더한 헤더」 흐름으로 넘겨 목록에 넣고 알린다
+      // (여기서 끝내면 다른 관리자가 더한 x-id 가 안내도 없이 빠져, 인증 저장이 서버에서 그 헤더를 말없이 지운다 — WD-804 반려).
       const fromStillThere = nextRows.some((n) => n.storedName === from);
-      // 사용자가 같은 이름(대소문자·앞뒤 공백 무시)의 행을 이미 갖고 있으면 저장 때 그 행이 나가 서버에서 지워지지 않는다
-      if (!fromStillThere && !rows.some((r) => normalizedExtraHeaderName(r.name) === lowerName)) {
-        renamedDeleted.push({ from, to: name });
+      if (!fromStillThere) {
+        // 되살리지 않되 조용히 넘기지 않는다 — 이름 변경을 알릴 수 있게 모은다.
+        // 사용자가 같은 이름(대소문자·앞뒤 공백 무시)의 행을 이미 갖고 있으면 저장 때 그 행이 나가 서버에서 지워지지 않으므로 알리지 않는다.
+        if (!rows.some((r) => normalizedExtraHeaderName(r.name) === lowerName)) {
+          renamedDeleted.push({ from, to: name });
+        }
+        return;
       }
-      return;
     }
     if (synced.some((s) => s.storedName === name)) return;
     changed = true;
