@@ -376,10 +376,13 @@ test.describe('카테고리 관리 페이지', () => {
     await expect(dialog.locator('label[for="create-name"]')).toHaveText('이름*');
     await expect(hint).toBeVisible();
     await expect(nameInput).toHaveAttribute('aria-describedby', /create-name-hint/);
+    // 안내가 보이는 그 화면에서 「만들기」가 꺼져 있다 — 안내가 꺼진 이유를 설명한다
+    await expect(createBtn).toBeDisabled();
 
-    // 이름을 입력하면 안내가 사라지고 버튼이 켜진다
+    // 이름을 입력하면 안내가 사라지고, 안내 연결도 풀리며, 버튼이 켜진다
     await nameInput.fill('테스트 카테고리');
     await expect(hint).toBeHidden();
+    await expect(nameInput).not.toHaveAttribute('aria-describedby', /create-name-hint/);
     await expect(createBtn).toBeEnabled();
 
     // 지우면 오류 문구만 보이고 안내는 보이지 않는다

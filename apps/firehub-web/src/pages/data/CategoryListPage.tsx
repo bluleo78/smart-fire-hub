@@ -145,9 +145,14 @@ export default function CategoryListPage() {
 
   // (WD-809) 생성 버튼이 꺼진 이유 안내 — 이름이 (공백 제외) 비어 있고 아직 오류 문구가 없을 때만 보인다.
   // 오류 문구와 겹치지 않게 하고, #49 의 비활성 동작은 그대로 두면서 이유를 문구로 알린다.
-  // watch() 대신 useWatch 를 써서 React Compiler 린트 경고(메모이즈 불가)를 피한다.
-  const createNameValue = useWatch({ control: createForm.control, name: 'name' });
-  const showCreateNameHint = !(createNameValue ?? '').trim() && !createForm.formState.errors.name;
+  // watch() 대신 useWatch 를 쓰고(React Compiler 린트 경고 회피) compute 로 「비었는가」만 구독해,
+  // 글자마다가 아니라 빈 상태가 바뀔 때만 다시 그린다(WD-812 와 같은 방식).
+  const createNameEmpty = useWatch({
+    control: createForm.control,
+    name: 'name',
+    compute: (v) => !(v ?? '').trim(),
+  });
+  const showCreateNameHint = createNameEmpty && !createForm.formState.errors.name;
 
   // mode: 'onChange' — 수정 폼도 동일하게 실시간 유효성 반영
   const editForm = useForm<CategoryFormData>({
