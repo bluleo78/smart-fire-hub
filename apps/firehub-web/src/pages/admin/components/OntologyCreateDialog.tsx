@@ -9,8 +9,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { FormField } from '@/components/ui/form-field';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { useCreateOntology } from '@/hooks/queries/useOntology';
 import { extractApiError } from '@/lib/api-error';
 import { validateDomain } from '@/lib/ontology-validation';
@@ -66,18 +66,18 @@ export default function OntologyCreateDialog({ open, onOpenChange, onCreated }: 
             도메인명을 정하면 빈 초안이 만들어집니다. 엔티티와 관계는 다음 단계에서 채웁니다.
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-2">
-          <Label htmlFor="ontology-domain">도메인</Label>
+        {/* WD-817: 「만들기」가 늘 켜져 있어 비우고 누르기 전에는 필수인지 알 수 없었다 — FormField 로 * 를 달고,
+            오류 문구도 칸에 잇는다(aria-describedby·role=alert — 예전에는 aria-invalid 만 있어 무슨 오류인지 읽히지 않았다) */}
+        <FormField label="도메인" htmlFor="ontology-domain" required error={error ?? undefined}>
           <Input
             id="ontology-domain"
+            aria-required
             value={domain}
             onChange={(e) => setDomain(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && submit()}
-            aria-invalid={error != null}
             placeholder="예: 건축물 안전점검"
           />
-          {error && <p className="text-[0.8rem] font-medium text-destructive">{error}</p>}
-        </div>
+        </FormField>
         <DialogFooter className="gap-2 sm:justify-end">
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={createOntology.isPending}>
             취소

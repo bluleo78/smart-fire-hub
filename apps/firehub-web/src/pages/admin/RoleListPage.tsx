@@ -40,7 +40,7 @@ import {
 } from '../../components/ui/table';
 import { useMyPermissions } from '../../hooks/queries/useMyPermissions';
 import type { CreateRoleFormData } from '../../lib/validations/role';
-import { createRoleSchema } from '../../lib/validations/role';
+import { createRoleSchema, ROLE_NAME_RULE } from '../../lib/validations/role';
 import type { RoleResponse } from '../../types/role';
 
 /**
@@ -192,13 +192,19 @@ export default function RoleListPage() {
                 <DialogDescription className="sr-only">새로운 사용자 역할을 생성합니다.</DialogDescription>
               </DialogHeader>
               <form onSubmit={submitCreate} className="space-y-4">
+                {/* WD-817: 필수 표시와 입력 규칙(createRoleSchema 의 정규식)을 입력 전에 보인다 — 예전에는 제출해야만 규칙을 알 수 있었다.
+                    규칙 문구는 FormField 의 description 으로 그려 aria-describedby 로 칸에 늘 잇는다. */}
                 <FormField
                   label="역할 이름"
                   htmlFor="role-name"
+                  required
                   error={form.formState.errors.name?.message}
+                  description={ROLE_NAME_RULE}
                 >
+                  {/* * 는 눈으로만 보이므로 보조 기술에는 aria-required 로 필수를 알린다(브라우저 기본 검증 말풍선을 피해 required 는 쓰지 않는다) */}
                   <Input
                     id="role-name"
+                    aria-required
                     {...form.register('name')}
                   />
                 </FormField>

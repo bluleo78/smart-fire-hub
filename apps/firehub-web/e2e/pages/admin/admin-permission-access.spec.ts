@@ -293,6 +293,10 @@ test.describe('역할 관리 — role:read', () => {
     await expect(page.getByRole('heading', { level: 1, name: '역할 상세' })).toBeVisible();
     await expect(page.getByLabel('역할 이름')).toHaveValue('EDITOR');
     await expect(page.getByLabel('역할 이름')).toBeDisabled();
+    // WD-817: role:write 가 없어 칸이 잠겼으니 필수 표시(*·aria-required)·규칙 안내를 보이지 않는다.
+    await expect(page.locator('label[for="role-name"]')).toHaveText('역할 이름');
+    await expect(page.locator('#role-name')).not.toHaveAttribute('aria-required', 'true');
+    await expect(page.locator('#role-name-desc')).toHaveCount(0);
     // 이 역할이 가진 권한(응답의 2개)만, 체크된 채 잠겨 있다.
     await expect(page.getByRole('checkbox', { name: 'DATASET_WRITE' })).toBeChecked();
     await expect(page.getByRole('checkbox', { name: 'DATASET_WRITE' })).toBeDisabled();
