@@ -34,12 +34,14 @@ describe('transformWaterfallData', () => {
 
 describe('splitPieData', () => {
   it('NULL·숫자 아닌 값은 결측으로 빼고 개수를 센다 — 0 으로 바꾸지 않는다(WD-835)', () => {
-    const { pieData, negativeCount, missingCount } = splitPieData(
+    const { pieData, negativeCount, missingCount, nonNumericCount } = splitPieData(
       [{ v: 50 }, { v: -20 }, { v: '30' }, { v: null }, { v: '측정 안 함' }, { v: '' }, { v: ' ' }, { v: true }, { v: undefined }],
       'v',
     );
     expect(negativeCount).toBe(1);
     expect(missingCount).toBe(6);
+    // WD-838: 비어 있지 않은 숫자 아님은 '측정 안 함'·' '·true 3개 (null·''·undefined 는 제외)
+    expect(nonNumericCount).toBe(3);
     expect(pieData.map((r) => r.v)).toEqual([50, 30]);
   });
 
@@ -50,7 +52,15 @@ describe('splitPieData', () => {
   });
 
   it('모두 결측·음수면 빈 배열', () => {
-    expect(splitPieData([{ v: null }, { v: -1 }], 'v')).toEqual({ pieData: [], negativeCount: 1, missingCount: 1 });
+    expect(splitPieData([{ v: null }, { v: -1 }], 'v')).toEqual({ pieData: [], negativeCount: 1, missingCount: 1, nonNumericCount: 0 });
+  });
+
+  it('nonNumericCount: 값이 전부 문자열이면 그릴 행·음수 없이 문자 개수만 센다(WD-838)', () => {
+    const r = splitPieData([{ v: '서울' }, { v: '부산' }, { v: null }], 'v');
+    expect(r.pieData).toEqual([]);
+    expect(r.negativeCount).toBe(0);
+    expect(r.missingCount).toBe(3);
+    expect(r.nonNumericCount).toBe(2);
   });
 
   it('숫자 문자열이 있으면 복사해 숫자로 바꾸고 원본은 건드리지 않는다', () => {

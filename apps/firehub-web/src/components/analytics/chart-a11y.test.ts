@@ -284,6 +284,25 @@ describe('대체 표 — 파이 비율·산점도 거르기·숫자 셀 형식 (
     ]);
   });
 
+  it('PIE: 뺀 행이 있으면 캡션 꼬리에 음수·값 없음 행 수를 적는다(WD-838)', () => {
+    const rows = [10, -3, null, 'x', 5].map((v, i) => ({ k: `k${i}`, v }));
+    const t = table('PIE', { xAxis: 'k', yAxis: ['v'] }, rows);
+    expect(t.caption).toBe('차트 데이터 (음수 1행·값 없음·숫자 아님 2행 제외)');
+  });
+
+  it('PIE: 뺀 행이 없으면 캡션은 그대로, 한쪽만 있으면 그쪽만 적는다(WD-838)', () => {
+    expect(table('PIE', { xAxis: 'k', yAxis: ['v'] }, [{ k: 'a', v: 1 }]).caption).toBe('차트 데이터');
+    expect(table('DONUT', { xAxis: 'k', yAxis: ['v'] }, [{ k: 'a', v: 1 }, { k: 'b', v: -1 }]).caption).toBe('차트 데이터 (음수 1행 제외)');
+    expect(table('PIE', { xAxis: 'k', yAxis: ['v'] }, [{ k: 'a', v: 1 }, { k: 'b', v: null }]).caption).toBe('차트 데이터 (값 없음·숫자 아님 1행 제외)');
+  });
+
+  it('PIE: 행 상한 문구와 같이 쓰면 한 괄호 안에 쉼표로 잇는다(WD-838)', () => {
+    const rows = Array.from({ length: 150 }, (_, i) => ({ k: `k${i}`, v: i + 1 }));
+    rows.push({ k: 'n1', v: -1 }, { k: 'n2', v: -2 });
+    const t = table('PIE', { xAxis: 'k', yAxis: ['v'] }, rows);
+    expect(t.caption).toBe('차트 데이터 (전체 150행 중 처음 100행, 음수 2행 제외)');
+  });
+
   it('산점도: x 나 y 가 숫자가 아닌 행은 뺀다', () => {
     const t = table('SCATTER', { xAxis: 'x', yAxis: ['y'] }, [
       { x: 1, y: 2 },
