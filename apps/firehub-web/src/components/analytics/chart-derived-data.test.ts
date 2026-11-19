@@ -40,8 +40,8 @@ describe('splitPieData', () => {
     );
     expect(negativeCount).toBe(1);
     expect(missingCount).toBe(6);
-    // WD-838: 비어 있지 않은 숫자 아님은 '측정 안 함'·' '·true 3개 (null·''·undefined 는 제외)
-    expect(nonNumericCount).toBe(3);
+    // WD-838: 비어 있지 않은 숫자 아님은 '측정 안 함'·true 2개 (null·''·' '·undefined 는 빈 값이라 제외)
+    expect(nonNumericCount).toBe(2);
     expect(pieData.map((r) => r.v)).toEqual([50, 30]);
   });
 
@@ -61,6 +61,12 @@ describe('splitPieData', () => {
     expect(r.negativeCount).toBe(0);
     expect(r.missingCount).toBe(3);
     expect(r.nonNumericCount).toBe(2);
+  });
+
+  it('공백뿐인 값은 빈 값이라 결측으로만 센다(WD-838)', () => {
+    const r = splitPieData([{ v: ' ' }, { v: '서울' }], 'v');
+    expect(r.missingCount).toBe(2);
+    expect(r.nonNumericCount).toBe(1);
   });
 
   it('숫자 문자열이 있으면 복사해 숫자로 바꾸고 원본은 건드리지 않는다', () => {

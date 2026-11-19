@@ -195,4 +195,27 @@ test.describe('파이·도넛 차트 — 빈 안내·텍스트 컬럼 (WD-838)',
 
     await expect(page.getByTestId('pie-many-categories-notice')).toContainText('도넛 차트로 읽기 어렵습니다');
   });
+
+  test('값이 전부 0 인 항목 51개 파이는 빈 안내만 보이고 많은 항목 안내는 없다', async ({ authenticatedPage: page }) => {
+    const rows = Array.from({ length: 51 }, (_, i) => ({ city: `도시${i + 1}`, delta: 0 }));
+    const name = await setupPieMocks(page, 'PIE', rows);
+    await page.goto('/analytics/dashboards/1');
+    await expect(page.getByText(name, { exact: true })).toBeVisible();
+
+    await expect(page.getByTestId('pie-empty-notice')).toBeVisible();
+    await expect(page.getByTestId('pie-many-categories-notice')).toHaveCount(0);
+  });
+
+  test('값 컬럼이 공백 문자열뿐이면 텍스트 컬럼 안내가 아니라 빈 안내를 보인다', async ({ authenticatedPage: page }) => {
+    const rows = [
+      { city: '서울', delta: ' ' },
+      { city: '부산', delta: '  ' },
+    ];
+    const name = await setupPieMocks(page, 'PIE', rows);
+    await page.goto('/analytics/dashboards/1');
+    await expect(page.getByText(name, { exact: true })).toBeVisible();
+
+    await expect(page.getByTestId('pie-empty-notice')).toBeVisible();
+    await expect(page.getByTestId('chart-non-numeric-value')).toHaveCount(0);
+  });
 });

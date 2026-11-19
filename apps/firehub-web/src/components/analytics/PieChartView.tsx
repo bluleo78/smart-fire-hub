@@ -90,6 +90,9 @@ export function PieChartView({ chartType, config, data, height }: PieChartViewPr
   const chartLabel = isDonut ? '도넛' : '파이';
   // 차트 위 안내 줄 목록 — 보일 줄만 담아, 그리는 줄과 아래 여백 계산이 늘 같은 목록을 쓰게 한다(WD-835).
   // warn 은 경고 아이콘을 붙일지(뺀 행이 있다는 안내), 순서는 화면에 보이는 순서다.
+  // WD-838: 그릴 조각이 없다 — 행이 없거나 전부 0(합계 0)이면 빈 원 대신 이유를 말한다.
+  // 많은 항목 안내(막대 권장)도 이때는 그릴 것이 없어 어긋나므로 줄에 넣지 않는다.
+  const nothingToDraw = pieData.length === 0 || pieTotal <= 0;
   const notices: { testId: string; warn: boolean; text: string }[] = [];
   if (negativeCount > 0) {
     // WD-303: 음수 행을 뺐다는 안내 — 빼고 말하지 않으면 비율·합계를 잘못 읽는다.
@@ -107,7 +110,7 @@ export function PieChartView({ chartType, config, data, height }: PieChartViewPr
       text: `값이 없거나 숫자가 아닌 항목 ${missingCount}개는 ${chartLabel} 차트에 표시되지 않습니다.`,
     });
   }
-  if (showManyNotice) {
+  if (showManyNotice && !nothingToDraw) {
     notices.push({
       testId: 'pie-many-categories-notice',
       warn: false,
@@ -139,9 +142,6 @@ export function PieChartView({ chartType, config, data, height }: PieChartViewPr
   if (allNonNumeric) {
     return <NonNumericValueNotice height={height} />;
   }
-  // WD-838: 그릴 조각이 없다 — 행이 없거나 전부 0(합계 0)이면 빈 원 대신 이유를 말한다.
-  const nothingToDraw = pieData.length === 0 || pieTotal <= 0;
-
   return (
     // 안내 문구를 차트 위에 겹쳐 두기 위한 기준 상자 — 높이는 ResponsiveContainer 와 같게 둔다.
     <div className="relative w-full" style={{ height: height ?? '100%' }}>
