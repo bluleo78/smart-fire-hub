@@ -97,7 +97,8 @@ test.describe('파이프라인 에디터 — 스텝 설정', () => {
 
     // 실패 토스트(sonner)가 렌더되는지 — "파이프라인 이름을 입력하세요"
     // sonner 토스트는 role=status / role=list 내부 텍스트로 표시된다
-    await expect(page.getByText('파이프라인 이름을 입력하세요')).toBeVisible();
+    // WD-812: 이름 칸 아래 안내(#pipeline-name-hint)에도 같은 문구가 있어, 토스트 안에서만 찾아 둘을 구분한다
+    await expect(page.locator('[data-sonner-toast]').getByText('파이프라인 이름을 입력하세요')).toBeVisible();
   });
 
   // 회귀 가드(WD-360): 이름 길이 한도에 메시지가 없어 zod 영어 기본 문구(「Too big: expected string to have <=100 characters」)가 그대로 떴다.

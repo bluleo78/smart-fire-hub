@@ -353,6 +353,66 @@ test.describe('카테고리 관리 페이지', () => {
     expect(req.payload).toMatchObject({ name: '앞뒤공백카테고리' });
   });
 
+  test('생성 다이얼로그 — 이름 필수 표시와 비활성 이유 안내가 보인다 (WD-809)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', []);
+    await page.goto('/data/categories');
+
+    // 로케이터는 지연 평가라 다이얼로그를 닫았다 다시 열어도 그대로 쓴다
+    const dialog = page.getByRole('dialog');
+    const openDialog = async () => {
+      await page.getByRole('button', { name: /새 카테고리/ }).click();
+      await expect(dialog).toBeVisible();
+    };
+    await openDialog();
+
+    const hint = dialog.getByText('이름을 입력하면 만들 수 있습니다.');
+    const nameError = dialog.getByText('카테고리 이름을 입력해주세요.');
+    const nameInput = dialog.locator('#create-name');
+    const createBtn = dialog.getByRole('button', { name: '만들기' });
+
+    // 열자마자 필수 표시(*)와 안내가 보이고, 입력과 안내가 aria-describedby 로 이어진다
+    await expect(dialog.locator('label[for="create-name"]')).toHaveText('이름*');
+    await expect(hint).toBeVisible();
+    await expect(nameInput).toHaveAttribute('aria-describedby', /create-name-hint/);
+    // 안내가 보이는 그 화면에서 「만들기」가 꺼져 있다 — 안내가 꺼진 이유를 설명한다
+    await expect(createBtn).toBeDisabled();
+
+    // 이름을 입력하면 안내가 사라지고, 안내 연결도 풀리며, 버튼이 켜진다
+    await nameInput.fill('테스트 카테고리');
+    await expect(hint).toBeHidden();
+    await expect(nameInput).not.toHaveAttribute('aria-describedby', /create-name-hint/);
+    await expect(createBtn).toBeEnabled();
+
+    // 지우면 오류 문구만 보이고 안내는 보이지 않는다
+    await nameInput.clear();
+    await expect(nameError).toBeVisible();
+    await expect(hint).toBeHidden();
+
+    // 공백만 넣어도 오류 문구만 보인다
+    await nameInput.fill('   ');
+    await expect(nameError).toBeVisible();
+    await expect(hint).toBeHidden();
+
+    // 닫았다가 다시 열면 안내가 다시 보인다
+    await dialog.getByRole('button', { name: '취소' }).click();
+    await expect(dialog).toBeHidden();
+    await openDialog();
+    await expect(hint).toBeVisible();
+  });
+
+  test('수정 다이얼로그 — 이름 필수 표시가 보인다 (WD-809)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
+    await page.goto('/data/categories');
+
+    await page.getByRole('button', { name: '소방 데이터 편집' }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await expect(page.getByRole('dialog').locator('label[for="edit-name"]')).toHaveText('이름*');
+  });
+
   test('검색 입력으로 카테고리를 필터링한다 (이슈 #75)', async ({
     authenticatedPage: page,
   }) => {
