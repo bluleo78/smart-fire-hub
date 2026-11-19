@@ -1612,13 +1612,13 @@ public class PipelineService {
    * 않는 값은 되돌려 보내도 거부해 사용자가 고치게 한다.
    */
   private boolean isUnchangedRunnableMaxResponseSize(Object requested, Object stored) {
-    // 같은 값인지는 숫자 값으로 본다 — null 과 빈 문자열은 둘 다 "비어 있음", "150"·150·150.0 은 모두 같고, 10.5 와 10 은 다르다.
+    // 먼저 저장본과 요청 둘 다 실행 때와 같은 변환으로 읽혀 도는 값이어야 한다 — 소수(10.5)는 10, 빈 문자열은 null(기본값)로 돌던 옛 값은 그대로
+    // 돈다. 이 관문을 먼저 지나게 하면 실행기가 Integer 로 못 읽는 값(긴 숫자 문자열·큰 지수 등)은 아래 숫자 비교까지 오지 않는다.
+    // 그다음 같은 값인지는 숫자 값으로 본다 — null 과 빈 문자열은 둘 다 "비어 있음", "150"·150·150.0 은 모두 같고, 10.5 와 10 은 다르다.
     // jsonb 가 150.0 으로 돌려준 옛 값을 편집기가 150 으로 되돌려 보내도 같은 값이어야 설명만 고치는 저장이 막히지 않는다.
-    if (!isSameMaxResponseSize(requested, stored)) {
-      return false;
-    }
-    // 저장본과 요청 둘 다 실행 때와 같은 변환으로 읽혀 도는 값이어야 한다 — 소수(10.5)는 10, 빈 문자열은 null(기본값)로 돌던 옛 값은 그대로 돈다.
-    return isRunnableAsExecutorReads(stored) && isRunnableAsExecutorReads(requested);
+    return isRunnableAsExecutorReads(stored)
+        && isRunnableAsExecutorReads(requested)
+        && isSameMaxResponseSize(requested, stored);
   }
 
   /** 값을 실행기와 같은 변환(ObjectMapper → Integer)으로 읽어 비었거나 도는 값이면 true, 변환 실패·돌지 않는 값이면 false(WD-810). */
@@ -1639,6 +1639,9 @@ public class PipelineService {
   private static boolean isSameMaxResponseSize(Object a, Object b) {
     String textA = a == null ? "" : a.toString().trim();
     String textB = b == null ? "" : b.toString().trim();
+    if (textA.equals(textB)) {
+      return true;
+    }
     BigDecimal numA = parseDecimalOrNull(textA);
     BigDecimal numB = parseDecimalOrNull(textB);
     if (numA != null && numB != null) {
@@ -1647,29 +1650,24 @@ public class PipelineService {
     return textA.equals(textB);
   }
 
+  /** {@link #parseDecimalOrNull} 이 파싱을 시도하는 글자 길이의 상한 — 응답 크기 한도로 쓸 수 있는 값은 이보다 훨씬 짧다. */
+  private static final int MAX_COMPARED_DECIMAL_TEXT_LENGTH = 30;
+
   /**
-   * 숫자로 읽히면 BigDecimal, 아니면 null — 빈 문자열·숫자 아님·지수 범위 초과·너무 긴 글자(30 자 초과)는 모두 null. 긴 글자를 파싱 전에 거르는
-   * 것은 수백만 자리 숫자 문자열의 파싱이 저장마다 큰 비용(자릿수에 비해 초선형)을 만들지 않게 하려는 것이다. 소수 자릿수(scale)가 ±100 을 넘는 값도 null
-   * 로 본다 — 자릿수가 크게 다른 두 값의 compareTo 는 10 의 거듭제곱을 실제로 만들어 맞추므로("1.0e999999999" 등) 사용자 입력 하나로 큰 계산이
-   * 생기지 않게 하려는 것이다. 응답 크기 한도로 쓸 수 있는 값은 이 범위 안이다.
+   * 숫자로 읽히면 BigDecimal, 아니면 null — 빈 문자열·숫자 아님·지수 범위 초과·너무 긴 글자(30 자 초과)는 모두 null. 호출부가 실행기 변환 관문을 먼저
+   * 거치므로 여기 오는 값은 이미 짧은 정수·소수다. 길이 상한은 그 관문과 무관하게 수백만 자리 문자열의 파싱 비용(자릿수에 비해 초선형)을 막는 마지막 울타리다.
+   * 30 자 안에서는 지수가 커도 compareTo 가 크기(조정 지수)부터 견줘 비용이 작다.
    */
   private static BigDecimal parseDecimalOrNull(String text) {
     if (text.isEmpty() || text.length() > MAX_COMPARED_DECIMAL_TEXT_LENGTH) {
       return null;
     }
     try {
-      BigDecimal value = new BigDecimal(text);
-      return Math.abs(value.scale()) > MAX_COMPARED_DECIMAL_SCALE ? null : value;
+      return new BigDecimal(text);
     } catch (NumberFormatException e) {
       return null;
     }
   }
-
-  /** {@link #parseDecimalOrNull} 이 숫자로 받아들이는 소수 자릿수(scale) 절댓값의 상한. */
-  private static final int MAX_COMPARED_DECIMAL_SCALE = 100;
-
-  /** {@link #parseDecimalOrNull} 이 파싱을 시도하는 글자 길이의 상한 — 응답 크기 한도로 쓸 수 있는 값은 이보다 훨씬 짧다. */
-  private static final int MAX_COMPARED_DECIMAL_TEXT_LENGTH = 30;
 
   /**
    * 출력 컬럼 이름(API_CALL 대상 컬럼·AI_CLASSIFY 출력 컬럼)의 예약어·형식 검사.
