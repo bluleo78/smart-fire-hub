@@ -48,10 +48,14 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
@@ -1026,6 +1030,111 @@ class PipelineAsyncRunnerTest {
     verify(executorClient, never()).executeApiCall(any());
     verify(apiCallExecutor, never()).execute(any(), any(), any(), any(), any(), any(), any());
     verify(dataTableService, never()).createTempTable(anyString());
+  }
+
+  /** WD-810 — 응답 크기 한도 판정 시험용 API_CALL 스텝: apiConfig 에 원래 값(mb)만 넣는다. */
+  private PipelineStepResponse apiStepWithMaxResponseSize(Object mb) {
+    return new PipelineStepResponse(
+        214L,
+        "api-size",
+        null,
+        "API_CALL",
+        null,
+        null,
+        null,
+        List.of(),
+        List.of(),
+        0,
+        "REPLACE",
+        Map.of("maxResponseSizeMb", mb),
+        null,
+        null,
+        null);
+  }
+
+  /** WD-810 — 응답 크기 한도 거절 시험의 공통 검증: 외부 호출·임시 테이블 생성이 없어야 한다. */
+  private void verifyNoExternalCall() {
+    verify(executorClient, never()).executeApiCall(any());
+    verify(apiCallExecutor, never()).execute(any(), any(), any(), any(), any(), any(), any());
+    verify(dataTableService, never()).createTempTable(anyString());
+  }
+
+  /** WD-810 — 돌 수 없는 응답 크기 한도 원래 값: 0·음수·2048 이상, int 초과(Long·문자열), 정수 아님. */
+  static Stream<Object> unrunnableMaxResponseSizes() {
+    return Stream.of(0, -1, 2048, 4096, 3_000_000_000L, "3000000000", "abc", "1.5");
+  }
+
+  /**
+   * WD-810 — 돌 수 없는 maxResponseSizeMb 로 저장된 API_CALL 스텝은 변환 전에(Jackson 원문 오류 없이) 실행기 호출 전에 실패하고 실행 기록에 고칠 곳을 남긴다.
+   */
+  @ParameterizedTest
+  @MethodSource("unrunnableMaxResponseSizes")
+  void executeStep_apiCallMaxResponseSizeUnrunnable_failsBeforeCall(Object mb) {
+    Long stepExecId = 314L;
+
+    String status =
+        runner.executeStep(
+            stepExecId, apiStepWithMaxResponseSize(mb), 21L, "TestPipeline", 2L, true);
+
+    assertThat(status).isEqualTo("FAILED");
+    ArgumentCaptor<String> error = ArgumentCaptor.forClass(String.class);
+    verify(executionRepository)
+        .updateStepExecution(
+            eq(stepExecId), eq("FAILED"), isNull(), isNull(), error.capture(), isNull(), any());
+    assertThat(error.getValue())
+        .isEqualTo(PipelineAsyncRunner.MAX_RESPONSE_SIZE_OUT_OF_RANGE_AT_RUN_MESSAGE);
+    verifyNoExternalCall();
+  }
+
+  /** WD-810 — 실행 기록에 남는 문구의 실제 텍스트(상수에서 조립한 값이 의도한 문장과 같은지). */
+  @Test
+  void maxResponseSizeRunMessage_text() {
+    assertThat(PipelineAsyncRunner.MAX_RESPONSE_SIZE_OUT_OF_RANGE_AT_RUN_MESSAGE)
+        .isEqualTo(
+            "응답 크기 한도(maxResponseSizeMb)가 잘못되었습니다. 1~100MB 로 고치거나 지우면 기본 10MB 를 씁니다 — AI 어시스턴트에게 이 스텝의 응답 크기 한도를 고쳐 달라고 요청하세요.");
+  }
+
+  /**
+   * WD-810 — 저장 상한(100) 이전에 저장돼 동작하던 101~2047MB 옛 스텝은 범위 오류로 막지 않고 정상 호출 경로로 진행한다. 이후 흐름은 목에 맡기므로 여기서는
+   * "범위 오류 문구로 실패하지 않는다"만 확인한다.
+   */
+  @ParameterizedTest
+  @ValueSource(ints = {101, 2047})
+  void executeStep_apiCallLegacyMaxResponseSize_notRejectedAsOutOfRange(int legacyMb) {
+    ApiCallConfig base = minimalApiConfig();
+    ApiCallConfig legacy =
+        new ApiCallConfig(
+            base.url(),
+            base.method(),
+            null,
+            null,
+            null,
+            null,
+            base.dataPath(),
+            base.fieldMappings(),
+            null,
+            null,
+            null,
+            null,
+            null,
+            legacyMb,
+            null,
+            null,
+            null,
+            null);
+    when(objectMapper.convertValue(any(), eq(ApiCallConfig.class))).thenReturn(legacy);
+
+    runner.executeStep(314L, apiStepWithMaxResponseSize(legacyMb), 21L, "TestPipeline", 2L, true);
+
+    verify(executionRepository, never())
+        .updateStepExecution(
+            any(),
+            any(),
+            any(),
+            any(),
+            eq(PipelineAsyncRunner.MAX_RESPONSE_SIZE_OUT_OF_RANGE_AT_RUN_MESSAGE),
+            any(),
+            any());
   }
 
   /**

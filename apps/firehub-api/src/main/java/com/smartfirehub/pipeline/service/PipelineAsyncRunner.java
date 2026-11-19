@@ -98,6 +98,18 @@ public class PipelineAsyncRunner {
   static final String API_CONNECTION_NOT_FOUND_AT_RUN_MESSAGE =
       "스텝이 참조한 API 연결을 찾을 수 없습니다. 파이프라인 편집에서 연결을 다시 선택하세요.";
 
+  /**
+   * 돌 수 없는 maxResponseSizeMb 로 저장된 API_CALL 스텝을 실행할 때 실행 기록에 남기는 문구(WD-810) — 호출 전에 실패시키고 고칠 곳을 알린다. 범위는 실행기 상수에서 만든다.
+   */
+  static final String MAX_RESPONSE_SIZE_OUT_OF_RANGE_AT_RUN_MESSAGE =
+      "응답 크기 한도(maxResponseSizeMb)가 잘못되었습니다. "
+          + ApiCallExecutor.MIN_MAX_RESPONSE_SIZE_MB
+          + "~"
+          + ApiCallExecutor.MAX_MAX_RESPONSE_SIZE_MB
+          + "MB 로 고치거나 지우면 기본 "
+          + ApiCallExecutor.DEFAULT_MAX_RESPONSE_SIZE_MB
+          + "MB 를 씁니다 — AI 어시스턴트에게 이 스텝의 응답 크기 한도를 고쳐 달라고 요청하세요.";
+
   private final PipelineStepRepository stepRepository;
   private final PipelineExecutionRepository executionRepository;
   private final PipelineExecutionRegistry executionRegistry;
@@ -1194,6 +1206,22 @@ public class PipelineAsyncRunner {
           }
         }
       } else if ("API_CALL".equals(step.scriptType())) {
+        // WD-810: 응답 크기 한도는 변환 전에 원래 값으로 판정한다(변환 뒤에는 Jackson 원문 오류로 샌다). 근거는 isRunnableMaxResponseSizeMb 참고.
+        boolean runnableMb;
+        try {
+          Long parsedMb =
+              step.apiConfig() == null
+                  ? null
+                  : DatasetChangeTriggerConfig.parseWholeNumber(
+                      step.apiConfig().get("maxResponseSizeMb"));
+          runnableMb = parsedMb == null || ApiCallExecutor.isRunnableMaxResponseSizeMb(parsedMb);
+        } catch (NumberFormatException e) {
+          runnableMb = false;
+        }
+        if (!runnableMb) {
+          throw new ScriptExecutionException(MAX_RESPONSE_SIZE_OUT_OF_RANGE_AT_RUN_MESSAGE);
+        }
+
         ApiCallConfig apiCallConfig =
             JsonConversions.convertValue(objectMapper, step.apiConfig(), ApiCallConfig.class);
 

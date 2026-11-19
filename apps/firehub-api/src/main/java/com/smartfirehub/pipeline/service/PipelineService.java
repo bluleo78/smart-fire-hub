@@ -23,6 +23,7 @@ import com.smartfirehub.pipeline.repository.PipelineExecutionRepository.ActiveEx
 import com.smartfirehub.pipeline.repository.PipelineRepository;
 import com.smartfirehub.pipeline.repository.PipelineStepRepository;
 import com.smartfirehub.pipeline.repository.TriggerRepository;
+import com.smartfirehub.pipeline.service.executor.ApiCallExecutor;
 import com.smartfirehub.pipeline.service.validator.PythonScriptValidator;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
 import com.smartfirehub.securitylevel.access.Clearance;
@@ -265,6 +266,7 @@ public class PipelineService {
         // 아래 출력 판정 뒤에 본다(존재 오라클 방지).
         validateApiCallFieldMappings(stepRequest);
         validateApiCallPagination(stepRequest);
+        validateApiCallMaxResponseSize(stepRequest, storedStep);
       }
 
       // Validate AI_CLASSIFY step requirements
@@ -1568,6 +1570,53 @@ public class PipelineService {
         MIN_PAGE_SIZE,
         MAX_PAGE_SIZE,
         stepError(step.name(), PAGE_SIZE_RANGE_MESSAGE));
+  }
+
+  /** API_CALL 응답 크기 한도 허용 범위 안내(WD-810) — 범위는 실행기 상수와 같다. */
+  static final String MAX_RESPONSE_SIZE_RANGE_MESSAGE =
+      "응답 크기 한도는 "
+          + ApiCallExecutor.MIN_MAX_RESPONSE_SIZE_MB
+          + "~"
+          + ApiCallExecutor.MAX_MAX_RESPONSE_SIZE_MB
+          + "MB 사이의 정수여야 합니다";
+
+  /**
+   * API_CALL 응답 크기 한도(maxResponseSizeMb)의 저장 검증(WD-810) — 비어 있으면 실행기 기본값을 쓰므로 허용하고, 값이 있으면 1~100 의 정수만 받는다. 상한을 저장에서
+   * 막는 근거는 {@link ApiCallExecutor#isRunnableMaxResponseSizeMb}. 단 저장본과 같은 값을 그대로 되돌려 보내는 저장은 통과시킨다.
+   */
+  private static void validateApiCallMaxResponseSize(
+      PipelineStepRequest step, PipelineStepResponse storedStep) {
+    Object requested = step.apiConfig().get("maxResponseSizeMb");
+    if (storedStep != null
+        && storedStep.apiConfig() != null
+        && isUnchangedRunnableMaxResponseSize(
+            requested, storedStep.apiConfig().get("maxResponseSizeMb"))) {
+      return;
+    }
+    // 정수 범위 검사는 페이지 크기·트리거 설정과 같은 해석을 쓴다 — 반환값은 쓰지 않고 범위 밖·소수·숫자 아님만 400 으로 막는다.
+    DatasetChangeTriggerConfig.requireSecondsInRange(
+        step.apiConfig().get("maxResponseSizeMb"),
+        ApiCallExecutor.DEFAULT_MAX_RESPONSE_SIZE_MB,
+        ApiCallExecutor.MIN_MAX_RESPONSE_SIZE_MB,
+        ApiCallExecutor.MAX_MAX_RESPONSE_SIZE_MB,
+        stepError(step.name(), MAX_RESPONSE_SIZE_RANGE_MESSAGE));
+  }
+
+  /**
+   * 요청 값이 저장본 값과 같고 그 값이 지금도 도는 값인지(WD-810). 상한(100) 이전에 저장된 101~2047 옛 스텝은 편집기가 모르는 apiConfig 키를 되돌려 보내므로 같은 값이
+   * 다시 온다 — 막으면 설명만 고쳐도 저장할 수 없다(WD-426/WD-585 와 같은 이유). 돌지 않는 저장값은 되돌려 보내도 거부해 사용자가 고치게 한다. 양쪽을 같은 정수 해석으로 읽어
+   * "150" 과 150 도 같고, 해석 실패는 false(일반 검증이 400 으로 거부).
+   */
+  private static boolean isUnchangedRunnableMaxResponseSize(Object requested, Object stored) {
+    try {
+      Long requestedMb = DatasetChangeTriggerConfig.parseWholeNumber(requested);
+      Long storedMb = DatasetChangeTriggerConfig.parseWholeNumber(stored);
+      return requestedMb != null
+          && requestedMb.equals(storedMb)
+          && ApiCallExecutor.isRunnableMaxResponseSizeMb(storedMb);
+    } catch (NumberFormatException e) {
+      return false;
+    }
   }
 
   /**

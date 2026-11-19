@@ -145,7 +145,12 @@ export function registerPipelineTools(
                     .describe('재시도 설정'),
                   timeoutMs: z.number().optional().describe('요청 타임아웃(ms)'),
                   maxDurationMs: z.number().optional().describe('최대 실행 시간(ms)'),
-                  maxResponseSizeMb: z.number().optional().describe('최대 응답 크기(MB)'),
+                  maxResponseSizeMb: z
+                    .number()
+                    .int()
+                    .min(1)
+                    .optional()
+                    .describe('최대 응답 크기(MB, 새 값은 1~100, 기본 10)'),
                   inlineAuth: z
                     .record(z.string(), z.string())
                     .optional()
