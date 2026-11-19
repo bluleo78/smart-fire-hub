@@ -192,7 +192,9 @@ test.describe('AI 챗 인라인 차트 — 저장 이름 중복 (WD-824)', () =>
 
     await dialog.getByRole('button', { name: '저장', exact: true }).click();
 
-    await expect(page.getByText('이미 있는 쿼리 이름입니다.')).toBeVisible();
+    await expect(
+      page.getByText('저장 쿼리 이름을 정하지 못했습니다. 쓰지 않는 「AI 생성: 지역별 합계」 쿼리를 지우거나 차트 이름을 바꾼 뒤 다시 저장하세요.'),
+    ).toBeVisible();
     await expect(dialog.locator('#chart-name-error')).toHaveCount(0);
   });
 });

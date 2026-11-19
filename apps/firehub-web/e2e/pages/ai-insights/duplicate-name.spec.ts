@@ -97,6 +97,102 @@ test.describe('이름 중복 409 — 스마트 작업·리포트 양식 (WD-824)
     await expect(page.getByText(TEMPLATE_MSG)).toHaveCount(0);
   });
 
+  test('목표 기반 새 작업: 자동 양식 이름이 20번까지 쓰였으면 한 번 읽은 목록으로 「양식 (21)」을 바로 보낸다 (WD-837)', async ({ authenticatedPage: page }) => {
+    await setupNewJobMocks(page);
+    // 「<작업> 양식」~「(20)」은 이미 있다 — 서버는 그 이름 모두에 409 를 낸다
+    const used = ['주간 화재 추이 양식', ...Array.from({ length: 19 }, (_, i) => `주간 화재 추이 양식 (${i + 2})`)];
+    let listReads = 0;
+    const templateNames: string[] = [];
+    await page.route(
+      (url) => url.pathname === '/api/v1/proactive/templates',
+      (route) => {
+        const req = route.request();
+        if (req.method() === 'GET') {
+          // 화면 자신의 목록 조회(기본 크기)와 이름 읽기(size=200)를 가른다 — 후자만 센다
+          if (new URL(req.url()).searchParams.get('size') === '200') listReads += 1;
+          return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(used.map((name, i) => createTemplate({ id: 100 + i, name }))) });
+        }
+        const name = (req.postDataJSON() as { name: string }).name;
+        templateNames.push(name);
+        return used.includes(name)
+          ? route.fulfill({ status: 409, contentType: 'application/json', body: duplicateBody(TEMPLATE_MSG) })
+          : route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(createTemplate({ id: 78 })) });
+      },
+    );
+    const jobBodies = await mockPostRejectingFirst(page, '/api/v1/proactive/jobs', 0, JOB_MSG, createJob({ id: 99, name: '주간 화재 추이' }));
+    await page.goto('/ai-insights/jobs/new');
+
+    await page.locator('#mode-goal').click();
+    await page.getByLabel('비즈니스 질문').fill('주간 화재 추이');
+    await page.getByRole('button', { name: '템플릿 자동 생성' }).click();
+    await page.getByRole('button', { name: '만들기', exact: true }).click();
+
+    await expect.poll(() => jobBodies.length).toBe(1);
+    // 첫 409 뒤 목록을 한 번 읽고 비어 있는 가장 작은 번호(21)로 바로 간다 — 2 부터 20 까지 순차로 두드리지 않는다
+    expect(templateNames).toEqual(['주간 화재 추이 양식', '주간 화재 추이 양식 (21)']);
+    expect(listReads).toBe(1);
+    expect(jobBodies[0]).toMatchObject({ templateId: 78 });
+  });
+
+  test('목표 기반 새 작업: 자동 양식 이름을 끝내 못 정하면 안내를 토스트로 보이고 작업을 만들지 않는다 (WD-837)', async ({ authenticatedPage: page }) => {
+    await setupNewJobMocks(page);
+    await mockPostRejectingFirst(page, '/api/v1/proactive/templates', 999, TEMPLATE_MSG, {});
+    const jobBodies = await mockPostRejectingFirst(page, '/api/v1/proactive/jobs', 0, JOB_MSG, createJob({ id: 99 }));
+    await page.goto('/ai-insights/jobs/new');
+
+    await page.locator('#mode-goal').click();
+    await page.getByLabel('비즈니스 질문').fill('주간 화재 추이');
+    await page.getByRole('button', { name: '템플릿 자동 생성' }).click();
+    await page.getByRole('button', { name: '만들기', exact: true }).click();
+
+    await expect(
+      page.getByText('자동 양식 이름을 정하지 못했습니다. 쓰지 않는 「주간 화재 추이 양식」 양식을 지우거나 작업 이름을 바꾼 뒤 다시 저장하세요.'),
+    ).toBeVisible();
+    // 사용자 입력이 아닌 이름이라 이름 칸 오류로 가지 않고, 작업도 만들지 않는다
+    await expect(page.getByText(TEMPLATE_MSG)).toHaveCount(0);
+    expect(jobBodies).toHaveLength(0);
+  });
+
+  test('작업 복제: 목록을 열어 둔 캐시가 있으면 409 뒤 작업 목록을 다시 읽지 않는다 (WD-837)', async ({ authenticatedPage: page }) => {
+    let jobListReads = 0;
+    await page.route(
+      (url) => url.pathname === '/api/v1/proactive/jobs',
+      (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        jobListReads += 1;
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([createJob({ id: 1, name: '잡 1', enabled: true })]) });
+      },
+    );
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    const cloned = createJob({ id: 2, name: '잡 1 (복사본 2)', enabled: false });
+    const bodies = await mockPostRejectingFirst(page, '/api/v1/proactive/jobs', 1, JOB_MSG, cloned);
+    // (나중에 등록한 라우트가 먼저 실행되므로 mockPostRejectingFirst 뒤에 둔다) 재시도(두 번째) POST 를 받는 순간의 목록 GET 수를 기록한다 — 성공 뒤 onSuccess 의 목록 무효화 GET 과 섞이지 않게 하려는 것이다.
+    // 캐시가 없으면 재시도 POST 전에 목록 GET 이 한 번 더 나가 2 가 되므로 회귀를 그대로 잡는다.
+    let readsAtRetry = -1;
+    let posts = 0;
+    await page.route(
+      (url) => url.pathname === '/api/v1/proactive/jobs',
+      (route) => {
+        if (route.request().method() !== 'POST') return route.fallback();
+        posts += 1;
+        if (posts === 2) readsAtRetry = jobListReads;
+        return route.fallback();
+      },
+    );
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/2', cloned);
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/2/executions', []);
+    await mockApi(page, 'GET', '/api/v1/proactive/templates', []);
+
+    await page.goto('/ai-insights/jobs');
+    await expect(page.getByRole('button', { name: '복제' })).toBeVisible();
+    expect(jobListReads).toBe(1);
+    await page.getByRole('button', { name: '복제' }).click();
+
+    await expect.poll(() => bodies.length).toBe(2);
+    // 목록을 연 1회가 전부 — 409 뒤 이름을 얻으려고 목록을 또 읽지 않는다(캐시 재사용)
+    expect(readsAtRetry).toBe(1);
+  });
+
   test('양식 복제: 「(복사본)」이 겹치면 「(복사본 2)」로 다시 보내 성공한다', async ({ authenticatedPage: page }) => {
     await setupTemplateDetailMocks(page, 1);
     const created = createTemplate({ id: 10, name: '기본 리포트 템플릿 (복사본 2)', builtin: false });

@@ -6,6 +6,7 @@ import { useForm } from 'react-hook-form';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
+import { proactiveApi } from '@/api/proactive';
 import { EditConflictDialog } from '@/components/EditConflictDialog';
 import { DetailPageTitle } from '@/components/PageTitleSync';
 import {
@@ -25,7 +26,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cloneSuccessMessage, useCanWriteProactive,useCloneProactiveJob, useCreateProactiveJob, useCreateProactiveTemplate, useDeleteProactiveJob, useDeleteProactiveTemplate, useDisableProactiveJob, useExecuteProactiveJob, useFetchLatestProactiveJob, useProactiveJob, useProactiveTemplates, useUpdateProactiveJob } from '@/hooks/queries/useProactiveMessages';
 import { useEditModeFocus } from '@/hooks/useEditModeFocus';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
-import { applyDuplicateNameError, extractApiError, handleApiError, isEditConflict, isForbiddenError, isJobAlreadyRunning } from '@/lib/api-error';
+import { applyDuplicateNameError, extractApiError, handleApiError, isEditConflict, isForbiddenError, isJobAlreadyRunning, NameRetryExhaustedError } from '@/lib/api-error';
 import { createWithNumberedName } from '@/lib/clone-name';
 import { parseRouteId } from '@/lib/route-id';
 import { numberedGoalTemplateName, type ProactiveJobFormValues,proactiveJobSchema } from '@/lib/validations/proactive-job';
@@ -264,6 +265,16 @@ export default function ProactiveJobDetailPage() {
                 description: `목표 기반 작업 「${values.name}」의 질문으로 만든 양식`,
                 sections,
               }),
+            {
+              // 첫 409 뒤 양식 이름을 한 번 읽어 이미 쓰인 번호를 건너뛴다(WD-837) — 읽기 실패는 순차 재시도로 이어진다
+              loadExistingNames: proactiveApi.getAllTemplateNames,
+              // 안내의 양식 이름은 엔진이 넘기는 1회차 저장 이름(200자 자르기 반영)을 그대로 쓴다
+              // 소진은 사용자가 정한 이름이 아니라 아래 catch 의 토스트(handleApiError)로 할 일을 안내한다 — 이름 칸 오류로 보내지 않는다
+              onExhausted: (firstName) =>
+                new NameRetryExhaustedError(
+                  `자동 양식 이름을 정하지 못했습니다. 쓰지 않는 「${firstName}」 양식을 지우거나 작업 이름을 바꾼 뒤 다시 저장하세요.`,
+                ),
+            },
           );
           goalTemplateId = template.id;
         } catch (err) {
