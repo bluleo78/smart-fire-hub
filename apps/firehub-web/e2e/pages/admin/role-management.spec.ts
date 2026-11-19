@@ -411,6 +411,40 @@ test.describe('역할 관리 페이지', () => {
     await expect(saveButton).toBeDisabled();
   });
 
+  // WD-817: 상세 화면의 역할 이름 칸도 생성 다이얼로그와 같은 스키마라, 고칠 수 있는 사용자 역할이면 필수 * 와
+  // 규칙 안내(#role-name-desc)가 보이고 칸의 aria-describedby 로 이어진다.
+  test('편집 가능한 역할 상세의 역할 이름 칸에 필수 표시와 규칙 안내가 이어진다 (WD-817)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupRoleDetailMocks(page, 3, false);
+    await page.goto('/admin/roles/3');
+
+    const input = page.locator('#role-name');
+    await expect(input).toHaveValue('EDITOR');
+    await expect(input).toBeEnabled();
+    await expect(page.locator('label[for="role-name"]')).toHaveText('역할 이름*');
+    await expect(input).toHaveAttribute('aria-required', 'true');
+    const desc = page.locator('#role-name-desc');
+    await expect(desc).toContainText('대문자로 시작');
+    await expect(desc).toContainText('DATA_EDITOR');
+    await expect(input).toHaveAttribute('aria-describedby', /role-name-desc/);
+  });
+
+  // WD-817 리뷰: 시스템 역할은 칸이 잠겨 고칠 수 없으니, 규칙 안내도 필수 표시(*·aria-required)도 보이지 않는다.
+  test('시스템 역할 상세의 잠긴 역할 이름 칸에는 필수 표시·규칙 안내가 없다 (WD-817)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupRoleDetailMocks(page, 1, true);
+    await page.goto('/admin/roles/1');
+
+    const input = page.locator('#role-name');
+    await expect(input).toHaveValue('USER');
+    await expect(input).toBeDisabled();
+    await expect(page.locator('label[for="role-name"]')).toHaveText('역할 이름');
+    await expect(input).not.toHaveAttribute('aria-required', 'true');
+    await expect(page.locator('#role-name-desc')).toHaveCount(0);
+  });
+
   test('역할 상세 페이지에서 권한 할당 섹션이 카테고리별로 렌더링된다', async ({ authenticatedPage: page }) => {
     await setupRoleDetailMocks(page, 3, false);
     await page.goto('/admin/roles/3');
