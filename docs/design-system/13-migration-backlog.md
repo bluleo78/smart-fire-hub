@@ -156,7 +156,7 @@ WCAG 2.2 AA 기준에 맞게 ARIA 속성을 추가하고 포커스 관리를 개
 
 ### 영향 범위
 - **적용 완료**: `OntologyEditDialog.tsx` (#303), 선례 `components/ai/widgets/ReportPreviewDialog.tsx:62`
-- **남은 후보**: `EditTriggerDialog.tsx:108`, `AddTriggerDialog.tsx:163`, `ProactiveJobsTab.tsx:329`, `AddRowDialog.tsx:57` — 모두 같은 `max-h-[85vh] overflow-y-auto` 관행이지만 콘텐츠가 짧아 현재는 체감 결함이 없다. **일괄 치환하지 않고**, 콘텐츠가 길어지는 시점에 개별 전환한다.
+- **남은 후보**: `EditTriggerDialog.tsx:108`, `AddTriggerDialog.tsx:163`, `AddRowDialog.tsx:57` — 모두 같은 `max-h-[85vh] overflow-y-auto` 관행이지만 콘텐츠가 짧아 현재는 체감 결함이 없다(`ProactiveJobsTab.tsx:329` 는 WD-834 에서 쓰지 않는 파일이라 지움). **일괄 치환하지 않고**, 콘텐츠가 길어지는 시점에 개별 전환한다.
 - **주의**: shadcn `DialogContent`의 기본 `grid gap-4`를 덮어야 하므로 `flex flex-col`을 반드시 명시한다.
 
 ### 함께 처리할 것

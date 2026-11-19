@@ -16,17 +16,23 @@ function isDuplicateNameError(error: unknown): boolean {
 
 /**
  * 시도 번호별 양식 이름 — 1번째는 그대로, 2번째부터 「이름 (2)」「이름 (3)」 …(WD-824)
- * 200자(코드 포인트, 서버 varchar 기준)를 넘으면 이름 쪽만 잘라 맞추고, 「 양식」 꼬리와 번호는 항상 남긴다.
+ * 200 단위(UTF-16, 서버 @Size 기준 — WD-699)를 넘으면 이름 쪽만 잘라 맞추고, 「 양식」 꼬리와 번호는 항상 남긴다.
+ * 길이는 String.length(UTF-16 단위)로 센다. 이모지는 2단위라 코드 포인트로 세면 서버보다 짧게 세어 400 이 난다.
+ * 자르는 자리 끝이 surrogate 쌍의 앞쪽(high surrogate)이면 쌍이 깨지므로 그 한 단위도 뺀다.
  * 자르는 자리의 공백은 지운다. 웹 numberedGoalTemplateName 과 같은 모양이다.
  */
 export function numberedTemplateName(base: string, attempt: number): string {
   const kept = base.endsWith(' 양식') ? ' 양식' : '';
   const stem = kept ? base.slice(0, -kept.length) : base;
   const tail = kept + (attempt <= 1 ? '' : ` (${attempt})`);
-  const chars = Array.from(stem);
-  const room = TEMPLATE_NAME_MAX_LENGTH - Array.from(tail).length;
-  if (chars.length <= room) return stem + tail;
-  return chars.slice(0, room).join('').trimEnd() + tail;
+  // 꼬리 길이도 UTF-16 단위로 잰다 — 꼬리는 BMP 문자뿐이라 String.length 와 같다.
+  const room = TEMPLATE_NAME_MAX_LENGTH - tail.length;
+  if (stem.length <= room) return stem + tail;
+  let end = room;
+  // 자르는 자리 바로 앞 단위가 high surrogate(0xD800–0xDBFF)면 쌍의 앞부분만 남으므로 한 단위 더 뺀다.
+  const before = stem.charCodeAt(end - 1);
+  if (before >= 0xd800 && before <= 0xdbff) end -= 1;
+  return stem.slice(0, end).trimEnd() + tail;
 }
 
 /**

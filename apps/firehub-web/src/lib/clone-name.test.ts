@@ -2,9 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   cloneName,
+  CloneNameExhaustedError,
   createWithNumberedName,
   createWithUniqueCloneName,
   NAME_RETRY_MAX_ATTEMPTS,
+  nextCloneAttempt,
   numberedCloneName,
   numberedName,
 } from './clone-name';
@@ -130,11 +132,89 @@ describe('createWithUniqueCloneName (WD-824)', () => {
     expect(create).toHaveBeenCalledTimes(1);
   });
 
-  it('시도 상한까지 계속 겹치면 마지막 오류를 던진다', async () => {
-    const err = duplicateError();
-    const create = vi.fn().mockRejectedValue(err);
-    await expect(createWithUniqueCloneName('A', '복사본', create)).rejects.toBe(err);
+  it('시도 상한까지 계속 겹치면 소진 오류를 던진다 (WD-834)', async () => {
+    const create = vi.fn().mockRejectedValue(duplicateError());
+    await expect(createWithUniqueCloneName('A', '복사본', create)).rejects.toBeInstanceOf(CloneNameExhaustedError);
     expect(create).toHaveBeenCalledTimes(NAME_RETRY_MAX_ATTEMPTS);
+  });
+
+  describe('기존 이름 읽기 (WD-834)', () => {
+    /** 「A (복사본)」, 「A (복사본 2)」 … 「A (복사본 20)」 */
+    const taken = Array.from({ length: 20 }, (_, i) => numberedCloneName('A', '복사본', i + 1));
+
+    function fakeCreate() {
+      return vi.fn(async (name: string) => {
+        if (taken.includes(name)) throw duplicateError();
+        return { name };
+      });
+    }
+
+    it('1회차가 겹치면 목록을 읽어 다음 번호부터 이어 시도한다', async () => {
+      const create = fakeCreate();
+      const loader = vi.fn(async () => taken);
+      await createWithUniqueCloneName('A', '복사본', create, loader);
+      expect(create.mock.calls.map((c) => c[0])).toEqual(['A (복사본)', 'A (복사본 21)']);
+      expect(loader).toHaveBeenCalledTimes(1);
+    });
+
+    it('읽은 다음 번호도 겹치면 계속 올린다', async () => {
+      const create = vi.fn(async (name: string) => {
+        if (taken.includes(name) || name === 'A (복사본 21)') throw duplicateError();
+        return { name };
+      });
+      await createWithUniqueCloneName('A', '복사본', create, async () => taken);
+      expect(create.mock.calls.map((c) => c[0])).toEqual(['A (복사본)', 'A (복사본 21)', 'A (복사본 22)']);
+    });
+
+    it('목록 읽기가 실패하면 순차 재시도로 돌아간다', async () => {
+      const create = vi
+        .fn<(name: string) => Promise<{ name: string }>>()
+        .mockRejectedValueOnce(duplicateError())
+        .mockImplementation(async (name) => ({ name }));
+      await createWithUniqueCloneName('A', '복사본', create, () => Promise.reject(new Error('목록 실패')));
+      expect(create.mock.calls.map((c) => c[0])).toEqual(['A (복사본)', 'A (복사본 2)']);
+    });
+
+    it('이름 중복이 아닌 오류는 그대로 던지고 목록을 읽지 않는다', async () => {
+      const boom = { isAxiosError: true, response: { status: 500, data: {} } };
+      const create = vi.fn().mockRejectedValue(boom);
+      const loader = vi.fn(async () => taken);
+      await expect(createWithUniqueCloneName('A', '복사본', create, loader)).rejects.toBe(boom);
+      expect(loader).not.toHaveBeenCalled();
+    });
+
+    it('계속 겹치면 읽은 뒤에도 총 시도 20번에서 소진 오류를 던진다', async () => {
+      const create = vi.fn().mockRejectedValue(duplicateError());
+      await expect(
+        createWithUniqueCloneName('A', '복사본', create, async () => taken),
+      ).rejects.toBeInstanceOf(CloneNameExhaustedError);
+      expect(create).toHaveBeenCalledTimes(NAME_RETRY_MAX_ATTEMPTS);
+    });
+  });
+});
+
+describe('nextCloneAttempt (WD-834)', () => {
+  it('기존 사본 중 가장 큰 번호의 다음 번호를 돌려준다', () => {
+    const existing = ['A (복사본)', ...Array.from({ length: 19 }, (_, i) => `A (복사본 ${i + 2})`)];
+    expect(nextCloneAttempt('A', '복사본', existing)).toBe(21);
+    expect(nextCloneAttempt('A', '복사본', [])).toBe(1);
+    expect(nextCloneAttempt('A', '복사본', ['A (복사본)'])).toBe(2);
+  });
+
+  it('서버처럼 대소문자·앞뒤 공백을 무시하고 센다', () => {
+    // 「abc (복사본 n)」이 있으면 서버는 「ABC (복사본 n)」도 겹친다고 막는다 — 같은 번호를 건너뛰어야 한다
+    const existing = ['abc (복사본)', ' abc (복사본 2) ', 'ABC (복사본 3)'];
+    expect(nextCloneAttempt('ABC', '복사본', existing)).toBe(4);
+  });
+
+  it('다른 원본의 사본은 세지 않는다', () => {
+    expect(nextCloneAttempt('A', '복사본', ['B (복사본 30)', 'A (복사본)'])).toBe(2);
+  });
+
+  it('잘린 긴 이름의 사본도 번호를 읽는다', () => {
+    const name = '가'.repeat(200);
+    const existing = [numberedCloneName(name, '복사본', 1), numberedCloneName(name, '복사본', 2)];
+    expect(nextCloneAttempt(name, '복사본', existing)).toBe(3);
   });
 });
 
@@ -143,6 +223,26 @@ describe('numberedName / createWithNumberedName (WD-824)', () => {
     expect(numberedName('A 양식', 1)).toBe('A 양식');
     expect(numberedName('A 양식', 2)).toBe('A 양식 (2)');
     expect(numberedName('A 양식', 10)).toBe('A 양식 (10)');
+  });
+
+  it('1회차도 200자 안으로 자른다 (WD-834)', () => {
+    const result = numberedName(`AI 생성: ${'a'.repeat(195)}`, 1);
+    expect(result.length).toBe(200);
+    expect(result.startsWith('AI 생성: ')).toBe(true);
+  });
+
+  it('1회차도 200자 안으로 자르고 서로게이트를 가르지 않는다', () => {
+    const result = numberedName(`AI 생성: ${'a'.repeat(192)}😀😀`, 1);
+    expect(result.length).toBeLessThanOrEqual(200);
+    const last = result.charCodeAt(result.length - 1);
+    expect(last >= 0xd800 && last <= 0xdbff).toBe(false);
+  });
+
+  it('1회차는 한도 안이면 끝 공백까지 그대로 두고, 잘랐을 때만 끝 공백을 지운다', () => {
+    // 자르지 않는 이름은 손대지 않는다 — cloneName·ai-agent 와 같은 규칙(WD-834 최종 리뷰)
+    expect(numberedName('AI 생성: x ', 1)).toBe('AI 생성: x ');
+    // 자른 자리가 공백이면 끝 공백을 지운다
+    expect(numberedName(`${'a'.repeat(199)} bbb`, 1)).toBe('a'.repeat(199));
   });
 
   it('번호가 붙어도 200자를 넘지 않게 앞쪽을 자른다', () => {

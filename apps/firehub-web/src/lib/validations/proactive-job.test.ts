@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  goalTemplateName,
   MAX_JOB_PROMPT_LENGTH,
   numberedGoalTemplateName,
   proactiveJobSchema,
@@ -104,5 +105,25 @@ describe('numberedGoalTemplateName (WD-824)', () => {
     const emoji = numberedGoalTemplateName('😀'.repeat(250), 2);
     expect(emoji.length).toBeLessThanOrEqual(200);
     expect(emoji).not.toMatch(/[\ud800-\udbff] 양식/);
+  });
+});
+
+/** 미리보기(goalTemplateName)는 저장 1회차 이름(numberedGoalTemplateName(.., 1))과 항상 같아야 한다(WD-834). */
+describe('goalTemplateName 미리보기 (WD-834)', () => {
+  it.each([
+    ['보통 이름', '주간 매출'],
+    ['200자 이름', '가'.repeat(200)],
+    ['이모지로 끝나는 긴 이름', 'a'.repeat(195) + '😀😀😀'],
+    ['이모지가 자르는 자리에 걸친 이름', 'a'.repeat(196) + '😀'],
+    ['자르는 자리가 공백인 이름', 'a'.repeat(196) + ' bbb'],
+  ])('%s 는 저장 1회차 이름과 같다', (_label, name) => {
+    expect(goalTemplateName(name)).toBe(numberedGoalTemplateName(name, 1));
+  });
+
+  it('잘라도 서로게이트 쌍을 가르지 않고 「 양식」 꼬리를 남긴다', () => {
+    const out = goalTemplateName('a'.repeat(196) + '😀');
+    expect(out.endsWith(' 양식')).toBe(true);
+    expect(out.length).toBeLessThanOrEqual(200);
+    expect(out).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
   });
 });

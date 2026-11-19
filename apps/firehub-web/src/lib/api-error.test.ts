@@ -13,6 +13,7 @@ import {
   isMemberGoneError,
   isWrongCurrentPasswordError,
 } from './api-error';
+import { CloneNameExhaustedError } from './clone-name';
 
 // toast 는 부수효과만 확인한다 — 실제 sonner 렌더는 E2E 몫이다. vi.mock 은 호이스팅되므로 import 아래에 둬도
 // import 보다 먼저 적용된다(import 순서 lint 를 지키기 위해 아래에 둔다).
@@ -215,5 +216,13 @@ describe('isDuplicateName (WD-824)', () => {
     expect(isDuplicateName(axiosErrorWithStatus(400, { code: 'DUPLICATE_NAME' }))).toBe(false);
     expect(isDuplicateName({ isAxiosError: true })).toBe(false);
     expect(isDuplicateName(new Error('x'))).toBe(false);
+  });
+});
+
+describe('extractApiError — 복제 이름 소진 (WD-834)', () => {
+  it('CloneNameExhaustedError 면 그 안내 문구를 돌려준다', () => {
+    expect(extractApiError(new CloneNameExhaustedError(), 'x')).toBe(
+      '복사본 이름을 정하지 못했습니다. 쓰지 않는 복사본을 지우거나 원본 이름을 바꾼 뒤 다시 복제하세요.',
+    );
   });
 });

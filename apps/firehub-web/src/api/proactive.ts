@@ -372,6 +372,20 @@ export const proactiveApi = {
   // 응답 자체는 기존과 동일하게 바로 배열이다(엔벨로프 아님).
   getTemplates: (params?: { page?: number; size?: number }) =>
     client.get<ReportTemplateSummary[]>('/proactive/templates', { params }),
+  /**
+   * 내가 볼 수 있는 양식 이름 전체(WD-834) — 복제 이름 재시도가 이미 쓰인 사본 번호를 건너뛰는 데 쓴다.
+   * 서버가 한 번에 최대 200건만 주므로 200건 미만이 올 때까지 페이지를 넘기고, 비정상적으로 큰 목록에서 끝없이 돌지 않게 20페이지에서 멈춘다.
+   */
+  getAllTemplateNames: async (): Promise<string[]> => {
+    const pageSize = 200;
+    const names: string[] = [];
+    for (let page = 0; page < 20; page++) {
+      const { data } = await client.get<ReportTemplateSummary[]>('/proactive/templates', { params: { page, size: pageSize } });
+      names.push(...data.map((t) => t.name));
+      if (data.length < pageSize) break;
+    }
+    return names;
+  },
   getTemplate: (id: number) =>
     client.get<ReportTemplate>(`/proactive/templates/${id}`),
   createTemplate: (data: CreateReportTemplateRequest) =>

@@ -276,6 +276,8 @@ export function useCloneProactiveJob() {
           // 수신자로 곧바로 예약돼, 편집하다 취소한 복제 한 번으로 같은 리포트가 두 번 발송된다 (WD-300)
           enabled: false,
         }).then((r) => r.data),
+        // 첫 409 뒤 기존 작업 이름을 한 번 읽어 이미 쓰인 사본 번호를 건너뛴다 — 목록 조회가 실패하면 순차 재시도로 이어진다(WD-834)
+        () => proactiveApi.getJobs().then((r) => r.data.map((j) => j.name)),
       ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: KEYS.jobs });

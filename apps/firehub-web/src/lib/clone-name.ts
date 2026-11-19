@@ -1,4 +1,7 @@
-import { isDuplicateName } from './api-error';
+import { CloneNameExhaustedError, isDuplicateName } from './api-error';
+
+// 복제 소진 오류는 extractApiError 가 instanceof 로 알아보도록 api-error.ts 에 둔다 — 복제 쪽 호출부·시험은 여기서도 가져다 쓴다.
+export { CloneNameExhaustedError };
 
 /**
  * 「복제」로 만드는 사본 이름(WD-430).
@@ -33,7 +36,7 @@ export function cloneName(name: string, suffix: string, maxLength = NAME_MAX_LEN
 }
 
 /**
- * 이름 겹침 재시도(`createWithNumberedName`)의 시도 상한(WD-824) — 복제뿐 아니라 파생 이름(자동 양식·AI 차트 저장)도 쓴다. 겹치는 이름이 이만큼 쌓여 있으면 더 시도하지 않고 서버 오류를 그대로 보인다.
+ * 이름 겹침 재시도(`createWithNumberedName`)의 시도 상한(WD-824) — 복제뿐 아니라 파생 이름(자동 양식·AI 차트 저장)도 쓴다. 겹치는 이름이 이만큼 쌓여 있으면 더 시도하지 않는다 — 파생 이름은 서버 오류를 그대로 보이고, 복제(createWithUniqueCloneName)는 CloneNameExhaustedError 로 안내 문구를 보인다(WD-834).
  * 서버가 복사본을 몇 개든 허용하므로 끝없이 두드리지 않게 막는 안전장치다.
  */
 export const NAME_RETRY_MAX_ATTEMPTS = 20;
@@ -55,7 +58,26 @@ export function numberedCloneName(name: string, label: string, attempt: number):
  * 번호가 들어갈 만큼 기본 이름 끝을 잘라 200자 안에 맞춘다(자르는 규칙은 cloneName 과 같다).
  */
 export function numberedName(base: string, attempt: number, maxLength = NAME_MAX_LENGTH): string {
-  return attempt <= 1 ? base : cloneName(base, `(${attempt})`, maxLength);
+  // 1회차도 한도를 넘는 기본 이름(예: 200자 차트 이름 앞에 「AI 생성: 」)은 서버가 거절하므로 잘라 맞춘다(WD-834).
+  // 끝 공백은 실제로 자를 때만 지운다 — cloneName·ai-agent numberedTemplateName 과 같은 규칙.
+  if (attempt > 1) return cloneName(base, `(${attempt})`, maxLength);
+  return base.length > maxLength ? truncateUtf16(base, maxLength).trimEnd() : base;
+}
+
+/**
+ * 기존 이름들에서 다음에 시도할 복제 번호를 구한다(WD-834) — 이미 있는 사본 중 번호가 가장 큰 것의 다음 번호(없으면 1).
+ * 접미사별로 원본 이름을 자르는 규칙까지 같게 numberedCloneName 으로 후보를 만들어 비교하므로, 잘린 긴 이름의 사본도 읽히고
+ * 다른 원본의 사본은 세지 않는다. 사본이 연속이 아니어도 가장 큰 번호만 보며, 번호는 기존 이름 개수 + 1 까지만 맞춰 본다(비용 상한).
+ */
+export function nextCloneAttempt(name: string, label: string, existingNames: readonly string[]): number {
+  // 서버 ResourceNameGuard 처럼 앞뒤 공백·대소문자를 무시해 비교한다 — 「abc (복사본)」이 있으면 「ABC」 복제도 서버가 409 로 막기 때문이다.
+  const normalize = (value: string) => value.trim().toLowerCase();
+  const existing = new Set(existingNames.map(normalize));
+  let highest = 0;
+  for (let n = 1; n <= existingNames.length + 1; n++) {
+    if (existing.has(normalize(numberedCloneName(name, label, n)))) highest = n;
+  }
+  return highest + 1;
 }
 
 /**
@@ -65,15 +87,40 @@ export function numberedName(base: string, attempt: number, maxLength = NAME_MAX
  * @param nameFor 1부터 시작하는 시도 번호로 후보 이름을 만든다
  * @param create 후보 이름으로 생성 API 를 호출한다
  */
-export async function createWithNumberedName<T>(
+export function createWithNumberedName<T>(
   nameFor: (attempt: number) => string,
   create: (candidate: string) => Promise<T>,
 ): Promise<T> {
-  for (let attempt = 1; ; attempt++) {
+  return retryOnDuplicateName(nameFor, create);
+}
+
+/**
+ * 409 DUPLICATE_NAME 재시도 엔진(WD-834) — 파생 이름·복제가 같은 상한·같은 중복 판정을 쓰게 한곳에 둔다.
+ * 상한은 생성 호출 수(NAME_RETRY_MAX_ATTEMPTS)다 — 시도 번호는 onFirstDuplicate 로 건너뛸 수 있어 호출 수와 다를 수 있다.
+ *
+ * @param onFirstDuplicate 첫 겹침 뒤 한 번 불려 다음 시도 번호를 정한다 — 실패하면 무시하고 번호를 하나씩 올린다
+ * @param onExhausted 상한에 닿았을 때 던질 오류 — 없으면 마지막 서버 오류를 그대로 던진다
+ */
+async function retryOnDuplicateName<T>(
+  nameFor: (attempt: number) => string,
+  create: (candidate: string) => Promise<T>,
+  options: {
+    onFirstDuplicate?: (nextAttempt: number) => Promise<number>;
+    onExhausted?: () => Error;
+  } = {},
+): Promise<T> {
+  let attempt = 1;
+  for (let calls = 1; ; calls++) {
     try {
       return await create(nameFor(attempt));
     } catch (error) {
-      if (!isDuplicateName(error) || attempt >= NAME_RETRY_MAX_ATTEMPTS) throw error;
+      if (!isDuplicateName(error)) throw error;
+      if (calls >= NAME_RETRY_MAX_ATTEMPTS) throw options.onExhausted?.() ?? error;
+    }
+    attempt += 1;
+    if (calls === 1 && options.onFirstDuplicate) {
+      // 목록을 못 읽어도 생성은 계속한다 — 번호를 하나씩 올리는 재시도로 대신한다.
+      attempt = await options.onFirstDuplicate(attempt).catch(() => attempt);
     }
   }
 }
@@ -82,12 +129,24 @@ export async function createWithNumberedName<T>(
  * 복제 생성 + 이름 겹침 재시도(WD-824) — 서버에 복제 전용 API 가 없어 웹이 이름을 만들어 일반 생성 API 로 보낸다.
  * 서버가 같은 소유자 안의 같은 이름을 409 DUPLICATE_NAME 으로 막으므로, 이미 복사본이 있으면 번호를 올려 다시 시도한다.
  *
+ * 복사본이 상한(20)보다 많이 쌓인 경우를 위해(WD-834), 1회차가 겹치면 `loadExistingNames` 로 기존 이름을 한 번 읽어
+ * 가장 큰 사본 번호의 다음부터 이어 시도한다. 목록 읽기가 실패하면 무시하고 번호를 하나씩 올린다.
+ * 이 함수 안의 총 시도가 NAME_RETRY_MAX_ATTEMPTS 에 닿으면 CloneNameExhaustedError 를 던진다. 이름 중복이 아닌 오류는 그대로 던진다.
+ *
  * @param create 후보 이름으로 생성 API 를 호출한다
+ * @param loadExistingNames 같은 소유자의 기존 이름 목록을 읽는다(선택)
  */
 export function createWithUniqueCloneName<T>(
   name: string,
   label: string,
   create: (candidate: string) => Promise<T>,
+  loadExistingNames?: () => Promise<readonly string[]>,
 ): Promise<T> {
-  return createWithNumberedName((attempt) => numberedCloneName(name, label, attempt), create);
+  return retryOnDuplicateName((attempt) => numberedCloneName(name, label, attempt), create, {
+    // 첫 겹침 뒤 한 번만 기존 이름을 읽어 이미 쓰인 사본 번호를 건너뛴다 — 낡은 목록이어도 번호가 뒤로 가지 않게 max 를 쓴다.
+    onFirstDuplicate: loadExistingNames
+      ? async (next) => Math.max(next, nextCloneAttempt(name, label, await loadExistingNames()))
+      : undefined,
+    onExhausted: () => new CloneNameExhaustedError(),
+  });
 }

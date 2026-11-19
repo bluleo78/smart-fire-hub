@@ -5,7 +5,7 @@ import { useForm, useWatch } from 'react-hook-form';
 import { type NavigateFunction, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
-import type { ReportTemplate, ReportTemplateSummary } from '@/api/proactive';
+import { proactiveApi, type ReportTemplate, type ReportTemplateSummary } from '@/api/proactive';
 import { EditConflictDialog } from '@/components/EditConflictDialog';
 import { DetailPageTitle } from '@/components/PageTitleSync';
 import {
@@ -482,6 +482,7 @@ function ReportTemplateDetailContent({ templateId }: { templateId: number | null
           sections: Array.isArray(template.sections) ? template.sections : [],
           style: template.style ?? undefined,
         }),
+        proactiveApi.getAllTemplateNames,
       );
       toast.success(`"${created.name}" 템플릿이 복제되었습니다.`);
       navigate(`/ai-insights/templates/${created.id}`);
