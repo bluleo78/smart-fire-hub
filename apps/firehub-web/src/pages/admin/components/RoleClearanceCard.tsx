@@ -15,7 +15,7 @@ import {
   AlertDialogTitle,
 } from '../../../components/ui/alert-dialog';
 import { Button } from '../../../components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../../components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader } from '../../../components/ui/card';
 import { InlineBanner } from '../../../components/ui/inline-banner';
 import { Label } from '../../../components/ui/label';
 import { RadioGroup, RadioGroupItem } from '../../../components/ui/radio-group';
@@ -130,7 +130,10 @@ export function RoleClearanceCard({
   return (
     <Card data-testid="role-clearance-card">
       <CardHeader>
-        <CardTitle>데이터 열람 등급</CardTitle>
+        {/* 역할 상세의 다른 카드 제목(역할 정보·권한 할당)과 같은 h2 20px 섹션 제목 (WD-811) */}
+        <h2 data-slot="card-title" className="text-xl leading-7 font-semibold">
+          데이터 열람 등급
+        </h2>
         <CardDescription>이 역할이 볼 수 있는 가장 높은 보안 등급</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">

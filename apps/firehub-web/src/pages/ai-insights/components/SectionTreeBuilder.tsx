@@ -83,7 +83,8 @@ export function SectionTreeBuilder({
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b">
-        <h3 className="text-sm font-semibold">섹션 구조</h3>
+        {/* WD-811: 보기 모드·JSON 탭과 같은 h2 20px 로 맞춘다 */}
+        <h2 className="text-xl leading-7 font-semibold">섹션 구조</h2>
         <Badge variant="secondary" className="text-xs">
           {flatItems.length}개
         </Badge>

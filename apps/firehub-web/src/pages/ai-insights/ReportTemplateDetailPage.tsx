@@ -20,7 +20,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import {
   Dialog,
   DialogContent,
@@ -816,7 +816,8 @@ function ReportTemplateDetailContent({ templateId }: { templateId: number | null
               <TabsContent value="json" className="mt-4">
                 <Card>
                   <CardHeader>
-                    <CardTitle className="text-base">섹션 구조 (JSON)</CardTitle>
+                    {/* WD-811 — 섹션 제목을 데이터셋 상세와 같은 h2 20px 로 통일 */}
+                    <h2 data-slot="card-title" className="text-xl leading-7 font-semibold">섹션 구조 (JSON)</h2>
                   </CardHeader>
                   <CardContent>
                     <TemplateJsonEditor
@@ -835,7 +836,8 @@ function ReportTemplateDetailContent({ templateId }: { templateId: number | null
           <div className="lg:col-span-3">
             <Card>
               <CardHeader>
-                <CardTitle className="text-base">섹션 구조</CardTitle>
+                {/* 같은 h2 20px 섹션 제목 (WD-811) */}
+                <h2 data-slot="card-title" className="text-xl leading-7 font-semibold">섹션 구조</h2>
               </CardHeader>
               <CardContent>
                 <TemplateJsonEditor
@@ -849,7 +851,8 @@ function ReportTemplateDetailContent({ templateId }: { templateId: number | null
           <div className="lg:col-span-2">
             <Card className="h-full">
               <CardContent className="pt-6 h-full">
-                <h3 className="text-sm font-medium mb-4">섹션 구조 미리보기</h3>
+                {/* 같은 h2 20px 섹션 제목 (WD-811) */}
+                <h2 className="text-xl leading-7 font-semibold mb-4">섹션 구조 미리보기</h2>
                 <SectionPreview sections={sections} />
               </CardContent>
             </Card>

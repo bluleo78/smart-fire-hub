@@ -24,7 +24,7 @@ import {
 } from '../../components/ui/alert-dialog';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
+import { Card, CardContent, CardHeader } from '../../components/ui/card';
 import { Checkbox } from '../../components/ui/checkbox';
 import { FormField } from '../../components/ui/form-field';
 import { Input } from '../../components/ui/input';
@@ -455,7 +455,10 @@ function RoleDetailView() {
 
       <Card>
         <CardHeader>
-          <CardTitle>역할 정보</CardTitle>
+          {/* 카드 제목: 시맨틱 h2 + 20px. (WD-811 — 제목이 본문 14px 와 같고 h1 다음 h2 없이 h3 가 와서, 데이터셋 상세와 같은 h2 20px + 그룹 h3 16px 로 단계를 잇는다) */}
+          <h2 data-slot="card-title" className="text-xl leading-7 font-semibold">
+            역할 정보
+          </h2>
         </CardHeader>
         <CardContent>
           {/* handleSubmit 은 두 번째 인자로 이벤트를 넘기므로 감싸서 부른다 — 그대로 넘기면 이벤트가 overwrite 로 읽혀 기준 없이 저장된다 */}
@@ -566,7 +569,10 @@ function RoleDetailView() {
 
       <Card>
         <CardHeader>
-          <CardTitle>권한 할당</CardTitle>
+          {/* 카드 제목: 시맨틱 h2 + 20px. (WD-811) */}
+          <h2 data-slot="card-title" className="text-xl leading-7 font-semibold">
+            권한 할당
+          </h2>
         </CardHeader>
         <CardContent className="space-y-6">
           {isScopeLocked && (
@@ -581,7 +587,8 @@ function RoleDetailView() {
           )}
           {Object.entries(permissionsByCategory).map(([category, perms]) => (
             <div key={category} className="space-y-3">
-              <h3 className="text-sm font-semibold uppercase text-muted-foreground">
+              {/* 권한 그룹 제목: h2 아래 h3 16px, 대문자·흐린 색 제거. (WD-811) */}
+              <h3 className="text-base leading-6 font-semibold">
                 {PERMISSION_CATEGORY_LABELS[category] ?? category}
               </h3>
               <div className="space-y-2">
