@@ -12,8 +12,7 @@ import { createWithNumberedName, numberedName } from '../../lib/clone-name';
 import { normalizeChartConfig } from '../../lib/normalize-chart-config';
 import { MAX_DESCRIPTION_LENGTH } from '../../lib/validations/description';
 import type { ChartConfig, ChartType } from '../../types/analytics';
-import { CHART_TYPE_LABELS } from '../../types/analytics';
-import { findMissingChartColumns } from '../analytics/chart-missing-columns';
+import { findMissingChartColumns, getChartTypeLabel, isKnownChartType } from '../analytics/chart-missing-columns';
 import { ChartRenderer } from '../analytics/ChartRenderer';
 import { Button } from '../ui/button';
 import {
@@ -238,8 +237,9 @@ export function InlineChartWidget({
   // WD-88: 설정 컬럼이 결과에 없으면 ChartRenderer 가 차트 대신 안내를 보여 준다. 이때 「차트로 저장」을 열어 두면
   // 깨진 설정이 그대로 저장되므로 버튼을 숨긴다(표 위젯 내보내기처럼 쓸 수 없는 동작은 숨기는 기존 관례).
   // ChartRenderer 와 같은 함수·같은 입력(원본 config, columns, rows)으로 판단해 두 곳의 결론이 어긋나지 않게 한다.
-  const hasMissingColumns = useMemo(
-    () => findMissingChartColumns(chartType, config, columns, rows).length > 0,
+  const cannotSave = useMemo(
+    // 모르는 차트 타입도 렌더러가 그리지 못하므로 「차트로 저장」을 숨긴다 — 저장하면 대시보드에서 영영 그려지지 않는다(WD-831)
+    () => !isKnownChartType(chartType) || findMissingChartColumns(chartType, config, columns, rows).length > 0,
     [chartType, config, columns, rows],
   );
 
@@ -261,13 +261,15 @@ export function InlineChartWidget({
   }
 
   // 헤더 표시 우선순위: title > 차트 유형명. 둘 다 trim 후 비어 있으면 chartType 키 그대로.
+  // 유형명은 아는 타입일 때만 찾는다 — 'toString'·'constructor' 같은 상속 이름이 함수로 풀려 JSX 에 들어가지 않게(WD-831).
+  const chartTypeLabel = getChartTypeLabel(chartType);
   const trimmedTitle = title?.trim();
   const headerLabel = trimmedTitle && trimmedTitle.length > 0
     ? trimmedTitle
-    : (CHART_TYPE_LABELS[chartType] ?? chartType);
+    : chartTypeLabel;
   // title이 있으면 차트 유형명을 보조 라벨로 표시(맥락 유지). 없으면 행수만 표시.
   const subLabel = trimmedTitle && trimmedTitle.length > 0
-    ? `${CHART_TYPE_LABELS[chartType] ?? chartType} · ${rows.length}건`
+    ? `${chartTypeLabel} · ${rows.length}건`
     : `${rows.length}건`;
 
   return (
@@ -352,7 +354,7 @@ export function InlineChartWidget({
       </Dialog>
 
       {/* Footer — 컬럼 누락 안내가 보일 때는 깨진 설정을 저장하지 못하게 숨긴다(WD-88) */}
-      {!hasMissingColumns && (
+      {!cannotSave && (
         <div className="flex justify-end px-3 py-2 border-t border-border bg-muted">
           <Button
             size="sm"

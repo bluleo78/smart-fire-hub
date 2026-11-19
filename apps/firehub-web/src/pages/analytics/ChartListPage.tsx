@@ -10,6 +10,7 @@ import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { AnalyticsDeleteConfirmDialog } from '../../components/analytics/AnalyticsDeleteConfirmDialog';
+import { getChartTypeLabel } from '../../components/analytics/chart-missing-columns';
 import { WorkspaceAnalyticsTable } from '../../components/analytics/WorkspaceAnalyticsTable';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -31,7 +32,6 @@ import { handleApiError } from '../../lib/api-error';
 import { formatDateShort, formatRelativeTime } from '../../lib/formatters';
 import { getPageAfterDelete } from '../../lib/pagination';
 import { iGa } from '../../lib/utils';
-import { CHART_TYPE_LABELS } from '../../types/analytics';
 
 /** 목록 보기 — 「워크스페이스 전체」는 analytics:admin 에게만 보인다(WD-199). */
 type ListTab = 'mine' | 'shared' | 'workspace';
@@ -176,7 +176,7 @@ export default function ChartListPage() {
                           </TableCell>
                           <TableCell>
                             <Badge variant="outline" className="text-xs">
-                              {CHART_TYPE_LABELS[chart.chartType] ?? chart.chartType}
+                              {getChartTypeLabel(chart.chartType)}
                             </Badge>
                           </TableCell>
                           <TableCell>

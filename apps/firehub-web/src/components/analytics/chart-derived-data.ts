@@ -16,11 +16,12 @@ export interface HistogramBin {
 }
 
 /**
- * 히스토그램이 집계할 수치 값을 읽는다 — X 컬럼을 Number() 로 읽고 NaN 은 버린다.
+ * 히스토그램이 집계할 수치 값을 읽는다 — X 컬럼을 toPlotNumber 로 읽고 읽을 수 없는 값(null·''·문자)은 버린다.
+ * Number() 는 null·'' 를 0 으로 바꿔 가짜 값이 되므로 다른 차트와 같은 읽기(toPlotNumber)로 맞췄다(WD-831).
  * 결과가 비었는데 행이 있으면 뷰는 「X축은 숫자 컬럼이어야 합니다」 안내를 보여 준다.
  */
 export function readHistogramValues(data: Record<string, unknown>[], xKey: string): number[] {
-  return data.map((d) => Number(d[xKey])).filter((v) => !isNaN(v));
+  return data.map((d) => toPlotNumber(d[xKey])).filter((v): v is number => v !== null);
 }
 
 /** 수치 배열을 N개 구간으로 집계한다(모든 값이 같으면 구간 하나) */
@@ -65,7 +66,8 @@ export function transformWaterfallData(
   let cumulative = 0;
   return data.map((d) => {
     const name = String(d[xKey] ?? '');
-    const value = Number(d[yKey] ?? 0);
+    // 읽을 수 없는 증감은 0 — NaN 이 누적에 번져 뒤 단계가 모두 NaN 이 되지 않게 한다(WD-831)
+    const value = toPlotNumber(d[yKey]) ?? 0;
     const prev = cumulative;
     cumulative += value;
     if (value >= 0) {
@@ -93,4 +95,46 @@ export function computeGaugeReading(data: Record<string, unknown>[], config: Cha
   const min = config.min ?? 0;
   const max = config.max ?? (value > 0 ? Math.ceil(value * 1.2) : 100);
   return { value, min, max };
+}
+
+/**
+ * 파이·도넛이 그릴 행과 뺀 음수 행 수를 나눈다(WD-303 → WD-831 에서 뷰 밖으로 옮김).
+ * 파이는 전체 대비 비율을 그려 음수를 표현할 수 없으므로 음수 행은 뺀다. 뷰(그림·안내)와 값 대체 표가 같은 행을 쓰게 한 곳에 둔다.
+ * 값은 toPlotNumber 로 읽는다(다른 차트와 같은 숫자 규칙). 음수는 빼고, 남은 행의 값은 숫자로 바꾼 새 행으로 준다(읽을 수 없으면 0) —
+ * recharts Pie 는 숫자 타입만 값으로 세고 문자열('30', DB NUMERIC)은 0 으로 그려, 표의 비율과 그림이 어긋났다(WD-831).
+ * 행마다 값을 한 번만 읽는다. 늘 새 배열을 돌려주므로 뷰는 useMemo 로 감싼다.
+ */
+export function splitPieData(
+  data: Record<string, unknown>[],
+  valueKey: string,
+): { pieData: Record<string, unknown>[]; negativeCount: number } {
+  const pieData: Record<string, unknown>[] = [];
+  let negativeCount = 0;
+  for (const row of data) {
+    const n = toPlotNumber(row[valueKey]);
+    if (n !== null && n < 0) {
+      negativeCount++;
+      continue;
+    }
+    pieData.push({ ...row, [valueKey]: n ?? 0 });
+  }
+  return { pieData, negativeCount };
+}
+
+/**
+ * 산점도가 그리는 Y 컬럼 — groupBy 가 있으면 첫 Y 하나만, 없으면 yAxis 전체(normalize 된 yAxis 가정).
+ * 뷰(ScatterChartView)와 스크린리더 표(chart-a11y)가 같은 규칙을 쓰도록 한 곳에 둔다(WD-831).
+ */
+export function getScatterUsedY(config: ChartConfig): string[] {
+  return config.groupBy ? config.yAxis.slice(0, 1) : config.yAxis;
+}
+
+/** 산점도 그룹(계열) 이름 — 그룹 값이 없으면 'unknown' 계열로 묶는다(뷰 범례와 스크린리더 표가 같은 이름을 쓰게, WD-831) */
+export function getScatterGroupLabel(value: unknown): string {
+  return String(value ?? 'unknown');
+}
+
+/** 산점도의 한 점이 되는지 — x 와 y 가 모두 숫자로 읽힐 때만 그린다(뷰와 표 공용, WD-831) */
+export function isScatterPoint(x: unknown, y: unknown): boolean {
+  return toPlotNumber(x) !== null && toPlotNumber(y) !== null;
 }

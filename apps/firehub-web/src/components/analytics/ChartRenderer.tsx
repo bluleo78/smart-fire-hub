@@ -5,7 +5,7 @@ import type { ChartConfig, ChartType } from '../../types/analytics';
 import { AreaChartView } from './AreaChartView';
 import { BarChartView } from './BarChartView';
 import { buildChartAccessibleName, buildChartDataTable } from './chart-a11y';
-import { findMissingChartColumns, normalizeYAxis, resolveChartAxes } from './chart-missing-columns';
+import { findMissingChartColumns, isKnownChartType, normalizeYAxis, resolveChartAxes } from './chart-missing-columns';
 import { findMissingChartAxesMessage } from './chart-required-axes';
 import { ChartAccessibleFigure } from './ChartAccessibleFigure';
 import { LineChartView } from './LineChartView';
@@ -159,12 +159,27 @@ export function ChartRenderer({
   // WD-826: figure 의 접근 이름·값 대체 표. 대시보드·AI 챗은 memo 하지 않은 ChartRenderer 를 쓰므로 렌더마다
   // 다시 만들지 않게 메모한다 — 훅이라 조기 반환보다 앞에 둔다. figure 로 감싸지 않는 경우(TABLE·MAP·컬럼 누락·
   // 빈 데이터)에는 계산하지 않는다(null). 축 미설정 안내 등 그 밖의 조기 반환에서는 계산해도 쓰이지 않을 뿐이다.
-  const needsFigure = chartType !== 'TABLE' && chartType !== 'MAP' && missingColumns.length === 0 && data.length > 0;
+  // WD-831: 모르는 타입(LLM 이 만든 값 등)은 switch default 의 안내로 가므로 figure 를 만들지 않는다.
+  const needsFigure =
+    isKnownChartType(chartType) &&
+    chartType !== 'TABLE' &&
+    chartType !== 'MAP' &&
+    missingColumns.length === 0 &&
+    data.length > 0;
   const accessible = useMemo(() => {
     if (!needsFigure) return null;
     const name = buildChartAccessibleName(chartType, config, title);
     return { name, table: buildChartDataTable(chartType, config, columns, data, name) };
   }, [needsFigure, chartType, config, columns, data, title]);
+
+  // 모르는 차트 타입은 축 안내·0행 안내보다 먼저 막는다 — 고칠 축이 없는 문제이므로(WD-831)
+  if (!isKnownChartType(chartType)) {
+    return (
+      <ChartMessage height={height} fillParent={fillParent}>
+        지원하지 않는 차트 타입입니다.
+      </ChartMessage>
+    );
+  }
 
   // 0행 결과에서도 이름이 틀렸으면 컬럼 안내가 「데이터가 없습니다」보다 우선한다(축을 고쳐야 데이터가 보이므로).
   if (missingColumns.length > 0) {
@@ -267,12 +282,18 @@ export function ChartRenderer({
     case 'CANDLESTICK':
       chart = <CandlestickChartView data={data} config={config} height={fillParent ? undefined : height} />;
       break;
-    default:
+    default: {
+      // 모르는 타입은 위 isKnownChartType 조기 반환이 이미 막는다 — 여기는 ChartType 에 새 타입을 더하고
+      // case 를 빠뜨렸을 때 타입 검사가 잡도록 never 검사를 둔다(WD-831). 런타임에 혹시 닿아도 타입 문자열을
+      // 그림 자리에 그리지 않고 같은 안내를 보인다.
+      const unhandled: never = chartType;
+      void unhandled;
       return (
         <ChartMessage height={height} fillParent={fillParent}>
           지원하지 않는 차트 타입입니다.
         </ChartMessage>
       );
+    }
   }
 
   // TABLE 은 자체가 표라 대체 표가 필요 없다 — 기존 방식 그대로 둔다.
@@ -286,7 +307,7 @@ export function ChartRenderer({
   // WD-826: 그 외 차트는 접근 이름이 붙은 figure 로 감싸고 값 대체 표를 함께 준다(위에서 메모한 값).
   // 그림은 각 뷰가 ChartDrawingArea 로 그림 영역에만 aria-hidden 을 건다 — 뷰의 안내문은 스크린리더에 남긴다.
   // 뷰가 그림 대신 안내만 돌려주면 figure 는 이름·표를 내지 않는다(ChartAccessibleFigure). figure 가 fillParent 래퍼 역할도 겸한다.
-  // 여기까지 오면 needsFigure(TABLE·MAP·컬럼 누락·빈 데이터 아님)는 항상 참이라 accessible 에 값이 있다.
+  // 여기까지 오면 needsFigure(TABLE·MAP·모르는 타입·컬럼 누락·빈 데이터 아님)는 항상 참이라 accessible 에 값이 있다.
   return (
     <ChartAccessibleFigure name={accessible!.name} table={accessible!.table} fillParent={fillParent}>
       {chart}

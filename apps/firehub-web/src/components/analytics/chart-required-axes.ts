@@ -1,5 +1,5 @@
 import type { ChartConfig, ChartType } from '../../types/analytics';
-import { normalizeYAxis } from './chart-missing-columns';
+import { isKnownChartType, normalizeYAxis } from './chart-missing-columns';
 
 /** 차트 타입 하나의 필수 축 규칙 — 빠진 축이 있으면 안내 문구, 모두 있으면 null */
 type RequiredAxesRule = (hasX: boolean, hasFirstY: boolean, hasAnyY: boolean, config: ChartConfig) => string | null;
@@ -60,6 +60,9 @@ const REQUIRED_AXES_RULES: Record<ChartType, RequiredAxesRule> = {
  * yAxis 가 빠지거나 타입이 틀린 config 도 받을 수 있게 내부에서 normalizeYAxis 로 맞춘다. 빈 문자열은 미설정으로 본다.
  */
 export function findMissingChartAxesMessage(chartType: ChartType, rawConfig: ChartConfig): string | null {
+  // 모르는 타입은 규칙이 없어 TypeError 대신 통과시킨다(WD-831).
+  // 'toString' 같은 상속 이름이 Object.prototype 함수로 풀리지 않게 isKnownChartType(Object.hasOwn)으로 가른다.
+  if (!isKnownChartType(chartType)) return null;
   const config = normalizeYAxis(rawConfig);
   const hasX = typeof config.xAxis === 'string' && config.xAxis !== '';
   const hasFirstY = typeof config.yAxis[0] === 'string' && config.yAxis[0] !== '';

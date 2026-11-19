@@ -107,6 +107,18 @@ describe('formatChartCellValue (WD-826)', () => {
     expect(formatChartCellValue(false)).toBe('false');
   });
 
+  it('16~17자리 정수(타임스탬프·ID)는 끝자리를 바꾸지 않는다 (WD-831)', () => {
+    expect(formatChartCellValue(1731999999123456)).toBe('1731999999123456');
+    expect(formatChartCellValue(Number.MAX_SAFE_INTEGER)).toBe('9007199254740991');
+    expect(formatChartCellValue(-1731999999123456)).toBe('-1731999999123456');
+  });
+
+  it('소수는 부동소수 잡음만 다듬고 작은 소수는 남긴다 (WD-831)', () => {
+    expect(formatChartCellValue(0.1 + 0.2)).toBe('0.3');
+    expect(formatChartCellValue(0.0004)).toBe('0.0004');
+    expect(formatChartCellValue(NaN)).toBe('NaN');
+  });
+
   it('객체는 JSON 으로 쓰고 길면 80자 + …로 자른다', () => {
     expect(formatChartCellValue({ type: 'Point', coordinates: [1, 2] })).toBe(
       '{"type":"Point","coordinates":[1,2]}',
@@ -215,5 +227,85 @@ describe('buildChartDataTable — 차트가 그리는 값 (WD-826)', () => {
     expect(table.rows).toHaveLength(100);
     expect(table.rows[99]).toEqual(['s99', '1', '100']);
     expect(table.caption).toBe('N 데이터 (전체 150행 중 처음 100행)');
+  });
+});
+
+describe('대체 표 — 파이 비율·산점도 거르기·숫자 셀 형식 (WD-831)', () => {
+  const table = (type: 'PIE' | 'DONUT' | 'SCATTER', config: Parameters<typeof buildChartDataTable>[1], data: Record<string, unknown>[]) =>
+    buildChartDataTable(type, config, [], data, '차트');
+
+  it.each(['PIE', 'DONUT'] as const)('%s: 음수를 빼고 비율 칸을 싣는다', (type) => {
+    const t = table(type, { xAxis: 'k', yAxis: ['v'] }, [
+      { k: 'A', v: 50 },
+      { k: 'B', v: -20 },
+      { k: 'C', v: 30 },
+    ]);
+    expect(t.headers).toEqual(['k', 'v', '비율']);
+    expect(t.rows).toEqual([
+      ['A', '50', '62.5%'],
+      ['C', '30', '37.5%'],
+    ]);
+  });
+
+  it('파이 합이 0 이하면 비율 칸이 빈다', () => {
+    const t = table('PIE', { xAxis: 'k', yAxis: ['v'] }, [
+      { k: 'A', v: 0 },
+      { k: 'B', v: -1 },
+    ]);
+    expect(t.rows).toEqual([['A', '0', '']]);
+  });
+
+  it('파이: 숫자 문자열은 값으로 읽고 null 은 0 · 0.0% 다(그림에 넘기는 값과 같다)', () => {
+    const t = table('PIE', { xAxis: 'k', yAxis: ['v'] }, [
+      { k: 'A', v: '30' },
+      { k: 'B', v: null },
+      { k: 'C', v: 10 },
+    ]);
+    expect(t.rows).toEqual([
+      ['A', '30', '75.0%'],
+      ['B', '0', '0.0%'],
+      ['C', '10', '25.0%'],
+    ]);
+  });
+
+  it('산점도: x 나 y 가 숫자가 아닌 행은 뺀다', () => {
+    const t = table('SCATTER', { xAxis: 'x', yAxis: ['y'] }, [
+      { x: 1, y: 2 },
+      { x: 'a', y: 3 },
+      { x: 2, y: 'b' },
+      { x: 3, y: 4 },
+    ]);
+    expect(t.rows).toEqual([
+      ['1', '2'],
+      ['3', '4'],
+    ]);
+  });
+
+  it('산점도: 두 Y 중 숫자 아닌 칸은 빈 칸이다', () => {
+    const t = table('SCATTER', { xAxis: 'x', yAxis: ['y1', 'y2'] }, [{ x: 1, y1: 2, y2: 'z' }]);
+    expect(t.rows).toEqual([['1', '2', '']]);
+  });
+
+  it('산점도: groupBy 칸은 그대로 싣는다', () => {
+    const t = table('SCATTER', { xAxis: 'x', yAxis: ['y'], groupBy: 'g' }, [{ x: 1, y: 2, g: 'G' }]);
+    expect(t.headers).toEqual(['x', 'y', 'g']);
+    expect(t.rows).toEqual([['1', '2', 'G']]);
+  });
+
+  it('산점도: 그룹 값이 없으면 범례와 같은 unknown 으로 싣는다', () => {
+    const t = table('SCATTER', { xAxis: 'x', yAxis: ['y'], groupBy: 'g' }, [{ x: 1, y: 2, g: null }]);
+    expect(t.rows).toEqual([['1', '2', 'unknown']]);
+  });
+
+  it('formatChartCellValue: 부동소수 잡음은 다듬고 천 단위 구분은 넣지 않는다, 유한하지 않으면 그대로', () => {
+    expect(formatChartCellValue(0.1 + 0.2)).toBe('0.3');
+    // 연도·ID 같은 라벨 숫자가 축과 같게 읽히도록 구분 기호를 넣지 않는다(로캘과 무관)
+    expect(formatChartCellValue(2024)).toBe('2024');
+    expect(formatChartCellValue(1234567)).toBe('1234567');
+    expect(formatChartCellValue(-12.5)).toBe('-12.5');
+    // 작은 소수는 0 으로 줄지 않는다
+    expect(formatChartCellValue(0.0004)).toBe('0.0004');
+    expect(formatChartCellValue(NaN)).toBe('NaN');
+    expect(formatChartCellValue('1,234')).toBe('1,234');
   });
 });

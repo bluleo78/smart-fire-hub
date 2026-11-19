@@ -1,5 +1,5 @@
 import { AlertTriangle } from 'lucide-react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   Cell,
   Legend,
@@ -10,6 +10,7 @@ import {
 } from 'recharts';
 
 import type { ChartConfig, ChartType } from '../../types/analytics';
+import { splitPieData } from './chart-derived-data';
 import { HIDDEN_CHART_ROOT_PROPS } from './chart-figure-context';
 import { CHART_SERIES_COLORS, TOOLTIP_CONTENT_STYLE, TOOLTIP_ITEM_STYLE } from './chart-styles';
 import { ChartDrawingArea } from './ChartDrawingArea';
@@ -51,8 +52,9 @@ export function PieChartView({ chartType, config, data, height }: PieChartViewPr
   // WD-303: 파이·도넛은 전체에서 차지하는 비율을 그리는 차트라 음수를 표현할 수 없다. 음수를 그대로 넘기면 recharts 가
   // 음수를 포함한 합계로 비율을 계산해 「인천 (135%)」처럼 100% 를 넘는 라벨을 내고 음수 조각을 다른 조각 위에 겹쳐 그린다.
   // 음수 행은 그리기·비율 계산에서 빼고, 몇 개를 뺐는지 차트 위에 안내한다(빼고 말하지 않으면 합계를 잘못 읽는다).
-  const negativeCount = data.filter((row) => isNegative(row[valueKey])).length;
-  const pieData = negativeCount > 0 ? data.filter((row) => !isNegative(row[valueKey])) : data;
+  // 거르기는 값 대체 표와 공유하는 splitPieData 로 한다(WD-831). 새 배열을 만들므로 입력이 같으면 다시 만들지 않게 메모한다
+  // (렌더마다 새 배열이면 recharts 가 조각을 다시 그린다).
+  const { pieData, negativeCount } = useMemo(() => splitPieData(data, valueKey), [data, valueKey]);
 
   const categoryCount = pieData.length;
   // 카테고리가 많으면 조각 위 텍스트 라벨을 생략하고 범례로만 안내한다 (겹침 방지).
@@ -172,11 +174,4 @@ export function PieChartView({ chartType, config, data, height }: PieChartViewPr
       </ChartDrawingArea>
     </div>
   );
-}
-
-/** 값이 숫자로 읽히고 0보다 작은지 — DB 숫자는 문자열(NUMERIC)로 올 수 있어 Number 로 읽는다. 숫자가 아니면 음수로 보지 않는다. */
-function isNegative(value: unknown): boolean {
-  if (value === null || value === undefined || value === '') return false;
-  const n = typeof value === 'number' ? value : Number(value);
-  return Number.isFinite(n) && n < 0;
 }

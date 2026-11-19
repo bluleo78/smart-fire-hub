@@ -277,4 +277,56 @@ test.describe('차트 접근 이름·값 대체 표 (WD-826)', () => {
     await expect(table.getByRole('row').nth(1).getByRole('cell')).toHaveText(['10.0', '1']);
     await expect(table.getByRole('row').nth(2).getByRole('cell')).toHaveText(['15.0', '1']);
   });
+
+});
+
+test.describe('차트 값 표가 그림과 같은 값을 준다 (WD-831)', () => {
+  test('파이 값 표는 그리지 않은 음수 행을 빼고, 숫자 문자열(DB NUMERIC)도 값으로 세어 비율을 준다', async ({
+    authenticatedPage: page,
+  }) => {
+    const widget = createWidget({ id: 1, chartId: 1, chartName: '지역 비중', chartType: 'PIE', width: 6, height: 4 });
+    const chart = createChart({ id: 1, name: '지역 비중', chartType: 'PIE', config: { xAxis: 'region', yAxis: ['amount'] } });
+    const mixed = createQueryResult({
+      columns: ['region', 'amount'],
+      // 서울 은 서버가 DECIMAL 을 문자열로 보낸 경우 — 그림과 표 모두 30 으로 세야 한다
+      rows: [
+        { region: '서울', amount: '30' },
+        { region: '부산', amount: 10 },
+        { region: '인천', amount: -5 },
+      ],
+      totalRows: 3,
+    });
+    await mockSingleChartDashboard(page, { widget, chart, queryResult: mixed });
+    await page.goto('/analytics/dashboards/1');
+
+    const table = page.getByRole('figure', { name: '「지역 비중」 파이 차트' }).getByRole('table');
+    await expect(table.getByRole('columnheader')).toHaveText(['region', 'amount', '비율']);
+    // 음수 행(인천)은 그림에 없으므로 표에도 없다 — 머리글 + 2행
+    await expect(table.getByRole('row')).toHaveCount(3);
+    await expect(table.getByRole('row').nth(1).getByRole('cell')).toHaveText(['서울', '30', '75.0%']);
+    await expect(table.getByRole('row').nth(2).getByRole('cell')).toHaveText(['부산', '10', '25.0%']);
+    await expect(table.getByRole('cell', { name: '인천' })).toHaveCount(0);
+  });
+
+  test('산점도 값 표는 숫자로 읽히지 않아 그리지 않은 점을 뺀다', async ({ authenticatedPage: page }) => {
+    const widget = createWidget({ id: 1, chartId: 1, chartName: '키와 몸무게', chartType: 'SCATTER', width: 6, height: 4 });
+    const chart = createChart({ id: 1, name: '키와 몸무게', chartType: 'SCATTER', config: { xAxis: 'h', yAxis: ['w'] } });
+    const points = createQueryResult({
+      columns: ['h', 'w'],
+      rows: [
+        { h: 170, w: 65 },
+        { h: '측정 안 함', w: 70 },
+        { h: 180, w: 0.5 },
+      ],
+      totalRows: 3,
+    });
+    await mockSingleChartDashboard(page, { widget, chart, queryResult: points });
+    await page.goto('/analytics/dashboards/1');
+
+    const table = page.getByRole('figure', { name: '「키와 몸무게」 산점도' }).getByRole('table');
+    await expect(table.getByRole('row')).toHaveCount(3);
+    await expect(table.getByRole('row').nth(1).getByRole('cell')).toHaveText(['170', '65']);
+    await expect(table.getByRole('row').nth(2).getByRole('cell')).toHaveText(['180', '0.5']);
+    await expect(table.getByRole('cell', { name: '측정 안 함' })).toHaveCount(0);
+  });
 });
