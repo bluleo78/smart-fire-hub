@@ -57,6 +57,30 @@ test.describe('온톨로지 생명주기', () => {
     expect(payload).toMatchObject({ domain: '신규 도메인', status: 'draft', entities: [], relations: [] });
   });
 
+  // WD-817: 「만들기」는 늘 켜져 있어 비우고 누르기 전에는 도메인이 필수인지 알 수 없었다 — 라벨에 FormField 와 같은
+  // 필수 표시(*)를 달고, 칸은 aria-required 다. 비운 채 만들면 오류가 칸 아래에 나고 aria-describedby 로 칸에 이어진다.
+  test('생성 다이얼로그의 도메인은 필수 표시가 있고 빈 값 오류가 칸에 이어진다 (WD-817)', async ({
+    authenticatedPage: page,
+  }) => {
+    const capture = await mockApi(page, 'POST', '/api/v1/ontologies', 5, { status: 201, capture: true });
+    await page.goto('/knowledge-graph/model');
+
+    await page.getByRole('button', { name: '새 온톨로지' }).click();
+    const dialog = page.getByTestId('ontology-create-dialog');
+    const label = dialog.locator('label[for="ontology-domain"]');
+    await expect(label).toHaveText('도메인*');
+    await expect(label.locator('span.text-destructive')).toHaveText('*');
+    const input = dialog.locator('#ontology-domain');
+    await expect(input).toHaveAttribute('aria-required', 'true');
+
+    // 비운 채 만들기 → 요청 없이 칸 아래 오류, 칸에 이어짐(기존 제출 시 오류 동작 유지)
+    await dialog.getByRole('button', { name: '만들기' }).click();
+    await expect(dialog.locator('#ontology-domain-error')).toHaveText('도메인명을 입력하세요.');
+    await expect(input).toHaveAttribute('aria-invalid', 'true');
+    await expect(input).toHaveAccessibleDescription('도메인명을 입력하세요.');
+    expect(capture.requests).toHaveLength(0);
+  });
+
   test('도메인명 중복(409)은 필드 에러로 표시된다', async ({ authenticatedPage: page }) => {
     // 실제 백엔드 페이로드(GlobalExceptionHandler.handleIllegalState → ErrorResponse.message = ex.getMessage())를
     // 그대로 목킹한다 — 코드리뷰 결함 #1: 친절한 한국어를 임의로 목킹하면 실제 도메인 중복 사전 검사가

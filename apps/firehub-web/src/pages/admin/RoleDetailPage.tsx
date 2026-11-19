@@ -26,6 +26,7 @@ import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Checkbox } from '../../components/ui/checkbox';
+import { FormField } from '../../components/ui/form-field';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
 import { Separator } from '../../components/ui/separator';
@@ -37,7 +38,7 @@ import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import { extractApiError, isEditConflict, isNotFoundError } from '../../lib/api-error';
 import { parseRouteId } from '../../lib/route-id';
 import type { UpdateRoleFormData } from '../../lib/validations/role';
-import { updateRoleSchema } from '../../lib/validations/role';
+import { ROLE_NAME_RULE, updateRoleSchema } from '../../lib/validations/role';
 import type { ErrorResponse } from '../../types/auth';
 import type { RoleDetailResponse } from '../../types/role';
 import type { PermissionResponse } from '../../types/role';
@@ -456,17 +457,22 @@ function RoleDetailView() {
         <CardContent>
           {/* handleSubmit 은 두 번째 인자로 이벤트를 넘기므로 감싸서 부른다 — 그대로 넘기면 이벤트가 overwrite 로 읽혀 기준 없이 저장된다 */}
           <form onSubmit={form.handleSubmit(data => onRoleSubmit(data))} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="role-name">역할 이름</Label>
+            {/* WD-817: 생성 다이얼로그와 같은 스키마(updateRoleSchema = createRoleSchema)라 같은 필수 표시·규칙 안내를 보인다.
+                규칙은 고칠 수 있을 때만 보인다 — 시스템 역할·쓰기 권한 없음은 칸이 잠겨 있어 안내가 쓸모없다. */}
+            <FormField
+              label="역할 이름"
+              htmlFor="role-name"
+              required
+              error={form.formState.errors.name?.message}
+              description={role.isSystem || !canWriteRole ? undefined : ROLE_NAME_RULE}
+            >
               <Input
                 id="role-name"
+                aria-required
                 {...form.register('name')}
                 disabled={role.isSystem || !canWriteRole}
               />
-              {form.formState.errors.name && (
-                <p className="text-sm text-destructive">{form.formState.errors.name.message}</p>
-              )}
-            </div>
+            </FormField>
             <div className="space-y-2">
               <Label htmlFor="role-description">설명</Label>
               <Input

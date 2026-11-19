@@ -149,6 +149,73 @@ test.describe('역할 관리 페이지', () => {
     expect(req.payload).toMatchObject({ name: 'NEW_ROLE' });
   });
 
+  // WD-817: 역할 이름은 필수인데 표시가 없었고(옆 칸만 「설명 (선택)」), 대문자·숫자·밑줄 규칙은 제출해야만 알 수 있었다.
+  // 라벨에 * 를 달고, 규칙을 입력 전에 보이는 설명으로 두어 aria-describedby 로 칸에 잇는다.
+  test('새 역할 다이얼로그의 역할 이름은 필수 표시와 입력 규칙 안내를 입력 전에 보인다 (WD-817)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupRoleListMocks(page);
+    await page.goto('/admin/roles');
+    await page.getByRole('button', { name: '새 역할' }).click();
+
+    const dialog = page.getByRole('dialog');
+    const label = dialog.locator('label[for="role-name"]');
+    await expect(label).toHaveText('역할 이름*');
+    await expect(label.locator('span.text-destructive')).toHaveText('*');
+    // 선택 칸에는 * 가 없다.
+    await expect(dialog.locator('label[for="role-description"]')).toHaveText('설명 (선택)');
+
+    // 입력하기 전에 규칙이 보이고 칸의 설명으로 이어진다.
+    const rule = dialog.locator('#role-name-desc');
+    await expect(rule).toBeVisible();
+    await expect(rule).toContainText('대문자로 시작');
+    await expect(rule).toContainText('DATA_EDITOR');
+    const nameInput = dialog.getByLabel('역할 이름');
+    await expect(nameInput).toHaveAttribute('aria-describedby', /role-name-desc/);
+    await expect(nameInput).toHaveAccessibleDescription(/대문자로 시작/);
+    await expect(nameInput).toHaveAttribute('aria-required', 'true');
+  });
+
+  // 안내를 더한 뒤에도 규칙에 맞는 이름은 그대로 만들어진다 — 입력 → 요청 payload 까지 본다.
+  test('안내 예시대로 입력한 역할 이름은 그대로 생성 요청된다 (WD-817)', async ({ authenticatedPage: page }) => {
+    await setupRoleListMocks(page);
+    const capture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/roles',
+      { id: 11, name: 'DATA_EDITOR', description: '', isSystem: false },
+      { capture: true },
+    );
+    await page.goto('/admin/roles');
+    await page.getByRole('button', { name: '새 역할' }).click();
+
+    const dialog = page.getByRole('dialog');
+    await dialog.getByLabel('역할 이름').fill('DATA_EDITOR');
+    await dialog.getByRole('button', { name: '만들기' }).click();
+
+    const req = await capture.waitForRequest();
+    expect(req.payload).toMatchObject({ name: 'DATA_EDITOR' });
+  });
+
+  // 기존 제출 시 오류 동작은 그대로다 — 규칙에 맞지 않는 이름은 칸 아래 오류로 막히고, 규칙 안내도 함께 이어진다.
+  test('규칙에 맞지 않는 역할 이름은 제출 때 오류가 나고 안내와 함께 칸에 이어진다 (WD-817)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupRoleListMocks(page);
+    await page.goto('/admin/roles');
+    await page.getByRole('button', { name: '새 역할' }).click();
+
+    const dialog = page.getByRole('dialog');
+    const nameInput = dialog.getByLabel('역할 이름');
+    await nameInput.fill('editor');
+    await dialog.getByRole('button', { name: '만들기' }).click();
+
+    await expect(dialog.locator('#role-name-error')).toHaveText('역할 이름은 대문자, 숫자, 밑줄만 허용됩니다');
+    await expect(nameInput).toHaveAttribute('aria-invalid', 'true');
+    await expect(nameInput).toHaveAttribute('aria-describedby', /role-name-error/);
+    await expect(nameInput).toHaveAttribute('aria-describedby', /role-name-desc/);
+  });
+
   test('시스템 역할에는 삭제 버튼이 표시되지 않는다', async ({ authenticatedPage: page }) => {
     // USER, ADMIN은 isSystem=true → 삭제 버튼 없음
     // EDITOR는 isSystem=false → 삭제 버튼 있음
