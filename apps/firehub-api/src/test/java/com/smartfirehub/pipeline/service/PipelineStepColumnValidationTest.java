@@ -557,4 +557,88 @@ class PipelineStepColumnValidationTest extends IntegrationTestBase {
   void update_changedOutOfRangeMaxResponseSize_rejected() {
     assertUpdateRejected(createLegacyStep("WD810 옛 스텝", "500"), 600);
   }
+
+  /** 옛 스텝이 소수(10.5)로 저장돼 있어도(Jackson 이 10 으로 줄여 돌던 값) 같은 값을 되돌려 보내는 저장은 통과한다(WD-810). */
+  @Test
+  void update_unchangedLegacyDecimalMaxResponseSize_succeeds() {
+    PipelineDetailResponse created = createLegacyStep("WD810 소수 옛 스텝", "10.5");
+    pipelineService.updatePipeline(
+        created.id(),
+        new UpdatePipelineRequest(
+            "WD810 소수 옛 스텝", "설명 수정", true, List.of(apiStepWithMaxResponseSize(10.5))),
+        userId);
+    assertThat(pipelineService.getPipelineById(created.id()).description()).isEqualTo("설명 수정");
+  }
+
+  /** 새 소수 값은 저장본이 없어도 여전히 400 이다(WD-810). */
+  @Test
+  void create_newDecimalMaxResponseSize_rejected() {
+    assertThatThrownBy(
+            () ->
+                pipelineService.createPipeline(
+                    new CreatePipelineRequest(
+                        "WD810 새 소수", null, List.of(apiStepWithMaxResponseSize(10.5))),
+                    userId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(MAX_RESPONSE_SIZE_ERROR);
+  }
+
+  /**
+   * 저장본 소수(10.5)를 다른 소수(20.5)·같은 정수부의 다른 소수(10.9)로 바꾸는 저장은 바뀐 값이라 새 값 규칙(정수 1~100)에 막힌다(WD-810).
+   */
+  @ParameterizedTest(name = "저장 10.5 -> {0} 거부")
+  @ValueSource(doubles = {20.5, 10.9})
+  void update_changedDecimalMaxResponseSize_rejected(double sent) {
+    assertUpdateRejected(createLegacyStep("WD810 소수 옛 스텝", "10.5"), sent);
+  }
+
+  /** 저장본 소수(10.5)를 정수 10 으로 바꾸는 저장은 바뀐 값이지만 새 값 규칙(정수 1~100)을 지키므로 통과한다(WD-810). */
+  @Test
+  void update_decimalChangedToValidInteger_succeeds() {
+    PipelineDetailResponse created = createLegacyStep("WD810 소수 정수화", "10.5");
+    pipelineService.updatePipeline(
+        created.id(),
+        new UpdatePipelineRequest(
+            "WD810 소수 정수화", "정수로 고침", true, List.of(apiStepWithMaxResponseSize(10))),
+        userId);
+    assertThat(pipelineService.getPipelineById(created.id()).description()).isEqualTo("정수로 고침");
+  }
+
+  /** 저장본 150.7(소수부를 버리면 150, 상한 100 초과)을 150 이나 "150" 으로 바꾸는 저장은 바뀐 값이라 거부한다(WD-810). */
+  @Test
+  void update_changedLargeDecimalToInteger_rejected() {
+    PipelineDetailResponse created = createLegacyStep("WD810 큰 소수", "150.7");
+    assertUpdateRejected(created, "150");
+    assertUpdateRejected(created, 150);
+  }
+
+  /** 옛 스텝이 빈 문자열("")로 저장돼 기본 10MB 로 돌았다면 같은 값을 되돌려 보내는 저장은 통과한다(WD-810). */
+  @Test
+  void update_unchangedLegacyBlankMaxResponseSize_succeeds() {
+    PipelineDetailResponse created = createLegacyStep("WD810 빈 문자열", "\"\"");
+    pipelineService.updatePipeline(
+        created.id(),
+        new UpdatePipelineRequest(
+            "WD810 빈 문자열", "설명 수정", true, List.of(apiStepWithMaxResponseSize(""))),
+        userId);
+    assertThat(pipelineService.getPipelineById(created.id()).description()).isEqualTo("설명 수정");
+  }
+
+  /** 새로 보내는 빈 문자열은 저장본이 정수여도 예전처럼 400 이다(WD-810). */
+  @Test
+  void update_newBlankMaxResponseSize_rejected() {
+    assertUpdateRejected(createLegacyStep("WD810 빈 문자열 새 값", "50"), "");
+  }
+
+  /** 저장본 150.0 을 150 으로 보내는 저장은 원문이 달라 바뀐 값으로 보고(150 은 상한 100 초과) 거부한다 — 같은 값 판정은 원문 기준이다(WD-810). */
+  @Test
+  void update_storedDecimalFormOfLargeValueResentAsInteger_rejected() {
+    assertUpdateRejected(createLegacyStep("WD810 150.0", "150.0"), 150);
+  }
+
+  /** 저장본이 0.5 처럼 소수부를 버리면 돌 수 없는 값(0)은 그대로 되돌려 보내도 거부한다(WD-810). */
+  @Test
+  void update_unchangedNonRunnableDecimalMaxResponseSize_rejected() {
+    assertUpdateRejected(createLegacyStep("WD810 소수 불가 옛 스텝", "0.5"), 0.5);
+  }
 }

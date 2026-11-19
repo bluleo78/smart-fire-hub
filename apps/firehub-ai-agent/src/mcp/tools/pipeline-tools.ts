@@ -149,8 +149,9 @@ export function registerPipelineTools(
                     .number()
                     .int()
                     .min(1)
+                    .max(100)
                     .optional()
-                    .describe('최대 응답 크기(MB, 새 값은 1~100, 기본 10)'),
+                    .describe('최대 응답 크기(MB, 1~100 정수, 기본 10)'),
                   inlineAuth: z
                     .record(z.string(), z.string())
                     .optional()
@@ -233,7 +234,12 @@ export function registerPipelineTools(
                 .enum(['REPLACE', 'APPEND', 'MERGE'])
                 .optional()
                 .describe('적재 전략. MERGE: 출력 데이터셋 PK 기준 upsert(SQL 스텝 전용)'),
-              apiConfig: z.record(z.string(), z.unknown()).optional().describe('API_CALL 설정'),
+              apiConfig: z
+                .record(z.string(), z.unknown())
+                .optional()
+                .describe(
+                  'API_CALL 설정. apiConfig.maxResponseSizeMb 는 1~100 정수(기본 10)여야 한다. 100 을 넘거나 소수로 저장된 옛 값은 스텝을 고칠 때 1~100 정수로 바로잡아 보낸다',
+                ),
               aiConfig: z
                 .object({
                   prompt: z.string().min(1).describe('AI 처리 프롬프트'),

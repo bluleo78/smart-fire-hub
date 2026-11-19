@@ -110,6 +110,20 @@ public final class ApiCallErrorMessages {
     return "응답 크기가 제한(" + maxMb + "MB)을 넘었습니다 — 응답 크기 제한을 늘리거나 페이지 크기를 줄이세요";
   }
 
+  /**
+   * 돌 수 없는 응답 크기 한도(maxResponseSizeMb) 문구(WD-810) — 러너(실행 전 검사)와 실행기(방어 검사)가 같은 문장을 실행 기록에 남기도록 한
+   * 곳에서 만든다. 범위·기본값은 실행기 상수에서 가져온다.
+   */
+  public static String maxResponseSizeOutOfRange() {
+    return "응답 크기 한도(maxResponseSizeMb)가 잘못되었습니다. "
+        + ApiCallExecutor.MIN_MAX_RESPONSE_SIZE_MB
+        + "~"
+        + ApiCallExecutor.MAX_MAX_RESPONSE_SIZE_MB
+        + "MB 로 고치거나 지우면 기본 "
+        + ApiCallExecutor.DEFAULT_MAX_RESPONSE_SIZE_MB
+        + "MB 를 씁니다 — AI 어시스턴트에게 이 스텝의 응답 크기 한도를 고쳐 달라고 요청하세요.";
+  }
+
   /** 한도 값을 모르는 경로(미리보기 등)용. */
   public static String responseTooLarge() {
     return "응답 크기가 너무 큽니다 — 페이지 크기를 줄여 보세요";

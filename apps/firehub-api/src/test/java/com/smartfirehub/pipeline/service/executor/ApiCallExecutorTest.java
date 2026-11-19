@@ -2260,4 +2260,44 @@ class ApiCallExecutorTest {
             ApiCallErrorMessages.retriesExhausted(
                 0, ApiCallErrorMessages.unknownHost("wd693-no-such-host.invalid")));
   }
+
+  /** config 의 응답 크기 한도(MB)만 바꾼 사본. */
+  private static ApiCallConfig withMaxResponseSize(ApiCallConfig base, Integer mb) {
+    return new ApiCallConfig(
+        base.url(),
+        base.method(),
+        base.headers(),
+        base.queryParams(),
+        base.body(),
+        base.responseFormat(),
+        base.dataPath(),
+        base.fieldMappings(),
+        base.sourceTimezone(),
+        base.pagination(),
+        base.retry(),
+        base.timeoutMs(),
+        base.maxDurationMs(),
+        mb,
+        base.inlineAuth(),
+        base.apiConnectionId(),
+        base.path(),
+        base.customUrl());
+  }
+
+  /**
+   * WD-810 후속 — 실행기도 돌 수 없는 응답 크기 한도(0·음수·2048 이상)를 스스로 거절한다: 한국어 ApiCallException, HTTP 호출·임시 테이블
+   * 생성 없이. 러너가 변환 전에 먼저 막지만, 실행기를 직접 부르는 다른 경로(미리보기 등)에서도 음수가 코덱 한도를 없애지 못하게 하는 이중 방어다.
+   */
+  @ParameterizedTest
+  @ValueSource(ints = {0, -1, 2048, 4096})
+  void execute_unrunnableMaxResponseSize_rejectedBeforeAnyCall(int mb) {
+    ApiCallConfig config = withMaxResponseSize(simpleGetConfig("/api/items"), mb);
+
+    assertThatThrownBy(() -> executor.execute(config, "out_table", null, "REPLACE", null))
+        .isInstanceOf(ApiCallException.class)
+        .hasMessage(ApiCallErrorMessages.maxResponseSizeOutOfRange());
+
+    assertThat(wireMock.getAllServeEvents()).isEmpty();
+    verify(dataTableService, never()).createTempTable(anyString());
+  }
 }

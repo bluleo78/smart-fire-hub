@@ -1584,7 +1584,7 @@ public class PipelineService {
    * API_CALL 응답 크기 한도(maxResponseSizeMb)의 저장 검증(WD-810) — 비어 있으면 실행기 기본값을 쓰므로 허용하고, 값이 있으면 1~100 의 정수만 받는다. 상한을 저장에서
    * 막는 근거는 {@link ApiCallExecutor#isRunnableMaxResponseSizeMb}. 단 저장본과 같은 값을 그대로 되돌려 보내는 저장은 통과시킨다.
    */
-  private static void validateApiCallMaxResponseSize(
+  private void validateApiCallMaxResponseSize(
       PipelineStepRequest step, PipelineStepResponse storedStep) {
     Object requested = step.apiConfig().get("maxResponseSizeMb");
     if (storedStep != null
@@ -1604,19 +1604,25 @@ public class PipelineService {
 
   /**
    * 요청 값이 저장본 값과 같고 그 값이 지금도 도는 값인지(WD-810). 상한(100) 이전에 저장된 101~2047 옛 스텝은 편집기가 모르는 apiConfig 키를 되돌려 보내므로 같은 값이
-   * 다시 온다 — 막으면 설명만 고쳐도 저장할 수 없다(WD-426/WD-585 와 같은 이유). 돌지 않는 저장값은 되돌려 보내도 거부해 사용자가 고치게 한다. 양쪽을 같은 정수 해석으로 읽어
-   * "150" 과 150 도 같고, 해석 실패는 false(일반 검증이 400 으로 거부).
+   * 다시 온다 — 막으면 설명만 고쳐도 저장할 수 없다(WD-426/WD-585 와 같은 이유). 돌지 않는 저장값은 되돌려 보내도 거부해 사용자가 고치게 한다. 같은 값인지는 원문으로, 도는 값인지는 실행과
+   * 같은 변환으로 판정한다.
    */
-  private static boolean isUnchangedRunnableMaxResponseSize(Object requested, Object stored) {
-    try {
-      Long requestedMb = DatasetChangeTriggerConfig.parseWholeNumber(requested);
-      Long storedMb = DatasetChangeTriggerConfig.parseWholeNumber(stored);
-      return requestedMb != null
-          && requestedMb.equals(storedMb)
-          && ApiCallExecutor.isRunnableMaxResponseSizeMb(storedMb);
-    } catch (NumberFormatException e) {
+  private boolean isUnchangedRunnableMaxResponseSize(Object requested, Object stored) {
+    // 같은 값인지는 원문 문자열로 본다 — null 과 빈 문자열은 둘 다 "비어 있음", "150" 과 150 은 같고, 150.0 과 150 은 바뀐 값이다.
+    if (!normalizedText(requested).equals(normalizedText(stored))) {
       return false;
     }
+    // 지금도 도는 값인지는 실행 때와 같은 변환(ObjectMapper)으로 판정한다 — 소수(10.5)는 10, 빈 문자열은 null(기본값)로 돌던 옛 값은 그대로 돈다.
+    try {
+      Integer storedMb = JsonConversions.convertValue(objectMapper, stored, Integer.class);
+      return storedMb == null || ApiCallExecutor.isRunnableMaxResponseSizeMb(storedMb);
+    } catch (IllegalArgumentException e) {
+      return false;
+    }
+  }
+
+  private static String normalizedText(Object raw) {
+    return raw == null ? "" : raw.toString().trim();
   }
 
   /**

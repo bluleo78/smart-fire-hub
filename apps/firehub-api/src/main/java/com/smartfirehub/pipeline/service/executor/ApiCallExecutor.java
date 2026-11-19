@@ -129,6 +129,16 @@ public class ApiCallExecutor {
       ApiConnectionResponse conn,
       ExecutionCancelCheck cancel) {
 
+    // 0. 응답 크기 한도(WD-810) — 임시 테이블 생성·클라이언트 생성·호출보다 먼저 판정한다. 러너가 먼저 막지만 실행기를 직접 부르는 경로도 있어 여기서도 막는다
+    // (음수는 코덱 한도를 없애고 2048 이상은 int 바이트 계산이 넘친다). 재시도해도 같으므로 재시도하지 않는 ApiCallException 으로 낸다.
+    int maxResponseSizeMb =
+        (config.maxResponseSizeMb() != null)
+            ? config.maxResponseSizeMb()
+            : DEFAULT_MAX_RESPONSE_SIZE_MB;
+    if (!isRunnableMaxResponseSizeMb(maxResponseSizeMb)) {
+      throw new ApiCallException(ApiCallErrorMessages.maxResponseSizeOutOfRange());
+    }
+
     // 1. URL 결정: apiConnectionId → baseUrl+path, customUrl, 또는 레거시 url 순으로 해석
     String resolvedUrl = resolveTargetUrl(config, conn);
 
@@ -158,10 +168,6 @@ public class ApiCallExecutor {
         config.maxDurationMs() != null ? config.maxDurationMs() : DEFAULT_MAX_DURATION_MS;
     int timeoutMs = config.timeoutMs() != null ? config.timeoutMs() : DEFAULT_TIMEOUT_MS;
     // 응답 크기 제한(maxResponseSizeMb)을 건 클라이언트는 실행마다 한 번만 만든다(WD-693) — 페이지·재시도마다 다시 만들지 않는다.
-    int maxResponseSizeMb =
-        (config.maxResponseSizeMb() != null)
-            ? config.maxResponseSizeMb()
-            : DEFAULT_MAX_RESPONSE_SIZE_MB;
     HttpTarget http = new HttpTarget(noRedirectClient(maxResponseSizeMb), maxResponseSizeMb);
 
     int totalRows = 0;
@@ -474,6 +480,7 @@ public class ApiCallExecutor {
    * 쓴다(WD-693) — 응답 크기 제한이 다른 파이프라인이 동시에 돌아도 서로의 코덱 설정을 덮어쓰지 않는다.
    */
   private WebClient noRedirectClient(int maxResponseSizeMb) {
+    // execute() 가 한도 범위(1~2047MB)를 먼저 보장한다 — 여기서는 다시 검사하지 않는다.
     // WD-810: MB→바이트를 long 으로 계산한 뒤 int 로 줄인다 — int 곱셈은 2048MB 부터 조용히 넘쳐 음수 한도가 된다(넘치면 예외).
     int maxInMemoryBytes = Math.toIntExact((long) maxResponseSizeMb * 1024 * 1024);
     // 교환 전략을 새로 끼우면 주입 빌더의 코덱이 기본값으로 바뀌므로, 앱 매퍼와 같은 공유 코덱 팩토리로 만든다(WD-793).

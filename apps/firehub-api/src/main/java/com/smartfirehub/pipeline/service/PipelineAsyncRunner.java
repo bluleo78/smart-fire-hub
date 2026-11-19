@@ -28,6 +28,7 @@ import com.smartfirehub.pipeline.repository.PipelineStepRepository;
 import com.smartfirehub.pipeline.service.executor.AiClassifyExecutor;
 import com.smartfirehub.pipeline.service.executor.ApiCallAuth;
 import com.smartfirehub.pipeline.service.executor.ApiCallConfig;
+import com.smartfirehub.pipeline.service.executor.ApiCallErrorMessages;
 import com.smartfirehub.pipeline.service.executor.ApiCallExecutor;
 import com.smartfirehub.pipeline.service.executor.DbExecutorClient;
 import com.smartfirehub.pipeline.service.executor.ExecutionCancelCheck;
@@ -76,6 +77,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
 /**
@@ -97,18 +99,6 @@ public class PipelineAsyncRunner {
    */
   static final String API_CONNECTION_NOT_FOUND_AT_RUN_MESSAGE =
       "스텝이 참조한 API 연결을 찾을 수 없습니다. 파이프라인 편집에서 연결을 다시 선택하세요.";
-
-  /**
-   * 돌 수 없는 maxResponseSizeMb 로 저장된 API_CALL 스텝을 실행할 때 실행 기록에 남기는 문구(WD-810) — 호출 전에 실패시키고 고칠 곳을 알린다. 범위는 실행기 상수에서 만든다.
-   */
-  static final String MAX_RESPONSE_SIZE_OUT_OF_RANGE_AT_RUN_MESSAGE =
-      "응답 크기 한도(maxResponseSizeMb)가 잘못되었습니다. "
-          + ApiCallExecutor.MIN_MAX_RESPONSE_SIZE_MB
-          + "~"
-          + ApiCallExecutor.MAX_MAX_RESPONSE_SIZE_MB
-          + "MB 로 고치거나 지우면 기본 "
-          + ApiCallExecutor.DEFAULT_MAX_RESPONSE_SIZE_MB
-          + "MB 를 씁니다 — AI 어시스턴트에게 이 스텝의 응답 크기 한도를 고쳐 달라고 요청하세요.";
 
   private final PipelineStepRepository stepRepository;
   private final PipelineExecutionRepository executionRepository;
@@ -500,6 +490,29 @@ public class PipelineAsyncRunner {
     }
 
     return result;
+  }
+
+  /**
+   * API_CALL 스텝의 apiConfig 를 변환한다. 변환 실패가 maxResponseSizeMb 필드 때문이면(int 를 넘는 값·숫자 아님·소수 문자열 등) Jackson 원문 대신 한국어 스텝 오류(WD-810)로
+   * 바꾸고, 다른 필드 때문인 실패는 예전처럼 그대로 던진다.
+   */
+  private ApiCallConfig convertApiCallConfig(Map<String, Object> apiConfig) {
+    try {
+      // WD-793 뒤 Jackson 3 — 실패를 예전처럼 IllegalArgumentException 으로 감싸는 공용 도우미로 변환한다.
+      return JsonConversions.convertValue(objectMapper, apiConfig, ApiCallConfig.class);
+    } catch (IllegalArgumentException e) {
+      // 원인 사슬에서 경로가 있는 첫 Jackson 예외의 마지막 필드 이름으로 maxResponseSizeMb 실패인지 가린다.
+      for (Throwable c = e.getCause(); c != null; c = c.getCause()) {
+        if (c instanceof JacksonException je && !je.getPath().isEmpty()) {
+          String field = je.getPath().get(je.getPath().size() - 1).getPropertyName();
+          if ("maxResponseSizeMb".equals(field)) {
+            throw new ScriptExecutionException(ApiCallErrorMessages.maxResponseSizeOutOfRange());
+          }
+          break;
+        }
+      }
+      throw e;
+    }
   }
 
   /**
@@ -1206,24 +1219,13 @@ public class PipelineAsyncRunner {
           }
         }
       } else if ("API_CALL".equals(step.scriptType())) {
-        // WD-810: 응답 크기 한도는 변환 전에 원래 값으로 판정한다(변환 뒤에는 Jackson 원문 오류로 샌다). 근거는 isRunnableMaxResponseSizeMb 참고.
-        boolean runnableMb;
-        try {
-          Long parsedMb =
-              step.apiConfig() == null
-                  ? null
-                  : DatasetChangeTriggerConfig.parseWholeNumber(
-                      step.apiConfig().get("maxResponseSizeMb"));
-          runnableMb = parsedMb == null || ApiCallExecutor.isRunnableMaxResponseSizeMb(parsedMb);
-        } catch (NumberFormatException e) {
-          runnableMb = false;
+        ApiCallConfig apiCallConfig = convertApiCallConfig(step.apiConfig());
+        // WD-810: 변환된 값으로 응답 크기 한도를 판정한다 — 예전에 소수(10.5)·빈 문자열로 저장돼 10·기본값으로 돌던 스텝은 그대로 돌고, 0·음수·2048 이상은 호출 전에 막는다.
+        if (apiCallConfig != null
+            && apiCallConfig.maxResponseSizeMb() != null
+            && !ApiCallExecutor.isRunnableMaxResponseSizeMb(apiCallConfig.maxResponseSizeMb())) {
+          throw new ScriptExecutionException(ApiCallErrorMessages.maxResponseSizeOutOfRange());
         }
-        if (!runnableMb) {
-          throw new ScriptExecutionException(MAX_RESPONSE_SIZE_OUT_OF_RANGE_AT_RUN_MESSAGE);
-        }
-
-        ApiCallConfig apiCallConfig =
-            JsonConversions.convertValue(objectMapper, step.apiConfig(), ApiCallConfig.class);
 
         // apiConnectionId가 있으면 connection 정보 로드 (baseUrl + auth)
         ApiConnectionResponse apiConn = null;

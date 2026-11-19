@@ -28,6 +28,7 @@ import com.smartfirehub.pipeline.repository.PipelineRepository;
 import com.smartfirehub.pipeline.repository.PipelineStepRepository;
 import com.smartfirehub.pipeline.service.executor.AiClassifyExecutor;
 import com.smartfirehub.pipeline.service.executor.ApiCallConfig;
+import com.smartfirehub.pipeline.service.executor.ApiCallErrorMessages;
 import com.smartfirehub.pipeline.service.executor.ApiCallExecutor;
 import com.smartfirehub.pipeline.service.executor.DbExecutorClient;
 import com.smartfirehub.pipeline.service.executor.ExecutionCancelCheck;
@@ -1059,82 +1060,129 @@ class PipelineAsyncRunnerTest {
     verify(dataTableService, never()).createTempTable(anyString());
   }
 
-  /** WD-810 — 돌 수 없는 응답 크기 한도 원래 값: 0·음수·2048 이상, int 초과(Long·문자열), 정수 아님. */
-  static Stream<Object> unrunnableMaxResponseSizes() {
-    return Stream.of(0, -1, 2048, 4096, 3_000_000_000L, "3000000000", "abc", "1.5");
+  /** WD-810 — 변환 결과의 maxResponseSizeMb 만 지정한 API_CALL 설정(나머지는 최소 설정). */
+  private ApiCallConfig apiConfigWithMaxResponseSize(Integer mb) {
+    ApiCallConfig base = minimalApiConfig();
+    return new ApiCallConfig(
+        base.url(),
+        base.method(),
+        null,
+        null,
+        null,
+        null,
+        base.dataPath(),
+        base.fieldMappings(),
+        null,
+        null,
+        null,
+        null,
+        null,
+        mb,
+        null,
+        null,
+        null,
+        null);
   }
 
-  /**
-   * WD-810 — 돌 수 없는 maxResponseSizeMb 로 저장된 API_CALL 스텝은 변환 전에(Jackson 원문 오류 없이) 실행기 호출 전에 실패하고 실행 기록에 고칠 곳을 남긴다.
-   */
+  /** WD-810 — 실행 기록에 응답 크기 한도 범위 오류 문구가 남았는지(남지 않았어야 하면 never). */
+  private void verifyRangeErrorRecorded(
+      org.mockito.verification.VerificationMode mode, Long stepExecId) {
+    verify(executionRepository, mode)
+        .updateStepExecution(
+            eq(stepExecId),
+            eq("FAILED"),
+            isNull(),
+            isNull(),
+            eq(ApiCallErrorMessages.maxResponseSizeOutOfRange()),
+            isNull(),
+            any());
+  }
+
+  /** WD-810 — 변환 결과가 돌 수 없는 응답 크기 한도: 0·음수·2048 이상. */
   @ParameterizedTest
-  @MethodSource("unrunnableMaxResponseSizes")
-  void executeStep_apiCallMaxResponseSizeUnrunnable_failsBeforeCall(Object mb) {
-    Long stepExecId = 314L;
+  @ValueSource(ints = {0, -1, 2048, 4096})
+  void executeStep_apiCallMaxResponseSizeUnrunnable_failsBeforeCall(int mb) {
+    when(objectMapper.convertValue(any(), eq(ApiCallConfig.class)))
+        .thenReturn(apiConfigWithMaxResponseSize(mb));
 
     String status =
-        runner.executeStep(
-            stepExecId, apiStepWithMaxResponseSize(mb), 21L, "TestPipeline", 2L, true);
+        runner.executeStep(314L, apiStepWithMaxResponseSize(mb), 21L, "TestPipeline", 2L, true);
 
     assertThat(status).isEqualTo("FAILED");
-    ArgumentCaptor<String> error = ArgumentCaptor.forClass(String.class);
-    verify(executionRepository)
-        .updateStepExecution(
-            eq(stepExecId), eq("FAILED"), isNull(), isNull(), error.capture(), isNull(), any());
-    assertThat(error.getValue())
-        .isEqualTo(PipelineAsyncRunner.MAX_RESPONSE_SIZE_OUT_OF_RANGE_AT_RUN_MESSAGE);
+    verifyRangeErrorRecorded(times(1), 314L);
     verifyNoExternalCall();
   }
 
-  /** WD-810 — 실행 기록에 남는 문구의 실제 텍스트(상수에서 조립한 값이 의도한 문장과 같은지). */
+  /**
+   * WD-810 — 변환 자체가 maxResponseSizeMb 때문에 실패하면(int 초과·숫자 아님·소수 문자열) Jackson 원문 대신 한국어 스텝 오류를 남기고 호출 전에 실패한다.
+   */
   @Test
-  void maxResponseSizeRunMessage_text() {
-    assertThat(PipelineAsyncRunner.MAX_RESPONSE_SIZE_OUT_OF_RANGE_AT_RUN_MESSAGE)
-        .isEqualTo(
-            "응답 크기 한도(maxResponseSizeMb)가 잘못되었습니다. 1~100MB 로 고치거나 지우면 기본 10MB 를 씁니다 — AI 어시스턴트에게 이 스텝의 응답 크기 한도를 고쳐 달라고 요청하세요.");
+  void executeStep_apiCallMaxResponseSizeUnconvertible_failsWithKoreanMessage() {
+    when(objectMapper.convertValue(any(), eq(ApiCallConfig.class)))
+        .thenThrow(conversionFailureAt("maxResponseSizeMb"));
+
+    String status =
+        runner.executeStep(
+            314L, apiStepWithMaxResponseSize("abc"), 21L, "TestPipeline", 2L, true);
+
+    assertThat(status).isEqualTo("FAILED");
+    verifyRangeErrorRecorded(times(1), 314L);
+    verifyNoExternalCall();
+  }
+
+  /** WD-810 — 다른 필드 때문에 변환이 실패하면 예전과 같게 처리한다(한국어 한도 문구를 남기지 않는다). */
+  @Test
+  void executeStep_apiCallOtherFieldConversionFailure_notReportedAsMaxResponseSize() {
+    when(objectMapper.convertValue(any(), eq(ApiCallConfig.class)))
+        .thenThrow(conversionFailureAt("timeoutMs"));
+
+    runner.executeStep(314L, apiStepWithMaxResponseSize(10), 21L, "TestPipeline", 2L, true);
+
+    verifyRangeErrorRecorded(never(), 314L);
+  }
+
+  /** Jackson 3 이 던지는 모양의 변환 실패: DatabindException(경로 끝 = 필드) — 러너는 JsonConversions 로 감싸 받는다(WD-793). */
+  private static tools.jackson.databind.DatabindException conversionFailureAt(String field) {
+    tools.jackson.databind.DatabindException failure =
+        tools.jackson.databind.DatabindException.from(
+            (tools.jackson.core.JsonParser) null, "변환 실패");
+    failure.prependPath(new Object(), field);
+    return failure;
   }
 
   /**
-   * WD-810 — 저장 상한(100) 이전에 저장돼 동작하던 101~2047MB 옛 스텝은 범위 오류로 막지 않고 정상 호출 경로로 진행한다. 이후 흐름은 목에 맡기므로 여기서는
-   * "범위 오류 문구로 실패하지 않는다"만 확인한다.
+   * WD-810 — 이미 저장돼 돌던 값은 범위 오류로 막지 않고 정상 호출 경로로 진행한다: 변환이 소수(10.5)를 10 으로, 빈 문자열을 null(기본값)로 바꾼 것과 저장 상한(100) 이전의
+   * 101~2047MB. 이후 흐름은 목에 맡기므로 여기서는 "범위 오류 문구로 실패하지 않는다"만 확인한다. 변환 규칙은 MaxResponseSizeJacksonCoercionTest 가 실제 매퍼로 고정한다.
    */
   @ParameterizedTest
-  @ValueSource(ints = {101, 2047})
-  void executeStep_apiCallLegacyMaxResponseSize_notRejectedAsOutOfRange(int legacyMb) {
-    ApiCallConfig base = minimalApiConfig();
-    ApiCallConfig legacy =
-        new ApiCallConfig(
-            base.url(),
-            base.method(),
-            null,
-            null,
-            null,
-            null,
-            base.dataPath(),
-            base.fieldMappings(),
-            null,
-            null,
-            null,
-            null,
-            null,
-            legacyMb,
-            null,
-            null,
-            null,
-            null);
-    when(objectMapper.convertValue(any(), eq(ApiCallConfig.class))).thenReturn(legacy);
+  @MethodSource("legacyRunnableMaxResponseSizes")
+  void executeStep_apiCallLegacyMaxResponseSize_notRejectedAsOutOfRange(
+      Object raw, Integer converted) {
+    when(objectMapper.convertValue(any(), eq(ApiCallConfig.class)))
+        .thenReturn(apiConfigWithMaxResponseSize(converted));
 
-    runner.executeStep(314L, apiStepWithMaxResponseSize(legacyMb), 21L, "TestPipeline", 2L, true);
+    runner.executeStep(314L, apiStepWithMaxResponseSize(raw), 21L, "TestPipeline", 2L, true);
 
-    verify(executionRepository, never())
-        .updateStepExecution(
-            any(),
-            any(),
-            any(),
-            any(),
-            eq(PipelineAsyncRunner.MAX_RESPONSE_SIZE_OUT_OF_RANGE_AT_RUN_MESSAGE),
-            any(),
-            any());
+    verify(objectMapper).convertValue(any(), eq(ApiCallConfig.class));
+    verifyRangeErrorRecorded(never(), 314L);
+  }
+
+  static Stream<org.junit.jupiter.params.provider.Arguments> legacyRunnableMaxResponseSizes() {
+    return Stream.of(
+        org.junit.jupiter.params.provider.Arguments.of(10.5, 10),
+        org.junit.jupiter.params.provider.Arguments.of(2047.9, 2047),
+        org.junit.jupiter.params.provider.Arguments.of("", null),
+        org.junit.jupiter.params.provider.Arguments.of("  ", null),
+        org.junit.jupiter.params.provider.Arguments.of(101, 101),
+        org.junit.jupiter.params.provider.Arguments.of(2047, 2047));
+  }
+
+  /** WD-810 — 실행 기록에 남는 문구의 실제 텍스트(문구가 의도한 문장과 같은지). */
+  @Test
+  void maxResponseSizeRunMessage_text() {
+    assertThat(ApiCallErrorMessages.maxResponseSizeOutOfRange())
+        .isEqualTo(
+            "응답 크기 한도(maxResponseSizeMb)가 잘못되었습니다. 1~100MB 로 고치거나 지우면 기본 10MB 를 씁니다 — AI 어시스턴트에게 이 스텝의 응답 크기 한도를 고쳐 달라고 요청하세요.");
   }
 
   /**
