@@ -28,7 +28,6 @@ import io.qdrant.client.grpc.Points.RetrievedPoint;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -69,7 +68,7 @@ class QdrantVectorStoreLifecycleTest {
   void createsAllCollectionsWithExpectedConfigOnEmptyStore() throws Exception {
     lifecycle(6, true).prepare();
 
-    assertThat(client.listCollectionsAsync().get(30, TimeUnit.SECONDS))
+    assertThat(QdrantTestContainer.await(client.listCollectionsAsync()))
         .containsExactlyInAnyOrder(
             "fh_datasets_1024",
             "fh_datasets_1536",
@@ -141,11 +140,10 @@ class QdrantVectorStoreLifecycleTest {
   @Test
   void foreignCollectionWithSameNameStopsStartup() throws Exception {
     // 누가 같은 이름으로 다른 구성(차원·이름 없는 벡터·메타 없음)의 컬렉션을 만들어 둔 경우
-    client
-        .createCollectionAsync(
+    QdrantTestContainer.await(
+        client.createCollectionAsync(
             "fh_datasets_1024",
-            VectorParams.newBuilder().setSize(768).setDistance(Distance.Dot).build())
-        .get(30, TimeUnit.SECONDS);
+            VectorParams.newBuilder().setSize(768).setDistance(Distance.Dot).build()));
     assertThatThrownBy(() -> lifecycle(6, true).prepare())
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("fh_datasets_1024")
@@ -158,7 +156,7 @@ class QdrantVectorStoreLifecycleTest {
     QdrantProperties props = QdrantTestContainer.properties(6, true);
     QdrantCollectionSpec spec = QdrantCollectionSpec.chunks(EmbeddingDimension.D1536);
     CreateCollection req = spec.toCreateRequest(props);
-    client.createCollectionAsync(req).get(30, TimeUnit.SECONDS);
+    QdrantTestContainer.await(client.createCollectionAsync(req));
     assertThat(info(spec.name()).getPayloadSchemaMap()).isEmpty();
 
     lifecycle(6, true).prepare();
@@ -243,7 +241,7 @@ class QdrantVectorStoreLifecycleTest {
           Thread.sleep(500);
           lc.retryPrepare();
         }
-        assertThat(client.listCollectionsAsync().get(30, TimeUnit.SECONDS))
+        assertThat(QdrantTestContainer.await(client.listCollectionsAsync()))
             .contains(EmbeddingDimension.D1024.datasetCollection(), "fh_chunks_kw");
         now.addAndGet(QdrantVectorStoreLifecycle.AVAILABILITY_CACHE_MS);
         assertThat(lc.available()).isTrue();
@@ -297,9 +295,9 @@ class QdrantVectorStoreLifecycleTest {
   @Test
   void availablePreparesWhenHealthyButNotPrepared() throws Exception {
     QdrantVectorStoreLifecycle lc = lifecycle(6, true); // afterPropertiesSet 을 부르지 않은 상태
-    assertThat(client.listCollectionsAsync().get(30, TimeUnit.SECONDS)).isEmpty();
+    assertThat(QdrantTestContainer.await(client.listCollectionsAsync())).isEmpty();
     assertThat(lc.available()).isTrue();
-    assertThat(client.listCollectionsAsync().get(30, TimeUnit.SECONDS)).hasSize(6);
+    assertThat(QdrantTestContainer.await(client.listCollectionsAsync())).hasSize(6);
   }
 
   /** API 키가 틀리면 설정 오류로 보고 기동을 멈춘다(2026-11-14 사용자 결정). */
@@ -398,8 +396,8 @@ class QdrantVectorStoreLifecycleTest {
     BigramSparseEncoder.SparseTerms doc =
         BigramSparseEncoder.document("소방안전관리자", BigramSparseEncoder.Profile.DATASET);
 
-    client
-        .upsertAsync(
+    QdrantTestContainer.await(
+        client.upsertAsync(
             collection,
             List.of(
                 PointStruct.newBuilder()
@@ -413,19 +411,17 @@ class QdrantVectorStoreLifecycleTest {
                         Map.of(
                             QdrantCollectionSpec.TENANT_ID, ValueFactory.value("7"),
                             QdrantCollectionSpec.DATASET_ID, ValueFactory.value(42L)))
-                    .build()))
-        .get(30, TimeUnit.SECONDS);
+                    .build())));
 
     // 저장된 sparse id 를 부호 없는 값으로 읽으면 생성기가 낸 값과 같다
     RetrievedPoint stored =
-        client
-            .retrieveAsync(
-                collection,
-                List.of(PointIdFactory.id(QdrantPointIds.dataset(7, 42))),
-                false,
-                true,
-                null)
-            .get(30, TimeUnit.SECONDS)
+        QdrantTestContainer.await(
+                client.retrieveAsync(
+                    collection,
+                    List.of(PointIdFactory.id(QdrantPointIds.dataset(7, 42))),
+                    false,
+                    true,
+                    null))
             .get(0);
     List<Long> storedIds =
         stored
@@ -454,19 +450,19 @@ class QdrantVectorStoreLifecycleTest {
 
   private static List<java.util.UUID> keywordHits(
       String collection, BigramSparseEncoder.SparseTerms q, String tenant) throws Exception {
-    return client
-        .queryAsync(
-            QueryPoints.newBuilder()
-                .setCollectionName(collection)
-                .setUsing(QdrantCollectionSpec.KW_BIGRAM)
-                .setQuery(QueryFactory.nearest(q.valueList(), q.indexList()))
-                .setFilter(
-                    Filter.newBuilder()
-                        .addMust(
-                            ConditionFactory.matchKeyword(QdrantCollectionSpec.TENANT_ID, tenant)))
-                .setLimit(10)
-                .build())
-        .get(30, TimeUnit.SECONDS)
+    return QdrantTestContainer.await(
+            client.queryAsync(
+                QueryPoints.newBuilder()
+                    .setCollectionName(collection)
+                    .setUsing(QdrantCollectionSpec.KW_BIGRAM)
+                    .setQuery(QueryFactory.nearest(q.valueList(), q.indexList()))
+                    .setFilter(
+                        Filter.newBuilder()
+                            .addMust(
+                                ConditionFactory.matchKeyword(
+                                    QdrantCollectionSpec.TENANT_ID, tenant)))
+                    .setLimit(10)
+                    .build()))
         .stream()
         .map(p -> java.util.UUID.fromString(p.getId().getUuid()))
         .toList();
@@ -478,6 +474,6 @@ class QdrantVectorStoreLifecycleTest {
   }
 
   private static CollectionInfo info(String name) throws Exception {
-    return client.getCollectionInfoAsync(name).get(30, TimeUnit.SECONDS);
+    return QdrantTestContainer.await(client.getCollectionInfoAsync(name));
   }
 }

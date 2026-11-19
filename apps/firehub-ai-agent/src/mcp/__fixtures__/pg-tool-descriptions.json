@@ -694,8 +694,10 @@
                     "type": "number"
                   },
                   "maxResponseSizeMb": {
-                    "description": "최대 응답 크기(MB)",
-                    "type": "number"
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100,
+                    "description": "최대 응답 크기(MB, 1~100 정수, 기본 10)"
                   },
                   "inlineAuth": {
                     "description": "인라인 인증 정보 — { authType, ... }. API_KEY: { placement, headerName/paramName, apiKey }, BEARER: { token }, BASIC: { username, password }. URL 에 사용자 정보(아이디:비밀번호@)를 넣지 말 것. 가능하면 저장된 apiConnectionId 를 쓰세요",
@@ -4274,7 +4276,7 @@
                 ]
               },
               "apiConfig": {
-                "description": "API_CALL 설정",
+                "description": "API_CALL 설정. apiConfig.maxResponseSizeMb 는 1~100 정수(기본 10)여야 한다. 100 을 넘거나 소수로 저장된 옛 값은 스텝을 고칠 때 1~100 정수로 바로잡아 보낸다",
                 "type": "object",
                 "propertyNames": {
                   "type": "string"

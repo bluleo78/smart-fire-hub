@@ -37,7 +37,29 @@ public class ApiCallExecutor {
   private static final int DEFAULT_INITIAL_BACKOFF = 1_000;
   private static final int DEFAULT_MAX_BACKOFF = 30_000;
   private static final int DEFAULT_PAGE_SIZE = 100;
-  private static final int DEFAULT_MAX_RESPONSE_SIZE_MB = 10;
+
+  /** 응답 크기 한도 기본값(MB) — 설정이 비었을 때 쓴다. 저장 검증(PipelineService)도 같은 값을 쓴다. */
+  public static final int DEFAULT_MAX_RESPONSE_SIZE_MB = 10;
+
+  /** 응답 크기 한도 저장 허용 범위(MB, WD-810) — 저장과 실행이 같은 범위를 쓰도록 상수로 둔다. 실행 판정 근거는 {@link #isRunnableMaxResponseSizeMb}. */
+  public static final int MIN_MAX_RESPONSE_SIZE_MB = 1;
+
+  public static final int MAX_MAX_RESPONSE_SIZE_MB = 100;
+
+  /** 실행 시 처음으로 거절하는 값(MB, WD-810) — int 바이트 곱셈이 넘치기 시작하는 지점. */
+  private static final int INT_OVERFLOW_START_MB = 2048;
+
+  /**
+   * 실행 시 응답 크기 한도(MB)로 쓸 수 있는 값인지 판정한다(WD-810) — 1 이상 2048 미만이면 true. 저장 상한(100)은 새 값에만 적용하므로, 그 전에 저장돼
+   * 동작하던 101~2047 은 그대로 돈다.
+   *
+   * <p>거절하는 값: 음수는 Spring 코덱 한도를 무제한으로 만들어 메모리 고갈 위험(WD-810 이 막으려는 바로 그 위험)이 있으므로 "돌긴 했어도" 의도적으로 거절한다. 0 은
+   * 모든 응답을 초과로 실패시켰다. 2048 이상은 프로세스 내 경로에서 int 넘침이 났다. Python 실행기 경로에서는 2048 이상이 넘치지 않았지만 2GB 이상을 메모리에
+   * 올리는 것도 같은 위험이라 두 경로 모두에서 일부러 거절한다.
+   */
+  public static boolean isRunnableMaxResponseSizeMb(long mb) {
+    return mb >= MIN_MAX_RESPONSE_SIZE_MB && mb < INT_OVERFLOW_START_MB;
+  }
   private final SsrfProtectionService ssrfProtectionService;
   private final JsonResponseParser jsonResponseParser;
   private final OffsetPaginationHandler offsetPaginationHandler;
@@ -107,6 +129,16 @@ public class ApiCallExecutor {
       ApiConnectionResponse conn,
       ExecutionCancelCheck cancel) {
 
+    // 0. 응답 크기 한도(WD-810) — 임시 테이블 생성·클라이언트 생성·호출보다 먼저 판정한다. 러너가 먼저 막지만 실행기를 직접 부르는 경로도 있어 여기서도 막는다
+    // (음수는 코덱 한도를 없애고 2048 이상은 int 바이트 계산이 넘친다). 재시도해도 같으므로 재시도하지 않는 ApiCallException 으로 낸다.
+    int maxResponseSizeMb =
+        (config.maxResponseSizeMb() != null)
+            ? config.maxResponseSizeMb()
+            : DEFAULT_MAX_RESPONSE_SIZE_MB;
+    if (!isRunnableMaxResponseSizeMb(maxResponseSizeMb)) {
+      throw new ApiCallException(ApiCallErrorMessages.maxResponseSizeOutOfRange());
+    }
+
     // 1. URL 결정: apiConnectionId → baseUrl+path, customUrl, 또는 레거시 url 순으로 해석
     String resolvedUrl = resolveTargetUrl(config, conn);
 
@@ -136,10 +168,6 @@ public class ApiCallExecutor {
         config.maxDurationMs() != null ? config.maxDurationMs() : DEFAULT_MAX_DURATION_MS;
     int timeoutMs = config.timeoutMs() != null ? config.timeoutMs() : DEFAULT_TIMEOUT_MS;
     // 응답 크기 제한(maxResponseSizeMb)을 건 클라이언트는 실행마다 한 번만 만든다(WD-693) — 페이지·재시도마다 다시 만들지 않는다.
-    int maxResponseSizeMb =
-        (config.maxResponseSizeMb() != null)
-            ? config.maxResponseSizeMb()
-            : DEFAULT_MAX_RESPONSE_SIZE_MB;
     HttpTarget http = new HttpTarget(noRedirectClient(maxResponseSizeMb), maxResponseSizeMb);
 
     int totalRows = 0;
@@ -452,9 +480,12 @@ public class ApiCallExecutor {
    * 쓴다(WD-693) — 응답 크기 제한이 다른 파이프라인이 동시에 돌아도 서로의 코덱 설정을 덮어쓰지 않는다.
    */
   private WebClient noRedirectClient(int maxResponseSizeMb) {
+    // execute() 가 한도 범위(1~2047MB)를 먼저 보장한다 — 여기서는 다시 검사하지 않는다.
+    // WD-810: MB→바이트를 long 으로 계산한 뒤 int 로 줄인다 — int 곱셈은 2048MB 부터 조용히 넘쳐 음수 한도가 된다(넘치면 예외).
+    int maxInMemoryBytes = Math.toIntExact((long) maxResponseSizeMb * 1024 * 1024);
     // 교환 전략을 새로 끼우면 주입 빌더의 코덱이 기본값으로 바뀌므로, 앱 매퍼와 같은 공유 코덱 팩토리로 만든다(WD-793).
     ExchangeStrategies exchangeStrategies =
-        AppJsonWebClients.exchangeStrategies(maxResponseSizeMb * 1024 * 1024);
+        AppJsonWebClients.exchangeStrategies(maxInMemoryBytes);
     return RedirectFollower.withoutAutoRedirect(webClientBuilder, ssrfSafeHttpClientFactory)
         .exchangeStrategies(exchangeStrategies)
         .build();

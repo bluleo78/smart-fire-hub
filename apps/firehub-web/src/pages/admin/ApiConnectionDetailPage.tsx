@@ -13,6 +13,9 @@ import {
   extraHeaderRowsFromConfig,
   extraHeadersToConfig,
   focusFirstExtraHeaderError,
+  normalizedExtraHeaderName,
+  renamedDeletedNotice,
+  type RenamedPair,
   withoutChangedRowErrors,
   withoutExtraHeaders,
 } from '@/lib/api-connection-extra-headers';
@@ -164,6 +167,14 @@ interface SyncedStoredRows {
   removedNames: string[];
   /** 이전 기준에 없고 새 기준에만 있어(다른 곳에서 더함·이름 변경의 새 이름) 새 기준 순서 자리에 넣은 저장 행의 이름 — 토스트 안내용(WD-796) */
   addedNames: string[];
+  /**
+   * 사용자가 지운 저장 헤더가 다른 곳에서 대소문자만 바뀐 이름으로 와 되살리지 않은 쌍(WD-804 반려) — 토스트 안내용.
+   * from = 사용자가 지운 이전 기준의 저장 이름, to = 새 기준의 이름. 이름이 정확히 같으면 호출 앞쪽에서 이미 걸러져 여기 오지 않는다.
+   * 새 기준에서 옛 이름(from)이 사라졌고 대소문자 변형이 정확히 하나일 때만 넣는다. 옛 이름이 남았거나(X-Id 와 x-id 함께) 변형이 둘 이상(X-ID 와 x-id)이면
+   * 이름 변경이 아니라 더해진 것이라 넣지 않는다 — 보통의 「더해져」 흐름으로 목록에 들어간다.
+   * 사용자가 같은 이름(대소문자 무시)으로 보낼 행을 이미 갖고 있으면 저장 때 서버에서 지워지지 않으므로 넣지 않고, 저장 행도 끼우지 않는다.
+   */
+  renamedDeleted: RenamedPair[];
 }
 
 /**
@@ -181,6 +192,10 @@ interface SyncedStoredRows {
  *   앞선 저장 행 바로 뒤에 이어진 사용자 새 행은 건너뛰어 그 뒤에 넣는다(써 둔 행이 자리를 옮기지 않게).
  *   「새 기준에만」= 이전 기준에도, 맞춘 결과에도 그 원래 이름이 없는 행이다 — 사용자가 덩어리에서 지운 저장 헤더는 이전 기준에 있으므로
  *   재조회로 되살리지 않는다. 이름은 서버 키(storedName) 그대로 비교해, 대소문자만 다른 사용자 새 행과 합치지 않는다(저장 때 중복 검증이 잡는다).
+ *   예외(WD-804): 이전 기준에 대소문자만 다른 같은 헤더가 있었는데 지금 행에 그 저장 행이 없으면(사용자가 지움) 아래 규칙을 따른다.
+ *     - 사용자가 같은 이름(대소문자 무시)의 행을 이미 갖고 있으면 저장 행을 넣지 않는다 — 사용자의 행이 저장되고, 둘을 함께 두면 중복 검증이 저장을 막는다.
+ *     - 새 기준에서 옛 이름이 사라졌고 대소문자 변형이 정확히 하나면 지운 헤더의 이름 변경이므로 되살리지 않고 renamedDeleted 로 알린다.
+ *     - 그 밖(옛 이름이 남았거나 변형이 둘 이상)은 어느 것이 옛 헤더인지 알 수 없는 「더해진」 헤더라 모두 보통 흐름으로 넣고 알린다(말없는 삭제 방지).
  */
 function syncStoredRows(
   rows: ExtraHeaderRow[],
@@ -190,6 +205,7 @@ function syncStoredRows(
   let changed = false;
   const removedNames: string[] = [];
   const addedNames: string[] = [];
+  const renamedDeleted: RenamedPair[] = [];
   const synced: ExtraHeaderRow[] = [];
   for (const row of rows) {
     if (row.storedName === undefined) {
@@ -224,6 +240,29 @@ function syncStoredRows(
     if (fresh.storedName === undefined) return;
     const name = fresh.storedName;
     if (prevRows.some((p) => p.storedName === name)) return;
+    // (WD-804) 사용자가 지운 헤더(이전 기준에 대소문자 무시로 같은 저장 행이 있었는데 지금 행엔 없음)가 대소문자만 바뀌어 오면 되살리지 않는다.
+    // 손대지 않은 X-Id 행이 아직 있으면 지운 게 아니므로 이름 변경(지워짐+더해짐)으로 그대로 더한다. 규칙 전체는 SyncedStoredRows.renamedDeleted 참고.
+    const lowerName = name.toLowerCase();
+    const hasStoredIgnoringCase = (list: ExtraHeaderRow[]) =>
+      list.some((r) => r.storedName?.toLowerCase() === lowerName);
+    const prev = prevRows.find((p) => p.storedName?.toLowerCase() === lowerName);
+    if (prev?.storedName !== undefined && !hasStoredIgnoringCase(rows)) {
+      const from = prev.storedName;
+      // 새 기준에 옛 이름이 그대로 남아 있거나 대소문자 변형이 둘 이상이면(X-Id·x-id 함께, 또는 X-ID·x-id) 이름이 바뀐 것이 아니라 더해진 것으로 본다.
+      // 이름 변경으로 보는 것은 「옛 이름이 사라졌고 대소문자 변형이 정확히 하나」일 때뿐이다 — 변형이 여럿이면 어느 것이 옛 헤더의 새 이름인지 알 수 없어
+      // 하나라도 되살리지 않고 넘기면 다른 관리자가 더한 헤더를 인증 저장이 서버에서 말없이 지운다(WD-804 반려). 그래서 모두 아래 「더한 헤더」 흐름으로 넘겨
+      // 목록에 넣고 알린다 — 쓸모없는 행이 보이면 사용자가 다시 지우면 되지만, 데이터 손실은 되돌릴 수 없다.
+      // 사용자가 같은 이름(대소문자·앞뒤 공백 무시)의 행을 이미 갖고 있으면 저장 때 그 행이 나가므로, 저장 행을 끼워 중복 검증이 저장을 막게 하지 않고
+      // 사용자의 행이 이기게 한다(안내도 없다 — 서버에서 지워지지 않고 사용자의 행으로 덮인다).
+      if (rows.some((r) => normalizedExtraHeaderName(r.name) === lowerName)) return;
+      // 이 행(name)은 옛 이름(from)과 다르다(같으면 위 prevRows 검사에서 이미 끝났다). 그래서 대소문자 변형이 이 행 하나뿐이면 옛 이름은 새 기준에서
+      // 사라진 것이고, 그때만 이름 변경이다 — 두 조건을 따로 셀 필요가 없다.
+      if (nextRows.filter((n) => n.storedName?.toLowerCase() === lowerName).length === 1) {
+        // 되살리지 않되 조용히 넘기지 않는다 — 이름 변경을 알릴 수 있게 모은다.
+        renamedDeleted.push({ from, to: name });
+        return;
+      }
+    }
     if (synced.some((s) => s.storedName === name)) return;
     changed = true;
     addedNames.push(name);
@@ -244,7 +283,7 @@ function syncStoredRows(
     }
     synced.splice(insertAt, 0, fresh);
   });
-  return { rows: changed ? synced : rows, removedNames, addedNames };
+  return { rows: changed ? synced : rows, removedNames, addedNames, renamedDeleted };
 }
 
 /**
@@ -549,13 +588,23 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
       }
       if (synced.removedNames.length > 0) {
         toast.info(`다른 곳에서 추가 헤더(${synced.removedNames.join(', ')})가 지워져 목록을 맞췄습니다.`, {
-          id: 'api-connection-extra-headers-removed',
+          // 이름 목록을 id 에 넣어 다른 안내는 서로 덮어쓰지 않고 같은 병합의 이중 실행(StrictMode)은 하나로 모은다(WD-804)
+          id: `api-connection-extra-headers-removed:${synced.removedNames.join(',')}`,
         });
       }
       // (WD-796) 다른 곳에서 더한 헤더를 목록(새 기준 순서 자리)에 넣었음을 알린다 — 이름 변경이면 위의 「지워짐」과 함께 떠 바뀐 것을 둘 다 보게 한다
       if (synced.addedNames.length > 0) {
         toast.info(`다른 곳에서 추가 헤더(${synced.addedNames.join(', ')})가 더해져 목록에 넣었습니다.`, {
-          id: 'api-connection-extra-headers-added',
+          // 이름 목록을 id 에 넣는다 — 4초 안의 두 번째 재조회 안내가 첫 안내를 덮어쓰지 않게(WD-804)
+          id: `api-connection-extra-headers-added:${synced.addedNames.join(',')}`,
+        });
+      }
+      // (WD-804 반려) 사용자가 지운 헤더가 다른 곳에서 대소문자만 바뀌어 왔다 — 지운 대로 두되 알린다. 여럿이면 `옛→새` 쌍을 한 토스트에 이어 넣는다.
+      if (synced.renamedDeleted.length > 0) {
+        const pairs = synced.renamedDeleted.map((r) => `${r.from}→${r.to}`).join(', ');
+        toast.info(renamedDeletedNotice(synced.renamedDeleted), {
+          // 이름 쌍 목록을 id 에 넣어 「더해짐」 등 다른 안내와 서로 덮어쓰지 않게 한다
+          id: `api-connection-extra-headers-renamed-deleted:${pairs}`,
         });
       }
     }

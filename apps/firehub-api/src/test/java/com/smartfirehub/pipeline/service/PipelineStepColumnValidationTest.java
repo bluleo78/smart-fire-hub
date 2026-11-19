@@ -133,6 +133,18 @@ class PipelineStepColumnValidationTest extends IntegrationTestBase {
         null);
   }
 
+  /** API_CALL 스텝 + 응답 크기 한도(WD-810) — maxResponseSizeMb 가 null 이면 키를 넣지 않는다(실행기 기본값 10MB). */
+  private static PipelineStepRequest apiStepWithMaxResponseSize(Object maxResponseSizeMb) {
+    Map<String, Object> apiConfig = new HashMap<>();
+    apiConfig.put("customUrl", "https://example.com/items");
+    apiConfig.put("method", "GET");
+    if (maxResponseSizeMb != null) {
+      apiConfig.put("maxResponseSizeMb", maxResponseSizeMb);
+    }
+    return new PipelineStepRequest(
+        "API 호출", null, "API_CALL", null, null, null, null, "REPLACE", apiConfig, null, null, null);
+  }
+
   /** AI_CLASSIFY 스텝 — 출력 자동 생성(TEMP), 입력 없음(입력 판정과 무관하게 출력 컬럼 검증만 본다). */
   private static PipelineStepRequest aiStep(List<Map<String, Object>> outputColumns) {
     return new PipelineStepRequest(
@@ -181,6 +193,9 @@ class PipelineStepColumnValidationTest extends IntegrationTestBase {
   /** WD-362 페이지 크기 범위 오류 문구(API 스텝 이름 'API 호출'). */
   private static final String PAGE_SIZE_ERROR = "스텝 'API 호출': 페이지 크기는 1~10000 사이의 정수여야 합니다";
 
+  private static final String MAX_RESPONSE_SIZE_ERROR =
+      "스텝 'API 호출': 응답 크기 한도는 1~100MB 사이의 정수여야 합니다";
+
   static Stream<Arguments> rejectedSteps() {
     return Stream.of(
         // WD-362 — 0 이하 페이지 크기는 실행기가 끝없이 다음 페이지를 요청한다
@@ -189,6 +204,13 @@ class PipelineStepColumnValidationTest extends IntegrationTestBase {
         Arguments.of("페이지 크기 상한 초과", apiStepWithPageSize(10_001), PAGE_SIZE_ERROR),
         Arguments.of("페이지 크기 소수", apiStepWithPageSize(2.5), PAGE_SIZE_ERROR),
         Arguments.of("페이지 크기 문자열", apiStepWithPageSize("abc"), PAGE_SIZE_ERROR),
+        Arguments.of("응답 크기 0", apiStepWithMaxResponseSize(0), MAX_RESPONSE_SIZE_ERROR),
+        Arguments.of("응답 크기 음수", apiStepWithMaxResponseSize(-1), MAX_RESPONSE_SIZE_ERROR),
+        Arguments.of("응답 크기 상한 초과", apiStepWithMaxResponseSize(101), MAX_RESPONSE_SIZE_ERROR),
+        Arguments.of("응답 크기 2048", apiStepWithMaxResponseSize(2048), MAX_RESPONSE_SIZE_ERROR),
+        Arguments.of("응답 크기 4096", apiStepWithMaxResponseSize(4096), MAX_RESPONSE_SIZE_ERROR),
+        Arguments.of("응답 크기 소수", apiStepWithMaxResponseSize(1.5), MAX_RESPONSE_SIZE_ERROR),
+        Arguments.of("응답 크기 문자열", apiStepWithMaxResponseSize("abc"), MAX_RESPONSE_SIZE_ERROR),
         Arguments.of(
             "빈 매핑 행",
             apiStep(null, List.of(mapping("a", "a"), mapping("", ""))),
@@ -447,5 +469,210 @@ class PipelineStepColumnValidationTest extends IntegrationTestBase {
             new CreatePipelineRequest("WD362 페이지 크기 비움", null, List.of(apiStepWithPageSize(null))),
             userId);
     assertThat(created.steps()).hasSize(1);
+  }
+
+  /** 저장되는 응답 크기 한도: 경계값(1·100), 숫자 문자열("50", 트리거 설정과 같은 해석), 비움(실행기 기본값 10MB)(WD-810). */
+  static Stream<Arguments> acceptedMaxResponseSizes() {
+    return Stream.of(
+        Arguments.of("경계 1", 1),
+        Arguments.of("경계 100", 100),
+        Arguments.of("숫자 문자열", "50"),
+        Arguments.of("비움", null));
+  }
+
+  @ParameterizedTest(name = "응답 크기 저장: {0}")
+  @MethodSource("acceptedMaxResponseSizes")
+  void create_maxResponseSizeAccepted_succeeds(String label, Object maxResponseSizeMb) {
+    PipelineDetailResponse created =
+        pipelineService.createPipeline(
+            new CreatePipelineRequest(
+                "WD810 응답 크기", null, List.of(apiStepWithMaxResponseSize(maxResponseSizeMb))),
+            userId);
+    assertThat(created.steps()).hasSize(1);
+  }
+
+  /** 옛 스텝(저장 상한 이전 값)을 만든다 — 저장 검증을 우회해 DB 에 직접 심는다(WD-810). json 은 JSON 리터럴이다(예: 500, "150"). */
+  private PipelineDetailResponse createLegacyStep(String name, String jsonLiteral) {
+    PipelineDetailResponse created =
+        pipelineService.createPipeline(
+            new CreatePipelineRequest(name, null, List.of(apiStepWithMaxResponseSize(10))), userId);
+    dsl.execute(
+        "UPDATE pipeline_step SET api_config = jsonb_set(api_config, '{maxResponseSizeMb}', ?::jsonb) WHERE pipeline_id = ?",
+        jsonLiteral,
+        created.id());
+    return created;
+  }
+
+  private void assertUpdateRejected(PipelineDetailResponse created, Object sent) {
+    assertThatThrownBy(
+            () ->
+                pipelineService.updatePipeline(
+                    created.id(),
+                    new UpdatePipelineRequest(
+                        "WD810 옛 스텝", null, true, List.of(apiStepWithMaxResponseSize(sent))),
+                    userId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(MAX_RESPONSE_SIZE_ERROR);
+  }
+
+  /** 저장값이 문자열("150")이어도 같은 값(150 또는 "150")을 되돌려 보내면 통과한다(WD-810). */
+  @Test
+  void update_unchangedLegacyStringMaxResponseSize_succeeds() {
+    PipelineDetailResponse created = createLegacyStep("WD810 문자열 옛 스텝", "\"150\"");
+    pipelineService.updatePipeline(
+        created.id(),
+        new UpdatePipelineRequest(
+            "WD810 문자열 옛 스텝", "설명", true, List.of(apiStepWithMaxResponseSize("150"))),
+        userId);
+    pipelineService.updatePipeline(
+        created.id(),
+        new UpdatePipelineRequest(
+            "WD810 문자열 옛 스텝", "설명2", true, List.of(apiStepWithMaxResponseSize(150))),
+        userId);
+    assertThat(pipelineService.getPipelineById(created.id()).description()).isEqualTo("설명2");
+  }
+
+  /** 돌지 않는 저장값(5000·-1)은 그대로 되돌려 보내도 거부한다 — 사용자가 고쳐야 한다(WD-810). */
+  @ParameterizedTest(name = "저장 {0} 그대로 되돌림 거부")
+  @ValueSource(ints = {5000, -1, 0})
+  void update_unchangedNonRunnableMaxResponseSize_rejected(int stored) {
+    PipelineDetailResponse created = createLegacyStep("WD810 불가 옛 스텝", Integer.toString(stored));
+    assertUpdateRejected(created, stored);
+  }
+
+  /** 저장본 값 그대로(500) 되돌려 보내는 편집기 저장은 막지 않는다(WD-810) — 막으면 옛 스텝의 설명도 못 고친다. */
+  @Test
+  void update_unchangedLegacyMaxResponseSize_succeeds() {
+    PipelineDetailResponse created = createLegacyStep("WD810 옛 스텝", "500");
+    pipelineService.updatePipeline(
+        created.id(),
+        new UpdatePipelineRequest(
+            "WD810 옛 스텝", "설명 수정", true, List.of(apiStepWithMaxResponseSize(500))),
+        userId);
+    assertThat(pipelineService.getPipelineById(created.id()).description()).isEqualTo("설명 수정");
+  }
+
+  /** 저장본과 다른 범위 밖 값(500 -> 600)은 여전히 거부한다(WD-810). */
+  @Test
+  void update_changedOutOfRangeMaxResponseSize_rejected() {
+    assertUpdateRejected(createLegacyStep("WD810 옛 스텝", "500"), 600);
+  }
+
+  /** 옛 스텝이 소수(10.5)로 저장돼 있어도(Jackson 이 10 으로 줄여 돌던 값) 같은 값을 되돌려 보내는 저장은 통과한다(WD-810). */
+  @Test
+  void update_unchangedLegacyDecimalMaxResponseSize_succeeds() {
+    PipelineDetailResponse created = createLegacyStep("WD810 소수 옛 스텝", "10.5");
+    pipelineService.updatePipeline(
+        created.id(),
+        new UpdatePipelineRequest(
+            "WD810 소수 옛 스텝", "설명 수정", true, List.of(apiStepWithMaxResponseSize(10.5))),
+        userId);
+    assertThat(pipelineService.getPipelineById(created.id()).description()).isEqualTo("설명 수정");
+  }
+
+  /** 새 소수 값은 저장본이 없어도 여전히 400 이다(WD-810). */
+  @Test
+  void create_newDecimalMaxResponseSize_rejected() {
+    assertThatThrownBy(
+            () ->
+                pipelineService.createPipeline(
+                    new CreatePipelineRequest(
+                        "WD810 새 소수", null, List.of(apiStepWithMaxResponseSize(10.5))),
+                    userId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(MAX_RESPONSE_SIZE_ERROR);
+  }
+
+  /**
+   * 저장본 소수(10.5)를 다른 소수(20.5)·같은 정수부의 다른 소수(10.9)로 바꾸는 저장은 바뀐 값이라 새 값 규칙(정수 1~100)에 막힌다(WD-810).
+   */
+  @ParameterizedTest(name = "저장 10.5 -> {0} 거부")
+  @ValueSource(doubles = {20.5, 10.9})
+  void update_changedDecimalMaxResponseSize_rejected(double sent) {
+    assertUpdateRejected(createLegacyStep("WD810 소수 옛 스텝", "10.5"), sent);
+  }
+
+  /** 저장본 소수(10.5)를 정수 10 으로 바꾸는 저장은 바뀐 값이지만 새 값 규칙(정수 1~100)을 지키므로 통과한다(WD-810). */
+  @Test
+  void update_decimalChangedToValidInteger_succeeds() {
+    PipelineDetailResponse created = createLegacyStep("WD810 소수 정수화", "10.5");
+    pipelineService.updatePipeline(
+        created.id(),
+        new UpdatePipelineRequest(
+            "WD810 소수 정수화", "정수로 고침", true, List.of(apiStepWithMaxResponseSize(10))),
+        userId);
+    assertThat(pipelineService.getPipelineById(created.id()).description()).isEqualTo("정수로 고침");
+  }
+
+  /** 저장본 150.7(소수부를 버리면 150, 상한 100 초과)을 150 이나 "150" 으로 바꾸는 저장은 바뀐 값이라 거부한다(WD-810). */
+  @Test
+  void update_changedLargeDecimalToInteger_rejected() {
+    PipelineDetailResponse created = createLegacyStep("WD810 큰 소수", "150.7");
+    assertUpdateRejected(created, "150");
+    assertUpdateRejected(created, 150);
+  }
+
+  /** 옛 스텝이 빈 문자열("")로 저장돼 기본 10MB 로 돌았다면 같은 값을 되돌려 보내는 저장은 통과한다(WD-810). */
+  @Test
+  void update_unchangedLegacyBlankMaxResponseSize_succeeds() {
+    PipelineDetailResponse created = createLegacyStep("WD810 빈 문자열", "\"\"");
+    pipelineService.updatePipeline(
+        created.id(),
+        new UpdatePipelineRequest(
+            "WD810 빈 문자열", "설명 수정", true, List.of(apiStepWithMaxResponseSize(""))),
+        userId);
+    assertThat(pipelineService.getPipelineById(created.id()).description()).isEqualTo("설명 수정");
+  }
+
+  /** 새로 보내는 빈 문자열은 저장본이 정수여도 예전처럼 400 이다(WD-810). */
+  @Test
+  void update_newBlankMaxResponseSize_rejected() {
+    assertUpdateRejected(createLegacyStep("WD810 빈 문자열 새 값", "50"), "");
+  }
+
+  /**
+   * 저장본 150.0 을 150 으로 되돌려 보내는 저장은 숫자로 같고 150 도 실행에서 도는 값이라 통과한다 — 설명만 고쳐도 저장되며 요청 값 그대로
+   * 저장된다(WD-810).
+   */
+  @Test
+  void update_numericallyEqualMaxResponseSizeForms_succeeds() {
+    PipelineDetailResponse created = createLegacyStep("WD810 150.0", "150.0");
+    pipelineService.updatePipeline(
+        created.id(),
+        new UpdatePipelineRequest(
+            "WD810 150.0", "설명 수정", true, List.of(apiStepWithMaxResponseSize(150))),
+        userId);
+    PipelineDetailResponse saved = pipelineService.getPipelineById(created.id());
+    assertThat(saved.description()).isEqualTo("설명 수정");
+    assertThat(saved.steps().get(0).apiConfig().get("maxResponseSizeMb")).isEqualTo(150);
+  }
+
+  /**
+   * 저장본 150 을 "150.0" 으로 보내는 저장은 숫자로는 같지만 요청 값(문자열 "150.0")은 실행기 변환(Integer)이 못 읽어 매 실행이 실패하므로
+   * 거부한다(WD-810).
+   */
+  @Test
+  void update_numericallyEqualButUnrunnableRequested_rejected() {
+    PipelineDetailResponse created = createLegacyStep("WD810 150 문자열", "150");
+    assertUpdateRejected(created, "150.0");
+    assertUpdateRejected(created, "1.5e2");
+  }
+
+  /** 저장본 150.0 을 151 로, 150.5 를 150 으로 바꾸는 저장은 숫자로 다른 값이라 바뀐 값으로 보고 거부한다(WD-810). */
+  @Test
+  void update_numericallyDifferentMaxResponseSize_rejected() {
+    assertUpdateRejected(createLegacyStep("WD810 옛 스텝", "150.0"), 151);
+  }
+
+  /** 저장본 150.5 를 150 으로 바꾸는 저장은 소수부가 달라 바뀐 값이고 150 은 상한 초과라 거부한다(WD-810). */
+  @Test
+  void update_fractionalDifferenceMaxResponseSize_rejected() {
+    assertUpdateRejected(createLegacyStep("WD810 옛 스텝", "150.5"), 150);
+  }
+
+  /** 저장본이 0.5 처럼 소수부를 버리면 돌 수 없는 값(0)은 그대로 되돌려 보내도 거부한다(WD-810). */
+  @Test
+  void update_unchangedNonRunnableDecimalMaxResponseSize_rejected() {
+    assertUpdateRejected(createLegacyStep("WD810 소수 불가 옛 스텝", "0.5"), 0.5);
   }
 }

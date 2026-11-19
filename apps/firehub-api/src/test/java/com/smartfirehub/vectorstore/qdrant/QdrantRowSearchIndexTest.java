@@ -25,7 +25,6 @@ import io.qdrant.client.grpc.Points.QueryPoints;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterAll;
@@ -344,27 +343,25 @@ class QdrantRowSearchIndexTest extends IntegrationTestBase {
     QdrantClient tenant1 =
         rowClients.forCollections(lifecycle.rowCollections(DEFAULT_TEST_TENANT_ID));
     // 자기 컬렉션은 된다
-    tenant1
-        .queryAsync(
+    QdrantTestContainer.await(
+        tenant1.queryAsync(
             QueryPoints.newBuilder()
                 .setCollectionName(QdrantCollectionSpec.rowsDenseName(DEFAULT_TEST_TENANT_ID, DIM))
                 .setUsing(QdrantCollectionSpec.DENSE)
                 .setQuery(QueryFactory.nearest(axis(0)))
                 .setLimit(1)
-                .build())
-        .get(30, TimeUnit.SECONDS);
+                .build()));
     // 다른 테넌트 컬렉션은 앱 필터와 상관없이 서버가 막는다
     assertThatThrownBy(
             () ->
-                tenant1
-                    .queryAsync(
+                QdrantTestContainer.await(
+                    tenant1.queryAsync(
                         QueryPoints.newBuilder()
                             .setCollectionName(QdrantCollectionSpec.rowsDenseName(2L, DIM))
                             .setUsing(QdrantCollectionSpec.DENSE)
                             .setQuery(QueryFactory.nearest(axis(0)))
                             .setLimit(1)
-                            .build())
-                    .get(30, TimeUnit.SECONDS))
+                            .build())))
         .isInstanceOf(ExecutionException.class)
         .cause()
         .isInstanceOfSatisfying(

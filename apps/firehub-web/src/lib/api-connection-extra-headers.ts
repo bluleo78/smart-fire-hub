@@ -6,8 +6,9 @@
  * (maskedAuthConfig)에는 「****」+끝 4자로 가려 내려오고, 수정 때 가린 값을 그대로 되돌려 보내면 서버가 저장 원문을 유지한다.
  *
  * 생성 대화상자(ApiConnectionListPage)와 상세 편집(ApiConnectionDetailPage)이 같은 규칙을 쓰도록 이 파일 한 곳에 둔다.
- * 최종 검사(헤더 이름 토큰·예약 헤더·메인 인증 헤더와 겹침·개수 상한·줄바꿈)는 서버(AuthConfigValidator)가 하고 400 문구로 안내한다 —
- * 화면은 흔한 실수(이름 빠짐·값 빠짐·이름 겹침·ASCII 밖 값)만 먼저 막는다.
+ * 최종 검사(헤더 이름 토큰·예약 헤더·메인 인증 헤더와 겹침·줄바꿈)는 서버(AuthConfigValidator)가 하고 400 문구로 안내한다 —
+ * 화면은 흔한 실수(이름 빠짐·값 빠짐·이름 겹침·ASCII 밖 값·개수 상한)만 먼저 막는다. 개수 상한은 재조회가 다른 곳의 헤더를 더해 행이
+ * 버튼으로는 못 넘는 수(11개)가 될 수 있어 저장 전에 보이게 한다(WD-804).
  */
 
 import { focusFirstError, withoutKeys } from '@/lib/api-connection-form';
@@ -55,6 +56,8 @@ const NAME_MISSING = '헤더 이름을 입력하세요';
 const VALUE_MISSING = '값을 입력하세요';
 /** 행 오류 문구 — 다른 행과 이름이 겹칠 때(HTTP 헤더 이름은 대소문자를 가리지 않는다) */
 const NAME_DUPLICATE = '이름이 겹칩니다';
+/** 행 오류 문구 — 보낼 행이 상한(MAX_EXTRA_HEADERS)을 넘을 때(서버 AuthConfigValidator 문구와 같다, WD-804) */
+const TOO_MANY_HEADERS = `추가 헤더는 최대 ${MAX_EXTRA_HEADERS}개까지 넣을 수 있습니다`;
 /** 행 오류 문구 — 값에 HTTP 헤더로 보낼 수 없는 글자(한글·특수 공백·제어 문자)가 있을 때(WD-780) */
 const VALUE_NON_ASCII = '영문·숫자·기호(ASCII)만 쓸 수 있습니다';
 
@@ -72,6 +75,19 @@ const VALUE_NON_ASCII = '영문·숫자·기호(ASCII)만 쓸 수 있습니다';
  */
 function hasNonAsciiHeaderValue(value: string): boolean {
   return /[^\t\x20-\x7e]/.test(javaStrip(value));
+}
+
+/**
+ * 이 행을 서버로 보내는지 — 이름이나 값 중 하나라도 있으면 보낸다(extraHeadersToConfig 가 이름·값이 모두 빈 행만 버린다).
+ * 개수 상한 검사(extraHeaderRowErrors)·상한 오류 정리(withoutChangedRowErrors)가 같은 기준으로 세도록 한곳에 둔다(WD-804 리뷰).
+ */
+function isSendableExtraHeaderRow(row: ExtraHeaderRow): boolean {
+  return javaStrip(row.name) !== '' || !isBlankLikeServer(row.value);
+}
+
+/** 보낼 행 id 를 순서대로 — 개수 초과 행 고르기(extraHeaderRowErrors)와 보낼 행 모음이 바뀌었는지 보기(withoutChangedRowErrors)가 함께 쓴다(WD-804). */
+function sendableExtraHeaderRowIds(rows: ExtraHeaderRow[]): string[] {
+  return rows.filter(isSendableExtraHeaderRow).map((row) => row.id);
 }
 
 /** 화면 안 행 id 순번 — crypto.randomUUID 는 http(비보안 출처)에서 없을 수 있어 단순 순번을 쓴다. */
@@ -119,9 +135,9 @@ export function keptStoredMasked(row: ExtraHeaderRow): string | undefined {
 export function extraHeadersToConfig(rows: ExtraHeaderRow[]): Record<string, string> {
   const config: Record<string, string> = {};
   for (const row of rows) {
+    if (!isSendableExtraHeaderRow(row)) continue;
     const name = javaStrip(row.name);
     const valueBlank = isBlankLikeServer(row.value);
-    if (!name && valueBlank) continue;
     const kept = keptStoredMasked(row);
     config[`${EXTRA_HEADER_PREFIX}${name}`] = valueBlank && kept ? kept : row.value;
   }
@@ -138,21 +154,28 @@ export function withoutExtraHeaders(config: Record<string, string>): Record<stri
 
 /**
  * 행 id → 오류 문구. 오류가 없는 행은 키가 없다.
- * 한 행에는 하나만 단다 — 이름 빠짐 → 이름 겹침(앞 행과 대소문자 무시로 같으면 뒤 행에) → 값 빠짐(유지할 저장값이 없을 때)
+ * 한 행에는 하나만 단다 — 개수 초과(WD-804, 보낼 행 기준 11번째부터, 서버도 개수를 먼저 본다) → 이름 빠짐 → 이름 겹침(앞 행과 대소문자 무시로 같으면 뒤 행에) → 값 빠짐(유지할 저장값이 없을 때)
  * → 값의 ASCII 밖 글자(hasNonAsciiHeaderValue, 서버 규칙과 같다 — WD-780) 순.
  * 이름·값이 모두 빈 행은 보내지 않으므로 오류도 없다.
  */
 export function extraHeaderRowErrors(rows: ExtraHeaderRow[]): Record<string, string> {
   const errors: Record<string, string> = {};
   const seen = new Set<string>();
+  // 보낼 행 중 상한을 넘는 행(11번째부터) — extraHeadersToConfig 가 버리는 행(이름·값이 모두 빈 행)은 세지 않는다(WD-804)
+  const overflow = new Set(sendableExtraHeaderRowIds(rows).slice(MAX_EXTRA_HEADERS));
   for (const row of rows) {
+    if (overflow.has(row.id)) {
+      // 이름 칸 오류(isExtraHeaderValueError 아님)라 포커스가 넘친 첫 행의 이름 칸으로 간다
+      errors[row.id] = TOO_MANY_HEADERS;
+      continue;
+    }
     const name = javaStrip(row.name);
     const valueBlank = isBlankLikeServer(row.value);
     if (!name) {
       if (!valueBlank) errors[row.id] = NAME_MISSING;
       continue;
     }
-    const lower = name.toLowerCase();
+    const lower = normalizedExtraHeaderName(row.name);
     if (seen.has(lower)) {
       errors[row.id] = NAME_DUPLICATE;
       continue;
@@ -170,6 +193,9 @@ export function extraHeaderRowErrors(rows: ExtraHeaderRow[]): Record<string, str
 
 /**
  * 행을 고친 뒤 남길 오류 — 이름·값이 바뀌었거나 지운 행의 오류만 지운다(다른 행 오류는 고칠 때까지 남긴다, 메인 칸 clearError 와 같은 규칙).
+ * 다만 개수 초과(TOO_MANY_HEADERS)는 그 행 하나가 아니라 보낼 행 전체에 걸린 오류라, 보낼 행의 모음·순서가 바뀌면(다른 행을 지우거나 비우거나
+ * 채우거나, 재조회 병합으로 행이 바뀌면) 모두 지운다 — 그대로 두면 다른 행을 지워 10개로 맞춰도 넘쳤던 행의 오류가 남는다(WD-804 리뷰).
+ * 아직 넘치면 다음 저장 검사(extraHeaderRowErrors)가 다시 단다.
  * 지울 오류가 없으면 같은 참조를 돌려줘 setState 가 불필요한 렌더를 일으키지 않게 한다(공용 withoutKeys 의 성질).
  */
 export function withoutChangedRowErrors(
@@ -182,6 +208,13 @@ export function withoutChangedRowErrors(
     const after = nextRows.find((row) => row.id === id);
     return !after || before?.name !== after.name || before?.value !== after.value;
   });
+  // 보낼 행 id 순서가 달라졌으면 개수 초과 오류는 낡은 것이라 함께 지운다(빈 행만 더하거나 지운 경우는 그대로 넘치므로 남긴다)
+  const before = sendableExtraHeaderRowIds(prevRows);
+  const after = sendableExtraHeaderRowIds(nextRows);
+  const sameSendable = before.length === after.length && before.every((id, i) => id === after[i]);
+  if (!sameSendable) {
+    changed.push(...Object.keys(errors).filter((id) => errors[id] === TOO_MANY_HEADERS));
+  }
   // 지우기·같은 참조 유지는 메인 칸 오류와 같은 공용 withoutKeys 를 쓴다. 행 오류 Map 은 값이 항상 문구라 Record 로 되돌려 읽어도 안전하다.
   return withoutKeys(errors, ...changed) as Record<string, string>;
 }
@@ -218,4 +251,30 @@ export function focusFirstExtraHeaderError(rows: ExtraHeaderRow[], errors: Recor
     errors,
     fieldId,
   );
+}
+
+/**
+ * 행 이름의 비교용 정규형 — 서버와 같은 javaStrip 으로 앞뒤 공백을 떼고 소문자로 만든다.
+ * 서버는 헤더 이름을 대소문자 무시로 같은 헤더로 보므로, 중복 검사와 「같은 이름의 행이 있는가」 판정이 이 값으로 비교해야 어긋나지 않는다.
+ */
+export function normalizedExtraHeaderName(name: string): string {
+  return javaStrip(name).toLowerCase();
+}
+
+/** 사용자가 지운 저장 헤더가 다른 곳에서 대소문자만 바뀐 이름으로 온 쌍 — from = 지운 옛 이름, to = 새 이름 */
+export type RenamedPair = { from: string; to: string };
+
+/**
+ * 「지운 헤더가 다른 곳에서 이름이 바뀌었다」 토스트 문구를 만든다(WD-804).
+ * 한 쌍이면 `옛 이(가) 다른 곳에서 새(으)로`, 여럿이면 `옛→새` 쌍을 이어 보인다. 이름 뒤 조사는 받침 유무를 알 수 없어 「이(가)」·「(으)로」 로 쓴다.
+ * 문구를 페이지 밖 순수 함수로 두어 단위 시험으로 지킨다.
+ */
+export function renamedDeletedNotice(pairs: RenamedPair[]): string {
+  // 두 문구가 같이 쓰는 꼬리 — 한 곳에 두어 문구가 어긋나지 않게 한다
+  const tail = '. 지운 대로 두며, 저장하면 서버에서도 지워집니다.';
+  if (pairs.length === 1) {
+    return `지운 헤더 ${pairs[0].from} 이(가) 다른 곳에서 ${pairs[0].to}(으)로 바뀌었습니다${tail}`;
+  }
+  const joined = pairs.map((r) => `${r.from}→${r.to}`).join(', ');
+  return `지운 헤더 ${joined} 이(가) 다른 곳에서 이름이 바뀌었습니다${tail}`;
 }

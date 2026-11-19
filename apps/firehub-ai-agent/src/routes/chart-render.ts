@@ -1,17 +1,46 @@
 import { Router, Request, Response } from 'express';
-import { ChartJSNodeCanvas } from 'chartjs-node-canvas';
+import { renderChartPng } from './chart-png.js';
 import { authedJsonBody } from '../http/json-body.js';
+import { isPositiveInteger } from '../utils.js';
 
-const canvasCache = new Map<string, ChartJSNodeCanvas>();
+/**
+ * 렌더를 지원하는 차트 종류 — 런타임 검증과 `ChartRequest.type` 타입이 함께 쓰는 단일 목록(WD-806).
+ * 요청 본문은 TS 타입으로 보장되지 않으므로 런타임에 이 목록으로 거른다.
+ */
+const ALLOWED_TYPES = ['bar', 'pie', 'line', 'doughnut'] as const;
+type ChartType = (typeof ALLOWED_TYPES)[number];
 
-function getCanvas(width: number, height: number): ChartJSNodeCanvas {
-  const key = `${width}x${height}`;
-  let canvas = canvasCache.get(key);
-  if (!canvas) {
-    canvas = new ChartJSNodeCanvas({ width, height, backgroundColour: 'white' });
-    canvasCache.set(key, canvas);
+/** 요청당 네이티브 캔버스 메모리 할당을 제한하기 위한 한 변 최대 픽셀(WD-806). */
+const MAX_DIMENSION = 2000;
+
+/**
+ * 한 요청에서 그릴 최대 차트 수.
+ * 유일한 호출자 ReportRenderUtils 는 카드가 있는 AI 결과 섹션마다 차트 하나를 만들어 한 요청에 모아 보낸다.
+ * 이 섹션 수는 AI 출력이라 ReportSectionLimits 가 막아 주지 않는다. 돌려받은 이미지는 순서대로 섹션에 매핑하고
+ * images.size 를 넘는 섹션은 차트 없이 둔다. 그래서 초과 시 400 으로 모든 차트를 잃는 대신 앞 100 개만 그리고
+ * 나머지는 무시한다. 상한은 요청당 렌더 시간(차트를 차례로 그림)을 묶는 용도다.
+ */
+const MAX_CHARTS = 100;
+
+/**
+ * 렌더 전에 모든 차트 요청을 검증한다(하나라도 잘못되면 아무것도 그리지 않는다).
+ * width/height 는 주어졌다면 1..MAX_DIMENSION 의 정수여야 한다.
+ * @returns 오류 메시지, 유효하면 null
+ */
+function validateCharts(charts: ChartRequest[]): string | null {
+  for (let i = 0; i < charts.length; i++) {
+    const c = charts[i];
+    if (!c || !(ALLOWED_TYPES as readonly unknown[]).includes(c.type)) {
+      return `charts[${i}].type must be one of: ${ALLOWED_TYPES.join(', ')}`;
+    }
+    for (const field of ['width', 'height'] as const) {
+      const value: unknown = c[field];
+      if (value !== undefined && !(isPositiveInteger(value) && value <= MAX_DIMENSION)) {
+        return `charts[${i}].${field} must be an integer between 1 and ${MAX_DIMENSION}`;
+      }
+    }
   }
-  return canvas;
+  return null;
 }
 
 const router = Router();
@@ -30,7 +59,7 @@ interface ChartData {
 }
 
 interface ChartRequest {
-  type: 'bar' | 'pie' | 'line' | 'doughnut';
+  type: ChartType;
   title: string;
   data: ChartData;
   width?: number;
@@ -62,21 +91,30 @@ router.post(
       return;
     }
 
+    // 상한을 넘으면 앞 MAX_CHARTS 개만 그리고 나머지는 무시한다(검증도 그릴 차트에만 적용).
+    if (body.charts.length > MAX_CHARTS) {
+      console.warn(`[ChartRender] charts truncated: ${body.charts.length} -> ${MAX_CHARTS}`);
+    }
+    const charts = body.charts.slice(0, MAX_CHARTS);
+
+    const validationError = validateCharts(charts);
+    if (validationError) {
+      res.status(400).json({ error: validationError });
+      return;
+    }
+
     try {
       const images: ChartImage[] = [];
 
-      for (let i = 0; i < body.charts.length; i++) {
-        const chart = body.charts[i];
+      for (let i = 0; i < charts.length; i++) {
+        const chart = charts[i];
         const width = chart.width ?? 600;
         const height = chart.height ?? 400;
-
-        const canvas = getCanvas(width, height);
 
         const configuration = {
           type: chart.type,
           data: chart.data,
           options: {
-            responsive: false,
             plugins: {
               title: {
                 display: chart.title != null && chart.title !== '',
@@ -115,7 +153,8 @@ router.post(
           },
         };
 
-        const buffer = await canvas.renderToBuffer(configuration);
+        // WD-806: @napi-rs/canvas 기반 렌더(반응형·애니메이션 off·흰 배경은 renderChartPng 가 처리)
+        const buffer = await renderChartPng(configuration, width, height);
         const base64 = buffer.toString('base64');
 
         images.push({

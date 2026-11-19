@@ -11,6 +11,8 @@ import {
   keptStoredMasked,
   MAX_EXTRA_HEADERS,
   newExtraHeaderRow,
+  normalizedExtraHeaderName,
+  renamedDeletedNotice,
   withoutChangedRowErrors,
   withoutExtraHeaders,
 } from './api-connection-extra-headers';
@@ -98,6 +100,24 @@ describe('api-connection-extra-headers', () => {
     expect(extraHeaderRowErrors([row('a', 'X-A', 'v')])).toEqual({});
   });
 
+  it('행 오류 — 보낼 행이 상한(10)을 넘으면 11번째 행부터 이름 칸 오류가 붙고, 빈 행은 세지 않는다 (WD-804)', () => {
+    const ten = Array.from({ length: MAX_EXTRA_HEADERS }, (_, i) => row(`r${i}`, `X-${i}`, 'v'));
+    expect(extraHeaderRowErrors(ten)).toEqual({});
+    // 이름·값이 모두 빈 행은 저장에서 빠지므로 세지 않는다 — 열 개 + 빈 행은 통과
+    expect(extraHeaderRowErrors([...ten, row('blank', '', '')])).toEqual({});
+    // 11번째 보낼 행(과 그 뒤)에만 오류 — 이름 칸 오류라 값 칸 오류 판정이 아니다
+    const errors = extraHeaderRowErrors([...ten, row('over', 'X-Over', 'v'), row('over2', 'X-Over2', 'v')]);
+    expect(errors).toEqual({
+      over: '추가 헤더는 최대 10개까지 넣을 수 있습니다',
+      over2: '추가 헤더는 최대 10개까지 넣을 수 있습니다',
+    });
+    expect(isExtraHeaderValueError(errors.over)).toBe(false);
+    // 빈 행이 사이에 끼어도 보낼 행만 센다
+    expect(extraHeaderRowErrors([row('b0', '', ''), ...ten, row('b1', '', ''), row('over', 'X-Over', 'v')])).toEqual({
+      over: '추가 헤더는 최대 10개까지 넣을 수 있습니다',
+    });
+  });
+
   it('행 오류 — 값은 서버와 같은 ASCII 규칙(0x20~0x7E·탭)만 통과하고, 값을 비운 저장 행(가린 값 유지)은 검사하지 않으며, 「****」로 시작해도 친 값은 검사한다 (WD-780)', () => {
     expect(
       extraHeaderRowErrors([
@@ -132,6 +152,31 @@ describe('api-connection-extra-headers', () => {
     const after = [row('a', 'X-A', 'v'), row('c', 'X-C', '')];
     expect(withoutChangedRowErrors(errors, before, after)).toEqual({ c: '값을 입력하세요' });
     expect(withoutChangedRowErrors(errors, before, before)).toBe(errors);
+  });
+
+  it('개수 초과 오류는 보낼 행이 바뀌면 다른 행을 고쳐도 지우고, 빈 행만 바뀌면 남긴다 (WD-804 리뷰)', () => {
+    const ten = Array.from({ length: MAX_EXTRA_HEADERS }, (_, i) => row(`r${i}`, `X-${i}`, 'v'));
+    const before = [...ten, row('over', 'X-Over', 'v'), row('blank', '', '')];
+    const errors = extraHeaderRowErrors(before);
+    expect(errors).toEqual({ over: '추가 헤더는 최대 10개까지 넣을 수 있습니다' });
+
+    // 넘친 행이 아닌 다른 행(r0)을 지워 10개로 맞추면 넘친 행의 오류도 지운다 — 다시 검사하면 오류가 없다
+    const removedOther = before.filter((r) => r.id !== 'r0');
+    expect(withoutChangedRowErrors(errors, before, removedOther)).toEqual({});
+    expect(extraHeaderRowErrors(removedOther)).toEqual({});
+
+    // 다른 행을 비워(이름·값 모두) 보내지 않게 해도 같다
+    const emptiedOther = before.map((r) => (r.id === 'r1' ? { ...r, name: '', value: '' } : r));
+    expect(withoutChangedRowErrors(errors, before, emptiedOther)).toEqual({});
+
+    // 빈 행만 지우거나 더하면 여전히 넘치므로 오류를 남긴다(같은 참조)
+    const withoutBlank = before.filter((r) => r.id !== 'blank');
+    expect(withoutChangedRowErrors(errors, before, withoutBlank)).toBe(errors);
+    expect(withoutChangedRowErrors(errors, before, [...before, row('blank2', '', '')])).toBe(errors);
+
+    // 개수 초과가 아닌 다른 행의 오류는 보낼 행이 바뀌어도 고칠 때까지 남긴다
+    const mixed = { ...errors, r5: '값을 입력하세요' };
+    expect(withoutChangedRowErrors(mixed, before, removedOther)).toEqual({ r5: '값을 입력하세요' });
   });
 
   it('이름을 바꾸면 저장값 유지가 풀리고, 앞뒤 공백을 뗀 이름이 원래 이름과 같아지면 다시 유지한다 (WD-753 리뷰)', () => {
@@ -188,5 +233,28 @@ describe('api-connection-extra-headers', () => {
     expect(withoutExtraHeaders({ apiKey: '****abcd', 'ExtraHeader:X-A': '****1234', 'extraheader:X-B': '****5678' })).toEqual({
       apiKey: '****abcd',
     });
+  });
+});
+
+describe('normalizedExtraHeaderName', () => {
+  it('앞뒤 공백을 떼고 소문자로 만든다', () => {
+    expect(normalizedExtraHeaderName('  X-Id\t')).toBe('x-id');
+  });
+});
+
+describe('renamedDeletedNotice', () => {
+  it('한 쌍이면 옛 이름이 새 이름으로 바뀌었다고 안내한다', () => {
+    expect(renamedDeletedNotice([{ from: 'X-Id', to: 'x-id' }])).toBe(
+      '지운 헤더 X-Id 이(가) 다른 곳에서 x-id(으)로 바뀌었습니다. 지운 대로 두며, 저장하면 서버에서도 지워집니다.',
+    );
+  });
+
+  it('여러 쌍이면 옛→새 쌍을 이어 보인다', () => {
+    expect(
+      renamedDeletedNotice([
+        { from: 'X-Id', to: 'x-id' },
+        { from: 'X-A', to: 'x-a' },
+      ]),
+    ).toBe('지운 헤더 X-Id→x-id, X-A→x-a 이(가) 다른 곳에서 이름이 바뀌었습니다. 지운 대로 두며, 저장하면 서버에서도 지워집니다.');
   });
 });

@@ -23,6 +23,7 @@ import com.smartfirehub.pipeline.repository.PipelineExecutionRepository.ActiveEx
 import com.smartfirehub.pipeline.repository.PipelineRepository;
 import com.smartfirehub.pipeline.repository.PipelineStepRepository;
 import com.smartfirehub.pipeline.repository.TriggerRepository;
+import com.smartfirehub.pipeline.service.executor.ApiCallExecutor;
 import com.smartfirehub.pipeline.service.validator.PythonScriptValidator;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
 import com.smartfirehub.securitylevel.access.Clearance;
@@ -35,6 +36,7 @@ import com.smartfirehub.securitylevel.ai.AiCall;
 import com.smartfirehub.securitylevel.ai.AiCallContext;
 import com.smartfirehub.securitylevel.ai.AiHostingResolver;
 import com.smartfirehub.user.repository.UserRepository;
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -265,6 +267,7 @@ public class PipelineService {
         // 아래 출력 판정 뒤에 본다(존재 오라클 방지).
         validateApiCallFieldMappings(stepRequest);
         validateApiCallPagination(stepRequest);
+        validateApiCallMaxResponseSize(stepRequest, storedStep);
       }
 
       // Validate AI_CLASSIFY step requirements
@@ -1568,6 +1571,102 @@ public class PipelineService {
         MIN_PAGE_SIZE,
         MAX_PAGE_SIZE,
         stepError(step.name(), PAGE_SIZE_RANGE_MESSAGE));
+  }
+
+  /** API_CALL 응답 크기 한도 허용 범위 안내(WD-810) — 범위는 실행기 상수와 같다. */
+  static final String MAX_RESPONSE_SIZE_RANGE_MESSAGE =
+      "응답 크기 한도는 "
+          + ApiCallExecutor.MIN_MAX_RESPONSE_SIZE_MB
+          + "~"
+          + ApiCallExecutor.MAX_MAX_RESPONSE_SIZE_MB
+          + "MB 사이의 정수여야 합니다";
+
+  /**
+   * API_CALL 응답 크기 한도(maxResponseSizeMb)의 저장 검증(WD-810) — 비어 있으면 실행기 기본값을 쓰므로 허용하고, 값이 있으면 1~100 의
+   * 정수만 받는다. 상한을 저장에서 막는 근거는 {@link ApiCallExecutor#isRunnableMaxResponseSizeMb}. 단 저장본과 같은 값을 그대로
+   * 되돌려 보내는 저장은 통과시킨다.
+   */
+  private void validateApiCallMaxResponseSize(
+      PipelineStepRequest step, PipelineStepResponse storedStep) {
+    Object requested = step.apiConfig().get("maxResponseSizeMb");
+    if (storedStep != null
+        && storedStep.apiConfig() != null
+        && isUnchangedRunnableMaxResponseSize(
+            requested, storedStep.apiConfig().get("maxResponseSizeMb"))) {
+      return;
+    }
+    // 정수 범위 검사는 페이지 크기·트리거 설정과 같은 해석을 쓴다 — 반환값은 쓰지 않고 범위 밖·소수·숫자 아님만 400 으로 막는다.
+    DatasetChangeTriggerConfig.requireSecondsInRange(
+        step.apiConfig().get("maxResponseSizeMb"),
+        ApiCallExecutor.DEFAULT_MAX_RESPONSE_SIZE_MB,
+        ApiCallExecutor.MIN_MAX_RESPONSE_SIZE_MB,
+        ApiCallExecutor.MAX_MAX_RESPONSE_SIZE_MB,
+        stepError(step.name(), MAX_RESPONSE_SIZE_RANGE_MESSAGE));
+  }
+
+  /**
+   * 요청 값이 저장본 값과 같고 저장본·요청 둘 다 지금도 도는 값인지(WD-810). 상한(100) 이전에 저장된 101~2047 옛 스텝은 편집기가 모르는
+   * apiConfig 키를 되돌려 보내므로 같은 값이 다시 온다 — 막으면 설명만 고쳐도 저장할 수 없다(WD-426/WD-585 와 같은 이유). 같은 값은 숫자로 같은
+   * 값이다(150.0 과 150 은 같다). 단 저장되어 실행되는 것은 요청 값이므로, 저장본과 요청 모두 실행기와 같은 변환(ObjectMapper → Integer)으로
+   * 읽히고 그 결과가 도는 값이어야 통과한다 — 숫자로는 같아도 문자열 "150.0" 은 실행기가 Integer 로 못 바꿔 매 실행이 실패하므로 통과시키지 않는다. 돌지
+   * 않는 값은 되돌려 보내도 거부해 사용자가 고치게 한다.
+   */
+  private boolean isUnchangedRunnableMaxResponseSize(Object requested, Object stored) {
+    // 먼저 저장본과 요청 둘 다 실행 때와 같은 변환으로 읽혀 도는 값이어야 한다 — 소수(10.5)는 10, 빈 문자열은 null(기본값)로 돌던 옛 값은 그대로
+    // 돈다. 이 관문을 먼저 지나게 하면 실행기가 Integer 로 못 읽는 값(긴 숫자 문자열·큰 지수 등)은 아래 숫자 비교까지 오지 않는다.
+    // 그다음 같은 값인지는 숫자 값으로 본다 — null 과 빈 문자열은 둘 다 "비어 있음", "150"·150·150.0 은 모두 같고, 10.5 와 10 은 다르다.
+    // jsonb 가 150.0 으로 돌려준 옛 값을 편집기가 150 으로 되돌려 보내도 같은 값이어야 설명만 고치는 저장이 막히지 않는다.
+    return isRunnableAsExecutorReads(stored)
+        && isRunnableAsExecutorReads(requested)
+        && isSameMaxResponseSize(requested, stored);
+  }
+
+  /** 값을 실행기와 같은 변환(ObjectMapper → Integer)으로 읽어 비었거나 도는 값이면 true, 변환 실패·돌지 않는 값이면 false(WD-810). */
+  private boolean isRunnableAsExecutorReads(Object value) {
+    try {
+      Integer mb = JsonConversions.convertValue(objectMapper, value, Integer.class);
+      return mb == null || ApiCallExecutor.isRunnableMaxResponseSizeMb(mb);
+    } catch (IllegalArgumentException e) {
+      return false;
+    }
+  }
+
+  /**
+   * 두 응답 크기 한도 값이 같은지 본다(WD-810) — 둘 다 숫자로 읽히면 BigDecimal 크기 비교(150.0 == 150, "10.5" == 10.5)로, 아니면
+   * 앞뒤 공백을 뗀 문자열로 비교한다. null 과 빈 문자열은 둘 다 "비어 있음"으로 같다. 지수가 큰 입력("1e999999999")도 compareTo 는 안전하며,
+   * 파싱 실패는 숫자가 아닌 것으로 본다.
+   */
+  private static boolean isSameMaxResponseSize(Object a, Object b) {
+    String textA = a == null ? "" : a.toString().trim();
+    String textB = b == null ? "" : b.toString().trim();
+    if (textA.equals(textB)) {
+      return true;
+    }
+    BigDecimal numA = parseDecimalOrNull(textA);
+    BigDecimal numB = parseDecimalOrNull(textB);
+    if (numA != null && numB != null) {
+      return numA.compareTo(numB) == 0;
+    }
+    return textA.equals(textB);
+  }
+
+  /** {@link #parseDecimalOrNull} 이 파싱을 시도하는 글자 길이의 상한 — 응답 크기 한도로 쓸 수 있는 값은 이보다 훨씬 짧다. */
+  private static final int MAX_COMPARED_DECIMAL_TEXT_LENGTH = 30;
+
+  /**
+   * 숫자로 읽히면 BigDecimal, 아니면 null — 빈 문자열·숫자 아님·지수 범위 초과·너무 긴 글자(30 자 초과)는 모두 null. 호출부가 실행기 변환 관문을 먼저
+   * 거치므로 여기 오는 값은 이미 짧은 정수·소수다. 길이 상한은 그 관문과 무관하게 수백만 자리 문자열의 파싱 비용(자릿수에 비해 초선형)을 막는 마지막 울타리다.
+   * 30 자 안에서는 지수가 커도 compareTo 가 크기(조정 지수)부터 견줘 비용이 작다.
+   */
+  private static BigDecimal parseDecimalOrNull(String text) {
+    if (text.isEmpty() || text.length() > MAX_COMPARED_DECIMAL_TEXT_LENGTH) {
+      return null;
+    }
+    try {
+      return new BigDecimal(text);
+    } catch (NumberFormatException e) {
+      return null;
+    }
   }
 
   /**

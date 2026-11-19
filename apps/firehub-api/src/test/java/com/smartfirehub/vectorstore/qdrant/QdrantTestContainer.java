@@ -10,7 +10,10 @@ import java.sql.SQLException;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import org.testcontainers.qdrant.QdrantContainer;
 
 /**
@@ -35,6 +38,23 @@ public final class QdrantTestContainer {
    */
   public static final Map<String, String> STORAGE_TMPFS = Map.of("/qdrant/storage", "rw");
 
+  /**
+   * 시험에서 Qdrant 호출 한 번을 기다리는 상한(WD-803).
+   *
+   * <p>여러 세션이 겹치는 공유 개발 서버(load average 128)에서는 gRPC 응답이 30초를 넘겨 {@code
+   * QdrantVectorStoreLifecycleTest} 의
+   * restartWithSameConfigPassesVerification·missingPayloadIndexesAreFilledOnNextStartup 이 실패했다. 하네스
+   * 클라이언트 호출의 대기 상한을 한 곳으로 모아 넉넉히(120초) 잡는다. 시험 전용이며 운영 기본값(QDRANT_TIMEOUT 10초)과는 무관하다. 호출마다 상한이
+   * 있으므로 진짜 멈춤이 있어도 전체 실행이 끝없이 걸리지는 않는다.
+   */
+  public static final Duration CALL_TIMEOUT = Duration.ofSeconds(120);
+
+  /**
+   * 부하 재현 스크립트용 선택 환경변수(WD-803). 비어 있지 않으면 시험 컨테이너를 이 CPU 코어 집합(예: {@code 0-1})에 묶는다. 코어가 모자란 상황을
+   * 일부러 만들어 지연 증상을 재현하기 위한 기능이며, 설정하지 않으면(기본) 컨테이너 생성은 이전과 완전히 같다.
+   */
+  static final String CPUSET_ENV = "QDRANT_TEST_CPUSET";
+
   private static QdrantContainer container;
 
   private QdrantTestContainer() {}
@@ -51,6 +71,10 @@ public final class QdrantTestContainer {
               .withEnv("QDRANT__SERVICE__JWT_RBAC", "true")
               // 클러스터 모드는 자기 p2p 주소가 필요하다. 노드가 하나라 컨테이너 안 주소면 된다.
               .withCommand("./qdrant", "--uri", "http://localhost:6335");
+      String cpuset = System.getenv(CPUSET_ENV);
+      if (cpuset != null && !cpuset.isBlank()) {
+        c.withCreateContainerCmdModifier(cmd -> cmd.getHostConfig().withCpusetCpus(cpuset));
+      }
       c.start();
       container = c;
     }
@@ -65,14 +89,20 @@ public final class QdrantTestContainer {
         API_KEY,
         shardNumber,
         quantization,
-        Duration.ofSeconds(30));
+        CALL_TIMEOUT);
+  }
+
+  /** Qdrant 비동기 호출 결과를 {@link #CALL_TIMEOUT} 까지만 기다려 돌려준다(WD-803). 재시도 없이 넘으면 {@link TimeoutException}. */
+  public static <T> T await(Future<T> future)
+      throws InterruptedException, ExecutionException, TimeoutException {
+    return future.get(CALL_TIMEOUT.toSeconds(), TimeUnit.SECONDS);
   }
 
   /** 모든 컬렉션을 지운다. 테스트마다 빈 저장소에서 시작하게 한다. */
   public static void deleteAllCollections(QdrantClient client) throws Exception {
-    List<String> names = client.listCollectionsAsync().get(30, TimeUnit.SECONDS);
+    List<String> names = await(client.listCollectionsAsync());
     for (String name : names) {
-      client.deleteCollectionAsync(name).get(30, TimeUnit.SECONDS);
+      await(client.deleteCollectionAsync(name));
     }
   }
 

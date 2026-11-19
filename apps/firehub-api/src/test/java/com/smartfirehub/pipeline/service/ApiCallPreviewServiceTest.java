@@ -1958,6 +1958,12 @@ class ApiCallPreviewServiceTest {
             .isTrue();
       } finally {
         // 컨텍스트 종료와 같은 일 — 전역 루프·연결 풀을 폐기한다(다음 HttpResources.get() 이 새로 만든다).
+        // WD-804: 전역(JVM 공용) 자원을 폐기해야만 재현된다 — 버그 경로(HttpClient.create() 의 풀·루프, DefaultDns.current())가
+        // 모두 HttpResources.get() 을 보므로 setUseGlobalResources(false) 로는 DefaultDns 교체가 일어나지 않는다.
+        // 같은 포크 JVM 의 다른 시험에 미치는 영향: HttpClient.create() 기반 클라이언트는 접속 때 HttpResources.get() 을
+        // 다시 봐서 회복한다. 그러나 Boot 자동 구성 WebClient.Builder 커넥터는 시작 때 잡은 루프를 계속 쥐어 회복하지 못한다
+        // (캐시된 Spring 컨텍스트의 그 커넥터를 이 시험 뒤에 실제 HTTP 로 쓰면 깨질 수 있는 잠재 위험 — 컨텍스트 캐시 축출·JVM 종료
+        // 때와 같은 종류). 별도 JVM 으로 분리하는 시험 인프라 변경은 WD-804 범위 밖이라 하지 않았다.
         resources.stop();
         resources.destroy();
       }

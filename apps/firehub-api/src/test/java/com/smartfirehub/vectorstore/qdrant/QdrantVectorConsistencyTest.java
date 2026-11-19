@@ -36,7 +36,6 @@ import io.qdrant.client.grpc.Points.RetrievedPoint;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterAll;
@@ -427,11 +426,10 @@ class QdrantVectorConsistencyTest extends IntegrationTestBase {
 
   private List<RetrievedPoint> points(String collection, PointId id) {
     try {
-      return client
-          .retrieveAsync(
+      return QdrantTestContainer.await(
+          client.retrieveAsync(
               GetPoints.newBuilder().setCollectionName(collection).addIds(id).build(),
-              Duration.ofSeconds(30))
-          .get(30, TimeUnit.SECONDS);
+              QdrantTestContainer.CALL_TIMEOUT));
     } catch (Exception e) {
       throw new IllegalStateException(e);
     }
@@ -441,8 +439,8 @@ class QdrantVectorConsistencyTest extends IntegrationTestBase {
   private void upsertRaw(
       String collection, PointId id, Map<String, io.qdrant.client.grpc.JsonWithInt.Value> payload)
       throws Exception {
-    client
-        .upsertAsync(
+    QdrantTestContainer.await(
+        client.upsertAsync(
             collection,
             List.of(
                 PointStruct.newBuilder()
@@ -452,8 +450,7 @@ class QdrantVectorConsistencyTest extends IntegrationTestBase {
                             Map.of(
                                 QdrantCollectionSpec.DENSE, VectorFactory.vector(axis(1024, 0)))))
                     .putAllPayload(payload)
-                    .build()))
-        .get(30, TimeUnit.SECONDS);
+                    .build())));
   }
 
   private List<Long> semantic(float[] q) {
