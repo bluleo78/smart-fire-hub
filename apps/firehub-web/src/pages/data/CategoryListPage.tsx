@@ -232,9 +232,11 @@ export default function CategoryListPage() {
 
       {/* 검색·정렬 툴바 — 클라이언트 사이드 필터/정렬 (백엔드 호출 없음) */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        {/* WD-815: 0건 안내(TableEmptyRow)와 개수 영역이 라이브 리전이라, 글자마다 다시 읽히지 않게 입력이 멈춘 뒤 거른다 */}
         <SearchInput
           placeholder="이름 또는 설명으로 검색..."
           aria-label="카테고리 검색"
+          debounceMs={300}
           value={search}
           onChange={setSearch}
         />

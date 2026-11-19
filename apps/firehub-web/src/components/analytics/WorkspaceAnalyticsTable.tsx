@@ -160,7 +160,8 @@ export function WorkspaceAnalyticsTable({ kind }: { kind: AnalyticsAdminKind }) 
         워크스페이스의 모든 {copy.entity}입니다. 다른 사람의 {copy.entity}는 공유 해제하거나 삭제만 할 수 있습니다.
       </p>
       <div className="flex items-center gap-3 flex-wrap">
-        <SearchInput placeholder="이름·작성자 검색..." value={search} onChange={setSearch} />
+        {/* WD-815: 0건 안내가 라이브 리전이라 글자마다 다시 읽히지 않도록 다른 검색 화면처럼 300ms 디바운스(SearchInput 이 onChange 호출 자체를 늦춤) */}
+        <SearchInput placeholder="이름·작성자 검색..." value={search} onChange={setSearch} debounceMs={300} />
       </div>
       <div className="rounded-md border">
         <Table aria-label={copy.tableLabel}>
