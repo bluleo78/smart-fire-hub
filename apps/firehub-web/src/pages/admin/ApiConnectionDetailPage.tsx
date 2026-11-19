@@ -164,6 +164,11 @@ interface SyncedStoredRows {
   removedNames: string[];
   /** 이전 기준에 없고 새 기준에만 있어(다른 곳에서 더함·이름 변경의 새 이름) 새 기준 순서 자리에 넣은 저장 행의 이름 — 토스트 안내용(WD-796) */
   addedNames: string[];
+  /**
+   * 사용자가 지운 저장 헤더가 다른 곳에서 대소문자만 바뀐 이름으로 와 되살리지 않은 쌍(WD-804 반려) — 토스트 안내용.
+   * from = 사용자가 지운 이전 기준의 저장 이름, to = 새 기준의 이름. 이름이 정확히 같으면 바뀐 게 아니므로 넣지 않는다.
+   */
+  renamedDeleted: { from: string; to: string }[];
 }
 
 /**
@@ -191,6 +196,7 @@ function syncStoredRows(
   let changed = false;
   const removedNames: string[] = [];
   const addedNames: string[] = [];
+  const renamedDeleted: { from: string; to: string }[] = [];
   const synced: ExtraHeaderRow[] = [];
   for (const row of rows) {
     if (row.storedName === undefined) {
@@ -232,7 +238,13 @@ function syncStoredRows(
     const hasStoredIgnoringCase = (list: ExtraHeaderRow[]) =>
       list.some((r) => r.storedName?.toLowerCase() === lowerName);
     const deletedByUser = hasStoredIgnoringCase(prevRows) && !hasStoredIgnoringCase(rows);
-    if (deletedByUser) return;
+    if (deletedByUser) {
+      // 되살리지 않되 조용히 넘기지 않는다 — 이전 기준의 옛 이름이 새 이름과 정확히 다르면(대소문자만 다름) 이름 변경을 알릴 수 있게 모은다.
+      // 저장하면 서버에서 지워지므로 안내에서 그 점도 말한다(부르는 쪽 토스트).
+      const from = prevRows.find((p) => p.storedName?.toLowerCase() === lowerName)?.storedName;
+      if (from !== undefined && from !== name) renamedDeleted.push({ from, to: name });
+      return;
+    }
     if (synced.some((s) => s.storedName === name)) return;
     changed = true;
     addedNames.push(name);
@@ -253,7 +265,7 @@ function syncStoredRows(
     }
     synced.splice(insertAt, 0, fresh);
   });
-  return { rows: changed ? synced : rows, removedNames, addedNames };
+  return { rows: changed ? synced : rows, removedNames, addedNames, renamedDeleted };
 }
 
 /**
@@ -567,6 +579,18 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
         toast.info(`다른 곳에서 추가 헤더(${synced.addedNames.join(', ')})가 더해져 목록에 넣었습니다.`, {
           // 이름 목록을 id 에 넣는다 — 4초 안의 두 번째 재조회 안내가 첫 안내를 덮어쓰지 않게(WD-804)
           id: `api-connection-extra-headers-added:${synced.addedNames.join(',')}`,
+        });
+      }
+      // (WD-804 반려) 사용자가 지운 헤더가 다른 곳에서 대소문자만 바뀌어 왔다 — 지운 대로 두되 알린다. 여럿이면 `옛→새` 쌍을 한 토스트에 이어 넣는다.
+      if (synced.renamedDeleted.length > 0) {
+        const pairs = synced.renamedDeleted.map((r) => `${r.from}→${r.to}`).join(', ');
+        const text =
+          synced.renamedDeleted.length === 1
+            ? `지운 헤더 ${synced.renamedDeleted[0].from} 이(가) 다른 곳에서 ${synced.renamedDeleted[0].to} 으로 바뀌었습니다. 지운 대로 두며, 저장하면 서버에서도 지워집니다`
+            : `지운 헤더 ${pairs} 이(가) 다른 곳에서 바뀌었습니다. 지운 대로 두며, 저장하면 서버에서도 지워집니다`;
+        toast.info(text, {
+          // 이름 쌍 목록을 id 에 넣어 「더해짐」 등 다른 안내와 서로 덮어쓰지 않게 한다
+          id: `api-connection-extra-headers-renamed-deleted:${pairs}`,
         });
       }
     }

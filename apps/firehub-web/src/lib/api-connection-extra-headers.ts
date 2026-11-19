@@ -79,7 +79,7 @@ function hasNonAsciiHeaderValue(value: string): boolean {
 
 /**
  * 이 행을 서버로 보내는지 — 이름이나 값 중 하나라도 있으면 보낸다(extraHeadersToConfig 가 이름·값이 모두 빈 행만 버린다).
- * 개수 상한 검사(extraHeaderRowErrors)·「헤더 추가」 비활성·상한 오류 정리(withoutChangedRowErrors)가 같은 기준으로 세도록 한곳에 둔다(WD-804 리뷰).
+ * 개수 상한 검사(extraHeaderRowErrors)·상한 오류 정리(withoutChangedRowErrors)가 같은 기준으로 세도록 한곳에 둔다(WD-804 리뷰).
  */
 function isSendableExtraHeaderRow(row: ExtraHeaderRow): boolean {
   return javaStrip(row.name) !== '' || !isBlankLikeServer(row.value);

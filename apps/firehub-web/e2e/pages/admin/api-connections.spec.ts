@@ -3635,7 +3635,7 @@ test.describe('WD-796 재조회 병합 후속', () => {
     await expect(page.getByRole('button', { name: '헤더 추가' })).toBeDisabled();
   });
 
-  test('사용자가 지운 X-Id 가 다른 곳에서 x-id 로 이름만 바뀌어 와도 되살아나지 않고 안내도 없다 (WD-804)', async ({
+  test('사용자가 지운 X-Id 가 다른 곳에서 x-id 로 이름만 바뀌어 와도 되살아나지 않고, 이름이 바뀌었다는 안내가 한 번 뜬다 (WD-804 반려)', async ({
     authenticatedPage: page,
   }) => {
     const stored = await openAuthEdit(
@@ -3658,10 +3658,44 @@ test.describe('WD-796 재조회 병합 후속', () => {
     await expect(page.getByLabel('추가 헤더 이름 1')).toHaveValue('X-A');
     await expect(page.getByLabel('추가 헤더 이름 2')).toHaveCount(0);
     await expect(page.getByText(/가 더해져 목록에 넣었습니다/)).toHaveCount(0);
+    // 되살리지는 않지만, 지운 헤더가 다른 곳에서 이름이 바뀌었음을 한 번 알린다
+    await expect(
+      page.getByText('지운 헤더 X-Id 이(가) 다른 곳에서 x-id 으로 바뀌었습니다', { exact: false }),
+    ).toHaveCount(1);
 
     await page.getByRole('button', { name: '인증 저장' }).click();
     await expect.poll(() => capture.requests.length).toBe(2);
     expect(savedExtraHeaders(capture)).toEqual({ 'extraHeader:X-A': '****a001' });
+  });
+
+  test('지운 X-Id 가 x-id 로 바뀌고 X-New 가 더해진 재조회는 「더해져」 안내와 이름 변경 안내를 함께 보인다 (WD-804 반려)', async ({
+    authenticatedPage: page,
+  }) => {
+    const stored = await openAuthEdit(
+      page,
+      storedApiKeyConnection({ 'extraHeader:X-A': '****a001', 'extraHeader:X-Id': '****i001' }),
+    );
+    await page.getByRole('button', { name: '추가 헤더 2 삭제' }).click();
+    await expect(page.getByLabel('추가 헤더 이름 2')).toHaveCount(0);
+
+    await saveInfoAndRefetch(page, {
+      ...stored,
+      name: RENAMED,
+      maskedAuthConfig: {
+        ...MAIN_AUTH,
+        'extraHeader:X-A': '****a001',
+        'extraHeader:x-id': '****i001',
+        'extraHeader:X-New': '****n001',
+      },
+    });
+    await expect(page.getByLabel('연결 이름')).toHaveValue(RENAMED);
+
+    await expect(page.getByText('다른 곳에서 추가 헤더(X-New)가 더해져 목록에 넣었습니다.')).toBeVisible();
+    await expect(
+      page.getByText('지운 헤더 X-Id 이(가) 다른 곳에서 x-id 으로 바뀌었습니다', { exact: false }),
+    ).toBeVisible();
+    await expect(page.getByLabel('추가 헤더 이름 2')).toHaveValue('X-New');
+    await expect(page.getByLabel('추가 헤더 이름 3')).toHaveCount(0);
   });
 
   test('연속 재조회가 서로 다른 헤더를 더하면 두 안내가 모두 보인다 — 같은 토스트 id 로 덮어쓰지 않는다 (WD-804)', async ({
