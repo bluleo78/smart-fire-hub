@@ -4,22 +4,14 @@
 // config.xAxis = 카테고리 컬럼명
 // 데이터에 min, q1, median, q3, max 컬럼이 있어야 함
 import { AlertTriangle } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
-import { BOXPLOT_REQUIRED_COLUMNS_LABEL, findMissingBoxplotStats } from '../boxplot-stats';
+import { BOXPLOT_REQUIRED_COLUMNS_LABEL, findMissingBoxplotStats, toBoxStats } from '../boxplot-stats';
 import type { ChartViewProps } from '../chart-view-props';
+import { ChartDrawingArea } from '../ChartDrawingArea';
 
 const MARGIN = { top: 20, right: 20, bottom: 40, left: 50 };
 const BOX_WIDTH_RATIO = 0.4; // 카테고리 폭 대비 박스 폭 비율
-
-interface BoxStat {
-  category: string;
-  min: number;
-  q1: number;
-  median: number;
-  q3: number;
-  max: number;
-}
 
 export function BoxPlotChartView({ data, config, height = 300 }: ChartViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -40,14 +32,8 @@ export function BoxPlotChartView({ data, config, height = 300 }: ChartViewProps)
   // 행마다 키가 같으므로 첫 행의 키로 판단한다(빈 데이터는 아래 「데이터 없음」이 처리).
   const missingStats = data.length > 0 ? findMissingBoxplotStats(Object.keys(data[0])) : [];
 
-  const stats: BoxStat[] = data.map(d => ({
-    category: String(d[config.xAxis] ?? ''),
-    min: Number(d.min ?? d.q0 ?? 0),
-    q1: Number(d.q1 ?? 0),
-    median: Number(d.median ?? d.q2 ?? 0),
-    q3: Number(d.q3 ?? 0),
-    max: Number(d.max ?? d.q4 ?? 0),
-  }));
+  // WD-826: 통계 읽기는 값 대체 표(chart-a11y)와 같은 함수를 쓴다 — 표와 그림이 같은 값을 보이게
+  const stats = useMemo(() => toBoxStats(data, config.xAxis), [data, config.xAxis]);
 
   const containerH = height ?? dims.height;
   const plotW = dims.width - MARGIN.left - MARGIN.right;
@@ -98,54 +84,57 @@ export function BoxPlotChartView({ data, config, height = 300 }: ChartViewProps)
 
   return (
     <div ref={containerRef} style={{ width: '100%', height: containerH }}>
-      {dims.width > 0 && (
-        <svg width={dims.width} height={containerH}>
-          <g transform={`translate(${MARGIN.left},${MARGIN.top})`}>
-            {/* Y축 */}
-            {yTicks.map(t => (
-              <g key={t} transform={`translate(0,${toY(t)})`}>
-                <line x1={0} x2={plotW} stroke="var(--border)" strokeDasharray="3 3" />
-                <text x={-8} textAnchor="end" fontSize={10} fill="var(--muted-foreground)" dy="0.32em">
-                  {t.toFixed(1)}
-                </text>
-              </g>
-            ))}
-            {/* 박스 플롯 */}
-            {stats.map((s, i) => {
-              const cx = toX(i);
-              const x1 = cx - boxW / 2;
-              const x2 = cx + boxW / 2;
-              return (
-                <g key={s.category}>
-                  {/* 위 수염 (median → max) */}
-                  <line x1={cx} y1={toY(s.q3)} x2={cx} y2={toY(s.max)}
-                    stroke="var(--chart-1)" strokeWidth={1.5} />
-                  <line x1={x1 + boxW * 0.2} y1={toY(s.max)} x2={x2 - boxW * 0.2} y2={toY(s.max)}
-                    stroke="var(--chart-1)" strokeWidth={1.5} />
-                  {/* 아래 수염 (min → q1) */}
-                  <line x1={cx} y1={toY(s.q1)} x2={cx} y2={toY(s.min)}
-                    stroke="var(--chart-1)" strokeWidth={1.5} />
-                  <line x1={x1 + boxW * 0.2} y1={toY(s.min)} x2={x2 - boxW * 0.2} y2={toY(s.min)}
-                    stroke="var(--chart-1)" strokeWidth={1.5} />
-                  {/* IQR 박스 (q1 ~ q3) */}
-                  <rect
-                    x={x1} y={toY(s.q3)}
-                    width={boxW} height={Math.max(toY(s.q1) - toY(s.q3), 1)}
-                    fill="var(--chart-1)" fillOpacity={0.25}
-                    stroke="var(--chart-1)" strokeWidth={1.5}
-                  />
-                  {/* 중앙값 선 */}
-                  <line x1={x1} y1={toY(s.median)} x2={x2} y2={toY(s.median)}
-                    stroke="var(--chart-1)" strokeWidth={2.5} />
-                  {/* X축 라벨 */}
-                  <text x={cx} y={plotH + 20} textAnchor="middle" fontSize={11}
-                    fill="var(--muted-foreground)">{s.category}</text>
+      {/* WD-826: 그림만 보조기술에서 숨긴다 — 값은 figure 의 대체 표가 전달하고, 안내문은 위에서 따로 반환해 읽힌다 */}
+      <ChartDrawingArea>
+        {dims.width > 0 && (
+          <svg width={dims.width} height={containerH}>
+            <g transform={`translate(${MARGIN.left},${MARGIN.top})`}>
+              {/* Y축 */}
+              {yTicks.map(t => (
+                <g key={t} transform={`translate(0,${toY(t)})`}>
+                  <line x1={0} x2={plotW} stroke="var(--border)" strokeDasharray="3 3" />
+                  <text x={-8} textAnchor="end" fontSize={10} fill="var(--muted-foreground)" dy="0.32em">
+                    {t.toFixed(1)}
+                  </text>
                 </g>
-              );
-            })}
-          </g>
-        </svg>
-      )}
+              ))}
+              {/* 박스 플롯 */}
+              {stats.map((s, i) => {
+                const cx = toX(i);
+                const x1 = cx - boxW / 2;
+                const x2 = cx + boxW / 2;
+                return (
+                  <g key={s.category}>
+                    {/* 위 수염 (median → max) */}
+                    <line x1={cx} y1={toY(s.q3)} x2={cx} y2={toY(s.max)}
+                      stroke="var(--chart-1)" strokeWidth={1.5} />
+                    <line x1={x1 + boxW * 0.2} y1={toY(s.max)} x2={x2 - boxW * 0.2} y2={toY(s.max)}
+                      stroke="var(--chart-1)" strokeWidth={1.5} />
+                    {/* 아래 수염 (min → q1) */}
+                    <line x1={cx} y1={toY(s.q1)} x2={cx} y2={toY(s.min)}
+                      stroke="var(--chart-1)" strokeWidth={1.5} />
+                    <line x1={x1 + boxW * 0.2} y1={toY(s.min)} x2={x2 - boxW * 0.2} y2={toY(s.min)}
+                      stroke="var(--chart-1)" strokeWidth={1.5} />
+                    {/* IQR 박스 (q1 ~ q3) */}
+                    <rect
+                      x={x1} y={toY(s.q3)}
+                      width={boxW} height={Math.max(toY(s.q1) - toY(s.q3), 1)}
+                      fill="var(--chart-1)" fillOpacity={0.25}
+                      stroke="var(--chart-1)" strokeWidth={1.5}
+                    />
+                    {/* 중앙값 선 */}
+                    <line x1={x1} y1={toY(s.median)} x2={x2} y2={toY(s.median)}
+                      stroke="var(--chart-1)" strokeWidth={2.5} />
+                    {/* X축 라벨 */}
+                    <text x={cx} y={plotH + 20} textAnchor="middle" fontSize={11}
+                      fill="var(--muted-foreground)">{s.category}</text>
+                  </g>
+                );
+              })}
+            </g>
+          </svg>
+        )}
+      </ChartDrawingArea>
     </div>
   );
 }

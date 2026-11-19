@@ -144,6 +144,8 @@ function WidgetContent({ widget, chartData, dataLoading, dataFetching, dataError
           data={queryResult.rows}
           columns={queryResult.columns}
           fillParent
+          // WD-826: 카드 제목과 같은 출처(widget.chartName)를 접근 이름에 쓴다
+          title={widget.chartName ?? undefined}
         />
         {isBackgroundFetching && (
           <div className="absolute top-1 right-1 pointer-events-none">

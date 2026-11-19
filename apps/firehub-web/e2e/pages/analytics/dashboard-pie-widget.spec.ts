@@ -62,7 +62,7 @@ test.describe('대시보드 파이 위젯 — 라벨/범례 겹침 (#642)', () =
     await setupPieDashboardMocks(page, 4);
 
     await page.goto('/analytics/dashboards/1');
-    await expect(page.getByText('월별 매출 비중(파이)')).toBeVisible();
+    await expect(page.getByText('월별 매출 비중(파이)', { exact: true })).toBeVisible();
 
     // 위젯 오류 경계(WidgetErrorBoundary) fallback이 뜨지 않아야 한다 — 렌더 크래시 없음
     await expect(page.getByText('위젯 오류')).not.toBeVisible();
@@ -98,7 +98,7 @@ test.describe('대시보드 파이 위젯 — 라벨/범례 겹침 (#642)', () =
     await setupPieDashboardMocks(page, 1);
 
     await page.goto('/analytics/dashboards/1');
-    await expect(page.getByText('월별 매출 비중(파이)')).toBeVisible();
+    await expect(page.getByText('월별 매출 비중(파이)', { exact: true })).toBeVisible();
 
     // 크래시 시 뜨는 WidgetErrorBoundary fallback이 나타나지 않아야 한다
     await expect(page.getByText('위젯 오류')).not.toBeVisible();

@@ -27,7 +27,7 @@ test.describe("대시보드 편집 — 키보드 배치 조작 (WD-324)", () => 
     );
 
     await page.goto("/analytics/dashboards/1");
-    await expect(page.getByText("테스트 차트")).toBeVisible();
+    await expect(page.getByText("테스트 차트", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "편집" }).click();
 
     // 키보드만으로 닿는지 — 「위젯 제거」에서 Shift+Tab 하면 바로 앞 손잡이로 간다
@@ -243,7 +243,7 @@ test.describe("대시보드 편집 — 키보드 배치 조작 (WD-324)", () => 
   }) => {
     await setupDashboardEditorMocks(page, 1);
     await page.goto("/analytics/dashboards/1");
-    await expect(page.getByText("테스트 차트")).toBeVisible();
+    await expect(page.getByText("테스트 차트", { exact: true })).toBeVisible();
     await expect(
       page.getByRole("button", { name: /위젯 이동·크기 조절/ }),
     ).toHaveCount(0);

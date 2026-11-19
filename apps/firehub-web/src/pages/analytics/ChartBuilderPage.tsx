@@ -1166,6 +1166,9 @@ export default function ChartBuilderPage() {
                   fillParent
                   // WD-505: 사용자가 비운 축을 결과 컬럼으로 추론하지 않는다 — 문자 컬럼이 값으로 읽혀 NaN 이 그려졌다
                   inferAxes={false}
+                  // WD-826: 접근 이름에는 서버에 저장된 차트 이름만 쓴다(새 차트는 undefined → 축 정보로 자동 생성).
+                  // 편집 중인 saveForm.name 을 넘기면 저장 대화상자에서 글자를 칠 때마다 prop 이 바뀌어 WD-821 memo 가 깨진다.
+                  title={existingChart?.name}
                 />
               </div>
             )}

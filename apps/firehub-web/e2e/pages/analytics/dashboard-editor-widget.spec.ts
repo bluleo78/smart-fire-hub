@@ -140,7 +140,7 @@ test.describe('대시보드 에디터 — 위젯 CRUD', () => {
     );
 
     await page.goto('/analytics/dashboards/1');
-    await expect(page.getByText('테스트 차트')).toBeVisible();
+    await expect(page.getByText('테스트 차트', { exact: true })).toBeVisible();
 
     // 편집 모드 진입
     await page.getByRole('button', { name: '편집' }).click();
@@ -169,7 +169,7 @@ test.describe('대시보드 에디터 — 위젯 CRUD', () => {
     await setupDashboardEditorMocks(page, 1);
 
     await page.goto('/analytics/dashboards/1');
-    await expect(page.getByText('테스트 차트')).toBeVisible();
+    await expect(page.getByText('테스트 차트', { exact: true })).toBeVisible();
 
     // 편집 모드 진입
     await page.getByRole('button', { name: '편집' }).click();
@@ -197,7 +197,7 @@ test.describe('대시보드 에디터 — 위젯 CRUD', () => {
     expect(deleteCalled).toBe(false);
 
     // 위젯이 여전히 화면에 존재
-    await expect(page.getByText('테스트 차트')).toBeVisible();
+    await expect(page.getByText('테스트 차트', { exact: true })).toBeVisible();
   });
 
   test('위젯 삭제 즉시 반영 — 완료 버튼 없이도 삭제 확인 시 DELETE API 호출됨 (#133 회귀 방지)', async ({ authenticatedPage: page }) => {
@@ -215,7 +215,7 @@ test.describe('대시보드 에디터 — 위젯 CRUD', () => {
     );
 
     await page.goto('/analytics/dashboards/1');
-    await expect(page.getByText('테스트 차트')).toBeVisible();
+    await expect(page.getByText('테스트 차트', { exact: true })).toBeVisible();
 
     // 편집 모드 진입
     await page.getByRole('button', { name: '편집' }).click();
@@ -251,7 +251,7 @@ test.describe('대시보드 에디터 — 위젯 CRUD', () => {
     await mockApi(page, 'PATCH', '/api/v1/analytics/dashboards/1/widgets/1', {});
 
     await page.goto('/analytics/dashboards/1');
-    await expect(page.getByText('테스트 차트')).toBeVisible();
+    await expect(page.getByText('테스트 차트', { exact: true })).toBeVisible();
 
     // 편집 모드 진입
     await page.getByRole('button', { name: '편집' }).click();
@@ -453,7 +453,7 @@ test.describe('대시보드 에디터 — 위젯 CRUD', () => {
     );
 
     await page.goto('/analytics/dashboards/1');
-    await expect(page.getByText('테스트 차트')).toBeVisible();
+    await expect(page.getByText('테스트 차트', { exact: true })).toBeVisible();
 
     // 편집 모드 진입
     await page.getByRole('button', { name: '편집' }).click();
@@ -509,9 +509,9 @@ test.describe('대시보드 에디터 — 위젯 CRUD', () => {
     //  아무 신호도 없이 실패가 묻히던 문제)
     await setupDashboardEditorMocks(page, 1);
     await page.goto('/analytics/dashboards/1');
-    await expect(page.getByText('테스트 차트')).toBeVisible();
+    await expect(page.getByText('테스트 차트', { exact: true })).toBeVisible();
     // 실패 전 정상 상태를 먼저 단언 — 첫 로드부터 실패해 배지가 떠 있으면 이 테스트가 공허해진다(#778)
-    await expect(page.getByText('항목 A')).toBeVisible();
+    await expect(page.locator('svg.recharts-surface').getByText('항목 A', { exact: true }).first()).toBeVisible();
     await expect(page.getByText('새로고침 실패')).toHaveCount(0);
 
     await page.route('**/api/v1/analytics/**', (route) =>
@@ -534,7 +534,7 @@ test.describe('대시보드 에디터 — 위젯 CRUD', () => {
     await expect(page.getByText('새로고침 실패')).toBeVisible();
 
     // 이전 데이터(placeholderData)는 여전히 표시된다 — 깜빡임 방지 의도는 유지
-    await expect(page.getByText('테스트 차트')).toBeVisible();
-    await expect(page.getByText('항목 A')).toBeVisible();
+    await expect(page.getByText('테스트 차트', { exact: true })).toBeVisible();
+    await expect(page.locator('svg.recharts-surface').getByText('항목 A', { exact: true }).first()).toBeVisible();
   });
 });

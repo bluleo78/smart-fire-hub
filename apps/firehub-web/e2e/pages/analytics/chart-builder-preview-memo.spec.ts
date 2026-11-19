@@ -4,6 +4,7 @@ import { createQueryResult } from '../../factories/analytics.factory';
 import { setupNewChartBuilderMocks } from '../../fixtures/analytics.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { CHART_SURFACE } from '../../fixtures/chart-selectors';
 
 /**
  * 차트 빌더 미리보기 memo E2E (WD-821)
@@ -52,8 +53,10 @@ test.describe('차트 빌더 미리보기 — 저장 대화상자·설정 변경
     // 대화상자 오버레이 안의 svg 와 섞이지 않도록 미리보기 컨테이너로 범위를 좁힌다
     const preview = page.getByTestId('chart-builder-preview');
     const svg = preview.locator('.recharts-surface');
-    // 툴팁(role=status)에도 같은 글자가 뜰 수 있어 차트 본체(role=application)의 X축 눈금(첫 행 값)만 짚는다
-    const tick = preview.getByRole('application').getByText('서울지역', { exact: true });
+    // 툴팁(role=status)에도 같은 글자가 뜰 수 있어 차트 본체 svg 의 X축 눈금(첫 행 값)만 짚는다
+    // WD-826: 차트는 figure 안에서 aria-hidden 이고 accessibilityLayer=false 라 role=application 도 없다 —
+    // 범례 아이콘 svg 와 섞이지 않게 recharts-wrapper 바로 아래 svg(차트 본체)로 짚는다
+    const tick = preview.locator(CHART_SURFACE).getByText('서울지역', { exact: true });
 
     await expect(tick).toBeVisible();
     const svgCount = await svg.count();
@@ -75,6 +78,31 @@ test.describe('차트 빌더 미리보기 — 저장 대화상자·설정 변경
     await expect(svg).toHaveCount(svgCount);
     await expect(bars).toHaveCount(barCount);
     await expect(tick).toBeVisible();
+  });
+
+  test('저장 대화상자에서 이름을 입력해도 미리보기가 다시 그려지지 않는다 (WD-826)', async ({
+    authenticatedPage: page,
+  }) => {
+    await renderBarPreview(page);
+    const preview = page.getByTestId('chart-builder-preview');
+    await expect(preview.locator('.recharts-bar-rectangle').first()).toBeVisible();
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible();
+    // 진입 애니메이션 등이 가라앉은 뒤부터 미리보기 하위 트리의 모든 변경(속성·자식·글자)을 센다
+    await page.waitForTimeout(1500);
+    await preview.evaluate((el) => {
+      const w = window as unknown as { __previewMutations: number };
+      w.__previewMutations = 0;
+      new MutationObserver((records) => {
+        w.__previewMutations += records.length;
+      }).observe(el, { subtree: true, attributes: true, childList: true, characterData: true });
+    });
+
+    // 이름 입력은 saveForm.name 을 글자마다 바꾼다 — 접근 이름(figure aria-label)과 차트가 그대로여야 한다
+    await dialog.getByLabel('이름').fill('입력 중인 이름');
+    await page.waitForTimeout(500);
+    expect(await page.evaluate(() => (window as unknown as { __previewMutations: number }).__previewMutations)).toBe(0);
   });
 
   test('차트 종류·Y축을 바꾸면 미리보기가 새 설정으로 바뀐다', async ({ authenticatedPage: page }) => {

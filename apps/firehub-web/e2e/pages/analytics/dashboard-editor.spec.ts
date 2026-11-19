@@ -20,7 +20,7 @@ test.describe('대시보드 에디터 페이지', () => {
     // 위젯이 렌더링되는지 확인
     // createDashboard 기본값: widgets[0].chartName = '테스트 차트'
     // setupDashboardEditorMocks의 /data 응답에서 chartName: '테스트 차트'가 포함됨
-    await expect(page.getByText('테스트 차트')).toBeVisible();
+    await expect(page.getByText('테스트 차트', { exact: true })).toBeVisible();
   });
 
   test('위젯이 없는 대시보드에서 빈 상태 메시지가 표시된다', async ({ authenticatedPage: page }) => {
@@ -167,7 +167,7 @@ test.describe('대시보드 에디터 페이지', () => {
 
     // 대시보드와 위젯이 렌더링될 때까지 대기
     await expect(page.getByRole('heading', { name: '테스트 대시보드' })).toBeVisible();
-    await expect(page.getByText('테스트 차트')).toBeVisible();
+    await expect(page.getByText('테스트 차트', { exact: true })).toBeVisible();
 
     // 뷰 모드에서는 위젯 제거 버튼이 없어야 한다
     await expect(page.locator('button[title="위젯 제거"]')).not.toBeVisible();
