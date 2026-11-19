@@ -41,7 +41,7 @@ export function toPlotNumber(value: unknown): number | null {
 
 /**
  * 값이 「비어 있지 않은데 숫자로 읽히지 않는가」(WD-505).
- * null·undefined·'' 는 빈 값이라 뷰가 0 으로 그린다(기존 동작) — 문자('서울')·불리언처럼 숫자가 아닌 값만 true.
+ * null·undefined·'' 는 빈 값이라 뷰가 0 으로 그린다(기존 동작, 파이·도넛은 결측으로 빼고 안내한다 — WD-835) — 문자('서울')·불리언처럼 숫자가 아닌 값만 true.
  */
 export function isNonNumericValue(value: unknown): boolean {
   if (value == null || value === '') return false;

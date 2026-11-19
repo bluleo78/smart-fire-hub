@@ -33,11 +33,24 @@ describe('transformWaterfallData', () => {
 });
 
 describe('splitPieData', () => {
-  it('음수 행만 빼고 개수를 센다', () => {
-    const { pieData, negativeCount } = splitPieData([{ v: 50 }, { v: -20 }, { v: '30' }, { v: null }], 'v');
+  it('NULL·숫자 아닌 값은 결측으로 빼고 개수를 센다 — 0 으로 바꾸지 않는다(WD-835)', () => {
+    const { pieData, negativeCount, missingCount } = splitPieData(
+      [{ v: 50 }, { v: -20 }, { v: '30' }, { v: null }, { v: '측정 안 함' }, { v: '' }, { v: ' ' }, { v: true }, { v: undefined }],
+      'v',
+    );
     expect(negativeCount).toBe(1);
-    // 남은 값은 recharts 가 세는 숫자로 바뀐다 — 숫자 문자열은 수로, 읽을 수 없는 값은 0(WD-831)
-    expect(pieData.map((r) => r.v)).toEqual([50, 30, 0]);
+    expect(missingCount).toBe(6);
+    expect(pieData.map((r) => r.v)).toEqual([50, 30]);
+  });
+
+  it('실제 0 은 결측이 아니라 남긴다', () => {
+    const { pieData, missingCount } = splitPieData([{ v: 0 }, { v: '0' }, { v: 5 }], 'v');
+    expect(missingCount).toBe(0);
+    expect(pieData.map((r) => r.v)).toEqual([0, 0, 5]);
+  });
+
+  it('모두 결측·음수면 빈 배열', () => {
+    expect(splitPieData([{ v: null }, { v: -1 }], 'v')).toEqual({ pieData: [], negativeCount: 1, missingCount: 1 });
   });
 
   it('숫자 문자열이 있으면 복사해 숫자로 바꾸고 원본은 건드리지 않는다', () => {
@@ -46,12 +59,6 @@ describe('splitPieData', () => {
     expect(pieData).toEqual([{ k: 'A', v: 2 }]);
     expect(data[0].v).toBe('2');
   });
-
-  it('공백뿐인 문자열·불리언은 음수로 세지 않고 0 으로 본다(toPlotNumber 규칙)', () => {
-    const { pieData, negativeCount } = splitPieData([{ v: ' ' }, { v: true }, { v: '-3' }], 'v');
-    expect(negativeCount).toBe(1);
-    expect(pieData.map((r) => r.v)).toEqual([0, 0]);
-  });
 });
 
 describe('toBoxStats', () => {
@@ -59,6 +66,16 @@ describe('toBoxStats', () => {
     expect(toBoxStats([{ c: 'A', min: '1,0', q1: '2', median: 3, q3: null, max: '5' }], 'c')).toEqual([
       { category: 'A', min: 0, q1: 2, median: 3, q3: 0, max: 5 },
     ]);
+  });
+
+  it('앞 이름이 읽히지 않으면 읽히는 별칭을 쓴다(WD-835)', () => {
+    expect(toBoxStats([{ c: 'A', min: '', q0: 5, q1: 6, median: 'N/A', q2: '7', q3: 8, max: null, q4: 9 }], 'c')).toEqual([
+      { category: 'A', min: 5, q1: 6, median: 7, q3: 8, max: 9 },
+    ]);
+  });
+
+  it('앞 이름이 읽히면 별칭이 있어도 앞을 쓴다', () => {
+    expect(toBoxStats([{ c: 'A', min: 1, q0: 5, q1: 2, median: 3, q3: 4, max: 6, q4: 99 }], 'c')[0]).toMatchObject({ min: 1, max: 6 });
   });
 });
 

@@ -145,7 +145,7 @@ function buildDerivedTable(
     }
     case 'PIE':
     case 'DONUT': {
-      // 파이는 음수를 그리지 않고(splitPieData, 뷰와 같은 함수) 남은 값의 비율로 조각 크기를 정한다 — 값과 비율을 함께 준다(WD-831)
+      // 파이는 음수·결측을 빼고(splitPieData, 뷰와 같은 함수) 남은 값의 비율로 조각 크기를 정한다 — 값과 비율을 함께 준다(WD-831)
       const yKey = config.yAxis[0] ?? '';
       const { pieData } = splitPieData(data, yKey);
       // pieData 의 값은 splitPieData 가 이미 숫자로 바꿔 두었다(그림이 그리는 값 그대로)
