@@ -170,8 +170,9 @@ interface SyncedStoredRows {
   /**
    * 사용자가 지운 저장 헤더가 다른 곳에서 대소문자만 바뀐 이름으로 와 되살리지 않은 쌍(WD-804 반려) — 토스트 안내용.
    * from = 사용자가 지운 이전 기준의 저장 이름, to = 새 기준의 이름. 이름이 정확히 같으면 호출 앞쪽에서 이미 걸러져 여기 오지 않는다.
-   * 새 기준에 옛 이름(from)이 그대로 남아 있으면(X-Id 와 x-id 가 함께 있음) 이름이 바뀐 게 아니므로 넣지 않는다.
-   * 사용자가 같은 이름(대소문자 무시)으로 보낼 행을 이미 갖고 있어도 저장 때 서버에서 지워지지 않으므로 넣지 않는다.
+   * 새 기준에서 옛 이름(from)이 사라졌고 대소문자 변형이 정확히 하나일 때만 넣는다. 옛 이름이 남았거나(X-Id 와 x-id 함께) 변형이 둘 이상(X-ID 와 x-id)이면
+   * 이름 변경이 아니라 더해진 것이라 넣지 않는다 — 보통의 「더해져」 흐름으로 목록에 들어간다.
+   * 사용자가 같은 이름(대소문자 무시)으로 보낼 행을 이미 갖고 있으면 저장 때 서버에서 지워지지 않으므로 넣지 않고, 저장 행도 끼우지 않는다.
    */
   renamedDeleted: RenamedPair[];
 }
@@ -191,7 +192,10 @@ interface SyncedStoredRows {
  *   앞선 저장 행 바로 뒤에 이어진 사용자 새 행은 건너뛰어 그 뒤에 넣는다(써 둔 행이 자리를 옮기지 않게).
  *   「새 기준에만」= 이전 기준에도, 맞춘 결과에도 그 원래 이름이 없는 행이다 — 사용자가 덩어리에서 지운 저장 헤더는 이전 기준에 있으므로
  *   재조회로 되살리지 않는다. 이름은 서버 키(storedName) 그대로 비교해, 대소문자만 다른 사용자 새 행과 합치지 않는다(저장 때 중복 검증이 잡는다).
- *   예외(WD-804): 이전 기준에 대소문자만 다른 같은 헤더가 있었는데 지금 행에 그 저장 행이 없으면 사용자가 지운 것으로 보고 되살리지 않는다.
+ *   예외(WD-804): 이전 기준에 대소문자만 다른 같은 헤더가 있었는데 지금 행에 그 저장 행이 없으면(사용자가 지움) 아래 규칙을 따른다.
+ *     - 사용자가 같은 이름(대소문자 무시)의 행을 이미 갖고 있으면 저장 행을 넣지 않는다 — 사용자의 행이 저장되고, 둘을 함께 두면 중복 검증이 저장을 막는다.
+ *     - 새 기준에서 옛 이름이 사라졌고 대소문자 변형이 정확히 하나면 지운 헤더의 이름 변경이므로 되살리지 않고 renamedDeleted 로 알린다.
+ *     - 그 밖(옛 이름이 남았거나 변형이 둘 이상)은 어느 것이 옛 헤더인지 알 수 없는 「더해진」 헤더라 모두 보통 흐름으로 넣고 알린다(말없는 삭제 방지).
  */
 function syncStoredRows(
   rows: ExtraHeaderRow[],
@@ -244,16 +248,19 @@ function syncStoredRows(
     const prev = prevRows.find((p) => p.storedName?.toLowerCase() === lowerName);
     if (prev?.storedName !== undefined && !hasStoredIgnoringCase(rows)) {
       const from = prev.storedName;
-      // 새 기준에 옛 이름이 그대로 남아 있으면(X-Id·x-id 함께) 바뀐 게 아니라 더해진 것이다 — 값싼 이 검사를 먼저 한다.
-      // 이 경우 지운 X-Id 는 지운 대로 두되, 더해진 x-id 는 아래 「더한 헤더」 흐름으로 넘겨 목록에 넣고 알린다
-      // (여기서 끝내면 다른 관리자가 더한 x-id 가 안내도 없이 빠져, 인증 저장이 서버에서 그 헤더를 말없이 지운다 — WD-804 반려).
-      const fromStillThere = nextRows.some((n) => n.storedName === from);
-      if (!fromStillThere) {
+      // 새 기준에 옛 이름이 그대로 남아 있거나 대소문자 변형이 둘 이상이면(X-Id·x-id 함께, 또는 X-ID·x-id) 이름이 바뀐 것이 아니라 더해진 것으로 본다.
+      // 이름 변경으로 보는 것은 「옛 이름이 사라졌고 대소문자 변형이 정확히 하나」일 때뿐이다 — 변형이 여럿이면 어느 것이 옛 헤더의 새 이름인지 알 수 없어
+      // 하나라도 되살리지 않고 넘기면 다른 관리자가 더한 헤더를 인증 저장이 서버에서 말없이 지운다(WD-804 반려). 그래서 모두 아래 「더한 헤더」 흐름으로 넘겨
+      // 목록에 넣고 알린다 — 쓸모없는 행이 보이면 사용자가 다시 지우면 되지만, 데이터 손실은 되돌릴 수 없다.
+      const variantCount = nextRows.filter((n) => n.storedName?.toLowerCase() === lowerName).length;
+      const isRename = variantCount === 1 && !nextRows.some((n) => n.storedName === from);
+      // 사용자가 같은 이름(대소문자·앞뒤 공백 무시)의 행을 이미 갖고 있으면 저장 때 그 행이 나가므로, 저장 행을 끼워 중복 검증이 저장을 막게 하지 않고
+      // 사용자의 행이 이기게 한다(안내도 없다 — 서버에서 지워지지 않고 사용자의 행으로 덮인다).
+      const userHasSameName = rows.some((r) => normalizedExtraHeaderName(r.name) === lowerName);
+      if (userHasSameName) return;
+      if (isRename) {
         // 되살리지 않되 조용히 넘기지 않는다 — 이름 변경을 알릴 수 있게 모은다.
-        // 사용자가 같은 이름(대소문자·앞뒤 공백 무시)의 행을 이미 갖고 있으면 저장 때 그 행이 나가 서버에서 지워지지 않으므로 알리지 않는다.
-        if (!rows.some((r) => normalizedExtraHeaderName(r.name) === lowerName)) {
-          renamedDeleted.push({ from, to: name });
-        }
+        renamedDeleted.push({ from, to: name });
         return;
       }
     }
