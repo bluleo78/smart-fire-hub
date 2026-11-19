@@ -30,7 +30,7 @@ import {
   focusFirstError,
   withoutKeys,
 } from '@/lib/api-connection-form';
-import { missingSecretMessage } from '@/lib/api-connection-secret';
+import { javaStrip, missingSecretMessage } from '@/lib/api-connection-secret';
 import { handleApiError } from '@/lib/api-error';
 import { formatDate } from '@/lib/formatters';
 import { parseRouteId } from '@/lib/route-id';
@@ -166,7 +166,9 @@ interface SyncedStoredRows {
   addedNames: string[];
   /**
    * 사용자가 지운 저장 헤더가 다른 곳에서 대소문자만 바뀐 이름으로 와 되살리지 않은 쌍(WD-804 반려) — 토스트 안내용.
-   * from = 사용자가 지운 이전 기준의 저장 이름, to = 새 기준의 이름. 이름이 정확히 같으면 바뀐 게 아니므로 넣지 않는다.
+   * from = 사용자가 지운 이전 기준의 저장 이름, to = 새 기준의 이름. 이름이 정확히 같으면 호출 앞쪽에서 이미 걸러져 여기 오지 않는다.
+   * 새 기준에 옛 이름(from)이 그대로 남아 있으면(X-Id 와 x-id 가 함께 있음) 이름이 바뀐 게 아니므로 넣지 않는다.
+   * 사용자가 같은 이름(대소문자 무시)으로 보낼 행을 이미 갖고 있어도 저장 때 서버에서 지워지지 않으므로 넣지 않는다.
    */
   renamedDeleted: { from: string; to: string }[];
 }
@@ -241,12 +243,14 @@ function syncStoredRows(
     if (deletedByUser) {
       // 되살리지 않되 조용히 넘기지 않는다 — 이전 기준의 옛 이름이 새 이름과 정확히 다르면(대소문자만 다름) 이름 변경을 알릴 수 있게 모은다.
       // 저장하면 서버에서 지워지므로 안내에서 그 점도 말한다(부르는 쪽 토스트).
-      const from = prevRows.find((p) => p.storedName?.toLowerCase() === lowerName)?.storedName;
-      // 단, 사용자가 같은 이름(대소문자 무시·앞뒤 공백 무시)의 새 행을 이미 써 두었으면 저장 때 그 행이 나가 서버에서 지워지지 않으므로 알리지 않는다.
-      const userReAdded = rows.some(
-        (r) => r.storedName === undefined && r.name.trim().toLowerCase() === lowerName,
-      );
-      if (from !== undefined && from !== name && !userReAdded) renamedDeleted.push({ from, to: name });
+      const from = prevRows.find((p) => p.storedName?.toLowerCase() === lowerName)?.storedName as string;
+      // 단, 사용자가 같은 이름(대소문자 무시·앞뒤 공백 무시 — 서버와 같은 javaStrip)의 행을 이미 갖고 있으면 저장 때 그 행이 나가 서버에서 지워지지 않으므로
+      // 알리지 않는다. 새로 쓴 행뿐 아니라 다른 저장 행의 이름을 그 이름으로 고친 행도 같다(지운 행은 이미 rows 에 없다).
+      const userReAdded = rows.some((r) => javaStrip(r.name).toLowerCase() === lowerName);
+      // 새 기준에 옛 이름이 그대로 남아 있으면(X-Id·x-id 가 함께 있음) 이름이 바뀐 게 아니라 하나가 더해진 것이다 — 알리지 않는다.
+      // from 은 deletedByUser 라 항상 있고, 정확히 같은 이름은 위의 prevRows 정확 일치 검사에서 이미 돌아갔다(그래서 from !== name 검사는 필요 없다).
+      const fromStillThere = nextRows.some((n) => n.storedName === from);
+      if (!userReAdded && !fromStillThere) renamedDeleted.push({ from, to: name });
       return;
     }
     if (synced.some((s) => s.storedName === name)) return;
@@ -588,12 +592,12 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
       // (WD-804 반려) 사용자가 지운 헤더가 다른 곳에서 대소문자만 바뀌어 왔다 — 지운 대로 두되 알린다. 여럿이면 `옛→새` 쌍을 한 토스트에 이어 넣는다.
       if (synced.renamedDeleted.length > 0) {
         const pairs = synced.renamedDeleted.map((r) => `${r.from}→${r.to}`).join(', ');
-        // 두 문구가 같이 쓰는 꼬리 — 한 곳에 두어 문구가 어긋나지 않게 한다
-        const tail = '. 지운 대로 두며, 저장하면 서버에서도 지워집니다';
+        // 두 문구가 같이 쓰는 꼬리 — 한 곳에 두어 문구가 어긋나지 않게 한다. 이름 뒤 조사는 받침 유무를 알 수 없어 「이(가)」·「(으)로」 로 쓴다.
+        const tail = '. 지운 대로 두며, 저장하면 서버에서도 지워집니다.';
         const text =
           synced.renamedDeleted.length === 1
-            ? `지운 헤더 ${synced.renamedDeleted[0].from} 이(가) 다른 곳에서 ${synced.renamedDeleted[0].to} 으로 바뀌었습니다${tail}`
-            : `지운 헤더 ${pairs} 이(가) 다른 곳에서 바뀌었습니다${tail}`;
+            ? `지운 헤더 ${synced.renamedDeleted[0].from} 이(가) 다른 곳에서 ${synced.renamedDeleted[0].to}(으)로 바뀌었습니다${tail}`
+            : `지운 헤더 ${pairs} 이(가) 다른 곳에서 이름이 바뀌었습니다${tail}`;
         toast.info(text, {
           // 이름 쌍 목록을 id 에 넣어 「더해짐」 등 다른 안내와 서로 덮어쓰지 않게 한다
           id: `api-connection-extra-headers-renamed-deleted:${pairs}`,

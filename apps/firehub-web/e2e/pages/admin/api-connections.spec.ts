@@ -3674,7 +3674,7 @@ test.describe('WD-796 재조회 병합 후속', () => {
     await expect(page.getByText(/가 더해져 목록에 넣었습니다/)).toHaveCount(0);
     // 되살리지는 않지만, 지운 헤더가 다른 곳에서 이름이 바뀌었음을 한 번 알린다
     await expect(
-      page.getByText('지운 헤더 X-Id 이(가) 다른 곳에서 x-id 으로 바뀌었습니다. 지운 대로 두며, 저장하면 서버에서도 지워집니다', {
+      page.getByText('지운 헤더 X-Id 이(가) 다른 곳에서 x-id(으)로 바뀌었습니다. 지운 대로 두며, 저장하면 서버에서도 지워집니다.', {
         exact: true,
       }),
     ).toHaveCount(1);
@@ -3712,6 +3712,61 @@ test.describe('WD-796 재조회 병합 후속', () => {
     await expectNoRenameNotice(page);
   });
 
+  test('지운 X-Id 자리에 다른 저장 행(X-A)의 이름을 X-Id 로 고쳐 두면 x-id 로 바뀌어 와도 이름 변경 안내를 띄우지 않는다 (WD-804 반려)', async ({
+    authenticatedPage: page,
+  }) => {
+    const stored = await openAuthEdit(
+      page,
+      storedApiKeyConnection({ 'extraHeader:X-A': '****a001', 'extraHeader:X-Id': '****i001' }),
+    );
+    // X-Id 행을 지우고, 저장 행 X-A 의 이름을 X-Id 로 고친다 — 저장하면 이 행이 X-Id 로 나간다
+    await page.getByRole('button', { name: '추가 헤더 2 삭제' }).click();
+    await expect(page.getByLabel('추가 헤더 이름 2')).toHaveCount(0);
+    await page.getByLabel('추가 헤더 이름 1').fill('X-Id');
+    await page.getByLabel('추가 헤더 값 1').fill('typed-new');
+
+    // 그사이 다른 관리자가 X-Id 를 x-id 로 바꿨다
+    await saveInfoAndRefetch(page, {
+      ...stored,
+      name: RENAMED,
+      maskedAuthConfig: { ...MAIN_AUTH, 'extraHeader:X-A': '****a001', 'extraHeader:x-id': '****i001' },
+    });
+    await expect(page.getByLabel('연결 이름')).toHaveValue(RENAMED);
+
+    // 결정적 신호: 사용자가 고친 행이 그대로 남아 있다(병합이 끝났다)
+    await expect(page.getByLabel('추가 헤더 이름 1')).toHaveValue('X-Id');
+    await expect(page.getByLabel('추가 헤더 값 1')).toHaveValue('typed-new');
+    await expectNoRenameNotice(page);
+  });
+
+  test('지운 X-Id 가 있는 채 재조회가 X-Id 와 x-id 를 함께 돌려주면 이름이 바뀐 게 아니므로 이름 변경 안내를 띄우지 않는다 (WD-804 반려)', async ({
+    authenticatedPage: page,
+  }) => {
+    const stored = await openAuthEdit(
+      page,
+      storedApiKeyConnection({ 'extraHeader:X-A': '****a001', 'extraHeader:X-Id': '****i001' }),
+    );
+    await page.getByRole('button', { name: '추가 헤더 2 삭제' }).click();
+    await expect(page.getByLabel('추가 헤더 이름 2')).toHaveCount(0);
+
+    await saveInfoAndRefetch(page, {
+      ...stored,
+      name: RENAMED,
+      maskedAuthConfig: {
+        ...MAIN_AUTH,
+        'extraHeader:X-A': '****a001',
+        'extraHeader:X-Id': '****i002',
+        'extraHeader:x-id': '****i003',
+      },
+    });
+    await expect(page.getByLabel('연결 이름')).toHaveValue(RENAMED);
+
+    // 결정적 신호: 지운 행은 돌아오지 않고 병합이 끝났다(X-Id 는 이전 기준에도 있어 더해진 것이 아니다)
+    await expect(page.getByLabel('추가 헤더 이름 1')).toHaveValue('X-A');
+    await expect(page.getByLabel('추가 헤더 이름 2')).toHaveCount(0);
+    await expectNoRenameNotice(page);
+  });
+
   test('지운 X-Id 가 x-id 로 바뀌고 X-New 가 더해진 재조회는 「더해져」 안내와 이름 변경 안내를 함께 보인다 (WD-804 반려)', async ({
     authenticatedPage: page,
   }) => {
@@ -3736,7 +3791,7 @@ test.describe('WD-796 재조회 병합 후속', () => {
 
     await expect(page.getByText('다른 곳에서 추가 헤더(X-New)가 더해져 목록에 넣었습니다.')).toBeVisible();
     await expect(
-      page.getByText('지운 헤더 X-Id 이(가) 다른 곳에서 x-id 으로 바뀌었습니다. 지운 대로 두며, 저장하면 서버에서도 지워집니다', {
+      page.getByText('지운 헤더 X-Id 이(가) 다른 곳에서 x-id(으)로 바뀌었습니다. 지운 대로 두며, 저장하면 서버에서도 지워집니다.', {
         exact: true,
       }),
     ).toBeVisible();
