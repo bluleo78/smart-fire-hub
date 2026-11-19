@@ -10,7 +10,10 @@ import java.sql.SQLException;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import org.testcontainers.qdrant.QdrantContainer;
 
 /**
@@ -46,6 +49,12 @@ public final class QdrantTestContainer {
    */
   public static final Duration CALL_TIMEOUT = Duration.ofSeconds(120);
 
+  /**
+   * 부하 재현 스크립트용 선택 환경변수(WD-803). 비어 있지 않으면 시험 컨테이너를 이 CPU 코어 집합(예: {@code 0-1})에 묶는다. 코어가 모자란 상황을
+   * 일부러 만들어 지연 증상을 재현하기 위한 기능이며, 설정하지 않으면(기본) 컨테이너 생성은 이전과 완전히 같다.
+   */
+  static final String CPUSET_ENV = "QDRANT_TEST_CPUSET";
+
   private static QdrantContainer container;
 
   private QdrantTestContainer() {}
@@ -62,6 +71,10 @@ public final class QdrantTestContainer {
               .withEnv("QDRANT__SERVICE__JWT_RBAC", "true")
               // 클러스터 모드는 자기 p2p 주소가 필요하다. 노드가 하나라 컨테이너 안 주소면 된다.
               .withCommand("./qdrant", "--uri", "http://localhost:6335");
+      String cpuset = System.getenv(CPUSET_ENV);
+      if (cpuset != null && !cpuset.isBlank()) {
+        c.withCreateContainerCmdModifier(cmd -> cmd.getHostConfig().withCpusetCpus(cpuset));
+      }
       c.start();
       container = c;
     }
@@ -79,12 +92,22 @@ public final class QdrantTestContainer {
         CALL_TIMEOUT);
   }
 
+  /**
+   * Qdrant 비동기 호출 결과를 {@link #CALL_TIMEOUT} 까지만 기다려 돌려준다(WD-803).
+   *
+   * <p>하네스와 시험이 호출마다 같은 대기 상한을 되풀이해 적던 것을 한 곳으로 모아, 상한을 바꿀 때 이 도우미만 고치면 되게 한다. 재시도는 하지 않는다 — 상한을
+   * 넘으면 {@link TimeoutException} 으로 그대로 실패한다.
+   */
+  public static <T> T await(Future<T> future)
+      throws InterruptedException, ExecutionException, TimeoutException {
+    return future.get(CALL_TIMEOUT.toSeconds(), TimeUnit.SECONDS);
+  }
+
   /** 모든 컬렉션을 지운다. 테스트마다 빈 저장소에서 시작하게 한다. */
   public static void deleteAllCollections(QdrantClient client) throws Exception {
-    List<String> names =
-        client.listCollectionsAsync().get(CALL_TIMEOUT.toSeconds(), TimeUnit.SECONDS);
+    List<String> names = await(client.listCollectionsAsync());
     for (String name : names) {
-      client.deleteCollectionAsync(name).get(CALL_TIMEOUT.toSeconds(), TimeUnit.SECONDS);
+      await(client.deleteCollectionAsync(name));
     }
   }
 

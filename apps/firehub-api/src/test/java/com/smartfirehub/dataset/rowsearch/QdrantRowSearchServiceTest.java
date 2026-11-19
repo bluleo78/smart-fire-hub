@@ -14,7 +14,6 @@ import io.qdrant.client.QdrantClient;
 import io.qdrant.client.grpc.Common.Filter;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -91,10 +90,7 @@ class QdrantRowSearchServiceTest extends RowSearchServiceTest {
     }
     List<String> existing;
     try {
-      existing =
-          client
-              .listCollectionsAsync()
-              .get(QdrantTestContainer.CALL_TIMEOUT.toSeconds(), TimeUnit.SECONDS);
+      existing = QdrantTestContainer.await(client.listCollectionsAsync());
     } catch (Exception e) {
       throw new IllegalStateException("Qdrant 컬렉션 목록을 읽지 못했습니다", e);
     }
@@ -126,19 +122,13 @@ class QdrantRowSearchServiceTest extends RowSearchServiceTest {
       String prefix = QdrantCollectionSpec.rowsTenantPrefix(DEFAULT_TEST_TENANT_ID);
       String kw = QdrantCollectionSpec.rowsKeywordName(DEFAULT_TEST_TENANT_ID);
       long n = 0;
-      for (String c :
-          client
-              .listCollectionsAsync()
-              .get(QdrantTestContainer.CALL_TIMEOUT.toSeconds(), TimeUnit.SECONDS)) {
+      for (String c : QdrantTestContainer.await(client.listCollectionsAsync())) {
         if (!c.startsWith(prefix) || c.equals(kw)) continue;
         Filter f =
             Filter.newBuilder()
                 .addMust(ConditionFactory.match(QdrantCollectionSpec.DATASET_ID, datasetId))
                 .build();
-        n +=
-            client
-                .countAsync(c, f, true)
-                .get(QdrantTestContainer.CALL_TIMEOUT.toSeconds(), TimeUnit.SECONDS);
+        n += QdrantTestContainer.await(client.countAsync(c, f, true));
       }
       return n;
     } catch (Exception e) {
@@ -154,24 +144,14 @@ class QdrantRowSearchServiceTest extends RowSearchServiceTest {
   void rowCollectionIsRecreatedAfterAnotherTestDeletedIt() throws Exception {
     String keyword = QdrantCollectionSpec.rowsKeywordName(DEFAULT_TEST_TENANT_ID);
     // setUp 의 색인으로 행 키워드 컬렉션이 만들어졌고 빈이 그것을 기억한다
-    assertThat(
-            client
-                .collectionExistsAsync(keyword)
-                .get(QdrantTestContainer.CALL_TIMEOUT.toSeconds(), TimeUnit.SECONDS))
-        .isTrue();
+    assertThat(QdrantTestContainer.await(client.collectionExistsAsync(keyword))).isTrue();
 
     // WD-796: 전체 삭제 대신 이 시험의 컬렉션만 지운다(공유 Qdrant 의 다른 시험 컬렉션 보호)
-    client
-        .deleteCollectionAsync(keyword)
-        .get(QdrantTestContainer.CALL_TIMEOUT.toSeconds(), TimeUnit.SECONDS);
+    QdrantTestContainer.await(client.deleteCollectionAsync(keyword));
     restoreCollectionsWipedByOtherTests();
     lifecycle.ensureRowCollections(DEFAULT_TEST_TENANT_ID, 1);
 
-    assertThat(
-            client
-                .collectionExistsAsync(keyword)
-                .get(QdrantTestContainer.CALL_TIMEOUT.toSeconds(), TimeUnit.SECONDS))
-        .isTrue();
+    assertThat(QdrantTestContainer.await(client.collectionExistsAsync(keyword))).isTrue();
   }
 
   @Test

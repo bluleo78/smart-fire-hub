@@ -20,7 +20,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -139,8 +138,7 @@ class QdrantDedicatedRowTargetTest extends IntegrationTestBase {
   }
 
   private static List<String> collections(QdrantClient c) throws Exception {
-    return c.listCollectionsAsync()
-        .get(QdrantTestContainer.CALL_TIMEOUT.toSeconds(), TimeUnit.SECONDS);
+    return QdrantTestContainer.await(c.listCollectionsAsync());
   }
 
   @Test
