@@ -1,3 +1,14 @@
+# gosu 를 최신 Go 로 다시 빌드하는 스테이지(WD-833).
+# 베이스 이미지의 gosu 는 go1.24.6 으로 빌드돼 Go stdlib 의 HIGH·CRITICAL CVE 가 남는다 — 같은 소스(1.20 태그)를
+# 최신 Go 로 정적 빌드해 최종 이미지의 /usr/local/bin/gosu 를 덮어쓴다. 태그가 가리키는 커밋을 확인해 소스 바꿔치기를 막는다.
+# Go 판은 고정한다(재현성). trivy 가 gosu 의 stdlib CVE 를 다시 잡으면 golang 태그만 수정판으로 올린다.
+# BuildKit 전용 문법은 쓰지 않는다: Testcontainers 가 레거시 빌더로 이 파일을 빌드할 수 있다.
+FROM golang:1.27.4-trixie AS gosu
+WORKDIR /src
+RUN git clone --depth 1 --branch 1.20 https://github.com/tianon/gosu.git . \
+    && test "$(git rev-parse HEAD)" = "29b939aa5bd4dc588af765b8248f6e39150d2565" \
+    && CGO_ENABLED=0 go build -trimpath -mod=readonly -ldflags '-d -w' -o /out/gosu .
+
 # PostGIS 16 이미지에 pgvector 확장을 추가한다.
 # imresamu/postgis는 Debian + PGDG apt 소스를 포함하므로 패키지 설치로 pgvector 추가 가능.
 # 베이스는 16-3.6.1-trixie(PG16·PostGIS 3.6.1·debian 13)다(WD-794): 옛 16-3.5(debian 12) 태그는 2025-09 뒤로 갱신되지 않아
@@ -38,4 +49,8 @@ RUN if [ "${OS_PATCH}" = "skip" ]; then echo "os patch: skipped (OS_PATCH=skip, 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends postgresql-16-pgvector=0.8.7-* \
     && rm -rf /var/lib/apt/lists/*
+# 위 gosu 스테이지에서 새로 빌드한 바이너리로 베이스의 gosu 를 덮어쓴다(WD-833).
+# 바로 실행해 판 출력과 uid 전환(nobody)이 되는지 빌드 중에 확인한다.
+COPY --from=gosu /out/gosu /usr/local/bin/gosu
+RUN gosu --version && gosu nobody true
 USER postgres
