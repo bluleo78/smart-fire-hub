@@ -43,18 +43,30 @@ export interface BoxStat {
 export type BoxplotStatLabel = 'min' | 'q1' | 'median' | 'q3' | 'max';
 
 /**
- * 행마다 카테고리(xKey)와 통계 값을 읽는다 — 앞 이름이 우선(min → q0 등)이고, 없거나 숫자로 읽을 수 없으면 0 으로 본다(toPlotNumber — WD-831).
- * 통계 컬럼이 빠진 결과는 뷰가 그리지 않고 안내하므로(findMissingBoxplotStats) 0 은 실제로 그려지지 않는다.
+ * 한 행에서 통계 항목 하나를 읽는다 — 이름 목록을 앞에서부터 보아 toPlotNumber 가 숫자를 주는 첫 값, 없으면 0 (WD-835).
+ * 예전에는 `d.min ?? d.q0` 로 앞 이름이 null 이 아니기만 하면 골라, 앞 이름이 '' 나 'N/A' 같은 읽을 수 없는 값이면
+ * 읽히는 별칭이 있어도 0 이 됐다.
+ */
+function readStat(row: Record<string, unknown>, keys: readonly string[]): number {
+  for (const key of keys) {
+    const n = toPlotNumber(row[key]);
+    if (n !== null) return n;
+  }
+  return 0;
+}
+
+/**
+ * 행마다 카테고리(xKey)와 통계 값을 읽는다 — 항목마다 이름 목록(min → q0 등, BOXPLOT_STAT_KEYS)에서 숫자로 읽히는 첫 값을 쓰고,
+ * 모두 읽을 수 없으면 0 으로 본다(toPlotNumber — WD-831, 별칭 폴백 WD-835).
+ * 통계 컬럼이 아예 빠진 결과는 뷰가 그리지 않고 안내한다(findMissingBoxplotStats). 컬럼은 있는데 어떤 행의 값이 모든 이름에서
+ * 읽히지 않으면(null 등) 그 행의 그 항목은 0 으로 그려진다 — 지금 동작을 유지한 것이다(WD-835 설계의 「하지 않는 것」).
  */
 export function toBoxStats(data: Record<string, unknown>[], xKey: string): BoxStat[] {
-  return data.map((d) => ({
-    category: String(d[xKey] ?? ''),
-    min: toPlotNumber(d.min ?? d.q0) ?? 0,
-    q1: toPlotNumber(d.q1) ?? 0,
-    median: toPlotNumber(d.median ?? d.q2) ?? 0,
-    q3: toPlotNumber(d.q3) ?? 0,
-    max: toPlotNumber(d.max ?? d.q4) ?? 0,
-  }));
+  return data.map((d) => {
+    const stat = { category: String(d[xKey] ?? '') } as BoxStat;
+    for (const { label, keys } of BOXPLOT_STAT_KEYS) stat[label] = readStat(d, keys);
+    return stat;
+  });
 }
 
 /**

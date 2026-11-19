@@ -98,27 +98,29 @@ export function computeGaugeReading(data: Record<string, unknown>[], config: Cha
 }
 
 /**
- * 파이·도넛이 그릴 행과 뺀 음수 행 수를 나눈다(WD-303 → WD-831 에서 뷰 밖으로 옮김).
- * 파이는 전체 대비 비율을 그려 음수를 표현할 수 없으므로 음수 행은 뺀다. 뷰(그림·안내)와 값 대체 표가 같은 행을 쓰게 한 곳에 둔다.
- * 값은 toPlotNumber 로 읽는다(다른 차트와 같은 숫자 규칙). 음수는 빼고, 남은 행의 값은 숫자로 바꾼 새 행으로 준다(읽을 수 없으면 0) —
+ * 파이·도넛이 그릴 행과 뺀 음수·결측 행 수를 나눈다(WD-303 → WD-831 에서 뷰 밖으로 옮김, WD-835 에서 결측도 뺌).
+ * 파이는 전체 대비 비율을 그려 음수를 표현할 수 없으므로 음수 행은 뺀다. 값이 NULL·숫자 아님인 행(결측)도 뺀다 —
+ * 예전에는 0 으로 바꿔 남겼는데, 값이 없는 항목이 0 을 잰 것처럼 읽히고 범례·표에 0.0% 로 실렸다(WD-835).
+ * 실제 0 은 결측이 아니므로 남긴다. 뷰(그림·안내)와 값 대체 표가 같은 행을 쓰게 한 곳에 둔다.
+ * 값은 toPlotNumber 로 읽는다(다른 차트와 같은 숫자 규칙). 남은 행의 값은 숫자로 바꾼 새 행으로 준다(항상 유한 숫자 ≥ 0) —
  * recharts Pie 는 숫자 타입만 값으로 세고 문자열('30', DB NUMERIC)은 0 으로 그려, 표의 비율과 그림이 어긋났다(WD-831).
  * 행마다 값을 한 번만 읽는다. 늘 새 배열을 돌려주므로 뷰는 useMemo 로 감싼다.
  */
 export function splitPieData(
   data: Record<string, unknown>[],
   valueKey: string,
-): { pieData: Record<string, unknown>[]; negativeCount: number } {
+): { pieData: Record<string, unknown>[]; negativeCount: number; missingCount: number } {
   const pieData: Record<string, unknown>[] = [];
   let negativeCount = 0;
+  let missingCount = 0;
   for (const row of data) {
     const n = toPlotNumber(row[valueKey]);
-    if (n !== null && n < 0) {
-      negativeCount++;
-      continue;
-    }
-    pieData.push({ ...row, [valueKey]: n ?? 0 });
+    // 결측은 0 으로 바꾸지 않고 뺀다(WD-835) — 음수도 뺀다, 나머지만 그린다
+    if (n === null) missingCount++;
+    else if (n < 0) negativeCount++;
+    else pieData.push({ ...row, [valueKey]: n });
   }
-  return { pieData, negativeCount };
+  return { pieData, negativeCount, missingCount };
 }
 
 /**

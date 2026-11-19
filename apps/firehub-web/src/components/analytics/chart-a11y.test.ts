@@ -221,6 +221,11 @@ describe('buildChartDataTable — 차트가 그리는 값 (WD-826)', () => {
     expect(table.rows).toEqual([['A', '2', '4']]);
   });
 
+  it('박스 플롯은 앞 이름이 읽히지 않으면 별칭 값을 싣는다(WD-835)', () => {
+    const t = buildChartDataTable('BOXPLOT', { xAxis: 'cat', yAxis: [] }, ['cat'], [{ cat: 'A', min: '', q0: 5, q1: 6, median: 7, q3: 8, max: 9 }], 'N');
+    expect(t.rows[0][t.headers.indexOf('min')]).toBe('5');
+  });
+
   it('변환 표도 100행 제한·캡션 규칙을 따른다', () => {
     const data = Array.from({ length: 150 }, (_, i) => ({ step: `s${i}`, v: 1 }));
     const table = buildChartDataTable('WATERFALL', { xAxis: 'step', yAxis: ['v'] }, ['step', 'v'], data, 'N');
@@ -255,16 +260,27 @@ describe('대체 표 — 파이 비율·산점도 거르기·숫자 셀 형식 (
     expect(t.rows).toEqual([['A', '0', '']]);
   });
 
-  it('파이: 숫자 문자열은 값으로 읽고 null 은 0 · 0.0% 다(그림에 넘기는 값과 같다)', () => {
+  it('파이: 숫자 문자열은 값으로 읽는다', () => {
     const t = table('PIE', { xAxis: 'k', yAxis: ['v'] }, [
       { k: 'A', v: '30' },
-      { k: 'B', v: null },
       { k: 'C', v: 10 },
     ]);
     expect(t.rows).toEqual([
       ['A', '30', '75.0%'],
-      ['B', '0', '0.0%'],
       ['C', '10', '25.0%'],
+    ]);
+  });
+
+  it('PIE: NULL·숫자 아닌 Y 행은 표에 싣지 않고 비율은 남은 값으로 낸다(WD-835)', () => {
+    const t = table('PIE', { xAxis: 'k', yAxis: ['v'] }, [
+      { k: '서울', v: 30 },
+      { k: '부산', v: null },
+      { k: '대구', v: '측정 안 함' },
+      { k: '인천', v: 10 },
+    ]);
+    expect(t.rows).toEqual([
+      ['서울', '30', '75.0%'],
+      ['인천', '10', '25.0%'],
     ]);
   });
 

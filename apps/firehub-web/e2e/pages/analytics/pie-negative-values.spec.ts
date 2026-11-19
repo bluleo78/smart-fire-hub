@@ -96,5 +96,39 @@ test.describe('파이·도넛 차트 — 음수 값 (WD-303)', () => {
     await expect(page.locator('.recharts-pie-label-text', { hasText: '인천 (75%)' })).toBeVisible();
     await expect(page.locator('.recharts-pie-label-text', { hasText: '부산 (25%)' })).toBeVisible();
     await expect(page.getByTestId('pie-negative-notice')).toHaveCount(0);
+    // WD-835: 결측도 없으면 결측 안내도 없다
+    await expect(page.getByTestId('pie-missing-notice')).toHaveCount(0);
   });
+
+  // WD-835: 값이 비었거나 숫자가 아닌 행은 0 이 아니라 「없음」이다 — 조각에서 빼고 뺀 개수를 안내한다
+  for (const [chartType, label] of [
+    ['PIE', '파이'],
+    ['DONUT', '도넛'],
+  ] as const) {
+    test(`${label} 차트는 결측 행을 빼고 뺀 개수를 안내한다 (WD-835)`, async ({ authenticatedPage: page }) => {
+      const rows = [
+        { city: '서울', delta: 30 },
+        { city: '부산', delta: null },
+        { city: '대구', delta: '측정 안 함' },
+        { city: '인천', delta: 10 },
+        { city: '광주', delta: -5 },
+      ];
+      const name = await setupPieMocks(page, chartType, rows);
+      await page.goto('/analytics/dashboards/1');
+      await expect(page.getByText(name, { exact: true })).toBeVisible();
+
+      await expect(page.getByTestId('pie-missing-notice')).toHaveText(
+        `값이 없거나 숫자가 아닌 항목 2개는 ${label} 차트에 표시되지 않습니다.`,
+      );
+      // 음수 1개 안내도 함께 보인다
+      await expect(page.getByTestId('pie-negative-notice')).toBeVisible();
+
+      // 결측 행은 범례에서도 빠진다
+      const legend = page.locator('.recharts-legend-wrapper');
+      await expect(legend.getByText('서울')).toBeVisible();
+      await expect(legend.getByText('인천')).toBeVisible();
+      await expect(legend.getByText('부산')).toHaveCount(0);
+      await expect(legend.getByText('대구')).toHaveCount(0);
+    });
+  }
 });

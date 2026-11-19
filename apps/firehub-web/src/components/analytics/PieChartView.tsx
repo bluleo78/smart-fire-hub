@@ -54,7 +54,8 @@ export function PieChartView({ chartType, config, data, height }: PieChartViewPr
   // 음수 행은 그리기·비율 계산에서 빼고, 몇 개를 뺐는지 차트 위에 안내한다(빼고 말하지 않으면 합계를 잘못 읽는다).
   // 거르기는 값 대체 표와 공유하는 splitPieData 로 한다(WD-831). 새 배열을 만들므로 입력이 같으면 다시 만들지 않게 메모한다
   // (렌더마다 새 배열이면 recharts 가 조각을 다시 그린다).
-  const { pieData, negativeCount } = useMemo(() => splitPieData(data, valueKey), [data, valueKey]);
+  // WD-835: 값이 비었거나 숫자가 아닌 행(missingCount)도 0 이 아니라 「없음」이라 같은 방식으로 빼고 안내한다.
+  const { pieData, negativeCount, missingCount } = useMemo(() => splitPieData(data, valueKey), [data, valueKey]);
 
   const categoryCount = pieData.length;
   // 카테고리가 많으면 조각 위 텍스트 라벨을 생략하고 범례로만 안내한다 (겹침 방지).
@@ -78,10 +79,37 @@ export function PieChartView({ chartType, config, data, height }: PieChartViewPr
   const legendReservedHeight = showLegend
     ? Math.min(8 + legendRows * LEGEND_ROW_HEIGHT, legendMaxHeight)
     : 0;
+  // 항목이 많은지 — 안내 줄뿐 아니라 애니메이션·조각 테두리도 이 값으로 끈다(WD-307)
   const showManyNotice = categoryCount > MANY_CATEGORY_THRESHOLD;
-  const showNegativeNotice = negativeCount > 0;
-  // 안내 줄(음수 제외·많은 항목)마다 한 줄 높이를 파이 위쪽 여백으로 비워 둔다.
-  const noticeHeight = ((showManyNotice ? 1 : 0) + (showNegativeNotice ? 1 : 0)) * NOTICE_HEIGHT;
+  const chartLabel = isDonut ? '도넛' : '파이';
+  // 차트 위 안내 줄 목록 — 보일 줄만 담아, 그리는 줄과 아래 여백 계산이 늘 같은 목록을 쓰게 한다(WD-835).
+  // warn 은 경고 아이콘을 붙일지(뺀 행이 있다는 안내), 순서는 화면에 보이는 순서다.
+  const notices: { testId: string; warn: boolean; text: string }[] = [];
+  if (negativeCount > 0) {
+    // WD-303: 음수 행을 뺐다는 안내 — 빼고 말하지 않으면 비율·합계를 잘못 읽는다.
+    notices.push({
+      testId: 'pie-negative-notice',
+      warn: true,
+      text: `음수 값 ${negativeCount}개는 ${chartLabel} 차트에 표시되지 않습니다. 음수까지 보려면 막대 차트를 쓰세요.`,
+    });
+  }
+  if (missingCount > 0) {
+    // WD-835: 결측 행을 뺐다는 안내 — 0 으로 싣지 않고 뺐으니 뺀 개수를 말해야 합계를 잘못 읽지 않는다.
+    notices.push({
+      testId: 'pie-missing-notice',
+      warn: true,
+      text: `값이 없거나 숫자가 아닌 항목 ${missingCount}개는 ${chartLabel} 차트에 표시되지 않습니다.`,
+    });
+  }
+  if (showManyNotice) {
+    notices.push({
+      testId: 'pie-many-categories-notice',
+      warn: false,
+      text: `항목이 ${categoryCount.toLocaleString()}개라 파이 차트로 읽기 어렵습니다 — 막대 차트를 권장합니다.`,
+    });
+  }
+  // 안내 줄마다 한 줄 높이를 파이 위쪽 여백으로 비워 둔다.
+  const noticeHeight = notices.length * NOTICE_HEIGHT;
 
   // 라벨을 그릴 때는 조각 바깥으로 텍스트가 삐져나오므로 여백을 더 크게 잡는다.
   const labelMargin = showSliceLabels ? 40 : 16;
@@ -100,21 +128,21 @@ export function PieChartView({ chartType, config, data, height }: PieChartViewPr
   return (
     // 안내 문구를 차트 위에 겹쳐 두기 위한 기준 상자 — 높이는 ResponsiveContainer 와 같게 둔다.
     <div className="relative w-full" style={{ height: height ?? '100%' }}>
-      {(showManyNotice || showNegativeNotice) && (
+      {notices.length > 0 && (
         // 한 줄씩 자르고 포인터를 통과시킨다 — 좁은 위젯에서 여러 줄로 감겨 파이를 덮거나 조각 툴팁을 막지 않게.
         // 계속 보이는 정적 안내라 role=alert 를 붙이지 않는다(ChartRenderer 의 컬럼 안내와 같은 판단).
         <div className="pointer-events-none absolute inset-x-0 top-0 z-10 text-xs text-muted-foreground">
-          {showNegativeNotice && (
-            // WD-303: 음수 행을 뺐다는 안내 — 빼고 말하지 않으면 비율·합계를 잘못 읽는다.
-            <p className="flex items-center gap-1 truncate" data-testid="pie-negative-notice">
-              <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-warning" aria-hidden="true" />
-              음수 값 {negativeCount}개는 {isDonut ? '도넛' : '파이'} 차트에 표시되지 않습니다. 음수까지 보려면 막대 차트를 쓰세요.
-            </p>
-          )}
-          {showManyNotice && (
-            <p className="truncate" data-testid="pie-many-categories-notice">
-              항목이 {categoryCount.toLocaleString()}개라 파이 차트로 읽기 어렵습니다 — 막대 차트를 권장합니다.
-            </p>
+          {notices.map(({ testId, warn, text }) =>
+            warn ? (
+              <p key={testId} className="flex items-center gap-1 truncate" data-testid={testId}>
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-warning" aria-hidden="true" />
+                {text}
+              </p>
+            ) : (
+              <p key={testId} className="truncate" data-testid={testId}>
+                {text}
+              </p>
+            ),
           )}
         </div>
       )}
