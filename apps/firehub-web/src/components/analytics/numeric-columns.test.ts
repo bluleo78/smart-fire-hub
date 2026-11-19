@@ -22,6 +22,10 @@ describe('isNonNumericValue(WD-505)', () => {
     expect(isNonNumericValue(undefined)).toBe(false);
     expect(isNonNumericValue('')).toBe(false);
   });
+  it('공백만 있는 문자열도 빈 값이다(WD-838)', () => {
+    expect(isNonNumericValue(' ')).toBe(false);
+    expect(isNonNumericValue('\t')).toBe(false);
+  });
   it('숫자·숫자 문자열은 false, 문자·불리언은 true', () => {
     expect(isNonNumericValue(5)).toBe(false);
     expect(isNonNumericValue('10.5')).toBe(false);

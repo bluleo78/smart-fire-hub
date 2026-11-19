@@ -79,11 +79,17 @@ export function formatChartCellValue(value: unknown): string {
   return text.length > CELL_MAX_LENGTH ? `${text.slice(0, CELL_MAX_LENGTH)}…` : text;
 }
 
-/** 표 캡션 — 행이 제한을 넘어 잘렸으면 전체 행 수를 밝혀 정보가 빠졌음을 알린다 */
-function buildCaption(totalRows: number, accessibleName: string): string {
-  return totalRows > CHART_SR_TABLE_ROW_LIMIT
-    ? `${accessibleName} 데이터 (전체 ${totalRows.toLocaleString()}행 중 처음 ${CHART_SR_TABLE_ROW_LIMIT}행)`
-    : `${accessibleName} 데이터`;
+/**
+ * 표 캡션 — 행이 제한을 넘어 잘렸으면 전체 행 수를 밝혀 정보가 빠졌음을 알린다.
+ * tail(WD-838)은 파이가 뺀 행 수 같은 꼬리 문구 — 상한 문구와 한 괄호 안에 쉼표로 잇고, 없으면 캡션은 그대로다.
+ */
+function buildCaption(totalRows: number, accessibleName: string, tail = ''): string {
+  const parts: string[] = [];
+  if (totalRows > CHART_SR_TABLE_ROW_LIMIT) {
+    parts.push(`전체 ${totalRows.toLocaleString()}행 중 처음 ${CHART_SR_TABLE_ROW_LIMIT}행`);
+  }
+  if (tail) parts.push(tail);
+  return parts.length > 0 ? `${accessibleName} 데이터 (${parts.join(', ')})` : `${accessibleName} 데이터`;
 }
 
 /** 머리글과 (이미 문자열로 바꾼) 전체 행으로 표를 만든다 — 변환 표도 원본 표와 같은 행 수 제한·캡션 규칙을 쓴다 */
@@ -95,8 +101,14 @@ function toTable(headers: string[], allRows: string[][], accessibleName: string)
  * 이미 제한(CHART_SR_TABLE_ROW_LIMIT)까지만 문자열로 바꾼 행으로 표를 만든다 — 전체 행 수(totalRows)는 캡션에 쓴다.
  * 행이 많을 수 있는 표(원본 행·파이·산점도)는 버릴 행까지 문자열로 바꾸지 않게 이것을 쓴다(WD-831).
  */
-function toLimitedTable(headers: string[], totalRows: number, rows: string[][], accessibleName: string): ChartDataTable {
-  return { caption: buildCaption(totalRows, accessibleName), headers, rows };
+function toLimitedTable(
+  headers: string[],
+  totalRows: number,
+  rows: string[][],
+  accessibleName: string,
+  captionTail = '',
+): ChartDataTable {
+  return { caption: buildCaption(totalRows, accessibleName, captionTail), headers, rows };
 }
 
 /**
@@ -147,7 +159,13 @@ function buildDerivedTable(
     case 'DONUT': {
       // 파이는 음수·결측을 빼고(splitPieData, 뷰와 같은 함수) 남은 값의 비율로 조각 크기를 정한다 — 값과 비율을 함께 준다(WD-831)
       const yKey = config.yAxis[0] ?? '';
-      const { pieData } = splitPieData(data, yKey);
+      const { pieData, negativeCount, missingCount } = splitPieData(data, yKey);
+      // 뺀 행 수를 캡션 꼬리에 적는다(WD-838) — 항목마다 「제외」를 붙여 쉼표로 이어도 어느 행이 빠졌는지 읽힌다. 0 인 항목은 생략, 둘 다 0 이면 꼬리 없음
+      // 문구는 화면 안내(「값이 없거나 숫자가 아닌 항목」)와 같은 뜻이 되게 맞춘다
+      const omitted: string[] = [];
+      if (negativeCount > 0) omitted.push(`음수 ${negativeCount.toLocaleString()}행 제외`);
+      if (missingCount > 0) omitted.push(`값 없음·숫자 아님 ${missingCount.toLocaleString()}행 제외`);
+      const captionTail = omitted.join(', ');
       // pieData 의 값은 splitPieData 가 이미 숫자로 바꿔 두었다(그림이 그리는 값 그대로)
       const valueOf = (r: Record<string, unknown>) => r[yKey] as number;
       const total = pieData.reduce((sum, r) => sum + valueOf(r), 0);
@@ -162,6 +180,7 @@ function buildDerivedTable(
           total > 0 ? `${((valueOf(r) / total) * 100).toFixed(1)}%` : '',
         ]),
         accessibleName,
+        captionTail,
       );
     }
     case 'SCATTER': {

@@ -14,6 +14,7 @@ import { splitPieData } from './chart-derived-data';
 import { HIDDEN_CHART_ROOT_PROPS } from './chart-figure-context';
 import { CHART_SERIES_COLORS, TOOLTIP_CONTENT_STYLE, TOOLTIP_ITEM_STYLE } from './chart-styles';
 import { ChartDrawingArea } from './ChartDrawingArea';
+import { NonNumericValueNotice } from './recharts/NonNumericValueNotice';
 
 interface PieChartViewProps {
   chartType: ChartType;
@@ -55,7 +56,12 @@ export function PieChartView({ chartType, config, data, height }: PieChartViewPr
   // 거르기는 값 대체 표와 공유하는 splitPieData 로 한다(WD-831). 새 배열을 만들므로 입력이 같으면 다시 만들지 않게 메모한다
   // (렌더마다 새 배열이면 recharts 가 조각을 다시 그린다).
   // WD-835: 값이 비었거나 숫자가 아닌 행(missingCount)도 0 이 아니라 「없음」이라 같은 방식으로 빼고 안내한다.
-  const { pieData, negativeCount, missingCount } = useMemo(() => splitPieData(data, valueKey), [data, valueKey]);
+  const { pieData, negativeCount, missingCount, nonNumericCount } = useMemo(
+    () => splitPieData(data, valueKey),
+    [data, valueKey],
+  );
+  // WD-838: 그릴 조각의 값 합 — 전부 0 이면 조각이 각도 0 이라 아무것도 그려지지 않는다(빈 안내 대상).
+  const pieTotal = useMemo(() => pieData.reduce((sum, r) => sum + (r[valueKey] as number), 0), [pieData, valueKey]);
 
   const categoryCount = pieData.length;
   // 카테고리가 많으면 조각 위 텍스트 라벨을 생략하고 범례로만 안내한다 (겹침 방지).
@@ -79,8 +85,11 @@ export function PieChartView({ chartType, config, data, height }: PieChartViewPr
   const legendReservedHeight = showLegend
     ? Math.min(8 + legendRows * LEGEND_ROW_HEIGHT, legendMaxHeight)
     : 0;
-  // 항목이 많은지 — 안내 줄뿐 아니라 애니메이션·조각 테두리도 이 값으로 끈다(WD-307)
-  const showManyNotice = categoryCount > MANY_CATEGORY_THRESHOLD;
+  // WD-838: 그릴 조각이 없다 — 행이 없거나 전부 0(합계 0)이면 빈 원 대신 이유를 말한다.
+  const nothingToDraw = pieData.length === 0 || pieTotal <= 0;
+  // 항목이 많은지 — 안내 줄뿐 아니라 애니메이션·조각 테두리도 이 값으로 끈다(WD-307).
+  // 그릴 것이 없으면 막대 권장 안내가 어긋나므로 많은 항목으로 보지 않는다(WD-838)
+  const showManyNotice = !nothingToDraw && categoryCount > MANY_CATEGORY_THRESHOLD;
   const chartLabel = isDonut ? '도넛' : '파이';
   // 차트 위 안내 줄 목록 — 보일 줄만 담아, 그리는 줄과 아래 여백 계산이 늘 같은 목록을 쓰게 한다(WD-835).
   // warn 은 경고 아이콘을 붙일지(뺀 행이 있다는 안내), 순서는 화면에 보이는 순서다.
@@ -105,7 +114,8 @@ export function PieChartView({ chartType, config, data, height }: PieChartViewPr
     notices.push({
       testId: 'pie-many-categories-notice',
       warn: false,
-      text: `항목이 ${categoryCount.toLocaleString()}개라 파이 차트로 읽기 어렵습니다 — 막대 차트를 권장합니다.`,
+      // WD-838: 도넛에서도 「파이 차트」라 말하던 문구를 차트 종류에 맞춘다.
+      text: `항목이 ${categoryCount.toLocaleString()}개라 ${chartLabel} 차트로 읽기 어렵습니다 — 막대 차트를 권장합니다.`,
     });
   }
   // 안내 줄마다 한 줄 높이를 파이 위쪽 여백으로 비워 둔다.
@@ -125,6 +135,13 @@ export function PieChartView({ chartType, config, data, height }: PieChartViewPr
     ),
   );
 
+  // WD-838: 그릴 행도 뺀 음수도 없이 숫자 아닌 값만 있으면 값 컬럼 전체가 문자다 — 컬럼을 다시 고르라고 안내한다.
+  // 의도적으로 퍼널·게이지와 다르다: 파이는 섞인 숫자 아닌 행을 빼고 그리므로(WD-835) 컬럼 전체가 숫자 아닐 때만 컬럼 안내를 낸다.
+  // null 만 있는 컬럼은 nonNumericCount 가 0 이라 빈 안내가 나온다. 훅을 모두 호출한 뒤에 반환해 훅 규칙을 지킨다.
+  const allNonNumeric = pieData.length === 0 && negativeCount === 0 && nonNumericCount > 0;
+  if (allNonNumeric) {
+    return <NonNumericValueNotice height={height} />;
+  }
   return (
     // 안내 문구를 차트 위에 겹쳐 두기 위한 기준 상자 — 높이는 ResponsiveContainer 와 같게 둔다.
     <div className="relative w-full" style={{ height: height ?? '100%' }}>
@@ -146,60 +163,73 @@ export function PieChartView({ chartType, config, data, height }: PieChartViewPr
           )}
         </div>
       )}
-      {/* WD-826: 그림만 보조기술에서 숨긴다 — 위 안내문은 화면에 보이는 정보라 밖에 두어 스크린리더가 읽는다.
-          PieChart 의 HIDDEN_CHART_ROOT_PROPS 는 svg 의 tabindex·role=application 을, Pie 의 rootTabIndex=-1 은
-          조각 묶음 <g> 의 tabindex=0 을 없애 숨긴 영역 안 Tab 정지점이 생기지 않게 한다(마우스 툴팁은 그대로). */}
-      <ChartDrawingArea>
-        <ResponsiveContainer
-          width="100%"
-          height="100%"
-          initialDimension={{ width: numericWidth, height: numericHeight }}
-          onResize={(width, resizedHeight) => setMeasured({ width, height: resizedHeight })}
+      {nothingToDraw ? (
+        // 위 안내 줄(절대 배치)에 가리지 않게 줄 높이만큼 위를 비운다. 안내 줄은 그대로 둔다.
+        <p
+          data-testid="pie-empty-notice"
+          className="flex h-full items-center justify-center text-sm text-muted-foreground"
+          style={{ paddingTop: noticeHeight }}
         >
-          <PieChart {...HIDDEN_CHART_ROOT_PROPS} margin={{ top: 8 + noticeHeight, right: 16, left: 0, bottom: 8 }}>
-            <Pie
-              // WD-826: recharts Pie 는 조각 묶음 <g> 에 rootTabIndex(기본 0)를 붙여 숨긴 그림 안 Tab 정지점이 된다 — -1 로 끈다
-              rootTabIndex={-1}
-              data={pieData}
-              dataKey={valueKey}
-              nameKey={nameKey}
-              cx="50%"
-              cy="50%"
-              innerRadius={isDonut ? 60 : 0}
-              outerRadius={outerRadius}
-              // 조각 사이 여백은 (항목 수-1)×각도만큼 360° 에서 빠진다 — 항목이 많으면 합이 360° 를 넘어 조각이 음수 각도로 겹쳐
-              // 그려지므로 많은 항목에서는 여백을 없앤다(WD-307).
-              paddingAngle={categoryCount > PADDING_MAX_CATEGORIES ? 0 : 2}
-              // 수백 개 조각의 진입 애니메이션은 대시보드를 무겁게 만든다 — 많은 항목이면 끈다(WD-307).
-              isAnimationActive={!showManyNotice}
-              // 조각이 1° 도 안 되면 기본 흰 테두리(1px)가 조각을 덮어 파이가 속 빈 고리처럼 보인다 — 많은 항목이면 테두리를 없앤다(WD-307).
-              stroke={showManyNotice ? 'none' : undefined}
-              label={
-                showSliceLabels
-                  ? ({ name, percent }: { name?: string; percent?: number }) =>
-                      (percent ?? 0) > 0.05 ? `${name ?? ''} (${((percent ?? 0) * 100).toFixed(0)}%)` : ''
-                  : false
-              }
-              labelLine={false}
+          {chartLabel} 차트로 그릴 값이 없습니다.
+        </p>
+      ) : (
+        <>
+          {/* WD-826: 그림만 보조기술에서 숨긴다 — 위 안내문은 화면에 보이는 정보라 밖에 두어 스크린리더가 읽는다.
+              PieChart 의 HIDDEN_CHART_ROOT_PROPS 는 svg 의 tabindex·role=application 을, Pie 의 rootTabIndex=-1 은
+              조각 묶음 <g> 의 tabindex=0 을 없애 숨긴 영역 안 Tab 정지점이 생기지 않게 한다(마우스 툴팁은 그대로). */}
+          <ChartDrawingArea>
+            <ResponsiveContainer
+              width="100%"
+              height="100%"
+              initialDimension={{ width: numericWidth, height: numericHeight }}
+              onResize={(width, resizedHeight) => setMeasured({ width, height: resizedHeight })}
             >
-              {pieData.map((_entry, index) => (
-                <Cell key={`cell-${index}`} fill={palette[index % palette.length]} />
-              ))}
-            </Pie>
-            <Tooltip
-              contentStyle={TOOLTIP_CONTENT_STYLE}
-              itemStyle={TOOLTIP_ITEM_STYLE}
-              formatter={(value, name) => [value, name]}
-            />
-            {showLegend && (
-              <Legend
-                // 범례는 상한 높이 안에서 스크롤된다 — 카드 밖·제목 위로 넘치지 않게(WD-307).
-                wrapperStyle={{ fontSize: 12, maxHeight: legendMaxHeight, overflowY: 'auto' }}
-              />
-            )}
-          </PieChart>
-        </ResponsiveContainer>
-      </ChartDrawingArea>
+              <PieChart {...HIDDEN_CHART_ROOT_PROPS} margin={{ top: 8 + noticeHeight, right: 16, left: 0, bottom: 8 }}>
+                <Pie
+                  // WD-826: recharts Pie 는 조각 묶음 <g> 에 rootTabIndex(기본 0)를 붙여 숨긴 그림 안 Tab 정지점이 된다 — -1 로 끈다
+                  rootTabIndex={-1}
+                  data={pieData}
+                  dataKey={valueKey}
+                  nameKey={nameKey}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={isDonut ? 60 : 0}
+                  outerRadius={outerRadius}
+                  // 조각 사이 여백은 (항목 수-1)×각도만큼 360° 에서 빠진다 — 항목이 많으면 합이 360° 를 넘어 조각이 음수 각도로 겹쳐
+                  // 그려지므로 많은 항목에서는 여백을 없앤다(WD-307).
+                  paddingAngle={categoryCount > PADDING_MAX_CATEGORIES ? 0 : 2}
+                  // 수백 개 조각의 진입 애니메이션은 대시보드를 무겁게 만든다 — 많은 항목이면 끈다(WD-307).
+                  isAnimationActive={!showManyNotice}
+                  // 조각이 1° 도 안 되면 기본 흰 테두리(1px)가 조각을 덮어 파이가 속 빈 고리처럼 보인다 — 많은 항목이면 테두리를 없앤다(WD-307).
+                  stroke={showManyNotice ? 'none' : undefined}
+                  label={
+                    showSliceLabels
+                      ? ({ name, percent }: { name?: string; percent?: number }) =>
+                          (percent ?? 0) > 0.05 ? `${name ?? ''} (${((percent ?? 0) * 100).toFixed(0)}%)` : ''
+                      : false
+                  }
+                  labelLine={false}
+                >
+                  {pieData.map((_entry, index) => (
+                    <Cell key={`cell-${index}`} fill={palette[index % palette.length]} />
+                  ))}
+                </Pie>
+                <Tooltip
+                  contentStyle={TOOLTIP_CONTENT_STYLE}
+                  itemStyle={TOOLTIP_ITEM_STYLE}
+                  formatter={(value, name) => [value, name]}
+                />
+                {showLegend && (
+                  <Legend
+                    // 범례는 상한 높이 안에서 스크롤된다 — 카드 밖·제목 위로 넘치지 않게(WD-307).
+                    wrapperStyle={{ fontSize: 12, maxHeight: legendMaxHeight, overflowY: 'auto' }}
+                  />
+                )}
+              </PieChart>
+            </ResponsiveContainer>
+          </ChartDrawingArea>
+        </>
+      )}
     </div>
   );
 }
