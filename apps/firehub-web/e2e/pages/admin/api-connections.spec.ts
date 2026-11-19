@@ -60,6 +60,16 @@ async function saveInfoAndRefetch(page: Page, refetched: ApiConnectionResponse, 
 }
 
 /**
+ * 「지운 헤더 … 바뀌었습니다」 안내가 뜨지 않았음을 확인한다(WD-804 반려).
+ * 토스트는 재조회 병합 뒤 조금 늦게 그려질 수 있어, 곧바로 세면 안내가 떠도 통과한다 — 잠깐 기다린 뒤 센다.
+ */
+async function expectNoRenameNotice(page: Page) {
+  await page.waitForTimeout(500);
+  // toHaveCount(0) 는 안 뜰 때까지 재시도해, 떴다가 4초 뒤 저절로 닫히는 토스트도 통과시킨다 — 한 번만 세어 그 순간 없음을 본다
+  expect(await page.getByText(/지운 헤더 .* 바뀌었습니다/).count()).toBe(0);
+}
+
+/**
  * API 연결 페이지 E2E 테스트
  * - 목록 렌더링, 생성 폼, 수정, 삭제를 검증한다.
  * - 관리 화면 권한 가드(AdminOrPermissionRoute) 통과와 화면 안 버튼 노출을 위해 ADMIN 역할·관리 권한 코드로 users/me를 오버라이드한다.
@@ -3481,6 +3491,8 @@ test.describe('WD-796 재조회 병합 후속', () => {
 
     await expect(page.getByText('다른 곳에서 추가 헤더(X-Id)가 지워져 목록을 맞췄습니다.')).toBeVisible();
     await expect(page.getByText('다른 곳에서 추가 헤더(x-id)가 더해져 목록에 넣었습니다.')).toBeVisible();
+    // 사용자가 지운 헤더가 아니므로 「지운 헤더 … 바뀌었습니다」 안내는 없다(WD-804 반려)
+    await expectNoRenameNotice(page);
     // 손대지 않은 옛 이름 행은 빠지고 새 이름 행이 남는다
     await expect(page.getByLabel('추가 헤더 이름 1')).toHaveValue('X-A');
     await expect(page.getByLabel('추가 헤더 이름 2')).toHaveValue('x-id');
@@ -3584,6 +3596,8 @@ test.describe('WD-796 재조회 병합 후속', () => {
     await expect(page.getByLabel('추가 헤더 이름 1')).toHaveValue('X-A');
     await expect(page.getByLabel('추가 헤더 이름 2')).toHaveCount(0);
     await expect(page.getByText(/가 더해져 목록에 넣었습니다/)).toHaveCount(0);
+    // 같은 이름으로 돌아왔으니 이름 변경 안내도 없다(WD-804 반려)
+    await expectNoRenameNotice(page);
 
     // 저장 payload 에도 X-Del 이 없다
     await page.getByRole('button', { name: '인증 저장' }).click();
@@ -3660,12 +3674,42 @@ test.describe('WD-796 재조회 병합 후속', () => {
     await expect(page.getByText(/가 더해져 목록에 넣었습니다/)).toHaveCount(0);
     // 되살리지는 않지만, 지운 헤더가 다른 곳에서 이름이 바뀌었음을 한 번 알린다
     await expect(
-      page.getByText('지운 헤더 X-Id 이(가) 다른 곳에서 x-id 으로 바뀌었습니다', { exact: false }),
+      page.getByText('지운 헤더 X-Id 이(가) 다른 곳에서 x-id 으로 바뀌었습니다. 지운 대로 두며, 저장하면 서버에서도 지워집니다', {
+        exact: true,
+      }),
     ).toHaveCount(1);
 
     await page.getByRole('button', { name: '인증 저장' }).click();
     await expect.poll(() => capture.requests.length).toBe(2);
     expect(savedExtraHeaders(capture)).toEqual({ 'extraHeader:X-A': '****a001' });
+  });
+
+  test('지운 X-Id 자리에 같은 이름의 새 행을 써 두면 x-id 로 바뀌어 와도 「서버에서도 지워집니다」 안내를 띄우지 않는다 (WD-804 반려)', async ({
+    authenticatedPage: page,
+  }) => {
+    const stored = await openAuthEdit(
+      page,
+      storedApiKeyConnection({ 'extraHeader:X-A': '****a001', 'extraHeader:X-Id': '****i001' }),
+    );
+    await page.getByRole('button', { name: '추가 헤더 2 삭제' }).click();
+    await expect(page.getByLabel('추가 헤더 이름 2')).toHaveCount(0);
+    // 같은 이름 X-Id 를 값과 함께 새 행으로 다시 넣는다 — 저장하면 이 행이 나간다
+    await page.getByRole('button', { name: '헤더 추가' }).click();
+    await page.getByLabel('추가 헤더 이름 2').fill('X-Id');
+    await page.getByLabel('추가 헤더 값 2').fill('typed-new');
+
+    await saveInfoAndRefetch(page, {
+      ...stored,
+      name: RENAMED,
+      maskedAuthConfig: { ...MAIN_AUTH, 'extraHeader:X-A': '****a001', 'extraHeader:x-id': '****i001' },
+    });
+    await expect(page.getByLabel('연결 이름')).toHaveValue(RENAMED);
+
+    // 사용자의 새 행이 그대로 남고, 서버에서 지워진다는 거짓 안내는 없다
+    await expect(page.getByLabel('추가 헤더 이름 2')).toHaveValue('X-Id');
+    await expect(page.getByLabel('추가 헤더 값 2')).toHaveValue('typed-new');
+    await expect(page.getByLabel('추가 헤더 이름 3')).toHaveCount(0);
+    await expectNoRenameNotice(page);
   });
 
   test('지운 X-Id 가 x-id 로 바뀌고 X-New 가 더해진 재조회는 「더해져」 안내와 이름 변경 안내를 함께 보인다 (WD-804 반려)', async ({
@@ -3692,7 +3736,9 @@ test.describe('WD-796 재조회 병합 후속', () => {
 
     await expect(page.getByText('다른 곳에서 추가 헤더(X-New)가 더해져 목록에 넣었습니다.')).toBeVisible();
     await expect(
-      page.getByText('지운 헤더 X-Id 이(가) 다른 곳에서 x-id 으로 바뀌었습니다', { exact: false }),
+      page.getByText('지운 헤더 X-Id 이(가) 다른 곳에서 x-id 으로 바뀌었습니다. 지운 대로 두며, 저장하면 서버에서도 지워집니다', {
+        exact: true,
+      }),
     ).toBeVisible();
     await expect(page.getByLabel('추가 헤더 이름 2')).toHaveValue('X-New');
     await expect(page.getByLabel('추가 헤더 이름 3')).toHaveCount(0);
