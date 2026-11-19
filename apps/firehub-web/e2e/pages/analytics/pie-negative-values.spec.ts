@@ -62,7 +62,7 @@ test.describe('파이·도넛 차트 — 음수 값 (WD-303)', () => {
     test(`${label} 차트는 음수 행을 빼고 비율을 계산하며, 뺀 개수를 안내한다`, async ({ authenticatedPage: page }) => {
       const name = await setupPieMocks(page, chartType, ROWS);
       await page.goto('/analytics/dashboards/1');
-      await expect(page.getByText(name)).toBeVisible();
+      await expect(page.getByText(name, { exact: true })).toBeVisible();
 
       // 음수 2개(서울 -5.5, 서울2 "-1")를 뺐다는 안내
       await expect(page.getByTestId('pie-negative-notice')).toHaveText(
@@ -91,7 +91,7 @@ test.describe('파이·도넛 차트 — 음수 값 (WD-303)', () => {
     ];
     const name = await setupPieMocks(page, 'PIE', rows);
     await page.goto('/analytics/dashboards/1');
-    await expect(page.getByText(name)).toBeVisible();
+    await expect(page.getByText(name, { exact: true })).toBeVisible();
 
     await expect(page.locator('.recharts-pie-label-text', { hasText: '인천 (75%)' })).toBeVisible();
     await expect(page.locator('.recharts-pie-label-text', { hasText: '부산 (25%)' })).toBeVisible();

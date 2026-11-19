@@ -4,8 +4,10 @@ import { memo, useMemo } from 'react';
 import type { ChartConfig, ChartType } from '../../types/analytics';
 import { AreaChartView } from './AreaChartView';
 import { BarChartView } from './BarChartView';
+import { buildChartAccessibleName, buildChartDataTable } from './chart-a11y';
 import { findMissingChartColumns, normalizeYAxis, resolveChartAxes } from './chart-missing-columns';
 import { findMissingChartAxesMessage } from './chart-required-axes';
+import { ChartAccessibleFigure } from './ChartAccessibleFigure';
 import { LineChartView } from './LineChartView';
 import { MapChartView } from './MapChartView';
 import { HeatmapChartView } from './nivo/HeatmapChartView';
@@ -42,6 +44,10 @@ export interface ChartRendererProps {
    * 일부러 Y 를 비운 것이라 추론하면 문자 컬럼을 값으로 읽어 NaN 이 그려진다 — false 를 넘겨 「축을 선택하세요」 안내를 보인다.
    */
   inferAxes?: boolean;
+  /**
+   * 차트 제목(WD-826) — 있으면 접근 이름이 「제목」 타입 이 되고, 없으면 축 정보로 자동 생성한다.
+   */
+  title?: string;
 }
 
 /** 위젯·차트 편집 미리보기의 기본 해결 문구(WD-88 A안, 사람 승인 문구 — 바꾸지 않는다) */
@@ -127,6 +133,7 @@ export function ChartRenderer({
   fillParent,
   missingColumnsHint = DEFAULT_MISSING_COLUMNS_HINT,
   inferAxes = true,
+  title,
 }: ChartRendererProps) {
   // WD-88: 원본 쿼리의 컬럼 이름이 바뀌면 저장된 축 설정이 없는 컬럼을 가리켜, 차트가 빈 격자·범례만 그린 채
   // 아무 안내도 하지 않았다. 설정 컬럼이 하나라도 결과에 없으면 틀린 그림 대신 원인과 해결 방법을 보여 준다.
@@ -142,7 +149,22 @@ export function ChartRenderer({
   // yAxis 가 아예 없는 설정(AI 챗에서 LLM 이 빠뜨린 경우 등)에서 .length 로 TypeError 가 나지 않게 빈 배열로 정규화한다(WD-88).
   // 추론 규칙은 resolveChartAxes 하나로 AI 챗 rows 정규화(WD-104)와 공유한다.
   // WD-505: inferAxes=false(차트 빌더 미리보기)면 추론하지 않고 사용자가 고른 축만 쓴다.
-  const config = inferAxes ? resolveChartAxes(rawConfig, columns) : normalizeYAxis(rawConfig);
+  // WD-826: 아래 접근 이름·값 표 메모의 키로 쓰므로 입력이 같으면 같은 객체를 돌려주게 메모한다
+  // (resolveChartAxes/normalizeYAxis 는 항상 새 객체를 만들어, 메모하지 않으면 매 렌더 표를 다시 만든다).
+  const config = useMemo(
+    () => (inferAxes ? resolveChartAxes(rawConfig, columns) : normalizeYAxis(rawConfig)),
+    [inferAxes, rawConfig, columns],
+  );
+
+  // WD-826: figure 의 접근 이름·값 대체 표. 대시보드·AI 챗은 memo 하지 않은 ChartRenderer 를 쓰므로 렌더마다
+  // 다시 만들지 않게 메모한다 — 훅이라 조기 반환보다 앞에 둔다. figure 로 감싸지 않는 경우(TABLE·MAP·컬럼 누락·
+  // 빈 데이터)에는 계산하지 않는다(null). 축 미설정 안내 등 그 밖의 조기 반환에서는 계산해도 쓰이지 않을 뿐이다.
+  const needsFigure = chartType !== 'TABLE' && chartType !== 'MAP' && missingColumns.length === 0 && data.length > 0;
+  const accessible = useMemo(() => {
+    if (!needsFigure) return null;
+    const name = buildChartAccessibleName(chartType, config, title);
+    return { name, table: buildChartDataTable(chartType, config, columns, data, name) };
+  }, [needsFigure, chartType, config, columns, data, title]);
 
   // 0행 결과에서도 이름이 틀렸으면 컬럼 안내가 「데이터가 없습니다」보다 우선한다(축을 고쳐야 데이터가 보이므로).
   if (missingColumns.length > 0) {
@@ -253,13 +275,23 @@ export function ChartRenderer({
       );
   }
 
-  // When fillParent, wrap in a full-height container so Recharts ResponsiveContainer
-  // and MapView/TableView can derive their dimensions from CSS.
-  if (fillParent) {
-    return <div className="h-full w-full">{chart}</div>;
+  // TABLE 은 자체가 표라 대체 표가 필요 없다 — 기존 방식 그대로 둔다.
+  // MAP 도 figure 로 감싸지 않는다(WD-826): 지도에는 확대·축소 버튼, 키보드로 움직이는 canvas, 팝업 닫기 버튼 같은
+  // 실제 조작 요소와 경고 안내(role=status)가 있어 숨길 수 없고, GeoJSON 원문 표로는 그 내용을 대신하지 못한다.
+  // fillParent 면 MapView/TableView 가 CSS 로 크기를 얻도록 전체 높이 래퍼로 감싼다.
+  if (chartType === 'TABLE' || chartType === 'MAP') {
+    return fillParent ? <div className="h-full w-full">{chart}</div> : chart;
   }
 
-  return chart;
+  // WD-826: 그 외 차트는 접근 이름이 붙은 figure 로 감싸고 값 대체 표를 함께 준다(위에서 메모한 값).
+  // 그림은 각 뷰가 ChartDrawingArea 로 그림 영역에만 aria-hidden 을 건다 — 뷰의 안내문은 스크린리더에 남긴다.
+  // 뷰가 그림 대신 안내만 돌려주면 figure 는 이름·표를 내지 않는다(ChartAccessibleFigure). figure 가 fillParent 래퍼 역할도 겸한다.
+  // 여기까지 오면 needsFigure(TABLE·MAP·컬럼 누락·빈 데이터 아님)는 항상 참이라 accessible 에 값이 있다.
+  return (
+    <ChartAccessibleFigure name={accessible!.name} table={accessible!.table} fillParent={fillParent}>
+      {chart}
+    </ChartAccessibleFigure>
+  );
 }
 
 /**

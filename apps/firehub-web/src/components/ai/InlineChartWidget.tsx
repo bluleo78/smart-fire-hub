@@ -256,6 +256,8 @@ export function InlineChartWidget({
             columns={columns}
             height={300}
             missingColumnsHint={AI_MISSING_COLUMNS_HINT}
+            // WD-826: 접근 이름에 쓰는 차트 제목
+            title={title}
           />
         </ChartErrorBoundary>
       </div>

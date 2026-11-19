@@ -9,6 +9,7 @@ import {
   TOOLTIP_ITEM_STYLE,
 } from '../chart-styles';
 import type { ChartViewProps } from '../chart-view-props';
+import { ChartDrawingArea } from '../ChartDrawingArea';
 
 // 커스텀 콘텐츠: 셀에 라벨 표시
 interface ContentProps {
@@ -43,19 +44,23 @@ export function TreemapChartView({ data, config, height = 300 }: ChartViewProps)
   }));
 
   return (
-    <ResponsiveContainer width="100%" height={height ?? '100%'}>
-      <Treemap
-        data={treeData}
-        dataKey="size"
-        content={<CustomContent />}
-        isAnimationActive={false}
-      >
-        <Tooltip
-          contentStyle={TOOLTIP_CONTENT_STYLE}
-          itemStyle={TOOLTIP_ITEM_STYLE}
-          formatter={(v, _, props: { payload?: { name?: string } }) => [v != null ? Number(v).toLocaleString() : '', props.payload?.name ?? ''] as [string, string]}
-        />
-      </Treemap>
-    </ResponsiveContainer>
+    <ChartDrawingArea>
+      {/* WD-826: 그림만 보조기술에서 숨긴다(값은 figure 의 대체 표). Treemap 은 다른 recharts 차트와 달리 RootSurface 를
+          쓰지 않아 svg 에 tabindex 를 붙이지 않는다 — tabIndex prop 도 받지 않으므로 넘기지 않는다 */}
+      <ResponsiveContainer width="100%" height={height ?? '100%'}>
+        <Treemap
+          data={treeData}
+          dataKey="size"
+          content={<CustomContent />}
+          isAnimationActive={false}
+        >
+          <Tooltip
+            contentStyle={TOOLTIP_CONTENT_STYLE}
+            itemStyle={TOOLTIP_ITEM_STYLE}
+            formatter={(v, _, props: { payload?: { name?: string } }) => [v != null ? Number(v).toLocaleString() : '', props.payload?.name ?? ''] as [string, string]}
+          />
+        </Treemap>
+      </ResponsiveContainer>
+    </ChartDrawingArea>
   );
 }

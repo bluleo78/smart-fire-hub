@@ -5,6 +5,7 @@ import { ResponsiveHeatMap } from '@nivo/heatmap';
 import { useMemo } from 'react';
 
 import type { ChartViewProps } from '../chart-view-props';
+import { ChartDrawingArea } from '../ChartDrawingArea';
 
 /** CSS 변수를 읽어 Nivo theme 객체를 생성 */
 function useNivoTheme() {
@@ -84,7 +85,8 @@ export function HeatmapChartView({ data, config, height = 300 }: ChartViewProps)
   }
 
   return (
-    <div style={{ height: height ?? '100%' }}>
+    // WD-826: 히트맵 그림만 보조기술에서 숨긴다 — 값은 figure 의 대체 표가 전달하고, 매핑·빈 데이터 안내는 위에서 따로 반환해 읽힌다.
+    <ChartDrawingArea style={{ height: height ?? '100%' }}>
       <ResponsiveHeatMap
         data={nivoData}
         theme={theme}
@@ -96,6 +98,6 @@ export function HeatmapChartView({ data, config, height = 300 }: ChartViewProps)
         labelTextColor={{ from: 'color', modifiers: [['darker', 2]] }}
         animate={false}
       />
-    </div>
+    </ChartDrawingArea>
   );
 }

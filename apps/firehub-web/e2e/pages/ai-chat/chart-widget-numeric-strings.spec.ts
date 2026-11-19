@@ -10,6 +10,7 @@
 import type { Locator, Page } from '@playwright/test';
 
 import { expect, test } from '../../fixtures/auth.fixture';
+import { CHART_SURFACE } from '../../fixtures/chart-selectors';
 
 /** SSE 이벤트 직렬화 — "data: {json}\n\n" 형태로 변환 */
 function sseEvent(data: Record<string, unknown>): string {
@@ -120,8 +121,9 @@ test.describe('AI 챗 인라인 차트 — 숫자 문자열 값 (WD-104)', () =>
       })
       .toBeCloseTo(120.5 / 80, 1);
     // 카테고리 축 값은 바꾸지 않는다 — "007" 이 7 로 바뀌면 안 된다
-    // 첫 .recharts-surface 는 범례 아이콘이라 차트 본체(role=application)에서 축 라벨을 찾는다
-    const surface = panel.getByRole('application');
+    // 첫 .recharts-surface 는 범례 아이콘이라 차트 본체에서 축 라벨을 찾는다.
+    // WD-826: 숨긴 그림은 accessibilityLayer=false 라 role=application 이 없다 — recharts-wrapper 바로 아래 svg(본체)로 짚는다
+    const surface = panel.locator(CHART_SURFACE);
     await expect(surface.getByText('007', { exact: true })).toBeVisible();
     await expect(surface.getByText('2024', { exact: true })).toBeVisible();
   });

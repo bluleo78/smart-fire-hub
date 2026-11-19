@@ -11,7 +11,9 @@ import {
 } from 'recharts';
 
 import type { ChartConfig } from '../../types/analytics';
+import { HIDDEN_CHART_ROOT_PROPS } from './chart-figure-context';
 import { CHART_SERIES_COLORS, TOOLTIP_CONTENT_STYLE, TOOLTIP_ITEM_STYLE } from './chart-styles';
+import { ChartDrawingArea } from './ChartDrawingArea';
 import { toPlotNumber } from './numeric-columns';
 
 interface ScatterChartViewProps {
@@ -89,47 +91,50 @@ export function ScatterChartView({ config, data, height }: ScatterChartViewProps
   }
 
   return (
-    <ResponsiveContainer width="100%" height={height ?? '100%'}>
-      <ScatterChart margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
-        {showGrid && <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />}
-        <XAxis
-          dataKey="x"
-          name={xAxis}
-          type="number"
-          tick={{ fontSize: 12, fill: 'var(--muted-foreground)' }}
-          tickLine={false}
-          axisLine={{ stroke: 'var(--border)' }}
-          label={
-            config.xAxisLabel
-              ? { value: config.xAxisLabel, position: 'insideBottom', offset: -4, fontSize: 12 }
-              : undefined
-          }
-        />
-        <YAxis
-          dataKey="y"
-          // 계열이 여럿이면(Y축 여러 개) 툴팁의 y 이름을 한 컬럼으로 단정하지 않는다 — 어느 계열인지는 범례 색으로 본다
-          name={usedY.length === 1 ? usedY[0] : '값'}
-          type="number"
-          tick={{ fontSize: 12, fill: 'var(--muted-foreground)' }}
-          tickLine={false}
-          axisLine={false}
-          label={
-            config.yAxisLabel
-              ? { value: config.yAxisLabel, angle: -90, position: 'insideLeft', fontSize: 12 }
-              : undefined
-          }
-        />
-        <ZAxis range={[40, 40]} />
-        <Tooltip
-          cursor={{ strokeDasharray: '3 3', stroke: 'var(--muted-foreground)' }}
-          contentStyle={TOOLTIP_CONTENT_STYLE}
-          itemStyle={TOOLTIP_ITEM_STYLE}
-        />
-        {showLegend && <Legend wrapperStyle={{ fontSize: 12 }} />}
-        {scatterGroups.map((g) => (
-          <Scatter key={g.name} name={g.name} data={g.data} fill={g.color} opacity={0.7} />
-        ))}
-      </ScatterChart>
-    </ResponsiveContainer>
+    <ChartDrawingArea>
+      {/* WD-826: 그림은 숨기고 대체 표가 값을 전한다 */}
+      <ResponsiveContainer width="100%" height={height ?? '100%'}>
+        <ScatterChart {...HIDDEN_CHART_ROOT_PROPS} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
+          {showGrid && <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />}
+          <XAxis
+            dataKey="x"
+            name={xAxis}
+            type="number"
+            tick={{ fontSize: 12, fill: 'var(--muted-foreground)' }}
+            tickLine={false}
+            axisLine={{ stroke: 'var(--border)' }}
+            label={
+              config.xAxisLabel
+                ? { value: config.xAxisLabel, position: 'insideBottom', offset: -4, fontSize: 12 }
+                : undefined
+            }
+          />
+          <YAxis
+            dataKey="y"
+            // 계열이 여럿이면(Y축 여러 개) 툴팁의 y 이름을 한 컬럼으로 단정하지 않는다 — 어느 계열인지는 범례 색으로 본다
+            name={usedY.length === 1 ? usedY[0] : '값'}
+            type="number"
+            tick={{ fontSize: 12, fill: 'var(--muted-foreground)' }}
+            tickLine={false}
+            axisLine={false}
+            label={
+              config.yAxisLabel
+                ? { value: config.yAxisLabel, angle: -90, position: 'insideLeft', fontSize: 12 }
+                : undefined
+            }
+          />
+          <ZAxis range={[40, 40]} />
+          <Tooltip
+            cursor={{ strokeDasharray: '3 3', stroke: 'var(--muted-foreground)' }}
+            contentStyle={TOOLTIP_CONTENT_STYLE}
+            itemStyle={TOOLTIP_ITEM_STYLE}
+          />
+          {showLegend && <Legend wrapperStyle={{ fontSize: 12 }} />}
+          {scatterGroups.map((g) => (
+            <Scatter key={g.name} name={g.name} data={g.data} fill={g.color} opacity={0.7} />
+          ))}
+        </ScatterChart>
+      </ResponsiveContainer>
+    </ChartDrawingArea>
   );
 }

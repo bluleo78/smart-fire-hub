@@ -86,6 +86,21 @@ const USED_COLUMN_FIELDS: Record<ChartType, UsedColumnFields> = {
 };
 
 /**
+ * 차트 타입이 렌더러에서 실제로 읽는 컬럼 이름 목록을 돌려준다(WD-826).
+ *
+ * 스크린리더용 값 대체 표(chart-a11y)가 "차트가 그리는 컬럼"만 열로 삼도록 USED_COLUMN_FIELDS 를 그대로 재사용한다.
+ * 빈 값은 제거하고 중복은 한 번만, 설정 순서를 유지한다. TABLE 처럼 설정 컬럼이 없는 타입은 빈 배열이다.
+ */
+export function getChartUsedColumns(chartType: ChartType, config: ChartConfig): string[] {
+  const result: string[] = [];
+  for (const field of USED_COLUMN_FIELDS[chartType](normalizeYAxis(config))) {
+    if (typeof field !== 'string' || field === '') continue;
+    if (!result.includes(field)) result.push(field);
+  }
+  return result;
+}
+
+/**
  * 차트 설정이 가리키는 컬럼 중 쿼리 결과에 없는 이름을 돌려준다(WD-88).
  *
  * 원본 쿼리의 컬럼 이름이 바뀌면(region → area) 저장된 축 설정은 없는 컬럼을 가리키고, 차트는 빈 격자와

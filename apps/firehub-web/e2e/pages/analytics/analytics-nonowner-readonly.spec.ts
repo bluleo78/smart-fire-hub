@@ -54,7 +54,7 @@ test.describe('대시보드 — 남이 공유한 대시보드는 보기 전용 (
     await expect(page.getByRole('heading', { name: '공유 현황판' })).toBeVisible();
 
     // 위젯은 그대로 보인다(읽기)
-    await expect(page.getByText('항목 A')).toBeVisible();
+    await expect(page.locator('svg.recharts-surface').getByText('항목 A', { exact: true }).first()).toBeVisible();
     // 편집 진입점이 없다
     await expect(page.getByRole('button', { name: '편집' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: '차트 추가' })).toHaveCount(0);
@@ -73,7 +73,7 @@ test.describe('대시보드 — 남이 공유한 대시보드는 보기 전용 (
 
     // 새로고침을 눌러도 수정 요청은 나가지 않는다
     await toolbarRefresh.click();
-    await expect(page.getByText('항목 A')).toBeVisible();
+    await expect(page.locator('svg.recharts-surface').getByText('항목 A', { exact: true }).first()).toBeVisible();
     expect(writes).toEqual([]);
   });
 

@@ -2,8 +2,10 @@
 // 단계별 감소 수치를 깔때기 형태로 표현. config.xAxis = 단계명, config.yAxis[0] = 수치.
 import { Cell,Funnel, FunnelChart, LabelList, ResponsiveContainer, Tooltip } from 'recharts';
 
+import { HIDDEN_CHART_ROOT_PROPS } from '../chart-figure-context';
 import { CHART_SEQ_LABEL_COLOR, seqColor, TOOLTIP_CONTENT_STYLE, TOOLTIP_ITEM_STYLE } from '../chart-styles';
 import type { ChartViewProps } from '../chart-view-props';
+import { ChartDrawingArea } from '../ChartDrawingArea';
 import { isNonNumericValue, toPlotNumber } from '../numeric-columns';
 import { NonNumericValueNotice } from './NonNumericValueNotice';
 
@@ -21,32 +23,35 @@ export function FunnelChartView(props: ChartViewProps) {
   }));
 
   return (
-    <ResponsiveContainer width="100%" height={height ?? '100%'}>
-      <FunnelChart>
-        <Tooltip contentStyle={TOOLTIP_CONTENT_STYLE} itemStyle={TOOLTIP_ITEM_STYLE} />
-        <Funnel dataKey="value" data={funnelData} isAnimationActive={false}>
-          {funnelData.map((entry, i) => (
-            <Cell key={i} fill={entry.fill} />
-          ))}
-          <LabelList
-            dataKey="value"
-            position="center"
-            content={(props) => {
-              // dataKey="value"로 props.value를 직접 전달받고, index로 name 조회
-              const entry = funnelData[props.index as number];
-              if (!entry) return null;
-              const nx = Number(props.x ?? 0), ny = Number(props.y ?? 0);
-              const nw = Number(props.width ?? 0), nh = Number(props.height ?? 0);
-              return (
-              <text x={nx + nw / 2} y={ny + nh / 2} textAnchor="middle"
-                dominantBaseline="middle" fontSize={12} fill={CHART_SEQ_LABEL_COLOR} fontWeight={500}>
-                {`${entry.name}: ${entry.value.toLocaleString()}`}
-              </text>
-              );
-            }}
-          />
-        </Funnel>
-      </FunnelChart>
-    </ResponsiveContainer>
+    <ChartDrawingArea>
+      {/* WD-826: 그림은 숨기고 대체 표가 값을 전한다 */}
+      <ResponsiveContainer width="100%" height={height ?? '100%'}>
+        <FunnelChart {...HIDDEN_CHART_ROOT_PROPS}>
+          <Tooltip contentStyle={TOOLTIP_CONTENT_STYLE} itemStyle={TOOLTIP_ITEM_STYLE} />
+          <Funnel dataKey="value" data={funnelData} isAnimationActive={false}>
+            {funnelData.map((entry, i) => (
+              <Cell key={i} fill={entry.fill} />
+            ))}
+            <LabelList
+              dataKey="value"
+              position="center"
+              content={(props) => {
+                // dataKey="value"로 props.value를 직접 전달받고, index로 name 조회
+                const entry = funnelData[props.index as number];
+                if (!entry) return null;
+                const nx = Number(props.x ?? 0), ny = Number(props.y ?? 0);
+                const nw = Number(props.width ?? 0), nh = Number(props.height ?? 0);
+                return (
+                <text x={nx + nw / 2} y={ny + nh / 2} textAnchor="middle"
+                  dominantBaseline="middle" fontSize={12} fill={CHART_SEQ_LABEL_COLOR} fontWeight={500}>
+                  {`${entry.name}: ${entry.value.toLocaleString()}`}
+                </text>
+                );
+              }}
+            />
+          </Funnel>
+        </FunnelChart>
+      </ResponsiveContainer>
+    </ChartDrawingArea>
   );
 }

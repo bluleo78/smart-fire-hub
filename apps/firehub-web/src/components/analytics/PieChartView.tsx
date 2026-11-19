@@ -10,7 +10,9 @@ import {
 } from 'recharts';
 
 import type { ChartConfig, ChartType } from '../../types/analytics';
+import { HIDDEN_CHART_ROOT_PROPS } from './chart-figure-context';
 import { CHART_SERIES_COLORS, TOOLTIP_CONTENT_STYLE, TOOLTIP_ITEM_STYLE } from './chart-styles';
+import { ChartDrawingArea } from './ChartDrawingArea';
 
 interface PieChartViewProps {
   chartType: ChartType;
@@ -114,53 +116,60 @@ export function PieChartView({ chartType, config, data, height }: PieChartViewPr
           )}
         </div>
       )}
-      <ResponsiveContainer
-        width="100%"
-        height="100%"
-        initialDimension={{ width: numericWidth, height: numericHeight }}
-        onResize={(width, resizedHeight) => setMeasured({ width, height: resizedHeight })}
-      >
-        <PieChart margin={{ top: 8 + noticeHeight, right: 16, left: 0, bottom: 8 }}>
-          <Pie
-            data={pieData}
-            dataKey={valueKey}
-            nameKey={nameKey}
-            cx="50%"
-            cy="50%"
-            innerRadius={isDonut ? 60 : 0}
-            outerRadius={outerRadius}
-            // 조각 사이 여백은 (항목 수-1)×각도만큼 360° 에서 빠진다 — 항목이 많으면 합이 360° 를 넘어 조각이 음수 각도로 겹쳐
-            // 그려지므로 많은 항목에서는 여백을 없앤다(WD-307).
-            paddingAngle={categoryCount > PADDING_MAX_CATEGORIES ? 0 : 2}
-            // 수백 개 조각의 진입 애니메이션은 대시보드를 무겁게 만든다 — 많은 항목이면 끈다(WD-307).
-            isAnimationActive={!showManyNotice}
-            // 조각이 1° 도 안 되면 기본 흰 테두리(1px)가 조각을 덮어 파이가 속 빈 고리처럼 보인다 — 많은 항목이면 테두리를 없앤다(WD-307).
-            stroke={showManyNotice ? 'none' : undefined}
-            label={
-              showSliceLabels
-                ? ({ name, percent }: { name?: string; percent?: number }) =>
-                    (percent ?? 0) > 0.05 ? `${name ?? ''} (${((percent ?? 0) * 100).toFixed(0)}%)` : ''
-                : false
-            }
-            labelLine={false}
-          >
-            {pieData.map((_entry, index) => (
-              <Cell key={`cell-${index}`} fill={palette[index % palette.length]} />
-            ))}
-          </Pie>
-          <Tooltip
-            contentStyle={TOOLTIP_CONTENT_STYLE}
-            itemStyle={TOOLTIP_ITEM_STYLE}
-            formatter={(value, name) => [value, name]}
-          />
-          {showLegend && (
-            <Legend
-              // 범례는 상한 높이 안에서 스크롤된다 — 카드 밖·제목 위로 넘치지 않게(WD-307).
-              wrapperStyle={{ fontSize: 12, maxHeight: legendMaxHeight, overflowY: 'auto' }}
+      {/* WD-826: 그림만 보조기술에서 숨긴다 — 위 안내문은 화면에 보이는 정보라 밖에 두어 스크린리더가 읽는다.
+          PieChart 의 HIDDEN_CHART_ROOT_PROPS 는 svg 의 tabindex·role=application 을, Pie 의 rootTabIndex=-1 은
+          조각 묶음 <g> 의 tabindex=0 을 없애 숨긴 영역 안 Tab 정지점이 생기지 않게 한다(마우스 툴팁은 그대로). */}
+      <ChartDrawingArea>
+        <ResponsiveContainer
+          width="100%"
+          height="100%"
+          initialDimension={{ width: numericWidth, height: numericHeight }}
+          onResize={(width, resizedHeight) => setMeasured({ width, height: resizedHeight })}
+        >
+          <PieChart {...HIDDEN_CHART_ROOT_PROPS} margin={{ top: 8 + noticeHeight, right: 16, left: 0, bottom: 8 }}>
+            <Pie
+              // WD-826: recharts Pie 는 조각 묶음 <g> 에 rootTabIndex(기본 0)를 붙여 숨긴 그림 안 Tab 정지점이 된다 — -1 로 끈다
+              rootTabIndex={-1}
+              data={pieData}
+              dataKey={valueKey}
+              nameKey={nameKey}
+              cx="50%"
+              cy="50%"
+              innerRadius={isDonut ? 60 : 0}
+              outerRadius={outerRadius}
+              // 조각 사이 여백은 (항목 수-1)×각도만큼 360° 에서 빠진다 — 항목이 많으면 합이 360° 를 넘어 조각이 음수 각도로 겹쳐
+              // 그려지므로 많은 항목에서는 여백을 없앤다(WD-307).
+              paddingAngle={categoryCount > PADDING_MAX_CATEGORIES ? 0 : 2}
+              // 수백 개 조각의 진입 애니메이션은 대시보드를 무겁게 만든다 — 많은 항목이면 끈다(WD-307).
+              isAnimationActive={!showManyNotice}
+              // 조각이 1° 도 안 되면 기본 흰 테두리(1px)가 조각을 덮어 파이가 속 빈 고리처럼 보인다 — 많은 항목이면 테두리를 없앤다(WD-307).
+              stroke={showManyNotice ? 'none' : undefined}
+              label={
+                showSliceLabels
+                  ? ({ name, percent }: { name?: string; percent?: number }) =>
+                      (percent ?? 0) > 0.05 ? `${name ?? ''} (${((percent ?? 0) * 100).toFixed(0)}%)` : ''
+                  : false
+              }
+              labelLine={false}
+            >
+              {pieData.map((_entry, index) => (
+                <Cell key={`cell-${index}`} fill={palette[index % palette.length]} />
+              ))}
+            </Pie>
+            <Tooltip
+              contentStyle={TOOLTIP_CONTENT_STYLE}
+              itemStyle={TOOLTIP_ITEM_STYLE}
+              formatter={(value, name) => [value, name]}
             />
-          )}
-        </PieChart>
-      </ResponsiveContainer>
+            {showLegend && (
+              <Legend
+                // 범례는 상한 높이 안에서 스크롤된다 — 카드 밖·제목 위로 넘치지 않게(WD-307).
+                wrapperStyle={{ fontSize: 12, maxHeight: legendMaxHeight, overflowY: 'auto' }}
+              />
+            )}
+          </PieChart>
+        </ResponsiveContainer>
+      </ChartDrawingArea>
     </div>
   );
 }

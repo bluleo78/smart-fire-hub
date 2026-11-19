@@ -7,7 +7,7 @@
  */
 
 /** 통계 항목별로 받아들이는 컬럼 이름 — 뷰가 읽는 순서와 같다(앞 이름이 우선). */
-const BOXPLOT_STAT_KEYS: ReadonlyArray<{ label: string; keys: readonly string[] }> = [
+const BOXPLOT_STAT_KEYS: ReadonlyArray<{ label: BoxplotStatLabel; keys: readonly string[] }> = [
   { label: 'min', keys: ['min', 'q0'] },
   { label: 'q1', keys: ['q1'] },
   { label: 'median', keys: ['median', 'q2'] },
@@ -25,4 +25,41 @@ export const BOXPLOT_REQUIRED_COLUMNS_LABEL = 'min·q1·median·q3·max';
 export function findMissingBoxplotStats(columns: readonly string[]): string[] {
   const present = new Set(columns);
   return BOXPLOT_STAT_KEYS.filter(({ keys }) => !keys.some((k) => present.has(k))).map(({ label }) => label);
+}
+
+/** 박스 플롯이 그리는 카테고리 하나의 통계(WD-826 — 뷰와 값 대체 표가 같은 값을 쓰도록 여기로 옮김) */
+export interface BoxStat {
+  category: string;
+  min: number;
+  q1: number;
+  median: number;
+  q3: number;
+  max: number;
+}
+
+/** 통계 항목 이름(BOXPLOT_STAT_KEYS 의 label) — BoxStat 의 키와 같다 */
+export type BoxplotStatLabel = 'min' | 'q1' | 'median' | 'q3' | 'max';
+
+/**
+ * 행마다 카테고리(xKey)와 통계 값을 읽는다 — 앞 이름이 우선(min → q0 등)이고, 없으면 0 으로 본다.
+ * 통계 컬럼이 빠진 결과는 뷰가 그리지 않고 안내하므로(findMissingBoxplotStats) 0 은 실제로 그려지지 않는다.
+ */
+export function toBoxStats(data: Record<string, unknown>[], xKey: string): BoxStat[] {
+  return data.map((d) => ({
+    category: String(d[xKey] ?? ''),
+    min: Number(d.min ?? d.q0 ?? 0),
+    q1: Number(d.q1 ?? 0),
+    median: Number(d.median ?? d.q2 ?? 0),
+    q3: Number(d.q3 ?? 0),
+    max: Number(d.max ?? d.q4 ?? 0),
+  }));
+}
+
+/**
+ * 결과 컬럼에 있는 통계 항목 이름을 뷰가 읽는 순서대로 돌려준다(WD-826 — 값 대체 표의 열).
+ * findMissingBoxplotStats 의 반대 — 별칭(q0·q2·q4)으로 있어도 항목 이름(min·median·max)으로 센다.
+ */
+export function findPresentBoxplotStats(columns: readonly string[]): BoxplotStatLabel[] {
+  const present = new Set(columns);
+  return BOXPLOT_STAT_KEYS.filter(({ keys }) => keys.some((k) => present.has(k))).map(({ label }) => label);
 }

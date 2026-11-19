@@ -4,6 +4,7 @@
 import { useEffect, useRef, useState } from 'react';
 
 import type { ChartViewProps } from '../chart-view-props';
+import { ChartDrawingArea } from '../ChartDrawingArea';
 
 const MARGIN = { top: 20, right: 20, bottom: 40, left: 60 };
 const CANDLE_RATIO = 0.5;
@@ -79,51 +80,54 @@ export function CandlestickChartView({ data, config, height = 300 }: ChartViewPr
 
   return (
     <div ref={containerRef} style={{ width: '100%', height: containerH }}>
-      {dims.width > 0 && (
-        <svg width={dims.width} height={containerH}>
-          <g transform={`translate(${MARGIN.left},${MARGIN.top})`}>
-            {/* Y축 그리드 + 눈금 */}
-            {yTicks.map(t => (
-              <g key={t} transform={`translate(0,${toY(t)})`}>
-                <line x1={0} x2={plotW} stroke="var(--border)" strokeDasharray="3 3" />
-                <text x={-8} textAnchor="end" fontSize={10} fill="var(--muted-foreground)" dy="0.32em">
-                  {t.toFixed(2)}
-                </text>
-              </g>
-            ))}
-            {/* 캔들 */}
-            {candles.map((c, i) => {
-              const cx = toX(i);
-              const bullish = c.close >= c.open;
-              // #375: 상승/하락은 시리즈가 아니라 의미(양/음)다 — 범주형 팔레트가 아닌 시맨틱 토큰을 쓴다.
-              const color = bullish ? 'var(--success)' : 'var(--destructive)';
-              const bodyTop = toY(Math.max(c.open, c.close));
-              const bodyBottom = toY(Math.min(c.open, c.close));
-              const bodyH = Math.max(bodyBottom - bodyTop, 1);
-              return (
-                <g key={i}>
-                  {/* 위 꼬리 */}
-                  <line x1={cx} y1={toY(c.high)} x2={cx} y2={bodyTop} stroke={color} strokeWidth={1.5} />
-                  {/* 아래 꼬리 */}
-                  <line x1={cx} y1={bodyBottom} x2={cx} y2={toY(c.low)} stroke={color} strokeWidth={1.5} />
-                  {/* 몸통 */}
-                  <rect
-                    x={cx - candleW / 2} y={bodyTop}
-                    width={candleW} height={bodyH}
-                    fill={color}
-                    stroke={color}
-                    strokeWidth={1}
-                    fillOpacity={bullish ? 0.2 : 1}
-                  />
-                  {/* X 라벨 */}
-                  <text x={cx} y={plotH + 20} textAnchor="middle" fontSize={10}
-                    fill="var(--muted-foreground)">{c.label}</text>
+      {/* WD-826: 그림만 보조기술에서 숨긴다 — 값은 figure 의 대체 표가 전달하고, 안내문은 위에서 따로 반환해 읽힌다 */}
+      <ChartDrawingArea>
+        {dims.width > 0 && (
+          <svg width={dims.width} height={containerH}>
+            <g transform={`translate(${MARGIN.left},${MARGIN.top})`}>
+              {/* Y축 그리드 + 눈금 */}
+              {yTicks.map(t => (
+                <g key={t} transform={`translate(0,${toY(t)})`}>
+                  <line x1={0} x2={plotW} stroke="var(--border)" strokeDasharray="3 3" />
+                  <text x={-8} textAnchor="end" fontSize={10} fill="var(--muted-foreground)" dy="0.32em">
+                    {t.toFixed(2)}
+                  </text>
                 </g>
-              );
-            })}
-          </g>
-        </svg>
-      )}
+              ))}
+              {/* 캔들 */}
+              {candles.map((c, i) => {
+                const cx = toX(i);
+                const bullish = c.close >= c.open;
+                // #375: 상승/하락은 시리즈가 아니라 의미(양/음)다 — 범주형 팔레트가 아닌 시맨틱 토큰을 쓴다.
+                const color = bullish ? 'var(--success)' : 'var(--destructive)';
+                const bodyTop = toY(Math.max(c.open, c.close));
+                const bodyBottom = toY(Math.min(c.open, c.close));
+                const bodyH = Math.max(bodyBottom - bodyTop, 1);
+                return (
+                  <g key={i}>
+                    {/* 위 꼬리 */}
+                    <line x1={cx} y1={toY(c.high)} x2={cx} y2={bodyTop} stroke={color} strokeWidth={1.5} />
+                    {/* 아래 꼬리 */}
+                    <line x1={cx} y1={bodyBottom} x2={cx} y2={toY(c.low)} stroke={color} strokeWidth={1.5} />
+                    {/* 몸통 */}
+                    <rect
+                      x={cx - candleW / 2} y={bodyTop}
+                      width={candleW} height={bodyH}
+                      fill={color}
+                      stroke={color}
+                      strokeWidth={1}
+                      fillOpacity={bullish ? 0.2 : 1}
+                    />
+                    {/* X 라벨 */}
+                    <text x={cx} y={plotH + 20} textAnchor="middle" fontSize={10}
+                      fill="var(--muted-foreground)">{c.label}</text>
+                  </g>
+                );
+              })}
+            </g>
+          </svg>
+        )}
+      </ChartDrawingArea>
     </div>
   );
 }

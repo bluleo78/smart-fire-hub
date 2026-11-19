@@ -2,8 +2,11 @@
 // 단일 수치를 반원 게이지로 표현. config.yAxis[0] = 값 컬럼, config.min/max/target = 범위 설정.
 import { Cell, Pie, PieChart, ResponsiveContainer } from 'recharts';
 
+import { computeGaugeReading } from '../chart-derived-data';
+import { HIDDEN_CHART_ROOT_PROPS } from '../chart-figure-context';
 import type { ChartViewProps } from '../chart-view-props';
-import { isNonNumericValue, toPlotNumber } from '../numeric-columns';
+import { ChartDrawingArea } from '../ChartDrawingArea';
+import { isNonNumericValue } from '../numeric-columns';
 import { NonNumericValueNotice } from './NonNumericValueNotice';
 
 export function GaugeChartView(props: ChartViewProps) {
@@ -13,11 +16,8 @@ export function GaugeChartView(props: ChartViewProps) {
   // 첫 행만 보면 첫 칸이 빈 문자 컬럼이 0 으로 그럴듯하게 그려지므로, 컬럼에 숫자가 아닌 값이 하나라도 있으면 안내한다.
   // 안내 높이는 기본값(280)이 아닌 원래 prop 을 넘긴다 — fillParent(undefined)면 부모 높이를 채워 가운데에 보이게.
   if (data.some((row) => isNonNumericValue(row[valueKey]))) return <NonNumericValueNotice height={props.height} />;
-  // 빈 값(null·'')은 기존처럼 0 으로 본다
-  const value = toPlotNumber(data[0]?.[valueKey]) ?? 0;
-  const min = config.min ?? 0;
-  // max 미설정 시 실제 데이터 값의 120%를 기본값으로 사용하여 바늘이 최대값에 고착되지 않도록 함
-  const max = config.max ?? (value > 0 ? Math.ceil(value * 1.2) : 100);
+  // 값(빈 값은 0)과 범위(max 미설정 시 값의 120%) — WD-826: 값 대체 표(chart-a11y)와 같은 함수를 쓴다
+  const { value, min, max } = computeGaugeReading(data, config);
   const pct = Math.min(Math.max((value - min) / (max - min), 0), 1);
 
   // 반원 배경 + 값 호
@@ -34,11 +34,16 @@ export function GaugeChartView(props: ChartViewProps) {
   const containerH = height ?? 280;
 
   return (
-    <div style={{ position: 'relative', height: containerH }}>
+    // WD-826: 게이지 그림(호 + 바늘·수치 오버레이)만 보조기술에서 숨긴다 — 수치는 figure 의 대체 표가 전달한다.
+    // 숫자 아닌 값 안내(NonNumericValueNotice)는 위에서 그림 대신 반환하므로 숨기지 않는다.
+    // PieChart 의 HIDDEN_CHART_ROOT_PROPS 는 svg 의 tabindex·role=application 을, Pie 의 rootTabIndex=-1 은
+    // 조각 묶음 <g> 의 tabindex=0 을 없애 숨긴 영역 안 Tab 정지점이 생기지 않게 한다.
+    <ChartDrawingArea style={{ position: 'relative', height: containerH }}>
       <ResponsiveContainer width="100%" height={containerH}>
-        <PieChart>
+        <PieChart {...HIDDEN_CHART_ROOT_PROPS}>
           {/* 배경 반원 */}
           <Pie
+            rootTabIndex={-1}
             data={backgroundData}
             cx="50%"
             cy="75%"
@@ -53,6 +58,7 @@ export function GaugeChartView(props: ChartViewProps) {
           </Pie>
           {/* 값 반원 */}
           <Pie
+            rootTabIndex={-1}
             data={gaugeData}
             cx="50%"
             cy="75%"
@@ -101,6 +107,6 @@ export function GaugeChartView(props: ChartViewProps) {
           {min} ~ {max}
         </text>
       </svg>
-    </div>
+    </ChartDrawingArea>
   );
 }
