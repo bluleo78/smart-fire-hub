@@ -1,6 +1,5 @@
 package com.smartfirehub.global.config;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.security.JsonAuthenticationEntryPoint;
 import com.smartfirehub.global.security.JwtAuthenticationFilter;
 import com.smartfirehub.global.security.JwtProperties;
@@ -25,6 +24,7 @@ import org.springframework.security.web.header.HeaderWriterFilter;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+import tools.jackson.databind.ObjectMapper;
 
 @Configuration
 @EnableWebSecurity

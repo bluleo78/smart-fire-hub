@@ -9,7 +9,6 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.analytics.dto.CreateChartRequest;
 import com.smartfirehub.analytics.repository.mybatis.AnalyticsRows.IdName;
 import com.smartfirehub.analytics.repository.mybatis.ChartRows.ChartInsert;
@@ -22,6 +21,8 @@ import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * 분석 MyBatis 리포지토리의 DB 로 재현할 수 없는 분기(WD-710) — 가짜 매퍼로 고정한다.
@@ -33,7 +34,7 @@ import org.mockito.ArgumentCaptor;
  */
 class MyBatisAnalyticsShareAndConfigUnitTest {
 
-  private final ObjectMapper objectMapper = new ObjectMapper();
+  private final ObjectMapper objectMapper = JsonMapper.builderWithJackson2Defaults().build();
 
   @Test
   @DisplayName("shareCharts — 잠근 대상 수와 바꾼 행 수가 다르면 IllegalStateException")

@@ -1,6 +1,5 @@
 package com.smartfirehub.analytics.repository;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.analytics.repository.mybatis.AnalyticsDashboardMapper;
 import com.smartfirehub.analytics.repository.mybatis.ChartMapper;
 import com.smartfirehub.analytics.repository.mybatis.MyBatisAnalyticsDashboardRepository;
@@ -19,6 +18,8 @@ import com.smartfirehub.user.repository.AccessFixtures;
 import com.smartfirehub.user.repository.TiberoAccessFixtures;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.TestInstance;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * LockUpdatedAtByIdContractTest 를 MyBatis 구현 다섯 + Tibero 실서버로 실행한다(WD-710). 리포지토리는 런타임 계정 +
@@ -38,7 +39,7 @@ class TiberoMyBatisLockUpdatedAtByIdContractTest extends LockUpdatedAtByIdContra
   @BeforeAll
   void startTibero() {
     poc = TiberoPlatformSchema.shared();
-    ObjectMapper om = new ObjectMapper();
+    ObjectMapper om = JsonMapper.builderWithJackson2Defaults().build();
     savedQueryRepository =
         poc.transactional(
             SavedQueryRepository.class,

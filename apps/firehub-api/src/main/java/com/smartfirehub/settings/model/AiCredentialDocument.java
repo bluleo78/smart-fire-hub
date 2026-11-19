@@ -1,13 +1,14 @@
 package com.smartfirehub.settings.model;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.function.UnaryOperator;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 /**
  * {@code ai.credential} 의 저장 형태 {@code {v, agentType, payload, secret}}.
@@ -22,7 +23,8 @@ import java.util.function.UnaryOperator;
  */
 public final class AiCredentialDocument {
 
-  private static final ObjectMapper MAPPER = new ObjectMapper();
+  // Jackson 3(WD-793): 예전 Jackson 2 new ObjectMapper() 와 같은 기본값(속성 정렬 안 함·원시 타입 null 허용 등)으로 만든다.
+  private static final ObjectMapper MAPPER = JsonMapper.builderWithJackson2Defaults().build();
 
   private final ObjectNode root;
 
@@ -42,7 +44,7 @@ public final class AiCredentialDocument {
         throw new IllegalArgumentException("ai.credential JSON 은 객체여야 한다: " + json);
       }
       return new AiCredentialDocument(objectNode);
-    } catch (JsonProcessingException e) {
+    } catch (JacksonException e) {
       throw new IllegalArgumentException("ai.credential JSON 파싱에 실패했다: " + json, e);
     }
   }
@@ -59,7 +61,7 @@ public final class AiCredentialDocument {
 
   /** 미해석 원본 문자열이다. 알려진 값인지 판별하고 거부하는 것은 이 클래스가 아니라 소비처의 책임이다. */
   public String agentType() {
-    return root.path("agentType").asText("");
+    return root.path("agentType").asString("");
   }
 
   /**
@@ -98,7 +100,7 @@ public final class AiCredentialDocument {
     List<String> names = new ArrayList<>();
     // fields() 는 Jackson 3(Boot 4)에서 사라지므로 같은 순서를 주는 properties() 로 순회한다.
     for (Map.Entry<String, JsonNode> entry : secret().properties()) {
-      String cipher = entry.getValue().asText("");
+      String cipher = entry.getValue().asString("");
       if (!decrypt.apply(cipher).isEmpty()) {
         names.add(entry.getKey());
       }
@@ -116,7 +118,7 @@ public final class AiCredentialDocument {
    * 서비스가 이 값을 얻으려 썼던 {@code toJson()} 재파싱(문서 전체를 문자열로 넘기는 것)보다 오히려 노출 폭이 좁다.
    */
   public String secretCipher(String name) {
-    return secret().path(name).asText("");
+    return secret().path(name).asString("");
   }
 
   /**

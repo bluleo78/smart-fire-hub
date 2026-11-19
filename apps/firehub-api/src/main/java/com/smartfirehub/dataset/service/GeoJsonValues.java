@@ -1,12 +1,12 @@
 package com.smartfirehub.dataset.service;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.util.ExactJsonMapper;
 import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * 위치(GEOMETRY) 칸에 들어온 GeoJSON 문자열을 검증하고, DB 가 저장할 geometry GeoJSON 으로 정규화한다(WD-201).
@@ -70,7 +70,7 @@ public final class GeoJsonValues {
     JsonNode node;
     try {
       node = EXACT_MAPPER.readTree(value);
-    } catch (JsonProcessingException e) {
+    } catch (JacksonException e) {
       // 파서 원문(토큰·위치)은 사용자 문구에 싣지 않는다 — 원인 추적용으로만 남긴다.
       log.debug("GeoJSON 파싱 실패: {}", e.getOriginalMessage());
       throw new IllegalArgumentException(INVALID_FORMAT_MESSAGE);
@@ -100,7 +100,7 @@ public final class GeoJsonValues {
       validateGeometry(geometry, geometryType);
       try {
         return EXACT_MAPPER.writeValueAsString(geometry);
-      } catch (JsonProcessingException e) {
+      } catch (JacksonException e) {
         // 방금 읽은 트리를 다시 쓰는 것이라 실제로는 일어나지 않는다 — 일어나면 형식 오류로 돌린다.
         log.debug("GeoJSON geometry 직렬화 실패: {}", e.getOriginalMessage());
         throw new IllegalArgumentException(INVALID_FORMAT_MESSAGE);
@@ -116,7 +116,7 @@ public final class GeoJsonValues {
     if (typeNode == null || typeNode.isNull()) {
       throw new IllegalArgumentException("GeoJSON 에 type 항목이 없습니다");
     }
-    return typeNode.asText();
+    return typeNode.asString("");
   }
 
   /** geometry 객체 하나를 검사한다 — 저장 가능한 타입인지, 필수 항목(coordinates·geometries)이 있는지. */
@@ -176,8 +176,11 @@ public final class GeoJsonValues {
       if (coords.size() < 2 || !coords.get(0).isNumber() || !coords.get(1).isNumber()) {
         throw new IllegalArgumentException(INVALID_FORMAT_MESSAGE);
       }
-      double lon = coords.get(0).asDouble();
-      double lat = coords.get(1).asDouble();
+      // numberValue().doubleValue() 로 읽는다 — Jackson 3 의 asDouble() 은 double 범위를 넘는 값(예: 1e400, EXACT_MAPPER 가
+      // BigDecimal 로 읽음)에 예외를 던져 500 이 됐다. Number#doubleValue 는 Jackson 2 때처럼 ±Infinity 를 돌려줘 아래 범위
+      // 검사가 400(좌표 범위 밖)으로 거부한다(WD-793 리뷰).
+      double lon = coords.get(0).numberValue().doubleValue();
+      double lat = coords.get(1).numberValue().doubleValue();
       if (lon < -180 || lon > 180 || lat < -90 || lat > 90) {
         throw new IllegalArgumentException(OUT_OF_RANGE_MESSAGE);
       }

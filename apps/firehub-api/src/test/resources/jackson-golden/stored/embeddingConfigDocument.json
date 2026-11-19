@@ -1,0 +1,1 @@
+{"v":1,"provider":"OLLAMA","model":"모델/x","baseUrl":"https://e.example/v1","dimension":1536,"hosting":"SELF_HOSTED","secret":{"apiKey":"cipher=="}}

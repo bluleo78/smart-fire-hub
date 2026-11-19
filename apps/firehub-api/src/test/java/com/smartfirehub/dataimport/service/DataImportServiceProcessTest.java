@@ -586,7 +586,7 @@ class DataImportServiceProcessTest extends IntegrationTestBase {
   // 시트 고르기 (WD-253) — 임포트 잡이 미리보기에서 고른 시트를 그대로 읽는다
   // ---------------------------------------------------------------------
 
-  @Autowired private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+  @Autowired private tools.jackson.databind.ObjectMapper objectMapper;
 
   /** 숨긴 첫 시트 「숨김」(h 1행)과 보이는 「데이터」(d1·d2 2행)로 된 xlsx 를 임시 파일로 쓴다. */
   private Path writeHiddenFirstXlsx() throws Exception {

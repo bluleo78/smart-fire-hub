@@ -1,0 +1,1 @@
+{"success":true,"columns":["a","b"],"rows":[{"a":0.0000001,"b":"x"}],"row_count":1,"truncated":true,"query_type":"SELECT","affected_rows":0,"execution_time_ms":7,"error":null,"db_error":null}

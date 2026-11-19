@@ -1,6 +1,5 @@
 package com.smartfirehub.proactive.repository.mybatis;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.dto.LockedRowVersion;
 import com.smartfirehub.global.platformdb.mybatis.PlatformJson;
 import com.smartfirehub.global.platformdb.mybatis.PlatformMyBatisRepository;
@@ -15,6 +14,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * ProactiveJobRepository 의 MyBatis 구현(WD-709) — {@code JooqProactiveJobRepository} 와 같은 의미.

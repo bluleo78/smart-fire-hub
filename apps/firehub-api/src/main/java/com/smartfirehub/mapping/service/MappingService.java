@@ -1,7 +1,5 @@
 package com.smartfirehub.mapping.service;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
@@ -23,6 +21,8 @@ import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 
 // 데이터셋 매핑 서비스 — 저장/활성화 시점에 온톨로지·컬럼·속성타입·트리플 conformance를 검증한다.
 // 수동 저작이므로 검수 인박스는 쓰지 않고 매핑 레코드 자체의 draft→active 라이프사이클로 관리한다.
@@ -287,7 +287,7 @@ public class MappingService {
   private String serialize(MappingSpec spec) {
     try {
       return objectMapper.writeValueAsString(spec);
-    } catch (JsonProcessingException e) {
+    } catch (JacksonException e) {
       throw new IllegalArgumentException("매핑 직렬화 실패", e);
     }
   }
@@ -295,7 +295,7 @@ public class MappingService {
   private MappingSpec deserialize(String json) {
     try {
       return objectMapper.readValue(json, MappingSpec.class);
-    } catch (JsonProcessingException e) {
+    } catch (JacksonException e) {
       throw new IllegalStateException("매핑 역직렬화 실패", e);
     }
   }

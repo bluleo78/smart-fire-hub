@@ -14,9 +14,6 @@ import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import ch.qos.logback.classic.Level;
-import com.fasterxml.jackson.core.JsonGenerator;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dbexecutor.LogCapture;
 import com.smartfirehub.dbexecutor.store.StoreDescriptor;
 import com.smartfirehub.dbexecutor.store.StoreDescriptorClient;
@@ -39,6 +36,10 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
+import tools.jackson.core.StreamWriteFeature;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * 슬롯 스트리밍 조회(WD-78): NDJSON 형식, 행 상한 없음(Review Focus 5), 중간 DB 오류는 실패 마지막 줄, 클라이언트 끊김은 문장 취소·롤백·반납,
@@ -65,7 +66,7 @@ class SlotQueryRunnerTest {
 
   /** 운영 설정(write-bigdecimal-as-plain)과 같은 매퍼. */
   private final ObjectMapper mapper =
-      new ObjectMapper().enable(JsonGenerator.Feature.WRITE_BIGDECIMAL_AS_PLAIN);
+      JsonMapper.builder().enable(StreamWriteFeature.WRITE_BIGDECIMAL_AS_PLAIN).build();
 
   private final SlotQueryRunner runner = new SlotQueryRunner(db.slotPools, descriptors, mapper);
 

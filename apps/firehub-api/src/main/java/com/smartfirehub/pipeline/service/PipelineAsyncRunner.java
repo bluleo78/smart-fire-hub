@@ -1,6 +1,5 @@
 package com.smartfirehub.pipeline.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.apiconnection.dto.ApiConnectionResponse;
 import com.smartfirehub.apiconnection.exception.ApiConnectionNotFoundException;
 import com.smartfirehub.apiconnection.service.ApiConnectionService;
@@ -15,6 +14,7 @@ import com.smartfirehub.dataset.service.DatasetDataWriteLock;
 import com.smartfirehub.dataset.service.DatasetService;
 import com.smartfirehub.dataset.storage.DataStoreBackend;
 import com.smartfirehub.dataset.storage.DataTableNames;
+import com.smartfirehub.global.json.JsonConversions;
 import com.smartfirehub.global.security.PermissionChecker;
 import com.smartfirehub.pipeline.dto.LoadStrategy;
 import com.smartfirehub.pipeline.dto.PipelineStepResponse;
@@ -76,6 +76,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * PipelineExecutionService의 비동기 파이프라인 실행을 담당하는 별도 Spring Bean.
@@ -993,8 +994,10 @@ public class PipelineAsyncRunner {
         // outputColumns 가 없으면 들어온 출력(소유 TEMP 포함)을 그대로 쓴다(이전 동작 유지).
         if (ownedTempOutput && step.pythonConfig() != null) {
           com.smartfirehub.pipeline.dto.PythonStepConfig pythonStepConfig =
-              objectMapper.convertValue(
-                  step.pythonConfig(), com.smartfirehub.pipeline.dto.PythonStepConfig.class);
+              JsonConversions.convertValue(
+                  objectMapper,
+                  step.pythonConfig(),
+                  com.smartfirehub.pipeline.dto.PythonStepConfig.class);
           if (pythonStepConfig.outputColumns() != null
               && !pythonStepConfig.outputColumns().isEmpty()) {
             List<ColumnInfo> pythonColumns =
@@ -1192,7 +1195,7 @@ public class PipelineAsyncRunner {
         }
       } else if ("API_CALL".equals(step.scriptType())) {
         ApiCallConfig apiCallConfig =
-            objectMapper.convertValue(step.apiConfig(), ApiCallConfig.class);
+            JsonConversions.convertValue(objectMapper, step.apiConfig(), ApiCallConfig.class);
 
         // apiConnectionId가 있으면 connection 정보 로드 (baseUrl + auth)
         ApiConnectionResponse apiConn = null;
@@ -1399,8 +1402,10 @@ public class PipelineAsyncRunner {
         // 출력이 없거나 이 스텝 소유 TEMP 면 임시 데이터셋 준비(WD-222 — 열이 바뀌면 재생성)
         if (ownedTempOutput) {
           com.smartfirehub.pipeline.dto.AiClassifyConfig aiClassifyConfig =
-              objectMapper.convertValue(
-                  step.aiConfig(), com.smartfirehub.pipeline.dto.AiClassifyConfig.class);
+              JsonConversions.convertValue(
+                  objectMapper,
+                  step.aiConfig(),
+                  com.smartfirehub.pipeline.dto.AiClassifyConfig.class);
           List<ColumnInfo> aiColumns = buildAiClassifyColumns(aiClassifyConfig);
           StepTemp temp =
               ensureStepTemp(

@@ -1,6 +1,5 @@
 package com.smartfirehub.pipeline.repository;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.pipeline.repository.mybatis.MyBatisTriggerEventRepository;
 import com.smartfirehub.pipeline.repository.mybatis.TriggerEventMapper;
 import com.smartfirehub.support.tibero.TiberoLive;
@@ -9,6 +8,7 @@ import com.smartfirehub.user.repository.AccessFixtures;
 import com.smartfirehub.user.repository.TiberoAccessFixtures;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.TestInstance;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * TriggerEventRepositoryContractTest 를 MyBatis 구현 + Tibero 실서버로 실행한다(WD-708). 리포지토리는 런타임 계정 +
@@ -28,7 +28,8 @@ class TiberoMyBatisTriggerEventRepositoryContractTest extends TriggerEventReposi
         poc.transactional(
             TriggerEventRepository.class,
             new MyBatisTriggerEventRepository(
-                poc.mapper(TriggerEventMapper.class), new ObjectMapper()));
+                poc.mapper(TriggerEventMapper.class),
+                JsonMapper.builderWithJackson2Defaults().build()));
   }
 
   @Override

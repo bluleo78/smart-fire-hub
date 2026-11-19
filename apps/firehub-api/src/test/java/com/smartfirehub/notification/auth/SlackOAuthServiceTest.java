@@ -9,8 +9,6 @@ import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.smartfirehub.apiconnection.service.EncryptionService;
 import com.smartfirehub.notification.ChannelType;
 import com.smartfirehub.notification.auth.SlackOAuthService.SlackWorkspaceInstalled;
@@ -30,6 +28,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.test.util.ReflectionTestUtils;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 /**
  * SlackOAuthService 단위 테스트.
@@ -51,7 +52,7 @@ class SlackOAuthServiceTest {
 
   @InjectMocks private SlackOAuthService slackOAuthService;
 
-  private static final ObjectMapper MAPPER = new ObjectMapper();
+  private static final ObjectMapper MAPPER = JsonMapper.builderWithJackson2Defaults().build();
 
   private static final String TEST_CLIENT_ID = "test-slack-client-id";
   private static final String TEST_CLIENT_SECRET = "test-slack-secret";

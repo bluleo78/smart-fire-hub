@@ -80,9 +80,6 @@ dependencies {
     implementation("org.jspecify:jspecify:1.0.0")
     // Boot 4 에서 spring-boot-starter-web 은 spring-boot-starter-webmvc 로 이름이 바뀌었다(옛 이름은 deprecated 별칭).
     implementation("org.springframework.boot:spring-boot-starter-webmvc")
-    // Jackson 2 유지(WD-792) — Boot 4 기본은 Jackson 3 이라, Jackson 2 ObjectMapper 빈·HTTP 메시지 변환기 자동 구성을 이 모듈이 따로 준다.
-    // 코드 전반이 com.fasterxml ObjectMapper 를 주입받으므로 없으면 컨텍스트가 뜨지 않는다. Jackson 3 전환은 WD-793.
-    implementation("org.springframework.boot:spring-boot-jackson2")
     implementation("org.springframework.boot:spring-boot-starter-validation")
     implementation("org.springframework.boot:spring-boot-starter-jooq")
     // WD-487 PoC - MyBatis (starter 는 쓰지 않는다: DataSource 가 여럿이라 자동 구성이 잘못 붙을 수 있고, 팩토리 생성을 Tibero 하네스와 공유해야 한다)
@@ -382,6 +379,9 @@ tasks.withType<Test> {
     }
     // 테스트 JVM 의 Testcontainers 가 데몬이 받는 API 버전으로 요청하게 한다(기본 1.32 는 거절됨, WD-762).
     systemProperty("api.version", testcontainersDockerApiVersion)
+    // Jackson 골든 시험(WD-793)이 골든 파일을 다시 쓰게 하는 스위치만 Gradle 속성(-PjacksonGoldenWrite=true)에서 시험 JVM 으로 넘긴다.
+    // 시스템 속성은 기본으로 시험 JVM 에 전달되지 않기 때문이며, 평소(속성 없음)에는 아무것도 넘기지 않아 비교만 한다.
+    providers.gradleProperty("jacksonGoldenWrite").orNull?.let { systemProperty("jackson.golden.write", it) }
     // 시험용 PostgreSQL 이미지는 포크를 띄우기 전에 Gradle 이 한 번 준비하고, 이름을 시스템 속성으로 넘긴다(WD-798).
     // 예전에는 포크(JVM)마다 PostgresTestContainer 가 빌드를 불러 포크 2 면 같은 빌드가 두 번 돌았다.
     // tasks.withType<Test> 라 기본 test 뿐 아니라 tiberoTest·separateDataStoreTest 도 같은 이미지를 받는다.

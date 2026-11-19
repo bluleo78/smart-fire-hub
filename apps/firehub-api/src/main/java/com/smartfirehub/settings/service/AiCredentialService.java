@@ -1,11 +1,8 @@
 package com.smartfirehub.settings.service;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.smartfirehub.apiconnection.service.EncryptionService;
 import com.smartfirehub.apiconnection.service.UrlUtils;
+import com.smartfirehub.global.json.JsonConversions;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.securitylevel.access.ProviderHosting;
 import com.smartfirehub.securitylevel.ai.KnownPublicAiHosts;
@@ -27,6 +24,11 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 /**
  * AI 자격증명 슬롯({@link AiCredentialSlot}: {@code ai.credential}, {@code ai.classify_credential} +
@@ -129,7 +131,8 @@ public class AiCredentialService {
   // payload 값(Map<String,Object>) ↔ JsonNode 변환에 쓴다. AiCredentialDocument 내부 MAPPER 와
   // 별개 인스턴스다 — 그 클래스의 상수는 private 이고, 여기서 하는 일(POJO↔트리 변환)은 커스텀
   // 설정이 필요 없는 표준 동작이라 공유할 이유가 없다.
-  private static final ObjectMapper MAPPER = new ObjectMapper();
+  // Jackson 3(WD-793): 예전 Jackson 2 new ObjectMapper() 와 같은 기본값(속성 정렬 안 함·원시 타입 null 허용 등)으로 만든다.
+  private static final ObjectMapper MAPPER = JsonMapper.builderWithJackson2Defaults().build();
 
   /** 채팅 슬롯 해석 — 채팅·프로액티브·분류(미설정 시) 호출처가 쓰는 기존 진입점. */
   public AiCredential resolve() {
@@ -178,7 +181,8 @@ public class AiCredentialService {
             .orElseGet(() -> AiCredentialDocument.empty(DEFAULT_AGENT_TYPE));
 
     Map<String, Object> payload =
-        MAPPER.convertValue(doc.payload(), new TypeReference<Map<String, Object>>() {});
+        JsonConversions.convertValue(
+            MAPPER, doc.payload(), new TypeReference<Map<String, Object>>() {});
     // decryptOrEmpty 가 아니라 decryptOrEmptyLenient 를 쓴다 — 손으로 고친 행이 암호문 형식이
     // 아닌 값을 담고 있어도(예: "not-a-cipher") 화면은 죽지 않고 "미설정"으로 보여야 관리자가
     // 되돌릴 수 있다(스펙 §"알 수 없는 agentType" 문단과 같은 이유, 아래 메서드 javadoc 참고).
@@ -284,8 +288,9 @@ public class AiCredentialService {
       changed.add("agentType");
     }
     Set<String> payloadKeys = new LinkedHashSet<>();
-    before.payload().fieldNames().forEachRemaining(payloadKeys::add);
-    after.payload().fieldNames().forEachRemaining(payloadKeys::add);
+    // Jackson 3(WD-793): fieldNames() 는 propertyNames() 로 바뀌었다(같은 순서).
+    payloadKeys.addAll(before.payload().propertyNames());
+    payloadKeys.addAll(after.payload().propertyNames());
     for (String key : payloadKeys) {
       if (!Objects.equals(
           payloadValue(before.payload(), key), payloadValue(after.payload(), key))) {
@@ -337,7 +342,8 @@ public class AiCredentialService {
     // 호스팅 결과는 병합 전 기존 문서로 판정한다(미리보기와 같은 규칙 한 곳 — hostingOutcome).
     HostingOutcome outcome = hostingOutcome(existing, req);
     ObjectNode payloadNode = doc.payload();
-    req.payload().forEach((key, value) -> payloadNode.set(key, MAPPER.valueToTree(value)));
+    req.payload()
+        .forEach((key, value) -> payloadNode.set(key, JsonConversions.valueToTree(MAPPER, value)));
     // 같은 유형에서 전송 대상이 바뀌었는데 hosting 을 생략했으면, 병합이 남긴 기존 선언을 외부로 되돌린다 — 미리보기만 외부라 말하고 문서에
     // SELF_HOSTED 가 남으면 실제 판정(hosting())은 여전히 자체 호스팅으로 읽어 security:settings 우회가 그대로 남는다.
     if (!req.payload().containsKey(HOSTING_FIELD) && outcome.targetChanged() && !typeChanged) {
@@ -524,7 +530,7 @@ public class AiCredentialService {
       if (!req.payload().containsKey(field)) continue;
       Object requested = req.payload().get(field);
       JsonNode stored = existing.payload().get(field);
-      String before = stored == null || stored.isNull() ? "" : stored.asText("");
+      String before = stored == null || stored.isNull() ? "" : stored.asString("");
       String after = requested == null ? "" : String.valueOf(requested);
       if (!normalizeTarget(before).equals(normalizeTarget(after))) return true;
     }
@@ -541,7 +547,7 @@ public class AiCredentialService {
     if (!SELF_HOSTABLE_AGENT_TYPES.contains(doc.agentType())) {
       return ProviderHosting.EXTERNAL;
     }
-    return ProviderHosting.fromStored(doc.payload().path(HOSTING_FIELD).asText(""));
+    return ProviderHosting.fromStored(doc.payload().path(HOSTING_FIELD).asString(""));
   }
 
   /**
@@ -551,7 +557,7 @@ public class AiCredentialService {
   private static void validateHosting(AiCredentialDocument doc) {
     JsonNode h = doc.payload().get(HOSTING_FIELD);
     if (h == null || h.isNull()) return;
-    String v = h.asText("");
+    String v = h.asString("");
     if (!"EXTERNAL".equals(v) && !"SELF_HOSTED".equals(v)) {
       throw new IllegalArgumentException(MSG_HOSTING_INVALID);
     }
@@ -561,7 +567,7 @@ public class AiCredentialService {
     // 확실한 공용 AI SaaS 주소(api.openai.com 등)를 자체 호스팅이라 선언하면 '자체 호스팅 모델만' 등급 데이터가 외부로 나간다 — 병합 결과를
     // 보므로 명시 선언·생략 유지 모두 덮인다(임베딩 설정 저장과 같은 규칙·같은 목록).
     if ("SELF_HOSTED".equals(v)) {
-      KnownPublicAiHosts.requireNotKnownPublic(doc.payload().path("baseURL").asText(""));
+      KnownPublicAiHosts.requireNotKnownPublic(doc.payload().path("baseURL").asString(""));
     }
   }
 
@@ -600,7 +606,7 @@ public class AiCredentialService {
         .map(
             doc ->
                 new StoredOpencodeCredential(
-                    doc.payload().path("baseURL").asText(""),
+                    doc.payload().path("baseURL").asString(""),
                     decryptOrEmptyLenient(doc.secretCipher("apiKey"), slot.key())));
   }
 
@@ -730,9 +736,9 @@ public class AiCredentialService {
       case "cli-api" -> new AiCredential.CliApi(secretOf.apply("apiKey"));
       case "opencode" ->
           new AiCredential.Opencode(
-              payload.path("providerId").asText(""),
-              payload.path("baseURL").asText(""),
-              payload.path("reasoningEffort").asText(""),
+              payload.path("providerId").asString(""),
+              payload.path("baseURL").asString(""),
+              payload.path("reasoningEffort").asString(""),
               secretOf.apply("apiKey"));
       default -> throw new UnknownAgentTypeException(doc.agentType());
     };

@@ -1,8 +1,8 @@
 package com.smartfirehub.platform.dto;
 
-import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import com.smartfirehub.audit.time.StorageZoneDateTimeSerializer;
 import java.time.LocalDateTime;
+import tools.jackson.databind.annotation.JsonSerialize;
 
 /**
  * 운영자 콘솔 "계정" 화면의 한 줄(#784, WD-47 목록화) — 계정 생성(WD-46) 응답도 같은 DTO 다.

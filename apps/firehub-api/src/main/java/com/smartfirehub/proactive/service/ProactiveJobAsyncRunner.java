@@ -1,7 +1,6 @@
 package com.smartfirehub.proactive.service;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartfirehub.global.json.JsonConversions;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.notification.service.NotificationDispatcher;
 import com.smartfirehub.proactive.dto.AnomalyEvent;
@@ -31,6 +30,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * ProactiveJobService의 비동기 Job 실행을 담당하는 별도 Spring Bean.
@@ -246,7 +247,8 @@ public class ProactiveJobAsyncRunner {
         }
 
         // 결과 저장
-        Map<String, Object> resultMap = objectMapper.convertValue(result, new TypeReference<>() {});
+        Map<String, Object> resultMap =
+            JsonConversions.convertValue(objectMapper, result, new TypeReference<>() {});
         // 정리기가 먼저 닫았으면 이 결과를 배달해서는 안 된다. DB의 FAILED 와 실제 알림이 갈라진다.
         if (lostRace(
             executionRepository.updateResult(

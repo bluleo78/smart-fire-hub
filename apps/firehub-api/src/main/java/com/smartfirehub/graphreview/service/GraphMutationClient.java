@@ -1,10 +1,8 @@
 package com.smartfirehub.graphreview.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.exception.ExternalServiceException;
 import com.smartfirehub.global.security.DelegationHeaders;
-import com.smartfirehub.global.util.Jackson2WebClientCodecs;
+import com.smartfirehub.global.util.AppJsonWebClients;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
@@ -18,13 +16,15 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * 검수 승인 시 Neo4j 소유자인 ai-agent에 그래프 변경을 위임한다(역방향 통신 — 기존 Internal 인증 재사용). 실패는 예외로 전파해,
  * 호출자(ReviewItemService)가 이 예외 시 DB 상태를 갱신하지 않도록 함으로써 "실패 시 pending 유지"를 트랜잭션 없이 보장한다. 실패는 두 종류로
  * 나뉜다(#310): 사람이 고칠 거절(ai-agent 409 — 대상 노드 부재·온톨로지 위반·데이터셋 온톨로지 미연결(WD-807) 등) → {@link
- * IllegalStateException}(409 + 사유 노출), 그 외 장애 → {@link
- * ExternalServiceException}(502).
+ * IllegalStateException}(409 + 사유 노출), 그 외 장애 → {@link ExternalServiceException}(502).
  */
 @Component
 public class GraphMutationClient {
@@ -34,13 +34,14 @@ public class GraphMutationClient {
   private final WebClient webClient;
 
   /** 409 응답 바디에서 사용자용 사유(message)를 뽑는 데만 쓴다. */
-  private final ObjectMapper objectMapper = new ObjectMapper();
+  // Jackson 3(WD-793): 예전 Jackson 2 new ObjectMapper() 와 같은 기본값(속성 정렬 안 함·원시 타입 null 허용 등)으로 만든다.
+  private final ObjectMapper objectMapper = JsonMapper.builderWithJackson2Defaults().build();
 
   public GraphMutationClient(
       @Value("${agent.url}") String agentUrl,
       @Value("${agent.internal-token}") String internalToken) {
     this.webClient =
-        Jackson2WebClientCodecs.webClientBuilder()
+        AppJsonWebClients.webClientBuilder()
             .baseUrl(agentUrl)
             .defaultHeader("Authorization", "Internal " + internalToken)
             .build();
@@ -139,11 +140,11 @@ public class GraphMutationClient {
   /**
    * 임의 JSON 바디 POST.
    *
-   * <p>ai-agent가 409를 주면 "지금 이 요청 그대로는 그래프에 반영할 수 없음"이라는 거절이다 — 대상 노드 부재(#310), 온톨로지 위반(#319·WD-429),
-   * 데이터셋 온톨로지 미연결(WD-807) 등. 이때는 장애(502)가 아니라 사용자에게 사유를 그대로
-   * 보여줘야 하므로, 응답 바디의 message를 담은 {@link IllegalStateException}으로 바꿔 던진다(GlobalExceptionHandler가 409
-   * + 해당 메시지로 응답). 그 외 실패는 {@link ExternalServiceException}(502). 어느 쪽이든 예외가 나가면
-   * 호출자(ReviewItemService)는 status를 갱신하지 않아 항목이 pending으로 남는다.
+   * <p>ai-agent가 409를 주면 "지금 이 요청 그대로는 그래프에 반영할 수 없음"이라는 거절이다 — 대상 노드 부재(#310), 온톨로지
+   * 위반(#319·WD-429), 데이터셋 온톨로지 미연결(WD-807) 등. 이때는 장애(502)가 아니라 사용자에게 사유를 그대로 보여줘야 하므로, 응답 바디의
+   * message를 담은 {@link IllegalStateException}으로 바꿔 던진다(GlobalExceptionHandler가 409 + 해당 메시지로 응답). 그
+   * 외 실패는 {@link ExternalServiceException}(502). 어느 쪽이든 예외가 나가면 호출자(ReviewItemService)는 status를
+   * 갱신하지 않아 항목이 pending으로 남는다.
    *
    * <p>409 사유 추출은 {@code onStatus} 훅에서 바디를 명시적으로 읽는다 — {@code toBodilessEntity()}가 바디를 버리는 경로에 기대면
    * 사유가 조용히 사라져 일반 실패 문구로 퇴화할 수 있다.
@@ -153,6 +154,8 @@ public class GraphMutationClient {
     // 사유가 남는 쪽(여기)에서 끊는다.
     HttpHeaders delegation = DelegationHeaders.require(opLabel);
     try {
+      // 본문은 공유 코덱(앱 매퍼 설정, AppJsonWebClients)이 쓴다(WD-793) — 골든 graphMutationClient_* 가 이 바이트를 못
+      // 박는다.
       webClient
           .post()
           .uri(uri)
@@ -243,7 +246,7 @@ public class GraphMutationClient {
   private String conflictMessage(String rawBody, String opLabel) {
     try {
       JsonNode node = objectMapper.readTree(rawBody);
-      String message = node.path("message").asText(null);
+      String message = node.path("message").asString(null);
       if (message != null && !message.isBlank()) return message;
     } catch (Exception ignored) {
       // 바디가 JSON이 아니거나 비어 있음 — 아래 폴백 문구를 쓴다.

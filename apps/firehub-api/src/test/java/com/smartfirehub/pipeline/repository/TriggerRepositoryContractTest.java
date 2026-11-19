@@ -3,9 +3,8 @@ package com.smartfirehub.pipeline.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.dto.LockedRowVersion;
+import com.smartfirehub.global.json.StoredJsonAssert;
 import com.smartfirehub.pipeline.dto.CreateTriggerRequest;
 import com.smartfirehub.pipeline.dto.PipelineDeleteImpactResponse.DownstreamChainTrigger;
 import com.smartfirehub.pipeline.dto.TriggerResponse;
@@ -24,6 +23,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.IllegalTransactionStateException;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * TriggerRepository 계약 테스트 — 구현마다 하위 클래스로 실행한다(WD-708). 감시 목록 정리(removeWatchedDataset·
@@ -36,7 +38,7 @@ import org.springframework.transaction.IllegalTransactionStateException;
  */
 public abstract class TriggerRepositoryContractTest extends TenantPairContractBase {
 
-  private static final ObjectMapper JSON = new ObjectMapper();
+  private static final ObjectMapper JSON = JsonMapper.builderWithJackson2Defaults().build();
 
   /** 수정 시각 유지·갱신 판정용 과거 기준 시각(초 단위). */
   private static final LocalDateTime PAST = LocalDateTime.of(2020, 1, 2, 3, 4, 5);
@@ -103,6 +105,11 @@ public abstract class TriggerRepositoryContractTest extends TenantPairContractBa
     assertThat(Duration.between(t.createdAt(), now).abs()).isLessThan(Duration.ofMinutes(2));
     assertThat(Duration.between(t.updatedAt(), now).abs()).isLessThan(Duration.ofMinutes(2));
     assertThat(fx.triggerStored(id).updatedBy()).isNull();
+    // 저장된 config·state 원문(WD-793 골든) — 이 계약은 jOOQ·MyBatis(PG·Tibero) 모두에 돈다. jsonb 정규화 때문에 트리로
+    // 비교한다.
+    StoredJsonAssert.assertStoredJson(
+        fx.triggerStored(id).configJson(), "{\"cron\":\"0 0 * * *\",\"nested\":{\"a\":[1,2]}}");
+    StoredJsonAssert.assertStoredJson(fx.triggerStored(id).stateJson(), "{}");
   }
 
   @Test

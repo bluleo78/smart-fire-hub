@@ -1,6 +1,5 @@
 package com.smartfirehub.notification.inbound;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.smartfirehub.ai.dto.AiSessionResponse;
 import com.smartfirehub.ai.repository.AiSessionRepository;
 import com.smartfirehub.ai.service.AiAgentBatchClient;
@@ -21,6 +20,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+import tools.jackson.databind.JsonNode;
 
 /**
  * Slack inbound 이벤트 처리 서비스.
@@ -119,7 +119,7 @@ public class SlackInboundService {
    */
   @Async("slackInboundExecutor")
   public void dispatch(String teamId, JsonNode event) {
-    String ts = event.path("ts").asText();
+    String ts = event.path("ts").asString("");
 
     // 메트릭: 수신 카운트 증가 + 처리 시간 측정 시작
     metrics.incrementReceived();
@@ -186,12 +186,12 @@ public class SlackInboundService {
   void process(String teamId, JsonNode event) {
     long tenantId = TenantContext.require("Slack inbound 본 처리 (team=" + teamId + ")");
 
-    String channel = event.path("channel").asText();
-    String slackUserId = event.path("user").asText();
-    String text = event.path("text").asText();
-    String ts = event.path("ts").asText();
+    String channel = event.path("channel").asString("");
+    String slackUserId = event.path("user").asString("");
+    String text = event.path("text").asString("");
+    String ts = event.path("ts").asString("");
     // thread_ts가 없으면 이 메시지가 스레드 루트 — ts를 그대로 사용
-    String threadTs = event.path("thread_ts").asText(ts);
+    String threadTs = event.path("thread_ts").asString(ts);
 
     // 1. 워크스페이스 조회 + 봇 토큰 복호화
     //    해석기가 이미 revoked_at IS NULL 을 걸렀지만 이 조회를 생략하지 않는다 — 해석과 조회

@@ -1,9 +1,5 @@
 package com.smartfirehub.pipeline.service;
 
-import com.fasterxml.jackson.core.json.JsonReadFeature;
-import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.ObjectReader;
-import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.smartfirehub.dataset.exception.DatasetNotFoundException;
 import com.smartfirehub.dataset.exception.OutputStructureChangedException;
 import com.smartfirehub.dataset.service.DataTableRowService;
@@ -37,6 +33,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import tools.jackson.core.json.JsonReadFeature;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.ObjectReader;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * 로컬(실행기 끔) PYTHON 스텝의 stdout JSON 출력을 API 가 적재한다 — executor 계약의 Java 이식(R5, WD-29).
@@ -82,10 +82,11 @@ public class LocalPythonOutputLoader {
 
   /**
    * Python {@code json.loads} 와 같은 규칙의 파서: 뒤따르는 내용 거부, NaN/Infinity 허용, 실수는 Double(Python float).
-   * 공유 ObjectMapper 를 바꾸지 않도록 전용 인스턴스를 쓴다.
+   * 공유 ObjectMapper 를 바꾸지 않도록 전용 인스턴스를 쓴다. Jackson 3(WD-793): 예전 Jackson 2 {@code
+   * JsonMapper.builder()} 와 같은 기본값({@code builderWithJackson2Defaults})에서 출발해 위 두 설정을 더한다.
    */
   private static final ObjectReader JSON =
-      JsonMapper.builder()
+      JsonMapper.builderWithJackson2Defaults()
           .enable(JsonReadFeature.ALLOW_NON_NUMERIC_NUMBERS)
           .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
           .build()
@@ -270,8 +271,11 @@ public class LocalPythonOutputLoader {
   static final String ONLY_SYSTEM_KEYS =
       "출력 행에 시스템 컬럼(id·import_id·created_at·_updated_at) 말고 적재할 컬럼이 없습니다";
 
-  /** 중첩 값(JSON 객체·배열)을 문자열로 만들 때 쓰는 직렬화기 — Python {@code json.dumps} 처럼 값만 담는다(공백 차이는 의미 없음). */
-  private static final JsonMapper NESTED_JSON = JsonMapper.builder().build();
+  /**
+   * 중첩 값(JSON 객체·배열)을 문자열로 만들 때 쓰는 직렬화기 — Python {@code json.dumps} 처럼 값만 담는다(공백 차이는 의미 없음).
+   * Jackson 3(WD-793): 예전 Jackson 2 기본값과 같게 만든다({@code builderWithJackson2Defaults}).
+   */
+  private static final JsonMapper NESTED_JSON = JsonMapper.builderWithJackson2Defaults().build();
 
   /**
    * Tibero 스테이징에 바인딩할 수 있게 값을 바꾼다 — 실행기 켠 경로({@code remote.to_wire_value} → db-executor {@code
@@ -299,7 +303,7 @@ public class LocalPythonOutputLoader {
         } else if (v instanceof Map<?, ?> || v instanceof List<?>) {
           try {
             e.setValue(NESTED_JSON.writeValueAsString(v));
-          } catch (com.fasterxml.jackson.core.JsonProcessingException ex) {
+          } catch (tools.jackson.core.JacksonException ex) {
             throw new IllegalArgumentException("cannot serialize nested value: " + ex.getMessage());
           }
         }

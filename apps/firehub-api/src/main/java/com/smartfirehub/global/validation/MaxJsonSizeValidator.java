@@ -1,10 +1,11 @@
 package com.smartfirehub.global.validation;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.validation.ConstraintValidator;
 import jakarta.validation.ConstraintValidatorContext;
 import org.springframework.beans.factory.annotation.Autowired;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * {@link MaxJsonSize} 검증기(WD-425) — 값을 JSON 으로 직렬화한 UTF-8 바이트 수를 상한과 비교한다.
@@ -16,7 +17,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 public class MaxJsonSizeValidator implements ConstraintValidator<MaxJsonSize, Object> {
 
   /** Spring 밖에서 생성됐을 때 쓰는 기본 직렬화기. */
-  private static final ObjectMapper FALLBACK_MAPPER = new ObjectMapper();
+  // Jackson 3(WD-793): 예전 Jackson 2 new ObjectMapper() 와 같은 기본값(속성 정렬 안 함·원시 타입 null 허용 등)으로 만든다.
+  private static final ObjectMapper FALLBACK_MAPPER =
+      JsonMapper.builderWithJackson2Defaults().build();
 
   private final ObjectMapper objectMapper;
   private long maxBytes;
@@ -45,7 +48,7 @@ public class MaxJsonSizeValidator implements ConstraintValidator<MaxJsonSize, Ob
     }
     try {
       return objectMapper.writeValueAsBytes(value).length <= maxBytes;
-    } catch (JsonProcessingException e) {
+    } catch (JacksonException e) {
       // 직렬화조차 안 되는 값은 어차피 저장할 수 없으므로 거부한다.
       return false;
     }

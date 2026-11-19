@@ -5,8 +5,6 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.request;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataset.exception.DatasetNotFoundException;
 import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.security.JwtTokenProvider;
@@ -29,6 +27,8 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * 스펙 §2.5 "볼 수 없는 데이터셋은 존재 자체를 숨긴다"를 <b>모든</b> 데이터셋 ID 라우트에서 고정한다.
@@ -235,8 +235,8 @@ class DatasetRouteHidingTest extends IntegrationTestBase {
     assertThat(hidden.get("message").asText()).isEqualTo(DatasetNotFoundException.MESSAGE);
     assertThat(none.get("message").asText()).isEqualTo(DatasetNotFoundException.MESSAGE);
     // 바이트 동일 비교: 가변 필드(timestamp)를 빼고 id 만 정규화하면 본문 전체가 같아야 한다.
-    ((com.fasterxml.jackson.databind.node.ObjectNode) hidden).remove("timestamp");
-    ((com.fasterxml.jackson.databind.node.ObjectNode) none).remove("timestamp");
+    ((tools.jackson.databind.node.ObjectNode) hidden).remove("timestamp");
+    ((tools.jackson.databind.node.ObjectNode) none).remove("timestamp");
     assertThat(hidden.toString().replace(String.valueOf(hiddenId), "<id>"))
         .isEqualTo(none.toString().replace(String.valueOf(missing), "<id>"));
   }

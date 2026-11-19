@@ -4,7 +4,6 @@ import static com.smartfirehub.dbexecutor.live.TiberoLiveAccount.exec;
 import static com.smartfirehub.dbexecutor.live.TiberoLiveAccount.execIgnore;
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dbexecutor.config.DbExecutorProperties;
 import com.smartfirehub.dbexecutor.config.ExecutionTimeouts;
 import com.smartfirehub.dbexecutor.sql.LoadRunner;
@@ -46,6 +45,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * Tibero 실서버 테스트(WD-77 Task 5) — {@code /execute/sql}·{@code /execute/probe} 를 실제 서버에 돌린다.
@@ -177,7 +177,7 @@ class TiberoLiveSqlTest {
         new LoadRunner(pools, timeouts, descriptors),
         null,
         timeouts,
-        new com.fasterxml.jackson.databind.ObjectMapper());
+        new tools.jackson.databind.ObjectMapper());
   }
 
   /** 매 테스트마다 api createTable 과 같은 모양의 출력 테이블·시퀀스를 새로 만든다. */

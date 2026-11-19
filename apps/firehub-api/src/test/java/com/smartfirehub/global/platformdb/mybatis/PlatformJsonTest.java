@@ -3,17 +3,18 @@ package com.smartfirehub.global.platformdb.mybatis;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.smartfirehub.global.exception.SerializationException;
 import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 /** PlatformJson 규칙 — null 은 null, 깨진 입력·직렬화 실패는 SerializationException(빈 값 대체는 호출자 몫, WD-708). */
 class PlatformJsonTest {
 
-  private final ObjectMapper om = new ObjectMapper();
+  private final ObjectMapper om = JsonMapper.builderWithJackson2Defaults().build();
 
   @Test
   @DisplayName("toMap — 객체 JSON 은 맵, null 은 null, 깨진 JSON·배열은 라벨을 담은 SerializationException")

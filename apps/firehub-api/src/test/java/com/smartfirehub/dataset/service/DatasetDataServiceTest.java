@@ -4,8 +4,6 @@ import static com.smartfirehub.jooq.Tables.*;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataset.dto.*;
 import com.smartfirehub.dataset.exception.DatasetNotFoundException;
 import com.smartfirehub.global.datastore.DataStoreDb;
@@ -20,6 +18,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * DatasetDataService 통합 테스트.
@@ -767,6 +767,10 @@ class DatasetDataServiceTest extends IntegrationTestBase {
         List.of(
             "{\"type\":\"Point\",\"coordinates\":[999,999]}",
             "{\"type\":\"Point\",\"coordinates\":[400,37]}",
+            // double 범위를 넘는 좌표도 500 이 아니라 범위 밖 400 으로 거부한다(WD-793 — Jackson 3 asDouble 예외 회귀)
+            "{\"type\":\"Point\",\"coordinates\":[1e400,0]}",
+            "{\"type\":\"Point\",\"coordinates\":[0,-1e400]}",
+            "{\"type\":\"Point\",\"coordinates\":[1" + "0".repeat(400) + ",0]}",
             // geometries 키를 덧붙여도 Point 의 좌표 검사를 건너뛰지 않는다
             "{\"type\":\"Point\",\"coordinates\":[999,999],\"geometries\":[]}",
             "{\"type\":\"Polygon\",\"coordinates\":[[[0,0],[1,0],[1,91],[0,0]]]}",

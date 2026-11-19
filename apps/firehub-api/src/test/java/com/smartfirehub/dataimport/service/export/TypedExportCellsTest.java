@@ -4,8 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataimport.service.DataValidationService;
 import com.smartfirehub.dataimport.service.FileParserService;
 import com.smartfirehub.dataset.storage.DataStoreResolver;
@@ -25,6 +23,8 @@ import org.apache.poi.ss.usermodel.DateUtil;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * 내보내기 셀이 값 타입을 살려 나가는지 검증한다(WD-159).
@@ -177,7 +177,13 @@ class TypedExportCellsTest {
           });
     }
     String json = bos.toString(StandardCharsets.UTF_8);
-    JsonNode props = new ObjectMapper().readTree(json).get("features").get(0).get("properties");
+    JsonNode props =
+        JsonMapper.builderWithJackson2Defaults()
+            .build()
+            .readTree(json)
+            .get("features")
+            .get(0)
+            .get("properties");
     assertThat(props.get("cnt").isIntegralNumber()).isTrue();
     assertThat(props.get("cnt").asLong()).isEqualTo(3L);
     assertThat(props.get("amount").isNumber()).isTrue();
@@ -189,7 +195,8 @@ class TypedExportCellsTest {
     assertThat(props.get("big").isTextual()).isTrue();
     assertThat(props.get("big").asText()).isEqualTo("9007199254740993");
     assertThat(
-            new ObjectMapper()
+            JsonMapper.builderWithJackson2Defaults()
+                .build()
                 .readTree(json)
                 .get("features")
                 .get(0)

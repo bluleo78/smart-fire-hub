@@ -10,7 +10,6 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.config.SecurityConfig;
 import com.smartfirehub.global.exception.ExternalServiceException;
 import com.smartfirehub.global.security.JwtAuthenticationFilter;
@@ -31,6 +30,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import tools.jackson.databind.ObjectMapper;
 
 @WebMvcTest(ReviewItemController.class)
 @Import({SecurityConfig.class, JwtAuthenticationFilter.class})
@@ -65,7 +65,7 @@ class ReviewItemControllerTest {
         "normalization_failure",
         null,
         "reason",
-        com.fasterxml.jackson.databind.node.NullNode.getInstance(),
+        tools.jackson.databind.node.NullNode.getInstance(),
         1L,
         null,
         null);

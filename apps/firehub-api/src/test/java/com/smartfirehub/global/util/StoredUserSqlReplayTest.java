@@ -2,13 +2,13 @@ package com.smartfirehub.global.util;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.List;
 import org.assertj.core.api.SoftAssertions;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * dev DB 에 실제로 저장돼 있던 사용자 SQL(query_history 20행 + saved_query 34행)을 새 {@link SqlValidator} 규칙에 통과시켜
@@ -66,8 +66,9 @@ class StoredUserSqlReplayTest {
       if (is == null) {
         throw new IllegalStateException("테스트 리소스를 찾을 수 없습니다: " + CORPUS_RESOURCE);
       }
-      return new ObjectMapper()
-          .readValue(is, new com.fasterxml.jackson.core.type.TypeReference<>() {});
+      return JsonMapper.builderWithJackson2Defaults()
+          .build()
+          .readValue(is, new tools.jackson.core.type.TypeReference<>() {});
     }
   }
 }

@@ -8,7 +8,6 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
@@ -21,6 +20,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.test.web.servlet.MockMvc;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * 운영자 평면 사용자 검색 TC.
@@ -96,7 +96,7 @@ class PlatformUserControllerTest extends IntegrationTestBase {
             .getContentAsString();
 
     List<Long> ids =
-        objectMapper.readTree(body).findValuesAsText("id").stream().map(Long::valueOf).toList();
+        objectMapper.readTree(body).findValuesAsString("id").stream().map(Long::valueOf).toList();
     assertThat(ids).contains(userA, userB);
   }
 
@@ -187,7 +187,7 @@ class PlatformUserControllerTest extends IntegrationTestBase {
             .getResponse()
             .getContentAsString();
     List<Long> literalIds =
-        objectMapper.readTree(literalBody).findValuesAsText("id").stream()
+        objectMapper.readTree(literalBody).findValuesAsString("id").stream()
             .map(Long::valueOf)
             .toList();
     assertThat(literalIds).contains(delta);
@@ -212,7 +212,7 @@ class PlatformUserControllerTest extends IntegrationTestBase {
             .getResponse()
             .getContentAsString();
     List<Long> ids =
-        objectMapper.readTree(body).findValuesAsText("id").stream().map(Long::valueOf).toList();
+        objectMapper.readTree(body).findValuesAsString("id").stream().map(Long::valueOf).toList();
     assertThat(ids).doesNotContain(delta);
   }
 
@@ -240,7 +240,7 @@ class PlatformUserControllerTest extends IntegrationTestBase {
             .getContentAsString();
 
     List<Long> ids =
-        objectMapper.readTree(body).findValuesAsText("id").stream().map(Long::valueOf).toList();
+        objectMapper.readTree(body).findValuesAsString("id").stream().map(Long::valueOf).toList();
     assertThat(ids).contains(active).doesNotContain(inactive);
   }
 
@@ -282,7 +282,7 @@ class PlatformUserControllerTest extends IntegrationTestBase {
             .getContentAsString();
 
     List<Long> ids =
-        objectMapper.readTree(body).findValuesAsText("id").stream().map(Long::valueOf).toList();
+        objectMapper.readTree(body).findValuesAsString("id").stream().map(Long::valueOf).toList();
     assertThat(ids).containsExactly(userExact, userY, userZ);
   }
 

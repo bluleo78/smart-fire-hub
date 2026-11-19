@@ -1,9 +1,7 @@
 package com.smartfirehub.ai.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.tenant.TenantContext;
-import com.smartfirehub.global.util.Jackson2WebClientCodecs;
+import com.smartfirehub.global.util.AppJsonWebClients;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.LinkedHashMap;
@@ -22,6 +20,9 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.netty.http.client.HttpClient;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 @Service
 @Slf4j
@@ -78,7 +79,7 @@ public class AiAgentProxyService {
     HttpClient httpClient =
         HttpClient.create().responseTimeout(Duration.ofMinutes(5)).keepAlive(true);
     this.webClient =
-        Jackson2WebClientCodecs.webClientBuilder()
+        AppJsonWebClients.webClientBuilder()
             .baseUrl(agentUrl)
             .clientConnector(new ReactorClientHttpConnector(httpClient))
             .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(10 * 1024 * 1024))
@@ -153,7 +154,7 @@ public class AiAgentProxyService {
   private String serializeBody(Map<String, ?> payload) {
     try {
       return objectMapper.writeValueAsString(payload);
-    } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+    } catch (JacksonException e) {
       // Map 직렬화는 실패할 수 없으므로 발생 시 즉시 런타임 예외로 노출
       throw new IllegalStateException("Failed to serialize verification body", e);
     }
@@ -236,11 +237,11 @@ public class AiAgentProxyService {
     try {
       JsonNode node = objectMapper.readTree(body);
       JsonNode error = node == null ? null : node.get("error");
-      String message = error != null && error.isTextual() ? error.asText() : "";
+      String message = error != null && error.isString() ? error.asString() : "";
       if (!message.isBlank()) {
         return new AgentRejectedException(diagnostic, null, message);
       }
-    } catch (IOException ignored) {
+    } catch (JacksonException ignored) {
       // JSON 이 아니면 사람이 읽는 문구가 없는 것으로 본다
     }
     return new RuntimeException(diagnostic);
@@ -335,7 +336,8 @@ public class AiAgentProxyService {
             if (data == null || data.isEmpty()) return;
 
             JsonNode node = objectMapper.readTree(data);
-            String type = node.has("type") ? node.get("type").asText() : "";
+            // Jackson 3(WD-793): asString("") 은 객체·배열 값에서도 예외 없이 "" 를 준다(예전 asText() 와 같다).
+            String type = node.has("type") ? node.get("type").asString("") : "";
 
             // Pass through events from firehub-ai to frontend as-is
             // firehub-ai format matches frontend expectations:
@@ -351,7 +353,7 @@ public class AiAgentProxyService {
               }
               case "error" -> {
                 completed[0] = true;
-                String rawMsg = node.has("message") ? node.get("message").asText() : "";
+                String rawMsg = node.has("message") ? node.get("message").asString("") : "";
                 String errorMsg =
                     (rawMsg == null || rawMsg.isBlank())
                         ? "AI agent processing error (max turns exceeded, etc.)"
@@ -361,7 +363,8 @@ public class AiAgentProxyService {
                 emitter.complete();
               }
             }
-          } catch (IOException e) {
+          } catch (IOException | JacksonException e) {
+            // 전송 I/O 오류와 JSON 파싱 오류(Jackson 3 에서 비검사 JacksonException, WD-793)를 예전처럼 함께 처리한다.
             log.error("[AI Chat] SSE event processing error", e);
             try {
               emitter.completeWithError(e);
@@ -399,7 +402,7 @@ public class AiAgentProxyService {
                         "Agent connection failed: " + error.getMessage()));
             emitter.send(SseEmitter.event().data(payload));
             emitter.completeWithError(error);
-          } catch (IOException ignored) {
+          } catch (IOException | JacksonException ignored) {
           }
         },
         () -> {
@@ -415,7 +418,7 @@ public class AiAgentProxyService {
     try {
       emitter.send(SseEmitter.event().data(objectMapper.writeValueAsString(payload)));
       emitter.complete();
-    } catch (IOException ignored) {
+    } catch (IOException | JacksonException ignored) {
     }
   }
 }

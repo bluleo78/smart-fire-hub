@@ -2,8 +2,6 @@ package com.smartfirehub.pipeline.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.pipeline.repository.AiInferenceCacheRepository.Entry;
 import com.smartfirehub.user.repository.TenantPairContractBase;
 import java.time.Duration;
@@ -11,6 +9,9 @@ import java.time.LocalDateTime;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * AiInferenceCacheRepository 계약 테스트 — 구현마다 하위 클래스로 실행한다(WD-708).
@@ -21,7 +22,7 @@ import org.junit.jupiter.api.Test;
  */
 public abstract class AiInferenceCacheRepositoryContractTest extends TenantPairContractBase {
 
-  private static final ObjectMapper JSON = new ObjectMapper();
+  private static final ObjectMapper JSON = JsonMapper.builderWithJackson2Defaults().build();
 
   protected abstract AiInferenceCacheRepository repository();
 

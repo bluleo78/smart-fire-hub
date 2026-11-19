@@ -11,7 +11,6 @@ import static org.assertj.core.api.Assertions.catchThrowableOfType;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import com.smartfirehub.dataset.storage.DataStoreBackend;
@@ -35,6 +34,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * WD-766 — 프로액티브 AI 호출의 제한 시간(설정 {@code app.proactive.agent-timeout}, 기본 15분)과 「시간 초과」 문구.
@@ -78,7 +78,8 @@ class ProactiveAiClientTimeoutTest {
     when(resolver.backendFor(5L)).thenReturn(DataStoreBackend.POSTGRESQL);
     VectorStoreFeatures features = mock(VectorStoreFeatures.class);
     ProactiveAiClient client =
-        new ProactiveAiClient(baseUrl, new ObjectMapper(), resolver, features, timeout);
+        new ProactiveAiClient(
+            baseUrl, JsonMapper.builderWithJackson2Defaults().build(), resolver, features, timeout);
     ReflectionTestUtils.setField(client, "internalToken", "t");
     return client;
   }

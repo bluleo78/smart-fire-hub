@@ -1,8 +1,8 @@
 package com.smartfirehub.platform.dto;
 
-import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import com.smartfirehub.audit.time.StorageZoneDateTimeSerializer;
 import java.time.LocalDateTime;
+import tools.jackson.databind.annotation.JsonSerialize;
 
 /**
  * 운영자 목록 화면의 테넌트 한 줄.

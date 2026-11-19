@@ -1,7 +1,5 @@
 package com.smartfirehub.job.service;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.job.dto.AsyncJobStatusResponse;
 import com.smartfirehub.job.exception.JobAccessDeniedException;
 import com.smartfirehub.job.exception.JobNotFoundException;
@@ -23,6 +21,8 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * 범용 비동기 작업 관리 서비스. SSE emitter 맵은 JVM 로컬이므로 단일 인스턴스 배포에서만 실시간 전송이 보장됩니다. 다중 인스턴스 환경에서는 클라이언트의 REST
@@ -374,7 +374,7 @@ public class AsyncJobService {
   private String toJson(Map<String, Object> payload) {
     try {
       return objectMapper.writeValueAsString(payload);
-    } catch (JsonProcessingException e) {
+    } catch (JacksonException e) {
       log.warn("Failed to serialize SSE payload: {}", e.getMessage());
       return "{}";
     }

@@ -2,13 +2,14 @@ package com.smartfirehub.notification.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * WD-169: 트리거 건너뜀 알림(트리거·파이프라인 이름이 실린다)은 <b>그 워크스페이스</b>의 <b>수신자</b> 연결로만 간다. 같은 수신자가 다른 워크스페이스
@@ -46,7 +47,8 @@ class TriggerSkippedNotificationScopeTest {
   void notifyTriggerSkipped_sendsOnlyToRecipientConnectionsOfThatTenant() {
     long t1 = 900_001L;
     long t2 = 900_002L;
-    RecordingRegistry registry = new RecordingRegistry(new ObjectMapper().findAndRegisterModules());
+    RecordingRegistry registry =
+        new RecordingRegistry(JsonMapper.builderWithJackson2Defaults().findAndAddModules().build());
     // 이 알림은 보안 등급 판정을 쓰지 않는다
     NotificationService service = new NotificationService(registry, null, null, null);
     registry.register(10L, t1); // 수신자 · 이 워크스페이스

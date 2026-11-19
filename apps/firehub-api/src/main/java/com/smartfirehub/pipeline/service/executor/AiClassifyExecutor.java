@@ -1,13 +1,12 @@
 package com.smartfirehub.pipeline.service.executor;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.dataset.service.DatasetDataWriteLock;
+import com.smartfirehub.global.json.JsonConversions;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.pipeline.dto.AiClassifyConfig;
 import com.smartfirehub.pipeline.dto.PipelineStepResponse;
@@ -35,6 +34,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * AI_CLASSIFY 스텝 실행기 — 입력 행을 배치로 묶어 ai-agent 에 분류를 맡기고, 결과를 {@code ai_inference_cache} 에 캐시한다.
@@ -107,7 +108,8 @@ public class AiClassifyExecutor {
    */
   public ExecutionResult execute(
       PipelineStepResponse step, Long stepExecutionId, Long userId, ExecutionCancelCheck cancel) {
-    AiClassifyConfig config = objectMapper.convertValue(step.aiConfig(), AiClassifyConfig.class);
+    AiClassifyConfig config =
+        JsonConversions.convertValue(objectMapper, step.aiConfig(), AiClassifyConfig.class);
 
     // WD-216: 분류할 입력 데이터셋이 하나도 없으면 설정 오류로 실패시킨다(빈 입력 데이터와 구분). 러너가 의존 스텝 출력까지 해석한 뒤의
     // 목록이므로, 여기서 비어 있으면 명시 입력도 없고 의존 스텝에서도 출력을 얻지 못한 것이다. 출력·임시 테이블을 건드리기 전에 던진다.
@@ -821,7 +823,7 @@ public class AiClassifyExecutor {
     String base;
     try {
       base = config.prompt() + objectMapper.writeValueAsString(config.outputColumns());
-    } catch (JsonProcessingException e) {
+    } catch (JacksonException e) {
       // 옛 코드와 같은 폴백 — 직렬화 실패 시 프롬프트만 해시한다.
       base = config.prompt();
     }
@@ -835,7 +837,7 @@ public class AiClassifyExecutor {
   private String toJson(Map<String, Object> map) {
     try {
       return objectMapper.writeValueAsString(map);
-    } catch (JsonProcessingException e) {
+    } catch (JacksonException e) {
       return "{}";
     }
   }
@@ -844,7 +846,7 @@ public class AiClassifyExecutor {
   private Map<String, Object> fromJson(String json) {
     try {
       return objectMapper.readValue(json, Map.class);
-    } catch (JsonProcessingException e) {
+    } catch (JacksonException e) {
       return new HashMap<>();
     }
   }

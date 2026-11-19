@@ -1,12 +1,12 @@
 package com.smartfirehub.ai.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import java.io.IOException;
 import java.time.Duration;
 import java.util.Map;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.stereotype.Component;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * 응답 전체를 한 번에 받아야 하는 경로(Slack 인바운드)용 ai-agent 채팅 클라이언트(이슈 #709).
@@ -76,19 +76,19 @@ public class AiAgentBatchClient {
       JsonNode node;
       try {
         node = objectMapper.readTree(data);
-      } catch (IOException e) {
+      } catch (JacksonException e) {
         throw new IllegalStateException("ai-agent SSE 데이터를 해석하지 못했습니다", e);
       }
-      switch (node.path("type").asText()) {
-        case "init" -> sessionId = node.path("sessionId").asText(sessionId);
-        case "text" -> text.append(node.path("content").asText(""));
+      switch (node.path("type").asString("")) {
+        case "init" -> sessionId = node.path("sessionId").asString(sessionId);
+        case "text" -> text.append(node.path("content").asString(""));
         case "error" -> {
-          String message = node.path("message").asText("");
+          String message = node.path("message").asString("");
           throw new AgentChatException(message.isBlank() ? "AI 에이전트 처리 중 오류가 발생했습니다." : message);
         }
         case "done" -> {
           // CLI 경로의 done 에는 sessionId 가 없을 수 있다 — 그때는 init 의 값을 쓴다
-          sessionId = node.path("sessionId").asText(sessionId);
+          sessionId = node.path("sessionId").asString(sessionId);
           done = true;
           return true;
         }

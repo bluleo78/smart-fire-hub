@@ -929,7 +929,7 @@ class ApiConnectionTestUrlMaskingTest extends IntegrationTestBase {
 
   @Autowired private com.smartfirehub.apiconnection.repository.ApiConnectionRepository repository;
   @Autowired private EncryptionService encryptionService;
-  @Autowired private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+  @Autowired private tools.jackson.databind.ObjectMapper objectMapper;
 
   /**
    * 빈 비밀로 저장된 옛 연결(WD-588·WD-623 전 저장분)이 섞여 있어도 주기 점검은 멈추지 않는다 — 그 연결만 호출 없이 「… 입력하세요」 사유로 DOWN 이

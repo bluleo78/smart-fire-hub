@@ -2,8 +2,6 @@ package com.smartfirehub.securitylevel;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.analytics.dto.ChartDataResponse;
 import com.smartfirehub.analytics.dto.ChartResponse;
 import com.smartfirehub.analytics.dto.DashboardDataResponse;
@@ -27,6 +25,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * 스펙 §4.2 4행: 차트·대시보드는 조회자 기준으로 판정하고, 위반 위젯은 denied(페이지 전체 실패 X)로 응답하며, 캐시 히트도 판정을 건너뛰지 않는다.
@@ -415,7 +416,7 @@ class ChartDeniedTest extends IntegrationTestBase {
 
   // ------------------------------------------------------------ WD-31② config 가림
 
-  private static final ObjectMapper JSON = new ObjectMapper();
+  private static final ObjectMapper JSON = JsonMapper.builderWithJackson2Defaults().build();
   private final List<Long> reassignedOwners = new ArrayList<>();
 
   /** WD-31②: 저장 쿼리를 통과하지 못하는 조회자에게는 config(컬럼명)를 주지 않는다 — 단건에서 가리고, 목록은 config 자체가 없다(WD-733). */
@@ -463,7 +464,7 @@ class ChartDeniedTest extends IntegrationTestBase {
     String json;
     try {
       json = JSON.writeValueAsString(config);
-    } catch (JsonProcessingException e) {
+    } catch (JacksonException e) {
       throw new IllegalStateException(e);
     }
     TenantRlsTestSupport.runInTenantTransaction(
@@ -492,7 +493,7 @@ class ChartDeniedTest extends IntegrationTestBase {
                     .get(0, String.class));
     try {
       return JSON.readValue(json, Map.class);
-    } catch (JsonProcessingException e) {
+    } catch (JacksonException e) {
       throw new IllegalStateException(e);
     }
   }

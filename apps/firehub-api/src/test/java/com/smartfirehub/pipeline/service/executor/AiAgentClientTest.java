@@ -4,7 +4,6 @@ import static com.github.tomakehurst.wiremock.client.WireMock.*;
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import com.smartfirehub.settings.model.AiBehaviorDefaults;
@@ -20,6 +19,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * AiAgentClient 의 자격증명 주입 검증.
@@ -66,7 +66,10 @@ class AiAgentClientTest {
     resolver = new AiClassifyTargetResolver(aiCredentialService);
     AiAgentClient client =
         new AiAgentClient(
-            wireMock.baseUrl(), new ObjectMapper(), settingsService, aiCredentialService);
+            wireMock.baseUrl(),
+            JsonMapper.builderWithJackson2Defaults().build(),
+            settingsService,
+            aiCredentialService);
     ReflectionTestUtils.setField(client, "internalToken", "test-internal-token");
     return client;
   }
@@ -102,6 +105,74 @@ class AiAgentClientTest {
             .withHeader("X-On-Behalf-Of", equalTo("42"))
             .withRequestBody(matchingJsonPath("$.oauthToken", equalTo("oauth-token-value")))
             .withRequestBody(matchingJsonPath("$.model", equalTo("claude-sonnet-5"))));
+  }
+
+  /**
+   * 요청 본문 직렬화 규칙을 못 박는다(WD-793). 이 클라이언트는 공유 코덱 팩토리({@code AppJsonWebClients}) 로 만들어 앱 매퍼와 같은 설정으로
+   * 본문을 쓴다 — 행 값의 날짜·시각은 ISO 문자열, BigDecimal 은 JSON 숫자다(WireMock JsonPath 가 숫자를 읽어 12.50 → 12.5).
+   * Jackson 2 직접 빌더 때는 날짜가 숫자(epoch)·배열로 나갔다(Boot 가 구성한 매퍼와도 달랐다).
+   */
+  @Test
+  void classify_bodySerializesDatesAsIsoAndBigDecimalAsNumber() {
+    AiAgentClient client = newClient();
+    when(settingsService.getValue("ai.model")).thenReturn(Optional.of("claude-sonnet-5"));
+    when(aiCredentialService.resolve()).thenReturn(new AiCredential.Sdk("oauth-token-value", ""));
+    stubOk();
+    AiAgentClient.ClassifyRequest request =
+        new AiAgentClient.ClassifyRequest(
+            List.of(
+                Map.of(
+                    "d", java.time.LocalDate.of(2026, 1, 15),
+                    "t", java.time.LocalDateTime.of(2026, 1, 15, 10, 30, 0),
+                    "n", new java.math.BigDecimal("12.50"))),
+            "분류",
+            List.of(Map.of("name", "label", "type", "TEXT")));
+
+    client.classify(request, resolver.resolve(), 42L);
+
+    wireMock.verify(
+        postRequestedFor(urlEqualTo("/agent/classify"))
+            .withRequestBody(matchingJsonPath("$.rows[0].d", equalTo("2026-01-15")))
+            .withRequestBody(matchingJsonPath("$.rows[0].t", equalTo("2026-01-15T10:30:00")))
+            .withRequestBody(matchingJsonPath("$.rows[0].n", equalTo("12.5"))));
+  }
+
+  /**
+   * jOOQ·MyBatis 가 DATE·TIMESTAMP 컬럼을 담는 {@code java.sql.Date}·{@code java.sql.Timestamp} 행 값도 앱 매퍼
+   * 모양으로 나간다(WD-793 코드 리뷰 지적 1). Spring 기본 Jackson 3 매퍼는 java.sql.Date 를 자정의 UTC 시각으로 써 비-UTC JVM
+   * 에서 하루 전 날짜가 됐다 — 앱 매퍼는 {@code yyyy-MM-dd} 그대로, Timestamp 는 UTC ISO 시각(+00:00)이다. 시간대를
+   * Asia/Seoul 로 고정해 어긋남이 드러나는 조건에서 본다.
+   */
+  @Test
+  void classify_bodySerializesSqlDateAsPlainDateAndTimestampAsIso() {
+    java.util.TimeZone original = java.util.TimeZone.getDefault();
+    java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("Asia/Seoul"));
+    try {
+      AiAgentClient client = newClient();
+      when(settingsService.getValue("ai.model")).thenReturn(Optional.of("claude-sonnet-5"));
+      when(aiCredentialService.resolve()).thenReturn(new AiCredential.Sdk("oauth-token-value", ""));
+      stubOk();
+      AiAgentClient.ClassifyRequest request =
+          new AiAgentClient.ClassifyRequest(
+              List.of(
+                  Map.of(
+                      "d", java.sql.Date.valueOf("2024-02-29"),
+                      "ts",
+                          java.sql.Timestamp.from(
+                              java.time.Instant.parse("2024-02-29T06:00:00.250Z")))),
+              "분류",
+              List.of(Map.of("name", "label", "type", "TEXT")));
+
+      client.classify(request, resolver.resolve(), 42L);
+
+      wireMock.verify(
+          postRequestedFor(urlEqualTo("/agent/classify"))
+              .withRequestBody(matchingJsonPath("$.rows[0].d", equalTo("2024-02-29")))
+              .withRequestBody(
+                  matchingJsonPath("$.rows[0].ts", equalTo("2024-02-29T06:00:00.250+00:00"))));
+    } finally {
+      java.util.TimeZone.setDefault(original);
+    }
   }
 
   @Test

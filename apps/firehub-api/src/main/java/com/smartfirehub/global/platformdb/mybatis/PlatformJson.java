@@ -1,13 +1,13 @@
 package com.smartfirehub.global.platformdb.mybatis;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.smartfirehub.global.exception.SerializationException;
 import java.util.List;
 import java.util.Map;
+import tools.jackson.core.JacksonException;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 /**
  * MyBatis 구현이 JSON 열(PG jsonb / Tibero JSON)을 문자열로 주고받을 때 쓰는 변환 도우미(WD-708).
@@ -36,7 +36,7 @@ public final class PlatformJson {
     }
     try {
       return objectMapper.readValue(json, MAP_TYPE);
-    } catch (JsonProcessingException e) {
+    } catch (JacksonException e) {
       throw new SerializationException("Failed to parse " + label + " JSON", e);
     }
   }
@@ -53,7 +53,7 @@ public final class PlatformJson {
     }
     try {
       return objectMapper.readValue(json, LIST_TYPE);
-    } catch (JsonProcessingException e) {
+    } catch (JacksonException e) {
       throw new SerializationException("Failed to parse " + label + " JSON", e);
     }
   }
@@ -70,7 +70,7 @@ public final class PlatformJson {
     JsonNode node;
     try {
       node = objectMapper.readTree(json);
-    } catch (JsonProcessingException e) {
+    } catch (JacksonException e) {
       throw new SerializationException("Failed to parse " + label + " JSON", e);
     }
     return node instanceof ObjectNode object ? object : null;
@@ -87,7 +87,7 @@ public final class PlatformJson {
     }
     try {
       return objectMapper.writeValueAsString(value);
-    } catch (JsonProcessingException e) {
+    } catch (JacksonException e) {
       throw new SerializationException("Failed to serialize " + label, e);
     }
   }

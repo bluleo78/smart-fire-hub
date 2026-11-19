@@ -1,7 +1,7 @@
 package com.smartfirehub.proactive.controller;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.dto.CronPreviewResponse;
+import com.smartfirehub.global.json.JsonConversions;
 import com.smartfirehub.global.security.RequirePermission;
 import com.smartfirehub.global.util.ContentDispositions;
 import com.smartfirehub.global.util.CronPreview;
@@ -27,6 +27,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
+import tools.jackson.databind.ObjectMapper;
 
 @RestController
 @RequestMapping("/api/v1/proactive/jobs")
@@ -193,7 +194,8 @@ public class ProactiveJobController {
     if (execution == null) {
       return ResponseEntity.badRequest().build();
     }
-    ProactiveResult result = objectMapper.convertValue(execution.result(), ProactiveResult.class);
+    ProactiveResult result =
+        JsonConversions.convertValue(objectMapper, execution.result(), ProactiveResult.class);
 
     // 머리 시각은 실행 완료 시각을 작업 시간대로 — 받을 때마다 바뀌지 않는다(WD-344)
     byte[] pdfBytes =
@@ -247,7 +249,7 @@ public class ProactiveJobController {
         getValidatedExecution(jobId, executionId, userId, export);
     return execution == null
         ? null
-        : objectMapper.convertValue(execution.result(), ProactiveResult.class);
+        : JsonConversions.convertValue(objectMapper, execution.result(), ProactiveResult.class);
   }
 
   /** 소속·열람(또는 내보내기) 권한·완료 여부를 확인한 실행. 리포트로 쓸 수 없으면 null. */

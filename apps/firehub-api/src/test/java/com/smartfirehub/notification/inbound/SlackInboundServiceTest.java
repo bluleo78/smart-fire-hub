@@ -10,8 +10,6 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.smartfirehub.ai.dto.AiSessionResponse;
 import com.smartfirehub.ai.repository.AiSessionRepository;
 import com.smartfirehub.ai.service.AiAgentBatchClient;
@@ -45,6 +43,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.dao.DuplicateKeyException;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 /**
  * SlackInboundService 단위 테스트.
@@ -134,7 +135,7 @@ class SlackInboundServiceTest {
 
   /** 이벤트 JSON 생성 헬퍼. */
   private ObjectNode makeEvent(String text) {
-    ObjectMapper om = new ObjectMapper();
+    ObjectMapper om = JsonMapper.builderWithJackson2Defaults().build();
     ObjectNode node = om.createObjectNode();
     node.put("type", "message");
     node.put("channel", CHANNEL);

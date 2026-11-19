@@ -4,7 +4,6 @@ import static com.smartfirehub.dbexecutor.live.TiberoLiveAccount.exec;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dbexecutor.config.DbExecutorProperties;
 import com.smartfirehub.dbexecutor.config.ExecutionTimeouts;
 import com.smartfirehub.dbexecutor.sql.LoadRunner;
@@ -38,6 +37,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.Timeout;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * Tibero 실서버 테스트(WD-77 Task 4) — api 가 보내는 "스테이징 → 출력 테이블 옮기기" 를 실제 서버에서 확인한다.
@@ -107,7 +107,7 @@ class TiberoLiveMoveTest {
             new LoadRunner(pools, timeouts, descriptors),
             null,
             timeouts,
-            new com.fasterxml.jackson.databind.ObjectMapper());
+            new tools.jackson.databind.ObjectMapper());
   }
 
   @AfterAll

@@ -3,7 +3,6 @@ package com.smartfirehub.dataimport.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataimport.dto.ColumnMappingEntry;
 import com.smartfirehub.dataimport.dto.ImportResponse;
 import com.smartfirehub.dataimport.dto.ImportValidateResponse;
@@ -42,6 +41,7 @@ import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * WD-96: 물리 타입 제약(VARCHAR(n) 길이, NUMERIC(18,6) 정수부)을 넘는 값이 사전검증에서는 "성공", 실제 임포트에서는 "관리자에게 문의" 일반
@@ -253,6 +253,10 @@ class DataImportPhysicalLimitIntegrationTest extends IntegrationTestBase {
     // 웹이 실패 화면에서 그리는 오류 상세(감사 로그 errorDetails)에도 같은 행·칸·사유가 있다.
     ImportResponse failed = latestImport();
     assertThat(failed.status()).isEqualTo("FAILED");
+    // 저장된 errorDetails 원문 문자열(WD-793 골든) — 서비스가 직렬화해 감사 로그에 넣은 그대로를 글자 단위로 못 박는다.
+    assertThat((String) failed.errorDetails())
+        .isEqualTo(
+            "{\"errors\":[{\"rowNumber\":250,\"columnName\":\"code\",\"value\":\"1234567890123\",\"error\":\"최대 10자까지 입력할 수 있습니다(입력 13자)\"}]}");
     Map<?, ?> details = objectMapper.readValue((String) failed.errorDetails(), Map.class);
     assertThat((List<?>) details.get("errors"))
         .singleElement()

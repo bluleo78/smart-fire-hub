@@ -1,6 +1,5 @@
 package com.smartfirehub.proactive.repository;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.proactive.repository.mybatis.MyBatisProactiveMessageRepository;
 import com.smartfirehub.proactive.repository.mybatis.ProactiveMessageMapper;
@@ -17,6 +16,7 @@ import org.junit.jupiter.api.TestInstance;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * ProactiveMessageRepositoryContractTest 를 MyBatis 구현 + Tibero 실서버로 실행한다(WD-487 PoC).
@@ -78,6 +78,12 @@ class TiberoMyBatisProactiveMessageRepositoryContractTest
   @Override
   protected ProactiveMessageRepository repository() {
     return repository;
+  }
+
+  @Override
+  protected String rawContentJson(Long id) {
+    return poc.jdbc()
+        .queryForObject("SELECT content FROM proactive_message WHERE id = ?", String.class, id);
   }
 
   @Override

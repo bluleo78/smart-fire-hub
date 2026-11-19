@@ -3,14 +3,12 @@ package com.smartfirehub.pipeline.service.executor;
 import static com.github.tomakehurst.wiremock.client.WireMock.*;
 import static org.assertj.core.api.Assertions.*;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import com.smartfirehub.global.tenant.MissingTenantScopeException;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.util.AdhocSqlErrorMessages;
-import com.smartfirehub.global.util.Jackson2WebClientCodecs;
+import com.smartfirehub.global.util.AppJsonWebClients;
 import com.smartfirehub.pipeline.service.PipelineSqlErrorMessages;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -23,6 +21,9 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 class ExecutorClientTest {
 
@@ -67,10 +68,10 @@ class ExecutorClientTest {
 
   /** 응답 바이트 한도·선행 상한만 바꿔 끼운 클라이언트(Python 시간 제한은 기본 1800초). 생성자 직접 호출은 여기 한 곳이다. */
   private ExecutorClient client(int maxResponseBytes, int preStatementTimeoutSeconds) {
-    // 운영은 자동 구성 빌더(spring.http.codecs.preferred-json-mapper: jackson2)를 받는다. 날 builder() 는
-    // Spring 7 에서 Jackson 3 코덱을 골라 응답 DTO 디코딩이 어긋나므로 운영과 같게 Jackson 2 코덱을 건다(WD-792).
+    // 운영은 자동 구성 빌더(application.yml 의 spring.jackson.* 가 걸린 Jackson 3 매퍼)를 받는다 — 같은 규칙의 빌더를
+    // 쓴다(WD-793).
     return new ExecutorClient(
-        Jackson2WebClientCodecs.webClientBuilder(),
+        AppJsonWebClients.webClientBuilder(),
         "http://localhost:" + wireMock.port(),
         "test-token",
         maxResponseBytes,
@@ -107,7 +108,7 @@ class ExecutorClientTest {
    */
   @Test
   void preStatementTimeoutDefaults_matchContractVector() throws Exception {
-    ObjectMapper mapper = new ObjectMapper();
+    ObjectMapper mapper = JsonMapper.builderWithJackson2Defaults().build();
     JsonNode vectors;
     try (var in =
         getClass()

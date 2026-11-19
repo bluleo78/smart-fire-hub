@@ -1,9 +1,6 @@
 package com.smartfirehub.notification.channels.slack;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.smartfirehub.global.util.Jackson2WebClientCodecs;
+import com.smartfirehub.global.util.AppJsonWebClients;
 import java.util.HashMap;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
@@ -11,6 +8,9 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.web.reactive.function.client.WebClient;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * Slack REST API WebClient 래퍼.
@@ -29,14 +29,13 @@ public class SlackApiClient {
   /**
    * Spring 주입 생성자 — Spring이 관리하는 ObjectMapper 빈을 재사용한다.
    *
-   * <p>new ObjectMapper() 직접 생성을 피해 Spring의 커스텀 직렬화 설정(JavaTimeModule 등)이 적용되도록 한다 (이슈 #190).
+   * <p>new ObjectMapper() 직접 생성을 피해 Spring 이 구성한 직렬화 설정이 적용되도록 한다 (이슈 #190).
    *
    * @param objectMapper Spring 컨텍스트에서 주입받는 ObjectMapper 빈
    */
   @Autowired
   public SlackApiClient(ObjectMapper objectMapper) {
-    this.webClient =
-        Jackson2WebClientCodecs.webClientBuilder().baseUrl("https://slack.com/api").build();
+    this.webClient = AppJsonWebClients.webClientBuilder().baseUrl("https://slack.com/api").build();
     this.objectMapper = objectMapper;
   }
 
@@ -227,7 +226,7 @@ public class SlackApiClient {
     if (blocksJson != null) {
       try {
         body.put("blocks", objectMapper.readTree(blocksJson));
-      } catch (JsonProcessingException e) {
+      } catch (JacksonException e) {
         // blocks 파싱 실패 시 text 단독 전송으로 폴백
         throw new IllegalArgumentException("blocksJson 파싱 실패: " + e.getMessage(), e);
       }

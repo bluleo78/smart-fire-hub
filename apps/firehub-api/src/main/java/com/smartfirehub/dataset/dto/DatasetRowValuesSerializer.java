@@ -1,13 +1,12 @@
 package com.smartfirehub.dataset.dto;
 
-import com.fasterxml.jackson.core.JsonGenerator;
-import com.fasterxml.jackson.databind.JsonSerializer;
-import com.fasterxml.jackson.databind.SerializerProvider;
 import com.smartfirehub.global.util.JsSafeNumbers;
-import java.io.IOException;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
+import tools.jackson.core.JsonGenerator;
+import tools.jackson.databind.SerializationContext;
+import tools.jackson.databind.ValueSerializer;
 
 /**
  * 행 값 맵(컬럼명 → 값)을 JSON 으로 쓸 때 JS double 로 깎이는 숫자만 문자열로 바꾼다(WD-101, WD-104).
@@ -36,22 +35,20 @@ import java.util.Map;
  * 결과 표 전용 원문을 {@code AnalyticsQueryResponse.exactValues} 로 따로 싣는다, WD-105 — 정수 경계는 {@link
  * JsSafeNumbers} 공용).
  */
-public class DatasetRowValuesSerializer extends JsonSerializer<Map<String, Object>> {
+public class DatasetRowValuesSerializer extends ValueSerializer<Map<String, Object>> {
 
   @Override
-  public void serialize(Map<String, Object> row, JsonGenerator gen, SerializerProvider provider)
-      throws IOException {
+  public void serialize(Map<String, Object> row, JsonGenerator gen, SerializationContext context) {
     gen.writeStartObject(row);
     for (Map.Entry<String, Object> entry : row.entrySet()) {
-      gen.writeFieldName(entry.getKey());
-      writeValue(entry.getValue(), gen, provider);
+      gen.writeName(entry.getKey());
+      writeValue(entry.getValue(), gen, context);
     }
     gen.writeEndObject();
   }
 
   /** 셀 값 하나를 쓴다 — 정밀도를 잃는 숫자만 문자열, 나머지는 기본 직렬화에 맡긴다. */
-  private static void writeValue(Object value, JsonGenerator gen, SerializerProvider provider)
-      throws IOException {
+  private static void writeValue(Object value, JsonGenerator gen, SerializationContext context) {
     if (value == null) {
       gen.writeNull();
     } else if (value instanceof BigDecimal decimal) {
@@ -65,12 +62,12 @@ public class DatasetRowValuesSerializer extends JsonSerializer<Map<String, Objec
       // 배열 원소도 같은 규칙으로 쓴다 — 기본 직렬화는 BigDecimal·Long 원소를 숫자로 써서 깎는다(WD-104).
       gen.writeStartArray();
       for (Object element : JsSafeNumbers.asList(value)) {
-        writeValue(element, gen, provider);
+        writeValue(element, gen, context);
       }
       gen.writeEndArray();
     } else {
       // Integer(최대 2^31)·Double 은 double 로 그대로 표현되고, 날짜·지오메트리 등은 기존 직렬화 형태를 유지해야 한다.
-      provider.defaultSerializeValue(value, gen);
+      context.writeValue(gen, value);
     }
   }
 }

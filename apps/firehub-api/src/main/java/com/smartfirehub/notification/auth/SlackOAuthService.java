@@ -1,6 +1,5 @@
 package com.smartfirehub.notification.auth;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.smartfirehub.apiconnection.service.EncryptionService;
 import com.smartfirehub.global.platformdb.PlatformDbErrors;
 import com.smartfirehub.global.tenant.TenantContext;
@@ -15,6 +14,7 @@ import java.time.Instant;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
+import tools.jackson.databind.JsonNode;
 
 /**
  * Slack Workspace OAuth 설치 및 사용자 매핑 서비스.
@@ -118,14 +118,14 @@ public class SlackOAuthService {
 
     // Slack API는 HTTP 200 + ok=false로 실패를 전달한다
     if (!resp.path("ok").asBoolean(false)) {
-      String error = resp.path("error").asText("unknown");
+      String error = resp.path("error").asString("unknown");
       throw new IllegalStateException("slack oauth failed: " + error);
     }
 
-    String teamId = resp.path("team").path("id").asText();
-    String teamName = resp.path("team").path("name").asText();
-    String botUserId = resp.path("bot_user_id").asText();
-    String accessToken = resp.path("access_token").asText();
+    String teamId = resp.path("team").path("id").asString("");
+    String teamName = resp.path("team").path("name").asString("");
+    String botUserId = resp.path("bot_user_id").asString("");
+    String accessToken = resp.path("access_token").asString("");
 
     // 봇 토큰을 AES-256-GCM으로 암호화하여 저장
     String botTokenEnc = encryption.encrypt(accessToken);
@@ -220,7 +220,7 @@ public class SlackOAuthService {
 
     // conversations.open으로 DM 채널 ID 획득
     JsonNode convResp = slackApiClient.openConversation(botToken, slackUserId);
-    String dmChannelId = convResp.path("channel").path("id").asText();
+    String dmChannelId = convResp.path("channel").path("id").asString("");
 
     // 연동 확인 DM 발송 — blocks 없이 텍스트만
     slackApiClient.chatPostMessage(botToken, dmChannelId, null, brandName + " 채널 연동이 확인되었습니다.");
@@ -253,10 +253,10 @@ public class SlackOAuthService {
    * @return 표시 이름 (빈 문자열일 수 있음)
    */
   private String extractDisplayName(JsonNode userInfo) {
-    String displayName = userInfo.path("user").path("profile").path("display_name").asText("");
+    String displayName = userInfo.path("user").path("profile").path("display_name").asString("");
     if (displayName.isBlank()) {
       // display_name이 없는 경우 real_name으로 fallback
-      displayName = userInfo.path("user").path("real_name").asText("");
+      displayName = userInfo.path("user").path("real_name").asString("");
     }
     return displayName;
   }

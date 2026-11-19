@@ -8,7 +8,6 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.audit.service.AuditLogService;
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.exception.ExternalServiceException;
@@ -32,6 +31,7 @@ import okhttp3.mockwebserver.RecordedRequest;
 import org.junit.jupiter.api.*;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
+import tools.jackson.databind.json.JsonMapper;
 
 // OntologyService 단위 테스트 — MockWebServer로 ai-agent를 흉내내어 getGraph 프록시가
 // camelCase 필드를 정확히 역직렬화하고 실패 응답(502)을 예외로 전파하는지 검증한다.
@@ -73,7 +73,7 @@ class OntologyServiceTest {
             mock(AuditLogService.class),
             mock(UserRepository.class),
             gate,
-            new ObjectMapper(),
+            JsonMapper.builderWithJackson2Defaults().build(),
             // WD-31⑤ 출처 판정 협력자 — 이 단위 테스트는 출처 없는 요청만 보내므로 목으로 둔다(판정은 OntologySourceDatasetsTest).
             mock(ClearanceResolver.class),
             mock(DatasetAccessGuard.class),
@@ -166,7 +166,9 @@ class OntologyServiceTest {
     assertThat(res.nodes().get(1).properties()).isNull();
     // 화면 응답 직렬화: 값이 없는 노드는 두 필드를 싣지 않는다
     String json =
-        new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(res.nodes().get(1));
+        tools.jackson.databind.json.JsonMapper.builderWithJackson2Defaults()
+            .build()
+            .writeValueAsString(res.nodes().get(1));
     assertThat(json).doesNotContain("sourceDatasetIds").doesNotContain("properties");
   }
 

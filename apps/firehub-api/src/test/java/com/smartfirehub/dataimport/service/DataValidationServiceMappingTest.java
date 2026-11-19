@@ -92,6 +92,10 @@ class DataValidationServiceMappingTest {
     assertThatThrownBy(
             () -> service.convertValue("{\"type\":\"Point\",\"coordinates\":[400,37]}", "GEOMETRY"))
         .hasMessageStartingWith("좌표 범위를 벗어났습니다");
+    // double 범위를 넘는 좌표(1e400)도 예외로 새지 않고 범위 밖으로 거부한다(WD-793 — Jackson 3 asDouble 예외 회귀)
+    assertThatThrownBy(
+            () -> service.convertValue("{\"type\":\"Point\",\"coordinates\":[1e400,0]}", "GEOMETRY"))
+        .hasMessageStartingWith("좌표 범위를 벗어났습니다");
     // 숫자가 아닌 좌표는 범위 검사를 피하지 못하게 형식 오류로 거부한다
     assertThatThrownBy(
             () ->

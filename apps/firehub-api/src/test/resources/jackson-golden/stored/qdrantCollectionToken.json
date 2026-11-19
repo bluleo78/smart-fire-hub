@@ -1,0 +1,2 @@
+{"alg":"HS256","typ":"JWT"}
+{"access":[{"access":"rw","collection":"rows_t1"},{"access":"rw","collection":"rows_t2"}],"exp":1768439100}

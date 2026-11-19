@@ -6,8 +6,6 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.SecurityFixture;
@@ -29,6 +27,8 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * 데이터셋 변경 감사(WD-463) — 데이터셋 정보 수정·상태 변경·필드 추가/수정/삭제·기본 키·필드 순서·태그 추가/제거·데이터 탭 행 추가/수정/일괄 삭제.
@@ -202,7 +202,7 @@ class DatasetAuditTest extends IntegrationTestBase {
   /** JSON 의 모든 말단 값(숫자·문자열)을 글자로 모은다 — 값 누출을 부분 문자열이 아니라 값 단위로 검사한다(WD-689). */
   private static List<String> jsonValues(JsonNode node) {
     List<String> out = new ArrayList<>();
-    if (node.isContainerNode()) {
+    if (node.isContainer()) {
       node.forEach(child -> out.addAll(jsonValues(child)));
     } else {
       out.add(node.asText());

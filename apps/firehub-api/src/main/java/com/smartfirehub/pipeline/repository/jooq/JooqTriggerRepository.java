@@ -2,8 +2,6 @@ package com.smartfirehub.pipeline.repository.jooq;
 
 import static org.jooq.impl.DSL.*;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.dto.LockedRowVersion;
 import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.global.platformdb.PlatformLocks;
@@ -26,6 +24,8 @@ import org.jooq.Table;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
 
 /** TriggerRepository 의 jOOQ(PostgreSQL) 구현 — WD-485. */
 @Repository

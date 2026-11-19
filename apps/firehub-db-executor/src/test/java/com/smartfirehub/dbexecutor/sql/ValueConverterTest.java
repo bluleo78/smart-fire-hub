@@ -4,9 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import com.fasterxml.jackson.core.JsonGenerator;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.sql.Clob;
@@ -16,6 +13,10 @@ import java.sql.Timestamp;
 import java.sql.Types;
 import java.time.LocalDateTime;
 import org.junit.jupiter.api.Test;
+import tools.jackson.core.StreamWriteFeature;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * 결과 값 변환 규칙을 api 와 공유하는 고정값({@code tibero-executor-vectors.json} 의 {@code columnNames}·{@code
@@ -27,7 +28,7 @@ class ValueConverterTest {
 
   /** 응답과 같은 직렬화: BigDecimal 을 지수 표기 없이 쓴다(application.yml 의 write-bigdecimal-as-plain). */
   private static final ObjectMapper JSON =
-      new ObjectMapper().enable(JsonGenerator.Feature.WRITE_BIGDECIMAL_AS_PLAIN);
+      JsonMapper.builder().enable(StreamWriteFeature.WRITE_BIGDECIMAL_AS_PLAIN).build();
 
   private static JsonNode load() {
     try {

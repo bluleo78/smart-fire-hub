@@ -6,7 +6,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.within;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.audit.dto.AuditLogResponse;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.platformdb.mybatis.LongTextAssertions;
@@ -23,6 +22,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataIntegrityViolationException;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * AuditLogRepository 계약 테스트 — 구현마다 하위 클래스로 실행한다(WD-706).
@@ -36,7 +37,7 @@ import org.springframework.dao.DataIntegrityViolationException;
  */
 public abstract class AuditLogRepositoryContractTest extends AccessContractBase {
 
-  private static final ObjectMapper JSON = new ObjectMapper();
+  private static final ObjectMapper JSON = JsonMapper.builderWithJackson2Defaults().build();
 
   protected abstract AuditLogRepository repository();
 

@@ -2,8 +2,6 @@ package com.smartfirehub.settings.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
@@ -14,6 +12,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * SMTP 호스트·발신자 주소 문법이 web 과 <b>같은 판정</b>을 내리는지 지킨다(#728).
@@ -41,7 +41,7 @@ class SmtpAddressGrammarTest {
     try (InputStream in =
         SmtpAddressGrammarTest.class.getResourceAsStream(
             "/fixtures/smtp-validation-vectors.json")) {
-      return new ObjectMapper().readTree(in);
+      return JsonMapper.builderWithJackson2Defaults().build().readTree(in);
     } catch (IOException e) {
       throw new IllegalStateException("SMTP 시험 벡터 픽스처를 읽지 못했다", e);
     }

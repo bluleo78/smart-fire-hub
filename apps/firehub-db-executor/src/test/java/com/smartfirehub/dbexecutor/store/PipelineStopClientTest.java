@@ -3,7 +3,6 @@ package com.smartfirehub.dbexecutor.store;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dbexecutor.config.DbExecutorProperties;
 import com.sun.net.httpserver.HttpServer;
 import java.net.InetSocketAddress;
@@ -14,6 +13,7 @@ import java.util.function.BooleanSupplier;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * {@link PipelineStopClient} 단위 테스트(WD-482) — api 중지 확인 엔드포인트의 경로·내부 토큰 헤더와, 비정상 응답을 예외로 올리는

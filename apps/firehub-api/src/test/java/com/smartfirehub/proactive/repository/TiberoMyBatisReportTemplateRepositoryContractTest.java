@@ -1,6 +1,5 @@
 package com.smartfirehub.proactive.repository;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.proactive.repository.mybatis.MyBatisReportTemplateRepository;
 import com.smartfirehub.proactive.repository.mybatis.ReportTemplateMapper;
 import com.smartfirehub.support.tibero.TiberoLive;
@@ -9,6 +8,7 @@ import com.smartfirehub.user.repository.AccessFixtures;
 import com.smartfirehub.user.repository.TiberoAccessFixtures;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.TestInstance;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * ReportTemplateRepositoryContractTest 를 MyBatis 구현 + Tibero 실서버로 실행한다(WD-709). 리포지토리는 런타임 계정 +
@@ -29,7 +29,8 @@ class TiberoMyBatisReportTemplateRepositoryContractTest
         poc.transactional(
             ReportTemplateRepository.class,
             new MyBatisReportTemplateRepository(
-                poc.mapper(ReportTemplateMapper.class), new ObjectMapper()));
+                poc.mapper(ReportTemplateMapper.class),
+                JsonMapper.builderWithJackson2Defaults().build()));
   }
 
   @Override

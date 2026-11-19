@@ -12,7 +12,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.apiconnection.service.EncryptionService;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.global.tenant.TenantContext;
@@ -35,6 +34,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * {@code AiCredentialController} 통합 테스트(Task 7, #706 로 테넌트 전용화).
@@ -162,7 +162,7 @@ class AiCredentialControllerTest extends IntegrationTestBase {
   }
 
   private String json(Map<String, ?> body) throws Exception {
-    return new ObjectMapper().writeValueAsString(body);
+    return JsonMapper.builderWithJackson2Defaults().build().writeValueAsString(body);
   }
 
   // -------------------------------------------------------------------------

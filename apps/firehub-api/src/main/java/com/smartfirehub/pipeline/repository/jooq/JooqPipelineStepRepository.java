@@ -2,9 +2,6 @@ package com.smartfirehub.pipeline.repository.jooq;
 
 import static org.jooq.impl.DSL.*;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.exception.SerializationException;
 import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.pipeline.dto.PipelineStepRequest;
@@ -23,6 +20,9 @@ import org.jooq.JSONB;
 import org.jooq.Table;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.core.JacksonException;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
 
 /** PipelineStepRepository 의 jOOQ(PostgreSQL) 구현 — WD-485. */
 @Repository
@@ -217,7 +217,7 @@ public class JooqPipelineStepRepository implements PipelineStepRepository {
                   apiConfigMap =
                       objectMapper.readValue(
                           apiConfigJsonb.data(), new TypeReference<Map<String, Object>>() {});
-                } catch (JsonProcessingException e) {
+                } catch (JacksonException e) {
                   throw new SerializationException("Failed to parse api_config JSON", e);
                 }
               }
@@ -228,7 +228,7 @@ public class JooqPipelineStepRepository implements PipelineStepRepository {
                   aiConfigMap =
                       objectMapper.readValue(
                           aiConfigJsonb.data(), new TypeReference<Map<String, Object>>() {});
-                } catch (JsonProcessingException e) {
+                } catch (JacksonException e) {
                   throw new SerializationException("Failed to parse ai_config JSON", e);
                 }
               }
@@ -239,7 +239,7 @@ public class JooqPipelineStepRepository implements PipelineStepRepository {
                   pythonConfigMap =
                       objectMapper.readValue(
                           pythonConfigJsonb.data(), new TypeReference<Map<String, Object>>() {});
-                } catch (JsonProcessingException e) {
+                } catch (JacksonException e) {
                   throw new SerializationException("Failed to parse python_config JSON", e);
                 }
               }
@@ -326,7 +326,7 @@ public class JooqPipelineStepRepository implements PipelineStepRepository {
     }
     try {
       return JSONB.jsonb(objectMapper.writeValueAsString(value));
-    } catch (JsonProcessingException e) {
+    } catch (JacksonException e) {
       throw new SerializationException("Failed to serialize " + label, e);
     }
   }

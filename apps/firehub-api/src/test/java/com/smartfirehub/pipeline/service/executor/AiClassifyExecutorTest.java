@@ -19,7 +19,6 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
@@ -50,6 +49,8 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * AiClassifyExecutor 단위 테스트. Spring 컨텍스트 없이 Mockito 로 실행한다. 캐시 접근은 AiInferenceCacheRepository mock
@@ -82,7 +83,7 @@ class AiClassifyExecutorTest {
     // 이번 실행 전용 임시 테이블 이름(WD-151) — 실행기는 createTempTable 이 돌려준 이 이름을 적재·맞바꿈·정리에 그대로 써야 한다.
     when(dataTableService.createTempTable("output_table")).thenReturn(RUN_TEMP);
     datasetRepository = mock(DatasetRepository.class);
-    objectMapper = new ObjectMapper();
+    objectMapper = JsonMapper.builderWithJackson2Defaults().build();
     cacheRepository = mock(AiInferenceCacheRepository.class);
     executionRepository = mock(PipelineExecutionRepository.class);
     datasetColumnRepository = mock(DatasetColumnRepository.class);

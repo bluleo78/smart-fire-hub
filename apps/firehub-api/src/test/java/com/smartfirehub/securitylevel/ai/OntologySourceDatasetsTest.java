@@ -6,8 +6,6 @@ import static org.jooq.impl.DSL.name;
 import static org.jooq.impl.DSL.table;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.embedding.config.EmbeddingConfigService;
 import com.smartfirehub.global.security.InternalCallHeaders;
 import com.smartfirehub.global.tenant.TenantContext;
@@ -29,6 +27,8 @@ import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * 보충 스펙 §2.2 WD-31⑤: 온톨로지 생성 요청의 sourceDatasetIds 는 VIEW + AI(공유 호스팅 규칙) + SHARE 판정을 통과해야

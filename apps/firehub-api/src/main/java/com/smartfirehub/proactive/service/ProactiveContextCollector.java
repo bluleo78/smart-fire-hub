@@ -1,6 +1,5 @@
 package com.smartfirehub.proactive.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dashboard.service.DashboardService;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.proactive.dto.AnomalyEvent;
@@ -21,6 +20,7 @@ import java.util.function.Supplier;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.ObjectMapper;
 
 @Component
 @RequiredArgsConstructor

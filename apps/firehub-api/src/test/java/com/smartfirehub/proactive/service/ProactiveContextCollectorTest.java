@@ -7,8 +7,6 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.when;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.proactive.dto.ProactiveJobExecutionResponse;
 import com.smartfirehub.proactive.repository.ProactiveJobExecutionRepository;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -20,6 +18,8 @@ import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 class ProactiveContextCollectorTest extends IntegrationTestBase {
 
@@ -68,7 +68,7 @@ class ProactiveContextCollectorTest extends IntegrationTestBase {
 
     String withAnomaly = contextCollector.collectContext(config, null, null, event);
     JsonNode root = objectMapper.readTree(withAnomaly);
-    assertThat(root.fieldNames().next()).isEqualTo("anomaly");
+    assertThat(root.propertyNames().iterator().next()).isEqualTo("anomaly");
     JsonNode anomaly = root.path("anomaly");
     assertThat(anomaly.path("metricName").asText()).isEqualTo("데이터셋수");
     assertThat(anomaly.path("currentValue").asDouble()).isEqualTo(9.0);

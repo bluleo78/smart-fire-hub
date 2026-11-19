@@ -3,6 +3,7 @@ package com.smartfirehub.proactive.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.smartfirehub.global.dto.LockedRowVersion;
+import com.smartfirehub.global.json.StoredJsonAssert;
 import com.smartfirehub.proactive.dto.ReportTemplateResponse;
 import com.smartfirehub.proactive.dto.ReportTemplateSummaryResponse;
 import com.smartfirehub.user.repository.AccessFixtures.ReportTemplateStored;
@@ -69,6 +70,12 @@ abstract class ReportTemplateRepositoryContractTest extends TenantPairContractBa
     assertThat(found.userId()).isEqualTo(userA);
     assertThat(found.builtin()).isFalse();
     assertThat(found.sections()).isEqualTo(secs);
+    // 저장된 sections 원문(WD-793 골든) — jsonb 정규화 때문에 트리로 비교한다.
+    StoredJsonAssert.assertStoredJson(
+        fx.rawJsonText("report_template", "sections", "id", id),
+        "[{\"key\":\"s0\",\"label\":\"섹션0\",\"type\":\"text\"},"
+            + "{\"key\":\"s1\",\"label\":\"섹션1\",\"type\":\"text\"},"
+            + "{\"key\":\"s2\",\"label\":\"섹션2\",\"type\":\"text\"}]");
     assertThat(found.createdAt()).isNotNull();
     assertThat(found.updatedAt()).isNotNull();
     // 삽입 시각은 DB 시계 기준이다.

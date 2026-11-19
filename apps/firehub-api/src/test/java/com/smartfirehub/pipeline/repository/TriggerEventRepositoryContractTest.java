@@ -2,6 +2,7 @@ package com.smartfirehub.pipeline.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.smartfirehub.global.json.StoredJsonAssert;
 import com.smartfirehub.pipeline.dto.TriggerEventResponse;
 import com.smartfirehub.pipeline.repository.TriggerEventRepository.LatestEvent;
 import com.smartfirehub.user.repository.TenantPairContractBase;
@@ -63,6 +64,10 @@ public abstract class TriggerEventRepositoryContractTest extends TenantPairContr
     assertThat(Duration.between(e.createdAt(), fx.dbWallClockNow()).abs())
         .isLessThan(Duration.ofMinutes(2));
     assertThat(fx.triggerEventCreatedAts(chainTrigger)).hasSize(1);
+    // 저장된 detail 원문(WD-793 골든) — jsonb 정규화 때문에 트리로 비교한다. 두 벤더 계약에서 모두 돈다.
+    StoredJsonAssert.assertStoredJson(
+        fx.rawJsonText("trigger_event", "detail", "id", e.id()),
+        "{\"chainDepth\":2,\"note\":\"한글 사유\",\"nested\":{\"a\":\"b\"},\"list\":[1,2]}");
   }
 
   @Test

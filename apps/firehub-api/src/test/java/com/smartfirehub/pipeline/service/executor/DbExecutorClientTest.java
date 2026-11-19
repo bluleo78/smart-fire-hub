@@ -13,7 +13,7 @@ import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import com.smartfirehub.global.tenant.MissingTenantScopeException;
 import com.smartfirehub.global.tenant.TenantContext;
-import com.smartfirehub.global.util.Jackson2WebClientCodecs;
+import com.smartfirehub.global.util.AppJsonWebClients;
 import com.smartfirehub.pipeline.exception.ScriptExecutionException;
 import java.io.IOException;
 import java.sql.Types;
@@ -64,15 +64,10 @@ class DbExecutorClientTest {
   }
 
   private static DbExecutorClient client(String baseUrl, Duration timeout) {
-    // 운영은 자동 구성 빌더(Jackson 2 우선)를 받는다 — 날 builder() 는 Spring 7 에서 Jackson 3 코덱을 고르므로
-    // 운영과 같게 Jackson 2 코덱을 건다(WD-792).
+    // 운영은 자동 구성 빌더(application.yml 의 spring.jackson.* 가 걸린 Jackson 3 매퍼)를 받는다 — 같은 규칙의 빌더를
+    // 쓴다(WD-793).
     return new DbExecutorClient(
-        Jackson2WebClientCodecs.webClientBuilder(),
-        baseUrl,
-        "test-token",
-        timeout,
-        timeout,
-        timeout);
+        AppJsonWebClients.webClientBuilder(), baseUrl, "test-token", timeout, timeout, timeout);
   }
 
   private static void stubJson(String path, String body) {
@@ -260,7 +255,7 @@ class DbExecutorClientTest {
   @Test
   void oversizedResponse_throwsTooLargeNotConnectFailure() {
     WebClient.Builder overflowing =
-        WebClient.builder()
+        AppJsonWebClients.webClientBuilder()
             .exchangeFunction(
                 request -> Mono.error(new DataBufferLimitException("Exceeded limit on max bytes")));
     DbExecutorClient client =
@@ -384,7 +379,8 @@ class DbExecutorClientTest {
   @Test
   void sqlWait_addsPreStatementTimeoutOnlyWhenPreStatementsPresent() {
     DbExecutorClient client =
-        new DbExecutorClient(WebClient.builder(), "http://localhost:1", "test-token", 1800);
+        new DbExecutorClient(
+            AppJsonWebClients.webClientBuilder(), "http://localhost:1", "test-token", 1800);
 
     assertThat(client.sqlWait(List.of())).isEqualTo(Duration.ofSeconds(60));
     assertThat(client.sqlWait(null)).isEqualTo(Duration.ofSeconds(60));
@@ -396,7 +392,8 @@ class DbExecutorClientTest {
   @Test
   void sqlWait_withTimeout_isTimeoutPlusGracePlusPreStatementTimeout() {
     DbExecutorClient client =
-        new DbExecutorClient(WebClient.builder(), "http://localhost:1", "test-token", 1800);
+        new DbExecutorClient(
+            AppJsonWebClients.webClientBuilder(), "http://localhost:1", "test-token", 1800);
 
     assertThat(client.sqlWait(List.of(), 120)).isEqualTo(Duration.ofSeconds(125));
     assertThat(client.sqlWait(null, 120)).isEqualTo(Duration.ofSeconds(125));
@@ -410,7 +407,8 @@ class DbExecutorClientTest {
   @Test
   void sqlWait_usesConfiguredPreStatementTimeout() {
     DbExecutorClient client =
-        new DbExecutorClient(WebClient.builder(), "http://localhost:1", "test-token", 600);
+        new DbExecutorClient(
+            AppJsonWebClients.webClientBuilder(), "http://localhost:1", "test-token", 600);
 
     assertThat(client.sqlWait(List.of("DELETE FROM \"S\".\"T\"")))
         .isEqualTo(Duration.ofSeconds(660));
@@ -430,8 +428,8 @@ class DbExecutorClientTest {
     Duration shortWait = Duration.ofMillis(300);
     DbExecutorClient client =
         new DbExecutorClient(
-            // 운영과 같은 Jackson 2 코덱(WD-792)
-            Jackson2WebClientCodecs.webClientBuilder(),
+            // 운영과 같은 규칙의 Jackson 3 코덱(WD-793)
+            AppJsonWebClients.webClientBuilder(),
             "http://localhost:" + wireMock.port(),
             "test-token",
             shortWait,

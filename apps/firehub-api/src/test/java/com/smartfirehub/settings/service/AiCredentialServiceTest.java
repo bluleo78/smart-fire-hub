@@ -410,7 +410,7 @@ class AiCredentialServiceTest extends IntegrationTestBase {
   @Test
   void tenantOpencodeCredential_은_암호문이_손상돼도_던지지_않고_빈_키를_돌려준다() {
     seedTenantRaw(
-        "{\"v\":1,\"agentType\":\"opencode\",\"payload\":{\"providerId\":\"openai\","
+        "{\"v\":1,\"agentType\":\"opencode\",\"payload\":{\"baseURL\":\"https://api.openai.com/v1\","
             + "\"baseURL\":\"https://api.openai.com/v1\"},\"secret\":{\"apiKey\":\""
             + CIPHER_GCM_BROKEN
             + "\"}}");
@@ -483,6 +483,24 @@ class AiCredentialServiceTest extends IntegrationTestBase {
         """
         {"v":1,"agentType":"martian","payload":{},"secret":{}}""");
     assertThat(service.read().agentType()).isEqualTo("martian");
+  }
+
+  /**
+   * 저장되는 {@code ai.credential} 원문 문자열의 모양을 못 박는다(WD-793 Jackson 골든) — 최상위·payload·secret 의 필드 순서와
+   * 표기가 바뀌면 안 된다. 암호문만 실행마다 다르므로 정규식으로 그 자리만 비운다.
+   */
+  @Test
+  void save_저장_원문_JSON_모양이_고정이다() {
+    // Map.of 는 순회 순서가 실행마다 달라 골든이 흔들리므로 삽입 순서가 고정인 맵을 쓴다.
+    Map<String, Object> payload = new java.util.LinkedHashMap<>();
+    payload.put("providerId", "openai");
+    payload.put("baseURL", "https://api.openai.com/v1");
+    service.save(upsert("opencode", payload, Map.of("apiKey", "sk-secret")), USER);
+
+    assertThat(tenantSettingsRepository.findValue(KEY).orElseThrow())
+        .matches(
+            "\\{\"v\":1,\"agentType\":\"opencode\",\"payload\":\\{\"providerId\":\"openai\",\"baseURL\":\"https://api.openai.com/v1\"\\},"
+                + "\"secret\":\\{\"apiKey\":\"[^\"]+\"\\}\\}");
   }
 
   @Test

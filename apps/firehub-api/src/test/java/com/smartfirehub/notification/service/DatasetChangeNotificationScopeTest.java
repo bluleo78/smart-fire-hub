@@ -2,7 +2,6 @@ package com.smartfirehub.notification.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
@@ -20,6 +19,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * Task 3 D2: 데이터셋 변경 SSE 알림(데이터셋 이름이 실린다)은 <b>같은 테넌트</b>의 연결 중 <b>그 데이터셋을 볼 수 있는</b> 사용자에게만 간다. 예전

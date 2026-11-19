@@ -1,8 +1,8 @@
 package com.smartfirehub.notification;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import java.util.List;
 import java.util.Map;
+import tools.jackson.databind.JsonNode;
 
 /** 채널 발송용 페이로드. Standard 필드 + 선택적 channel-raw override. */
 public record Payload(

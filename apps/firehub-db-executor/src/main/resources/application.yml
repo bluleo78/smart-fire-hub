@@ -11,14 +11,13 @@ spring:
   autoconfigure:
     exclude:
       - org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration
-  # Jackson 2 유지(WD-792, Jackson 3 전환은 WD-793). Boot 4 는 Jackson 3 이 있으면 HTTP JSON 에 그것을 쓰는데 웹 스타터가 Jackson 3 을
-  # 끌어온다 — 응답 변환기를 Jackson 2 로 고정하고, Jackson 2 설정은 spring.jackson2.* 로 준다(spring.jackson.* 는 Jackson 3 용이 됐다).
-  http:
-    converters:
-      preferred-json-mapper: jackson2
-  jackson2:
-    generator:
+  # Jackson 3(WD-793). 응답 JSON 모양을 Jackson 2 때와 같게 유지하는 설정이다.
+  jackson:
+    # Boot 3(Jackson 2) 때의 기본값(모르는 속성 무시·날짜를 문자열로 등)으로 되돌려 api 와 같게 맞춘다 — 요청·응답 JSON 동작이 마이그레이션 전과 달라지지 않게 하려는 것이다.
+    use-jackson2-defaults: true
+    write:
       # 결과 NUMBER(BigDecimal)를 지수 표기(1E-7) 없이 쓴다 — 고정값 valueConversions 와 같은 JSON 텍스트.
+      # Jackson 3 에서 이 기능은 StreamWriteFeature 라 spring.jackson.write.*(JacksonProperties.write = StreamWriteFeature)에 둔다 — Jackson 2 의 generator.* 에 해당.
       write-bigdecimal-as-plain: true
 
 app:

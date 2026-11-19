@@ -1,6 +1,5 @@
 package com.smartfirehub.analytics.repository;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.analytics.repository.mybatis.ChartMapper;
 import com.smartfirehub.analytics.repository.mybatis.MyBatisChartRepository;
 import com.smartfirehub.support.tibero.TiberoLive;
@@ -9,6 +8,7 @@ import com.smartfirehub.user.repository.AccessFixtures;
 import com.smartfirehub.user.repository.TiberoAccessFixtures;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.TestInstance;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * ChartRepositoryContractTest 를 MyBatis 구현 + Tibero 실서버로 실행한다(WD-710). 리포지토리는 런타임 계정 + DBMS_RLS
@@ -27,7 +27,8 @@ class TiberoMyBatisChartRepositoryContractTest extends ChartRepositoryContractTe
     repository =
         poc.transactional(
             ChartRepository.class,
-            new MyBatisChartRepository(poc.mapper(ChartMapper.class), new ObjectMapper()));
+            new MyBatisChartRepository(
+                poc.mapper(ChartMapper.class), JsonMapper.builderWithJackson2Defaults().build()));
   }
 
   @Override

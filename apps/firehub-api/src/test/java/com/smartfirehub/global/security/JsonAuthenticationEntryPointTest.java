@@ -14,7 +14,6 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.support.IntegrationTestBase;
 import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
@@ -26,6 +25,7 @@ import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * 인증 진입점 401 응답 모양 회귀 테스트(WD-549).
@@ -84,7 +84,8 @@ class JsonAuthenticationEntryPointTest extends IntegrationTestBase {
    */
   @Test
   void committedResponse_isLeftUntouched() throws Exception {
-    JsonAuthenticationEntryPoint entryPoint = new JsonAuthenticationEntryPoint(new ObjectMapper());
+    JsonAuthenticationEntryPoint entryPoint =
+        new JsonAuthenticationEntryPoint(JsonMapper.builderWithJackson2Defaults().build());
     MockHttpServletRequest request = new MockHttpServletRequest("GET", PROTECTED_PATH);
     MockHttpServletResponse response = new MockHttpServletResponse();
     response.setStatus(200);
@@ -113,7 +114,7 @@ class JsonAuthenticationEntryPointTest extends IntegrationTestBase {
       MockHttpServletRequest request = new MockHttpServletRequest("GET", PROTECTED_PATH);
       request.setQueryString("token=secret-token");
       request.addHeader(HttpHeaders.AUTHORIZATION, "Bearer secret-jwt");
-      new JsonAuthenticationEntryPoint(new ObjectMapper())
+      new JsonAuthenticationEntryPoint(JsonMapper.builderWithJackson2Defaults().build())
           .commence(
               request, new MockHttpServletResponse(), new BadCredentialsException("secret-detail"));
 

@@ -1,9 +1,9 @@
 package com.smartfirehub.audit.dto;
 
 import com.fasterxml.jackson.annotation.JsonRawValue;
-import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import com.smartfirehub.audit.time.StorageZoneDateTimeSerializer;
 import java.time.LocalDateTime;
+import tools.jackson.databind.annotation.JsonSerialize;
 
 public record AuditLogResponse(
     Long id,

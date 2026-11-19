@@ -57,7 +57,8 @@ class TiberoIncrementalCursorTest {
   @Test
   void candidateSql_matchesSharedFixtureWithDbExecutorGuard() throws Exception {
     String fixture =
-        new com.fasterxml.jackson.databind.ObjectMapper()
+        tools.jackson.databind.json.JsonMapper.builderWithJackson2Defaults()
+            .build()
             .readTree(new java.io.File("src/test/resources/fixtures/tibero-cursor-candidate.json"))
             .get("sql")
             .asText();

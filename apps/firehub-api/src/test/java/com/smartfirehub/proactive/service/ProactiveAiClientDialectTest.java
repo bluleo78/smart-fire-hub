@@ -9,7 +9,6 @@ import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import com.smartfirehub.dataset.storage.DataStoreBackend;
@@ -24,6 +23,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * WD-79 — 프로액티브 요청 바디의 {@code dbDialect}. Spring 컨텍스트 없이 저장소 리졸버를 목으로 두고 WireMock 으로 ai-agent 를
@@ -62,7 +62,7 @@ class ProactiveAiClientDialectTest {
     ProactiveAiClient client =
         new ProactiveAiClient(
             "http://localhost:" + wireMock.port(),
-            new ObjectMapper(),
+            JsonMapper.builderWithJackson2Defaults().build(),
             resolver,
             features,
             Duration.ofSeconds(30));

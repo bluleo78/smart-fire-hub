@@ -1,0 +1,1 @@
+{"success":true,"rows":[{"tiny":0.0000001,"sciSmall":0.0000001,"sciBig":1000,"scaled":1.50,"huge":12345678901234567890.123456789,"long":9007199254740993,"double":1.5,"flag":true,"text":"한글 \"인용\" \n","nothing":null},{}],"columns":["tiny","sciSmall"],"row_count":2,"execution_log":"로그","error":null,"db_error":null,"cancelled":false}

@@ -1,7 +1,5 @@
 package com.smartfirehub.dbexecutor.store;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dbexecutor.config.DbExecutorProperties;
 import java.io.IOException;
 import java.net.URI;
@@ -21,6 +19,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * api 에서 테넌트 저장소 기술자를 조회하고 캐시한다(Python executor {@code StoreClient} 와 같은 동작).
@@ -319,7 +320,7 @@ public class StoreDescriptorClient {
         throw new IOException("scriptTokenEpoch 형식 오류");
       }
       value = node.longValue();
-    } catch (IOException e) {
+    } catch (IOException | JacksonException e) {
       // 세대 조회 실패는 스크립트 요청 거부로 이어진다 — 운영자가 원인을 볼 수 있게 사유만 남긴다(리뷰 M-9, 비밀·본문 없음).
       log.warn("{} 조회 실패 — 스크립트 요청을 거부합니다 tenant={} 사유=응답 형식 오류", EPOCH_LABEL, tenantId);
       throw new StoreUnavailableException("응답 형식 오류");
@@ -435,7 +436,7 @@ public class StoreDescriptorClient {
     StoreDescriptor d;
     try {
       d = mapper.readValue(res.body(), StoreDescriptor.class);
-    } catch (IOException e) {
+    } catch (JacksonException e) {
       throw new StoreUnavailableException("응답 형식 오류");
     }
     if (d == null || d.tenantId() != tenantId) {

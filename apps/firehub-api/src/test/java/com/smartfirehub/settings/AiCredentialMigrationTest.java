@@ -3,8 +3,6 @@ package com.smartfirehub.settings;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.apiconnection.service.EncryptionService;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.settings.model.AiCredential;
@@ -25,6 +23,9 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * V122 마이그레이션(옛 3키 {@code ai.api_key}/{@code ai.cli_oauth_token}/{@code ai.agent_type} → {@code
@@ -50,7 +51,7 @@ class AiCredentialMigrationTest extends IntegrationTestBase {
   @Autowired private EncryptionService encryptionService;
   @Autowired private AiCredentialService aiCredentialService;
 
-  private static final ObjectMapper MAPPER = new ObjectMapper();
+  private static final ObjectMapper MAPPER = JsonMapper.builderWithJackson2Defaults().build();
   private static final String MIGRATION_SQL = loadMigrationSql();
 
   // V122 파일 본문에서 잘라낸 문 3개(가드 DO 블록 / 테넌트 INSERT / 변환 행 수 단언 DO 블록).
@@ -150,12 +151,9 @@ class AiCredentialMigrationTest extends IntegrationTestBase {
                 .map(r -> r.get(0, String.class)));
   }
 
+  // Jackson 3(WD-793): readTree 는 비검사 JacksonException 을 던지므로 감쌀 필요가 없다.
   private JsonNode parseJson(String json) {
-    try {
-      return MAPPER.readTree(json);
-    } catch (IOException e) {
-      throw new UncheckedIOException(e);
-    }
+    return MAPPER.readTree(json);
   }
 
   // ---------- 테스트 ----------

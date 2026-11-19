@@ -6,8 +6,6 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataset.dto.ReorderColumnsRequest;
 import com.smartfirehub.dataset.dto.UpdatePrimaryKeysRequest;
 import com.smartfirehub.global.security.JwtTokenProvider;
@@ -27,6 +25,8 @@ import org.springframework.http.MediaType;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * 필드 순서 변경·기본 키 일괄 변경의 {@code columnIds} null 검증(WD-604) — HTTP 왕복으로 검증한다.

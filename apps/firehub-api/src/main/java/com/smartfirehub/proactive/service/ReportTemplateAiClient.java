@@ -1,9 +1,8 @@
 package com.smartfirehub.proactive.service;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.exception.ExternalServiceException;
-import com.smartfirehub.global.util.Jackson2WebClientCodecs;
+import com.smartfirehub.global.json.JsonConversions;
+import com.smartfirehub.global.util.AppJsonWebClients;
 import com.smartfirehub.settings.model.AiCredential;
 import com.smartfirehub.settings.service.AiCredentialService;
 import com.smartfirehub.settings.service.SettingsService;
@@ -19,6 +18,8 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.netty.http.client.HttpClient;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * ai-agent 의 리포트 양식 섹션 생성 엔드포인트({@code POST /agent/template-sections/generate}) 클라이언트(WD-455).
@@ -55,7 +56,7 @@ public class ReportTemplateAiClient {
       AiCredentialService aiCredentialService) {
     HttpClient httpClient = HttpClient.create().responseTimeout(TIMEOUT);
     this.webClient =
-        Jackson2WebClientCodecs.webClientBuilder()
+        AppJsonWebClients.webClientBuilder()
             .baseUrl(agentUrl)
             .clientConnector(new ReactorClientHttpConnector(httpClient))
             .build();
@@ -104,7 +105,8 @@ public class ReportTemplateAiClient {
       if (!(responseMap.get("sections") instanceof List<?>)) {
         throw new IllegalArgumentException("sections 가 없는 응답");
       }
-      return objectMapper.convertValue(responseMap.get("sections"), new TypeReference<>() {});
+      return JsonConversions.convertValue(
+          objectMapper, responseMap.get("sections"), new TypeReference<>() {});
     } catch (WebClientResponseException e) {
       log.error(
           "AI agent template generation failed with status {}: {}",

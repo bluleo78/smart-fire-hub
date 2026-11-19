@@ -1,8 +1,7 @@
 package com.smartfirehub.pipeline.service.executor;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.smartfirehub.global.util.Jackson2WebClientCodecs;
+import com.smartfirehub.global.json.JsonConversions;
+import com.smartfirehub.global.util.AppJsonWebClients;
 import com.smartfirehub.settings.model.AiCredential;
 import com.smartfirehub.settings.service.AiCredentialService;
 import com.smartfirehub.settings.service.SettingsService;
@@ -17,6 +16,8 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.netty.http.client.HttpClient;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
 
 @Slf4j
 @Component
@@ -47,7 +48,7 @@ public class AiAgentClient {
       AiCredentialService aiCredentialService) {
     HttpClient httpClient = HttpClient.create().responseTimeout(TIMEOUT);
     this.webClient =
-        Jackson2WebClientCodecs.webClientBuilder()
+        AppJsonWebClients.webClientBuilder()
             .baseUrl(agentUrl)
             .clientConnector(new ReactorClientHttpConnector(httpClient))
             .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(10 * 1024 * 1024))
@@ -173,7 +174,8 @@ public class AiAgentClient {
           objectMapper.readValue(responseBody, new TypeReference<>() {});
 
       List<Map<String, Object>> rawResults =
-          objectMapper.convertValue(responseMap.get("results"), new TypeReference<>() {});
+          JsonConversions.convertValue(
+              objectMapper, responseMap.get("results"), new TypeReference<>() {});
 
       List<ClassifyRowResult> results = rawResults.stream().map(ClassifyRowResult::new).toList();
 

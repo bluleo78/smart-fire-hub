@@ -4,7 +4,6 @@ import static com.smartfirehub.jooq.Tables.AUDIT_LOG;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dashboard.service.DashboardService;
 import com.smartfirehub.embedding.config.EmbeddingConfigService;
 import com.smartfirehub.global.tenant.TenantContext;
@@ -25,6 +24,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * 스펙 §4.2·§4.3 Proactive 행(Review Focus 4): 리포트 컨텍스트·메트릭은 채팅 공급자로 가고 발송되므로 소유자 VIEW 에 더해 AI(공유 호스팅

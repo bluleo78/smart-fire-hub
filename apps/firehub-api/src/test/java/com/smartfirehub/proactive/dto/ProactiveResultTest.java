@@ -2,10 +2,10 @@ package com.smartfirehub.proactive.dto;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.json.JsonMapper;
 
 /** ProactiveResult 알림 요약·수치 검증 직렬화 단위 검증(WD-767). */
 class ProactiveResultTest {
@@ -65,7 +65,8 @@ class ProactiveResultTest {
             new ProactiveResult.NumberCheck(
                 true, List.of(new ProactiveResult.UnverifiedNumber("3.5억", "매출 3.5억")), 3));
 
-    Map<String, Object> map = new ObjectMapper().convertValue(r, Map.class);
+    Map<String, Object> map =
+        JsonMapper.builderWithJackson2Defaults().build().convertValue(r, Map.class);
 
     Map<String, Object> check = (Map<String, Object>) map.get("numberCheck");
     assertThat(check).containsEntry("checked", true).containsEntry("unverifiedTotal", 3);
@@ -88,7 +89,8 @@ class ProactiveResultTest {
   void convertValue_numberCheck_없는_옛_결과는_null() {
     Map<String, Object> old = Map.of("title", "제목", "summary", "요약", "sections", List.of());
 
-    ProactiveResult r = new ObjectMapper().convertValue(old, ProactiveResult.class);
+    ProactiveResult r =
+        JsonMapper.builderWithJackson2Defaults().build().convertValue(old, ProactiveResult.class);
 
     assertThat(r.numberCheck()).isNull();
   }

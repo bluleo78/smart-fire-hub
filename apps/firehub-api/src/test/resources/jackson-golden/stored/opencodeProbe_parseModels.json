@@ -1,0 +1,5 @@
+ProbeResult[ok=true, models=[m1, 모델2], message=null, reason=OK, httpStatus=null]
+ProbeResult[ok=true, models=[a, b], message=null, reason=OK, httpStatus=null]
+ProbeResult[ok=false, models=[], message=공급자 응답을 해석할 수 없습니다, reason=PARSE_ERROR, httpStatus=null]
+ProbeResult[ok=false, models=[], message=공급자 응답을 해석할 수 없습니다, reason=PARSE_ERROR, httpStatus=null]
+ProbeResult[ok=false, models=[], message=공급자 응답을 해석할 수 없습니다, reason=PARSE_ERROR, httpStatus=null]

@@ -2,8 +2,6 @@ package com.smartfirehub.pipeline.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.user.repository.AccessFixtures.TriggerStored;
 import com.smartfirehub.user.repository.TenantPairContractBase;
 import java.time.LocalDateTime;
@@ -12,6 +10,9 @@ import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * 데이터 변경 트리거 폴러 상태 정리(WD-399, WD-221) — 트리거를 다시 켤 때·감시 데이터셋을 지울 때 행 수 스냅숏과 함께 변경 카운터 스냅숏({@code
@@ -23,7 +24,7 @@ import org.junit.jupiter.api.Test;
  */
 public abstract class TriggerRepositoryPollSnapshotContractTest extends TenantPairContractBase {
 
-  private static final ObjectMapper JSON = new ObjectMapper();
+  private static final ObjectMapper JSON = JsonMapper.builderWithJackson2Defaults().build();
 
   /** 폴러가 남기는 상태 그대로 — 감시 데이터셋 101·102 의 행 수·변경 카운터·테이블 실체 + 마지막 확인 시각. */
   private static final String POLLER_STATE =

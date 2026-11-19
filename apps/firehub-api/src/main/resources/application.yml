@@ -1,4 +1,10 @@
 spring:
+  # Jackson 3(WD-793). HTTP 요청·응답 JSON 이 Boot 3(Jackson 2) 때와 같게 동작하도록 Jackson 2 기본값으로 되돌린다.
+  # Boot 4.1 의 use-jackson2-defaults 는 MapperBuilder.configureForJackson2()(원시 타입 자리 null 허용·날짜 UTC 를 +00:00 로 쓰기 등)에
+  # Boot 3 자동 구성이 걸던 값(모르는 속성 무시·날짜를 문자열로·DEFAULT_VIEW_INCLUSION 끔)을 더한 묶음이다. 골든 시험(JacksonGoldenHttpTest)이
+  # 요청 본문의 모르는 속성·원시 타입 자리 null 에서 Jackson 3 기본값과의 차이를 잡았다. 이 키로 안 되는 것은 JacksonCompatConfig 가 맡는다.
+  jackson:
+    use-jackson2-defaults: true
   application:
     name: smart-fire-hub
   flyway:
@@ -46,14 +52,6 @@ spring:
       # Boot 4 는 블로킹·리액티브 키(spring.http.client.redirects·spring.http.reactiveclient.redirects)를 이 하나로 합쳤다(WD-792).
       # 그래서 자동 구성 RestClient/RestTemplate 도 따라가지 않게 되지만, 이 앱은 그것들을 쓰지 않는다(블로킹 HTTP 는 직접 만든 클라이언트).
       redirects: dont-follow
-    # Jackson 2 유지(WD-792, Jackson 3 전환은 WD-793). Boot 4 는 Jackson 3 이 있으면 그것을 HTTP JSON 에 쓰는데, Flyway 12·웹 스타터가
-    # Jackson 3 을 끌어와 클래스패스에서 뺄 수 없다. 서블릿 응답·요청 본문(converters)과 자동 구성 WebClient(codecs)를 Jackson 2 로 고정해
-    # @JsonSerialize(StorageZoneDateTimeSerializer 등)·날짜 형식·속성 순서를 Boot 3 때와 같게 둔다. 직접 만드는 WebClient 는
-    # Jackson2WebClientCodecs 로 같은 일을 한다.
-    converters:
-      preferred-json-mapper: jackson2
-    codecs:
-      preferred-json-mapper: jackson2
 
 server:
   port: 8080

@@ -3,6 +3,7 @@ package com.smartfirehub.proactive.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.smartfirehub.global.json.StoredJsonAssert;
 import com.smartfirehub.proactive.dto.ProactiveJobExecutionResponse;
 import com.smartfirehub.proactive.dto.ProactiveJobExecutionSummaryResponse;
 import com.smartfirehub.proactive.dto.ReportListItemResponse;
@@ -176,6 +177,10 @@ abstract class ProactiveJobExecutionRepositoryContractTest extends TenantPairCon
     assertThat(found.status()).isEqualTo("COMPLETED");
     assertThat(found.result()).isEqualTo(result);
     assertThat(found.completedAt()).isEqualTo(second);
+    // 저장된 result 원문(WD-793 골든) — jsonb 정규화 때문에 트리로 비교한다.
+    StoredJsonAssert.assertStoredJson(
+        fx.rawJsonText("proactive_job_execution", "result", "id", id),
+        "{\"title\":\"제목\",\"htmlContent\":\"<p>본문</p>\",\"n\":3,\"sections\":[{\"k\":\"v\"}]}");
   }
 
   /** 정리기가 먼저 닫은 실행을 늦게 돌아온 러너의 성공 결과가 되살리면 안 된다(WD-258). */

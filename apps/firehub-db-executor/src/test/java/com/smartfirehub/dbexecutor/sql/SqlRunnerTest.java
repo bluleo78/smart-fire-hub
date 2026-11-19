@@ -86,7 +86,7 @@ class SqlRunnerTest {
             null,
             null,
             t,
-            new com.fasterxml.jackson.databind.ObjectMapper());
+            new tools.jackson.databind.ObjectMapper());
     return controller.executeSql(new SqlExecuteRequest(5L, query, preStatements));
   }
 

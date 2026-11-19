@@ -1,0 +1,1 @@
+{"success":true,"columns":[{"name":"a","jdbc_type":2,"type_name":"NUMBER","precision":0,"scale":-127},{"name":"b","jdbc_type":12,"type_name":"VARCHAR","precision":10,"scale":0}],"error":null,"db_error":null}

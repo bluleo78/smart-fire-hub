@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.spi.ILoggingEvent;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dbexecutor.LogCapture;
 import com.smartfirehub.dbexecutor.config.DbExecutorProperties;
 import com.sun.net.httpserver.HttpServer;
@@ -31,6 +30,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.ObjectMapper;
 
 /** 기술자 조회·캐시: 성공만 캐시, 단일 조회, fail-closed. */
 class StoreDescriptorClientTest {

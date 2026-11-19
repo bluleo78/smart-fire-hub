@@ -1,7 +1,5 @@
 package com.smartfirehub.proactive.repository.mybatis;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.platformdb.mybatis.PlatformMyBatisRepository;
 import com.smartfirehub.proactive.dto.ProactiveMessageResponse;
 import com.smartfirehub.proactive.repository.ProactiveMessageRepository;
@@ -12,6 +10,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * ProactiveMessageRepository 의 MyBatis 구현(WD-487 PoC) — {@code JooqProactiveMessageRepository} 와 같은
@@ -60,7 +60,7 @@ public class MyBatisProactiveMessageRepository implements ProactiveMessageReposi
               messageType != null ? messageType : "REPORT");
       mapper.insert(insert);
       return insert.getId();
-    } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+    } catch (tools.jackson.core.JacksonException e) {
       // jOOQ 구현과 같은 메시지 — 직렬화 실패만 감싼다(DB 오류는 그대로 전파).
       throw new RuntimeException("Failed to serialize content", e);
     }

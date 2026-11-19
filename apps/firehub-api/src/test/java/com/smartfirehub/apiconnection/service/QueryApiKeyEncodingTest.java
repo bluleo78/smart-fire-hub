@@ -2,8 +2,6 @@ package com.smartfirehub.apiconnection.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
@@ -14,6 +12,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * {@link QueryApiKeyEncoding} 이 공용 사례 표({@code fixtures/query-api-key-encoding-vectors.json})와 같은
@@ -28,7 +28,7 @@ class QueryApiKeyEncodingTest {
     try (InputStream in =
         QueryApiKeyEncodingTest.class.getResourceAsStream(
             "/fixtures/query-api-key-encoding-vectors.json")) {
-      return new ObjectMapper().readTree(in);
+      return JsonMapper.builderWithJackson2Defaults().build().readTree(in);
     }
   }
 
