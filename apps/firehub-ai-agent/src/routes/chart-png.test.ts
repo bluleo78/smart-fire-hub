@@ -52,12 +52,18 @@ describe('renderChartPng', () => {
     expect(Object.keys(Chart.instances)).toHaveLength(0);
   });
 
-  it('생성자가 던져도 호출 전과 Chart.instances 개수가 같다', async () => {
+  it('생성자가 던져도 호출 전과 Chart.instances 개수가 같고 destroy 는 정확히 한 번 불린다', async () => {
     const before = Object.keys(Chart.instances).length;
-    await expect(
-      renderChartPng({ ...barConfig, type: 'no-such-type' }, 200, 100),
-    ).rejects.toThrow();
-    expect(Object.keys(Chart.instances)).toHaveLength(before);
+    const spy = vi.spyOn(Chart.prototype, 'destroy');
+    try {
+      await expect(
+        renderChartPng({ ...barConfig, type: 'no-such-type' }, 200, 100),
+      ).rejects.toThrow();
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(Object.keys(Chart.instances)).toHaveLength(before);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('성공 렌더 뒤에도 Chart 인스턴스를 남기지 않는다', async () => {

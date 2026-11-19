@@ -14,10 +14,11 @@ type ChartType = (typeof ALLOWED_TYPES)[number];
 const MAX_DIMENSION = 2000;
 
 /**
- * 한 요청에서 그릴 수 있는 최대 차트 수.
- * 차트를 차례로 그리므로 개수가 곧 CPU 점유 시간이 된다. 다만 API 의 ReportRenderUtils 는 카드 섹션마다
- * 차트 하나를 한 요청에 모아 보내고, 400 이 나면 모든 차트를 버린다. 리포트 섹션은 하위 포함 최대 100 개
- * (ReportSectionLimits.MAX_SECTIONS)이므로 상한을 그와 같은 100 으로 둔다.
+ * 한 요청에서 그릴 최대 차트 수.
+ * 유일한 호출자 ReportRenderUtils 는 카드가 있는 AI 결과 섹션마다 차트 하나를 만들어 한 요청에 모아 보낸다.
+ * 이 섹션 수는 AI 출력이라 ReportSectionLimits 가 막아 주지 않는다. 돌려받은 이미지는 순서대로 섹션에 매핑하고
+ * images.size 를 넘는 섹션은 차트 없이 둔다. 그래서 초과 시 400 으로 모든 차트를 잃는 대신 앞 100 개만 그리고
+ * 나머지는 무시한다. 상한은 요청당 렌더 시간(차트를 차례로 그림)을 묶는 용도다.
  */
 const MAX_CHARTS = 100;
 
@@ -90,13 +91,13 @@ router.post(
       return;
     }
 
-    // 개수 상한 초과는 하나도 그리기 전에 막는다(CPU 시간 독점 방지)
+    // 상한을 넘으면 앞 MAX_CHARTS 개만 그리고 나머지는 무시한다(검증도 그릴 차트에만 적용).
     if (body.charts.length > MAX_CHARTS) {
-      res.status(400).json({ error: `charts must contain at most ${MAX_CHARTS} items` });
-      return;
+      console.warn(`[ChartRender] charts truncated: ${body.charts.length} -> ${MAX_CHARTS}`);
     }
+    const charts = body.charts.slice(0, MAX_CHARTS);
 
-    const validationError = validateCharts(body.charts);
+    const validationError = validateCharts(charts);
     if (validationError) {
       res.status(400).json({ error: validationError });
       return;
@@ -105,8 +106,8 @@ router.post(
     try {
       const images: ChartImage[] = [];
 
-      for (let i = 0; i < body.charts.length; i++) {
-        const chart = body.charts[i];
+      for (let i = 0; i < charts.length; i++) {
+        const chart = charts[i];
         const width = chart.width ?? 600;
         const height = chart.height ?? 400;
 

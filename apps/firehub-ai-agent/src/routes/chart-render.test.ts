@@ -294,11 +294,23 @@ describe('POST /agent/chart-render', () => {
     expect(mockRenderChartPng).toHaveBeenCalledTimes(100);
   });
 
-  it('should return 400 without rendering when more than 100 charts are sent', async () => {
+  it('should render only the first 100 charts when more than 100 are sent', async () => {
+    mockRenderChartPng.mockResolvedValue(Buffer.from('x'));
     const body = { charts: Array.from({ length: 101 }, () => validBody.charts[0]) };
     const res = await makeRequest(createApp(), body, authHeaders);
-    expect(res.status).toBe(400);
-    expect((res.body as { error: string }).error).toBe('charts must contain at most 100 items');
-    expect(mockRenderChartPng).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    const images = (res.body as { images: Array<{ id: string }> }).images;
+    expect(images).toHaveLength(100);
+    expect(images[99].id).toBe('chart-99');
+    expect(mockRenderChartPng).toHaveBeenCalledTimes(100);
+  });
+
+  it('should ignore an invalid chart beyond the first 100', async () => {
+    mockRenderChartPng.mockResolvedValue(Buffer.from('x'));
+    const charts = Array.from({ length: 101 }, () => validBody.charts[0]);
+    charts[100] = { ...validBody.charts[0], type: 'scatter' };
+    const res = await makeRequest(createApp(), { charts }, authHeaders);
+    expect(res.status).toBe(200);
+    expect((res.body as { images: unknown[] }).images).toHaveLength(100);
   });
 });
