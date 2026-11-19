@@ -70,7 +70,7 @@ export function numberedName(base: string, attempt: number, maxLength = NAME_MAX
  * 목록은 유한하므로 찾기는 늘 끝난다.
  *
  * @param nameFor 번호로 후보 이름을 만든다(잘림 규칙까지 같은 함수를 넘긴다)
- * @param loadExistingNames 같은 소유자의 기존 이름 목록을 읽는다(선택 — 없으면 빈 목록, 곧 순차)
+ * @param loadExistingNames 서버 중복 판정과 같은 범위(리소스마다 다르다 — 예: 리포트 양식은 본인 + 기본 양식)의 기존 이름 목록을 읽는다(선택 — 없으면 빈 목록, 곧 순차)
  * @returns 방금 겹친 번호(처음엔 1, 그 뒤로는 직전에 고른 번호)를 받아 다음 번호를 돌려주는 함수
  */
 export function makeFreeNumberPicker(
@@ -119,12 +119,12 @@ export async function createWithNumberedName<T>(
 
 /**
  * 복제 생성 + 이름 겹침 재시도(WD-824) — 서버에 복제 전용 API 가 없어 웹이 이름을 만들어 일반 생성 API 로 보낸다.
- * 서버가 같은 소유자 안의 같은 이름을 409 DUPLICATE_NAME 으로 막으므로, 이미 복사본이 있으면 비어 있는 가장 작은 번호로 다시 시도한다.
+ * 서버가 중복 판정 범위 안의 같은 이름을 409 DUPLICATE_NAME 으로 막으므로, 이미 복사본이 있으면 비어 있는 가장 작은 번호로 다시 시도한다.
  * 첫 겹침 뒤 `loadExistingNames` 로 기존 이름을 한 번 읽어 쓰인 번호를 건너뛴다(WD-834·WD-837). 읽기가 실패하면 빈 목록으로 본다.
  * 총 시도가 NAME_RETRY_MAX_ATTEMPTS 에 닿으면 CloneNameExhaustedError 를 던진다. 이름 중복이 아닌 오류는 그대로 던진다.
  *
  * @param create 후보 이름으로 생성 API 를 호출한다
- * @param loadExistingNames 같은 소유자의 기존 이름 목록을 읽는다(선택)
+ * @param loadExistingNames 서버 중복 판정과 같은 범위의 기존 이름 목록을 읽는다(선택 — makeFreeNumberPicker 참고)
  */
 export function createWithUniqueCloneName<T>(
   name: string,

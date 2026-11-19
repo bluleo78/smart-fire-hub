@@ -134,6 +134,61 @@ test.describe('이름 중복 409 — 스마트 작업·리포트 양식 (WD-824)
     expect(jobBodies[0]).toMatchObject({ templateId: 78 });
   });
 
+  test('목표 기반 새 작업: 이름 읽기 중 한 페이지가 실패해도 읽은 이름으로 빈 번호를 고른다 (WD-842)', async ({ authenticatedPage: page }) => {
+    await setupNewJobMocks(page);
+    const base = '주간 화재 추이 양식';
+    const numbered = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => `${base} (${from + i})`);
+    const others = (tag: string, count: number) => Array.from({ length: count }, (_, i) => `기타 양식 ${tag}-${i}`);
+    // page 0 = 기타 180건 +「양식」+「(2)~(20)」, page 2 는 실패 — 성공한 page 3(221~420) 이름은 살아야 한다
+    const byPage: Record<number, string[]> = {
+      0: [...others('A', 180), base, ...numbered(2, 20)],
+      1: numbered(21, 220),
+      3: numbered(221, 420),
+      4: others('B', 200),
+      5: others('C', 200),
+    };
+    const used = new Set(Object.values(byPage).flat());
+    const readPages: number[] = [];
+    const templateNames: string[] = [];
+    await page.route(
+      (url) => url.pathname === '/api/v1/proactive/templates',
+      (route) => {
+        const req = route.request();
+        if (req.method() === 'GET') {
+          const params = new URL(req.url()).searchParams;
+          // 화면 자신의 목록 조회(기본 크기)는 빈 목록 — 이름 읽기(size=200)만 page 로 가른다
+          if (params.get('size') !== '200') return route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+          const pageNo = Number(params.get('page'));
+          readPages.push(pageNo);
+          if (pageNo === 2) return route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ message: 'boom' }) });
+          const names = byPage[pageNo] ?? [];
+          return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(names.map((name, i) => createTemplate({ id: 1000 + pageNo * 200 + i, name }))) });
+        }
+        const name = (req.postDataJSON() as { name: string }).name;
+        templateNames.push(name);
+        return used.has(name)
+          ? route.fulfill({ status: 409, contentType: 'application/json', body: duplicateBody(TEMPLATE_MSG) })
+          : route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(createTemplate({ id: 78 })) });
+      },
+    );
+    const jobBodies = await mockPostRejectingFirst(page, '/api/v1/proactive/jobs', 0, JOB_MSG, createJob({ id: 99, name: '주간 화재 추이' }));
+    await page.goto('/ai-insights/jobs/new');
+
+    await page.locator('#mode-goal').click();
+    await page.getByLabel('비즈니스 질문').fill('주간 화재 추이');
+    await page.getByRole('button', { name: '템플릿 자동 생성' }).click();
+    await page.getByRole('button', { name: '만들기', exact: true }).click();
+
+    await expect.poll(() => jobBodies.length).toBe(1);
+    // 실패한 page 2 만 빠지고 page 3(221~420) 이름은 살아 있어 421 로 바로 간다
+    expect(templateNames).toEqual([base, `${base} (421)`]);
+    expect(jobBodies[0]).toMatchObject({ templateId: 78 });
+    // 병렬 묶음(2~5)에 실패가 있었으니 page 6 이상은 읽지 않고, page 1 은 묶음보다 먼저 읽는다
+    expect(Math.max(...readPages)).toBeLessThanOrEqual(5);
+    expect(readPages.indexOf(1)).toBeLessThan(readPages.indexOf(2));
+    expect(readPages.indexOf(1)).toBeLessThan(readPages.indexOf(5));
+  });
+
   test('목표 기반 새 작업: 자동 양식 이름을 끝내 못 정하면 안내를 토스트로 보이고 작업을 만들지 않는다 (WD-837)', async ({ authenticatedPage: page }) => {
     await setupNewJobMocks(page);
     await mockPostRejectingFirst(page, '/api/v1/proactive/templates', 999, TEMPLATE_MSG, {});
