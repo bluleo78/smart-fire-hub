@@ -160,12 +160,12 @@ function buildDerivedTable(
       // 파이는 음수·결측을 빼고(splitPieData, 뷰와 같은 함수) 남은 값의 비율로 조각 크기를 정한다 — 값과 비율을 함께 준다(WD-831)
       const yKey = config.yAxis[0] ?? '';
       const { pieData, negativeCount, missingCount } = splitPieData(data, yKey);
-      // 뺀 행 수를 캡션 꼬리에 적는다(WD-838) — 0 인 항목은 생략, 둘 다 0 이면 꼬리 없음
+      // 뺀 행 수를 캡션 꼬리에 적는다(WD-838) — 항목마다 「제외」를 붙여 쉼표로 이어도 어느 행이 빠졌는지 읽힌다. 0 인 항목은 생략, 둘 다 0 이면 꼬리 없음
       // 문구는 화면 안내(「값이 없거나 숫자가 아닌 항목」)와 같은 뜻이 되게 맞춘다
       const omitted: string[] = [];
-      if (negativeCount > 0) omitted.push(`음수 ${negativeCount.toLocaleString()}행`);
-      if (missingCount > 0) omitted.push(`값 없음·숫자 아님 ${missingCount.toLocaleString()}행`);
-      const captionTail = omitted.length > 0 ? `${omitted.join(', ')} 제외` : '';
+      if (negativeCount > 0) omitted.push(`음수 ${negativeCount.toLocaleString()}행 제외`);
+      if (missingCount > 0) omitted.push(`값 없음·숫자 아님 ${missingCount.toLocaleString()}행 제외`);
+      const captionTail = omitted.length > 0 ? omitted.join(', ') : '';
       // pieData 의 값은 splitPieData 가 이미 숫자로 바꿔 두었다(그림이 그리는 값 그대로)
       const valueOf = (r: Record<string, unknown>) => r[yKey] as number;
       const total = pieData.reduce((sum, r) => sum + valueOf(r), 0);

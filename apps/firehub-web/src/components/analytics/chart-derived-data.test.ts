@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest';
 
 import { toBoxStats } from './boxplot-stats';
 import {
+  computeGaugeReading,
   getScatterUsedY,
   isScatterPoint,
   readHistogramValues,
   splitPieData,
   transformWaterfallData,
 } from './chart-derived-data';
+import { isNonNumericValue } from './numeric-columns';
 
 // WD-831: 차트 숫자 읽기를 toPlotNumber 로 통일하고, 파이 음수 거르기를 공용 함수로 옮긴 것을 검증한다.
 describe('readHistogramValues', () => {
@@ -105,5 +107,17 @@ describe('getScatterUsedY / isScatterPoint (WD-831)', () => {
     expect(isScatterPoint('1.5', '2')).toBe(true);
     expect(isScatterPoint(null, 2)).toBe(false);
     expect(isScatterPoint(1, 'a')).toBe(false);
+  });
+});
+
+// WD-838: 공백뿐인 값은 빈 값이다 — 게이지·퍼널 뷰는 isNonNumericValue 가 false 일 때 안내 없이 0 으로 그린다.
+describe('공백뿐인 값 (게이지·퍼널, WD-838)', () => {
+  it('computeGaugeReading: 첫 값이 공백이면 던지지 않고 0 으로 읽는다', () => {
+    expect(computeGaugeReading([{ v: ' ' }], { yAxis: ['v'] } as never)).toEqual({ value: 0, min: 0, max: 100 });
+  });
+
+  it('isNonNumericValue: 공백뿐인 값은 숫자 아님 안내 대상이 아니다(게이지·퍼널 뷰의 가드)', () => {
+    expect(isNonNumericValue('  ')).toBe(false);
+    expect(isNonNumericValue(' ')).toBe(false);
   });
 });
