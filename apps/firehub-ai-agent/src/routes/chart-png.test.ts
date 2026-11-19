@@ -1,6 +1,6 @@
 import { createCanvas, loadImage } from '@napi-rs/canvas';
 import { Chart } from 'chart.js';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { renderChartPng } from './chart-png.js';
 
@@ -52,5 +52,25 @@ describe('renderChartPng', () => {
   it('성공 렌더 뒤에도 Chart 인스턴스를 남기지 않는다', async () => {
     await renderChartPng(barConfig, 200, 100);
     expect(Object.keys(Chart.instances)).toHaveLength(0);
+  });
+
+  it('Chart 를 우리가 만든 캔버스로 만든다', async () => {
+    // destroy 호출 때의 this.canvas 를 기록하되 원래 destroy 도 그대로 부른다.
+    const original = Chart.prototype.destroy;
+    const seen: Array<{ width: number; height: number; getContext: unknown }> = [];
+    const spy = vi.spyOn(Chart.prototype, 'destroy').mockImplementation(function (this: Chart) {
+      seen.push(this.canvas as unknown as (typeof seen)[number]);
+      return original.call(this);
+    });
+    try {
+      await renderChartPng(barConfig, 300, 200);
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(seen).toHaveLength(1);
+      expect(seen[0].width).toBe(300);
+      expect(seen[0].height).toBe(200);
+      expect(typeof seen[0].getContext).toBe('function');
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

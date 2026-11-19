@@ -55,11 +55,10 @@ export async function renderChartPng(
   height: number,
 ): Promise<Buffer> {
   const canvas = createCanvas(width, height);
-  const ctx = canvas.getContext('2d');
 
   let chart: Chart | undefined;
   try {
-    chart = new Chart(ctx as unknown as ChartCanvasItem, {
+    chart = new Chart(canvas as unknown as ChartCanvasItem, {
       ...configuration,
       options: {
         ...configuration.options,
@@ -74,7 +73,8 @@ export async function renderChartPng(
     return await canvas.encode('png');
   } finally {
     // 생성자가 던지면(잘못된 data 등) chart 는 비어 있지만 chart.js 는 인스턴스를 Chart.instances 에
-    // 이미 등록한 뒤다 — 그때만 우리 캔버스로 등록된 인스턴스를 찾아 정리한다(누수 방지).
+    // 이미 등록한 뒤다 — 그때만 같은 canvas 로 인스턴스를 찾아 정리한다(누수 방지).
+    // 만든 객체와 찾는 객체가 같은 canvas 라 chart.js 의 ctx.canvas 동일성 가정이 없다.
     (chart ?? Chart.getChart(canvas as unknown as ChartLookupKey))?.destroy();
   }
 }
