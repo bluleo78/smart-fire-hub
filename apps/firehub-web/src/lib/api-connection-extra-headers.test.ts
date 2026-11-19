@@ -11,6 +11,8 @@ import {
   keptStoredMasked,
   MAX_EXTRA_HEADERS,
   newExtraHeaderRow,
+  normalizedExtraHeaderName,
+  renamedDeletedNotice,
   withoutChangedRowErrors,
   withoutExtraHeaders,
 } from './api-connection-extra-headers';
@@ -231,5 +233,28 @@ describe('api-connection-extra-headers', () => {
     expect(withoutExtraHeaders({ apiKey: '****abcd', 'ExtraHeader:X-A': '****1234', 'extraheader:X-B': '****5678' })).toEqual({
       apiKey: '****abcd',
     });
+  });
+});
+
+describe('normalizedExtraHeaderName', () => {
+  it('앞뒤 공백을 떼고 소문자로 만든다', () => {
+    expect(normalizedExtraHeaderName('  X-Id\t')).toBe('x-id');
+  });
+});
+
+describe('renamedDeletedNotice', () => {
+  it('한 쌍이면 옛 이름이 새 이름으로 바뀌었다고 안내한다', () => {
+    expect(renamedDeletedNotice([{ from: 'X-Id', to: 'x-id' }])).toBe(
+      '지운 헤더 X-Id 이(가) 다른 곳에서 x-id(으)로 바뀌었습니다. 지운 대로 두며, 저장하면 서버에서도 지워집니다.',
+    );
+  });
+
+  it('여러 쌍이면 옛→새 쌍을 이어 보인다', () => {
+    expect(
+      renamedDeletedNotice([
+        { from: 'X-Id', to: 'x-id' },
+        { from: 'X-A', to: 'x-a' },
+      ]),
+    ).toBe('지운 헤더 X-Id→x-id, X-A→x-a 이(가) 다른 곳에서 이름이 바뀌었습니다. 지운 대로 두며, 저장하면 서버에서도 지워집니다.');
   });
 });

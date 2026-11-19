@@ -175,7 +175,7 @@ export function extraHeaderRowErrors(rows: ExtraHeaderRow[]): Record<string, str
       if (!valueBlank) errors[row.id] = NAME_MISSING;
       continue;
     }
-    const lower = name.toLowerCase();
+    const lower = normalizedExtraHeaderName(row.name);
     if (seen.has(lower)) {
       errors[row.id] = NAME_DUPLICATE;
       continue;
@@ -251,4 +251,30 @@ export function focusFirstExtraHeaderError(rows: ExtraHeaderRow[], errors: Recor
     errors,
     fieldId,
   );
+}
+
+/**
+ * 행 이름의 비교용 정규형 — 서버와 같은 javaStrip 으로 앞뒤 공백을 떼고 소문자로 만든다.
+ * 서버는 헤더 이름을 대소문자 무시로 같은 헤더로 보므로, 중복 검사와 「같은 이름의 행이 있는가」 판정이 이 값으로 비교해야 어긋나지 않는다.
+ */
+export function normalizedExtraHeaderName(name: string): string {
+  return javaStrip(name).toLowerCase();
+}
+
+/** 사용자가 지운 저장 헤더가 다른 곳에서 대소문자만 바뀐 이름으로 온 쌍 — from = 지운 옛 이름, to = 새 이름 */
+export type RenamedPair = { from: string; to: string };
+
+/**
+ * 「지운 헤더가 다른 곳에서 이름이 바뀌었다」 토스트 문구를 만든다(WD-804).
+ * 한 쌍이면 `옛 이(가) 다른 곳에서 새(으)로`, 여럿이면 `옛→새` 쌍을 이어 보인다. 이름 뒤 조사는 받침 유무를 알 수 없어 「이(가)」·「(으)로」 로 쓴다.
+ * 문구를 페이지 밖 순수 함수로 두어 단위 시험으로 지킨다.
+ */
+export function renamedDeletedNotice(pairs: RenamedPair[]): string {
+  // 두 문구가 같이 쓰는 꼬리 — 한 곳에 두어 문구가 어긋나지 않게 한다
+  const tail = '. 지운 대로 두며, 저장하면 서버에서도 지워집니다.';
+  if (pairs.length === 1) {
+    return `지운 헤더 ${pairs[0].from} 이(가) 다른 곳에서 ${pairs[0].to}(으)로 바뀌었습니다${tail}`;
+  }
+  const joined = pairs.map((r) => `${r.from}→${r.to}`).join(', ');
+  return `지운 헤더 ${joined} 이(가) 다른 곳에서 이름이 바뀌었습니다${tail}`;
 }
