@@ -1605,9 +1605,11 @@ public class PipelineService {
   }
 
   /**
-   * 요청 값이 저장본 값과 같고 그 값이 지금도 도는 값인지(WD-810). 상한(100) 이전에 저장된 101~2047 옛 스텝은 편집기가 모르는 apiConfig 키를
-   * 되돌려 보내므로 같은 값이 다시 온다 — 막으면 설명만 고쳐도 저장할 수 없다(WD-426/WD-585 와 같은 이유). 돌지 않는 저장값은 되돌려 보내도 거부해 사용자가
-   * 고치게 한다. 같은 값인지는 숫자 값으로(150.0 과 150 은 같다), 도는 값인지는 실행과 같은 변환으로 판정한다.
+   * 요청 값이 저장본 값과 같고 저장본·요청 둘 다 지금도 도는 값인지(WD-810). 상한(100) 이전에 저장된 101~2047 옛 스텝은 편집기가 모르는
+   * apiConfig 키를 되돌려 보내므로 같은 값이 다시 온다 — 막으면 설명만 고쳐도 저장할 수 없다(WD-426/WD-585 와 같은 이유). 같은 값은 숫자로 같은
+   * 값이다(150.0 과 150 은 같다). 단 저장되어 실행되는 것은 요청 값이므로, 저장본과 요청 모두 실행기와 같은 변환(ObjectMapper → Integer)으로
+   * 읽히고 그 결과가 도는 값이어야 통과한다 — 숫자로는 같아도 문자열 "150.0" 은 실행기가 Integer 로 못 바꿔 매 실행이 실패하므로 통과시키지 않는다. 돌지
+   * 않는 값은 되돌려 보내도 거부해 사용자가 고치게 한다.
    */
   private boolean isUnchangedRunnableMaxResponseSize(Object requested, Object stored) {
     // 같은 값인지는 숫자 값으로 본다 — null 과 빈 문자열은 둘 다 "비어 있음", "150"·150·150.0 은 모두 같고, 10.5 와 10 은 다르다.
@@ -1615,11 +1617,15 @@ public class PipelineService {
     if (!isSameMaxResponseSize(requested, stored)) {
       return false;
     }
-    // 지금도 도는 값인지는 실행 때와 같은 변환(ObjectMapper)으로 판정한다 — 소수(10.5)는 10, 빈 문자열은 null(기본값)로 돌던 옛 값은 그대로
-    // 돈다.
+    // 저장본과 요청 둘 다 실행 때와 같은 변환으로 읽혀 도는 값이어야 한다 — 소수(10.5)는 10, 빈 문자열은 null(기본값)로 돌던 옛 값은 그대로 돈다.
+    return isRunnableAsExecutorReads(stored) && isRunnableAsExecutorReads(requested);
+  }
+
+  /** 값을 실행기와 같은 변환(ObjectMapper → Integer)으로 읽어 비었거나 도는 값이면 true, 변환 실패·돌지 않는 값이면 false(WD-810). */
+  private boolean isRunnableAsExecutorReads(Object value) {
     try {
-      Integer storedMb = JsonConversions.convertValue(objectMapper, stored, Integer.class);
-      return storedMb == null || ApiCallExecutor.isRunnableMaxResponseSizeMb(storedMb);
+      Integer mb = JsonConversions.convertValue(objectMapper, value, Integer.class);
+      return mb == null || ApiCallExecutor.isRunnableMaxResponseSizeMb(mb);
     } catch (IllegalArgumentException e) {
       return false;
     }
@@ -1642,12 +1648,13 @@ public class PipelineService {
   }
 
   /**
-   * 숫자로 읽히면 BigDecimal, 아니면 null — 빈 문자열·숫자 아님·지수 범위 초과는 모두 null. 소수 자릿수(scale)가 ±100 을 넘는 값도 null
+   * 숫자로 읽히면 BigDecimal, 아니면 null — 빈 문자열·숫자 아님·지수 범위 초과·너무 긴 글자(30 자 초과)는 모두 null. 긴 글자를 파싱 전에 거르는
+   * 것은 수백만 자리 숫자 문자열의 파싱이 저장마다 큰 비용(자릿수에 비해 초선형)을 만들지 않게 하려는 것이다. 소수 자릿수(scale)가 ±100 을 넘는 값도 null
    * 로 본다 — 자릿수가 크게 다른 두 값의 compareTo 는 10 의 거듭제곱을 실제로 만들어 맞추므로("1.0e999999999" 등) 사용자 입력 하나로 큰 계산이
    * 생기지 않게 하려는 것이다. 응답 크기 한도로 쓸 수 있는 값은 이 범위 안이다.
    */
   private static BigDecimal parseDecimalOrNull(String text) {
-    if (text.isEmpty()) {
+    if (text.isEmpty() || text.length() > MAX_COMPARED_DECIMAL_TEXT_LENGTH) {
       return null;
     }
     try {
@@ -1660,6 +1667,9 @@ public class PipelineService {
 
   /** {@link #parseDecimalOrNull} 이 숫자로 받아들이는 소수 자릿수(scale) 절댓값의 상한. */
   private static final int MAX_COMPARED_DECIMAL_SCALE = 100;
+
+  /** {@link #parseDecimalOrNull} 이 파싱을 시도하는 글자 길이의 상한 — 응답 크기 한도로 쓸 수 있는 값은 이보다 훨씬 짧다. */
+  private static final int MAX_COMPARED_DECIMAL_TEXT_LENGTH = 30;
 
   /**
    * 출력 컬럼 이름(API_CALL 대상 컬럼·AI_CLASSIFY 출력 컬럼)의 예약어·형식 검사.

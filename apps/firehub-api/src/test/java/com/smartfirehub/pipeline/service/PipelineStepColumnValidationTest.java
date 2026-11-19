@@ -630,7 +630,10 @@ class PipelineStepColumnValidationTest extends IntegrationTestBase {
     assertUpdateRejected(createLegacyStep("WD810 빈 문자열 새 값", "50"), "");
   }
 
-  /** 저장본 150.0 을 150 으로(또는 150 을 "150.0" 으로) 되돌려 보내는 저장은 숫자로 같은 값이라 통과한다 — 설명만 고쳐도 저장된다(WD-810). */
+  /**
+   * 저장본 150.0 을 150 으로 되돌려 보내는 저장은 숫자로 같고 150 도 실행에서 도는 값이라 통과한다 — 설명만 고쳐도 저장되며 요청 값 그대로
+   * 저장된다(WD-810).
+   */
   @Test
   void update_numericallyEqualMaxResponseSizeForms_succeeds() {
     PipelineDetailResponse created = createLegacyStep("WD810 150.0", "150.0");
@@ -639,15 +642,20 @@ class PipelineStepColumnValidationTest extends IntegrationTestBase {
         new UpdatePipelineRequest(
             "WD810 150.0", "설명 수정", true, List.of(apiStepWithMaxResponseSize(150))),
         userId);
-    assertThat(pipelineService.getPipelineById(created.id()).description()).isEqualTo("설명 수정");
+    PipelineDetailResponse saved = pipelineService.getPipelineById(created.id());
+    assertThat(saved.description()).isEqualTo("설명 수정");
+    assertThat(saved.steps().get(0).apiConfig().get("maxResponseSizeMb")).isEqualTo(150);
+  }
 
-    PipelineDetailResponse created2 = createLegacyStep("WD810 150 문자열", "150");
-    pipelineService.updatePipeline(
-        created2.id(),
-        new UpdatePipelineRequest(
-            "WD810 150 문자열", "설명 수정", true, List.of(apiStepWithMaxResponseSize("150.0"))),
-        userId);
-    assertThat(pipelineService.getPipelineById(created2.id()).description()).isEqualTo("설명 수정");
+  /**
+   * 저장본 150 을 "150.0" 으로 보내는 저장은 숫자로는 같지만 요청 값(문자열 "150.0")은 실행기 변환(Integer)이 못 읽어 매 실행이 실패하므로
+   * 거부한다(WD-810).
+   */
+  @Test
+  void update_numericallyEqualButUnrunnableRequested_rejected() {
+    PipelineDetailResponse created = createLegacyStep("WD810 150 문자열", "150");
+    assertUpdateRejected(created, "150.0");
+    assertUpdateRejected(created, "1.5e2");
   }
 
   /** 저장본 150.0 을 151 로, 150.5 를 150 으로 바꾸는 저장은 숫자로 다른 값이라 바뀐 값으로 보고 거부한다(WD-810). */
