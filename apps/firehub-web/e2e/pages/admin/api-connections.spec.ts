@@ -2610,18 +2610,21 @@ test.describe('WD-753 추가 헤더', () => {
     expect(req.payload).toMatchObject({ authConfig: { [EXTRA_KEY]: 'keyid\t4567' } });
   });
 
-  test('만들기 — 추가 헤더는 10개까지, 10개면 「헤더 추가」가 꺼진다', async ({ authenticatedPage: page }) => {
+  test('만들기 — 추가 헤더 행은 10개까지, 빈 행도 세어 10행이면 「헤더 추가」가 꺼진다 (WD-804 반려)', async ({ authenticatedPage: page }) => {
     await setupApiConnectionListMocks(page);
     await openCreateFilled(page);
     const add = page.getByRole('button', { name: '헤더 추가' });
-    // 「헤더 추가」는 보낼 행(이름이나 값이 있는 행) 수로 꺼진다 — 저장 검사의 개수 상한과 같은 셈이다(WD-804 리뷰). 빈 행만으로는 꺼지지 않는다.
-    for (let i = 1; i <= 10; i++) {
+    // 「헤더 추가」는 빈 행까지 센 행 수로 꺼진다 — 빈 행을 끝없이 더하지 못하게 한다(저장 검사는 보낼 행 수로 본다)
+    for (let i = 1; i <= 9; i++) {
       await add.click();
-      if (i === 10) await expect(add).toBeEnabled();
       await page.getByLabel(`추가 헤더 이름 ${i}`).fill(`X-H${i}`);
     }
+    await expect(add).toBeEnabled();
+    // 빈 행 1개를 더해 10행이 되면 이름이 비어 있어도 꺼진다
+    await add.click();
+    await expect(page.getByLabel('추가 헤더 이름 10')).toHaveValue('');
     await expect(add).toBeDisabled();
-    // 하나 지우면 다시 켜진다
+    // 빈 행을 지우면 다시 켜진다
     await page.getByRole('button', { name: '추가 헤더 10 삭제' }).click();
     await expect(add).toBeEnabled();
   });
@@ -3628,6 +3631,8 @@ test.describe('WD-796 재조회 병합 후속', () => {
     await expect(page.getByLabel('추가 헤더 이름 10')).toHaveValue('X-New');
     await expect(page.getByLabel('추가 헤더 이름 10')).not.toHaveAccessibleDescription(/최대 10개/);
     await expect(page.getByText('추가 헤더는 최대 10개까지 넣을 수 있습니다')).toHaveCount(0);
+    // 10행이면 「헤더 추가」는 꺼져 있다
+    await expect(page.getByRole('button', { name: '헤더 추가' })).toBeDisabled();
   });
 
   test('사용자가 지운 X-Id 가 다른 곳에서 x-id 로 이름만 바뀌어 와도 되살아나지 않고 안내도 없다 (WD-804)', async ({

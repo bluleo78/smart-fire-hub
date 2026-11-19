@@ -85,14 +85,6 @@ function isSendableExtraHeaderRow(row: ExtraHeaderRow): boolean {
   return javaStrip(row.name) !== '' || !isBlankLikeServer(row.value);
 }
 
-/**
- * 보낼 행 수 — 「헤더 추가」 버튼이 상한(MAX_EXTRA_HEADERS)에서 꺼지는 기준과 저장 검사의 개수 상한이 같은 수를 보게 한다(WD-804 리뷰).
- * 예전에는 버튼이 빈 행까지 센 rows.length 로 꺼져, 저장 검사(빈 행 제외)와 어긋났다.
- */
-export function sendableExtraHeaderCount(rows: ExtraHeaderRow[]): number {
-  return rows.filter(isSendableExtraHeaderRow).length;
-}
-
 /** 보낼 행 id 를 순서대로 — 개수 초과 행 고르기(extraHeaderRowErrors)와 보낼 행 모음이 바뀌었는지 보기(withoutChangedRowErrors)가 함께 쓴다(WD-804). */
 function sendableExtraHeaderRowIds(rows: ExtraHeaderRow[]): string[] {
   return rows.filter(isSendableExtraHeaderRow).map((row) => row.id);

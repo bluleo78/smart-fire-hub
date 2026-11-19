@@ -11,7 +11,6 @@ import {
   keptStoredMasked,
   MAX_EXTRA_HEADERS,
   newExtraHeaderRow,
-  sendableExtraHeaderCount,
   withoutChangedRowErrors,
   withoutExtraHeaders,
 } from './api-connection-extra-headers';
@@ -176,11 +175,6 @@ describe('api-connection-extra-headers', () => {
     // 개수 초과가 아닌 다른 행의 오류는 보낼 행이 바뀌어도 고칠 때까지 남긴다
     const mixed = { ...errors, r5: '값을 입력하세요' };
     expect(withoutChangedRowErrors(mixed, before, removedOther)).toEqual({ r5: '값을 입력하세요' });
-  });
-
-  it('보낼 행 수는 이름·값이 모두 빈 행을 세지 않는다 — 「헤더 추가」 비활성과 개수 검사가 같은 셈이다 (WD-804 리뷰)', () => {
-    expect(sendableExtraHeaderCount([])).toBe(0);
-    expect(sendableExtraHeaderCount([row('a', 'X-A', ''), row('b', '', 'v'), row('c', '  ', ' '), row('d', '', '')])).toBe(2);
   });
 
   it('이름을 바꾸면 저장값 유지가 풀리고, 앞뒤 공백을 뗀 이름이 원래 이름과 같아지면 다시 유지한다 (WD-753 리뷰)', () => {

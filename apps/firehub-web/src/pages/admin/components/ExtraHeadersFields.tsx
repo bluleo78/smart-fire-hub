@@ -11,7 +11,6 @@ import {
   keptStoredMasked,
   MAX_EXTRA_HEADERS,
   newExtraHeaderRow,
-  sendableExtraHeaderCount,
 } from '@/lib/api-connection-extra-headers';
 
 interface ExtraHeadersFieldsProps {
@@ -110,8 +109,9 @@ export function ExtraHeadersFields({ rows, onChange, errors = {} }: ExtraHeaders
         type="button"
         variant="outline"
         size="sm"
-        // 저장 검사의 개수 상한과 같은 셈(보낼 행 수, 빈 행 제외)으로 끈다 — 빈 행까지 세면 둘이 어긋난다(WD-804 리뷰)
-        disabled={sendableExtraHeaderCount(rows) >= MAX_EXTRA_HEADERS}
+        // 버튼은 행 수(빈 행 포함)로 막아 빈 행을 끝없이 더하지 못하게 한다. 저장 검사는 보낼 행 수로 본다 —
+        // 보낼 행 ≤ 행이라 버튼으로는 상한을 넘지 못하고, 재조회로 늘어난 초과는 행 오류로 보인다(WD-804 반려)
+        disabled={rows.length >= MAX_EXTRA_HEADERS}
         onClick={() => onChange([...rows, newExtraHeaderRow()])}
       >
         <Plus className="h-4 w-4" />
