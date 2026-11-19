@@ -8,7 +8,14 @@
 import { describe, expect, it } from 'vitest';
 
 import type { ChartConfig, ChartType } from '../../types/analytics';
-import { findMissingChartColumns, normalizeYAxis, resolveChartAxes, toggleYAxisColumn } from './chart-missing-columns';
+import {
+  findMissingChartColumns,
+  getChartUsedColumns,
+  isKnownChartType,
+  normalizeYAxis,
+  resolveChartAxes,
+  toggleYAxisColumn,
+} from './chart-missing-columns';
 
 /** 기본 설정에 덮어쓸 값만 받는 헬퍼 */
 function cfg(overrides: Partial<ChartConfig>): ChartConfig {
@@ -233,5 +240,23 @@ describe('resolveChartAxes', () => {
     const missingY = { xAxis: '' } as unknown as ChartConfig;
     resolveChartAxes(missingY, ['a', 'b']);
     expect(missingY.xAxis).toBe('');
+  });
+});
+
+describe('모르는 차트 타입 (WD-831)', () => {
+  const config: ChartConfig = { xAxis: 'a', yAxis: ['b'] };
+
+  it('findMissingChartColumns 는 던지지 않고 빈 배열을 돌려준다', () => {
+    expect(findMissingChartColumns('NOPE' as ChartType, config, ['a'], [{ a: 1 }])).toEqual([]);
+  });
+
+  it('getChartUsedColumns 는 빈 배열을 돌려준다', () => {
+    expect(getChartUsedColumns('NOPE' as ChartType, config)).toEqual([]);
+  });
+
+  it('isKnownChartType 은 알려진 타입만 true 이고 상속 속성 이름은 false 다', () => {
+    expect(isKnownChartType('BAR')).toBe(true);
+    expect(isKnownChartType('toString')).toBe(false);
+    expect(isKnownChartType('NOPE')).toBe(false);
   });
 });

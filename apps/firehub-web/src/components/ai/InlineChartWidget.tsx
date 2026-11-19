@@ -11,7 +11,7 @@ import { normalizeChartConfig } from '../../lib/normalize-chart-config';
 import { MAX_DESCRIPTION_LENGTH } from '../../lib/validations/description';
 import type { ChartConfig, ChartType } from '../../types/analytics';
 import { CHART_TYPE_LABELS } from '../../types/analytics';
-import { findMissingChartColumns } from '../analytics/chart-missing-columns';
+import { findMissingChartColumns, isKnownChartType } from '../analytics/chart-missing-columns';
 import { ChartRenderer } from '../analytics/ChartRenderer';
 import { Button } from '../ui/button';
 import {
@@ -202,8 +202,9 @@ export function InlineChartWidget({
   // WD-88: 설정 컬럼이 결과에 없으면 ChartRenderer 가 차트 대신 안내를 보여 준다. 이때 「차트로 저장」을 열어 두면
   // 깨진 설정이 그대로 저장되므로 버튼을 숨긴다(표 위젯 내보내기처럼 쓸 수 없는 동작은 숨기는 기존 관례).
   // ChartRenderer 와 같은 함수·같은 입력(원본 config, columns, rows)으로 판단해 두 곳의 결론이 어긋나지 않게 한다.
-  const hasMissingColumns = useMemo(
-    () => findMissingChartColumns(chartType, config, columns, rows).length > 0,
+  const cannotSave = useMemo(
+    // 모르는 차트 타입도 렌더러가 그리지 못하므로 「차트로 저장」을 숨긴다 — 저장하면 대시보드에서 영영 그려지지 않는다(WD-831)
+    () => !isKnownChartType(chartType) || findMissingChartColumns(chartType, config, columns, rows).length > 0,
     [chartType, config, columns, rows],
   );
 
@@ -316,7 +317,7 @@ export function InlineChartWidget({
       </Dialog>
 
       {/* Footer — 컬럼 누락 안내가 보일 때는 깨진 설정을 저장하지 못하게 숨긴다(WD-88) */}
-      {!hasMissingColumns && (
+      {!cannotSave && (
         <div className="flex justify-end px-3 py-2 border-t border-border bg-muted">
           <Button
             size="sm"

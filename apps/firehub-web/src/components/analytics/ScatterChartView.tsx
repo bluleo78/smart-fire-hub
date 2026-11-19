@@ -11,6 +11,7 @@ import {
 } from 'recharts';
 
 import type { ChartConfig } from '../../types/analytics';
+import { getScatterGroupLabel, getScatterUsedY } from './chart-derived-data';
 import { HIDDEN_CHART_ROOT_PROPS } from './chart-figure-context';
 import { CHART_SERIES_COLORS, TOOLTIP_CONTENT_STYLE, TOOLTIP_ITEM_STYLE } from './chart-styles';
 import { ChartDrawingArea } from './ChartDrawingArea';
@@ -39,6 +40,7 @@ export function ScatterChartView({ config, data, height }: ScatterChartViewProps
     for (const i of rows) {
       const x = xs[i];
       const y = toPlotNumber(data[i][yKey]);
+      // x·y 가 모두 숫자로 읽힐 때만 점이 된다 — 표(chart-a11y)의 isScatterPoint 와 같은 규칙(WD-831)
       if (x !== null && y !== null) out.push({ x, y });
     }
     return out;
@@ -47,13 +49,13 @@ export function ScatterChartView({ config, data, height }: ScatterChartViewProps
 
   // 그릴 수 없는 설정이면 빈 격자 대신 이유를 알린다 — 히스토그램과 같은 수준(WD-308).
   // X 가 숫자가 아니면(다른 차트 타입에서 바꿔 문자 컬럼이 남은 경우 등), Y 에 숫자 컬럼이 없으면 점이 하나도 없다.
-  const usedY = groupBy ? yAxis.slice(0, 1) : yAxis;
+  const usedY = getScatterUsedY(config);
   const emptyReason =
     data.length === 0
       ? null
       : !xs.some((x) => x !== null)
         ? '산점도의 X축은 숫자 컬럼이어야 합니다'
-        : !usedY.some((yKey) => data.some((row) => toPlotNumber(row[yKey]) !== null))
+        : !usedY.some((yKey) => data.some((row, i) => xs[i] !== null && toPlotNumber(row[yKey]) !== null))
           ? '산점도의 Y축에 숫자 컬럼을 하나 이상 고르세요'
           : null;
   if (emptyReason) {
@@ -70,7 +72,7 @@ export function ScatterChartView({ config, data, height }: ScatterChartViewProps
     // 그룹이 계열이 되므로 Y축은 첫 번째 컬럼만 쓴다
     const groups = new Map<string, number[]>();
     data.forEach((row, i) => {
-      const groupVal = String(row[groupBy] ?? 'unknown');
+      const groupVal = getScatterGroupLabel(row[groupBy]);
       if (!groups.has(groupVal)) groups.set(groupVal, []);
       groups.get(groupVal)!.push(i);
     });

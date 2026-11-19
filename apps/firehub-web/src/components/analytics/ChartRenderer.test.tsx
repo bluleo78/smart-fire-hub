@@ -34,7 +34,7 @@ vi.mock('./MapChartView', () => ({
   MapChartView: () => <div data-testid="map-chart" />,
 }));
 
-import type { ChartConfig } from '../../types/analytics';
+import type { ChartConfig, ChartType } from '../../types/analytics';
 import { ChartRenderer, MemoChartRenderer } from './ChartRenderer';
 
 const ROWS = [{ area: '서울', sum: 10 }];
@@ -266,5 +266,27 @@ describe('ChartRenderer — 접근 이름·값 대체 표 (WD-826)', () => {
     render(<ChartRenderer chartType="BAR" config={CONFIG} data={many} columns={['area', 'sum']} />);
     const table = screen.getByRole('table');
     expect(within(table).getAllByRole('row')).toHaveLength(101); // 머리글 1 + 본문 100
+  });
+});
+
+describe('ChartRenderer — 모르는 차트 타입 (WD-831)', () => {
+  const config: ChartConfig = { xAxis: 'a', yAxis: ['b'] };
+  const data = [{ a: 1, b: 2 }];
+
+  it.each([
+    ['컬럼이 있을 때', ['a', 'b']],
+    ['컬럼이 비었을 때', [] as string[]],
+  ])('%s 도 TypeError 없이 지원하지 않는 타입 안내를 보인다', (_label, columns) => {
+    render(<ChartRenderer chartType={'NOPE' as ChartType} config={config} data={data} columns={columns} />);
+    expect(screen.getByText('지원하지 않는 차트 타입입니다.')).toBeInTheDocument();
+    expect(screen.queryByRole('figure')).toBeNull();
+  });
+
+  it.each([
+    ['축이 비어 있어도', { xAxis: '', yAxis: [] } as ChartConfig, data],
+    ['0행이어도', config, [] as typeof data],
+  ])('%s 같은 안내가 먼저 나온다', (_label, cfgArg, rows) => {
+    render(<ChartRenderer chartType={'NOPE' as ChartType} config={cfgArg} data={rows} columns={['a', 'b']} />);
+    expect(screen.getByText('지원하지 않는 차트 타입입니다.')).toBeInTheDocument();
   });
 });

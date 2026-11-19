@@ -86,12 +86,25 @@ const USED_COLUMN_FIELDS: Record<ChartType, UsedColumnFields> = {
 };
 
 /**
+ * 알고 있는 차트 타입인지 판별한다(WD-831).
+ *
+ * AI 챗 인라인 위젯 등은 LLM 이 정한 임의 문자열 타입을 런타임에 넘길 수 있어 TS 타입만 믿을 수 없다.
+ * 표에 없는 타입을 그대로 색인하면 TypeError 라서 먼저 걸러 렌더러가 「지원하지 않는 차트 타입」 안내로 가게 한다.
+ * 'toString' 같은 상속 속성 이름을 타입으로 오인하지 않도록 `in` 대신 Object.hasOwn 을 쓴다.
+ */
+export function isKnownChartType(chartType: string): chartType is ChartType {
+  return Object.hasOwn(USED_COLUMN_FIELDS, chartType);
+}
+
+/**
  * 차트 타입이 렌더러에서 실제로 읽는 컬럼 이름 목록을 돌려준다(WD-826).
  *
  * 스크린리더용 값 대체 표(chart-a11y)가 "차트가 그리는 컬럼"만 열로 삼도록 USED_COLUMN_FIELDS 를 그대로 재사용한다.
  * 빈 값은 제거하고 중복은 한 번만, 설정 순서를 유지한다. TABLE 처럼 설정 컬럼이 없는 타입은 빈 배열이다.
  */
 export function getChartUsedColumns(chartType: ChartType, config: ChartConfig): string[] {
+  // WD-831: 모르는 타입은 읽는 컬럼이 없다
+  if (!isKnownChartType(chartType)) return [];
   const result: string[] = [];
   for (const field of USED_COLUMN_FIELDS[chartType](normalizeYAxis(config))) {
     if (typeof field !== 'string' || field === '') continue;
@@ -122,7 +135,8 @@ export function findMissingChartColumns(
   columns: string[],
   rows: Record<string, unknown>[] = [],
 ): string[] {
-  if (columns.length === 0) return [];
+  // WD-831: 모르는 타입은 검사할 컬럼이 없다(렌더러가 지원하지 않는 타입 안내를 보인다)
+  if (!isKnownChartType(chartType) || columns.length === 0) return [];
   const columnSet = new Set(columns);
 
   // 1단계: columns 에 없는 설정 컬럼 후보(중복 제거, 설정 순서 유지). 빈 값은 자동 추론 대상이라 제외한다.

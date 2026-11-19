@@ -6,6 +6,8 @@
  * 뷰(안내)·빌더(저장 차단)가 같은 규칙을 쓰도록 여기 한 곳에 둔다.
  */
 
+import { toPlotNumber } from './numeric-columns';
+
 /** 통계 항목별로 받아들이는 컬럼 이름 — 뷰가 읽는 순서와 같다(앞 이름이 우선). */
 const BOXPLOT_STAT_KEYS: ReadonlyArray<{ label: BoxplotStatLabel; keys: readonly string[] }> = [
   { label: 'min', keys: ['min', 'q0'] },
@@ -41,17 +43,17 @@ export interface BoxStat {
 export type BoxplotStatLabel = 'min' | 'q1' | 'median' | 'q3' | 'max';
 
 /**
- * 행마다 카테고리(xKey)와 통계 값을 읽는다 — 앞 이름이 우선(min → q0 등)이고, 없으면 0 으로 본다.
+ * 행마다 카테고리(xKey)와 통계 값을 읽는다 — 앞 이름이 우선(min → q0 등)이고, 없거나 숫자로 읽을 수 없으면 0 으로 본다(toPlotNumber — WD-831).
  * 통계 컬럼이 빠진 결과는 뷰가 그리지 않고 안내하므로(findMissingBoxplotStats) 0 은 실제로 그려지지 않는다.
  */
 export function toBoxStats(data: Record<string, unknown>[], xKey: string): BoxStat[] {
   return data.map((d) => ({
     category: String(d[xKey] ?? ''),
-    min: Number(d.min ?? d.q0 ?? 0),
-    q1: Number(d.q1 ?? 0),
-    median: Number(d.median ?? d.q2 ?? 0),
-    q3: Number(d.q3 ?? 0),
-    max: Number(d.max ?? d.q4 ?? 0),
+    min: toPlotNumber(d.min ?? d.q0) ?? 0,
+    q1: toPlotNumber(d.q1) ?? 0,
+    median: toPlotNumber(d.median ?? d.q2) ?? 0,
+    q3: toPlotNumber(d.q3) ?? 0,
+    max: toPlotNumber(d.max ?? d.q4) ?? 0,
   }));
 }
 

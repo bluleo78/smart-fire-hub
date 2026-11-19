@@ -1,6 +1,6 @@
 import { PLAIN_DECIMAL_RE } from '../../lib/plain-decimal';
 import type { ChartConfig, ChartType } from '../../types/analytics';
-import { resolveChartAxes } from '../analytics/chart-missing-columns';
+import { isKnownChartType, resolveChartAxes } from '../analytics/chart-missing-columns';
 
 /**
  * AI 챗 인라인 차트(show_chart) rows 의 숫자 문자열 정규화 (WD-104)
@@ -66,7 +66,8 @@ const NUMERIC_X_AXIS_TYPES: ReadonlySet<ChartType> = new Set<ChartType>(['SCATTE
  */
 export function chartValueColumns(chartType: ChartType, config: ChartConfig, columns: string[]): Set<string> {
   const resolved = resolveChartAxes(config, columns);
-  const fields = VALUE_COLUMN_FIELDS[chartType] ?? none;
+  // 모르는 타입·상속 이름('toString' 등)은 규칙 없음 — 아는 타입 판정은 isKnownChartType 한 곳으로(WD-831)
+  const fields = isKnownChartType(chartType) ? VALUE_COLUMN_FIELDS[chartType] : none;
   const result = new Set<string>(fields(resolved).filter((c): c is string => typeof c === 'string' && c !== ''));
   if (resolved.xAxis && !NUMERIC_X_AXIS_TYPES.has(chartType)) result.delete(resolved.xAxis);
   if (resolved.groupBy) result.delete(resolved.groupBy);

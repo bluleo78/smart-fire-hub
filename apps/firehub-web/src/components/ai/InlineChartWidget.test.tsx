@@ -109,6 +109,11 @@ describe('InlineChartWidget 컬럼 누락 시 저장 버튼 (WD-88)', () => {
     expect(screen.queryByRole('button', { name: '차트로 저장' })).toBeNull();
   });
 
+  it('모르는 차트 타입이면 그릴 수 없으므로 「차트로 저장」을 숨긴다 (WD-831)', () => {
+    render(<InlineChartWidget {...baseProps} chartType={'SANKEY' as unknown as 'PIE'} />);
+    expect(screen.queryByRole('button', { name: '차트로 저장' })).toBeNull();
+  });
+
   it('columns 가 표시 라벨이어도 row 키로 컬럼이 있으면 「차트로 저장」을 보인다', () => {
     render(<InlineChartWidget {...baseProps} columns={['이름', '값']} />);
     expect(screen.getByRole('button', { name: '차트로 저장' })).toBeInTheDocument();

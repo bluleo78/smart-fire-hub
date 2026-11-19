@@ -5,10 +5,15 @@ import {
   binHistogramValues,
   computeGaugeReading,
   getHistogramBinCount,
+  getScatterGroupLabel,
+  getScatterUsedY,
+  isScatterPoint,
   readHistogramValues,
+  splitPieData,
   transformWaterfallData,
 } from './chart-derived-data';
 import { getChartUsedColumns } from './chart-missing-columns';
+import { toPlotNumber } from './numeric-columns';
 
 /**
  * 스크린리더용 값 대체 표에 넣는 최대 행 수(WD-826).
@@ -55,6 +60,10 @@ export interface ChartDataTable {
 export function formatChartCellValue(value: unknown): string {
   if (value === null || value === undefined) return '';
   // 문자열·숫자 등 원시 값은 자르지 않는다 — 긴 카테고리 라벨이 잘리면 값을 구분할 수 없다
+  // 단, 유한한 숫자는 유효숫자 15자리로 다듬어 부동소수 잡음(0.30000000000000004 → 0.3)을 없앤다(WD-831).
+  // 천 단위 구분(toLocaleString)은 쓰지 않는다 — 연도·ID 같은 라벨 숫자가 축(2024)과 달리 2,024 로 읽히고 보는 사람 로캘에 따라 바뀐다.
+  // 작은 소수(0.0004)도 그대로 남는다. NaN·Infinity 는 그대로 문자열화한다.
+  if (typeof value === 'number') return Number.isFinite(value) ? String(Number(value.toPrecision(15))) : String(value);
   if (typeof value !== 'object') return String(value);
   // 객체(GEOMETRY 등)만 JSON 으로 쓰고, 표가 비대해지지 않도록 80자를 넘으면 …로 줄인다
   let text: string;
@@ -75,11 +84,15 @@ function buildCaption(totalRows: number, accessibleName: string): string {
 
 /** 머리글과 (이미 문자열로 바꾼) 전체 행으로 표를 만든다 — 변환 표도 원본 표와 같은 행 수 제한·캡션 규칙을 쓴다 */
 function toTable(headers: string[], allRows: string[][], accessibleName: string): ChartDataTable {
-  return {
-    caption: buildCaption(allRows.length, accessibleName),
-    headers,
-    rows: allRows.slice(0, CHART_SR_TABLE_ROW_LIMIT),
-  };
+  return toLimitedTable(headers, allRows.length, allRows.slice(0, CHART_SR_TABLE_ROW_LIMIT), accessibleName);
+}
+
+/**
+ * 이미 제한(CHART_SR_TABLE_ROW_LIMIT)까지만 문자열로 바꾼 행으로 표를 만든다 — 전체 행 수(totalRows)는 캡션에 쓴다.
+ * 행이 많을 수 있는 표(원본 행·파이·산점도)는 버릴 행까지 문자열로 바꾸지 않게 이것을 쓴다(WD-831).
+ */
+function toLimitedTable(headers: string[], totalRows: number, rows: string[][], accessibleName: string): ChartDataTable {
+  return { caption: buildCaption(totalRows, accessibleName), headers, rows };
 }
 
 /**
@@ -126,6 +139,43 @@ function buildDerivedTable(
         accessibleName,
       );
     }
+    case 'PIE':
+    case 'DONUT': {
+      // 파이는 음수를 그리지 않고(splitPieData, 뷰와 같은 함수) 남은 값의 비율로 조각 크기를 정한다 — 값과 비율을 함께 준다(WD-831)
+      const yKey = config.yAxis[0] ?? '';
+      const { pieData } = splitPieData(data, yKey);
+      // pieData 의 값은 splitPieData 가 이미 숫자로 바꿔 두었다(그림이 그리는 값 그대로)
+      const valueOf = (r: Record<string, unknown>) => r[yKey] as number;
+      const total = pieData.reduce((sum, r) => sum + valueOf(r), 0);
+      return toLimitedTable(
+        [config.xAxis, yKey, '비율'],
+        pieData.length,
+        // 표에 실을 행(CHART_SR_TABLE_ROW_LIMIT)만 문자열로 바꾼다 — 합계는 전체로 구한다
+        pieData.slice(0, CHART_SR_TABLE_ROW_LIMIT).map((r) => [
+          cell(r[config.xAxis]),
+          cell(r[yKey]),
+          // 합이 0 이하면 비율을 정할 수 없어 빈 칸으로 둔다
+          total > 0 ? `${((valueOf(r) / total) * 100).toFixed(1)}%` : '',
+        ]),
+        accessibleName,
+      );
+    }
+    case 'SCATTER': {
+      // 산점도는 x 와 사용 Y 가 숫자인 점만 그린다 — 그리지 않은 행은 표에서도 빼고, Y 칸의 숫자 아닌 값은 빈 칸으로 둔다(WD-831)
+      const headers = getChartUsedColumns('SCATTER', config);
+      // 사용 Y 와 점 판정은 뷰와 같은 함수(getScatterUsedY·isScatterPoint)를 쓴다(WD-831)
+      const usedY = new Set(getScatterUsedY(config));
+      const xKey = config.xAxis;
+      // 칸 하나 — 사용 Y 는 숫자일 때만 값(그리지 않은 값은 빈 칸), 그룹 칸은 범례와 같은 이름(값이 없으면 'unknown'), 그 밖은 그대로
+      const scatterCell = (row: Record<string, unknown>, h: string): string => {
+        if (h !== xKey && usedY.has(h)) return toPlotNumber(row[h]) !== null ? cell(row[h]) : '';
+        if (h !== xKey && h === config.groupBy) return getScatterGroupLabel(row[h]);
+        return cell(row[h]);
+      };
+      const drawn = data.filter((row) => [...usedY].some((y) => isScatterPoint(row[xKey], row[y])));
+      const rows = drawn.slice(0, CHART_SR_TABLE_ROW_LIMIT).map((row) => headers.map((h) => scatterCell(row, h)));
+      return toLimitedTable(headers, drawn.length, rows, accessibleName);
+    }
     default:
       return null;
   }
@@ -134,7 +184,7 @@ function buildDerivedTable(
 /**
  * 차트 값 대체 표 데이터를 만든다(WD-826).
  *
- * 히스토그램·폭포·게이지·박스 플롯은 차트가 그리는 변환 값(구간 빈도·누적·값과 범위·통계)으로 표를 만든다.
+ * 히스토그램·폭포·게이지·박스 플롯·파이·산점도는 차트가 그리는 변환 값(구간 빈도·누적·값과 범위·통계)으로 표를 만든다.
  * 그 외 타입의 열은 차트가 실제로 읽는 컬럼(getChartUsedColumns)이고, 설정이 비어 있으면(자동 추론 차트·TABLE) 결과 컬럼 전체를 쓴다.
  * 행은 CHART_SR_TABLE_ROW_LIMIT 까지만 싣고, 잘렸으면 캡션에 전체 행 수를 밝혀 정보가 빠졌음을 알린다.
  */
@@ -153,5 +203,5 @@ export function buildChartDataTable(
   const rows = data
     .slice(0, CHART_SR_TABLE_ROW_LIMIT)
     .map((row) => headers.map((h) => formatChartCellValue(row[h])));
-  return { caption: buildCaption(data.length, accessibleName), headers, rows };
+  return toLimitedTable(headers, data.length, rows, accessibleName);
 }

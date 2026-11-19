@@ -55,4 +55,13 @@ describe('findMissingChartAxesMessage (WD-505)', () => {
     expect(findMissingChartAxesMessage('BAR', noYAxis)).toBe('Y축 컬럼을 선택하세요.');
     expect(findMissingChartAxesMessage('GAUGE', cfg({ yAxis: [''] }))).toBe('값 컬럼(Y축)을 선택하세요.');
   });
+
+  it('모르는 차트 타입은 TypeError 없이 null (WD-831)', () => {
+    expect(findMissingChartAxesMessage('NOPE' as ChartType, cfg({}))).toBeNull();
+  });
+
+  it('상속 이름(toString·constructor)도 Object.prototype 함수를 부르지 않고 null (WD-831)', () => {
+    expect(findMissingChartAxesMessage('toString' as ChartType, cfg({}))).toBeNull();
+    expect(findMissingChartAxesMessage('constructor' as ChartType, cfg({}))).toBeNull();
+  });
 });

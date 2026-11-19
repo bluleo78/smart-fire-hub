@@ -151,4 +151,8 @@ describe('chartValueColumns (WD-104)', () => {
       new Set(['sum']),
     );
   });
+
+  it('상속 이름(toString) 차트 타입은 Object.prototype 함수를 값 컬럼 규칙으로 쓰지 않는다 (WD-831)', () => {
+    expect(chartValueColumns('toString' as never, { xAxis: 'a', yAxis: ['b'] }, ['a', 'b'])).toEqual(new Set());
+  });
 });
