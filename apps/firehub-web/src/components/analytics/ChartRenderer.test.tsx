@@ -8,14 +8,17 @@ import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 // 막대 차트는 recharts 대신 받은 축만 노출하는 스텁으로 대체 — "차트가 그려졌는가"만 본다
+// WD-821: 같은 props 로 다시 그리는지 세려고 스텁이 렌더될 때마다 센다
+const barRenders = vi.hoisted(() => ({ count: 0 }));
 vi.mock('./BarChartView', () => ({
-  BarChartView: ({ config }: { config: { xAxis: string; yAxis: string[] } }) => (
-    <div data-testid="bar-chart">{`${config.xAxis}|${config.yAxis.join(',')}`}</div>
-  ),
+  BarChartView: ({ config }: { config: { xAxis: string; yAxis: string[] } }) => {
+    barRenders.count += 1;
+    return <div data-testid="bar-chart">{`${config.xAxis}|${config.yAxis.join(',')}`}</div>;
+  },
 }));
 
 import type { ChartConfig } from '../../types/analytics';
-import { ChartRenderer } from './ChartRenderer';
+import { ChartRenderer, MemoChartRenderer } from './ChartRenderer';
 
 const ROWS = [{ area: '서울', sum: 10 }];
 
@@ -170,5 +173,22 @@ describe('ChartRenderer — inferAxes=false 축 미선택 안내 (WD-505)', () =
     render(<ChartRenderer chartType="BAR" config={{ xAxis: 'region', yAxis: [] }} data={DATA} columns={COLS} />);
     expect(screen.queryByTestId('chart-axis-required')).toBeNull();
     expect(screen.getByTestId('bar-chart')).toHaveTextContent('region|cnt,amt');
+  });
+});
+
+describe('MemoChartRenderer — 같은 props 면 다시 그리지 않는다 (WD-821)', () => {
+  // 차트 빌더의 「저장」 대화상자처럼 부모 상태만 바뀌어도 recharts 가 다시 계산돼, 저사양에서 클릭이 장기 작업이 됐다.
+  it('부모가 다시 렌더돼도 chartType·config·data·columns 가 그대로면 차트를 다시 그리지 않고, 데이터가 바뀌면 다시 그린다', () => {
+    const config: ChartConfig = { xAxis: 'area', yAxis: ['sum'] };
+    const columns = ['area', 'sum'];
+    const { rerender } = render(<MemoChartRenderer chartType="BAR" config={config} data={ROWS} columns={columns} />);
+    const before = barRenders.count;
+    expect(before).toBeGreaterThan(0);
+
+    rerender(<MemoChartRenderer chartType="BAR" config={config} data={ROWS} columns={columns} />);
+    expect(barRenders.count).toBe(before);
+
+    rerender(<MemoChartRenderer chartType="BAR" config={config} data={[{ area: '부산', sum: 3 }]} columns={columns} />);
+    expect(barRenders.count).toBeGreaterThan(before);
   });
 });
