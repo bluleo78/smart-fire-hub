@@ -17,6 +17,7 @@ import com.smartfirehub.pipeline.repository.PipelineStepRepository;
 import com.smartfirehub.user.repository.UserRepository;
 import java.time.Clock;
 import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
@@ -60,6 +61,14 @@ class PipelineExecutionServiceTest {
   @BeforeEach
   void setTenantContext() {
     TenantContext.set(7L);
+    // 수동 실행 중첩 가드(WD-825)가 파이프라인 잠금·진행 중 실행 조회를 먼저 한다 — 기본은 「있고, 진행 중 실행 없음」이다.
+    // 가드 자체는 PipelineManualRunGuardTest 가 실제 DB 로 검증한다.
+    lenient()
+        .when(pipelineRepository.lockById(anyLong()))
+        .thenReturn(Optional.of(new PipelineRepository.LockedPipeline("P", LocalDateTime.now())));
+    lenient()
+        .when(executionRepository.findActiveExecutionState(anyLong()))
+        .thenReturn(PipelineExecutionRepository.ActiveExecutionState.NONE);
   }
 
   @AfterEach

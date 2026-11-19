@@ -756,7 +756,18 @@ class PipelineServiceTest extends IntegrationTestBase {
             new CreatePipelineRequest("WD532 paging", "Description", List.of()), testUserId);
     List<Long> ids = new java.util.ArrayList<>();
     for (int i = 0; i < 5; i++) {
-      ids.add(pipelineService.executePipeline(pipeline.id(), testUserId).id());
+      // WD-825: 수동 실행은 앞 실행이 진행 중이면 409 이고 비동기 러너가 실행 행을 소유하므로(경쟁), 서비스로 5번
+      // 실행하지 않는다. 페이징 확인용 이력이므로 끝난 실행 행을 직접 넣어 결정적으로 만든다.
+      ids.add(
+          dsl.insertInto(PIPELINE_EXECUTION)
+              .set(PIPELINE_EXECUTION.PIPELINE_ID, pipeline.id())
+              .set(PIPELINE_EXECUTION.STATUS, "COMPLETED")
+              .set(PIPELINE_EXECUTION.EXECUTED_BY, testUserId)
+              .set(PIPELINE_EXECUTION.TRIGGERED_BY, "MANUAL")
+              .set(PIPELINE_EXECUTION.TENANT_ID, DEFAULT_TEST_TENANT_ID)
+              .returning(PIPELINE_EXECUTION.ID)
+              .fetchOne()
+              .getId());
     }
     List<Long> newestFirst = ids.stream().sorted(java.util.Comparator.reverseOrder()).toList();
 

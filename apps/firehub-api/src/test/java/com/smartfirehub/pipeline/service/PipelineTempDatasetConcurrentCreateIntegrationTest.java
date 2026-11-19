@@ -119,7 +119,8 @@ class PipelineTempDatasetConcurrentCreateIntegrationTest extends IntegrationTest
 
       List<Long> executionIds = new ArrayList<>();
       for (int i = 0; i < RUNS_PER_ROUND; i++) {
-        executionIds.add(executionService.executePipeline(pipelineId, userId));
+        // WD-825: 같은 파이프라인의 수동 동시 실행은 409 이므로, 동시 첫 실행 경쟁은 트리거 실행(SCHEDULE)으로 재현한다.
+        executionIds.add(executionService.executePipeline(pipelineId, userId, "SCHEDULE", null));
       }
       List<String> statuses = new ArrayList<>();
       for (Long executionId : executionIds) {

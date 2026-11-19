@@ -9,8 +9,10 @@ import com.smartfirehub.pipeline.dto.PipelineStepResponse;
 import com.smartfirehub.pipeline.event.PipelineCompletedEvent;
 import com.smartfirehub.pipeline.exception.CyclicDependencyException;
 import com.smartfirehub.pipeline.exception.ExecutionAlreadyFinishedException;
+import com.smartfirehub.pipeline.exception.PipelineAlreadyRunningException;
 import com.smartfirehub.pipeline.exception.PipelineNotFoundException;
 import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
+import com.smartfirehub.pipeline.repository.PipelineExecutionRepository.ActiveExecutionState;
 import com.smartfirehub.pipeline.repository.PipelineRepository;
 import com.smartfirehub.pipeline.repository.PipelineStepRepository;
 import com.smartfirehub.user.repository.UserRepository;
@@ -45,6 +47,9 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 @Slf4j
 @Service
 public class PipelineExecutionService {
+
+  /** 수동 실행을 뜻하는 triggeredBy 값. 중첩 실행 409 가드가 수동 여부를 판정할 때 쓴다. */
+  private static final String MANUAL_TRIGGER = "MANUAL";
 
   private final PipelineStepRepository stepRepository;
   private final PipelineExecutionRepository executionRepository;
@@ -354,6 +359,19 @@ public class PipelineExecutionService {
    */
   @Transactional
   public Long executePipeline(Long pipelineId, Long userId, String triggeredBy, Long triggerId) {
+    // 수동 실행 중첩 가드(WD-825): 이미 대기·실행 중인 실행이 있으면 409 로 거부한다. 파이프라인 행을 FOR UPDATE 로
+    // 잠근 뒤 판정해 동시에 들어온 수동 실행 둘이 모두 통과하지 못하게 한다(삭제 가드 WD-437 의 경쟁 정리와 같은 방식 —
+    // 잠금은 이 트랜잭션이 끝날 때 풀리고, 뒤 요청은 앞 실행 행이 커밋된 뒤 PENDING 을 본다).
+    // 트리거 실행(SCHEDULE·API·WEBHOOK 등)은 기존 동시 실행 정책을 따르므로 막지 않는다.
+    // triggeredBy 가 null 이면 createExecution 이 "MANUAL" 로 저장하므로 가드에서도 수동 실행으로 본다(우회 방지).
+    if (triggeredBy == null || MANUAL_TRIGGER.equals(triggeredBy)) {
+      pipelineRepository.lockById(pipelineId).orElseThrow(PipelineNotFoundException::new);
+      ActiveExecutionState active = executionRepository.findActiveExecutionState(pipelineId);
+      if (active != ActiveExecutionState.NONE) {
+        throw new PipelineAlreadyRunningException(active == ActiveExecutionState.CANCELLING);
+      }
+    }
+
     // 파이프라인 스텝 및 의존성 로드
     List<PipelineStepResponse> steps = stepRepository.findByPipelineId(pipelineId);
 
