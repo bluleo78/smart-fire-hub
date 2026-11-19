@@ -267,5 +267,6 @@ export function ChartRenderer({
  * 「저장」 대화상자처럼 부모 상태만 바뀌어도 recharts 가 통째로 다시 계산돼, 저사양(CPU 4x)에서 대화상자를 여는 클릭이
  * 장기 작업(50ms 넘음)으로 이어졌다. 대시보드 그리드(react-grid-layout)는 렌더 시점에 기대는 키보드 배치 흐름이 있어
  * 일반 ChartRenderer 를 그대로 쓴다 — 전역 memo 는 그 흐름의 빠른 연속 입력을 놓치게 했다.
+ * 대시보드 키보드 배치 경합은 WD-823 — 고치면 전역 memo 로 되돌릴지 검토.
  */
 export const MemoChartRenderer = memo(ChartRenderer);

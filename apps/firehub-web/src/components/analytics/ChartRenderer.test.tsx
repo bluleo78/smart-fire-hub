@@ -5,7 +5,7 @@
  * columns 가 비었거나(가림) 설정이 비어 자동 추론하는 경우에는 기존 동작을 유지해야 한다.
  */
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // 막대 차트는 recharts 대신 받은 축만 노출하는 스텁으로 대체 — "차트가 그려졌는가"만 본다
 // WD-821: 같은 props 로 다시 그리는지 세려고 스텁이 렌더될 때마다 센다
@@ -177,6 +177,11 @@ describe('ChartRenderer — inferAxes=false 축 미선택 안내 (WD-505)', () =
 });
 
 describe('MemoChartRenderer — 같은 props 면 다시 그리지 않는다 (WD-821)', () => {
+  // 스텁 렌더 횟수는 모듈 전역이라 다른 테스트 순서에 영향받지 않도록 매번 비운다
+  beforeEach(() => {
+    barRenders.count = 0;
+  });
+
   // 차트 빌더의 「저장」 대화상자처럼 부모 상태만 바뀌어도 recharts 가 다시 계산돼, 저사양에서 클릭이 장기 작업이 됐다.
   it('부모가 다시 렌더돼도 chartType·config·data·columns 가 그대로면 차트를 다시 그리지 않고, 데이터가 바뀌면 다시 그린다', () => {
     const config: ChartConfig = { xAxis: 'area', yAxis: ['sum'] };

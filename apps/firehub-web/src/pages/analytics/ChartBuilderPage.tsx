@@ -1151,7 +1151,12 @@ export default function ChartBuilderPage() {
                 <p className="text-sm">쿼리를 실행하면 차트가 표시됩니다.</p>
               </div>
             ) : (
-              <div ref={previewContainerRef} className="px-4 pt-3" style={{ height: 460 }}>
+              <div
+                ref={previewContainerRef}
+                data-testid="chart-builder-preview"
+                className="px-4 pt-3"
+                style={{ height: 460 }}
+              >
                 {/* WD-821: 저장 대화상자 등 부모 상태 변화로 미리보기 차트를 다시 계산하지 않는다 */}
                 <MemoChartRenderer
                   chartType={chartType}
