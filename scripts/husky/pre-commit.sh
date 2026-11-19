@@ -39,10 +39,17 @@ if [ -z "$NEEDS_REGRESSION" ]; then
 fi
 
 # 게이트 훅 자체를 바꿨으면 판정 테스트를 먼저 — 잘못된 판정이 회귀를 건너뛰거나 가짜 통과를 기록하지 않게 (WD-459)
-# 기차·마이그레이션 번호 검사 스크립트도 같은 묶음으로 본다 — test:hooks 가 husky/*.test.sh 전부와 번호 검사 테스트를 돈다 (WD-506)
-if printf '%s\n' "$CHANGED" | grep -qE '^(scripts/husky/|\.husky/|scripts/check-migration-versions)'; then
+# 기차·마이그레이션 번호 검사·zod 판 가드(WD-829) 스크립트도 같은 묶음으로 본다 — test:hooks 가 husky/*.test.sh 전부와 번호 검사 테스트를 돈다 (WD-506)
+if printf '%s\n' "$CHANGED" | grep -qE '^(scripts/husky/|\.husky/|scripts/check-migration-versions|scripts/check-zod-single-version)'; then
   echo "[pre-commit] 게이트 훅 변경 — 판정 테스트(pnpm test:hooks) 실행"
   [ -n "$PRECOMMIT_DRY_RUN" ] || pnpm -s test:hooks
+fi
+
+# 의존성 판(lockfile·package.json)을 바꿨으면 zod 단일 판 가드를 — shamefully-hoist 로 루트 zod 가 갈리면 web typecheck 가 깨진다 (WD-829).
+# 가드는 lockfile 텍스트만 읽어 빠르다. 위 test:hooks 묶음과 별개로, 이 경로 변경만으로도 돈다.
+if printf '%s\n' "$CHANGED" | grep -qE '^(pnpm-lock\.yaml|package\.json|apps/[^/]+/package\.json)$'; then
+  echo "[pre-commit] 의존성 변경 — zod 판 가드 실행"
+  [ -n "$PRECOMMIT_DRY_RUN" ] || node --test scripts/check-zod-single-version.test.mjs
 fi
 
 # typecheck 는 코드 변경이 있을 때만 — 문서만 바꾼 커밋에서 전체 앱 타입 검사를 돌지 않게 (WD-459)

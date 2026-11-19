@@ -180,6 +180,10 @@ check "docker/postgres 변경은 api 로 본다" "compileTestJava" "$(precommit 
 check "훅 변경은 판정 테스트" "게이트 훅 변경" "$(precommit 'scripts/husky/noncode.sh')"
 # 마이그레이션 번호 검사도 test:hooks 가 돌리므로 같은 판정을 탄다 (WD-506)
 check "번호 검사 변경도 판정 테스트" "게이트 훅 변경" "$(precommit 'scripts/check-migration-versions.mjs')"
+# 의존성 변경은 zod 판 가드를 돈다 (WD-829)
+check "lockfile 변경은 zod 가드" "의존성 변경" "$(precommit 'pnpm-lock.yaml')"
+check "앱 package.json 변경은 zod 가드" "의존성 변경" "$(precommit 'apps/firehub-web/package.json')"
+check_not "무관한 변경은 zod 가드 없음" "의존성 변경" "$(precommit 'apps/firehub-web/src/App.tsx')"
 
 # ── 4) run_locked — macOS 잠자기 방지(caffeinate) (WD-764) ───────
 # 락 파일은 임시 경로로 덮어 다른 세션이 쥔 공유 락을 건드리지 않는다. source 뒤에 다시 대입해야 덮어써진다.
