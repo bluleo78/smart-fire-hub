@@ -10,7 +10,6 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.document.repository.DocumentChunkRepository;
 import com.smartfirehub.graphreview.dto.EntityRelationRef;
 import com.smartfirehub.graphreview.dto.ReviewItemRecord;
@@ -29,6 +28,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
+import tools.jackson.databind.json.JsonMapper;
 
 class ReviewItemServiceTest {
 
@@ -53,7 +53,7 @@ class ReviewItemServiceTest {
             repo,
             mutationClient,
             chunkRepository,
-            new ObjectMapper(),
+            JsonMapper.builderWithJackson2Defaults().build(),
             guard,
             Mockito.mock(ClearanceResolver.class),
             Mockito.mock(AiCallContext.class));

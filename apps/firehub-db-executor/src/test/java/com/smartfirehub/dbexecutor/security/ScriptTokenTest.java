@@ -2,10 +2,10 @@ package com.smartfirehub.dbexecutor.security;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * 스크립트 1회용 토큰 검증(WD-78, Ruling 16). api 와 공유하는 고정 벡터({@code script-token-vectors.json})로 서명 형식이 두

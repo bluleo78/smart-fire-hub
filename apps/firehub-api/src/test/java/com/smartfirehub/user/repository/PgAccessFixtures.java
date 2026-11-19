@@ -951,6 +951,15 @@ public class PgAccessFixtures implements AccessFixtures {
   }
 
   @Override
+  public String rawJsonText(String table, String column, String idColumn, Object id) {
+    // 소유자 커넥션 — 정책(RLS)과 무관하게 실제 저장된 값을 읽는다.
+    return ownerJdbc.queryForObject(
+        "select " + column + "::text from " + table + " where " + idColumn + " = ?",
+        String.class,
+        id);
+  }
+
+  @Override
   public int countAsyncJobAnyTenant(String id) {
     // 앱 계정(app_tenant)은 정책이 걸러 테넌트를 모르면 셀 수 없다 — 소유자 커넥션으로 테넌트와 무관하게 센다.
     Integer n =

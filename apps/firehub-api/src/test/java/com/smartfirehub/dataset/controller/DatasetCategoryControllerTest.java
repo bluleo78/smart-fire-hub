@@ -6,7 +6,6 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataset.dto.CategoryRequest;
 import com.smartfirehub.dataset.dto.CategoryResponse;
 import com.smartfirehub.dataset.exception.DuplicateDatasetNameException;
@@ -28,6 +27,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import tools.jackson.databind.ObjectMapper;
 
 /** DatasetCategoryController WebMvcTest — 카테고리 CRUD 엔드포인트 검증 */
 @SuppressWarnings("null")

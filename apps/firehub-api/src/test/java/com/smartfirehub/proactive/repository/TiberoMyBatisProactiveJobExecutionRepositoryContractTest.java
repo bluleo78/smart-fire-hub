@@ -1,6 +1,5 @@
 package com.smartfirehub.proactive.repository;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.proactive.repository.mybatis.MyBatisProactiveJobExecutionRepository;
 import com.smartfirehub.proactive.repository.mybatis.ProactiveJobExecutionMapper;
 import com.smartfirehub.support.tibero.TiberoLive;
@@ -9,6 +8,7 @@ import com.smartfirehub.user.repository.AccessFixtures;
 import com.smartfirehub.user.repository.TiberoAccessFixtures;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.TestInstance;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * ProactiveJobExecutionRepositoryContractTest 를 MyBatis 구현 + Tibero 실서버로 실행한다(WD-709). 리포지토리는 런타임
@@ -29,7 +29,8 @@ class TiberoMyBatisProactiveJobExecutionRepositoryContractTest
         poc.transactional(
             ProactiveJobExecutionRepository.class,
             new MyBatisProactiveJobExecutionRepository(
-                poc.mapper(ProactiveJobExecutionMapper.class), new ObjectMapper()));
+                poc.mapper(ProactiveJobExecutionMapper.class),
+                JsonMapper.builderWithJackson2Defaults().build()));
   }
 
   @Override

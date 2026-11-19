@@ -3,7 +3,6 @@ package com.smartfirehub.notification.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.*;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.notification.dto.NotificationEvent;
 import java.time.LocalDateTime;
 import java.util.Map;
@@ -13,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import tools.jackson.databind.json.JsonMapper;
 
 @ExtendWith(MockitoExtension.class)
 class SseEmitterRegistryTest {
@@ -21,7 +21,7 @@ class SseEmitterRegistryTest {
 
   @BeforeEach
   void setUp() {
-    registry = new SseEmitterRegistry(new ObjectMapper());
+    registry = new SseEmitterRegistry(JsonMapper.builderWithJackson2Defaults().build());
   }
 
   // ------------------------------------------------------------------ //

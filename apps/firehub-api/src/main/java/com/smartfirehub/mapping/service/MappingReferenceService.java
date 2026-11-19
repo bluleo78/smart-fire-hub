@@ -1,7 +1,5 @@
 package com.smartfirehub.mapping.service;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
@@ -29,6 +27,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * 데이터셋 매핑이 온톨로지 요소를 참조하는 관계를 지키는 서비스(WD-129).
@@ -675,7 +675,7 @@ public class MappingReferenceService {
   private String serialize(MappingSpec spec) {
     try {
       return objectMapper.writeValueAsString(spec);
-    } catch (JsonProcessingException e) {
+    } catch (JacksonException e) {
       throw new IllegalStateException("매핑 직렬화 실패", e);
     }
   }
@@ -683,7 +683,7 @@ public class MappingReferenceService {
   private MappingSpec deserialize(String json) {
     try {
       return objectMapper.readValue(json, MappingSpec.class);
-    } catch (JsonProcessingException e) {
+    } catch (JacksonException e) {
       throw new IllegalStateException("매핑 역직렬화 실패", e);
     }
   }

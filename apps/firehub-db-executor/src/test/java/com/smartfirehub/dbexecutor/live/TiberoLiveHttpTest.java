@@ -2,8 +2,6 @@ package com.smartfirehub.dbexecutor.live;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dbexecutor.config.DbExecutorProperties;
 import com.smartfirehub.dbexecutor.store.StoreDescriptor;
 import com.smartfirehub.dbexecutor.store.StoreDescriptorClient;
@@ -34,6 +32,8 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * Tibero 실서버 HTTP 끝-끝 테스트(WD-77 Task 8) — 실제 Tomcat 에 {@code java.net.http.HttpClient} 로 요청을 보내 인증
@@ -266,7 +266,7 @@ class TiberoLiveHttpTest {
 
   private static Set<String> fieldSet(JsonNode n) {
     Set<String> out = new HashSet<>();
-    n.fieldNames().forEachRemaining(out::add);
+    n.propertyNames().forEach(out::add);
     return out;
   }
 

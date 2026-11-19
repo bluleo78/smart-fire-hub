@@ -1,8 +1,8 @@
 package com.smartfirehub.dataset.dto;
 
-import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import java.time.LocalDateTime;
 import java.util.Map;
+import tools.jackson.databind.annotation.JsonSerialize;
 
 public record RowDataResponse(
     Long id,

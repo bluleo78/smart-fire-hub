@@ -6,7 +6,6 @@ import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.proactive.dto.ProactiveResult;
 import com.sun.net.httpserver.HttpServer;
 import java.net.InetAddress;
@@ -31,6 +30,7 @@ import org.thymeleaf.templateresolver.ClassLoaderTemplateResolver;
 import org.xhtmlrenderer.extend.UserAgentCallback;
 import org.xhtmlrenderer.pdf.ITextRenderer;
 import org.xhtmlrenderer.resource.CSSResource;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Flying Saucer 폴백 경로의 SSRF 회귀 테스트(WD-695).
@@ -131,7 +131,9 @@ class PdfExportServiceSsrfTest {
   /** 끝단 간 층: 실제 마크다운 변환기를 거친 AI 본문(마크다운 이미지·원시 img)도 서버 요청을 만들지 않아야 한다. */
   @Test
   void flyingSaucer_withRealMarkdown_doesNotFetchImageUrls() {
-    ReportRenderUtils utils = new ReportRenderUtils("http://127.0.0.1:1", "t", new ObjectMapper());
+    ReportRenderUtils utils =
+        new ReportRenderUtils(
+            "http://127.0.0.1:1", "t", JsonMapper.builderWithJackson2Defaults().build());
     PdfExportService service =
         new PdfExportService(templateEngine(), utils, "http://127.0.0.1:1", "t");
 

@@ -959,6 +959,16 @@ public class TiberoAccessFixtures implements AccessFixtures {
   }
 
   @Override
+  public String rawJsonText(String table, String column, String idColumn, Object id) {
+    // Tibero 는 JSON 열이 문자열로 읽힌다(소유자 계정이라 정책과 무관).
+    return poc.jdbc()
+        .queryForObject(
+            "SELECT " + column + " FROM " + table + " WHERE " + idColumn + " = ?",
+            String.class,
+            id);
+  }
+
+  @Override
   public int countAsyncJobAnyTenant(String id) {
     return poc.jdbc()
         .queryForObject("SELECT COUNT(*) FROM async_job WHERE id = ?", Integer.class, id);

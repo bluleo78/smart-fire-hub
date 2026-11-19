@@ -1,6 +1,5 @@
 package com.smartfirehub.notification.auth;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.smartfirehub.apiconnection.service.EncryptionService;
 import com.smartfirehub.notification.ChannelType;
 import com.smartfirehub.notification.channels.kakao.KakaoApiClient;
@@ -9,6 +8,7 @@ import com.smartfirehub.notification.repository.UserChannelBindingRepository;
 import java.time.Instant;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import tools.jackson.databind.JsonNode;
 
 /**
  * Kakao OAuth 인증 흐름 서비스.
@@ -89,9 +89,9 @@ public class KakaoOAuthService {
   public void completeAuthorization(long userId, String code) {
     JsonNode resp = kakaoApiClient.exchangeCode(code, clientId, clientSecret, redirectUri);
 
-    String accessToken = resp.path("access_token").asText();
-    String refreshToken = resp.path("refresh_token").asText();
-    long expiresInSeconds = resp.path("expires_in").asLong();
+    String accessToken = resp.path("access_token").asString("");
+    String refreshToken = resp.path("refresh_token").asString("");
+    long expiresInSeconds = resp.path("expires_in").asLong(0L);
 
     Instant now = Instant.now();
     bindingRepo.upsert(

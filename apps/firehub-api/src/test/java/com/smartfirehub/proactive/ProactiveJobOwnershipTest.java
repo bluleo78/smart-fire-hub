@@ -16,8 +16,6 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.proactive.service.ProactiveJobAsyncRunner;
@@ -46,6 +44,8 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * WD-164·WD-165: 남의 스마트 작업이나 없는 작업에 대한 실행·수정·삭제는 조회와 같은 404 로 거절하고, 주인의 작업·실행 이력·예약 실행에 흔적을 남기지
@@ -394,7 +394,7 @@ class ProactiveJobOwnershipTest extends IntegrationTestBase {
     assertThat(row).as("관리자 목록에 남의 작업이 보여야 한다").isNotNull();
     // 정확한 키 집합 — 「프롬프트가 없다」만 보면 다른 내용 필드가 새도 통과한다
     Set<String> keys = new HashSet<>();
-    row.fieldNames().forEachRemaining(keys::add);
+    row.propertyNames().forEach(keys::add);
     assertThat(keys)
         .containsExactlyInAnyOrder(
             "id",

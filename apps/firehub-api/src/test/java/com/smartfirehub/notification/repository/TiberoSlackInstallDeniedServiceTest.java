@@ -7,8 +7,6 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.smartfirehub.apiconnection.service.EncryptionService;
 import com.smartfirehub.global.platformdb.tibero.TiberoPlatformDbErrors;
 import com.smartfirehub.notification.auth.SlackOAuthService;
@@ -28,6 +26,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.springframework.dao.DuplicateKeyException;
+import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 /**
  * WD-730 — Tibero 에서 SlackOAuthService 가 실제 MyBatis 리포지토리(런타임 계정 + 행 격리)에 묶였을 때, 다른 테넌트가 가진 team
@@ -66,7 +66,7 @@ class TiberoSlackInstallDeniedServiceTest extends TenantPairContractBase {
 
   private SlackOAuthService service() {
     SlackApiClient api = mock(SlackApiClient.class);
-    ObjectNode resp = new ObjectMapper().createObjectNode();
+    ObjectNode resp = JsonMapper.builderWithJackson2Defaults().build().createObjectNode();
     resp.put("ok", true);
     resp.put("access_token", "xoxb-dummy");
     resp.put("bot_user_id", "UBOT1");

@@ -4,8 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.analytics.service.AnalyticsQueryExecutionService;
 import com.smartfirehub.global.security.InternalCallHeaders;
 import com.smartfirehub.global.security.JwtTokenProvider;
@@ -25,6 +23,8 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * WD-105 — 분석 쿼리 결과 표의 NUMERIC·BIGINT 가 브라우저 double 로 깎여 보이던 결함 회귀 테스트.
@@ -121,7 +121,7 @@ class AnalyticsExactValuesTest extends IntegrationTestBase {
   /** exactValues 한 행의 컬럼 이름 집합. */
   private static Set<String> keys(JsonNode node) {
     Set<String> names = new java.util.TreeSet<>();
-    node.fieldNames().forEachRemaining(names::add);
+    node.propertyNames().forEach(names::add);
     return names;
   }
 

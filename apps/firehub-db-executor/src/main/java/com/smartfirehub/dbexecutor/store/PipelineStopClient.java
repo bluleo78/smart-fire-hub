@@ -1,7 +1,5 @@
 package com.smartfirehub.dbexecutor.store;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dbexecutor.config.DbExecutorProperties;
 import java.io.IOException;
 import java.net.URI;
@@ -12,6 +10,9 @@ import java.time.Duration;
 import java.util.function.BooleanSupplier;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * api 의 파이프라인 실행 중지 요청 확인 클라이언트(WD-482, Python 실행기 {@code pipeline_stop_client} 와 같은 동작).
@@ -94,7 +95,7 @@ public class PipelineStopClient {
     JsonNode value;
     try {
       value = mapper.readTree(res.body()).path("stopRequested");
-    } catch (IOException e) {
+    } catch (JacksonException e) {
       throw new IllegalStateException("중지 요청 확인 응답 형식 오류");
     }
     if (!value.isBoolean()) {

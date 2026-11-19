@@ -1,7 +1,7 @@
 package com.smartfirehub.proactive.service;
 
 import com.lowagie.text.pdf.BaseFont;
-import com.smartfirehub.global.util.Jackson2WebClientCodecs;
+import com.smartfirehub.global.util.AppJsonWebClients;
 import com.smartfirehub.proactive.dto.ProactiveResult;
 import com.smartfirehub.proactive.util.ProactiveTime;
 import java.io.ByteArrayOutputStream;
@@ -67,7 +67,7 @@ public class PdfExportService {
 
     HttpClient httpClient = HttpClient.create().responseTimeout(PDF_TIMEOUT);
     this.agentWebClient =
-        Jackson2WebClientCodecs.webClientBuilder()
+        AppJsonWebClients.webClientBuilder()
             .baseUrl(agentUrl)
             .clientConnector(new ReactorClientHttpConnector(httpClient))
             .codecs(c -> c.defaultCodecs().maxInMemorySize(10 * 1024 * 1024))

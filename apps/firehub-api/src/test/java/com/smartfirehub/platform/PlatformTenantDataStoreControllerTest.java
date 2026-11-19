@@ -4,8 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -24,6 +22,8 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * 운영자 데이터셋 저장소 API(WD-73 Task 5): 백엔드 목록·연결 테스트·조회·검증·스크립트 재발급.
@@ -188,7 +188,7 @@ class PlatformTenantDataStoreControllerTest extends IntegrationTestBase {
     assertThat(json.get("tablespace").asText()).isEqualTo("USR");
     assertThat(json.get("accountUsernames")).hasSize(12);
     assertThat(json.get("accountUsernames").get(0).asText()).isEqualTo("GENIA_T" + createdTenant);
-    json.fieldNames().forEachRemaining(n -> assertThat(n.toLowerCase()).doesNotContain("password"));
+    json.propertyNames().forEach(n -> assertThat(n.toLowerCase()).doesNotContain("password"));
     // 키 이름만이 아니라 본문 전체에 저장된 암호문이 하나도 없어야 한다.
     String body = res.getContentAsString(StandardCharsets.UTF_8);
     java.util.List<String> ciphertexts = storedPasswords();

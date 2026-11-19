@@ -1,8 +1,8 @@
 package com.smartfirehub.dataset.dto;
 
-import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import java.util.List;
 import java.util.Map;
+import tools.jackson.databind.annotation.JsonSerialize;
 
 public record DataQueryResponse(
     List<DatasetColumnResponse> columns,

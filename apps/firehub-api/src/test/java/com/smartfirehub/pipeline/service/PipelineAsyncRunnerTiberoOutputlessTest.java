@@ -15,7 +15,6 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.apiconnection.service.ApiConnectionService;
 import com.smartfirehub.dataset.dto.CreateDatasetRequest;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
@@ -62,6 +61,8 @@ import org.mockito.Mock;
 import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Tibero 테넌트의 출력 없는 단계(임시 데이터셋 자동 생성) 러너 단위 테스트(WD-77 Task 7, 스펙 §4.5).
@@ -116,7 +117,7 @@ class PipelineAsyncRunnerTiberoOutputlessTest {
   @Mock LocalPythonOutputLoader localPythonOutputLoader;
 
   /** 실제 JSON 변환기 — API_CALL·AI_CLASSIFY 설정 맵을 설정 레코드로 바꾸는 데 쓴다. */
-  @Spy ObjectMapper objectMapper = new ObjectMapper();
+  @Spy ObjectMapper objectMapper = JsonMapper.builderWithJackson2Defaults().build();
 
   private final DataStoreResolver dataStoreResolver = mock(DataStoreResolver.class);
   private final SqlValidator pgValidator = org.mockito.Mockito.spy(new SqlValidator("data", true));

@@ -1,8 +1,5 @@
 package com.smartfirehub.apiconnection.service;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.apiconnection.dto.ApiConnectionResponse;
 import com.smartfirehub.apiconnection.exception.ApiConnectionNotFoundException;
 import com.smartfirehub.apiconnection.repository.ApiConnectionRepository;
@@ -18,6 +15,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.core.JacksonException;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * {@link ApiConnectionService} 의 조회 전용 협력자.
@@ -173,7 +173,7 @@ public class ApiConnectionReader {
     }
     try {
       return objectMapper.readValue(json, new TypeReference<Map<String, String>>() {});
-    } catch (JsonProcessingException e) {
+    } catch (JacksonException e) {
       // 저장 데이터 손상(서버 쪽 문제)이라 입력 오류(400)가 아니다 — 500(SerializationException)으로 나가게 하고, 파서 원문(값 조각이
       // 실릴 수 있다)은 응답 문구에 싣지 않고 원인(cause)으로만 남긴다(WD-180).
       throw new SerializationException("저장된 API 연결 인증 정보를 읽지 못했습니다", e);

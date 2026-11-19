@@ -2,8 +2,6 @@ package com.smartfirehub.global.util;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
@@ -13,6 +11,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * {@link ResultColumnNames} 가 공용 픽스처({@code fixtures/result-column-name-vectors.json})와 같은 결과를 내는지
@@ -30,7 +30,7 @@ class ResultColumnNamesTest {
     try (InputStream in =
         ResultColumnNamesTest.class.getResourceAsStream(
             "/fixtures/result-column-name-vectors.json")) {
-      return new ObjectMapper().readTree(in);
+      return JsonMapper.builderWithJackson2Defaults().build().readTree(in);
     } catch (IOException e) {
       throw new IllegalStateException("결과 컬럼 이름 시험 벡터 픽스처를 읽지 못했다", e);
     }

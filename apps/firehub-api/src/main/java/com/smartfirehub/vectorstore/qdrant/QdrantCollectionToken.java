@@ -1,6 +1,5 @@
 package com.smartfirehub.vectorstore.qdrant;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.time.Duration;
@@ -13,6 +12,8 @@ import java.util.List;
 import java.util.Map;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * 정해진 컬렉션에만 읽기·쓰기를 허용하는 Qdrant JWT 를 만든다(WD-722, 2026-11-14 사용자 결정 ③).
@@ -28,7 +29,8 @@ import javax.crypto.spec.SecretKeySpec;
  */
 final class QdrantCollectionToken {
 
-  private static final ObjectMapper JSON = new ObjectMapper();
+  // Jackson 3(WD-793): 예전 Jackson 2 new ObjectMapper() 와 같은 기본값(속성 정렬 안 함·원시 타입 null 허용 등)으로 만든다.
+  private static final ObjectMapper JSON = JsonMapper.builderWithJackson2Defaults().build();
   private static final Base64.Encoder B64 = Base64.getUrlEncoder().withoutPadding();
   private static final String HEADER = encode(Map.of("alg", "HS256", "typ", "JWT"));
 
@@ -57,7 +59,7 @@ final class QdrantCollectionToken {
   private static String encode(Object value) {
     try {
       return B64.encodeToString(JSON.writeValueAsBytes(value));
-    } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+    } catch (tools.jackson.core.JacksonException e) {
       throw new IllegalStateException("Qdrant 토큰 직렬화 실패", e);
     }
   }

@@ -401,4 +401,36 @@ class AuditLogServiceTest extends IntegrationTestBase {
         .isEqualTo(true);
     assertThat(auditLogService.findById(withoutMeta).orElseThrow().metadata()).isNull();
   }
+
+  /**
+   * 저장된 jsonb 의 값 표기를 못 박는다(WD-793 Jackson 골든) — jsonb 가 키 순서·공백을 정규화하므로, 직렬화기가 바꿀 수 있는
+   * 것(숫자·한글·이스케이프·중첩)을 값 단위로 {@code metadata::text} 에 고정한다.
+   */
+  @Test
+  void log_metadataJsonb_goldenText() {
+    Map<String, Object> metadata = new java.util.LinkedHashMap<>();
+    metadata.put("file", "한글 \"a\".csv");
+    metadata.put("rows", 3);
+    metadata.put("ratio", 1.5);
+    metadata.put("big", 9007199254740993L);
+    metadata.put("nothing", null);
+    metadata.put("list", java.util.List.of(1, "둘"));
+    Long id =
+        auditLogService.log(
+            adminId,
+            "admin",
+            "EXECUTE",
+            "pipeline",
+            "9",
+            "골든",
+            null,
+            null,
+            "SUCCESS",
+            null,
+            metadata);
+
+    assertThat(dsl.fetchValue("select metadata::text from audit_log where id = ?", id))
+        .isEqualTo(
+            "{\"big\": 9007199254740993, \"file\": \"한글 \\\"a\\\".csv\", \"list\": [1, \"둘\"], \"rows\": 3, \"ratio\": 1.5, \"nothing\": null}");
+  }
 }

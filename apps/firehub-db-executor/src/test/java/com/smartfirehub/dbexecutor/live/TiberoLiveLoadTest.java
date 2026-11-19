@@ -3,7 +3,6 @@ package com.smartfirehub.dbexecutor.live;
 import static com.smartfirehub.dbexecutor.live.TiberoLiveAccount.exec;
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dbexecutor.config.DbExecutorProperties;
 import com.smartfirehub.dbexecutor.config.ExecutionTimeouts;
 import com.smartfirehub.dbexecutor.sql.LoadRunner;
@@ -32,6 +31,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * Tibero 실서버 테스트(WD-77 Task 3) — {@code /execute/load} 를 실제 서버의 스테이징 테이블에 돌린다.
@@ -96,7 +96,7 @@ class TiberoLiveLoadTest {
             new LoadRunner(pools, timeouts, descriptors),
             null,
             timeouts,
-            new com.fasterxml.jackson.databind.ObjectMapper());
+            new tools.jackson.databind.ObjectMapper());
   }
 
   @AfterAll

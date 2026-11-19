@@ -2,7 +2,6 @@ package com.smartfirehub.dataset.rowsearch;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.global.datastore.DataStoreDb;
@@ -19,6 +18,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * 행 검색 결과의 원본 행 조회({@link SearchSourceReader#fetchRows})가 범위 밖 DATE/TIMESTAMP 를 다른 날짜로 바꾸지 않고 PG

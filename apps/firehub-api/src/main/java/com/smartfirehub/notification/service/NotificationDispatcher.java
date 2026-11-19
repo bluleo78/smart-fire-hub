@@ -1,7 +1,5 @@
 package com.smartfirehub.notification.service;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.notification.ChannelType;
 import com.smartfirehub.notification.NotificationRequest;
 import com.smartfirehub.notification.Payload;
@@ -15,6 +13,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * 도메인이 알림 발송을 트리거할 때 호출하는 단일 진입점.
@@ -97,7 +97,7 @@ public class NotificationDispatcher {
           "PENDING",
           0,
           Instant.now());
-    } catch (JsonProcessingException e) {
+    } catch (JacksonException e) {
       throw new IllegalStateException("payload serialize failed", e);
     }
   }
@@ -123,7 +123,7 @@ public class NotificationDispatcher {
           "PENDING",
           0,
           Instant.now());
-    } catch (JsonProcessingException e) {
+    } catch (JacksonException e) {
       throw new IllegalStateException("advisory serialize failed", e);
     }
   }

@@ -7,7 +7,6 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.analytics.repository.AnalyticsQueryRunRepository;
 import com.smartfirehub.analytics.service.AnalyticsQueryRunCleanupService;
 import com.smartfirehub.global.datastore.DataStoreDb;
@@ -30,6 +29,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * 스펙 §4.4 — 쿼리 결과 내보내기는 실행 기록 id(V136 analytics_query_run)로 서버가 재판정·재실행한다. 클라이언트 rows 직렬화는 없다.

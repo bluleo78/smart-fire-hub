@@ -1,11 +1,10 @@
 package com.smartfirehub.audit.time;
 
-import com.fasterxml.jackson.core.JsonGenerator;
-import com.fasterxml.jackson.databind.JsonSerializer;
-import com.fasterxml.jackson.databind.SerializerProvider;
-import java.io.IOException;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import tools.jackson.core.JsonGenerator;
+import tools.jackson.databind.SerializationContext;
+import tools.jackson.databind.ValueSerializer;
 
 /**
  * 저장 벽시계(LocalDateTime)를 저장 TZ 오프셋을 붙인 ISO 문자열로 직렬화한다(WD-11).
@@ -17,11 +16,10 @@ import java.time.format.DateTimeFormatter;
  * <p>Java 타입은 LocalDateTime 으로 두고 JSON 만 바꾸는 이유: 타입을 바꾸면 감사 응답을 다른 DTO 로 복사하는 경로 (DataImportService
  * 의 가져오기 이력)까지 파급된다. 웹 parseUtcDate 는 오프셋을 존중하므로 운영 표시는 그대로다.
  */
-public class StorageZoneDateTimeSerializer extends JsonSerializer<LocalDateTime> {
+public class StorageZoneDateTimeSerializer extends ValueSerializer<LocalDateTime> {
 
   @Override
-  public void serialize(LocalDateTime value, JsonGenerator gen, SerializerProvider provider)
-      throws IOException {
+  public void serialize(LocalDateTime value, JsonGenerator gen, SerializationContext context) {
     gen.writeString(
         AuditTimes.fromStorage(value, AuditTimes.storageZone())
             .format(DateTimeFormatter.ISO_OFFSET_DATE_TIME));

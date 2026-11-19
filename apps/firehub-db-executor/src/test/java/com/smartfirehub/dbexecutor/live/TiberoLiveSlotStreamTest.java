@@ -3,9 +3,6 @@ package com.smartfirehub.dbexecutor.live;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 
-import com.fasterxml.jackson.core.JsonGenerator;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dbexecutor.sql.Deadline;
 import com.smartfirehub.dbexecutor.sql.SlotQueryRunner;
 import com.smartfirehub.dbexecutor.store.HikariPoolFactory;
@@ -21,6 +18,10 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import tools.jackson.core.StreamWriteFeature;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Tibero 실서버 슬롯 스트리밍 테스트(WD-78 Task 13, 스펙 §5.1·§5.2).
@@ -47,7 +48,7 @@ class TiberoLiveSlotStreamTest {
   private static final int ROWS = 10_050;
 
   private final ObjectMapper mapper =
-      new ObjectMapper().enable(JsonGenerator.Feature.WRITE_BIGDECIMAL_AS_PLAIN);
+      JsonMapper.builder().enable(StreamWriteFeature.WRITE_BIGDECIMAL_AS_PLAIN).build();
 
   private TiberoLiveAccount account;
   private TenantPools slotPools;

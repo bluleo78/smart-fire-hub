@@ -1,6 +1,5 @@
 package com.smartfirehub.global.security;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.dto.ErrorResponse;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -12,6 +11,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.web.AuthenticationEntryPoint;
+import tools.jackson.core.exc.JacksonIOException;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * 인증이 없거나 무효한 요청에 공통 {@link ErrorResponse} 모양의 401 을 쓰는 진입점(WD-549).
@@ -68,6 +69,13 @@ public class JsonAuthenticationEntryPoint implements AuthenticationEntryPoint {
     // charset 을 명시하지 않으면 직접 쓰는 응답은 ISO-8859-1 로 나가 한국어가 깨진다.
     response.setCharacterEncoding(StandardCharsets.UTF_8.name());
     response.setContentType(MediaType.APPLICATION_JSON_VALUE + ";charset=UTF-8");
-    objectMapper.writeValue(response.getOutputStream(), body);
+    try {
+      objectMapper.writeValue(response.getOutputStream(), body);
+    } catch (JacksonIOException e) {
+      // Jackson 3(WD-793)은 출력 스트림 I/O 오류를 비검사 JacksonIOException 으로 감싼다 — 예전처럼 IOException 으로 올린다.
+      // 원인 없는 JacksonIOException 은 없어야 하지만, 있으면 NPE 대신 그 예외를 IOException 으로 감싸 올린다.
+      IOException cause = e.getCause();
+      throw cause != null ? cause : new IOException(e.getMessage(), e);
+    }
   }
 }

@@ -1,11 +1,10 @@
 package com.smartfirehub.proactive.service;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataset.storage.DataStoreBackend;
 import com.smartfirehub.dataset.storage.DataStoreResolver;
+import com.smartfirehub.global.json.JsonConversions;
 import com.smartfirehub.global.tenant.TenantContext;
-import com.smartfirehub.global.util.Jackson2WebClientCodecs;
+import com.smartfirehub.global.util.AppJsonWebClients;
 import com.smartfirehub.proactive.dto.ProactiveResult;
 import com.smartfirehub.proactive.exception.ProactiveJobException;
 import com.smartfirehub.securitylevel.ai.AiCallContext;
@@ -26,6 +25,8 @@ import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.core.publisher.Mono;
 import reactor.netty.http.client.HttpClient;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
 
 @Component
 @Slf4j
@@ -65,7 +66,7 @@ public class ProactiveAiClient {
     // 제한은 아래 Mono.timeout 하나로 건다 — Netty responseTimeout 을 함께 두면 어느 쪽이 먼저 걸렸는지 예외로 다시 가려야 한다.
     HttpClient httpClient = HttpClient.create();
     this.webClient =
-        Jackson2WebClientCodecs.webClientBuilder()
+        AppJsonWebClients.webClientBuilder()
             .baseUrl(agentUrl)
             .clientConnector(new ReactorClientHttpConnector(httpClient))
             .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(10 * 1024 * 1024))
@@ -235,8 +236,10 @@ public class ProactiveAiClient {
     String title = (String) responseMap.getOrDefault("title", null);
 
     List<Map<String, Object>> rawSections =
-        objectMapper.convertValue(
-            responseMap.getOrDefault("sections", List.of()), new TypeReference<>() {});
+        JsonConversions.convertValue(
+            objectMapper,
+            responseMap.getOrDefault("sections", List.of()),
+            new TypeReference<>() {});
 
     List<ProactiveResult.Section> sections =
         rawSections.stream()

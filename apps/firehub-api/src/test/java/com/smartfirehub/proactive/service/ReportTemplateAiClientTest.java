@@ -12,7 +12,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import com.smartfirehub.global.exception.ExternalServiceException;
@@ -27,6 +26,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * WD-455 — {@link ReportTemplateAiClient}. Spring 컨텍스트 없이 설정·자격증명 서비스를 목으로 두고 WireMock 으로 ai-agent
@@ -61,7 +61,10 @@ class ReportTemplateAiClientTest {
     when(credentials.resolve()).thenReturn(credential);
     ReportTemplateAiClient c =
         new ReportTemplateAiClient(
-            "http://localhost:" + wireMock.port(), new ObjectMapper(), settings, credentials);
+            "http://localhost:" + wireMock.port(),
+            JsonMapper.builderWithJackson2Defaults().build(),
+            settings,
+            credentials);
     ReflectionTestUtils.setField(c, "internalToken", "t");
     return c;
   }

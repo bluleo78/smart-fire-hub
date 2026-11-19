@@ -1,7 +1,7 @@
 package com.smartfirehub.graphreview.dto;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import java.util.List;
+import tools.jackson.databind.JsonNode;
 
 /** 저신뢰 엔티티 검수 등록 요청(ai-agent → api). properties는 정규화된 속성 객체(그대로 저장·재전달). */
 public record PendingEntityRequest(

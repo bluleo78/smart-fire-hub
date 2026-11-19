@@ -3,11 +3,11 @@ package com.smartfirehub.dataset.storage.tibero;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.io.InputStream;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 /** Tibero 문장 가드(허용 문장·위험 이름·타 스키마 호출)를 공유 벡터와 개별 단위 테스트로 고정한다. */
 class TiberoSqlGuardTest {
@@ -17,7 +17,7 @@ class TiberoSqlGuardTest {
   private static JsonNode load() {
     try (InputStream in =
         TiberoSqlGuardTest.class.getResourceAsStream("/fixtures/tibero-sql-lexical-vectors.json")) {
-      return new ObjectMapper().readTree(in);
+      return JsonMapper.builderWithJackson2Defaults().build().readTree(in);
     } catch (IOException e) {
       throw new IllegalStateException("Tibero 어휘 벡터 픽스처를 읽지 못했다", e);
     }

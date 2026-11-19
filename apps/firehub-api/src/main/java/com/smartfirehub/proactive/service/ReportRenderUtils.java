@@ -1,8 +1,6 @@
 package com.smartfirehub.proactive.service;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.smartfirehub.global.util.Jackson2WebClientCodecs;
+import com.smartfirehub.global.util.AppJsonWebClients;
 import com.smartfirehub.proactive.dto.ProactiveResult;
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -22,6 +20,8 @@ import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.netty.http.client.HttpClient;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
 
 @Service
 @Slf4j
@@ -59,7 +59,7 @@ public class ReportRenderUtils {
             .build();
     HttpClient httpClient = HttpClient.create().responseTimeout(CHART_TIMEOUT);
     this.agentWebClient =
-        Jackson2WebClientCodecs.webClientBuilder()
+        AppJsonWebClients.webClientBuilder()
             .baseUrl(agentUrl)
             .clientConnector(new ReactorClientHttpConnector(httpClient))
             .codecs(c -> c.defaultCodecs().maxInMemorySize(10 * 1024 * 1024))

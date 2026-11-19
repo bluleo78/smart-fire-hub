@@ -2,9 +2,6 @@ package com.smartfirehub.pipeline.service.executor;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.apiconnection.service.AuthQueryMasker;
 import com.smartfirehub.apiconnection.service.BaseUrlUserInfo;
 import java.io.IOException;
@@ -19,6 +16,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * API_CALL 인증 규칙이 공용 사례 표({@code fixtures/api-call-auth-vectors.json})와 같은지 본다(WD-657) — 리다이렉트 인증
@@ -27,7 +28,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  */
 class ApiCallAuthVectorsTest {
 
-  private static final ObjectMapper MAPPER = new ObjectMapper();
+  private static final ObjectMapper MAPPER = JsonMapper.builderWithJackson2Defaults().build();
 
   /** 표의 한 갈래(sameAuthOrigin·bearerToken·headerName·scrub)를 읽는다. */
   private static JsonNode section(String name) throws IOException {

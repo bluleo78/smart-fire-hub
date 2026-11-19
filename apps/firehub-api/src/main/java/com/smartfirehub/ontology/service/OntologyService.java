@@ -1,13 +1,10 @@
 package com.smartfirehub.ontology.service;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.audit.service.AuditLogService;
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.exception.ExternalServiceException;
 import com.smartfirehub.global.security.DelegationHeaders;
-import com.smartfirehub.global.util.Jackson2WebClientCodecs;
+import com.smartfirehub.global.util.AppJsonWebClients;
 import com.smartfirehub.ontology.OntologyRules;
 import com.smartfirehub.ontology.dto.CreateOntologyRequest;
 import com.smartfirehub.ontology.dto.GraphAccessResponse;
@@ -34,6 +31,9 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientException;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 // 온톨로지 스키마는 api DB 단일 소유(OntologyRepository), 전체 그래프(/graph)는 ai-agent(Neo4j) 프록시.
 // B-2a 소스 플립: 과거 getOntology 프록시를 DB 읽기로 교체했다(getGraph 는 프록시 유지).
@@ -73,7 +73,7 @@ public class OntologyService {
       AiHostingResolver aiHostingResolver,
       GraphOntologySourceRepository sourceRepository) {
     this.webClient =
-        Jackson2WebClientCodecs.webClientBuilder()
+        AppJsonWebClients.webClientBuilder()
             .baseUrl(agentUrl)
             // 지식그래프(/agent/graph)는 한 온톨로지를 페이지네이션 없이 한 번에 내려주므로 응답이
             // 수 MB까지 커진다(운영 기준 노드 3천/엣지 7천 ≈ 1.5MB, 요소당 약 148B). WebClient 기본
@@ -449,8 +449,8 @@ public class OntologyService {
   private boolean isGraphReadRestrictedBody(String body) {
     try {
       JsonNode code = objectMapper.readTree(body).path("code");
-      return code.isTextual() && GraphReadGate.RESTRICTED_CODE.equals(code.asText());
-    } catch (JsonProcessingException e) {
+      return code.isString() && GraphReadGate.RESTRICTED_CODE.equals(code.asString());
+    } catch (JacksonException e) {
       return false;
     }
   }

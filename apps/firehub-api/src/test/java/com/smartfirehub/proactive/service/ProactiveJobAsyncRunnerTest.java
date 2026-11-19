@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.notification.service.NotificationDispatcher;
 import com.smartfirehub.proactive.dto.AnomalyEvent;
@@ -37,6 +36,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * ProactiveJobAsyncRunner 의 AI 자격증명 분기(2026-09 타입형 전환) 단위 테스트.
@@ -129,7 +129,7 @@ class ProactiveJobAsyncRunnerTest {
             aiClient,
             aiCredentialService,
             settingsService,
-            new ObjectMapper(),
+            JsonMapper.builderWithJackson2Defaults().build(),
             List.of(chatChannel),
             notificationDispatcher,
             ownerEligibility,

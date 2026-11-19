@@ -9,8 +9,6 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dbexecutor.config.ExecutionTimeouts;
 import com.smartfirehub.dbexecutor.sql.Deadline;
 import com.smartfirehub.dbexecutor.sql.LoadRunner;
@@ -39,6 +37,8 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * 두 실행기 공통 DB 계약 벡터({@code executor-db-contract-vectors.json}, api 테스트 리소스)를 컨트롤러에 그대로 넣어, 응답 JSON
@@ -392,7 +392,7 @@ class ExecutorContractVectorsTest {
           .containsExactlyElementsOf(
               () -> {
                 java.util.List<String> keys = new java.util.ArrayList<>();
-                last.fieldNames().forEachRemaining(keys::add);
+                last.propertyNames().forEach(keys::add);
                 return keys.iterator();
               });
       checked++;

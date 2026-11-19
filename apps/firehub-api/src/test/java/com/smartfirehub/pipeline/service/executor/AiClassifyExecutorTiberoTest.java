@@ -15,7 +15,6 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
@@ -37,6 +36,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
 import org.springframework.transaction.support.TransactionTemplate;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Tibero 테넌트의 AI 분류 REPLACE(WD-77 Task 6) — 임시 테이블이 스테이징({@code STG_<24HEX>})이므로 쓰기는 임시 테이블 전용 창구
@@ -81,7 +81,7 @@ class AiClassifyExecutorTiberoTest {
             dataTableRowService,
             dataTableService,
             datasetRepository,
-            new ObjectMapper(),
+            JsonMapper.builderWithJackson2Defaults().build(),
             cacheRepository,
             new TransactionTemplate(
                 mock(org.springframework.transaction.PlatformTransactionManager.class)),
@@ -116,7 +116,8 @@ class AiClassifyExecutorTiberoTest {
             20,
             "CONTINUE");
     @SuppressWarnings("unchecked")
-    Map<String, Object> aiConfig = new ObjectMapper().convertValue(config, Map.class);
+    Map<String, Object> aiConfig =
+        JsonMapper.builderWithJackson2Defaults().build().convertValue(config, Map.class);
     return new PipelineStepResponse(
         10L,
         "AI Step",

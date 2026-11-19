@@ -3,7 +3,6 @@ package com.smartfirehub.analytics.repository.mybatis;
 import static com.smartfirehub.global.platformdb.mybatis.PlatformText.blankToNull;
 import static com.smartfirehub.global.platformdb.mybatis.PlatformText.searchPattern;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.analytics.dto.ChartListItemResponse;
 import com.smartfirehub.analytics.dto.ChartResponse;
 import com.smartfirehub.analytics.dto.CreateChartRequest;
@@ -28,6 +27,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * ChartRepository 의 MyBatis 구현(WD-710) — {@code JooqChartRepository} 와 같은 의미.

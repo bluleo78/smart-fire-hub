@@ -3,6 +3,7 @@ package com.smartfirehub.proactive.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.smartfirehub.global.dto.LockedRowVersion;
+import com.smartfirehub.global.json.StoredJsonAssert;
 import com.smartfirehub.proactive.dto.ProactiveJobResponse;
 import com.smartfirehub.proactive.repository.ProactiveJobRepository.WorkspaceJobRow;
 import com.smartfirehub.user.repository.AccessFixtures.ProactiveJobStored;
@@ -112,6 +113,10 @@ abstract class ProactiveJobRepositoryContractTest extends TenantPairContractBase
     assertThat(found.templateId()).isEqualTo(template);
     assertThat(found.templateName()).isEqualTo("양식-" + prefix);
     assertThat(fx.proactiveJobStored(id).enabled()).isFalse();
+    // 저장된 config 원문(WD-793 골든) — jsonb 정규화 때문에 트리로 비교한다.
+    StoredJsonAssert.assertStoredJson(
+        fx.proactiveJobStored(id).configJson(),
+        "{\"metrics\":[\"m1\",\"m2\"],\"n\":3,\"label\":\"한글\"}");
   }
 
   @Test

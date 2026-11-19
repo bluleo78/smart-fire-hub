@@ -1,0 +1,1 @@
+{"success":false,"rows":null,"columns":null,"row_count":0,"execution_log":"로그","error":"오류","db_error":{"code":-10007,"sql_state":"23000","message":"TBR-10007: dup"},"cancelled":false}

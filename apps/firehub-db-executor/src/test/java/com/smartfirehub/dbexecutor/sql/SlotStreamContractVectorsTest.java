@@ -4,9 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import com.fasterxml.jackson.core.JsonGenerator;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dbexecutor.store.StoreDescriptorClient;
 import java.io.ByteArrayOutputStream;
 import java.math.BigDecimal;
@@ -21,6 +18,10 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
+import tools.jackson.core.StreamWriteFeature;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * 공용 계약 벡터의 슬롯 스트리밍 모양({@code endpoints.query.streaming}, WD-78)을 db-executor {@link
@@ -30,7 +31,7 @@ class SlotStreamContractVectorsTest {
 
   private static final JsonNode STREAMING = load();
   private static final ObjectMapper OM =
-      new ObjectMapper().enable(JsonGenerator.Feature.WRITE_BIGDECIMAL_AS_PLAIN);
+      JsonMapper.builder().enable(StreamWriteFeature.WRITE_BIGDECIMAL_AS_PLAIN).build();
 
   private static JsonNode load() {
     try {
@@ -49,7 +50,7 @@ class SlotStreamContractVectorsTest {
 
   private static List<String> keys(JsonNode node) {
     List<String> out = new ArrayList<>();
-    for (Iterator<String> it = node.fieldNames(); it.hasNext(); ) {
+    for (Iterator<String> it = node.propertyNames().iterator(); it.hasNext(); ) {
       out.add(it.next());
     }
     return out;

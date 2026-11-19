@@ -1,8 +1,5 @@
 package com.smartfirehub.dataimport.service.export;
 
-import com.fasterxml.jackson.core.JsonEncoding;
-import com.fasterxml.jackson.core.JsonGenerator;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.util.JsSafeNumbers;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -10,6 +7,11 @@ import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.List;
+import tools.jackson.core.JsonEncoding;
+import tools.jackson.core.JsonGenerator;
+import tools.jackson.core.exc.JacksonIOException;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * GeoJSON (RFC 7946) ExportWriter.
@@ -23,6 +25,12 @@ import java.util.List;
  */
 public class GeoJsonExportWriter implements ExportWriter {
 
+  /**
+   * 생성기를 만드는 데만 쓰는 공유 매퍼. 내보내기마다 매퍼를 새로 만들면(설정·캐시 초기화) 헛일이라 한 번만 만든다 — 매퍼는 만든 뒤 스레드 안전하고 생성기는
+   * 내보내기마다 따로다. Jackson 3(WD-793): 예전 Jackson 2 new ObjectMapper() 와 같은 기본값에서 출발한다.
+   */
+  private static final ObjectMapper MAPPER = JsonMapper.builderWithJackson2Defaults().build();
+
   private final JsonGenerator generator;
   private final String geometryColumnName;
   private List<String> columnNames;
@@ -30,11 +38,37 @@ public class GeoJsonExportWriter implements ExportWriter {
   public GeoJsonExportWriter(OutputStream outputStream, String geometryColumnName)
       throws IOException {
     this.geometryColumnName = geometryColumnName;
-    ObjectMapper mapper = new ObjectMapper();
-    this.generator = mapper.getFactory().createGenerator(outputStream, JsonEncoding.UTF8);
-    generator.writeStartObject();
-    generator.writeStringField("type", "FeatureCollection");
-    generator.writeArrayFieldStart("features");
+    this.generator = unwrapIo(() -> MAPPER.createGenerator(outputStream, JsonEncoding.UTF8));
+    unwrapIo(
+        () -> {
+          generator.writeStartObject();
+          generator.writeStringProperty("type", "FeatureCollection");
+          generator.writeArrayPropertyStart("features");
+          return null;
+        });
+  }
+
+  /** {@link #unwrapIo} 에 넘기는 생성기 작업. */
+  @FunctionalInterface
+  private interface GeneratorWork<T> {
+    T run();
+  }
+
+  /**
+   * 생성기 작업을 실행하고, 출력 스트림 I/O 오류는 예전처럼 {@link IOException} 으로 올린다.
+   *
+   * <p>Jackson 3(WD-793)은 스트림 I/O 오류를 비검사 {@link JacksonIOException} 으로 감싼다. 이 writer 는 {@link
+   * ExportWriter} 계약대로 IOException 을 던져 왔고, 동기 내보내기({@code StreamingResponseBody})는 클라이언트 연결 끊김 등을
+   * IOException 으로 받으므로 원래 예외로 풀어 같은 경로를 탄다.
+   */
+  private static <T> T unwrapIo(GeneratorWork<T> work) throws IOException {
+    try {
+      return work.run();
+    } catch (JacksonIOException e) {
+      // 원인 없는 JacksonIOException 은 없어야 하지만, 있으면 NPE 대신 그 예외를 IOException 으로 감싸 올린다.
+      IOException cause = e.getCause();
+      throw cause != null ? cause : new IOException(e.getMessage(), e);
+    }
   }
 
   @Override
@@ -44,24 +78,33 @@ public class GeoJsonExportWriter implements ExportWriter {
 
   @Override
   public void writeRow(Object[] values) throws IOException {
+    unwrapIo(
+        () -> {
+          writeFeature(values);
+          return null;
+        });
+  }
+
+  /** 행 하나를 GeoJSON Feature 객체로 쓴다. */
+  private void writeFeature(Object[] values) {
     generator.writeStartObject();
-    generator.writeStringField("type", "Feature");
+    generator.writeStringProperty("type", "Feature");
 
     // geometry
     int geomIdx = columnNames.indexOf(geometryColumnName);
     String geometry = geomIdx >= 0 && values[geomIdx] != null ? values[geomIdx].toString() : null;
     if (geometry != null && !geometry.isEmpty()) {
-      generator.writeFieldName("geometry");
+      generator.writeName("geometry");
       generator.writeRawValue(geometry);
     } else {
-      generator.writeNullField("geometry");
+      generator.writeNullProperty("geometry");
     }
 
     // properties
-    generator.writeObjectFieldStart("properties");
+    generator.writeObjectPropertyStart("properties");
     for (int i = 0; i < columnNames.size(); i++) {
       if (i == geomIdx) continue;
-      generator.writeFieldName(columnNames.get(i));
+      generator.writeName(columnNames.get(i));
       writePropertyValue(values[i]);
     }
     generator.writeEndObject();
@@ -80,7 +123,7 @@ public class GeoJsonExportWriter implements ExportWriter {
    *   <li>날짜·시각·문자열 → {@link ExportValues#text} 문자열
    * </ul>
    */
-  private void writePropertyValue(Object value) throws IOException {
+  private void writePropertyValue(Object value) {
     if (value == null) {
       generator.writeNull();
     } else if (value instanceof Boolean b) {
@@ -110,8 +153,12 @@ public class GeoJsonExportWriter implements ExportWriter {
 
   @Override
   public void close() throws IOException {
-    generator.writeEndArray();
-    generator.writeEndObject();
-    generator.close();
+    unwrapIo(
+        () -> {
+          generator.writeEndArray();
+          generator.writeEndObject();
+          generator.close();
+          return null;
+        });
   }
 }

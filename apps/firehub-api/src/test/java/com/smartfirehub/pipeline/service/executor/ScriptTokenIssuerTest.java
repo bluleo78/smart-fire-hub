@@ -3,14 +3,14 @@ package com.smartfirehub.pipeline.service.executor;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * 스크립트 1회용 토큰 발급(WD-78, Ruling 16). db-executor 와 공유하는 고정 벡터({@code script-token-vectors.json})를 같은
@@ -27,7 +27,8 @@ class ScriptTokenIssuerTest {
 
   private static JsonNode load() {
     try {
-      return new ObjectMapper()
+      return JsonMapper.builderWithJackson2Defaults()
+          .build()
           .readTree(Path.of("src/test/resources/fixtures/script-token-vectors.json").toFile());
     } catch (Exception e) {
       throw new IllegalStateException("스크립트 토큰 벡터를 읽지 못했다", e);

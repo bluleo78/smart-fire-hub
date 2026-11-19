@@ -2,7 +2,6 @@ package com.smartfirehub.dbexecutor.sql;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.time.LocalDate;
@@ -10,6 +9,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * Python 실행기 원격 적재(WD-77 Task 6)가 실제로 보내는 값의 수용 검사(실서버 없이). 공유 사례 {@code

@@ -12,7 +12,6 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetRepository;
@@ -27,6 +26,7 @@ import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.json.JsonMapper;
 
 // 매핑 conformance 검증 + save/get/activate 단위 테스트(리포지토리 mock).
 class MappingServiceTest {
@@ -54,7 +54,7 @@ class MappingServiceTest {
             ontologyRepository,
             columnRepository,
             datasetRepository,
-            new ObjectMapper());
+            JsonMapper.builderWithJackson2Defaults().build());
 
     // 기본 fixture: DS는 온톨로지 1에 바인딩, 온톨로지는 Incident/Building + OCCURRED_AT.
     // 속성은 dataType 축(number/date/text/미지정)별로 하나씩 두어 타입 conformance 검증을 커버한다.
@@ -121,6 +121,20 @@ class MappingServiceTest {
     assertThat(res.status()).isEqualTo("draft");
     assertThat(res.ontologyId()).isEqualTo(1L);
     verify(mappingRepository).upsert(eq(DS), eq(1L), anyString(), eq("draft"), eq(42L));
+  }
+
+  // WD-793 골든: 저장소로 넘어가는 spec JSON 원문(서비스가 직렬화한 문자열)을 글자 단위로 못 박는다. 저장소가 목이라 DB 가 정규화하지 않아 정확히
+  // 비교된다.
+  @Test
+  void save_저장소로_넘기는_spec_JSON_원문이_고정이다() {
+    service.save(DS, validSpec(), 42L);
+    org.mockito.ArgumentCaptor<String> spec = org.mockito.ArgumentCaptor.forClass(String.class);
+    verify(mappingRepository).upsert(eq(DS), eq(1L), spec.capture(), eq("draft"), eq(42L));
+    assertThat(spec.getValue())
+        .isEqualTo(
+            "{\"entities\":[{\"entityType\":\"Incident\",\"nameColumn\":\"id\",\"properties\":[{\"column\":\"loss\",\"propertyName\":\"피해액\"}]},"
+                + "{\"entityType\":\"Building\",\"nameColumn\":\"bld\",\"properties\":[]}],"
+                + "\"relations\":[{\"subjectRef\":0,\"relation\":\"OCCURRED_AT\",\"objectRef\":1}]}");
   }
 
   // WD-129: 스키마를 읽기 전에 온톨로지 행을 공유 잠금해야 진행 중인 요소 이름 변경·삭제가 끝난 뒤의 스키마로 검증한다.

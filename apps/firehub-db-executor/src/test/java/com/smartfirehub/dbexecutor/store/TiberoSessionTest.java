@@ -2,9 +2,9 @@ package com.smartfirehub.dbexecutor.store;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.ObjectMapper;
 
 /** 세션 초기화 SQL 이 api 와 공유하는 고정값 파일과 같은지 대조한다(모듈 디렉터리 기준 상대 경로). */
 class TiberoSessionTest {

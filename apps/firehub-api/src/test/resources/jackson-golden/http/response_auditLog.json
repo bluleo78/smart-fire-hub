@@ -1,0 +1,1 @@
+{"id":1,"userId":7,"username":"admin","actionType":"CREATE","resource":"dataset","resourceId":"5","description":"데이터셋 생성 \"따옴표\"와 <태그> & 한글","actionTime":"2026-02-15T10:00:00+09:00","ipAddress":"127.0.0.1","userAgent":null,"result":"SUCCESS","errorMessage":null,"metadata":{"a":1,"b":[true,null]}}

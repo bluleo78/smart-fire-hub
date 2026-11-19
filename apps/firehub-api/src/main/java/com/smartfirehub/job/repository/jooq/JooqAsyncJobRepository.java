@@ -4,9 +4,6 @@ import static org.jooq.impl.DSL.field;
 import static org.jooq.impl.DSL.name;
 import static org.jooq.impl.DSL.table;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.job.dto.AsyncJobStatusResponse;
 import com.smartfirehub.job.repository.AsyncJobRepository;
@@ -24,6 +21,9 @@ import org.jooq.Record;
 import org.jooq.Table;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.core.JacksonException;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
 
 /** AsyncJobRepository 의 jOOQ(PostgreSQL) 구현 — WD-485. */
 @Repository
@@ -82,7 +82,7 @@ public class JooqAsyncJobRepository implements AsyncJobRepository {
     }
     try {
       return objectMapper.readValue(jsonb.data(), new TypeReference<Map<String, Object>>() {});
-    } catch (JsonProcessingException e) {
+    } catch (JacksonException e) {
       log.warn("Failed to parse async_job metadata JSON: {}", e.getMessage());
       return Collections.emptyMap();
     }
@@ -94,7 +94,7 @@ public class JooqAsyncJobRepository implements AsyncJobRepository {
     }
     try {
       return JSONB.valueOf(objectMapper.writeValueAsString(metadata));
-    } catch (JsonProcessingException e) {
+    } catch (JacksonException e) {
       log.warn("Failed to serialize async_job metadata: {}", e.getMessage());
       return JSONB.valueOf("{}");
     }

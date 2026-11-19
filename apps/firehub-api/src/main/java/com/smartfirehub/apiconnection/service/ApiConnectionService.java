@@ -1,7 +1,5 @@
 package com.smartfirehub.apiconnection.service;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.apiconnection.dto.ApiConnectionReferencesResponse;
 import com.smartfirehub.apiconnection.dto.ApiConnectionResponse;
 import com.smartfirehub.apiconnection.dto.ApiConnectionSelectableResponse;
@@ -16,7 +14,7 @@ import com.smartfirehub.apiconnection.repository.ApiConnectionRepository.ApiConn
 import com.smartfirehub.apiconnection.repository.ApiConnectionRepository.HealthCheckTarget;
 import com.smartfirehub.audit.service.AuditLogService;
 import com.smartfirehub.global.exception.SerializationException;
-import com.smartfirehub.global.util.Jackson2WebClientCodecs;
+import com.smartfirehub.global.util.AppJsonWebClients;
 import com.smartfirehub.job.service.AsyncJobService;
 import com.smartfirehub.pipeline.service.executor.ApiCallAuth;
 import com.smartfirehub.pipeline.service.executor.ApiCallErrorMessages;
@@ -47,6 +45,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.util.DefaultUriBuilderFactory;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * API 연결(ApiConnection) 비즈니스 로직 서비스. Phase 9: baseUrl 정규화/SSRF 검증, 헬스체크(testConnection), slim
@@ -638,14 +638,14 @@ public class ApiConnectionService {
   }
 
   /**
-   * 헬스체크 WebClient — 프로젝트 관행에 따라 빌더를 직접 생성한다(별도 Bean 없음). 자동 리다이렉트를 끄고 따라가기는 미리보기·실행과 같은 {@link
-   * RedirectFollower} 가 홉마다 검사하며 한다(WD-693). 커넥터는 접속 시점 주소 검사가 걸린 {@link SsrfSafeHttpClientFactory}
-   * 의 HttpClient 라(WD-613) 첫 요청과 모든 리다이렉트 홉이 DNS 재바인딩에 막힌다. 주입받은 팩토리가 필요해 필드 초기화 대신 호출마다 만든다 —
-   * HttpClient 는 전역 연결 풀·이벤트 루프를 공유하므로 연결을 새로 열지 않는다.
+   * 헬스체크 WebClient — 빌더는 공유 코덱 팩토리 {@link AppJsonWebClients} 로 직접 만든다(별도 Bean 없음, 코덱은 앱 매퍼 설정). 자동
+   * 리다이렉트를 끄고 따라가기는 미리보기·실행과 같은 {@link RedirectFollower} 가 홉마다 검사하며 한다(WD-693). 커넥터는 접속 시점 주소 검사가
+   * 걸린 {@link SsrfSafeHttpClientFactory} 의 HttpClient 라(WD-613) 첫 요청과 모든 리다이렉트 홉이 DNS 재바인딩에 막힌다.
+   * 주입받은 팩토리가 필요해 필드 초기화 대신 호출마다 만든다 — HttpClient 는 전역 연결 풀·이벤트 루프를 공유하므로 연결을 새로 열지 않는다.
    */
   private WebClient healthCheckClient() {
     return RedirectFollower.withoutAutoRedirect(
-            Jackson2WebClientCodecs.webClientBuilder(), ssrfSafeHttpClientFactory)
+            AppJsonWebClients.webClientBuilder(), ssrfSafeHttpClientFactory)
         .build();
   }
 
@@ -1228,7 +1228,7 @@ public class ApiConnectionService {
     try {
       String json = objectMapper.writeValueAsString(authConfig);
       return encryptionService.encrypt(json);
-    } catch (JsonProcessingException e) {
+    } catch (JacksonException e) {
       // 문자열 Map 직렬화 실패는 서버 쪽 문제라 입력 오류(400)가 아니다 — 500 으로 보내고 원문은 원인(cause)으로만 남긴다(WD-180).
       throw new SerializationException("API 연결 인증 정보를 저장하지 못했습니다", e);
     }

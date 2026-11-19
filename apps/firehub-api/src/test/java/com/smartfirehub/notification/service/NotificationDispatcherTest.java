@@ -7,7 +7,6 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.notification.ChannelType;
 import com.smartfirehub.notification.NotificationRequest;
 import com.smartfirehub.notification.Payload;
@@ -22,6 +21,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.junit.jupiter.MockitoExtension;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 /** NotificationDispatcher 라우팅/멱등성 키/forcedChat 분기 단위 검증. */
 @ExtendWith(MockitoExtension.class)
@@ -32,7 +33,7 @@ class NotificationDispatcherTest {
       org.mockito.Mockito.mock(NotificationOutboxRepository.class);
   private final IdempotencyKeyGenerator keyGen = new IdempotencyKeyGenerator();
   private final OutboxNotifier notifier = org.mockito.Mockito.mock(OutboxNotifier.class);
-  private final ObjectMapper objectMapper = new ObjectMapper();
+  private final ObjectMapper objectMapper = JsonMapper.builderWithJackson2Defaults().build();
 
   private NotificationDispatcher enabled() {
     return new NotificationDispatcher(

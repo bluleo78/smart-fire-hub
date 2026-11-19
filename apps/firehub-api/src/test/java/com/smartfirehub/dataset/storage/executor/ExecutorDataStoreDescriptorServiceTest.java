@@ -350,7 +350,8 @@ class ExecutorDataStoreDescriptorServiceTest {
     ExecutorDataStoreDescriptor d = service.describe(7, true, false);
 
     assertThat(d.scriptTokenEpoch()).isEqualTo(5L);
-    var json = new com.fasterxml.jackson.databind.ObjectMapper().valueToTree(d);
+    var json =
+        tools.jackson.databind.json.JsonMapper.builderWithJackson2Defaults().build().valueToTree(d);
     assertThat(json.get("scriptTokenEpoch").asLong()).isEqualTo(5L);
   }
 
@@ -360,7 +361,7 @@ class ExecutorDataStoreDescriptorServiceTest {
     when(repository.find(7))
         .thenReturn(Optional.of(row(DataStoreBackend.TIBERO, TenantDataStoreStatus.READY)));
     when(repository.find(3)).thenReturn(Optional.empty());
-    var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+    var mapper = tools.jackson.databind.json.JsonMapper.builderWithJackson2Defaults().build();
 
     ExecutorDataStoreDescriptor backendOnly = service.describeBackendOnly(7);
     ExecutorDataStoreDescriptor pg = service.describe(3, true, false);

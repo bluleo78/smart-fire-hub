@@ -8,8 +8,6 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -30,6 +28,8 @@ import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * Task 3 B1·B2·C1·C2·D1·F1: 다른 엔티티가 참조하는 데이터셋의 <b>이름</b>은 조회자가 볼 수 없으면 null(id 는 유지)이고, 참조를 새로 지정하는
@@ -179,8 +179,8 @@ class DatasetReferenceNameTest extends IntegrationTestBase {
     assertThat(a.getStatus()).isEqualTo(b.getStatus());
     JsonNode ja = json(a);
     JsonNode jb = json(b);
-    ((com.fasterxml.jackson.databind.node.ObjectNode) ja).remove("timestamp");
-    ((com.fasterxml.jackson.databind.node.ObjectNode) jb).remove("timestamp");
+    ((tools.jackson.databind.node.ObjectNode) ja).remove("timestamp");
+    ((tools.jackson.databind.node.ObjectNode) jb).remove("timestamp");
     assertThat(ja.toString().replace(String.valueOf(MISSING_ID), "<id>"))
         .isEqualTo(jb.toString().replace(String.valueOf(hiddenInB), "<id>"));
   }

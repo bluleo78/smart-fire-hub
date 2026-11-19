@@ -7,7 +7,7 @@ import com.smartfirehub.apiconnection.service.UrlUtils;
 import com.smartfirehub.dataset.service.DataTableRowService;
 import com.smartfirehub.dataset.service.DataTableService;
 import com.smartfirehub.dataset.service.DatasetDataWriteLock;
-import com.smartfirehub.global.util.Jackson2WebClientCodecs;
+import com.smartfirehub.global.util.AppJsonWebClients;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -452,8 +452,9 @@ public class ApiCallExecutor {
    * 쓴다(WD-693) — 응답 크기 제한이 다른 파이프라인이 동시에 돌아도 서로의 코덱 설정을 덮어쓰지 않는다.
    */
   private WebClient noRedirectClient(int maxResponseSizeMb) {
+    // 교환 전략을 새로 끼우면 주입 빌더의 코덱이 기본값으로 바뀌므로, 앱 매퍼와 같은 공유 코덱 팩토리로 만든다(WD-793).
     ExchangeStrategies exchangeStrategies =
-        Jackson2WebClientCodecs.exchangeStrategies(maxResponseSizeMb * 1024 * 1024);
+        AppJsonWebClients.exchangeStrategies(maxResponseSizeMb * 1024 * 1024);
     return RedirectFollower.withoutAutoRedirect(webClientBuilder, ssrfSafeHttpClientFactory)
         .exchangeStrategies(exchangeStrategies)
         .build();

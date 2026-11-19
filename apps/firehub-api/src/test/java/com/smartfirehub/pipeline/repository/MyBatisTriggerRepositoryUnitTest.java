@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.platformdb.PlatformLocks;
 import com.smartfirehub.pipeline.repository.jooq.JooqTriggerRepository;
 import com.smartfirehub.pipeline.repository.jooq.JooqTriggerTenantResolver;
@@ -18,6 +17,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.core.annotation.AnnotatedElementUtils;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * MyBatis 트리거 리포지토리·해석기의 DB 없이 볼 수 있는 계약(WD-708). Tibero 계약 시험은 잠금 창구를 가짜로 쓰므로 잠금 키는 여기서 고정하고,
@@ -30,7 +30,8 @@ class MyBatisTriggerRepositoryUnitTest {
   void lockChainGraph_sameKeyAsJooq() {
     PlatformLocks locks = mock(PlatformLocks.class);
     MyBatisTriggerRepository repository =
-        new MyBatisTriggerRepository(mock(TriggerMapper.class), new ObjectMapper(), locks);
+        new MyBatisTriggerRepository(
+            mock(TriggerMapper.class), JsonMapper.builderWithJackson2Defaults().build(), locks);
 
     repository.lockChainGraph(42L);
 

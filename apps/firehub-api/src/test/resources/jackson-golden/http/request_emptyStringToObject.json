@@ -1,0 +1,1 @@
+{"status":400,"error":"Bad Request","message":"요청 본문을 해석할 수 없습니다.","errors":null,"timestamp":"<TS>","path":"/golden/echo-nested"}

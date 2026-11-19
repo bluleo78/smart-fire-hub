@@ -10,8 +10,6 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.analytics.dto.DeleteImpactResponse;
 import com.smartfirehub.analytics.exception.ChartNotFoundException;
 import com.smartfirehub.analytics.exception.SavedQueryNotFoundException;
@@ -36,6 +34,8 @@ import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * 저장 쿼리·차트 삭제 영향 범위(WD-86) 통합 테스트.
@@ -365,7 +365,7 @@ class AnalyticsDeleteImpactTest extends IntegrationTestBase {
 
   private static Set<String> fieldNames(JsonNode node) {
     Set<String> keys = new TreeSet<>();
-    node.fieldNames().forEachRemaining(keys::add);
+    node.propertyNames().forEach(keys::add);
     return keys;
   }
 

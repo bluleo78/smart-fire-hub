@@ -1,8 +1,5 @@
 package com.smartfirehub.job.repository.mybatis;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.platformdb.mybatis.PlatformMyBatisRepository;
 import com.smartfirehub.global.platformdb.mybatis.TiberoTextLimits;
 import com.smartfirehub.job.dto.AsyncJobStatusResponse;
@@ -14,6 +11,9 @@ import java.util.Map;
 import java.util.Optional;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.core.JacksonException;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * AsyncJobRepository 의 MyBatis 구현(WD-706) — {@code JooqAsyncJobRepository} 와 같은 의미. SQL 은 {@code
@@ -135,7 +135,7 @@ public class MyBatisAsyncJobRepository implements AsyncJobRepository {
     }
     try {
       return objectMapper.readValue(json, new TypeReference<Map<String, Object>>() {});
-    } catch (JsonProcessingException e) {
+    } catch (JacksonException e) {
       log.warn("Failed to parse async_job metadata JSON: {}", e.getMessage());
       return Collections.emptyMap();
     }
@@ -148,7 +148,7 @@ public class MyBatisAsyncJobRepository implements AsyncJobRepository {
     }
     try {
       return objectMapper.writeValueAsString(metadata);
-    } catch (JsonProcessingException e) {
+    } catch (JacksonException e) {
       log.warn("Failed to serialize async_job metadata: {}", e.getMessage());
       return "{}";
     }

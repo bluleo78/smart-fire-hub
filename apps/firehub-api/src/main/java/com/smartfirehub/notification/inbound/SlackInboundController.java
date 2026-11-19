@@ -1,6 +1,5 @@
 package com.smartfirehub.notification.inbound;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.smartfirehub.global.security.InternalTokens;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
@@ -9,6 +8,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import tools.jackson.databind.JsonNode;
 
 /** firehub-channel로부터 Slack inbound 이벤트를 수신하는 Internal 전용 엔드포인트. */
 @RestController

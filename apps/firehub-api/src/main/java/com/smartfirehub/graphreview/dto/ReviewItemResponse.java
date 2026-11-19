@@ -1,6 +1,6 @@
 package com.smartfirehub.graphreview.dto;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import tools.jackson.databind.JsonNode;
 
 /** graph_review_item API 응답 — payload는 타입별 상세를 담은 JSON 객체(web이 item_type으로 분기 렌더). */
 public record ReviewItemResponse(

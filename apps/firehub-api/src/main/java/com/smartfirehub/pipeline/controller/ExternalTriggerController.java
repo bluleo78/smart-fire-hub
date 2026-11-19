@@ -1,7 +1,5 @@
 package com.smartfirehub.pipeline.controller;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.dto.ErrorResponse;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.util.ClientIpExtractor;
@@ -21,6 +19,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * 외부 시스템이 부르는 트리거 엔드포인트(API 토큰·웹훅). 인증 필터를 거치지 않는 공개 경로라, 식별자로 테넌트를 먼저 해석한 뒤 나머지를 그 테넌트 컨텍스트 안에서
@@ -153,7 +153,7 @@ public class ExternalTriggerController {
     int size;
     try {
       size = objectMapper.writeValueAsBytes(params).length;
-    } catch (JsonProcessingException e) {
+    } catch (JacksonException e) {
       // 받은 JSON 을 다시 직렬화하지 못하는 경우는 사실상 없지만, 실패해도 발화는 막지 않고 본문을 남기지 않는다
       size = -1;
     }

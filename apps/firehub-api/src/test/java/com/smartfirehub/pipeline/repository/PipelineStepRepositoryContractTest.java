@@ -2,6 +2,7 @@ package com.smartfirehub.pipeline.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.smartfirehub.global.json.StoredJsonAssert;
 import com.smartfirehub.pipeline.dto.PipelineStepRequest;
 import com.smartfirehub.pipeline.dto.PipelineStepResponse;
 import com.smartfirehub.pipeline.dto.StepCursor;
@@ -118,6 +119,16 @@ public abstract class PipelineStepRepositoryContractTest extends TenantPairContr
     assertThat(s.apiConfig()).isEqualTo(api);
     assertThat(s.aiConfig()).isEqualTo(ai);
     assertThat(s.pythonConfig()).isEqualTo(py);
+    // 저장된 JSON 원문(WD-793 골든) — jsonb 정규화 때문에 트리로 비교한다. 두 벤더 계약에서 모두 돈다.
+    StoredJsonAssert.assertStoredJson(
+        fx.rawJsonText("pipeline_step", "api_config", "id", id),
+        "{\"url\":\"https://x.test\",\"retries\":3}");
+    StoredJsonAssert.assertStoredJson(
+        fx.rawJsonText("pipeline_step", "ai_config", "id", id),
+        "{\"model\":\"m\",\"nested\":{\"k\":[1,2]}}");
+    StoredJsonAssert.assertStoredJson(
+        fx.rawJsonText("pipeline_step", "python_config", "id", id),
+        "{\"outputColumns\":[\"a\",\"b\"]}");
     assertThat(s.lastRunAt()).isNull();
     assertThat(s.fullRebuildPending()).isFalse();
     assertThat(s.warnings()).isEmpty();

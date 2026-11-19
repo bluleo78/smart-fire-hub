@@ -1,12 +1,13 @@
 package com.smartfirehub.notification.channels.kakao;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.smartfirehub.global.util.Jackson2WebClientCodecs;
+import com.smartfirehub.global.json.JsonConversions;
+import com.smartfirehub.global.util.AppJsonWebClients;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.web.reactive.function.client.WebClient;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * Kakao REST API WebClient 래퍼.
@@ -23,9 +24,8 @@ public class KakaoApiClient {
 
   public KakaoApiClient(ObjectMapper objectMapper) {
     this.authClient =
-        Jackson2WebClientCodecs.webClientBuilder().baseUrl("https://kauth.kakao.com").build();
-    this.apiClient =
-        Jackson2WebClientCodecs.webClientBuilder().baseUrl("https://kapi.kakao.com").build();
+        AppJsonWebClients.webClientBuilder().baseUrl("https://kauth.kakao.com").build();
+    this.apiClient = AppJsonWebClients.webClientBuilder().baseUrl("https://kapi.kakao.com").build();
     this.objectMapper = objectMapper;
   }
 
@@ -96,7 +96,7 @@ public class KakaoApiClient {
     // text 필드는 JSON 직렬화, webUrl은 URL 이스케이프만 적용
     String templateJson =
         "{\"object_type\":\"text\",\"text\":"
-            + objectMapper.valueToTree(text)
+            + JsonConversions.valueToTree(objectMapper, text)
             + ",\"link\":{\"web_url\":\""
             + escapeQuotes(webUrl)
             + "\"}}";

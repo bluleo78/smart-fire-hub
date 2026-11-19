@@ -1,6 +1,5 @@
 package com.smartfirehub.pipeline.repository;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.platformdb.PlatformLocks;
 import com.smartfirehub.pipeline.repository.mybatis.MyBatisTriggerRepository;
 import com.smartfirehub.pipeline.repository.mybatis.TriggerMapper;
@@ -11,6 +10,7 @@ import com.smartfirehub.user.repository.TiberoAccessFixtures;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.TestInstance;
 import org.mockito.Mockito;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * TriggerRepositoryContractTest 를 MyBatis 구현 + Tibero 실서버로 실행한다(WD-708). 리포지토리는 런타임 계정 + DBMS_RLS
@@ -36,7 +36,7 @@ class TiberoMyBatisTriggerRepositoryContractTest extends TriggerRepositoryContra
         TriggerRepository.class,
         new MyBatisTriggerRepository(
             poc.mapper(TriggerMapper.class),
-            new ObjectMapper(),
+            JsonMapper.builderWithJackson2Defaults().build(),
             Mockito.mock(PlatformLocks.class)));
   }
 

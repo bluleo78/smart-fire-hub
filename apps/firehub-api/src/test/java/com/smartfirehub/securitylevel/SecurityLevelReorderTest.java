@@ -7,12 +7,12 @@ import static com.smartfirehub.jooq.Tables.SECURITY_LEVEL;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.securitylevel.dto.ReorderPreviewResponse;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 /** 스펙 §4.7 "순서 변경: 영향(역할별 열람 데이터셋 증감 수) 확인 후 적용, 감사". */
 class SecurityLevelReorderTest extends SecurityLevelServiceTest {
@@ -145,7 +145,7 @@ class SecurityLevelReorderTest extends SecurityLevelServiceTest {
                     .where(AUDIT_LOG.ACTION_TYPE.eq("SECURITY_LEVEL_REORDER"))
                     .fetchSingle(AUDIT_LOG.METADATA)
                     .data());
-    JsonNode impact = new ObjectMapper().readTree(meta).get("impact");
+    JsonNode impact = JsonMapper.builderWithJackson2Defaults().build().readTree(meta).get("impact");
     assertThat(preview.roles()).isNotEmpty();
     assertThat(impact).hasSize(preview.roles().size());
     for (int i = 0; i < impact.size(); i++) {

@@ -1,7 +1,5 @@
 package com.smartfirehub.dbexecutor.sql;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dbexecutor.store.StoreDescriptor;
 import com.smartfirehub.dbexecutor.store.StoreDescriptorClient;
 import com.smartfirehub.dbexecutor.store.TenantPools;
@@ -18,6 +16,8 @@ import java.util.Map;
 import java.util.regex.Pattern;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * 슬롯 조회 스트리밍(WD-78, 스펙 §5.2) — Python 스크립트가 db-executor {@code /execute/query} 에 {@code readSlot} 과
@@ -255,7 +255,7 @@ public class SlotQueryRunner {
     byte[] json;
     try {
       json = mapper.writeValueAsBytes(line);
-    } catch (JsonProcessingException e) {
+    } catch (JacksonException e) {
       throw new IllegalStateException("결과 행을 JSON 으로 바꾸지 못했습니다", e);
     }
     out.write(json);

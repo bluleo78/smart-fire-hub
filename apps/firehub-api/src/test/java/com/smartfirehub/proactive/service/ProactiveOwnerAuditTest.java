@@ -3,8 +3,6 @@ package com.smartfirehub.proactive.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.exception.EditConflictException;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.proactive.dto.CreateProactiveJobRequest;
@@ -26,6 +24,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * 작성자 본인의 스마트 작업·리포트 양식 변경 감사(WD-464) 통합 테스트.

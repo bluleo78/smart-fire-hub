@@ -7,8 +7,6 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.smartfirehub.apiconnection.service.EncryptionService;
 import com.smartfirehub.notification.ChannelType;
 import com.smartfirehub.notification.channels.kakao.KakaoApiClient;
@@ -25,6 +23,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.test.util.ReflectionTestUtils;
+import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 /**
  * KakaoOAuthService 단위 테스트.
@@ -77,7 +77,7 @@ class KakaoOAuthServiceTest {
     String rawRefreshToken = "raw-refresh-token-BBB";
     long expiresIn = 21599L;
 
-    ObjectNode tokenResp = new ObjectMapper().createObjectNode();
+    ObjectNode tokenResp = JsonMapper.builderWithJackson2Defaults().build().createObjectNode();
     tokenResp.put("access_token", rawAccessToken);
     tokenResp.put("refresh_token", rawRefreshToken);
     tokenResp.put("expires_in", expiresIn);
@@ -113,7 +113,7 @@ class KakaoOAuthServiceTest {
   void completeAuthorization_expiresInReflectedToFutureTokenExpiresAt() {
     // given
     long expiresIn = 21599L; // 약 6시간
-    ObjectNode tokenResp = new ObjectMapper().createObjectNode();
+    ObjectNode tokenResp = JsonMapper.builderWithJackson2Defaults().build().createObjectNode();
     tokenResp.put("access_token", "AAA");
     tokenResp.put("refresh_token", "BBB");
     tokenResp.put("expires_in", expiresIn);

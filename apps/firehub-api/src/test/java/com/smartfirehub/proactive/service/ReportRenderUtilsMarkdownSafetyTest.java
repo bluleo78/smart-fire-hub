@@ -2,8 +2,8 @@ package com.smartfirehub.proactive.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * 리포트 마크다운 변환의 안전성 테스트(WD-695).
@@ -14,7 +14,8 @@ import org.junit.jupiter.api.Test;
 class ReportRenderUtilsMarkdownSafetyTest {
 
   private final ReportRenderUtils utils =
-      new ReportRenderUtils("http://127.0.0.1:1", "t", new ObjectMapper());
+      new ReportRenderUtils(
+          "http://127.0.0.1:1", "t", JsonMapper.builderWithJackson2Defaults().build());
 
   /** 1x1 투명 PNG */
   private static final String PNG_DATA_URI =

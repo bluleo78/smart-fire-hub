@@ -1,0 +1,1 @@
+{"type":"FeatureCollection","features":[{"type":"Feature","geometry":{"type":"Point","coordinates":[127.0,37.5]},"properties":{"이름":"서울 \"강남\"","n":3,"d":1.5,"big":"9007199254740993","flag":true,"nul":null,"when":"2026-01-15 10:00:00"}},{"type":"Feature","geometry":null,"properties":{"이름":"b","n":1.5,"d":2.25,"big":5,"flag":false,"nul":null,"when":null}}]}

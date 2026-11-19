@@ -8,7 +8,6 @@ import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.notification.DeliveryContext;
 import com.smartfirehub.notification.DeliveryResult;
@@ -34,6 +33,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * WD-173: 사용자 단위 알림(리포트 도착·파이프라인 실행 실패·임포트·문서·이상 탐지)은 <b>그 알림이 생긴 워크스페이스 화면으로 연 연결로만</b> 간다.
@@ -85,7 +86,8 @@ class UserNotificationTenantScopeTest {
   @BeforeEach
   void openTwoWorkspaceConnections() {
     TenantContext.clear();
-    registry = new RecordingRegistry(new ObjectMapper().findAndRegisterModules());
+    registry =
+        new RecordingRegistry(JsonMapper.builderWithJackson2Defaults().findAndAddModules().build());
     registry.register(USER, T1);
     registry.register(USER, T2);
     t1Conn = registry.created.get(0);

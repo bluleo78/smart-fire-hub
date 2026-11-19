@@ -1,0 +1,7 @@
+[{a=1, b=1.5, c=한글, d=null, e=[1, 2], f={g=true}}]
+[{nan=NaN, inf=Infinity, neg=-Infinity}]
+null
+null
+null
+StdoutNotJsonException: 스크립트 출력이 JSON 이 아니어서 결과를 적재하지 않았습니다. 출력 데이터셋을 쓰는 스크립트는 결과 JSON 한 번만 print 해야 합니다(디버그 출력은 sys.stderr 로). 출력 앞부분: "[{"a":1}] trailing"
+StdoutNotJsonException: 스크립트 출력이 JSON 이 아니어서 결과를 적재하지 않았습니다. 출력 데이터셋을 쓰는 스크립트는 결과 JSON 한 번만 print 해야 합니다(디버그 출력은 sys.stderr 로). 출력 앞부분: "not json at all"

@@ -2,11 +2,12 @@ package com.smartfirehub.global.exception;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.dto.ErrorResponse;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.mock.web.MockHttpServletRequest;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * 기계가 읽는 오류 코드(ErrorResponse.code) 계약 고정.
@@ -16,7 +17,7 @@ import org.springframework.mock.web.MockHttpServletRequest;
  */
 class CodedApiExceptionTest {
 
-  private final ObjectMapper objectMapper = new ObjectMapper();
+  private final ObjectMapper objectMapper = JsonMapper.builderWithJackson2Defaults().build();
 
   @Test
   void codedException_isRenderedWithStatusAndCode() {

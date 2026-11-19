@@ -291,6 +291,12 @@ public interface AccessFixtures {
   /** 그 id 의 비동기 작업이 지정 테넌트로 저장돼 있으면 1, 아니면 0 — 정책을 우회한 실제 행 기준. */
   int countAsyncJob(long tenantId, String id);
 
+  /**
+   * 한 행의 JSON 열 원문을 정책을 우회해 문자열로 읽는다(WD-793 Jackson 골든) — PG 는 {@code ::text}, Tibero 는 열 값 그대로.
+   * 리포지토리가 직렬화해 쓴 값이 실제로 저장된 모양인지 확인하는 용도다. 표·열 이름은 시험 코드의 상수만 넣는다(사용자 입력 아님).
+   */
+  String rawJsonText(String table, String column, String idColumn, Object id);
+
   /** 그 id 의 비동기 작업 행 수 — 테넌트와 무관하게 정책을 우회해 센다(거절된 쓰기가 아무 행도 남기지 않았는지 확인용). */
   int countAsyncJobAnyTenant(String id);
 

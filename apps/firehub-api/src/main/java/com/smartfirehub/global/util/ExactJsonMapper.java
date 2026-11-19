@@ -1,8 +1,9 @@
 package com.smartfirehub.global.util;
 
-import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.cfg.JsonNodeFeature;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * 숫자를 double 로 바꾸지 않고 원문 자릿수 그대로 읽는 공용 JSON 매퍼(WD-657).
@@ -15,9 +16,17 @@ public final class ExactJsonMapper {
 
   private ExactJsonMapper() {}
 
-  /** 소수는 BigDecimal(자릿수 보존)로 읽는 매퍼. */
+  /**
+   * 소수는 BigDecimal(자릿수 보존)로 읽는 매퍼.
+   *
+   * <p>Jackson 3(WD-793): 예전 Jackson 2 {@code new ObjectMapper()} 와 같은 기본값에서 출발한다( {@code
+   * builderWithJackson2Defaults} — 속성 알파벳 정렬 끔 등). Jackson 2 의 {@code
+   * JsonNodeFactory.withExactBigDecimals(true)}(트리의 BigDecimal 뒤 0 을 지우지 않음)는 Jackson 3 에서 {@code
+   * STRIP_TRAILING_BIGDECIMAL_ZEROES} 끔으로 옮겨졌다 — Jackson 2 기본값 묶음은 이 기능을 켜므로 다시 끈다.
+   */
   public static final ObjectMapper INSTANCE =
-      new ObjectMapper()
+      JsonMapper.builderWithJackson2Defaults()
           .enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS)
-          .setNodeFactory(JsonNodeFactory.withExactBigDecimals(true));
+          .disable(JsonNodeFeature.STRIP_TRAILING_BIGDECIMAL_ZEROES)
+          .build();
 }

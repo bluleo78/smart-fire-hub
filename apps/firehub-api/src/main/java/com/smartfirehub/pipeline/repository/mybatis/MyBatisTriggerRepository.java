@@ -1,9 +1,5 @@
 package com.smartfirehub.pipeline.repository.mybatis;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.smartfirehub.global.dto.LockedRowVersion;
 import com.smartfirehub.global.exception.SerializationException;
 import com.smartfirehub.global.platformdb.PlatformLocks;
@@ -29,6 +25,10 @@ import java.util.Set;
 import java.util.function.Consumer;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ArrayNode;
+import tools.jackson.databind.node.ObjectNode;
 
 /**
  * TriggerRepository 의 MyBatis 구현(WD-708) — {@code JooqTriggerRepository} 와 같은 의미.

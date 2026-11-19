@@ -7,8 +7,6 @@ import static org.jooq.impl.DSL.table;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.apiconnection.service.EncryptionService;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.global.tenant.TenantContext;
@@ -33,6 +31,8 @@ import org.springframework.http.MediaType;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * WD-176 — 파이프라인 스텝이 <b>다른 워크스페이스의 API 연결</b>을 참조로 저장할 수 없다.
@@ -402,7 +402,7 @@ class PipelineApiConnectionTenantTest extends IntegrationTestBase {
     var node =
         raw.isBlank()
             ? objectMapper.createObjectNode()
-            : (com.fasterxml.jackson.databind.node.ObjectNode) objectMapper.readTree(raw);
+            : (tools.jackson.databind.node.ObjectNode) objectMapper.readTree(raw);
     node.put("status", result.getResponse().getStatus());
     if (!node.has("message")) {
       node.put("message", "");

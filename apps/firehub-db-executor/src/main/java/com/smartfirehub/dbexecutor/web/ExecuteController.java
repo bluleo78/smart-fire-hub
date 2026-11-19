@@ -1,6 +1,5 @@
 package com.smartfirehub.dbexecutor.web;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dbexecutor.config.ExecutionTimeouts;
 import com.smartfirehub.dbexecutor.security.InternalTokenFilter;
 import com.smartfirehub.dbexecutor.security.ScriptToken;
@@ -29,6 +28,7 @@ import java.util.Map;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * api 가 부르는 실행 엔드포인트(스펙 §4.2). 인증은 {@code InternalTokenFilter} 가 먼저 한다(실패만 401).

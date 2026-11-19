@@ -2,7 +2,6 @@ package com.smartfirehub.proactive.repository.mybatis;
 
 import static com.smartfirehub.global.platformdb.mybatis.PlatformText.blankToNull;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.dto.LockedRowVersion;
 import com.smartfirehub.global.platformdb.mybatis.PlatformJson;
 import com.smartfirehub.global.platformdb.mybatis.PlatformMyBatisRepository;
@@ -19,6 +18,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * ReportTemplateRepository 의 MyBatis 구현(WD-709) — {@code JooqReportTemplateRepository} 와 같은 의미.

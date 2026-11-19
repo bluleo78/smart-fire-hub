@@ -2,8 +2,6 @@ package com.smartfirehub.global.util;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.analytics.dto.AnalyticsQueryResponse;
 import com.smartfirehub.analytics.service.AnalyticsQueryExecutionService;
 import com.smartfirehub.dataset.dto.SqlQueryResponse;
@@ -14,6 +12,8 @@ import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * 애드혹 SQL 결과 직렬화 회귀 테스트(#756).
@@ -29,7 +29,7 @@ class AdhocResultSerializationTest extends IntegrationTestBase {
 
   @Autowired private AnalyticsQueryExecutionService analyticsService;
   @Autowired private DataTableQueryService dataTableQueryService;
-  @Autowired private ObjectMapper objectMapper;
+  @Autowired private JsonMapper objectMapper;
   @Autowired private DSLContext dsl;
 
   /** PG 가 이 식을 텍스트로 내보낸 값 — 기대값 오라클. */

@@ -2,12 +2,12 @@ package com.smartfirehub.dataset.storage.tibero;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataset.storage.DataStoreAccountRole;
 import java.io.IOException;
 import java.io.InputStream;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * executor(Python)와 공유하는 Tibero 벡터 픽스처(WD-75)가 api 구현과 일치하는지 고정한다.
@@ -23,7 +23,7 @@ class TiberoExecutorVectorsTest {
     try (InputStream in =
         TiberoExecutorVectorsTest.class.getResourceAsStream(
             "/fixtures/tibero-executor-vectors.json")) {
-      return new ObjectMapper().readTree(in);
+      return JsonMapper.builderWithJackson2Defaults().build().readTree(in);
     } catch (IOException e) {
       throw new IllegalStateException("Tibero executor 벡터 픽스처를 읽지 못했다", e);
     }

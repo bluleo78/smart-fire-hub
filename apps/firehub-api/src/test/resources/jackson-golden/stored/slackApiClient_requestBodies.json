@@ -1,0 +1,3 @@
+/reactions.add {"channel":"C1","name":"eyes","timestamp":"1.0001"}
+/chat.postEphemeral {"channel":"C1","text":"임시 \"메시지\"","user":"U1"}
+/chat.postMessage {"thread_ts":"1.0001","blocks":[{"type":"section","text":{"type":"mrkdwn","text":"가"}}],"channel":"C1","text":"대체 텍스트"}

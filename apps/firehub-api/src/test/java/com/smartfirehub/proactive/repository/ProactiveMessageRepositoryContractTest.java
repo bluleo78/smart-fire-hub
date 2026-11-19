@@ -3,6 +3,7 @@ package com.smartfirehub.proactive.repository;
 import static com.smartfirehub.jooq.Tables.USER;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.smartfirehub.global.json.StoredJsonAssert;
 import com.smartfirehub.proactive.dto.ProactiveMessageResponse;
 import com.smartfirehub.support.IntegrationTestBase;
 import java.time.LocalDateTime;
@@ -55,6 +56,12 @@ abstract class ProactiveMessageRepositoryContractTest extends IntegrationTestBas
         .returning(USER.ID)
         .fetchOne()
         .getId();
+  }
+
+  /** 메시지 content JSON 열의 저장 원문(WD-793 골든) — 기본은 PG(::text), Tibero 하위 클래스가 소유자 계정으로 다시 구현한다. */
+  protected String rawContentJson(Long id) {
+    return dsl.fetchValue("select content::text from proactive_message where id = ?", id)
+        .toString();
   }
 
   // -----------------------------------------------------------------------
@@ -270,6 +277,9 @@ abstract class ProactiveMessageRepositoryContractTest extends IntegrationTestBas
 
     assertThat(msg.content()).containsKey("summary");
     assertThat(msg.content().get("summary")).isEqualTo("test summary");
+    // 저장된 content 원문(WD-793 골든) — jsonb 정규화 때문에 트리로 비교한다.
+    StoredJsonAssert.assertStoredJson(
+        rawContentJson(id), "{\"summary\":\"test summary\",\"count\":42}");
   }
 
   // -----------------------------------------------------------------------

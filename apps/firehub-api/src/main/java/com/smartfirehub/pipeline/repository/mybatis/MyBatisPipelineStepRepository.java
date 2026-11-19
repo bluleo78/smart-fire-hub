@@ -1,6 +1,5 @@
 package com.smartfirehub.pipeline.repository.mybatis;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.platformdb.mybatis.InChunks;
 import com.smartfirehub.global.platformdb.mybatis.PlatformJson;
 import com.smartfirehub.global.platformdb.mybatis.PlatformMyBatisRepository;
@@ -26,6 +25,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * PipelineStepRepository 의 MyBatis 구현(WD-708) — {@code JooqPipelineStepRepository} 와 같은 의미.

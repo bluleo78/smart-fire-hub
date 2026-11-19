@@ -1,9 +1,10 @@
 package com.smartfirehub.embedding.config;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 /**
  * {@code tenant_settings.embedding.config} JSON 문서 형태의 단일 출처.
@@ -15,7 +16,8 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
  */
 final class EmbeddingConfigDocument {
 
-  private static final ObjectMapper MAPPER = new ObjectMapper();
+  // Jackson 3(WD-793): 예전 Jackson 2 new ObjectMapper() 와 같은 기본값(속성 정렬 안 함·원시 타입 null 허용 등)으로 만든다.
+  private static final ObjectMapper MAPPER = JsonMapper.builderWithJackson2Defaults().build();
   static final int VERSION = 1;
 
   private EmbeddingConfigDocument() {}
@@ -52,19 +54,19 @@ final class EmbeddingConfigDocument {
     JsonNode root;
     try {
       root = MAPPER.readTree(json);
-    } catch (JsonProcessingException e) {
+    } catch (JacksonException e) {
       throw new IllegalArgumentException("임베딩 설정 문서를 해석할 수 없습니다", e);
     }
     if (root == null || !root.isObject()) {
       throw new IllegalArgumentException("임베딩 설정 문서가 객체가 아닙니다");
     }
     return new Parsed(
-        EmbeddingProviderType.parse(root.path("provider").asText(null)),
-        root.path("model").asText(""),
-        root.path("baseUrl").asText(""),
+        EmbeddingProviderType.parse(root.path("provider").asString(null)),
+        root.path("model").asString(""),
+        root.path("baseUrl").asString(""),
         root.path("dimension").asInt(0),
-        root.path("secret").path("apiKey").asText(""),
+        root.path("secret").path("apiKey").asString(""),
         // 선언 이전에 저장된 문서에는 hosting 이 없다 — 기본 외부(보수적).
-        root.path("hosting").asText("EXTERNAL"));
+        root.path("hosting").asString("EXTERNAL"));
   }
 }

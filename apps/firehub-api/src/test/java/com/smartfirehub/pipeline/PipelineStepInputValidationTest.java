@@ -5,8 +5,6 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.support.IntegrationTestBase;
@@ -31,6 +29,8 @@ import org.springframework.http.MediaType;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * 파이프라인 생성·수정 API 의 스텝 입력 검증(WD-547) — HTTP 왕복으로 상태 코드와 한국어 문구를 확인한다.
@@ -156,6 +156,31 @@ class PipelineStepInputValidationTest extends IntegrationTestBase {
     assertThat(after.get("updatedAt").asText())
         .as("거부된 수정은 수정 시각도 바꾸지 않는다: " + label)
         .isEqualTo(before.get("updatedAt").asText());
+  }
+
+  /**
+   * AI_CLASSIFY 설정 값의 형식이 틀리면(정수 자리에 문자열) 400 이다(WD-793). Jackson 3 의 convertValue 는 변환 실패를
+   * JacksonException 으로 던지는데, 예전(Jackson 2)처럼 IllegalArgumentException 으로 감싸지 않으면 500 이 된다 — {@code
+   * JsonConversions} 가 그 계약을 지키는지 HTTP 끝에서 못 박는다.
+   */
+  @Test
+  void create_aiClassifyConfigWithWrongValueType_rejects400() throws Exception {
+    Map<String, Object> step = step("ai1", "AI_CLASSIFY", null, List.of());
+    Map<String, Object> aiConfig = new LinkedHashMap<>();
+    aiConfig.put("prompt", "분류하라");
+    aiConfig.put("batchSize", "abc");
+    aiConfig.put("outputColumns", List.of(Map.of("name", "label", "type", "TEXT")));
+    step.put("aiConfig", aiConfig);
+
+    MvcResult result = postPipeline("wd793-" + System.nanoTime(), List.of(step));
+
+    assertThat(result.getResponse().getStatus()).isEqualTo(400);
+    assertThat(
+            inTenantFixture(
+                DEFAULT_TEST_TENANT_ID,
+                () -> dsl.fetchCount(dsl.selectFrom("pipeline").where("created_by = ?", editor))))
+        .as("거부된 생성은 파이프라인을 남기지 않는다")
+        .isZero();
   }
 
   // ── 정상 입력 회귀 ────────────────────────────────────────────────────────

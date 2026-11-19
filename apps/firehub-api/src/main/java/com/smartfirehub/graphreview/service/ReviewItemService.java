@@ -1,8 +1,5 @@
 package com.smartfirehub.graphreview.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.smartfirehub.document.repository.DocumentChunkRepository;
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.graphreview.dto.EntityRelationRef;
@@ -24,6 +21,9 @@ import lombok.SneakyThrows;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 /**
  * 범용 검수 인박스 서비스 — 타입별 등록/조회, 승인 시 item_type별 액션 라우팅, 원문 근거 조회.
@@ -290,18 +290,18 @@ public class ReviewItemService {
     switch (row.itemType()) {
       case SYNONYM ->
           mutationClient.mergeEntities(
-              p.path("entityType").asText(),
-              p.path("nameA").asText(),
-              p.path("nameB").asText(),
+              p.path("entityType").asString(""),
+              p.path("nameA").asString(""),
+              p.path("nameB").asString(""),
               row.datasetId());
       case PROPERTY -> {
         if (correctedValue == null || correctedValue.isBlank()) {
           throw new IllegalArgumentException("속성 정규화 승인에는 정정값(correctedValue)이 필요합니다.");
         }
         mutationClient.setProperty(
-            p.path("entityKey").asText(),
-            p.path("propertyName").asText(),
-            p.path("dataType").asText(),
+            p.path("entityKey").asString(""),
+            p.path("propertyName").asString(""),
+            p.path("dataType").asString(""),
             correctedValue,
             row.datasetId());
       }
@@ -309,19 +309,19 @@ public class ReviewItemService {
         // as-extracted 타입/이름 그대로 적재(정정 없음). 보류 관계는 add-entity가 끝점 존재 시에만 MERGE.
         JsonNode props = p.path("properties");
         List<Long> chunkIds = new ArrayList<>();
-        p.path("sourceChunkIds").forEach(n -> chunkIds.add(n.asLong()));
+        p.path("sourceChunkIds").forEach(n -> chunkIds.add(n.asLong(0L)));
         List<GraphMutationClient.RelationRef> rels = new ArrayList<>();
         p.path("relations")
             .forEach(
                 r ->
                     rels.add(
                         new GraphMutationClient.RelationRef(
-                            r.path("relType").asText(),
-                            r.path("direction").asText(),
-                            r.path("otherKey").asText())));
+                            r.path("relType").asString(""),
+                            r.path("direction").asString(""),
+                            r.path("otherKey").asString(""))));
         mutationClient.addEntity(
-            p.path("entityType").asText(),
-            p.path("name").asText(),
+            p.path("entityType").asString(""),
+            p.path("name").asString(""),
             props.isMissingNode() ? null : props,
             chunkIds,
             rels,
@@ -330,11 +330,11 @@ public class ReviewItemService {
       case RELATION -> {
         // as-extracted 관계 그대로 적재. add-relation이 양 끝점 존재 시에만 MERGE.
         List<Long> chunkIds = new ArrayList<>();
-        p.path("sourceChunkIds").forEach(n -> chunkIds.add(n.asLong()));
+        p.path("sourceChunkIds").forEach(n -> chunkIds.add(n.asLong(0L)));
         mutationClient.addRelation(
-            p.path("subjectKey").asText(),
-            p.path("relType").asText(),
-            p.path("objectKey").asText(),
+            p.path("subjectKey").asString(""),
+            p.path("relType").asString(""),
+            p.path("objectKey").asString(""),
             chunkIds,
             row.datasetId());
       }
@@ -365,7 +365,7 @@ public class ReviewItemService {
     JsonNode ids = parse(row.payloadJson()).path("sourceChunkIds");
     if (!ids.isArray() || ids.isEmpty()) return List.of();
     Set<Long> want = new java.util.HashSet<>();
-    ids.forEach(n -> want.add(n.asLong()));
+    ids.forEach(n -> want.add(n.asLong(0L)));
     List<EvidenceChunk> out = new ArrayList<>();
     for (var c : chunkRepository.findChunkContentsByDataset(row.datasetId())) {
       if (want.contains(c.chunkId())) out.add(new EvidenceChunk(c.chunkId(), c.content()));

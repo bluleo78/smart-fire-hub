@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.within;
 
+import com.smartfirehub.global.json.StoredJsonAssert;
 import com.smartfirehub.global.platformdb.mybatis.LongTextAssertions;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.job.dto.AsyncJobStatusResponse;
@@ -105,6 +106,10 @@ public abstract class AsyncJobRepositoryContractTest extends AccessContractBase 
     assertThat(r.createdAt()).isCloseTo(LocalDateTime.now(), within(3, MINUTES));
     assertThat(r.updatedAt()).isCloseTo(LocalDateTime.now(), within(3, MINUTES));
     assertThat(fx.countAsyncJob(tenantA, id)).isEqualTo(1);
+    // 저장된 metadata 원문(WD-793 골든) — jsonb 라 키 순서는 정규화되므로 트리로 비교한다. 두 벤더 모두 이 계약에서 같은 단언이 돈다.
+    StoredJsonAssert.assertStoredJson(
+        fx.rawJsonText("async_job", "metadata", "id", id),
+        "{\"fileName\":\"한글.csv\",\"rows\":12,\"nested\":{\"k\":\"v\"}}");
   }
 
   @Test
@@ -245,6 +250,9 @@ public abstract class AsyncJobRepositoryContractTest extends AccessContractBase 
     assertThat(r.progress()).isEqualTo(42);
     assertThat(r.message()).isEqualTo("적재 중");
     assertThat(r.metadata()).isEqualTo(Map.of("done", 42));
+    // 진행 갱신 경로(updateStageAndProgress)가 쓴 metadata 원문도 고정한다(WD-793 골든).
+    StoredJsonAssert.assertStoredJson(
+        fx.rawJsonText("async_job", "metadata", "id", id), "{\"done\":42}");
     assertThat(r.updatedAt()).isCloseTo(LocalDateTime.now(), within(3, MINUTES));
     assertThat(r.createdAt()).isEqualTo(old);
 

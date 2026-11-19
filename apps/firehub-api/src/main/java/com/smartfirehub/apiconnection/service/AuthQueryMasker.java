@@ -1,15 +1,6 @@
 package com.smartfirehub.apiconnection.service;
 
-import com.fasterxml.jackson.core.JsonParser;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.JsonToken;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.fasterxml.jackson.databind.node.TextNode;
 import com.smartfirehub.global.util.ExactJsonMapper;
-import java.io.IOException;
 import java.net.URI;
 import java.net.URLDecoder;
 import java.net.URLEncoder;
@@ -23,6 +14,14 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import org.springframework.web.util.UriComponentsBuilder;
+import tools.jackson.core.JacksonException;
+import tools.jackson.core.JsonParser;
+import tools.jackson.core.JsonToken;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ArrayNode;
+import tools.jackson.databind.node.ObjectNode;
+import tools.jackson.databind.node.StringNode;
 
 /**
  * API 키를 쿼리 파라미터로 보내는 인증(API_KEY + placement=query)에서, 실제 호출 URL 과 화면·응답에 내보낼 표시용 URL 을 함께 만들고 비밀값을
@@ -468,7 +467,7 @@ public final class AuthQueryMasker {
       JsonNode masked = maskNode(tree, scrubber);
       // 바뀐 노드만 새로 만들므로 같은 객체면 가린 것이 없다.
       return masked == tree ? fallback : mapper.writeValueAsString(masked);
-    } catch (JsonProcessingException e) {
+    } catch (JacksonException e) {
       return fallback;
     }
   }
@@ -487,21 +486,21 @@ public final class AuthQueryMasker {
    *
    * <ul>
    *   <li>키·문자열: 이스케이프를 푼 텍스트에 {@link Scrubber#scrub} 을 적용해 바뀌면 있음.
-   *   <li>정수: {@code getBigIntegerValue().toString()} 이 비밀 형태와 같으면 있음 — 트리 정수 노드의 {@code asText()}
-   *       와 같은 표기.
+   *   <li>정수: {@code getBigIntegerValue().toString()} 이 비밀 형태와 같으면 있음 — 트리 정수 노드의 {@code
+   *       asString()} 와 같은 표기.
    *   <li>소수: {@code getDecimalValue().toString()} 이 비밀 형태와 같으면 있음 — {@link ExactJsonMapper} 의 정확한
-   *       BigDecimal 노드 {@code asText()} 와 같은 정규형(예: {@code 1e3} → {@code 1E+3}).
+   *       BigDecimal 노드 {@code asString()} 와 같은 정규형(예: {@code 1e3} → {@code 1E+3}).
    * </ul>
    *
    * JSON 이 아니면(파싱 오류) 없음으로 본다 — 트리 경로도 파싱 실패면 문자열 가림 결과를 돌려주므로 결과가 같다.
    */
   static boolean jsonValuesContainSecret(String body, Scrubber scrubber) {
-    try (JsonParser parser = ExactJsonMapper.INSTANCE.getFactory().createParser(body)) {
+    try (JsonParser parser = ExactJsonMapper.INSTANCE.createParser(body)) {
       JsonToken token;
       while ((token = parser.nextToken()) != null) {
         switch (token) {
-          case FIELD_NAME, VALUE_STRING -> {
-            String text = parser.getText();
+          case PROPERTY_NAME, VALUE_STRING -> {
+            String text = parser.getString();
             if (!scrubber.scrub(text).equals(text)) return true;
           }
           case VALUE_NUMBER_INT -> {
@@ -516,7 +515,8 @@ public final class AuthQueryMasker {
         }
       }
       return false;
-    } catch (IOException e) {
+    } catch (JacksonException e) {
+      // Jackson 3(WD-793): 파싱 오류는 비검사 JacksonException 이다(예전 IOException 자리).
       return false;
     }
   }
@@ -562,13 +562,13 @@ public final class AuthQueryMasker {
       items.forEach(out::add);
       return out;
     }
-    if (node.isTextual()) {
-      String text = node.asText();
+    if (node.isString()) {
+      String text = node.asString();
       String scrubbed = scrubber.scrub(text);
-      return scrubbed.equals(text) ? node : TextNode.valueOf(scrubbed);
+      return scrubbed.equals(text) ? node : StringNode.valueOf(scrubbed);
     }
-    if (node.isNumber() && scrubber.forms().contains(node.asText())) {
-      return TextNode.valueOf(scrubber.mask());
+    if (node.isNumber() && scrubber.forms().contains(node.asString())) {
+      return StringNode.valueOf(scrubber.mask());
     }
     return node;
   }

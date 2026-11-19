@@ -3,7 +3,6 @@ package com.smartfirehub.dbexecutor.live;
 import static com.smartfirehub.dbexecutor.live.TiberoLiveAccount.exec;
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dbexecutor.config.DbExecutorProperties;
 import com.smartfirehub.dbexecutor.config.ExecutionTimeouts;
 import com.smartfirehub.dbexecutor.sql.LoadRunner;
@@ -28,6 +27,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * Tibero 실서버 테스트(WD-77 Task 10) — 증분 SQL 의 커서 후보 조회와 {@code {{last_run_at}}} 리터럴 비교를 실서버에서 고정한다.
@@ -103,7 +103,7 @@ class TiberoLiveCursorTest {
             new LoadRunner(pools, timeouts, descriptors),
             null,
             timeouts,
-            new com.fasterxml.jackson.databind.ObjectMapper());
+            new tools.jackson.databind.ObjectMapper());
     String s = "\"" + schema + "\"";
     exec(
         owner,

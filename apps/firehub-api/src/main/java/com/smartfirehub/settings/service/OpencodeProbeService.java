@@ -1,9 +1,7 @@
 package com.smartfirehub.settings.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.apiconnection.service.UrlUtils;
-import com.smartfirehub.global.util.Jackson2WebClientCodecs;
+import com.smartfirehub.global.util.AppJsonWebClients;
 import com.smartfirehub.pipeline.service.executor.SsrfException;
 import com.smartfirehub.pipeline.service.executor.SsrfProtectionService;
 import com.smartfirehub.pipeline.service.executor.SsrfSafeHttpClientFactory;
@@ -29,6 +27,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.ExchangeStrategies;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.netty.http.client.HttpClient;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * opencode(OpenAI 호환) 공급자의 {@code GET {baseURL}/models} 를 호출해 모델 목록을 뽑는다.
@@ -66,7 +67,8 @@ import reactor.netty.http.client.HttpClient;
 @Service
 public class OpencodeProbeService {
 
-  private static final ObjectMapper MAPPER = new ObjectMapper();
+  // Jackson 3(WD-793): 예전 Jackson 2 new ObjectMapper() 와 같은 기본값(속성 정렬 안 함·원시 타입 null 허용 등)으로 만든다.
+  private static final ObjectMapper MAPPER = JsonMapper.builderWithJackson2Defaults().build();
   private static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(10);
 
   // https 기본 포트(443)와, 자체 호스팅 OpenAI 호환 게이트웨이가 흔히 쓰는 대체 포트만 허용한다.
@@ -398,7 +400,7 @@ public class OpencodeProbeService {
     // 키를 실어 보내 버린다. CSRF 로 baseURL 필드만 조작당해도 같은 결과이므로, 키를 재사용하려면
     // 요청이 저장된 것과 같은 baseURL 임을 스스로 증명해야 한다(달라졌으면 apiKey 를 다시 보내라).
     //
-    // equals() 의 수신자를 저장된 값(never null — payload().path("baseURL").asText("") 라 항상
+    // equals() 의 수신자를 저장된 값(never null — payload().path("baseURL").asString("") 라 항상
     // 문자열이다) 쪽으로 둔다. 요청 baseUrl 은 null 일 수 있고(UrlUtils.normalizeBaseUrl(null) 은
     // null 을 그대로 돌려준다), null 을 수신자로 두면 NPE 가 나 400 대신 500 이 된다 — apiKey 를
     // 생략한 요청이 baseUrl 도 생략했다면 "저장된 값과 다르다"로 자연스럽게 떨어져야 한다.
@@ -506,7 +508,8 @@ public class OpencodeProbeService {
   // -------------------------------------------------------------------------
 
   private ProbeResult doRequest(URI uri, String apiKey) {
-    ExchangeStrategies strategies = Jackson2WebClientCodecs.exchangeStrategies(MAX_RESPONSE_BYTES);
+    // 앱 매퍼와 같은 공유 코덱 팩토리 — 점검마다 매퍼를 새로 만들지 않는다(WD-793).
+    ExchangeStrategies strategies = AppJsonWebClients.exchangeStrategies(MAX_RESPONSE_BYTES);
 
     // followRedirect(false): 리다이렉트를 절대 따라가지 않는다 — 공개 호스트가 302 로
     // 169.254.169.254(클라우드 메타데이터) 같은 내부 주소로 돌려보내는 공격을 애초에 차단한다.
@@ -622,7 +625,7 @@ public class OpencodeProbeService {
 
     List<String> ids = new ArrayList<>();
     for (JsonNode item : items) {
-      String id = item.path("id").asText("");
+      String id = item.path("id").asString("");
       if (!id.isBlank()) {
         ids.add(id);
       }

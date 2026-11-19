@@ -10,7 +10,6 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantScopedRunner;
@@ -35,6 +34,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionTemplate;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * 지표 폴러의 데이터셋 메트릭 사전 검증이 테넌트 저장소를 따르는지 고정한다(WD-76).
@@ -86,7 +86,7 @@ class MetricPollerServiceTiberoTest {
             snapshots,
             new AnomalyDetector(),
             mock(ApplicationEventPublisher.class),
-            new ObjectMapper(),
+            JsonMapper.builderWithJackson2Defaults().build(),
             runner,
             tx,
             gate,
@@ -110,7 +110,11 @@ class MetricPollerServiceTiberoTest {
             Map.of("metrics", List.of(Map.of("id", "m1", "source", "dataset", "query", query))));
     when(systemMetrics.findEnabledAnomalyJobs())
         .thenReturn(
-            List.of(new PolledJob(JOB_ID, 2L, new ObjectMapper().writeValueAsString(config))));
+            List.of(
+                new PolledJob(
+                    JOB_ID,
+                    2L,
+                    JsonMapper.builderWithJackson2Defaults().build().writeValueAsString(config))));
   }
 
   /** Tibero 테넌트의 스키마 한정 메트릭은 관문(executeMetricQuery)까지 가고, 값이 저장된다. */

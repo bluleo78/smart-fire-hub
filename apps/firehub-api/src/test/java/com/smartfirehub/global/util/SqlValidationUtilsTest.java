@@ -3,8 +3,6 @@ package com.smartfirehub.global.util;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.dataset.exception.SqlQueryException;
 import java.io.IOException;
 import java.io.InputStream;
@@ -17,6 +15,8 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * SqlValidationUtils 단위 테스트.
@@ -256,7 +256,7 @@ class SqlValidationUtilsTest {
   private static JsonNode loadQueryTypeFixture() {
     try (InputStream in =
         SqlValidationUtilsTest.class.getResourceAsStream("/fixtures/query-type-vectors.json")) {
-      return new ObjectMapper().readTree(in);
+      return JsonMapper.builderWithJackson2Defaults().build().readTree(in);
     } catch (IOException e) {
       throw new IllegalStateException("문 타입 분류 시험 벡터 픽스처를 읽지 못했다", e);
     }

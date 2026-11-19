@@ -2,8 +2,6 @@ package com.smartfirehub.apiconnection.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
@@ -15,6 +13,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * API_CALL 스텝의 쿼리 파라미터(정적·페이지네이션·인증 키)가 붙은 호출 URL 이 공용 사례 표({@code
@@ -31,7 +31,7 @@ class QueryParamEncodingVectorsTest {
     try (InputStream in =
         QueryParamEncodingVectorsTest.class.getResourceAsStream(
             "/fixtures/query-param-encoding-vectors.json")) {
-      return new ObjectMapper().readTree(in).get("cases");
+      return JsonMapper.builderWithJackson2Defaults().build().readTree(in).get("cases");
     }
   }
 

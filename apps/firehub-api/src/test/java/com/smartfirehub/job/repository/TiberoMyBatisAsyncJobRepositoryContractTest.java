@@ -3,7 +3,6 @@ package com.smartfirehub.job.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowable;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.global.platformdb.tibero.TiberoPlatformDbErrors;
 import com.smartfirehub.job.repository.mybatis.AsyncJobMapper;
 import com.smartfirehub.job.repository.mybatis.AsyncJobRow;
@@ -18,6 +17,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.springframework.dao.DuplicateKeyException;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * AsyncJobRepositoryContractTest 를 MyBatis 구현 + Tibero 실서버로 실행한다(WD-706). 리포지토리는 런타임 계정 + DBMS_RLS
@@ -37,7 +37,9 @@ class TiberoMyBatisAsyncJobRepositoryContractTest extends AsyncJobRepositoryCont
     repository =
         poc.transactional(
             AsyncJobRepository.class,
-            new MyBatisAsyncJobRepository(poc.mapper(AsyncJobMapper.class), new ObjectMapper()));
+            new MyBatisAsyncJobRepository(
+                poc.mapper(AsyncJobMapper.class),
+                JsonMapper.builderWithJackson2Defaults().build()));
   }
 
   @Override

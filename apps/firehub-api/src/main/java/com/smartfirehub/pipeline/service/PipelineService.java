@@ -1,6 +1,5 @@
 package com.smartfirehub.pipeline.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartfirehub.apiconnection.service.ApiConnectionReader;
 import com.smartfirehub.dataset.dto.DatasetColumnResponse;
 import com.smartfirehub.dataset.repository.DatasetColumnRepository;
@@ -11,6 +10,7 @@ import com.smartfirehub.dataset.storage.DataTableNames;
 import com.smartfirehub.dataset.storage.DataTableStore;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.exception.EditConflictException;
+import com.smartfirehub.global.json.JsonConversions;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.pipeline.dto.*;
 import com.smartfirehub.pipeline.exception.PipelineExecutionActiveException;
@@ -52,6 +52,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.databind.ObjectMapper;
 
 @Slf4j
 @Service
@@ -1210,7 +1211,8 @@ public class PipelineService {
       throw new IllegalArgumentException(stepError(stepName, "AI 분류 설정(aiConfig)이 필요합니다"));
     }
 
-    AiClassifyConfig config = objectMapper.convertValue(step.aiConfig(), AiClassifyConfig.class);
+    AiClassifyConfig config =
+        JsonConversions.convertValue(objectMapper, step.aiConfig(), AiClassifyConfig.class);
 
     if (config.prompt() == null || config.prompt().isBlank()) {
       throw new IllegalArgumentException(stepError(stepName, "프롬프트를 입력하세요"));
@@ -1268,7 +1270,8 @@ public class PipelineService {
     if (step.inputDatasetIds() == null || step.inputDatasetIds().isEmpty()) {
       return;
     }
-    AiClassifyConfig config = objectMapper.convertValue(step.aiConfig(), AiClassifyConfig.class);
+    AiClassifyConfig config =
+        JsonConversions.convertValue(objectMapper, step.aiConfig(), AiClassifyConfig.class);
     if (config.inputColumns() == null || config.inputColumns().isEmpty()) {
       return;
     }
@@ -1310,7 +1313,7 @@ public class PipelineService {
    */
   private void validatePythonStep(PipelineStepRequest step) {
     PythonStepConfig config =
-        objectMapper.convertValue(step.pythonConfig(), PythonStepConfig.class);
+        JsonConversions.convertValue(objectMapper, step.pythonConfig(), PythonStepConfig.class);
     if (config.outputColumns() != null) {
       // AI_CLASSIFY 와 달리 출력 지정 시에는 정의를 쓰지 않으므로 이름 검사를 통째로 건너뛴다(자동 생성일 때만 — 예약어도 막는다)
       if (step.outputDatasetId() == null) {
