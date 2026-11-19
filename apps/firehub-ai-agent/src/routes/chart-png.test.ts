@@ -1,6 +1,6 @@
 import { createCanvas, loadImage } from '@napi-rs/canvas';
 import { Chart } from 'chart.js';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderChartPng } from './chart-png.js';
 
@@ -23,6 +23,11 @@ const barConfig = {
 type SeenCanvas = { width: number; height: number; getContext: unknown };
 
 describe('renderChartPng', () => {
+  // 시험마다 만든 spy 를 되돌린다(각 시험의 try/finally 대신).
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('PNG 시그니처와 요청한 크기(IHDR)의 이미지를 만든다', async () => {
     const buf = await renderChartPng(barConfig, 320, 200);
 
@@ -55,15 +60,11 @@ describe('renderChartPng', () => {
   it('생성자가 던져도 호출 전과 Chart.instances 개수가 같고 destroy 는 정확히 한 번 불린다', async () => {
     const before = Object.keys(Chart.instances).length;
     const spy = vi.spyOn(Chart.prototype, 'destroy');
-    try {
-      await expect(
-        renderChartPng({ ...barConfig, type: 'no-such-type' }, 200, 100),
-      ).rejects.toThrow();
-      expect(spy).toHaveBeenCalledTimes(1);
-      expect(Object.keys(Chart.instances)).toHaveLength(before);
-    } finally {
-      spy.mockRestore();
-    }
+    await expect(
+      renderChartPng({ ...barConfig, type: 'no-such-type' }, 200, 100),
+    ).rejects.toThrow();
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(Object.keys(Chart.instances)).toHaveLength(before);
   });
 
   it('성공 렌더 뒤에도 Chart 인스턴스를 남기지 않는다', async () => {
@@ -79,15 +80,11 @@ describe('renderChartPng', () => {
       seen.push(this.canvas as unknown as SeenCanvas);
       return original.call(this);
     });
-    try {
-      await renderChartPng(barConfig, 300, 200);
-      expect(spy).toHaveBeenCalledTimes(1);
-      expect(seen).toHaveLength(1);
-      expect(seen[0].width).toBe(300);
-      expect(seen[0].height).toBe(200);
-      expect(typeof seen[0].getContext).toBe('function');
-    } finally {
-      spy.mockRestore();
-    }
+    await renderChartPng(barConfig, 300, 200);
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(seen).toHaveLength(1);
+    expect(seen[0].width).toBe(300);
+    expect(seen[0].height).toBe(200);
+    expect(typeof seen[0].getContext).toBe('function');
   });
 });

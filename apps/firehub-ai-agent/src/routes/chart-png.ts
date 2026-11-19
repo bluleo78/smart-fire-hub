@@ -58,16 +58,16 @@ export async function renderChartPng(
   // 생성자가 던져도(예: 잘못된 type) chart.js 는 인스턴스를 Chart.instances 에 이미 등록한 뒤 beforeInit 을 부르고,
   // 컨트롤러 생성(잘못된 type 에서 던지는 지점)은 그 뒤다. 그래서 이번 호출 전용 플러그인으로 인스턴스를 붙잡아
   // 생성자가 던진 경우에도 정확히 이번 인스턴스만 정리한다(전역 스냅샷·canvas 비교에 기대지 않음).
-  let created: Chart | undefined;
+  // 성공하면 생성자 반환값과 같은 인스턴스이므로 이 변수 하나로 정리한다.
+  let chart: Chart | undefined;
   const trackPlugin: Plugin = {
     id: 'wd806Track',
     beforeInit: (c) => {
-      created = c;
+      chart = c;
     },
   };
-  let chart: Chart | undefined;
   try {
-    chart = new Chart(canvas as unknown as ChartCanvasItem, {
+    new Chart(canvas as unknown as ChartCanvasItem, {
       ...configuration,
       options: {
         ...configuration.options,
@@ -81,14 +81,12 @@ export async function renderChartPng(
     // destroy 는 인코딩이 끝난 뒤(finally)에 한다.
     return await canvas.encode('png');
   } finally {
-    // 생성자가 던졌다면 chart 는 비어 있으므로 beforeInit 에서 붙잡은 인스턴스를 정리한다.
-    const target = chart ?? created;
+    // 생성자가 던졌어도 beforeInit 에서 붙잡은 인스턴스를 정리한다.
     try {
-      target?.destroy();
+      chart?.destroy();
     } catch (cleanupError: unknown) {
       // 정리 실패가 원래 오류(또는 성공한 PNG)를 덮지 않도록 경고만 남기고 다시 던지지 않는다.
-      const message = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
-      console.warn('[ChartPng] destroy failed:', message);
+      console.warn('[ChartPng] destroy failed:', cleanupError);
     }
   }
 }

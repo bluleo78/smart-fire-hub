@@ -103,6 +103,11 @@ const validBody = {
   ],
 };
 
+/** 같은 정상 차트 n 개로 이루어진 charts 배열(개수 상한 시험용). */
+function makeCharts(n: number) {
+  return Array.from({ length: n }, () => validBody.charts[0]);
+}
+
 describe('POST /agent/chart-render', () => {
   beforeEach(() => {
     // 각 테스트 전 환경변수 설정 및 mock 초기화
@@ -287,7 +292,7 @@ describe('POST /agent/chart-render', () => {
 
   it('should accept exactly 100 charts', async () => {
     mockRenderChartPng.mockResolvedValue(Buffer.from('x'));
-    const body = { charts: Array.from({ length: 100 }, () => validBody.charts[0]) };
+    const body = { charts: makeCharts(100) };
     const res = await makeRequest(createApp(), body, authHeaders);
     expect(res.status).toBe(200);
     expect((res.body as { images: unknown[] }).images).toHaveLength(100);
@@ -296,7 +301,7 @@ describe('POST /agent/chart-render', () => {
 
   it('should render only the first 100 charts when more than 100 are sent', async () => {
     mockRenderChartPng.mockResolvedValue(Buffer.from('x'));
-    const body = { charts: Array.from({ length: 101 }, () => validBody.charts[0]) };
+    const body = { charts: makeCharts(101) };
     const res = await makeRequest(createApp(), body, authHeaders);
     expect(res.status).toBe(200);
     const images = (res.body as { images: Array<{ id: string }> }).images;
@@ -307,7 +312,7 @@ describe('POST /agent/chart-render', () => {
 
   it('should ignore an invalid chart beyond the first 100', async () => {
     mockRenderChartPng.mockResolvedValue(Buffer.from('x'));
-    const charts = Array.from({ length: 101 }, () => validBody.charts[0]);
+    const charts = makeCharts(101);
     charts[100] = { ...validBody.charts[0], type: 'scatter' };
     const res = await makeRequest(createApp(), { charts }, authHeaders);
     expect(res.status).toBe(200);
