@@ -252,13 +252,12 @@ function syncStoredRows(
       // 이름 변경으로 보는 것은 「옛 이름이 사라졌고 대소문자 변형이 정확히 하나」일 때뿐이다 — 변형이 여럿이면 어느 것이 옛 헤더의 새 이름인지 알 수 없어
       // 하나라도 되살리지 않고 넘기면 다른 관리자가 더한 헤더를 인증 저장이 서버에서 말없이 지운다(WD-804 반려). 그래서 모두 아래 「더한 헤더」 흐름으로 넘겨
       // 목록에 넣고 알린다 — 쓸모없는 행이 보이면 사용자가 다시 지우면 되지만, 데이터 손실은 되돌릴 수 없다.
-      const variantCount = nextRows.filter((n) => n.storedName?.toLowerCase() === lowerName).length;
-      const isRename = variantCount === 1 && !nextRows.some((n) => n.storedName === from);
       // 사용자가 같은 이름(대소문자·앞뒤 공백 무시)의 행을 이미 갖고 있으면 저장 때 그 행이 나가므로, 저장 행을 끼워 중복 검증이 저장을 막게 하지 않고
       // 사용자의 행이 이기게 한다(안내도 없다 — 서버에서 지워지지 않고 사용자의 행으로 덮인다).
-      const userHasSameName = rows.some((r) => normalizedExtraHeaderName(r.name) === lowerName);
-      if (userHasSameName) return;
-      if (isRename) {
+      if (rows.some((r) => normalizedExtraHeaderName(r.name) === lowerName)) return;
+      // 이 행(name)은 옛 이름(from)과 다르다(같으면 위 prevRows 검사에서 이미 끝났다). 그래서 대소문자 변형이 이 행 하나뿐이면 옛 이름은 새 기준에서
+      // 사라진 것이고, 그때만 이름 변경이다 — 두 조건을 따로 셀 필요가 없다.
+      if (nextRows.filter((n) => n.storedName?.toLowerCase() === lowerName).length === 1) {
         // 되살리지 않되 조용히 넘기지 않는다 — 이름 변경을 알릴 수 있게 모은다.
         renamedDeleted.push({ from, to: name });
         return;
