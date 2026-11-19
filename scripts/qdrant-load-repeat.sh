@@ -1,32 +1,62 @@
 #!/bin/sh
-# 정한 코어에만 CPU 부하를 걸고 Qdrant 시험 두 클래스를 반복 실행한다.
+# 정한 코어에 CPU 부하를 걸고 Qdrant 시험 두 클래스를 반복 실행한다.
 #
 # 목적(WD-803 완료 기준 3): 호스트가 과부하일 때도 Qdrant 시험이 안정적으로 통과하는지 확인한다.
 #   시험용 Qdrant 컨테이너를 QDRANT_TEST_CPUSET 으로 특정 코어에 묶고(Task 1),
-#   같은 코어에 바쁜 루프를 taskset 으로 묶어 Qdrant 가 그 코어에서만 CPU 를 다투게 한다.
-#   나머지 코어는 비워 두므로 이 공유 호스트의 다른 작업에 영향을 주지 않는다.
+#   같은 코어에 묶은 "바쁜 컨테이너" 하나를 띄워 Qdrant 가 그 코어에서 CPU 를 다투게 한다.
+#   부하를 호스트 프로세스(taskset)가 아닌 컨테이너로 거는 이유: cgroup v2 의 CPU 공정 분배는
+#   cgroup 단위라서, Docker 밖의 루프는 Qdrant cgroup 과 다른 그룹이 되어 루프를 아무리 늘려도
+#   Qdrant 가 코어의 절반가량을 항상 확보한다(부하가 한정되어 경합이 재현되지 않을 수 있음).
+#   Qdrant 와 같은 Docker cgroup 계층에서 높은 cpu-shares 로 돌리면 실제로 코어를 빼앗는다.
+#   정한 코어 밖의 다른 코어 영향은 적다(없다고 단정할 수는 없음 - 호스트 스케줄러·IO 는 공유).
 #
 # 사용법(저장소 루트 어디서든 실행 가능):
-#   scripts/qdrant-load-repeat.sh [반복 수] [코어 목록] [바쁜 루프 수]
-#   기본값: 3 0-1 16
+#   scripts/qdrant-load-repeat.sh [반복 수] [코어 목록] [부하 루프 수] [부하 가중치]
+#   기본값: 3 0-1 (코어 수 x 4) 10240
+#   예: scripts/qdrant-load-repeat.sh 3 14-15   (공유 호스트에서는 번호가 큰 코어 한 쌍을 권한다)
+#   부하 루프 수: 바쁜 컨테이너 안에서 도는 루프 수. 고정 코어 수보다 많아야 코어를 모두 쓴다.
+#   부하 가중치: 바쁜 컨테이너의 docker --cpu-shares (기본 컨테이너 1024 대비 우선 확보량).
+#   부하 컨테이너 이미지: Qdrant 시험 이미지(qdrant/qdrant:v1.20.0, 시험이 이미 받아 둠, sh 포함)를
+#     --entrypoint sh 로 재사용한다 - 새로 내려받지 않기 위해서다(busybox/alpine 은 이 호스트에 없음).
 #   출력: 회차마다 "run <i>/<n>: PASS|FAIL <초>s load=<1분 load>", 끝에 "summary: <통과>/<n> passed"
-#   종료 코드: 0 전부 통과, 1 실패 있음, 2 인자/코어 목록 오류
+#     load= 는 호스트 전체의 1분 평균 load 이며 이 스크립트가 거는 부하도 포함한다.
+#   종료 코드: 0 전부 통과, 1 실패 있음, 2 인자/코어 목록 오류, 129 HUP, 130 INT, 143 TERM
 #   gradle 로그: apps/firehub-api/build/qdrant-load-repeat/run-<i>.log
 #
+# 정리: 종료 경로마다 부하 컨테이너를 docker rm -f 하고, 시작 시 이전 실행이 죽으며 남긴
+#   라벨(wd803-load=1) 컨테이너도 지운다. gradle 클라이언트를 kill 하면 gradle 데몬의 취소와
+#   Testcontainers Ryuk 이 시험 Qdrant 컨테이너를 정리해 준다는 점에 기대고 있다(직접 지우지 않음).
+#
 # set -e 를 쓰지 않는다: gradle 이 실패해도 trap 정리와 다음 회차가 이어져야 하기 때문이다.
+
+LOAD_IMAGE="qdrant/qdrant:v1.20.0"
+LOAD_LABEL="wd803-load=1"
 
 N="$1"
 CORES="$2"
 LOOPS="$3"
+WEIGHT="$4"
 if [ -z "$N" ]; then
   N=3
 fi
 if [ -z "$CORES" ]; then
   CORES=0-1
 fi
-if [ -z "$LOOPS" ]; then
-  LOOPS=16
-fi
+
+# 양의 정수가 아닌 인자는 바로 거부한다(부하·gradle 시작 전).
+check_positive() {
+  case "$2" in
+    ''|*[!0-9]*)
+      echo "invalid $1 '$2': 양의 정수여야 한다" >&2
+      exit 2
+      ;;
+  esac
+  if [ "$2" -lt 1 ]; then
+    echo "invalid $1 '$2': 1 이상이어야 한다" >&2
+    exit 2
+  fi
+}
+check_positive "반복 수" "$N"
 
 # 코어 목록이 이 호스트에서 유효한지 먼저 확인한다(잘못되면 부하 없이 바로 종료).
 if ! ERR=$(taskset -c "$CORES" true 2>&1); then
@@ -34,47 +64,99 @@ if ! ERR=$(taskset -c "$CORES" true 2>&1); then
   exit 2
 fi
 
+# 코어 수를 세어 루프 수 기본값(코어 수 x 4)을 정한다. "0-3,8" 같은 목록도 센다.
+count_cores() {
+  total=0
+  for part in $(echo "$1" | tr ',' ' '); do
+    case "$part" in
+      *-*)
+        lo=${part%-*}
+        hi=${part#*-}
+        total=$((total + hi - lo + 1))
+        ;;
+      *)
+        total=$((total + 1))
+        ;;
+    esac
+  done
+  echo "$total"
+}
+if [ -z "$LOOPS" ]; then
+  LOOPS=$(( $(count_cores "$CORES") * 4 ))
+fi
+if [ -z "$WEIGHT" ]; then
+  WEIGHT=10240
+fi
+check_positive "부하 루프 수" "$LOOPS"
+check_positive "부하 가중치" "$WEIGHT"
+
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 API_DIR="$SCRIPT_DIR/../apps/firehub-api"
 cd "$API_DIR" || exit 2
 LOG_DIR="build/qdrant-load-repeat"
 mkdir -p "$LOG_DIR"
 
-PIDS=""
+LOAD_CID=""
 GRADLE_PID=""
 
-# 바쁜 루프를 모두 끈다. 어떤 경로로 끝나도 부하가 남지 않도록 trap 에서 호출한다.
+# 라벨이 붙은 부하 컨테이너를 모두 지운다(이전 실행이 강제 종료되며 남긴 것 포함).
+remove_load_containers() {
+  OLD=$(docker ps -aq --filter "label=$LOAD_LABEL" 2>/dev/null)
+  if [ -n "$OLD" ]; then
+    docker rm -f $OLD >/dev/null 2>&1
+  fi
+}
+
+# gradle 과 부하 컨테이너를 모두 끈다. 어떤 경로로 끝나도 부하가 남지 않도록 trap 에서 호출한다.
 cleanup() {
   if [ -n "$GRADLE_PID" ]; then
     kill "$GRADLE_PID" 2>/dev/null
+    GRADLE_PID=""
   fi
-  for p in $PIDS; do
-    kill "$p" 2>/dev/null
-  done
-  PIDS=""
+  remove_load_containers
+  LOAD_CID=""
 }
 
-# INT/TERM 은 정리 후 종료 코드를 정해 끝내고, EXIT 는 정상 종료 때 정리만 한다.
-on_signal() {
+# INT/TERM/HUP 은 정리 후 신호별 종료 코드로 끝내고, EXIT 는 정상 종료 때 정리만 한다.
+on_int() {
   cleanup
   exit 130
 }
+on_term() {
+  cleanup
+  exit 143
+}
+on_hup() {
+  cleanup
+  exit 129
+}
 trap cleanup EXIT
-trap on_signal INT TERM
+trap on_int INT
+trap on_term TERM
+trap on_hup HUP
 
-# 정한 코어에만 묶은 바쁜 루프를 시작한다.
-i=0
-while [ "$i" -lt "$LOOPS" ]; do
-  taskset -c "$CORES" sh -c 'while :; do :; done' &
-  PIDS="$PIDS $!"
-  i=$((i + 1))
+remove_load_containers
+
+# 정한 코어에 묶은 바쁜 컨테이너 하나를 띄운다. 안에서 바쁜 루프를 LOOPS 개 돌려 모든 코어를 쓴다.
+BUSY_CMD="i=0
+while [ \$i -lt $LOOPS ]; do
+  (while :; do :; done) &
+  i=\$((i+1))
 done
+wait"
+LOAD_CID=$(docker run -d --rm --label "$LOAD_LABEL" --cpuset-cpus "$CORES" \
+  --cpu-shares "$WEIGHT" --entrypoint sh "$LOAD_IMAGE" -c "$BUSY_CMD")
+if [ -z "$LOAD_CID" ]; then
+  echo "부하 컨테이너를 시작하지 못했다" >&2
+  exit 2
+fi
 
 PASSED=0
 run=1
 while [ "$run" -le "$N" ]; do
   START=$(date +%s)
-  QDRANT_TEST_CPUSET="$CORES" ./gradlew test --rerun-tasks \
+  # --rerun 은 시험 태스크만 다시 돌린다(--rerun-tasks 는 컴파일·코드생성까지 호스트를 다시 부하시킴).
+  QDRANT_TEST_CPUSET="$CORES" ./gradlew test --rerun \
     --tests '*QdrantVectorStoreLifecycleTest' \
     --tests '*QdrantRowSearchServiceTest' \
     > "$LOG_DIR/run-$run.log" 2>&1 &
@@ -82,6 +164,7 @@ while [ "$run" -le "$N" ]; do
   # 백그라운드로 띄우고 wait 해야 신호가 와도 trap 이 즉시 실행된다(전경 실행이면 gradle 이 끝날 때까지 지연됨).
   wait "$GRADLE_PID"
   RC=$?
+  GRADLE_PID=""
   END=$(date +%s)
   LOAD=$(cut -d ' ' -f 1 /proc/loadavg)
   if [ "$RC" -eq 0 ]; then
