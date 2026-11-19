@@ -92,12 +92,7 @@ public final class QdrantTestContainer {
         CALL_TIMEOUT);
   }
 
-  /**
-   * Qdrant 비동기 호출 결과를 {@link #CALL_TIMEOUT} 까지만 기다려 돌려준다(WD-803).
-   *
-   * <p>하네스와 시험이 호출마다 같은 대기 상한을 되풀이해 적던 것을 한 곳으로 모아, 상한을 바꿀 때 이 도우미만 고치면 되게 한다. 재시도는 하지 않는다 — 상한을
-   * 넘으면 {@link TimeoutException} 으로 그대로 실패한다.
-   */
+  /** Qdrant 비동기 호출 결과를 {@link #CALL_TIMEOUT} 까지만 기다려 돌려준다(WD-803). 재시도 없이 넘으면 {@link TimeoutException}. */
   public static <T> T await(Future<T> future)
       throws InterruptedException, ExecutionException, TimeoutException {
     return future.get(CALL_TIMEOUT.toSeconds(), TimeUnit.SECONDS);
