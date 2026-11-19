@@ -58,12 +58,60 @@ test.describe('파이프라인 에디터 이름 안내 (WD-812)', () => {
     await expect(page.getByText('미저장 변경사항')).toBeVisible();
   });
 
-  test('기존 파이프라인 보기 모드에는 안내가 없다', async ({ authenticatedPage: page }) => {
+  // 반려 수정 — 보이는 라벨 대신 이름 칸 옆에 늘 보이는 필수 표시(*)와 aria-required 로 필수임을 알린다
+  test('새 파이프라인: 이름 칸 옆에 필수 표시(*)가 늘 보이고 칸은 aria-required 다', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockNewEditor(page);
+    await page.goto('/pipelines/new');
+
+    const nameInput = page.getByRole('textbox', { name: '파이프라인 이름' });
+    const marker = page.getByTestId('pipeline-name-required');
+    await expect(marker).toBeVisible();
+    await expect(marker).toHaveText('*');
+    // 장식 표시는 스크린리더에서 감추고, 필수임은 칸 속성으로 읽힌다
+    await expect(marker).toHaveAttribute('aria-hidden', 'true');
+    await expect(nameInput).toHaveAttribute('aria-required', 'true');
+
+    // 이름을 채워도 필수 표시는 그대로 남는다(안내와 달리 늘 보인다)
+    await nameInput.fill('일일 집계');
+    await expect(marker).toBeVisible();
+  });
+
+  test('좁은 화면(375px)에서 가장 긴 상태여도 머리글은 56px 이고 저장 버튼이 화면 안에 있다', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.setViewportSize({ width: 375, height: 800 });
+    await mockNewEditor(page);
+    await page.goto('/pipelines/new');
+
+    // 공백만 넣어 「미저장 변경사항 · 안내」가 필수 표시와 함께 보이는 가장 긴 상태를 만든다
+    const nameInput = page.getByRole('textbox', { name: '파이프라인 이름' });
+    await nameInput.fill('   ');
+    await expect(page.getByText(HINT)).toBeVisible();
+    await expect(page.getByTestId('pipeline-name-required')).toBeVisible();
+
+    const header = page.locator('header').filter({ has: nameInput });
+    const box = await header.boundingBox();
+    expect(Math.round(box!.height)).toBe(56);
+    // 상태 줄(미저장 표시·안내)이 여러 줄로 접혀 머리글 밖으로 넘치지 않는다 — 한 줄로 말줄임한다
+    const hintBox = await page.locator('#pipeline-name-hint').boundingBox();
+    const dirtyBox = await page.getByText('미저장 변경사항').boundingBox();
+    expect(hintBox!.height).toBeLessThanOrEqual(20);
+    expect(dirtyBox!.height).toBeLessThanOrEqual(20);
+    expect(hintBox!.y + hintBox!.height).toBeLessThanOrEqual(box!.y + box!.height);
+    const saveBox = await page.getByRole('button', { name: '저장', exact: true }).boundingBox();
+    expect(saveBox!.x + saveBox!.width).toBeLessThanOrEqual(375);
+  });
+
+  test('기존 파이프라인 보기 모드에는 안내도 필수 표시도 없다', async ({ authenticatedPage: page }) => {
     await setupPipelineEditorMocks(page, 1);
     await page.goto('/pipelines/1');
 
     await expect(page.getByRole('tab', { name: '개요' })).toBeVisible();
     await expect(page.getByText(HINT)).toHaveCount(0);
+    // 보기 모드는 이름이 글자로만 보여 필수 표시도 없다
+    await expect(page.getByTestId('pipeline-name-required')).toHaveCount(0);
   });
 
   test('기존 파이프라인 수정 모드: 이름을 지우면 안내가 보이고 칸에 이어지며 저장은 켜져 있다', async ({
