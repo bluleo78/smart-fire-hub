@@ -37,11 +37,25 @@ export function pickBestMessage(errData: ErrorResponse, fallback: string): strin
 }
 
 /**
+ * 복제 이름을 끝내 정하지 못함(WD-834) — 시도 상한(NAME_RETRY_MAX_ATTEMPTS) 안에서 비어 있는 사본 이름을 찾지 못했다.
+ * 서버 409 문구(「이미 있는 … 이름입니다」)는 사용자가 이름을 쓴 적 없는 복제에서 뜻이 어긋나므로, 복제 전용 안내를 message 로 담고
+ * extractApiError 가 그대로 보여 준다(instanceof).
+ */
+export class CloneNameExhaustedError extends Error {
+  constructor() {
+    super('복사본 이름을 정하지 못했습니다. 쓰지 않는 복사본을 지우거나 원본 이름을 바꾼 뒤 다시 복제하세요.');
+    this.name = 'CloneNameExhaustedError';
+  }
+}
+
+/**
  * Axios 에러에서 백엔드 ErrorResponse.message를 추출한다.
  * responseType: 'blob' 요청에서 서버가 에러를 반환하면 error.response.data가
  * Blob 형태로 오므로, 이를 텍스트로 읽어 JSON 파싱을 시도한다.
  */
 export function extractApiError(error: unknown, fallback: string): string {
+  // 복제 이름 소진(WD-834) — 서버 문구 대신 복제 전용 안내를 보인다.
+  if (error instanceof CloneNameExhaustedError) return error.message;
   if (axios.isAxiosError(error) && error.response?.data) {
     const data = error.response.data;
     // responseType: 'blob' 요청의 에러 응답은 Blob 형태로 전달된다

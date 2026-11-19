@@ -94,11 +94,12 @@ const TEMPLATE_NAME_MAX = 200;
 const GOAL_TEMPLATE_SUFFIX = ' 양식';
 
 /**
- * 목표 기반 작업이 함께 저장하는 리포트 양식 이름(WD-297) — 「<작업 이름> 양식」. 작업 이름도 200자까지라 그대로 붙이면 양식 이름 한도를
- * 넘으므로 작업 이름을 잘라 맞춘다.
+ * 목표 기반 작업이 함께 저장하는 리포트 양식 이름(WD-297) — 「<작업 이름> 양식」. 화면 미리보기용이다.
+ * 저장 1회차 이름(numberedGoalTemplateName(.., 1))과 글자 하나까지 같아야 한다 — 따로 자르면(slice) 긴 이름에서
+ * 서로게이트 쌍·끝 공백 처리가 달라, 미리 본 이름과 실제 저장되는 이름이 어긋난다(WD-834). 그래서 같은 함수를 쓴다.
  */
 export function goalTemplateName(jobName: string): string {
-  return jobName.trim().slice(0, TEMPLATE_NAME_MAX - GOAL_TEMPLATE_SUFFIX.length) + GOAL_TEMPLATE_SUFFIX;
+  return numberedGoalTemplateName(jobName, 1);
 }
 
 /**
