@@ -10,7 +10,7 @@ import { BOXPLOT_REQUIRED_COLUMNS_LABEL, findMissingBoxplotStats } from '../../c
 import { findMissingChartColumns } from '../../components/analytics/chart-missing-columns';
 import { findMissingChartAxesMessage } from '../../components/analytics/chart-required-axes';
 import { ChartConfigWithheldNotice } from '../../components/analytics/ChartConfigWithheldNotice';
-import { ChartRenderer } from '../../components/analytics/ChartRenderer';
+import { MemoChartRenderer } from '../../components/analytics/ChartRenderer';
 import { ChartTypeSelector } from '../../components/analytics/ChartTypeSelector';
 import { isNumericColumn, isWeightColumn } from '../../components/analytics/numeric-columns';
 import { SharedReadOnlyNotice } from '../../components/analytics/SharedReadOnlyNotice';
@@ -1151,8 +1151,14 @@ export default function ChartBuilderPage() {
                 <p className="text-sm">쿼리를 실행하면 차트가 표시됩니다.</p>
               </div>
             ) : (
-              <div ref={previewContainerRef} className="px-4 pt-3" style={{ height: 460 }}>
-                <ChartRenderer
+              <div
+                ref={previewContainerRef}
+                data-testid="chart-builder-preview"
+                className="px-4 pt-3"
+                style={{ height: 460 }}
+              >
+                {/* WD-821: 저장 대화상자 등 부모 상태 변화로 미리보기 차트를 다시 계산하지 않는다 */}
+                <MemoChartRenderer
                   chartType={chartType}
                   config={config}
                   data={queryRows}
