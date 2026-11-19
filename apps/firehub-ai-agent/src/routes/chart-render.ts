@@ -34,6 +34,12 @@ function validateCharts(charts: ChartRequest[]): string | null {
   return null;
 }
 
+/**
+ * 한 요청에서 그릴 수 있는 최대 차트 수.
+ * 차트를 차례로 그리므로 개수가 곧 CPU 점유 시간이 된다. 보고서는 카드 섹션마다 차트 하나라 50 개면 넉넉하다.
+ */
+const MAX_CHARTS = 50;
+
 const router = Router();
 
 interface ChartDataset {
@@ -79,6 +85,12 @@ router.post(
 
     if (!body.charts || !Array.isArray(body.charts) || body.charts.length === 0) {
       res.status(400).json({ error: 'charts array is required and must not be empty' });
+      return;
+    }
+
+    // 개수 상한 초과는 하나도 그리기 전에 막는다(CPU 시간 독점 방지)
+    if (body.charts.length > MAX_CHARTS) {
+      res.status(400).json({ error: `charts must contain at most ${MAX_CHARTS} items` });
       return;
     }
 
