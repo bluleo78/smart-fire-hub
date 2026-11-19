@@ -81,6 +81,47 @@ test.describe('온톨로지 생명주기', () => {
     expect(capture.requests).toHaveLength(0);
   });
 
+  // WD-818: 빈 값·서버 오류가 나면 스크린리더가 바로 읽도록 오류 문구가 role=alert 이고, 포커스는 「만들기」 버튼에
+  // 남지 않고 고칠 도메인 칸으로 돌아간다(로그인·프로필 폼과 같은 동작).
+  test('빈 도메인 제출 시 오류가 알림되고 포커스가 도메인 칸으로 간다 (WD-818)', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.goto('/knowledge-graph/model');
+    await page.getByRole('button', { name: '새 온톨로지' }).click();
+    const dialog = page.getByTestId('ontology-create-dialog');
+    const input = dialog.locator('#ontology-domain');
+    const createButton = dialog.getByRole('button', { name: '만들기' });
+
+    await createButton.focus();
+    await page.keyboard.press('Enter');
+    const alert = dialog.getByRole('alert');
+    await expect(alert).toHaveText('도메인명을 입력하세요.');
+    await expect(alert).toHaveAttribute('id', 'ontology-domain-error');
+    await expect(input).toHaveAttribute('aria-describedby', /ontology-domain-error/);
+    await expect(input).toBeFocused();
+  });
+
+  test('도메인 중복(409) 오류가 나도 포커스가 도메인 칸으로 돌아간다 (WD-818)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(
+      page,
+      'POST',
+      '/api/v1/ontologies',
+      { message: '이미 같은 도메인의 온톨로지가 있습니다: 화재조사 보고서' },
+      { status: 409 },
+    );
+    await page.goto('/knowledge-graph/model');
+    await page.getByRole('button', { name: '새 온톨로지' }).click();
+    const dialog = page.getByTestId('ontology-create-dialog');
+    const input = dialog.locator('#ontology-domain');
+    await input.fill('화재조사 보고서');
+    await dialog.getByRole('button', { name: '만들기' }).click();
+
+    await expect(dialog.getByRole('alert')).toHaveText('이미 같은 도메인의 온톨로지가 있습니다: 화재조사 보고서');
+    await expect(input).toBeFocused();
+  });
+
   test('도메인명 중복(409)은 필드 에러로 표시된다', async ({ authenticatedPage: page }) => {
     // 실제 백엔드 페이로드(GlobalExceptionHandler.handleIllegalState → ErrorResponse.message = ex.getMessage())를
     // 그대로 목킹한다 — 코드리뷰 결함 #1: 친절한 한국어를 임의로 목킹하면 실제 도메인 중복 사전 검사가

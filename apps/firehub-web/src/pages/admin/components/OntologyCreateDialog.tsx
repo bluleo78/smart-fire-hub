@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -31,6 +31,8 @@ export default function OntologyCreateDialog({ open, onOpenChange, onCreated }: 
   const [domain, setDomain] = useState('');
   const [error, setError] = useState<string | null>(null);
   const createOntology = useCreateOntology();
+  /** 오류가 나면 도메인 칸으로 포커스를 옮기기 위한 참조(WD-818) — 로그인·프로필 폼처럼 오류 칸으로 바로 돌아가게 한다. */
+  const domainRef = useRef<HTMLInputElement>(null);
 
   const submit = () => {
     const trimmed = domain.trim();
@@ -39,6 +41,8 @@ export default function OntologyCreateDialog({ open, onOpenChange, onCreated }: 
     const domainError = validateDomain(trimmed);
     if (domainError) {
       setError(domainError);
+      // WD-818: 포커스가 「만들기」 버튼에 남아 있으면 키보드·스크린리더 사용자가 고칠 칸을 다시 찾아야 한다
+      domainRef.current?.focus();
       return;
     }
     setError(null);
@@ -52,7 +56,11 @@ export default function OntologyCreateDialog({ open, onOpenChange, onCreated }: 
           onCreated(id);
         },
         // 도메인 중복(409)은 다이얼로그를 닫지 않고 필드 옆에 보여준다 — 이름을 고쳐 재시도해야 하기 때문.
-        onError: (err) => setError(extractApiError(err, '온톨로지 생성에 실패했습니다.')),
+        // WD-818: 서버 오류(중복 등)도 칸에 이어지므로 같은 칸으로 포커스를 돌려 바로 고칠 수 있게 한다
+        onError: (err) => {
+          setError(extractApiError(err, '온톨로지 생성에 실패했습니다.'));
+          domainRef.current?.focus();
+        },
       },
     );
   };
@@ -71,6 +79,7 @@ export default function OntologyCreateDialog({ open, onOpenChange, onCreated }: 
         <FormField label="도메인" htmlFor="ontology-domain" required error={error ?? undefined}>
           <Input
             id="ontology-domain"
+            ref={domainRef}
             aria-required
             value={domain}
             onChange={(e) => setDomain(e.target.value)}
