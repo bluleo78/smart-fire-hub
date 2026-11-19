@@ -91,6 +91,20 @@ test.describe('AI 검수 인박스', () => {
     await expect(page.getByText('“수천만원대”')).toBeVisible();
   });
 
+  // WD-813: 제목이 앱 다른 화면의 h1 체계(28px/600/tracking-tight)와 같아야 한다.
+  test('페이지 제목이 앱 h1 체계(28px)다 (WD-813)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(page, 'GET', '/api/v1/graphrag/review-items', []);
+    await page.goto('/knowledge-graph/review');
+
+    const h1 = page.getByRole('heading', { level: 1, name: 'AI 검수' });
+    await expect(h1).toBeVisible();
+    await expect(h1).toHaveCSS('font-size', '28px');
+    await expect(h1).toHaveCSS('font-weight', '600');
+    await expect(h1).toHaveCSS('letter-spacing', '-0.7px');
+  });
+
   // #422 — pending 큐가 페이지 크기(50)를 넘기면 무한스크롤로 나머지를 이어 불러온다.
   test.describe('무한스크롤 페이지네이션 (#422)', () => {
     test('첫 페이지가 꽉 차면 "더 보기"가 나타나고, 클릭 시 page=1로 다음 페이지를 요청해 이어붙인다', async ({ authenticatedPage: page }) => {
