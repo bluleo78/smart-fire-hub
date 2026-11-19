@@ -48,7 +48,7 @@ test.describe('상세 섹션 제목 위계 (WD-811)', () => {
     await expectSectionHeadings(page, ['이상 탐지', '최근 이상 탐지']);
   });
 
-  test('리포트 양식 상세 섹션 제목이 보기·편집 모드 모두 h2 20px 이다 (WD-811)', async ({
+  test('리포트 양식 상세 섹션 제목이 보기 모드 h2 20px, 편집 빌더 헤더 h2 16px 이다 (WD-811)', async ({
     authenticatedPage: page,
   }) => {
     // 편집 버튼은 builtin: false 양식에만 보여, 공용 모킹 위에 커스텀 양식을 덮는다
@@ -62,10 +62,10 @@ test.describe('상세 섹션 제목 위계 (WD-811)', () => {
     await expectSectionHeadings(page, ['섹션 구조', '섹션 구조 미리보기']);
     await expect(page.getByRole('heading', { level: 3 })).toHaveCount(0);
 
-    // 편집 모드 — 빌더 왼쪽 「섹션 구조」 제목도 같은 h2 20px
+    // 편집 모드 — 빌더 왼쪽 「섹션 구조」 제목은 h2 이되 배지와 한 줄인 툴바형 헤더라 16px(#788 예외와 같음)
     await page.getByRole('button', { name: '편집' }).click();
     await expect(page.getByRole('tab', { name: '빌더' })).toBeVisible();
-    await expectSectionHeadings(page, ['섹션 구조']);
+    await expect(page.getByRole('heading', { level: 2, name: '섹션 구조', exact: true })).toHaveCSS('font-size', '16px');
     await expect(page.getByRole('heading', { level: 3 })).toHaveCount(0);
   });
 });

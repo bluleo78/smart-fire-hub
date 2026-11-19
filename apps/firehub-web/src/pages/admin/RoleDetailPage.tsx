@@ -587,8 +587,9 @@ function RoleDetailView() {
           )}
           {Object.entries(permissionsByCategory).map(([category, perms]) => (
             <div key={category} className="space-y-3">
-              {/* 권한 그룹 제목: h2 아래 h3 16px, 대문자·흐린 색 제거. (WD-811) */}
-              <h3 className="text-base leading-6 font-semibold">
+              {/* 권한 그룹 제목: h2 아래 h3 16px, 흐린 색 제거(WD-811). 실제 카테고리 키는 소문자(dataset 등)이고
+                  한국어 라벨은 security 하나뿐이라, 라벨을 채우는 WD-814 전까지 uppercase 로 예전처럼 대문자로 보인다. */}
+              <h3 className="text-base leading-6 font-semibold uppercase">
                 {PERMISSION_CATEGORY_LABELS[category] ?? category}
               </h3>
               <div className="space-y-2">
