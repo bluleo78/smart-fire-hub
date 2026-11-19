@@ -15,6 +15,7 @@ import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.global.validation.DescriptionLimits;
 import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.pipeline.dto.*;
+import com.smartfirehub.pipeline.exception.PipelineAlreadyRunningException;
 import com.smartfirehub.pipeline.service.ApiCallPreviewService;
 import com.smartfirehub.pipeline.service.PipelineService;
 import com.smartfirehub.pipeline.service.TriggerService;
@@ -247,6 +248,19 @@ class PipelineControllerTest {
         .andExpect(status().isConflict())
         .andExpect(jsonPath("$.message").value("실행 중에는 삭제할 수 없습니다. 실행을 취소한 뒤 삭제하세요"))
         .andExpect(jsonPath("$.code").value("PIPELINE_EXECUTION_ACTIVE"));
+  }
+
+  /** 이미 대기·실행 중인 파이프라인을 수동 실행하면 409 와 오류 코드·안내 문구로 거부한다(WD-825). */
+  @Test
+  void executePipeline_alreadyRunning_returns409WithCode() throws Exception {
+    when(pipelineService.executePipeline(eq(1L), anyLong(), eq("MANUAL"), isNull()))
+        .thenThrow(new PipelineAlreadyRunningException(false));
+
+    mockMvc
+        .perform(post("/api/v1/pipelines/1/execute").header("Authorization", "Bearer test-token"))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("PIPELINE_ALREADY_RUNNING"))
+        .andExpect(jsonPath("$.message").value(PipelineAlreadyRunningException.MESSAGE));
   }
 
   /** 삭제 영향 조회(WD-170) — 함께 지워질 자동 생성 임시 데이터셋 개수를 그대로 내보낸다. */

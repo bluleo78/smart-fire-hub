@@ -288,8 +288,9 @@ class PipelineUserDmlReplaceOutputLockTest extends IntegrationTestBase {
       gate.setAutoCommit(false);
       try (Statement st = gate.createStatement()) {
         st.execute("LOCK TABLE " + DataSchema.qualify(srcTable) + " IN ACCESS EXCLUSIVE MODE");
-        executions.add(executionService.executePipeline(firstPipeline, userId));
-        executions.add(executionService.executePipeline(secondPipeline, userId));
+        // WD-825: 같은 파이프라인의 수동 중복 실행은 409 이므로, 겹침을 만드는 두 실행은 트리거 실행(SCHEDULE)으로 올린다.
+        executions.add(executionService.executePipeline(firstPipeline, userId, "SCHEDULE", null));
+        executions.add(executionService.executePipeline(secondPipeline, userId, "SCHEDULE", null));
 
         // pg_locks 만 본다(pg_stat_activity 는 트랜잭션 안에서 첫 조회 스냅샷으로 고정된다 — #731
         // 테스트의 실측). 테스트 DB 는 이 JVM 전용 컨테이너라 다른 세션의 잠금 대기가 섞이지 않는다.

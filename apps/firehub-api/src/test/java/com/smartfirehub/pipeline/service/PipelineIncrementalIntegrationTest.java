@@ -878,7 +878,9 @@ class PipelineIncrementalIntegrationTest extends IntegrationTestBase {
           "INSERT INTO "
               + DataSchema.qualify(srcTable)
               + " (code, name) VALUES ('NEW1', 'new-row')");
-      Long exec2 = executionService.executePipeline(pipelineId, userId);
+      // WD-825: 같은 파이프라인의 수동 중복 실행은 409 로 막히므로, 겹치는 뒤 실행은 트리거 실행(SCHEDULE)으로 올린다.
+      // 트리거 경로로는 여전히 겹칠 수 있어 책갈피 경쟁 검증이 유효하다.
+      Long exec2 = executionService.executePipeline(pipelineId, userId, "SCHEDULE", null);
 
       assertThat(awaitTerminal(exec1)).as("앞 실행").isEqualTo("COMPLETED");
       assertThat(awaitTerminal(exec2)).as("뒤 실행").isEqualTo("COMPLETED");

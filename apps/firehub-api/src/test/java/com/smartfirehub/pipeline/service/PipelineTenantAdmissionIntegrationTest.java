@@ -54,7 +54,9 @@ class PipelineTenantAdmissionIntegrationTest
     Long first = executionService.executePipeline(slow, userId);
     awaitStatus(slow, first, "RUNNING");
     Long waiting = executionService.executePipeline(quick, userId);
-    Long next = executionService.executePipeline(quick, userId);
+    // WD-825: 같은 파이프라인의 수동 중복 실행은 409 로 막히므로, 취소 뒤 자리를 받을 두 번째 실행은
+    // 트리거 실행(SCHEDULE)으로 올려 「대기 중 실행 취소 → 다음 실행 승계」 의도를 그대로 검증한다.
+    Long next = executionService.executePipeline(quick, userId, "SCHEDULE", null);
 
     assertThat(executionService.cancelExecution(quick, waiting, userId).status())
         .isEqualTo("CANCELLED");
