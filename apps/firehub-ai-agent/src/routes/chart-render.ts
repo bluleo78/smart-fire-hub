@@ -14,6 +14,14 @@ type ChartType = (typeof ALLOWED_TYPES)[number];
 const MAX_DIMENSION = 2000;
 
 /**
+ * 한 요청에서 그릴 수 있는 최대 차트 수.
+ * 차트를 차례로 그리므로 개수가 곧 CPU 점유 시간이 된다. 다만 API 의 ReportRenderUtils 는 카드 섹션마다
+ * 차트 하나를 한 요청에 모아 보내고, 400 이 나면 모든 차트를 버린다. 리포트 섹션은 하위 포함 최대 100 개
+ * (ReportSectionLimits.MAX_SECTIONS)이므로 상한을 그와 같은 100 으로 둔다.
+ */
+const MAX_CHARTS = 100;
+
+/**
  * 렌더 전에 모든 차트 요청을 검증한다(하나라도 잘못되면 아무것도 그리지 않는다).
  * width/height 는 주어졌다면 1..MAX_DIMENSION 의 정수여야 한다.
  * @returns 오류 메시지, 유효하면 null
@@ -33,12 +41,6 @@ function validateCharts(charts: ChartRequest[]): string | null {
   }
   return null;
 }
-
-/**
- * 한 요청에서 그릴 수 있는 최대 차트 수.
- * 차트를 차례로 그리므로 개수가 곧 CPU 점유 시간이 된다. 보고서는 카드 섹션마다 차트 하나라 50 개면 넉넉하다.
- */
-const MAX_CHARTS = 50;
 
 const router = Router();
 

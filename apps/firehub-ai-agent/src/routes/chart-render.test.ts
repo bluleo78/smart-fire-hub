@@ -285,20 +285,20 @@ describe('POST /agent/chart-render', () => {
     expect(mockRenderChartPng).toHaveBeenCalledWith(expect.anything(), 600, 400);
   });
 
-  it('should accept exactly 50 charts', async () => {
+  it('should accept exactly 100 charts', async () => {
     mockRenderChartPng.mockResolvedValue(Buffer.from('x'));
-    const body = { charts: Array.from({ length: 50 }, () => validBody.charts[0]) };
+    const body = { charts: Array.from({ length: 100 }, () => validBody.charts[0]) };
     const res = await makeRequest(createApp(), body, authHeaders);
     expect(res.status).toBe(200);
-    expect((res.body as { images: unknown[] }).images).toHaveLength(50);
-    expect(mockRenderChartPng).toHaveBeenCalledTimes(50);
+    expect((res.body as { images: unknown[] }).images).toHaveLength(100);
+    expect(mockRenderChartPng).toHaveBeenCalledTimes(100);
   });
 
-  it('should return 400 without rendering when more than 50 charts are sent', async () => {
-    const body = { charts: Array.from({ length: 51 }, () => validBody.charts[0]) };
+  it('should return 400 without rendering when more than 100 charts are sent', async () => {
+    const body = { charts: Array.from({ length: 101 }, () => validBody.charts[0]) };
     const res = await makeRequest(createApp(), body, authHeaders);
     expect(res.status).toBe(400);
-    expect((res.body as { error: string }).error).toBe('charts must contain at most 50 items');
+    expect((res.body as { error: string }).error).toBe('charts must contain at most 100 items');
     expect(mockRenderChartPng).not.toHaveBeenCalled();
   });
 });

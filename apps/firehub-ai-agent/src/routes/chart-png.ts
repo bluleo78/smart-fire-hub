@@ -5,7 +5,6 @@ import { Chart, registerables, type ChartConfiguration, type Plugin } from 'char
 // (CanvasRenderingContext2D·HTMLCanvasElement)을 직접 쓰지 않고 chart.js 시그니처에서 타입을 뽑는다(WD-806).
 // 로컬에서는 다른 패키지가 DOM 타입을 끌어와 통과했지만 Docker 빌드의 tsc 에서는 TS2304 로 깨졌다.
 type ChartCanvasItem = ConstructorParameters<typeof Chart>[0];
-type ChartLookupKey = Parameters<typeof Chart.getChart>[0];
 
 // chart.js 의 모든 컨트롤러·스케일·요소를 모듈 로드 때 한 번만 등록한다.
 // (요청마다 등록할 필요가 없고, tree-shaking 이 필요한 번들 환경도 아니다.)
@@ -56,6 +55,9 @@ export async function renderChartPng(
 ): Promise<Buffer> {
   const canvas = createCanvas(width, height);
 
+  // 생성자가 던질 때 chart 변수는 비어 있어도 chart.js 는 인스턴스를 Chart.instances 에 이미 등록했을 수 있다.
+  // canvas 로 찾는 Chart.getChart 는 ctx.canvas === canvas 라는 가정에 기대므로, 생성 전 키 스냅샷으로 찾는다.
+  const before = new Set(Object.keys(Chart.instances));
   let chart: Chart | undefined;
   try {
     chart = new Chart(canvas as unknown as ChartCanvasItem, {
@@ -72,9 +74,14 @@ export async function renderChartPng(
     // destroy 는 인코딩이 끝난 뒤(finally)에 한다.
     return await canvas.encode('png');
   } finally {
-    // 생성자가 던지면(잘못된 data 등) chart 는 비어 있지만 chart.js 는 인스턴스를 Chart.instances 에
-    // 이미 등록한 뒤다 — 그때만 같은 canvas 로 인스턴스를 찾아 정리한다(누수 방지).
-    // 만든 객체와 찾는 객체가 같은 canvas 라 chart.js 의 ctx.canvas 동일성 가정이 없다.
-    (chart ?? Chart.getChart(canvas as unknown as ChartLookupKey))?.destroy();
+    if (chart) {
+      chart.destroy();
+    } else {
+      // 생성자는 동기라 그 사이에 다른 렌더가 인스턴스를 등록할 수 없다 — 스냅샷에 없던 인스턴스는
+      // 모두 이번 호출이 만든 것이므로 안전하게 정리한다(누수 방지).
+      for (const [key, instance] of Object.entries(Chart.instances)) {
+        if (!before.has(key)) instance.destroy();
+      }
+    }
   }
 }

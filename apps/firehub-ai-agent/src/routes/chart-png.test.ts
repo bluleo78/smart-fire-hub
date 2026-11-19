@@ -19,6 +19,9 @@ const barConfig = {
   },
 };
 
+/** destroy 스파이가 기록하는 캔버스의 최소 모양(DOM 타입 없이). */
+type SeenCanvas = { width: number; height: number; getContext: unknown };
+
 describe('renderChartPng', () => {
   it('PNG 시그니처와 요청한 크기(IHDR)의 이미지를 만든다', async () => {
     const buf = await renderChartPng(barConfig, 320, 200);
@@ -49,6 +52,14 @@ describe('renderChartPng', () => {
     expect(Object.keys(Chart.instances)).toHaveLength(0);
   });
 
+  it('생성자가 던져도 호출 전과 Chart.instances 개수가 같다', async () => {
+    const before = Object.keys(Chart.instances).length;
+    await expect(
+      renderChartPng({ ...barConfig, type: 'no-such-type' }, 200, 100),
+    ).rejects.toThrow();
+    expect(Object.keys(Chart.instances)).toHaveLength(before);
+  });
+
   it('성공 렌더 뒤에도 Chart 인스턴스를 남기지 않는다', async () => {
     await renderChartPng(barConfig, 200, 100);
     expect(Object.keys(Chart.instances)).toHaveLength(0);
@@ -57,9 +68,9 @@ describe('renderChartPng', () => {
   it('Chart 를 우리가 만든 캔버스로 만든다', async () => {
     // destroy 호출 때의 this.canvas 를 기록하되 원래 destroy 도 그대로 부른다.
     const original = Chart.prototype.destroy;
-    const seen: Array<{ width: number; height: number; getContext: unknown }> = [];
+    const seen: SeenCanvas[] = [];
     const spy = vi.spyOn(Chart.prototype, 'destroy').mockImplementation(function (this: Chart) {
-      seen.push(this.canvas as unknown as (typeof seen)[number]);
+      seen.push(this.canvas as unknown as SeenCanvas);
       return original.call(this);
     });
     try {
