@@ -36,6 +36,7 @@ import com.smartfirehub.securitylevel.ai.AiCall;
 import com.smartfirehub.securitylevel.ai.AiCallContext;
 import com.smartfirehub.securitylevel.ai.AiHostingResolver;
 import com.smartfirehub.user.repository.UserRepository;
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -1581,8 +1582,9 @@ public class PipelineService {
           + "MB 사이의 정수여야 합니다";
 
   /**
-   * API_CALL 응답 크기 한도(maxResponseSizeMb)의 저장 검증(WD-810) — 비어 있으면 실행기 기본값을 쓰므로 허용하고, 값이 있으면 1~100 의 정수만 받는다. 상한을 저장에서
-   * 막는 근거는 {@link ApiCallExecutor#isRunnableMaxResponseSizeMb}. 단 저장본과 같은 값을 그대로 되돌려 보내는 저장은 통과시킨다.
+   * API_CALL 응답 크기 한도(maxResponseSizeMb)의 저장 검증(WD-810) — 비어 있으면 실행기 기본값을 쓰므로 허용하고, 값이 있으면 1~100 의
+   * 정수만 받는다. 상한을 저장에서 막는 근거는 {@link ApiCallExecutor#isRunnableMaxResponseSizeMb}. 단 저장본과 같은 값을 그대로
+   * 되돌려 보내는 저장은 통과시킨다.
    */
   private void validateApiCallMaxResponseSize(
       PipelineStepRequest step, PipelineStepResponse storedStep) {
@@ -1603,16 +1605,18 @@ public class PipelineService {
   }
 
   /**
-   * 요청 값이 저장본 값과 같고 그 값이 지금도 도는 값인지(WD-810). 상한(100) 이전에 저장된 101~2047 옛 스텝은 편집기가 모르는 apiConfig 키를 되돌려 보내므로 같은 값이
-   * 다시 온다 — 막으면 설명만 고쳐도 저장할 수 없다(WD-426/WD-585 와 같은 이유). 돌지 않는 저장값은 되돌려 보내도 거부해 사용자가 고치게 한다. 같은 값인지는 원문으로, 도는 값인지는 실행과
-   * 같은 변환으로 판정한다.
+   * 요청 값이 저장본 값과 같고 그 값이 지금도 도는 값인지(WD-810). 상한(100) 이전에 저장된 101~2047 옛 스텝은 편집기가 모르는 apiConfig 키를
+   * 되돌려 보내므로 같은 값이 다시 온다 — 막으면 설명만 고쳐도 저장할 수 없다(WD-426/WD-585 와 같은 이유). 돌지 않는 저장값은 되돌려 보내도 거부해 사용자가
+   * 고치게 한다. 같은 값인지는 숫자 값으로(150.0 과 150 은 같다), 도는 값인지는 실행과 같은 변환으로 판정한다.
    */
   private boolean isUnchangedRunnableMaxResponseSize(Object requested, Object stored) {
-    // 같은 값인지는 원문 문자열로 본다 — null 과 빈 문자열은 둘 다 "비어 있음", "150" 과 150 은 같고, 150.0 과 150 은 바뀐 값이다.
-    if (!normalizedText(requested).equals(normalizedText(stored))) {
+    // 같은 값인지는 숫자 값으로 본다 — null 과 빈 문자열은 둘 다 "비어 있음", "150"·150·150.0 은 모두 같고, 10.5 와 10 은 다르다.
+    // jsonb 가 150.0 으로 돌려준 옛 값을 편집기가 150 으로 되돌려 보내도 같은 값이어야 설명만 고치는 저장이 막히지 않는다.
+    if (!isSameMaxResponseSize(requested, stored)) {
       return false;
     }
-    // 지금도 도는 값인지는 실행 때와 같은 변환(ObjectMapper)으로 판정한다 — 소수(10.5)는 10, 빈 문자열은 null(기본값)로 돌던 옛 값은 그대로 돈다.
+    // 지금도 도는 값인지는 실행 때와 같은 변환(ObjectMapper)으로 판정한다 — 소수(10.5)는 10, 빈 문자열은 null(기본값)로 돌던 옛 값은 그대로
+    // 돈다.
     try {
       Integer storedMb = JsonConversions.convertValue(objectMapper, stored, Integer.class);
       return storedMb == null || ApiCallExecutor.isRunnableMaxResponseSizeMb(storedMb);
@@ -1621,9 +1625,41 @@ public class PipelineService {
     }
   }
 
-  private static String normalizedText(Object raw) {
-    return raw == null ? "" : raw.toString().trim();
+  /**
+   * 두 응답 크기 한도 값이 같은지 본다(WD-810) — 둘 다 숫자로 읽히면 BigDecimal 크기 비교(150.0 == 150, "10.5" == 10.5)로, 아니면
+   * 앞뒤 공백을 뗀 문자열로 비교한다. null 과 빈 문자열은 둘 다 "비어 있음"으로 같다. 지수가 큰 입력("1e999999999")도 compareTo 는 안전하며,
+   * 파싱 실패는 숫자가 아닌 것으로 본다.
+   */
+  private static boolean isSameMaxResponseSize(Object a, Object b) {
+    String textA = a == null ? "" : a.toString().trim();
+    String textB = b == null ? "" : b.toString().trim();
+    BigDecimal numA = parseDecimalOrNull(textA);
+    BigDecimal numB = parseDecimalOrNull(textB);
+    if (numA != null && numB != null) {
+      return numA.compareTo(numB) == 0;
+    }
+    return textA.equals(textB);
   }
+
+  /**
+   * 숫자로 읽히면 BigDecimal, 아니면 null — 빈 문자열·숫자 아님·지수 범위 초과는 모두 null. 소수 자릿수(scale)가 ±100 을 넘는 값도 null
+   * 로 본다 — 자릿수가 크게 다른 두 값의 compareTo 는 10 의 거듭제곱을 실제로 만들어 맞추므로("1.0e999999999" 등) 사용자 입력 하나로 큰 계산이
+   * 생기지 않게 하려는 것이다. 응답 크기 한도로 쓸 수 있는 값은 이 범위 안이다.
+   */
+  private static BigDecimal parseDecimalOrNull(String text) {
+    if (text.isEmpty()) {
+      return null;
+    }
+    try {
+      BigDecimal value = new BigDecimal(text);
+      return Math.abs(value.scale()) > MAX_COMPARED_DECIMAL_SCALE ? null : value;
+    } catch (NumberFormatException e) {
+      return null;
+    }
+  }
+
+  /** {@link #parseDecimalOrNull} 이 숫자로 받아들이는 소수 자릿수(scale) 절댓값의 상한. */
+  private static final int MAX_COMPARED_DECIMAL_SCALE = 100;
 
   /**
    * 출력 컬럼 이름(API_CALL 대상 컬럼·AI_CLASSIFY 출력 컬럼)의 예약어·형식 검사.
