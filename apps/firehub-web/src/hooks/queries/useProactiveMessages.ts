@@ -85,6 +85,9 @@ function isRunInFlight(job: ProactiveJob): boolean {
   return job.lastExecution?.status === 'RUNNING';
 }
 
+/** 작업 목록 읽기 — 목록 화면과 복제의 이름 읽기(fetchQuery)가 같은 캐시 데이터 모양을 쓰게 한곳에 둔다(WD-837). */
+const fetchJobs = () => proactiveApi.getJobs().then((r) => r.data);
+
 /**
  * 스마트 작업 목록 조회.
  *
@@ -94,7 +97,7 @@ function isRunInFlight(job: ProactiveJob): boolean {
 export function useProactiveJobs(options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: KEYS.jobs,
-    queryFn: () => proactiveApi.getJobs().then((r) => r.data),
+    queryFn: fetchJobs,
     enabled: options?.enabled ?? true,
     refetchInterval: (query) =>
       query.state.data?.some((job) => isRunInFlight(job)) ? RUN_POLL_MS : false,
@@ -277,7 +280,11 @@ export function useCloneProactiveJob() {
           enabled: false,
         }).then((r) => r.data),
         // 첫 409 뒤 기존 작업 이름을 한 번 읽어 이미 쓰인 사본 번호를 건너뛴다 — 목록 조회가 실패하면 순차 재시도로 이어진다(WD-834)
-        () => proactiveApi.getJobs().then((r) => r.data.map((j) => j.name)),
+        // 작업 목록 화면이 이미 읽어 둔 캐시(KEYS.jobs)가 30초 안이면 그대로 쓴다 — 복제는 목록 화면에서 일어나 같은 목록을 또 읽을 까닭이 없다(WD-837)
+        () =>
+          queryClient
+            .fetchQuery({ queryKey: KEYS.jobs, queryFn: fetchJobs, staleTime: 30_000 })
+            .then((jobs) => jobs.map((j) => j.name)),
       ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: KEYS.jobs });

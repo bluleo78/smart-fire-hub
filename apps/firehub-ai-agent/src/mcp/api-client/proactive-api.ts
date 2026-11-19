@@ -35,22 +35,84 @@ export function numberedTemplateName(base: string, attempt: number): string {
   return stem.slice(0, end).trimEnd() + tail;
 }
 
+/** 양식 이름 목록 읽기 — 한 페이지 크기·첫 페이지 뒤 병렬 폭·최대 페이지 수(웹과 같다, WD-837). */
+const TEMPLATE_LIST_PAGE_SIZE = 200;
+const TEMPLATE_LIST_PARALLEL = 4;
+const TEMPLATE_LIST_MAX_PAGES = 20;
+
+/** 이름 비교 기준 — 앞뒤 공백·대소문자를 무시한다(서버 중복 판정과 맞춘다). */
+function normalizeName(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+/**
+ * 남은 양식 이름을 읽어 온다(WD-837) — 첫 페이지 뒤 4페이지씩 병렬로, 최대 20페이지, 짧은 페이지가 나오면 멈춘다.
+ * 이름 고르기는 힌트일 뿐이므로 읽기에 실패하면 빈 목록을 돌려 순차 재시도로 되돌아간다.
+ */
+async function loadTemplateNames(client: AxiosInstance): Promise<string[]> {
+  // 한 페이지의 행을 읽는다 — 이름 담기는 아래가 페이지 순서대로 한다(병렬 읽기 순서와 무관하게 결정적이게)
+  const readPage = async (page: number): Promise<Array<{ name?: unknown }>> => {
+    const response = await client.get('/proactive/templates', {
+      params: { page, size: TEMPLATE_LIST_PAGE_SIZE },
+    });
+    return Array.isArray(response.data) ? response.data : [];
+  };
+  const names: string[] = [];
+  // 페이지 이름을 담고, 짧은 페이지(마지막)였는지 돌려준다
+  const collect = (rows: Array<{ name?: unknown }>): boolean => {
+    for (const row of rows) if (typeof row?.name === 'string') names.push(row.name);
+    return rows.length < TEMPLATE_LIST_PAGE_SIZE;
+  };
+  try {
+    if (collect(await readPage(0))) return names;
+    for (let next = 1; next < TEMPLATE_LIST_MAX_PAGES; next += TEMPLATE_LIST_PARALLEL) {
+      const pages: Promise<Array<{ name?: unknown }>>[] = [];
+      for (let p = next; p < Math.min(next + TEMPLATE_LIST_PARALLEL, TEMPLATE_LIST_MAX_PAGES); p++) {
+        pages.push(readPage(p));
+      }
+      // 웹 getAllTemplateNames 와 같게: 페이지 순서대로 담다가 첫 짧은 페이지(그 페이지 이름까지 담음)에서 멈춘다
+      for (const rows of await Promise.all(pages)) {
+        if (collect(rows)) return names;
+      }
+    }
+    return names;
+  } catch {
+    return [];
+  }
+}
+
 /**
  * 번호 붙인 양식 이름으로 생성하고, 409 DUPLICATE_NAME 이면 다음 번호 이름으로 다시 시도한다(WD-824).
  * 양식 이름은 작업 이름에서 파생된 것이라 사용자가 정한 적이 없다 — 작업을 지워도 양식은 남아 있어 같은 이름으로 다시 만들면 겹친다.
- * 다른 오류와 시도 상한을 넘긴 마지막 오류는 그대로 던진다.
+ * WD-837: 첫 겹침 뒤 남은 양식 이름을 한 번만 읽어(겹치지 않으면 읽지 않는다), 이미 있거나 이미 실패한 이름의 번호를 건너뛰고
+ * 가장 작은 빈 번호로 시도한다. 생성 호출은 20번까지이며, 소진하면 사용자가 할 일을 안내한다. 다른 오류는 그대로 던진다.
  */
 async function createWithNumberedTemplateName<T>(
   base: string,
   create: (name: string) => Promise<T>,
+  loadExistingNames: () => Promise<string[]>,
 ): Promise<T> {
-  for (let attempt = 1; ; attempt++) {
+  let existing: Set<string> | null = null;
+  let attempt = 1;
+  for (let calls = 1; ; calls++) {
     try {
       return await create(numberedTemplateName(base, attempt));
     } catch (error) {
-      if (!isDuplicateNameError(error) || attempt >= TEMPLATE_NAME_MAX_ATTEMPTS) throw error;
+      if (!isDuplicateNameError(error)) throw error;
+      if (calls >= TEMPLATE_NAME_MAX_ATTEMPTS) break;
+      // 첫 겹침 뒤에 한 번만 읽는다.
+      existing ??= new Set((await loadExistingNames()).map(normalizeName));
+      // 방금 겹친 번호 다음부터 목록에 없는 가장 작은 번호 — 그 아래는 모두 목록에 있거나 이미 겹쳤다.
+      // 낡은 목록에 없던 이름에 걸려도 같은 번호로 돌아가지 않고, 목록이 유한해 찾기는 늘 끝난다.
+      let n = attempt + 1;
+      while (existing.has(normalizeName(numberedTemplateName(base, n)))) n++;
+      attempt = n;
     }
   }
+  // 지울 양식을 찾을 수 있게 실제로 보낸 1회차 이름(200자 자르기 반영)을 넣는다 — 웹 goalTemplateName 과 같다.
+  throw new Error(
+    `자동 양식 이름을 정하지 못했습니다. 쓰지 않는 「${numberedTemplateName(base, 1)}」 양식을 지우거나 작업 이름을 바꾼 뒤 다시 만들어 주세요.`,
+  );
 }
 
 export function createProactiveApi(client: AxiosInstance) {
@@ -170,6 +232,7 @@ export function createProactiveApi(client: AxiosInstance) {
           style: data.templateStyle,
           sections: data.templateStructure.sections,
         }),
+        () => loadTemplateNames(client),
       );
       const templateId = (template.data as { id: number }).id;
       // 2. Create smart job

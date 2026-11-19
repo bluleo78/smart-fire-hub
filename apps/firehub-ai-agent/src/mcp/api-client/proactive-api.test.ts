@@ -84,3 +84,77 @@ describe('createSmartJobWithTemplate 양식 이름 길이 (WD-834)', () => {
     expect(sentNames[0].endsWith(' 양식')).toBe(true);
   });
 });
+
+/** 자동 양식 이름이 남은 양식 이름을 건너뛰고, 소진되면 할 일을 안내한다(WD-837). */
+describe('createSmartJobWithTemplate 자동 양식 이름 건너뛰기·소진 안내 (WD-837)', () => {
+  let client: FireHubApiClient;
+  const dupBody = { status: 409, error: 'Conflict', code: 'DUPLICATE_NAME', message: '이미 있는 이름' };
+  const args = {
+    name: 'n',
+    prompt: 'p',
+    templateName: 'X 양식',
+    templateStructure: { sections: [{ key: 'k', label: 'l' }], output_format: 'markdown' },
+  };
+  /** 「X 양식」, 「X 양식 (2)」 … 「X 양식 (count)」 */
+  const existingNames = (count: number) =>
+    Array.from({ length: count }, (_, i) => ({ name: i === 0 ? 'X 양식' : `X 양식 (${i + 1})` }));
+
+  beforeEach(() => {
+    nock.cleanAll();
+    client = new FireHubApiClient(BASE_URL, TOKEN, USER_ID);
+  });
+
+  afterEach(() => {
+    nock.cleanAll();
+  });
+
+  it('첫 409 뒤 목록을 한 번 읽어 남은 이름을 건너뛰고 비어 있는 번호로 만든다', async () => {
+    const names: string[] = [];
+    nock(BASE_URL)
+      .post('/proactive/templates', (b: Record<string, unknown>) => {
+        names.push(b.name as string);
+        return true;
+      })
+      .times(2)
+      .reply(function () {
+        return names.length === 1 ? [409, dupBody] : [201, { id: 70 }];
+      });
+    const listScope = nock(BASE_URL)
+      .get('/proactive/templates')
+      .query({ page: '0', size: '200' })
+      .reply(200, existingNames(20));
+    nock(BASE_URL).post('/proactive/jobs').reply(201, { id: 9 });
+
+    await client.createSmartJobWithTemplate(args);
+
+    expect(names).toEqual(['X 양식', 'X 양식 (21)']);
+    expect(listScope.isDone()).toBe(true);
+  });
+
+  it('목록 읽기가 실패하면 순차 재시도하다 20번째에 소진 안내를 던진다', async () => {
+    let calls = 0;
+    nock(BASE_URL)
+      .post('/proactive/templates', () => {
+        calls += 1;
+        return true;
+      })
+      .times(25)
+      .reply(409, dupBody);
+    nock(BASE_URL).get('/proactive/templates').query(true).reply(500, { message: 'boom' });
+
+    await expect(client.createSmartJobWithTemplate(args)).rejects.toThrow(
+      '자동 양식 이름을 정하지 못했습니다. 쓰지 않는 「X 양식」 양식을 지우거나 작업 이름을 바꾼 뒤 다시 만들어 주세요.',
+    );
+    expect(calls).toBe(20);
+  });
+
+  it('겹치지 않으면 목록을 읽지 않는다', async () => {
+    nock(BASE_URL).post('/proactive/templates').reply(201, { id: 3 });
+    nock(BASE_URL).post('/proactive/jobs').reply(201, { id: 4 });
+    const listScope = nock(BASE_URL).get('/proactive/templates').query(true).reply(200, []);
+
+    await client.createSmartJobWithTemplate(args);
+
+    expect(listScope.isDone()).toBe(false);
+  });
+});

@@ -7,7 +7,7 @@ import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { toast } from 'sonner';
 
 import { analyticsApi } from '../../api/analytics';
-import { extractApiError, handleApiError, isDuplicateName } from '../../lib/api-error';
+import { extractApiError, handleApiError, isDuplicateName, NameRetryExhaustedError } from '../../lib/api-error';
 import { createWithNumberedName, numberedName } from '../../lib/clone-name';
 import { normalizeChartConfig } from '../../lib/normalize-chart-config';
 import { MAX_DESCRIPTION_LENGTH } from '../../lib/validations/description';
@@ -106,6 +106,14 @@ function SaveDialog({ open, onOpenChange, sql, chartType, config }: SaveDialogPr
             sqlText: sql,
             isShared,
           }),
+        // 소진은 사용자가 정한 이름이 아니라 쿼리 이름이라 토스트로 할 일을 안내한다(WD-837) — 목록 읽기는 없다(쿼리 목록이 커 한 번에 못 읽는다).
+        // 지울 쿼리를 찾을 수 있게 실제 1회차 쿼리 이름(200자 자르기 반영)을 넣는다.
+        {
+          onExhausted: (firstName) =>
+            new NameRetryExhaustedError(
+              `저장 쿼리 이름을 정하지 못했습니다. 쓰지 않는 「${firstName}」 쿼리를 지우거나 차트 이름을 바꾼 뒤 다시 저장하세요.`,
+            ),
+        },
       );
       const savedQueryId = queryResponse.data.id;
       createdQueryId = savedQueryId;

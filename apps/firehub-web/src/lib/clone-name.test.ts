@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { CloneNameExhaustedError } from './api-error';
 import {
   cloneName,
-  CloneNameExhaustedError,
   createWithNumberedName,
   createWithUniqueCloneName,
+  makeFreeNumberPicker,
   NAME_RETRY_MAX_ATTEMPTS,
-  nextCloneAttempt,
   numberedCloneName,
   numberedName,
 } from './clone-name';
@@ -138,6 +138,18 @@ describe('createWithUniqueCloneName (WD-824)', () => {
     expect(create).toHaveBeenCalledTimes(NAME_RETRY_MAX_ATTEMPTS);
   });
 
+  it('목록에 사본 1·30~60 이 있고 그 이름만 409 면 비어 있는 2번을 쓴다 (WD-837)', async () => {
+    const taken = [1, ...Array.from({ length: 31 }, (_, i) => i + 30)].map((n) => numberedCloneName('A', '복사본', n));
+    const create = vi.fn(async (name: string) => {
+      if (taken.includes(name)) throw duplicateError();
+      return { name };
+    });
+    await expect(createWithUniqueCloneName('A', '복사본', create, async () => taken)).resolves.toEqual({
+      name: 'A (복사본 2)',
+    });
+    expect(create).toHaveBeenCalledTimes(2);
+  });
+
   describe('기존 이름 읽기 (WD-834)', () => {
     /** 「A (복사본)」, 「A (복사본 2)」 … 「A (복사본 20)」 */
     const taken = Array.from({ length: 20 }, (_, i) => numberedCloneName('A', '복사본', i + 1));
@@ -193,28 +205,48 @@ describe('createWithUniqueCloneName (WD-824)', () => {
   });
 });
 
-describe('nextCloneAttempt (WD-834)', () => {
-  it('기존 사본 중 가장 큰 번호의 다음 번호를 돌려준다', () => {
-    const existing = ['A (복사본)', ...Array.from({ length: 19 }, (_, i) => `A (복사본 ${i + 2})`)];
-    expect(nextCloneAttempt('A', '복사본', existing)).toBe(21);
-    expect(nextCloneAttempt('A', '복사본', [])).toBe(1);
-    expect(nextCloneAttempt('A', '복사본', ['A (복사본)'])).toBe(2);
+describe('makeFreeNumberPicker (WD-837)', () => {
+  const nameFor = (n: number) => numberedCloneName('A', '복사본', n);
+
+  it('목록에 연속이 아닌 사본이 있어도 비어 있는 가장 작은 번호를 고른다', async () => {
+    const existing = ['A (복사본)', ...Array.from({ length: 31 }, (_, i) => `A (복사본 ${i + 30})`)];
+    const pick = makeFreeNumberPicker(nameFor, async () => existing);
+    await expect(pick(1)).resolves.toBe(2);
   });
 
-  it('서버처럼 대소문자·앞뒤 공백을 무시하고 센다', () => {
-    // 「abc (복사본 n)」이 있으면 서버는 「ABC (복사본 n)」도 겹친다고 막는다 — 같은 번호를 건너뛰어야 한다
-    const existing = ['abc (복사본)', ' abc (복사본 2) ', 'ABC (복사본 3)'];
-    expect(nextCloneAttempt('ABC', '복사본', existing)).toBe(4);
+  it('목록이 비어 있으면 실패한 번호의 다음 번호를 차례로 고른다', async () => {
+    const pick = makeFreeNumberPicker(nameFor, async () => []);
+    await expect(pick(1)).resolves.toBe(2);
+    await expect(pick(2)).resolves.toBe(3);
+    await expect(pick(3)).resolves.toBe(4);
   });
 
-  it('다른 원본의 사본은 세지 않는다', () => {
-    expect(nextCloneAttempt('A', '복사본', ['B (복사본 30)', 'A (복사본)'])).toBe(2);
+  it('서버처럼 대소문자·앞뒤 공백을 무시하고 비교한다', async () => {
+    const pick = makeFreeNumberPicker(
+      (n) => numberedCloneName('ABC', '복사본', n),
+      async () => ['abc (복사본)', ' abc (복사본 2) '],
+    );
+    await expect(pick(1)).resolves.toBe(3);
   });
 
-  it('잘린 긴 이름의 사본도 번호를 읽는다', () => {
-    const name = '가'.repeat(200);
-    const existing = [numberedCloneName(name, '복사본', 1), numberedCloneName(name, '복사본', 2)];
-    expect(nextCloneAttempt(name, '복사본', existing)).toBe(3);
+  it('목록 읽기가 실패하면 빈 목록으로 보고, 로더는 한 번만 부른다', async () => {
+    const loader = vi.fn(() => Promise.reject(new Error('목록 실패')));
+    const pick = makeFreeNumberPicker(nameFor, loader);
+    await expect(pick(1)).resolves.toBe(2);
+    await expect(pick(2)).resolves.toBe(3);
+    expect(loader).toHaveBeenCalledTimes(1);
+  });
+
+  it('로더가 없으면 목록 없이 고른다', async () => {
+    const pick = makeFreeNumberPicker(nameFor);
+    await expect(pick(1)).resolves.toBe(2);
+  });
+
+  it('200자 원본의 잘린 사본 이름도 비교해 비어 있는 번호를 고른다', async () => {
+    const name = 'a'.repeat(200);
+    const existing = [1, 2, 3, 4, 5].map((n) => numberedCloneName(name, '복사본', n));
+    const pick = makeFreeNumberPicker((n) => numberedCloneName(name, '복사본', n), async () => existing);
+    await expect(pick(1)).resolves.toBe(6);
   });
 });
 
@@ -269,5 +301,25 @@ describe('numberedName / createWithNumberedName (WD-824)', () => {
     const always = vi.fn().mockRejectedValue(dup);
     await expect(createWithNumberedName((n) => numberedName('A', n), always)).rejects.toBe(dup);
     expect(always).toHaveBeenCalledTimes(NAME_RETRY_MAX_ATTEMPTS);
+  });
+
+  it('목록의 20개 이름이 모두 겹쳐도 비어 있는 21번을 쓴다 (WD-837)', async () => {
+    const taken = ['X 양식', ...Array.from({ length: 19 }, (_, i) => `X 양식 (${i + 2})`)];
+    const create = vi.fn(async (name: string) => {
+      if (taken.includes(name)) throw duplicateError();
+      return name;
+    });
+    await expect(
+      createWithNumberedName((n) => numberedName('X 양식', n), create, { loadExistingNames: async () => taken }),
+    ).resolves.toBe('X 양식 (21)');
+  });
+
+  it('onExhausted 가 준 오류를 던진다', async () => {
+    const custom = new Error('소진');
+    const create = vi.fn().mockRejectedValue(duplicateError());
+    await expect(
+      createWithNumberedName((n) => numberedName('A', n), create, { onExhausted: () => custom }),
+    ).rejects.toBe(custom);
+    expect(create).toHaveBeenCalledTimes(NAME_RETRY_MAX_ATTEMPTS);
   });
 });

@@ -37,11 +37,21 @@ export function pickBestMessage(errData: ErrorResponse, fallback: string): strin
 }
 
 /**
- * 복제 이름을 끝내 정하지 못함(WD-834) — 시도 상한(NAME_RETRY_MAX_ATTEMPTS) 안에서 비어 있는 사본 이름을 찾지 못했다.
- * 서버 409 문구(「이미 있는 … 이름입니다」)는 사용자가 이름을 쓴 적 없는 복제에서 뜻이 어긋나므로, 복제 전용 안내를 message 로 담고
- * extractApiError 가 그대로 보여 준다(instanceof).
+ * 이름 겹침 재시도 소진(WD-837) — 시도 상한(NAME_RETRY_MAX_ATTEMPTS) 안에서 비어 있는 이름을 찾지 못했다.
+ * 서버 409 문구는 사용자가 이름을 쓴 적 없는 복제·파생 이름에서 뜻이 어긋나므로, 호출부가 정한 안내를 message 로 담고
+ * extractApiError·extractApiErrorAsync 가 그대로 보여 준다(instanceof).
  */
-export class CloneNameExhaustedError extends Error {
+export class NameRetryExhaustedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'NameRetryExhaustedError';
+  }
+}
+
+/**
+ * 복제 이름을 끝내 정하지 못함(WD-834) — 복제 전용 안내 문구를 담은 NameRetryExhaustedError.
+ */
+export class CloneNameExhaustedError extends NameRetryExhaustedError {
   constructor() {
     super('복사본 이름을 정하지 못했습니다. 쓰지 않는 복사본을 지우거나 원본 이름을 바꾼 뒤 다시 복제하세요.');
     this.name = 'CloneNameExhaustedError';
@@ -54,8 +64,8 @@ export class CloneNameExhaustedError extends Error {
  * Blob 형태로 오므로, 이를 텍스트로 읽어 JSON 파싱을 시도한다.
  */
 export function extractApiError(error: unknown, fallback: string): string {
-  // 복제 이름 소진(WD-834) — 서버 문구 대신 복제 전용 안내를 보인다.
-  if (error instanceof CloneNameExhaustedError) return error.message;
+  // 이름 재시도 소진(WD-834·WD-837) — 서버 문구 대신 호출부가 정한 안내를 보인다.
+  if (error instanceof NameRetryExhaustedError) return error.message;
   if (axios.isAxiosError(error) && error.response?.data) {
     const data = error.response.data;
     // responseType: 'blob' 요청의 에러 응답은 Blob 형태로 전달된다
@@ -77,6 +87,7 @@ export async function extractApiErrorAsync(
   error: unknown,
   fallback: string,
 ): Promise<string> {
+  if (error instanceof NameRetryExhaustedError) return error.message;
   if (axios.isAxiosError(error) && error.response?.data) {
     const data = error.response.data;
     if (data instanceof Blob) {

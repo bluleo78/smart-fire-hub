@@ -373,16 +373,29 @@ export const proactiveApi = {
   getTemplates: (params?: { page?: number; size?: number }) =>
     client.get<ReportTemplateSummary[]>('/proactive/templates', { params }),
   /**
-   * 내가 볼 수 있는 양식 이름 전체(WD-834) — 복제 이름 재시도가 이미 쓰인 사본 번호를 건너뛰는 데 쓴다.
-   * 서버가 한 번에 최대 200건만 주므로 200건 미만이 올 때까지 페이지를 넘기고, 비정상적으로 큰 목록에서 끝없이 돌지 않게 20페이지에서 멈춘다.
+   * 내가 볼 수 있는 양식 이름 전체(WD-834) — 이름 번호 재시도가 이미 쓰인 번호를 건너뛰는 데 쓴다.
+   * 서버가 한 번에 최대 200건만 주므로 200건 미만(짧은 페이지)이 올 때까지 읽고, 비정상적으로 큰 목록에서 끝없이 돌지 않게 20페이지에서 멈춘다.
+   * 순차로 읽으면 왕복이 페이지 수만큼 쌓이므로(WD-837), 첫 페이지로 크기를 가늠한 뒤 4페이지씩 병렬로 읽는다.
    */
   getAllTemplateNames: async (): Promise<string[]> => {
     const pageSize = 200;
-    const names: string[] = [];
-    for (let page = 0; page < 20; page++) {
+    const maxPages = 20;
+    const parallel = 4;
+    const fetchPage = async (page: number) => {
       const { data } = await client.get<ReportTemplateSummary[]>('/proactive/templates', { params: { page, size: pageSize } });
-      names.push(...data.map((t) => t.name));
-      if (data.length < pageSize) break;
+      return data;
+    };
+    const first = await fetchPage(0);
+    const names = first.map((t) => t.name);
+    if (first.length < pageSize) return names;
+    for (let start = 1; start < maxPages; start += parallel) {
+      const pages = Array.from({ length: Math.min(parallel, maxPages - start) }, (_, i) => start + i);
+      const batch = await Promise.all(pages.map(fetchPage));
+      // 묶음 안에서는 페이지 순서대로 싣고, 처음 나온 짧은 페이지까지만 센다 — 그 뒤 페이지는 끝을 넘어선 것이다
+      for (const data of batch) {
+        names.push(...data.map((t) => t.name));
+        if (data.length < pageSize) return names;
+      }
     }
     return names;
   },
