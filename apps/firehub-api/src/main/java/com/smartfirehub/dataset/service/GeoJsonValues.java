@@ -176,8 +176,11 @@ public final class GeoJsonValues {
       if (coords.size() < 2 || !coords.get(0).isNumber() || !coords.get(1).isNumber()) {
         throw new IllegalArgumentException(INVALID_FORMAT_MESSAGE);
       }
-      double lon = coords.get(0).asDouble();
-      double lat = coords.get(1).asDouble();
+      // numberValue().doubleValue() 로 읽는다 — Jackson 3 의 asDouble() 은 double 범위를 넘는 값(예: 1e400, EXACT_MAPPER 가
+      // BigDecimal 로 읽음)에 예외를 던져 500 이 됐다. Number#doubleValue 는 Jackson 2 때처럼 ±Infinity 를 돌려줘 아래 범위
+      // 검사가 400(좌표 범위 밖)으로 거부한다(WD-793 리뷰).
+      double lon = coords.get(0).numberValue().doubleValue();
+      double lat = coords.get(1).numberValue().doubleValue();
       if (lon < -180 || lon > 180 || lat < -90 || lat > 90) {
         throw new IllegalArgumentException(OUT_OF_RANGE_MESSAGE);
       }

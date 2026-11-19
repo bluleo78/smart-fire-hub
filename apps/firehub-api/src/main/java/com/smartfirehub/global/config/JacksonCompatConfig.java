@@ -21,7 +21,7 @@ import tools.jackson.databind.module.SimpleModule;
  * <p>두 소비자가 같은 규칙({@link #applyAppJsonDefaults})을 쓴다 — ① Boot 가 만드는 앱 매퍼(HTTP 변환기·주입되는 {@code
  * ObjectMapper}) 는 아래 customizer 로, ② 스프링 밖에서 직접 만드는 WebClient 코덱({@code AppJsonWebClients}) 은
  * {@link #appJsonMapperBuilder()} 로. 규칙을 두 곳에 따로 적으면 한쪽만 고쳐져 직접 빌더의 요청·응답 JSON 이 앱 응답과 조용히 갈라지므로(코드
- * 리뷰 지적 1·2) 여기 한 곳에서만 정한다. {@code AppJsonMapperEquivalenceTest} 가 두 매퍼의 바이트가 같은지 지킨다.
+ * 리뷰 지적 1·2) 여기 한 곳에서만 정한다. {@code AppJsonWebClientsEquivalenceTest} 가 두 매퍼의 바이트가 같은지 지킨다.
  */
 @Configuration(proxyBeanMethods = false)
 public class JacksonCompatConfig {
