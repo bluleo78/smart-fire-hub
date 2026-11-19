@@ -165,7 +165,7 @@ function buildDerivedTable(
       const omitted: string[] = [];
       if (negativeCount > 0) omitted.push(`음수 ${negativeCount.toLocaleString()}행 제외`);
       if (missingCount > 0) omitted.push(`값 없음·숫자 아님 ${missingCount.toLocaleString()}행 제외`);
-      const captionTail = omitted.length > 0 ? omitted.join(', ') : '';
+      const captionTail = omitted.join(', ');
       // pieData 의 값은 splitPieData 가 이미 숫자로 바꿔 두었다(그림이 그리는 값 그대로)
       const valueOf = (r: Record<string, unknown>) => r[yKey] as number;
       const total = pieData.reduce((sum, r) => sum + valueOf(r), 0);
