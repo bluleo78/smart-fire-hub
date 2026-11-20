@@ -5,7 +5,7 @@ import { expect, test } from '../../fixtures/auth.fixture';
 
 /**
  * 표 빈 상태 라이브 리전 E2E 회귀 (WD-815)
- * - 공유 TableEmptyRow 는 셀 안에 role=status(aria-live=polite) 한 개를 두고, 안내 문구를 잠시(ANNOUNCE_DELAY_MS) 뒤에 채운다.
+ * - 공유 TableEmptyRow 는 셀 안에 role=status(aria-live=polite) 한 개를 두고, 안내 문구는 바로 그리되 잠시(ANNOUNCE_DELAY_MS) 뒤에 접근성 트리에 드러낸다.
  *   그래야 "결과 있음 → 검색 0건" 전환 때 스크린리더가 문구를 읽는다. 화면 두 곳에서 그 계약을 확인한다.
  * - 관리 화면 권한 가드 통과를 위해 setupAdminAuth 로 ADMIN 사용자를 쓴다.
  */
@@ -47,6 +47,24 @@ test.describe('표 빈 상태 라이브 리전 (WD-815)', () => {
     await expect(page.getByRole('link', { name: '김철수', exact: true })).toBeVisible();
     await expect(page.getByRole('table').getByRole('status')).toHaveCount(0);
 
+    // 표 안 status 에 「숨기지 않은 노드」가 실제로 추가되는지 기록한다 — 문구가 처음부터 보이는 채 aria-hidden 만 떼면
+    // 일부 화면 읽기 프로그램이 낭독하지 않으므로, 노드 추가로 안내하는 계약을 지킨다
+    await page.evaluate(() => {
+      const w = window as unknown as { __statusAdds: string[] };
+      w.__statusAdds = [];
+      new MutationObserver((records) => {
+        for (const r of records) {
+          for (const n of Array.from(r.addedNodes)) {
+            // 이미 있던 status 안에 추가된 노드만 센다(행째 새로 마운트된 status 는 「내용과 함께 생성」이라 세지 않는다)
+            const inStatus = r.target instanceof Element && r.target.closest('[role="status"]');
+            const hidden = r.target instanceof Element && r.target.closest('[aria-hidden="true"]');
+            const selfHidden = n instanceof Element && n.getAttribute('aria-hidden') === 'true';
+            if (inStatus && !hidden && !selfHidden) w.__statusAdds.push(n.textContent ?? '');
+          }
+        }
+      }).observe(document.body, { childList: true, subtree: true });
+    });
+
     // 검색 입력 → 디바운스 뒤 요청 q 가 입력값
     const keyword = '존재하지않는사용자xyz';
     await page.getByPlaceholder('이름 또는 아이디로 검색...').fill(keyword);
@@ -56,6 +74,11 @@ test.describe('표 빈 상태 라이브 리전 (WD-815)', () => {
     const status = page.getByRole('table').getByRole('status');
     await expect(status).toHaveText(`'${keyword}'에 대한 결과가 없습니다.다른 키워드로 검색해 보세요.`);
     await expect(status).toHaveAttribute('aria-live', 'polite');
+    // 지연 뒤에는 문구가 접근성 트리에 드러나 있고, 숨기지 않은 문구 노드가 status 안에 새로 추가됐다
+    await expect(status.locator('[aria-hidden="true"]')).toHaveCount(0);
+    await expect
+      .poll(() => page.evaluate(() => (window as unknown as { __statusAdds: string[] }).__statusAdds.join('|')))
+      .toContain(keyword);
 
     // 초기화 버튼은 status 밖에서 보인다
     await expect(page.getByRole('button', { name: '검색 초기화' })).toBeVisible();

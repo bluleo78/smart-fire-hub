@@ -426,18 +426,21 @@ test.describe('카테고리 관리 페이지', () => {
     await expect(page.getByRole('cell', { name: '통계 데이터', exact: true })).toBeVisible();
     await expect(page.getByRole('cell', { name: '기타', exact: true })).toBeVisible();
 
-    // "소방"으로 검색 → 1건만 남아야 함 (debounce 200ms)
+    // "소방"으로 검색 → 1건만 남아야 함 (SearchInput debounce 300ms 한 번만)
     await page.getByLabel('카테고리 검색').fill('소방');
     await expect(page.getByRole('cell', { name: '소방 데이터', exact: true })).toBeVisible();
     await expect(page.getByRole('cell', { name: '통계 데이터', exact: true })).not.toBeVisible();
     await expect(page.getByRole('cell', { name: '기타', exact: true })).not.toBeVisible();
 
-    // 결과 카운트(1 / 3) 노출 확인
+    // 결과 카운트(1 / 3) 노출 확인 — 결과가 있을 때는 개수가 낭독된다
     await expect(page.getByText('1 / 3')).toBeVisible();
+    await expect(page.getByText('1 / 3')).not.toHaveAttribute('aria-hidden', 'true');
 
     // 일치하지 않는 키워드 → 빈 상태 메시지 (전체 빈 상태와 다른 메시지)
     await page.getByLabel('카테고리 검색').fill('존재하지않는키워드xyz');
     await expect(page.getByText('검색 결과가 없습니다.')).toBeVisible();
+    // 0건이면 표 안 status 가 안내를 읽으므로 개수(0 / 3)는 낭독하지 않는다 — 두 번 읽힘 방지 (WD-815)
+    await expect(page.getByText('0 / 3')).toHaveAttribute('aria-hidden', 'true');
 
     // 검색 지우기 → 다시 3건 모두
     await page.getByRole('button', { name: '검색어 지우기' }).click();

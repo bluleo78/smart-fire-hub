@@ -1,3 +1,5 @@
+import type { Page } from "@playwright/test";
+
 import {
   createChart,
   createQueryResult,
@@ -6,6 +8,27 @@ import {
 import { setupDashboardEditorMocks } from "../../fixtures/analytics.fixture";
 import { mockApi } from "../../fixtures/api-mock";
 import { expect, test } from "../../fixtures/auth.fixture";
+
+/**
+ * 대시보드 편집 화면을 열어 「편집」 모드로 들어가고 첫 위젯의 이동 손잡이에 포커스를 둔다(WD-823 시험 공통 준비).
+ * 이 호출 전에 setupDashboardEditorMocks 로 모킹을 끝내 둬야 한다.
+ */
+async function openEditorWithHandleFocused(page: Page) {
+  await page.goto("/analytics/dashboards/1");
+  await expect(page.getByText("테스트 차트", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "편집" }).click();
+  const handle = page.getByRole("button", {
+    name: "「테스트 차트」 위젯 이동·크기 조절",
+  });
+  await handle.focus();
+  return handle;
+}
+
+/** 저사양처럼 CPU 를 6배 늦춘다 — 렌더가 키 입력을 못 따라와야 RGL 배치 동기화와 연타가 겹치는 경합이 드러난다(WD-823) */
+async function throttleCpu(page: Page) {
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send("Emulation.setCPUThrottlingRate", { rate: 6 });
+}
 
 /**
  * 대시보드 편집 — 키보드로 위젯 옮기기·크기 바꾸기(WD-324).
@@ -236,6 +259,150 @@ test.describe("대시보드 편집 — 키보드 배치 조작 (WD-324)", () => 
       "「왼쪽 차트」 위치 2열 1행, 크기 너비 4칸 높이 3칸",
     );
     expect(put2Requests).toEqual([]);
+  });
+
+  test("화살표·Shift+화살표를 기다리지 않고 연달아 눌러도 모든 키가 반영되고 「완료」 때 그대로 저장된다 (WD-823)", async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDashboardEditorMocks(page, 1);
+    const putCapture = await mockApi(
+      page,
+      "PUT",
+      "/api/v1/analytics/dashboards/1/widgets/1",
+      {},
+      { capture: true },
+    );
+
+    await openEditorWithHandleFocused(page);
+    await throttleCpu(page);
+
+    // 안내를 기다리지 않고 연달아 누른다 — react-grid-layout 의 늦은 배치 메아리가 앞 키 결과를 덮던 경합(WD-823)
+    // 시작 x0·w6·h4 → x3(→×3), h6(Shift+↓×2), w4(Shift+←×2)
+    for (let i = 0; i < 3; i++) await page.keyboard.press("ArrowRight");
+    for (let i = 0; i < 2; i++) await page.keyboard.press("Shift+ArrowDown");
+    for (let i = 0; i < 2; i++) await page.keyboard.press("Shift+ArrowLeft");
+
+    await expect(page.getByTestId("dashboard-layout-announcement")).toHaveText(
+      "「테스트 차트」 위치 4열 1행, 크기 너비 4칸 높이 6칸",
+    );
+    await page.getByRole("button", { name: "완료" }).click();
+    const captured = await putCapture.waitForRequest();
+    expect(captured.payload).toMatchObject({
+      positionX: 3,
+      positionY: 0,
+      width: 4,
+      height: 6,
+    });
+  });
+
+  test("→ 와 ← 를 기다리지 않고 누르면 제자리로 돌아오고, 그린 위치·안내·저장이 모두 1열이다 (WD-823)", async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDashboardEditorMocks(page, 1);
+    // 저장 확인 — 「완료」는 서버 값과 달라진 위젯만 PUT 하므로, 1열(서버 값 positionX 0)로 돌아왔으면 PUT 이 없어야 한다.
+    // 부모 배치가 2열로 남았다면 positionX 1 PUT 이 나가 여기 잡힌다.
+    const putPayloads: unknown[] = [];
+    page.on("request", (req) => {
+      if (
+        req.method() === "PUT" &&
+        req.url().endsWith("/api/v1/analytics/dashboards/1/widgets/1")
+      ) {
+        putPayloads.push(req.postDataJSON());
+      }
+    });
+    await mockApi(page, "PUT", "/api/v1/analytics/dashboards/1/widgets/1", {});
+
+    await openEditorWithHandleFocused(page);
+
+    // 그리드가 실제로 그린 가로 위치 — RGL 은 위젯을 style 의 translate(x, y) 로 놓는다(위젯 1개)
+    const gridItem = page.locator(".react-grid-item");
+    const drawnX = async () => {
+      const style = (await gridItem.getAttribute("style")) ?? "";
+      const m = /translate\((-?[\d.]+)px/.exec(style);
+      return m ? Number(m[1]) : null;
+    };
+    const startX = await drawnX();
+    expect(startX).not.toBeNull();
+
+    await throttleCpu(page);
+
+    // → 결과의 배치 동기화가 ← 의 렌더 뒤로 밀리면 RGL 은 2열을 그리고 부모는 1열을 들어 화면과 저장이 어긋났다(WD-823)
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("ArrowLeft");
+
+    await expect(page.getByTestId("dashboard-layout-announcement")).toHaveText(
+      "「테스트 차트」 위치 1열 1행, 크기 너비 6칸 높이 4칸",
+    );
+    await expect.poll(drawnX).toBe(startX);
+
+    await page.getByRole("button", { name: "완료" }).click();
+    await expect(page.getByRole("button", { name: "편집" })).toBeVisible();
+    expect(putPayloads).toEqual([]);
+  });
+
+  test("키를 연달아 누르고 곧바로 「완료」를 눌러도 누른 키가 모두 저장된다 (WD-823)", async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDashboardEditorMocks(page, 1);
+    const putCapture = await mockApi(
+      page,
+      "PUT",
+      "/api/v1/analytics/dashboards/1/widgets/1",
+      {},
+      { capture: true },
+    );
+
+    await openEditorWithHandleFocused(page);
+
+    // → 세 번과 「완료」 클릭을 브라우저의 한 작업 안에서 잇달아 보낸다(WD-823).
+    // RGL 의 메아리는 키 렌더 뒤 별도 작업에서 오므로, 이렇게 하면 「완료」 때 첫 키만 RGL 에 보냈고 둘째·셋째 키는
+    // 반드시 대기열에 남아 있다. playwright 의 press 를 하나씩 기다리면 CPU 를 늦춰도 그 사이 메아리가 와서
+    // 대기열이 비어 버려(옛 코드에서도 통과) 이 경우를 시험하지 못했다. 옛 코드는 여기서 PUT 을 아예 보내지 않았다.
+    await page.evaluate(() => {
+      const handleEl = document.activeElement as HTMLElement;
+      for (let i = 0; i < 3; i++) {
+        handleEl.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: "ArrowRight",
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      }
+      const done = Array.from(document.querySelectorAll("button")).find(
+        (b) => b.textContent?.trim() === "완료",
+      );
+      done?.click();
+    });
+
+    const captured = await putCapture.waitForRequest();
+    expect(captured.payload).toMatchObject({
+      positionX: 3,
+      positionY: 0,
+      width: 6,
+      height: 4,
+    });
+  });
+
+  test("키를 누른 뒤 「편집 취소」하고 다시 편집하면 서버 배치에서 출발한다 (WD-823)", async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDashboardEditorMocks(page, 1);
+
+    const handle = await openEditorWithHandleFocused(page);
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("ArrowRight");
+    await expect(page.getByTestId("dashboard-layout-announcement")).toHaveText(
+      "「테스트 차트」 위치 3열 1행, 크기 너비 6칸 높이 4칸",
+    );
+
+    await page.getByRole("button", { name: "편집 취소" }).click();
+    await page.getByRole("button", { name: "편집" }).click();
+    await handle.focus();
+    await page.keyboard.press("ArrowRight");
+    await expect(page.getByTestId("dashboard-layout-announcement")).toHaveText(
+      "「테스트 차트」 위치 2열 1행, 크기 너비 6칸 높이 4칸",
+    );
   });
 
   test("보기 모드에는 이동 손잡이가 없다", async ({

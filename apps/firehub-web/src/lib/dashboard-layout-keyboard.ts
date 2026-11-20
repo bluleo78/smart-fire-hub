@@ -81,3 +81,55 @@ function moveAndCompact(layout: readonly LayoutItem[], id: string, x: number, y:
 export function describeLayoutItem(title: string, item: Pick<LayoutItem, 'x' | 'y' | 'w' | 'h'>): string {
   return `「${title}」 위치 ${item.x + 1}열 ${item.y + 1}행, 크기 너비 ${item.w}칸 높이 ${item.h}칸`;
 }
+
+/**
+ * 두 배치가 기하(i·x·y·w·h)상 같은지 비교한다. 순서와 moved·static·minW 같은 나머지 필드는 무시한다.
+ * RGL 이 되돌려주는 배치는 순서·moved 플래그가 달라질 수 있어 값 전체 비교가 아닌 위치·크기만 본다(WD-823).
+ * 위젯 id(i)가 배치 안에서 고유하다고 가정한다 — 같은 i 가 둘이면 Map 이 하나만 남겨 잘못 같다고 볼 수 있다.
+ */
+export function sameLayoutGeometry(a: readonly LayoutItem[], b: readonly LayoutItem[]): boolean {
+  if (a.length !== b.length) return false;
+  const byId = new Map(b.map((it) => [it.i, it] as const));
+  return a.every((it) => {
+    const other = byId.get(it.i);
+    return !!other && other.x === it.x && other.y === it.y && other.w === it.w && other.h === it.h;
+  });
+}
+
+/** 메아리 판정 결과: ack=마지막으로 보낸 배치의 메아리, stale=앞선 배치의 늦은 메아리, external=그 밖(끌기 등) */
+export type LayoutEchoVerdict = 'ack' | 'stale' | 'external';
+
+/**
+ * onLayoutChange 로 들어온 배치가 우리가 부모에서 내려보낸 배치의 메아리인지 가른다.
+ * RGL 이 부모 배치를 effect 뒤에 onLayoutChange 로 늦게 돌려주는 메아리를 가르기 위함이다(WD-823).
+ * 키를 빠르게 누르면 키1 의 늦은 메아리가 키2 의 배치를 덮어쓰므로, 마지막 배치를 먼저 보고(ack)
+ * 그 앞 배치와 같으면 stale 로 버리게 하며, 어느 쪽과도 다르면 사용자의 끌기 등 외부 변경(external)이다.
+ * 키보드 결과(applyKeyboardLayoutAction)와 RGL 이 같은 verticalCompactor 로 압축한다는 데 기댄다 — 그리드의 압축 방식을
+ * 바꾸면 RGL 이 다시 압축한 메아리가 보낸 배치와 달라져 모두 external 로 판정된다.
+ */
+export function classifyLayoutEcho(
+  incoming: readonly LayoutItem[],
+  pending: readonly (readonly LayoutItem[])[],
+): LayoutEchoVerdict {
+  if (pending.length === 0) return 'external';
+  if (sameLayoutGeometry(incoming, pending[pending.length - 1])) return 'ack';
+  return pending.slice(0, -1).some((p) => sameLayoutGeometry(incoming, p)) ? 'stale' : 'external';
+}
+
+/**
+ * 대기열에 쌓인 키보드 조작을 출발 배치에 차례로 적용한다(WD-823). 마지막 조작의 위젯 항목(안내 문구용)도 함께 돌려준다 —
+ * 마지막 키의 위젯이 결과 배치에 없으면 last 는 없다. 펌프(한 키씩)와 「완료」(남은 키 일괄)가 같은 적용·항목 찾기를 쓰게 한다.
+ */
+export function drainKeyboardQueue(
+  base: readonly LayoutItem[],
+  actions: readonly { widgetId: number; action: KeyboardLayoutAction }[],
+): { layout: LayoutItem[]; last?: { widgetId: number; item: LayoutItem } } {
+  let layout = [...base];
+  for (const { widgetId, action } of actions) {
+    layout = applyKeyboardLayoutAction(layout, String(widgetId), action);
+  }
+  if (actions.length === 0) return { layout };
+  const { widgetId } = actions[actions.length - 1];
+  const item = layout.find((l) => l.i === String(widgetId));
+  return item ? { layout, last: { widgetId, item } } : { layout };
+}

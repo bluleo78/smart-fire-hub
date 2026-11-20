@@ -16,6 +16,11 @@ function renderRow(props: Parameters<typeof TableEmptyRow>[0]) {
   return { ...result, rerenderRow: (p: Parameters<typeof TableEmptyRow>[0]) => result.rerender(ui(p)) };
 }
 
+/** status 안 문구가 아직 접근성 트리에서 빠져 있는지(aria-hidden) — 화면 문구는 처음부터 있다 */
+function hiddenFromAT(status: HTMLElement) {
+  return status.querySelector('[aria-hidden="true"]') !== null;
+}
+
 /** ANNOUNCE_DELAY_MS 지연(ready 전환)까지 타이머를 돌린다. */
 function flush() {
   act(() => {
@@ -32,11 +37,14 @@ describe('TableEmptyRow 라이브 리전 (WD-815)', () => {
     vi.restoreAllMocks();
   });
 
-  it('마운트 직후 status 는 비어 있고 지연 뒤 검색 0건 문구가 채워진다', () => {
+  it('문구는 마운트 직후부터 보이고, 지연 뒤에야 접근성 트리에 드러난다', () => {
     renderRow({ colSpan: 3, searchKeyword: 'xyz' });
     const status = screen.getByRole('status');
-    expect(status.textContent).toBe('');
+    // 화면 문구는 바로 있다(깜빡임 없음) — 낭독만 aria-hidden 으로 늦춘다
+    expect(status.textContent).toBe("'xyz'에 대한 결과가 없습니다.다른 키워드로 검색해 보세요.");
+    expect(hiddenFromAT(status)).toBe(true);
     flush();
+    expect(hiddenFromAT(status)).toBe(false);
     expect(status.textContent).toBe("'xyz'에 대한 결과가 없습니다.다른 키워드로 검색해 보세요.");
     expect(status.getAttribute('aria-live')).toBe('polite');
     expect(status.getAttribute('aria-atomic')).toBe('true');
@@ -72,25 +80,43 @@ describe('TableEmptyRow 라이브 리전 (WD-815)', () => {
     expect(status.textContent).toContain(expected);
   });
 
-  it('지연(ANNOUNCE_DELAY_MS) 전에는 비어 있고 지난 뒤에 채워진다', () => {
+  it('지연 뒤에는 숨긴 사본 대신 새 노드가 들어온다(속성만 떼지 않고 실제 노드 추가로 낭독되게)', () => {
+    renderRow({ colSpan: 3, searchKeyword: 'xyz' });
+    const status = screen.getByRole('status');
+    const pending = status.firstElementChild;
+    expect(pending?.getAttribute('aria-hidden')).toBe('true');
+    flush();
+    const announced = status.firstElementChild;
+    expect(announced).not.toBe(pending);
+    expect(pending?.isConnected).toBe(false);
+    expect(announced?.hasAttribute('aria-hidden')).toBe(false);
+    expect(announced?.textContent).toBe("'xyz'에 대한 결과가 없습니다.다른 키워드로 검색해 보세요.");
+  });
+
+  it('announceKey 가 바뀌면 같은 문구라도 새 노드가 들어와 다시 낭독된다', () => {
+    const { rerenderRow } = renderRow({ colSpan: 3, message: '검색 결과가 없습니다.', announceKey: 'abc' });
+    flush();
+    const status = screen.getByRole('status');
+    const first = status.firstElementChild;
+    rerenderRow({ colSpan: 3, message: '검색 결과가 없습니다.', announceKey: 'abcx' });
+    const second = status.firstElementChild;
+    expect(second).not.toBe(first);
+    expect(second?.hasAttribute('aria-hidden')).toBe(false);
+    expect(second?.textContent).toBe('검색 결과가 없습니다.');
+  });
+
+  it('지연(ANNOUNCE_DELAY_MS) 전에는 낭독에서 빠져 있고 지난 뒤에 드러난다', () => {
     renderRow({ colSpan: 3 });
     const status = screen.getByRole('status');
     act(() => {
       vi.advanceTimersByTime(ANNOUNCE_DELAY_MS - 1);
     });
-    expect(status.textContent).toBe('');
+    expect(hiddenFromAT(status)).toBe(true);
+    expect(status.textContent).toBe('데이터가 없습니다.');
     act(() => {
       vi.advanceTimersByTime(1);
     });
-    expect(status.textContent).toBe('데이터가 없습니다.');
-  });
-
-  it('빈 동안 높이가 튀지 않도록 최소 높이 클래스를 둔다', () => {
-    const { unmount } = renderRow({ colSpan: 3, searchKeyword: 'xyz' });
-    expect(screen.getByRole('status').className).toContain('min-h-10');
-    unmount();
-    renderRow({ colSpan: 3 });
-    expect(screen.getByRole('status').className).toContain('min-h-5');
+    expect(hiddenFromAT(status)).toBe(false);
   });
 
   it('검색 초기화 버튼·emptyAction 은 status 밖이고 마운트 때부터 보인다', () => {
