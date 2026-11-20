@@ -11,6 +11,8 @@ import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.pipeline.dto.PipelineStepRequest;
 import com.smartfirehub.pipeline.dto.PipelineStepResponse;
 import com.smartfirehub.pipeline.exception.CyclicDependencyException;
+import com.smartfirehub.pipeline.exception.PipelineInactiveException;
+import com.smartfirehub.pipeline.exception.PipelineNotFoundException;
 import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
 import com.smartfirehub.pipeline.repository.PipelineRepository;
 import com.smartfirehub.pipeline.repository.PipelineStepRepository;
@@ -106,6 +108,34 @@ class PipelineExecutionServiceTest {
 
     verify(executionRegistry).register(42L, 7L);
     verify(executionRegistry).unregister(42L);
+  }
+
+  /** 잠근 행이 비활성이면 수동·트리거를 가리지 않고 거절하고 실행 행을 만들지 않는다(WD-856). 판정이 수동 분기 안으로 되돌아가면 트리거 종류에서 실패한다. */
+  @Test
+  void executePipeline_inactiveLockedRow_rejectedForManualAndTrigger() {
+    when(pipelineRepository.lockById(1L))
+        .thenReturn(
+            Optional.of(new PipelineRepository.LockedPipeline("P", LocalDateTime.now(), false)));
+
+    assertThatThrownBy(() -> service.executePipeline(1L, 10L))
+        .isInstanceOf(PipelineInactiveException.class);
+    assertThatThrownBy(() -> service.executePipeline(1L, 10L, "SCHEDULE", 5L))
+        .isInstanceOf(PipelineInactiveException.class);
+
+    verify(executionRepository, never()).createExecution(any(), any(), any(), any());
+  }
+
+  /** 잠글 행이 없으면 수동·트리거 모두 없음(404)으로 거절하고 실행 행을 만들지 않는다(WD-856). */
+  @Test
+  void executePipeline_missingPipeline_notFoundForManualAndTrigger() {
+    when(pipelineRepository.lockById(1L)).thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> service.executePipeline(1L, 10L))
+        .isInstanceOf(PipelineNotFoundException.class);
+    assertThatThrownBy(() -> service.executePipeline(1L, 10L, "SCHEDULE", 5L))
+        .isInstanceOf(PipelineNotFoundException.class);
+
+    verify(executionRepository, never()).createExecution(any(), any(), any(), any());
   }
 
   // ------------------------------------------------------------------ //
