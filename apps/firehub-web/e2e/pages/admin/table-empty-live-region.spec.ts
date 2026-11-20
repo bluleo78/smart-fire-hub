@@ -88,10 +88,14 @@ test.describe('표 빈 상태 라이브 리전 (WD-815)', () => {
     // 기본 빈 상태 문구도 표 안 status 에 담긴다
     await expect(page.getByRole('table').getByRole('status')).toHaveText('감사 로그가 없습니다.');
 
-    await page.getByLabel('시작 날짜').fill('2026-09-01');
-    // 화면은 브라우저 로컬 자정을 UTC ISO(Z)로 바꿔 보낸다(#164·WD-11) — KST 에서는 날짜 부분이 전날
-    // (2026-08-31T15:00Z)이 되므로 날짜 문자열 대신 같은 브라우저에서 계산한 로컬 9월 1일 자정과 비교한다(WD-850).
-    const expectedStart = await page.evaluate(() => new Date(2026, 8, 1).toISOString());
+    const START_DATE = '2026-09-01';
+    await page.getByLabel('시작 날짜').fill(START_DATE);
+    // 화면은 브라우저 로컬 자정을 UTC ISO(Z)로 바꿔 보낸다(#164·WD-11, toIsoDateTime) — KST 에서는 날짜 부분이
+    // 전날(2026-08-31T15:00Z)이 되므로, 같은 상수의 로컬 자정을 같은 브라우저에서 계산해 비교한다(WD-850).
+    const expectedStart = await page.evaluate((date) => {
+      const [y, m, d] = date.split('-').map(Number);
+      return new Date(y, m - 1, d).toISOString();
+    }, START_DATE);
     await expect
       .poll(() => capture.lastRequest()?.searchParams.get('startDate') ?? '')
       .toBe(expectedStart);
