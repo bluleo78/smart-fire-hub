@@ -7,7 +7,6 @@ import { toast } from 'sonner';
 import { z } from 'zod';
 
 import { TruncatedText } from '@/components/ui/truncated-text';
-import { useDebounceValue } from '@/hooks/useDebounceValue';
 
 import { Button } from '../../components/ui/button';
 import { DeleteConfirmDialog } from '../../components/ui/delete-confirm-dialog';
@@ -83,8 +82,8 @@ export default function CategoryListPage() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editingCategory, setEditingCategory] = useState<CategoryResponse | null>(null);
   // 검색어/정렬 상태 — 클라이언트 사이드에서만 적용 (백엔드 변경 없음)
+  // 검색어는 SearchInput 이 입력이 멈춘 뒤(debounceMs) 넘겨준 값이라 여기서 다시 늦추지 않는다 (WD-815)
   const [search, setSearch] = useState('');
-  const debouncedSearch = useDebounceValue(search, 200);
   const [sortKey, setSortKey] = useState<SortKey>('name-asc');
 
   const { data: categories, isLoading } = useCategories();
@@ -97,7 +96,7 @@ export default function CategoryListPage() {
    */
   const visibleCategories = useMemo(() => {
     if (!categories) return [];
-    const keyword = debouncedSearch.trim().toLowerCase();
+    const keyword = search.trim().toLowerCase();
     const filtered = keyword
       ? categories.filter((c) => {
           const name = c.name.toLowerCase();
@@ -122,11 +121,13 @@ export default function CategoryListPage() {
         break;
     }
     return sorted;
-  }, [categories, debouncedSearch, sortKey]);
+  }, [categories, search, sortKey]);
 
   // 검색이 적용된 상태에서 결과가 0건일 때만 별도 안내를 노출 (전체 빈 상태와 구분)
-  const isFiltering = debouncedSearch.trim().length > 0;
+  const isFiltering = search.trim().length > 0;
   const hasResults = visibleCategories.length > 0;
+  // 로딩이 끝났는데 보일 행이 없을 때만 개수 낭독을 멈춘다 — 로딩 중(스켈레톤)에는 빈 상태 안내가 없으므로 (WD-815)
+  const countSilenced = !isLoading && !hasResults;
   const totalCount = categories?.length ?? 0;
   const createCategory = useCreateCategory();
   const updateCategory = useUpdateCategory(editingCategory?.id || 0);
@@ -241,8 +242,12 @@ export default function CategoryListPage() {
           onChange={setSearch}
         />
         <div className="flex items-center gap-2">
+          {/* 0건이면 표 안 status 가 안내를 읽으므로 개수는 aria-hidden 노드로 바꿔 두 번 읽히지 않게 한다(이 화면만 개수 라이브 리전이 있다).
+              aria-live 값을 껐다 켜면 켜지는 렌더의 변화가 빠질 수 있어 영역은 늘 polite 로 두고 key 로 노드를 갈아 끼운다 (WD-815) */}
           <span className="text-sm text-muted-foreground" aria-live="polite">
-            {isFiltering ? `${visibleCategories.length} / ${totalCount}` : `${totalCount}개`}
+            <span key={countSilenced ? 'silenced' : 'announced'} aria-hidden={countSilenced ? true : undefined}>
+              {isFiltering ? `${visibleCategories.length} / ${totalCount}` : `${totalCount}개`}
+            </span>
           </span>
           <Select value={sortKey} onValueChange={(v) => setSortKey(v as SortKey)}>
             <SelectTrigger className="w-[180px]" aria-label="정렬 기준">
@@ -321,6 +326,8 @@ export default function CategoryListPage() {
             ) : (
               <TableEmptyRow
                 colSpan={showActions ? 3 : 2}
+                // 문구가 고정이라 0건인 채 검색어만 바뀌어도 다시 안내되게 검색어를 넘긴다
+                announceKey={search}
                 message={isFiltering ? '검색 결과가 없습니다.' : '카테고리가 없습니다.'}
               />
             )}
