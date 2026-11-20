@@ -76,6 +76,19 @@ describe('GaugeChartView — 범위 잘못됨 안내 (WD-848)', () => {
     expect(container.querySelector('.recharts-wrapper')).toBeNull();
   });
 
+  it.each([
+    ['NaN', { min: 0, max: Number.NaN }],
+    ['Infinity', { min: 0, max: Infinity }],
+  ])('%s 이면 숫자 글자 없이 계산 불가 안내를 보인다', (_name, range) => {
+    mockParentSize(400, 240);
+    const { getByTestId } = render(
+      <GaugeChartView data={[{ name: 'A', v: 50 }]} config={{ ...CONFIG, ...range }} height={240} />,
+    );
+    const text = getByTestId(NOTICE).textContent ?? '';
+    expect(text).toBe('게이지 범위를 계산할 수 없습니다 — 최솟값·최댓값이 올바른 숫자가 아닙니다.');
+    expect(text).not.toMatch(/NaN|Infinity|∞/);
+  });
+
   it('한쪽만 설정한 min 이 자동 max 보다 크면 max 를 맞춰 정상 게이지로 그린다', () => {
     mockParentSize(400, 240);
     const { container, queryByTestId } = render(

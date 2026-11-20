@@ -201,6 +201,15 @@ describe('buildChartDataTable — 차트가 그리는 값 (WD-826)', () => {
     expect(table.caption).toContain('범위 잘못됨(최댓값 ≤ 최솟값)');
   });
 
+  it('게이지 범위가 비유한이면 캡션에 계산 불가를 싣고 최솟값·최댓값 칸은 - 로 둔다 (WD-848)', () => {
+    const table = buildChartDataTable('GAUGE', { xAxis: '', yAxis: ['v'], min: 0, max: Number.NaN }, ['v'], [{ v: 50 }], 'N');
+    expect(table.rows).toEqual([['50', '-', '-']]);
+    expect(table.caption).toContain('범위 계산 불가(숫자가 아님)');
+    expect(table.caption).not.toContain('범위 잘못됨');
+    const inf = buildChartDataTable('GAUGE', { xAxis: '', yAxis: ['v'], min: 0, max: Infinity }, ['v'], [{ v: 50 }], 'N');
+    expect(inf.rows).toEqual([['50', '-', '-']]);
+  });
+
   it('게이지 최댓값이 없으면 뷰처럼 값의 120%(올림)를 쓴다', () => {
     const table = buildChartDataTable('GAUGE', { xAxis: '', yAxis: ['v'] }, ['v'], [{ v: 42 }], 'N');
     expect(table.rows).toEqual([['42', '0', '51']]);

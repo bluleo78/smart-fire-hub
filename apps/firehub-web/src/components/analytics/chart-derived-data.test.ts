@@ -180,19 +180,34 @@ describe('computeGaugeReading 범위 판정 (WD-848)', () => {
     ['최댓값 = 최솟값', { min: 100, max: 100 }],
     ['최댓값 < 최솟값', { min: 100, max: 60 }],
   ])('%s 이면 잘못된 범위', (_name, config) => {
-    expect(read(config).invalidRange).toBe(true);
+    expect(read(config).invalidRange).toBe('not-increasing');
   });
-  it('최솟값만 설정하면 최댓값을 최솟값의 120% 로 맞춰 역범위를 만들지 않는다', () => {
-    expect(read({ min: 200 }, 100)).toMatchObject({ min: 200, max: 240, invalidRange: false });
-    expect(read({ min: 1 }, 0.5)).toMatchObject({ min: 1, max: 2, invalidRange: false });
+  // 한쪽만 설정하면 빠진 끝은 120% 규칙으로 정하고, 이미 바르게 그리던 눈금은 그대로 둔다(WD-848)
+  it.each([
+    [{ min: 99 }, 83, 99, 119],
+    [{ min: 100 }, 83, 100, 120],
+    [{ min: 200 }, 100, 200, 240],
+    [{ min: 1 }, 0.5, 1, 2],
+    [{ min: -1000 }, 10, -1000, 12],
+    [{ min: -50 }, -60, -50, -40],
+    [{ min: 0 }, 0, 0, 100],
+    [{ min: 0 }, 50, 0, 60],
+    [{ max: 100 }, 50, 0, 100],
+    [{ max: 100 }, -20, 0, 100],
+    [{ max: -10 }, 5, -12, -10],
+    [{ max: 0 }, 5, -6, 0],
+    [{ max: 0 }, 0, -100, 0],
+    [{ max: 0 }, -1000, -1200, 0],
+    [{ max: -10 }, -50, -60, -10],
+  ])('한쪽만 설정 %j 값 %s → %s ~ %s', (config, v, min, max) => {
+    const r = read(config, v);
+    expect(r).toMatchObject({ min, max, invalidRange: false });
+    expect(r.max).toBeGreaterThan(r.min);
   });
-  it('최댓값만 설정하면 최솟값을 최댓값 아래로 맞춘다', () => {
-    expect(read({ max: -10 }, 5)).toMatchObject({ min: -12, max: -10, invalidRange: false });
-    expect(read({ max: 0 }, 5)).toMatchObject({ min: -100, max: 0, invalidRange: false });
-  });
-  it('NaN·Infinity 는 잘못된 범위', () => {
-    expect(read({ min: 0, max: Number.NaN }).invalidRange).toBe(true);
-    expect(read({ min: 0, max: Infinity }).invalidRange).toBe(true);
+  it('NaN·Infinity 는 비유한 범위', () => {
+    expect(read({ min: 0, max: Number.NaN }).invalidRange).toBe('non-finite');
+    expect(read({ min: 0, max: Infinity }).invalidRange).toBe('non-finite');
+    expect(read({ min: -Infinity, max: 10 }).invalidRange).toBe('non-finite');
   });
   it('정상 범위는 잘못된 범위가 아니다', () => {
     expect(read({ min: 0, max: 100 }, 70).invalidRange).toBe(false);

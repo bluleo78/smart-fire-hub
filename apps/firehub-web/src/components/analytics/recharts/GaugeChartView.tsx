@@ -42,10 +42,13 @@ export function GaugeChartView(props: ChartViewProps) {
   // 첫 행만 보면 첫 칸이 빈 문자 컬럼이 0 으로 그럴듯하게 그려지므로, 컬럼에 숫자가 아닌 값이 하나라도 있으면 안내한다.
   // 안내 높이는 원래 prop 을 넘긴다 — fillParent(undefined)면 부모 높이를 채워 가운데에 보이게.
   if (data.some((row) => isNonNumericValue(row[valueKey]))) return <NonNumericValueNotice height={props.height} />;
-  // 값(빈 값은 0)과 범위(max 미설정 시 값의 120%) — WD-826: 값 대체 표(chart-a11y)와 같은 함수를 쓴다
+  // 값(빈 값은 0)과 범위(미설정 끝은 computeGaugeReading 규칙) — WD-826: 값 대체 표(chart-a11y)와 같은 함수를 쓴다
   const { value, min, max, invalidRange } = computeGaugeReading(data, config);
   // 잘못된 범위는 그리지 않고 안내한다(이유는 computeGaugeReading, WD-848) — 숫자 아님 안내 뒤, pct 계산 전
-  if (invalidRange) return <GaugeInvalidRangeNotice min={min} max={max} height={props.height} />;
+  if (invalidRange === 'non-finite') return <GaugeInvalidRangeNotice reason="non-finite" height={props.height} />;
+  if (invalidRange === 'not-increasing') {
+    return <GaugeInvalidRangeNotice reason="not-increasing" min={min} max={max} height={props.height} />;
+  }
   const pct = Math.min(Math.max((value - min) / (max - min), 0), 1);
 
   // 반원 배경 + 값 호

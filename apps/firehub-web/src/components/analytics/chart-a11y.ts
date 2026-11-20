@@ -24,6 +24,12 @@ const CHART_SR_TABLE_ROW_LIMIT = 100;
 /** 표 셀 한 칸에 담는 값 문자열의 최대 길이(초과분은 …로 줄인다) */
 const CELL_MAX_LENGTH = 80;
 
+/** 게이지 범위가 잘못된 이유별 캡션 꼬리(WD-848) — 뷰의 안내와 같은 갈래로 나눈다 */
+const GAUGE_INVALID_TAILS: Record<'non-finite' | 'not-increasing', string> = {
+  'non-finite': '범위 계산 불가(숫자가 아님)',
+  'not-increasing': '범위 잘못됨(최댓값 ≤ 최솟값)',
+};
+
 /**
  * 차트의 접근 가능한 이름을 만든다(WD-826).
  *
@@ -147,10 +153,12 @@ function buildDerivedTable(
       // 게이지는 첫 행 값 하나와 눈금 범위(min ~ max)만 보여 준다 — 그 세 값을 한 행으로 준다.
       // config.target 은 뷰가 그리지 않으므로 표에도 넣지 않는다.
       const { value, min, max, invalidRange } = computeGaugeReading(data, config);
-      const gaugeRows = [[cell(value), cell(min), cell(max)]];
+      // 비유한 범위는 NaN·Infinity 글자를 표에 싣지 않고 - 로 둔다
+      const rangeCell = (n: number) => (invalidRange === 'non-finite' ? '-' : cell(n));
+      const gaugeRows = [[cell(value), rangeCell(min), rangeCell(max)]];
       const gaugeHeaders = [config.yAxis[0] ?? '값', '최솟값', '최댓값'];
       // 범위가 잘못되면(WD-848) 뷰는 게이지 대신 안내를 보이므로, 값 행은 그대로 두고 캡션 꼬리에 이유를 싣는다
-      return toLimitedTable(gaugeHeaders, 1, gaugeRows, accessibleName, invalidRange ? '범위 잘못됨(최댓값 ≤ 최솟값)' : '');
+      return toLimitedTable(gaugeHeaders, 1, gaugeRows, accessibleName, invalidRange ? GAUGE_INVALID_TAILS[invalidRange] : '');
     }
     case 'BOXPLOT': {
       // 박스 플롯은 X 카테고리별 통계(min·q1·median·q3·max)를 그린다 — 결과에 있는 통계 항목을 뷰가 읽는 값으로 준다
