@@ -9,11 +9,16 @@ import com.smartfirehub.pipeline.exception.CyclicTriggerDependencyException;
 import com.smartfirehub.pipeline.exception.TriggerNotFoundException;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
+import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Stream;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -37,6 +42,9 @@ class TriggerServiceExtTest extends IntegrationTestBase {
   private Long pipelineId2;
   private Long pipelineId3;
   private Long watchedDatasetId;
+
+  /** WD-859: allowedIps 모양 거절 문구의 일부. */
+  private static final String ALLOWED_IPS_SHAPE_MSG = "문자열 목록이어야";
 
   @BeforeEach
   void setUp() {
@@ -395,6 +403,65 @@ class TriggerServiceExtTest extends IntegrationTestBase {
         dsl.fetchValue(
             "select config->>'secretEncrypted' from pipeline_trigger where id = ?", triggerId);
     return v == null ? null : v.toString();
+  }
+
+  /** WD-859: allowedIps 가 문자열 목록이 아니면 저장 때 400(IllegalArgumentException)으로 거절한다. */
+  static Stream<Object> badAllowedIps() {
+    return Stream.of(
+        "10.0.0.1", // 목록이 아니라 문자열
+        List.of("10.0.0.1", 5), // 문자열이 아닌 원소
+        Arrays.asList("10.0.0.1", null)); // null 원소
+  }
+
+  @ParameterizedTest
+  @MethodSource("badAllowedIps")
+  void createApiTrigger_badAllowedIps_rejected(Object allowedIps) {
+    // null 원소를 담을 수 있도록 HashMap 을 쓴다
+    Map<String, Object> config = new HashMap<>();
+    config.put("allowedIps", allowedIps);
+    assertThatThrownBy(
+            () ->
+                triggerService.createTrigger(
+                    pipelineId,
+                    new CreateTriggerRequest("Bad IPs", TriggerType.API, null, config),
+                    testUserId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining(ALLOWED_IPS_SHAPE_MSG);
+  }
+
+  @Test
+  void updateApiTrigger_allowedIpsNotList_rejected() {
+    TriggerResponse created = createApiTrigger("Update Bad IPs");
+
+    assertThatThrownBy(
+            () ->
+                triggerService.updateTrigger(
+                    created.id(),
+                    new UpdateTriggerRequest(
+                        "Update Bad IPs", null, null, Map.of("allowedIps", "10.0.0.1")),
+                    testUserId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining(ALLOWED_IPS_SHAPE_MSG);
+
+    // 거절된 수정은 저장값을 바꾸지 않는다
+    assertThat(triggerService.getTriggerById(created.id()).config())
+        .containsEntry("allowedIps", List.of("10.0.0.0/8"));
+  }
+
+  @Test
+  void createApiTrigger_allowedIpsValidListWithBlank_saved() {
+    TriggerResponse created =
+        triggerService.createTrigger(
+            pipelineId,
+            new CreateTriggerRequest(
+                "Blank IPs",
+                TriggerType.API,
+                null,
+                Map.of("allowedIps", List.of("10.0.0.0/8", ""))),
+            testUserId);
+
+    assertThat(triggerService.getTriggerById(created.id()).config())
+        .containsEntry("allowedIps", List.of("10.0.0.0/8", ""));
   }
 
   /** API 트리거를 allowedIps 하나로 만든다(WD-243). 응답 config 의 rawToken 이 원본 토큰이다. */

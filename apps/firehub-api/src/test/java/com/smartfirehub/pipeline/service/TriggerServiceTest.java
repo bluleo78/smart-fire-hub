@@ -10,6 +10,7 @@ import com.smartfirehub.pipeline.exception.PipelineNotFoundException;
 import com.smartfirehub.pipeline.exception.TriggerNotFoundException;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import org.jooq.DSLContext;
@@ -520,5 +521,35 @@ class TriggerServiceTest extends IntegrationTestBase {
     assertThat(triggerService.isIpAllowed("myhost", List.of("myhost"))).isFalse();
     assertThat(triggerService.isIpAllowed("garbage", List.of("10.0.0.0/8"))).isFalse();
     assertThat(triggerService.isIpAllowed("[2001:db8::7]", List.of("2001:db8::/32"))).isTrue();
+  }
+
+  /**
+   * WD-859: 잠금 뒤 재검사 경로(TriggerResponse 오버로드)도 옛 잘못된 allowedIps(문자열·비문자열 원소)를 형 변환 오류(500)나 통과 없이 거절한다. 정상 목록은
+   * 그대로 판정한다.
+   */
+  @Test
+  void isIpAllowed_triggerResponseWithLegacyBadShape_failsClosed() {
+    assertThat(triggerService.isIpAllowed("127.0.0.1", apiTriggerWith("127.0.0.1"))).isFalse();
+    assertThat(triggerService.isIpAllowed("127.0.0.1", apiTriggerWith(List.of("127.0.0.0/8", 5))))
+        .isFalse();
+    assertThat(triggerService.isIpAllowed("127.0.0.1", apiTriggerWith(List.of("127.0.0.0/8"))))
+        .isTrue();
+  }
+
+  /** config 에 allowedIps 원본 값만 담은 API 트리거 응답(저장 검증을 거치지 않은 옛 값 재현용). */
+  private static TriggerResponse apiTriggerWith(Object allowedIps) {
+    return new TriggerResponse(
+        1L,
+        2L,
+        "API",
+        "legacy",
+        null,
+        true,
+        Map.of("allowedIps", allowedIps),
+        null,
+        null,
+        1L,
+        LocalDateTime.now(),
+        LocalDateTime.now());
   }
 }
