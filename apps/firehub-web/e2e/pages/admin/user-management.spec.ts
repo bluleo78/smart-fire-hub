@@ -438,7 +438,10 @@ test.describe('사용자 관리 페이지', () => {
     await setupUserListMocks(page, 3);
     await page.goto('/admin/users');
 
-    const firstRow = page.getByRole('row').nth(1);
+    // 로딩 중에는 TableSkeletonRows 의 스켈레톤 행이 먼저 그려진다 — 그 행에도 role·tabindex 가 없어 부정 단언이
+    // 데이터가 오기 전에 바로 통과해 버린다(리뷰 후속). 그래서 user1 칸이 있는 데이터 행이 보일 때까지 먼저 기다린다.
+    const firstRow = page.getByRole('row').filter({ has: page.getByRole('cell', { name: 'user1', exact: true }) });
+    await expect(firstRow).toBeVisible();
     await expect(firstRow).not.toHaveAttribute('role', /.+/);
     await expect(firstRow).not.toHaveAttribute('tabindex', /.+/);
     await expect(page.getByRole('button', { name: /상세 보기/ })).toHaveCount(0);
