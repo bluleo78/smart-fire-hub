@@ -116,6 +116,27 @@ test.describe('데이터셋 상세 페이지', () => {
     await expect(page).not.toHaveURL(/[?&]tab=/);
   });
 
+  /**
+   * WD-851: 저장소 기능 조회 실패(직접 목 500 — 공용 목이 생겨도 재현이 사라지지 않게)로 데이터 탭 마운트 때 rowSearch 가 흔들려,
+   * 라우터 transition 대기 중 효과가 낡은 URL 로 탭을 되돌리던 경쟁을 CPU 8배 늦춤으로 재현한다.
+   */
+  test('부하 아래 탭 클릭 직후 URL 반영 전에 고른 탭이 되돌아가지 않는다 (WD-851)', async ({ authenticatedPage: page }) => {
+    test.setTimeout(60_000);
+    await setupDetailPageMocks(page, 1);
+    await mockApi(page, 'GET', '/api/v1/data-store/capabilities', { message: 'capabilities 조회 실패' }, { status: 500 });
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Emulation.setCPUThrottlingRate', { rate: 8 });
+    await page.goto('/data/datasets/1');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible({ timeout: 30_000 });
+
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await expect(page).toHaveURL(/[?&]tab=data/);
+
+    await page.getByRole('tab', { name: '정보' }).click();
+    await expect(page.getByRole('tab', { name: '정보' })).toHaveAttribute('aria-selected', 'true');
+    await expect(page).not.toHaveURL(/[?&]tab=/);
+  });
+
   test('뒤로 가기 버튼 클릭 시 목록 페이지로 이동한다', async ({ authenticatedPage: page }) => {
     await setupDetailPageMocks(page, 1);
     // 목록 페이지로 돌아갈 때 필요한 API 모킹 (동적 import → 정적 import로 교체)

@@ -185,17 +185,16 @@ export default function DatasetDetailPage() {
     if (active) scrollIntoViewNearest(tabsListEl, active, 'x');
   }, [tabsListEl, activeTab]);
 
-  // searchParams가 외부에서 변경될 때(예: DatasetListPage의 ?tab=data 링크) activeTab을 동기화한다 (#170).
-  // dataset도 의존성에 포함 — 데이터셋 로드 완료 시 storageType 기반 validTabs를 재계산하여
-  // ?tab=documents로 직접 진입한 DOCUMENT 데이터셋이 올바른 탭으로 복원된다.
-  // useState 초기값은 최초 렌더링에만 반영되므로, searchParams 변경 시 별도 동기화가 필요하다.
-  // 페인트 전 동기 보정으로 탭 깜빡임 방지.
+  // URL ?tab= 이 바뀌면(외부 링크 #170·뒤로 가기) 또는 유효 탭 집합이 바뀌면(데이터셋 로드 후 ?tab=documents 복원) activeTab 을 맞춘다.
+  // 의존성은 객체(searchParams·dataset)가 아니라 값으로 둔다(WD-851) — 탭 클릭 뒤 라우터 transition 이 끝나기 전에 다른 조회
+  // 갱신으로 효과가 다시 돌면 낡은 URL 로 방금 고른 탭을 되돌렸다. 남은 좁은 창: 그 사이 유효 탭 집합 자체가 바뀌면(Tibero
+  // 첫 조회가 rowSearch=false 로 끝나는 순간) 여전히 URL 값으로 맞춘다 — 드물고 결과도 유효한 탭이다. 페인트 전 보정으로 깜빡임 방지.
+  const validTabsKey = validTabs.join(',');
   useLayoutEffect(() => {
-    const currentValidTabs = tabsFor(dataset?.storageType, rowSearch);
-    const newTabParam = searchParams.get('tab');
-    const newTab = newTabParam && currentValidTabs.includes(newTabParam) ? newTabParam : 'info';
+    const currentValidTabs = validTabsKey.split(',');
+    const newTab = tabParam && currentValidTabs.includes(tabParam) ? tabParam : 'info';
     setActiveTab(newTab);
-  }, [searchParams, dataset, rowSearch]);
+  }, [tabParam, validTabsKey]);
   const { data: categoriesData } = useCategories();
   const { addRecent, removeRecent } = useRecentDatasets();
 
