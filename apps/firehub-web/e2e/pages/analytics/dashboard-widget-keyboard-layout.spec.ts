@@ -251,6 +251,10 @@ test.describe("대시보드 편집 — 키보드 배치 조작 (WD-324)", () => 
     // 실패 안내 뒤에도 편집 모드 — 「완료」가 그대로 있고 옮긴 위치도 유지된다
     await expect(page.getByText(/배치를 저장하지 못했습니다/)).toBeVisible();
     await expect(page.getByRole("button", { name: "완료" })).toBeVisible();
+    // 안내 영역에 「저장하는 중」이 남지 않고 실패와 다시 옮길 수 있음을 알린다(WD-823 리뷰 후속)
+    await expect(page.getByTestId("dashboard-layout-announcement")).toHaveText(
+      "저장에 실패해 편집을 이어 갑니다. 위젯을 계속 옮기거나 다시 「완료」를 누를 수 있습니다.",
+    );
     await page
       .getByRole("button", { name: "「왼쪽 차트」 위젯 이동·크기 조절" })
       .focus();
@@ -382,6 +386,56 @@ test.describe("대시보드 편집 — 키보드 배치 조작 (WD-324)", () => 
       width: 6,
       height: 4,
     });
+  });
+
+  test("「완료」 저장을 기다리는 동안에는 화살표·끌기·편집 취소·차트 추가가 잠기고, 저장 중이라 옮길 수 없다고 안내한다 (WD-823 리뷰 후속)", async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDashboardEditorMocks(page, 1);
+    // 저장 응답을 1.5초 늦춰 「저장 중」 창을 만든다 — 요청은 도착 즉시 캡처된다
+    const putCapture = await mockApi(
+      page,
+      "PUT",
+      "/api/v1/analytics/dashboards/1/widgets/1",
+      {},
+      { capture: true, delayMs: 1500 },
+    );
+
+    const handle = await openEditorWithHandleFocused(page);
+    const announcement = page.getByTestId("dashboard-layout-announcement");
+    const gridItem = page.locator(".react-grid-item");
+    const drawnStyle = () => gridItem.getAttribute("style");
+
+    await page.keyboard.press("ArrowRight");
+    await expect(announcement).toHaveText(
+      "「테스트 차트」 위치 2열 1행, 크기 너비 6칸 높이 4칸",
+    );
+    const styleBeforeSave = await drawnStyle();
+
+    await page.getByRole("button", { name: "완료" }).click();
+    expect((await putCapture.waitForRequest()).payload).toMatchObject({
+      positionX: 1,
+      positionY: 0,
+    });
+
+    // 저장 응답 전 — 저장 중이라 옮길 수 없다고 안내하고, 손잡이로 → 를 두 번 더 눌러도 화면 배치는 그대로다.
+    // 옛 코드는 화면에서는 3열·4열로 움직였다가 저장 성공 뒤 편집이 끝나며 이 이동이 말없이 버려졌다.
+    await expect(announcement).toHaveText(
+      "배치를 저장하는 중입니다. 저장이 끝날 때까지 위젯을 옮길 수 없습니다.",
+    );
+    await handle.focus();
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("ArrowRight");
+    expect(await drawnStyle()).toBe(styleBeforeSave);
+    // 마우스 끌기도 잠긴다 — RGL 은 끌 수 있는 항목에만 react-draggable 클래스를 붙인다
+    await expect(gridItem).not.toHaveClass(/react-draggable(\s|$)/);
+    // 취소 뒤 다시 편집하면 늦게 끝난 저장이 새 편집을 닫았으므로 취소·차트 추가도 잠근다
+    await expect(page.getByTitle("편집 취소")).toBeDisabled();
+    await expect(page.getByRole("button", { name: "차트 추가" })).toBeDisabled();
+
+    // 저장이 끝나면 편집이 끝나고, 저장 요청은 처음 한 번(2열)뿐이다
+    await expect(page.getByRole("button", { name: "편집" })).toBeVisible();
+    expect(putCapture.requests).toHaveLength(1);
   });
 
   test("키를 누른 뒤 「편집 취소」하고 다시 편집하면 서버 배치에서 출발한다 (WD-823)", async ({
