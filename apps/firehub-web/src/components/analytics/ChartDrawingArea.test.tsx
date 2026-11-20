@@ -201,12 +201,18 @@ describe('ChartAccessibleFigure — 그림이 있을 때만 차트 이름·값 �
  */
 describe('HIDDEN_CHART_ROOT_PROPS — 숨긴 recharts svg 는 role=application·포커스가 없다 (WD-826)', () => {
   let original: unknown;
+  // 게이지는 ResponsiveWrapper(react-virtualized-auto-sizer)가 부모 getBoundingClientRect 로 재서 0 크기면 그리지 않는다(WD-846).
+  // jsdom 은 크기가 0 이라 이 묶음에서만 400×300 으로 알려 준다.
+  const originalRect = HTMLElement.prototype.getBoundingClientRect;
   beforeEach(() => {
+    HTMLElement.prototype.getBoundingClientRect = () =>
+      ({ width: 400, height: 300, top: 0, left: 0, right: 400, bottom: 300, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
     original = globalThis.ResizeObserver;
     Object.defineProperty(globalThis, 'ResizeObserver', { value: createResizeObserverStub({ width: 400, height: 300 }), configurable: true });
   });
   afterEach(() => {
     Object.defineProperty(globalThis, 'ResizeObserver', { value: original, configurable: true });
+    HTMLElement.prototype.getBoundingClientRect = originalRect;
   });
 
   const XY = { xAxis: 'area', yAxis: ['sum'] };

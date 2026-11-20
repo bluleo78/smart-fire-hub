@@ -5,10 +5,10 @@ import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 
 /**
- * 대시보드 위젯 높이 채우기 (WD-845)
+ * 대시보드 위젯 높이 채우기 (WD-845, WD-846)
  *
- * 폭포·트리맵·박스플롯·레이더·히스토그램·퍼널·캔들·히트맵 8개 뷰가 `height = 300` 기본값을 가져
- * 위젯 높이와 상관없이 그림이 300px 로 고정되던 문제를 검증한다. 위젯 행 수를 작게/크게 두 번 그려
+ * 폭포·트리맵·박스플롯·레이더·히스토그램·퍼널·캔들·히트맵 8개 뷰가 `height = 300` 기본값을, 게이지가
+ * 280px 고정(WD-846)을 가져 위젯 높이와 상관없이 그림이 그 값으로 고정되던 문제를 검증한다. 위젯 행 수를 작게/크게 두 번 그려
  * 그림 높이가 (a) 300 이 아니고 (b) 큰 위젯이 더 크며 (c) 위젯 본문을 넘지 않는지 본다.
  */
 
@@ -51,10 +51,18 @@ const CASES: Case[] = [
     config: { xAxis: 'r', yAxis: ['col'], valueColumn: 'val' },
     target: 'svg',
   },
+  // WD-846: 게이지도 280px 고정이 아니라 위젯 높이를 채운다
+  { type: 'GAUGE', columns: ['name', 'v'], rows: [{ name: 'A', v: 70 }], config: { xAxis: 'name', yAxis: ['v'], min: 0, max: 100 }, target: '.recharts-wrapper' },
 ];
 
-async function setup(page: Page, c: Case, widgetHeight: number, rows = c.rows, columns = c.columns) {
-  const widget = createWidget({ id: 1, chartId: 1, chartName: `위젯-${c.type}`, chartType: c.type as never, width: 6, height: widgetHeight });
+// 위젯 하나짜리 대시보드를 모킹한다 — rows·columns 는 차트 데이터, widgetWidth 는 격자 칸 수(기본 6칸)
+async function setup(
+  page: Page,
+  c: Case,
+  widgetHeight: number,
+  { rows = c.rows, columns = c.columns, widgetWidth = 6 }: { rows?: Case['rows']; columns?: Case['columns']; widgetWidth?: number } = {},
+) {
+  const widget = createWidget({ id: 1, chartId: 1, chartName: `위젯-${c.type}`, chartType: c.type as never, width: widgetWidth, height: widgetHeight });
   const chart = createChart({ id: 1, name: `위젯-${c.type}`, chartType: c.type as never, config: c.config as never });
   await mockApi(page, 'GET', '/api/v1/analytics/dashboards/1', createDashboard({ id: 1, widgets: [widget] }));
   await mockApi(page, 'GET', '/api/v1/analytics/charts/1/data', {
@@ -108,10 +116,11 @@ test.describe('대시보드 위젯 높이 채우기 (WD-845)', () => {
   }
 
   // 박스플롯·캔들·히트맵: 본문이 위·아래 여백 합(60px) 이하인 아주 낮은 위젯(1행)에서는 뒤집혀 그리지 않는다.
-  // 컴포넌트 단위 테스트 환경이 없어 E2E 로 검증한다 — 측정이 끝난 뒤에도 svg 를 하나도 그리면 안 된다.
-  // 그릴 높이가 여백 합 이하면 그리지 않는 가드가 있는 차트들(WD-845)
-  const LOW_GUARD_TYPES = ['BOXPLOT', 'CANDLESTICK', 'HEATMAP'];
-  for (const c of CASES.filter((x) => LOW_GUARD_TYPES.includes(x.type))) {
+  // 측정·레이아웃이 실제 브라우저에서만 의미가 있어 E2E 로 검증한다(WD-846) — 측정이 끝난 뒤에도 svg 를 하나도 그리면 안 된다.
+  // 그릴 높이가 여백 합 이하면 그리지 않는 가드가 있는 차트들(WD-845). 게이지는 잰 폭·높이 중 작은 쪽이 80px 미만이면 그리지 않는다(WD-846)
+  const LOW_GUARD_TYPES = ['BOXPLOT', 'CANDLESTICK', 'HEATMAP', 'GAUGE'];
+  const GUARD_CASES = CASES.filter((x) => LOW_GUARD_TYPES.includes(x.type));
+  for (const c of GUARD_CASES) {
     test(`${c.type} 아주 낮은 위젯에서는 음수 높이로 그리지 않는다`, async ({ authenticatedPage: page }) => {
       await setup(page, c, 1);
       await page.goto('/analytics/dashboards/1');
@@ -126,11 +135,34 @@ test.describe('대시보드 위젯 높이 채우기 (WD-845)', () => {
     });
   }
 
+  // WD-846: 높이는 넉넉한데 폭만 좌우 여백 합 이하인 위젯 — 높이 가드는 통과해도 plotW 가 0 이하라 음수 폭이 된다.
+  // 실제 대시보드 격자로 만든다: 폭 1칸 위젯 + 900px 뷰포트. 보기 모드는 격자 컨테이너가 640px 미만이면 한 줄에 하나씩
+  // 쌓아 위젯이 전체 폭을 쓰므로(320·700px 에서는 본문 222·602px 라 재현되지 않았다), 12열 격자가 유지되는 폭이어야 한다.
+  // 측정한 본문 폭은 34~56px 로 세 차트의 여백 합보다 모두 작다.
+  // 본문 폭이 각 차트 여백 합(박스플롯 70·캔들 80·히트맵 140·게이지 최소 크기 80)보다 엄격히 작음을 단언한다(같은 값은 가드 경계라 따로 다루지 않는다).
+  const MARGIN_SUM: Record<string, number> = { BOXPLOT: 70, CANDLESTICK: 80, HEATMAP: 140, GAUGE: 80 };
+  for (const c of GUARD_CASES) {
+    test(`${c.type} 아주 좁은 위젯에서는 음수 폭으로 그리지 않는다`, async ({ authenticatedPage: page }) => {
+      await page.setViewportSize({ width: 900, height: 800 });
+      await setup(page, c, 5, { widgetWidth: 1 });
+      await page.goto('/analytics/dashboards/1');
+      const body = page.getByTestId(BODY);
+      await expect(body).toBeVisible();
+      // 측정이 끝난 뒤에 폭을 읽는다 — 측정 전 레이아웃의 폭으로 판단하지 않게(WD-846)
+      await expect(body.locator('[data-chart-measured="true"]')).toHaveCount(1);
+      const box = await body.boundingBox();
+      expect(box?.width ?? 0).toBeLessThan(MARGIN_SUM[c.type]);
+      // 높이는 넉넉해야 높이 가드가 아니라 폭 가드를 검증한다
+      expect(box?.height ?? 0).toBeGreaterThan(100);
+      await expect(body.locator('[data-chart-drawing] svg')).toHaveCount(0);
+    });
+  }
+
   test('폭포 넘침 안내가 위젯 높이를 채운다', async ({ authenticatedPage: page }) => {
     const c = CASES.find((x) => x.type === 'WATERFALL')!;
     const rows = [{ name: 'A', v: 1e308 }, { name: 'B', v: 1e308 }, { name: 'C', v: -5 }];
     const get = async (h: number) => {
-      await setup(page, c, h, rows);
+      await setup(page, c, h, { rows });
       await page.goto('/analytics/dashboards/1');
       const el = page.getByTestId('waterfall-overflow-notice');
       await expect(el).toBeVisible();

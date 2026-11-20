@@ -60,7 +60,8 @@ export function CandlestickChartView({ data, config, height }: ChartViewProps) {
   const plotW = dims.width - MARGIN.left - MARGIN.right;
   const plotH = containerH - MARGIN.top - MARGIN.bottom;
   // WD-845: 측정 높이가 위·아래 여백 합 이하(아주 낮은 위젯)면 plotH 가 0 이하라 뒤집혀 그려지므로 그리지 않는다
-  const canDraw = dims.width > 0 && containerH > MARGIN.top + MARGIN.bottom;
+  // WD-846: 폭도 같은 이유 — 측정 폭이 좌우 여백 합 이하(아주 좁은 위젯)면 plotW 가 0 이하라 음수 폭이 되므로 그리지 않는다
+  const canDraw = plotW > 0 && plotH > 0;
 
   const allVals = candles.flatMap(c => [c.high, c.low]);
   // 빈 데이터: Math.min(...[]) = Infinity 로 SVG 좌표가 NaN이 되는 것을 방지
