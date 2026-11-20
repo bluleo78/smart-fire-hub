@@ -1686,6 +1686,69 @@ test.describe('새 온톨로지 대화상자 (WD-819)', () => {
     await expectNoDomainError(reopened, DUPLICATE_TEXT);
   });
 
+  test('요청 중 닫고 다시 열어 입력 중일 때 늦게 온 성공은 대화상자·입력을 건드리지 않고 토스트로 알린다 (WD-819)', async ({
+    authenticatedPage: page,
+  }) => {
+    const held = await holdApi(page, 'POST', '/api/v1/ontologies', 201, 7);
+    const { dialog, input } = await openDialog(page);
+    await input.fill('화재');
+    await dialog.getByRole('button', { name: '만들기' }).click();
+    await expect.poll(() => held.requests.length).toBe(1);
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    // 다시 열어 다른 값을 입력 중인 상태에서 늦은 성공이 도착한다
+    await page.getByRole('button', { name: '새 온톨로지' }).click();
+    const reopened = page.getByTestId('ontology-create-dialog');
+    await expect(reopened).toBeVisible();
+    await reopened.locator('#ontology-domain').fill('다른 도메인');
+    held.release();
+
+    await expect(page.getByText('온톨로지 「화재」를 만들었습니다.')).toBeVisible();
+    await expect(reopened).toBeVisible();
+    await expect(reopened.locator('#ontology-domain')).toHaveValue('다른 도메인');
+  });
+
+  test('요청 중 닫고 다시 열지 않았다면 늦게 온 성공도 평소처럼 새 온톨로지를 고르고 다음에 열면 칸이 비어 있다 (WD-819)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 새 온톨로지 id=2(건축물 대장) — 선택되면 기본 선택(첫 활성 = 화재조사 보고서)이 바뀐다
+    const held = await holdApi(page, 'POST', '/api/v1/ontologies', 201, 2);
+    const { dialog, input } = await openDialog(page);
+    // 지식 모델 탭의 온톨로지 선택기(접근성 이름이 이 탭에서는 노출되지 않아 첫 combobox 로 잡는다)
+    const selector = page.getByRole('combobox').first();
+    await input.fill('건축물 대장');
+    await dialog.getByRole('button', { name: '만들기' }).click();
+    await expect.poll(() => held.requests.length).toBe(1);
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    // 닫힌 뒤 기본 선택(첫 활성)은 화재조사 보고서 — 늦은 성공이 새 온톨로지로 바꾼다
+    await expect(selector).toContainText('화재조사 보고서');
+    held.release();
+    await expect(selector).toContainText('건축물 대장');
+
+    await page.getByRole('button', { name: '새 온톨로지' }).click();
+    await expect(page.getByTestId('ontology-create-dialog').locator('#ontology-domain')).toHaveValue('');
+  });
+
+  test('요청 중 닫은 뒤 늦게 온 409 실패는 오류 토스트로 알리고, 다시 열면 칸 오류가 없다 (WD-819)', async ({
+    authenticatedPage: page,
+  }) => {
+    const held = await holdApi(page, 'POST', '/api/v1/ontologies', 409, DUPLICATE_BODY);
+    const { dialog, input } = await openDialog(page);
+    await input.fill('화재');
+    await dialog.getByRole('button', { name: '만들기' }).click();
+    await expect.poll(() => held.requests.length).toBe(1);
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    held.release();
+
+    await expect(page.getByText(DUPLICATE_TEXT)).toBeVisible();
+    await page.getByRole('button', { name: '새 온톨로지' }).click();
+    const reopened = page.getByTestId('ontology-create-dialog');
+    await expect(reopened).toBeVisible();
+    await expectNoDomainError(reopened, DUPLICATE_TEXT);
+  });
+
   test('409 오류 뒤 도메인을 고쳐 다시 제출하면 POST 가 다시 나간다 (WD-819)', async ({ authenticatedPage: page }) => {
     const capture = await mockApi(page, 'POST', '/api/v1/ontologies', DUPLICATE_BODY, {
       status: 409,

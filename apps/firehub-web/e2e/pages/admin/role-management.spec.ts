@@ -724,6 +724,71 @@ test.describe('역할 관리 페이지', () => {
     await expect(reopened.getByLabel('역할 이름')).not.toHaveAttribute('aria-invalid', 'true');
   });
 
+  test('새 역할 요청 중 닫고 다시 열어 입력 중일 때 늦게 온 성공은 대화상자·입력을 건드리지 않고 토스트로 알리며 목록을 다시 읽는다 (WD-819)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupRoleListMocks(page);
+    const held = await holdApi(page, 'POST', '/api/v1/roles', 201, { id: 99, name: 'NEW_ROLE' });
+    const { dialog } = await submitNewRole(page, 'NEW_ROLE');
+    await expect.poll(() => held.requests.length).toBe(1);
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    await page.getByRole('button', { name: '새 역할' }).click();
+    const reopened = page.getByRole('dialog');
+    await expect(reopened).toBeVisible();
+    await reopened.getByLabel('역할 이름').fill('OTHER_ROLE');
+    // 응답을 풀기 전부터 목록 재조회 GET 을 센다
+    let listGets = 0;
+    page.on('request', (r) => {
+      if (r.method() === 'GET' && new URL(r.url()).pathname === '/api/v1/roles') listGets += 1;
+    });
+    held.release();
+
+    await expect(page.getByText('역할이 생성되었습니다.')).toBeVisible();
+    await expect.poll(() => listGets).toBeGreaterThanOrEqual(1);
+    await expect(reopened).toBeVisible();
+    await expect(reopened.getByLabel('역할 이름')).toHaveValue('OTHER_ROLE');
+  });
+
+  test('새 역할 요청 중 닫고 다시 열지 않았다면 늦게 온 성공도 평소처럼 폼을 비워 다음에 열면 칸이 비어 있다 (WD-819)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupRoleListMocks(page);
+    const held = await holdApi(page, 'POST', '/api/v1/roles', 201, { id: 99, name: 'NEW_ROLE' });
+    const { dialog } = await submitNewRole(page, 'NEW_ROLE');
+    await dialog.getByLabel('설명').fill('설명 값');
+    await expect.poll(() => held.requests.length).toBe(1);
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    held.release();
+    await expect(page.getByText('역할이 생성되었습니다.')).toBeVisible();
+
+    await page.getByRole('button', { name: '새 역할' }).click();
+    const reopened = page.getByRole('dialog');
+    await expect(reopened).toBeVisible();
+    await expect(reopened.getByLabel('역할 이름')).toHaveValue('');
+    await expect(reopened.getByLabel('설명')).toHaveValue('');
+  });
+
+  test('새 역할 요청 중 닫은 뒤 늦게 온 400 실패는 오류 토스트로 알리고, 다시 열면 칸 오류가 없다 (WD-819)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupRoleListMocks(page);
+    const held = await holdApi(page, 'POST', '/api/v1/roles', 400, DUPLICATE_ROLE_BODY);
+    const { dialog } = await submitNewRole(page, 'ADMIN');
+    await expect.poll(() => held.requests.length).toBe(1);
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    held.release();
+
+    await expect(page.getByText(DUPLICATE_ROLE_MESSAGE)).toBeVisible();
+    await page.getByRole('button', { name: '새 역할' }).click();
+    const reopened = page.getByRole('dialog');
+    await expect(reopened).toBeVisible();
+    await expect(reopened.getByRole('alert')).toHaveCount(0);
+    await expect(reopened.getByLabel('역할 이름')).not.toHaveAttribute('aria-invalid', 'true');
+  });
+
   test('새 역할의 이름 무관 서버 오류(500)는 이름 칸에 붙지 않고 알림으로 읽힌다 (WD-819)', async ({
     authenticatedPage: page,
   }) => {

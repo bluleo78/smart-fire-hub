@@ -14,6 +14,7 @@ import { TableEmptyRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { TruncatedText } from '@/components/ui/truncated-text';
 import { useRoleClearance } from '@/hooks/queries/useSecurityLevels';
+import { useCloseGeneration } from '@/hooks/useCloseGeneration';
 import { useGuardedSubmit } from '@/hooks/useSubmitGuard';
 import { extractApiError, handleApiError, isBadRequestError, isNotFoundError } from '@/lib/api-error';
 import { iGa } from '@/lib/utils';
@@ -146,13 +147,11 @@ export default function RoleListPage() {
     setServerError(null);
   }, [nameValue]);
 
-  // 닫힘 세대 카운터 — 요청 중에 대화상자를 닫으면 올려서, 늦게 도착한 서버 오류가
-  // 닫힌(그러나 마운트된) 대화상자에 남아 다시 열었을 때 보이는 것을 막는다.
-  const closeGenRef = useRef(0);
+  // 닫힘 세대(WD-819) — 요청 중 닫힘·다시 열림 판정(상세는 훅 JSDoc)
+  const closeGen = useCloseGeneration(dialogOpen);
 
   const onCreateSubmit = async (data: CreateRoleFormData) => {
-    // 제출 시작 시점의 세대를 잡아 두고, catch 에서 바뀌었으면 오류를 버린다
-    const gen = closeGenRef.current;
+    const { isStale, isReopened } = closeGen.capture();
     try {
       setServerError(null);
       await rolesApi.createRole({
@@ -160,12 +159,21 @@ export default function RoleListPage() {
         description: data.description || undefined,
       });
       toast.success('역할이 생성되었습니다.');
+      // 늦은 성공 + 다시 열려 있음(WD-819): 입력 중일 수 있어 열림·폼은 건드리지 않고 목록만 갱신한다.
+      // (다시 열지 않았다면 아래 평소 경로 — 이미 닫혀 있어도 폼은 비워야 다음에 열 때 값이 남지 않는다.)
+      if (isReopened()) {
+        fetchRoles();
+        return;
+      }
       setDialogOpen(false);
       form.reset();
       fetchRoles();
     } catch (error) {
-      // 요청 중에 닫혔다면 늦게 온 오류를 표시하지 않는다(다시 열었을 때 묵은 오류가 남지 않게)
-      if (gen !== closeGenRef.current) return;
+      // 요청 중에 닫혔다면 칸 오류 대신 토스트로 알린다(다시 열었을 때 묵은 오류가 남지 않게, WD-819)
+      if (isStale()) {
+        handleApiError(error, '역할 생성에 실패했습니다.');
+        return;
+      }
       const message = extractApiError(error, '역할 생성에 실패했습니다.');
       // CreateRoleRequest 는 name 만 검증하므로 400 은 이름 문제다 — 이름 칸 오류로 이어 읽히게 하고 칸으로 포커스를 돌린다.
       if (isBadRequestError(error)) {
@@ -201,7 +209,6 @@ export default function RoleListPage() {
             onOpenChange={(next) => {
               // 닫힐 때(취소·X·ESC·바깥 클릭 모두) 서버 오류를 지워 다시 열었을 때 묵은 오류가 남지 않게 한다.
               if (!next) {
-                closeGenRef.current += 1;
                 setServerError(null);
               }
               setDialogOpen(next);
