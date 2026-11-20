@@ -101,23 +101,34 @@ export function transformWaterfallData(
   return { rows, overflow: false };
 }
 
+/** 게이지 범위가 그릴 수 없는 이유 — 'non-finite': 최솟값·최댓값이 NaN·±Infinity, 'not-increasing': 최댓값 ≤ 최솟값 */
+export type GaugeInvalidRange = false | 'non-finite' | 'not-increasing';
+
 /** 게이지가 보여 주는 값 — 첫 행의 값과 눈금 범위(min ~ max) */
 export interface GaugeReading {
   value: number;
   min: number;
   max: number;
-  /** 범위가 그릴 수 없는 값인가 — 판정 이유는 computeGaugeReading 참고(WD-848) */
-  invalidRange: boolean;
+  /** 범위가 그릴 수 없는 값이면 그 이유, 아니면 false — 참·거짓 검사로도 쓸 수 있다(WD-848) */
+  invalidRange: GaugeInvalidRange;
+}
+
+/** x 보다 위로 120% 만큼 나간 눈금 — 양수는 ×1.2 올림, 음수는 ×0.8 올림(0 쪽으로), 0 이면 100 */
+function extendUp(x: number): number {
+  return x > 0 ? Math.ceil(x * 1.2) : x < 0 ? Math.ceil(x * 0.8) : 100;
 }
 
 /**
  * 게이지가 그리는 값과 범위를 계산한다. 값은 첫 행(data[0])의 yAxis[0] 이며 빈 값(null·''·공백만)은 0 으로 본다.
- * max 미설정 시 실제 값의 120%(올림)를 써서 바늘이 최대값에 고착되지 않게 하고, 값이 0 이하이면 100 을 쓴다.
- * 한쪽만 설정했을 때는 빠진 끝을 설정된 끝에 맞춘다 — 자동 기본값이 설정된 끝을 무시하면 max ≤ min 인 역범위가 되기 때문이다.
- * 둘 다 설정한 역범위를 서버·normalizeChartConfig(WD-413)가 막고 기본 범위로 그리는 것과 같은 철학으로 역범위를 만들지 않는다(WD-848):
- *  - max 미설정: 자동 max 가 min 이하이면 max = ceil(min×1.2)
- *  - min 미설정: min = 0, 설정된 max 가 0 이하이면 min = max < 0 ? floor(max×1.2) : -100
+ * 둘 다 미설정이면 min = 0, max = 값이 0 보다 크면 ceil(값×1.2), 아니면 100 (바늘이 최대값에 고착되지 않게).
+ * 둘 다 설정하면 그대로 쓴다. 둘 다 설정한 역범위는 서버·normalizeChartConfig(WD-413)가 막으므로 여기서 고치지 않고 invalidRange 로 알린다.
+ * 한쪽만 설정하면 빠진 끝을 설정된 끝과 값을 기준으로 120% 만큼 바깥으로 정한다(WD-848) — 이미 바르게 그리던 눈금은 그대로 둔다. 항상 max > min 이다:
+ *  - 최솟값만 설정: max = extendUp(max(값, min))  예) min 99·값 83 → 119, min 200·값 100 → 240, min -1000·값 10 → 12, min -50·값 -60 → -40, min 0·값 0 → 100
+ *  - 최댓값만 설정: max > 0 이면 min = 0(흔한 0~max 게이지, 값이 음수여도 0). max ≤ 0 이면 bottom = min(값, max) 로
+ *    bottom < 0 → min = -extendUp(-bottom)(= floor(bottom×1.2)), bottom = 0 → min = -extendUp(값)(값이 0 이면 -100)
+ *    예) max -10·값 5 → -12, max -10·값 -50 → -60, max 0·값 5 → -6, max 0·값 0 → -100, max 0·값 -1000 → -1200
  * 숫자 아닌 값 검사는 뷰가 먼저 한다(그때는 게이지 대신 안내를 보여 준다).
+ * 비유한 설정값(NaN·±Infinity)은 위 규칙을 타지 않고 그대로 두어 invalidRange 'non-finite' 로 잡는다.
  * invalidRange 는 그래도 남는 경우(둘 다 설정한 역범위, 비유한 값, 뷰를 직접 부르는 경로)의 마지막 방어선이다.
  */
 export function computeGaugeReading(data: Record<string, unknown>[], config: ChartConfig): GaugeReading {
@@ -128,16 +139,27 @@ export function computeGaugeReading(data: Record<string, unknown>[], config: Cha
   const hasMax = config.max != null;
   let min = config.min ?? 0;
   let max = config.max ?? (value > 0 ? Math.ceil(value * 1.2) : 100);
-  if (hasMin && !hasMax && max <= min) {
-    // 최솟값만 설정: 자동 최댓값이 최솟값 이하이면 최솟값의 120% 로 올린다(min ≥ 1 이면 늘 min 보다 크다)
-    max = Math.ceil(min * 1.2);
-  } else if (!hasMin && hasMax && max <= 0) {
-    // 최댓값만 설정: 기본 최솟값 0 이 최댓값 이상이면 최댓값 아래로 내린다
-    min = max < 0 ? Math.floor(max * 1.2) : -100;
+  // 비유한 설정값은 아래 규칙을 건너뛴다 — 판정이 그대로 잡게 한다
+  const setEndFinite = hasMin ? Number.isFinite(min) : Number.isFinite(max);
+  if (hasMin !== hasMax && setEndFinite) {
+    if (hasMin) {
+      // 최솟값만 설정: 최솟값과 값 중 위쪽 기준으로 올린다
+      max = extendUp(Math.max(value, min));
+    } else if (max > 0) {
+      // 최댓값만 설정(양수): 흔한 0~max 게이지 — 값이 음수여도 최솟값은 0
+      min = 0;
+    } else {
+      // 최댓값만 설정(0 이하): 값과 최댓값 중 아래쪽 기준으로 내린다 — 아래로 내리기는 부호를 뒤집은 extendUp 이다.
+      // 아래쪽이 0(최댓값 0·값 ≥ 0)이면 값 크기로 폭을 잡는다(값도 0 이면 extendUp(0) = 100 → -100)
+      const bottom = Math.min(value, max);
+      min = -extendUp(bottom < 0 ? -bottom : value);
+    }
   }
   // 마지막 방어선 — 둘 다 설정한 역범위·NaN·Infinity 는 (value-min)/(max-min) 이 NaN·Infinity 라 그릴 수 없다.
-  // 뷰·표가 같은 판정을 쓰게 여기서 낸다(WD-848)
-  const invalidRange = !Number.isFinite(min) || !Number.isFinite(max) || max <= min;
+  // 뷰·표가 같은 판정을 쓰게 여기서 낸다(WD-848). 이유는 비유한이 먼저다
+  let invalidRange: GaugeInvalidRange = false;
+  if (!Number.isFinite(min) || !Number.isFinite(max)) invalidRange = 'non-finite';
+  else if (max <= min) invalidRange = 'not-increasing';
   return { value, min, max, invalidRange };
 }
 

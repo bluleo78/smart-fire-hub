@@ -33,6 +33,7 @@ test.describe('게이지 한쪽 범위 설정 (WD-848)', () => {
   // 한쪽만 설정한 경우 빠진 끝을 설정된 끝에 맞춰 정상 게이지로 그린다. side: 값이 범위 밖일 때 바늘 끝이 중심(x1)의 어느 쪽인지
   const cases = [
     { name: 'min 만 설정해 자동 max 보다 크면 max 를 맞춘다', config: { min: 200 }, value: 100, rangeText: '200 ~ 240', side: 'left' },
+    { name: 'min 만 설정해 자동 max 가 min 을 겨우 넘으면 폭을 확보한다', config: { min: 99 }, value: 83, rangeText: '99 ~ 119', side: 'left' },
     { name: 'max 만 음수로 설정하면 min 을 아래로 맞춘다', config: { max: -10 }, value: 5, rangeText: '-12 ~ -10', side: 'right' },
   ] as const;
 
