@@ -532,19 +532,4 @@ public abstract class TriggerRepositoryContractTest extends TenantPairContractBa
         .containsExactlyInAnyOrder(ds1, ds2);
     assertThat(inB(() -> repository().findOutputDatasetIds(pipelineA))).isEmpty();
   }
-
-  @Test
-  @DisplayName("hasRunningExecution — PENDING·RUNNING 실행이 있을 때만 true")
-  void hasRunningExecution() {
-    fx.createExecution(pipelineA, "COMPLETED");
-    assertThat(inA(() -> repository().hasRunningExecution(pipelineA))).isFalse();
-
-    fx.createExecution(pipelineA, "PENDING");
-    assertThat(inA(() -> repository().hasRunningExecution(pipelineA))).isTrue();
-    assertThat(inB(() -> repository().hasRunningExecution(pipelineA))).isFalse();
-
-    long p2 = fx.createPipeline(tenantA, prefix + "-p2", true);
-    fx.createExecution(p2, "RUNNING");
-    assertThat(inA(() -> repository().hasRunningExecution(p2))).isTrue();
-  }
 }

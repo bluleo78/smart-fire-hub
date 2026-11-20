@@ -314,11 +314,6 @@ public class MyBatisTriggerRepository implements TriggerRepository {
     return Optional.ofNullable(mapper.selectByWebhookId(webhookId)).map(this::toResponse);
   }
 
-  @Override
-  public boolean hasRunningExecution(Long pipelineId) {
-    return mapper.selectRunningExecutionMarker(pipelineId) != null;
-  }
-
   /**
    * 행 → 응답. jOOQ mapToResponse 와 같다 — 꺼진 트리거는 "다음 실행"을 내보내지 않도록 nextFireTime 을 최상위 필드와 상태 원본 모두에서
    * 뺀다(WD-114).

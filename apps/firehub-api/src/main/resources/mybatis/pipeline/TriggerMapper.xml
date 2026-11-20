@@ -255,10 +255,4 @@
      WHERE <include refid="tiberoWebhookIdMatches"/>
   </select>
 
-  <select id="selectRunningExecutionMarker" resultType="java.lang.Integer">
-    SELECT 1 FROM pipeline_execution
-     WHERE pipeline_id = #{pipelineId} AND status IN ('PENDING', 'RUNNING')
-     <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.limitRows"><property name="n" value="1"/></include>
-  </select>
-
 </mapper>

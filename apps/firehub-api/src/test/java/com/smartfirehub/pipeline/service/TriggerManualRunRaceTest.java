@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.smartfirehub.pipeline.dto.CreatePipelineRequest;
 import com.smartfirehub.pipeline.dto.CreateTriggerRequest;
+import com.smartfirehub.pipeline.dto.TriggerEventResponse;
 import com.smartfirehub.pipeline.dto.TriggerFireResult;
 import com.smartfirehub.pipeline.dto.TriggerType;
 import com.smartfirehub.pipeline.dto.UpdatePipelineRequest;
@@ -135,14 +136,25 @@ class TriggerManualRunRaceTest extends IntegrationTestBase {
     assertThat(outcome.secondResult().outcome()).isEqualTo(TriggerFireResult.Outcome.SKIPPED);
     assertThat(outcome.secondResult().reason()).isEqualTo(TriggerService.REASON_CONCURRENT_SKIP);
     assertThat(executionCount()).isEqualTo(1);
+    // 건너뜀은 트리거 이벤트로도 남아야 사용자가 이력에서 이유를 본다 — 실행 없이 SKIPPED·동시 실행 사유 하나만 (WD-827 리뷰 후속)
+    List<TriggerEventResponse> events =
+        inTenantFixture(() -> triggerEventRepository.findByTriggerId(triggerId, 10));
+    assertThat(events)
+        .singleElement()
+        .satisfies(
+            e -> {
+              assertThat(e.eventType()).isEqualTo("SKIPPED");
+              assertThat(e.executionId()).isNull();
+              assertThat(e.detail()).containsEntry("reason", TriggerService.REASON_CONCURRENT_SKIP);
+            });
   }
 
   /**
    * 커밋 전 SKIP 트리거 실행이 있으면 수동 실행은 기다렸다가 409 로 거부된다.
    *
-   * <p>반대 방향(트리거가 먼저)도 하나만 시작됨을 고정하는 시험이다. 이 방향은 WD-827 수정 전에도 통과한다 — 트리거의 실행 행 INSERT 가
-   * FK 검사로 파이프라인 행을 잡아 수동 실행의 잠금이 그 커밋을 기다리고, 이어 수동 가드(WD-825)가 PENDING 을 보기 때문이다. 수정을
-   * 가리는 시험은 {@link #skipTrigger_waitsForManualRun_thenSkipped} 다.
+   * <p>반대 방향(트리거가 먼저)도 하나만 시작됨을 고정하는 시험이다. 이 방향은 WD-827 수정 전에도 통과한다 — 트리거의 실행 행 INSERT 가 FK 검사로
+   * 파이프라인 행을 잡아 수동 실행의 잠금이 그 커밋을 기다리고, 이어 수동 가드(WD-825)가 PENDING 을 보기 때문이다. 수정을 가리는 시험은 {@link
+   * #skipTrigger_waitsForManualRun_thenSkipped} 다.
    */
   @Test
   void manualRun_waitsForSkipTrigger_thenRejected() throws Exception {

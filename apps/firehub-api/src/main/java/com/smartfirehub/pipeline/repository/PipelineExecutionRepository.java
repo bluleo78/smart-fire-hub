@@ -91,7 +91,10 @@ public interface PipelineExecutionRepository {
    */
   boolean isStopRequested(long executionId);
 
-  /** 파이프라인의 진행 중 실행 상태(WD-437 — 삭제 거부 판정·삭제 확인 창 안내). */
+  /**
+   * 파이프라인의 진행 중 실행 상태. 쓰는 곳: 삭제 거부 판정·삭제 확인 창 안내(WD-437), 수동 실행 409 가드(WD-825), 일정 트리거 「건너뛰기」 동시 실행
+   * 정책(WD-827). 「진행 중」 규칙을 바꾸면 세 곳이 함께 바뀐다 — NONE 이 아니면 트리거는 건너뛰고 수동 실행은 거부된다.
+   */
   enum ActiveExecutionState {
     /** 진행 중(PENDING/RUNNING) 실행이 없다 — 지울 수 있다. */
     NONE,

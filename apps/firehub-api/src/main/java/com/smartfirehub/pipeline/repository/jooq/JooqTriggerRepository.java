@@ -458,15 +458,4 @@ public class JooqTriggerRepository implements TriggerRepository {
         .and(field("{0}->>'webhookId'", String.class, T_CONFIG).eq(webhookId))
         .fetchOptional(this::mapToResponse);
   }
-
-  @Override
-  public boolean hasRunningExecution(Long pipelineId) {
-    return dsl.fetchExists(
-        dsl.selectOne()
-            .from(table(name("pipeline_execution")))
-            .where(field(name("pipeline_execution", "pipeline_id"), Long.class).eq(pipelineId))
-            .and(
-                field(name("pipeline_execution", "status"), String.class)
-                    .in("PENDING", "RUNNING")));
-  }
 }

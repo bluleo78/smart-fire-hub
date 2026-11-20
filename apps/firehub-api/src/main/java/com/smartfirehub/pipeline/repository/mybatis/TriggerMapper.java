@@ -85,7 +85,4 @@ public interface TriggerMapper {
   TriggerRow selectByTokenHash(@Param("tokenHash") String tokenHash);
 
   TriggerRow selectByWebhookId(@Param("webhookId") String webhookId);
-
-  /** PENDING·RUNNING 실행이 있으면 1, 없으면 null. */
-  Integer selectRunningExecutionMarker(@Param("pipelineId") Long pipelineId);
 }
