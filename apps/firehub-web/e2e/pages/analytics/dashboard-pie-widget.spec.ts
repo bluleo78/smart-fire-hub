@@ -116,6 +116,11 @@ test.describe('대시보드 파이 위젯 — 카테고리 1000개 (WD-307)', ()
   test('범례가 위젯 밖으로 넘치지 않고 스크롤되며, 파이가 보이고 많은 항목 안내가 뜬다', async ({
     authenticatedPage: page,
   }) => {
+    // 1000조각 파이 + 범례 1000개의 첫 렌더가 무거워 호스트 부하에서 수십 초 걸린다.
+    // 측정(제목 표시까지): 감속 없음 2.7초 / CPU 4배 9.6초 / CPU 8배 24.7초.
+    // 느린 단계는 아래 45초 개별 제한이 맡으므로 시험 전체는 그 위에 여유만 둔 60초로 —
+    // test.slow()(90초)면 뒤 단계가 멈출 때 시도마다 90초를 쓴다.
+    test.setTimeout(60_000);
     const rows = Array.from({ length: 1000 }, (_, i) => ({ label: `항목 ${i + 1}`, v: ((i + 1) * 7) % 13 + 1 }));
     const widget = createWidget({ id: 1, chartId: 1, chartName: '많은 항목 파이', chartType: 'PIE', width: 6, height: 4 });
     const chart = createChart({
@@ -134,7 +139,8 @@ test.describe('대시보드 파이 위젯 — 카테고리 1000개 (WD-307)', ()
 
     await page.goto('/analytics/dashboards/1');
     const title = page.getByText('많은 항목 파이').first();
-    await expect(title).toBeVisible();
+    // 위젯 제목은 1000조각 그리기가 끝나야 보인다 — 45초는 위 최악 측정의 약 1.8배라 큰 렌더 회귀는 여전히 실패한다.
+    await expect(title).toBeVisible({ timeout: 45_000 });
     await expect(page.getByText('위젯 오류')).not.toBeVisible();
 
     // 많은 항목 안내
