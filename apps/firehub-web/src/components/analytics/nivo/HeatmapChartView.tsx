@@ -1,7 +1,8 @@
 // apps/firehub-web/src/components/analytics/nivo/HeatmapChartView.tsx
 // 2차원 교차 데이터를 색상 농도로 표현. 시간대×요일 패턴 분석에 적합.
 // @nivo/heatmap을 사용하며 CSS 변수로 다크모드를 동기화한다.
-import { ResponsiveHeatMap } from '@nivo/heatmap';
+import { ResponsiveWrapper } from '@nivo/core';
+import { HeatMap } from '@nivo/heatmap';
 import { useMemo } from 'react';
 
 import type { ChartViewProps } from '../chart-view-props';
@@ -30,6 +31,9 @@ function useNivoTheme() {
     },
   }), []);
 }
+
+// 히트맵 여백 — HeatMap margin 과 낮은 위젯 가드가 같은 값을 쓴다(WD-845)
+const MARGIN = { top: 40, right: 60, bottom: 40, left: 80 };
 
 /** 평탄한 행 데이터 → Nivo HeatMap 형식 변환 */
 function toNivoFormat(
@@ -88,17 +92,30 @@ export function HeatmapChartView({ data, config, height }: ChartViewProps) {
   return (
     // WD-826: 히트맵 그림만 보조기술에서 숨긴다 — 값은 figure 의 대체 표가 전달하고, 매핑·빈 데이터 안내는 위에서 따로 반환해 읽힌다.
     <ChartDrawingArea style={{ height: height ?? '100%' }}>
-      <ResponsiveHeatMap
-        data={nivoData}
-        theme={theme}
-        margin={{ top: 40, right: 60, bottom: 40, left: 80 }}
-        colors={{ type: 'sequential', scheme: 'blues' }}
-        axisTop={null}
-        axisLeft={{ tickSize: 5, tickPadding: 5 }}
-        axisBottom={{ tickSize: 5, tickPadding: 5 }}
-        labelTextColor={{ from: 'color', modifiers: [['darker', 2]] }}
-        animate={false}
-      />
+      {/* WD-845: 측정 크기가 여백 합 이하(아주 낮은 위젯)면 격자 높이가 0 이하라 음수 rect 가 되므로 그리지 않는다.
+          data-chart-measured 는 측정된 뒤에만 붙인다 — 시험이 측정 전 빈 상태를 통과로 오인하지 않게. width>0 검사는 방어용이다
+          (AutoSizer 는 0 크기에서는 children 을 렌더하지 않는다) */}
+      <ResponsiveWrapper>
+        {({ width, height: h }) => (
+          <div data-chart-measured={width > 0 ? 'true' : undefined} style={{ width, height: h }}>
+            {h > MARGIN.top + MARGIN.bottom && (
+              <HeatMap
+                width={width}
+                height={h}
+                data={nivoData}
+                theme={theme}
+                margin={MARGIN}
+                colors={{ type: 'sequential', scheme: 'blues' }}
+                axisTop={null}
+                axisLeft={{ tickSize: 5, tickPadding: 5 }}
+                axisBottom={{ tickSize: 5, tickPadding: 5 }}
+                labelTextColor={{ from: 'color', modifiers: [['darker', 2]] }}
+                animate={false}
+              />
+            )}
+          </div>
+        )}
+      </ResponsiveWrapper>
     </ChartDrawingArea>
   );
 }
