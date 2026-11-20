@@ -1016,9 +1016,20 @@ public class TriggerService {
     }
 
     // Check concurrency policy for SCHEDULE triggers
-    if ("SCHEDULE".equals(trigger.triggerType())) {
-      String policy = (String) trigger.config().getOrDefault("concurrencyPolicy", "SKIP");
-      if ("SKIP".equals(policy) && triggerRepository.hasRunningExecution(trigger.pipelineId())) {
+    if ("SCHEDULE".equals(trigger.triggerType())
+        && "SKIP".equals(trigger.config().getOrDefault("concurrencyPolicy", "SKIP"))) {
+      // WD-827: 수동 실행 가드(WD-825)와 같은 파이프라인 행 잠금 뒤에서 판정한다. 잠금 없이 보면 아직 커밋되지
+      // 않은 수동 실행을 놓쳐 겹쳐 실행한다. 잠금은 fireTrigger 트랜잭션 끝까지 유지되어 아래 실행 행 생성까지
+      // 직렬화된다. ALLOW 정책은 잠그지 않아 판정이 겹침을 막지 않는다
+      // (실행 행 INSERT 의 FK 검사(FOR KEY SHARE)로 앞선 수동 실행 커밋까지 잠깐 기다릴 수는 있다 — WD-437 의도된 동작).
+      if (pipelineRepository.lockById(trigger.pipelineId()).isEmpty()) {
+        log.info(
+            "Trigger {} not fired: pipeline {} not found while locking",
+            triggerId,
+            trigger.pipelineId());
+        return TriggerFireResult.notFired(TriggerFireResult.Outcome.NOT_FOUND, null);
+      }
+      if (triggerRepository.hasRunningExecution(trigger.pipelineId())) {
         log.info(
             "Skipping trigger {} due to SKIP concurrency policy (running execution exists)",
             triggerId);

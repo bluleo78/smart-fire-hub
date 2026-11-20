@@ -36,6 +36,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { useIsMounted } from '../../hooks/useIsMounted';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import { extractApiError, isEditConflict, isNotFoundError } from '../../lib/api-error';
+import { permissionCategoryLabel } from '../../lib/permission-category';
 import { parseRouteId } from '../../lib/route-id';
 import type { UpdateRoleFormData } from '../../lib/validations/role';
 import { ROLE_NAME_RULE, updateRoleSchema } from '../../lib/validations/role';
@@ -44,8 +45,6 @@ import type { RoleDetailResponse } from '../../types/role';
 import type { PermissionResponse } from '../../types/role';
 import { RoleClearanceCard } from './components/RoleClearanceCard';
 
-/** 권한 카테고리 표시 이름 — 없는 키는 원문 그대로. 보안 등급 S1 의 신규 카테고리(목업 s3 "보안"). */
-const PERMISSION_CATEGORY_LABELS: Record<string, string> = { security: '보안' };
 /**
  * 읽기 범위 안내를 붙일 권한. WD-29 이후 Python 스텝은 우회가 아니라 실행 주체 열람 등급 안에서만 읽으므로
  * 위험 경고 대신 등급 범위·허용 목록 등급 제약을 알린다.
@@ -587,10 +586,10 @@ function RoleDetailView() {
           )}
           {Object.entries(permissionsByCategory).map(([category, perms]) => (
             <div key={category} className="space-y-3">
-              {/* 권한 그룹 제목: h2 아래 h3 16px, 흐린 색 제거(WD-811). 실제 카테고리 키는 소문자(dataset 등)이고
-                  한국어 라벨은 security 하나뿐이라, 라벨을 채우는 WD-814 전까지 uppercase 로 예전처럼 대문자로 보인다. */}
-              <h3 className="text-base leading-6 font-semibold uppercase">
-                {PERMISSION_CATEGORY_LABELS[category] ?? category}
+              {/* 권한 그룹 제목: h2 아래 h3 16px, 흐린 색 제거(WD-811). 카테고리 키(소문자)를 한국어 라벨로 보이고(WD-814),
+                  라벨 맵에 없는 키는 원시 키 그대로 보인다. 한국어에는 대소문자가 없어 uppercase 는 쓰지 않는다. */}
+              <h3 className="text-base leading-6 font-semibold">
+                {permissionCategoryLabel(category)}
               </h3>
               <div className="space-y-2">
                 {perms.map((perm) => (
