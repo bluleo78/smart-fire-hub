@@ -50,8 +50,8 @@ public interface PipelineRepository {
 
   Optional<LocalDateTime> findUpdatedAtById(Long id);
 
-  /** 행 잠금으로 읽은 파이프라인 — 이름(삭제 감사용)과 수정 시각(낙관적 잠금 비교용, nullable 컬럼이라 null 일 수 있다). */
-  record LockedPipeline(String name, LocalDateTime updatedAt) {}
+  /** 행 잠금으로 읽은 파이프라인 — 이름(삭제 감사용), 수정 시각(낙관적 잠금 비교용, nullable 컬럼이라 null 일 수 있다), 활성 여부(WD-853). */
+  record LockedPipeline(String name, LocalDateTime updatedAt, boolean active) {}
 
   /**
    * 파이프라인 행을 FOR UPDATE 로 잠그고 읽는다. 행이 없으면 빈 값 — 수정·삭제 경로의 존재 확인(404)이다. 잠금은 호출 트랜잭션 끝까지 유지된다.

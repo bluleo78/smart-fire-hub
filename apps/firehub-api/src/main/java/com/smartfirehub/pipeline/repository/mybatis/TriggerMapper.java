@@ -88,7 +88,4 @@ public interface TriggerMapper {
 
   /** PENDING·RUNNING 실행이 있으면 1, 없으면 null. */
   Integer selectRunningExecutionMarker(@Param("pipelineId") Long pipelineId);
-
-  /** 파이프라인 활성 플래그 — 행이 없으면 null. */
-  Boolean selectPipelineActive(@Param("pipelineId") Long pipelineId);
 }

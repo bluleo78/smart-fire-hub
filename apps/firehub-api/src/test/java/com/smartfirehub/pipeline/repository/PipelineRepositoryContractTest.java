@@ -225,6 +225,10 @@ public abstract class PipelineRepositoryContractTest extends TenantPairContractB
     LockedPipeline blank = inA(() -> repository().lockById(id)).orElseThrow();
     assertThat(blank.name()).isEqualTo(prefix + "-l");
     assertThat(blank.updatedAt()).isNull();
+    // WD-853: 활성 여부도 잠근 행에서 함께 읽는다 — 활성이면 true, 끄면 false.
+    assertThat(blank.active()).isTrue();
+    inA(() -> repository().update(id, prefix + "-l", null, false, creator));
+    assertThat(inA(() -> repository().lockById(id)).orElseThrow().active()).isFalse();
 
     LocalDateTime at = fx.dbWallClockNow().withNano(0).minusDays(1);
     fx.setPipelineUpdatedAt(id, at);

@@ -261,8 +261,4 @@
      <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.limitRows"><property name="n" value="1"/></include>
   </select>
 
-  <select id="selectPipelineActive" resultType="java.lang.Boolean">
-    SELECT is_active FROM pipeline WHERE id = #{pipelineId}
-  </select>
-
 </mapper>
