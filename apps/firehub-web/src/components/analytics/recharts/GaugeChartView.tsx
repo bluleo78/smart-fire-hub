@@ -14,6 +14,24 @@ import { NonNumericValueNotice } from './NonNumericValueNotice';
 const MIN_GAUGE_SIZE = 80;
 /** 중심 아래 남은 높이가 이보다 작으면 범위 글자만 숨긴다(px, WD-846) */
 const MIN_RANGE_ROOM = 40;
+/** 굵은 숫자 글자 한 자의 대략 폭 ÷ 글자 크기 — 값 글자가 폭을 넘지 않게 크기를 줄이는 데 쓴다(WD-846) */
+const DIGIT_WIDTH_RATIO = 0.62;
+/** 글자가 차지해도 되는 폭의 비율 — 양옆에 조금 여유를 둔다(WD-846) */
+const FIT_RATIO = 0.9;
+/** 값 글자 크기 — 남은 높이에 맞춘 크기의 범위(px) */
+const VALUE_FONT_MIN = 10;
+const VALUE_FONT_MAX = 16;
+/** 값 글자 크기 하한(px) — 폭에 맞추느라 이보다 작아지면 읽을 수 없다(WD-846) */
+const MIN_VALUE_FONT = 8;
+/** 범위 글자 크기(px) */
+const RANGE_FONT = 10;
+/** PieChart 기본 여백(5px)을 없애 호 중심·반지름이 오버레이 계산((W/2, 0.75h), min(W,h)/2 기준)과 같게 한다(WD-846) */
+const NO_MARGIN = { top: 0, right: 0, bottom: 0, left: 0 };
+
+/** 글자 크기 font 로 쓴 text 의 대략 폭(px) — 굵은 숫자 기준의 넉넉한 추정(쉼표·공백은 더 좁다) */
+function estimateTextWidth(text: string, font: number) {
+  return text.length * DIGIT_WIDTH_RATIO * font;
+}
 
 export function GaugeChartView(props: ChartViewProps) {
   // height 가 없으면 부모를 채운다 — ChartViewProps 참고(WD-846: 280 기본값 제거)
@@ -50,16 +68,23 @@ export function GaugeChartView(props: ChartViewProps) {
     const needleLen = innerR * 0.9;
     // 중심 아래 남은 높이(0.25h)에 글자를 맞춘다 — 예전 +24/+38 고정 오프셋은 낮은 위젯에서 h 를 넘어 잘렸다
     const below = containerH - cy;
-    const valueFont = Math.max(10, Math.min(16, below * 0.4));
+    // 값 글자는 남은 높이에 맞추되, 폭(90%)도 넘지 않게 줄인다 — 오버레이가 축소 없는 픽셀이라 80~120px 폭에서
+    // 큰 값(예: 12,345,678)이 양쪽으로 잘렸다(예전 viewBox 는 통째로 줄여 맞췄다)
+    const valueText = value.toLocaleString();
+    const heightFont = Math.max(VALUE_FONT_MIN, Math.min(VALUE_FONT_MAX, below * 0.4));
+    const fitWidthFont = (W * FIT_RATIO) / estimateTextWidth(valueText, 1);
+    const valueFont = Math.max(MIN_VALUE_FONT, Math.min(heightFont, fitWidthFont));
     const valueY = cy + Math.min(below - 2, valueFont + 8);
-    // 범위 글자(10px)는 값 글자 아래 자리가 있을 때만 — 남은 높이가 40px 미만이면 숨긴다
-    const showRange = below >= MIN_RANGE_ROOM;
+    // 범위 글자(10px)는 값 글자 아래 자리가 있고 폭(90%)에 들어갈 때만 — 남은 높이가 40px 미만이거나 좁은 폭에서
+    // 양쪽이 잘리면 숨긴다(값 글자처럼 천 단위 구분으로 맞춘다)
+    const rangeText = `${min.toLocaleString()} ~ ${max.toLocaleString()}`;
+    const showRange = below >= MIN_RANGE_ROOM && estimateTextWidth(rangeText, RANGE_FONT) <= W * FIT_RATIO;
     return (
       <>
         {/* PieChart 의 HIDDEN_CHART_ROOT_PROPS 는 svg 의 tabindex·role=application 을, Pie 의 rootTabIndex=-1 은
             조각 묶음 <g> 의 tabindex=0 을 없애 숨긴 영역 안 Tab 정지점이 생기지 않게 한다. */}
         {/* 크기는 바깥 ResponsiveWrapper 가 이미 쟀으므로 픽셀로 넘겨 두 번 재지 않는다(WD-846) */}
-        <PieChart {...HIDDEN_CHART_ROOT_PROPS} width={W} height={containerH}>
+        <PieChart {...HIDDEN_CHART_ROOT_PROPS} width={W} height={containerH} margin={NO_MARGIN}>
           {/* 배경 반원 */}
           <Pie
             rootTabIndex={-1}
@@ -113,15 +138,15 @@ export function GaugeChartView(props: ChartViewProps) {
             textAnchor="middle" fontSize={valueFont} fontWeight={700}
             fill="var(--foreground)"
           >
-            {value.toLocaleString()}
+            {valueText}
           </text>
           {showRange && (
             <text
               x={cx} y={valueY + 14}
-              textAnchor="middle" fontSize={10}
+              textAnchor="middle" fontSize={RANGE_FONT}
               fill="var(--muted-foreground)"
             >
-              {min} ~ {max}
+              {rangeText}
             </text>
           )}
         </svg>

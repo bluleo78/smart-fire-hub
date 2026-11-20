@@ -12,29 +12,10 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { ChartAccessibleFigure } from './ChartAccessibleFigure';
 import { ChartDrawingArea } from './ChartDrawingArea';
 import { ChartRenderer } from './ChartRenderer';
+import { createResizeObserverStub, mockElementSize } from './test-element-size';
 
 /** 숨긴 영역 안에서 Tab 정지점이 될 수 있는 요소 */
 const TABBABLE = '[tabindex]:not([tabindex="-1"]), button, a[href], input, select, textarea';
-
-/**
- * ResizeObserver 스텁을 만든다 — size 를 주면 관찰 즉시 그 크기를 알리고, 없으면 아무것도 알리지 않는다(빈 구현).
- * jsdom 에는 ResizeObserver 가 없고 크기도 0 이라, 마운트만 필요하면 빈 구현을, svg 까지 그려야 하면 크기를 준다.
- */
-function createResizeObserverStub(size?: { width: number; height: number }) {
-  return class StubResizeObserver {
-    private readonly callback: ResizeObserverCallback;
-    constructor(callback: ResizeObserverCallback) {
-      this.callback = callback;
-    }
-    observe(target: Element) {
-      if (!size) return;
-      const entry = { target, contentRect: { ...size, top: 0, left: 0 } } as unknown as ResizeObserverEntry;
-      this.callback([entry], this as unknown as ResizeObserver);
-    }
-    unobserve() {}
-    disconnect() {}
-  };
-}
 
 beforeAll(() => {
   // recharts ResponsiveContainer·커스텀 뷰가 마운트되도록 빈 구현을 둔다
@@ -200,19 +181,14 @@ describe('ChartAccessibleFigure — 그림이 있을 때만 차트 이름·값 �
  * jsdom 은 크기가 0 이라 recharts 가 svg 를 그리지 않으므로, 이 묶음에서만 관찰 즉시 크기를 알려 주는 ResizeObserver 를 둔다.
  */
 describe('HIDDEN_CHART_ROOT_PROPS — 숨긴 recharts svg 는 role=application·포커스가 없다 (WD-826)', () => {
-  let original: unknown;
+  let restoreSize: () => void;
   // 게이지는 ResponsiveWrapper(react-virtualized-auto-sizer)가 부모 getBoundingClientRect 로 재서 0 크기면 그리지 않는다(WD-846).
   // jsdom 은 크기가 0 이라 이 묶음에서만 400×300 으로 알려 준다.
-  const originalRect = HTMLElement.prototype.getBoundingClientRect;
   beforeEach(() => {
-    HTMLElement.prototype.getBoundingClientRect = () =>
-      ({ width: 400, height: 300, top: 0, left: 0, right: 400, bottom: 300, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
-    original = globalThis.ResizeObserver;
-    Object.defineProperty(globalThis, 'ResizeObserver', { value: createResizeObserverStub({ width: 400, height: 300 }), configurable: true });
+    restoreSize = mockElementSize(400, 300);
   });
   afterEach(() => {
-    Object.defineProperty(globalThis, 'ResizeObserver', { value: original, configurable: true });
-    HTMLElement.prototype.getBoundingClientRect = originalRect;
+    restoreSize();
   });
 
   const XY = { xAxis: 'area', yAxis: ['sum'] };

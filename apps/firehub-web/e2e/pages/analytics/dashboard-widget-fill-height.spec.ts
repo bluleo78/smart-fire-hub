@@ -138,7 +138,7 @@ test.describe('대시보드 위젯 높이 채우기 (WD-845)', () => {
   // WD-846: 높이는 넉넉한데 폭만 좌우 여백 합 이하인 위젯 — 높이 가드는 통과해도 plotW 가 0 이하라 음수 폭이 된다.
   // 실제 대시보드 격자로 만든다: 폭 1칸 위젯 + 900px 뷰포트. 보기 모드는 격자 컨테이너가 640px 미만이면 한 줄에 하나씩
   // 쌓아 위젯이 전체 폭을 쓰므로(320·700px 에서는 본문 222·602px 라 재현되지 않았다), 12열 격자가 유지되는 폭이어야 한다.
-  // 측정한 본문 폭은 34~56px 로 세 차트의 여백 합보다 모두 작다.
+  // 측정한 본문 폭은 34~56px 다.
   // 본문 폭이 각 차트 여백 합(박스플롯 70·캔들 80·히트맵 140·게이지 최소 크기 80)보다 엄격히 작음을 단언한다(같은 값은 가드 경계라 따로 다루지 않는다).
   const MARGIN_SUM: Record<string, number> = { BOXPLOT: 70, CANDLESTICK: 80, HEATMAP: 140, GAUGE: 80 };
   for (const c of GUARD_CASES) {
@@ -157,6 +157,29 @@ test.describe('대시보드 위젯 높이 채우기 (WD-845)', () => {
       await expect(body.locator('[data-chart-drawing] svg')).toHaveCount(0);
     });
   }
+
+  // WD-846 리뷰 후속: 게이지 오버레이는 축소 없는 픽셀이라, 그릴 만큼(80px 이상)은 되지만 좁은 위젯에서 큰 값이
+  // 양쪽으로 잘렸다 — 값 글자가 폭에 맞게 줄어 위젯 본문 안에 들어오는지 실제 브라우저 글꼴로 본다.
+  test('GAUGE 좁은 위젯에서 큰 값 글자가 본문 폭 안에 들어온다', async ({ authenticatedPage: page }) => {
+    const c = CASES.find((x) => x.type === 'GAUGE')!;
+    await page.setViewportSize({ width: 900, height: 800 });
+    await setup(page, { ...c, config: { ...c.config, max: 20000000 } }, 5, {
+      rows: [{ name: 'A', v: 12345678 }],
+      widgetWidth: 2,
+    });
+    await page.goto('/analytics/dashboards/1');
+    const body = page.getByTestId(BODY);
+    await expect(body.locator('[data-chart-measured="true"]')).toHaveCount(1);
+    const bodyBox = (await body.boundingBox())!;
+    // 그릴 만큼은 되는 좁은 폭이어야 이 시험이 의미가 있다(80px 이상, 값 글자를 줄이지 않으면 넘치는 폭)
+    expect(bodyBox.width).toBeGreaterThanOrEqual(80);
+    expect(bodyBox.width).toBeLessThan(140);
+    const valueText = body.locator('text', { hasText: '12,345,678' });
+    await expect(valueText).toHaveCount(1);
+    const textBox = (await valueText.boundingBox())!;
+    expect(textBox.x).toBeGreaterThanOrEqual(bodyBox.x);
+    expect(textBox.x + textBox.width).toBeLessThanOrEqual(bodyBox.x + bodyBox.width);
+  });
 
   test('폭포 넘침 안내가 위젯 높이를 채운다', async ({ authenticatedPage: page }) => {
     const c = CASES.find((x) => x.type === 'WATERFALL')!;
