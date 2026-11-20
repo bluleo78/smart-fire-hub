@@ -1613,7 +1613,7 @@ public class PipelineService {
    */
   private boolean isUnchangedRunnableMaxResponseSize(Object requested, Object stored) {
     // 먼저 저장본과 요청 둘 다 실행 때와 같은 변환으로 읽혀 도는 값이어야 한다 — 소수(10.5)는 10, 빈 문자열은 null(기본값)로 돌던 옛 값은 그대로
-    // 돈다. 이 관문을 먼저 지나게 하면 실행기가 Integer 로 못 읽는 값(긴 숫자 문자열·큰 지수 등)은 아래 숫자 비교까지 오지 않는다.
+    // 돈다. 이 관문을 먼저 지나게 하면 실행기가 Integer 로 못 읽는 값(Integer 범위를 넘는 숫자 문자열·큰 지수 등)은 아래 숫자 비교까지 오지 않는다.
     // 그다음 같은 값인지는 숫자 값으로 본다 — null 과 빈 문자열은 둘 다 "비어 있음", "150"·150·150.0 은 모두 같고, 10.5 와 10 은 다르다.
     // jsonb 가 150.0 으로 돌려준 옛 값을 편집기가 150 으로 되돌려 보내도 같은 값이어야 설명만 고치는 저장이 막히지 않는다.
     return isRunnableAsExecutorReads(stored)
@@ -1647,26 +1647,89 @@ public class PipelineService {
     if (numA != null && numB != null) {
       return numA.compareTo(numB) == 0;
     }
-    return textA.equals(textB);
+    // 맨 위에서 글자가 같으면 이미 true 로 돌아갔으므로, 여기 오면 글자가 다르고 숫자로도 같다고 볼 수 없는 값(한쪽이 숫자가 아닌 경우 포함)이다.
+    return false;
   }
 
-  /** {@link #parseDecimalOrNull} 이 파싱을 시도하는 글자 길이의 상한 — 응답 크기 한도로 쓸 수 있는 값은 이보다 훨씬 짧다. */
+  /**
+   * {@link #parseDecimalOrNull} 이 파싱을 시도하는 정규화 뒤 글자 길이의 상한 — 응답 크기 한도로 쓸 수 있는 값은 이보다 훨씬 짧다. 원문 길이가
+   * 아니라 앞자리 0·소수부 뒤 0 을 걷어낸 뒤의 길이에 건다(WD-836): 앞자리 0 이 붙은 같은 값("000…0150")이 원문이 길다는 이유만으로 숫자가 아닌
+   * 것으로 읽혀 같은 값 비교에서 빠지는 일을 막는다.
+   */
   private static final int MAX_COMPARED_DECIMAL_TEXT_LENGTH = 30;
 
   /**
-   * 숫자로 읽히면 BigDecimal, 아니면 null — 빈 문자열·숫자 아님·지수 범위 초과·너무 긴 글자(30 자 초과)는 모두 null. 호출부가 실행기 변환 관문을 먼저
-   * 거치므로 여기 오는 값은 이미 짧은 정수·소수다. 길이 상한은 그 관문과 무관하게 수백만 자리 문자열의 파싱 비용(자릿수에 비해 초선형)을 막는 마지막 울타리다.
-   * 30 자 안에서는 지수가 커도 compareTo 가 크기(조정 지수)부터 견줘 비용이 작다.
+   * 숫자로 읽히면 BigDecimal, 아니면 null — 빈 문자열·숫자 아님·지수 범위 초과·정규화 뒤에도 너무 긴 글자(30 자 초과)는 모두 null. 지수 없는 소수
+   * 표기는 {@link #canonicalPlainDecimal} 로 먼저 정규화한 뒤 길이를 잰다(WD-836) — 원문 길이로 막으면 앞자리 0 이 붙은 같은 값이
+   * 비교에서 빠진다. 호출부가 실행기 변환 관문을 먼저 거치지만, 길이 상한은 그 관문과 무관하게 수백만 자리 문자열의 파싱 비용(자릿수에 비해 초선형)을 막는 마지막
+   * 울타리다(정규화는 선형 한 번 훑기라 비용이 작다). 30 자 안에서는 지수가 커도 compareTo 가 크기(조정 지수)부터 견줘 비용이 작다.
    */
   private static BigDecimal parseDecimalOrNull(String text) {
-    if (text.isEmpty() || text.length() > MAX_COMPARED_DECIMAL_TEXT_LENGTH) {
+    String canonical = canonicalPlainDecimal(text);
+    if (canonical.isEmpty() || canonical.length() > MAX_COMPARED_DECIMAL_TEXT_LENGTH) {
       return null;
     }
     try {
-      return new BigDecimal(text);
+      return new BigDecimal(canonical);
     } catch (NumberFormatException e) {
       return null;
     }
+  }
+
+  /**
+   * 지수 없는 {@code [+-]?digits(.digits)?} 꼴이면 같은 값의 정규 글자(앞 '+' 제거, 정수부 앞 0 제거, 소수부 뒤 0 과 빈 소수점 제거)를,
+   * 아니면 입력을 그대로 돌려준다(WD-836). 정규식의 역추적 없이 글자를 한 번만 훑어 아주 긴 입력에도 선형 비용이다. 지수 없는 소수 표기끼리는 값이 같으면 정규 글자도 같아져, 길이
+   * 상한을 정규화한 글자에 걸 수 있다. 지수 표기는 대상이 아니며, -0 과 0 은 글자가 다르지만 BigDecimal 로는 같다고 비교되므로 무해하다.
+   */
+  private static String canonicalPlainDecimal(String text) {
+    int n = text.length();
+    int i = 0;
+    boolean negative = false;
+    if (i < n && (text.charAt(i) == '+' || text.charAt(i) == '-')) {
+      negative = text.charAt(i) == '-';
+      i++;
+    }
+    int intStart = i;
+    while (i < n && isAsciiDigit(text.charAt(i))) {
+      i++;
+    }
+    int intEnd = i;
+    int fracStart = i;
+    int fracEnd = i;
+    if (i < n && text.charAt(i) == '.') {
+      i++;
+      fracStart = i;
+      while (i < n && isAsciiDigit(text.charAt(i))) {
+        i++;
+      }
+      fracEnd = i;
+    }
+    // 정수부가 비었거나 남는 글자(지수·숫자 아님)가 있으면 정규화하지 않고 그대로 둔다.
+    if (i != n || intEnd == intStart) {
+      return text;
+    }
+    int intFrom = intStart;
+    while (intFrom < intEnd - 1 && text.charAt(intFrom) == '0') {
+      intFrom++;
+    }
+    int fracTo = fracEnd;
+    while (fracTo > fracStart && text.charAt(fracTo - 1) == '0') {
+      fracTo--;
+    }
+    StringBuilder sb = new StringBuilder();
+    if (negative) {
+      sb.append('-');
+    }
+    sb.append(text, intFrom, intEnd);
+    if (fracTo > fracStart) {
+      sb.append('.').append(text, fracStart, fracTo);
+    }
+    return sb.toString();
+  }
+
+  /** ASCII 숫자(0~9)인지 — 전각·아랍 숫자 같은 유니코드 숫자는 정규화하지 않고 그대로 두려고 따로 본다(WD-836). */
+  private static boolean isAsciiDigit(char c) {
+    return c >= '0' && c <= '9';
   }
 
   /**

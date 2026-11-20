@@ -658,7 +658,7 @@ class PipelineStepColumnValidationTest extends IntegrationTestBase {
     assertUpdateRejected(created, "1.5e2");
   }
 
-  /** 저장본 150.0 을 151 로, 150.5 를 150 으로 바꾸는 저장은 숫자로 다른 값이라 바뀐 값으로 보고 거부한다(WD-810). */
+  /** 저장본 150.0 을 151 로 바꾸는 저장은 숫자로 다른 값이라 바뀐 값으로 보고 거부한다(WD-810). */
   @Test
   void update_numericallyDifferentMaxResponseSize_rejected() {
     assertUpdateRejected(createLegacyStep("WD810 옛 스텝", "150.0"), 151);
@@ -674,5 +674,32 @@ class PipelineStepColumnValidationTest extends IntegrationTestBase {
   @Test
   void update_unchangedNonRunnableDecimalMaxResponseSize_rejected() {
     assertUpdateRejected(createLegacyStep("WD810 소수 불가 옛 스텝", "0.5"), 0.5);
+  }
+
+  /**
+   * 30자 넘는 소수 표기 숫자 저장값(150.000…0)을 150 으로 되돌려 보내는 저장은 같은 값이라 통과한다(WD-836). 앱 매퍼는 JSON 실수를 Double 로 읽어 이 숫자
+   * 리터럴은 "150.0" 으로 들어오므로, 이 테스트는 정규화 로직을 직접 검증하기보다 회귀를 지키는 용도다(정규화는 앞자리 0 문자열 테스트가 검증한다).
+   */
+  @Test
+  void update_longDecimalNotationMaxResponseSize_succeeds() {
+    assertDescriptionOnlyUpdateWith150Succeeds("WD836 긴 소수 표기", "150.000000000000000000000000000");
+  }
+
+  /** 앞자리 0 이 붙어 30자를 넘는 문자열 저장값("000…0150")도 실행기 관문을 지나면 150 과 같은 값이라 통과한다(WD-836). */
+  @Test
+  void update_leadingZeroStringMaxResponseSize_succeeds() {
+    assertDescriptionOnlyUpdateWith150Succeeds("WD836 앞자리 0", "\"0000000000000000000000000000150\"");
+  }
+
+  /** 옛 저장값(jsonLiteral)을 심은 스텝에 150 을 되돌려 보내며 설명만 고치는 저장이 통과하고 요청 값 150 이 저장되는지 본다(WD-836). */
+  private void assertDescriptionOnlyUpdateWith150Succeeds(String name, String jsonLiteral) {
+    PipelineDetailResponse created = createLegacyStep(name, jsonLiteral);
+    pipelineService.updatePipeline(
+        created.id(),
+        new UpdatePipelineRequest(name, "설명 수정", true, List.of(apiStepWithMaxResponseSize(150))),
+        userId);
+    PipelineDetailResponse saved = pipelineService.getPipelineById(created.id());
+    assertThat(saved.description()).isEqualTo("설명 수정");
+    assertThat(saved.steps().get(0).apiConfig().get("maxResponseSizeMb")).isEqualTo(150);
   }
 }
