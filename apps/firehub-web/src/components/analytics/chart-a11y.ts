@@ -132,7 +132,11 @@ function buildDerivedTable(
     case 'WATERFALL': {
       // 폭포 차트는 단계별 증감을 누적 합계 위에 띄워 그린다 — 단계·증감·누적을 함께 준다
       const yKey = config.yAxis[0] ?? '';
-      const steps = transformWaterfallData(data, config.xAxis, yKey);
+      const { rows: steps, overflow } = transformWaterfallData(data, config.xAxis, yKey);
+      // WD-844: 누적이 넘쳐 그릴 수 없으면 뷰와 같이 행 없이 이유만 캡션에 적는다
+      // 뷰는 넘침 시 ChartDrawingArea 없이 안내만 렌더하므로 이 빈 표·캡션은 지금은 figure 에 나오지 않는다(WD-843 파이 넘침과 같음).
+      // buildDerivedTable 이 Infinity/NaN 셀을 돌려주지 않고, 호출처가 렌더해도 일관되도록 갈래를 남겨 둔다
+      if (overflow) return toLimitedTable([config.xAxis, yKey, '누적'], 0, [], accessibleName, '누적 합계가 너무 큼');
       return toTable(
         [config.xAxis, yKey, '누적'],
         steps.map((r) => [r.name, cell(r.value), cell(r.cumulative)]),

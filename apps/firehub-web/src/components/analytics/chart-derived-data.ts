@@ -57,24 +57,48 @@ export interface WaterfallRow {
   cumulative: number;
 }
 
-/** 단계별 증감을 누적해 폭포 막대 위치를 계산한다 */
+/** 폭포 차트 변환 결과 — overflow 면 누적이 유한하지 않아 rows 는 비어 있다 */
+export interface WaterfallResult {
+  rows: WaterfallRow[];
+  overflow: boolean;
+}
+
+/**
+ * 단계별 증감을 누적해 폭포 막대 위치를 계산한다.
+ * WD-844: 증감은 모두 유한해도 누적이 Infinity(또는 ±Infinity 가 섞여 NaN)가 될 수 있다.
+ * 어느 단계의 누적이라도 유한하지 않으면 그릴 수 없으므로 행 없이 overflow 로 알려
+ * 화면 안내와 대체 표가 같은 판정을 쓰게 한다(파이의 WD-843 과 같은 방식).
+ */
 export function transformWaterfallData(
   data: Record<string, unknown>[],
   xKey: string,
   yKey: string,
-): WaterfallRow[] {
+): WaterfallResult {
   let cumulative = 0;
-  return data.map((d) => {
+  // Y축이 걸치는 범위 계산용 — 0 과 모든 누적 중 최대·최소(WD-844)
+  let maxBound = 0;
+  let minBound = 0;
+  const rows: WaterfallRow[] = [];
+  for (const d of data) {
     const name = String(d[xKey] ?? '');
     // 읽을 수 없는 증감은 0 — NaN 이 누적에 번져 뒤 단계가 모두 NaN 이 되지 않게 한다(WD-831)
     const value = toPlotNumber(d[yKey]) ?? 0;
     const prev = cumulative;
     cumulative += value;
+    maxBound = Math.max(maxBound, cumulative);
+    minBound = Math.min(minBound, cumulative);
     if (value >= 0) {
-      return { name, base: prev, positive: value, negative: 0, value, cumulative };
+      rows.push({ name, base: prev, positive: value, negative: 0, value, cumulative });
+    } else {
+      rows.push({ name, base: cumulative, positive: 0, negative: Math.abs(value), value, cumulative });
     }
-    return { name, base: cumulative, positive: 0, negative: Math.abs(value), value, cumulative };
-  });
+  }
+  // 판정 하나로 두 경우를 다 잡는다 — 누적이 Infinity·NaN 이 되면 maxBound/minBound 도 그 값이 되어 아래 식이 유한하지 않다.
+  // 누적이 모두 유한해도 recharts Y축은 min(0, 누적)..max(0, 누적) 을 걸치고 위쪽을 보기 좋은 눈금으로 올림한다.
+  // 범위(최대-최소)가 Infinity 가 되거나 올림한 눈금이 넘치면 축·막대에 Infinity/NaN 이 새므로,
+  // 눈금 올림 여유로 ×2 를 곱해도 유한한지 확인해 넘치면 그릴 수 없음으로 판정한다(WD-844)
+  if (!Number.isFinite((maxBound - minBound) * 2)) return { rows: [], overflow: true };
+  return { rows, overflow: false };
 }
 
 /** 게이지가 보여 주는 값 — 첫 행의 값과 눈금 범위(min ~ max) */
