@@ -691,6 +691,16 @@ class PipelineStepColumnValidationTest extends IntegrationTestBase {
     assertDescriptionOnlyUpdateWith150Succeeds("WD836 앞자리 0", "\"0000000000000000000000000000150\"");
   }
 
+  /**
+   * 앞자리 0 문자열 저장값("000…0150")을 151 로 바꾸는 저장은 정규화 뒤에도 다른 값이라 바뀐 값으로 보고 거부한다(WD-836).
+   * 정규화가 다른 값을 같은 글자로 만드는 회귀를 막는 울타리다.
+   */
+  @Test
+  void update_leadingZeroStringMaxResponseSizeChanged_rejected() {
+    assertUpdateRejected(
+        createLegacyStep("WD836 앞자리 0 바꿈", "\"0000000000000000000000000000150\""), 151);
+  }
+
   /** 옛 저장값(jsonLiteral)을 심은 스텝에 150 을 되돌려 보내며 설명만 고치는 저장이 통과하고 요청 값 150 이 저장되는지 본다(WD-836). */
   private void assertDescriptionOnlyUpdateWith150Succeeds(String name, String jsonLiteral) {
     PipelineDetailResponse created = createLegacyStep(name, jsonLiteral);
