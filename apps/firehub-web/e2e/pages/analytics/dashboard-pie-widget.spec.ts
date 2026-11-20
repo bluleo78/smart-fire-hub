@@ -118,7 +118,9 @@ test.describe('대시보드 파이 위젯 — 카테고리 1000개 (WD-307)', ()
   }) => {
     // 1000조각 파이 + 범례 1000개의 첫 렌더가 무거워 호스트 부하에서 수십 초 걸린다.
     // 측정(제목 표시까지): 감속 없음 2.7초 / CPU 4배 9.6초 / CPU 8배 24.7초.
-    test.slow();
+    // 느린 단계는 아래 45초 개별 제한이 맡으므로 시험 전체는 그 위에 여유만 둔 60초로 —
+    // test.slow()(90초)면 뒤 단계가 멈출 때 시도마다 90초를 쓴다.
+    test.setTimeout(60_000);
     const rows = Array.from({ length: 1000 }, (_, i) => ({ label: `항목 ${i + 1}`, v: ((i + 1) * 7) % 13 + 1 }));
     const widget = createWidget({ id: 1, chartId: 1, chartName: '많은 항목 파이', chartType: 'PIE', width: 6, height: 4 });
     const chart = createChart({
