@@ -52,7 +52,8 @@ function toNivoFormat(
   }));
 }
 
-export function HeatmapChartView({ data, config, height = 300 }: ChartViewProps) {
+// height 가 없으면 부모를 채운다 — ChartViewProps 참고(WD-845)
+export function HeatmapChartView({ data, config, height }: ChartViewProps) {
   const theme = useNivoTheme();
   const rowKey = config.xAxis;
   const colKey = config.yAxis[0] ?? '';
@@ -70,7 +71,7 @@ export function HeatmapChartView({ data, config, height = 300 }: ChartViewProps)
 
   if (isMappingInvalid) {
     return (
-      <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
+      <div className="flex items-center justify-center text-muted-foreground text-sm" style={{ height: height ?? '100%' }}>
         행/열/값(색상 기준) 컬럼을 서로 다르게 선택하세요.
       </div>
     );
@@ -78,7 +79,7 @@ export function HeatmapChartView({ data, config, height = 300 }: ChartViewProps)
 
   if (nivoData.length === 0) {
     return (
-      <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
+      <div className="flex items-center justify-center text-muted-foreground text-sm" style={{ height: height ?? '100%' }}>
         데이터가 없습니다.
       </div>
     );

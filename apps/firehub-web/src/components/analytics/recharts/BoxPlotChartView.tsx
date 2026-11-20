@@ -13,7 +13,8 @@ import { ChartDrawingArea } from '../ChartDrawingArea';
 const MARGIN = { top: 20, right: 20, bottom: 40, left: 50 };
 const BOX_WIDTH_RATIO = 0.4; // 카테고리 폭 대비 박스 폭 비율
 
-export function BoxPlotChartView({ data, config, height = 300 }: ChartViewProps) {
+// height 가 없으면 부모를 채운다 — ChartViewProps 참고(WD-845)
+export function BoxPlotChartView({ data, config, height }: ChartViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [dims, setDims] = useState({ width: 0, height: 0 });
 
@@ -36,15 +37,19 @@ export function BoxPlotChartView({ data, config, height = 300 }: ChartViewProps)
   const stats = useMemo(() => toBoxStats(data, config.xAxis), [data, config.xAxis]);
 
   const containerH = height ?? dims.height;
+  // WD-845: 측정 컨테이너는 height 미지정(fillParent)이면 부모를 채워야 ResizeObserver 가 부모 높이를 읽는다
+  const containerCss = height ?? '100%';
   const plotW = dims.width - MARGIN.left - MARGIN.right;
   const plotH = containerH - MARGIN.top - MARGIN.bottom;
+  // WD-845: 측정 높이가 위·아래 여백 합 이하(아주 낮은 위젯)면 plotH 가 0 이하라 뒤집혀 그려지므로 그리지 않는다
+  const canDraw = dims.width > 0 && containerH > MARGIN.top + MARGIN.bottom;
 
   // Y 스케일
   const allVals = stats.flatMap(s => [s.min, s.max]);
   // 빈 데이터: Math.min(...[]) = Infinity 로 SVG 좌표가 NaN이 되는 것을 방지
   if (allVals.length === 0) {
     return (
-      <div ref={containerRef} style={{ width: '100%', height: containerH }}
+      <div ref={containerRef} style={{ width: '100%', height: containerCss }}
         className="flex items-center justify-center text-sm text-muted-foreground">
         데이터 없음
       </div>
@@ -55,7 +60,7 @@ export function BoxPlotChartView({ data, config, height = 300 }: ChartViewProps)
     return (
       <div
         ref={containerRef}
-        style={{ width: '100%', height: containerH }}
+        style={{ width: '100%', height: containerCss }}
         className="flex flex-col items-center justify-center gap-2 px-4 text-center"
         data-testid="boxplot-missing-stats"
       >
@@ -83,11 +88,11 @@ export function BoxPlotChartView({ data, config, height = 300 }: ChartViewProps)
   const yTicks = Array.from({ length: 5 }, (_, i) => yMin + (yRange * i) / 4);
 
   return (
-    <div ref={containerRef} style={{ width: '100%', height: containerH }}>
+    <div ref={containerRef} style={{ width: '100%', height: containerCss }}>
       {/* WD-826: 그림만 보조기술에서 숨긴다 — 값은 figure 의 대체 표가 전달하고, 안내문은 위에서 따로 반환해 읽힌다 */}
       <ChartDrawingArea>
-        {dims.width > 0 && (
-          <svg width={dims.width} height={containerH}>
+        {canDraw && (
+          <svg className="block" width={dims.width} height={containerH}>
             <g transform={`translate(${MARGIN.left},${MARGIN.top})`}>
               {/* Y축 */}
               {yTicks.map(t => (

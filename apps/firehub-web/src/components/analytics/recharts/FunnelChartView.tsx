@@ -10,7 +10,8 @@ import { isNonNumericValue, toPlotNumber } from '../numeric-columns';
 import { NonNumericValueNotice } from './NonNumericValueNotice';
 
 export function FunnelChartView(props: ChartViewProps) {
-  const { data, config, height = 300 } = props;
+  // height 가 없으면 부모를 채운다 — ChartViewProps 참고(WD-845)
+  const { data, config, height } = props;
   const valueKey = config.yAxis[0];
   // WD-505: 값 컬럼이 문자 컬럼이면 단계가 「이름: NaN」 으로 그려졌다 — 숫자로 읽히지 않는 값이 하나라도 있으면 안내한다.
   // (빈 값이 섞인 문자 컬럼도 걸러지도록 「유한수가 하나도 없을 때」가 아니라 「숫자가 아닌 값이 하나라도 있을 때」로 본다)

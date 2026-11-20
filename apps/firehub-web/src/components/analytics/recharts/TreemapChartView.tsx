@@ -37,7 +37,8 @@ const CustomContent = (props: ContentProps) => {
   );
 };
 
-export function TreemapChartView({ data, config, height = 300 }: ChartViewProps) {
+// height 가 없으면 부모를 채운다 — ChartViewProps 참고(WD-845)
+export function TreemapChartView({ data, config, height }: ChartViewProps) {
   const treeData = data.map(d => ({
     name: String(d[config.xAxis] ?? ''),
     size: Number(d[config.yAxis[0]] ?? 0),
