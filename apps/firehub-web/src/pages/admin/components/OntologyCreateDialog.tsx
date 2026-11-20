@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -12,10 +13,12 @@ import {
 import { FormField } from '@/components/ui/form-field';
 import { Input } from '@/components/ui/input';
 import { useCreateOntology } from '@/hooks/queries/useOntology';
+import { useCloseGeneration } from '@/hooks/useCloseGeneration';
 import { isImeComposing } from '@/hooks/useOverlayEscape';
 import { useSubmitGuard } from '@/hooks/useSubmitGuard';
-import { extractApiError } from '@/lib/api-error';
+import { extractApiError, handleApiError } from '@/lib/api-error';
 import { validateDomain } from '@/lib/ontology-validation';
+import { eulReul } from '@/lib/utils';
 
 interface OntologyCreateDialogProps {
   open: boolean;
@@ -44,12 +47,8 @@ export default function OntologyCreateDialog({ open, onOpenChange, onCreated }: 
    */
   const guard = useSubmitGuard();
 
-  /**
-   * 닫힘 세대 카운터 — 요청 중에 닫으면(ESC·X·바깥 클릭) 올라간다. 컴포넌트는 계속 마운트되어 있어서,
-   * 늦게 도착한 오류가 닫힌 대화상자에 오류를 심으면 다시 열었을 때 묵은 오류가 보이기 때문에
-   * submit 시점의 세대와 달라졌으면 그 오류를 버린다.
-   */
-  const closeGenRef = useRef(0);
+  // 닫힘 세대(WD-819) — 요청 중 닫힘·다시 열림 판정(상세는 훅 JSDoc)
+  const closeGen = useCloseGeneration(open);
 
   const runSubmit = async () => {
     const trimmed = domain.trim();
@@ -64,24 +63,33 @@ export default function OntologyCreateDialog({ open, onOpenChange, onCreated }: 
     }
     // 같은 값으로 다시 제출해도(onChange 가 돌지 않음) 요청 중에는 이전 오류가 남지 않게 지운다
     setError(null);
-    const gen = closeGenRef.current;
+    const { isStale, isReopened } = closeGen.capture();
     try {
       // 항상 draft로 만든다 — 사람이 내용을 채우고 활성화하기 전까지 바인딩·적재에서 격리된다.
       const id = await createOntology.mutateAsync({ domain: trimmed, entities: [], relations: [], status: 'draft' });
+      // 늦은 성공 + 다시 열려 있음(WD-819): 다른 값을 입력 중일 수 있어 입력·열림·이동은 건드리지 않고 성공만 알린다.
+      // (다시 열지 않았다면 아래 평소 경로 — 이미 닫혀 있어 onOpenChange(false) 는 무해.) 목록 갱신은 useCreateOntology 의 invalidate 가 한다.
+      if (isReopened()) {
+        toast.success(`온톨로지 「${trimmed}」${eulReul(trimmed)} 만들었습니다.`);
+        return;
+      }
       setDomain('');
       onOpenChange(false);
       onCreated(id);
     } catch (err) {
       // 도메인 중복(409)은 다이얼로그를 닫지 않고 필드 옆에 보여준다 — 이름을 고쳐 재시도해야 하기 때문.
-      // 요청 중에 닫혔다면 늦게 온 오류를 표시하지 않는다
-      if (closeGenRef.current !== gen) return;
+      // 요청 중에 닫혔다면 칸 오류·포커스 대신 토스트로 알린다 — 다시 열었을 때 묵은 오류가 보이지 않게(WD-819)
+      if (isStale()) {
+        handleApiError(err, '온톨로지 생성에 실패했습니다.');
+        return;
+      }
       setError(extractApiError(err, '온톨로지 생성에 실패했습니다.'));
       // WD-818: 서버 오류(중복 등)도 칸에 이어지므로 같은 칸으로 포커스를 돌려 바로 고칠 수 있게 한다
       domainRef.current?.focus();
     }
   };
 
-  // 가드는 렌더 중이 아니라 제출 때 씌운다 — runSubmit 이 ref(domainRef·closeGenRef)를 읽어서, 렌더 중에 함수로 넘기면
+  // 가드는 렌더 중이 아니라 제출 때 씌운다 — runSubmit 이 ref(domainRef)를 읽어서, 렌더 중에 함수로 넘기면
   // react-hooks/refs 규칙에 걸린다. 잠금 자체는 useSubmitGuard 안의 ref 라 매 호출이 같은 잠금을 본다.
   const submit = () => guard(runSubmit)();
 
@@ -91,7 +99,6 @@ export default function OntologyCreateDialog({ open, onOpenChange, onCreated }: 
    */
   const handleOpenChange = (next: boolean) => {
     if (!next) {
-      closeGenRef.current += 1;
       setError(null);
     }
     onOpenChange(next);
