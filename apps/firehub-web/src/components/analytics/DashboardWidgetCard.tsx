@@ -137,7 +137,7 @@ function WidgetContent({ widget, chartData, dataLoading, dataFetching, dataError
 
   return (
     <div className="flex h-full flex-col">
-      <div className="relative min-h-0 flex-1">
+      <div className="relative min-h-0 flex-1" data-testid="dashboard-widget-chart-area">
         <ChartRenderer
           chartType={effectiveChart.chartType}
           config={effectiveConfig}

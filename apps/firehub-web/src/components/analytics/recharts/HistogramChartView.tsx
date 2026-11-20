@@ -12,7 +12,8 @@ import { BAR_CURSOR_STYLE,TOOLTIP_CONTENT_STYLE, TOOLTIP_ITEM_STYLE } from '../c
 import type { ChartViewProps } from '../chart-view-props';
 import { ChartDrawingArea } from '../ChartDrawingArea';
 
-export function HistogramChartView({ data, config, height = 300 }: ChartViewProps) {
+// height 가 없으면 부모를 채운다 — ChartViewProps 참고(WD-845)
+export function HistogramChartView({ data, config, height }: ChartViewProps) {
   // WD-826: 구간 집계는 값 대체 표(chart-a11y)와 같은 함수를 쓴다 — 표가 차트와 같은 구간·빈도를 전하게
   // 렌더마다(figure 의 그림 등록 재렌더 포함) 다시 집계하지 않게 data·축·구간 수 기준으로 메모한다.
   const binCount = getHistogramBinCount(config);
@@ -22,7 +23,7 @@ export function HistogramChartView({ data, config, height = 300 }: ChartViewProp
   // 수치 컬럼이 아닌 경우 안내 메시지 표시
   if (values.length === 0 && data.length > 0) {
     return (
-      <div style={{ height }} className="flex items-center justify-center text-sm text-muted-foreground">
+      <div style={{ height: height ?? '100%' }} className="flex items-center justify-center text-sm text-muted-foreground">
         X축은 숫자 컬럼이어야 합니다
       </div>
     );

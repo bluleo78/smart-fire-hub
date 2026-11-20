@@ -10,7 +10,8 @@ import { CHART_SERIES_COLORS, TOOLTIP_CONTENT_STYLE, TOOLTIP_ITEM_STYLE } from '
 import type { ChartViewProps } from '../chart-view-props';
 import { ChartDrawingArea } from '../ChartDrawingArea';
 
-export function RadarChartView({ data, config, height = 300 }: ChartViewProps) {
+// height 가 없으면 부모를 채운다 — ChartViewProps 참고(WD-845)
+export function RadarChartView({ data, config, height }: ChartViewProps) {
   return (
     <ChartDrawingArea>
       {/* WD-826: 그림은 숨기고 대체 표가 값을 전한다 */}

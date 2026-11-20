@@ -13,7 +13,8 @@ import { TOOLTIP_CONTENT_STYLE, TOOLTIP_ITEM_STYLE } from '../chart-styles';
 import type { ChartViewProps } from '../chart-view-props';
 import { ChartDrawingArea } from '../ChartDrawingArea';
 
-export function WaterfallChartView({ data, config, height = 300 }: ChartViewProps) {
+// height 가 없으면 부모를 채운다 — ChartViewProps 참고(WD-845)
+export function WaterfallChartView({ data, config, height }: ChartViewProps) {
   // WD-826: 누적 계산은 값 대체 표(chart-a11y)와 같은 함수를 쓴다 — 표가 단계별 증감과 누적을 함께 전하게
   const valueKey = config.yAxis[0] ?? '';
   const { rows, overflow } = useMemo(
