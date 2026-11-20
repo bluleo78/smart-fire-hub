@@ -233,11 +233,12 @@ public class JooqPipelineRepository implements PipelineRepository {
 
   @Override
   public Optional<LockedPipeline> lockById(Long id) {
-    return dsl.select(P_NAME, P_UPDATED_AT)
+    return dsl.select(P_NAME, P_UPDATED_AT, P_IS_ACTIVE)
         .from(PIPELINE)
         .where(P_ID.eq(id))
         .forUpdate()
-        .fetchOptional(r -> new LockedPipeline(r.get(P_NAME), r.get(P_UPDATED_AT)));
+        .fetchOptional(
+            r -> new LockedPipeline(r.get(P_NAME), r.get(P_UPDATED_AT), r.get(P_IS_ACTIVE)));
   }
 
   @Override

@@ -547,15 +547,4 @@ public abstract class TriggerRepositoryContractTest extends TenantPairContractBa
     fx.createExecution(p2, "RUNNING");
     assertThat(inA(() -> repository().hasRunningExecution(p2))).isTrue();
   }
-
-  @Test
-  @DisplayName("isPipelineActive — 활성 플래그 그대로, 없는 파이프라인·다른 테넌트는 false")
-  void isPipelineActive() {
-    long inactive = fx.createPipeline(tenantA, prefix + "-off", false);
-
-    assertThat(inA(() -> repository().isPipelineActive(pipelineA))).isTrue();
-    assertThat(inA(() -> repository().isPipelineActive(inactive))).isFalse();
-    assertThat(inA(() -> repository().isPipelineActive(-1L))).isFalse();
-    assertThat(inB(() -> repository().isPipelineActive(pipelineA))).isFalse();
-  }
 }

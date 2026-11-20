@@ -170,7 +170,4 @@ public interface TriggerRepository {
 
   /** Check if there is a running execution for the given pipeline. */
   boolean hasRunningExecution(Long pipelineId);
-
-  /** Check if pipeline is active. */
-  boolean isPipelineActive(Long pipelineId);
 }

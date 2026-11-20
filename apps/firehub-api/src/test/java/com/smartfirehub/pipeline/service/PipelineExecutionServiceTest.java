@@ -65,7 +65,8 @@ class PipelineExecutionServiceTest {
     // 가드 자체는 PipelineManualRunGuardTest 가 실제 DB 로 검증한다.
     lenient()
         .when(pipelineRepository.lockById(anyLong()))
-        .thenReturn(Optional.of(new PipelineRepository.LockedPipeline("P", LocalDateTime.now())));
+        .thenReturn(
+            Optional.of(new PipelineRepository.LockedPipeline("P", LocalDateTime.now(), true)));
     lenient()
         .when(executionRepository.findActiveExecutionState(anyLong()))
         .thenReturn(PipelineExecutionRepository.ActiveExecutionState.NONE);

@@ -28,6 +28,7 @@
     <constructor>
       <arg column="name" javaType="java.lang.String"/>
       <arg column="updated_at" javaType="java.time.LocalDateTime"/>
+      <arg column="is_active" javaType="_boolean"/>
     </constructor>
   </resultMap>
 
@@ -115,7 +116,7 @@
 
   <!-- jOOQ forUpdate() 와 같은 FOR UPDATE — 두 DB 같은 문장. 삭제·실행 생성 경쟁(WD-437)의 판정 전 잠금이다. -->
   <select id="selectForUpdate" resultMap="lockedPipeline">
-    SELECT name, updated_at FROM pipeline WHERE id = #{id} FOR UPDATE
+    SELECT name, updated_at, is_active FROM pipeline WHERE id = #{id} FOR UPDATE
   </select>
 
 </mapper>

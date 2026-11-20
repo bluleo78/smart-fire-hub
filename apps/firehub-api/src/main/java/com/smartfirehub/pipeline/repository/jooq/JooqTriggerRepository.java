@@ -469,13 +469,4 @@ public class JooqTriggerRepository implements TriggerRepository {
                 field(name("pipeline_execution", "status"), String.class)
                     .in("PENDING", "RUNNING")));
   }
-
-  @Override
-  public boolean isPipelineActive(Long pipelineId) {
-    return dsl.select(field(name("pipeline", "is_active"), Boolean.class))
-        .from(table(name("pipeline")))
-        .where(field(name("pipeline", "id"), Long.class).eq(pipelineId))
-        .fetchOptional(r -> r.get(field(name("pipeline", "is_active"), Boolean.class)))
-        .orElse(false);
-  }
 }

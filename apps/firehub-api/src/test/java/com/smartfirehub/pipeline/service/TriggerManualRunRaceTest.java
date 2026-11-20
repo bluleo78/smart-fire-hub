@@ -7,7 +7,9 @@ import com.smartfirehub.pipeline.dto.CreatePipelineRequest;
 import com.smartfirehub.pipeline.dto.CreateTriggerRequest;
 import com.smartfirehub.pipeline.dto.TriggerFireResult;
 import com.smartfirehub.pipeline.dto.TriggerType;
+import com.smartfirehub.pipeline.dto.UpdatePipelineRequest;
 import com.smartfirehub.pipeline.exception.PipelineAlreadyRunningException;
+import com.smartfirehub.pipeline.repository.TriggerEventRepository;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.PausedTransactionRace;
 import com.smartfirehub.support.TenantRlsTestSupport;
@@ -25,7 +27,9 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
  * 수동 실행과 일정 트리거의 「건너뛰기」 판정 경쟁(WD-827).
  *
  * <p>수동 실행이 커밋 전일 때 SKIP 트리거가 잠금 없이 판정하면 진행 중 실행을 못 보고 겹쳐 실행한다. SKIP 판정이 수동 실행 가드와 같은 파이프라인 행 잠금
- * 뒤에서 일어나는지, ALLOW 는 잠그지 않아 그대로 겹치는지 본다.
+ * 뒤에서 일어나는지, ALLOW 는 진행 중 실행을 판정하지 않아 그대로 겹치는지 본다.
+ *
+ * <p>WD-853: 파이프라인 비활성화가 커밋 전일 때 트리거(SKIP·ALLOW 모두)가 잠금 뒤에서 활성 여부를 읽어, 커밋을 기다렸다가 비활성으로 건너뛰는지 본다.
  *
  * <p>클래스 레벨 {@code @Transactional} 을 쓰지 않는다 — 커밋돼야 행 잠금 경쟁이 재현된다. 러너는 no-op 대역이라 접수된 실행이 PENDING 에
  * 머문다.
@@ -34,6 +38,7 @@ class TriggerManualRunRaceTest extends IntegrationTestBase {
 
   @Autowired private PipelineService pipelineService;
   @Autowired private TriggerService triggerService;
+  @Autowired private TriggerEventRepository triggerEventRepository;
   @Autowired private DSLContext dsl;
 
   /** WD-827: 비동기 러너를 no-op 으로 대체해 접수된 실행이 PENDING 에 고정되게 한다. */
@@ -173,5 +178,42 @@ class TriggerManualRunRaceTest extends IntegrationTestBase {
     assertThat(outcome.secondError()).isNull();
     assertThat(outcome.secondResult().outcome()).isEqualTo(TriggerFireResult.Outcome.FIRED);
     assertThat(executionCount()).isEqualTo(2);
+  }
+
+  /** 커밋 전 비활성화를 트리거 발화가 잠금에서 기다린 뒤 비활성으로 건너뛰는지 확인한다(WD-853). */
+  private void assertWaitsForDeactivation(String policy) throws Exception {
+    Long triggerId = createScheduleTrigger(policy);
+
+    // 실제 사용자 경로(PipelineService.updatePipeline)로 비활성화한다 — 현재 값은 일시정지 트랜잭션 밖에서 읽어 둔다.
+    var current = inTenantFixture(() -> pipelineService.getPipelineById(pipelineId));
+    var deactivate =
+        new UpdatePipelineRequest(
+            current.name(), current.description(), false, List.of(), current.updatedAt());
+
+    var outcome =
+        PausedTransactionRace.run(
+            fixtureTransactionTemplate,
+            DEFAULT_TEST_TENANT_ID,
+            () -> pipelineService.updatePipeline(pipelineId, deactivate, userId),
+            () -> triggerService.fireTrigger(triggerId, Map.of()));
+
+    assertThat(outcome.secondBlocked()).isTrue();
+    assertThat(outcome.secondError()).isNull();
+    assertThat(outcome.secondResult().outcome()).isEqualTo(TriggerFireResult.Outcome.SKIPPED);
+    assertThat(outcome.secondResult().reason()).isEqualTo(TriggerService.REASON_PIPELINE_INACTIVE);
+    assertThat(executionCount()).isZero();
+    var event = inTenantFixture(() -> triggerEventRepository.findByTriggerId(triggerId, 1)).get(0);
+    assertThat(event.eventType()).isEqualTo("SKIPPED");
+    assertThat(event.detail()).containsEntry("reason", TriggerService.REASON_PIPELINE_INACTIVE);
+  }
+
+  @Test
+  void skipTrigger_waitsForUncommittedDeactivation_thenSkippedInactive() throws Exception {
+    assertWaitsForDeactivation("SKIP");
+  }
+
+  @Test
+  void allowTrigger_waitsForUncommittedDeactivation_thenSkippedInactive() throws Exception {
+    assertWaitsForDeactivation("ALLOW");
   }
 }
