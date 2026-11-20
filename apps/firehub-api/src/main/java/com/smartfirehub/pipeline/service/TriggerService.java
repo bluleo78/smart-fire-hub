@@ -39,9 +39,12 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.support.CronExpression;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Slf4j
 @Service
@@ -126,6 +129,8 @@ public class TriggerService {
   private final WebhookSecretCipher webhookSecretCipher;
   // 트리거 생성·수정·켜기/끄기·삭제 감사 기록(WD-462)
   private final PipelineAuditRecorder auditRecorder;
+  // 발화 시도(실행 접수·FIRED 기록·상태 갱신)를 감싸는 저장점(NESTED) 템플릿 — 실패가 발화 트랜잭션을 rollback-only 로 만들지 않게 한다(WD-858)
+  private final TransactionTemplate fireSavepoint;
 
   public TriggerService(
       TriggerRepository triggerRepository,
@@ -141,6 +146,7 @@ public class TriggerService {
       TriggerCreatorSkipNotifier creatorSkipNotifier,
       TenantRepository tenantRepository,
       PipelineAuditRecorder auditRecorder,
+      PlatformTransactionManager transactionManager,
       @Value("${app.encryption.master-key}") String encryptionMasterKey) {
     this.triggerRepository = triggerRepository;
     this.triggerEventRepository = triggerEventRepository;
@@ -155,6 +161,8 @@ public class TriggerService {
     this.creatorSkipNotifier = creatorSkipNotifier;
     this.tenantRepository = tenantRepository;
     this.auditRecorder = auditRecorder;
+    this.fireSavepoint = new TransactionTemplate(transactionManager);
+    this.fireSavepoint.setPropagationBehavior(TransactionDefinition.PROPAGATION_NESTED);
     // WEBHOOK_SECRET_KEY 는 예전부터 환경변수로만 읽었다 — 같은 이름을 그대로 존중한다(설정한 배포의 옛 암호문 호환).
     this.webhookSecretCipher =
         new WebhookSecretCipher(System.getenv("WEBHOOK_SECRET_KEY"), encryptionMasterKey);
@@ -983,27 +991,6 @@ public class TriggerService {
           TriggerFireResult.Outcome.DISABLED, REASON_TRIGGER_DISABLED);
     }
 
-    // 실행 시 연쇄 깊이 방어(WD-106): 저장 시 검사를 빠져나간 순환(검사 결함 이전에 저장된 것 포함)이 있어도 연쇄가 끝없이
-    // 서로를 부르지 않게, 상한을 넘는 단계는 발화하지 않고 건너뜀 이벤트로 남긴다. 깊이는 연쇄 트리거에만 의미가 있다 —
-    // 다른 유형의 params 는 외부 호출자가 채우므로 판정에 쓰지 않는다.
-    if ("PIPELINE_CHAIN".equals(trigger.triggerType())
-        && params.get(CHAIN_DEPTH_PARAM) instanceof Number depth
-        && depth.intValue() > MAX_CHAIN_DEPTH) {
-      log.warn(
-          "PIPELINE_CHAIN 트리거 {} 발화를 건너뛴다: 연쇄 깊이 {} 가 상한 {} 를 넘는다 (pipeline={}). "
-              + "연쇄가 순환하고 있을 수 있다 — 트리거 구성을 확인할 것.",
-          triggerId,
-          depth.intValue(),
-          MAX_CHAIN_DEPTH,
-          trigger.pipelineId());
-      Map<String, Object> detail = new HashMap<>(params);
-      String reason =
-          "연쇄 실행이 최대 " + MAX_CHAIN_DEPTH + "단계를 넘어 더 실행하지 않았습니다. 파이프라인 연쇄가 서로를 부르는 순환인지 확인해 주세요.";
-      detail.put("reason", reason);
-      triggerEventRepository.create(triggerId, trigger.pipelineId(), null, "SKIPPED", detail);
-      return TriggerFireResult.notFired(TriggerFireResult.Outcome.SKIPPED, reason);
-    }
-
     // WD-853: 활성 여부는 행 잠금 뒤에 읽는다 — 커밋 전 비활성화를 기다렸다가 봐야 방금 끈 파이프라인이 또 실행되지 않는다(정책 무관).
     var locked = pipelineRepository.lockById(trigger.pipelineId());
     if (locked.isEmpty()) {
@@ -1034,6 +1021,29 @@ public class TriggerService {
       log.info("Trigger {} was disabled while waiting for lock, skipping", triggerId);
       return TriggerFireResult.notFired(
           TriggerFireResult.Outcome.DISABLED, REASON_TRIGGER_DISABLED);
+    }
+
+    // 실행 시 연쇄 깊이 방어(WD-106): 저장 시 검사를 빠져나간 순환(검사 결함 이전에 저장된 것 포함)이 있어도 연쇄가 끝없이
+    // 서로를 부르지 않게, 상한을 넘는 단계는 발화하지 않고 건너뜀 이벤트로 남긴다. 깊이는 연쇄 트리거에만 의미가 있다 —
+    // 다른 유형의 params 는 외부 호출자가 채우므로 판정에 쓰지 않는다.
+    // WD-858: 행 잠금·다시 읽기·DISABLED 재확인 뒤에 판정한다 — 잠금 전 값으로 판정하면 커밋 전 삭제와 겹칠 때 FK 예외가,
+    // 커밋 전 끄기와 겹칠 때 꺼진 트리거의 SKIPPED 이벤트가 남았다.
+    if ("PIPELINE_CHAIN".equals(trigger.triggerType())
+        && params.get(CHAIN_DEPTH_PARAM) instanceof Number depth
+        && depth.intValue() > MAX_CHAIN_DEPTH) {
+      log.warn(
+          "PIPELINE_CHAIN 트리거 {} 발화를 건너뛴다: 연쇄 깊이 {} 가 상한 {} 를 넘는다 (pipeline={}). "
+              + "연쇄가 순환하고 있을 수 있다 — 트리거 구성을 확인할 것.",
+          triggerId,
+          depth.intValue(),
+          MAX_CHAIN_DEPTH,
+          trigger.pipelineId());
+      Map<String, Object> detail = new HashMap<>(params);
+      String reason =
+          "연쇄 실행이 최대 " + MAX_CHAIN_DEPTH + "단계를 넘어 더 실행하지 않았습니다. 파이프라인 연쇄가 서로를 부르는 순환인지 확인해 주세요.";
+      detail.put("reason", reason);
+      triggerEventRepository.create(triggerId, trigger.pipelineId(), null, "SKIPPED", detail);
+      return TriggerFireResult.notFired(TriggerFireResult.Outcome.SKIPPED, reason);
     }
 
     if (!locked.get().active()) {
@@ -1095,26 +1105,35 @@ public class TriggerService {
     }
 
     try {
-      // Execute pipeline using trigger creator as executedBy
-      PipelineExecutionResponse execution =
-          pipelineService.executePipeline(
-              trigger.pipelineId(), trigger.createdBy(), trigger.triggerType(), triggerId);
+      // WD-858: 발화 시도 전체(실행 접수·FIRED 기록·상태 갱신)를 한 저장점(NESTED)으로 감싼다. 안쪽 @Transactional 프록시의 예외가
+      // 공유 트랜잭션을 rollback-only(PG 는 aborted)로 만들어 catch 의 ERROR 이벤트까지 사라지던 것을, 저장점 롤백이 그 표시와 반쯤 만든
+      // 실행 행을 함께 되돌려 막는다. REQUIRES_NEW 는 위에서 잡은 트리거 행 FOR UPDATE 와 자기 교착이라 쓰지 않는다.
+      // 저장점 롤백은 이미 등록된 afterCommit 콜백(비동기 접수)은 지우지 않지만, 러너가 실행 행 없음을 중지로 보고 슬롯을 풀어 무해하다.
+      // trigger 는 잠금 뒤 재할당되므로 람다용 final 지역변수로 잡는다.
+      final TriggerResponse fired = trigger;
+      return fireSavepoint.execute(
+          status -> {
+            // Execute pipeline using trigger creator as executedBy.
+            PipelineExecutionResponse execution =
+                pipelineService.executePipeline(
+                    fired.pipelineId(), fired.createdBy(), fired.triggerType(), triggerId);
 
-      // Record FIRED event
-      triggerEventRepository.create(
-          triggerId,
-          trigger.pipelineId(),
-          execution.id(),
-          "FIRED",
-          params.isEmpty() ? null : params);
+            // Record FIRED event
+            triggerEventRepository.create(
+                triggerId,
+                fired.pipelineId(),
+                execution.id(),
+                "FIRED",
+                params.isEmpty() ? null : params);
 
-      // Update trigger state with lastFiredAt
-      Map<String, Object> state = new HashMap<>(trigger.triggerState());
-      state.put("lastFiredAt", LocalDateTime.now().toString());
-      triggerRepository.updateTriggerState(triggerId, state);
+            // Update trigger state with lastFiredAt
+            Map<String, Object> state = new HashMap<>(fired.triggerState());
+            state.put("lastFiredAt", LocalDateTime.now().toString());
+            triggerRepository.updateTriggerState(triggerId, state);
 
-      log.info("Trigger {} fired successfully, execution {}", triggerId, execution.id());
-      return TriggerFireResult.fired(execution.id());
+            log.info("Trigger {} fired successfully, execution {}", triggerId, execution.id());
+            return TriggerFireResult.fired(execution.id());
+          });
     } catch (Exception e) {
       log.error("Failed to fire trigger {}: {}", triggerId, e.getMessage(), e);
       // 화면에는 한국어 사유(reason)만 보이고, 진단용 예외 원문은 기존대로 error 에 남긴다(WD-152).
