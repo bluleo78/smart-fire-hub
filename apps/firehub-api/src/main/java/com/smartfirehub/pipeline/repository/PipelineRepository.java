@@ -63,6 +63,8 @@ public interface PipelineRepository {
    *       충돌한다. 그래서 삭제가 잠근 뒤 진행 중 실행을 판정하면 (1) 실행 생성이 먼저면 그 커밋을 기다렸다가 새 실행을 보고 409, (2) 삭제가 먼저면 실행
    *       INSERT 가 삭제 커밋까지 기다린 뒤 FK 위반으로 실패해 404 로 바뀐다(PipelineExecutionRepository#createExecution)
    *       — 어느 순서든 판정과 삭제 사이에 실행이 끼어들지 못한다.
+   *   <li>트리거 발화(WD-853): 정책과 무관하게 활성 판정 전에 이 행을 잠그고 {@link LockedPipeline#active()} 로 판정한다. 잠금 없이
+   *       읽으면 커밋 전 비활성화를 놓쳐 방금 끈 파이프라인이 한 번 더 실행된다.
    * </ul>
    */
   Optional<LockedPipeline> lockById(Long id);

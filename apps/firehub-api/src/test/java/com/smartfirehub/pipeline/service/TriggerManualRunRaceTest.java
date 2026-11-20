@@ -161,8 +161,9 @@ class TriggerManualRunRaceTest extends IntegrationTestBase {
   }
 
   /**
-   * ALLOW 정책은 판정에서 잠그지 않으므로 진행 중 실행이 있어도 건너뛰지 않고 겹쳐 실행된다. 실행 행 INSERT 의 FK 검사(FOR KEY SHARE)가 수동
-   * 실행의 FOR UPDATE 와 충돌해 커밋까지 기다리는 것은 WD-437 의 의도된 동작이라 대기 여부는 단언하지 않는다.
+   * ALLOW 정책도 발화에서 파이프라인 행을 잠그지만(WD-853 활성 확인) 진행 중 실행을 판정하지 않으므로, 수동 실행 커밋을 기다린 뒤 건너뛰지 않고 겹쳐 실행된다.
+   * 실행 행 FK 검사(WD-437)로도 기다리므로 대기 여부는 여기서 단언하지 않는다 — ALLOW 잠금은 {@link
+   * #allowTrigger_waitsForUncommittedDeactivation_thenSkippedInactive} 가 가린다.
    */
   @Test
   void allowTrigger_notSkipped_overlaps() throws Exception {
