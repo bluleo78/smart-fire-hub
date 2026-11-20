@@ -89,9 +89,12 @@ test.describe('표 빈 상태 라이브 리전 (WD-815)', () => {
     await expect(page.getByRole('table').getByRole('status')).toHaveText('감사 로그가 없습니다.');
 
     await page.getByLabel('시작 날짜').fill('2026-09-01');
+    // 화면은 브라우저 로컬 자정을 UTC ISO(Z)로 바꿔 보낸다(#164·WD-11) — KST 에서는 날짜 부분이 전날
+    // (2026-08-31T15:00Z)이 되므로 날짜 문자열 대신 같은 브라우저에서 계산한 로컬 9월 1일 자정과 비교한다(WD-850).
+    const expectedStart = await page.evaluate(() => new Date(2026, 8, 1).toISOString());
     await expect
       .poll(() => capture.lastRequest()?.searchParams.get('startDate') ?? '')
-      .toContain('2026-09-01');
+      .toBe(expectedStart);
     await expect(page.getByRole('table').getByRole('status')).toHaveText('조건에 맞는 감사 로그가 없습니다.');
   });
 });
