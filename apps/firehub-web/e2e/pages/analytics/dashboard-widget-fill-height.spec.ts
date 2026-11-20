@@ -107,9 +107,11 @@ test.describe('대시보드 위젯 높이 채우기 (WD-845)', () => {
     });
   }
 
-  // 박스플롯·캔들: 본문이 위·아래 여백 합(60px) 이하인 아주 낮은 위젯(1행)에서는 뒤집혀 그리지 않는다.
-  // 컴포넌트 단위 테스트 환경이 없어 E2E 로 검증한다 — 그림이 없거나, 있다면 음수 높이 rect 가 없어야 한다.
-  for (const c of CASES.filter((x) => x.type === 'BOXPLOT' || x.type === 'CANDLESTICK')) {
+  // 박스플롯·캔들·히트맵: 본문이 위·아래 여백 합(60px) 이하인 아주 낮은 위젯(1행)에서는 뒤집혀 그리지 않는다.
+  // 컴포넌트 단위 테스트 환경이 없어 E2E 로 검증한다 — 측정이 끝난 뒤에도 svg 를 하나도 그리면 안 된다.
+  // 그릴 높이가 여백 합 이하면 그리지 않는 가드가 있는 차트들(WD-845)
+  const LOW_GUARD_TYPES = ['BOXPLOT', 'CANDLESTICK', 'HEATMAP'];
+  for (const c of CASES.filter((x) => LOW_GUARD_TYPES.includes(x.type))) {
     test(`${c.type} 아주 낮은 위젯에서는 음수 높이로 그리지 않는다`, async ({ authenticatedPage: page }) => {
       await setup(page, c, 1);
       await page.goto('/analytics/dashboards/1');
@@ -118,7 +120,9 @@ test.describe('대시보드 위젯 높이 채우기 (WD-845)', () => {
       await expect.poll(async () => (await body.boundingBox())?.height ?? 0).toBeGreaterThan(0);
       const bodyH = (await body.boundingBox())?.height ?? 0;
       expect(bodyH).toBeLessThanOrEqual(60);
-      await expect(page.locator('[data-chart-drawing] svg')).toHaveCount(0);
+      // 측정이 끝난 뒤에 검사한다 — 측정 전의 빈 상태로 통과하지 않게(WD-845). 빈 div 라 visible 이 아닐 수 있어 개수로 본다
+      await expect(body.locator('[data-chart-measured="true"]')).toHaveCount(1);
+      await expect(body.locator('[data-chart-drawing] svg')).toHaveCount(0);
     });
   }
 

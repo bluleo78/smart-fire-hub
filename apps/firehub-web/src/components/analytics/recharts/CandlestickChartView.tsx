@@ -84,7 +84,7 @@ export function CandlestickChartView({ data, config, height }: ChartViewProps) {
   const yTicks = Array.from({ length: 5 }, (_, i) => yMin + (yRange * i) / 4);
 
   return (
-    <div ref={containerRef} style={{ width: '100%', height: containerCss }}>
+    <div ref={containerRef} data-chart-measured={dims.width > 0 ? 'true' : undefined} style={{ width: '100%', height: containerCss }}>
       {/* WD-826: 그림만 보조기술에서 숨긴다 — 값은 figure 의 대체 표가 전달하고, 안내문은 위에서 따로 반환해 읽힌다 */}
       <ChartDrawingArea>
         {canDraw && (
