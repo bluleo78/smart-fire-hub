@@ -98,7 +98,8 @@ export function HeatmapChartView({ data, config, height }: ChartViewProps) {
       <ResponsiveWrapper>
         {({ width, height: h }) => (
           <div data-chart-measured={width > 0 ? 'true' : undefined} style={{ width, height: h }}>
-            {h > MARGIN.top + MARGIN.bottom && (
+            {/* WD-846: 폭도 같은 이유 — 좌우 여백 합 이하면 격자 폭이 0 이하라 그리지 않는다 */}
+            {h > MARGIN.top + MARGIN.bottom && width > MARGIN.left + MARGIN.right && (
               <HeatMap
                 width={width}
                 height={h}
