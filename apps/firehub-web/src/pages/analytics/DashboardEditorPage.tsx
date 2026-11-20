@@ -721,6 +721,8 @@ export default function DashboardEditorPage() {
     setEditingWidgets([...dashboard.widgets]);
     // WD-823: 새 편집 세션은 서버 배치에서 출발 — 지난 세션의 키보드 배치 대기열을 버린다
     resetKeyboardLayoutFlight();
+    // 지난 편집의 안내(저장 실패 등)를 새 편집으로 가져오지 않는다 — 편집에 들어서자마자 옛 문구가 읽히지 않게(WD-823)
+    setLayoutAnnouncement('');
     const items = widgetsToLayoutItems(dashboard.widgets);
     setLocalLayouts({ lg: items, md: items, sm: items });
     setIsEditing(true);
@@ -822,6 +824,8 @@ export default function DashboardEditorPage() {
 
     // 편집이 끝나므로 저장을 기다리는 사이 RGL 메아리로 바뀌었을 수 있는 출발 배치·타이머도 정리한다(WD-823)
     resetKeyboardLayoutFlight();
+    // 「저장하는 중」 안내가 남으면 다음 편집에서 안내 영역이 그 문구로 다시 읽힌다(WD-823 #1090 리뷰) — 성공으로 끝낼 때 비운다
+    setLayoutAnnouncement('');
     setEditingWidgets(null);
     setIsEditing(false);
   }, [dashboard, editingWidgets, updateWidgetMutation, syncEditingWithServer, resetKeyboardLayoutFlight, applyKeyboardKeys, setSaving]);

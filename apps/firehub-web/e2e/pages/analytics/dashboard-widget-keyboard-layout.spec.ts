@@ -8,6 +8,7 @@ import {
 import { setupDashboardEditorMocks } from "../../fixtures/analytics.fixture";
 import { mockApi } from "../../fixtures/api-mock";
 import { expect, test } from "../../fixtures/auth.fixture";
+import { holdApi } from "../../fixtures/hold-api";
 
 /**
  * 대시보드 편집 화면을 열어 「편집」 모드로 들어가고 첫 위젯의 이동 손잡이에 포커스를 둔다(WD-823 시험 공통 준비).
@@ -392,13 +393,14 @@ test.describe("대시보드 편집 — 키보드 배치 조작 (WD-324)", () => 
     authenticatedPage: page,
   }) => {
     await setupDashboardEditorMocks(page, 1);
-    // 저장 응답을 1.5초 늦춰 「저장 중」 창을 만든다 — 요청은 도착 즉시 캡처된다
-    const putCapture = await mockApi(
+    // 저장 PUT 을 release() 전까지 붙잡아 「저장 중」 창을 시간에 기대지 않고 만든다(WD-637 holdApi) —
+    // 응답 지연(delayMs)은 느린 CI 에서 아래 단언이 끝나기 전에 응답이 와 버릴 수 있다(#1090 리뷰)
+    const heldPut = await holdApi(
       page,
       "PUT",
       "/api/v1/analytics/dashboards/1/widgets/1",
+      200,
       {},
-      { capture: true, delayMs: 1500 },
     );
 
     const handle = await openEditorWithHandleFocused(page);
@@ -413,12 +415,13 @@ test.describe("대시보드 편집 — 키보드 배치 조작 (WD-324)", () => 
     const styleBeforeSave = await drawnStyle();
 
     await page.getByRole("button", { name: "완료" }).click();
-    expect((await putCapture.waitForRequest()).payload).toMatchObject({
+    await expect.poll(() => heldPut.requests.length).toBe(1);
+    expect(JSON.parse(heldPut.requests[0] ?? "{}")).toMatchObject({
       positionX: 1,
       positionY: 0,
     });
 
-    // 저장 응답 전 — 저장 중이라 옮길 수 없다고 안내하고, 손잡이로 → 를 두 번 더 눌러도 화면 배치는 그대로다.
+    // 저장 응답을 붙잡은 동안 — 저장 중이라 옮길 수 없다고 안내하고, 손잡이로 → 를 두 번 더 눌러도 화면 배치는 그대로다.
     // 옛 코드는 화면에서는 3열·4열로 움직였다가 저장 성공 뒤 편집이 끝나며 이 이동이 말없이 버려졌다.
     await expect(announcement).toHaveText(
       "배치를 저장하는 중입니다. 저장이 끝날 때까지 위젯을 옮길 수 없습니다.",
@@ -426,16 +429,28 @@ test.describe("대시보드 편집 — 키보드 배치 조작 (WD-324)", () => 
     await handle.focus();
     await page.keyboard.press("ArrowRight");
     await page.keyboard.press("ArrowRight");
-    expect(await drawnStyle()).toBe(styleBeforeSave);
+    // 누른 직후 한 번만 읽으면 렌더가 늦어 잠금이 깨져도 통과할 수 있다 — 붙잡은 동안 여러 번 읽어 배치가 그대로 유지되는지 본다
+    for (let i = 0; i < 5; i++) {
+      expect(await drawnStyle()).toBe(styleBeforeSave);
+      await page.waitForTimeout(100);
+    }
     // 마우스 끌기도 잠긴다 — RGL 은 끌 수 있는 항목에만 react-draggable 클래스를 붙인다
     await expect(gridItem).not.toHaveClass(/react-draggable(\s|$)/);
     // 취소 뒤 다시 편집하면 늦게 끝난 저장이 새 편집을 닫았으므로 취소·차트 추가도 잠근다
     await expect(page.getByTitle("편집 취소")).toBeDisabled();
     await expect(page.getByRole("button", { name: "차트 추가" })).toBeDisabled();
+    // 붙잡은 동안 저장 요청은 처음 한 번(2열)뿐이다
+    expect(heldPut.requests).toHaveLength(1);
 
-    // 저장이 끝나면 편집이 끝나고, 저장 요청은 처음 한 번(2열)뿐이다
+    // 저장을 풀면 편집이 끝난다
+    heldPut.release();
     await expect(page.getByRole("button", { name: "편집" })).toBeVisible();
-    expect(putCapture.requests).toHaveLength(1);
+    expect(heldPut.requests).toHaveLength(1);
+
+    // 다시 편집하면 안내 영역은 비어 있다 — 「저장하는 중」 문구가 남아 다음 편집에서 잘못 읽히면 안 된다(#1090 리뷰 ①)
+    await page.getByRole("button", { name: "편집" }).click();
+    await expect(page.getByTitle("편집 취소")).toBeVisible();
+    await expect(announcement).toHaveText("");
   });
 
   test("키를 누른 뒤 「편집 취소」하고 다시 편집하면 서버 배치에서 출발한다 (WD-823)", async ({
