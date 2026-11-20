@@ -188,7 +188,7 @@
     SELECT cancel_requested_at FROM pipeline_execution WHERE id = #{executionId}
   </select>
 
-  <!-- 있으면 1, 없으면 행 없음(null) — 한 행만 보면 된다(TriggerMapper.selectRunningExecutionMarker 와 같은 꼴). -->
+  <!-- 있으면 1, 없으면 행 없음(null) — 한 행만 보면 된다. -->
   <select id="selectRunningMarker" resultType="java.lang.Integer">
     SELECT 1 FROM pipeline_execution WHERE tenant_id = #{tenantId} AND status = 'RUNNING'
     <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.limitRows"><property name="n" value="1"/></include>

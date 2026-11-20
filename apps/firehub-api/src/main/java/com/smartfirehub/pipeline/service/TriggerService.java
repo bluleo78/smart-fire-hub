@@ -10,6 +10,8 @@ import com.smartfirehub.pipeline.dto.*;
 import com.smartfirehub.pipeline.exception.CyclicTriggerDependencyException;
 import com.smartfirehub.pipeline.exception.PipelineNotFoundException;
 import com.smartfirehub.pipeline.exception.TriggerNotFoundException;
+import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
+import com.smartfirehub.pipeline.repository.PipelineExecutionRepository.ActiveExecutionState;
 import com.smartfirehub.pipeline.repository.PipelineRepository;
 import com.smartfirehub.pipeline.repository.TriggerEventRepository;
 import com.smartfirehub.pipeline.repository.TriggerRepository;
@@ -104,6 +106,9 @@ public class TriggerService {
   private final TriggerTenantResolver triggerTenantResolver;
   // 순환 안내 문구에 파이프라인 이름을 싣기 위한 조회 전용(WD-106).
   private final PipelineRepository pipelineRepository;
+  // SKIP 동시 실행 정책의 「진행 중 실행」 판정 — 수동 실행 가드(PipelineExecutionService)와 같은 쿼리를 써서 활성 상태 규칙이 하나가 되게
+  // 한다(WD-827)
+  private final PipelineExecutionRepository executionRepository;
   private final PipelineService pipelineService;
   private final TriggerSchedulerService schedulerService;
   // DATASET_CHANGE 감시 대상 VIEW 판정(보안 등급) — 저장하는 사용자가 볼 수 없는 데이터셋을 감시 대상으로 넣지 못하게.
@@ -126,6 +131,7 @@ public class TriggerService {
       TriggerEventRepository triggerEventRepository,
       TriggerTenantResolver triggerTenantResolver,
       PipelineRepository pipelineRepository,
+      PipelineExecutionRepository executionRepository,
       @Lazy PipelineService pipelineService,
       @Lazy TriggerSchedulerService schedulerService,
       DatasetAccessGuard datasetAccessGuard,
@@ -139,6 +145,7 @@ public class TriggerService {
     this.triggerEventRepository = triggerEventRepository;
     this.triggerTenantResolver = triggerTenantResolver;
     this.pipelineRepository = pipelineRepository;
+    this.executionRepository = executionRepository;
     this.pipelineService = pipelineService;
     this.schedulerService = schedulerService;
     this.datasetAccessGuard = datasetAccessGuard;
@@ -1045,10 +1052,13 @@ public class TriggerService {
     // Check concurrency policy for SCHEDULE triggers
     if ("SCHEDULE".equals(trigger.triggerType())
         && "SKIP".equals(trigger.config().getOrDefault("concurrencyPolicy", "SKIP"))) {
-      // WD-827: 수동 실행 가드(WD-825)와 같은 파이프라인 행 잠금 뒤에서 판정한다 — 잠금은 위(WD-853)에서 이미 잡았다.
-      if (triggerRepository.hasRunningExecution(trigger.pipelineId())) {
+      // WD-827: 수동 실행 가드(WD-825)와 같은 파이프라인 행 잠금 뒤에서 판정한다 — 잠금은 위(WD-853)에서 이미 잡았고
+      // fireTrigger 트랜잭션 끝까지 유지되어 아래 실행 행 생성까지 직렬화된다.
+      // 취소 진행 중(CANCELLING) 실행도 아직 끝나지 않았으므로 건너뛴다 — 수동 실행 가드와 같은 판정(WD-827)
+      if (executionRepository.findActiveExecutionState(trigger.pipelineId())
+          != ActiveExecutionState.NONE) {
         log.info(
-            "Skipping trigger {} due to SKIP concurrency policy (running execution exists)",
+            "Skipping trigger {} due to SKIP concurrency policy (active execution exists)",
             triggerId);
         triggerEventRepository.create(
             triggerId,

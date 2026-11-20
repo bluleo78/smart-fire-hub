@@ -47,6 +47,7 @@ import {
   DropdownMenuTrigger,
 } from '../../components/ui/dropdown-menu';
 import { ExportBlockedTooltip } from '../../components/ui/ExportBlockedTooltip';
+import { FormField } from '../../components/ui/form-field';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
 import {
@@ -319,6 +320,14 @@ function SaveDialog({
   error,
   nameError,
 }: SaveDialogProps) {
+  // 버튼을 끄는 규칙과 안내를 보이는 규칙이 어긋나지 않게 한 값으로 쓴다(WD-828).
+  const nameMissing = !name.trim();
+  // 이름이 비어 만들기·저장 버튼이 꺼진 이유를 이름 칸 아래에 알린다. FormField 는 오류와 안내를 함께 그리므로
+  // 중복 오류(WD-824)가 보이면 안내를 빼서 한 번에 한 메시지만 둔다.
+  const nameHint =
+    nameMissing && !nameError
+      ? `이름을 입력하면 ${isEdit ? '저장할' : '만들'} 수 있습니다.`
+      : undefined;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
@@ -333,23 +342,26 @@ function SaveDialog({
           <p className="text-sm text-destructive -mt-2">{error}</p>
         )}
         <div className="space-y-4 py-2">
-          <div className="space-y-1.5">
-            <Label htmlFor="query-name">이름 *</Label>
+          {/* WD-828: 이름이 비면 만들기·저장 버튼이 꺼지는데 이유가 안 보였다. FormField 가 안내(hint)를 칸 아래에 보이고
+              aria-describedby 로 잇는다(WD-809·812 와 같은 방식). 중복 409 오류(WD-824)가 있으면 오류만 보인다.
+              오류 id `query-name-error`·role=alert·aria-invalid 는 FormField 가 같은 규칙으로 잇는다. */}
+          <FormField
+            label="이름"
+            htmlFor="query-name"
+            // 같은 다이얼로그의 설명·폴더 칸과 라벨-입력 간격(space-y-1.5)을 맞춘다
+            className="space-y-1.5"
+            required
+            error={nameError ?? undefined}
+            hint={nameHint}
+          >
             <Input
               id="query-name"
               value={name}
               onChange={(e) => onNameChange(e.target.value)}
               placeholder="쿼리 이름을 입력하세요"
               maxLength={200}
-              aria-invalid={nameError ? true : undefined}
-              aria-describedby={nameError ? 'query-name-error' : undefined}
             />
-            {nameError && (
-              <p id="query-name-error" role="alert" className="text-sm text-destructive">
-                {nameError}
-              </p>
-            )}
-          </div>
+          </FormField>
           <div className="space-y-1.5">
             <Label htmlFor="query-description">설명</Label>
             <Input
@@ -394,7 +406,7 @@ function SaveDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             취소
           </Button>
-          <Button onClick={onSave} disabled={!name.trim() || isSaving}>
+          <Button onClick={onSave} disabled={nameMissing || isSaving}>
             {isSaving && <Loader2 className="h-4 w-4 animate-spin" />}
             {isEdit ? '저장' : '만들기'}
           </Button>

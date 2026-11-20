@@ -167,7 +167,4 @@ public interface TriggerRepository {
 
   /** Find webhook trigger by webhookId. */
   Optional<TriggerResponse> findByWebhookId(String webhookId);
-
-  /** Check if there is a running execution for the given pipeline. */
-  boolean hasRunningExecution(Long pipelineId);
 }
