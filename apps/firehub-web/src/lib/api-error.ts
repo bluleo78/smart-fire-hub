@@ -194,6 +194,14 @@ export function isConflictError(error: unknown): boolean {
   return axios.isAxiosError(error) && error.response?.status === 409;
 }
 
+/**
+ * 잘못된 요청(400) 응답인가 (WD-819) — 서버가 입력값을 받아들이지 않았다(예: 이미 있는 역할 이름은 409 가 아니라 400).
+ * 서버가 검증하는 칸이 하나뿐인 요청의 400 은 그 칸의 문제로 보고 칸 오류로 잇는 데 쓴다.
+ */
+export function isBadRequestError(error: unknown): boolean {
+  return axios.isAxiosError(error) && error.response?.status === 400;
+}
+
 /** 워크스페이스 멤버가 아닌 사용자 404 의 코드(WD-288) — api UserNotFoundException.NOT_IN_WORKSPACE_CODE 와 같은 값. */
 export const USER_NOT_IN_WORKSPACE_CODE = 'USER_NOT_IN_WORKSPACE';
 

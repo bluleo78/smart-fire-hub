@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 
 import { createOntologySummaries } from '../../factories/mapping.factory';
 import { createEntityTypeMutation, createOntologyGraph, createOntologySchema } from '../../factories/ontology.factory';
@@ -12,6 +12,7 @@ import {
 } from '../../fixtures/admin.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { expectSingleHeldRequest, holdApi } from '../../fixtures/hold-api';
 
 /**
  * 지식그래프(구 온톨로지) 시각화 페이지 E2E 테스트
@@ -1544,5 +1545,162 @@ test.describe('페이지 제목(WD-813)', () => {
     await expect(h1).toBeVisible();
     const box = await h1.boundingBox();
     expect(box!.height).toBeLessThan(50);
+  });
+});
+
+// WD-819: 새 온톨로지 대화상자의 도메인 칸 — Enter 제출 가드(한글 조합·요청 중)와 오류 초기화.
+test.describe('새 온톨로지 대화상자 (WD-819)', () => {
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+    await mockApi(page, 'GET', '/api/v1/ontology', createOntologySchema());
+    await mockOntologyGraph(page, createOntologyGraph());
+    await mockApi(page, 'GET', '/api/v1/ontologies', createOntologySummaries());
+    await mockApi(page, 'GET', '/api/v1/ontology/1', createOntologySchema());
+  });
+
+  /** 서버가 중복 도메인에 돌려주는 409 본문 */
+  const DUPLICATE_BODY = { message: '이미 존재하는 도메인입니다.' };
+  const DUPLICATE_TEXT = DUPLICATE_BODY.message;
+
+  /** 도메인 오류가 없는 상태 — 알림도 오류 문구도 없고 칸이 aria-invalid 가 아니다(auto-retry). */
+  async function expectNoDomainError(scope: Locator, errorText?: string) {
+    await expect(scope.getByRole('alert')).toHaveCount(0);
+    if (errorText) await expect(scope.getByText(errorText)).toHaveCount(0);
+    await expect(scope.locator('#ontology-domain')).not.toHaveAttribute('aria-invalid', 'true');
+  }
+
+  /** 지식 모델 탭에서 「새 온톨로지」 대화상자를 열고 도메인 칸과 대화상자를 돌려준다. */
+  async function openDialog(page: Page) {
+    await page.goto('/knowledge-graph/model');
+    await page.getByRole('button', { name: '새 온톨로지' }).click();
+    const dialog = page.getByTestId('ontology-create-dialog');
+    return { dialog, input: dialog.locator('#ontology-domain') };
+  }
+
+  test('한글 조합 중 Enter 는 제출하지 않고, 조합이 끝난 Enter 는 한 번 제출한다 (WD-819)', async ({
+    authenticatedPage: page,
+  }) => {
+    const capture = await mockApi(page, 'POST', '/api/v1/ontologies', 5, { status: 201, capture: true });
+    await mockApi(page, 'GET', '/api/v1/ontology/5', createOntologySchema({ domain: '건축물', entities: [], relations: [] }));
+    const { input } = await openDialog(page);
+
+    await input.fill('건축물');
+    // IME 조합 중 Enter(확정 키) — 제출되면 안 된다
+    await input.dispatchEvent('keydown', { key: 'Enter', isComposing: true });
+    // Safari 는 조합 확정 Enter 를 isComposing=false·keyCode 229 로 보낸다 — 이것도 제출되면 안 된다
+    await input.dispatchEvent('keydown', { key: 'Enter', keyCode: 229 });
+    // 여기서 요청이 없음을 따로 본다 — 끝의 「1회」만 보면, 조합 중 Enter 가 잘못 보낸 요청이 아직 도는 사이
+    // 아래 진짜 Enter 를 제출 잠금이 막아 1회로 세어져 결함을 놓친다. 일어나지 않음을 보이려고 짧게 기다린다.
+    await page.waitForTimeout(300);
+    expect(capture.requests).toHaveLength(0);
+
+    await input.press('Enter');
+    const req = await capture.waitForRequest();
+    expect(req.payload).toMatchObject({ domain: '건축물', status: 'draft' });
+    expect(capture.requests).toHaveLength(1);
+  });
+
+  test('요청 중 Enter 를 거듭 눌러도 POST 는 한 번이다 (WD-819)', async ({ authenticatedPage: page }) => {
+    // 응답을 붙잡아 두어 「요청 중」 상태를 시간에 기대지 않고 만든다
+    const held = await holdApi(page, 'POST', '/api/v1/ontologies', 201, 5);
+    await mockApi(page, 'GET', '/api/v1/ontology/5', createOntologySchema({ domain: '화재', entities: [], relations: [] }));
+    const { input } = await openDialog(page);
+
+    await input.fill('화재');
+    // 렌더링 사이에 끼지 않도록 한 번의 evaluate 안에서 동기로 세 번 보낸다 — useSubmitGuard 없이는 POST 가 세 번 나간다
+    await input.evaluate((el) => {
+      for (let i = 0; i < 3; i++) {
+        el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+      }
+    });
+    await expectSingleHeldRequest(() => held.requests.length);
+    held.release();
+  });
+
+  test('도메인 오류는 입력을 고치면 사라진다 (WD-819)', async ({ authenticatedPage: page }) => {
+    const { dialog, input } = await openDialog(page);
+
+    await dialog.getByRole('button', { name: '만들기' }).click();
+    await expect(dialog.getByRole('alert')).toHaveText('도메인명을 입력하세요.');
+    await expect(input).toHaveAttribute('aria-invalid', 'true');
+
+    await input.fill('화재');
+    await expectNoDomainError(dialog);
+  });
+
+  test('서버 409 오류 뒤 닫았다 다시 열면 오류가 없다 (WD-819)', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'POST', '/api/v1/ontologies', DUPLICATE_BODY, { status: 409 });
+    const { dialog, input } = await openDialog(page);
+
+    await input.fill('화재');
+    await dialog.getByRole('button', { name: '만들기' }).click();
+    await expect(dialog.getByText(DUPLICATE_TEXT)).toBeVisible();
+
+    await dialog.getByRole('button', { name: '취소' }).click();
+    await expect(dialog).toHaveCount(0);
+    await page.getByRole('button', { name: '새 온톨로지' }).click();
+
+    const reopened = page.getByTestId('ontology-create-dialog');
+    await expect(reopened).toBeVisible();
+    await expectNoDomainError(reopened, DUPLICATE_TEXT);
+    // 입력한 도메인 값은 다시 열어도 남는다(오류만 지운다)
+    await expect(reopened.locator('#ontology-domain')).toHaveValue('화재');
+  });
+
+  test('서버 409 오류는 도메인을 고치면 사라진다 (WD-819)', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'POST', '/api/v1/ontologies', DUPLICATE_BODY, { status: 409 });
+    const { dialog, input } = await openDialog(page);
+
+    await input.fill('화재');
+    await dialog.getByRole('button', { name: '만들기' }).click();
+    await expect(dialog.getByText(DUPLICATE_TEXT)).toBeVisible();
+    await expect(input).toHaveAttribute('aria-invalid', 'true');
+
+    await input.fill('화재2');
+    await expectNoDomainError(dialog, DUPLICATE_TEXT);
+  });
+
+  test('요청 중 ESC 로 닫은 뒤 늦게 온 409 오류는 다시 열어도 보이지 않는다 (WD-819)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 응답을 붙잡아 두어 「요청 중에 닫힘」을 시간에 기대지 않고 만든다
+    const held = await holdApi(page, 'POST', '/api/v1/ontologies', 409, DUPLICATE_BODY);
+    const { dialog, input } = await openDialog(page);
+
+    await input.fill('화재');
+    await dialog.getByRole('button', { name: '만들기' }).click();
+    // 요청이 서버에 닿아 붙잡힐 때까지 기다린 뒤 닫는다 — 닫힘이 요청 중에 일어났음을 보장한다
+    await expect.poll(() => held.requests.length).toBe(1);
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    // 닫은 뒤에 응답을 풀어 늦게 온 409 가 onError 까지 처리되게 한다
+    const responded = page.waitForResponse((r) => r.url().includes('/api/v1/ontologies') && r.request().method() === 'POST');
+    held.release();
+    await responded;
+    // 응답 처리 마이크로태스크·렌더가 끝나도록 프레임 한 번을 보낸다(고정 대기 대신)
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+
+    await page.getByRole('button', { name: '새 온톨로지' }).click();
+    const reopened = page.getByTestId('ontology-create-dialog');
+    await expect(reopened).toBeVisible();
+    await expectNoDomainError(reopened, DUPLICATE_TEXT);
+  });
+
+  test('409 오류 뒤 도메인을 고쳐 다시 제출하면 POST 가 다시 나간다 (WD-819)', async ({ authenticatedPage: page }) => {
+    const capture = await mockApi(page, 'POST', '/api/v1/ontologies', DUPLICATE_BODY, {
+      status: 409,
+      capture: true,
+    });
+    const { dialog, input } = await openDialog(page);
+
+    await input.fill('화재');
+    await dialog.getByRole('button', { name: '만들기' }).click();
+    await expect(dialog.getByText(DUPLICATE_TEXT)).toBeVisible();
+    expect(capture.requests).toHaveLength(1);
+
+    // 가드가 풀렸는지 — 고친 도메인으로 다시 제출하면 두 번째 POST 가 나간다
+    await input.fill('화재2');
+    await dialog.getByRole('button', { name: '만들기' }).click();
+    await expect.poll(() => capture.requests.length).toBe(2);
   });
 });

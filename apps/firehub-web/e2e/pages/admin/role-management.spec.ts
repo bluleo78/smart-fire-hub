@@ -1,3 +1,5 @@
+import type { Page } from '@playwright/test';
+
 import { createPermission, createRoleDetail } from '../../factories/admin.factory';
 import { createRole } from '../../factories/auth.factory';
 import {
@@ -7,6 +9,7 @@ import {
 } from '../../fixtures/admin.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { holdApi } from '../../fixtures/hold-api';
 import {
   expectLongValueTruncated,
   expectTableFits,
@@ -20,7 +23,7 @@ import {
  * - 관리 화면 권한 가드(AdminOrPermissionRoute) 통과와 화면 안 버튼 노출을 위해 ADMIN 역할·관리 권한 코드로 users/me를 오버라이드한다.
  */
 /** 역할 정보 카드의 「저장」 — 권한 저장·열람 등급 저장 버튼과 섞이지 않게 카드 안으로 좁힌다 (WD-119). */
-async function saveRoleInfo(page: import('@playwright/test').Page) {
+async function saveRoleInfo(page: Page) {
   await page
     .locator('[data-slot="card"]')
     .filter({ hasText: '역할 정보' })
@@ -644,6 +647,90 @@ test.describe('역할 관리 페이지', () => {
     // 제출하지 않은 채 이름만 다른 값으로 고치면 stale 서버 에러가 즉시 사라져야 한다
     await nameInput.fill('EXPLORER_TEST_ROLE_1');
     await expect(errorMessage).not.toBeVisible();
+  });
+
+  // WD-819 공용 — 서버는 중복 이름을 409 가 아니라 400 으로 돌려준다
+  const DUPLICATE_ROLE_MESSAGE = '이미 존재하는 역할 이름입니다: ADMIN';
+  const DUPLICATE_ROLE_BODY = { status: 400, message: DUPLICATE_ROLE_MESSAGE };
+
+  /** 새 역할 대화상자를 열어 이름을 채우고 「만들기」를 누른 상태까지 만든다(POST 모킹은 호출 전에 등록). */
+  async function submitNewRole(page: Page, name: string) {
+    await page.goto('/admin/roles');
+    await page.getByRole('button', { name: '새 역할' }).click();
+    const dialog = page.getByRole('dialog');
+    const nameInput = dialog.getByLabel('역할 이름');
+    await nameInput.fill(name);
+    await dialog.getByRole('button', { name: '만들기' }).click();
+    return { dialog, nameInput };
+  }
+
+  test('새 역할의 같은 이름 서버 오류는 역할 이름 칸에 이어져 읽힌다 (WD-819)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupRoleListMocks(page);
+    await mockApi(page, 'POST', '/api/v1/roles', DUPLICATE_ROLE_BODY, { status: 400 });
+    const { dialog, nameInput } = await submitNewRole(page, 'ADMIN');
+
+    const alert = dialog.getByRole('alert').filter({ hasText: DUPLICATE_ROLE_MESSAGE });
+    await expect(alert).toBeVisible();
+    await expect(nameInput).toHaveAttribute('aria-invalid', 'true');
+    const alertId = await alert.getAttribute('id');
+    expect(alertId).toBeTruthy();
+    expect(await nameInput.getAttribute('aria-describedby')).toContain(alertId as string);
+    await expect(nameInput).toBeFocused();
+  });
+
+  test('새 역할 400 이름 오류 뒤 닫기(X)로 닫고 다시 열면 오류가 남지 않는다 (WD-819)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupRoleListMocks(page);
+    await mockApi(page, 'POST', '/api/v1/roles', DUPLICATE_ROLE_BODY, { status: 400 });
+    const { dialog } = await submitNewRole(page, 'ADMIN');
+    await expect(dialog.getByRole('alert').filter({ hasText: DUPLICATE_ROLE_MESSAGE })).toBeVisible();
+
+    await dialog.getByRole('button', { name: '닫기' }).click();
+    await expect(dialog).toHaveCount(0);
+    await page.getByRole('button', { name: '새 역할' }).click();
+
+    const reopened = page.getByRole('dialog');
+    await expect(reopened).toBeVisible();
+    await expect(reopened.getByRole('alert')).toHaveCount(0);
+    await expect(reopened.getByLabel('역할 이름')).not.toHaveAttribute('aria-invalid', 'true');
+  });
+
+  test('새 역할 요청 중 ESC 로 닫은 뒤 늦게 온 400 오류는 다시 열어도 보이지 않는다 (WD-819)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupRoleListMocks(page);
+    // 응답을 붙잡아 「요청 중에 닫힘」을 시간에 기대지 않고 만든다
+    const held = await holdApi(page, 'POST', '/api/v1/roles', 400, DUPLICATE_ROLE_BODY);
+    const { dialog } = await submitNewRole(page, 'ADMIN');
+    await expect.poll(() => held.requests.length).toBe(1);
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    // 닫은 뒤에 응답을 풀어 늦게 온 400 이 catch 까지 처리되게 한다
+    const responded = page.waitForResponse((r) => r.url().includes('/api/v1/roles') && r.request().method() === 'POST');
+    held.release();
+    await responded;
+    // 응답 처리·렌더가 끝나도록 프레임 두 번을 보낸다(고정 대기 대신)
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+
+    await page.getByRole('button', { name: '새 역할' }).click();
+    const reopened = page.getByRole('dialog');
+    await expect(reopened).toBeVisible();
+    await expect(reopened.getByRole('alert')).toHaveCount(0);
+    await expect(reopened.getByLabel('역할 이름')).not.toHaveAttribute('aria-invalid', 'true');
+  });
+
+  test('새 역할의 이름 무관 서버 오류(500)는 이름 칸에 붙지 않고 알림으로 읽힌다 (WD-819)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupRoleListMocks(page);
+    await mockApi(page, 'POST', '/api/v1/roles', { message: '서버 오류' }, { status: 500 });
+    const { dialog, nameInput } = await submitNewRole(page, 'SOME_ROLE');
+
+    await expect(dialog.getByRole('alert').filter({ hasText: '서버 오류' })).toBeVisible();
+    await expect(nameInput).not.toHaveAttribute('aria-invalid', 'true');
   });
 
   // #567: 권한을 전부 해제하고 저장을 시도하면 확인 다이얼로그 없이 즉시 반영되면 안 된다 (#512와 동일 패턴)
