@@ -318,8 +318,7 @@ export function ChartRenderer({
 /**
  * 같은 입력이면 다시 그리지 않는 차트 렌더러(WD-821) — 차트 빌더 미리보기 전용.
  * 「저장」 대화상자처럼 부모 상태만 바뀌어도 recharts 가 통째로 다시 계산돼, 저사양(CPU 4x)에서 대화상자를 여는 클릭이
- * 장기 작업(50ms 넘음)으로 이어졌다. 대시보드 그리드(react-grid-layout)는 렌더 시점에 기대는 키보드 배치 흐름이 있어
- * 일반 ChartRenderer 를 그대로 쓴다 — 전역 memo 는 그 흐름의 빠른 연속 입력을 놓치게 했다.
- * 대시보드 키보드 배치 경합은 WD-823 — 고치면 전역 memo 로 되돌릴지 검토.
+ * 장기 작업(50ms 넘음)으로 이어졌다.
+ * 다른 사용처(대시보드 카드·AI 챗 등) 영향을 확인하지 않아 차트 빌더 한정으로 둔다(대시보드 키보드 배치 경합은 WD-823 으로 고침).
  */
 export const MemoChartRenderer = memo(ChartRenderer);

@@ -17,7 +17,7 @@ import {
   Share2,
   X,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import type { LayoutItem, ResponsiveLayouts } from 'react-grid-layout';
 import { ResponsiveGridLayout, useContainerWidth } from 'react-grid-layout';
@@ -62,10 +62,12 @@ import { useIsOwner } from '../../hooks/useIsOwner';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import { extractApiError, handleApiError, isConflictError, isNotFoundError } from '../../lib/api-error';
 import {
-  applyKeyboardLayoutAction,
+  classifyLayoutEcho,
   DASHBOARD_GRID_COLS,
   describeLayoutItem,
+  drainKeyboardQueue,
   type KeyboardLayoutAction,
+  sameLayoutGeometry,
 } from '../../lib/dashboard-layout-keyboard';
 import { formatDateTimeMinute } from '../../lib/formatters';
 import { parseRouteId } from '../../lib/route-id';
@@ -85,6 +87,8 @@ interface GridAreaProps {
   onLayoutChange: (layout: readonly LayoutItem[], allLayouts: ResponsiveLayouts) => void;
   onRemove: (widgetId: number) => void;
   onKeyboardLayout: (widgetId: number, action: KeyboardLayoutAction) => void;
+  /** 마우스 끌기·크기 조절이 시작될 때 — 키보드 배치 대기열을 비우게 한다(WD-823) */
+  onInteractionStart: () => void;
   autoRefreshSeconds?: number | null;
 }
 
@@ -95,6 +99,7 @@ function GridArea({
   onLayoutChange,
   onRemove,
   onKeyboardLayout,
+  onInteractionStart,
   autoRefreshSeconds,
 }: GridAreaProps) {
   const { width, containerRef: gridRef } = useContainerWidth({ initialWidth: 1280 });
@@ -145,6 +150,9 @@ function GridArea({
           resizeConfig={{ enabled: isEditing, handles: ['se'] }}
           layouts={layouts}
           onLayoutChange={onLayoutChange}
+          // WD-823: 끌기·크기 조절이 시작되면 그 결과가 배치를 정하므로 아직 처리 안 된 키보드 배치를 버린다
+          onDragStart={onInteractionStart}
+          onResizeStart={onInteractionStart}
           margin={[GRID_GAP, GRID_GAP]}
         >
           {widgets.map((widget) => (
@@ -377,6 +385,46 @@ export default function DashboardEditorPage() {
   // Local layout state (breakpoint → LayoutItem[])
   const [localLayouts, setLocalLayouts] = useState<ResponsiveLayouts>({});
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 키보드 배치는 한 번에 하나씩만 react-grid-layout(RGL)에 보내고, 그 배치의 메아리(onLayoutChange)를 받은 뒤 다음 키를 처리한다(WD-823).
+  // RGL 은 부모 layouts 를 effect 에서 늦게 따라온 뒤 메아리로 돌려보내므로, 연타하면 늦은 메아리가 앞 키 결과를 덮어 화면과 저장 배치가 어긋난다.
+  // 메아리 판정 규칙은 classifyLayoutEcho 문서 참고.
+  // 보낸 배치 목록 — 마지막 ack 로 정리되기 전의 키보드 배치들(안전장치가 다음 키를 보내도 앞 배치의 늦은 메아리를 stale 로 거르려고 남긴다)
+  const sentKeyboardLayoutsRef = useRef<LayoutItem[][]>([]);
+  // 대기열 — 날아간 배치가 있는 동안 눌린 키(메아리 또는 안전장치 뒤에 차례로 처리)
+  const keyboardQueueRef = useRef<{ widgetId: number; action: KeyboardLayoutAction }[]>([]);
+  // 다음 키의 출발 배치 — 마지막으로 넣은 키보드 배치 또는 받아들인 외부 배치(null 이면 localLayouts 에서 출발)
+  const keyboardBaseLayoutRef = useRef<LayoutItem[] | null>(null);
+  // 메아리 대기 타이머 겸 「날아간 배치 있음」 표시 — 메아리가 안 오는 경우(RGL 이 onLayoutChange 를 안 부름)의 300ms 안전장치.
+  // 날아간 배치가 있는 동안에만 non-null 이다.
+  const keyboardAckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 최신 상태 — 안정 콜백(pumpKeyboardQueue)과 handleSaveEdit 이 상태를 의존성으로 갖지 않고 읽게 한다(WD-823).
+  // 렌더 중 ref 쓰기는 react-hooks 규칙에 어긋나므로 아래 layout effect 에서 채운다(RGL 의 effect 보다 먼저 돌아 최신이다).
+  const latestRef = useRef({ isEditing, dashboard, editingWidgets, localLayouts });
+  useLayoutEffect(() => {
+    latestRef.current = { isEditing, dashboard, editingWidgets, localLayouts };
+  }, [isEditing, dashboard, editingWidgets, localLayouts]);
+
+  /** 메아리 대기 타이머를 끈다 — 날아간 배치도 없어진다(WD-823) */
+  const stopKeyboardAckTimer = useCallback(() => {
+    if (keyboardAckTimerRef.current) clearTimeout(keyboardAckTimerRef.current);
+    keyboardAckTimerRef.current = null;
+  }, []);
+
+  /**
+   * 날아간 배치·보낸 배치 목록·타이머를 비운다(WD-823). keepQueue 면 대기열·출발 배치는 둔다(RGL 이 스스로 낸 배치를 받을 때).
+   * 기본은 대기열·출발 배치까지 모두 비운다 — 배치를 통째로 바꾸거나 끌기가 시작될 때.
+   */
+  const resetKeyboardLayoutFlight = useCallback((keepQueue = false) => {
+    stopKeyboardAckTimer();
+    sentKeyboardLayoutsRef.current = [];
+    if (keepQueue) return;
+    keyboardQueueRef.current = [];
+    keyboardBaseLayoutRef.current = null;
+  }, [stopKeyboardAckTimer]);
+  // 언마운트 때 안전장치 타이머를 정리한다(WD-823)
+  useEffect(() => () => resetKeyboardLayoutFlight(), [resetKeyboardLayoutFlight]);
+  // 끌기·크기 조절 시작 — 아직 처리 안 된 키보드 배치를 모두 버린다(RGL 이벤트 인자는 무시)
+  const handleInteractionStart = useCallback(() => resetKeyboardLayoutFlight(), [resetKeyboardLayoutFlight]);
 
   // Sync layout from server data when not editing (state-based tracking)
   const [syncedDashboardId, setSyncedDashboardId] = useState<number | null>(null);
@@ -440,37 +488,82 @@ export default function DashboardEditorPage() {
     return () => document.removeEventListener('fullscreenchange', handler);
   }, []);
 
+  // 키보드로 바꾼 위치·크기 안내(WD-324) — 화면 읽기 프로그램이 읽도록 aria-live 영역에 둔다
+  const [layoutAnnouncement, setLayoutAnnouncement] = useState('');
+
+  /**
+   * 키보드 배치 대기열을 처리한다(WD-823). 날아간 배치가 없을 때만 앞에서부터 하나를 꺼내 출발 배치에 적용하고,
+   * 결과가 출발 배치와 같으면(그리드 끝 등) 보낼 것이 없으니 안내만 하고 다음 키로 넘어간다.
+   * 다르면 그 배치를 부모 상태에 넣고 멈춘다 — 메아리(handleLayoutChange 의 ack)나 300ms 안전장치가 다시 부른다.
+   * 최신 상태는 latestRef 로 읽는 안정 콜백이라 타이머·메아리 같은 옛 클로저에서 불러도 최신이다.
+   */
+  const pumpKeyboardQueue = useCallback(function pump() {
+    const { isEditing, dashboard, editingWidgets, localLayouts } = latestRef.current;
+    if (!isEditing || !dashboard) {
+      keyboardQueueRef.current = [];
+      return;
+    }
+    const widgets = editingWidgets ?? dashboard.widgets;
+    while (keyboardAckTimerRef.current === null && keyboardQueueRef.current.length > 0) {
+      const key = keyboardQueueRef.current.shift()!;
+      // 출발 배치: 마지막으로 넣은 배치 → 최신 상태 → 위젯 목록 순
+      const current =
+        keyboardBaseLayoutRef.current ??
+        (localLayouts.lg as LayoutItem[] | undefined) ??
+        widgetsToLayoutItems(widgets);
+      const { layout: next, last } = drainKeyboardQueue(current, [key]);
+      if (last) {
+        const widget = widgets.find((w) => w.id === last.widgetId);
+        setLayoutAnnouncement(describeLayoutItem(widget?.chartName ?? '위젯', last.item));
+      }
+      if (sameLayoutGeometry(current, next)) continue;
+      keyboardBaseLayoutRef.current = next;
+      sentKeyboardLayoutsRef.current.push(next);
+      setLocalLayouts((prev) => ({ ...prev, lg: next }));
+      // 안전장치: 메아리가 오지 않으면 300ms 뒤 날아간 배치를 비우고 대기열을 이어 처리한다.
+      // 보낸 배치 목록에서는 빼지 않는다 — 그 메아리가 뒤늦게 오면 stale 로 걸러야 한다.
+      keyboardAckTimerRef.current = setTimeout(() => {
+        keyboardAckTimerRef.current = null;
+        pump(); // 자기 자신 — 안정 콜백이라 옛 클로저여도 같은 함수다
+      }, 300);
+    }
+  }, []);
+
   // onLayoutChange: 편집 모드에서는 로컬 layouts만 갱신하고 서버에는 즉시 저장하지 않는다.
   // "완료" 클릭 시 handleSaveEdit에서 일괄 서버 반영.
   const handleLayoutChange = useCallback(
     (_layout: readonly LayoutItem[], allLayouts: ResponsiveLayouts) => {
       if (!isEditing || !dashboard) return;
+      // WD-823: ack=마지막 보낸 배치의 메아리 → 목록을 그 배치 하나로 줄이고 다음 키 처리, stale=늦은 메아리 → 무시,
+      // external=RGL 이 스스로 낸 배치(끌기 등) → 그 배치를 새 기준으로 받고 남은 키는 이어 처리
+      const sent = sentKeyboardLayoutsRef.current;
+      const verdict = classifyLayoutEcho(allLayouts.lg ?? [], sent);
+      if (verdict === 'stale') return;
+      if (verdict === 'ack') {
+        sentKeyboardLayoutsRef.current = [sent[sent.length - 1]];
+        stopKeyboardAckTimer();
+        pumpKeyboardQueue();
+        return;
+      }
+      resetKeyboardLayoutFlight(true);
+      keyboardBaseLayoutRef.current = (allLayouts.lg as LayoutItem[] | undefined) ?? null;
       setLocalLayouts(allLayouts);
+      // 남은 키는 새 기준에서 이어 처리 — 위 setLocalLayouts 뒤에 쌓이므로 그 결과가 최종 상태가 된다
+      pumpKeyboardQueue();
     },
-    [isEditing, dashboard]
+    [isEditing, dashboard, pumpKeyboardQueue, stopKeyboardAckTimer, resetKeyboardLayoutFlight]
   );
-
-  // 키보드로 바꾼 위치·크기 안내(WD-324) — 화면 읽기 프로그램이 읽도록 aria-live 영역에 둔다
-  const [layoutAnnouncement, setLayoutAnnouncement] = useState('');
 
   // 이동 손잡이 화살표 키(WD-324): 끌기와 같은 규칙(밀어내기·세로 압축)으로 lg 레이아웃만 바꾸고, 저장은 끌기처럼
   // 「완료」 때 handleSaveEdit 이 한다. 바뀐 위치·크기를 알려 보지 않고도 결과를 알 수 있게 한다.
+  // WD-823: 키는 대기열에 넣고, 날아간 배치가 없을 때만 바로 처리한다(pumpKeyboardQueue).
   const handleKeyboardLayout = useCallback(
     (widgetId: number, action: KeyboardLayoutAction) => {
       if (!isEditing || !dashboard) return;
-      const id = String(widgetId);
-      const current =
-        (localLayouts.lg as LayoutItem[] | undefined) ??
-        widgetsToLayoutItems(editingWidgets ?? dashboard.widgets);
-      const next = applyKeyboardLayoutAction(current, id, action);
-      setLocalLayouts((prev) => ({ ...prev, lg: next }));
-      const item = next.find((l) => l.i === id);
-      const widget = (editingWidgets ?? dashboard.widgets).find((w) => w.id === widgetId);
-      if (item) {
-        setLayoutAnnouncement(describeLayoutItem(widget?.chartName ?? '위젯', item));
-      }
+      keyboardQueueRef.current.push({ widgetId, action });
+      pumpKeyboardQueue();
     },
-    [isEditing, dashboard, localLayouts, editingWidgets]
+    [isEditing, dashboard, pumpKeyboardQueue]
   );
 
   // 위젯 삭제 버튼 클릭 시: 즉시 삭제하지 않고 확인 다이얼로그를 표시한다.
@@ -493,6 +586,8 @@ export default function DashboardEditorPage() {
     if (isError || !updated) return null;
     if (!isEditingRef.current) return updated.widgets;
     setEditingWidgets(updated.widgets);
+    // WD-823: 배치를 서버 기준으로 다시 맞추므로 날아간 키보드 배치·대기열은 버린다
+    resetKeyboardLayoutFlight();
     const serverIds = new Set(updated.widgets.map((w) => String(w.id)));
     setLocalLayouts((prev) => {
       const kept = ((prev.lg as LayoutItem[] | undefined) ?? []).filter((i) => serverIds.has(i.i));
@@ -502,7 +597,7 @@ export default function DashboardEditorPage() {
       return { lg: items, md: items, sm: items };
     });
     return updated.widgets;
-  }, [refetch]);
+  }, [refetch, resetKeyboardLayoutFlight]);
 
   // 삭제 확인 다이얼로그에서 "삭제" 클릭 시: 즉시 서버에 DELETE 요청을 보낸다.
   // 위젯 추가(handleAddWidget)와 동일하게 즉시 서버 반영하여 동작 일관성을 유지한다.
@@ -516,6 +611,8 @@ export default function DashboardEditorPage() {
       await removeWidgetMutation.mutateAsync(id);
       // 서버 DELETE 성공 후 로컬 editingWidgets에서도 제거하여 UI 동기화
       setEditingWidgets((prev) => (prev ? prev.filter((w) => w.id !== id) : prev));
+      // WD-823: 배치를 통째로 바꾸므로 날아간 키보드 배치·대기열은 버린다
+      resetKeyboardLayoutFlight();
       // 레이아웃은 편집 중 배치에서 지운 위젯만 뺀다 — 편집 시작 때 목록으로 다시 만들면
       // 그 사이 바꿔 둔 다른 위젯의 크기·위치가 안내 없이 되돌아갔다(WD-331).
       setLocalLayouts((prev) => {
@@ -534,7 +631,7 @@ export default function DashboardEditorPage() {
         handleApiError(error, '위젯 제거에 실패했습니다.');
       }
     }
-  }, [deleteConfirmWidgetId, removeWidgetMutation, syncEditingWithServer]);
+  }, [deleteConfirmWidgetId, removeWidgetMutation, syncEditingWithServer, resetKeyboardLayoutFlight]);
 
   const handleAddWidget = useCallback(
     async (chartId: number, chartType?: string) => {
@@ -587,10 +684,12 @@ export default function DashboardEditorPage() {
       void document.exitFullscreen().catch(() => {});
     }
     setEditingWidgets([...dashboard.widgets]);
+    // WD-823: 새 편집 세션은 서버 배치에서 출발 — 지난 세션의 키보드 배치 대기열을 버린다
+    resetKeyboardLayoutFlight();
     const items = widgetsToLayoutItems(dashboard.widgets);
     setLocalLayouts({ lg: items, md: items, sm: items });
     setIsEditing(true);
-  }, [dashboard, canEdit]);
+  }, [dashboard, canEdit, resetKeyboardLayoutFlight]);
 
   /**
    * 편집 취소(X 버튼): 로컬 변경사항(삭제·레이아웃)을 버리고 스냅샷으로 복원.
@@ -599,13 +698,15 @@ export default function DashboardEditorPage() {
   const handleCancelEdit = useCallback(() => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     // editingWidgets를 버리고 서버 원본 상태로 복원
+    // WD-823: 취소하면 키보드 배치 대기열도 버려 다시 편집할 때 옛 배치가 끼어들지 않게 한다
+    resetKeyboardLayoutFlight();
     if (dashboard) {
       const items = widgetsToLayoutItems(dashboard.widgets);
       setLocalLayouts({ lg: items, md: items, sm: items });
     }
     setEditingWidgets(null);
     setIsEditing(false);
-  }, [dashboard]);
+  }, [dashboard, resetKeyboardLayoutFlight]);
 
   /**
    * 편집 완료(완료 버튼): 레이아웃 변경사항을 서버에 일괄 반영한다.
@@ -625,8 +726,25 @@ export default function DashboardEditorPage() {
     const remainingIds = new Set(editingWidgets.map((w) => w.id));
     const serverById = new Map(dashboard.widgets.map((w) => [w.id, w]));
 
+    // WD-823: 저장할 배치 = 최신 기준 배치에 대기열에 남은 키를 모두 차례로 적용한 최종 배치.
+    // 키를 연달아 누르고 곧바로 「완료」를 누르면 아직 RGL 에 보내지 못한 키가 남아 있다 — 버리면 누른 키 일부가 저장되지 않는다.
+    // 대기열·날아간 배치는 스냅숏 직후(await 전에) 비워 저장을 기다리는 동안 펌프가 배치를 바꾸지 않게 한다.
+    let lgItems =
+      keyboardBaseLayoutRef.current ?? (latestRef.current.localLayouts.lg as LayoutItem[] | undefined) ?? [];
+    const pendingKeys = keyboardQueueRef.current;
+    if (pendingKeys.length > 0) {
+      const { layout, last } = drainKeyboardQueue(lgItems, pendingKeys);
+      lgItems = layout;
+      // 안내는 마지막 키의 결과로 한다
+      if (last) {
+        const lastWidget = editingWidgets.find((w) => w.id === last.widgetId);
+        setLayoutAnnouncement(describeLayoutItem(lastWidget?.chartName ?? '위젯', last.item));
+      }
+      setLocalLayouts((prev) => ({ ...prev, lg: layout }));
+    }
+    resetKeyboardLayoutFlight();
+
     // 레이아웃 변경 서버에 반영 (lg 기준) — 현재 편집 목록에 있고 서버 값과 다른 위젯만
-    const lgItems = (localLayouts.lg as LayoutItem[] | undefined) ?? [];
     const changed = lgItems.filter((item) => {
       const widgetId = parseInt(item.i, 10);
       const server = serverById.get(widgetId);
@@ -664,9 +782,11 @@ export default function DashboardEditorPage() {
       return;
     }
 
+    // WD-823: 편집이 끝나므로 저장을 기다리는 사이 쌓였을 수 있는 키보드 배치 대기열·타이머도 정리한다
+    resetKeyboardLayoutFlight();
     setEditingWidgets(null);
     setIsEditing(false);
-  }, [dashboard, editingWidgets, localLayouts, updateWidgetMutation, syncEditingWithServer]);
+  }, [dashboard, editingWidgets, updateWidgetMutation, syncEditingWithServer, resetKeyboardLayoutFlight]);
 
   /**
    * 편집 모드에서 「완료」 전에 바꾼 배치가 있는지(WD-323). 배치·크기는 완료를 눌러야 서버에 가므로, 이 값이 참인 채로 다른 화면으로 가면
@@ -920,6 +1040,7 @@ export default function DashboardEditorPage() {
             onLayoutChange={handleLayoutChange}
             onRemove={handleRemoveWidget}
             onKeyboardLayout={handleKeyboardLayout}
+            onInteractionStart={handleInteractionStart}
             autoRefreshSeconds={dashboard.autoRefreshSeconds}
           />
         )}
