@@ -43,8 +43,8 @@ test.describe('표 빈 상태 라이브 리전 (WD-815)', () => {
     const queries = await mockUsersByQuery(page);
     await page.goto('/admin/users');
 
-    // 결과가 있을 때는 빈 상태 status 가 없다
-    await expect(page.getByRole('button', { name: '사용자 김철수 상세 보기' })).toBeVisible();
+    // 결과가 있을 때는 빈 상태 status 가 없다(행은 이름 링크로 상세에 간다 — WD-816)
+    await expect(page.getByRole('link', { name: '김철수', exact: true })).toBeVisible();
     await expect(page.getByRole('table').getByRole('status')).toHaveCount(0);
 
     // 검색 입력 → 디바운스 뒤 요청 q 가 입력값
@@ -65,7 +65,7 @@ test.describe('표 빈 상태 라이브 리전 (WD-815)', () => {
   test('사용자 관리 — 0건인 채 키워드를 바꾸면 status 문구가 새 키워드로 바뀐다', async ({ authenticatedPage: page }) => {
     const queries = await mockUsersByQuery(page);
     await page.goto('/admin/users');
-    await expect(page.getByRole('button', { name: '사용자 김철수 상세 보기' })).toBeVisible();
+    await expect(page.getByRole('link', { name: '김철수', exact: true })).toBeVisible();
 
     const search = page.getByPlaceholder('이름 또는 아이디로 검색...');
     await search.fill('존재하지않는사용자xyz');
