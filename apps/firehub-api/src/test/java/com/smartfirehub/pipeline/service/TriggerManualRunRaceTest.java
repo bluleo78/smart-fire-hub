@@ -31,6 +31,8 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
  *
  * <p>WD-853: 파이프라인 비활성화가 커밋 전일 때 트리거(SKIP·ALLOW 모두)가 잠금 뒤에서 활성 여부를 읽어, 커밋을 기다렸다가 비활성으로 건너뛰는지 본다.
  *
+ * <p>WD-855: 트리거 끄기·삭제가 커밋 전일 때 발화가 파이프라인 잠금 뒤 트리거 행도 잠그고 다시 읽어, 커밋을 기다렸다가 꺼짐·없음으로 건너뛰는지 본다.
+ *
  * <p>클래스 레벨 {@code @Transactional} 을 쓰지 않는다 — 커밋돼야 행 잠금 경쟁이 재현된다. 러너는 no-op 대역이라 접수된 실행이 PENDING 에
  * 머문다.
  */
@@ -216,5 +218,46 @@ class TriggerManualRunRaceTest extends IntegrationTestBase {
   @Test
   void allowTrigger_waitsForUncommittedDeactivation_thenSkippedInactive() throws Exception {
     assertWaitsForDeactivation("ALLOW");
+  }
+
+  /** 커밋 전 트리거 끄기를 발화가 트리거 행 잠금에서 기다린 뒤 꺼짐으로 건너뛴다(WD-855). */
+  @Test
+  void fire_waitsForUncommittedTriggerDisable_thenDisabled() throws Exception {
+    Long triggerId = createScheduleTrigger("ALLOW");
+
+    var outcome =
+        PausedTransactionRace.run(
+            fixtureTransactionTemplate,
+            DEFAULT_TEST_TENANT_ID,
+            () -> triggerService.toggleTrigger(triggerId, false),
+            () -> triggerService.fireTrigger(triggerId, Map.of()));
+
+    assertThat(outcome.secondBlocked()).isTrue();
+    assertThat(outcome.secondError()).isNull();
+    assertThat(outcome.secondResult().outcome()).isEqualTo(TriggerFireResult.Outcome.DISABLED);
+    assertThat(outcome.secondResult().reason()).isEqualTo(TriggerService.REASON_TRIGGER_DISABLED);
+    assertThat(executionCount()).isZero();
+    assertThat(inTenantFixture(() -> triggerEventRepository.findByTriggerId(triggerId, 10)))
+        .isEmpty();
+  }
+
+  /** 커밋 전 트리거 삭제를 발화가 기다린 뒤 없음으로 건너뛴다(WD-855). */
+  @Test
+  void fire_waitsForUncommittedTriggerDelete_thenNotFound() throws Exception {
+    Long triggerId = createScheduleTrigger("ALLOW");
+    // 직접 지우므로 정리 목록에서 미리 뺀다(경쟁 도구가 실패해도 정리가 진짜 실패를 가리지 않게).
+    triggers.remove(triggerId);
+
+    var outcome =
+        PausedTransactionRace.run(
+            fixtureTransactionTemplate,
+            DEFAULT_TEST_TENANT_ID,
+            () -> triggerService.deleteTrigger(triggerId),
+            () -> triggerService.fireTrigger(triggerId, Map.of()));
+
+    assertThat(outcome.secondBlocked()).isTrue();
+    assertThat(outcome.secondError()).isNull();
+    assertThat(outcome.secondResult().outcome()).isEqualTo(TriggerFireResult.Outcome.NOT_FOUND);
+    assertThat(executionCount()).isZero();
   }
 }
