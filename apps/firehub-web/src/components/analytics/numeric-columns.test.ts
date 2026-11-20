@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  hasMixedSignValues,
   isEmptyValue,
   isNonNumericValue,
   isNumericColumn,
@@ -77,5 +78,20 @@ describe('빈 값 규칙 통일 (WD-841)', () => {
     expect(isNumericColumn('c', [{ c: '' }, { c: null }, { c: '  ' }])).toBe(false);
     expect(isNumericColumn('c', [{ c: true }, { c: false }])).toBe(false);
     expect(isNumericColumn('c', [{ c: '서울' }, { c: '부산' }, { c: '1' }])).toBe(false);
+  });
+});
+
+describe('hasMixedSignValues (WD-843)', () => {
+  it('숫자 문자열(DECIMAL)·숫자로 양수와 음수가 모두 있으면 참', () => {
+    expect(hasMixedSignValues('c', [{ c: '10' }, { c: '-3.5' }])).toBe(true);
+    expect(hasMixedSignValues('c', [{ c: 5 }, { c: -1 }])).toBe(true);
+  });
+
+  it('불리언·공백·0·문자는 양수/음수로 세지 않고, 빈 행도 거짓', () => {
+    expect(hasMixedSignValues('c', [{ c: true }, { c: -1 }])).toBe(false);
+    expect(hasMixedSignValues('c', [{ c: ' ' }, { c: 3 }])).toBe(false);
+    expect(hasMixedSignValues('c', [{ c: 0 }, { c: 3 }])).toBe(false);
+    expect(hasMixedSignValues('c', [{ c: '서울' }, { c: -2 }])).toBe(false);
+    expect(hasMixedSignValues('c', [])).toBe(false);
   });
 });

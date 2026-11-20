@@ -182,6 +182,24 @@ test.describe('파이·도넛 차트 — 빈 안내·텍스트 컬럼 (WD-838)',
     await expect(page.locator('.recharts-pie-sector')).toHaveCount(0);
   });
 
+  for (const [chartType, label] of [
+    ['PIE', '파이'],
+    ['DONUT', '도넛'],
+  ] as const) {
+    test(`${label} 차트는 값의 합이 무한대로 넘치면 넘침 안내를 보이고 조각을 그리지 않는다 (WD-843)`, async ({ authenticatedPage: page }) => {
+      const rows = [
+        { city: '서울', delta: 1e308 },
+        { city: '부산', delta: 1e308 },
+      ];
+      const name = await setupPieMocks(page, chartType, rows);
+      await page.goto('/analytics/dashboards/1');
+      await expect(page.getByText(name, { exact: true })).toBeVisible();
+
+      await expect(page.getByTestId('pie-empty-notice')).toHaveText(`값의 합이 너무 커서 ${label} 차트로 그릴 수 없습니다.`);
+      await expect(page.locator('.recharts-pie-sector')).toHaveCount(0);
+    });
+  }
+
   test('값 컬럼이 전부 문자열이면 숫자 값 컬럼 안내를 보인다', async ({ authenticatedPage: page }) => {
     const rows = [
       { city: '서울', delta: '서울' },

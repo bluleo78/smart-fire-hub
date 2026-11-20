@@ -108,6 +108,7 @@ export function computeGaugeReading(data: Record<string, unknown>[], config: Cha
  * 뷰가 「값 컬럼 전체가 숫자 아님」(그릴 행·음수 없이 nonNumericCount > 0)을 가려 컬럼 선택 안내를 내는 데 쓴다.
  * total 은 그릴 행(pieData) 값의 합이다(WD-841) — 뷰의 「그릴 것 없음」 판정과 대체 표의 비율·빈 표 판정이 같은 합을 쓰게 여기서 한 번 낸다.
  * emptyReason(WD-841)은 그릴 것이 없는 이유다 — 뷰(안내)와 스크린리더 표(캡션)가 둘 다 이 값을 읽으므로 판정이 서로 어긋나지 않는다.
+ * 'overflow'(WD-843)는 각 값은 유한한데 합이 Infinity 로 넘친 경우다 — 비율을 낼 수 없어 'nothing' 과 따로 알린다.
  * 행마다 값을 한 번만 읽는다. 늘 새 배열을 돌려주므로 뷰는 useMemo 로 감싼다.
  */
 export function splitPieData(
@@ -119,7 +120,7 @@ export function splitPieData(
   missingCount: number;
   nonNumericCount: number;
   total: number;
-  emptyReason: 'nonNumeric' | 'nothing' | null;
+  emptyReason: 'nonNumeric' | 'nothing' | 'overflow' | null;
 } {
   const pieData: Record<string, unknown>[] = [];
   let negativeCount = 0;
@@ -139,9 +140,16 @@ export function splitPieData(
       total += n;
     }
   }
-  // 그릴 것이 없는 이유 — 값 컬럼 전체가 숫자 아님이면 'nonNumeric', 그 밖에 합이 0 이하면 'nothing'
+  // 그릴 것이 없는 이유 — 값 컬럼 전체가 숫자 아님이면 'nonNumeric', 합이 유한하지 않으면 'overflow'(WD-843), 합이 0 이하면 'nothing'
+  // 순서가 중요하다: 합이 Infinity 면 `total <= 0` 이 거짓이라 그릴 수 있는 것처럼 지나가 비율이 NaN 이 되므로 유한성을 먼저 본다
   const emptyReason =
-    pieData.length === 0 && negativeCount === 0 && nonNumericCount > 0 ? 'nonNumeric' : total <= 0 ? 'nothing' : null;
+    pieData.length === 0 && negativeCount === 0 && nonNumericCount > 0
+      ? 'nonNumeric'
+      : !Number.isFinite(total)
+        ? 'overflow'
+        : total <= 0
+          ? 'nothing'
+          : null;
   return { pieData, negativeCount, missingCount, nonNumericCount, total, emptyReason };
 }
 

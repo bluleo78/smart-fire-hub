@@ -12,7 +12,7 @@ import { findMissingChartAxesMessage } from '../../components/analytics/chart-re
 import { ChartConfigWithheldNotice } from '../../components/analytics/ChartConfigWithheldNotice';
 import { MemoChartRenderer } from '../../components/analytics/ChartRenderer';
 import { ChartTypeSelector } from '../../components/analytics/ChartTypeSelector';
-import { isNumericColumn, isWeightColumn } from '../../components/analytics/numeric-columns';
+import { hasMixedSignValues, isNumericColumn, isWeightColumn } from '../../components/analytics/numeric-columns';
 import { SharedReadOnlyNotice } from '../../components/analytics/SharedReadOnlyNotice';
 import { EditConflictDialog } from '../../components/EditConflictDialog';
 import { DetailPageTitle } from '../../components/PageTitleSync';
@@ -131,10 +131,8 @@ function recommendChartType(
 
   // WATERFALL: 카테고리 1개 + 수치 1개이며 수치에 양수/음수 모두 존재
   if (categoryCols.length === 1 && numericCols.length === 1) {
-    const vals = rows.map((r) => Number(r[numericCols[0]])).filter((v) => !isNaN(v));
-    const hasPositive = vals.some((v) => v > 0);
-    const hasNegative = vals.some((v) => v < 0);
-    if (hasPositive && hasNegative) return 'WATERFALL';
+    // WD-843: 부호 판정도 차트와 같은 toPlotNumber 규칙으로 읽는다(불리언·공백은 숫자가 아니다)
+    if (hasMixedSignValues(numericCols[0], rows)) return 'WATERFALL';
   }
 
   if (dateCols.length > 0 && numericCols.length > 0) return 'LINE';

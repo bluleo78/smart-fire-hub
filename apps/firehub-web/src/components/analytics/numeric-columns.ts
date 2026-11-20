@@ -60,3 +60,20 @@ export function isNonNumericValue(value: unknown): boolean {
   if (isEmptyValue(value)) return false;
   return toPlotNumber(value) === null;
 }
+
+/**
+ * 한 컬럼에 양수와 음수가 모두 있는가 — 워터폴 추천 판정용(WD-843).
+ * 전체 행을 toPlotNumber 로 읽어 차트와 같은 규칙을 쓴다: DECIMAL 문자열('-3.5')은 숫자로 세고,
+ * 불리언·공백·문자(읽히지 않는 값 = null)는 뺀다 — 불리언 true 를 양수로 세지 않는다.
+ */
+export function hasMixedSignValues(col: string, rows: Record<string, unknown>[]): boolean {
+  let hasPositive = false;
+  let hasNegative = false;
+  for (const r of rows) {
+    const n = toPlotNumber(r[col]);
+    if (n === null) continue;
+    if (n > 0) hasPositive = true;
+    else if (n < 0) hasNegative = true;
+  }
+  return hasPositive && hasNegative;
+}

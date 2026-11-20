@@ -168,9 +168,11 @@ function buildDerivedTable(
       const omitted: string[] = [];
       if (negativeCount > 0) omitted.push(`음수 ${negativeCount.toLocaleString('ko-KR')}행 제외`);
       if (missingCount > 0) omitted.push(`값 없음·숫자 아님 ${missingCount.toLocaleString('ko-KR')}행 제외`);
-      // 그릴 값이 없으면(합계 0 이하) 화면은 안내만 보이고 조각이 없다 — 표도 행을 싣지 않고 꼬리 맨 앞에 「그릴 값 없음」을 적는다
-      if (emptyReason === 'nothing') {
-        return toLimitedTable(tableHeaders, 0, [], accessibleName, ['그릴 값 없음', ...omitted].join(', '));
+      // 그릴 것이 없으면(합계 0 이하 'nothing', 합이 무한대로 넘침 'overflow' — WD-843) 화면은 안내만 보이고 조각이 없다
+      // 표도 행을 싣지 않고 그 이유를 꼬리 맨 앞에 적는다
+      if (emptyReason !== null) {
+        const reason = emptyReason === 'overflow' ? '값 합계가 너무 큼' : '그릴 값 없음';
+        return toLimitedTable(tableHeaders, 0, [], accessibleName, [reason, ...omitted].join(', '));
       }
       const captionTail = omitted.join(', ');
       // pieData 의 값은 splitPieData 가 이미 숫자로 바꿔 두었다(그림이 그리는 값 그대로)

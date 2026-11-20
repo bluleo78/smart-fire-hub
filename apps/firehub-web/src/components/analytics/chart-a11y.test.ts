@@ -293,6 +293,14 @@ describe('대체 표 — 파이 비율·산점도 거르기·숫자 셀 형식 (
     expect(zeros.caption).toBe('차트 데이터 (그릴 값 없음)');
   });
 
+  it('PIE: 합계가 무한대면 행 없이 「값 합계가 너무 큼」, 아슬아슬하게 유한하면 비율을 싣는다(WD-843)', () => {
+    const big = table('PIE', { xAxis: 'k', yAxis: ['v'] }, [1e308, 1e308, -1].map((v, i) => ({ k: `k${i}`, v })));
+    expect(big.rows).toHaveLength(0);
+    expect(big.caption).toBe('차트 데이터 (값 합계가 너무 큼, 음수 1행 제외)');
+    const ok = table('PIE', { xAxis: 'k', yAxis: ['v'] }, [1e307, 1e307].map((v, i) => ({ k: `k${i}`, v })));
+    expect(ok.rows.map((r) => r[2])).toEqual(['50.0%', '50.0%']);
+  });
+
   it('PIE: 값 컬럼이 전부 숫자 아님이면 캡션 꼬리는 「숫자 값 컬럼 아님」, 행 없음(WD-841)', () => {
     const t = table('PIE', { xAxis: 'k', yAxis: ['v'] }, ['서울', '부산', null].map((v, i) => ({ k: `k${i}`, v })));
     expect(t.rows).toHaveLength(0);

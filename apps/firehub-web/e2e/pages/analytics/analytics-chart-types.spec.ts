@@ -256,6 +256,69 @@ test.describe('신규 차트 타입 선택 — ChartBuilderPage', () => {
     await expect(page.getByRole('button', { name: '선 차트' })).toHaveAttribute('data-variant', 'default');
   });
 
+  test('WATERFALL: 문자열 숫자(DECIMAL)로 양수·음수가 섞인 값이면 워터폴이 추천된다 (WD-843)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupNewChartBuilderMocks(page);
+    // 서버는 DECIMAL 을 문자열로 보낸다 — 값 컬럼이 문자열이어도 부호를 읽어 워터폴로 추천해야 한다
+    const waterfallQueryResult = createQueryResult({
+      columns: ['구분', '값'],
+      rows: [
+        { 구분: '가', 값: '10' },
+        { 구분: '나', 값: '-3.5' },
+        { 구분: '다', 값: '7' },
+      ],
+      totalRows: 3,
+    });
+    await mockApi(page, 'POST', '/api/v1/analytics/queries/1/execute', waterfallQueryResult);
+
+    await page.goto('/analytics/charts/new');
+
+    await page.getByRole('combobox').click();
+    await page.getByRole('option', { name: '저장 쿼리 1' }).click();
+    await page.getByRole('button', { name: '쿼리 실행' }).click();
+
+    await expect(page.getByText('2개 컬럼, 3개 행 로드됨')).toBeVisible();
+
+    await expect(page.getByRole('button', { name: '폭포 차트' })).toHaveAttribute('data-variant', 'default');
+  });
+
+  test('WATERFALL: 음수 문자열에 불리언이 섞여도 불리언을 양수로 세지 않아 워터폴이 아닌 막대가 추천된다 (WD-843)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupNewChartBuilderMocks(page);
+    // 값 컬럼: 음수 문자열 8개 + 불리언 2개 → 숫자 컬럼(80%)이지만 읽히는 값은 음수뿐이다.
+    // 예전 Number(true)=1 이면 양·음이 섞였다고 보고 워터폴을 추천했다. 카테고리 10종(>5)이라 PIE 가 아닌 BAR 가 추천된다.
+    const mixedQueryResult = createQueryResult({
+      columns: ['구분', '값'],
+      rows: [
+        { 구분: 'a1', 값: '-2' },
+        { 구분: 'a2', 값: '-3' },
+        { 구분: 'a3', 값: '-4' },
+        { 구분: 'a4', 값: '-5' },
+        { 구분: 'a5', 값: '-6' },
+        { 구분: 'a6', 값: '-7' },
+        { 구분: 'a7', 값: '-8' },
+        { 구분: 'a8', 값: '-9' },
+        { 구분: 'a9', 값: true },
+        { 구분: 'a10', 값: true },
+      ],
+      totalRows: 10,
+    });
+    await mockApi(page, 'POST', '/api/v1/analytics/queries/1/execute', mixedQueryResult);
+
+    await page.goto('/analytics/charts/new');
+
+    await page.getByRole('combobox').click();
+    await page.getByRole('option', { name: '저장 쿼리 1' }).click();
+    await page.getByRole('button', { name: '쿼리 실행' }).click();
+
+    await expect(page.getByText('2개 컬럼, 10개 행 로드됨')).toBeVisible();
+
+    await expect(page.getByRole('button', { name: '막대 차트' })).toHaveAttribute('data-variant', 'default');
+    await expect(page.getByRole('button', { name: '폭포 차트' })).toHaveAttribute('data-variant', 'outline');
+  });
+
   test('TABLE: 컬럼 1개만 있는 경우 TABLE 타입이 자동 추천된다', async ({
     authenticatedPage: page,
   }) => {

@@ -170,7 +170,10 @@ export function PieChartView({ chartType, config, data, height }: PieChartViewPr
           className="flex h-full items-center justify-center text-sm text-muted-foreground"
           style={{ paddingTop: noticeHeight }}
         >
-          {chartLabel} 차트로 그릴 값이 없습니다.
+          {/* WD-843: 합이 넘친 경우는 「값이 없다」가 아니라 「너무 크다」로 알린다 */}
+          {emptyReason === 'overflow'
+            ? `값의 합이 너무 커서 ${chartLabel} 차트로 그릴 수 없습니다.`
+            : `${chartLabel} 차트로 그릴 값이 없습니다.`}
         </p>
       ) : (
         <>
