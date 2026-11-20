@@ -84,6 +84,15 @@ test.describe('파이·도넛 차트 — 음수 값 (WD-303)', () => {
     });
   }
 
+  test('음수가 1000행 이상이면 안내 개수에 천 단위 쉼표를 쓴다(WD-841)', async ({ authenticatedPage: page }) => {
+    const rows: Record<string, unknown>[] = Array.from({ length: 1000 }, (_, i) => ({ city: `음수${i}`, delta: -1 }));
+    rows.push({ city: '서울', delta: 5 });
+    const name = await setupPieMocks(page, 'PIE', rows);
+    await page.goto('/analytics/dashboards/1');
+    await expect(page.getByText(name, { exact: true })).toBeVisible();
+    await expect(page.getByTestId('pie-negative-notice')).toContainText('음수 값 1,000개');
+  });
+
   test('음수가 없으면 안내 없이 모든 행을 그린다', async ({ authenticatedPage: page }) => {
     const rows = [
       { city: '부산', delta: 25 },

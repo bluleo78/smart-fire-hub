@@ -56,12 +56,12 @@ export function PieChartView({ chartType, config, data, height }: PieChartViewPr
   // 거르기는 값 대체 표와 공유하는 splitPieData 로 한다(WD-831). 새 배열을 만들므로 입력이 같으면 다시 만들지 않게 메모한다
   // (렌더마다 새 배열이면 recharts 가 조각을 다시 그린다).
   // WD-835: 값이 비었거나 숫자가 아닌 행(missingCount)도 0 이 아니라 「없음」이라 같은 방식으로 빼고 안내한다.
-  const { pieData, negativeCount, missingCount, nonNumericCount } = useMemo(
+  const { pieData, negativeCount, missingCount, emptyReason } = useMemo(
     () => splitPieData(data, valueKey),
     [data, valueKey],
   );
-  // WD-838: 그릴 조각의 값 합 — 전부 0 이면 조각이 각도 0 이라 아무것도 그려지지 않는다(빈 안내 대상).
-  const pieTotal = useMemo(() => pieData.reduce((sum, r) => sum + (r[valueKey] as number), 0), [pieData, valueKey]);
+  // WD-838: 그릴 조각의 값 합(total) — 전부 0 이면 조각이 각도 0 이라 아무것도 그려지지 않는다(빈 안내 대상).
+  // WD-841: 합은 splitPieData 가 한 번만 내고 대체 표(chart-a11y)도 같은 값을 쓴다 — 조각이 없으면 합이 0 이라 length 검사는 따로 필요 없다.
 
   const categoryCount = pieData.length;
   // 카테고리가 많으면 조각 위 텍스트 라벨을 생략하고 범례로만 안내한다 (겹침 방지).
@@ -86,7 +86,8 @@ export function PieChartView({ chartType, config, data, height }: PieChartViewPr
     ? Math.min(8 + legendRows * LEGEND_ROW_HEIGHT, legendMaxHeight)
     : 0;
   // WD-838: 그릴 조각이 없다 — 행이 없거나 전부 0(합계 0)이면 빈 원 대신 이유를 말한다.
-  const nothingToDraw = pieData.length === 0 || pieTotal <= 0;
+  // WD-841: 그릴 것이 없는지는 splitPieData 의 emptyReason 한 곳에서 정한다(대체 표와 같은 판정)
+  const nothingToDraw = emptyReason !== null;
   // 항목이 많은지 — 안내 줄뿐 아니라 애니메이션·조각 테두리도 이 값으로 끈다(WD-307).
   // 그릴 것이 없으면 막대 권장 안내가 어긋나므로 많은 항목으로 보지 않는다(WD-838)
   const showManyNotice = !nothingToDraw && categoryCount > MANY_CATEGORY_THRESHOLD;
@@ -99,7 +100,7 @@ export function PieChartView({ chartType, config, data, height }: PieChartViewPr
     notices.push({
       testId: 'pie-negative-notice',
       warn: true,
-      text: `음수 값 ${negativeCount}개는 ${chartLabel} 차트에 표시되지 않습니다. 음수까지 보려면 막대 차트를 쓰세요.`,
+      text: `음수 값 ${negativeCount.toLocaleString('ko-KR')}개는 ${chartLabel} 차트에 표시되지 않습니다. 음수까지 보려면 막대 차트를 쓰세요.`,
     });
   }
   if (missingCount > 0) {
@@ -107,7 +108,7 @@ export function PieChartView({ chartType, config, data, height }: PieChartViewPr
     notices.push({
       testId: 'pie-missing-notice',
       warn: true,
-      text: `값이 없거나 숫자가 아닌 항목 ${missingCount}개는 ${chartLabel} 차트에 표시되지 않습니다.`,
+      text: `값이 없거나 숫자가 아닌 항목 ${missingCount.toLocaleString('ko-KR')}개는 ${chartLabel} 차트에 표시되지 않습니다.`,
     });
   }
   if (showManyNotice) {
@@ -115,7 +116,7 @@ export function PieChartView({ chartType, config, data, height }: PieChartViewPr
       testId: 'pie-many-categories-notice',
       warn: false,
       // WD-838: 도넛에서도 「파이 차트」라 말하던 문구를 차트 종류에 맞춘다.
-      text: `항목이 ${categoryCount.toLocaleString()}개라 ${chartLabel} 차트로 읽기 어렵습니다 — 막대 차트를 권장합니다.`,
+      text: `항목이 ${categoryCount.toLocaleString('ko-KR')}개라 ${chartLabel} 차트로 읽기 어렵습니다 — 막대 차트를 권장합니다.`,
     });
   }
   // 안내 줄마다 한 줄 높이를 파이 위쪽 여백으로 비워 둔다.
@@ -138,8 +139,7 @@ export function PieChartView({ chartType, config, data, height }: PieChartViewPr
   // WD-838: 그릴 행도 뺀 음수도 없이 숫자 아닌 값만 있으면 값 컬럼 전체가 문자다 — 컬럼을 다시 고르라고 안내한다.
   // 의도적으로 퍼널·게이지와 다르다: 파이는 섞인 숫자 아닌 행을 빼고 그리므로(WD-835) 컬럼 전체가 숫자 아닐 때만 컬럼 안내를 낸다.
   // null 만 있는 컬럼은 nonNumericCount 가 0 이라 빈 안내가 나온다. 훅을 모두 호출한 뒤에 반환해 훅 규칙을 지킨다.
-  const allNonNumeric = pieData.length === 0 && negativeCount === 0 && nonNumericCount > 0;
-  if (allNonNumeric) {
+  if (emptyReason === 'nonNumeric') {
     return <NonNumericValueNotice height={height} />;
   }
   return (

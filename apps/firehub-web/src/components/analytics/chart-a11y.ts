@@ -86,7 +86,7 @@ export function formatChartCellValue(value: unknown): string {
 function buildCaption(totalRows: number, accessibleName: string, tail = ''): string {
   const parts: string[] = [];
   if (totalRows > CHART_SR_TABLE_ROW_LIMIT) {
-    parts.push(`전체 ${totalRows.toLocaleString()}행 중 처음 ${CHART_SR_TABLE_ROW_LIMIT}행`);
+    parts.push(`전체 ${totalRows.toLocaleString('ko-KR')}행 중 처음 ${CHART_SR_TABLE_ROW_LIMIT}행`);
   }
   if (tail) parts.push(tail);
   return parts.length > 0 ? `${accessibleName} 데이터 (${parts.join(', ')})` : `${accessibleName} 데이터`;
@@ -159,25 +159,30 @@ function buildDerivedTable(
     case 'DONUT': {
       // 파이는 음수·결측을 빼고(splitPieData, 뷰와 같은 함수) 남은 값의 비율로 조각 크기를 정한다 — 값과 비율을 함께 준다(WD-831)
       const yKey = config.yAxis[0] ?? '';
-      const { pieData, negativeCount, missingCount } = splitPieData(data, yKey);
+      const { pieData, negativeCount, missingCount, total, emptyReason } = splitPieData(data, yKey);
+      const tableHeaders = [config.xAxis, yKey, '비율'];
+      // WD-841: 그릴 것이 없는 이유는 뷰와 같은 emptyReason 으로 한 번만 가른다 — 값 컬럼 전체가 숫자 아님이면 뺀 행 수 없이 그 이유만 적는다
+      if (emptyReason === 'nonNumeric') return toLimitedTable(tableHeaders, 0, [], accessibleName, '숫자 값 컬럼 아님');
       // 뺀 행 수를 캡션 꼬리에 적는다(WD-838) — 항목마다 「제외」를 붙여 쉼표로 이어도 어느 행이 빠졌는지 읽힌다. 0 인 항목은 생략, 둘 다 0 이면 꼬리 없음
       // 문구는 화면 안내(「값이 없거나 숫자가 아닌 항목」)와 같은 뜻이 되게 맞춘다
       const omitted: string[] = [];
-      if (negativeCount > 0) omitted.push(`음수 ${negativeCount.toLocaleString()}행 제외`);
-      if (missingCount > 0) omitted.push(`값 없음·숫자 아님 ${missingCount.toLocaleString()}행 제외`);
+      if (negativeCount > 0) omitted.push(`음수 ${negativeCount.toLocaleString('ko-KR')}행 제외`);
+      if (missingCount > 0) omitted.push(`값 없음·숫자 아님 ${missingCount.toLocaleString('ko-KR')}행 제외`);
+      // 그릴 값이 없으면(합계 0 이하) 화면은 안내만 보이고 조각이 없다 — 표도 행을 싣지 않고 꼬리 맨 앞에 「그릴 값 없음」을 적는다
+      if (emptyReason === 'nothing') {
+        return toLimitedTable(tableHeaders, 0, [], accessibleName, ['그릴 값 없음', ...omitted].join(', '));
+      }
       const captionTail = omitted.join(', ');
       // pieData 의 값은 splitPieData 가 이미 숫자로 바꿔 두었다(그림이 그리는 값 그대로)
       const valueOf = (r: Record<string, unknown>) => r[yKey] as number;
-      const total = pieData.reduce((sum, r) => sum + valueOf(r), 0);
       return toLimitedTable(
-        [config.xAxis, yKey, '비율'],
+        tableHeaders,
         pieData.length,
         // 표에 실을 행(CHART_SR_TABLE_ROW_LIMIT)만 문자열로 바꾼다 — 합계는 전체로 구한다
         pieData.slice(0, CHART_SR_TABLE_ROW_LIMIT).map((r) => [
           cell(r[config.xAxis]),
           cell(r[yKey]),
-          // 합이 0 이하면 비율을 정할 수 없어 빈 칸으로 둔다
-          total > 0 ? `${((valueOf(r) / total) * 100).toFixed(1)}%` : '',
+          `${((valueOf(r) / total) * 100).toFixed(1)}%`,
         ]),
         accessibleName,
         captionTail,

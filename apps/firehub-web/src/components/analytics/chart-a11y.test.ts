@@ -252,12 +252,12 @@ describe('대체 표 — 파이 비율·산점도 거르기·숫자 셀 형식 (
     ]);
   });
 
-  it('파이 합이 0 이하면 비율 칸이 빈다', () => {
+  it('파이 합이 0 이하면 행을 싣지 않는다 — 예전엔 비율 칸만 비웠다(WD-841)', () => {
     const t = table('PIE', { xAxis: 'k', yAxis: ['v'] }, [
       { k: 'A', v: 0 },
       { k: 'B', v: -1 },
     ]);
-    expect(t.rows).toEqual([['A', '0', '']]);
+    expect(t.rows).toEqual([]);
   });
 
   it('파이: 숫자 문자열은 값으로 읽는다', () => {
@@ -282,6 +282,33 @@ describe('대체 표 — 파이 비율·산점도 거르기·숫자 셀 형식 (
       ['서울', '30', '75.0%'],
       ['인천', '10', '25.0%'],
     ]);
+  });
+
+  it('PIE: 그릴 값이 없으면(합계 0) 행을 싣지 않고 캡션 맨 앞에 「그릴 값 없음」을 적는다(WD-841)', () => {
+    const t = table('PIE', { xAxis: 'k', yAxis: ['v'] }, [0, 0, -2, null].map((v, i) => ({ k: `k${i}`, v })));
+    expect(t.rows).toHaveLength(0);
+    expect(t.caption).toBe('차트 데이터 (그릴 값 없음, 음수 1행 제외, 값 없음·숫자 아님 1행 제외)');
+    const zeros = table('PIE', { xAxis: 'k', yAxis: ['v'] }, [0, 0].map((v, i) => ({ k: `k${i}`, v })));
+    expect(zeros.rows).toHaveLength(0);
+    expect(zeros.caption).toBe('차트 데이터 (그릴 값 없음)');
+  });
+
+  it('PIE: 값 컬럼이 전부 숫자 아님이면 캡션 꼬리는 「숫자 값 컬럼 아님」, 행 없음(WD-841)', () => {
+    const t = table('PIE', { xAxis: 'k', yAxis: ['v'] }, ['서울', '부산', null].map((v, i) => ({ k: `k${i}`, v })));
+    expect(t.rows).toHaveLength(0);
+    expect(t.caption).toBe('차트 데이터 (숫자 값 컬럼 아님)');
+  });
+
+  it('PIE: 값 없음 행 수 캡션은 천 단위 쉼표 형식이다(WD-841)', () => {
+    const rows: { k: string; v: number | null }[] = [{ k: 'a', v: 1 }];
+    for (let i = 0; i < 1000; i++) rows.push({ k: `m${i}`, v: null });
+    expect(table('PIE', { xAxis: 'k', yAxis: ['v'] }, rows).caption).toBe('차트 데이터 (값 없음·숫자 아님 1,000행 제외)');
+  });
+
+  it('PIE: 합계가 양수면 지금처럼 꼬리 없이 비율을 싣는다(WD-841)', () => {
+    const t = table('PIE', { xAxis: 'k', yAxis: ['v'] }, [3, 1].map((v, i) => ({ k: `k${i}`, v })));
+    expect(t.caption).toBe('차트 데이터');
+    expect(t.rows.map((r) => r[2])).toEqual(['75.0%', '25.0%']);
   });
 
   it('PIE: 뺀 행이 있으면 캡션 꼬리에 음수·값 없음 행 수를 적는다(WD-838)', () => {

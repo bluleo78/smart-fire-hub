@@ -253,6 +253,38 @@ test.describe('차트 빌더 — MAP 히트맵 sub-mode', () => {
   });
 
   /**
+   * WD-841: 값이 전부 공백뿐인 컬럼은 차트가 빈 값으로 읽으므로 가중치 목록에도 나오지 않는다.
+   */
+  test('값이 전부 공백인 컬럼은 가중치 컬럼 목록에 없다 (WD-841)', async ({ authenticatedPage: page }) => {
+    await setupNewChartBuilderMocks(page);
+    await mockApi(
+      page,
+      'POST',
+      '/api/v1/analytics/queries/1/execute',
+      createQueryResult({
+        columns: ['id', 'blank', 'cnt', 'geom'],
+        rows: [
+          { id: 1, blank: ' ', cnt: 3, geom: { type: 'Point', coordinates: [127.0, 37.5] } },
+          { id: 2, blank: ' ', cnt: 7, geom: { type: 'Point', coordinates: [128.0, 37.6] } },
+        ],
+        totalRows: 2,
+      }),
+    );
+
+    await page.goto('/analytics/charts/new');
+    await page.getByRole('combobox').click();
+    await page.getByRole('option', { name: '저장 쿼리 1' }).click();
+    await page.getByRole('button', { name: '쿼리 실행' }).click();
+    await page.getByRole('button', { name: '지도' }).click();
+    await page.getByRole('combobox', { name: '공간 컬럼' }).click();
+    await page.getByRole('option', { name: 'geom' }).click();
+    await page.getByRole('tab', { name: '히트맵' }).click();
+
+    await page.getByRole('combobox', { name: '가중치 컬럼' }).click();
+    await expect(page.getByRole('option')).toHaveText(['없음 — 균등 가중치', 'id', 'cnt']);
+  });
+
+  /**
    * WD-354: 예전에 문자 컬럼을 가중치로 골라 저장한 차트 — 히트맵이 사라지지 않고 균등 가중치로 그린다고 알리며,
    * 설정 칸에서는 숫자 컬럼을 고르라고 안내한다.
    */
