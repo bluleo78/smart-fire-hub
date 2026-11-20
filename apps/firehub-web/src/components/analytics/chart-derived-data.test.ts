@@ -58,6 +58,11 @@ describe('splitPieData', () => {
     expect(splitPieData([], 'v').total).toBe(0);
   });
 
+  it('emptyReason: 합계가 유한하지 않으면 overflow, 아슬아슬하게 유한하면 null(WD-843)', () => {
+    expect(splitPieData([{ v: 1e308 }, { v: 1e308 }], 'v').emptyReason).toBe('overflow');
+    expect(splitPieData([{ v: 1e307 }, { v: 1e307 }], 'v').emptyReason).toBeNull();
+  });
+
   it('emptyReason: 전부 숫자 아님 → nonNumeric, 합 0 → nothing, 그릴 값 있음 → null(WD-841)', () => {
     expect(splitPieData([{ v: '서울' }, { v: null }], 'v').emptyReason).toBe('nonNumeric');
     expect(splitPieData([{ v: 0 }, { v: -1 }], 'v').emptyReason).toBe('nothing');
