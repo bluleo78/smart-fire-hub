@@ -1,6 +1,7 @@
 import { useCallback, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 
+import { TruncatedLink } from '@/components/TruncatedLink';
 import { SearchInput } from '@/components/ui/search-input';
 import { SimplePagination } from '@/components/ui/simple-pagination';
 import { TableEmptyRow } from '@/components/ui/table-empty';
@@ -60,8 +61,12 @@ export default function UserListPage() {
     patchParams({ q: value, page: 0 });
   };
 
-  /** 상세로 갈 때 지금 목록 주소(page·q)를 넘겨, 상세의 「목록으로 돌아가기」도 이 위치로 돌아오게 한다(WD-283). */
-  const openUser = (id: number) => navigate(`/admin/users/${id}`, { state: { listSearch: `?${searchParams.toString()}` } });
+  /**
+   * 상세로 갈 때 넘길 router state — 지금 목록 주소(page·q)를 실어 상세의 「목록으로 돌아가기」가 이 위치로 돌아오게 한다(WD-283).
+   * 행 클릭(openUser)과 이름 링크(WD-816)가 같은 값을 쓰도록 한 곳에서 만든다.
+   */
+  const listState = { listSearch: `?${searchParams.toString()}` };
+  const openUser = (id: number) => navigate(`/admin/users/${id}`, { state: listState });
 
   const { data: users, isLoading, isError } = useUsers({
     search: debouncedSearch || undefined,
@@ -120,14 +125,10 @@ export default function UserListPage() {
               users.content.map((u) => (
                 <TableRow
                   key={u.id}
-                  // 키보드 접근성: Tab 포커스 가능하도록 tabIndex={0}, role="button" 추가
-                  tabIndex={0}
-                  role="button"
-                  aria-label={`사용자 ${u.name} 상세 보기`}
+                  // 행은 표 행 의미(열 머리글 연동)를 지키려고 button 역할·tabIndex 를 주지 않는다(WD-816).
+                  // 키보드·보조기기 진입점은 이름 칸의 링크이고, 행 onClick 은 마우스 편의로만 남긴다.
                   className="cursor-pointer hover:bg-muted/50 transition-colors row-hover"
                   onClick={() => openUser(u.id)}
-                  // Enter/Space 키로 행 클릭과 동일한 네비게이션 동작 수행
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') openUser(u.id); }}
                 >
                   {/* WD-15: 주 식별자(이름)만 굵게 — 보조 식별자(아이디)가 더 굵으면 시선이 역전된다(02 §4.1).
                       역할 라벨은 공용 매핑(lib/membership-role)으로 admin 콘솔과 같은 용어 "소유자". */}
@@ -135,7 +136,7 @@ export default function UserListPage() {
                   <TableCell className="font-medium">
                     {/* 상한은 이름+소유자 배지 묶음에 건다 — 배지가 붙어도 칸 몫을 넘지 않고, 이름(min-w-0)만 줄어든다 */}
                     <span className="inline-flex max-w-[min(16rem,calc((100cqw_-_var(--k))_*_0.26))] items-center gap-2">
-                      <TruncatedText value={u.name} className="min-w-0" />
+                      <TruncatedLink to={`/admin/users/${u.id}`} state={listState} value={u.name} className="min-w-0" />
                       {u.membershipRole === 'OWNER' && <Badge variant="outline" className="shrink-0">{membershipRoleLabel('OWNER')}</Badge>}
                     </span>
                   </TableCell>

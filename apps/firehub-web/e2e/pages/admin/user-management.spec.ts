@@ -33,19 +33,19 @@ test.describe('사용자 관리 페이지', () => {
     ]));
     await page.goto('/admin/users');
 
-    const jisu = page.getByRole('button', { name: '사용자 김지수 상세 보기' });
+    const jisu = page.getByRole('row').filter({ hasText: '김지수' });
     await expect(jisu).toBeVisible();
     await expect(jisu.getByText('활성', { exact: true })).toBeVisible();
     await expect(jisu.getByText('계정 비활성(운영자)', { exact: true })).toHaveAttribute('data-status', 'warning');
 
     // 멤버십 정지 + 전역 비활성: 두 배지가 같은 행에서 서로를 가리지 않는다.
-    const park = page.getByRole('button', { name: '사용자 박정지 상세 보기' });
+    const park = page.getByRole('row').filter({ hasText: '박정지' });
     await expect(park).toBeVisible();
     await expect(park.getByText('정지', { exact: true })).toBeVisible();
     await expect(park.getByText('계정 비활성(운영자)', { exact: true })).toBeVisible();
 
     // 음성 대조: 행이 그려졌음을 먼저 확인한 뒤 배지가 없음을 단언한다.
-    const dh = page.getByRole('button', { name: '사용자 양동희 상세 보기' });
+    const dh = page.getByRole('row').filter({ hasText: '양동희' });
     await expect(dh).toBeVisible();
     await expect(dh.getByText('계정 비활성(운영자)')).toHaveCount(0);
   });
@@ -64,10 +64,8 @@ test.describe('사용자 관리 페이지', () => {
     await expect(page.getByRole('columnheader', { name: '이메일' })).toBeVisible();
     await expect(page.getByRole('columnheader', { name: '상태' })).toBeVisible();
 
-    // 행 개수 확인: 헤더 row 1개 + 데이터 button 행 3개
-    // 데이터 행은 role="button" (#29 키보드 접근성 수정으로 변경됨)이므로 별도 카운트
-    await expect(page.getByRole('row')).toHaveCount(1);  // 헤더 행만
-    await expect(page.getByRole('button', { name: /상세 보기/ })).toHaveCount(3);  // 데이터 행
+    // 행 개수 확인: 헤더 row 1개 + 데이터 row 3개 (데이터 행은 표 행 의미를 지켜 role="button" 이 아니다, WD-816)
+    await expect(page.getByRole('row')).toHaveCount(4);
 
     // 첫 번째 데이터 행의 셀 내용 확인 — 아이디(username), 이메일이 올바르게 렌더링되는지 검증
     await expect(page.getByRole('cell', { name: 'user1', exact: true })).toBeVisible();
@@ -210,8 +208,8 @@ test.describe('사용자 관리 페이지', () => {
 
     await page.goto('/admin/users');
 
-    // 첫 번째 사용자 행 클릭
-    await page.getByRole('cell', { name: '사용자 1', exact: true }).click();
+    // 아이디 칸(링크 없는 칸)을 눌러 행 onClick 이동 경로를 늘 검증한다 — 이름 칸은 링크라 클릭 위치에 따라 링크 경로가 탈 수 있다(WD-816)
+    await page.getByRole('cell', { name: 'user1', exact: true }).click();
 
     // 상세 페이지로 이동 확인
     await expect(page).toHaveURL(/\/admin\/users\/1/);
@@ -435,37 +433,61 @@ test.describe('사용자 관리 페이지', () => {
     expect(req.payload).toMatchObject({ active: false });
   });
 
-  // #29 회귀: 클릭 가능한 테이블 행에 키보드 접근성 속성이 존재해야 한다
-  test('테이블 행에 키보드 접근성 속성이 있다 (#29)', async ({ authenticatedPage: page }) => {
+  // WD-816: 행에서 button 역할을 빼고(표 행 의미 유지) 이름 칸 링크가 키보드·보조기기 진입점이 된다
+  test('데이터 행은 표 행 의미를 지키고 이름 링크가 상세로 간다 (WD-816)', async ({ authenticatedPage: page }) => {
     await setupUserListMocks(page, 3);
     await page.goto('/admin/users');
 
-    // 첫 번째 데이터 행이 tabIndex=0, role="button", aria-label 갖는지 확인
-    const firstRow = page.getByRole('button', { name: /사용자 사용자 1 상세 보기/ });
-    await expect(firstRow).toBeVisible();
-
-    // tabIndex={0} — Tab 포커스 가능한지 확인
-    const tabIndex = await firstRow.evaluate((el) => (el as HTMLElement).tabIndex);
-    expect(tabIndex).toBe(0);
-
-    // aria-label이 존재하는지 확인
-    const ariaLabel = await firstRow.getAttribute('aria-label');
-    expect(ariaLabel).not.toBeNull();
+    const firstRow = page.getByRole('row').nth(1);
+    await expect(firstRow).not.toHaveAttribute('role', /.+/);
+    await expect(firstRow).not.toHaveAttribute('tabindex', /.+/);
+    await expect(page.getByRole('button', { name: /상세 보기/ })).toHaveCount(0);
+    const link = page.getByRole('link', { name: '사용자 1', exact: true });
+    await expect(link).toHaveAttribute('href', '/admin/users/1');
+    // 행 안의 칸이 버튼의 자식이 아니라 행(row)의 칸(cell)으로 드러난다 — 머리글 연동 자체는 브라우저 표 의미에 맡긴다
+    await expect(firstRow.getByRole('cell', { name: 'user1', exact: true })).toBeVisible();
   });
 
-  // #29 회귀: Enter/Space 키로 행 클릭과 동일한 네비게이션이 이루어져야 한다
-  test('테이블 행에서 Enter 키로 상세 페이지로 이동한다 (#29)', async ({ authenticatedPage: page }) => {
+  // WD-816: 이름 링크에 포커스한 뒤 Enter 로 상세에 간다(행이 포커스 대상이 아님은 위 시험의 tabindex 단언이 본다)
+  test('이름 링크에 포커스하고 Enter 로 상세로 간다 (WD-816)', async ({ authenticatedPage: page }) => {
     await setupUserListMocks(page, 3);
     await setupUserDetailMocks(page, 1);
     await page.goto('/admin/users');
 
-    // 첫 번째 사용자 행에 포커스 후 Enter 키 입력
-    const firstRow = page.getByRole('button', { name: /사용자 사용자 1 상세 보기/ });
-    await firstRow.focus();
+    const link = page.getByRole('link', { name: '사용자 1', exact: true });
+    await link.focus();
+    await expect(link).toBeFocused();
     await page.keyboard.press('Enter');
+    await expect(page).toHaveURL(/\/admin\/users\/1$/);
+  });
 
-    // 상세 페이지로 이동 확인
-    await expect(page).toHaveURL(/\/admin\/users\/1/);
+  // WD-816: 링크로 가도 행 onClick 과 같은 state 를 넘겨 「목록으로 돌아가기」가 보던 위치로 돌아온다
+  test('이름 링크로 상세에 가도 목록으로 돌아가기가 보던 페이지·검색어로 돌아간다 (WD-816)', async ({ authenticatedPage: page }) => {
+    const users = Array.from({ length: 10 }, (_, i) =>
+      createUser({ id: i + 1, name: `사용자 ${i + 1}`, username: `user${i + 1}`, email: `user${i + 1}@example.com` }),
+    );
+    await mockApi(page, 'GET', '/api/v1/users', createPageResponse(users, { totalElements: 23 }));
+    await setupUserDetailMocks(page, 1);
+
+    await page.goto('/admin/users?q=%EC%82%AC%EC%9A%A9%EC%9E%90&page=1');
+    await expect(page.getByPlaceholder('이름 또는 아이디로 검색...')).toHaveValue('사용자');
+    await page.getByRole('link', { name: '사용자 1', exact: true }).click();
+    await expect(page).toHaveURL(/\/admin\/users\/1$/);
+
+    await page.getByRole('button', { name: '목록으로 돌아가기' }).click();
+    await expect(page).toHaveURL(/\/admin\/users\?q=%EC%82%AC%EC%9A%A9%EC%9E%90&page=1$/);
+  });
+
+  // WD-816: 링크 클릭이 행 onClick 으로 번지지 않아 기록이 한 번만 쌓인다
+  test('이름 링크 클릭은 한 번만 이동한다 — 뒤로 한 번이면 목록 (WD-816)', async ({ authenticatedPage: page }) => {
+    await setupUserListMocks(page, 3);
+    await setupUserDetailMocks(page, 1);
+    await page.goto('/admin/users');
+
+    await page.getByRole('link', { name: '사용자 1', exact: true }).click();
+    await expect(page).toHaveURL(/\/admin\/users\/1$/);
+    await page.goBack();
+    await expect(page).toHaveURL(/\/admin\/users$/);
   });
 
   // #30 회귀: SearchInput에 aria-label이 있어야 스크린리더가 접근 가능하다
@@ -827,7 +849,7 @@ test.describe('사용자 목록 긴 값 말줄임 (WD-559)', () => {
       ]));
       await page.goto('/admin/users');
 
-      const row = page.getByRole('button', { name: `사용자 ${LONG_NAME} 상세 보기` });
+      const row = page.getByRole('row').filter({ hasText: LONG_NAME });
       await expectTableFits(row.getByText('활성', { exact: true }));
       await expectLongValueTruncated(row.getByText(LONG_NAME, { exact: true }), LONG_NAME);
       await expectLongValueTruncated(row.getByText(LONG_USERNAME, { exact: true }), LONG_USERNAME);
@@ -854,12 +876,12 @@ test.describe('사용자 목록 긴 값 말줄임 (WD-559)', () => {
       );
       await page.goto('/admin/users');
 
-      const row = page.getByRole('button', { name: `사용자 ${NAME} 상세 보기` });
+      const row = page.getByRole('row').filter({ hasText: NAME });
       await expectTableFits(row.getByText('활성', { exact: true }));
       await expectValueNotTruncated(row.getByText(NAME, { exact: true }));
       await expectValueNotTruncated(row.getByText(USERNAME, { exact: true }));
       await expectValueNotTruncated(row.getByText(EMAIL, { exact: true }));
-      const row2 = page.getByRole('button', { name: `사용자 ${SHORT_NAME} 상세 보기` });
+      const row2 = page.getByRole('row').filter({ hasText: SHORT_NAME });
       await expectValueNotTruncated(row2.getByText(EMAIL_40, { exact: true }));
     });
   }

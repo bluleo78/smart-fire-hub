@@ -264,7 +264,7 @@ test.describe('멤버 추가', () => {
     await page.goto('/admin/users');
     await permissions;
     await expect(page.getByRole('heading', { level: 1, name: '사용자 관리' })).toBeVisible();
-    await expect(page.getByRole('button', { name: '사용자 양동희 상세 보기' })).toBeVisible(); // 목록 로드 완료 후 판정
+    await expect(page.getByRole('row').filter({ hasText: '양동희' })).toBeVisible(); // 목록 로드 완료 후 판정
     // 응답 처리 후 한 프레임 뒤(리렌더 반영) 판정.
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => r(null))));
     await expect(page.getByRole('button', { name: '멤버 추가' })).toHaveCount(0);
@@ -278,7 +278,7 @@ test.describe('멤버 추가', () => {
     await page.goto('/admin/users');
     await permissions;
     await expect(page.getByRole('heading', { level: 1, name: '사용자 관리' })).toBeVisible();
-    await expect(page.getByRole('button', { name: '사용자 양동희 상세 보기' })).toBeVisible();
+    await expect(page.getByRole('row').filter({ hasText: '양동희' })).toBeVisible();
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => r(null))));
     await expect(page.getByRole('button', { name: '멤버 추가' })).toHaveCount(1);
   });
@@ -303,11 +303,11 @@ test.describe('멤버 추가', () => {
   test('목록: 상태 열은 멤버십 기준(활성/정지), 소유자 라벨 (WD-15)', async ({ authenticatedPage: page }) => {
     await page.goto('/admin/users');
     await expect(page.getByRole('columnheader', { name: '상태' })).toBeVisible();
-    const ownerRow = page.getByRole('button', { name: '사용자 양동희 상세 보기' });
+    const ownerRow = page.getByRole('row').filter({ hasText: '양동희' });
     await expect(ownerRow.getByText('소유자', { exact: true })).toBeVisible();
     await expect(ownerRow.getByText('OWNER', { exact: true })).toHaveCount(0);
     await expect(ownerRow.getByText('활성', { exact: true })).toBeVisible();
-    await expect(page.getByRole('button', { name: '사용자 박민호 상세 보기' }).getByText('정지', { exact: true })).toBeVisible();
+    await expect(page.getByRole('row').filter({ hasText: '박민호' }).getByText('정지', { exact: true })).toBeVisible();
   });
 
   test('키보드: Esc 로 닫으면 포커스가 "멤버 추가" 버튼으로 돌아간다', async ({ authenticatedPage: page }) => {
