@@ -21,7 +21,7 @@ export function createPermission(overrides?: Partial<PermissionResponse>): Permi
     id: 1,
     code: 'DATASET_READ',
     description: '데이터셋 조회 권한',
-    category: 'DATASET',
+    category: 'dataset',
     ...overrides,
   };
 }
@@ -253,11 +253,11 @@ export function createAuditLogs(count: number): AuditLogResponse[] {
 /** 기본 권한 목록 생성 (카테고리별 권한 포함) */
 export function createPermissions(): PermissionResponse[] {
   return [
-    createPermission({ id: 1, code: 'DATASET_READ', description: '데이터셋 조회', category: 'DATASET' }),
-    createPermission({ id: 2, code: 'DATASET_WRITE', description: '데이터셋 수정', category: 'DATASET' }),
-    createPermission({ id: 3, code: 'PIPELINE_READ', description: '파이프라인 조회', category: 'PIPELINE' }),
-    createPermission({ id: 4, code: 'PIPELINE_WRITE', description: '파이프라인 수정', category: 'PIPELINE' }),
-    createPermission({ id: 5, code: 'ADMIN_ACCESS', description: '관리자 페이지 접근', category: 'ADMIN' }),
+    createPermission({ id: 1, code: 'DATASET_READ', description: '데이터셋 조회', category: 'dataset' }),
+    createPermission({ id: 2, code: 'DATASET_WRITE', description: '데이터셋 수정', category: 'dataset' }),
+    createPermission({ id: 3, code: 'PIPELINE_READ', description: '파이프라인 조회', category: 'pipeline' }),
+    createPermission({ id: 4, code: 'PIPELINE_WRITE', description: '파이프라인 수정', category: 'pipeline' }),
+    createPermission({ id: 5, code: 'ADMIN_ACCESS', description: '관리자 페이지 접근', category: 'admin' }), // admin: 마이그레이션이 시드하지 않는 테스트 전용 키(라벨 폴백 검증용)
   ];
 }
 

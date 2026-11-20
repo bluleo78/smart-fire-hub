@@ -455,10 +455,12 @@ test.describe('역할 관리 페이지', () => {
     // 권한 할당 카드 확인
     await expect(page.getByText('권한 할당')).toBeVisible();
 
-    // 카테고리 이름(대문자 h3 heading) 확인 — 팩토리에서 DATASET, PIPELINE, ADMIN 카테고리 포함
-    // strict 모드 위반 방지를 위해 h3 태그(카테고리 섹션 헤더)로 명시적 선택
-    await expect(page.getByRole('heading', { name: 'DATASET' })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'PIPELINE' })).toBeVisible();
+    // 카테고리 그룹 제목(h3) 확인 — 서버는 소문자 키(dataset, pipeline, admin)를 보내고
+    // 화면은 한국어 라벨(데이터셋, 파이프라인)로 보여준다(WD-814).
+    // admin 은 마이그레이션이 시드하지 않는 테스트 전용 키로, 원시 키 폴백을 고정하기 위해 쓴다.
+    await expect(page.getByRole('heading', { level: 3, name: '데이터셋', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { level: 3, name: '파이프라인', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { level: 3, name: 'admin', exact: true })).toBeVisible();
 
     // createPermissions()에서 생성된 특정 권한 이름/설명이 렌더링되는지 확인
     // code: 'DATASET_READ', description: '데이터셋 조회'
@@ -912,7 +914,7 @@ test.describe('역할 관리 페이지', () => {
         isSystem: false,
         permissions: [
           ...createRoleDetail().permissions,
-          createPermission({ id: 3, code: 'PIPELINE_READ', category: 'PIPELINE' }),
+          createPermission({ id: 3, code: 'PIPELINE_READ', category: 'pipeline' }),
         ],
       });
       const saveCapture = await mockApi(
