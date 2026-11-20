@@ -520,11 +520,11 @@ export default function OntologyPage() {
     // Radix Tabs로 감싸 탭 a11y(role=tab)와 기존 E2E 셀렉터를 보존한다. 높이 체인 전 구간 min-h-0.
     <Tabs value={tab} onValueChange={setTab} className="flex h-full min-h-0 flex-col">
       {/* 툴바 — 좌: 패널 토글 + 제목 + 탭 전환, 우: 검색(인스턴스 탭 한정). */}
-      {/* 좁은 폭(max-md)에서는 툴바를 줄바꿈하고 높이를 풀어 가로 스크롤을 없앤다(#345 SC 1.4.10).
-          md 이상에서는 기존 한 줄 h-12 툴바 그대로. 원래 경계는 sm(640px)이었으나, 항목
-          (아이콘+제목+탭 2개+검색/온톨로지 선택기+버튼들)이 640~768px 대역엔 실제로 한 줄에
-          들어가지 못해 h1이 형제 요소에 밀려 세로로 찌그러졌다(#402) — md(768px)로 완화. */}
-      <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b px-3 py-1.5 md:h-12 md:flex-nowrap md:py-0">
+      {/* 모든 폭에서 줄바꿈을 허용한다 — 자리가 있으면 한 줄 48px(min-h-12), 모자라면 오른쪽 묶음이
+          둘째 줄로 내려간다(WD-840). 이전에는 md 이상에서 flex-nowrap + h-12 로 강제해 768~1279px 에서
+          오른쪽 컨트롤(선택기·버튼)이 툴바 밖으로 밀려 가려졌다. 좁은 폭의 줄바꿈은 320px 리플로우
+          (#345 SC 1.4.10)와 640~768px 겹침(#402)도 함께 막는다. */}
+      <div className="flex min-h-12 shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b px-3 py-1">
         {/* (리뷰 MIN-5) 편집 모드에서는 숨긴다 — ModelOutline이 TypeFilterPanel과 달리 collapsed prop을
             받지 않아, 편집 모드에서 이 버튼을 누르면 aria-pressed만 바뀌고 화면은 그대로였다(무력한 컨트롤).
             (#414) sm(640px) 미만에서는 TypeFilterPanel 자체가 collapsed 상태와 무관하게 항상 숨으므로
@@ -553,9 +553,9 @@ export default function OntologyPage() {
           <TabsTrigger value="instance">그래프 탐색</TabsTrigger>
           <TabsTrigger value="schema">지식 모델</TabsTrigger>
         </TabsList>
-        {/* 온톨로지 선택기(고정 220px)까지 들어오며 항목이 늘었다 — 이 그룹도 outer 툴바처럼
-            max-md에서 줄바꿈해야 320px 리플로우(#345)와 640~900px 겹침(#402)이 깨지지 않는다. */}
-        <div className="ml-auto flex flex-wrap items-center justify-end gap-x-2 gap-y-1 md:flex-nowrap">
+        {/* 온톨로지 선택기(고정 220px)까지 들어오며 항목이 늘었다 — 이 그룹도 outer 툴바처럼 모든 폭에서
+            줄바꿈을 허용해야 320px 리플로우(#345)·640~900px 겹침(#402)·768~1279px 넘침(WD-840)이 깨지지 않는다. */}
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-x-2 gap-y-1">
           {/* 온톨로지 선택기 — 두 탭이 공유한다(#677 후속). 편집 권한(ontology:write)이 없으면 관리 진입점은 없다. */}
           {ontologies && ontologies.length > 0 && (
             <OntologySelect
@@ -608,8 +608,11 @@ export default function OntologyPage() {
           {showGraphTools && (
             <>
               {/* 최소 폭(min-w-48)을 둬 좁은 화면에서는 온톨로지 선택 상자 옆에서 90px 로 줄지 않고 다음 줄로 내려간다(WD-373).
-                  다음 줄에서는 flex-1 로 넓어져(최대 max-w-sm) 검색어가 보인다. */}
-              <SearchInput placeholder="이름 검색" value={search} onChange={setSearch} className="min-w-48 md:w-64" />
+                  다음 줄에서는 flex-1 로 넓어져(최대 max-w-sm) 검색어가 보인다.
+                  md~xl 은 192px(w-48)로 두고 2xl 부터 256px — 1280px(사이드바 펼침, 툴바 약 992px)에서
+                  w-64 면 여유가 18px 뿐이라 글꼴 메트릭이 조금만 넓어도 오른쪽 묶음이 둘째 줄로 내려갔다.
+                  64px 를 줄여 그 폭에서도 한 줄을 실제로 보장한다(WD-840). */}
+              <SearchInput placeholder="이름 검색" value={search} onChange={setSearch} className="min-w-48 md:w-48 2xl:w-64" />
               {/* 타입 묶기 토글 — 타입별 compound 번들로 접어 밀집을 줄인다. */}
               <Button
                 variant={grouped ? 'secondary' : 'ghost'}

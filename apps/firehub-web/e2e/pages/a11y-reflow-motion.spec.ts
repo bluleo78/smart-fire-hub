@@ -86,11 +86,12 @@ test.describe('320px 리플로우 (#345)', () => {
 /**
  * 지식그래프 툴바 — 태블릿 폭(~700px) 겹침 회귀 가드 (#402).
  *
- * 원인은 `<h1>지식그래프</h1>`에 whitespace-nowrap이 없던 것 — 컨테이너의 sm:flex-nowrap은
+ * 원인은 `<h1>지식그래프</h1>`에 whitespace-nowrap이 없던 것 — 당시 컨테이너의 sm:flex-nowrap은
  * 형제 요소 사이의 줄바꿈만 막을 뿐, 개별 자식의 텍스트 자체가 CJK 글자 단위로 줄어드는 것은
  * 막지 못해 h1이 12px로 찌그러지고 햄버거 아이콘·탭 레이블과 겹쳤다. 수정은 h1에
- * whitespace-nowrap shrink-0을 추가하고, 툴바 전체의 줄바꿈 브레이크포인트를 sm(640px)에서
- * md(768px)로 완화해 640~768px 대역에서 항목이 실제로 들어갈 자리가 없을 때는 줄바꿈하도록 했다.
+ * whitespace-nowrap shrink-0을 추가하고 한 줄 고정 경계를 sm→md 로 완화한 것이었다.
+ * WD-840 부터는 한 줄 고정 자체를 없앴다 — 툴바는 모든 폭에서 줄바꿈을 허용하고(min-h-12 로 한 줄
+ * 48px 보장), 자리가 모자라면 오른쪽 묶음이 둘째 줄로 내려간다. h1 nowrap·shrink-0 은 그대로 지킨다.
  */
 test.describe('지식그래프 툴바 태블릿 폭 겹침 (#402)', () => {
   /**
@@ -108,7 +109,6 @@ test.describe('지식그래프 툴바 태블릿 폭 겹침 (#402)', () => {
         text: h1.textContent,
         whiteSpace: getComputedStyle(h1).whiteSpace,
         width: Math.round(h1.getBoundingClientRect().width),
-        toolbarWrap: getComputedStyle(toolbar).flexWrap,
         toolbarFits: toolbar.scrollWidth <= toolbar.clientWidth + 1,
       };
     });
@@ -130,7 +130,7 @@ test.describe('지식그래프 툴바 태블릿 폭 겹침 (#402)', () => {
     expect(title.toolbarFits).toBe(true);
   });
 
-  test('데스크톱(1280px)에서는 툴바가 기존대로 한 줄(h-12)로 유지된다', async ({
+  test('데스크톱(1280px)에서는 자리가 있으면 툴바가 한 줄(높이 < 55)로 유지된다', async ({
     authenticatedPage: page,
   }) => {
     await setupAdminAuth(page);
@@ -140,18 +140,93 @@ test.describe('지식그래프 툴바 태블릿 폭 겹침 (#402)', () => {
     await page.goto('/knowledge-graph/model');
     await expect(page.locator('[data-slot=tabs-list]')).toBeVisible();
 
+    // 툴바는 모든 폭에서 줄바꿈을 허용하므로(WD-840) 자리가 있는 1280px 에서 한 줄(높이 < 55)로
+    // 남는지가 회귀 지표다. 지식 모델 탭은 1280px 에서 내용(약 830px)이 툴바(약 992px)보다 160px
+    // 가량 좁아 글꼴 메트릭이 달라도 한 줄에 여유 있게 들어간다 — 줄바꿈 허용 뒤라 가로 넘침도 없어야 한다.
     const title = await titleFit(page);
-    // 브레이크포인트 완화(sm→md)가 데스크톱 표현을 바꾸지 않아야 한다 — 1280px는 완화 전(sm)과
-    // 완화 후(md) 기준 모두 nowrap 구간이라 이 값 자체는 변경으로 바뀌지 않는다. 스키마 탭은
-    // 온톨로지 선택기(고정 220px)+버튼 여럿이 붙어 툴바 실폭이 빠듯한 기존 상태라, toolbarFits는
-    // 병렬 워커의 폰트 메트릭 타이밍에 따라 경계선에서 흔들려(#402와 무관한 기존 특성) 여기서는
-    // 단언하지 않는다 — 이 이슈의 회귀 지표는 wrap 여부와 h-12 높이 유지다.
-    expect(title.toolbarWrap).toBe('nowrap');
+    expect(title.toolbarFits).toBe(true);
     const toolbarHeight = await page
       .locator('h1')
       .evaluate((h1) => Math.round(h1.closest('div')!.getBoundingClientRect().height));
     expect(toolbarHeight).toBeLessThan(55);
   });
+});
+
+/**
+ * 지식그래프 툴바 — 768~1279px 오른쪽 컨트롤 넘침 회귀 가드 (WD-840).
+ *
+ * md 이상에서 툴바를 flex-nowrap + h-12 로 강제해, 컨트롤이 많은 768~1279px 에서 오른쪽 묶음이
+ * 툴바 밖으로 밀려 가려졌다. 자리가 모자라면 오른쪽 묶음이 둘째 줄로 내려가야 하므로,
+ * 폭별로 보이는 모든 컨트롤이 툴바 사각형 안에 있는지 확인한다.
+ */
+test.describe('지식그래프 툴바 768~1279px 넘침 (WD-840)', () => {
+  for (const width of [768, 1024, 1280]) {
+    for (const path of ['/knowledge-graph/explore', '/knowledge-graph/model']) {
+      test(`${width}px ${path} 에서 툴바 컨트롤이 툴바 밖으로 넘치지 않는다`, async ({
+        authenticatedPage: page,
+      }) => {
+        await setupAdminAuth(page);
+        await setupOntologyMocks(page);
+        await page.setViewportSize({ width, height: 900 });
+        await page.goto(path);
+        await expect(page.locator('[data-slot=tabs-list]')).toBeVisible();
+
+        const result = await page.locator('h1').evaluate((h1) => {
+          const toolbar = h1.closest('div')!;
+          const tb = toolbar.getBoundingClientRect();
+          const controls = Array.from(
+            toolbar.querySelectorAll<HTMLElement>('button, input, [role=combobox]'),
+          )
+            // 사각형은 컨트롤마다 한 번만 읽는다 — 보이는지 거르기와 넘침 판정에 같은 값을 쓴다
+            .map((el) => ({ el, r: el.getBoundingClientRect() }))
+            .filter(({ el, r }) => el.offsetParent !== null && r.width > 0 && r.height > 0)
+            .map(({ el, r }) => {
+              return {
+                label:
+                  el.getAttribute('aria-label') ||
+                  el.getAttribute('placeholder') ||
+                  el.textContent?.trim() ||
+                  '',
+                outLeft: r.left < tb.left - 1,
+                outRight: r.right > tb.right + 1,
+                // 툴바가 줄 수만큼 높아지지 못하면(높이 고정이 되살아나면) 둘째 줄 컨트롤이 툴바 아래로 삐져나와 캔버스에 가려진다 — 그 회귀를 잡는다
+                outVertical: r.top < tb.top - 1 || r.bottom > tb.bottom + 1,
+                // 툴바 자체가 뷰포트보다 넓어 화면 밖에 있는 경우(툴바 안에서는 다 들어와 보여도)를 잡는다
+                outViewport: r.right > document.documentElement.clientWidth + 1,
+              };
+            });
+          return {
+            // 이 수정의 메커니즘 — 툴바와 오른쪽 묶음이 모든 폭에서 줄바꿈을 허용한다(md:flex-nowrap 회귀 방지)
+            wrap: getComputedStyle(toolbar).flexWrap,
+            groupWrap: getComputedStyle(toolbar.lastElementChild as HTMLElement).flexWrap,
+            fits: toolbar.scrollWidth <= toolbar.clientWidth + 1,
+            height: Math.round(tb.height),
+            controls,
+          };
+        });
+
+        // 공허한 통과 방지 — 탭별 대표 컨트롤이 실제로 보이는 목록에 있어야 한다.
+        const labels = result.controls.map((c) => c.label).join('|');
+        if (path.endsWith('/explore')) {
+          expect(labels).toContain('이름 검색');
+          expect(labels).toContain('타입 묶기');
+        } else {
+          expect(labels).toContain('수정 모드');
+        }
+        expect(result.wrap).toBe('wrap');
+        expect(result.groupWrap).toBe('wrap');
+        expect(result.fits).toBe(true);
+        expect(
+          result.controls.filter((c) => c.outLeft || c.outRight || c.outVertical || c.outViewport),
+        ).toEqual([]);
+        // 자리가 있는 1280px 탐색 탭은 여전히 한 줄이어야 한다 — 검색 칸 192px 로 내용 약 910px /
+        // 툴바 약 992px, 글꼴이 넓은 환경(+30px)에서도 50px 안팎의 여유가 남는다.
+        if (width === 1280 && path.endsWith('/explore')) {
+          expect(result.height).toBeLessThan(55);
+        }
+      });
+    }
+  }
 });
 
 /**

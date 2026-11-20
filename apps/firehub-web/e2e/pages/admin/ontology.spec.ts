@@ -1523,7 +1523,7 @@ test.describe('페이지 제목(WD-813)', () => {
     await expect(h1).toHaveCSS('font-size', '28px');
     await expect(h1).toHaveCSS('font-weight', '600');
 
-    // 제목을 키워도 툴바(h1의 부모)가 md:h-12(48px) 그대로여야 한다.
+    // 제목을 키워도 툴바(h1의 부모)가 한 줄 높이 min-h-12(48px) 그대로여야 한다.
     const toolbarHeight = await h1.evaluate(
       (el) => el.parentElement!.getBoundingClientRect().height,
     );
