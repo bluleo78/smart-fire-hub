@@ -176,20 +176,24 @@ test.describe('대시보드 위젯 높이 채우기 (WD-845)', () => {
     await expect(body.locator('[data-chart-measured="true"]')).toHaveCount(1);
     const valueText = body.locator('text', { hasText: '12,345,678' });
     await expect(valueText).toHaveCount(1);
-    // 측정 표식은 첫 폭에 붙어 격자가 다시 배치되는 중간 프레임을 읽지 않게 안정될 때까지 읽는다(WD-854)
-    const readBoxes = async () => {
-      const [bodyBox, textBox] = await Promise.all([body.boundingBox(), valueText.boundingBox()]);
-      return { bodyBox: bodyBox!, textBox: textBox! };
-    };
-    let last = await readBoxes();
+    // 측정 표식은 첫 폭에 붙고 그 뒤에도 격자가 다시 배치되므로, poll 간격을 둔 두 읽기가 같아질 때까지 기다린다(WD-854).
+    // 읽은 값 없음(null)에서 시작해야 첫 콜백이 몇 ms 사이 두 값을 견줘 바로 통과하지 않는다. 상자가 잠깐 null 이면 다시 읽는다.
+    // 콜백에서 바꾸는 값은 객체에 담는다 — let 은 TS 가 null 로 좁혀 `!` 를 강요한다.
+    type Boxes = { bodyBox: { x: number; width: number }; textBox: { x: number; width: number } };
+    const read: { last: Boxes | null } = { last: null };
     await expect
       .poll(async () => {
-        const prev = last;
-        last = await readBoxes();
-        return (['bodyBox', 'textBox'] as const).every((k) => last[k].x === prev[k].x && last[k].width === prev[k].width);
+        const [bodyBox, textBox] = await Promise.all([body.boundingBox(), valueText.boundingBox()]);
+        const prev = read.last;
+        const cur = bodyBox && textBox ? { bodyBox, textBox } : null;
+        read.last = cur;
+        if (!prev || !cur) return false;
+        return (['bodyBox', 'textBox'] as const).every((k) => cur[k].x === prev[k].x && cur[k].width === prev[k].width);
       })
       .toBe(true);
-    const { bodyBox, textBox } = last;
+    // 타입 좁히기용 — poll 을 통과했으면 늘 값이 있다
+    if (!read.last) throw new Error('안정된 상자를 읽지 못했다');
+    const { bodyBox, textBox } = read.last;
     // 그릴 만큼은 되는 좁은 폭이어야 이 시험이 의미가 있다(80px 이상, 값 글자를 줄이지 않으면 넘치는 폭)
     expect(bodyBox.width).toBeGreaterThanOrEqual(80);
     expect(bodyBox.width).toBeLessThan(140);
