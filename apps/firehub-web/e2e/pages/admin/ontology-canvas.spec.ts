@@ -491,12 +491,18 @@ test.describe('SchemaGraph — 캔버스 드래그 관계 생성', () => {
     await enterEditMode(page);
 
     let postCount = 0;
+    // 응답을 시간(지연)이 아니라 시험이 풀어 줄 때까지 붙잡는다 — 200ms 지연은 부하가 큰 게이트에서
+    // toBeDisabled 확인보다 응답이 먼저 와 입력이 사라져 흔들렸다(기차 integ/developer5-33 게이트).
+    let releaseResponse: () => void = () => {};
+    const responseReleased = new Promise<void>((resolve) => {
+      releaseResponse = resolve;
+    });
     await page.route(
       (url) => url.pathname === '/api/v1/ontology/1/relations',
       async (route) => {
         if (route.request().method() !== 'POST') return route.fallback();
         postCount += 1;
-        await new Promise((resolve) => setTimeout(resolve, 200));
+        await responseReleased;
         return route.fulfill({
           status: 200,
           contentType: 'application/json',
@@ -512,12 +518,13 @@ test.describe('SchemaGraph — 캔버스 드래그 관계 생성', () => {
     await expect(input).toBeVisible();
     await input.fill('LOCATED_NEAR');
     await input.press('Enter');
-    // 응답이 아직 안 왔으므로(200ms 지연) 입력이 잠겨 있어야 한다 — 잠기지 않았다면 곧이어 보내는
+    // 응답을 아직 붙잡고 있으므로 입력이 잠겨 있어야 한다 — 잠기지 않았다면 곧이어 보내는
     // 두 번째 Enter가 실제로 두 번째 요청을 만들어 낼 것이다.
     await expect(input).toBeDisabled();
     // disabled 상태에서는 브라우저가 애초에 keydown을 발생시키지 않는다 — page.keyboard.press로
     // 같은 확인을 한 번 더 시도해 "이 시점에 어떤 두 번째 Enter도 요청을 만들지 않는다"를 증명한다.
     await page.keyboard.press('Enter');
+    releaseResponse();
 
     await expect(page.getByTestId('relation-inspector')).toBeVisible();
     expect(postCount).toBe(1);
@@ -808,12 +815,17 @@ test.describe('SchemaGraph — 캔버스 인라인 리네임 + 빈 곳 더블클
     const incident = await nodeScreenPosition(page, 'Incident');
 
     let patchCount = 0;
+    // 연결 입력 시험과 같은 까닭으로 응답을 시험이 풀어 줄 때까지 붙잡는다(200ms 지연은 게이트에서 흔들림).
+    let releaseResponse: () => void = () => {};
+    const responseReleased = new Promise<void>((resolve) => {
+      releaseResponse = resolve;
+    });
     await page.route(
       (url) => url.pathname === `/api/v1/ontology/1/entity-types/${incident.id}`,
       async (route) => {
         if (route.request().method() !== 'PATCH') return route.fallback();
         patchCount += 1;
-        await new Promise((resolve) => setTimeout(resolve, 200));
+        await responseReleased;
         return route.fulfill({
           status: 200,
           contentType: 'application/json',
@@ -829,11 +841,12 @@ test.describe('SchemaGraph — 캔버스 인라인 리네임 + 빈 곳 더블클
     await expect(input).toBeVisible();
     await input.fill('사건유형');
     await input.press('Enter');
-    // 응답이 아직 안 왔으므로(200ms 지연) 입력이 잠겨 있어야 한다.
+    // 응답을 아직 붙잡고 있으므로 입력이 잠겨 있어야 한다.
     await expect(input).toBeDisabled();
     // disabled 상태에서는 브라우저가 애초에 keydown을 발생시키지 않는다 — 한 번 더 시도해 "이 시점에
     // 어떤 두 번째 Enter도 요청을 만들지 않는다"를 증명한다.
     await page.keyboard.press('Enter');
+    releaseResponse();
 
     await expect(input).toHaveCount(0);
     expect(patchCount).toBe(1);

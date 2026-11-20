@@ -373,9 +373,10 @@ export const proactiveApi = {
   getTemplates: (params?: { page?: number; size?: number }) =>
     client.get<ReportTemplateSummary[]>('/proactive/templates', { params }),
   /**
-   * 내가 볼 수 있는 양식 이름 전체(WD-834) — 이름 번호 재시도가 이미 쓰인 번호를 건너뛰는 데 쓴다.
-   * 서버가 한 번에 최대 200건만 주므로 200건 미만(짧은 페이지)이 올 때까지 읽고, 비정상적으로 큰 목록에서 끝없이 돌지 않게 20페이지에서 멈춘다.
-   * 순차로 읽으면 왕복이 페이지 수만큼 쌓이므로(WD-837), 첫 페이지로 크기를 가늠한 뒤 4페이지씩 병렬로 읽는다.
+   * 양식 이름 전체(WD-834) — 이름 번호 재시도가 이미 쓰인 번호를 건너뛰는 데 쓴다.
+   * 범위는 서버 중복 판정과 같다(본인 + 기본 양식, user_id NULL) — 그래서 목록에 있는 이름은 모두 서버도 겹침으로 본다.
+   * 한 번에 최대 200건이라 짧은 페이지가 올 때까지, 최대 20페이지(page 0~19) 읽는다. page 0·1 은 하나씩(201건이면 요청 2건 — WD-842),
+   * 그 뒤는 4페이지씩 병렬로 읽는다(WD-837). 부분 실패에도 읽은 이름은 돌려준다 — page 0 실패만 reject(호출부 makeFreeNumberPicker 가 [] 로 바꾼다).
    */
   getAllTemplateNames: async (): Promise<string[]> => {
     const pageSize = 200;
@@ -388,14 +389,22 @@ export const proactiveApi = {
     const first = await fetchPage(0);
     const names = first.map((t) => t.name);
     if (first.length < pageSize) return names;
-    for (let start = 1; start < maxPages; start += parallel) {
-      const pages = Array.from({ length: Math.min(parallel, maxPages - start) }, (_, i) => start + i);
-      const batch = await Promise.all(pages.map(fetchPage));
-      // 묶음 안에서는 페이지 순서대로 싣고, 처음 나온 짧은 페이지까지만 센다 — 그 뒤 페이지는 끝을 넘어선 것이다
-      for (const data of batch) {
-        names.push(...data.map((t) => t.name));
-        if (data.length < pageSize) return names;
+    // page 1 은 너비 1 묶음, 그 뒤는 너비 4 묶음 — 같은 규칙으로 본다
+    for (let start = 1; start < maxPages; ) {
+      const width = start === 1 ? 1 : Math.min(parallel, maxPages - start);
+      const pages = Array.from({ length: width }, (_, i) => start + i);
+      start += width;
+      // 이름은 순서 없는 힌트라 실패한 페이지만 빼고 담는다. 짧은 페이지(그 이름까지)에서 끝내고, 실패가 있던 묶음 뒤로는 더 읽지 않는다.
+      let failed = false;
+      for (const result of await Promise.allSettled(pages.map(fetchPage))) {
+        if (result.status === 'rejected') {
+          failed = true;
+          continue;
+        }
+        names.push(...result.value.map((t) => t.name));
+        if (result.value.length < pageSize) return names;
       }
+      if (failed) return names;
     }
     return names;
   },

@@ -545,7 +545,10 @@ export default function OntologyPage() {
         {/* whitespace-nowrap 없으면 640~900px 대역에서 한글(CJK) 텍스트가 글자 단위로
             줄바꿈 기회를 허용해 min-content가 사실상 "1글자 폭"이 되고, 형제 요소(탭·아이콘)에
             밀려 h1이 세로로 찌그러진다(#402). shrink-0으로 다른 flex item에 밀려 줄어드는 것도 막는다. */}
-        <h1 className="shrink-0 text-sm font-semibold whitespace-nowrap">지식그래프</h1>
+        {/* WD-813: 앱 h1 체계(28px/36px/600). 문구는 사이드바 그룹 이름 — 탭 이름이면 옆 활성 탭과 겹친다. */}
+        <h1 className="shrink-0 text-[28px] leading-[36px] font-semibold tracking-tight whitespace-nowrap">
+          지식그래프
+        </h1>
         <TabsList>
           <TabsTrigger value="instance">그래프 탐색</TabsTrigger>
           <TabsTrigger value="schema">지식 모델</TabsTrigger>

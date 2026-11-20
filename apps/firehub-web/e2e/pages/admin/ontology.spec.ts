@@ -1503,3 +1503,46 @@ test.describe('지식그래프 노드 상세 — 좁은 화면 오버레이 (WD-
     await expect(drawer.getByRole('heading', { name: 'Equipment' })).toBeVisible();
   });
 });
+
+test.describe('페이지 제목(WD-813)', () => {
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+    await setupOntologyMocks(page);
+  });
+
+  // 툴바 제목이 앱 다른 화면의 h1 체계(28px/600)와 같고, 두 탭 모두 같은 화면 이름을 유지하며, 툴바 높이(48px)를 지킨다.
+  test('지식그래프 제목이 28px h1이고 탭을 바꿔도 그대로다', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto('/knowledge-graph/explore');
+
+    const h1 = page.getByRole('heading', { level: 1, name: '지식그래프' });
+    await expect(h1).toBeVisible();
+    await expect(h1).toHaveCSS('font-size', '28px');
+    await expect(h1).toHaveCSS('font-weight', '600');
+
+    // 제목을 키워도 툴바(h1의 부모)가 md:h-12(48px) 그대로여야 한다.
+    const toolbarHeight = await h1.evaluate(
+      (el) => el.parentElement!.getBoundingClientRect().height,
+    );
+    // 서브픽셀 오차로 47.99 등이 나올 수 있어 반올림해 비교한다.
+    expect(Math.round(toolbarHeight)).toBe(48);
+
+    await page.getByRole('tab', { name: '지식 모델' }).click();
+    await expect(page).toHaveURL(/\/knowledge-graph\/model/);
+    await expect(h1).toBeVisible();
+  });
+
+  test('좁은 화면(375px)에서도 제목이 한 줄(50px 미만)로 유지된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.setViewportSize({ width: 375, height: 800 });
+    await page.goto('/knowledge-graph/explore');
+
+    const h1 = page.getByRole('heading', { level: 1, name: '지식그래프' });
+    await expect(h1).toBeVisible();
+    const box = await h1.boundingBox();
+    expect(box!.height).toBeLessThan(50);
+  });
+});

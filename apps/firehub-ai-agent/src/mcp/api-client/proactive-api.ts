@@ -35,7 +35,7 @@ export function numberedTemplateName(base: string, attempt: number): string {
   return stem.slice(0, end).trimEnd() + tail;
 }
 
-/** 양식 이름 목록 읽기 — 한 페이지 크기·첫 페이지 뒤 병렬 폭·최대 페이지 수(웹과 같다, WD-837). */
+/** 양식 이름 목록 읽기 — 한 페이지 크기·page 2 부터의 병렬 폭·최대 페이지 수(웹과 같다, WD-837·WD-842). */
 const TEMPLATE_LIST_PAGE_SIZE = 200;
 const TEMPLATE_LIST_PARALLEL = 4;
 const TEMPLATE_LIST_MAX_PAGES = 20;
@@ -46,8 +46,9 @@ function normalizeName(value: string): string {
 }
 
 /**
- * 남은 양식 이름을 읽어 온다(WD-837) — 첫 페이지 뒤 4페이지씩 병렬로, 최대 20페이지, 짧은 페이지가 나오면 멈춘다.
- * 이름 고르기는 힌트일 뿐이므로 읽기에 실패하면 빈 목록을 돌려 순차 재시도로 되돌아간다.
+ * 양식 이름을 읽어 온다(WD-837·WD-842) — 범위는 서버 중복 판정과 같다(본인 + 기본 양식, user_id NULL).
+ * page 0·1 은 하나씩(201건이면 요청 2건), 그 뒤는 4페이지씩 병렬로 최대 20페이지(page 0~19). 이름은 힌트일 뿐이라
+ * page 0 이 실패하면 빈 목록(순차 재시도로 복귀), 그 뒤 실패에는 읽은 이름을 돌려준다(버리면 번호 건너뛰기가 헛수고가 된다).
  */
 async function loadTemplateNames(client: AxiosInstance): Promise<string[]> {
   // 한 페이지의 행을 읽는다 — 이름 담기는 아래가 페이지 순서대로 한다(병렬 읽기 순서와 무관하게 결정적이게)
@@ -63,28 +64,35 @@ async function loadTemplateNames(client: AxiosInstance): Promise<string[]> {
     for (const row of rows) if (typeof row?.name === 'string') names.push(row.name);
     return rows.length < TEMPLATE_LIST_PAGE_SIZE;
   };
+  // page 0: 실패하면 읽은 것이 없으므로 빈 목록
   try {
     if (collect(await readPage(0))) return names;
-    for (let next = 1; next < TEMPLATE_LIST_MAX_PAGES; next += TEMPLATE_LIST_PARALLEL) {
-      const pages: Promise<Array<{ name?: unknown }>>[] = [];
-      for (let p = next; p < Math.min(next + TEMPLATE_LIST_PARALLEL, TEMPLATE_LIST_MAX_PAGES); p++) {
-        pages.push(readPage(p));
-      }
-      // 웹 getAllTemplateNames 와 같게: 페이지 순서대로 담다가 첫 짧은 페이지(그 페이지 이름까지 담음)에서 멈춘다
-      for (const rows of await Promise.all(pages)) {
-        if (collect(rows)) return names;
-      }
-    }
-    return names;
   } catch {
     return [];
   }
+  // page 1 은 너비 1 묶음, 그 뒤는 너비 4 묶음 — 같은 규칙으로 본다
+  for (let start = 1; start < TEMPLATE_LIST_MAX_PAGES; ) {
+    const width = start === 1 ? 1 : Math.min(TEMPLATE_LIST_PARALLEL, TEMPLATE_LIST_MAX_PAGES - start);
+    const pages = Array.from({ length: width }, (_, i) => readPage(start + i));
+    start += width;
+    // 이름은 순서 없는 힌트라 실패한 페이지만 빼고 담는다. 짧은 페이지(그 이름까지)에서 끝내고, 실패가 있던 묶음 뒤로는 더 읽지 않는다.
+    let failed = false;
+    for (const result of await Promise.allSettled(pages)) {
+      if (result.status === 'rejected') {
+        failed = true;
+        continue;
+      }
+      if (collect(result.value)) return names;
+    }
+    if (failed) return names;
+  }
+  return names;
 }
 
 /**
  * 번호 붙인 양식 이름으로 생성하고, 409 DUPLICATE_NAME 이면 다음 번호 이름으로 다시 시도한다(WD-824).
  * 양식 이름은 작업 이름에서 파생된 것이라 사용자가 정한 적이 없다 — 작업을 지워도 양식은 남아 있어 같은 이름으로 다시 만들면 겹친다.
- * WD-837: 첫 겹침 뒤 남은 양식 이름을 한 번만 읽어(겹치지 않으면 읽지 않는다), 이미 있거나 이미 실패한 이름의 번호를 건너뛰고
+ * WD-837: 첫 겹침 뒤 양식 이름(서버 중복 판정과 같은 범위: 본인 + 기본 양식, user_id NULL)을 한 번만 읽어(겹치지 않으면 읽지 않는다), 이미 있거나 이미 실패한 이름의 번호를 건너뛰고
  * 가장 작은 빈 번호로 시도한다. 생성 호출은 20번까지이며, 소진하면 사용자가 할 일을 안내한다. 다른 오류는 그대로 던진다.
  */
 async function createWithNumberedTemplateName<T>(
