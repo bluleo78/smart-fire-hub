@@ -76,11 +76,17 @@ async function setup(
 /** 위젯 본문(차트 영역) testid */
 const BODY = 'dashboard-widget-chart-area';
 
+// 라우트(lazy 청크)·데이터 로드를 그림·측정 대기와 따로 기다려 부하에서 10초 하나로 흔들리지 않게 한다(WD-854)
+async function gotoDashboard(page: Page) {
+  await page.goto('/analytics/dashboards/1');
+  await expect(page.getByTestId(BODY)).toBeVisible();
+}
+
 /** 측정 대상의 높이와, 그것을 담는 위젯 본문 높이. 레이아웃이 안정(두 번 연속 같은 값)될 때까지 poll 한다. */
 async function measure(page: Page, selector: string) {
+  const body = page.getByTestId(BODY);
   const el = page.locator(`[data-chart-drawing] ${selector}`).first();
   await expect(el).toBeVisible();
-  const body = page.getByTestId(BODY);
   const read = async () => ({
     h: (await el.boundingBox())?.height ?? 0,
     body: (await body.boundingBox())?.height ?? 0,
@@ -101,11 +107,11 @@ test.describe('대시보드 위젯 높이 채우기 (WD-845)', () => {
   for (const c of CASES) {
     test(`${c.type} 그림이 위젯 높이를 채운다(300px 고정 아님)`, async ({ authenticatedPage: page }) => {
       await setup(page, c, 3);
-      await page.goto('/analytics/dashboards/1');
+      await gotoDashboard(page);
       const small = await measure(page, c.target);
 
       await setup(page, c, 7);
-      await page.goto('/analytics/dashboards/1');
+      await gotoDashboard(page);
       const large = await measure(page, c.target);
 
       // 그림 높이가 위젯 본문 높이와 거의 같고(300 고정이 아님), 큰 위젯이 더 크다
@@ -123,9 +129,8 @@ test.describe('대시보드 위젯 높이 채우기 (WD-845)', () => {
   for (const c of GUARD_CASES) {
     test(`${c.type} 아주 낮은 위젯에서는 음수 높이로 그리지 않는다`, async ({ authenticatedPage: page }) => {
       await setup(page, c, 1);
-      await page.goto('/analytics/dashboards/1');
+      await gotoDashboard(page);
       const body = page.getByTestId(BODY);
-      await expect(body).toBeVisible();
       await expect.poll(async () => (await body.boundingBox())?.height ?? 0).toBeGreaterThan(0);
       const bodyH = (await body.boundingBox())?.height ?? 0;
       expect(bodyH).toBeLessThanOrEqual(60);
@@ -145,9 +150,8 @@ test.describe('대시보드 위젯 높이 채우기 (WD-845)', () => {
     test(`${c.type} 아주 좁은 위젯에서는 음수 폭으로 그리지 않는다`, async ({ authenticatedPage: page }) => {
       await page.setViewportSize({ width: 900, height: 800 });
       await setup(page, c, 5, { widgetWidth: 1 });
-      await page.goto('/analytics/dashboards/1');
+      await gotoDashboard(page);
       const body = page.getByTestId(BODY);
-      await expect(body).toBeVisible();
       // 측정이 끝난 뒤에 폭을 읽는다 — 측정 전 레이아웃의 폭으로 판단하지 않게(WD-846)
       await expect(body.locator('[data-chart-measured="true"]')).toHaveCount(1);
       const box = await body.boundingBox();
@@ -167,16 +171,28 @@ test.describe('대시보드 위젯 높이 채우기 (WD-845)', () => {
       rows: [{ name: 'A', v: 12345678 }],
       widgetWidth: 2,
     });
-    await page.goto('/analytics/dashboards/1');
+    await gotoDashboard(page);
     const body = page.getByTestId(BODY);
     await expect(body.locator('[data-chart-measured="true"]')).toHaveCount(1);
-    const bodyBox = (await body.boundingBox())!;
+    const valueText = body.locator('text', { hasText: '12,345,678' });
+    await expect(valueText).toHaveCount(1);
+    // 측정 표식은 첫 폭에 붙어 격자가 다시 배치되는 중간 프레임을 읽지 않게 안정될 때까지 읽는다(WD-854)
+    const readBoxes = async () => {
+      const [bodyBox, textBox] = await Promise.all([body.boundingBox(), valueText.boundingBox()]);
+      return { bodyBox: bodyBox!, textBox: textBox! };
+    };
+    let last = await readBoxes();
+    await expect
+      .poll(async () => {
+        const prev = last;
+        last = await readBoxes();
+        return (['bodyBox', 'textBox'] as const).every((k) => last[k].x === prev[k].x && last[k].width === prev[k].width);
+      })
+      .toBe(true);
+    const { bodyBox, textBox } = last;
     // 그릴 만큼은 되는 좁은 폭이어야 이 시험이 의미가 있다(80px 이상, 값 글자를 줄이지 않으면 넘치는 폭)
     expect(bodyBox.width).toBeGreaterThanOrEqual(80);
     expect(bodyBox.width).toBeLessThan(140);
-    const valueText = body.locator('text', { hasText: '12,345,678' });
-    await expect(valueText).toHaveCount(1);
-    const textBox = (await valueText.boundingBox())!;
     expect(textBox.x).toBeGreaterThanOrEqual(bodyBox.x);
     expect(textBox.x + textBox.width).toBeLessThanOrEqual(bodyBox.x + bodyBox.width);
   });
@@ -186,7 +202,7 @@ test.describe('대시보드 위젯 높이 채우기 (WD-845)', () => {
     const rows = [{ name: 'A', v: 1e308 }, { name: 'B', v: 1e308 }, { name: 'C', v: -5 }];
     const get = async (h: number) => {
       await setup(page, c, h, { rows });
-      await page.goto('/analytics/dashboards/1');
+      await gotoDashboard(page);
       const el = page.getByTestId('waterfall-overflow-notice');
       await expect(el).toBeVisible();
       const read = async () => ({
