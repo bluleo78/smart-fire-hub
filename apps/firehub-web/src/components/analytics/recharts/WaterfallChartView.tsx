@@ -16,7 +16,24 @@ import { ChartDrawingArea } from '../ChartDrawingArea';
 export function WaterfallChartView({ data, config, height = 300 }: ChartViewProps) {
   // WD-826: 누적 계산은 값 대체 표(chart-a11y)와 같은 함수를 쓴다 — 표가 단계별 증감과 누적을 함께 전하게
   const valueKey = config.yAxis[0] ?? '';
-  const rows = useMemo(() => transformWaterfallData(data, config.xAxis, valueKey), [data, config.xAxis, valueKey]);
+  const { rows, overflow } = useMemo(
+    () => transformWaterfallData(data, config.xAxis, valueKey),
+    [data, config.xAxis, valueKey],
+  );
+
+  // WD-844: 누적이 유한하지 않으면 Infinity 막대·축 대신 안내만 보인다(파이 pie-empty-notice 와 같은 모양).
+  // 그림이 없으므로 ChartDrawingArea 밖에 두어 스크린리더가 읽게 한다.
+  if (overflow) {
+    return (
+      <p
+        data-testid="waterfall-overflow-notice"
+        className="flex w-full items-center justify-center text-sm text-muted-foreground"
+        style={{ height: height ?? '100%' }}
+      >
+        값의 누적이 너무 커서 폭포 차트로 그릴 수 없습니다.
+      </p>
+    );
+  }
 
   return (
     <ChartDrawingArea>

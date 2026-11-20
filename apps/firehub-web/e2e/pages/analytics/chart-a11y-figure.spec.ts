@@ -128,6 +128,59 @@ test.describe('차트 접근 이름·값 대체 표 (WD-826)', () => {
     await expectFigureContent(page, '「월별 매출」 막대 차트');
   });
 
+  test('폭포 누적이 무한대로 넘치면 넘침 안내만 보이고 Infinity·NaN 은 어디에도 없다 (WD-844)', async ({
+    authenticatedPage: page,
+  }) => {
+    const widget = createWidget({ id: 1, chartId: 1, chartName: '증감 폭포', chartType: 'WATERFALL', width: 6, height: 4 });
+    const chart = createChart({
+      id: 1,
+      name: '증감 폭포',
+      chartType: 'WATERFALL',
+      config: { xAxis: 'region', yAxis: ['amount'] },
+    });
+    const huge = createQueryResult({
+      columns: ['region', 'amount'],
+      rows: [
+        { region: '서울', amount: 1e308 },
+        { region: '부산', amount: 1e308 },
+        { region: '대구', amount: -5 },
+      ],
+      totalRows: 3,
+    });
+    await mockSingleChartDashboard(page, { widget, chart, queryResult: huge });
+    await page.goto('/analytics/dashboards/1');
+
+    await expect(page.getByTestId('waterfall-overflow-notice')).toHaveText('값의 누적이 너무 커서 폭포 차트로 그릴 수 없습니다.');
+    await expect(page.getByText('Infinity')).toHaveCount(0);
+    await expect(page.getByText('NaN')).toHaveCount(0);
+  });
+
+  test('폭포 누적은 유한해도 Y축 범위가 넘치면 넘침 안내만 보이고 Infinity·NaN 은 없다 (WD-844)', async ({
+    authenticatedPage: page,
+  }) => {
+    const widget = createWidget({ id: 1, chartId: 1, chartName: '증감 폭포', chartType: 'WATERFALL', width: 6, height: 4 });
+    const chart = createChart({
+      id: 1,
+      name: '증감 폭포',
+      chartType: 'WATERFALL',
+      config: { xAxis: 'region', yAxis: ['amount'] },
+    });
+    const wide = createQueryResult({
+      columns: ['region', 'amount'],
+      rows: [
+        { region: '서울', amount: -1e308 },
+        { region: '부산', amount: 1e308 },
+        { region: '대구', amount: 1e308 },
+      ],
+      totalRows: 3,
+    });
+    await mockSingleChartDashboard(page, { widget, chart, queryResult: wide });
+    await page.goto('/analytics/dashboards/1');
+
+    await expect(page.getByTestId('waterfall-overflow-notice')).toBeVisible();
+    await expect(page.getByText(/Infinity|NaN/)).toHaveCount(0);
+  });
+
   test('파이 음수 제외 안내는 figure 안에서 숨기지 않아 스크린리더가 읽는다', async ({ authenticatedPage: page }) => {
     const widget = createWidget({ id: 1, chartId: 1, chartName: '지역 비중', chartType: 'PIE', width: 6, height: 4 });
     const chart = createChart({

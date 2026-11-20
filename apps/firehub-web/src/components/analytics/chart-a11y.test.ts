@@ -226,6 +226,15 @@ describe('buildChartDataTable — 차트가 그리는 값 (WD-826)', () => {
     expect(t.rows[0][t.headers.indexOf('min')]).toBe('5');
   });
 
+  it('폭포 차트: 누적이 넘치면 행 없이 「누적 합계가 너무 큼」, 유한하면 그대로 싣는다(WD-844)', () => {
+    const cfg = { xAxis: 'step', yAxis: ['v'] };
+    const big = buildChartDataTable('WATERFALL', cfg, ['step', 'v'], ['1e308', '1e308', '-5'].map((v, i) => ({ step: `s${i}`, v })), 'N');
+    expect(big.rows).toHaveLength(0);
+    expect(big.caption.endsWith('(누적 합계가 너무 큼)')).toBe(true);
+    const ok = buildChartDataTable('WATERFALL', cfg, ['step', 'v'], [10, -3, 5].map((v, i) => ({ step: `s${i}`, v })), 'N');
+    expect(ok.rows.map((r) => r[2])).toEqual(['10', '7', '12']);
+  });
+
   it('변환 표도 100행 제한·캡션 규칙을 따른다', () => {
     const data = Array.from({ length: 150 }, (_, i) => ({ step: `s${i}`, v: 1 }));
     const table = buildChartDataTable('WATERFALL', { xAxis: 'step', yAxis: ['v'] }, ['step', 'v'], data, 'N');

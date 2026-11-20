@@ -19,7 +19,7 @@ describe('readHistogramValues', () => {
 
 describe('transformWaterfallData', () => {
   it('읽을 수 없는 증감은 0 으로 보고 누적이 항상 유한하다', () => {
-    const rows = transformWaterfallData(
+    const { rows } = transformWaterfallData(
       [
         { s: 'a', v: '10' },
         { s: 'b', v: '1,234' },
@@ -30,6 +30,39 @@ describe('transformWaterfallData', () => {
     );
     expect(rows.map((r) => r.cumulative)).toEqual([10, 10, 7]);
     expect(rows.every((r) => Number.isFinite(r.cumulative))).toBe(true);
+  });
+
+  it('증감은 유한해도 누적이 넘치면 행 없이 overflow 로 판정한다(WD-844)', () => {
+    const data = [{ s: 'a', v: '1e308' }, { s: 'b', v: '1e308' }, { s: 'c', v: '-5' }];
+    expect(transformWaterfallData(data, 's', 'v')).toEqual({ rows: [], overflow: true });
+  });
+
+  it('양·음 무한이 섞여 NaN 이 되기 전 중간에 Infinity 면 overflow 다(WD-844)', () => {
+    const data = [1e308, 1e308, -1e308, -1e308, -1e308].map((v, i) => ({ s: `s${i}`, v }));
+    expect(transformWaterfallData(data, 's', 'v').overflow).toBe(true);
+  });
+
+  it('누적이 아슬아슬하게 유한하면 overflow 가 아니다(WD-844)', () => {
+    const data = [1e307, 1e307, 1e307].map((v, i) => ({ s: `s${i}`, v }));
+    const result = transformWaterfallData(data, 's', 'v');
+    expect(result.overflow).toBe(false);
+    expect(result.rows).toHaveLength(3);
+    expect(result.rows[2].cumulative).toBe(3e307);
+  });
+
+  it('누적은 모두 유한해도 Y축 범위(최대-최소)가 넘치면 overflow 다(WD-844)', () => {
+    const data = [-1e308, 1e308, 1e308].map((v, i) => ({ s: `s${i}`, v }));
+    expect(transformWaterfallData(data, 's', 'v')).toEqual({ rows: [], overflow: true });
+  });
+
+  it('단일 합계가 최댓값에 가까워 눈금 올림이 넘치면 overflow 다(WD-844)', () => {
+    const result = transformWaterfallData([{ s: 'a', v: 1.7e308 }], 's', 'v');
+    expect(result.overflow).toBe(true);
+    expect(result.rows).toEqual([]);
+  });
+
+  it('빈 데이터는 overflow 가 아니다(WD-844)', () => {
+    expect(transformWaterfallData([], 's', 'v')).toEqual({ rows: [], overflow: false });
   });
 });
 
