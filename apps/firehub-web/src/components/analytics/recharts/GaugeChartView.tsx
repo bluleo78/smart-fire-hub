@@ -8,6 +8,7 @@ import { HIDDEN_CHART_ROOT_PROPS } from '../chart-figure-context';
 import type { ChartViewProps } from '../chart-view-props';
 import { ChartDrawingArea } from '../ChartDrawingArea';
 import { isNonNumericValue } from '../numeric-columns';
+import { GaugeInvalidRangeNotice } from './GaugeInvalidRangeNotice';
 import { NonNumericValueNotice } from './NonNumericValueNotice';
 
 /** 잰 폭·높이 중 작은 쪽의 하한(px) — 이보다 작으면 게이지를 그리지 않는다(WD-846) */
@@ -42,7 +43,9 @@ export function GaugeChartView(props: ChartViewProps) {
   // 안내 높이는 원래 prop 을 넘긴다 — fillParent(undefined)면 부모 높이를 채워 가운데에 보이게.
   if (data.some((row) => isNonNumericValue(row[valueKey]))) return <NonNumericValueNotice height={props.height} />;
   // 값(빈 값은 0)과 범위(max 미설정 시 값의 120%) — WD-826: 값 대체 표(chart-a11y)와 같은 함수를 쓴다
-  const { value, min, max } = computeGaugeReading(data, config);
+  const { value, min, max, invalidRange } = computeGaugeReading(data, config);
+  // 잘못된 범위는 그리지 않고 안내한다(이유는 computeGaugeReading, WD-848) — 숫자 아님 안내 뒤, pct 계산 전
+  if (invalidRange) return <GaugeInvalidRangeNotice min={min} max={max} height={props.height} />;
   const pct = Math.min(Math.max((value - min) / (max - min), 0), 1);
 
   // 반원 배경 + 값 호

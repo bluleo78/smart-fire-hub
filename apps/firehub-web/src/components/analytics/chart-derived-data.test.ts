@@ -162,6 +162,39 @@ describe('getScatterUsedY / isScatterPoint (WD-831)', () => {
 // WD-838: 공백뿐인 값은 빈 값이다 — 게이지·퍼널 뷰는 isNonNumericValue 가 false 일 때 안내 없이 0 으로 그린다.
 describe('공백뿐인 값 (게이지·퍼널, WD-838)', () => {
   it('computeGaugeReading: 첫 값이 공백이면 던지지 않고 0 으로 읽는다', () => {
-    expect(computeGaugeReading([{ v: ' ' }], { yAxis: ['v'] } as never)).toEqual({ value: 0, min: 0, max: 100 });
+    expect(computeGaugeReading([{ v: ' ' }], { yAxis: ['v'] } as never)).toEqual({
+      value: 0,
+      min: 0,
+      max: 100,
+      invalidRange: false,
+    });
+  });
+});
+
+// WD-848: 최댓값 ≤ 최솟값이거나 범위가 유한하지 않으면 호·바늘 각도가 NaN 이 되므로 invalidRange 로 판정한다.
+describe('computeGaugeReading 범위 판정 (WD-848)', () => {
+  const read = (config: Record<string, unknown>, v = 50) =>
+    computeGaugeReading([{ v }], { yAxis: ['v'], ...config } as never);
+
+  it.each([
+    ['최댓값 = 최솟값', { min: 100, max: 100 }],
+    ['최댓값 < 최솟값', { min: 100, max: 60 }],
+  ])('%s 이면 잘못된 범위', (_name, config) => {
+    expect(read(config).invalidRange).toBe(true);
+  });
+  it('최솟값만 설정하면 최댓값을 최솟값의 120% 로 맞춰 역범위를 만들지 않는다', () => {
+    expect(read({ min: 200 }, 100)).toMatchObject({ min: 200, max: 240, invalidRange: false });
+    expect(read({ min: 1 }, 0.5)).toMatchObject({ min: 1, max: 2, invalidRange: false });
+  });
+  it('최댓값만 설정하면 최솟값을 최댓값 아래로 맞춘다', () => {
+    expect(read({ max: -10 }, 5)).toMatchObject({ min: -12, max: -10, invalidRange: false });
+    expect(read({ max: 0 }, 5)).toMatchObject({ min: -100, max: 0, invalidRange: false });
+  });
+  it('NaN·Infinity 는 잘못된 범위', () => {
+    expect(read({ min: 0, max: Number.NaN }).invalidRange).toBe(true);
+    expect(read({ min: 0, max: Infinity }).invalidRange).toBe(true);
+  });
+  it('정상 범위는 잘못된 범위가 아니다', () => {
+    expect(read({ min: 0, max: 100 }, 70).invalidRange).toBe(false);
   });
 });

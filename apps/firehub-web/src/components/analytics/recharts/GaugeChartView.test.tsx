@@ -59,3 +59,55 @@ describe('GaugeChartView — 고정 높이 (WD-846)', () => {
     expect(container.textContent).not.toContain('20,000,000');
   });
 });
+
+describe('GaugeChartView — 범위 잘못됨 안내 (WD-848)', () => {
+  const NOTICE = 'chart-gauge-invalid-range';
+
+  it.each([
+    ['min = max', { min: 100, max: 100 }, '게이지 최댓값(100)이 최솟값(100)보다 커야 합니다.'],
+    ['max < min', { min: 100, max: 60 }, '게이지 최댓값(60)이 최솟값(100)보다 커야 합니다.'],
+  ])('%s 이면 두 값을 담은 안내를 보이고 바늘·호를 그리지 않는다', (_name, range, text) => {
+    mockParentSize(400, 240);
+    const { container, getByTestId } = render(
+      <GaugeChartView data={[{ name: 'A', v: 50 }]} config={{ ...CONFIG, ...range }} height={240} />,
+    );
+    expect(getByTestId(NOTICE).textContent).toBe(text);
+    expect(container.querySelector('line')).toBeNull();
+    expect(container.querySelector('.recharts-wrapper')).toBeNull();
+  });
+
+  it('한쪽만 설정한 min 이 자동 max 보다 크면 max 를 맞춰 정상 게이지로 그린다', () => {
+    mockParentSize(400, 240);
+    const { container, queryByTestId } = render(
+      <GaugeChartView data={[{ name: 'A', v: 100 }]} config={{ xAxis: 'name', yAxis: ['v'], min: 200 }} height={240} />,
+    );
+    expect(queryByTestId(NOTICE)).toBeNull();
+    expect(container.querySelector('line')).not.toBeNull();
+    expect(container.textContent).toContain('200 ~ 240');
+  });
+
+  it('숫자 아닌 값 안내가 범위 안내보다 먼저다', () => {
+    mockParentSize(400, 240);
+    const { queryByTestId } = render(
+      <GaugeChartView data={[{ name: 'A', v: '서울' }]} config={{ ...CONFIG, min: 100, max: 60 }} height={240} />,
+    );
+    expect(queryByTestId('chart-non-numeric-value')).not.toBeNull();
+    expect(queryByTestId(NOTICE)).toBeNull();
+  });
+
+  it('height 가 없으면(fillParent) 안내가 부모 높이를 채운다', () => {
+    const { getByTestId } = render(
+      <GaugeChartView data={[{ name: 'A', v: 50 }]} config={{ ...CONFIG, min: 100, max: 60 }} />,
+    );
+    expect(getByTestId(NOTICE).className).toContain('h-full');
+  });
+
+  it('정상 범위면 안내 없이 바늘을 그린다', () => {
+    mockParentSize(400, 240);
+    const { container, queryByTestId } = render(
+      <GaugeChartView data={[{ name: 'A', v: 70 }]} config={CONFIG} height={240} />,
+    );
+    expect(queryByTestId(NOTICE)).toBeNull();
+    expect(container.querySelector('line')).not.toBeNull();
+  });
+});

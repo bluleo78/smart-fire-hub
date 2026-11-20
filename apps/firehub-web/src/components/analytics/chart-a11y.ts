@@ -146,8 +146,11 @@ function buildDerivedTable(
     case 'GAUGE': {
       // 게이지는 첫 행 값 하나와 눈금 범위(min ~ max)만 보여 준다 — 그 세 값을 한 행으로 준다.
       // config.target 은 뷰가 그리지 않으므로 표에도 넣지 않는다.
-      const { value, min, max } = computeGaugeReading(data, config);
-      return toTable([config.yAxis[0] ?? '값', '최솟값', '최댓값'], [[cell(value), cell(min), cell(max)]], accessibleName);
+      const { value, min, max, invalidRange } = computeGaugeReading(data, config);
+      const gaugeRows = [[cell(value), cell(min), cell(max)]];
+      const gaugeHeaders = [config.yAxis[0] ?? '값', '최솟값', '최댓값'];
+      // 범위가 잘못되면(WD-848) 뷰는 게이지 대신 안내를 보이므로, 값 행은 그대로 두고 캡션 꼬리에 이유를 싣는다
+      return toLimitedTable(gaugeHeaders, 1, gaugeRows, accessibleName, invalidRange ? '범위 잘못됨(최댓값 ≤ 최솟값)' : '');
     }
     case 'BOXPLOT': {
       // 박스 플롯은 X 카테고리별 통계(min·q1·median·q3·max)를 그린다 — 결과에 있는 통계 항목을 뷰가 읽는 값으로 준다

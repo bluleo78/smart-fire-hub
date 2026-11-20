@@ -195,6 +195,12 @@ describe('buildChartDataTable — 차트가 그리는 값 (WD-826)', () => {
     });
   });
 
+  it('게이지 범위가 잘못되면(최댓값 ≤ 최솟값) 행은 그대로 두고 캡션에 이유를 싣는다 (WD-848)', () => {
+    const table = buildChartDataTable('GAUGE', { xAxis: '', yAxis: ['v'], min: 100, max: 100 }, ['v'], [{ v: 50 }], 'N');
+    expect(table.rows).toEqual([['50', '100', '100']]);
+    expect(table.caption).toContain('범위 잘못됨(최댓값 ≤ 최솟값)');
+  });
+
   it('게이지 최댓값이 없으면 뷰처럼 값의 120%(올림)를 쓴다', () => {
     const table = buildChartDataTable('GAUGE', { xAxis: '', yAxis: ['v'] }, ['v'], [{ v: 42 }], 'N');
     expect(table.rows).toEqual([['42', '0', '51']]);
