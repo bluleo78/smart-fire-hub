@@ -21,12 +21,16 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 /**
  * 수동 실행 중첩 409 가드(WD-825).
  *
  * <p>대기(PENDING)·실행 중(RUNNING) 실행이 있는 파이프라인을 수동 실행하면 409 로 거부하고 실행 행·감사가 늘지 않는지, 트리거 실행은 막지 않는지,
  * 동시에 두 번 눌러도 하나만 접수되는지 본다. 실행 행은 러너 없이 픽스처로 직접 넣는다 — 러너가 돌면 상태가 바뀌어 판정 대상이 흔들린다.
+ *
+ * <p>WD-827: 러너를 아무것도 하지 않는 대역으로 바꿔 접수된 실행이 PENDING 에 머문다 — 스텝 0개 실행이 몇 ms 만에 COMPLETED 가 되어 늦게 잠금을 잡은
+ * 두 번째 호출이 접수되던 흔들림을 없앤다.
  *
  * <p>클래스 레벨 {@code @Transactional} 을 쓰지 않는다 — 서비스 트랜잭션이 커밋돼야 경쟁(행 잠금)이 실제로 재현된다.
  */
@@ -35,6 +39,9 @@ class PipelineManualRunGuardTest extends IntegrationTestBase {
   @Autowired private PipelineService pipelineService;
   @Autowired private PipelineExecutionService executionService;
   @Autowired private DSLContext dsl;
+
+  /** WD-827: 비동기 러너를 no-op 으로 대체해 접수된 실행이 PENDING 에 고정되게 한다. */
+  @MockitoBean private PipelineAsyncRunner asyncRunner;
 
   private Long userId;
   private String unique;
@@ -239,5 +246,14 @@ class PipelineManualRunGuardTest extends IntegrationTestBase {
         .hasSize(1)
         .allMatch(PipelineAlreadyRunningException.class::isInstance);
     assertThat(executionCount(id)).isEqualTo(1);
+    // WD-827: 러너가 막혀 있으므로 접수된 실행은 여전히 PENDING 이어야 한다(활성 상태 유지 확인)
+    assertThat(
+            inTenantFixture(
+                () ->
+                    dsl.select(PIPELINE_EXECUTION.STATUS)
+                        .from(PIPELINE_EXECUTION)
+                        .where(PIPELINE_EXECUTION.PIPELINE_ID.eq(id))
+                        .fetchOne(PIPELINE_EXECUTION.STATUS)))
+        .isEqualTo("PENDING");
   }
 }
