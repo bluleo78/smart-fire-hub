@@ -83,7 +83,8 @@ export function SectionTreeBuilder({
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b">
-        <h3 className="text-sm font-semibold">섹션 구조</h3>
+        {/* WD-811: h2 로 단계를 잇되, 배지와 한 줄에 놓이는 툴바형 헤더라 ReportModal(#788) 예외처럼 16px 로 둔다 */}
+        <h2 className="text-base leading-6 font-semibold">섹션 구조</h2>
         <Badge variant="secondary" className="text-xs">
           {flatItems.length}개
         </Badge>

@@ -249,7 +249,8 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
       <div className="space-y-6 pt-4">
         {/* 기본 정보 */}
         <div className="rounded-lg border p-4 space-y-4">
-          <h3 className="text-sm font-semibold">기본 정보</h3>
+          {/* WD-811 — 섹션 제목이 본문 14px 와 같아 위계가 없어 데이터셋 상세와 같은 h2 20px 로 통일 */}
+          <h2 className="text-xl leading-7 font-semibold">기본 정보</h2>
           <div className="grid grid-cols-2 gap-4">
             <ReadonlyCard label="작업명" value={job.name} />
             <ReadonlyCard
@@ -280,7 +281,8 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
 
         {/* 실행 주기 */}
         <div className="rounded-lg border p-4 space-y-4">
-          <h3 className="text-sm font-semibold">실행 주기</h3>
+          {/* 같은 h2 20px 섹션 제목 (WD-811) */}
+          <h2 className="text-xl leading-7 font-semibold">실행 주기</h2>
           <div className="grid grid-cols-2 gap-4">
             <ReadonlyCard label="스케줄" value={cronToLabel(job.cronExpression)} />
             <ReadonlyCard label="타임존" value={job.timezone} />
@@ -313,13 +315,15 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
 
         {/* 프롬프트 */}
         <div className="rounded-lg border p-4 space-y-2">
-          <h3 className="text-sm font-semibold">분석 프롬프트</h3>
+          {/* 같은 h2 20px 섹션 제목 (WD-811) */}
+          <h2 className="text-xl leading-7 font-semibold">분석 프롬프트</h2>
           <p className="text-sm whitespace-pre-wrap text-muted-foreground">{job.prompt}</p>
         </div>
 
         {/* 전달 채널 */}
         <div className="rounded-lg border p-4 space-y-3">
-          <h3 className="text-sm font-semibold">전달 채널</h3>
+          {/* 같은 h2 20px 섹션 제목 (WD-811) */}
+          <h2 className="text-xl leading-7 font-semibold">전달 채널</h2>
           {channelList.length === 0 ? (
             <p className="text-sm text-muted-foreground">설정된 채널이 없습니다.</p>
           ) : (
@@ -358,7 +362,8 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
           const isSkipped = displayStatus === 'SKIPPED';
           return (
             <div className="rounded-lg border p-4 space-y-2">
-              <h3 className="text-sm font-semibold">마지막 실행 상태</h3>
+              {/* 같은 h2 20px 섹션 제목 (WD-811) */}
+              <h2 className="text-xl leading-7 font-semibold">마지막 실행 상태</h2>
               <div className="flex items-center gap-2">
                 <Badge variant={getStatusBadgeVariant(displayStatus)}>
                   {getStatusLabel(displayStatus)}

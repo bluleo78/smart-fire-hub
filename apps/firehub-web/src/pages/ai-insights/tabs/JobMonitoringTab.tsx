@@ -83,8 +83,9 @@ function AnomalyHistorySection({ jobId }: { jobId: number }) {
   return (
     <div className="rounded-lg border p-4 space-y-4">
       <div className="flex items-center gap-2">
-        <AlertTriangle className="h-4 w-4 text-warning" />
-        <h3 className="text-sm font-semibold">최근 이상 탐지</h3>
+        <AlertTriangle className="h-5 w-5 text-warning" />
+        {/* WD-811 — 섹션 제목을 데이터셋 상세와 같은 h2 20px 로 통일(본문 14px 와 위계 구분) */}
+        <h2 className="text-xl leading-7 font-semibold">최근 이상 탐지</h2>
         {/* 감지 건수 배지 */}
         <Badge variant="secondary">{events.length}</Badge>
       </div>
@@ -249,10 +250,11 @@ export default function JobMonitoringTab({ form, isEditing, jobId = 0, onChange 
         {/* 이상 탐지 상태 */}
         <div className="rounded-lg border p-4 space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold flex items-center gap-2">
-              <Activity className="h-4 w-4" />
+            {/* 같은 h2 20px 섹션 제목 (WD-811) */}
+            <h2 className="text-xl leading-7 font-semibold flex items-center gap-2">
+              <Activity className="h-5 w-5" />
               이상 탐지
-            </h3>
+            </h2>
             <Badge
               variant={anomalyIdle ? 'destructive' : anomalyConfig.enabled ? 'default' : 'secondary'}
               data-testid={anomalyIdle ? 'anomaly-idle-badge' : undefined}
