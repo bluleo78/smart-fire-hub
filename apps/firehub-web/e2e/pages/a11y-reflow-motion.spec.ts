@@ -140,10 +140,11 @@ test.describe('지식그래프 툴바 태블릿 폭 겹침 (#402)', () => {
     await page.goto('/knowledge-graph/model');
     await expect(page.locator('[data-slot=tabs-list]')).toBeVisible();
 
-    // 툴바는 이제 모든 폭에서 flex-wrap 이라 wrap 값 자체는 지표가 아니다(WD-840) — 자리가 있는
-    // 1280px 에서 한 줄(높이 < 55)로 유지되는지가 회귀 지표다. 스키마 탭은 온톨로지 선택기
-    // (고정 220px)+버튼 여럿이 붙어 툴바 실폭이 빠듯한 기존 상태라, toolbarFits는 병렬 워커의
-    // 폰트 메트릭 타이밍에 따라 경계선에서 흔들려(#402와 무관한 기존 특성) 여기서는 단언하지 않는다.
+    // 툴바는 모든 폭에서 줄바꿈을 허용하므로(WD-840) 자리가 있는 1280px 에서 한 줄(높이 < 55)로
+    // 남는지가 회귀 지표다. 지식 모델 탭은 1280px 에서 내용(약 830px)이 툴바(약 992px)보다 160px
+    // 가량 좁아 글꼴 메트릭이 달라도 한 줄에 여유 있게 들어간다 — 줄바꿈 허용 뒤라 가로 넘침도 없어야 한다.
+    const title = await titleFit(page);
+    expect(title.toolbarFits).toBe(true);
     const toolbarHeight = await page
       .locator('h1')
       .evaluate((h1) => Math.round(h1.closest('div')!.getBoundingClientRect().height));
@@ -188,13 +189,16 @@ test.describe('지식그래프 툴바 768~1279px 넘침 (WD-840)', () => {
                   '',
                 outLeft: r.left < tb.left - 1,
                 outRight: r.right > tb.right + 1,
-                // 둘째 줄로 내려간 컨트롤이 고정 높이 툴바 아래로 삐져나와 캔버스에 가려지는 경우도 잡는다
+                // 툴바가 줄 수만큼 높아지지 못하면(높이 고정이 되살아나면) 둘째 줄 컨트롤이 툴바 아래로 삐져나와 캔버스에 가려진다 — 그 회귀를 잡는다
                 outVertical: r.top < tb.top - 1 || r.bottom > tb.bottom + 1,
                 // 툴바 자체가 뷰포트보다 넓어 화면 밖에 있는 경우(툴바 안에서는 다 들어와 보여도)를 잡는다
                 outViewport: r.right > document.documentElement.clientWidth + 1,
               };
             });
           return {
+            // 이 수정의 메커니즘 — 툴바와 오른쪽 묶음이 모든 폭에서 줄바꿈을 허용한다(md:flex-nowrap 회귀 방지)
+            wrap: getComputedStyle(toolbar).flexWrap,
+            groupWrap: getComputedStyle(toolbar.lastElementChild as HTMLElement).flexWrap,
             fits: toolbar.scrollWidth <= toolbar.clientWidth + 1,
             height: Math.round(tb.height),
             controls,
@@ -209,11 +213,14 @@ test.describe('지식그래프 툴바 768~1279px 넘침 (WD-840)', () => {
         } else {
           expect(labels).toContain('수정 모드');
         }
+        expect(result.wrap).toBe('wrap');
+        expect(result.groupWrap).toBe('wrap');
         expect(result.fits).toBe(true);
         expect(
           result.controls.filter((c) => c.outLeft || c.outRight || c.outVertical || c.outViewport),
         ).toEqual([]);
-        // 자리가 있는 1280px 탐색 탭은 여전히 한 줄이어야 한다.
+        // 자리가 있는 1280px 탐색 탭은 여전히 한 줄이어야 한다 — 검색 칸 192px 로 내용 약 910px /
+        // 툴바 약 992px, 글꼴이 넓은 환경(+30px)에서도 50px 안팎의 여유가 남는다.
         if (width === 1280 && path.endsWith('/explore')) {
           expect(result.height).toBeLessThan(55);
         }

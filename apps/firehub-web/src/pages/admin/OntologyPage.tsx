@@ -608,8 +608,11 @@ export default function OntologyPage() {
           {showGraphTools && (
             <>
               {/* 최소 폭(min-w-48)을 둬 좁은 화면에서는 온톨로지 선택 상자 옆에서 90px 로 줄지 않고 다음 줄로 내려간다(WD-373).
-                  다음 줄에서는 flex-1 로 넓어져(최대 max-w-sm) 검색어가 보인다. */}
-              <SearchInput placeholder="이름 검색" value={search} onChange={setSearch} className="min-w-48 md:w-64" />
+                  다음 줄에서는 flex-1 로 넓어져(최대 max-w-sm) 검색어가 보인다.
+                  md~xl 은 192px(w-48)로 두고 2xl 부터 256px — 1280px(사이드바 펼침, 툴바 약 992px)에서
+                  w-64 면 여유가 18px 뿐이라 글꼴 메트릭이 조금만 넓어도 오른쪽 묶음이 둘째 줄로 내려갔다.
+                  64px 를 줄여 그 폭에서도 한 줄을 실제로 보장한다(WD-840). */}
+              <SearchInput placeholder="이름 검색" value={search} onChange={setSearch} className="min-w-48 md:w-48 2xl:w-64" />
               {/* 타입 묶기 토글 — 타입별 compound 번들로 접어 밀집을 줄인다. */}
               <Button
                 variant={grouped ? 'secondary' : 'ghost'}
