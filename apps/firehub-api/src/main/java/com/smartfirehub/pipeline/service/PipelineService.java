@@ -14,7 +14,6 @@ import com.smartfirehub.global.json.JsonConversions;
 import com.smartfirehub.global.tenant.DataSchema;
 import com.smartfirehub.pipeline.dto.*;
 import com.smartfirehub.pipeline.exception.PipelineExecutionActiveException;
-import com.smartfirehub.pipeline.exception.PipelineInactiveException;
 import com.smartfirehub.pipeline.exception.PipelineNameConflictException;
 import com.smartfirehub.pipeline.exception.PipelineNotFoundException;
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
@@ -1886,22 +1885,12 @@ public class PipelineService {
 
   public PipelineExecutionResponse executePipeline(
       Long pipelineId, Long userId, String triggeredBy, Long triggerId) {
-    // 파이프라인 존재 여부 확인
-    PipelineResponse pipeline =
-        pipelineRepository.findById(pipelineId).orElseThrow(PipelineNotFoundException::new);
-
-    // 비활성 파이프라인은 수동 실행 불가 — 활성화 후 재시도해야 함 (#187)
-    // 이 문구는 화면 토스트에 그대로 보이므로 사용자 안내 문장으로 쓴다(WD-110).
-    if (!pipeline.isActive()) {
-      throw new PipelineInactiveException("비활성 파이프라인은 실행할 수 없습니다. 파이프라인 편집에서 활성화한 뒤 다시 실행하세요.");
-    }
+    // 없음·비활성 판정은 실행 서비스가 파이프라인 행을 잠근 뒤 한다(WD-856) — 잠금 없는 읽기로는 커밋 전 비활성화를 놓친다.
+    Long executionId = executionService.executePipeline(pipelineId, userId, triggeredBy, triggerId);
 
     // Get user display name
     String username =
         userRepository.findById(userId).map(user -> user.name()).orElse(String.valueOf(userId));
-
-    // Start execution with trigger info
-    Long executionId = executionService.executePipeline(pipelineId, userId, triggeredBy, triggerId);
 
     // Return execution response
     return new PipelineExecutionResponse(

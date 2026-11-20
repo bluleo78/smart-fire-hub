@@ -10,10 +10,12 @@ import com.smartfirehub.pipeline.event.PipelineCompletedEvent;
 import com.smartfirehub.pipeline.exception.CyclicDependencyException;
 import com.smartfirehub.pipeline.exception.ExecutionAlreadyFinishedException;
 import com.smartfirehub.pipeline.exception.PipelineAlreadyRunningException;
+import com.smartfirehub.pipeline.exception.PipelineInactiveException;
 import com.smartfirehub.pipeline.exception.PipelineNotFoundException;
 import com.smartfirehub.pipeline.repository.PipelineExecutionRepository;
 import com.smartfirehub.pipeline.repository.PipelineExecutionRepository.ActiveExecutionState;
 import com.smartfirehub.pipeline.repository.PipelineRepository;
+import com.smartfirehub.pipeline.repository.PipelineRepository.LockedPipeline;
 import com.smartfirehub.pipeline.repository.PipelineStepRepository;
 import com.smartfirehub.user.repository.UserRepository;
 import java.time.LocalDateTime;
@@ -356,16 +358,27 @@ public class PipelineExecutionService {
    * @param triggeredBy 트리거 유형 (예: "MANUAL", "SCHEDULE", "API")
    * @param triggerId 트리거 레코드 ID (해당 없으면 null)
    * @return 생성된 파이프라인 실행 레코드 ID
+   * @throws PipelineNotFoundException 파이프라인이 없을 때(모든 실행 경로)
+   * @throws PipelineInactiveException 잠근 행이 비활성일 때(모든 실행 경로, WD-856)
+   * @throws PipelineAlreadyRunningException 수동 실행인데 대기·실행 중인 실행이 있을 때(WD-825)
    */
   @Transactional
   public Long executePipeline(Long pipelineId, Long userId, String triggeredBy, Long triggerId) {
-    // 수동 실행 중첩 가드(WD-825): 이미 대기·실행 중인 실행이 있으면 409 로 거부한다. 파이프라인 행을 FOR UPDATE 로
-    // 잠근 뒤 판정해 동시에 들어온 수동 실행 둘이 모두 통과하지 못하게 한다(삭제 가드 WD-437 의 경쟁 정리와 같은 방식 —
+    // 행을 먼저 잠근 뒤 활성 여부를 판정한다(WD-856) — 커밋 전 비활성화를 기다렸다가 그 값을 본다. 트리거 발화는 이미 같은
+    // 잠금 아래 판정(WD-853)해 여기 닿지 않지만, 모든 실행 경로의 뒷받침이라 지우지 않는다.
+    LockedPipeline locked =
+        pipelineRepository.lockById(pipelineId).orElseThrow(PipelineNotFoundException::new);
+    if (!locked.active()) {
+      // 이 문구는 화면 토스트에 그대로 보이므로 사용자 안내 문장으로 쓴다(WD-110·#187).
+      throw new PipelineInactiveException("비활성 파이프라인은 실행할 수 없습니다. 파이프라인 편집에서 활성화한 뒤 다시 실행하세요.");
+    }
+
+    // 수동 실행 중첩 가드(WD-825): 이미 대기·실행 중인 실행이 있으면 409 로 거부한다. 위에서 잠근 행 기준으로 판정해
+    // 동시에 들어온 수동 실행 둘이 모두 통과하지 못하게 한다(삭제 가드 WD-437 의 경쟁 정리와 같은 방식 —
     // 잠금은 이 트랜잭션이 끝날 때 풀리고, 뒤 요청은 앞 실행 행이 커밋된 뒤 PENDING 을 본다).
     // 트리거 실행(SCHEDULE·API·WEBHOOK 등)은 기존 동시 실행 정책을 따르므로 막지 않는다.
     // triggeredBy 가 null 이면 createExecution 이 "MANUAL" 로 저장하므로 가드에서도 수동 실행으로 본다(우회 방지).
     if (triggeredBy == null || MANUAL_TRIGGER.equals(triggeredBy)) {
-      pipelineRepository.lockById(pipelineId).orElseThrow(PipelineNotFoundException::new);
       ActiveExecutionState active = executionRepository.findActiveExecutionState(pipelineId);
       if (active != ActiveExecutionState.NONE) {
         throw new PipelineAlreadyRunningException(active == ActiveExecutionState.CANCELLING);

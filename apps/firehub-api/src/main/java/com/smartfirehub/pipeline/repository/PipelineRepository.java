@@ -65,6 +65,8 @@ public interface PipelineRepository {
    *       — 어느 순서든 판정과 삭제 사이에 실행이 끼어들지 못한다.
    *   <li>트리거 발화(WD-853): 정책과 무관하게 활성 판정 전에 이 행을 잠그고 {@link LockedPipeline#active()} 로 판정한다. 잠금 없이
    *       읽으면 커밋 전 비활성화를 놓쳐 방금 끈 파이프라인이 한 번 더 실행된다.
+   *   <li>실행 생성(WD-856): 수동·트리거를 가리지 않고 실행을 만들기 전에 이 행을 잠그고 {@link LockedPipeline#active()} 로 판정한다
+   *       — 수동 실행도 커밋 전 비활성화를 기다렸다가 거절한다.
    * </ul>
    */
   Optional<LockedPipeline> lockById(Long id);

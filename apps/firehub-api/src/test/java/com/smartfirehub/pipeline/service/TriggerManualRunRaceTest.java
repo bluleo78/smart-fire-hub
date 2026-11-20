@@ -10,6 +10,7 @@ import com.smartfirehub.pipeline.dto.TriggerFireResult;
 import com.smartfirehub.pipeline.dto.TriggerType;
 import com.smartfirehub.pipeline.dto.UpdatePipelineRequest;
 import com.smartfirehub.pipeline.exception.PipelineAlreadyRunningException;
+import com.smartfirehub.pipeline.exception.PipelineInactiveException;
 import com.smartfirehub.pipeline.repository.TriggerEventRepository;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.PausedTransactionRace;
@@ -33,6 +34,8 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
  * <p>WD-853: 파이프라인 비활성화가 커밋 전일 때 트리거(SKIP·ALLOW 모두)가 잠금 뒤에서 활성 여부를 읽어, 커밋을 기다렸다가 비활성으로 건너뛰는지 본다.
  *
  * <p>WD-855: 트리거 끄기·삭제가 커밋 전일 때 발화가 파이프라인 잠금 뒤 트리거 행도 잠그고 다시 읽어, 커밋을 기다렸다가 꺼짐·없음으로 건너뛰는지 본다.
+ *
+ * <p>WD-856: 수동 실행도 파이프라인 행을 잠근 뒤 활성 여부를 판정해, 커밋 전 비활성화를 기다렸다가 비활성으로 거절되는지 본다.
  *
  * <p>클래스 레벨 {@code @Transactional} 을 쓰지 않는다 — 커밋돼야 행 잠금 경쟁이 재현된다. 러너는 no-op 대역이라 접수된 실행이 PENDING 에
  * 머문다.
@@ -195,15 +198,18 @@ class TriggerManualRunRaceTest extends IntegrationTestBase {
     assertThat(executionCount()).isEqualTo(2);
   }
 
+  /** 실제 사용자 경로(PipelineService.updatePipeline)로 비활성화하는 요청을 만든다 — 현재 값은 일시정지 트랜잭션 밖에서 읽어 둔다. */
+  private UpdatePipelineRequest deactivateRequest() {
+    var current = inTenantFixture(() -> pipelineService.getPipelineById(pipelineId));
+    return new UpdatePipelineRequest(
+        current.name(), current.description(), false, List.of(), current.updatedAt());
+  }
+
   /** 커밋 전 비활성화를 트리거 발화가 잠금에서 기다린 뒤 비활성으로 건너뛰는지 확인한다(WD-853). */
   private void assertWaitsForDeactivation(String policy) throws Exception {
     Long triggerId = createScheduleTrigger(policy);
 
-    // 실제 사용자 경로(PipelineService.updatePipeline)로 비활성화한다 — 현재 값은 일시정지 트랜잭션 밖에서 읽어 둔다.
-    var current = inTenantFixture(() -> pipelineService.getPipelineById(pipelineId));
-    var deactivate =
-        new UpdatePipelineRequest(
-            current.name(), current.description(), false, List.of(), current.updatedAt());
+    var deactivate = deactivateRequest();
 
     var outcome =
         PausedTransactionRace.run(
@@ -270,6 +276,25 @@ class TriggerManualRunRaceTest extends IntegrationTestBase {
     assertThat(outcome.secondBlocked()).isTrue();
     assertThat(outcome.secondError()).isNull();
     assertThat(outcome.secondResult().outcome()).isEqualTo(TriggerFireResult.Outcome.NOT_FOUND);
+    assertThat(executionCount()).isZero();
+  }
+
+  /** 커밋 전 비활성화를 수동 실행이 파이프라인 행 잠금에서 기다린 뒤 비활성으로 거절된다(WD-856). */
+  @Test
+  void manualRun_waitsForUncommittedDeactivation_thenRejectedInactive() throws Exception {
+    var deactivate = deactivateRequest();
+
+    var outcome =
+        PausedTransactionRace.run(
+            fixtureTransactionTemplate,
+            DEFAULT_TEST_TENANT_ID,
+            () -> pipelineService.updatePipeline(pipelineId, deactivate, userId),
+            () -> pipelineService.executePipeline(pipelineId, userId));
+
+    assertThat(outcome.secondBlocked()).isTrue();
+    assertThat(outcome.secondError())
+        .isInstanceOf(PipelineInactiveException.class)
+        .hasMessage("비활성 파이프라인은 실행할 수 없습니다. 파이프라인 편집에서 활성화한 뒤 다시 실행하세요.");
     assertThat(executionCount()).isZero();
   }
 }
