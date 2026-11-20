@@ -15,7 +15,7 @@ import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { TruncatedText } from '@/components/ui/truncated-text';
 import { useRoleClearance } from '@/hooks/queries/useSecurityLevels';
 import { useGuardedSubmit } from '@/hooks/useSubmitGuard';
-import { extractApiError, handleApiError, isNotFoundError } from '@/lib/api-error';
+import { extractApiError, handleApiError, isBadRequestError, isNotFoundError } from '@/lib/api-error';
 import { iGa } from '@/lib/utils';
 
 import { rolesApi } from '../../api/roles';
@@ -111,7 +111,9 @@ export default function RoleListPage() {
   const [roles, setRoles] = useState<RoleResponse[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [createError, setCreateError] = useState('');
+  // 생성 실패 서버 오류 — 이름 칸 오류(400: 이름 중복 등, 칸에 이어 읽힘)와 이름과 무관한 폼 오류(그 밖, 폼 문단 알림)는
+  // 동시에 나지 않으므로 한 상태에 field 로 구분해 담는다. 지울 때는 안정적인 setter 하나만 부르면 된다.
+  const [serverError, setServerError] = useState<{ field: 'name' | 'form'; message: string } | null>(null);
 
   const form = useForm<CreateRoleFormData>({
     resolver: zodResolver(createRoleSchema),
@@ -141,12 +143,18 @@ export default function RoleListPage() {
   // (제출 시에만 초기화하면, 값만 고치고 아직 제출 전인 상태에서 stale 에러가 남는 문제가 있었다 - #558)
   const nameValue = form.watch('name');
   useEffect(() => {
-    setCreateError('');
+    setServerError(null);
   }, [nameValue]);
 
+  // 닫힘 세대 카운터 — 요청 중에 대화상자를 닫으면 올려서, 늦게 도착한 서버 오류가
+  // 닫힌(그러나 마운트된) 대화상자에 남아 다시 열었을 때 보이는 것을 막는다.
+  const closeGenRef = useRef(0);
+
   const onCreateSubmit = async (data: CreateRoleFormData) => {
+    // 제출 시작 시점의 세대를 잡아 두고, catch 에서 바뀌었으면 오류를 버린다
+    const gen = closeGenRef.current;
     try {
-      setCreateError('');
+      setServerError(null);
       await rolesApi.createRole({
         name: data.name,
         description: data.description || undefined,
@@ -156,7 +164,16 @@ export default function RoleListPage() {
       form.reset();
       fetchRoles();
     } catch (error) {
-      setCreateError(extractApiError(error, '역할 생성에 실패했습니다.'));
+      // 요청 중에 닫혔다면 늦게 온 오류를 표시하지 않는다(다시 열었을 때 묵은 오류가 남지 않게)
+      if (gen !== closeGenRef.current) return;
+      const message = extractApiError(error, '역할 생성에 실패했습니다.');
+      // CreateRoleRequest 는 name 만 검증하므로 400 은 이름 문제다 — 이름 칸 오류로 이어 읽히게 하고 칸으로 포커스를 돌린다.
+      if (isBadRequestError(error)) {
+        setServerError({ field: 'name', message });
+        form.setFocus('name');
+      } else {
+        setServerError({ field: 'form', message });
+      }
     }
   };
 
@@ -179,7 +196,17 @@ export default function RoleListPage() {
       <div className="flex items-center justify-between">
         <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">역할 관리</h1>
         {canWriteRole && (
-          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+          <Dialog
+            open={dialogOpen}
+            onOpenChange={(next) => {
+              // 닫힐 때(취소·X·ESC·바깥 클릭 모두) 서버 오류를 지워 다시 열었을 때 묵은 오류가 남지 않게 한다.
+              if (!next) {
+                closeGenRef.current += 1;
+                setServerError(null);
+              }
+              setDialogOpen(next);
+            }}
+          >
             <DialogTrigger asChild>
               <Button>
                 <Plus className="h-4 w-4" />
@@ -198,7 +225,7 @@ export default function RoleListPage() {
                   label="역할 이름"
                   htmlFor="role-name"
                   required
-                  error={form.formState.errors.name?.message}
+                  error={form.formState.errors.name?.message ?? (serverError?.field === 'name' ? serverError.message : undefined)}
                   description={ROLE_NAME_RULE}
                 >
                   {/* * 는 눈으로만 보이므로 보조 기술에는 aria-required 로 필수를 알린다(브라우저 기본 검증 말풍선을 피해 required 는 쓰지 않는다) */}
@@ -217,8 +244,8 @@ export default function RoleListPage() {
                     {...form.register('description')}
                   />
                 </FormField>
-                {createError && (
-                  <p className="text-sm text-destructive">{createError}</p>
+                {serverError?.field === 'form' && (
+                  <p role="alert" className="text-sm text-destructive">{serverError.message}</p>
                 )}
                 <PendingSubmitButton className="w-full" pending={form.formState.isSubmitting}>
                   {form.formState.isSubmitting ? '만드는 중...' : '만들기'}
