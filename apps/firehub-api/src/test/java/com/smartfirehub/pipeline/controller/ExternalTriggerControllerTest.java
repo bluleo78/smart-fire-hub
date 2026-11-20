@@ -6,6 +6,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.smartfirehub.global.dto.ErrorResponse;
 import com.smartfirehub.pipeline.dto.*;
 import com.smartfirehub.pipeline.service.PipelineService;
 import com.smartfirehub.pipeline.service.TriggerService;
@@ -24,6 +25,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.test.web.servlet.MockMvc;
 
 @AutoConfigureMockMvc
@@ -32,6 +35,8 @@ class ExternalTriggerControllerTest extends IntegrationTestBase {
   @Autowired private MockMvc mockMvc;
 
   @Autowired private TriggerService triggerService;
+
+  @Autowired private ExternalTriggerController externalTriggerController;
 
   @Autowired private PipelineService pipelineService;
 
@@ -139,6 +144,20 @@ class ExternalTriggerControllerTest extends IntegrationTestBase {
         .andExpect(jsonPath("$.reason").value("트리거가 꺼져 있어 실행하지 않았습니다"));
 
     assertThat(eventsOf(trigger.id())).isEmpty();
+  }
+
+  /** WD-857: 서비스가 잠금 뒤 재검사에서 REJECTED 를 돌려주면 컨트롤러는 앞 검사와 같은 403 "IP not allowed" 로 매핑한다. */
+  @Test
+  void toFireResponse_rejected_mapsToForbiddenIpNotAllowed() {
+    MockHttpServletRequest request = new MockHttpServletRequest("POST", "/api/v1/triggers/api/x");
+
+    ResponseEntity<?> response =
+        externalTriggerController.toFireResponse(
+            TriggerFireResult.notFired(TriggerFireResult.Outcome.REJECTED, null), null, request);
+
+    assertThat(response.getStatusCode().value()).isEqualTo(403);
+    assertThat(response.getBody()).isInstanceOf(ErrorResponse.class);
+    assertThat(((ErrorResponse) response.getBody()).message()).isEqualTo("IP not allowed");
   }
 
   /** 꺼진 API 트리거라도 IP 제한이 먼저다 — 허용되지 않은 IP 에는 "꺼져 있음"을 알려 주지 않고 기존대로 403 이다. */
