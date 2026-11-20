@@ -91,7 +91,7 @@ test.describe('사용자 관리 — user:read', () => {
     await gotoWithPermissions(page, '/admin/users');
     await expect(sidebarLink(page, '사용자 관리')).toBeVisible();
     await expect(page.getByRole('heading', { level: 1, name: '사용자 관리' })).toBeVisible();
-    await expect(page.getByRole('button', { name: '사용자 사용자 1 상세 보기' })).toBeVisible();
+    await expect(page.getByRole('link', { name: '사용자 1', exact: true })).toBeVisible();
     await nextFrame(page);
     await expect(page.getByRole('button', { name: '멤버 추가' })).toHaveCount(0);
 
@@ -117,7 +117,7 @@ test.describe('사용자 관리 — user:read', () => {
     const put = await mockApi(page, 'PUT', '/api/v1/users/5/roles', {}, { capture: true });
 
     await gotoWithPermissions(page, '/admin/users');
-    await expect(page.getByRole('button', { name: '사용자 사용자 1 상세 보기' })).toBeVisible();
+    await expect(page.getByRole('link', { name: '사용자 1', exact: true })).toBeVisible();
     await nextFrame(page);
     await expect(page.getByRole('button', { name: '멤버 추가' })).toHaveCount(1);
 
