@@ -31,6 +31,8 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
  *
  * <p>WD-853: 파이프라인 비활성화가 커밋 전일 때 트리거(SKIP·ALLOW 모두)가 잠금 뒤에서 활성 여부를 읽어, 커밋을 기다렸다가 비활성으로 건너뛰는지 본다.
  *
+ * <p>WD-855: 트리거 끄기·삭제가 커밋 전일 때 발화가 파이프라인 잠금 뒤 트리거 행도 잠그고 다시 읽어, 커밋을 기다렸다가 꺼짐·없음으로 건너뛰는지 본다.
+ *
  * <p>클래스 레벨 {@code @Transactional} 을 쓰지 않는다 — 커밋돼야 행 잠금 경쟁이 재현된다. 러너는 no-op 대역이라 접수된 실행이 PENDING 에
  * 머문다.
  */
@@ -161,8 +163,9 @@ class TriggerManualRunRaceTest extends IntegrationTestBase {
   }
 
   /**
-   * ALLOW 정책은 판정에서 잠그지 않으므로 진행 중 실행이 있어도 건너뛰지 않고 겹쳐 실행된다. 실행 행 INSERT 의 FK 검사(FOR KEY SHARE)가 수동
-   * 실행의 FOR UPDATE 와 충돌해 커밋까지 기다리는 것은 WD-437 의 의도된 동작이라 대기 여부는 단언하지 않는다.
+   * ALLOW 정책도 발화에서 파이프라인 행을 잠그지만(WD-853 활성 확인) 진행 중 실행을 판정하지 않으므로, 수동 실행 커밋을 기다린 뒤 건너뛰지 않고 겹쳐 실행된다.
+   * 실행 행 FK 검사(WD-437)로도 기다리므로 대기 여부는 여기서 단언하지 않는다 — ALLOW 잠금은 {@link
+   * #allowTrigger_waitsForUncommittedDeactivation_thenSkippedInactive} 가 가린다.
    */
   @Test
   void allowTrigger_notSkipped_overlaps() throws Exception {
@@ -215,5 +218,46 @@ class TriggerManualRunRaceTest extends IntegrationTestBase {
   @Test
   void allowTrigger_waitsForUncommittedDeactivation_thenSkippedInactive() throws Exception {
     assertWaitsForDeactivation("ALLOW");
+  }
+
+  /** 커밋 전 트리거 끄기를 발화가 트리거 행 잠금에서 기다린 뒤 꺼짐으로 건너뛴다(WD-855). */
+  @Test
+  void fire_waitsForUncommittedTriggerDisable_thenDisabled() throws Exception {
+    Long triggerId = createScheduleTrigger("ALLOW");
+
+    var outcome =
+        PausedTransactionRace.run(
+            fixtureTransactionTemplate,
+            DEFAULT_TEST_TENANT_ID,
+            () -> triggerService.toggleTrigger(triggerId, false),
+            () -> triggerService.fireTrigger(triggerId, Map.of()));
+
+    assertThat(outcome.secondBlocked()).isTrue();
+    assertThat(outcome.secondError()).isNull();
+    assertThat(outcome.secondResult().outcome()).isEqualTo(TriggerFireResult.Outcome.DISABLED);
+    assertThat(outcome.secondResult().reason()).isEqualTo(TriggerService.REASON_TRIGGER_DISABLED);
+    assertThat(executionCount()).isZero();
+    assertThat(inTenantFixture(() -> triggerEventRepository.findByTriggerId(triggerId, 10)))
+        .isEmpty();
+  }
+
+  /** 커밋 전 트리거 삭제를 발화가 기다린 뒤 없음으로 건너뛴다(WD-855). */
+  @Test
+  void fire_waitsForUncommittedTriggerDelete_thenNotFound() throws Exception {
+    Long triggerId = createScheduleTrigger("ALLOW");
+    // 직접 지우므로 정리 목록에서 미리 뺀다(경쟁 도구가 실패해도 정리가 진짜 실패를 가리지 않게).
+    triggers.remove(triggerId);
+
+    var outcome =
+        PausedTransactionRace.run(
+            fixtureTransactionTemplate,
+            DEFAULT_TEST_TENANT_ID,
+            () -> triggerService.deleteTrigger(triggerId),
+            () -> triggerService.fireTrigger(triggerId, Map.of()));
+
+    assertThat(outcome.secondBlocked()).isTrue();
+    assertThat(outcome.secondError()).isNull();
+    assertThat(outcome.secondResult().outcome()).isEqualTo(TriggerFireResult.Outcome.NOT_FOUND);
+    assertThat(executionCount()).isZero();
   }
 }

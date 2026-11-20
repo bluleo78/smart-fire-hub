@@ -987,6 +987,25 @@ public class TriggerService {
           trigger.pipelineId());
       return TriggerFireResult.notFired(TriggerFireResult.Outcome.NOT_FOUND, null);
     }
+
+    // WD-855: 트리거 행도 잠근 뒤 다시 읽는다 — 커밋 전 끄기·삭제를 기다렸다가 반영한다. 잠금 순서는 파이프라인 → 트리거로
+    // 고정한다(파이프라인 삭제가 같은 순서라 반대로 잡으면 교착). 잠금은 발화 커밋까지 유지되어 같은 트리거의 끄기·수정은 기다린다.
+    if (triggerRepository.lockUpdatedAtById(triggerId).isEmpty()) {
+      log.warn("Trigger {} not found while locking (possibly deleted)", triggerId);
+      return TriggerFireResult.notFired(TriggerFireResult.Outcome.NOT_FOUND, null);
+    }
+    trigger = triggerRepository.findById(triggerId).orElse(null);
+    if (trigger == null) {
+      log.warn("Trigger {} not found after locking (possibly deleted)", triggerId);
+      return TriggerFireResult.notFired(TriggerFireResult.Outcome.NOT_FOUND, null);
+    }
+    // 맨 앞 검사와 같은 결과(이벤트 없음)로 돌려줘 결과 모양을 하나로 둔다.
+    if (!trigger.isEnabled()) {
+      log.info("Trigger {} was disabled while waiting for lock, skipping", triggerId);
+      return TriggerFireResult.notFired(
+          TriggerFireResult.Outcome.DISABLED, REASON_TRIGGER_DISABLED);
+    }
+
     if (!locked.get().active()) {
       log.info("Pipeline {} is not active, skipping trigger {}", trigger.pipelineId(), triggerId);
       triggerEventRepository.create(
