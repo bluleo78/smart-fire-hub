@@ -28,6 +28,8 @@ public record TriggerFireResult(Outcome outcome, Long executionId, String reason
     TENANT_SUSPENDED,
     /** 트리거가 없다(발화 직전 삭제 등) — 이벤트를 남길 대상이 없다. */
     NOT_FOUND,
+    /** 발화가 읽은 트리거로 다시 한 호출자 검사(허용 IP)에 걸려 실행하지 않았다(WD-857) — 이벤트 없음, 외부에는 403. */
+    REJECTED,
     /** 실행을 시작하려다 실패했다 — 오류 이벤트가 남는다. */
     ERROR
   }

@@ -9,6 +9,7 @@ import com.smartfirehub.pipeline.dto.TriggerEventResponse;
 import com.smartfirehub.pipeline.dto.TriggerFireResult;
 import com.smartfirehub.pipeline.dto.TriggerType;
 import com.smartfirehub.pipeline.dto.UpdatePipelineRequest;
+import com.smartfirehub.pipeline.dto.UpdateTriggerRequest;
 import com.smartfirehub.pipeline.exception.PipelineAlreadyRunningException;
 import com.smartfirehub.pipeline.exception.PipelineInactiveException;
 import com.smartfirehub.pipeline.repository.TriggerEventRepository;
@@ -36,6 +37,8 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
  * <p>WD-855: 트리거 끄기·삭제가 커밋 전일 때 발화가 파이프라인 잠금 뒤 트리거 행도 잠그고 다시 읽어, 커밋을 기다렸다가 꺼짐·없음으로 건너뛰는지 본다.
  *
  * <p>WD-856: 수동 실행도 파이프라인 행을 잠근 뒤 활성 여부를 판정해, 커밋 전 비활성화를 기다렸다가 비활성으로 거절되는지 본다.
+ *
+ * <p>WD-857: API 트리거 허용 IP 좁히기가 커밋 전일 때 외부 호출이 잠금 뒤 다시 읽은 새 목록으로 거절되는지, 넓히기와는 겹쳐도 막히지 않는지 본다.
  *
  * <p>클래스 레벨 {@code @Transactional} 을 쓰지 않는다 — 커밋돼야 행 잠금 경쟁이 재현된다. 러너는 no-op 대역이라 접수된 실행이 PENDING 에
  * 머문다.
@@ -110,6 +113,22 @@ class TriggerManualRunRaceTest extends IntegrationTestBase {
                                 "Asia/Seoul",
                                 "concurrencyPolicy",
                                 policy)),
+                        userId)
+                    .id());
+    triggers.add(id);
+    return id;
+  }
+
+  /** 허용 IP 목록을 가진 API 트리거를 만든다(WD-857). */
+  private Long createApiTrigger(List<String> allowedIps) {
+    Long id =
+        inTenantFixture(
+            () ->
+                triggerService
+                    .createTrigger(
+                        pipelineId,
+                        new CreateTriggerRequest(
+                            "wd857-api", TriggerType.API, null, Map.of("allowedIps", allowedIps)),
                         userId)
                     .id());
     triggers.add(id);
@@ -296,5 +315,57 @@ class TriggerManualRunRaceTest extends IntegrationTestBase {
         .isInstanceOf(PipelineInactiveException.class)
         .hasMessage("비활성 파이프라인은 실행할 수 없습니다. 파이프라인 편집에서 활성화한 뒤 다시 실행하세요.");
     assertThat(executionCount()).isZero();
+  }
+
+  /** 커밋 전 허용 IP 좁히기를 API 호출이 트리거 잠금에서 기다린 뒤 새 목록으로 거절된다(WD-857). */
+  @Test
+  void apiFire_waitsForUncommittedAllowedIpNarrowing_thenRejected() throws Exception {
+    Long triggerId = createApiTrigger(List.of("10.0.0.1"));
+
+    var outcome =
+        PausedTransactionRace.run(
+            fixtureTransactionTemplate,
+            DEFAULT_TEST_TENANT_ID,
+            () ->
+                triggerService.updateTrigger(
+                    triggerId,
+                    new UpdateTriggerRequest(
+                        null, null, null, Map.of("allowedIps", List.of("10.0.0.2"))),
+                    userId),
+            () ->
+                triggerService.fireTrigger(
+                    triggerId, Map.of(), t -> triggerService.isIpAllowed("10.0.0.1", t)));
+
+    assertThat(outcome.secondBlocked()).isTrue();
+    assertThat(outcome.secondError()).isNull();
+    assertThat(outcome.secondResult().outcome()).isEqualTo(TriggerFireResult.Outcome.REJECTED);
+    assertThat(executionCount()).isZero();
+    assertThat(inTenantFixture(() -> triggerEventRepository.findByTriggerId(triggerId, 10)))
+        .isEmpty();
+  }
+
+  /** 넓히기(허용 IP 추가)와 겹친 호출은 막지 않는다 — 옛 목록에 있던 IP 는 그대로 실행된다(WD-857). */
+  @Test
+  void apiFire_allowedIpWidening_stillFires() throws Exception {
+    Long triggerId = createApiTrigger(List.of("10.0.0.1"));
+
+    var outcome =
+        PausedTransactionRace.run(
+            fixtureTransactionTemplate,
+            DEFAULT_TEST_TENANT_ID,
+            () ->
+                triggerService.updateTrigger(
+                    triggerId,
+                    new UpdateTriggerRequest(
+                        null, null, null, Map.of("allowedIps", List.of("10.0.0.1", "10.0.0.2"))),
+                    userId),
+            () ->
+                triggerService.fireTrigger(
+                    triggerId, Map.of(), t -> triggerService.isIpAllowed("10.0.0.1", t)));
+
+    assertThat(outcome.secondBlocked()).isTrue();
+    assertThat(outcome.secondError()).isNull();
+    assertThat(outcome.secondResult().outcome()).isEqualTo(TriggerFireResult.Outcome.FIRED);
+    assertThat(executionCount()).isEqualTo(1);
   }
 }

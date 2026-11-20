@@ -30,6 +30,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.*;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
@@ -930,6 +931,19 @@ public class TriggerService {
    */
   @Transactional
   public TriggerFireResult fireTrigger(Long triggerId, Map<String, Object> params) {
+    return fireTrigger(triggerId, params, null);
+  }
+
+  /**
+   * 호출자 검사를 곁들인 발화(WD-857). 외부 API 트리거의 허용 IP 는 잠금 없이 읽은 설정으로 먼저 검사해 커밋 전 좁히기를 놓치므로, 발화가 읽은 트리거(첫
+   * 읽기와 WD-855 잠금 뒤 다시 읽기)로 같은 검사를 다시 해 걸리면 {@link TriggerFireResult.Outcome#REJECTED}(이벤트 없음)로
+   * 돌려준다.
+   *
+   * @param callerCheck 트리거를 받아 호출자가 허용되는지 판정한다. null 이면 검사하지 않는다(2인자 발화와 같다).
+   */
+  @Transactional
+  public TriggerFireResult fireTrigger(
+      Long triggerId, Map<String, Object> params, Predicate<TriggerResponse> callerCheck) {
     // 워크스페이스 정지 관문(WD-174) — 다른 어떤 판정보다 먼저 본다. 예약(cron 콜백·놓친 발화)·연쇄·데이터 변경·외부 API·웹훅이 모두 이
     // 메서드를 지나므로 여기 한 곳이 모든 트리거 경로의 차단 지점이다. 예전에는 정지 후에도 등록된 cron 이 남아 매 주기 실행이 COMPLETED 됐고,
     // WD-169 이후에는 만든 사람 자격 판정(hasActiveMembership 이 테넌트 ACTIVE 도 본다)에 걸려 「만든 사람이 정지·제거」라는 틀린 사유의
@@ -954,6 +968,11 @@ public class TriggerService {
     if (trigger == null) {
       log.warn("Trigger {} not found during fire (possibly deleted)", triggerId);
       return TriggerFireResult.notFired(TriggerFireResult.Outcome.NOT_FOUND, null);
+    }
+
+    // WD-857·WD-152: 호출자가 통과하기 전에는 트리거 상태(꺼짐)를 알려 주지 않는다.
+    if (callerRejected(callerCheck, trigger)) {
+      return TriggerFireResult.notFired(TriggerFireResult.Outcome.REJECTED, null);
     }
 
     // 꺼진 트리거는 이벤트를 남기지 않는다(기존 동작 유지) — 외부 호출자가 꺼진 트리거를 반복 호출해도 이벤트 로그가 넘치지 않게 한다.
@@ -1005,6 +1024,10 @@ public class TriggerService {
     if (trigger == null) {
       log.warn("Trigger {} not found after locking (possibly deleted)", triggerId);
       return TriggerFireResult.notFired(TriggerFireResult.Outcome.NOT_FOUND, null);
+    }
+    // WD-857: 잠근 뒤 다시 읽은 설정으로 호출자 검사를 한 번 더 — 커밋 전 허용 IP 좁히기를 기다렸다가 새 목록으로 거절한다.
+    if (callerRejected(callerCheck, trigger)) {
+      return TriggerFireResult.notFired(TriggerFireResult.Outcome.REJECTED, null);
     }
     // 맨 앞 검사와 같은 결과(이벤트 없음)로 돌려줘 결과 모양을 하나로 둔다.
     if (!trigger.isEnabled()) {
@@ -1534,6 +1557,23 @@ public class TriggerService {
       }
     }
     return true;
+  }
+
+  /** 호출자 검사가 있고 그 검사에 걸렸는지(WD-857). 검사가 없으면(null) 걸리지 않는다. */
+  private static boolean callerRejected(
+      Predicate<TriggerResponse> callerCheck, TriggerResponse trigger) {
+    return callerCheck != null && !callerCheck.test(trigger);
+  }
+
+  /** 트리거 config 의 허용 IP 목록(없으면 빈 목록 = 모두 허용). 외부 호출 검사와 시험이 같은 읽기를 쓴다(WD-857). */
+  @SuppressWarnings("unchecked")
+  public static List<String> allowedIps(TriggerResponse trigger) {
+    return (List<String>) trigger.config().getOrDefault("allowedIps", List.of());
+  }
+
+  /** 요청 IP 가 트리거의 허용 IP 목록에 맞는지 — 앞 검사와 잠금 뒤 재검사(WD-857)가 같은 판정을 쓴다. */
+  public boolean isIpAllowed(String sourceIp, TriggerResponse trigger) {
+    return isIpAllowed(sourceIp, allowedIps(trigger));
   }
 
   /**

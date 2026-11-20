@@ -121,28 +121,42 @@ public class ExternalTriggerController {
     }
 
     // allowedIps가 설정된 경우 요청 IP가 허용 목록에 포함되는지 검사 (#127)
-    @SuppressWarnings("unchecked")
-    List<String> allowedIps = (List<String>) trigger.config().getOrDefault("allowedIps", List.of());
-    if (!triggerService.isIpAllowed(sourceIp, allowedIps)) {
+    if (!triggerService.isIpAllowed(sourceIp, trigger)) {
       log.warn(
-          "API trigger {} blocked: IP {} not in allowedIps {}", trigger.id(), sourceIp, allowedIps);
-      return ResponseEntity.status(HttpStatus.FORBIDDEN)
-          .body(
-              new ErrorResponse(
-                  403,
-                  "Forbidden",
-                  "IP not allowed",
-                  null,
-                  Instant.now().toString(),
-                  request.getRequestURI()));
+          "API trigger {} blocked: IP {} not in allowedIps {}",
+          trigger.id(),
+          sourceIp,
+          TriggerService.allowedIps(trigger));
+      return ipForbidden(request);
     }
 
     Map<String, Object> fireParams = storablePayload(params != null ? params : Map.of());
     fireParams.put("sourceIp", sourceIp);
 
     // 켜짐 여부는 토큰·IP 검사를 통과한 뒤에 fireTrigger 가 판정한다 — 맞는 토큰과 허용된 IP 를 가진 호출자에게만 "꺼져 있음"이 드러난다.
-    TriggerFireResult result = triggerService.fireTrigger(trigger.id(), fireParams);
-    return toFireResponse(result, trigger);
+    // WD-857: 같은 허용 IP 검사를 트리거 행 잠금 뒤 다시 읽은 설정으로 한 번 더 한다 — 커밋 전 좁히기를 기다렸다가 거절한다.
+    TriggerFireResult result =
+        triggerService.fireTrigger(
+            trigger.id(), fireParams, t -> triggerService.isIpAllowed(sourceIp, t));
+    // 재검사로 막힌 호출도 앞 검사처럼 경고를 남긴다(WD-857 — 막힌 IP 를 로그에서 찾을 수 있게).
+    if (result.outcome() == TriggerFireResult.Outcome.REJECTED) {
+      log.warn(
+          "API trigger {} blocked after lock: IP {} not in allowedIps", trigger.id(), sourceIp);
+    }
+    return toFireResponse(result, trigger, request);
+  }
+
+  /** IP 차단 403 응답 — 앞 검사와 잠금 뒤 재검사 거절(REJECTED)이 같은 모양이다. */
+  private ResponseEntity<?> ipForbidden(HttpServletRequest request) {
+    return ResponseEntity.status(HttpStatus.FORBIDDEN)
+        .body(
+            new ErrorResponse(
+                403,
+                "Forbidden",
+                "IP not allowed",
+                null,
+                Instant.now().toString(),
+                request.getRequestURI()));
   }
 
   /**
@@ -282,8 +296,9 @@ public class ExternalTriggerController {
       fireParams.put("payloadSize", body.length());
     }
 
+    // WD-857: 웹훅은 호출자 검사를 잠금 뒤에 다시 하지 않는다 — 시크릿·웹훅 id 는 서버 소유 키라 수정으로 바뀌지 않는다.
     TriggerFireResult result = triggerService.fireTrigger(trigger.id(), fireParams);
-    return toFireResponse(result, trigger);
+    return toFireResponse(result, trigger, request);
   }
 
   /**
@@ -308,7 +323,9 @@ public class ExternalTriggerController {
   static final String REASON_EXECUTOR_NOT_ELIGIBLE_EXTERNAL =
       "트리거를 만든 사용자가 지금 이 파이프라인을 실행할 수 없어 실행하지 않았습니다. 워크스페이스 관리자에게 문의하세요";
 
-  private ResponseEntity<?> toFireResponse(TriggerFireResult result, TriggerResponse trigger) {
+  // 테스트에서 REJECTED → 403 매핑을 직접 고정하기 위해 package-private 로 둔다(WD-857).
+  ResponseEntity<?> toFireResponse(
+      TriggerFireResult result, TriggerResponse trigger, HttpServletRequest request) {
     return switch (result.outcome()) {
       case FIRED -> {
         // executionId 는 항상 있지만, null 이 섞여도 Map.of 처럼 NPE 가 나지 않게 순서 보존 맵을 쓴다.
@@ -323,6 +340,8 @@ public class ExternalTriggerController {
       case SKIPPED, DISABLED, TENANT_SUSPENDED ->
           ResponseEntity.status(HttpStatus.CONFLICT)
               .body(Map.of("status", "skipped", "reason", externalReason(result.reason())));
+      // 잠금 뒤 허용 IP 재검사에 걸림(WD-857) — 앞 검사와 같은 403
+      case REJECTED -> ipForbidden(request);
       // NOT_FOUND 는 위에서 트리거를 읽은 직후 삭제된 경합이다 — 실행되지 않았다는 사실이 중요하므로 실패로 알린다.
       case NOT_FOUND, ERROR ->
           ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
