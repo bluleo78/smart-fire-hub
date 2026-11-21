@@ -53,9 +53,66 @@ test.describe('홈 페이지', () => {
     // 활동 피드 카드 제목 확인
     await expect(page.getByText('활동 피드')).toBeVisible();
 
-    // 인라인 통계 — setupHomeMocks 기본값: analytics/dashboards totalElements=0 → '대시보드 0'
-    // 건강 상태바 하단 퀵 카운트 영역에 대시보드 수가 표시된다
-    await expect(page.getByText(/대시보드\s*0/)).toBeVisible();
+    // 건강 상태바 대시보드 지표 버튼 — setupHomeMocks 기본값: analytics/dashboards totalElements=0 → '대시보드 0개'
+    await expect(
+      page.getByRole('region', { name: '시스템 건강 상태' }).getByRole('button', { name: /^대시보드\s*0개/ }),
+    ).toBeVisible();
+  });
+
+  /**
+   * WD-898: 건강 상태바의 대시보드 지표도 파이프라인·데이터셋처럼 눌러서 이동한다.
+   */
+  test('건강 상태바 대시보드 지표를 누르면 대시보드 목록으로 이동한다 (WD-898)', async ({ authenticatedPage: page }) => {
+    await page.goto('/');
+    // 퀵 액션 「대시보드 관리」와 겹치지 않게 건강 상태 영역 안에서만 찾는다
+    await page
+      .getByRole('region', { name: '시스템 건강 상태' })
+      .getByRole('button', { name: /^대시보드\s/ })
+      .click();
+    await expect(page).toHaveURL(/\/analytics\/dashboards$/);
+  });
+
+  test('건강 상태바 대시보드 지표는 키보드 Enter 로도 이동하고 조회 실패여도 눌린다 (WD-898)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 대시보드 목록 조회가 실패해도(수치 「—」) 이동 버튼은 살아 있어야 한다
+    await mockApi(page, 'GET', '/api/v1/analytics/dashboards', { message: '서버 오류' }, { status: 500 });
+    await page.goto('/');
+    const button = page
+      .getByRole('region', { name: '시스템 건강 상태' })
+      .getByRole('button', { name: /^대시보드\s/ });
+    await expect(button).toContainText('—', { timeout: 10000 });
+    await button.focus();
+    await page.keyboard.press('Enter');
+    await expect(page).toHaveURL(/\/analytics\/dashboards$/);
+  });
+
+  test('건강 상태바 세 지표는 아이콘 16px·높이 32 이상이다 (WD-898)', async ({ authenticatedPage: page }) => {
+    await page.goto('/');
+    const region = page.getByRole('region', { name: '시스템 건강 상태' });
+    // 대시보드 수치에도 다른 두 지표처럼 단위 「개」가 붙는다
+    await expect(region.getByRole('button', { name: /^대시보드\s*0개/ })).toBeVisible();
+    const names = [/^파이프라인/, /^데이터셋/, /^대시보드\s/];
+
+    /** 세 지표 버튼의 높이(≥32)와 첫 아이콘 크기(16×16)를 단언한다 */
+    const expectUniformMetrics = async () => {
+      for (const name of names) {
+        const button = region.getByRole('button', { name });
+        await expect(button).toBeVisible();
+        const box = await button.boundingBox();
+        expect(box?.height ?? 0).toBeGreaterThanOrEqual(32);
+        const iconSize = await button.locator('svg').first().evaluate((el) => {
+          const r = el.getBoundingClientRect();
+          return { w: r.width, h: r.height };
+        });
+        expect(iconSize.w).toBeCloseTo(16, 0);
+        expect(iconSize.h).toBeCloseTo(16, 0);
+      }
+    };
+
+    await expectUniformMetrics();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expectUniformMetrics();
   });
 
   /**
@@ -749,6 +806,48 @@ test.describe('홈 페이지', () => {
     // 끝 도달 후 sentinel은 사라지고 끝 안내 표시
     await expect(page.getByTestId('activity-feed-sentinel')).toHaveCount(0);
     await expect(page.getByText('더 이상 항목이 없습니다.')).toBeVisible();
+  });
+
+  /**
+   * WD-897: 활동 피드 필터 칩(24px)과 상태 선택 상자(36px)가 서로 높이가 달라 줄이 들쭉날쭉했고
+   * 칩은 최소 히트 영역(32px)에도 못 미쳤다. 데스크톱·모바일 모두 같은 높이(≥32px)여야 한다.
+   */
+  test('활동 피드 필터 칩과 상태 선택 상자 높이가 같고 32 이상이다 (WD-897)', async ({ authenticatedPage: page }) => {
+    await page.goto('/');
+
+    // 유형 칩들과 상태 선택 상자의 높이를 재서 서로 같고 32px 이상인지 단언한다.
+    // alignCenter: 넓은 화면(같은 줄)에서만 세로 가운데 정렬까지 본다 — 390px 에서는 줄이 감겨 칩과 선택 상자가
+    // 다른 줄에 놓일 수 있으니 높이만 본다.
+    const expectUniformHeights = async (alignCenter: boolean) => {
+      const chips = page.getByRole('group', { name: '유형' }).getByRole('button');
+      await expect(chips.first()).toBeVisible();
+      const select = page.getByRole('combobox', { name: '상태' });
+      await expect(select).toBeVisible();
+      const chipRects = await chips.evaluateAll((els) =>
+        els.map((el) => {
+          const r = el.getBoundingClientRect();
+          return { top: r.top, height: r.height };
+        }),
+      );
+      const box = await select.boundingBox();
+      // 칩은 권한 없으면 「전체」·「데이터셋」 2개뿐이다 — beforeEach 의 파이프라인 권한에 기대지 않도록 2 이상만 요구한다.
+      expect(chipRects.length).toBeGreaterThanOrEqual(2);
+      expect(box).not.toBeNull();
+      const selectHeight = box!.height;
+      const selectCenter = box!.y + selectHeight / 2;
+      expect(selectHeight).toBeGreaterThanOrEqual(32);
+      for (const c of chipRects) {
+        expect(c.height).toBeGreaterThanOrEqual(32);
+        expect(Math.abs(c.height - selectHeight)).toBeLessThanOrEqual(1);
+        // 이슈의 「top 305 vs 299 로 6px 어긋남」 고정 — 세로 가운데 차이 1px 이하
+        if (alignCenter) expect(Math.abs(c.top + c.height / 2 - selectCenter)).toBeLessThanOrEqual(1);
+      }
+    };
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await expectUniformHeights(true);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expectUniformHeights(false);
   });
 
   test('활동 피드 필터 변경 시 page=0부터 다시 시작한다 (이슈 #226)', async ({ authenticatedPage: page }) => {

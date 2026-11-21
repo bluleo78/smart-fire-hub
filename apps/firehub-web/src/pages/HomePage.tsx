@@ -36,6 +36,17 @@ import { useDatasetPermissions, useDatasets } from '../hooks/queries/useDatasets
 import { usePipelinePermissions } from '../hooks/queries/usePipelines';
 import { useAuth } from '../hooks/useAuth';
 import { getOriginTypeLabel, getStatusBadgeVariant, getStatusLabel, getStorageTypeLabel, timeAgo } from '../lib/formatters';
+import { cn } from '../lib/utils';
+
+/**
+ * 건강 상태바 지표 버튼(파이프라인·데이터셋·대시보드) 공통 클래스(WD-898).
+ * 세 지표가 같은 모양이라 같은 크기여야 하므로 한 곳에 둔다. min-h-8(32px)은 클릭·터치 영역 확보용 —
+ * 예전엔 텍스트 높이(24px)뿐이라 누르기 어려웠다.
+ * rounded-md·focus-visible 링은 세 지표가 Tab 대상인데 기본 outline 이 없어 포커스 위치가 안 보일 수 있어서 —
+ * shadcn 과 같은 포커스 링을 준다(알파 수식자는 대비 게이트가 금지해 단색).
+ */
+const HEALTH_METRIC_BUTTON_CLASS =
+  'flex min-h-8 min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-left rounded-md outline-none focus-visible:ring-[3px] focus-visible:ring-ring hover:opacity-80 transition-opacity cursor-pointer';
 
 function ActivityIcon({ eventType }: { eventType: string }) {
   const t = eventType.toUpperCase();
@@ -95,6 +106,8 @@ export default function HomePage() {
   const healthFailed = isHealthError && !health;
   const attentionFailed = isAttentionError && !attentionItems;
   const dashboardsFailed = isDashboardsError && !dashboardsData;
+  // 대시보드 지표 수치(WD-898) — 실패 표시는 dashboardsFailed 로 따로 처리
+  const dashboardCount = dashboardsData?.totalElements ?? 0;
   const datasetsFailed = isDatasetsError && !datasetsData;
   // 데이터셋 생성 바로가기는 생성 권한(dataset:write)이 있을 때만 보인다 — 없으면 생성 화면이 권한 안내만 보이므로(WD-144)
   const { canWriteDataset } = useDatasetPermissions();
@@ -202,7 +215,8 @@ export default function HomePage() {
             {canReadPipeline && (
               <>
                 <button
-                  className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-left hover:opacity-80 transition-opacity cursor-pointer"
+                  type="button"
+                  className={HEALTH_METRIC_BUTTON_CLASS}
                   onClick={() => navigate('/pipelines')}
                 >
                   <GitBranch className="h-4 w-4 text-pipeline shrink-0" />
@@ -241,7 +255,8 @@ export default function HomePage() {
 
             {/* Dataset summary */}
             <button
-              className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-left hover:opacity-80 transition-opacity cursor-pointer"
+              type="button"
+              className={HEALTH_METRIC_BUTTON_CLASS}
               onClick={() => navigate('/data/datasets')}
             >
               <Database className="h-4 w-4 text-primary shrink-0" />
@@ -273,12 +288,26 @@ export default function HomePage() {
 
             <div className="h-4 w-px bg-border" />
 
-            {/* Quick counts */}
-            <div className="flex items-center gap-1.5 text-sm text-dashboard-accent whitespace-nowrap">
-              <LayoutDashboard className="h-3.5 w-3.5 shrink-0" />
+            {/* 대시보드 지표 — 파이프라인·데이터셋과 같은 모양인데 눌러도 반응이 없던 문제(WD-898):
+                같은 button 으로 만들어 /analytics/dashboards 로 이동시키고 크기·터치 영역도 맞춘다 */}
+            <button
+              type="button"
+              className={HEALTH_METRIC_BUTTON_CLASS}
+              onClick={() => navigate('/analytics/dashboards')}
+            >
+              <LayoutDashboard className="h-4 w-4 shrink-0 text-dashboard-accent" />
+              <span className="text-sm font-medium text-dashboard-accent whitespace-nowrap">대시보드</span>
               {/* 목록 조회가 실패했으면 0 대신 「—」 — 대시보드가 없는 것처럼 보이지 않게(WD-333) */}
-              대시보드 <span className="tabular-nums">{dashboardsFailed ? '—' : (dashboardsData?.totalElements ?? 0)}</span>
-            </div>
+              {/* 다른 두 지표의 「0개」와 맞춰 단위 「개」를 붙이고, 0개면 같은 흐린 색(WD-898) */}
+              <span
+                className={cn(
+                  'text-sm tabular-nums whitespace-nowrap',
+                  !dashboardsFailed && dashboardCount === 0 ? 'text-muted-foreground' : 'text-dashboard-accent',
+                )}
+              >
+                {dashboardsFailed ? '—' : `${dashboardCount}개`}
+              </span>
+            </button>
 
             {stats && stats.recentImports.length > 0 && (
               <>
@@ -618,7 +647,8 @@ export default function HomePage() {
                     variant={typeFilter === opt.value ? 'default' : 'outline'}
                     aria-pressed={typeFilter === opt.value}
                     size="sm"
-                    className="h-6 text-xs px-2"
+                    // WD-897: h-6(24px)을 뺀다 — size="sm" 규칙이 32px 를 주므로 최소 히트 영역을 채우고 상태 선택 상자와 높이가 같아진다.
+                    className="text-xs px-2"
                     onClick={() => applyFilter(opt.value, severityFilter)}
                   >
                     {opt.label}
@@ -634,7 +664,9 @@ export default function HomePage() {
                   onValueChange={(v) => applyFilter(typeFilter, v === 'ALL' ? '' : v)}
                 >
                   {/* WD-339: 옆 「상태」 레이블과 연결 — 없으면 이름 없는 콤보박스(값 「전체」만)로 읽혔다 */}
-                  <SelectTrigger id={`${activityFilterId}-severity`} className="h-6 text-xs w-[80px] px-2">
+                  {/* WD-897: className h-6 은 shadcn 의 data-[size=default]:h-9 에 져서 36px 가 됐다 —
+                      size="sm"(data-[size=sm]:h-8 = 32px)으로 유형 칩과 높이를 맞추고 h-6 은 뺀다. */}
+                  <SelectTrigger id={`${activityFilterId}-severity`} size="sm" className="text-xs w-[80px] px-2">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
