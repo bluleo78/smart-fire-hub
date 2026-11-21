@@ -20,8 +20,12 @@ import java.util.UUID;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import org.jooq.DSLContext;
+import org.jooq.JSONB;
+import org.jooq.impl.DSL;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
@@ -554,6 +558,25 @@ class ExternalTriggerControllerTest extends IntegrationTestBase {
         .andExpect(jsonPath("$.status").value("triggered"));
   }
 
+  /**
+   * 회귀 테스트(WD-859): 옛 버전이 저장한 잘못된 모양의 allowedIps 는 ClassCastException(500) 이 아니라 403 으로 거절한다.
+   *
+   * <p>심은 모양: (1) 목록이 아닌 문자열, (2) 앞 원소가 맞아도 문자열이 아닌 원소가 섞인 목록(보안상 값 전체 fail closed), (3) 객체.
+   */
+  @ParameterizedTest
+  @ValueSource(strings = {"\"127.0.0.1\"", "[\"127.0.0.0/8\", 5]", "{\"a\":\"b\"}"})
+  void apiTrigger_legacyBadAllowedIps_returnsForbiddenNot500(String plantedJson) throws Exception {
+    String rawToken = createTriggerWithPlantedAllowedIps(plantedJson);
+
+    mockMvc
+        .perform(
+            post("/api/v1/triggers/api/" + rawToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{}"))
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.message").value("IP not allowed"));
+  }
+
   @Test
   void createTrigger_withInvalidIpFormat_returnsBadRequest() throws Exception {
     // 잘못된 IP 형식으로 트리거 생성 시 400 응답 기대
@@ -761,6 +784,32 @@ class ExternalTriggerControllerTest extends IntegrationTestBase {
     Mac mac = Mac.getInstance("HmacSHA256");
     mac.init(new SecretKeySpec(WEBHOOK_SECRET.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
     return "sha256=" + HexFormat.of().formatHex(mac.doFinal(body.getBytes(StandardCharsets.UTF_8)));
+  }
+
+  /**
+   * 빈 allowedIps 로 API 트리거를 만든 뒤, 저장 경로 검증(WD-859)을 우회해 DB 에 직접 allowedIps 를 심고 원본 토큰을 돌려준다. 옛 버전이 남긴 잘못된
+   * 모양의 값을 재현하기 위함이다. jsonb_set 으로 tokenHash 등 나머지 config 는 보존한다.
+   */
+  private String createTriggerWithPlantedAllowedIps(String allowedIpsJson) {
+    TriggerResponse trigger =
+        triggerService.createTrigger(
+            pipelineId,
+            new CreateTriggerRequest(
+                "Legacy IPs", TriggerType.API, null, Map.of("allowedIps", List.of())),
+            testUserId);
+    TenantRlsTestSupport.runInTenantTransaction(
+        fixtureTransactionTemplate,
+        DEFAULT_TEST_TENANT_ID,
+        () ->
+            dsl.update(PIPELINE_TRIGGER)
+                .set(
+                    PIPELINE_TRIGGER.CONFIG,
+                    DSL.field(
+                        "jsonb_set({0}, '{allowedIps}', {1}::jsonb)",
+                        JSONB.class, PIPELINE_TRIGGER.CONFIG, DSL.val(allowedIpsJson)))
+                .where(PIPELINE_TRIGGER.ID.eq(trigger.id()))
+                .execute());
+    return (String) trigger.config().get("rawToken");
   }
 
   /** 테스트 파이프라인을 비활성으로 바꾼다. */

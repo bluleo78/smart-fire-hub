@@ -39,9 +39,12 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.support.CronExpression;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Slf4j
 @Service
@@ -101,6 +104,10 @@ public class TriggerService {
   /** 실행 주체에게 요구하는 권한 — 직접 실행 API 와 같다(WD-167). */
   private static final String EXECUTE_PERMISSION = "pipeline:execute";
 
+  /** allowedIps 모양이 잘못됐을 때의 저장 거절 문구(WD-859). */
+  private static final String ALLOWED_IPS_SHAPE_MESSAGE =
+      "허용 IP(allowedIps)는 IP 주소·CIDR 문자열 목록이어야 합니다";
+
   private final TriggerRepository triggerRepository;
   private final TriggerEventRepository triggerEventRepository;
   // 비인증 경로의 테넌트 해석 전용. 해싱은 이 서비스에 남기고 조회만 위임한다.
@@ -126,6 +133,8 @@ public class TriggerService {
   private final WebhookSecretCipher webhookSecretCipher;
   // 트리거 생성·수정·켜기/끄기·삭제 감사 기록(WD-462)
   private final PipelineAuditRecorder auditRecorder;
+  // 발화 시도(실행 접수·FIRED 기록·상태 갱신)를 감싸는 저장점(NESTED) 템플릿 — 실패가 발화 트랜잭션을 rollback-only 로 만들지 않게 한다(WD-858)
+  private final TransactionTemplate fireSavepoint;
 
   public TriggerService(
       TriggerRepository triggerRepository,
@@ -141,6 +150,7 @@ public class TriggerService {
       TriggerCreatorSkipNotifier creatorSkipNotifier,
       TenantRepository tenantRepository,
       PipelineAuditRecorder auditRecorder,
+      PlatformTransactionManager transactionManager,
       @Value("${app.encryption.master-key}") String encryptionMasterKey) {
     this.triggerRepository = triggerRepository;
     this.triggerEventRepository = triggerEventRepository;
@@ -155,6 +165,8 @@ public class TriggerService {
     this.creatorSkipNotifier = creatorSkipNotifier;
     this.tenantRepository = tenantRepository;
     this.auditRecorder = auditRecorder;
+    this.fireSavepoint = new TransactionTemplate(transactionManager);
+    this.fireSavepoint.setPropagationBehavior(TransactionDefinition.PROPAGATION_NESTED);
     // WEBHOOK_SECRET_KEY 는 예전부터 환경변수로만 읽었다 — 같은 이름을 그대로 존중한다(설정한 배포의 옛 암호문 호환).
     this.webhookSecretCipher =
         new WebhookSecretCipher(System.getenv("WEBHOOK_SECRET_KEY"), encryptionMasterKey);
@@ -983,27 +995,6 @@ public class TriggerService {
           TriggerFireResult.Outcome.DISABLED, REASON_TRIGGER_DISABLED);
     }
 
-    // 실행 시 연쇄 깊이 방어(WD-106): 저장 시 검사를 빠져나간 순환(검사 결함 이전에 저장된 것 포함)이 있어도 연쇄가 끝없이
-    // 서로를 부르지 않게, 상한을 넘는 단계는 발화하지 않고 건너뜀 이벤트로 남긴다. 깊이는 연쇄 트리거에만 의미가 있다 —
-    // 다른 유형의 params 는 외부 호출자가 채우므로 판정에 쓰지 않는다.
-    if ("PIPELINE_CHAIN".equals(trigger.triggerType())
-        && params.get(CHAIN_DEPTH_PARAM) instanceof Number depth
-        && depth.intValue() > MAX_CHAIN_DEPTH) {
-      log.warn(
-          "PIPELINE_CHAIN 트리거 {} 발화를 건너뛴다: 연쇄 깊이 {} 가 상한 {} 를 넘는다 (pipeline={}). "
-              + "연쇄가 순환하고 있을 수 있다 — 트리거 구성을 확인할 것.",
-          triggerId,
-          depth.intValue(),
-          MAX_CHAIN_DEPTH,
-          trigger.pipelineId());
-      Map<String, Object> detail = new HashMap<>(params);
-      String reason =
-          "연쇄 실행이 최대 " + MAX_CHAIN_DEPTH + "단계를 넘어 더 실행하지 않았습니다. 파이프라인 연쇄가 서로를 부르는 순환인지 확인해 주세요.";
-      detail.put("reason", reason);
-      triggerEventRepository.create(triggerId, trigger.pipelineId(), null, "SKIPPED", detail);
-      return TriggerFireResult.notFired(TriggerFireResult.Outcome.SKIPPED, reason);
-    }
-
     // WD-853: 활성 여부는 행 잠금 뒤에 읽는다 — 커밋 전 비활성화를 기다렸다가 봐야 방금 끈 파이프라인이 또 실행되지 않는다(정책 무관).
     var locked = pipelineRepository.lockById(trigger.pipelineId());
     if (locked.isEmpty()) {
@@ -1034,6 +1025,29 @@ public class TriggerService {
       log.info("Trigger {} was disabled while waiting for lock, skipping", triggerId);
       return TriggerFireResult.notFired(
           TriggerFireResult.Outcome.DISABLED, REASON_TRIGGER_DISABLED);
+    }
+
+    // 실행 시 연쇄 깊이 방어(WD-106): 저장 시 검사를 빠져나간 순환(검사 결함 이전에 저장된 것 포함)이 있어도 연쇄가 끝없이
+    // 서로를 부르지 않게, 상한을 넘는 단계는 발화하지 않고 건너뜀 이벤트로 남긴다. 깊이는 연쇄 트리거에만 의미가 있다 —
+    // 다른 유형의 params 는 외부 호출자가 채우므로 판정에 쓰지 않는다.
+    // WD-858: 행 잠금·다시 읽기·DISABLED 재확인 뒤에 판정한다 — 잠금 전 값으로 판정하면 커밋 전 삭제와 겹칠 때 FK 예외가,
+    // 커밋 전 끄기와 겹칠 때 꺼진 트리거의 SKIPPED 이벤트가 남았다.
+    if ("PIPELINE_CHAIN".equals(trigger.triggerType())
+        && params.get(CHAIN_DEPTH_PARAM) instanceof Number depth
+        && depth.intValue() > MAX_CHAIN_DEPTH) {
+      log.warn(
+          "PIPELINE_CHAIN 트리거 {} 발화를 건너뛴다: 연쇄 깊이 {} 가 상한 {} 를 넘는다 (pipeline={}). "
+              + "연쇄가 순환하고 있을 수 있다 — 트리거 구성을 확인할 것.",
+          triggerId,
+          depth.intValue(),
+          MAX_CHAIN_DEPTH,
+          trigger.pipelineId());
+      Map<String, Object> detail = new HashMap<>(params);
+      String reason =
+          "연쇄 실행이 최대 " + MAX_CHAIN_DEPTH + "단계를 넘어 더 실행하지 않았습니다. 파이프라인 연쇄가 서로를 부르는 순환인지 확인해 주세요.";
+      detail.put("reason", reason);
+      triggerEventRepository.create(triggerId, trigger.pipelineId(), null, "SKIPPED", detail);
+      return TriggerFireResult.notFired(TriggerFireResult.Outcome.SKIPPED, reason);
     }
 
     if (!locked.get().active()) {
@@ -1095,26 +1109,35 @@ public class TriggerService {
     }
 
     try {
-      // Execute pipeline using trigger creator as executedBy
-      PipelineExecutionResponse execution =
-          pipelineService.executePipeline(
-              trigger.pipelineId(), trigger.createdBy(), trigger.triggerType(), triggerId);
+      // WD-858: 발화 시도 전체(실행 접수·FIRED 기록·상태 갱신)를 한 저장점(NESTED)으로 감싼다. 안쪽 @Transactional 프록시의 예외가
+      // 공유 트랜잭션을 rollback-only(PG 는 aborted)로 만들어 catch 의 ERROR 이벤트까지 사라지던 것을, 저장점 롤백이 그 표시와 반쯤 만든
+      // 실행 행을 함께 되돌려 막는다. REQUIRES_NEW 는 위에서 잡은 트리거 행 FOR UPDATE 와 자기 교착이라 쓰지 않는다.
+      // 저장점 롤백은 이미 등록된 afterCommit 콜백(비동기 접수)은 지우지 않지만, 러너가 실행 행 없음을 중지로 보고 슬롯을 풀어 무해하다.
+      // trigger 는 잠금 뒤 재할당되므로 람다용 final 지역변수로 잡는다.
+      final TriggerResponse fired = trigger;
+      return fireSavepoint.execute(
+          status -> {
+            // Execute pipeline using trigger creator as executedBy.
+            PipelineExecutionResponse execution =
+                pipelineService.executePipeline(
+                    fired.pipelineId(), fired.createdBy(), fired.triggerType(), triggerId);
 
-      // Record FIRED event
-      triggerEventRepository.create(
-          triggerId,
-          trigger.pipelineId(),
-          execution.id(),
-          "FIRED",
-          params.isEmpty() ? null : params);
+            // Record FIRED event
+            triggerEventRepository.create(
+                triggerId,
+                fired.pipelineId(),
+                execution.id(),
+                "FIRED",
+                params.isEmpty() ? null : params);
 
-      // Update trigger state with lastFiredAt
-      Map<String, Object> state = new HashMap<>(trigger.triggerState());
-      state.put("lastFiredAt", LocalDateTime.now().toString());
-      triggerRepository.updateTriggerState(triggerId, state);
+            // Update trigger state with lastFiredAt
+            Map<String, Object> state = new HashMap<>(fired.triggerState());
+            state.put("lastFiredAt", LocalDateTime.now().toString());
+            triggerRepository.updateTriggerState(triggerId, state);
 
-      log.info("Trigger {} fired successfully, execution {}", triggerId, execution.id());
-      return TriggerFireResult.fired(execution.id());
+            log.info("Trigger {} fired successfully, execution {}", triggerId, execution.id());
+            return TriggerFireResult.fired(execution.id());
+          });
     } catch (Exception e) {
       log.error("Failed to fire trigger {}: {}", triggerId, e.getMessage(), e);
       // 화면에는 한국어 사유(reason)만 보이고, 진단용 예외 원문은 기존대로 error 에 남긴다(WD-152).
@@ -1512,14 +1535,20 @@ public class TriggerService {
   /**
    * API 트리거의 allowedIps 목록에 포함된 각 항목이 유효한 IPv4 주소 또는 CIDR 표기인지 검증한다. 잘못된 형식이 있으면
    * IllegalArgumentException(→ 400)을 던진다.
+   *
+   * <p>형식 검사에 앞서 모양(문자열 목록)부터 검사한다(WD-859). 목록이 아니거나 문자열이 아닌 원소(null 포함)가 저장되면 외부 호출 때 IP 허용
+   * 판정이 ClassCastException(500)으로 터지므로, 저장 시점에 400 으로 거절한다. 키가 없거나 값이 null 이면 제한 없음이다.
    */
   private void validateAllowedIps(Map<String, Object> config) {
     Object allowedIpsObj = config.get("allowedIps");
     if (allowedIpsObj == null) return;
-    if (!(allowedIpsObj instanceof List<?> ipList)) return;
+    if (!isStringList(allowedIpsObj)) {
+      throw new IllegalArgumentException(ALLOWED_IPS_SHAPE_MESSAGE);
+    }
 
-    for (Object item : ipList) {
-      String entry = item == null ? "" : item.toString().trim();
+    for (Object item : (List<?>) allowedIpsObj) {
+      // 모양 검사를 통과했으므로 원소는 모두 문자열이다. 빈 문자열은 기존처럼 건너뛴다.
+      String entry = ((String) item).trim();
       if (entry.isEmpty()) continue;
 
       String ipPart = entry.contains("/") ? entry.substring(0, entry.indexOf('/')) : entry;
@@ -1544,6 +1573,18 @@ public class TriggerService {
     }
   }
 
+  /**
+   * 값이 "모든 원소가 문자열인 목록"인지 판정한다(WD-859). 목록이 아니거나 문자열이 아닌 원소(null 포함)가 하나라도 있으면 false 다. 저장 검증과 호출 시 판정이
+   * 같은 규칙을 쓰도록 한 곳에 둔다.
+   */
+  private static boolean isStringList(Object value) {
+    if (!(value instanceof List<?> list)) return false;
+    for (Object element : list) {
+      if (!(element instanceof String)) return false;
+    }
+    return true;
+  }
+
   /** 문자열이 유효한 IPv4 주소인지 확인한다. 각 옥텟이 0~255 범위인지 검사. */
   private boolean isValidIpv4(String ip) {
     String[] parts = ip.split("\\.", -1);
@@ -1565,13 +1606,15 @@ public class TriggerService {
     return callerCheck != null && !callerCheck.test(trigger);
   }
 
-  /** 트리거 config 의 허용 IP 목록(없으면 빈 목록 = 모두 허용). 외부 호출 검사와 시험이 같은 읽기를 쓴다(WD-857). */
-  @SuppressWarnings("unchecked")
-  public static List<String> allowedIps(TriggerResponse trigger) {
-    return (List<String>) trigger.config().getOrDefault("allowedIps", List.of());
+  /** 트리거 config 의 허용 IP 원본 값(없으면 null). 형 변환 없이 돌려준다 — {@link #isIpAllowed(String, Object)} 참고. */
+  public static Object allowedIps(TriggerResponse trigger) {
+    return trigger.config().get("allowedIps");
   }
 
-  /** 요청 IP 가 트리거의 허용 IP 목록에 맞는지 — 앞 검사와 잠금 뒤 재검사(WD-857)가 같은 판정을 쓴다. */
+  /**
+   * 요청 IP 가 트리거의 허용 IP 목록에 맞는지 — 앞 검사와 잠금 뒤 재검사(WD-857)가 같은 판정을 쓴다. 잘못된 값 처리는 {@link
+   * #isIpAllowed(String, Object)} 참고.
+   */
   public boolean isIpAllowed(String sourceIp, TriggerResponse trigger) {
     return isIpAllowed(sourceIp, allowedIps(trigger));
   }
@@ -1580,12 +1623,14 @@ public class TriggerService {
    * 주어진 sourceIp가 allowedIps 목록의 CIDR 범위에 포함되는지 확인한다. allowedIps가 비어 있으면 모든 IP를 허용한다. IPv4-mapped
    * IPv6 주소(::ffff:x.x.x.x)는 IPv4로 변환하여 비교한다.
    *
+   * <p>형 검사는 하지 않으므로 {@code private} 이다 — {@link #isIpAllowed(String, Object)} 참고.
+   *
    * @param sourceIp 요청 IP (IPv4 또는 ::ffff:x.x.x.x 형태의 IPv6)
    * @param allowedIps 허용 IP/CIDR 목록
    * @return 허용 여부
    */
-  public boolean isIpAllowed(String sourceIp, List<String> allowedIps) {
-    if (allowedIps == null || allowedIps.isEmpty()) return true;
+  private boolean matchesAnyAllowedIp(String sourceIp, List<String> allowedIps) {
+    if (allowedIps.isEmpty()) return true;
 
     // IPv4-mapped IPv6 주소를 IPv4로 정규화 (예: ::1 → 127.0.0.1, ::ffff:192.168.1.1 → 192.168.1.1)
     String normalizedIp = normalizeToIpv4(sourceIp);
@@ -1602,6 +1647,26 @@ public class TriggerService {
       }
     }
     return false;
+  }
+
+  /**
+   * 저장된 config 의 allowedIps 원본 값으로 허용 여부를 판정한다. 저장 시 검증(WD-859) 이전에 들어간 옛 값은 문자열 목록이 아닐 수 있어, 목록이 아니거나
+   * 문자열이 아닌 원소(null 포함)가 하나라도 있으면 보안상 값 전체를 거절(fail closed)한다 — 앞 원소가 맞아도 허용하지 않는다. null 은 제한 없음이다.
+   *
+   * @param sourceIp 요청 IP
+   * @param allowedIpsRaw config 에서 꺼낸 allowedIps 원본(null 가능)
+   * @return 허용 여부
+   */
+  public boolean isIpAllowed(String sourceIp, Object allowedIpsRaw) {
+    if (allowedIpsRaw == null) return true;
+    if (!isStringList(allowedIpsRaw)) {
+      // 큰 중첩 값이 호출마다 로그에 찍히지 않도록 값 대신 형만 남긴다
+      log.warn("allowedIps 가 문자열 목록이 아니라 접근을 거절한다: {}", allowedIpsRaw.getClass().getName());
+      return false;
+    }
+    @SuppressWarnings("unchecked")
+    List<String> ips = (List<String>) allowedIpsRaw;
+    return matchesAnyAllowedIp(sourceIp, ips);
   }
 
   /** IPv4-mapped IPv6 주소(::ffff:A.B.C.D 또는 ::1)를 IPv4 문자열로 변환한다. 이미 IPv4이면 그대로 반환. */

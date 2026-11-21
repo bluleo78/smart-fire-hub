@@ -40,6 +40,8 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
  *
  * <p>WD-857: API 트리거 허용 IP 좁히기가 커밋 전일 때 외부 호출이 잠금 뒤 다시 읽은 새 목록으로 거절되는지, 넓히기와는 겹쳐도 막히지 않는지 본다.
  *
+ * <p>WD-858: 연쇄 깊이 상한 건너뜀도 같은 잠금·다시 읽기 뒤에서 판정해, 커밋 전 끄기·삭제와 겹쳐도 꺼진 트리거에 이벤트를 남기거나 FK 예외를 내지 않는지 본다.
+ *
  * <p>클래스 레벨 {@code @Transactional} 을 쓰지 않는다 — 커밋돼야 행 잠금 경쟁이 재현된다. 러너는 no-op 대역이라 접수된 실행이 PENDING 에
  * 머문다.
  */
@@ -57,6 +59,7 @@ class TriggerManualRunRaceTest extends IntegrationTestBase {
   private Long pipelineId;
   private String unique;
   private final List<Long> triggers = new ArrayList<>();
+  private final List<Long> upstreams = new ArrayList<>();
 
   @BeforeEach
   void setUp() {
@@ -89,6 +92,9 @@ class TriggerManualRunRaceTest extends IntegrationTestBase {
       inTenantFixture(() -> triggerService.deleteTrigger(t));
     }
     inTenantFixture(() -> dsl.deleteFrom(PIPELINE).where(PIPELINE.ID.eq(pipelineId)).execute());
+    for (Long u : upstreams) {
+      inTenantFixture(() -> dsl.deleteFrom(PIPELINE).where(PIPELINE.ID.eq(u)).execute());
+    }
     inTenantFixture(() -> dsl.deleteFrom(AUDIT_LOG).where(AUDIT_LOG.USER_ID.eq(userId)).execute());
     TenantRlsTestSupport.deleteMembership(dsl, userId);
     dsl.deleteFrom(USER).where(USER.ID.eq(userId)).execute();
@@ -367,5 +373,80 @@ class TriggerManualRunRaceTest extends IntegrationTestBase {
     assertThat(outcome.secondError()).isNull();
     assertThat(outcome.secondResult().outcome()).isEqualTo(TriggerFireResult.Outcome.FIRED);
     assertThat(executionCount()).isEqualTo(1);
+  }
+
+  /** WD-858: 상류 파이프라인을 만들고 이 클래스 파이프라인을 대상으로 한 PIPELINE_CHAIN 트리거를 만든다. */
+  private Long createChainTrigger() {
+    Long upstreamId =
+        inTenantFixture(
+            () ->
+                pipelineService
+                    .createPipeline(
+                        new CreatePipelineRequest("wd858-up-" + unique, null, List.of()), userId)
+                    .id());
+    upstreams.add(upstreamId);
+    Long id =
+        inTenantFixture(
+            () ->
+                triggerService
+                    .createTrigger(
+                        pipelineId,
+                        new CreateTriggerRequest(
+                            "wd858-chain",
+                            TriggerType.PIPELINE_CHAIN,
+                            null,
+                            Map.of("upstreamPipelineId", upstreamId, "condition", "SUCCESS")),
+                        userId)
+                    .id());
+    triggers.add(id);
+    return id;
+  }
+
+  /** 깊이 상한을 넘는 연쇄 발화 params (WD-858). */
+  private static Map<String, Object> overDepthParams() {
+    return Map.of(TriggerService.CHAIN_DEPTH_PARAM, TriggerService.MAX_CHAIN_DEPTH + 1);
+  }
+
+  /**
+   * 커밋 전 트리거 끄기를 깊이 초과 발화가 기다린 뒤 꺼짐으로 돌려준다(WD-858). 잠금 전에 깊이를 판정하던 때는 꺼진 트리거에 SKIPPED 이벤트가 남았다 —
+   * 꺼진 트리거는 이벤트를 남기지 않는 규칙을 깼다.
+   */
+  @Test
+  void chainDepthSkip_waitsForUncommittedTriggerDisable_thenDisabled() throws Exception {
+    Long chainId = createChainTrigger();
+
+    var outcome =
+        PausedTransactionRace.run(
+            fixtureTransactionTemplate,
+            DEFAULT_TEST_TENANT_ID,
+            () -> triggerService.toggleTrigger(chainId, false),
+            () -> triggerService.fireTrigger(chainId, overDepthParams()));
+
+    assertThat(outcome.secondBlocked()).isTrue();
+    assertThat(outcome.secondError()).isNull();
+    assertThat(outcome.secondResult().outcome()).isEqualTo(TriggerFireResult.Outcome.DISABLED);
+    assertThat(outcome.secondResult().reason()).isEqualTo(TriggerService.REASON_TRIGGER_DISABLED);
+    assertThat(executionCount()).isZero();
+    assertThat(inTenantFixture(() -> triggerEventRepository.findByTriggerId(chainId, 10)))
+        .isEmpty();
+  }
+
+  /** 커밋 전 트리거 삭제를 깊이 초과 발화가 기다린 뒤 없음으로 돌려준다 — 이벤트 INSERT 의 FK 위반 예외가 나지 않는다(WD-858). */
+  @Test
+  void chainDepthSkip_waitsForUncommittedTriggerDelete_thenNotFound() throws Exception {
+    Long chainId = createChainTrigger();
+    triggers.remove(chainId);
+
+    var outcome =
+        PausedTransactionRace.run(
+            fixtureTransactionTemplate,
+            DEFAULT_TEST_TENANT_ID,
+            () -> triggerService.deleteTrigger(chainId),
+            () -> triggerService.fireTrigger(chainId, overDepthParams()));
+
+    assertThat(outcome.secondBlocked()).isTrue();
+    assertThat(outcome.secondError()).isNull();
+    assertThat(outcome.secondResult().outcome()).isEqualTo(TriggerFireResult.Outcome.NOT_FOUND);
+    assertThat(executionCount()).isZero();
   }
 }
