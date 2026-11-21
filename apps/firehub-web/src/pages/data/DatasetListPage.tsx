@@ -86,15 +86,15 @@ function DatasetTypeBadge({ info: { label, known }, className }: { info: TypeLab
  */
 const DATASET_FILTER_PARAM_KEYS = ['categoryId', 'storageType', 'originType', 'status', 'securityLevel', 'favorite'] as const;
 
+/** 카테고리 칩 클래스 — WD-880: 최소 클릭 대상 32×32. 높이 h-8·최소 너비 min-w-8(한 글자 이름도 32 이상), 글자 크기는 그대로 */
+const CATEGORY_CHIP_CLASS = 'h-8 min-w-8 cursor-pointer hover:opacity-80 transition-opacity';
+
 /**
  * URL 쿼리 파라미터를 단일 진실 소스(single source of truth)로 사용한다 (refs #94).
  * - 새로고침/공유 시 필터·검색·정렬 상태가 복원된다.
  * - 빈 값(default)일 때는 URL에서 제거하여 깔끔한 URL 유지.
  * - history 오염 방지를 위해 replace=true 로 갱신.
  */
-/** 카테고리 칩 클래스 — WD-880: 최소 클릭 대상 32×32. 높이 h-8·최소 너비 min-w-8(한 글자 이름도 32 이상), 글자 크기는 그대로 */
-const CATEGORY_CHIP_CLASS = 'h-8 min-w-8 cursor-pointer hover:opacity-80 transition-opacity';
-
 export default function DatasetListPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();

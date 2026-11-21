@@ -51,6 +51,8 @@ test('정렬 헤더 버튼이 32px 이상 (WD-880)', async ({ authenticatedPage:
   expect(count).toBeGreaterThan(0);
   for (let i = 0; i < count; i++) {
     const b = await heads.nth(i).boundingBox();
+    expect(b).not.toBeNull();
+    expect(b!.width).toBeGreaterThanOrEqual(32);
     expect(b!.height).toBeGreaterThanOrEqual(32);
   }
 });
