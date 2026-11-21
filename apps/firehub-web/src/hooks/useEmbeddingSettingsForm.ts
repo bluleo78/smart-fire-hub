@@ -32,6 +32,12 @@ const EMPTY: EmbeddingForm = { provider: 'OLLAMA', model: '', baseUrl: '', apiKe
 // 저장 요청 뒤 입력이 바뀌어 저장을 멈췄을 때의 안내(#716).
 const STALE_SAVE_MESSAGE = '저장 중 입력이 바뀌어 저장하지 않았습니다. 다시 저장하세요.';
 
+/** 필수 칸 빈 값 오류(WD-862) — 칸별로 따로 둬 여러 칸이 한꺼번에 비어도 각 칸 아래에 보인다(WD-643 다중 오류 규칙). */
+export interface EmbeddingFieldErrors {
+  model?: string;
+  baseUrl?: string;
+}
+
 export type EmbeddingTestState =
   | { ok: true; dimension: number }
   | { ok: false; message: string }
@@ -62,6 +68,8 @@ export interface EmbeddingSettingsFormState {
   /** 저장된 자체 호스팅 선언을 같은 전송 대상 그대로 유지하는 상태인가 — 이때는 security:settings 없이도 서버가 허용한다. */
   canKeepSavedSelfHosted: boolean;
   testState: EmbeddingTestState;
+  /** 비운 채 연결 테스트·저장을 눌렀을 때 빈 칸별 안내(WD-862). 그 칸을 고치면 그 칸 것만 사라진다. */
+  fieldErrors: EmbeddingFieldErrors;
   pending: EmbeddingPendingSave | null;
   busy: boolean;
   isSaving: boolean;
@@ -99,6 +107,7 @@ export function useEmbeddingSettingsForm(): EmbeddingSettingsFormState {
   const [pending, setPending] = useState<EmbeddingPendingSave | null>(null);
   const [busy, setBusy] = useState(false);
   const [hostingDemoted, setHostingDemoted] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<EmbeddingFieldErrors>({});
 
   // 서버 설정 → 폼. 키는 값으로 내려오지 않으므로 항상 빈 칸에서 시작한다(비우면 유지).
   // 최초 성공 로드 때 한 번만 시드한다(useSmtpSettingsForm 의 didInitialLoad 와 같은 규칙) — config 가 바뀔
@@ -156,6 +165,15 @@ export function useEmbeddingSettingsForm(): EmbeddingSettingsFormState {
       }
       setForm(next);
       setTestState(null);
+      // 고친 칸의 빈 값 안내만 지운다(WD-862) — 다른 빈 칸의 안내는 그 칸을 채울 때까지 남긴다.
+      if ('model' in patch || 'baseUrl' in patch) {
+        setFieldErrors((prev) => {
+          const rest = { ...prev };
+          if ('model' in patch) delete rest.model;
+          if ('baseUrl' in patch) delete rest.baseUrl;
+          return rest;
+        });
+      }
     },
     [form, isTargetChanged],
   );
@@ -180,7 +198,26 @@ export function useEmbeddingSettingsForm(): EmbeddingSettingsFormState {
     hosting: form.hosting,
   });
 
+  /**
+   * 모델·Base URL 이 비었는지(trim 후) 검사한다(WD-862). 서버도 거절하지만 화면이 먼저 칸 단위로 알려 주면
+   * 불필요한 외부 호출(probe)을 막고 어느 칸이 문제인지 바로 보인다. 비었으면 오류를 채우고 결과 줄을 지운 뒤
+   * 첫 빈 칸(모델 → Base URL 순)에 포커스를 옮겨 true 를 돌려준다 — 호출자는 API 를 부르지 않고 멈춘다.
+   */
+  const blockIfBlank = (): boolean => {
+    const errors: EmbeddingFieldErrors = {};
+    if (!form.model.trim()) errors.model = '모델을 입력하세요';
+    if (!form.baseUrl.trim()) errors.baseUrl = 'Base URL 을 입력하세요';
+    if (!errors.model && !errors.baseUrl) return false;
+    setFieldErrors(errors);
+    setTestState(null);
+    const firstId = errors.model ? 'embedding-model' : 'embedding-base-url';
+    // 오류가 렌더돼 aria-describedby 가 붙은 뒤에 포커스해야 스크린리더가 안내 문구를 함께 읽는다.
+    setTimeout(() => document.getElementById(firstId)?.focus(), 0);
+    return true;
+  };
+
   const handleTest = async () => {
+    if (blockIfBlank()) return;
     const seq = formSeqRef.current;
     setBusy(true);
     try {
@@ -221,6 +258,7 @@ export function useEmbeddingSettingsForm(): EmbeddingSettingsFormState {
   };
 
   const handleSave = async () => {
+    if (blockIfBlank()) return;
     const request = buildRequest();
     const seq = formSeqRef.current;
     // 요청 뒤 입력이 바뀌었는가 — 그렇다면 이 저장은 지금 화면의 값에 대한 것이 아니다(#716).
@@ -294,6 +332,7 @@ export function useEmbeddingSettingsForm(): EmbeddingSettingsFormState {
     hostingDemoted,
     canKeepSavedSelfHosted,
     testState,
+    fieldErrors,
     pending,
     busy,
     isSaving: save.isPending,

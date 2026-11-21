@@ -40,6 +40,20 @@ class EmbeddingTargetGuardTest {
     return c;
   }
 
+  /** WD-862: 비운 값(null·빈·공백)은 형식 오류가 아니라 「입력하세요」 전용 문구로 거절한다. */
+  @Test
+  void blankUrlIsRejectedWithRequiredMessage() {
+    for (EmbeddingProviderType provider : EmbeddingProviderType.values()) {
+      for (String blank : new String[] {null, "", "   "}) {
+        assertThatThrownBy(() -> guard.check(provider, blank))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage(EmbeddingTargetGuard.MSG_URL_REQUIRED)
+            .message()
+            .doesNotContain("http://");
+      }
+    }
+  }
+
   @Test
   void malformedUrlIsRejected() {
     assertThatThrownBy(() -> guard.check(EmbeddingProviderType.OLLAMA, "ftp://x"))

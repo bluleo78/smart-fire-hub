@@ -499,6 +499,79 @@ test.describe('임베딩 설정 탭', () => {
     ).toBeVisible();
     expect(new URL(page.url()).pathname).toBe('/admin/settings');
   });
+
+  test.describe('필수 입력 (WD-862)', () => {
+    async function openUnconfigured(page: import('@playwright/test').Page) {
+      const mocks = await setupEmbeddingMocks(page, {
+        config: UNCONFIGURED_EMBEDDING,
+        status: createEmbeddingStatus({ configured: false, model: null, dimension: null }),
+        probe: { body: { dimension: 1024 } },
+      });
+      await openTab(page);
+      return mocks;
+    }
+
+    test('모델·Base URL 라벨에 필수 표시가 있고 placeholder 는 예시로 보인다 (WD-862)', async ({
+      authenticatedPage: page,
+    }) => {
+      await openUnconfigured(page);
+      await expect(page.locator('label[for="embedding-model"]')).toContainText('*');
+      await expect(page.locator('label[for="embedding-base-url"]')).toContainText('*');
+      await expect(page.getByLabel('Base URL')).toHaveAttribute(
+        'placeholder',
+        '예: http://host.docker.internal:11434',
+      );
+      await expect(page.getByLabel('모델')).toHaveAttribute('placeholder', '예: bge-m3');
+      await page.getByRole('combobox', { name: 'Provider' }).click();
+      await page.getByRole('option', { name: 'OpenAI' }).click();
+      await expect(page.getByLabel('Base URL')).toHaveAttribute('placeholder', '예: https://api.openai.com');
+      await expect(page.getByLabel('모델')).toHaveAttribute('placeholder', '예: text-embedding-3-small');
+    });
+
+    for (const btn of ['연결 테스트', '저장']) {
+      test(`비운 채 ${btn} 하면 API 를 부르지 않고 빈 칸 아래에 입력 안내를 보인다 (WD-862)`, async ({
+        authenticatedPage: page,
+      }) => {
+        const { probe } = await openUnconfigured(page);
+        await page.getByRole('button', { name: btn, exact: true }).click();
+        await expect(page.locator('#embedding-model-error')).toHaveText('모델을 입력하세요');
+        await expect(page.locator('#embedding-base-url-error')).toHaveText('Base URL 을 입력하세요');
+        const model = page.getByLabel('모델');
+        const baseUrl = page.getByLabel('Base URL');
+        await expect(model).toHaveAttribute('aria-invalid', 'true');
+        await expect(baseUrl).toHaveAttribute('aria-invalid', 'true');
+        await expect(model).toHaveAttribute('aria-describedby', /embedding-model-error/);
+        await expect(baseUrl).toHaveAttribute('aria-describedby', /embedding-base-url-error/);
+        await expect(model).toBeFocused();
+        expect(probe.requests.length).toBe(0);
+        await expect(page.locator('p[role="status"]')).toHaveCount(0);
+        // 여러 칸 오류가 role=alert 로 겹쳐 낭독되지 않는지(announceError=false — WD-643) 함께 확인한다(WD-862).
+        await expect(page.locator('#embedding-model-error')).not.toHaveAttribute('role', 'alert');
+        await expect(page.locator('#embedding-base-url-error')).not.toHaveAttribute('role', 'alert');
+      });
+    }
+
+    test('공백만 넣은 Base URL 도 빈 값으로 본다 (WD-862)', async ({ authenticatedPage: page }) => {
+      const { probe } = await openUnconfigured(page);
+      await page.getByLabel('모델').fill('bge-m3');
+      await page.getByLabel('Base URL').fill('   ');
+      await page.getByRole('button', { name: '연결 테스트', exact: true }).click();
+      await expect(page.locator('#embedding-base-url-error')).toHaveText('Base URL 을 입력하세요');
+      await expect(page.locator('#embedding-model-error')).toHaveCount(0);
+      await expect(page.getByLabel('Base URL')).toBeFocused();
+      expect(probe.requests.length).toBe(0);
+    });
+
+    test('빈 칸에 입력하면 그 칸 안내만 사라진다 (WD-862)', async ({ authenticatedPage: page }) => {
+      await openUnconfigured(page);
+      await page.getByRole('button', { name: '연결 테스트', exact: true }).click();
+      await expect(page.locator('#embedding-model-error')).toBeVisible();
+      await page.getByLabel('모델').fill('bge-m3');
+      await expect(page.locator('#embedding-model-error')).toHaveCount(0);
+      await expect(page.getByLabel('모델')).not.toHaveAttribute('aria-invalid', 'true');
+      await expect(page.locator('#embedding-base-url-error')).toBeVisible();
+    });
+  });
 });
 
 test.describe('재임베딩 카드', () => {
