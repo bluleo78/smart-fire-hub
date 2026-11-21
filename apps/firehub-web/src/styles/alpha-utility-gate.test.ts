@@ -51,6 +51,11 @@ const ALLOWLIST: { file: string; util: string; reason: string }[] = [
     util: 'text-muted-foreground/30',
     reason: 'aria-hidden Clock 빈 상태 일러스트 — 순수 장식',
   },
+  {
+    file: 'pages/pipeline/PipelineEditorPage.tsx',
+    util: 'text-muted-foreground/30',
+    reason: 'aria-hidden History 빈 상태 일러스트(WD-884, 트리거 탭과 동일) — 순수 장식',
+  },
 ];
 
 /**

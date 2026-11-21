@@ -134,6 +134,46 @@ test.describe('파이프라인 에디터 페이지', () => {
 
     // 빈 상태 메시지 확인
     await expect(page.getByText('실행 기록이 없습니다.')).toBeVisible();
+    // 다음 행동 안내(WD-884) — 실행 권한이 있으면 헤더 「실행」 버튼과 트리거를 안내한다
+    await expect(
+      page.getByText('상단의 「실행」 버튼으로 첫 실행을 시작할 수 있습니다. 트리거를 추가하면 자동으로 실행됩니다.'),
+    ).toBeVisible();
+  });
+
+  test('실행 권한이 없으면 빈 상태가 실행 버튼 대신 기록이 쌓이는 때를 안내한다', async ({
+    authenticatedPage: page,
+  }) => {
+    // 읽기 권한만 부여 — beforeEach 의 전체 권한 모킹을 덮어쓴다(나중에 등록한 route 가 먼저 처리됨)
+    await grantPipelinePermissions(page, ['pipeline:read']);
+    await setupPipelineEditorMocks(page, 1);
+    // 실행 이력만 빈 목록으로 덮어쓴다(helper 기본값은 실행 2건)
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/executions', createPageResponse([]));
+
+    await page.goto('/pipelines/1');
+    await page.getByRole('tab', { name: '실행 이력' }).click();
+
+    await expect(page.getByText('실행 기록이 없습니다.')).toBeVisible();
+    await expect(
+      page.getByText('실행 권한이 있는 사용자가 실행하거나 트리거가 실행하면 이곳에 기록이 쌓입니다.'),
+    ).toBeVisible();
+    // 보이지 않는 「실행」 버튼을 가리키는 문구는 나오면 안 된다
+    await expect(page.getByText(/상단의 「실행」 버튼/)).toHaveCount(0);
+  });
+
+  test('실행 이력 응답이 오기 전에는 첫 실행 안내 문구를 보이지 않는다 (WD-884)', async ({ authenticatedPage: page }) => {
+    await setupPipelineEditorMocks(page, 1);
+    // 실행 이력 요청을 응답 없이 붙잡아 「빈 결과 확인 전」 상태를 만든다 — 실제 기록 유무를 모르는 때다
+    await page.route(
+      (url) => url.pathname === '/api/v1/pipelines/1/executions',
+      () => new Promise<void>(() => {}),
+    );
+
+    await page.goto('/pipelines/1');
+    await page.getByRole('tab', { name: '실행 이력' }).click();
+
+    await expect(page.getByText('실행 기록이 없습니다.')).toBeVisible();
+    await expect(page.getByText(/첫 실행을 시작할 수 있습니다/)).toHaveCount(0);
+    await expect(page.getByText(/이곳에 기록이 쌓입니다/)).toHaveCount(0);
   });
 
   test('트리거 탭에서 등록된 트리거가 표시된다', async ({ authenticatedPage: page }) => {
