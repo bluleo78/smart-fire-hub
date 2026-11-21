@@ -270,6 +270,7 @@ export function PipelineCanvas({
         ariaLabelConfig={KO_ARIA_LABEL_CONFIG}
       >
         <Background color={resolvedTheme === 'dark' ? 'oklch(1 0 0 / 8%)' : undefined} />
+        {/* WD-883: 확대·축소·전체 보기 버튼 크기는 index.css 의 .react-flow__controls-button 규칙(32×32)으로 키운다 */}
         <Controls showInteractive={!readOnly} />
       </ReactFlow>
 

@@ -479,7 +479,7 @@ export default function PipelineEditorPage() {
       {/* Main content with tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col min-h-0">
         {pipelineId && (
-          <TabsList className="border-b justify-start h-10 px-4 shrink-0">
+          <TabsList className="border-b justify-start px-4 shrink-0">
             <TabsTrigger
               value="overview"
               onPointerDown={() => {

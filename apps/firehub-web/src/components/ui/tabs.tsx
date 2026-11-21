@@ -25,8 +25,9 @@ function Tabs({
 
 const tabsListVariants = cva(
   // max-sm에서만 줄바꿈(#345 Reflow/SC 1.4.10) — 320px 폭에서 탭이 한 줄에 밀려 페이지가 가로 스크롤되는 것을 막는다.
-  // 높이는 고정 h-9 대신 max-sm 한정으로 auto로 풀어 두 번째 줄이 잘리지 않게 한다. sm 이상 데스크톱 표현은 그대로다.
-  "rounded-lg p-[3px] group-data-[orientation=horizontal]/tabs:h-9 max-sm:group-data-[orientation=horizontal]/tabs:h-auto max-sm:flex-wrap data-[variant=line]:rounded-none group/tabs-list text-muted-foreground inline-flex w-fit items-center justify-center group-data-[orientation=vertical]/tabs:h-fit group-data-[orientation=vertical]/tabs:flex-col",
+  // WD-883: 가로 탭 목록 높이를 h-9(36px)→h-10(40px)로 키워 트리거(100%-1px, p-[3px])가 29→33px 이 되게 한다(WCAG 2.5.8 클릭 대상 32px 이상).
+  // 높이는 고정 h-10 대신 max-sm 한정으로 auto로 풀어 두 번째 줄이 잘리지 않게 한다. sm 이상 데스크톱 표현은 그대로다.
+  "rounded-lg p-[3px] group-data-[orientation=horizontal]/tabs:h-10 max-sm:group-data-[orientation=horizontal]/tabs:h-auto max-sm:flex-wrap data-[variant=line]:rounded-none group/tabs-list text-muted-foreground inline-flex w-fit items-center justify-center group-data-[orientation=vertical]/tabs:h-fit group-data-[orientation=vertical]/tabs:flex-col",
   {
     variants: {
       variant: {
@@ -60,11 +61,12 @@ function TabsTrigger({
   className,
   ...props
 }: React.ComponentProps<typeof TabsPrimitive.Trigger>) {
+  // WD-883: 가로 탭 트리거는 목록 높이(100%-1px)와 별개로 min-h-8 을 둔다 — 목록이 h-auto(max-sm)거나 화면이 테두리·여백을 더해도 32px 를 지킨다.
   return (
     <TabsPrimitive.Trigger
       data-slot="tabs-trigger"
       className={cn(
-        "focus-visible:border-ring focus-visible:ring-ring focus-visible:outline-ring text-foreground/60 hover:text-foreground dark:text-muted-foreground dark:hover:text-foreground relative inline-flex h-[calc(100%-1px)] min-w-[72px] flex-1 items-center justify-center gap-1.5 rounded-md border border-transparent px-3 py-1 text-sm font-medium whitespace-nowrap transition-all group-data-[orientation=vertical]/tabs:w-full group-data-[orientation=vertical]/tabs:justify-start focus-visible:ring-[3px] focus-visible:outline-1 disabled:pointer-events-none disabled:opacity-50 group-data-[variant=default]/tabs-list:data-[state=active]:shadow-sm group-data-[variant=line]/tabs-list:data-[state=active]:shadow-none [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+        "focus-visible:border-ring focus-visible:ring-ring focus-visible:outline-ring text-foreground/60 hover:text-foreground dark:text-muted-foreground dark:hover:text-foreground relative inline-flex h-[calc(100%-1px)] group-data-[orientation=horizontal]/tabs:min-h-8 min-w-[72px] flex-1 items-center justify-center gap-1.5 rounded-md border border-transparent px-3 py-1 text-sm font-medium whitespace-nowrap transition-all group-data-[orientation=vertical]/tabs:w-full group-data-[orientation=vertical]/tabs:justify-start focus-visible:ring-[3px] focus-visible:outline-1 disabled:pointer-events-none disabled:opacity-50 group-data-[variant=default]/tabs-list:data-[state=active]:shadow-sm group-data-[variant=line]/tabs-list:data-[state=active]:shadow-none [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         "group-data-[variant=line]/tabs-list:bg-transparent group-data-[variant=line]/tabs-list:data-[state=active]:bg-transparent dark:group-data-[variant=line]/tabs-list:data-[state=active]:border-transparent dark:group-data-[variant=line]/tabs-list:data-[state=active]:bg-transparent",
         "data-[state=active]:bg-background dark:data-[state=active]:text-foreground dark:data-[state=active]:border-input dark:data-[state=active]:bg-input/30 data-[state=active]:text-foreground",
         "after:bg-foreground after:absolute after:opacity-0 after:transition-opacity group-data-[orientation=horizontal]/tabs:after:inset-x-0 group-data-[orientation=horizontal]/tabs:after:bottom-[-5px] group-data-[orientation=horizontal]/tabs:after:h-0.5 group-data-[orientation=vertical]/tabs:after:inset-y-0 group-data-[orientation=vertical]/tabs:after:-right-1 group-data-[orientation=vertical]/tabs:after:w-0.5 group-data-[variant=line]/tabs-list:data-[state=active]:after:opacity-100",
