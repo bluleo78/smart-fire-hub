@@ -1,6 +1,7 @@
 import { ChevronDown, ChevronRight, MoreHorizontal, Plus, Search, Table2, X } from 'lucide-react';
 import { type KeyboardEvent, useMemo, useRef, useState } from 'react';
 
+import { PendingButton } from '../../../components/PendingButton';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -9,6 +10,7 @@ import {
   DropdownMenuTrigger,
 } from '../../../components/ui/dropdown-menu';
 import { Input } from '../../../components/ui/input';
+import { extractApiError } from '../../../lib/api-error';
 import { cn } from '../../../lib/utils';
 import type { SchemaInfo, SchemaTable } from '../../../types/analytics';
 import {
@@ -24,11 +26,27 @@ interface SchemaExplorerProps {
   dialect?: SchemaInfo['dialect'];
   schema?: string;
   onInsertAtCursor: (text: string) => void;
+  /** 스키마 조회 진행 중(데이터 없음) — WD-912: 빈 목록과 로딩을 구분한다 */
+  isLoading?: boolean;
+  /** 스키마 조회 오류 — 목록이 비어 있을 때만 오류 UI 로 보인다 */
+  error?: unknown;
+  /** 오류 UI 의 「다시 시도」 */
+  onRetry?: () => void;
 }
 
-export function SchemaExplorer({ tables, dialect, schema, onInsertAtCursor }: SchemaExplorerProps) {
+export function SchemaExplorer({
+  tables,
+  dialect,
+  schema,
+  onInsertAtCursor,
+  isLoading,
+  error,
+  onRetry,
+}: SchemaExplorerProps) {
   const dialectInfo = useMemo(() => ({ dialect, schema }), [dialect, schema]);
   const [searchQuery, setSearchQuery] = useState('');
+  // 다시 시도를 누른 시점의 오류 — 재조회 중에도 오류 UI 를 유지하는 데 쓴다(WD-912)
+  const [retryError, setRetryError] = useState<unknown>(null);
   const [expandedTables, setExpandedTables] = useState<Set<string>>(new Set());
 
   const searchExpandedTables = useMemo(() => {
@@ -122,10 +140,49 @@ export function SchemaExplorer({ tables, dialect, schema, onInsertAtCursor }: Sc
     moveFocus(next);
   };
 
+  // WD-912: 목록이 비었을 때 오류 / 로딩 / 빈 상태를 구분한다 — 예전에는 무조건 「불러오는 중」이라 0건 응답과
+  // 조회 실패도 영원히 로딩처럼 보였다. 데이터가 있으면(재조회 실패 포함) 아래 목록을 그대로 유지한다.
+  // react-query 는 데이터 없는 오류에서 refetch 를 시작하면 error 를 비우고 pending 으로 돌린다 — 그러면 다시 시도를
+  // 누르는 순간 버튼(과 포커스)이 사라지므로, 누른 시점의 오류를 기억해 재조회 동안 오류 UI 를 유지한다.
+  // 그래서 error 가 비어 있는데 오류 UI 가 보이면 곧 재조회 중이다(버튼 잠금 조건).
+  const shownError = error ?? (isLoading ? retryError : null);
   if (tables.length === 0) {
+    if (shownError) {
+      const detail = extractApiError(shownError, '');
+      return (
+        <div role="alert" className="flex flex-col items-start gap-2 p-3 text-xs">
+          <p className="font-medium text-destructive">테이블 정보를 불러오지 못했습니다.</p>
+          {detail && <p className="text-muted-foreground">{detail}</p>}
+          {onRetry && (
+            // WD-912: 진행 중 잠금은 native disabled 가 아니라 PendingButton(aria-disabled)으로 —
+            // disabled 면 키보드로 누른 버튼의 포커스가 body 로 떨어진다(WD-637·WD-678).
+            <PendingButton
+              variant="outline"
+              size="sm"
+              className="h-8"
+              pending={!error}
+              onClick={() => {
+                setRetryError(error);
+                onRetry();
+              }}
+            >
+              다시 시도
+            </PendingButton>
+          )}
+        </div>
+      );
+    }
+    if (isLoading) {
+      return (
+        <div role="status" className="p-3 text-xs text-muted-foreground">
+          테이블 정보를 불러오는 중...
+        </div>
+      );
+    }
     return (
       <div className="p-3 text-xs text-muted-foreground">
-        테이블 정보를 불러오는 중...
+        <p className="font-medium text-foreground">표시할 테이블이 없습니다.</p>
+        <p className="mt-1">볼 수 있는 데이터셋이 생기면 여기에 테이블과 컬럼이 보입니다.</p>
       </div>
     );
   }

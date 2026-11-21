@@ -515,7 +515,13 @@ export default function QueryEditorPage() {
     if (canEdit) setIsDirty(true);
   }, [canEdit]);
   const cloneSavedQuery = useCloneSavedQuery();
-  const { data: schemaInfo } = useSchemaInfo();
+  // WD-912: 테이블 목록이 로딩/오류/빈 상태를 구분하도록 조회 상태도 SchemaExplorer 로 넘긴다.
+  const {
+    data: schemaInfo,
+    isPending: schemaLoading,
+    error: schemaError,
+    refetch: refetchSchema,
+  } = useSchemaInfo();
   const { data: foldersData } = useQueryFolders();
 
   const executeQuery = useExecuteAnalyticsQuery();
@@ -969,6 +975,10 @@ export default function QueryEditorPage() {
             dialect={schemaInfo?.dialect}
             schema={schemaInfo?.schema}
             onInsertAtCursor={handleInsertAtCursor}
+            isLoading={schemaLoading}
+            // WD-912: 데이터를 한 번이라도 받았으면(0건 성공 포함) 배경 재조회 실패로 빈 상태를 오류로 덮지 않는다.
+            error={schemaInfo ? null : schemaError}
+            onRetry={() => void refetchSchema()}
           />
         </div>
 
