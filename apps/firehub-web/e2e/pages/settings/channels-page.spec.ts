@@ -1,6 +1,8 @@
 import type { ChannelSetting } from '../../../src/api/channels';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { expectSingleLine } from '../../fixtures/long-name-layout';
+import { expectNoHorizontalOverflow } from '../../fixtures/long-unbroken-name';
 
 /**
  * 채널 설정 페이지 E2E 테스트
@@ -533,6 +535,27 @@ test.describe('채널 설정 페이지', () => {
     await expect(
       page.getByText('Slack OAuth 설정이 완료되지 않았습니다. 관리자에게 문의하세요.'),
     ).toBeVisible();
+  });
+
+  // WD-895: 페이지 제목 h1 이 다른 페이지와 같은 앱 표준 타이포그래피(28px/600/36px)인지 검증
+  test('페이지 제목 h1 이 앱 표준 28px / 600 / 줄 높이 36px 이다 (WD-895)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupChannelMocks(page);
+    await page.goto('/settings/channels');
+
+    const h1 = page.getByRole('heading', { level: 1, name: '알림 채널 설정' });
+    await expect(h1).toHaveCSS('font-size', '28px');
+    await expect(h1).toHaveCSS('font-weight', '600');
+    await expect(h1).toHaveCSS('line-height', '36px');
+
+    // 모바일 폭(375px)에서도 제목이 한 줄이고 페이지·본문이 가로로 넘치지 않는지 확인.
+    // 크기를 바꾼 뒤 레이아웃(모바일 서랍 전환)이 늦게 반영될 수 있어 toPass 로 다시 잰다.
+    await page.setViewportSize({ width: 375, height: 800 });
+    await expect(async () => {
+      await expectSingleLine(h1);
+      await expectNoHorizontalOverflow(page);
+    }).toPass();
   });
 
   /**
