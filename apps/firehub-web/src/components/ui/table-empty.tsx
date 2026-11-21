@@ -12,6 +12,46 @@ import { TableCell,TableRow } from './table';
  */
 export const ANNOUNCE_DELAY_MS = 100;
 
+interface DelayedStatusProps {
+  children: ReactNode;
+  /** 바뀌면 문구가 같아도 새 노드로 갈아 끼워 다시 낭독한다 */
+  announceKey?: string;
+  /** 내용 노드(낭독되는 노드)에 붙일 클래스 */
+  className?: string;
+}
+
+/**
+ * 빈 상태 안내 문구를 role="status" 라이브 리전 안에 두어 스크린리더가 낭독하게 하는 공용 컴포넌트.
+ *
+ * [WD-815] 내용과 함께 마운트된 status 영역은 낭독되지 않을 수 있다.
+ * - 문구는 마운트 때부터 화면에 그리되 ANNOUNCE_DELAY_MS 동안은 aria-hidden 노드로 두고, 지연 뒤 key 가 다른
+ *   숨기지 않은 노드로 갈아 끼운다. 보조기술에는 빈 영역에 문구 노드가 실제로 추가된 것으로 보여 낭독되고
+ *   (aria-hidden 속성만 떼면 일부 화면 읽기 프로그램이 낭독하지 않는다), 화면에서는 한 커밋에 바뀌어 깜빡이지 않는다.
+ * - status 는 분기 밖 같은 자리에 하나만 두어, 마운트된 동안 문구가 바뀌면 같은 영역의 변화로 낭독된다.
+ */
+export function DelayedStatus({ children, announceKey, className }: DelayedStatusProps) {
+  // 지연 뒤 숨긴 노드를 낭독되는 노드로 갈아 끼우기 위한 플래그
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setReady(true), ANNOUNCE_DELAY_MS);
+    // 지연 전에 언마운트되면 setState 가 일어나지 않도록 정리
+    return () => clearTimeout(t);
+  }, []);
+
+  return (
+    <div role="status" aria-live="polite" aria-atomic="true">
+      {/* announceKey 가 바뀌어도 새 노드가 들어와 같은 문구를 다시 낭독한다 */}
+      <div
+        key={ready ? `announced:${announceKey ?? ''}` : 'pending'}
+        className={className}
+        aria-hidden={ready ? undefined : true}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
 interface TableEmptyRowProps {
   colSpan: number;
   /** 데이터가 절대값 0건일 때 노출할 메시지 (기본: "데이터가 없습니다.") */
@@ -52,39 +92,24 @@ export function TableEmptyRow({
 }: TableEmptyRowProps) {
   const isSearchEmpty = !!searchKeyword;
 
-  // 지연 뒤 숨긴 노드를 낭독되는 노드로 갈아 끼우기 위한 플래그
-  const [ready, setReady] = useState(false);
-  useEffect(() => {
-    const t = setTimeout(() => setReady(true), ANNOUNCE_DELAY_MS);
-    // 지연 전에 언마운트되면 setState 가 일어나지 않도록 정리
-    return () => clearTimeout(t);
-  }, []);
-
   return (
     <TableRow>
       <TableCell colSpan={colSpan} className="text-center text-muted-foreground py-12">
         <div className="flex flex-col items-center gap-3">
           {isSearchEmpty && <SearchX className="h-8 w-8 text-muted-foreground/60" aria-hidden="true" />}
-          <div role="status" aria-live="polite" aria-atomic="true">
-            {/* announceKey 가 바뀌어도 새 노드가 들어와 같은 문구를 다시 낭독한다 */}
-            <div
-              key={ready ? `announced:${announceKey ?? ''}` : 'pending'}
-              className={isSearchEmpty ? 'space-y-1' : undefined}
-              aria-hidden={ready ? undefined : true}
-            >
-              {isSearchEmpty ? (
-                <>
-                  <p className="text-sm">
-                    <span className="font-medium text-foreground">'{searchKeyword}'</span>
-                    <span>에 대한 결과가 없습니다.</span>
-                  </p>
-                  <p className="text-xs">다른 키워드로 검색해 보세요.</p>
-                </>
-              ) : (
-                <p className="text-sm">{message}</p>
-              )}
-            </div>
-          </div>
+          <DelayedStatus announceKey={announceKey} className={isSearchEmpty ? 'space-y-1' : undefined}>
+            {isSearchEmpty ? (
+              <>
+                <p className="text-sm">
+                  <span className="font-medium text-foreground">'{searchKeyword}'</span>
+                  <span>에 대한 결과가 없습니다.</span>
+                </p>
+                <p className="text-xs">다른 키워드로 검색해 보세요.</p>
+              </>
+            ) : (
+              <p className="text-sm">{message}</p>
+            )}
+          </DelayedStatus>
           {isSearchEmpty && onResetSearch && (
             <Button variant="outline" size="sm" onClick={onResetSearch}>
               검색 초기화

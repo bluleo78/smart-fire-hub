@@ -24,6 +24,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Separator } from '../components/ui/separator';
 import { Skeleton } from '../components/ui/skeleton';
 import { Sparkline } from '../components/ui/sparkline';
+import { DelayedStatus } from '../components/ui/table-empty';
 import { useDashboards } from '../hooks/queries/useAnalytics';
 import {
   useActivityFeed,
@@ -133,6 +134,9 @@ export default function HomePage() {
   );
   const activityTotalCount = activityFeedPages?.pages[0]?.totalCount;
 
+  // 유형·상태 필터가 하나라도 걸려 있는지 — 0건일 때 「데이터 자체가 없음」과 「필터 때문에 비었음」을 구분한다(WD-875)
+  const activityFiltersActive = !!typeFilter || !!severityFilter;
+
   function applyFilter(type: string, severity: string) {
     setTypeFilter(type);
     setSeverityFilter(severity);
@@ -142,6 +146,8 @@ export default function HomePage() {
   // 컨테이너 내부 스크롤(`h-[32rem]`)이므로 root를 스크롤 컨테이너로 지정해야 한다.
   const activityScrollRef = useRef<HTMLDivElement>(null);
   const activitySentinelRef = useRef<HTMLDivElement>(null);
+  // 「필터 초기화」 후 포커스를 옮길 유형 「전체」 버튼 (WD-875)
+  const typeAllButtonRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     const sentinel = activitySentinelRef.current;
     const root = activityScrollRef.current;
@@ -608,6 +614,7 @@ export default function HomePage() {
                 ].map((opt) => (
                   <Button
                     key={opt.value}
+                    ref={opt.value === '' ? typeAllButtonRef : undefined}
                     variant={typeFilter === opt.value ? 'default' : 'outline'}
                     aria-pressed={typeFilter === opt.value}
                     size="sm"
@@ -710,12 +717,34 @@ export default function HomePage() {
             ) : (
               <div className="flex flex-col items-center gap-2 py-8 text-center">
                 <Activity className="h-8 w-8 text-muted-foreground/50" />
-                <p className="text-sm text-muted-foreground">활동 내역이 없습니다.</p>
-                {/* 파이프라인 목록(조회)으로 가서 실행하므로 조회·실행 권한이 모두 있을 때만 보인다(WD-272) */}
-                {canReadPipeline && canExecutePipeline && (
-                  <Button variant="outline" size="sm" onClick={() => navigate('/pipelines')}>
-                    파이프라인 실행하기
+                {/* 필터 때문에 비었으면 원인을 알리고 필터를 풀 수단을 준다(WD-875).
+                    DelayedStatus: 스크린리더가 빈 상태 문구를 낭독하도록 한다(공용 TableEmptyRow 와 동일) */}
+                <DelayedStatus announceKey={activityFiltersActive ? 'filtered' : 'empty'}>
+                  <p className="text-sm text-muted-foreground">
+                    {activityFiltersActive ? '조건에 맞는 활동이 없습니다.' : '활동 내역이 없습니다.'}
+                  </p>
+                </DelayedStatus>
+                {activityFiltersActive ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      applyFilter('', '');
+                      // 눌린 버튼이 사라지면 포커스가 body 로 떨어지므로, 항상 렌더되는 유형 「전체」로 옮겨
+                      // 키보드·스크린리더 사용자가 자리를 잃지 않게 한다(WD-875)
+                      typeAllButtonRef.current?.focus();
+                    }}
+                  >
+                    필터 초기화
                   </Button>
+                ) : (
+                  // 파이프라인 목록(조회)으로 가서 실행하므로 조회·실행 권한이 모두 있을 때만 보인다(WD-272)
+                  canReadPipeline &&
+                  canExecutePipeline && (
+                    <Button variant="outline" size="sm" onClick={() => navigate('/pipelines')}>
+                      파이프라인 실행하기
+                    </Button>
+                  )
                 )}
               </div>
             )}
