@@ -779,4 +779,84 @@ test.describe('자동 새로고침 인라인 오류 (WD-876)', () => {
     dialog = await openSettings();
     await expect(dialog.locator('#edit-dash-refresh-error')).toHaveCount(0);
   });
+
+  /**
+   * WD-888 — type=number 칸은 브라우저가 덜 된 숫자(1e, 5., -)를 value "" 로 넘겨 "수동"으로 저장되고
+   * 저장된 주기가 조용히 지워졌다. 텍스트 칸으로 바꿔 원문을 그대로 검증한다.
+   */
+  test('대시보드 설정 — 숫자가 덜 된 값(1e)은 오류로 막고 저장된 주기를 지우지 않는다 (WD-888)', async ({
+    authenticatedPage: page,
+  }) => {
+    const dashboard = createDashboardListItem({ id: 1, name: '주기 대시보드', autoRefreshSeconds: 30 });
+    await mockApi(page, 'GET', '/api/v1/analytics/dashboards', createPageResponse([dashboard]));
+    const putCapture = await mockApi(page, 'PUT', '/api/v1/analytics/dashboards/1', dashboard, { capture: true });
+    await page.goto('/analytics/dashboards');
+    await page.getByRole('row', { name: /주기 대시보드/ }).getByLabel('설정').click();
+    const dialog = page.getByRole('dialog', { name: '대시보드 설정' });
+    await expect(dialog).toBeVisible();
+
+    const input = dialog.getByLabel('자동 새로고침 (초)');
+    await expect(input).toHaveAttribute('inputmode', 'numeric');
+    await input.fill('1e');
+    await dialog.getByRole('button', { name: '저장' }).click();
+
+    await expect(dialog.locator('#edit-dash-refresh-error')).toHaveText(ERR_MIN);
+    await expect(input).toBeFocused();
+    await expect(dialog).toBeVisible();
+    expect(putCapture.requests.length).toBe(0);
+  });
+
+  test('새 대시보드 — 숫자가 덜 된 값(-·5.·1e3·+5·abc)은 오류로 막고, 아주 긴 숫자는 상한으로 알린다 (WD-888)', async ({
+    authenticatedPage: page,
+  }) => {
+    const { dialog, post } = await openCreateDialog(page);
+    await dialog.getByLabel('이름 *').fill('운영 현황');
+    const input = dialog.getByLabel('자동 새로고침 (초)');
+    const error = dialog.locator('#dash-refresh-error');
+    const cases: Array<[string, string]> = [
+      ['-', ERR_MIN],
+      ['5.', ERR_MIN],
+      ['1e3', ERR_MIN],
+      ['+5', ERR_MIN],
+      ['abc', ERR_MIN],
+      ['99999999999999999999999', '자동 새로고침은 86400초(24시간) 이하로 입력해 주세요.'],
+    ];
+
+    for (const [bad, message] of cases) {
+      await input.fill(bad);
+      // 값을 고치면 이전 오류가 사라진다 — 매 반복이 다시 검증됨을 보인다
+      await expect(error).toHaveCount(0);
+      await dialog.getByRole('button', { name: '만들기' }).click();
+      await expect(error).toHaveText(message);
+    }
+    expect(post.requests.length).toBe(0);
+  });
+
+  test('새 대시보드 — 앞뒤 공백·전각 숫자(IME 전각 모드)는 30 으로 받는다 (WD-888)', async ({ authenticatedPage: page }) => {
+    for (const raw of [' 30 ', '３０']) {
+      const { dialog, post } = await openCreateDialog(page);
+      await dialog.getByLabel('이름 *').fill('운영 현황');
+      await dialog.getByLabel('자동 새로고침 (초)').fill(raw);
+      await dialog.getByRole('button', { name: '만들기' }).click();
+      expect((await post.waitForRequest()).payload).toMatchObject({ autoRefreshSeconds: 30 });
+    }
+  });
+
+  test('대시보드 설정 — 공백뿐인 칸은 "수동"으로 저장해 기존 주기를 해제한다 (WD-888)', async ({
+    authenticatedPage: page,
+  }) => {
+    const dashboard = createDashboardListItem({ id: 1, name: '공백 대시보드', autoRefreshSeconds: 30 });
+    await mockApi(page, 'GET', '/api/v1/analytics/dashboards', createPageResponse([dashboard]));
+    const putCapture = await mockApi(page, 'PUT', '/api/v1/analytics/dashboards/1', dashboard, { capture: true });
+    await page.goto('/analytics/dashboards');
+    await page.getByRole('row', { name: /공백 대시보드/ }).getByLabel('설정').click();
+    const settings = page.getByRole('dialog', { name: '대시보드 설정' });
+    await expect(settings).toBeVisible();
+    await settings.getByLabel('자동 새로고침 (초)').fill('   ');
+    await settings.getByRole('button', { name: '저장' }).click();
+    expect((await putCapture.waitForRequest()).payload).toMatchObject({
+      autoRefreshSeconds: null,
+      clearAutoRefresh: true,
+    });
+  });
 });
