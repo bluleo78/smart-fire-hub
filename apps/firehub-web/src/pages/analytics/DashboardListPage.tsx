@@ -27,6 +27,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '../../components/ui/dialog';
+import { FormField } from '../../components/ui/form-field';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
 import { SearchInput } from '../../components/ui/search-input';
@@ -62,6 +63,7 @@ import {
   type DashboardListItem,
   MAX_AUTO_REFRESH_SECONDS,
   MAX_DASHBOARD_DESCRIPTION_LENGTH,
+  MIN_AUTO_REFRESH_SECONDS,
 } from '../../types/analytics';
 
 /**
@@ -75,13 +77,63 @@ function parseAutoRefreshInput(raw: string): { value: number | null } | { error:
   const trimmed = raw.trim();
   if (!trimmed) return { value: null };
   const num = Number(trimmed);
-  if (Number.isNaN(num) || !Number.isInteger(num) || num < 5) {
-    return { error: '자동 새로고침은 5 이상의 정수(초)로 입력해 주세요.' };
+  if (Number.isNaN(num) || !Number.isInteger(num) || num < MIN_AUTO_REFRESH_SECONDS) {
+    return { error: `자동 새로고침은 ${MIN_AUTO_REFRESH_SECONDS} 이상의 정수(초)로 입력해 주세요.` };
   }
   if (num > MAX_AUTO_REFRESH_SECONDS) {
     return { error: `자동 새로고침은 ${MAX_AUTO_REFRESH_SECONDS}초(${MAX_AUTO_REFRESH_SECONDS / 3600}시간) 이하로 입력해 주세요.` };
   }
   return { value: num };
+}
+
+// 자동 새로고침 칸 id — 칸에 주는 id 와 검증 실패 때 포커스를 옮길 id 가 어긋나지 않게 한 곳에 둔다(WD-876)
+const CREATE_REFRESH_ID = 'dash-refresh';
+const EDIT_REFRESH_ID = 'edit-dash-refresh';
+
+/**
+ * 검증에 걸린 칸으로 포커스를 옮긴다(WD-876) — 같은 잘못된 값으로 다시 눌러 오류 문구가 그대로여도
+ * (React 가 같은 문구를 다시 그리지 않아 role=alert 가 다시 읽히지 않는다) 포커스가 칸으로 가 연결된 오류를 읽게 한다.
+ * 제출 잠금(guardSubmit)에 넘기는 함수 안에서 ref 를 읽으면 react-hooks/refs 규칙에 걸려 id 로 찾는다.
+ */
+function focusById(id: string) {
+  document.getElementById(id)?.focus();
+}
+
+/**
+ * "자동 새로고침 (초)" 입력 칸 — 허용 범위 안내(description)와 검증 오류(error)를 칸 곁에 함께 보인다(WD-876).
+ * 토스트는 몇 초 뒤 사라져 무엇이 틀렸는지 다시 볼 수 없고 칸과 이어지지 않아, 칸 아래 인라인 오류로 둔다.
+ * 라벨·오류(role=alert)·안내의 aria 연결은 공용 FormField 가 한다(오류 → 안내 순으로 읽힌다).
+ */
+function AutoRefreshField({
+  id,
+  value,
+  onChange,
+  error,
+}: {
+  id: string;
+  value: string;
+  onChange: (value: string) => void;
+  error: string | null;
+}) {
+  return (
+    <FormField
+      label="자동 새로고침 (초)"
+      htmlFor={id}
+      error={error ?? undefined}
+      description={`${MIN_AUTO_REFRESH_SECONDS}~${MAX_AUTO_REFRESH_SECONDS}초(${MAX_AUTO_REFRESH_SECONDS / 3600}시간) 사이의 정수. 비워 두면 수동 새로고침`}
+    >
+      <Input
+        id={id}
+        type="number"
+        placeholder="비워두면 수동 새로고침"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        min={MIN_AUTO_REFRESH_SECONDS}
+        max={MAX_AUTO_REFRESH_SECONDS}
+        step={1}
+      />
+    </FormField>
+  );
 }
 
 interface CreateDialogProps {
@@ -97,6 +149,8 @@ function CreateDashboardDialog({ open, onOpenChange, onCreated }: CreateDialogPr
   const [autoRefresh, setAutoRefresh] = useState('');
   // 이름 중복 409(WD-824)의 서버 문구 — 이름 칸 아래에 보이고 이름을 고치면 사라진다
   const [nameError, setNameError] = useState<string | null>(null);
+  // 자동 새로고침 검증 오류(WD-876) — 토스트 대신 입력 칸 아래에 보이고 값을 고치면 사라진다
+  const [refreshError, setRefreshError] = useState<string | null>(null);
   const createDashboard = useCreateDashboard();
   // isPending은 mutateAsync 호출 후 리렌더를 거쳐야 반영되는 비동기 상태라,
   // 같은 틱에 도착하는 빠른 연속 클릭(더블클릭)을 막지 못한다(#546).
@@ -106,9 +160,11 @@ function CreateDashboardDialog({ open, onOpenChange, onCreated }: CreateDialogPr
   const handleSubmit = guardSubmit(async () => {
     if (!name.trim()) return;
     setNameError(null);
+    setRefreshError(null);
     const parsedAutoRefresh = parseAutoRefreshInput(autoRefresh);
     if ('error' in parsedAutoRefresh) {
-      toast.error(parsedAutoRefresh.error);
+      setRefreshError(parsedAutoRefresh.error);
+      focusById(CREATE_REFRESH_ID);
       return;
     }
     const req: CreateDashboardRequest = {
@@ -126,6 +182,7 @@ function CreateDashboardDialog({ open, onOpenChange, onCreated }: CreateDialogPr
       setDescription('');
       setIsShared(false);
       setAutoRefresh('');
+      setRefreshError(null);
     } catch (error) {
       // 이름 중복(409 DUPLICATE_NAME, WD-824)은 서버 문구를 이름 칸 아래에 보이고 토스트는 생략한다
       if (isDuplicateName(error)) {
@@ -176,19 +233,15 @@ function CreateDashboardDialog({ open, onOpenChange, onCreated }: CreateDialogPr
               maxLength={MAX_DASHBOARD_DESCRIPTION_LENGTH}
             />
           </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="dash-refresh">자동 새로고침 (초)</Label>
-            <Input
-              id="dash-refresh"
-              type="number"
-              placeholder="비워두면 수동 새로고침"
-              value={autoRefresh}
-              onChange={(e) => setAutoRefresh(e.target.value)}
-              min={5}
-              max={MAX_AUTO_REFRESH_SECONDS}
-              step={1}
-            />
-          </div>
+          <AutoRefreshField
+            id={CREATE_REFRESH_ID}
+            value={autoRefresh}
+            onChange={(v) => {
+              setAutoRefresh(v);
+              setRefreshError(null);
+            }}
+            error={refreshError}
+          />
           <div className="space-y-1.5">
             <div className="flex items-center gap-2">
               <Switch id="dash-shared" checked={isShared} onCheckedChange={setIsShared} />
@@ -227,6 +280,8 @@ function EditDashboardDialog({ dashboard, onClose }: EditDialogProps) {
   );
   // 이름 중복 409(WD-824)의 서버 문구 — 이름 칸 아래에 보이고 이름을 고치면 사라진다
   const [nameError, setNameError] = useState<string | null>(null);
+  // 자동 새로고침 검증 오류(WD-876) — 토스트 대신 입력 칸 아래에 보이고 값을 고치면 사라진다
+  const [refreshError, setRefreshError] = useState<string | null>(null);
   const updateDashboard = useUpdateDashboard();
   // 공유 스위치 안내용 영향 개수(WD-325) — 창이 열려 있을 때만 센다. 실패하면 개수 없는 안내로 물러난다
   const { data: shareImpact } = useDashboardShareImpact(dashboard?.id);
@@ -262,6 +317,7 @@ function EditDashboardDialog({ dashboard, onClose }: EditDialogProps) {
     setBaseUpdatedAt(dashboard.updatedAt);
     setEditConflict(false);
     setNameError(null);
+    setRefreshError(null);
   } else if (!dashboard && prevDashboard) {
     setPrevDashboard(null);
   }
@@ -270,9 +326,11 @@ function EditDashboardDialog({ dashboard, onClose }: EditDialogProps) {
   const submitSettings = async (force: boolean) => {
     if (!dashboard || !name.trim()) return;
     setNameError(null);
+    setRefreshError(null);
     const parsedAutoRefresh = parseAutoRefreshInput(autoRefresh);
     if ('error' in parsedAutoRefresh) {
-      toast.error(parsedAutoRefresh.error);
+      setRefreshError(parsedAutoRefresh.error);
+      focusById(EDIT_REFRESH_ID);
       return;
     }
     try {
@@ -379,19 +437,15 @@ function EditDashboardDialog({ dashboard, onClose }: EditDialogProps) {
               maxLength={MAX_DASHBOARD_DESCRIPTION_LENGTH}
             />
           </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="edit-dash-refresh">자동 새로고침 (초)</Label>
-            <Input
-              id="edit-dash-refresh"
-              type="number"
-              placeholder="비워두면 수동 새로고침"
-              value={autoRefresh}
-              onChange={(e) => setAutoRefresh(e.target.value)}
-              min={5}
-              max={MAX_AUTO_REFRESH_SECONDS}
-              step={1}
-            />
-          </div>
+          <AutoRefreshField
+            id={EDIT_REFRESH_ID}
+            value={autoRefresh}
+            onChange={(v) => {
+              setAutoRefresh(v);
+              setRefreshError(null);
+            }}
+            error={refreshError}
+          />
           <div className="space-y-1.5">
             <div className="flex items-center gap-2">
               <Switch id="edit-dash-shared" checked={isShared} onCheckedChange={setIsShared} />

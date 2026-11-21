@@ -118,6 +118,9 @@ export type ChartType =
   | 'HISTOGRAM' | 'BOXPLOT' | 'HEATMAP' | 'TREEMAP' | 'FUNNEL'
   | 'RADAR' | 'WATERFALL' | 'GAUGE' | 'CANDLESTICK';
 
+/** 대시보드 자동 새로고침 주기 하한(초) — 이보다 짧으면 위젯 데이터를 너무 자주 다시 불러온다(입력 검증·안내 문구·min 속성이 함께 쓴다, WD-876). */
+export const MIN_AUTO_REFRESH_SECONDS = 5;
+
 /**
  * 대시보드 자동 새로고침 주기 상한(초) — 24시간(WD-327, 서버 CreateDashboardRequest.MAX_AUTO_REFRESH_SECONDS 와 같다).
  * 상한이 없으면 약 24.8일(2^31 ms)을 넘는 값에서 브라우저 타이머 지연이 32비트로 감겨 0 이 되어, 위젯 데이터를 쉬지 않고 다시 요청했다.
