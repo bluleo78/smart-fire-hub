@@ -667,8 +667,8 @@ test.describe('데이터셋 목록 — 임시 데이터셋 보기 (WD-754)', () 
     await wrapper.hover();
     await expect(page.getByRole('tooltip')).toHaveText(reason);
 
-    // 빈 목록 안내: 「데이터셋이 없습니다.」만 — 따를 수 없는 「켜면 보입니다」 문장은 없다
-    // 출처 필터는 필터라 WD-879 이후엔 「조건에 맞는 데이터셋이 없습니다.」 로 읽힌다(임시 안내 문장은 여전히 없다)
+    // 빈 목록 안내: 출처 필터는 필터라 「조건에 맞는 데이터셋이 없습니다.」 로 읽히고(WD-879),
+    // 따를 수 없는 「켜면 보입니다」 임시 안내 문장은 없다
     await expect(page.getByText('조건에 맞는 데이터셋이 없습니다.', { exact: true })).toBeVisible();
     await expect(toggleHint).toHaveCount(0);
 
@@ -784,7 +784,7 @@ test.describe('필터 결과 0건 (WD-879)', () => {
   test('필터 초기화는 여섯 필터를 지우고 정렬·페이지 크기·임시 보기는 남긴다', async ({ authenticatedPage: page }) => {
     await mockZeroForFilters(page);
     await page.goto(
-      `/data/datasets?categoryId=${EMPTY_CAT}&favorite=true&storageType=TABLE&status=ACTIVE&securityLevel=1&sort=name&order=asc&size=20&showTemp=1`,
+      `/data/datasets?categoryId=${EMPTY_CAT}&favorite=true&storageType=TABLE&originType=SOURCE&status=ACTIVE&securityLevel=1&sort=name&order=asc&size=20&showTemp=1`,
     );
 
     const reset = page.getByRole('button', { name: '필터 초기화' });
@@ -794,12 +794,40 @@ test.describe('필터 결과 0건 (WD-879)', () => {
     await expect(page).not.toHaveURL(/categoryId=/);
     await expect(page).not.toHaveURL(/favorite=/);
     await expect(page).not.toHaveURL(/storageType=/);
+    await expect(page).not.toHaveURL(/originType=/);
     await expect(page).not.toHaveURL(/status=/);
     await expect(page).not.toHaveURL(/securityLevel=/);
     await expect(page).toHaveURL(/sort=name/);
     await expect(page).toHaveURL(/order=asc/);
     await expect(page).toHaveURL(/size=20/);
     await expect(page).toHaveURL(/showTemp=1/);
+  });
+
+  test('favorite=false 링크로 빈 목록에 들어오면 필터 0건이 아니라 첫 사용 빈 상태다 (리뷰 후속)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 요청은 favoriteOnly 를 'true' 일 때만 싣는다 — favorite=false 는 즐겨찾기 필터가 아니다
+    const urls: URL[] = [];
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets',
+      (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        urls.push(new URL(route.request().url()));
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(createPageResponse([])),
+        });
+      },
+    );
+    await page.goto('/data/datasets?favorite=false');
+
+    await expect(page.getByRole('button', { name: '즐겨찾기', exact: true })).toHaveAttribute('aria-pressed', 'false');
+    await expect.poll(() => urls.at(-1)?.searchParams.get('favoriteOnly') ?? null).toBeNull();
+    await expect(page.getByText('데이터셋이 없습니다.', { exact: false })).toBeVisible();
+    await expect(page.getByText(FILTER_ZERO, { exact: false })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '필터 초기화' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '새 데이터셋 만들기' }).first()).toBeVisible();
   });
 
   test('검색어와 필터가 함께 걸린 0건은 검색 결과 안내만 보인다', async ({ authenticatedPage: page }) => {
