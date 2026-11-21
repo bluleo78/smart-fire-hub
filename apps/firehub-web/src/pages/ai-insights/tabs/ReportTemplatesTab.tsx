@@ -82,11 +82,13 @@ export default function ReportTemplatesTab() {
               <CardHeader className="pb-2 flex-shrink-0">
                 <div className="flex items-start justify-between gap-2">
                   {/* 키보드 접근성(WD-335): 카드 클릭은 마우스로만 열리므로 이름을 양식 링크로 둔다 — Tab 으로 닿고 Enter 로 열린다.
-                    클릭은 카드 onClick 과 겹쳐 두 번 이동하지 않게 번지지 않게 막는다. */}
+                    클릭은 카드 onClick 과 겹쳐 두 번 이동하지 않게 번지지 않게 막는다.
+                    히트 영역(WD-891): inline-flex min-h-8 items-center py-1.5 로 세로를 32px 이상으로 유지한다.
+                    min-w-8 은 이름이 짧아도(예: "테스트") 가로가 32px 미만으로 줄지 않게 최소 너비를 못 박는다. */}
                   <CardTitle className="text-sm font-medium">
                     <Link
                       to={`/ai-insights/templates/${t.id}`}
-                      className="rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      className="inline-flex min-h-8 min-w-8 items-center py-1.5 rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       onClick={(e) => e.stopPropagation()}
                     >
                       {t.name}
@@ -170,9 +172,11 @@ export default function ReportTemplatesTab() {
                     <CardHeader className="pb-2 flex-shrink-0">
                       <div className="flex items-start justify-between gap-2">
                         <CardTitle className="text-sm font-medium">
+                          {/* 히트 영역 32×32(WD-891): 링크 세로를 최소 32px 로 유지하고,
+                            이름이 짧아도 가로가 32px 미만이 되지 않도록 min-w-8 로 최소 너비를 함께 둔다 */}
                           <Link
                             to={`/ai-insights/templates/${t.id}`}
-                            className="rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            className="inline-flex min-h-8 min-w-8 items-center py-1.5 rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                             onClick={(e) => e.stopPropagation()}
                           >
                             {t.name}

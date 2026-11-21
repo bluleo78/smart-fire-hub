@@ -1,7 +1,7 @@
 "use client"
 
-import * as React from "react"
 import { Switch as SwitchPrimitive } from "radix-ui"
+import * as React from "react"
 
 import { cn } from "@/lib/utils"
 
@@ -13,21 +13,33 @@ function Switch({
   size?: "sm" | "default"
 }) {
   return (
+    // 루트는 클릭·포커스를 받는 히트 상자로만 둔다(WD-891): 항상 32×32 이고 배경은 투명 — 시각 알약은
+    // 아래 안쪽 [data-slot=switch-track] 이 담당해, 알약 크기(32×18)는 그대로 두고 히트 영역만 넓힌다.
+    // data-size 는 루트에만 붙으므로 안쪽 요소는 group-data-[size=…]/switch 로 읽는다 — 루트 크기는 두 값이
+    // 같으므로 size 마다 나누지 않고 h-8 w-8 하나로 둔다(모든 크기의 히트 상자가 32×32).
     <SwitchPrimitive.Root
       data-slot="switch"
       data-size={size}
       className={cn(
-        "peer data-[state=checked]:bg-primary data-[state=unchecked]:bg-input focus-visible:border-ring focus-visible:ring-ring dark:data-[state=unchecked]:bg-input/80 group/switch inline-flex shrink-0 items-center rounded-full border border-transparent shadow-xs transition-all outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50 data-[size=default]:h-[1.15rem] data-[size=default]:w-8 data-[size=sm]:h-3.5 data-[size=sm]:w-6",
+        "peer group/switch inline-flex shrink-0 items-center justify-center rounded-full border border-transparent bg-transparent transition-all outline-none focus-visible:border-ring focus-visible:ring-ring focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50 h-8 w-8",
         className
       )}
       {...props}
     >
-      <SwitchPrimitive.Thumb
-        data-slot="switch-thumb"
+      {/* 시각 알약(track) — 상태색·테두리·그림자·알약 크기를 루트에서 옮겨 왔다. data-state 도 루트의 그룹에서 읽는다. */}
+      <span
+        data-slot="switch-track"
         className={cn(
-          "bg-background dark:data-[state=unchecked]:bg-foreground dark:data-[state=checked]:bg-primary-foreground pointer-events-none block rounded-full ring-0 transition-transform group-data-[size=default]/switch:size-4 group-data-[size=sm]/switch:size-3 data-[state=checked]:translate-x-[calc(100%-2px)] data-[state=unchecked]:translate-x-0"
+          "flex shrink-0 items-center rounded-full border border-transparent shadow-xs transition-all group-data-[size=default]/switch:h-[1.15rem] group-data-[size=default]/switch:w-8 group-data-[size=sm]/switch:h-3.5 group-data-[size=sm]/switch:w-6 group-data-[state=checked]/switch:bg-primary group-data-[state=unchecked]/switch:bg-input dark:group-data-[state=unchecked]/switch:bg-input/80"
         )}
-      />
+      >
+        <SwitchPrimitive.Thumb
+          data-slot="switch-thumb"
+          className={cn(
+            "bg-background dark:data-[state=unchecked]:bg-foreground dark:data-[state=checked]:bg-primary-foreground pointer-events-none block rounded-full ring-0 transition-transform group-data-[size=default]/switch:size-4 group-data-[size=sm]/switch:size-3 data-[state=checked]:translate-x-[calc(100%-2px)] data-[state=unchecked]:translate-x-0"
+          )}
+        />
+      </span>
     </SwitchPrimitive.Root>
   )
 }
