@@ -143,7 +143,9 @@ export default function QueryListPage() {
           setSearch('');
         }}
       >
-        <TabsList>
+        {/* WD-890: 탭이 24~29px 로 낮아 누르기 빠듯했다 — 목록 높이를 h-10 으로 올리고 모든 탭(조건부 「워크스페이스 전체」 포함)에
+            min-h-8(32px) 하한을 목록에서 한 번에 준다(대시보드 목록 WD-877 과 같은 방식) */}
+        <TabsList className="group-data-[orientation=horizontal]/tabs:h-10 [&>[role=tab]]:min-h-8">
           <TabsTrigger value="mine">내 쿼리</TabsTrigger>
           <TabsTrigger value="shared">공유됨</TabsTrigger>
           {canAdmin && <TabsTrigger value="workspace">워크스페이스 전체</TabsTrigger>}
@@ -198,7 +200,10 @@ export default function QueryListPage() {
                       <TableHead>데이터셋</TableHead>
                       <TableHead>차트</TableHead>
                       <TableHead>수정일</TableHead>
-                      <TableHead className="w-[100px]" />
+                      {/* WD-890: 버튼 3개(32×3) + 간격 4×2 + 셀 좌우 여백 16 = 120px. 빈 머리는 스크린리더에 이름 없는 열로 읽혀 sr-only 「작업」을 준다 */}
+                      <TableHead className="w-[120px]">
+                        <span className="sr-only">작업</span>
+                      </TableHead>
                     </TableRow>
                   </TableHeader>
                   <tbody>
@@ -217,8 +222,11 @@ export default function QueryListPage() {
                               {/* 이름 셀 내부: 긴 텍스트가 truncate되도록 min-w-0 + overflow-hidden 적용 */}
                               <div className="min-w-0 overflow-hidden">
                                 <div className="flex items-center gap-1.5 min-w-0">
-                                  {/* 긴 쿼리 이름이 테이블 레이아웃을 깨지 않도록 truncate + max-w 적용 */}
-                                  <span className="truncate max-w-[300px] block">{query.name}</span>
+                                  {/* 긴 쿼리 이름이 테이블 레이아웃을 깨지 않도록 truncate + max-w 적용. WD-890: xl 미만(사이드바 펼친 1024 포함)에서 표가 넘치지 않게 이름·설명 상한을 줄임 —
+                                      잘린 글자는 title 로 전체를 보임 */}
+                                  <span className="truncate max-w-[14rem] xl:max-w-[300px] block" title={query.name}>
+                                    {query.name}
+                                  </span>
                                   {query.isShared && (
                                     <Badge variant="secondary" className="text-xs gap-1 py-0">
                                       <Share2 className="h-2.5 w-2.5" />
@@ -227,7 +235,10 @@ export default function QueryListPage() {
                                   )}
                                 </div>
                                 {query.description && (
-                                  <p className="text-xs text-muted-foreground truncate max-w-xs mt-0.5">
+                                  <p
+                                    className="text-xs text-muted-foreground truncate max-w-[14rem] xl:max-w-xs mt-0.5"
+                                    title={query.description}
+                                  >
                                     {query.description}
                                   </p>
                                 )}
@@ -292,24 +303,23 @@ export default function QueryListPage() {
                             </span>
                           </TableCell>
                           <TableCell>
-                            {/* 행 작업 버튼 — 마우스를 올리거나 키보드 포커스가 안에 들어오면 보인다(WD-412: Tab 으로 와도 보이지 않던 문제) */}
+                            {/* 행 작업 버튼 — 마우스를 올리거나 키보드 포커스가 안에 들어오면 보인다(WD-412: Tab 으로 와도 보이지 않던 문제).
+                                WD-890: 28px(h-7 w-7)였던 버튼을 icon-sm(32px)으로 키운다. 아이콘은 size- 클래스가 없으면 Button 이 16px 로 덮으므로 size-3.5(14px)를 준다 */}
                             <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
                               <Button
                                 variant="ghost"
-                                size="sm"
-                                className="h-7 w-7 p-0"
+                                size="icon-sm"
                                 title="실행"
                                 aria-label="실행"
                                 onClick={(e) => handleRun(e, query.id, query.name)}
                               >
-                                <Play size={13} />
+                                <Play className="size-3.5" />
                               </Button>
                               {isOwner(query.createdBy) && (
                                 <>
                                   <Button
                                     variant="ghost"
-                                    size="sm"
-                                    className="h-7 w-7 p-0"
+                                    size="icon-sm"
                                     title="편집"
                                     aria-label="편집"
                                     onClick={(e) => {
@@ -317,7 +327,7 @@ export default function QueryListPage() {
                                       navigate(`/analytics/queries/${query.id}`);
                                     }}
                                   >
-                                    <Pencil size={13} />
+                                    <Pencil className="size-3.5" />
                                   </Button>
                                   {/* WD-86: 함께 삭제되는 항목(CASCADE)을 창을 열 때 조회해 보여 준다 */}
                                   <AnalyticsDeleteConfirmDialog
@@ -328,12 +338,11 @@ export default function QueryListPage() {
                                     trigger={
                                       <Button
                                         variant="ghost"
-                                        size="sm"
-                                        className="h-7 w-7 p-0"
+                                        size="icon-sm"
                                         aria-label="삭제"
                                         onClick={(e) => e.stopPropagation()}
                                       >
-                                        <Trash2 className="h-3.5 w-3.5" />
+                                        <Trash2 className="size-3.5" />
                                       </Button>
                                     }
                                   />

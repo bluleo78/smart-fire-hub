@@ -2,6 +2,8 @@ import { createChartListItem, createDeleteImpact } from '../../factories/analyti
 import { mockDeleteImpact, openFirstRowDeleteDialog, setupChartListMocks } from '../../fixtures/analytics.fixture';
 import { createPageResponse, mockApi, mockDeleteOnceThenNotFound } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { expectWithin } from '../../fixtures/long-name-layout';
+import { expectTableFits, TABLE_LAYOUT_WIDTHS } from '../../fixtures/table-layout';
 
 /**
  * 차트 목록 페이지 E2E 테스트
@@ -392,4 +394,87 @@ test.describe('차트 삭제 — 함께 삭제되는 항목 안내 (WD-86)', () 
     await expect(dialog.getByTestId('delete-not-owner')).toHaveText('본인이 만든 항목만 삭제할 수 있습니다.');
     await expect(dialog.getByRole('button', { name: '삭제' })).toBeDisabled();
   });
+});
+
+/**
+ * WD-890 — 차트 목록의 탭·행 작업 버튼을 최소 32px 클릭 영역으로 키운다.
+ * 28px 버튼·29px 탭은 터치·마우스로 누르기 빠듯해 WD-877(대시보드 목록)과 같은 기준으로 맞춘다.
+ */
+test.describe('WD-890 클릭 영역 32px', () => {
+  test('탭 세 개가 모두 32px 이상이다', async ({ authenticatedPage: page }) => {
+    // 관리자 권한이어야 조건부 「워크스페이스 전체」 탭까지 세 개가 보인다
+    await mockApi(page, 'GET', '/api/v1/auth/me/permissions', ['analytics:read', 'analytics:write', 'analytics:admin']);
+    await setupChartListMocks(page, 2);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto('/analytics/charts');
+
+    const tabs = page.getByRole('tab');
+    await expect(tabs).toHaveCount(3);
+    for (const tab of await tabs.all()) {
+      const box = await tab.boundingBox();
+      const label = await tab.textContent();
+      expect(box, `${label} 탭 영역`).not.toBeNull();
+      expect(box!.height, `${label} 탭 높이`).toBeGreaterThanOrEqual(32);
+    }
+  });
+
+  test('행 작업 버튼(편집·삭제)이 32×32 이상이고 아이콘은 14px 이다', async ({ authenticatedPage: page }) => {
+    await setupChartListMocks(page, 2);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto('/analytics/charts');
+
+    const firstRow = page.getByRole('row').nth(1);
+    await firstRow.hover();
+    for (const name of ['편집', '삭제']) {
+      const box = await firstRow.getByRole('button', { name, exact: true }).boundingBox();
+      expect(box, `${name} 버튼 영역`).not.toBeNull();
+      expect(box!.width, `${name} 너비`).toBeGreaterThanOrEqual(32);
+      expect(box!.height, `${name} 높이`).toBeGreaterThanOrEqual(32);
+    }
+    const icon = await firstRow.getByRole('button', { name: '편집', exact: true }).locator('svg').boundingBox();
+    expect(icon, '편집 아이콘 영역').not.toBeNull();
+    expect(icon!.width).toBeCloseTo(14, 0);
+  });
+
+  for (const width of [768, ...TABLE_LAYOUT_WIDTHS]) {
+    test(`${width}px 폭에서 가장 넓은 행(60자 이름·공유 배지·긴 설명·긴 쿼리 이름)이 있어도 표가 넘치지 않고 작업 열이 버튼을 담는다`, async ({
+      authenticatedPage: page,
+    }) => {
+      // 표준 목록 모킹 뒤 목록 응답만 가장 넓어지기 쉬운 행으로 덮어쓴다
+      await setupChartListMocks(page, 2);
+      await mockApi(
+        page,
+        'GET',
+        '/api/v1/analytics/charts',
+        createPageResponse([
+          createChartListItem({
+            id: 1,
+            name: 'ㄱ'.repeat(60),
+            isShared: true,
+            description: '관할 구역·출동 유형·장비 종류별로 나눠 주간 추이와 전년 대비를 한 화면에 모아 보는 긴 설명',
+            savedQueryName: '본부별 화재 출동 현황과 장비 가동률을 함께 보는 운영 쿼리 2026년 하반기',
+          }),
+          createChartListItem({ id: 2, name: '일반 차트 2' }),
+        ]),
+      );
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto('/analytics/charts');
+
+      const table = page.getByRole('table', { name: '차트 목록' });
+      // 로딩 골격 행이 아니라 실제 행이 그려진 뒤에 잰다
+      await expect(table.getByRole('row', { name: /일반 차트 2/ })).toBeVisible();
+      // 작업 열 머리 폭이 버튼 2개(32×2 + 간격 4 = 68px)보다 좁지 않다
+      const actionHead = table.getByRole('columnheader', { name: '작업' });
+      // WD-890: 작업 열 머리 폭만으로는 버튼이 칸을 넘는지 모른다 — 가장 넓은 행의 마지막 버튼(삭제)이 자기 칸 안에 들어가는지 직접 잰다.
+      // 버튼은 opacity-0 이어도 자리는 차지하므로 호버 없이 잰다.
+      const lastButton = table.getByRole('row', { name: /ㄱㄱㄱ/ }).getByRole('button', { name: '삭제', exact: true });
+      // 표 컨테이너가 넘치지 않고 마지막 버튼이 화면 안에 다 보인다(공용 측정 도우미)
+      await expectTableFits(lastButton);
+      await expectWithin(lastButton, lastButton.locator('xpath=ancestor::td[1]'));
+      // 레이아웃이 자리 잡은 뒤 작업 열 머리 폭을 잰다
+      const headBox = await actionHead.boundingBox();
+      expect(headBox, '작업 열 머리 영역').not.toBeNull();
+      expect(headBox!.width, '작업 열 머리 폭').toBeGreaterThanOrEqual(68);
+    });
+  }
 });

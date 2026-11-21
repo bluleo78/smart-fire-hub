@@ -1,6 +1,9 @@
+import type { Page } from '@playwright/test';
+
 import { createExecution, createPipelineDetail, createTrigger } from '../../factories/pipeline.factory';
 import { createPageResponse,mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { holdApi } from '../../fixtures/hold-api';
 import { grantPipelinePermissions, setupPipelineEditorMocks } from '../../fixtures/pipeline.fixture';
 
 /**
@@ -174,6 +177,212 @@ test.describe('파이프라인 에디터 페이지', () => {
     await expect(page.getByText('실행 기록이 없습니다.')).toBeVisible();
     await expect(page.getByText(/첫 실행을 시작할 수 있습니다/)).toHaveCount(0);
     await expect(page.getByText(/이곳에 기록이 쌓입니다/)).toHaveCount(0);
+  });
+
+  /**
+   * 앱 안 이동(SPA)으로 다른 파이프라인을 연다 — 편집 페이지 컴포넌트가 유지된 채 id 만 바뀌는 상황을 만든다(WD-884 리뷰 후속).
+   * 실제로 id 가 바뀌어 다시 그려졌는지는 호출한 테스트가 파이프라인 2 고유 이름으로 확인한다.
+   */
+  async function navigateInApp(page: Page, path: string) {
+    await page.evaluate((to) => {
+      window.history.pushState({}, '', to);
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    }, path);
+  }
+
+  /**
+   * 실행 이력 요청을 page 번호별로 응답하는 모킹 (WD-884 리뷰 후속) — handler 가 돌려준 객체를 본문으로,
+   * status 를 주면 그 상태로 응답한다. 받은 page 쿼리 값을 requests 에 쌓아 돌려준다(요청이 page=0 인지 보는 데 쓴다).
+   */
+  async function mockExecutionPages(
+    page: Page,
+    pipelineId: number,
+    handler: (pageNo: number) => { body: unknown; status?: number },
+  ) {
+    const requests: number[] = [];
+    await page.route(
+      (url) => url.pathname === `/api/v1/pipelines/${pipelineId}/executions`,
+      (route) => {
+        const pageNo = Number(new URL(route.request().url()).searchParams.get('page') ?? 0);
+        requests.push(pageNo);
+        const { body, status = 200 } = handler(pageNo);
+        return route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+      },
+    );
+    return { requests };
+  }
+
+  // WD-884 리뷰 후속 1 — 이전 파이프라인의 이전 데이터(placeholder)는 「이 파이프라인이 비었다」는 확인도, 이 파이프라인의 기록도 아니다.
+  test('0건이던 파이프라인에서 다른 파이프라인으로 옮기는 동안 첫 실행 안내를 보이지 않는다 (WD-884)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupPipelineEditorMocks(page, 1);
+    await setupPipelineEditorMocks(page, 2);
+    await mockApi(page, 'GET', '/api/v1/pipelines/2', createPipelineDetail({ id: 2, name: '두번째 파이프라인' }));
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/executions', createPageResponse([]));
+    // 2번 실행 이력 응답을 테스트가 풀 때까지 붙잡는다 — 그 사이 1번의 빈 목록이 placeholder 로 남던 결함을 시간에 기대지 않고 본다
+    const held = await holdApi(page, 'GET', '/api/v1/pipelines/2/executions', 200,
+      createPageResponse([createExecution({ id: 91, pipelineId: 2 })]));
+
+    await page.goto('/pipelines/1');
+    await page.getByRole('tab', { name: '실행 이력' }).click();
+    const hint = page.getByText(/첫 실행을 시작할 수 있습니다/);
+    await expect(hint).toBeVisible();
+
+    await navigateInApp(page, '/pipelines/2');
+    // 파이프라인 2 로 실제 다시 그려졌고 이력 요청이 붙잡힌 상태인지 먼저 확인한다(이동이 조용히 무시된 경우를 막는다)
+    await expect(page.getByText('두번째 파이프라인').first()).toBeVisible();
+    await expect.poll(() => held.requests.length).toBeGreaterThanOrEqual(1);
+    // 한 번만 보는 확인 — toHaveCount(0) 은 응답이 올 때까지 재시도해 결함을 가린다
+    expect(await hint.count()).toBe(0);
+
+    held.release();
+    await expect(page.getByRole('link', { name: '91', exact: true })).toBeVisible();
+  });
+
+  test('다른 파이프라인으로 옮기는 동안 이전 파이프라인의 실행 행이 보이지 않는다 (WD-884)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupPipelineEditorMocks(page, 1); // 1번: 실행 #1·#2
+    await setupPipelineEditorMocks(page, 2);
+    await mockApi(page, 'GET', '/api/v1/pipelines/2', createPipelineDetail({ id: 2, name: '두번째 파이프라인' }));
+    const held = await holdApi(page, 'GET', '/api/v1/pipelines/2/executions', 200,
+      createPageResponse([createExecution({ id: 91, pipelineId: 2 })]));
+
+    await page.goto('/pipelines/1');
+    await page.getByRole('tab', { name: '실행 이력' }).click();
+    await expect(page.getByRole('link', { name: '1', exact: true })).toBeVisible();
+
+    await navigateInApp(page, '/pipelines/2');
+    await expect(page.getByText('두번째 파이프라인').first()).toBeVisible();
+    await expect.poll(() => held.requests.length).toBeGreaterThanOrEqual(1);
+    // 잘못된 파이프라인의 실행 id 로 이동·취소하지 않도록 1번의 행·페이지 나눔이 남아 있으면 안 된다
+    expect(await page.getByRole('link', { name: '1', exact: true }).count()).toBe(0);
+    expect(await page.getByRole('link', { name: '2', exact: true }).count()).toBe(0);
+
+    held.release();
+    await expect(page.getByRole('link', { name: '91', exact: true })).toBeVisible();
+  });
+
+  // WD-884 리뷰 후속 2 — 뒤쪽 페이지를 보다 다른 파이프라인으로 옮기면 새 파이프라인은 첫 페이지부터 받아야 한다.
+  test('뒤쪽 페이지를 보다 다른 파이프라인으로 옮기면 첫 페이지(page=0)부터 요청한다 (WD-884)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupPipelineEditorMocks(page, 1);
+    await setupPipelineEditorMocks(page, 2);
+    await mockApi(page, 'GET', '/api/v1/pipelines/2', createPipelineDetail({ id: 2, name: '두번째 파이프라인' }));
+    // 1번: 2페이지짜리 이력 — 요청한 page 에 맞춰 응답한다
+    await mockExecutionPages(page, 1, (pageNo) => ({
+      body: createPageResponse([createExecution({ id: 10 + pageNo, pipelineId: 1 })], {
+        page: pageNo,
+        size: 1,
+        totalElements: 2,
+        totalPages: 2,
+      }),
+    }));
+    const pipeline2 = await mockExecutionPages(page, 2, () => ({
+      body: createPageResponse([createExecution({ id: 91, pipelineId: 2 })]),
+    }));
+
+    await page.goto('/pipelines/1');
+    await page.getByRole('tab', { name: '실행 이력' }).click();
+    await page.getByRole('button', { name: '다음 페이지' }).click();
+    await expect(page.getByRole('link', { name: '11', exact: true })).toBeVisible();
+
+    await navigateInApp(page, '/pipelines/2');
+    await expect(page.getByRole('link', { name: '91', exact: true })).toBeVisible();
+    expect(pipeline2.requests.length).toBeGreaterThan(0);
+    expect(pipeline2.requests.every((p) => p === 0)).toBe(true);
+  });
+
+  // WD-884 리뷰 후속 3 — 뒤쪽 페이지가 실패해 표·페이지 나눔이 사라져도 첫 페이지로 나갈 길이 있어야 한다.
+  test('뒤쪽 페이지 조회가 실패하면 「첫 페이지로」 로 돌아갈 수 있다 (WD-884)', async ({ authenticatedPage: page }) => {
+    await setupPipelineEditorMocks(page, 1);
+    await mockExecutionPages(page, 1, (pageNo) =>
+      pageNo > 0
+        ? { status: 500, body: { status: 500, error: 'Internal Server Error', message: '서버 오류가 발생했습니다.' } }
+        : {
+            body: createPageResponse([createExecution({ id: 10, pipelineId: 1 })], {
+              page: 0,
+              size: 1,
+              totalElements: 2,
+              totalPages: 2,
+            }),
+          },
+    );
+
+    await page.goto('/pipelines/1');
+    await page.getByRole('tab', { name: '실행 이력' }).click();
+    await page.getByRole('button', { name: '다음 페이지' }).click();
+
+    const alert = page.getByRole('alert').filter({ hasText: '서버 오류가 발생했습니다.' });
+    await expect(alert).toBeVisible({ timeout: 15000 });
+    await alert.getByRole('button', { name: '첫 페이지로' }).click();
+    await expect(page.getByRole('link', { name: '10', exact: true })).toBeVisible();
+    await expect(alert).toHaveCount(0);
+  });
+
+  // WD-884 리뷰 후속 4 — 파이프라인이 사라져 404 면 트리거 탭(WD-244)처럼 서버 문구를 보이고, 다시 받아도 같으니 다시 시도는 두지 않는다.
+  test('실행 이력 조회가 404 면 서버 문구를 보이고 다시 시도 버튼은 두지 않는다 (WD-884)', async ({
+    authenticatedPage: page,
+  }) => {
+    const message = '파이프라인을 찾을 수 없습니다. 이미 삭제되었을 수 있습니다.';
+    await setupPipelineEditorMocks(page, 1);
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/executions',
+      { status: 404, error: 'Not Found', message }, { status: 404 });
+
+    await page.goto('/pipelines/1');
+    await page.getByRole('tab', { name: '실행 이력' }).click();
+
+    const alert = page.getByRole('alert').filter({ hasText: message });
+    await expect(alert).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText('실행 기록이 없습니다.')).toHaveCount(0);
+    await expect(alert.getByRole('button', { name: '다시 시도' })).toHaveCount(0);
+  });
+
+  // WD-884 리뷰 후속 2 — 트리거를 쓸 수 없는 사용자에게 「트리거를 추가하면」 안내는 따를 수 없는 말이다.
+  test('실행 권한만 있고 트리거 쓰기 권한이 없으면 트리거 추가 안내를 빼고 실행 버튼만 안내한다 (WD-884)', async ({
+    authenticatedPage: page,
+  }) => {
+    await grantPipelinePermissions(page, ['pipeline:read', 'pipeline:execute', 'trigger:read']);
+    await setupPipelineEditorMocks(page, 1);
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/executions', createPageResponse([]));
+
+    await page.goto('/pipelines/1');
+    await page.getByRole('tab', { name: '실행 이력' }).click();
+
+    await expect(page.getByText('상단의 「실행」 버튼으로 첫 실행을 시작할 수 있습니다.')).toBeVisible();
+    await expect(page.getByText(/트리거를 추가하면/)).toHaveCount(0);
+  });
+
+  // WD-884 리뷰 후속 3 — 조회 실패는 「기록 없음」과 구분해 알리고 다시 받을 수 있게 한다(트리거 탭 WD-244 와 같은 role=alert 패턴).
+  test('실행 이력 조회가 실패하면 「실행 기록이 없습니다」 대신 오류 안내와 다시 시도 버튼을 보인다 (WD-884)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupPipelineEditorMocks(page, 1);
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/pipelines/1/executions',
+      { status: 500, error: 'Internal Server Error', message: '서버 오류가 발생했습니다.' },
+      { status: 500 },
+    );
+
+    await page.goto('/pipelines/1');
+    await page.getByRole('tab', { name: '실행 이력' }).click();
+
+    const alert = page.getByRole('alert').filter({ hasText: '서버 오류가 발생했습니다.' });
+    await expect(alert).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText('실행 기록이 없습니다.')).toHaveCount(0);
+    await expect(page.getByText(/첫 실행을 시작할 수 있습니다/)).toHaveCount(0);
+
+    // 다시 시도 — 이번에는 성공 응답이라 실행 목록이 보인다
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/executions', createPageResponse([
+      createExecution({ id: 5, pipelineId: 1 }),
+    ]));
+    await alert.getByRole('button', { name: '다시 시도' }).click();
+    await expect(page.getByRole('link', { name: '5', exact: true })).toBeVisible();
+    await expect(alert).toHaveCount(0);
   });
 
   test('트리거 탭에서 등록된 트리거가 표시된다', async ({ authenticatedPage: page }) => {

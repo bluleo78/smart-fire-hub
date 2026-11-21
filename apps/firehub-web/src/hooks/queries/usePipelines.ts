@@ -1,9 +1,10 @@
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef } from 'react';
 
 import { pipelinesApi } from '../../api/pipelines';
 import { fetchAllPages } from '../../lib/fetch-all-pages';
 import type { CreateTriggerRequest, PipelineExecutionResponse, UpdatePipelineRequest, UpdateTriggerRequest } from '../../types/pipeline';
+import { keepPreviousWithinEntity } from './keepPreviousWithinEntity';
 import { useMyPermissions } from './useMyPermissions';
 
 /**
@@ -203,8 +204,9 @@ export function useExecutions(pipelineId: number, page = 0, size = EXECUTIONS_PA
     queryKey: ['pipelines', pipelineId, 'executions', { page, size }],
     queryFn: () => pipelinesApi.getExecutions(pipelineId, { page, size }).then(r => r.data),
     enabled: !!pipelineId,
-    // 다음 페이지를 받는 동안 이전 페이지를 그대로 보여 표가 깜빡이지 않게 한다.
-    placeholderData: keepPreviousData,
+    // 같은 파이프라인의 다음 페이지를 받는 동안에만 이전 페이지를 보여 표가 깜빡이지 않게 한다 — 다른 파이프라인의 행·링크·취소 버튼·
+    // 페이지 나눔이 새 응답 전까지 보이면 잘못된 실행 id 로 이동/취소(404)할 수 있다(WD-884 리뷰 후속). queryKey[1] 이 파이프라인 id 다.
+    placeholderData: keepPreviousWithinEntity(pipelineId),
     refetchInterval: (query) => {
       const data = query.state.data;
       const hasActive = data?.content.some((e: PipelineExecutionResponse) => e.status === 'PENDING' || e.status === 'RUNNING');

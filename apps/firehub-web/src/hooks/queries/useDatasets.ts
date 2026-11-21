@@ -5,6 +5,7 @@ import { categoriesApi, type DatasetListParams, datasetsApi } from '../../api/da
 import { fetchAllPages } from '../../lib/fetch-all-pages';
 import type { ColumnMappingEntry, ImportMode,ImportResponse, ImportStartResponse } from '../../types/dataImport';
 import type { ApiImportRequest,CloneDatasetRequest } from '../../types/dataset';
+import { keepPreviousWithinEntity } from './keepPreviousWithinEntity';
 import { useMyPermissions } from './useMyPermissions';
 
 /**
@@ -257,8 +258,7 @@ export function useImports(datasetId: number, page = 0, size = IMPORTS_PAGE_SIZE
     enabled: !!datasetId,
     // 같은 데이터셋 안에서 페이지를 넘길 때만 이전 페이지를 유지한다 — 다른 데이터셋으로 옮겨 가면 비워 둬야
     // 새 응답이 오기 전 B 화면(이력 탭·임포트 다이얼로그)에 A 의 이력이 보이지 않는다(WD-535).
-    placeholderData: (previousData, previousQuery) =>
-      previousQuery?.queryKey[1] === datasetId ? previousData : undefined,
+    placeholderData: keepPreviousWithinEntity(datasetId),
     refetchInterval: (query) => {
       const data = query.state.data;
       const hasPending = data?.content.some((i: ImportResponse) => i.status === 'PENDING' || i.status === 'PROCESSING');
