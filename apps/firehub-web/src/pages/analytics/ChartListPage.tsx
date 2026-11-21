@@ -100,7 +100,9 @@ export default function ChartListPage() {
           setPage(0);
         }}
       >
-        <TabsList>
+        {/* WD-890: 탭이 24~29px 로 낮아 누르기 빠듯했다 — 목록 높이를 h-10 으로 올리고 모든 탭(조건부 「워크스페이스 전체」 포함)에
+            min-h-8(32px) 하한을 목록에서 한 번에 준다(대시보드 목록 WD-877 과 같은 방식) */}
+        <TabsList className="group-data-[orientation=horizontal]/tabs:h-10 [&>[role=tab]]:min-h-8">
           <TabsTrigger value="mine">내 차트</TabsTrigger>
           <TabsTrigger value="shared">공유됨</TabsTrigger>
           {canAdmin && <TabsTrigger value="workspace">워크스페이스 전체</TabsTrigger>}
@@ -134,7 +136,10 @@ export default function ChartListPage() {
                       <TableHead>타입</TableHead>
                       <TableHead>쿼리</TableHead>
                       <TableHead>수정일</TableHead>
-                      <TableHead className="w-[80px]" />
+                      {/* WD-890: 버튼 2개(32×2) + 간격 4 + 셀 좌우 여백 16 = 84px. 빈 머리는 스크린리더에 이름 없는 열로 읽혀 sr-only 「작업」을 준다 */}
+                      <TableHead className="w-[84px]">
+                        <span className="sr-only">작업</span>
+                      </TableHead>
                     </TableRow>
                   </TableHeader>
                   <tbody>
@@ -153,7 +158,9 @@ export default function ChartListPage() {
                               {/* min-w-0: flex 아이템 기본값(min-width:auto)이 truncate 축소를 막는 문제 방지 */}
                               <div className="min-w-0">
                                 <div className="flex items-center gap-1.5">
-                                  <span className="block truncate max-w-xs" title={chart.name}>
+                                  {/* WD-890: xl 미만(사이드바 펼친 1024 포함)에서 표가 넘치지 않게 이름·설명·쿼리 이름 상한을 줄임 —
+                                      잘린 글자는 title 로 전체를 보임 */}
+                                  <span className="block truncate max-w-[14rem] xl:max-w-xs" title={chart.name}>
                                     {chart.name}
                                   </span>
                                   {chart.isShared && (
@@ -164,7 +171,10 @@ export default function ChartListPage() {
                                   )}
                                 </div>
                                 {chart.description && (
-                                  <p className="text-xs text-muted-foreground truncate max-w-xs mt-0.5">
+                                  <p
+                                    className="text-xs text-muted-foreground truncate max-w-[14rem] xl:max-w-xs mt-0.5"
+                                    title={chart.description}
+                                  >
                                     {chart.description}
                                   </p>
                                 )}
@@ -180,7 +190,10 @@ export default function ChartListPage() {
                             </Badge>
                           </TableCell>
                           <TableCell>
-                            <span className="text-sm text-muted-foreground truncate max-w-[200px] block">
+                            <span
+                              className="text-sm text-muted-foreground truncate max-w-[8rem] xl:max-w-[200px] block"
+                              title={chart.savedQueryName}
+                            >
                               {chart.savedQueryName}
                             </span>
                           </TableCell>
@@ -193,13 +206,13 @@ export default function ChartListPage() {
                             </span>
                           </TableCell>
                           <TableCell>
-                            {/* 행 작업 버튼 — 마우스를 올리거나 키보드 포커스가 안에 들어오면 보인다(WD-412) */}
+                            {/* 행 작업 버튼 — 마우스를 올리거나 키보드 포커스가 안에 들어오면 보인다(WD-412).
+                                WD-890: 28px(h-7 w-7)였던 버튼을 icon-sm(32px)으로 키운다. 아이콘은 size- 클래스가 없으면 Button 이 16px 로 덮으므로 size-3.5(14px)를 준다 */}
                             {isOwner(chart.createdBy) && (
                               <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
                                 <Button
                                   variant="ghost"
-                                  size="sm"
-                                  className="h-7 w-7 p-0"
+                                  size="icon-sm"
                                   title="편집"
                                   aria-label="편집"
                                   onClick={(e) => {
@@ -207,7 +220,7 @@ export default function ChartListPage() {
                                     navigate(`/analytics/charts/${chart.id}`);
                                   }}
                                 >
-                                  <Pencil size={13} />
+                                  <Pencil className="size-3.5" />
                                 </Button>
                                 {/* WD-86: 함께 삭제되는 항목(CASCADE)을 창을 열 때 조회해 보여 준다 */}
                                 <AnalyticsDeleteConfirmDialog
@@ -218,12 +231,11 @@ export default function ChartListPage() {
                                   trigger={
                                     <Button
                                       variant="ghost"
-                                      size="sm"
-                                      className="h-7 w-7 p-0"
+                                      size="icon-sm"
                                       aria-label="삭제"
                                       onClick={(e) => e.stopPropagation()}
                                     >
-                                      <Trash2 className="h-3.5 w-3.5" />
+                                      <Trash2 className="size-3.5" />
                                     </Button>
                                   }
                                 />
