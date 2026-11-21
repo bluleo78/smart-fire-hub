@@ -628,6 +628,16 @@ html {
   box-shadow: 0 0 6px oklch(0.7 0.2 149 / 40%);
 }
 
+/* ===== React Flow 컨트롤 버튼 클릭 대상 (WD-883) =====
+ * xyflow 기본 26×26 은 작아 확대·축소·전체 보기·잠금을 누르기 어렵다 → 32×32 (WCAG 2.5.8).
+ * xyflow style.css 도 레이어 밖이라 @layer utilities 의 Tailwind 클래스로는 덮이지 않아 같은 위치(unlayered)에 둔다.
+ * xyflow CSS 는 PipelineCanvas 청크에서 나중에 로드돼 같은 명시도면 순서에서 지므로 .react-flow__controls 를 앞에 붙여 이긴다.
+ * 아이콘은 max 12px 그대로라 padding 4px 기준 중앙 정렬만 유지한다. */
+.react-flow__controls .react-flow__controls-button {
+  width: 32px;
+  height: 32px;
+}
+
 /* ===== React Flow dark mode ===== */
 .dark .react-flow__edge-path {
   stroke: oklch(1 0 0 / 20%);
