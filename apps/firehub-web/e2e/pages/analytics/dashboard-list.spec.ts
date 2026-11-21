@@ -566,6 +566,29 @@ test.describe('대시보드 목록 페이지', () => {
     const editDialog = page.getByRole('dialog', { name: '대시보드 설정' });
     await expect(editDialog.getByLabel('설명')).toHaveAttribute('maxlength', '2000');
   });
+
+  test('행 작업 버튼(편집·설정·삭제)과 탭이 최소 32×32px 히트 영역을 가진다 (WD-877)', async ({ authenticatedPage: page }) => {
+    await setupDashboardListMocks(page, 2);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto('/analytics/dashboards');
+
+    const firstRow = page.getByRole('row').nth(1);
+    for (const name of ['편집', '설정', '삭제']) {
+      const box = await firstRow.getByRole('button', { name, exact: true }).boundingBox();
+      expect(box, `${name} 버튼 영역`).not.toBeNull();
+      expect(box!.width, `${name} 너비`).toBeGreaterThanOrEqual(32);
+      expect(box!.height, `${name} 높이`).toBeGreaterThanOrEqual(32);
+    }
+    // 탭은 데스크톱(고정 h-10)과 모바일(390 — TabsList 가 h-auto 로 풀림) 두 폭에서 모두 잰다
+    for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+      await page.setViewportSize(viewport);
+      for (const name of ['내 대시보드', '공유됨']) {
+        const box = await page.getByRole('tab', { name, exact: true }).boundingBox();
+        expect(box, `${viewport.width}px ${name} 탭 영역`).not.toBeNull();
+        expect(box!.height, `${viewport.width}px ${name} 탭 높이`).toBeGreaterThanOrEqual(32);
+      }
+    }
+  });
 });
 
 /**

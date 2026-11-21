@@ -560,7 +560,9 @@ export default function DashboardListPage() {
           setPage(0);
         }}
       >
-        <TabsList>
+        {/* WD-877: 탭 히트 영역 32px 이상 — 데스크톱은 목록 높이를 h-10 으로 키우고, 모바일은 목록이 h-auto 로 풀리므로
+            모든 탭(조건부 「워크스페이스 전체」 포함)에 min-h-8 하한을 목록에서 한 번에 준다 */}
+        <TabsList className="group-data-[orientation=horizontal]/tabs:h-10 [&>[role=tab]]:min-h-8">
           <TabsTrigger value="mine">내 대시보드</TabsTrigger>
           <TabsTrigger value="shared">공유됨</TabsTrigger>
           {canAdmin && <TabsTrigger value="workspace">워크스페이스 전체</TabsTrigger>}
@@ -657,13 +659,13 @@ export default function DashboardListPage() {
                             </span>
                           </TableCell>
                           <TableCell>
-                            {/* 행 작업 버튼 — 마우스를 올리거나 키보드 포커스가 안에 들어오면 보인다(WD-412) */}
+                            {/* 행 작업 버튼 — 마우스를 올리거나 키보드 포커스가 안에 들어오면 보인다(WD-412).
+                                WD-877: 28px(h-7 w-7)였던 버튼을 icon-sm(32px)으로 키워 최소 히트 영역을 맞춘다 */}
                             {isOwner(dashboard.createdBy) && (
                               <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
                                 <Button
                                   variant="ghost"
-                                  size="sm"
-                                  className="h-7 w-7 p-0"
+                                  size="icon-sm"
                                   title="편집"
                                   aria-label="편집"
                                   onClick={(e) => {
@@ -671,12 +673,11 @@ export default function DashboardListPage() {
                                     navigate(`/analytics/dashboards/${dashboard.id}`);
                                   }}
                                 >
-                                  <Pencil size={13} />
+                                  <Pencil className="size-3.5" />
                                 </Button>
                                 <Button
                                   variant="ghost"
-                                  size="sm"
-                                  className="h-7 w-7 p-0"
+                                  size="icon-sm"
                                   title="설정"
                                   aria-label="설정"
                                   onClick={(e) => {
@@ -684,7 +685,7 @@ export default function DashboardListPage() {
                                     setEditDashboard(dashboard);
                                   }}
                                 >
-                                  <Settings size={13} />
+                                  <Settings className="size-3.5" />
                                 </Button>
                                 <DeleteConfirmDialog
                                   entityName="대시보드"
@@ -693,12 +694,11 @@ export default function DashboardListPage() {
                                   trigger={
                                     <Button
                                       variant="ghost"
-                                      size="sm"
-                                      className="h-7 w-7 p-0"
+                                      size="icon-sm"
                                       aria-label="삭제"
                                       onClick={(e) => e.stopPropagation()}
                                     >
-                                      <Trash2 className="h-3.5 w-3.5" />
+                                      <Trash2 className="size-3.5" />
                                     </Button>
                                   }
                                 />
