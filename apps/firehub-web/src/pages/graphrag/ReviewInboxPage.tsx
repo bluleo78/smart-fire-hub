@@ -566,27 +566,45 @@ function RelationContent({ payload, reason }: { payload: RelationPayload; reason
   );
 }
 
-// 원문 근거 패널 — 펼칠 때만 조회(enabled). 스니펫 없으면 안내.
-// 로딩 → 결과(또는 '근거 없음') 전환이 시각적으로만 일어나던 것을 aria-live/aria-busy로 고지한다(#338, SC 4.1.3).
+// 원문 근거 패널 — 펼칠 때만 조회(enabled). 분기: 로딩 → 실패 → 근거 없음 → 목록.
+// WD-872: 조회 실패를 「근거 없음」으로 그리면 AI 가 원문을 못 찾은 것으로 오해하므로 실패를 따로 알린다 — 목록 표(WD-126)와 같이
+// 받은 데이터가 없을 때만 실패로 보고(승인·거부 뒤 재조회 실패가 보이던 근거를 가리지 않게), 403 은 재시도가 소용없어 권한 안내만 둔다.
+// live region 래퍼는 분기마다 새로 만들지 않고 늘 유지해 결과·오류 전환을 낭독한다(#338, SC 4.1.3) — 그래서 role="alert" 는 따로 달지 않는다.
 function EvidencePanel({ id }: { id: number }) {
-  const { data, isLoading } = useReviewItemEvidence(id, true);
-  // live region은 콘텐츠가 바뀔 때 이미 DOM에 있어야 낭독된다 — 분기마다 새로 만들지 않고 래퍼를 항상 유지한다.
-  const body = isLoading ? (
-    <span className="text-muted-foreground text-sm">근거 불러오는 중...</span>
-  ) : !data || data.length === 0 ? (
-    <span className="text-muted-foreground text-sm">이 항목에는 연결된 원문 근거가 없습니다.</span>
-  ) : (
-    <div className="space-y-2">
-      {data.map((c) => (
-        <div key={c.chunkId} className="text-sm">
-          <span className="text-muted-foreground text-xs">청크 #{c.chunkId}</span>
-          <p className="whitespace-pre-wrap">{c.content}</p>
-        </div>
-      ))}
-    </div>
-  );
+  const { data, isLoading, isError, error, refetch, isFetching } = useReviewItemEvidence(id, true);
+  let body;
+  if (isLoading) {
+    body = <span className="text-muted-foreground text-sm">근거 불러오는 중...</span>;
+  } else if (isError && !data) {
+    body = isForbiddenError(error) ? (
+      <span className="text-muted-foreground text-sm">원문 근거를 볼 권한이 없습니다.</span>
+    ) : (
+      <div className="flex items-center gap-2 text-sm">
+        <span className="text-destructive">원문 근거를 불러오지 못했습니다.</span>
+        {/* 행마다 반복되는 버튼이라 접근 이름에 대상(「원문 근거」)을 숨김 글자로 붙인다 — 보이는 글자가 이름에 그대로 들어간다(WCAG 2.5.3). */}
+        <Button variant="outline" size="sm" disabled={isFetching} onClick={() => void refetch()}>
+          <span className="sr-only">원문 근거 </span>
+          {isFetching ? '불러오는 중…' : '다시 시도'}
+        </Button>
+      </div>
+    );
+  } else if (!data || data.length === 0) {
+    body = <span className="text-muted-foreground text-sm">이 항목에는 연결된 원문 근거가 없습니다.</span>;
+  } else {
+    body = (
+      <div className="space-y-2">
+        {data.map((c) => (
+          <div key={c.chunkId} className="text-sm">
+            <span className="text-muted-foreground text-xs">청크 #{c.chunkId}</span>
+            <p className="whitespace-pre-wrap">{c.content}</p>
+          </div>
+        ))}
+      </div>
+    );
+  }
+  // 조용한 백그라운드 재조회(근거가 이미 보이는 중)에는 busy 를 켜지 않는다 — 처음 로딩·실패 화면의 재시도 중만.
   return (
-    <div aria-live="polite" aria-busy={isLoading} data-testid={`review-evidence-live-${id}`}>
+    <div aria-live="polite" aria-busy={isLoading || (isError && isFetching)} data-testid={`review-evidence-live-${id}`}>
       {body}
     </div>
   );
