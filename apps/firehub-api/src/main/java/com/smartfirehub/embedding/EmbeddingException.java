@@ -1,5 +1,7 @@
 package com.smartfirehub.embedding;
 
+import java.util.Objects;
+
 /** 임베딩 생성 실패 (서비스 다운, 차원 불일치 등). 조용한 폴백 금지 — 명시적 전파. */
 public class EmbeddingException extends RuntimeException {
 
@@ -33,9 +35,10 @@ public class EmbeddingException extends RuntimeException {
 
   /**
    * WD-873 용 팩토리 — cause 없이 만들고 원 예외는 비공개로만 보관한다. 다른 패키지(설정·행 검색)도 같은 규칙으로 가려진 예외를 만들 수 있게 public.
+   * raw 는 null 일 수 없다 — {@link #isRedacted()} 가 raw 유무로 가리므로, null 이면 가린 예외가 평범한 예외로 보여 스택이 찍힌다.
    */
   public static EmbeddingException redacted(String message, Throwable raw) {
-    return new EmbeddingException(raw, message);
+    return new EmbeddingException(Objects.requireNonNull(raw, "raw"), message);
   }
 
   /** 로그용 상세 한 줄 — 원 예외가 있으면 가려서 처음 한 번만 만들고, 없으면 메시지를 쓴다. */
@@ -47,6 +50,11 @@ public class EmbeddingException extends RuntimeException {
       logDetail = EmbeddingFailureMessages.logDetail(raw);
     }
     return logDetail;
+  }
+
+  /** failure() 가 만든(원 예외를 cause 가 아닌 비공개로 든) 예외인지 — 상세는 EmbeddingFailureLog 가 가려 남긴다(WD-873). */
+  public boolean isRedacted() {
+    return raw != null;
   }
 
   /** 이미 로그에 남긴 실패인지 — 연결 테스트가 같은 실패를 두 번 남기지 않으려고 본다(WD-873). */

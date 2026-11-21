@@ -10,6 +10,7 @@ import com.smartfirehub.dataset.exception.CategoryNotFoundException;
 import com.smartfirehub.dataset.exception.ColumnModificationException;
 import com.smartfirehub.dataset.exception.DatasetNotFoundException;
 import com.smartfirehub.dataset.exception.DuplicateDatasetNameException;
+import com.smartfirehub.dataset.repository.DatasetSort;
 import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.exception.CodedApiException;
@@ -161,10 +162,32 @@ class DatasetServiceExtTest extends IntegrationTestBase {
 
     PageResponse<DatasetResponse> certified =
         datasetService.getDatasets(
-            null, null, null, false, null, 0, 10, testUserId, "CERTIFIED", false, null);
+            null,
+            null,
+            null,
+            false,
+            null,
+            0,
+            10,
+            testUserId,
+            "CERTIFIED",
+            false,
+            null,
+            DatasetSort.DEFAULT);
     PageResponse<DatasetResponse> deprecated =
         datasetService.getDatasets(
-            null, null, null, false, null, 0, 10, testUserId, "DEPRECATED", false, null);
+            null,
+            null,
+            null,
+            false,
+            null,
+            0,
+            10,
+            testUserId,
+            "DEPRECATED",
+            false,
+            null,
+            DatasetSort.DEFAULT);
 
     List<Long> certIds = certified.content().stream().map(DatasetResponse::id).toList();
     assertThat(certIds).contains(ds.id());
@@ -182,7 +205,18 @@ class DatasetServiceExtTest extends IntegrationTestBase {
 
     PageResponse<DatasetResponse> result =
         datasetService.getDatasets(
-            null, null, null, false, null, 0, 10, testUserId, null, true, null);
+            null,
+            null,
+            null,
+            false,
+            null,
+            0,
+            10,
+            testUserId,
+            null,
+            true,
+            null,
+            DatasetSort.DEFAULT);
 
     List<Long> ids = result.content().stream().map(DatasetResponse::id).toList();
     assertThat(ids).contains(fav.id());
@@ -195,7 +229,18 @@ class DatasetServiceExtTest extends IntegrationTestBase {
 
     PageResponse<DatasetResponse> result =
         datasetService.getDatasets(
-            null, null, null, false, "SearchMeExt", 0, 10, testUserId, null, false, null);
+            null,
+            null,
+            null,
+            false,
+            "SearchMeExt",
+            0,
+            10,
+            testUserId,
+            null,
+            false,
+            null,
+            DatasetSort.DEFAULT);
 
     assertThat(result.content()).hasSize(1);
     assertThat(result.content().get(0).name()).isEqualTo("SearchMeExt");
@@ -217,7 +262,18 @@ class DatasetServiceExtTest extends IntegrationTestBase {
     // 기본: TEMP 없음, 건수도 TEMP 를 뺀 수.
     PageResponse<DatasetResponse> hidden =
         datasetService.getDatasets(
-            null, null, null, false, "wd754", 0, 10, testUserId, null, false, null);
+            null,
+            null,
+            null,
+            false,
+            "wd754",
+            0,
+            10,
+            testUserId,
+            null,
+            false,
+            null,
+            DatasetSort.DEFAULT);
     assertThat(hidden.content()).extracting(DatasetResponse::id).containsExactly(source, derived);
     assertThat(hidden.totalElements()).isEqualTo(2);
     assertThat(hidden.totalPages()).isEqualTo(1);
@@ -225,7 +281,18 @@ class DatasetServiceExtTest extends IntegrationTestBase {
     // includeTemp=true: 모두.
     PageResponse<DatasetResponse> all =
         datasetService.getDatasets(
-            null, null, null, true, "wd754", 0, 10, testUserId, null, false, null);
+            null,
+            null,
+            null,
+            true,
+            "wd754",
+            0,
+            10,
+            testUserId,
+            null,
+            false,
+            null,
+            DatasetSort.DEFAULT);
     assertThat(all.content())
         .extracting(DatasetResponse::id)
         .containsExactly(source, derived, temp);
@@ -234,21 +301,54 @@ class DatasetServiceExtTest extends IntegrationTestBase {
     // originType=TEMP(includeTemp 없이): TEMP 만 — 빈 결과가 아니다.
     PageResponse<DatasetResponse> onlyTemp =
         datasetService.getDatasets(
-            null, null, "TEMP", false, "wd754", 0, 10, testUserId, null, false, null);
+            null,
+            null,
+            "TEMP",
+            false,
+            "wd754",
+            0,
+            10,
+            testUserId,
+            null,
+            false,
+            null,
+            DatasetSort.DEFAULT);
     assertThat(onlyTemp.content()).extracting(DatasetResponse::id).containsExactly(temp);
     assertThat(onlyTemp.totalElements()).isEqualTo(1);
 
     // originType=SOURCE + includeTemp=true: SOURCE 만.
     PageResponse<DatasetResponse> onlySource =
         datasetService.getDatasets(
-            null, null, "SOURCE", true, "wd754", 0, 10, testUserId, null, false, null);
+            null,
+            null,
+            "SOURCE",
+            true,
+            "wd754",
+            0,
+            10,
+            testUserId,
+            null,
+            false,
+            null,
+            DatasetSort.DEFAULT);
     assertThat(onlySource.content()).extracting(DatasetResponse::id).containsExactly(source);
     assertThat(onlySource.totalElements()).isEqualTo(1);
 
     // 쪽 나눔도 숨긴 결과 기준 — 크기 1 이면 2쪽이고 두 번째 쪽은 DERIVED 다.
     PageResponse<DatasetResponse> secondPage =
         datasetService.getDatasets(
-            null, null, null, false, "wd754", 1, 1, testUserId, null, false, null);
+            null,
+            null,
+            null,
+            false,
+            "wd754",
+            1,
+            1,
+            testUserId,
+            null,
+            false,
+            null,
+            DatasetSort.DEFAULT);
     assertThat(secondPage.content()).extracting(DatasetResponse::id).containsExactly(derived);
     assertThat(secondPage.totalPages()).isEqualTo(2);
   }

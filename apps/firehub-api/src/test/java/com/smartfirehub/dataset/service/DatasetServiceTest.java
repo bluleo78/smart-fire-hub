@@ -8,6 +8,7 @@ import com.smartfirehub.dataset.dto.*;
 import com.smartfirehub.dataset.exception.ColumnModificationException;
 import com.smartfirehub.dataset.exception.DatasetNotFoundException;
 import com.smartfirehub.dataset.exception.DuplicateDatasetNameException;
+import com.smartfirehub.dataset.repository.DatasetSort;
 import com.smartfirehub.global.datastore.DataStoreDb;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.exception.CodedApiException;
@@ -238,7 +239,18 @@ class DatasetServiceTest extends IntegrationTestBase {
     // When
     PageResponse<DatasetResponse> result =
         datasetService.getDatasets(
-            testCategoryId, null, null, false, null, 0, 10, testUserId, null, false, null);
+            testCategoryId,
+            null,
+            null,
+            false,
+            null,
+            0,
+            10,
+            testUserId,
+            null,
+            false,
+            null,
+            DatasetSort.DEFAULT);
 
     // Then
     assertThat(result.content()).hasSize(1);
@@ -264,7 +276,18 @@ class DatasetServiceTest extends IntegrationTestBase {
 
     PageResponse<DatasetResponse> result =
         datasetService.getDatasets(
-            null, null, null, false, "zztagkw", 0, 10, testUserId, null, false, null);
+            null,
+            null,
+            null,
+            false,
+            "zztagkw",
+            0,
+            10,
+            testUserId,
+            null,
+            false,
+            null,
+            DatasetSort.DEFAULT);
 
     assertThat(result.content()).hasSize(1);
     assertThat(result.content().get(0).id()).isEqualTo(tagged.id());
@@ -293,7 +316,18 @@ class DatasetServiceTest extends IntegrationTestBase {
 
     PageResponse<DatasetResponse> result =
         datasetService.getDatasets(
-            null, null, null, false, "zzcatkw", 0, 10, testUserId, null, false, null);
+            null,
+            null,
+            null,
+            false,
+            "zzcatkw",
+            0,
+            10,
+            testUserId,
+            null,
+            false,
+            null,
+            DatasetSort.DEFAULT);
 
     assertThat(result.content()).hasSize(1);
     assertThat(result.content().get(0).id()).isEqualTo(inCat.id());

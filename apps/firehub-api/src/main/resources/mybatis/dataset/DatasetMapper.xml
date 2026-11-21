@@ -118,8 +118,18 @@
   </sql>
 
   <select id="selectPageIds" resultType="java.lang.Long">
-    SELECT DISTINCT d.id <include refid="listFromWhere"/>
-     ORDER BY d.id
+    <!-- WD-874: DISTINCT 는 ORDER BY 열이 SELECT 목록에 있어야 해 정렬 열을 함께 고른다(데이터셋 한 행에 값이 하나라 중복 제거 결과는 같다).
+         정렬 열은 ${} 로 끼우지 않고 choose 로 고정 열만 고른다.
+         resultType 이 Long 이라 첫 열을 읽으므로 d.id 는 반드시 첫 열로 둔다. -->
+    SELECT DISTINCT d.id,
+    <choose>
+      <when test="sortField == 'CREATED_AT'">d.created_at AS sort_key</when>
+      <when test="sortField == 'NAME'">d.name AS sort_key</when>
+      <otherwise>d.id AS sort_key</otherwise>
+    </choose>
+    <include refid="listFromWhere"/>
+     ORDER BY sort_key <if test="sortDesc">DESC</if><if test="!sortDesc">ASC</if>,
+              d.id <if test="sortDesc">DESC</if><if test="!sortDesc">ASC</if>
      <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.pageClause"/>
   </select>
 
@@ -141,7 +151,6 @@
   <select id="selectByIds" resultMap="datasetRow">
     <include refid="rowSelect"/>
      WHERE <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.inChunks"><property name="col" value="d.id"/></include>
-     ORDER BY d.id
   </select>
 
   <select id="selectById" resultMap="datasetRow">

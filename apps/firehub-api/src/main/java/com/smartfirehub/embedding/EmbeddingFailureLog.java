@@ -24,7 +24,8 @@ public final class EmbeddingFailureLog {
 
   private static final Map<String, State> STATES = new HashMap<>();
 
-  private static volatile LongSupplier clock = System::currentTimeMillis;
+  // 벽시계(currentTimeMillis)는 뒤로 갈 수 있어 그만큼 모든 줄이 생략된다 — 단조 시계(nanoTime)를 ms 로 쓴다(WD-873 리뷰 후속).
+  private static volatile LongSupplier clock = EmbeddingFailureLog::monotonicMillis;
 
   private EmbeddingFailureLog() {}
 
@@ -55,11 +56,12 @@ public final class EmbeddingFailureLog {
   }
 
   /**
-   * 호출부가 실패를 다시 찍을 때 넘길 throwable — failure() 가 만든 임베딩 실패(cause 없음)는 상세를 이미 여기서 가려 남겼으므로 null(스택 없이
-   * 문장만), 그 밖(cause 를 단 임베딩 예외·다른 예외)은 원인이 스택에 있어 그대로 돌려준다. SLF4J 는 마지막 인자가 null 이면 무시한다.
+   * 호출부가 실패를 다시 찍을 때 넘길 throwable — failure() 가 만든 임베딩 실패(원 예외를 따로 든 것)는 상세를 이미 여기서 가려 남겼으므로
+   * null(스택 없이 문장만), 그 밖(평범한 임베딩 예외·cause 를 단 임베딩 예외·다른 예외)은 여기서 남기지 않았거나 원인이 스택에 있어 그대로 돌려준다(던진 곳을
+   * 찾을 수 있게 — WD-873 리뷰 후속). SLF4J 는 마지막 인자가 null 이면 무시한다.
    */
   public static Throwable stackOrNull(Throwable e) {
-    return e instanceof EmbeddingException ee && ee.getCause() == null ? null : e;
+    return e instanceof EmbeddingException ee && ee.isRedacted() ? null : e;
   }
 
   /** 한 줄을 남기고 예외에 「이미 로그함」을 표시한다. */
@@ -78,6 +80,11 @@ public final class EmbeddingFailureLog {
     }
   }
 
+  /** 단조 증가하는 ms — 창 간격 계산에만 쓴다(절대 시각이 아니다). */
+  private static long monotonicMillis() {
+    return System.nanoTime() / 1_000_000L;
+  }
+
   /** 시험용 — 시각 공급자를 바꾼다. */
   static void setClock(LongSupplier millis) {
     clock = millis;
@@ -88,6 +95,6 @@ public final class EmbeddingFailureLog {
     synchronized (STATES) {
       STATES.clear();
     }
-    clock = System::currentTimeMillis;
+    clock = EmbeddingFailureLog::monotonicMillis;
   }
 }

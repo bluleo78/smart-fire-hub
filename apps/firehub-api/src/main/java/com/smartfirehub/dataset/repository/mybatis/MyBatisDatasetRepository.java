@@ -6,6 +6,7 @@ import com.smartfirehub.dataset.dto.DatasetResponse;
 import com.smartfirehub.dataset.dto.UpdateDatasetRequest;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.repository.DatasetSchemaMeta;
+import com.smartfirehub.dataset.repository.DatasetSort;
 import com.smartfirehub.dataset.repository.DatasetWriteTarget;
 import com.smartfirehub.dataset.repository.mybatis.DatasetRows.DatasetRow;
 import com.smartfirehub.dataset.repository.mybatis.DatasetRows.LockedRow;
@@ -97,7 +98,8 @@ public class MyBatisDatasetRepository implements DatasetRepository {
       String status,
       boolean favoriteOnly,
       Long securityLevelId,
-      DatasetVisibility access) {
+      DatasetVisibility access,
+      DatasetSort sort) {
     // 먼저 조인으로 늘어난 행을 걷은 id 한 쪽을 고른다(다중 조인 중복 제거 뒤 페이지).
     List<Long> datasetIds =
         mapper.selectPageIds(
@@ -110,6 +112,8 @@ public class MyBatisDatasetRepository implements DatasetRepository {
             PlatformText.searchPattern(search),
             favoriteUser(favoriteOnly, currentUserId),
             MyBatisDatasetVisibility.params(access),
+            sort.field().name(),
+            sort.descending(),
             size,
             page * size);
     if (datasetIds.isEmpty()) {
@@ -118,9 +122,17 @@ public class MyBatisDatasetRepository implements DatasetRepository {
     Set<Long> favoriteIds = fetchFavoriteIds(currentUserId, datasetIds);
     Map<Long, List<String>> tags = fetchTagsByDatasetIds(datasetIds);
     Map<Long, SecurityLevelSummary> levels = fetchLevelSummaries();
-    List<DatasetResponse> out = new ArrayList<>();
+    // WD-874: 행 읽기는 SQL 순서에 기대지 않는다 — id 로 모은 뒤 위에서 고른 정렬 순서(datasetIds)대로 다시 놓는다.
+    Map<Long, DatasetRow> rowsById = new HashMap<>();
     for (DatasetRow r : mapper.selectByIds(InChunks.of(datasetIds))) {
-      out.add(toResponse(r, favoriteIds, tags, levels));
+      rowsById.put(r.id(), r);
+    }
+    List<DatasetResponse> out = new ArrayList<>();
+    for (Long id : datasetIds) {
+      DatasetRow r = rowsById.get(id);
+      if (r != null) {
+        out.add(toResponse(r, favoriteIds, tags, levels));
+      }
     }
     return out;
   }

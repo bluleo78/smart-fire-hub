@@ -22,6 +22,8 @@ public interface DatasetRepository {
    * <p>WD-754 임시(TEMP) 숨김: 출처 필터({@code originType})가 비어 있고 {@code includeTemp=false} 면 {@code
    * origin_type <> 'TEMP'} 를 건다 — 파이프라인 중간 결과가 목록을 덮지 않게 하되, 건수·페이지도 숨긴 결과 기준이 되도록 화면이 아닌 여기서 거른다.
    * 출처 필터가 있으면 그 필터가 이긴다(TEMP 를 직접 고르면 includeTemp 와 상관없이 TEMP 만 — 두 조건이 겹쳐 빈 결과가 되지 않게).
+   *
+   * <p>WD-874: {@code sort} 로 열(id·created_at·name)과 방향을 고른다. 동률은 id 를 같은 방향으로 덧붙여 페이지가 흔들리지 않게 한다.
    * origin_type 은 두 DB 모두 NOT NULL·CHECK(SOURCE·DERIVED·TEMP) 라 NULL 처리 없이 단순 비교로 충분하다.
    */
   List<DatasetResponse> findAll(
@@ -36,7 +38,38 @@ public interface DatasetRepository {
       String status,
       boolean favoriteOnly,
       Long securityLevelId,
-      DatasetVisibility access);
+      DatasetVisibility access,
+      DatasetSort sort);
+
+  /** 정렬 인자 없는 기존 호출용 — id 오름차순({@link DatasetSort#DEFAULT})으로 위임해 다른 소비처의 순서를 바꾸지 않는다(WD-874). */
+  default List<DatasetResponse> findAll(
+      Long categoryId,
+      String storageType,
+      String originType,
+      boolean includeTemp,
+      String search,
+      int page,
+      int size,
+      Long currentUserId,
+      String status,
+      boolean favoriteOnly,
+      Long securityLevelId,
+      DatasetVisibility access) {
+    return findAll(
+        categoryId,
+        storageType,
+        originType,
+        includeTemp,
+        search,
+        page,
+        size,
+        currentUserId,
+        status,
+        favoriteOnly,
+        securityLevelId,
+        access,
+        DatasetSort.DEFAULT);
+  }
 
   /** {@link #findAll} 과 같은 필터·가시성(임시 숨김 포함)을 적용한 전체 건수를 센다 — 목록과 조건이 어긋나면 페이지가 틀어진다. */
   long count(

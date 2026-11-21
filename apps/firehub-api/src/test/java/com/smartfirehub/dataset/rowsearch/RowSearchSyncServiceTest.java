@@ -305,6 +305,29 @@ class RowSearchSyncServiceTest extends IntegrationTestBase {
   }
 
   @Test
+  void plainEmbeddingFailure_keepsStack() {
+    // cause 도 원 예외도 없는 평범한 임베딩 예외(차원 불일치 등)는 EmbeddingFailureLog 가 남기지 않으므로 스택과 함께 남아야 한다(WD-873 리뷰
+    // 후속).
+    sync.sync(datasetId);
+    exec("UPDATE $T SET content = 'a6' WHERE id = 1");
+    embedFailure = new EmbeddingException("dimension mismatch");
+    failEmbedding.set(true);
+    Logger logger = (Logger) LoggerFactory.getLogger(RowSearchSyncService.class);
+    ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    appender.start();
+    logger.addAppender(appender);
+    try {
+      assertThat(sync.sync(datasetId)).isEqualTo(RowSearchSyncService.Outcome.FAILED);
+    } finally {
+      logger.detachAppender(appender);
+    }
+    var warns = appender.list.stream().filter(e -> e.getLevel() == Level.WARN).toList();
+    assertThat(warns).hasSize(1);
+    assertThat(warns.get(0).getThrowableProxy()).isNotNull();
+    assertThat(warns.get(0).getThrowableProxy().getMessage()).isEqualTo("dimension mismatch");
+  }
+
+  @Test
   void notConfiguredSkipsWithoutBackoff() {
     when(embeddingFactory.current()).thenThrow(new EmbeddingNotConfiguredException());
 

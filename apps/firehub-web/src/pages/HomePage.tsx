@@ -83,12 +83,14 @@ export default function HomePage() {
     isError: isDashboardsError,
     refetch: refetchDashboards,
   } = useDashboards({ page: 0, size: 5 });
+  // 「최근」 카드이므로 최신 생성 순으로 요청한다(WD-874) — 정렬 인자가 없으면 서버 기본(id 오름차순)이라
+  // 가장 오래된 5건이 보였다.
   const {
     data: datasetsData,
     isLoading: isDatasetsLoading,
     isError: isDatasetsError,
     refetch: refetchDatasets,
-  } = useDatasets({ page: 0, size: 5 });
+  } = useDatasets({ page: 0, size: 5, sortBy: 'createdAt', sortDir: 'desc' });
   const healthFailed = isHealthError && !health;
   const attentionFailed = isAttentionError && !attentionItems;
   const dashboardsFailed = isDashboardsError && !dashboardsData;

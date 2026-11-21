@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.smartfirehub.dataset.dto.*;
 import com.smartfirehub.dataset.exception.DatasetNotFoundException;
+import com.smartfirehub.dataset.repository.DatasetSort;
 import com.smartfirehub.dataset.search.DatasetEmbeddingBackfillService;
 import com.smartfirehub.dataset.search.DatasetSearchHit;
 import com.smartfirehub.dataset.search.DatasetSearchService;
@@ -134,6 +135,7 @@ class DatasetControllerTest {
             anyLong(),
             any(),
             anyBoolean(),
+            any(),
             any()))
         .thenReturn(page);
 
@@ -158,6 +160,7 @@ class DatasetControllerTest {
             anyLong(),
             any(),
             anyBoolean(),
+            any(),
             any()))
         .thenReturn(new PageResponse<>(List.of(), 0, 20, 0, 0));
 
@@ -168,7 +171,7 @@ class DatasetControllerTest {
     verify(datasetService)
         .getDatasets(
             isNull(), isNull(), isNull(), eq(false), isNull(), eq(0), eq(20), anyLong(), isNull(),
-            eq(false), isNull());
+            eq(false), isNull(), any());
   }
 
   /** WD-754: includeTemp=true 와 originType 을 그대로 서비스에 넘긴다(우선순위 판단은 리포지토리 몫). */
@@ -185,6 +188,7 @@ class DatasetControllerTest {
             anyLong(),
             any(),
             anyBoolean(),
+            any(),
             any()))
         .thenReturn(new PageResponse<>(List.of(), 0, 20, 0, 0));
 
@@ -208,7 +212,8 @@ class DatasetControllerTest {
             anyLong(),
             isNull(),
             eq(false),
-            isNull());
+            isNull(),
+            any());
   }
 
   @Test
@@ -312,6 +317,65 @@ class DatasetControllerTest {
         .andExpect(status().isNoContent());
 
     verify(datasetService).deleteDataset(1L);
+  }
+
+  /** WD-874: sortBy·sortDir 를 정렬 값으로 바꿔 서비스에 넘긴다. */
+  @Test
+  void getDatasets_withSort_passesSortToService() throws Exception {
+    when(datasetService.getDatasets(
+            any(),
+            any(),
+            any(),
+            anyBoolean(),
+            any(),
+            anyInt(),
+            anyInt(),
+            anyLong(),
+            any(),
+            anyBoolean(),
+            any(),
+            any()))
+        .thenReturn(new PageResponse<>(List.of(), 0, 20, 0, 0));
+
+    mockMvc
+        .perform(
+            get("/api/v1/datasets")
+                .param("sortBy", "createdAt")
+                .param("sortDir", "desc")
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isOk());
+
+    verify(datasetService)
+        .getDatasets(
+            isNull(),
+            isNull(),
+            isNull(),
+            eq(false),
+            isNull(),
+            eq(0),
+            eq(20),
+            anyLong(),
+            isNull(),
+            eq(false),
+            isNull(),
+            eq(new DatasetSort(DatasetSort.Field.CREATED_AT, true)));
+  }
+
+  /** WD-874: 허용 밖 정렬 값(대소문자 다름 포함)은 400. */
+  @Test
+  void getDatasets_withInvalidSort_returnsBadRequest() throws Exception {
+    mockMvc
+        .perform(
+            get("/api/v1/datasets")
+                .param("sortDir", "DESC")
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isBadRequest());
+    mockMvc
+        .perform(
+            get("/api/v1/datasets")
+                .param("sortBy", "foo")
+                .header("Authorization", "Bearer test-token"))
+        .andExpect(status().isBadRequest());
   }
 
   @Test

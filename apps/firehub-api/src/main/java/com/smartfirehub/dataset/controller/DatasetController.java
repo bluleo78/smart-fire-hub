@@ -3,6 +3,7 @@ package com.smartfirehub.dataset.controller;
 import com.smartfirehub.dataset.dto.*;
 import com.smartfirehub.dataset.dto.SpatialFilter;
 import com.smartfirehub.dataset.exception.TranslatesMissingDatasetTable;
+import com.smartfirehub.dataset.repository.DatasetSort;
 import com.smartfirehub.dataset.search.DatasetEmbeddingBackfillService;
 import com.smartfirehub.dataset.search.DatasetSearchHit;
 import com.smartfirehub.dataset.search.DatasetSearchRequest;
@@ -66,9 +67,13 @@ public class DatasetController {
       @RequestParam(required = false) String status,
       @RequestParam(defaultValue = "false") boolean favoriteOnly,
       @RequestParam(required = false) Long securityLevelId,
+      @RequestParam(required = false) String sortBy,
+      @RequestParam(required = false) String sortDir,
       Authentication authentication) {
     page = Math.max(0, page);
     size = Math.max(1, Math.min(size, 100));
+    // WD-874: 허용 밖 정렬 값은 IllegalArgumentException → 400. 인자가 없으면 id 오름차순(지금 순서).
+    DatasetSort sort = DatasetSort.parse(sortBy, sortDir);
     Long userId = (Long) authentication.getPrincipal();
     PageResponse<DatasetResponse> response =
         datasetService.getDatasets(
@@ -82,7 +87,8 @@ public class DatasetController {
             userId,
             status,
             favoriteOnly,
-            securityLevelId);
+            securityLevelId,
+            sort);
     return ResponseEntity.ok(response);
   }
 

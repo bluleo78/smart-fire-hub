@@ -104,6 +104,20 @@ class EmbeddingFailureLogTest {
   }
 
   @Test
+  void stackOrNullDropsStackOnlyForRedactedFailures() {
+    // failure() 가 만든(원 예외를 따로 든) 예외만 스택을 뺀다 — 평범한 임베딩 예외는 던진 곳을 찾게 스택을 남긴다(WD-873 리뷰 후속).
+    EmbeddingException redacted = ex(new RuntimeException("raw"));
+    EmbeddingException plain = new EmbeddingException("OpenAI 응답 index 범위 오류: 3");
+    EmbeddingException withCause =
+        new EmbeddingException("corrupt", new IllegalStateException("x"));
+    RuntimeException other = new IllegalStateException("other");
+    assertThat(EmbeddingFailureLog.stackOrNull(redacted)).isNull();
+    assertThat(EmbeddingFailureLog.stackOrNull(plain)).isSameAs(plain);
+    assertThat(EmbeddingFailureLog.stackOrNull(withCause)).isSameAs(withCause);
+    assertThat(EmbeddingFailureLog.stackOrNull(other)).isSameAs(other);
+  }
+
+  @Test
   void warnAlwaysLogsAndMarks() {
     EmbeddingException e = ex(new RuntimeException("a"));
     assertThat(e.isLogged()).isFalse();

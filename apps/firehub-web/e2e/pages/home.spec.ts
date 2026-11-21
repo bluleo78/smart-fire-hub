@@ -416,6 +416,58 @@ test.describe('홈 페이지', () => {
   });
 
   /**
+   * 회귀: WD-874 — 홈 「최근 데이터셋」 카드가 정렬 인자 없이 요청해 서버 기본(id 오름차순)대로 가장 오래된 5건을 보여 줬다.
+   * 이제 sortBy=createdAt·sortDir=desc·size=5 로 요청하고, 응답 순서(최신 → 오래된 순) 그대로 그린다.
+   */
+  test('최근 데이터셋 카드는 최신 순으로 요청하고 응답 순서대로 그린다 (WD-874)', async ({
+    authenticatedPage: page,
+  }) => {
+    // mockApi 는 pathname 만 매칭하므로, 실제 요청 URL 의 쿼리를 직접 가로채 기록한다.
+    const requestedUrls: URL[] = [];
+    const names = ['가장 최신', '두 번째', '세 번째', '네 번째', '다섯 번째'];
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets',
+      async (route) => {
+        requestedUrls.push(new URL(route.request().url()));
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            content: names.map((name, i) => ({
+              id: 100 - i,
+              name,
+              storageType: 'TABLE',
+              originType: 'SOURCE',
+              createdAt: `2026-04-0${5 - i}T00:00:00`,
+            })),
+            page: 0,
+            size: 5,
+            totalElements: 9,
+            totalPages: 2,
+          }),
+        });
+      },
+    );
+
+    await page.goto('/');
+
+    const card = page
+      .locator('[class*="card-hover"]')
+      .filter({ has: page.getByRole('heading', { name: '최근 데이터셋' }) });
+    await expect(card.getByText('가장 최신')).toBeVisible();
+
+    // 카드 안 항목 이름이 응답 순서(최신 → 오래된 순)와 같다
+    await expect(card.locator('button span.truncate')).toHaveText(names);
+
+    // 요청이 최신 순·5건 인자를 실었다
+    expect(requestedUrls.length).toBeGreaterThan(0);
+    const params = requestedUrls[0].searchParams;
+    expect(params.get('sortBy')).toBe('createdAt');
+    expect(params.get('sortDir')).toBe('desc');
+    expect(params.get('size')).toBe('5');
+  });
+
+  /**
    * 회귀: WD-296 — 파이프라인이 자동 생성한 임시(TEMP) 데이터셋은 「원본」이 아니라 「임시」로 보인다(데이터셋 목록과 같은 라벨).
    * 예전에는 DERIVED 밖을 모두 「원본」으로 표시해, 홈만 보면 사용자가 올린 원본 데이터로 오해했다.
    */
