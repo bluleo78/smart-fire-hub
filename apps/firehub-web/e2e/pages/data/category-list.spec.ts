@@ -1,3 +1,5 @@
+import type { Page } from '@playwright/test';
+
 import { createCategories } from '../../factories/dataset.factory';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
@@ -16,6 +18,11 @@ import {
 test.beforeEach(async ({ authenticatedPage: page }) => {
   await grantDatasetPermissions(page);
 });
+
+// WD-904: 빈 목록 CTA(「새 카테고리 만들기」)와 구분해 헤더 버튼(「새 카테고리」)만 정확한 이름으로 집는다.
+function headerCreateButton(page: Page) {
+  return page.getByRole('button', { name: '새 카테고리', exact: true });
+}
 
 /**
  * 카테고리 관리 페이지 E2E 테스트
@@ -79,7 +86,7 @@ test.describe('카테고리 관리 페이지', () => {
     await page.goto('/data/categories');
 
     // "새 카테고리" 버튼 클릭
-    await page.getByRole('button', { name: /새 카테고리/ }).click();
+    await headerCreateButton(page).click();
 
     // 카테고리 생성 다이얼로그가 열리는지 확인
     await expect(page.getByRole('dialog')).toBeVisible();
@@ -108,7 +115,7 @@ test.describe('카테고리 관리 페이지', () => {
     await page.goto('/data/categories');
 
     // 다이얼로그 열기
-    await page.getByRole('button', { name: /새 카테고리/ }).click();
+    await headerCreateButton(page).click();
     await expect(page.getByRole('dialog')).toBeVisible();
 
     // 취소 버튼 클릭
@@ -174,7 +181,7 @@ test.describe('카테고리 관리 페이지', () => {
     await page.goto('/data/categories');
 
     // "새 카테고리" 버튼 클릭 → 다이얼로그 열기
-    await page.getByRole('button', { name: /새 카테고리/ }).click();
+    await headerCreateButton(page).click();
     await expect(page.getByRole('dialog')).toBeVisible();
 
     // 중복 이름 입력 후 생성 버튼 클릭
@@ -210,7 +217,7 @@ test.describe('카테고리 관리 페이지', () => {
     await expect(createNameInput).toHaveAttribute('aria-invalid', 'true');
     await dialog.getByRole('button', { name: '취소' }).click();
     await expect(dialog).toBeHidden();
-    await page.getByRole('button', { name: /새 카테고리/ }).click();
+    await headerCreateButton(page).click();
     await expect(page.getByRole('dialog').getByLabel('이름')).not.toHaveAttribute('aria-invalid', 'true');
   });
 
@@ -223,7 +230,7 @@ test.describe('카테고리 관리 페이지', () => {
     await mockApi(page, 'POST', '/api/v1/dataset-categories', {}, { status: 500 });
 
     await page.goto('/data/categories');
-    await page.getByRole('button', { name: /새 카테고리/ }).click();
+    await headerCreateButton(page).click();
     const dialog = page.getByRole('dialog');
     await expect(dialog).toBeVisible();
 
@@ -250,7 +257,7 @@ test.describe('카테고리 관리 페이지', () => {
     });
 
     await page.goto('/data/categories');
-    await page.getByRole('button', { name: /새 카테고리/ }).click();
+    await headerCreateButton(page).click();
     const dialog = page.getByRole('dialog');
     const nameInput = dialog.getByLabel('이름');
     await nameInput.fill('행정');
@@ -372,7 +379,7 @@ test.describe('카테고리 관리 페이지', () => {
     await page.goto('/data/categories');
 
     // 새 카테고리 다이얼로그 열기
-    await page.getByRole('button', { name: /새 카테고리/ }).click();
+    await headerCreateButton(page).click();
     await expect(page.getByRole('dialog')).toBeVisible();
 
     // 이름 필드가 비어있으면 생성 버튼이 비활성화 상태여야 한다
@@ -419,7 +426,7 @@ test.describe('카테고리 관리 페이지', () => {
     await page.goto('/data/categories');
 
     // 새 카테고리 다이얼로그 열기
-    await page.getByRole('button', { name: /새 카테고리/ }).click();
+    await headerCreateButton(page).click();
     await expect(page.getByRole('dialog')).toBeVisible();
 
     const createBtn = page.getByRole('dialog').getByRole('button', { name: '만들기' });
@@ -449,7 +456,7 @@ test.describe('카테고리 관리 페이지', () => {
 
     await page.goto('/data/categories');
 
-    await page.getByRole('button', { name: /새 카테고리/ }).click();
+    await headerCreateButton(page).click();
     await expect(page.getByRole('dialog')).toBeVisible();
 
     // 이름 앞뒤에 공백을 섞어 입력
@@ -470,7 +477,7 @@ test.describe('카테고리 관리 페이지', () => {
     // 로케이터는 지연 평가라 다이얼로그를 닫았다 다시 열어도 그대로 쓴다
     const dialog = page.getByRole('dialog');
     const openDialog = async () => {
-      await page.getByRole('button', { name: /새 카테고리/ }).click();
+      await headerCreateButton(page).click();
       await expect(dialog).toBeVisible();
     };
     await openDialog();
@@ -546,13 +553,87 @@ test.describe('카테고리 관리 페이지', () => {
 
     // 일치하지 않는 키워드 → 빈 상태 메시지 (전체 빈 상태와 다른 메시지)
     await page.getByLabel('카테고리 검색').fill('존재하지않는키워드xyz');
-    await expect(page.getByText('검색 결과가 없습니다.')).toBeVisible();
+    await expect(page.getByText("'존재하지않는키워드xyz'에 대한 결과가 없습니다.")).toBeVisible();
+    await expect(page.getByText('다른 키워드로 검색해 보세요.')).toBeVisible();
     // 0건이면 표 안 status 가 안내를 읽으므로 개수(0 / 3)는 낭독하지 않는다 — 두 번 읽힘 방지 (WD-815)
     await expect(page.getByText('0 / 3')).toHaveAttribute('aria-hidden', 'true');
 
     // 검색 지우기 → 다시 3건 모두
     await page.getByRole('button', { name: '검색어 지우기' }).click();
     await expect(page.getByText('3개')).toBeVisible();
+  });
+
+  test('검색 0건이면 공용 검색 빈 상태와 「검색 초기화」를 보이고, 누르면 전체 목록으로 돌아온다 (WD-904)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
+    await page.goto('/data/categories');
+
+    // 앞뒤 공백은 다듬어 검색어로 보여준다
+    await page.getByLabel('카테고리 검색').fill('  xyz  ');
+    await expect(page.getByText("'xyz'에 대한 결과가 없습니다.")).toBeVisible();
+    const table = page.locator('table');
+    await expect(table.getByRole('button', { name: '검색 초기화' })).toBeVisible();
+    // 검색 0건에는 만들기 CTA 를 그리지 않는다(실제 0건일 때만)
+    await expect(table.getByRole('button', { name: '새 카테고리 만들기' })).toHaveCount(0);
+
+    await table.getByRole('button', { name: '검색 초기화' }).click();
+    await expect(page.getByLabel('카테고리 검색')).toHaveValue('');
+    await expect(page.getByRole('cell', { name: '소방 데이터', exact: true })).toBeVisible();
+    await expect(page.getByRole('cell', { name: '통계 데이터', exact: true })).toBeVisible();
+    await expect(page.getByRole('cell', { name: '기타', exact: true })).toBeVisible();
+    await expect(page.getByText('3개')).toBeVisible();
+  });
+
+  test('공백만 입력하면 검색 빈 상태가 나오지 않는다 (WD-904)', async ({ authenticatedPage: page }) => {
+    // 실제 0건 + 쓰기 권한(기본 fixture) — 공백 검색이 검색 빈 상태로 바뀌면 안 된다
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', []);
+    await page.goto('/data/categories');
+    await expect(page.getByText('카테고리가 없습니다.')).toBeVisible();
+
+    // 고정 대기 대신 결정적 전이를 쓴다: 먼저 'xyz' 를 넣어 디바운스가 적용된 것(검색 빈 상태)을 확인하고,
+    // 그다음 공백만 넣는다. 「카테고리가 없습니다.」 는 공백 값이 디바운스로 반영된 뒤에만 다시 나타나므로
+    // 「바뀌지 않음」 단언이 공허하지 않다.
+    await page.getByLabel('카테고리 검색').fill('xyz');
+    await expect(page.getByText("'xyz'에 대한 결과가 없습니다.")).toBeVisible();
+    await page.getByLabel('카테고리 검색').fill('   ');
+
+    await expect(page.getByText('카테고리가 없습니다.')).toBeVisible();
+    await expect(page.getByRole('button', { name: '검색 초기화' })).toHaveCount(0);
+    await expect(page.locator('tbody').getByRole('button', { name: '새 카테고리 만들기' })).toBeVisible();
+  });
+
+  test('카테고리가 없고 쓰기 권한이 있으면 「새 카테고리」 CTA 가 만들기 창을 연다 (WD-904)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', []);
+    await page.goto('/data/categories');
+
+    await expect(page.getByText('카테고리가 없습니다.')).toBeVisible();
+    // 헤더 버튼으로 열어 이름을 입력하고 취소한 뒤, tbody CTA 로 다시 열면 폼이 초기화돼 있어야 한다
+    await headerCreateButton(page).click();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByLabel('이름').fill('임시 이름');
+    await dialog.getByRole('button', { name: '취소' }).click();
+    await expect(dialog).toHaveCount(0);
+
+    await page.locator('tbody').getByRole('button', { name: '새 카테고리 만들기' }).click();
+    await expect(page.getByRole('dialog').getByText('새 카테고리', { exact: true })).toBeVisible();
+    await expect(page.getByRole('dialog').getByLabel('이름')).toHaveValue('');
+  });
+
+  test('쓰기 권한이 없으면 빈 목록에 「새 카테고리」 CTA 가 없다 (WD-904)', async ({ authenticatedPage: page }) => {
+    await grantDatasetPermissions(page, ['dataset:read']);
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', []);
+    // 권한 응답이 도착한 뒤에 판정해야 「CTA 없음」이 권한 로딩 전의 숨김이 아님을 보장한다
+    const permissionsLoaded = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/v1/auth/me/permissions');
+    await page.goto('/data/categories');
+    await permissionsLoaded;
+
+    await expect(page.getByText('카테고리가 없습니다.')).toBeVisible();
+    // 응답 처리 후 한 프레임 쉬어 리렌더를 반영한다
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => r(null))));
+    await expect(page.locator('tbody').getByRole('button', { name: '새 카테고리 만들기' })).toHaveCount(0);
   });
 
   test('정렬 드롭다운으로 카테고리 순서를 변경한다 (이슈 #75)', async ({

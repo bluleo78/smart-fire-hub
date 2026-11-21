@@ -102,6 +102,9 @@ export default function CategoryListPage() {
 
   const { data: categories, isLoading } = useCategories();
 
+  // 필터·검색 빈 상태 문구가 같은 기준을 쓰게 한 곳에서 다듬는다
+  const trimmedSearch = search.trim();
+
   /**
    * 검색·정렬을 클라이언트에서 적용한 결과 목록.
    * - 검색은 이름·설명 부분일치 (대소문자 무시).
@@ -110,7 +113,7 @@ export default function CategoryListPage() {
    */
   const visibleCategories = useMemo(() => {
     if (!categories) return [];
-    const keyword = search.trim().toLowerCase();
+    const keyword = trimmedSearch.toLowerCase();
     const filtered = keyword
       ? categories.filter((c) => {
           const name = c.name.toLowerCase();
@@ -135,10 +138,10 @@ export default function CategoryListPage() {
         break;
     }
     return sorted;
-  }, [categories, search, sortKey]);
+  }, [categories, trimmedSearch, sortKey]);
 
   // 검색이 적용된 상태에서 결과가 0건일 때만 별도 안내를 노출 (전체 빈 상태와 구분)
-  const isFiltering = search.trim().length > 0;
+  const isFiltering = trimmedSearch.length > 0;
   const hasResults = visibleCategories.length > 0;
   // 로딩이 끝났는데 보일 행이 없을 때만 개수 낭독을 멈춘다 — 로딩 중(스켈레톤)에는 빈 상태 안내가 없으므로 (WD-815)
   const countSilenced = !isLoading && !hasResults;
@@ -243,12 +246,18 @@ export default function CategoryListPage() {
     });
   };
 
+  // WD-904: 헤더 버튼과 빈 목록 CTA 가 같은 동작(폼 초기화 후 만들기 창 열기)을 하도록 한 함수로 묶는다
+  const openCreateDialog = () => {
+    createForm.reset();
+    setIsCreateOpen(true);
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">카테고리 관리</h1>
         {canWriteCategory && (
-          <Button onClick={() => { createForm.reset(); setIsCreateOpen(true); }}>
+          <Button onClick={openCreateDialog}>
             <Plus className="h-4 w-4" />
             새 카테고리
           </Button>
@@ -350,9 +359,19 @@ export default function CategoryListPage() {
             ) : (
               <TableEmptyRow
                 colSpan={showActions ? 3 : 2}
-                // 문구가 고정이라 0건인 채 검색어만 바뀌어도 다시 안내되게 검색어를 넘긴다
-                announceKey={search}
-                message={isFiltering ? '검색 결과가 없습니다.' : '카테고리가 없습니다.'}
+                // WD-904: 다른 목록과 같은 공용 빈 상태 — 검색 중엔 다듬은 검색어 문구·「검색 초기화」(공백만이면 검색 아님),
+                // 실제 0건엔 message 와 쓰기 권한(WD-144)일 때만 만들기 CTA. 검색어 문구가 바뀌면 다시 낭독되므로 announceKey 는 두지 않는다.
+                message="카테고리가 없습니다."
+                searchKeyword={isFiltering ? trimmedSearch : undefined}
+                onResetSearch={isFiltering ? () => setSearch('') : undefined}
+                emptyAction={
+                  canWriteCategory ? (
+                    <Button size="sm" variant="outline" onClick={openCreateDialog}>
+                      <Plus className="h-4 w-4" />
+                      새 카테고리 만들기
+                    </Button>
+                  ) : undefined
+                }
               />
             )}
           </TableBody>
