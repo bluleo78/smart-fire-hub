@@ -1,6 +1,7 @@
 import type { Page } from '@playwright/test';
 
 import { isExtraHeaderKey } from '../../../src/lib/api-connection-extra-headers';
+import { API_BASE_URL_PLACEHOLDER } from '../../../src/lib/api-connection-form';
 import type { ApiConnectionResponse } from '../../../src/types/api-connection';
 import { createApiConnection, createApiConnections, createBasicApiConnection } from '../../factories/admin.factory';
 import {
@@ -182,7 +183,7 @@ test.describe('API 연결 페이지', () => {
     await nameInput.fill('새 API 연결');
 
     // Base URL 입력 — Phase 9에서 추가된 필수 필드
-    await page.getByPlaceholder('https://api.example.com').fill('https://api.example.com');
+    await page.getByPlaceholder(API_BASE_URL_PLACEHOLDER, { exact: true }).fill('https://api.example.com');
 
     // API_KEY 인증 유형(기본값): 헤더 이름과 키 값도 필수 입력
     // placeholder='Authorization' → 헤더 이름 필드
@@ -198,6 +199,36 @@ test.describe('API 연결 페이지', () => {
     expect(req.payload).toMatchObject({ name: '새 API 연결' });
     // authType은 기본값(API_KEY)이 전달된다
     expect((req.payload as Record<string, unknown>).authType).toBeTruthy();
+  });
+
+  // WD-887: 플레이스홀더가 값처럼 보여 옮겨 적은 예시가 막히던 문제 — 이제 "예:" 예시임을 드러낸다
+  test('WD-887: Base URL 플레이스홀더는 바꿔 넣을 예시(예:)이고 그대로 넣으면 클라이언트에서 막힌다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupApiConnectionListMocks(page);
+    let postCount = 0;
+    await page.route('**/api/v1/api-connections', (route) => {
+      if (route.request().method() === 'POST') {
+        postCount += 1;
+        return route.fulfill({ status: 201, json: { id: 10, name: 'x', authType: 'API_KEY' } });
+      }
+      return route.fallback();
+    });
+    await page.goto('/admin/api-connections');
+    await page.getByRole('button', { name: '새 연결' }).click();
+
+    const baseUrlInput = page.getByLabel('Base URL');
+    await expect(baseUrlInput).toHaveAttribute('placeholder', API_BASE_URL_PLACEHOLDER);
+
+    await page.getByPlaceholder('예: Make.com API').fill('예시 옮겨 적기');
+    await page.getByPlaceholder('Authorization').fill('X-API-Key');
+    await page.getByPlaceholder('API 키를 입력하세요').fill('test-api-key-12345');
+    // 플레이스홀더 문구를 그대로 옮겨 적는다
+    await baseUrlInput.fill(API_BASE_URL_PLACEHOLDER);
+    await page.getByRole('button', { name: '만들기' }).click();
+
+    await expect(page.getByRole('alert').filter({ hasText: 'Base URL' })).toBeVisible();
+    expect(postCount).toBe(0);
   });
 
   test('생성 다이얼로그에서 API Key 인증 유형 선택 시 관련 필드가 표시된다', async ({
@@ -829,7 +860,7 @@ test.describe('API 연결 페이지', () => {
     await page.getByPlaceholder('예: Make.com API').fill('Bearer 테스트');
 
     // Base URL 입력 — Phase 9에서 추가된 필수 필드
-    await page.getByPlaceholder('https://api.example.com').fill('https://api.example.com');
+    await page.getByPlaceholder(API_BASE_URL_PLACEHOLDER, { exact: true }).fill('https://api.example.com');
 
     // 인증 유형 → Bearer Token으로 변경
     await page.getByRole('combobox').first().click();
@@ -869,7 +900,7 @@ test.describe('API 연결 페이지', () => {
     await page.getByPlaceholder('예: Make.com API').fill('Query API');
 
     // Base URL 입력 — Phase 9에서 추가된 필수 필드
-    await page.getByPlaceholder('https://api.example.com').fill('https://api.example.com');
+    await page.getByPlaceholder(API_BASE_URL_PLACEHOLDER, { exact: true }).fill('https://api.example.com');
 
     // API_KEY 유형(기본값), 위치를 Query Parameter로 변경
     const combos = page.getByRole('combobox');
@@ -922,7 +953,7 @@ test.describe('API 연결 페이지', () => {
     // 이름과 baseUrl 입력, 헤더이름·키값 비워두고 생성 시도
     await page.getByPlaceholder('예: Make.com API').fill('헤더 검증 테스트');
     // Base URL 입력 — 없으면 baseUrl 검증이 먼저 실패하여 헤더 검증까지 도달하지 못한다
-    await page.getByPlaceholder('https://api.example.com').fill('https://api.example.com');
+    await page.getByPlaceholder(API_BASE_URL_PLACEHOLDER, { exact: true }).fill('https://api.example.com');
     await page.getByRole('button', { name: '만들기' }).click();
 
     // 두 칸 오류가 따로 뜬다(WD-561)
@@ -955,7 +986,7 @@ test.describe('API 연결 페이지', () => {
     await expect(page.getByRole('dialog')).toBeVisible();
 
     await page.getByPlaceholder('예: Make.com API').fill('Test Connection');
-    await page.getByPlaceholder('https://api.example.com').fill('https://api.example.com');
+    await page.getByPlaceholder(API_BASE_URL_PLACEHOLDER, { exact: true }).fill('https://api.example.com');
     await page.getByPlaceholder('/health').fill('/health');
     await page.getByPlaceholder('Authorization').fill('X-API-Key');
     await page.getByPlaceholder('API 키를 입력하세요').fill('test-key-123');
@@ -1201,7 +1232,7 @@ test.describe('API 연결 페이지', () => {
     await page.getByRole('button', { name: '만들기' }).click();
 
     // 빈 값은 형식 안내가 아니라 빈 값 안내로 보인다(WD-561)
-    await expect(page.getByPlaceholder('https://api.example.com')).toHaveAccessibleDescription('Base URL을 입력하세요.');
+    await expect(page.getByPlaceholder(API_BASE_URL_PLACEHOLDER, { exact: true })).toHaveAccessibleDescription('Base URL을 입력하세요.');
     await expect(page.getByRole('dialog')).toBeVisible();
   });
 
@@ -1215,7 +1246,7 @@ test.describe('API 연결 페이지', () => {
 
     await page.getByPlaceholder('예: Make.com API').fill('Bearer 검증 테스트');
     // Base URL 입력 — 없으면 baseUrl 검증이 먼저 실패하여 토큰 검증까지 도달하지 못한다
-    await page.getByPlaceholder('https://api.example.com').fill('https://api.example.com');
+    await page.getByPlaceholder(API_BASE_URL_PLACEHOLDER, { exact: true }).fill('https://api.example.com');
     // Bearer Token으로 변경
     await page.getByRole('combobox').first().click();
     await page.getByRole('option', { name: 'Bearer Token' }).click();
@@ -1260,7 +1291,7 @@ test.describe('API 연결 페이지', () => {
     await page.getByRole('button', { name: '새 연결' }).click();
     await expect(page.getByRole('dialog')).toBeVisible();
     await page.getByPlaceholder('예: Make.com API').fill('WD639');
-    await page.getByPlaceholder('https://api.example.com').fill('https://api.example.com');
+    await page.getByPlaceholder(API_BASE_URL_PLACEHOLDER, { exact: true }).fill('https://api.example.com');
     await page.getByRole('combobox').first().click();
     await page.getByRole('option', { name: 'Bearer Token' }).click();
     const tokenInput = page.getByRole('textbox', { name: 'Bearer Token' });
@@ -1394,7 +1425,7 @@ test.describe('API 연결 페이지', () => {
     await page.getByRole('button', { name: '새 연결' }).click();
 
     // 입력값 채우기
-    await page.getByPlaceholder('https://api.example.com').fill('https://api.example.com');
+    await page.getByPlaceholder(API_BASE_URL_PLACEHOLDER, { exact: true }).fill('https://api.example.com');
     await page.getByPlaceholder('/health').fill('/health');
     await page.getByPlaceholder('Authorization').fill('X-API-Key');
     await page.getByPlaceholder('API 키를 입력하세요').fill('dry-run-key');
@@ -1448,7 +1479,7 @@ test.describe('API 연결 페이지', () => {
     await page.goto('/admin/api-connections');
     await page.getByRole('button', { name: '새 연결' }).click();
     await expect(page.getByRole('dialog')).toBeVisible();
-    await page.getByPlaceholder('https://api.example.com').fill('https://api.example.com');
+    await page.getByPlaceholder(API_BASE_URL_PLACEHOLDER, { exact: true }).fill('https://api.example.com');
 
     // API_KEY(기본) — 헤더 이름만 있고 키가 비면 막힌다
     await page.getByPlaceholder('Authorization').fill('X-API-Key');
@@ -1523,7 +1554,7 @@ test.describe('API 연결 페이지', () => {
     await expect(page.getByRole('heading', { name: 'API 연결 상세' })).toBeVisible();
 
     // Base URL에 잘못된 값 입력 후 저장
-    const baseUrlInput = page.getByPlaceholder('https://api.example.com');
+    const baseUrlInput = page.getByPlaceholder(API_BASE_URL_PLACEHOLDER, { exact: true });
     await baseUrlInput.clear();
     await baseUrlInput.fill('not-a-url');
     await page.getByRole('button', { name: '저장' }).click();
@@ -1560,8 +1591,8 @@ test.describe('API 연결 페이지', () => {
     await page.goto('/admin/api-connections/1');
     await expect(page.getByRole('heading', { name: 'API 연결 상세' })).toBeVisible();
 
-    // Base URL 필드를 비운다 (placeholder="https://api.example.com")
-    const baseUrlInput = page.getByPlaceholder('https://api.example.com');
+    // Base URL 필드를 비운다 (placeholder=API_BASE_URL_PLACEHOLDER)
+    const baseUrlInput = page.getByPlaceholder(API_BASE_URL_PLACEHOLDER, { exact: true });
     await baseUrlInput.clear();
 
     // 저장 버튼 클릭
@@ -1607,7 +1638,7 @@ test.describe('API 연결 페이지', () => {
 
     // 기존 연결과 동일한 이름으로 생성 시도
     await page.getByPlaceholder('예: Make.com API').fill('공공 데이터 API');
-    await page.getByPlaceholder('https://api.example.com').fill('https://dup.example.com');
+    await page.getByPlaceholder(API_BASE_URL_PLACEHOLDER, { exact: true }).fill('https://dup.example.com');
     await page.getByPlaceholder('Authorization').fill('X-API-Key');
     await page.getByPlaceholder('API 키를 입력하세요').fill('dup-key');
 
@@ -1808,7 +1839,7 @@ test.describe('API 연결 필수값 인라인 오류 (WD-561)', () => {
     await dialog.getByRole('button', { name: '만들기' }).click();
 
     const nameInput = dialog.getByPlaceholder('예: Make.com API');
-    const baseUrlInput = dialog.getByPlaceholder('https://api.example.com');
+    const baseUrlInput = dialog.getByPlaceholder(API_BASE_URL_PLACEHOLDER, { exact: true });
     const headerInput = dialog.getByPlaceholder('Authorization');
     const keyInput = dialog.getByPlaceholder('API 키를 입력하세요');
 
@@ -1847,7 +1878,7 @@ test.describe('API 연결 필수값 인라인 오류 (WD-561)', () => {
     await dialog.getByRole('button', { name: '만들기' }).click();
 
     const nameInput = dialog.getByPlaceholder('예: Make.com API');
-    const baseUrlInput = dialog.getByPlaceholder('https://api.example.com');
+    const baseUrlInput = dialog.getByPlaceholder(API_BASE_URL_PLACEHOLDER, { exact: true });
     await expect(nameInput).toHaveAttribute('aria-invalid', 'true');
 
     // 이름만 고친다 → 이름 오류만 사라지고 Base URL 오류는 남는다
@@ -1879,7 +1910,7 @@ test.describe('API 연결 필수값 인라인 오류 (WD-561)', () => {
   }) => {
     const dialog = await openCreateDialog(page);
     const nameInput = dialog.getByPlaceholder('예: Make.com API');
-    const baseUrlInput = dialog.getByPlaceholder('https://api.example.com');
+    const baseUrlInput = dialog.getByPlaceholder(API_BASE_URL_PLACEHOLDER, { exact: true });
 
     await nameInput.fill('형식 검증');
     await baseUrlInput.fill('ftp://api.example.com');
@@ -1903,7 +1934,7 @@ test.describe('API 연결 필수값 인라인 오류 (WD-561)', () => {
   test('헬스체크 경로 형식 오류는 도움말 설명을 지키며 인라인으로 뜬다', async ({ authenticatedPage: page }) => {
     const dialog = await openCreateDialog(page);
     await dialog.getByPlaceholder('예: Make.com API').fill('헬스체크 검증');
-    await dialog.getByPlaceholder('https://api.example.com').fill('https://api.example.com');
+    await dialog.getByPlaceholder(API_BASE_URL_PLACEHOLDER, { exact: true }).fill('https://api.example.com');
     const healthInput = dialog.getByPlaceholder('/health');
     await healthInput.fill('health');
     await dialog.getByPlaceholder('Authorization').fill('X-API-Key');
@@ -1921,7 +1952,7 @@ test.describe('API 연결 필수값 인라인 오류 (WD-561)', () => {
   }) => {
     const dialog = await openCreateDialog(page);
     await dialog.getByPlaceholder('예: Make.com API').fill('Bearer 검증');
-    await dialog.getByPlaceholder('https://api.example.com').fill('https://api.example.com');
+    await dialog.getByPlaceholder(API_BASE_URL_PLACEHOLDER, { exact: true }).fill('https://api.example.com');
     await dialog.getByRole('button', { name: '만들기' }).click();
     await expect(dialog.getByText('헤더 이름을 입력하세요.')).toBeVisible();
     await expect(dialog.getByText('API 키를 입력하세요.')).toBeVisible();
@@ -1943,7 +1974,7 @@ test.describe('API 연결 필수값 인라인 오류 (WD-561)', () => {
   }) => {
     const dialog = await openCreateDialog(page);
     await dialog.getByPlaceholder('예: Make.com API').fill('Query 검증');
-    await dialog.getByPlaceholder('https://api.example.com').fill('https://api.example.com');
+    await dialog.getByPlaceholder(API_BASE_URL_PLACEHOLDER, { exact: true }).fill('https://api.example.com');
     await dialog.getByRole('button', { name: '만들기' }).click();
     await expect(dialog.getByText('헤더 이름을 입력하세요.')).toBeVisible();
 
@@ -1979,7 +2010,7 @@ test.describe('API 연결 필수값 인라인 오류 (WD-561)', () => {
     await expect(page.getByRole('heading', { name: 'API 연결 상세' })).toBeVisible();
 
     const nameInput = page.getByLabel(/^연결 이름/);
-    const baseUrlInput = page.getByPlaceholder('https://api.example.com');
+    const baseUrlInput = page.getByPlaceholder(API_BASE_URL_PLACEHOLDER, { exact: true });
     await nameInput.fill('   ');
     await baseUrlInput.clear();
     await page.getByRole('button', { name: '저장', exact: true }).click();
@@ -2081,7 +2112,7 @@ test.describe('API 연결 인라인 오류 후속 (WD-666)', () => {
     await page.getByRole('button', { name: '새 연결' }).click();
     const dialog = page.getByRole('dialog');
 
-    const baseUrlInput = dialog.getByPlaceholder('https://api.example.com');
+    const baseUrlInput = dialog.getByPlaceholder(API_BASE_URL_PLACEHOLDER, { exact: true });
     const healthInput = dialog.getByPlaceholder('/health');
     const keyInput = dialog.getByPlaceholder('API 키를 입력하세요');
     await baseUrlInput.fill('ftp://bad');
@@ -2112,7 +2143,7 @@ test.describe('API 연결 인라인 오류 후속 (WD-666)', () => {
     await expect(dialog.getByRole('alert')).toHaveCount(4);
 
     // 테스트에 필요한 칸만 채우고(이름·헤더 이름은 비운 채) 연결 테스트 — 오래된 오류가 모두 지워진다
-    await dialog.getByPlaceholder('https://api.example.com').fill('https://api.example.com');
+    await dialog.getByPlaceholder(API_BASE_URL_PLACEHOLDER, { exact: true }).fill('https://api.example.com');
     await dialog.getByPlaceholder('API 키를 입력하세요').fill('k-123');
     await dialog.getByRole('button', { name: '연결 테스트' }).click();
     await expect(dialog.getByText('연결 성공')).toBeVisible();
@@ -2246,7 +2277,7 @@ test.describe('API 연결 BASIC 인증 (WD-681)', () => {
     await page.getByRole('button', { name: '새 연결' }).click();
     await expect(page.getByRole('dialog')).toBeVisible();
     await page.getByPlaceholder('예: Make.com API').fill('Basic 연결');
-    await page.getByPlaceholder('https://api.example.com').fill('https://api.example.com');
+    await page.getByPlaceholder(API_BASE_URL_PLACEHOLDER, { exact: true }).fill('https://api.example.com');
     await page.getByLabel('인증 유형').click();
     await page.getByRole('option', { name: 'Basic Auth' }).click();
   }
@@ -2504,7 +2535,7 @@ test.describe('WD-753 추가 헤더', () => {
     await page.getByRole('button', { name: '새 연결' }).click();
     await expect(page.getByRole('dialog')).toBeVisible();
     await page.getByPlaceholder('예: Make.com API').fill('네이버 API HUB');
-    await page.getByPlaceholder('https://api.example.com').fill('https://naveropenapi.apigw.ntruss.com');
+    await page.getByPlaceholder(API_BASE_URL_PLACEHOLDER, { exact: true }).fill('https://naveropenapi.apigw.ntruss.com');
     await page.getByPlaceholder('Authorization').fill('X-NCP-APIGW-API-KEY');
     await page.getByPlaceholder('API 키를 입력하세요').fill('secret-key-abcd');
   }

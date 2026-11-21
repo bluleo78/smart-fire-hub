@@ -92,6 +92,14 @@ export function connectionNameError(name: string): string | undefined {
 }
 
 /**
+ * API URL 입력칸 플레이스홀더 (WD-887).
+ * "예:" 접두어로 바꿔 넣을 예시임을 드러내고, 호스트는 RFC 6761 예약 TLD `.example` 이라
+ * 그대로 옮겨 적어도 공개 DNS 에서 풀리지 않아 남의 서버로 연결되지 않는다.
+ */
+export const API_BASE_URL_PLACEHOLDER = '예: https://api.your-service.example';
+export const API_FULL_URL_PLACEHOLDER = `${API_BASE_URL_PLACEHOLDER}/v1/data`;
+
+/**
  * Base URL — 비었으면 빈 값 안내, checkFormat 이면 http/https 로 시작하는지도 본다.
  * 상세 편집은 예전처럼 빈 값만 막고 형식은 서버 검증에 맡긴다(checkFormat=false).
  */

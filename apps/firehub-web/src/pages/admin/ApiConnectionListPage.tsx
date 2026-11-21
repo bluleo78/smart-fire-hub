@@ -19,6 +19,7 @@ import {
   withoutChangedRowErrors,
 } from '@/lib/api-connection-extra-headers';
 import {
+  API_BASE_URL_PLACEHOLDER,
   AUTH_FIELD_KEYS,
   AUTH_TYPE_LABEL,
   AUTH_TYPE_OPTIONS,
@@ -407,7 +408,8 @@ export default function ApiConnectionListPage() {
                   <FormField label="Base URL" htmlFor={fieldId.baseUrl} error={errors.baseUrl} required>
                     <Input
                       id={fieldId.baseUrl}
-                      placeholder="https://api.example.com"
+                      // 예시 플레이스홀더 — 까닭은 공용 상수 설명(WD-887)
+                      placeholder={API_BASE_URL_PLACEHOLDER}
                       value={baseUrl}
                       onChange={(e) => {
                         setBaseUrl(e.target.value);

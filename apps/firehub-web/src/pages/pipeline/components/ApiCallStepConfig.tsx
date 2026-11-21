@@ -41,7 +41,7 @@ import {
 import { Separator } from '@/components/ui/separator';
 import { Textarea } from '@/components/ui/textarea';
 import { useApiConnectionsSelectable } from '@/hooks/queries/useApiConnections';
-import { AUTH_TYPE_LABEL, AUTH_TYPE_OPTIONS } from '@/lib/api-connection-form';
+import { API_FULL_URL_PLACEHOLDER, AUTH_TYPE_LABEL, AUTH_TYPE_OPTIONS } from '@/lib/api-connection-form';
 import { cn } from '@/lib/utils';
 import { columnNameLengthError } from '@/lib/validations/dataset';
 
@@ -592,7 +592,8 @@ export default function ApiCallStepConfig({
             <Label htmlFor={`${baseId}-custom-url`} className="text-xs">URL *</Label>
             <Input
               id={`${baseId}-custom-url`}
-              placeholder="https://api.example.com/v1/data"
+              // 예시 플레이스홀더 — 까닭은 공용 상수 설명(WD-887)
+              placeholder={API_FULL_URL_PLACEHOLDER}
               value={customUrl}
               disabled={readOnly}
               data-error-field={API_CUSTOM_URL_FIELD}

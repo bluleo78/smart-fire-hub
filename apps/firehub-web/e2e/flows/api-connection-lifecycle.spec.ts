@@ -2,6 +2,7 @@
  * Phase 9 — API 연결 라이프사이클 E2E.
  * 생성 → 목록 확인 → 테스트(지금 확인) → 상태 배지 반영 전 과정 검증.
  */
+import { API_BASE_URL_PLACEHOLDER } from '../../src/lib/api-connection-form';
 import type { ApiConnectionResponse } from '../../src/types/api-connection';
 import { createApiConnection } from '../factories/admin.factory';
 import { setupAdminAuth } from '../fixtures/admin.fixture';
@@ -95,7 +96,7 @@ test.describe('API 연결 라이프사이클', () => {
 
     // 3) 폼 입력 — Label이 htmlFor 없이 렌더링되므로 placeholder로 선택한다
     await page.getByPlaceholder('예: Make.com API').fill('Make.com API');
-    await page.getByPlaceholder('https://api.example.com').fill('https://api.make.com');
+    await page.getByPlaceholder(API_BASE_URL_PLACEHOLDER, { exact: true }).fill('https://api.make.com');
     await page.getByPlaceholder('/health').fill('/health');
     // API_KEY 인증 헤더 + 키 입력 (기본 authType = API_KEY, placement = header)
     await page.getByPlaceholder('Authorization').fill('X-Make-Key');
