@@ -258,6 +258,9 @@ describe('mapFieldErrors — 붙인 칸과 모르는 필드 문구를 돌려준�
   it('필드 오류 400 이 아니면 null', () => {
     const setError = vi.fn();
     expect(mapFieldErrors(axiosErrorWith({ message: '이미 존재하는 역할' }), setError, ['name'])).toBeNull();
+    // 보일 문구가 없는 errors({}·빈 문구)도 null — 호출부가 기존 400 분기로 잇는다
+    expect(mapFieldErrors(axiosErrorWith({ errors: {} }), setError, ['name'])).toBeNull();
+    expect(mapFieldErrors(axiosErrorWith({ errors: { foo: '' } }), setError, ['name'])).toBeNull();
     expect(setError).not.toHaveBeenCalled();
   });
 });

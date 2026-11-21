@@ -115,7 +115,8 @@ export interface MappedFieldErrors {
  * 400 필드 오류 중 폼이 아는 필드만 setError 하고, 붙인 칸과 모르는 필드 문구를 돌려준다(WD-865).
  *
  * root 를 그리지 않는 화면(대화상자·상세 화면)은 모르는 필드 문구를 자기 오류 영역으로 보내야 하고, 어느 칸에 붙었는지로
- * 포커스를 정한다 — 그래서 호출부가 응답을 다시 훑지 않게 이 정보를 그대로 돌려준다. 필드 오류 400 이 아니면 null.
+ * 포커스를 정한다 — 그래서 호출부가 응답을 다시 훑지 않게 이 정보를 그대로 돌려준다. 필드 오류 400 이 아니거나
+ * 보일 문구가 하나도 없으면(errors 가 {} 이거나 문구가 모두 빈 값) null — 호출부가 「빈 결과」를 따로 가려내지 않게 한다.
  */
 export function mapFieldErrors<T extends FieldValues>(
   error: unknown,
@@ -137,6 +138,7 @@ export function mapFieldErrors<T extends FieldValues>(
       unknownMessages.push(message);
     }
   }
+  if (setFields.length === 0 && unknownMessages.length === 0) return null;
   return { setFields, unknownMessage: unknownMessages.join(' ') };
 }
 

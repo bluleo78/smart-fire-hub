@@ -288,7 +288,7 @@ test.describe('역할 관리 페이지', () => {
     await expect(nameInput).not.toHaveAttribute('aria-invalid', 'true');
   });
 
-  test('새 역할: 알 수 없는 필드 오류만 있는 400 도 메시지가 사라지지 않고 설명 칸은 오류가 아니다 (WD-865)', async ({
+  test('새 역할: 모르는 필드 오류만 있는 400 은 폼 오류 영역에만 보이고 이름 칸은 오류가 아니다 (WD-865)', async ({
     authenticatedPage: page,
   }) => {
     await setupRoleListMocks(page);
@@ -299,12 +299,67 @@ test.describe('역할 관리 페이지', () => {
       { status: 400, message: '잘못된 요청', errors: { foo: 'x' } },
       { status: 400 },
     );
-    const { dialog, descInput } = await openNewRoleWith(page, 'DESCLENPROBE', '짧은 설명');
+    const { dialog, nameInput, descInput } = await openNewRoleWith(page, 'DESCLENPROBE', '짧은 설명');
     await dialog.getByRole('button', { name: '만들기' }).click();
 
-    // 기존 폴백 동작: 서버 errors 문구('x')가 이름 칸 서버 오류로 이어 보인다
-    await expect(dialog.getByText('x', { exact: true })).toBeVisible();
+    // 폼 오류 영역(role=alert)에만 문구가 보이고, 이름·설명 칸은 오류 상태가 아니다
+    const formAlert = dialog.getByRole('alert').filter({ hasText: /^x$/ });
+    await expect(formAlert).toBeVisible();
+    await expect(nameInput).not.toHaveAttribute('aria-invalid', 'true');
+    await expect(nameInput).not.toBeFocused();
     await expect(descInput).not.toHaveAttribute('aria-invalid', 'true');
+
+    // 설명을 고치면 폼 오류가 사라진다
+    await descInput.fill('짧은 설명 고침');
+    await expect(formAlert).toHaveCount(0);
+
+    // 같은 400 을 다시 받아 문구가 보인 뒤 이름을 고쳐도 사라진다
+    await dialog.getByRole('button', { name: '만들기' }).click();
+    await expect(formAlert).toBeVisible();
+    await nameInput.fill('DESCLENPROBE2');
+    await expect(formAlert).toHaveCount(0);
+  });
+
+  test('새 역할: errors 가 빈 400 은 조용히 실패하지 않고 이름 칸에 문구를 보인다 (WD-865)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupRoleListMocks(page);
+    await mockApi(
+      page,
+      'POST',
+      '/api/v1/roles',
+      { status: 400, message: '잘못된 요청입니다', errors: {} },
+      { status: 400 },
+    );
+    const { dialog, nameInput } = await openNewRoleWith(page, 'DESCLENPROBE', '짧은 설명');
+    await dialog.getByRole('button', { name: '만들기' }).click();
+
+    // 기존 400 분기 그대로 — 문구가 이름 칸 오류로 이어지고(aria-invalid) 폼 오류 영역으로 가지 않는다
+    await expect(dialog.getByText('잘못된 요청입니다')).toBeVisible();
+    await expect(nameInput).toHaveAttribute('aria-invalid', 'true');
+  });
+
+  test('새 역할: 이름 중복 400 뒤 설명만 고치면 이름 칸 오류는 남는다 (WD-865)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupRoleListMocks(page);
+    await mockApi(
+      page,
+      'POST',
+      '/api/v1/roles',
+      { status: 400, message: '이미 존재하는 역할 이름입니다: ADMIN' },
+      { status: 400 },
+    );
+    const { dialog, nameInput, descInput } = await openNewRoleWith(page, 'ADMIN', '짧은 설명');
+    await dialog.getByRole('button', { name: '만들기' }).click();
+
+    const nameAlert = dialog.getByRole('alert').filter({ hasText: '이미 존재하는 역할 이름입니다: ADMIN' });
+    await expect(nameInput).toHaveAttribute('aria-invalid', 'true');
+    await expect(nameAlert).toBeVisible();
+
+    await descInput.fill('다른 설명');
+    await expect(nameAlert).toBeVisible();
+    await expect(nameInput).toHaveAttribute('aria-invalid', 'true');
   });
 
   test('새 역할: 설명 오류와 다른 필드 오류가 함께 오면 두 메시지 모두 보인다 (WD-865)', async ({

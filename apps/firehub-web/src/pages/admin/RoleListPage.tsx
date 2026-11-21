@@ -147,6 +147,14 @@ export default function RoleListPage() {
     setServerError(null);
   }, [nameValue]);
 
+  // 설명 입력값이 바뀌면 폼 오류('form')만 지운다(WD-865 리뷰 후속).
+  // 모르는 필드 400 문구는 어느 칸 문제인지 알 수 없어 칸을 고치면 사라져야 하지만,
+  // 이름 중복 같은 이름 칸 오류('name')는 설명을 고쳐도 여전히 유효하므로 남겨 둔다.
+  const descriptionValue = form.watch('description');
+  useEffect(() => {
+    setServerError((prev) => (prev?.field === 'form' ? null : prev));
+  }, [descriptionValue]);
+
   // 닫힘 세대(WD-819) — 요청 중 닫힘·다시 열림 판정(상세는 훅 JSDoc)
   const closeGen = useCloseGeneration(dialogOpen);
 
@@ -176,10 +184,14 @@ export default function RoleListPage() {
       }
       const message = extractApiError(error, '역할 생성에 실패했습니다.');
       // 400 의 필드별 오류(errors)는 해당 칸에 붙이고 첫 오류 칸으로 포커스한다(WD-865) — 설명 255자 초과가 이름 칸 오류로 읽히던 문제.
-      // 대화상자는 root 를 그리지 않으므로 이름·설명 외 필드 문구는 폼 오류 영역으로, 칸 오류가 하나도 없으면 아래 400 분기로 보낸다.
+      // 대화상자는 root 를 그리지 않으므로 이름·설명 외 필드 문구는 폼 오류 영역으로 보낸다(모르는 필드만 있어도 이름 칸에 붙이지 않는다).
+      // errors 가 {} 이거나 문구가 모두 빈 400 은 mapFieldErrors 가 null 이라 아래 기존 400 분기로 간다.
       const mapped = mapFieldErrors(error, form.setError, ['name', 'description']);
-      if (mapped && mapped.setFields.length > 0) {
-        form.setFocus(mapped.setFields.includes('name') ? 'name' : 'description');
+      if (mapped) {
+        // 칸 오류가 있을 때만 포커스를 옮긴다 — 모르는 필드만 있으면 이름 칸 오류로 오인시키지 않고 폼 오류 영역에만 보인다.
+        if (mapped.setFields.length > 0) {
+          form.setFocus(mapped.setFields.includes('name') ? 'name' : 'description');
+        }
         if (mapped.unknownMessage) setServerError({ field: 'form', message: mapped.unknownMessage });
       } else if (isBadRequestError(error)) {
         // 필드 오류가 없는 400(예: 이름 중복)은 이름 문제다 — 이름 칸 오류로 이어 읽히게 하고 칸으로 포커스를 돌린다.
