@@ -154,7 +154,7 @@ test.describe('카테고리 관리 페이지', () => {
     expect(req.payload).toMatchObject({ name: '수정된 소방 데이터' });
   });
 
-  test('카테고리 생성 — 중복 이름(409) 시 한국어 오류 토스트 표시', async ({
+  test('카테고리 생성 — 중복 이름(409)이면 이름 칸에 인라인 오류를 보이고 토스트는 띄우지 않는다', async ({
     authenticatedPage: page,
   }) => {
     // 카테고리 목록 모킹
@@ -179,14 +179,60 @@ test.describe('카테고리 관리 페이지', () => {
     await page.getByLabel('이름').fill('행정');
     await page.getByRole('dialog').getByRole('button', { name: '만들기' }).click();
 
-    // 한국어 오류 토스트가 표시되어야 한다
-    await expect(page.getByText('이미 사용 중인 카테고리 이름입니다.')).toBeVisible();
+    // 이름 칸에 인라인 오류가 붙고 포커스가 가며, 토스트는 뜨지 않아야 한다
+    const dialog = page.getByRole('dialog');
+    const createNameInput = dialog.locator('#create-name');
+    await expect(createNameInput).toHaveAttribute('aria-invalid', 'true');
+    await expect(dialog.getByRole('alert')).toHaveText('이미 사용 중인 카테고리 이름입니다.');
+    await expect(createNameInput).toBeFocused();
+    await expect(page.locator('[data-sonner-toast]')).toHaveCount(0);
+    await expect(dialog).toBeVisible();
 
     // 백엔드 영어 메시지가 그대로 노출되지 않아야 한다
     await expect(page.getByText('Category name already exists')).not.toBeVisible();
+
+    // 이름을 고치면 인라인 오류가 사라진다(onChange 재검증)
+    await createNameInput.fill('행정2');
+    await expect(createNameInput).not.toHaveAttribute('aria-invalid', 'true');
+    await expect(dialog.getByRole('alert')).toHaveCount(0);
+
+    // 다시 중복 이름으로 오류를 만든 뒤 닫았다 열면 서버 오류가 남지 않아야 한다
+    await createNameInput.fill('행정');
+    await dialog.getByRole('button', { name: '만들기' }).click();
+    await expect(createNameInput).toHaveAttribute('aria-invalid', 'true');
+    await dialog.getByRole('button', { name: '취소' }).click();
+    await expect(dialog).toBeHidden();
+    await page.getByRole('button', { name: /새 카테고리/ }).click();
+    await expect(page.getByRole('dialog').locator('#create-name')).not.toHaveAttribute(
+      'aria-invalid',
+      'true',
+    );
   });
 
-  test('카테고리 수정 — 중복 이름(409) 시 한국어 오류 토스트 표시', async ({
+  test('카테고리 생성 — 409 가 아닌 실패(500)는 토스트로 알리고 이름 칸 오류는 없다', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
+
+    // POST → 500 서버 오류 모킹(본문 메시지 없음 — 호출부 폴백 문구가 토스트로 나온다)
+    await mockApi(page, 'POST', '/api/v1/dataset-categories', {}, { status: 500 });
+
+    await page.goto('/data/categories');
+    await page.getByRole('button', { name: /새 카테고리/ }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible();
+
+    await dialog.locator('#create-name').fill('행정');
+    await dialog.getByRole('button', { name: '만들기' }).click();
+
+    // 범용 실패 토스트가 보이고 이름 칸에는 오류가 없어야 한다
+    await expect(
+      page.locator('[data-sonner-toast]').filter({ hasText: '카테고리 생성에 실패했습니다.' }),
+    ).toBeVisible();
+    await expect(dialog.locator('#create-name')).not.toHaveAttribute('aria-invalid', 'true');
+  });
+
+  test('카테고리 수정 — 중복 이름(409)이면 이름 칸에 인라인 오류를 보이고 토스트는 띄우지 않는다', async ({
     authenticatedPage: page,
   }) => {
     // 카테고리 목록 모킹
@@ -216,11 +262,31 @@ test.describe('카테고리 관리 페이지', () => {
     await nameInput.fill('운영');
     await page.getByRole('dialog').getByRole('button', { name: '수정' }).click();
 
-    // 한국어 오류 토스트가 표시되어야 한다
-    await expect(page.getByText('이미 사용 중인 카테고리 이름입니다.')).toBeVisible();
+    // 이름 칸에 인라인 오류가 붙고 포커스가 가며, 토스트는 뜨지 않아야 한다
+    const dialog = page.getByRole('dialog');
+    await expect(nameInput).toHaveAttribute('aria-invalid', 'true');
+    await expect(dialog.getByRole('alert')).toHaveText('이미 사용 중인 카테고리 이름입니다.');
+    await expect(nameInput).toBeFocused();
+    await expect(page.locator('[data-sonner-toast]')).toHaveCount(0);
+    await expect(dialog).toBeVisible();
 
     // 백엔드 영어 메시지가 그대로 노출되지 않아야 한다
     await expect(page.getByText('Category name already exists')).not.toBeVisible();
+
+    // 이름을 고치면 인라인 오류가 사라진다(수정 폼도 onChange 재검증)
+    await nameInput.fill('운영2');
+    await expect(nameInput).not.toHaveAttribute('aria-invalid', 'true');
+    await expect(dialog.getByRole('alert')).toHaveCount(0);
+
+    // 다시 중복 이름으로 오류를 만든 뒤 닫았다 열면 서버 오류가 남지 않아야 한다(openEditDialog 의 reset)
+    await nameInput.fill('운영');
+    await dialog.getByRole('button', { name: '수정' }).click();
+    await expect(nameInput).toHaveAttribute('aria-invalid', 'true');
+    await dialog.getByRole('button', { name: '취소' }).click();
+    await expect(dialog).toBeHidden();
+    await page.getByRole('button', { name: '소방 데이터 편집' }).click();
+    await expect(page.locator('#edit-name')).toHaveValue('소방 데이터');
+    await expect(page.locator('#edit-name')).not.toHaveAttribute('aria-invalid', 'true');
   });
 
   test('카테고리 삭제 — 삭제 확인 후 DELETE API 호출', async ({

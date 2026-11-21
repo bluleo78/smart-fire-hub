@@ -1,5 +1,4 @@
 import { zodResolver } from '@hookform/resolvers/zod';
-import axios from 'axios';
 import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useForm, useWatch } from 'react-hook-form';
@@ -45,7 +44,7 @@ import {
   useDeleteCategory,
   useUpdateCategory,
 } from '../../hooks/queries/useDatasets';
-import { handleApiError } from '../../lib/api-error';
+import { handleApiError, isConflictError } from '../../lib/api-error';
 import { iGa } from '../../lib/utils';
 import type { CategoryResponse } from '../../types/dataset';
 
@@ -63,6 +62,13 @@ const SORT_OPTIONS: { value: SortKey; label: string }[] = [
   { value: 'id-asc', label: '생성순 (오래된 순)' },
   { value: 'id-desc', label: '생성순 (최신 순)' },
 ];
+
+/**
+ * 카테고리 이름 중복(409) 시 이름 칸에 보이는 인라인 오류 문구 — 생성·수정 공통.
+ * 카테고리 409 응답에는 code 가 없어 공용 applyDuplicateNameError(code DUPLICATE_NAME 필요)를 쓰지 못한다 —
+ * 서버가 code 를 보내게 되면 그 헬퍼로 바꾼다.
+ */
+const DUPLICATE_NAME_MESSAGE = '이미 사용 중인 카테고리 이름입니다.';
 
 const categorySchema = z.object({
   // trim() 없이 min(1)만 검사하면 공백만 있는 값(length >= 1)도 통과해
@@ -163,7 +169,7 @@ export default function CategoryListPage() {
 
   /**
    * 카테고리 생성 핸들러
-   * - 409 Conflict(중복 이름) 오류 시 한국어 메시지로 안내한다.
+   * - 409 Conflict(중복 이름) 오류 시 이름 칸 인라인 오류로 안내한다.
    * - 그 외 오류는 범용 에러 핸들러로 처리한다.
    */
   const handleCreate = async (data: CategoryFormData) => {
@@ -173,8 +179,9 @@ export default function CategoryListPage() {
       setIsCreateOpen(false);
       createForm.reset();
     } catch (error) {
-      if (axios.isAxiosError(error) && error.response?.status === 409) {
-        toast.error('이미 사용 중인 카테고리 이름입니다.');
+      if (isConflictError(error)) {
+        // 토스트 대신 이름 칸 인라인 오류로 알리고 칸에 포커스한다(재입력 유도)
+        createForm.setError('name', { type: 'server', message: DUPLICATE_NAME_MESSAGE }, { shouldFocus: true });
       } else {
         handleApiError(error, '카테고리 생성에 실패했습니다.');
       }
@@ -183,7 +190,7 @@ export default function CategoryListPage() {
 
   /**
    * 카테고리 수정 핸들러
-   * - 409 Conflict(중복 이름) 오류 시 한국어 메시지로 안내한다.
+   * - 409 Conflict(중복 이름) 오류 시 이름 칸 인라인 오류로 안내한다.
    * - 그 외 오류는 범용 에러 핸들러로 처리한다.
    */
   const handleUpdate = async (data: CategoryFormData) => {
@@ -194,8 +201,9 @@ export default function CategoryListPage() {
       setEditingCategory(null);
       editForm.reset();
     } catch (error) {
-      if (axios.isAxiosError(error) && error.response?.status === 409) {
-        toast.error('이미 사용 중인 카테고리 이름입니다.');
+      if (isConflictError(error)) {
+        // 토스트 대신 이름 칸 인라인 오류로 알리고 칸에 포커스한다(재입력 유도)
+        editForm.setError('name', { type: 'server', message: DUPLICATE_NAME_MESSAGE }, { shouldFocus: true });
       } else {
         handleApiError(error, '카테고리 수정에 실패했습니다.');
       }
