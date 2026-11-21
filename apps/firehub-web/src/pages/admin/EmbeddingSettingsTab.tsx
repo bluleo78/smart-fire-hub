@@ -15,6 +15,7 @@ import {
 } from '../../components/ui/alert-dialog';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
+import { FormField } from '../../components/ui/form-field';
 import { InlineBanner } from '../../components/ui/inline-banner';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
@@ -89,6 +90,7 @@ export default function EmbeddingSettingsTab({
     hostingDemoted,
     canKeepSavedSelfHosted,
     testState,
+    fieldErrors,
     pending,
     busy,
     isSaving,
@@ -184,34 +186,48 @@ export default function EmbeddingSettingsTab({
 
           <Separator />
 
-          <div className="space-y-2">
-            <Label htmlFor="embedding-model">모델</Label>
+          {/* WD-862: 모델·Base URL 은 서버가 필수로 받는다 — 필수 표시와 칸 단위 오류를 FormField 로 보인다.
+              여러 칸이 함께 비어도 경고가 겹쳐 읽히지 않게 announceError 를 끄고 훅이 첫 빈 칸에 포커스한다(WD-643). */}
+          <FormField
+            label="모델"
+            htmlFor="embedding-model"
+            required
+            error={fieldErrors.model}
+            announceError={false}
+            description="지원 차원은 1024, 1536 입니다. 차원은 연결 테스트로 자동 측정됩니다."
+          >
             <Input
               id="embedding-model"
               className="max-w-md"
+              aria-required
               value={form.model}
               onChange={(e) => setField({ model: e.target.value })}
-              placeholder={form.provider === 'OPENAI' ? 'text-embedding-3-small' : 'bge-m3'}
+              placeholder={form.provider === 'OPENAI' ? '예: text-embedding-3-small' : '예: bge-m3'}
             />
-            <p className="text-sm text-muted-foreground">
-              지원 차원은 1024, 1536 입니다. 차원은 연결 테스트로 자동 측정됩니다.
-            </p>
-          </div>
+          </FormField>
 
           <Separator />
 
-          <div className="space-y-2">
-            <Label htmlFor="embedding-base-url">Base URL</Label>
+          <FormField
+            label="Base URL"
+            htmlFor="embedding-base-url"
+            required
+            error={fieldErrors.baseUrl}
+            announceError={false}
+          >
             <Input
               id="embedding-base-url"
               className="max-w-md"
+              aria-required
               value={form.baseUrl}
               onChange={(e) => setField({ baseUrl: e.target.value })}
               placeholder={
-                form.provider === 'OPENAI' ? 'https://api.openai.com' : 'http://host.docker.internal:11434'
+                form.provider === 'OPENAI'
+                  ? '예: https://api.openai.com'
+                  : '예: http://host.docker.internal:11434'
               }
             />
-          </div>
+          </FormField>
 
           {form.provider === 'OPENAI' && (
             <>
