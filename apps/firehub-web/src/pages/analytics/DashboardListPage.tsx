@@ -560,9 +560,8 @@ export default function DashboardListPage() {
           setPage(0);
         }}
       >
-        {/* WD-877: 탭 히트 영역 32px 이상 — 데스크톱은 목록 높이를 h-10 으로 키우고, 모바일은 목록이 h-auto 로 풀리므로
-            모든 탭(조건부 「워크스페이스 전체」 포함)에 min-h-8 하한을 목록에서 한 번에 준다 */}
-        <TabsList className="group-data-[orientation=horizontal]/tabs:h-10 [&>[role=tab]]:min-h-8">
+        {/* 탭 히트 영역 32px(WD-877)은 공용 tabs.tsx(가로 목록 h-10 + 트리거 min-h-8, WD-883)가 맡는다. */}
+        <TabsList>
           <TabsTrigger value="mine">내 대시보드</TabsTrigger>
           <TabsTrigger value="shared">공유됨</TabsTrigger>
           {canAdmin && <TabsTrigger value="workspace">워크스페이스 전체</TabsTrigger>}

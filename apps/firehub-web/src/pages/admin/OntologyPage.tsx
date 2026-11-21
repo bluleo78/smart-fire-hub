@@ -528,8 +528,9 @@ export default function OntologyPage() {
       {/* 모든 폭에서 줄바꿈을 허용한다 — 자리가 있으면 한 줄 48px(min-h-12), 모자라면 오른쪽 묶음이
           둘째 줄로 내려간다(WD-840). 이전에는 md 이상에서 flex-nowrap + h-12 로 강제해 768~1279px 에서
           오른쪽 컨트롤(선택기·버튼)이 툴바 밖으로 밀려 가려졌다. 좁은 폭의 줄바꿈은 320px 리플로우
-          (#345 SC 1.4.10)와 640~768px 겹침(#402)도 함께 막는다. */}
-      <div className="flex min-h-12 shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b px-3 py-1">
+          (#345 SC 1.4.10)와 640~768px 겹침(#402)도 함께 막는다.
+          WD-883: 공용 탭 줄이 40px(트리거 32px)로 커져 py-1 이면 8+40+1=49px 로 한 줄 48px 를 넘는다 — 세로 여백을 py-0.5 로 줄여 48px 를 지킨다. */}
+      <div className="flex min-h-12 shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b px-3 py-0.5">
         {/* (리뷰 MIN-5) 편집 모드에서는 숨긴다 — ModelOutline이 TypeFilterPanel과 달리 collapsed prop을
             받지 않아, 편집 모드에서 이 버튼을 누르면 aria-pressed만 바뀌고 화면은 그대로였다(무력한 컨트롤).
             (#414) sm(640px) 미만에서는 TypeFilterPanel 자체가 collapsed 상태와 무관하게 항상 숨으므로

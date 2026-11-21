@@ -682,7 +682,7 @@ export default function DatasetDetailPage() {
       >
         {/* 탭 바 — 좁은 화면(<sm)은 tabs.tsx 기본대로 줄바꿈(#345 Reflow)하고, sm 이상에서 탭이 본문 폭을 넘으면(지도 탭이 있는
             표 데이터셋을 640px 근처에서 열 때 등) 가로 스크롤한다. 잘린 쪽에만 페이드 + 화살표 배지를 띄워 뒤에 탭이 더 있음을 알린다
-            (표 Table 의 #505 인디케이터와 같은 모양). 스크롤바는 이 36px 띠 안에서 탭 높이를 잠식하므로 숨기고, 화살표 배지를 눌러
+            (표 Table 의 #505 인디케이터와 같은 모양). 스크롤바는 이 41px 띠 안에서 탭 높이를 잠식하므로 숨기고, 화살표 배지를 눌러
             넘길 수 있게 한다(키보드는 Radix 탭 목록의 좌우 화살표 + 아래 활성 탭 끌어오기).
             overflow-x-auto 는 세로 넘침도 자르므로, 활성 밑줄(after:, 트리거 아래 5px)이 잘리지 않게 아래 여백을 1px 늘리고(pb-1)
             세로 스크롤러가 되지 않게 overflow-y-hidden 을 둔다. */}
@@ -690,7 +690,10 @@ export default function DatasetDetailPage() {
           <TabsList
             ref={setTabsListEl}
             className={
-              'border-b justify-start h-10 shrink-0 max-w-full overflow-x-auto overflow-y-hidden scroll-px-10 pb-1 ' +
+              'border-b justify-start shrink-0 max-w-full overflow-x-auto overflow-y-hidden scroll-px-10 pb-1 ' +
+              // WD-883: 트리거는 공용 min-h-8 로 이미 32px 다. 다만 공용 h-10 그대로면 pb-1·border-b 가 내용 높이를 31px 로 깎아
+              // 32px 트리거가 1px 넘치고, overflow-y-hidden 이 그만큼 활성 밑줄(트리거 아래 5px)의 끝을 자른다 — 이 목록만 41px 로 키운다.
+              'group-data-[orientation=horizontal]/tabs:h-[41px] ' +
               '[scrollbar-width:none]! [&::-webkit-scrollbar]:hidden'
             }
           >
