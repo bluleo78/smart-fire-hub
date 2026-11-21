@@ -243,8 +243,13 @@ export default function OntologyPage() {
   // 눌러도 반응 없는 죽은 컨트롤이 되므로 같이 숨긴다(WD-870). 본문 분기(renderInstanceTab)는 제한/오류를
   // 다른 상태로 계속 구분하므로 graphRestricted 는 그대로 두고, 컨트롤 숨김 판정에만 이 값을 쓴다.
   // 재시도 중에도 isError 가 유지되는 동안은 숨겨 둔다(성공하면 되살아난다). 지식 모델 탭은 판정 대상이 아니다.
-  const graphUnavailable = tab === 'instance' && (graphRestricted || isGraphError);
-  // 인스턴스 탭 그래프 도구(검색·타입 묶기)를 그릴지 — 읽기 제한·조회 실패(WD-870)이면 숨긴다(위 사유).
+  // 목록 게이트(목록 오류·403·로딩·지식 모델 없음)가 본문을 대신하는 때도 그래프가 없어 같은 죽은 컨트롤이 남았다(WD-894).
+  // 게이트의 단일 판정이다 — renderOntologyListGate 도 이 값이 거짓이면 바로 null 을 준다. 목록이 회복되면 다시 보인다.
+  const ontologyListGated =
+    isOntologyListError || isOntologyListLoading || effectiveOntologyId == null;
+  const graphUnavailable =
+    tab === 'instance' && (ontologyListGated || graphRestricted || isGraphError);
+  // 인스턴스 탭 그래프 도구(검색·타입 묶기)를 그릴지 — 목록 게이트(WD-894)·읽기 제한·조회 실패(WD-870)이면 숨긴다(위 사유).
   const showGraphTools = tab === 'instance' && !graphUnavailable;
 
   // 온톨로지를 바꾸면 이전 선택/편집 상태가 새 컨텍스트에 잘못 남지 않도록 초기화한다.
@@ -461,8 +466,10 @@ export default function OntologyPage() {
    * 목록의 로딩·에러도 effectiveOntologyId 를 null 로 만들기 때문에, 그 둘을 먼저 걸러내지 않으면
    * 매 첫 진입마다 없다고 단정했다가 뒤늦게 바뀌고, 목록이 실패하면 재시도 경로도 없이 그 오답에 갇힌다.
    * 지식 모델 탭이 예전에 이 게이트 없이 selectedOntology 만 봐서, 0개 테넌트에서 스켈레톤에 갇혔다.
+   * 게이트를 띄울지는 위쪽 `ontologyListGated` 하나로 정한다 — 컨트롤 숨김(graphUnavailable)과 어긋나지 않게(WD-894).
    */
   const renderOntologyListGate = (emptyDescription: string) => {
+    if (!ontologyListGated) return null;
     // 조회 권한이 없으면(403) 다시 시도해도 같다 — 재시도 버튼 대신 권한 안내를 보인다 (WD-126).
     if (isOntologyListError && isForbiddenError(ontologyListError)) {
       return (
@@ -535,7 +542,7 @@ export default function OntologyPage() {
             받지 않아, 편집 모드에서 이 버튼을 누르면 aria-pressed만 바뀌고 화면은 그대로였다(무력한 컨트롤).
             (#414) sm(640px) 미만에서는 TypeFilterPanel 자체가 collapsed 상태와 무관하게 항상 숨으므로
             이 토글도 함께 숨긴다 — 안 그러면 눌러도 아무 효과가 없는 죽은 컨트롤이 된다.
-            읽기 제한·조회 실패(WD-870)에서도 그래프가 없어 눌러도 소용없으니 숨긴다. */}
+            목록 게이트(WD-894)·읽기 제한·조회 실패(WD-870)에서도 그래프가 없어 눌러도 소용없으니 숨긴다. */}
         {!showEditor && !graphUnavailable && (
           <Button
             variant="ghost"
@@ -679,7 +686,7 @@ export default function OntologyPage() {
             railButtonRef={outlineRailButtonRef}
           />
         ) : graphUnavailable ? null : (
-          // 읽기 제한·조회 실패(WD-870)이면 그래프가 없어 필터가 무의미하므로 그리지 않는다.
+          // 목록 게이트(WD-894)·읽기 제한·조회 실패(WD-870)이면 그래프가 없어 필터가 무의미하므로 그리지 않는다.
           <TypeFilterPanel
             entities={filterEntities}
             graph={graph}

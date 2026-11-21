@@ -26,7 +26,7 @@ import { expectSingleHeldRequest, holdApi } from '../../fixtures/hold-api';
 
 /**
  * 그래프 탐색 탭의 그래프 의존 컨트롤(이름 검색·타입 묶기·타입 필터 패널·패널 접기 토글)이 각각 count 개인지 본다.
- * 읽기 제한(WD-28)·조회 실패(WD-870) 상태에선 넷 다 0, 일반 상태에선 넷 다 1 — 넷을 한 묶음으로 단언해 하나만 빠지는 회귀를 잡는다.
+ * 읽기 제한(WD-28)·조회 실패(WD-870)·목록 게이트(WD-894: 목록 오류·403·로딩·지식 모델 없음) 상태에선 넷 다 0, 일반 상태에선 넷 다 1 — 넷을 한 묶음으로 단언해 하나만 빠지는 회귀를 잡는다.
  */
 async function expectGraphControls(page: Page, count: 0 | 1) {
   await expect(page.getByPlaceholder('이름 검색')).toHaveCount(count);
@@ -712,6 +712,8 @@ test.describe('지식그래프 시각화 페이지', () => {
     // 캔버스 자체가 렌더되지 않는다 — 빈 그래프를 그리는 것이 아니라 그릴 대상이 없는 상태다.
     // (남의 그래프가 새어 들어와 노드가 그려지면 이 단언이 깨진다.)
     await expect(page.getByTestId('instance-graph')).toHaveCount(0);
+    // 목록 게이트가 본문을 대신하면 그래프 의존 컨트롤도 없다 (WD-894).
+    await expectGraphControls(page, 0);
     // 그래프 엔드포인트를 아예 부르지 않았다 — 고를 온톨로지가 없으면 물어보지도 않는다.
     expect(requestedPaths).toEqual([]);
   });
@@ -763,11 +765,14 @@ test.describe('지식그래프 시각화 페이지', () => {
     // 단언하면 렌더가 시작되기도 전에 통과해 버려 공허해진다 — 로딩 상태를 긍정으로 지목한다.
     await expect(page.getByTestId('graph-loading')).toBeVisible();
     await expect(page.getByText('아직 지식 모델이 없습니다')).toHaveCount(0);
+    // 로딩 중에도 그래프가 없으니 그래프 의존 컨트롤은 숨는다(WD-894).
+    await expectGraphControls(page, 0);
 
-    // 목록을 풀어 주면 정상적으로 그래프가 그려진다.
+    // 목록을 풀어 주면 정상적으로 그래프가 그려지고 컨트롤이 되살아난다.
     releaseList!();
     await expect(page.getByTestId('instance-graph')).toBeVisible();
     await expect(page.getByText('아직 지식 모델이 없습니다')).toHaveCount(0);
+    await expectGraphControls(page, 1);
   });
 
   // 목록 조회가 실패한 것도 "0개"와 구분해야 한다 — 구분하지 않으면 사용자가 "지식 모델이 없다"는
@@ -785,10 +790,14 @@ test.describe('지식그래프 시각화 페이지', () => {
 
     await expect(page.getByText('지식 모델 목록을 불러오지 못했습니다.')).toBeVisible();
     await expect(page.getByText('아직 지식 모델이 없습니다')).toHaveCount(0);
+    // 목록 오류 게이트에서는 그래프 의존 컨트롤을 숨긴다 (WD-894).
+    await expectGraphControls(page, 0);
 
     // 재시도가 실제로 회복 경로다 — 누르면 목록이 로드되고 그래프가 그려진다.
     await page.getByRole('button', { name: '다시 시도' }).click();
     await expect(page.getByTestId('instance-graph')).toBeVisible();
+    // 목록이 회복되면 컨트롤이 다시 보인다 (WD-894).
+    await expectGraphControls(page, 1);
   });
 
   // WD-126: 조회 권한이 없으면(403) 다시 시도해도 같으므로 재시도 버튼 대신 권한 안내를 보인다 — 두 탭 모두.
@@ -811,6 +820,8 @@ test.describe('지식그래프 시각화 페이지', () => {
       );
       await expect(page.getByText('지식 모델 목록을 불러오지 못했습니다.')).toHaveCount(0);
       await expect(page.getByRole('button', { name: '다시 시도' })).toHaveCount(0);
+      // 403 게이트에서도 그래프 탐색 탭은 그래프 의존 컨트롤을 숨긴다 (WD-894).
+      if (view === 'explore') await expectGraphControls(page, 0);
       // 403 은 재시도하지 않는다(전역 기본)
       expect(listCapture.requests).toHaveLength(1);
     });

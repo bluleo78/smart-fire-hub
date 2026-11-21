@@ -53,7 +53,7 @@ test.describe('다이얼로그 제목 타이포그래피 (#788)', () => {
 });
 
 /**
- * WD-9: 닫기 X(absolute top-4 right-4)가 있는 Dialog 는 헤더 내용 영역의 오른쪽 끝이 X 왼쪽 끝을 넘지 않아야 한다.
+ * WD-9: 닫기 X(absolute top-2 right-2, 32×32 — WD-901)가 있는 Dialog 는 헤더 내용 영역의 오른쪽 끝이 X 왼쪽 끝을 넘지 않아야 한다.
  * "헤더 오른쪽 끝 - padding-right ≤ X 왼쪽" 은 제목 길이와 무관하게 성립해야 하는 기하 조건이라 긴 제목 픽스처가 필요 없다.
  */
 test.describe('Dialog 헤더와 닫기 버튼 (WD-9)', () => {
