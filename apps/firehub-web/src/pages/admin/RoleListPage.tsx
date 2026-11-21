@@ -16,7 +16,7 @@ import { TruncatedText } from '@/components/ui/truncated-text';
 import { useRoleClearance } from '@/hooks/queries/useSecurityLevels';
 import { useCloseGeneration } from '@/hooks/useCloseGeneration';
 import { useGuardedSubmit } from '@/hooks/useSubmitGuard';
-import { extractApiError, handleApiError, isBadRequestError, isNotFoundError } from '@/lib/api-error';
+import { extractApiError, handleApiError, isBadRequestError, isNotFoundError, mapFieldErrors } from '@/lib/api-error';
 import { iGa } from '@/lib/utils';
 
 import { rolesApi } from '../../api/roles';
@@ -41,7 +41,7 @@ import {
 } from '../../components/ui/table';
 import { useMyPermissions } from '../../hooks/queries/useMyPermissions';
 import type { CreateRoleFormData } from '../../lib/validations/role';
-import { createRoleSchema, ROLE_NAME_RULE } from '../../lib/validations/role';
+import { createRoleSchema, ROLE_DESCRIPTION_RULE, ROLE_NAME_RULE } from '../../lib/validations/role';
 import type { RoleResponse } from '../../types/role';
 
 /**
@@ -175,8 +175,14 @@ export default function RoleListPage() {
         return;
       }
       const message = extractApiError(error, '역할 생성에 실패했습니다.');
-      // CreateRoleRequest 는 name 만 검증하므로 400 은 이름 문제다 — 이름 칸 오류로 이어 읽히게 하고 칸으로 포커스를 돌린다.
-      if (isBadRequestError(error)) {
+      // 400 의 필드별 오류(errors)는 해당 칸에 붙이고 첫 오류 칸으로 포커스한다(WD-865) — 설명 255자 초과가 이름 칸 오류로 읽히던 문제.
+      // 대화상자는 root 를 그리지 않으므로 이름·설명 외 필드 문구는 폼 오류 영역으로, 칸 오류가 하나도 없으면 아래 400 분기로 보낸다.
+      const mapped = mapFieldErrors(error, form.setError, ['name', 'description']);
+      if (mapped && mapped.setFields.length > 0) {
+        form.setFocus(mapped.setFields.includes('name') ? 'name' : 'description');
+        if (mapped.unknownMessage) setServerError({ field: 'form', message: mapped.unknownMessage });
+      } else if (isBadRequestError(error)) {
+        // 필드 오류가 없는 400(예: 이름 중복)은 이름 문제다 — 이름 칸 오류로 이어 읽히게 하고 칸으로 포커스를 돌린다.
         setServerError({ field: 'name', message });
         form.setFocus('name');
       } else {
@@ -245,6 +251,8 @@ export default function RoleListPage() {
                 <FormField
                   label="설명 (선택)"
                   htmlFor="role-description"
+                  error={form.formState.errors.description?.message}
+                  description={ROLE_DESCRIPTION_RULE}
                 >
                   <Input
                     id="role-description"

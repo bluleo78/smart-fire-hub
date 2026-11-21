@@ -213,6 +213,60 @@ class RoleControllerTest {
     verify(roleService, never()).updateRole(any(), any(), any(), any(), any());
   }
 
+  /** WD-865: 설명 256자는 DTO 에서 설명 필드 오류(400, errors.description)로 거부되고 서비스까지 가지 않는다. */
+  @Test
+  void createRole_descriptionOver255_returnsFieldError() throws Exception {
+    mockAuthentication("role:write");
+    CreateRoleRequest request = new CreateRoleRequest("MODERATOR", "가".repeat(256));
+
+    mockMvc
+        .perform(
+            post("/api/v1/roles")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.description").value("설명은 255자 이내여야 합니다"));
+
+    verify(roleService, never()).createRole(any(), any(), any());
+  }
+
+  /** WD-865: 설명 255자는 경계값이라 통과한다. */
+  @Test
+  void createRole_description255_succeeds() throws Exception {
+    mockAuthentication("role:write");
+    String description = "가".repeat(255);
+    CreateRoleRequest request = new CreateRoleRequest("MODERATOR", description);
+    RoleResponse created = new RoleResponse(3L, "MODERATOR", description, false);
+    when(roleService.createRole("MODERATOR", description, 1L)).thenReturn(created);
+
+    mockMvc
+        .perform(
+            post("/api/v1/roles")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+        .andExpect(status().isCreated());
+  }
+
+  /** WD-865: 수정 요청의 설명 256자도 같은 설명 필드 오류로 거부된다. */
+  @Test
+  void updateRole_descriptionOver255_returnsFieldError() throws Exception {
+    mockAuthentication("role:write");
+    UpdateRoleRequest request = new UpdateRoleRequest("MOD", "가".repeat(256));
+
+    mockMvc
+        .perform(
+            put("/api/v1/roles/3")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.description").value("설명은 255자 이내여야 합니다"));
+
+    verify(roleService, never()).updateRole(any(), any(), any(), any(), any());
+  }
+
   @Test
   void deleteRole_withPermission_returnsNoContent() throws Exception {
     mockAuthentication("role:delete");

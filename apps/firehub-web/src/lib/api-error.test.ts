@@ -13,6 +13,7 @@ import {
   isGraphReadRestricted,
   isMemberGoneError,
   isWrongCurrentPasswordError,
+  mapFieldErrors,
   NameRetryExhaustedError,
 } from './api-error';
 
@@ -239,5 +240,24 @@ describe('NameRetryExhaustedError (WD-837)', () => {
 
   it('CloneNameExhaustedError 는 그 하위 형이다', () => {
     expect(new CloneNameExhaustedError()).toBeInstanceOf(NameRetryExhaustedError);
+  });
+});
+
+describe('mapFieldErrors — 붙인 칸과 모르는 필드 문구를 돌려준다 (WD-865)', () => {
+  it('아는 필드만 setError 하고 root 는 건드리지 않는다', () => {
+    const setError = vi.fn();
+    const err = axiosErrorWith({ errors: { description: '설명은 255자 이내여야 합니다', securityLevelId: '보안 등급이 없습니다' } });
+    expect(mapFieldErrors(err, setError, ['name', 'description'])).toEqual({
+      setFields: ['description'],
+      unknownMessage: '보안 등급이 없습니다',
+    });
+    expect(setError).toHaveBeenCalledTimes(1);
+    expect(setError).toHaveBeenCalledWith('description', { message: '설명은 255자 이내여야 합니다' });
+  });
+
+  it('필드 오류 400 이 아니면 null', () => {
+    const setError = vi.fn();
+    expect(mapFieldErrors(axiosErrorWith({ message: '이미 존재하는 역할' }), setError, ['name'])).toBeNull();
+    expect(setError).not.toHaveBeenCalled();
   });
 });

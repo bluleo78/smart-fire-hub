@@ -20,7 +20,10 @@ public record UpdateRoleRequest(
         @Size(max = RoleNameRules.MAX_LENGTH, message = RoleNameRules.SIZE_MESSAGE)
         @Pattern(regexp = RoleNameRules.PATTERN, message = RoleNameRules.PATTERN_MESSAGE)
         String name,
-    String description,
+    @Size(
+            max = RoleNameRules.DESCRIPTION_MAX_LENGTH,
+            message = RoleNameRules.DESCRIPTION_SIZE_MESSAGE)
+        String description,
     LocalDateTime expectedUpdatedAt) {
 
   /** 기준 버전 없이 만드는 기존 호출부용 — 비교하지 않는다. */

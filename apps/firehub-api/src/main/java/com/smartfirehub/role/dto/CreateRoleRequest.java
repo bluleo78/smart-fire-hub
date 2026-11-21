@@ -9,4 +9,7 @@ public record CreateRoleRequest(
         @Size(max = RoleNameRules.MAX_LENGTH, message = RoleNameRules.SIZE_MESSAGE)
         @Pattern(regexp = RoleNameRules.PATTERN, message = RoleNameRules.PATTERN_MESSAGE)
         String name,
-    String description) {}
+    @Size(
+            max = RoleNameRules.DESCRIPTION_MAX_LENGTH,
+            message = RoleNameRules.DESCRIPTION_SIZE_MESSAGE)
+        String description) {}
