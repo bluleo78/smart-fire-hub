@@ -219,6 +219,119 @@ export function splitPieData(
   return { pieData, negativeCount, missingCount, nonNumericCount, total, emptyReason };
 }
 
+/** 이 각도(°)보다 작은 파이 조각은 눈에 보이지 않아 「기타」 한 조각으로 묶는다(WD-852) */
+export const PIE_SMALL_SLICE_DEGREES = 0.5;
+/** 파이 범례에 싣는 최대 항목 수(큰 순) — 천 개 범례가 DOM 을 부풀리지 않게 한다(WD-852) */
+export const PIE_LEGEND_LIMIT = 50;
+
+/** 파이가 그릴 조각 하나 — colorIndex 는 pieData 안 원래 index(기타는 -1), isOther 는 묶음 조각 여부 */
+export interface PieSlice {
+  row: Record<string, unknown>;
+  colorIndex: number;
+  isOther: boolean;
+}
+
+/**
+ * 파이 범례 항목 하나 — colorIndex 는 조각의 색 index 와 같다(기타·외는 -1).
+ * kind: 'slice' 큰 조각, 'other' 회색 「기타 (n개)」 조각과 1:1 인 항목, 'rest' 범례에서 잘린 큰 조각 개수(스와치 없음).
+ */
+export interface PieLegendItem {
+  name: string;
+  colorIndex: number;
+  kind: 'slice' | 'other' | 'rest';
+}
+
+/**
+ * 부동소수 잡음(0.1+0.2 = 0.30000000000000004)을 유효숫자 15자리로 다듬는다(WD-852).
+ * 정수는 그대로 둔다 — 16~17자리 정수(타임스탬프·ID)는 toPrecision(15) 하면 끝자리가 바뀐다.
+ * NaN·Infinity 도 그대로 돌려준다. 값 대체 표(formatChartCellValue)와 파이 기타 합이 같은 규칙을 쓴다.
+ */
+export function roundFloatNoise(n: number): number {
+  return Number.isInteger(n) ? n : Number(n.toPrecision(15));
+}
+
+/** 「기타 (n개)」 라벨 — 기타 조각 행과 범례 항목이 같은 문구를 쓰도록 한 곳에서 만든다(WD-852) */
+function pieOtherLabel(count: number): string {
+  return `기타 (${count.toLocaleString('ko-KR')}개)`;
+}
+
+/**
+ * 0.5° 미만의 작은 조각을 「기타 (n개)」 한 조각으로 묶고, 범례를 고른다(WD-852).
+ * 범례는 큰 순 상위 50개 조각 + (실제로 묶었다면) 회색 「기타 (n개)」 + (큰 조각이 잘렸다면) 「외 k개」 이다.
+ * 회색 범례 항목은 정확히 회색 조각만 뜻해야 하므로 기타의 개수는 묶인 조각 수와 같고, 잘린 큰 조각은 색 없는 「외 k개」 로 따로 센다.
+ * 범주가 천 개에 가까우면 대부분 눈에 보이지 않는 조각이라 SVG 노드·범례 DOM 만 늘려 느려지므로 줄인다.
+ * 입력은 splitPieData 의 pieData(값은 유한 숫자 ≥ 0)다. 묶을지(조각 수가 많은지) 판단은 호출자 몫이다.
+ * 작은 조각이 1개뿐이면 묶어도 이득이 없으므로 묶지 않고(otherCount 0), total ≤ 0 이면 각도를 못 구하므로 그대로 돌려준다.
+ * 큰 조각은 원래 순서와 원래 colorIndex 를 유지하고 기타는 맨 끝에 둔다. 정렬(O(n log n))은 범례 후보(큰 조각)에만 한다.
+ * 기타 여부는 이름이 아니라 isOther 로 구분한다 — 실제 행 이름이 「기타」여도 일반 조각이다.
+ */
+export function groupSmallPieSlices(
+  pieData: Record<string, unknown>[],
+  nameKey: string,
+  valueKey: string,
+  total: number,
+): { slices: PieSlice[]; legend: PieLegendItem[]; otherCount: number } {
+  // 한 번 훑으며 전체 목록(all)·큰 조각(big)·작은 조각 수/합을 함께 모은다
+  const all: PieSlice[] = [];
+  const big: PieSlice[] = [];
+  let smallCount = 0;
+  let smallSum = 0;
+  pieData.forEach((row, index) => {
+    const value = row[valueKey] as number;
+    const slice: PieSlice = { row, colorIndex: index, isOther: false };
+    all.push(slice);
+    // value/total*360 < 0.5 를 곱셈으로 비교해 경계(정확히 0.5°)가 부동소수 오차로 흔들리지 않게 한다
+    if (total > 0 && value * 360 < PIE_SMALL_SLICE_DEGREES * total) {
+      smallCount++;
+      smallSum += value;
+    } else {
+      big.push(slice);
+    }
+  });
+
+  // 작은 조각이 1개 이하면 묶지 않고 원본 그대로
+  if (smallCount < 2) {
+    return { slices: all, legend: buildLegend(all, nameKey, valueKey, 0), otherCount: 0 };
+  }
+
+  // 소수 값을 여러 개 더하면 붙는 부동소수 오차(12.600000000000001)를 툴팁에 보이지 않게 다듬는다
+  const other: PieSlice = {
+    row: { [nameKey]: pieOtherLabel(smallCount), [valueKey]: roundFloatNoise(smallSum) },
+    colorIndex: -1,
+    isOther: true,
+  };
+  return {
+    slices: [...big, other],
+    legend: buildLegend(big, nameKey, valueKey, smallCount),
+    otherCount: smallCount,
+  };
+}
+
+/** 범례 고르기 — 값 내림차순(같으면 원래 순서) 큰 조각 상위 50개, 묶었으면 기타(묶인 수), 큰 조각이 잘렸으면 「외 k개」 */
+function buildLegend(
+  candidates: PieSlice[],
+  nameKey: string,
+  valueKey: string,
+  otherCount: number,
+): PieLegendItem[] {
+  // Array.prototype.sort 는 안정 정렬이라 같은 값은 원래 순서를 유지한다
+  const sorted = [...candidates].sort((a, b) => (b.row[valueKey] as number) - (a.row[valueKey] as number));
+  const shown = sorted.slice(0, PIE_LEGEND_LIMIT);
+  const legend: PieLegendItem[] = shown.map((s) => ({
+    name: String(s.row[nameKey] ?? ''),
+    colorIndex: s.colorIndex,
+    kind: 'slice',
+  }));
+  if (otherCount > 0) {
+    legend.push({ name: pieOtherLabel(otherCount), colorIndex: -1, kind: 'other' });
+  }
+  const cut = sorted.length - shown.length;
+  if (cut > 0) {
+    legend.push({ name: `외 ${cut.toLocaleString('ko-KR')}개`, colorIndex: -1, kind: 'rest' });
+  }
+  return legend;
+}
+
 /**
  * 산점도가 그리는 Y 컬럼 — groupBy 가 있으면 첫 Y 하나만, 없으면 yAxis 전체(normalize 된 yAxis 가정).
  * 뷰(ScatterChartView)와 스크린리더 표(chart-a11y)가 같은 규칙을 쓰도록 한 곳에 둔다(WD-831).

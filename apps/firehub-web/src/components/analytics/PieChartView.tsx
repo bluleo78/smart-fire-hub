@@ -10,9 +10,14 @@ import {
 } from 'recharts';
 
 import type { ChartConfig, ChartType } from '../../types/analytics';
-import { splitPieData } from './chart-derived-data';
+import { groupSmallPieSlices, type PieLegendItem, type PieSlice, splitPieData } from './chart-derived-data';
 import { HIDDEN_CHART_ROOT_PROPS } from './chart-figure-context';
-import { CHART_SERIES_COLORS, TOOLTIP_CONTENT_STYLE, TOOLTIP_ITEM_STYLE } from './chart-styles';
+import {
+  CHART_OTHER_COLOR,
+  CHART_SERIES_COLORS,
+  TOOLTIP_CONTENT_STYLE,
+  TOOLTIP_ITEM_STYLE,
+} from './chart-styles';
 import { ChartDrawingArea } from './ChartDrawingArea';
 import { NonNumericValueNotice } from './recharts/NonNumericValueNotice';
 
@@ -33,12 +38,42 @@ const LEGEND_ROW_HEIGHT = 20;
 // 범례가 차지할 수 있는 최대 비율(컨테이너 높이 대비) — 넘는 범례는 이 높이 안에서 스크롤된다(WD-307).
 // 제한이 없으면 카테고리가 수백 개일 때 범례가 카드 위로 넘쳐 제목을 덮고 파이를 가린다.
 const LEGEND_MAX_HEIGHT_RATIO = 0.4;
-// 이 수를 넘는 카테고리는 파이로 읽기 어렵다고 안내한다(WD-307). 데이터를 상위 N개+기타로 묶지는 않는다 — 값의 의미가 바뀐다.
+// 이 수를 넘는 카테고리는 막대를 권장하는 안내를 띄우고 작은 조각을 묶는다(WD-307, WD-852 — 규칙은 groupSmallPieSlices).
 const MANY_CATEGORY_THRESHOLD = 50;
 // 안내 문구 한 줄이 차지하는 높이(px) — 파이 위쪽 여백으로 비워 둔다.
 const NOTICE_HEIGHT = 24;
 // 조각 사이 여백(2°)을 둘 수 있는 최대 항목 수 — 넘으면 여백 합이 90° 를 넘어 파이가 크게 비거나 음수 각도가 된다(WD-307).
 const PADDING_MAX_CATEGORIES = 45;
+/** WD-852: 묶은 파이의 범례 — recharts 기본 범례와 같은 크기·간격. 항목 종류별 표시 규칙은 groupSmallPieSlices 참고. */
+function PieLegendList({ items, palette }: { items: PieLegendItem[]; palette: readonly string[] }) {
+  return (
+    <ul className="recharts-default-legend" style={{ padding: 0, margin: 0, textAlign: 'center' }}>
+      {items.map((item) => (
+        <li
+          key={`${item.name}-${item.colorIndex}`}
+          className="recharts-legend-item"
+          style={{ display: 'inline-block', marginRight: 10 }}
+        >
+          {item.kind !== 'rest' && (
+            <svg
+              width={14}
+              height={14}
+              viewBox="0 0 32 32"
+              aria-hidden="true"
+              style={{ display: 'inline-block', verticalAlign: 'middle', marginRight: 4 }}
+            >
+              <path
+                fill={item.kind === 'other' ? CHART_OTHER_COLOR : palette[item.colorIndex % palette.length]}
+                d="M0,4h32v24h-32z"
+              />
+            </svg>
+          )}
+          <span className="recharts-legend-item-text">{item.name}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 export function PieChartView({ chartType, config, data, height }: PieChartViewProps) {
   const { xAxis, yAxis, showLegend = true, colors } = config;
@@ -56,7 +91,7 @@ export function PieChartView({ chartType, config, data, height }: PieChartViewPr
   // 거르기는 값 대체 표와 공유하는 splitPieData 로 한다(WD-831). 새 배열을 만들므로 입력이 같으면 다시 만들지 않게 메모한다
   // (렌더마다 새 배열이면 recharts 가 조각을 다시 그린다).
   // WD-835: 값이 비었거나 숫자가 아닌 행(missingCount)도 0 이 아니라 「없음」이라 같은 방식으로 빼고 안내한다.
-  const { pieData, negativeCount, missingCount, emptyReason } = useMemo(
+  const { pieData, negativeCount, missingCount, emptyReason, total } = useMemo(
     () => splitPieData(data, valueKey),
     [data, valueKey],
   );
@@ -75,19 +110,53 @@ export function PieChartView({ chartType, config, data, height }: PieChartViewPr
   const numericWidth = measured.width;
   const numericHeight = measured.height;
 
-  // 범례가 차지할 세로 공간을 카테고리 수 기준으로 추정한다.
+  // 범례가 차지할 세로 공간을 그려지는 범례 항목 수 기준으로 추정한다(묶은 경우 legend.length).
   // (실제 렌더된 범례 DOM을 측정하지 않는 이유: recharts Legend는 Pie와 달리
   //  플롯 영역을 자동으로 줄여주지 않아 outerRadius 계산 전에 미리 예약해야 한다.)
   const itemsPerRow = Math.max(1, Math.floor(numericWidth / LEGEND_ITEM_WIDTH));
-  const legendRows = showLegend ? Math.ceil(categoryCount / itemsPerRow) : 0;
+  // WD-852: 많은 항목이면 범례는 큰 순 50개 + 「기타 (묶인 수)」 + 「외 k개」 로 줄어 그 항목 수로 높이를 추정한다.
+  // 회색 범례 항목은 회색 조각만 뜻하고, 범례에서 잘린 큰 조각은 색 없는 「외 k개」 로 따로 센다.
+  // WD-838/841: 그릴 조각이 없다 — 행이 없거나 전부 0(합계 0)이면 빈 원 대신 이유를 말한다.
+  // 그릴 것이 없는지는 splitPieData 의 emptyReason 한 곳에서 정한다(대체 표와 같은 판정).
+  const nothingToDraw = emptyReason !== null;
+  // WD-852: 그릴 데이터·조각 색·범례를 한 메모로 만든다 — 렌더마다 새 배열이면 recharts 가 조각을 다시 그린다.
+  // 항목이 많으면 groupSmallPieSlices(묶기 규칙은 그 함수 참고), 아니면 원래 행 그대로(legend null → recharts 기본 범례).
+  const { drawData, slices, legend } = useMemo(() => {
+    if (nothingToDraw || categoryCount <= MANY_CATEGORY_THRESHOLD) {
+      return {
+        drawData: pieData,
+        slices: pieData.map((row, index): PieSlice => ({ row, colorIndex: index, isOther: false })),
+        legend: null as PieLegendItem[] | null,
+      };
+    }
+    const grouped = groupSmallPieSlices(pieData, nameKey, valueKey, total);
+    return { drawData: grouped.slices.map((s) => s.row), slices: grouped.slices, legend: grouped.legend };
+  }, [nothingToDraw, categoryCount, pieData, nameKey, valueKey, total]);
+  // 조각(Cell) 수백~천 개를 리사이즈 재렌더마다 다시 만들지 않게 메모한다. 기타는 회색 고정, 큰 조각은 원래 index 의 팔레트 색.
+  const cells = useMemo(
+    () =>
+      slices.map((slice, index) => (
+        <Cell
+          key={`cell-${index}`}
+          fill={slice.isOther ? CHART_OTHER_COLOR : palette[slice.colorIndex % palette.length]}
+          data-testid={slice.isOther ? 'pie-other-slice' : undefined}
+        />
+      )),
+    [slices, palette],
+  );
+  // 범례 content 는 묶음·팔레트가 같으면 같은 함수로 유지한다 — 렌더마다 새 함수면 recharts 범례가 매번 다시 그려진다.
+  // 훅은 아래 조기 반환보다 앞에 둔다.
+  const legendContent = useMemo(
+    () => (legend ? () => <PieLegendList items={legend} palette={palette} /> : undefined),
+    [legend, palette],
+  );
+  const legendItemCount = legend ? legend.length : categoryCount;
+  const legendRows = showLegend ? Math.ceil(legendItemCount / itemsPerRow) : 0;
   // 범례 높이를 상한으로 자른다 — 나머지는 범례 안에서 스크롤해 보므로, 파이 자리는 늘 남는다(WD-307).
   const legendMaxHeight = Math.floor(numericHeight * LEGEND_MAX_HEIGHT_RATIO);
   const legendReservedHeight = showLegend
     ? Math.min(8 + legendRows * LEGEND_ROW_HEIGHT, legendMaxHeight)
     : 0;
-  // WD-838: 그릴 조각이 없다 — 행이 없거나 전부 0(합계 0)이면 빈 원 대신 이유를 말한다.
-  // WD-841: 그릴 것이 없는지는 splitPieData 의 emptyReason 한 곳에서 정한다(대체 표와 같은 판정)
-  const nothingToDraw = emptyReason !== null;
   // 항목이 많은지 — 안내 줄뿐 아니라 애니메이션·조각 테두리도 이 값으로 끈다(WD-307).
   // 그릴 것이 없으면 막대 권장 안내가 어긋나므로 많은 항목으로 보지 않는다(WD-838)
   const showManyNotice = !nothingToDraw && categoryCount > MANY_CATEGORY_THRESHOLD;
@@ -191,7 +260,7 @@ export function PieChartView({ chartType, config, data, height }: PieChartViewPr
                 <Pie
                   // WD-826: recharts Pie 는 조각 묶음 <g> 에 rootTabIndex(기본 0)를 붙여 숨긴 그림 안 Tab 정지점이 된다 — -1 로 끈다
                   rootTabIndex={-1}
-                  data={pieData}
+                  data={drawData}
                   dataKey={valueKey}
                   nameKey={nameKey}
                   cx="50%"
@@ -213,9 +282,7 @@ export function PieChartView({ chartType, config, data, height }: PieChartViewPr
                   }
                   labelLine={false}
                 >
-                  {pieData.map((_entry, index) => (
-                    <Cell key={`cell-${index}`} fill={palette[index % palette.length]} />
-                  ))}
+                  {cells}
                 </Pie>
                 <Tooltip
                   contentStyle={TOOLTIP_CONTENT_STYLE}
@@ -224,6 +291,8 @@ export function PieChartView({ chartType, config, data, height }: PieChartViewPr
                 />
                 {showLegend && (
                   <Legend
+                    // WD-852: 묶은 경우 범례를 직접 그린다 — 큰 순 50개 + 「기타 (n개)」 + 「외 k개」. 모양은 recharts 기본 범례와 같게 둔다.
+                    content={legendContent}
                     // 범례는 상한 높이 안에서 스크롤된다 — 카드 밖·제목 위로 넘치지 않게(WD-307).
                     wrapperStyle={{ fontSize: 12, maxHeight: legendMaxHeight, overflowY: 'auto' }}
                   />

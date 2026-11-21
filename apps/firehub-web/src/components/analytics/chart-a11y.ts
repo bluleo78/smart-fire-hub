@@ -9,6 +9,7 @@ import {
   getScatterUsedY,
   isScatterPoint,
   readHistogramValues,
+  roundFloatNoise,
   splitPieData,
   transformWaterfallData,
 } from './chart-derived-data';
@@ -72,7 +73,7 @@ export function formatChartCellValue(value: unknown): string {
   // 작은 소수(0.0004)도 그대로 남는다. NaN·Infinity 는 그대로 문자열화한다.
   if (typeof value === 'number') {
     if (!Number.isFinite(value) || Number.isInteger(value)) return String(value);
-    return String(Number(value.toPrecision(15)));
+    return String(roundFloatNoise(value));
   }
   if (typeof value !== 'object') return String(value);
   // 객체(GEOMETRY 등)만 JSON 으로 쓰고, 표가 비대해지지 않도록 80자를 넘으면 …로 줄인다
