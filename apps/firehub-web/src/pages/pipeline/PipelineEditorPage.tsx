@@ -36,7 +36,7 @@ import { useAllDatasets } from '@/hooks/queries/useDatasets';
 import { useInvalidateListsOnEntryNotFound } from '@/hooks/queries/useInvalidateListsOnEntryNotFound';
 import { PIPELINE_LIST_KEY, useCancelExecution, useExecutePipeline, useExecution, useExecutions,usePipeline, usePipelinePermissions } from '@/hooks/queries/usePipelines';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
-import { handleApiError } from '@/lib/api-error';
+import { extractApiError, handleApiError, isNotFoundError } from '@/lib/api-error';
 import { formatDate, getStatusBadgeVariant, getStatusLabel, parseUtcDate } from '@/lib/formatters';
 import { parseRouteId } from '@/lib/route-id';
 import type { PipelineExecutionResponse } from '@/types/pipeline';
@@ -125,12 +125,33 @@ export default function PipelineEditorPage() {
   // 서버 목록 상한(100)을 넘어도 전부 보이도록 전 페이지를 모은다 (#732)
   const { data: allDatasets } = useAllDatasets();
   // 실행 이력 탭의 현재 페이지(WD-532) — 이력을 한 번에 다 받지 않고 페이지로 나눠 받는다.
-  const [executionPage, setExecutionPage] = useState(0);
-  const { data: executionPageData } = useExecutions(pipelineId ?? 0, executionPage);
+  // WD-884 리뷰 후속: 앱 안 이동으로 다른 파이프라인을 열어도 이 컴포넌트는 유지돼 페이지 번호가 남는다 — 새 파이프라인에
+  // 없는 페이지를 요청하지 않도록 페이지를 파이프라인 id 와 함께 보관하고, id 가 다르면 첫 페이지로 본다(effect 없이 파생 — 깜빡임 없음).
+  const [execPageState, setExecPageState] = useState({ pipelineId, page: 0 });
+  const executionPage = execPageState.pipelineId === pipelineId ? execPageState.page : 0;
+  const setExecutionPage = useCallback((page: number) => setExecPageState({ pipelineId, page }), [pipelineId]);
+  const {
+    data: executionPageData,
+    isPlaceholderData: isExecutionPlaceholder,
+    isError: isExecutionsError,
+    error: executionsError,
+    isFetching: isExecutionsFetching,
+    refetch: refetchExecutions,
+  } = useExecutions(pipelineId ?? 0, executionPage);
   const executions = executionPageData?.content;
   // 첫 페이지 응답이 와서 비어 있음이 확인됐는지(WD-884) — 로딩 중·조회 실패·빈 뒤쪽 페이지는 기록 유무를 모르므로
   // 빈 상태의 「첫 실행」 안내를 이때만 보인다.
-  const isConfirmedEmpty = executionPage === 0 && executionPageData?.content.length === 0;
+  // WD-884 리뷰 후속: 같은 파이프라인의 다른 페이지로 옮기는 동안 남는 이전 페이지 데이터(placeholder)는 이 페이지가 비었다는
+  // 확인이 아니므로 제외한다. 다른 파이프라인의 placeholder 는 useExecutions 가 이미 끊는다.
+  const isConfirmedEmpty =
+    executionPage === 0 && !isExecutionPlaceholder && executionPageData?.content.length === 0;
+  // 조회 실패(500/404 등)는 「기록 없음」이 아니다 — 데이터가 없고 에러일 때만 오류 안내를 보인다(WD-884 리뷰 후속).
+  const showExecutionsError = isExecutionsError && !executionPageData;
+  // 404 는 다시 받아도 같다(파이프라인이 삭제됨) — 트리거 탭(WD-244)처럼 서버 문구를 보이고 다시 시도는 두지 않는다.
+  const executionsNotFound = isNotFoundError(executionsError);
+  const executionsErrorFallback = executionsNotFound
+    ? '파이프라인을 찾을 수 없습니다. 이미 삭제되었을 수 있습니다.'
+    : '실행 이력을 불러오지 못했습니다.';
   // 보던 페이지가 사라지면(보존 기간 정리로 이력이 줄어든 경우 등) 마지막 페이지로 옮긴다 — 빈 페이지에 머물면 「실행 기록이
   // 없습니다」만 보이고 페이지 나눔도 사라져 앞 페이지로 돌아갈 수 없다.
   // 다른 페이지의 캐시는 이력이 줄기 전 값이라(기본 staleTime 30초 동안 다시 받지 않는다) 이력 쿼리를 무효화해 새로 받게 한다.
@@ -139,9 +160,15 @@ export default function PipelineEditorPage() {
     if (!executionPageData || executionPage === 0 || executionPageData.content.length > 0) return;
     queryClient.invalidateQueries({ queryKey: ['pipelines', pipelineId ?? 0, 'executions'] });
     setExecutionPage(Math.max(0, executionPageData.totalPages - 1));
-  }, [executionPageData, executionPage, pipelineId, queryClient]);
+  }, [executionPageData, executionPage, pipelineId, queryClient, setExecutionPage]);
   // 실행 이력 행의 「실행 취소」는 pipeline:execute 가 있을 때만 보인다(WD-219) — 헤더 버튼과 같은 기준.
-  const { canExecutePipeline } = usePipelinePermissions();
+  // 트리거 추가 안내는 트리거를 쓸 수 있는 사용자(trigger:write — 트리거 탭 「새 트리거」와 같은 기준)에게만 보인다(WD-884 리뷰 후속).
+  const { canExecutePipeline, canWriteTrigger } = usePipelinePermissions();
+  // 빈 상태 안내(WD-884) — 실행 권한이 없으면 헤더의 「실행」 버튼이 숨겨지므로(WD-219) 그 버튼을 가리키는 문구 대신 기록이 쌓이는 때를
+  // 안내하고, 트리거 쓰기 권한이 있을 때만 트리거 추가를 덧붙인다(WD-884 리뷰 후속).
+  const runHint = canExecutePipeline
+    ? `상단의 「실행」 버튼으로 첫 실행을 시작할 수 있습니다.${canWriteTrigger ? ' 트리거를 추가하면 자동으로 실행됩니다.' : ''}`
+    : '실행 권한이 있는 사용자가 실행하거나 트리거가 실행하면 이곳에 기록이 쌓입니다.';
 
   /** 존재하지 않는 실행 ID 접근 시 toast 알림 후 파이프라인 페이지로 리다이렉트 — ApiConnectionDetailPage와 동일 패턴 */
   useEffect(() => {
@@ -575,19 +602,38 @@ export default function PipelineEditorPage() {
                 pipelineSteps={pipelineData?.steps}
               />
             </div>
+          ) : showExecutionsError ? (
+            /* 조회 실패는 「기록 없음」과 구분해 알리고 다시 받게 한다(WD-884 리뷰 후속) — 트리거 탭 조회 실패(WD-244)와 같은 role=alert·아이콘 모양. */
+            <div role="alert" className="flex flex-col items-center justify-center h-full px-4 text-center">
+              <History className="h-12 w-12 text-muted-foreground/30 mb-4" aria-hidden="true" />
+              <p className="text-muted-foreground text-sm">
+                {extractApiError(executionsError, executionsErrorFallback)}
+              </p>
+              <div className="mt-3 flex gap-2">
+                {!executionsNotFound && (
+                  <Button variant="outline" size="sm" disabled={isExecutionsFetching} onClick={() => refetchExecutions()}>
+                    다시 시도
+                  </Button>
+                )}
+                {/* 뒤쪽 페이지가 실패하면 표·페이지 나눔이 사라져 같은 페이지만 다시 받게 된다 — 첫 페이지로 나갈 길을 둔다 */}
+                {executionPage > 0 && (
+                  <Button variant="outline" size="sm" onClick={() => setExecutionPage(0)}>
+                    첫 페이지로
+                  </Button>
+                )}
+              </div>
+            </div>
           ) : !executions || executions.length === 0 ? (
             /* 빈 상태 안내(WD-884) — 한 줄만 보이던 것을 트리거 탭 빈 상태와 같은 모양(아이콘+상태+다음 행동)으로 맞춘다.
                실행 권한이 없으면 헤더의 「실행」 버튼이 숨겨지므로(WD-219) 그 버튼을 가리키는 문구 대신
-               기록이 쌓이는 때를 안내한다. */
+               기록이 쌓이는 때를 안내한다. 트리거 쓰기 권한이 없으면 트리거 추가 안내도 뺀다. */
             <div className="flex flex-col items-center justify-center h-full px-4 text-center">
               <History className="h-12 w-12 text-muted-foreground/30 mb-4" aria-hidden="true" />
               <p className="text-muted-foreground text-sm">실행 기록이 없습니다.</p>
               {/* 다음 행동 안내는 빈 결과가 확인됐을 때만(isConfirmedEmpty, WD-884) */}
               {isConfirmedEmpty && (
                 <p className="text-muted-foreground text-xs mt-1">
-                  {canExecutePipeline
-                    ? '상단의 「실행」 버튼으로 첫 실행을 시작할 수 있습니다. 트리거를 추가하면 자동으로 실행됩니다.'
-                    : '실행 권한이 있는 사용자가 실행하거나 트리거가 실행하면 이곳에 기록이 쌓입니다.'}
+                  {runHint}
                 </p>
               )}
             </div>
