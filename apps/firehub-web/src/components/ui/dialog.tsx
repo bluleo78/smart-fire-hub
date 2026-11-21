@@ -89,9 +89,10 @@ function DialogContent({
         {showCloseButton && (
           // WD-901: 클릭 영역을 아이콘 상자(16×16)에서 32×32 로 넓힌다(최소 클릭 대상).
           // top-4 right-4 → top-2 right-2 + size-8 + 중앙 정렬이라 아이콘 중심은 전과 같은 24px 에 남아 아이콘 위치·크기가 안 변한다(포커스 링·hover 모양만 32px 상자에 rounded-md 로 그려진다).
+          // 링은 focus-visible 에만 — 다른 포커스 대상이 없는 창은 Radix 가 열 때 X 에 첫 포커스를 주므로, focus 로 그리면 마우스로 열어도 링이 늘 보인다(WD-901 리뷰 후속).
           <DialogPrimitive.Close
             data-slot="dialog-close"
-            className="ring-offset-background focus:ring-ring data-[state=open]:bg-accent data-[state=open]:text-muted-foreground absolute top-2 right-2 inline-flex size-8 items-center justify-center rounded-md opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4"
+            className="ring-offset-background focus-visible:ring-ring data-[state=open]:bg-accent data-[state=open]:text-muted-foreground absolute top-2 right-2 inline-flex size-8 items-center justify-center rounded-md opacity-70 transition-opacity hover:opacity-100 focus-visible:ring-2 focus-visible:ring-offset-2 focus:outline-hidden disabled:pointer-events-none [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4"
           >
             <XIcon />
             <span className="sr-only">닫기</span>

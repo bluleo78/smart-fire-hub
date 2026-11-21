@@ -65,4 +65,35 @@ test.describe('Dialog 닫기 X 클릭 영역 (WD-901)', () => {
 
     await expectHitTarget(page.getByRole('dialog'));
   });
+  /**
+   * WD-901 리뷰 후속: 감사 로그 상세처럼 다른 포커스 대상이 없는 창은 Radix 가 열 때 X 에 첫 포커스를 준다.
+   * 링이 focus 로 그려지면 마우스로 열어도 32px 상자 둘레에 늘 링이 보이므로, 키보드 포커스(focus-visible)일 때만 그려야 한다.
+   */
+  test('마우스로 열면 닫기 X 에 포커스 링이 없고, Tab 으로 오면 링이 보인다 (WD-901)', async ({ authenticatedPage: page }) => {
+    await setupAuditLogMocks(page, 1);
+    await page.goto('/admin/audit-logs');
+    await page.getByRole('row').nth(1).getByRole('button', { name: /상세 보기$/ }).click();
+
+    const dialog = page.getByRole('dialog');
+    const close = await expectHitTarget(dialog);
+    // 링은 box-shadow 로 그려진다 — 투명(rgba(0, 0, 0, 0))이 아닌 그림자 층이 하나라도 있으면 링이 보이는 것
+    const ringVisible = () =>
+      close.evaluate((el) =>
+        getComputedStyle(el)
+          .boxShadow.split(/,(?![^(]*\))/)
+          .some((layer) => layer.trim() !== 'none' && !layer.trim().startsWith('rgba(0, 0, 0, 0)')),
+      );
+
+    // 일시 「상세 보기」 버튼을 마우스로 눌러 연 직후 — 링(box-shadow)이 없어야 한다.
+    // (행 빈 곳처럼 포커스를 받지 않는 곳을 누르면 앞선 포커스가 없어 Chromium 이 스크립트 포커스를 focus-visible 로 본다 — 그 경로는 이 시험 밖)
+    expect(await ringVisible()).toBe(false);
+
+    // Tab 으로 X 까지 온다(창 안 포커스는 갇혀 돈다) — 그러면 링이 보여야 한다
+    for (let i = 0; i < 10; i++) {
+      await page.keyboard.press('Tab');
+      if (await close.evaluate((el) => el === document.activeElement)) break;
+    }
+    await expect(close).toBeFocused();
+    expect(await ringVisible()).toBe(true);
+  });
 });
