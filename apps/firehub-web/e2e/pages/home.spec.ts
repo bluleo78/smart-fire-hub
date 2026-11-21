@@ -855,6 +855,84 @@ test.describe('홈 페이지', () => {
     await expect.poll(() => captured.some((r) => r.type === 'DATASET' && r.severity === 'CRITICAL')).toBe(true);
   });
 
+  /**
+   * 회귀: WD-875 — 활동 피드에서 유형·상태 필터로 0건이 되어도 「활동 내역이 없습니다.」와 「파이프라인 실행하기」만
+   * 보여, 필터 때문에 비었다는 사실도 풀 방법도 알 수 없었다. 필터 0건이면 별도 문구와 「필터 초기화」를 준다.
+   */
+  async function mockActivityFilteredEmpty(page: import('@playwright/test').Page) {
+    await page.route(
+      (url) => url.pathname === '/api/v1/dashboard/activity',
+      (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        const reqUrl = new URL(route.request().url());
+        const type = reqUrl.searchParams.get('type');
+        const severity = reqUrl.searchParams.get('severity');
+        // 필터가 하나라도 걸리면 0건, 없으면 1건
+        const items =
+          type || severity
+            ? []
+            : [
+                {
+                  id: 1,
+                  eventType: 'DATASET_CREATED',
+                  title: '데이터셋 생성 항목',
+                  description: 'desc',
+                  severity: 'INFO',
+                  entityType: 'DATASET',
+                  entityId: 1,
+                  occurredAt: '2026-05-15T10:00:00',
+                  isResolved: true,
+                },
+              ];
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ items, totalCount: items.length, hasMore: false }),
+        });
+      },
+    );
+  }
+
+  test('활동 피드 — 필터로 0건이면 「조건에 맞는 활동이 없습니다」와 「필터 초기화」가 보이고, 누르면 필터가 풀린다 (WD-875)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockActivityFilteredEmpty(page);
+    await page.goto('/');
+    await expect(page.getByText('데이터셋 생성 항목')).toBeVisible();
+
+    await page.getByRole('button', { name: '파이프라인', exact: true }).click();
+    await expect(page.getByText('조건에 맞는 활동이 없습니다.')).toBeVisible();
+    await expect(page.getByText('활동 내역이 없습니다.')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '파이프라인 실행하기' })).toHaveCount(0);
+
+    await page.getByRole('button', { name: '필터 초기화' }).click();
+    await expect(page.getByText('데이터셋 생성 항목')).toBeVisible();
+    const typeGroup = page.getByRole('group', { name: '유형' });
+    await expect(typeGroup.getByRole('button', { name: '전체', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByRole('combobox', { name: '상태' })).toHaveText('전체');
+    // 초기화 후 포커스는 사라진 버튼 대신 유형 「전체」 버튼으로 옮겨진다(무필터 조회는 캐시라 요청 캡처 대신 화면으로 판단)
+    await expect(typeGroup.getByRole('button', { name: '전체', exact: true })).toBeFocused();
+  });
+
+  test('활동 피드 — 상태 필터만으로 0건이어도 「조건에 맞는 활동이 없습니다」가 보인다 (WD-875)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockActivityFilteredEmpty(page);
+    await page.goto('/');
+    await expect(page.getByText('데이터셋 생성 항목')).toBeVisible();
+
+    await page.getByRole('combobox', { name: '상태' }).click();
+    await page.getByRole('option', { name: '실패' }).click();
+    await expect(page.getByText('조건에 맞는 활동이 없습니다.')).toBeVisible();
+    await expect(page.getByRole('button', { name: '필터 초기화' })).toBeVisible();
+    await expect(page.getByText('활동 내역이 없습니다.')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '파이프라인 실행하기' })).toHaveCount(0);
+
+    await page.getByRole('button', { name: '필터 초기화' }).click();
+    await expect(page.getByText('데이터셋 생성 항목')).toBeVisible();
+    await expect(page.getByRole('combobox', { name: '상태' })).toHaveText('전체');
+  });
+
   test('풀리스트 위젯("최근 대시보드"/"최근 데이터셋")은 스크롤 컨테이너에 우측 패딩이 있다 (이슈 #225)', async ({ authenticatedPage: page }) => {
     // 다수 항목으로 오버라이드하여 스크롤 발생 조건 확보
     await mockApi(page, 'GET', '/api/v1/analytics/dashboards', {
