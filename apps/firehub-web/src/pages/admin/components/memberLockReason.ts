@@ -27,10 +27,15 @@ export function memberLockReason(
   return null;
 }
 
+/** 시스템 ADMIN 을 붙이거나 뗄 수 없는 호출자(위임자·ADMIN 이 빠진 자기 자신)에게 보이는 잠금 이유(WD-116) — 서버 RoleGrantGuard 의 같은 거부 문구. 멤버 추가 창도 쓴다. */
+export const CALLER_SCOPE_REASON = '시스템 ADMIN 역할은 ADMIN 만 부여하거나 회수할 수 있습니다';
+
 /**
  * 역할 할당 화면에서 이 역할 체크를 잠그는 이유. 없으면 null. 서버 판정(UserService.setUserRoles·RoleGrantGuard)을 미리 보여 주는 안내다.
  *
  * - 시스템 ADMIN 은 ADMIN 만 부여·회수(WD-116) — 위임받은 역할 관리자에게는 붙이는 것도 떼는 것도 잠근다.
+ * - 자기 자신의 ADMIN 은 뺄 수 없다(#57, WD-867) — 소유자 사유보다 먼저 보여 이유는 하나만 나온다. ADMIN 이 없는 자기 자신(로그인 정보가 옛것)은
+ *   스스로 붙일 수 없으므로 위임자와 같은 문구로 잠근다.
  * - 워크스페이스 소유자의 ADMIN 은 뺄 수 없다(WD-282, 서버 409) — 지금 ADMIN 을 가진 소유자만 잠근다. 이미 빠진 소유자에게 다시 붙이는 것까지
  *   막으면 되돌릴 길이 없다.
  */
@@ -38,10 +43,18 @@ export function roleLockReason(
   role: RoleResponse,
   target: UserDetailResponse,
   isCallerAdmin: boolean,
+  currentUserId: number | undefined,
 ): string | null {
   if (!isSystemAdminRole(role)) return null;
-  if (!isCallerAdmin) return '시스템 ADMIN 역할은 ADMIN 만 부여하거나 회수할 수 있습니다';
-  if (target.membershipRole === 'OWNER' && target.roles.some((r) => r.id === role.id)) {
+  if (!isCallerAdmin) return CALLER_SCOPE_REASON;
+  const holdsRole = target.roles.some((r) => r.id === role.id);
+  if (currentUserId === target.id) {
+    // 자기 잠금 방지: 본인이 ADMIN 을 빼면 스스로 관리 화면을 잃는다. 소유자 사유보다 먼저 판정해 문구를 하나로 유지한다.
+    if (holdsRole) return '자기 자신의 ADMIN 역할은 뺄 수 없습니다';
+    // 내 ADMIN 이 그새 빠졌는데 로그인 정보(isCallerAdmin)만 옛것이면 — 지금은 ADMIN 이 아니라 스스로 붙일 수 없다(서버 403).
+    return CALLER_SCOPE_REASON;
+  }
+  if (target.membershipRole === 'OWNER' && holdsRole) {
     return '워크스페이스 소유자의 ADMIN 역할은 뺄 수 없습니다';
   }
   return null;

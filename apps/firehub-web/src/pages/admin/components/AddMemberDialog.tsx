@@ -35,15 +35,13 @@ import type { AddMemberFormData } from '../../../lib/validations/user';
 import { addExistingMemberSchema, addMemberSchema } from '../../../lib/validations/user';
 import type { ErrorResponse } from '../../../types/auth';
 import type { AddMemberRequest, MemberLookupResponse } from '../../../types/user';
+import { CALLER_SCOPE_REASON } from './memberLockReason';
 
 /** 새 계정 생성 직후 1회만 보여 줄 자격 증명. 닫으면 버린다(어디에도 저장·로그하지 않는다). */
 interface CreatedCredentials {
   username: string;
   password: string;
 }
-
-/** 시스템 ADMIN 역할 잠금 안내 — 서버 RoleGrantGuard 의 같은 거부 문구. */
-const ADMIN_ROLE_LOCK_REASON = '시스템 ADMIN 역할은 ADMIN 만 부여하거나 회수할 수 있습니다';
 
 /** 폼 초기값 — 닫을 때도 이 값으로 되돌려 임시 비밀번호가 폼 상태에 남지 않게 한다. */
 const EMPTY_FORM: AddMemberFormData = { email: '', name: '', temporaryPassword: '', roleIds: [] };
@@ -713,7 +711,7 @@ export function AddMemberDialog({ canAssignRoles, canReadRoles }: { canAssignRol
                         const lockReason = isUser
                           ? undefined
                           : adminOnlyLocked
-                            ? ADMIN_ROLE_LOCK_REASON
+                            ? CALLER_SCOPE_REASON
                             : blockedReasonById.get(role.id);
                         return (
                           <div key={role.id} className="flex flex-wrap items-center gap-x-2 gap-y-1">

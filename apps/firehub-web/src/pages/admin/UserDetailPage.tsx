@@ -504,17 +504,15 @@ function UserDetailView() {
           <CardContent className="space-y-4">
             <div className="space-y-3">
               {allRoles.map((role) => {
-                // 자기 자신의 ADMIN 역할 제거 차단 (#57)
-                const isSelf = currentUser?.id === userId;
-                const isOwnAdminRole = isSelf && role.name === 'ADMIN';
-                // 시스템 ADMIN 은 ADMIN 만(WD-116), 소유자의 ADMIN 은 뺄 수 없음(WD-282) — 열어 두면 저장 시점에야 403/409 를 받는다.
-                const lockReason = roleLockReason(role, user, isCallerAdmin);
+                // 자기 자신의 ADMIN 은 뺄 수 없음(#57, WD-867), 시스템 ADMIN 은 ADMIN 만(WD-116), 소유자의 ADMIN 은 뺄 수 없음(WD-282)
+                // — 열어 두면 저장 시점에야 403/409 를 받는다. 잠그는 이유도 함께 보인다.
+                const lockReason = roleLockReason(role, user, isCallerAdmin, currentUser?.id);
                 return (
                 <div key={role.id} className="flex flex-wrap items-center gap-x-3 gap-y-1">
                   <Checkbox
                     id={`role-${role.id}`}
                     checked={selectedRoleIds.includes(role.id)}
-                    disabled={isOwnAdminRole || lockReason !== null}
+                    disabled={lockReason !== null}
                     aria-describedby={lockReason ? `role-${role.id}-lock` : undefined}
                     onCheckedChange={(checked) => handleRoleToggle(role.id, checked === true)}
                   />

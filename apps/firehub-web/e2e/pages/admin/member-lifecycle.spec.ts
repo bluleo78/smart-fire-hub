@@ -242,3 +242,69 @@ test.describe('소유자 ADMIN 역할 잠금 (WD-282)', () => {
     await expect(page.getByRole('checkbox', { name: /ADMIN/ })).toBeEnabled();
   });
 });
+
+/**
+ * WD-867: 자기 자신의 ADMIN 역할 체크는 잠기는데 이유가 없었다(#57). 소유자 잠금(WD-282)처럼 이유 문구와 aria-describedby 를 보인다.
+ * 자기 자신이면서 소유자여도 이유는 자기 자신 문구 하나만 보인다.
+ */
+test.describe('자기 자신 ADMIN 역할 잠금 (WD-867)', () => {
+  const ROLES = [
+    createRole({ id: 1, name: 'USER', isSystem: true }),
+    createRole({ id: 2, name: 'ADMIN', isSystem: true }),
+    createRole({ id: 3, name: 'EDITOR', isSystem: false }),
+  ];
+  const SELF_REASON = '자기 자신의 ADMIN 역할은 뺄 수 없습니다';
+  /** 시스템 ADMIN 을 붙이거나 뗄 수 없는 호출자에게 보이는 이유(WD-116) */
+  const CALLER_SCOPE_REASON = '시스템 ADMIN 역할은 ADMIN 만 부여하거나 회수할 수 있습니다';
+
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page); // 호출자 = ADMIN(id 2)
+    await mockApi(page, 'GET', '/api/v1/roles', ROLES);
+  });
+
+  test('자기 자신의 ADMIN 체크는 잠기고 이유가 보이며, 다른 역할을 바꿔 저장하면 ADMIN 은 그대로 전송된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(page, 'GET', '/api/v1/users/2',
+      createUserDetail({ id: 2, membershipRole: 'MEMBER', roles: [ROLES[0], ROLES[1]] }));
+    const put = await mockApi(page, 'PUT', '/api/v1/users/2/roles', {}, { capture: true });
+    await page.goto('/admin/users/2');
+
+    const adminBox = page.getByRole('checkbox', { name: /ADMIN/ });
+    await expect(adminBox).toBeChecked();
+    await expect(adminBox).toBeDisabled();
+    await expect(adminBox).toHaveAccessibleDescription(SELF_REASON);
+    await expect(page.getByRole('checkbox', { name: /USER/ })).toBeEnabled();
+
+    await page.getByRole('checkbox', { name: /EDITOR/ }).check();
+    await page.getByRole('button', { name: '역할 저장' }).click();
+    expect((await put.waitForRequest()).payload).toEqual({ roleIds: [1, 2, 3], expectedRoleIds: [1, 2] });
+  });
+
+  test('자기 자신이 소유자여도 이유는 자기 자신 문구 하나만 보인다', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/users/2',
+      createUserDetail({ id: 2, membershipRole: 'OWNER', roles: [ROLES[0], ROLES[1]] }));
+    await page.goto('/admin/users/2');
+
+    const adminBox = page.getByRole('checkbox', { name: /ADMIN/ });
+    await expect(adminBox).toBeChecked();
+    await expect(adminBox).toBeDisabled();
+    await expect(adminBox).toHaveAccessibleDescription(SELF_REASON);
+    await expect(page.getByText('워크스페이스 소유자의 ADMIN 역할은 뺄 수 없습니다')).toHaveCount(0);
+  });
+
+  test('ADMIN 이 그새 빠진 자기 자신(로그인 정보만 ADMIN)은 스스로 붙일 수 없어 잠기고 그 이유가 보인다', async ({
+    authenticatedPage: page,
+  }) => {
+    // 다른 관리자가 내 ADMIN 을 뺐지만 로그인 정보(users/me)는 아직 ADMIN — 서버는 스스로 붙이기를 403 으로 막는다.
+    await mockApi(page, 'GET', '/api/v1/users/2',
+      createUserDetail({ id: 2, membershipRole: 'MEMBER', roles: [ROLES[0]] }));
+    await page.goto('/admin/users/2');
+
+    const adminBox = page.getByRole('checkbox', { name: /ADMIN/ });
+    await expect(adminBox).not.toBeChecked();
+    await expect(adminBox).toBeDisabled();
+    await expect(adminBox).toHaveAccessibleDescription(CALLER_SCOPE_REASON);
+    await expect(page.getByText(SELF_REASON)).toHaveCount(0);
+  });
+});
