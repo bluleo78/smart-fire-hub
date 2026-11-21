@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { Ban, Clock, Code, Database, GitBranch, Globe, Link, User } from 'lucide-react';
+import { Ban, Clock, Code, Database, GitBranch, Globe, History, Link, User } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo,useRef, useState } from 'react';
 import { Link as RouterLink, useNavigate,useParams } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -128,6 +128,9 @@ export default function PipelineEditorPage() {
   const [executionPage, setExecutionPage] = useState(0);
   const { data: executionPageData } = useExecutions(pipelineId ?? 0, executionPage);
   const executions = executionPageData?.content;
+  // 첫 페이지 응답이 와서 비어 있음이 확인됐는지(WD-884) — 로딩 중·조회 실패·빈 뒤쪽 페이지는 기록 유무를 모르므로
+  // 빈 상태의 「첫 실행」 안내를 이때만 보인다.
+  const isConfirmedEmpty = executionPage === 0 && executionPageData?.content.length === 0;
   // 보던 페이지가 사라지면(보존 기간 정리로 이력이 줄어든 경우 등) 마지막 페이지로 옮긴다 — 빈 페이지에 머물면 「실행 기록이
   // 없습니다」만 보이고 페이지 나눔도 사라져 앞 페이지로 돌아갈 수 없다.
   // 다른 페이지의 캐시는 이력이 줄기 전 값이라(기본 staleTime 30초 동안 다시 받지 않는다) 이력 쿼리를 무효화해 새로 받게 한다.
@@ -573,8 +576,20 @@ export default function PipelineEditorPage() {
               />
             </div>
           ) : !executions || executions.length === 0 ? (
-            <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
-              실행 기록이 없습니다.
+            /* 빈 상태 안내(WD-884) — 한 줄만 보이던 것을 트리거 탭 빈 상태와 같은 모양(아이콘+상태+다음 행동)으로 맞춘다.
+               실행 권한이 없으면 헤더의 「실행」 버튼이 숨겨지므로(WD-219) 그 버튼을 가리키는 문구 대신
+               기록이 쌓이는 때를 안내한다. */
+            <div className="flex flex-col items-center justify-center h-full px-4 text-center">
+              <History className="h-12 w-12 text-muted-foreground/30 mb-4" aria-hidden="true" />
+              <p className="text-muted-foreground text-sm">실행 기록이 없습니다.</p>
+              {/* 다음 행동 안내는 빈 결과가 확인됐을 때만(isConfirmedEmpty, WD-884) */}
+              {isConfirmedEmpty && (
+                <p className="text-muted-foreground text-xs mt-1">
+                  {canExecutePipeline
+                    ? '상단의 「실행」 버튼으로 첫 실행을 시작할 수 있습니다. 트리거를 추가하면 자동으로 실행됩니다.'
+                    : '실행 권한이 있는 사용자가 실행하거나 트리거가 실행하면 이곳에 기록이 쌓입니다.'}
+                </p>
+              )}
             </div>
           ) : (
             <ScrollArea className="h-full">
