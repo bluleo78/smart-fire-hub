@@ -159,4 +159,28 @@ test.describe('데이터셋 생성 — 2단계 유형 선택 모달 플로우', 
 
     await expect(page).toHaveURL('/data/datasets/100');
   });
+
+  test('2단계 출처 카드는 이모지 대신 1단계와 같은 SVG 아이콘을 쓰고 버튼 이름에 이모지가 없다 (WD-881)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDatasetMocks(page);
+    await page.goto('/data/datasets');
+    await page.getByRole('button', { name: '새 데이터셋' }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByRole('button', { name: '테이블' }).click();
+    await expect(dialog.getByText('출처를 선택하세요')).toBeVisible();
+
+    // 이모지가 이름에 섞이면 exact 매칭이 실패한다 — 스크린리더가 읽는 이름이 깨끗한지 확인
+    const source = dialog.getByRole('button', { name: '원본 직접 수집', exact: true });
+    const derived = dialog.getByRole('button', { name: '파생 가공/집계', exact: true });
+    await expect(source).toBeVisible();
+    await expect(derived).toBeVisible();
+
+    // 1단계 카드와 같은 lucide SVG(text-primary) 1개씩, 이모지 글리프는 없다
+    for (const card of [source, derived]) {
+      await expect(card.locator('svg.text-primary')).toHaveCount(1);
+      await expect(card).not.toContainText('🗃️');
+      await expect(card).not.toContainText('🔀');
+    }
+  });
 });
