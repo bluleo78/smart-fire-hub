@@ -464,6 +464,20 @@ class TriggerServiceExtTest extends IntegrationTestBase {
         .containsEntry("allowedIps", List.of("10.0.0.0/8", ""));
   }
 
+  /** WD-868: 공백뿐인 allowedIps 도 저장은 통과하고 값은 그대로 보존된다(호출 판정에서만 무시). */
+  @Test
+  void createApiTrigger_allowedIpsBlankOnly_saved() {
+    TriggerResponse created =
+        triggerService.createTrigger(
+            pipelineId,
+            new CreateTriggerRequest(
+                "Blank only IPs", TriggerType.API, null, Map.of("allowedIps", List.of(" "))),
+            testUserId);
+
+    assertThat(triggerService.getTriggerById(created.id()).config())
+        .containsEntry("allowedIps", List.of(" "));
+  }
+
   /** API 트리거를 allowedIps 하나로 만든다(WD-243). 응답 config 의 rawToken 이 원본 토큰이다. */
   private TriggerResponse createApiTrigger(String name) {
     return triggerService.createTrigger(
