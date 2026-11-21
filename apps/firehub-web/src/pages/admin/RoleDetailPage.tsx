@@ -125,11 +125,15 @@ function RoleDetailView() {
   // 렌더 중 watch 대신 구독을 써 글자마다 페이지 전체(권한 격자)를 다시 그리지 않는다. reset(불러오기)은 칸 이름이 없어 건너뛴다.
   // 저장 요청 중에 고쳤는지도 함께 적어, 늦게 온 실패가 이미 고친 값 아래에 옛 오류를 띄우지 않게 한다(onRoleSubmit).
   const editedSinceSubmitRef = useRef(false);
+  // 서버 400 이 칸에 붙인 오류의 칸 이름 — 고치면 그 칸 오류를 지운다(위 구독).
+  const serverFieldErrorsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     const subscription = form.watch((_values, { name }) => {
       if (name !== 'name' && name !== 'description') return;
       editedSinceSubmitRef.current = true;
       setRoleError('');
+      // 서버가 붙인 칸 오류(WD-865)도 그 칸을 고치면 지운다 — 스키마 오류는 resolver 가 다시 판정하므로 서버 것만 지운다.
+      if (serverFieldErrorsRef.current.delete(name)) form.clearErrors(name);
     });
     return () => subscription.unsubscribe();
   }, [form]);
@@ -280,6 +284,8 @@ function RoleDetailView() {
     setIsSavingRole(true);
     setRoleError('');
     editedSinceSubmitRef.current = false;
+    // 새 저장은 resolver 가 칸 오류를 다시 판정하므로 지난 서버 칸 오류 기록도 비운다.
+    serverFieldErrorsRef.current.clear();
     try {
       await rolesApi.updateRole(role.id, {
         name: data.name,
@@ -328,13 +334,20 @@ function RoleDetailView() {
         setIsRoleInfoConflictOpen(true);
         return;
       }
-      // 저장 요청 중에 이름·설명을 더 고쳤으면 이 실패는 지금 입력에 대한 것이 아니다 — 다음 저장이 새로 판정한다(WD-866)
+      // 저장 요청 중에 이름·설명을 더 고쳤으면(WD-866): 400 입력 검증 오류는 지금 입력에 대한 것이 아니므로 넘긴다 — 다음 저장이 새로 판정한다.
+      // 그 밖의 실패(500·403·네트워크)는 저장되지 않았다는 사실이 그대로라 알린다. 입력은 이미 바뀌었으니 입력란 아래 대신 토스트로.
       // 칸 오류 매핑(WD-865)보다 먼저 봐야 고친 칸에 옛 오류가 다시 붙지 않는다.
-      if (editedSinceSubmitRef.current) return;
+      if (editedSinceSubmitRef.current) {
+        if (!(axios.isAxiosError(error) && error.response?.status === 400)) {
+          toast.error(extractApiError(error, '역할 업데이트에 실패했습니다.'));
+        }
+        return;
+      }
       // 400 의 설명 필드 오류는 설명 칸에 붙인다(WD-865). 설명 오류가 실린 응답일 때만 — 이름 오류 흐름은 아래 그대로(WD-866 범위).
       // 이 화면은 root 를 그리지 않으므로 설명 외 필드 문구는 기존 역할 오류 영역으로 잇는다.
       const mapped = mapFieldErrors(error, form.setError, ['description']);
       if (mapped?.setFields.includes('description')) {
+        serverFieldErrorsRef.current = new Set(['description']);
         form.setFocus('description');
         if (mapped.unknownMessage) setRoleError(mapped.unknownMessage);
         return;

@@ -320,4 +320,50 @@ test.describe('역할 상세 — 지난 저장 오류 (WD-866)', () => {
     await expect(page.getByText(DUP_MSG)).toBeHidden();
     await expect(page.getByLabel('역할 이름')).toHaveValue('TESTROLE2');
   });
+
+  test('저장 중에 고쳤어도 400 이 아닌 실패(500)는 안내로 알린다 (WD-866)', async ({ authenticatedPage: page }) => {
+    await mockRoleInfoServer(page);
+    const SERVER_MSG = '서버 오류로 저장하지 못했습니다';
+    // PUT 응답을 붙잡아 두었다가, 이름을 고친 뒤에 500 을 돌려준다
+    const held = await holdApi(page, 'PUT', '/api/v1/roles/3', 500, { status: 500, message: SERVER_MSG });
+    await page.goto('/admin/roles/3');
+    await expect(page.getByLabel('역할 이름')).toHaveValue('EDITOR');
+
+    await page.getByLabel('역할 이름').fill('USER');
+    await roleInfoSave(page).click();
+    await expect.poll(() => held.requests.length).toBe(1);
+    await page.getByLabel('역할 이름').fill('TESTROLE2');
+    held.release();
+
+    // 저장되지 않았다는 사실은 그대로라 토스트로 알린다 — 고친 입력란 아래에는 붙이지 않는다
+    await expect(page.locator('[data-sonner-toast]').filter({ hasText: SERVER_MSG })).toBeVisible();
+    await expect(roleInfoSave(page)).toBeEnabled();
+    await expect(page.getByLabel('역할 이름')).toHaveValue('TESTROLE2');
+    await expect(page.locator('form').filter({ has: page.getByLabel('역할 이름') }).getByText(SERVER_MSG)).toHaveCount(0);
+  });
+
+  test('서버가 설명 칸에 붙인 오류는 설명을 고치면 사라진다 (WD-866·WD-865)', async ({ authenticatedPage: page }) => {
+    await mockRoleInfoServer(page);
+    const FIELD_MSG = '설명에 쓸 수 없는 문자가 있습니다';
+    await page.route(
+      (url) => url.pathname === '/api/v1/roles/3',
+      (route) =>
+        route.request().method() === 'PUT'
+          ? route.fulfill({
+              status: 400,
+              contentType: 'application/json',
+              body: JSON.stringify({ status: 400, message: '입력값이 올바르지 않습니다', errors: { description: FIELD_MSG } }),
+            })
+          : route.fallback(),
+    );
+    await page.goto('/admin/roles/3');
+    await expect(page.getByLabel('역할 이름')).toHaveValue('EDITOR');
+
+    await page.getByLabel('설명').fill('새 설명');
+    await roleInfoSave(page).click();
+    await expect(page.getByText(FIELD_MSG)).toBeVisible();
+
+    await page.getByLabel('설명').fill('새 설명 2');
+    await expect(page.getByText(FIELD_MSG)).toBeHidden();
+  });
 });
