@@ -25,7 +25,8 @@ function Tabs({
 
 const tabsListVariants = cva(
   // max-sm에서만 줄바꿈(#345 Reflow/SC 1.4.10) — 320px 폭에서 탭이 한 줄에 밀려 페이지가 가로 스크롤되는 것을 막는다.
-  // WD-883: 가로 탭 목록 높이를 h-9(36px)→h-10(40px)로 키워 트리거(100%-1px, p-[3px])가 29→33px 이 되게 한다(WCAG 2.5.8 클릭 대상 32px 이상).
+  // WD-883·WD-891: 가로 탭 목록 높이를 h-9(36px)→h-10(40px)로 키워 트리거(100%-1px, p-[3px])가 29→33px 이 되게 한다(WCAG 2.5.8 클릭 대상 32px 이상).
+  // 근거: 40 − p-[3px] 6px = 안쪽 34 − 트리거 1px = 트리거 33px ≥ 최소 히트 영역 32px.
   // 높이는 고정 h-10 대신 max-sm 한정으로 auto로 풀어 두 번째 줄이 잘리지 않게 한다. sm 이상 데스크톱 표현은 그대로다.
   "rounded-lg p-[3px] group-data-[orientation=horizontal]/tabs:h-10 max-sm:group-data-[orientation=horizontal]/tabs:h-auto max-sm:flex-wrap data-[variant=line]:rounded-none group/tabs-list text-muted-foreground inline-flex w-fit items-center justify-center group-data-[orientation=vertical]/tabs:h-fit group-data-[orientation=vertical]/tabs:flex-col",
   {
