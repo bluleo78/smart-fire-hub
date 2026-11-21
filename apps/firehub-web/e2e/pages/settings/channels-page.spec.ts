@@ -1,6 +1,9 @@
+import type { Locator } from '@playwright/test';
+
 import type { ChannelSetting } from '../../../src/api/channels';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { holdRequests } from '../../fixtures/hold-api';
 import { expectSingleLine } from '../../fixtures/long-name-layout';
 import { expectNoHorizontalOverflow } from '../../fixtures/long-unbroken-name';
 
@@ -9,14 +12,17 @@ import { expectNoHorizontalOverflow } from '../../fixtures/long-unbroken-name';
  * - /api/v1/channels/settings를 모킹하여 백엔드 없이 테스트한다.
  */
 
-/** 기본 채널 설정 목업 데이터 — ChannelSetting 타입으로 API 스펙 정합성 보장 */
+/**
+ * 기본 채널 설정 목업 데이터 — ChannelSetting 타입으로 API 스펙 정합성 보장.
+ * displayAddress 는 서버(ChannelSettingsService)처럼 모든 채널에 채운다 — CHAT 「웹 인박스」, 미연결 KAKAO 「카카오톡」 (WD-896)
+ */
 const MOCK_CHANNEL_SETTINGS: ChannelSetting[] = [
   {
     channel: 'CHAT',
     enabled: true,
     connected: true,
     needsReauth: false,
-    displayAddress: null,
+    displayAddress: '웹 인박스',
     oauthStartUrl: null,
     workspaceId: null,
   },
@@ -34,7 +40,7 @@ const MOCK_CHANNEL_SETTINGS: ChannelSetting[] = [
     enabled: false,
     connected: false,
     needsReauth: false,
-    displayAddress: null,
+    displayAddress: '카카오톡',
     oauthStartUrl: 'https://kauth.kakao.com/oauth/authorize?client_id=test',
     workspaceId: null,
   },
@@ -556,6 +562,59 @@ test.describe('채널 설정 페이지', () => {
       await expectSingleLine(h1);
       await expectNoHorizontalOverflow(page);
     }).toPass();
+  });
+
+  test('로딩 스켈레톤이 실제 채널 카드와 같은 높이·모서리·테두리라 로딩이 끝나도 밀리지 않는다 (WD-896)', async ({ authenticatedPage: page }) => {
+    // 기본(권한 로딩 완료·notification:admin) 상태 기준 — SLACK 의 OAuth 줄이 버튼으로 그려진 뒤에 잰다
+    await setupChannelMocks(page, ['notification:admin']);
+
+    const skeletons = page.getByTestId('channel-card-skeleton');
+    // 스켈레톤도 Card(data-slot="card")라서 제외해야 실제 카드만 가리킨다
+    const cards = page.locator('main [data-slot="card"]:not([data-testid="channel-card-skeleton"])');
+    const slackReconnect = page.getByRole('button', { name: '재연결' });
+    const measure = (loc: Locator) =>
+      loc.evaluateAll((els) =>
+        els.map((el) => {
+          const cs = window.getComputedStyle(el);
+          return {
+            height: el.getBoundingClientRect().height,
+            radius: cs.borderTopLeftRadius,
+            border: cs.borderTopWidth,
+          };
+        }),
+      );
+
+    /** 주어진 폭에서 설정 응답을 붙잡아 스켈레톤을 재고, 풀어 준 뒤 실제 카드를 재서 둘을 돌려준다 */
+    const measureLoading = async (width: number) => {
+      // 나중에 등록한 라우트가 먼저 받으므로 단계마다 새로 붙잡는다 — 풀면 setupChannelMocks 의 응답으로 넘어간다
+      const held = await holdRequests(page, '/api/v1/channels/settings', 'GET');
+      await page.setViewportSize({ width, height: 800 });
+      await page.goto('/settings/channels');
+      await expect(skeletons).toHaveCount(4);
+      await expectNoHorizontalOverflow(page);
+      const before = await measure(skeletons);
+      held.release();
+      await expect(skeletons).toHaveCount(0);
+      await expect(cards).toHaveCount(4);
+      await expect(slackReconnect).toBeVisible();
+      return { before, after: await measure(cards) };
+    };
+
+    // 1) 데스크톱 2열 — 높이·모서리·테두리
+    const desktop = await measureLoading(1280);
+    desktop.before.forEach((s, i) => {
+      expect(Math.abs(s.height - desktop.after[i].height)).toBeLessThanOrEqual(2);
+      expect(s.radius).toBe(desktop.after[i].radius);
+      expect(s.border).toBe(desktop.after[i].border);
+    });
+
+    // 2) 모바일 1열(같은 줄에 늘려지는 카드가 없어 4장 모두 자기 높이), 좁은 2열(EMAIL 설명이 두 줄로 꺾이는 폭)
+    for (const width of [375, 768]) {
+      const narrow = await measureLoading(width);
+      narrow.before.forEach((s, i) => {
+        expect(Math.abs(s.height - narrow.after[i].height), `${width}px ${i}번째 카드`).toBeLessThanOrEqual(2);
+      });
+    }
   });
 
   /**

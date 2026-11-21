@@ -38,6 +38,7 @@ import {
   useUpdateChannelPreferenceMutation,
 } from '../../../hooks/queries/useChannelSettings';
 import { extractApiError } from '../../../lib/api-error';
+import { CHANNEL_DESCRIPTIONS } from './channelDescriptions';
 import { ChannelStatusBadge } from './ChannelStatusBadge';
 import { OAuthConnectButton } from './OAuthConnectButton';
 
@@ -122,14 +123,6 @@ const CHANNEL_LABELS: Record<ChannelType, string> = {
   EMAIL: '이메일',
   KAKAO: '카카오 알림톡',
   SLACK: 'Slack',
-};
-
-/** 채널별 설명 */
-const CHANNEL_DESCRIPTIONS: Record<ChannelType, string> = {
-  CHAT: '앱 내 알림 채널 — 항상 활성화됩니다.',
-  EMAIL: '이메일로 알림을 받습니다. 계정 이메일로 발송됩니다.',
-  KAKAO: '카카오 알림톡으로 알림을 받습니다.',
-  SLACK: 'Slack 워크스페이스로 알림을 받습니다.',
 };
 
 interface ChannelCardProps {

@@ -1,8 +1,12 @@
 import { AlertTriangle, BellRing } from 'lucide-react';
 
-import { Skeleton } from '../../components/ui/skeleton';
+import type { ChannelType } from '../../api/channels';
 import { useChannelSettings } from '../../hooks/queries/useChannelSettings';
 import { ChannelCard } from './components/ChannelCard';
+import { ChannelCardSkeleton } from './components/ChannelCardSkeleton';
+
+/** 로딩 중 그릴 스켈레톤 순서 — 서버가 내려주는 채널 순서(CHAT·EMAIL·KAKAO·SLACK)와 같아야 카드별 높이가 맞는다 (WD-896) */
+const CHANNEL_SKELETON_ORDER: readonly ChannelType[] = ['CHAT', 'EMAIL', 'KAKAO', 'SLACK'];
 
 /**
  * 알림 채널 설정 페이지 (/settings/channels)
@@ -26,11 +30,11 @@ export default function ChannelsPage() {
         </div>
       </div>
 
-      {/* 로딩 스켈레톤 */}
+      {/* 로딩 스켈레톤 — 실제 카드와 같은 모양·높이(서버 순서 CHAT/EMAIL/KAKAO/SLACK 에 맞춘 모양)라 로딩 뒤 밀림이 없다 (WD-896) */}
       {isLoading && (
         <div className="grid gap-4 sm:grid-cols-2">
-          {[0, 1, 2, 3].map((i) => (
-            <Skeleton key={i} className="h-40 w-full rounded-lg" />
+          {CHANNEL_SKELETON_ORDER.map((channel) => (
+            <ChannelCardSkeleton key={channel} channel={channel} />
           ))}
         </div>
       )}
