@@ -133,7 +133,8 @@ public class TriggerService {
   private final WebhookSecretCipher webhookSecretCipher;
   // 트리거 생성·수정·켜기/끄기·삭제 감사 기록(WD-462)
   private final PipelineAuditRecorder auditRecorder;
-  // 발화 시도(실행 접수·FIRED 기록·상태 갱신)를 감싸는 저장점(NESTED) 템플릿 — 실패가 발화 트랜잭션을 rollback-only 로 만들지 않게 한다(WD-858)
+  // 발화 시도(실행 접수·FIRED 기록·상태 갱신)를 감싸는 저장점(NESTED) 템플릿 — 실패가 발화 트랜잭션을 rollback-only 로 만들지 않게
+  // 한다(WD-858)
   private final TransactionTemplate fireSavepoint;
 
   public TriggerService(
@@ -1536,8 +1537,8 @@ public class TriggerService {
    * API 트리거의 allowedIps 목록에 포함된 각 항목이 유효한 IPv4 주소 또는 CIDR 표기인지 검증한다. 잘못된 형식이 있으면
    * IllegalArgumentException(→ 400)을 던진다.
    *
-   * <p>형식 검사에 앞서 모양(문자열 목록)부터 검사한다(WD-859). 목록이 아니거나 문자열이 아닌 원소(null 포함)가 저장되면 외부 호출 때 IP 허용
-   * 판정이 ClassCastException(500)으로 터지므로, 저장 시점에 400 으로 거절한다. 키가 없거나 값이 null 이면 제한 없음이다.
+   * <p>형식 검사에 앞서 모양(문자열 목록)부터 검사한다(WD-859). 목록이 아니거나 문자열이 아닌 원소(null 포함)가 저장되면 외부 호출 때 IP 허용 판정이
+   * ClassCastException(500)으로 터지므로, 저장 시점에 400 으로 거절한다. 키가 없거나 값이 null 이면 제한 없음이다.
    */
   private void validateAllowedIps(Map<String, Object> config) {
     Object allowedIpsObj = config.get("allowedIps");
@@ -1574,8 +1575,8 @@ public class TriggerService {
   }
 
   /**
-   * 값이 "모든 원소가 문자열인 목록"인지 판정한다(WD-859). 목록이 아니거나 문자열이 아닌 원소(null 포함)가 하나라도 있으면 false 다. 저장 검증과 호출 시 판정이
-   * 같은 규칙을 쓰도록 한 곳에 둔다.
+   * 값이 "모든 원소가 문자열인 목록"인지 판정한다(WD-859). 목록이 아니거나 문자열이 아닌 원소(null 포함)가 하나라도 있으면 false 다. 저장 검증과 호출 시
+   * 판정이 같은 규칙을 쓰도록 한 곳에 둔다.
    */
   private static boolean isStringList(Object value) {
     if (!(value instanceof List<?> list)) return false;
@@ -1606,24 +1607,54 @@ public class TriggerService {
     return callerCheck != null && !callerCheck.test(trigger);
   }
 
-  /** 트리거 config 의 허용 IP 원본 값(없으면 null). 형 변환 없이 돌려준다 — {@link #isIpAllowed(String, Object)} 참고. */
-  public static Object allowedIps(TriggerResponse trigger) {
+  /** 트리거 config 의 허용 IP 원본 값(없으면 null). 옛 값은 문자열 목록이 아닐 수 있어 형 변환 없이 돌려준다. */
+  private static Object allowedIps(TriggerResponse trigger) {
     return trigger.config().get("allowedIps");
   }
 
+  /** 차단 로그에 찍을 허용 IP 설명 — 컨트롤러 차단 로그용. 규칙은 {@link #describeAllowedIps(Object)}. */
+  public static String allowedIpsForLog(TriggerResponse trigger) {
+    return describeAllowedIps(allowedIps(trigger));
+  }
+
   /**
-   * 요청 IP 가 트리거의 허용 IP 목록에 맞는지 — 앞 검사와 잠금 뒤 재검사(WD-857)가 같은 판정을 쓴다. 잘못된 값 처리는 {@link
-   * #isIpAllowed(String, Object)} 참고.
+   * 허용 IP 원본 값을 로그용 글로 바꾼다(WD-859). 문자열 목록·null 이면 그 값을, 아니면(옛 잘못된 값) 큰 중첩 값이 호출마다 통째로 찍히지 않도록 형
+   * 이름만 낸다 — 서비스 경고와 컨트롤러 차단 로그가 이 한 규칙을 쓴다.
+   */
+  private static String describeAllowedIps(Object raw) {
+    if (raw == null || isStringList(raw)) return String.valueOf(raw);
+    return "<" + raw.getClass().getName() + ">";
+  }
+
+  /**
+   * 요청 IP 가 트리거의 허용 IP 목록에 맞는지 — 앞 검사와 잠금 뒤 재검사(WD-857)가 같은 판정을 쓴다. 저장 시 검증(WD-859) 이전에 들어간 옛 값은
+   * 문자열 목록이 아닐 수 있어, 목록이 아니거나 문자열이 아닌 원소(null 포함)가 하나라도 있으면 보안상 값 전체를 거절(fail closed)한다 — 앞 원소가 맞아도
+   * 허용하지 않는다. allowedIps 가 없으면(null) 제한 없음이다.
+   *
+   * <p>원본 값을 받는 오버로드를 두지 않는다(WD-859) — 나란히 두면 {@code null} 인자가 TriggerResponse 쪽으로 풀려 NPE 가 나는 함정이
+   * 생긴다.
+   *
+   * @param sourceIp 요청 IP
+   * @param trigger 허용 IP 를 읽을 트리거(잠금 뒤 재검사는 다시 읽은 것)
+   * @return 허용 여부
    */
   public boolean isIpAllowed(String sourceIp, TriggerResponse trigger) {
-    return isIpAllowed(sourceIp, allowedIps(trigger));
+    Object raw = allowedIps(trigger);
+    if (raw == null) return true;
+    if (!isStringList(raw)) {
+      log.warn("allowedIps 가 문자열 목록이 아니라 접근을 거절한다: {}", describeAllowedIps(raw));
+      return false;
+    }
+    @SuppressWarnings("unchecked")
+    List<String> ips = (List<String>) raw;
+    return matchesAnyAllowedIp(sourceIp, ips);
   }
 
   /**
    * 주어진 sourceIp가 allowedIps 목록의 CIDR 범위에 포함되는지 확인한다. allowedIps가 비어 있으면 모든 IP를 허용한다. IPv4-mapped
    * IPv6 주소(::ffff:x.x.x.x)는 IPv4로 변환하여 비교한다.
    *
-   * <p>형 검사는 하지 않으므로 {@code private} 이다 — {@link #isIpAllowed(String, Object)} 참고.
+   * <p>형 검사는 하지 않으므로 {@code private} 이다 — {@link #isIpAllowed(String, TriggerResponse)} 참고.
    *
    * @param sourceIp 요청 IP (IPv4 또는 ::ffff:x.x.x.x 형태의 IPv6)
    * @param allowedIps 허용 IP/CIDR 목록
@@ -1647,26 +1678,6 @@ public class TriggerService {
       }
     }
     return false;
-  }
-
-  /**
-   * 저장된 config 의 allowedIps 원본 값으로 허용 여부를 판정한다. 저장 시 검증(WD-859) 이전에 들어간 옛 값은 문자열 목록이 아닐 수 있어, 목록이 아니거나
-   * 문자열이 아닌 원소(null 포함)가 하나라도 있으면 보안상 값 전체를 거절(fail closed)한다 — 앞 원소가 맞아도 허용하지 않는다. null 은 제한 없음이다.
-   *
-   * @param sourceIp 요청 IP
-   * @param allowedIpsRaw config 에서 꺼낸 allowedIps 원본(null 가능)
-   * @return 허용 여부
-   */
-  public boolean isIpAllowed(String sourceIp, Object allowedIpsRaw) {
-    if (allowedIpsRaw == null) return true;
-    if (!isStringList(allowedIpsRaw)) {
-      // 큰 중첩 값이 호출마다 로그에 찍히지 않도록 값 대신 형만 남긴다
-      log.warn("allowedIps 가 문자열 목록이 아니라 접근을 거절한다: {}", allowedIpsRaw.getClass().getName());
-      return false;
-    }
-    @SuppressWarnings("unchecked")
-    List<String> ips = (List<String>) allowedIpsRaw;
-    return matchesAnyAllowedIp(sourceIp, ips);
   }
 
   /** IPv4-mapped IPv6 주소(::ffff:A.B.C.D 또는 ::1)를 IPv4 문자열로 변환한다. 이미 IPv4이면 그대로 반환. */

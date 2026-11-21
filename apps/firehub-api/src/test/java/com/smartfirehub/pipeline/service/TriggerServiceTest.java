@@ -11,6 +11,7 @@ import com.smartfirehub.pipeline.exception.TriggerNotFoundException;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
 import java.time.LocalDateTime;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import org.jooq.DSLContext;
@@ -504,10 +505,18 @@ class TriggerServiceTest extends IntegrationTestBase {
   /** WD-402: 단일 주소 항목은 /128 로 비교해 IPv6 축약·전개 표기가 같은 주소로 맞는다. */
   @Test
   void isIpAllowed_singleIpv6Entry_matchesAcrossNotations() {
-    assertThat(triggerService.isIpAllowed("2001:db8::1", List.of("2001:db8:0:0:0:0:0:1"))).isTrue();
-    assertThat(triggerService.isIpAllowed("2001:db8:0:0:0:0:0:1", List.of("2001:db8::1"))).isTrue();
-    assertThat(triggerService.isIpAllowed("2001:db8::2", List.of("2001:db8::1"))).isFalse();
-    assertThat(triggerService.isIpAllowed("10.0.0.1", List.of("10.0.0.1"))).isTrue();
+    assertThat(
+            triggerService.isIpAllowed(
+                "2001:db8::1", apiTriggerWith(List.of("2001:db8:0:0:0:0:0:1"))))
+        .isTrue();
+    assertThat(
+            triggerService.isIpAllowed(
+                "2001:db8:0:0:0:0:0:1", apiTriggerWith(List.of("2001:db8::1"))))
+        .isTrue();
+    assertThat(triggerService.isIpAllowed("2001:db8::2", apiTriggerWith(List.of("2001:db8::1"))))
+        .isFalse();
+    assertThat(triggerService.isIpAllowed("10.0.0.1", apiTriggerWith(List.of("10.0.0.1"))))
+        .isTrue();
   }
 
   /**
@@ -516,16 +525,21 @@ class TriggerServiceTest extends IntegrationTestBase {
    */
   @Test
   void isIpAllowed_nonLiteralEntryOrSource_neverMatchesBySpoofing() {
-    assertThat(triggerService.isIpAllowed("10.0.0.1", List.of("010.0.0.1"))).isFalse();
-    assertThat(triggerService.isIpAllowed("010.0.0.1", List.of("010.0.0.1"))).isFalse();
-    assertThat(triggerService.isIpAllowed("myhost", List.of("myhost"))).isFalse();
-    assertThat(triggerService.isIpAllowed("garbage", List.of("10.0.0.0/8"))).isFalse();
-    assertThat(triggerService.isIpAllowed("[2001:db8::7]", List.of("2001:db8::/32"))).isTrue();
+    assertThat(triggerService.isIpAllowed("10.0.0.1", apiTriggerWith(List.of("010.0.0.1"))))
+        .isFalse();
+    assertThat(triggerService.isIpAllowed("010.0.0.1", apiTriggerWith(List.of("010.0.0.1"))))
+        .isFalse();
+    assertThat(triggerService.isIpAllowed("myhost", apiTriggerWith(List.of("myhost")))).isFalse();
+    assertThat(triggerService.isIpAllowed("garbage", apiTriggerWith(List.of("10.0.0.0/8"))))
+        .isFalse();
+    assertThat(
+            triggerService.isIpAllowed("[2001:db8::7]", apiTriggerWith(List.of("2001:db8::/32"))))
+        .isTrue();
   }
 
   /**
-   * WD-859: 잠금 뒤 재검사 경로(TriggerResponse 오버로드)도 옛 잘못된 allowedIps(문자열·비문자열 원소)를 형 변환 오류(500)나 통과 없이 거절한다. 정상 목록은
-   * 그대로 판정한다.
+   * WD-859: 잠금 뒤 재검사 경로(TriggerResponse 를 받는 isIpAllowed)도 옛 잘못된 allowedIps(문자열·비문자열 원소)를 형 변환
+   * 오류(500)나 통과 없이 거절한다. 정상 목록은 그대로 판정한다.
    */
   @Test
   void isIpAllowed_triggerResponseWithLegacyBadShape_failsClosed() {
@@ -534,6 +548,20 @@ class TriggerServiceTest extends IntegrationTestBase {
         .isFalse();
     assertThat(triggerService.isIpAllowed("127.0.0.1", apiTriggerWith(List.of("127.0.0.0/8"))))
         .isTrue();
+  }
+
+  /** WD-859 리뷰 후속: 차단 로그용 설명은 문자열 목록이면 목록을, 옛 잘못된 값이면 원값 대신 형 이름만 낸다(큰 중첩 값이 호출마다 찍히지 않게). */
+  @Test
+  void allowedIpsForLog_listShowsValues_badShapeShowsTypeOnly() {
+    assertThat(TriggerService.allowedIpsForLog(apiTriggerWith(List.of("10.0.0.0/8"))))
+        .isEqualTo("[10.0.0.0/8]");
+    assertThat(TriggerService.allowedIpsForLog(apiTriggerWith(null))).isEqualTo("null");
+    Object nested = Map.of("secret", "big-nested");
+    assertThat(TriggerService.allowedIpsForLog(apiTriggerWith(nested)))
+        .isEqualTo("<" + nested.getClass().getName() + ">");
+    Object mixed = List.of("10.0.0.1", 5);
+    assertThat(TriggerService.allowedIpsForLog(apiTriggerWith(mixed)))
+        .isEqualTo("<" + mixed.getClass().getName() + ">");
   }
 
   /** config 에 allowedIps 원본 값만 담은 API 트리거 응답(저장 검증을 거치지 않은 옛 값 재현용). */
@@ -545,7 +573,7 @@ class TriggerServiceTest extends IntegrationTestBase {
         "legacy",
         null,
         true,
-        Map.of("allowedIps", allowedIps),
+        Collections.singletonMap("allowedIps", allowedIps), // null 값도 담을 수 있게(Map.of 는 null 거절)
         null,
         null,
         1L,

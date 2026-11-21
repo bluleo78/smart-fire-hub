@@ -122,11 +122,12 @@ public class ExternalTriggerController {
 
     // allowedIps가 설정된 경우 요청 IP가 허용 목록에 포함되는지 검사 (#127)
     if (!triggerService.isIpAllowed(sourceIp, trigger)) {
+      // 옛 잘못된 값은 원값 대신 형 이름만 찍는다 — 큰 중첩 값이 막힌 호출마다 로그에 쌓이지 않게(WD-859)
       log.warn(
           "API trigger {} blocked: IP {} not in allowedIps {}",
           trigger.id(),
           sourceIp,
-          TriggerService.allowedIps(trigger));
+          TriggerService.allowedIpsForLog(trigger));
       return ipForbidden(request);
     }
 
