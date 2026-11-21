@@ -31,6 +31,8 @@ import okhttp3.mockwebserver.RecordedRequest;
 import org.junit.jupiter.api.*;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.web.reactive.function.client.WebClientException;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 import tools.jackson.databind.json.JsonMapper;
 
 // OntologyService 단위 테스트 — MockWebServer로 ai-agent를 흉내내어 getGraph 프록시가
@@ -47,6 +49,9 @@ class OntologyServiceTest {
   private static final long OWNED_ONTOLOGY_ID = 7L;
   private static final long REQUEST_USER_ID = 11L;
   private static final long REQUEST_TENANT_ID = 3L;
+  // WD-869 — 사용자에게 가는 502 문구에 ai-agent 내부 주소(호스트·포트·경로)가 실리면 인프라 구성이 노출된다.
+  // 서비스 상수를 참조하지 않고 문구를 따로 적어, 문구가 바뀌면 시험이 알린다.
+  private static final String GRAPH_READ_FAILED_MESSAGE = "지식그래프 조회에 실패했습니다. 잠시 후 다시 시도해 주세요.";
 
   @BeforeEach
   void setUp() throws Exception {
@@ -115,7 +120,8 @@ class OntologyServiceTest {
     TenantContext.clear();
 
     assertThatThrownBy(() -> service.getGraph(OWNED_ONTOLOGY_ID))
-        .isInstanceOf(ExternalServiceException.class);
+        .isInstanceOf(ExternalServiceException.class)
+        .hasMessageNotContaining(GRAPH_READ_FAILED_MESSAGE);
 
     assertThat(server.getRequestCount()).isZero();
   }
@@ -210,6 +216,79 @@ class OntologyServiceTest {
         new MockResponse().setResponseCode(502).setBody("{\"error\":\"graph read failed\"}"));
     assertThatThrownBy(() -> service.getGraph(OWNED_ONTOLOGY_ID))
         .isInstanceOf(ExternalServiceException.class);
+  }
+
+  // 문구가 사내 문구와 정확히 같고 내부 주소 조각이 없으며 원인 예외는 보존되는지 확인한다.
+  // MockWebServer 호스트는 localhost 라 "127.0.0.1" 단언은 헛것이다 — 실제 호스트명과 ":포트" 로 확인한다.
+  private void assertInternalAddressHidden(
+      Throwable thrown, Class<? extends Throwable> causeType, String host, int port) {
+    assertThat(thrown).isInstanceOf(ExternalServiceException.class);
+    assertThat(thrown.getMessage())
+        .isEqualTo(GRAPH_READ_FAILED_MESSAGE)
+        .doesNotContain(host)
+        .doesNotContain(":" + port)
+        .doesNotContain("/agent/graph")
+        .doesNotContain("Bad Gateway");
+    assertThat(thrown.getCause()).isInstanceOf(causeType);
+  }
+
+  @Test
+  void getGraph_의_ai_agent_502_응답_문구에_내부_주소가_없다() {
+    server.enqueue(
+        new MockResponse().setResponseCode(502).setBody("{\"error\":\"graph read failed\"}"));
+
+    Throwable thrown = catchThrowable(() -> service.getGraph(OWNED_ONTOLOGY_ID));
+
+    assertInternalAddressHidden(
+        thrown,
+        WebClientResponseException.class,
+        server.getHostName(),
+        server.getPort());
+  }
+
+  @Test
+  void getGraph_의_ai_agent_연결_실패_문구에_내부_주소가_없다() throws Exception {
+    // shutdown 뒤에는 포트를 못 읽을 수 있어 먼저 잡아 둔다.
+    String host = server.getHostName();
+    int port = server.getPort();
+    server.shutdown();
+
+    Throwable thrown = catchThrowable(() -> service.getGraph(OWNED_ONTOLOGY_ID));
+
+    assertInternalAddressHidden(
+        thrown,
+        WebClientException.class,
+        host,
+        port);
+  }
+
+  // WD-869 — 200 이지만 본문이 깨진 JSON 이면 역직렬화 실패(CodecException 계열)다. WebClientException 만
+  // 잡으면 500 으로 새므로 사내 문구 502 여야 한다.
+  @Test
+  void getGraph_의_깨진_JSON_응답도_사내_문구_502_로_보낸다() {
+    server.enqueue(
+        new MockResponse()
+            .setResponseCode(200)
+            .setHeader("Content-Type", "application/json")
+            .setBody("{\"nodes\":"));
+
+    Throwable thrown = catchThrowable(() -> service.getGraph(OWNED_ONTOLOGY_ID));
+
+    assertInternalAddressHidden(
+        thrown, RuntimeException.class, server.getHostName(), server.getPort());
+  }
+
+  @Test
+  void getGraph_의_코드_없는_403_문구에_내부_주소가_없다() {
+    server.enqueue(new MockResponse().setResponseCode(403).setBody("{\"error\":\"forbidden\"}"));
+
+    Throwable thrown = catchThrowable(() -> service.getGraph(OWNED_ONTOLOGY_ID));
+
+    assertInternalAddressHidden(
+        thrown,
+        WebClientResponseException.class,
+        server.getHostName(),
+        server.getPort());
   }
 
   // 이 경로의 테넌트 경계 회귀 가드. Neo4j 에는 RLS 도 tenant_id 도 없어서, 남의 온톨로지 id 로

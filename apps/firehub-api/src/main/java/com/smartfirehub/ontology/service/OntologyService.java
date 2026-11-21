@@ -23,7 +23,9 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
@@ -37,8 +39,13 @@ import tools.jackson.databind.ObjectMapper;
 
 // 온톨로지 스키마는 api DB 단일 소유(OntologyRepository), 전체 그래프(/graph)는 ai-agent(Neo4j) 프록시.
 // B-2a 소스 플립: 과거 getOntology 프록시를 DB 읽기로 교체했다(getGraph 는 프록시 유지).
+@Slf4j
 @Service
 public class OntologyService {
+  // 지식그래프 조회 실패 시 사용자에게 내려가는 고정 문구(WD-869) — WebClient 원문에는 내부 호스트·포트·경로가
+  // 들어 있어 응답으로 새면 인프라 구성이 노출된다. 원문은 서버 로그로만 남긴다.
+  private static final String GRAPH_READ_FAILED_MESSAGE = "지식그래프 조회에 실패했습니다. 잠시 후 다시 시도해 주세요.";
+
   // ai-agent 무응답 시 서블릿 스레드 고갈 방지용 블로킹 타임아웃(getGraph 프록시 전용).
   private static final Duration BLOCK_TIMEOUT = Duration.ofSeconds(40);
 
@@ -401,6 +408,9 @@ public class OntologyService {
     if (!graphReadGate.canRead(ontologyId)) {
       throw graphReadRestricted();
     }
+    // 대행 주체 헤더는 try 밖에서 만든다 — 주체가 없을 때의 재로그인 안내(ExternalServiceException)는 그 자체로
+    // 사내 문구라, 아래 catch(RuntimeException) 이 "조회 실패" 문구로 덮어쓰면 안 된다.
+    final HttpHeaders delegation = DelegationHeaders.require("지식그래프 조회");
     try {
       return webClient
           .get()
@@ -409,7 +419,7 @@ public class OntologyService {
           // 내부 토큰은 만능 자격증명이라 "api 가 보냈으니 믿는다"는 ai-agent 쪽에 검증 지점이
           // 없다는 뜻이고, 그러면 내부망에 닿는 누구나 전 테넌트 그래프를 읽을 수 있다.
           // 변형 라우트 네 개가 이미 같은 계약을 쓴다(GraphMutationClient).
-          .headers(h -> h.addAll(DelegationHeaders.require("지식그래프 조회")))
+          .headers(h -> h.addAll(delegation))
           .retrieve()
           .bodyToMono(GraphResponse.class)
           .block(BLOCK_TIMEOUT);
@@ -419,10 +429,29 @@ public class OntologyService {
       if (isGraphReadRestrictedBody(e.getResponseBodyAsString())) {
         throw graphReadRestricted();
       }
-      throw new ExternalServiceException("지식그래프 조회 중 ai-agent 호출 실패: " + e.getMessage(), e);
-    } catch (WebClientException e) {
-      throw new ExternalServiceException("지식그래프 조회 중 ai-agent 호출 실패: " + e.getMessage(), e);
+      throw graphReadFailed(ontologyId, e);
+    } catch (RuntimeException e) {
+      // WebClientException 만 잡으면 block 시간 초과(409 + 영문 원문)·역직렬화 실패(500)가 그대로 샌다 —
+      // 나머지 실패도 모두 같은 사내 문구 502 로 보낸다.
+      throw graphReadFailed(ontologyId, e);
     }
+  }
+
+  // ai-agent 호출 실패를 사내 문구의 502 로 바꾼다 — 원문은 로그로, 원인 예외는 cause 로 보존한다.
+  private ExternalServiceException graphReadFailed(long ontologyId, RuntimeException e) {
+    if (e instanceof WebClientException) {
+      // ai-agent 가 내려가 있으면 요청마다 실패하므로 스택 없이 원문(상태·주소)과 응답 본문(오류 코드, 500자)만 남긴다.
+      String body = "";
+      if (e instanceof WebClientResponseException re) {
+        String raw = re.getResponseBodyAsString();
+        body = raw.length() > 500 ? raw.substring(0, 500) + "…" : raw;
+      }
+      log.warn("지식그래프 조회 ai-agent 호출 실패 ontologyId={} cause={} body={}", ontologyId, e, body);
+    } else {
+      // 시간 초과·역직렬화 등 예상 밖 실패는 원인을 찾을 수 있게 스택까지 남긴다.
+      log.warn("지식그래프 조회 ai-agent 호출 실패 ontologyId={}", ontologyId, e);
+    }
+    return new ExternalServiceException(GRAPH_READ_FAILED_MESSAGE, e);
   }
 
   /**
