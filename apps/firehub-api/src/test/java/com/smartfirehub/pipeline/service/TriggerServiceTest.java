@@ -564,6 +564,16 @@ class TriggerServiceTest extends IntegrationTestBase {
   }
 
   /**
+   * WD-868 리뷰 후속: 공백 항목은 거르되 형식이 틀린 비공백 항목은 남으므로, 둘이 섞인 목록은 여전히 제한(모든 IP 거절)이다. 형식이 틀린 항목까지 거르는 변경이
+   * 들어와 이 목록이 조용히 「제한 없음」으로 풀리는 것을 막는다.
+   */
+  @Test
+  void isIpAllowed_blankMixedWithMalformed_stillRestricted() {
+    assertThat(triggerService.isIpAllowed("10.0.0.1", apiTriggerWith(List.of(" ", "abc"))))
+        .isFalse();
+  }
+
+  /**
    * WD-859: 잠금 뒤 재검사 경로(TriggerResponse 를 받는 isIpAllowed)도 옛 잘못된 allowedIps(문자열·비문자열 원소)를 형 변환
    * 오류(500)나 통과 없이 거절한다. 정상 목록은 그대로 판정한다.
    */
