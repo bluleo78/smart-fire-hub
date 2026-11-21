@@ -94,15 +94,20 @@ const EDIT_REFRESH_ID = 'edit-dash-refresh';
  * 검증에 걸린 칸으로 포커스를 옮긴다(WD-876) — 같은 잘못된 값으로 다시 눌러 오류 문구가 그대로여도
  * (React 가 같은 문구를 다시 그리지 않아 role=alert 가 다시 읽히지 않는다) 포커스가 칸으로 가 연결된 오류를 읽게 한다.
  * 제출 잠금(guardSubmit)에 넘기는 함수 안에서 ref 를 읽으면 react-hooks/refs 규칙에 걸려 id 로 찾는다.
+ * 포커스는 오류가 그려진 **뒤**(setTimeout 0)에 옮긴다 — setRefreshError 직후 바로 옮기면 포커스가 닿는 순간 칸에
+ * 아직 aria-invalid·오류 id 를 가리키는 aria-describedby 가 없어 화면낭독기가 라벨·안내만 읽고, 오류는 role=alert 도
+ * 없어(announceError={false}) 처음 실패한 오류가 아예 읽히지 않는다(WD-876 리뷰 후속 반려).
  */
 function focusById(id: string) {
-  document.getElementById(id)?.focus();
+  setTimeout(() => document.getElementById(id)?.focus(), 0);
 }
 
 /**
  * "자동 새로고침 (초)" 입력 칸 — 허용 범위 안내(description)와 검증 오류(error)를 칸 곁에 함께 보인다(WD-876).
  * 토스트는 몇 초 뒤 사라져 무엇이 틀렸는지 다시 볼 수 없고 칸과 이어지지 않아, 칸 아래 인라인 오류로 둔다.
- * 라벨·오류(role=alert)·안내의 aria 연결은 공용 FormField 가 한다(오류 → 안내 순으로 읽힌다).
+ * 라벨·오류·안내의 aria 연결은 공용 FormField 가 한다(오류 → 안내 순으로 읽힌다).
+ * 오류 때 화면이 이 칸으로 포커스를 옮기므로 오류 문구의 role=alert 는 끈다(announceError={false}) — 켜 두면
+ * alert 낭독과 포커스 뒤 aria-describedby 낭독이 같은 문장을 두 번 읽는다(WD-876 리뷰 후속).
  */
 function AutoRefreshField({
   id,
@@ -120,6 +125,7 @@ function AutoRefreshField({
       label="자동 새로고침 (초)"
       htmlFor={id}
       error={error ?? undefined}
+      announceError={false}
       description={`${MIN_AUTO_REFRESH_SECONDS}~${MAX_AUTO_REFRESH_SECONDS}초(${MAX_AUTO_REFRESH_SECONDS / 3600}시간) 사이의 정수. 비워 두면 수동 새로고침`}
     >
       <Input
@@ -386,6 +392,8 @@ function EditDashboardDialog({ dashboard, onClose }: EditDialogProps) {
       setDescription(latest.description ?? '');
       setIsShared(latest.isShared);
       setAutoRefresh(latest.autoRefreshSeconds != null ? String(latest.autoRefreshSeconds) : '');
+      // 서버 값으로 바꿨으니 앞서 내 입력에 붙은 검증 오류는 지운다 — 남기면 올바른 값에 오류·aria-invalid 가 남는다(WD-876 리뷰 후속)
+      setRefreshError(null);
       setBaseUpdatedAt(latest.updatedAt);
       setEditConflict(false);
       // 목록 행(이름·공개 여부)도 최신으로 맞춘다

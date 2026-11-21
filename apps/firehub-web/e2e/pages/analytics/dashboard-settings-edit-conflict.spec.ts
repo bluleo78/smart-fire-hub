@@ -169,6 +169,43 @@ test.describe('대시보드 설정 — 동시 편집 충돌 (WD-364)', () => {
     expect(server.description()).toBe('after-reload');
   });
 
+  /**
+   * WD-876 리뷰 후속 — 충돌 창이 떠 있는 동안 자동 새로고침 칸에 틀린 값이 들어가 「내 변경으로 덮어쓰기」가
+   * 칸 검증에서 막히면(충돌 창은 그대로) 칸 아래 오류가 생긴다. 이어 「다시 불러오기」로 서버 값을 넣으면
+   * 그 오류·aria-invalid 도 함께 지워져야 한다 — 남으면 올바른 서버 값에 빨간 오류가 붙어 보인다.
+   * 충돌 창이 포커스를 가둬 뒤 칸에는 fill 이 닿지 않으므로, 값 세터 + input 이벤트로 React onChange 를 직접 일으켜
+   * 그 상태(칸에 틀린 값)를 만든다 — 화면 조작 경로가 아니라 「다시 불러오기」가 오류를 지우는지만 지키는 테스트다.
+   */
+  test('「다시 불러오기」는 자동 새로고침 칸의 검증 오류도 지운다 (WD-876)', async ({ authenticatedPage: page }) => {
+    const server = await mockVersionedDashboard(page);
+    await page.goto('/analytics/dashboards');
+
+    await openConflictDialog(page, server);
+    // 충돌 창이 떠 있는 동안 설정 창은 접근성 트리에서 숨겨지므로(aria-hidden) id 로 칸을 찾는다
+    const input = page.locator('#edit-dash-refresh');
+    await input.evaluate((el: HTMLInputElement) => {
+      // React 가 추적하는 value 세터를 거쳐야 onChange 가 불린다
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setter?.call(el, '1');
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await expect(input).toHaveValue('1');
+    await conflictDialog(page).getByRole('button', { name: '내 변경으로 덮어쓰기' }).click();
+
+    // 검증에서 막혀 PUT 이 더 나가지 않고, 칸 아래 오류가 생긴다
+    const error = page.locator('#edit-dash-refresh-error');
+    await expect(error).toBeVisible();
+    await expect(input).toHaveAttribute('aria-invalid', 'true');
+    expect(server.puts).toHaveLength(1);
+
+    await conflictDialog(page).getByRole('button', { name: '다시 불러오기' }).click();
+    await expect(conflictDialog(page)).toHaveCount(0);
+    // 서버 값(수동 새로고침 = 빈 칸)으로 바뀌고 오류·aria-invalid 가 사라진다
+    await expect(input).toHaveValue('');
+    await expect(error).toHaveCount(0);
+    await expect(input).not.toHaveAttribute('aria-invalid', 'true');
+  });
+
   test('코드 없는 409 는 충돌 창이 아니라 서버 문구 토스트로 안내한다', async ({ authenticatedPage: page }) => {
     await mockVersionedDashboard(page);
     await page.route(

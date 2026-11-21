@@ -381,7 +381,7 @@ test.describe('대시보드 목록 페이지', () => {
     await page.getByRole('button', { name: '저장' }).click();
 
     // 칸 아래 오류(role=alert)가 표시되고 다이얼로그는 닫히지 않으며, 저장 API는 호출되지 않아야 한다
-    await expect(page.getByRole('dialog', { name: '대시보드 설정' }).getByRole('alert')).toHaveText('자동 새로고침은 5 이상의 정수(초)로 입력해 주세요.');
+    await expect(page.locator('#edit-dash-refresh-error')).toHaveText('자동 새로고침은 5 이상의 정수(초)로 입력해 주세요.');
     await expect(page.getByRole('dialog', { name: '대시보드 설정' })).toBeVisible();
     expect(putCapture.requests.length).toBe(0);
   });
@@ -590,6 +590,58 @@ test.describe('자동 새로고침 인라인 오류 (WD-876)', () => {
     return { dialog, post };
   }
 
+  /**
+   * 칸에 포커스가 **닿는 그 순간**의 aria-describedby·aria-invalid 를 기록한다(WD-876 리뷰 후속 반려).
+   * 오류에 role=alert 가 없으므로(announceError={false}) 처음 실패한 오류는 포커스 순간 칸에 연결돼 있어야만 읽힌다 —
+   * 포커스를 오류가 그려지기 전에 옮기면 그 순간 연결이 비어 있어 최종 DOM 만 보는 단언으로는 잡히지 않는다.
+   */
+  async function recordFocusMoments(input: import('@playwright/test').Locator) {
+    await input.evaluate((el) => {
+      const log: { describedBy: string; invalid: string | null }[] = [];
+      (window as unknown as { __focusLog: typeof log }).__focusLog = log;
+      el.addEventListener('focus', () =>
+        log.push({ describedBy: el.getAttribute('aria-describedby') ?? '', invalid: el.getAttribute('aria-invalid') }),
+      );
+    });
+  }
+  /** 기록된 마지막 포커스 순간 */
+  async function lastFocusMoment(page: import('@playwright/test').Page) {
+    return page.evaluate(() => {
+      const log = (window as unknown as { __focusLog: { describedBy: string; invalid: string | null }[] }).__focusLog;
+      return log[log.length - 1];
+    });
+  }
+
+  test('처음 실패한 오류도 읽힌다 — 포커스가 닿는 순간 칸에 오류가 이미 연결돼 있다(만들기·설정)', async ({
+    authenticatedPage: page,
+  }) => {
+    const { dialog } = await openCreateDialog(page);
+    await dialog.getByLabel('이름 *').fill('운영 현황');
+    const input = dialog.getByLabel('자동 새로고침 (초)');
+    await input.fill('3');
+    await recordFocusMoments(input);
+    await dialog.getByRole('button', { name: '만들기' }).click();
+    await expect(input).toBeFocused();
+    const created = await lastFocusMoment(page);
+    expect(created.describedBy.split(' ')).toContain('dash-refresh-error');
+    expect(created.invalid).toBe('true');
+
+    // 설정 창 — 같은 규칙
+    await dialog.getByRole('button', { name: '취소' }).click();
+    await expect(dialog).not.toBeVisible();
+    await page.getByRole('row', { name: /대시보드/ }).first().getByLabel('설정').click();
+    const settings = page.getByRole('dialog', { name: '대시보드 설정' });
+    await expect(settings).toBeVisible();
+    const editInput = settings.getByLabel('자동 새로고침 (초)');
+    await editInput.fill('5.5');
+    await recordFocusMoments(editInput);
+    await settings.getByRole('button', { name: '저장' }).click();
+    await expect(editInput).toBeFocused();
+    const edited = await lastFocusMoment(page);
+    expect(edited.describedBy.split(' ')).toContain('edit-dash-refresh-error');
+    expect(edited.invalid).toBe('true');
+  });
+
   test('새 대시보드 — 범위를 벗어난 값은 칸 아래 오류로 알리고, 고치면 사라진다', async ({ authenticatedPage: page }) => {
     const { dialog, post } = await openCreateDialog(page);
     const input = dialog.getByLabel('자동 새로고침 (초)');
@@ -599,7 +651,9 @@ test.describe('자동 새로고침 인라인 오류 (WD-876)', () => {
     await input.fill('3');
     await dialog.getByRole('button', { name: '만들기' }).click();
 
-    await expect(dialog.getByRole('alert')).toHaveText(ERR_MIN);
+    await expect(dialog.locator('#dash-refresh-error')).toHaveText(ERR_MIN);
+    // 오류는 칸 포커스로 aria-describedby 가 읽는다 — role=alert 까지 두면 두 번 낭독된다(WD-876 리뷰 후속)
+    await expect(dialog.locator('#dash-refresh-error')).not.toHaveAttribute('role', 'alert');
     await expect(input).toHaveAttribute('aria-invalid', 'true');
     // 오류와 범위 안내를 둘 다 읽는다 — 공용 FormField 규칙대로 오류가 먼저
     await expect(input).toHaveAccessibleDescription(`${ERR_MIN} ${HINT}`);
@@ -610,7 +664,7 @@ test.describe('자동 새로고침 인라인 오류 (WD-876)', () => {
 
     // 값을 고치면 오류가 사라지고, 올바른 값으로는 POST 가 간다
     await input.fill('10');
-    await expect(dialog.getByRole('alert')).toHaveCount(0);
+    await expect(dialog.locator('#dash-refresh-error')).toHaveCount(0);
     await expect(input).not.toHaveAttribute('aria-invalid', 'true');
     await dialog.getByRole('button', { name: '만들기' }).click();
     expect((await post.waitForRequest()).payload).toMatchObject({ name: '운영 현황', autoRefreshSeconds: 10 });
@@ -622,7 +676,7 @@ test.describe('자동 새로고침 인라인 오류 (WD-876)', () => {
     await dialog.getByLabel('자동 새로고침 (초)').fill('86401');
     await dialog.getByRole('button', { name: '만들기' }).click();
 
-    await expect(dialog.getByRole('alert')).toHaveText('자동 새로고침은 86400초(24시간) 이하로 입력해 주세요.');
+    await expect(dialog.locator('#dash-refresh-error')).toHaveText('자동 새로고침은 86400초(24시간) 이하로 입력해 주세요.');
     expect(post.requests.length).toBe(0);
 
     // 다른 칸으로 옮겼다가 같은 잘못된 값으로 다시 만들어도 포커스가 다시 그 칸으로 온다
@@ -648,13 +702,13 @@ test.describe('자동 새로고침 인라인 오류 (WD-876)', () => {
     const input = dialog.getByLabel('자동 새로고침 (초)');
     await input.fill('5.5');
     await dialog.getByRole('button', { name: '저장' }).click();
-    await expect(dialog.getByRole('alert')).toHaveText(ERR_MIN);
+    await expect(dialog.locator('#edit-dash-refresh-error')).toHaveText(ERR_MIN);
     await expect(input).toHaveAttribute('aria-invalid', 'true');
 
     await dialog.getByRole('button', { name: '취소' }).click();
     await expect(dialog).not.toBeVisible();
 
     dialog = await openSettings();
-    await expect(dialog.getByRole('alert')).toHaveCount(0);
+    await expect(dialog.locator('#edit-dash-refresh-error')).toHaveCount(0);
   });
 });
