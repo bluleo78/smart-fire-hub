@@ -2,6 +2,7 @@ import { createDashboard, createDashboardListItem } from '../../factories/analyt
 import { openFirstRowDeleteDialog, setupDashboardListMocks } from '../../fixtures/analytics.fixture';
 import { createPageResponse, mockApi, mockDeleteOnceThenNotFound } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { expectTableFits } from '../../fixtures/table-layout';
 
 /**
  * 대시보드 목록 페이지 E2E 테스트
@@ -588,6 +589,50 @@ test.describe('대시보드 목록 페이지', () => {
         expect(box!.height, `${viewport.width}px ${name} 탭 높이`).toBeGreaterThanOrEqual(32);
       }
     }
+  });
+
+  test('관리자 전용 「워크스페이스 전체」 탭도 모바일(390)에서 32px 이상이고 화면 안에 들어온다 (WD-877 리뷰 후속)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 목록 수준 선택자([&>[role=tab]]:min-h-8)를 둔 까닭인 조건부 탭 — 관리자 권한으로 켜서 직접 잰다
+    await mockApi(page, 'GET', '/api/v1/auth/me/permissions', ['analytics:read', 'analytics:write', 'analytics:admin']);
+    await setupDashboardListMocks(page, 1);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/analytics/dashboards');
+
+    const box = await page.getByRole('tab', { name: '워크스페이스 전체', exact: true }).boundingBox();
+    expect(box, '워크스페이스 전체 탭 영역').not.toBeNull();
+    expect(box!.height, '워크스페이스 전체 탭 높이').toBeGreaterThanOrEqual(32);
+    // 모바일에서 목록이 줄바꿈되며 세 번째 탭이 오른쪽 밖으로 잘리지 않는다(눌 수 있어야 한다)
+    expect(box!.x + box!.width, '워크스페이스 전체 탭 오른쪽 끝').toBeLessThanOrEqual(390);
+  });
+
+  test('작업 열이 버튼 3개를 담고, 768 폭에서 긴 이름·배지 행이 있어도 목록 표가 가로로 넘치지 않는다 (WD-877 리뷰 후속)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 가장 넓어지기 쉬운 행: 긴 이름·설명 + 공유 배지 + 자동 갱신 배지
+    const longRow = createDashboardListItem({
+      id: 1,
+      name: '본부별 화재 출동 현황과 장비 가동률을 함께 보는 운영 대시보드 2026년 하반기',
+      description: '관할 구역·출동 유형·장비 종류별로 나눠 주간 추이와 전년 대비를 한 화면에 모아 본다',
+      isShared: true,
+      autoRefreshSeconds: 3600,
+    });
+    const plainRow = createDashboardListItem({ id: 2, name: '테스트 대시보드 2' });
+    await mockApi(page, 'GET', '/api/v1/analytics/dashboards', createPageResponse([longRow, plainRow]));
+    await page.setViewportSize({ width: 768, height: 900 });
+    await page.goto('/analytics/dashboards');
+
+    const table = page.getByRole('table', { name: '대시보드 목록' });
+    // 로딩 골격 행이 아니라 실제 행이 그려진 뒤에 잰다
+    await expect(table.getByRole('row', { name: /테스트 대시보드 2/ })).toBeVisible();
+    // 작업 열 머리 폭이 버튼 묶음(32×3 + 간격 4×2 = 104px)보다 좁지 않다
+    const actionHead = table.getByRole('columnheader', { name: '작업' });
+    const headBox = await actionHead.boundingBox();
+    expect(headBox, '작업 열 머리 영역').not.toBeNull();
+    expect(headBox!.width, '작업 열 머리 폭').toBeGreaterThanOrEqual(104);
+    // 표 컨테이너가 가로로 넘치지 않고 작업 열이 화면 안에 다 보인다(공용 측정 도우미)
+    await expectTableFits(actionHead);
   });
 });
 

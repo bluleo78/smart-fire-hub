@@ -595,7 +595,12 @@ export default function DashboardListPage() {
                       <TableHead>위젯</TableHead>
                       <TableHead>자동 갱신</TableHead>
                       <TableHead>수정일</TableHead>
-                      <TableHead className="w-[80px]" />
+                      {/* WD-877 리뷰 후속: 선언 폭을 실제 내용에 맞춘다 — 버튼 32px×3 + 간격 4px×2 = 104px, 셀 좌우 여백 p-2(16px) 포함 120px.
+                          (auto 표 레이아웃이라 80px 힌트도 내용 폭으로 늘었지만, 선언과 내용이 어긋나 읽는 사람을 헷갈리게 했다)
+                          빈 머리는 스크린리더에 이름 없는 열로 읽혀 sr-only 「작업」 이름을 준다 */}
+                      <TableHead className="w-[120px]">
+                        <span className="sr-only">작업</span>
+                      </TableHead>
                     </TableRow>
                   </TableHeader>
                   <tbody>
@@ -614,7 +619,9 @@ export default function DashboardListPage() {
                               {/* min-w-0: flex 아이템 기본값(min-width:auto)이 truncate 축소를 막는 문제 방지 */}
                               <div className="min-w-0">
                                 <div className="flex items-center gap-1.5">
-                                  <span className="block truncate max-w-xs" title={dashboard.name}>
+                                  {/* WD-877 리뷰 후속: 작업 열이 32px 버튼 3개로 넓어져(120px) 768 폭에서 긴 이름+공유 배지 행이 표를 14px 넘겼다 —
+                                      lg 미만에서는 이름 상한을 288px(18rem)로 줄여 표가 컨테이너 안에 들어오게 한다 */}
+                                  <span className="block truncate max-w-[18rem] lg:max-w-xs" title={dashboard.name}>
                                     {dashboard.name}
                                   </span>
                                   {dashboard.isShared && (
