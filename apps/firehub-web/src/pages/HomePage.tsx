@@ -618,7 +618,8 @@ export default function HomePage() {
                     variant={typeFilter === opt.value ? 'default' : 'outline'}
                     aria-pressed={typeFilter === opt.value}
                     size="sm"
-                    className="h-6 text-xs px-2"
+                    // WD-897: h-6(24px)을 뺀다 — size="sm" 규칙이 32px 를 주므로 최소 히트 영역을 채우고 상태 선택 상자와 높이가 같아진다.
+                    className="text-xs px-2"
                     onClick={() => applyFilter(opt.value, severityFilter)}
                   >
                     {opt.label}
@@ -634,7 +635,9 @@ export default function HomePage() {
                   onValueChange={(v) => applyFilter(typeFilter, v === 'ALL' ? '' : v)}
                 >
                   {/* WD-339: 옆 「상태」 레이블과 연결 — 없으면 이름 없는 콤보박스(값 「전체」만)로 읽혔다 */}
-                  <SelectTrigger id={`${activityFilterId}-severity`} className="h-6 text-xs w-[80px] px-2">
+                  {/* WD-897: className h-6 은 shadcn 의 data-[size=default]:h-9 에 져서 36px 가 됐다 —
+                      size="sm"(data-[size=sm]:h-8 = 32px)으로 유형 칩과 높이를 맞추고 h-6 은 뺀다. */}
+                  <SelectTrigger id={`${activityFilterId}-severity`} size="sm" className="text-xs w-[80px] px-2">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>

@@ -751,6 +751,48 @@ test.describe('홈 페이지', () => {
     await expect(page.getByText('더 이상 항목이 없습니다.')).toBeVisible();
   });
 
+  /**
+   * WD-897: 활동 피드 필터 칩(24px)과 상태 선택 상자(36px)가 서로 높이가 달라 줄이 들쭉날쭉했고
+   * 칩은 최소 히트 영역(32px)에도 못 미쳤다. 데스크톱·모바일 모두 같은 높이(≥32px)여야 한다.
+   */
+  test('활동 피드 필터 칩과 상태 선택 상자 높이가 같고 32 이상이다 (WD-897)', async ({ authenticatedPage: page }) => {
+    await page.goto('/');
+
+    // 유형 칩들과 상태 선택 상자의 높이를 재서 서로 같고 32px 이상인지 단언한다.
+    // alignCenter: 넓은 화면(같은 줄)에서만 세로 가운데 정렬까지 본다 — 390px 에서는 줄이 감겨 칩과 선택 상자가
+    // 다른 줄에 놓일 수 있으니 높이만 본다.
+    const expectUniformHeights = async (alignCenter: boolean) => {
+      const chips = page.getByRole('group', { name: '유형' }).getByRole('button');
+      await expect(chips.first()).toBeVisible();
+      const select = page.getByRole('combobox', { name: '상태' });
+      await expect(select).toBeVisible();
+      const chipRects = await chips.evaluateAll((els) =>
+        els.map((el) => {
+          const r = el.getBoundingClientRect();
+          return { top: r.top, height: r.height };
+        }),
+      );
+      const box = await select.boundingBox();
+      // 칩은 권한 없으면 「전체」·「데이터셋」 2개뿐이다 — beforeEach 의 파이프라인 권한에 기대지 않도록 2 이상만 요구한다.
+      expect(chipRects.length).toBeGreaterThanOrEqual(2);
+      expect(box).not.toBeNull();
+      const selectHeight = box!.height;
+      const selectCenter = box!.y + selectHeight / 2;
+      expect(selectHeight).toBeGreaterThanOrEqual(32);
+      for (const c of chipRects) {
+        expect(c.height).toBeGreaterThanOrEqual(32);
+        expect(Math.abs(c.height - selectHeight)).toBeLessThanOrEqual(1);
+        // 이슈의 「top 305 vs 299 로 6px 어긋남」 고정 — 세로 가운데 차이 1px 이하
+        if (alignCenter) expect(Math.abs(c.top + c.height / 2 - selectCenter)).toBeLessThanOrEqual(1);
+      }
+    };
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await expectUniformHeights(true);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expectUniformHeights(false);
+  });
+
   test('활동 피드 필터 변경 시 page=0부터 다시 시작한다 (이슈 #226)', async ({ authenticatedPage: page }) => {
     // 필터 변경 → queryKey 변경 → useInfiniteQuery가 page=0으로 재시작.
     // 동일 핸들러로 type 파라미터별 응답을 분기한다.
