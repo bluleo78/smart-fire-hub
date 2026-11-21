@@ -1392,3 +1392,31 @@ test.describe('스마트 작업 상세 — 모바일 머리글', () => {
     expect(overflow).toBeLessThanOrEqual(0);
   });
 });
+
+// WD-871: ?tab= 이 허용되지 않는 값이면 활성 탭이 없어 본문이 비던 문제 — 「개요」로 되돌린다.
+test.describe('스마트 작업 상세 — ?tab= 보정 (WD-871)', () => {
+  test('새 작업에서 ?tab=executions(새 작업엔 없는 탭)이면 「개요」가 선택되고 본문이 보인다', async ({ authenticatedPage: page }) => {
+    await setupNewJobMocks(page);
+
+    await page.goto('/ai-insights/jobs/new?tab=executions');
+
+    await expect(page.getByRole('tab', { name: '개요' })).toHaveAttribute('aria-selected', 'true');
+    // 개요 본문 — 새 작업 폼의 작업 이름 칸이 보인다(실행 이력 탭이었다면 보이지 않는다)
+    await expect(page.getByLabel('작업 이름 *')).toBeVisible();
+  });
+
+  // 기존 작업: 없는 탭 값·빈 값 모두 「개요」로 되돌린다(같은 단언이라 값만 바꿔 돈다)
+  for (const query of ['?tab=zzz', '?tab=']) {
+    test(`기존 작업에서 ${query} 이면 「개요」가 선택된다`, async ({ authenticatedPage: page }) => {
+      await setupJobDetailMocks(page, 1);
+
+      await page.goto(`/ai-insights/jobs/1${query}`);
+
+      await expect(page.getByRole('tab', { name: '개요' })).toHaveAttribute('aria-selected', 'true');
+      // 개요 본문 — 목 작업의 분석 프롬프트가 보이고 실행 이력 표는 없다
+      await expect(page.getByRole('heading', { name: '분석 프롬프트' })).toBeVisible();
+      await expect(page.getByText('오늘의 데이터 현황을 분석하고 인사이트를 제공해주세요.')).toBeVisible();
+      await expect(page.getByRole('columnheader', { name: '실행 시간' })).toHaveCount(0);
+    });
+  }
+});

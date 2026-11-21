@@ -60,6 +60,7 @@ import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import { handleApiError, isNotFoundError } from '../../lib/api-error';
 import { parseRouteId } from '../../lib/route-id';
 import { scrollIntoViewNearest } from '../../lib/scroll-into-view-nearest';
+import { resolveTabParam } from '../../lib/tab-param';
 import { previewQuery } from '../analytics/components/schema-explorer-utils';
 import { ChangeSecurityLevelDialog } from './components/ChangeSecurityLevelDialog';
 import { CloneDatasetDialog } from './components/CloneDatasetDialog';
@@ -151,7 +152,8 @@ export default function DatasetDetailPage() {
   const { rowSearch } = useDataStoreFeatures();
   const validTabs = tabsFor(dataset?.storageType, rowSearch);
   const tabParam = searchParams.get('tab');
-  const initialTab = tabParam && validTabs.includes(tabParam) ? tabParam : 'info';
+  // 허용 목록 밖(없는 탭·빈 값)이면 기본 탭 — 리포트·AI 작업 상세와 같은 공용 규칙(WD-871)
+  const initialTab = resolveTabParam(tabParam, validTabs, 'info');
   const [activeTab, setActiveTab] = useState(initialTab);
   // 매핑 탭의 미저장 편집 여부. DatasetMappingTab은 탭 전환 시 완전히 unmount되어 자체적으론
   // 이탈을 막을 수 없으므로, 부모인 이 페이지가 값을 받아 탭 전환·라우트 이탈을 가로챈다(#502).
@@ -191,9 +193,7 @@ export default function DatasetDetailPage() {
   // 첫 조회가 rowSearch=false 로 끝나는 순간) 여전히 URL 값으로 맞춘다 — 드물고 결과도 유효한 탭이다. 페인트 전 보정으로 깜빡임 방지.
   const validTabsKey = validTabs.join(',');
   useLayoutEffect(() => {
-    const currentValidTabs = validTabsKey.split(',');
-    const newTab = tabParam && currentValidTabs.includes(tabParam) ? tabParam : 'info';
-    setActiveTab(newTab);
+    setActiveTab(resolveTabParam(tabParam, validTabsKey.split(','), 'info'));
   }, [tabParam, validTabsKey]);
   const { data: categoriesData } = useCategories();
   const { addRecent, removeRecent } = useRecentDatasets();
