@@ -241,3 +241,35 @@ test.describe('리포트 목록', () => {
     await expect(style).toHaveAttribute('title', LONG_STYLE);
   });
 });
+
+// WD-871: ?tab= 이 없는 탭이거나 빈 값이면 활성 탭이 없어 본문이 비던 문제 — 기본 탭으로 되돌린다.
+test.describe('리포트 — ?tab= 보정 (WD-871)', () => {
+  for (const query of ['?tab=zzz', '?tab=']) {
+    test(`${query} 이면 「생성된 리포트」 탭이 선택되고 본문이 보인다`, async ({ authenticatedPage: page }) => {
+      await mockApi(page, 'GET', '/api/v1/proactive/reports', REPORTS);
+      await mockApi(page, 'GET', '/api/v1/proactive/jobs', [JOB]);
+      await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+
+      await page.goto(`/ai-insights/reports${query}`);
+
+      await expect(page.getByRole('tab', { name: '생성된 리포트' })).toHaveAttribute('aria-selected', 'true');
+      // 기본 탭 본문 — 목 목록의 리포트 제목·요약이 실제로 그려진다
+      await expect(page.getByText('8월 화재 통계 리포트')).toBeVisible();
+      await expect(page.getByText('8월 화재 건수는 전월 대비 12% 감소했습니다.')).toBeVisible();
+    });
+  }
+
+  test('?tab=templates 이면 「리포트 양식」 탭이 선택된다', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/proactive/reports', REPORTS);
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs', [JOB]);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    await mockApi(page, 'GET', '/api/v1/proactive/templates', [createTemplate({ id: 5, name: '월간 양식' })]);
+
+    await page.goto('/ai-insights/reports?tab=templates');
+
+    await expect(page.getByRole('tab', { name: '리포트 양식' })).toHaveAttribute('aria-selected', 'true');
+    // 양식 탭 본문 — 목 양식 이름이 보이고 리포트 목록 내용은 보이지 않는다
+    await expect(page.getByText('월간 양식')).toBeVisible();
+    await expect(page.getByText('8월 화재 통계 리포트')).toHaveCount(0);
+  });
+});

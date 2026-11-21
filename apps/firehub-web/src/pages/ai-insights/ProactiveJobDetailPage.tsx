@@ -29,6 +29,7 @@ import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { applyDuplicateNameError, extractApiError, handleApiError, isEditConflict, isForbiddenError, isJobAlreadyRunning, NameRetryExhaustedError } from '@/lib/api-error';
 import { createWithNumberedName } from '@/lib/clone-name';
 import { parseRouteId } from '@/lib/route-id';
+import { resolveTabParam } from '@/lib/tab-param';
 import { numberedGoalTemplateName, type ProactiveJobFormValues,proactiveJobSchema } from '@/lib/validations/proactive-job';
 
 import { OwnerIneligibleBadge } from './components/OwnerIneligibleBadge';
@@ -102,6 +103,10 @@ interface ReportPrefillState {
   prompt?: string;
 }
 
+// 상세 페이지가 ?tab= 으로 받아들이는 탭 목록 — 렌더마다 배열을 새로 만들지 않도록 모듈 상수로 둔다 (WD-871)
+const NEW_JOB_TABS = ['overview', 'monitoring'] as const;
+const JOB_TABS = [...NEW_JOB_TABS, 'executions'] as const;
+
 export default function ProactiveJobDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -121,7 +126,8 @@ export default function ProactiveJobDetailPage() {
   // ReportBuilderWidget 저장 버튼에서 전달된 프리필 데이터 (이슈 #213)
   const prefill = isNew ? (location.state as ReportPrefillState | null) : null;
 
-  const activeTab = searchParams.get('tab') ?? 'overview';
+  // 새 작업엔 「실행 이력」 탭이 없으므로 허용 목록을 isNew 로 정한다 — 그 밖의 값은 「개요」로 보정 (WD-871)
+  const activeTab = resolveTabParam(searchParams.get('tab'), isNew ? NEW_JOB_TABS : JOB_TABS, 'overview');
 
   const { data: job, isLoading, isError, error } = useProactiveJob(jobId);
   const { data: templates = [] } = useProactiveTemplates();
@@ -636,6 +642,7 @@ export default function ProactiveJobDetailPage() {
         onValueChange={handleTabChange}
       >
         <TabsList>
+          {/* 탭을 추가하면 위 NEW_JOB_TABS/JOB_TABS 에도 넣어야 한다 — 빠지면 그 탭으로 가는 링크가 「개요」로 보정된다 */}
           <TabsTrigger value="overview">개요</TabsTrigger>
           <TabsTrigger value="monitoring">
             <Activity className="h-3.5 w-3.5" />
