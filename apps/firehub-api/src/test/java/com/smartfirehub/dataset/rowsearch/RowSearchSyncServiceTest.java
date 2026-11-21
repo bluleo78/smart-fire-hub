@@ -3,6 +3,10 @@ package com.smartfirehub.dataset.rowsearch;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.smartfirehub.dataset.dto.DatasetColumnRequest;
 import com.smartfirehub.dataset.repository.SearchColumnRepository;
 import com.smartfirehub.dataset.repository.SearchIndexStateRepository;
@@ -23,6 +27,7 @@ import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -51,6 +56,7 @@ class RowSearchSyncServiceTest extends IntegrationTestBase {
 
   private final List<String> embedded = new ArrayList<>();
   private final AtomicBoolean failEmbedding = new AtomicBoolean(false);
+  private volatile RuntimeException embedFailure = new EmbeddingException("down");
   private String model = "fake-a";
   private long datasetId;
   private Long userId;
@@ -69,7 +75,7 @@ class RowSearchSyncServiceTest extends IntegrationTestBase {
             inv ->
                 new EmbeddingProvider() {
                   public List<float[]> embed(List<String> texts) {
-                    if (failEmbedding.get()) throw new EmbeddingException("down");
+                    if (failEmbedding.get()) throw embedFailure;
                     embedded.addAll(texts);
                     return texts.stream()
                         .map(
@@ -251,6 +257,51 @@ class RowSearchSyncServiceTest extends IntegrationTestBase {
     assertThat(s.status()).isEqualTo("ERROR");
     assertThat(s.syncCursor()).isEqualTo(before);
     assertThat(states.findDueDatasetIds()).doesNotContain(datasetId);
+  }
+
+  /** 임베딩 실패는 스택 없이 가린 메시지만 남긴다(WD-873) — 원문(cause)의 키가 로그에 새지 않는다. */
+  @Test
+  void embeddingFailure_logsWithoutStack() {
+    sync.sync(datasetId);
+    exec("UPDATE $T SET content = 'a4' WHERE id = 1");
+    embedFailure = EmbeddingException.redacted("down", new RuntimeException("http://h?key=s3cret"));
+    failEmbedding.set(true);
+    Logger logger = (Logger) LoggerFactory.getLogger(RowSearchSyncService.class);
+    ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    appender.start();
+    logger.addAppender(appender);
+    try {
+      assertThat(sync.sync(datasetId)).isEqualTo(RowSearchSyncService.Outcome.FAILED);
+    } finally {
+      logger.detachAppender(appender);
+    }
+    var warns = appender.list.stream().filter(e -> e.getLevel() == Level.WARN).toList();
+    assertThat(warns).hasSize(1);
+    assertThat(warns.get(0).getThrowableProxy()).isNull();
+    assertThat(warns.get(0).getFormattedMessage()).contains("down").doesNotContain("s3cret");
+  }
+
+  @Test
+  void embeddingFailureWithCause_keepsStack() {
+    // cause 를 단 임베딩 예외(설정 해독 실패 등)는 원인이 cause 에만 있어 스택과 함께 남아야 한다(WD-873).
+    sync.sync(datasetId);
+    exec("UPDATE $T SET content = 'a5' WHERE id = 1");
+    embedFailure = new EmbeddingException("corrupt", new IllegalStateException("decrypt-failed"));
+    failEmbedding.set(true);
+    Logger logger = (Logger) LoggerFactory.getLogger(RowSearchSyncService.class);
+    ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    appender.start();
+    logger.addAppender(appender);
+    try {
+      assertThat(sync.sync(datasetId)).isEqualTo(RowSearchSyncService.Outcome.FAILED);
+    } finally {
+      logger.detachAppender(appender);
+    }
+    var warns = appender.list.stream().filter(e -> e.getLevel() == Level.WARN).toList();
+    assertThat(warns).hasSize(1);
+    assertThat(warns.get(0).getThrowableProxy()).isNotNull();
+    assertThat(warns.get(0).getThrowableProxy().getCause().getMessage())
+        .isEqualTo("decrypt-failed");
   }
 
   @Test

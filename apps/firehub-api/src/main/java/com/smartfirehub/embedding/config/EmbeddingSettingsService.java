@@ -2,6 +2,7 @@ package com.smartfirehub.embedding.config;
 
 import com.smartfirehub.embedding.EmbeddingDimension;
 import com.smartfirehub.embedding.EmbeddingException;
+import com.smartfirehub.embedding.EmbeddingFailureLog;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import com.smartfirehub.embedding.EmbeddingSpace;
 import com.smartfirehub.embedding.config.dto.EmbeddingConfigRequest;
@@ -121,6 +122,8 @@ public class EmbeddingSettingsService {
     try {
       measured = providerFactory.probeDimension(draft);
     } catch (EmbeddingException e) {
+      // 연결 테스트는 사용자가 직접 누른 것이라 빈도 제한 없이 원인을 한 줄 남긴다. 이미 남긴 예외면 중복을 피한다(WD-873).
+      if (!e.isLogged()) EmbeddingFailureLog.warn("연결 테스트", e);
       // provider 문장은 접두어 없는 원인 안내라 여기서 한 번만 붙인다(WD-863).
       throw new IllegalArgumentException("임베딩 연결 테스트 실패: " + e.getMessage(), e);
     }

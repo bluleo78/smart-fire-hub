@@ -8,6 +8,7 @@ import com.smartfirehub.document.dto.DocumentFileResponse;
 import com.smartfirehub.document.dto.ExtractedText;
 import com.smartfirehub.document.repository.DocumentChunkRepository;
 import com.smartfirehub.document.repository.DocumentFileRepository;
+import com.smartfirehub.embedding.EmbeddingFailureLog;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import com.smartfirehub.embedding.EmbeddingSpace;
@@ -158,7 +159,13 @@ public class DocumentIngestionService {
             }
             completed = true;
           } catch (Exception e) {
-            log.error("Document ingestion failed: file={}", documentFileId, e);
+            // 임베딩 실패는 EmbeddingFailureLog 가 가린 상세를 남기므로, stackOrNull 이 failure() 가 만든 것이면 스택을 빼고 그
+            // 밖은 스택과 함께 남긴다(WD-873).
+            log.error(
+                "Document ingestion failed: file={}, {}",
+                documentFileId,
+                e.getMessage(),
+                EmbeddingFailureLog.stackOrNull(e));
             fileRepository.markFailed(documentFileId, e.getMessage());
             notificationService.notifyDocumentIngested(
                 file.uploadedBy(), file.datasetId(), file.originalName(), false);

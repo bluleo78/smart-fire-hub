@@ -309,4 +309,47 @@ class EmbeddingFailureMessagesTest {
     assertThat(EmbeddingFailureMessages.describe(a)).startsWith("임베딩 호출 중 오류가 발생했습니다: ");
     assertThat(EmbeddingFailureMessages.logDetail(a)).startsWith("RuntimeException: a <- ");
   }
+
+  @Test
+  void bearerAnyShapeIsRedacted() {
+    for (String v : new String[] {"Bearer abc", "bearer abcdefghijk", "Bearer a:b%c"}) {
+      Throwable e = new RuntimeException("Authorization: " + v);
+      String token = v.substring(v.indexOf(' ') + 1);
+      assertThat(EmbeddingFailureMessages.describe(e)).doesNotContain(token).contains("***");
+      assertThat(EmbeddingFailureMessages.logDetail(e)).doesNotContain(token).contains("***");
+    }
+  }
+
+  @Test
+  void bearerWithColonOrEqualsSeparatorIsRedacted() {
+    for (String v : new String[] {"bearer=abc123", "Bearer:abc123"}) {
+      assertThat(EmbeddingFailureMessages.logDetail(new RuntimeException("auth " + v)))
+          .doesNotContain("abc123")
+          .contains("***");
+    }
+  }
+
+  @Test
+  void basicCredentialRedactedButEnglishKept() {
+    String msg =
+        EmbeddingFailureMessages.describe(new RuntimeException("Basic dXNlcjpwYXNzd29yZA=="));
+    assertThat(msg).doesNotContain("dXNlcjpwYXNzd29yZA").contains("Basic ***");
+    assertThat(EmbeddingFailureMessages.describe(new RuntimeException("basic validation.")))
+        .isEqualTo("임베딩 호출 중 오류가 발생했습니다: basic validation.");
+    assertThat(EmbeddingFailureMessages.describe(new RuntimeException("basic validation failed")))
+        .endsWith("basic validation failed");
+  }
+
+  @Test
+  void failureDetachesRawCause() {
+    EmbeddingException ex =
+        EmbeddingFailureMessages.failure(
+            "Ollama", new RuntimeException("GET http://h/x?key=s3cret failed"));
+    assertThat(ex.getCause()).isNull();
+    assertThat(ex.getMessage())
+        .isEqualTo(
+            EmbeddingFailureMessages.describe(
+                new RuntimeException("GET http://h/x?key=s3cret failed")));
+    assertThat(ex.logDetail()).doesNotContain("s3cret").contains("RuntimeException");
+  }
 }
