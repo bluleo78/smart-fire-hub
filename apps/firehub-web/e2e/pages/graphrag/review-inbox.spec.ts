@@ -1,3 +1,5 @@
+import type { Page } from '@playwright/test';
+
 import { createDatePropertyReviewItem, createEntityReviewItem, createEvidenceChunk, createPropertyReviewItem, createRelationReviewItem, createSynonymReviewItem } from '../../factories/reviewItem.factory';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
@@ -258,6 +260,114 @@ test.describe('AI 검수 인박스', () => {
     await page.getByRole('button', { name: '원문 근거 보기' }).click();
 
     await expect(page.getByText('약 수천만원대의 재산피해가 발생했다.')).toBeVisible();
+  });
+
+  // WD-872: 원문 근거 조회가 실패했는데도 「연결된 원문 근거가 없습니다」로 보이던 것을 실패 안내로 구분한다.
+  // 전역 retry 정책상 500 은 두 번 요청된 뒤에야 오류 상태가 되므로 단언 timeout 을 넉넉히 둔다.
+  test.describe('원문 근거 조회 실패 (WD-872)', () => {
+    // 근거를 여는 항목은 하나로 두고 근거 URL 도 그 id 에서 만든다
+    const ITEM = createPropertyReviewItem();
+    const EVIDENCE_URL = `/api/v1/graphrag/review-items/${ITEM.id}/evidence`;
+    const FAIL_TEXT = '원문 근거를 불러오지 못했습니다.';
+    const EMPTY_TEXT = '이 항목에는 연결된 원문 근거가 없습니다.';
+
+    // 목록을 모킹하고 근거 보기를 누른다 — 근거 응답은 각 시험이 먼저 정한다.
+    async function openEvidence(page: Page) {
+      await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [ITEM]);
+      await page.goto('/knowledge-graph/review');
+      await page.getByRole('button', { name: '원문 근거 보기' }).click();
+    }
+
+    test('근거 조회가 500 이면 「없습니다」 대신 불러오기 실패 안내를 보인다', async ({ authenticatedPage: page }) => {
+      await mockApi(page, 'GET', EVIDENCE_URL, {}, { status: 500 });
+      await openEvidence(page);
+
+      await expect(page.getByText(FAIL_TEXT)).toBeVisible({ timeout: 10000 });
+      await expect(page.getByText(EMPTY_TEXT)).toHaveCount(0);
+      await expect(page.getByRole('button', { name: '원문 근거 다시 시도' })).toBeVisible();
+    });
+
+    test('다시 시도하면 근거를 다시 조회해 청크를 보여준다', async ({ authenticatedPage: page }) => {
+      const chunk = createEvidenceChunk();
+      let calls = 0;
+      await page.route((url) => url.pathname === EVIDENCE_URL, (route) => {
+        calls += 1;
+        // 처음 2회(최초 + 전역 retry 1회)는 500, 이후 성공
+        if (calls <= 2) {
+          return route.fulfill({ status: 500, contentType: 'application/json', body: '{}' });
+        }
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([chunk]) });
+      });
+      await openEvidence(page);
+
+      await expect(page.getByText(FAIL_TEXT)).toBeVisible({ timeout: 10000 });
+      await page.getByRole('button', { name: '원문 근거 다시 시도' }).click();
+
+      await expect(page.getByText(chunk.content)).toBeVisible({ timeout: 10000 });
+      await expect(page.getByText(FAIL_TEXT)).toHaveCount(0);
+    });
+
+    test('근거 조회가 403 이면 권한 안내를 보이고 다시 시도 버튼은 없다', async ({ authenticatedPage: page }) => {
+      await mockApi(
+        page,
+        'GET',
+        EVIDENCE_URL,
+        { status: 403, error: 'Forbidden', message: 'Missing required permission: dataset:read' },
+        { status: 403 },
+      );
+      await openEvidence(page);
+
+      await expect(page.getByText('원문 근거를 볼 권한이 없습니다.')).toBeVisible({ timeout: 10000 });
+      await expect(page.getByRole('button', { name: '원문 근거 다시 시도' })).toHaveCount(0);
+      await expect(page.getByText(EMPTY_TEXT)).toHaveCount(0);
+    });
+
+    test('근거가 빈 배열이면 기존 「없습니다」 안내를 유지한다', async ({ authenticatedPage: page }) => {
+      await mockApi(page, 'GET', EVIDENCE_URL, []);
+      await openEvidence(page);
+
+      await expect(page.getByText(EMPTY_TEXT)).toBeVisible({ timeout: 10000 });
+      await expect(page.getByText(FAIL_TEXT)).toHaveCount(0);
+    });
+
+    test('근거 요청이 네트워크 오류로 끊겨도 불러오기 실패 안내를 보인다', async ({ authenticatedPage: page }) => {
+      await page.route((url) => url.pathname === EVIDENCE_URL, (route) => route.abort());
+      await openEvidence(page);
+
+      await expect(page.getByText(FAIL_TEXT)).toBeVisible({ timeout: 10000 });
+    });
+
+    // 승인·거부가 invalidateQueries 로 열린 근거 패널을 백그라운드 재조회하는데, 이때 실패해도
+    // 이미 받아 보이던 근거를 실패 안내로 바꿔 가리면 안 된다(목록 표의 WD-126 규칙과 동일).
+    test('승인 뒤 근거 재조회가 실패해도 이미 보이던 원문 근거는 그대로 둔다', async ({ authenticatedPage: page }) => {
+      const itemB = createSynonymReviewItem();
+      const chunk = createEvidenceChunk();
+      await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [ITEM, itemB]);
+      await mockApi(page, 'POST', `/api/v1/graphrag/review-items/${itemB.id}/approve`, createSynonymReviewItem({ status: 'approved' }));
+      // ITEM 의 근거: 처음엔 200, 승인 이후엔 500 — 실패 응답 수를 센다
+      let failEvidence = false;
+      let evidenceCallsAfterFail = 0;
+      await page.route((url) => url.pathname === EVIDENCE_URL, (route) => {
+        if (!failEvidence) {
+          return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([chunk]) });
+        }
+        evidenceCallsAfterFail += 1;
+        return route.fulfill({ status: 500, contentType: 'application/json', body: '{}' });
+      });
+      await page.goto('/knowledge-graph/review');
+
+      await page.getByRole('row').filter({ hasText: '수천만원대' }).getByRole('button', { name: '원문 근거 보기' }).click();
+      await expect(page.getByText(chunk.content)).toBeVisible();
+
+      failEvidence = true;
+      await page.getByRole('row').filter({ hasText: '전기적 요인' }).getByRole('button', { name: '승인' }).click();
+      await page.getByTestId('review-decide-confirm-action').click();
+
+      // 재조회 + 전역 retry 1회 = 최소 2회 실패 응답까지 기다린 뒤 단언한다
+      await expect.poll(() => evidenceCallsAfterFail, { timeout: 15000 }).toBeGreaterThanOrEqual(2);
+      await expect(page.getByText(chunk.content)).toBeVisible();
+      await expect(page.getByText(FAIL_TEXT)).toHaveCount(0);
+    });
   });
 
   test('동의어 항목에서 원문 근거 보기를 누르면 청크 스니펫이 표시된다', async ({ authenticatedPage: page }) => {

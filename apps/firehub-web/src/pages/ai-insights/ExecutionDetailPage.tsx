@@ -181,7 +181,8 @@ function ExecutionDetailContent({ jobIdNum, executionIdNum }: { jobIdNum: number
           뒤로
         </Button>
         <div className="h-5 w-px bg-border" />
-        <h1 className="text-lg font-semibold text-foreground">
+        {/* shrink-0: 긴 등급 배지(줄바꿈 모드)가 먼저 줄어들게 해 「실행 #N」 제목이 꺾이지 않게 한다 (WD-864) */}
+        <h1 className="shrink-0 text-lg font-semibold text-foreground">
           실행 #{executionIdNum}
         </h1>
         {/* 리포트 등급 배지(WD-198) — 데이터셋과 같은 배지. 등급 데이터를 읽지 않은 리포트는 배지가 없다. */}

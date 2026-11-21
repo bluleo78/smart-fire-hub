@@ -109,9 +109,10 @@ export default function ReportListTab() {
                       >
                         {report.title}
                       </Link>
-                      {/* 리포트 등급 배지(WD-198) — 열 수 없는 등급이면 서버가 요약을 비워 보낸다 */}
+                      {/* 리포트 등급 배지(WD-198) — 열 수 없는 등급이면 서버가 요약을 비워 보낸다.
+                          목록 칸이라 말줄임 + title(WD-658), 상한은 데이터셋 목록과 같게 둬 제목 폭을 남긴다(shrink-0: 제목이 먼저 줄어듦, WD-864) */}
                       {report.securityLevel && (
-                        <SecurityLevelBadge level={report.securityLevel} className="shrink-0" />
+                        <SecurityLevelBadge level={report.securityLevel} truncate className="shrink-0 max-w-[5.25rem]" />
                       )}
                     </div>
                     {report.summary && (
