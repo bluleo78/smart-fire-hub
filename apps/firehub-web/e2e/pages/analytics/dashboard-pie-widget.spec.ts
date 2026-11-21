@@ -109,6 +109,29 @@ test.describe('대시보드 파이 위젯 — 라벨/범례 겹침 (#642)', () =
 });
 
 /**
+ * 카테고리 1000개 파이 대시보드 목 설정 — WD-307 시험과 WD-852 툴팁 시험이 같은 데이터를 쓴다.
+ * 만든 행을 돌려줘 시험이 기대값을 같은 데이터로 계산하게 한다.
+ */
+async function setupManyPieDashboard(page: import('@playwright/test').Page) {
+  const rows = Array.from({ length: 1000 }, (_, i) => ({ label: `항목 ${i + 1}`, v: ((i + 1) * 7) % 13 + 1 }));
+  const widget = createWidget({ id: 1, chartId: 1, chartName: '많은 항목 파이', chartType: 'PIE', width: 6, height: 4 });
+  const chart = createChart({
+    id: 1,
+    name: '많은 항목 파이',
+    chartType: 'PIE',
+    config: { xAxis: 'label', yAxis: ['v'], showLegend: true },
+  });
+  await mockApi(page, 'GET', '/api/v1/analytics/dashboards/1', createDashboard({ id: 1, widgets: [widget] }));
+  await mockApi(page, 'GET', '/api/v1/analytics/charts/1/data', {
+    chart,
+    queryResult: createQueryResult({ columns: ['label', 'v'], rows, totalRows: rows.length }),
+  });
+  await mockApi(page, 'GET', '/api/v1/analytics/charts/1', chart);
+  await mockApi(page, 'GET', '/api/v1/analytics/charts', { content: [], page: 0, size: 20, totalElements: 0, totalPages: 0 });
+  return rows;
+}
+
+/**
  * WD-307: 카테고리가 수백 개면 범례가 위젯(카드) 위로 넘쳐 제목을 덮고 파이를 가렸다.
  * 범례는 위젯 안 상한 높이에서 스크롤되고, 파이는 범례 위에 남으며, 많은 항목 안내가 뜨는지 본다.
  */
@@ -121,21 +144,7 @@ test.describe('대시보드 파이 위젯 — 카테고리 1000개 (WD-307)', ()
     // 느린 단계는 아래 45초 개별 제한이 맡으므로 시험 전체는 그 위에 여유만 둔 60초로 —
     // test.slow()(90초)면 뒤 단계가 멈출 때 시도마다 90초를 쓴다.
     test.setTimeout(60_000);
-    const rows = Array.from({ length: 1000 }, (_, i) => ({ label: `항목 ${i + 1}`, v: ((i + 1) * 7) % 13 + 1 }));
-    const widget = createWidget({ id: 1, chartId: 1, chartName: '많은 항목 파이', chartType: 'PIE', width: 6, height: 4 });
-    const chart = createChart({
-      id: 1,
-      name: '많은 항목 파이',
-      chartType: 'PIE',
-      config: { xAxis: 'label', yAxis: ['v'], showLegend: true },
-    });
-    await mockApi(page, 'GET', '/api/v1/analytics/dashboards/1', createDashboard({ id: 1, widgets: [widget] }));
-    await mockApi(page, 'GET', '/api/v1/analytics/charts/1/data', {
-      chart,
-      queryResult: createQueryResult({ columns: ['label', 'v'], rows, totalRows: rows.length }),
-    });
-    await mockApi(page, 'GET', '/api/v1/analytics/charts/1', chart);
-    await mockApi(page, 'GET', '/api/v1/analytics/charts', { content: [], page: 0, size: 20, totalElements: 0, totalPages: 0 });
+    const rows = await setupManyPieDashboard(page);
 
     await page.goto('/analytics/dashboards/1');
     const title = page.getByText('많은 항목 파이').first();
@@ -155,7 +164,26 @@ test.describe('대시보드 파이 위젯 — 카테고리 1000개 (WD-307)', ()
       scrollHeight: el.scrollHeight,
       clientHeight: el.clientHeight,
     }));
-    expect(legendMetrics.scrollHeight).toBeGreaterThan(legendMetrics.clientHeight);
+    // WD-852: 범례가 큰 순 50개 + 「기타」로 줄어 이제 넘치지 않을 수도 있다 — 스크롤 여부 대신
+    // 「범례 높이가 상한(위젯 높이의 40%) 이하」를 본다. 넘치지 않아도 상한 안이면 위젯 밖으로 나가지 않는다.
+    // 상한은 컴포넌트가 쓰는 측정 높이(.recharts-responsive-container) 기준이므로 같은 요소로 잰다.
+    const chartHeight = (await page.locator('.recharts-responsive-container').first().boundingBox())!.height;
+    expect(legendMetrics.clientHeight).toBeLessThanOrEqual(chartHeight * 0.4 + 1);
+
+    // WD-852: 범례 항목을 앱과 같은 규칙으로 계산한다 — 0.5° 이상(v*360 >= 0.5*합) 큰 조각 중 상위 50개,
+    // 2개 이상 묶였으면 회색 「기타 (n개)」(n = 묶인 조각 수), 큰 조각이 잘렸으면 마지막에 「외 k개」.
+    const total = rows.reduce((sum, r) => sum + r.v, 0);
+    const bigCount = rows.filter((r) => r.v * 360 >= 0.5 * total).length;
+    const smallCount = rows.length - bigCount;
+    const shownBig = Math.min(bigCount, 50);
+    const legendItems = legend.locator('li');
+    await expect(legendItems).toHaveCount(shownBig + (smallCount >= 2 ? 1 : 0) + (bigCount > 50 ? 1 : 0));
+    if (smallCount >= 2) {
+      await expect(legendItems.nth(shownBig)).toHaveText(`기타 (${smallCount.toLocaleString('ko-KR')}개)`);
+    }
+    if (bigCount > 50) {
+      await expect(legendItems.last()).toHaveText(`외 ${(bigCount - 50).toLocaleString('ko-KR')}개`);
+    }
 
     // 범례가 위젯 제목 위로 넘치지 않는다 — 이전에는 범례가 카드 위쪽 경계를 넘어 제목을 덮었다.
     const titleBox = (await title.boundingBox())!;
@@ -168,7 +196,10 @@ test.describe('대시보드 파이 위젯 — 카테고리 1000개 (WD-307)', ()
         return { top: r.top, bottom: r.bottom };
       }),
     );
-    expect(sectors.length).toBe(1000);
+    // WD-852: 0.5° 미만 작은 조각은 「기타」 한 조각으로 묶여 1000개보다 적게 그려진다.
+    expect(sectors.length).toBeLessThan(1000);
+    expect(sectors.length).toBeGreaterThan(1);
+    await expect(page.locator('[data-testid="pie-other-slice"]')).toHaveCount(1);
     expect(Math.max(...sectors.map((b) => b.bottom))).toBeLessThanOrEqual(legendMetrics.top + 1);
 
     // 안내는 한 줄이라 파이를 덮지 않는다
@@ -182,5 +213,27 @@ test.describe('대시보드 파이 위젯 — 카테고리 1000개 (WD-307)', ()
       const itemBox = (await gridItem.first().boundingBox())!;
       expect(legendMetrics.bottom).toBeLessThanOrEqual(itemBox.y + itemBox.height + 1);
     }
+  });
+
+  test('기타 조각에 마우스를 올리면 개수와 합계가 툴팁에 뜬다 (WD-852)', async ({ authenticatedPage: page }) => {
+    test.setTimeout(60_000);
+    const rows = await setupManyPieDashboard(page);
+
+    await page.goto('/analytics/dashboards/1');
+    await expect(page.getByText('많은 항목 파이').first()).toBeVisible({ timeout: 45_000 });
+
+    // 기대값은 같은 데이터로 계산한다 — 0.5° 미만(v*360 < 0.5*합) 조각의 개수와 합.
+    const total = rows.reduce((sum, r) => sum + r.v, 0);
+    const small = rows.filter((r) => r.v * 360 < 0.5 * total);
+    const smallSum = small.reduce((sum, r) => sum + r.v, 0);
+
+    await page.locator('[data-testid="pie-other-slice"]').hover();
+    const tooltip = page.locator('.recharts-tooltip-wrapper');
+    const otherName = `기타 (${small.length.toLocaleString('ko-KR')}개)`;
+    await expect(tooltip).toContainText(otherName);
+    // 툴팁 formatter 는 값을 그대로(천 단위 구분 없이) 보인다 — 값 요소 전체가 합계와 정확히 같아야 한다(부분 일치 방지).
+    await expect(tooltip.locator('.recharts-tooltip-item-value')).toHaveText(String(smallSum));
+    // 툴팁의 기타 개수는 범례의 회색 기타 항목 개수와 같다.
+    await expect(page.locator('.recharts-legend-wrapper li').filter({ hasText: otherName })).toHaveCount(1);
   });
 });
