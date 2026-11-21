@@ -37,6 +37,7 @@ import { TableEmptyRow } from '../../components/ui/table-empty';
 import { TableSkeletonRows } from '../../components/ui/table-skeleton';
 import { Tabs, TabsControlsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import {
+  hasFolder,
   useCanAdminAnalytics,
   useDeleteSavedQuery,
   useExecuteSavedQuery,
@@ -91,6 +92,7 @@ export default function QueryListPage() {
   const queries = queriesData?.content ?? [];
   const totalPages = queriesData?.totalPages ?? 0;
   const totalElements = queriesData?.totalElements;
+  // 빈/공백 폴더는 useQueryFolders 가 이미 걸러 준다 (WD-889)
   const folders = foldersData ?? [];
 
   const handleDelete = async (id: number, name: string) => {
@@ -236,7 +238,8 @@ export default function QueryListPage() {
                             </div>
                           </TableCell>
                           <TableCell>
-                            {query.folder ? (
+                            {/* WD-889: 옛 공백 폴더는 빈 폴더 표시 대신 「-」로 */}
+                            {hasFolder(query.folder) ? (
                               <div className="flex items-center gap-1 text-sm text-muted-foreground">
                                 <Folder className="h-3.5 w-3.5" />
                                 {query.folder}

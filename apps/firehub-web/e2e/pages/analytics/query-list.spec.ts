@@ -302,6 +302,47 @@ test.describe('쿼리 목록 페이지', () => {
     expect(req.url.searchParams.get('folder')).toBe('분석');
   });
 
+  test('폴더 목록에 빈 폴더가 섞여 와도 목록이 그려지고 필터에는 전체 폴더·운영만 보인다 (WD-889)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 옛 서버·캐시가 "" / 공백 폴더를 돌려줘도 Radix SelectItem 빈 value 예외로 페이지가 무너지지 않아야 한다
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/analytics/queries',
+      createPageResponse([createSavedQueryListItem({ id: 1, name: '폴더 방어 쿼리' })]),
+    );
+    await mockApi(page, 'GET', '/api/v1/analytics/queries/folders', ['', '  ', '운영']);
+
+    await page.goto('/analytics/queries');
+
+    await expect(page.getByRole('heading', { name: '저장된 쿼리' })).toBeVisible();
+    await expect(page.getByText('폴더 방어 쿼리')).toBeVisible();
+    await expect(page.getByText('페이지를 불러오는 중 문제가 발생했습니다')).toHaveCount(0);
+
+    await page.getByRole('combobox', { name: '폴더 필터' }).click();
+    await expect(page.getByRole('option')).toHaveCount(2);
+    await expect(page.getByRole('option', { name: '전체 폴더', exact: true })).toBeVisible();
+    await expect(page.getByRole('option', { name: '운영', exact: true })).toBeVisible();
+  });
+
+  test('공백만 있는 옛 폴더 쿼리는 폴더 칸에 「-」로 보인다 (WD-889)', async ({ authenticatedPage: page }) => {
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/analytics/queries',
+      createPageResponse([createSavedQueryListItem({ id: 1, name: '공백 폴더 쿼리', folder: '   ' })]),
+    );
+    await mockApi(page, 'GET', '/api/v1/analytics/queries/folders', []);
+
+    await page.goto('/analytics/queries');
+
+    const row = page.getByRole('row').filter({ hasText: '공백 폴더 쿼리' });
+    await expect(row).toBeVisible();
+    // 두 번째 칸(폴더)이 빈 폴더 표시가 아니라 「-」
+    await expect(row.getByRole('cell').nth(1)).toHaveText('-');
+  });
+
   test('폴더 목록 요청도 탭 범위를 싣는다 — 「내 쿼리」는 mineOnly=true, 「공유됨」은 sharedOnly=true (WD-328)', async ({
     authenticatedPage: page,
   }) => {

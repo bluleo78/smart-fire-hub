@@ -60,6 +60,7 @@ import {
 import { Skeleton } from '../../components/ui/skeleton';
 import { Switch } from '../../components/ui/switch';
 import {
+  hasFolder,
   SAVED_QUERY_LIST_KEY,
   useCloneSavedQuery,
   useCreateSavedQuery,
@@ -536,6 +537,7 @@ export default function QueryEditorPage() {
   // 충돌 창의 「다시 불러오기」 진행 중 — 저장 중과 함께 창의 버튼을 막는다
   const [isReloading, setIsReloading] = useState(false);
 
+  // 빈/공백 폴더는 useQueryFolders 가 이미 걸러 준다 (WD-889)
   const folders = foldersData ?? [];
   const tables = schemaInfo?.tables ?? [];
 
@@ -559,7 +561,8 @@ export default function QueryEditorPage() {
     setSaveForm({
       name: query.name,
       description: query.description ?? '',
-      folder: query.folder ?? '',
+      // WD-889: 옛 공백 폴더("  ")는 고를 항목이 없어 폴더 칸이 빈 채로 보이므로 「폴더 없음」('')으로 읽는다
+      folder: hasFolder(query.folder) ? query.folder : '',
       isShared: query.isShared,
     });
     setBaseUpdatedAt(query.updatedAt);
@@ -634,7 +637,8 @@ export default function QueryEditorPage() {
       setSaveForm({
         name: savedQuery.name,
         description: savedQuery.description ?? '',
-        folder: savedQuery.folder ?? '',
+        // WD-889: 옛 공백 폴더는 「폴더 없음」으로 — 위 쿼리 불러오기와 같은 기준
+        folder: hasFolder(savedQuery.folder) ? savedQuery.folder : '',
         isShared: savedQuery.isShared,
       });
     }
@@ -859,7 +863,8 @@ export default function QueryEditorPage() {
                   툴바 내 제목이라 시각 크기(text-lg)는 그대로 두고 태그만 h1 으로 올린다.
                   긴 이름은 한 줄 말줄임되고, 잘렸을 때만 title 로 전체 이름을 보인다(WD-663, WD-517 원칙). */}
               <TruncatedTitle as="h1" className="text-lg font-semibold" text={savedQuery.name} />
-              {savedQuery.folder && (
+              {/* WD-889: 옛 공백 폴더는 빈 뱃지로 보이지 않게 내용이 있을 때만 그린다 */}
+              {hasFolder(savedQuery.folder) && (
                 <Badge variant="outline" className="text-xs">
                   {savedQuery.folder}
                 </Badge>
