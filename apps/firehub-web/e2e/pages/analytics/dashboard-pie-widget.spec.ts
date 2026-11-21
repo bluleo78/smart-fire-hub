@@ -202,6 +202,17 @@ test.describe('대시보드 파이 위젯 — 카테고리 1000개 (WD-307)', ()
     await expect(page.locator('[data-testid="pie-other-slice"]')).toHaveCount(1);
     expect(Math.max(...sectors.map((b) => b.bottom))).toBeLessThanOrEqual(legendMetrics.top + 1);
 
+    // WD-852 리뷰 후속: 많은 항목이면 테두리·여백이 꺼지므로, 그린 순서로 맞닿는 큰 조각(원을 돌아 마지막 → 첫 조각 포함)은
+    // 색이 달라야 한 조각처럼 보이지 않는다. 회색 기타는 1° 도 안 되어 사이에 있어도 경계가 되지 못하므로 빼고 본다.
+    const bigFills = await page
+      .locator('path.recharts-sector:not([data-testid="pie-other-slice"])')
+      .evaluateAll((els) => els.map((el) => el.getAttribute('fill')));
+    expect(bigFills.length).toBeGreaterThan(1);
+    bigFills.forEach((fill, i) => expect(fill).not.toBe(bigFills[(i + 1) % bigFills.length]));
+    // 범례 스와치 색은 같은 이름 조각의 색과 같다 — 첫 범례 항목(가장 큰 조각)으로 확인
+    const firstSwatch = await legendItems.first().locator('path').getAttribute('fill');
+    expect(bigFills).toContain(firstSwatch);
+
     // 안내는 한 줄이라 파이를 덮지 않는다
     const noticeBox = (await page.getByTestId('pie-many-categories-notice').boundingBox())!;
     expect(noticeBox.height).toBeLessThan(24);

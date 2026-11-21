@@ -224,7 +224,7 @@ export const PIE_SMALL_SLICE_DEGREES = 0.5;
 /** 파이 범례에 싣는 최대 항목 수(큰 순) — 천 개 범례가 DOM 을 부풀리지 않게 한다(WD-852) */
 export const PIE_LEGEND_LIMIT = 50;
 
-/** 파이가 그릴 조각 하나 — colorIndex 는 pieData 안 원래 index(기타는 -1), isOther 는 묶음 조각 여부 */
+/** 파이가 그릴 조각 하나 — colorIndex 는 팔레트 칸 번호(기타는 -1), isOther 는 묶음 조각 여부 */
 export interface PieSlice {
   row: Record<string, unknown>;
   colorIndex: number;
@@ -262,7 +262,7 @@ function pieOtherLabel(count: number): string {
  * 범주가 천 개에 가까우면 대부분 눈에 보이지 않는 조각이라 SVG 노드·범례 DOM 만 늘려 느려지므로 줄인다.
  * 입력은 splitPieData 의 pieData(값은 유한 숫자 ≥ 0)다. 묶을지(조각 수가 많은지) 판단은 호출자 몫이다.
  * 작은 조각이 1개뿐이면 묶어도 이득이 없으므로 묶지 않고(otherCount 0), total ≤ 0 이면 각도를 못 구하므로 그대로 돌려준다.
- * 큰 조각은 원래 순서와 원래 colorIndex 를 유지하고 기타는 맨 끝에 둔다. 정렬(O(n log n))은 범례 후보(큰 조각)에만 한다.
+ * 큰 조각은 원래 순서를 유지하고 기타는 맨 끝에 둔다. colorIndex 는 팔레트 칸(그린 순서 % paletteSize, 원을 돌아 맞닿는 끝은 fixWrapSlot)이다. 정렬(O(n log n))은 범례 후보(큰 조각)에만 한다.
  * 기타 여부는 이름이 아니라 isOther 로 구분한다 — 실제 행 이름이 「기타」여도 일반 조각이다.
  */
 export function groupSmallPieSlices(
@@ -270,6 +270,7 @@ export function groupSmallPieSlices(
   nameKey: string,
   valueKey: string,
   total: number,
+  paletteSize: number,
 ): { slices: PieSlice[]; legend: PieLegendItem[]; otherCount: number } {
   // 한 번 훑으며 전체 목록(all)·큰 조각(big)·작은 조각 수/합을 함께 모은다
   const all: PieSlice[] = [];
@@ -278,19 +279,20 @@ export function groupSmallPieSlices(
   let smallSum = 0;
   pieData.forEach((row, index) => {
     const value = row[valueKey] as number;
-    const slice: PieSlice = { row, colorIndex: index, isOther: false };
-    all.push(slice);
+    all.push({ row, colorIndex: index % paletteSize, isOther: false });
     // value/total*360 < 0.5 를 곱셈으로 비교해 경계(정확히 0.5°)가 부동소수 오차로 흔들리지 않게 한다
     if (total > 0 && value * 360 < PIE_SMALL_SLICE_DEGREES * total) {
       smallCount++;
       smallSum += value;
     } else {
-      big.push(slice);
+      // 리뷰 후속: 묶으면 원래 index 사이가 벌어져 이웃 큰 조각이 같은 색이 될 수 있어 그린 순서(big 안 위치)로 칸을 매긴다
+      big.push({ row, colorIndex: big.length % paletteSize, isOther: false });
     }
   });
 
   // 작은 조각이 1개 이하면 묶지 않고 원본 그대로
   if (smallCount < 2) {
+    fixWrapSlot(all, paletteSize);
     return { slices: all, legend: buildLegend(all, nameKey, valueKey, 0), otherCount: 0 };
   }
 
@@ -300,11 +302,29 @@ export function groupSmallPieSlices(
     colorIndex: -1,
     isOther: true,
   };
+  fixWrapSlot(big, paletteSize);
   return {
     slices: [...big, other],
     legend: buildLegend(big, nameKey, valueKey, smallCount),
     otherCount: smallCount,
   };
+}
+
+/**
+ * 원을 돌아 맞닿는 마지막·첫 조각이 같은 팔레트 칸이면 마지막 조각을 앞 이웃·첫 조각과 다른 가장 낮은 칸으로 옮긴다(WD-852 리뷰 후속).
+ * 많은 항목이면 테두리·여백이 꺼지고 사이의 회색 기타는 1° 도 안 되어, 같은 색이면 두 조각이 한 조각처럼 보인다.
+ * 조각 배열은 이 함수 안에서 새로 만든 것이라 마지막 항목의 colorIndex 를 그 자리에서 고친다.
+ */
+function fixWrapSlot(slices: PieSlice[], paletteSize: number): void {
+  const n = slices.length;
+  if (n < 2 || slices[n - 1].colorIndex !== slices[0].colorIndex) return;
+  const prev = slices[n - 2].colorIndex;
+  for (let slot = 0; slot < paletteSize; slot++) {
+    if (slot !== prev && slot !== slices[0].colorIndex) {
+      slices[n - 1].colorIndex = slot;
+      return;
+    }
+  }
 }
 
 /** 범례 고르기 — 값 내림차순(같으면 원래 순서) 큰 조각 상위 50개, 묶었으면 기타(묶인 수), 큰 조각이 잘렸으면 「외 k개」 */

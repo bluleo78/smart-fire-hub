@@ -10,7 +10,12 @@ import {
 } from 'recharts';
 
 import type { ChartConfig, ChartType } from '../../types/analytics';
-import { groupSmallPieSlices, type PieLegendItem, type PieSlice, splitPieData } from './chart-derived-data';
+import {
+  groupSmallPieSlices,
+  type PieLegendItem,
+  type PieSlice,
+  splitPieData,
+} from './chart-derived-data';
 import { HIDDEN_CHART_ROOT_PROPS } from './chart-figure-context';
 import {
   CHART_OTHER_COLOR,
@@ -119,20 +124,23 @@ export function PieChartView({ chartType, config, data, height }: PieChartViewPr
   // WD-838/841: 그릴 조각이 없다 — 행이 없거나 전부 0(합계 0)이면 빈 원 대신 이유를 말한다.
   // 그릴 것이 없는지는 splitPieData 의 emptyReason 한 곳에서 정한다(대체 표와 같은 판정).
   const nothingToDraw = emptyReason !== null;
+  // 항목이 많은지 — 안내 줄뿐 아니라 작은 조각 묶기(WD-852)·애니메이션·조각 테두리도 이 값 하나로 정한다(WD-307).
+  // 그릴 것이 없으면 막대 권장 안내가 어긋나므로 많은 항목으로 보지 않는다(WD-838)
+  const showManyNotice = !nothingToDraw && categoryCount > MANY_CATEGORY_THRESHOLD;
   // WD-852: 그릴 데이터·조각 색·범례를 한 메모로 만든다 — 렌더마다 새 배열이면 recharts 가 조각을 다시 그린다.
   // 항목이 많으면 groupSmallPieSlices(묶기 규칙은 그 함수 참고), 아니면 원래 행 그대로(legend null → recharts 기본 범례).
   const { drawData, slices, legend } = useMemo(() => {
-    if (nothingToDraw || categoryCount <= MANY_CATEGORY_THRESHOLD) {
+    if (!showManyNotice) {
       return {
         drawData: pieData,
         slices: pieData.map((row, index): PieSlice => ({ row, colorIndex: index, isOther: false })),
         legend: null as PieLegendItem[] | null,
       };
     }
-    const grouped = groupSmallPieSlices(pieData, nameKey, valueKey, total);
+    const grouped = groupSmallPieSlices(pieData, nameKey, valueKey, total, palette.length);
     return { drawData: grouped.slices.map((s) => s.row), slices: grouped.slices, legend: grouped.legend };
-  }, [nothingToDraw, categoryCount, pieData, nameKey, valueKey, total]);
-  // 조각(Cell) 수백~천 개를 리사이즈 재렌더마다 다시 만들지 않게 메모한다. 기타는 회색 고정, 큰 조각은 원래 index 의 팔레트 색.
+  }, [showManyNotice, pieData, nameKey, valueKey, total, palette.length]);
+  // 조각(Cell) 수백~천 개를 리사이즈 재렌더마다 다시 만들지 않게 메모한다. 기타는 회색 고정, 큰 조각은 colorIndex 칸의 팔레트 색.
   const cells = useMemo(
     () =>
       slices.map((slice, index) => (
@@ -157,9 +165,6 @@ export function PieChartView({ chartType, config, data, height }: PieChartViewPr
   const legendReservedHeight = showLegend
     ? Math.min(8 + legendRows * LEGEND_ROW_HEIGHT, legendMaxHeight)
     : 0;
-  // 항목이 많은지 — 안내 줄뿐 아니라 애니메이션·조각 테두리도 이 값으로 끈다(WD-307).
-  // 그릴 것이 없으면 막대 권장 안내가 어긋나므로 많은 항목으로 보지 않는다(WD-838)
-  const showManyNotice = !nothingToDraw && categoryCount > MANY_CATEGORY_THRESHOLD;
   const chartLabel = isDonut ? '도넛' : '파이';
   // 차트 위 안내 줄 목록 — 보일 줄만 담아, 그리는 줄과 아래 여백 계산이 늘 같은 목록을 쓰게 한다(WD-835).
   // warn 은 경고 아이콘을 붙일지(뺀 행이 있다는 안내), 순서는 화면에 보이는 순서다.
