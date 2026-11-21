@@ -513,7 +513,7 @@ test.describe('재임베딩 카드', () => {
         model: 'text-embedding-3-small',
         dimension: 1536,
         documentChunks: { total: 500, embedded: 340 },
-        job: { status: 'FAILED', lastError: '임베딩 서버 인증에 실패했습니다(HTTP 401) — 임베딩 API 키를 확인하세요', updatedAt: '2026-09-28T10:00:00Z' },
+        job: { status: 'FAILED', lastError: '임베딩 서버 인증에 실패했습니다(HTTP 401) — 인증 정보(API 키·프록시 인증)를 확인하세요', updatedAt: '2026-09-28T10:00:00Z' },
       }),
     });
     await openTab(page);
@@ -521,7 +521,7 @@ test.describe('재임베딩 카드', () => {
     await expect(page.getByText('text-embedding-3-small · 1536차원')).toBeVisible();
     await expect(page.getByText('340 / 500')).toBeVisible();
     await expect(page.getByText('재임베딩 실패')).toBeVisible();
-    await expect(page.getByText('임베딩 서버 인증에 실패했습니다(HTTP 401) — 임베딩 API 키를 확인하세요')).toBeVisible();
+    await expect(page.getByText('임베딩 서버 인증에 실패했습니다(HTTP 401) — 인증 정보(API 키·프록시 인증)를 확인하세요')).toBeVisible();
   });
 
   test('잡 실패 사유가 비어 있으면 대체 안내 문구를 보여준다', async ({ authenticatedPage: page }) => {
