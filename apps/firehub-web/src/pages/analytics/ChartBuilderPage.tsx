@@ -892,6 +892,13 @@ export default function ChartBuilderPage() {
 
   const isSaving = createChart.isPending || updateChart.isPending;
   const isRunning = executeQuery.isPending;
+  // 쿼리 실행 완료 문구 — 결과가 없으면 null(상태 그릇에 텍스트 노드를 두지 않아 :empty 가 맞게, WD-916)
+  const runStatusText =
+    queryColumns.length === 0
+      ? null
+      : queryTruncated
+        ? `${queryColumns.length}개 컬럼, 상위 ${queryRows.length}개 행 로드됨 (행 상한 — 결과가 더 있을 수 있음)`
+        : `${queryColumns.length}개 컬럼, ${queryRows.length}개 행 로드됨`;
 
   return (
     <div className="space-y-6">
@@ -1080,13 +1087,16 @@ export default function ChartBuilderPage() {
                 // 비활성 이유를 컨트롤 바로 아래에 알린다(디자이너 리뷰)
                 <p className="text-xs text-muted-foreground">설정이 잠긴 차트는 쿼리를 바꾸거나 실행할 수 없습니다.</p>
               )}
-              {queryColumns.length > 0 && (
-                <p className="text-xs text-muted-foreground">
-                  {queryTruncated
-                    ? `${queryColumns.length}개 컬럼, 상위 ${queryRows.length}개 행 로드됨 (행 상한 — 결과가 더 있을 수 있음)`
-                    : `${queryColumns.length}개 컬럼, ${queryRows.length}개 행 로드됨`}
-                </p>
-              )}
+              {/* 실행 완료 문구(WD-916, WCAG 4.1.3): 새로 끼워진 live region 은 읽히지 않으므로 그릇을 늘 두고 글자만 바꾼다
+                  (같은 결과로 다시 실행하면 글자가 그대로라 토스트가 알린다). 비었을 때는 space-y-3 의 12px 간격을 empty:-mt-3 로 상쇄한다. */}
+              <div
+                role="status"
+                aria-live="polite"
+                aria-atomic="true"
+                className="text-xs text-muted-foreground empty:-mt-3"
+              >
+                {runStatusText}
+              </div>
             </CardContent>
           </Card>
 
