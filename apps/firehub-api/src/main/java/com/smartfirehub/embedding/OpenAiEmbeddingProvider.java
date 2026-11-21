@@ -42,7 +42,8 @@ public class OpenAiEmbeddingProvider implements EmbeddingProvider {
               .block();
     } catch (Exception e) {
       // 인증 실패/쿼터 초과/타임아웃 등 — 조용한 폴백 없이 명시적으로 전파한다.
-      throw new EmbeddingException("OpenAI 임베딩 호출 실패: " + e.getMessage(), e);
+      // 문장은 원인별 안내(접두어 없음)다 — 연결 테스트가 「임베딩 연결 테스트 실패: 」 를 한 번만 붙인다(WD-863).
+      throw new EmbeddingException(EmbeddingFailureMessages.describe(e), e);
     }
     if (resp == null || !(resp.get("data") instanceof List<?> rows)) {
       throw new EmbeddingException("OpenAI 응답에 data 가 없습니다");

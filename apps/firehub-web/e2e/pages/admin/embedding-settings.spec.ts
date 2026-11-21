@@ -103,11 +103,11 @@ test.describe('임베딩 설정 탭', () => {
       page,
       'POST',
       '/api/v1/settings/embedding/test',
-      { message: '임베딩 연결 테스트 실패: Ollama 임베딩 호출 실패: 404 Not Found' },
+      { message: '임베딩 연결 테스트 실패: 임베딩 서버에서 요청한 주소나 모델을 찾을 수 없습니다(HTTP 404) — Base URL 과 모델 이름을 확인하세요' },
       { status: 400 },
     );
     await page.getByRole('button', { name: '연결 테스트' }).click();
-    await expect(page.getByText(/404 Not Found/)).toBeVisible();
+    await expect(page.getByText(/요청한 주소나 모델을 찾을 수 없습니다\(HTTP 404\)/)).toBeVisible();
   });
 
   test('모델·차원이 바뀌면 재임베딩 확인 창을 띄우고, 확인해야 저장한다', async ({ authenticatedPage: page }) => {
@@ -210,7 +210,7 @@ test.describe('임베딩 설정 탭', () => {
     await setupEmbeddingMocks(page, {});
     const probe = await gateProbe(page, {
       status: 400,
-      body: { message: '임베딩 연결 테스트 실패: OpenAI 임베딩 호출 실패: connection timed out' },
+      body: { message: '임베딩 연결 테스트 실패: 임베딩 서버가 제한 시간 안에 응답하지 않았습니다 — 서버 상태와 Base URL 을 확인하세요' },
     });
     await openTab(page);
 
@@ -281,7 +281,7 @@ test.describe('임베딩 설정 탭', () => {
     const { impact, save } = await setupEmbeddingMocks(page, {});
     const probe = await gateProbe(page, {
       status: 400,
-      body: { message: '임베딩 연결 테스트 실패: OpenAI 임베딩 호출 실패: connection timed out' },
+      body: { message: '임베딩 연결 테스트 실패: 임베딩 서버가 제한 시간 안에 응답하지 않았습니다 — 서버 상태와 Base URL 을 확인하세요' },
     });
     await openTab(page);
 
@@ -321,7 +321,7 @@ test.describe('임베딩 설정 탭', () => {
         return route.fulfill({
           status: 400,
           contentType: 'application/json',
-          body: JSON.stringify({ message: '임베딩 연결 테스트 실패: Ollama 임베딩 호출 실패: 503' }),
+          body: JSON.stringify({ message: '임베딩 연결 테스트 실패: 임베딩 서버 오류(HTTP 503) — 서버 상태를 확인하세요' }),
         });
       },
     );
@@ -335,14 +335,14 @@ test.describe('임베딩 설정 탭', () => {
 
     await expect(page.getByText('저장 중 입력이 바뀌어 저장하지 않았습니다. 다시 저장하세요.')).toBeVisible();
     await expect(page.getByRole('button', { name: '저장', exact: true })).toBeEnabled();
-    await expect(page.getByText(/Ollama 임베딩 호출 실패: 503/)).toHaveCount(0);
+    await expect(page.getByText(/임베딩 서버 오류\(HTTP 503\)/)).toHaveCount(0);
     await expect(page.getByLabel('모델')).toHaveValue('edited-model');
   });
 
   test('저장 PUT 이 400 이면 서버 문구를 토스트로 보여준다', async ({ authenticatedPage: page }) => {
     // probe·영향도는 통과(영향 0 → 확인 창 없이 PUT)했는데 서버가 저장 시 다시 probe 해 거부한 경우.
     const { save } = await setupEmbeddingMocks(page, {
-      save: { status: 400, body: { message: '임베딩 연결 테스트 실패: Ollama 임베딩 호출 실패: 503' } },
+      save: { status: 400, body: { message: '임베딩 연결 테스트 실패: 임베딩 서버 오류(HTTP 503) — 서버 상태를 확인하세요' } },
     });
     await openTab(page);
     await page.getByLabel('모델').fill('bge-m3-v2');
@@ -351,7 +351,7 @@ test.describe('임베딩 설정 탭', () => {
     const req = await save.waitForRequest();
     expect(req.payload).toMatchObject({ model: 'bge-m3-v2' });
     await expect(
-      page.locator('[data-sonner-toast]', { hasText: '임베딩 연결 테스트 실패: Ollama 임베딩 호출 실패: 503' }),
+      page.locator('[data-sonner-toast]', { hasText: '임베딩 연결 테스트 실패: 임베딩 서버 오류(HTTP 503) — 서버 상태를 확인하세요' }),
     ).toBeVisible();
     await expect(page.getByText('임베딩 설정을 저장했습니다')).toHaveCount(0);
   });
@@ -513,7 +513,7 @@ test.describe('재임베딩 카드', () => {
         model: 'text-embedding-3-small',
         dimension: 1536,
         documentChunks: { total: 500, embedded: 340 },
-        job: { status: 'FAILED', lastError: 'OpenAI 임베딩 호출 실패: 401 Unauthorized', updatedAt: '2026-09-28T10:00:00Z' },
+        job: { status: 'FAILED', lastError: '임베딩 서버 인증에 실패했습니다(HTTP 401) — 임베딩 API 키를 확인하세요', updatedAt: '2026-09-28T10:00:00Z' },
       }),
     });
     await openTab(page);
@@ -521,7 +521,7 @@ test.describe('재임베딩 카드', () => {
     await expect(page.getByText('text-embedding-3-small · 1536차원')).toBeVisible();
     await expect(page.getByText('340 / 500')).toBeVisible();
     await expect(page.getByText('재임베딩 실패')).toBeVisible();
-    await expect(page.getByText('OpenAI 임베딩 호출 실패: 401 Unauthorized')).toBeVisible();
+    await expect(page.getByText('임베딩 서버 인증에 실패했습니다(HTTP 401) — 임베딩 API 키를 확인하세요')).toBeVisible();
   });
 
   test('잡 실패 사유가 비어 있으면 대체 안내 문구를 보여준다', async ({ authenticatedPage: page }) => {

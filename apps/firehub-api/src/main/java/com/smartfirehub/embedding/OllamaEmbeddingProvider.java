@@ -35,7 +35,8 @@ public class OllamaEmbeddingProvider implements EmbeddingProvider {
               .block();
     } catch (Exception e) {
       // 서비스 다운/타임아웃/HTTP 오류 등 — 조용한 폴백 없이 명시적으로 전파한다.
-      throw new EmbeddingException("Ollama 임베딩 호출 실패: " + e.getMessage(), e);
+      // 문장은 원인별 안내(접두어 없음)다 — 연결 테스트가 「임베딩 연결 테스트 실패: 」 를 한 번만 붙인다(WD-863).
+      throw new EmbeddingException(EmbeddingFailureMessages.describe(e), e);
     }
     if (resp == null || !(resp.get("embeddings") instanceof List<?> rows)) {
       throw new EmbeddingException("Ollama 응답에 embeddings 가 없습니다");
