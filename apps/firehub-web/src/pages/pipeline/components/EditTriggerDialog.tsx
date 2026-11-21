@@ -17,6 +17,7 @@ import { cronInputError } from '@/lib/cron-frequency';
 import { iGa } from '@/lib/utils';
 import type { TriggerResponse } from '@/types/pipeline';
 
+import { withoutBlankAllowedIps } from './allowedIps';
 import ApiTriggerForm from './ApiTriggerForm';
 import DatasetChangeTriggerForm from './DatasetChangeTriggerForm';
 import PipelineChainForm from './PipelineChainForm';
@@ -40,10 +41,18 @@ interface EditTriggerDialogProps {
   onCloseAutoFocus?: (event: Event) => void;
 }
 
+/**
+ * 편집 창에 올릴 config — API 유형은 공백뿐인 allowedIps 원소를 걸러서 올린다 (WD-882).
+ * 서버가 그런 원소를 무시하므로(TriggerService.isBlankEntry, WD-868) 화면에도 칩으로 보이지 않고 저장 때도 빠진다.
+ */
+function editableConfig(trigger: TriggerResponse): Record<string, unknown> {
+  return trigger.triggerType === 'API' ? withoutBlankAllowedIps(trigger.config) : trigger.config;
+}
+
 export function EditTriggerDialog({ open, onOpenChange, pipelineId, trigger, onCloseAutoFocus }: EditTriggerDialogProps) {
   const [name, setName] = useState(trigger.name);
   const [description, setDescription] = useState(trigger.description ?? '');
-  const [config, setConfig] = useState<Record<string, unknown>>(trigger.config);
+  const [config, setConfig] = useState<Record<string, unknown>>(() => editableConfig(trigger));
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
   // 편집 기준 버전(WD-576) — 이 창의 입력값을 불러온 트리거의 updatedAt. 입력값과 함께만 바뀐다(창을 열 때·「다시 불러오기」).
   // 저장 때 expectedUpdatedAt 으로 보내, 그 사이 다른 사람이 먼저 저장했으면 서버가 409 EDIT_CONFLICT 로 거부한다 —
@@ -66,7 +75,7 @@ export function EditTriggerDialog({ open, onOpenChange, pipelineId, trigger, onC
   function applyTrigger(latest: TriggerResponse) {
     setName(latest.name);
     setDescription(latest.description ?? '');
-    setConfig(latest.config);
+    setConfig(editableConfig(latest));
     setValidationErrors({});
     setBaseUpdatedAt(latest.updatedAt ?? null);
   }

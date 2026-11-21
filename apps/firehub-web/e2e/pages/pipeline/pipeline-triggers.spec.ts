@@ -762,6 +762,64 @@ test.describe('파이프라인 트리거 탭', () => {
     expect(req.payload).toMatchObject({ name: 'IP 제한 없는 API 트리거', config: { allowedIps: ['10.0.0.0/24'] } });
   });
 
+  /**
+   * 회귀 방지 테스트 (WD-882)
+   * 서버는 공백뿐인 allowedIps 원소를 무시한다(TriggerService.isBlankEntry, WD-868).
+   * 편집 창이 그 원소를 그대로 보이면 빈 칩이 생기고, 저장 때 그대로 되돌려 보내던 결함.
+   */
+  test('API 트리거 편집 — 공백뿐인 allowedIps 는 칩 없이 제한 없음으로 보이고 저장 때 빠진다 (WD-882)', async ({
+    authenticatedPage: page,
+  }) => {
+    const existing = createTrigger({
+      id: 14,
+      name: '공백 IP API 트리거',
+      triggerType: 'API',
+      config: { allowedIps: [' '] },
+    });
+    await setupTriggerTabMocks(page, { triggers: [existing] });
+    const updateCapture = await mockApi(page, 'PUT', '/api/v1/pipelines/1/triggers/14', '', { capture: true });
+
+    await gotoTriggerTab(page);
+    await expect(page.getByText('공백 IP API 트리거')).toBeVisible();
+    await page.getByRole('button').filter({ has: page.locator('.lucide-ellipsis') }).first().click();
+    await page.getByRole('menuitem', { name: '편집' }).click();
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByLabel('IP 제한 (선택)')).toBeVisible();
+    // IP 칩(× 가 붙은 Badge)이 하나도 없어야 한다 — 트리거 유형 Badge 는 세지 않는다
+    await expect(dialog.locator('[data-slot="badge"]', { hasText: '×' })).toHaveCount(0);
+
+    await dialog.getByRole('button', { name: '저장' }).click();
+    const req = await updateCapture.waitForRequest();
+    expect(req.payload).toMatchObject({ config: { allowedIps: [] } });
+  });
+
+  test('API 트리거 편집 — 공백 원소가 섞인 allowedIps 는 유효한 칩만 보이고 저장 때 빠진다 (WD-882)', async ({
+    authenticatedPage: page,
+  }) => {
+    const existing = createTrigger({
+      id: 15,
+      name: '공백 섞인 IP API 트리거',
+      triggerType: 'API',
+      config: { allowedIps: ['', '\t', '10.0.0.0/8'] },
+    });
+    await setupTriggerTabMocks(page, { triggers: [existing] });
+    const updateCapture = await mockApi(page, 'PUT', '/api/v1/pipelines/1/triggers/15', '', { capture: true });
+
+    await gotoTriggerTab(page);
+    await expect(page.getByText('공백 섞인 IP API 트리거')).toBeVisible();
+    await page.getByRole('button').filter({ has: page.locator('.lucide-ellipsis') }).first().click();
+    await page.getByRole('menuitem', { name: '편집' }).click();
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByText('10.0.0.0/8')).toBeVisible();
+    await expect(dialog.locator('[data-slot="badge"]', { hasText: '×' })).toHaveCount(1);
+
+    await dialog.getByRole('button', { name: '저장' }).click();
+    const req = await updateCapture.waitForRequest();
+    expect((req.payload as { config: { allowedIps: string[] } }).config.allowedIps).toEqual(['10.0.0.0/8']);
+  });
+
   test('DATASET_CHANGE 트리거 추가 — 데이터셋 선택 없이 생성 시 에러가 표시된다', async ({
     authenticatedPage: page,
   }) => {
