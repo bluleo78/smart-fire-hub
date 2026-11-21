@@ -478,4 +478,23 @@ test.describe('설정 › 데이터 보안', () => {
       await expect(menuButton).toBeFocused();
     }
   });
+
+  /** WD-902: 등급 행의 위로·아래로·펼치기·메뉴 아이콘 버튼은 클릭 대상이 28×28 이라 작았다 — 모두 32×32 이상이어야 한다. */
+  test('등급 행의 위로·아래로·펼치기·메뉴 버튼이 모두 32×32 이상 (WD-902)', async ({ authenticatedPage: page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await openTab(page);
+    const rows = page.getByTestId('security-level-row');
+    await expect(rows).toHaveCount(4);
+    // 4행 × 4버튼 = 16개 — 개수를 확인한 뒤 크기를 한 번에 모아 가장 작은 폭·높이를 본다
+    const buttons = rows.getByRole('button', { name: /(위로|아래로|펼치기|메뉴)$/ });
+    await expect(buttons).toHaveCount(16);
+    const sizes = await buttons.evaluateAll((els) =>
+      els.map((el) => {
+        const r = el.getBoundingClientRect();
+        return { w: r.width, h: r.height };
+      }),
+    );
+    expect(Math.min(...sizes.map((s) => s.w))).toBeGreaterThanOrEqual(32);
+    expect(Math.min(...sizes.map((s) => s.h))).toBeGreaterThanOrEqual(32);
+  });
 });

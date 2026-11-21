@@ -161,10 +161,10 @@ export function SecurityLevelRow({
       {/* 좁은 폭(모바일)에서는 줄바꿈해 오른쪽 묶음(사용량·펼치기·메뉴)을 다음 줄로 내린다(WD-294). 줄바꿈이 없으면 줄어들 수 있는
           사용량 문구만 12px 까지 눌려 한 글자씩 세로로 쪼개지고, 남는 넘침이 메뉴 버튼을 카드 밖으로 밀었다. */}
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2">
+        {/* WD-902: 위로·아래로·펼치기·메뉴 아이콘 버튼은 클릭 대상을 size="icon-sm"(32×32) 변형으로 둔다 — 기존 28×28 은 터치·포인터로 맞히기 작았다. */}
         <Button
           variant="ghost"
-          size="icon"
-          className="h-7 w-7"
+          size="icon-sm"
           aria-label={`${level.name} 위로`}
           disabled={isFirst}
           onClick={onMoveUp}
@@ -173,8 +173,7 @@ export function SecurityLevelRow({
         </Button>
         <Button
           variant="ghost"
-          size="icon"
-          className="h-7 w-7"
+          size="icon-sm"
           aria-label={`${level.name} 아래로`}
           disabled={isLast}
           onClick={onMoveDown}
@@ -193,8 +192,7 @@ export function SecurityLevelRow({
           </span>
           <Button
             variant="ghost"
-            size="icon"
-            className="h-7 w-7"
+            size="icon-sm"
             aria-label={`${level.name} 펼치기`}
             aria-expanded={open}
             onClick={() => setOpen((o) => !o)}
@@ -208,8 +206,7 @@ export function SecurityLevelRow({
               <Button
                 ref={menuButtonRef}
                 variant="ghost"
-                size="icon"
-                className="h-7 w-7"
+                size="icon-sm"
                 aria-label={`${level.name} 메뉴`}
               >
                 <MoreHorizontal className="h-4 w-4" />
