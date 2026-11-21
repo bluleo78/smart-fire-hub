@@ -91,6 +91,12 @@ public class EmbeddingProviderFactory {
     try {
       targetGuard.check(cfg.provider(), cfg.baseUrl());
     } catch (IllegalArgumentException e) {
+      // 비운 값 전용 문구는 이미 완결된 문장이라 「허용되지 않습니다:」 접두를 붙이면
+      // 앞뒤가 안 맞는 문장이 된다(「… 허용되지 않습니다: 임베딩 Base URL 을 입력하세요」).
+      // 그 문구 자체가 안내라 접두 없이 그대로 내보낸다(WD-862 리뷰 후속).
+      if (EmbeddingTargetGuard.MSG_URL_REQUIRED.equals(e.getMessage())) {
+        throw new EmbeddingException(EmbeddingTargetGuard.MSG_URL_REQUIRED, e);
+      }
       throw new EmbeddingException("임베딩 Base URL 이 허용되지 않습니다: " + e.getMessage(), e);
     }
   }

@@ -9,6 +9,7 @@ import {
   type EmbeddingProviderType,
   type EmbeddingStatus,
 } from '../api/embedding';
+import { type FieldErrors, focusFirstError, withoutKeys } from '../lib/api-connection-form';
 import { extractApiError } from '../lib/api-error';
 import type { HostingLocation } from '../lib/hosting-location';
 import { isSameTransportTarget, normalizeHosting } from '../lib/hosting-location';
@@ -32,11 +33,23 @@ const EMPTY: EmbeddingForm = { provider: 'OLLAMA', model: '', baseUrl: '', apiKe
 // 저장 요청 뒤 입력이 바뀌어 저장을 멈췄을 때의 안내(#716).
 const STALE_SAVE_MESSAGE = '저장 중 입력이 바뀌어 저장하지 않았습니다. 다시 저장하세요.';
 
-/** 필수 칸 빈 값 오류(WD-862) — 칸별로 따로 둬 여러 칸이 한꺼번에 비어도 각 칸 아래에 보인다(WD-643 다중 오류 규칙). */
-export interface EmbeddingFieldErrors {
-  model?: string;
-  baseUrl?: string;
-}
+/**
+ * 필수 칸 빈 값 오류의 칸 key(WD-862) — 오류 맵 자체는 공용 {@link FieldErrors} 로 쓴다.
+ * 칸별로 따로 둬 여러 칸이 한꺼번에 비어도 각 칸 아래에 보인다(WD-643 다중 오류 규칙).
+ */
+export type EmbeddingFieldKey = 'model' | 'baseUrl';
+
+/**
+ * 빈 값 검사 대상 칸과 그 화면 순서(WD-862·WD-643) — `blockIfBlank` 가 이 칸들을 검사하고,
+ * 공용 {@link focusFirstError} 가 같은 순서로 첫 오류 칸을 고른다.
+ */
+const EMBEDDING_FIELD_ORDER: readonly EmbeddingFieldKey[] = ['model', 'baseUrl'];
+
+/** 칸 key → 입력 element id — 공용 {@link focusFirstError} 가 포커스할 대상. */
+const EMBEDDING_FIELD_ID: Record<EmbeddingFieldKey, string> = {
+  model: 'embedding-model',
+  baseUrl: 'embedding-base-url',
+};
 
 export type EmbeddingTestState =
   | { ok: true; dimension: number }
@@ -69,7 +82,7 @@ export interface EmbeddingSettingsFormState {
   canKeepSavedSelfHosted: boolean;
   testState: EmbeddingTestState;
   /** 비운 채 연결 테스트·저장을 눌렀을 때 빈 칸별 안내(WD-862). 그 칸을 고치면 그 칸 것만 사라진다. */
-  fieldErrors: EmbeddingFieldErrors;
+  fieldErrors: FieldErrors<EmbeddingFieldKey>;
   pending: EmbeddingPendingSave | null;
   busy: boolean;
   isSaving: boolean;
@@ -107,7 +120,7 @@ export function useEmbeddingSettingsForm(): EmbeddingSettingsFormState {
   const [pending, setPending] = useState<EmbeddingPendingSave | null>(null);
   const [busy, setBusy] = useState(false);
   const [hostingDemoted, setHostingDemoted] = useState(false);
-  const [fieldErrors, setFieldErrors] = useState<EmbeddingFieldErrors>({});
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors<EmbeddingFieldKey>>({});
 
   // 서버 설정 → 폼. 키는 값으로 내려오지 않으므로 항상 빈 칸에서 시작한다(비우면 유지).
   // 최초 성공 로드 때 한 번만 시드한다(useSmtpSettingsForm 의 didInitialLoad 와 같은 규칙) — config 가 바뀔
@@ -166,14 +179,10 @@ export function useEmbeddingSettingsForm(): EmbeddingSettingsFormState {
       setForm(next);
       setTestState(null);
       // 고친 칸의 빈 값 안내만 지운다(WD-862) — 다른 빈 칸의 안내는 그 칸을 채울 때까지 남긴다.
-      if ('model' in patch || 'baseUrl' in patch) {
-        setFieldErrors((prev) => {
-          const rest = { ...prev };
-          if ('model' in patch) delete rest.model;
-          if ('baseUrl' in patch) delete rest.baseUrl;
-          return rest;
-        });
-      }
+      // 복사·삭제 대신 공용 withoutKeys 를 쓴다 — 지울 오류가 없으면 같은 참조를 돌려
+      // 키 입력마다 새 객체로 다시 그리는 것을 막는다(WD-643 과 같은 규칙 한 곳).
+      const changed = EMBEDDING_FIELD_ORDER.filter((key) => key in patch);
+      setFieldErrors((prev) => withoutKeys(prev, ...changed));
     },
     [form, isTargetChanged],
   );
@@ -204,15 +213,15 @@ export function useEmbeddingSettingsForm(): EmbeddingSettingsFormState {
    * 첫 빈 칸(모델 → Base URL 순)에 포커스를 옮겨 true 를 돌려준다 — 호출자는 API 를 부르지 않고 멈춘다.
    */
   const blockIfBlank = (): boolean => {
-    const errors: EmbeddingFieldErrors = {};
+    const errors: FieldErrors<EmbeddingFieldKey> = {};
     if (!form.model.trim()) errors.model = '모델을 입력하세요';
     if (!form.baseUrl.trim()) errors.baseUrl = 'Base URL 을 입력하세요';
     if (!errors.model && !errors.baseUrl) return false;
     setFieldErrors(errors);
     setTestState(null);
-    const firstId = errors.model ? 'embedding-model' : 'embedding-base-url';
-    // 오류가 렌더돼 aria-describedby 가 붙은 뒤에 포커스해야 스크린리더가 안내 문구를 함께 읽는다.
-    setTimeout(() => document.getElementById(firstId)?.focus(), 0);
+    // 첫 빈 칸 고르기·포커스는 공용 focusFirstError 가 한다(WD-643 포커스 규칙 한 곳).
+    // 타이밍만 미룬다 — 오류가 렌더돼 aria-describedby 가 붙은 뒤에 포커스해야 스크린리더가 안내 문구를 함께 읽는다.
+    setTimeout(() => focusFirstError(EMBEDDING_FIELD_ORDER, errors, EMBEDDING_FIELD_ID), 0);
     return true;
   };
 
