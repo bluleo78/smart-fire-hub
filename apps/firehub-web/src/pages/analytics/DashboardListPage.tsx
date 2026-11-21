@@ -94,9 +94,12 @@ const EDIT_REFRESH_ID = 'edit-dash-refresh';
  * 검증에 걸린 칸으로 포커스를 옮긴다(WD-876) — 같은 잘못된 값으로 다시 눌러 오류 문구가 그대로여도
  * (React 가 같은 문구를 다시 그리지 않아 role=alert 가 다시 읽히지 않는다) 포커스가 칸으로 가 연결된 오류를 읽게 한다.
  * 제출 잠금(guardSubmit)에 넘기는 함수 안에서 ref 를 읽으면 react-hooks/refs 규칙에 걸려 id 로 찾는다.
+ * 포커스는 오류가 그려진 **뒤**(setTimeout 0)에 옮긴다 — setRefreshError 직후 바로 옮기면 포커스가 닿는 순간 칸에
+ * 아직 aria-invalid·오류 id 를 가리키는 aria-describedby 가 없어 화면낭독기가 라벨·안내만 읽고, 오류는 role=alert 도
+ * 없어(announceError={false}) 처음 실패한 오류가 아예 읽히지 않는다(WD-876 리뷰 후속 반려).
  */
 function focusById(id: string) {
-  document.getElementById(id)?.focus();
+  setTimeout(() => document.getElementById(id)?.focus(), 0);
 }
 
 /**
