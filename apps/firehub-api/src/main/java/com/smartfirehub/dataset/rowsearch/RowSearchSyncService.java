@@ -4,6 +4,7 @@ import com.smartfirehub.dataset.dto.DatasetResponse;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.repository.SearchColumnRepository;
 import com.smartfirehub.dataset.repository.SearchIndexStateRepository;
+import com.smartfirehub.embedding.EmbeddingFailureLog;
 import com.smartfirehub.embedding.EmbeddingNotConfiguredException;
 import com.smartfirehub.embedding.EmbeddingProvider;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
@@ -117,7 +118,13 @@ public class RowSearchSyncService {
       log.warn("행 검색 색인 동기화 보류 — 벡터 저장소 일시 중단: datasetId={}, {}", datasetId, e.getMessage());
       return Outcome.SKIPPED;
     } catch (RuntimeException e) {
-      log.warn("행 검색 색인 동기화 실패: datasetId={}", datasetId, e);
+      // 임베딩 실패는 EmbeddingFailureLog 가 가린 상세를 남기므로, stackOrNull 이 failure() 가 만든 것이면 스택을 빼고 그 밖은 스택과
+      // 함께 남긴다(WD-873).
+      log.warn(
+          "행 검색 색인 동기화 실패: datasetId={}, {}",
+          datasetId,
+          e.getMessage(),
+          EmbeddingFailureLog.stackOrNull(e));
       int failures = (state == null ? 0 : state.consecutiveFailures()) + 1;
       long backoffMin =
           Math.min(MAX_BACKOFF.toMinutes(), 1L << Math.min(failures - 1, 5)); // 1,2,4,8,16,30분

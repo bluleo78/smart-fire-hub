@@ -6,7 +6,12 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.smartfirehub.embedding.EmbeddingException;
+import com.smartfirehub.embedding.EmbeddingFailureMessages;
 import com.smartfirehub.embedding.EmbeddingProviderFactory;
 import com.smartfirehub.embedding.config.dto.EmbeddingConfigRequest;
 import com.smartfirehub.global.tenant.TenantContext;
@@ -21,6 +26,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -123,6 +129,44 @@ class EmbeddingSettingsServiceTest extends IntegrationTestBase {
     assertThatThrownBy(() -> settingsService.test(ollama("bge-m3")))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("임베딩 연결 테스트 실패: 임베딩 서버 인증에 실패했습니다(HTTP 401) — 인증 정보(API 키·프록시 인증)를 확인하세요");
+  }
+
+  /** 연결 테스트는 사용자가 직접 누른 것이라 빈도 제한 없이 가린 원인을 한 줄 남긴다(WD-873). 이미 남긴 예외면 다시 남기지 않고, 400 문장은 그대로다. */
+  @Test
+  void measure_logsCauseEvenWhenProviderWindowBusy() {
+    Logger logger =
+        (Logger) LoggerFactory.getLogger("com.smartfirehub.embedding.EmbeddingFailureLog");
+    ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    appender.start();
+    logger.addAppender(appender);
+    try {
+      // 검색이 막 실패해 provider 창이 닫혀 있어도(생략되는 실패) 연결 테스트는 원인을 남겨야 한다.
+      // provider 이름은 이 시험 전용 — JVM 공유 창을 다른 시험과 나눠 쓰지 않게 한다.
+      String provider = "Ollama-measure-test";
+      EmbeddingFailureMessages.failure(provider, new RuntimeException("search-failure"));
+      appender.list.clear();
+      doThrow(EmbeddingFailureMessages.failure(provider, new RuntimeException("raw-cause")))
+          .when(providerFactory)
+          .probeDimension(any());
+      assertThatThrownBy(() -> settingsService.test(ollama("bge-m3")))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessage("임베딩 연결 테스트 실패: 임베딩 호출 중 오류가 발생했습니다: raw-cause");
+      assertThat(appender.list).hasSize(1);
+      assertThat(appender.list.get(0).getLevel()).isEqualTo(Level.WARN);
+      assertThat(appender.list.get(0).getFormattedMessage()).contains("raw-cause");
+
+      appender.list.clear();
+      EmbeddingException logged =
+          EmbeddingException.redacted("문장", new RuntimeException("raw-cause"));
+      logged.markLogged();
+      doThrow(logged).when(providerFactory).probeDimension(any());
+      assertThatThrownBy(() -> settingsService.test(ollama("bge-m3")))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessage("임베딩 연결 테스트 실패: 문장");
+      assertThat(appender.list).isEmpty();
+    } finally {
+      logger.detachAppender(appender);
+    }
   }
 
   @Test

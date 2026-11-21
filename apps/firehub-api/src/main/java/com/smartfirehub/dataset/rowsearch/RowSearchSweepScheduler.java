@@ -2,6 +2,7 @@ package com.smartfirehub.dataset.rowsearch;
 
 import com.smartfirehub.dataset.repository.SearchIndexStateRepository;
 import com.smartfirehub.dataset.storage.DataStoreResolver;
+import com.smartfirehub.embedding.EmbeddingFailureLog;
 import com.smartfirehub.global.tenant.TenantScopedRunner;
 import com.smartfirehub.vectorstore.VectorStoreFeatures;
 import java.time.Duration;
@@ -99,7 +100,14 @@ public class RowSearchSweepScheduler {
               }
             } catch (RuntimeException e) {
               // 한 데이터셋 실패가 같은 테넌트의 나머지를 막지 않게 한다.
-              log.error("행 검색 스윕 실패: tenant={}, dataset={}", tenantId, datasetId, e);
+              // 임베딩 실패는 EmbeddingFailureLog 가 가린 상세를 남기므로, stackOrNull 이 failure() 가 만든 것이면 스택을 빼고
+              // 그 밖은 스택과 함께 남긴다(WD-873).
+              log.error(
+                  "행 검색 스윕 실패: tenant={}, dataset={}, {}",
+                  tenantId,
+                  datasetId,
+                  e.getMessage(),
+                  EmbeddingFailureLog.stackOrNull(e));
             }
             settled.add(datasetId);
           }

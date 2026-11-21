@@ -11,7 +11,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.regex.Pattern;
 import javax.net.ssl.SSLException;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.codec.DecodingException;
 import org.springframework.core.io.buffer.DataBufferLimitException;
 import org.springframework.web.reactive.function.client.WebClientRequestException;
@@ -30,7 +29,6 @@ import tools.jackson.databind.json.JsonMapper;
  * <p><b>비밀값.</b> 요청 URL 쿼리·userinfo·API 키·응답 본문은 문장에 싣지 않는다. 분류하지 못한 원문은 {@link
  * ApiCallErrorMessages#redactUrlsInText} 로 거른다.
  */
-@Slf4j
 public final class EmbeddingFailureMessages {
 
   /** 로그에 싣는 조각(예외 메시지·본문 오류 문장) 하나의 최대 길이. */
@@ -49,13 +47,17 @@ public final class EmbeddingFailureMessages {
   private static final ObjectMapper MAPPER = JsonMapper.builderWithJackson2Defaults().build();
 
   /**
-   * 원문에 섞인 Bearer 토큰·Basic 인증 값도 — 헤더 검증 오류 등이 헤더 값을 그대로 실을 수 있어 지운다(/code-review). 앞에 단어 경계를, 값에
-   * 토큰 문자 8자 이상에 소문자만이 아닌 글자(대문자·숫자·기호)가 하나 이상 있을 것을 요구해 "basic validation failed" 같은 일반 영어 단어는
-   * 건드리지 않는다.
+   * 원문에 섞인 Bearer 토큰 — 헤더 검증 오류 등이 헤더 값을 그대로 실을 수 있어 지운다. 값의 모양(소문자뿐·기호 포함 등)과 상관없이 공백 아닌 문자를 모두
+   * 가린다(WD-873). 구분자는 공백뿐 아니라 `:`·`=`(예: bearer=abc)도 받는다.
    */
-  private static final Pattern BEARER_TOKEN =
-      Pattern.compile(
-          "(?i)\\b((?:bearer|basic)\\s+)(?-i:(?=[a-z]*[0-9A-Z+/=._~-]))[A-Za-z0-9+/=._~-]{8,}");
+  private static final Pattern BEARER_TOKEN = Pattern.compile("(?i)\\b(bearer[\\s:=]+)\\S+");
+
+  /**
+   * 원문에 섞인 Basic 인증 값(base64). "basic validation failed" 같은 일반 영어 단어는 건드리지 않도록 값이 8자 이상이고 소문자만이 아닌
+   * 글자(대문자·숫자·기호)가 하나 이상 있을 때만 가린다.
+   */
+  private static final Pattern BASIC_CREDENTIAL =
+      Pattern.compile("(?i)\\b(basic\\s+)(?-i:(?=[a-z]*[0-9A-Z+/=]))[A-Za-z0-9+/]{8,}={0,2}");
 
   /** 원문에 섞인 OpenAI 형식 API 키(sk-…) — 같은 이유로 지운다. */
   private static final Pattern SK_KEY = Pattern.compile("sk-[A-Za-z0-9_-]+");
@@ -71,9 +73,10 @@ public final class EmbeddingFailureMessages {
    * @param provider 로그에 적을 provider 이름(Ollama·OpenAI)
    */
   public static EmbeddingException failure(String provider, Throwable error) {
-    EmbeddingException failure = new EmbeddingException(describe(error), error);
+    // cause 를 달지 않는다 — 가리지 않은 원문이 상위 스택트레이스 로그로 새지 않게(WD-873).
+    EmbeddingException failure = EmbeddingException.redacted(describe(error), error);
     try {
-      log.warn("임베딩 호출 실패({}): {}", provider, logDetail(error));
+      EmbeddingFailureLog.warnThrottled(provider, failure);
     } catch (RuntimeException ignored) {
       // 로그 만들기 실패가 원래 오류를 가리지 않게 한다.
     }
@@ -247,6 +250,7 @@ public final class EmbeddingFailureMessages {
   /** 원문에서 Bearer 토큰·sk- 키 모양을 가린다. */
   private static String redactSecrets(String text) {
     String t = BEARER_TOKEN.matcher(text).replaceAll("$1***");
+    t = BASIC_CREDENTIAL.matcher(t).replaceAll("$1***");
     return SK_KEY.matcher(t).replaceAll("sk-***");
   }
 
