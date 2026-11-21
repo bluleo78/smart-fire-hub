@@ -520,6 +520,7 @@ export default function QueryEditorPage() {
     data: schemaInfo,
     isPending: schemaLoading,
     error: schemaError,
+    isFetching: schemaFetching,
     refetch: refetchSchema,
   } = useSchemaInfo();
   const { data: foldersData } = useQueryFolders();
@@ -979,6 +980,7 @@ export default function QueryEditorPage() {
             // WD-912: 데이터를 한 번이라도 받았으면(0건 성공 포함) 배경 재조회 실패로 빈 상태를 오류로 덮지 않는다.
             error={schemaInfo ? null : schemaError}
             onRetry={() => void refetchSchema()}
+            isFetching={schemaFetching}
           />
         </div>
 
