@@ -48,8 +48,25 @@ class EmbeddingProviderFactoryTest {
 
     assertThatThrownBy(() -> factory.current())
         .isInstanceOf(EmbeddingException.class)
-        .hasMessageContaining("차단된 주소")
+        // 비운 값이 아닌 거절은 예전처럼 「허용되지 않습니다:」 접두를 붙인다(WD-862 리뷰 후속 요구의 나머지 절반).
+        .hasMessage("임베딩 Base URL 이 허용되지 않습니다: 차단된 주소")
         .hasCause(denied);
+  }
+
+  @Test
+  void blankBaseUrlKeepsRequiredMessageWithoutPrefix() {
+    // WD-862 리뷰 후속: 비운 Base URL 안내는 「허용되지 않습니다:」 접두를 붙이면 앞뒤가 안 맞는 문장이 된다 —
+    // 접두 없이 그대로 내보내는지(가드가 던진 그 문구) 본다.
+    EmbeddingConfig cfg = new EmbeddingConfig(EmbeddingProviderType.OLLAMA, "bge-m3", "", "", 1024);
+    when(configService.resolve()).thenReturn(Optional.of(cfg));
+    IllegalArgumentException blank = new IllegalArgumentException(EmbeddingTargetGuard.MSG_URL_REQUIRED);
+    doThrow(blank).when(targetGuard).check(EmbeddingProviderType.OLLAMA, "");
+
+    assertThatThrownBy(() -> factory.current())
+        .isInstanceOf(EmbeddingException.class)
+        .hasMessage(EmbeddingTargetGuard.MSG_URL_REQUIRED)
+        .hasMessageNotContaining("허용되지 않습니다")
+        .hasCause(blank);
   }
 
   @Test

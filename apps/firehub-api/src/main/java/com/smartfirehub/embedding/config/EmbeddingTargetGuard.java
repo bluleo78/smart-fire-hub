@@ -29,9 +29,10 @@ public class EmbeddingTargetGuard {
 
   /**
    * 비운 Base URL 전용 문구(WD-862). 예전에는 비운 값에도 형식 오류 문구가 나가, 사용자가 「직접 입력해야 한다」는 사실을 알지 못했다. 그래서 빈 값은
-   * 형식 검사보다 먼저 이 문구로 구분해 거절한다.
+   * 형식 검사보다 먼저 이 문구로 구분해 거절한다. public 인 까닭은 이 문구를 접두 없이 그대로 내보내야 하는 {@code
+   * EmbeddingProviderFactory.checkTarget} 이 같은 상수를 쓰기 위해서다(같은 문구가 두 번 갈라지지 않게).
    */
-  static final String MSG_URL_REQUIRED = "임베딩 Base URL 을 입력하세요";
+  public static final String MSG_URL_REQUIRED = "임베딩 Base URL 을 입력하세요";
 
   static final String MSG_URL_FORMAT = "임베딩 Base URL 은 http:// 또는 https:// 로 시작하는 올바른 주소여야 합니다";
   static final String MSG_OPENAI_HTTPS = "OpenAI 임베딩 provider 의 Base URL 은 https 주소여야 합니다";
