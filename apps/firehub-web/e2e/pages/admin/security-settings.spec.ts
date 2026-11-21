@@ -1,3 +1,4 @@
+import { createLevels } from '../../factories/security-level.factory';
 import {
   setupAdminAuth,
   setupSettingsMocks,
@@ -5,6 +6,7 @@ import {
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { setupSecurityLevelMocks } from '../../fixtures/security-level.fixture';
+import { expectLongValueTruncated, expectValueNotTruncated } from '../../fixtures/table-layout';
 
 /** 화면 1(목업 s1) — 등급 목록·정책 저장·허용 목록 켜기 확인·순서 적용·이동 삭제. */
 test.describe('설정 › 데이터 보안', () => {
@@ -62,6 +64,50 @@ test.describe('설정 › 데이터 보안', () => {
     }
     // 기본 등급 행도 사용량이 그대로 읽힌다.
     await expect(rows.nth(1)).toContainText('데이터셋 230 · 역할 4');
+  });
+
+  /**
+   * WD-861: 375px 에서 긴 등급 이름 배지가 행(카드) 밖으로 넘치지 않고 말줄임되며, 전체 이름은 title 로 보인다.
+   * 예전에는 배지가 shrink-0 whitespace-nowrap 이라 긴 이름만큼 폭이 커져 오른쪽이 카드 밖으로 나갔다.
+   */
+  test('좁은 폭에서 긴 등급 이름 배지는 행 안에서 말줄임되고 전체 이름은 title 로 보인다 (WD-861)', async ({
+    authenticatedPage: page,
+  }) => {
+    const longName = '개인정보보호법 적용대상 고객민감정보 외부반출 금지 등급';
+    const wideName = 'ABCDEFGHIJ'.repeat(5);
+    const levels = createLevels().map((l) =>
+      l.rank === 2 ? { ...l, name: longName } : l.rank === 3 ? { ...l, name: wideName } : l,
+    );
+    await mockApi(page, 'GET', '/api/v1/security-levels', levels);
+    await page.setViewportSize({ width: 375, height: 812 });
+    await openTab(page);
+    const rows = page.getByTestId('security-level-row');
+    await expect(rows).toHaveCount(4);
+    for (let i = 0; i < 4; i++) {
+      const row = rows.nth(i);
+      const rowBox = (await row.boundingBox())!;
+      const badgeBox = (await row.getByTestId('security-level-badge').boundingBox())!;
+      expect(badgeBox.x).toBeGreaterThanOrEqual(rowBox.x);
+      expect(badgeBox.x + badgeBox.width).toBeLessThanOrEqual(rowBox.x + rowBox.width);
+    }
+    // 배지 안 이름 요소(TruncatedText 의 title 붙은 span).
+    const nameOf = (idx: number) => rows.nth(idx).getByTestId('security-level-badge').locator('[title]');
+    // 긴 두 행 — title 이 전체 이름이고 말줄임이 실제로 걸린다.
+    for (const [idx, name] of [[1, longName], [2, wideName]] as const) {
+      await expectLongValueTruncated(nameOf(idx), name);
+    }
+    // 기본 배지도 행 안.
+    const defRow = (await rows.nth(1).boundingBox())!;
+    const defBox = (await rows.nth(1).getByText('기본', { exact: true }).boundingBox())!;
+    expect(defBox.x + defBox.width).toBeLessThanOrEqual(defRow.x + defRow.width);
+    // 짧은 이름은 잘리지 않는다.
+    await expectValueNotTruncated(nameOf(0));
+    // 넓은 화면에서는 30자 이름과 50자 이름 모두 잘리지 않는다.
+    await page.setViewportSize({ width: 1280, height: 800 });
+    // 크기 바꾼 직후 레이아웃이 늦게 잡힐 수 있어 다시 재며 기다린다.
+    for (const idx of [1, 2]) {
+      await expect.poll(() => nameOf(idx).evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+    }
   });
 
   test('정책 수정 → PUT payload', async ({ authenticatedPage: page }) => {

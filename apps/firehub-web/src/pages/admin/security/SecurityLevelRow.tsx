@@ -181,7 +181,8 @@ export function SecurityLevelRow({
         >
           <ArrowDown className="h-4 w-4" />
         </Button>
-        <SecurityLevelBadge level={level} />
+        {/* WD-861: 긴 이름은 자기 줄 폭에 묶여 말줄임한다(전체 이름은 title, 펼친 이름 입력란에도 그대로). */}
+        <SecurityLevelBadge level={level} truncate />
         {level.isDefault && <Badge variant="outline">기본</Badge>}
         {/* 오른쪽 묶음은 줄어들지 않고 한 줄로 유지한다 — 사용량 문구는 줄바꿈하지 않는다. */}
         <div className="ml-auto flex shrink-0 items-center gap-2">
