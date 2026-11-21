@@ -1,9 +1,10 @@
 import type { Page } from '@playwright/test';
 
 import { createActivityFeedResponse, createActivityItem } from '../factories/dashboard.factory';
-import { mockApi } from '../fixtures/api-mock';
+import { createPageResponse, mockApi } from '../fixtures/api-mock';
 import { expect, test } from '../fixtures/auth.fixture';
 import { DATASET_WRITE_PERMISSIONS, grantDatasetPermissions } from '../fixtures/dataset.fixture';
+import { holdApi } from '../fixtures/hold-api';
 import { grantPipelinePermissions } from '../fixtures/pipeline.fixture';
 
 /** 홈의 파이프라인 요약·바로가기를 보는 권한(WD-272) — 조회 + 「파이프라인 실행하기」 빈 상태 버튼용 실행 */
@@ -55,7 +56,7 @@ test.describe('홈 페이지', () => {
 
     // 건강 상태바 대시보드 지표 버튼 — setupHomeMocks 기본값: analytics/dashboards totalElements=0 → '대시보드 0개'
     await expect(
-      page.getByRole('region', { name: '시스템 건강 상태' }).getByRole('button', { name: /^대시보드\s*0개/ }),
+      page.getByRole('region', { name: '시스템 건강 상태' }).getByRole('button', { name: '대시보드 0개', exact: true }),
     ).toBeVisible();
   });
 
@@ -64,10 +65,11 @@ test.describe('홈 페이지', () => {
    */
   test('건강 상태바 대시보드 지표를 누르면 대시보드 목록으로 이동한다 (WD-898)', async ({ authenticatedPage: page }) => {
     await page.goto('/');
-    // 퀵 액션 「대시보드 관리」와 겹치지 않게 건강 상태 영역 안에서만 찾는다
+    // 퀵 액션 「대시보드 관리」와 겹치지 않게 건강 상태 영역 안에서만 찾는다.
+    // 접근 이름은 aria-label(「대시보드 <n>개」)로 고정돼 화면 글자 사이 공백에 기대지 않는다(WD-898 리뷰 후속)
     await page
       .getByRole('region', { name: '시스템 건강 상태' })
-      .getByRole('button', { name: /^대시보드\s/ })
+      .getByRole('button', { name: '대시보드 0개', exact: true })
       .click();
     await expect(page).toHaveURL(/\/analytics\/dashboards$/);
   });
@@ -80,19 +82,54 @@ test.describe('홈 페이지', () => {
     await page.goto('/');
     const button = page
       .getByRole('region', { name: '시스템 건강 상태' })
-      .getByRole('button', { name: /^대시보드\s/ });
+      .getByRole('button', { name: '대시보드 — 불러오지 못함', exact: true });
     await expect(button).toContainText('—', { timeout: 10000 });
     await button.focus();
     await page.keyboard.press('Enter');
     await expect(page).toHaveURL(/\/analytics\/dashboards$/);
   });
 
+  /**
+   * WD-898 리뷰 후속: 대시보드 목록을 받기 전(첫 로딩)에는 「0개」(빈 상태 모양) 대신 로딩 표시를 보인다.
+   * 건강 상태 줄은 health 만 기다려 먼저 그려지므로, 대시보드가 있는 사용자도 잠깐 「0개」를 봤다가 실제 수로 바뀌었다.
+   */
+  test('건강 상태바 대시보드 수치는 목록을 받기 전엔 0개 대신 로딩 표시다 (WD-898)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 대시보드 목록 응답을 붙잡아 두었다가 확인 뒤에 풀어 준다 — 시간 지연보다 확정적이다
+    const { release } = await holdApi(
+      page,
+      'GET',
+      '/api/v1/analytics/dashboards',
+      200,
+      createPageResponse([], { totalElements: 12 }),
+    );
+    await page.goto('/');
+    const region = page.getByRole('region', { name: '시스템 건강 상태' });
+    try {
+      const loadingButton = region.getByRole('button', { name: '대시보드 — 불러오는 중', exact: true });
+      await expect(loadingButton).toBeVisible();
+      await expect(loadingButton).toHaveAttribute('aria-busy', 'true');
+      await expect(loadingButton.getByTestId('dashboard-count-skeleton')).toBeVisible();
+      // 응답을 붙잡아 둔 동안에는 「0개」 글자가 없다 — 되돌아가면 이 동안 내내 「0개」가 보여 여기서 걸린다
+      await expect(loadingButton).not.toContainText('0개');
+    } finally {
+      // 단언이 실패해도 붙잡은 요청을 풀어 정리 단계에서 걸려 있지 않게 한다
+      release();
+    }
+    // 응답을 받으면 실제 수(12개)로 바뀌고 로딩 표시는 사라진다
+    const loadedButton = region.getByRole('button', { name: '대시보드 12개', exact: true });
+    await expect(loadedButton).toHaveText(/12개/);
+    await expect(loadedButton).toHaveAttribute('aria-busy', 'false');
+    await expect(region.getByTestId('dashboard-count-skeleton')).toHaveCount(0);
+  });
+
   test('건강 상태바 세 지표는 아이콘 16px·높이 32 이상이다 (WD-898)', async ({ authenticatedPage: page }) => {
     await page.goto('/');
     const region = page.getByRole('region', { name: '시스템 건강 상태' });
     // 대시보드 수치에도 다른 두 지표처럼 단위 「개」가 붙는다
-    await expect(region.getByRole('button', { name: /^대시보드\s*0개/ })).toBeVisible();
-    const names = [/^파이프라인/, /^데이터셋/, /^대시보드\s/];
+    await expect(region.getByRole('button', { name: '대시보드 0개', exact: true })).toBeVisible();
+    const names = [/^파이프라인/, /^데이터셋/, /^대시보드 \d+개$/];
 
     /** 세 지표 버튼의 높이(≥32)와 첫 아이콘 크기(16×16)를 단언한다 */
     const expectUniformMetrics = async () => {

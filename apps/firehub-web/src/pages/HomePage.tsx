@@ -108,6 +108,17 @@ export default function HomePage() {
   const dashboardsFailed = isDashboardsError && !dashboardsData;
   // 대시보드 지표 수치(WD-898) — 실패 표시는 dashboardsFailed 로 따로 처리
   const dashboardCount = dashboardsData?.totalElements ?? 0;
+  // 대시보드 지표의 화면 수치(text)와 접근 이름(label)을 한곳에서 함께 정한다(WD-898 리뷰 후속).
+  // - 실패: 0 대신 「—」 — 대시보드가 없는 것처럼 보이지 않게(WD-333)
+  // - 첫 로딩(isDashboardsLoading): 수치를 아직 모르므로 「0개」(빈 상태 모양) 대신 로딩 표시 — 있다가 바뀌어 보이지 않게
+  // - 받음: 다른 두 지표처럼 단위 「개」
+  // label 은 aria-label 로 써서 화면 글자(라벨·수치 두 span) 사이 공백 계산에 기대지 않는다.
+  const dashboardMetricText = dashboardsFailed ? '—' : `${dashboardCount}개`;
+  const dashboardMetricLabel = dashboardsFailed
+    ? '대시보드 — 불러오지 못함'
+    : isDashboardsLoading
+      ? '대시보드 — 불러오는 중'
+      : `대시보드 ${dashboardMetricText}`;
   const datasetsFailed = isDatasetsError && !datasetsData;
   // 데이터셋 생성 바로가기는 생성 권한(dataset:write)이 있을 때만 보인다 — 없으면 생성 화면이 권한 안내만 보이므로(WD-144)
   const { canWriteDataset } = useDatasetPermissions();
@@ -293,20 +304,31 @@ export default function HomePage() {
             <button
               type="button"
               className={HEALTH_METRIC_BUTTON_CLASS}
+              aria-label={dashboardMetricLabel}
+              aria-busy={isDashboardsLoading}
               onClick={() => navigate('/analytics/dashboards')}
             >
               <LayoutDashboard className="h-4 w-4 shrink-0 text-dashboard-accent" />
               <span className="text-sm font-medium text-dashboard-accent whitespace-nowrap">대시보드</span>
-              {/* 목록 조회가 실패했으면 0 대신 「—」 — 대시보드가 없는 것처럼 보이지 않게(WD-333) */}
-              {/* 다른 두 지표의 「0개」와 맞춰 단위 「개」를 붙이고, 0개면 같은 흐린 색(WD-898) */}
-              <span
-                className={cn(
-                  'text-sm tabular-nums whitespace-nowrap',
-                  !dashboardsFailed && dashboardCount === 0 ? 'text-muted-foreground' : 'text-dashboard-accent',
-                )}
-              >
-                {dashboardsFailed ? '—' : `${dashboardCount}개`}
-              </span>
+              {/* 첫 로딩 중에는 수치 대신 Skeleton 모양(WD-898 리뷰 후속). button 안에는 div(공용 Skeleton)를 둘 수 없어
+                  같은 모양의 span 으로 그리고, 높이는 text-sm 줄 높이(20px)와 맞춰 수치가 들어올 때 줄이 흔들리지 않게 한다 */}
+              {isDashboardsLoading ? (
+                <span
+                  aria-hidden="true"
+                  data-testid="dashboard-count-skeleton"
+                  className="inline-block h-5 w-8 rounded-md bg-accent animate-pulse"
+                />
+              ) : (
+                <span
+                  className={cn(
+                    'text-sm tabular-nums whitespace-nowrap',
+                    // 0개면 다른 두 지표의 「0개」와 같은 흐린 색(WD-898)
+                    !dashboardsFailed && dashboardCount === 0 ? 'text-muted-foreground' : 'text-dashboard-accent',
+                  )}
+                >
+                  {dashboardMetricText}
+                </span>
+              )}
             </button>
 
             {stats && stats.recentImports.length > 0 && (
