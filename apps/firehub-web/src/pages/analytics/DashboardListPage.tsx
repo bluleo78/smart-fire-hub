@@ -57,6 +57,7 @@ import { useSubmitGuard } from '../../hooks/useSubmitGuard';
 import { extractApiError, handleApiError, isDuplicateName, isEditConflict } from '../../lib/api-error';
 import { formatDateShort, formatRelativeTime } from '../../lib/formatters';
 import { getPageAfterDelete } from '../../lib/pagination';
+import { isIntegerSyntax } from '../../lib/settings-number';
 import { iGa } from '../../lib/utils';
 import {
   type CreateDashboardRequest,
@@ -67,17 +68,16 @@ import {
 } from '../../types/analytics';
 
 /**
- * "자동 새로고침 (초)" 입력 문자열을 검증한다.
- * 빈 문자열은 "수동"(null)으로 취급하고, 정수가 아니거나 5 미만이면 에러를 반환한다.
- * 24시간(86400초)을 넘으면 서버가 거부하므로 저장 전에 같은 문구로 막는다(WD-327).
- * 기존 parseInt(autoRefresh, 10)는 "5.5" 같은 소수점 입력을 조용히 "5"로 잘라
- * 사용자에게 알림 없이 다른 값이 저장되는 문제가 있었다(#568).
+ * "자동 새로고침 (초)" 입력 원문을 검증한다 — 빈 칸(공백뿐 포함)은 "수동"(null), 부호 없는 십진 정수만 숫자로 받는다.
+ * 칸이 type=number 면 브라우저가 덜 된 숫자(1e, 5., -)를 "" 로 넘겨 "수동"으로 저장돼 저장된 주기가 조용히 지워졌다.
+ * 그래서 텍스트 칸의 원문을 직접 검증하고, IME 전각 숫자(３０)는 NFKC 로 반각으로 바꿔 받는다(WD-888).
+ * 숫자 표기가 아니거나(5.5·1e3·+5) 5 미만이면 하한 문구, 24시간(86400초) 초과면 상한 문구다(#568, WD-327).
  */
 function parseAutoRefreshInput(raw: string): { value: number | null } | { error: string } {
-  const trimmed = raw.trim();
+  const trimmed = raw.normalize('NFKC').trim();
   if (!trimmed) return { value: null };
   const num = Number(trimmed);
-  if (Number.isNaN(num) || !Number.isInteger(num) || num < MIN_AUTO_REFRESH_SECONDS) {
+  if (!isIntegerSyntax(trimmed) || num < MIN_AUTO_REFRESH_SECONDS) {
     return { error: `자동 새로고침은 ${MIN_AUTO_REFRESH_SECONDS} 이상의 정수(초)로 입력해 주세요.` };
   }
   if (num > MAX_AUTO_REFRESH_SECONDS) {
@@ -130,13 +130,12 @@ function AutoRefreshField({
     >
       <Input
         id={id}
-        type="number"
+        // 텍스트 칸으로 원문을 받는다 — 까닭은 parseAutoRefreshInput 주석(WD-888)
+        type="text"
+        inputMode="numeric"
         placeholder="비워두면 수동 새로고침"
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        min={MIN_AUTO_REFRESH_SECONDS}
-        max={MAX_AUTO_REFRESH_SECONDS}
-        step={1}
       />
     </FormField>
   );
