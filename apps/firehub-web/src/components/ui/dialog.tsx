@@ -78,7 +78,7 @@ function DialogContent({
         // 일반 Dialog 에서 break-word 상속은 예전과 다른 새 동작이다(WD-660): 기존 pre-wrap 블록은 일부러 감기게 만든 것이고(break-words·break-all·wrapLongLines), whitespace-pre 블록은 영향이 없다.
         className={cn(
           "grid-cols-[minmax(0,1fr)] wrap-break-word bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border p-6 shadow-lg duration-200 outline-none sm:max-w-lg",
-          // WD-9: 닫기 X(우측 16~32px)가 있을 때만 후손 헤더에 X 폭만큼 우측 여백을 준다 — 긴 제목이 X 와 겹치지 않게.
+          // WD-9: 닫기 X(아이콘 우측 16~32px, 클릭 상자 8~40px — WD-901)가 있을 때만 후손 헤더에 X 폭만큼 우측 여백을 준다 — 긴 제목이 X 와 겹치지 않게.
           // 헤더 자체에 박지 않는 이유: X 가 없는 다이얼로그(ReportModal 툴바 헤더 등)까지 여백이 생긴다.
           showCloseButton && "[&_[data-slot=dialog-header]]:pr-6",
           className
@@ -87,9 +87,11 @@ function DialogContent({
       >
         {children}
         {showCloseButton && (
+          // WD-901: 클릭 영역을 아이콘 상자(16×16)에서 32×32 로 넓힌다(최소 클릭 대상).
+          // top-4 right-4 → top-2 right-2 + size-8 + 중앙 정렬이라 아이콘 중심은 전과 같은 24px 에 남아 아이콘 위치·크기가 안 변한다(포커스 링·hover 모양만 32px 상자에 rounded-md 로 그려진다).
           <DialogPrimitive.Close
             data-slot="dialog-close"
-            className="ring-offset-background focus:ring-ring data-[state=open]:bg-accent data-[state=open]:text-muted-foreground absolute top-4 right-4 rounded-xs opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4"
+            className="ring-offset-background focus:ring-ring data-[state=open]:bg-accent data-[state=open]:text-muted-foreground absolute top-2 right-2 inline-flex size-8 items-center justify-center rounded-md opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4"
           >
             <XIcon />
             <span className="sr-only">닫기</span>
