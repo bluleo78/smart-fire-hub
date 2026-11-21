@@ -355,7 +355,8 @@ class TenantReembedJobTest extends IntegrationTestBase {
             inv ->
                 new EmbeddingProvider() {
                   public List<float[]> embed(List<String> texts) {
-                    throw new EmbeddingException("Ollama 임베딩 호출 실패: down");
+                    throw new EmbeddingException(
+                        "임베딩 서버가 연결을 거부했습니다 — Base URL 의 주소·포트와 서버 실행 여부를 확인하세요");
                   }
 
                   public String modelId() {
@@ -371,7 +372,7 @@ class TenantReembedJobTest extends IntegrationTestBase {
 
     ReembedState s = inTenant(() -> states.find()).orElseThrow();
     assertThat(s.status()).isEqualTo("FAILED");
-    assertThat(s.lastError()).contains("down");
+    assertThat(s.lastError()).contains("연결을 거부했습니다");
     assertThat(inTenant(() -> states.tryAcquire(Duration.ofMinutes(1)))).isTrue(); // 임대 해제됨
   }
 

@@ -299,7 +299,8 @@ public final class ApiCallErrorMessages {
     return describe(error, timeoutMs, null);
   }
 
-  private static boolean isTimeout(Throwable c) {
+  /** 시간 초과 예외인지(연결 타임아웃 포함) — 임베딩 실패 분류(WD-863)도 같은 판정을 쓴다. */
+  public static boolean isTimeout(Throwable c) {
     return c instanceof java.util.concurrent.TimeoutException
         || c instanceof SocketTimeoutException
         || c instanceof io.netty.handler.timeout.TimeoutException

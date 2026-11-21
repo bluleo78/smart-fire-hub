@@ -121,6 +121,7 @@ public class EmbeddingSettingsService {
     try {
       measured = providerFactory.probeDimension(draft);
     } catch (EmbeddingException e) {
+      // provider 문장은 접두어 없는 원인 안내라 여기서 한 번만 붙인다(WD-863).
       throw new IllegalArgumentException("임베딩 연결 테스트 실패: " + e.getMessage(), e);
     }
     return EmbeddingDimension.of(measured);

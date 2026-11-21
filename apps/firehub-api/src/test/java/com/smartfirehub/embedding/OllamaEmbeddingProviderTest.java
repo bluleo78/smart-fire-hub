@@ -86,4 +86,35 @@ class OllamaEmbeddingProviderTest {
             EmbeddingProviderFactory.UNCHECKED_DIMENSION);
     assertThat(p.embed(List.of("a")).get(0)).hasSize(3);
   }
+
+  /** WD-863: HTTP 404 는 접두어 없는 원인 문장으로 나온다. */
+  @Test
+  void http404GivesCauseSentence() {
+    server.enqueue(new MockResponse().setResponseCode(404));
+    assertThatThrownBy(() -> provider(2).embed(List.of("a")))
+        .isInstanceOf(EmbeddingException.class)
+        .hasMessage("임베딩 서버에서 요청한 주소나 모델을 찾을 수 없습니다(HTTP 404) — Base URL 과 모델 이름을 확인하세요");
+  }
+
+  /** WD-863: HTTP 503 은 서버 오류 문장으로 나온다. */
+  @Test
+  void http503GivesServerErrorSentence() {
+    server.enqueue(new MockResponse().setResponseCode(503));
+    assertThatThrownBy(() -> provider(2).embed(List.of("a")))
+        .isInstanceOf(EmbeddingException.class)
+        .hasMessage("임베딩 서버 오류(HTTP 503) — 서버 상태를 확인하세요");
+  }
+
+  /** WD-863: 서버가 꺼진 닫힌 포트는 연결 거부 문장(OS 에 따라 연결 실패 문장)으로 나온다. */
+  @Test
+  void connectionRefusedGivesConnectionSentence() throws Exception {
+    OllamaEmbeddingProvider p = provider(2);
+    server.shutdown();
+    assertThatThrownBy(() -> p.embed(List.of("a")))
+        .isInstanceOf(EmbeddingException.class)
+        .message()
+        .isIn(
+            "임베딩 서버가 연결을 거부했습니다 — Base URL 의 주소·포트와 서버 실행 여부를 확인하세요",
+            "임베딩 서버에 연결하지 못했습니다 — Base URL 과 네트워크 상태를 확인하세요");
+  }
 }

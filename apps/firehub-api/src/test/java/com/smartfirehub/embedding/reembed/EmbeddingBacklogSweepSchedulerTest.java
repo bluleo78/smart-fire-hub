@@ -156,7 +156,7 @@ class EmbeddingBacklogSweepSchedulerTest extends IntegrationTestBase {
         tenant,
         () -> {
           states.tryAcquire(Duration.ofMinutes(10));
-          states.markFailed("OpenAI 임베딩 호출 실패: 401 Unauthorized");
+          states.markFailed("임베딩 서버 인증에 실패했습니다(HTTP 401) — 임베딩 API 키를 확인하세요");
           states.release();
         });
   }

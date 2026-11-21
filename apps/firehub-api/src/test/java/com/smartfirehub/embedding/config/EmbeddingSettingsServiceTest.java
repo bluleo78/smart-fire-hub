@@ -117,12 +117,12 @@ class EmbeddingSettingsServiceTest extends IntegrationTestBase {
 
   @Test
   void providerFailureCauseIsPassedThrough() {
-    doThrow(new EmbeddingException("OpenAI 임베딩 호출 실패: 401 Unauthorized"))
+    doThrow(new EmbeddingException("임베딩 서버 인증에 실패했습니다(HTTP 401) — 임베딩 API 키를 확인하세요"))
         .when(providerFactory)
         .probeDimension(any());
     assertThatThrownBy(() -> settingsService.test(ollama("bge-m3")))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("401 Unauthorized");
+        .hasMessage("임베딩 연결 테스트 실패: 임베딩 서버 인증에 실패했습니다(HTTP 401) — 임베딩 API 키를 확인하세요");
   }
 
   @Test
