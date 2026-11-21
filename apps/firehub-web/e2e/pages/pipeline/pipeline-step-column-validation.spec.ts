@@ -9,6 +9,7 @@
 
 import type { Page } from '@playwright/test';
 
+import { API_FULL_URL_PLACEHOLDER } from '../../../src/lib/api-connection-form';
 import { createColumn, createDataset, createDatasetDetail } from '../../factories/dataset.factory';
 import { createPipelineDetail, createStep } from '../../factories/pipeline.factory';
 import { createPageResponse,mockApi } from '../../fixtures/api-mock';
@@ -47,7 +48,7 @@ async function openNewStep(page: Page, stepTypeLabel: string) {
 /** API 호출 스텝의 URL 을 채우고 매핑 행을 count 개 추가한다(URL 빈값 검증과 섞이지 않게). */
 async function fillUrlAndAddMappings(page: Page, count: number) {
   await expect(page.getByText('기본 설정')).toBeVisible({ timeout: 10000 });
-  await page.getByPlaceholder('https://api.example.com/v1/data').fill('https://api.example.com/items');
+  await page.getByPlaceholder(API_FULL_URL_PLACEHOLDER, { exact: true }).fill('https://api.example.com/items');
   for (let i = 0; i < count; i++) {
     await page.getByRole('button', { name: /매핑 추가/ }).click();
   }
@@ -366,7 +367,7 @@ test.describe('API 호출 스텝 헤더·쿼리 파라미터 행 저장 검증 (
     );
     await openNewStep(page, 'API 호출');
     await expect(page.getByText('기본 설정')).toBeVisible({ timeout: 10000 });
-    await page.getByPlaceholder('https://api.example.com/v1/data').fill('https://api.example.com/items');
+    await page.getByPlaceholder(API_FULL_URL_PLACEHOLDER, { exact: true }).fill('https://api.example.com/items');
 
     await addRows(page, '쿼리 파라미터', 3);
     const names = page.getByPlaceholder('파라미터명');
@@ -412,7 +413,7 @@ test.describe('API 호출 스텝 헤더·쿼리 파라미터 행 저장 검증 (
     const createCapture = await mockApi(page, 'POST', '/api/v1/pipelines', {}, { capture: true });
     await openNewStep(page, 'API 호출');
     await expect(page.getByText('기본 설정')).toBeVisible({ timeout: 10000 });
-    await page.getByPlaceholder('https://api.example.com/v1/data').fill('https://api.example.com/items');
+    await page.getByPlaceholder(API_FULL_URL_PLACEHOLDER, { exact: true }).fill('https://api.example.com/items');
 
     await addRows(page, '헤더', 2);
     const names = page.getByPlaceholder('Content-Type');

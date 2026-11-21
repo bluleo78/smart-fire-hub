@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test';
 
+import { API_FULL_URL_PLACEHOLDER } from '../../../src/lib/api-connection-form';
 import { createCategories, createColumn, createDatasetDetail } from '../../factories/dataset.factory';
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
@@ -65,7 +66,7 @@ test.describe('데이터셋 상세 — API 가져오기 기본 이름 (WD-31④)
 
     const dialog = page.getByRole('dialog');
     // 1단계: URL — 2단계: 매핑 1개(0개면 다음으로 못 간다) — 3단계: 미리보기 — 4단계: 실행 옵션
-    await dialog.getByPlaceholder('https://api.example.com/v1/data').fill('https://api.example.com/v1/data');
+    await dialog.getByPlaceholder(API_FULL_URL_PLACEHOLDER, { exact: true }).fill('https://api.example.com/v1/data');
     await dialog.getByRole('button', { name: '다음' }).click();
     await dialog.getByRole('button', { name: '매핑 추가' }).click();
     await dialog.getByRole('button', { name: '다음' }).click();
@@ -108,7 +109,7 @@ test.describe('데이터셋 상세 — API 가져오기 기본 이름 (WD-31④)
     await expect(dialog.getByText('응답 매핑', { exact: true })).toBeHidden();
 
     // 다음 단계로 가면 그 단계 이름이 보인다
-    await dialog.getByPlaceholder('https://api.example.com/v1/data').fill('https://api.example.com/v1/data');
+    await dialog.getByPlaceholder(API_FULL_URL_PLACEHOLDER, { exact: true }).fill('https://api.example.com/v1/data');
     await dialog.getByRole('button', { name: '다음' }).click();
     await expect(dialog.getByText('응답 매핑', { exact: true })).toBeVisible();
     await expect(dialog.getByText('API 설정', { exact: true })).toBeHidden();
@@ -153,7 +154,7 @@ test.describe('데이터셋 상세 — API 가져오기 기본 이름 (WD-31④)
     await page.getByRole('button', { name: 'API 가져오기' }).click();
 
     const dialog = page.getByRole('dialog');
-    await dialog.getByPlaceholder('https://api.example.com/v1/data').fill('https://api.example.com/v1/data');
+    await dialog.getByPlaceholder(API_FULL_URL_PLACEHOLDER, { exact: true }).fill('https://api.example.com/v1/data');
     await dialog.getByRole('button', { name: '다음' }).click();
     await dialog.getByRole('button', { name: '매핑 추가' }).click();
     await dialog.getByRole('button', { name: '다음' }).click();
@@ -171,7 +172,7 @@ test.describe('데이터셋 상세 — API 가져오기 기본 이름 (WD-31④)
     await page.getByRole('tab', { name: '데이터' }).click();
     await page.getByRole('button', { name: 'API 가져오기' }).click();
     const dialog = page.getByRole('dialog');
-    await dialog.getByPlaceholder('https://api.example.com/v1/data').fill('https://api.example.com/v1/data');
+    await dialog.getByPlaceholder(API_FULL_URL_PLACEHOLDER, { exact: true }).fill('https://api.example.com/v1/data');
     await dialog.getByRole('button', { name: '다음' }).click();
     await dialog.getByRole('button', { name: '매핑 추가' }).click();
     await dialog.getByRole('button', { name: '다음' }).click();

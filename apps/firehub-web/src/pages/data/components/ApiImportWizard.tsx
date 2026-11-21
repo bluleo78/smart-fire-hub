@@ -26,6 +26,7 @@ import {
 import { Textarea } from '@/components/ui/textarea';
 import { useCreateApiImport } from '@/hooks/queries/useDatasets';
 import { usePipelinePermissions } from '@/hooks/queries/usePipelines';
+import { API_FULL_URL_PLACEHOLDER } from '@/lib/api-connection-form';
 import { handleApiError } from '@/lib/api-error';
 import type { DatasetColumnResponse } from '@/types/dataset';
 
@@ -337,7 +338,8 @@ export function ApiImportWizard({
               <Label htmlFor={`${baseId}-url`}>URL *</Label>
               <Input
                 id={`${baseId}-url`}
-                placeholder="https://api.example.com/v1/data"
+                // 예시 플레이스홀더 — 까닭은 공용 상수 설명(WD-887)
+                placeholder={API_FULL_URL_PLACEHOLDER}
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
               />

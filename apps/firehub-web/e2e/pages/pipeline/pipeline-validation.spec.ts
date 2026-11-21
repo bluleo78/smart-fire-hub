@@ -11,6 +11,7 @@
  *       여기서는 나머지 분기(step validation loop, duplicates)를 집중 커버한다.
  */
 
+import { API_FULL_URL_PLACEHOLDER } from '../../../src/lib/api-connection-form';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { clickToolbarAddStep, grantPipelinePermissions } from '../../fixtures/pipeline.fixture';
@@ -576,7 +577,7 @@ test.describe('usePipelineValidation — API_CALL 스텝 URL 검증', () => {
     await expect(page.getByText('기본 설정')).toBeVisible({ timeout: 10000 });
 
     // URL 은 채워 URL 오류가 아닌 페이지 크기 오류로만 막히게 한다
-    await page.getByPlaceholder('https://api.example.com/v1/data').fill('https://api.example.com/v1/data');
+    await page.getByPlaceholder(API_FULL_URL_PLACEHOLDER, { exact: true }).fill('https://api.example.com/v1/data');
 
     // 접힌 「페이지네이션」 절을 펴고 유형 → Offset, 페이지 크기 -5
     await page.getByRole('button', { name: '페이지네이션' }).click();

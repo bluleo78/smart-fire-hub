@@ -13,6 +13,7 @@
 
 import type { Locator, Page } from '@playwright/test';
 
+import { API_FULL_URL_PLACEHOLDER } from '../../../src/lib/api-connection-form';
 import { createPipelineDetail, createStep } from '../../factories/pipeline.factory';
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
@@ -115,7 +116,7 @@ async function saveAndExpectFailureAnnouncedOnce(page: Page) {
   expect(await isInLiveRegion(toastText)).toBe(true);
 }
 
-const urlInput = (page: Page) => page.getByPlaceholder('https://api.example.com/v1/data');
+const urlInput = (page: Page) => page.getByPlaceholder(API_FULL_URL_PLACEHOLDER, { exact: true });
 const promptInput = (page: Page) => page.getByRole('textbox', { name: '프롬프트' });
 const PAGE_SIZE_MESSAGE = '페이지 크기는 1~10000 사이의 정수여야 합니다';
 const scriptGroup = (page: Page) => page.getByRole('group', { name: '스크립트' });
