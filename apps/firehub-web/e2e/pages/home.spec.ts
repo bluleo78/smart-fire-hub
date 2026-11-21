@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test';
 
+import { createActivityFeedResponse, createActivityItem } from '../factories/dashboard.factory';
 import { mockApi } from '../fixtures/api-mock';
 import { expect, test } from '../fixtures/auth.fixture';
 import { DATASET_WRITE_PERMISSIONS, grantDatasetPermissions } from '../fixtures/dataset.fixture';
@@ -859,7 +860,10 @@ test.describe('홈 페이지', () => {
    * 회귀: WD-875 — 활동 피드에서 유형·상태 필터로 0건이 되어도 「활동 내역이 없습니다.」와 「파이프라인 실행하기」만
    * 보여, 필터 때문에 비었다는 사실도 풀 방법도 알 수 없었다. 필터 0건이면 별도 문구와 「필터 초기화」를 준다.
    */
-  async function mockActivityFilteredEmpty(page: import('@playwright/test').Page) {
+  async function mockActivityFilteredEmpty(
+    page: import('@playwright/test').Page,
+    captured?: Array<{ type: string | null; severity: string | null }>,
+  ) {
     await page.route(
       (url) => url.pathname === '/api/v1/dashboard/activity',
       (route) => {
@@ -867,36 +871,54 @@ test.describe('홈 페이지', () => {
         const reqUrl = new URL(route.request().url());
         const type = reqUrl.searchParams.get('type');
         const severity = reqUrl.searchParams.get('severity');
-        // 필터가 하나라도 걸리면 0건, 없으면 1건
-        const items =
-          type || severity
-            ? []
-            : [
-                {
-                  id: 1,
-                  eventType: 'DATASET_CREATED',
-                  title: '데이터셋 생성 항목',
-                  description: 'desc',
-                  severity: 'INFO',
-                  entityType: 'DATASET',
-                  entityId: 1,
-                  occurredAt: '2026-05-15T10:00:00',
-                  isResolved: true,
-                },
-              ];
+        // 요청 파라미터를 기록해 테스트가 「어떤 쿼리로 호출됐는지」 검증할 수 있게 한다
+        captured?.push({ type, severity });
+        // 필터가 하나라도 걸리면 0건, 없으면 1건 (src/types 타입의 팩토리로 생성)
+        const body = type || severity ? createActivityFeedResponse([]) : createActivityFeedResponse([createActivityItem()]);
         return route.fulfill({
           status: 200,
           contentType: 'application/json',
-          body: JSON.stringify({ items, totalCount: items.length, hasMore: false }),
+          body: JSON.stringify(body),
         });
       },
     );
   }
 
-  test('활동 피드 — 필터로 0건이면 「조건에 맞는 활동이 없습니다」와 「필터 초기화」가 보이고, 누르면 필터가 풀린다 (WD-875)', async ({
+  test('활동 피드 — 0건 필터 사이를 오가면(A→B) 빈 상태 status 노드가 새로 갈아 끼워져 다시 낭독된다 (WD-875)', async ({
     authenticatedPage: page,
   }) => {
     await mockActivityFilteredEmpty(page);
+    await page.goto('/');
+    await expect(page.getByText('데이터셋 생성 항목')).toBeVisible();
+
+    const message = page.getByText('조건에 맞는 활동이 없습니다.');
+    const pipeline = page.getByRole('button', { name: '파이프라인', exact: true });
+    const dataset = page.getByRole('button', { name: '데이터셋', exact: true });
+    // 낭독용 노드(지연 뒤 aria-hidden 해제)
+    const node = page.getByRole('status').filter({ hasText: '조건에 맞는 활동이 없습니다.' }).locator('> div');
+
+    // 로딩 재마운트가 키 변경을 가리지 않도록 A·B 두 0건 쿼리를 먼저 모두 캐시에 올린다(staleTime 30초)
+    await pipeline.click();
+    await expect(message).toBeVisible();
+    await dataset.click();
+    await expect(message).toBeVisible();
+    await expect(node).not.toHaveAttribute('aria-hidden', 'true');
+    await node.evaluate((el) => el.setAttribute('data-probe', 'old'));
+
+    // 캐시된 0건 필터 A 로 복귀 — 로딩 없이 바로 전환되므로 노드 교체는 announceKey 변경만으로 일어난다
+    await pipeline.click();
+    await expect(message).toBeVisible();
+    await expect(node).not.toHaveAttribute('aria-hidden', 'true');
+    await expect(node).not.toHaveAttribute('data-probe', 'old');
+  });
+
+  test('활동 피드 — 필터로 0건이면 「조건에 맞는 활동이 없습니다」와 「필터 초기화」가 보이고, 누르면 필터가 풀린다 (WD-875)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 무필터 쿼리 캐시(staleTime 30초)가 만료되도록 가짜 시계를 쓴다 — 앱 캐시 설정은 건드리지 않는다
+    await page.clock.install();
+    const captured: Array<{ type: string | null; severity: string | null }> = [];
+    await mockActivityFilteredEmpty(page, captured);
     await page.goto('/');
     await expect(page.getByText('데이터셋 생성 항목')).toBeVisible();
 
@@ -905,12 +927,17 @@ test.describe('홈 페이지', () => {
     await expect(page.getByText('활동 내역이 없습니다.')).toHaveCount(0);
     await expect(page.getByRole('button', { name: '파이프라인 실행하기' })).toHaveCount(0);
 
+    // 무필터 캐시를 stale 로 만든 뒤 초기화 — 새 요청이 나가야 하고, 그 요청엔 type/severity 가 없어야 한다
+    await page.clock.fastForward(31_000);
+    const before = captured.length;
     await page.getByRole('button', { name: '필터 초기화' }).click();
+    await expect.poll(() => captured.length).toBeGreaterThan(before);
+    expect(captured.slice(before).every((r) => r.type === null && r.severity === null)).toBe(true);
     await expect(page.getByText('데이터셋 생성 항목')).toBeVisible();
     const typeGroup = page.getByRole('group', { name: '유형' });
     await expect(typeGroup.getByRole('button', { name: '전체', exact: true })).toHaveAttribute('aria-pressed', 'true');
     await expect(page.getByRole('combobox', { name: '상태' })).toHaveText('전체');
-    // 초기화 후 포커스는 사라진 버튼 대신 유형 「전체」 버튼으로 옮겨진다(무필터 조회는 캐시라 요청 캡처 대신 화면으로 판단)
+    // 초기화 후 포커스는 사라진 버튼 대신 유형 「전체」 버튼으로 옮겨진다
     await expect(typeGroup.getByRole('button', { name: '전체', exact: true })).toBeFocused();
   });
 
