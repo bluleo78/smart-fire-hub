@@ -219,6 +219,143 @@ test.describe('역할 관리 페이지', () => {
     await expect(nameInput).toHaveAttribute('aria-describedby', /role-name-desc/);
   });
 
+  // WD-865: 설명은 255자까지다(DB VARCHAR(255)) — 한도를 입력 전에 안내하고, 초과 오류는 이름이 아닌 설명 칸에 붙인다.
+  const DESCRIPTION_LIMIT_MESSAGE = '설명은 255자 이내여야 합니다';
+
+  /** 새 역할 대화상자를 열어 이름·설명을 채운 뒤 「만들기」 직전 상태까지 만든다. */
+  async function openNewRoleWith(page: Page, name: string, description: string) {
+    await page.goto('/admin/roles');
+    await page.getByRole('button', { name: '새 역할' }).click();
+    const dialog = page.getByRole('dialog');
+    const nameInput = dialog.getByLabel('역할 이름');
+    const descInput = dialog.getByLabel('설명');
+    await nameInput.fill(name);
+    await descInput.fill(description);
+    return { dialog, nameInput, descInput };
+  }
+
+  test('새 역할: 설명 칸에 255자 제한 안내가 보인다 (WD-865)', async ({ authenticatedPage: page }) => {
+    await setupRoleListMocks(page);
+    await page.goto('/admin/roles');
+    await page.getByRole('button', { name: '새 역할' }).click();
+
+    await expect(page.getByRole('dialog').getByLabel('설명')).toHaveAccessibleDescription(/255자까지/);
+  });
+
+  test('새 역할: 설명 256자는 제출 전에 설명 칸 오류, 이름 칸은 오류 없음 (WD-865)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupRoleListMocks(page);
+    const capture = await mockApi(page, 'POST', '/api/v1/roles', { id: 11, name: 'DESCLENPROBE' }, { capture: true });
+    const { dialog, nameInput, descInput } = await openNewRoleWith(page, 'DESCLENPROBE', 'ㄱ'.repeat(256));
+    await dialog.getByRole('button', { name: '만들기' }).click();
+
+    await expect(descInput).toHaveAttribute('aria-invalid', 'true');
+    await expect(dialog.getByText(DESCRIPTION_LIMIT_MESSAGE)).toBeVisible();
+    await expect(nameInput).not.toHaveAttribute('aria-invalid', 'true');
+    expect(capture.requests).toHaveLength(0);
+
+    // 255자로 줄이면 오류 문구가 사라진다
+    await descInput.fill('ㄱ'.repeat(255));
+    await expect(dialog.getByText(DESCRIPTION_LIMIT_MESSAGE)).toHaveCount(0);
+  });
+
+  test('새 역할: 설명 255자는 통과 (WD-865)', async ({ authenticatedPage: page }) => {
+    await setupRoleListMocks(page);
+    const capture = await mockApi(page, 'POST', '/api/v1/roles', { id: 11, name: 'DESCLENPROBE' }, { capture: true });
+    const { dialog } = await openNewRoleWith(page, 'DESCLENPROBE', 'ㄱ'.repeat(255));
+    await dialog.getByRole('button', { name: '만들기' }).click();
+
+    const req = await capture.waitForRequest();
+    expect((req.payload as { description: string }).description).toHaveLength(255);
+  });
+
+  test('새 역할: 서버 400 의 설명 필드 오류는 설명 칸에 (WD-865)', async ({ authenticatedPage: page }) => {
+    await setupRoleListMocks(page);
+    await mockApi(
+      page,
+      'POST',
+      '/api/v1/roles',
+      { status: 400, message: '입력값이 올바르지 않습니다', errors: { description: DESCRIPTION_LIMIT_MESSAGE } },
+      { status: 400 },
+    );
+    const { dialog, nameInput, descInput } = await openNewRoleWith(page, 'DESCLENPROBE', '짧은 설명');
+    await dialog.getByRole('button', { name: '만들기' }).click();
+
+    await expect(descInput).toHaveAttribute('aria-invalid', 'true');
+    await expect(dialog.getByText(DESCRIPTION_LIMIT_MESSAGE)).toBeVisible();
+    await expect(descInput).toBeFocused();
+    await expect(nameInput).not.toHaveAttribute('aria-invalid', 'true');
+  });
+
+  test('새 역할: 알 수 없는 필드 오류만 있는 400 도 메시지가 사라지지 않고 설명 칸은 오류가 아니다 (WD-865)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupRoleListMocks(page);
+    await mockApi(
+      page,
+      'POST',
+      '/api/v1/roles',
+      { status: 400, message: '잘못된 요청', errors: { foo: 'x' } },
+      { status: 400 },
+    );
+    const { dialog, descInput } = await openNewRoleWith(page, 'DESCLENPROBE', '짧은 설명');
+    await dialog.getByRole('button', { name: '만들기' }).click();
+
+    // 기존 폴백 동작: 서버 errors 문구('x')가 이름 칸 서버 오류로 이어 보인다
+    await expect(dialog.getByText('x', { exact: true })).toBeVisible();
+    await expect(descInput).not.toHaveAttribute('aria-invalid', 'true');
+  });
+
+  test('새 역할: 설명 오류와 다른 필드 오류가 함께 오면 두 메시지 모두 보인다 (WD-865)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupRoleListMocks(page);
+    await mockApi(
+      page,
+      'POST',
+      '/api/v1/roles',
+      {
+        status: 400,
+        message: '잘못된 요청',
+        errors: { description: DESCRIPTION_LIMIT_MESSAGE, securityLevelId: '보안 등급이 없습니다' },
+      },
+      { status: 400 },
+    );
+    const { dialog, descInput } = await openNewRoleWith(page, 'DESCLENPROBE', '짧은 설명입니다 열자');
+    await dialog.getByRole('button', { name: '만들기' }).click();
+
+    // 설명 칸 오류와 함께, root 로 사라지던 모르는 필드 오류도 폼 오류 영역에 보인다
+    await expect(descInput).toHaveAttribute('aria-invalid', 'true');
+    await expect(dialog.getByText(DESCRIPTION_LIMIT_MESSAGE)).toBeVisible();
+    await expect(dialog.getByText('보안 등급이 없습니다')).toBeVisible();
+  });
+
+  test('새 역할: 이름·설명 모두 잘못되면 두 칸 모두 오류 (WD-865)', async ({ authenticatedPage: page }) => {
+    await setupRoleListMocks(page);
+    const { dialog, nameInput, descInput } = await openNewRoleWith(page, 'bad name', 'ㄱ'.repeat(256));
+    await dialog.getByRole('button', { name: '만들기' }).click();
+
+    await expect(nameInput).toHaveAttribute('aria-invalid', 'true');
+    await expect(descInput).toHaveAttribute('aria-invalid', 'true');
+    await expect(dialog.getByText(DESCRIPTION_LIMIT_MESSAGE)).toBeVisible();
+  });
+
+  test('역할 상세: 설명 256자 저장은 설명 칸 오류 (WD-865)', async ({ authenticatedPage: page }) => {
+    await setupRoleDetailMocks(page, 3, false);
+    const capture = await mockApi(page, 'PUT', '/api/v1/roles/3', { id: 3 }, { capture: true });
+    await page.goto('/admin/roles/3');
+
+    const descInput = page.getByLabel('설명');
+    await expect(descInput).toHaveAccessibleDescription(/255자까지/);
+    await descInput.fill('ㄱ'.repeat(256));
+    await saveRoleInfo(page);
+
+    await expect(descInput).toHaveAttribute('aria-invalid', 'true');
+    await expect(page.getByText(DESCRIPTION_LIMIT_MESSAGE)).toBeVisible();
+    expect(capture.requests).toHaveLength(0);
+  });
+
   test('시스템 역할에는 삭제 버튼이 표시되지 않는다', async ({ authenticatedPage: page }) => {
     // USER, ADMIN은 isSystem=true → 삭제 버튼 없음
     // EDITOR는 isSystem=false → 삭제 버튼 있음

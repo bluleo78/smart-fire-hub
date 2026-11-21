@@ -35,11 +35,11 @@ import { useMyPermissions } from '../../hooks/queries/useMyPermissions';
 import { useAuth } from '../../hooks/useAuth';
 import { useIsMounted } from '../../hooks/useIsMounted';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
-import { extractApiError, isEditConflict, isNotFoundError } from '../../lib/api-error';
+import { extractApiError, isEditConflict, isNotFoundError, mapFieldErrors } from '../../lib/api-error';
 import { permissionCategoryLabel } from '../../lib/permission-category';
 import { parseRouteId } from '../../lib/route-id';
 import type { UpdateRoleFormData } from '../../lib/validations/role';
-import { ROLE_NAME_RULE, updateRoleSchema } from '../../lib/validations/role';
+import { ROLE_DESCRIPTION_RULE, ROLE_NAME_RULE, updateRoleSchema } from '../../lib/validations/role';
 import type { ErrorResponse } from '../../types/auth';
 import type { RoleDetailResponse } from '../../types/role';
 import type { PermissionResponse } from '../../types/role';
@@ -314,6 +314,14 @@ function RoleDetailView() {
         setIsRoleInfoConflictOpen(true);
         return;
       }
+      // 400 의 설명 필드 오류는 설명 칸에 붙인다(WD-865). 설명 오류가 실린 응답일 때만 — 이름 오류 흐름은 아래 그대로(WD-866 범위).
+      // 이 화면은 root 를 그리지 않으므로 설명 외 필드 문구는 기존 역할 오류 영역으로 잇는다.
+      const mapped = mapFieldErrors(error, form.setError, ['description']);
+      if (mapped?.setFields.includes('description')) {
+        form.setFocus('description');
+        if (mapped.unknownMessage) setRoleError(mapped.unknownMessage);
+        return;
+      }
       if (axios.isAxiosError(error) && error.response?.data) {
         const errData = error.response.data as ErrorResponse;
         setRoleError(errData.message || '역할 업데이트에 실패했습니다.');
@@ -479,14 +487,19 @@ function RoleDetailView() {
                 disabled={roleNameLocked}
               />
             </FormField>
-            <div className="space-y-2">
-              <Label htmlFor="role-description">설명</Label>
+            {/* WD-865: 설명 255자 한도를 입력 전에 안내하고, 초과 오류(클라이언트·서버 400)는 이 칸 아래에 보인다. */}
+            <FormField
+              label="설명"
+              htmlFor="role-description"
+              error={form.formState.errors.description?.message}
+              description={role.isSystem || !canWriteRole ? undefined : ROLE_DESCRIPTION_RULE}
+            >
               <Input
                 id="role-description"
                 {...form.register('description')}
                 disabled={role.isSystem || !canWriteRole}
               />
-            </div>
+            </FormField>
             {roleError && (
               <p className="text-sm text-destructive">{roleError}</p>
             )}

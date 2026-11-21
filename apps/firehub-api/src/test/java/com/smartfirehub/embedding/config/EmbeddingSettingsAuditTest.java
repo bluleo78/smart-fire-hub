@@ -216,7 +216,7 @@ class EmbeddingSettingsAuditTest extends IntegrationTestBase {
     assertThatThrownBy(() -> settingsService.save(openAi("text-embedding-3-small", null), actor))
         .isInstanceOf(IllegalArgumentException.class);
     // 공급자 연결 실패(400)
-    doThrow(new EmbeddingException("임베딩 서버 인증에 실패했습니다(HTTP 401) — 임베딩 API 키를 확인하세요"))
+    doThrow(new EmbeddingException("임베딩 서버 인증에 실패했습니다(HTTP 401) — 인증 정보(API 키·프록시 인증)를 확인하세요"))
         .when(providerFactory)
         .probeDimension(any());
     assertThatThrownBy(

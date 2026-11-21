@@ -156,7 +156,7 @@ class EmbeddingBacklogSweepSchedulerTest extends IntegrationTestBase {
         tenant,
         () -> {
           states.tryAcquire(Duration.ofMinutes(10));
-          states.markFailed("임베딩 서버 인증에 실패했습니다(HTTP 401) — 임베딩 API 키를 확인하세요");
+          states.markFailed("임베딩 서버 인증에 실패했습니다(HTTP 401) — 인증 정보(API 키·프록시 인증)를 확인하세요");
           states.release();
         });
   }

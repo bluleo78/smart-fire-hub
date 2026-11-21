@@ -105,6 +105,41 @@ export async function extractApiErrorAsync(
   return fallback;
 }
 
+/** {@link mapFieldErrors} 결과 — 어느 칸에 오류를 붙였는지와 폼이 모르는 필드의 문구(공백으로 이음, 없으면 빈 문자열). */
+export interface MappedFieldErrors {
+  setFields: string[];
+  unknownMessage: string;
+}
+
+/**
+ * 400 필드 오류 중 폼이 아는 필드만 setError 하고, 붙인 칸과 모르는 필드 문구를 돌려준다(WD-865).
+ *
+ * root 를 그리지 않는 화면(대화상자·상세 화면)은 모르는 필드 문구를 자기 오류 영역으로 보내야 하고, 어느 칸에 붙었는지로
+ * 포커스를 정한다 — 그래서 호출부가 응답을 다시 훑지 않게 이 정보를 그대로 돌려준다. 필드 오류 400 이 아니면 null.
+ */
+export function mapFieldErrors<T extends FieldValues>(
+  error: unknown,
+  setError: UseFormSetError<T>,
+  fields: readonly string[],
+): MappedFieldErrors | null {
+  if (!axios.isAxiosError(error) || error.response?.status !== 400) return null;
+  const data = error.response.data as ErrorResponse | undefined;
+  if (!data?.errors || !hasHumanFieldErrors(data)) return null;
+
+  const entries = Object.entries(data.errors).filter(([, message]) => message);
+  const setFields: string[] = [];
+  const unknownMessages: string[] = [];
+  for (const [field, message] of entries) {
+    if (fields.includes(field)) {
+      setError(field as Path<T>, { message });
+      setFields.push(field);
+    } else {
+      unknownMessages.push(message);
+    }
+  }
+  return { setFields, unknownMessage: unknownMessages.join(' ') };
+}
+
 /**
  * Bean Validation 400(code 없음 또는 VALIDATION_FAILED, 필드별 errors)을 폼 필드 오류로 옮긴다 (WD-270, WD-640).
  *
@@ -119,16 +154,10 @@ export function applyFieldErrors<T extends FieldValues>(
   setError: UseFormSetError<T>,
   fields: readonly string[],
 ): boolean {
-  if (!axios.isAxiosError(error) || error.response?.status !== 400) return false;
-  const data = error.response.data as ErrorResponse | undefined;
-  if (!data?.errors || !hasHumanFieldErrors(data)) return false;
-
-  const entries = Object.entries(data.errors).filter(([, message]) => message);
-  const known = entries.filter(([field]) => fields.includes(field));
-  const unknownMessages = entries.filter(([field]) => !fields.includes(field)).map(([, message]) => message);
-  for (const [field, message] of known) setError(field as Path<T>, { message });
-  if (unknownMessages.length > 0) setError('root', { message: unknownMessages.join(' ') });
-  return entries.length > 0;
+  const mapped = mapFieldErrors(error, setError, fields);
+  if (!mapped) return false;
+  if (mapped.unknownMessage) setError('root', { message: mapped.unknownMessage });
+  return mapped.setFields.length > 0 || mapped.unknownMessage !== '';
 }
 
 export function handleApiError(error: unknown, fallback: string): void {

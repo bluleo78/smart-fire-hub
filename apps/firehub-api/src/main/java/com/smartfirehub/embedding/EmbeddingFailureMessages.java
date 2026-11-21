@@ -2,16 +2,23 @@ package com.smartfirehub.embedding;
 
 import com.smartfirehub.pipeline.service.executor.ApiCallErrorMessages;
 import com.smartfirehub.pipeline.service.executor.UrlAuthority;
+import io.netty.handler.ssl.SslHandshakeTimeoutException;
 import java.io.IOException;
 import java.net.ConnectException;
 import java.net.UnknownHostException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 import java.util.regex.Pattern;
 import javax.net.ssl.SSLException;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.codec.DecodingException;
 import org.springframework.core.io.buffer.DataBufferLimitException;
 import org.springframework.web.reactive.function.client.WebClientRequestException;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * 임베딩 provider(Ollama·OpenAI) 호출 실패를 원인별 한국어 안내 문장으로 바꾼다(WD-863).
@@ -23,15 +30,55 @@ import org.springframework.web.reactive.function.client.WebClientResponseExcepti
  * <p><b>비밀값.</b> 요청 URL 쿼리·userinfo·API 키·응답 본문은 문장에 싣지 않는다. 분류하지 못한 원문은 {@link
  * ApiCallErrorMessages#redactUrlsInText} 로 거른다.
  */
+@Slf4j
 public final class EmbeddingFailureMessages {
 
-  /** 원문에 섞인 Bearer 토큰 — 헤더 검증 오류 등이 헤더 값을 그대로 실을 수 있어 지운다(/code-review). */
-  private static final Pattern BEARER_TOKEN = Pattern.compile("(?i)(bearer\\s+)\\S+");
+  /** 로그에 싣는 조각(예외 메시지·본문 오류 문장) 하나의 최대 길이. */
+  private static final int LOG_FRAGMENT_MAX = 500;
+
+  /** 오류 문장 필드를 찾으려 JSON 으로 읽어 볼 본문의 최대 길이 — 큰 HTML·데이터 본문을 통째로 파싱하지 않는다(/simplify). */
+  private static final int BODY_PARSE_MAX = 8192;
+
+  /** 로그 줄 위조를 막으려 공백으로 바꿀 제어 문자(줄바꿈 등) — 호출마다 컴파일하지 않게 미리 만든다(/simplify). */
+  private static final Pattern CONTROL_CHARS = Pattern.compile("\\p{Cc}");
+
+  /** cause 사슬을 따라가는 최대 단계 수 — 서로를 cause 로 갖는 2노드 순환이 무한 루프를 만들지 못하게 막는다. */
+  private static final int MAX_CHAIN = 32;
+
+  /** 응답 본문에서 오류 문장 필드만 읽기 위한 JSON 파서(스레드 안전). */
+  private static final ObjectMapper MAPPER = JsonMapper.builderWithJackson2Defaults().build();
+
+  /**
+   * 원문에 섞인 Bearer 토큰·Basic 인증 값도 — 헤더 검증 오류 등이 헤더 값을 그대로 실을 수 있어 지운다(/code-review). 앞에 단어 경계를, 값에
+   * 토큰 문자 8자 이상에 소문자만이 아닌 글자(대문자·숫자·기호)가 하나 이상 있을 것을 요구해 "basic validation failed" 같은 일반 영어 단어는
+   * 건드리지 않는다.
+   */
+  private static final Pattern BEARER_TOKEN =
+      Pattern.compile(
+          "(?i)\\b((?:bearer|basic)\\s+)(?-i:(?=[a-z]*[0-9A-Z+/=._~-]))[A-Za-z0-9+/=._~-]{8,}");
 
   /** 원문에 섞인 OpenAI 형식 API 키(sk-…) — 같은 이유로 지운다. */
   private static final Pattern SK_KEY = Pattern.compile("sk-[A-Za-z0-9_-]+");
 
   private EmbeddingFailureMessages() {}
+
+  /**
+   * provider 호출 실패를 사용자 문장({@link #describe})의 {@link EmbeddingException} 으로 바꾸고, 원인 분석용 가린 한
+   * 줄({@link #logDetail})을 warn 로그로 남긴다. 두 provider 가 같은 규칙을 한 곳에서 쓰게 모았다(/simplify).
+   *
+   * <p>로그 만들기가 실패해도 원래 오류를 가리지 않는다 — 로그는 부가 정보일 뿐이라 예외를 삼키고 만든 예외를 그대로 돌려준다.
+   *
+   * @param provider 로그에 적을 provider 이름(Ollama·OpenAI)
+   */
+  public static EmbeddingException failure(String provider, Throwable error) {
+    EmbeddingException failure = new EmbeddingException(describe(error), error);
+    try {
+      log.warn("임베딩 호출 실패({}): {}", provider, logDetail(error));
+    } catch (RuntimeException ignored) {
+      // 로그 만들기 실패가 원래 오류를 가리지 않게 한다.
+    }
+    return failure;
+  }
 
   /**
    * 호출 예외를 사용자 문장으로 바꾼다. {@code block()}·WebClient 가 원인을 여러 겹 감싸므로 cause 사슬을 한 번만 훑어 분류별 첫 원인을 모은 뒤
@@ -42,8 +89,10 @@ public final class EmbeddingFailureMessages {
    * 바뀌면 시간 초과가 「거부」로 보이기 때문이다.
    */
   public static String describe(Throwable error) {
-    // 사슬을 한 번 훑어 분류별 첫 원인을 모은다(자기 자신을 cause 로 갖는 순환은 next 가 끊는다).
-    Throwable status = null; // HTTP 상태 또는 응답 과대 중 사슬에서 먼저 나온 것
+    // 사슬을 한 번 훑어 분류별 첫 원인을 모은다(순환은 chain 이 끊는다).
+    // HTTP 오류 상태 또는 응답 과대 중 사슬에서 먼저 나온 것. 비오류 상태(200 등)의 WebClientResponseException 은
+    // 본문 읽기 오류를 감싼 껍데기라 상태로 보지 않고 더 구체적인 원인으로 분류한다.
+    Throwable status = null;
     Throwable decoding = null;
     Throwable timeout = null;
     Throwable hostOrConnect = null; // 호스트 없음 또는 연결 예외 중 먼저 나온 것
@@ -51,16 +100,24 @@ public final class EmbeddingFailureMessages {
     Throwable io = null; // 입출력 실패(연결 끊김 등) — TLS 를 먼저 보므로 SSLException 이어도 된다
     String host = null;
     Throwable root = error;
-    for (Throwable c = error; c != null; c = next(c)) {
+    // 비오류 상태(200 등)의 WebClientResponseException 을 봤는지 — 아무것도 분류되지 않으면 고정 문장으로 안내한다.
+    boolean okResponse = false;
+    for (Throwable c : chain(error)) {
       root = c;
+      if (c instanceof WebClientResponseException ok && !ok.getStatusCode().isError()) {
+        okResponse = true;
+      }
       if (status == null
-          && (c instanceof WebClientResponseException || c instanceof DataBufferLimitException)) {
+          && ((c instanceof WebClientResponseException wre && wre.getStatusCode().isError())
+              || c instanceof DataBufferLimitException)) {
         status = c;
       }
       if (decoding == null && c instanceof DecodingException) {
         decoding = c;
       }
-      if (timeout == null && ApiCallErrorMessages.isTimeout(c)) {
+      // SslHandshakeTimeoutException 은 SSLException 하위지만 인증서 문제가 아니라 시간 초과다(시간 초과가 TLS 보다 먼저 평가된다).
+      if (timeout == null
+          && (ApiCallErrorMessages.isTimeout(c) || c instanceof SslHandshakeTimeoutException)) {
         timeout = c;
       }
       if (hostOrConnect == null
@@ -112,9 +169,79 @@ public final class EmbeddingFailureMessages {
     if (io != null) {
       return connectFailed();
     }
+    // 7a) 비오류 상태 응답을 읽다 실패했고 더 구체적인 원인이 없으면 원문 대신 고정 문장(원문에 응답 조각이 실릴 수 있다).
+    if (okResponse) {
+      return "임베딩 응답을 읽지 못했습니다 — Base URL 이 임베딩 서버를 가리키는지 확인하세요";
+    }
     // 7) 분류하지 못한 오류 — 근본 원인 메시지를 쓰되 URL 의 쿼리·userinfo 와 토큰·키 모양은 지운다.
     String raw = root.getMessage() != null ? root.getMessage() : root.getClass().getSimpleName();
     return "임베딩 호출 중 오류가 발생했습니다: " + redactSecrets(ApiCallErrorMessages.redactUrlsInText(raw));
+  }
+
+  /**
+   * 운영자 로그용 상세 한 줄 — cause 사슬 각 단계를 {@code SimpleName: 가린 메시지} 로 {@code " <- "} 로 잇고, {@link
+   * WebClientResponseException} 이면 {@code status=<코드>} 와 본문의 오류 문장({@code body.error=…}, 없으면 {@code
+   * body(len=N)})을 붙인다.
+   *
+   * <p>스택 전체·원본 본문은 일부러 남기지 않는다 — 예외 메시지·본문에 URL 쿼리·토큰·데이터셋 원문이 실릴 수 있어, 가리기 규칙을 거친 이 문자열만 로그에 둔다.
+   */
+  public static String logDetail(Throwable error) {
+    StringBuilder sb = new StringBuilder();
+    for (Throwable c : chain(error)) {
+      if (sb.length() > 0) {
+        sb.append(" <- ");
+      }
+      String msg = c.getMessage();
+      String safe = msg == null ? "" : sanitize(msg);
+      if (c instanceof WebClientResponseException wre) {
+        // 하위 클래스(Unauthorized 등)는 이름만으로는 출처를 알기 어려워 공통 이름으로 적는다(코드는 status=).
+        sb.append("WebClientResponseException: ").append(safe);
+        sb.append(" status=").append(wre.getStatusCode().value()).append(' ');
+        sb.append(bodyDetail(wre.getResponseBodyAsString()));
+      } else {
+        sb.append(c.getClass().getSimpleName()).append(": ").append(safe);
+      }
+    }
+    return sb.toString();
+  }
+
+  /**
+   * 응답 본문을 로그용 조각으로 바꾼다 — JSON 의 오류 문장 필드만 {@code body.error=…} 로 남기고, 그 밖에는 길이만 {@code
+   * body(len=N)} 로 남긴다.
+   *
+   * <p>본문에 데이터셋 원문·알 수 없는 형식의 키가 실릴 수 있어 오류 문장 필드만 남긴다(Ollama {@code {"error":"…"}}, OpenAI {@code
+   * {"error":{"message":"…"}}}).
+   */
+  private static String bodyDetail(String body) {
+    String trimmed = body.strip();
+    // JSON 객체가 아니거나 너무 크면 파싱하지 않고 길이만 남긴다(HTML 오류 페이지 등에서 예외·할당을 피한다).
+    if (trimmed.length() > BODY_PARSE_MAX || !trimmed.startsWith("{")) {
+      return "body(len=" + body.length() + ")";
+    }
+    String error = null;
+    try {
+      JsonNode err = MAPPER.readTree(trimmed).path("error");
+      if (err.isString()) {
+        error = err.asString();
+      } else if (err.path("message").isString()) {
+        error = err.path("message").asString();
+      }
+    } catch (RuntimeException e) {
+      // JSON 이 아니거나 형식이 달라 파싱에 실패하면 길이만 남긴다.
+    }
+    return error != null ? "body.error=" + sanitize(error) : "body(len=" + body.length() + ")";
+  }
+
+  /**
+   * 로그 한 조각을 안전하게 만든다 — 먼저 URL 쿼리·토큰·키를 가린 뒤(잘린 비밀이 패턴을 피하지 못하게) 최대 길이로 자르고, 줄바꿈 등 제어 문자는 공백으로 바꿔
+   * 로그 줄을 위조하지 못하게 한다.
+   */
+  private static String sanitize(String text) {
+    String t = redactSecrets(ApiCallErrorMessages.redactUrlsInText(text));
+    if (t.length() > LOG_FRAGMENT_MAX) {
+      t = t.substring(0, LOG_FRAGMENT_MAX);
+    }
+    return CONTROL_CHARS.matcher(t).replaceAll(" ");
   }
 
   /** 원문에서 Bearer 토큰·sk- 키 모양을 가린다. */
@@ -131,8 +258,8 @@ public final class EmbeddingFailureMessages {
   /** HTTP 오류 상태별 안내. 응답 본문은 담지 않는다. */
   private static String httpStatus(int status) {
     return switch (status) {
-      case 401 -> "임베딩 서버 인증에 실패했습니다(HTTP 401) — 임베딩 API 키를 확인하세요";
-      case 403 -> "임베딩 서버가 접근을 거부했습니다(HTTP 403) — 임베딩 API 키 권한을 확인하세요";
+      case 401 -> "임베딩 서버 인증에 실패했습니다(HTTP 401) — 인증 정보(API 키·프록시 인증)를 확인하세요";
+      case 403 -> "임베딩 서버가 접근을 거부했습니다(HTTP 403) — 인증 정보(API 키·프록시 인증)의 권한을 확인하세요";
       case 404 -> "임베딩 서버에서 요청한 주소나 모델을 찾을 수 없습니다(HTTP 404) — Base URL 과 모델 이름을 확인하세요";
       case 429 -> "임베딩 서버가 요청이 너무 많아 거부했습니다(HTTP 429) — 잠시 후 다시 시도하거나 사용 한도를 확인하세요";
       default ->
@@ -142,9 +269,17 @@ public final class EmbeddingFailureMessages {
     };
   }
 
-  /** 자기 자신을 cause 로 갖는 순환을 끊는다. */
-  private static Throwable next(Throwable c) {
-    Throwable cause = c.getCause();
-    return cause == c ? null : cause;
+  /**
+   * cause 사슬을 바깥부터 목록으로 편다 — 자기 자신을 cause 로 갖는 순환은 끊고, 서로를 cause 로 갖는 2노드 순환도 최대 {@code MAX_CHAIN}
+   * 단계에서 멈춘다. describe·logDetail 이 같은 상한을 쓰게 한 곳에 둔다(/simplify).
+   */
+  private static List<Throwable> chain(Throwable error) {
+    List<Throwable> out = new ArrayList<>();
+    for (Throwable c = error; c != null && out.size() < MAX_CHAIN; ) {
+      out.add(c);
+      Throwable cause = c.getCause();
+      c = cause == c ? null : cause;
+    }
+    return out;
   }
 }

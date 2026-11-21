@@ -3,9 +3,11 @@ package com.smartfirehub.embedding;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.netty.channel.ConnectTimeoutException;
+import io.netty.handler.ssl.SslHandshakeTimeoutException;
 import java.net.ConnectException;
 import java.net.URI;
 import java.net.UnknownHostException;
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.TimeoutException;
 import javax.net.ssl.SSLHandshakeException;
 import org.junit.jupiter.api.Test;
@@ -72,12 +74,13 @@ class EmbeddingFailureMessagesTest {
 
   @Test
   void http401() {
-    assertThat(http(401)).isEqualTo("임베딩 서버 인증에 실패했습니다(HTTP 401) — 임베딩 API 키를 확인하세요");
+    assertThat(http(401)).isEqualTo("임베딩 서버 인증에 실패했습니다(HTTP 401) — 인증 정보(API 키·프록시 인증)를 확인하세요");
   }
 
   @Test
   void http403() {
-    assertThat(http(403)).isEqualTo("임베딩 서버가 접근을 거부했습니다(HTTP 403) — 임베딩 API 키 권한을 확인하세요");
+    assertThat(http(403))
+        .isEqualTo("임베딩 서버가 접근을 거부했습니다(HTTP 403) — 인증 정보(API 키·프록시 인증)의 권한을 확인하세요");
   }
 
   @Test
@@ -178,5 +181,132 @@ class EmbeddingFailureMessagesTest {
             EmbeddingFailureMessages.describe(
                 new IllegalStateException("key sk-proj-Secret99 bad")))
         .isEqualTo("임베딩 호출 중 오류가 발생했습니다: key sk-*** bad");
+  }
+
+  /** 주어진 상태·본문의 WebClientResponseException 에 cause 를 붙여 돌려주는 테스트 도우미. */
+  private static WebClientResponseException wrapped(int code, byte[] body, Throwable cause) {
+    WebClientResponseException e =
+        WebClientResponseException.create(
+            code, "x", new HttpHeaders(), body, StandardCharsets.UTF_8);
+    e.initCause(cause);
+    return e;
+  }
+
+  @Test
+  void okStatusWrappingBufferLimit_isTooLarge() {
+    assertThat(
+            EmbeddingFailureMessages.describe(
+                wrapped(200, new byte[0], new DataBufferLimitException("limit"))))
+        .isEqualTo("임베딩 응답이 너무 큽니다");
+  }
+
+  @Test
+  void okStatusWrappingDecoding_isDecodingFailure() {
+    assertThat(
+            EmbeddingFailureMessages.describe(
+                wrapped(200, new byte[0], new DecodingException("bad json"))))
+        .isEqualTo("임베딩 응답 형식을 해석하지 못했습니다 — Base URL 이 임베딩 서버를 가리키는지 확인하세요");
+  }
+
+  @Test
+  void okStatusWrappingReadTimeout_isTimeout() {
+    assertThat(
+            EmbeddingFailureMessages.describe(
+                wrapped(200, new byte[0], io.netty.handler.timeout.ReadTimeoutException.INSTANCE)))
+        .isEqualTo(TIMEOUT);
+  }
+
+  @Test
+  void okStatusWithoutKnownCause_doesNotMentionHttp200() {
+    String msg =
+        EmbeddingFailureMessages.describe(
+            wrapped(200, new byte[0], new IllegalStateException("boom")));
+    assertThat(msg)
+        .isEqualTo("임베딩 응답을 읽지 못했습니다 — Base URL 이 임베딩 서버를 가리키는지 확인하세요")
+        .doesNotContain("HTTP 200");
+  }
+
+  @Test
+  void errorStatusStillWins() {
+    assertThat(
+            EmbeddingFailureMessages.describe(
+                wrapped(500, new byte[0], new DecodingException("bad json"))))
+        .isEqualTo("임베딩 서버 오류(HTTP 500) — 서버 상태를 확인하세요");
+  }
+
+  @Test
+  void sslHandshakeTimeout_isTimeout() {
+    assertThat(
+            EmbeddingFailureMessages.describe(
+                new SslHandshakeTimeoutException("handshake timed out after 10000ms")))
+        .isEqualTo(TIMEOUT);
+  }
+
+  @Test
+  void logDetail_hidesBasicAuthValueInBody() {
+    // Basic 인증 헤더 값이 응답 본문에 섞여 와도 로그에 남지 않아야 한다.
+    byte[] body =
+        "{\"error\":\"invalid header: Basic dXNlcjpwYXNz\"}".getBytes(StandardCharsets.UTF_8);
+    String detail =
+        EmbeddingFailureMessages.logDetail(new RuntimeException("x", wrapped(401, body, null)));
+    assertThat(detail).doesNotContain("dXNlcjpwYXNz").contains("Basic ***");
+  }
+
+  @Test
+  void logDetail_keepsOnlyErrorSentenceFromOllamaBody() {
+    byte[] body = "{\"error\":\"model \\\"bge-m3\\\" not found\"}".getBytes(StandardCharsets.UTF_8);
+    String detail = EmbeddingFailureMessages.logDetail(wrapped(404, body, null));
+    assertThat(detail).contains("status=404", "body.error=model \"bge-m3\" not found");
+  }
+
+  @Test
+  void logDetail_keepsOnlyErrorMessageFromOpenAiBodyAndRedacts() {
+    byte[] body =
+        "{\"error\":{\"message\":\"bad key sk-abc12345\"},\"input\":\"dataset row\"}"
+            .getBytes(StandardCharsets.UTF_8);
+    String detail = EmbeddingFailureMessages.logDetail(wrapped(401, body, null));
+    assertThat(detail)
+        .contains("body.error=bad key sk-***")
+        .doesNotContain("abc12345")
+        .doesNotContain("dataset row");
+  }
+
+  @Test
+  void logDetail_nonJsonBodyLogsLengthOnly() {
+    String html = "<html>\n<body>secret-row</body>\n</html>\n".repeat(15);
+    byte[] body = html.getBytes(StandardCharsets.UTF_8);
+    String detail = EmbeddingFailureMessages.logDetail(wrapped(502, body, null));
+    assertThat(detail)
+        .contains("body(len=" + html.length() + ")")
+        .doesNotContain("secret-row")
+        .doesNotContain("\n");
+  }
+
+  @Test
+  void logDetail_redactsThenTruncatesErrorAndStripsControlChars() {
+    // 비밀이 500자 경계에 걸쳐도 먼저 가린 뒤 자르므로 새지 않고, 줄바꿈은 공백이 된다.
+    String err = "a\r\nb " + "y".repeat(490) + " Bearer abcdefgh12345678";
+    byte[] body =
+        ("{\"error\":\"" + err.replace("\r", "\\r").replace("\n", "\\n") + "\"}")
+            .getBytes(StandardCharsets.UTF_8);
+    String detail = EmbeddingFailureMessages.logDetail(wrapped(401, body, null));
+    assertThat(detail).doesNotContain("abcdefgh").doesNotContain("\n").doesNotContain("\r");
+    assertThat(detail).contains("body.error=a  b ");
+  }
+
+  @Test
+  void describeFallback_keepsPlainBasicWord() {
+    assertThat(EmbeddingFailureMessages.describe(new RuntimeException("basic validation failed")))
+        .isEqualTo("임베딩 호출 중 오류가 발생했습니다: basic validation failed");
+  }
+
+  @Test
+  void twoNodeCauseCycle_returns() {
+    RuntimeException a = new RuntimeException("a");
+    RuntimeException b = new RuntimeException("b");
+    a.initCause(b);
+    b.initCause(a);
+    assertThat(EmbeddingFailureMessages.describe(a)).startsWith("임베딩 호출 중 오류가 발생했습니다: ");
+    assertThat(EmbeddingFailureMessages.logDetail(a)).startsWith("RuntimeException: a <- ");
   }
 }

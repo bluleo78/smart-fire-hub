@@ -117,12 +117,12 @@ class EmbeddingSettingsServiceTest extends IntegrationTestBase {
 
   @Test
   void providerFailureCauseIsPassedThrough() {
-    doThrow(new EmbeddingException("임베딩 서버 인증에 실패했습니다(HTTP 401) — 임베딩 API 키를 확인하세요"))
+    doThrow(new EmbeddingException("임베딩 서버 인증에 실패했습니다(HTTP 401) — 인증 정보(API 키·프록시 인증)를 확인하세요"))
         .when(providerFactory)
         .probeDimension(any());
     assertThatThrownBy(() -> settingsService.test(ollama("bge-m3")))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessage("임베딩 연결 테스트 실패: 임베딩 서버 인증에 실패했습니다(HTTP 401) — 임베딩 API 키를 확인하세요");
+        .hasMessage("임베딩 연결 테스트 실패: 임베딩 서버 인증에 실패했습니다(HTTP 401) — 인증 정보(API 키·프록시 인증)를 확인하세요");
   }
 
   @Test
