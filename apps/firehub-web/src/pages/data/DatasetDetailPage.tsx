@@ -690,8 +690,9 @@ export default function DatasetDetailPage() {
           <TabsList
             ref={setTabsListEl}
             className={
-              'border-b justify-start h-10 shrink-0 max-w-full overflow-x-auto overflow-y-hidden scroll-px-10 pb-1 ' +
-              // WD-883: pb-1 과 border-b 가 내용 높이를 깎아 공용 h-10 에서는 트리거가 31px 이라, 이 목록만 41px 로 키워 트리거를 32px 로 맞춘다.
+              'border-b justify-start shrink-0 max-w-full overflow-x-auto overflow-y-hidden scroll-px-10 pb-1 ' +
+              // WD-883: 트리거는 공용 min-h-8 로 이미 32px 다. 다만 공용 h-10 그대로면 pb-1·border-b 가 내용 높이를 31px 로 깎아
+              // 32px 트리거가 1px 넘치고, overflow-y-hidden 이 그만큼 활성 밑줄(트리거 아래 5px)의 끝을 자른다 — 이 목록만 41px 로 키운다.
               'group-data-[orientation=horizontal]/tabs:h-[41px] ' +
               '[scrollbar-width:none]! [&::-webkit-scrollbar]:hidden'
             }

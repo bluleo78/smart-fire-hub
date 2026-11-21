@@ -74,6 +74,7 @@ test.describe('탭·캔버스 클릭 대상 크기 (WD-883)', () => {
     await page.goto('/data/datasets/1');
     await expect(page.getByRole('tab', { name: '정보' })).toBeVisible();
 
-    await expectTabsMinHeight(page, 1);
+    // 테이블 데이터셋 기본 모킹의 탭 7개(정보·보안·필드·데이터·검색·매핑·이력)를 모두 센다.
+    await expectTabsMinHeight(page, 7);
   });
 });
