@@ -26,7 +26,7 @@ import { expectSingleHeldRequest, holdApi } from '../../fixtures/hold-api';
 
 /**
  * 그래프 탐색 탭의 그래프 의존 컨트롤(이름 검색·타입 묶기·타입 필터 패널·패널 접기 토글)이 각각 count 개인지 본다.
- * 읽기 제한(WD-28) 상태에선 넷 다 0, 일반 상태에선 넷 다 1 — 넷을 한 묶음으로 단언해 하나만 빠지는 회귀를 잡는다.
+ * 읽기 제한(WD-28)·조회 실패(WD-870) 상태에선 넷 다 0, 일반 상태에선 넷 다 1 — 넷을 한 묶음으로 단언해 하나만 빠지는 회귀를 잡는다.
  */
 async function expectGraphControls(page: Page, count: 0 | 1) {
   await expect(page.getByPlaceholder('이름 검색')).toHaveCount(count);
@@ -841,7 +841,7 @@ test.describe('지식그래프 시각화 페이지', () => {
     await expect(page.getByTestId('type-filter-list').getByText('Incident')).toHaveCount(0);
   });
 
-  test('인스턴스 그래프 조회 실패 시 에러 문구가 표시되고 페이지가 크래시하지 않는다', async ({
+  test('인스턴스 그래프 조회 실패 시 에러 문구가 표시되고 페이지가 크래시하지 않는다 — 눌러도 반응 없는 필터·검색은 숨긴다 (WD-870)', async ({
     authenticatedPage: page,
   }) => {
     await setupOntologyGraphErrorMock(page);
@@ -860,6 +860,13 @@ test.describe('지식그래프 시각화 페이지', () => {
     );
     // 그래프 캔버스는 렌더되지 않는다(크래시 없이 안전하게 폴백)
     await expect(page.getByTestId('instance-graph')).toHaveCount(0);
+    // 그래프가 없으니 눌러도 효과가 없는 컨트롤은 읽기 제한처럼 숨긴다(WD-870). 온톨로지 선택기·다시 시도는 남는다.
+    await expectGraphControls(page, 0);
+    await expect(page.getByRole('combobox', { name: '온톨로지 선택' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '다시 시도' })).toBeVisible();
+    // 지식 모델 탭은 판정 대상이 아니다 — 타입 필터가 그대로 보인다
+    await page.getByRole('tab', { name: '지식 모델' }).click();
+    await expect(page.getByTestId('type-filter-panel')).toBeVisible();
   });
 
   // WD-28: 출처 데이터셋 중 볼 수 없는 것이 있으면 서버가 403 GRAPH_READ_RESTRICTED 를 준다. 오류가 아니라 권한 상태이므로
@@ -943,6 +950,7 @@ test.describe('지식그래프 시각화 페이지', () => {
     await expect(page.getByText('그래프를 불러오지 못했습니다.')).toBeVisible();
     const retryButton = page.getByRole('button', { name: '다시 시도' });
     await expect(retryButton).toBeVisible();
+    await expectGraphControls(page, 0);
 
     // 재시도 이전까지의 요청 수 기록(최초 요청 + 자동 재시도 1회 = 2회)
     const callsBeforeRetry = counter.calls;
@@ -954,6 +962,7 @@ test.describe('지식그래프 시각화 페이지', () => {
     // 에러 문구가 사라지고 모킹 그래프의 노드 수(7개)만큼 렌더된다
     await expect(page.getByText('그래프를 불러오지 못했습니다.')).toHaveCount(0);
     await expectNodeCount(page, graph.nodes.length);
+    await expectGraphControls(page, 1);
     // 실제 재요청이 발생했음을 검증(입력→처리→출력: 클릭 → API 재호출 → UI 반영)
     expect(counter.calls).toBeGreaterThan(callsBeforeRetry);
   });
@@ -1192,6 +1201,25 @@ test.describe('지식그래프 캔버스 키보드 접근성 (#326, #327)', () =
     await chip.getByRole('button', { name: '전체 보기' }).click();
     await expect(chip).toHaveCount(0);
     await expect(page.getByTestId('instance-graph')).not.toHaveAttribute('data-node-count', '1');
+  });
+
+  // WD-870: 좁은 화면 필터 칩도 그래프 의존 컨트롤이다 — 그래프 조회가 실패하면 「전체 보기」를 눌러도 보일 그래프가 없으니
+  // 오류 문구 위에 칩을 띄우지 않는다. 드릴다운으로 필터(activeTypes)가 걸린 상태에서 그래프가 500 이어야 칩 조건이 드러난다.
+  test('모바일에서 드릴다운 필터가 걸렸어도 그래프 조회가 실패하면 필터 칩을 띄우지 않는다 (WD-870)', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await setupOntologyGraphErrorMock(page);
+    await page.goto('/knowledge-graph/model');
+    const list = page.getByTestId('schema-graph-type-list');
+    await list.locator('[data-graph-item]').first().focus();
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Enter');
+    await expect(page).toHaveURL(/\/knowledge-graph\/explore$/);
+
+    await expect(page.getByText('그래프를 불러오지 못했습니다.')).toBeVisible();
+    await expect(page.getByTestId('active-type-filter-chip')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '다시 시도' })).toBeVisible();
   });
 
   // 데스크톱(sm 이상)은 왼쪽 패널에 눌린 칩이 보이므로 별도 칩을 두지 않는다.

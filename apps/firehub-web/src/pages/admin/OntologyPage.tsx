@@ -239,8 +239,13 @@ export default function OntologyPage() {
   // 색색의 타입 목록이 "표시할 수 없습니다" 옆에 있으면 필터만 바꾸면 보일 것처럼 읽힌다(디자인 검토 M-2) — 숨긴다.
   // 온톨로지 선택기는 제한에서 벗어나는 유일한 출구라 유지한다. 스키마 탭은 판정 대상이 아니다.
   const graphRestricted = tab === 'instance' && isGraphReadRestricted(graphError);
-  // 인스턴스 탭 그래프 도구(검색·타입 묶기)를 그릴지 — 읽기 제한이면 숨긴다(위 사유).
-  const showGraphTools = tab === 'instance' && !graphRestricted;
+  // 그래프 조회 실패(isGraphError)도 읽기 제한과 마찬가지로 그래프가 없다 — 이름 검색·타입 묶기·타입 필터·접기 토글이
+  // 눌러도 반응 없는 죽은 컨트롤이 되므로 같이 숨긴다(WD-870). 본문 분기(renderInstanceTab)는 제한/오류를
+  // 다른 상태로 계속 구분하므로 graphRestricted 는 그대로 두고, 컨트롤 숨김 판정에만 이 값을 쓴다.
+  // 재시도 중에도 isError 가 유지되는 동안은 숨겨 둔다(성공하면 되살아난다). 지식 모델 탭은 판정 대상이 아니다.
+  const graphUnavailable = tab === 'instance' && (graphRestricted || isGraphError);
+  // 인스턴스 탭 그래프 도구(검색·타입 묶기)를 그릴지 — 읽기 제한·조회 실패(WD-870)이면 숨긴다(위 사유).
+  const showGraphTools = tab === 'instance' && !graphUnavailable;
 
   // 온톨로지를 바꾸면 이전 선택/편집 상태가 새 컨텍스트에 잘못 남지 않도록 초기화한다.
   // useEffect 대신 렌더 중 이전 값 비교(React 권장 패턴)로 처리한다 — setState-in-effect의
@@ -529,8 +534,8 @@ export default function OntologyPage() {
             받지 않아, 편집 모드에서 이 버튼을 누르면 aria-pressed만 바뀌고 화면은 그대로였다(무력한 컨트롤).
             (#414) sm(640px) 미만에서는 TypeFilterPanel 자체가 collapsed 상태와 무관하게 항상 숨으므로
             이 토글도 함께 숨긴다 — 안 그러면 눌러도 아무 효과가 없는 죽은 컨트롤이 된다.
-            읽기 제한(WD-28)에서도 숨긴다. */}
-        {!showEditor && !graphRestricted && (
+            읽기 제한·조회 실패(WD-870)에서도 그래프가 없어 눌러도 소용없으니 숨긴다. */}
+        {!showEditor && !graphUnavailable && (
           <Button
             variant="ghost"
             size="icon"
@@ -672,8 +677,8 @@ export default function OntologyPage() {
             onExpandedChange={setOutlineExpanded}
             railButtonRef={outlineRailButtonRef}
           />
-        ) : graphRestricted ? null : (
-          // 읽기 제한(WD-28)이면 그리지 않는다.
+        ) : graphUnavailable ? null : (
+          // 읽기 제한·조회 실패(WD-870)이면 그래프가 없어 필터가 무의미하므로 그리지 않는다.
           <TypeFilterPanel
             entities={filterEntities}
             graph={graph}
@@ -717,7 +722,7 @@ export default function OntologyPage() {
             {/* 타입 필터가 걸려 있는데 필터 패널이 숨는 좁은 화면(sm=640px 미만, #414)에서는 걸린 필터를 알리고 풀 수단이 없었다 —
                 「지식 모델」에서 타입을 눌러(드릴다운) 넘어오면 그 타입만 걸러진 채 「노드 N개, 관계 0개」처럼만 보였다(WD-384).
                 그 폭에서만 캔버스 위에 칩과 「전체 보기」를 둔다. sm 이상은 왼쪽 패널에 눌린 칩이 보이므로 그대로 둔다. */}
-            {!showEditor && !graphRestricted && activeTypes.size > 0 && (
+            {!showEditor && !graphUnavailable && activeTypes.size > 0 && (
               <div
                 className="absolute left-2 top-2 z-10 flex max-w-[calc(100%-1rem)] items-center gap-1.5 rounded-full border bg-background/95 py-0.5 pl-3 pr-1 text-xs shadow-sm sm:hidden"
                 data-testid="active-type-filter-chip"
