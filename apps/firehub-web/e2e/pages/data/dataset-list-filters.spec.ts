@@ -1,6 +1,7 @@
-import { createDataset } from '../../factories/dataset.factory';
+import { createCategory, createDataset } from '../../factories/dataset.factory';
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { grantDatasetPermissions } from '../../fixtures/dataset.fixture';
 
 /**
  * 데이터셋 목록 — 필터/미리보기 E2E 테스트
@@ -667,7 +668,8 @@ test.describe('데이터셋 목록 — 임시 데이터셋 보기 (WD-754)', () 
     await expect(page.getByRole('tooltip')).toHaveText(reason);
 
     // 빈 목록 안내: 「데이터셋이 없습니다.」만 — 따를 수 없는 「켜면 보입니다」 문장은 없다
-    await expect(page.getByText('데이터셋이 없습니다.', { exact: true })).toBeVisible();
+    // 출처 필터는 필터라 WD-879 이후엔 「조건에 맞는 데이터셋이 없습니다.」 로 읽힌다(임시 안내 문장은 여전히 없다)
+    await expect(page.getByText('조건에 맞는 데이터셋이 없습니다.', { exact: true })).toBeVisible();
     await expect(toggleHint).toHaveCount(0);
 
     // 출처를 「전체」로 되돌리면 토글이 살아나고 안내 문장도 돌아온다
@@ -696,5 +698,115 @@ test.describe('데이터셋 목록 — 임시 데이터셋 보기 (WD-754)', () 
     await page.getByRole('button', { name: SHOW_TEMP }).click();
     await expectRowNames(page, tempNames, []);
     await expect(hint).toHaveCount(0);
+  });
+});
+
+test.describe('필터 결과 0건 (WD-879)', () => {
+  const EMPTY_CAT = 99;
+  const FILTER_ZERO = '조건에 맞는 데이터셋이 없습니다.';
+  const all = [
+    createDataset({ id: 21, name: '화재 출동 원본', originType: 'SOURCE', tags: [] }),
+    createDataset({ id: 22, name: '월별 출동 집계', originType: 'DERIVED', tags: [] }),
+  ];
+
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    // 「새 데이터셋 만들기」 가 없는 이유가 권한이 아니라 필터 때문임을 보이려고 쓰기 권한을 준다
+    await grantDatasetPermissions(page);
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', [
+      createCategory({ id: 1, name: '화재' }),
+      createCategory({ id: EMPTY_CAT, name: '빈 카테고리' }),
+    ]);
+    await mockApi(page, 'GET', '/api/v1/datasets/tags', []);
+  });
+
+  /** 카테고리 99 와 즐겨찾기는 0건, 그 밖엔 전부 돌려주는 목록 모킹. 요청 URL 을 모두 남긴다. */
+  async function mockZeroForFilters(page: import('@playwright/test').Page) {
+    const urls: URL[] = [];
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets',
+      (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        const url = new URL(route.request().url());
+        urls.push(url);
+        const zero =
+          url.searchParams.get('categoryId') === String(EMPTY_CAT) ||
+          url.searchParams.get('favoriteOnly') === 'true' ||
+          url.searchParams.get('q') !== null;
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(createPageResponse(zero ? [] : all)),
+        });
+      },
+    );
+    return urls;
+  }
+
+  test('카테고리 필터로 0건이면 조건 문구와 필터 초기화를 보이고, 누르면 필터 없이 다시 불러 목록이 보인다', async ({
+    authenticatedPage: page,
+  }) => {
+    const urls = await mockZeroForFilters(page);
+    // 필터 없는 목록을 먼저 불러오면 그 응답이 쿼리 캐시(staleTime 30s)에 남아 초기화 때 재요청이 안 나간다.
+    // 그래서 칩이 가리키는 URL 로 바로 열어 「필터 없이 다시 불러온다」를 요청으로 확인한다(칩 클릭은 즐겨찾기 시험이 같은 방식으로 덮는다).
+    await page.goto(`/data/datasets?categoryId=${EMPTY_CAT}`);
+    await expect(page.getByRole('button', { name: '빈 카테고리' })).toHaveAttribute('aria-pressed', 'true');
+
+    await expect(page.getByText(FILTER_ZERO, { exact: false })).toBeVisible();
+    await expect(page.getByRole('status').getByText(FILTER_ZERO, { exact: false })).toBeVisible();
+    await expect(page.getByRole('button', { name: '필터 초기화' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '새 데이터셋 만들기' })).toHaveCount(0);
+
+    await page.getByRole('button', { name: '필터 초기화' }).click();
+
+    await expect.poll(() => urls.at(-1)?.searchParams.get('categoryId')).toBeNull();
+    await expect(page).not.toHaveURL(/categoryId=/);
+    await expect(page.getByRole('link', { name: '화재 출동 원본', exact: true })).toBeVisible();
+  });
+
+  test('즐겨찾기만 켜서 0건이어도 같은 조건 문구와 필터 초기화를 보인다', async ({ authenticatedPage: page }) => {
+    await mockZeroForFilters(page);
+    await page.goto('/data/datasets');
+    await expect(page.getByRole('link', { name: '화재 출동 원본', exact: true })).toBeVisible();
+
+    await page.getByRole('button', { name: '즐겨찾기', exact: true }).click();
+
+    await expect(page.getByText(FILTER_ZERO, { exact: false })).toBeVisible();
+    await expect(page.getByRole('button', { name: '필터 초기화' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '새 데이터셋 만들기' })).toHaveCount(0);
+
+    // 필터 없는 목록이 이미 캐시에 있는 실제 흐름 — 초기화하면 (재요청 없이도) 목록이 돌아온다
+    await page.getByRole('button', { name: '필터 초기화' }).click();
+    await expect(page).not.toHaveURL(/favorite=/);
+    await expect(page.getByRole('link', { name: '화재 출동 원본', exact: true })).toBeVisible();
+    await expect(page.getByText(FILTER_ZERO, { exact: false })).toHaveCount(0);
+  });
+
+  test('필터 초기화는 여섯 필터를 지우고 정렬·페이지 크기·임시 보기는 남긴다', async ({ authenticatedPage: page }) => {
+    await mockZeroForFilters(page);
+    await page.goto(
+      `/data/datasets?categoryId=${EMPTY_CAT}&favorite=true&storageType=TABLE&status=ACTIVE&securityLevel=1&sort=name&order=asc&size=20&showTemp=1`,
+    );
+
+    const reset = page.getByRole('button', { name: '필터 초기화' });
+    await expect(reset).toBeVisible();
+    await reset.click();
+
+    await expect(page).not.toHaveURL(/categoryId=/);
+    await expect(page).not.toHaveURL(/favorite=/);
+    await expect(page).not.toHaveURL(/storageType=/);
+    await expect(page).not.toHaveURL(/status=/);
+    await expect(page).not.toHaveURL(/securityLevel=/);
+    await expect(page).toHaveURL(/sort=name/);
+    await expect(page).toHaveURL(/order=asc/);
+    await expect(page).toHaveURL(/size=20/);
+    await expect(page).toHaveURL(/showTemp=1/);
+  });
+
+  test('검색어와 필터가 함께 걸린 0건은 검색 결과 안내만 보인다', async ({ authenticatedPage: page }) => {
+    await mockZeroForFilters(page);
+    await page.goto(`/data/datasets?q=없는말&categoryId=${EMPTY_CAT}`);
+
+    await expect(page.getByRole('button', { name: '검색 초기화' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '필터 초기화' })).toHaveCount(0);
   });
 });

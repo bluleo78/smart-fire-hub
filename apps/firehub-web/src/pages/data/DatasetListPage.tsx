@@ -81,6 +81,12 @@ function DatasetTypeBadge({ info: { label, known }, className }: { info: TypeLab
 }
 
 /**
+ * 목록 필터의 URL 키(검색어 q 제외) — 「조건에 맞는 데이터셋이 없습니다」 판정과 「필터 초기화」가 함께 쓴다 (WD-879).
+ * 정렬(sort/order)·페이지 크기(size)·임시 보기(showTemp)는 보기 설정이라 넣지 않는다.
+ */
+const DATASET_FILTER_PARAM_KEYS = ['categoryId', 'storageType', 'originType', 'status', 'securityLevel', 'favorite'] as const;
+
+/**
  * URL 쿼리 파라미터를 단일 진실 소스(single source of truth)로 사용한다 (refs #94).
  * - 새로고침/공유 시 필터·검색·정렬 상태가 복원된다.
  * - 빈 값(default)일 때는 URL에서 제거하여 깔끔한 URL 유지.
@@ -267,7 +273,18 @@ export default function DatasetListPage() {
     patchParams({ page: lastPage === 0 ? null : lastPage });
   }, [pageOutOfRange, datasetsData, patchParams]);
 
-  const noFiltersActive = !search && !categoryId && !storageType && !originType && !favoriteOnly && !statusFilter && !securityLevelId;
+  // 검색어를 뺀 여섯 필터(카테고리·저장방식·출처·상태·보안등급·즐겨찾기) 중 하나라도 걸려 있는지 (WD-879).
+  // 0건 빈 상태가 「데이터셋이 없습니다」(데이터 자체가 없음)인지 「조건에 맞는 데이터셋이 없습니다」(필터로 걸러짐)인지 가르는 기준이다.
+  // 숫자로 바꾼 값이 아니라 주소 값이 있는지로 본다 — 손으로 고친 ?categoryId=abc 도 요청에는 실리므로, 숫자 변환(NaN)으로
+  // 「필터 없음」이 되면 초기화 버튼 없이 첫 사용 문구가 나와 잘못된 값을 지울 길이 없다.
+  // 활성 판정과 초기화가 같은 키 목록을 써서, 필터를 더할 때 한쪽만 고쳐 어긋나지 않게 한다.
+  const filtersActive = DATASET_FILTER_PARAM_KEYS.some((key) => !!searchParams.get(key));
+  const noFiltersActive = !search && !filtersActive;
+
+  // 여섯 필터와 page 만 지운다 — 정렬·페이지 크기·임시 보기·검색어는 필터가 아니라 보기 설정이라 남긴다 (WD-879).
+  const resetFilters = () => {
+    patchParams({ ...Object.fromEntries(DATASET_FILTER_PARAM_KEYS.map((key) => [key, null])), page: null });
+  };
 
   const handleDelete = async (id: number, name: string) => {
     try {
@@ -728,16 +745,23 @@ export default function DatasetListPage() {
                 colSpan={8}
                 // 임시가 숨겨진 상태면 0건이어도 임시 데이터셋은 있을 수 있다 — 어디서 보는지 함께 알린다(WD-754).
                 // 출처 필터가 골라져 있으면 토글이 비활성이라 「켜면 보입니다」는 따를 수 없는 안내다 — 빼고 그대로 둔다(WD-776).
+                // 필터로 걸러져 0건이면 「조건에 맞는」 문구를 쓴다 — 데이터가 없는 게 아니라 조건에 맞는 게 없다는 뜻이다(WD-879).
+                // 검색어가 있으면 TableEmptyRow 가 검색 결과 안내를 대신 보이므로 이 문구는 쓰이지 않는다.
                 message={
-                  showTemp || tempToggleBlocked
-                    ? '데이터셋이 없습니다.'
-                    : '데이터셋이 없습니다. 임시 데이터셋은 「임시 데이터셋 보기」를 켜면 보입니다.'
+                  (filtersActive ? '조건에 맞는 데이터셋이 없습니다.' : '데이터셋이 없습니다.') +
+                  (showTemp || tempToggleBlocked ? '' : ' 임시 데이터셋은 「임시 데이터셋 보기」를 켜면 보입니다.')
                 }
                 searchKeyword={search || undefined}
                 onResetSearch={search ? () => { patchParams({ q: null, page: null }); } : undefined}
                 // 만들 권한이 없으면 안내 문구만 둔다 — "데이터셋이 없습니다." 는 버튼 없이도 그대로 읽힌다(WD-144)
                 emptyAction={
-                  noFiltersActive && canWriteDataset ? (
+                  // 검색어가 있으면 TableEmptyRow 가 검색 안내만 보이고 emptyAction 은 쓰지 않는다
+                  filtersActive ? (
+                    // 필터 때문에 비었으면 만들기 대신 필터를 풀어 다시 보게 한다(WD-879)
+                    <Button size="sm" variant="outline" onClick={resetFilters}>
+                      필터 초기화
+                    </Button>
+                  ) : noFiltersActive && canWriteDataset ? (
                     <Button size="sm" variant="outline" onClick={() => setTypeModalOpen(true)}>
                       <Plus className="h-4 w-4" />
                       새 데이터셋 만들기
