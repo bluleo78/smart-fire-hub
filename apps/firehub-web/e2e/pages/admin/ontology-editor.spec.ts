@@ -1,3 +1,5 @@
+import type { Locator, Page } from '@playwright/test';
+
 import {
   createArchivedOntologySummary,
   createDraftOntologySummary,
@@ -17,6 +19,38 @@ import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 
 /**
+ * 첫 진입 준비 대기(WD-878) — 병렬 부하 중에는 vite dev 서버의 첫 페이지 변환 + 응답 뒤 렌더가 기본 액션
+ * 타임아웃(15초)을 넘겨 첫 조작이 실패했다. 준비 신호를 30초까지 기다리고, 그만큼 테스트 예산(기본 30초)도 늘린다.
+ */
+const READY_WAIT_MS = 30_000;
+
+/** 지식 모델 화면을 열고 준비 신호(ready)가 보일 때까지 기다린다. 예산은 진입마다 한 번만 늘린다. */
+async function gotoModelUntil(page: Page, ready: Locator): Promise<void> {
+  test.info().setTimeout(test.info().timeout + READY_WAIT_MS);
+  await page.goto('/knowledge-graph/model');
+  await expect(ready).toBeVisible({ timeout: READY_WAIT_MS });
+}
+
+/**
+ * 지식 모델 화면을 열고 「온톨로지 선택」 콤보박스(목록이 도착해야 그려진다)를 기다린다.
+ * 비관리자도 콤보박스는 보인다. 목록을 붙잡거나 비우는 테스트는 상자가 끝내 안 뜨므로 쓰지 않는다.
+ */
+async function openModel(page: Page): Promise<void> {
+  await gotoModelUntil(page, page.getByRole('combobox', { name: '온톨로지 선택' }));
+}
+
+/**
+ * 지식 모델 화면을 열고 「수정 모드」를 눌러 편집 모드로 들어간다. 이 버튼은 목록과 스키마 응답이 모두 있어야
+ * 그려지므로 콤보박스가 아니라 버튼 자체를 기다린다. 끄기 등에 다시 쓰도록 토글 locator 를 돌려준다.
+ */
+async function openEditMode(page: Page): Promise<Locator> {
+  const toggle = page.getByRole('button', { name: '수정 모드' });
+  await gotoModelUntil(page, toggle);
+  await toggle.click();
+  return toggle;
+}
+
+/**
  * 요소 단위 지식 모델 편집기(S2) — 편집 모드 셸(모드 토글 + 아웃라인 + 캔버스 + 인스펙터 자리) E2E.
  * 전체 문서를 왕복시키던 모달(OntologyEditDialog, "편집" 버튼)은 Task 6에서 제거됐다 — "수정 모드"
  * 버튼이 유일한 편집 진입점이다(라벨은 "편집"을 포함하지 않는다 — Playwright getByRole 이름 매칭이
@@ -29,9 +63,7 @@ test.describe('지식 모델 요소 편집기 — 모드 셸', () => {
   test('ADMIN이 편집 모드를 켜면 3-pane이 나타난다', async ({ authenticatedPage: page }) => {
     await setupAdminAuth(page);
     await setupOntologyMocks(page);
-    await page.goto('/knowledge-graph/model');
-
-    await page.getByRole('button', { name: '수정 모드' }).click();
+    await openEditMode(page);
 
     await expect(page.getByTestId('model-outline')).toBeVisible();
     await expect(page.getByTestId('schema-graph')).toBeVisible();
@@ -41,8 +73,7 @@ test.describe('지식 모델 요소 편집기 — 모드 셸', () => {
   test('편집 모드에서 캔버스 노드 선택이 아웃라인 선택과 동기화된다', async ({ authenticatedPage: page }) => {
     await setupAdminAuth(page);
     await setupOntologyMocks(page);
-    await page.goto('/knowledge-graph/model');
-    await page.getByRole('button', { name: '수정 모드' }).click();
+    await openEditMode(page);
 
     // 아웃라인 클릭(Building, entity id=2) → 캔버스가 같은 노드를 :selected로 표시한다.
     // (리뷰 IMP-6) click() 직후 바로 page.evaluate로 읽으면 React 리렌더 + 선택 effect 완료를 기다리지
@@ -78,8 +109,7 @@ test.describe('지식 모델 요소 편집기 — 모드 셸', () => {
   test('편집 모드에서 관계 선택도 아웃라인 선택과 양방향으로 동기화된다', async ({ authenticatedPage: page }) => {
     await setupAdminAuth(page);
     await setupOntologyMocks(page);
-    await page.goto('/knowledge-graph/model');
-    await page.getByRole('button', { name: '수정 모드' }).click();
+    await openEditMode(page);
 
     // 아웃라인에서 관계 클릭(OCCURRED_AT, relation id=1) → 캔버스가 같은 엣지를 :selected로 표시한다.
     // (Task 5) "관계 #1 선택됨" 플레이스홀더가 실제 RelationInspector 편집 폼으로 바뀌었다 — 인스펙터가
@@ -108,7 +138,7 @@ test.describe('지식 모델 요소 편집기 — 모드 셸', () => {
   test('읽기 모드에서는 노드 클릭이 여전히 인스턴스 탭 드릴다운이다', async ({ authenticatedPage: page }) => {
     await setupAdminAuth(page);
     await setupOntologyMocks(page);
-    await page.goto('/knowledge-graph/model');
+    await openModel(page);
 
     // 수정 모드를 켜지 않은 채(기본 read 모드) 캔버스 노드를 탭한다 — 기존 드릴다운 브리지가 그대로 살아 있어야 한다.
     // 캔버스 노드 id는 이제 타입 이름이 아니라 entityTypeId다(S3 Task 1) — id 값은 fixture 배정에 우연히
@@ -129,10 +159,7 @@ test.describe('지식 모델 요소 편집기 — 모드 셸', () => {
   test('수정 모드를 다시 끄면 TypeFilterPanel이 돌아오고 인스펙터가 사라진다', async ({ authenticatedPage: page }) => {
     await setupAdminAuth(page);
     await setupOntologyMocks(page);
-    await page.goto('/knowledge-graph/model');
-
-    const toggle = page.getByRole('button', { name: '수정 모드' });
-    await toggle.click();
+    const toggle = await openEditMode(page);
     await page.getByTestId('outline-entity-2').click();
     await expect(page.getByTestId('model-outline')).toBeVisible();
     await expect(page.getByTestId('type-filter-panel')).toHaveCount(0);
@@ -156,10 +183,7 @@ test.describe('지식 모델 요소 편집기 — 모드 셸', () => {
     await mockApi(page, 'GET', '/api/v1/ontology/1', createOntologySchema());
     await mockApi(page, 'GET', '/api/v1/ontology/2', otherSchema);
     await mockApi(page, 'GET', '/api/v1/ontologies', createOntologySummaries());
-    await page.goto('/knowledge-graph/model');
-
-    const toggle = page.getByRole('button', { name: '수정 모드' });
-    await toggle.click();
+    const toggle = await openEditMode(page);
     await page.getByTestId('outline-entity-2').click();
     // (Task 4) EntityInspector가 채워지면서 플레이스홀더 대신 실제 편집 폼이 보인다.
     await expect(page.getByLabel('타입 이름')).toHaveValue('Building');
@@ -180,7 +204,7 @@ test.describe('지식 모델 요소 편집기 — 모드 셸', () => {
   test('비관리자에게는 편집 모드 토글이 보이지 않는다', async ({ authenticatedPage: page }) => {
     // setupAdminAuth를 호출하지 않는다 — 기본 authenticatedPage는 USER(비관리자) 역할이다.
     await setupOntologyMocks(page);
-    await page.goto('/knowledge-graph/model');
+    await openModel(page);
 
     await expect(page.getByRole('button', { name: '수정 모드' })).toHaveCount(0);
   });
@@ -196,7 +220,7 @@ test.describe('지식 모델 요소 편집기 — 모드 셸', () => {
       archived,
     ]);
     await mockApi(page, 'GET', `/api/v1/ontology/${archived.id}`, createOntologySchema({ domain: archived.domain }));
-    await page.goto('/knowledge-graph/model');
+    await openModel(page);
 
     await page.getByRole('combobox', { name: '온톨로지 선택' }).click();
     await page.getByRole('option', { name: archived.domain }).click();
@@ -236,8 +260,7 @@ test.describe('지식 모델 요소 편집기 — 모드 셸', () => {
       if (msg.type() === 'warning') warnings.push(msg.text());
     });
 
-    await page.goto('/knowledge-graph/model');
-    await page.getByRole('button', { name: '수정 모드' }).click();
+    await openEditMode(page);
 
     // 크래시하지 않는다 — 에러 바운더리가 뜨지 않고 캔버스가 정상 렌더된다.
     await expect(page.getByRole('heading', { name: '페이지를 불러오는 중 문제가 발생했습니다' })).toHaveCount(0);
@@ -275,8 +298,7 @@ test.describe('ModelOutline — 타입/관계 검색', () => {
   test('타입 검색어를 입력하면 일치하는 타입만 남고, 지우면 전체가 돌아온다', async ({ authenticatedPage: page }) => {
     await setupAdminAuth(page);
     await setupOntologyMocks(page);
-    await page.goto('/knowledge-graph/model');
-    await page.getByRole('button', { name: '수정 모드' }).click();
+    await openEditMode(page);
 
     const entityList = page.getByTestId('model-outline-entities');
     // 초기 상태 — factory의 6개 타입이 모두 보인다.
@@ -301,8 +323,7 @@ test.describe('ModelOutline — 타입/관계 검색', () => {
   test('관계 검색은 subject → relation → object 전체 텍스트를 대상으로 부분일치한다', async ({ authenticatedPage: page }) => {
     await setupAdminAuth(page);
     await setupOntologyMocks(page);
-    await page.goto('/knowledge-graph/model');
-    await page.getByRole('button', { name: '수정 모드' }).click();
+    await openEditMode(page);
 
     const relationList = page.getByTestId('model-outline-relations');
     // 초기 상태 — factory의 6개 관계가 모두 보인다.
@@ -332,8 +353,7 @@ test.describe('ModelOutline — 도메인명 자동 저장', () => {
   test('도메인명을 고치면 PATCH가 그 필드만 담아 나가고 화면에도 반영된다', async ({ authenticatedPage: page }) => {
     await setupAdminAuth(page);
     await setupOntologyMocks(page);
-    await page.goto('/knowledge-graph/model');
-    await page.getByRole('button', { name: '수정 모드' }).click();
+    await openEditMode(page);
 
     const capture = await mockApi(page, 'PATCH', '/api/v1/ontology/1', { schemaVersion: 2 }, { capture: true });
     const domainInput = page.getByLabel('도메인');
@@ -356,8 +376,7 @@ test.describe('ModelOutline — 도메인명 자동 저장', () => {
   test('도메인명을 비우면 PATCH 없이 로컬에서 막히고 aria-invalid가 붙는다', async ({ authenticatedPage: page }) => {
     await setupAdminAuth(page);
     await setupOntologyMocks(page);
-    await page.goto('/knowledge-graph/model');
-    await page.getByRole('button', { name: '수정 모드' }).click();
+    await openEditMode(page);
 
     let called = false;
     await page.route(
@@ -391,11 +410,10 @@ test.describe('ModelOutline — 도메인명 자동 저장', () => {
  */
 test.describe('EntityInspector — 타입 필드 · 속성 CRUD · 자동 저장', () => {
   // 편집 모드를 켜고 지정한 엔티티(outline-entity-{id})를 선택해 인스펙터를 연 상태까지 준비한다.
-  async function openInspector(page: import('@playwright/test').Page, entityId: number) {
+  async function openInspector(page: Page, entityId: number) {
     await setupAdminAuth(page);
     await setupOntologyMocks(page);
-    await page.goto('/knowledge-graph/model');
-    await page.getByRole('button', { name: '수정 모드' }).click();
+    await openEditMode(page);
     await page.getByTestId(`outline-entity-${entityId}`).click();
   }
 
@@ -753,8 +771,7 @@ test.describe('EntityInspector — 타입 필드 · 속성 CRUD · 자동 저장
         relations: [],
       }),
     );
-    await page.goto('/knowledge-graph/model');
-    await page.getByRole('button', { name: '수정 모드' }).click();
+    await openEditMode(page);
     await page.getByTestId('outline-entity-1').click();
 
     await expect(page.getByTestId('entity-delete-trigger')).toBeDisabled();
@@ -1060,11 +1077,10 @@ test.describe('EntityInspector — 타입 필드 · 속성 CRUD · 자동 저장
  */
 test.describe('RelationInspector — 관계 생성·편집·삭제', () => {
   // 편집 모드를 켜고 지정한 관계(outline-relation-{id})를 선택해 인스펙터를 연 상태까지 준비한다.
-  async function openRelationInspector(page: import('@playwright/test').Page, relationId: number) {
+  async function openRelationInspector(page: Page, relationId: number) {
     await setupAdminAuth(page);
     await setupOntologyMocks(page);
-    await page.goto('/knowledge-graph/model');
-    await page.getByRole('button', { name: '수정 모드' }).click();
+    await openEditMode(page);
     await page.getByTestId(`outline-relation-${relationId}`).click();
   }
 
@@ -1073,9 +1089,7 @@ test.describe('RelationInspector — 관계 생성·편집·삭제', () => {
   }) => {
     await setupAdminAuth(page);
     await setupOntologyMocks(page);
-    await page.goto('/knowledge-graph/model');
-    await page.getByRole('button', { name: '수정 모드' }).click();
-
+    await openEditMode(page);
     await page.getByRole('button', { name: '관계 추가' }).click();
     await expect(page.getByTestId('relation-inspector-create')).toBeVisible();
 
@@ -1202,8 +1216,7 @@ test.describe('RelationInspector — 관계 생성·편집·삭제', () => {
   test('생성 폼에서 관계명 없이 "관계 만들기"를 누르면 API 호출 없이 막힌다', async ({ authenticatedPage: page }) => {
     await setupAdminAuth(page);
     await setupOntologyMocks(page);
-    await page.goto('/knowledge-graph/model');
-    await page.getByRole('button', { name: '수정 모드' }).click();
+    await openEditMode(page);
     await page.getByRole('button', { name: '관계 추가' }).click();
 
     let called = false;
@@ -1236,8 +1249,7 @@ test.describe('RelationInspector — 관계 생성·편집·삭제', () => {
   }) => {
     await setupAdminAuth(page);
     await setupOntologyMocks(page);
-    await page.goto('/knowledge-graph/model');
-    await page.getByRole('button', { name: '수정 모드' }).click();
+    await openEditMode(page);
     await page.getByRole('button', { name: '관계 추가' }).click();
 
     // Damage(4)→Regulation(6)은 이 화면이 들고 있는 캐시된 스키마(factory 6트리플)에는 없는 조합이라
@@ -1265,8 +1277,7 @@ test.describe('RelationInspector — 관계 생성·편집·삭제', () => {
   test('로컬에서 중복을 막아 API 호출조차 나가지 않는다(생성)', async ({ authenticatedPage: page }) => {
     await setupAdminAuth(page);
     await setupOntologyMocks(page);
-    await page.goto('/knowledge-graph/model');
-    await page.getByRole('button', { name: '수정 모드' }).click();
+    await openEditMode(page);
     await page.getByRole('button', { name: '관계 추가' }).click();
 
     let called = false;
@@ -1303,8 +1314,7 @@ test.describe('RelationInspector — 관계 생성·편집·삭제', () => {
     await mockApi(page, 'GET', '/api/v1/ontology/1', schema);
     await mockOntologyGraph(page, createOntologyGraph());
     await mockApi(page, 'GET', '/api/v1/ontologies', createOntologySummaries());
-    await page.goto('/knowledge-graph/model');
-    await page.getByRole('button', { name: '수정 모드' }).click();
+    await openEditMode(page);
     await page.getByTestId('outline-relation-2').click(); // CAUSED_BY(Incident→Cause)
 
     // excludeId 가드 확인(먼저): CAUSED_BY(id=2) 자신은 schema.relations 안에 이미 "Incident|
@@ -1426,9 +1436,7 @@ test.describe('EntityInspector — 새 타입 만들기', () => {
   test('타입 추가 시 POST /entity-types 본문에 필드가 담겨 나간다', async ({ authenticatedPage: page }) => {
     await setupAdminAuth(page);
     await setupOntologyMocks(page);
-    await page.goto('/knowledge-graph/model');
-    await page.getByRole('button', { name: '수정 모드' }).click();
-
+    await openEditMode(page);
     await page.getByRole('button', { name: '타입 추가' }).click();
     await expect(page.getByTestId('entity-inspector-create')).toBeVisible();
 
@@ -1458,8 +1466,7 @@ test.describe('EntityInspector — 새 타입 만들기', () => {
   }) => {
     await setupAdminAuth(page);
     await setupOntologyMocks(page);
-    await page.goto('/knowledge-graph/model');
-    await page.getByRole('button', { name: '수정 모드' }).click();
+    await openEditMode(page);
     await page.getByRole('button', { name: '타입 추가' }).click();
 
     let called = false;
@@ -1485,8 +1492,7 @@ test.describe('EntityInspector — 새 타입 만들기', () => {
   test('이미 존재하는 타입 이름으로 추가를 시도하면 로컬에서 막힌다', async ({ authenticatedPage: page }) => {
     await setupAdminAuth(page);
     await setupOntologyMocks(page);
-    await page.goto('/knowledge-graph/model');
-    await page.getByRole('button', { name: '수정 모드' }).click();
+    await openEditMode(page);
     await page.getByRole('button', { name: '타입 추가' }).click();
 
     let called = false;
@@ -1514,9 +1520,9 @@ test.describe('EntityInspector — 새 타입 만들기', () => {
     await mockApi(page, 'GET', '/api/v1/ontology/1', emptySchema);
     await mockOntologyGraph(page, createOntologyGraph());
     await mockApi(page, 'GET', '/api/v1/ontologies', createOntologySummaries());
-    await page.goto('/knowledge-graph/model');
+    await openEditMode(page);
     // 엔티티가 0개면 캔버스 대신 빈 상태가 뜨지만, 수정 모드 자체는 독립적으로 켤 수 있다.
-    await page.getByRole('button', { name: '수정 모드' }).click();
+
     await expect(page.getByTestId('model-outline')).toContainText('타입 0개');
 
     const capture = await mockApi(
@@ -1543,11 +1549,10 @@ test.describe('EntityInspector — 새 타입 만들기', () => {
 // EntityInspector/RelationInspector 자동저장 필드)에도 연결했는지 검증한다 — 원인은 이 가드가
 // 아예 배선돼 있지 않아 blur/디바운스가 아직 끝나지 않은 입력이 이탈 시 무경고로 유실되던 것이었다.
 test.describe('지식 모델 편집기 — 자동저장 이탈 가드(#484)', () => {
-  async function openInspector(page: import('@playwright/test').Page, entityId: number) {
+  async function openInspector(page: Page, entityId: number) {
     await setupAdminAuth(page);
     await setupOntologyMocks(page);
-    await page.goto('/knowledge-graph/model');
-    await page.getByRole('button', { name: '수정 모드' }).click();
+    await openEditMode(page);
     await page.getByTestId(`outline-entity-${entityId}`).click();
   }
 
@@ -1644,16 +1649,15 @@ test.describe('지식 모델 편집기 — 자동저장 이탈 가드(#484)', ()
 test.describe('지식 모델 편집기 — 데이터셋 매핑 사용처 삭제 차단(WD-129)', () => {
   // setupOntologyMocks 의 기본 사용처(없음)를 덮어쓴 뒤 화면을 연다 — page.route 는 나중에 등록한 것이 앞선다.
   // 인스펙터가 열리는 순간 사용처를 묻기 때문에 덮어쓰기가 화면 진입보다 먼저여야 한다.
-  async function openEditor(page: import('@playwright/test').Page, usage: ReturnType<typeof createMappingUsage>) {
+  async function openEditor(page: Page, usage: ReturnType<typeof createMappingUsage>) {
     await setupAdminAuth(page);
     await setupOntologyMocks(page);
     await mockApi(page, 'GET', '/api/v1/ontology/1/mapping-usage', usage);
-    await page.goto('/knowledge-graph/model');
-    await page.getByRole('button', { name: '수정 모드' }).click();
+    await openEditMode(page);
   }
 
   // 지정 경로로 DELETE 가 나갔는지 기록한다 — 확인 버튼이 막혀 있으면 요청이 전혀 없어야 한다.
-  async function trackDelete(page: import('@playwright/test').Page, path: string) {
+  async function trackDelete(page: Page, path: string) {
     const state = { called: false };
     await page.route(
       (url) => url.pathname === path,
@@ -1826,7 +1830,7 @@ test.describe('EntityInspector — 속성 행 폭(WD-188)', () => {
   // 편집 패널(320px 고정)에 이름·자료형·단위·삭제를 한 줄로 몰아 이름 칸 글자 영역이 17px 만 남던 결함의 회귀 가드.
   // 입력 요소의 scrollWidth 는 브라우저마다 글자 넘침을 반영하는지 보장되지 않으므로, 값의 실제 글자 폭을
   // 같은 글꼴로 canvas 에 재서 칸의 글자 영역(clientWidth - 좌우 padding)과 직접 비교한다.
-  async function textFits(locator: import('@playwright/test').Locator) {
+  async function textFits(locator: Locator) {
     return locator.evaluate((el) => {
       const style = getComputedStyle(el);
       const text = el instanceof HTMLInputElement ? el.value : (el.textContent ?? '');
@@ -1850,8 +1854,7 @@ test.describe('EntityInspector — 속성 행 폭(WD-188)', () => {
         e.id === 4 ? { ...e, properties: e.properties.map((p) => ({ ...p, name: 'construction_year' })) } : e,
       ),
     });
-    await page.goto('/knowledge-graph/model');
-    await page.getByRole('button', { name: '수정 모드' }).click();
+    await openEditMode(page);
     await page.getByTestId('outline-entity-4').click();
 
     // 기존 속성 행 — 이름 전체가 글자 영역 안에 들어가고, 자료형 「number」가 잘리지 않는다.

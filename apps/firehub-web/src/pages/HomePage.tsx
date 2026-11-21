@@ -719,7 +719,10 @@ export default function HomePage() {
                 <Activity className="h-8 w-8 text-muted-foreground/50" />
                 {/* 필터 때문에 비었으면 원인을 알리고 필터를 풀 수단을 준다(WD-875).
                     DelayedStatus: 스크린리더가 빈 상태 문구를 낭독하도록 한다(공용 TableEmptyRow 와 동일) */}
-                <DelayedStatus announceKey={activityFiltersActive ? 'filtered' : 'empty'}>
+                {/* announceKey 에 필터 값을 넣어, 캐시된 0건 필터 사이를 오갈 때(A→B)도 새 노드로 갈아 끼워 다시 낭독한다 */}
+                <DelayedStatus
+                  announceKey={activityFiltersActive ? `filtered:${typeFilter}:${severityFilter}` : 'empty'}
+                >
                   <p className="text-sm text-muted-foreground">
                     {activityFiltersActive ? '조건에 맞는 활동이 없습니다.' : '활동 내역이 없습니다.'}
                   </p>
