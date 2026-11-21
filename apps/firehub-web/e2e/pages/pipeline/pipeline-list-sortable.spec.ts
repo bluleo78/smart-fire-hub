@@ -39,3 +39,18 @@ test.describe('파이프라인 목록 — 정렬 전이 가드 (#359)', () => {
     await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 });
   });
 });
+
+// WD-880 — 정렬 헤더 버튼(공용 SortableHeader)의 클릭 상자는 높이 32px 이상이어야 한다.
+test('정렬 헤더 버튼이 32px 이상 (WD-880)', async ({ authenticatedPage: page }) => {
+  await setupPipelineMocks(page, 5);
+  await page.goto('/pipelines');
+
+  const heads = page.locator('th[aria-sort] button');
+  await expect(heads.first()).toBeVisible();
+  const count = await heads.count();
+  expect(count).toBeGreaterThan(0);
+  for (let i = 0; i < count; i++) {
+    const b = await heads.nth(i).boundingBox();
+    expect(b!.height).toBeGreaterThanOrEqual(32);
+  }
+});

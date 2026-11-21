@@ -92,6 +92,9 @@ const DATASET_FILTER_PARAM_KEYS = ['categoryId', 'storageType', 'originType', 's
  * - 빈 값(default)일 때는 URL에서 제거하여 깔끔한 URL 유지.
  * - history 오염 방지를 위해 replace=true 로 갱신.
  */
+/** 카테고리 칩 클래스 — WD-880: 최소 클릭 대상 32×32. 높이 h-8·최소 너비 min-w-8(한 글자 이름도 32 이상), 글자 크기는 그대로 */
+const CATEGORY_CHIP_CLASS = 'h-8 min-w-8 cursor-pointer hover:opacity-80 transition-opacity';
+
 export default function DatasetListPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -489,7 +492,7 @@ export default function DatasetListPage() {
           <Badge
             asChild
             variant={categoryId === undefined ? 'default' : 'outline'}
-            className="cursor-pointer hover:opacity-80 transition-opacity"
+            className={CATEGORY_CHIP_CLASS}
           >
             <button
               type="button"
@@ -506,7 +509,7 @@ export default function DatasetListPage() {
               key={cat.id}
               asChild
               variant={categoryId === cat.id ? 'default' : 'outline'}
-              className="cursor-pointer hover:opacity-80 transition-opacity"
+              className={CATEGORY_CHIP_CLASS}
             >
               <button
                 type="button"
@@ -595,7 +598,9 @@ export default function DatasetListPage() {
                   {/* Favorite star */}
                   <TableCell onClick={(e) => e.stopPropagation()} className="pr-0">
                     <button
-                      className="p-1 rounded hover:bg-muted transition-colors"
+                      type="button"
+                      // WD-880: 최소 클릭 대상 32×32 — p-2(아이콘 16 + 16 = 32)로 상자를 넓히고 -m-1 로 레이아웃 차지는 기존(24)과 같게 유지해 행 높이가 변하지 않는다
+                      className="-m-1 p-2 rounded hover:bg-muted transition-colors"
                       aria-label={dataset.isFavorite ? '즐겨찾기 해제' : '즐겨찾기 추가'}
                       onClick={(e) => handleToggleFavorite(e, dataset.id, dataset.name, dataset.isFavorite)}
                     >
@@ -672,11 +677,11 @@ export default function DatasetListPage() {
                   </TableCell>
                   <TableCell className="relative">
                     {/* 행 작업 버튼 — 마우스를 올리거나 키보드 포커스가 안에 들어오면 보인다(WD-412: Tab 으로 와도 보이지 않던 문제) */}
+                    {/* WD-880: 아래 미리보기·프로파일·내보내기 버튼은 최소 클릭 대상 32×32(size="icon-sm"). 오버레이는 top-1/2 -translate-y-1/2 로 세로 가운데라 커져도 행 안에 든다 */}
                     <div className="absolute right-10 top-1/2 -translate-y-1/2 flex gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity bg-background/90 backdrop-blur-sm rounded-md p-1 shadow-sm z-10">
                       <Button
                         variant="ghost"
-                        size="sm"
-                        className="h-7 w-7 p-0"
+                        size="icon-sm"
                         title="미리보기"
                         aria-label="미리보기"
                         onClick={(e) => {
@@ -690,8 +695,7 @@ export default function DatasetListPage() {
                       </Button>
                       <Button
                         variant="ghost"
-                        size="sm"
-                        className="h-7 w-7 p-0"
+                        size="icon-sm"
                         title="프로파일"
                         aria-label="프로파일"
                         onClick={(e) => {
@@ -705,8 +709,7 @@ export default function DatasetListPage() {
                       {dataset.exportAllowed === true && (
                         <Button
                           variant="ghost"
-                          size="sm"
-                          className="h-7 w-7 p-0"
+                          size="icon-sm"
                           title="내보내기"
                           aria-label="내보내기"
                           onClick={(e) => {

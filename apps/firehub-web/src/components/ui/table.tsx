@@ -215,7 +215,8 @@ function SortableHeader({
         type="button"
         onClick={onSort}
         className={cn(
-          "inline-flex items-center gap-1.5 -mx-2 px-2 py-1 rounded-sm",
+          // WD-880: 최소 클릭 대상 32px — py-1(높이 28) 대신 min-h-8 로 상자만 키운다(글자·아이콘 크기는 그대로, th 높이 h-10 안에 든다)
+          "inline-flex min-h-8 items-center gap-1.5 -mx-2 px-2 rounded-sm",
           "hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           "transition-colors text-foreground font-medium"
         )}
