@@ -537,6 +537,32 @@ class TriggerServiceTest extends IntegrationTestBase {
         .isTrue();
   }
 
+  /** WD-868: 공백뿐인 원소만 있는 목록은 저장 때 건너뛰는 값이라 제한 없음으로 판정한다. */
+  @Test
+  void isIpAllowed_blankOnlyEntries_meansUnrestricted() {
+    for (String blank : List.of(" ", "", "\t")) {
+      assertThat(triggerService.isIpAllowed("192.168.0.1", apiTriggerWith(List.of(blank))))
+          .as("blank=[%s]", blank)
+          .isTrue();
+    }
+  }
+
+  /** WD-868: 공백 원소가 섞여 있어도 나머지 CIDR 로 판정한다. */
+  @Test
+  void isIpAllowed_blankMixedWithCidr_ignoresBlank() {
+    assertThat(triggerService.isIpAllowed("10.1.2.3", apiTriggerWith(List.of("", "10.0.0.0/8"))))
+        .isTrue();
+    assertThat(triggerService.isIpAllowed("192.168.0.1", apiTriggerWith(List.of("", "10.0.0.0/8"))))
+        .isFalse();
+  }
+
+  /** WD-868: 공백이 아닌 잘못된 항목만 있으면 여전히 제한이고, 빈 목록은 제한 없음이다. */
+  @Test
+  void isIpAllowed_malformedOnly_stillRestricted() {
+    assertThat(triggerService.isIpAllowed("10.0.0.1", apiTriggerWith(List.of("abc")))).isFalse();
+    assertThat(triggerService.isIpAllowed("10.0.0.1", apiTriggerWith(List.of()))).isTrue();
+  }
+
   /**
    * WD-859: 잠금 뒤 재검사 경로(TriggerResponse 를 받는 isIpAllowed)도 옛 잘못된 allowedIps(문자열·비문자열 원소)를 형 변환
    * 오류(500)나 통과 없이 거절한다. 정상 목록은 그대로 판정한다.

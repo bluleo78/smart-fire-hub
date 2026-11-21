@@ -1548,9 +1548,9 @@ public class TriggerService {
     }
 
     for (Object item : (List<?>) allowedIpsObj) {
-      // 모양 검사를 통과했으므로 원소는 모두 문자열이다. 빈 문자열은 기존처럼 건너뛴다.
+      // 모양 검사를 통과했으므로 원소는 모두 문자열이다. 공백 원소는 기존처럼 건너뛴다(호출 판정과 같은 isBlankEntry — WD-868).
+      if (isBlankEntry((String) item)) continue;
       String entry = ((String) item).trim();
-      if (entry.isEmpty()) continue;
 
       String ipPart = entry.contains("/") ? entry.substring(0, entry.indexOf('/')) : entry;
       String prefixPart = entry.contains("/") ? entry.substring(entry.indexOf('/') + 1) : null;
@@ -1584,6 +1584,14 @@ public class TriggerService {
       if (!(element instanceof String)) return false;
     }
     return true;
+  }
+
+  /**
+   * allowedIps 원소가 「없는 것」으로 볼 공백 원소(빈 문자열·공백뿐)인지 — 저장 검사와 호출 판정이 같은 정의를 쓰도록 한 곳에 둔다(WD-868: 두 규칙이
+   * 어긋나 공백뿐인 목록이 모든 호출을 막았다). {@code isBlank()} 가 아니라 {@code trim()} 기준이다 — 저장 검사가 써 온 규칙 그대로.
+   */
+  private static boolean isBlankEntry(String entry) {
+    return entry.trim().isEmpty();
   }
 
   /** 문자열이 유효한 IPv4 주소인지 확인한다. 각 옥텟이 0~255 범위인지 검사. */
@@ -1629,7 +1637,8 @@ public class TriggerService {
   /**
    * 요청 IP 가 트리거의 허용 IP 목록에 맞는지 — 앞 검사와 잠금 뒤 재검사(WD-857)가 같은 판정을 쓴다. 저장 시 검증(WD-859) 이전에 들어간 옛 값은
    * 문자열 목록이 아닐 수 있어, 목록이 아니거나 문자열이 아닌 원소(null 포함)가 하나라도 있으면 보안상 값 전체를 거절(fail closed)한다 — 앞 원소가 맞아도
-   * 허용하지 않는다. allowedIps 가 없으면(null) 제한 없음이다.
+   * 허용하지 않는다. allowedIps 가 없으면(null) 제한 없음이다. 빈 목록이나 공백 문자열만 든 목록(예: {@code [" "]})도 제한 없음이다(WD-868
+   * — 저장 검사가 공백 원소를 건너뛰는 규칙과 같다).
    *
    * <p>원본 값을 받는 오버로드를 두지 않는다(WD-859) — 나란히 두면 {@code null} 인자가 TriggerResponse 쪽으로 풀려 NPE 가 나는 함정이
    * 생긴다.
@@ -1651,8 +1660,8 @@ public class TriggerService {
   }
 
   /**
-   * 주어진 sourceIp가 allowedIps 목록의 CIDR 범위에 포함되는지 확인한다. allowedIps가 비어 있으면 모든 IP를 허용한다. IPv4-mapped
-   * IPv6 주소(::ffff:x.x.x.x)는 IPv4로 변환하여 비교한다.
+   * 주어진 sourceIp가 allowedIps 목록의 CIDR 범위에 포함되는지 확인한다. 공백 원소(빈 문자열·공백뿐)를 뺀 목록이 비면 모든 IP를 허용한다. null
+   * 원소는 호출부가 이미 거절했다(fail closed). IPv4-mapped IPv6 주소(::ffff:x.x.x.x)는 IPv4로 변환하여 비교한다.
    *
    * <p>형 검사는 하지 않으므로 {@code private} 이다 — {@link #isIpAllowed(String, TriggerResponse)} 참고.
    *
@@ -1661,13 +1670,16 @@ public class TriggerService {
    * @return 허용 여부
    */
   private boolean matchesAnyAllowedIp(String sourceIp, List<String> allowedIps) {
-    if (allowedIps.isEmpty()) return true;
+    // WD-868: 저장(validateAllowedIps)은 공백 원소를 건너뛰는데 호출 판정은 비어 있지 않은 목록을 모두 제한으로 봐,
+    // [" "] 처럼 공백뿐인 목록이 모든 외부 호출을 403 으로 막았다. 저장과 같게 공백 원소를 뺀 목록 기준으로 판정한다.
+    // 공백이 아닌 잘못된 항목(예: "abc")은 그대로 남아 제한으로 취급된다.
+    List<String> effectiveIps = allowedIps.stream().filter(e -> !isBlankEntry(e)).toList();
+    if (effectiveIps.isEmpty()) return true;
 
     // IPv4-mapped IPv6 주소를 IPv4로 정규화 (예: ::1 → 127.0.0.1, ::ffff:192.168.1.1 → 192.168.1.1)
     String normalizedIp = normalizeToIpv4(sourceIp);
 
-    for (String cidrEntry : allowedIps) {
-      if (cidrEntry == null || cidrEntry.trim().isEmpty()) continue;
+    for (String cidrEntry : effectiveIps) {
       try {
         if (isIpInCidr(normalizedIp, cidrEntry.trim())) {
           return true;
