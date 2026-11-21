@@ -8,6 +8,7 @@
  * - 저장 시 올바른 payload 전송
  */
 
+import { API_FULL_URL_PLACEHOLDER } from '../../../src/lib/api-connection-form';
 import type { ApiConnectionSelectable } from '../../../src/types/api-connection';
 import { createPageResponse,mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
@@ -110,7 +111,7 @@ test.describe('파이프라인 에디터 — API_CALL 스텝 설정', () => {
     await expect(page.locator('[role="combobox"]:has-text("직접 입력")')).toBeVisible();
 
     // inline 모드(직접 입력) 기본 상태: URL * 입력 필드 (placeholder로 확인)
-    await expect(page.getByPlaceholder('https://api.example.com/v1/data')).toBeVisible();
+    await expect(page.getByPlaceholder(API_FULL_URL_PLACEHOLDER, { exact: true })).toBeVisible();
 
     // "테스트 호출" 버튼
     await expect(page.getByRole('button', { name: '테스트 호출' })).toBeVisible();
@@ -249,7 +250,7 @@ test.describe('파이프라인 에디터 — API_CALL 스텝 설정', () => {
     await addAndOpenApiCallStep(page);
 
     // inline 모드에서 직접 URL 입력 (placeholder로 접근)
-    const urlInput = page.getByPlaceholder('https://api.example.com/v1/data');
+    const urlInput = page.getByPlaceholder(API_FULL_URL_PLACEHOLDER, { exact: true });
     await urlInput.fill('https://api.example.com/v1/data');
 
     // 테스트 호출
@@ -284,7 +285,7 @@ test.describe('파이프라인 에디터 — API_CALL 스텝 설정', () => {
     );
 
     await addAndOpenApiCallStep(page);
-    await page.getByPlaceholder('https://api.example.com/v1/data').fill('https://api.example.com/v1/data');
+    await page.getByPlaceholder(API_FULL_URL_PLACEHOLDER, { exact: true }).fill('https://api.example.com/v1/data');
 
     // 인증 섹션의 방식 선택 — 기본값 「없음」
     await page.locator('[role="combobox"]:has-text("없음")').click();
@@ -494,7 +495,7 @@ test.describe('파이프라인 에디터 — API_CALL 스텝 설정', () => {
     await addAndOpenApiCallStep(page);
 
     // inline 모드에서 URL 입력 (저장 조건 충족용)
-    await page.getByPlaceholder('https://api.example.com/v1/data').fill('https://example.com/api');
+    await page.getByPlaceholder(API_FULL_URL_PLACEHOLDER, { exact: true }).fill('https://example.com/api');
 
     // "고급 설정" 섹션 펼치기
     await page.locator('button').filter({ hasText: /^고급 설정$/ }).click();
