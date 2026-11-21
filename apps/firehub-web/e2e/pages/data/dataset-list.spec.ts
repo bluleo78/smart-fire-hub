@@ -1,3 +1,5 @@
+import type { Locator } from '@playwright/test';
+
 import { createCategories, createDataset, createDatasets } from '../../factories/dataset.factory';
 import { createPageResponse, mockApi, type MockApiCapture, mockDeleteOnceThenNotFound } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
@@ -552,5 +554,70 @@ test.describe('WD-390 최근 접근 — 지운·바뀐 데이터셋', () => {
     await expect
       .poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('sfh-recent-datasets:1:1') ?? '[]')[0]?.name))
       .toBe('데이터셋 3');
+  });
+});
+
+/**
+ * WD-880 — 데이터셋 목록의 클릭 대상은 상자 32×32 이상이어야 한다(WCAG 2.5.8 권장 수준).
+ * 시각 크기(아이콘·글자)는 그대로 두고 클릭 상자만 넓히므로, 행 높이가 늘거나 hover 오버레이가 행 밖으로 넘치지 않는지도 함께 본다.
+ */
+test.describe('WD-880 클릭 대상 32×32', () => {
+  // 상자가 32×32 이상인지 단언한다.
+  async function expectMinTarget(loc: Locator) {
+    const b = await loc.boundingBox();
+    expect(b).not.toBeNull();
+    expect(b!.width).toBeGreaterThanOrEqual(32);
+    expect(b!.height).toBeGreaterThanOrEqual(32);
+  }
+
+  test('카테고리 칩·정렬 헤더가 32×32 이상 (WD-880)', async ({ authenticatedPage: page }) => {
+    await setupDatasetMocks(page);
+    await page.goto('/data/datasets');
+    await expect(page.getByText('소방 데이터').first()).toBeVisible();
+
+    const chips = page.getByRole('group', { name: '카테고리' }).getByRole('button');
+    const chipCount = await chips.count();
+    expect(chipCount).toBeGreaterThan(0);
+    for (let i = 0; i < chipCount; i++) await expectMinTarget(chips.nth(i));
+
+    const heads = page.locator('th[aria-sort] button');
+    const headCount = await heads.count();
+    expect(headCount).toBeGreaterThan(0);
+    for (let i = 0; i < headCount; i++) await expectMinTarget(heads.nth(i));
+  });
+
+  // 한 글자 이름 칩도 너비가 32 이상이어야 한다 — 칩 너비가 글자 폭을 따라가 좁아지지 않게(min-w-8)
+  test('한 글자 이름 카테고리 칩도 32×32 이상 (WD-880)', async ({ authenticatedPage: page }) => {
+    await setupDatasetMocks(page);
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', [{ id: 9, name: 'A', description: null }]);
+    await page.goto('/data/datasets');
+    const chip = page.getByRole('group', { name: '카테고리' }).getByRole('button', { name: 'A', exact: true });
+    await expect(chip).toBeVisible();
+    await expectMinTarget(chip);
+  });
+
+  test('행 즐겨찾기·미리보기·프로파일·내보내기가 32×32 이상이고 행 안에 든다 (WD-880)', async ({ authenticatedPage: page }) => {
+    await setupDatasetMocks(page);
+    await page.goto('/data/datasets');
+
+    const row = page.locator('tbody tr').first();
+    await expect(row).toBeVisible();
+    await row.hover();
+
+    const targets = [
+      row.getByRole('button', { name: /즐겨찾기 (추가|해제)/ }),
+      row.getByRole('button', { name: '미리보기' }),
+      row.getByRole('button', { name: '프로파일' }),
+      row.getByRole('button', { name: '내보내기' }),
+    ];
+    const tr = (await row.boundingBox())!;
+    for (const t of targets) {
+      await expect(t).toBeVisible();
+      await expectMinTarget(t);
+      // 버튼 세로 범위가 행 안에 있어야 행 높이를 키우거나 이웃 행을 덮지 않는다
+      const b = (await t.boundingBox())!;
+      expect(b.y).toBeGreaterThanOrEqual(tr.y - 0.5);
+      expect(b.y + b.height).toBeLessThanOrEqual(tr.y + tr.height + 0.5);
+    }
   });
 });
