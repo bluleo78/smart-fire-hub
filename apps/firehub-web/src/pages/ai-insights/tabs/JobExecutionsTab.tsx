@@ -89,8 +89,11 @@ export default function JobExecutionsTab({ jobId }: JobExecutionsTabProps) {
                       >
                         {formatDate(exec.startedAt)} ({timeAgo(exec.startedAt)})
                       </Link>
-                      {/* 리포트 등급 배지(WD-198) — 실행 동안 읽은 데이터셋의 최고 등급 */}
-                      {exec.securityLevel && <SecurityLevelBadge level={exec.securityLevel} />}
+                      {/* 리포트 등급 배지(WD-198) — 실행 동안 읽은 데이터셋의 최고 등급.
+                          목록 칸이라 말줄임 + title(WD-658), 상한은 데이터셋 목록과 같게 둬 시작 시각 링크 폭을 남긴다 (WD-864) */}
+                      {exec.securityLevel && (
+                        <SecurityLevelBadge level={exec.securityLevel} truncate className="max-w-[5.25rem]" />
+                      )}
                     </div>
                   </TableCell>
                   <TableCell className="text-center">

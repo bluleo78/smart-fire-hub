@@ -53,4 +53,38 @@ test.describe("리포트 목록 — 휴대폰 폭 (WD-334)", () => {
     const jobBox = (await jobCell.boundingBox())!;
     expect(badgeBox.x + badgeBox.width).toBeLessThanOrEqual(jobBox.x + 1);
   });
+
+  test("긴 등급 이름 배지도 제목 칸 안에서 말줄임되고 title 로 전체 이름을 보인다 (WD-864)", async ({
+    authenticatedPage: page,
+  }) => {
+    const longName = "개인정보보호법 적용대상 고객민감정보 외부반출 금지 등급";
+    await mockApi(page, "GET", "/api/v1/proactive/reports", [
+      {
+        ...createReport({
+          executionId: 2,
+          title: "QA 일간 운영 요약 리포트 — 아주 긴 제목으로 말줄임 확인",
+        }),
+        securityLevel: { ...createLevelSummary("공개"), name: longName },
+      },
+    ]);
+    await page.goto("/ai-insights/reports");
+
+    const row = page.getByRole("row").nth(1);
+    const titleCell = row.getByRole("cell").nth(0);
+    const jobCell = row.getByRole("cell").nth(1);
+    const badge = titleCell.getByTestId("security-level-badge");
+    await expect(badge).toBeVisible();
+
+    // 목록 표 칸 규칙(WD-658): 이름은 말줄임, 전체 이름은 title
+    await expect(badge.locator("[title]")).toHaveAttribute("title", longName);
+    const badgeBox = (await badge.boundingBox())!;
+    const jobBox = (await jobCell.boundingBox())!;
+    expect(badgeBox.x + badgeBox.width).toBeLessThanOrEqual(jobBox.x + 1);
+
+    // 배지 상한 덕분에 제목 글자도 읽을 폭이 남는다
+    const titleBox = (await titleCell
+      .getByText(/QA 일간 운영 요약 리포트/)
+      .boundingBox())!;
+    expect(titleBox.width).toBeGreaterThan(60);
+  });
 });
