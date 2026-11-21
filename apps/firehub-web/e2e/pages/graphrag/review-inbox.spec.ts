@@ -1,8 +1,9 @@
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 
 import { createDatePropertyReviewItem, createEntityReviewItem, createEvidenceChunk, createPropertyReviewItem, createRelationReviewItem, createSynonymReviewItem } from '../../factories/reviewItem.factory';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { expectNoHorizontalOverflow } from '../../fixtures/long-unbroken-name';
 
 test.describe('AI 검수 인박스', () => {
   // 기본은 검수 권한(dataset:write)이 있는 사용자 — 조치 버튼은 이 권한이 있을 때만 그려진다(WD-127).
@@ -260,6 +261,44 @@ test.describe('AI 검수 인박스', () => {
     await page.getByRole('button', { name: '원문 근거 보기' }).click();
 
     await expect(page.getByText('약 수천만원대의 재산피해가 발생했다.')).toBeVisible();
+  });
+
+  // WD-900: 근거 토글의 클릭 상자가 글자 높이(16px)뿐이라 누르기 어려웠다 — 접힘·펼침 모두 32px 이상이어야 한다.
+  test('원문 근거 토글은 접힘·펼침 모두 클릭 영역 높이가 32px 이상이다 (WD-900)', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createSynonymReviewItem(), createPropertyReviewItem()]);
+    await mockApi(page, 'GET', '/api/v1/graphrag/review-items/2/evidence', [createEvidenceChunk()]);
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto('/knowledge-graph/review');
+
+    // 클릭 상자가 가로·세로 모두 32px 이상인지 잰다 — boundingBox 가 null 이면 먼저 실패시켜 원인을 분명히 한다.
+    const expectMinTarget = async (locator: Locator) => {
+      const box = await locator.boundingBox();
+      expect(box).not.toBeNull();
+      expect(box?.height).toBeGreaterThanOrEqual(32);
+      expect(box?.width).toBeGreaterThanOrEqual(32);
+    };
+
+    const toggles = page.getByRole('button', { name: /원문 근거 보기/ });
+    await expect(toggles).toHaveCount(2);
+    for (const toggle of await toggles.all()) {
+      await expectMinTarget(toggle);
+    }
+
+    // 목록 순서가 바뀌어도 evidence 를 모킹한 속성 행(id 2)을 누르도록 접근 가능한 이름(대상 요약)으로 고른다.
+    const propertyToggle = page.getByRole('button', { name: /피해액.*원문 근거 보기/ });
+    // 상자 가장자리(글자 밖)를 눌러도 반응해야 한다 — 글자에만 반응하는 회귀를 잡는다.
+    await propertyToggle.click({ position: { x: 2, y: 2 } });
+    const hide = page.getByRole('button', { name: /피해액.*근거 숨기기/ });
+    await expect(hide).toHaveAttribute('aria-expanded', 'true');
+    await expectMinTarget(hide);
+
+    // 모바일 폭에서도 32px 이상이고 가로 넘침이 없으며, 실제로 눌러 다시 접힌다
+    await page.setViewportSize({ width: 375, height: 800 });
+    await expectMinTarget(hide);
+    await expectNoHorizontalOverflow(page);
+    await hide.click();
+    await expect(page.getByRole('button', { name: /피해액.*원문 근거 보기/ })).toHaveAttribute('aria-expanded', 'false');
   });
 
   // WD-872: 원문 근거 조회가 실패했는데도 「연결된 원문 근거가 없습니다」로 보이던 것을 실패 안내로 구분한다.

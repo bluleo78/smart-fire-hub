@@ -458,10 +458,11 @@ function ReviewRow(props: {
           <div>
             {/* aria-expanded/aria-controls로 접힘·펼침 상태와 대상 패널을 노출한다(#338, SC 4.1.2).
                 시각 라벨은 행마다 같지만 aria-label로 대상을 붙여 버튼 목록에서 구분되게 한다(SC 2.4.6).
-                aria-controls는 패널이 실제로 있을 때만 붙인다 — 없는 id를 가리키면 무효 참조가 된다. */}
+                aria-controls는 패널이 실제로 있을 때만 붙인다 — 없는 id를 가리키면 무효 참조가 된다.
+                최소 클릭 대상 32px — 글자·밑줄은 그대로 두고 상자만 키운다(WD-900). */}
             <button
               type="button"
-              className="text-primary underline text-xs"
+              className="inline-flex min-h-8 items-center text-primary underline text-xs"
               aria-expanded={showEvidence}
               aria-controls={showEvidence ? evidencePanelId : undefined}
               aria-label={`${targetSummary} — ${showEvidence ? '근거 숨기기' : '원문 근거 보기'}`}
