@@ -358,7 +358,7 @@ test.describe('대시보드 목록 페이지', () => {
     expect(req.payload).toMatchObject({ autoRefreshSeconds: null, clearAutoRefresh: true });
   });
 
-  test('자동 새로고침에 소수점 값을 입력하면 저장이 거부되고 에러 토스트가 표시된다 (#568)', async ({
+  test('자동 새로고침에 소수점 값을 입력하면 저장이 거부되고 칸 아래 오류가 표시된다 (#568, WD-876)', async ({
     authenticatedPage: page,
   }) => {
     // 이전에는 parseInt(autoRefresh, 10)가 "5.5"를 소리 없이 "5"로 잘라 저장했다.
@@ -380,8 +380,8 @@ test.describe('대시보드 목록 페이지', () => {
     await page.getByLabel('자동 새로고침 (초)').fill('5.5');
     await page.getByRole('button', { name: '저장' }).click();
 
-    // 에러 토스트가 표시되고 다이얼로그는 닫히지 않으며, 저장 API는 호출되지 않아야 한다
-    await expect(page.getByText('자동 새로고침은 5 이상의 정수(초)로 입력해 주세요.')).toBeVisible();
+    // 칸 아래 오류(role=alert)가 표시되고 다이얼로그는 닫히지 않으며, 저장 API는 호출되지 않아야 한다
+    await expect(page.getByRole('dialog', { name: '대시보드 설정' }).getByRole('alert')).toHaveText('자동 새로고침은 5 이상의 정수(초)로 입력해 주세요.');
     await expect(page.getByRole('dialog', { name: '대시보드 설정' })).toBeVisible();
     expect(putCapture.requests.length).toBe(0);
   });
@@ -565,5 +565,96 @@ test.describe('대시보드 목록 페이지', () => {
     await page.getByRole('row', { name: /상한 확인 대시보드/ }).getByLabel('설정').click();
     const editDialog = page.getByRole('dialog', { name: '대시보드 설정' });
     await expect(editDialog.getByLabel('설명')).toHaveAttribute('maxlength', '2000');
+  });
+});
+
+/**
+ * WD-876 — 자동 새로고침 검증 오류를 토스트 대신 입력 칸 아래에 보이고, 허용 범위를 칸에서 안내한다.
+ * 토스트는 몇 초 뒤 사라져 무엇이 틀렸는지 다시 볼 수 없고 칸과 이어지지 않았다.
+ */
+test.describe('자동 새로고침 인라인 오류 (WD-876)', () => {
+  const HINT = '5~86400초(24시간) 사이의 정수. 비워 두면 수동 새로고침';
+  const ERR_MIN = '자동 새로고침은 5 이상의 정수(초)로 입력해 주세요.';
+
+  /** 생성 다이얼로그를 열고 POST 캡처를 건 상태를 준비한다 */
+  async function openCreateDialog(page: import('@playwright/test').Page) {
+    await setupDashboardListMocks(page, 1);
+    await page.goto('/analytics/dashboards');
+    const newDashboard = createDashboard({ id: 10, name: '운영 현황' });
+    const post = await mockApi(page, 'POST', '/api/v1/analytics/dashboards', newDashboard, { capture: true });
+    await mockApi(page, 'GET', '/api/v1/analytics/dashboards/10', newDashboard);
+    await mockApi(page, 'GET', '/api/v1/analytics/charts', { content: [], page: 0, size: 20, totalElements: 0, totalPages: 0 });
+    await page.getByRole('button', { name: '새 대시보드' }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible();
+    return { dialog, post };
+  }
+
+  test('새 대시보드 — 범위를 벗어난 값은 칸 아래 오류로 알리고, 고치면 사라진다', async ({ authenticatedPage: page }) => {
+    const { dialog, post } = await openCreateDialog(page);
+    const input = dialog.getByLabel('자동 새로고침 (초)');
+    await expect(input).toHaveAccessibleDescription(HINT);
+
+    await dialog.getByLabel('이름 *').fill('운영 현황');
+    await input.fill('3');
+    await dialog.getByRole('button', { name: '만들기' }).click();
+
+    await expect(dialog.getByRole('alert')).toHaveText(ERR_MIN);
+    await expect(input).toHaveAttribute('aria-invalid', 'true');
+    // 오류와 범위 안내를 둘 다 읽는다 — 공용 FormField 규칙대로 오류가 먼저
+    await expect(input).toHaveAccessibleDescription(`${ERR_MIN} ${HINT}`);
+    // 포커스가 틀린 칸으로 간다 — 같은 값으로 다시 눌러도 어디가 틀렸는지 알 수 있다
+    await expect(input).toBeFocused();
+    await expect(page.locator('[data-sonner-toast]')).toHaveCount(0);
+    expect(post.requests.length).toBe(0);
+
+    // 값을 고치면 오류가 사라지고, 올바른 값으로는 POST 가 간다
+    await input.fill('10');
+    await expect(dialog.getByRole('alert')).toHaveCount(0);
+    await expect(input).not.toHaveAttribute('aria-invalid', 'true');
+    await dialog.getByRole('button', { name: '만들기' }).click();
+    expect((await post.waitForRequest()).payload).toMatchObject({ name: '운영 현황', autoRefreshSeconds: 10 });
+  });
+
+  test('새 대시보드 — 24시간을 넘는 값도 칸 아래에 알린다', async ({ authenticatedPage: page }) => {
+    const { dialog, post } = await openCreateDialog(page);
+    await dialog.getByLabel('이름 *').fill('운영 현황');
+    await dialog.getByLabel('자동 새로고침 (초)').fill('86401');
+    await dialog.getByRole('button', { name: '만들기' }).click();
+
+    await expect(dialog.getByRole('alert')).toHaveText('자동 새로고침은 86400초(24시간) 이하로 입력해 주세요.');
+    expect(post.requests.length).toBe(0);
+
+    // 다른 칸으로 옮겼다가 같은 잘못된 값으로 다시 만들어도 포커스가 다시 그 칸으로 온다
+    await dialog.getByLabel('이름 *').focus();
+    await dialog.getByRole('button', { name: '만들기' }).click();
+    await expect(dialog.getByLabel('자동 새로고침 (초)')).toBeFocused();
+    expect(post.requests.length).toBe(0);
+  });
+
+  test('대시보드 설정 — 칸 아래 오류는 창을 닫았다 다시 열면 사라진다', async ({ authenticatedPage: page }) => {
+    const dashboard = createDashboardListItem({ id: 1, name: '재열기 대시보드', autoRefreshSeconds: null });
+    await mockApi(page, 'GET', '/api/v1/analytics/dashboards', createPageResponse([dashboard]));
+    await page.goto('/analytics/dashboards');
+
+    const openSettings = async () => {
+      await page.getByRole('row', { name: /재열기 대시보드/ }).getByLabel('설정').click();
+      const dialog = page.getByRole('dialog', { name: '대시보드 설정' });
+      await expect(dialog).toBeVisible();
+      return dialog;
+    };
+
+    let dialog = await openSettings();
+    const input = dialog.getByLabel('자동 새로고침 (초)');
+    await input.fill('5.5');
+    await dialog.getByRole('button', { name: '저장' }).click();
+    await expect(dialog.getByRole('alert')).toHaveText(ERR_MIN);
+    await expect(input).toHaveAttribute('aria-invalid', 'true');
+
+    await dialog.getByRole('button', { name: '취소' }).click();
+    await expect(dialog).not.toBeVisible();
+
+    dialog = await openSettings();
+    await expect(dialog.getByRole('alert')).toHaveCount(0);
   });
 });
