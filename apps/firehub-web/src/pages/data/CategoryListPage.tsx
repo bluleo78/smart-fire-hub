@@ -70,6 +70,14 @@ const SORT_OPTIONS: { value: SortKey; label: string }[] = [
  */
 const DUPLICATE_NAME_MESSAGE = '이미 사용 중인 카테고리 이름입니다.';
 
+/**
+ * 409 가 돌아왔을 때 이름 칸이 아직 보낸 이름 그대로인가 (WD-905 리뷰 후속).
+ * 요청이 도는 사이 이름을 고쳤거나(다른 이름이 중복으로 찍힘) 수정 폼이 다른 카테고리로 다시 채워졌으면
+ * 지금 칸의 이름은 중복이 아니다 — 그때는 칸에 오류를 붙이지 않고(버튼이 잠기지 않게) 토스트로만 알린다.
+ * 스키마가 이름을 trim 해서 보내므로 칸 값도 trim 해 견준다.
+ */
+const isSameSubmittedName = (currentName: string, submittedName: string) => currentName.trim() === submittedName;
+
 const categorySchema = z.object({
   // trim() 없이 min(1)만 검사하면 공백만 있는 값(length >= 1)도 통과해
   // "생성" 버튼이 활성화되는 문제(#659)가 있어, trim() 후 길이를 검사하고
@@ -161,11 +169,19 @@ export default function CategoryListPage() {
   });
   const showCreateNameHint = createNameEmpty && !createForm.formState.errors.name;
 
+  // (WD-905 리뷰 후속) 409 로 붙인 서버 이름 오류가 남아 있는가.
+  // resolver 폼에서 setError 가 내린 isValid=false 는 다음 스키마 검사(다른 칸 입력)에서 true 로 돌아오지만,
+  // 이름 칸 오류는 이름을 고칠 때만 지워진다. 그래서 설명만 고쳐도 버튼이 다시 켜져 같은 이름으로 또 보내게 된다 —
+  // 서버 이름 오류가 남아 있는 동안은 버튼을 끈다(이름을 고치면 onChange 재검증이 오류를 지워 다시 켜진다).
+  const createNameServerError = createForm.formState.errors.name?.type === 'server';
+
   // mode: 'onChange' — 수정 폼도 동일하게 실시간 유효성 반영
   const editForm = useForm<CategoryFormData>({
     resolver: zodResolver(categorySchema),
     mode: 'onChange',
   });
+  // 수정 폼도 같은 이유로 서버 이름 오류가 남아 있으면 「수정」을 끈다 (WD-905 리뷰 후속)
+  const editNameServerError = editForm.formState.errors.name?.type === 'server';
 
   /**
    * 카테고리 생성 핸들러
@@ -179,7 +195,7 @@ export default function CategoryListPage() {
       setIsCreateOpen(false);
       createForm.reset();
     } catch (error) {
-      if (isConflictError(error)) {
+      if (isConflictError(error) && isSameSubmittedName(createForm.getValues('name'), data.name)) {
         // 토스트 대신 이름 칸 인라인 오류로 알리고 칸에 포커스한다(재입력 유도)
         createForm.setError('name', { type: 'server', message: DUPLICATE_NAME_MESSAGE }, { shouldFocus: true });
       } else {
@@ -201,7 +217,7 @@ export default function CategoryListPage() {
       setEditingCategory(null);
       editForm.reset();
     } catch (error) {
-      if (isConflictError(error)) {
+      if (isConflictError(error) && isSameSubmittedName(editForm.getValues('name'), data.name)) {
         // 토스트 대신 이름 칸 인라인 오류로 알리고 칸에 포커스한다(재입력 유도)
         editForm.setError('name', { type: 'server', message: DUPLICATE_NAME_MESSAGE }, { shouldFocus: true });
       } else {
@@ -375,8 +391,12 @@ export default function CategoryListPage() {
               <Button type="button" variant="outline" onClick={() => setIsCreateOpen(false)}>
                 취소
               </Button>
-              {/* isValid: 필수 필드(이름)가 비어 있으면 버튼 비활성화(#49 유지). 이유는 이름 칸의 안내 문구로 보인다 (WD-809) */}
-              <Button type="submit" disabled={createCategory.isPending || !createForm.formState.isValid}>
+              {/* isValid: 필수 필드(이름)가 비어 있으면 버튼 비활성화(#49 유지). 이유는 이름 칸의 안내 문구로 보인다 (WD-809)
+                  서버 이름 중복 오류가 남아 있어도 끈다 — 이름을 고쳐야 다시 보낼 수 있다 (WD-905) */}
+              <Button
+                type="submit"
+                disabled={createCategory.isPending || !createForm.formState.isValid || createNameServerError}
+              >
                 만들기
               </Button>
             </DialogFooter>
@@ -415,8 +435,11 @@ export default function CategoryListPage() {
               <Button type="button" variant="outline" onClick={() => setEditingCategory(null)}>
                 취소
               </Button>
-              {/* isValid: 필수 필드(이름)가 비어 있으면 수정 버튼 비활성화 */}
-              <Button type="submit" disabled={updateCategory.isPending || !editForm.formState.isValid}>
+              {/* isValid: 필수 필드(이름)가 비어 있으면 수정 버튼 비활성화. 서버 이름 중복 오류가 남아 있어도 끈다 (WD-905) */}
+              <Button
+                type="submit"
+                disabled={updateCategory.isPending || !editForm.formState.isValid || editNameServerError}
+              >
                 수정
               </Button>
             </DialogFooter>
