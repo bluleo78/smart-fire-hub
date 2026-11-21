@@ -3923,3 +3923,55 @@ test.describe('WD-796 재조회 병합 후속', () => {
     await expect(page.getByText('다른 곳에서 추가 헤더(X-B)가 더해져 목록에 넣었습니다.')).toBeVisible();
   });
 });
+
+test.describe('WD-886 마스킹 도움말 버튼 히트 영역', () => {
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    // 관리 화면 권한 가드 통과를 위해 ADMIN 으로 오버라이드한다
+    await setupAdminAuth(page);
+    await page.setViewportSize({ width: 1440, height: 900 });
+  });
+
+  test('키 값 도움말 버튼이 32×32 이상이고 행 높이는 늘지 않는다', async ({ authenticatedPage: page }) => {
+    await setupApiConnectionDetailMocks(page, 1);
+    await page.goto('/admin/api-connections/1');
+
+    const help = page.getByTestId('masked-key-help');
+    await expect(help).toBeVisible();
+    const box = await help.boundingBox();
+    expect(box!.width).toBeGreaterThanOrEqual(32);
+    expect(box!.height).toBeGreaterThanOrEqual(32);
+    // 히트 영역만 커지고 아이콘은 14px 그대로다
+    const iconBox = await help.locator('svg').boundingBox();
+    expect(iconBox!.width).toBeCloseTo(14, 0);
+
+    // 음수 세로 여백 덕에 키 값 행 높이가 버튼 없는 「인증 유형」 행과 같다(1px 오차 허용)
+    const valueBox = await page.getByText('***masked***', { exact: true }).boundingBox();
+    const plainBox = await page.getByText('인증 유형', { exact: true }).boundingBox();
+    expect(Math.abs(valueBox!.height - plainBox!.height)).toBeLessThanOrEqual(1);
+
+    // 버튼 왼쪽 위 모서리 근처(아이콘 바깥 여백)에서도 툴팁이 열린다
+    await help.hover({ position: { x: 2, y: 2 } });
+    await expect(page.getByText('보안 정책상 마지막 4자리만 표시됩니다.', { exact: false })).toBeVisible();
+  });
+
+  test('토큰 도움말 버튼도 32×32 이상이고 행 높이는 늘지 않는다', async ({ authenticatedPage: page }) => {
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/api-connections/1',
+      createApiConnection({ id: 1, authType: 'BEARER', maskedAuthConfig: { token: '***masked***' } }),
+    );
+    await page.goto('/admin/api-connections/1');
+
+    const help = page.getByTestId('masked-token-help');
+    await expect(help).toBeVisible();
+    const box = await help.boundingBox();
+    expect(box!.width).toBeGreaterThanOrEqual(32);
+    expect(box!.height).toBeGreaterThanOrEqual(32);
+
+    // 토큰 행 높이도 버튼 없는 「인증 유형」 행과 같다(1px 오차 허용)
+    const valueBox = await page.getByText('***masked***', { exact: true }).boundingBox();
+    const plainBox = await page.getByText('인증 유형', { exact: true }).boundingBox();
+    expect(Math.abs(valueBox!.height - plainBox!.height)).toBeLessThanOrEqual(1);
+  });
+});

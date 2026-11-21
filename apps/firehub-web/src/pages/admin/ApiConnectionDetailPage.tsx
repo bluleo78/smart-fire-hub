@@ -1057,14 +1057,18 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <button
+                            {/* WD-886 — 클릭 대상 32×32(.design §2.12): 공용 icon-sm(32px) 버튼, 음수 세로 여백으로 행 높이(text-sm 20px) 유지.
+                                아이콘은 size-3.5 로 적어야 Button 의 svg 기본 크기(16px)에 덮이지 않고 14px 그대로다 */}
+                            <Button
                               type="button"
+                              variant="ghost"
+                              size="icon-sm"
                               aria-label="키 값 마스킹 정책 안내"
                               data-testid="masked-key-help"
-                              className="text-muted-foreground hover:text-foreground"
+                              className="-my-1.5 text-muted-foreground hover:text-foreground"
                             >
-                              <HelpCircle className="h-3.5 w-3.5" />
-                            </button>
+                              <HelpCircle className="size-3.5" />
+                            </Button>
                           </TooltipTrigger>
                           <TooltipContent className="max-w-[260px] text-xs">
                             보안 정책상 마지막 4자리만 표시됩니다. 전체 키 확인이 필요하면 "인증 정보 변경"으로 재입력하세요.
@@ -1084,14 +1088,18 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
                     <TooltipProvider>
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <button
+                          {/* WD-886 — 클릭 대상 32×32(.design §2.12): 공용 icon-sm(32px) 버튼, 음수 세로 여백으로 행 높이(text-sm 20px) 유지.
+                              아이콘은 size-3.5 로 적어야 Button 의 svg 기본 크기(16px)에 덮이지 않고 14px 그대로다 */}
+                          <Button
                             type="button"
+                            variant="ghost"
+                            size="icon-sm"
                             aria-label="토큰 마스킹 정책 안내"
                             data-testid="masked-token-help"
-                            className="text-muted-foreground hover:text-foreground"
+                            className="-my-1.5 text-muted-foreground hover:text-foreground"
                           >
-                            <HelpCircle className="h-3.5 w-3.5" />
-                          </button>
+                            <HelpCircle className="size-3.5" />
+                          </Button>
                         </TooltipTrigger>
                         <TooltipContent className="max-w-[260px] text-xs">
                           보안 정책상 마지막 4자리만 표시됩니다. 전체 토큰 확인이 필요하면 "인증 정보 변경"으로 재입력하세요.
