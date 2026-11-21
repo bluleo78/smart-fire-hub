@@ -53,9 +53,66 @@ test.describe('홈 페이지', () => {
     // 활동 피드 카드 제목 확인
     await expect(page.getByText('활동 피드')).toBeVisible();
 
-    // 인라인 통계 — setupHomeMocks 기본값: analytics/dashboards totalElements=0 → '대시보드 0'
-    // 건강 상태바 하단 퀵 카운트 영역에 대시보드 수가 표시된다
-    await expect(page.getByText(/대시보드\s*0/)).toBeVisible();
+    // 건강 상태바 대시보드 지표 버튼 — setupHomeMocks 기본값: analytics/dashboards totalElements=0 → '대시보드 0개'
+    await expect(
+      page.getByRole('region', { name: '시스템 건강 상태' }).getByRole('button', { name: /^대시보드\s*0개/ }),
+    ).toBeVisible();
+  });
+
+  /**
+   * WD-898: 건강 상태바의 대시보드 지표도 파이프라인·데이터셋처럼 눌러서 이동한다.
+   */
+  test('건강 상태바 대시보드 지표를 누르면 대시보드 목록으로 이동한다 (WD-898)', async ({ authenticatedPage: page }) => {
+    await page.goto('/');
+    // 퀵 액션 「대시보드 관리」와 겹치지 않게 건강 상태 영역 안에서만 찾는다
+    await page
+      .getByRole('region', { name: '시스템 건강 상태' })
+      .getByRole('button', { name: /^대시보드\s/ })
+      .click();
+    await expect(page).toHaveURL(/\/analytics\/dashboards$/);
+  });
+
+  test('건강 상태바 대시보드 지표는 키보드 Enter 로도 이동하고 조회 실패여도 눌린다 (WD-898)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 대시보드 목록 조회가 실패해도(수치 「—」) 이동 버튼은 살아 있어야 한다
+    await mockApi(page, 'GET', '/api/v1/analytics/dashboards', { message: '서버 오류' }, { status: 500 });
+    await page.goto('/');
+    const button = page
+      .getByRole('region', { name: '시스템 건강 상태' })
+      .getByRole('button', { name: /^대시보드\s/ });
+    await expect(button).toContainText('—', { timeout: 10000 });
+    await button.focus();
+    await page.keyboard.press('Enter');
+    await expect(page).toHaveURL(/\/analytics\/dashboards$/);
+  });
+
+  test('건강 상태바 세 지표는 아이콘 16px·높이 32 이상이다 (WD-898)', async ({ authenticatedPage: page }) => {
+    await page.goto('/');
+    const region = page.getByRole('region', { name: '시스템 건강 상태' });
+    // 대시보드 수치에도 다른 두 지표처럼 단위 「개」가 붙는다
+    await expect(region.getByRole('button', { name: /^대시보드\s*0개/ })).toBeVisible();
+    const names = [/^파이프라인/, /^데이터셋/, /^대시보드\s/];
+
+    /** 세 지표 버튼의 높이(≥32)와 첫 아이콘 크기(16×16)를 단언한다 */
+    const expectUniformMetrics = async () => {
+      for (const name of names) {
+        const button = region.getByRole('button', { name });
+        await expect(button).toBeVisible();
+        const box = await button.boundingBox();
+        expect(box?.height ?? 0).toBeGreaterThanOrEqual(32);
+        const iconSize = await button.locator('svg').first().evaluate((el) => {
+          const r = el.getBoundingClientRect();
+          return { w: r.width, h: r.height };
+        });
+        expect(iconSize.w).toBeCloseTo(16, 0);
+        expect(iconSize.h).toBeCloseTo(16, 0);
+      }
+    };
+
+    await expectUniformMetrics();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expectUniformMetrics();
   });
 
   /**
