@@ -10,6 +10,7 @@ import {
   splitPieData,
   transformWaterfallData,
 } from './chart-derived-data';
+import { CHART_SERIES_COLORS } from './chart-styles';
 
 // WD-831: 차트 숫자 읽기를 toPlotNumber 로 통일하고, 파이 음수 거르기를 공용 함수로 옮긴 것을 검증한다.
 describe('readHistogramValues', () => {
@@ -217,6 +218,8 @@ describe('computeGaugeReading 범위 판정 (WD-848)', () => {
 
 // WD-852: 천 개 가까운 범주의 파이에서 눈에 안 보이는 작은 조각을 「기타」 한 조각으로 묶고 범례를 상위 항목으로 줄인다.
 describe('groupSmallPieSlices (WD-852)', () => {
+  /** 기본 팔레트 크기 — 조각 colorIndex 는 이 크기로 나눈 칸 번호다 */
+  const SIZE = CHART_SERIES_COLORS.length;
   /** 이름·값 행 만들기 */
   const rows = (values: number[], prefix = 'c'): Record<string, unknown>[] =>
     values.map((v, i) => ({ name: `${prefix}${i}`, v }));
@@ -224,7 +227,7 @@ describe('groupSmallPieSlices (WD-852)', () => {
 
   it('0.5° 미만 조각 2개 이상을 기타 한 조각으로 끝에 묶는다', () => {
     const values = [1000, 800, ...Array.from({ length: 100 }, () => 1)];
-    const r = groupSmallPieSlices(rows(values), 'name', 'v', sum(values));
+    const r = groupSmallPieSlices(rows(values), 'name', 'v', sum(values), SIZE);
     expect(r.slices).toHaveLength(3);
     const last = r.slices[2];
     expect(last.isOther).toBe(true);
@@ -236,10 +239,40 @@ describe('groupSmallPieSlices (WD-852)', () => {
     expect(r.slices[1].colorIndex).toBe(1);
   });
 
+  it('묶으면 큰 조각 색 index 를 그린 순서로 다시 매겨 이웃 조각 색이 겹치지 않는다 (리뷰 후속)', () => {
+    // 큰 조각 사이에 작은 조각 7개 — 원래 index 0·8·16 이라 팔레트 8색이면 셋 다 같은 색이 되던 경우
+    const smalls = Array.from({ length: 7 }, () => 0.01);
+    const values = [1000, ...smalls, 900, ...smalls, 800];
+    const r = groupSmallPieSlices(rows(values), 'name', 'v', sum(values), SIZE);
+    expect(r.otherCount).toBe(14);
+    const drawn = r.slices.filter((s) => !s.isOther);
+    expect(drawn.map((s) => s.row.name)).toEqual(['c0', 'c8', 'c16']);
+    expect(drawn.map((s) => s.colorIndex)).toEqual([0, 1, 2]);
+    // 그린 순서로 이웃한 큰 조각은 팔레트 칸이 서로 다르다
+    drawn.slice(1).forEach((sl, i) => expect(sl.colorIndex).not.toBe(drawn[i].colorIndex));
+    // 범례 스와치도 같은 조각의 색 index 를 쓴다
+    const legendByName = new Map(r.legend.map((l) => [l.name, l.colorIndex]));
+    drawn.forEach((s) => expect(legendByName.get(String(s.row.name))).toBe(s.colorIndex));
+  });
+
+  it('원을 돌아 맞닿는 마지막·첫 큰 조각이 같은 칸이면 마지막을 다른 칸으로 옮긴다 (리뷰 후속)', () => {
+    // 큰 조각 SIZE+1 개 + 작은 조각 — 마지막 큰 조각(그린 순서 SIZE)이 첫 조각과 같은 0번 칸에 걸리던 경우
+    const big = Array.from({ length: SIZE + 1 }, () => 100);
+    const values = [...big, 0.01, 0.01];
+    const r = groupSmallPieSlices(rows(values), 'name', 'v', sum(values), SIZE);
+    const slots = r.slices.filter((sl) => !sl.isOther).map((sl) => sl.colorIndex);
+    expect(slots).toHaveLength(SIZE + 1);
+    // 한 바퀴 이웃(마지막 → 첫 조각 포함)이 모두 다르다
+    slots.forEach((slot, i) => expect(slot).not.toBe(slots[(i + 1) % slots.length]));
+    // 묶지 않는 경로(작은 조각 1개 이하)도 같다
+    const plain = groupSmallPieSlices(rows(big), 'name', 'v', sum(big), SIZE).slices.map((sl) => sl.colorIndex);
+    plain.forEach((slot, i) => expect(slot).not.toBe(plain[(i + 1) % plain.length]));
+  });
+
   it('경계: 정확히 0.5° 이상이면 묶지 않는다', () => {
     // total 720 에서 값 1 = 0.5° → 큰 조각, 값 0.4 는 작은 조각(2개 이상이라 묶임)
     const values = [1, 717.8, 0.4, 0.4, 0.4];
-    const r = groupSmallPieSlices(rows(values), 'name', 'v', 720);
+    const r = groupSmallPieSlices(rows(values), 'name', 'v', 720, SIZE);
     expect(r.otherCount).toBe(3);
     expect(r.slices).toHaveLength(3);
     expect(r.slices[0].isOther).toBe(false);
@@ -249,7 +282,7 @@ describe('groupSmallPieSlices (WD-852)', () => {
   it('경계: 0.5° 바로 아래(0.999, total 720)는 작은 조각 묶음에 든다', () => {
     // 0.999 * 360 = 359.64 < 0.5 * 720 = 360 → 작은 조각. 0.4 와 함께 2개라 기타로 묶인다.
     const values = [719.001, 0.999, 0.4];
-    const r = groupSmallPieSlices(rows(values), 'name', 'v', 720);
+    const r = groupSmallPieSlices(rows(values), 'name', 'v', 720, SIZE);
     expect(r.otherCount).toBe(2);
     expect(r.slices).toHaveLength(2);
     expect(r.slices[0].row.v).toBe(719.001);
@@ -259,7 +292,7 @@ describe('groupSmallPieSlices (WD-852)', () => {
   it('기타 합은 부동소수 오차 없이 반올림된다 (0.1 × 3 = 0.3)', () => {
     // 0.1+0.1+0.1 은 0.30000000000000004 — total 1000 에서 0.1 은 0.036° 라 모두 작은 조각이다.
     const values = [999.7, 0.1, 0.1, 0.1];
-    const r = groupSmallPieSlices(rows(values), 'name', 'v', 1000);
+    const r = groupSmallPieSlices(rows(values), 'name', 'v', 1000, SIZE);
     expect(r.otherCount).toBe(3);
     expect(r.slices[1].row.v).toBe(0.3);
   });
@@ -268,14 +301,14 @@ describe('groupSmallPieSlices (WD-852)', () => {
     // 정수 합에 toPrecision(12) 를 쓰면 1234567890120 으로 끝자리가 바뀐다 — 정수는 그대로 둔다.
     // total 1e15 에서 4.1e11 은 0.15° 라 모두 작은 조각이다.
     const values = [1e15, 411522630041, 411522630041, 411522630041];
-    const r = groupSmallPieSlices(rows(values), 'name', 'v', sum(values));
+    const r = groupSmallPieSlices(rows(values), 'name', 'v', sum(values), SIZE);
     expect(r.otherCount).toBe(3);
     expect(r.slices[1].row.v).toBe(1234567890123);
   });
 
   it('작은 조각이 1개면 묶지 않는다', () => {
     const values = [1000, 800, 1];
-    const r = groupSmallPieSlices(rows(values), 'name', 'v', sum(values));
+    const r = groupSmallPieSlices(rows(values), 'name', 'v', sum(values), SIZE);
     expect(r.otherCount).toBe(0);
     expect(r.slices).toHaveLength(3);
     expect(r.slices.some((s) => s.isOther)).toBe(false);
@@ -283,7 +316,7 @@ describe('groupSmallPieSlices (WD-852)', () => {
 
   it('모두 작으면 기타 하나', () => {
     const values = Array.from({ length: 1000 }, () => 1);
-    const r = groupSmallPieSlices(rows(values), 'name', 'v', 1000);
+    const r = groupSmallPieSlices(rows(values), 'name', 'v', 1000, SIZE);
     expect(r.slices).toHaveLength(1);
     expect(r.slices[0].row.name).toBe('기타 (1,000개)');
     expect(r.legend).toEqual([{ name: '기타 (1,000개)', colorIndex: -1, kind: 'other' }]);
@@ -294,26 +327,26 @@ describe('groupSmallPieSlices (WD-852)', () => {
     const big = Array.from({ length: 60 }, (_, i) => 100 + ((i * 7) % 60));
     const small = Array.from({ length: 900 }, () => 0.01);
     const values = [...big, ...small];
-    const r = groupSmallPieSlices(rows(values), 'name', 'v', sum(values));
+    const r = groupSmallPieSlices(rows(values), 'name', 'v', sum(values), SIZE);
     expect(r.legend).toHaveLength(52);
     expect(r.legend.slice(0, 50).every((l) => l.kind === 'slice')).toBe(true);
     const maxIdx = big.indexOf(159);
     expect(r.legend[0].name).toBe(`c${maxIdx}`);
-    expect(r.legend[0].colorIndex).toBe(maxIdx);
+    expect(r.legend[0].colorIndex).toBe(maxIdx % SIZE);
     expect(r.legend[50]).toEqual({ name: '기타 (900개)', colorIndex: -1, kind: 'other' });
     expect(r.legend[51]).toEqual({ name: '외 10개', colorIndex: -1, kind: 'rest' });
   });
 
   it('큰 조각이 50개 이하면 외 항목 없음, 안 묶었으면 기타 항목 없음', () => {
     const values = [500, 300, 200];
-    const r = groupSmallPieSlices(rows(values), 'name', 'v', 1000);
+    const r = groupSmallPieSlices(rows(values), 'name', 'v', 1000, SIZE);
     expect(r.legend).toHaveLength(3);
     expect(r.legend.every((l) => l.kind === 'slice')).toBe(true);
   });
 
   it('큰 조각 60개 + 작은 조각 0개면 기타 없이 50개 + 외 10개', () => {
     const values = Array.from({ length: 60 }, (_, i) => 100 + i);
-    const r = groupSmallPieSlices(rows(values), 'name', 'v', sum(values));
+    const r = groupSmallPieSlices(rows(values), 'name', 'v', sum(values), SIZE);
     expect(r.otherCount).toBe(0);
     expect(r.legend).toHaveLength(51);
     expect(r.legend.some((l) => l.kind === 'other')).toBe(false);
@@ -322,7 +355,7 @@ describe('groupSmallPieSlices (WD-852)', () => {
 
   it('큰 조각 60개 + 작은 조각 1개(안 묶임)면 그 작은 조각도 후보라 외 11개', () => {
     const values = [...Array.from({ length: 60 }, (_, i) => 100 + i), 0.01];
-    const r = groupSmallPieSlices(rows(values), 'name', 'v', sum(values));
+    const r = groupSmallPieSlices(rows(values), 'name', 'v', sum(values), SIZE);
     expect(r.otherCount).toBe(0);
     expect(r.legend).toHaveLength(51);
     expect(r.legend.some((l) => l.kind === 'other')).toBe(false);
@@ -335,14 +368,14 @@ describe('groupSmallPieSlices (WD-852)', () => {
       { name: 'a', v: 1 },
       { name: 'b', v: 1 },
     ];
-    const r = groupSmallPieSlices(data, 'name', 'v', 902);
+    const r = groupSmallPieSlices(data, 'name', 'v', 902, SIZE);
     expect(r.slices[0].row.name).toBe('기타');
     expect(r.slices[0].isOther).toBe(false);
     expect(r.slices[1].isOther).toBe(true);
   });
 
   it('total 0 이면 그대로', () => {
-    const r = groupSmallPieSlices(rows([0, 0, 0]), 'name', 'v', 0);
+    const r = groupSmallPieSlices(rows([0, 0, 0]), 'name', 'v', 0, SIZE);
     expect(r.otherCount).toBe(0);
     expect(r.slices).toHaveLength(3);
   });

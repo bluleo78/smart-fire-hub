@@ -17,7 +17,7 @@ import { createPermissions, createRoleDetail } from '../../factories/admin.facto
 import { setupAdminAuth } from '../../fixtures/admin.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
-import { expectLockedInFlight, expectSingleHeldRequest, holdRequests } from '../../fixtures/hold-api';
+import { expectLockedInFlight, expectSingleHeldRequest, holdApi, holdRequests } from '../../fixtures/hold-api';
 import { setupSecurityLevelMocks } from '../../fixtures/security-level.fixture';
 
 const conflictDialog = (page: Page) => page.getByRole('alertdialog', { name: '다른 곳에서 먼저 변경되었습니다' });
@@ -243,5 +243,127 @@ test.describe('역할 상세 — 충돌 창 진행 중 포커스 유지 (WD-678)
     expect(hold.count()).toBe(1);
     // 다시 불러오기는 저장하지 않는다 — 충돌을 낸 PUT 한 번뿐
     expect(server.puts).toHaveLength(1);
+  });
+});
+
+test.describe('역할 상세 — 지난 저장 오류 (WD-866)', () => {
+  /** 이름 중복 400 응답 문구 */
+  const DUP_MSG = '이미 존재하는 역할 이름입니다: USER';
+
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+  });
+
+  test('저장 실패 오류는 이름·설명을 고치면 사라진다 (WD-866)', async ({ authenticatedPage: page }) => {
+    await mockRoleInfoServer(page);
+    // 이름 저장은 항상 400 — 뒤에 등록된 라우트가 먼저 적용되므로 모킹 서버의 PUT 을 덮는다. 보낸 본문은 모아 둔다.
+    const payloads: unknown[] = [];
+    await page.route(
+      (url) => url.pathname === '/api/v1/roles/3',
+      (route) => {
+        if (route.request().method() !== 'PUT') return route.fallback();
+        payloads.push(route.request().postDataJSON());
+        return route.fulfill({
+          status: 400,
+          contentType: 'application/json',
+          body: JSON.stringify({ status: 400, message: DUP_MSG }),
+        });
+      },
+    );
+    await page.goto('/admin/roles/3');
+    await expect(page.getByLabel('역할 이름')).toHaveValue('EDITOR');
+
+    const message = page.getByText(DUP_MSG);
+
+    await page.getByLabel('역할 이름').fill('USER');
+    await roleInfoSave(page).click();
+    await expect(message).toBeVisible();
+    // 입력한 이름이 그대로 저장 요청에 실렸다
+    expect(payloads[0]).toMatchObject({ name: 'USER', description: '편집자 역할' });
+
+    // 값을 안 바꾸면 지워지지 않는다 — 입력 없이 칸만 떠나도(blur) 그대로다
+    await page.getByLabel('역할 이름').blur();
+    await expect(message).toBeVisible();
+
+    // 이름을 고치면 사라진다
+    await page.getByLabel('역할 이름').fill('TESTROLE2');
+    await expect(message).toBeHidden();
+
+    // 다시 저장(여전히 400) → 다시 보인다
+    await roleInfoSave(page).click();
+    await expect(message).toBeVisible();
+    expect(payloads[1]).toMatchObject({ name: 'TESTROLE2' });
+
+    // 설명만 고쳐도 사라진다
+    await page.getByLabel('설명').fill('다른 설명');
+    await expect(message).toBeHidden();
+  });
+
+  test('저장 요청 중에 이름을 고치면 늦게 온 실패 오류를 띄우지 않는다 (WD-866)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockRoleInfoServer(page);
+    // PUT 응답을 붙잡아 두었다가, 이름을 고친 뒤에 400 을 돌려준다
+    const held = await holdApi(page, 'PUT', '/api/v1/roles/3', 400, { status: 400, message: DUP_MSG });
+    await page.goto('/admin/roles/3');
+    await expect(page.getByLabel('역할 이름')).toHaveValue('EDITOR');
+
+    await page.getByLabel('역할 이름').fill('USER');
+    await roleInfoSave(page).click();
+    await expect.poll(() => held.requests.length).toBe(1);
+    // 응답이 오기 전에 이름을 고친다
+    await page.getByLabel('역할 이름').fill('TESTROLE2');
+    held.release();
+
+    // 저장이 끝나(버튼이 다시 눌림) 실패가 처리된 뒤에도 옛 값의 오류는 보이지 않는다
+    await expect(roleInfoSave(page)).toBeEnabled();
+    await expect(page.getByText(DUP_MSG)).toBeHidden();
+    await expect(page.getByLabel('역할 이름')).toHaveValue('TESTROLE2');
+  });
+
+  test('저장 중에 고쳤어도 400 이 아닌 실패(500)는 안내로 알린다 (WD-866)', async ({ authenticatedPage: page }) => {
+    await mockRoleInfoServer(page);
+    const SERVER_MSG = '서버 오류로 저장하지 못했습니다';
+    // PUT 응답을 붙잡아 두었다가, 이름을 고친 뒤에 500 을 돌려준다
+    const held = await holdApi(page, 'PUT', '/api/v1/roles/3', 500, { status: 500, message: SERVER_MSG });
+    await page.goto('/admin/roles/3');
+    await expect(page.getByLabel('역할 이름')).toHaveValue('EDITOR');
+
+    await page.getByLabel('역할 이름').fill('USER');
+    await roleInfoSave(page).click();
+    await expect.poll(() => held.requests.length).toBe(1);
+    await page.getByLabel('역할 이름').fill('TESTROLE2');
+    held.release();
+
+    // 저장되지 않았다는 사실은 그대로라 토스트로 알린다 — 고친 입력란 아래에는 붙이지 않는다
+    await expect(page.locator('[data-sonner-toast]').filter({ hasText: SERVER_MSG })).toBeVisible();
+    await expect(roleInfoSave(page)).toBeEnabled();
+    await expect(page.getByLabel('역할 이름')).toHaveValue('TESTROLE2');
+    await expect(page.locator('form').filter({ has: page.getByLabel('역할 이름') }).getByText(SERVER_MSG)).toHaveCount(0);
+  });
+
+  test('서버가 설명 칸에 붙인 오류는 설명을 고치면 사라진다 (WD-866·WD-865)', async ({ authenticatedPage: page }) => {
+    await mockRoleInfoServer(page);
+    const FIELD_MSG = '설명에 쓸 수 없는 문자가 있습니다';
+    await page.route(
+      (url) => url.pathname === '/api/v1/roles/3',
+      (route) =>
+        route.request().method() === 'PUT'
+          ? route.fulfill({
+              status: 400,
+              contentType: 'application/json',
+              body: JSON.stringify({ status: 400, message: '입력값이 올바르지 않습니다', errors: { description: FIELD_MSG } }),
+            })
+          : route.fallback(),
+    );
+    await page.goto('/admin/roles/3');
+    await expect(page.getByLabel('역할 이름')).toHaveValue('EDITOR');
+
+    await page.getByLabel('설명').fill('새 설명');
+    await roleInfoSave(page).click();
+    await expect(page.getByText(FIELD_MSG)).toBeVisible();
+
+    await page.getByLabel('설명').fill('새 설명 2');
+    await expect(page.getByText(FIELD_MSG)).toBeHidden();
   });
 });
