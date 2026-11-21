@@ -125,11 +125,15 @@ function ChangeSecurityLevelForm({
                 disabled={aboveMine}
                 aria-label={isCurrent ? `${l.name} (현재)` : l.name}
               />
-              <SecurityLevelBadge level={l} />
-              {isCurrent && <span className="text-xs text-muted-foreground">(현재)</span>}
-              {clearanceLoaded && aboveMine && (
-                <span className="text-xs text-muted-foreground">본인 열람 등급보다 높아 선택 불가</span>
-              )}
+              {/* WD-864: 배지·안내를 줄바꿈 묶음으로 — 좁은 폭에서 안내가 다음 줄로 내려가 짧은 이름이 글자 단위로 꺾이지 않는다.
+                  min-w-0: 묶음이 남은 폭을 넘지 않아 긴 이름 배지는 그 안에서 줄바꿈된다. */}
+              <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                <SecurityLevelBadge level={l} />
+                {isCurrent && <span className="text-xs text-muted-foreground">(현재)</span>}
+                {clearanceLoaded && aboveMine && (
+                  <span className="text-xs text-muted-foreground">본인 열람 등급보다 높아 선택 불가</span>
+                )}
+              </span>
             </Label>
           );
         })}

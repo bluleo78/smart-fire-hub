@@ -139,6 +139,36 @@ test.describe('보안 등급 배지 — 긴 이름 넘침 (WD-864)', () => {
   });
 });
 
+test.describe('보안 등급 배지 — 짧은 이름은 좁은 행에서도 꺾이지 않는다 (WD-864)', () => {
+  // 좁은 폭 + 줄어드는 긴 형제(「본인 열람 등급보다 높아 선택 불가」) 옆에서도 짧은 이름이 글자 단위로 꺾이면 안 된다.
+  test.use({ viewport: { width: 320, height: 720 } });
+
+  test('보안 등급 변경 대화상자 — 선택 불가 안내 옆 짧은 이름 배지는 한 줄 그대로', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDataset(page, LONG_NAME);
+    // 짧은 한글 이름·긴 영문 낱말 줄에 선택 불가 안내가 붙게 내 자격을 rank 2 로 낮춘다
+    const NAMES: Record<number, string> = { 2: LONG_NAME, 3: '대외비', 4: 'Confidential' };
+    const levels = createLevels().map((l) => (NAMES[l.id] ? { ...l, name: NAMES[l.id] } : l));
+    await mockApi(page, 'GET', '/api/v1/security-levels', levels);
+    await mockApi(page, 'GET', '/api/v1/security-levels/my-clearance', { rank: 2, levelId: 2 });
+    await page.goto('/data/datasets/1');
+    await page.getByRole('button', { name: '보안 등급 변경' }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByText('본인 열람 등급보다 높아 선택 불가').first()).toBeVisible();
+    for (const name of ['대외비', 'Confidential']) {
+      const badge = dialog.getByTestId('security-level-badge').filter({ hasText: name });
+      await expect(badge).toBeVisible();
+      // 한 줄 높이(배지 기본 약 22px) — 글자 단위로 꺾이면 두세 줄로 커진다
+      const box = await badge.boundingBox();
+      expect(box!.height, `${name} 배지 높이`).toBeLessThanOrEqual(24);
+    }
+    // 긴 이름은 여전히 대화상자 안에서 줄바꿈된다
+    await expectAllInside(dialog.getByTestId('security-level-badge'), dialog);
+    await expectNoHorizontalOverflow(page, { checkMain: false });
+  });
+});
+
 test.describe('AI 인사이트 실행 목록 — 긴 등급 배지 말줄임 (WD-864)', () => {
   test('실행 이력 표의 긴 이름 배지는 칸 안에서 말줄임되고 title 로 전체 이름을 보인다', async ({
     authenticatedPage: page,

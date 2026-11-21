@@ -307,6 +307,55 @@ test.describe('AI 검수 인박스', () => {
       await expect(page.getByText(FAIL_TEXT)).toHaveCount(0);
     });
 
+    // WD-872 리뷰 후속: 재조회 중 버튼이 disabled 가 되거나 성공 뒤 사라지면 키보드·스크린리더 사용자의 포커스가 body 로 떨어진다(#337 선례).
+    test('키보드로 다시 시도해 성공하면 포커스가 body 로 떨어지지 않고 근거 패널로 옮겨진다', async ({
+      authenticatedPage: page,
+    }) => {
+      const chunk = createEvidenceChunk();
+      let calls = 0;
+      let releaseRetry: () => void = () => {};
+      const retryGate = new Promise<void>((resolve) => (releaseRetry = resolve));
+      await page.route((url) => url.pathname === EVIDENCE_URL, async (route) => {
+        calls += 1;
+        // 처음 2회(최초 + main.tsx 전역 retry 1회)는 500 — 전역 retry 횟수가 바뀌면 이 숫자도 바꾼다. 3번째가 수동 재시도다.
+        if (calls <= 2) {
+          return route.fulfill({ status: 500, contentType: 'application/json', body: '{}' });
+        }
+        // 재조회 응답을 붙잡아 「불러오는 중」 동안의 포커스를 확인한다
+        await retryGate;
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([chunk]) });
+      });
+      await openEvidence(page);
+
+      const retry = page.getByRole('button', { name: '원문 근거 다시 시도' });
+      await expect(retry).toBeVisible({ timeout: 10000 });
+      await retry.focus();
+      await page.keyboard.press('Enter');
+
+      // 재조회 중에도 버튼이 포커스를 잃지 않는다(disabled 가 아니라 aria-disabled)
+      const busy = page.getByRole('button', { name: '원문 근거 불러오는 중…' });
+      await expect(busy).toBeFocused();
+      await expect(busy).toHaveAttribute('aria-disabled', 'true');
+      releaseRetry();
+
+      await expect(page.getByText(chunk.content)).toBeVisible({ timeout: 10000 });
+      await expect(page.getByTestId(`review-evidence-live-${ITEM.id}`)).toBeFocused();
+    });
+
+    test('다시 시도가 또 실패하면 포커스가 다시 시도 버튼에 그대로 있다', async ({ authenticatedPage: page }) => {
+      await mockApi(page, 'GET', EVIDENCE_URL, {}, { status: 500 });
+      await openEvidence(page);
+
+      const retry = page.getByRole('button', { name: '원문 근거 다시 시도' });
+      await expect(retry).toBeVisible({ timeout: 10000 });
+      await retry.focus();
+      await page.keyboard.press('Enter');
+
+      await expect(page.getByText(FAIL_TEXT)).toBeVisible();
+      await expect(retry).toBeVisible({ timeout: 10000 });
+      await expect(retry).toBeFocused();
+    });
+
     test('근거 조회가 403 이면 권한 안내를 보이고 다시 시도 버튼은 없다', async ({ authenticatedPage: page }) => {
       await mockApi(
         page,

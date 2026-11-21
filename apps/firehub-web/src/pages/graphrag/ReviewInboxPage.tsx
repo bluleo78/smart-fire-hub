@@ -4,6 +4,7 @@ import { useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
+import { PendingButton } from '@/components/PendingButton';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -570,22 +571,49 @@ function RelationContent({ payload, reason }: { payload: RelationPayload; reason
 // WD-872: 조회 실패를 「근거 없음」으로 그리면 AI 가 원문을 못 찾은 것으로 오해하므로 실패를 따로 알린다 — 목록 표(WD-126)와 같이
 // 받은 데이터가 없을 때만 실패로 보고(승인·거부 뒤 재조회 실패가 보이던 근거를 가리지 않게), 403 은 재시도가 소용없어 권한 안내만 둔다.
 // live region 래퍼는 분기마다 새로 만들지 않고 늘 유지해 결과·오류 전환을 낭독한다(#338, SC 4.1.3) — 그래서 role="alert" 는 따로 달지 않는다.
+// WD-872 리뷰 후속: 「다시 시도」 뒤 포커스가 body 로 떨어지지 않게 한다 — 규칙은 아래 retry.
 function EvidencePanel({ id }: { id: number }) {
-  const { data, isLoading, isError, error, refetch, isFetching } = useReviewItemEvidence(id, true);
+  const { data, isLoading, isError, error, refetch } = useReviewItemEvidence(id, true);
+  const liveRef = useRef<HTMLDivElement>(null);
+  // 수동 재시도 중 — 실패 뒤 다시 받으면 TanStack Query v5 는 상태를 pending 으로 되돌리고(isLoading) error 도 비워 버튼이
+  // 사라진다. 재시도가 끝날 때까지 실패 화면(버튼)을 그대로 두려고 따로 든다.
+  const [retrying, setRetrying] = useState(false);
+  // 거듭 누름 가드는 ref 로 — state 는 다음 렌더 전에 들어온 두 번째 누름(Enter 자동 반복 등)을 막지 못한다.
+  const retryingRef = useRef(false);
+  // 재조회 중 잠금은 disabled 대신 PendingButton(aria-disabled) — disabled 는 누른 버튼의 포커스를 body 로 떨군다.
+  // 재조회 뒤 버튼이 사라지면 포커스를 늘 있는 live region 래퍼로 옮긴다(같은 페이지 #337 복귀 지점과 같은 방식).
+  const retry = async (button: HTMLButtonElement) => {
+    if (retryingRef.current) return;
+    retryingRef.current = true;
+    setRetrying(true);
+    let result;
+    try {
+      result = await refetch();
+    } finally {
+      // 재조회가 던져도 잠금이 영영 남지 않게 늘 푼다
+      retryingRef.current = false;
+      setRetrying(false);
+    }
+    // 다시 실패하면 버튼이 남아 포커스도 그대로다. 버튼이 사라지는 경우(성공·권한 없음 확정)에만, 그사이 사용자가 다른 곳으로
+    // 옮기지 않았을 때 패널로 옮긴다. 다른 행 승인·거부의 무효화로 취소된(pending) 결과는 새 로딩이 이어지므로 옮기지 않는다.
+    const buttonGone = result.isSuccess || (result.isError && isForbiddenError(result.error));
+    const focusLost = document.activeElement === button || document.activeElement === document.body;
+    if (buttonGone && focusLost) liveRef.current?.focus();
+  };
   let body;
-  if (isLoading) {
+  if (isLoading && !retrying) {
     body = <span className="text-muted-foreground text-sm">근거 불러오는 중...</span>;
-  } else if (isError && !data) {
-    body = isForbiddenError(error) ? (
-      <span className="text-muted-foreground text-sm">원문 근거를 볼 권한이 없습니다.</span>
-    ) : (
+  } else if (!retrying && isError && !data && isForbiddenError(error)) {
+    body = <span className="text-muted-foreground text-sm">원문 근거를 볼 권한이 없습니다.</span>;
+  } else if (retrying || (isError && !data)) {
+    body = (
       <div className="flex items-center gap-2 text-sm">
         <span className="text-destructive">원문 근거를 불러오지 못했습니다.</span>
         {/* 행마다 반복되는 버튼이라 접근 이름에 대상(「원문 근거」)을 숨김 글자로 붙인다 — 보이는 글자가 이름에 그대로 들어간다(WCAG 2.5.3). */}
-        <Button variant="outline" size="sm" disabled={isFetching} onClick={() => void refetch()}>
+        <PendingButton pending={retrying} variant="outline" size="sm" onClick={(e) => void retry(e.currentTarget)}>
           <span className="sr-only">원문 근거 </span>
-          {isFetching ? '불러오는 중…' : '다시 시도'}
-        </Button>
+          {retrying ? '불러오는 중…' : '다시 시도'}
+        </PendingButton>
       </div>
     );
   } else if (!data || data.length === 0) {
@@ -604,7 +632,15 @@ function EvidencePanel({ id }: { id: number }) {
   }
   // 조용한 백그라운드 재조회(근거가 이미 보이는 중)에는 busy 를 켜지 않는다 — 처음 로딩·실패 화면의 재시도 중만.
   return (
-    <div aria-live="polite" aria-busy={isLoading || (isError && isFetching)} data-testid={`review-evidence-live-${id}`}>
+    // tabIndex=-1: Tab 순서는 그대로 두고 재시도 뒤 포커스를 받을 수 있게 한다(위 retry).
+    <div
+      ref={liveRef}
+      tabIndex={-1}
+      aria-live="polite"
+      aria-busy={isLoading || retrying}
+      className="rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      data-testid={`review-evidence-live-${id}`}
+    >
       {body}
     </div>
   );
