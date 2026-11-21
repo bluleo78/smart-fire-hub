@@ -170,6 +170,8 @@ test.describe('지식그래프 툴바 768~1279px 넘침 (WD-840)', () => {
         await page.setViewportSize({ width, height: 900 });
         await page.goto(path);
         await expect(page.locator('[data-slot=tabs-list]')).toBeVisible();
+        // WD-894: 그래프 탐색의 이름 검색·타입 묶기는 지식 모델 목록이 도착한 뒤에야 나타난다 — 측정 전에 기다린다.
+        if (path.endsWith('/explore')) await expect(page.getByPlaceholder('이름 검색')).toBeVisible();
 
         const result = await page.locator('h1').evaluate((h1) => {
           const toolbar = h1.closest('div')!;
@@ -334,6 +336,10 @@ test.describe('지식그래프 TypeFilterPanel 모바일 폭 캔버스 압착 (#
     await page.setViewportSize({ width: 375, height: 812 });
     await page.goto('/knowledge-graph/explore');
 
+    // WD-894: 목록이 오기 전에는 패널이 아예 그려지지 않아 toBeHidden 이 공허하게 통과한다 —
+    // 그래프가 그려진 뒤, 패널이 DOM 에 있으면서(sm:hidden 으로) 숨어 있는지 본다.
+    await expect(page.getByTestId('instance-graph')).toBeVisible();
+    await expect(page.getByTestId('type-filter-panel')).toHaveCount(1);
     await expect(page.getByTestId('type-filter-panel')).toBeHidden();
     const canvasBox = await page.getByTestId('instance-graph').boundingBox();
     expect(canvasBox!.width).toBeGreaterThan(300);
