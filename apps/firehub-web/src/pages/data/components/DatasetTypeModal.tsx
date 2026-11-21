@@ -1,4 +1,4 @@
-import { ArrowLeft, Boxes, Database, FileText } from 'lucide-react';
+import { Archive, ArrowLeft, Boxes, Database, FileText, Shuffle } from 'lucide-react';
 import { useState } from 'react';
 
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../../components/ui/dialog';
@@ -81,6 +81,7 @@ export function DatasetTypeModal({ open, onOpenChange, onSelect }: DatasetTypeMo
             </button>
           </div>
         ) : (
+          // WD-881: 1단계와 같은 lucide 아이콘 체계를 쓴다 — 이모지는 OS마다 모양이 다르고 색 토큰·스크린리더 제어가 불가능하다.
           <div className="py-2">
             <div className="grid grid-cols-2 gap-4">
               <button
@@ -88,7 +89,7 @@ export function DatasetTypeModal({ open, onOpenChange, onSelect }: DatasetTypeMo
                 onClick={() => handleOrigin('SOURCE')}
                 className="flex flex-col items-center gap-2 rounded-lg border-2 border-border p-6 text-center transition-colors hover:border-primary hover:bg-accent"
               >
-                <span className="text-2xl">🗃️</span>
+                <Archive className="h-8 w-8 text-primary" aria-hidden="true" />
                 <span className="font-semibold">원본</span>
                 <span className="text-xs text-muted-foreground">직접 수집</span>
               </button>
@@ -97,7 +98,7 @@ export function DatasetTypeModal({ open, onOpenChange, onSelect }: DatasetTypeMo
                 onClick={() => handleOrigin('DERIVED')}
                 className="flex flex-col items-center gap-2 rounded-lg border-2 border-border p-6 text-center transition-colors hover:border-primary hover:bg-accent"
               >
-                <span className="text-2xl">🔀</span>
+                <Shuffle className="h-8 w-8 text-primary" aria-hidden="true" />
                 <span className="font-semibold">파생</span>
                 <span className="text-xs text-muted-foreground">가공/집계</span>
               </button>
