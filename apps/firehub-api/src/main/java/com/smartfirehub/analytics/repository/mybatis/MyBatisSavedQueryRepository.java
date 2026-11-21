@@ -123,7 +123,8 @@ public class MyBatisSavedQueryRepository implements SavedQueryRepository {
             req.description(),
             req.sqlText(),
             req.datasetId(),
-            req.folder(),
+            // WD-889: 빈 폴더("")는 NULL 로 저장 — 폴더 목록에 빈 항목이 생겨 화면이 깨지던 문제 방지
+            blankToNull(req.folder()),
             req.isShared(),
             userId);
     mapper.insert(row);

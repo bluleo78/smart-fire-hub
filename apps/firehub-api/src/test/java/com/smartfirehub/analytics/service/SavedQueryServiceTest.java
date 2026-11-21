@@ -355,6 +355,52 @@ class SavedQueryServiceTest extends IntegrationTestBase {
     assertThat(cloned.folder()).isEqualTo("my-folder");
   }
 
+  /** WD-889: 폴더를 빈 문자열·공백으로 만들면 NULL 로 저장돼 폴더 목록에 빈 항목이 생기지 않는다. */
+  @Test
+  void create_blankFolder_storedAsNull() {
+    SavedQueryResponse empty = createQuery("Blank Empty", "SELECT 1", "", false, ownerUserId);
+    SavedQueryResponse spaces = createQuery("Blank Spaces", "SELECT 2", "   ", false, ownerUserId);
+
+    assertThat(empty.folder()).isNull();
+    assertThat(spaces.folder()).isNull();
+    assertThat(savedQueryService.getById(empty.id(), ownerUserId).folder()).isNull();
+    assertThat(savedQueryService.getById(spaces.id(), ownerUserId).folder()).isNull();
+  }
+
+  /** WD-889: 저장소를 거치지 않고 folder = '' 로 들어간 옛 데이터도 폴더 목록에 내지 않는다. */
+  @Test
+  void getFolders_excludesBlankFolders() {
+    createQuery("Ops", "SELECT 1", "운영", false, ownerUserId);
+    insertLegacyBlankFolderQuery("Legacy Blank", "");
+    insertLegacyBlankFolderQuery("Legacy Spaces", "   ");
+
+    List<String> folders = savedQueryService.getFolders(null, null, ownerUserId);
+
+    assertThat(folders).contains("운영");
+    assertThat(folders).allMatch(f -> f != null && !f.isBlank());
+  }
+
+  /** WD-889: 옛 데이터(folder = '')를 복제해도 새 쿼리의 folder 는 NULL 이다. */
+  @Test
+  void clone_ofLegacyBlankFolder_storesNull() {
+    Long legacyId = insertLegacyBlankFolderQuery("Legacy Clone", "");
+
+    SavedQueryResponse cloned = savedQueryService.clone(legacyId, ownerUserId);
+
+    assertThat(cloned.folder()).isNull();
+  }
+
+  /** 저장소를 거치지 않고 옛 빈·공백 폴더 행을 직접 넣는다(insert 정규화 전 데이터 재현, WD-889). */
+  private Long insertLegacyBlankFolderQuery(String name, String folder) {
+    return dsl.fetchOne(
+            "insert into saved_query (name, sql_text, folder, is_shared, created_by)"
+                + " values (?, 'SELECT 1', ?, false, ?) returning id",
+            name,
+            folder,
+            ownerUserId)
+        .get(0, Long.class);
+  }
+
   /** WD-430: 200자 이름은 「 (복사본)」을 붙이면 한도를 넘어 복제가 400 으로 실패했다 — 원래 이름을 잘라 200자로 맞춘다. */
   @Test
   void clone_nameAtLimit_truncatesOriginalToFitSuffix() {

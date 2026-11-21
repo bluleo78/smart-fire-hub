@@ -278,7 +278,11 @@ export default function DatasetListPage() {
   // 숫자로 바꾼 값이 아니라 주소 값이 있는지로 본다 — 손으로 고친 ?categoryId=abc 도 요청에는 실리므로, 숫자 변환(NaN)으로
   // 「필터 없음」이 되면 초기화 버튼 없이 첫 사용 문구가 나와 잘못된 값을 지울 길이 없다.
   // 활성 판정과 초기화가 같은 키 목록을 써서, 필터를 더할 때 한쪽만 고쳐 어긋나지 않게 한다.
-  const filtersActive = DATASET_FILTER_PARAM_KEYS.some((key) => !!searchParams.get(key));
+  // 다만 즐겨찾기는 요청(favoriteOnly)이 'true' 일 때만 거르므로 같은 기준으로 본다 — ?favorite=false 링크로 들어오면
+  // 즐겨찾기 버튼은 꺼져 보이는데 「조건에 맞는…」이 나오고 「새 데이터셋 만들기」·최근 데이터셋이 사라지던 어긋남을 막는다 (WD-879 리뷰 후속).
+  const filtersActive = DATASET_FILTER_PARAM_KEYS.some((key) =>
+    key === 'favorite' ? favoriteOnly : !!searchParams.get(key),
+  );
   const noFiltersActive = !search && !filtersActive;
 
   // 여섯 필터와 page 만 지운다 — 정렬·페이지 크기·임시 보기·검색어는 필터가 아니라 보기 설정이라 남긴다 (WD-879).

@@ -158,7 +158,18 @@ export function useQueryFolders(params: { sharedOnly?: boolean; mineOnly?: boole
     queryKey: ['analytics', 'folders', params],
     queryFn: () => analyticsApi.getFolders(params).then((r) => r.data),
     staleTime: 5 * 60 * 1000,
+    // WD-889: 빈/공백 폴더는 Radix SelectItem value="" 예외를 던져 폴더 Select 를 그리는 페이지 전체가 에러 바운더리로 무너진다.
+    // 옛 서버·캐시가 빈 폴더를 돌려줘도 모든 소비처가 걸러진 목록을 받도록 여기서 한 번 거른다.
+    select: (folders) => folders.filter(hasFolder),
   });
+}
+
+/**
+ * 폴더 값이 실제 이름을 가졌는지 — 빈 문자열·공백만 있는 옛 폴더는 「폴더 없음」으로 본다 (WD-889).
+ * 폴더 목록 거르기와 쿼리 화면(목록 폴더 칸·편집기 뱃지·저장 폼)이 같은 기준을 쓰게 한 곳에 둔다.
+ */
+export function hasFolder(folder: string | null | undefined): folder is string {
+  return !!folder && folder.trim() !== '';
 }
 
 // ============================================================

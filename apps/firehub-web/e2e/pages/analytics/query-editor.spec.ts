@@ -436,6 +436,44 @@ test.describe('쿼리 에디터 페이지', () => {
     expect(req.payload).toMatchObject({ folder: '업무용' });
   });
 
+  test('폴더 목록에 빈 폴더가 섞여 와도 저장 대화상자 폴더 칸을 열 수 있다 (WD-889)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 옛 서버·캐시가 "" / 공백 폴더를 돌려줘도 Radix SelectItem 빈 value 예외가 나면 안 된다
+    await mockApi(page, 'GET', '/api/v1/analytics/queries/schema', { tables: [] });
+    await mockApi(page, 'GET', '/api/v1/analytics/queries/folders', ['', '  ', '운영']);
+
+    await page.goto('/analytics/queries/new?sql=' + encodeURIComponent('SELECT 1'));
+    await expect(page.getByText('새 쿼리')).toBeVisible();
+
+    await page.getByRole('button', { name: '저장' }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+
+    await page.getByRole('dialog').getByLabel('폴더').click();
+
+    await expect(page.getByRole('option', { name: '운영', exact: true })).toBeVisible();
+    // 「폴더 없음」 + 「운영」 만 있어야 한다 (빈 이름 option 없음)
+    await expect(page.getByRole('option')).toHaveCount(2);
+    await expect(page.getByText('페이지를 불러오는 중 문제가 발생했습니다')).toHaveCount(0);
+  });
+
+  test('공백만 있는 옛 폴더 쿼리를 열면 폴더 뱃지가 없고 저장 대화상자 폴더 칸은 「폴더 없음」이다 (WD-889)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(page, 'GET', '/api/v1/analytics/queries/1', createSavedQuery({ id: 1, folder: '   ' }));
+    await mockApi(page, 'GET', '/api/v1/analytics/queries/schema', { tables: [] });
+    await mockApi(page, 'GET', '/api/v1/analytics/queries/folders', ['운영']);
+
+    await page.goto('/analytics/queries/1');
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('테스트 쿼리');
+    // 툴바에는 「공유됨」 같은 다른 뱃지도 없는 쿼리라 뱃지가 하나도 없어야 한다
+    await expect(page.locator('[data-slot="badge"]')).toHaveCount(0);
+
+    await page.getByRole('button', { name: '저장' }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await expect(page.getByRole('dialog').getByLabel('폴더')).toHaveText('폴더 없음');
+  });
+
   test('스키마 탐색기 — 테이블 숨기기/보기 토글', async ({ authenticatedPage: page }) => {
     await setupQueryEditorMocks(page, 1);
 

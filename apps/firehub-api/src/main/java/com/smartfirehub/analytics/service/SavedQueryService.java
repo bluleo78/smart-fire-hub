@@ -212,7 +212,8 @@ public class SavedQueryService {
         savedQueryRepository
             .findByIdForOwner(id, userId, DatasetVisibility.UNRESTRICTED)
             .orElseThrow(() -> new SavedQueryNotFoundException());
-    // 이름이 바뀐 저장만 중복을 검사한다(WD-824) — 판정 기준·이유는 ResourceNameGuard.requireUnusedOnRename 참고. 기준값은 행 잠금 뒤에 읽은 값이다.
+    // 이름이 바뀐 저장만 중복을 검사한다(WD-824) — 판정 기준·이유는 ResourceNameGuard.requireUnusedOnRename 참고. 기준값은 행 잠금
+    // 뒤에 읽은 값이다.
     nameGuard.requireUnusedOnRename(
         ResourceKind.SAVED_QUERY,
         userId,
@@ -325,8 +326,9 @@ public class SavedQueryService {
       throw new SavedQueryNotFoundException();
     }
 
-    // 복제 이름(WD-824) — 「 (복사본)」, 쓰이면 「 (복사본 2)」… 200자 안으로 원래 이름을 잘라 맞춘다(WD-430). 후보마다 그 이름의 잠금을 먼저 잡고
-    // 존재를 확인해, 실제로 넣는 이름이 항상 잠겨 있게 한다(같은 원본의 동시 복제가 같은 이름을 고르지 못하게). 잠금은 커밋 때 풀리므로 몇 개 쥐어도 된다.
+    // 복제 이름(WD-824) — 「 (복사본)」, 쓰이면 「 (복사본 2)」… 200자 안으로 원래 이름을 잘라 맞춘다(WD-430).
+    // 후보마다 그 이름의 잠금을 먼저 잡고 존재를 확인해, 실제로 넣는 이름이 항상 잠겨 있게 한다
+    // (같은 원본의 동시 복제가 같은 이름을 고르지 못하게). 잠금은 커밋 때 풀리므로 몇 개 쥐어도 된다.
     String originalName = raw.name();
     String cloneName =
         ResourceNameGuard.copyName(
@@ -337,12 +339,7 @@ public class SavedQueryService {
             });
     CreateSavedQueryRequest cloneReq =
         new CreateSavedQueryRequest(
-            cloneName,
-            raw.description(),
-            raw.sqlText(),
-            raw.datasetId(),
-            raw.folder(),
-            false);
+            cloneName, raw.description(), raw.sqlText(), raw.datasetId(), raw.folder(), false);
 
     Long newId = savedQueryRepository.insert(cloneReq, userId);
     SavedQueryResponse cloned =
@@ -392,6 +389,9 @@ public class SavedQueryService {
   // sharedOnly/mineOnly 는 목록(list)과 같은 탭 범위 — 탭에 없는 쿼리의 폴더를 드롭다운에 내지 않는다(WD-328).
   @Transactional(readOnly = true)
   public List<String> getFolders(Boolean sharedOnly, Boolean mineOnly, Long userId) {
-    return savedQueryRepository.findDistinctFolders(sharedOnly, mineOnly, userId);
+    // WD-889: 옛 데이터의 빈·공백 폴더("")는 목록에서 뺀다 — 드롭다운 항목이 빈 값이면 화면이 깨졌다.
+    return savedQueryRepository.findDistinctFolders(sharedOnly, mineOnly, userId).stream()
+        .filter(f -> f != null && !f.isBlank())
+        .toList();
   }
 }

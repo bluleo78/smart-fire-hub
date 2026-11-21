@@ -337,7 +337,8 @@ public class JooqSavedQueryRepository implements SavedQueryRepository {
         .set(SQ_DESCRIPTION, req.description())
         .set(SQ_SQL_TEXT, req.sqlText())
         .set(SQ_DATASET_ID, req.datasetId())
-        .set(SQ_FOLDER, req.folder())
+        // WD-889: 빈 폴더("")는 NULL 로 저장 — 폴더 목록에 빈 항목이 생겨 화면이 깨지던 문제 방지
+        .set(SQ_FOLDER, blankToNull(req.folder()))
         .set(SQ_IS_SHARED, req.isShared())
         .set(SQ_CREATED_BY, userId)
         .returning(SQ_ID)
