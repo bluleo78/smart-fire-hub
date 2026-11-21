@@ -165,7 +165,8 @@ function NavItemLink({
         active
           ? 'bg-accent text-accent-foreground [&_svg]:text-primary nav-active-indicator'
           : 'text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground hover:scale-[1.02]',
-        collapsed ? 'justify-center px-2 py-2.5 mx-1' : 'gap-3 px-3 py-1.5'
+        // WD-899: 펼친 분기는 min-h-8 로 클릭 영역 높이를 최소 32px 보장(글자·아이콘 크기는 그대로, §2.12)
+        collapsed ? 'justify-center px-2 py-2.5 mx-1' : 'min-h-8 gap-3 px-3 py-1.5'
       )}
     >
       <Icon className={cn('shrink-0', collapsed ? 'h-5 w-5' : 'h-4 w-4')} />
@@ -225,7 +226,8 @@ function NavSection({
 
   return (
     <Collapsible open={open} onOpenChange={onOpenChange} className="mt-4">
-      <CollapsibleTrigger className="flex w-full items-center justify-between px-3 py-1.5 text-xs font-semibold tracking-wider text-muted-foreground hover:text-foreground transition-colors cursor-pointer">
+      {/* WD-899: min-h-8 로 그룹 머리글 클릭 영역 높이를 최소 32px 로 보장(§2.12) */}
+      <CollapsibleTrigger className="flex min-h-8 w-full items-center justify-between px-3 py-1.5 text-xs font-semibold tracking-wider text-muted-foreground hover:text-foreground transition-colors cursor-pointer">
         <span>{label}</span>
         {open ? (
           <ChevronDown className="h-3 w-3" />
@@ -472,9 +474,10 @@ function AppLayoutInner() {
                 </Tooltip>
               ) : (
                 <>
+                  {/* WD-899: 브랜드 링크 클릭 영역 높이를 min-h-8 로 최소 32px 보장(§2.12) */}
                   <Link
                     to="/"
-                    className="flex items-center gap-2 text-base font-semibold"
+                    className="flex min-h-8 items-center gap-2 text-base font-semibold"
                     onClick={handleNavClick}
                   >
                     <BrandLogo className="h-5 w-5 shrink-0" />
@@ -483,7 +486,8 @@ function AppLayoutInner() {
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-7 w-7 shrink-0 hidden lg:flex text-muted-foreground hover:text-foreground"
+                    // WD-899: 접기 버튼 클릭 영역을 28→32px 로 키운다(아이콘은 h-4 w-4 유지, §2.12)
+                    className="h-8 w-8 shrink-0 hidden lg:flex text-muted-foreground hover:text-foreground"
                     aria-label="사이드바 접기"
                     onClick={toggleCollapsed}
                   >
@@ -616,8 +620,9 @@ function AppLayoutInner() {
         {/* 인쇄(WD-424): 블록으로 풀어 본문(main)이 종이 전체 폭을 쓴다 */}
         <div className="relative flex flex-1 min-h-0 bg-gradient-main print:block">
           {/* AI Status Chip — 전체 뷰포트 가로 중앙. 인쇄에서는 AI 칩·알림 종을 숨긴다(WD-424) */}
+          {/* WD-899: 칩이 32px 로 커져 top-2(8px)면 40px 에서 본문(pt-10)과 맞닿는다 — top-1.5(6px)로 올려 38px 에 끝나게 2px 여백을 둔다 */}
           <div
-            className="fixed top-2 left-0 right-0 z-30 flex justify-center pointer-events-none print:hidden"
+            className="fixed top-1.5 left-0 right-0 z-30 flex justify-center pointer-events-none print:hidden"
             inert={aiOverlayOpen}
           >
             <div className="pointer-events-auto">

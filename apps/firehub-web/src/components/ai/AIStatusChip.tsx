@@ -342,7 +342,9 @@ export function AIStatusChip() {
   const style: React.CSSProperties = {
     ...chipStyles[state],
     borderRadius: 20,
-    padding: '6px 16px',
+    // WD-899: 세로 패딩은 0 으로 두고 높이는 minHeight 하나로만 정한다(padding 과 minHeight 가 겹쳐 정하지 않게). 클릭 영역 최소 32px(§2.12)
+    padding: '0 16px',
+    minHeight: 32,
     fontSize: 12,
     minWidth: 140,
     justifyContent: 'center',
@@ -433,7 +435,8 @@ export function AIStatusChip() {
         <button
           ref={bellButtonRef}
           type="button"
-          className="relative flex items-center justify-center h-7 w-7 rounded-full hover:bg-muted/80 transition-colors"
+          // WD-899: 알림 벨 클릭 영역을 28→32px 로 키운다(최소 32×32, §2.12)
+          className="relative flex items-center justify-center h-8 w-8 rounded-full hover:bg-muted/80 transition-colors"
           aria-label={unreadCount > 0 ? `안 읽은 AI 인사이트 ${unreadCount}개` : 'AI 인사이트 알림'}
           aria-haspopup="dialog"
           aria-expanded={showNotificationPanel}
@@ -447,7 +450,9 @@ export function AIStatusChip() {
             <span
               // #367: 16px 원에 `99+` 3자를 9px로 넣으면 판독성이 낮아 한 단계 키운다.
               // 벨 아이콘 위 절대배치라 레이아웃에는 영향이 없다.
-              className="absolute -top-0.5 -right-0.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold text-destructive-foreground"
+              // WD-899: 벨 버튼이 28→32px 로 커져 기준 박스가 2px 씩 넓어졌다. 아이콘(16px) 대비 배지 위치를
+              // 그대로 유지하려고 -top-0.5/-right-0.5 를 top-0/right-0 으로 바꾼다.
+              className="absolute top-0 right-0 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold text-destructive-foreground"
               aria-live="polite"
             >
               {unreadCount > 99 ? '99+' : unreadCount}
