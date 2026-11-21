@@ -22,9 +22,10 @@ import org.apache.ibatis.annotations.Param;
 public interface DatasetMapper {
 
   /**
-   * 목록 한 쪽의 데이터셋 id(중복 제거, id 오름차순). pattern 은 {@code LikePatternUtils.containsPattern} 로 이스케이프한 검색
-   * 패턴(null 이면 검색하지 않음), favoriteUserId 는 즐겨찾기만 볼 때의 사용자(null 이면 거르지 않음). includeTemp 가 false 이고
-   * originType 이 null 이면 임시(TEMP) 데이터셋을 뺀다(WD-754 — 출처 필터가 있으면 그 필터가 이긴다).
+   * 목록 한 쪽의 데이터셋 id(중복 제거). 정렬은 sortField(ID·CREATED_AT·NAME)·sortDesc 로 고르고 동률은 id 를 같은 방향으로
+   * 덧붙인다(WD-874). pattern 은 {@code LikePatternUtils.containsPattern} 로 이스케이프한 검색 패턴(null 이면 검색하지
+   * 않음), favoriteUserId 는 즐겨찾기만 볼 때의 사용자(null 이면 거르지 않음). includeTemp 가 false 이고 originType 이 null
+   * 이면 임시(TEMP) 데이터셋을 뺀다(WD-754 — 출처 필터가 있으면 그 필터가 이긴다).
    */
   List<Long> selectPageIds(
       @Param("categoryId") Long categoryId,
@@ -36,6 +37,8 @@ public interface DatasetMapper {
       @Param("pattern") String pattern,
       @Param("favoriteUserId") Long favoriteUserId,
       @Param("vis") VisibilityParams vis,
+      @Param("sortField") String sortField,
+      @Param("sortDesc") boolean sortDesc,
       @Param("limit") int limit,
       @Param("offset") int offset);
 
@@ -51,7 +54,7 @@ public interface DatasetMapper {
       @Param("favoriteUserId") Long favoriteUserId,
       @Param("vis") VisibilityParams vis);
 
-  /** id 청크(조각당 500 개 이하, OR 로 잇는다)의 데이터셋 행(id 오름차순). */
+  /** id 청크(조각당 500 개 이하, OR 로 잇는다)의 데이터셋 행(순서 보장 없음 — 저장소가 id 순서대로 다시 놓는다). */
   List<DatasetRow> selectByIds(@Param("chunks") List<List<Long>> chunks);
 
   /** 응답 행 한 건(카테고리·상태 변경자 이름 포함). 없으면 null. */

@@ -24,6 +24,7 @@ import com.smartfirehub.dataset.repository.DatasetColumnRepository;
 import com.smartfirehub.dataset.repository.DatasetReferenceRepository;
 import com.smartfirehub.dataset.repository.DatasetReferenceRepository.DashboardHit;
 import com.smartfirehub.dataset.repository.DatasetRepository;
+import com.smartfirehub.dataset.repository.DatasetSort;
 import com.smartfirehub.dataset.repository.DatasetTagRepository;
 import com.smartfirehub.dataset.repository.DatasetWriteTarget;
 import com.smartfirehub.dataset.repository.SearchColumnRepository;
@@ -580,6 +581,8 @@ public class DatasetService {
    * <p>WD-754: {@code includeTemp=false}(API 기본)면 출처 필터가 없을 때 임시(TEMP) 데이터셋을 목록·건수 모두에서 뺀다. 출처 필터가
    * 있으면 그 필터가 이긴다(규칙은 {@link DatasetRepository#findAll} 참고). 파이프라인 입력 선택처럼 임시 결과가 필요한 호출자는 {@code
    * includeTemp=true} 를 넘긴다.
+   *
+   * <p>WD-874: {@code sort} 로 정렬 열·방향을 고른다(홈 「최근 데이터셋」은 createdAt desc). 건수는 정렬과 무관하다.
    */
   @Transactional(readOnly = true)
   public PageResponse<DatasetResponse> getDatasets(
@@ -593,7 +596,8 @@ public class DatasetService {
       Long currentUserId,
       String status,
       boolean favoriteOnly,
-      Long securityLevelId) {
+      Long securityLevelId,
+      DatasetSort sort) {
     // 목록은 항상 현재 사용자 가시성 조건과 함께 조회한다(스펙 §4.2 1행).
     DatasetVisibility access = datasetAccessGuard.visibility();
     List<DatasetResponse> content =
@@ -609,7 +613,8 @@ public class DatasetService {
             status,
             favoriteOnly,
             securityLevelId,
-            access);
+            access,
+            sort == null ? DatasetSort.DEFAULT : sort); // 정렬 미지정(내부 호출)은 기본(id 오름차순)
     long totalElements =
         datasetRepository.count(
             categoryId,

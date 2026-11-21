@@ -471,6 +471,103 @@ public abstract class DatasetRepositoryContractTest extends TenantPairContractBa
     assertThat(searchCount("pg")).isEqualTo(3);
   }
 
+  /** WD-874: 정렬을 주고 검색어로 좁혀 한 쪽의 id 를 읽는다. */
+  private List<Long> sortedPage(String search, DatasetSort sort, int page, int size) {
+    return inA(
+        () ->
+            repository()
+                .findAll(
+                    null,
+                    null,
+                    null,
+                    false,
+                    search,
+                    page,
+                    size,
+                    null,
+                    null,
+                    false,
+                    null,
+                    DatasetVisibility.UNRESTRICTED,
+                    sort)
+                .stream()
+                .map(DatasetResponse::id)
+                .toList());
+  }
+
+  @Test
+  @DisplayName("정렬 — created_at 내림차순, 동률은 id 내림차순으로 가르고 페이지가 이어진다(WD-874)")
+  void findAll_sortsByCreatedAtDescWithIdTieBreak() {
+    long a = fx.createDataset(tenantA, prefix + " sa");
+    long b = fx.createDataset(tenantA, prefix + " sb");
+    long c = fx.createDataset(tenantA, prefix + " sc");
+    java.time.LocalDateTime same = java.time.LocalDateTime.of(2020, 1, 1, 0, 0);
+    fx.setDatasetField(b, "created_at", same);
+    fx.setDatasetField(c, "created_at", same);
+    fx.setDatasetField(a, "created_at", java.time.LocalDateTime.of(2024, 1, 1, 0, 0));
+    DatasetSort sort = new DatasetSort(DatasetSort.Field.CREATED_AT, true);
+    assertThat(sortedPage(prefix + " s", sort, 0, 2)).containsExactly(a, c);
+    assertThat(sortedPage(prefix + " s", sort, 1, 2)).containsExactly(b);
+  }
+
+  @Test
+  @DisplayName("정렬 — 이름 순서가 행 읽기 뒤에도 유지된다(WD-874)")
+  void findAll_sortsByNameKeepsOrderAfterRowFetch() {
+    fx.createDataset(tenantA, prefix + " n다");
+    fx.createDataset(tenantA, prefix + " n가");
+    fx.createDataset(tenantA, prefix + " n나");
+    assertThat(names(new DatasetSort(DatasetSort.Field.NAME, false)))
+        .containsExactly(prefix + " n가", prefix + " n나", prefix + " n다");
+    assertThat(names(new DatasetSort(DatasetSort.Field.NAME, true)))
+        .containsExactly(prefix + " n다", prefix + " n나", prefix + " n가");
+  }
+
+  private List<String> names(DatasetSort sort) {
+    return inA(
+        () ->
+            repository()
+                .findAll(
+                    null,
+                    null,
+                    null,
+                    false,
+                    prefix + " n",
+                    0,
+                    100,
+                    null,
+                    null,
+                    false,
+                    null,
+                    DatasetVisibility.UNRESTRICTED,
+                    sort)
+                .stream()
+                .map(DatasetResponse::name)
+                .toList());
+  }
+
+  @Test
+  @DisplayName("정렬 — 기존 오버로드(정렬 없음)는 id 오름차순(WD-874)")
+  void findAll_defaultSortIsIdAsc() {
+    long a = fx.createDataset(tenantA, prefix + " da");
+    long b = fx.createDataset(tenantA, prefix + " db");
+    long c = fx.createDataset(tenantA, prefix + " dc");
+    fx.setDatasetField(a, "created_at", java.time.LocalDateTime.of(2030, 1, 1, 0, 0));
+    assertThat(page(prefix + " d", 0, 10)).containsExactly(a, b, c);
+  }
+
+  @Test
+  @DisplayName("정렬 — 검색 필터와 함께 걸어도 걸린 것만 최신 순(WD-874)")
+  void findAll_sortWithSearchFilter() {
+    long x1 = fx.createDataset(tenantA, prefix + " fx1");
+    long x2 = fx.createDataset(tenantA, prefix + " fx2");
+    fx.createDataset(tenantA, prefix + " other");
+    fx.setDatasetField(x1, "created_at", java.time.LocalDateTime.of(2024, 1, 1, 0, 0));
+    fx.setDatasetField(x2, "created_at", java.time.LocalDateTime.of(2023, 1, 1, 0, 0));
+    assertThat(
+            sortedPage(prefix + " fx", new DatasetSort(DatasetSort.Field.CREATED_AT, true), 0, 10))
+        .containsExactly(x1, x2);
+  }
+
   private List<Long> page(String search, int page, int size) {
     return inA(
         () ->

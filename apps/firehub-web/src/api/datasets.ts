@@ -40,6 +40,10 @@ export interface DatasetListParams {
   status?: string;
   securityLevelId?: number;
   includeTemp?: boolean;
+  /** 정렬 기준(WD-874) — 생략하면 서버 기본(id 오름차순). */
+  sortBy?: 'id' | 'createdAt' | 'name';
+  /** 정렬 방향(WD-874) — 생략하면 asc. */
+  sortDir?: 'asc' | 'desc';
 }
 
 export const datasetsApi = {

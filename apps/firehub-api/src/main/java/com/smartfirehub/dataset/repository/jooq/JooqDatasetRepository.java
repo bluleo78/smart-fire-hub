@@ -8,6 +8,7 @@ import com.smartfirehub.dataset.dto.DatasetResponse;
 import com.smartfirehub.dataset.dto.UpdateDatasetRequest;
 import com.smartfirehub.dataset.repository.DatasetRepository;
 import com.smartfirehub.dataset.repository.DatasetSchemaMeta;
+import com.smartfirehub.dataset.repository.DatasetSort;
 import com.smartfirehub.dataset.repository.DatasetWriteTarget;
 import com.smartfirehub.global.dto.LockedRowVersion;
 import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
@@ -36,6 +37,7 @@ import org.jooq.Field;
 import org.jooq.Record;
 import org.jooq.Record4;
 import org.jooq.SelectConditionStep;
+import org.jooq.SortField;
 import org.jooq.Table;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Propagation;
@@ -266,7 +268,8 @@ public class JooqDatasetRepository implements DatasetRepository {
       String status,
       boolean favoriteOnly,
       Long securityLevelId,
-      DatasetVisibility access) {
+      DatasetVisibility access,
+      DatasetSort sort) {
     Condition condition =
         buildCondition(
             categoryId,
@@ -278,9 +281,18 @@ public class JooqDatasetRepository implements DatasetRepository {
             securityLevelId,
             access);
 
+    // WD-874: 정렬 열 + 같은 방향의 id 동률 깨기. DISTINCT 는 ORDER BY 열이 SELECT 목록에 있어야 하므로 정렬 열을 함께 고른다
+    // (id·created_at·name 은 데이터셋 한 행에 값이 하나라 중복 제거 결과는 그대로다).
+    // 정렬 열에 별칭을 달아 id 정렬(기본)에서도 SELECT 에 같은 필드가 두 번 들지 않게 한다(r.get(DS_ID) 가 모호해지지 않게, MyBatis 의
+    // sort_key 와 같다).
+    Field<?> sortKey = sortField(sort).as("sort_key");
+    Field<Object> sortKeyRef = field(name("sort_key"));
+    SortField<?> primary = sort.descending() ? sortKeyRef.desc() : sortKeyRef.asc();
+    SortField<Long> tieBreak = sort.descending() ? DS_ID.desc() : DS_ID.asc();
+
     // First get the distinct IDs for the page
     var idQuery =
-        dsl.selectDistinct(DS_ID)
+        dsl.selectDistinct(DS_ID, sortKey)
             .from(DATASET)
             .leftJoin(DATASET_COLUMN)
             .on(COL_DATASET_ID.eq(DS_ID))
@@ -299,7 +311,7 @@ public class JooqDatasetRepository implements DatasetRepository {
     List<Long> datasetIds =
         idQuery
             .where(condition)
-            .orderBy(DS_ID.asc())
+            .orderBy(primary, tieBreak)
             .limit(size)
             .offset(page * size)
             .fetch(r -> r.get(DS_ID));
@@ -313,33 +325,60 @@ public class JooqDatasetRepository implements DatasetRepository {
     Map<Long, SecurityLevelSummary> levels = fetchLevelSummaries();
 
     // status_updated_by 사용자 이름을 JOIN으로 한 번에 조회하여 N+1 제거
-    return dsl.select(
-            DS_ID,
-            DS_NAME,
-            DS_TABLE_NAME,
-            DS_DESCRIPTION,
-            DS_STORAGE_TYPE,
-            DS_ORIGIN_TYPE,
-            DS_CREATED_AT,
-            DS_STATUS,
-            DS_STATUS_NOTE,
-            DS_STATUS_UPDATED_BY,
-            DS_STATUS_UPDATED_AT,
-            DS_SOURCE_PIPELINE_STEP_ID,
-            DS_SECURITY_LEVEL_ID,
-            DS_SECURITY_LEVEL_AUTO_RAISED_AT,
-            DC_ID,
-            DC_NAME,
-            DC_DESCRIPTION,
-            SU_NAME)
-        .from(DATASET)
-        .leftJoin(DATASET_CATEGORY)
-        .on(DS_CATEGORY_ID.eq(DC_ID))
-        .leftJoin(STATUS_USER_TABLE)
-        .on(SU_ID.eq(DS_STATUS_UPDATED_BY))
-        .where(DS_ID.in(datasetIds))
-        .orderBy(DS_ID.asc())
-        .fetch(r -> mapToDatasetResponse(r, favoriteIds, tagsByDatasetId, levels));
+    List<DatasetResponse> rows =
+        dsl.select(
+                DS_ID,
+                DS_NAME,
+                DS_TABLE_NAME,
+                DS_DESCRIPTION,
+                DS_STORAGE_TYPE,
+                DS_ORIGIN_TYPE,
+                DS_CREATED_AT,
+                DS_STATUS,
+                DS_STATUS_NOTE,
+                DS_STATUS_UPDATED_BY,
+                DS_STATUS_UPDATED_AT,
+                DS_SOURCE_PIPELINE_STEP_ID,
+                DS_SECURITY_LEVEL_ID,
+                DS_SECURITY_LEVEL_AUTO_RAISED_AT,
+                DC_ID,
+                DC_NAME,
+                DC_DESCRIPTION,
+                SU_NAME)
+            .from(DATASET)
+            .leftJoin(DATASET_CATEGORY)
+            .on(DS_CATEGORY_ID.eq(DC_ID))
+            .leftJoin(STATUS_USER_TABLE)
+            .on(SU_ID.eq(DS_STATUS_UPDATED_BY))
+            .where(DS_ID.in(datasetIds))
+            .fetch(r -> mapToDatasetResponse(r, favoriteIds, tagsByDatasetId, levels));
+    // WD-874: SQL 순서에 기대지 않고 위에서 고른 id 순서(정렬 결과)대로 재배열한다.
+    return reorderByIds(rows, datasetIds);
+  }
+
+  /** 정렬 값에 맞는 열 — 허용 목록(enum)으로만 고르므로 사용자 입력이 SQL 에 끼지 않는다(WD-874). */
+  private static Field<?> sortField(DatasetSort sort) {
+    return switch (sort.field()) {
+      case ID -> DS_ID;
+      case CREATED_AT -> DS_CREATED_AT;
+      case NAME -> DS_NAME;
+    };
+  }
+
+  /** 읽은 행을 id 목록 순서대로 되돌린다 — 페이지에서 고른 정렬 순서를 행 읽기 뒤에도 유지한다(WD-874). */
+  private static List<DatasetResponse> reorderByIds(List<DatasetResponse> rows, List<Long> ids) {
+    Map<Long, DatasetResponse> byId = new HashMap<>();
+    for (DatasetResponse r : rows) {
+      byId.put(r.id(), r);
+    }
+    List<DatasetResponse> out = new ArrayList<>(ids.size());
+    for (Long id : ids) {
+      DatasetResponse r = byId.get(id);
+      if (r != null) {
+        out.add(r);
+      }
+    }
+    return out;
   }
 
   @Override
