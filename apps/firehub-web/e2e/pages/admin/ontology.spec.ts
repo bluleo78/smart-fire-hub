@@ -1223,7 +1223,9 @@ test.describe('지식그래프 캔버스 키보드 접근성 (#326, #327)', () =
     await page.setViewportSize({ width: 390, height: 844 });
     await setupOntologyGraphErrorMock(page);
     const list = page.getByTestId('schema-graph-type-list');
-    await gotoUntilReady(page, '/knowledge-graph/model', list.locator('[data-graph-item]').first());
+    // 준비 신호는 보이는 그래프 컨테이너(타입 수가 0 이 아닐 때)로 본다 — 대체 목록 항목은 포커스 전 sr-only(1px)라
+    // toBeVisible 이 우연히 통과할 뿐이라 준비 신호로 쓰지 않는다(WD-903 리뷰).
+    await gotoUntilReady(page, '/knowledge-graph/model', page.locator('[data-testid="schema-graph"]:not([data-node-count="0"])'));
     await list.locator('[data-graph-item]').first().focus();
     await page.keyboard.press('ArrowDown');
     await page.keyboard.press('Enter');
@@ -1238,7 +1240,9 @@ test.describe('지식그래프 캔버스 키보드 접근성 (#326, #327)', () =
   test('데스크톱에서는 드릴다운 뒤에도 필터 칩을 따로 띄우지 않는다 (WD-384)', async ({ authenticatedPage: page }) => {
     await setupOntologyMocks(page);
     const list = page.getByTestId('schema-graph-type-list');
-    await gotoUntilReady(page, '/knowledge-graph/model', list.locator('[data-graph-item]').first());
+    // 준비 신호는 보이는 그래프 컨테이너(타입 수가 0 이 아닐 때)로 본다 — 대체 목록 항목은 포커스 전 sr-only(1px)라
+    // toBeVisible 이 우연히 통과할 뿐이라 준비 신호로 쓰지 않는다(WD-903 리뷰).
+    await gotoUntilReady(page, '/knowledge-graph/model', page.locator('[data-testid="schema-graph"]:not([data-node-count="0"])'));
     await list.locator('[data-graph-item]').first().focus();
     await page.keyboard.press('ArrowDown');
     await page.keyboard.press('Enter');
