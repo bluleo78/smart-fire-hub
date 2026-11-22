@@ -1210,7 +1210,24 @@ test.describe('지식그래프 캔버스 키보드 접근성 (#326, #327)', () =
     const chip = page.getByTestId('active-type-filter-chip');
     await expect(chip).toBeVisible();
     await expect(chip).toContainText('Building 만 보는 중');
-    await chip.getByRole('button', { name: '전체 보기' }).click();
+    // 회귀 가드(WD-922): expand-collapse 큐 캔버스는 250ms 뒤 z-index 999 로 자리잡는다 — 그 뒤에도 칩이 맨 위여야 한다
+    const cueCanvas = page.locator('[data-testid="instance-graph"] canvas.expand-collapse-canvas');
+    // 이 가드는 플러그인의 캔버스 클래스명(expand-collapse-canvas)과 인라인 z-index 지정에 기대므로, 플러그인이 바뀌면 함께 고친다.
+    // 큐 캔버스는 정확히 1개여야 한다(재마운트 잔여물을 잡고, 플러그인이 캔버스를 안 만들면 분명한 메시지로 실패).
+    await expect(cueCanvas).toHaveCount(1);
+    await expect.poll(() => cueCanvas.evaluate((el) => (el as HTMLElement).style.zIndex)).not.toBe('');
+    const showAll = chip.getByRole('button', { name: '전체 보기' });
+    const box = await showAll.boundingBox();
+    expect(box).not.toBeNull();
+    const topIsButton = await showAll.evaluate(
+      (btn, p) => {
+        const hit = document.elementFromPoint(p.x, p.y);
+        return hit !== null && btn.contains(hit);
+      },
+      { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2 },
+    );
+    expect(topIsButton).toBe(true);
+    await showAll.click();
     await expect(chip).toHaveCount(0);
     await expect(page.getByTestId('instance-graph')).not.toHaveAttribute('data-node-count', '1');
   });
