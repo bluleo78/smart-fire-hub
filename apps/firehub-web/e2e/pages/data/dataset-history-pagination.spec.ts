@@ -189,12 +189,6 @@ test.describe('데이터셋 변경 이력 페이지네이션 (WD-535)', () => {
   });
 });
 
-const waitTwoFrames = (page: Page) =>
-  page.evaluate(
-    () =>
-      new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(undefined)))),
-  );
-
 /**
  * 방향 버튼으로 끝 페이지에 닿아도 포커스가 유지되는지 검증 (WD-932).
  * disabled 로 잠그면 포커스가 실린 버튼이 blur 돼 body 로 떨어진다.
@@ -228,11 +222,9 @@ test.describe('데이터셋 이력 페이지네이션 — 방향 버튼 이동 �
     await expect(nav.getByRole('button', { name: '처음 페이지' })).toHaveAttribute('aria-disabled', 'true');
     await expect(nav.getByRole('button', { name: '다음 페이지' })).not.toHaveAttribute('aria-disabled');
 
-    // 끝에서 한 번 더 눌러도 요청이 더 가지 않고 포커스도 그대로 (가드 검증은 위 describe 주석 참고)
-    const before = requests.length;
+    // 끝에서 한 번 더 눌러도 포커스는 그대로 — 「추가 요청 없음」은 프레임 몇 개만 기다려 비교하면 거짓 통과하므로
+    // 여기서 단언하지 않는다(가드는 simple-pagination.test.tsx 단위 시험이 검증)
     await page.keyboard.press('Enter');
-    await waitTwoFrames(page);
-    expect(requests.length).toBe(before);
     await expect(prev).toBeFocused();
   });
 
@@ -256,11 +248,9 @@ test.describe('데이터셋 이력 페이지네이션 — 방향 버튼 이동 �
     // 마지막 페이지 버튼도 같이 사용 불가로 알려야 한다
     await expect(nav.getByRole('button', { name: '마지막 페이지' })).toHaveAttribute('aria-disabled', 'true');
 
-    const before = requests.length;
     // 흐려진 버튼에 클릭 이벤트가 닿아도(보조 기술·강제 클릭) 화면이 그대로인지 본다 — 뷰포트 위치와 무관하게 이벤트를 직접 보낸다(가드 검증은 위 describe 주석 참고).
+    // 「추가 요청 없음」은 프레임 몇 개만 기다려 비교하면 거짓 통과하므로 단언하지 않는다 — 가드는 simple-pagination.test.tsx 단위 시험이 검증한다.
     await next.dispatchEvent('click');
-    await waitTwoFrames(page);
-    expect(requests.length).toBe(before);
     await expect(nav.getByRole('button', { name: '2 페이지' })).toHaveAttribute('aria-current', 'page');
   });
 });

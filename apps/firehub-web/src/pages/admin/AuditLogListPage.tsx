@@ -731,7 +731,7 @@ export default function AuditLogListPage() {
 
       <div className="rounded-md border">
         {/* WD-932: 페이지 이동 중에는 이전 페이지 행(placeholderData)이 남아 있다 — aria-busy 로 갱신 중임을 알리고,
-            흐리게 하며 행 클릭(상세 열기)을 막아 낡은 행을 누르지 못하게 한다. 페이지네이션 nav 는 표 밖이라 막히지 않아 포커스가 유지된다. */}
+            흐리게 하며 행 클릭(상세 열기)을 막아 낡은 행을 누르지 못하게 한다(키보드는 tbody inert). 페이지네이션 nav 는 표 밖이라 막히지 않아 포커스가 유지된다. */}
         <Table
           aria-label="감사 로그"
           aria-busy={isPlaceholderData || undefined}
@@ -748,7 +748,9 @@ export default function AuditLogListPage() {
               <TableHead>IP</TableHead>
             </TableRow>
           </TableHeader>
-          <TableBody>
+          {/* inert: 이동 중 낡은 행은 마우스뿐 아니라 키보드(Tab·Enter)로도 상세를 열 수 없게 한다.
+              포커스는 nav 버튼에서 이동을 시작하므로 inert 영역 안에 있지 않아 포커스가 빠지지 않는다. */}
+          <TableBody inert={isPlaceholderData}>
             {isDateRangeInverted ? (
               // 날짜 범위 역전 상태 — "결과 없음"과 구분되는 전용 메시지 (#541)
               <TableEmptyRow colSpan={7} message="날짜 범위가 올바르지 않아 조회할 수 없습니다." />
