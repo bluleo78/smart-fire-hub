@@ -328,7 +328,7 @@ playwright-cli -s=wl-$STACK_ID close
 
 개발한 PR 을 리뷰·머지하는 AI 팀장(`SKILL.md` 「검토자」). 비어 있으면 PR 을 사람이 리뷰·머지한다.
 
-- username: `teamleader@iacloud.kr`(AI 팀장)
+- username: `teamleader2@iacloud.kr`(AI 팀장 — 2026-11-22 teamleader 에서 바뀜)
 - **머지 조건(WP-1717)** — 리뷰 글에 아래가 없으면 머지하지 않는다. 리뷰 시간·비용이 늘어도 규정대로 한다.
   - 개발자 PR 본문의 「절차」 줄을 확인한다(`process-issue.md` 5번 형식, 흉내만 낸 줄이면 반려).
   - 브랜치 전체에 `/code-review medium` 을 실제로 돌리고(다시 부탁받으면 달라진 부분 — `process-issue.md` 「PR 리뷰·머지」 3번) 그 결과를 적는다.
