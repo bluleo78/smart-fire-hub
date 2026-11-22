@@ -731,9 +731,8 @@ test.describe('파이프라인 스텝 검증 오류 접근성 (WD-560)', () => {
     const req = await postCapture.waitForRequest();
     const payload = req.payload as { steps: Array<{ apiConfig: { customUrl?: string } }> };
     expect(payload.steps[0].apiConfig.customUrl).toBe('https://api.example.com/search?q=seoul city');
-    await expect(urlInput(page)).not.toHaveAttribute('aria-invalid', 'true');
-    await expect(page.getByText(URL_SCHEME_MESSAGE)).toHaveCount(0);
-    await expect(page.getByText(URL_FORMAT_MESSAGE)).toHaveCount(0);
+    // 저장에 성공하면 상세로 이동해 URL 칸이 사라진다 — 칸의 오류 유무 대신 이동을 본다(검증에 막히면 요청도 이동도 없다)
+    await expect(page).toHaveURL(/\/pipelines\/7$/);
   });
 
   test('테스트 호출 성공 뒤 잘못된 URL 로 다시 호출하면 이전 성공 결과가 사라진다 (WD-909)', async ({
