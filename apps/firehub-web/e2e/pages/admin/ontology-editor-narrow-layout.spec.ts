@@ -5,6 +5,7 @@ import { createMappingUsage, createOntologySchema } from '../../factories/ontolo
 import { setupAdminAuth, setupOntologyMocks } from '../../fixtures/admin.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { gotoUntilReady } from '../../fixtures/first-visit'; // WD-903: 첫 진입 직후 클릭은 대상이 보일 때까지 먼저 기다린다
 
 /**
  * 지식 모델 편집기 — 좁은 본문에서의 목록·편집 패널 배치 (WD-130).
@@ -69,7 +70,7 @@ test.describe('지식 모델 편집기 — 좁은 본문 배치 (WD-130)', () =>
     );
     await mockApi(page, 'GET', '/api/v1/ontology/3/mapping-usage', createMappingUsage());
     await page.setViewportSize({ width: 1024, height: 800 });
-    await page.goto('/knowledge-graph/model');
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('button', { name: '첫 타입 만들기' }));
 
     await page.getByRole('button', { name: '첫 타입 만들기' }).click();
 
@@ -108,7 +109,7 @@ test.describe('지식 모델 편집기 — 좁은 본문 배치 (WD-130)', () =>
     await setupAdminAuth(page);
     await setupOntologyMocks(page);
     await page.setViewportSize({ width: 1024, height: 800 });
-    await page.goto('/knowledge-graph/model');
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('button', { name: '수정 모드' }));
     await page.getByRole('button', { name: '수정 모드' }).click();
 
     // 선택 전: 목록은 얇은 막대, 편집 패널은 붙지 않는다 — 캔버스가 넓게 남는다.
@@ -160,7 +161,7 @@ test.describe('지식 모델 편집기 — 좁은 본문 배치 (WD-130)', () =>
     await setupAdminAuth(page);
     await setupOntologyMocks(page);
     await page.setViewportSize({ width: 1440, height: 900 });
-    await page.goto('/knowledge-graph/model');
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('button', { name: '수정 모드' }));
     await page.getByRole('button', { name: '수정 모드' }).click();
 
     // 선택 전에도 편집 패널이 붙어 안내 문구를 보인다 — 넓을 때의 규칙은 바뀌지 않았다.
@@ -188,7 +189,7 @@ test.describe('지식 모델 편집기 — 좁은 본문 배치 (WD-130)', () =>
     await setupOntologyMocks(page);
     await mockApi(page, 'GET', '/api/v1/ai/sessions', []);
     await page.setViewportSize({ width: 1440, height: 900 });
-    await page.goto('/knowledge-graph/model');
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('button', { name: '수정 모드' }));
     await page.getByRole('button', { name: '수정 모드' }).click();
 
     // 열기 전: 넓은 배치(목록 패널 보임) — 대조군. 본문 폭도 기록해 둔다.
@@ -228,7 +229,7 @@ test.describe('지식 모델 편집기 — 좁은 본문 배치 (WD-130)', () =>
     await setupOntologyMocks(page);
     await mockApi(page, 'GET', '/api/v1/ai/sessions', []);
     await page.setViewportSize({ width: 1024, height: 800 });
-    await page.goto('/knowledge-graph/model');
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('button', { name: '수정 모드' }));
     await page.getByRole('button', { name: '수정 모드' }).click();
     await page.getByText('AI 어시스턴트').first().click();
     await expect(page.getByTestId('ai-side-panel')).toBeVisible();

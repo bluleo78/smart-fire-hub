@@ -3,6 +3,7 @@ import type { Locator, Page } from '@playwright/test';
 import { createDatePropertyReviewItem, createEntityReviewItem, createEvidenceChunk, createPropertyReviewItem, createRelationReviewItem, createSynonymReviewItem } from '../../factories/reviewItem.factory';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { gotoUntilReady } from '../../fixtures/first-visit'; // WD-903: 첫 진입 직후 조작은 대상이 보일 때까지 먼저 기다린다
 import { expectNoHorizontalOverflow } from '../../fixtures/long-unbroken-name';
 
 test.describe('AI 검수 인박스', () => {
@@ -183,7 +184,7 @@ test.describe('AI 검수 인박스', () => {
     test('속성 탭 선택 후 다른 페이지로 이동했다가 뒤로가기하면 속성 탭이 그대로 선택되어 있다', async ({ authenticatedPage: page }) => {
       await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createPropertyReviewItem()]);
 
-      await page.goto('/knowledge-graph/review');
+      await gotoUntilReady(page, '/knowledge-graph/review', page.getByRole('tab', { name: '속성' }));
       await page.getByRole('tab', { name: '속성' }).click();
       await expect(page.getByRole('tab', { name: '속성' })).toHaveAttribute('aria-selected', 'true');
 
@@ -197,7 +198,7 @@ test.describe('AI 검수 인박스', () => {
     test('속성 탭 선택 후 새로고침해도 필터가 유지된다', async ({ authenticatedPage: page }) => {
       await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createPropertyReviewItem()]);
 
-      await page.goto('/knowledge-graph/review');
+      await gotoUntilReady(page, '/knowledge-graph/review', page.getByRole('tab', { name: '속성' }));
       await page.getByRole('tab', { name: '속성' }).click();
       await expect(page.getByRole('tab', { name: '속성' })).toHaveAttribute('aria-selected', 'true');
 
@@ -243,7 +244,7 @@ test.describe('AI 검수 인박스', () => {
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(createPropertyReviewItem({ status: 'approved' })) });
     });
 
-    await page.goto('/knowledge-graph/review');
+    await gotoUntilReady(page, '/knowledge-graph/review', page.getByPlaceholder('정정 숫자(예: 30000000)'));
     await page.getByPlaceholder('정정 숫자(예: 30000000)').fill('30000000');
     await page.getByRole('button', { name: '정정 적용' }).click();
     // WD-13: 정정 적용은 삭제/제거가 아니다 — default 유지
@@ -257,7 +258,7 @@ test.describe('AI 검수 인박스', () => {
     await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createPropertyReviewItem()]);
     await mockApi(page, 'GET', '/api/v1/graphrag/review-items/2/evidence', [{ chunkId: 7, content: '약 수천만원대의 재산피해가 발생했다.' }]);
 
-    await page.goto('/knowledge-graph/review');
+    await gotoUntilReady(page, '/knowledge-graph/review', page.getByRole('button', { name: '원문 근거 보기' }));
     await page.getByRole('button', { name: '원문 근거 보기' }).click();
 
     await expect(page.getByText('약 수천만원대의 재산피해가 발생했다.')).toBeVisible();
@@ -313,7 +314,7 @@ test.describe('AI 검수 인박스', () => {
     // 목록을 모킹하고 근거 보기를 누른다 — 근거 응답은 각 시험이 먼저 정한다.
     async function openEvidence(page: Page) {
       await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [ITEM]);
-      await page.goto('/knowledge-graph/review');
+      await gotoUntilReady(page, '/knowledge-graph/review', page.getByRole('button', { name: '원문 근거 보기' }));
       await page.getByRole('button', { name: '원문 근거 보기' }).click();
     }
 
@@ -442,7 +443,7 @@ test.describe('AI 검수 인박스', () => {
         evidenceCallsAfterFail += 1;
         return route.fulfill({ status: 500, contentType: 'application/json', body: '{}' });
       });
-      await page.goto('/knowledge-graph/review');
+      await gotoUntilReady(page, '/knowledge-graph/review', page.getByRole('row').filter({ hasText: '수천만원대' }).getByRole('button', { name: '원문 근거 보기' }));
 
       await page.getByRole('row').filter({ hasText: '수천만원대' }).getByRole('button', { name: '원문 근거 보기' }).click();
       await expect(page.getByText(chunk.content)).toBeVisible();
@@ -464,7 +465,7 @@ test.describe('AI 검수 인박스', () => {
     await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [synonym]);
     await mockApi(page, 'GET', '/api/v1/graphrag/review-items/777/evidence', [chunk]);
 
-    await page.goto('/knowledge-graph/review');
+    await gotoUntilReady(page, '/knowledge-graph/review', page.getByRole('button', { name: '원문 근거 보기' }));
     await page.getByRole('button', { name: '원문 근거 보기' }).click();
 
     await expect(page.getByText(chunk.content)).toBeVisible();
@@ -499,7 +500,7 @@ test.describe('AI 검수 인박스', () => {
   test('엔티티 항목에서 원문 근거 보기를 누르면 청크 스니펫이 표시된다', async ({ authenticatedPage: page }) => {
     await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createEntityReviewItem()]);
     await mockApi(page, 'GET', '/api/v1/graphrag/review-items/3/evidence', [{ chunkId: 9, content: '노후된 배선으로 추정된다.' }]);
-    await page.goto('/knowledge-graph/review');
+    await gotoUntilReady(page, '/knowledge-graph/review', page.getByRole('button', { name: '원문 근거 보기' }));
     await page.getByRole('button', { name: '원문 근거 보기' }).click();
     await expect(page.getByText('노후된 배선으로 추정된다.')).toBeVisible();
   });
@@ -565,7 +566,7 @@ test.describe('AI 검수 인박스', () => {
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(createDatePropertyReviewItem({ status: 'approved' })) });
     });
 
-    await page.goto('/knowledge-graph/review');
+    await gotoUntilReady(page, '/knowledge-graph/review', page.getByPlaceholder('YYYY-MM-DD'));
     await page.getByPlaceholder('YYYY-MM-DD').fill('작년겨울');
 
     await expect(page.getByText('YYYY-MM-DD 형식의 날짜를 입력하세요(예: 2026-01-05).')).toBeVisible();
@@ -581,8 +582,8 @@ test.describe('AI 검수 인박스', () => {
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(createDatePropertyReviewItem({ status: 'approved' })) });
     });
 
-    await page.goto('/knowledge-graph/review');
     const input = page.getByPlaceholder('YYYY-MM-DD');
+    await gotoUntilReady(page, '/knowledge-graph/review', input);
     await input.fill('2026-02-31');
     await expect(page.getByText('존재하지 않는 날짜입니다.')).toBeVisible();
     await expect(page.getByRole('button', { name: '정정 적용' })).toBeDisabled();
@@ -597,7 +598,7 @@ test.describe('AI 검수 인박스', () => {
 
   test('number 속성에 숫자가 아닌 정정값을 넣으면 서버 왕복 없이 사유가 표시된다', async ({ authenticatedPage: page }) => {
     await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createPropertyReviewItem()]);
-    await page.goto('/knowledge-graph/review');
+    await gotoUntilReady(page, '/knowledge-graph/review', page.getByPlaceholder('정정 숫자(예: 30000000)'));
     await page.getByPlaceholder('정정 숫자(예: 30000000)').fill('삼천만원 정도');
 
     await expect(page.getByText('숫자만 입력할 수 있습니다(예: 30000000).')).toBeVisible();
@@ -615,7 +616,7 @@ test.describe('AI 검수 인박스', () => {
         body: JSON.stringify({ status: 409, error: 'Conflict', message: reason, timestamp: '2026-07-30T00:00:00Z', path: '/api/v1/graphrag/review-items/5/approve' }),
       }));
 
-    await page.goto('/knowledge-graph/review');
+    await gotoUntilReady(page, '/knowledge-graph/review', page.getByPlaceholder('YYYY-MM-DD'));
     await page.getByPlaceholder('YYYY-MM-DD').fill('2026-01-05');
     await page.getByRole('button', { name: '정정 적용' }).click();
     await page.getByTestId('review-decide-confirm-action').click();
@@ -660,7 +661,7 @@ test.describe('AI 검수 인박스', () => {
   test('관계 항목에서 원문 근거 보기를 누르면 청크 스니펫이 표시된다', async ({ authenticatedPage: page }) => {
     await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createRelationReviewItem()]);
     await mockApi(page, 'GET', '/api/v1/graphrag/review-items/4/evidence', [{ chunkId: 9, content: '노후 배선이 화재 원인으로 추정된다.' }]);
-    await page.goto('/knowledge-graph/review');
+    await gotoUntilReady(page, '/knowledge-graph/review', page.getByRole('button', { name: '원문 근거 보기' }));
     await page.getByRole('button', { name: '원문 근거 보기' }).click();
     await expect(page.getByText('노후 배선이 화재 원인으로 추정된다.')).toBeVisible();
   });
@@ -713,7 +714,7 @@ test.describe('AI 검수 인박스', () => {
         return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(createSynonymReviewItem({ status: 'approved' })) });
       });
 
-      await page.goto('/knowledge-graph/review');
+      await gotoUntilReady(page, '/knowledge-graph/review', page.getByRole('button', { name: '승인' }));
       await page.getByRole('button', { name: '승인' }).click();
 
       // 다이얼로그가 열려 있는 동안에도 서버는 호출되지 않아야 한다 — 게이트가 실제로 존재한다는 증거.
@@ -731,7 +732,7 @@ test.describe('AI 검수 인박스', () => {
         return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(createSynonymReviewItem({ status: 'rejected' })) });
       });
 
-      await page.goto('/knowledge-graph/review');
+      await gotoUntilReady(page, '/knowledge-graph/review', page.getByRole('button', { name: '거부' }));
       await page.getByRole('button', { name: '거부' }).click();
       await page.getByTestId('review-decide-confirm-cancel').click();
 
@@ -749,7 +750,7 @@ test.describe('AI 검수 인박스', () => {
         return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(createSynonymReviewItem({ status: 'rejected' })) });
       });
 
-      await page.goto('/knowledge-graph/review');
+      await gotoUntilReady(page, '/knowledge-graph/review', page.getByRole('button', { name: '거부' }));
       await page.getByRole('button', { name: '거부' }).click();
       await page.getByTestId('review-decide-confirm-action').click();
 
@@ -759,7 +760,7 @@ test.describe('AI 검수 인박스', () => {
 
     test('동의어 승인 다이얼로그는 병합 대상과 비가역성을 알리고 destructive 액션을 쓴다', async ({ authenticatedPage: page }) => {
       await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createSynonymReviewItem()]);
-      await page.goto('/knowledge-graph/review');
+      await gotoUntilReady(page, '/knowledge-graph/review', page.getByRole('button', { name: '승인' }));
       await page.getByRole('button', { name: '승인' }).click();
 
       const dialog = page.getByTestId('review-decide-confirm');
@@ -774,7 +775,7 @@ test.describe('AI 검수 인박스', () => {
 
     test('속성 정정 다이얼로그는 원문과 입력한 정정값을 그대로 에코한다', async ({ authenticatedPage: page }) => {
       await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createPropertyReviewItem()]);
-      await page.goto('/knowledge-graph/review');
+      await gotoUntilReady(page, '/knowledge-graph/review', page.getByPlaceholder('정정 숫자(예: 30000000)'));
       await page.getByPlaceholder('정정 숫자(예: 30000000)').fill('30000000');
       await page.getByRole('button', { name: '정정 적용' }).click();
 
@@ -790,7 +791,7 @@ test.describe('AI 검수 인박스', () => {
 
     test('엔티티 적재 다이얼로그는 함께 적재되는 연결 관계 건수를 알린다', async ({ authenticatedPage: page }) => {
       await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createEntityReviewItem()]);
-      await page.goto('/knowledge-graph/review');
+      await gotoUntilReady(page, '/knowledge-graph/review', page.getByRole('button', { name: '적재' }));
       await page.getByRole('button', { name: '적재' }).click();
 
       const dialog = page.getByTestId('review-decide-confirm');
@@ -803,7 +804,7 @@ test.describe('AI 검수 인박스', () => {
 
     test('관계 적재 다이얼로그는 주어→관계→목적어를 그대로 보여준다', async ({ authenticatedPage: page }) => {
       await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createRelationReviewItem()]);
-      await page.goto('/knowledge-graph/review');
+      await gotoUntilReady(page, '/knowledge-graph/review', page.getByRole('button', { name: '적재' }));
       await page.getByRole('button', { name: '적재' }).click();
 
       const dialog = page.getByTestId('review-decide-confirm');
@@ -814,7 +815,7 @@ test.describe('AI 검수 인박스', () => {
 
     test('거부 다이얼로그는 item_type별 대상 요약과 함께 destructive 액션을 쓴다', async ({ authenticatedPage: page }) => {
       await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createRelationReviewItem()]);
-      await page.goto('/knowledge-graph/review');
+      await gotoUntilReady(page, '/knowledge-graph/review', page.getByRole('button', { name: '거부' }));
       await page.getByRole('button', { name: '거부' }).click();
 
       const dialog = page.getByTestId('review-decide-confirm');
@@ -829,7 +830,7 @@ test.describe('AI 검수 인박스', () => {
     // #311 회귀 가드 — 확인 게이트가 생겼다고 형식 위반 정정값이 다이얼로그를 통해 새어나가면 안 된다.
     test('정정값 형식 위반 상태에서는 트리거가 다이얼로그를 열지 못한다', async ({ authenticatedPage: page }) => {
       await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createDatePropertyReviewItem()]);
-      await page.goto('/knowledge-graph/review');
+      await gotoUntilReady(page, '/knowledge-graph/review', page.getByPlaceholder('YYYY-MM-DD'));
       await page.getByPlaceholder('YYYY-MM-DD').fill('작년겨울');
 
       await expect(page.getByText('YYYY-MM-DD 형식의 날짜를 입력하세요(예: 2026-01-05).')).toBeVisible();
@@ -844,10 +845,10 @@ test.describe('AI 검수 인박스', () => {
   test.describe('확인 다이얼로그 닫힘 후 포커스 복귀 (#337)', () => {
     test('ESC로 닫으면 포커스가 트리거(승인) 버튼으로 돌아온다', async ({ authenticatedPage: page }) => {
       await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createSynonymReviewItem()]);
-      await page.goto('/knowledge-graph/review');
+      const trigger = page.getByRole('button', { name: '승인' });
+      await gotoUntilReady(page, '/knowledge-graph/review', trigger);
 
       // 키보드 전용 사용자와 동일한 경로 — 트리거에 포커스를 두고 Enter로 연다.
-      const trigger = page.getByRole('button', { name: '승인' });
       await trigger.focus();
       await page.keyboard.press('Enter');
       await expect(page.getByTestId('review-decide-confirm-cancel')).toBeFocused();
@@ -859,9 +860,9 @@ test.describe('AI 검수 인박스', () => {
 
     test('취소 버튼으로 닫으면 포커스가 트리거(거부) 버튼으로 돌아온다', async ({ authenticatedPage: page }) => {
       await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createSynonymReviewItem()]);
-      await page.goto('/knowledge-graph/review');
-
       const trigger = page.getByRole('button', { name: '거부' });
+      await gotoUntilReady(page, '/knowledge-graph/review', trigger);
+
       await trigger.focus();
       await page.keyboard.press('Enter');
       await expect(page.getByTestId('review-decide-confirm-cancel')).toBeFocused();
@@ -874,7 +875,7 @@ test.describe('AI 검수 인박스', () => {
     test('거부를 확정해 행이 사라지면 포커스가 표로 복귀한다', async ({ authenticatedPage: page }) => {
       await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createSynonymReviewItem()]);
       await mockApi(page, 'POST', '/api/v1/graphrag/review-items/1/reject', createSynonymReviewItem({ status: 'rejected' }));
-      await page.goto('/knowledge-graph/review');
+      await gotoUntilReady(page, '/knowledge-graph/review', page.getByRole('button', { name: '거부' }));
 
       await page.getByRole('button', { name: '거부' }).focus();
       await page.keyboard.press('Enter');
@@ -939,9 +940,9 @@ test.describe('AI 검수 인박스', () => {
 
     test('속성 정정값 오류가 aria-describedby로 입력에 연결되어 사유가 낭독된다 (#340)', async ({ authenticatedPage: page }) => {
       await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createDatePropertyReviewItem()]);
-      await page.goto('/knowledge-graph/review');
-
       const input = page.getByLabel('occurredAt 정정값');
+      await gotoUntilReady(page, '/knowledge-graph/review', input);
+
       // 정상 입력 상태에서는 오류 연결이 없어야 한다.
       await input.fill('2026-01-02');
       await expect(input).toHaveAttribute('aria-invalid', 'false');

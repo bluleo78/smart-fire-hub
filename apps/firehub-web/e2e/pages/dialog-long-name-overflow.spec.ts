@@ -9,6 +9,7 @@ import { setupJobListMocks, setupNotificationPanelMocks } from '../fixtures/ai-i
 import { createPageResponse, mockApi } from '../fixtures/api-mock';
 import { expect, test } from '../fixtures/auth.fixture';
 import { grantDatasetPermissions, setupDatasetDetailMocks } from '../fixtures/dataset.fixture';
+import { gotoUntilReady } from '../fixtures/first-visit'; // WD-903: 첫 진입 직후 클릭은 대상이 보일 때까지 먼저 기다린다
 import { expectDialogContained, expectSingleLine, expectWithin, expectWrapped } from '../fixtures/long-name-layout';
 
 /**
@@ -141,7 +142,7 @@ test.describe('일반 대화상자·알림 상세 긴 이름 넘침 (WD-648)', (
       }),
     ]);
 
-    await page.goto('/knowledge-graph/review');
+    await gotoUntilReady(page, '/knowledge-graph/review', page.getByRole('button', { name: '거부' }));
     await page.getByRole('button', { name: '거부' }).click();
 
     const dialog = page.getByTestId('review-decide-confirm');
