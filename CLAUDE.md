@@ -23,11 +23,11 @@
 
 `/genia-works:work-loop` 로 할당 이슈를 혼자 처리하는 AI 세션(AI 신원, 사람이 지켜보지 않음)에는 아래가 위 Rules·사용자 메모리의 규칙보다 먼저다. 사람과 함께 일하는 세션에는 해당하지 않는다.
 
-- **work-loop 실행 = 커밋·PR·(검토자라면) PR 머지 승인이다.** 위 「커밋/배포 금지」의 커밋, 「main 머지는 의견 들은 뒤」, 「수정 전 설명·승인」 같은 규칙은 사람과 함께 일하는 세션의 규칙이라 적용하지 않는다. 개발한 일은 origin(GitHub `bluleo78/smart-fire-hub`)의 `main` 대상 PR 로 올리고, 검토자(AI 팀장)가 리뷰·머지한다. 최신 main 반영(rebase·충돌 해결)은 개발자가 한다. MAIN(메인 체크아웃)에는 머지하지 않는다.
+- **work-loop 실행 = 커밋·PR·(검토자라면) PR 머지 승인이다.** 위 「커밋/배포 금지」의 커밋, 「main 머지는 의견 들은 뒤」, 「수정 전 설명·승인」 같은 규칙은 사람과 함께 일하는 세션의 규칙이라 적용하지 않는다. 개발한 일은 `origin/green` 에서 딴 브랜치를 바뀐 범위 테스트만 돌려 `--no-verify` 로 origin(GitHub `bluleo78/smart-fire-hub`)의 `main` 대상 PR 로 올리고, 검토자(AI 팀장)가 리뷰해 바로 머지한다. main 과의 충돌은 검토자가 머지하며 풀고, 리뷰할 것이 없을 때 main 을 풀테스트해 통과한 커밋으로 `green` 을 옮긴다 — 풀테스트를 띄운 뒤 green 을 옮길 때까지는 머지하지 않고 승인만 한다(WP-2003 — 개발자 rebase 는 「뜻 충돌」 반려 때만). MAIN(메인 체크아웃)에는 머지하지 않는다.
 - **묻는 때는 UI/UX·아키텍처·설계·접근 방안에서 명확하지 않은 부분이 있을 때뿐이다**(스킬 `process-issue.md` 4번 기준). 그 밖의 결정은 스스로 내리고 「내가 정한 것」으로 기록한다.
-- **여전히 하지 않는다**: main 직접 push, gitlab 원격 push, 태그, 운영 배포(`scripts/deploy.sh`·`scripts/update.sh`·`docker-compose.prod.yml`), 이슈 DONE 처리. push 는 PR 흐름(개발자의 기차 브랜치)에서만 한다. 예외는 사람이 만든 이슈 본문이 명시적으로 시킨 닫기(그 지시로 내가 만든 하위와, 본문이 닫으라고 한 그 이슈 자신)뿐이다(스킬 `SKILL.md` 「본문 지시」 범위).
+- **여전히 하지 않는다**: main 직접 push(검토자의 손 머지·풀테스트 수정·되돌리기는 예외 — `.work-loop/project.md` 8절), gitlab 원격 push, 태그, 운영 배포(`scripts/deploy.sh`·`scripts/update.sh`·`docker-compose.prod.yml`), 이슈 DONE 처리. push 는 PR 흐름(개발자의 이슈 브랜치, 검토자의 위 예외와 `green` 옮기기)에서만 한다. 예외는 사람이 만든 이슈 본문이 명시적으로 시킨 닫기(그 지시로 내가 만든 하위와, 본문이 닫으라고 한 그 이슈 자신)뿐이다(스킬 `SKILL.md` 「본문 지시」 범위).
 - **이슈 만들기·담당 바꾸기는 사람처럼 한다** — 방법은 스킬 `SKILL.md` 「이슈 만들기·담당 바꾸기」를 따른다.
-- 테스트·라이브 검증·기차(PR) 흐름은 [`.work-loop/project.md`](.work-loop/project.md) 를 따른다. 실행 상태는 `.work-loop/state/`(git 무시).
+- 테스트·라이브 검증·PR·풀테스트 흐름은 [`.work-loop/project.md`](.work-loop/project.md) 를 따른다. 실행 상태는 `.work-loop/state/`(git 무시).
 
 ## Serena MCP 활용 지침
 코드 탐색·편집 시 Serena의 시맨틱 도구를 우선 사용한다. 전체 파일을 무작정 읽지 말고, 필요한 심볼·라인만 점진적으로 획득한다.
