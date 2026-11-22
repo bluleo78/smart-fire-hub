@@ -25,14 +25,14 @@ UI 전반의 애니메이션과 전환 효과에 관한 패턴을 정의한다. 
 
 ### 2. `transition-opacity` — 투명도 전환
 
-`group-hover` 패턴과 함께 사용하여 hover 시 액션 버튼을 표시/숨김 처리한다.
+`group-hover` 패턴과 함께 사용하여 hover·초점 시 액션 버튼을 표시/숨김 처리한다.
 
 ```tsx
 // 테이블 행 액션 버튼 표시
 <TableRow className="group">
   <TableCell>
-    <div className="opacity-0 group-hover:opacity-100 transition-opacity">
-      <Button size="icon" variant="ghost">
+    <div className="opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+      <Button size="icon-sm" variant="ghost" aria-label="더보기" onClick={(e) => e.stopPropagation()}>
         <MoreHorizontal className="h-4 w-4" />
       </Button>
     </div>
@@ -187,10 +187,10 @@ Tailwind를 사용하는 경우 조건부 클래스로 적용할 수 있다.
   저장
 </Button>
 
-// hover 시 액션 표시
+// hover·초점 시 액션 표시
 <div className="group relative">
   <span>{content}</span>
-  <div className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 transition-opacity group-hover:opacity-100">
+  <div className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
     <ActionButtons />
   </div>
 </div>

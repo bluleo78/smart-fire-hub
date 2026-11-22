@@ -92,7 +92,7 @@ Input 컴포넌트는 4가지 상태를 가진다.
 | 상태 | 시각적 표현 | Tailwind |
 |------|-----------|---------|
 | Default | 회색 테두리 | `border-input` (라이트 oklch(0.64 0.005 264)·다크 oklch(0.52 0.01 280), 합성 후 3:1 — #376) |
-| Focus | Ring + 테두리 강조 | `focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]` |
+| Focus | Ring + 테두리 강조 | `focus-visible:border-ring focus-visible:ring-ring focus-visible:ring-[3px]` |
 | Error | 빨간 테두리 + Ring | `aria-invalid:border-destructive aria-invalid:ring-destructive/20` |
 | Disabled | 50% 투명도, not-allowed 커서 | `disabled:opacity-50 disabled:pointer-events-none` |
 

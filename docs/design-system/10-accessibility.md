@@ -18,11 +18,10 @@
 
 ## B. Focus Indicator (포커스 표시)
 
-- **현재(As-Is)**: `focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]` (shadcn 기본값)
-- Button, Input, Select, Checkbox, Radio 모두 `focus-visible` 스타일 적용됨
-- Ring 색상: `--ring: oklch(0.708 0 0)` — 충분한 대비 확보
+- **현재(As-Is)**: Button·Input·Select·Checkbox·Radio 는 `focus-visible:border-ring focus-visible:ring-ring focus-visible:ring-[3px]` (Button `destructive` 의 링 색은 `ring-destructive`)
+- Ring 색상: `--ring` 은 테마마다 다르고, 원색이면 모든 테마 조합에서 3:1 을 넘는다
 
-**권장(To-Be)**: 현재 shadcn 기본 설정을 유지하되, 커스텀 컴포넌트 작성 시 반드시 `focus-visible` 스타일을 포함해야 한다.
+**권장(To-Be)**: 커스텀 컴포넌트에도 `focus-visible` 스타일을 넣고, 링 색에 알파를 붙이지 않는다(`ring-ring/50` ✗ → `ring-ring` ✓) — [01 디자인 토큰](./01-design-tokens.md).
 
 ---
 
@@ -43,7 +42,7 @@
    - 파이프라인 편집, 삭제, 즐겨찾기 버튼 등 해당
 2. **데이터 테이블에 `aria-label` 누락**: `<Table>` 요소에 테이블 내용을 설명하는 `aria-label` 없음
 3. **정렬 표시 없음**: 정렬 기능이 있는 테이블 컬럼에 `aria-sort` 속성 부재
-4. **라이브 영역(Live Region) 없음**: 비동기 로딩/업데이트 알림을 위한 `aria-live` 미사용
+4. **라이브 영역(Live Region)이 일부에만 있음**: `TableEmptyRow`·`TableErrorRow`·`InlineBanner` 는 스스로 알리므로 겹쳐 두지 않는다. `SimplePagination` 은 `totalElements`·`pageSize` 를 받아 그려질 때만 건수를 알린다(WD-931 — 한 쪽뿐이고 크기 선택이 없으면 그려지지 않고, 0건은 빈 행이 알린다). 그 밖의 비동기 갱신은 빠진 곳이 있다
 5. **차트 접근성 없음**: 차트 시각화에 대한 텍스트 대안 없음
 6. **Toast 알림 읽기 미확인**: Sonner toast가 스크린 리더에 올바르게 알려지는지 확인 필요 (`role="alert"` 검토 필요)
 

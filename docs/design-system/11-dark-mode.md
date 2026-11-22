@@ -93,19 +93,4 @@
 3. **다크에서 텍스트를 더 밝게**: muted-foreground는 라이트보다 밝게 올려, 가장 밝은 표면(두 겹 카드·머리 띠 위 hover)에서도 4.5:1 을 지킨다(값은 01 §1-2)
 4. **시맨틱 토큰 사용**: 항상 `bg-background`, `text-foreground`, `border-border` 사용 — 색상 하드코딩 금지. 구조 경계(외곽선·행 구분선·영역 구분 면)에는 알파 수식자(`border-border/50`·`divide-border/30`·`bg-muted/30`)도 붙이지 않는다 — §C-1
 5. **상태 색상에 다크 변형 포함**: `--success`, `--warning`, `--info` 등을 정의할 때 반드시 다크 모드 값도 함께 정의
-
----
-
-## G. index.css 정리 필요 사항
-
-`index.css` 119-120행과 123-124행에 완전히 동일한 규칙이 중복 정의되어 있다. Phase D-2에서 정리가 필요하다.
-
-```css
-/* 중복 — 하나만 남기고 제거 필요 */
-* { @apply border-border outline-ring/50; }
-* { @apply border-border outline-ring/50; }
-
-/* 중복 — 하나만 남기고 제거 필요 */
-body { @apply bg-background text-foreground; }
-body { @apply bg-background text-foreground; }
-```
+6. **초점 outline 은 알파 없이**: 전역 초점 outline 은 `outline-ring` 이고 알파를 붙이지 않는다([01 디자인 토큰](./01-design-tokens.md))

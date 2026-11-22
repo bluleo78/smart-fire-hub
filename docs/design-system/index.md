@@ -112,7 +112,7 @@
 | 기본 버튼 | `bg-primary text-primary-foreground` |
 | 위험/삭제 | `bg-destructive text-destructive-foreground` |
 | hover 배경 | `bg-accent` / `bg-muted/50` — 쉬는 면이 `bg-card`인 요소는 단색 `hover:bg-muted`·`hover:bg-accent`, 단색 `bg-muted` 띠 안 버튼은 기본 `hover:bg-accent`(머리 띠보다 한 단계 위) |
-| Focus ring | `ring-ring/50` |
+| Focus ring | `ring-ring` |
 
 ### Status Colors (구현 완료)
 

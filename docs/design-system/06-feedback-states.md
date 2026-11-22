@@ -25,22 +25,12 @@ function PageSkeleton() {
 
 테이블 데이터 로드 중에 행 구조를 유지한다.
 
+공용 `TableSkeletonRows`(`@/components/ui/table-skeleton`)를 쓴다 — 표에 aria-busy 를 건다(WD-518). 직접 만들지 않는다.
+
 ```tsx
-function TableSkeleton({ rows = 10, columns = 4 }: { rows?: number; columns?: number }) {
-  return (
-    <>
-      {Array.from({ length: rows }).map((_, i) => (
-        <TableRow key={i}>
-          {Array.from({ length: columns }).map((_, j) => (
-            <TableCell key={j}>
-              <Skeleton className="h-10 w-full" />
-            </TableCell>
-          ))}
-        </TableRow>
-      ))}
-    </>
-  );
-}
+<TableBody>
+  {isLoading && <TableSkeletonRows columns={4} />}
+</TableBody>
 ```
 
 ### 3. Inline Spinner (인라인 스피너)
@@ -95,7 +85,8 @@ function FullPageLoading() {
 |------|--------|-------|--------|
 | 페이지 타이틀 | h-8 | w-64 | `<Skeleton className="h-8 w-64" />` |
 | 콘텐츠 블록 | h-96 | w-full | `<Skeleton className="h-96 w-full" />` |
-| 테이블 행 | h-10 | w-full | `<Skeleton className="h-10 w-full" />` |
+| 표(`<table>`) 행 | h-4 | w-full | `<TableSkeletonRows columns={4} />` |
+| 표 밖 목록 행(위젯 등) | h-10 | w-full | `<Skeleton className="h-10 w-full" />` |
 | 카드 통계값 | h-8 | w-24 | `<Skeleton className="h-8 w-24" />` |
 | 아바타 | h-8 w-8 | rounded-full | `<Skeleton className="h-8 w-8 rounded-full" />` |
 
@@ -105,19 +96,14 @@ function FullPageLoading() {
 
 ### 테이블 빈 상태
 
-```tsx
-function TableEmpty({ colSpan, message = "데이터가 없습니다" }: { colSpan: number; message?: string }) {
-  return (
-    <TableRow>
-      <TableCell colSpan={colSpan} className="text-center py-10 text-muted-foreground">
-        {message}
-      </TableCell>
-    </TableRow>
-  );
-}
+공용 `TableEmptyRow`(`@/components/ui/table-empty`)를 쓴다 — 문구를 낭독한다(WD-815). 직접 만들지 않는다. 조회 실패는 같은 파일의 `TableErrorRow` 다.
 
-// 사용 예시
-<TableEmpty colSpan={5} message="데이터셋이 없습니다" />
+```tsx
+<TableEmptyRow
+  colSpan={5}
+  message="데이터셋이 없습니다."
+  emptyAction={<Button size="sm" onClick={() => navigate("/data/datasets/new")}>새 데이터셋</Button>}
+/>
 ```
 
 ### 일반 빈 상태 (아이콘 + 메시지 + 액션)
@@ -179,7 +165,7 @@ function EmptyState({
 
 ### 2. Toast Error (토스트 에러)
 
-API 호출 실패 등 비동기 에러에 사용. `extractApiError`를 통해 서버 에러 메시지를 추출한다.
+저장·삭제 등 요청 실패에 사용(목록 조회 실패는 `TableErrorRow`). `extractApiError`를 통해 서버 에러 메시지를 추출한다.
 
 ```tsx
 try {
@@ -243,7 +229,7 @@ function ErrorPage({ error, reset }: { error: Error; reset: () => void }) {
 | 함수 | 사용 시점 | 예시 |
 |------|----------|------|
 | `toast.success()` | Mutation 성공 (생성, 수정, 삭제) | `toast.success("데이터셋이 생성되었습니다")` |
-| `toast.error()` | API 실패, 유효성 검사 에러 | `toast.error(extractApiError(err))` |
+| `toast.error()` | 저장·삭제 등 요청 실패, 유효성 검사 에러 | `toast.error(extractApiError(err))` |
 | `toast.info()` | 정보성 알림 | `toast.info("클립보드에 복사되었습니다")` |
 | `toast.warning()` | 비차단 경고 | 드물게 사용 |
 
@@ -332,7 +318,8 @@ import { Toaster } from "sonner";
 | 상황 | 권장 패턴 |
 |----------|----------|
 | 폼 필드 유효성 | Inline error (`text-destructive`) |
-| API 호출 실패 | `toast.error()` |
+| 저장·삭제 등 요청 실패 | `toast.error()` |
+| 목록(표) 조회 실패 | `TableErrorRow` |
 | 맥락 안의 지속되는 상태·경고 | InlineBanner (`warning` / `info`) |
 | 위젯 렌더링 실패 | Error Boundary |
 | 페이지 로드 실패 | Full page error |

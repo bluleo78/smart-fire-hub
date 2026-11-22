@@ -241,8 +241,8 @@ P3: 다크 모드 전수 검증 (P2 hex/rgb 교체 후)
 
 | # | 항목 | 근거 / 이연 사유 |
 |---|------|------------------|
-| G1 | **문서 간 icon 버튼 표기 불일치** — `04-components.md:253`은 `size="icon-sm"`, `07-iconography.md:66`은 `size="icon" className="h-8 w-8"`. 렌더 결과는 32px 정사각형으로 동일하지만 표기가 갈린다. 코드베이스 실사용은 `size="icon"` 59건 : `size="icon-sm"` 2건 | 한쪽으로 통일하고 나머지 문서를 고쳐야 한다. `icon-sm`이 클래스 오버라이드 없이 같은 결과를 내지만, 실사용 다수는 `icon`이라 마이그레이션 비용이 크다 |
-| G2 | **클릭 가능한 `<TableRow>`가 키보드 도달 불가** — `onClick`만 있고 `tabIndex`/`role`/`onKeyDown` 없음. `ReportListTab`, `JobExecutionsTab` 등 다수 | `10-accessibility.md` §F 위반이나 앱 전역 "클릭 가능 행" 관행 문제. 공용 `<ClickableTableRow>` 래퍼로 한 번에 해결 권장 |
+| G1 | **문서 간 icon 버튼 표기 불일치** — `04-components.md` §C 패턴 2는 `size="icon-sm"`, `07-iconography.md:66`은 `size="icon" className="h-8 w-8"`. 렌더 결과는 32px 정사각형으로 동일하지만 표기가 갈린다. 코드베이스 실사용은 2026-11-23 기준 `size="icon"` 69건 : `size="icon-sm"` 21건 | 한쪽으로 통일하고 나머지 문서를 고쳐야 한다. `icon-sm`이 클래스 오버라이드 없이 같은 결과를 내지만, 실사용 다수는 `icon`이라 마이그레이션 비용이 크다 |
+| G2 | **클릭 가능한 `<TableRow>`의 키보드 경로** — 행에 `role`·`tabIndex`를 주지 않고 행 안 링크·버튼을 경로로 둔다(WD-816, [05 §A](./05-page-patterns.md#a-list-page-목록-페이지)) | 2026-11-23 재확인(WD-975): `ReportListTab`·`JobExecutionsTab`을 포함한 목록은 링크·버튼이 있다. `OntologyManageDialog`의 행 선택은 행 안 경로가 없고 `OntologySelect`로 같은 선택을 한다. 남은 결함은 `DatasetDataTab`의 더블클릭 행 수정(WD-977) |
 | G3 | **`<Table>`에 `aria-label` 없음** | `10-accessibility.md` §D.2에 기재된 기존 결함. 전역 |
 | G4 | **`TableEmptyRow`에 아이콘 슬롯 없음** — `06-feedback-states.md` §B의 `EmptyState`는 아이콘 24px + 제목 + 설명 + 액션인데, 테이블 변형은 텍스트+버튼만 지원 | 컴포넌트 자체의 한계. 아이콘 prop 추가 시 모든 테이블 빈 상태가 함께 개선된다 |
 | G5 | **`calc(100vh - 280px)` 매직넘버** — 브레이크포인트별 헤더/탭 높이가 달라지면 어긋난다 | `ReportListTab`은 `max-h`로 완화했으나 `JobExecutionsTab` 등은 여전히 고정 `height`. 공용 훅(`useTableViewportHeight`)으로 추출 제안 |
