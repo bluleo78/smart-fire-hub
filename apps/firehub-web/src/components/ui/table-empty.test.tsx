@@ -1,20 +1,24 @@
 import { act, render, screen } from '@testing-library/react';
+import type { ComponentType } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ANNOUNCE_DELAY_MS, TableEmptyRow } from './table-empty';
+import { ANNOUNCE_DELAY_MS, TableEmptyRow, TableErrorRow } from './table-empty';
 
-/** TableEmptyRow 는 <tr> 이므로 table/tbody 로 감싸 렌더한다. */
-function renderRow(props: Parameters<typeof TableEmptyRow>[0]) {
-  const ui = (p: Parameters<typeof TableEmptyRow>[0]) => (
+/** 빈·실패 행은 <tr> 이므로 table/tbody 로 감싸 렌더한다. */
+function renderInTable<P extends object>(Row: ComponentType<P>, props: P) {
+  const ui = (p: P) => (
     <table>
       <tbody>
-        <TableEmptyRow {...p} />
+        <Row {...p} />
       </tbody>
     </table>
   );
   const result = render(ui(props));
-  return { ...result, rerenderRow: (p: Parameters<typeof TableEmptyRow>[0]) => result.rerender(ui(p)) };
+  return { ...result, rerenderRow: (p: P) => result.rerender(ui(p)) };
 }
+
+const renderRow = (props: Parameters<typeof TableEmptyRow>[0]) => renderInTable(TableEmptyRow, props);
+const renderErrorRow = (props: Parameters<typeof TableErrorRow>[0]) => renderInTable(TableErrorRow, props);
 
 /** status 안 문구가 아직 접근성 트리에서 빠져 있는지(aria-hidden) — 화면 문구는 처음부터 있다 */
 function hiddenFromAT(status: HTMLElement) {
@@ -137,5 +141,77 @@ describe('TableEmptyRow 라이브 리전 (WD-815)', () => {
     expect(before).toBeGreaterThan(0);
     unmount();
     expect(vi.getTimerCount()).toBeLessThan(before);
+  });
+});
+
+describe('TableErrorRow (WD-938)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('인자가 없으면 빨간 글자·기본 여백의 셀 안 alert 이다', () => {
+    renderErrorRow({ colSpan: 3 });
+    flush();
+    const alert = screen.getByRole('alert');
+    const td = screen.getByRole('cell');
+    expect(td.hasAttribute('role')).toBe(false);
+    // 톤은 문구 노드에만 — 셀(action 이 물려받는 자리)에는 없다
+    expect(alert.firstElementChild?.className).toContain('text-destructive');
+    expect(td.className).not.toContain('text-destructive');
+    expect(td.className).toContain('text-center');
+    expect(td.className).not.toContain('py-12');
+    expect(td.contains(alert)).toBe(true);
+    expect(alert.getAttribute('aria-live')).toBe('assertive');
+  });
+
+  it('tone=muted 는 지연 전·후 모두 흐린 글자다', () => {
+    renderErrorRow({ colSpan: 3, tone: 'muted' });
+    const td = screen.getByRole('cell');
+    const alert = screen.getByRole('alert');
+    for (const announced of [false, true]) {
+      if (announced) flush();
+      expect(alert.firstElementChild?.className).toContain('text-muted-foreground');
+      expect(alert.firstElementChild?.className).not.toContain('text-destructive');
+    }
+    expect(td.className).not.toContain('text-muted-foreground');
+  });
+
+  it('className 은 셀에 더해진다', () => {
+    renderErrorRow({ colSpan: 3, className: 'py-12 font-medium' });
+    const td = screen.getByRole('cell');
+    expect(td.className).toContain('py-12');
+    expect(td.className).toContain('font-medium');
+    expect(td.className).not.toContain('text-destructive');
+  });
+
+  it('action 은 alert 밖·같은 셀이고 지연 전후 같은 노드다', () => {
+    renderErrorRow({ colSpan: 3, action: <button>다시 시도</button> });
+    const before = screen.getByRole('button', { name: '다시 시도' });
+    flush();
+    const button = screen.getByRole('button', { name: '다시 시도' });
+    const alert = screen.getByRole('alert');
+    const td = screen.getByRole('cell');
+    expect(button).toBe(before);
+    expect(alert.contains(button)).toBe(false);
+    expect(td.contains(button)).toBe(true);
+    expect(button.closest('[aria-hidden="true"]')).toBeNull();
+    // 톤 클래스는 action 이 든 셀에 없다 — 버튼이 빨간 글자를 물려받지 않게
+    expect(td.className).not.toContain('text-destructive');
+    expect(td.className).not.toContain('text-muted-foreground');
+  });
+
+  it('문구·tone 이 바뀌어도 같은 alert 다', () => {
+    const { rerenderRow } = renderErrorRow({ colSpan: 3, message: '첫 문구' });
+    flush();
+    const alert = screen.getByRole('alert');
+    rerenderRow({ colSpan: 3, message: '새 문구', tone: 'muted' });
+    expect(screen.getByRole('alert')).toBe(alert);
+    expect(alert.textContent).toBe('새 문구');
+    // 낭독된 뒤 tone 이 바뀌어도 문구 노드의 톤이 따라간다
+    expect(alert.firstElementChild?.className).toContain('text-muted-foreground');
   });
 });

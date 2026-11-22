@@ -3,6 +3,7 @@ import type { Page } from '@playwright/test';
 import { createJob, createTemplate } from '../../factories/ai-insight.factory';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { expectTableErrorAlert } from '../../fixtures/table-error-alert';
 
 /**
  * 스마트 작업 조회 권한(proactive:read)이 없는 사용자 E2E (WD-137).
@@ -168,6 +169,8 @@ test.describe('리포트·실행 이력 — 403 이 아닌 조회 실패 (WD-137
 
     // 전역 retry 1회(백오프 약 1초)를 거친 뒤 오류가 확정된다
     await expect(page.getByText('리포트 목록을 불러오지 못했습니다.')).toBeVisible({ timeout: 10_000 });
+    // 조회 실패를 스크린리더에 알린다(role=alert, WD-938)
+    await expectTableErrorAlert(page, '리포트 목록을 불러오지 못했습니다.');
     await expect(page.getByText('스마트 작업을 만들면 생성된 리포트가 여기에 쌓입니다.')).toHaveCount(0);
     await expect(page.getByText('아직 생성된 리포트가 없습니다.')).toHaveCount(0);
     await expect(page.getByTestId('reports-forbidden')).toHaveCount(0);
@@ -200,6 +203,8 @@ test.describe('리포트·실행 이력 — 403 이 아닌 조회 실패 (WD-137
     await page.goto('/ai-insights/jobs/1?tab=executions');
 
     await expect(page.getByText('실행 이력을 불러오지 못했습니다.')).toBeVisible({ timeout: 10_000 });
+    // 조회 실패를 스크린리더에 알린다(role=alert, WD-938)
+    await expectTableErrorAlert(page, '실행 이력을 불러오지 못했습니다.');
     await expect(page.getByText('실행 이력이 없습니다.')).toHaveCount(0);
     await expect(page.getByTestId('executions-forbidden')).toHaveCount(0);
   });

@@ -1,6 +1,8 @@
 import { SearchX } from 'lucide-react';
 import { type ReactNode, useEffect, useState } from 'react';
 
+import { cn } from '@/lib/utils';
+
 import { Button } from './button';
 import { TableCell,TableRow } from './table';
 
@@ -129,6 +131,16 @@ interface TableErrorRowProps {
   colSpan: number;
   /** 조회 실패 시 노출할 메시지 (기본: "데이터를 불러오는 데 실패했습니다.") */
   message?: string;
+  /** 문구 글자 톤 — 기본 error(빨강), 권한 없음처럼 흐린 안내는 muted */
+  tone?: 'error' | 'muted';
+  /** 셀에 더할 클래스 (예: 여백 py-12) */
+  className?: string;
+  /**
+   * 문구 옆에 둘 동작 (예: "다시 시도" 버튼).
+   * alert 밖, DelayedStatus 바로 뒤 형제로 둔다 — DelayedStatus 는 지연 동안 내용을 aria-hidden 으로 두고
+   * 지연 뒤 노드를 갈아 끼우므로 안에 넣으면 버튼이 숨겨졌다 다시 만들어져 초점·낭독이 끊긴다.
+   */
+  action?: ReactNode;
 }
 
 /**
@@ -136,16 +148,24 @@ interface TableErrorRowProps {
  *
  * 실패 문구를 role="alert" 라이브 리전 안에 두어 스크린리더 사용자가 조회 실패를 알게 한다(WCAG 4.1.3).
  * - alert 영역은 td 안쪽에 둔다 — td 에 role 을 덮어쓰면 표의 cell 역할이 깨지기 때문이다.
+ * - 톤 클래스는 문구 노드(DelayedStatus 의 className)에만 둔다 — td 에 두면 outline 버튼(color: inherit)인
+ *   action 이 빨간/흐린 글자를 물려받아 예전 모양(버튼은 본문 글자색)이 바뀐다.
  * - 내용과 함께 마운트된 라이브 리전 낭독 누락(WD-815)을 피하려 TableEmptyRow 와 같은 DelayedStatus 를 쓴다.
  */
 export function TableErrorRow({
   colSpan,
   message = '데이터를 불러오는 데 실패했습니다.',
+  tone = 'error',
+  className,
+  action,
 }: TableErrorRowProps) {
   return (
     <TableRow>
-      <TableCell colSpan={colSpan} className="text-center text-destructive">
-        <DelayedStatus role="alert">{message}</DelayedStatus>
+      <TableCell colSpan={colSpan} className={cn('text-center', className)}>
+        <DelayedStatus role="alert" className={tone === 'muted' ? 'text-muted-foreground' : 'text-destructive'}>
+          {message}
+        </DelayedStatus>
+        {action}
       </TableCell>
     </TableRow>
   );

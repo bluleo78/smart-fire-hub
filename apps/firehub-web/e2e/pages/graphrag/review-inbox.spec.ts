@@ -4,6 +4,7 @@ import { createDatePropertyReviewItem, createEntityReviewItem, createEvidenceChu
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { expectNoHorizontalOverflow } from '../../fixtures/long-unbroken-name';
+import { expectTableErrorAlert } from '../../fixtures/table-error-alert';
 
 test.describe('AI 검수 인박스', () => {
   // 기본은 검수 권한(dataset:write)이 있는 사용자 — 조치 버튼은 이 권한이 있을 때만 그려진다(WD-127).
@@ -70,6 +71,9 @@ test.describe('AI 검수 인박스', () => {
 
     const table = page.getByTestId('review-inbox-table');
     await expect(table.getByText('AI 검수 항목을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.')).toBeVisible();
+    // 권한 안내도 alert 로 알리되(WD-938) 흐린 안내 톤을 유지한다
+    await expectTableErrorAlert(page, 'AI 검수 항목을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.');
+    await expect(page.getByRole('alert').getByText('AI 검수 항목을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.')).toHaveClass(/text-muted-foreground/);
     await expect(table.getByText('검수 대기 중인 항목이 없습니다.')).toHaveCount(0);
     expect(capture.requests).toHaveLength(1);
   });
@@ -82,6 +86,9 @@ test.describe('AI 검수 인박스', () => {
 
     const table = page.getByTestId('review-inbox-table');
     await expect(table.getByText('검수 항목을 불러오지 못했습니다.')).toBeVisible({ timeout: 10000 });
+    // 조회 실패를 스크린리더에 알린다(role=alert, WD-938) — 500 은 빨간 글자 그대로
+    await expectTableErrorAlert(page, '검수 항목을 불러오지 못했습니다.');
+    await expect(page.getByRole('alert').getByText('검수 항목을 불러오지 못했습니다.')).toHaveClass(/text-destructive/);
     await expect(table.getByText('검수 대기 중인 항목이 없습니다.')).toHaveCount(0);
   });
 
