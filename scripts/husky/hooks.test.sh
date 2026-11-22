@@ -134,6 +134,23 @@ rm apps/firehub-web/src/b.ts
 out=$(FULL_REGRESSION_CMD='true' env -u PREPUSH_VERIFIED_FILE sh scripts/husky/full-regression.sh 2>&1) && r=0 || r=$?
 check "테스트 명령은 기록 파일 없이 거부" "테스트 전용" "$out"
 
+# 검토자 풀테스트 — 기준을 green 으로(FULL_REGRESSION_BASE). green 뒤 web 만 → web, api 포함 → full, 문서만 → 돌 단계 없이 통과.
+git branch -f green main
+git checkout -qb g-web main
+echo g > apps/firehub-web/src/g.ts && git add -A && git commit -qm g-web
+out=$(FULL_REGRESSION_BASE=green FULL_REGRESSION_CMD='echo "scope=$GATE_SCOPE"' sh scripts/husky/full-regression.sh 2>&1)
+check "green 뒤 web 만 바뀌면 web 범위" "scope=web" "$out"
+check "범위 안내에 기준이 나온다" "기준 green" "$out"
+echo g > apps/firehub-api/src/G.java && git add -A && git commit -qm g-api
+out=$(FULL_REGRESSION_BASE=green FULL_REGRESSION_CMD='echo "scope=$GATE_SCOPE"' sh scripts/husky/full-regression.sh 2>&1)
+check "green 뒤 api 가 바뀌면 full" "scope=full" "$out"
+git checkout -qb g-doc main
+mkdir -p docs && echo g > docs/g.md && git add -A && git commit -qm g-doc
+out=$(FULL_REGRESSION_BASE=green FULL_REGRESSION_CMD='echo "scope=$GATE_SCOPE"' sh scripts/husky/full-regression.sh 2>&1; echo "exit=$?")
+check "green 뒤 문서만이면 돌 단계 없이 통과" "범위: 없음" "$out"
+check_not "문서만이면 회귀 명령을 부르지 않는다" "scope=" "$out"
+check "문서만 통과는 종료 0" "exit=0" "$out"
+
 # ── 3) pre-commit 판정 (이 저장소, dry-run) ───────────────────────
 cd "$REPO_ROOT"
 precommit() { PRECOMMIT_CHANGED_FILES="$1" PRECOMMIT_DRY_RUN=1 sh scripts/husky/pre-commit.sh 2>&1; }

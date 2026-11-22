@@ -1,7 +1,7 @@
 # smart-fire-hub — work-loop 프로젝트 설정
 
 genia-works work-loop 이 이 저장소의 이슈를 무인 처리할 때 참고하는 저장소별 설정이다(`process-issue.md` 2·6·8·9번과 「PR 리뷰·머지」·「풀테스트·green (검토자)」, `SKILL.md` 「이슈 만들기·담당 바꾸기」·「검토자」).
-경로는 모두 워크트리 루트 기준이다. 흐름은 smart-workplace `.work-loop/project.md` 를 따라간다 — 그쪽이 바뀌면 이 파일도 맞춘다(마지막 맞춤: WP-1959·WP-1999·WP-2003, 2026-11-22).
+경로는 모두 워크트리 루트 기준이다. 흐름은 smart-workplace `.work-loop/project.md` 를 따라간다 — 그쪽이 바뀌면 이 파일도 맞춘다(마지막 맞춤: WP-1959·WP-1999·WP-2003(풀테스트 green 기준 범위 99edd2a6b 까지), 2026-11-22).
 
 ## 1. 개요
 
@@ -112,8 +112,11 @@ WP-2003 뒤 이 저장소는 검토자가 있어 개발자가 push 게이트를 
 개발자는 push 게이트 없이(`--no-verify`) 올리고 검토자는 받는 대로 머지한다. 합친 main 은 검토자가 리뷰할 것이 없을 때 아래로 한 번에 돌리고, 통과한 커밋으로 `green` 브랜치를 옮긴다. 개발자는 `origin/green` 에서 브랜치를 딴다. **풀테스트를 띄운 뒤 green 을 옮길 때까지(실패해 고치는 동안 포함) 검토자는 PR 을 머지하지 않는다** — 리뷰·승인만 하고, green 을 옮긴 뒤 승인한 순서대로 머지한다. 그동안 main 에는 풀테스트 실패의 고침·되돌리기만 들어가, 다시 돌린 풀테스트가 고침만 검사한다.
 
 ```sh
-pnpm install && FULL_REGRESSION_SCOPE=full pnpm test:full   # green 워크트리(MAIN/.claude/worktrees/green, main 의 정한 커밋에 detach)에서. 범위 판정은 origin/main 기준이라 main HEAD 에서는 빈 범위가 나오므로 전체를 강제한다
+pnpm install && FULL_REGRESSION_BASE=origin/green pnpm test:full   # green 워크트리(MAIN/.claude/worktrees/green, main 의 정한 커밋에 detach)에서
 ```
+
+- **범위는 green 뒤 바뀐 앱만**: green 은 이미 전체를 통과한 커밋이라 `origin/green` 과 갈라진 뒤 바뀐 코드 파일로 범위를 고른다(`apps/firehub-web` 만 → web vitest·E2E 만, 그 밖의 코드가 바뀌면 전체, 문서만이면 돌 단계 없이 통과). 띄우기 전에 `git fetch origin` 으로 `origin/green` 을 새로 받는다.
+- smart-workplace 의 「web vitest 는 main CI 결과로 대신」(`FULL_REGRESSION_CI_VITEST`)은 이 저장소에 CI 가 없어 들이지 않았다 — 풀테스트가 vitest 를 직접 돈다(몇 분).
 
 - 실패한 테스트만 다시 돌릴 때(불안정 확인·수정 확인): api `cd apps/firehub-api && ./gradlew cleanTest test --tests "<클래스>"`, web vitest `cd apps/firehub-web && pnpm exec vitest run <파일>`, web E2E `cd apps/firehub-web && E2E_SERVER=preview PW_PORT=<빈 포트> pnpm test:e2e <spec> --workers=1`.
 - 풀테스트는 web(vitest·E2E)·api 만 본다. ai-agent·admin·channel·executor 는 들지 않는다 — 위 「바뀐 범위 테스트를 고르는 법」.
@@ -144,7 +147,8 @@ work-loop 는 아래 명령을 기다리지 않고 백그라운드(`bg-job`)로 
 | 명령 | 예상 시간 | 근거 |
 |---|---|---|
 | `pnpm test:full`(push 게이트) — 전체(web vitest·E2E + api gradle) | 60분 | 아래 둘의 합 |
-| 풀테스트(`FULL_REGRESSION_SCOPE=full pnpm test:full`, green 워크트리 — 검토자) | 60분 | 위와 같은 단계 |
+| 풀테스트(3절 「풀테스트」 명령, green 워크트리 — 검토자) — web 만 바뀐 회차 | 25분 | 아래 web 만 범위와 같은 단계 |
+| 풀테스트 — api·공유 영역이 바뀐 회차(전체) | 60분 | 전체 게이트와 같은 단계 |
 | `pnpm test:full` — web 만 바꾼 범위(gradle 빠짐) | 25분 | 기차 `integ/developer2-29` 게이트, E2E 2951건 24.1분(2026-11-17) |
 | web E2E 전체(`apps/firehub-web`, `PW_PORT=<빈 포트> pnpm exec playwright test`) | 24분 | 위 게이트의 E2E 단계, WD-772 커밋 훅 2939건 23.2분 |
 | `./gradlew test`(api 전체, `apps/firehub-api`) — 기본 포크 2 | 35분 | WD-764 실측 2070초(12,9xx건, 실패 0, 2026-11-17) |
