@@ -75,7 +75,9 @@ test.describe('파이프라인 편집 — 저장 중 패널 삭제 창 (WD-954)'
     await expect(page.locator('.react-flow__node')).toHaveCount(3);
     await expect(page.getByText('미저장 변경사항')).toHaveCount(0);
     expect(puts).toHaveLength(1);
-    expect(puts[0].steps).toHaveLength(3);
+    // 개수만이 아니라 저장 요청에 입력한 이름(s2-renamed)이 그대로 실렸는지까지 본다(폼 입력 → API payload).
+    // 요청은 창을 열기 전에 보낸 것이라, 「삭제가 먹지 않았다」는 위 노드 수·미저장 없음 단언이 맡는다.
+    expect(puts[0].steps.map((s) => s.name)).toEqual(['s1', 's2-renamed', 's3']);
 
     // 다시 수정 모드로 들어가도 닫힌 창이 되살아나지 않는다
     // 수정 모드로 바뀐 것(저장 버튼)을 먼저 기다린 뒤 확인해야, 모드 전환 전에 곧바로 통과하지 않는다.
