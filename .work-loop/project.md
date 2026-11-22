@@ -1,7 +1,7 @@
 # smart-fire-hub — work-loop 프로젝트 설정
 
-genia-works work-loop 이 이 저장소의 이슈를 무인 처리할 때 참고하는 저장소별 설정이다.
-경로는 모두 워크트리 루트 기준이다.
+genia-works work-loop 이 이 저장소의 이슈를 무인 처리할 때 참고하는 저장소별 설정이다(`process-issue.md` 2·6·8·9번과 「PR 리뷰·머지」·「풀테스트·green (검토자)」, `SKILL.md` 「이슈 만들기·담당 바꾸기」·「검토자」).
+경로는 모두 워크트리 루트 기준이다. 흐름은 smart-workplace `.work-loop/project.md` 를 따라간다 — 그쪽이 바뀌면 이 파일도 맞춘다(마지막 맞춤: WP-1959·WP-1999·WP-2003, 2026-11-22).
 
 ## 1. 개요
 
@@ -82,21 +82,58 @@ PW_PORT=6151 pnpm exec playwright test           # E2E (기본 5051 — 다른 �
 - firehub-channel: `cd apps/firehub-channel && pnpm test`
 - firehub-executor: `cd apps/firehub-executor && pnpm test` (pytest)
 
+### 바뀐 범위 테스트를 고르는 법 (WP-2003)
+
+개발자는 위 앱별 명령 중 **바뀐 파일(`git diff --name-only $(git merge-base origin/main HEAD) HEAD`)에 해당하는 것만** 돌리고 PR 본문에 명령과 결과를 적는다. push 게이트(`pnpm test:full`)는 돌리지 않는다 — 합친 main 의 회귀는 검토자가 머지 뒤 아래 「풀테스트」로 잡는다.
+- api: 바꾼 패키지(`--tests "com.smartfirehub.<패키지>.*"`). 공용(`global`·보안 설정·마이그레이션·jOOQ)을 바꿨으면 그 기능을 쓰는 패키지까지 넓힌다. 커밋 전 바꾼 파일만 spotless(6절 「포맷터 전체 실행 금지」).
+- ↳ 마이그레이션(`apps/firehub-api/src/main/resources/db/migration/`): `./gradlew generateJooq` 결과를 같은 커밋에. 번호(`V<n>__`)가 origin/main 의 마지막보다 큰지 커밋 전에 `pnpm check:migrations origin/main HEAD` 로 본다(그 뒤 main 과 겹치면 검토자가 손 머지에서 옮긴다 — 8절).
+- web: `pnpm typecheck` · 바꾼 도메인 E2E(`e2e/pages/<도메인>/`) · 바꾼 단위 테스트. 공유 영역(components/api/lib/hooks/types, `e2e/` 헬퍼, `vite.config.ts`·`playwright.config.ts`)을 바꿨으면 E2E 전체.
+- ai-agent·admin·channel·executor: 그 앱의 테스트 전체(위 명령). **풀테스트는 web·api 만 돈다** — 이 앱들의 회귀는 개발자 테스트가 유일한 확인이라 줄이지 않는다.
+- 훅·스크립트(`scripts/husky/`·`.husky/`·`scripts/check-migration-versions*`): `pnpm test:hooks`.
+- 문서(`*.md`·`docs/`·`.work-loop/`·`.claude/`)만: 테스트 없음.
+
 ### 커밋 훅·push 게이트 (WD-459)
+
+WP-2003 뒤 이 저장소는 검토자가 있어 개발자가 push 게이트를 돌리지 않는다(`git push --no-verify`). 아래 게이트는 사람 세션과 검토자의 풀테스트가 쓴다.
 - **커밋 훅**(`scripts/husky/pre-commit.sh`): lint-staged → (코드 변경이 있으면) 전체 typecheck → web 변경 영역별 E2E → api 변경분 gradle.
   - 문서만(`scripts/husky/noncode.sh` — `docs/`·루트 `.md`·`README/CLAUDE/AGENTS.md`·`.claude/`·`.work-loop/`) 바꾸면 모두 건너뛴다. `apps/` 아래 다른 `.md` 는 코드다.
   - web 코드를 바꾸면 커밋 때는 `@smoke` + 바꾼 도메인(`src/pages/<d>/`) spec + 바꾼 spec 파일(`e2e/**/*.spec.ts`)만 playwright 한 번에 돈다. 공유 영역(components/api/lib/hooks/types, `e2e/` 헬퍼, 설정)·매핑 밖 페이지도 `@smoke` 만 — 전체 E2E 는 커밋 때 돌지 않고 push 게이트가 한 번 돈다 (WD-764).
   - gradle 은 api 를 바꿨을 때만 — 바뀐 테스트 클래스와 이름 규칙(`Foo*Test`·`Foo*Tests`·`Foo*IT`) 매칭 테스트만, 없으면 `compileTestJava`. 전체는 push 게이트.
   - 훅 파일(`scripts/husky/`·`.husky/`·`scripts/check-migration-versions*`)을 바꾸면 판정 테스트 `pnpm test:hooks` 가 먼저 돈다 — `scripts/husky/*.test.sh` 전부(`hooks.test.sh`·기차 `train.test.sh`)와 `node --test scripts/check-migration-versions.test.mjs`.
-- **push 게이트**(`pnpm test:full` = `scripts/husky/full-regression.sh`, pre-push 가 부른다): web E2E 전체(preview) → api `gradlew test` 전체(JaCoCo 끔).
+- **push 게이트**(`pnpm test:full` = `scripts/husky/full-regression.sh`, pre-push 가 부른다): zod 단일 판 가드 → web vitest 전체 → web E2E 전체(preview) → api `gradlew test` 전체(JaCoCo 끔).
   - **범위**: origin/main 과 갈라진 뒤 바꾼 코드가 `apps/firehub-web` 뿐이면 gradle 을 건너뛴다(웹 E2E 는 API 를 모킹). 그 밖은 전체. 첫 줄 `[full-regression] 범위: …` 에 찍힌다. `FULL_REGRESSION_SCOPE=full pnpm test:full` 이면 전체 강제.
   - **통과 기록**: 끝까지 통과하고 작업 트리가 커밋과 같으면 그 트리를 git common dir 의 `firehub-prepush-verified-trees` 에 기록한다(모든 워크트리 공유).
   - **pre-push 생략**: 새 커밋 없음·삭제·비코드만·이미 통과한 트리(필요 범위를 덮을 때)면 회귀를 건너뛴다 — `[pre-push] 회귀 생략 — …`.
   - **미리 돌리기**: 커밋한 상태에서 `pnpm test:full` 을 bg-job 으로 띄우면, 통과한 뒤의 `git push` 는 회귀 없이 끝난다. 지금 HEAD 트리가 기록됐는지는 워크트리에서 `sh -c '. scripts/husky/noncode.sh && . scripts/husky/gate-scope.sh && . scripts/husky/verified-trees.sh && is_verified_head'`(성공이면 기록됨 — 다시 돌리지 않는다). rebase 하면 트리가 바뀌어 다시 돌아야 한다.
   - 게이트는 저장소 전역 락(`firehub-test-gate.lock`)으로 한 번에 하나만 돈다 — 락 파일을 지우거나 다른 세션의 게이트를 끝내지 않는다.
 
+### 풀테스트 (WP-2003 — 검토자, `process-issue.md` 「풀테스트·green (검토자)」)
+
+개발자는 push 게이트 없이(`--no-verify`) 올리고 검토자는 받는 대로 머지한다. 합친 main 은 검토자가 리뷰할 것이 없을 때 아래로 한 번에 돌리고, 통과한 커밋으로 `green` 브랜치를 옮긴다. 개발자는 `origin/green` 에서 브랜치를 딴다. **풀테스트를 띄운 뒤 green 을 옮길 때까지(실패해 고치는 동안 포함) 검토자는 PR 을 머지하지 않는다** — 리뷰·승인만 하고, green 을 옮긴 뒤 승인한 순서대로 머지한다. 그동안 main 에는 풀테스트 실패의 고침·되돌리기만 들어가, 다시 돌린 풀테스트가 고침만 검사한다.
+
+```sh
+pnpm install && FULL_REGRESSION_SCOPE=full pnpm test:full   # green 워크트리(MAIN/.claude/worktrees/green, main 의 정한 커밋에 detach)에서. 범위 판정은 origin/main 기준이라 main HEAD 에서는 빈 범위가 나오므로 전체를 강제한다
+```
+
+- 실패한 테스트만 다시 돌릴 때(불안정 확인·수정 확인): api `cd apps/firehub-api && ./gradlew cleanTest test --tests "<클래스>"`, web vitest `cd apps/firehub-web && pnpm exec vitest run <파일>`, web E2E `cd apps/firehub-web && E2E_SERVER=preview PW_PORT=<빈 포트> pnpm test:e2e <spec> --workers=1`.
+- 풀테스트는 web(vitest·E2E)·api 만 본다. ai-agent·admin·channel·executor 는 들지 않는다 — 위 「바뀐 범위 테스트를 고르는 법」.
+- green 의 첫 위치는 이 흐름을 들인 때의 origin/main 커밋이다(사람이 만든다 — `git push origin <sha>:refs/heads/green`).
+- **생성 코드**(손 머지가 다시 만드는 것): `apps/firehub-api/src/main/generated`(jOOQ) — 충돌하면 머지 워크트리에서 `cd apps/firehub-api && ./gradlew generateJooq`(Docker 필요 — 임시 Postgres 에 마이그레이션을 적용해 만든다)로 다시 만들어 넣는다.
+
+### 통합 PR 정리 (WP-2003 — 예전 묶음 흐름을 끔)
+
+이 절은 `process-issue.md` 가 찾는 「기차」 절이 아니다 — 이 저장소에는 「기차」 절이 없으니 개발자는 이슈마다 PR 을 낸다.
+
+기차(WD-460 — 이슈를 `integ/<AI 이름>-<번호>` 에 쌓아 게이트 한 번·PR 하나)는 껐다. 게이트를 묶어 돌리려던 것인데 개발자 게이트가 없어졌고, 「앞 기차가 머지돼야 다음 출발」이 줄을 하나 더 만들었다. 새 이슈는 이슈마다 PR 이다(`process-issue.md` 9번 — 브랜치 `<커밋 타입>/<소문자 이슈 키>` 를 push 하고 PR 제목 `<이슈 키> <이슈 제목>`).
+
+- 쌓았지만 아직 출발하지 않은 내 기차가 있으면(`pnpm train next <AI 이름>`) 출발 게이트 없이 기차 워크트리에서 `git push --no-verify -u origin <기차>` 하고 통합 PR(제목 `통합 <키>·…` — `pnpm train keys <기차>`, 본문 첫 줄 `개발: <username>`, 이슈마다 요약·바뀐 범위 테스트·라이브 검증)로 올린다. rebase 하지 않는다.
+- 이미 올린 통합 PR 은 검토자가 그대로 리뷰·머지한다. 반려되면 같은 기차에 수정 커밋을 더해 `--no-verify` 로 push 한다.
+- 스크립트 `scripts/husky/train.sh` 는 이 정리에만 쓴다.
+
 ### 커밋 훅으로 충분한 것 (`process-issue.md` 9번 「돌릴지부터 판단」)
-push 게이트가 커밋 훅보다 더 돌리는 것은 web E2E 전체와 api gradle 전체다. 브랜치가 바꾼 파일이 모두 아래에 들면 게이트를 돌리지 않고 근거를 PR 에 남긴다.
+
+WP-2003 뒤 개발자는 push 게이트를 돌리지 않으므로 이 목록은 검토자가 없을 때(사람이 리뷰하는 세션)만 쓴다.
+push 게이트가 커밋 훅보다 더 돌리는 것은 web vitest·E2E 전체와 api gradle 전체다. 브랜치가 바꾼 파일이 모두 아래에 들면 게이트를 돌리지 않고 근거를 PR 에 남긴다.
 - 비코드(`noncode.sh` 규칙) — 문서·`.work-loop/`·`.claude/`. pre-push 도 스스로 건너뛴다.
 - 그 밖의 코드 변경은 게이트를 돈다(다른 앱만 바꾼 변경을 게이트에서 빼는 것은 아직 없다).
 
@@ -106,15 +143,16 @@ work-loop 는 아래 명령을 기다리지 않고 백그라운드(`bg-job`)로 
 
 | 명령 | 예상 시간 | 근거 |
 |---|---|---|
-| `pnpm test:full`(push 게이트) — 전체(web E2E + api gradle) | 60분 | 아래 둘의 합 |
+| `pnpm test:full`(push 게이트) — 전체(web vitest·E2E + api gradle) | 60분 | 아래 둘의 합 |
+| 풀테스트(`FULL_REGRESSION_SCOPE=full pnpm test:full`, green 워크트리 — 검토자) | 60분 | 위와 같은 단계 |
 | `pnpm test:full` — web 만 바꾼 범위(gradle 빠짐) | 25분 | 기차 `integ/developer2-29` 게이트, E2E 2951건 24.1분(2026-11-17) |
-| 기차 출발 게이트(`pnpm test:full`, 기차 워크트리) | 실린 이슈들의 범위에 따라 위와 같음 | |
 | web E2E 전체(`apps/firehub-web`, `PW_PORT=<빈 포트> pnpm exec playwright test`) | 24분 | 위 게이트의 E2E 단계, WD-772 커밋 훅 2939건 23.2분 |
 | `./gradlew test`(api 전체, `apps/firehub-api`) — 기본 포크 2 | 35분 | WD-764 실측 2070초(12,9xx건, 실패 0, 2026-11-17) |
 | `./gradlew test -PtestForks=1`(api 전체, 포크 1) | 43분 | WD-764 같은 커밋 실측 2571초(실패 1 — 포크 2 에서는 통과) |
 
 - 포크 2 는 포크 1 보다 남은 메모리(`free` available 최저)가 13.3GB → 11.5GB 로 1.8GB 줄었고 스왑 사용은 늘지 않았다(31GB 호스트). 메모리가 작은 환경은 `FIREHUB_TEST_FORKS=1`.
-- 한 번에 `test:full` 하나만 돈다. 락(`firehub-test-gate.lock`)은 git common dir 에 있어 **한 클론(= AI 하나) 안의 워크트리·세션끼리만** 공유한다 — 다른 AI 의 클론과는 락이 아니라 CPU·메모리를 나눠 쓴다. 내 이슈의 커밋 훅·기차 게이트·측정을 한꺼번에 띄우면 서로 락을 기다리느라 그만큼 늦게 끝난다.
+- 한 번에 `test:full` 하나만 돈다. 락(`firehub-test-gate.lock`)은 git common dir 에 있어 **한 클론(= AI 하나) 안의 워크트리·세션끼리만** 공유한다 — 다른 AI 의 클론과는 락이 아니라 CPU·메모리를 나눠 쓴다. 내 이슈의 커밋 훅·풀테스트·측정을 한꺼번에 띄우면 서로 락을 기다리느라 그만큼 늦게 끝난다.
+- api 전체(`./gradlew test`)·web E2E 전체를 게이트 밖에서 직접 돌릴 때는 `-PtestForks`(또는 `FIREHUB_TEST_FORKS`)를 2 넘게 주지 않는다.
 
 ## 4. 격리 라이브 스택
 
@@ -221,7 +259,7 @@ playwright-cli -s=wl-$STACK_ID close
 다른 세션(사람의 dev 스택, 다른 클론의 라이브 스택, 사람의 맥이면 로컬 운영 배포)이 쓴다. 죽이거나, 재시작하거나, 데이터를 바꾸지 않는다.
 이 저장소는 세 곳에서 돈다 — **사람의 맥**, 여러 AI 클론이 함께 쓰는 **리눅스 호스트**, **k8s AI Pod 칸**. 아래는 어디서든 지키고, 맥에만 있는 것은 따로 묶었다.
 
-- **MAIN** = 메인 체크아웃 = `git rev-parse --path-format=absolute --git-common-dir` 의 부모 폴더(경로는 환경마다 다르다). MAIN 에서 브랜치를 만들거나 바꾸거나 파일을 고치지 않는다 — 모든 수정은 이슈·기차 워크트리에서 한다.
+- **MAIN** = 메인 체크아웃 = `git rev-parse --path-format=absolute --git-common-dir` 의 부모 폴더(경로는 환경마다 다르다). MAIN 에서 브랜치를 만들거나 바꾸거나 파일을 고치지 않는다 — 모든 수정은 이슈 워크트리(검토자의 손 머지·풀테스트는 그 워크트리·green 워크트리)에서 한다.
 - **dev 포트**: 5010(api), 5040(JobRunr 대시보드), 5020(ai-agent), 5030(channel), 5050(admin), 5173(web), 5051(admin E2E)
 - **dev 컨테이너/DB**: `smart-fire-hub-db-1`(5432, `smartfirehub`), `db-test`(5433), MinIO 9000/9001, Neo4j 7474/7687 — 루트 `docker-compose.yml` 의 `smart-fire-hub` project 전체
 - **공유 바탕의 다른 저장소 것**: `work-loop-shared` 의 내 것이 아닌 DB(`smartfirehub_*`)·버킷(`firehub-*`) — `status` 의 「다른 저장소」 목록. 공유 바탕 자체를 재시작·down 하지 않는다(`shared-down` 은 사람만).
@@ -259,65 +297,46 @@ playwright-cli -s=wl-$STACK_ID close
 
 이슈 DONE 은 운영 배포 뒤에 사람이 처리하므로, 서버의 `blocked`(선행이 DONE·CANCELED 가 아님)는 선행이 main 에 들어간 뒤에도 배포 전까지 켜져 있다. 후속 개발은 main 위에서 하므로 배포를 기다리지 않는다 — 내 이슈든 대기열 이슈든 `blocked` 를 아래 기준으로 다시 판정한다.
 
-- 모든 선행(`get_issue_detail` 의 `blockedBy`)이 다음 중 하나면 착수할 수 있다: DONE·CANCELED / 선행이 실린 PR(제목 `통합 …` 에 `<선행 키>` 가 든 것, 또는 기차 전의 `<선행 키> ` 로 시작하는 것 중 가장 최근 것 — `process-issue.md` 맨 위 갈래와 같은 조회)이 `MERGED` / 선행의 AI 작업이 「<커밋> 머지 — 검토 대기」(REVIEW).
+- 모든 선행(`get_issue_detail` 의 `blockedBy`)이 다음 중 하나면 착수할 수 있다: DONE·CANCELED / 선행 PR(제목이 `<선행 키> ` 로 시작하는 것, 또는 남은 통합 PR 제목 `통합 …` 에 `<선행 키>` 가 든 것 중 가장 최근 것 — `process-issue.md` 맨 위 갈래와 같은 조회)이 `MERGED` / 선행의 AI 작업이 「<커밋> 머지 — 검토 대기」(REVIEW). 선행이 머지됐어도 아직 green 에 없으면(풀테스트 전) 새 브랜치를 `origin/green` 에서 따면 선행이 빠진다 — 그때는 `origin/main` 에서 딴다.
 - 선행 본문이 사람 확인을 확정 조건으로 걸면(예: 「규칙안은 사람 확인을 받아야 확정」) 그 확인 글(사람이 쓴 이슈 챗·댓글)이 선행 이슈에 있어야 한다. 없으면 착수하지 않는다.
 - 후속 본문의 착수 조건 「WD-N 완료」는 이 기준으로 읽는다. 본문이 다른 조건(시안 확인, 같은 파일을 고치는 이슈 대기 등)을 더 걸었으면 그것도 따른다.
 - 하나라도 맞지 않으면 대기열에서 가져가지 않는다(가져간 뒤 막혀 있으면 `BLOCKED` + 기다리는 선행). 서버의 `blocked` 표시·DONE 처리 방식은 바꾸지 않는다.
 
-## 8. PR — 기차(개발자 통합 브랜치) 흐름 (`process-issue.md` 9번·「PR 리뷰·머지」, WD-460·WD-506)
+## 8. PR (`process-issue.md` 9번·「PR 리뷰·머지」, WP-2003)
 
-- **기차: 켜짐** — 이 저장소의 기본 PR 경로는 기차다(흐름은 work-loop 스킬, WP-1216). 아래는 WD 고유 값과 스크립트다.
 - 원격은 **origin**(`https://github.com/bluleo78/smart-fire-hub.git`), PR 대상 브랜치는 `main`, 도구는 `gh`(work-loop 는 스킬의 `gw-repo` 로 부른다). gitlab 등 다른 원격에는 push 하지 않는다 — 사람이 origin main 을 받아 맞춘다.
-- **feature 브랜치**: `<커밋 타입>/<소문자 이슈 키>`(예: `fix/wd-272`) — main 에서 따서 개발하고 3절의 바뀐 범위 테스트·4절 라이브 검증까지 끝낸 뒤 **커밋 하나로 합친다**(제목 끝 `(<이슈 키>)`, 예: `fix(web): … (WD-354)`). **push 하지 않는다.** 커밋 훅(`.husky/pre-commit`)은 그대로 돈다.
-- **통합 브랜치(기차)**: `integ/<AI 이름>-<번호>`(AI 이름 = 내 username 의 `@` 앞, 예: `integ/developer1-12`). 쌓기·rebase 는 아래 스크립트로만 한다.
+- 브랜치: 이슈마다 `<커밋 타입>/<소문자 이슈 키>`(예: `fix/wd-272`)를 `origin/green` 에서 따서(없으면 `origin/main`) 개발하고, 3절 바뀐 범위 테스트·4절 라이브 검증까지 끝낸 뒤 **커밋 하나로 합쳐**(제목 끝 `(<이슈 키>)`, 예: `fix(web): … (WD-354)`) push 하고 PR 로 올린다(기차는 껐다 — 3절 「통합 PR 정리」). 커밋 훅(`.husky/pre-commit`)은 그대로 돈다.
+- PR 제목 `<이슈 키> <이슈 제목>`, 본문 첫 줄 `개발: <개발한 AI username>`, 이어서 요약·「절차」 줄·바뀐 범위 테스트(명령과 결과)·라이브 검증 근거. 머지 커밋 제목 `merge: <이슈 키> <이슈 제목>`(`gh pr merge --merge` 또는 검토자의 손 머지 — 지금 main 이력 모양을 지킨다). 남은 통합 PR(제목 `통합 <키1>·<키2>·…`)은 머지 커밋 `merge: 통합 <키1>·<키2>·…` 로 그대로 리뷰·머지한다.
+- **통합 PR 리뷰(WD-460)**: 이슈 단위로 리뷰하고(이슈 하나 = 커밋 하나 + 그 키를 단 수정 커밋) 마이그레이션 번호(아래 0번)·테스트 근거(아래 1번)를 확인한다. 하나라도 문제면 PR 전체를 반려하고 어느 이슈가 왜 문제인지 적는다 — 개발자는 같은 PR 에 수정 커밋을 더한다. 통과하면 머지하고 실린 이슈마다 검토 대기(REVIEW)로 올린다 — 머지 커밋은 `message` 에.
+- **바로 머지(WP-2003)**: 개발자는 바뀐 범위 테스트(3절)만 돌리고 `git push --no-verify` 로 올리며 rebase 하지 않는다. 검토자는 리뷰를 통과한 PR 을 받는 대로 머지한다 — 충돌 없으면 `gh pr merge --merge`(gw-repo), main 과 충돌하거나 마이그레이션 번호가 겹치면 검토자가 이슈 워크트리에서 origin/main 에 머지 커밋을 만들어 풀고 `git push --no-verify origin HEAD:main`(손 머지 — GitHub 가 PR 을 머지됨으로 닫는다). 양쪽 뜻을 함께 살릴 수 없는 「뜻 충돌」만 개발자에게 rebase 로 돌려보낸다. 합친 결과의 회귀는 3절 「풀테스트」가 잡는다. 풀테스트를 띄워 green 을 옮길 때까지는 머지하지 않고 승인만 한다(3절).
+- 머지는 **`--admin` 없이** `gh pr merge --merge …` 로만 한다. AI 들이 관리자 계정을 함께 쓰므로 `--admin` 을 붙이면 보호가 뚫린다 — 어떤 경우에도 붙이지 않는다(거절되면 이유를 보고 고치거나 BLOCKED). AI 의 main 직접 push 는 검토자의 세 예외(손 머지·풀테스트 수정·되돌리기 — `green` 은 main 이 아니다)뿐이다.
+- **CI 없음**: 이 저장소에는 GitHub Actions CI 가 없다 — `gh pr checks`·`verify` 단계는 건너뛴다. 머지 전 자동 확인은 아래 0번 마이그레이션 번호뿐이고, 합친 main 의 회귀는 풀테스트가 잡는다.
+- 마이그레이션 번호가 main 과 겹치면 검토자가 손 머지에서 PR 쪽 파일 이름의 번호를 옮긴다(내용 그대로 — jOOQ 생성 코드는 스키마가 같아 바뀌지 않는다). 두 마이그레이션이 같은 테이블을 고쳐 순서가 결과를 바꾸면 「뜻 충돌」로 돌려보낸다.
 
-```sh
-pnpm train stack <AI 이름> <feature 브랜치> <이슈 키>   # 다음 기차에 커밋 하나로 쌓는다(출발한 기차는 건너뛰고, 없으면 새 번호를 origin/main 에서)
-pnpm train rebase <기차 브랜치>                         # 출발 전 → 최신 origin/main 으로. 출발한 기차 → main 과 충돌할 때만
-pnpm train next <AI 이름>                               # 아직 출발하지 않은 기차(없으면 빈 출력)
-pnpm train keys <기차 브랜치>                           # 실린 이슈 키 「K1·K2」 — PR 제목 `통합 K1·K2`
-```
+### 검토자 머지 판단 (WP-1081 → WP-1959)
 
-- 스크립트는 `scripts/husky/train.sh`(테스트 `train.test.sh` — `pnpm test:hooks` 가 함께 돈다). 「출발」 = 기차 브랜치를 origin 에 push 한 것.
-- **기차 워크트리**: 기차마다 `MAIN/.claude/worktrees/integ-<AI 이름>-<번호>` 를 스크립트가 만든다 — 게이트·수정 커밋·push 는 그 안에서 한다. 처음 게이트를 돌기 전에 2절처럼 `pnpm install` 한다(설치가 `pnpm-lock.yaml` 을 바꾸면 되돌린다).
-- **쌓기**는 feature 의 커밋 하나(메시지·작성자 유지)를 그대로 옮긴다. 아래면 쌓지 않고 멈춘다 — feature 에서 고쳐 다시 쌓는다.
-  - 마이그레이션 번호(`apps/firehub-api/src/main/resources/db/migration/` 의 `V<n>__`)가 origin/main·앞서 실린 이슈와 겹침 — 번호를 올리고 `cd apps/firehub-api && ./gradlew generateJooq` 결과(`src/main/generated/`)를 같은 커밋에 넣는다(6절 jOOQ). 번호만 따로 보려면 `pnpm check:migrations origin/main <브랜치>`.
-  - 앞서 실린 이슈나 origin/main 과 충돌.
-- **출발**: 내 앞 기차의 PR 이 main 에 머지됐거나 처음일 때만.
-  1. `pnpm train rebase <기차>` 로 최신 origin/main 위로.
-  2. 기차 워크트리에서 `pnpm test:full` 을 백그라운드로(3절 「오래 걸리는 작업」). 통과하면 그 트리가 기록돼 다음 push 가 회귀를 다시 돌지 않는다. pre-push 자체는 바꾸지 않는다.
-  3. `git push -u origin <기차>` → PR. 제목 `통합 <키1>·<키2>·…`, 본문 첫 줄 `개발: <개발한 AI username>`, 이어서 이슈마다 요약·바뀐 범위 테스트·라이브 검증 근거, 마지막에 pre-push 게이트 결과.
-- **게이트 실패·반려**: 같은 기차 워크트리에서 수정 커밋(제목 끝에 고친 이슈 키)을 더해 다시 돈다. 빼고 다시 만들지 않는다.
-- **리베이스**: 출발 전 기차는 main 이 움직일 때마다(`stack` 이 스스로 한다), 출발한 PR 은 main 과 **충돌할 때만**(rebase 하면 게이트를 다시 돌고 `git push --force-with-lease`). 충돌이 없어도 main 이 같은 마이그레이션 번호를 더했으면 `rebase` 가 알린다.
-- 다른 AI 의 이슈는 내 기차에 싣지 않는다.
-- 이 저장소에는 GitHub Actions CI 가 없다 — 검토자는 PR 본문의 pre-push 게이트 결과·라이브 검증과 아래 9절의 머지 판단으로 머지한다.
+**검토자는 테스트를 직접 돌리지 않는다(WP-1959)** — 로컬 합친 검사·격리 스택·vitest·gradle 어느 것도 검토자가 리뷰 중에 돌리지 않는다. 테스트는 개발자의 바뀐 범위 테스트와 머지 뒤 검토자의 풀테스트(3절 — 리뷰할 것이 없을 때)가 돌리고, 검토자는 리뷰 때 그 결과와 근거를 보고 머지하거나 반려한다. 예전에는 main 이 같은 앱을 고쳤으면 검토자가 최신 main 과 합친 상태로 그 앱 테스트를 돌렸는데(WD-506 조건부 합친 검사·묶음), PR 마다 api 전체(약 35분)를 검토자 한 명이 줄지어 돌아 모든 개발자가 함께 멈췄다(smart-workplace 2026-11-22).
+
+0. **마이그레이션 번호 확인(늘, 머지 직전)**: `git fetch origin main <PR 브랜치>` 뒤 `pnpm check:migrations origin/main origin/<PR 브랜치>`(테스트가 아니라 몇 초 걸리는 번호 비교다). PR 이 더한 `V<n>__*.sql` 이 origin/main 의 가장 큰 번호보다 크고 서로·main 과 겹치지 않는지 본다 — 두 PR 이 같은 번호를 각자 더하면 git 충돌 없이 합친 main 에서 Flyway 가 깨진다. 실패(종료 코드 1)면 손 머지(위 「바로 머지」)에서 PR 쪽 번호를 옮겨 머지한다(개발자에게 돌려보내지 않는다). 마이그레이션을 더한 PR 이 둘 이상이면 하나씩 머지하며, 앞의 것이 머지된 뒤 다음 PR 을 다시 확인한다.
+1. **테스트 근거 확인**: PR 본문의 바뀐 범위 테스트 결과(3절 「바뀐 범위 테스트를 고르는 법」대로 돌렸는지)를 본다. push 게이트 결과는 요구하지 않는다(WP-2003). 함께 들어가 깨지는 의미 충돌은 머지 뒤 풀테스트(3절)가 잡는다. 다만 풀테스트가 보지 않는 앱(ai-agent·admin·channel·executor)을 바꾼 PR 은 그 앱의 테스트 전체 결과가 있어야 한다.
+2. **테스트가 필요하면 반려한다**: 검토자가 보기에 테스트가 더 필요하면 직접 돌리지 않고 무엇을 왜 돌려야 하는지 적어 반려한다 — 개발자가 돌리고 결과를 PR 에 적어 다시 부탁한다. 완료 기준의 근거(테스트·캡처·라이브 검증)가 모자라거나 의심스러울 때 — 어느 기준에 무엇이 모자란지 적는다. 「push 게이트를 돌려 주세요」로는 반려하지 않는다.
+3. **하나씩**: 같은 파일·영역(DB 마이그레이션, 공통 컴포넌트·토큰, 공통 유틸·테스트 헬퍼)을 고치는 PR 은 앞의 것이 머지된 뒤 다음 PR 의 충돌·마이그레이션 번호를 다시 보고 머지한다.
+4. **main 이 깨졌을 때**: 풀테스트(3절)가 실패하면 검토자가 `process-issue.md` 「풀테스트·green (검토자)」 4번대로 원인 머지를 찾아 작게 고치거나 되돌린다. 개발자는 green 에서 시작하므로 main 이 깨져 있어도 그 실패를 고치지 않는다 — 내가 바꾸지 않은 곳의 테스트가 실패하면 PR 본문에 적고 넘어간다.
+5. 검토자의 push 는 손 머지·풀테스트 수정·되돌리기·green 옮기기뿐이다. 리뷰 보고에 테스트 근거를 어떻게 확인했는지 한 줄 남긴다(예: 「바뀐 범위 테스트(api pipeline 패키지·web pipeline E2E) 통과·마이그레이션 번호 이상 없음」).
 
 ## 9. 검토자
 
-개발한 통합 PR 을 리뷰·머지하는 AI 팀장(`SKILL.md` 「검토자」). 비어 있으면 PR 을 사람이 리뷰·머지한다.
+개발한 PR 을 리뷰·머지하는 AI 팀장(`SKILL.md` 「검토자」). 비어 있으면 PR 을 사람이 리뷰·머지한다.
 
 - username: `teamleader@iacloud.kr`(AI 팀장)
-- 통합 PR 을 **이슈 단위로** 리뷰한다(이슈 하나 = 커밋 하나 + 그 키를 단 수정 커밋). 본문의 pre-push 게이트 통과, 아래 0번 마이그레이션 번호, 1번 합친 상태 검사, main 과 충돌 여부를 확인한다.
-- 하나라도 문제면 **PR 전체를 반려**하고 어느 이슈가 왜 문제인지 적는다 — 개발자가 같은 PR 에 수정 커밋을 더한다.
-- 통과하면 **`--admin` 없이** `gh pr merge --merge`(지금 main 이력 모양 — 머지 커밋 제목 `merge: 통합 <키들>`). 실린 이슈마다 「<커밋> 머지 — 검토 대기」(REVIEW)로 올린다. 거절되면 이유를 보고 고치거나 BLOCKED 로 둔다 — `--admin` 은 어떤 경우에도 붙이지 않는다.
-- origin/main 과 **충돌하는** PR 만 개발자에게 rebase 를 요청한다. 충돌 없이 main 이 앞서 있기만 한 PR 은 그대로 머지한다 — 낡았다는 이유로 돌려보내면 rebase 마다 게이트를 다시 돌아 머지가 멈춘다.
-
-### 검토자 머지 판단 (WP-1081 → WD-506)
-
-개발자의 push 게이트는 「그 PR + 갈라진 시점의 main」만 본다 — 줄 충돌은 없지만 함께 들어가면 깨지는 경우(의미 충돌)는 머지 뒤에야 드러난다. 그렇다고 PR 마다 합친 상태로 전체 테스트를 돌리면 머지가 크게 늦어지므로 위험이 있을 때만 돌린다.
-
-0. **마이그레이션 번호 확인(늘, 머지 직전 — 줄이지 않는다)**: `git fetch origin main <PR 브랜치>` 뒤 `pnpm check:migrations origin/main origin/<PR 브랜치>`. PR 이 더한 `V<n>__*.sql` 이 origin/main 의 가장 큰 번호보다 크고 서로·main 과 겹치지 않는지 본다 — 두 PR 이 같은 번호를 각자 더하면 git 충돌도 각 PR 의 게이트 실패도 없이 합친 main 에서 Flyway 가 깨진다. 실패(종료 코드 1)면 머지하지 않고 겹친 번호를 적어 개발자에게 번호를 옮겨 달라고 돌려보낸다(`generateJooq` 결과 동반). 마이그레이션을 더한 PR 이 둘 이상이면 묶지 않고 하나씩 머지하며, 앞의 것이 머지된 뒤 다음 PR 을 다시 확인한다.
-1. **조건부 합친 검사**: PR 이 **갈라진 뒤** main 이 PR 과 **같은 앱**(`apps/firehub-api`·`firehub-web`·`firehub-ai-agent`·`firehub-admin`)을 고쳤으면(`git diff --name-only $(git merge-base origin/main <PR>) origin/main -- apps/<앱>/`), 임시 워크트리에서 최신 main 과 `git merge --no-ff`(커밋하지 않고 검사용으로만)로 합쳐 그 앱의 테스트를 돌린다. 다른 앱만 바뀌었으면 바로 머지한다.
-   - **api**: 양쪽이 바꾼 패키지의 테스트만(`cd apps/firehub-api && ./gradlew test --tests 'com.smartfirehub.<패키지>.*'`). 공용 코드(`global`·보안·DB 스키마 — 마이그레이션·jOOQ)가 바뀌었을 때만 `./gradlew test` 전체.
-   - **web**: `pnpm typecheck` + 양쪽이 바꾼 도메인의 E2E(`PW_PORT=<빈 포트> pnpm exec playwright test e2e/pages/<도메인>/`). 공유 영역(3절 커밋 훅의 「web 공유 영역」)이 바뀌었으면 E2E 전체.
-   - **ai-agent·admin**: 그 앱의 `pnpm typecheck` + `pnpm test`(admin 은 `pnpm test:unit`).
-   - 「CI `verify` 결과를 쓴다」는 WP 의 단계는 이 저장소에 없다 — PR 본문의 pre-push 게이트 결과로 본다.
-2. **묶음**: 비슷한 때 준비된 PR 들(그때 함께 준비된 2~4개 — 묶으려고 일부러 기다리지 않는다)이 같은 앱을 고치면, 머지할 순서대로 로컬에서 모두 합쳐 1번 검사를 한 번만 한다. 통과하면 같은 순서로 GitHub 에서 하나씩 머지하고, 실패하면 원인 PR 을 가려 그 PR 만 돌려보낸다.
-3. **하나씩**: 같은 파일·영역(DB 마이그레이션, 공통 컴포넌트·토큰, 공통 유틸·테스트 헬퍼)을 고치는 PR 은 묶지 않고 하나씩 머지한다.
-4. **판단은 검토자 몫**: 1~3 은 기준이고, 바뀐 범위가 작거나 명백히 무관하면 검토자가 범위를 줄일 수 있다(0번은 줄이지 않는다). 무엇을 왜 돌렸는지(또는 건너뛰었는지)를 리뷰 보고에 한 줄 남긴다(예: 「main 이 web 을 고쳐 합친 상태로 web typecheck·dataset E2E 통과」, 「main 변경은 api 만 — 합친 검사 생략」).
-5. **불안정한 테스트**: 합친 검사에서 실패한 테스트가 해당 PR 들과 무관하고 다시 돌려 통과하면 반려 사유로 삼지 않고, 불안정 테스트 이슈로 등록한다(`SKILL.md` 「이슈 만들기·담당 바꾸기」).
-6. 검토자는 push 하지 않는다 — 로컬에서 합친 상태는 검사용으로만 쓰고 버린다(임시 워크트리 정리).
+- **머지 조건(WP-1717)** — 리뷰 글에 아래가 없으면 머지하지 않는다. 리뷰 시간·비용이 늘어도 규정대로 한다.
+  - 개발자 PR 본문의 「절차」 줄을 확인한다(`process-issue.md` 5번 형식, 흉내만 낸 줄이면 반려).
+  - 브랜치 전체에 `/code-review medium` 을 실제로 돌리고(다시 부탁받으면 달라진 부분 — `process-issue.md` 「PR 리뷰·머지」 3번) 그 결과를 적는다.
+  - 완료 기준 대조표를 적는다(미충족·확인 불가가 있으면 반려, 통합 PR 은 이슈마다).
+- **바로 머지·풀테스트(WP-2003)** — 리뷰를 통과한 PR 은 받는 대로 머지한다(순서 머지 WP-1720·앞지르기 WP-1999 는 없앴다). 충돌은 검토자가 손 머지로 푼다(8절). 리뷰할 것이 없으면 main 을 풀테스트하고 통과한 커밋으로 `green` 을 옮긴다 — 풀테스트를 띄운 뒤 green 을 옮길 때까지는 머지를 멈추고 승인만 한다(3절 「풀테스트」, `process-issue.md` 「풀테스트·green (검토자)」).
 
 ## 10. 할 일 없을 때 (`SKILL.md` 3번 「할 일 없음」)
 
-없음 — 할 일 없음으로 끝낸다. 이 저장소에는 main CI 가 없어 확인할 실패 실행이 없다(CI 를 들이면 WP 처럼 main CI 실패를 확인해 알리는 내용을 여기에 적는다).
+- 검토자는 3절 「풀테스트」를 본다(`process-issue.md` 「풀테스트·green (검토자)」 1번 — main 이 green 보다 앞서 있으면 띄운다).
+- main CI 는 없어 확인할 실패 실행이 없다(CI 를 들이면 smart-workplace 처럼 main CI 실패를 확인해 알리는 내용을 여기에 적는다).
+- 분류 역할 AI·기획 역할 AI 는 이 저장소에 두지 않는다 — 맡은 이슈는 모두 `process-issue.md` 로 처리한다.
