@@ -36,6 +36,7 @@ import {
 import { Textarea } from '@/components/ui/textarea';
 import { useAllDatasets } from '@/hooks/queries/useDatasets';
 import { useAnomalyEvents } from '@/hooks/queries/useProactiveMessages';
+import { useIntegerFieldsValidity } from '@/hooks/useIntegerFieldsValidity';
 import { parseUtcDate } from '@/lib/formatters';
 import type { ProactiveJobFormValues } from '@/lib/validations/proactive-job';
 
@@ -74,6 +75,8 @@ interface JobMonitoringTabProps {
   jobId?: number;
   /** 사용자 입력으로 폼이 변경됐을 때 호출 — 이탈 가드용 dirty 마킹 (이슈 #59) */
   onChange?: () => void;
+  /** 숫자 칸(쿨다운·폴링 주기) 중 하나라도 유효하지 않으면 false — 상위가 저장을 막는 데 쓴다 (WD-906 후속) */
+  onIntegerValidityChange?: (valid: boolean) => void;
 }
 
 /** 이상 탐지 이력 섹션 컴포넌트 */
@@ -142,7 +145,7 @@ function AnomalyHistorySection({ jobId }: { jobId: number }) {
   );
 }
 
-export default function JobMonitoringTab({ form, isEditing, jobId = 0, onChange }: JobMonitoringTabProps) {
+export default function JobMonitoringTab({ form, isEditing, jobId = 0, onChange, onIntegerValidityChange }: JobMonitoringTabProps) {
   const { watch, setValue } = form;
   const anomalyConfig: AnomalyConfig = (watch('config.anomaly') as AnomalyConfig | undefined) ?? DEFAULT_ANOMALY_CONFIG;
 
@@ -150,6 +153,12 @@ export default function JobMonitoringTab({ form, isEditing, jobId = 0, onChange 
   // 이 탭은 작업 상세/신규에서 재사용되므로 하드코딩 id 대신 useId()로 충돌을 막는다.
   // (이미 하드코딩 id 로 E2E 가 의존하는 sensitivity·cooldown·custom-* 은 그대로 둔다)
   const baseId = useId();
+
+  // 숫자 칸(쿨다운·지표 행 폴링 주기) 유효성을 모아 하나라도 무효면 상위에 false 를 알려 저장을 막는다 (WD-906 후속).
+  // 지표 행이 지워져 칸이 사라지면 칸이 스스로 유효로 되돌려 모음에서 빠진다.
+  const setFieldValid = useIntegerFieldsValidity(onIntegerValidityChange);
+  // 커스텀 메트릭 모달의 폴링 주기 칸이 표기 오류인가 — 「추가」 버튼을 막는다
+  const [customIntervalValid, setCustomIntervalValid] = useState(true);
 
   // 시스템 메트릭 Select 리셋용 키 — 메트릭 추가 후 값을 초기화하기 위해 증가시킨다
   const [selectKey, setSelectKey] = useState(0);
@@ -369,6 +378,7 @@ export default function JobMonitoringTab({ form, isEditing, jobId = 0, onChange 
                 id="cooldown"
                 value={anomalyConfig.cooldownMinutes}
                 onValueChange={(n) => updateAnomaly({ cooldownMinutes: n })}
+                onValidityChange={(v) => setFieldValid('cooldown', v)}
               />
               {/* 쿨다운 음수 입력 시 Zod 에러 메시지 표시 (#39) */}
               {anomalyConfig.cooldownMinutes < 1 && (
@@ -464,6 +474,7 @@ export default function JobMonitoringTab({ form, isEditing, jobId = 0, onChange 
                           className="w-20 h-8 text-xs"
                           value={metric.pollingInterval}
                           onValueChange={(n) => updateMetricInterval(metric.id, n)}
+                          onValidityChange={(v) => setFieldValid(`metric-${metric.id}`, v)}
                         />
                         <span className="inline-flex h-8 items-center text-xs text-muted-foreground">초</span>
                       </div>
@@ -556,6 +567,7 @@ export default function JobMonitoringTab({ form, isEditing, jobId = 0, onChange 
                 id="custom-interval"
                 value={customForm.customInterval}
                 onValueChange={(n) => setCustomForm((f) => ({ ...f, customInterval: n }))}
+                onValidityChange={setCustomIntervalValid}
               />
               {/* 60초 미만 입력 시 에러 메시지 표시 (#44) */}
               {customForm.customInterval < 60 && (
@@ -577,7 +589,7 @@ export default function JobMonitoringTab({ form, isEditing, jobId = 0, onChange 
             </Button>
             <Button
               type="button"
-              disabled={!customForm.customName || !customForm.customDatasetId || !customForm.customQuery || customForm.customInterval < 60}
+              disabled={!customForm.customName || !customForm.customDatasetId || !customForm.customQuery || customForm.customInterval < 60 || !customIntervalValid}
               onClick={addCustomMetric}
             >
               추가

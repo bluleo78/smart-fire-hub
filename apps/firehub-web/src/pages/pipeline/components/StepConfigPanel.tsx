@@ -30,6 +30,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { useDataset } from '@/hooks/queries/useDatasets';
+import { IntegerDraftContext, integerDraftStepPrefix, scopeIntegerDrafts, useIntegerDraftStore } from '@/hooks/useIntegerDrafts';
 import { formatDate } from '@/lib/formatters';
 import { SYSTEM_COLUMN_NAMES } from '@/lib/validations/dataset';
 import { MAX_DESCRIPTION_LENGTH } from '@/lib/validations/description';
@@ -171,6 +172,17 @@ export default function StepConfigPanel({
   const [scriptEditorHandle, setScriptEditorHandle] = useState<ScriptEditorHandle | null>(null);
   const focusRequest = state.focusRequest;
   const selectedTempId = step?.tempId;
+  // 숫자 칸 무효 원문 보관소를 「이 스텝·이 종류」 범위로 좁혀 스텝 설정에 내려 준다 (WD-906 후속).
+  // 편집기가 들고 있으므로 스텝을 옮기거나 절을 접어 칸이 사라져도 원문·저장 차단이 남는다. (rules-of-hooks: early return 이전 선언)
+  const parentIntegerDrafts = useIntegerDraftStore();
+  const selectedScriptType = step?.scriptType;
+  const stepIntegerDrafts = useMemo(
+    () =>
+      selectedTempId && selectedScriptType
+        ? scopeIntegerDrafts(parentIntegerDrafts, integerDraftStepPrefix(selectedTempId, selectedScriptType))
+        : null,
+    [parentIntegerDrafts, selectedTempId, selectedScriptType],
+  );
   // 이 스텝의 요청일 때만 처리한다(WD-633)
   const focusField = focusRequest && focusRequest.stepTempId === selectedTempId ? focusRequest.field : null;
   const clearFocusRequest = () => dispatch({ type: 'CLEAR_FOCUS_REQUEST' });
@@ -466,17 +478,19 @@ export default function StepConfigPanel({
                  * 재마운트 없이는 useState 지연 초기화(lazy initializer)가 마운트 시 1회만 실행되어
                  * headerPairs/queryParamPairs가 이전 스텝의 값으로 고정되는 stale 상태가 발생한다.
                  */}
-                <ApiCallStepConfig
-                  key={step.tempId}
-                  apiConfig={(step.apiConfig ?? {}) as Record<string, unknown>}
-                  apiConnectionId={step.apiConnectionId ?? null}
-                  onChange={(config) => handleUpdateStep({ apiConfig: config })}
-                  onConnectionChange={(id) => handleUpdateStep({ apiConnectionId: id })}
-                  readOnly={readOnly}
-                  fieldError={getFieldError}
-                  errorFields={stepErrors.map((e) => e.field)}
-                  errorFocusRequest={state.focusRequest}
-                />
+                <IntegerDraftContext.Provider value={stepIntegerDrafts}>
+                  <ApiCallStepConfig
+                    key={step.tempId}
+                    apiConfig={(step.apiConfig ?? {}) as Record<string, unknown>}
+                    apiConnectionId={step.apiConnectionId ?? null}
+                    onChange={(config) => handleUpdateStep({ apiConfig: config })}
+                    onConnectionChange={(id) => handleUpdateStep({ apiConnectionId: id })}
+                    readOnly={readOnly}
+                    fieldError={getFieldError}
+                    errorFields={stepErrors.map((e) => e.field)}
+                    errorFocusRequest={state.focusRequest}
+                  />
+                </IntegerDraftContext.Provider>
               </Suspense>
             </>
           ) : step.scriptType === 'AI_CLASSIFY' ? (
@@ -484,15 +498,17 @@ export default function StepConfigPanel({
               <Separator />
               <Suspense fallback={<Skeleton className="h-[200px]" />}>
                 {/* WD-906: 스텝마다 재마운트해 덜 친 숫자와 오류가 다른 AI 분류 스텝으로 넘어가지 않게 한다 */}
-                <AiClassifyStepConfig
-                  key={step.tempId}
-                  aiConfig={step.aiConfig ?? { prompt: '', outputColumns: [] }}
-                  inputDatasetIds={step.inputDatasetIds}
-                  onChange={(config) => handleUpdateStep({ aiConfig: config })}
-                  readOnly={readOnly}
-                  primaryInputHidden={primaryInputHidden}
-                  fieldError={getFieldError}
-                />
+                <IntegerDraftContext.Provider value={stepIntegerDrafts}>
+                  <AiClassifyStepConfig
+                    key={step.tempId}
+                    aiConfig={step.aiConfig ?? { prompt: '', outputColumns: [] }}
+                    inputDatasetIds={step.inputDatasetIds}
+                    onChange={(config) => handleUpdateStep({ aiConfig: config })}
+                    readOnly={readOnly}
+                    primaryInputHidden={primaryInputHidden}
+                    fieldError={getFieldError}
+                  />
+                </IntegerDraftContext.Provider>
               </Suspense>
             </>
           ) : (

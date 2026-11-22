@@ -1186,11 +1186,20 @@ test.describe('파이프라인 트리거 탭', () => {
     await debounceInput.fill('5');
     await expect(page.getByText('정수를 입력하세요')).toHaveCount(0);
 
-    // 오류가 보이는 채로 저장해도 마지막으로 확정된 값(120)이 실린다 — 기본값이나 빈 값으로 바뀌지 않는다 (WD-906)
-    // 커서 이동 키 대신 fill — macOS 의 End 는 스크롤 여지가 있으면 커서를 옮기지 않아 `e120` 이 된다
+    // 오류가 보이는 채로는 저장이 막힌다 — 마지막 올바른 값(120)이 말없이 저장되지 않는다 (WD-906 후속)
+    // 커서 이동 키 대신 fill — macOS 의 End 는 스크롤 여지가 있으면 커서를 옮기지 않아 `e120` 이 된다(WD-910)
     await pollingInput.fill('120e');
     await expect(pollingInput).toHaveValue('120e');
     await expect(page.getByText('정수를 입력하세요')).toHaveCount(1);
+    await page.getByRole('button', { name: '만들기' }).click();
+    // 요청이 가지 않고, 창이 닫히지 않으며, 오류가 보이는 칸으로 초점이 간다
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await expect(pollingInput).toBeFocused();
+    expect(createCapture.requests).toHaveLength(0);
+
+    // 칸을 고치면 저장이 풀려 고친 값이 실린다
+    await pollingInput.fill('120');
+    await expect(page.getByText('정수를 입력하세요')).toHaveCount(0);
     await page.getByRole('button', { name: '만들기' }).click();
 
     const req = await createCapture.waitForRequest();

@@ -26,9 +26,11 @@ import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cloneSuccessMessage, useCanWriteProactive,useCloneProactiveJob, useCreateProactiveJob, useCreateProactiveTemplate, useDeleteProactiveJob, useDeleteProactiveTemplate, useDisableProactiveJob, useExecuteProactiveJob, useFetchLatestProactiveJob, useProactiveJob, useProactiveTemplates, useUpdateProactiveJob } from '@/hooks/queries/useProactiveMessages';
 import { useEditModeFocus } from '@/hooks/useEditModeFocus';
+import { useInvalidFlag } from '@/hooks/useInvalidFlag';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { applyDuplicateNameError, extractApiError, handleApiError, isEditConflict, isForbiddenError, isJobAlreadyRunning, NameRetryExhaustedError } from '@/lib/api-error';
 import { createWithNumberedName } from '@/lib/clone-name';
+import { focusFirstInvalidInteger } from '@/lib/focus-invalid-integer';
 import { parseRouteId } from '@/lib/route-id';
 import { resolveTabParam } from '@/lib/tab-param';
 import { numberedGoalTemplateName, type ProactiveJobFormValues,proactiveJobSchema } from '@/lib/validations/proactive-job';
@@ -145,6 +147,8 @@ export default function ProactiveJobDetailPage() {
   // - 작업명/프롬프트/템플릿/트리거/주기/타임존/채널/이상 탐지 설정 등 편집 모드 입력 시 dirty=true
   const [isDirty, setIsDirty] = useState(false);
   const markDirty = useCallback(() => setIsDirty(true), []);
+  // 모니터링 탭의 숫자 칸(쿨다운·폴링 주기)이 표기 오류인 채인가 — 마지막 올바른 값이 말없이 저장되지 않게 저장을 막는다 (WD-906 후속)
+  const [integerInvalid, handleIntegerValidity] = useInvalidFlag();
 
   // 이탈 확인 다이얼로그 상태 — 뒤로가기/취소 클릭 시 dirty면 오픈 (이슈 #59)
   const [leaveDialogOpen, setLeaveDialogOpen] = useState(false);
@@ -244,6 +248,13 @@ export default function ProactiveJobDetailPage() {
   // handleSubmit 을 렌더 중이 아니라 클릭 때 부른다 — 콜백이 isCreatingRef 를 읽기 때문이다(react-hooks/refs).
   /** force: 기준 버전을 보내지 않아 서버가 비교하지 않는다 — 편집 충돌 뒤 「내 변경으로 덮어쓰기」(WD-364) */
   const submitJob = (force: boolean) => (e?: React.BaseSyntheticEvent) => form.handleSubmit(async (values) => {
+    // 숫자 칸 오류가 보이는 채로는 저장하지 않는다 (버튼 외 경로 — 충돌 창의 「내 변경으로 덮어쓰기」 — 방어).
+    // 말없이 끝나지 않게 이유를 알리고 오류 칸으로 초점을 옮긴다.
+    if (integerInvalid) {
+      toast.error('모니터링 탭의 숫자 칸 오류를 고친 뒤 저장하세요.', { id: 'job-integer-invalid' });
+      focusFirstInvalidInteger();
+      return;
+    }
     const payload = {
       name: values.name,
       prompt: values.prompt,
@@ -620,7 +631,18 @@ export default function ProactiveJobDetailPage() {
                 </Button>
               )}
               {/* 폼이 유효하지 않으면(필수 필드 미입력 등) 저장/생성 버튼 비활성화 — #52 */}
-              <Button size="sm" onClick={handleSave} disabled={isSaving || !form.formState.isValid}>
+              {/* 비활성 버튼은 title 툴팁이 뜨지 않으므로 이유를 버튼 옆에 보이는 문구로 둔다 */}
+              {integerInvalid && (
+                <span id="job-integer-invalid-hint" role="status" className="text-xs text-destructive">
+                  모니터링 탭의 숫자 칸 오류를 고치세요
+                </span>
+              )}
+              <Button
+                size="sm"
+                onClick={handleSave}
+                disabled={isSaving || !form.formState.isValid || integerInvalid}
+                aria-describedby={integerInvalid ? 'job-integer-invalid-hint' : undefined}
+              >
                 {isSaving ? (isNew ? '만드는 중...' : '저장 중...') : isNew ? '만들기' : '저장'}
               </Button>
             </>
@@ -663,12 +685,17 @@ export default function ProactiveJobDetailPage() {
           />
         </TabsContent>
 
-        <TabsContent value="monitoring">
+        {/* forceMount: 다른 탭으로 가도 모니터링 탭을 언마운트하지 않는다. 언마운트하면 오류 칸의 무효 상태가 풀려
+            오류가 남은 채 마지막 올바른 값이 저장된다(WD-906 후속).
+            Radix 는 forceMount 패널에 hidden 을 주지 않으므로, 비활성일 때 data-[state=inactive]:hidden 으로 화면·접근성 트리에서 숨긴다
+            (안 그러면 개요·실행 이력 탭에도 모니터링 내용이 함께 보였다 — 반려 지적). */}
+        <TabsContent value="monitoring" forceMount className="data-[state=inactive]:hidden">
           <JobMonitoringTab
             form={form}
             isEditing={isEditing}
             jobId={jobId}
             onChange={markDirty}
+            onIntegerValidityChange={handleIntegerValidity}
           />
         </TabsContent>
 

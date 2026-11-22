@@ -42,6 +42,7 @@ import {
 import { Separator } from '@/components/ui/separator';
 import { Textarea } from '@/components/ui/textarea';
 import { useApiConnectionsSelectable } from '@/hooks/queries/useApiConnections';
+import { useIntegerDraftStore } from '@/hooks/useIntegerDrafts';
 import { API_FULL_URL_PLACEHOLDER, AUTH_TYPE_LABEL, AUTH_TYPE_OPTIONS } from '@/lib/api-connection-form';
 import { cn } from '@/lib/utils';
 import { columnNameLengthError } from '@/lib/validations/dataset';
@@ -153,18 +154,25 @@ interface SectionProps {
   hasError?: boolean;
   /** 저장 실패 포커스 요청 — 바뀔 때(저장 시도) 오류가 있으면 편다 */
   focusRequest?: FocusRequest | null;
+  /** 숨은 숫자 칸 오류를 다시 펴 달라는 요청 번호(편집기 저장 차단) — 바뀔 때 오류가 있으면 편다 (WD-906 후속) */
+  revealSeq?: number;
 }
 
 /**
  * 접을 수 있는 설정 절. 오류가 있으면 마운트 때와 저장을 시도할 때마다 펴서 오류 문구·포커스할 칸을 그린다(WD-633).
  * 렌더 중에 열어야 같은 커밋에 칸이 생겨 포커스가 늦지 않다.
  */
-function Section({ title, icon, defaultOpen = false, children, hasError = false, focusRequest = null }: SectionProps) {
+function Section({ title, icon, defaultOpen = false, children, hasError = false, focusRequest = null, revealSeq = 0 }: SectionProps) {
   const [open, setOpen] = useState(defaultOpen || hasError);
   const [prevFocusRequest, setPrevFocusRequest] = useState(focusRequest);
+  const [prevRevealSeq, setPrevRevealSeq] = useState(revealSeq);
   if (focusRequest !== prevFocusRequest) {
     setPrevFocusRequest(focusRequest);
     if (focusRequest && hasError) setOpen(true);
+  }
+  if (revealSeq !== prevRevealSeq) {
+    setPrevRevealSeq(revealSeq);
+    if (hasError) setOpen(true);
   }
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
@@ -347,6 +355,12 @@ export default function ApiCallStepConfig({
   errorFields = [],
   errorFocusRequest = null,
 }: ApiCallStepConfigProps) {
+  // 숫자 칸 무효 원문 보관소(편집기가 이 스텝 범위로 좁혀 내려 준다) — 칸이 언마운트돼도 오류 원문·저장 차단이 남는다 (WD-906 후속)
+  const integerDrafts = useIntegerDraftStore();
+  // 고급 설정의 숫자 칸 중 무효 원문이 맡겨진 칸이 있으면, 다시 마운트될 때·저장 차단 때 절을 펴서 오류를 보인다
+  const advancedHasIntegerDraft = ['maxRetries', 'timeoutMs', 'maxDurationMs'].some(
+    (key) => integerDrafts?.get(key) !== undefined,
+  );
   // 접근성: 라벨↔입력 연결용 id 접두사 (#432).
   // 이 패널은 스텝이 바뀔 때마다 key 로 재마운트되고 여러 곳에서 재사용될 수 있어 하드코딩 id 는 충돌한다.
   const baseId = useId();
@@ -1005,7 +1019,12 @@ export default function ApiCallStepConfig({
       <Separator />
 
       {/* Advanced Settings */}
-      <Section title="고급 설정" icon={<Settings2 className="h-3.5 w-3.5" />}>
+      <Section
+        title="고급 설정"
+        icon={<Settings2 className="h-3.5 w-3.5" />}
+        hasError={advancedHasIntegerDraft}
+        revealSeq={integerDrafts?.revealSeq}
+      >
         <div className="grid grid-cols-2 gap-1.5">
           <div className="space-y-1">
             <Label htmlFor={`${baseId}-max-retries`} className="text-xs">재시도 횟수</Label>
@@ -1017,6 +1036,7 @@ export default function ApiCallStepConfig({
               min={MAX_RETRIES_RANGE.min}
               max={MAX_RETRIES_RANGE.max}
               onValueChange={(n) => handleRetryChange({ maxRetries: n })}
+              draftKey="maxRetries"
             />
             <p className="text-[11px] text-muted-foreground">{MAX_RETRIES_RANGE.min}~{MAX_RETRIES_RANGE.max}회</p>
           </div>
@@ -1030,6 +1050,7 @@ export default function ApiCallStepConfig({
               min={TIMEOUT_MS_RANGE.min}
               max={TIMEOUT_MS_RANGE.max}
               onValueChange={(n) => update('timeoutMs', n)}
+              draftKey="timeoutMs"
             />
             <p className="text-[11px] text-muted-foreground">{TIMEOUT_MS_RANGE.min}~{TIMEOUT_MS_RANGE.max}ms</p>
           </div>
@@ -1043,6 +1064,7 @@ export default function ApiCallStepConfig({
               min={MAX_DURATION_MS_RANGE.min}
               max={MAX_DURATION_MS_RANGE.max}
               onValueChange={(n) => update('maxDurationMs', n)}
+              draftKey="maxDurationMs"
             />
             <p className="text-[11px] text-muted-foreground">{MAX_DURATION_MS_RANGE.min}~{MAX_DURATION_MS_RANGE.max}ms</p>
           </div>
