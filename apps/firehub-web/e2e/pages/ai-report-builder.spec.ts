@@ -276,9 +276,9 @@ test.describe('AI 리포트 빌더 위젯', () => {
 
     // 핵심 검증 — 리포트 데이터가 폼에 프리필되어 있는지 확인 (이슈 #213)
     // title → 작업 이름 필드
-    await expect(page.getByLabel('작업 이름 *')).toHaveValue('매출 분석 리포트', { timeout: 5000 });
+    await expect(page.getByRole('textbox', { name: '작업 이름', exact: true })).toHaveValue('매출 분석 리포트', { timeout: 5000 });
     // question → 분석 프롬프트 필드 (수동 모드에서 표시됨)
-    await expect(page.getByLabel('분석 프롬프트 *')).toHaveValue('이번 달 매출이 왜 떨어졌나요?', { timeout: 5000 });
+    await expect(page.getByRole('textbox', { name: '분석 프롬프트', exact: true })).toHaveValue('이번 달 매출이 왜 떨어졌나요?', { timeout: 5000 });
   });
 
   test('섹션 콘텐츠가 없는 경우 빈 상태를 표시한다', async ({ authenticatedPage: page }) => {

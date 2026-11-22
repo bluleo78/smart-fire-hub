@@ -124,7 +124,8 @@ test.describe('스마트 작업 — 쓰기 권한 없는 사용자 (WD-133)', ()
 
     await expect(page.getByTestId('job-readonly-notice')).toHaveText(JOBS_NOTICE);
     // 채워도 저장할 수 없는 폼은 아예 그려지지 않는다
-    await expect(page.getByLabel('작업 이름 *')).toHaveCount(0);
+    // 없음 확인은 id 로 — 이름 조회는 라벨이 바뀌거나 숨은 칸이면 폼이 있어도 0개다
+    await expect(page.locator('#job-name')).toHaveCount(0);
     await expect(page.getByRole('button', { name: '만들기' })).toHaveCount(0);
 
     await page.getByRole('button', { name: '목록으로 돌아가기' }).click();
