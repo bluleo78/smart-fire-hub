@@ -475,7 +475,7 @@ test.describe('파이프라인 목록 페이지', () => {
     const table = page.getByRole('table', { name: '파이프라인 목록' });
     await expect(table.getByText('파이프라인 목록을 불러오지 못했습니다.')).toBeVisible();
     // 조회 실패를 스크린리더에 알린다(role=alert, WD-938) — 500 은 빨간 글자 그대로
-    await expectTableErrorAlert(page, '파이프라인 목록을 불러오지 못했습니다.');
+    await expectTableErrorAlert(page, '파이프라인 목록을 불러오지 못했습니다.', { action: '다시 시도' });
     await expect(page.getByRole('alert').getByText('파이프라인 목록을 불러오지 못했습니다.')).toHaveClass(/text-destructive/);
     await expect(table.getByText('파이프라인이 없습니다.')).toHaveCount(0);
     // 권한 문제는 아니므로 추가 버튼은 그대로 둔다

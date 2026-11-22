@@ -1,0 +1,48 @@
+import { useCallback, useState } from 'react';
+
+interface UseLoadMoreLimitOptions {
+  /** 처음 보여 줄 건수 (기본 20) */
+  initial?: number;
+  /** 「더 보기」 한 번에 늘릴 건수 (기본 20) */
+  step?: number;
+}
+
+/**
+ * 「더 보기」로 limit 을 늘려 같은 목록을 다시 조회하는 화면의 공용 훅 (WD-956).
+ *
+ * limit 이 키에 들어가는 조회는 「더 보기」가 실패하면 새 키에 데이터가 없어 보던 목록이 통째로 사라지고
+ * 오류 안내만 남는다. 그래서 실패하면 limit 을 마지막으로 성공한 값으로 되돌려(캐시된 보던 목록을 다시 보이게) 하고,
+ * failed 로 실패를 알려 화면이 안내와 「다시 시도」를 그리게 한다.
+ * - settle: 화면이 조회 상태를 렌더 중에 넘긴다. 성공이면 지금 limit 을 마지막 성공 값으로 기록한다.
+ * - failed: 되돌린 limit 의 성공·폴링에 덮이지 않도록 loadMore 전까지 유지한다.
+ */
+export function useLoadMoreLimit({ initial = 20, step = 20 }: UseLoadMoreLimitOptions = {}) {
+  const [limit, setLimit] = useState(initial);
+  // 마지막으로 조회에 성공한 limit — 실패 시 되돌릴 곳. 렌더에서도 읽으므로 ref 가 아닌 state.
+  const [lastSuccessLimit, setLastSuccessLimit] = useState(initial);
+  const [failed, setFailed] = useState(false);
+
+  /** 「더 보기」·「다시 시도」 공용 — 실패 표시를 지우고 limit 을 한 단계 늘린다. */
+  const loadMore = useCallback(() => {
+    setFailed(false);
+    setLimit((l) => l + step);
+  }, [step]);
+
+  /**
+   * 조회 결과를 반영한다 — 성공이면 기록, 「더 보기」 실패면 마지막 성공 limit 으로 되돌리고 failed 로 둔다.
+   * 화면이 렌더 중에 직접 부른다(React 의 「렌더 중 setState」 패턴 — 이전 렌더 정보 저장과 같은 방식).
+   * useEffect 로 부르면 오류 렌더가 한 번 그려진 뒤 보던 행이 돌아와 깜빡이지만, 렌더 중에 되돌리면 React 가 그 렌더를
+   * 버리고 바로 다시 그려 화면에 오류 렌더가 나오지 않는다. 값이 실제로 바뀔 때만 setState 하므로 무한 렌더가 없다.
+   * 자리표시(keepPreviousData) 데이터는 status 가 success 라도 새 limit 의 성공이 아니므로 isPlaceholderData 면 성공으로 세지 않는다.
+   */
+  const settle = ({ isError, isSuccess, isPlaceholderData = false }: { isError: boolean; isSuccess: boolean; isPlaceholderData?: boolean }) => {
+    if (isSuccess && !isPlaceholderData) {
+      if (lastSuccessLimit !== limit) setLastSuccessLimit(limit);
+    } else if (isError && limit > lastSuccessLimit) {
+      setLimit(lastSuccessLimit);
+      setFailed(true);
+    }
+  };
+
+  return { limit, loadMore, failed, settle };
+}

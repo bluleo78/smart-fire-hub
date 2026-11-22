@@ -4,6 +4,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { PageHeading } from '@/components/PageHeading';
+import { PendingButton } from '@/components/PendingButton';
 import { TruncatedLink } from '@/components/TruncatedLink';
 import { SimplePagination } from '@/components/ui/simple-pagination';
 import { TableEmptyRow, TableErrorRow } from '@/components/ui/table-empty';
@@ -35,7 +36,16 @@ export default function PipelineListPage() {
   const [page, setPage] = useState(0);
   const size = 10;
 
-  const { data: pipelinesData, isLoading, isError, error } = usePipelines({ page, size });
+  const { data: pipelinesData, isLoading, isError, error, refetch } = usePipelines({ page, size });
+  // 「다시 시도」 수동 재시도 중 여부(WD-956). 실패한 쪽은 data 가 없어 재조회하면 v5 가 pending(isLoading)으로 되돌려
+  // 스켈레톤이 오류 행을 대신하고 초점 잡힌 버튼이 언마운트되므로, 재시도 중에는 오류 행과 버튼을 그대로 둔다.
+  const [retrying, setRetrying] = useState(false);
+  const handleRetry = () => {
+    // 재시도 중 겹침 클릭은 PendingButton 이 막는다(aria-disabled + 클릭 가드).
+    setRetrying(true);
+    // 조회가 끝나면(성공·실패 모두) 해제한다 — 성공이면 행이, 실패면 오류 행이 그대로 그려진다.
+    void refetch().finally(() => setRetrying(false));
+  };
   // 조회 실패를 빈 목록으로 그리지 않는다 (WD-122) — 403 이면 권한 안내, 그 밖은 불러오기 실패 안내.
   const isForbidden = isError && isForbiddenError(error);
   const deletePipeline = useDeletePipeline();
@@ -64,7 +74,22 @@ export default function PipelineListPage() {
   };
 
   const rawPipelines = pipelinesData?.content || [];
-  const totalPages = pipelinesData?.totalPages || 0;
+  // 다음 쪽 조회가 실패하면 data 가 비어 totalPages 가 0 이 돼 쪽 이동이 사라진다(WD-956).
+  // 마지막 성공 응답의 totalPages 를 기억해 실패 중에도 이전 쪽·다른 쪽으로 이동하게 한다.
+  const [lastTotalPages, setLastTotalPages] = useState(0);
+  if (pipelinesData && pipelinesData.totalPages !== lastTotalPages) {
+    setLastTotalPages(pipelinesData.totalPages);
+  }
+  const totalPages = pipelinesData ? pipelinesData.totalPages : lastTotalPages;
+  // 불러오기 실패 안내 문구 — 권한 없음 / 다음 쪽 실패(쪽 이동이 그려지면 이동 권유 포함) / 첫 쪽 실패.
+  let errorMessage = '파이프라인 목록을 불러오지 못했습니다.';
+  if (isForbidden) {
+    errorMessage = '파이프라인을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.';
+  } else if (page > 0 && totalPages > 1) {
+    errorMessage = '이 쪽을 불러오지 못했습니다. 다시 시도하거나 다른 쪽으로 이동하세요.';
+  } else if (page > 0) {
+    errorMessage = '이 쪽을 불러오지 못했습니다. 다시 시도하세요.'; // 쪽 이동이 그려지지 않으면 이동 권유를 뺀다
+  }
 
   /**
    * 정렬이 적용된 파이프라인 목록 (현재 페이지 내).
@@ -154,7 +179,7 @@ export default function PipelineListPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {isLoading ? (
+            {isLoading && !retrying ? (
               <TableSkeletonRows columns={7} rows={5} />
             ) : pipelines.length > 0 ? (
               pipelines.map((pipeline) => (
@@ -206,12 +231,20 @@ export default function PipelineListPage() {
                   </TableCell>
                 </TableRow>
               ))
-            ) : isError ? (
+            ) : isError || retrying ? (
               <TableErrorRow
                 colSpan={7}
                 className="py-12"
                 tone={isForbidden ? 'muted' : 'error'}
-                message={isForbidden ? '파이프라인을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.' : '파이프라인 목록을 불러오지 못했습니다.'}
+                message={errorMessage}
+                // 403 은 다시 해도 같아 버튼을 두지 않는다. 요청 중에는 disabled 대신 aria-disabled 로 잠가(초점 유지) 중복 요청을 막는다(WD-956).
+                action={
+                  isForbidden ? undefined : (
+                    <PendingButton pending={retrying} variant="outline" size="sm" className="mt-3" onClick={handleRetry}>
+                      다시 시도
+                    </PendingButton>
+                  )
+                }
               />
             ) : (
               <TableEmptyRow

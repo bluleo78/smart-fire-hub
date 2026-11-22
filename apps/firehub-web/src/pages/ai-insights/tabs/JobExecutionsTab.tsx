@@ -5,11 +5,11 @@
  * RUNNING 상태의 실행이 있으면 5초 간격으로 자동 폴링한다.
  */
 import { Loader2 } from 'lucide-react';
-import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { LoadMoreFailure } from '@/components/ui/load-more-failure';
 import { SecurityLevelBadge } from '@/components/ui/SecurityLevelBadge';
 import { StatusBadge } from '@/components/ui/status-badge';
 import {
@@ -23,6 +23,7 @@ import {
 import { TableEmptyRow, TableErrorRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { useJobExecutions } from '@/hooks/queries/useProactiveMessages';
+import { useLoadMoreLimit } from '@/hooks/useLoadMoreLimit';
 import { isForbiddenError } from '@/lib/api-error';
 import { getExecutionDisplayStatus } from '@/lib/error-classifier';
 import { formatDate, formatDuration, getExecutionStatusType, getStatusLabel, timeAgo } from '@/lib/formatters';
@@ -35,10 +36,17 @@ interface JobExecutionsTabProps {
 
 export default function JobExecutionsTab({ jobId }: JobExecutionsTabProps) {
   const navigate = useNavigate();
-  const [limit, setLimit] = useState(20);
+  const { limit, loadMore, failed, settle } = useLoadMoreLimit();
 
   // RUNNING 상태 실행이 있으면 5초 폴링, 아니면 비활성화 — state 없이 직접 유도
-  const { data: executions = [], isLoading, isError, error } = useJobExecutions(
+  const {
+    data: executions = [],
+    isLoading,
+    isError,
+    isSuccess,
+    isPlaceholderData,
+    error,
+  } = useJobExecutions(
     jobId,
     { limit, offset: 0 },
     {
@@ -48,6 +56,9 @@ export default function JobExecutionsTab({ jobId }: JobExecutionsTabProps) {
       },
     },
   );
+
+  // 「더 보기」 조회가 실패하면 렌더 중에 limit 을 마지막 성공 값으로 되돌려 보던 목록을 남긴다(WD-956) — 오류 렌더가 그려지지 않는다.
+  settle({ isError, isSuccess, isPlaceholderData });
 
   // 조회 실패를 「실행 이력이 없습니다」로 그리지 않는다 (WD-137) — 403 이면 권한 안내, 그 밖은 불러오기 실패 안내.
   // 조회 권한이 없으면 표 대신 권한 안내만 보인다 — 다시 시도해도 같다.
@@ -134,12 +145,16 @@ export default function JobExecutionsTab({ jobId }: JobExecutionsTabProps) {
         </Table>
       </div>
 
-      {executions.length >= limit && (
-        <div className="py-2 flex justify-center">
-          <Button variant="ghost" size="sm" onClick={() => setLimit((l) => l + 20)}>
-            더 보기
-          </Button>
-        </div>
+      {failed ? (
+        <LoadMoreFailure onRetry={loadMore} />
+      ) : (
+        executions.length >= limit && (
+          <div className="py-2 flex justify-center">
+            <Button variant="ghost" size="sm" onClick={loadMore}>
+              더 보기
+            </Button>
+          </div>
+        )
       )}
     </div>
   );
