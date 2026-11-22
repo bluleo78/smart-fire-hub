@@ -323,10 +323,16 @@ export function registerPipelineTools(
           .url()
           .optional()
           .describe('apiConnectionId 없이 호출할 때의 full URL'),
-        method: z.enum(['GET', 'POST', 'PUT', 'DELETE']).describe('HTTP 메서드'),
+        method: z
+          .enum(['GET'], {
+            error:
+              "method 는 'GET' 이거나 생략해야 합니다. POST 는 사용자가 파이프라인 편집기의 「테스트 호출」로 확인하고, PUT·DELETE 는 미리볼 수 없습니다",
+          })
+          .optional()
+          .describe('HTTP 메서드. GET 만 가능하며 생략하면 GET'),
         headers: z.record(z.string(), z.string()).optional().describe('커스텀 헤더'),
         queryParams: z.record(z.string(), z.string()).optional().describe('쿼리 파라미터'),
-        body: z.string().optional().describe('요청 본문'),
+        body: z.string().optional().describe('요청 본문(GET 만 보내므로 미리보기에는 실리지 않음)'),
         dataPath: z.string().describe('JSONPath로 데이터 배열 추출 (예: $.data)'),
         fieldMappings: z
           .array(
@@ -345,7 +351,7 @@ export function registerPipelineTools(
       async (args: {
         path?: string;
         customUrl?: string;
-        method: string;
+        method?: 'GET';
         headers?: Record<string, string>;
         queryParams?: Record<string, string>;
         body?: string;

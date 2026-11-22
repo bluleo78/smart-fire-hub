@@ -135,6 +135,20 @@ describe('Pipeline MCP Tools', () => {
       expect(result.isError).toBeFalsy();
     });
 
+    it('스키마는 method 로 GET 만 받고 생략도 받는다', () => {
+      const schema = getInputSchema(server, 'preview_api_call');
+      const base = { dataPath: '$.items', customUrl: 'https://api.example.com/data' };
+      expect(schema.safeParse(base).success).toBe(true);
+      expect(schema.safeParse({ ...base, method: 'GET' }).success).toBe(true);
+      for (const method of ['POST', 'PUT', 'DELETE']) {
+        const parsed = schema.safeParse({ ...base, method });
+        expect(parsed.success).toBe(false);
+        const issues = JSON.stringify(parsed.error.issues);
+        expect(issues).toContain('「테스트 호출」');
+        expect(issues).toContain('PUT·DELETE 는 미리볼 수 없습니다');
+      }
+    });
+
     it('returns isError on failure', async () => {
       (client.previewApiCall as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('API 오류'));
       const result = await invokeTool(server, 'preview_api_call', {
