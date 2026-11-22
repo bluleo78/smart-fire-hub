@@ -69,6 +69,8 @@ function computePageItems(current: number, total: number): (number | 'ellipsis-l
  * - 페이지 번호: 현재 ±2 + 양 끝 + "..." 생략 패턴
  * - onPageSizeChange 전달 시 페이지 사이즈 selector 함께 표시
  * - totalPages <= 1 이고 사이즈 selector 도 없으면 렌더링 생략
+ * - 건수 문구는 role=status 낭독 리전(DelayedStatus)에 담되, 0건·범위 밖 쪽이면 리전 밖 일반 문구로 그린다
+ *   (0건은 표의 빈 안내와 겹쳐 두 번 읽히고, 범위 밖 쪽은 어긋난 건수가 낭독되기 때문 — WD-931)
  */
 export function SimplePagination({
   page,
@@ -98,16 +100,18 @@ export function SimplePagination({
       ? `총 ${totalElements}건 중 ${start + 1}-${Math.min(start + pageSize!, totalElements!)}`
       : `총 ${totalElements}건`;
     const className = 'text-sm text-muted-foreground';
-    // [WD-931] 0건이면 표의 빈 안내(TableEmptyRow, role=status)가 이미 낭독되므로 role 없는 일반 문구로 그려 겹침을 막는다.
-    // 그 외에는 재조회로 언마운트됐다 다시 마운트돼도 낭독되도록 지연 뒤 노드를 갈아 끼우는 DelayedStatus(WD-815)를 쓴다.
-    countNode =
-      totalElements === 0 ? (
-        <p className={className}>{countText}</p>
-      ) : (
-        <DelayedStatus announceKey={countText} className={className}>
-          {countText}
-        </DelayedStatus>
-      );
+    // [WD-931] 범위 안일 때만 낭독 리전을 쓴다. 재조회로 언마운트됐다 다시 마운트돼도 낭독되도록
+    // 지연 뒤 노드를 갈아 끼우는 DelayedStatus(WD-815)로 그린다.
+    // 나머지는 role 없는 일반 문구로 그리며 근거가 분기마다 다르다:
+    //  - 0건: 표의 빈 안내(TableEmptyRow, role=status)가 이미 낭독되므로 「총 0건」까지 읽히면 겹친다.
+    //  - 범위 밖 쪽: 건수가 화면 상태와 어긋나 있어 그대로 낭독하면 틀린 건수를 알리게 된다.
+    countNode = inRange ? (
+      <DelayedStatus announceKey={countText} className={className}>
+        {countText}
+      </DelayedStatus>
+    ) : (
+      <p className={className}>{countText}</p>
+    );
   }
 
   // 좌측 정보 영역: 건수 문구 + 페이지 사이즈 selector
