@@ -1,3 +1,5 @@
+import type { Page } from '@playwright/test';
+
 import { createJobExecution } from '../../factories/ai-insight.factory';
 import { setupExecutionDetailMocks } from '../../fixtures/ai-insight.fixture';
 import { mockApi } from '../../fixtures/api-mock';
@@ -203,3 +205,52 @@ test.describe('실행 상세 페이지', () => {
   });
 });
 
+test.describe('실행 상세 — 제목 위계 (WD-929)', () => {
+  // main 안 제목 목록(태그:텍스트)을 문서 순서대로 뽑는다
+  const headings = (page: Page) =>
+    page
+      .locator('main')
+      .locator('h1, h2, h3, h4, h5, h6')
+      .evaluateAll((els) => els.map((e) => e.tagName + ':' + e.textContent?.trim()));
+
+  // 실패·건너뜀 두 결과 카드 모두 h1 바로 다음 단계(h2)여야 한다 — 모킹·단언 모양이 같아 표로 돈다
+  const cases = [
+    {
+      name: '실패 실행은 h1 다음에 결과 카드 제목이 h2 로 온다 (WD-929)',
+      id: 5,
+      errorMessage: 'AI API 키 또는 OAuth 토큰이 설정되지 않았습니다. 관리자 설정에서 등록하세요.',
+      testId: 'execution-error',
+      title: 'AI 인증 정보 확인 필요',
+      colorClass: /text-destructive/,
+    },
+    {
+      name: '건너뛴 실행도 결과 카드 제목이 h2 다 (WD-929)',
+      id: 6,
+      errorMessage: '작업 주인이 정지됐거나 워크스페이스에서 제거돼 실행하지 않았습니다',
+      testId: 'execution-skipped',
+      title: '건너뜀',
+      colorClass: /text-foreground/,
+    },
+  ];
+
+  for (const c of cases) {
+    test(c.name, async ({ authenticatedPage: page }) => {
+      await mockApi(
+        page,
+        'GET',
+        `/api/v1/proactive/jobs/1/executions/${c.id}`,
+        createJobExecution({ id: c.id, jobId: 1, status: 'FAILED', errorMessage: c.errorMessage, deliveredChannels: [] }),
+      );
+      await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+
+      await page.goto(`/ai-insights/jobs/1/executions/${c.id}`);
+      await expect(page.getByTestId(c.testId)).toBeVisible();
+
+      expect(await headings(page)).toEqual([`H1:실행 #${c.id}`, `H2:${c.title}`]);
+      // 단계만 바꾸고 모양(색)은 그대로다
+      await expect(
+        page.getByTestId(c.testId).getByRole('heading', { level: 2, name: c.title }),
+      ).toHaveClass(c.colorClass);
+    });
+  }
+});
