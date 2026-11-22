@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 
 import { auditLogsApi } from '../../api/auditLogs';
+import { keepPreviousWhenOnlyPageChanged } from './keepPreviousWhenOnlyPageChanged';
 
 export function useAuditLogs(params: {
   search?: string;
@@ -23,5 +24,7 @@ export function useAuditLogs(params: {
     queryKey: ['auditLogs', queryParams],
     queryFn: () => auditLogsApi.getAuditLogs(queryParams).then(r => r.data),
     enabled,
+    // 페이지만 바뀔 때 이전 목록을 유지해 페이지네이션이 언마운트되지 않게 한다(포커스 유지, WD-932)
+    placeholderData: keepPreviousWhenOnlyPageChanged(queryParams),
   });
 }

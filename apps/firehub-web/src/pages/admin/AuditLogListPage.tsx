@@ -572,7 +572,7 @@ export default function AuditLogListPage() {
    */
   const isDateRangeInverted = Boolean(startDate && endDate && startDate > endDate);
 
-  const { data: logs, isLoading, isError } = useAuditLogs({
+  const { data: logs, isLoading, isError, isPlaceholderData } = useAuditLogs({
     search: debouncedSearch || undefined,
     // userId 필터 (#89): "all"/'' → undefined, 숫자 문자열은 number 변환
     userId: userId ? Number(userId) : undefined,
@@ -730,7 +730,13 @@ export default function AuditLogListPage() {
       )}
 
       <div className="rounded-md border">
-        <Table aria-label="감사 로그">
+        {/* WD-932: 페이지 이동 중에는 이전 페이지 행(placeholderData)이 남아 있다 — aria-busy 로 갱신 중임을 알리고,
+            흐리게 하며 행 클릭(상세 열기)을 막아 낡은 행을 누르지 못하게 한다. 페이지네이션 nav 는 표 밖이라 막히지 않아 포커스가 유지된다. */}
+        <Table
+          aria-label="감사 로그"
+          aria-busy={isPlaceholderData || undefined}
+          className={isPlaceholderData ? 'pointer-events-none opacity-60' : undefined}
+        >
           <TableHeader>
             <TableRow>
               <TableHead>시간</TableHead>
