@@ -476,7 +476,7 @@ export class FireHubApiClient {
   previewApiCall(data: {
     path?: string;
     customUrl?: string;
-    method: string;
+    method?: string;
     headers?: Record<string, string>;
     queryParams?: Record<string, string>;
     body?: string;

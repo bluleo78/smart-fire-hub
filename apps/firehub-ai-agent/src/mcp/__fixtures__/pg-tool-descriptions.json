@@ -2682,14 +2682,11 @@
           "format": "uri"
         },
         "method": {
+          "description": "HTTP 메서드. GET 만 가능하며 생략하면 GET",
           "type": "string",
           "enum": [
-            "GET",
-            "POST",
-            "PUT",
-            "DELETE"
-          ],
-          "description": "HTTP 메서드"
+            "GET"
+          ]
         },
         "headers": {
           "description": "커스텀 헤더",
@@ -2712,7 +2709,7 @@
           }
         },
         "body": {
-          "description": "요청 본문",
+          "description": "요청 본문(GET 만 보내므로 미리보기에는 실리지 않음)",
           "type": "string"
         },
         "dataPath": {
@@ -2765,7 +2762,6 @@
         }
       },
       "required": [
-        "method",
         "dataPath"
       ],
       "additionalProperties": false

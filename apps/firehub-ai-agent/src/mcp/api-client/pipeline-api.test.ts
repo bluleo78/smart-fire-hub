@@ -60,6 +60,7 @@ describe('pipelineApi (via FireHubApiClient)', () => {
   describe('previewApiCall', () => {
     const base = { method: 'GET', dataPath: '$.items' };
     const mock = { rows: [], totalCount: 0 };
+    const DATA_URL = 'https://api.example.com/data';
 
     it.each([
       {
@@ -97,9 +98,9 @@ describe('pipelineApi (via FireHubApiClient)', () => {
         expected: { url: 'https://api.example.com/data' },
       },
       {
-        name: '소문자 get',
+        name: '소문자 get 은 GET 으로',
         input: { method: 'get', customUrl: 'https://api.example.com/data' },
-        expected: { method: 'get', url: 'https://api.example.com/data' },
+        expected: { method: 'GET', url: 'https://api.example.com/data' },
       },
     ])('$name: url 로 보낸다', async ({ input, expected }) => {
       const scope = nock(BASE_URL)
@@ -146,9 +147,80 @@ describe('pipelineApi (via FireHubApiClient)', () => {
           customUrl: 'https://api.example.com/data',
         }),
       ).rejects.toThrow(
-        `API_CALL: 에이전트 미리보기는 GET 만 보냅니다 — ${method.toUpperCase()} 요청은 실제 데이터를 바꿀 수 있어 사용자가 파이프라인 편집기의 「테스트 호출」로 확인해야 합니다`,
+        `API_CALL: 에이전트 미리보기는 GET 만 보냅니다 — ${method.toUpperCase()} 요청은 실제 데이터를 바꿀 수 있어 보낼 수 없습니다(POST 는 사용자가 파이프라인 편집기의 「테스트 호출」로 확인, PUT·DELETE 는 미리보기 없음)`,
       );
       expect(scope.isDone()).toBe(false);
+    });
+
+    it('method 가 없으면 GET 으로 보낸다', async () => {
+      const customUrl = 'https://api.example.com/data';
+      const scope = nock(BASE_URL)
+        .post('/pipelines/api-call/preview', { ...base, url: customUrl })
+        .reply(200, mock);
+      await client.previewApiCall({ dataPath: base.dataPath, customUrl });
+      expect(scope.isDone()).toBe(true);
+    });
+
+    it.each<{ name: string; input: Record<string, Record<string, string>> }>([
+      { name: 'X-HTTP-Method-Override', input: { headers: { 'X-HTTP-Method-Override': 'DELETE' } } },
+      { name: 'X-HTTP-Method', input: { headers: { 'X-HTTP-Method': 'PUT' } } },
+      { name: 'X-Method-Override', input: { headers: { 'X-Method-Override': 'POST' } } },
+      { name: '대소문자', input: { headers: { 'x-http-method-OVERRIDE': 'DELETE' } } },
+      { name: '앞뒤 공백', input: { headers: { ' X-Method-Override\t': 'DELETE' } } },
+      { name: '밑줄', input: { headers: { X_HTTP_Method_Override: 'DELETE' } } },
+      { name: '인증 headerName', input: { inlineAuth: { headerName: 'X-HTTP-Method', apiKey: 'PUT' } } },
+      { name: '인증 key_name', input: { inlineAuth: { key_name: 'x-method-override', apiKey: 'PUT' } } },
+      { name: '인증 추가 헤더', input: { inlineAuth: { 'EXTRAHEADER: X-HTTP-Method-Override': 'DELETE' } } },
+    ])('메서드 변경 헤더($name)는 요청 없이 거절한다', async ({ input }) => {
+      const scope = nock(BASE_URL).post('/pipelines/api-call/preview').reply(200, mock);
+      await expect(
+        client.previewApiCall({ ...base, customUrl: DATA_URL, ...input }),
+      ).rejects.toThrow('헤더는 GET 을 다른 메서드로 바꿀 수 있어 보낼 수 없습니다');
+      expect(scope.isDone()).toBe(false);
+      nock.cleanAll();
+    });
+
+    it.each<{ name: string; input: Record<string, unknown> }>([
+      { name: 'queryParams', input: { customUrl: DATA_URL, queryParams: { _method: 'DELETE' } } },
+      { name: '헤더와 같은 이름', input: { customUrl: DATA_URL, queryParams: { 'X-HTTP-Method-Override': 'PUT' } } },
+      { name: 'customUrl', input: { customUrl: `${DATA_URL}?page=1&_METHOD=DELETE` } },
+      { name: '인코딩된 customUrl', input: { customUrl: `${DATA_URL}?%5Fmethod=DELETE` } },
+      { name: '연결의 path', input: { apiConnectionId: 1, path: '/data?_method=DELETE' } },
+      { name: '인증 paramName', input: { customUrl: DATA_URL, inlineAuth: { paramName: '_method', apiKey: 'DELETE' } } },
+      { name: '인증 key_name', input: { customUrl: DATA_URL, inlineAuth: { key_name: '_method', apiKey: 'DELETE' } } },
+    ])('메서드 변경 쿼리($name)는 요청 없이 거절한다', async ({ input }) => {
+      const scope = nock(BASE_URL).post('/pipelines/api-call/preview').reply(200, mock);
+      await expect(client.previewApiCall({ ...base, ...input })).rejects.toThrow(
+        '쿼리는 GET 을 다른 메서드로 바꿀 수 있어 보낼 수 없습니다',
+      );
+      expect(scope.isDone()).toBe(false);
+      nock.cleanAll();
+    });
+
+    it('method 같은 보통 쿼리와 숫자가 붙은 다른 헤더는 그대로 보낸다', async () => {
+      const input = {
+        headers: { 'X-Method-Override2': 'on' },
+        queryParams: { method: 'photos.search' },
+      };
+      const url = `${DATA_URL}?method=list`;
+      const scope = nock(BASE_URL)
+        .post('/pipelines/api-call/preview', { ...base, ...input, url })
+        .reply(200, mock);
+      await client.previewApiCall({ ...base, ...input, customUrl: url });
+      expect(scope.isDone()).toBe(true);
+    });
+
+    it('이름이 비슷한 보통 헤더는 그대로 보낸다', async () => {
+      const input = {
+        headers: { 'X-Method-Name': 'list', Accept: 'application/json' },
+        inlineAuth: { headerName: 'X-Api-Key', 'extraHeader:X-Client': 'hub' },
+      };
+      const url = 'https://api.example.com/data';
+      const scope = nock(BASE_URL)
+        .post('/pipelines/api-call/preview', { ...base, ...input, url })
+        .reply(200, mock);
+      await client.previewApiCall({ ...base, ...input, customUrl: url });
+      expect(scope.isDone()).toBe(true);
     });
 
     const CONN_MSG = 'API_CALL: apiConnectionId 설정 시 path가 필수입니다(연결의 기본 주소 그대로 부르려면 \'/\')';
