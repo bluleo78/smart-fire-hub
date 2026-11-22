@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import type { ProactiveJob } from '@/api/proactive';
+import { TruncatedLink } from '@/components/TruncatedLink';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import {
@@ -224,6 +225,8 @@ export default function ProactiveJobListPage() {
               <TableSkeletonRows columns={6} rows={5} />
             ) : jobs.length > 0 ? (
               jobs.map((job) => (
+                /* 행은 표 행 의미를 지키려고 role·tabIndex 를 주지 않는다 — 키보드 진입점은 작업명 링크,
+                   행 onClick 은 마우스 편의일 뿐이다 (WD-927, WD-816 사용자 목록과 같은 관례). */
                 <TableRow
                   key={job.id}
                   className="cursor-pointer hover:bg-muted/50 transition-colors"
@@ -236,10 +239,8 @@ export default function ProactiveJobListPage() {
                   <TableCell className="font-medium max-w-0 min-w-[180px]">
                     {/* 작업명과 채널 요약을 세로로 분리하여 가독성 개선 (#5) */}
                     <div className="flex flex-col gap-0.5 min-w-0 whitespace-normal break-words">
-                      {/* 잘린 이름은 title 툴팁으로 전체를 볼 수 있다 */}
-                      <span className="truncate" title={job.name}>
-                        {job.name}
-                      </span>
+                      {/* 키보드 진입점 링크 — 말줄임·title 은 링크가 맡고, self-start 로 폭을 글자만큼만 둔다 */}
+                      <TruncatedLink to={`/ai-insights/jobs/${job.id}`} value={job.name} className="self-start" />
                       <span className="text-xs text-muted-foreground">
                         {channelSummary(job.config)}
                       </span>
