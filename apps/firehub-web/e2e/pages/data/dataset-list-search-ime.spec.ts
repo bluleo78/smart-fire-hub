@@ -18,6 +18,8 @@ import { expect, test } from '../../fixtures/auth.fixture';
  * 3. 입력 box 의 표시 값은 조합 중에도 깨지지 않고 사용자가 본 글자 그대로 유지된다.
  */
 test.describe('데이터셋 목록 — 검색 한글 IME 입력', () => {
+  // 검색창 debounce(300ms) + 여유 — 조합 중 앞 글자 타이머가 만료되도록 기다리는 시간
+  const DEBOUNCE_SETTLE_MS = 300 + 100;
   const datasets = [
     createDataset({ id: 1, name: '가스 누출 데이터셋' }),
     createDataset({ id: 2, name: '나무 화재 데이터셋' }),
@@ -108,6 +110,64 @@ test.describe('데이터셋 목록 — 검색 한글 IME 입력', () => {
     await expect
       .poll(() => urls.some((u) => u.searchParams.get('search') === '가'))
       .toBeTruthy();
+  });
+
+  /**
+   * (WD-979) 한글을 이어 치면 조합 중 앞 글자의 늦춘 onChange 가 불려 칸이 옛 값으로 덮이던 회귀.
+   * 「가」 입력 후 조합 종료 → 「나」 조합 중 debounce(300ms) 를 넘겨 기다린 뒤 「다」로 끝내는
+   * 순서를 실제 브라우저에서 재현해, 칸·URL·API 검색 파라미터가 모두 「가나다」로 남는지 본다.
+   */
+  test('(WD-979) 한글을 이어 치면 검색어가 「가나다」로 남는다', async ({
+    authenticatedPage: page,
+  }) => {
+    const urls = await setup(page);
+    await page.goto('/data/datasets');
+    await expect(page.getByRole('heading', { name: /데이터셋/ })).toBeVisible();
+
+    const searchInput = page.getByRole('textbox', { name: '데이터셋 검색...' });
+    await searchInput.focus();
+    const initialCallCount = urls.length;
+
+    // 호출마다 evaluate 한 번으로 조합·입력 이벤트를 연달아 보내는 헬퍼
+    const fireStep = (steps: Array<['start' | 'end' | 'set', string?]>) =>
+      searchInput.evaluate((el, s) => {
+        const input = el as HTMLInputElement;
+        const nativeSetter = Object.getOwnPropertyDescriptor(
+          window.HTMLInputElement.prototype,
+          'value',
+        )!.set!;
+        for (const [kind, v] of s) {
+          if (kind === 'start') {
+            input.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+          } else if (kind === 'end') {
+            input.dispatchEvent(
+              new CompositionEvent('compositionend', { bubbles: true, data: v ?? '' }),
+            );
+          } else {
+            nativeSetter.call(input, v ?? '');
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+          }
+        }
+      }, steps);
+
+    // 「가」 조합 후 종료 → 「나」 조합 시작 (앞 글자의 debounce 타이머가 아직 살아 있다)
+    await fireStep([['start'], ['set', '가'], ['end', '가'], ['start'], ['set', '가나']]);
+    // 조합 중에 debounce 를 넘겨 앞 글자 타이머가 만료되게 한다
+    await page.waitForTimeout(DEBOUNCE_SETTLE_MS);
+    // 「다」로 결합해 조합 종료 (Chromium 은 input 뒤에 compositionend 를 보낸다)
+    await fireStep([['set', '가나다'], ['end', '가나다']]);
+
+    await expect.poll(() => new URL(page.url()).searchParams.get('q')).toBe('가나다');
+    // URL 갱신 뒤에도 칸이 옛 값으로 덮이지 않았는지 본다
+    await expect(searchInput).toHaveValue('가나다');
+
+    await expect.poll(() => urls[urls.length - 1].searchParams.get('search')).toBe('가나다');
+    // 마지막 요청까지 기다린 뒤에 스냅숏을 계산한다
+    const searches = urls
+      .slice(initialCallCount)
+      .map((u) => u.searchParams.get('search'));
+    // 앞 글자 「가」 만으로는 조회되지 않았다
+    expect(searches).not.toContain('가');
   });
 
   test('한글이 아닌 영문 입력은 매 키 입력마다 그대로 onChange 가 발화된다', async ({
