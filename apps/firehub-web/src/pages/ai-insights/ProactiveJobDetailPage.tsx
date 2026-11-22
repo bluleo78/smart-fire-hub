@@ -46,7 +46,7 @@ function buildDefaultValues(job?: {
   name: string;
   prompt: string;
   templateId: number | null;
-  cronExpression: string;
+  cronExpression: string | null;
   timezone: string;
   triggerType?: string;
   config: Record<string, unknown>;
@@ -93,7 +93,7 @@ function buildDefaultValues(job?: {
     name: job.name,
     prompt: job.prompt,
     templateId: job.templateId ?? null,
-    cronExpression: job.cronExpression,
+    cronExpression: job.cronExpression ?? '',
     timezone: job.timezone ?? 'Asia/Seoul',
     triggerType: (job.triggerType as 'SCHEDULE' | 'ANOMALY' | 'BOTH') ?? 'SCHEDULE',
     config: { channels, anomaly },
@@ -141,6 +141,11 @@ export default function ProactiveJobDetailPage() {
   const [isEditing, setIsEditing] = useState(isNew);
   // 「편집」으로 편집 폼이 열리면 첫 칸으로, 「취소」·「저장」 뒤에는 「편집」 버튼으로 포커스를 옮긴다(WD-415)
   const { editButtonRef, editRegionRef } = useEditModeFocus(isEditing);
+
+  // 「직접 입력」 칸에 사용자가 넣은 값(WD-962) — 개요 탭은 다른 탭으로 가면 언마운트되므로 페이지가 들고 있다.
+  // 읽기 전용으로 돌아가면(저장·취소) 지운다 — 다시 편집할 때 저장된 주기대로 보이게.
+  const [customCronValue, setCustomCronValue] = useState<string | null>(null);
+  if (customCronValue !== null && !isEditing) setCustomCronValue(null);
 
   // 사용자 상호작용 후 변경 여부 추적 (이슈 #59)
   // - 초기 로드(values 동기화)는 변경으로 간주하지 않기 위해 명시적으로 markDirty()를 호출
@@ -368,6 +373,8 @@ export default function ProactiveJobDetailPage() {
     try {
       const latest = await fetchLatestJob(jobId);
       form.reset(buildDefaultValues(latest));
+      // 내 변경을 버렸으니 「직접 입력」 선택도 버린다 — 최신 값이 내가 친 값과 같아도 저장된 주기대로 보인다(WD-962)
+      setCustomCronValue(null);
       setIsDirty(false);
       setEditConflict(false);
     } catch (err) {
@@ -682,6 +689,8 @@ export default function ProactiveJobDetailPage() {
             form={form}
             templates={templates}
             onChange={markDirty}
+            customCronValue={customCronValue}
+            onCustomCronValueChange={setCustomCronValue}
           />
         </TabsContent>
 
