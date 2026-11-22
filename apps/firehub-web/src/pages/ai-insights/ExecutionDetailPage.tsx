@@ -254,9 +254,10 @@ function ExecutionDetailContent({ jobIdNum, executionIdNum }: { jobIdNum: number
         >
           <div className="flex items-center gap-2">
             <span className="text-lg">{outcome.icon}</span>
-            <h3 className={isSkipped ? 'font-semibold text-foreground' : 'font-semibold text-destructive'}>
+            {/* h1 다음 단계라 h2 — 실패·건너뜀에는 요약·리포트 h2 가 없어 h3 이면 단계가 뛴다(WD-929, WCAG 1.3.1) */}
+            <h2 className={isSkipped ? 'font-semibold text-foreground' : 'font-semibold text-destructive'}>
               {outcome.label}
-            </h3>
+            </h2>
           </div>
           {execution.errorMessage && (
             // break-words: 긴 URL/JSON/에러코드 포함 시 카드 너비 초과 방지
