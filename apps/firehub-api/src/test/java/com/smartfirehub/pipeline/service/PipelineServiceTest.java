@@ -2923,6 +2923,156 @@ class PipelineServiceTest extends IntegrationTestBase {
         .containsEntry("path", "/data");
   }
 
+  /** 예전 버전(WD-934 전)이 연결 스텝에 남긴 「inlineAuth 만」 api_config 행을 DB 에 직접 되살린다. */
+  private void seedLegacyInlineAuthOnly(Long stepId) {
+    dsl.execute(
+        "update pipeline_step set api_config = '{\"inlineAuth\":{\"authType\":\"BEARER\",\"token\":\"old\"}}'::jsonb where id = ?",
+        stepId);
+  }
+
+  /**
+   * WD-934 리뷰 후속 — 연결 스텝의 설정이 inlineAuth 하나뿐이면 저장될 값이 빈 설정({})이므로 처음 저장부터 「설정이 필요합니다」로 막는다. 예전에는
+   * 원본으로 판정해 통과한 뒤 {} 로 저장돼, 그 조회 값을 되돌려 보낸 다음 저장에서야 막혔다.
+   */
+  @Test
+  void inlineAuthOnlyConfigWithConnectionRejected() {
+    Long connId = insertApiConnection();
+    CreatePipelineRequest req =
+        new CreatePipelineRequest(
+            "wd934-empty",
+            "t",
+            List.of(
+                apiStep(
+                    inlineAuthConfig(Map.of(), Map.of("authType", "BEARER", "token", "t")),
+                    connId,
+                    null)));
+    assertThatThrownBy(() -> pipelineService.createPipeline(req, testUserId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("API 호출 설정(apiConfig)이 필요합니다");
+  }
+
+  /**
+   * WD-934 리뷰 후속 — 예전 버전이 연결 스텝에 inlineAuth 만 저장해 둔 행은 조회에서 {} 로 보인다. 그 값을 그대로 되돌려 보낸 저장(다른 곳만 고친
+   * 저장)은 막지 않고, 저장하면서 남은 inlineAuth 를 지운다. 이미 있던 스텝을 그런 빈 설정으로 바꾸는 저장은 여전히 막는다(대조군).
+   */
+  @Test
+  void legacyInlineAuthOnlyStepCanBeResaved() {
+    Long connId = insertApiConnection();
+    PipelineDetailResponse p =
+        pipelineService.createPipeline(
+            new CreatePipelineRequest(
+                "wd934-legacy", "t", List.of(apiStep(Map.of("path", "/data"), connId, null))),
+            testUserId);
+    Long stepId = p.steps().get(0).id();
+
+    // 대조군: 설정이 있던 스텝을 inlineAuth 뿐인 설정으로 바꾸면 막힌다(새·바뀐 스텝).
+    UpdatePipelineRequest toEmpty =
+        new UpdatePipelineRequest(
+            "wd934-legacy",
+            "t",
+            null,
+            List.of(
+                apiStep(
+                    inlineAuthConfig(Map.of(), Map.of("authType", "BEARER", "token", "t")),
+                    connId,
+                    stepId)));
+    assertThatThrownBy(() -> pipelineService.updatePipeline(p.id(), toEmpty, testUserId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("API 호출 설정(apiConfig)이 필요합니다");
+
+    // 예전 버전이 남긴 행을 되살린다 — 연결이 있는데 inlineAuth 만 저장됐다.
+    seedLegacyInlineAuthOnly(stepId);
+    Map<String, Object> shown = pipelineService.getPipelineById(p.id()).steps().get(0).apiConfig();
+    assertThat(shown).isEmpty();
+
+    // 조회 값을 그대로 되돌려 보내며 설명만 고친 저장은 통과하고, 남은 비밀값은 지워진다.
+    pipelineService.updatePipeline(
+        p.id(),
+        new UpdatePipelineRequest(
+            "wd934-legacy", "설명만 고침", null, List.of(apiStep(shown, connId, stepId))),
+        testUserId);
+    assertThat(storedApiConfig(stepId)).doesNotContain("inlineAuth").doesNotContain("old");
+
+    // 두 번째 재저장(PR #1162 반려): 첫 재저장이 inlineAuth 를 지워 행이 「연결 + {}」가 됐어도 그대로 보낸 저장은 계속 통과한다.
+    Map<String, Object> shownAgain =
+        pipelineService.getPipelineById(p.id()).steps().get(0).apiConfig();
+    assertThat(shownAgain).isEmpty();
+    pipelineService.updatePipeline(
+        p.id(),
+        new UpdatePipelineRequest(
+            "wd934-legacy", "설명 또 고침", null, List.of(apiStep(shownAgain, connId, stepId))),
+        testUserId);
+    assertThat(pipelineService.getPipelineById(p.id()).description()).isEqualTo("설명 또 고침");
+  }
+
+  /**
+   * WD-934 리뷰 후속 — 그대로 재저장 예외는 「같은 연결 + 저장 기준 빈 설정」 행에만 준다. 같은 옛 행이라도 연결을 빼고 빈 설정으로 보내면 막고, 연결
+   * 없이 {} 로 저장된 다른 옛 행을 빈 설정으로 되돌려 보내도 예전처럼 막는다.
+   */
+  @Test
+  void legacyEmptyStepExemptionIsNarrow() {
+    Long connId = insertApiConnection();
+    PipelineDetailResponse p =
+        pipelineService.createPipeline(
+            new CreatePipelineRequest(
+                "wd934-narrow", "t", List.of(apiStep(Map.of("path", "/data"), connId, null))),
+            testUserId);
+    Long stepId = p.steps().get(0).id();
+    seedLegacyInlineAuthOnly(stepId);
+
+    // 연결을 빼고 빈 설정으로 보내면 바뀐 스텝이라 막는다.
+    UpdatePipelineRequest dropConnection =
+        new UpdatePipelineRequest(
+            "wd934-narrow", "t", null, List.of(apiStep(Map.of(), null, stepId)));
+    assertThatThrownBy(() -> pipelineService.updatePipeline(p.id(), dropConnection, testUserId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("API 호출 설정(apiConfig)이 필요합니다");
+
+    // 같은 연결이어도 설정을 null 로 보내면 예외가 아니다(뒤 검증이 null 맵에서 500 이 나지 않고 400).
+    UpdatePipelineRequest nullConfig =
+        new UpdatePipelineRequest(
+            "wd934-narrow", "t", null, List.of(apiStep(null, connId, stepId)));
+    assertThatThrownBy(() -> pipelineService.updatePipeline(p.id(), nullConfig, testUserId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("API 호출 설정(apiConfig)이 필요합니다");
+
+    // 연결도 inlineAuth 도 없이 {} 로 저장된 옛 행은 예외가 아니다.
+    dsl.execute(
+        "update pipeline_step set api_config = '{}'::jsonb, api_connection_id = null where id = ?",
+        stepId);
+    UpdatePipelineRequest emptyAgain =
+        new UpdatePipelineRequest(
+            "wd934-narrow", "t", null, List.of(apiStep(Map.of(), null, stepId)));
+    assertThatThrownBy(() -> pipelineService.updatePipeline(p.id(), emptyAgain, testUserId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("API 호출 설정(apiConfig)이 필요합니다");
+  }
+
+  /**
+   * WD-934 리뷰 후속 — 연결 번호가 남은 SQL 스텝(api_config 없음)을 같은 연결의 빈 API_CALL 로 바꾸는 저장은 「바뀌지 않은 스텝」이 아니라 막는다.
+   */
+  @Test
+  void sqlStepTurnedIntoEmptyApiCallRejected() {
+    Long connId = insertApiConnection();
+    PipelineDetailResponse p =
+        pipelineService.createPipeline(
+            new CreatePipelineRequest(
+                "wd934-sql", "t", List.of(apiStep(Map.of("path", "/data"), connId, null))),
+            testUserId);
+    Long stepId = p.steps().get(0).id();
+    // 다른 유형 스텝에도 연결 번호가 남을 수 있다(WD-176) — SQL 스텝으로 바꿔 둔다.
+    dsl.execute(
+        "update pipeline_step set script_type = 'SQL', script_content = 'select 1', api_config = null where id = ?",
+        stepId);
+
+    UpdatePipelineRequest toEmptyApi =
+        new UpdatePipelineRequest(
+            "wd934-sql", "t", null, List.of(apiStep(Map.of(), connId, stepId)));
+    assertThatThrownBy(() -> pipelineService.updatePipeline(p.id(), toEmptyApi, testUserId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("API 호출 설정(apiConfig)이 필요합니다");
+  }
+
   /** 수정 감사 중 "steps" 변경으로 기록된 UPDATE 행 수 — 감사 행은 같은 테넌트 컨텍스트에서 읽는다. */
   private long stepsAuditCount(Long pipelineId) {
     return dsl.fetchCount(

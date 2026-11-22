@@ -258,7 +258,11 @@ public class PipelineService {
 
       // Validate API_CALL step requirements
       if ("API_CALL".equals(stepRequest.scriptType())) {
-        if (stepRequest.apiConfig() == null || stepRequest.apiConfig().isEmpty()) {
+        // WD-934 리뷰 후속: 빈 설정 판정은 저장될 값(연결이 있으면 낡은 inlineAuth 를 뺀 설정) 기준이다. 원본으로 보면 inlineAuth 하나뿐인
+        // 연결 스텝이 {} 로 저장·조회된 뒤 그 조회 값을 되돌려 보낸 다음 저장이 막혔다. 다만 이미 그렇게(빈 설정으로) 저장된 스텝을 그대로
+        // 되돌려 보낸 저장은 막지 않는다 — 막으면 다른 스텝만 고쳐도 파이프라인을 저장할 수 없다(WD-585 「새·바뀐 스텝만 거부」와 같은 이유).
+        if (isEmptyApiCallConfig(stepRequest.apiConfig(), stepRequest.apiConnectionId())
+            && !isUnchangedEmptyConnectionStep(storedStep, stepRequest)) {
           throw new IllegalArgumentException(
               stepError(stepRequest.name(), "API 호출 설정(apiConfig)이 필요합니다"));
         }
@@ -1128,6 +1132,37 @@ public class PipelineService {
     Map<String, Object> copy = new java.util.LinkedHashMap<>(apiConfig);
     copy.remove("inlineAuth");
     return copy;
+  }
+
+  /**
+   * 저장될 기준(연결이 있으면 낡은 inlineAuth 를 뺀)으로 API 호출 설정이 비었는가(WD-934 리뷰 후속).
+   *
+   * <p>왜: 연결 스텝은 inlineAuth 가 저장·조회에서 빠지므로, 원본에 inlineAuth 만 있으면 실제로는 빈 설정이 저장된다. 판정도 같은 기준이어야 첫
+   * 저장은 통과하고 그 조회 값으로 한 다음 저장만 막히는 어긋남이 없다. 연결 스텝도 실행기는 path 가 있어야 호출하므로 빈 설정은 실행할 수 없다.
+   */
+  private static boolean isEmptyApiCallConfig(Map<String, Object> apiConfig, Long apiConnectionId) {
+    Map<String, Object> effective = stripStaleInlineAuth(apiConfig, apiConnectionId);
+    return effective == null || effective.isEmpty();
+  }
+
+  /**
+   * 짝지은 기존 스텝이 연결을 쓰면서 저장 기준으로 빈 설정인 행이고, 요청이 같은 연결로 그 스텝을 되돌려 보낸 것인가(WD-934 리뷰 후속, WD-585 와 같은
+   * "바뀌지 않은 스텝" 예외). 예전 버전이 남긴 「연결 + inlineAuth 만」 행과, 그 행을 한 번 재저장해 inlineAuth 가 지워진 「연결 + {}」 행이 여기에
+   * 든다 — 둘 다 조회에서 {} 로 보이므로 그 값을 그대로 보낸 저장(다른 곳만 고친 저장)을 막지 않는다. 재저장이 inlineAuth 를 지우므로 「연결 + {}」 행도
+   * 받아야 두 번째 저장부터 다시 막히지 않는다.
+   *
+   * <p>연결을 빼거나 바꾼 요청, 연결 없이 null·{} 로 저장된 행은 예전처럼 「설정이 필요합니다」로 막는다. 요청 설정이 null 이면 예외로 받지 않는다 — 뒤
+   * 검증들이 null 이 아닌 맵을 전제로 해 500 이 났고, 조회 응답은 {} 를 주므로 그대로 되돌려 보낸 저장은 null 이 아니다. 저장된 스텝이 API_CALL 일 때만
+   * 받는다 — 다른 유형 스텝도 연결 번호가 남을 수 있어(WD-176) SQL 스텝을 빈 API_CALL 로 바꾸는 저장이 통과하지 않게.
+   */
+  private static boolean isUnchangedEmptyConnectionStep(
+      PipelineStepResponse storedStep, PipelineStepRequest stepRequest) {
+    return storedStep != null
+        && stepRequest.apiConfig() != null
+        && "API_CALL".equals(storedStep.scriptType())
+        && storedStep.apiConnectionId() != null
+        && storedStep.apiConnectionId().equals(stepRequest.apiConnectionId())
+        && isEmptyApiCallConfig(storedStep.apiConfig(), storedStep.apiConnectionId());
   }
 
   /** 저장용: 요청 스텝의 apiConfig 에서 낡은 inlineAuth 를 뺀 요청을 만든다(바뀔 게 없으면 같은 객체, WD-934). */
