@@ -75,6 +75,18 @@ describe('pipelineEditorReducer', () => {
   });
 
   describe('REMOVE_STEP', () => {
+    it('없는 tempId 면 state 를 그대로 돌려준다(WD-954)', () => {
+      const s1 = createDefaultStep({ x: 0, y: 0 });
+      const s2 = createDefaultStep({ x: 100, y: 0 });
+      s2.scriptContent = 'SELECT * FROM {{#1}} JOIN {{#2}}';
+      state = { ...state, steps: [s1, s2], selectedStepId: s1.tempId, isDirty: false };
+
+      const next = dispatch(state, { type: 'REMOVE_STEP', payload: { tempId: 'missing' } });
+      expect(next).toBe(state);
+      expect(next.steps[1].scriptContent).toBe('SELECT * FROM {{#1}} JOIN {{#2}}');
+      expect(next.isDirty).toBe(false);
+    });
+
     it('스텝 제거 + dependsOnTempIds에서 해당 ID 삭제', () => {
       const s1 = createDefaultStep({ x: 0, y: 0 });
       const s2 = createDefaultStep({ x: 100, y: 0 });

@@ -113,6 +113,14 @@ export default function StepConfigPanel({
 
   // 스텝 삭제 확인 다이얼로그 표시 여부 — 실수 삭제 방지 (rules-of-hooks: early return 이전 선언)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  // WD-954: 저장 중에 열어 둔 삭제 창이 보기 모드로 바뀐 뒤에도 남아 스텝을 지우는 것을 막는다.
+  // 렌더 중 이전 readOnly 와 비교해 상태를 조정한다(useEffect 로 하면 한 프레임 동안 창이 남고,
+  // react-hooks 린트의 effect 내 setState 경고도 피한다). 보기 모드가 되는 순간 창을 닫아 이후 다시 수정해도 되살아나지 않는다.
+  const [prevReadOnly, setPrevReadOnly] = useState(readOnly);
+  if (prevReadOnly !== readOnly) {
+    setPrevReadOnly(readOnly);
+    if (readOnly) setDeleteDialogOpen(false);
+  }
 
   // MERGE 로드 전략의 PK 안내에 필요 — 출력 데이터셋의 컬럼 정의를 조회한다.
   // (rules-of-hooks: early return 이전 선언, step이 없으면 id 0으로 비활성 조회)
@@ -379,7 +387,10 @@ export default function StepConfigPanel({
   };
 
   // 삭제 확인 다이얼로그에서 "삭제" 클릭 시: 실제 스텝을 제거한다.
+  // 보기 모드면 아무것도 지우지 않는다 — 저장이 끝나 창이 닫히는 애니메이션 동안에도 내용이 남아
+  // 그 틈의 클릭·Enter 가 여기로 들어올 수 있어, 창을 숨기는 것만으로는 막지 못한다(WD-954).
   const handleConfirmDelete = () => {
+    if (readOnly) return;
     dispatch({ type: 'REMOVE_STEP', payload: { tempId: step.tempId } });
     dispatch({ type: 'SELECT_STEP', payload: { tempId: null } });
   };
@@ -862,7 +873,7 @@ export default function StepConfigPanel({
 
       {/* 스텝 삭제 확인 다이얼로그 — 실수 삭제 방지 */}
       <AlertDialog
-        open={deleteDialogOpen}
+        open={deleteDialogOpen && !readOnly}
         onOpenChange={(open) => { if (!open) setDeleteDialogOpen(false); }}
       >
         <AlertDialogContent>
