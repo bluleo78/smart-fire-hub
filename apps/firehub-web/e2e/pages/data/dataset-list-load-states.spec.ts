@@ -158,3 +158,174 @@ test.describe('데이터셋 목록 — 조회 실패·범위 밖 페이지 (WD-1
     await expect(page.getByText('데이터셋이 없습니다.')).toHaveCount(0);
   });
 });
+
+/**
+ * 데이터셋 목록 — 「다시 시도」 포커스 (WD-957)
+ *
+ * 데이터가 없는 채로 「다시 시도」를 누르면 쿼리가 pending 으로 돌아가 실패 행이 사라지고 포커스가 body 로 떨어졌다.
+ * 누르는 즉시 표로 옮겨 재조회 중에도 위치를 잃지 않게 하고, 다시 실패해 버튼이 돌아왔을 때만 버튼으로 되돌린다.
+ */
+test.describe('데이터셋 목록 — 「다시 시도」 포커스 (WD-957)', () => {
+  type Outcome = { status: number; body: unknown };
+  const serverError: Outcome = {
+    status: 500,
+    body: { status: 500, error: 'Internal Server Error', message: '일시적인 서버 오류입니다.' },
+  };
+
+  const threeDatasets: Outcome = { status: 200, body: createPageResponse(createDatasets(3)) };
+
+  /** 500 으로 진입 → 응답을 outcome 으로 바꾸고 붙잡은 뒤 「다시 시도」를 눌러, 재조회 중 표에 포커스가 있는 상태까지 만든다. */
+  async function failThenRetry(page: Page, outcome: Outcome, via: 'keyboard' | 'mouse' = 'keyboard') {
+    let current: Outcome = serverError;
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets',
+      (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        return route.fulfill({ status: current.status, contentType: 'application/json', body: JSON.stringify(current.body) });
+      },
+    );
+    await page.goto('/data/datasets');
+    const table = page.getByRole('table', { name: '데이터셋 목록' });
+    const retry = page.getByRole('cell').getByRole('button', { name: '다시 시도' });
+    await expect(retry).toBeVisible();
+
+    current = outcome;
+    const held = await holdRequests(page, '/api/v1/datasets', 'GET');
+    if (via === 'mouse') {
+      await retry.click();
+    } else {
+      await retry.focus();
+      await page.keyboard.press('Enter');
+    }
+    await expect.poll(held.count).toBeGreaterThan(0);
+    await expect(table).toBeFocused();
+    return {
+      table,
+      retry,
+      held,
+      setOutcome: (next: Outcome) => {
+        current = next;
+      },
+    };
+  }
+
+  test('재조회 중 표에 포커스가 보이고, 다시 실패하면 「다시 시도」로 돌아온다', async ({ authenticatedPage: page }) => {
+    const { table, retry, held } = await failThenRetry(page, serverError);
+    // 포커스 표시: --ring 원색 2px 안쪽 outline(스크롤 상자에 잘리지 않게 -2px)
+    const ring = await page.evaluate(() => {
+      const probe = document.createElement('span');
+      probe.style.color = 'var(--ring)';
+      document.body.appendChild(probe);
+      const color = getComputedStyle(probe).color;
+      probe.remove();
+      return color;
+    });
+    await expect(table).toHaveCSS('outline-style', 'solid');
+    await expect(table).toHaveCSS('outline-width', '2px');
+    await expect(table).toHaveCSS('outline-offset', '-2px');
+    await expect(table).toHaveCSS('outline-color', ring);
+
+    held.release();
+    await expect(retry).toBeVisible();
+    await expect(retry).toBeFocused();
+  });
+
+  test('성공하면 목록 표에 포커스가 남는다', async ({ authenticatedPage: page }) => {
+    const { table, held } = await failThenRetry(page, threeDatasets);
+    held.release();
+    await expect(page.getByText('데이터셋 1', { exact: true })).toBeVisible();
+    await expect(table).toBeFocused();
+  });
+
+  test('빈 목록으로 성공해도 표에 남는다', async ({ authenticatedPage: page }) => {
+    const { table, held } = await failThenRetry(page, { status: 200, body: createPageResponse([]) });
+    held.release();
+    await expect(page.getByText('데이터셋이 없습니다.')).toBeVisible();
+    await expect(table).toBeFocused();
+  });
+
+  test('권한 없음으로 확정되면 표에 남는다', async ({ authenticatedPage: page }) => {
+    const { table, held } = await failThenRetry(page, {
+      status: 403,
+      body: { status: 403, error: 'Forbidden', message: 'Access denied' },
+    });
+    held.release();
+    await expectTableErrorAlert(page, '데이터셋 목록을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.');
+    await expect(page.getByRole('button', { name: '다시 시도' })).toHaveCount(0);
+    await expect(table).toBeFocused();
+  });
+
+  test('재조회 중 사용자가 옮긴 포커스는 빼앗지 않는다', async ({ authenticatedPage: page }) => {
+    const { retry, held } = await failThenRetry(page, serverError);
+    const search = page.getByPlaceholder('데이터셋 검색...');
+    await search.focus();
+    held.release();
+    await expect(retry).toBeVisible();
+    await expect(search).toBeFocused();
+  });
+
+  test('성공한 뒤의 무관한 실패는 포커스를 옮기지 않는다', async ({ authenticatedPage: page }) => {
+    const { table, retry, held, setOutcome } = await failThenRetry(page, threeDatasets);
+    held.release();
+    await expect(page.getByText('데이터셋 1', { exact: true })).toBeVisible();
+    await expect(table).toBeFocused();
+
+    // 다른 검색어 조회가 실패해도, 이미 끝난 「다시 시도」의 포커스 이동이 되살아나지 않는다
+    setOutcome(serverError);
+    await page.evaluate(() => {
+      history.pushState({}, '', '/data/datasets?q=zzz');
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    });
+    await expect(retry).toBeVisible({ timeout: 15000 });
+    await expect(table).toBeFocused();
+  });
+
+  test('마우스로 눌러 다시 실패해도 버튼에 포커스가 있다', async ({ authenticatedPage: page }) => {
+    const { table, retry, held } = await failThenRetry(page, serverError, 'mouse');
+    // 마우스 클릭이 옮긴 포커스는 :focus-visible 이 아니라 표에 outline 이 그려지지 않는다
+    await expect(table).toHaveCSS('outline-style', 'none');
+    held.release();
+    await expect(retry).toBeVisible();
+    await expect(retry).toBeFocused();
+  });
+
+  test('표는 재시도 뒤 포커스가 떠나면 다시 포커스를 받지 않는다', async ({ authenticatedPage: page }) => {
+    const { table, held } = await failThenRetry(page, threeDatasets);
+    held.release();
+    await expect(page.getByText('데이터셋 1', { exact: true })).toBeVisible();
+    await expect(table).toBeFocused();
+    await expect(table).toHaveAttribute('tabindex', '-1');
+
+    // 포커스가 떠난 뒤 표를 마우스로 누르면 그때 tabindex 를 뗀다 — 늘 두면 표 빈 곳 클릭이 포커스를 가져간다
+    await page.keyboard.press('Tab');
+    await page.getByRole('columnheader', { name: '유형' }).click();
+    await expect(table).not.toHaveAttribute('tabindex', /.*/);
+    await expect(table).not.toBeFocused();
+  });
+
+  test('재조회 중 창(단축키 도움말)을 열었다 닫아도 표로 돌아오고 「다시 시도」로 이어진다', async ({ authenticatedPage: page }) => {
+    const { table, retry, held } = await failThenRetry(page, serverError);
+    await page.keyboard.press('Shift+?');
+    const dialog = page.getByRole('dialog', { name: '키보드 단축키' });
+    await expect(dialog).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    // 창이 되돌려 줄 자리(표)가 그사이 포커스를 못 받게 되면 body 로 떨어진다
+    await expect(table).toBeFocused();
+    // 포커스를 쥔 표를 눌러도 놓지 않는다
+    await page.getByRole('columnheader', { name: '유형' }).click();
+    await expect(table).toBeFocused();
+    held.release();
+    await expect(retry).toBeFocused();
+  });
+
+  test('재조회 중 다른 창에 다녀와도 포커스가 남아 「다시 시도」로 돌아온다', async ({ authenticatedPage: page }) => {
+    const { table, retry, held } = await failThenRetry(page, serverError);
+    // 창을 떠나면 브라우저는 activeElement 를 그대로 둔 채 그 요소에 blur 만 보낸다 — headless 는 창 포커스를 잃지 않아 그 blur 를 직접 보낸다
+    await table.evaluate((el) => el.dispatchEvent(new FocusEvent('blur')));
+    await expect(table).toHaveAttribute('tabindex', '-1');
+    await expect(table).toBeFocused();
+    held.release();
+    await expect(retry).toBeFocused();
+  });
+});
