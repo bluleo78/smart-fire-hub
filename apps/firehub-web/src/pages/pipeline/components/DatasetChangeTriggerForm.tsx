@@ -3,6 +3,7 @@ import { useId, useMemo } from 'react';
 import { IntegerTextInput } from '@/components/IntegerTextInput';
 import { Label } from '@/components/ui/label';
 import { useAllDatasets } from '@/hooks/queries/useDatasets';
+import { useIntegerFieldsValidity } from '@/hooks/useIntegerFieldsValidity';
 
 import DatasetCombobox from './DatasetCombobox';
 
@@ -14,9 +15,13 @@ interface DatasetChangeTriggerFormProps {
   };
   onChange: (config: DatasetChangeTriggerFormProps['config']) => void;
   errors?: Record<string, string>;
+  /** 숫자 칸 중 하나라도 유효하지 않으면(표기 오류) false — 부모가 저장을 막는 데 쓴다 (WD-906 후속) */
+  onValidityChange?: (valid: boolean) => void;
 }
 
-export default function DatasetChangeTriggerForm({ config, onChange, errors }: DatasetChangeTriggerFormProps) {
+export default function DatasetChangeTriggerForm({ config, onChange, errors, onValidityChange }: DatasetChangeTriggerFormProps) {
+  // 칸별 유효성을 모아 하나라도 무효면 부모에 false 를 알린다 (바뀔 때만)
+  const setFieldValid = useIntegerFieldsValidity(onValidityChange);
   // 서버 목록 상한(100)을 넘어도 전부 보이도록 전 페이지를 모은다 (#732)
   const { data: allDatasets } = useAllDatasets();
   // 볼 수 없는 감시 대상(보안 등급)은 목록 로드가 끝난 뒤에만 잠금 칩으로 판정한다(DatasetCombobox).
@@ -73,6 +78,7 @@ export default function DatasetChangeTriggerForm({ config, onChange, errors }: D
           }
           aria-invalid={!!errors?.pollingIntervalSeconds}
           onValueChange={(n) => onChange({ ...config, pollingIntervalSeconds: n })}
+          onValidityChange={(v) => setFieldValid('polling', v)}
         />
         <p id={pollingHelpId} className="text-xs text-muted-foreground">30초 ~ 3600초 (1시간)</p>
         {errors?.pollingIntervalSeconds && (
@@ -92,6 +98,7 @@ export default function DatasetChangeTriggerForm({ config, onChange, errors }: D
           }
           aria-invalid={!!errors?.debounceSeconds}
           onValueChange={(n) => onChange({ ...config, debounceSeconds: n })}
+          onValidityChange={(v) => setFieldValid('debounce', v)}
         />
         <p id={debounceHelpId} className="text-xs text-muted-foreground">
           연속 변경 시 지정 시간 내 재트리거를 방지합니다. 0초 ~ 3600초 (1시간)

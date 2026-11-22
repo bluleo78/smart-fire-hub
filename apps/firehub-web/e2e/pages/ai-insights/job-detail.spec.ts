@@ -694,8 +694,29 @@ test.describe('스마트 작업 상세 페이지', () => {
     await expect(page.getByRole('dialog').getByText('정수를 입력하세요')).toHaveCount(0);
     await page.getByRole('dialog').getByRole('button', { name: '취소' }).click();
 
-    // 저장하면 덜 된 값은 커밋되지 않았으므로 이전 값이 실린다 (30·300 같은 기본값이 아니다)
-    await page.getByRole('button', { name: '저장' }).click();
+    // 개요 탭으로 갔다 와도 오류는 풀리지 않는다 — 모니터링 탭이 언마운트되면 마지막 올바른 값이 저장되던 문제 (WD-906 후속)
+    await page.getByRole('tab', { name: '개요' }).click();
+    await expect(page.getByRole('button', { name: '저장', exact: true })).toBeDisabled();
+    await expect(page.getByText('모니터링 탭의 숫자 칸 오류를 고치세요')).toBeVisible();
+    expect(putCapture.requests).toHaveLength(0);
+    await page.getByRole('tab', { name: /모니터링/ }).click();
+    await expect(cooldown).toHaveValue('1e');
+
+    // 표기 오류(1e·-)가 보이는 동안은 저장이 막힌다 — 마지막 올바른 값(45·120)이 말없이 저장되지 않는다 (WD-906 후속)
+    const saveButton = page.getByRole('button', { name: '저장', exact: true });
+    await expect(saveButton).toBeDisabled();
+    await saveButton.click({ force: true });
+    expect(putCapture.requests).toHaveLength(0);
+    await expect(page.getByRole('button', { name: '편집' })).toHaveCount(0);
+
+    // 쿨다운만 고쳐도 지표 행 칸이 아직 오류면 막혀 있다
+    await cooldown.fill('45');
+    await expect(saveButton).toBeDisabled();
+    // 지표 행도 고치면 풀리고, 고친 값이 실린다
+    await metricInterval.fill('120');
+    await expect(page.getByText('정수를 입력하세요')).toHaveCount(0);
+    await expect(saveButton).toBeEnabled();
+    await saveButton.click();
     const req = await putCapture.waitForRequest();
     expect(req.payload).toMatchObject({
       config: { anomaly: { cooldownMinutes: 45, metrics: [{ id: 'm-1', pollingInterval: 120 }] } },

@@ -606,6 +606,74 @@ test.describe('파이프라인 에디터 — API_CALL 스텝 설정', () => {
   });
 
   /**
+   * WD-906 후속: 하한(1000ms) 미만 값은 입력 중에도 커밋하지 않고 칸 오류로 보이며(타임아웃 5ms 가 상태에 들어가지 않는다),
+   * 칸을 떠나면 하한으로 올려 맞춘다. 칸이 무효인 동안은 파이프라인 저장 자체가 막힌다(아래 별도 테스트).
+   */
+  test('API 호출 스텝 고급 설정 — 하한 미만 값은 커밋되지 않고 칸 오류가 보이며 blur 하면 하한으로 맞춰진다 (WD-906)', async ({
+    authenticatedPage: page,
+  }) => {
+    const capture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/pipelines',
+      { id: 104, name: '하한 테스트', steps: [] },
+      { capture: true },
+    );
+
+    await openApiCallAdvanced(page);
+    const timeoutInput = page.getByLabel('요청 타임아웃 (ms)');
+    await expect(timeoutInput).toBeVisible({ timeout: 5000 });
+
+    await timeoutInput.fill('5');
+    await expect(timeoutInput).toHaveValue('5');
+    await expect(timeoutInput).toHaveAttribute('aria-invalid', 'true');
+    await expect(page.getByText('1000 이상 입력하세요')).toBeVisible();
+
+    // 칸을 떠나면 하한(1000)으로 올려 맞춰지고 오류가 사라진다
+    await timeoutInput.blur();
+    await expect(timeoutInput).toHaveValue('1000');
+    await expect(page.getByText('1000 이상 입력하세요')).toHaveCount(0);
+
+    // 하한으로 커밋됐으므로 저장 요청에 정확히 1000 이 실린다
+    await saveApiCallPipeline(page, '하한 테스트');
+    const req = await capture.waitForRequest();
+    const payload = req.payload as { steps: Array<{ apiConfig?: { timeoutMs?: number } }> };
+    expect(payload.steps[0].apiConfig?.timeoutMs).toBe(1000);
+  });
+
+  /** WD-906 후속: 타임아웃 칸이 표기 오류·하한 미만인 동안은 파이프라인 저장이 막히고(요청 0건) 이유가 토스트로 보인다 */
+  test('API 호출 스텝 고급 설정 — 표기 오류(1e)가 보이는 동안 저장이 막히고, 고치면 저장된다 (WD-906)', async ({
+    authenticatedPage: page,
+  }) => {
+    const capture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/pipelines',
+      { id: 106, name: '저장 차단 테스트', steps: [] },
+      { capture: true },
+    );
+
+    await openApiCallAdvanced(page);
+    const timeoutInput = page.getByLabel('요청 타임아웃 (ms)');
+    await expect(timeoutInput).toBeVisible({ timeout: 5000 });
+
+    // 표기 오류(1e)는 칸을 떠나도(저장 클릭의 blur) 그대로 무효라 저장이 막힌다.
+    // 하한 미만(5)은 칸을 떠나는 순간 하한으로 올려 맞춰져 유효가 되므로(위 테스트) 여기서는 다루지 않는다.
+    await timeoutInput.fill('1e');
+    await expect(timeoutInput).toHaveAttribute('aria-invalid', 'true');
+    await saveApiCallPipeline(page, '저장 차단 테스트');
+    await expect(page.getByText('스텝 설정의 숫자 칸 오류를 고친 뒤 저장하세요.')).toBeVisible();
+    await expect(timeoutInput).toBeFocused();
+    expect(capture.requests).toHaveLength(0);
+
+    await timeoutInput.fill('5000');
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+    const req = await capture.waitForRequest();
+    const payload = req.payload as { steps: Array<{ apiConfig?: { timeoutMs?: number } }> };
+    expect(payload.steps[0].apiConfig?.timeoutMs).toBe(5000);
+  });
+
+  /**
    * WD-906: 칸에 들어갔다가 아무것도 치지 않고 나가기만 해도 blur 보정이 갱신을 보내
    * 기본 설정값(retry·timeoutMs·maxDurationMs)이 저장 본문에 새로 실리던 문제.
    */

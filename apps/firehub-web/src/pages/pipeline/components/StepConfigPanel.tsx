@@ -88,6 +88,8 @@ interface StepConfigPanelProps {
   /** 이름 입력(#step-name) 콜백 ref — 「스텝 추가」 직후 편집기 페이지가 새 스텝 이름으로 포커스를 옮기는 데 쓴다(WD-545).
    *  객체 ref 가 아니라 콜백인 이유: 패널도 같은 입력에 자기 ref(WD-560)를 걸어야 하는데, prop 으로 받은 ref 객체를 고치면 안 된다. */
   nameInputRef?: (el: HTMLInputElement | null) => void;
+  /** 스텝 설정의 숫자 칸 중 하나라도 유효하지 않으면 false — 편집기가 파이프라인 저장을 막는 데 쓴다 (WD-906 후속) */
+  onIntegerValidityChange?: (valid: boolean) => void;
 }
 
 export default function StepConfigPanel({
@@ -100,6 +102,7 @@ export default function StepConfigPanel({
   pipelineId,
   serverSteps,
   nameInputRef,
+  onIntegerValidityChange,
 }: StepConfigPanelProps) {
   const step = state.selectedStepId
     ? state.steps.find((s) => s.tempId === state.selectedStepId) ?? null
@@ -476,6 +479,7 @@ export default function StepConfigPanel({
                   fieldError={getFieldError}
                   errorFields={stepErrors.map((e) => e.field)}
                   errorFocusRequest={state.focusRequest}
+                  onIntegerValidityChange={onIntegerValidityChange}
                 />
               </Suspense>
             </>
@@ -492,6 +496,7 @@ export default function StepConfigPanel({
                   readOnly={readOnly}
                   primaryInputHidden={primaryInputHidden}
                   fieldError={getFieldError}
+                  onIntegerValidityChange={onIntegerValidityChange}
                 />
               </Suspense>
             </>

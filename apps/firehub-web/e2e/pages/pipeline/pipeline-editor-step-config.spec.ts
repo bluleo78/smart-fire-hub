@@ -289,6 +289,38 @@ test.describe('파이프라인 에디터 — 스텝 설정', () => {
     expect(payload.steps[0].aiConfig?.batchSize).toBe(50);
   });
 
+  /** WD-906 후속: 배치 크기 칸이 표기 오류인 동안은 파이프라인 저장이 막히고(요청 0건) 이유가 토스트로 보인다 */
+  test('AI 분류 스텝 배치 크기 — 오류가 보이는 동안 저장이 막히고, 고치면 저장된다 (WD-906)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupNewEditorMocks(page);
+    const capture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/pipelines',
+      { id: 105, name: '배치 저장 차단', steps: [] },
+      { capture: true },
+    );
+    await page.goto('/pipelines/new');
+    await addConfiguredAiClassifyStep(page);
+
+    const batch = page.getByLabel('배치 크기 (1~100)');
+    await batch.fill('1e');
+    await expect(page.getByText('정수를 입력하세요')).toBeVisible();
+    await page.getByPlaceholder(/파이프라인 이름|이름 입력/).first().fill('배치 저장 차단');
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+
+    await expect(page.getByText('스텝 설정의 숫자 칸 오류를 고친 뒤 저장하세요.')).toBeVisible();
+    await expect(batch).toBeFocused();
+    expect(capture.requests).toHaveLength(0);
+
+    await batch.fill('30');
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+    const req = await capture.waitForRequest();
+    const payload = req.payload as { steps: Array<{ aiConfig?: { batchSize?: number } }> };
+    expect(payload.steps[0].aiConfig?.batchSize).toBe(30);
+  });
+
   /**
    * WD-906: 칸에 들어갔다 나가기만 해도 batchSize 가 본문에 새로 실리던 문제.
    */

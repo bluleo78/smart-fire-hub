@@ -42,6 +42,7 @@ import {
 import { Separator } from '@/components/ui/separator';
 import { Textarea } from '@/components/ui/textarea';
 import { useApiConnectionsSelectable } from '@/hooks/queries/useApiConnections';
+import { useIntegerFieldsValidity } from '@/hooks/useIntegerFieldsValidity';
 import { API_FULL_URL_PLACEHOLDER, AUTH_TYPE_LABEL, AUTH_TYPE_OPTIONS } from '@/lib/api-connection-form';
 import { cn } from '@/lib/utils';
 import { columnNameLengthError } from '@/lib/validations/dataset';
@@ -109,6 +110,8 @@ interface ApiCallStepConfigProps {
   errorFields?: readonly string[];
   /** 저장 실패 포커스 요청(리듀서 focusRequest) — 저장 시도마다 새 객체라, 바뀌면 오류가 남은 절을 다시 편다(WD-633) */
   errorFocusRequest?: FocusRequest | null;
+  /** 숫자 칸(재시도·타임아웃·최대 실행 시간) 중 하나라도 유효하지 않으면 false — 상위 편집기가 저장을 막는 데 쓴다 (WD-906 후속) */
+  onIntegerValidityChange?: (valid: boolean) => void;
 }
 
 interface PreviewResult {
@@ -346,7 +349,10 @@ export default function ApiCallStepConfig({
   fieldError,
   errorFields = [],
   errorFocusRequest = null,
+  onIntegerValidityChange,
 }: ApiCallStepConfigProps) {
+  // 숫자 칸 유효성을 모아 상위에 알린다 (WD-906 후속)
+  const setIntegerValid = useIntegerFieldsValidity(onIntegerValidityChange);
   // 접근성: 라벨↔입력 연결용 id 접두사 (#432).
   // 이 패널은 스텝이 바뀔 때마다 key 로 재마운트되고 여러 곳에서 재사용될 수 있어 하드코딩 id 는 충돌한다.
   const baseId = useId();
@@ -1017,6 +1023,7 @@ export default function ApiCallStepConfig({
               min={MAX_RETRIES_RANGE.min}
               max={MAX_RETRIES_RANGE.max}
               onValueChange={(n) => handleRetryChange({ maxRetries: n })}
+              onValidityChange={(v) => setIntegerValid('maxRetries', v)}
             />
             <p className="text-[11px] text-muted-foreground">{MAX_RETRIES_RANGE.min}~{MAX_RETRIES_RANGE.max}회</p>
           </div>
@@ -1030,6 +1037,7 @@ export default function ApiCallStepConfig({
               min={TIMEOUT_MS_RANGE.min}
               max={TIMEOUT_MS_RANGE.max}
               onValueChange={(n) => update('timeoutMs', n)}
+              onValidityChange={(v) => setIntegerValid('timeoutMs', v)}
             />
             <p className="text-[11px] text-muted-foreground">{TIMEOUT_MS_RANGE.min}~{TIMEOUT_MS_RANGE.max}ms</p>
           </div>
@@ -1043,6 +1051,7 @@ export default function ApiCallStepConfig({
               min={MAX_DURATION_MS_RANGE.min}
               max={MAX_DURATION_MS_RANGE.max}
               onValueChange={(n) => update('maxDurationMs', n)}
+              onValidityChange={(v) => setIntegerValid('maxDurationMs', v)}
             />
             <p className="text-[11px] text-muted-foreground">{MAX_DURATION_MS_RANGE.min}~{MAX_DURATION_MS_RANGE.max}ms</p>
           </div>

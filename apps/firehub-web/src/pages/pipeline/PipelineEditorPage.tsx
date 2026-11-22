@@ -35,8 +35,10 @@ import { Tabs, TabsContent,TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAllDatasets } from '@/hooks/queries/useDatasets';
 import { useInvalidateListsOnEntryNotFound } from '@/hooks/queries/useInvalidateListsOnEntryNotFound';
 import { PIPELINE_LIST_KEY, useCancelExecution, useExecutePipeline, useExecution, useExecutions,usePipeline, usePipelinePermissions } from '@/hooks/queries/usePipelines';
+import { useInvalidFlag } from '@/hooks/useInvalidFlag';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { extractApiError, handleApiError, isNotFoundError } from '@/lib/api-error';
+import { focusFirstInvalidInteger } from '@/lib/focus-invalid-integer';
 import { formatDate, getStatusBadgeVariant, getStatusLabel, parseUtcDate } from '@/lib/formatters';
 import { parseRouteId } from '@/lib/route-id';
 import type { PipelineExecutionResponse } from '@/types/pipeline';
@@ -253,13 +255,25 @@ export default function PipelineEditorPage() {
   // 기존엔 beforeunload만 등록해 SPA 내부 이동 시 dirty 상태가 무경고로 유실됐다(이슈 #86과 동일 결함).
   const { dialog: unsavedChangesDialog } = useUnsavedChangesGuard(state.isDirty);
 
+  // 스텝 설정의 숫자 칸이 표기 오류·하한 미만인 채인가 — 마지막 올바른 값이 말없이 저장되지 않게 저장을 막는다 (WD-906 후속)
+  const [integerInvalid, handleIntegerValidity] = useInvalidFlag();
+  /** 숫자 칸 오류가 있으면 이유를 알리고 오류 칸으로 초점을 옮긴 뒤 true(저장 중단) */
+  const blockedByInvalidInteger = () => {
+    if (!integerInvalid) return false;
+    toast.error('스텝 설정의 숫자 칸 오류를 고친 뒤 저장하세요.', { id: 'pipeline-integer-invalid' });
+    focusFirstInvalidInteger();
+    return true;
+  };
+
   const handleSave = async () => {
+    if (blockedByInvalidInteger()) return;
     const ok = await save();
     if (ok) setIsEditing(false);
   };
 
   /** 편집 충돌(WD-353) — 「내 변경으로 덮어쓰기」: 기준 버전 없이 다시 저장하고, 성공하면 보기 모드로 돌아간다 */
   const handleOverwrite = async () => {
+    if (blockedByInvalidInteger()) return;
     const ok = await overwrite();
     if (ok) setIsEditing(false);
   };
@@ -570,6 +584,7 @@ export default function PipelineEditorPage() {
             pipelineInfo={pipelineInfo}
             pipelineId={pipelineId}
             serverSteps={pipelineData?.steps}
+            onIntegerValidityChange={handleIntegerValidity}
           />
         </TabsContent>
 

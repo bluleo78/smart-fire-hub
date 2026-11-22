@@ -122,17 +122,91 @@ describe('IntegerTextInput (WD-906)', () => {
     expect(onBlur).toHaveBeenCalledTimes(1);
   });
 
-  it('min 은 치는 도중에는 적용하지 않고 blur 때 올려 맞춘다', async () => {
+  it('min 미만은 치는 도중 커밋하지 않고 오류로 알리며 blur 때 하한으로 올려 맞춘다 (WD-906 후속)', async () => {
     const user = userEvent.setup();
     const onValueChange = vi.fn();
-    render(<IntegerTextInput id="num" value={50} min={10} onValueChange={onValueChange} />);
+    const onValidityChange = vi.fn();
+    function MinHarness() {
+      const [value, setValue] = useState(50);
+      return (
+        <IntegerTextInput
+          id="num"
+          value={value}
+          min={10}
+          onValueChange={(n) => {
+            onValueChange(n);
+            setValue(n);
+          }}
+          onValidityChange={onValidityChange}
+        />
+      );
+    }
+    render(<MinHarness />);
     const box = screen.getByRole('textbox');
     await user.clear(box);
+    // 비우면 표기 오류 → 무효
+    expect(onValidityChange).toHaveBeenLastCalledWith(false);
     await user.type(box, '5');
     expect(box).toHaveValue('5');
-    expect(onValueChange).toHaveBeenLastCalledWith(5);
+    // 하한 미만 — 부모에 커밋하지 않는다
+    expect(onValueChange).not.toHaveBeenCalled();
+    expect(box).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByText('10 이상 입력하세요')).toBeInTheDocument();
+    expect(box.getAttribute('aria-describedby')).toBeTruthy();
+    // 계속 쳐서 하한 이상이 되면 커밋하고 유효로 돌아온다
+    await user.type(box, '0');
+    // 50 은 부모 값과 같아 커밋 호출은 없다(같은 값 갱신 안 함) — 유효로만 돌아온다
+    expect(onValueChange).not.toHaveBeenCalled();
+    expect(onValidityChange).toHaveBeenLastCalledWith(true);
+    // 다시 하한 미만으로 낮췄다가 blur → 하한으로 올려 커밋하고 유효
+    await user.clear(box);
+    await user.type(box, '3');
+    expect(onValidityChange).toHaveBeenLastCalledWith(false);
     await user.tab();
     expect(onValueChange).toHaveBeenLastCalledWith(10);
+    expect(box).toHaveValue('10');
+    expect(onValidityChange).toHaveBeenLastCalledWith(true);
+    expect(screen.queryByText('10 이상 입력하세요')).toBeNull();
+  });
+
+  it('onValidityChange — 표기 오류면 false, 고치면 true, 같은 값은 반복 호출하지 않는다 (WD-906 후속)', async () => {
+    const user = userEvent.setup();
+    const onValidityChange = vi.fn();
+    function Valid() {
+      const [value, setValue] = useState(60);
+      return <IntegerTextInput id="num" value={value} onValueChange={setValue} onValidityChange={onValidityChange} />;
+    }
+    render(<Valid />);
+    expect(onValidityChange).not.toHaveBeenCalled();
+    const box = screen.getByRole('textbox');
+    await user.clear(box);
+    await user.type(box, '1e');
+    // 비움(무효) → 1(유효) → 1e(무효) — 바뀔 때만 호출된다
+    expect(onValidityChange.mock.calls).toEqual([[false], [true], [false]]);
+    await user.clear(box);
+    await user.type(box, '45');
+    expect(onValidityChange.mock.calls).toEqual([[false], [true], [false], [true]]);
+  });
+
+  it('무효인 채 칸이 사라지면 유효(true)로 되돌린다 (WD-906 후속)', async () => {
+    const user = userEvent.setup();
+    const onValidityChange = vi.fn();
+    function Toggle() {
+      const [show, setShow] = useState(true);
+      return (
+        <div>
+          {show && <IntegerTextInput id="num" value={60} onValueChange={() => {}} onValidityChange={onValidityChange} />}
+          <button type="button" onClick={() => setShow(false)}>
+            숨김
+          </button>
+        </div>
+      );
+    }
+    render(<Toggle />);
+    await user.type(screen.getByRole('textbox'), 'e');
+    expect(onValidityChange).toHaveBeenLastCalledWith(false);
+    await user.click(screen.getByRole('button', { name: '숨김' }));
+    expect(onValidityChange).toHaveBeenLastCalledWith(true);
   });
 
   it('blur 해도 잘못된 표기는 그대로 두고 오류를 유지한다', async () => {

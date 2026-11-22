@@ -12,8 +12,10 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useAllPipelines, useUpdateTrigger } from '@/hooks/queries/usePipelines';
+import { useInvalidFlag } from '@/hooks/useInvalidFlag';
 import { handleApiError, isEditConflict, isNotFoundError } from '@/lib/api-error';
 import { cronInputError } from '@/lib/cron-frequency';
+import { focusFirstInvalidInteger } from '@/lib/focus-invalid-integer';
 import { iGa } from '@/lib/utils';
 import type { TriggerResponse } from '@/types/pipeline';
 
@@ -113,6 +115,9 @@ export function EditTriggerDialog({ open, onOpenChange, pipelineId, trigger, onC
     });
   };
 
+  // 숫자 칸(폴링 주기·디바운스)이 표기 오류인 채인가 — 마지막 올바른 값이 말없이 저장되지 않게 제출을 막는다 (WD-906 후속)
+  const [numberInvalid, setNumberValid] = useInvalidFlag();
+
   const validate = (): boolean => {
     const errors: Record<string, string> = {};
     if (!name.trim()) {
@@ -154,7 +159,14 @@ export function EditTriggerDialog({ open, onOpenChange, pipelineId, trigger, onC
         errors.debounceSeconds = '디바운스 시간은 0~3600초 사이여야 합니다';
     }
     setValidationErrors(errors);
-    return Object.keys(errors).length === 0;
+    const ok = Object.keys(errors).length === 0;
+    // 숫자 칸 오류가 보이는 채로는 저장하지 않는다. 이름·cron 같은 다른 오류도 함께 보이게 위에서 먼저 모았고,
+    // 다른 오류가 없을 때만 오류 칸으로 초점을 옮긴다(다른 오류가 있으면 그 문구가 안내한다).
+    if (numberInvalid) {
+      if (ok) focusFirstInvalidInteger();
+      return false;
+    }
+    return ok;
   };
 
   /**
@@ -293,6 +305,7 @@ export function EditTriggerDialog({ open, onOpenChange, pipelineId, trigger, onC
               config={config as { datasetIds: number[]; pollingIntervalSeconds: number; debounceSeconds: number }}
               onChange={handleConfigChange}
               errors={validationErrors}
+              onValidityChange={setNumberValid}
             />
           )}
 

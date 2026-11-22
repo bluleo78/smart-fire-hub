@@ -32,6 +32,7 @@ import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { useDataset } from '@/hooks/queries/useDatasets';
+import { useIntegerFieldsValidity } from '@/hooks/useIntegerFieldsValidity';
 import { columnNameLengthError } from '@/lib/validations/dataset';
 import type { AiClassifyConfig } from '@/types/pipeline';
 
@@ -82,6 +83,8 @@ interface AiClassifyStepConfigProps {
    * (WD-154, WD-633. 키는 aiConfig.prompt · aiConfig.outputColumns · aiOutputColumnNameField)
    */
   fieldError?: (field: string) => string | undefined;
+  /** 배치 크기 칸이 유효하지 않으면 false — 상위 편집기가 저장을 막는 데 쓴다 (WD-906 후속) */
+  onIntegerValidityChange?: (valid: boolean) => void;
 }
 
 interface CollapsibleSectionProps {
@@ -131,7 +134,10 @@ export default function AiClassifyStepConfig({
   readOnly,
   primaryInputHidden = false,
   fieldError,
+  onIntegerValidityChange,
 }: AiClassifyStepConfigProps) {
+  // 숫자 칸 유효성을 상위에 알린다 (WD-906 후속)
+  const setIntegerValid = useIntegerFieldsValidity(onIntegerValidityChange);
   // 접근성: 라벨↔입력 연결용 id 접두사 (#432). 스텝마다 이 패널이 다시 렌더되므로 하드코딩 id 는 충돌한다.
   const baseId = useId();
   const batchSizeId = `${baseId}-batch-size`;
@@ -449,6 +455,7 @@ export default function AiClassifyStepConfig({
               min={1}
               max={100}
               onValueChange={(n) => update('batchSize', n)}
+              onValidityChange={(v) => setIntegerValid('batchSize', v)}
             />
             <p id={batchSizeHelpId} className="text-xs text-muted-foreground">한 번에 처리할 행 수 (기본값: 20)</p>
           </div>
