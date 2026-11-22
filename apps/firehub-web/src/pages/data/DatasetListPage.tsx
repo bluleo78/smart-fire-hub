@@ -1,5 +1,6 @@
+import { onlineManager } from '@tanstack/react-query';
 import { BarChart3, Download, Eye, History, Hourglass, Info, Plus, Star, Trash2 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Link, useNavigate, useNavigationType, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -61,6 +62,22 @@ type SortKey = 'name' | 'createdAt';
 
 /** 오프라인으로 조회가 멈춰 있을 때 목록 자리에 보이는 안내 — 연결되면 TanStack Query 가 자동 재조회한다(WD-966) */
 const OFFLINE_PAUSED_MESSAGE = '인터넷 연결이 없어 데이터셋 목록을 불러오지 못하고 있습니다. 연결되면 자동으로 다시 불러옵니다.';
+
+/** onlineManager 구독 함수 — 모듈 범위에 고정해 렌더마다 새 함수로 재구독하지 않게 한다(useSyncExternalStore 는 subscribe 참조가 바뀌면 다시 구독한다) */
+const subscribeOnline = (onChange: () => void) => onlineManager.subscribe(onChange);
+
+/**
+ * 브라우저의 실제 온라인 여부를 구독하는 훅 — TanStack Query 의 onlineManager 를 그대로 따른다.
+ * isPaused 는 오프라인뿐 아니라 탭 숨김(focusManager)으로 재시도가 멈춘 경우에도 참이므로,
+ * 「연결 없음」 안내는 이 값이 false 일 때만 보이게 하기 위해 쓴다(WD-966).
+ */
+function useOnlineStatus(): boolean {
+  return useSyncExternalStore(
+    subscribeOnline,
+    () => onlineManager.isOnline(),
+    () => true,
+  );
+}
 
 /** 출처 필터가 골라져 있을 때 「임시 데이터셋 보기」를 비활성으로 두는 이유(WD-754·WD-776) */
 const ORIGIN_FILTER_HINT = '출처 필터를 고르면 그 출처의 데이터셋만 보여 이 옵션은 쓰이지 않습니다';
@@ -219,6 +236,9 @@ export default function DatasetListPage() {
 
   // 데이터셋 생성 유형 선택 모달 상태 — 저장 방식/출처를 먼저 고른 뒤 생성 폼으로 이동
   const [typeModalOpen, setTypeModalOpen] = useState(false);
+
+  // 실제 오프라인 여부 — isPaused 는 탭 숨김(focusManager)으로 재시도가 멈춘 경우에도 참이라 구분에 쓴다(WD-966)
+  const isOnline = useOnlineStatus();
 
   const { data: categoriesData } = useCategories();
   const { data: datasetsData, isLoading, isPending, isPaused, isError, error: datasetsError, refetch: refetchDatasets, isFetching } = useDatasets({
@@ -601,9 +621,10 @@ export default function DatasetListPage() {
             </TableRow>
           </TableHeader>
           <tbody>
-            {isLoading || pageOutOfRange ? (
+            {isLoading || pageOutOfRange || (!datasetsData && isPaused && isOnline) ? (
               <TableSkeletonRows columns={8} rows={5} />
             ) : !datasetsData && isPaused ? (
+              // 데이터 없는 paused 쿼리 중 실제 오프라인만 여기로 온다 — 온라인인데 paused(탭 숨김으로 재시도 멈춤)면 위 스켈레톤 분기가 받는다.
               // 데이터 없는 paused 쿼리(오프라인)는 isLoading 도 isError 도 아니라 빈 분기(「데이터셋이 없습니다」)로 떨어지므로 오류·빈 분기보다 먼저 잡는다(WD-966).
               // 실패가 아닌 중립 대기 상태라 alert(assertive) 대신 TableEmptyRow 의 role=status(polite)로 알린다.
               // 검색어·emptyAction 은 넘기지 않아 안내 문구만 보이고 버튼은 없다 — 연결되면 자동으로 다시 불러오므로 눌러서 할 일이 없다. 이전 데이터가 있으면 목록을 유지한다.
