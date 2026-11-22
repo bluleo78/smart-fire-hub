@@ -188,3 +188,79 @@ test.describe('데이터셋 변경 이력 페이지네이션 (WD-535)', () => {
     await expect(page.getByRole('button', { name: '다음 페이지' })).toHaveCount(0);
   });
 });
+
+const waitTwoFrames = (page: Page) =>
+  page.evaluate(
+    () =>
+      new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(undefined)))),
+  );
+
+/**
+ * 방향 버튼으로 끝 페이지에 닿아도 포커스가 유지되는지 검증 (WD-932).
+ * disabled 로 잠그면 포커스가 실린 버튼이 blur 돼 body 로 떨어진다.
+ * 이력 탭은 같은 데이터셋 안에서 페이지를 넘길 때 이전 데이터를 유지해 페이지네이션이 다시 마운트되지 않으므로
+ * (감사 로그는 useAuditLogs placeholderData 로 해결했고, 다른 목록 화면은 후속 이슈다) 포커스 유지를 검증하기에 알맞다.
+ * 주의: 이력 탭 onPageChange 는 같은 page 로 setState 해 요청이 안 나가므로 이 화면에선 끝 가드 회귀를 잡지 못한다.
+ * 가드 자체는 단위 시험 src/components/ui/simple-pagination.test.tsx 가 검증하고, 여기선 포커스 유지만 확인한다.
+ */
+test.describe('데이터셋 이력 페이지네이션 — 방향 버튼 이동 뒤 포커스 유지 (WD-932)', () => {
+  test('2페이지에서 「이전 페이지」를 Enter 로 누르면 1페이지로 가고 포커스가 그 버튼에 남는다 (WD-932)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDatasetDetailMocks(page, DATASET_ID);
+    const requests = await mockPagedImports(page, 25);
+    await page.goto(`/data/datasets/${DATASET_ID}`);
+    await page.getByRole('tab', { name: '이력' }).click();
+
+    const nav = page.getByRole('navigation', { name: '페이지네이션' });
+    await nav.getByRole('button', { name: '2 페이지' }).click();
+    await expect.poll(() => requests.at(-1)?.get('page')).toBe('1');
+    await expect(importRows(page)).toHaveCount(5);
+
+    const prev = nav.getByRole('button', { name: '이전 페이지' });
+    await prev.focus();
+    await page.keyboard.press('Enter');
+    // 1페이지는 캐시에서 바로 그려질 수 있어 요청 여부가 아니라 화면(20건)으로 이동을 확인한다
+    await expect(importRows(page)).toHaveCount(20);
+
+    await expect(prev).toBeFocused();
+    await expect(prev).toHaveAttribute('aria-disabled', 'true');
+    await expect(nav.getByRole('button', { name: '처음 페이지' })).toHaveAttribute('aria-disabled', 'true');
+    await expect(nav.getByRole('button', { name: '다음 페이지' })).not.toHaveAttribute('aria-disabled');
+
+    // 끝에서 한 번 더 눌러도 요청이 더 가지 않고 포커스도 그대로 (가드 검증은 위 describe 주석 참고)
+    const before = requests.length;
+    await page.keyboard.press('Enter');
+    await waitTwoFrames(page);
+    expect(requests.length).toBe(before);
+    await expect(prev).toBeFocused();
+  });
+
+  test('1페이지에서 「다음 페이지」로 끝에 닿아도 포커스가 남고, 흐린 버튼 클릭은 무시된다 (WD-932)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDatasetDetailMocks(page, DATASET_ID);
+    const requests = await mockPagedImports(page, 25);
+    await page.goto(`/data/datasets/${DATASET_ID}`);
+    await page.getByRole('tab', { name: '이력' }).click();
+    await expect(importRows(page)).toHaveCount(20);
+
+    const nav = page.getByRole('navigation', { name: '페이지네이션' });
+    const next = nav.getByRole('button', { name: '다음 페이지' });
+    await next.focus();
+    await page.keyboard.press('Enter');
+    await expect.poll(() => requests.at(-1)?.get('page')).toBe('1');
+    await expect(importRows(page)).toHaveCount(5);
+    await expect(next).toBeFocused();
+    await expect(next).toHaveAttribute('aria-disabled', 'true');
+    // 마지막 페이지 버튼도 같이 사용 불가로 알려야 한다
+    await expect(nav.getByRole('button', { name: '마지막 페이지' })).toHaveAttribute('aria-disabled', 'true');
+
+    const before = requests.length;
+    // 흐려진 버튼에 클릭 이벤트가 닿아도(보조 기술·강제 클릭) 화면이 그대로인지 본다 — 뷰포트 위치와 무관하게 이벤트를 직접 보낸다(가드 검증은 위 describe 주석 참고).
+    await next.dispatchEvent('click');
+    await waitTwoFrames(page);
+    expect(requests.length).toBe(before);
+    await expect(nav.getByRole('button', { name: '2 페이지' })).toHaveAttribute('aria-current', 'page');
+  });
+});

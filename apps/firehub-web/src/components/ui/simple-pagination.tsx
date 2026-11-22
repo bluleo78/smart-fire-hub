@@ -1,5 +1,7 @@
 import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
+import type { ReactNode } from 'react';
 
+import { ARIA_DISABLED_CLASS } from '../PendingButton';
 import { Button } from './button';
 import {
   Select,
@@ -8,6 +10,38 @@ import {
   SelectTrigger,
   SelectValue,
 } from './select';
+
+/**
+ * 방향 버튼(처음·이전·다음·마지막) 하나.
+ * disabled 로 잠그면 이동 뒤 포커스가 실린 버튼이 blur 돼 body 로 떨어지므로(WD-932) aria-disabled 로 잠근다.
+ * 잠긴 상태의 클릭(보조 기술·강제 클릭 포함)은 onActivate 를 부르지 않는다.
+ */
+function NavButton({
+  label,
+  disabled,
+  onActivate,
+  children,
+}: {
+  label: string;
+  disabled: boolean;
+  onActivate: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={() => {
+        if (!disabled) onActivate();
+      }}
+      aria-disabled={disabled || undefined}
+      className={ARIA_DISABLED_CLASS}
+      aria-label={label}
+    >
+      {children}
+    </Button>
+  );
+}
 
 interface SimplePaginationProps {
   page: number;
@@ -137,24 +171,12 @@ export function SimplePagination({
       className="flex items-center gap-1 max-sm:flex-wrap max-sm:justify-center"
       aria-label="페이지네이션"
     >
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={() => onPageChange(0)}
-        disabled={isFirst}
-        aria-label="처음 페이지"
-      >
+      <NavButton label="처음 페이지" disabled={isFirst} onActivate={() => onPageChange(0)}>
         <ChevronsLeft className="h-4 w-4" />
-      </Button>
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={() => onPageChange(Math.max(0, page - 1))}
-        disabled={isFirst}
-        aria-label="이전 페이지"
-      >
+      </NavButton>
+      <NavButton label="이전 페이지" disabled={isFirst} onActivate={() => onPageChange(Math.max(0, page - 1))}>
         <ChevronLeft className="h-4 w-4" />
-      </Button>
+      </NavButton>
       {items.map((item, idx) => {
         if (item === 'ellipsis-l' || item === 'ellipsis-r') {
           return (
@@ -182,24 +204,12 @@ export function SimplePagination({
           </Button>
         );
       })}
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={() => onPageChange(Math.min(totalPages - 1, page + 1))}
-        disabled={isLast}
-        aria-label="다음 페이지"
-      >
+      <NavButton label="다음 페이지" disabled={isLast} onActivate={() => onPageChange(Math.min(totalPages - 1, page + 1))}>
         <ChevronRight className="h-4 w-4" />
-      </Button>
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={() => onPageChange(totalPages - 1)}
-        disabled={isLast}
-        aria-label="마지막 페이지"
-      >
+      </NavButton>
+      <NavButton label="마지막 페이지" disabled={isLast} onActivate={() => onPageChange(totalPages - 1)}>
         <ChevronsRight className="h-4 w-4" />
-      </Button>
+      </NavButton>
     </nav>
   );
 
