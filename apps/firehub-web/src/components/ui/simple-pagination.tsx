@@ -108,7 +108,7 @@ export function SimplePagination({
             value={String(pageSize)}
             onValueChange={(v) => onPageSizeChange!(Number(v))}
           >
-            <SelectTrigger className="h-8 w-[80px]" aria-label="페이지 사이즈">
+            <SelectTrigger size="sm" className="w-[80px]" aria-label="페이지 사이즈">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

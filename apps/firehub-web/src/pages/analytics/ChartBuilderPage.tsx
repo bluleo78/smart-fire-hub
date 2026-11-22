@@ -1042,7 +1042,8 @@ export default function ChartBuilderPage() {
                 >
                   <SelectTrigger
                     id={`${baseId}-saved-query`}
-                    className="h-8 text-sm w-full truncate"
+                    size="sm"
+                    className="text-sm w-full truncate"
                   >
                     <SelectValue placeholder="쿼리 선택" />
                   </SelectTrigger>

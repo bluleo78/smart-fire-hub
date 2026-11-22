@@ -680,7 +680,7 @@ export default function ApiCallStepConfig({
           <div className="space-y-1.5">
             <Label htmlFor={`${baseId}-method`} className="text-xs">HTTP 메서드</Label>
             <Select value={method} disabled={readOnly} onValueChange={(v) => update('method', v)}>
-              <SelectTrigger id={`${baseId}-method`} className="h-8 text-xs w-full">
+              <SelectTrigger id={`${baseId}-method`} size="sm" className="text-xs w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -725,7 +725,7 @@ export default function ApiCallStepConfig({
                 handleAuthChange(patch);
               }}
             >
-              <SelectTrigger className="h-8 text-xs w-full">
+              <SelectTrigger size="sm" className="text-xs w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -746,7 +746,7 @@ export default function ApiCallStepConfig({
                   disabled={readOnly}
                   onValueChange={(v) => handleAuthChange({ placement: v })}
                 >
-                  <SelectTrigger className="h-8 text-xs w-full">
+                  <SelectTrigger size="sm" className="text-xs w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -979,7 +979,7 @@ export default function ApiCallStepConfig({
                   handlePaginationChange({ type: v as 'NONE' | 'OFFSET' })
                 }
               >
-                <SelectTrigger id={`${baseId}-pagination-type`} className="h-8 text-xs w-full">
+                <SelectTrigger id={`${baseId}-pagination-type`} size="sm" className="text-xs w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -1001,7 +1001,7 @@ export default function ApiCallStepConfig({
                     }
                   }}
                 >
-                  <SelectTrigger id={`${baseId}-pagination-preset`} className="h-8 text-xs w-full">
+                  <SelectTrigger id={`${baseId}-pagination-preset`} size="sm" className="text-xs w-full">
                     <SelectValue placeholder="프리셋 선택" />
                   </SelectTrigger>
                   <SelectContent>

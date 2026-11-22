@@ -119,7 +119,8 @@ export function ImportMappingTable({
                        * 표 셀의 인접성은 프로그램적 연결이 아니므로 파일 컬럼명을 이름에 담는다(#331, WCAG SC 4.1.2).
                        */}
                       <SelectTrigger
-                        className="h-8 text-xs w-full"
+                        size="sm"
+                        className="text-xs w-full"
                         aria-label={`${label} 컬럼을 매핑할 데이터셋 컬럼`}
                         title={locked ? '이름 없는 열이 여러 개라 가져올 수 없습니다' : undefined}
                       >

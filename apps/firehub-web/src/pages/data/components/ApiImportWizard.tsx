@@ -594,7 +594,7 @@ export function ApiImportWizard({
                       )
                     }
                   >
-                    <SelectTrigger className="h-7 text-xs">
+                    <SelectTrigger size="sm" className="text-xs">
                       <SelectValue placeholder="컬럼 선택" />
                     </SelectTrigger>
                     <SelectContent>
@@ -614,7 +614,7 @@ export function ApiImportWizard({
                       )
                     }
                   >
-                    <SelectTrigger className="h-7 text-xs w-24">
+                    <SelectTrigger size="sm" className="text-xs w-24">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
