@@ -12,6 +12,7 @@
  */
 
 import { expect, test } from '../../fixtures/auth.fixture';
+import { clickDialogBackdrop } from '../../fixtures/dialog.fixture';
 
 /** AIStatusChip locator */
 const chipLocator = (page: import('@playwright/test').Page) =>
@@ -233,6 +234,44 @@ test.describe('AI 세션 관리 — 세션 삭제 (useDeleteAISession)', () => {
     await expect(dialog.getByText(/이전 대화 1/)).toBeVisible({ timeout: 3000 });
     // 취소 버튼도 표시되어야 함
     await expect(page.getByRole('button', { name: '취소' })).toBeVisible({ timeout: 3000 });
+  });
+
+  test('삭제 확인 창의 배경을 눌러도 그 대화가 선택되지 않는다 (WD-943)', async ({
+    authenticatedPage: page,
+  }) => {
+    await openPanelWithSessions(page);
+    // 메시지 조회 캡처는 누르기 전에 건다 — 선택(loadSession)이 일어났다면 이 조회가 나간다.
+    const messageRequests: string[] = [];
+    await page.route(
+      (url) => /\/api\/v1\/ai\/sessions\/[^/]+\/messages$/.test(url.pathname),
+      (route) => {
+        messageRequests.push(new URL(route.request().url()).pathname);
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(MOCK_MESSAGES) });
+      },
+    );
+
+    const trigger = page.getByRole('button', { name: /대화 선택|이전 대화/ }).first();
+    const triggerLabel = await trigger.innerText();
+    await trigger.click();
+    const menuItem1 = page.getByRole('menuitem', { name: /이전 대화 1/ });
+    await expect(menuItem1).toBeVisible();
+    await menuItem1.getByRole('button', { name: /삭제/ }).click();
+
+    const dialog = page.getByRole('alertdialog');
+    await clickDialogBackdrop(page);
+    // 배경 click 이 메뉴 항목으로 번졌다면 메뉴가 곧바로 닫힘 상태가 되며 그 대화가 선택된다. 닫힘 애니메이션 동안 창은 잠깐
+    // 보이므로 메뉴 상태를 먼저 본다(창이 떠 있는 동안 메뉴는 aria-hidden 이라 role 대신 data-slot 으로 집는다).
+    await expect(page.locator('[data-slot="dropdown-menu-content"]')).toHaveAttribute('data-state', 'open');
+    await expect(dialog).toBeVisible();
+    expect(messageRequests).toHaveLength(0);
+
+    await dialog.getByRole('button', { name: '취소' }).click();
+    await expect(dialog).toBeHidden();
+    // 취소 뒤에도 목록은 열려 있다 — 닫은 뒤 현재 대화가 그대로인지 본다(선택됐다면 트리거 이름이 「이전 대화 1」로 바뀐다).
+    await expect(menuItem1).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('button', { name: /대화 선택|이전 대화/ }).first()).toHaveText(triggerLabel);
+    expect(messageRequests).toHaveLength(0);
   });
 
   test('삭제 버튼의 accessible name이 대화 제목을 중복 낭독하지 않는다 (#514)', async ({

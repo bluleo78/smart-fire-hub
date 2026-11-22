@@ -45,7 +45,9 @@ interface CancelExecutionDialogProps {
 export function CancelExecutionDialog({ open, onOpenChange, onConfirm, executionId }: CancelExecutionDialogProps) {
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
-      {/* 행 클릭(상세 이동)으로 이벤트가 번지지 않도록 막는다 — DeleteConfirmDialog 와 같은 처리 */}
+      {/* 창 안 click 이 행 클릭(상세 이동)으로 번지지 않도록 Content 에서만 막는다. 배경(overlay) click 은 막지 못하므로 이
+          방식은 클릭 가능한 조상이 없는 페이지 최상위에 렌더할 때만 충분하다 — 클릭 가능한 조상 안에 두면 배경 click 이 샌다(WD-943).
+          DeleteConfirmDialog 는 배경까지 부품 안에서 막는다. */}
       <AlertDialogContent onClick={(e) => e.stopPropagation()}>
         <AlertDialogHeader>
           <AlertDialogTitle>실행을 취소할까요?</AlertDialogTitle>

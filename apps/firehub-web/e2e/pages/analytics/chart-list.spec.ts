@@ -2,6 +2,7 @@ import { createChartListItem, createDeleteImpact } from '../../factories/analyti
 import { mockDeleteImpact, openFirstRowDeleteDialog, setupChartBuilderMocks, setupChartListMocks } from '../../fixtures/analytics.fixture';
 import { createPageResponse, mockApi, mockDeleteOnceThenNotFound } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { clickDialogBackdrop, expectBackdropClickStaysOnList } from '../../fixtures/dialog.fixture';
 import { expectWithin } from '../../fixtures/long-name-layout';
 import { expectFocusRingRoom, expectTableFits, TABLE_LAYOUT_WIDTHS } from '../../fixtures/table-layout';
 
@@ -124,6 +125,34 @@ test.describe('차트 목록 페이지', () => {
     // DELETE API가 실제로 호출되었는지 검증
     const captured = await deleteCapture.waitForRequest();
     expect(captured).toBeDefined();
+  });
+
+  test('삭제 확인 창의 배경을 눌러도 상세로 이동하지 않는다 (WD-943)', async ({ authenticatedPage: page }) => {
+    await setupChartListMocks(page, 2);
+    await page.goto('/analytics/charts');
+    // 요청 캡처는 누르기 전에 건다 — 늦게 걸면 번진 요청을 놓쳐 통과할 수 있다(WD-943).
+    const { requests: deleteRequests } = await mockApi(page, 'DELETE', '/api/v1/analytics/charts/1', {}, { capture: true });
+
+    await openFirstRowDeleteDialog(page);
+    await expectBackdropClickStaysOnList(page, deleteRequests);
+  });
+
+  test('삭제 확인 창의 배경을 누른 뒤 Escape 로 닫으면 삭제 버튼으로 초점이 돌아온다 (WD-943)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupChartListMocks(page, 2);
+    await page.goto('/analytics/charts');
+
+    const trigger = page.getByRole('button', { name: '삭제' }).first();
+    const dialog = await openFirstRowDeleteDialog(page);
+    const listUrl = page.url();
+    await clickDialogBackdrop(page);
+    await expect(dialog).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden();
+
+    await expect(trigger).toBeFocused();
+    await expect(page).toHaveURL(listUrl);
   });
 
   test('확인 창의 「삭제」를 더블클릭해도 DELETE 는 한 번만 나가고 오류 토스트가 뜨지 않는다 (WD-507)', async ({

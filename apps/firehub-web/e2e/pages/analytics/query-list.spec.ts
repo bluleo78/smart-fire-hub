@@ -7,6 +7,7 @@ import {
 import { mockDeleteImpact, openFirstRowDeleteDialog, setupQueryEditorMocks, setupQueryListMocks } from '../../fixtures/analytics.fixture';
 import { createPageResponse, mockApi, mockDeleteOnceThenNotFound } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { clickDialogBackdrop, expectBackdropClickStaysOnList } from '../../fixtures/dialog.fixture';
 import { expectWithin } from '../../fixtures/long-name-layout';
 import { expectFocusRingRoom, expectTableFits, TABLE_LAYOUT_WIDTHS } from '../../fixtures/table-layout';
 
@@ -155,6 +156,33 @@ test.describe('쿼리 목록 페이지', () => {
     // DELETE /api/v1/analytics/queries/1 가 실제로 호출되었는지 검증
     const req = await capture.waitForRequest();
     expect(req.url.pathname).toBe('/api/v1/analytics/queries/1');
+  });
+
+  test('삭제 확인 창의 배경을 눌러도 상세로 이동하지 않는다 (WD-943)', async ({ authenticatedPage: page }) => {
+    await setupQueryListMocks(page, 2);
+    await page.goto('/analytics/queries');
+    // 요청 캡처는 누르기 전에 건다 — 늦게 걸면 번진 요청을 놓쳐 통과할 수 있다(WD-943).
+    const { requests: deleteRequests } = await mockApi(page, 'DELETE', '/api/v1/analytics/queries/1', {}, { capture: true });
+
+    await openFirstRowDeleteDialog(page);
+    await expectBackdropClickStaysOnList(page, deleteRequests);
+  });
+
+  test('삭제 확인 창의 배경을 누른 뒤에도 「삭제」는 DELETE 를 한 번 보내고 상세로 이동하지 않는다 (WD-943)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupQueryListMocks(page, 2);
+    await page.goto('/analytics/queries');
+    const { requests: deleteRequests } = await mockApi(page, 'DELETE', '/api/v1/analytics/queries/1', {}, { capture: true });
+
+    const dialog = await openFirstRowDeleteDialog(page);
+    const listUrl = page.url();
+    await clickDialogBackdrop(page);
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole('button', { name: '삭제' }).click();
+
+    await expect.poll(() => deleteRequests.length).toBe(1);
+    await expect(page).toHaveURL(listUrl);
   });
 
   test('확인 창의 「삭제」를 더블클릭해도 DELETE 는 한 번만 나가고 오류 토스트가 뜨지 않는다 (WD-507)', async ({

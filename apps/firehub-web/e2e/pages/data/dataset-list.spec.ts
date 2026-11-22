@@ -4,6 +4,7 @@ import { createCategories, createDataset, createDatasets } from '../../factories
 import { createPageResponse, mockApi, type MockApiCapture, mockDeleteOnceThenNotFound } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { grantDatasetPermissions, mockDatasetReferences, setupDatasetMocks } from '../../fixtures/dataset.fixture';
+import { expectBackdropClickStaysOnList } from '../../fixtures/dialog.fixture';
 
 // 생성·수정·삭제 진입점은 권한이 있을 때만 보인다(WD-144) — 기본 인증 fixture 는 권한이 비어 있으므로 쓰기 흐름을 검증하는 이 spec 은
 // 데이터셋 쓰기 권한(dataset:write·dataset:delete 포함)을 준다. 조회 전용 노출은 dataset-list-permissions.spec.ts 가 검증한다.
@@ -227,6 +228,16 @@ test.describe('데이터셋 목록 페이지', () => {
     // AlertDialog 열림 확인 — role="alertdialog"
     await expect(page.getByRole('alertdialog')).toBeVisible({ timeout: 3000 });
     await expect(page.getByText('데이터셋 삭제')).toBeVisible();
+  });
+
+  test('삭제 확인 창의 배경을 눌러도 상세로 이동하지 않는다 (WD-943)', async ({ authenticatedPage: page }) => {
+    await setupDatasetMocks(page);
+    await page.goto('/data/datasets');
+    // 요청 캡처는 누르기 전에 건다 — 늦게 걸면 번진 요청을 놓쳐 통과할 수 있다(WD-943).
+    const { requests: deleteRequests } = await mockApi(page, 'DELETE', '/api/v1/datasets/1', {}, { capture: true });
+
+    await page.getByRole('row', { name: /데이터셋 1 / }).getByRole('button', { name: '삭제' }).click();
+    await expectBackdropClickStaysOnList(page, deleteRequests);
   });
 
   test('확인 창의 「삭제」를 더블클릭해도 DELETE 는 한 번만 나가고 오류 토스트가 뜨지 않는다 (WD-507)', async ({

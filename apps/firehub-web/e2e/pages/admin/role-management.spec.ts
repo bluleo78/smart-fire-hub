@@ -9,6 +9,7 @@ import {
 } from '../../fixtures/admin.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { expectBackdropClickStaysOnList } from '../../fixtures/dialog.fixture';
 import { holdApi } from '../../fixtures/hold-api';
 import {
   expectLongValueTruncated,
@@ -112,6 +113,17 @@ test.describe('역할 관리 페이지', () => {
     // 이름 밖의 칸(설명)을 눌러도 예전처럼 행 클릭으로 상세가 열린다.
     await page.getByRole('row').filter({ hasText: 'EDITOR' }).getByText('사용자 정의').click();
     await expect(page).toHaveURL(/\/admin\/roles\/3$/);
+  });
+
+  test('삭제 확인 창의 배경을 눌러도 상세로 이동하지 않는다 (WD-943)', async ({ authenticatedPage: page }) => {
+    await setupRoleListMocks(page);
+    await setupRoleDetailMocks(page, 3, false);
+    await page.goto('/admin/roles');
+    // 요청 캡처는 누르기 전에 건다 — 늦게 걸면 번진 요청을 놓쳐 통과할 수 있다(WD-943).
+    const { requests: deleteRequests } = await mockApi(page, 'DELETE', '/api/v1/roles/3', {}, { capture: true });
+
+    await page.getByRole('button', { name: 'EDITOR 역할 삭제' }).click();
+    await expectBackdropClickStaysOnList(page, deleteRequests);
   });
 
   test('역할 추가 버튼 클릭 시 생성 다이얼로그가 열린다', async ({ authenticatedPage: page }) => {

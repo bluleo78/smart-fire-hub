@@ -2,6 +2,7 @@ import { createDashboard, createDashboardListItem } from '../../factories/analyt
 import { openFirstRowDeleteDialog, setupDashboardEditorMocks, setupDashboardListMocks } from '../../fixtures/analytics.fixture';
 import { createPageResponse, mockApi, mockDeleteOnceThenNotFound } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { expectBackdropClickStaysOnList } from '../../fixtures/dialog.fixture';
 import { expectFocusRingRoom, expectTableFits } from '../../fixtures/table-layout';
 
 /**
@@ -165,6 +166,30 @@ test.describe('대시보드 목록 페이지', () => {
     // DELETE API가 실제로 호출되었는지 검증
     const captured = await deleteCapture.waitForRequest();
     expect(captured).toBeDefined();
+  });
+
+  test('삭제 확인 창의 배경을 눌러도 상세로 이동하지 않는다 (WD-943)', async ({ authenticatedPage: page }) => {
+    await setupDashboardListMocks(page, 2);
+    await page.goto('/analytics/dashboards');
+    // 요청 캡처는 누르기 전에 건다 — 늦게 걸면 번진 요청을 놓쳐 통과할 수 있다(WD-943).
+    const { requests: deleteRequests } = await mockApi(page, 'DELETE', '/api/v1/analytics/dashboards/1', {}, { capture: true });
+
+    await openFirstRowDeleteDialog(page);
+    await expectBackdropClickStaysOnList(page, deleteRequests);
+  });
+
+  test('창이 닫혀 있으면 삭제 확인 창을 감싼 요소가 자리를 차지하지 않는다 (WD-943)', async ({ authenticatedPage: page }) => {
+    await setupDashboardListMocks(page, 2);
+    await page.goto('/analytics/dashboards');
+
+    // 트리거 바로 다음 형제가 클릭 차단용 래퍼(span)다 — 없거나(감싸지 않음) 상자를 만들면(레이아웃 변화) 실패한다.
+    const trigger = page.getByRole('button', { name: '삭제' }).first();
+    await expect(trigger).toBeVisible();
+    const wrapper = await trigger.evaluate((el) => {
+      const next = el.nextElementSibling;
+      return next ? { tag: next.tagName, rects: next.getClientRects().length } : null;
+    });
+    expect(wrapper).toEqual({ tag: 'SPAN', rects: 0 });
   });
 
   test('확인 창의 「삭제」를 더블클릭해도 DELETE 는 한 번만 나가고 오류 토스트가 뜨지 않는다 (WD-507)', async ({
