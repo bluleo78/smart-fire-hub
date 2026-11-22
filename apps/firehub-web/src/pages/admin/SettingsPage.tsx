@@ -2,6 +2,8 @@ import { Bot, Boxes, Mail, RotateCcw, Save, Settings, ShieldCheck, Tags } from '
 import { lazy, type ReactNode, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
+import { PageHeading } from '@/components/PageHeading';
+
 import { settingsApi } from '../../api/settings';
 import {
   AlertDialog,
@@ -586,7 +588,7 @@ function AdminSettingsPage() {
     <div className="max-w-2xl mx-auto space-y-6 p-6">
       <div className="flex items-center gap-3">
         <Settings className="h-6 w-6" />
-        <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">설정</h1>
+        <PageHeading>설정</PageHeading>
       </div>
 
       <Tabs

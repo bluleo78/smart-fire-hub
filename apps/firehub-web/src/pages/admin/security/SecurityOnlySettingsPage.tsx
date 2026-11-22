@@ -1,5 +1,7 @@
 import { ShieldCheck } from 'lucide-react';
 
+import { PageHeading } from '@/components/PageHeading';
+
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../components/ui/tabs';
 import SecuritySettingsTab from './SecuritySettingsTab';
 
@@ -10,7 +12,7 @@ import SecuritySettingsTab from './SecuritySettingsTab';
 export default function SecurityOnlySettingsPage() {
   return (
     <div className="max-w-2xl mx-auto space-y-6 p-6">
-      <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">설정</h1>
+      <PageHeading>설정</PageHeading>
       <Tabs defaultValue="security">
         <TabsList>
           <TabsTrigger value="security">

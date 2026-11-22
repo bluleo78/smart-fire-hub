@@ -15,6 +15,7 @@ import { toast } from 'sonner';
 
 import { AnalyticsDeleteConfirmDialog } from '../../components/analytics/AnalyticsDeleteConfirmDialog';
 import { WorkspaceAnalyticsTable } from '../../components/analytics/WorkspaceAnalyticsTable';
+import { PageHeading } from '../../components/PageHeading';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { SearchInput } from '../../components/ui/search-input';
@@ -124,7 +125,7 @@ export default function QueryListPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">저장된 쿼리</h1>
+        <PageHeading>저장된 쿼리</PageHeading>
         <Button onClick={() => navigate('/analytics/queries/new')}>
           <Plus className="h-4 w-4" />
           새 쿼리

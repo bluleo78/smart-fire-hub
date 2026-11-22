@@ -4,6 +4,7 @@ import { useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
+import { PageHeading } from '@/components/PageHeading';
 import { PendingButton } from '@/components/PendingButton';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -290,8 +291,7 @@ export default function ReviewInboxPage() {
     // 좁은 폭에서는 페이지 패딩을 줄여 320px 리플로우 여유를 확보한다(#345).
     <div className="space-y-4 p-4 sm:p-6">
       <div>
-        {/* WD-813: 앱 다른 화면의 h1 체계(28px/36px/600)와 맞춘다. */}
-        <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">AI 검수</h1>
+        <PageHeading>AI 검수</PageHeading>
         <p className="text-muted-foreground text-sm">
           AI가 수행한 불확실한 작업을 원문 근거와 함께 검수합니다. 동의어 병합은 승인 시 그래프에 병합되고,
           속성 정규화는 정정값을 입력해 반영합니다. 저신뢰 엔티티는 승인 시 관계와 함께 그래프에 적재됩니다.

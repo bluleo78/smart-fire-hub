@@ -4,6 +4,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { StatusBadge } from '@/components/api-connection/StatusBadge';
+import { PageHeading } from '@/components/PageHeading';
 import { DetailPageTitle } from '@/components/PageTitleSync';
 import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
 import { FormField } from '@/components/ui/form-field';
@@ -813,7 +814,7 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
         <Button variant="ghost" size="icon" onClick={() => requestNavigate('/admin/api-connections')} aria-label="목록으로 돌아가기" title="목록으로 돌아가기">
           <ArrowLeft className="h-4 w-4" />
         </Button>
-        <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">API 연결 상세</h1>
+        <PageHeading>API 연결 상세</PageHeading>
         {/* 배지 문구는 목록과 같은 공용 표(WD-681) — 모르는 값은 서버 값을 그대로 보인다 */}
         <Badge variant={authTypeBadgeVariant(connection.authType)}>
           {authTypeLabel(connection.authType, 'badge')}

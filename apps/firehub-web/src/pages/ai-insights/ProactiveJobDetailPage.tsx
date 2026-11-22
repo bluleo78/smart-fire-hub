@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 
 import { proactiveApi } from '@/api/proactive';
 import { EditConflictDialog } from '@/components/EditConflictDialog';
+import { PageHeading } from '@/components/PageHeading';
 import { DetailPageTitle } from '@/components/PageTitleSync';
 import {
   AlertDialog,
@@ -456,7 +457,7 @@ export default function ProactiveJobDetailPage() {
           <Button variant="ghost" size="icon" onClick={() => navigate('/ai-insights/jobs')} aria-label="목록으로">
             <ArrowLeft className="h-4 w-4" />
           </Button>
-          <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">스마트 작업</h1>
+          <PageHeading>스마트 작업</PageHeading>
         </div>
         <ProactiveReadForbiddenNotice subject="스마트 작업" testId="job-forbidden" />
       </div>
@@ -473,7 +474,7 @@ export default function ProactiveJobDetailPage() {
           <Button variant="ghost" size="icon" onClick={() => navigate('/ai-insights/jobs')} aria-label="목록으로">
             <ArrowLeft className="h-4 w-4" />
           </Button>
-          <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">작업을 찾을 수 없습니다</h1>
+          <PageHeading>작업을 찾을 수 없습니다</PageHeading>
         </div>
         <p className="text-muted-foreground text-sm">요청하신 작업이 존재하지 않거나 삭제되었습니다.</p>
         <Button variant="outline" size="sm" onClick={() => navigate('/ai-insights/jobs')}>
@@ -492,7 +493,7 @@ export default function ProactiveJobDetailPage() {
           <Button variant="ghost" size="icon" onClick={() => navigate('/ai-insights/jobs')} aria-label="목록으로">
             <ArrowLeft className="h-4 w-4" />
           </Button>
-          <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">새 스마트 작업</h1>
+          <PageHeading>새 스마트 작업</PageHeading>
         </div>
         <ProactiveWriteNotice subject="스마트 작업" testId="job-readonly-notice" />
         <Button variant="outline" size="sm" onClick={() => navigate('/ai-insights/jobs')}>
@@ -520,9 +521,9 @@ export default function ProactiveJobDetailPage() {
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <div className="min-w-0">
-            <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight break-words">
+            <PageHeading className="break-words">
               {isNew ? '새 스마트 작업' : (job?.name ?? '-')}
-            </h1>
+            </PageHeading>
             <div className="flex flex-wrap items-center gap-2 mt-1">
               {!isNew && job && (
                 <Badge variant={job.enabled ? 'default' : 'secondary'}>

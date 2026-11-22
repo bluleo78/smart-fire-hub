@@ -23,7 +23,7 @@ export default function XxxListPage() {
     <div className="space-y-6">
       {/* 페이지 헤더 */}
       <div className="flex items-center justify-between">
-        <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">페이지 제목</h1>
+        <PageHeading>페이지 제목</PageHeading>
         <Button>
           <Plus className="h-4 w-4" />
           새로 만들기
@@ -138,7 +138,7 @@ export default function XxxDetailPage() {
           <ArrowLeft className="h-4 w-4" />
         </Button>
         <div className="flex-1 min-w-0">
-          <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight truncate">{item.name}</h1>
+          <PageHeading className="truncate">{item.name}</PageHeading>
           <p className="text-sm text-muted-foreground">{item.description}</p>
         </div>
         <div className="flex gap-2 shrink-0">
@@ -234,7 +234,7 @@ export default function XxxFormPage() {
   return (
     <div className="space-y-6">
       {/* 페이지 제목 */}
-      <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">새로 만들기</h1>
+      <PageHeading>새로 만들기</PageHeading>
 
       <Card>
         <CardHeader>

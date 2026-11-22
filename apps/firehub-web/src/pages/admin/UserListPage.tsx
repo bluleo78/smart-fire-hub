@@ -1,6 +1,7 @@
 import { useCallback, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 
+import { PageHeading } from '@/components/PageHeading';
 import { TruncatedLink } from '@/components/TruncatedLink';
 import { SearchInput } from '@/components/ui/search-input';
 import { SimplePagination } from '@/components/ui/simple-pagination';
@@ -85,7 +86,7 @@ export default function UserListPage() {
     <div className="space-y-6">
       {/* 제목 행 오른쪽 주 액션 — RoleListPage 와 같은 배치(와이어프레임 ①). user:write 보유 시만. */}
       <div className="flex items-center justify-between">
-        <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">사용자 관리</h1>
+        <PageHeading>사용자 관리</PageHeading>
         {/* 역할 지정은 role:assign 에 더해 고를 역할 목록(GET /roles = role:read)도 읽을 수 있어야 한다(WD-121). */}
         {permissions.has('user:write') && (
           <AddMemberDialog

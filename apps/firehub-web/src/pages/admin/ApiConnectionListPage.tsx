@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 
 import { apiConnectionsApi } from '@/api/api-connections';
 import { StatusBadge } from '@/components/api-connection/StatusBadge';
+import { PageHeading } from '@/components/PageHeading';
 import { TruncatedLink } from '@/components/TruncatedLink';
 import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
 import { FormField } from '@/components/ui/form-field';
@@ -356,7 +357,7 @@ export default function ApiConnectionListPage() {
       {/* 좁은 화면(375)에서 버튼 묶음이 제목을 밀어 「API 연결 관 / 리」처럼 음절 중간에서 끊겼다(WD-356).
           제목은 단어 단위로만 줄바꿈하고(break-keep), 자리가 모자라면 버튼 묶음이 다음 줄로 내려간다(flex-wrap). */}
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
-        <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight break-keep">API 연결 관리</h1>
+        <PageHeading className="break-keep">API 연결 관리</PageHeading>
         {canWrite && (
           <div className="flex items-center gap-2">
             {/* 전체 갱신: 모든 연결의 헬스체크 즉시 트리거 */}

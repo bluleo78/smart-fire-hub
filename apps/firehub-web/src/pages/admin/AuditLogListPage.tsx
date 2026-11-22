@@ -1,5 +1,6 @@
 import { useState } from 'react';
 
+import { PageHeading } from '@/components/PageHeading';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -616,7 +617,7 @@ export default function AuditLogListPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">감사 로그</h1>
+      <PageHeading>감사 로그</PageHeading>
 
       <div className="flex flex-wrap items-center gap-4">
         <SearchInput

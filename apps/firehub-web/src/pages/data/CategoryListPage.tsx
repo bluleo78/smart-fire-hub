@@ -5,6 +5,7 @@ import { useForm, useWatch } from 'react-hook-form';
 import { toast } from 'sonner';
 import { z } from 'zod';
 
+import { PageHeading } from '@/components/PageHeading';
 import { TruncatedText } from '@/components/ui/truncated-text';
 
 import { Button } from '../../components/ui/button';
@@ -246,7 +247,7 @@ export default function CategoryListPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">카테고리 관리</h1>
+        <PageHeading>카테고리 관리</PageHeading>
         {canWriteCategory && (
           <Button onClick={() => { createForm.reset(); setIsCreateOpen(true); }}>
             <Plus className="h-4 w-4" />

@@ -3,6 +3,7 @@ import { useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 
+import { PageHeading } from '@/components/PageHeading';
 import { FormField } from '@/components/ui/form-field';
 import { applyFieldErrors, extractApiError, isWrongCurrentPasswordError } from '@/lib/api-error';
 
@@ -122,7 +123,7 @@ export default function ProfilePage() {
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
-      <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">내 프로필</h1>
+      <PageHeading>내 프로필</PageHeading>
 
       <Card>
         <CardHeader>
