@@ -3,6 +3,7 @@ import { setupAdminAuth } from '../../fixtures/admin.fixture';
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { holdRequests } from '../../fixtures/hold-api';
+import { isUnderInert } from '../../fixtures/inert-a11y';
 
 /**
  * 감사 로그 페이지의 강화된 페이지네이션 검증 (이슈 #65)
@@ -130,6 +131,23 @@ test.describe('감사 로그 페이지네이션 — 이동 중에도 목록을 �
     // 이동 중임을 알린다 — 표가 aria-busy 이고 이전 행은 눌러도 상세가 열리지 않는다
     const table = page.getByRole('table', { name: '감사 로그' });
     await expect(table).toHaveAttribute('aria-busy', 'true');
+    // 붙잡힌 동안 이전 행으로는 상세를 열 수 없다 — 마우스(강제 클릭)와 키보드(상세 보기 버튼 포커스 + Enter) 모두
+    // tbody 가 inert 라 이전 행 버튼은 포커스를 못 받고, Enter·강제 클릭으로도 상세가 열리지 않는다(WD-932)
+    const rowButton = page.locator('tbody button[aria-haspopup="dialog"]').first();
+    await expect(next).toBeFocused();
+    await expect(rowButton).not.toBeFocused();
+    expect(await isUnderInert(rowButton)).toBe(true);
+    // 응답을 잡아 둔 동안의 요청 수 — Enter 가 추가 요청을 만들지 않았는지 비교하려고 미리 센다
+    const countBefore = held.count();
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(next).toBeFocused();
+    expect(held.count()).toBe(countBefore);
+    // 마우스(강제 클릭)로도 열리지 않는다 — 클릭은 포커스를 옮기므로 포커스 단언 뒤에 둔다
+    await page.getByText('감사 로그 1', { exact: true }).click({ force: true });
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    // 클릭이 포커스를 옮겼으니 응답 도착 뒤 포커스 단언을 위해 다시 nav 버튼으로 돌려 둔다
+    await next.focus();
 
     held.release();
     await expect.poll(() => capture.lastRequest()?.searchParams.get('page')).toBe('1');
@@ -137,6 +155,7 @@ test.describe('감사 로그 페이지네이션 — 이동 중에도 목록을 �
     await expect(next).toHaveAttribute('aria-disabled', 'true');
     // 응답이 도착하면 이동 중 표시가 사라진다
     await expect(table).not.toHaveAttribute('aria-busy', 'true');
+    expect(await isUnderInert(page.locator('tbody button[aria-haspopup="dialog"]').first())).toBe(false);
   });
 
   test('필터(검색어)를 바꾸면 응답 전에 이전 조건의 행이 보이지 않는다 (WD-932)', async ({

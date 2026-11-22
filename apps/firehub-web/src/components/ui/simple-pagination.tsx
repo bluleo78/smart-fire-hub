@@ -1,7 +1,8 @@
 import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import type { ReactNode } from 'react';
 
-import { ARIA_DISABLED_CLASS } from '../PendingButton';
+import { ARIA_DISABLED_CLASS } from '@/lib/ariaDisabled';
+
 import { Button } from './button';
 import {
   Select,
