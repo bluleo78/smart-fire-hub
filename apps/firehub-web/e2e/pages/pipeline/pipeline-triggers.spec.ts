@@ -1193,7 +1193,8 @@ test.describe('파이프라인 트리거 탭', () => {
     await expect(page.getByText('정수를 입력하세요')).toHaveCount(1);
     await page.getByRole('button', { name: '만들기' }).click();
     // 요청이 가지 않고, 창이 닫히지 않으며, 오류가 보이는 칸으로 초점이 간다
-    await expect(page.getByRole('dialog')).toBeVisible();
+    // 창은 이름으로 찾는다 — 닫히는 중인 데이터셋 팝오버도 role=dialog 라 이름 없이는 둘이 잡힌다(WD-911)
+    await expect(page.getByRole('dialog', { name: '새 트리거 - 데이터셋 변경' })).toBeVisible();
     await expect(pollingInput).toBeFocused();
     expect(createCapture.requests).toHaveLength(0);
 
