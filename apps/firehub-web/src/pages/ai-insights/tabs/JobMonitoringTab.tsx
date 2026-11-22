@@ -4,6 +4,7 @@ import { type UseFormReturn } from 'react-hook-form';
 
 import type { AnomalyConfig, Sensitivity } from '@/api/proactive';
 import { SYSTEM_METRICS } from '@/api/proactive';
+import { IntegerTextInput } from '@/components/IntegerTextInput';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -362,12 +363,12 @@ export default function JobMonitoringTab({ form, isEditing, jobId = 0, onChange 
             {/* 쿨다운 */}
             <div className="space-y-2">
               <Label htmlFor="cooldown">쿨다운 (분)</Label>
-              <Input
+              {/* WD-906: type="number" 는 `1e` 를 ""로 보고해 `|| 30` 이 입력을 말없이 기본값으로 바꿨다.
+                  표기가 덜 된 값은 커밋하지 않고 칸 오류로 알린다. 범위(1분 이상) 안내는 아래에서 그대로 한다. */}
+              <IntegerTextInput
                 id="cooldown"
-                type="number"
-                min={1}
                 value={anomalyConfig.cooldownMinutes}
-                onChange={(e) => updateAnomaly({ cooldownMinutes: Number(e.target.value) || 30 })}
+                onValueChange={(n) => updateAnomaly({ cooldownMinutes: n })}
               />
               {/* 쿨다운 음수 입력 시 Zod 에러 메시지 표시 (#39) */}
               {anomalyConfig.cooldownMinutes < 1 && (
@@ -447,26 +448,24 @@ export default function JobMonitoringTab({ form, isEditing, jobId = 0, onChange 
                         {metric.source === 'system' ? '시스템' : '데이터셋'}
                       </Badge>
                       <span className="text-sm font-medium flex-1 min-w-0 break-words">{metric.name}</span>
-                      <div className="flex items-center gap-2">
+                      {/* items-start + 라벨·단위 h-8: 오류 문구가 칸 아래에 붙어도 "폴링 주기 [칸] 초" 는 칸 높이에 맞춰 한 줄로 읽힌다 */}
+                      <div className="flex flex-wrap items-start gap-2">
                         {/* 반복 렌더되는 메트릭 행이므로 안정 키(metric.id)를 id 에 끼워
                             행 간 id 충돌을 막는다 (#432). metric.id 는 crypto.randomUUID() 라 안정적. */}
                         <Label
                           htmlFor={`${baseId}-metric-${metric.id}-interval`}
-                          className="text-xs text-muted-foreground shrink-0"
+                          className="inline-flex h-8 items-center text-xs text-muted-foreground shrink-0"
                         >
                           폴링 주기
                         </Label>
-                        <Input
+                        {/* WD-906: 덜 된 숫자를 300 으로 바꾸지 않는다 — 표기 오류는 칸이 보인다 */}
+                        <IntegerTextInput
                           id={`${baseId}-metric-${metric.id}-interval`}
-                          type="number"
-                          min={60}
                           className="w-20 h-8 text-xs"
                           value={metric.pollingInterval}
-                          onChange={(e) =>
-                            updateMetricInterval(metric.id, Number(e.target.value) || 300)
-                          }
+                          onValueChange={(n) => updateMetricInterval(metric.id, n)}
                         />
-                        <span className="text-xs text-muted-foreground">초</span>
+                        <span className="inline-flex h-8 items-center text-xs text-muted-foreground">초</span>
                       </div>
                       <Button
                         type="button"
@@ -552,14 +551,11 @@ export default function JobMonitoringTab({ form, isEditing, jobId = 0, onChange 
             {/* 폴링 주기 */}
             <div className="space-y-2">
               <Label htmlFor="custom-interval">폴링 주기 (초)</Label>
-              <Input
+              {/* WD-906: 덜 된 숫자를 600 으로 바꾸지 않는다 */}
+              <IntegerTextInput
                 id="custom-interval"
-                type="number"
-                min={60}
                 value={customForm.customInterval}
-                onChange={(e) =>
-                  setCustomForm((f) => ({ ...f, customInterval: Number(e.target.value) || 600 }))
-                }
+                onValueChange={(n) => setCustomForm((f) => ({ ...f, customInterval: n }))}
               />
               {/* 60초 미만 입력 시 에러 메시지 표시 (#44) */}
               {customForm.customInterval < 60 && (

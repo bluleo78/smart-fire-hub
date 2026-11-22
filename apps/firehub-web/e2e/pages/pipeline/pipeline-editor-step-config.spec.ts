@@ -5,9 +5,28 @@
  * 분기를 StepConfigPanel 의 입력/버튼에서 실제로 dispatch 되도록 구동한다.
  */
 
+import type { Page } from '@playwright/test';
+
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { clickToolbarAddStep, grantPipelinePermissions } from '../../fixtures/pipeline.fixture';
+
+/** 툴바로 스텝을 추가하고 이름·타입(AI 분류)을 정한다 */
+async function addAiClassifyStep(page: Page, name: string) {
+  await clickToolbarAddStep(page);
+  await page.locator('#step-name').fill(name);
+  await page.getByRole('combobox', { name: '스크립트 타입' }).click();
+  await page.getByRole('option', { name: 'AI 분류', exact: true }).click();
+}
+
+/** 저장 가능한 AI 분류 스텝(프롬프트·출력 컬럼)을 만들고 고급 설정까지 연다 */
+async function addConfiguredAiClassifyStep(page: Page) {
+  await addAiClassifyStep(page, 'AI 스텝');
+  await page.getByRole('textbox', { name: '프롬프트' }).fill('감성을 분류하세요');
+  await page.getByRole('button', { name: '컬럼 추가', exact: true }).click();
+  await page.getByLabel('출력 컬럼명 1').fill('sentiment');
+  await page.locator('button').filter({ hasText: /^고급 설정$/ }).click();
+}
 
 test.describe('파이프라인 에디터 — 스텝 설정', () => {
   // 추가·삭제·생성 경로·실행·수정 버튼은 권한이 있을 때만 보인다(WD-219) — 기본 인증 fixture 는 권한이 비어 있어 모든 파이프라인 권한을 준다.
@@ -232,5 +251,105 @@ test.describe('파이프라인 에디터 — 스텝 설정', () => {
 
     // 빈 상태 안내
     await expect(page.getByText('첫 번째 스텝을 추가하세요')).toBeVisible();
+  });
+
+  test('AI 분류 스텝 배치 크기 — 덜 된 숫자는 1 로 바뀌지 않고, 비우고 50 을 치면 50 이 저장된다 (WD-906)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupNewEditorMocks(page);
+    const capture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/pipelines',
+      { id: 102, name: '배치 크기 테스트', steps: [] },
+      { capture: true },
+    );
+    await page.goto('/pipelines/new');
+    await addConfiguredAiClassifyStep(page);
+
+    const batch = page.getByLabel('배치 크기 (1~100)');
+    await expect(batch).toBeVisible();
+
+    // 덜 된 숫자 "1e" — 1 로 바뀌지 않고 원문 유지 + 오류 문구
+    await batch.fill('1e');
+    await expect(batch).toHaveValue('1e');
+    await expect(batch).toHaveAttribute('aria-invalid', 'true');
+    await expect(page.getByText('정수를 입력하세요')).toBeVisible();
+
+    // 비우고 50 — 50 이 저장된다
+    await batch.fill('');
+    await batch.pressSequentially('50');
+    await expect(batch).toHaveValue('50');
+    await expect(page.getByText('정수를 입력하세요')).toHaveCount(0);
+
+    await page.getByPlaceholder(/파이프라인 이름|이름 입력/).first().fill('배치 크기 테스트');
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+    const req = await capture.waitForRequest();
+    const payload = req.payload as { steps: Array<{ aiConfig?: { batchSize?: number } }> };
+    expect(payload.steps[0].aiConfig?.batchSize).toBe(50);
+  });
+
+  /**
+   * WD-906: 칸에 들어갔다 나가기만 해도 batchSize 가 본문에 새로 실리던 문제.
+   */
+  test('AI 분류 스텝 배치 크기 — 칸에 들어갔다 나가기만 하면 저장 본문에 batchSize 가 새로 실리지 않는다 (WD-906)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupNewEditorMocks(page);
+    const capture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/pipelines',
+      { id: 103, name: '탭 통과', steps: [] },
+      { capture: true },
+    );
+    await page.goto('/pipelines/new');
+    await addConfiguredAiClassifyStep(page);
+
+    const batch = page.getByLabel('배치 크기 (1~100)');
+    await batch.focus();
+    await batch.blur();
+
+    await page.getByPlaceholder(/파이프라인 이름|이름 입력/).first().fill('탭 통과');
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+    const req = await capture.waitForRequest();
+    const payload = req.payload as { steps: Array<{ aiConfig?: { batchSize?: number } }> };
+    expect(payload.steps[0].aiConfig?.batchSize).toBeUndefined();
+  });
+
+  /**
+   * WD-906: AI 분류 설정이 스텝별로 재마운트되지 않아 A 스텝에서 덜 친 `1e` 와 오류가
+   * 같은 값(기본 20)을 가진 B 스텝으로 넘어가던 문제.
+   */
+  test('AI 분류 스텝 — A 스텝에서 덜 친 배치 크기와 오류가 B 스텝으로 넘어가지 않는다 (WD-906)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupNewEditorMocks(page);
+    await page.goto('/pipelines/new');
+
+    // 스텝 A, B 를 모두 AI 분류로 만든다
+    for (const name of ['AI 스텝 A', 'AI 스텝 B']) {
+      await addAiClassifyStep(page, name);
+      await expect(page.getByRole('textbox', { name: '프롬프트' })).toBeVisible();
+    }
+
+    // A 선택 → 고급 설정 열고 `1e`
+    await page.locator('.react-flow__node').filter({ hasText: 'AI 스텝 A' }).click();
+    await expect(page.locator('#step-name')).toHaveValue('AI 스텝 A');
+    await page.locator('button').filter({ hasText: /^고급 설정$/ }).click();
+    const batchA = page.getByLabel('배치 크기 (1~100)');
+    await batchA.fill('1e');
+    await expect(page.getByText('정수를 입력하세요')).toBeVisible();
+
+    // B 선택 → 오류가 없고, 칸을 열면 B 의 값(20)이 보인다
+    await page.locator('.react-flow__node').filter({ hasText: 'AI 스텝 B' }).click();
+    await expect(page.locator('#step-name')).toHaveValue('AI 스텝 B');
+    await expect(page.getByText('정수를 입력하세요')).toHaveCount(0);
+    const batchB = page.getByLabel('배치 크기 (1~100)');
+    if (!(await batchB.isVisible())) {
+      await page.locator('button').filter({ hasText: /^고급 설정$/ }).click();
+    }
+    await expect(batchB).toHaveValue('20');
+    await expect(batchB).not.toHaveAttribute('aria-invalid', 'true');
   });
 });

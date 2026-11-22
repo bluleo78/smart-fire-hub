@@ -1,6 +1,6 @@
 import { useId, useMemo } from 'react';
 
-import { Input } from '@/components/ui/input';
+import { IntegerTextInput } from '@/components/IntegerTextInput';
 import { Label } from '@/components/ui/label';
 import { useAllDatasets } from '@/hooks/queries/useDatasets';
 
@@ -61,11 +61,9 @@ export default function DatasetChangeTriggerForm({ config, onChange, errors }: D
 
       <div className="space-y-1.5">
         <Label htmlFor={pollingId}>폴링 주기 (초)</Label>
-        <Input
+        {/* WD-906: type="number" 는 `1e` 를 ""로 보고해 기본값으로 바뀌었다 — 원문을 두는 정수 칸으로 교체 */}
+        <IntegerTextInput
           id={pollingId}
-          type="number"
-          min={30}
-          max={3600}
           value={config.pollingIntervalSeconds}
           /* 범위 안내와 오류 문구를 함께 연결한다 (오류는 조건부) */
           aria-describedby={
@@ -74,9 +72,7 @@ export default function DatasetChangeTriggerForm({ config, onChange, errors }: D
               .join(' ')
           }
           aria-invalid={!!errors?.pollingIntervalSeconds}
-          onChange={(e) =>
-            onChange({ ...config, pollingIntervalSeconds: Number(e.target.value) || 60 })
-          }
+          onValueChange={(n) => onChange({ ...config, pollingIntervalSeconds: n })}
         />
         <p id={pollingHelpId} className="text-xs text-muted-foreground">30초 ~ 3600초 (1시간)</p>
         {errors?.pollingIntervalSeconds && (
@@ -86,11 +82,8 @@ export default function DatasetChangeTriggerForm({ config, onChange, errors }: D
 
       <div className="space-y-1.5">
         <Label htmlFor={debounceId}>디바운스 시간 (초)</Label>
-        <Input
+        <IntegerTextInput
           id={debounceId}
-          type="number"
-          min={0}
-          max={3600}
           value={config.debounceSeconds}
           aria-describedby={
             [debounceHelpId, errors?.debounceSeconds ? debounceErrorId : null]
@@ -98,9 +91,7 @@ export default function DatasetChangeTriggerForm({ config, onChange, errors }: D
               .join(' ')
           }
           aria-invalid={!!errors?.debounceSeconds}
-          onChange={(e) =>
-            onChange({ ...config, debounceSeconds: Number(e.target.value) || 0 })
-          }
+          onValueChange={(n) => onChange({ ...config, debounceSeconds: n })}
         />
         <p id={debounceHelpId} className="text-xs text-muted-foreground">
           연속 변경 시 지정 시간 내 재트리거를 방지합니다. 0초 ~ 3600초 (1시간)

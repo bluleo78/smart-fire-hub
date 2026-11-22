@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { useId, useState } from 'react';
 
+import { IntegerTextInput } from '@/components/IntegerTextInput';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
@@ -439,19 +440,15 @@ export default function AiClassifyStepConfig({
         <div className="space-y-2">
           <div className="space-y-1.5">
             <Label htmlFor={batchSizeId} className="text-xs">배치 크기 (1~100)</Label>
-            <Input
+            <IntegerTextInput
               id={batchSizeId}
               aria-describedby={batchSizeHelpId}
               className="h-8 text-xs"
-              type="number"
-              min={1}
-              max={100}
               value={batchSize}
               disabled={readOnly}
-              onChange={(e) => {
-                const v = Math.max(1, Math.min(100, Number(e.target.value)));
-                update('batchSize', v);
-              }}
+              min={1}
+              max={100}
+              onValueChange={(n) => update('batchSize', n)}
             />
             <p id={batchSizeHelpId} className="text-xs text-muted-foreground">한 번에 처리할 행 수 (기본값: 20)</p>
           </div>

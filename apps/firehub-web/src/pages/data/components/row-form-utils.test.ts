@@ -110,6 +110,16 @@ describe('decimalInputError', () => {
   });
 });
 
+// (WD-906) 덜 된 숫자·전각 숫자는 text 칸 원문 그대로 형식 오류가 된다(빈 값으로 바뀌지 않는다).
+describe('덜 된 숫자 입력 (WD-906)', () => {
+  it('-, 1e, ., 전각 숫자는 두 검사 모두 형식 안내', () => {
+    for (const v of ['-', '1e', '.', '1e-', '１２']) {
+      expect(integerInputError(v)).toBe('숫자를 입력하세요.');
+      expect(decimalInputError(v)).toBe('숫자를 입력하세요.');
+    }
+  });
+});
+
 describe('integerInputError', () => {
   const RANGE_MSG = '정수 범위를 벗어났습니다(허용 범위: -9223372036854775808 ~ 9223372036854775807).';
 
@@ -152,6 +162,10 @@ describe('buildRowZodSchema — 물리 타입 한도 (WD-98)', () => {
     expect(issues(schema, { num: '1.5' })).toEqual(['정수를 입력하세요.']);
     expect(issues(schema, { num: '9223372036854775808' })).toHaveLength(1);
     expect(schema.parse({ num: '' }).num).toBeUndefined();
+    // 공백만 있는 입력도 빈 값 — NULL 허용 칸은 null 로, NOT NULL 칸은 형식 오류로
+    expect(schema.parse({ num: '   ' }).num).toBeUndefined();
+    expect(buildRowZodSchema([col('price', 'DECIMAL')], 'add').parse({ price: ' \t ' }).price).toBeUndefined();
+    expect(issues(buildRowZodSchema([{ ...col('num', 'INTEGER'), isNullable: false }], 'add'), { num: '  ' })).toHaveLength(1);
   });
 
   it('DECIMAL 편집: 초기값과 같은(손대지 않은) 칸은 자릿수 검사를 건너뛰고, 바꾼 칸은 검사한다', () => {

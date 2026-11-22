@@ -240,6 +240,37 @@ test.describe('데이터셋 상세 — 행 추가/편집', () => {
     await expect(page.getByText('행이 수정되었습니다.')).toBeVisible();
   });
 
+  test('(WD-906) nullable INTEGER/DECIMAL 필드에 공백만 남기고 저장하면 형식 오류 없이 NULL로 전송된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupMocks(page);
+
+    const updateCapture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/datasets/1/data/rows/1',
+      { id: 1, name: 'Alice', amount: null, price: null },
+      { capture: true },
+    );
+
+    await page.goto('/data/datasets/1');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible({ timeout: 10000 });
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await page.getByRole('cell', { name: 'Alice' }).dblclick();
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('heading', { name: /행 편집 \(ID: 1\)/ })).toBeVisible();
+
+    await page.locator('#edit-amount').fill('   ');
+    await page.locator('#edit-price').fill('  ');
+    await dialog.getByRole('button', { name: '저장' }).click();
+
+    const captured = await updateCapture.waitForRequest();
+    const payload = captured.payload as { data: Record<string, unknown> };
+    expect(payload.data.amount).toBeNull();
+    expect(payload.data.price).toBeNull();
+  });
+
   test('(#674) NOT NULL INTEGER/DECIMAL 컬럼은 비운 채 저장 시도하면 여전히 유효성 에러가 뜬다', async ({
     authenticatedPage: page,
   }) => {
@@ -324,11 +355,51 @@ test.describe('데이터셋 상세 — 행 추가/편집', () => {
 
     // 유효성 에러로 제출이 막혀 다이얼로그가 여전히 열려 있어야 한다 (0으로 조용히 저장되면 안 됨)
     await expect(dialog).toBeVisible();
-    // 잠깐 대기해도 PUT 요청 자체가 나가지 않아야 한다 — falsy-0 함정이면 score/ratio가 0으로
-    // "유효한" 값이 되어 여기서 PUT이 호출돼 버린다.
-    await page.waitForTimeout(300);
+    // 칸 오류가 보이면 검증이 끝난 것이다 — 그 뒤에도 PUT 요청이 나가지 않아야 한다.
+    // falsy-0 함정이면 score/ratio가 0으로 "유효한" 값이 되어 PUT이 호출돼 버린다.
+    await expect(page.locator('#edit-score-error')).toBeVisible();
     expect(putCalled).toBe(false);
   });
+
+  // (WD-906) type=number 칸은 `1e`·`-` 처럼 덜 된 숫자를 브라우저가 빈 문자열로 돌려줘, NULL 허용 칸이면 조용히 null 로 저장됐다.
+  // 이제 text 칸이라 원문이 검사로 가서 형식 오류가 보이고 요청이 가지 않아야 한다.
+  for (const [label, field, text] of [
+    ['INTEGER', 'amount', '1e'],
+    ['DECIMAL', 'price', '-'],
+  ] as const) {
+    test(`행 편집 — NULL 허용 ${label} 칸에 ${text} 를 치면 형식 오류가 보이고 저장 요청이 가지 않는다(값이 지워지지 않는다) (WD-906)`, async ({
+      authenticatedPage: page,
+    }) => {
+      await setupMocks(page);
+      let putCalled = false;
+      await page.route(
+        (url) => url.pathname === '/api/v1/datasets/1/data/rows/1' && url.search === '',
+        (route) => {
+          if (route.request().method() === 'PUT') putCalled = true;
+          return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+        },
+      );
+
+      await page.goto('/data/datasets/1');
+      await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible({ timeout: 10000 });
+      await page.getByRole('tab', { name: '데이터' }).click();
+      await page.getByRole('cell', { name: 'Alice' }).dblclick();
+
+      const dialog = page.getByRole('dialog');
+      await expect(dialog.getByRole('heading', { name: /행 편집 \(ID: 1\)/ })).toBeVisible();
+
+      const input = page.locator(`#edit-${field}`);
+      // 한 번의 change 로 덜 된 숫자를 넣는다 — 브라우저가 빈 값으로 바꾸지 않아야 한다.
+      await input.fill(text);
+      await expect(input).toHaveValue(text);
+      await dialog.getByRole('button', { name: '저장' }).click();
+
+      // 그 칸의 오류만 확인한다(페이지 전체 문구 수가 아니라).
+      await expect(page.locator(`#edit-${field}-error`)).toHaveText('숫자를 입력하세요.');
+      await expect(dialog).toBeVisible();
+      expect(putCalled).toBe(false);
+    });
+  }
 
   test('행 추가 시 필수 필드 미입력 → Zod 유효성 에러 표시', async ({
     authenticatedPage: page,

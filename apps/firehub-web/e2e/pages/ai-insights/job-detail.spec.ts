@@ -632,6 +632,76 @@ test.describe('스마트 작업 상세 페이지', () => {
     await expect(page.locator('[data-slot="badge"]').filter({ hasText: '데이터셋' })).toBeVisible();
   });
 
+  /**
+   * 회귀 테스트 (WD-906): type="number" 칸은 `1e` 같은 덜 된 숫자를 ""로 보고해
+   * `Number(v) || 30` 등이 칸을 말없이 기본값으로 바꿨다. 공용 정수 칸은 원문을 두고 오류를 보인다.
+   */
+  test('모니터링 탭 — 쿨다운·폴링 주기에 덜 된 숫자를 치면 기본값(30·300·600)으로 바뀌지 않고 칸 오류가 보인다 (WD-906)', async ({
+    authenticatedPage: page,
+  }) => {
+    const job = createJob({
+      id: 1,
+      config: {
+        channels: [{ type: 'CHAT', recipientUserIds: [], recipientEmails: [] }],
+        anomaly: {
+          enabled: true,
+          metrics: [
+            { id: 'm-1', name: '활성 사용자 수', source: 'system', metricKey: 'active_user_count', pollingInterval: 120 },
+          ],
+          sensitivity: 'medium',
+          cooldownMinutes: 45,
+        },
+      },
+    });
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1', job);
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1/executions', []);
+    await mockApi(page, 'GET', '/api/v1/proactive/templates', createTemplates());
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1/anomaly-events', []);
+    await mockApi(page, 'GET', '/api/v1/datasets', createPageResponse([createDataset({ id: 1, name: '소방 데이터셋' })]));
+    const putCapture = await mockApi(page, 'PUT', '/api/v1/proactive/jobs/1', {}, { capture: true });
+
+    await page.goto('/ai-insights/jobs/1');
+    await page.getByRole('button', { name: '편집' }).click();
+    await page.getByRole('tab', { name: /모니터링/ }).click();
+
+    // 쿨다운 — `1e` 는 30 으로 튀지 않고 원문이 남으며 칸 오류가 보인다
+    const cooldown = page.locator('#cooldown');
+    await expect(cooldown).toHaveValue('45');
+    // fill 은 변경 한 번이라 중간 값(`1`)이 커밋되지 않는다 — 저장 요청이 이전 값(45)을 유지하는지 본다
+    await cooldown.fill('1e');
+    await expect(cooldown).toHaveValue('1e');
+    await expect(cooldown).toHaveAttribute('aria-invalid', 'true');
+    await expect(page.getByText('정수를 입력하세요')).toHaveCount(1);
+
+    // 지표 행 폴링 주기 — `-` 도 300 으로 튀지 않는다
+    const metricInterval = page.getByLabel('폴링 주기', { exact: true });
+    await metricInterval.fill('-');
+    await expect(metricInterval).toHaveValue('-');
+    await expect(metricInterval).toHaveAttribute('aria-invalid', 'true');
+    await expect(page.getByText('정수를 입력하세요')).toHaveCount(2);
+
+    // 커스텀 지표 모달의 주기도 `-` 면 600 으로 튀지 않고 오류가 보인다
+    await page.getByRole('button', { name: /커스텀 메트릭/ }).click();
+    const customInterval = page.getByRole('dialog').locator('#custom-interval');
+    await customInterval.fill('');
+    await customInterval.pressSequentially('-');
+    await expect(customInterval).toHaveValue('-');
+    await expect(customInterval).toHaveAttribute('aria-invalid', 'true');
+    await expect(page.getByRole('dialog').getByText('정수를 입력하세요')).toHaveCount(1);
+    // 고쳐 쓰면 오류가 사라진다
+    await customInterval.fill('90');
+    await expect(page.getByRole('dialog').getByText('정수를 입력하세요')).toHaveCount(0);
+    await page.getByRole('dialog').getByRole('button', { name: '취소' }).click();
+
+    // 저장하면 덜 된 값은 커밋되지 않았으므로 이전 값이 실린다 (30·300 같은 기본값이 아니다)
+    await page.getByRole('button', { name: '저장' }).click();
+    const req = await putCapture.waitForRequest();
+    expect(req.payload).toMatchObject({
+      config: { anomaly: { cooldownMinutes: 45, metrics: [{ id: 'm-1', pollingInterval: 120 }] } },
+    });
+  });
+
   test('EmailTagInput — 유효하지 않은 이메일 입력 시 에러 메시지가 표시된다', async ({ authenticatedPage: page }) => {
     // 이메일 채널이 포함된 작업 모킹
     const jobWithEmail = createJob({

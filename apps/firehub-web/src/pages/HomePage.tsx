@@ -65,7 +65,8 @@ function HomeLoadError({ message, onRetry, className }: { message: string; onRet
   return (
     <div role="alert" className={`flex flex-wrap items-center gap-2 text-sm ${className ?? ''}`}>
       <span className="text-destructive">{message}</span>
-      <Button variant="outline" size="sm" className="h-6 text-xs px-2" onClick={onRetry}>
+      {/* 높이를 덮어쓰지 않는다 — size="sm"(h-8)이 최소 클릭 영역 32px 를 지킨다 */}
+      <Button variant="outline" size="sm" className="text-xs px-2" onClick={onRetry}>
         다시 시도
       </Button>
     </div>
