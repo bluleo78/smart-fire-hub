@@ -33,6 +33,7 @@ import com.smartfirehub.pipeline.service.executor.ApiCallExecutor;
 import com.smartfirehub.pipeline.service.executor.DbExecutorClient;
 import com.smartfirehub.pipeline.service.executor.ExecutionCancelCheck;
 import com.smartfirehub.pipeline.service.executor.ExecutorClient;
+import com.smartfirehub.pipeline.service.executor.RedirectFollower;
 import com.smartfirehub.pipeline.service.executor.ScriptTokenIssuer;
 import com.smartfirehub.pipeline.service.step.PgStepDialect;
 import com.smartfirehub.pipeline.service.step.SqlOutputColumns;
@@ -493,8 +494,8 @@ public class PipelineAsyncRunner {
   }
 
   /**
-   * API_CALL 스텝의 apiConfig 를 변환한다. 변환 실패가 maxResponseSizeMb 필드 때문이면(int 를 넘는 값·숫자 아님·소수 문자열 등) Jackson 원문 대신 한국어 스텝 오류(WD-810)로
-   * 바꾸고, 다른 필드 때문인 실패는 예전처럼 그대로 던진다.
+   * API_CALL 스텝의 apiConfig 를 변환한다. 변환 실패가 maxResponseSizeMb 필드 때문이면(int 를 넘는 값·숫자 아님·소수 문자열 등)
+   * Jackson 원문 대신 한국어 스텝 오류(WD-810)로 바꾸고, 다른 필드 때문인 실패는 예전처럼 그대로 던진다.
    */
   private ApiCallConfig convertApiCallConfig(Map<String, Object> apiConfig) {
     try {
@@ -1220,7 +1221,8 @@ public class PipelineAsyncRunner {
         }
       } else if ("API_CALL".equals(step.scriptType())) {
         ApiCallConfig apiCallConfig = convertApiCallConfig(step.apiConfig());
-        // WD-810: 변환된 값으로 응답 크기 한도를 판정한다 — 예전에 소수(10.5)·빈 문자열로 저장돼 10·기본값으로 돌던 스텝은 그대로 돌고, 0·음수·2048 이상은 호출 전에 막는다.
+        // WD-810: 변환된 값으로 응답 크기 한도를 판정한다 — 예전에 소수(10.5)·빈 문자열로 저장돼 10·기본값으로 돌던 스텝은 그대로 돌고,
+        // 0·음수·2048 이상은 호출 전에 막는다.
         if (apiCallConfig != null
             && apiCallConfig.maxResponseSizeMb() != null
             && !ApiCallExecutor.isRunnableMaxResponseSizeMb(apiCallConfig.maxResponseSizeMb())) {
@@ -2031,7 +2033,9 @@ public class PipelineAsyncRunner {
 
     Map<String, Object> request = new LinkedHashMap<>();
     request.put("url", resolvedUrl);
-    request.put("method", config.method() != null ? config.method() : "GET");
+    // 메서드는 한 곳(RedirectFollower.resolveMethod)에서 정한다(WD-969 리뷰 후속) — 이 외부(Python) 실행기에는
+    // 메서드 검증이 없어, 비어 있는 값이 그대로 나가 재시도 대상이 되는 것을 여기서 막는다.
+    request.put("method", RedirectFollower.resolveMethod(config.method()).name());
     if (config.headers() != null) request.put("headers", config.headers());
     if (config.queryParams() != null) request.put("query_params", config.queryParams());
     if (config.body() != null) request.put("body", config.body());

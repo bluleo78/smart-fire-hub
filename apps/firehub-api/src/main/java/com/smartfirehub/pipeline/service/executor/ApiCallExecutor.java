@@ -12,7 +12,6 @@ import java.net.URI;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -41,7 +40,10 @@ public class ApiCallExecutor {
   /** 응답 크기 한도 기본값(MB) — 설정이 비었을 때 쓴다. 저장 검증(PipelineService)도 같은 값을 쓴다. */
   public static final int DEFAULT_MAX_RESPONSE_SIZE_MB = 10;
 
-  /** 응답 크기 한도 저장 허용 범위(MB, WD-810) — 저장과 실행이 같은 범위를 쓰도록 상수로 둔다. 실행 판정 근거는 {@link #isRunnableMaxResponseSizeMb}. */
+  /**
+   * 응답 크기 한도 저장 허용 범위(MB, WD-810) — 저장과 실행이 같은 범위를 쓰도록 상수로 둔다. 실행 판정 근거는 {@link
+   * #isRunnableMaxResponseSizeMb}.
+   */
   public static final int MIN_MAX_RESPONSE_SIZE_MB = 1;
 
   public static final int MAX_MAX_RESPONSE_SIZE_MB = 100;
@@ -50,16 +52,17 @@ public class ApiCallExecutor {
   private static final int INT_OVERFLOW_START_MB = 2048;
 
   /**
-   * 실행 시 응답 크기 한도(MB)로 쓸 수 있는 값인지 판정한다(WD-810) — 1 이상 2048 미만이면 true. 저장 상한(100)은 새 값에만 적용하므로, 그 전에 저장돼
-   * 동작하던 101~2047 은 그대로 돈다.
+   * 실행 시 응답 크기 한도(MB)로 쓸 수 있는 값인지 판정한다(WD-810) — 1 이상 2048 미만이면 true. 저장 상한(100)은 새 값에만 적용하므로, 그 전에
+   * 저장돼 동작하던 101~2047 은 그대로 돈다.
    *
-   * <p>거절하는 값: 음수는 Spring 코덱 한도를 무제한으로 만들어 메모리 고갈 위험(WD-810 이 막으려는 바로 그 위험)이 있으므로 "돌긴 했어도" 의도적으로 거절한다. 0 은
-   * 모든 응답을 초과로 실패시켰다. 2048 이상은 프로세스 내 경로에서 int 넘침이 났다. Python 실행기 경로에서는 2048 이상이 넘치지 않았지만 2GB 이상을 메모리에
-   * 올리는 것도 같은 위험이라 두 경로 모두에서 일부러 거절한다.
+   * <p>거절하는 값: 음수는 Spring 코덱 한도를 무제한으로 만들어 메모리 고갈 위험(WD-810 이 막으려는 바로 그 위험)이 있으므로 "돌긴 했어도" 의도적으로
+   * 거절한다. 0 은 모든 응답을 초과로 실패시켰다. 2048 이상은 프로세스 내 경로에서 int 넘침이 났다. Python 실행기 경로에서는 2048 이상이 넘치지 않았지만
+   * 2GB 이상을 메모리에 올리는 것도 같은 위험이라 두 경로 모두에서 일부러 거절한다.
    */
   public static boolean isRunnableMaxResponseSizeMb(long mb) {
     return mb >= MIN_MAX_RESPONSE_SIZE_MB && mb < INT_OVERFLOW_START_MB;
   }
+
   private final SsrfProtectionService ssrfProtectionService;
   private final JsonResponseParser jsonResponseParser;
   private final OffsetPaginationHandler offsetPaginationHandler;
@@ -436,7 +439,8 @@ public class ApiCallExecutor {
       throw new ApiCallException(e.getMessage());
     }
 
-    String method = (config.method() != null) ? config.method().toUpperCase(Locale.ROOT) : "GET";
+    // 보낼 메서드는 한 곳(RedirectFollower.resolveMethod)에서 정한다(WD-969 리뷰 후속).
+    String method = RedirectFollower.resolveMethod(config.method()).name();
 
     try {
       // 홉마다 SSRF 검사·메서드/본문 규칙·다른 출처 인증 떼기는 RedirectFollower 한 곳에 있다(WD-693 — 미리보기·연결 테스트도
@@ -484,8 +488,7 @@ public class ApiCallExecutor {
     // WD-810: MB→바이트를 long 으로 계산한 뒤 int 로 줄인다 — int 곱셈은 2048MB 부터 조용히 넘쳐 음수 한도가 된다(넘치면 예외).
     int maxInMemoryBytes = Math.toIntExact((long) maxResponseSizeMb * 1024 * 1024);
     // 교환 전략을 새로 끼우면 주입 빌더의 코덱이 기본값으로 바뀌므로, 앱 매퍼와 같은 공유 코덱 팩토리로 만든다(WD-793).
-    ExchangeStrategies exchangeStrategies =
-        AppJsonWebClients.exchangeStrategies(maxInMemoryBytes);
+    ExchangeStrategies exchangeStrategies = AppJsonWebClients.exchangeStrategies(maxInMemoryBytes);
     return RedirectFollower.withoutAutoRedirect(webClientBuilder, ssrfSafeHttpClientFactory)
         .exchangeStrategies(exchangeStrategies)
         .build();

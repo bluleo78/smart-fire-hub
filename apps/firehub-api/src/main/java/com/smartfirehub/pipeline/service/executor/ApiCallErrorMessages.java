@@ -113,6 +113,16 @@ public final class ApiCallErrorMessages {
         + " 요청을 보낼 수 없습니다. HTTP 메서드를 GET 또는 POST 로 바꿔 다시 시도하세요";
   }
 
+  /**
+   * HTTP 메서드 값이 표준 메서드가 아닐 때(WD-969 리뷰 후속) — 설정에 저장된 값을 그대로 전송하면 WebClient 가 빈 이름 요청을 만들어 전송 오류로
+   * 분류되고, 그 오류는 재시도 대상이라 같은 잘못을 N회 반복한다. 그래서 재시도하지 않는 안내 오류({@link ApiCallException})로 낸다.
+   */
+  public static String unsupportedHttpMethod(String method) {
+    return "지원하지 않는 HTTP 메서드입니다: "
+        + method
+        + " — GET·HEAD·POST·PUT·PATCH·DELETE·OPTIONS·TRACE 중 하나로 설정하세요";
+  }
+
   public static String responseTooLarge(int maxMb) {
     return "응답 크기가 제한(" + maxMb + "MB)을 넘었습니다 — 응답 크기 제한을 늘리거나 페이지 크기를 줄이세요";
   }

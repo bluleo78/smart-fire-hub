@@ -326,17 +326,46 @@ public final class RedirectFollower {
   private record Redirect(int status, String location) {}
 
   /**
+   * 보낼 HTTP 메서드 값을 정한다(WD-969 리뷰 후속) — 메서드를 읽는 모든 곳이 이 한 곳을 쓴다. 자리마다 따로 정하면 한쪽만 고치는 실수가 반복된다.
+   *
+   * <p>값이 비어 있으면(설정이 비었거나 공백만 있음) 예전과 같은 GET 으로 보낸다 — 비어 있는 값을 그대로 {@code HttpMethod.valueOf} 에 넘기면
+   * Spring 이 빈 이름 메서드를 그대로 만들고, WebClient 는 그 요청을 전송 오류로 실패시켜 재시도 대상이 된다(잘못이 고쳐지지 않아도 같은 요청을 N회
+   * 반복한다).
+   *
+   * <p>비어 있지 않지만 표준 메서드가 아닌 값도 다시 보내도 같으므로 재시도하지 않는 안내 오류({@link ApiCallException})로 낸다 — {@code
+   * HttpMethod.valueOf} 는 알 수 없는 값을 받아 빈 이름·그름 이름 요청을 만드는 통로가 된다.
+   *
+   * @param method 설정·호부가 준 원본 값(null 허용)
+   * @return 표준 메서드 — 표준이 아니면 {@link ApiCallException}
+   */
+  public static HttpMethod resolveMethod(String method) {
+    if (method == null || method.isBlank()) {
+      return HttpMethod.GET;
+    }
+    String normalized = method.trim().toUpperCase(Locale.ROOT);
+    for (HttpMethod known : HttpMethod.values()) {
+      if (known.name().equals(normalized)) {
+        return known;
+      }
+    }
+    throw new ApiCallException(ApiCallErrorMessages.unsupportedHttpMethod(normalized));
+  }
+
+  /**
    * 홉 하나의 요청을 만든다 — 받은 메서드를 그대로 보낸다(Python 실행기와 같음, WD-969) — 리다이렉트 홉의 메서드 규칙은 {@link
    * RedirectLocations#keepsMethodAndBody} 가 그대로 정한다. 본문을 싣는 메서드(POST·PUT·PATCH)에 본문이 있으면
-   * Content-Type: application/json 으로 싣는다.
+   * Content-Type: application/json 으로 싣는다. 메서드 값은 {@link #resolveMethod} 로 정한다(WD-969 리뷰 후속 — 비어
+   * 있으면 GET, 표준이 아니면 안내 오류).
    *
    * @param sendAuth 인증 헤더를 붙일지 — 처음 요청과 다른 출처로 가는 리다이렉트 홉이면 false(WD-657)
    * @param bodyDropped 리다이렉트가 본문을 버린 홉인지 — 본문 헤더(Content-Type 등)를 뺀다(WD-676)
    */
   private static WebClient.RequestHeadersSpec<?> buildRequestSpec(
       Request req, String method, URI requestUri, boolean sendAuth, boolean bodyDropped) {
-    HttpMethod httpMethod = HttpMethod.valueOf(method);
-    if ("POST".equals(method) || "PUT".equals(method) || "PATCH".equals(method)) {
+    HttpMethod httpMethod = resolveMethod(method);
+    if (httpMethod == HttpMethod.POST
+        || httpMethod == HttpMethod.PUT
+        || httpMethod == HttpMethod.PATCH) {
       WebClient.RequestBodySpec bodySpec = req.client().method(httpMethod).uri(requestUri);
       applyHeaders(bodySpec, req, sendAuth, false);
       if (req.body() != null && !req.body().isBlank()) {
