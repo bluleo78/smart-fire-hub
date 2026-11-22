@@ -18,14 +18,23 @@ Smart Fire Hub 프론트엔드(`apps/firehub-web`)에서 반복되는 페이지 
 const subscribeOnline = (onChange: () => void) => onlineManager.subscribe(onChange);
 // 조회와 페이지네이션이 같은 페이지 크기를 쓴다
 const PAGE_SIZE = 10;
+// Radix SelectItem 은 빈 문자열 값을 쓸 수 없어 「전체」를 센티널로 둔다 — 조회에는 넘기지 않는다(WD-984)
+const ALL_STATUS = "all";
 
 export default function XxxListPage() {
   const navigate = useNavigate();
   const isOnline = useSyncExternalStore(subscribeOnline, () => onlineManager.isOnline(), () => true);
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState("");
-  const [status, setStatus] = useState("all");
-  const { data, isLoading, isError, isPaused } = useXxxList({ page, size: PAGE_SIZE, search, status });
+  const [status, setStatus] = useState(ALL_STATUS);
+  // 상태 필터가 걸려 있는지 — 전체면 서버에 보내지 않고, 빈 목록 안내·필터 풀기에도 쓴다
+  const filtersActive = status !== ALL_STATUS;
+  const { data, isLoading, isError, isPaused } = useXxxList({
+    page,
+    size: PAGE_SIZE,
+    search,
+    status: filtersActive ? status : undefined,
+  });
 
   // 다음 쪽을 불러오거나 실패하면 data 가 비어 쪽 이동이 사라지므로 마지막 성공 값을 쓴다(WD-956)
   const [lastTotalPages, setLastTotalPages] = useState(0);
@@ -53,6 +62,12 @@ export default function XxxListPage() {
     setStatus(value);
     resetPaging();
   };
+  // 「필터 초기화」는 빈 행 안에 있어 누르면 사라진다 — 초점이 body 로 떨어지지 않게 필터로 옮긴다(WD-875)
+  const statusTriggerRef = useRef<HTMLButtonElement>(null);
+  const resetFilters = () => {
+    handleStatusChange(ALL_STATUS);
+    statusTriggerRef.current?.focus();
+  };
 
   return (
     <div className="space-y-6">
@@ -74,11 +89,13 @@ export default function XxxListPage() {
           debounceMs={300}
         />
         <Select value={status} onValueChange={handleStatusChange}>
-          <SelectTrigger className="w-36" aria-label="상태 필터">
-            <SelectValue placeholder="상태" />
+          <SelectTrigger ref={statusTriggerRef} className="w-36" aria-label="상태 필터">
+            <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">전체</SelectItem>
+            <SelectItem value={ALL_STATUS}>전체</SelectItem>
+            <SelectItem value="ACTIVE">활성</SelectItem>
+            <SelectItem value="INACTIVE">비활성</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -105,10 +122,19 @@ export default function XxxListPage() {
               // 재조회만 실패했으면 받아 둔 목록을 그대로 보인다(WD-146)
               <TableErrorRow colSpan={3} />
             ) : data?.content.length === 0 ? (
+              // 필터로 비면 「조건에 맞는」 문구와 필터 풀기를 보인다(WD-879) — 검색어가 있으면 TableEmptyRow 가 검색 안내만 보인다
               <TableEmptyRow
                 colSpan={3}
+                message={filtersActive ? "조건에 맞는 항목이 없습니다." : undefined}
                 searchKeyword={search || undefined}
                 onResetSearch={() => handleSearchChange("")}
+                emptyAction={
+                  filtersActive ? (
+                    <Button size="sm" variant="outline" onClick={resetFilters}>
+                      필터 초기화
+                    </Button>
+                  ) : undefined
+                }
               />
             ) : (
               data?.content.map((item) => (
@@ -159,7 +185,7 @@ export default function XxxListPage() {
 
 > 상세로 가는 키보드 경로는 이름의 `TruncatedLink`(`@/components/TruncatedLink`)이고 행 `onClick` 은 마우스 편의일 뿐이라, 행에 `role`·`tabIndex` 를 주지 않는다(표 행 의미 유지, WD-816). 행 이동에 `state` 를 넘기면 링크에도 같은 값을 넘긴다.
 >
-> 쪽 수 기억: 쪽을 넘기면 새 쪽 조회가 끝나기 전(로딩)이나 실패했을 때 `data` 가 비어 `totalPages` 가 0 이 되고 `SimplePagination` 이 사라져 사용자가 이동할 수 없게 된다. 그래서 마지막 성공 응답의 `totalPages` 를 기억해 쪽 이동을 그대로 남긴다(실패 갈래는 `PipelineListPage`, WD-956). 검색·필터가 바뀌면 다른 결과의 쪽 수이므로 기억한 값을 지운다. 건수 줄(「총 N건 중 a-b」)은 지금 쪽의 범위라 `data` 가 없는 동안 숨는 것이 맞다 — 기억하지 않는다. 이동 중 이전 행까지 남기려면 조회 훅에 `placeholderData: keepPreviousWhenOnlyPageChanged(...)`(WD-932, `AuditLogListPage`)를 쓰고 표에 aria-busy 를 건다 — 실패하면 placeholder 가 버려지므로 쪽 수 기억은 그대로 필요하다.
+> 쪽 수 기억: 쪽을 넘기면 새 쪽 조회가 끝나기 전(로딩)이나 실패했을 때 `data` 가 비어 `totalPages` 가 0 이 되고 `SimplePagination` 이 사라져 사용자가 이동할 수 없게 된다. 그래서 마지막 성공 응답의 `totalPages` 를 기억해 쪽 이동을 그대로 남긴다(`PipelineListPage`, WD-956 — 로딩·실패 모두). 검색·필터가 바뀌면 다른 결과의 쪽 수이므로 기억한 값을 지운다. 건수 줄(「총 N건 중 a-b」)은 지금 쪽의 범위라 `data` 가 없는 동안 숨는 것이 맞다 — 기억하지 않는다. 이동 중 이전 행까지 남기려면 조회 훅에 `placeholderData: keepPreviousWhenOnlyPageChanged(...)`(WD-932, `AuditLogListPage`)를 쓰고 표에 aria-busy 를 건다 — 실패하면 placeholder 가 버려지므로 쪽 수 기억은 그대로 필요하다.
 >
 > 범위 밖 쪽: 이 쪽의 마지막 항목이 지워져(나 또는 다른 사람) 재조회되면 `totalPages` 가 줄어 지금 쪽이 범위 밖이 된다(쪽을 URL 에 두는 화면은 북마크·뒤로 가기도). 그러면 응답이 빈 목록이라 「데이터가 없습니다」로 오해되므로, 범위 밖이면 마지막 쪽으로 옮기고 그동안은 로딩 행을 보인다(`DatasetListPage`, `UserListPage`, WD-146).
 >
