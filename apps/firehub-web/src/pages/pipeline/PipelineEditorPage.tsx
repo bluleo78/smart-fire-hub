@@ -295,8 +295,18 @@ export default function PipelineEditorPage() {
     return true;
   };
   // reveal 요청이 그려진 뒤(스텝 패널·펴진 절이 커밋된 뒤) 첫 오류 칸으로 초점을 옮긴다. 부모 effect 는 자식 커밋 뒤에 돈다.
+  // 다른 탭(트리거·실행 이력)에서 저장해 개요 탭이 새로 마운트될 때는 칸이 그 커밋보다 늦게 그려질 수 있어
+  // (탭 패널·지연 로드 스텝 설정), 칸이 나타날 때까지 몇 프레임 더 시도한다.
   useEffect(() => {
-    if (integerRevealSeq > 0) focusFirstInvalidInteger();
+    if (integerRevealSeq === 0) return;
+    let frame = 0;
+    let tries = 0;
+    const attempt = () => {
+      if (focusFirstInvalidInteger() || ++tries >= 30) return;
+      frame = requestAnimationFrame(attempt);
+    };
+    attempt();
+    return () => cancelAnimationFrame(frame);
   }, [integerRevealSeq]);
 
   const handleSave = async () => {

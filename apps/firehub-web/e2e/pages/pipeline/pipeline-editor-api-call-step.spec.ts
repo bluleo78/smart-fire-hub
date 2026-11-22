@@ -10,6 +10,8 @@
 
 import { API_FULL_URL_PLACEHOLDER } from '../../../src/lib/api-connection-form';
 import type { ApiConnectionSelectable } from '../../../src/types/api-connection';
+import { createColumn, createDataset, createDatasetDetail } from '../../factories/dataset.factory';
+import { createPipelineDetail, createStep } from '../../factories/pipeline.factory';
 import { createPageResponse,mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { clickToolbarAddStep, grantPipelinePermissions } from '../../fixtures/pipeline.fixture';
@@ -771,6 +773,94 @@ test.describe('파이프라인 에디터 — API_CALL 스텝 설정', () => {
     const payload = req.payload as { steps: Array<{ name: string; apiConfig?: { timeoutMs?: number } }> };
     expect(payload.steps.find((s) => s.name === 'API 스텝 A')?.apiConfig?.timeoutMs).toBe(5000);
     expect(payload.steps).toHaveLength(2);
+  });
+
+  /**
+   * WD-906 반려 수정 (c): 기존 파이프라인 편집 중 오류 칸(1e)을 둔 채 다른 탭(트리거·실행 이력)으로 가면 개요 탭이 언마운트된다.
+   * 그 탭에서 저장해도 막히고(요청 0건·토스트), 저장 차단이 개요 탭으로 돌아와 원문 1e 칸을 보이며, 고치면 저장된다.
+   */
+  test('API 호출 스텝 — 오류(1e)를 둔 채 다른 탭으로 가 저장해도 막히고 돌아오면 1e 와 오류가 보인다 (WD-906)', async ({
+    authenticatedPage: page,
+  }) => {
+    const step = createStep({
+      id: 7,
+      name: 'API 호출',
+      scriptType: 'API_CALL',
+      scriptContent: '',
+      outputDatasetId: 10,
+      outputDatasetName: 'API 출력',
+      apiConfig: {
+        customUrl: 'https://api.example.com/items',
+        method: 'GET',
+        dataPath: '$',
+        timeoutMs: 30000,
+        fieldMappings: [{ sourceField: 'a', targetColumn: 'col1' }],
+      },
+    });
+    // 저장 검증을 통과하도록 출력 데이터셋(col1)을 모킹한다 — beforeEach 의 빈 목록보다 나중 등록이 먼저 적용된다
+    await mockApi(page, 'GET', '/api/v1/datasets', {
+      content: [createDataset({ id: 10, name: 'API 출력', tableName: 'api_out' })],
+      page: 0,
+      size: 100,
+      totalElements: 1,
+      totalPages: 1,
+    });
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/datasets/10',
+      createDatasetDetail({
+        id: 10,
+        name: 'API 출력',
+        tableName: 'api_out',
+        columns: [createColumn({ id: 1, columnName: 'col1', dataType: 'TEXT', columnOrder: 0 })],
+      }),
+    );
+    await mockApi(page, 'GET', '/api/v1/pipelines/1', createPipelineDetail({ id: 1, steps: [step] }));
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/executions', createPageResponse([]));
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/triggers', []);
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/trigger-events', []);
+    const putCapture = await mockApi(page, 'PUT', '/api/v1/pipelines/1', {}, { capture: true });
+
+    await page.goto('/pipelines/1');
+    await page.getByRole('button', { name: '수정' }).click();
+    await page.locator('.react-flow__node').first().click();
+    await expect(page.getByText('기본 설정')).toBeVisible({ timeout: 10000 });
+    // 저장 버튼은 변경이 있을 때만 켜진다 — 다른 칸을 하나 고쳐 둔다(덜 된 1e 는 커밋되지 않아 변경으로 치지 않는다)
+    await page.locator('#step-description').fill('설명 변경');
+    await page.locator('button').filter({ hasText: /^고급 설정$/ }).click();
+    const timeoutInput = page.getByLabel('요청 타임아웃 (ms)');
+    await timeoutInput.fill('1e');
+    await expect(timeoutInput).toHaveAttribute('aria-invalid', 'true');
+
+    // 트리거 탭으로 가면 개요 탭(스텝 설정 칸)이 언마운트된다 — 그 탭에서 저장해도 막힌다
+    await page.getByRole('tab', { name: '트리거' }).click();
+    await expect(timeoutInput).toHaveCount(0);
+    const saveButton = page.getByRole('button', { name: '저장', exact: true });
+    await saveButton.click();
+    await expect(page.getByText('스텝 설정의 숫자 칸 오류를 고친 뒤 저장하세요.')).toBeVisible();
+    expect(putCapture.requests).toHaveLength(0);
+    // 저장 차단이 개요 탭으로 돌아와 원문 1e 칸과 오류를 보이고 초점을 옮긴다
+    await expect(page.getByRole('tab', { name: '개요' })).toHaveAttribute('aria-selected', 'true');
+    await expect(timeoutInput).toHaveValue('1e');
+    await expect(page.getByText('정수를 입력하세요')).toBeVisible();
+    await expect(timeoutInput).toBeFocused();
+
+    // 실행 이력 탭에 갔다 직접 돌아와도 원문·오류가 그대로다
+    await page.getByRole('tab', { name: '실행 이력' }).click();
+    await expect(timeoutInput).toHaveCount(0);
+    await page.getByRole('tab', { name: '개요' }).click();
+    await expect(timeoutInput).toHaveValue('1e');
+    await expect(timeoutInput).toHaveAttribute('aria-invalid', 'true');
+    expect(putCapture.requests).toHaveLength(0);
+
+    // 고치면 저장되고 고친 값이 실린다
+    await timeoutInput.fill('5000');
+    await saveButton.click();
+    const req = await putCapture.waitForRequest();
+    const payload = req.payload as { steps: Array<{ description?: string; apiConfig?: { timeoutMs?: number } }> };
+    expect(payload.steps[0].apiConfig?.timeoutMs).toBe(5000);
+    expect(payload.steps[0].description).toBe('설명 변경');
   });
 
   /** WD-906 반려 수정: 오류 칸이 있는 스텝을 지우면 그 스텝의 무효는 풀려 남은 스텝으로 저장된다 */
