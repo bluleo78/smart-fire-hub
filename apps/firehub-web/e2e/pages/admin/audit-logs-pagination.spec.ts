@@ -2,7 +2,7 @@ import { createAuditLog, createAuditLogs } from '../../factories/admin.factory';
 import { setupAdminAuth } from '../../fixtures/admin.fixture';
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
-import { holdRequests } from '../../fixtures/hold-api';
+import { DUPLICATE_WINDOW_MS, expectSingleHeldRequest, holdRequests } from '../../fixtures/hold-api';
 import { isUnderInert } from '../../fixtures/inert-a11y';
 
 /**
@@ -119,6 +119,16 @@ test.describe('감사 로그 페이지네이션 — 이동 중에도 목록을 �
     const next = nav.getByRole('button', { name: '다음 페이지' });
     await expect(next).toBeVisible();
 
+    // 양성 대조와 붙잡힌 동안의 클릭이 같은 첫 행·대화상자를 보도록 한 번만 정의한다
+    const firstRow = page.getByText('감사 로그 1', { exact: true });
+    const dialog = page.getByRole('dialog');
+    // 양성 대조: 잡기 전에는 같은 강제 클릭이 상세 대화상자를 연다 — 아래 「열리지 않는다」가 클릭이 닿지 않아 통과한 것이 아님을 보인다.
+    // 열림은 다시 시도하는 단언으로 기다린다(고정 대기 뒤 한 번만 세면 느린 CI 에서 정상 동작이 실패한다)
+    await firstRow.click({ force: true });
+    await expect(dialog).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+
     // 이후 요청(2페이지)을 붙잡는다 — 붙잡힌 동안의 화면을 본다
     const held = await holdRequests(page, '/api/v1/admin/audit-logs', 'GET');
     await next.focus();
@@ -127,25 +137,26 @@ test.describe('감사 로그 페이지네이션 — 이동 중에도 목록을 �
     await expect(nav).toBeVisible();
     await expect(next).toBeFocused();
     // 이전 페이지 행이 그대로 보인다
-    await expect(page.getByText('감사 로그 1', { exact: true })).toBeVisible();
+    await expect(firstRow).toBeVisible();
     // 이동 중임을 알린다 — 표가 aria-busy 이고 이전 행은 눌러도 상세가 열리지 않는다
     const table = page.getByRole('table', { name: '감사 로그' });
     await expect(table).toHaveAttribute('aria-busy', 'true');
-    // 붙잡힌 동안 이전 행으로는 상세를 열 수 없다 — 마우스(강제 클릭)와 키보드(상세 보기 버튼 포커스 + Enter) 모두
-    // tbody 가 inert 라 이전 행 버튼은 포커스를 못 받고, Enter·강제 클릭으로도 상세가 열리지 않는다(WD-932)
+    // 붙잡힌 동안 이전 행으로는 상세를 열 수 없다 — 키보드(행 버튼에 포커스가 닿지 않음)와 마우스(강제 클릭) 모두.
+    // tbody 가 inert 라 행 버튼은 포커스를 받지 못하고, 표가 pointer-events-none 이고 tbody 가 inert 라 클릭도 닿지 않는다(WD-932)
     const rowButton = page.locator('tbody button[aria-haspopup="dialog"]').first();
-    await expect(next).toBeFocused();
-    await expect(rowButton).not.toBeFocused();
     expect(await isUnderInert(rowButton)).toBe(true);
-    // 응답을 잡아 둔 동안의 요청 수 — Enter 가 추가 요청을 만들지 않았는지 비교하려고 미리 센다
-    const countBefore = held.count();
-    await page.keyboard.press('Enter');
-    await expect(page.getByRole('dialog')).toHaveCount(0);
+    // 키보드: 행 버튼에 포커스를 주려 해도 받지 못하고 포커스는 nav 버튼에 남는다
+    await rowButton.focus();
+    await expect(rowButton).not.toBeFocused();
     await expect(next).toBeFocused();
-    expect(held.count()).toBe(countBefore);
-    // 마우스(강제 클릭)로도 열리지 않는다 — 클릭은 포커스를 옮기므로 포커스 단언 뒤에 둔다
-    await page.getByText('감사 로그 1', { exact: true }).click({ force: true });
-    await expect(page.getByRole('dialog')).toHaveCount(0);
+    // 이동 중 nav 버튼에서 Enter 를 다시 눌러도 요청이 더 나가지 않는다 — 중복이 나갈 틈(DUPLICATE_WINDOW_MS)을 준 뒤 1회인지 센다
+    await page.keyboard.press('Enter');
+    await expectSingleHeldRequest(held.count, '이동 중 Enter 는 요청을 더 보내지 않아야 한다');
+    // 마우스: 강제 클릭을 해도 상세가 열리지 않는다 — 클릭은 포커스를 옮기므로 포커스 단언 뒤에 둔다
+    await firstRow.click({ force: true });
+    // 대화상자가 그려질 틈을 준 뒤 본다 — 바로 보면 그려지기 전에 통과한다
+    await page.waitForTimeout(DUPLICATE_WINDOW_MS);
+    await expect(dialog).toHaveCount(0);
     // 클릭이 포커스를 옮겼으니 응답 도착 뒤 포커스 단언을 위해 다시 nav 버튼으로 돌려 둔다
     await next.focus();
 
