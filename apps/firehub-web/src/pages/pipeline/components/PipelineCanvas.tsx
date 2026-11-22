@@ -237,6 +237,7 @@ export function PipelineCanvas({
 
   // 읽기 전용이 되거나 대상 스텝이 사라지면(저장 완료·재조회) 창을 닫고 요청도 버린다 —
   // 남겨 두면 다시 열리거나, 닫히는 창의 「삭제」가 먹는다(WD-952)
+  // 저장 중 잠금(WD-953) 뒤로는 저장 경로로 이 상황에 닿지 않아 방어용으로 남긴다
   const canConfirmDelete = !readOnly && state.steps.some((s) => s.tempId === pendingDeleteId);
   if (pendingDeleteId !== null && !canConfirmDelete) setPendingDeleteId(null);
 

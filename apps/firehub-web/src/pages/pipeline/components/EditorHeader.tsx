@@ -130,6 +130,8 @@ export function EditorHeader({
           <div className="flex min-w-0 items-center">
             <Input
               value={state.name}
+              // 저장 중에는 이름도 잠근다 — 저장 요청에 실리지 않은 입력이 응답 뒤 사라지지 않게(WD-953)
+              disabled={isSaving}
               onChange={(e) => {
                 dispatch({ type: 'SET_META', payload: { name: e.target.value } });
                 // 입력으로 글자가 바뀌면 잘림을 다시 재서 title 을 맞춘다 — hover 중에 쳐도 툴팁이 새 이름을 따른다(WD-669)
