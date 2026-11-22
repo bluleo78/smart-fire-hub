@@ -266,8 +266,10 @@ function reduceEditorAction(
     case 'REMOVE_STEP': {
       const { tempId } = action.payload;
       const removedIndex = state.steps.findIndex((s) => s.tempId === tempId);
-      const removedStep = state.steps.find((s) => s.tempId === tempId);
-      const removedDeps = removedStep?.dependsOnTempIds ?? [];
+      // 대상 스텝이 없으면(이미 지워졌거나 무효가 된 삭제 요청) 아무것도 바꾸지 않는다.
+      // 그대로 진행하면 removedNum=0 이 되어 모든 {{#N}} 참조가 한 칸씩 내려가 버린다 (WD-954).
+      if (removedIndex === -1) return state;
+      const removedDeps = state.steps[removedIndex].dependsOnTempIds;
       const removedNum = removedIndex + 1;
 
       const remainingSteps = state.steps
