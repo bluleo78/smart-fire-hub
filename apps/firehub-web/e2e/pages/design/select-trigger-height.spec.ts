@@ -13,13 +13,25 @@ import { expect, test } from '../../fixtures/auth.fixture';
  */
 
 /**
+ * 32px 허용 오차(±0.5px) — 브라우저가 렌더링한 높이는 서브픽셀이라 31.95 처럼 소수로 나올 수 있다.
+ * 왜:   정확히 `=== 32` 로 비교하면 애니메이션·서브픽셀 반올림만으로 흔들려(주석에도 31.95 가 나온다)
+ *       올바른 화면에서도 실패한다 — 리뷰 후속(앞 PR #1173)에서 ±0.5 로 완화했다.
+ */
+const HEIGHT_TOLERANCE = 0.5;
+
+/** 그려진 높이가 32px 과 허용 오차 안에 있는지 본다. */
+function is32(height: number): boolean {
+  return Math.abs(height - 32) <= HEIGHT_TOLERANCE;
+}
+
+/**
  * 선택 상자의 높이들을 재어 32px 다는 것을 단언한다.
  * @param heights - getBoundingClientRect().height 배열 — 최소 1개는 있어야 한다(빈 배열로 통과하는 공허한 단언 방지).
  */
 function expectAll32(heights: number[]) {
   expect(heights.length).toBeGreaterThanOrEqual(1);
   expect(
-    heights.every((h) => h === 32),
+    heights.every(is32),
     `SelectTrigger 높이가 전부 32px 가 아니다: ${JSON.stringify(heights)}`
   ).toBe(true);
 }
@@ -56,9 +68,21 @@ test('헤더 사용자 메뉴의 테마 선택 상자가 32px 다 (WD-913)', asy
     themeSelect.evaluateAll((els) => els.map((el) => el.getBoundingClientRect().height));
 
   // 드롭다운은 열릴 때 scale 애니메이션이라 도중에는 사각형이 잠깐 32px 보다 작다(예: 31.95) —
-  // 애니메이션이 끝나 32 로 안정될 때까지 기다린 뒤 확정 단언한다.
+  // 애니메이션이 끝나 허용 오차 안에 들어올 때까지 기다린 뒤 확정 단언한다.
   // (수정 전에는 애니메이션이 끝나도 36 이라 이 대기가 타임아웃으로 실패한다.)
-  await expect.poll(readHeights).toEqual([32]);
+  // 임계값도 위 허용 오차를 쓴다 — 정확 일치(=== 32) 기다림은 서브픽셀 차이로 타임아웃이 난다(리뷰 후속).
+  try {
+    await expect
+      .poll(async () => {
+        const settled = await readHeights();
+        return settled.length >= 1 && settled.every(is32);
+      })
+      .toBe(true);
+  } catch {
+    // 기다림이 끝나도 못 맞으면 확정 단언이 재실측한 높이 배열을 실패 메시지에 남긴다 —
+    // 기다림 실패만 뜨면 Expected: true 뿐이라 원인 추정을 다시 재보게 된다(리뷰 후속 지적).
+    expectAll32(await readHeights());
+  }
 
   expectAll32(await readHeights());
 });
