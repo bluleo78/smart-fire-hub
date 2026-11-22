@@ -47,7 +47,7 @@ test.describe('데이터셋 상세 — API 가져오기 기본 이름 (WD-31④)
     });
   }
 
-  test('기본 파이프라인 이름은 데이터셋 id 만 쓰고 요청에 데이터셋 이름이 없다', async ({
+  test('기본 파이프라인 이름은 데이터셋 id 만 쓰고 요청에 데이터셋 이름이 없으며, URL 은 customUrl 로 보낸다(WD-925)', async ({
     authenticatedPage: page,
   }) => {
     await setupDataTabMocks(page);
@@ -82,6 +82,10 @@ test.describe('데이터셋 상세 — API 가져오기 기본 이름 (WD-31④)
     const req = await create.waitForRequest();
     expect(req.payload).toMatchObject({ pipelineName: 'API Import #1' });
     expect(JSON.stringify(req.payload)).not.toContain('인사 급여');
+    // 편집기가 읽는 키는 customUrl — 옛 url 키로 보내면 편집기의 URL 칸이 비었다(WD-925)
+    const { apiConfig } = req.payload as { apiConfig: Record<string, unknown> };
+    expect(apiConfig.customUrl).toBe('https://api.example.com/v1/data');
+    expect(apiConfig).not.toHaveProperty('url');
   });
 
   // 회귀 가드(WD-375): 창이 기본 좌우 1rem 여백을 덮어써 390 폭에서 화면 끝에 붙었고,
@@ -309,7 +313,7 @@ test.describe('데이터셋 상세 — API 가져오기 기본 이름 (WD-31④)
       await dialog.getByRole('button', { name: '다음' }).click();
       await dialog.getByRole('button', { name: '완료' }).click();
       const req = await create.waitForRequest();
-      expect(req.payload).toMatchObject({ apiConfig: { url: 'https://api.example.com/v1/data' } });
+      expect(req.payload).toMatchObject({ apiConfig: { customUrl: 'https://api.example.com/v1/data' } });
     });
   });
 });

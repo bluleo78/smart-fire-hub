@@ -148,8 +148,8 @@ export function ApiImportWizard({
     }
 
     return {
-      // 저장 키 `url` 은 그대로 둔다(WD-925)
-      url: trimmedUrl,
+      // 편집기·서버가 우선하는 키는 customUrl — 옛 url 키로 저장하면 편집기에서 URL 칸이 비어 보였다(WD-925)
+      customUrl: trimmedUrl,
       method,
       headers: kvPairsToRecord(headers),
       queryParams: kvPairsToRecord(queryParams),

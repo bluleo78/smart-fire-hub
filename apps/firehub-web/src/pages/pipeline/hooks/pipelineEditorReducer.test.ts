@@ -4,8 +4,11 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { PipelineDetailResponse } from '@/types/pipeline';
+
 import { sectionOf } from './errorFieldOrder';
 import {
+  buildStateFromDetail,
   createDefaultStep,
   type EditorAction,
   initialState,
@@ -737,5 +740,69 @@ describe('pipelineEditorReducer', () => {
       expect(next.isDirty).toBe(false);
       expect(next.selectedStepId).toBeNull();
     });
+  });
+});
+
+/** apiConfig·apiConnectionId 만 바꾼 API_CALL 스텝 한 개짜리 상세 응답 */
+function detailWithApiStep(
+  apiConfig: Record<string, unknown> | null,
+  apiConnectionId: number | null,
+): PipelineDetailResponse {
+  return {
+    id: 1,
+    name: 'p',
+    description: '',
+    isActive: true,
+    createdBy: 'u',
+    steps: [
+      {
+        id: 10,
+        name: 's1',
+        description: '',
+        scriptType: 'API_CALL',
+        scriptContent: '',
+        outputDatasetId: 5,
+        outputDatasetName: null,
+        inputDatasetIds: [],
+        dependsOnStepNames: [],
+        stepOrder: 0,
+        loadStrategy: 'REPLACE',
+        apiConfig,
+        apiConnectionId,
+        lastRunAt: null,
+        fullRebuildPending: false,
+        warnings: [],
+        fullRebuildMode: null,
+      },
+    ],
+    createdAt: '2024-01-01T00:00:00Z',
+    updatedAt: null,
+    updatedBy: null,
+  };
+}
+
+describe('옛 url 키 정규화 (WD-925)', () => {
+  // 서버 ApiCallExecutor.resolveTargetUrl 우선순위: 연결 → path / 아니면 비지 않은 customUrl / 아니면 비지 않은 옛 url
+  it.each<[string, Record<string, unknown> | null, number | null, Record<string, unknown> | undefined]>([
+    ['customUrl 없음 → url 을 customUrl 로 옮긴다', { url: 'https://a.example/x', method: 'GET' }, null, { customUrl: 'https://a.example/x', method: 'GET' }],
+    ['customUrl 빈 문자열', { url: 'https://a.example/x', customUrl: '' }, null, { customUrl: 'https://a.example/x' }],
+    ['customUrl 공백', { url: 'https://a.example/x', customUrl: '  ' }, null, { customUrl: 'https://a.example/x' }],
+    ['customUrl null', { url: 'https://a.example/x', customUrl: null }, null, { customUrl: 'https://a.example/x' }],
+    ['customUrl 이 있으면 url 은 버리기만 한다', { url: 'https://old.example', customUrl: 'https://new.example' }, null, { customUrl: 'https://new.example' }],
+    ['url 이 공백이면 옮기지 않고 키만 버린다', { url: ' ' }, null, {}],
+    ['url 이 문자열이 아니면 옮기지 않는다', { url: 42, customUrl: '' }, null, { customUrl: '' }],
+    ['연결이 있으면 그대로', { url: 'https://old.example', path: '/v1' }, 7, { url: 'https://old.example', path: '/v1' }],
+    ['url 키가 없으면 그대로', { method: 'GET' }, null, { method: 'GET' }],
+    ['apiConfig 가 null 이면 undefined', null, null, undefined],
+  ])('%s', (_name, apiConfig, apiConnectionId, expected) => {
+    const state = buildStateFromDetail(detailWithApiStep(apiConfig, apiConnectionId));
+    expect(state.steps[0].apiConfig).toEqual(expected);
+  });
+
+  it('옛 url 을 옮겨도 isDirty 는 false 이고 입력 detail 은 바뀌지 않는다', () => {
+    const detail = detailWithApiStep({ url: 'https://a.example/x', method: 'GET' }, null);
+    const state = buildStateFromDetail(detail);
+    expect(state.isDirty).toBe(false);
+    expect(detail.steps[0].apiConfig).toEqual({ url: 'https://a.example/x', method: 'GET' });
   });
 });

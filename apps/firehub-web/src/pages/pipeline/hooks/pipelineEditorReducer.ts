@@ -166,6 +166,24 @@ export function applyAutoLayout(state: PipelineEditorState): PipelineEditorState
   };
 }
 
+const isBlank = (v: unknown) => v == null || (typeof v === 'string' && v.trim() === '');
+
+/**
+ * 옛 `apiConfig.url` 을 편집기가 읽는 `customUrl` 로 옮긴다 — 예전 API 가져오기 마법사가 `url` 로 저장했다(WD-925).
+ * 우선순위는 문자열 값에서 서버 ApiCallExecutor.resolveTargetUrl 과 같다: 연결이 있으면 그대로, 비지 않은 customUrl 이 url 보다 먼저.
+ */
+function normalizeLegacyApiUrl(
+  apiConfig: Record<string, unknown> | undefined,
+  apiConnectionId: number | null | undefined,
+): Record<string, unknown> | undefined {
+  if (!apiConfig || apiConnectionId != null || !('url' in apiConfig)) return apiConfig;
+  const { url, ...rest } = apiConfig;
+  if (typeof url === 'string' && !isBlank(url) && isBlank(rest.customUrl)) {
+    rest.customUrl = url;
+  }
+  return rest;
+}
+
 /**
  * 서버 상세 응답을 편집기 상태로 변환한다 (의존 관계는 스텝 이름 → tempId 로 다시 잇고 자동 배치한다).
  * LOAD_FROM_API 와, 취소 기준 스냅샷을 만드는 usePipelineEditor 가 함께 쓴다 (#742).
@@ -190,7 +208,7 @@ export function buildStateFromDetail(detail: PipelineDetailResponse): PipelineEd
       dependsOnTempIds: [],
       position: { x: 0, y: 0 },
       loadStrategy: step.loadStrategy ?? 'REPLACE',
-      apiConfig: step.apiConfig ?? undefined,
+      apiConfig: normalizeLegacyApiUrl(step.apiConfig ?? undefined, step.apiConnectionId),
       aiConfig: step.aiConfig as AiClassifyConfig | undefined,
       pythonConfig: step.pythonConfig ?? undefined,
       apiConnectionId: step.apiConnectionId ?? undefined,
