@@ -1,5 +1,7 @@
 import { useEffect, useRef } from 'react';
 
+import { isFocusLost } from '../lib/focus-lost';
+
 /** 편집 영역 안에서 처음 포커스할 수 있는 칸 — 숨김·비활성은 건너뛴다 */
 const FOCUSABLE =
   'input:not([type="hidden"]):not([disabled]), textarea:not([disabled]), select:not([disabled]), [role="combobox"]:not([disabled]), [contenteditable="true"], button:not([disabled]):not([role="tab"])';
@@ -11,7 +13,7 @@ const FOCUSABLE =
  *       키보드·스크린리더 사용자의 포커스가 body 로 떨어졌다(다음 Tab 은 페이지 맨 처음부터).
  *       편집으로 바뀌면 편집 영역의 첫 칸으로, 보기로 돌아오면 다시 그려진 「수정」 버튼으로 옮긴다.
  * 왜 조건부인가: 저장이 비동기로 끝나는 사이 사용자가 다른 곳에 포커스를 두었으면 빼앗지 않는다 —
- *       포커스가 body(사라진 버튼 자리)나 이 화면 영역 안에 있을 때만 옮긴다.
+ *       포커스가 body·본문 main(사라진 버튼 자리 — isFocusLost, WD-968)이나 이 화면 영역 안에 있을 때만 옮긴다.
  *
  * @param isEditing 지금 편집 모드인지
  * @returns editButtonRef — 「수정」 버튼, editRegionRef — 편집 폼을 감싼 영역(첫 칸을 여기서 찾는다),
@@ -29,7 +31,7 @@ export function useEditModeFocus(isEditing: boolean) {
 
     const active = document.activeElement;
     const scope = scopeRef.current ?? editRegionRef.current;
-    const focusLost = !active || active === document.body;
+    const focusLost = isFocusLost(active);
     if (!focusLost && !(scope && scope.contains(active))) return;
 
     if (isEditing) {

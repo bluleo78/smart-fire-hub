@@ -32,6 +32,7 @@ import { useBranding } from '../../hooks/useBranding';
 import { useMediaQuery } from '../../hooks/useMediaQuery';
 import { useNotificationStream } from '../../hooks/useNotificationStream';
 import { useScrollRestoration } from '../../hooks/useScrollRestoration';
+import { MAIN_CONTENT_ID } from '../../lib/focus-lost';
 import { cn } from '../../lib/utils';
 import { AIProvider, useAI } from '../ai/AIProvider';
 import { AIStatusChip } from '../ai/AIStatusChip';
@@ -407,9 +408,11 @@ function AppLayoutInner() {
    *
    * 실제 DOM 상 main 안에서 난 누름만 처리한다 — React 합성 이벤트는 포털(Radix 대화상자 등)을 거쳐 부모 트리로 버블링되므로,
    * main 안 페이지가 띄운 대화상자 안 클릭이 여기 닿아 tabindex 를 떼고 닫힐 때 포커스가 body 로 떨어지는 걸 막는다.
-   * 캡처 단계(onMouseDownCapture)에 달아 mousedown 전파를 막는 자식(xyflow 캔버스 등)이 있어도 놓치지 않는다(캡처도 포털을 거치므로 검사는 필요).
+   * 캡처 단계(onPointerDownCapture)에 달아 전파를 막는 자식(xyflow 캔버스 등)이 있어도 놓치지 않는다(캡처도 포털을 거치므로 검사는 필요).
+   * mousedown 이 아니라 pointerdown 인 까닭(WD-968 리뷰 후속): Radix 트리거(선택 상자·메뉴)는 pointerdown 에서 preventDefault 해
+   * 뒤따르는 mousedown 이 오지 않는다 — mousedown 으로는 본문 안 Radix 트리거를 눌러도 tabindex 가 남았다. 터치·펜 누름도 함께 잡는다.
    */
-  const releaseMainFocusTarget = (e: React.MouseEvent<HTMLElement>) => {
+  const releaseMainFocusTarget = (e: React.PointerEvent<HTMLElement>) => {
     if (!e.currentTarget.contains(e.target as Node)) return;
     if (document.activeElement !== e.currentTarget) e.currentTarget.removeAttribute('tabindex');
   };
@@ -429,7 +432,7 @@ function AppLayoutInner() {
           모바일(lg 미만)은 메뉴 버튼(top-3 left-3)을 덮지 않게 상단 줄 아래(top-14)에 띄운다. */}
       {showSkipLink && (
         <a
-          href="#main-content"
+          href={`#${MAIN_CONTENT_ID}`}
           onClick={handleSkipToContent}
           className="sr-only focus:not-sr-only focus:fixed focus:top-3 max-lg:focus:top-14 focus:left-3 focus:z-[60] focus:rounded-md focus:border focus:bg-background focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-foreground focus:shadow-md focus:outline-none focus-visible:ring-[3px] focus-visible:ring-ring print:hidden"
         >
@@ -651,9 +654,9 @@ function AppLayoutInner() {
             // 건너뛰기 링크의 대상(WD-530) — 프로그램 포커스 때 윤곽선은 끈다(handleSkipToContent 참고).
             <main
               ref={mainRef}
-              id="main-content"
+              id={MAIN_CONTENT_ID}
               inert={aiOverlayOpen}
-              onMouseDownCapture={releaseMainFocusTarget}
+              onPointerDownCapture={releaseMainFocusTarget}
               className="flex-1 p-6 pt-10 max-lg:pt-2 overflow-auto min-w-0 focus:outline-none print:p-0 print:overflow-visible"
             >
               <Suspense fallback={<PageSkeleton />}>
