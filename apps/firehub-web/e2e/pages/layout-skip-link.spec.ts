@@ -69,7 +69,7 @@ test.describe('본문으로 건너뛰기 링크 (WD-530)', () => {
     // Enter — 본문(main#main-content)으로 포커스가 옮겨지고 URL 에 해시가 남지 않는다
     await page.keyboard.press('Enter');
     await expect(main).toBeFocused();
-    // 프로그램 포커스를 받는 동안에만 tabindex=-1 이 붙는다
+    // 건너뛰기로 tabindex=-1 이 붙는다(평소엔 없다). 포커스가 main 에 없을 때 main 을 마우스로 누르면 떼어진다
     await expect(main).toHaveAttribute('tabindex', '-1');
     await expect(page).toHaveURL(/\/data\/datasets$/);
     await expect(page).not.toHaveURL(/#/);
@@ -81,8 +81,121 @@ test.describe('본문으로 건너뛰기 링크 (WD-530)', () => {
       return !!el && !!el.closest('main#main-content') && !el.matches('main');
     });
     expect(inMain).toBe(true);
-    // 포커스가 떠나면 tabindex 는 다시 떼어진다
+    // 포커스가 떠나도 tabindex 는 남는다(대화상자 닫힘 때 돌아올 자리, WD-968) — 본문을 마우스로 누르면 떼어진다
+    await expect(main).toHaveAttribute('tabindex', '-1');
+    await page.mouse.click(mainBox!.x + mainBox!.width - 5, mainBox!.y + mainBox!.height - 5);
     await expect(main).not.toHaveAttribute('tabindex', /.*/);
+    // 그 클릭이 main 에 포커스를 주지 않는다(빈 곳 클릭은 원래대로 body 에 남는다)
+    await expect(main).not.toBeFocused();
+  });
+
+  test('건너뛰기 뒤 대화상자를 열었다 닫으면 포커스가 본문으로 돌아온다 (WD-968)', async ({
+    authenticatedPage: page,
+  }) => {
+    await openDatasets(page);
+    const main = page.locator('main#main-content');
+
+    // 건너뛰기 링크로 본문에 포커스를 보낸다
+    await page.keyboard.press('Tab');
+    await expect(skipLink(page)).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(main).toBeFocused();
+
+    // 단축키 도움말 대화상자를 열었다 Esc 로 닫는다
+    await page.keyboard.press('?');
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+
+    // 닫힌 뒤 포커스는 body 가 아니라 본문으로 돌아온다
+    await expect(main).toBeFocused();
+
+    // 다음 Tab 은 본문 안이고 건너뛰기 링크로 되돌아가지 않는다
+    await page.keyboard.press('Tab');
+    const state = await page.evaluate(() => {
+      const el = document.activeElement;
+      return {
+        inMain: !!el && !!document.querySelector('main#main-content')?.contains(el),
+        isSkip: !!el && el.textContent?.trim() === '본문으로 건너뛰기',
+      };
+    });
+    expect(state.inMain).toBe(true);
+    expect(state.isSkip).toBe(false);
+  });
+
+  test('건너뛰기 뒤 본문 컨트롤로 나간 다음 본문 빈 곳을 누르면 본문이 포커스를 가져가지 않는다 (WD-968)', async ({
+    authenticatedPage: page,
+  }) => {
+    await openDatasets(page);
+    const main = page.locator('main#main-content');
+
+    // 건너뛰기 → 본문 포커스 → Tab 으로 본문 첫 컨트롤로 나간다(main 의 tabindex=-1 은 남아 있다)
+    await page.keyboard.press('Tab');
+    await expect(skipLink(page)).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(main).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(main).not.toBeFocused();
+    await expect(main).toHaveAttribute('tabindex', '-1');
+
+    // 본문 오른쪽 아래 빈 곳을 누른다 — 남은 tabindex 때문에 main 이 포커스를 가져가면 안 되고, tabindex 는 떼어진다
+    const box = await main.boundingBox();
+    await page.mouse.click(box!.x + box!.width - 5, box!.y + box!.height - 5);
+    await expect(main).not.toBeFocused();
+    await expect(main).not.toHaveAttribute('tabindex', /.*/);
+  });
+
+  test('건너뛰기 뒤 대화상자를 두 번 열고 닫아도 포커스가 본문으로 돌아온다 (WD-968)', async ({
+    authenticatedPage: page,
+  }) => {
+    await openDatasets(page);
+    const main = page.locator('main#main-content');
+
+    await page.keyboard.press('Tab');
+    await expect(skipLink(page)).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(main).toBeFocused();
+
+    // 같은 열기·닫기를 두 번 — 첫 닫힘 뒤에도 tabindex 가 남아 두 번째도 본문으로 돌아와야 한다
+    for (let i = 0; i < 2; i++) {
+      await page.keyboard.press('?');
+      await expect(page.getByRole('dialog')).toBeVisible();
+      await page.keyboard.press('Escape');
+      await expect(page.getByRole('dialog')).toHaveCount(0);
+      await expect(main).toBeFocused();
+    }
+  });
+
+  test('건너뛰기 뒤 본문 안 페이지가 띄운 대화상자 안을 마우스로 눌러도 본문의 임시 tabindex 는 남는다 (WD-968)', async ({
+    authenticatedPage: page,
+  }) => {
+    await openDatasets(page);
+    // 내보내기 대화상자가 부르는 견적 API — 목록 첫 데이터셋 기준
+    await mockApi(page, 'GET', '/api/v1/datasets/1/export/estimate', {
+      rowCount: 100,
+      async: false,
+      hasGeometryColumn: false,
+      columns: [{ columnName: 'id', displayName: 'ID', isGeometry: false }],
+    });
+    const main = page.locator('main#main-content');
+
+    await page.keyboard.press('Tab');
+    await expect(skipLink(page)).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(main).toBeFocused();
+
+    // 키보드로 본문 안 「내보내기」 버튼에 포커스를 옮겨 Enter — 포털 대화상자가 열린다(마우스로 열면 본문 누름이라 tabindex 가 정당하게 떨어진다)
+    const exportBtn = page.getByRole('button', { name: '내보내기' }).first();
+    await exportBtn.focus();
+    await page.keyboard.press('Enter');
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible();
+    await expect(main).toHaveAttribute('tabindex', '-1');
+
+    // 대화상자(포털) 안을 마우스로 누른다 — React 합성 이벤트는 포털을 거쳐 main 까지 버블링되지만 실제 DOM 은 main 밖이다
+    await dialog.getByText('데이터 내보내기').click();
+    // 핵심: main 밖에서 난 누름이 main 의 임시 tabindex 를 떼지 않는다
+    await expect(main).toHaveAttribute('tabindex', '-1');
   });
 
   test('다른 화면(내 쿼리)에서도 첫 Tab 은 건너뛰기 링크다', async ({ authenticatedPage: page }) => {
