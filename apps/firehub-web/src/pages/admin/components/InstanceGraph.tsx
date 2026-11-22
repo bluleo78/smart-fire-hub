@@ -415,6 +415,9 @@ export default function InstanceGraph({ graph, activeTypes, search, onNodeSelect
       ro.disconnect();
       clearTimeout(fitTimer);
       if (import.meta.env.DEV || __E2E__) delete (window as unknown as { __ontologyCy?: cytoscape.Core }).__ontologyCy;
+      // expand-collapse 플러그인은 큐 캔버스(z-index 999)를 컨테이너에 붙이기만 하고 지우지 않으며
+      // cy.destroy() 도 지우지 않는다 — 재마운트(개발 StrictMode 등 컨테이너 재사용) 때 낡은 999 캔버스가 남지 않게 직접 제거한다.
+      container.querySelectorAll('canvas.expand-collapse-canvas').forEach((el) => el.remove());
       cy.destroy();
       cyRef.current = null;
     };
@@ -649,8 +652,10 @@ export default function InstanceGraph({ graph, activeTypes, search, onNodeSelect
   return (
     <div className="relative h-full w-full" data-testid="instance-graph" data-node-count={filteredNodes.length}>
       {/* Cytoscape 캔버스 마운트 지점 — 항상 렌더해 cy 라이프사이클을 단순하게 유지한다.
-          canvas는 대체 텍스트가 없어 접근성 트리에서 제외하고, 아래 GraphKeyboardList가 텍스트 대체물을 담당한다. */}
-      <div ref={containerRef} className="h-full w-full" aria-hidden="true" />
+          canvas는 대체 텍스트가 없어 접근성 트리에서 제외하고, 아래 GraphKeyboardList가 텍스트 대체물을 담당한다.
+          isolate: expand-collapse 플러그인의 큐 캔버스가 250ms 뒤 z-index 999 로 컨테이너 안에 붙는데, 쌓임 맥락이 없으면
+          그 값이 컨테이너 밖 오버레이(모바일 타입 필터 칩 z-10)까지 덮는다 — 컨테이너를 쌓임 맥락으로 가둬 막는다 (WD-922). */}
+      <div ref={containerRef} className="isolate h-full w-full" aria-hidden="true" />
 
       {/* 키보드·스크린리더 전용 노드 목록(#326) — 포커스 시 오버레이로 드러난다. */}
       <GraphKeyboardList

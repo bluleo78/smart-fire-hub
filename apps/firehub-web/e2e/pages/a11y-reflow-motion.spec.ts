@@ -4,6 +4,7 @@ import { createSynonymReviewItem } from '../factories/reviewItem.factory';
 import { setupAdminAuth, setupAuditLogMocks, setupOntologyMocks } from '../fixtures/admin.fixture';
 import { createPageResponse, mockApi } from '../fixtures/api-mock';
 import { expect, test } from '../fixtures/auth.fixture';
+import { gotoUntilReady } from '../fixtures/first-visit'; // WD-903: 첫 진입 직후 클릭은 대상이 보일 때까지 먼저 기다린다
 
 /**
  * 접근성 회귀 가드 — 리플로우(#345)와 동작 줄이기(#344).
@@ -59,7 +60,7 @@ test.describe('320px 리플로우 (#345)', () => {
     await setupAdminAuth(page);
     await setupOntologyMocks(page);
     await page.setViewportSize({ width: 320, height: 800 });
-    await page.goto('/knowledge-graph/model');
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('button', { name: '수정 모드' }));
     await page.getByRole('button', { name: '수정 모드' }).click();
 
     expect(await mainOverflow(page)).toBe(0);
@@ -255,7 +256,7 @@ test.describe('지식 모델 3-pane 편집기 태블릿·좁은 데스크톱 폭
     await setupAdminAuth(page);
     await setupOntologyMocks(page);
     await page.setViewportSize({ width: 834, height: 1112 });
-    await page.goto('/knowledge-graph/model');
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('button', { name: '수정 모드' }));
     await page.getByRole('button', { name: '수정 모드' }).click();
 
     // 수정 전에는 이 폭에서 아웃라인/인스펙터가 sm:flex/sm:block으로 이미 나타나 캔버스가
@@ -276,7 +277,7 @@ test.describe('지식 모델 3-pane 편집기 태블릿·좁은 데스크톱 폭
     await setupAdminAuth(page);
     await setupOntologyMocks(page);
     await page.setViewportSize({ width: 1024, height: 900 });
-    await page.goto('/knowledge-graph/model');
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('button', { name: '수정 모드' }));
     await page.getByRole('button', { name: '수정 모드' }).click();
 
     await expect(page.getByTestId('model-outline')).toBeHidden();
@@ -289,7 +290,7 @@ test.describe('지식 모델 3-pane 편집기 태블릿·좁은 데스크톱 폭
     await setupAdminAuth(page);
     await setupOntologyMocks(page);
     await page.setViewportSize({ width: 1280, height: 900 });
-    await page.goto('/knowledge-graph/model');
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('button', { name: '수정 모드' }));
     await page.getByRole('button', { name: '수정 모드' }).click();
 
     await expect(page.getByTestId('model-outline')).toBeVisible();

@@ -12,6 +12,7 @@ import {
 } from '../../fixtures/admin.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { gotoUntilReady } from '../../fixtures/first-visit'; // WD-903: 첫 진입 직후 클릭은 대상이 보일 때까지 먼저 기다린다
 import { expectSingleHeldRequest, holdApi } from '../../fixtures/hold-api';
 
 /**
@@ -65,7 +66,7 @@ test.describe('지식그래프 시각화 페이지', () => {
     async ({ authenticatedPage: page }) => {
       const graph = createOntologyGraph();
       await setupOntologyMocks(page);
-      await page.goto('/knowledge-graph/model');
+      await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('tab', { name: '그래프 탐색' }));
 
       await page.getByRole('tab', { name: '그래프 탐색' }).click();
 
@@ -105,7 +106,7 @@ test.describe('지식그래프 시각화 페이지', () => {
     const graph = createOntologyGraph();
     const building = graph.nodes.find((n) => n.type === 'Building')!;
     await setupOntologyMocks(page);
-    await page.goto('/knowledge-graph/model');
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('tab', { name: '그래프 탐색' }));
     await page.getByRole('tab', { name: '그래프 탐색' }).click();
     await expectNodeCount(page, graph.nodes.length);
 
@@ -147,7 +148,7 @@ test.describe('지식그래프 시각화 페이지', () => {
     const graph = createOntologyGraph();
     const incident1 = graph.nodes.find((n) => n.key === 'incident-1')!; // factory: schemaVersion=1
     await setupOntologyMocks(page);
-    await page.goto('/knowledge-graph/model');
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('tab', { name: '그래프 탐색' }));
     await page.getByRole('tab', { name: '그래프 탐색' }).click();
     await expectNodeCount(page, graph.nodes.length);
 
@@ -169,7 +170,7 @@ test.describe('지식그래프 시각화 페이지', () => {
     const graph = createOntologyGraph();
     const incident2 = graph.nodes.find((n) => n.key === 'incident-2')!; // factory: schemaVersion=null
     await setupOntologyMocks(page);
-    await page.goto('/knowledge-graph/model');
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('tab', { name: '그래프 탐색' }));
     await page.getByRole('tab', { name: '그래프 탐색' }).click();
     await expectNodeCount(page, graph.nodes.length);
 
@@ -202,7 +203,7 @@ test.describe('지식그래프 시각화 페이지', () => {
       createOntologySummaries().map((o) => (o.id === 1 ? { ...o, schemaVersion: 2 } : o)),
     );
     await mockOntologyGraph(page, graph);
-    await page.goto('/knowledge-graph/model');
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('tab', { name: '그래프 탐색' }));
     await page.getByRole('tab', { name: '그래프 탐색' }).click();
     await expectNodeCount(page, graph.nodes.length);
 
@@ -222,7 +223,7 @@ test.describe('지식그래프 시각화 페이지', () => {
     const building = graph.nodes.find((n) => n.type === 'Building')!;
     const equipment = graph.nodes.find((n) => n.name === '스프링클러설비')!;
     await setupOntologyMocks(page);
-    await page.goto('/knowledge-graph/model');
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('tab', { name: '그래프 탐색' }));
     await page.getByRole('tab', { name: '그래프 탐색' }).click();
     await expectNodeCount(page, graph.nodes.length);
 
@@ -254,7 +255,7 @@ test.describe('지식그래프 시각화 페이지', () => {
     const graph = createOntologyGraph();
     const building = graph.nodes.find((n) => n.type === 'Building')!;
     await setupOntologyMocks(page);
-    await page.goto('/knowledge-graph/model');
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('tab', { name: '그래프 탐색' }));
     await page.getByRole('tab', { name: '그래프 탐색' }).click();
     await expectNodeCount(page, graph.nodes.length);
 
@@ -284,7 +285,7 @@ test.describe('지식그래프 시각화 페이지', () => {
     const graph = createOntologyGraph();
     const building = graph.nodes.find((n) => n.type === 'Building')!;
     await setupOntologyMocks(page);
-    await page.goto('/knowledge-graph/model');
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('tab', { name: '그래프 탐색' }));
     await page.getByRole('tab', { name: '그래프 탐색' }).click();
     await expectNodeCount(page, graph.nodes.length);
 
@@ -337,7 +338,7 @@ test.describe('지식그래프 시각화 페이지', () => {
     const graph = createOntologyGraph();
     const typeCount = new Set(graph.nodes.map((n) => n.type)).size;
     await setupOntologyMocks(page);
-    await page.goto('/knowledge-graph/model');
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('tab', { name: '그래프 탐색' }));
     await page.getByRole('tab', { name: '그래프 탐색' }).click();
     await expectNodeCount(page, graph.nodes.length);
 
@@ -404,7 +405,7 @@ test.describe('지식그래프 시각화 페이지', () => {
     const typeCount = bundleTypes.length;
     await setupOntologyMocks(page);
     await mockOntologyGraph(page, graph);
-    await page.goto('/knowledge-graph/model');
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('tab', { name: '그래프 탐색' }));
     await page.getByRole('tab', { name: '그래프 탐색' }).click();
     await expectNodeCount(page, graph.nodes.length);
 
@@ -449,7 +450,7 @@ test.describe('지식그래프 시각화 페이지', () => {
   }) => {
     const graph = createOntologyGraph();
     await setupOntologyMocks(page);
-    await page.goto('/knowledge-graph/model');
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('tab', { name: '그래프 탐색' }));
     await page.getByRole('tab', { name: '그래프 탐색' }).click();
     await expectNodeCount(page, graph.nodes.length);
 
@@ -524,7 +525,7 @@ test.describe('지식그래프 시각화 페이지', () => {
     }));
     await setupOntologyMocks(page);
     await mockOntologyGraph(page, { nodes, edges });
-    await page.goto('/knowledge-graph/model');
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('tab', { name: '그래프 탐색' }));
     await page.getByRole('tab', { name: '그래프 탐색' }).click();
     await expectNodeCount(page, nodes.length);
 
@@ -585,7 +586,7 @@ test.describe('지식그래프 시각화 페이지', () => {
     const graph = createOntologyGraph();
     const buildingCount = graph.nodes.filter((n) => n.type === 'Building').length;
     await setupOntologyMocks(page);
-    await page.goto('/knowledge-graph/model');
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('tab', { name: '그래프 탐색' }));
     await page.getByRole('tab', { name: '그래프 탐색' }).click();
 
     // 초기: 전체 노드(7개) 표시, 모든 타입 버튼이 pressed(빈 activeTypes = 전체 활성).
@@ -612,7 +613,7 @@ test.describe('지식그래프 시각화 페이지', () => {
     const graph = createOntologyGraph();
     const buildingCount = graph.nodes.filter((n) => n.type === 'Building').length;
     await setupOntologyMocks(page);
-    await page.goto('/knowledge-graph/model');
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('tab', { name: '그래프 탐색' }));
     await page.getByRole('tab', { name: '그래프 탐색' }).click();
     await expectNodeCount(page, graph.nodes.length);
 
@@ -953,7 +954,7 @@ test.describe('지식그래프 시각화 페이지', () => {
     const graph = createOntologyGraph();
     // 초기 로드는 실패시키고 이후 refetch부터 성공하는 모킹 — 재요청 횟수를 카운터로 추적.
     const counter = await setupOntologyGraphRetryMock(page);
-    await page.goto('/knowledge-graph/model');
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('tab', { name: '그래프 탐색' }));
 
     await page.getByRole('tab', { name: '그래프 탐색' }).click();
 
@@ -1209,7 +1210,24 @@ test.describe('지식그래프 캔버스 키보드 접근성 (#326, #327)', () =
     const chip = page.getByTestId('active-type-filter-chip');
     await expect(chip).toBeVisible();
     await expect(chip).toContainText('Building 만 보는 중');
-    await chip.getByRole('button', { name: '전체 보기' }).click();
+    // 회귀 가드(WD-922): expand-collapse 큐 캔버스는 250ms 뒤 z-index 999 로 자리잡는다 — 그 뒤에도 칩이 맨 위여야 한다
+    const cueCanvas = page.locator('[data-testid="instance-graph"] canvas.expand-collapse-canvas');
+    // 이 가드는 플러그인의 캔버스 클래스명(expand-collapse-canvas)과 인라인 z-index 지정에 기대므로, 플러그인이 바뀌면 함께 고친다.
+    // 큐 캔버스는 정확히 1개여야 한다(재마운트 잔여물을 잡고, 플러그인이 캔버스를 안 만들면 분명한 메시지로 실패).
+    await expect(cueCanvas).toHaveCount(1);
+    await expect.poll(() => cueCanvas.evaluate((el) => (el as HTMLElement).style.zIndex)).not.toBe('');
+    const showAll = chip.getByRole('button', { name: '전체 보기' });
+    const box = await showAll.boundingBox();
+    expect(box).not.toBeNull();
+    const topIsButton = await showAll.evaluate(
+      (btn, p) => {
+        const hit = document.elementFromPoint(p.x, p.y);
+        return hit !== null && btn.contains(hit);
+      },
+      { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2 },
+    );
+    expect(topIsButton).toBe(true);
+    await showAll.click();
     await expect(chip).toHaveCount(0);
     await expect(page.getByTestId('instance-graph')).not.toHaveAttribute('data-node-count', '1');
   });
@@ -1221,8 +1239,10 @@ test.describe('지식그래프 캔버스 키보드 접근성 (#326, #327)', () =
   }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await setupOntologyGraphErrorMock(page);
-    await page.goto('/knowledge-graph/model');
     const list = page.getByTestId('schema-graph-type-list');
+    // 준비 신호는 보이는 그래프 컨테이너(타입 수가 0 이 아닐 때)로 본다 — 대체 목록 항목은 포커스 전 sr-only(1px)라
+    // toBeVisible 이 우연히 통과할 뿐이라 준비 신호로 쓰지 않는다(WD-903 리뷰).
+    await gotoUntilReady(page, '/knowledge-graph/model', page.locator('[data-testid="schema-graph"]:not([data-node-count="0"])'));
     await list.locator('[data-graph-item]').first().focus();
     await page.keyboard.press('ArrowDown');
     await page.keyboard.press('Enter');
@@ -1236,8 +1256,10 @@ test.describe('지식그래프 캔버스 키보드 접근성 (#326, #327)', () =
   // 데스크톱(sm 이상)은 왼쪽 패널에 눌린 칩이 보이므로 별도 칩을 두지 않는다.
   test('데스크톱에서는 드릴다운 뒤에도 필터 칩을 따로 띄우지 않는다 (WD-384)', async ({ authenticatedPage: page }) => {
     await setupOntologyMocks(page);
-    await page.goto('/knowledge-graph/model');
     const list = page.getByTestId('schema-graph-type-list');
+    // 준비 신호는 보이는 그래프 컨테이너(타입 수가 0 이 아닐 때)로 본다 — 대체 목록 항목은 포커스 전 sr-only(1px)라
+    // toBeVisible 이 우연히 통과할 뿐이라 준비 신호로 쓰지 않는다(WD-903 리뷰).
+    await gotoUntilReady(page, '/knowledge-graph/model', page.locator('[data-testid="schema-graph"]:not([data-node-count="0"])'));
     await list.locator('[data-graph-item]').first().focus();
     await page.keyboard.press('ArrowDown');
     await page.keyboard.press('Enter');
@@ -1610,7 +1632,7 @@ test.describe('새 온톨로지 대화상자 (WD-819)', () => {
 
   /** 지식 모델 탭에서 「새 온톨로지」 대화상자를 열고 도메인 칸과 대화상자를 돌려준다. */
   async function openDialog(page: Page) {
-    await page.goto('/knowledge-graph/model');
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('button', { name: '새 온톨로지' }));
     await page.getByRole('button', { name: '새 온톨로지' }).click();
     const dialog = page.getByTestId('ontology-create-dialog');
     return { dialog, input: dialog.locator('#ontology-domain') };

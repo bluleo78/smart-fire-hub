@@ -5,6 +5,7 @@ import { createOntologyGraph } from '../../factories/ontology.factory';
 import { mockOntologyGraph, setupAdminAuth, setupOntologyMocks } from '../../fixtures/admin.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { gotoUntilReady } from '../../fixtures/first-visit'; // WD-903: 첫 진입 직후 클릭은 대상이 보일 때까지 먼저 기다린다
 
 /**
  * 지식그래프 노드 상세 — 표(데이터셋) 투영 노드의 출처·속성 (WD-382).
@@ -18,7 +19,7 @@ test.beforeEach(async ({ authenticatedPage: page }) => {
 
 /** 그래프 탐색 탭을 열고 노드 하나를 탭해 상세를 띄운다. */
 async function openNodeDetail(page: Page, key: string, nodeCount: number) {
-  await page.goto('/knowledge-graph/model');
+  await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('tab', { name: '그래프 탐색' }));
   await page.getByRole('tab', { name: '그래프 탐색' }).click();
   await expect(page.getByTestId('instance-graph')).toHaveAttribute('data-node-count', String(nodeCount));
   await page.evaluate((k) => {
