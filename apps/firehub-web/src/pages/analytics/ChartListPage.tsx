@@ -13,6 +13,7 @@ import { AnalyticsDeleteConfirmDialog } from '../../components/analytics/Analyti
 import { getChartTypeLabel } from '../../components/analytics/chart-missing-columns';
 import { WorkspaceAnalyticsTable } from '../../components/analytics/WorkspaceAnalyticsTable';
 import { PageHeading } from '../../components/PageHeading';
+import { TruncatedLink } from '../../components/TruncatedLink';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { SearchInput } from '../../components/ui/search-input';
@@ -161,9 +162,12 @@ export default function ChartListPage() {
                                 <div className="flex items-center gap-1.5">
                                   {/* WD-890: xl 미만(사이드바 펼친 1024 포함)에서 표가 넘치지 않게 이름·설명·쿼리 이름 상한을 줄임 —
                                       잘린 글자는 title 로 전체를 보임 */}
-                                  <span className="block truncate max-w-[14rem] xl:max-w-xs" title={chart.name}>
-                                    {chart.name}
-                                  </span>
+                                  {/* WD-933: 행 클릭만으로는 키보드 경로가 없어(남이 공유한 차트는 편집 버튼도 없다) 이름을 상세 링크로 둔다. title·말줄임은 TruncatedLink 가 한다 */}
+                                  <TruncatedLink
+                                    to={`/analytics/charts/${chart.id}`}
+                                    value={chart.name}
+                                    className="block max-w-[14rem] xl:max-w-xs"
+                                  />
                                   {chart.isShared && (
                                     <Badge variant="secondary" className="text-xs gap-1 py-0">
                                       <Share2 className="h-2.5 w-2.5" />

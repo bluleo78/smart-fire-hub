@@ -16,6 +16,7 @@ import { toast } from 'sonner';
 import { AnalyticsDeleteConfirmDialog } from '../../components/analytics/AnalyticsDeleteConfirmDialog';
 import { WorkspaceAnalyticsTable } from '../../components/analytics/WorkspaceAnalyticsTable';
 import { PageHeading } from '../../components/PageHeading';
+import { TruncatedLink } from '../../components/TruncatedLink';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { SearchInput } from '../../components/ui/search-input';
@@ -221,13 +222,17 @@ export default function QueryListPage() {
                             <div className="flex items-center gap-2 min-w-0">
                               <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
                               {/* 이름 셀 내부: 긴 텍스트가 truncate되도록 min-w-0 + overflow-hidden 적용 */}
-                              <div className="min-w-0 overflow-hidden">
+                              {/* WD-933: 이름은 상세 링크라 포커스 링(ring-2)이 overflow-hidden 에 잘린다 — p-0.5 -m-0.5 로 2px 여유를 두되 레이아웃은 그대로 */}
+                              <div className="min-w-0 overflow-hidden p-0.5 -m-0.5">
                                 <div className="flex items-center gap-1.5 min-w-0">
                                   {/* 긴 쿼리 이름이 테이블 레이아웃을 깨지 않도록 truncate + max-w 적용. WD-890: xl 미만(사이드바 펼친 1024 포함)에서 표가 넘치지 않게 이름·설명 상한을 줄임 —
                                       잘린 글자는 title 로 전체를 보임 */}
-                                  <span className="truncate max-w-[14rem] xl:max-w-[300px] block" title={query.name}>
-                                    {query.name}
-                                  </span>
+                                  {/* WD-933: 행 클릭만으로는 키보드 경로가 없어(남이 공유한 쿼리는 편집 버튼도 없다) 이름을 상세 링크로 둔다. title·말줄임은 TruncatedLink 가 한다 */}
+                                  <TruncatedLink
+                                    to={`/analytics/queries/${query.id}`}
+                                    value={query.name}
+                                    className="block max-w-[14rem] xl:max-w-[300px]"
+                                  />
                                   {query.isShared && (
                                     <Badge variant="secondary" className="text-xs gap-1 py-0">
                                       <Share2 className="h-2.5 w-2.5" />

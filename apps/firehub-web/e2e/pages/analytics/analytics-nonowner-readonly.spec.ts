@@ -295,8 +295,8 @@ test.describe('목록 — 남의 공유 항목 줄에는 편집·설정·삭제�
       await expect(mine.getByRole('button', { name: label })).toHaveCount(1);
       await expect(others.getByRole('button', { name: label })).toHaveCount(0);
     }
-    // 줄 클릭으로 보기는 그대로
-    await others.getByText('남의 대시보드').click();
+    // 줄 클릭으로 보기는 그대로 — 이름은 링크라(WD-933) 행 이동은 이름 밖 칸으로 본다
+    await others.getByRole('cell').nth(1).click();
     await expect(page).toHaveURL('/analytics/dashboards/2');
   });
 

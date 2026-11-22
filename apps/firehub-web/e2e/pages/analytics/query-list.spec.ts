@@ -4,11 +4,11 @@ import {
   createSavedQuery,
   createSavedQueryListItem,
 } from '../../factories/analytics.factory';
-import { mockDeleteImpact, openFirstRowDeleteDialog, setupQueryListMocks } from '../../fixtures/analytics.fixture';
+import { mockDeleteImpact, openFirstRowDeleteDialog, setupQueryEditorMocks, setupQueryListMocks } from '../../fixtures/analytics.fixture';
 import { createPageResponse, mockApi, mockDeleteOnceThenNotFound } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { expectWithin } from '../../fixtures/long-name-layout';
-import { expectTableFits, TABLE_LAYOUT_WIDTHS } from '../../fixtures/table-layout';
+import { expectFocusRingRoom, expectTableFits, TABLE_LAYOUT_WIDTHS } from '../../fixtures/table-layout';
 
 /**
  * 쿼리 목록 페이지 E2E 테스트
@@ -423,6 +423,65 @@ test.describe('쿼리 목록 페이지', () => {
     await expect(page).toHaveURL(/\/analytics\/queries\/1/);
   });
 
+  test('남이 공유한 쿼리도 Tab·Enter 로 상세에 간다 (WD-933)', async ({ authenticatedPage: page }) => {
+    // 작성자가 내가 아닌 공유 쿼리 — 편집 버튼이 없어 키보드로 상세에 갈 길이 이름 링크뿐이다
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/analytics/queries',
+      createPageResponse([
+        createSavedQueryListItem({ id: 7, name: '남의 공유 쿼리', createdBy: 999, isShared: true }),
+      ]),
+    );
+    await setupQueryEditorMocks(page, 7);
+
+    await page.goto('/analytics/queries');
+    await page.getByRole('tab', { name: '공유됨' }).click();
+
+    const link = page.getByRole('table').getByRole('link', { name: '남의 공유 쿼리', exact: true });
+    await expect(link).toHaveAttribute('href', '/analytics/queries/7');
+
+    // 행은 키보드 대상이 아니다 — 이름 링크가 유일한 경로
+    const row = page.getByRole('row').nth(1);
+    await expect(row).not.toHaveAttribute('role');
+    await expect(row).not.toHaveAttribute('tabindex');
+    // 이 시험의 전제 — 남의 공유 항목 행에는 편집 버튼이 없다(aria-label="편집", 작성자 행에서만 그려진다)
+    await expect(row.getByRole('button', { name: '편집', exact: true })).toHaveCount(0);
+
+    // 폴더 필터에서 Tab 한 번으로 링크에 닿는다
+    await page.getByRole('combobox', { name: '폴더 필터' }).focus();
+    await page.keyboard.press('Tab');
+    await expect(link).toBeFocused();
+
+    await page.keyboard.press('Enter');
+    await expect(page).toHaveURL(/\/analytics\/queries\/7$/);
+  });
+
+  test('이름 링크 클릭은 한 번만 이동한다 (WD-933)', async ({ authenticatedPage: page }) => {
+    await setupQueryListMocks(page, 2);
+    await setupQueryEditorMocks(page, 1);
+
+    await page.goto('/analytics/queries');
+    await page.getByRole('table').getByRole('link', { name: '저장 쿼리 1', exact: true }).click();
+    await expect(page).toHaveURL(/\/analytics\/queries\/1$/);
+
+    // 링크 클릭이 행 onClick 으로 번져 두 번 push 되면 한 번 뒤로로는 목록에 못 온다
+    await page.goBack();
+    await expect(page).toHaveURL(/\/analytics\/queries$/);
+
+    // 행의 다른 칸(폴더 칸)을 누르면 행 경로로 상세에 간다
+    await page.getByRole('row').nth(1).getByRole('cell').nth(1).click();
+    await expect(page).toHaveURL(/\/analytics\/queries\/1$/);
+  });
+
+  test('이름 링크 포커스 링이 잘리지 않는다 (WD-933)', async ({ authenticatedPage: page }) => {
+    await setupQueryListMocks(page, 1);
+    await page.goto('/analytics/queries');
+
+    const link = page.getByRole('table').getByRole('link', { name: '저장 쿼리 1', exact: true });
+    await expectFocusRingRoom(link);
+  });
+
   test('200자 이상 긴 쿼리 이름이 셀 영역을 벗어나지 않고 truncate된다', async ({
     authenticatedPage: page,
   }) => {
@@ -445,14 +504,15 @@ test.describe('쿼리 목록 페이지', () => {
     const table = page.getByRole('table');
     await expect(table).toBeVisible();
 
-    // 긴 이름이 포함된 행의 이름 span 요소가 max-w-[300px] 제한으로 truncate되는지 확인한다.
-    // span.truncate가 없으면 텍스트가 무한으로 확장되어 다른 컬럼이 밀려난다.
-    const longNameRow = page.getByRole('row').nth(2);
-    const longNameSpan = longNameRow.locator('span.truncate').first();
-    const spanWidth = await longNameSpan.evaluate((el) => el.getBoundingClientRect().width);
+    // 긴 이름은 상세 링크(TruncatedLink, WD-933)이고 max-w-[300px] 제한으로 truncate 되는지 확인한다.
+    // truncate 가 없으면 텍스트가 무한으로 확장되어 다른 컬럼이 밀려난다.
+    const nameLink = table.getByRole('link', { name: longName, exact: true });
+    await expect(nameLink).toHaveAttribute('title', longName);
+    await expect(nameLink).toHaveClass(/truncate/);
+    const linkWidth = await nameLink.evaluate((el) => el.getBoundingClientRect().width);
 
-    // max-w-[300px]가 적용된 span이 실제로 300px 이하임을 검증 (픽셀 허용 오차 5px)
-    expect(spanWidth).toBeLessThanOrEqual(305);
+    // max-w-[300px]가 적용된 링크가 실제로 300px 이하임을 검증 (픽셀 허용 오차 5px)
+    expect(linkWidth).toBeLessThanOrEqual(305);
 
     // "수정일" 헤더 컬럼이 여전히 뷰포트 내에 있는지 확인 (레이아웃 깨짐 회귀 방지)
     await expect(page.getByRole('columnheader', { name: '수정일' })).toBeVisible();

@@ -101,7 +101,7 @@ export default function XxxListPage() {
 
 - `DatasetListPage`: 테이블 행 클릭 → 상세 페이지 이동. 태그 컬럼에 Badge 복수 표시.
 - `PipelineListPage`: 상태 컬럼에 실행 상태 Badge + 마지막 실행 시간 표시.
-- `QueryListPage`: 쿼리 타입 필터 추가. 행 클릭 → 쿼리 에디터 이동.
+- `QueryListPage`: 폴더 필터 추가. 이름은 상세 링크(키보드 경로), 행 클릭 → 쿼리 에디터 이동.
 - `UserListPage`: 역할(Role) 필터 추가. 관리자 전용 페이지로 권한 가드 적용.
 
 ---
