@@ -5,6 +5,7 @@ import { createPageResponse, mockApi, type MockApiCapture, mockDeleteOnceThenNot
 import { expect, test } from '../../fixtures/auth.fixture';
 import { grantDatasetPermissions, mockDatasetReferences, setupDatasetMocks } from '../../fixtures/dataset.fixture';
 import { expectBackdropClickStaysOnList } from '../../fixtures/dialog.fixture';
+import { expectTableErrorAlert } from '../../fixtures/table-error-alert';
 
 // 생성·수정·삭제 진입점은 권한이 있을 때만 보인다(WD-144) — 기본 인증 fixture 는 권한이 비어 있으므로 쓰기 흐름을 검증하는 이 spec 은
 // 데이터셋 쓰기 권한(dataset:write·dataset:delete 포함)을 준다. 조회 전용 노출은 dataset-list-permissions.spec.ts 가 검증한다.
@@ -172,8 +173,7 @@ test.describe('데이터셋 목록 페이지', () => {
     await page.goto('/data/datasets');
 
     // 예전에는 「데이터셋이 없습니다.」로 그려 데이터가 없다고 오해하게 했다 — 사유 없는 500 은 기본 문구로 알린다
-    await expect(page.getByText('데이터셋 목록을 불러오지 못했습니다.')).toBeVisible({ timeout: 15000 });
-    await expect(page.getByRole('button', { name: '다시 시도' })).toBeVisible();
+    await expectTableErrorAlert(page, '데이터셋 목록을 불러오지 못했습니다.', { action: '다시 시도' });
     await expect(page.getByText('데이터셋이 없습니다.')).toHaveCount(0);
   });
 

@@ -6,11 +6,11 @@ import { toast } from 'sonner';
 import { PageHeading } from '@/components/PageHeading';
 import { TruncatedLink } from '@/components/TruncatedLink';
 import { SimplePagination } from '@/components/ui/simple-pagination';
-import { TableEmptyRow } from '@/components/ui/table-empty';
+import { TableEmptyRow, TableErrorRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { TruncatedText } from '@/components/ui/truncated-text';
 import { handleApiError, isForbiddenError } from '@/lib/api-error';
-import { cn, iGa } from '@/lib/utils';
+import { iGa } from '@/lib/utils';
 
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -207,14 +207,12 @@ export default function PipelineListPage() {
                 </TableRow>
               ))
             ) : isError ? (
-              <TableRow>
-                <TableCell
-                  colSpan={7}
-                  className={cn('py-12 text-center', isForbidden ? 'text-muted-foreground' : 'text-destructive')}
-                >
-                  {isForbidden ? '파이프라인을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.' : '파이프라인 목록을 불러오지 못했습니다.'}
-                </TableCell>
-              </TableRow>
+              <TableErrorRow
+                colSpan={7}
+                className="py-12"
+                tone={isForbidden ? 'muted' : 'error'}
+                message={isForbidden ? '파이프라인을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.' : '파이프라인 목록을 불러오지 못했습니다.'}
+              />
             ) : (
               <TableEmptyRow
                 colSpan={7}

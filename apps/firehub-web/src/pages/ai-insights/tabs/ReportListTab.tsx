@@ -13,7 +13,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { TableEmptyRow } from '@/components/ui/table-empty';
+import { TableEmptyRow, TableErrorRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { useCanWriteProactive,useProactiveJobs, useReports } from '@/hooks/queries/useProactiveMessages';
 import { downloadReportPdf } from '@/hooks/useReportActions';
@@ -161,11 +161,7 @@ export default function ReportListTab() {
               ))
             ) : isError ? (
               // 같은 키 재조회 실패면 이전 행이 남아 위 분기가 그대로 그린다. 「더 보기」(키가 바뀜) 실패는 이 오류 안내로 바뀐다.
-              <TableRow>
-                <TableCell colSpan={4} className="py-12 text-center text-destructive">
-                  리포트 목록을 불러오지 못했습니다.
-                </TableCell>
-              </TableRow>
+              <TableErrorRow colSpan={4} className="py-12" message="리포트 목록을 불러오지 못했습니다." />
             ) : (
               <TableEmptyRow colSpan={4} message={emptyMessage} emptyAction={emptyAction} />
             )}

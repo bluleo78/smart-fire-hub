@@ -16,6 +16,7 @@ import { Input } from '@/components/ui/input';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
+import { TableErrorRow } from '@/components/ui/table-empty';
 import { Tabs, TabsControlsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useMyPermissions } from '@/hooks/queries/useMyPermissions';
 import {
@@ -24,7 +25,6 @@ import {
 } from '@/hooks/queries/useReviewItems';
 import { handleApiError, isForbiddenError } from '@/lib/api-error';
 import { validatePropertyCorrection } from '@/lib/property-correction';
-import { cn } from '@/lib/utils';
 import type {
   EntityPayload, PropertyPayload, RelationPayload, ReviewItemResponse, ReviewItemType, SynonymPayload,
 } from '@/types/reviewItem';
@@ -334,13 +334,15 @@ export default function ReviewInboxPage() {
             {/* 조회 실패를 「항목 없음」으로 그리지 않는다 (WD-126) — 403 이면 권한 안내, 그 밖은 불러오기 실패 안내.
                 이미 받은 행이 있는 상태에서 「더 보기」만 실패한 경우는 행을 그대로 둔다. */}
             {!isLoading && isError && (pending?.length ?? 0) === 0 && (
-              <TableRow>
-                <TableCell colSpan={colCount} className={cn('text-center', isForbidden ? 'text-muted-foreground' : 'text-destructive')}>
-                  {isForbidden
+              <TableErrorRow
+                colSpan={colCount}
+                tone={isForbidden ? 'muted' : 'error'}
+                message={
+                  isForbidden
                     ? 'AI 검수 항목을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.'
-                    : '검수 항목을 불러오지 못했습니다.'}
-                </TableCell>
-              </TableRow>
+                    : '검수 항목을 불러오지 못했습니다.'
+                }
+              />
             )}
             {!isLoading && !isError && (pending?.length ?? 0) === 0 && (
               <TableRow><TableCell colSpan={colCount} className="text-muted-foreground text-center">검수 대기 중인 항목이 없습니다.</TableCell></TableRow>

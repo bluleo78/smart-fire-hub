@@ -27,7 +27,7 @@ import {
   TableHeader,
   TableRow,
 } from '../../components/ui/table';
-import { TableEmptyRow } from '../../components/ui/table-empty';
+import { TableEmptyRow, TableErrorRow } from '../../components/ui/table-empty';
 import { TableSkeletonRows } from '../../components/ui/table-skeleton';
 import { TruncatedText } from '../../components/ui/truncated-text';
 import {
@@ -568,15 +568,17 @@ export default function DatasetListPage() {
             ) : isError && !datasetsData ? (
               // 조회 실패를 「데이터셋이 없습니다」로 그리지 않는다 — 서버·권한 오류를 데이터가 없다고 오해하게 된다(WD-146).
               // 이전 데이터가 있는 재조회 실패는 위 분기가 그 데이터를 그대로 보인다.
-              <TableRow>
-                <TableCell colSpan={8} className="py-12 text-center" role="alert">
-                  <p className="text-sm font-medium text-destructive">
-                    {isForbiddenError(datasetsError)
-                      ? '데이터셋 목록을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.'
-                      : extractApiError(datasetsError, '데이터셋 목록을 불러오지 못했습니다.')}
-                  </p>
-                  {/* 권한 오류는 다시 시도해도 같으므로 버튼을 두지 않는다(WD-137 선례) */}
-                  {!isForbiddenError(datasetsError) && (
+              <TableErrorRow
+                colSpan={8}
+                className="py-12 font-medium"
+                message={
+                  isForbiddenError(datasetsError)
+                    ? '데이터셋 목록을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.'
+                    : extractApiError(datasetsError, '데이터셋 목록을 불러오지 못했습니다.')
+                }
+                // 권한 오류는 다시 시도해도 같으므로 버튼을 두지 않는다(WD-137 선례)
+                action={
+                  !isForbiddenError(datasetsError) && (
                     <Button
                       size="sm"
                       variant="outline"
@@ -586,9 +588,9 @@ export default function DatasetListPage() {
                     >
                       다시 시도
                     </Button>
-                  )}
-                </TableCell>
-              </TableRow>
+                  )
+                }
+              />
             ) : datasets.length > 0 ? (
               datasets.map((dataset) => (
                 <TableRow

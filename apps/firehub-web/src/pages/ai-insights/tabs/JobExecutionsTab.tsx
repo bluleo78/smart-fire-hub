@@ -20,7 +20,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { TableEmptyRow } from '@/components/ui/table-empty';
+import { TableEmptyRow, TableErrorRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { useJobExecutions } from '@/hooks/queries/useProactiveMessages';
 import { isForbiddenError } from '@/lib/api-error';
@@ -126,11 +126,7 @@ export default function JobExecutionsTab({ jobId }: JobExecutionsTabProps) {
                 </TableRow>
               ))
             ) : isError ? (
-              <TableRow>
-                <TableCell colSpan={4} className="py-12 text-center text-destructive">
-                  실행 이력을 불러오지 못했습니다.
-                </TableCell>
-              </TableRow>
+              <TableErrorRow colSpan={4} className="py-12" message="실행 이력을 불러오지 못했습니다." />
             ) : (
               <TableEmptyRow colSpan={4} message="실행 이력이 없습니다." />
             )}

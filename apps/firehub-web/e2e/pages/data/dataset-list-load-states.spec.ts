@@ -4,6 +4,8 @@ import { createCategories, createDataset, createDatasets } from '../../factories
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { grantDatasetPermissions } from '../../fixtures/dataset.fixture';
+import { holdRequests } from '../../fixtures/hold-api';
+import { expectTableErrorAlert } from '../../fixtures/table-error-alert';
 
 /**
  * 데이터셋 목록 — 조회 실패·범위 밖 페이지 표시 (WD-146)
@@ -111,15 +113,26 @@ test.describe('데이터셋 목록 — 조회 실패·범위 밖 페이지 (WD-1
 
     await page.goto('/data/datasets');
 
-    const alert = page.getByRole('alert').filter({ hasText: '일시적인 서버 오류입니다.' });
-    await expect(alert).toBeVisible({ timeout: 15000 });
+    await expectTableErrorAlert(page, '일시적인 서버 오류입니다.', { action: '다시 시도' });
+    // 톤은 문구에만 있다 — 「다시 시도」 버튼 글자는 본문 글자색 그대로(빨갛게 물려받지 않는다)
+    const retryButton = page.getByRole('cell').getByRole('button', { name: '다시 시도' });
+    await expect(retryButton).toHaveCSS('color', await page.locator('body').evaluate((el) => getComputedStyle(el).color));
     await expect(page.getByText('데이터셋이 없습니다.')).toHaveCount(0);
     // 오류 상태에서는 「새 데이터셋 만들기」 빈 목록 안내도 없다
     await expect(page.getByRole('button', { name: '새 데이터셋 만들기' })).toHaveCount(0);
 
+    // 성공으로 바꾸기 전에 한 번 더 실패 — 재시도 뒤에도 오류 행이 cell 역할로 다시 알려져야 한다.
+    // 두 번째 실패 응답을 붙잡아 두고: 옛 alert 가 사라진 것을 먼저 확인한 뒤 풀어 줘서 새 alert 만 통과하게 한다
+    const held = await holdRequests(page, '/api/v1/datasets', 'GET');
+    await retryButton.click();
+    await expect.poll(held.count).toBeGreaterThan(0);
+    await expect(page.getByRole('alert').filter({ hasText: '일시적인 서버 오류입니다.' })).toHaveCount(0);
+    held.release();
+    await expectTableErrorAlert(page, '일시적인 서버 오류입니다.', { action: '다시 시도' });
+
     fail = false;
     const before = calls;
-    await alert.getByRole('button', { name: '다시 시도' }).click();
+    await retryButton.click();
     await expect(page.getByText('데이터셋 1', { exact: true })).toBeVisible();
     await expect(page.getByRole('alert').filter({ hasText: '일시적인 서버 오류입니다.' })).toHaveCount(0);
     expect(calls).toBeGreaterThan(before);
@@ -138,9 +151,10 @@ test.describe('데이터셋 목록 — 조회 실패·범위 밖 페이지 (WD-1
 
     await page.goto('/data/datasets');
 
-    const alert = page.getByRole('alert').filter({ hasText: '데이터셋 목록을 볼 권한이 없습니다.' });
-    await expect(alert).toBeVisible({ timeout: 15000 });
-    await expect(alert.getByRole('button', { name: '다시 시도' })).toHaveCount(0);
+    await expectTableErrorAlert(page, '데이터셋 목록을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.');
+    // alert 안만 보면 버튼이 밖에 있어도 늘 참이므로 문구를 품은 cell 안에서 센다
+    const errorCell = page.getByRole('cell').filter({ hasText: '데이터셋 목록을 볼 권한이 없습니다.' });
+    await expect(errorCell.getByRole('button', { name: '다시 시도' })).toHaveCount(0);
     await expect(page.getByText('데이터셋이 없습니다.')).toHaveCount(0);
   });
 });
