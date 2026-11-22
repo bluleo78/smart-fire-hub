@@ -10,7 +10,7 @@ import {
   Settings2,
   Trash2,
 } from 'lucide-react';
-import { useId, useRef, useState } from 'react';
+import { useId, useLayoutEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { client } from '@/api/client';
@@ -43,6 +43,7 @@ import { Separator } from '@/components/ui/separator';
 import { Textarea } from '@/components/ui/textarea';
 import { useApiConnectionsSelectable } from '@/hooks/queries/useApiConnections';
 import { useIntegerDraftStore } from '@/hooks/useIntegerDrafts';
+import { useIsMounted } from '@/hooks/useIsMounted';
 import { API_FULL_URL_PLACEHOLDER, AUTH_TYPE_LABEL, AUTH_TYPE_OPTIONS } from '@/lib/api-connection-form';
 import { httpUrlError } from '@/lib/http-url';
 import { cn } from '@/lib/utils';
@@ -144,6 +145,42 @@ function kvPairsToRecord(pairs: KvPair[]): Record<string, string> {
     if (key.trim()) result[key.trim()] = value;
   }
   return result;
+}
+
+/**
+ * 미리보기 요청 payload 를 저장되는 설정(apiConfig·apiConnectionId)만으로 만드는 순수 함수(WD-935).
+ * 호출 시작과 응답 도착 양쪽에서 같은 방식으로 만들어, 응답이 돌아왔을 때 요청에 영향을 주는 값이
+ * 그대로인지 비교하는 데 쓴다. 편집 중 행(headerRows·queryParamRows)이 있으면 화면과 같게 그것을 먼저 본다.
+ */
+function buildPreviewPayload(apiConfig: Record<string, unknown>, apiConnectionId: number | null) {
+  const path = getConfig<string>(apiConfig, 'path', '');
+  const customUrl = getConfig<string>(apiConfig, 'customUrl', '');
+  const method = getConfig<string>(apiConfig, 'method', 'GET');
+  const inlineAuth = getConfig<InlineAuth>(apiConfig, 'inlineAuth', { authType: 'NONE' });
+  const headerRows = getConfig<KvPair[] | undefined>(apiConfig, KV_ROWS_KEYS.headers, undefined);
+  const queryParamRows = getConfig<KvPair[] | undefined>(apiConfig, KV_ROWS_KEYS.queryParams, undefined);
+  return {
+    apiConnectionId: apiConnectionId ?? undefined,
+    // 직접 URL 은 앞뒤 공백을 뺀 값으로 호출한다(WD-909 검증과 같은 값)
+    url: apiConnectionId !== null ? path : customUrl.trim(),
+    method,
+    headers: Array.isArray(headerRows)
+      ? kvPairsToRecord(headerRows)
+      : getConfig<Record<string, string>>(apiConfig, 'headers', {}),
+    queryParams: Array.isArray(queryParamRows)
+      ? kvPairsToRecord(queryParamRows)
+      : getConfig<Record<string, string>>(apiConfig, 'queryParams', {}),
+    body: method === 'POST' ? getConfig<string>(apiConfig, 'body', '') : undefined,
+    dataPath: getConfig<string>(apiConfig, 'dataPath', ''),
+    fieldMappings: getConfig<FieldMapping[]>(apiConfig, 'fieldMappings', []),
+    inlineAuth: inlineAuth.authType !== 'NONE' ? inlineAuth : undefined,
+    timeoutMs: getConfig<number>(apiConfig, 'timeoutMs', 30000),
+  };
+}
+
+/** 응답 컬럼에 영향을 주는 요청 전체의 비교 키 — 매핑(fieldMappings)은 응답의 결과가 아니라 입력이라 뺀다(WD-935) */
+function previewRequestKey(apiConfig: Record<string, unknown>, apiConnectionId: number | null): string {
+  return JSON.stringify({ ...buildPreviewPayload(apiConfig, apiConnectionId), fieldMappings: undefined });
 }
 
 interface SectionProps {
@@ -378,6 +415,17 @@ export default function ApiCallStepConfig({
 
   const update = (key: string, value: unknown) => onChange({ ...apiConfig, [key]: value });
 
+  // 항상 가장 최근에 렌더된 설정 — await 이후(미리보기 응답)에 부르는 콜백은 호출을 시작한 렌더의 클로저를 쥐고 있어
+  // 그 사이 사용자가 고친 값을 옛 값으로 덮어쓴다(WD-935). 응답 시점에는 이 ref 로 최신 값을 읽는다.
+  // 렌더 중 ref 대입은 린트(react-hooks) 규칙에 어긋나므로 layout effect 로 갱신한다(페인트 전에 반영).
+  const latestRef = useRef({ apiConfig, apiConnectionId });
+  useLayoutEffect(() => {
+    latestRef.current = { apiConfig, apiConnectionId };
+  }, [apiConfig, apiConnectionId]);
+  // 마운트 여부 — 이 패널은 스텝마다 key 로 재마운트되므로, 호출 중 다른 스텝에 갔다 오면 옛 인스턴스의 응답 처리기가
+  // 새 인스턴스에서 고친 값을 덮을 수 있다. 언마운트된 인스턴스는 응답 뒤 쓰기를 하지 않는다(WD-935).
+  const isMounted = useIsMounted();
+
   // saved 모드: path (apiConnectionId + path → 백엔드에서 baseUrl + path 조합)
   const path = getConfig<string>(apiConfig, 'path', '');
   // inline 모드: customUrl (full URL)
@@ -416,6 +464,7 @@ export default function ApiCallStepConfig({
   // 스텝을 바꿨다 돌아와도 편집 중 행이 남도록 초기값도 이 키를 먼저 본다(없으면 서버 설정 객체에서 만든다).
   const headerRows = getConfig<KvPair[] | undefined>(apiConfig, KV_ROWS_KEYS.headers, undefined);
   const queryParamRows = getConfig<KvPair[] | undefined>(apiConfig, KV_ROWS_KEYS.queryParams, undefined);
+  // 주의(WD-935): 아래 초기값 규칙(편집 중 행 우선, 없으면 객체 설정)은 buildPreviewPayload 의 headers·queryParams 읽기와 같아야 한다 — 한쪽만 바꾸면 화면과 호출 요청이 어긋난다.
   const [headerPairs, setHeaderPairs] = useState<KvPair[]>(() =>
     Array.isArray(headerRows) ? headerRows : recordToKvPairs(headersRecord),
   );
@@ -500,36 +549,39 @@ export default function ApiCallStepConfig({
         return;
       }
     }
+    // 요청 전체(매핑 제외) 키 스냅샷 — 응답이 돌아왔을 때 최신 설정의 키와 비교해,
+    // 호출 중 연결·URL·메서드·헤더·본문·데이터 경로·인증 등을 바꿨다면 옛 요청의 컬럼으로 매핑을 채우지 않는다(WD-935).
+    const requestKey = previewRequestKey(apiConfig, apiConnectionId);
     setPreviewLoading(true);
     try {
       // 백엔드 ApiCallPreviewService: apiConnectionId + path 또는 customUrl로 URL 계산
-      const payload = {
-        apiConnectionId: apiConnectionId ?? undefined,
-        url: apiConnectionId !== null ? path : directUrl,
-        method,
-        headers: kvPairsToRecord(headerPairs),
-        queryParams: kvPairsToRecord(queryParamPairs),
-        body: method === 'POST' ? body : undefined,
-        dataPath,
-        fieldMappings,
-        inlineAuth: inlineAuth.authType !== 'NONE' ? inlineAuth : undefined,
-        timeoutMs,
-      };
+      const payload = buildPreviewPayload(apiConfig, apiConnectionId);
       const { data } = await client.post<PreviewResult>(
         '/pipelines/api-call/preview',
         payload,
       );
+      // 언마운트됐으면(다른 스텝으로 갔다 돌아온 경우 등) 화면 상태·설정 모두 건드리지 않는다(WD-935)
+      if (!isMounted()) return;
       setPreviewResult(data);
 
-      // Auto-fill field mappings from columns if mappings are empty
-      if (data.success && data.columns.length > 0 && fieldMappings.every((m) => !m.sourceField)) {
+      // 응답이 비어 있던 매핑을 자동으로 채운다 — 단, 호출 시작 값이 아니라 응답 시점의 최신 설정 기준으로 판단한다(WD-935):
+      // 호출 대상이 바뀌었거나 사용자가 그 사이 매핑을 직접 채웠으면 건너뛰고, 채울 때도 최신 설정에 병합해 다른 필드 수정을 보존한다.
+      const latest = latestRef.current;
+      const latestMappings = getConfig<FieldMapping[]>(latest.apiConfig, 'fieldMappings', []);
+      if (
+        data.success &&
+        data.columns.length > 0 &&
+        latestMappings.every((m) => !m.sourceField) &&
+        previewRequestKey(latest.apiConfig, latest.apiConnectionId) === requestKey
+      ) {
         const autoMappings: FieldMapping[] = data.columns.map((col) => ({
           sourceField: col,
           targetColumn: col,
         }));
-        update('fieldMappings', autoMappings);
+        onChange({ ...latest.apiConfig, fieldMappings: autoMappings });
       }
     } catch (err: unknown) {
+      if (!isMounted()) return;
       const message =
         (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
         '미리보기 호출에 실패했습니다';
@@ -543,7 +595,7 @@ export default function ApiCallStepConfig({
         resolvedUrl: null,
       });
     } finally {
-      setPreviewLoading(false);
+      if (isMounted()) setPreviewLoading(false);
     }
   };
 
