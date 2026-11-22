@@ -193,6 +193,84 @@ test.describe('데이터셋 상세 — 행 추가/편집', () => {
     });
   });
 
+  test('(WD-977) 키보드만으로 행 수정 창을 열고 저장하며, 닫으면 초점이 수정 버튼으로 돌아온다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupMocks(page);
+    const updateCapture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/datasets/1/data/rows/1',
+      { id: 1, name: 'Alice Kb' },
+      { capture: true },
+    );
+
+    await page.goto('/data/datasets/1');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible({ timeout: 10000 });
+    await page.getByRole('tab', { name: '데이터' }).click();
+
+    // 첫 행 체크박스에서 시작해 Tab 으로 수정 버튼에 닿는다 — 셀은 초점을 받지 않으므로 보통 1번
+    const editButton = page.getByRole('button', { name: '행 1 수정' });
+
+    // 마우스를 올리면 상위 TooltipProvider 의 툴팁 「행 수정」이 뜬다
+    await editButton.hover();
+    await expect(page.getByRole('tooltip', { name: '행 수정' })).toBeVisible();
+    await page.getByRole('checkbox', { name: '행 1 선택' }).focus();
+    for (let i = 0; i < 3; i++) {
+      await page.keyboard.press('Tab');
+      if (await editButton.evaluate((el) => el === document.activeElement)) break;
+    }
+    await expect(editButton).toBeFocused();
+
+    // Enter 로 열고 Escape 로 닫으면 초점이 버튼으로 돌아온다
+    await page.keyboard.press('Enter');
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('heading', { name: /행 편집 \(ID: 1\)/ })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(editButton).toBeFocused();
+
+    // 다시 Enter 로 열어 값을 바꾸고 저장 버튼에서 Enter — PUT payload 와 초점 복귀
+    await page.keyboard.press('Enter');
+    await expect(page.locator('#edit-name')).toHaveValue('Alice');
+    await page.locator('#edit-name').fill('Alice Kb');
+    await dialog.getByRole('button', { name: '저장' }).focus();
+    await page.keyboard.press('Enter');
+
+    const captured = await updateCapture.waitForRequest();
+    const payload = captured.payload as { data: Record<string, unknown> };
+    expect(payload.data).toMatchObject({ name: 'Alice Kb' });
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(editButton).toBeFocused();
+
+    // <tr> 에는 tabindex·role 을 주지 않는다(표 행 의미 유지, WD-816)
+    const aliceRow = page.getByRole('cell', { name: 'Alice', exact: true }).locator('xpath=..');
+    await expect(aliceRow).not.toHaveAttribute('tabindex', /.*/);
+    await expect(aliceRow).not.toHaveAttribute('role', /.*/);
+  });
+
+  test('(WD-977) 쓰기 권한이어도 표가 가로로 넘치지 않고, 행 수정 버튼에 초점이 가도 체크박스 열이 가려지지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await setupMocks(page);
+    await page.goto('/data/datasets/1');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible({ timeout: 10000 });
+    await page.getByRole('tab', { name: '데이터' }).click();
+    const editButton = page.getByRole('button', { name: '행 1 수정' });
+    await expect(editButton).toBeVisible();
+
+    // 표의 부모 스크롤 컨테이너(overflow-auto)가 가로로 넘치지 않는다 — 작업 열 48px 가 데이터 열 폭 계산에 빠지면 넘친다
+    const scroller = page.locator('table').first().locator('xpath=..');
+    const overflow = () => scroller.evaluate((el) => el.scrollWidth - el.clientWidth);
+    await expect.poll(overflow).toBeLessThanOrEqual(1);
+
+    // 행 끝 수정 버튼에 초점이 가도 표가 밀리지 않아 체크박스 열이 그대로 보인다
+    await editButton.focus();
+    expect(await scroller.evaluate((el) => el.scrollLeft)).toBe(0);
+    await expect(page.getByRole('checkbox', { name: '행 1 선택' })).toBeInViewport();
+  });
+
   test('(#674) nullable INTEGER/DECIMAL 필드를 비우고 저장하면 0이 아닌 NULL로 전송된다', async ({
     authenticatedPage: page,
   }) => {

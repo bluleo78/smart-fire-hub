@@ -102,6 +102,10 @@ test.describe('데이터셋 상세 — 조회 전용 사용자 (WD-139)', () => 
     await page.getByRole('cell', { name: '항목 1' }).dblclick();
     await expect(page.getByRole('dialog')).toHaveCount(0);
 
+    // 조회 권한만이면 키보드용 행 수정 버튼과 「작업」 열 머리도 없다 (WD-977)
+    await expect(page.getByRole('button', { name: /^행 \d+ 수정$/ })).toHaveCount(0);
+    await expect(page.getByRole('columnheader', { name: '작업' })).toHaveCount(0);
+
     // 선택은 CSV 내보내기에 쓰이므로 남지만 삭제(data:delete)는 없다
     await page.getByRole('checkbox', { name: '행 1 선택' }).check();
     await expect(page.getByText('1개 행 선택됨')).toBeVisible();
@@ -213,6 +217,8 @@ test.describe('데이터셋 상세 — 부분 권한 (WD-139)', () => {
     for (const name of ['SQL', '행 추가', '임포트', 'API 가져오기']) {
       await expect(page.getByRole('button', { name, exact: true })).toHaveCount(0);
     }
+    // dataset:write 는 행 수정(data:import)이 아니므로 행 수정 버튼이 없다 (WD-977)
+    await expect(page.getByRole('button', { name: /^행 \d+ 수정$/ })).toHaveCount(0);
     await page.getByRole('checkbox', { name: '행 1 선택' }).check();
     await expect(page.getByRole('button', { name: '삭제', exact: true })).toHaveCount(0);
   });
@@ -235,6 +241,12 @@ test.describe('데이터셋 상세 — 부분 권한 (WD-139)', () => {
 
     await page.getByRole('cell', { name: '항목 1' }).dblclick();
     await expect(page.getByRole('dialog').getByText('행 편집 (ID: 1)')).toBeVisible();
+    await page.keyboard.press('Escape');
+
+    // 키보드로 닿는 행 수정 버튼과 「작업」 열 머리가 보이고 클릭하면 같은 편집 창이 열린다 (WD-977)
+    await expect(page.getByRole('columnheader', { name: '작업' })).toBeVisible();
+    await page.getByRole('button', { name: '행 1 수정' }).click();
+    await expect(page.getByRole('dialog').getByText('행 편집 (ID: 1)')).toBeVisible();
   });
 
   test('data:delete 만 있으면 선택 삭제만 보이고 행 추가·임포트는 숨는다', async ({ authenticatedPage: page }) => {
@@ -243,6 +255,8 @@ test.describe('데이터셋 상세 — 부분 권한 (WD-139)', () => {
 
     await expect(page.getByRole('button', { name: '행 추가' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: '임포트', exact: true })).toHaveCount(0);
+    // data:delete 만으로는 행 수정 버튼이 없다 (WD-977)
+    await expect(page.getByRole('button', { name: /^행 \d+ 수정$/ })).toHaveCount(0);
     await page.getByRole('checkbox', { name: '행 1 선택' }).check();
     await expect(page.getByRole('button', { name: '삭제', exact: true })).toBeVisible();
   });
