@@ -151,7 +151,7 @@ Smart Fire Hub 프론트엔드(`apps/firehub-web`)에서 사용하는 UI 컴포�
 | `onPageSizeChange` | `(size: number) => void` | 선택 | 페이지 크기 변경 콜백 |
 | `pageSizeOptions` | `number[]` | 선택 | 크기 선택지 (기본값: 10·20·50·100) |
 
-**표시 조건**: 건수(보이고 읽어 준다, WD-931)는 `totalElements`·`pageSize`, 크기 선택은 `onPageSizeChange`·`pageSize` 를 함께 넘길 때 보인다. `totalPages` 가 1 이하이고 `onPageSizeChange` 가 없으면 부품 전체가 그려지지 않는다.
+**표시 조건**: 건수(보이고 읽어 준다, WD-931)는 `totalElements`·`pageSize`, 크기 선택은 `onPageSizeChange`·`pageSize` 를 함께 넘길 때 보인다. `totalPages` 가 1 이하이고 `onPageSizeChange` 가 없으면 부품 전체가 그려지지 않는다. 조회 중·실패로 `data` 가 없을 때 `totalPages` 에 0 을 넘기면 부품이 사라져 앞 쪽으로 돌아갈 수 없다 — 마지막 성공 값을 넘긴다([05 A 절](./05-page-patterns.md#a-list-page-목록-페이지), WD-956).
 
 **사용 예시**:
 

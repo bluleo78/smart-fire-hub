@@ -26,10 +26,24 @@ export default function XxxListPage() {
   const [search, setSearch] = useState("");
   const { data, isLoading, isError, isPaused } = useXxxList({ page, size: PAGE_SIZE, search });
 
-  // 검색어가 바뀌면 첫 쪽부터 다시 본다
+  // 다음 쪽을 불러오거나 실패하면 data 가 비어 쪽 이동이 사라지므로 마지막 성공 값을 쓴다(WD-956)
+  const [lastTotalPages, setLastTotalPages] = useState(0);
+  if (data && data.totalPages !== lastTotalPages) {
+    setLastTotalPages(data.totalPages);
+  }
+  const totalPages = data ? data.totalPages : lastTotalPages;
+
+  // 범위 밖 쪽(이 쪽의 마지막 항목이 지워져 재조회된 뒤 등)은 빈 목록으로 오해하지 않게 마지막 쪽으로 옮긴다(WD-146)
+  const pageOutOfRange = !!data && page > 0 && page >= Math.max(data.totalPages, 1);
+  useEffect(() => {
+    if (pageOutOfRange && data) setPage(Math.max(data.totalPages - 1, 0));
+  }, [pageOutOfRange, data]);
+
+  // 검색어가 바뀌면 첫 쪽부터 다시 본다 — 기억한 쪽 수도 지워 이전 검색의 쪽 수를 보이지 않는다
   const handleSearchChange = (value: string) => {
     setSearch(value);
     setPage(0);
+    setLastTotalPages(0);
   };
 
   return (
@@ -72,7 +86,8 @@ export default function XxxListPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {isLoading || (!data && isPaused && isOnline) ? (
+            {isLoading || pageOutOfRange || (!data && isPaused && isOnline) ? (
+              // pageOutOfRange 는 마지막 쪽으로 옮기는 동안 로딩 행으로 가린다(빈 안내가 번쩍이지 않게)
               // isPaused 는 탭이 숨어 재시도가 멈춰도 참이다 — 연결돼 있으면 불러오는 중으로 보인다(WD-966)
               <TableSkeletonRows columns={3} />
             ) : !data && isPaused ? (
@@ -124,7 +139,7 @@ export default function XxxListPage() {
       {/* 페이지네이션 — totalElements·pageSize 를 함께 넘기면 건수도 보이고 읽어 준다(WD-931) */}
       <SimplePagination
         page={page}
-        totalPages={data?.totalPages ?? 0}
+        totalPages={totalPages}
         onPageChange={setPage}
         totalElements={data?.totalElements}
         pageSize={PAGE_SIZE}
@@ -135,6 +150,10 @@ export default function XxxListPage() {
 ```
 
 > 상세로 가는 키보드 경로는 이름의 `TruncatedLink`(`@/components/TruncatedLink`)이고 행 `onClick` 은 마우스 편의일 뿐이라, 행에 `role`·`tabIndex` 를 주지 않는다(표 행 의미 유지, WD-816). 행 이동에 `state` 를 넘기면 링크에도 같은 값을 넘긴다.
+>
+> 쪽 수 기억: 쪽을 넘기면 새 쪽 조회가 끝나기 전(로딩)이나 실패했을 때 `data` 가 비어 `totalPages` 가 0 이 되고 `SimplePagination` 이 사라져 사용자가 이동할 수 없게 된다. 그래서 마지막 성공 응답의 `totalPages` 를 기억해 쪽 이동을 그대로 남긴다(`PipelineListPage`, WD-956). 검색·필터가 바뀌면 다른 결과의 쪽 수이므로 기억한 값을 지운다. 건수 줄(「총 N건 중 a-b」)은 지금 쪽의 범위라 `data` 가 없는 동안 숨는 것이 맞다 — 기억하지 않는다. 이동 중 이전 행까지 남기려면 조회 훅에 `placeholderData: keepPreviousWhenOnlyPageChanged(...)`(WD-932, `AuditLogListPage`)를 쓰고 표에 aria-busy 를 건다 — 실패하면 placeholder 가 버려지므로 쪽 수 기억은 그대로 필요하다.
+>
+> 범위 밖 쪽: 이 쪽의 마지막 항목이 지워져(나 또는 다른 사람) 재조회되면 `totalPages` 가 줄어 지금 쪽이 범위 밖이 된다(쪽을 URL 에 두는 화면은 북마크·뒤로 가기도). 그러면 응답이 빈 목록이라 「데이터가 없습니다」로 오해되므로, 범위 밖이면 마지막 쪽으로 옮기고 그동안은 로딩 행을 보인다(`DatasetListPage`, `UserListPage`, WD-146).
 >
 > 주의: 링크를 `overflow-hidden` 요소 안에 두면 초점 표시가 잘린다. 초점 링(`ring-2`)에는 그 요소에 `p-0.5 -m-0.5`(2px)가, 고대비 모드의 outline(WD-944)까지 남기려면 `p-1 -m-1`(4px)이 필요하다. 링크가 스스로 말줄임하므로 되도록 `overflow-hidden` 대신 `min-w-0` 을 쓴다.
 >
