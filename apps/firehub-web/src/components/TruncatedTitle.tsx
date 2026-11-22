@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils';
 interface TruncatedTitleProps extends Omit<ComponentProps<'span'>, 'children' | 'title' | 'ref'> {
   /** 표시할 글자 — 잘렸을 때만 같은 값이 title 로 붙는다 */
   text: string;
-  /** 그릴 태그 — 페이지 제목처럼 heading 이어야 하는 곳은 'h1' (기본 span) */
+  /** 그릴 태그(기본 span) — h1 은 도구 막대 제목 전용, 페이지 제목은 PageHeading */
   as?: 'span' | 'h1';
 }
 
