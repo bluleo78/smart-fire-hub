@@ -28,7 +28,9 @@ interface SearchInputProps {
  * - 부모(예: URL searchParams 동기화)에서 매 입력마다 `value`가 round-trip 되면
  *   조합 중인 한글의 임시 글자가 외부 값으로 덮어써져 자모가 분리되는 버그가 있다.
  * - 이를 막기 위해 컴포넌트 내부에 표시용 `draft` 상태를 두고,
- *   조합 중에는 부모로 onChange를 보내지 않으며 외부 value도 무시한다.
+ *   조합 중에는 부모로 onChange를 보내지 않는다. 조합 중 들어온 외부 value 는 기준값(lastExternal)에만
+ *   기록하고 표시 글자(draft)는 그대로 둔다(WD-979).
+ * - compositionstart 에서는 앞 글자 때문에 늦춰 둔 onChange 를 취소한다(옛 값이 조합 중 칸을 덮지 않도록).
  * - 조합이 끝나면(`compositionend`) 최종 글자를 한 번에 부모에 전달한다.
  * - IME를 쓰지 않는 영문/숫자 입력은 기존과 동일하게 매 입력마다 즉시 전달된다.
  */
@@ -50,11 +52,15 @@ export function SearchInput({ placeholder = '검색...', 'aria-label': ariaLabel
   };
   useEffect(() => cancelPending, []);
 
-  // 외부 value 변경을 draft 에 즉시 반영(렌더 중 setState — React 권장 패턴).
-  // 조합 중에는 무시해 자모 분리를 방지한다.
-  if (!isComposing && value !== lastExternal) {
+  // 외부 value 변경을 렌더 중에 감지한다(렌더 중 setState — React 권장 패턴).
+  // WD-979: lastExternal 은 조합 여부와 무관하게 늘 갱신한다 — 조합 중에 건너뛰면 조합이 끝난 렌더에서
+  //   "바뀐 값"으로 보여 옛 외부 값이 방금 조합한 글자를 덮어 글자가 빠진다.
+  // draft 는 조합 중에만 건드리지 않는다(자모 분리 방지).
+  if (value !== lastExternal) {
     setLastExternal(value);
-    setDraft(value);
+    if (!isComposing) {
+      setDraft(value);
+    }
   }
   // 부모가 값을 바꿨으면(탭 전환으로 검색 초기화 등) 늦춰 둔 옛 입력이 뒤늦게 덮어쓰지 않게 취소한다(WD-513).
   // 렌더 중에는 ref 를 바꾸지 않도록 effect 에서 한다.
@@ -87,6 +93,9 @@ export function SearchInput({ placeholder = '검색...', 'aria-label': ariaLabel
   };
 
   const handleCompositionStart = () => {
+    // WD-979: 앞 글자 조합이 끝나며 늦춰 둔 onChange 가 다음 글자 조합 중에 불리면 부모 value 가 옛 글자로
+    //   돌아와 칸을 덮는다. 조합이 시작되면 늦춘 전달을 취소하고, 조합이 끝날 때 최종값으로 다시 전달한다.
+    cancelPending();
     setIsComposing(true);
   };
 
