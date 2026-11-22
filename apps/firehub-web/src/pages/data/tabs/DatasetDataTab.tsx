@@ -1,5 +1,5 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { ArrowDown, ArrowUp, ArrowUpDown, Loader2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, ArrowUpDown, Loader2, Pencil } from 'lucide-react';
 import React, { lazy, Suspense, useCallback,useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
@@ -12,9 +12,11 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '../../../components/ui/alert-dialog';
+import { Button } from '../../../components/ui/button';
 import { Card } from '../../../components/ui/card';
 import { Checkbox } from '../../../components/ui/checkbox';
 import { OnceAlertDialogAction } from '../../../components/ui/once-alert-dialog-action';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../../components/ui/tooltip';
 import { useDatasetData, useDatasetPermissions, useDeleteDataRows } from '../../../hooks/queries/useDatasets';
 import { useColumnStatsMap } from '../../../hooks/useColumnStatsMap';
 import { toCsvCell } from '../../../lib/csv';
@@ -47,6 +49,10 @@ interface DatasetDataTabProps {
   dataset: DatasetDetailResponse;
   datasetId: number;
 }
+
+// 고정 폭 열 — 선택 열(40px)과 쓰기 권한일 때만 붙는 작업 열(48px). col/th/td 와 열 폭 계산(reservedWidth)이 같은 값을 쓴다(WD-977).
+const SELECT_COL_WIDTH = 40;
+const ACTION_COL_WIDTH = 48;
 
 export const DatasetDataTab = React.memo(function DatasetDataTab({
   dataset,
@@ -111,7 +117,13 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
     [allRows]
   );
 
-  const { columnWidths, startResize } = useColumnResize({ columns, containerRef });
+  const { columnWidths, startResize } = useColumnResize({
+    columns,
+    // 표가 실제로 놓이는 스크롤 영역 기준 — clientWidth 가 세로 스크롤바 폭을 뺀 값이라 클래식 스크롤바에서도 넘치지 않는다(WD-977)
+    containerRef: parentRef,
+    // 작업 열 폭까지 빼고 데이터 열에 나눠야 표가 가로로 넘치지 않는다. 권한이 늦게 오면 값이 바뀌어 다시 계산된다(WD-977)
+    reservedWidth: SELECT_COL_WIDTH + (canImportData ? ACTION_COL_WIDTH : 0),
+  });
   const { sentinelRef } = useInfiniteScrollSentinel({ hasNextPage, isFetchingNextPage, fetchNextPage });
   const {
     selectedRowIds,
@@ -212,6 +224,19 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
     return sort.dir === 'ASC' ? 'ascending' : 'descending';
   };
 
+  /**
+   * 행 수정 창을 연다 — 더블클릭(마우스 지름길)과 행 끝 수정 버튼(키보드 진입점, WD-977)이 같은 함수를 쓴다.
+   * 컬럼 순서대로 값을 모아 EditRowDialog 에 넘긴다.
+   */
+  const openEditRow = (row: Record<string, unknown>) => {
+    const rowData: Record<string, unknown> = {};
+    for (const col of columns) rowData[col.columnName] = row[col.columnName ?? ''];
+    setEditRowState({ open: true, rowId: row['id'] as number, data: rowData });
+  };
+
+  // 열 수 = 선택 열 1 + 데이터 열 + (쓰기 권한 시) 작업 열 1 — spacer 행 colSpan 이 표 전체 폭을 덮도록 맞춘다
+  const totalColSpan = columns.length + 1 + (canImportData ? 1 : 0);
+
   const virtualItems = rowVirtualizer.getVirtualItems();
   const totalHeight = rowVirtualizer.getTotalSize();
 
@@ -273,17 +298,21 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
             헤더 구성이 바뀌어 높이가 달라지면 이 값이 부족해지는 즉시 red가 된다.
           */}
           <div ref={parentRef} className="min-h-0 flex-1 overflow-auto overscroll-contain scroll-pt-14">
+            {/* 행 수정 버튼 툴팁용 Provider 는 표 전체에 한 번만 — AppLayout 의 Provider 는 사이드바만 감싸 본문에는 닿지 않는다 */}
+            <TooltipProvider>
             <table style={{ tableLayout: 'fixed', width: '100%', borderCollapse: 'collapse' }}>
               <colgroup>
-                <col style={{ width: 40 }} />
+                <col style={{ width: SELECT_COL_WIDTH }} />
                 {columns.map((col) => {
                   const key = col.columnName ?? String(col.id);
                   return <col key={key} style={{ width: columnWidths[key] ?? 120 }} />;
                 })}
+                {/* 작업 열(행 수정 버튼) — 쓰기 권한이 있을 때만 (WD-977, WD-139) */}
+                {canImportData && <col style={{ width: ACTION_COL_WIDTH }} />}
               </colgroup>
               <thead className="bg-muted sticky top-0 z-10">
                 <tr>
-                  <th style={{ width: 40, padding: '8px', textAlign: 'center', borderBottom: '1px solid var(--border)' }}>
+                  <th style={{ width: SELECT_COL_WIDTH, padding: '8px', textAlign: 'center', borderBottom: '1px solid var(--border)' }}>
                     <Checkbox
                       checked={isAllSelected ? true : isIndeterminate ? 'indeterminate' : false}
                       onCheckedChange={(checked) => handleSelectAll(!!checked)}
@@ -331,12 +360,17 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
                       </th>
                     );
                   })}
+                  {canImportData && (
+                    <th style={{ width: ACTION_COL_WIDTH, padding: '8px', borderBottom: '1px solid var(--border)' }}>
+                      <span className="sr-only">작업</span>
+                    </th>
+                  )}
                 </tr>
               </thead>
               <tbody>
                 {virtualItems.length > 0 && virtualItems[0].start > 0 && (
                   <tr>
-                    <td colSpan={columns.length + 1} style={{ height: virtualItems[0].start, padding: 0 }} />
+                    <td colSpan={totalColSpan} style={{ height: virtualItems[0].start, padding: 0 }} />
                   </tr>
                 )}
                 {virtualItems.map((virtualRow) => {
@@ -351,14 +385,10 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
                       style={{ height: virtualRow.size, background: isSelected ? 'var(--accent)' : undefined }}
                       className="hover:bg-muted/50 transition-colors"
                       // 더블클릭 행 수정(PUT 행)은 data:import — 권한이 없으면 핸들러째 두지 않는다 (WD-139)
-                      onDoubleClick={canImportData ? () => {
-                        const rowData: Record<string, unknown> = {};
-                        for (const col of columns) rowData[col.columnName] = row[col.columnName ?? ''];
-                        setEditRowState({ open: true, rowId, data: rowData });
-                      } : undefined}
+                      onDoubleClick={canImportData ? () => openEditRow(row) : undefined}
                     >
                       <td
-                        style={{ width: 40, padding: '0 8px', textAlign: 'center', borderBottom: '1px solid var(--divider)', verticalAlign: 'middle' }}
+                        style={{ width: SELECT_COL_WIDTH, padding: '0 8px', textAlign: 'center', borderBottom: '1px solid var(--divider)', verticalAlign: 'middle' }}
                         onDoubleClick={(e) => e.stopPropagation()}
                       >
                         <Checkbox
@@ -403,6 +433,29 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
                           </td>
                         );
                       })}
+                      {canImportData && (
+                        // 키보드 진입점 — <tr> 에 role·tabIndex 를 주지 않고 행 끝 버튼으로 연다(WD-977, WD-816).
+                        // 닫으면 Radix FocusScope 가 열기 전 포커스(이 버튼)로 되돌린다.
+                        <td
+                          style={{ width: ACTION_COL_WIDTH, padding: '0 8px', textAlign: 'center', borderBottom: '1px solid var(--divider)', verticalAlign: 'middle' }}
+                          onDoubleClick={(e) => e.stopPropagation()}
+                        >
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7"
+                                aria-label={`행 ${virtualRow.index + 1} 수정`}
+                                onClick={() => openEditRow(row)}
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>행 수정</TooltipContent>
+                          </Tooltip>
+                        </td>
+                      )}
                     </tr>
                   );
                 })}
@@ -411,12 +464,13 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
                   const bottom = totalHeight - lastItem.end;
                   return bottom > 0 ? (
                     <tr>
-                      <td colSpan={columns.length + 1} style={{ height: bottom, padding: 0 }} />
+                      <td colSpan={totalColSpan} style={{ height: bottom, padding: 0 }} />
                     </tr>
                   ) : null;
                 })()}
               </tbody>
             </table>
+            </TooltipProvider>
 
             <div ref={sentinelRef} style={{ height: 1 }} />
 
