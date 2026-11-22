@@ -52,8 +52,8 @@ test.describe('일반 대화상자·알림 상세 긴 이름 넘침 (WD-648)', (
     // 상세 조회만 긴 이름으로 덮어쓴다(나중에 등록한 route 가 우선)
     await mockApi(page, 'GET', '/api/v1/datasets/1', createDatasetDetail({ id: 1, name: LONG_DATASET_NAME }));
 
-    await page.goto('/data/datasets/1');
-    await expect(page.getByRole('heading', { name: LONG_DATASET_NAME })).toBeVisible({ timeout: 10000 });
+    // WD-974: 10초 고정 대기는 느린 첫 진입보다 짧다 — 공용 대기(예산도 함께 늘림)로 제목을 기다린다
+    await gotoUntilReady(page, '/data/datasets/1', page.getByRole('heading', { name: LONG_DATASET_NAME }));
     await page.getByRole('button', { name: '복제' }).click();
 
     const dialog = page.getByRole('dialog', { name: '데이터셋 복제' });
@@ -78,9 +78,10 @@ test.describe('일반 대화상자·알림 상세 긴 이름 넘침 (WD-648)', (
       totalPages: 0,
     });
 
-    await page.goto('/data/datasets');
     // 미리보기 버튼은 행에 마우스를 올렸을 때 나타난다(hover-opacity) — 사용자처럼 행에 올린 뒤 누른다
     const row = page.getByRole('row').filter({ hasText: LONG_DATASET_NAME });
+    // WD-974: 첫 진입 직후 hover 도 클릭처럼 대상이 보일 때까지 기다린다
+    await gotoUntilReady(page, '/data/datasets', row);
     await row.hover();
     await row.getByRole('button', { name: '미리보기' }).click();
 
@@ -121,8 +122,10 @@ test.describe('일반 대화상자·알림 상세 긴 이름 넘침 (WD-648)', (
       }),
     );
 
-    await page.goto('/data/datasets/5');
-    await page.getByRole('tab', { name: '필드' }).click();
+    // WD-974: 첫 진입 직후 클릭은 대상이 보일 때까지 기다린다
+    const fieldsTab = page.getByRole('tab', { name: '필드' });
+    await gotoUntilReady(page, '/data/datasets/5', fieldsTab);
+    await fieldsTab.click();
     await page.getByRole('button', { name: /기본 키 설정/ }).click();
 
     const dialog = page.getByRole('dialog', { name: /기본 키 일괄 설정/ });
@@ -160,8 +163,10 @@ test.describe('일반 대화상자·알림 상세 긴 이름 넘침 (WD-648)', (
     await setupNotificationPanelMocks(page, [createMessage({ title: LONG_MESSAGE_TITLE, read: false })]);
     await setupJobListMocks(page);
 
-    await page.goto('/ai-insights/jobs');
-    await page.getByRole('button', { name: /AI 인사이트 알림/ }).click();
+    // WD-974: 첫 진입 직후 클릭은 대상이 보일 때까지 기다린다
+    const bellButton = page.getByRole('button', { name: /AI 인사이트 알림/ });
+    await gotoUntilReady(page, '/ai-insights/jobs', bellButton);
+    await bellButton.click();
     const panel = page.getByRole('dialog', { name: 'AI 인사이트 알림' });
     await expect(panel).toBeVisible();
     await panel.getByRole('button', { name: new RegExp(LONG_TITLE_PREFIX) }).click();
@@ -196,8 +201,10 @@ test.describe('확인 대화상자 긴 값 (WD-660)', () => {
       createApiConnection({ id: 1, name: LONG_CONNECTION_NAME, baseUrl: LONG_BASE_URL }),
     ]);
 
-    await page.goto('/admin/api-connections');
-    await page.getByRole('button', { name: `${LONG_CONNECTION_NAME} 삭제` }).click();
+    // WD-974: 첫 진입 직후 클릭은 대상이 보일 때까지 기다린다
+    const deleteButton = page.getByRole('button', { name: `${LONG_CONNECTION_NAME} 삭제` });
+    await gotoUntilReady(page, '/admin/api-connections', deleteButton);
+    await deleteButton.click();
 
     const dialog = page.getByRole('alertdialog');
     await expect(dialog).toBeVisible();
@@ -216,8 +223,10 @@ test.describe('확인 대화상자 긴 값 (WD-660)', () => {
       createCategory({ id: 1, name: LONG_CATEGORY_NAME, description: '긴 이름 카테고리' }),
     ]);
 
-    await page.goto('/data/categories');
-    await page.getByRole('button', { name: `${LONG_CATEGORY_NAME} 삭제` }).click();
+    // WD-974: 첫 진입 직후 클릭은 대상이 보일 때까지 기다린다
+    const deleteButton = page.getByRole('button', { name: `${LONG_CATEGORY_NAME} 삭제` });
+    await gotoUntilReady(page, '/data/categories', deleteButton);
+    await deleteButton.click();
 
     const dialog = page.getByRole('alertdialog');
     await expect(dialog).toBeVisible();
