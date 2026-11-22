@@ -102,4 +102,30 @@ test.describe("홈 — 조회 실패 안내 (WD-333)", () => {
     await expect(page.getByText("복구된 데이터셋")).toBeVisible();
     await expect(alert).toHaveCount(0);
   });
+
+  test("카드마다 「다시 시도」가 32×32px 이상이다 (WD-914)", async ({
+    authenticatedPage: page,
+  }) => {
+    for (const path of FAILING_PATHS) {
+      await mockApi(page, "GET", path, FAIL, { status: 500 });
+    }
+    await page.goto("/");
+
+    // 실패 안내(role=alert) 안의 「다시 시도」만 잰다
+    const retryButtons = page
+      .getByRole("alert")
+      .filter({ hasText: "불러오지 못했습니다" })
+      .getByRole("button", { name: "다시 시도" });
+    await expect(retryButtons).toHaveCount(5);
+
+    // 다섯 버튼을 모두 잰 뒤 한 번에 단언한다 — 실패하면 모든 버튼의 크기가 메시지에 남는다 (최소 32px = sm 규칙 h-8)
+    const boxes = await Promise.all(
+      (await retryButtons.all()).map((button) => button.boundingBox()),
+    );
+    const sizes = boxes.map((box, i) => `${i}: ${box?.width}x${box?.height}`).join(", ");
+    for (const box of boxes) {
+      expect(box?.height ?? 0, `버튼 크기 (${sizes})`).toBeGreaterThanOrEqual(32);
+      expect(box?.width ?? 0, `버튼 크기 (${sizes})`).toBeGreaterThanOrEqual(32);
+    }
+  });
 });
