@@ -517,9 +517,17 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
 
       {/* 작업명 */}
       <div className="space-y-2">
-        <Label htmlFor="job-name">작업 이름 *</Label>
+        {/* WD-928: 별표는 aria-hidden 으로 숨겨 이름이 "작업 이름"으로 읽히게 하고, 필수는 aria-required 로 알린다.
+            native required 는 브라우저 기본 검증 말풍선이 폼 검증(zod)과 겹쳐 쓰지 않는다.
+            바깥 span 은 Label 의 flex gap 이 별표 앞에 끼지 않게 한다. FormField 는 별표 색·간격과 문구 크기가 달라 쓰지 않는다. */}
+        <Label htmlFor="job-name">
+          <span>
+            작업 이름 <span aria-hidden="true">*</span>
+          </span>
+        </Label>
         <Input
           id="job-name"
+          aria-required="true"
           placeholder="일일 파이프라인 리포트"
           maxLength={200}
           aria-describedby={showNameHint ? 'job-name-hint' : undefined}
@@ -611,9 +619,15 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
       {/* 프롬프트 — 수동 모드에서만 직접 편집, 목표 모드에서는 자동 채워짐 */}
       {(creationMode === 'manual' || !isNew) && (
         <div className="space-y-2">
-          <Label htmlFor="job-prompt">분석 프롬프트 *</Label>
+          {/* WD-928: 작업 이름 칸과 같은 방식(별표 aria-hidden + aria-required) — 이유는 위 작업명 주석 참고 */}
+          <Label htmlFor="job-prompt">
+            <span>
+              분석 프롬프트 <span aria-hidden="true">*</span>
+            </span>
+          </Label>
           <Textarea
             id="job-prompt"
+            aria-required="true"
             rows={4}
             placeholder="어제 파이프라인 실행 결과를 분석하고 주요 이슈를 알려주세요."
             // 서버 상한과 같은 길이까지만 입력받는다 — 넘으면 저장이 400 으로 거부된다(WD-425)

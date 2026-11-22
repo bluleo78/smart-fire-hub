@@ -86,9 +86,9 @@ test.describe('스마트 작업 상세 페이지', () => {
     // "생성" 버튼 확인
     await expect(page.getByRole('button', { name: '만들기' })).toBeVisible();
 
-    // 작업명 입력 필드 확인 (id="job-name", label="작업 이름 *")
+    // 작업명 입력 필드 확인 (id="job-name", label="작업 이름", 별표는 aria-hidden)
     await expect(page.locator('#job-name')).toBeVisible();
-    await expect(page.getByLabel('작업 이름 *')).toBeVisible();
+    await expect(page.getByRole('textbox', { name: '작업 이름', exact: true })).toBeVisible();
 
     // 수동 모드로 전환하여 프롬프트/템플릿 필드 확인
     // 새 작업 페이지는 기본적으로 목표 모드로 시작하므로 수동 모드 버튼을 클릭해야 한다
@@ -97,7 +97,7 @@ test.describe('스마트 작업 상세 페이지', () => {
       await manualModeBtn.click();
     }
 
-    // 분석 프롬프트 textarea 확인 (id="job-prompt", label="분석 프롬프트 *")
+    // 분석 프롬프트 textarea 확인 (id="job-prompt", label="분석 프롬프트", 별표는 aria-hidden)
     // 수동 모드에서만 표시되므로 표시된 경우에만 검증한다
     const promptField = page.locator('#job-prompt');
     const templateField = page.locator('#job-template');
@@ -1498,7 +1498,7 @@ test.describe('스마트 작업 상세 — ?tab= 보정 (WD-871)', () => {
 
     await expect(page.getByRole('tab', { name: '개요' })).toHaveAttribute('aria-selected', 'true');
     // 개요 본문 — 새 작업 폼의 작업 이름 칸이 보인다(실행 이력 탭이었다면 보이지 않는다)
-    await expect(page.getByLabel('작업 이름 *')).toBeVisible();
+    await expect(page.getByRole('textbox', { name: '작업 이름', exact: true })).toBeVisible();
   });
 
   // 기존 작업: 없는 탭 값·빈 값 모두 「개요」로 되돌린다(같은 단언이라 값만 바꿔 돈다)
