@@ -1187,8 +1187,8 @@ test.describe('파이프라인 트리거 탭', () => {
     await expect(page.getByText('정수를 입력하세요')).toHaveCount(0);
 
     // 오류가 보이는 채로 저장해도 마지막으로 확정된 값(120)이 실린다 — 기본값이나 빈 값으로 바뀌지 않는다 (WD-906)
-    await pollingInput.press('End');
-    await pollingInput.pressSequentially('e');
+    // 커서 이동 키 대신 fill — macOS 의 End 는 스크롤 여지가 있으면 커서를 옮기지 않아 `e120` 이 된다
+    await pollingInput.fill('120e');
     await expect(pollingInput).toHaveValue('120e');
     await expect(page.getByText('정수를 입력하세요')).toHaveCount(1);
     await page.getByRole('button', { name: '만들기' }).click();
