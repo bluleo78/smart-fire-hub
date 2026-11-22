@@ -151,6 +151,91 @@ test.describe('AI 검수 인박스', () => {
       await expect(page.getByRole('button', { name: '더 보기' })).toHaveCount(0);
     });
 
+    test('「더 보기」가 실패하면 행이 남고 실패가 alert 로 알려지며 다시 시도로 이어 받는다 (WD-956)', async ({ authenticatedPage: page }) => {
+      const page0Items = Array.from({ length: 50 }, (_, i) =>
+        createSynonymReviewItem({ id: i + 1, payload: { entityType: 'Cause', nameA: `요인${i}`, nameB: `누전${i}` } }));
+      const page1Items = [createSynonymReviewItem({ id: 999, payload: { entityType: 'Cause', nameA: '51번째항목', nameB: '누전999' } })];
+
+      // 둘째 쪽(page=1) 요청 수 — 전역 재시도 1회가 있어 실패 한 번에 요청이 2개 나간다.
+      let secondPageCount = 0;
+      await page.route((url) => url.pathname === '/api/v1/graphrag/review-items', (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        const isSecond = new URL(route.request().url()).searchParams.get('page') === '1';
+        if (!isSecond) {
+          return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(page0Items) });
+        }
+        secondPageCount += 1;
+        // 첫 요청과 그 재시도(1·2번째)는 실패, 3번째부터 성공
+        if (secondPageCount <= 2) {
+          return route.fulfill({
+            status: 500, contentType: 'application/json',
+            body: JSON.stringify({ status: 500, error: 'Internal Server Error', message: 'boom' }),
+          });
+        }
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(page1Items) });
+      });
+
+      await page.goto('/knowledge-graph/review');
+      await expect(page.getByText('요인0')).toBeVisible();
+
+      await page.getByRole('button', { name: '더 보기' }).click();
+
+      await expect(page.getByRole('alert').filter({ hasText: '다음 목록을 불러오지 못했습니다. 다시 시도하세요.' })).toHaveCount(1);
+      await expect(page.getByText('요인0')).toBeVisible();
+      await expect(page.getByRole('button', { name: '더 보기' })).toHaveCount(0);
+      expect(secondPageCount).toBe(2);
+
+      await page.getByRole('button', { name: '다시 시도' }).click();
+
+      await expect(page.getByText('51번째항목')).toBeVisible();
+      await expect(page.getByRole('alert').filter({ hasText: '다음 목록을' })).toHaveCount(0);
+      expect(secondPageCount).toBe(3);
+      await page.waitForTimeout(500);
+      expect(secondPageCount).toBe(3);
+    });
+
+    test('「다시 시도」를 키보드로 눌러 재요청 중이어도 초점이 버튼에 남고 또 실패해도 유지된다 (WD-956)', async ({ authenticatedPage: page }) => {
+      const page0Items = Array.from({ length: 50 }, (_, i) =>
+        createSynonymReviewItem({ id: i + 1, payload: { entityType: 'Cause', nameA: `요인${i}`, nameB: `누전${i}` } }));
+
+      // 둘째 쪽 요청 수 — 처음 2개(첫 요청+재시도)는 즉시 실패, 이후 4개(다시 시도 한 번분)는 1.5초 지연 뒤 실패.
+      let secondPageCount = 0;
+      await page.route((url) => url.pathname === '/api/v1/graphrag/review-items', async (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        const isSecond = new URL(route.request().url()).searchParams.get('page') === '1';
+        if (!isSecond) {
+          return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(page0Items) });
+        }
+        secondPageCount += 1;
+        if (secondPageCount > 2) await new Promise((r) => setTimeout(r, 1500));
+        return route.fulfill({
+          status: 500, contentType: 'application/json',
+          body: JSON.stringify({ status: 500, error: 'Internal Server Error', message: 'boom' }),
+        });
+      });
+
+      await page.goto('/knowledge-graph/review');
+      await expect(page.getByText('요인0')).toBeVisible();
+      await page.getByRole('button', { name: '더 보기' }).click();
+      await expect(page.getByRole('alert').filter({ hasText: '다음 목록을 불러오지 못했습니다.' })).toHaveCount(1);
+
+      const retry = page.getByRole('button', { name: '다시 시도' });
+      await retry.focus();
+      await page.keyboard.press('Enter');
+
+      // 재요청이 진행되는 동안 버튼은 잠기되(aria-disabled) 초점은 그대로다
+      await expect(retry).toHaveAttribute('aria-disabled', 'true');
+      await expect(retry).toBeFocused();
+      // 잠긴 동안 Enter 를 더 눌러도 겹침 요청이 생기지 않는다
+      await page.keyboard.press('Enter');
+      // 또 실패해도 초점이 버튼에 남는다
+      await expect.poll(() => secondPageCount, { timeout: 8000 }).toBe(4);
+      await expect(retry).not.toHaveAttribute('aria-disabled', 'true'); // PendingButton 은 잠금 해제 시 속성을 뺀다
+      await expect(retry).toBeFocused();
+      await page.waitForTimeout(500);
+      expect(secondPageCount).toBe(4);
+    });
+
     test('전체 pending이 페이지 크기 미만이면 "더 보기"가 나타나지 않는다', async ({ authenticatedPage: page }) => {
       await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createSynonymReviewItem(), createPropertyReviewItem()]);
       await page.goto('/knowledge-graph/review');

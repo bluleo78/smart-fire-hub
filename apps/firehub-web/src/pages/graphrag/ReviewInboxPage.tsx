@@ -13,6 +13,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { LoadMoreFailure } from '@/components/ui/load-more-failure';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
@@ -198,6 +199,7 @@ export default function ReviewInboxPage() {
   };
   const {
     data, isLoading, isError, error, hasNextPage, fetchNextPage, isFetchingNextPage,
+    isFetchNextPageError,
   } = useReviewItemsPending(filter);
   // 조회 권한 부족(403) — 「항목 없음」 대신 권한 안내를 보이는 기준 (WD-126).
   const isForbidden = isError && isForbiddenError(error);
@@ -359,7 +361,11 @@ export default function ReviewInboxPage() {
         {/* 페이지당 50건씩 무한스크롤(#422) — pending 큐가 커져도 한 번에 전량을 불러오지 않는다.
             hasNextPage는 직전 페이지가 꽉 찼는지로 추론되므로(useReviewItemsPending), 마지막 페이지가
             정확히 50건으로 끝나면 "더 보기"가 한 번 더 보이고 빈 응답으로 사라진다(더 보기 UX 표준 트레이드오프). */}
-        {hasNextPage && (
+        {/* 「더 보기」 조회가 실패해도 이미 받은 행은 남는다(WD-956) — 실패를 알리고 「다시 시도」로 이어 받게 한다.
+            여기서는 클릭해도 블록이 남아(성공해야 사라짐) 겹침 요청이 생길 수 있어 pending 으로 잠근다(초점 유지). */}
+        {hasNextPage && (isFetchNextPageError ? (
+          <LoadMoreFailure pending={isFetchingNextPage} onRetry={() => fetchNextPage()} />
+        ) : (
           <button
             type="button"
             onClick={() => fetchNextPage()}
@@ -368,7 +374,7 @@ export default function ReviewInboxPage() {
           >
             {isFetchingNextPage ? '불러오는 중…' : '더 보기'}
           </button>
-        )}
+        ))}
         </TabsControlsContent>
       </Tabs>
 

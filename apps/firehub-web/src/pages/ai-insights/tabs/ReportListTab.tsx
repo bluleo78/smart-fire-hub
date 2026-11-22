@@ -1,9 +1,9 @@
 import { Download, Zap } from 'lucide-react';
-import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { LoadMoreFailure } from '@/components/ui/load-more-failure';
 import { SecurityLevelBadge } from '@/components/ui/SecurityLevelBadge';
 import {
   Table,
@@ -16,6 +16,7 @@ import {
 import { TableEmptyRow, TableErrorRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { useCanWriteProactive,useProactiveJobs, useReports } from '@/hooks/queries/useProactiveMessages';
+import { useLoadMoreLimit } from '@/hooks/useLoadMoreLimit';
 import { downloadReportPdf } from '@/hooks/useReportActions';
 import { isForbiddenError } from '@/lib/api-error';
 import { formatDate, timeAgo } from '@/lib/formatters';
@@ -31,8 +32,17 @@ import { ProactiveReadForbiddenNotice } from '../components/ProactiveReadForbidd
  */
 export default function ReportListTab() {
   const navigate = useNavigate();
-  const [limit, setLimit] = useState(20);
-  const { data: reports = [], isLoading, isError, error } = useReports({ limit, offset: 0 });
+  const { limit, loadMore, failed, settle } = useLoadMoreLimit();
+  const {
+    data: reports = [],
+    isLoading,
+    isError,
+    isSuccess,
+    isPlaceholderData,
+    error,
+  } = useReports({ limit, offset: 0 });
+  // 「더 보기」 조회가 실패하면 렌더 중에 limit 을 마지막 성공 값으로 되돌려 보던 목록을 남긴다(WD-956) — 오류 렌더가 그려지지 않는다.
+  settle({ isError, isSuccess, isPlaceholderData });
   // 조회 실패를 빈 목록으로 그리지 않는다 (WD-137) — 403 이면 권한 안내, 그 밖은 불러오기 실패 안내.
   const isForbidden = isError && isForbiddenError(error);
   // 빈 상태를 "잡이 없음" / "잡은 있으나 리포트 없음" 으로 가르기 위해 잡 목록도 본다.
@@ -160,7 +170,7 @@ export default function ReportListTab() {
                 </TableRow>
               ))
             ) : isError ? (
-              // 같은 키 재조회 실패면 이전 행이 남아 위 분기가 그대로 그린다. 「더 보기」(키가 바뀜) 실패는 이 오류 안내로 바뀐다.
+              // 같은 키 재조회 실패면 이전 행이 남아 위 분기가 그대로 그린다. 「더 보기」(키가 바뀜) 실패는 보던 limit 으로 되돌려 이 갈래로 오지 않고 아래 「다시 시도」 안내로 알린다.
               <TableErrorRow colSpan={4} className="py-12" message="리포트 목록을 불러오지 못했습니다." />
             ) : (
               <TableEmptyRow colSpan={4} message={emptyMessage} emptyAction={emptyAction} />
@@ -169,12 +179,16 @@ export default function ReportListTab() {
         </Table>
       </div>
 
-      {reports.length >= limit && (
-        <div className="py-2 flex justify-center">
-          <Button variant="ghost" size="sm" onClick={() => setLimit((l) => l + 20)}>
-            더 보기
-          </Button>
-        </div>
+      {failed ? (
+        <LoadMoreFailure onRetry={loadMore} />
+      ) : (
+        reports.length >= limit && (
+          <div className="py-2 flex justify-center">
+            <Button variant="ghost" size="sm" onClick={loadMore}>
+              더 보기
+            </Button>
+          </div>
+        )
       )}
     </div>
   );
