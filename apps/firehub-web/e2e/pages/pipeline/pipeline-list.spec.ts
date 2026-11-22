@@ -3,6 +3,7 @@ import type { Page } from '@playwright/test';
 import { createPipeline, createPipelines } from '../../factories/pipeline.factory';
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { expectBackdropClickStaysOnList } from '../../fixtures/dialog.fixture';
 import { grantPipelinePermissions, mockPipelineDeleteImpact, setupPipelineMocks } from '../../fixtures/pipeline.fixture';
 import {
   expectBadgesFitDeclaredWidth,
@@ -162,6 +163,16 @@ test.describe('파이프라인 목록 페이지', () => {
     // DELETE API가 실제로 호출되었는지 확인
     const req = await deleteCapture.waitForRequest();
     expect(req.url.pathname).toBe('/api/v1/pipelines/1');
+  });
+
+  test('삭제 확인 창의 배경을 눌러도 상세로 이동하지 않는다 (WD-943)', async ({ authenticatedPage: page }) => {
+    await setupPipelineMocks(page, 2);
+    await page.goto('/pipelines');
+    // 요청 캡처는 누르기 전에 건다 — 늦게 걸면 번진 요청을 놓쳐 통과할 수 있다(WD-943).
+    const { requests: deleteRequests } = await mockApi(page, 'DELETE', '/api/v1/pipelines/1', null, { capture: true });
+
+    await page.getByRole('button', { name: '삭제' }).first().click();
+    await expectBackdropClickStaysOnList(page, deleteRequests);
   });
 
   test('삭제 확인 창에 함께 삭제될 자동 생성 임시 데이터셋 개수를 안내한다 (WD-170)', async ({ authenticatedPage: page }) => {

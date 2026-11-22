@@ -10,6 +10,7 @@ import { createOntologyGraph, createOntologySchema } from '../../factories/ontol
 import { mockOntologyGraph, setupAdminAuth } from '../../fixtures/admin.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { clickDialogBackdrop } from '../../fixtures/dialog.fixture';
 import { gotoUntilReady } from '../../fixtures/first-visit'; // WD-903: 첫 진입 직후 클릭은 대상이 보일 때까지 먼저 기다린다
 
 // 지식 모델 탭의 온톨로지 생명주기 — 선택·생성·활성화·은퇴·삭제.
@@ -323,6 +324,37 @@ test.describe('온톨로지 생명주기', () => {
     await page.getByRole('button', { name: '삭제', exact: true }).last().click();
 
     await capture.waitForRequest();
+  });
+
+  // 보호 테스트 — 관리 창의 행은 삭제 칸에서 click 을 멈춰 이 결함이 없었다. 부품으로 옮긴 뒤에도 그대로임을 지킨다.
+  test('삭제 확인 창의 배경을 눌러도 관리 창이 닫히거나 선택이 바뀌지 않는다 (WD-943)', async ({
+    authenticatedPage: page,
+  }) => {
+    const deleteCapture = await mockApi(page, 'DELETE', '/api/v1/ontology/2', null, { status: 204, capture: true });
+    const schemaCapture = await mockApi(page, 'GET', '/api/v1/ontology/2', createOntologySchema(), { capture: true });
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('combobox', { name: '온톨로지 선택' }));
+    const select = page.getByRole('combobox', { name: '온톨로지 선택' });
+    const selectedLabel = await select.innerText();
+    await select.click();
+    await page.getByRole('option', { name: /온톨로지 관리/ }).click();
+
+    const manage = page.getByTestId('ontology-manage-dialog');
+    await manage.getByRole('row', { name: /건축물 대장/ }).getByRole('button', { name: '삭제' }).click();
+    const dialog = page.getByRole('alertdialog');
+
+    await clickDialogBackdrop(page);
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole('button', { name: '취소' }).click();
+    await expect(dialog).toBeHidden();
+
+    await expect(manage).toBeVisible();
+    expect(deleteCapture.requests).toHaveLength(0);
+    // 행 선택(onSelect)이 일어났다면 그 온톨로지 스키마를 조회한다.
+    expect(schemaCapture.requests).toHaveLength(0);
+    // 선택 표시도 그대로다 — 관리 창을 닫은 뒤 선택기를 본다.
+    await page.keyboard.press('Escape');
+    await expect(manage).toBeHidden();
+    await expect(select).toHaveText(selectedLabel);
   });
 
   test('은퇴는 확인 다이얼로그를 거친 뒤 전용 PATCH로 status=archived만 보낸다 (#399)', async ({

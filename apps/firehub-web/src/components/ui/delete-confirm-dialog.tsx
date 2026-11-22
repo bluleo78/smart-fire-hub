@@ -70,25 +70,31 @@ export function DeleteConfirmDialog({
           {trigger}
         </AlertDialogTrigger>
       )}
-      <AlertDialogContent onClick={(e) => e.stopPropagation()} restoreFocusRef={restoreFocusRef}>
-        <AlertDialogHeader>
-          <AlertDialogTitle>{entityName} 삭제</AlertDialogTitle>
-          <AlertDialogDescription>
-            &quot;{itemName}&quot; {entityName}{eulReul(entityName)} 정말 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.
-            {/* (#647) 이름이 같은 다른 항목과 헷갈리지 않도록 ID/URL 등 보조 식별 정보를 함께 노출.
-                Radix Description은 <p>로 렌더링되어 block 요소를 중첩할 수 없으므로 같은 문단 안에 이어 붙인다. */}
-            {extraDetail && <> ({extraDetail})</>}
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        {details}
-        <AlertDialogFooter>
-          <AlertDialogCancel>취소</AlertDialogCancel>
-          {/* WD-5: 이 컴포넌트는 정의상 "되돌릴 수 없는 삭제" 확인이다(제목·문구 고정). 디자인 시스템 04 §D 에 따라
-              확인 버튼은 항상 destructive — 호출처 prop 으로 열지 않는다(한 곳만 빠져도 같은 결함이 재발한다). */}
-          {/* key: 열린 채로 대상만 바뀌는 제어형 사용처(OntologyPage)에서도 항목이 바뀌면 가드를 새로 시작한다 (WD-507) */}
-          <ConfirmDeleteAction key={itemName} onConfirm={onConfirm} confirmDisabled={confirmDisabled} />
-        </AlertDialogFooter>
-      </AlertDialogContent>
+      {/* (WD-943) 창은 포털로 body 에 그려지지만 React 이벤트는 React 트리를 따라 올라가므로, 배경(overlay)을 누른 click 이
+          이 컴포넌트를 품은 행·메뉴 항목의 onClick(상세 이동·대화 선택)까지 번진다. Content 에서만 막으면 배경 click 은 못 막는다.
+          shadcn 프리미티브(alert-dialog.tsx)는 직접 고치지 않는 규칙이라 사용처마다 막지 않고 이 합성 부품 안에서 한 번에 막는다.
+          display: contents 라 상자를 만들지 않아 레이아웃은 그대로이고, click 만 멈춘다(pointerdown·keydown 은 그대로 통과). */}
+      <span className="contents" onClick={(e) => e.stopPropagation()}>
+        <AlertDialogContent restoreFocusRef={restoreFocusRef}>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{entityName} 삭제</AlertDialogTitle>
+            <AlertDialogDescription>
+              &quot;{itemName}&quot; {entityName}{eulReul(entityName)} 정말 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.
+              {/* (#647) 이름이 같은 다른 항목과 헷갈리지 않도록 ID/URL 등 보조 식별 정보를 함께 노출.
+                  Radix Description은 <p>로 렌더링되어 block 요소를 중첩할 수 없으므로 같은 문단 안에 이어 붙인다. */}
+              {extraDetail && <> ({extraDetail})</>}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {details}
+          <AlertDialogFooter>
+            <AlertDialogCancel>취소</AlertDialogCancel>
+            {/* WD-5: 이 컴포넌트는 정의상 "되돌릴 수 없는 삭제" 확인이다(제목·문구 고정). 디자인 시스템 04 §D 에 따라
+                확인 버튼은 항상 destructive — 호출처 prop 으로 열지 않는다(한 곳만 빠져도 같은 결함이 재발한다). */}
+            {/* key: 열린 채로 대상만 바뀌는 제어형 사용처(OntologyPage)에서도 항목이 바뀌면 가드를 새로 시작한다 (WD-507) */}
+            <ConfirmDeleteAction key={itemName} onConfirm={onConfirm} confirmDisabled={confirmDisabled} />
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </span>
     </AlertDialog>
   );
 }

@@ -93,6 +93,8 @@ Smart Fire Hub 프론트엔드(`apps/firehub-web`)에서 사용하는 UI 컴포�
 
 **목적**: 되돌릴 수 없는 삭제 전 확인을 받는 AlertDialog 래퍼. 제목은 `{entityName} 삭제`, 본문은 `"{itemName}" {entityName}을/를 정말 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.` 로 고정이다.
 
+**클릭 전파**: 창 안과 배경(overlay)을 누른 click 은 조상으로 번지지 않으므로 호출처가 그 click 을 따로 막을 필요가 없다(WD-943). 다만 제어형(`open`)으로 쓸 때 창을 여는 버튼의 click 은 호출처가 막고, 키보드 이벤트는 그대로 조상(메뉴 항목 등)까지 올라간다. 트리거 옆에 상자 없는 `<span>`(`display: contents`)이 함께 렌더되므로 `tr`·`tbody`·`ul` 바로 아래에는 두지 않고, `:last-child`·`space-*` 계산에는 형제로 잡힌다는 점에 유의한다.
+
 **확인 버튼**: 항상 `variant="destructive"`(§D — 삭제/제거), 취소는 `outline`. 되돌릴 수 있는 동작(정지·비활성화)은 이 컴포넌트를 쓰지 않고 범위·되돌림을 설명하는 전용 AlertDialog 를 쓴다.
 
 **Props API**:
