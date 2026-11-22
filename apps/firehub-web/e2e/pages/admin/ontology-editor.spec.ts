@@ -17,26 +17,14 @@ import {
 import { mockOntologyGraph, setupAdminAuth, setupOntologyMocks } from '../../fixtures/admin.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
-
-/**
- * 첫 진입 준비 대기(WD-878) — 병렬 부하 중에는 vite dev 서버의 첫 페이지 변환 + 응답 뒤 렌더가 기본 액션
- * 타임아웃(15초)을 넘겨 첫 조작이 실패했다. 준비 신호를 30초까지 기다리고, 그만큼 테스트 예산(기본 30초)도 늘린다.
- */
-const READY_WAIT_MS = 30_000;
-
-/** 지식 모델 화면을 열고 준비 신호(ready)가 보일 때까지 기다린다. 예산은 진입마다 한 번만 늘린다. */
-async function gotoModelUntil(page: Page, ready: Locator): Promise<void> {
-  test.info().setTimeout(test.info().timeout + READY_WAIT_MS);
-  await page.goto('/knowledge-graph/model');
-  await expect(ready).toBeVisible({ timeout: READY_WAIT_MS });
-}
+import { gotoUntilReady } from '../../fixtures/first-visit'; // WD-903: 첫 진입 직후 클릭은 대상이 보일 때까지 먼저 기다린다
 
 /**
  * 지식 모델 화면을 열고 「온톨로지 선택」 콤보박스(목록이 도착해야 그려진다)를 기다린다.
  * 비관리자도 콤보박스는 보인다. 목록을 붙잡거나 비우는 테스트는 상자가 끝내 안 뜨므로 쓰지 않는다.
  */
 async function openModel(page: Page): Promise<void> {
-  await gotoModelUntil(page, page.getByRole('combobox', { name: '온톨로지 선택' }));
+  await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('combobox', { name: '온톨로지 선택' }));
 }
 
 /**
@@ -45,7 +33,7 @@ async function openModel(page: Page): Promise<void> {
  */
 async function openEditMode(page: Page): Promise<Locator> {
   const toggle = page.getByRole('button', { name: '수정 모드' });
-  await gotoModelUntil(page, toggle);
+  await gotoUntilReady(page, '/knowledge-graph/model', toggle);
   await toggle.click();
   return toggle;
 }

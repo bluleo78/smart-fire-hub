@@ -10,6 +10,7 @@ import { createOntologyGraph, createOntologySchema } from '../../factories/ontol
 import { mockOntologyGraph, setupAdminAuth } from '../../fixtures/admin.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { gotoUntilReady } from '../../fixtures/first-visit'; // WD-903: 첫 진입 직후 클릭은 대상이 보일 때까지 먼저 기다린다
 
 // 지식 모델 탭의 온톨로지 생명주기 — 선택·생성·활성화·은퇴·삭제.
 test.describe('온톨로지 생명주기', () => {
@@ -31,7 +32,7 @@ test.describe('온톨로지 생명주기', () => {
     async ({ authenticatedPage: page }) => {
       const otherSchema = createOntologySchema({ domain: '건축물 대장', schemaVersion: 3 });
       const capture = await mockApi(page, 'GET', '/api/v1/ontology/2', otherSchema, { capture: true });
-      await page.goto('/knowledge-graph/model');
+      await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('combobox', { name: '온톨로지 선택' }));
 
       await page.getByRole('combobox', { name: '온톨로지 선택' }).click();
       await page.getByRole('option', { name: '건축물 대장' }).click();
@@ -45,7 +46,7 @@ test.describe('온톨로지 생명주기', () => {
   test('새 온톨로지는 도메인명만 받아 draft로 생성된다', async ({ authenticatedPage: page }) => {
     const capture = await mockApi(page, 'POST', '/api/v1/ontologies', 5, { status: 201, capture: true });
     await mockApi(page, 'GET', '/api/v1/ontology/5', createOntologySchema({ domain: '신규 도메인', entities: [], relations: [] }));
-    await page.goto('/knowledge-graph/model');
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('button', { name: '새 온톨로지' }));
 
     await page.getByRole('button', { name: '새 온톨로지' }).click();
     await page.getByLabel('도메인').fill('신규 도메인');
@@ -63,7 +64,7 @@ test.describe('온톨로지 생명주기', () => {
     authenticatedPage: page,
   }) => {
     const capture = await mockApi(page, 'POST', '/api/v1/ontologies', 5, { status: 201, capture: true });
-    await page.goto('/knowledge-graph/model');
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('button', { name: '새 온톨로지' }));
 
     await page.getByRole('button', { name: '새 온톨로지' }).click();
     const dialog = page.getByTestId('ontology-create-dialog');
@@ -86,7 +87,7 @@ test.describe('온톨로지 생명주기', () => {
   test('빈 도메인 제출 시 오류가 알림되고 포커스가 도메인 칸으로 간다 (WD-818)', async ({
     authenticatedPage: page,
   }) => {
-    await page.goto('/knowledge-graph/model');
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('button', { name: '새 온톨로지' }));
     await page.getByRole('button', { name: '새 온톨로지' }).click();
     const dialog = page.getByTestId('ontology-create-dialog');
     const input = dialog.locator('#ontology-domain');
@@ -111,7 +112,7 @@ test.describe('온톨로지 생명주기', () => {
       { message: '이미 같은 도메인의 온톨로지가 있습니다: 화재조사 보고서' },
       { status: 409 },
     );
-    await page.goto('/knowledge-graph/model');
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('button', { name: '새 온톨로지' }));
     await page.getByRole('button', { name: '새 온톨로지' }).click();
     const dialog = page.getByTestId('ontology-create-dialog');
     const input = dialog.locator('#ontology-domain');
@@ -133,7 +134,7 @@ test.describe('온톨로지 생명주기', () => {
       { message: '이미 같은 도메인의 온톨로지가 있습니다: 화재조사 보고서' },
       { status: 409 },
     );
-    await page.goto('/knowledge-graph/model');
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('button', { name: '새 온톨로지' }));
 
     await page.getByRole('button', { name: '새 온톨로지' }).click();
     await page.getByLabel('도메인').fill('화재조사 보고서');
@@ -198,7 +199,7 @@ test.describe('온톨로지 생명주기', () => {
   });
 
   test('관리 다이얼로그가 카운트와 수정일을 셀 단위로 보여준다', async ({ authenticatedPage: page }) => {
-    await page.goto('/knowledge-graph/model');
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('combobox', { name: '온톨로지 선택' }));
     await page.getByRole('combobox', { name: '온톨로지 선택' }).click();
     await page.getByRole('option', { name: /온톨로지 관리/ }).click();
 
@@ -219,7 +220,7 @@ test.describe('온톨로지 생명주기', () => {
   // 다른 정보 구조(그룹핑 없음)를 갖던 불일치. 활성 → 초안 → 은퇴 순 섹션 헤더가 나타나고,
   // 각 그룹 아래에 해당 상태의 온톨로지만 놓이는지 순서까지 확인한다(단순 존재 확인이 아님).
   test('관리 다이얼로그가 활성/초안/은퇴 섹션으로 그룹핑된다(회귀, #417)', async ({ authenticatedPage: page }) => {
-    await page.goto('/knowledge-graph/model');
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('combobox', { name: '온톨로지 선택' }));
     await page.getByRole('combobox', { name: '온톨로지 선택' }).click();
     await page.getByRole('option', { name: /온톨로지 관리/ }).click();
 
@@ -290,7 +291,7 @@ test.describe('온톨로지 생명주기', () => {
         },
       ]),
     );
-    await page.goto('/knowledge-graph/model');
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('combobox', { name: '온톨로지 선택' }));
     await page.getByRole('combobox', { name: '온톨로지 선택' }).click();
     await page.getByRole('option', { name: /온톨로지 관리/ }).click();
 
@@ -313,7 +314,7 @@ test.describe('온톨로지 생명주기', () => {
 
   test('참조가 없는 온톨로지는 삭제할 수 있다', async ({ authenticatedPage: page }) => {
     const capture = await mockApi(page, 'DELETE', '/api/v1/ontology/2', null, { status: 204, capture: true });
-    await page.goto('/knowledge-graph/model');
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('combobox', { name: '온톨로지 선택' }));
     await page.getByRole('combobox', { name: '온톨로지 선택' }).click();
     await page.getByRole('option', { name: /온톨로지 관리/ }).click();
 
@@ -332,7 +333,7 @@ test.describe('온톨로지 생명주기', () => {
     const capture = await mockApi(page, 'PATCH', '/api/v1/ontology/2/status', null, { status: 204, capture: true });
     // PUT이 호출되면 실패해야 한다 — 낡은 경로로 되돌아가는 회귀를 잡는 가드.
     const putCapture = await mockApi(page, 'PUT', '/api/v1/ontology/2', createOntologySchema(), { capture: true });
-    await page.goto('/knowledge-graph/model');
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('combobox', { name: '온톨로지 선택' }));
     await page.getByRole('combobox', { name: '온톨로지 선택' }).click();
     await page.getByRole('option', { name: /온톨로지 관리/ }).click();
 
@@ -365,7 +366,7 @@ test.describe('온톨로지 생명주기', () => {
         updatedAt: '2026-07-01T09:00:00Z',
       },
     ]);
-    await page.goto('/knowledge-graph/model');
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('combobox', { name: '온톨로지 선택' }));
     await page.getByRole('combobox', { name: '온톨로지 선택' }).click();
     await page.getByRole('option', { name: /온톨로지 관리/ }).click();
 
@@ -381,7 +382,7 @@ test.describe('온톨로지 생명주기', () => {
   test('참조 중 삭제 시도(409)는 사유를 토스트로 보여준다', async ({ authenticatedPage: page }) => {
     // 관리 다이얼로그는 사유를 미리 보여주지만, 동시 바인딩 상황에서는 409가 올 수 있다.
     await mockApi(page, 'DELETE', '/api/v1/ontology/2', { message: '2개 데이터셋이 사용 중입니다. 은퇴(archived)를 사용하세요.' }, { status: 409 });
-    await page.goto('/knowledge-graph/model');
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('combobox', { name: '온톨로지 선택' }));
     await page.getByRole('combobox', { name: '온톨로지 선택' }).click();
     await page.getByRole('option', { name: /온톨로지 관리/ }).click();
 
@@ -398,7 +399,7 @@ test.describe('온톨로지 생명주기', () => {
   test('초안 온톨로지는 warning 배너와 활성화 버튼을 보여준다', async ({ authenticatedPage: page }) => {
     await mockApi(page, 'GET', '/api/v1/ontology/3', createOntologySchema({ domain: '소방시설 점검', entities: [], relations: [] }));
     const capture = await mockApi(page, 'PATCH', '/api/v1/ontology/3/status', null, { status: 204, capture: true });
-    await page.goto('/knowledge-graph/model');
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('combobox', { name: '온톨로지 선택' }));
 
     await page.getByRole('combobox', { name: '온톨로지 선택' }).click();
     await page.getByRole('option', { name: /소방시설 점검/ }).click();
@@ -423,7 +424,7 @@ test.describe('온톨로지 생명주기', () => {
       { message: '엔티티 타입은 최소 1개 이상이어야 합니다.' },
       { status: 400 },
     );
-    await page.goto('/knowledge-graph/model');
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('combobox', { name: '온톨로지 선택' }));
 
     await page.getByRole('combobox', { name: '온톨로지 선택' }).click();
     await page.getByRole('option', { name: /소방시설 점검/ }).click();
@@ -434,7 +435,7 @@ test.describe('온톨로지 생명주기', () => {
 
   test('은퇴 온톨로지는 info 배너를 보여주고 편집 버튼을 숨긴다', async ({ authenticatedPage: page }) => {
     await mockApi(page, 'GET', '/api/v1/ontology/4', createOntologySchema({ domain: '구 화재조사(2024)' }));
-    await page.goto('/knowledge-graph/model');
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('combobox', { name: '온톨로지 선택' }));
 
     await page.getByRole('combobox', { name: '온톨로지 선택' }).click();
     await page.getByRole('option', { name: /구 화재조사/ }).click();
@@ -458,7 +459,7 @@ test.describe('온톨로지 생명주기', () => {
     authenticatedPage: page,
   }) => {
     await mockApi(page, 'GET', '/api/v1/ontology/3', createOntologySchema({ domain: '소방시설 점검', entities: [], relations: [] }));
-    await page.goto('/knowledge-graph/model');
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('combobox', { name: '온톨로지 선택' }));
 
     await page.getByRole('combobox', { name: '온톨로지 선택' }).click();
     await page.getByRole('option', { name: /소방시설 점검/ }).click();
@@ -534,7 +535,7 @@ test.describe('온톨로지 생명주기', () => {
     ];
     await mockApi(page, 'GET', '/api/v1/ontologies', many);
     await page.setViewportSize({ width: 1000, height: 480 });
-    await page.goto('/knowledge-graph/model');
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('combobox', { name: '온톨로지 선택' }));
 
     await page.getByRole('combobox', { name: '온톨로지 선택' }).click();
     await page.getByRole('option', { name: /온톨로지 관리/ }).click();
@@ -581,7 +582,7 @@ test.describe('온톨로지 생명주기', () => {
       { schemaVersion: 4, entityType: { ...schema.entities[0], description: '수정됨' } },
       { capture: true },
     );
-    await page.goto('/knowledge-graph/model');
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('combobox', { name: '온톨로지 선택' }));
 
     await page.getByRole('combobox', { name: '온톨로지 선택' }).click();
     await page.getByRole('option', { name: '건축물 대장' }).click();
