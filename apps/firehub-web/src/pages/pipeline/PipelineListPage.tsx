@@ -38,13 +38,16 @@ export default function PipelineListPage() {
 
   const { data: pipelinesData, isLoading, isError, error, refetch } = usePipelines({ page, size });
   // 「다시 시도」 수동 재시도 중 여부(WD-956). 실패한 쪽은 data 가 없어 재조회하면 v5 가 pending(isLoading)으로 되돌려
-  // 스켈레톤이 오류 행을 대신하고 초점 잡힌 버튼이 언마운트되므로, 재시도 중에는 오류 행과 버튼을 그대로 둔다.
-  const [retrying, setRetrying] = useState(false);
+  // 스켈레톤이 오류 행을 대신하고 초점 잡힌 버튼이 언마운트된다. 그래서 재시도한 쪽에서만(retrying = retryingPage === page)
+  // 오류 행과 잠긴 버튼을 유지한다 — 재시도 중 캐시에 없는 다른 쪽으로 옮기면 그 쪽에는 번지지 않는다.
+  const [retryingPage, setRetryingPage] = useState<number | null>(null);
+  const retrying = retryingPage === page;
   const handleRetry = () => {
     // 재시도 중 겹침 클릭은 PendingButton 이 막는다(aria-disabled + 클릭 가드).
-    setRetrying(true);
-    // 조회가 끝나면(성공·실패 모두) 해제한다 — 성공이면 행이, 실패면 오류 행이 그대로 그려진다.
-    void refetch().finally(() => setRetrying(false));
+    const target = page;
+    setRetryingPage(target);
+    // 조회가 끝나면(성공·실패 모두) 그 쪽일 때만 해제한다 — 그 사이 다른 쪽 재시도가 시작됐으면 건드리지 않는다.
+    void refetch().finally(() => setRetryingPage((p) => (p === target ? null : p)));
   };
   // 조회 실패를 빈 목록으로 그리지 않는다 (WD-122) — 403 이면 권한 안내, 그 밖은 불러오기 실패 안내.
   const isForbidden = isError && isForbiddenError(error);

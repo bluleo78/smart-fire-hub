@@ -27,17 +27,20 @@ function pageBody(pageIndex: number) {
  * 목록 API 를 쪽별로 모킹하고 쪽(page 쿼리)별 요청 수를 돌려준다.
  * - failUntil[page]: 그 쪽의 요청 수가 이 값에 못 미치는 동안 500 을 준다(전역 재시도 1회도 요청으로 센다).
  */
-async function mockPagedList(page: Page, failUntil: Record<number, number>, delayAfter?: { page: number; afterCount: number; ms: number }) {
+async function mockPagedList(
+  page: Page,
+  failUntil: Record<number, number>,
+  // 쪽별 응답 붙잡기 — 시험이 gates[쪽] 에 deferred promise 를 넣으면 풀릴 때까지 그 쪽 요청에 응답하지 않는다(실패 응답도 붙잡은 뒤).
+  gates: Record<number, Promise<void> | undefined> = {},
+) {
   const counts: Record<number, number> = { 0: 0, 1: 0, 2: 0 };
   await page.route(
     (url) => url.pathname === '/api/v1/pipelines',
     async (route) => {
       const idx = Number(new URL(route.request().url()).searchParams.get('page') ?? '0');
       counts[idx] = (counts[idx] ?? 0) + 1;
-      // 재요청 중 상태를 관찰할 수 있게 지정한 쪽의 N번째 이후 요청을 지연시킨다.
-      if (delayAfter && idx === delayAfter.page && counts[idx] > delayAfter.afterCount) {
-        await new Promise((r) => setTimeout(r, delayAfter.ms));
-      }
+      // 재요청 중 상태를 관찰할 수 있게 시험이 건 gate 가 풀릴 때까지 기다린다.
+      await gates[idx];
       if (counts[idx] <= (failUntil[idx] ?? 0)) {
         return route.fulfill({
           status: 500,
@@ -49,6 +52,15 @@ async function mockPagedList(page: Page, failUntil: Record<number, number>, dela
     },
   );
   return counts;
+}
+
+/** 시험이 직접 푸는 deferred — promise 를 gates 에 넣고 resolve 로 응답을 푼다. */
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
 }
 
 test.describe('파이프라인 목록 다음 쪽 조회 실패 (WD-956)', () => {
@@ -93,14 +105,17 @@ test.describe('파이프라인 목록 다음 쪽 조회 실패 (WD-956)', () => 
   });
 
   test('「다시 시도」를 키보드로 눌러 재요청 중에도 오류 행·초점이 남고 또 실패해도 유지된다 (WD-956)', async ({ authenticatedPage: page }) => {
-    // 둘째 쪽: 처음 2개(요청+재시도)는 즉시 실패, 이후 4개는 1.5초 지연 뒤 실패
-    const counts = await mockPagedList(page, { 1: 99 }, { page: 1, afterCount: 2, ms: 1500 });
+    // 둘째 쪽: 처음 2개(요청+재시도)는 즉시 실패, 재시도부터는 gate 를 풀 때까지 붙잡은 뒤 실패
+    const gates: Record<number, Promise<void> | undefined> = {};
+    const counts = await mockPagedList(page, { 1: 99 }, gates);
     await page.goto('/pipelines');
     await expect(page.getByRole('cell', { name: '파이프라인 1', exact: true })).toBeVisible();
     await page.getByRole('button', { name: '다음 페이지' }).click();
     await expectTableErrorAlert(page, PAGE_FAIL_MESSAGE, { action: '다시 시도' });
     expect(counts[1]).toBe(2);
 
+    const gate = deferred();
+    gates[1] = gate.promise;
     const retry = page.getByRole('button', { name: '다시 시도' });
     await retry.focus();
     await page.keyboard.press('Enter');
@@ -110,8 +125,9 @@ test.describe('파이프라인 목록 다음 쪽 조회 실패 (WD-956)', () => 
     await expect(retry).toBeFocused();
     await expect(page.getByRole('table', { name: '파이프라인 목록' }).getByRole('alert')).toHaveText(PAGE_FAIL_MESSAGE);
     await page.keyboard.press('Enter');
-    // 또 실패해도 오류 행과 초점이 그대로다 (요청 수 4 = 다시 시도 1회 + 전역 재시도 1회, 겹침 없음)
-    await expect.poll(() => counts[1], { timeout: 8000 }).toBe(4);
+    // gate 를 풀면 또 실패하는데 오류 행과 초점이 그대로다 (요청 수 4 = 다시 시도 1회 + 전역 재시도 1회, 겹침 없음)
+    gate.resolve();
+    await expect.poll(() => counts[1]).toBe(4);
     await expect(retry).not.toHaveAttribute('aria-disabled', 'true'); // PendingButton 은 잠금 해제 시 속성을 뺀다
     await expect(retry).toBeFocused();
     await expect(page.getByRole('table', { name: '파이프라인 목록' }).getByRole('alert')).toHaveText(PAGE_FAIL_MESSAGE);
@@ -120,19 +136,52 @@ test.describe('파이프라인 목록 다음 쪽 조회 실패 (WD-956)', () => 
   });
 
   test('「다시 시도」 재요청이 지연된 뒤 성공하면 행이 보인다 (WD-956)', async ({ authenticatedPage: page }) => {
-    // 둘째 쪽 처음 2개 실패, 3번째는 1.5초 지연 뒤 성공
-    const counts = await mockPagedList(page, { 1: 2 }, { page: 1, afterCount: 2, ms: 1500 });
+    // 둘째 쪽 처음 2개 실패, 3번째는 gate 를 풀 때까지 붙잡은 뒤 성공
+    const gates: Record<number, Promise<void> | undefined> = {};
+    const counts = await mockPagedList(page, { 1: 2 }, gates);
     await page.goto('/pipelines');
     await expect(page.getByRole('cell', { name: '파이프라인 1', exact: true })).toBeVisible();
     await page.getByRole('button', { name: '다음 페이지' }).click();
     await expectTableErrorAlert(page, PAGE_FAIL_MESSAGE, { action: '다시 시도' });
 
+    const gate = deferred();
+    gates[1] = gate.promise;
     const retry = page.getByRole('button', { name: '다시 시도' });
     await retry.focus();
     await page.keyboard.press('Enter');
     await expect(retry).toBeFocused();
-    await expect(page.getByRole('cell', { name: '파이프라인 11', exact: true })).toBeVisible({ timeout: 8000 });
+    gate.resolve();
+    await expect(page.getByRole('cell', { name: '파이프라인 11', exact: true })).toBeVisible();
     expect(counts[1]).toBe(3);
+  });
+
+  test('「다시 시도」 중 캐시에 없는 다른 쪽으로 옮기면 그 쪽에 오류 안내·잠긴 버튼이 번지지 않는다 (WD-956 리뷰 후속)', async ({ authenticatedPage: page }) => {
+    // 2쪽(idx 1): 처음 2개 실패 뒤 재시도는 붙잡음, 3쪽(idx 2): 첫 요청부터 붙잡음 — 응답이 오면 상태가 풀려 잘못을 가리므로 시험이 끝에서야 푼다
+    const retryGate = deferred();
+    const gates: Record<number, Promise<void> | undefined> = { 2: undefined };
+    const counts = await mockPagedList(page, { 1: 99 }, gates);
+    const page3Gate = deferred();
+    gates[2] = page3Gate.promise;
+    await page.goto('/pipelines');
+    await expect(page.getByRole('cell', { name: '파이프라인 1', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: '다음 페이지' }).click();
+    await expectTableErrorAlert(page, PAGE_FAIL_MESSAGE, { action: '다시 시도' });
+    expect(counts[1]).toBe(2);
+
+    gates[1] = retryGate.promise;
+    await page.getByRole('button', { name: '다시 시도' }).click();
+    await expect(page.getByRole('button', { name: '다시 시도' })).toHaveAttribute('aria-disabled', 'true');
+    // 재시도 응답이 오기 전에 3쪽으로 이동한다
+    const pager = page.getByRole('navigation', { name: '페이지네이션' });
+    await pager.getByRole('button', { name: '3 페이지' }).click();
+    // 3쪽으로 옮겨졌는지(현재 쪽 표시) 확인한 뒤 본다 — 이동이 안 됐으면 이 시험이 아무것도 보지 못한다
+    await expect(pager.getByRole('button', { name: '3 페이지' })).toHaveAttribute('aria-current', 'page');
+
+    // 3쪽은 아직 로딩 중 — 오류 안내와 잠긴 「다시 시도」가 없어야 한다
+    await expect(page.getByRole('table', { name: '파이프라인 목록' }).getByRole('alert')).toHaveCount(0, { timeout: 1500 });
+    await expect(page.getByRole('button', { name: '다시 시도' })).toHaveCount(0, { timeout: 1500 });
+    retryGate.resolve();
+    page3Gate.resolve();
   });
 
   test('쪽 이동이 없으면 다른 쪽으로 이동하라는 안내를 하지 않는다 (WD-956)', async ({ authenticatedPage: page }) => {

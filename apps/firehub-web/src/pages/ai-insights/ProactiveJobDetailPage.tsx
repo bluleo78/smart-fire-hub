@@ -701,7 +701,8 @@ export default function ProactiveJobDetailPage() {
 
         {!isNew && (
           <TabsContent value="executions">
-            <JobExecutionsTab jobId={jobId} />
+            {/* key: 작업이 바뀌면 탭 상태(더 보기 실패 안내 등)를 새로 시작한다 — A 작업의 실패 안내가 B 에 남지 않게 (WD-956 리뷰 후속) */}
+            <JobExecutionsTab key={jobId} jobId={jobId} />
           </TabsContent>
         )}
       </Tabs>
