@@ -1,4 +1,5 @@
 import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
+import type { ReactNode } from 'react';
 
 import { Button } from './button';
 import {
@@ -8,6 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from './select';
+import { DelayedStatus } from './table-empty';
 
 interface SimplePaginationProps {
   page: number;
@@ -86,21 +88,32 @@ export function SimplePagination({
   const isFirst = page === 0;
   const isLast = page >= totalPages - 1;
 
-  // 좌측 정보 영역: "총 N건 중 a-b" + 페이지 사이즈 selector
+  // 건수 문구: 범위 안이면 "총 N건 중 a-b", 아니면 "총 N건".
+  // 범위 밖 페이지(낡은 북마크 ?page=999)면 「9991-15」처럼 깨진 범위가 나오므로 범위를 숨긴다(WD-146)
+  let countNode: ReactNode = null;
+  if (showCount) {
+    const start = page * pageSize!;
+    const inRange = totalElements! > 0 && start < totalElements!;
+    const countText = inRange
+      ? `총 ${totalElements}건 중 ${start + 1}-${Math.min(start + pageSize!, totalElements!)}`
+      : `총 ${totalElements}건`;
+    const className = 'text-sm text-muted-foreground';
+    // [WD-931] 0건이면 표의 빈 안내(TableEmptyRow, role=status)가 이미 낭독되므로 role 없는 일반 문구로 그려 겹침을 막는다.
+    // 그 외에는 재조회로 언마운트됐다 다시 마운트돼도 낭독되도록 지연 뒤 노드를 갈아 끼우는 DelayedStatus(WD-815)를 쓴다.
+    countNode =
+      totalElements === 0 ? (
+        <p className={className}>{countText}</p>
+      ) : (
+        <DelayedStatus announceKey={countText} className={className}>
+          {countText}
+        </DelayedStatus>
+      );
+  }
+
+  // 좌측 정보 영역: 건수 문구 + 페이지 사이즈 selector
   const leftInfo = (
     <div className="flex items-center gap-3">
-      {showCount && (
-        <p className="text-sm text-muted-foreground">
-          총 {totalElements}건
-          {/* 범위 밖 페이지(낡은 북마크 ?page=999)면 「9991-15」처럼 깨진 범위가 나오므로 범위를 숨긴다(WD-146) */}
-          {totalElements! > 0 && page * pageSize! < totalElements! && (
-            <>
-              {' '}중 {page * pageSize! + 1}-
-              {Math.min((page + 1) * pageSize!, totalElements!)}
-            </>
-          )}
-        </p>
-      )}
+      {countNode}
       {showSizeSelector && (
         <div className="flex items-center gap-2">
           <span className="text-sm text-muted-foreground">페이지당</span>
