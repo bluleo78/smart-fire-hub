@@ -329,3 +329,148 @@ test.describe('데이터셋 목록 — 「다시 시도」 포커스 (WD-957)', 
     await expect(retry).toBeFocused();
   });
 });
+
+/**
+ * 데이터셋 목록 — 오프라인 연결 대기 (WD-966)
+ *
+ * 오류 뒤 오프라인에서 「다시 시도」를 누르면 쿼리가 pending + paused 라 로딩도 실패도 아니어서 「데이터셋이 없습니다」로 떨어졌다.
+ * 연결 대기 안내를 보이고, 연결이 돌아오면 자동으로 다시 불러와 목록을 채운다.
+ */
+test.describe('데이터셋 목록 — 오프라인 연결 대기 (WD-966)', () => {
+  const OFFLINE_TEXT = '인터넷 연결이 없어 데이터셋 목록을 불러오지 못하고 있습니다. 연결되면 자동으로 다시 불러옵니다.';
+
+  /** 데이터셋 목록 GET 을 항상 200(3건)으로 응답시킨다 — 오프라인 전환 전후 목록 채움 검증용 */
+  async function mockDatasetsOk(page: Page) {
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets',
+      (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(createPageResponse(createDatasets(3))),
+        });
+      },
+    );
+  }
+
+  test('오류 뒤 오프라인에서 다시 시도하면 빈 목록 대신 연결 대기 안내를 보이고, 연결되면 목록을 채운다', async ({ authenticatedPage: page }) => {
+    let fail = true;
+    let calls = 0;
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets',
+      (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        calls += 1;
+        if (fail) {
+          return route.fulfill({
+            status: 500,
+            contentType: 'application/json',
+            body: JSON.stringify({ status: 500, error: 'Internal Server Error', message: '일시적인 서버 오류입니다.' }),
+          });
+        }
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(createPageResponse(createDatasets(3))),
+        });
+      },
+    );
+
+    await page.goto('/data/datasets');
+    await expectTableErrorAlert(page, '일시적인 서버 오류입니다.', { action: '다시 시도' });
+    const before = calls;
+
+    await page.context().setOffline(true);
+    await page.getByRole('button', { name: '다시 시도' }).click();
+
+    await expect(page.getByText(OFFLINE_TEXT)).toBeVisible();
+    await expect(page.getByText('데이터셋이 없습니다.')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '새 데이터셋 만들기' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '다시 시도' })).toHaveCount(0);
+    expect(calls).toBe(before);
+
+    fail = false;
+    await page.context().setOffline(false);
+    await expect(page.getByText('데이터셋 1', { exact: true })).toBeVisible();
+    await expect(page.getByText(OFFLINE_TEXT)).toHaveCount(0);
+    expect(calls).toBeGreaterThan(before);
+  });
+
+  test('첫 진입부터 오프라인이면 빈 목록 안내 대신 연결 대기 안내를 보이고, 연결되면 목록을 채운다', async ({ authenticatedPage: page }) => {
+    await mockDatasetsOk(page);
+
+    // 온라인에서 보기 설정만 다른 주소(?size=20 — 필터가 아니라 쿼리 키만 다르다)를 먼저 열어 페이지·AI 패널 지연 조각을 받아 둔다.
+    // 서버(dev/preview)에 의존하는 모듈 경로 import 없이도, 오프라인 이동 때 조각 로딩 실패로 전체 화면 오류가 나지 않는다
+    await page.goto('/data/datasets?size=20');
+    await expect(page.getByText('데이터셋 1', { exact: true })).toBeVisible();
+
+    await page.context().setOffline(true);
+    // 사이드바 링크로 size 10 주소(캐시 없는 쿼리 키)로 SPA 이동 — 첫 조회가 오프라인에서 대기한다
+    await page.getByRole('link', { name: '데이터셋', exact: true }).first().click();
+    await expect(page).not.toHaveURL(/size=/);
+
+    await expect(page.getByText(OFFLINE_TEXT)).toBeVisible();
+    // 실패가 아닌 중립 대기 안내라 role=status(polite) 영역 안에 있어야 한다
+    await expect(page.getByRole('status').filter({ hasText: OFFLINE_TEXT })).toBeVisible();
+    await expect(page.getByRole('alert').filter({ hasText: OFFLINE_TEXT })).toHaveCount(0);
+    await expect(page.getByText('데이터셋이 없습니다.')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '새 데이터셋 만들기' })).toHaveCount(0);
+
+    await page.context().setOffline(false);
+    await expect(page.getByText('데이터셋 1', { exact: true })).toBeVisible();
+    await expect(page.getByText(OFFLINE_TEXT)).toHaveCount(0);
+  });
+
+  test('목록을 본 뒤 오프라인에서 필터를 바꾸면 연결 대기 안내를 보인다', async ({ authenticatedPage: page }) => {
+    await mockDatasetsOk(page);
+    await page.goto('/data/datasets');
+    await expect(page.getByText('데이터셋 1', { exact: true })).toBeVisible();
+
+    await page.context().setOffline(true);
+    await page.getByRole('combobox', { name: '저장 방식 필터' }).click();
+    // 현재 값(전체)이 아닌 다른 선택지를 이름으로 고른다 — 새 조건의 조회는 캐시가 없어 오프라인에서 대기한다
+    await page.getByRole('option', { name: '문서', exact: true }).click();
+
+    await expect(page.getByText(OFFLINE_TEXT)).toBeVisible();
+    await expect(page.getByText('조건에 맞는 데이터셋이 없습니다.')).toHaveCount(0);
+    await expect(page.getByText('데이터셋이 없습니다.')).toHaveCount(0);
+
+    // 연결이 돌아오면 고른 storageType 으로 GET 이 나가고 목록이 다시 그려지며 안내가 사라진다
+    const recovered = page.waitForRequest(
+      (req) => req.method() === 'GET' && new URL(req.url()).pathname === '/api/v1/datasets' && new URL(req.url()).searchParams.has('storageType'),
+    );
+    await page.context().setOffline(false);
+    const req = await recovered;
+    expect(new URL(req.url()).searchParams.get('storageType')).toBeTruthy();
+    await expect(page.getByText('데이터셋 1', { exact: true })).toBeVisible();
+    await expect(page.getByText(OFFLINE_TEXT)).toHaveCount(0);
+  });
+
+  test('연결 복구 뒤 다시 실패하면 오류 행과 「다시 시도」로 돌아오고 포커스가 버튼에 있다', async ({ authenticatedPage: page }) => {
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets',
+      (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        return route.fulfill({
+          status: 500,
+          contentType: 'application/json',
+          body: JSON.stringify({ status: 500, error: 'Internal Server Error', message: '일시적인 서버 오류입니다.' }),
+        });
+      },
+    );
+    await page.goto('/data/datasets');
+    await expectTableErrorAlert(page, '일시적인 서버 오류입니다.', { action: '다시 시도' });
+
+    await page.context().setOffline(true);
+    await page.getByRole('button', { name: '다시 시도' }).focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByText(OFFLINE_TEXT)).toBeVisible();
+
+    // 연결이 돌아와 재조회가 다시 500 이면 오류 행·버튼·포커스가 돌아와야 한다
+    await page.context().setOffline(false);
+    await expectTableErrorAlert(page, '일시적인 서버 오류입니다.', { action: '다시 시도' });
+    await expect(page.getByText(OFFLINE_TEXT)).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '다시 시도' })).toBeFocused();
+  });
+});
