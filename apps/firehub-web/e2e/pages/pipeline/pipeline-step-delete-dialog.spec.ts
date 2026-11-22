@@ -170,6 +170,18 @@ async function clickClosingConfirm(page: Page, box: { x: number; y: number; widt
   await page.mouse.click(point.x, point.y);
 }
 
+/**
+ * 재조회가 편집기 상태로 동기화(tempId 교체)될 때까지 기다린다 — 서버 이름이 보이면 동기화된 것이다.
+ * 응답 도착을 먼저 기다려, 재조회가 늦어도 화면 단언의 제한 시간을 쓰지 않는다.
+ */
+async function waitRefetchApplied(page: Page, refetchServed: Promise<void>) {
+  await refetchServed;
+  await expect(
+    page.getByText('서버 이름').first(),
+    '재조회 미반영 — 삭제가 새면 미저장 상태라 동기화가 무시된다',
+  ).toBeVisible();
+}
+
 /** 편집 모드로 돌아와 이름을 다시 바꿔 저장하고, 두 번째 PUT 에 세 스텝과 참조 번호가 그대로인지 본다 */
 async function saveAgainAndExpectOriginalSteps(page: Page, puts: SavedPayload[]) {
   await page.getByRole('button', { name: '수정' }).click();
@@ -313,7 +325,7 @@ test.describe('파이프라인 편집기 — 스텝 삭제 확인 창 (WD-952)',
   });
 
   test('저장이 끝난 직후 닫히는 창의 삭제를 눌러도 읽기 전용 스텝이 지워지지 않는다', async ({ authenticatedPage: page }) => {
-    const { confirmBox, puts, releasePut, releaseGet } = await openDialogWhileSaving(page, { slowExit: true });
+    const { confirmBox, puts, releasePut, releaseGet, refetchServed } = await openDialogWhileSaving(page, { slowExit: true });
 
     releasePut();
     // 읽기 전용이 되어 창이 닫히는 중(퇴장 애니메이션 중이라 아직 마운트되어 있다)일 때 삭제를 누른다
@@ -321,6 +333,8 @@ test.describe('파이프라인 편집기 — 스텝 삭제 확인 창 (WD-952)',
     await expect(page.locator('.react-flow__node')).toHaveCount(3);
 
     releaseGet();
+    // 동기화 전에 다음 편집을 시작하면 늦은 재조회와 순서가 실행마다 달라진다
+    await waitRefetchApplied(page, refetchServed);
     await saveAgainAndExpectOriginalSteps(page, puts);
   });
 
@@ -329,9 +343,7 @@ test.describe('파이프라인 편집기 — 스텝 삭제 확인 창 (WD-952)',
 
     releasePut();
     releaseGet();
-    await refetchServed;
-    // 재조회 결과의 서버 이름이 화면에 나타나면 편집기 상태로 동기화(tempId 교체)된 것이다
-    await expect(page.getByText('서버 이름').first()).toBeVisible();
+    await waitRefetchApplied(page, refetchServed);
     await clickClosingConfirm(page, confirmBox);
 
     await saveAgainAndExpectOriginalSteps(page, puts);
