@@ -382,8 +382,12 @@ function AppLayoutInner() {
    * 해시 이동은 URL 에 #main-content 를 남겨 BrowserRouter 위치·스크롤 복원(useScrollRestoration)과 엉키고,
    * 스크롤 컨테이너가 window 가 아니라 main 이라 포커스가 확실히 옮겨진다는 보장도 없다. href 는 의미·JS 실패 대비로 둔다.
    *
-   * main 에 tabindex=-1 을 늘 두지 않고 이때만 붙였다가 포커스가 떠나면(blur) 뗀다 — 늘 두면 본문 빈 곳을 마우스로 누를 때마다
+   * main 에 tabindex=-1 을 처음부터 두지 않고 건너뛰기로 붙인다 — 처음부터 두면 본문 빈 곳을 마우스로 누를 때마다
    * main 이 포커스를 가져가 activeElement 가 body 에서 바뀌고(단축키·포커스 복원 로직이 엉킬 수 있다), 그럴 이유가 없다.
+   * 떼는 시점은 blur 가 아니라 포커스가 떠난 main 을 마우스로 누를 때(releaseMainFocusTarget)다 — blur 에 떼면 대화상자를
+   * 열고 닫을 때 Radix 가 돌려줄 포커스 자리(main)가 사라져 포커스가 body 로 떨어진다(WD-968, DatasetListPage 표와 같은 방식).
+   * 키보드만 쓰면 이 tabindex=-1 이 세션 내내(페이지 이동에도) 남을 수 있으나, -1 은 Tab 순서에 들지 않고 마우스로 본문을
+   * 누르면 떼어지므로 무해하다.
    * 수정키·가운데 클릭(새 탭 등 브라우저 기본 동작)은 가로채지 않는다. 키보드 Enter 는 button 0 으로 들어와 그대로 처리된다.
    */
   const handleSkipToContent = (e: React.MouseEvent<HTMLAnchorElement>) => {
@@ -391,12 +395,23 @@ function AppLayoutInner() {
     const main = mainRef.current;
     if (!main) return;
     e.preventDefault();
-    // 이미 붙어 있으면(포커스가 아직 main 에 있음) 다시 붙이지 않는다 — blur 리스너가 겹쳐 쌓이지 않게
-    if (main.getAttribute('tabindex') !== '-1') {
-      main.setAttribute('tabindex', '-1');
-      main.addEventListener('blur', () => main.removeAttribute('tabindex'), { once: true });
-    }
+    // setAttribute 는 멱등이라 이미 -1 이어도 안전하다
+    main.setAttribute('tabindex', '-1');
     main.focus();
+  };
+
+  /**
+   * main 의 임시 tabindex=-1 을 뗀다(WD-968) — 포커스가 main 을 떠난 뒤 사용자가 본문을 마우스로 누르면 호출된다.
+   * 포커스가 아직 main 자신에 있으면 떼지 않는다(떼면 포커스가 흔들린다). 마우스를 누르기 전까지는 tabindex 를 남겨
+   * 대화상자 닫힘 같은 포커스 복귀 자리를 지키고, 누른 뒤에는 빈 곳 클릭이 main 에 포커스를 주지 않던 원래 동작으로 돌아간다.
+   *
+   * 실제 DOM 상 main 안에서 난 누름만 처리한다 — React 합성 이벤트는 포털(Radix 대화상자 등)을 거쳐 부모 트리로 버블링되므로,
+   * main 안 페이지가 띄운 대화상자 안 클릭이 여기 닿아 tabindex 를 떼고 닫힐 때 포커스가 body 로 떨어지는 걸 막는다.
+   * 캡처 단계(onMouseDownCapture)에 달아 mousedown 전파를 막는 자식(xyflow 캔버스 등)이 있어도 놓치지 않는다(캡처도 포털을 거치므로 검사는 필요).
+   */
+  const releaseMainFocusTarget = (e: React.MouseEvent<HTMLElement>) => {
+    if (!e.currentTarget.contains(e.target as Node)) return;
+    if (document.activeElement !== e.currentTarget) e.currentTarget.removeAttribute('tabindex');
   };
 
   return (
@@ -638,6 +653,7 @@ function AppLayoutInner() {
               ref={mainRef}
               id="main-content"
               inert={aiOverlayOpen}
+              onMouseDownCapture={releaseMainFocusTarget}
               className="flex-1 p-6 pt-10 max-lg:pt-2 overflow-auto min-w-0 focus:outline-none print:p-0 print:overflow-visible"
             >
               <Suspense fallback={<PageSkeleton />}>

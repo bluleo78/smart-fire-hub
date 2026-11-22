@@ -251,7 +251,9 @@ export default function DatasetListPage() {
   };
   // tabindex 는 blur 가 아니라, 포커스가 떠난 표를 마우스로 누를 때 뗀다 — blur 에 떼면 다른 창·대화상자에서 돌아올 자리가
   // 없어져 body 로 떨어지고, 늘 두면 표 빈 곳 클릭이 포커스를 가져간다.
+  // 표 안 행의 삭제 대화상자 같은 포털 안 클릭은 합성 이벤트로 여기까지 버블링되므로, 실제 DOM 상 표 안에서 난 누름만 처리한다.
   const releaseTableFocusTarget = (e: React.MouseEvent<HTMLTableElement>) => {
+    if (!e.currentTarget.contains(e.target as Node)) return;
     if (document.activeElement !== e.currentTarget) e.currentTarget.removeAttribute('tabindex');
   };
   useEffect(() => {
