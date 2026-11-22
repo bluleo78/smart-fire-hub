@@ -26,6 +26,8 @@ export default function XxxListPage() {
   const isOnline = useSyncExternalStore(subscribeOnline, () => onlineManager.isOnline(), () => true);
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState("");
+  // 「검색 초기화」 뒤 초점을 받을 검색 입력(WD-985)
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [status, setStatus] = useState(ALL_STATUS);
   // 상태 필터가 걸려 있는지 — 전체면 서버에 보내지 않고, 빈 목록 안내·필터 풀기에도 쓴다
   const filtersActive = status !== ALL_STATUS;
@@ -87,6 +89,7 @@ export default function XxxListPage() {
           value={search}
           onChange={handleSearchChange}
           debounceMs={300}
+          inputRef={searchInputRef}
         />
         <Select value={status} onValueChange={handleStatusChange}>
           <SelectTrigger ref={statusTriggerRef} className="w-36" aria-label="상태 필터">
@@ -135,6 +138,7 @@ export default function XxxListPage() {
                     </Button>
                   ) : undefined
                 }
+                resetFocusRef={searchInputRef}
               />
             ) : (
               data?.content.map((item) => (
@@ -184,6 +188,8 @@ export default function XxxListPage() {
 ```
 
 > 상세로 가는 키보드 경로는 이름의 `TruncatedLink`(`@/components/TruncatedLink`)이고 행 `onClick` 은 마우스 편의일 뿐이라, 행에 `role`·`tabIndex` 를 주지 않는다(표 행 의미 유지, WD-816). 행 이동에 `state` 를 넘기면 링크에도 같은 값을 넘긴다.
+>
+> 검색 초기화 뒤 초점을 검색 입력으로(WD-985): 「검색 초기화」를 누르면 버튼이 사라져 초점이 body 로 떨어지므로, 검색 입력에 `useRef` 를 `SearchInput inputRef` 로 걸고 같은 ref 를 `TableEmptyRow resetFocusRef` 에 넘긴다.
 >
 > 쪽 수 기억: 쪽을 넘기면 새 쪽 조회가 끝나기 전(로딩)이나 실패했을 때 `data` 가 비어 `totalPages` 가 0 이 되고 `SimplePagination` 이 사라져 사용자가 이동할 수 없게 된다. 그래서 마지막 성공 응답의 `totalPages` 를 기억해 쪽 이동을 그대로 남긴다(`PipelineListPage`, WD-956 — 로딩·실패 모두). 검색·필터가 바뀌면 다른 결과의 쪽 수이므로 기억한 값을 지운다. 건수 줄(「총 N건 중 a-b」)은 지금 쪽의 범위라 `data` 가 없는 동안 숨는 것이 맞다 — 기억하지 않는다. 이동 중 이전 행까지 남기려면 조회 훅에 `placeholderData: keepPreviousWhenOnlyPageChanged(...)`(WD-932, `AuditLogListPage`)를 쓰고 표에 aria-busy 를 건다 — 실패하면 placeholder 가 버려지므로 쪽 수 기억은 그대로 필요하다.
 >

@@ -1,5 +1,5 @@
 import { Search, X } from 'lucide-react';
-import { type ChangeEvent, type CompositionEvent, useEffect, useRef, useState } from 'react';
+import { type ChangeEvent, type CompositionEvent, type Ref, useEffect, useRef, useState } from 'react';
 
 import { cn } from '@/lib/utils';
 
@@ -19,6 +19,8 @@ interface SearchInputProps {
    * 지우기(X)는 기다리지 않고 바로 전달한다.
    */
   debounceMs?: number;
+  /** 안쪽 input 요소의 ref (WD-985) — 「검색 초기화」 뒤 초점을 검색 입력으로 돌려주려는 호출부가 넘긴다 */
+  inputRef?: Ref<HTMLInputElement>;
 }
 
 /**
@@ -34,7 +36,7 @@ interface SearchInputProps {
  * - 조합이 끝나면(`compositionend`) 최종 글자를 한 번에 부모에 전달한다.
  * - IME를 쓰지 않는 영문/숫자 입력은 기존과 동일하게 매 입력마다 즉시 전달된다.
  */
-export function SearchInput({ placeholder = '검색...', 'aria-label': ariaLabel, value, onChange, className, debounceMs }: SearchInputProps) {
+export function SearchInput({ placeholder = '검색...', 'aria-label': ariaLabel, value, onChange, className, debounceMs, inputRef }: SearchInputProps) {
   // 조합 중 표시되는 임시 글자를 담는 내부 상태. 부모 value와 분리해 IME 끊김을 방지한다.
   const [draft, setDraft] = useState(value);
   // 직전 렌더에서 받은 외부 value. 외부 value 변동을 렌더 중에 감지하기 위한 비교 기준.
@@ -117,6 +119,8 @@ export function SearchInput({ placeholder = '검색...', 'aria-label': ariaLabel
     <div className={cn('relative flex-1 max-w-sm', className)}>
       <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
       <Input
+        // ref 는 React 19 에서 일반 prop 이라 Input 에 그대로 전달된다(WD-985)
+        ref={inputRef}
         placeholder={placeholder}
         // aria-label: 스크린리더에서 입력 목적을 인식할 수 있도록 aria-label 전달.
         // placeholder는 VoiceOver/NVDA에서 accessible name으로 처리되지 않으므로 명시 필요.

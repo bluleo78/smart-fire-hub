@@ -257,6 +257,27 @@ test.describe('분석 자산 「워크스페이스 전체」 보기 (WD-199)', (
     await expect(page.getByTestId('workspace-analytics-queries-31')).toHaveCount(0);
   });
 
+  test('관리자 — 검색 초기화를 Enter 로 누르면 초점이 검색 입력으로 간다 (WD-985)', async ({ authenticatedPage: page }) => {
+    await setupChartListMocks(page, 1);
+    await mockAdminPermissions(page);
+    await mockApi(page, 'GET', '/api/v1/analytics/admin/queries', [
+      createAdminItem({ id: 31, name: '매출 쿼리', ownerName: '홍길동' }),
+    ]);
+    await setupQueryListMocks(page, 1);
+
+    await page.goto('/analytics/queries');
+    await page.getByRole('tab', { name: '워크스페이스 전체' }).click();
+    const input = page.getByPlaceholder('이름·작성자 검색...');
+    await input.fill('없는말');
+    const reset = page.getByRole('button', { name: '검색 초기화' });
+    await expect(reset).toBeVisible();
+    // 키보드로 누르면 버튼이 사라져도 초점이 body 로 떨어지지 않고 검색 입력으로 가야 한다
+    await reset.focus();
+    await page.keyboard.press('Enter');
+    await expect(input).toHaveValue('');
+    await expect(input).toBeFocused();
+  });
+
   // WD-524: 공유 해제 확인 창의 「공유 해제」를 더블클릭하면 닫힘 애니메이션 동안 남은 버튼이 두 번째 클릭을 받아
   // unshare POST 가 두 번 나갔다. 응답을 붙잡아 진행 중에도 두 번째 요청이 나가지 않는지 세 종류 모두 본다.
   test('관리자 — 공유 해제 확인 창의 「공유 해제」를 더블클릭해도 unshare 요청은 한 번만 나간다 (WD-524)', async ({

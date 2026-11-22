@@ -117,6 +117,8 @@ const CATEGORY_CHIP_CLASS = 'h-8 min-w-8 cursor-pointer hover:opacity-80 transit
  * - history 오염 방지를 위해 replace=true 로 갱신.
  */
 export default function DatasetListPage() {
+  // WD-985: 「검색 초기화」 뒤 초점이 body 로 떨어지지 않게 이 화면의 검색 입력으로 보낸다
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -425,6 +427,7 @@ export default function DatasetListPage() {
         <div className="flex items-center gap-3 flex-wrap">
           <SearchInput
             placeholder="데이터셋 검색..."
+            inputRef={searchInputRef}
             // 입력이 멈춘 뒤 한 번만 검색한다(WD-513) — 글자마다 목록 요청·페이지 초기화가 나가지 않게
             debounceMs={300}
             value={search}
@@ -820,6 +823,7 @@ export default function DatasetListPage() {
             ) : (
               <TableEmptyRow
                 colSpan={8}
+                resetFocusRef={searchInputRef}
                 // 임시가 숨겨진 상태면 0건이어도 임시 데이터셋은 있을 수 있다 — 어디서 보는지 함께 알린다(WD-754).
                 // 출처 필터가 골라져 있으면 토글이 비활성이라 「켜면 보입니다」는 따를 수 없는 안내다 — 빼고 그대로 둔다(WD-776).
                 // 필터로 걸러져 0건이면 「조건에 맞는」 문구를 쓴다 — 데이터가 없는 게 아니라 조건에 맞는 게 없다는 뜻이다(WD-879).

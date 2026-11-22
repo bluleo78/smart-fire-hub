@@ -567,6 +567,21 @@ test.describe('카테고리 관리 페이지', () => {
     await expect(page.getByText('3개')).toBeVisible();
   });
 
+  test('검색 초기화를 Enter 로 누르면 초점이 검색 입력으로 간다 (WD-985)', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
+    await page.goto('/data/categories');
+
+    const input = page.getByLabel('카테고리 검색');
+    await input.fill('존재하지않는키워드xyz');
+    const reset = page.getByRole('button', { name: '검색 초기화' });
+    await expect(reset).toBeVisible();
+    // 키보드로 누르면 버튼이 사라져도 초점이 body 로 떨어지지 않고 검색 입력으로 가야 한다
+    await reset.focus();
+    await page.keyboard.press('Enter');
+    await expect(input).toHaveValue('');
+    await expect(input).toBeFocused();
+  });
+
   test('검색 0건이면 공용 검색 빈 상태와 「검색 초기화」를 보이고, 누르면 전체 목록으로 돌아온다 (WD-904)', async ({
     authenticatedPage: page,
   }) => {

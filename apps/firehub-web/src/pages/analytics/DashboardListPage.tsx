@@ -8,7 +8,7 @@ import {
   Share2,
   Trash2,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -497,6 +497,8 @@ function EditDashboardDialog({ dashboard, onClose }: EditDialogProps) {
 type ListTab = 'mine' | 'shared' | 'workspace';
 
 export default function DashboardListPage() {
+  // WD-985: 「검색 초기화」 뒤 초점이 body 로 떨어지지 않게 이 화면의 검색 입력으로 보낸다
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [selectedTab, setSelectedTab] = useState<ListTab>('mine');
@@ -576,6 +578,7 @@ export default function DashboardListPage() {
               <div className="flex items-center gap-3">
                 <SearchInput
                   placeholder="대시보드 검색..."
+                  inputRef={searchInputRef}
                   // 입력이 멈춘 뒤 한 번만 검색한다(WD-513) — 글자마다 목록 요청·페이지 초기화가 나가지 않게
                   debounceMs={300}
                   value={search}
@@ -728,6 +731,7 @@ export default function DashboardListPage() {
                       <TableEmptyRow
                         colSpan={5}
                         message="대시보드가 없습니다."
+                        resetFocusRef={searchInputRef}
                         searchKeyword={search || undefined}
                         onResetSearch={search ? () => { setSearch(''); setPage(0); } : undefined}
                         emptyAction={

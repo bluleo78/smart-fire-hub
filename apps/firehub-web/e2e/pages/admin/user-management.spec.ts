@@ -121,6 +121,22 @@ test.describe('사용자 관리 페이지', () => {
     await expect(searchInput).toHaveValue('사용자');
   });
 
+  test('검색 초기화를 Enter 로 누르면 초점이 검색 입력으로 간다 (WD-985)', async ({ authenticatedPage: page }) => {
+    // 목록이 비어 있으면 어떤 검색어든 0건 → 검색 빈 상태의 「검색 초기화」가 보인다
+    await mockApi(page, 'GET', '/api/v1/users', createPageResponse([]));
+    await page.goto('/admin/users');
+
+    const input = page.getByPlaceholder('이름 또는 아이디로 검색...');
+    await input.fill('없는말');
+    const reset = page.getByRole('button', { name: '검색 초기화' });
+    await expect(reset).toBeVisible();
+    // 키보드로 누르면 버튼이 사라져도 초점이 body 로 떨어지지 않고 검색 입력으로 가야 한다
+    await reset.focus();
+    await page.keyboard.press('Enter');
+    await expect(input).toHaveValue('');
+    await expect(input).toBeFocused();
+  });
+
   /** WD-283: 2페이지에서 상세에 다녀와도(뒤로) 2페이지로 돌아온다 — 페이지가 주소 쿼리에 남는다. */
   test('2페이지에서 사용자 상세에 다녀오면 2페이지로 돌아온다 (WD-283)', async ({ authenticatedPage: page }) => {
     const users = Array.from({ length: 10 }, (_, i) =>

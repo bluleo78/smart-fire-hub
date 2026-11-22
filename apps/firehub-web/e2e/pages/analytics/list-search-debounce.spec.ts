@@ -186,8 +186,12 @@ test.describe('목록 검색 debounce (WD-513)', () => {
       calls.length = 0;
 
       // 「검색 초기화」: debounce 를 기다리지 않고 바로 입력 칸을 비우고 전체 목록(캐시)으로 돌아간다
-      await page.getByRole('button', { name: '검색 초기화' }).click();
+      // WD-985: 키보드(Enter)로 눌러도 초점이 body 로 떨어지지 않고 검색 입력으로 간다
+      const resetBtn = page.getByRole('button', { name: '검색 초기화' });
+      await resetBtn.focus();
+      await page.keyboard.press('Enter');
       await expect(input).toHaveValue('', { timeout: 250 });
+      await expect(input).toBeFocused();
       await expect(page.getByText('항목 p0', { exact: true })).toBeVisible();
       await page.waitForTimeout(400);
       // 초기화 뒤 옛 검색어(zzz)로 늦게 나가는 요청이 없다

@@ -95,6 +95,24 @@ test.describe('데이터셋 목록 페이지', () => {
     await expect(rows).toHaveCount(2); // 헤더 1개 + 빈 상태 행 1개
   });
 
+  test('검색 초기화를 Enter 로 누르면 초점이 검색 입력으로 간다 (WD-985)', async ({ authenticatedPage: page }) => {
+    // 목록이 비어 있으면 어떤 검색어든 0건 → 검색 빈 상태의 「검색 초기화」가 보인다
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', []);
+    await mockApi(page, 'GET', '/api/v1/datasets', createPageResponse([]));
+    await mockApi(page, 'GET', '/api/v1/datasets/tags', []);
+    await page.goto('/data/datasets');
+
+    const input = page.getByPlaceholder('데이터셋 검색...');
+    await input.fill('없는말');
+    const reset = page.getByRole('button', { name: '검색 초기화' });
+    await expect(reset).toBeVisible();
+    // 키보드로 누르면 버튼이 사라져도 초점이 body 로 떨어지지 않고 검색 입력으로 가야 한다
+    await reset.focus();
+    await page.keyboard.press('Enter');
+    await expect(input).toHaveValue('');
+    await expect(input).toBeFocused();
+  });
+
   test('검색 입력 시 search 파라미터가 반영된다', async ({ authenticatedPage: page }) => {
     // 초기 모킹 설정 후 페이지 이동
     await setupDatasetMocks(page);
