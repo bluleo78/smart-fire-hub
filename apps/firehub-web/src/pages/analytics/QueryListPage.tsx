@@ -47,7 +47,7 @@ import {
   useSavedQueries,
 } from '../../hooks/queries/useAnalytics';
 import { useIsOwner } from '../../hooks/useIsOwner';
-import { handleApiError } from '../../lib/api-error';
+import { handleApiError, listLoadErrorProps } from '../../lib/api-error';
 import { formatDateTimeMinute, formatRelativeTime } from '../../lib/formatters';
 import { getPageAfterDelete } from '../../lib/pagination';
 import { iGa } from '../../lib/utils';
@@ -72,7 +72,7 @@ export default function QueryListPage() {
   // 「내 쿼리」 탭은 내가 만든 쿼리만 — 필터 없이 부르면 서버가 남의 공유 쿼리까지 섞어 준다(WD-328). 「공유됨」은 sharedOnly 그대로.
   const mineOnly = tab === 'mine';
 
-  const { data: queriesData, isLoading, isError } = useSavedQueries({
+  const { data: queriesData, isLoading, isError, error: queriesError } = useSavedQueries({
     search: search || undefined,
     folder: folder || undefined,
     sharedOnly: sharedOnly || undefined,
@@ -82,7 +82,7 @@ export default function QueryListPage() {
   });
 
   // 폴더 드롭다운도 목록과 같은 탭 범위 — 「내 쿼리」에서 남의 공유 쿼리에만 있는 폴더를 고르면 늘 빈 결과가 된다(WD-328)
-  const { data: foldersData } = useQueryFolders({
+  const { data: foldersData, isError: isFoldersError } = useQueryFolders({
     sharedOnly: sharedOnly || undefined,
     mineOnly: mineOnly || undefined,
   });
@@ -188,6 +188,12 @@ export default function QueryListPage() {
                         {f}
                       </SelectItem>
                     ))}
+                    {/* 폴더 목록 조회 실패를 「폴더 없음」과 구분한다 — 실패해도 쿼리 목록·「전체 폴더」는 그대로 쓰고, 고를 수 없는 안내 줄만 더한다 (WD-978 리뷰 후속) */}
+                    {isFoldersError && !foldersData && (
+                      <SelectItem value="__folders_error__" disabled>
+                        폴더 목록을 불러오지 못했습니다
+                      </SelectItem>
+                    )}
                   </SelectContent>
                 </Select>
               </div>
@@ -213,7 +219,11 @@ export default function QueryListPage() {
                       <TableSkeletonRows columns={6} rows={5} />
                     ) : isError && !queriesData ? (
                       // 목록 조회 실패 — 0건 안내로 오해되지 않게 실패 안내를 보인다. 받아 둔 목록이 있으면 재조회 실패여도 유지한다 (WD-978)
-                      <TableErrorRow colSpan={6} />
+                      <TableErrorRow
+                        colSpan={6}
+                        // 403 은 권한 안내(흐린 톤), 그 밖은 서버 사유 — 권한 문제를 일시 장애처럼 보이지 않게 한다 (WD-978 리뷰 후속)
+                        {...listLoadErrorProps(queriesError, '쿼리')}
+                      />
                     ) : queries.length > 0 ? (
                       queries.map((query) => (
                         <TableRow
