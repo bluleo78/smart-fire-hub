@@ -32,8 +32,9 @@ export function SessionSwitcher({ currentSessionId, onNewSession, onSelectSessio
   const [open, setOpen] = useState(false);
   const { data: sessions } = useAISessions();
   const deleteSession = useDeleteAISession();
-  // 삭제를 보낸 줄(id)과 그 줄이 사라지면 초점을 옮겨 갈 이웃 줄 (WD-951). 삭제가 겹칠 수 있어 모음이다.
-  const pendingDeletes = useRef(new Map<number, number | undefined>());
+  // 보낸 삭제 요청마다 지운 줄(id)과 그 줄이 사라지면 초점을 옮겨 갈 이웃 줄 (WD-951). 삭제가 겹칠 수 있어 모음이다.
+  // 요청 단위라 실패한 요청만 빠지고, 같은 줄에 겹친 요청이 하나라도 남아 있으면 그 줄은 계속 기억된다.
+  const pendingDeletes = useRef(new Set<{ id: number; neighborId: number | undefined }>());
   // 이 컴포넌트 안의 줄 제목 버튼과 목록 상자·새 대화 버튼 — 패널이 최대 세 곳에 그려지므로 전역 id 대신 ref 로 찾는다
   const titleRefs = useRef(new Map<number, HTMLButtonElement>());
   const contentRef = useRef<HTMLDivElement>(null);
@@ -52,10 +53,10 @@ export function SessionSwitcher({ currentSessionId, onNewSession, onSelectSessio
     if (!sessions) return;
     // 이번 갱신에서 사라진 줄들만 모음에서 꺼낸다(아직 남은 줄은 다음 갱신까지 기억)
     const gone: (number | undefined)[] = [];
-    pendingDeletes.current.forEach((neighborId, id) => {
-      if (sessions.some((s) => s.id === id)) return;
-      pendingDeletes.current.delete(id);
-      gone.push(neighborId);
+    pendingDeletes.current.forEach((req) => {
+      if (sessions.some((s) => s.id === req.id)) return;
+      pendingDeletes.current.delete(req);
+      gone.push(req.neighborId);
     });
     if (gone.length === 0 || !hadFocus.current) return;
     const active = document.activeElement;
@@ -66,10 +67,11 @@ export function SessionSwitcher({ currentSessionId, onNewSession, onSelectSessio
       newSessionRef.current?.focus();
       return;
     }
-    // 이웃이 그새 사라졌어도 남은 줄이 있으면 첫 줄로 — 대화가 남았는데 목록을 닫지 않는다.
+    // 이웃이 그새 사라졌어도 남은 줄이 있으면 목록 순서의 첫 남은 줄로 — 대화가 남았는데 목록을 닫지 않는다.
+    // Map 의 넣은 순서(ref 가 붙는 순서)에 기대지 않고 sessions 순서로 고른다(WD-951 리뷰 후속).
     // 목록이 닫혀 있으면 줄 버튼이 없어 옮길 곳이 없고, 대화가 남았으니 「새 대화」로 끌어가지도 않는다.
     const neighbor = gone.map((id) => id !== undefined && titleRefs.current.get(id)).find(Boolean);
-    (neighbor || titleRefs.current.values().next().value)?.focus();
+    (neighbor || sessions.map((s) => titleRefs.current.get(s.id)).find(Boolean))?.focus();
   }, [sessions]);
 
   // 대화가 모두 사라지면 목록을 닫아 둔다 — open 이 true 로 남으면 이후 새 대화가 생길 때 목록이 저절로 열린다.
@@ -149,22 +151,26 @@ export function SessionSwitcher({ currentSessionId, onNewSession, onSelectSessio
                       onConfirm={() => {
                         // 이웃은 다음 줄, 없으면 이전 줄 — 누른 시점의 목록으로 정한다
                         const neighborId = (sessions[index + 1] ?? sessions[index - 1])?.id;
-                        // 보내기 전에 기억한다 — 응답보다 목록 갱신이 먼저 올 수 있다. 실패해도 지우지 않는다:
-                        // 줄이 남아 있으면 아무 일도 없고, 같은 줄을 두 번 지운 둘째 실패가 첫 성공의 기억을 지우면 안 된다.
-                        pendingDeletes.current.set(session.id, neighborId);
-                        deleteSession.mutate(session.id);
+                        // 보내기 전에 기억한다 — 응답보다 목록 갱신이 먼저 올 수 있다. 실패한 요청은 기억에서 뺀다(리뷰 후속):
+                        // 남겨 두면 나중에 다른 까닭으로 그 줄이 사라질 때 초점을 엉뚱하게 옮긴다. 호출별 mutate 콜백은
+                        // 겹친 호출 중 마지막 것만 불리므로 promise 로 받는다. 오류 안내는 훅의 onError 가 띄운다.
+                        const req = { id: session.id, neighborId };
+                        pendingDeletes.current.add(req);
+                        deleteSession.mutateAsync(session.id).catch(() => pendingDeletes.current.delete(req));
                       }}
                       trigger={
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="absolute right-2 top-1.5 h-5 w-5 opacity-50 hover:opacity-100 focus-visible:opacity-100"
+                          className="group/trash absolute right-2 top-1.5 h-5 w-5"
                           // 어느 대화의 삭제인지 이름에 담는다(전체 화면 목록 #346 과 같게). 제목 버튼의 형제라
                           // #514 처럼 제목이 두 번 읽히지 않는다.
                           aria-label={`${label} 삭제`}
                           onFocus={scrollIntoViewOnKeyboardFocus}
                         >
-                          <Trash2 className="h-3 w-3 text-muted-foreground" />
+                          {/* 흐린 opacity-50 에 muted 색까지 겹치면 현재 줄(bg-accent) 위 대비가 3:1 아래로 떨어진다 —
+                              muted 색 하나만 두고 가리킬 때 진하게(WD-951 리뷰 후속, WCAG 1.4.11) */}
+                          <Trash2 className="h-3 w-3 text-muted-foreground group-hover/trash:text-foreground group-focus-visible/trash:text-foreground" />
                         </Button>
                       }
                     />

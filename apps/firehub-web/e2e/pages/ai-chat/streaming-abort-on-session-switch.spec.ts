@@ -210,11 +210,11 @@ test.describe('AI 채팅 스트리밍 중 세션 전환 abort (#209)', () => {
     await page.waitForTimeout(300);
 
     // 기존 세션으로 전환 (펼침 목록 → 세션 선택)
+    // 전환 버튼이 없으면 전환 없이 통과해 버리므로 보이는지부터 단언한다(WD-951 리뷰 후속)
     const sessionSwitcher = page.getByRole('button', { name: /대화 선택/ });
-    if (await sessionSwitcher.isVisible()) {
-      await sessionSwitcher.click();
-      await page.getByRole('dialog', { name: '대화 선택' }).getByRole('button', { name: /기존 대화/ }).first().click();
-    }
+    await expect(sessionSwitcher).toBeVisible();
+    await sessionSwitcher.click();
+    await page.getByRole('dialog', { name: '대화 선택' }).getByRole('button', { name: /기존 대화/ }).first().click();
 
     // 스트림 해제
     resolveStream();

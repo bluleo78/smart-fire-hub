@@ -44,6 +44,8 @@ interface PanelOptions {
   holdRefetch?: boolean;
   /** 이 id 들의 DELETE 응답은 releaseDelete(id) 까지 붙잡는다 — 삭제 둘이 겹칠 때 응답 순서를 시험이 쥔다 */
   slowDeleteIds?: string[];
+  /** 이 id 들의 DELETE 만 500 으로 실패시킨다(나머지는 deleteStatus) */
+  failDeleteIds?: string[];
 }
 
 /** 패널을 열고 대화 3개를 모킹한 뒤 요청 기록을 돌려준다 */
@@ -95,8 +97,9 @@ async function openPanel(page: Page, sessions: AISession[] = MOCK_SESSIONS, opts
         if (opts.slowDeleteIds?.includes(id)) {
           await new Promise<void>((resolve) => deleteGates.set(id, resolve));
         }
-        if ((opts.deleteStatus ?? 204) >= 400) {
-          return route.fulfill({ status: opts.deleteStatus, contentType: 'application/json', body: '{"message":"fail"}' });
+        const status = opts.failDeleteIds?.includes(id) ? 500 : (opts.deleteStatus ?? 204);
+        if (status >= 400) {
+          return route.fulfill({ status, contentType: 'application/json', body: '{"message":"fail"}' });
         }
         serverSessions = serverSessions.filter((s) => String(s.id) !== id);
         if (opts.holdRefetch) {
@@ -478,6 +481,45 @@ test.describe('SessionSwitcher — 키보드 삭제 (WD-951)', () => {
       expect(await focusIsOnBody(page)).toBe(true);
     });
 
+    test('이웃 줄도 함께 사라지면 목록 순서의 첫 남은 줄로 간다 — 나중에 생긴 줄이 위에 있어도 (리뷰 후속 ①)', async ({
+      authenticatedPage: page,
+    }) => {
+      const requests = await openPanel(page, MOCK_SESSIONS, { holdRefetch: true });
+      await openListByKeyboard(page);
+      await deleteByKeyboard(page, '셋째 대화');
+      await expect.poll(() => requests.deletes).toEqual(['3']);
+
+      // 그사이 다른 곳에서 둘째(이웃)가 지워지고 새 대화가 맨 위에 생겼다 — 목록 순서의 첫 줄인 새 대화로 가야 한다
+      // (인라인 ref 는 렌더마다 다시 붙어 지금은 Map 순서도 같지만, 그 구현 세부에 기대지 않음을 지킨다)
+      const created = createAISession({ id: 7, sessionId: 'sw-7', title: '새로 생긴 대화', updatedAt: '2026-11-23T04:00:00Z' });
+      requests.setSessions([created, MOCK_SESSIONS[0]]);
+      requests.release();
+      await expect(titleBtn(page, '셋째 대화')).toHaveCount(0);
+      await expect(titleBtn(page, '새로 생긴 대화')).toBeFocused();
+    });
+
+    test('실패한 삭제는 기억에서 빠져, 뒤에 그 줄이 다른 까닭으로 사라져도 초점을 그 이웃으로 끌지 않는다 (리뷰 후속 ②)', async ({
+      authenticatedPage: page,
+    }) => {
+      const four = createAISession({ id: 4, sessionId: 'sw-4', title: '넷째 대화', updatedAt: '2026-11-23T00:00:00Z' });
+      const requests = await openPanel(page, [...MOCK_SESSIONS, four], { holdRefetch: true, failDeleteIds: ['3'] });
+      await openListByKeyboard(page);
+      // 셋째 삭제는 실패한다(이웃은 넷째)
+      await deleteByKeyboard(page, '셋째 대화');
+      await expect(page.getByText('대화 삭제에 실패했습니다.')).toBeVisible();
+      await expect(deleteBtn(page, '셋째 대화')).toBeFocused();
+
+      // 첫째를 지운다(이웃은 둘째). 갱신 전에 다른 곳에서 셋째가 지워져 둘이 함께 사라진다
+      await deleteByKeyboard(page, '첫째 대화');
+      await expect.poll(() => requests.deletes).toEqual(['3', '1']);
+      requests.setSessions([MOCK_SESSIONS[1], four]);
+      requests.release();
+      await expect(titleBtn(page, '첫째 대화')).toHaveCount(0);
+      await expect(titleBtn(page, '셋째 대화')).toHaveCount(0);
+      // 실패한 셋째의 기억이 남아 있으면 먼저 기억한 그 이웃(넷째)으로 간다
+      await expect(titleBtn(page, '둘째 대화')).toBeFocused();
+    });
+
     test('삭제가 500 으로 실패하면 오류 토스트, 줄은 남고 초점은 그 삭제 버튼에 돌아온다', async ({
       authenticatedPage: page,
     }) => {
@@ -517,6 +559,55 @@ test.describe('SessionSwitcher — 키보드 삭제 (WD-951)', () => {
       expect(current).not.toBe(TRANSPARENT);
       expect(await rowBg(page, 0)).toBe(TRANSPARENT);
       expect(await rowBg(page, 2)).toBe(TRANSPARENT);
+    });
+
+    test('현재 줄(bg-accent) 위 휴지통 아이콘의 대비가 밝은·어두운 테마 모두 3:1 이상이다 (리뷰 후속 ③, WCAG 1.4.11)', async ({
+      authenticatedPage: page,
+    }) => {
+      await openPanel(page);
+      await page.getByRole('button', { name: '대화 선택', exact: true }).click();
+      await titleBtn(page, '첫째 대화').click();
+      await page.getByRole('button', { name: '첫째 대화', exact: true }).click();
+      await page.mouse.move(2, 2);
+      const contrast = () =>
+        deleteBtn(page, '첫째 대화').evaluate((btn) => {
+          // 색 문자열을 캔버스로 sRGB 로 바꾼다(oklch 등도 읽힌다)
+          const ctx = document.createElement('canvas').getContext('2d')!;
+          const rgba = (c: string) => {
+            ctx.clearRect(0, 0, 1, 1);
+            ctx.fillStyle = c;
+            ctx.fillRect(0, 0, 1, 1);
+            const d = ctx.getImageData(0, 0, 1, 1).data;
+            return [d[0], d[1], d[2], d[3] / 255];
+          };
+          const over = (top: number[], below: number[]) => {
+            const a = top[3];
+            return [0, 1, 2].map((i) => top[i] * a + below[i] * (1 - a)).concat(1);
+          };
+          const lum = ([r, g, b]: number[]) => {
+            const f = (v: number) => {
+              const x = v / 255;
+              return x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4;
+            };
+            return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+          };
+          // 줄 배경은 반투명일 수 있어(어두운 테마 accent 9%) 불투명한 조상이 나올 때까지 아래 배경 위에 겹친다
+          const layers: number[][] = [];
+          for (let el: Element | null = btn.closest('li'); el; el = el.parentElement) {
+            const c = rgba(getComputedStyle(el).backgroundColor);
+            if (c[3] > 0) layers.push(c);
+            if (c[3] >= 1) break;
+          }
+          const bg = layers.reverse().reduce((acc, c) => over(c, acc), [255, 255, 255, 1]);
+          const icon = rgba(getComputedStyle(btn.querySelector('svg')!).color);
+          // 버튼 opacity 까지 곱해 배경 위에 실제로 칠해지는 색으로 섞는다
+          const fg = over([icon[0], icon[1], icon[2], icon[3] * Number(getComputedStyle(btn).opacity)], bg);
+          const [l1, l2] = [lum(fg), lum(bg)].sort((x, y) => y - x);
+          return (l1 + 0.05) / (l2 + 0.05);
+        });
+      await expect.poll(contrast).toBeGreaterThanOrEqual(3);
+      await page.evaluate(() => document.documentElement.classList.add('dark'));
+      await expect.poll(contrast).toBeGreaterThanOrEqual(3);
     });
 
     test('키보드로 열면 초점이 간 첫 줄도 강조된다', async ({ authenticatedPage: page }) => {
