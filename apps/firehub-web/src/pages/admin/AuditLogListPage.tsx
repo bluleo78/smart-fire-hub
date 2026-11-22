@@ -29,7 +29,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { TableEmptyRow } from '@/components/ui/table-empty';
+import { TableEmptyRow, TableErrorRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { useAuditLogs } from '@/hooks/queries/useAuditLogs';
 import { useMyPermissions } from '@/hooks/queries/useMyPermissions';
@@ -749,11 +749,7 @@ export default function AuditLogListPage() {
             ) : isLoading ? (
               <TableSkeletonRows columns={7} rows={5} />
             ) : isError ? (
-              <TableRow>
-                <TableCell colSpan={7} className="text-center text-destructive">
-                  데이터를 불러오는 데 실패했습니다.
-                </TableCell>
-              </TableRow>
+              <TableErrorRow colSpan={7} />
             ) : logs && logs.content.length > 0 ? (
               logs.content.map((log) => (
                 // 행 클릭 시 상세 보기 다이얼로그를 열어 truncate된 description 전문을 표시한다

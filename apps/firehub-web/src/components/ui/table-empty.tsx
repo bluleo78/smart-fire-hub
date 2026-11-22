@@ -18,10 +18,13 @@ interface DelayedStatusProps {
   announceKey?: string;
   /** 내용 노드(낭독되는 노드)에 붙일 클래스 */
   className?: string;
+  /** 라이브 리전 역할 — 기본 status(정중한 안내), 실패처럼 바로 알려야 하면 alert (WD-930) */
+  role?: 'status' | 'alert';
 }
 
 /**
  * 빈 상태 안내 문구를 role="status" 라이브 리전 안에 두어 스크린리더가 낭독하게 하는 공용 컴포넌트.
+ * role="alert" 를 넘기면 같은 지연 낭독 방식으로 실패 안내를 aria-live="assertive" 로 알린다(WD-930).
  *
  * [WD-815] 내용과 함께 마운트된 status 영역은 낭독되지 않을 수 있다.
  * - 문구는 마운트 때부터 화면에 그리되 ANNOUNCE_DELAY_MS 동안은 aria-hidden 노드로 두고, 지연 뒤 key 가 다른
@@ -29,7 +32,7 @@ interface DelayedStatusProps {
  *   (aria-hidden 속성만 떼면 일부 화면 읽기 프로그램이 낭독하지 않는다), 화면에서는 한 커밋에 바뀌어 깜빡이지 않는다.
  * - status 는 분기 밖 같은 자리에 하나만 두어, 마운트된 동안 문구가 바뀌면 같은 영역의 변화로 낭독된다.
  */
-export function DelayedStatus({ children, announceKey, className }: DelayedStatusProps) {
+export function DelayedStatus({ children, announceKey, className, role = 'status' }: DelayedStatusProps) {
   // 지연 뒤 숨긴 노드를 낭독되는 노드로 갈아 끼우기 위한 플래그
   const [ready, setReady] = useState(false);
   useEffect(() => {
@@ -39,7 +42,7 @@ export function DelayedStatus({ children, announceKey, className }: DelayedStatu
   }, []);
 
   return (
-    <div role="status" aria-live="polite" aria-atomic="true">
+    <div role={role} aria-live={role === 'alert' ? 'assertive' : 'polite'} aria-atomic="true">
       {/* announceKey 가 바뀌어도 새 노드가 들어와 같은 문구를 다시 낭독한다 */}
       <div
         key={ready ? `announced:${announceKey ?? ''}` : 'pending'}
@@ -117,6 +120,32 @@ export function TableEmptyRow({
           )}
           {!isSearchEmpty && emptyAction}
         </div>
+      </TableCell>
+    </TableRow>
+  );
+}
+
+interface TableErrorRowProps {
+  colSpan: number;
+  /** 조회 실패 시 노출할 메시지 (기본: "데이터를 불러오는 데 실패했습니다.") */
+  message?: string;
+}
+
+/**
+ * 테이블 조회 실패 행 (WD-930).
+ *
+ * 실패 문구를 role="alert" 라이브 리전 안에 두어 스크린리더 사용자가 조회 실패를 알게 한다(WCAG 4.1.3).
+ * - alert 영역은 td 안쪽에 둔다 — td 에 role 을 덮어쓰면 표의 cell 역할이 깨지기 때문이다.
+ * - 내용과 함께 마운트된 라이브 리전 낭독 누락(WD-815)을 피하려 TableEmptyRow 와 같은 DelayedStatus 를 쓴다.
+ */
+export function TableErrorRow({
+  colSpan,
+  message = '데이터를 불러오는 데 실패했습니다.',
+}: TableErrorRowProps) {
+  return (
+    <TableRow>
+      <TableCell colSpan={colSpan} className="text-center text-destructive">
+        <DelayedStatus role="alert">{message}</DelayedStatus>
       </TableCell>
     </TableRow>
   );
