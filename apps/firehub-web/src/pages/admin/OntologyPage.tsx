@@ -234,22 +234,22 @@ export default function OntologyPage() {
   // 3-pane 요소 편집기가 실제로 보여야 하는지 — 스키마 탭 + 토글 켜짐 + 권한까지 모두 갖춰야 한다.
   // canEdit이 꺼지면(예: 관리 다이얼로그에서 archived로 전이) 토글 state와 무관하게 즉시 닫혀야 하므로
   // modelEditMode를 곱해 파생시킨다(별도 effect로 끄는 대신).
+  // 편집기는 목록 게이트로 닫지 않는다 — 편집 중 목록 배경 재조회가 실패해도 캐시에 남은 selectedSchema 로 편집기가
+  // 유지되어 저장 대기 초안을 잃지 않게 한다. 첫 진입 게이트(로딩·오류·403·없음)에선 selectedSchema 가 없어 원래 들어갈 수 없다(WD-915).
   const showEditor = tab === 'schema' && modelEditMode && canEdit;
-  // 그래프 탐색 탭이 읽기 제한(WD-28) 상태인가 — 한 번만 계산해 본문·툴바·좌측 패널이 같은 판정을 쓴다.
-  // 제한 상태에선 그래프가 없어 이름 검색·타입 묶기·타입 필터가 눌러도 아무 효과가 없는 죽은 컨트롤이 되고,
-  // 색색의 타입 목록이 "표시할 수 없습니다" 옆에 있으면 필터만 바꾸면 보일 것처럼 읽힌다(디자인 검토 M-2) — 숨긴다.
-  // 온톨로지 선택기는 제한에서 벗어나는 유일한 출구라 유지한다. 스키마 탭은 판정 대상이 아니다.
-  const graphRestricted = tab === 'instance' && isGraphReadRestricted(graphError);
-  // 그래프 조회 실패(isGraphError)도 읽기 제한과 마찬가지로 그래프가 없다 — 이름 검색·타입 묶기·타입 필터·접기 토글이
-  // 눌러도 반응 없는 죽은 컨트롤이 되므로 같이 숨긴다(WD-870). 본문 분기(renderInstanceTab)는 제한/오류를
-  // 다른 상태로 계속 구분하므로 graphRestricted 는 그대로 두고, 컨트롤 숨김 판정에만 이 값을 쓴다.
-  // 재시도 중에도 isError 가 유지되는 동안은 숨겨 둔다(성공하면 되살아난다). 지식 모델 탭은 판정 대상이 아니다.
-  // 목록 게이트(목록 오류·403·로딩·지식 모델 없음)가 본문을 대신하는 때도 그래프가 없어 같은 죽은 컨트롤이 남았다(WD-894).
-  // 게이트의 단일 판정이다 — renderOntologyListGate 도 이 값이 거짓이면 바로 null 을 준다. 목록이 회복되면 다시 보인다.
+  // 목록 게이트(목록 오류·403·로딩·지식 모델 없음)의 단일 판정 — 두 탭 공통이며 renderOntologyListGate 도 이 값이 거짓이면 null 을 준다.
   const ontologyListGated =
     isOntologyListError || isOntologyListLoading || effectiveOntologyId == null;
+  // 그래프 탐색 탭이 읽기 제한(WD-28) 상태인가 — 한 번만 계산해 본문·툴바·좌측 패널이 같은 판정을 쓴다.
+  // 제한 상태에선 그래프가 없어 이름 검색·타입 묶기·타입 필터가 죽은 컨트롤이 되고, 색색의 타입 목록이
+  // "표시할 수 없습니다" 옆에 있으면 필터만 바꾸면 보일 것처럼 읽힌다(디자인 검토 M-2) — 숨긴다.
+  // 온톨로지 선택기는 제한에서 벗어나는 유일한 출구라 유지한다. 인스턴스 탭 전용 판정이다.
+  const graphRestricted = tab === 'instance' && isGraphReadRestricted(graphError);
+  // 그래프가 없어 눌러도 반응 없는 컨트롤(이름 검색·타입 묶기·타입 필터·접기 토글)을 숨기는 판정이다.
+  // 사유: 목록 게이트(두 탭, WD-894·WD-915) / 인스턴스 탭의 읽기 제한·조회 실패(WD-870, 재시도 중 isError 가 유지되는 동안도 숨김).
+  // 본문 분기(renderInstanceTab)는 제한/오류를 계속 구분하므로 graphRestricted 는 그대로 두고 컨트롤 숨김 판정에만 이 값을 쓴다.
   const graphUnavailable =
-    tab === 'instance' && (ontologyListGated || graphRestricted || isGraphError);
+    ontologyListGated || (tab === 'instance' && (graphRestricted || isGraphError));
   // 인스턴스 탭 그래프 도구(검색·타입 묶기)를 그릴지 — 목록 게이트(WD-894)·읽기 제한·조회 실패(WD-870)이면 숨긴다(위 사유).
   const showGraphTools = tab === 'instance' && !graphUnavailable;
 

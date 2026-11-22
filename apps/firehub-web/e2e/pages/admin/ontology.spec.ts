@@ -1,6 +1,6 @@
 import type { Locator, Page } from '@playwright/test';
 
-import { createOntologySummaries } from '../../factories/mapping.factory';
+import { createOntologySummaries, MAPPING_ONTOLOGY_ID } from '../../factories/mapping.factory';
 import { createEntityTypeMutation, createOntologyGraph, createOntologySchema } from '../../factories/ontology.factory';
 import {
   mockFailThenSucceed,
@@ -32,8 +32,48 @@ import { expectSingleHeldRequest, holdApi } from '../../fixtures/hold-api';
 async function expectGraphControls(page: Page, count: 0 | 1) {
   await expect(page.getByPlaceholder('이름 검색')).toHaveCount(count);
   await expect(page.getByRole('button', { name: '타입 묶기' })).toHaveCount(count);
+  await expectTypeFilterControls(page, count);
+}
+
+/**
+ * 타입 필터 패널과 그 접기 토글이 각각 count 개인지 본다 — 두 탭 모두에 있는 컨트롤이라
+ * 이름 검색·타입 묶기가 없는 지식 모델 탭(WD-915)은 expectGraphControls 대신 이것만 쓴다.
+ */
+async function expectTypeFilterControls(page: Page, count: 0 | 1) {
   await expect(page.getByTestId('type-filter-panel')).toHaveCount(count);
   await expect(page.getByRole('button', { name: /^타입 필터 (접기|펼치기)$/ })).toHaveCount(count);
+}
+
+/**
+ * 지금부터 온톨로지 목록 GET 을 500 으로 실패시키고, recover() 를 부르면 원래 목록 응답으로 돌린다(WD-915).
+ * 나중에 건 라우트가 앞 라우트를 가리므로 setupOntologyMocks 뒤에 부른다 — GET 이 아니거나 회복된 뒤면 앞 라우트로 넘긴다.
+ */
+async function failOntologyListGet(page: Page) {
+  let failing = true;
+  await page.route(
+    (url) => url.pathname === '/api/v1/ontologies',
+    (route) => {
+      if (route.request().method() !== 'GET' || !failing) return route.fallback();
+      return route.fulfill({
+        status: 500,
+        contentType: 'application/json',
+        body: JSON.stringify({ message: '목록 조회 실패' }),
+      });
+    },
+  );
+  return { recover: () => { failing = false; } };
+}
+
+/**
+ * 「새 온톨로지」 대화상자에 도메인을 넣고 Enter 로 제출한다 — 생성 성공이 ['ontologies'] 를 무효화해
+ * 목록을 다시 받게 하는 계기로 쓴다(WD-915 배경 재조회 시험).
+ */
+async function submitCreateOntology(page: Page, domain: string) {
+  await page.getByRole('button', { name: '새 온톨로지' }).click();
+  const dialog = page.getByTestId('ontology-create-dialog');
+  await expect(dialog).toBeVisible();
+  await dialog.locator('#ontology-domain').fill(domain);
+  await dialog.locator('#ontology-domain').press('Enter');
 }
 test.describe('지식그래프 시각화 페이지', () => {
   test.beforeEach(async ({ authenticatedPage: page }) => {
@@ -731,6 +771,8 @@ test.describe('지식그래프 시각화 페이지', () => {
     await expect(page.getByText('아직 지식 모델이 없습니다')).toBeVisible();
     // 끝나지 않는 로딩이 아니다 — 스켈레톤은 사라져 있어야 한다.
     await expect(page.getByTestId('graph-loading')).toHaveCount(0);
+    // 지식 모델 탭도 그래프가 없는 게이트 상태라 타입 필터 패널·접기 토글을 숨긴다 (WD-915).
+    await expectGraphControls(page, 0);
     // 빈 상태의 CTA 가 툴바의 "새 온톨로지"와 같은 생성 다이얼로그를 연다.
     await page.getByTestId('instance-graph-panel').getByRole('button', { name: '새 온톨로지' }).click();
     await expect(page.getByRole('dialog')).toBeVisible();
@@ -745,21 +787,7 @@ test.describe('지식그래프 시각화 페이지', () => {
     await setupOntologyMocks(page);
     // 목록 응답을 붙잡아 둔 채로 진입한다 — 이 구간이 "로딩 중"이다. 기본 모킹 뒤에 등록해
     // 목록 라우트만 덮어쓴다(나중 라우트가 앞을 가린다).
-    let releaseList: (() => void) | null = null;
-    const listHeld = new Promise<void>((resolve) => {
-      releaseList = resolve;
-    });
-    await page.route(
-      (url) => url.pathname === '/api/v1/ontologies',
-      async (route) => {
-        await listHeld;
-        return route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify(createOntologySummaries()),
-        });
-      },
-    );
+    const listHeld = await holdApi(page, 'GET', '/api/v1/ontologies', 200, createOntologySummaries());
     await page.goto('/knowledge-graph/explore');
 
     // 목록이 오기 전에는 로딩 스켈레톤이어야 한다. 여기서 "빈 상태 문구가 없다"(toHaveCount(0))로만
@@ -770,7 +798,7 @@ test.describe('지식그래프 시각화 페이지', () => {
     await expectGraphControls(page, 0);
 
     // 목록을 풀어 주면 정상적으로 그래프가 그려지고 컨트롤이 되살아난다.
-    releaseList!();
+    listHeld.release();
     await expect(page.getByTestId('instance-graph')).toBeVisible();
     await expect(page.getByText('아직 지식 모델이 없습니다')).toHaveCount(0);
     await expectGraphControls(page, 1);
@@ -801,6 +829,115 @@ test.describe('지식그래프 시각화 페이지', () => {
     await expectGraphControls(page, 1);
   });
 
+  // WD-915: 지식 모델 탭도 목록 게이트(로딩·오류)가 본문을 대신하면 그래프가 없다 — 타입 필터 패널·접기 토글을 숨기고 회복되면 되살린다.
+  // 이름 검색·타입 묶기는 인스턴스 탭 전용이라 지식 모델 탭에는 원래 없다(expectGraphControls(page, 1)을 쓰지 않는 이유).
+  test('지식 모델 탭도 목록 로딩 게이트에서는 타입 필터 패널·접기 토글을 숨기고, 풀리면 다시 보인다 (WD-915)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupOntologyMocks(page);
+    // 목록 응답을 붙잡아 둔 채로 진입한다 — 이 구간이 「로딩 중」이다.
+    const listHeld = await holdApi(page, 'GET', '/api/v1/ontologies', 200, createOntologySummaries());
+    await page.goto('/knowledge-graph/model');
+
+    await expect(page.getByTestId('graph-loading')).toBeVisible();
+    await expectTypeFilterControls(page, 0);
+
+    listHeld.release();
+    await expectTypeFilterControls(page, 1);
+  });
+
+  test('지식 모델 탭도 목록 오류 게이트에서는 타입 필터 패널·접기 토글을 숨기고, 다시 시도로 회복되면 보인다 (WD-915)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupOntologyMocks(page);
+    await mockFailThenSucceed(page, '/api/v1/ontologies', {
+      errorBody: { message: '목록 조회 실패' },
+      okBody: createOntologySummaries(),
+    });
+    await page.goto('/knowledge-graph/model');
+
+    await expect(page.getByText('지식 모델 목록을 불러오지 못했습니다.')).toBeVisible();
+    await expectTypeFilterControls(page, 0);
+
+    await page.getByRole('button', { name: '다시 시도' }).click();
+    await expectTypeFilterControls(page, 1);
+  });
+
+  // WD-915: 편집 모드 중 목록 배경 재조회가 실패해도 편집기는 닫히지 않는다 — 목록·스키마는 캐시에 남아 있고,
+  // 편집기를 닫으면 저장 대기 초안을 잃는다. 그래프가 없는 게이트라 타입 필터 패널·접기 토글만 숨는다.
+  test('편집 모드 중 목록 재조회가 실패해도 편집기는 닫히지 않고 타입 필터 패널·접기 토글은 숨는다 (WD-915)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupOntologyMocks(page);
+    // 생성 POST 성공이 ['ontologies'] 를 무효화해 목록을 다시 받게 한다 — 돌려주는 id 는 지금 선택된 온톨로지와 같게 두어
+    // 온톨로지 전환 리셋(편집 모드 해제)이 끼지 않게 한다.
+    await mockApi(page, 'POST', '/api/v1/ontologies', MAPPING_ONTOLOGY_ID, { status: 201 });
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('button', { name: '수정 모드' }));
+    await page.getByRole('button', { name: '수정 모드' }).click();
+    await expect(page.getByTestId('model-outline')).toBeVisible();
+    await expect(page.getByRole('button', { name: '수정 모드' })).toHaveAttribute('aria-pressed', 'true');
+    // 저장 대기 초안 — 인스펙터 타입 이름 칸에 글자를 쳐 두고, 재조회 실패 뒤에도 값이 남는지 본다.
+    await page.getByTestId('outline-entity-2').click();
+    // 초안은 칸에서 초점을 뺄 때 자동 저장(PATCH)된다 — 그 저장이 끝난 뒤에 「새 온톨로지」를 눌러 첫 클릭이 blur 리렌더에 삼켜지지 않게 한다.
+    const draftSaved = await mockApi(
+      page,
+      'PATCH',
+      '/api/v1/ontology/1/entity-types/2',
+      createEntityTypeMutation({ id: 2, type: 'Building초안', description: '', naming: '', resolution: 'exact', properties: [] }),
+      { capture: true },
+    );
+    await page.getByLabel('타입 이름').fill('Building초안');
+    await page.getByLabel('타입 이름').press('Tab');
+    await draftSaved.waitForRequest();
+
+    // 이제부터 목록 조회는 실패한다(나중 라우트가 앞을 가린다).
+    const listFailure = await failOntologyListGet(page);
+    await submitCreateOntology(page, '건축물');
+
+    // 전역 재시도(1회)가 끝나면 목록이 오류가 된다 — 편집기·초안·편집 모드가 그대로인지 실패 직후와 다시 시도 뒤에 같은 묶음을 본다.
+    // 편집 모드에선 접기 토글이 원래 숨으므로 이 시험의 expectTypeFilterControls(page, 0)은 회귀를 지키지 못한다 — 읽기 모드 시험이 지킨다.
+    const expectEditorKept = async () => {
+      await expect(page.getByTestId('model-outline')).toBeVisible();
+      await expect(page.getByRole('button', { name: '수정 모드' })).toHaveAttribute('aria-pressed', 'true');
+      await expect(page.getByLabel('타입 이름')).toHaveValue('Building초안');
+      await expectTypeFilterControls(page, 0);
+    };
+    await expect(page.getByText('지식 모델 목록을 불러오지 못했습니다.')).toBeVisible();
+    await expectEditorKept();
+
+    listFailure.recover();
+    await page.getByRole('button', { name: '다시 시도' }).click();
+    await expect(page.getByText('지식 모델 목록을 불러오지 못했습니다.')).toHaveCount(0);
+    await expectEditorKept();
+  });
+
+  // WD-915: 읽기 모드에서 목록·스키마가 캐시에 있는 채 배경 재조회가 실패해도 지식 모델 탭은 목록 게이트다 —
+  // 그래프가 없으니 타입 필터 패널·접기 토글을 숨기고, 다시 시도로 회복되면 되살린다.
+  // 편집 모드는 접기 토글이 원래 숨어 수정 전에도 통과하므로, 고친 판정(graphUnavailable)을 지키는 것은 이 시험이다.
+  test('읽기 모드에서 캐시가 있는 채 목록 재조회가 실패하면 지식 모델 탭의 타입 필터 패널·접기 토글을 숨기고, 회복되면 보인다 (WD-915)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupOntologyMocks(page);
+    // 생성 POST 성공이 ['ontologies'] 를 무효화해 목록을 다시 받게 한다 — 같은 id 를 돌려줘 온톨로지 전환이 끼지 않게 한다.
+    await mockApi(page, 'POST', '/api/v1/ontologies', MAPPING_ONTOLOGY_ID, { status: 201 });
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('button', { name: '수정 모드' }));
+    await expect(page.getByRole('button', { name: '수정 모드' })).toHaveAttribute('aria-pressed', 'false');
+    // 읽기 모드 정상 상태 — 패널·토글이 보인다(아래 숨김이 원래 없던 것이 아님을 보인다).
+    await expectTypeFilterControls(page, 1);
+
+    // 이제부터 목록 조회는 실패한다(나중 라우트가 앞을 가린다).
+    const listFailure = await failOntologyListGet(page);
+    await submitCreateOntology(page, '건축물');
+
+    await expect(page.getByText('지식 모델 목록을 불러오지 못했습니다.')).toBeVisible();
+    await expectTypeFilterControls(page, 0);
+
+    listFailure.recover();
+    await page.getByRole('button', { name: '다시 시도' }).click();
+    await expect(page.getByText('지식 모델 목록을 불러오지 못했습니다.')).toHaveCount(0);
+    await expectTypeFilterControls(page, 1);
+  });
+
   // WD-126: 조회 권한이 없으면(403) 다시 시도해도 같으므로 재시도 버튼 대신 권한 안내를 보인다 — 두 탭 모두.
   for (const view of ['explore', 'model'] as const) {
     test(`온톨로지 목록이 403 이면 ${view} 탭에 재시도 대신 권한 안내를 보인다 (WD-126)`, async ({
@@ -821,8 +958,8 @@ test.describe('지식그래프 시각화 페이지', () => {
       );
       await expect(page.getByText('지식 모델 목록을 불러오지 못했습니다.')).toHaveCount(0);
       await expect(page.getByRole('button', { name: '다시 시도' })).toHaveCount(0);
-      // 403 게이트에서도 그래프 탐색 탭은 그래프 의존 컨트롤을 숨긴다 (WD-894).
-      if (view === 'explore') await expectGraphControls(page, 0);
+      // 403 게이트에서는 두 탭 모두 그래프 의존 컨트롤을 숨긴다 (WD-894 탐색 탭, WD-915 지식 모델 탭).
+      await expectGraphControls(page, 0);
       // 403 은 재시도하지 않는다(전역 기본)
       expect(listCapture.requests).toHaveLength(1);
     });
