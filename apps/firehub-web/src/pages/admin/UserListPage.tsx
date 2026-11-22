@@ -5,7 +5,7 @@ import { PageHeading } from '@/components/PageHeading';
 import { TruncatedLink } from '@/components/TruncatedLink';
 import { SearchInput } from '@/components/ui/search-input';
 import { SimplePagination } from '@/components/ui/simple-pagination';
-import { TableEmptyRow } from '@/components/ui/table-empty';
+import { TableEmptyRow, TableErrorRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { TruncatedText } from '@/components/ui/truncated-text';
 import { useDebounceValue } from '@/hooks/useDebounceValue';
@@ -117,11 +117,7 @@ export default function UserListPage() {
             {isLoading || pageOutOfRange ? (
               <TableSkeletonRows columns={4} rows={5} />
             ) : isError ? (
-              <TableRow>
-                <TableCell colSpan={4} className="text-center text-destructive">
-                  데이터를 불러오는 데 실패했습니다.
-                </TableCell>
-              </TableRow>
+              <TableErrorRow colSpan={4} />
             ) : users && users.content.length > 0 ? (
               users.content.map((u) => (
                 <TableRow

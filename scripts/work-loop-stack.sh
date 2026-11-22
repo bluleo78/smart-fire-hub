@@ -422,20 +422,30 @@ svc_ports() {
 }
 
 # 공유 포트를 우리 공유 컨테이너가 아닌 것이 쓰는지 확인한다. 쓰면 누가 쓰는지(옛 이름 project 면 정리 방법)를 알리고 실패.
+# 단, 멈춘(Exited) 공유 바탕만 그 포트를 공개하고 아무도 듣고 있지 않으면 내 것이므로 통과시켜 ensure_shared 가 다시 띄우게 한다(WD-942).
 # check_shared_ports_free <서비스…> (기본 = db minio)
 check_shared_ports_free() {
   local mine p bad=0 owners ports
   # shellcheck disable=SC2046  # 서비스·포트는 공백 없는 고정 토큰
   ports="$(svc_ports $([ $# -gt 0 ] && echo "$@" || echo db minio))"
-  # 실행 중인 공유 컨테이너만 본다 — 멈춘 컨테이너도 docker ps -a 에 Ports 를 보여, 그 포트를 남이 잡고 있어도 내 것으로 오판한다.
+  # 실행 중인 공유 컨테이너만 「mine」 으로 본다 — 멈춘 컨테이너도 docker ps -a 에 Ports 를 보여, 그 포트를 남이 잡고 있어도 내 것으로 오판한다.
   mine="$(docker ps --filter "label=com.docker.compose.project=$WL_SHARED_PROJECT" --format '{{.Ports}}' 2>/dev/null || true)"
   port_snapshot
   for p in $ports; do
     ports_list_has "$p" "$mine" && continue
     port_in_use "$p" || continue
-    bad=1
     owners="$(docker ps -a --format '{{.Names}} (project={{.Label "com.docker.compose.project"}}) {{.Ports}}' 2>/dev/null \
       | while IFS= read -r line; do ports_list_has "$p" "$line" && echo "$line"; done || true)"
+    # OrbStack 은 멈춘 컨테이너도 Ports 를 보여 멈춘 공유 바탕이 「남」으로 보였다. 아무도 안 듣고(LISTEN 없음),
+    # 그 포트를 공개한 컨테이너가 모두 공유 project 것이면 멈춘 내 바탕이므로 실패시키지 않고 다시 띄운다.
+    # LISTEN 은 lsof(sudo 없이는 내 소켓만)·ss(리눅스만)로만 본다 — 맥에서 다른 사용자(root 서비스 등)가 듣거나 둘 다 없으면
+    # 못 보고 통과시킬 수 있다. 그때는 compose up 이 포트 충돌로 실패할 뿐 아무것도 죽이지 않으므로 로그로 알린다.
+    # grep 은 here-string 으로 — 파이프라면 grep -q 가 일찍 끝날 때 pipefail 이 echo 의 SIGPIPE 를 실패로 읽을 수 있다.
+    if [ -n "$owners" ] && ! in_list "$p" "$WL_LISTEN_PORTS" && ! grep -qvF "(project=$WL_SHARED_PROJECT)" <<< "$owners"; then
+      log "공유 포트 $p — 멈춘 공유 바탕($WL_SHARED_PROJECT)이 주인이라 다시 띄운다(포트 충돌로 실패하면 보이지 않는 리스너를 의심)"
+      continue
+    fi
+    bad=1
     log "공유 포트 $p 를 공유 바탕($WL_SHARED_PROJECT)이 아닌 것이 쓰고 있다 — 죽이지 않고 실패한다:"
     [ -n "$owners" ] && echo "$owners" | sed 's/^/    /' >&2
     lsof -nP -iTCP:"$p" -sTCP:LISTEN >&2 || true
@@ -448,6 +458,7 @@ check_shared_ports_free() {
 }
 
 # 내가 쓰는 공유 서비스가 없거나 멈춰 있으면 띄우고 healthy 까지 기다린다. healthy 면 그대로 재사용한다. 락 안에서 부른다.
+# 멈춘 것은 check_shared_ports_free 가 내 것으로 통과시켜 아래 --no-recreate 로 다시 뜬다(WD-942).
 # --no-recreate: 클론마다 compose.shared.yml 이 조금 달라도 떠 있는 컨테이너를 재생성(=모든 저장소 접속 끊김)하지 않는다.
 # --build 를 주지 않는다: 이미지(work-loop-firehub-postgres:local)가 없을 때만 compose 가 빌드한다.
 ensure_shared() {

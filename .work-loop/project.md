@@ -262,7 +262,7 @@ playwright-cli -s=wl-$STACK_ID close
 - **MAIN** = 메인 체크아웃 = `git rev-parse --path-format=absolute --git-common-dir` 의 부모 폴더(경로는 환경마다 다르다). MAIN 에서 브랜치를 만들거나 바꾸거나 파일을 고치지 않는다 — 모든 수정은 이슈 워크트리(검토자의 손 머지·풀테스트는 그 워크트리·green 워크트리)에서 한다.
 - **dev 포트**: 5010(api), 5040(JobRunr 대시보드), 5020(ai-agent), 5030(channel), 5050(admin), 5173(web), 5051(admin E2E)
 - **dev 컨테이너/DB**: `smart-fire-hub-db-1`(5432, `smartfirehub`), `db-test`(5433), MinIO 9000/9001, Neo4j 7474/7687 — 루트 `docker-compose.yml` 의 `smart-fire-hub` project 전체
-- **공유 바탕의 다른 저장소 것**: `work-loop-shared` 의 내 것이 아닌 DB(`smartfirehub_*`)·버킷(`firehub-*`) — `status` 의 「다른 저장소」 목록. 공유 바탕 자체를 재시작·down 하지 않는다(`shared-down` 은 사람만).
+- **공유 바탕의 다른 저장소 것**: `work-loop-shared` 의 내 것이 아닌 DB(`smartfirehub_*`)·버킷(`firehub-*`) — `status` 의 「다른 저장소」 목록. 공유 바탕 자체를 재시작·down 하지 않는다(`shared-down` 은 사람만). 예외는 `up` 이 멈춘(Exited) 공유 바탕을 그 포트의 유일한 주인일 때 `--no-recreate` 로 다시 띄우는 것뿐이다 — 손으로 `docker start`·`restart` 하지 않는다(WD-942).
 - **다른 클론의 라이브 스택**: 내 STACK_ID 가 아닌 `work-loop-*` compose project(전용 DB·Neo4j)와 그 포트, 옛 방식 project `work-loop`
 - **사람의 맥에서 돌 때만 해당 — 리눅스 호스트·AI Pod 칸에는 없다**: 로컬 운영 배포 `smart-fire-hub-prod-*` 컨테이너 전부(web 8888, admin 8889, prod DB·Neo4j·MinIO), 6768(Orca), `buildx_buildkit_*`
 - 금지 명령: `pnpm dev` / `pnpm dev:full`(5xxx 포트를 `lsof | kill -9` 로 죽인다), `pnpm db:up|db:down|db:reset`, `docker compose down`(project 미지정),

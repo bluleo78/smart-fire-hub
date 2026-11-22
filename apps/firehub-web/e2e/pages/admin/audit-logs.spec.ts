@@ -2,6 +2,7 @@ import { createAuditLog } from '../../factories/admin.factory';
 import { setupAdminAuth, setupAuditLogMocks } from '../../fixtures/admin.fixture';
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { expectTableErrorAlert } from '../../fixtures/table-error-alert';
 
 /**
  * 감사 로그 페이지 E2E 테스트
@@ -759,5 +760,20 @@ test.describe('감사 로그 페이지', () => {
     await expect(closeButton).toBeVisible();
     const srOnlyText = await closeButton.locator('span.sr-only').textContent();
     expect(srOnlyText).toBe('닫기');
+  });
+});
+
+/**
+ * 조회 실패 안내 role=alert 회귀 (WD-930)
+ * - 감사 로그 목록 조회가 500 이면 표 안 실패 문구를 alert 라이브 리전으로 알려 스크린리더가 실패를 알게 한다.
+ * - 문구가 든 셀은 td 의 cell 역할을 그대로 유지한다(표 구조 보존).
+ */
+test.describe('감사 로그 조회 실패 안내 (WD-930)', () => {
+  test('조회 실패 시 안내 문구가 role=alert 로 노출되고 셀 역할을 유지한다', async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+    await mockApi(page, 'GET', '/api/v1/admin/audit-logs', { message: '서버 오류 테스트' }, { status: 500 });
+    await page.goto('/admin/audit-logs');
+
+    await expectTableErrorAlert(page);
   });
 });
