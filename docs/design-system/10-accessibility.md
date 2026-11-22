@@ -42,7 +42,7 @@
    - 파이프라인 편집, 삭제, 즐겨찾기 버튼 등 해당
 2. **데이터 테이블에 `aria-label` 누락**: `<Table>` 요소에 테이블 내용을 설명하는 `aria-label` 없음
 3. **정렬 표시 없음**: 정렬 기능이 있는 테이블 컬럼에 `aria-sort` 속성 부재
-4. **라이브 영역(Live Region)이 일부에만 있음**: `TableEmptyRow`·`TableErrorRow`·`InlineBanner` 는 스스로 알리므로 겹쳐 두지 않는다. `SimplePagination` 은 `totalElements`·`pageSize` 를 받아 그려질 때만 건수를 알린다(WD-931 — 한 쪽뿐이고 크기 선택이 없으면 그려지지 않고, 0건은 빈 행이 알린다). 그 밖의 비동기 갱신은 빠진 곳이 있다
+4. **라이브 영역(Live Region)이 일부에만 있음**: `TableEmptyRow`·`TableErrorRow`·`InlineBanner` 는 스스로 알리므로 겹쳐 두지 않는다. `SimplePagination` 은 `totalElements`·`pageSize` 를 받아 그려질 때만 건수를 알린다(WD-931 — 전체가 한 페이지뿐이고 크기 선택이 없으면 그려지지 않고, 0건은 빈 행이 알린다). 그 밖의 비동기 갱신은 빠진 곳이 있다
 5. **차트 접근성 없음**: 차트 시각화에 대한 텍스트 대안 없음
 6. **Toast 알림 읽기 미확인**: Sonner toast가 스크린 리더에 올바르게 알려지는지 확인 필요 (`role="alert"` 검토 필요)
 
