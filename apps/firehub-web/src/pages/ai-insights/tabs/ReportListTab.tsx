@@ -32,7 +32,7 @@ import { ProactiveReadForbiddenNotice } from '../components/ProactiveReadForbidd
  */
 export default function ReportListTab() {
   const navigate = useNavigate();
-  const { limit, loadMore, failed, settle } = useLoadMoreLimit();
+  const { limit, loadMore, pending, failed, settle } = useLoadMoreLimit();
   const {
     data: reports = [],
     isLoading,
@@ -180,7 +180,7 @@ export default function ReportListTab() {
       </div>
 
       {failed ? (
-        <LoadMoreFailure onRetry={loadMore} />
+        <LoadMoreFailure onRetry={loadMore} pending={pending} />
       ) : (
         reports.length >= limit && (
           <div className="py-2 flex justify-center">

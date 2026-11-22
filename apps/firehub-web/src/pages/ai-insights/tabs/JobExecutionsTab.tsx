@@ -36,7 +36,7 @@ interface JobExecutionsTabProps {
 
 export default function JobExecutionsTab({ jobId }: JobExecutionsTabProps) {
   const navigate = useNavigate();
-  const { limit, loadMore, failed, settle } = useLoadMoreLimit();
+  const { limit, loadMore, pending, failed, settle } = useLoadMoreLimit();
 
   // RUNNING 상태 실행이 있으면 5초 폴링, 아니면 비활성화 — state 없이 직접 유도
   const {
@@ -146,7 +146,7 @@ export default function JobExecutionsTab({ jobId }: JobExecutionsTabProps) {
       </div>
 
       {failed ? (
-        <LoadMoreFailure onRetry={loadMore} />
+        <LoadMoreFailure onRetry={loadMore} pending={pending} />
       ) : (
         executions.length >= limit && (
           <div className="py-2 flex justify-center">

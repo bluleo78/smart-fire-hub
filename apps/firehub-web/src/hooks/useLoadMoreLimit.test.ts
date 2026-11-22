@@ -42,14 +42,39 @@ describe('useLoadMoreLimit', () => {
     expect(result.current.limit).toBe(20);
   });
 
-  it('loadMore 는(다시 시도로도 쓰인다) limit 을 다시 늘리고 failed 를 지운다', () => {
+  it('실패 뒤 loadMore 는 failed 를 유지한 채 limit 만 늘리고 재시도 조회 중에는 pending 이다 (WD-956 리뷰 후속)', () => {
+    // 40 은 처음엔 실패, retry 뒤에는 조회 중(PENDING)인 상황
     const statuses: Record<number, Status> = { 20: OK, 40: FAIL };
     const { result } = setup(statuses);
     act(() => result.current.loadMore());
+    expect(result.current.failed).toBe(true);
+    expect(result.current.pending).toBe(false);
+    statuses[40] = PENDING;
+    act(() => result.current.loadMore());
+    expect(result.current.limit).toBe(40);
+    expect(result.current.failed).toBe(true);
+    expect(result.current.pending).toBe(true);
+  });
+
+  it('다시 시도 조회가 성공하면 failed 가 지워지고 pending 이 꺼진다', () => {
+    const statuses: Record<number, Status> = { 20: OK, 40: FAIL };
+    const { result } = setup(statuses);
+    act(() => result.current.loadMore());
+    expect(result.current.failed).toBe(true);
     statuses[40] = OK;
     act(() => result.current.loadMore());
     expect(result.current.limit).toBe(40);
     expect(result.current.failed).toBe(false);
+    expect(result.current.pending).toBe(false);
+  });
+
+  it('다시 시도 조회가 다시 실패하면 마지막 성공 limit 으로 되돌리고 failed 를 유지한다', () => {
+    const { result } = setup({ 20: OK, 40: FAIL });
+    act(() => result.current.loadMore());
+    act(() => result.current.loadMore());
+    expect(result.current.limit).toBe(20);
+    expect(result.current.failed).toBe(true);
+    expect(result.current.pending).toBe(false);
   });
 
   it('성공한 limit 을 기록해 그 뒤 실패는 그 값으로 되돌린다', () => {

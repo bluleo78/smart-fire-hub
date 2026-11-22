@@ -22,8 +22,9 @@ async function mockLimitedList(
   pathname: string,
   failUntil40: number,
   build: (n: number) => unknown[],
-  // limit=20 응답을 이 시간(ms)만큼 늦춘다 — 되돌린 쿼리의 재조회(isFetching)를 일부러 길게 잡는 시험용.
-  slow20 = { ms: 0 },
+  // limit 별 응답 붙잡기 — 시험이 gates[limit] 에 deferred promise 를 넣으면 그 limit 의 요청이 풀릴 때까지 응답하지 않는다.
+  // (실패 응답은 붙잡은 뒤에 준다. 고정 지연 대신 시험이 직접 풀어 시간에 기대지 않는다.)
+  gates: Record<number, Promise<void> | undefined> = {},
 ) {
   const counts: Record<number, number> = { 20: 0, 40: 0 };
   await page.route(
@@ -31,7 +32,7 @@ async function mockLimitedList(
     async (route) => {
       const limit = Number(new URL(route.request().url()).searchParams.get('limit') ?? '20');
       counts[limit] = (counts[limit] ?? 0) + 1;
-      if (limit === 20 && slow20.ms > 0) await new Promise((r) => setTimeout(r, slow20.ms));
+      await gates[limit];
       if (limit === 40 && counts[40] <= failUntil40) {
         return route.fulfill({
           status: 500,
@@ -54,6 +55,15 @@ const executionRows = (n: number) =>
   Array.from({ length: n }, (_, i) =>
     createJobExecution({ id: i + 1, jobId: 1, startedAt: `2024-01-01T09:${String(i % 60).padStart(2, '0')}:00Z` }),
   );
+
+/** 시험이 직접 푸는 deferred — promise 를 gates 에 넣고 resolve 로 응답을 푼다. */
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
 
 test.describe('「더 보기」 조회 실패 (WD-956)', () => {
   test.beforeEach(async ({ authenticatedPage: page }) => {
@@ -114,6 +124,62 @@ test.describe('「더 보기」 조회 실패 (WD-956)', () => {
     expect(counts[40]).toBe(4);
   });
 
+  test('리포트 「다시 시도」를 Enter 로 눌러 응답을 기다리는 동안 블록이 남고 초점을 유지하며 성공 뒤 사라진다 (WD-956 리뷰 후속)', async ({
+    authenticatedPage: page,
+  }) => {
+    const gates: Record<number, Promise<void> | undefined> = {};
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs', [createJob({ id: 3 })]);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    await mockLimitedList(page, '/api/v1/proactive/reports', 2, reportRows, gates);
+    await page.goto('/ai-insights/reports');
+    await expect(page.getByRole('link', { name: '리포트 1', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: '더 보기' }).click();
+    await expect(page.getByRole('alert')).toHaveText(FAIL_MESSAGE);
+
+    // 재시도 응답을 시험이 풀 때까지 붙잡는다
+    const gate = deferred();
+    gates[40] = gate.promise;
+    const retry = page.getByRole('button', { name: '다시 시도' });
+    await retry.focus();
+    await page.keyboard.press('Enter');
+    // 응답 대기 중 블록이 남고 초점이 유지된다
+    await expect(retry).toBeFocused();
+    await expect(retry).toHaveAttribute('aria-disabled', 'true');
+    await expect(page.getByRole('alert')).toHaveText(FAIL_MESSAGE);
+    // 응답을 풀면 성공 뒤 블록이 사라진다
+    gate.resolve();
+    await expect(page.getByRole('link', { name: '리포트 21', exact: true })).toBeVisible();
+    await expect(page.getByRole('alert')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '다시 시도' })).toHaveCount(0);
+  });
+
+  test('작업을 바꾸면 이전 작업의 실행 이력 실패 안내가 남지 않는다 (WD-956 리뷰 후속)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupJobDetailMocks(page, 1);
+    await setupJobDetailMocks(page, 2);
+    await mockLimitedList(page, '/api/v1/proactive/jobs/1/executions', 99, executionRows);
+    // 같은 탭을 앱 안에서 옮긴다(페이지 재로드 없이) — 작업 상세가 캐시돼 있으면 로딩 화면이 탭을 내리지 않아 key 가 없으면 상태가 남는다.
+    const gotoJob = (id: number) =>
+      page.evaluate((jid) => {
+        window.history.pushState({}, '', `/ai-insights/jobs/${jid}?tab=executions`);
+        window.dispatchEvent(new PopStateEvent('popstate'));
+      }, id);
+    // B 작업(2)을 먼저 열어 캐시에 둔 뒤 A 작업(1)으로 옮긴다
+    await page.goto('/ai-insights/jobs/2?tab=executions');
+    await expect(page.getByRole('tab', { name: /실행 이력/ })).toBeVisible();
+    await gotoJob(1);
+    await expect(page.getByRole('link', { name: /\(.*\)$/ })).toHaveCount(20);
+    await page.getByRole('button', { name: '더 보기' }).click();
+    await expect(page.getByRole('alert')).toHaveText(FAIL_MESSAGE);
+
+    await gotoJob(2);
+    await expect(page).toHaveURL(/jobs\/2/);
+    await expect(page.getByRole('link', { name: /\(.*\)$/ })).toHaveCount(0);
+    await expect(page.getByRole('alert').filter({ hasText: FAIL_MESSAGE })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '다시 시도' })).toHaveCount(0);
+  });
+
   test('실행 이력 「더 보기」가 실패하면 보던 행이 남고 다시 시도로 이어 받는다 (WD-956)', async ({
     authenticatedPage: page,
   }) => {
@@ -142,11 +208,11 @@ test.describe('「더 보기」 조회 실패 (WD-956)', () => {
   }) => {
     await page.clock.install();
     await setupJobDetailMocks(page, 1);
-    const slow20 = { ms: 0 };
+    const gates: Record<number, Promise<void> | undefined> = {};
     // 첫 행을 RUNNING 으로 둬 5초 폴링이 돌게 한다
     const running = (n: number) =>
       executionRows(n).map((e, i) => (i === 0 ? { ...e, status: 'RUNNING' as const, completedAt: null } : e));
-    const counts = await mockLimitedList(page, '/api/v1/proactive/jobs/1/executions', 99, running, slow20);
+    const counts = await mockLimitedList(page, '/api/v1/proactive/jobs/1/executions', 99, running, gates);
     await page.goto('/ai-insights/jobs/1?tab=executions');
     await expect(page.getByRole('link', { name: /\(.*\)$/ })).toHaveCount(20);
 
@@ -156,8 +222,9 @@ test.describe('「더 보기」 조회 실패 (WD-956)', () => {
     await retryButton.focus();
     await expect(retryButton).toBeFocused();
 
-    // 되돌린 limit=20 쿼리의 폴링 재조회를 늦은 응답으로 길게 잡는다
-    slow20.ms = 1500;
+    // 되돌린 limit=20 쿼리의 폴링 재조회 응답을 시험이 풀 때까지 붙잡는다
+    const gate = deferred();
+    gates[20] = gate.promise;
     const before = counts[20];
     await page.clock.fastForward(5000);
     await expect.poll(() => counts[20]).toBeGreaterThan(before);
@@ -165,5 +232,6 @@ test.describe('「더 보기」 조회 실패 (WD-956)', () => {
     // 재조회가 진행되는 동안에도 버튼은 enabled 이고 초점을 잃지 않는다
     await expect(retryButton).toBeEnabled();
     await expect(retryButton).toBeFocused();
+    gate.resolve();
   });
 });
