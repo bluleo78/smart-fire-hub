@@ -82,11 +82,11 @@ test.describe('AI 챗 세션 히스토리 에러 피드백 (#207)', () => {
     // 3. AI 패널 열기
     await openChatPanel(page);
 
-    // 4. "대화 선택" 드롭다운 열기
+    // 4. "대화 선택" 목록 열기
     await page.getByRole('button', { name: '대화 선택' }).click();
 
     // 5. 세션 아이템 클릭 — 메시지 조회 실패 유도
-    await page.getByRole('menuitem', { name: /테스트 대화/ }).first().click();
+    await page.getByRole('dialog', { name: '대화 선택' }).getByRole('button', { name: /테스트 대화/ }).first().click();
 
     // 6. 핵심 검증: toast 에러 메시지가 표시되어야 한다 (이슈 #207 수정 확인)
     await expect(

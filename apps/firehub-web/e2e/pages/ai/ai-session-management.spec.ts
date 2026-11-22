@@ -5,7 +5,7 @@
  * 기존 테스트는 항상 빈 세션([])만 사용하므로,
  * 이 파일에서 기존 세션이 있을 때의 분기를 검증한다.
  *
- * - SessionSwitcher 드롭다운 렌더링 (세션 목록 있을 때)
+ * - SessionSwitcher 펼침 목록 렌더링 (세션 목록 있을 때)
  * - 세션 클릭 → /ai/sessions/{id}/messages API 호출 및 히스토리 렌더링
  * - 세션 삭제 → DELETE /ai/sessions/{id} API 호출
  * - 새 대화 버튼 → 입력창 초기화 확인
@@ -17,6 +17,11 @@ import { clickDialogBackdrop } from '../../fixtures/dialog.fixture';
 /** AIStatusChip locator */
 const chipLocator = (page: import('@playwright/test').Page) =>
   page.getByRole('button', { name: /AI 상태/ });
+
+/** 대화 선택 펼침 목록(Popover, WD-951) — 목록 안 제목 버튼·그 줄의 삭제 버튼을 이름으로 집는다 */
+const switcherList = (page: import('@playwright/test').Page) => page.getByRole('dialog', { name: '대화 선택' });
+const titleButton = (page: import('@playwright/test').Page, title: string) =>
+  switcherList(page).getByRole('button', { name: title, exact: true });
 
 /** 세션 목록 목업 데이터 */
 const MOCK_SESSIONS = [
@@ -79,14 +84,14 @@ async function openPanelWithSessions(page: import('@playwright/test').Page) {
 }
 
 test.describe('AI 세션 관리 — SessionSwitcher', () => {
-  test('세션 목록이 있을 때 SessionSwitcher 드롭다운 트리거가 표시된다', { tag: '@smoke' }, async ({
+  test('세션 목록이 있을 때 SessionSwitcher 펼침 목록 트리거가 표시된다', { tag: '@smoke' }, async ({
     authenticatedPage: page,
   }) => {
     await openPanelWithSessions(page);
 
-    // SessionSwitcher: sessions.length > 0 분기 → DropdownMenuTrigger 렌더링
+    // SessionSwitcher: sessions.length > 0 분기 → PopoverTrigger 렌더링
     // 트리거 버튼에 MessageSquare 아이콘 + 세션 제목 또는 "대화 선택" 텍스트
-    // 현재 세션 없으면 triggerLabel = '대화 선택'이지만 드롭다운 트리거 자체는 존재
+    // 현재 세션 없으면 triggerLabel = '대화 선택'이지만 펼침 목록 트리거 자체는 존재
     const sessionTrigger = page.getByRole('button', { name: /대화 선택|이전 대화/ });
     await expect(sessionTrigger.first()).toBeVisible({ timeout: 3000 });
   });
@@ -111,19 +116,19 @@ test.describe('AI 세션 관리 — SessionSwitcher', () => {
     await expect(page.getByText('대화 이력 없음')).toBeVisible({ timeout: 3000 });
   });
 
-  test('세션 드롭다운을 열면 기존 세션 목록이 표시된다', async ({
+  test('세션 펼침 목록을 열면 기존 세션 목록이 표시된다', async ({
     authenticatedPage: page,
   }) => {
     await openPanelWithSessions(page);
 
-    // DropdownMenuTrigger 클릭 → 세션 목록 열기
+    // PopoverTrigger 클릭 → 세션 목록 열기
     // 트리거 버튼: sessions이 있으면 현재 세션 title 또는 "새 대화"
     const trigger = page.getByRole('button', { name: /대화 선택|이전 대화/ }).first();
     await trigger.click();
 
-    // 드롭다운 안에서 세션 제목 표시 확인
-    await expect(page.getByRole('menuitem', { name: /이전 대화 1/ })).toBeVisible({ timeout: 3000 });
-    await expect(page.getByRole('menuitem', { name: /이전 대화 2/ })).toBeVisible({ timeout: 3000 });
+    // 펼침 목록 안에서 세션 제목 표시 확인
+    await expect(titleButton(page, '이전 대화 1')).toBeVisible({ timeout: 3000 });
+    await expect(titleButton(page, '이전 대화 2')).toBeVisible({ timeout: 3000 });
   });
 });
 
@@ -147,7 +152,7 @@ test.describe('AI 세션 관리 — 세션 전환 (loadSession)', () => {
       },
     );
 
-    // 드롭다운 열기
+    // 펼침 목록 열기
     const trigger = page.getByRole('button', { name: /대화 선택|이전 대화/ }).first();
     await trigger.click();
 
@@ -155,7 +160,7 @@ test.describe('AI 세션 관리 — 세션 전환 (loadSession)', () => {
     // messages API 응답을 대기하여 API 호출이 완료된 후 검증한다
     await Promise.all([
       page.waitForResponse((r) => r.url().includes('/sessions/session-1/messages') && r.status() === 200),
-      page.getByRole('menuitem', { name: /이전 대화 1/ }).click(),
+      titleButton(page, '이전 대화 1').click(),
     ]);
     expect(messagesApiCalled).toBe(true);
   });
@@ -175,10 +180,10 @@ test.describe('AI 세션 관리 — 세션 전환 (loadSession)', () => {
       }),
     );
 
-    // 드롭다운 → 세션 선택
+    // 펼침 목록 → 세션 선택
     const trigger = page.getByRole('button', { name: /대화 선택|이전 대화/ }).first();
     await trigger.click();
-    await page.getByRole('menuitem', { name: /이전 대화 1/ }).click();
+    await titleButton(page, '이전 대화 1').click();
 
     // 히스토리 메시지가 화면에 표시되어야 함
     await expect(page.getByText('안녕하세요', { exact: true })).toBeVisible({ timeout: 3000 });
@@ -201,12 +206,14 @@ test.describe('AI 세션 관리 — 세션 전환 (loadSession)', () => {
 
     const trigger = page.getByRole('button', { name: /대화 선택|이전 대화/ }).first();
     await trigger.click();
-    await page.getByRole('menuitem', { name: /이전 대화 1/ }).click();
+    await titleButton(page, '이전 대화 1').click();
 
     // 현재 세션이 session-1로 바뀌었으므로 트리거 레이블이 '이전 대화 1'로 업데이트됨
     // currentSession = sessions.find(s => s.sessionId === currentSessionId)
+    // 선택하면 펼침 목록이 닫힌다 — 닫힌 뒤에는 이름이 「이전 대화 1」인 버튼이 트리거 하나뿐이다.
+    await expect(switcherList(page)).toHaveCount(0);
     await expect(
-      page.getByRole('button', { name: /이전 대화 1/ }),
+      page.getByRole('button', { name: '이전 대화 1', exact: true }),
     ).toBeVisible({ timeout: 3000 });
   });
 });
@@ -217,14 +224,14 @@ test.describe('AI 세션 관리 — 세션 삭제 (useDeleteAISession)', () => {
   }) => {
     await openPanelWithSessions(page);
 
-    // 드롭다운 열기
+    // 펼침 목록 열기
     const trigger = page.getByRole('button', { name: /대화 선택|이전 대화/ }).first();
     await trigger.click();
 
     // "이전 대화 1" 행의 삭제 버튼 클릭
-    const menuItem1 = page.getByRole('menuitem', { name: /이전 대화 1/ });
-    await expect(menuItem1).toBeVisible({ timeout: 3000 });
-    const deleteBtn = menuItem1.getByRole('button', { name: /삭제/ });
+    const row1 = switcherList(page).getByRole('listitem').filter({ hasText: '이전 대화 1' });
+    await expect(row1).toBeVisible({ timeout: 3000 });
+    const deleteBtn = row1.getByRole('button', { name: '이전 대화 1 삭제', exact: true });
     await deleteBtn.click();
 
     // AlertDialog 확인 다이얼로그가 표시되어야 함 (즉시 삭제 방지 #15)
@@ -233,7 +240,7 @@ test.describe('AI 세션 관리 — 세션 삭제 (useDeleteAISession)', () => {
     // 다이얼로그 내에 세션명이 포함되어야 함
     await expect(dialog.getByText(/이전 대화 1/)).toBeVisible({ timeout: 3000 });
     // 취소 버튼도 표시되어야 함
-    await expect(page.getByRole('button', { name: '취소' })).toBeVisible({ timeout: 3000 });
+    await expect(page.getByRole('alertdialog').getByRole('button', { name: '취소' })).toBeVisible({ timeout: 3000 });
   });
 
   test('삭제 확인 창의 배경을 눌러도 그 대화가 선택되지 않는다 (WD-943)', async ({
@@ -253,48 +260,43 @@ test.describe('AI 세션 관리 — 세션 삭제 (useDeleteAISession)', () => {
     const trigger = page.getByRole('button', { name: /대화 선택|이전 대화/ }).first();
     const triggerLabel = await trigger.innerText();
     await trigger.click();
-    const menuItem1 = page.getByRole('menuitem', { name: /이전 대화 1/ });
-    await expect(menuItem1).toBeVisible();
-    await menuItem1.getByRole('button', { name: /삭제/ }).click();
+    const row1 = switcherList(page).getByRole('listitem').filter({ hasText: '이전 대화 1' });
+    await expect(row1).toBeVisible();
+    await row1.getByRole('button', { name: '이전 대화 1 삭제', exact: true }).click();
 
     const dialog = page.getByRole('alertdialog');
     await clickDialogBackdrop(page);
-    // 배경 click 이 메뉴 항목으로 번졌다면 메뉴가 곧바로 닫힘 상태가 되며 그 대화가 선택된다. 닫힘 애니메이션 동안 창은 잠깐
-    // 보이므로 메뉴 상태를 먼저 본다(창이 떠 있는 동안 메뉴는 aria-hidden 이라 role 대신 data-slot 으로 집는다).
-    await expect(page.locator('[data-slot="dropdown-menu-content"]')).toHaveAttribute('data-state', 'open');
+    // 배경 click 이 목록 줄로 번졌다면 목록이 곧바로 닫힘 상태가 되며 그 대화가 선택된다. 닫힘 애니메이션 동안 창은 잠깐
+    // 보이므로 목록 상태를 먼저 본다(창이 떠 있는 동안 목록은 aria-hidden 이라 role 대신 data-slot 으로 집는다).
+    await expect(page.locator('[data-slot="popover-content"]')).toHaveAttribute('data-state', 'open');
     await expect(dialog).toBeVisible();
     expect(messageRequests).toHaveLength(0);
 
     await dialog.getByRole('button', { name: '취소' }).click();
     await expect(dialog).toBeHidden();
     // 취소 뒤에도 목록은 열려 있다 — 닫은 뒤 현재 대화가 그대로인지 본다(선택됐다면 트리거 이름이 「이전 대화 1」로 바뀐다).
-    await expect(menuItem1).toBeVisible();
+    await expect(row1).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(page.getByRole('button', { name: /대화 선택|이전 대화/ }).first()).toHaveText(triggerLabel);
     expect(messageRequests).toHaveLength(0);
   });
 
-  test('삭제 버튼의 accessible name이 대화 제목을 중복 낭독하지 않는다 (#514)', async ({
+  test('제목 버튼 이름은 제목뿐이고 삭제 버튼 이름은 「제목 삭제」다 (#514 → WD-951)', async ({
     authenticatedPage: page,
   }) => {
     await openPanelWithSessions(page);
 
-    // 드롭다운 열기
     const trigger = page.getByRole('button', { name: /대화 선택|이전 대화/ }).first();
     await trigger.click();
 
-    // menuitem 자체의 accessible name은 "제목 span" + "삭제 버튼 aria-label"을
-    // 이어붙여 계산되므로, 삭제 버튼 라벨이 "대화 삭제"로 짧게 고정되어 있으면
-    // 제목이 한 번만 나타나야 한다.
-    const menuItem1 = page.getByRole('menuitem', { name: /이전 대화 1/ });
-    await expect(menuItem1).toBeVisible({ timeout: 3000 });
-    const accessibleName = await menuItem1.evaluate((el) => el.getAttribute('aria-label') ?? el.textContent ?? '');
-    const titleOccurrences = accessibleName.split('이전 대화 1').length - 1;
-    expect(titleOccurrences).toBeLessThanOrEqual(1);
-
-    // 삭제 버튼 자체의 accessible name도 제목을 포함하지 않고 짧게 고정되어야 함
-    const deleteBtn = menuItem1.getByRole('button', { name: /삭제/ });
-    await expect(deleteBtn).toHaveAccessibleName('대화 삭제');
+    // #514: menuitem 이 하위 콘텐츠를 이어붙여 이름을 계산해 제목이 두 번 읽혀 삭제 버튼 이름을 「대화 삭제」로 짧게 고정했었다.
+    // 줄이 menuitem 이 아니라 형제 버튼 둘이 된 지금은 제목 버튼 이름이 제목만이고(중복 없음),
+    // 삭제 버튼은 어느 대화의 삭제인지 이름에 담는다(전체 화면 목록 #346 과 같다).
+    const row1 = switcherList(page).getByRole('listitem').filter({ hasText: '이전 대화 1' });
+    await expect(row1).toBeVisible({ timeout: 3000 });
+    await expect(row1.getByRole('button')).toHaveCount(2);
+    await expect(titleButton(page, '이전 대화 1')).toHaveAccessibleName('이전 대화 1');
+    await expect(row1.getByRole('button', { name: '이전 대화 1 삭제', exact: true })).toHaveAccessibleName('이전 대화 1 삭제');
   });
 
   test('확인 다이얼로그에서 취소 클릭 시 API가 호출되지 않는다 (#15)', async ({
@@ -315,15 +317,15 @@ test.describe('AI 세션 관리 — 세션 삭제 (useDeleteAISession)', () => {
       },
     );
 
-    // 드롭다운 열기 → 삭제 버튼 클릭
+    // 펼침 목록 열기 → 삭제 버튼 클릭
     const trigger = page.getByRole('button', { name: /대화 선택|이전 대화/ }).first();
     await trigger.click();
-    const menuItem1 = page.getByRole('menuitem', { name: /이전 대화 1/ });
-    await expect(menuItem1).toBeVisible({ timeout: 3000 });
-    await menuItem1.getByRole('button', { name: /삭제/ }).click();
+    const row1 = switcherList(page).getByRole('listitem').filter({ hasText: '이전 대화 1' });
+    await expect(row1).toBeVisible({ timeout: 3000 });
+    await row1.getByRole('button', { name: '이전 대화 1 삭제', exact: true }).click();
 
     // 다이얼로그에서 취소 → API 미호출 검증
-    await page.getByRole('button', { name: '취소' }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: '취소' }).click();
     await expect(page.getByRole('alertdialog')).not.toBeVisible({ timeout: 3000 });
     expect(deleteApiCalled).toBe(false);
   });
@@ -358,17 +360,17 @@ test.describe('AI 세션 관리 — 세션 삭제 (useDeleteAISession)', () => {
       }),
     );
 
-    // 드롭다운 열기 → 삭제 버튼 클릭 → 다이얼로그 확인
+    // 펼침 목록 열기 → 삭제 버튼 클릭 → 다이얼로그 확인
     const trigger = page.getByRole('button', { name: /대화 선택|이전 대화/ }).first();
     await trigger.click();
-    const menuItem1 = page.getByRole('menuitem', { name: /이전 대화 1/ });
-    await expect(menuItem1).toBeVisible({ timeout: 3000 });
-    await menuItem1.getByRole('button', { name: /삭제/ }).click();
+    const row1 = switcherList(page).getByRole('listitem').filter({ hasText: '이전 대화 1' });
+    await expect(row1).toBeVisible({ timeout: 3000 });
+    await row1.getByRole('button', { name: '이전 대화 1 삭제', exact: true }).click();
 
     // AlertDialog에서 삭제 확인 → DELETE API 호출
     await Promise.all([
       page.waitForResponse((r) => /\/ai\/sessions\/\d+$/.test(new URL(r.url()).pathname) && r.request().method() === 'DELETE'),
-      page.getByRole('button', { name: '삭제' }).click(),
+      page.getByRole('alertdialog').getByRole('button', { name: '삭제', exact: true }).click(),
     ]);
     expect(deletedId).toBe(1); // MOCK_SESSIONS[0].id === 1
   });
@@ -389,17 +391,17 @@ test.describe('AI 세션 관리 — 세션 삭제 (useDeleteAISession)', () => {
       },
     );
 
-    // 드롭다운 열기 → 삭제 버튼 클릭 → AlertDialog 확인
+    // 펼침 목록 열기 → 삭제 버튼 클릭 → AlertDialog 확인
     const trigger = page.getByRole('button', { name: /대화 선택|이전 대화/ }).first();
     await trigger.click();
-    const menuItem1 = page.getByRole('menuitem', { name: /이전 대화 1/ });
-    await expect(menuItem1).toBeVisible({ timeout: 3000 });
-    await menuItem1.getByRole('button', { name: /삭제/ }).click();
+    const row1 = switcherList(page).getByRole('listitem').filter({ hasText: '이전 대화 1' });
+    await expect(row1).toBeVisible({ timeout: 3000 });
+    await row1.getByRole('button', { name: '이전 대화 1 삭제', exact: true }).click();
 
     // AlertDialog에서 삭제 확인 → DELETE API 실패 → onError 토스트
     await Promise.all([
       page.waitForResponse((r) => /\/ai\/sessions\/\d+$/.test(new URL(r.url()).pathname) && r.request().method() === 'DELETE'),
-      page.getByRole('button', { name: '삭제' }).click(),
+      page.getByRole('alertdialog').getByRole('button', { name: '삭제', exact: true }).click(),
     ]);
 
     // onError 핸들러가 실행되어 에러 토스트가 표시되어야 함
@@ -425,10 +427,10 @@ test.describe('AI 세션 관리 — 새 대화 (startNewSession)', () => {
 
     const trigger = page.getByRole('button', { name: /대화 선택|이전 대화/ }).first();
     await trigger.click();
-    await page.getByRole('menuitem', { name: /이전 대화 1/ }).click();
+    await titleButton(page, '이전 대화 1').click();
     await expect(page.getByText('안녕하세요', { exact: true })).toBeVisible({ timeout: 3000 });
 
-    // 세션 선택 후 드롭다운 트리거는 "이전 대화 1"로 바뀌므로 "새 대화" 버튼은 독립 버튼 1개만 존재
+    // 세션 선택 후 펼침 목록 트리거는 "이전 대화 1"로 바뀌므로 "새 대화" 버튼은 독립 버튼 1개만 존재
     const newSessionBtn = page.getByRole('button', { name: '새 대화' }).first();
     await newSessionBtn.click();
 
