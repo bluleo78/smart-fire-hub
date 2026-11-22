@@ -10,6 +10,9 @@
 #   FULL_REGRESSION_CMD   — 회귀 대신 실행할 명령(테스트 전용 — 락 없이 실행). 공유 기록을 더럽히지 않게 PREPUSH_VERIFIED_FILE 이 함께 있어야 한다.
 #                           고른 범위는 GATE_SCOPE 환경변수로 그 명령에 넘어간다.
 #   FULL_REGRESSION_SCOPE — 범위를 판정하지 않고 이 값으로 돈다(full 로 전체를 강제할 때). full|web
+#   FULL_REGRESSION_BASE  — 범위를 이 ref 와 갈라진 뒤 바꾼 코드 파일로 판정한다(기본 origin/main). 검토자 풀테스트는
+#                           origin/green 을 준다 — green 은 이미 전체 검사를 통과한 커밋이라 그 뒤 바뀐 앱만 돌면 된다(smart-workplace WP-2003).
+#                           이 값을 주었는데 그 뒤 바뀐 코드 파일이 없으면(문서만) 아무 단계도 돌지 않고 통과한다.
 
 set -e
 
@@ -34,10 +37,18 @@ CLEAN_AT_START=1
 matches_commit || CLEAN_AT_START=0
 
 # 돌릴 범위 — 기록·pre-push 와 같은 기준(origin/main 과 갈라진 뒤 바꾼 코드 파일). origin/main 이 없으면 전체.
+# 기준(FULL_REGRESSION_BASE)을 주면 그 ref 와 갈라진 뒤 바꾼 코드 파일로 판정한다 — 검토자 풀테스트가 origin/green 을 준다.
+BASE_REF=${FULL_REGRESSION_BASE:-refs/remotes/origin/main}
 if [ -n "$FULL_REGRESSION_SCOPE" ]; then
   GATE_SCOPE=$FULL_REGRESSION_SCOPE
-elif git rev-parse --verify --quiet refs/remotes/origin/main >/dev/null; then
-  GATE_SCOPE=$(gate_scope refs/remotes/origin/main HEAD)
+elif git rev-parse --verify --quiet "$BASE_REF" >/dev/null; then
+  # 기준을 따로 준 풀테스트(green)에서 그 뒤 바뀐 코드 파일이 없으면 돌 것이 없다 — 문서만 바뀐 회차.
+  if [ -n "$FULL_REGRESSION_BASE" ] && _fr_mb=$(git merge-base "$BASE_REF" HEAD 2>/dev/null) &&
+    [ -z "$(code_files "$(git -c core.quotePath=false diff --name-only --no-renames "$_fr_mb" HEAD)")" ]; then
+    echo "[full-regression] 범위: 없음 — $FULL_REGRESSION_BASE 뒤 바뀐 코드 파일이 없어 돌 단계가 없다(통과)"
+    exit 0
+  fi
+  GATE_SCOPE=$(gate_scope "$BASE_REF" HEAD)
 else
   GATE_SCOPE=full
 fi
@@ -47,7 +58,7 @@ case "$GATE_SCOPE" in
   *) echo "[full-regression] 알 수 없는 범위 '$GATE_SCOPE' — full|web" >&2; exit 1 ;;
 esac
 export GATE_SCOPE
-echo "[full-regression] 범위: $GATE_SCOPE — $STAGES"
+echo "[full-regression] 범위: $GATE_SCOPE (기준 $BASE_REF) — $STAGES"
 
 if [ -n "$FULL_REGRESSION_CMD" ]; then
   sh -c "$FULL_REGRESSION_CMD"
