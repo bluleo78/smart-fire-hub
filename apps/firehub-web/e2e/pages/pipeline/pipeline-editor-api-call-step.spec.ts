@@ -14,6 +14,7 @@ import { createColumn, createDataset, createDatasetDetail } from '../../factorie
 import { createPipelineDetail, createStep } from '../../factories/pipeline.factory';
 import { createPageResponse,mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { holdApi } from '../../fixtures/hold-api';
 import { clickToolbarAddStep, grantPipelinePermissions } from '../../fixtures/pipeline.fixture';
 
 /** 모킹용 API 연결 목록 — ApiConnectionSelectable 타입으로 스펙 정합성 보장 */
@@ -998,5 +999,143 @@ test.describe('파이프라인 에디터 — API_CALL 스텝 설정', () => {
     expect(payload.steps[0].apiConfig?.retry).toBeUndefined();
     expect(payload.steps[0].apiConfig?.timeoutMs).toBeUndefined();
     expect(payload.steps[0].apiConfig?.maxDurationMs).toBeUndefined();
+  });
+});
+
+test.describe('테스트 호출 중 고친 설정 (WD-935)', () => {
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await grantPipelinePermissions(page);
+    await setupEditorMocks(page);
+  });
+
+  /** holdApi 로 붙잡을 미리보기 성공 응답 */
+  const PREVIEW_OK = {
+    success: true,
+    rawJson: '{"items":[{"item_id":1,"name":"a"}]}',
+    rows: [{ item_id: '1', name: 'a' }],
+    // 'id' 는 시스템 예약어라 저장 검증에 막혀 item_id 를 쓴다
+    columns: ['item_id', 'name'],
+    totalExtractedRows: 1,
+    errorMessage: null,
+    resolvedUrl: 'https://example.com/old',
+  };
+
+  type SavedApiConfig = {
+    customUrl?: string;
+    dataPath?: string;
+    maxDurationMs?: number;
+    fieldMappings?: Array<{ sourceField: string; targetColumn: string }>;
+  };
+
+  /** URL 을 채우고 테스트 호출을 눌러 응답이 게이트에 걸린 상태까지 간다 */
+  async function startGatedPreview(page: import('@playwright/test').Page) {
+    // 응답을 붙잡는다 — 시간 지연 대신 테스트가 입력을 고친 뒤 풀어 결정적으로 재현한다
+    const gate = await holdApi(page, 'POST', '/api/v1/pipelines/api-call/preview', 200, PREVIEW_OK);
+    const capture = await mockApi(page, 'POST', '/api/v1/pipelines', { id: 99, name: 'x', steps: [] }, { capture: true });
+    await addAndOpenApiCallStep(page);
+    await page.getByPlaceholder(API_FULL_URL_PLACEHOLDER, { exact: true }).fill('https://example.com/old');
+    await page.getByRole('button', { name: '테스트 호출' }).click();
+    // 호출이 서버에 도착할 때까지 기다린다
+    await expect.poll(() => gate.requests.length).toBeGreaterThan(0);
+    return { gate, capture };
+  }
+
+  async function savedConfig(capture: { waitForRequest: () => Promise<{ payload: unknown }> }) {
+    const req = await capture.waitForRequest();
+    return (req.payload as { steps: Array<{ apiConfig: SavedApiConfig }> }).steps[0].apiConfig;
+  }
+
+  /** 붙잡은 응답을 풀고 「호출 URL」 표시를 기다린 뒤 저장해 저장된 apiConfig 를 돌려준다 */
+  async function releaseAndSave(
+    page: import('@playwright/test').Page,
+    gate: { release: () => void },
+    capture: { waitForRequest: () => Promise<{ payload: unknown }> },
+  ) {
+    gate.release();
+    await expect(page.getByText('호출 URL')).toBeVisible({ timeout: 10000 });
+    await saveApiCallPipeline(page, '미리보기 병합');
+    return savedConfig(capture);
+  }
+
+  test('테스트 호출 중 요청에 들어가지 않는 설정(최대 실행 시간)을 고치면 응답 뒤 고친 값이 남고 매핑이 채워진다 (WD-935)', async ({
+    authenticatedPage: page,
+  }) => {
+    const { gate, capture } = await startGatedPreview(page);
+    // 최대 실행 시간은 미리보기 payload 에 없는 필드 — 요청이 그대로이므로 자동 채움이 일어나야 한다
+    await page.locator('button').filter({ hasText: /^고급 설정$/ }).click();
+    await page.getByLabel('최대 실행 시간 (ms)').fill('7200000');
+    const cfg = await releaseAndSave(page, gate, capture);
+    expect(cfg.customUrl).toBe('https://example.com/old');
+    expect(cfg.maxDurationMs).toBe(7_200_000);
+    expect(cfg.fieldMappings).toEqual([
+      { sourceField: 'item_id', targetColumn: 'item_id' },
+      { sourceField: 'name', targetColumn: 'name' },
+    ]);
+  });
+
+  test('테스트 호출 중 데이터 경로를 고치면 응답 뒤 고친 값이 남고 옛 요청 컬럼으로 매핑을 채우지 않는다 (WD-935)', async ({
+    authenticatedPage: page,
+  }) => {
+    const { gate, capture } = await startGatedPreview(page);
+    await page.getByPlaceholder('$.data.items').fill('$.edited');
+    const cfg = await releaseAndSave(page, gate, capture);
+    expect(cfg.customUrl).toBe('https://example.com/old');
+    expect(cfg.dataPath).toBe('$.edited');
+    expect(cfg.fieldMappings ?? []).toEqual([]);
+  });
+
+  test('테스트 호출 중 URL 을 고치면 응답 뒤 고친 URL 이 남고 옛 대상 컬럼으로 매핑을 채우지 않는다 (WD-935)', async ({
+    authenticatedPage: page,
+  }) => {
+    const { gate, capture } = await startGatedPreview(page);
+    await page.getByPlaceholder(API_FULL_URL_PLACEHOLDER, { exact: true }).fill('https://example.com/edited-during-call');
+    const cfg = await releaseAndSave(page, gate, capture);
+    expect(cfg.customUrl).toBe('https://example.com/edited-during-call');
+    expect(cfg.fieldMappings ?? []).toEqual([]);
+  });
+
+  test('테스트 호출 중 매핑을 직접 채우면 응답 뒤 덮지 않는다 (WD-935)', async ({
+    authenticatedPage: page,
+  }) => {
+    const { gate, capture } = await startGatedPreview(page);
+    // 필드 매핑 섹션은 기본으로 열려 있고 새 스텝에는 매핑 행이 없다 — 전제를 확인한 뒤 행을 추가한다
+    await expect(page.getByLabel('응답 필드 1')).toHaveCount(0);
+    await page.getByRole('button', { name: '매핑 추가' }).click();
+    await page.getByLabel('응답 필드 1').fill('mine');
+    await page.getByLabel('대상 컬럼 1').fill('my_col');
+    const cfg = await releaseAndSave(page, gate, capture);
+    expect(cfg.fieldMappings?.[0]).toEqual({ sourceField: 'mine', targetColumn: 'my_col' });
+    expect(cfg.fieldMappings?.some((m) => m.sourceField === 'item_id' || m.sourceField === 'name')).toBe(false);
+  });
+
+  test('테스트 호출 중 다른 스텝에 갔다 돌아와 데이터 경로를 고쳐도 옛 응답이 덮지 않는다 (WD-935)', async ({
+    authenticatedPage: page,
+  }) => {
+    const { gate, capture } = await startGatedPreview(page);
+    // 다른 스텝을 추가해 선택했다가 첫 스텝으로 돌아온다 — 패널이 key 로 재마운트된다
+    await clickToolbarAddStep(page);
+    await expect(page.locator('.react-flow__node')).toHaveCount(2);
+    await page.locator('.react-flow__node').nth(1).click();
+    // 저장 검증을 통과하도록 두 번째 스텝(SQL)에 이름과 스크립트를 채운다
+    await page.locator('#step-name').fill('SQL 스텝');
+    await page.locator('.cm-content').first().click();
+    await page.keyboard.type('SELECT 1');
+    await page.locator('.react-flow__node').first().click();
+    await expect(page.getByText('기본 설정')).toBeVisible({ timeout: 10000 });
+    await page.getByPlaceholder('$.data.items').fill('$.edited');
+    // 옛 인스턴스의 응답이 도착해 처리될 때까지 기다린 뒤 저장한다
+    const responded = page.waitForResponse('**/api/v1/pipelines/api-call/preview');
+    gate.release();
+    await responded;
+    // 옛 인스턴스의 응답 처리기(마이크로태스크·상태 반영)가 끝나도록 한 프레임 넘긴다 — 고정 대기 대신 렌더 주기 신호
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+    await page.locator('#step-name').fill('API 호출 스텝');
+    await page.getByPlaceholder(/파이프라인 이름|이름 입력/).first().fill('미리보기 병합');
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+    const req = await capture.waitForRequest();
+    const steps = (req.payload as { steps: Array<{ scriptType: string; apiConfig?: SavedApiConfig }> }).steps;
+    const cfg = steps.find((s) => s.scriptType === 'API_CALL')?.apiConfig;
+    expect(cfg?.dataPath).toBe('$.edited');
+    expect(cfg?.fieldMappings ?? []).toEqual([]);
   });
 });
