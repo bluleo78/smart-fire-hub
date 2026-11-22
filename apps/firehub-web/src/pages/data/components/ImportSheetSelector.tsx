@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 
 import { FormField } from '../../../components/ui/form-field';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
+import { isFocusLost } from '../../../lib/focus-lost';
 import type { ImportSheetInfo } from '../../../types/dataImport';
 
 interface ImportSheetSelectorProps {
@@ -25,10 +26,10 @@ export function ImportSheetSelector({ sheets, sheetName, disabled, onSheetChange
   const triggerRef = useRef<HTMLButtonElement>(null);
   const wasDisabled = useRef(disabled);
 
-  // 미리보기 재요청 동안 트리거가 비활성화되면 포커스가 body 로 빠진다 — 끝나면 트리거로 돌려 놓아
+  // 미리보기 재요청 동안 트리거가 비활성화되면 포커스가 body(건너뛰기 뒤면 본문 main — isFocusLost, WD-968)로 빠진다 — 끝나면 트리거로 돌려 놓아
   // 키보드·스크린리더 사용자가 위치를 잃지 않게 한다. (다른 곳으로 포커스를 옮긴 경우는 건드리지 않는다)
   useEffect(() => {
-    if (wasDisabled.current && !disabled && document.activeElement === document.body) {
+    if (wasDisabled.current && !disabled && isFocusLost()) {
       triggerRef.current?.focus();
     }
     wasDisabled.current = disabled;

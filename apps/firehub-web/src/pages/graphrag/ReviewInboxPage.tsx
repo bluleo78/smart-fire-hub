@@ -25,6 +25,7 @@ import {
   useApproveReviewItem, useRejectReviewItem, useReviewItemEvidence, useReviewItemsPending,
 } from '@/hooks/queries/useReviewItems';
 import { handleApiError, isForbiddenError } from '@/lib/api-error';
+import { isFocusLost } from '@/lib/focus-lost';
 import { validatePropertyCorrection } from '@/lib/property-correction';
 import type {
   EntityPayload, PropertyPayload, RelationPayload, ReviewItemResponse, ReviewItemType, SynonymPayload,
@@ -606,7 +607,8 @@ function EvidencePanel({ id }: { id: number }) {
     // 다시 실패하면 버튼이 남아 포커스도 그대로다. 버튼이 사라지는 경우(성공·권한 없음 확정)에만, 그사이 사용자가 다른 곳으로
     // 옮기지 않았을 때 패널로 옮긴다. 다른 행 승인·거부의 무효화로 취소된(pending) 결과는 새 로딩이 이어지므로 옮기지 않는다.
     const buttonGone = result.isSuccess || (result.isError && isForbiddenError(result.error));
-    const focusLost = document.activeElement === button || document.activeElement === document.body;
+    // 버튼에 남았거나, 사라진 버튼 자리에서 body·본문 main 으로 떨어졌으면(isFocusLost, WD-968) 잃은 것으로 본다
+    const focusLost = document.activeElement === button || isFocusLost();
     if (buttonGone && focusLost) liveRef.current?.focus();
   };
   let body;

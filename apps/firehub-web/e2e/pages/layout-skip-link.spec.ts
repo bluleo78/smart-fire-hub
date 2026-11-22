@@ -166,6 +166,28 @@ test.describe('본문으로 건너뛰기 링크 (WD-530)', () => {
     }
   });
 
+  test('건너뛰기 뒤 본문 안 Radix 선택 상자(트리거)를 마우스로 누르면 본문의 임시 tabindex 가 떼어진다 (WD-968 리뷰 후속)', async ({
+    authenticatedPage: page,
+  }) => {
+    await openDatasets(page);
+    const main = page.locator('main#main-content');
+
+    // 건너뛰기 → 본문 포커스 → Tab 으로 본문 첫 컨트롤로 나간다(main 의 tabindex=-1 은 남아 있다)
+    await page.keyboard.press('Tab');
+    await expect(skipLink(page)).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(main).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(main).toHaveAttribute('tabindex', '-1');
+
+    // Radix 트리거는 pointerdown 에서 preventDefault 해 mousedown 이 오지 않는다 — 그래도 본문 안 마우스 누름이므로 tabindex 를 떼야 한다
+    await page.getByRole('combobox', { name: '출처 필터' }).click();
+    await expect(page.getByRole('listbox')).toBeVisible();
+    await expect(main).not.toHaveAttribute('tabindex', /.*/);
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('listbox')).toHaveCount(0);
+  });
+
   test('건너뛰기 뒤 본문 안 페이지가 띄운 대화상자 안을 마우스로 눌러도 본문의 임시 tabindex 는 남는다 (WD-968)', async ({
     authenticatedPage: page,
   }) => {
