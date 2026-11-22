@@ -259,9 +259,9 @@ describe('MCP Tool Handlers', () => {
 
   // MCP-13: preview_api_call
   it('preview_api_call calls apiClient.previewApiCall', async () => {
-    const args = { url: 'https://api.example.com', method: 'GET', dataPath: '$.data' };
+    const args = { customUrl: 'https://api.example.com', method: 'GET', dataPath: '$.data' };
     await invokeTool(server, 'preview_api_call', args);
-    expect(client.previewApiCall).toHaveBeenCalled();
+    expect(client.previewApiCall).toHaveBeenCalledWith(args);
   });
 
   // MCP-14: create_trigger

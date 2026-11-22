@@ -409,10 +409,11 @@ describe('FireHubApiClient', () => {
     const mockResp = { preview: [{ name: 'item1' }] };
 
     nock(BASE_URL)
-      .post(
-        '/pipelines/api-call/preview',
-        (reqBody: Record<string, unknown>) => reqBody.customUrl === body.customUrl,
-      )
+      .post('/pipelines/api-call/preview', {
+        url: 'https://api.example.com/data',
+        method: 'GET',
+        dataPath: '$.items',
+      })
       .reply(200, mockResp);
 
     const result = await client.previewApiCall(body);
