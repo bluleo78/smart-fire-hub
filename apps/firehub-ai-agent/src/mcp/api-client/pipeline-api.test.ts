@@ -56,12 +56,122 @@ describe('pipelineApi (via FireHubApiClient)', () => {
     expect(result).toEqual({ success: true });
   });
 
-  it('previewApiCall calls POST /pipelines/api-call/preview', async () => {
-    const body = { method: 'GET', dataPath: '$.items', customUrl: 'https://api.example.com/data' };
+  // previewApiCall: 도구 인자(path/customUrl)를 서버가 읽는 url 하나로 바꿔 보내는지 본문 전체로 확인한다.
+  describe('previewApiCall', () => {
+    const base = { method: 'GET', dataPath: '$.items' };
     const mock = { rows: [], totalCount: 0 };
-    nock(BASE_URL).post('/pipelines/api-call/preview', body).reply(200, mock);
-    const result = await client.previewApiCall(body);
-    expect(result).toEqual(mock);
+
+    it.each([
+      {
+        name: '직접 URL',
+        input: { customUrl: 'https://api.example.com/data' },
+        expected: { url: 'https://api.example.com/data' },
+      },
+      {
+        name: '연결+경로',
+        input: { apiConnectionId: 1, path: '/v1/users' },
+        expected: { apiConnectionId: 1, url: '/v1/users' },
+      },
+      {
+        name: '연결+루트',
+        input: { apiConnectionId: 1, path: '/' },
+        expected: { apiConnectionId: 1, url: '/' },
+      },
+      {
+        name: '연결이면 경로 우선',
+        input: {
+          apiConnectionId: 1,
+          path: '/v1/users',
+          customUrl: 'https://other.example.com/x',
+        },
+        expected: { apiConnectionId: 1, url: '/v1/users' },
+      },
+      {
+        name: '연결 없으면 customUrl 우선',
+        input: { path: '/v1/users', customUrl: 'https://api.example.com/data' },
+        expected: { url: 'https://api.example.com/data' },
+      },
+      {
+        name: '옛 url 이 섞여도 customUrl',
+        input: { url: 'https://evil.example.com/x', customUrl: 'https://api.example.com/data' },
+        expected: { url: 'https://api.example.com/data' },
+      },
+      {
+        name: '소문자 get',
+        input: { method: 'get', customUrl: 'https://api.example.com/data' },
+        expected: { method: 'get', url: 'https://api.example.com/data' },
+      },
+    ])('$name: url 로 보낸다', async ({ input, expected }) => {
+      const scope = nock(BASE_URL)
+        .post('/pipelines/api-call/preview', { ...base, ...expected })
+        .reply(200, mock);
+      const result = await client.previewApiCall({ ...base, ...input });
+      expect(result).toEqual(mock);
+      expect(scope.isDone()).toBe(true);
+    });
+
+    it('전체 필드는 url 외에 그대로 남는다', async () => {
+      const extra = {
+        headers: { 'X-Test': 'a' },
+        queryParams: { q: '1' },
+        body: '{"a":1}',
+        fieldMappings: [{ sourceField: 'id', targetColumn: 'id', dataType: 'INTEGER' }],
+        inlineAuth: { token: 't' },
+        timeoutMs: 5000,
+      };
+      const scope = nock(BASE_URL)
+        .post('/pipelines/api-call/preview', {
+          ...base,
+          ...extra,
+          apiConnectionId: 1,
+          url: '/v1/users',
+        })
+        .reply(200, mock);
+      const result = await client.previewApiCall({
+        ...base,
+        ...extra,
+        apiConnectionId: 1,
+        path: '/v1/users',
+      });
+      expect(result).toEqual(mock);
+      expect(scope.isDone()).toBe(true);
+    });
+
+    it.each(['POST', 'PUT', 'DELETE', 'post'])('%s 는 요청 없이 거절한다', async (method) => {
+      const scope = nock(BASE_URL).post('/pipelines/api-call/preview').reply(200, mock);
+      await expect(
+        client.previewApiCall({
+          method,
+          dataPath: '$.items',
+          customUrl: 'https://api.example.com/data',
+        }),
+      ).rejects.toThrow(
+        `API_CALL: 에이전트 미리보기는 GET 만 보냅니다 — ${method.toUpperCase()} 요청은 실제 데이터를 바꿀 수 있어 사용자가 파이프라인 편집기의 「테스트 호출」로 확인해야 합니다`,
+      );
+      expect(scope.isDone()).toBe(false);
+    });
+
+    const CONN_MSG = 'API_CALL: apiConnectionId 설정 시 path가 필수입니다(연결의 기본 주소 그대로 부르려면 \'/\')';
+    const DIRECT_MSG = 'API_CALL: apiConnectionId 없이 호출하려면 customUrl이 필수입니다';
+
+    it.each([
+      { name: '연결만', input: { apiConnectionId: 1 }, message: CONN_MSG },
+      {
+        name: '연결+customUrl 만',
+        input: { apiConnectionId: 1, customUrl: 'https://other.example.com/x' },
+        message: CONN_MSG,
+      },
+      { name: '연결+빈 경로', input: { apiConnectionId: 1, path: '' }, message: CONN_MSG },
+      { name: '연결+공백 경로', input: { apiConnectionId: 1, path: '  ' }, message: CONN_MSG },
+      { name: '주소 없음', input: {}, message: DIRECT_MSG },
+      { name: '경로만', input: { path: '/v1/users' }, message: DIRECT_MSG },
+      { name: '빈 URL', input: { customUrl: '' }, message: DIRECT_MSG },
+      { name: '공백 URL', input: { customUrl: '  ' }, message: DIRECT_MSG },
+    ])('$name: 요청 없이 거절한다', async ({ input, message }) => {
+      const scope = nock(BASE_URL).post('/pipelines/api-call/preview').reply(200, mock);
+      await expect(client.previewApiCall({ ...base, ...input })).rejects.toThrow(message);
+      expect(scope.isDone()).toBe(false);
+    });
   });
 
   it('executePipeline calls POST /pipelines/:id/execute', async () => {

@@ -311,7 +311,7 @@ export function registerPipelineTools(
 
     safeTool(
       'preview_api_call',
-      'API 호출을 미리보기합니다. 파이프라인에 저장하기 전에 응답 데이터를 확인할 수 있습니다. apiConnectionId 설정 시 path, 미설정 시 customUrl을 사용합니다.',
+      'API 호출을 미리보기합니다. 파이프라인에 저장하기 전에 응답 데이터를 확인할 수 있습니다. apiConnectionId 설정 시 path, 미설정 시 customUrl을 사용합니다. GET 요청만 보냅니다.',
       {
         path: z
           .string()
