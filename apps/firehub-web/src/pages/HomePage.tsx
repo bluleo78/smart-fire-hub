@@ -15,6 +15,8 @@ import {
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
+import { PageHeading } from '@/components/PageHeading';
+
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
@@ -203,7 +205,7 @@ export default function HomePage() {
     <div className="space-y-6">
       {/* Page header */}
       <div>
-        <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">홈</h1>
+        <PageHeading>홈</PageHeading>
         <p className="text-muted-foreground mt-1">환영합니다, {user?.name}님!</p>
       </div>
 

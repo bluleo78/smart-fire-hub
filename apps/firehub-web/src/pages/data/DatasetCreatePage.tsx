@@ -4,6 +4,7 @@ import { FormProvider, useForm } from 'react-hook-form';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
+import { PageHeading } from '../../components/PageHeading';
 import { PendingSubmitButton } from '../../components/PendingSubmitButton';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -305,7 +306,7 @@ export default function DatasetCreatePage() {
   return (
     <div className="max-w-2xl mx-auto space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">새 데이터셋</h1>
+        <PageHeading>새 데이터셋</PageHeading>
       </div>
 
       <FormProvider {...form}>

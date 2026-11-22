@@ -4,6 +4,8 @@ import { useCallback,useEffect,useId,useMemo,useState } from 'react';
 import { useLocation, useNavigate,useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
+import { PageHeading } from '@/components/PageHeading';
+
 import { rolesApi } from '../../api/roles';
 import { usersApi } from '../../api/users';
 import { EditConflictDialog } from '../../components/EditConflictDialog';
@@ -342,7 +344,7 @@ function UserDetailView() {
         <Button variant="ghost" size="icon" onClick={() => requestNavigate(listPath)} aria-label="목록으로 돌아가기" title="목록으로 돌아가기">
           <ArrowLeft className="h-4 w-4" />
         </Button>
-        <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">사용자 상세</h1>
+        <PageHeading>사용자 상세</PageHeading>
       </div>
 
       <Card>

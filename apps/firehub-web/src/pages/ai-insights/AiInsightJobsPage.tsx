@@ -1,6 +1,7 @@
 import { Zap } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 
+import { PageHeading } from '@/components/PageHeading';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useCanAdminProactive } from '@/hooks/queries/useProactiveMessages';
 
@@ -26,7 +27,7 @@ export default function AiInsightJobsPage() {
       <div className="flex items-center gap-3">
         <Zap className="h-6 w-6" />
         <div>
-          <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">스마트 작업</h1>
+          <PageHeading>스마트 작업</PageHeading>
           <p className="text-sm text-muted-foreground mt-0.5">AI가 자동으로 실행하는 분석/요약 작업을 관리합니다</p>
         </div>
       </div>

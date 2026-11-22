@@ -1,6 +1,7 @@
 import { FileText } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 
+import { PageHeading } from '@/components/PageHeading';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { resolveTabParam } from '@/lib/tab-param';
 
@@ -28,7 +29,7 @@ export default function ReportsPage() {
       <div className="flex items-center gap-3">
         <FileText className="h-6 w-6" />
         <div>
-          <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">리포트</h1>
+          <PageHeading>리포트</PageHeading>
           <p className="text-sm text-muted-foreground mt-0.5">
             AI가 생성한 리포트를 열람하고 출력 양식을 관리합니다
           </p>

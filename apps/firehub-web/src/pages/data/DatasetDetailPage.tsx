@@ -19,6 +19,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { Breadcrumb } from '../../components/layout/Breadcrumb';
+import { PageHeading } from '../../components/PageHeading';
 import { DetailPageTitle } from '../../components/PageTitleSync';
 import { ResourceNotFound } from '../../components/ResourceNotFound';
 import { TruncatedTitle } from '../../components/TruncatedTitle';
@@ -412,7 +413,7 @@ export default function DatasetDetailPage() {
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               {/* 띄어쓰기 없는 긴 이름도 머리글 안에서 줄바꿈한다(WD-656) */}
-              <h1 className="min-w-0 wrap-anywhere text-[28px] leading-[36px] font-semibold tracking-tight">{dataset.name}</h1>
+              <PageHeading className="min-w-0 wrap-anywhere">{dataset.name}</PageHeading>
               {/* 보안 등급 배지 — Certified 배지 앞, 같은 위계(목업 s2). 생성 응답 등에서 비어 올 수 있어 있을 때만 그린다. */}
               {dataset.securityLevel && (
                 <span className="inline-flex items-center gap-1">

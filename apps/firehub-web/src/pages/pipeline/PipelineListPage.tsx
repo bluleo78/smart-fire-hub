@@ -3,6 +3,7 @@ import { useMemo,useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
+import { PageHeading } from '@/components/PageHeading';
 import { TruncatedLink } from '@/components/TruncatedLink';
 import { SimplePagination } from '@/components/ui/simple-pagination';
 import { TableEmptyRow } from '@/components/ui/table-empty';
@@ -97,7 +98,7 @@ export default function PipelineListPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">파이프라인 관리</h1>
+        <PageHeading>파이프라인 관리</PageHeading>
         {/* 조회 권한이 없으면 만들어도 볼 수 없으니 추가 버튼을 숨긴다 (WD-122). 생성 권한(pipeline:write)이 없어도 숨긴다 (WD-219). */}
         {!isForbidden && canWritePipeline && (
           <Button asChild>

@@ -7,6 +7,8 @@ import { useForm } from 'react-hook-form';
 import { useNavigate,useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
+import { PageHeading } from '@/components/PageHeading';
+
 import { permissionsApi } from '../../api/permissions';
 import { ROLE_LIST_KEY, rolesApi } from '../../api/roles';
 import { EditConflictDialog } from '../../components/EditConflictDialog';
@@ -484,7 +486,7 @@ function RoleDetailView() {
         <Button variant="ghost" size="icon" onClick={() => requestNavigate('/admin/roles')} aria-label="목록으로 돌아가기" title="목록으로 돌아가기">
           <ArrowLeft className="h-4 w-4" />
         </Button>
-        <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">역할 상세</h1>
+        <PageHeading>역할 상세</PageHeading>
         {role.isSystem && (
           <Badge variant="outline">시스템 역할</Badge>
         )}

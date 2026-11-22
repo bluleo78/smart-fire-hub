@@ -58,10 +58,10 @@ Vercel Geist 3-tier 시스템(Heading / Body / Label)을 참고하여 14개 의�
 `heading-page`부터 `heading-column`까지 5단계. 반드시 의미론적 HTML 요소(`h1`–`h4`, `th`)와 함께 사용한다. 시각적 스타일과 HTML 계층이 일치해야 스크린 리더 접근성이 보장된다.
 
 ```tsx
-// heading-page — 페이지 진입점, 페이지당 1개만
-<h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">
+// heading-page — 페이지 진입점, 페이지당 1개만 — `@/components/PageHeading` 을 쓴다(h1 에 클래스를 직접 쓰지 않는다, WD-910)
+<PageHeading>
   데이터셋 목록
-</h1>
+</PageHeading>
 
 // heading-section — 페이지 내 주요 섹션 구분
 <h2 className="text-2xl leading-8 font-semibold tracking-tight">

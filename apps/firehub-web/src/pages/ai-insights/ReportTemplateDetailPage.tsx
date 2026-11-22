@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 
 import { proactiveApi, type ReportTemplate, type ReportTemplateSummary } from '@/api/proactive';
 import { EditConflictDialog } from '@/components/EditConflictDialog';
+import { PageHeading } from '@/components/PageHeading';
 import { DetailPageTitle } from '@/components/PageTitleSync';
 import {
   AlertDialog,
@@ -564,7 +565,7 @@ function ReportTemplateDetailContent({ templateId }: { templateId: number | null
           >
             <ArrowLeft className="h-4 w-4" />
           </Button>
-          <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">리포트 양식</h1>
+          <PageHeading>리포트 양식</PageHeading>
         </div>
         <ProactiveReadForbiddenNotice subject="리포트 양식" testId="template-forbidden" />
       </div>
@@ -584,7 +585,7 @@ function ReportTemplateDetailContent({ templateId }: { templateId: number | null
           >
             <ArrowLeft className="h-4 w-4" />
           </Button>
-          <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">새 템플릿</h1>
+          <PageHeading>새 템플릿</PageHeading>
         </div>
         <ProactiveWriteNotice subject="리포트 양식" testId="template-readonly-notice" />
         <Button variant="outline" size="sm" onClick={() => navigate('/ai-insights/reports?tab=templates')}>
@@ -614,9 +615,9 @@ function ReportTemplateDetailContent({ templateId }: { templateId: number | null
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <div className="min-w-0">
-            <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight break-words">
+            <PageHeading className="break-words">
               {isNew ? '새 템플릿' : (template?.name ?? '-')}
-            </h1>
+            </PageHeading>
             <div className="flex flex-wrap items-center gap-2 mt-1">
               {!isNew && template && (
                 <Badge variant={isBuiltin ? 'secondary' : 'default'}>

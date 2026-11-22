@@ -5,6 +5,7 @@ import { useForm } from 'react-hook-form';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
+import { PageHeading } from '@/components/PageHeading';
 import { PendingSubmitButton } from '@/components/PendingSubmitButton';
 import { TruncatedLink } from '@/components/TruncatedLink';
 import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
@@ -220,7 +221,7 @@ export default function RoleListPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-[28px] leading-[36px] font-semibold tracking-tight">역할 관리</h1>
+        <PageHeading>역할 관리</PageHeading>
         {canWriteRole && (
           <Dialog
             open={dialogOpen}
