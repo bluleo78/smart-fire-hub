@@ -347,6 +347,40 @@ test.describe('대시보드 위젯 — 조회 실패 안내 (WD-686)', () => {
     await expect(card(page, '위젯 B').getByRole('button', { name: '다시 시도' })).toBeVisible();
   });
 
+  // WD-926: 「다시 시도」 className 의 h-7 이 size="sm"(h-8) 높이를 28px 로 덮어써 클릭 영역이 좁았다(홈 카드 WD-914 와 같은 결함).
+  // 높이 2칸 위젯에서도 32px 버튼이 안내 상자(overflow-auto — 넘치면 잘리고 스크롤)의 보이는 영역 안에 다 보여야 한다 — 높이를 키운 부작용 확인.
+  // 카드 전체가 아니라 실제로 잘리는 상자와 비교한다(카드 아래에는 신선도 바가 있어 카드 안이어도 잘릴 수 있다).
+  // 가로 2칸(격자 최소)은 고치기 전(28px)에도 오류 문구가 두 줄로 감겨 버튼이 잘렸던 기존 결함이라 후속 이슈 WD-959 로 따로 다룬다.
+  test('위젯 조회 실패 안내의 「다시 시도」는 32×32px 이상이고, 높이 2칸 위젯에서도 잘리지 않고 다 보인다 (WD-926)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDashboard(page, {
+      widgets: [
+        createWidget({ id: 11, chartId: 1, chartName: '위젯 A', chartType: 'TABLE', width: 3, height: 2 }),
+        createWidget({ id: 12, chartId: 2, chartName: '위젯 B', chartType: 'TABLE', positionX: 6, width: 6, height: 4 }),
+      ],
+    });
+    await routeChartData(page, 1, [{ status: 500, body: { message: '위젯 A 원본 조회 실패' } }]);
+    await routeChartData(page, 2, [{ status: 200, body: rowsBody(chartB, 'b-1') }]);
+
+    await page.goto('/analytics/dashboards/1');
+    const retry = card(page, '위젯 A').getByRole('button', { name: '다시 시도' });
+    await expect(retry).toBeVisible();
+    // 버튼과, 버튼을 잘라 낼 수 있는 가장 가까운 overflow 상자의 화면 위치를 함께 잰다
+    const m = await retry.evaluate((el) => {
+      let clip = el.parentElement;
+      while (clip && !['auto', 'hidden', 'scroll'].includes(getComputedStyle(clip).overflowY)) clip = clip.parentElement;
+      const b = el.getBoundingClientRect();
+      const c = (clip ?? document.documentElement).getBoundingClientRect();
+      return { width: b.width, height: b.height, bottom: b.bottom, right: b.right, clipBottom: c.bottom, clipRight: c.right };
+    });
+    const sizes = JSON.stringify(m);
+    expect(m.height, `버튼 높이 32px 이상 — ${sizes}`).toBeGreaterThanOrEqual(32);
+    expect(m.width, `버튼 너비 32px 이상 — ${sizes}`).toBeGreaterThanOrEqual(32);
+    expect(m.bottom, `안내 상자 아래로 잘리지 않음 — ${sizes}`).toBeLessThanOrEqual(m.clipBottom);
+    expect(m.right, `안내 상자 오른쪽으로 잘리지 않음 — ${sizes}`).toBeLessThanOrEqual(m.clipRight);
+  });
+
   test('「다시 시도」는 응답을 기다리는 동안 aria-disabled 로 잠겨, 거듭 눌러도 요청이 하나만 나간다', async ({
     authenticatedPage: page,
   }) => {
