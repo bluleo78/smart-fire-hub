@@ -1,3 +1,6 @@
+import type { Page } from '@playwright/test';
+
+import { createAuditLog } from '../../factories/admin.factory';
 import { createUser } from '../../factories/auth.factory';
 import { setupAdminAuth } from '../../fixtures/admin.fixture';
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
@@ -15,7 +18,7 @@ test.describe('표 빈 상태 라이브 리전 (WD-815)', () => {
   });
 
   /** 사용자 목록 API 를 쿼리 search 로 갈라 응답한다(화면 URL 의 q 가 API 에서는 search) — 비면 2명, 있으면 빈 페이지. 요청 search 값을 캡처한다. */
-  async function mockUsersByQuery(page: import('@playwright/test').Page) {
+  async function mockUsersByQuery(page: Page) {
     const queries: string[] = [];
     await page.route(
       (url) => url.pathname === '/api/v1/users',
@@ -123,5 +126,97 @@ test.describe('표 빈 상태 라이브 리전 (WD-815)', () => {
       .poll(() => capture.lastRequest()?.searchParams.get('startDate') ?? '')
       .toBe(expectedStart);
     await expect(page.getByRole('table').getByRole('status')).toHaveText('조건에 맞는 감사 로그가 없습니다.');
+  });
+});
+
+/**
+ * 목록 건수 라이브 리전 (WD-931)
+ * - 공유 SimplePagination 의 「총 N건 중 a-b」가 role=status 안에 있어, 필터·쪽 이동으로 건수가 바뀌면 스크린리더가 알린다.
+ * - 감사 로그는 필터 재조회 중 페이지네이션이 언마운트됐다 다시 마운트되므로 DelayedStatus(WD-815)로 감싼 것을 확인한다.
+ */
+test.describe('WD-931 목록 건수 라이브 리전', () => {
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+  });
+
+  /** 결과 필터별 총 건수 — 필터 없으면 4건 */
+  const TOTAL_BY_RESULT: Record<string, number> = { SUCCESS: 3, FAILURE: 0 };
+
+  /** 결과 필터 드롭다운에서 옵션(예: 「실패」)을 고른다 */
+  async function selectResult(page: Page, name: string) {
+    await page.getByLabel('결과 필터').click();
+    await page.getByRole('option', { name }).click();
+  }
+
+  /** 감사 로그 화면을 열고 필터 없는 기본 건수 「총 4건 중 1-4」 가 뜰 때까지 기다린다 */
+  async function openAuditLogs(page: Page) {
+    await mockAuditByResult(page);
+    await page.goto('/admin/audit-logs');
+    await expect(page.getByRole('status').filter({ hasText: '총 4건 중 1-4' })).toBeVisible();
+  }
+
+  /** 감사 로그 API 를 result 필터·page 로 갈라 응답한다 — 건수는 TOTAL_BY_RESULT(기본 4건), opts.total 이 우선 */
+  async function mockAuditByResult(page: Page, opts: { total?: number } = {}) {
+    await page.route(
+      (url) => url.pathname === '/api/v1/admin/audit-logs',
+      (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        const sp = new URL(route.request().url()).searchParams;
+        const result = sp.get('result');
+        const pageNo = Number(sp.get('page') ?? '0');
+        const total = opts.total ?? TOTAL_BY_RESULT[result ?? ''] ?? 4;
+        // 화면 기본 쪽 크기는 20 — 요청의 size 를 그대로 따른다
+        const size = Number(sp.get('size') ?? '20');
+        const from = pageNo * size;
+        const count = Math.max(0, Math.min(size, total - from));
+        const content = Array.from({ length: count }, (_, i) => createAuditLog({ id: from + i + 1, description: `로그 ${from + i + 1}` }));
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(createPageResponse(content, { page: pageNo, size, totalElements: total })),
+        });
+      },
+    );
+  }
+
+  test('필터로 결과가 바뀌면 건수가 role=status 영역 안에서 새 건수로 바뀐다', async ({ authenticatedPage: page }) => {
+    await openAuditLogs(page);
+
+    await selectResult(page, '성공');
+
+    await expect(page.getByRole('status').filter({ hasText: '총 3건 중 1-3' })).toBeVisible();
+  });
+
+  test('0건에서 결과가 돌아오면 건수가 role=status 영역 안에 다시 담긴다', async ({ authenticatedPage: page }) => {
+    await openAuditLogs(page);
+
+    await selectResult(page, '실패');
+    await expect(page.getByRole('table').getByRole('status')).toHaveText('조건에 맞는 감사 로그가 없습니다.');
+
+    await selectResult(page, '성공');
+    await expect(page.getByRole('status').filter({ hasText: '총 3건 중 1-3' })).toBeVisible();
+  });
+
+  test('0건이면 「총 0건」 은 라이브 리전에 두지 않는다 — 표의 빈 안내가 이미 낭독된다', async ({ authenticatedPage: page }) => {
+    await openAuditLogs(page);
+
+    await selectResult(page, '실패');
+    await expect(page.getByRole('table').getByRole('status')).toHaveText('조건에 맞는 감사 로그가 없습니다.');
+
+    // 글자는 보이되, 「총 0건」 을 담은 status 는 없다(빈 안내와 겹쳐 두 번 읽히지 않게)
+    await expect(page.getByText('총 0건')).toBeVisible();
+    await expect(page.getByRole('status').filter({ hasText: '총 0건' })).toHaveCount(0);
+  });
+
+  test('쪽을 넘기면 건수 범위가 role=status 영역 안에서 바뀐다', async ({ authenticatedPage: page }) => {
+    await mockAuditByResult(page, { total: 25 });
+    await page.goto('/admin/audit-logs');
+    // 쪽 크기를 10 으로 바꿔 25건을 3쪽으로 나눈다
+    await page.getByRole('combobox', { name: '페이지 사이즈' }).click();
+    await page.getByRole('option', { name: '10', exact: true }).click();
+    await expect(page.getByRole('status').filter({ hasText: '총 25건 중 1-10' })).toBeVisible();
+
+    await page.getByRole('button', { name: '다음 페이지' }).click();
+    await expect(page.getByRole('status').filter({ hasText: '총 25건 중 11-20' })).toBeVisible();
   });
 });

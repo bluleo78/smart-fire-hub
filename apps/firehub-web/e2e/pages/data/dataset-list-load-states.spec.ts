@@ -42,6 +42,12 @@ async function mockFifteenDatasets(page: Page) {
   return requestedPages;
 }
 
+test('WD-931 건수 「총 15건 중 1-10」 이 role=status 영역 안에 보인다', async ({ authenticatedPage: page }) => {
+  await mockFifteenDatasets(page);
+  await page.goto('/data/datasets');
+  await expect(page.getByRole('status').filter({ hasText: '총 15건 중 1-10' })).toBeVisible();
+});
+
 test.describe('데이터셋 목록 — 조회 실패·범위 밖 페이지 (WD-146)', () => {
   test('범위 밖 페이지 주소(?page=999)는 마지막 페이지로 옮겨 남은 데이터셋을 보인다', async ({ authenticatedPage: page }) => {
     const requestedPages = await mockFifteenDatasets(page);
