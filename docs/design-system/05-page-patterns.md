@@ -14,11 +14,21 @@ Smart Fire Hub 프론트엔드(`apps/firehub-web`)에서 반복되는 페이지 
 **TSX 스켈레톤**:
 
 ```tsx
+// 실제 연결 여부(@tanstack/react-query 의 onlineManager) — 구독 함수는 모듈 범위에 둔다
+const subscribeOnline = (onChange: () => void) => onlineManager.subscribe(onChange);
+
 export default function XxxListPage() {
   const navigate = useNavigate();
+  const isOnline = useSyncExternalStore(subscribeOnline, () => onlineManager.isOnline(), () => true);
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState("");
-  const { data, isLoading } = useXxxList({ page, search });
+  const { data, isLoading, isError, isPaused } = useXxxList({ page, search });
+
+  // 검색어가 바뀌면 첫 쪽부터 다시 본다
+  const handleSearchChange = (value: string) => {
+    setSearch(value);
+    setPage(0);
+  };
 
   return (
     <div className="space-y-6">
@@ -35,12 +45,12 @@ export default function XxxListPage() {
       <div className="flex items-center gap-3 flex-wrap">
         <SearchInput
           placeholder="검색..."
-          className="w-64"
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={handleSearchChange}
+          debounceMs={300}
         />
         <Select>
-          <SelectTrigger className="w-36">
+          <SelectTrigger className="w-36" aria-label="상태 필터">
             <SelectValue placeholder="상태" />
           </SelectTrigger>
           <SelectContent>
@@ -51,7 +61,7 @@ export default function XxxListPage() {
 
       {/* 데이터 테이블 */}
       <div className="rounded-md border">
-        <Table>
+        <Table aria-label="항목 목록">
           <TableHeader>
             <TableRow>
               <TableHead>컬럼 A</TableHead>
@@ -60,10 +70,21 @@ export default function XxxListPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {isLoading ? (
-              <TableSkeleton rows={10} columns={3} />
+            {isLoading || (!data && isPaused && isOnline) ? (
+              // isPaused 는 탭이 숨어 재시도가 멈춰도 참이다 — 연결돼 있으면 불러오는 중으로 보인다(WD-966)
+              <TableSkeletonRows columns={3} />
+            ) : !data && isPaused ? (
+              // 오프라인 대기는 로딩도 실패도 아니다(WD-966)
+              <TableEmptyRow colSpan={3} message="인터넷 연결이 없어 목록을 불러오지 못하고 있습니다. 연결되면 자동으로 다시 불러옵니다." />
+            ) : isError && !data ? (
+              // 재조회만 실패했으면 받아 둔 목록을 그대로 보인다(WD-146)
+              <TableErrorRow colSpan={3} />
             ) : data?.content.length === 0 ? (
-              <TableEmpty colSpan={3} message="데이터가 없습니다" />
+              <TableEmptyRow
+                colSpan={3}
+                searchKeyword={search || undefined}
+                onResetSearch={() => handleSearchChange("")}
+              />
             ) : (
               data?.content.map((item) => (
                 <TableRow
@@ -76,8 +97,17 @@ export default function XxxListPage() {
                   </TableCell>
                   <TableCell>{item.status}</TableCell>
                   <TableCell>
-                    <div className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-1 justify-end">
-                      <Button variant="ghost" size="icon-sm">
+                    {/* 행 작업: 행 이동을 막고, 초점이 와도 보인다(WD-412) */}
+                    <div className="opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity flex gap-1 justify-end">
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label={`${item.name} 수정`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigate(`/xxx/${item.id}/edit`);
+                        }}
+                      >
                         <Pencil className="h-4 w-4" />
                       </Button>
                     </div>
@@ -89,7 +119,7 @@ export default function XxxListPage() {
         </Table>
       </div>
 
-      {/* 페이지네이션 */}
+      {/* 페이지네이션 — totalElements·pageSize 를 함께 넘기면 건수도 보이고 읽어 준다(WD-931) */}
       <SimplePagination
         page={page}
         totalPages={data?.totalPages ?? 0}
@@ -472,7 +502,7 @@ export default function AuthPage() {
 | 현재 문제 | 권장 개선 방향 |
 |-----------|---------------|
 | 페이지별로 `space-y-6` / `space-y-4`가 일관되지 않게 사용됨 | List/Detail/Form 패턴은 `space-y-6`으로 통일 |
-| 로딩 상태 처리가 페이지마다 다름 (null 반환, Spinner, Skeleton 혼용) | 테이블은 `TableSkeleton`, 단일 리소스는 `Skeleton` 컴포넌트로 통일 |
+| 로딩 상태 처리가 페이지마다 다름 (null 반환, Spinner, Skeleton 혼용) | 테이블은 `TableSkeletonRows`, 단일 리소스는 `Skeleton` 컴포넌트로 통일 |
 | 에디터 페이지의 뷰포트 높이 계산값이 페이지마다 다르게 하드코딩됨 | CSS 변수 `--content-height`로 AppShell에서 주입하는 방식으로 통일 |
 | `navigate(-1)` vs `navigate("/목록경로")` 혼용 | Detail/Form 페이지의 취소/뒤로가기는 `navigate(-1)` 우선, 최상위 진입 시는 경로 지정 |
 | 삭제 확인 없이 바로 삭제하는 케이스 존재 | 모든 삭제 액션은 `DeleteConfirmDialog`를 거치도록 통일 |

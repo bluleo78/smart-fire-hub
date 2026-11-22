@@ -72,18 +72,27 @@ Smart Fire Hub 프론트엔드(`apps/firehub-web`)에서 사용하는 UI 컴포�
 
 **목적**: 돋보기 아이콘이 내장된 검색 입력 필드. 목록 페이지 상단 검색 바에 공통 사용.
 
-**Props API**: `InputProps` 전체 상속 (추가 Props 없음)
+**Props API**:
 
-**구현 특징**: 아이콘 위치를 위해 `pl-9` 패딩 적용.
+| Prop | Type | Required | Description |
+|------|------|----------|-------------|
+| `value` | `string` | 필수 | 현재 검색어 |
+| `onChange` | `(value: string) => void` | 필수 | 이벤트가 아니라 문자열을 받는다 |
+| `debounceMs` | `number` | 선택 | 입력이 멈춘 뒤 한 번만 전달한다(WD-513). 서버 검색이면 300 |
+| `placeholder` | `string` | 선택 | 기본값: "검색..." |
+| `aria-label` | `string` | 선택 | 접근 이름 (기본값: placeholder) |
+| `className` | `string` | 선택 | 바깥 요소의 클래스. 기본 `flex-1 max-w-sm` 이라 폭을 고정하려면 `flex-none` 을 함께 준다 |
+
+**구현 특징**: 돋보기·지우기 버튼 내장. 한글 조합 중인 입력은 조합이 끝난 뒤에 전달한다.
 
 **사용 예시**:
 
 ```tsx
 <SearchInput
   placeholder="데이터셋 검색..."
-  className="w-64"
   value={search}
-  onChange={(e) => setSearch(e.target.value)}
+  onChange={setSearch}
+  debounceMs={300}
 />
 ```
 
@@ -150,51 +159,63 @@ Smart Fire Hub 프론트엔드(`apps/firehub-web`)에서 사용하는 UI 컴포�
 
 ---
 
-### 5. TableEmpty (`table-empty.tsx`)
+### 5. TableEmptyRow · TableErrorRow (`table-empty.tsx`)
 
-**목적**: 테이블에 데이터가 없을 때 표시하는 빈 상태 행.
+**목적**: 테이블의 빈 상태·조회 실패 행. 문구를 라이브 리전으로 낭독한다(WD-815·930).
 
-**Props API**:
+**TableEmptyRow Props API**:
 
 | Prop | Type | Required | Description |
 |------|------|----------|-------------|
 | `colSpan` | `number` | 필수 | 테이블 컬럼 수 (전체 너비 병합) |
-| `message` | `string` | 선택 | 표시할 메시지 (기본값: "데이터가 없습니다") |
-| `icon` | `ReactNode` | 선택 | 메시지 위에 표시할 아이콘 |
+| `message` | `string` | 선택 | 기본값: "데이터가 없습니다." |
+| `searchKeyword` | `string` | 선택 | 있으면 검색 결과 0건 안내를 대신 표시 |
+| `onResetSearch` | `() => void` | 선택 | 검색 0건일 때 "검색 초기화" 버튼 |
+| `emptyAction` | `ReactNode` | 선택 | 검색어가 없는 0건일 때의 동작 |
+| `announceKey` | `string` | 선택 | 바뀌면 같은 문구도 다시 낭독 |
+
+**TableErrorRow Props API**:
+
+| Prop | Type | Required | Description |
+|------|------|----------|-------------|
+| `colSpan` | `number` | 필수 | 테이블 컬럼 수 |
+| `message` | `string` | 선택 | 기본값: "데이터를 불러오는 데 실패했습니다." |
+| `tone` | `'error' \| 'muted'` | 선택 | 기본값: `error`. 권한 없음은 `muted` |
+| `action` | `ReactNode` | 선택 | "다시 시도" 같은 동작 |
+| `className` | `string` | 선택 | 셀에 더할 클래스 |
 
 **사용 예시**:
 
 ```tsx
 <TableBody>
-  {data?.length === 0 && (
-    <TableEmpty
-      colSpan={5}
-      message="등록된 파이프라인이 없습니다"
-      icon={<GitBranch className="h-8 w-8 text-muted-foreground" />}
-    />
-  )}
+  {isError && !data ? (
+    <TableErrorRow colSpan={5} />
+  ) : data?.length === 0 ? (
+    <TableEmptyRow colSpan={5} message="등록된 파이프라인이 없습니다." />
+  ) : null}
 </TableBody>
 ```
 
 ---
 
-### 6. TableSkeleton (`table-skeleton.tsx`)
+### 6. TableSkeletonRows (`table-skeleton.tsx`)
 
-**목적**: 데이터 로딩 중 테이블 형태의 Skeleton 플레이스홀더 행을 표시.
+**목적**: 데이터 로딩 중 테이블 형태의 Skeleton 플레이스홀더 행을 표시. 그려진 동안 표에 aria-busy 를 건다(WD-518).
 
 **Props API**:
 
 | Prop | Type | Required | Description |
 |------|------|----------|-------------|
+| `columns` | `number` | 필수 | 표시할 컬럼 수 |
 | `rows` | `number` | 선택 | 표시할 행 수 (기본값: 5) |
-| `columns` | `number` | 선택 | 표시할 컬럼 수 (기본값: 4) |
+| `widths` | `string[]` | 선택 | 컬럼별 폭 클래스 (기본값: `w-full`) |
 
 **사용 예시**:
 
 ```tsx
 <TableBody>
   {isLoading ? (
-    <TableSkeleton rows={10} columns={5} />
+    <TableSkeletonRows columns={5} />
   ) : (
     data?.map(item => <TableRow key={item.id}>...</TableRow>)
   )}
@@ -259,17 +280,17 @@ Smart Fire Hub 프론트엔드(`apps/firehub-web`)에서 사용하는 UI 컴포�
 
 ```tsx
 // 편집 버튼
-<Button variant="ghost" size="icon-sm">
+<Button variant="ghost" size="icon-sm" aria-label="수정">
   <Pencil className="h-4 w-4" />
 </Button>
 
 // 삭제 버튼
-<Button variant="ghost" size="icon-sm" className="text-destructive hover:text-destructive">
+<Button variant="ghost" size="icon-sm" aria-label="삭제" className="text-destructive hover:text-destructive">
   <Trash2 className="h-4 w-4" />
 </Button>
 
 // 더보기 버튼
-<Button variant="ghost" size="icon-sm">
+<Button variant="ghost" size="icon-sm" aria-label="더보기">
   <MoreHorizontal className="h-4 w-4" />
 </Button>
 ```
@@ -278,21 +299,43 @@ Smart Fire Hub 프론트엔드(`apps/firehub-web`)에서 사용하는 UI 컴포�
 
 ### 패턴 3. Table Row with Hover Actions
 
-테이블 행에 마우스 오버 시 액션 버튼이 나타나는 패턴이다.
+테이블 행에 마우스를 올리거나 키보드 초점이 오면 액션 버튼이 나타나는 패턴이다.
+상세로 가는 키보드 경로는 이름 링크다 — [05 §A](./05-page-patterns.md#a-list-page-목록-페이지).
 
 ```tsx
-<TableRow className="cursor-pointer hover:bg-muted/50 transition-colors group">
-  <TableCell>{item.name}</TableCell>
-  <TableCell>{item.status}</TableCell>
-  {/* 액션 컬럼: 기본 투명, hover 시 표시 */}
+<TableRow
+  className="cursor-pointer hover:bg-muted/50 transition-colors group"
+  onClick={() => navigate(`/xxx/${item.id}`)}
+>
   <TableCell>
-    <div className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-1 justify-end">
-      <Button variant="ghost" size="icon-xs">
-        <Pencil className="h-3 w-3" />
+    <TruncatedLink to={`/xxx/${item.id}`} value={item.name} className="max-w-xs" />
+  </TableCell>
+  <TableCell>{item.status}</TableCell>
+  {/* 액션 컬럼: 기본 투명, hover·초점 시 표시 */}
+  <TableCell>
+    <div className="opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity flex gap-1 justify-end">
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        aria-label={`${item.name} 수정`}
+        onClick={(e) => {
+          e.stopPropagation();
+          navigate(`/xxx/${item.id}/edit`);
+        }}
+      >
+        <Pencil className="h-4 w-4" />
       </Button>
-      <Button variant="ghost" size="icon-xs" className="text-destructive hover:text-destructive">
-        <Trash2 className="h-3 w-3" />
-      </Button>
+      {/* 트리거·확인 창의 클릭은 DeleteConfirmDialog 가 행으로 번지지 않게 막는다 */}
+      <DeleteConfirmDialog
+        entityName="항목"
+        itemName={item.name}
+        onConfirm={() => handleDelete(item.id)}
+        trigger={
+          <Button variant="ghost" size="icon-sm" aria-label={`${item.name} 삭제`} className="text-destructive hover:text-destructive">
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        }
+      />
     </div>
   </TableCell>
 </TableRow>
@@ -307,11 +350,11 @@ Smart Fire Hub 프론트엔드(`apps/firehub-web`)에서 사용하는 UI 컴포�
 ```tsx
 <div className="flex items-center gap-3 flex-wrap">
   {/* 검색 */}
-  <SearchInput placeholder="검색..." className="w-64" />
+  <SearchInput placeholder="검색..." value={search} onChange={setSearch} debounceMs={300} />
 
   {/* 상태 필터 */}
   <Select value={statusFilter} onValueChange={setStatusFilter}>
-    <SelectTrigger className="w-36">
+    <SelectTrigger className="w-36" aria-label="상태 필터">
       <SelectValue placeholder="상태" />
     </SelectTrigger>
     <SelectContent>
