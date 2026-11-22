@@ -59,6 +59,9 @@ import { ExportDialog } from './components/ExportDialog';
 
 type SortKey = 'name' | 'createdAt';
 
+/** 오프라인으로 조회가 멈춰 있을 때 목록 자리에 보이는 안내 — 연결되면 TanStack Query 가 자동 재조회한다(WD-966) */
+const OFFLINE_PAUSED_MESSAGE = '인터넷 연결이 없어 데이터셋 목록을 불러오지 못하고 있습니다. 연결되면 자동으로 다시 불러옵니다.';
+
 /** 출처 필터가 골라져 있을 때 「임시 데이터셋 보기」를 비활성으로 두는 이유(WD-754·WD-776) */
 const ORIGIN_FILTER_HINT = '출처 필터를 고르면 그 출처의 데이터셋만 보여 이 옵션은 쓰이지 않습니다';
 
@@ -218,7 +221,7 @@ export default function DatasetListPage() {
   const [typeModalOpen, setTypeModalOpen] = useState(false);
 
   const { data: categoriesData } = useCategories();
-  const { data: datasetsData, isLoading, isPending, isError, error: datasetsError, refetch: refetchDatasets, isFetching } = useDatasets({
+  const { data: datasetsData, isLoading, isPending, isPaused, isError, error: datasetsError, refetch: refetchDatasets, isFetching } = useDatasets({
     categoryId,
     storageType: storageType || undefined,
     originType: originType || undefined,
@@ -600,6 +603,11 @@ export default function DatasetListPage() {
           <tbody>
             {isLoading || pageOutOfRange ? (
               <TableSkeletonRows columns={8} rows={5} />
+            ) : !datasetsData && isPaused ? (
+              // 데이터 없는 paused 쿼리(오프라인)는 isLoading 도 isError 도 아니라 빈 분기(「데이터셋이 없습니다」)로 떨어지므로 오류·빈 분기보다 먼저 잡는다(WD-966).
+              // 실패가 아닌 중립 대기 상태라 alert(assertive) 대신 TableEmptyRow 의 role=status(polite)로 알린다.
+              // 검색어·emptyAction 은 넘기지 않아 안내 문구만 보이고 버튼은 없다 — 연결되면 자동으로 다시 불러오므로 눌러서 할 일이 없다. 이전 데이터가 있으면 목록을 유지한다.
+              <TableEmptyRow colSpan={8} message={OFFLINE_PAUSED_MESSAGE} />
             ) : isError && !datasetsData ? (
               // 조회 실패를 「데이터셋이 없습니다」로 그리지 않는다 — 서버·권한 오류를 데이터가 없다고 오해하게 된다(WD-146).
               // 이전 데이터가 있는 재조회 실패는 위 분기가 그 데이터를 그대로 보인다.
