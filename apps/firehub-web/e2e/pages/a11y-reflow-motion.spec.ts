@@ -533,7 +533,7 @@ test.describe('동작 줄이기 (#344)', () => {
   test('reduce 설정에서 확인 다이얼로그의 확대 애니메이션이 감쇠된다', async ({ authenticatedPage: page }) => {
     await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createSynonymReviewItem()]);
     await page.emulateMedia({ reducedMotion: 'reduce' });
-    await page.goto('/knowledge-graph/review');
+    await gotoUntilReady(page, '/knowledge-graph/review', page.getByRole('button', { name: /승인/ }));
 
     await page.getByRole('button', { name: /승인/ }).click();
     const dialog = page.getByTestId('review-decide-confirm');
@@ -551,19 +551,19 @@ test.describe('동작 줄이기 (#344)', () => {
   test('reduce 설정에서도 포커스 가시성용 transition은 살아 있다', async ({ authenticatedPage: page }) => {
     await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createSynonymReviewItem()]);
     await page.emulateMedia({ reducedMotion: 'reduce' });
-    await page.goto('/knowledge-graph/review');
+    const tabTrigger = page.locator('[data-slot=tabs-trigger]').first();
+    await gotoUntilReady(page, '/knowledge-graph/review', tabTrigger);
 
     // 탭 트리거의 transition을 함께 죽이면 활성 인디케이터/포커스 링 표현이 사라져
     // SC 2.4.7 쪽에 결함을 새로 심게 된다 — 의도적으로 남긴 부분의 회귀 가드.
-    const trans = await page.locator('[data-slot=tabs-trigger]').first()
-      .evaluate((el) => parseFloat(getComputedStyle(el).transitionDuration));
+    const trans = await tabTrigger.evaluate((el) => parseFloat(getComputedStyle(el).transitionDuration));
     expect(trans).toBeGreaterThan(0);
   });
 
   test('기본(no-preference) 설정에서는 다이얼로그 모션이 그대로 재생된다', async ({ authenticatedPage: page }) => {
     await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createSynonymReviewItem()]);
     await page.emulateMedia({ reducedMotion: 'no-preference' });
-    await page.goto('/knowledge-graph/review');
+    await gotoUntilReady(page, '/knowledge-graph/review', page.getByRole('button', { name: /승인/ }));
 
     await page.getByRole('button', { name: /승인/ }).click();
     const duration = await page.getByTestId('review-decide-confirm')

@@ -13,6 +13,7 @@ import {
 import { mockOntologyGraph, setupAdminAuth, setupOntologyMocks } from '../../fixtures/admin.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { gotoUntilReady } from '../../fixtures/first-visit'; // WD-903: 첫 진입 직후 클릭은 대상이 보일 때까지 먼저 기다린다
 
 // 캔버스 뷰포트(zoom/pan)가 실제로 멈출 때까지 기다린다 — "몇 ms 지났는가"가 아니라 "더 이상 안
 // 움직인다"는 사실 자체를 관측한다.
@@ -1303,7 +1304,7 @@ test.describe('SchemaGraph — 캔버스 Delete 키 삭제', () => {
         },
       ]),
     );
-    await page.goto('/knowledge-graph/model');
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('combobox', { name: '온톨로지 선택' }));
 
     await page.getByRole('combobox', { name: '온톨로지 선택' }).click();
     const longOption = page.getByRole('option', { name: longDomain });
@@ -1364,7 +1365,7 @@ test.describe('SchemaGraph — 캔버스 Delete 키 삭제', () => {
       ]),
     );
     await mockApi(page, 'GET', '/api/v1/ontology/99', createOntologySchema({ domain: longDomain, entities: [], relations: [] }));
-    await page.goto('/knowledge-graph/model');
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('combobox', { name: '온톨로지 선택' }));
 
     await page.getByRole('combobox', { name: '온톨로지 선택' }).click();
     await page.getByRole('option', { name: longDomain }).click();
