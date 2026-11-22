@@ -10,7 +10,7 @@ import {
   Settings2,
   Trash2,
 } from 'lucide-react';
-import { useId, useState } from 'react';
+import { useId, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { client } from '@/api/client';
@@ -44,6 +44,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { useApiConnectionsSelectable } from '@/hooks/queries/useApiConnections';
 import { useIntegerDraftStore } from '@/hooks/useIntegerDrafts';
 import { API_FULL_URL_PLACEHOLDER, AUTH_TYPE_LABEL, AUTH_TYPE_OPTIONS } from '@/lib/api-connection-form';
+import { httpUrlError } from '@/lib/http-url';
 import { cn } from '@/lib/utils';
 import { columnNameLengthError } from '@/lib/validations/dataset';
 
@@ -367,6 +368,9 @@ export default function ApiCallStepConfig({
 
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewResult, setPreviewResult] = useState<PreviewResult | null>(null);
+  // 「테스트 호출」 때 직접 URL 이 비었거나 형식이 틀리면 토스트 대신 URL 칸 아래에 보이는 오류(WD-909). 입력·연결 변경 때 지운다.
+  const [previewUrlError, setPreviewUrlError] = useState<string | undefined>(undefined);
+  const customUrlRef = useRef<HTMLInputElement>(null);
   // selectable 엔드포인트: 일반 사용자도 접근 가능 (파이프라인 에디터 권한)
   const { data: savedConnections } = useApiConnectionsSelectable();
 
@@ -400,8 +404,9 @@ export default function ApiCallStepConfig({
   const headersRecord = getConfig<Record<string, string>>(apiConfig, 'headers', {});
   const queryParamsRecord = getConfig<Record<string, string>>(apiConfig, 'queryParams', {});
 
-  // URL 빈 값 저장 오류(usePipelineValidation, 이슈 #44) — 칸 아래 문구로 보이고 입력과 연결한다(WD-633)
-  const customUrlError = fieldError?.(API_CUSTOM_URL_FIELD);
+  // URL 칸 저장 오류(usePipelineValidation: 빈 값 #44·형식 오류 WD-909) — 칸 아래 문구로 보이고 입력과 연결한다(WD-633)
+  // 저장 오류가 있으면 그것을 먼저 보인다 — 같은 칸에 문구가 둘 뜨지 않게 한다(WD-909)
+  const customUrlError = fieldError?.(API_CUSTOM_URL_FIELD) ?? previewUrlError;
   const pathError = fieldError?.(API_PATH_FIELD);
   const customUrlErrorId = `${baseId}-custom-url-error`;
   const pathErrorId = `${baseId}-path-error`;
@@ -438,6 +443,7 @@ export default function ApiCallStepConfig({
    */
   const handleConnectionChange = (id: number | null) => {
     onConnectionChange(id);
+    setPreviewUrlError(undefined);
     const cleaned = { ...apiConfig };
     delete cleaned['url'];       // 과거 필드 제거
     delete cleaned['path'];
@@ -479,17 +485,24 @@ export default function ApiCallStepConfig({
       toast.error('경로(Path)를 입력하세요.');
       return;
     }
-    if (apiConnectionId === null && !customUrl) {
-      toast.error('URL을 입력하세요.');
-      return;
+    // 직접 모드는 빈 값·형식 오류를 토스트 대신 URL 칸 오류로 안내하고 그 칸으로 포커스한다(WD-909) — 저장 검증과 같은 함수·문구
+    // 이전 성공 결과가 새 URL 오류 옆에 남지 않게 검증 전에 먼저 비운다
+    setPreviewResult(null);
+    const directUrl = customUrl.trim();
+    if (apiConnectionId === null) {
+      const message = directUrl ? httpUrlError(directUrl) : 'URL을 입력하세요';
+      if (message) {
+        setPreviewUrlError(message);
+        customUrlRef.current?.focus();
+        return;
+      }
     }
     setPreviewLoading(true);
-    setPreviewResult(null);
     try {
       // 백엔드 ApiCallPreviewService: apiConnectionId + path 또는 customUrl로 URL 계산
       const payload = {
         apiConnectionId: apiConnectionId ?? undefined,
-        url: apiConnectionId !== null ? path : customUrl,
+        url: apiConnectionId !== null ? path : directUrl,
         method,
         headers: kvPairsToRecord(headerPairs),
         queryParams: kvPairsToRecord(queryParamPairs),
@@ -596,6 +609,7 @@ export default function ApiCallStepConfig({
             <Label htmlFor={`${baseId}-custom-url`} className="text-xs">URL *</Label>
             <Input
               id={`${baseId}-custom-url`}
+              ref={customUrlRef}
               // 예시 플레이스홀더 — 까닭은 공용 상수 설명(WD-887)
               placeholder={API_FULL_URL_PLACEHOLDER}
               value={customUrl}
@@ -603,7 +617,10 @@ export default function ApiCallStepConfig({
               data-error-field={API_CUSTOM_URL_FIELD}
               aria-invalid={customUrlError ? true : undefined}
               aria-describedby={customUrlError ? customUrlErrorId : undefined}
-              onChange={(e) => update('customUrl', e.target.value)}
+              onChange={(e) => {
+                setPreviewUrlError(undefined);
+                update('customUrl', e.target.value);
+              }}
               className="text-xs h-8"
             />
             <InlineFieldError id={customUrlErrorId} message={customUrlError} />

@@ -1556,7 +1556,8 @@ test.describe('API 연결 페이지', () => {
     // Base URL에 잘못된 값 입력 후 저장
     const baseUrlInput = page.getByPlaceholder(API_BASE_URL_PLACEHOLDER, { exact: true });
     await baseUrlInput.clear();
-    await baseUrlInput.fill('not-a-url');
+    // 클라이언트 형식 검사(WD-909)를 통과하는 값이어야 서버 400 문구 경로를 계속 덮는다
+    await baseUrlInput.fill('https://rejected-by-server.example');
     await page.getByRole('button', { name: '저장' }).click();
 
     // 한국어 검증 메시지가 토스트로 표시되어야 한다 (영문 "Validation failed" 아님)
@@ -1604,6 +1605,44 @@ test.describe('API 연결 페이지', () => {
     // PUT API가 호출되지 않아야 한다 (short wait after click to be sure)
     await page.waitForTimeout(300);
     expect(putCalled).toBe(false);
+  });
+
+  test('상세 편집 — Base URL 형식이 틀리면 인라인 오류·포커스로 막고 고치면 지워진다 (WD-909)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupApiConnectionDetailMocks(page, 1);
+
+    // PUT payload 를 캡처한다 — 틀린 값일 때는 0건이어야 한다
+    const putBodies: Array<{ baseUrl?: string }> = [];
+    await page.route(
+      (url) => url.pathname === '/api/v1/api-connections/1',
+      (route) => {
+        if (route.request().method() === 'PUT') {
+          putBodies.push(route.request().postDataJSON());
+          return route.fulfill({ status: 200, json: { id: 1 } });
+        }
+        return route.fallback();
+      },
+    );
+
+    await page.goto('/admin/api-connections/1');
+    await expect(page.getByRole('heading', { name: 'API 연결 상세' })).toBeVisible();
+
+    const baseUrlInput = page.getByPlaceholder(API_BASE_URL_PLACEHOLDER, { exact: true });
+    await baseUrlInput.fill(API_BASE_URL_PLACEHOLDER);
+    await page.getByRole('button', { name: '저장' }).click();
+
+    await expect(baseUrlInput).toHaveAccessibleDescription('Base URL은 http 또는 https로 시작해야 합니다.');
+    await expect(baseUrlInput).toHaveAttribute('aria-invalid', 'true');
+    await expect(baseUrlInput).toBeFocused();
+    expect(putBodies).toHaveLength(0);
+
+    // 정상 값으로 고치면 오류가 지워지고 그 값이 저장된다
+    await baseUrlInput.fill('https://fixed.example.com');
+    await expect(baseUrlInput).not.toHaveAttribute('aria-invalid', 'true');
+    await page.getByRole('button', { name: '저장' }).click();
+    await expect.poll(() => putBodies.length).toBe(1);
+    expect(putBodies[0].baseUrl).toBe('https://fixed.example.com');
   });
 
   // (#647) 동일 테넌트 내 이름 중복 시 백엔드가 409로 거부 — 토스트 노출 + 다이얼로그 유지 검증

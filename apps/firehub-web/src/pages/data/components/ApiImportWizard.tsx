@@ -14,6 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { FormField } from '@/components/ui/form-field';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -28,6 +29,7 @@ import { useCreateApiImport } from '@/hooks/queries/useDatasets';
 import { usePipelinePermissions } from '@/hooks/queries/usePipelines';
 import { API_FULL_URL_PLACEHOLDER } from '@/lib/api-connection-form';
 import { handleApiError } from '@/lib/api-error';
+import { httpUrlError } from '@/lib/http-url';
 import type { DatasetColumnResponse } from '@/types/dataset';
 
 import ApiCallPreview from '../../pipeline/components/ApiCallPreview';
@@ -102,6 +104,10 @@ export function ApiImportWizard({
 
   // Step 1 state
   const [url, setUrl] = useState('');
+  // 검사·요약·전송이 같은 값을 보도록 앞뒤 공백을 뗀 값 하나를 쓴다(WD-909).
+  const trimmedUrl = url.trim();
+  // 1단계 URL 칸 오류 — 토스트 대신 칸 아래에 보인다(WD-909)
+  const [urlError, setUrlError] = useState<string | undefined>();
   const [method, setMethod] = useState('GET');
   const [authType, setAuthType] = useState('NONE');
   const [authPlacement, setAuthPlacement] = useState('header');
@@ -142,7 +148,8 @@ export function ApiImportWizard({
     }
 
     return {
-      url,
+      // 저장 키 `url` 은 그대로 둔다(WD-925)
+      url: trimmedUrl,
       method,
       headers: kvPairsToRecord(headers),
       queryParams: kvPairsToRecord(queryParams),
@@ -162,7 +169,7 @@ export function ApiImportWizard({
     setPreviewResult(null);
     try {
       const payload = {
-        url,
+        url: trimmedUrl,
         method,
         headers: kvPairsToRecord(headers),
         queryParams: kvPairsToRecord(queryParams),
@@ -254,19 +261,11 @@ export function ApiImportWizard({
 
   const handleNext = () => {
     if (step === 0) {
-      if (!url) {
-        toast.error('URL을 입력하세요.');
-        return;
-      }
-      // URL 형식 검증 (#53)
-      try {
-        const parsed = new URL(url);
-        if (!['http:', 'https:'].includes(parsed.protocol)) {
-          toast.error('http 또는 https URL을 입력하세요.');
-          return;
-        }
-      } catch {
-        toast.error('유효하지 않은 URL 형식입니다.');
+      // 빈 값·형식 오류는 토스트 대신 URL 칸 아래에 보이고 그 칸으로 포커스를 옮긴다(WD-909)
+      const error = trimmedUrl ? httpUrlError(trimmedUrl) : 'URL을 입력하세요.';
+      if (error) {
+        setUrlError(error);
+        document.getElementById(`${baseId}-url`)?.focus();
         return;
       }
     }
@@ -334,16 +333,19 @@ export function ApiImportWizard({
         {/* Step 1: API 설정 */}
         {step === 0 && (
           <div className="space-y-4">
-            <div className="space-y-1.5">
-              <Label htmlFor={`${baseId}-url`}>URL *</Label>
+            {/* FormField 가 * 표시·오류 문구·aria 연결을 맡는다(WD-909) */}
+            <FormField label="URL" htmlFor={`${baseId}-url`} error={urlError} required>
               <Input
                 id={`${baseId}-url`}
                 // 예시 플레이스홀더 — 까닭은 공용 상수 설명(WD-887)
                 placeholder={API_FULL_URL_PLACEHOLDER}
                 value={url}
-                onChange={(e) => setUrl(e.target.value)}
+                onChange={(e) => {
+                  setUrl(e.target.value);
+                  setUrlError(undefined);
+                }}
               />
-            </div>
+            </FormField>
 
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
@@ -663,7 +665,7 @@ export function ApiImportWizard({
               <div className="space-y-1.5 text-sm">
                 <div className="flex gap-2">
                   <span className="text-muted-foreground w-24 shrink-0">URL</span>
-                  <span className="font-mono text-xs break-all">{url}</span>
+                  <span className="font-mono text-xs break-all">{trimmedUrl}</span>
                 </div>
                 <div className="flex gap-2">
                   <span className="text-muted-foreground w-24 shrink-0">메서드</span>
