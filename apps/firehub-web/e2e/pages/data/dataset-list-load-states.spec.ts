@@ -343,6 +343,8 @@ test.describe('데이터셋 목록 — 「다시 시도」 포커스 (WD-957)', 
  * 연결 대기 안내를 보이고, 연결이 돌아오면 자동으로 다시 불러와 목록을 채운다.
  */
 test.describe('데이터셋 목록 — 오프라인 연결 대기 (WD-966)', () => {
+  // 재시도 지연(TanStack 기본 첫 재시도 1초)보다 충분히 긴 대기 — 멈춘 재시도가 이 시간 동안 요청을 내지 않는지 본다
+  const RETRY_HOLD_MS = 2500;
   const OFFLINE_TEXT = '인터넷 연결이 없어 데이터셋 목록을 불러오지 못하고 있습니다. 연결되면 자동으로 다시 불러옵니다.';
 
   /** 데이터셋 목록 GET 을 항상 200(3건)으로 응답시킨다 — 오프라인 전환 전후 목록 채움 검증용 */
@@ -478,5 +480,58 @@ test.describe('데이터셋 목록 — 오프라인 연결 대기 (WD-966)', () 
     await expectTableErrorAlert(page, '일시적인 서버 오류입니다.', { action: '다시 시도' });
     await expect(page.getByText(OFFLINE_TEXT)).toHaveCount(0);
     await expect(page.getByRole('button', { name: '다시 시도' })).toBeFocused();
+  });
+
+  test('첫 요청 실패 뒤 재시도를 탭 숨김으로 멈추면 연결 없음 안내 대신 불러오는 중을 보인다', async ({ authenticatedPage: page }) => {
+    let calls = 0;
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets',
+      (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        calls += 1;
+        // 첫 요청만 실패시켜 재시도 대기에 들어가게 한다
+        if (calls === 1) {
+          return route.fulfill({
+            status: 500,
+            contentType: 'application/json',
+            body: JSON.stringify({ status: 500, error: 'Internal Server Error', message: '일시적인 서버 오류입니다.' }),
+          });
+        }
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(createPageResponse(createDatasets(3))),
+        });
+      },
+    );
+
+    // 처음부터 탭이 숨겨진 상태로 연다 — 첫 요청은 나가고, 실패 뒤 재시도는 focusManager 에 의해 paused 가 된다
+    await page.addInitScript(() => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
+    });
+    await page.goto('/data/datasets');
+    await expect.poll(() => calls).toBe(1);
+
+    // 양성 신호: 표 안 스켈레톤(TableSkeletonRows 가 표에 거는 aria-busy)이 보이고 연결 없음 안내는 없다
+    await expect(page.locator('table[aria-busy="true"] tbody tr[aria-hidden="true"]').first()).toBeVisible();
+    await expect(page.getByText(OFFLINE_TEXT)).toHaveCount(0);
+    // 재시도 지연(기본 1초)보다 충분히 긴 시간 동안에도 재시도 요청이 나가지 않아야 한다(멈춘 상태 유지)
+    await page.waitForTimeout(RETRY_HOLD_MS);
+    expect(calls).toBe(1);
+    await expect(page.locator('table[aria-busy="true"] tbody tr[aria-hidden="true"]').first()).toBeVisible();
+    await expect(page.getByText(OFFLINE_TEXT)).toHaveCount(0);
+    await expect(page.getByText('데이터셋이 없습니다.')).toHaveCount(0);
+    await expect(page.getByRole('status').filter({ hasText: '인터넷 연결이 없어' })).toHaveCount(0);
+
+    // 탭이 다시 보이면 재시도가 나가 목록을 채운다
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' });
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
+      // 실제 브라우저처럼 버블링하는 이벤트로 보낸다(TanStack 은 window 에서 듣는다)
+      document.dispatchEvent(new Event('visibilitychange', { bubbles: true }));
+    });
+    await expect(page.getByText('데이터셋 1', { exact: true })).toBeVisible();
+    expect(calls).toBeGreaterThan(1);
   });
 });
