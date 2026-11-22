@@ -77,7 +77,8 @@ function WidgetContent({ widget, chartData, dataLoading, dataFetching, dataError
         title={extractApiError(dataError, '데이터를 불러올 수 없습니다.')}
         action={
           // 다시 조회하는 동안 잠근다 — 거듭 눌러 같은 차트 데이터 요청이 겹쳐 나가지 않게(aria-disabled 로 포커스 유지)
-          <PendingButton pending={dataFetching} variant="outline" size="sm" className="mt-2 h-7 text-xs" onClick={onRetry}>
+          // 높이를 덮어쓰지 않는다 — size="sm"(h-8)이 최소 클릭 영역 32px 를 지킨다(h-7 이 28px 로 줄이던 결함, WD-926)
+          <PendingButton pending={dataFetching} variant="outline" size="sm" className="mt-2 text-xs" onClick={onRetry}>
             다시 시도
           </PendingButton>
         }
