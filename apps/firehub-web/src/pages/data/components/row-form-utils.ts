@@ -138,7 +138,8 @@ function numericField(col: DatasetColumnResponse, check: (raw: unknown) => strin
     .transform((v) => String(v).trim());
   // (#674) 빈 문자열은 검사 전에 undefined 로 바꾼다 — NOT NULL 이면 형식 오류(필수), NULL 허용이면 optional 로 통과해
   // cleanFormValues 가 null 로 보낸다(예전 coerce 경로에서 `Number('') === 0` 이 0 으로 저장되던 함정).
-  return z.preprocess((v) => (v === '' ? undefined : v), col.isNullable ? numeric.optional() : numeric);
+  // (WD-906 리뷰) 공백만 있는 입력도 빈 값으로 본다 — 안 그러면 NULL 허용 칸이 null 대신 형식 오류를 낸다.
+  return z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), col.isNullable ? numeric.optional() : numeric);
 }
 
 /**

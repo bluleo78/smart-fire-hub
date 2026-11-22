@@ -50,6 +50,7 @@ export function RowFormFields({
       {editableColumns.map((col) => {
         const label = col.displayName || col.columnName;
         const fieldError = form.formState.errors[col.columnName];
+        const errorId = `${idPrefix}-${col.columnName}-error`;
         const isChanged = changedFields?.has(col.columnName) ?? false;
 
         return (
@@ -141,18 +142,15 @@ export function RowFormFields({
                 step="any"
                 {...form.register(col.columnName)}
               />
-            ) : col.dataType === 'INTEGER' ? (
+            ) : col.dataType === 'INTEGER' || col.dataType === 'DECIMAL' ? (
+              // (WD-906) type=number 는 `1e`·`-` 같은 덜 된 숫자를 빈 문자열로 돌려줘 NULL 허용 칸이 조용히 null 로
+              // 저장됐다. text 로 원문을 그대로 검사(integerInputError/decimalInputError)에 보내 형식 오류로 막는다.
+              // inputMode 는 일부러 지정하지 않는다 — decimal 은 iOS 키패드에 마이너스 키가 없어 음수를 못 친다.
               <Input
                 id={`${idPrefix}-${col.columnName}`}
-                type="number"
-                step="1"
-                {...form.register(col.columnName)}
-              />
-            ) : col.dataType === 'DECIMAL' ? (
-              <Input
-                id={`${idPrefix}-${col.columnName}`}
-                type="number"
-                step="any"
+                type="text"
+                aria-invalid={fieldError ? true : undefined}
+                aria-describedby={fieldError ? errorId : undefined}
                 {...form.register(col.columnName)}
               />
             ) : (
@@ -164,7 +162,9 @@ export function RowFormFields({
             )}
 
             {fieldError && (
-              <p className="text-sm text-destructive">{fieldError.message as string}</p>
+              <p id={errorId} className="text-sm text-destructive">
+                {fieldError.message as string}
+              </p>
             )}
           </div>
         );

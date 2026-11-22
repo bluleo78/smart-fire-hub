@@ -1014,7 +1014,7 @@ test.describe('파이프라인 트리거 탭', () => {
     await page.getByLabel(/^이름/).fill('변경 감지 트리거');
 
     // 폴링 주기를 30초 미만(29초)으로 설정
-    const pollingInput = page.locator('input[type="number"]').first();
+    const pollingInput = page.getByLabel(/^폴링 주기/);
     await pollingInput.fill('29');
 
     await page.getByRole('button', { name: '만들기' }).click();
@@ -1051,7 +1051,7 @@ test.describe('파이프라인 트리거 탭', () => {
     await page.getByLabel(/^이름/).fill('변경 감지 트리거');
 
     // 폴링 주기를 3600초 초과(3601초)로 설정
-    const pollingInput = page.locator('input[type="number"]').first();
+    const pollingInput = page.getByLabel(/^폴링 주기/);
     await pollingInput.fill('3601');
 
     await page.getByRole('button', { name: '만들기' }).click();
@@ -1111,7 +1111,7 @@ test.describe('파이프라인 트리거 탭', () => {
     await page.getByRole('option', { name: '화재 이력' }).click();
 
     // 폴링 주기를 30초(최솟값)로 설정
-    const pollingInput = page.locator('input[type="number"]').first();
+    const pollingInput = page.getByLabel(/^폴링 주기/);
     await pollingInput.fill('30');
 
     await page.getByRole('button', { name: '만들기' }).click();
@@ -1124,6 +1124,78 @@ test.describe('파이프라인 트리거 탭', () => {
       config: expect.objectContaining({
         pollingIntervalSeconds: 30,
       }),
+    });
+  });
+
+  /**
+   * 회귀 테스트 (WD-906): type="number" 칸은 `1e` 같은 덜 된 숫자를 ""로 보고해
+   * `Number(v) || 60` 이 칸을 말없이 기본값으로 바꿨다. 공용 정수 칸은 원문을 두고 오류를 보인다.
+   */
+  test('데이터셋 변경 트리거 — 폴링 주기·디바운스에 덜 된 숫자를 치면 기본값으로 바뀌지 않고 칸 오류가 보인다 (WD-906)', async ({
+    authenticatedPage: page,
+  }) => {
+    const pipelineId = 1;
+    await mockApi(page, 'GET', `/api/v1/pipelines/${pipelineId}`, createPipelineDetail({ id: pipelineId }));
+    await mockApi(page, 'GET', `/api/v1/pipelines/${pipelineId}/executions`, createPageResponse([]));
+    await mockApi(page, 'GET', `/api/v1/pipelines/${pipelineId}/trigger-events`, []);
+    await mockApi(page, 'GET', `/api/v1/pipelines/${pipelineId}/triggers`, []);
+    await mockApi(page, 'GET', '/api/v1/datasets', {
+      content: [{ id: 42, name: '화재 이력', tableName: 'fire_history' }],
+      page: 0,
+      size: 1000,
+      totalElements: 1,
+      totalPages: 1,
+    });
+    const created = createTrigger({
+      id: 21,
+      name: '덜 된 숫자 트리거',
+      triggerType: 'DATASET_CHANGE',
+      config: { datasetIds: [42], pollingIntervalSeconds: 120, debounceSeconds: 5 },
+    });
+    const createCapture = await mockApi(page, 'POST', '/api/v1/pipelines/1/triggers', created, {
+      capture: true,
+    });
+
+    await page.goto('/pipelines/1');
+    await page.getByRole('tab', { name: '트리거' }).click();
+    await page.getByRole('button', { name: /새 트리거/ }).click();
+    await page.getByRole('button', { name: /데이터셋 변경/ }).click();
+    await page.getByLabel(/^이름/).fill('덜 된 숫자 트리거');
+    await page.getByRole('combobox').click();
+    await page.getByRole('option', { name: '화재 이력' }).click();
+
+    const pollingInput = page.getByLabel(/^폴링 주기/);
+    const debounceInput = page.getByLabel(/^디바운스 시간/);
+
+    // 폴링 주기를 비우고 `1e` — 60 으로 튀지 않고 원문이 남으며 칸 오류가 보인다
+    await pollingInput.fill('');
+    await pollingInput.pressSequentially('1e');
+    await expect(pollingInput).toHaveValue('1e');
+    await expect(pollingInput).toHaveAttribute('aria-invalid', 'true');
+    await expect(page.getByText('정수를 입력하세요')).toHaveCount(1);
+
+    // 디바운스도 `-` 면 같은 오류
+    await debounceInput.fill('');
+    await debounceInput.pressSequentially('-');
+    await expect(debounceInput).toHaveValue('-');
+    await expect(debounceInput).toHaveAttribute('aria-invalid', 'true');
+    await expect(page.getByText('정수를 입력하세요')).toHaveCount(2);
+
+    // 고쳐 쓰면 오류가 사라지고 요청 본문에 그 값이 실린다
+    await pollingInput.fill('120');
+    await debounceInput.fill('5');
+    await expect(page.getByText('정수를 입력하세요')).toHaveCount(0);
+
+    // 오류가 보이는 채로 저장해도 마지막으로 확정된 값(120)이 실린다 — 기본값이나 빈 값으로 바뀌지 않는다 (WD-906)
+    await pollingInput.press('End');
+    await pollingInput.pressSequentially('e');
+    await expect(pollingInput).toHaveValue('120e');
+    await expect(page.getByText('정수를 입력하세요')).toHaveCount(1);
+    await page.getByRole('button', { name: '만들기' }).click();
+
+    const req = await createCapture.waitForRequest();
+    expect(req.payload).toMatchObject({
+      config: expect.objectContaining({ pollingIntervalSeconds: 120, debounceSeconds: 5 }),
     });
   });
 

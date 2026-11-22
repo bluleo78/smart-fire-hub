@@ -88,6 +88,20 @@ async function addAndOpenApiCallStep(page: import('@playwright/test').Page) {
   await expect(page.locator('[role="combobox"]:has-text("직접 입력")')).toBeVisible({ timeout: 5000 });
 }
 
+/** API 호출 스텝을 추가하고 URL 을 채운 뒤 고급 설정까지 연다 (WD-906) */
+async function openApiCallAdvanced(page: import('@playwright/test').Page) {
+  await addAndOpenApiCallStep(page);
+  await page.getByPlaceholder(API_FULL_URL_PLACEHOLDER, { exact: true }).fill('https://example.com/api');
+  await page.locator('button').filter({ hasText: /^고급 설정$/ }).click();
+}
+
+/** 스텝 이름·파이프라인 이름을 채우고 저장한다 (WD-906) */
+async function saveApiCallPipeline(page: import('@playwright/test').Page, pipelineName: string) {
+  await page.locator('#step-name').fill('API 호출 스텝');
+  await page.getByPlaceholder(/파이프라인 이름|이름 입력/).first().fill(pipelineName);
+  await page.getByRole('button', { name: '저장', exact: true }).click();
+}
+
 test.describe('파이프라인 에디터 — API_CALL 스텝 설정', () => {
   // 실행·수정·트리거 편집 버튼은 권한이 있을 때만 보인다(WD-219) — 기본 인증 fixture 는 권한이 비어 있어 모든 쓰기 권한을 준다.
   test.beforeEach(async ({ authenticatedPage: page }) => {
@@ -506,10 +520,15 @@ test.describe('파이프라인 에디터 — API_CALL 스텝 설정', () => {
 
     await expect(maxRetriesInput).toBeVisible({ timeout: 5000 });
 
-    // 음수 재시도 횟수 → 최소값(0)으로 클램핑
-    await maxRetriesInput.fill('-10');
+    // 재시도 횟수 상한 초과 → 최대값(10)으로 클램핑 (음수는 정수 표기가 아니라 WD-906 에서 칸 오류로 처리된다)
+    await maxRetriesInput.fill('99');
     await maxRetriesInput.blur();
-    await expect(maxRetriesInput).toHaveValue('0');
+    await expect(maxRetriesInput).toHaveValue('10');
+
+    // 이미 10 인 칸에 100 을 쳐도(커밋값이 10 으로 클램핑돼 prop 불변) blur 하면 칸이 10 으로 돌아온다
+    await maxRetriesInput.fill('100');
+    await maxRetriesInput.blur();
+    await expect(maxRetriesInput).toHaveValue('10');
 
     // 0 타임아웃 → 최소값(1000ms)으로 클램핑
     await timeoutInput.fill('0');
@@ -532,8 +551,93 @@ test.describe('파이프라인 에디터 — API_CALL 스텝 설정', () => {
       steps: Array<{ apiConfig?: { retry?: { maxRetries?: number }; timeoutMs?: number; maxDurationMs?: number } }>;
     };
     const apiConfig = payload.steps[0].apiConfig;
-    expect(apiConfig?.retry?.maxRetries).toBe(0);
+    expect(apiConfig?.retry?.maxRetries).toBe(10);
     expect(apiConfig?.timeoutMs).toBe(1000);
     expect(apiConfig?.maxDurationMs).toBe(86_400_000);
+  });
+
+  /**
+   * WD-906: 숫자 칸이 덜 된 숫자("1e", "-")를 말없이 최솟값으로 바꾸던 문제.
+   * 오류 문구를 보이고 원문을 남기며, 비운 뒤 새로 친 값은 중간에 튀지 않고 저장돼야 한다.
+   */
+  test('API 호출 스텝 고급 설정 — 덜 된 숫자는 최솟값으로 바뀌지 않고 칸 오류가 보이며, 칸을 비우고 5000 을 쳐도 중간에 튀지 않는다 (WD-906)', async ({
+    authenticatedPage: page,
+  }) => {
+    const capture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/pipelines',
+      { id: 101, name: '숫자 칸 테스트', steps: [] },
+      { capture: true },
+    );
+
+    await openApiCallAdvanced(page);
+
+    const maxRetriesInput = page.getByLabel('재시도 횟수');
+    const timeoutInput = page.getByLabel('요청 타임아웃 (ms)');
+    await expect(timeoutInput).toBeVisible({ timeout: 5000 });
+
+    // 덜 된 숫자 "1e" — 1000 으로 바뀌지 않고 원문 유지 + 오류 문구
+    await timeoutInput.fill('1e');
+    await expect(timeoutInput).toHaveValue('1e');
+    await expect(timeoutInput).toHaveAttribute('aria-invalid', 'true');
+    await expect(page.getByText('정수를 입력하세요')).toBeVisible();
+
+    // 비우고 5000 — 중간에 튀지 않고 5000 그대로
+    await timeoutInput.fill('');
+    await timeoutInput.pressSequentially('5000');
+    await expect(timeoutInput).toHaveValue('5000');
+    await expect(page.getByText('정수를 입력하세요')).toHaveCount(0);
+
+    // 재시도 칸 "-" — 오류·원문 유지
+    await maxRetriesInput.fill('-');
+    await expect(maxRetriesInput).toHaveValue('-');
+    await expect(page.getByText('정수를 입력하세요')).toBeVisible();
+    await maxRetriesInput.fill('2');
+
+    await saveApiCallPipeline(page, '숫자 칸 테스트');
+
+    const req = await capture.waitForRequest();
+    const payload = req.payload as {
+      steps: Array<{ apiConfig?: { retry?: { maxRetries?: number }; timeoutMs?: number } }>;
+    };
+    expect(payload.steps[0].apiConfig?.timeoutMs).toBe(5000);
+    expect(payload.steps[0].apiConfig?.retry?.maxRetries).toBe(2);
+  });
+
+  /**
+   * WD-906: 칸에 들어갔다가 아무것도 치지 않고 나가기만 해도 blur 보정이 갱신을 보내
+   * 기본 설정값(retry·timeoutMs·maxDurationMs)이 저장 본문에 새로 실리던 문제.
+   */
+  test('API 호출 스텝 고급 설정 — 칸에 들어갔다 나가기만 하면 저장 본문에 기본값이 새로 실리지 않는다 (WD-906)', async ({
+    authenticatedPage: page,
+  }) => {
+    const capture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/pipelines',
+      { id: 103, name: '탭 통과 테스트', steps: [] },
+      { capture: true },
+    );
+
+    await openApiCallAdvanced(page);
+
+    // 세 칸에 차례로 포커스를 주고 아무것도 치지 않은 채 떠난다
+    for (const label of ['재시도 횟수', '요청 타임아웃 (ms)', '최대 실행 시간 (ms)']) {
+      const input = page.getByLabel(label);
+      await input.focus();
+      await input.blur();
+    }
+
+    await saveApiCallPipeline(page, '탭 통과 테스트');
+
+    const req = await capture.waitForRequest();
+    const payload = req.payload as {
+      steps: Array<{ apiConfig?: { retry?: unknown; timeoutMs?: number; maxDurationMs?: number } }>;
+    };
+    // 치지 않았으므로 기본값이 본문에 새로 쓰이지 않는다
+    expect(payload.steps[0].apiConfig?.retry).toBeUndefined();
+    expect(payload.steps[0].apiConfig?.timeoutMs).toBeUndefined();
+    expect(payload.steps[0].apiConfig?.maxDurationMs).toBeUndefined();
   });
 });

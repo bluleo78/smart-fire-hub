@@ -12,7 +12,7 @@ import { Separator } from '../../components/ui/separator';
 import { Switch } from '../../components/ui/switch';
 import { useTestSmtpSettings } from '../../hooks/queries/useProactiveMessages';
 import type { SmtpSettingsFormState } from '../../hooks/useSmtpSettingsForm';
-import { PORT_MAX, PORT_MIN, SMTP_FIELD_META } from '../../hooks/useSmtpSettingsForm';
+import { SMTP_FIELD_META } from '../../hooks/useSmtpSettingsForm';
 import { ClearConfirmDialog } from './ClearConfirmDialog';
 
 const CLEAR_LABEL = '설정 해제';
@@ -150,9 +150,9 @@ export default function SmtpSettingsTab({ state }: { state: SmtpSettingsFormStat
         >
           <Input
             id="smtp-port"
-            type="number"
-            min={PORT_MIN}
-            max={PORT_MAX}
+            // WD-906: type="number" 는 `1e` 를 ""로 보고해 검증이 원문을 못 봤다 — 원문을 그대로 넘긴다
+            type="text"
+            inputMode="numeric"
             className="max-w-[120px]"
             value={form['smtp.port']}
             onChange={(e) => updateField('smtp.port', e.target.value)}

@@ -284,6 +284,44 @@ test.describe('설정 페이지', () => {
       });
     }
 
+    // (WD-906) type="number" 칸은 `1e` 를 ""로 보고해 「포트를 입력하세요」로 잘못 안내하거나 통과시켰다.
+    test('SMTP 포트에 1e 를 치고 저장하면 포트 오류가 보이고 저장 요청이 가지 않는다 (WD-906)', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupSettingsMocks(page);
+      const saveCapture = await mockApi(page, 'PUT', '/api/v1/settings', {}, { capture: true });
+
+      await page.goto('/admin/settings');
+      await page.getByRole('tab', { name: '이메일' }).click();
+      await expect(page.locator('#smtp-host')).toHaveValue('smtp.gmail.com');
+      const port = page.locator('#smtp-port');
+      await port.fill('');
+      await port.pressSequentially('1e');
+      await expect(port).toHaveValue('1e');
+      await page.getByRole('button', { name: '저장' }).click();
+
+      await expect(
+        page.getByRole('tabpanel', { name: '이메일' }).getByText('1~65535 사이의 정수를 입력하세요'),
+      ).toBeVisible();
+      expect(saveCapture.lastRequest()).toBeUndefined();
+    });
+
+    test('SMTP 포트를 정말 비우고 저장하면 지금처럼 포트 필수 오류로 막힌다 (WD-906)', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupSettingsMocks(page);
+      const saveCapture = await mockApi(page, 'PUT', '/api/v1/settings', {}, { capture: true });
+
+      await page.goto('/admin/settings');
+      await page.getByRole('tab', { name: '이메일' }).click();
+      await expect(page.locator('#smtp-host')).toHaveValue('smtp.gmail.com');
+      await page.locator('#smtp-port').fill('');
+      await page.getByRole('button', { name: '저장' }).click();
+
+      await expect(page.getByRole('tabpanel', { name: '이메일' }).getByText('포트를 입력하세요')).toBeVisible();
+      expect(saveCapture.lastRequest()).toBeUndefined();
+    });
+
     test('AI 탭 저장을 서버가 400 으로 거부하면 서버가 준 사유를 그대로 보여준다', async ({
       authenticatedPage: page,
     }) => {

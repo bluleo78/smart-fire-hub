@@ -483,7 +483,9 @@ export default function StepConfigPanel({
             <>
               <Separator />
               <Suspense fallback={<Skeleton className="h-[200px]" />}>
+                {/* WD-906: 스텝마다 재마운트해 덜 친 숫자와 오류가 다른 AI 분류 스텝으로 넘어가지 않게 한다 */}
                 <AiClassifyStepConfig
+                  key={step.tempId}
                   aiConfig={step.aiConfig ?? { prompt: '', outputColumns: [] }}
                   inputDatasetIds={step.inputDatasetIds}
                   onChange={(config) => handleUpdateStep({ aiConfig: config })}
