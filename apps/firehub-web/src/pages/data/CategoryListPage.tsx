@@ -1,6 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Pencil, Plus, Trash2 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useForm, useWatch } from 'react-hook-form';
 import { toast } from 'sonner';
 import { z } from 'zod';
@@ -94,6 +94,8 @@ const categorySchema = z.object({
 type CategoryFormData = z.infer<typeof categorySchema>;
 
 export default function CategoryListPage() {
+  // WD-985: 「검색 초기화」 뒤 초점이 body 로 떨어지지 않게 이 화면의 검색 입력으로 보낸다
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editingCategory, setEditingCategory] = useState<CategoryResponse | null>(null);
   // 검색어/정렬 상태 — 클라이언트 사이드에서만 적용 (백엔드 변경 없음)
@@ -270,6 +272,7 @@ export default function CategoryListPage() {
         {/* WD-815: 0건 안내(TableEmptyRow)와 개수 영역이 라이브 리전이라, 글자마다 다시 읽히지 않게 입력이 멈춘 뒤 거른다 */}
         <SearchInput
           placeholder="이름 또는 설명으로 검색..."
+          inputRef={searchInputRef}
           aria-label="카테고리 검색"
           debounceMs={300}
           value={search}
@@ -360,6 +363,7 @@ export default function CategoryListPage() {
             ) : (
               <TableEmptyRow
                 colSpan={showActions ? 3 : 2}
+                resetFocusRef={searchInputRef}
                 // WD-904: 다른 목록과 같은 공용 빈 상태 — 검색 중엔 다듬은 검색어 문구·「검색 초기화」(공백만이면 검색 아님),
                 // 실제 0건엔 message 와 쓰기 권한(WD-144)일 때만 만들기 CTA. 검색어 문구가 바뀌면 다시 낭독되므로 announceKey 는 두지 않는다.
                 message="카테고리가 없습니다."

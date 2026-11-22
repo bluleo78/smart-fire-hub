@@ -1,5 +1,5 @@
 import { Share2 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { AnalyticsDeleteConfirmDialog } from '@/components/analytics/AnalyticsDeleteConfirmDialog';
@@ -113,6 +113,8 @@ function UnshareConfirmDialog({
  * - 목록은 페이지 없이 한 번에 받으므로 검색은 화면에서 이름·작성자로 거른다.
  */
 export function WorkspaceAnalyticsTable({ kind }: { kind: AnalyticsAdminKind }) {
+  // WD-985: 「검색 초기화」 뒤 초점이 body 로 떨어지지 않게 이 화면의 검색 입력으로 보낸다
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const copy = COPY[kind];
   const impactKind = IMPACT_KIND[kind];
   const { data: items = [], isLoading, isError } = useWorkspaceAnalyticsItems(kind);
@@ -161,7 +163,7 @@ export function WorkspaceAnalyticsTable({ kind }: { kind: AnalyticsAdminKind }) 
       </p>
       <div className="flex items-center gap-3 flex-wrap">
         {/* WD-815: 0건 안내가 라이브 리전이라 글자마다 다시 읽히지 않도록 다른 검색 화면처럼 300ms 디바운스(SearchInput 이 onChange 호출 자체를 늦춤) */}
-        <SearchInput placeholder="이름·작성자 검색..." value={search} onChange={setSearch} debounceMs={300} />
+        <SearchInput inputRef={searchInputRef} placeholder="이름·작성자 검색..." value={search} onChange={setSearch} debounceMs={300} />
       </div>
       <div className="rounded-md border">
         <Table aria-label={copy.tableLabel}>
@@ -268,6 +270,7 @@ export function WorkspaceAnalyticsTable({ kind }: { kind: AnalyticsAdminKind }) 
               <TableEmptyRow
                 colSpan={5}
                 message={copy.empty}
+                resetFocusRef={searchInputRef}
                 searchKeyword={search || undefined}
                 onResetSearch={search ? () => setSearch('') : undefined}
               />

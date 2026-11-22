@@ -1,5 +1,5 @@
 import { SearchX } from 'lucide-react';
-import { type ReactNode, useEffect, useState } from 'react';
+import { type ReactNode, type RefObject, useEffect, useState } from 'react';
 
 import { cn } from '@/lib/utils';
 
@@ -65,6 +65,12 @@ interface TableEmptyRowProps {
   searchKeyword?: string;
   /** 검색어 초기화 콜백 — 제공 시 "검색 초기화" 버튼 노출 */
   onResetSearch?: () => void;
+  /**
+   * 「검색 초기화」를 누른 뒤 초점을 받을 요소(보통 검색 입력의 ref) (WD-985).
+   * 초기화로 검색어가 사라지면 이 버튼이 함께 사라져 초점이 body 로 떨어지므로, onResetSearch 직후 이 요소로 옮긴다.
+   * 생략하면 초점을 옮기지 않는다(기존 동작).
+   */
+  resetFocusRef?: RefObject<HTMLElement | null>;
   /** 진짜 데이터 0건 상태에서 노출할 추가 CTA (예: "새 데이터셋 만들기") */
   emptyAction?: ReactNode;
   /**
@@ -92,6 +98,7 @@ export function TableEmptyRow({
   message = '데이터가 없습니다.',
   searchKeyword,
   onResetSearch,
+  resetFocusRef,
   emptyAction,
   announceKey,
 }: TableEmptyRowProps) {
@@ -116,7 +123,15 @@ export function TableEmptyRow({
             )}
           </DelayedStatus>
           {isSearchEmpty && onResetSearch && (
-            <Button variant="outline" size="sm" onClick={onResetSearch}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                // 먼저 검색어를 지우고, 그다음 초점을 검색 입력으로 옮긴다(WD-985)
+                onResetSearch();
+                resetFocusRef?.current?.focus();
+              }}
+            >
               검색 초기화
             </Button>
           )}

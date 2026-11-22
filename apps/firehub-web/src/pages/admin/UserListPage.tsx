@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 
 import { PageHeading } from '@/components/PageHeading';
@@ -27,6 +27,8 @@ import { AccountDisabledBadge } from './components/AccountDisabledBadge';
 import { AddMemberDialog } from './components/AddMemberDialog';
 
 export default function UserListPage() {
+  // WD-985: 「검색 초기화」 뒤 초점이 body 로 떨어지지 않게 이 화면의 검색 입력으로 보낸다
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
   // 멤버 추가 버튼 노출(user:write)·역할 지정 가능 여부(role:assign) — 최종 판정은 서버(WD-2).
   const { permissions } = useMyPermissions();
@@ -98,6 +100,7 @@ export default function UserListPage() {
 
       <SearchInput
         placeholder="이름 또는 아이디로 검색..."
+        inputRef={searchInputRef}
         value={search}
         onChange={handleSearchChange}
       />
@@ -158,6 +161,7 @@ export default function UserListPage() {
               <TableEmptyRow
                 colSpan={4}
                 message="사용자가 없습니다."
+                resetFocusRef={searchInputRef}
                 searchKeyword={debouncedSearch || undefined}
                 onResetSearch={search ? () => patchParams({ q: '', page: 0 }) : undefined}
               />

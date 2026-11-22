@@ -1,5 +1,5 @@
-import { act, render, screen } from '@testing-library/react';
-import type { ComponentType } from 'react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
+import { type ComponentType, createRef } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ANNOUNCE_DELAY_MS, TableEmptyRow, TableErrorRow } from './table-empty';
@@ -213,5 +213,44 @@ describe('TableErrorRow (WD-938)', () => {
     expect(alert.textContent).toBe('새 문구');
     // 낭독된 뒤 tone 이 바뀌어도 문구 노드의 톤이 따라간다
     expect(alert.firstElementChild?.className).toContain('text-muted-foreground');
+  });
+});
+
+describe('TableEmptyRow 검색 초기화 초점 (WD-985)', () => {
+  /** 검색 입력과 빈 행이 같은 트리에 있는 화면을 흉내 낸다 */
+  function renderWithInput(withRef: boolean, spy: () => void) {
+    const ref = createRef<HTMLInputElement>();
+    render(
+      <>
+        <input aria-label="검색" ref={ref} />
+        <table>
+          <tbody>
+            <TableEmptyRow
+              colSpan={3}
+              searchKeyword="xyz"
+              onResetSearch={spy}
+              resetFocusRef={withRef ? ref : undefined}
+            />
+          </tbody>
+        </table>
+      </>,
+    );
+    return screen.getByLabelText('검색');
+  }
+
+  it('검색 초기화를 누르면 onResetSearch 뒤 resetFocusRef 대상에 초점이 간다 (WD-985)', () => {
+    const spy = vi.fn();
+    const input = renderWithInput(true, spy);
+    fireEvent.click(screen.getByRole('button', { name: '검색 초기화' }));
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(input);
+  });
+
+  it('resetFocusRef 없으면 onResetSearch 만 부르고 초점은 옮기지 않는다 (WD-985)', () => {
+    const spy = vi.fn();
+    const input = renderWithInput(false, spy);
+    fireEvent.click(screen.getByRole('button', { name: '검색 초기화' }));
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).not.toBe(input);
   });
 });
