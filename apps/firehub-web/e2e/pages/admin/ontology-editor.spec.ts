@@ -489,8 +489,11 @@ test.describe('EntityInspector — 타입 필드 · 속성 CRUD · 자동 저장
   });
 
   // I-1(S2 최종 리뷰) — 관계 삭제와 같은 계열: PropertyRow가 언마운트되는데 포커스를 옮기는 코드가
-  // 전혀 없었다. 응답을 지연시켜 toBeFocused()의 자동 재시도로 지연 자기 치유를 놓치지 않는다
-  // (관계 삭제 포커스 테스트와 동일한 이유 — 단발 page.evaluate()로 확인).
+  // 전혀 없었다. 이 삭제 대화상자는 restoreFocusRef 를 넘기지 않아, 대화상자의 포커스 자기 치유
+  // (use-dialog-focus-restore — 트리거나 살아남은 조상 컨테이너)는 「속성 추가」 버튼으로 갈 수 없다.
+  // 그래서 그 버튼으로 옮기는 것은 앱 코드(.then 의 focus)뿐이고, toBeFocused() 의 자동 재시도로도
+  // 포커스 유실을 가리지 않는다. 예전 단발 page.evaluate() 는 행 제거 렌더와 .then(focus) 사이 틈을
+  // 부하에서 밟아 플래키였다(WD-921). 응답 300ms 지연은 「지연 응답」 경로를 밟기 위한 것이다.
   test('속성 삭제 성공 시 포커스가 "속성 추가" 버튼으로 복귀한다(지연 응답에서도 body 유실 없음)', async ({
     authenticatedPage: page,
   }) => {
@@ -512,11 +515,7 @@ test.describe('EntityInspector — 타입 필드 · 속성 CRUD · 자동 저장
     await page.getByTestId('property-row-1').getByLabel('Damage 속성 삭제').click();
     await page.getByRole('alertdialog').getByRole('button', { name: '삭제' }).click();
     await expect(page.getByTestId('property-row-1')).toHaveCount(0);
-    const activeElement = await page.evaluate(() => ({
-      tag: document.activeElement?.tagName,
-      label: document.activeElement?.getAttribute('aria-label'),
-    }));
-    expect(activeElement).toEqual({ tag: 'BUTTON', label: 'Damage 속성 추가' });
+    await expect(page.getByRole('button', { name: 'Damage 속성 추가' })).toBeFocused();
   });
 
   // I-2(S2 최종 리뷰) — CreateEntityTypeForm/CreateRelationForm은 리뷰 M-5로 이 가드를 이미 받았는데
@@ -772,14 +771,17 @@ test.describe('EntityInspector — 타입 필드 · 속성 CRUD · 자동 저장
 
   test('저장 실패(500) 시 SaveStatusChip이 error가 되고 재시도가 가능하다', async ({ authenticatedPage: page }) => {
     await openInspector(page, 2);
-    let attempts = 0;
+    // 실패는 시도 횟수가 아니라 스위치로 정한다(WD-921) — 부하로 fill→blur 가 400ms 를 넘으면 디바운스와
+    // blur 가 PATCH 를 두 번 보내 "첫 시도만 500" 모킹은 둘째(200)가 error 를 덮는다.
+    let failSave = true;
+    let successAfterRecovery = 0;
     await page.route(
       (url) => url.pathname === '/api/v1/ontology/1/entity-types/2',
       (route) => {
-        attempts += 1;
-        if (attempts === 1) {
+        if (failSave) {
           return route.fulfill({ status: 500, body: JSON.stringify({ message: '저장 실패' }) });
         }
+        successAfterRecovery += 1;
         return route.fulfill({
           status: 200,
           body: JSON.stringify(
@@ -794,10 +796,13 @@ test.describe('EntityInspector — 타입 필드 · 속성 CRUD · 자동 저장
 
     const chip = page.getByTestId('save-status-chip');
     await expect(chip).toHaveAttribute('data-state', 'error');
+    // 실패 단언을 마친 뒤에야 서버를 복구시켜 재시도가 성공하게 한다.
+    failSave = false;
     await page.getByTestId('save-status-retry').click();
 
     await expect(chip).toHaveAttribute('data-state', 'saved');
-    expect(attempts).toBe(2);
+    // 복구 뒤에는 재시도 한 번만 나가야 한다 — 실패 구간의 PATCH 는 모두 500 으로 끝났으므로 정확히 1 이다.
+    expect(successAfterRecovery).toBe(1);
   });
 
   // Task 3 리뷰 IMP-1 회귀 가드 — 인스펙터가 OntologyPage의 useOntologyElementMutations 인스턴스를
@@ -852,16 +857,20 @@ test.describe('EntityInspector — 타입 필드 · 속성 CRUD · 자동 저장
     authenticatedPage: page,
   }) => {
     await openInspector(page, 2); // Building
+    // 타입 PATCH 실패도 스위치로 정한다 — 위 저장 실패 시험과 같은 이유(WD-921).
+    let failType = true;
     let typeAttempts = 0;
+    let typeSuccesses = 0;
     await page.route(
       (url) => url.pathname === '/api/v1/ontology/1/entity-types/2',
       (route) => {
         const payload = route.request().postDataJSON() as { type?: string; description?: string };
         if (payload.type !== undefined) {
           typeAttempts += 1;
-          if (typeAttempts === 1) {
+          if (failType) {
             return route.fulfill({ status: 500, body: JSON.stringify({ message: '저장 실패' }) });
           }
+          typeSuccesses += 1;
           return route.fulfill({
             status: 200,
             body: JSON.stringify(
@@ -890,7 +899,8 @@ test.describe('EntityInspector — 타입 필드 · 속성 CRUD · 자동 저장
     await typeInput.fill('바뀔뻔한이름');
     await typeInput.blur();
     await expect(page.getByTestId('save-status-chip')).toHaveAttribute('data-state', 'error');
-    expect(typeAttempts).toBe(1);
+    // 실패 PATCH 는 디바운스+blur 로 최대 2번이다 — 실패한 값이 저절로 계속 재전송되면 여기서 잡힌다.
+    expect(typeAttempts).toBeLessThanOrEqual(2);
 
     // B: 설명 편집 — 성공한다.
     const descInput = page.getByLabel('설명', { exact: true });
@@ -903,9 +913,11 @@ test.describe('EntityInspector — 타입 필드 · 속성 CRUD · 자동 저장
     // A가 조용히 버려지지 않았다면, 이제 타입 이름 필드에 다시 포커스했다 벗어나는 것만으로
     // 재전송돼야 한다(draft가 여전히 dirty이므로) — committed가 요청 성공 전에 확정돼 버렸다면
     // 이 두 번째 blur는 "변경 없음"으로 조기 반환되어 typeAttempts가 늘지 않는다.
+    // 서버를 복구시킨 뒤 포커스/블러 — 복구 이후 성공한 타입 PATCH가 1번 이상 나가야 한다.
+    failType = false;
     await typeInput.focus();
     await typeInput.blur();
-    await expect.poll(() => typeAttempts).toBe(2);
+    await expect.poll(() => typeSuccesses).toBeGreaterThanOrEqual(1);
     await expect(page.getByTestId('save-status-chip')).toHaveAttribute('data-state', 'saved');
 
     // 리네임이 성공했는데도 캔버스가 크래시하지 않고(C-2), 아웃라인의 관계 목록도 새 이름으로
@@ -1370,9 +1382,9 @@ test.describe('RelationInspector — 관계 생성·편집·삭제', () => {
 
   // I-1(S2 최종 리뷰) — 엔티티 타입 삭제(#328류)와 같은 계열의 결함: 삭제 트리거가 onDeleted로
   // 인스펙터와 함께 언마운트되는데, 포커스를 옮기는 코드가 아예 없어 <body>로 떨어졌다.
-  // 응답을 일부러 지연시킨다 — toBeFocused()의 자동 재시도는 dialog.tsx류의 지연 자기 치유가
-  // 끝날 때까지 기다렸다 통과해 버려 그 사이의 <body> 유실 구간 자체를 가릴 수 있다(엔티티 타입
-  // 삭제 테스트의 선례 주석 참고). 그래서 여기서도 재시도 없는 단발 page.evaluate()로 확인한다.
+  // toBeFocused() 를 쓰는 이유는 속성 삭제 포커스 시험 주석과 같다 — 이 대화상자도 restoreFocusRef 를
+  // 넘기지 않아 「타입 추가」로 옮기는 것은 앱 코드뿐이다(WD-921). 엔티티 타입 삭제 시험은 restoreFocusRef 를
+  // 넘기므로 단발 evaluate 를 유지한다.
   test('관계 삭제 성공 시 포커스가 "타입 추가" 버튼으로 복귀한다(지연 응답에서도 body 유실 없음)', async ({
     authenticatedPage: page,
   }) => {
@@ -1394,11 +1406,7 @@ test.describe('RelationInspector — 관계 생성·편집·삭제', () => {
     await page.getByTestId('relation-delete-trigger').click();
     await page.getByRole('alertdialog').getByRole('button', { name: '삭제' }).click();
     await expect(page.getByText('왼쪽에서 타입 또는 관계를 선택하세요.')).toBeVisible();
-    const activeElement = await page.evaluate(() => ({
-      tag: document.activeElement?.tagName,
-      label: document.activeElement?.getAttribute('aria-label'),
-    }));
-    expect(activeElement).toEqual({ tag: 'BUTTON', label: '타입 추가' });
+    await expect(page.getByRole('button', { name: '타입 추가' })).toBeFocused();
   });
 
   test('끝점을 바꾸려 하면 UI가 삭제 후 재생성으로 안내한다(수정 불가 고지)', async ({ authenticatedPage: page }) => {
