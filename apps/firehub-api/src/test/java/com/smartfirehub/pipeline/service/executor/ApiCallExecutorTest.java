@@ -2300,4 +2300,76 @@ class ApiCallExecutorTest {
     assertThat(wireMock.getAllServeEvents()).isEmpty();
     verify(dataTableService, never()).createTempTable(anyString());
   }
+
+  // -------------------------------------------------------------------------
+  // WD-969: 받은 메서드를 그대로 보낸다 (PUT·DELETE)
+  // -------------------------------------------------------------------------
+
+  /** 메서드만 바꾼 설정(WD-969) — 받은 메서드를 그대로 보내는지 확인하는 데 쓴다. */
+  private static ApiCallConfig withMethod(ApiCallConfig base, String method, String body) {
+    return new ApiCallConfig(
+        base.url(),
+        method,
+        base.headers(),
+        base.queryParams(),
+        body,
+        base.responseFormat(),
+        base.dataPath(),
+        base.fieldMappings(),
+        base.sourceTimezone(),
+        base.pagination(),
+        base.retry(),
+        base.timeoutMs(),
+        base.maxDurationMs(),
+        base.maxResponseSizeMb(),
+        base.inlineAuth(),
+        base.apiConnectionId(),
+        base.path(),
+        base.customUrl());
+  }
+
+  /** WD-969: PUT 설정을 받으면 GET 이 아니라 실제로 PUT 으로 보낸다(Python 실행기와 같아진다). */
+  @Test
+  void execute_putMethod_sendsPutWithBody() {
+    wireMock.stubFor(
+        put(urlEqualTo("/api/put-target"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("{\"items\":[{\"name\":\"a\",\"age\":1}]}")));
+
+    executor.execute(
+        withMethod(simpleGetConfig("/api/put-target"), "PUT", "{\"name\":\"a\"}"),
+        "t",
+        null,
+        "APPEND",
+        null);
+
+    wireMock.verify(
+        putRequestedFor(urlEqualTo("/api/put-target"))
+            .withRequestBody(equalToJson("{\"name\":\"a\"}")));
+    wireMock.verify(0, getRequestedFor(urlEqualTo("/api/put-target")));
+  }
+
+  /** WD-969: DELETE 도 그대로 보낸다 — 본문 없는 메서드는 본문 없이 간다. */
+  @Test
+  void execute_deleteMethod_sendsDelete() {
+    wireMock.stubFor(
+        delete(urlEqualTo("/api/delete-target"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("{\"items\":[{\"name\":\"a\",\"age\":1}]}")));
+
+    executor.execute(
+        withMethod(simpleGetConfig("/api/delete-target"), "DELETE", null),
+        "t",
+        null,
+        "APPEND",
+        null);
+
+    wireMock.verify(deleteRequestedFor(urlEqualTo("/api/delete-target")));
+  }
 }

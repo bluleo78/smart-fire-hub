@@ -106,6 +106,13 @@ public final class ApiCallErrorMessages {
     return "호스트 이름을 찾을 수 없습니다: " + host;
   }
 
+  /** 미리보기가 지원하지 않는 HTTP 메서드(WD-969) — 대상을 부르기 전에 낸다. */
+  public static String unsupportedPreviewMethod(String method) {
+    return "미리보기(테스트 호출)는 GET·POST 만 지원합니다 — 요청한 "
+        + method
+        + " 요청을 보낼 수 없습니다. HTTP 메서드를 GET 또는 POST 로 바꿔 다시 시도하세요";
+  }
+
   public static String responseTooLarge(int maxMb) {
     return "응답 크기가 제한(" + maxMb + "MB)을 넘었습니다 — 응답 크기 제한을 늘리거나 페이지 크기를 줄이세요";
   }

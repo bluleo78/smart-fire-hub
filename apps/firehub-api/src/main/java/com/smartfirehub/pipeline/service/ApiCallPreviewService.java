@@ -9,6 +9,7 @@ import com.smartfirehub.pipeline.dto.ApiCallPreviewResponse;
 import com.smartfirehub.pipeline.service.executor.ApiCallAuth;
 import com.smartfirehub.pipeline.service.executor.ApiCallConfig;
 import com.smartfirehub.pipeline.service.executor.ApiCallErrorMessages;
+import com.smartfirehub.pipeline.service.executor.ApiCallException;
 import com.smartfirehub.pipeline.service.executor.JsonResponseParser;
 import com.smartfirehub.pipeline.service.executor.RedirectFollower;
 import com.smartfirehub.pipeline.service.executor.SsrfProtectionService;
@@ -17,6 +18,7 @@ import java.net.URI;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 
@@ -27,6 +29,9 @@ public class ApiCallPreviewService {
   private static final int DEFAULT_TIMEOUT_MS = 30_000;
   private static final int MAX_RAW_JSON_BYTES = 10 * 1024; // 10 KB
   private static final int MAX_PREVIEW_ROWS = 5;
+
+  /** 미리보기가 대상에 보낼 수 있는 메서드(WD-969) — 편집기 범위와 같다. */
+  private static final Set<String> PREVIEW_METHODS = Set.of("GET", "POST");
 
   private final SsrfProtectionService ssrfProtectionService;
   private final JsonResponseParser jsonResponseParser;
@@ -76,6 +81,15 @@ public class ApiCallPreviewService {
     // 오류 문구에서 가릴 비밀(WD-177) — 인증 설정을 읽은 뒤에 채운다. BASIC 은 비밀번호와 Base64 덩어리 둘이다(WD-681).
     AuthQueryMasker.SentSecrets authSecret = AuthQueryMasker.SentSecrets.NONE;
     try {
+      // 0. 미리보기 지원 메서드(WD-969) — GET·POST 밖은 대상을 부르기 전에 안내한다.
+      //    받은 메서드를 그대로 보내면 편집기·에이전트 안내 밖의 PUT·DELETE 가 확인 없이 쓰기가 된다
+      //    (쓰기 미리보기의 확인 절차는 WD-946 이 맡는다).
+      String previewMethod =
+          request.method() != null ? request.method().toUpperCase(Locale.ROOT) : "GET";
+      if (!PREVIEW_METHODS.contains(previewMethod)) {
+        throw new ApiCallException(ApiCallErrorMessages.unsupportedPreviewMethod(previewMethod));
+      }
+
       // 1. URL 결정: apiConnectionId가 있으면 connection.baseUrl + request.url()을 path로 해석
       // 연결은 한 번만 읽어 URL·빈 비밀 검사(방식·이름)에 함께 쓴다.
       ApiConnectionResponse conn =

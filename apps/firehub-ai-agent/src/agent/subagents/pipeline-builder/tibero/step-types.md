@@ -101,7 +101,7 @@
 **apiConfig 핵심 필드**:
 - path: apiConnectionId가 있을 때 사용. baseUrl 뒤에 결합됨 (예: `/v1/users`, `/15085601/v1/uddi`)
 - customUrl: apiConnectionId 없이 호출할 때의 full URL (예: `https://api.example.com/data`)
-- method: GET/POST/PUT/DELETE
+- method: GET/POST
 - dataPath: JSONPath로 데이터 배열 추출 (예: "$.data", "$.items")
 - fieldMappings: 소스 필드 → 대상 컬럼 매핑 (선택)
 
