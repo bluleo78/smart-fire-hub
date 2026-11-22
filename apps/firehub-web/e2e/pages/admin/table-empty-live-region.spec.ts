@@ -142,6 +142,16 @@ test.describe('WD-931 목록 건수 라이브 리전', () => {
   /** 결과 필터별 총 건수 — 필터 없으면 4건 */
   const TOTAL_BY_RESULT: Record<string, number> = { SUCCESS: 3, FAILURE: 0 };
 
+  /** 낭독되는 건수 노드 — role=status 리전 안에서 aria-hidden 이 아닌 노드(DelayedStatus 지연 뒤의 노드)만 잡는다 */
+  function announcedCount(page: Page, text: string) {
+    return page.locator('[role="status"] > :not([aria-hidden="true"])').filter({ hasText: text });
+  }
+
+  /** 리전 밖 건수 — role=status 조상이 없는 일반 문구만 잡는다 */
+  function plainCount(page: Page, text: string) {
+    return page.locator('p:not([role="status"] *)').filter({ hasText: text });
+  }
+
   /** 결과 필터 드롭다운에서 옵션(예: 「실패」)을 고른다 */
   async function selectResult(page: Page, name: string) {
     await page.getByLabel('결과 필터').click();
@@ -152,11 +162,11 @@ test.describe('WD-931 목록 건수 라이브 리전', () => {
   async function openAuditLogs(page: Page) {
     await mockAuditByResult(page);
     await page.goto('/admin/audit-logs');
-    await expect(page.getByRole('status').filter({ hasText: '총 4건 중 1-4' })).toBeVisible();
+    await expect(announcedCount(page, '총 4건 중 1-4')).toBeVisible();
   }
 
-  /** 감사 로그 API 를 result 필터·page 로 갈라 응답한다 — 건수는 TOTAL_BY_RESULT(기본 4건), opts.total 이 우선 */
-  async function mockAuditByResult(page: Page, opts: { total?: number } = {}) {
+  /** 감사 로그 API 를 result 필터·page 로 갈라 응답한다 — 건수는 TOTAL_BY_RESULT(기본 4건), opts.total, opts.totalForPage(쪽별 총 건수) 순으로 우선 */
+  async function mockAuditByResult(page: Page, opts: { total?: number; totalForPage?: (pageNo: number) => number } = {}) {
     await page.route(
       (url) => url.pathname === '/api/v1/admin/audit-logs',
       (route) => {
@@ -164,7 +174,7 @@ test.describe('WD-931 목록 건수 라이브 리전', () => {
         const sp = new URL(route.request().url()).searchParams;
         const result = sp.get('result');
         const pageNo = Number(sp.get('page') ?? '0');
-        const total = opts.total ?? TOTAL_BY_RESULT[result ?? ''] ?? 4;
+        const total = opts.totalForPage?.(pageNo) ?? opts.total ?? TOTAL_BY_RESULT[result ?? ''] ?? 4;
         // 화면 기본 쪽 크기는 20 — 요청의 size 를 그대로 따른다
         const size = Number(sp.get('size') ?? '20');
         const from = pageNo * size;
@@ -184,7 +194,7 @@ test.describe('WD-931 목록 건수 라이브 리전', () => {
 
     await selectResult(page, '성공');
 
-    await expect(page.getByRole('status').filter({ hasText: '총 3건 중 1-3' })).toBeVisible();
+    await expect(announcedCount(page, '총 3건 중 1-3')).toBeVisible();
   });
 
   test('0건에서 결과가 돌아오면 건수가 role=status 영역 안에 다시 담긴다', async ({ authenticatedPage: page }) => {
@@ -194,7 +204,7 @@ test.describe('WD-931 목록 건수 라이브 리전', () => {
     await expect(page.getByRole('table').getByRole('status')).toHaveText('조건에 맞는 감사 로그가 없습니다.');
 
     await selectResult(page, '성공');
-    await expect(page.getByRole('status').filter({ hasText: '총 3건 중 1-3' })).toBeVisible();
+    await expect(announcedCount(page, '총 3건 중 1-3')).toBeVisible();
   });
 
   test('0건이면 「총 0건」 은 라이브 리전에 두지 않는다 — 표의 빈 안내가 이미 낭독된다', async ({ authenticatedPage: page }) => {
@@ -204,8 +214,23 @@ test.describe('WD-931 목록 건수 라이브 리전', () => {
     await expect(page.getByRole('table').getByRole('status')).toHaveText('조건에 맞는 감사 로그가 없습니다.');
 
     // 글자는 보이되, 「총 0건」 을 담은 status 는 없다(빈 안내와 겹쳐 두 번 읽히지 않게)
-    await expect(page.getByText('총 0건')).toBeVisible();
+    await expect(plainCount(page, '총 0건')).toBeVisible();
     await expect(page.getByRole('status').filter({ hasText: '총 0건' })).toHaveCount(0);
+  });
+
+  test('범위 밖 쪽이면 「총 3건」 은 라이브 리전에 두지 않는다 — 어긋난 범위·건수가 낭독되지 않게', async ({ authenticatedPage: page }) => {
+    // 3쪽(page=2)만 총 3건으로 줄어든 응답을 준다 — 앞 쪽은 25건이라 3쪽 이동이 가능하고, 이동하면 start(20) >= 총 3건 이 된다
+    await mockAuditByResult(page, { totalForPage: (pageNo) => (pageNo >= 2 ? 3 : 25) });
+    await page.goto('/admin/audit-logs');
+    await page.getByRole('combobox', { name: '페이지 사이즈' }).click();
+    await page.getByRole('option', { name: '10', exact: true }).click();
+    await expect(announcedCount(page, '총 25건 중 1-10')).toBeVisible();
+
+    await page.getByRole('button', { name: '마지막 페이지' }).click();
+
+    // 글자는 보이되 role=status 리전 안이 아니다
+    await expect(plainCount(page, '총 3건')).toBeVisible();
+    await expect(page.getByRole('status').filter({ hasText: '총 3건' })).toHaveCount(0);
   });
 
   test('쪽을 넘기면 건수 범위가 role=status 영역 안에서 바뀐다', async ({ authenticatedPage: page }) => {
@@ -214,9 +239,9 @@ test.describe('WD-931 목록 건수 라이브 리전', () => {
     // 쪽 크기를 10 으로 바꿔 25건을 3쪽으로 나눈다
     await page.getByRole('combobox', { name: '페이지 사이즈' }).click();
     await page.getByRole('option', { name: '10', exact: true }).click();
-    await expect(page.getByRole('status').filter({ hasText: '총 25건 중 1-10' })).toBeVisible();
+    await expect(announcedCount(page, '총 25건 중 1-10')).toBeVisible();
 
     await page.getByRole('button', { name: '다음 페이지' }).click();
-    await expect(page.getByRole('status').filter({ hasText: '총 25건 중 11-20' })).toBeVisible();
+    await expect(announcedCount(page, '총 25건 중 11-20')).toBeVisible();
   });
 });
