@@ -9,6 +9,7 @@ import { createPageResponse, mockApi, mockDeleteOnceThenNotFound } from '../../f
 import { expect, test } from '../../fixtures/auth.fixture';
 import { clickDialogBackdrop, expectBackdropClickStaysOnList } from '../../fixtures/dialog.fixture';
 import { expectWithin } from '../../fixtures/long-name-layout';
+import { expectTableErrorAlert } from '../../fixtures/table-error-alert';
 import { expectFocusRingRoom, expectTableFits, TABLE_LAYOUT_WIDTHS } from '../../fixtures/table-layout';
 
 /**
@@ -641,6 +642,61 @@ test.describe('쿼리 목록 페이지', () => {
     await expect(page.locator('[data-sonner-toast]')).toHaveCount(0);
     await expect(page.getByRole('alert')).toHaveCount(0);
     await page.screenshot({ path: 'test-results/tc/security-level-name-masking/query-list-restricted.png' });
+  });
+
+  test('목록 조회가 실패하면 빈 목록 대신 실패 안내를 보인다 (WD-978)', async ({ authenticatedPage: page }) => {
+    // 목록 조회만 500 — 「저장된 쿼리가 없습니다.」 는 실패 안내로 대체되어야 한다
+    await setupQueryListMocks(page, 0);
+    await mockApi(page, 'GET', '/api/v1/analytics/queries', { message: '서버 오류' }, { status: 500 });
+    await page.goto('/analytics/queries');
+
+    await expectTableErrorAlert(page);
+    await expect(page.getByText('저장된 쿼리가 없습니다.')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '새 쿼리 만들기' })).toHaveCount(0);
+    // 헤더의 「새 쿼리」 버튼은 그대로 쓸 수 있다
+    await expect(page.getByRole('button', { name: '새 쿼리', exact: true })).toBeVisible();
+  });
+
+  test('검색 중 실패하면 실패 안내, 검색어를 바꿔 성공하면 행이 보인다 (WD-978)', async ({ authenticatedPage: page }) => {
+    // 검색어에 fail 이 들어 있으면 500, 아니면 쿼리 1건을 돌려준다
+    await mockApi(page, 'GET', '/api/v1/analytics/queries/folders', []);
+    await page.route('**/api/v1/analytics/queries?*', async (route) => {
+      if (route.request().method() !== 'GET') return route.fallback();
+      const search = new URL(route.request().url()).searchParams.get('search') ?? '';
+      if (search.includes('fail')) {
+        return route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ message: '서버 오류' }) });
+      }
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(createPageResponse([createSavedQueryListItem({ id: 1, name: '매출 쿼리' })])),
+      });
+    });
+    await page.goto('/analytics/queries');
+    await expect(page.getByText('매출 쿼리')).toBeVisible();
+
+    const searchBox = page.getByPlaceholder('쿼리 검색...');
+    await searchBox.fill('fail');
+    await expectTableErrorAlert(page);
+    // 검색 0건 안내·검색 초기화는 아니다
+    await expect(page.getByRole('button', { name: '검색 초기화' })).toHaveCount(0);
+    await expect(page.getByText('저장된 쿼리가 없습니다.')).toHaveCount(0);
+    await expect(searchBox).toBeEnabled();
+
+    // 검색어를 바꿔 새 조회가 성공하면 실패 안내가 사라지고 행이 보인다
+    await searchBox.fill('매출');
+    await expect(page.getByRole('alert')).toHaveCount(0, { timeout: 15000 });
+    await expect(page.getByText('매출 쿼리')).toBeVisible();
+  });
+
+  test('폴더 목록만 실패해도 쿼리 목록은 보인다 (WD-978)', async ({ authenticatedPage: page }) => {
+    await setupQueryListMocks(page, 3);
+    await mockApi(page, 'GET', '/api/v1/analytics/queries/folders', { message: 'x' }, { status: 500 });
+    await page.goto('/analytics/queries');
+
+    await expect(page.getByText('저장 쿼리 1')).toBeVisible();
+    await expect(page.getByText('저장 쿼리 3')).toBeVisible();
+    await expect(page.getByRole('alert')).toHaveCount(0);
   });
 });
 

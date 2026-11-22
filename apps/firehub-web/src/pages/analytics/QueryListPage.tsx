@@ -35,7 +35,7 @@ import {
   TableHeader,
   TableRow,
 } from '../../components/ui/table';
-import { TableEmptyRow } from '../../components/ui/table-empty';
+import { TableEmptyRow, TableErrorRow } from '../../components/ui/table-empty';
 import { TableSkeletonRows } from '../../components/ui/table-skeleton';
 import { Tabs, TabsControlsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import {
@@ -72,7 +72,7 @@ export default function QueryListPage() {
   // 「내 쿼리」 탭은 내가 만든 쿼리만 — 필터 없이 부르면 서버가 남의 공유 쿼리까지 섞어 준다(WD-328). 「공유됨」은 sharedOnly 그대로.
   const mineOnly = tab === 'mine';
 
-  const { data: queriesData, isLoading } = useSavedQueries({
+  const { data: queriesData, isLoading, isError } = useSavedQueries({
     search: search || undefined,
     folder: folder || undefined,
     sharedOnly: sharedOnly || undefined,
@@ -211,6 +211,9 @@ export default function QueryListPage() {
                   <tbody>
                     {isLoading ? (
                       <TableSkeletonRows columns={6} rows={5} />
+                    ) : isError && !queriesData ? (
+                      // 목록 조회 실패 — 0건 안내로 오해되지 않게 실패 안내를 보인다. 받아 둔 목록이 있으면 재조회 실패여도 유지한다 (WD-978)
+                      <TableErrorRow colSpan={6} />
                     ) : queries.length > 0 ? (
                       queries.map((query) => (
                         <TableRow

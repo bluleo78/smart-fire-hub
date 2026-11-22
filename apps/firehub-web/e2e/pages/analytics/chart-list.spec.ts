@@ -4,6 +4,7 @@ import { createPageResponse, mockApi, mockDeleteOnceThenNotFound } from '../../f
 import { expect, test } from '../../fixtures/auth.fixture';
 import { clickDialogBackdrop, expectBackdropClickStaysOnList } from '../../fixtures/dialog.fixture';
 import { expectWithin } from '../../fixtures/long-name-layout';
+import { expectTableErrorAlert } from '../../fixtures/table-error-alert';
 import { expectFocusRingRoom, expectTableFits, TABLE_LAYOUT_WIDTHS } from '../../fixtures/table-layout';
 
 /**
@@ -412,6 +413,17 @@ test.describe('차트 목록 페이지', () => {
     const tableBox = await table.boundingBox();
     expect(tableBox?.width ?? 0).toBeLessThanOrEqual(viewportWidth);
     await expect(dataRow.getByLabel('삭제')).toBeVisible();
+  });
+
+  test('목록 조회가 실패하면 빈 목록 대신 실패 안내를 보인다 (WD-978)', async ({ authenticatedPage: page }) => {
+    // 목록 조회만 500 — 「차트가 없습니다.」 는 실패 안내로 대체되어야 한다
+    await setupChartListMocks(page, 0);
+    await mockApi(page, 'GET', '/api/v1/analytics/charts', { message: '서버 오류' }, { status: 500 });
+    await page.goto('/analytics/charts');
+
+    await expectTableErrorAlert(page);
+    await expect(page.getByText('차트가 없습니다.')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '새 차트 만들기' })).toHaveCount(0);
   });
 });
 

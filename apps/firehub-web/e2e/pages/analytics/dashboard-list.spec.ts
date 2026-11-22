@@ -3,6 +3,7 @@ import { openFirstRowDeleteDialog, setupDashboardEditorMocks, setupDashboardList
 import { createPageResponse, mockApi, mockDeleteOnceThenNotFound } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { expectBackdropClickStaysOnList } from '../../fixtures/dialog.fixture';
+import { expectTableErrorAlert } from '../../fixtures/table-error-alert';
 import { expectFocusRingRoom, expectTableFits } from '../../fixtures/table-layout';
 
 /**
@@ -715,6 +716,17 @@ test.describe('대시보드 목록 페이지', () => {
     expect(headBox!.width, '작업 열 머리 폭').toBeGreaterThanOrEqual(104);
     // 표 컨테이너가 가로로 넘치지 않고 작업 열이 화면 안에 다 보인다(공용 측정 도우미)
     await expectTableFits(actionHead);
+  });
+
+  test('목록 조회가 실패하면 빈 목록 대신 실패 안내를 보인다 (WD-978)', async ({ authenticatedPage: page }) => {
+    // 목록 조회만 500 — 「대시보드가 없습니다.」 는 실패 안내로 대체되어야 한다
+    await setupDashboardListMocks(page, 0);
+    await mockApi(page, 'GET', '/api/v1/analytics/dashboards', { message: '서버 오류' }, { status: 500 });
+    await page.goto('/analytics/dashboards');
+
+    await expectTableErrorAlert(page);
+    await expect(page.getByText('대시보드가 없습니다.')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '새 대시보드 만들기' })).toHaveCount(0);
   });
 });
 

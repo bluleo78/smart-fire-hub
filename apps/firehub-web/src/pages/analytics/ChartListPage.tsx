@@ -25,7 +25,7 @@ import {
   TableHeader,
   TableRow,
 } from '../../components/ui/table';
-import { TableEmptyRow } from '../../components/ui/table-empty';
+import { TableEmptyRow, TableErrorRow } from '../../components/ui/table-empty';
 import { TableSkeletonRows } from '../../components/ui/table-skeleton';
 import { Tabs, TabsControlsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { useCanAdminAnalytics, useCharts, useDeleteChart } from '../../hooks/queries/useAnalytics';
@@ -54,7 +54,7 @@ export default function ChartListPage() {
   // 「내 차트」 탭은 내가 만든 차트만 — 필터 없이 부르면 서버가 남의 공유 차트까지 섞어 준다(WD-328). 「공유됨」은 sharedOnly 그대로.
   const mineOnly = tab === 'mine';
 
-  const { data: chartsData, isLoading } = useCharts({
+  const { data: chartsData, isLoading, isError } = useCharts({
     search: search || undefined,
     sharedOnly: sharedOnly || undefined,
     mineOnly: mineOnly || undefined,
@@ -147,6 +147,9 @@ export default function ChartListPage() {
                   <tbody>
                     {isLoading ? (
                       <TableSkeletonRows columns={5} rows={5} />
+                    ) : isError && !chartsData ? (
+                      // 목록 조회 실패 — 0건 안내로 오해되지 않게 실패 안내를 보인다. 받아 둔 목록이 있으면 재조회 실패여도 유지한다 (WD-978)
+                      <TableErrorRow colSpan={5} />
                     ) : charts.length > 0 ? (
                       charts.map((chart) => (
                         <TableRow
