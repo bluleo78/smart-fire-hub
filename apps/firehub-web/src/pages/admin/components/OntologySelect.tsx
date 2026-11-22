@@ -79,7 +79,7 @@ export default function OntologySelect({ ontologies, value, onChange, onManage }
         onChange(Number(next));
       }}
     >
-      <SelectTrigger className="h-8 w-[220px]" aria-label="온톨로지 선택">
+      <SelectTrigger size="sm" className="w-[220px]" aria-label="온톨로지 선택">
         {/* Radix SelectValue는 className/style prop을 받아도 렌더링에 반영하지 않는다(내부에서
             구조 분해로 버림) — 그래서 폭 제약은 children 쪽에서 직접 만든다. renderItem이 쓰는
             max-w-[280px] 래퍼 대신 단순 truncate span을 쓰면, 이 span에는 title(#504)이 있어 잘린

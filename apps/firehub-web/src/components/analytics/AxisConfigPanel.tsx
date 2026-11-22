@@ -74,7 +74,7 @@ export function AxisConfigPanel({ chartType, columns, numericColumns, config, on
             value={config.xAxis || NO_COLUMN}
             onValueChange={(v) => update({ xAxis: v === NO_COLUMN ? '' : v })}
           >
-            <SelectTrigger id={`${baseId}-heatmap-row`} className="h-8 text-sm">
+            <SelectTrigger id={`${baseId}-heatmap-row`} size="sm" className="text-sm">
               <SelectValue placeholder="컬럼 선택" />
             </SelectTrigger>
             <SelectContent>
@@ -100,7 +100,7 @@ export function AxisConfigPanel({ chartType, columns, numericColumns, config, on
             value={config.yAxis[0] || NO_COLUMN}
             onValueChange={(v) => update({ yAxis: v === NO_COLUMN ? [] : [v] })}
           >
-            <SelectTrigger id={`${baseId}-heatmap-col`} className="h-8 text-sm">
+            <SelectTrigger id={`${baseId}-heatmap-col`} size="sm" className="text-sm">
               <SelectValue placeholder="컬럼 선택" />
             </SelectTrigger>
             <SelectContent>
@@ -126,7 +126,7 @@ export function AxisConfigPanel({ chartType, columns, numericColumns, config, on
             value={config.valueColumn || NO_COLUMN}
             onValueChange={(v) => update({ valueColumn: v === NO_COLUMN ? undefined : v })}
           >
-            <SelectTrigger id={`${baseId}-heatmap-value`} className="h-8 text-sm" aria-label="값 (색상 기준)">
+            <SelectTrigger id={`${baseId}-heatmap-value`} size="sm" className="text-sm" aria-label="값 (색상 기준)">
               <SelectValue placeholder="컬럼 선택" />
             </SelectTrigger>
             <SelectContent>
@@ -166,7 +166,7 @@ export function AxisConfigPanel({ chartType, columns, numericColumns, config, on
             value={config.xAxis || NO_COLUMN}
             onValueChange={(v) => update({ xAxis: v === NO_COLUMN ? '' : v })}
           >
-            <SelectTrigger id={`${baseId}-x-axis`} className="h-8 text-sm">
+            <SelectTrigger id={`${baseId}-x-axis`} size="sm" className="text-sm">
               <SelectValue placeholder="컬럼 선택" />
             </SelectTrigger>
             <SelectContent>
@@ -193,7 +193,7 @@ export function AxisConfigPanel({ chartType, columns, numericColumns, config, on
               value={config[key] || NO_COLUMN}
               onValueChange={(v) => update({ [key]: v === NO_COLUMN ? undefined : v })}
             >
-              <SelectTrigger id={`${baseId}-${key}`} className="h-8 text-sm" aria-label={label}>
+              <SelectTrigger id={`${baseId}-${key}`} size="sm" className="text-sm" aria-label={label}>
                 <SelectValue placeholder="컬럼 선택" />
               </SelectTrigger>
               <SelectContent>
@@ -258,7 +258,7 @@ export function AxisConfigPanel({ chartType, columns, numericColumns, config, on
             value={config.spatialColumn || NO_COLUMN}
             onValueChange={(v) => update({ spatialColumn: v === NO_COLUMN ? undefined : v })}
           >
-            <SelectTrigger id={`${baseId}-spatial`} className="h-8 text-sm" aria-label="공간 컬럼">
+            <SelectTrigger id={`${baseId}-spatial`} size="sm" className="text-sm" aria-label="공간 컬럼">
               <SelectValue placeholder="컬럼 선택" />
             </SelectTrigger>
             <SelectContent>
@@ -284,7 +284,7 @@ export function AxisConfigPanel({ chartType, columns, numericColumns, config, on
             value={config.colorByColumn || NO_COLUMN}
             onValueChange={(v) => update({ colorByColumn: v === NO_COLUMN ? undefined : v })}
           >
-            <SelectTrigger id={`${baseId}-color-by`} className="h-8 text-sm">
+            <SelectTrigger id={`${baseId}-color-by`} size="sm" className="text-sm">
               <SelectValue placeholder="선택 안 함" />
             </SelectTrigger>
             <SelectContent>
@@ -314,7 +314,8 @@ export function AxisConfigPanel({ chartType, columns, numericColumns, config, on
           >
             <SelectTrigger
               id={`${baseId}-weight`}
-              className="h-8 text-sm"
+              size="sm"
+              className="text-sm"
               aria-label="가중치 컬럼"
               aria-describedby={`${baseId}-weight-help`}
             >
@@ -358,7 +359,7 @@ export function AxisConfigPanel({ chartType, columns, numericColumns, config, on
           value={config.xAxis || NO_COLUMN}
           onValueChange={(v) => update({ xAxis: v === NO_COLUMN ? '' : v })}
         >
-          <SelectTrigger id={`${baseId}-x-axis`} className="h-8 text-sm">
+          <SelectTrigger id={`${baseId}-x-axis`} size="sm" className="text-sm">
             <SelectValue placeholder="컬럼 선택" />
           </SelectTrigger>
           <SelectContent>
@@ -437,7 +438,7 @@ export function AxisConfigPanel({ chartType, columns, numericColumns, config, on
             value={config.yAxis[0] || NO_COLUMN}
             onValueChange={(v) => update({ yAxis: v === NO_COLUMN ? [] : [v] })}
           >
-            <SelectTrigger id={`${baseId}-y-value`} className="h-8 text-sm">
+            <SelectTrigger id={`${baseId}-y-value`} size="sm" className="text-sm">
               <SelectValue placeholder="컬럼 선택" />
             </SelectTrigger>
             <SelectContent>
@@ -465,7 +466,7 @@ export function AxisConfigPanel({ chartType, columns, numericColumns, config, on
             value={config.groupBy || NO_COLUMN}
             onValueChange={(v) => update({ groupBy: v === NO_COLUMN ? undefined : v })}
           >
-            <SelectTrigger id={`${baseId}-group-by`} className="h-8 text-sm">
+            <SelectTrigger id={`${baseId}-group-by`} size="sm" className="text-sm">
               <SelectValue placeholder="그룹 없음" />
             </SelectTrigger>
             <SelectContent>

@@ -339,7 +339,7 @@ export default function AiClassifyStepConfig({
                       disabled={readOnly}
                       onValueChange={(v) => updateOutputColumn(i, 'type', v)}
                     >
-                      <SelectTrigger className="h-7 text-xs w-full">
+                      <SelectTrigger size="sm" className="text-xs w-full">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -479,7 +479,7 @@ export default function AiClassifyStepConfig({
               disabled={readOnly}
               onValueChange={(v) => update('onError', v as AiClassifyConfig['onError'])}
             >
-              <SelectTrigger id={onErrorId} className="h-8 text-xs w-full">
+              <SelectTrigger id={onErrorId} size="sm" className="text-xs w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>

@@ -404,7 +404,7 @@ export default function JobMonitoringTab({ form, isEditing, jobId = 0, onChange,
                       내부 선택 상태가 초기화되어 동일한 항목을 반복 선택할 수 있다 */}
                   {availableSystemMetrics.length > 0 && (
                     <Select key={selectKey} onValueChange={addSystemMetric}>
-                      <SelectTrigger className="w-[200px] h-8">
+                      <SelectTrigger size="sm" className="w-[200px]">
                         <div className="flex items-center gap-1 text-xs">
                           <Plus className="h-3 w-3" />
                           시스템 메트릭 추가

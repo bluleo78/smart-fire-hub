@@ -114,7 +114,7 @@ export function UserNav({ collapsed = false }: UserNavProps) {
           <div className="flex items-center gap-2 mb-1.5">
             <span className="text-[10px] font-semibold text-muted-foreground w-7">테마</span>
             <Select value={themeColor} onValueChange={(v) => setThemeColor(v as 'indigo' | 'ocean' | 'sunset')}>
-              <SelectTrigger className="h-7 flex-1 text-xs">
+              <SelectTrigger size="sm" className="flex-1 text-xs">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>

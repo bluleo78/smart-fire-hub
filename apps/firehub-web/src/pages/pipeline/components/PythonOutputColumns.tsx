@@ -143,7 +143,8 @@ export default function PythonOutputColumns({
                     onValueChange={(v) => updateColumn(i, 'type', v)}
                   >
                     <SelectTrigger
-                      className="h-7 text-xs w-full"
+                      size="sm"
+                      className="text-xs w-full"
                       aria-labelledby="col-header-type"
                       aria-label={`컬럼 ${i + 1} 타입`}
                     >
