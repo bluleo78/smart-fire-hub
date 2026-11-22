@@ -381,6 +381,33 @@ class ApiCallPreviewServiceTest {
     assertThat(response.errorMessage()).isNull();
   }
 
+  /** WD-969: 미리보기는 GET·POST 밖 메서드를 대상에 보내지 않고 안내로 거절한다. */
+  @Test
+  void preview_putMethod_rejectsWithoutCallingServer() {
+    ApiCallPreviewResponse response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/put-endpoint", "put", null, null, "{}", "$", null, null, null, 5000));
+
+    assertThat(response.success()).isFalse();
+    assertThat(response.errorMessage())
+        .isEqualTo(ApiCallErrorMessages.unsupportedPreviewMethod("PUT"));
+    wireMock.verify(0, anyRequestedFor(urlEqualTo("/put-endpoint")));
+  }
+
+  /** WD-969: DELETE 도 같은 안내로 거절한다. */
+  @Test
+  void preview_deleteMethod_rejectsWithMessage() {
+    ApiCallPreviewResponse response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/del", "DELETE", null, null, null, "$", null, null, null, 5000));
+
+    assertThat(response.success()).isFalse();
+    assertThat(response.errorMessage())
+        .isEqualTo(ApiCallErrorMessages.unsupportedPreviewMethod("DELETE"));
+  }
+
   // =========================================================================
   // SSRF 방어 검증
   // =========================================================================

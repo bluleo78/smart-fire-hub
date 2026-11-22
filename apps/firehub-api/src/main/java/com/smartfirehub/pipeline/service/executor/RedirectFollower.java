@@ -11,6 +11,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.buffer.DataBufferLimitException;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.client.reactive.ReactorClientHttpConnector;
@@ -66,10 +67,10 @@ public final class RedirectFollower {
    *
    * @param client 자동 리다이렉트를 끄고 접속 시점 주소 검사를 건 클라이언트({@link #withoutAutoRedirect})
    * @param ssrf 홉마다 리다이렉트 대상을 검사할 SSRF 검사기
-   * @param method 처음 요청 메서드(대문자, POST 가 아니면 GET 으로 보낸다)
+   * @param method 처음 요청 메서드(대문자) — 받은 메서드를 그대로 보낸다(Python 실행기와 같음, WD-969)
    * @param uri 처음 요청 URI(쿼리 인증 키 포함) — 인증을 붙일지 정하는 출처 기준이기도 하다
    * @param headers 사용자 헤더(null 가능)
-   * @param body POST 본문(null·빈 값이면 본문 없음)
+   * @param body 본문을 싣는 메서드(POST·PUT·PATCH)의 요청 본문(null·빈 값이면 본문 없음)
    * @param auth 한 번 푼 인증(ApiCallAuth.resolve) — 전송 오류 문구에서 가릴 비밀도 여기서 얻는다
    * @param timeoutMs 응답 시간 제한(ms) — 오류 문구의 초 표기에도 쓴다
    * @param timeoutPerHop true 면 홉마다 timeoutMs(파이프라인 실행 — Python 실행기 httpx 와 같고, 전체 시간은
@@ -325,25 +326,28 @@ public final class RedirectFollower {
   private record Redirect(int status, String location) {}
 
   /**
-   * 홉 하나의 요청을 만든다 — POST 면 본문(있으면 Content-Type: application/json), 그 밖은 GET.
+   * 홉 하나의 요청을 만든다 — 받은 메서드를 그대로 보낸다(Python 실행기와 같음, WD-969) — 리다이렉트 홉의 메서드 규칙은 {@link
+   * RedirectLocations#keepsMethodAndBody} 가 그대로 정한다. 본문을 싣는 메서드(POST·PUT·PATCH)에 본문이 있으면
+   * Content-Type: application/json 으로 싣는다.
    *
    * @param sendAuth 인증 헤더를 붙일지 — 처음 요청과 다른 출처로 가는 리다이렉트 홉이면 false(WD-657)
    * @param bodyDropped 리다이렉트가 본문을 버린 홉인지 — 본문 헤더(Content-Type 등)를 뺀다(WD-676)
    */
   private static WebClient.RequestHeadersSpec<?> buildRequestSpec(
       Request req, String method, URI requestUri, boolean sendAuth, boolean bodyDropped) {
-    if ("POST".equals(method)) {
-      WebClient.RequestBodySpec bodySpec = req.client().post().uri(requestUri);
+    HttpMethod httpMethod = HttpMethod.valueOf(method);
+    if ("POST".equals(method) || "PUT".equals(method) || "PATCH".equals(method)) {
+      WebClient.RequestBodySpec bodySpec = req.client().method(httpMethod).uri(requestUri);
       applyHeaders(bodySpec, req, sendAuth, false);
       if (req.body() != null && !req.body().isBlank()) {
         return bodySpec.header("Content-Type", "application/json").bodyValue(req.body());
       }
       return bodySpec;
     }
-    // GET(기본) — 처음 요청 또는 리다이렉트 홉
-    WebClient.RequestHeadersSpec<?> getSpec = req.client().get().uri(requestUri);
-    applyHeaders(getSpec, req, sendAuth, bodyDropped);
-    return getSpec;
+    // 본문 없는 메서드(GET·DELETE·HEAD 등) — 받은 그대로 보내고 본문은 싣지 않는다.
+    WebClient.RequestHeadersSpec<?> spec = req.client().method(httpMethod).uri(requestUri);
+    applyHeaders(spec, req, sendAuth, bodyDropped);
+    return spec;
   }
 
   /**
