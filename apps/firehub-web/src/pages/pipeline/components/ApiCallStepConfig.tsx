@@ -440,6 +440,8 @@ export default function ApiCallStepConfig({
   /**
    * 연결 모드 전환 시 기존 url/path/customUrl 필드를 초기화한다.
    * - 과거 'url' 필드도 함께 제거해 레거시 데이터를 정리한다.
+   * - 직접 입력 인증(inlineAuth)도 함께 버린다 — 연결 모드에선 인증 UI 가 숨겨져 안 보이는 비밀이
+   *   저장되지 않게, 직접 입력으로 돌아오면 인증이 「없음」으로 시작하게 한다 (WD-934).
    */
   const handleConnectionChange = (id: number | null) => {
     onConnectionChange(id);
@@ -448,6 +450,7 @@ export default function ApiCallStepConfig({
     delete cleaned['url'];       // 과거 필드 제거
     delete cleaned['path'];
     delete cleaned['customUrl'];
+    delete cleaned['inlineAuth'];
     onChange(cleaned);
   };
 
@@ -557,14 +560,8 @@ export default function ApiCallStepConfig({
         <ConnectionCombobox
           connections={savedConnections ?? []}
           value={apiConnectionId}
-          onChange={(id) => {
-            if (id === null) {
-              handleConnectionChange(null);
-            } else {
-              handleAuthChange({ authType: 'NONE' });
-              handleConnectionChange(id);
-            }
-          }}
+          // 한 번의 onChange 로 처리한다 — 두 번 연속 호출하면 같은 렌더의 apiConfig 로 서로 덮어쓴다 (WD-934)
+          onChange={handleConnectionChange}
           disabled={readOnly}
         />
 

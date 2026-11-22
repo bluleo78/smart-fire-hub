@@ -46,6 +46,8 @@ test.describe('멤버 추가', () => {
     const dialog = page.getByRole('dialog', { name: '멤버 추가' });
     await dialog.getByLabel('이메일').fill('newbie@acme.io');
     await dialog.getByLabel('이름').fill('뉴비');
+    // WD-908: 감싼 div 때문에 FormField 가 못 찾으니 화면이 직접 필수를 알린다
+    await expect(dialog.getByLabel('임시 비밀번호')).toHaveAttribute('aria-required', 'true');
     const password = await dialog.getByLabel('임시 비밀번호').inputValue();
     expect(password).toMatch(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{12}$/); // 열 때 자동 생성
     await dialog.getByRole('checkbox', { name: /ADMIN/ }).check();

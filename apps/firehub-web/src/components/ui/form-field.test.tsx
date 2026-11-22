@@ -106,3 +106,97 @@ describe('공유 도우미 — linkedAriaProps·FormFieldLabelRow(WD-660)', () =
     expect(container.querySelector('label')).toHaveTextContent(/^모델$/);
   });
 });
+
+describe('FormField — 필수 표시(WD-908)', () => {
+  it('required 면 htmlFor 입력에 aria-required="true" 를 붙인다', () => {
+    render(
+      <FormField label="이름" htmlFor="name" required>
+        <input id="name" />
+      </FormField>,
+    );
+    const input = screen.getByRole('textbox', { name: '이름' });
+    expect(input).toHaveAttribute('aria-required', 'true');
+    expect(input).not.toHaveAttribute('required');
+  });
+
+  it('라벨의 * 는 접근 이름에서 빠지고 텍스트로는 보인다', () => {
+    const { container } = render(
+      <FormField label="이름" htmlFor="name" required>
+        <input id="name" />
+      </FormField>,
+    );
+    expect(screen.getByText('*')).toHaveAttribute('aria-hidden', 'true');
+    expect(container.querySelector('label')?.textContent).toBe('이름*');
+  });
+
+  it('required 가 아니면 aria-required 를 붙이지 않는다', () => {
+    render(
+      <FormField label="이름" htmlFor="name">
+        <input id="name" />
+      </FormField>,
+    );
+    expect(screen.getByRole('textbox')).not.toHaveAttribute('aria-required');
+  });
+
+  it('화면이 넣은 aria-required 를 덮어쓰지 않는다', () => {
+    render(
+      <FormField label="이름" htmlFor="name" required>
+        <input id="name" aria-required={false} />
+      </FormField>,
+    );
+    expect(screen.getByRole('textbox')).toHaveAttribute('aria-required', 'false');
+  });
+
+  it('오류와 함께면 셋 다 붙는다', () => {
+    render(
+      <FormField label="이름" htmlFor="name" required error="이름을 입력하세요">
+        <input id="name" />
+      </FormField>,
+    );
+    const input = screen.getByRole('textbox');
+    expect(input).toHaveAttribute('aria-required', 'true');
+    expect(input).toHaveAttribute('aria-invalid', 'true');
+    expect(input.getAttribute('aria-describedby')).toContain('name-error');
+  });
+
+  it('오류가 생겼다 사라져도 입력 노드가 그대로다', () => {
+    const field = (error?: string) => (
+      <FormField label="이름" htmlFor="name" required error={error}>
+        <input id="name" />
+      </FormField>
+    );
+    const { rerender } = render(field());
+    const node = screen.getByRole('textbox');
+    rerender(field('오류'));
+    rerender(field());
+    expect(screen.getByRole('textbox')).toBe(node);
+  });
+
+  it('FormFieldLabelRow 단독 required 는 * 를 감추지 않고, markerHidden 이면 aria-hidden 으로 감춘다', () => {
+    const { rerender } = render(
+      <FormFieldLabelRow htmlFor="m" required>
+        모델
+      </FormFieldLabelRow>,
+    );
+    expect(screen.getByText('*')).not.toHaveAttribute('aria-hidden');
+    rerender(
+      <FormFieldLabelRow htmlFor="m" required markerHidden>
+        모델
+      </FormFieldLabelRow>,
+    );
+    expect(screen.getByText('*')).toHaveAttribute('aria-hidden', 'true');
+  });
+
+  // WD-908 code-review: 감싼 입력은 FormField 가 aria-required 를 붙이지 못하니 별표를 남겨 필수 정보를 잃지 않게 한다.
+  it('감싼 입력이면 별표를 감추지 않는다', () => {
+    render(
+      <FormField label="이름" htmlFor="name" required>
+        <div>
+          <input id="name" />
+        </div>
+      </FormField>,
+    );
+    expect(screen.getByText('*')).not.toHaveAttribute('aria-hidden');
+    expect(screen.getByLabelText('이름*')).toBeInTheDocument();
+  });
+});

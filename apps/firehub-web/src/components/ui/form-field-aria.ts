@@ -7,6 +7,9 @@ export type AriaInputProps = {
   id?: string;
   'aria-invalid'?: boolean | 'true' | 'false';
   'aria-describedby'?: string;
+  /** WD-908: FormField 가 required 일 때 전파하는 필수 표시. */
+  'aria-required'?: boolean | 'true' | 'false';
+  required?: boolean;
 };
 
 /** 입력에 이을 문구 id — 실제로 그려지는 문구만 담는다(없으면 undefined). */

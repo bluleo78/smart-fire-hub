@@ -330,6 +330,77 @@ test.describe('파이프라인 에디터 — API_CALL 스텝 설정', () => {
   });
 
   /**
+   * WD-934: 직접 입력 인증(API Key)을 넣은 뒤 저장된 연결로 바꾸면, 화면에 안 보이는 인증 비밀이
+   * 저장 본문에 남지 않아야 한다. 연결을 다시 비워 직접 입력으로 돌아오면 인증은 「없음」으로 시작한다.
+   */
+  test('직접 입력 인증을 넣은 뒤 저장된 연결로 바꾸면 저장 본문에 inlineAuth 가 없다 (WD-934)', async ({
+    authenticatedPage: page,
+  }) => {
+    const capture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/pipelines',
+      { id: 99, name: 'API 파이프라인', steps: [] },
+      { capture: true },
+    );
+
+    await addAndOpenApiCallStep(page);
+
+    // 직접 입력 인증: API Key
+    await page.locator('[role="combobox"]:has-text("없음")').click();
+    await page.getByRole('option', { name: 'API Key' }).click();
+    await page.getByPlaceholder('API 키를 입력하세요').fill('secret-key');
+
+    // 저장된 연결 선택 → 추가 경로 입력
+    await clickConnectionCombobox(page);
+    await page.getByRole('option', { name: /공공 데이터 API/ }).click();
+    await page.getByPlaceholder('/v1/data (선택)').fill('/data');
+
+    await saveApiCallPipeline(page, 'API 파이프라인');
+    const req = await capture.waitForRequest();
+    const step = (req.payload as {
+      steps: Array<{ apiConnectionId?: number; apiConfig?: { inlineAuth?: unknown; path?: string } }>;
+    }).steps[0];
+    expect(step.apiConnectionId).toBe(1);
+    expect(step.apiConfig?.inlineAuth).toBeUndefined();
+    expect(step.apiConfig?.path).toBe('/data');
+    expect(JSON.stringify(req.payload)).not.toContain('secret-key');
+  });
+
+  test('연결을 골랐다가 직접 입력으로 돌아오면 인증은 없음으로 시작한다 (WD-934)', async ({
+    authenticatedPage: page,
+  }) => {
+    const capture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/pipelines',
+      { id: 99, name: 'API 파이프라인', steps: [] },
+      { capture: true },
+    );
+
+    await addAndOpenApiCallStep(page);
+    await page.locator('[role="combobox"]:has-text("없음")').click();
+    await page.getByRole('option', { name: 'API Key' }).click();
+    await page.getByPlaceholder('API 키를 입력하세요').fill('secret-key');
+
+    // 연결 선택 후 다시 직접 입력으로 복귀
+    await clickConnectionCombobox(page);
+    await page.getByRole('option', { name: /공공 데이터 API/ }).click();
+    await page.locator('[role="combobox"]:has-text("공공 데이터 API")').click();
+    await page.getByRole('option', { name: /직접 입력/ }).click();
+
+    // 인증 선택 상자는 「없음」, 이전 키는 남지 않는다
+    await expect(page.locator('[role="combobox"]:has-text("없음")')).toBeVisible();
+    await page.getByPlaceholder(API_FULL_URL_PLACEHOLDER, { exact: true }).fill('https://example.com/api');
+
+    await saveApiCallPipeline(page, 'API 파이프라인');
+    const req = await capture.waitForRequest();
+    const step = (req.payload as { steps: Array<{ apiConfig?: { inlineAuth?: unknown } }> }).steps[0];
+    expect(step.apiConfig?.inlineAuth).toBeUndefined();
+    expect(JSON.stringify(req.payload)).not.toContain('secret-key');
+  });
+
+  /**
    * TC-7: API_CALL 스텝이 올바른 payload로 저장된다
    * - saved 연결 선택 + path 입력 후 파이프라인 저장
    * - POST /api/v1/pipelines payload에 apiConnectionId, path가 포함되어야 한다

@@ -437,12 +437,14 @@ public class PipelineService {
 
       // Save step — 기존 스텝이면 id 를 유지한 채 제자리 갱신하고(과거 실행 기록·러너 TEMP 연결 유지, WD-108), 새 스텝만 INSERT 한다.
       // 검증은 위에서 두 경우 모두 똑같이 끝났다.
+      // WD-934: 저장된 연결을 쓰는 스텝이면 직접 입력 인증(inlineAuth)은 실행에 쓰이지 않으니 저장 직전에 뺀다(검증은 위에서 원본으로 끝났다).
+      PipelineStepRequest storedRequest = withoutStaleInlineAuth(stepRequest);
       Long stepId;
       if (existingStepId != null) {
-        stepRepository.updateStep(pipelineId, existingStepId, stepRequest, i);
+        stepRepository.updateStep(pipelineId, existingStepId, storedRequest, i);
         stepId = existingStepId;
       } else {
-        stepId = stepRepository.saveStep(pipelineId, stepRequest, i);
+        stepId = stepRepository.saveStep(pipelineId, storedRequest, i);
       }
       stepNameToId.put(stepRequest.name(), stepId);
 
@@ -618,6 +620,7 @@ public class PipelineService {
     List<PipelineStepResponse> steps =
         stepRepository.findByPipelineId(id, datasetAccessGuard.visibility()).stream()
             .map(this::attachIncrementalMeta)
+            .map(PipelineService::withoutStaleInlineAuth)
             .toList();
 
     var updatedAt = pipelineRepository.findUpdatedAtById(id).orElse(null);
@@ -837,7 +840,11 @@ public class PipelineService {
     // 남는다).
     if (request.steps() != null) {
       List<PipelineStepResponse> existingSteps = stepRepository.findByPipelineId(id);
-      stepsBeforeAudit = auditStepProjection(existingSteps);
+      // 변경 전 투영도 저장 후 값(조회 응답)과 같은 기준으로 만든다 — 연결이 있는 스텝에 DB 에 남은 예전 inlineAuth 를
+      // 그대로 비교하면, 아무것도 안 바꾼 저장도 감사에 "steps" 변경으로 남는다(WD-934).
+      stepsBeforeAudit =
+          auditStepProjection(
+              existingSteps.stream().map(PipelineService::withoutStaleInlineAuth).toList());
       // 왕복 보존용 기존 출력·입력 id — 이름이 아니라 파이프라인 전체 집합으로 비교한다(스텝 이름을 바꿔도 같은 출력을
       // 되돌려 보내는 저장이 막히지 않게). 웹은 해석된 출력(TEMP 폴백 포함)을 되돌려 보내므로 해석된 값을 쓴다.
       Set<Long> previouslySavedOutputIds = new java.util.HashSet<>();
@@ -1103,6 +1110,42 @@ public class PipelineService {
         hidden > 0,
         executionRepository.findActiveExecutionState(id),
         triggerRepository.findEnabledDownstreamChainTriggers(id));
+  }
+
+  /**
+   * 저장된 연결(apiConnectionId)을 쓰는 스텝의 apiConfig 에서 직접 입력 인증({@code inlineAuth})만 뺀 설정을 돌려준다(WD-934).
+   *
+   * <p>왜: 연결이 있으면 실행기가 연결의 인증을 쓰고 inlineAuth 는 무시한다. 그런데 화면에서 직접 입력 → 연결로 바꾸면 입력해 둔 비밀값이 안 보이는 채 DB 에
+   * 남아 조회 응답으로 되돌아온다. 그래서 저장·조회 양쪽에서 뺀다.
+   *
+   * <p>연결이 없거나 설정이 없거나 inlineAuth 가 없으면 같은 객체를 그대로 돌려주고, 아니면 원본을 건드리지 않고 inlineAuth 만 뺀 새 맵을 돌려준다.
+   */
+  static Map<String, Object> stripStaleInlineAuth(
+      Map<String, Object> apiConfig, Long apiConnectionId) {
+    if (apiConnectionId == null || apiConfig == null || !apiConfig.containsKey("inlineAuth")) {
+      return apiConfig;
+    }
+    Map<String, Object> copy = new java.util.LinkedHashMap<>(apiConfig);
+    copy.remove("inlineAuth");
+    return copy;
+  }
+
+  /** 저장용: 요청 스텝의 apiConfig 에서 낡은 inlineAuth 를 뺀 요청을 만든다(바뀔 게 없으면 같은 객체, WD-934). */
+  private static PipelineStepRequest withoutStaleInlineAuth(PipelineStepRequest s) {
+    Map<String, Object> cleaned = stripStaleInlineAuth(s.apiConfig(), s.apiConnectionId());
+    if (cleaned == s.apiConfig()) {
+      return s;
+    }
+    return s.withApiConfig(cleaned);
+  }
+
+  /** 조회용: 응답 스텝의 apiConfig 에서 이미 저장돼 남은 낡은 inlineAuth 를 가린다(다른 필드는 그대로, WD-934). */
+  private static PipelineStepResponse withoutStaleInlineAuth(PipelineStepResponse s) {
+    Map<String, Object> cleaned = stripStaleInlineAuth(s.apiConfig(), s.apiConnectionId());
+    if (cleaned == s.apiConfig()) {
+      return s;
+    }
+    return s.withApiConfig(cleaned);
   }
 
   /**

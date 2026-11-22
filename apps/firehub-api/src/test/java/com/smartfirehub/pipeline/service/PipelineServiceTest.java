@@ -2771,4 +2771,205 @@ class PipelineServiceTest extends IntegrationTestBase {
         .as("증분 스텝이 아니면 재생성 모드 자체가 없다(예약도 불가)")
         .isNull();
   }
+
+  // ===== WD-934: 저장된 연결을 쓰는 API 호출 스텝의 직접 입력 인증(inlineAuth) 제거 =====
+
+  /** 시험용 API 연결 한 건을 만든다(보임 판정·FK 통과용). */
+  private Long insertApiConnection() {
+    return dsl.insertInto(API_CONNECTION)
+        .set(API_CONNECTION.NAME, "wd934-conn")
+        .set(API_CONNECTION.AUTH_TYPE, "BEARER")
+        .set(API_CONNECTION.AUTH_CONFIG, "{}")
+        .set(API_CONNECTION.BASE_URL, "https://api.example")
+        .set(API_CONNECTION.CREATED_BY, testUserId)
+        .returning(API_CONNECTION.ID)
+        .fetchOne()
+        .getId();
+  }
+
+  /** API_CALL 스텝 한 개짜리 파이프라인 요청용 스텝을 만든다. */
+  private PipelineStepRequest apiStep(Map<String, Object> apiConfig, Long connId, Long stepId) {
+    return new PipelineStepRequest(
+        "api-step",
+        "api",
+        "API_CALL",
+        null,
+        outputDatasetId,
+        null,
+        null,
+        "REPLACE",
+        apiConfig,
+        null,
+        null,
+        connId,
+        stepId);
+  }
+
+  private Map<String, Object> inlineAuthConfig(Map<String, Object> extra, Map<String, Object> auth) {
+    Map<String, Object> m = new java.util.LinkedHashMap<>(extra);
+    m.put("inlineAuth", auth);
+    return m;
+  }
+
+  /** DB 에 저장된 스텝 api_config 원문(JSON 문자열)을 직접 읽는다. */
+  private String storedApiConfig(Long stepId) {
+    return dsl.fetchOne("select api_config::text from pipeline_step where id = ?", stepId)
+        .get(0, String.class);
+  }
+
+  @Test
+  void stripStaleInlineAuth_nullSafe() {
+    assertThat(PipelineService.stripStaleInlineAuth(null, 1L)).isNull();
+
+    Map<String, Object> plain = Map.of("method", "GET");
+    assertThat(PipelineService.stripStaleInlineAuth(plain, 1L)).isSameAs(plain);
+
+    Map<String, Object> withAuth =
+        inlineAuthConfig(Map.of("method", "GET"), Map.of("authType", "API_KEY", "apiKey", "secret"));
+    assertThat(PipelineService.stripStaleInlineAuth(withAuth, null)).isSameAs(withAuth);
+
+    Map<String, Object> stripped = PipelineService.stripStaleInlineAuth(withAuth, 1L);
+    assertThat(stripped).containsOnlyKeys("method").containsEntry("method", "GET");
+    assertThat(withAuth).containsKey("inlineAuth");
+  }
+
+  @Test
+  void inlineAuthRemovedWhenConnectionSaved() {
+    Long connId = insertApiConnection();
+    PipelineDetailResponse p =
+        pipelineService.createPipeline(
+            new CreatePipelineRequest(
+                "wd934-save",
+                "t",
+                List.of(
+                    apiStep(
+                        inlineAuthConfig(
+                            Map.of("path", "/data"),
+                            Map.of("authType", "API_KEY", "apiKey", "secret-key")),
+                        connId,
+                        null))),
+            testUserId);
+    PipelineStepResponse step = p.steps().get(0);
+    assertThat(step.apiConfig()).doesNotContainKey("inlineAuth").containsEntry("path", "/data");
+    String raw = storedApiConfig(step.id());
+    assertThat(raw).doesNotContain("inlineAuth").doesNotContain("secret-key");
+  }
+
+  @Test
+  void inlineAuthRemovedOnUpdate() {
+    Long connId = insertApiConnection();
+    Map<String, Object> cfg =
+        inlineAuthConfig(
+            Map.of("customUrl", "https://api.example/x"),
+            Map.of("authType", "BEARER", "token", "t0"));
+    PipelineDetailResponse p =
+        pipelineService.createPipeline(
+            new CreatePipelineRequest("wd934-upd", "t", List.of(apiStep(cfg, null, null))),
+            testUserId);
+    Long stepId = p.steps().get(0).id();
+    assertThat(storedApiConfig(stepId)).contains("inlineAuth");
+
+    pipelineService.updatePipeline(
+        p.id(),
+        new UpdatePipelineRequest("wd934-upd", "t", null, List.of(apiStep(cfg, connId, stepId))),
+        testUserId);
+
+    assertThat(storedApiConfig(stepId)).doesNotContain("inlineAuth").doesNotContain("t0");
+    assertThat(pipelineService.getPipelineById(p.id()).steps().get(0).apiConfig())
+        .doesNotContainKey("inlineAuth");
+  }
+
+  @Test
+  void inlineAuthKeptWithoutConnection() {
+    PipelineDetailResponse p =
+        pipelineService.createPipeline(
+            new CreatePipelineRequest(
+                "wd934-keep",
+                "t",
+                List.of(
+                    apiStep(
+                        inlineAuthConfig(
+                            Map.of("customUrl", "https://api.example/x"),
+                            Map.of("authType", "BEARER", "token", "t")),
+                        null,
+                        null))),
+            testUserId);
+    @SuppressWarnings("unchecked")
+    Map<String, Object> auth =
+        (Map<String, Object>) p.steps().get(0).apiConfig().get("inlineAuth");
+    assertThat(auth).containsEntry("token", "t");
+    assertThat(
+            pipelineService.getPipelineById(p.id()).steps().get(0).apiConfig().get("inlineAuth"))
+        .isNotNull();
+  }
+
+  @Test
+  void staleInlineAuthHiddenOnRead() {
+    Long connId = insertApiConnection();
+    PipelineDetailResponse p =
+        pipelineService.createPipeline(
+            new CreatePipelineRequest(
+                "wd934-read", "t", List.of(apiStep(Map.of("path", "/data"), connId, null))),
+            testUserId);
+    Long stepId = p.steps().get(0).id();
+    // 과거에 저장돼 남은 값을 되살린다 — 이전 버전은 연결이 있어도 inlineAuth 를 그대로 저장했다.
+    dsl.execute(
+        "update pipeline_step set api_config = '{\"path\":\"/data\",\"inlineAuth\":{\"authType\":\"BEARER\",\"token\":\"old\"}}'::jsonb where id = ?",
+        stepId);
+    assertThat(storedApiConfig(stepId)).contains("inlineAuth");
+
+    assertThat(pipelineService.getPipelineById(p.id()).steps().get(0).apiConfig())
+        .doesNotContainKey("inlineAuth")
+        .containsEntry("path", "/data");
+  }
+
+  /** 수정 감사 중 "steps" 변경으로 기록된 UPDATE 행 수 — 감사 행은 같은 테넌트 컨텍스트에서 읽는다. */
+  private long stepsAuditCount(Long pipelineId) {
+    return dsl.fetchCount(
+        dsl.selectFrom(AUDIT_LOG)
+            .where(AUDIT_LOG.ACTION_TYPE.eq("UPDATE"))
+            .and(AUDIT_LOG.RESOURCE.eq("pipeline"))
+            .and(AUDIT_LOG.RESOURCE_ID.eq(String.valueOf(pipelineId)))
+            .and(AUDIT_LOG.METADATA.cast(String.class).contains("steps")));
+  }
+
+  /**
+   * WD-934 — 예전에 저장돼 남은 inlineAuth 만 빠지는 같은 내용 재저장은 감사에 steps 변경으로 남지 않는다. 변경 전 투영도 저장 후 값과 같은
+   * 기준(남은 inlineAuth 제외)으로 만들어야 한다. 실제 스텝 변경은 여전히 기록된다(대조군).
+   */
+  @Test
+  void staleInlineAuthOnlySaveNotAuditedAsStepsChange() {
+    Long connId = insertApiConnection();
+    PipelineDetailResponse p =
+        pipelineService.createPipeline(
+            new CreatePipelineRequest(
+                "wd934-audit", "t", List.of(apiStep(Map.of("path", "/data"), connId, null))),
+            testUserId);
+    Long stepId = p.steps().get(0).id();
+    dsl.execute(
+        "update pipeline_step set api_config = '{\"path\":\"/data\",\"inlineAuth\":{\"authType\":\"BEARER\",\"token\":\"old\"}}'::jsonb where id = ?",
+        stepId);
+
+    pipelineService.updatePipeline(
+        p.id(),
+        new UpdatePipelineRequest(
+            "wd934-audit",
+            "t",
+            null,
+            List.of(apiStep(Map.of("path", "/data"), connId, stepId))),
+        testUserId);
+    assertThat(storedApiConfig(stepId)).doesNotContain("inlineAuth");
+    assertThat(stepsAuditCount(p.id())).isZero();
+
+    // 대조군: 실제로 스텝 내용이 바뀌면 steps 변경이 기록된다.
+    pipelineService.updatePipeline(
+        p.id(),
+        new UpdatePipelineRequest(
+            "wd934-audit",
+            "t",
+            null,
+            List.of(apiStep(Map.of("path", "/changed"), connId, stepId))),
+        testUserId);
+    assertThat(stepsAuditCount(p.id())).isEqualTo(1);
+  }
 }

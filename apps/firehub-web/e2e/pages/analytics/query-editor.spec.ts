@@ -282,7 +282,7 @@ test.describe('쿼리 에디터 페이지', () => {
     await expect(page.getByRole('heading', { name: '쿼리 저장' })).toBeVisible();
 
     // 이름 입력란에 기본값 "새 쿼리"가 채워져 있어야 한다
-    const nameInput = page.getByLabel('이름*');
+    const nameInput = page.getByRole('textbox', { name: '이름', exact: true });
     await expect(nameInput).toBeVisible();
 
     // 이름을 변경
@@ -328,7 +328,7 @@ test.describe('쿼리 에디터 페이지', () => {
     await expect(page.getByRole('heading', { name: '쿼리 수정' })).toBeVisible();
 
     // 이름 입력란에 기존 이름이 채워져 있어야 한다
-    const nameInput = page.getByLabel('이름*');
+    const nameInput = page.getByRole('textbox', { name: '이름', exact: true });
     await expect(nameInput).toHaveValue('테스트 쿼리');
 
     // 이름 변경

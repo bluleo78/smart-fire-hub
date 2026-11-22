@@ -99,4 +99,22 @@ public record PipelineStepRequest(
         null,
         null);
   }
+
+  /** apiConfig 만 바꾼 복사본 — 다른 필드는 그대로 둔다(저장 전 정규화용, WD-934). */
+  public PipelineStepRequest withApiConfig(Map<String, Object> newApiConfig) {
+    return new PipelineStepRequest(
+        name,
+        description,
+        scriptType,
+        scriptContent,
+        outputDatasetId,
+        inputDatasetIds,
+        dependsOnStepNames,
+        loadStrategy,
+        newApiConfig,
+        aiConfig,
+        pythonConfig,
+        apiConnectionId,
+        id);
+  }
 }
