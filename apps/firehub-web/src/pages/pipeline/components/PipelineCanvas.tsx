@@ -15,6 +15,16 @@ import { LayoutGrid, Pencil,Plus } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { useCallback, useMemo, useState } from 'react';
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import type { ExecutionDetailResponse } from '@/types/pipeline';
 
@@ -53,6 +63,9 @@ export function PipelineCanvas({
   executionData,
 }: PipelineCanvasProps) {
   const { resolvedTheme } = useTheme();
+  // 삭제 확인을 기다리는 스텝 — X 버튼은 즉시 지우지 않고 확인을 거쳐 실수 삭제를 막는다(#536).
+  // 창은 노드가 아니라 캔버스가 한 개만 들고, onKeyDown div 의 형제로 그려 창의 이벤트가 캔버스·노드로 올라가지 않게 한다(WD-952).
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const nodeTypes = useMemo(() => ({ step: StepNode }), []);
   const edgeTypes = useMemo(() => ({ addStep: AddStepEdge }), []);
 
@@ -97,9 +110,7 @@ export function PipelineCanvas({
         // 실행 기록은 스텝 id 로 찾는다(WD-108) — 이름으로 찾으면 삭제된 동명 스텝의 기록이 새 스텝에 붙는다.
         executionStatus: findStepExecution(executionData?.stepExecutions, step.id)?.status,
         readOnly,
-        onDelete: readOnly
-          ? undefined
-          : () => dispatch({ type: 'REMOVE_STEP', payload: { tempId: step.tempId } }),
+        onRequestDelete: readOnly ? undefined : () => setPendingDeleteId(step.tempId),
         onAddAfter: readOnly
           ? undefined
           : () => dispatch({ type: 'ADD_STEP_AFTER', payload: { sourceTempId: step.tempId } }),
@@ -224,6 +235,11 @@ export function PipelineCanvas({
     dispatch({ type: 'AUTO_LAYOUT' });
   };
 
+  // 읽기 전용이 되거나 대상 스텝이 사라지면(저장 완료·재조회) 창을 닫고 요청도 버린다 —
+  // 남겨 두면 다시 열리거나, 닫히는 창의 「삭제」가 먹는다(WD-952)
+  const canConfirmDelete = !readOnly && state.steps.some((s) => s.tempId === pendingDeleteId);
+  if (pendingDeleteId !== null && !canConfirmDelete) setPendingDeleteId(null);
+
   if (state.steps.length === 0) {
     return (
       <div className="relative flex h-full w-full flex-col items-center justify-center gap-4 rounded-lg border-2 border-dashed border-border bg-muted">
@@ -242,62 +258,92 @@ export function PipelineCanvas({
   }
 
   return (
-    <div className="relative h-full w-full [&_.react-flow]:text-sm" onKeyDown={handleCanvasKeyDown}>
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        nodeTypes={nodeTypes as never}
-        edgeTypes={edgeTypes}
-        defaultEdgeOptions={defaultEdgeOptions}
-        onNodeClick={onNodeClick}
-        onNodeDragStop={onNodeDragStop}
-        onConnect={onConnect}
-        onEdgesChange={onEdgesChange}
-        deleteKeyCode={null}
-        onPaneClick={() => {
-          clearEdgeSelection();
-          dispatch({ type: 'SELECT_STEP', payload: { tempId: null } });
-        }}
-        nodesDraggable={!readOnly}
-        nodesConnectable={!readOnly}
-        elementsSelectable={!readOnly}
-        maxZoom={1}
-        // 좁은 화면(375px)에서 기본 최소 배율 0.5 에 걸려 「전체 보기」로도 스텝 세 개가 한 화면에 들어오지 않았다(WD-456)
-        minZoom={0.2}
-        fitView
-        fitViewOptions={{ maxZoom: 1, minZoom: 0.2, padding: 0.3 }}
-        proOptions={{ hideAttribution: true }}
-        ariaLabelConfig={KO_ARIA_LABEL_CONFIG}
-      >
-        <Background color={resolvedTheme === 'dark' ? 'oklch(1 0 0 / 8%)' : undefined} />
-        {/* WD-883: 확대·축소·전체 보기 버튼 크기는 index.css 의 .react-flow__controls-button 규칙(32×32)으로 키운다 */}
-        <Controls showInteractive={!readOnly} />
-      </ReactFlow>
+    <>
+      <div className="relative h-full w-full [&_.react-flow]:text-sm" onKeyDown={handleCanvasKeyDown}>
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          nodeTypes={nodeTypes as never}
+          edgeTypes={edgeTypes}
+          defaultEdgeOptions={defaultEdgeOptions}
+          onNodeClick={onNodeClick}
+          onNodeDragStop={onNodeDragStop}
+          onConnect={onConnect}
+          onEdgesChange={onEdgesChange}
+          deleteKeyCode={null}
+          onPaneClick={() => {
+            clearEdgeSelection();
+            dispatch({ type: 'SELECT_STEP', payload: { tempId: null } });
+          }}
+          nodesDraggable={!readOnly}
+          nodesConnectable={!readOnly}
+          elementsSelectable={!readOnly}
+          maxZoom={1}
+          // 좁은 화면(375px)에서 기본 최소 배율 0.5 에 걸려 「전체 보기」로도 스텝 세 개가 한 화면에 들어오지 않았다(WD-456)
+          minZoom={0.2}
+          fitView
+          fitViewOptions={{ maxZoom: 1, minZoom: 0.2, padding: 0.3 }}
+          proOptions={{ hideAttribution: true }}
+          ariaLabelConfig={KO_ARIA_LABEL_CONFIG}
+        >
+          <Background color={resolvedTheme === 'dark' ? 'oklch(1 0 0 / 8%)' : undefined} />
+          {/* WD-883: 확대·축소·전체 보기 버튼 크기는 index.css 의 .react-flow__controls-button 규칙(32×32)으로 키운다 */}
+          <Controls showInteractive={!readOnly} />
+        </ReactFlow>
 
-      {/* 수정모드 표시 (좌상단) */}
-      {!readOnly && (
-        <div className="absolute left-3 top-3 z-10 flex items-center gap-1.5 rounded-md border bg-background/90 px-2.5 py-1 text-xs font-medium text-muted-foreground shadow-sm backdrop-blur-sm">
-          <Pencil className="h-3 w-3" />
-          수정모드
-        </div>
-      )}
+        {/* 수정모드 표시 (좌상단) */}
+        {!readOnly && (
+          <div className="absolute left-3 top-3 z-10 flex items-center gap-1.5 rounded-md border bg-background/90 px-2.5 py-1 text-xs font-medium text-muted-foreground shadow-sm backdrop-blur-sm">
+            <Pencil className="h-3 w-3" />
+            수정모드
+          </div>
+        )}
 
-      {/* 자동 정렬 + 스텝 추가 (우상단, 실행 상세에서는 숨김) — 칠은 FLOATING_BUTTON_CLASS 참고(WD-778) */}
-      {!executionData && (
-        <div className="absolute right-3 top-3 z-10 flex items-center gap-1.5">
-          <Button variant="outline" size="sm" className={FLOATING_BUTTON_CLASS} onClick={handleAutoLayout}>
-            <LayoutGrid className="h-3.5 w-3.5" />
-            자동 정렬
-          </Button>
-          {!readOnly && (
-            <Button variant="outline" size="sm" className={FLOATING_BUTTON_CLASS} onClick={handleAddStep}>
-              <Plus className="h-3.5 w-3.5" />
-              스텝 추가
+        {/* 자동 정렬 + 스텝 추가 (우상단, 실행 상세에서는 숨김) — 칠은 FLOATING_BUTTON_CLASS 참고(WD-778) */}
+        {!executionData && (
+          <div className="absolute right-3 top-3 z-10 flex items-center gap-1.5">
+            <Button variant="outline" size="sm" className={FLOATING_BUTTON_CLASS} onClick={handleAutoLayout}>
+              <LayoutGrid className="h-3.5 w-3.5" />
+              자동 정렬
             </Button>
-          )}
-        </div>
-      )}
-    </div>
+            {!readOnly && (
+              <Button variant="outline" size="sm" className={FLOATING_BUTTON_CLASS} onClick={handleAddStep}>
+                <Plus className="h-3.5 w-3.5" />
+                스텝 추가
+              </Button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* 스텝 삭제 확인 — 캔버스 div 의 형제여야 한다(이유는 pendingDeleteId 선언부, WD-952·#536) */}
+      <AlertDialog
+        open={canConfirmDelete}
+        onOpenChange={(open) => { if (!open) setPendingDeleteId(null); }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>스텝 삭제</AlertDialogTitle>
+            <AlertDialogDescription>
+              정말 이 스텝을 삭제하시겠습니까? 저장하기 전까지는 취소가 가능합니다.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>취소</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                const tempId = pendingDeleteId;
+                setPendingDeleteId(null);
+                if (tempId) dispatch({ type: 'REMOVE_STEP', payload: { tempId } });
+              }}
+            >
+              삭제
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }
 

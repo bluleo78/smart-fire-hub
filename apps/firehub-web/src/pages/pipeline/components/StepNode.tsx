@@ -1,18 +1,7 @@
 import { Handle, type Node,type NodeProps, Position } from '@xyflow/react';
 import { Ban, Brain, CheckCircle2, Clock,FileCode, Globe, Loader2, Plus, SkipForward, Terminal, X, XCircle } from 'lucide-react';
 import { useTheme } from 'next-themes';
-import { memo, useState } from 'react';
-
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
+import { memo } from 'react';
 
 export interface StepNodeData extends Record<string, unknown> {
   label: string;
@@ -25,7 +14,8 @@ export interface StepNodeData extends Record<string, unknown> {
   // CANCELLED = 실행 취소가 닿았을 때 진행 중이던 스텝(WD-153)
   executionStatus?: 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'SKIPPED' | 'CANCELLED';
   readOnly?: boolean;
-  onDelete?: () => void;
+  // X 는 삭제를 요청만 한다 — 확인 창을 노드 안에 두면 이벤트가 새므로 캔버스가 그린다(WD-952)
+  onRequestDelete?: () => void;
   onAddAfter?: () => void;
 }
 
@@ -212,15 +202,6 @@ export const StepNode = memo(function StepNode({ data }: NodeProps<StepNodeType>
   const { resolvedTheme } = useTheme();
   const isDark = resolvedTheme === 'dark';
 
-  // 스텝 삭제 확인 다이얼로그 표시 여부 — X 버튼 클릭 시 즉시 삭제하지 않고
-  // StepConfigPanel의 삭제 버튼과 동일하게 확인을 거쳐 실수 삭제를 방지한다 (#536)
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-
-  const handleConfirmDelete = () => {
-    setDeleteDialogOpen(false);
-    data.onDelete?.();
-  };
-
   const showDelete = !data.readOnly && !data.executionStatus;
   const showAddAfter = !data.readOnly && !data.executionStatus && !data.hasOutgoingEdge;
 
@@ -341,7 +322,7 @@ export const StepNode = memo(function StepNode({ data }: NodeProps<StepNodeType>
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  setDeleteDialogOpen(true);
+                  data.onRequestDelete?.();
                 }}
                 aria-label="스텝 삭제"
                 title="스텝 삭제"
@@ -352,33 +333,6 @@ export const StepNode = memo(function StepNode({ data }: NodeProps<StepNodeType>
             )}
           </div>
         </div>
-
-        {/* 스텝 삭제 확인 다이얼로그 — 실수로 X 버튼을 눌러 스텝 설정을 통째로 잃는 것을 방지 (#536) */}
-        <AlertDialog
-          open={deleteDialogOpen}
-          onOpenChange={(open) => { if (!open) setDeleteDialogOpen(false); }}
-        >
-          <AlertDialogContent onClick={(e) => e.stopPropagation()}>
-            <AlertDialogHeader>
-              <AlertDialogTitle>스텝 삭제</AlertDialogTitle>
-              <AlertDialogDescription>
-                정말 이 스텝을 삭제하시겠습니까? 저장하기 전까지는 취소가 가능합니다.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel onClick={(e) => e.stopPropagation()}>취소</AlertDialogCancel>
-              <AlertDialogAction
-                variant="destructive"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleConfirmDelete();
-                }}
-              >
-                삭제
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
 
         {/* ── Body: name + description ── */}
         <div className="px-3 py-2">
