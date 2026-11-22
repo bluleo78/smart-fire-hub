@@ -137,15 +137,21 @@ Smart Fire Hub 프론트엔드(`apps/firehub-web`)에서 사용하는 UI 컴포�
 
 ### 4. SimplePagination (`simple-pagination.tsx`)
 
-**목적**: 이전/다음 버튼 + 현재 페이지/전체 페이지 표시. 목록 페이지 하단에 공통 사용.
+**목적**: 페이지 이동(처음·이전·번호·다음·마지막) + 선택적으로 건수·페이지 크기 선택. 목록 페이지 하단에 공통 사용.
 
 **Props API**:
 
 | Prop | Type | Required | Description |
 |------|------|----------|-------------|
-| `page` | `number` | 필수 | 현재 페이지 (0-indexed 또는 1-indexed는 구현 확인) |
+| `page` | `number` | 필수 | 현재 페이지 (0부터) |
 | `totalPages` | `number` | 필수 | 전체 페이지 수 |
 | `onPageChange` | `(page: number) => void` | 필수 | 페이지 변경 콜백 |
+| `totalElements` | `number` | 선택 | 전체 건수 |
+| `pageSize` | `number` | 선택 | 조회에 쓴 페이지 크기 |
+| `onPageSizeChange` | `(size: number) => void` | 선택 | 페이지 크기 변경 콜백 |
+| `pageSizeOptions` | `number[]` | 선택 | 크기 선택지 (기본값: 10·20·50·100) |
+
+**표시 조건**: 건수(보이고 읽어 준다, WD-931)는 `totalElements`·`pageSize`, 크기 선택은 `onPageSizeChange`·`pageSize` 를 함께 넘길 때 보인다. `totalPages` 가 1 이하이고 `onPageSizeChange` 가 없으면 부품 전체가 그려지지 않는다.
 
 **사용 예시**:
 
@@ -154,6 +160,8 @@ Smart Fire Hub 프론트엔드(`apps/firehub-web`)에서 사용하는 UI 컴포�
   page={page}
   totalPages={totalPages}
   onPageChange={setPage}
+  totalElements={totalElements}
+  pageSize={pageSize}
 />
 ```
 
@@ -184,13 +192,13 @@ Smart Fire Hub 프론트엔드(`apps/firehub-web`)에서 사용하는 UI 컴포�
 | `action` | `ReactNode` | 선택 | "다시 시도" 같은 동작 |
 | `className` | `string` | 선택 | 셀에 더할 클래스 |
 
-**사용 예시**:
+**사용 예시** (빈 상태·실패 갈래만 — 로딩·오프라인까지 포함한 순서는 [05 A 절](./05-page-patterns.md#a-list-page-목록-페이지)):
 
 ```tsx
 <TableBody>
   {isError && !data ? (
     <TableErrorRow colSpan={5} />
-  ) : data?.length === 0 ? (
+  ) : data?.content.length === 0 ? (
     <TableEmptyRow colSpan={5} message="등록된 파이프라인이 없습니다." />
   ) : null}
 </TableBody>
@@ -217,7 +225,7 @@ Smart Fire Hub 프론트엔드(`apps/firehub-web`)에서 사용하는 UI 컴포�
   {isLoading ? (
     <TableSkeletonRows columns={5} />
   ) : (
-    data?.map(item => <TableRow key={item.id}>...</TableRow>)
+    data?.content.map(item => <TableRow key={item.id}>...</TableRow>)
   )}
 </TableBody>
 ```

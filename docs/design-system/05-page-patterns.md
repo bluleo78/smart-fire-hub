@@ -16,13 +16,15 @@ Smart Fire Hub 프론트엔드(`apps/firehub-web`)에서 반복되는 페이지 
 ```tsx
 // 실제 연결 여부(@tanstack/react-query 의 onlineManager) — 구독 함수는 모듈 범위에 둔다
 const subscribeOnline = (onChange: () => void) => onlineManager.subscribe(onChange);
+// 조회와 페이지네이션이 같은 페이지 크기를 쓴다
+const PAGE_SIZE = 10;
 
 export default function XxxListPage() {
   const navigate = useNavigate();
   const isOnline = useSyncExternalStore(subscribeOnline, () => onlineManager.isOnline(), () => true);
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState("");
-  const { data, isLoading, isError, isPaused } = useXxxList({ page, search });
+  const { data, isLoading, isError, isPaused } = useXxxList({ page, size: PAGE_SIZE, search });
 
   // 검색어가 바뀌면 첫 쪽부터 다시 본다
   const handleSearchChange = (value: string) => {
@@ -124,6 +126,8 @@ export default function XxxListPage() {
         page={page}
         totalPages={data?.totalPages ?? 0}
         onPageChange={setPage}
+        totalElements={data?.totalElements}
+        pageSize={PAGE_SIZE}
       />
     </div>
   );
