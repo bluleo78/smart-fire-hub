@@ -231,3 +231,33 @@ export async function expectValueNotTruncated(valueEl: Locator) {
   const clipped = await valueEl.evaluate((el) => el.scrollWidth > el.clientWidth);
   expect(clipped, '평범한 길이의 값은 잘리지 않아야 한다').toBe(false);
 }
+
+/**
+ * 링크에 포커스 링(ring-2)이 그려지고, 조상의 overflow 에 잘리지 않을 여백이 있는지 검증한다 (WD-933)
+ * - 말줄임용 overflow:hidden 조상이 링크에 딱 붙어 있으면 키보드 포커스 링 바깥쪽이 잘려 보이지 않는다.
+ * - overflow 가 visible 이 아닌 가장 가까운 조상이 링크보다 사방 2px 이상 넓어야 한다.
+ * @param link - 포커스 링을 검사할 링크
+ */
+export async function expectFocusRingRoom(link: Locator) {
+  await expect(link).toBeVisible();
+  // 여백만 재면 링 자체가 사라져도 통과한다 — 초점을 주고 2px 링이 그려지는지 먼저 본다
+  await link.focus();
+  await expect(link, '포커스 링이 없다').toHaveCSS('box-shadow', /0px 0px 0px 2px/);
+  const gaps = await link.evaluate((el) => {
+    let anc = el.parentElement;
+    while (anc && getComputedStyle(anc).overflow === 'visible') anc = anc.parentElement;
+    if (!anc) return null;
+    const a = anc.getBoundingClientRect();
+    const l = el.getBoundingClientRect();
+    return {
+      top: l.top - a.top,
+      left: l.left - a.left,
+      bottom: a.bottom - l.bottom,
+      right: a.right - l.right,
+    };
+  });
+  expect(gaps, 'overflow 조상 없음').not.toBeNull();
+  for (const [side, gap] of Object.entries(gaps!)) {
+    expect(gap, `${side} 여백`).toBeGreaterThanOrEqual(2);
+  }
+}

@@ -17,6 +17,7 @@ import { DashboardShareNotice } from '../../components/analytics/DashboardShareN
 import { WorkspaceAnalyticsTable } from '../../components/analytics/WorkspaceAnalyticsTable';
 import { EditConflictDialog } from '../../components/EditConflictDialog';
 import { PageHeading } from '../../components/PageHeading';
+import { TruncatedLink } from '../../components/TruncatedLink';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { DeleteConfirmDialog } from '../../components/ui/delete-confirm-dialog';
@@ -620,9 +621,12 @@ export default function DashboardListPage() {
                                 <div className="flex items-center gap-1.5">
                                   {/* WD-877 리뷰 후속: 작업 열이 32px 버튼 3개로 넓어져(120px) 768 폭에서 긴 이름+공유 배지 행이 표를 14px 넘겼다 —
                                       lg 미만에서는 이름 상한을 288px(18rem)로 줄여 표가 컨테이너 안에 들어오게 한다 */}
-                                  <span className="block truncate max-w-[18rem] lg:max-w-xs" title={dashboard.name}>
-                                    {dashboard.name}
-                                  </span>
+                                  {/* WD-933: 행 클릭만으로는 키보드 경로가 없어(남이 공유한 대시보드는 편집 버튼도 없다) 이름을 상세 링크로 둔다. title·말줄임은 TruncatedLink 가 한다 */}
+                                  <TruncatedLink
+                                    to={`/analytics/dashboards/${dashboard.id}`}
+                                    value={dashboard.name}
+                                    className="block max-w-[18rem] lg:max-w-xs"
+                                  />
                                   {dashboard.isShared && (
                                     <Badge variant="secondary" className="text-xs gap-1 py-0">
                                       <Share2 className="h-2.5 w-2.5" />

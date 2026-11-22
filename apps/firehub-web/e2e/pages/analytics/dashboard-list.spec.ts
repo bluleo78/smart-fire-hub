@@ -1,8 +1,8 @@
 import { createDashboard, createDashboardListItem } from '../../factories/analytics.factory';
-import { openFirstRowDeleteDialog, setupDashboardListMocks } from '../../fixtures/analytics.fixture';
+import { openFirstRowDeleteDialog, setupDashboardEditorMocks, setupDashboardListMocks } from '../../fixtures/analytics.fixture';
 import { createPageResponse, mockApi, mockDeleteOnceThenNotFound } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
-import { expectTableFits } from '../../fixtures/table-layout';
+import { expectFocusRingRoom, expectTableFits } from '../../fixtures/table-layout';
 
 /**
  * 대시보드 목록 페이지 E2E 테스트
@@ -520,8 +520,65 @@ test.describe('대시보드 목록 페이지', () => {
     expect(putCapture.requests.length).toBe(0);
   });
 
+  test('남이 공유한 대시보드도 Tab·Enter 로 상세에 간다 (WD-933)', async ({ authenticatedPage: page }) => {
+    // 작성자가 내가 아닌 공유 대시보드 — 편집 버튼이 없어 키보드로 상세에 갈 길이 이름 링크뿐이다
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/analytics/dashboards',
+      createPageResponse([createDashboardListItem({ id: 7, name: '남의 공유 대시보드', createdBy: 999, isShared: true })]),
+    );
+    await setupDashboardEditorMocks(page, 7);
+
+    await page.goto('/analytics/dashboards');
+    await page.getByRole('tab', { name: '공유됨' }).click();
+
+    const link = page.getByRole('table').getByRole('link', { name: '남의 공유 대시보드', exact: true });
+    await expect(link).toHaveAttribute('href', '/analytics/dashboards/7');
+
+    // 행은 키보드 대상이 아니다 — 이름 링크가 유일한 경로
+    const row = page.getByRole('row').filter({ hasText: '남의 공유 대시보드' });
+    await expect(row).not.toHaveAttribute('role');
+    await expect(row).not.toHaveAttribute('tabindex');
+    // 이 시험의 전제 — 남의 공유 항목 행에는 편집 버튼이 없다(aria-label="편집", 작성자 행에서만 그려진다)
+    await expect(row.getByRole('button', { name: '편집', exact: true })).toHaveCount(0);
+
+    // 검색 칸에서 Tab 한 번으로 링크에 닿는다
+    await page.getByPlaceholder('대시보드 검색...').focus();
+    await page.keyboard.press('Tab');
+    await expect(link).toBeFocused();
+
+    await page.keyboard.press('Enter');
+    await expect(page).toHaveURL(/\/analytics\/dashboards\/7$/);
+  });
+
+  test('이름 링크 클릭은 한 번만 이동한다 (WD-933)', async ({ authenticatedPage: page }) => {
+    await setupDashboardListMocks(page, 2);
+    await setupDashboardEditorMocks(page, 1);
+
+    await page.goto('/analytics/dashboards');
+    await page.getByRole('table').getByRole('link', { name: '테스트 대시보드 1', exact: true }).click();
+    await expect(page).toHaveURL(/\/analytics\/dashboards\/1$/);
+
+    // 링크 클릭이 행 onClick 으로 번져 두 번 push 되면 한 번 뒤로로는 목록에 못 온다
+    await page.goBack();
+    await expect(page).toHaveURL(/\/analytics\/dashboards$/);
+
+    // 링크 밖 칸(위젯 수)을 누르면 행 경로로 상세에 간다
+    await page.getByRole('row').nth(1).getByRole('cell').nth(1).click();
+    await expect(page).toHaveURL(/\/analytics\/dashboards\/1$/);
+  });
+
+  test('이름 링크 포커스 링이 잘리지 않는다 (WD-933)', async ({ authenticatedPage: page }) => {
+    await setupDashboardListMocks(page, 1);
+    await page.goto('/analytics/dashboards');
+
+    const link = page.getByRole('table').getByRole('link', { name: '테스트 대시보드 1', exact: true });
+    await expectFocusRingRoom(link);
+  });
+
   test('이름이 매우 긴 대시보드도 테이블 레이아웃이 깨지지 않는다 (#563)', async ({ authenticatedPage: page }) => {
-    // 회귀 방지: 이름 span에 truncate가 없으면 긴 이름이 테이블 전체 폭을
+    // 회귀 방지: 이름 링크에 truncate가 없으면 긴 이름이 테이블 전체 폭을
     // 뷰포트 밖으로 밀어내 상태/생성자/작업 버튼 컬럼이 가려진다.
     const longName = '가'.repeat(500);
     await mockApi(
@@ -535,10 +592,10 @@ test.describe('대시보드 목록 페이지', () => {
     const dataRow = page.getByRole('row').nth(1);
     await expect(dataRow).toBeVisible();
 
-    // 이름 span은 잘려 보이되 title 속성으로 전체 이름을 노출해야 한다
-    const nameSpan = dataRow.locator('span[title]').first();
-    await expect(nameSpan).toHaveAttribute('title', longName);
-    await expect(nameSpan).toHaveClass(/truncate/);
+    // 이름은 상세 링크(TruncatedLink, WD-933)이고 잘려 보이되 title 속성으로 전체 이름을 노출해야 한다
+    const nameLink = dataRow.getByRole('link', { name: longName, exact: true });
+    await expect(nameLink).toHaveAttribute('title', longName);
+    await expect(nameLink).toHaveClass(/truncate/);
 
     // 테이블 전체 폭이 뷰포트를 벗어나지 않아야 하며,
     // 같은 행의 "삭제" 작업 버튼(가장 우측 컬럼)이 화면 밖으로 밀려나지 않고 보여야 한다

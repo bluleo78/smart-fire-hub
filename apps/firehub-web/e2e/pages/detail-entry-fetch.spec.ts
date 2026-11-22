@@ -382,7 +382,8 @@ test.describe('상세 진입 404 뒤 목록 캐시 (WD-646)', () => {
       await expect.poll(() => listRequests.length).toBe(1);
 
       // 행을 눌러 상세로 간다(앱 안 이동이라 목록 캐시가 유지된다 — 무효화하지 않으면 staleTime 30초 동안 다시 받지 않는다)
-      await page.getByText(`지워질 ${c.label}`).click();
+      // 이름은 링크라(WD-933) 행 클릭 경로는 이름 밖 칸으로 누른다
+      await page.getByRole('row').filter({ hasText: `지워질 ${c.label}` }).getByRole('cell').nth(1).click();
       await expect(page.getByRole('heading', { name: c.notFoundMessage })).toBeVisible();
       await page.getByRole('button', { name: '목록으로' }).click();
 
