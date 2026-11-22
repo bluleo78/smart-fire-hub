@@ -77,34 +77,34 @@ test.describe('데이터셋 목록 — 컬럼 헤더 정렬 (#80)', () => {
   });
 
   /**
-   * 이슈 #358 회귀 방지 — 렌더가 느린 환경에서 헤더를 연속 클릭해도 정렬 전이가 유실되지 않아야 한다.
-   * CPU 스로틀로 리렌더를 지연시켜, 이전 렌더의 정렬 상태를 기준으로 다음 상태를 계산하던
-   * 결함(asc→desc→desc 로 계산되어 3번째 클릭에도 정렬이 해제되지 않음)을 재현 가능하게 만든다.
+   * 이슈 #358 회귀 방지 — 렌더 전에 온 다음 클릭이 이전 렌더의 정렬로 전이를 계산하면 안 된다.
+   * 하나씩 기다려 보낸 클릭 사이에는 렌더가 끝나 결함이 재현되지 않는다(CPU 스로틀은 부하에서 시간 초과만 만든다).
+   * 그래서 한 브라우저 작업 안에서 DOM 클릭 두 번을 보낸다 — 실제 입력보다 엄격한 대역이다.
+   * 덮는 것은 클릭 시점의 ref 전진까지다. 중간 렌더의 되감기를 막는 pendingSortRef 는 덮지 않는다.
    */
-  test('리렌더가 지연되는 상황에서 연속 클릭해도 정렬 해제까지 전이가 유실되지 않는다 (이슈 #358 회귀 방지)', async ({
+  test('렌더 전에 연속 클릭해도 정렬 해제까지 전이가 유실되지 않는다 (이슈 #358 회귀 방지)', async ({
     authenticatedPage: page,
   }) => {
     await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
     await mockApi(page, 'GET', '/api/v1/datasets', createPageResponse(createDatasets(3)));
     await mockApi(page, 'GET', '/api/v1/datasets/tags', []);
 
-    const cdp = await page.context().newCDPSession(page);
-    await cdp.send('Emulation.setCPUThrottlingRate', { rate: 6 });
-
     await page.goto('/data/datasets');
+    // 목록이 다 그려진 뒤에 누른다 — 로드 중 렌더가 연속 클릭에 섞이지 않게
+    await expect(page.getByRole('row').filter({ hasText: /^데이터셋\s/ })).toHaveCount(3);
 
     const nameHeader = page.getByRole('columnheader', { name: /이름/ });
     await nameHeader.getByRole('button').click(); // asc
     await expect(nameHeader).toHaveAttribute('aria-sort', 'ascending');
 
-    // 중간 상태를 기다리지 않고 연속 클릭 — desc 를 거쳐 정렬 해제(none)에 도달해야 한다
-    await nameHeader.getByRole('button').click(); // desc
-    await nameHeader.getByRole('button').click(); // none
+    // 2·3번째 클릭을 한 작업 안에서 — 사이에 렌더가 없어도 desc → none 에 도달해야 한다
+    await nameHeader.getByRole('button').evaluate((button: HTMLButtonElement) => {
+      button.click();
+      button.click();
+    });
     await expect(nameHeader).toHaveAttribute('aria-sort', 'none');
     await expect(page.getByText('현재 페이지 내 정렬이 적용됩니다')).not.toBeVisible();
-    await expect(page).toHaveURL(/\/data\/datasets(\?|$)/);
-
-    await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 });
+    await expect(page).toHaveURL(/\/data\/datasets$/);
   });
 
   /**
