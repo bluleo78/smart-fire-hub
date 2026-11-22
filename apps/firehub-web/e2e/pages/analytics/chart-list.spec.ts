@@ -421,7 +421,19 @@ test.describe('차트 목록 페이지', () => {
     await mockApi(page, 'GET', '/api/v1/analytics/charts', { message: '서버 오류' }, { status: 500 });
     await page.goto('/analytics/charts');
 
-    await expectTableErrorAlert(page);
+    await expectTableErrorAlert(page, '서버 오류');
+    await expect(page.getByText('차트가 없습니다.')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '새 차트 만들기' })).toHaveCount(0);
+  });
+
+  test('목록 조회가 403 이면 권한 없음 안내를 흐린 톤으로 보인다 (WD-978 리뷰 후속)', async ({ authenticatedPage: page }) => {
+    // 권한 문제는 다시 해도 같으므로 일시 장애(빨간 실패 안내)처럼 보이지 않게 권한 안내로 구분한다
+    await setupChartListMocks(page, 0);
+    await mockApi(page, 'GET', '/api/v1/analytics/charts', { message: '권한이 없습니다' }, { status: 403 });
+    await page.goto('/analytics/charts');
+
+    await expectTableErrorAlert(page, '차트 목록을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.');
+    await expect(page.getByRole('alert').getByText('차트 목록을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.')).toHaveClass(/text-muted-foreground/);
     await expect(page.getByText('차트가 없습니다.')).toHaveCount(0);
     await expect(page.getByRole('button', { name: '새 차트 만들기' })).toHaveCount(0);
   });

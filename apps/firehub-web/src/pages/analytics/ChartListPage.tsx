@@ -30,7 +30,7 @@ import { TableSkeletonRows } from '../../components/ui/table-skeleton';
 import { Tabs, TabsControlsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { useCanAdminAnalytics, useCharts, useDeleteChart } from '../../hooks/queries/useAnalytics';
 import { useIsOwner } from '../../hooks/useIsOwner';
-import { handleApiError } from '../../lib/api-error';
+import { handleApiError, listLoadErrorProps } from '../../lib/api-error';
 import { formatDateShort, formatRelativeTime } from '../../lib/formatters';
 import { getPageAfterDelete } from '../../lib/pagination';
 import { iGa } from '../../lib/utils';
@@ -54,7 +54,7 @@ export default function ChartListPage() {
   // 「내 차트」 탭은 내가 만든 차트만 — 필터 없이 부르면 서버가 남의 공유 차트까지 섞어 준다(WD-328). 「공유됨」은 sharedOnly 그대로.
   const mineOnly = tab === 'mine';
 
-  const { data: chartsData, isLoading, isError } = useCharts({
+  const { data: chartsData, isLoading, isError, error: chartsError } = useCharts({
     search: search || undefined,
     sharedOnly: sharedOnly || undefined,
     mineOnly: mineOnly || undefined,
@@ -149,7 +149,11 @@ export default function ChartListPage() {
                       <TableSkeletonRows columns={5} rows={5} />
                     ) : isError && !chartsData ? (
                       // 목록 조회 실패 — 0건 안내로 오해되지 않게 실패 안내를 보인다. 받아 둔 목록이 있으면 재조회 실패여도 유지한다 (WD-978)
-                      <TableErrorRow colSpan={5} />
+                      <TableErrorRow
+                        colSpan={5}
+                        // 403 은 권한 안내(흐린 톤), 그 밖은 서버 사유 — 권한 문제를 일시 장애처럼 보이지 않게 한다 (WD-978 리뷰 후속)
+                        {...listLoadErrorProps(chartsError, '차트')}
+                      />
                     ) : charts.length > 0 ? (
                       charts.map((chart) => (
                         <TableRow

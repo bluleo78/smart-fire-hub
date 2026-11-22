@@ -202,6 +202,19 @@ export function isForbiddenError(error: unknown): boolean {
 }
 
 /**
+ * 목록 첫 조회 실패 행(TableErrorRow)에 넘길 문구·톤 (WD-978).
+ * 403 은 다시 해도 같은 권한 문제라 흐린 톤의 권한 안내로, 그 밖은 서버 사유(없으면 「<대상> 목록을 불러오지 못했습니다.」)로 보인다 —
+ * 목록마다 같은 삼항식을 복사하면 문구·톤이 화면마다 갈라지므로 한 곳에서 정한다.
+ * @param noun 목록 대상 이름(예: '쿼리', 'API 연결') — 「<noun> 목록을 …」 문구에 들어간다
+ */
+export function listLoadErrorProps(error: unknown, noun: string): { tone: 'error' | 'muted'; message: string } {
+  if (isForbiddenError(error)) {
+    return { tone: 'muted', message: `${noun} 목록을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.` };
+  }
+  return { tone: 'error', message: extractApiError(error, `${noun} 목록을 불러오지 못했습니다.`) };
+}
+
+/**
  * 찾을 수 없음(404) 응답인가 (WD-162).
  * 스마트 작업 리포트·실행 조회는 「없음」과 「작업 작성자가 아님」을 똑같이 404 로 숨기므로, 화면이 두 경우를 함께 말하는 안내를 고를 때 쓴다.
  */

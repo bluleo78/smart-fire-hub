@@ -13,6 +13,7 @@ import {
   isGraphReadRestricted,
   isMemberGoneError,
   isWrongCurrentPasswordError,
+  listLoadErrorProps,
   mapFieldErrors,
   NameRetryExhaustedError,
 } from './api-error';
@@ -262,5 +263,28 @@ describe('mapFieldErrors — 붙인 칸과 모르는 필드 문구를 돌려준�
     expect(mapFieldErrors(axiosErrorWith({ errors: {} }), setError, ['name'])).toBeNull();
     expect(mapFieldErrors(axiosErrorWith({ errors: { foo: '' } }), setError, ['name'])).toBeNull();
     expect(setError).not.toHaveBeenCalled();
+  });
+});
+
+describe('listLoadErrorProps (WD-978)', () => {
+  it('403 이면 흐린 톤의 권한 안내를 돌려준다', () => {
+    expect(listLoadErrorProps(axiosErrorWithStatus(403, { message: '권한이 없습니다' }), '쿼리')).toEqual({
+      tone: 'muted',
+      message: '쿼리 목록을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.',
+    });
+  });
+
+  it('그 밖의 실패는 빨간 톤에 서버 사유를 돌려준다', () => {
+    expect(listLoadErrorProps(axiosErrorWithStatus(500, { message: '서버 오류' }), '차트')).toEqual({
+      tone: 'error',
+      message: '서버 오류',
+    });
+  });
+
+  it('서버 사유가 없으면 「<대상> 목록을 불러오지 못했습니다.」 로 보인다', () => {
+    expect(listLoadErrorProps(new Error('Network Error'), 'API 연결')).toEqual({
+      tone: 'error',
+      message: 'API 연결 목록을 불러오지 못했습니다.',
+    });
   });
 });

@@ -36,7 +36,7 @@ import {
   withoutKeys,
 } from '@/lib/api-connection-form';
 import { missingSecretMessage } from '@/lib/api-connection-secret';
-import { handleApiError } from '@/lib/api-error';
+import { handleApiError, listLoadErrorProps } from '@/lib/api-error';
 import { formatDateShort } from '@/lib/formatters';
 import { MAX_DESCRIPTION_LENGTH } from '@/lib/validations/description';
 import type { ApiConnectionAuthType, TestConnectionResponse } from '@/types/api-connection';
@@ -93,7 +93,7 @@ export default function ApiConnectionListPage() {
   const { permissions } = useMyPermissions();
   const canWrite = permissions.has('apiconnection:write');
   const canDelete = permissions.has('apiconnection:delete');
-  const { data: connections, isLoading, isError } = useApiConnections();
+  const { data: connections, isLoading, isError, error: connectionsError } = useApiConnections();
   const createMutation = useCreateApiConnection();
   const deleteMutation = useDeleteApiConnection();
   const refreshAllMutation = useRefreshAllApiConnections();
@@ -639,7 +639,11 @@ export default function ApiConnectionListPage() {
             ) : isError && !connections ? (
               // WD-978: 첫 조회가 실패하면 빈 목록(「등록된 API 연결이 없습니다.」·만들기 버튼)으로 오인되지 않게 공용 실패 안내를 보인다.
               // 재조회만 실패해 받아 둔 목록이 있으면 그대로 둔다(WD-146). 쓰기 권한과 무관하게 보인다.
-              <TableErrorRow colSpan={7} />
+              <TableErrorRow
+                colSpan={7}
+                // 403 은 권한 안내(흐린 톤), 그 밖은 서버 사유 — 권한 문제를 일시 장애처럼 보이지 않게 한다 (WD-978 리뷰 후속)
+                {...listLoadErrorProps(connectionsError, 'API 연결')}
+              />
             ) : connections && connections.length > 0 ? (
               connections.map((conn) => (
                 <TableRow
