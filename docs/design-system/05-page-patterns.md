@@ -15,6 +15,7 @@ Smart Fire Hub 프론트엔드(`apps/firehub-web`)에서 반복되는 페이지 
 
 ```tsx
 export default function XxxListPage() {
+  const navigate = useNavigate();
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState("");
   const { data, isLoading } = useXxxList({ page, search });
@@ -70,7 +71,9 @@ export default function XxxListPage() {
                   className="cursor-pointer hover:bg-muted/50 transition-colors group"
                   onClick={() => navigate(`/xxx/${item.id}`)}
                 >
-                  <TableCell className="font-medium">{item.name}</TableCell>
+                  <TableCell className="font-medium">
+                    <TruncatedLink to={`/xxx/${item.id}`} value={item.name} className="max-w-xs" />
+                  </TableCell>
                   <TableCell>{item.status}</TableCell>
                   <TableCell>
                     <div className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-1 justify-end">
@@ -97,12 +100,18 @@ export default function XxxListPage() {
 }
 ```
 
-**주요 변형 사례**:
+> 상세로 가는 키보드 경로는 이름의 `TruncatedLink`(`@/components/TruncatedLink`)이고 행 `onClick` 은 마우스 편의일 뿐이라, 행에 `role`·`tabIndex` 를 주지 않는다(표 행 의미 유지, WD-816). 행 이동에 `state` 를 넘기면 링크에도 같은 값을 넘긴다.
+>
+> 주의: 링크를 `overflow-hidden` 요소 안에 두면 초점 표시가 잘린다. 초점 링(`ring-2`)에는 그 요소에 `p-0.5 -m-0.5`(2px)가, 고대비 모드의 outline(WD-944)까지 남기려면 `p-1 -m-1`(4px)이 필요하다. 링크가 스스로 말줄임하므로 되도록 `overflow-hidden` 대신 `min-w-0` 을 쓴다.
+>
+> 폭 상한: 링크나 감싸는 요소에 둔다. `max-w-xs` 는 열이 적은 표의 기본값이고, 표가 넘치면 `components/ui/truncated-text.tsx` 주석의 컨테이너 비례 상한(WD-634)을 따른다(예: `PipelineListPage`).
 
-- `DatasetListPage`: 테이블 행 클릭 → 상세 페이지 이동. 태그 컬럼에 Badge 복수 표시.
-- `PipelineListPage`: 상태 컬럼에 실행 상태 Badge + 마지막 실행 시간 표시.
-- `QueryListPage`: 폴더 필터 추가. 이름은 상세 링크(키보드 경로), 행 클릭 → 쿼리 에디터 이동.
-- `UserListPage`: 역할(Role) 필터 추가. 관리자 전용 페이지로 권한 가드 적용.
+**주요 변형 사례** (모두 이름은 상세 링크):
+
+- `DatasetListPage`: 행 클릭 → 상세 페이지 이동. 태그 컬럼에 Badge 복수 표시.
+- `PipelineListPage`: 상태 컬럼에 활성/비활성 Badge 표시.
+- `QueryListPage`: 폴더 필터 추가. 행 클릭 → 쿼리 에디터 이동.
+- `UserListPage`: 관리자 전용 페이지로 권한 가드 적용.
 
 ---
 
