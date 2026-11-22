@@ -95,6 +95,15 @@ async function openApiCallAdvanced(page: import('@playwright/test').Page) {
   await page.locator('button').filter({ hasText: /^고급 설정$/ }).click();
 }
 
+/** 지금 캔버스에 API 호출 스텝을 하나 더 추가하고 이름·URL 을 채운다 — 이미 열린 편집기에서 쓴다 (WD-906 후속) */
+async function addApiCallStepHere(page: import('@playwright/test').Page, name: string) {
+  await clickToolbarAddStep(page);
+  await page.locator('#step-name').fill(name);
+  await page.getByRole('combobox', { name: '스크립트 타입' }).click();
+  await page.getByRole('option', { name: 'API 호출', exact: true }).click();
+  await page.getByPlaceholder(API_FULL_URL_PLACEHOLDER, { exact: true }).fill('https://example.com/b');
+}
+
 /** 스텝 이름·파이프라인 이름을 채우고 저장한다 (WD-906) */
 async function saveApiCallPipeline(page: import('@playwright/test').Page, pipelineName: string) {
   await page.locator('#step-name').fill('API 호출 스텝');
@@ -671,6 +680,127 @@ test.describe('파이프라인 에디터 — API_CALL 스텝 설정', () => {
     const req = await capture.waitForRequest();
     const payload = req.payload as { steps: Array<{ apiConfig?: { timeoutMs?: number } }> };
     expect(payload.steps[0].apiConfig?.timeoutMs).toBe(5000);
+  });
+
+  /**
+   * WD-906 반려 수정 (a): 오류 칸이 든 고급 설정을 접으면 칸이 언마운트되는데, 예전엔 그때 무효가 풀려 옛 값이 말없이 저장됐다.
+   * 이제 무효 원문을 편집기가 맡아 두므로 접어도 저장이 막히고, 다시 펴면 원문 1e 와 칸 오류가 그대로 보이며, 고치면 저장된다.
+   */
+  test('API 호출 스텝 — 오류(1e) 칸이 든 고급 설정을 접어도 저장이 막히고 다시 펴면 1e 와 오류가 보인다 (WD-906)', async ({
+    authenticatedPage: page,
+  }) => {
+    const capture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/pipelines',
+      { id: 107, name: '접기 차단 테스트', steps: [] },
+      { capture: true },
+    );
+
+    await openApiCallAdvanced(page);
+    const timeoutInput = page.getByLabel('요청 타임아웃 (ms)');
+    const advancedToggle = page.locator('button').filter({ hasText: /^고급 설정$/ });
+    await timeoutInput.fill('1e');
+    await expect(timeoutInput).toHaveAttribute('aria-invalid', 'true');
+
+    // 접으면 칸이 사라지고(언마운트), 다시 펴면 원문 1e 와 칸 오류가 되살아난다
+    await advancedToggle.click();
+    await expect(timeoutInput).toHaveCount(0);
+    await advancedToggle.click();
+    await expect(timeoutInput).toHaveValue('1e');
+    await expect(timeoutInput).toHaveAttribute('aria-invalid', 'true');
+    await expect(page.getByText('정수를 입력하세요')).toBeVisible();
+
+    // 접힌 채 저장해도 막힌다(요청 0건·토스트). 저장 차단이 절을 다시 펴 오류 칸으로 초점을 옮긴다
+    await advancedToggle.click();
+    await expect(timeoutInput).toHaveCount(0);
+    await saveApiCallPipeline(page, '접기 차단 테스트');
+    await expect(page.getByText('스텝 설정의 숫자 칸 오류를 고친 뒤 저장하세요.')).toBeVisible();
+    await expect(timeoutInput).toHaveValue('1e');
+    await expect(timeoutInput).toBeFocused();
+    expect(capture.requests).toHaveLength(0);
+
+    // 고치면 저장되고 고친 값이 실린다
+    await timeoutInput.fill('5000');
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+    const req = await capture.waitForRequest();
+    const payload = req.payload as { steps: Array<{ apiConfig?: { timeoutMs?: number } }> };
+    expect(payload.steps[0].apiConfig?.timeoutMs).toBe(5000);
+  });
+
+  /**
+   * WD-906 반려 수정 (b): 오류 칸이 있는 스텝에서 다른 스텝을 클릭하면 패널이 바뀌어 칸이 언마운트된다.
+   * 그래도 저장이 막히고, 저장 차단이 오류 스텝을 다시 골라 원문 1e 칸으로 초점을 옮긴다. 고치면 두 스텝이 저장된다.
+   */
+  test('API 호출 스텝 — 오류(1e) 스텝에서 다른 스텝을 클릭해도 저장이 막히고 오류 스텝으로 돌아간다 (WD-906)', async ({
+    authenticatedPage: page,
+  }) => {
+    const capture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/pipelines',
+      { id: 108, name: '스텝 이동 차단 테스트', steps: [] },
+      { capture: true },
+    );
+
+    await openApiCallAdvanced(page);
+    await page.locator('#step-name').fill('API 스텝 A');
+    const timeoutInput = page.getByLabel('요청 타임아웃 (ms)');
+    await timeoutInput.fill('1e');
+    await expect(timeoutInput).toHaveAttribute('aria-invalid', 'true');
+
+    // 두 번째 스텝을 만들고(새 스텝이 선택돼 A 의 칸이 언마운트), 캔버스에서 B 를 다시 클릭해 둔다
+    await addApiCallStepHere(page, 'API 스텝 B');
+    await page.locator('.react-flow__node').filter({ hasText: 'API 스텝 B' }).click();
+    await expect(page.locator('#step-name')).toHaveValue('API 스텝 B');
+    await expect(timeoutInput).toHaveCount(0);
+
+    await page.getByPlaceholder(/파이프라인 이름|이름 입력/).first().fill('스텝 이동 차단 테스트');
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+    await expect(page.getByText('스텝 설정의 숫자 칸 오류를 고친 뒤 저장하세요.')).toBeVisible();
+    expect(capture.requests).toHaveLength(0);
+    // 저장 차단이 오류 스텝 A 를 다시 고르고, 접혀 있던 고급 설정을 펴 원문 1e 칸으로 초점을 옮긴다
+    await expect(page.locator('#step-name')).toHaveValue('API 스텝 A');
+    await expect(timeoutInput).toHaveValue('1e');
+    await expect(page.getByText('정수를 입력하세요')).toBeVisible();
+    await expect(timeoutInput).toBeFocused();
+
+    await timeoutInput.fill('5000');
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+    const req = await capture.waitForRequest();
+    const payload = req.payload as { steps: Array<{ name: string; apiConfig?: { timeoutMs?: number } }> };
+    expect(payload.steps.find((s) => s.name === 'API 스텝 A')?.apiConfig?.timeoutMs).toBe(5000);
+    expect(payload.steps).toHaveLength(2);
+  });
+
+  /** WD-906 반려 수정: 오류 칸이 있는 스텝을 지우면 그 스텝의 무효는 풀려 남은 스텝으로 저장된다 */
+  test('API 호출 스텝 — 오류(1e) 스텝을 삭제하면 저장 차단이 풀린다 (WD-906)', async ({ authenticatedPage: page }) => {
+    const capture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/pipelines',
+      { id: 109, name: '삭제 해제 테스트', steps: [] },
+      { capture: true },
+    );
+
+    await openApiCallAdvanced(page);
+    await page.locator('#step-name').fill('API 스텝 A');
+    await page.getByLabel('요청 타임아웃 (ms)').fill('1e');
+    await addApiCallStepHere(page, 'API 스텝 B');
+
+    // 오류 스텝 A 를 골라 삭제한다
+    await page.locator('.react-flow__node').filter({ hasText: 'API 스텝 A' }).click();
+    await expect(page.locator('#step-name')).toHaveValue('API 스텝 A');
+    await page.getByRole('button', { name: '스텝 삭제' }).last().click();
+    await page.getByRole('button', { name: '삭제' }).click();
+    await expect(page.locator('.react-flow__node')).toHaveCount(1);
+
+    await page.getByPlaceholder(/파이프라인 이름|이름 입력/).first().fill('삭제 해제 테스트');
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+    const req = await capture.waitForRequest();
+    const payload = req.payload as { steps: Array<{ name: string }> };
+    expect(payload.steps.map((s) => s.name)).toEqual(['API 스텝 B']);
+    await expect(page.getByText('스텝 설정의 숫자 칸 오류를 고친 뒤 저장하세요.')).toHaveCount(0);
   });
 
   /**

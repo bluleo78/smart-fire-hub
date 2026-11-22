@@ -696,6 +696,11 @@ test.describe('스마트 작업 상세 페이지', () => {
 
     // 개요 탭으로 갔다 와도 오류는 풀리지 않는다 — 모니터링 탭이 언마운트되면 마지막 올바른 값이 저장되던 문제 (WD-906 후속)
     await page.getByRole('tab', { name: '개요' }).click();
+    // 모니터링 패널은 언마운트하지 않지만(forceMount) 개요 탭에서는 화면·접근성 트리에서 숨어야 한다 — 내용이 겹쳐 보이던 반려 지적
+    await expect(cooldown).toBeHidden();
+    await expect(metricInterval).toBeHidden();
+    await expect(page.getByRole('tabpanel', { name: /모니터링/ })).toHaveCount(0);
+    await expect(page.getByRole('tabpanel', { name: '개요' })).toBeVisible();
     await expect(page.getByRole('button', { name: '저장', exact: true })).toBeDisabled();
     await expect(page.getByText('모니터링 탭의 숫자 칸 오류를 고치세요')).toBeVisible();
     expect(putCapture.requests).toHaveLength(0);

@@ -32,7 +32,7 @@ import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { useDataset } from '@/hooks/queries/useDatasets';
-import { useIntegerFieldsValidity } from '@/hooks/useIntegerFieldsValidity';
+import { useIntegerDraftStore } from '@/hooks/useIntegerDrafts';
 import { columnNameLengthError } from '@/lib/validations/dataset';
 import type { AiClassifyConfig } from '@/types/pipeline';
 
@@ -83,8 +83,6 @@ interface AiClassifyStepConfigProps {
    * (WD-154, WD-633. 키는 aiConfig.prompt · aiConfig.outputColumns · aiOutputColumnNameField)
    */
   fieldError?: (field: string) => string | undefined;
-  /** 배치 크기 칸이 유효하지 않으면 false — 상위 편집기가 저장을 막는 데 쓴다 (WD-906 후속) */
-  onIntegerValidityChange?: (valid: boolean) => void;
 }
 
 interface CollapsibleSectionProps {
@@ -93,6 +91,10 @@ interface CollapsibleSectionProps {
   defaultOpen?: boolean;
   children: React.ReactNode;
   accentClassName?: string;
+  /** 절 안 숫자 칸에 무효 원문이 맡겨져 있다 — 마운트 때·reveal 요청 때 편다 (WD-906 후속) */
+  hasError?: boolean;
+  /** 숨은 숫자 칸 오류를 다시 펴 달라는 요청 번호(편집기 저장 차단) */
+  revealSeq?: number;
 }
 
 function CollapsibleSection({
@@ -101,8 +103,16 @@ function CollapsibleSection({
   defaultOpen = false,
   children,
   accentClassName,
+  hasError = false,
+  revealSeq = 0,
 }: CollapsibleSectionProps) {
-  const [open, setOpen] = useState(defaultOpen);
+  const [open, setOpen] = useState(defaultOpen || hasError);
+  // 저장 차단으로 reveal 요청이 오면, 이 절에 오류 칸이 있을 때 펴서 칸을 그린다(렌더 중 조정 — 같은 커밋에 칸이 생겨 초점이 닿는다)
+  const [prevRevealSeq, setPrevRevealSeq] = useState(revealSeq);
+  if (revealSeq !== prevRevealSeq) {
+    setPrevRevealSeq(revealSeq);
+    if (hasError) setOpen(true);
+  }
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <CollapsibleTrigger asChild>
@@ -134,10 +144,10 @@ export default function AiClassifyStepConfig({
   readOnly,
   primaryInputHidden = false,
   fieldError,
-  onIntegerValidityChange,
 }: AiClassifyStepConfigProps) {
-  // 숫자 칸 유효성을 상위에 알린다 (WD-906 후속)
-  const setIntegerValid = useIntegerFieldsValidity(onIntegerValidityChange);
+  // 숫자 칸 무효 원문 보관소(편집기가 이 스텝 범위로 좁혀 내려 준다) — 고급 설정을 접거나 스텝을 옮겨도 오류 원문·저장 차단이 남는다 (WD-906 후속)
+  const integerDrafts = useIntegerDraftStore();
+  const batchSizeHasDraft = integerDrafts?.get('batchSize') !== undefined;
   // 접근성: 라벨↔입력 연결용 id 접두사 (#432). 스텝마다 이 패널이 다시 렌더되므로 하드코딩 id 는 충돌한다.
   const baseId = useId();
   const batchSizeId = `${baseId}-batch-size`;
@@ -442,6 +452,8 @@ export default function AiClassifyStepConfig({
         icon={<Settings2 className="h-3.5 w-3.5" />}
         defaultOpen={false}
         accentClassName="text-ai-accent"
+        hasError={batchSizeHasDraft}
+        revealSeq={integerDrafts?.revealSeq}
       >
         <div className="space-y-2">
           <div className="space-y-1.5">
@@ -455,7 +467,7 @@ export default function AiClassifyStepConfig({
               min={1}
               max={100}
               onValueChange={(n) => update('batchSize', n)}
-              onValidityChange={(v) => setIntegerValid('batchSize', v)}
+              draftKey="batchSize"
             />
             <p id={batchSizeHelpId} className="text-xs text-muted-foreground">한 번에 처리할 행 수 (기본값: 20)</p>
           </div>

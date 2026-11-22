@@ -35,7 +35,7 @@ import { Tabs, TabsContent,TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAllDatasets } from '@/hooks/queries/useDatasets';
 import { useInvalidateListsOnEntryNotFound } from '@/hooks/queries/useInvalidateListsOnEntryNotFound';
 import { PIPELINE_LIST_KEY, useCancelExecution, useExecutePipeline, useExecution, useExecutions,usePipeline, usePipelinePermissions } from '@/hooks/queries/usePipelines';
-import { useInvalidFlag } from '@/hooks/useInvalidFlag';
+import { IntegerDraftContext, integerDraftStepPrefix, useIntegerDrafts } from '@/hooks/useIntegerDrafts';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { extractApiError, handleApiError, isNotFoundError } from '@/lib/api-error';
 import { focusFirstInvalidInteger } from '@/lib/focus-invalid-integer';
@@ -255,15 +255,49 @@ export default function PipelineEditorPage() {
   // 기존엔 beforeunload만 등록해 SPA 내부 이동 시 dirty 상태가 무경고로 유실됐다(이슈 #86과 동일 결함).
   const { dialog: unsavedChangesDialog } = useUnsavedChangesGuard(state.isDirty);
 
-  // 스텝 설정의 숫자 칸이 표기 오류·하한 미만인 채인가 — 마지막 올바른 값이 말없이 저장되지 않게 저장을 막는다 (WD-906 후속)
-  const [integerInvalid, handleIntegerValidity] = useInvalidFlag();
-  /** 숫자 칸 오류가 있으면 이유를 알리고 오류 칸으로 초점을 옮긴 뒤 true(저장 중단) */
+  // 스텝 설정 숫자 칸의 무효 원문(표기 오류·하한 미만)을 편집기가 맡아 둔다 — 마지막 올바른 값이 말없이 저장되지 않게 저장을 막는다 (WD-906 후속).
+  // 칸이 들고 있으면 다른 스텝 클릭·고급 설정 접기·탭 전환으로 칸이 언마운트될 때 무효가 풀려 옛 값이 저장됐다(반려 지적).
+  const {
+    drafts: integerDrafts,
+    store: integerDraftStore,
+    clear: clearIntegerDrafts,
+    reveal: revealIntegerDrafts,
+    revealSeq: integerRevealSeq,
+  } = useIntegerDrafts();
+  // 무효 원문이 맡겨진 스텝들 — 지금 있는 스텝이고 그 스텝의 지금 종류 칸인 것만 센다.
+  // 그래서 스텝을 지우면(또는 종류를 바꾸면) 그 스텝의 무효는 저장을 막지 않는다.
+  const invalidIntegerStepIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (integerDrafts.size === 0) return ids;
+    const keys = [...integerDrafts.keys()];
+    for (const s of state.steps) {
+      const prefix = `${integerDraftStepPrefix(s.tempId, s.scriptType)}/`;
+      if (keys.some((k) => k.startsWith(prefix))) ids.add(s.tempId);
+    }
+    return ids;
+  }, [integerDrafts, state.steps]);
+  /**
+   * 숫자 칸 오류가 있으면 이유를 알리고 오류 칸을 다시 보여 준 뒤 true(저장 중단).
+   * 오류 칸이 지금 화면에 없을 수 있으므로(다른 스텝 선택·절 접힘·다른 탭) 개요 탭으로 돌아가 그 스텝을 고르고 절을 펴 달라고 요청한다.
+   * 초점 이동은 칸이 그려진 뒤 아래 effect 가 맡는다.
+   */
   const blockedByInvalidInteger = () => {
-    if (!integerInvalid) return false;
+    if (invalidIntegerStepIds.size === 0) return false;
     toast.error('스텝 설정의 숫자 칸 오류를 고친 뒤 저장하세요.', { id: 'pipeline-integer-invalid' });
-    focusFirstInvalidInteger();
+    // 지금 고른 스텝에 오류가 있으면 그 스텝을, 아니면 캔버스 순서상 첫 오류 스텝을 보인다
+    const target =
+      state.selectedStepId && invalidIntegerStepIds.has(state.selectedStepId)
+        ? state.selectedStepId
+        : state.steps.find((s) => invalidIntegerStepIds.has(s.tempId))?.tempId;
+    setActiveTab('overview');
+    if (target && target !== state.selectedStepId) dispatch({ type: 'SELECT_STEP', payload: { tempId: target } });
+    revealIntegerDrafts();
     return true;
   };
+  // reveal 요청이 그려진 뒤(스텝 패널·펴진 절이 커밋된 뒤) 첫 오류 칸으로 초점을 옮긴다. 부모 effect 는 자식 커밋 뒤에 돈다.
+  useEffect(() => {
+    if (integerRevealSeq > 0) focusFirstInvalidInteger();
+  }, [integerRevealSeq]);
 
   const handleSave = async () => {
     if (blockedByInvalidInteger()) return;
@@ -283,6 +317,8 @@ export default function PipelineEditorPage() {
     setIsReloading(true);
     try {
       await reloadLatest();
+      // 내 변경을 버렸으므로 맡겨 둔 숫자 칸 무효 원문도 버린다 (WD-906 후속)
+      clearIntegerDrafts();
     } catch (error) {
       handleApiError(error, '최신 내용을 불러오지 못했습니다.');
     } finally {
@@ -300,6 +336,7 @@ export default function PipelineEditorPage() {
       setShowCancelConfirm(true);
     } else {
       cancelEdit();
+      clearIntegerDrafts();
       setIsEditing(false);
     }
   };
@@ -308,6 +345,8 @@ export default function PipelineEditorPage() {
   const handleConfirmCancel = () => {
     setShowCancelConfirm(false);
     cancelEdit();
+    // 편집을 버렸으므로 맡겨 둔 숫자 칸 무효 원문도 버린다 (WD-906 후속)
+    clearIntegerDrafts();
     setIsEditing(false);
   };
 
@@ -573,19 +612,20 @@ export default function PipelineEditorPage() {
             />
           </div>
 
-          {/* Right panel */}
-          <StepConfigPanel
-            state={state}
-            dispatch={dispatch}
-            readOnly={readOnly}
-            nameInputRef={setStepNameInput}
-            datasets={datasetOptions}
-            datasetsLoaded={allDatasets !== undefined}
-            pipelineInfo={pipelineInfo}
-            pipelineId={pipelineId}
-            serverSteps={pipelineData?.steps}
-            onIntegerValidityChange={handleIntegerValidity}
-          />
+          {/* Right panel — 숫자 칸 무효 원문 보관소를 내려 준다(스텝 범위로 좁히는 것은 패널이 한다) (WD-906 후속) */}
+          <IntegerDraftContext.Provider value={integerDraftStore}>
+            <StepConfigPanel
+              state={state}
+              dispatch={dispatch}
+              readOnly={readOnly}
+              nameInputRef={setStepNameInput}
+              datasets={datasetOptions}
+              datasetsLoaded={allDatasets !== undefined}
+              pipelineInfo={pipelineInfo}
+              pipelineId={pipelineId}
+              serverSteps={pipelineData?.steps}
+            />
+          </IntegerDraftContext.Provider>
         </TabsContent>
 
         <TabsContent value="triggers" className="flex-1 overflow-hidden mt-0 border rounded-b-lg">

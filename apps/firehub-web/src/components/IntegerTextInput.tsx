@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import { Input } from '@/components/ui/input';
+import { useIntegerDraftStore } from '@/hooks/useIntegerDrafts';
 import { useReportValidity } from '@/hooks/useReportValidity';
 import { isIntegerSyntax } from '@/lib/settings-number';
 import { cn } from '@/lib/utils';
@@ -26,6 +27,12 @@ type IntegerTextInputProps = Omit<
    * 칸이 사라질 때(언마운트)도 유효(true)로 되돌려 저장이 영영 막히지 않게 한다.
    */
   onValidityChange?: (valid: boolean) => void;
+  /**
+   * 무효 원문을 맡길 키 (WD-906 후속 반려 수정). 가까운 IntegerDraftContext 가 있으면 무효인 동안 원문을 거기 맡기고,
+   * 칸이 언마운트됐다 다시 마운트되면 맡긴 원문(예: 1e)으로 시작해 오류를 다시 보인다. 언마운트해도 맡긴 원문은 지우지 않는다 —
+   * 보이지 않는 오류 칸 때문에 저장이 계속 막혀야 하기 때문이다(옛 값이 말없이 저장되는 것 방지).
+   */
+  draftKey?: string;
   /** 표기 오류 문구의 id (없으면 자동 생성) */
   errorId?: string;
   /** 입력 칸과 오류 문구를 감싸는 요소의 클래스 */
@@ -51,6 +58,7 @@ export function IntegerTextInput({
   value,
   onValueChange,
   onValidityChange,
+  draftKey,
   min,
   max,
   errorId,
@@ -62,7 +70,9 @@ export function IntegerTextInput({
 }: IntegerTextInputProps) {
   const autoId = React.useId();
   const messageId = errorId ?? autoId;
-  const [raw, setRaw] = React.useState(String(value));
+  const draftStore = useIntegerDraftStore();
+  // 맡겨 둔 무효 원문이 있으면 그것으로 시작한다(다시 마운트된 오류 칸이 원문과 오류를 되살린다)
+  const [raw, setRaw] = React.useState(() => (draftKey ? draftStore?.get(draftKey) : undefined) ?? String(value));
   const [prevValue, setPrevValue] = React.useState(value);
 
   // 부모 value 가 바뀌었고 지금 원문이 그 값을 가리키지 않으면(외부 변경·초기화) 원문을 맞춘다(오류는 원문에서 계산되므로 따라 지워진다).
@@ -91,6 +101,12 @@ export function IntegerTextInput({
 
   // 유효성이 바뀔 때만(그리고 사라질 때 유효로 되돌려) 부모에 알린다
   useReportValidity(!invalid, onValidityChange);
+
+  // 무효인 동안 원문을 보관소에 맡기고, 유효해지면 지운다. 언마운트 정리는 일부러 하지 않는다(위 draftKey 설명).
+  React.useEffect(() => {
+    if (!draftKey || !draftStore) return;
+    draftStore.set(draftKey, invalid ? raw : null);
+  }, [draftStore, draftKey, invalid, raw]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const next = e.target.value;

@@ -686,8 +686,10 @@ export default function ProactiveJobDetailPage() {
         </TabsContent>
 
         {/* forceMount: 다른 탭으로 가도 모니터링 탭을 언마운트하지 않는다. 언마운트하면 오류 칸의 무효 상태가 풀려
-            오류가 남은 채 마지막 올바른 값이 저장된다(WD-906 후속). 숨김은 TabsContent 의 hidden 속성이 맡는다. */}
-        <TabsContent value="monitoring" forceMount>
+            오류가 남은 채 마지막 올바른 값이 저장된다(WD-906 후속).
+            Radix 는 forceMount 패널에 hidden 을 주지 않으므로, 비활성일 때 data-[state=inactive]:hidden 으로 화면·접근성 트리에서 숨긴다
+            (안 그러면 개요·실행 이력 탭에도 모니터링 내용이 함께 보였다 — 반려 지적). */}
+        <TabsContent value="monitoring" forceMount className="data-[state=inactive]:hidden">
           <JobMonitoringTab
             form={form}
             isEditing={isEditing}
