@@ -32,6 +32,8 @@ interface SchemaExplorerProps {
   error?: unknown;
   /** 오류 UI 의 「다시 시도」 */
   onRetry?: () => void;
+  /** 스키마를 지금 (재)조회 중인지 — 「다시 시도」 잠금과 기억한 오류를 보일지 정한다(WD-912 리뷰 후속) */
+  isFetching?: boolean;
 }
 
 export function SchemaExplorer({
@@ -42,11 +44,12 @@ export function SchemaExplorer({
   isLoading,
   error,
   onRetry,
+  isFetching,
 }: SchemaExplorerProps) {
   const dialectInfo = useMemo(() => ({ dialect, schema }), [dialect, schema]);
   const [searchQuery, setSearchQuery] = useState('');
-  // 다시 시도를 누른 시점의 오류 — 재조회 중에도 오류 UI 를 유지하는 데 쓴다(WD-912)
-  const [retryError, setRetryError] = useState<unknown>(null);
+  // 마지막 조회 오류 — 데이터 없이 재조회하는 동안에도 오류 UI 를 유지하는 데 쓴다(WD-912)
+  const [lastError, setLastError] = useState<unknown>(null);
   const [expandedTables, setExpandedTables] = useState<Set<string>>(new Set());
 
   const searchExpandedTables = useMemo(() => {
@@ -142,10 +145,19 @@ export function SchemaExplorer({
 
   // WD-912: 목록이 비었을 때 오류 / 로딩 / 빈 상태를 구분한다 — 예전에는 무조건 「불러오는 중」이라 0건 응답과
   // 조회 실패도 영원히 로딩처럼 보였다. 데이터가 있으면(재조회 실패 포함) 아래 목록을 그대로 유지한다.
-  // react-query 는 데이터 없는 오류에서 refetch 를 시작하면 error 를 비우고 pending 으로 돌린다 — 그러면 다시 시도를
-  // 누르는 순간 버튼(과 포커스)이 사라지므로, 누른 시점의 오류를 기억해 재조회 동안 오류 UI 를 유지한다.
-  // 그래서 error 가 비어 있는데 오류 UI 가 보이면 곧 재조회 중이다(버튼 잠금 조건).
-  const shownError = error ?? (isLoading ? retryError : null);
+  // react-query 는 데이터 없는 오류에서 다시 조회를 시작하면 error 를 비우고 pending 으로 돌린다 — 그러면 다시 시도를
+  // 누르는 순간 버튼(과 포커스)이 사라지므로, 마지막 오류를 기억해 재조회 동안 오류 UI 를 유지한다.
+  // DashboardWidgetCard 의 lastError 와 같은 렌더 중 상태 맞추기(WD-912 리뷰 후속):
+  // - 오류가 오면 늘 새 오류로 바꾼다 — 다시 실패한 뒤 자동 재조회(창 포커스 등) 동안 옛 문구가 보이지 않게.
+  // - 조회가 성공하면(pending 아님·오류 없음) 지운다 — 남겨 두면 나중에 쿼리가 데이터 없이 다시 pending 이 될 때
+  //   (쿼리 reset·캐시 제거) 로딩 대신 옛 오류가 보인다. 오프라인으로 멈춘(paused) 재조회는 pending 이라 지우지 않는다.
+  // 기억은 오류가 있을 때만, 지우기는 오류가 없을 때만 해 두 갈래가 서로 배타적이다(끝없이 다시 그리지 않음).
+  if (error != null) {
+    if (error !== lastError) setLastError(error);
+  } else if (!isLoading && lastError !== null) {
+    setLastError(null);
+  }
+  const shownError = error ?? lastError;
   if (tables.length === 0) {
     if (shownError) {
       const detail = extractApiError(shownError, '');
@@ -160,11 +172,10 @@ export function SchemaExplorer({
               variant="outline"
               size="sm"
               className="h-8"
-              pending={!error}
-              onClick={() => {
-                setRetryError(error);
-                onRetry();
-              }}
+              // 잠금은 재조회 중 여부로 정한다 — 오프라인으로 멈춘 재조회는 잠그지 않아 다시 누를 수 있다.
+              // isFetching 을 넘기지 않는 호출부는 「오류가 비었는데 오류 UI 가 보임 = 재조회 중」으로 추론한다.
+              pending={isFetching ?? !error}
+              onClick={onRetry}
             >
               다시 시도
             </PendingButton>
