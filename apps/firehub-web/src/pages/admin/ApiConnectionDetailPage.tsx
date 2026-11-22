@@ -641,8 +641,8 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
     const nextErrors: FieldErrors<InfoFieldKey> = {
       name: connectionNameError(name),
       // Base URL은 API 연결의 필수 값 — 빈 값으로 저장하면 백엔드가 null 처리해 무음으로 무시하므로 클라이언트에서 차단 (#124)
-      // 편집 화면은 예전처럼 빈 값만 막는다(형식 검사는 서버 검증에 맡긴다).
-      baseUrl: baseUrlError(baseUrl, false),
+      // 형식도 생성 대화상자와 같은 규칙으로 클라이언트에서 막는다(WD-909).
+      baseUrl: baseUrlError(baseUrl),
     };
     setInfoErrors(nextErrors);
     if (focusFirstError(INFO_FIELD_ORDER, nextErrors, infoFieldId)) return;

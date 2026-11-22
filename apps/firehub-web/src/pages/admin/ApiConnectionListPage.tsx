@@ -290,7 +290,7 @@ export default function ApiConnectionListPage() {
    */
   const handleCreate = async () => {
     // 칸 규칙·문구는 상세 편집과 같은 공용 도우미(api-connection-form)로 한다(WD-666) — 비었으면 빈 값 안내,
-    // Base URL 은 http/https 시작, 헬스체크 경로는 입력했다면 / 시작.
+    // Base URL 은 http/https 시작·호스트 있음·공백 없음(서버 URI.create 가 거절), 헬스체크 경로는 입력했다면 / 시작.
     const nextErrors: CreateFieldErrors = {
       name: connectionNameError(name),
       baseUrl: baseUrlError(baseUrl),

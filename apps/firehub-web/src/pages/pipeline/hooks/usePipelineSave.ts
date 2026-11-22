@@ -24,6 +24,19 @@ interface UsePipelineSaveOptions {
   onSaved?: (saved: PipelineEditorState) => void;
 }
 
+/**
+ * API_CALL 직접 입력 모드의 customUrl 앞뒤 공백을 요청에서 뺀다(WD-909).
+ * 검증은 앞뒤 공백을 무시하고 통과시키는데, 저장값에 공백이 남으면 실행기가 실패하진 않지만
+ * 끝 공백이 %20 으로 붙어 다른 경로를 호출한다.
+ * 연결 모드의 path 는 URL 이 아니라 건드리지 않는다.
+ */
+function trimCustomUrl(step: PipelineEditorState['steps'][number], apiConfig: PipelineStepRequest['apiConfig']) {
+  if (step.scriptType !== 'API_CALL' || step.apiConnectionId != null) return apiConfig;
+  const customUrl = apiConfig?.['customUrl'];
+  if (typeof customUrl !== 'string') return apiConfig;
+  return { ...apiConfig, customUrl: customUrl.trim() };
+}
+
 export function usePipelineSave({
   state,
   validate,
@@ -61,7 +74,7 @@ export function usePipelineSave({
         .map((tempId) => state.steps.find((s) => s.tempId === tempId)?.name.trim())
         .filter((name): name is string => !!name),
       loadStrategy: step.loadStrategy,
-      apiConfig: stripKvRows(step.apiConfig),
+      apiConfig: trimCustomUrl(step, stripKvRows(step.apiConfig)),
       aiConfig: step.aiConfig,
       pythonConfig: step.pythonConfig,
       apiConnectionId: step.apiConnectionId,

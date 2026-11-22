@@ -7,6 +7,7 @@
  */
 
 import { isBlankLikeServer } from '@/lib/api-connection-secret';
+import { httpUrlError, stripUrlUserInfo } from '@/lib/http-url';
 import type { ApiConnectionAuthType, StoredApiConnectionAuthType } from '@/types/api-connection';
 
 /** 칸 key → 오류 문구. 오류가 없는 칸은 키가 없다. */
@@ -100,14 +101,20 @@ export const API_BASE_URL_PLACEHOLDER = '예: https://api.your-service.example';
 export const API_FULL_URL_PLACEHOLDER = `${API_BASE_URL_PLACEHOLDER}/v1/data`;
 
 /**
- * Base URL — 비었으면 빈 값 안내, checkFormat 이면 http/https 로 시작하는지도 본다.
- * 상세 편집은 예전처럼 빈 값만 막고 형식은 서버 검증에 맡긴다(checkFormat=false).
+ * Base URL — 비었으면 입력 안내, 그 밖에는 공용 http(s) 형식 검사({@link httpUrlError})를 따른다.
+ * 공용 검사는 대문자 스킴(HTTPS://)을 받지만 서버 DTO 는 소문자 http(s):// 만 받으므로(대소문자를 가림),
+ * API 연결은 소문자 스킴을 먼저 확인한다. 형식 실수만 미리 알리고 내부 주소·DNS·인증 방식에 따른 거절은 서버 안내를 따른다.
+ * 생성·상세 편집이 같은 규칙을 쓴다(WD-909).
  */
-export function baseUrlError(baseUrl: string, checkFormat = true): string | undefined {
+export function baseUrlError(baseUrl: string): string | undefined {
   const value = baseUrl.trim();
   if (!value) return 'Base URL을 입력하세요.';
-  if (checkFormat && !/^https?:\/\/.+/.test(value)) return 'Base URL은 http 또는 https로 시작해야 합니다.';
-  return undefined;
+  if (!/^https?:\/\//.test(value)) return 'Base URL은 http 또는 https로 시작해야 합니다.';
+  // httpUrlError 는 호스트 밖 공백을 통과시키지만(실행기가 %20 으로 보냄), Base URL 은 서버가
+  // URI.create 로 저장해 공백을 거절하므로 여기서는 막는다. 다만 사용자 정보는 서버가(BASIC) 그 전에 떼어
+  // 인증 설정으로 옮기므로 그 안의 공백(비밀번호 등)은 막지 않는다.
+  if (/\s/.test(stripUrlUserInfo(value))) return 'Base URL 형식이 올바르지 않습니다.';
+  return httpUrlError(value, 'Base URL');
 }
 
 /** 헬스체크 경로 — 선택 칸이라 비어도 되지만, 입력했다면 /로 시작해야 한다. */

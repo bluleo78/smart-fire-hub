@@ -545,4 +545,235 @@ test.describe('파이프라인 스텝 검증 오류 접근성 (WD-560)', () => {
     // 재선택은 저장 실패 안내(토스트)를 새로 띄우지 않는다
     await expect(page.getByText(SAVE_FAILED_TOAST)).toHaveCount(0);
   });
+
+  // ===== WD-909: 직접 URL 형식 검사 =====
+
+  const URL_SCHEME_MESSAGE = 'URL은 http 또는 https로 시작해야 합니다.';
+  const URL_FORMAT_MESSAGE = 'URL 형식이 올바르지 않습니다.';
+  const previewButton = (page: Page) => page.getByRole('button', { name: '테스트 호출' });
+  const PREVIEW_OK = {
+    success: true,
+    rawJson: '[]',
+    rows: [],
+    columns: [],
+    totalExtractedRows: 0,
+    errorMessage: null,
+    resolvedUrl: 'https://api.example.com/v1/data',
+  };
+
+  /** 저장 오류가 난 URL 칸이 주어진 오류 문구로 연결·포커스됐는지, 오류 문구가 라이브 영역이 아닌지 확인한다 */
+  async function expectUrlFieldError(page: Page, message: string) {
+    const url = urlInput(page);
+    await expect(url).toHaveAttribute('aria-invalid', 'true');
+    const error = await describedByTarget(page, url);
+    await expect(error).toHaveText(message);
+    expect(await isInLiveRegion(error)).toBe(false);
+    await expect(url).toBeFocused();
+  }
+
+  test('직접 URL 이 http/https 로 시작하지 않으면 저장이 막히고 URL 칸에 연결·포커스되며 고치면 사라진다 (WD-909)', async ({
+    authenticatedPage: page,
+  }) => {
+    const postCapture = await mockApi(page, 'POST', '/api/v1/pipelines', { id: 7 }, { capture: true });
+    await openNewEditorWithTypedStep(page, 'API 스텝', 'API 호출');
+    await urlInput(page).fill('ftp://x');
+
+    await saveAndExpectFailureAnnouncedOnce(page);
+    await expectUrlFieldError(page, URL_SCHEME_MESSAGE);
+    expect(postCapture.requests).toHaveLength(0);
+
+    await urlInput(page).fill('https://api.example.com/v1/data');
+    await expect(urlInput(page)).not.toHaveAttribute('aria-invalid', 'true');
+    await expect(urlInput(page)).not.toHaveAttribute('aria-describedby', /.+/);
+    await expect(page.getByText(URL_SCHEME_MESSAGE)).toHaveCount(0);
+  });
+
+  test('직접 URL 가운데 공백은 형식 오류 문구로 막힌다 (WD-909)', async ({ authenticatedPage: page }) => {
+    const postCapture = await mockApi(page, 'POST', '/api/v1/pipelines', { id: 7 }, { capture: true });
+    await openNewEditorWithTypedStep(page, 'API 스텝', 'API 호출');
+    await urlInput(page).fill('https://exa mple.com');
+
+    await saveAndExpectFailureAnnouncedOnce(page);
+    await expectUrlFieldError(page, URL_FORMAT_MESSAGE);
+    expect(postCapture.requests).toHaveLength(0);
+  });
+
+  test('앞뒤 공백과 대문자 스킴이 든 정상 직접 URL 은 저장되고 payload 에는 trim 된 값이 나간다 (WD-909)', async ({
+    authenticatedPage: page,
+  }) => {
+    const postCapture = await mockApi(page, 'POST', '/api/v1/pipelines', { id: 7 }, { capture: true });
+    await openNewEditorWithTypedStep(page, 'API 스텝', 'API 호출');
+    await urlInput(page).fill('  HTTPS://api.example.com/v1/data  ');
+
+    await saveButton(page).click();
+    const req = await postCapture.waitForRequest();
+    const payload = req.payload as { steps: Array<{ apiConfig: { customUrl?: string } }> };
+    expect(payload.steps[0].apiConfig.customUrl).toBe('HTTPS://api.example.com/v1/data');
+  });
+
+  test('URL 오류가 난 스텝을 저장된 연결로 바꾸면 옛 오류가 남지 않고 path 는 그대로 저장된다 (WD-909)', async ({
+    authenticatedPage: page,
+  }) => {
+    const postCapture = await mockApi(page, 'POST', '/api/v1/pipelines', { id: 7 }, { capture: true });
+    // 선택 가능한 연결 하나 — 나중에 등록한 모킹이 우선하므로 기본 모킹 뒤에 덮어쓴다
+    await setupNewEditorMocks(page);
+    await mockApi(page, 'GET', '/api/v1/api-connections/selectable', [
+      { id: 1, name: '공공 데이터 API', authType: 'NONE', baseUrl: 'https://api.data.go.kr' },
+    ]);
+    await page.goto('/pipelines/new');
+    await page.getByPlaceholder('파이프라인 이름').fill('접근성 파이프라인');
+    await clickToolbarAddStep(page);
+    await expect(page.locator('#step-name')).toBeVisible({ timeout: 10000 });
+    await nameAndTypeStep(page, 'API 스텝', 'API 호출');
+    await urlInput(page).fill('ftp://x');
+    await saveAndExpectFailureAnnouncedOnce(page);
+    await expectUrlFieldError(page, URL_SCHEME_MESSAGE);
+
+    await page.locator('[role="combobox"]:has-text("직접 입력")').click();
+    await page.getByRole('option', { name: /공공 데이터 API/ }).click();
+    await page.getByPlaceholder('/v1/data (선택)').fill('/v1/data');
+    await expect(page.getByText(URL_SCHEME_MESSAGE)).toHaveCount(0);
+
+    await saveButton(page).click();
+    const req = await postCapture.waitForRequest();
+    const payload = req.payload as { steps: Array<{ apiConnectionId: number; apiConfig: { path?: string } }> };
+    expect(payload.steps[0].apiConnectionId).toBe(1);
+    expect(payload.steps[0].apiConfig.path).toBe('/v1/data');
+  });
+
+  test('이미 잘못된 직접 URL 로 저장된 파이프라인은 이름만 고쳐 저장해도 그 스텝이 선택되고 URL 칸에 오류가 보인다 (WD-909)', async ({
+    authenticatedPage: page,
+  }) => {
+    const step = createStep({
+      id: 9,
+      name: 'API 스텝',
+      scriptType: 'API_CALL',
+      scriptContent: '',
+      apiConnectionId: null,
+      apiConfig: { method: 'GET', dataPath: '$', customUrl: 'ftp://x' },
+    });
+    await mockApi(page, 'GET', '/api/v1/pipelines/1', createPipelineDetail({ id: 1, steps: [step] }));
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/executions', createPageResponse([]));
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/triggers', []);
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/trigger-events', []);
+    await setupNewEditorMocks(page);
+    const putCapture = await mockApi(page, 'PUT', '/api/v1/pipelines/1', {}, { capture: true });
+
+    await page.goto('/pipelines/1');
+    await page.getByRole('button', { name: '수정' }).click();
+    await page.getByPlaceholder('파이프라인 이름').fill('이름 변경');
+    await saveAndExpectFailureAnnouncedOnce(page);
+
+    await expect(page.getByText(/^스텝 #1:/)).toBeVisible();
+    await expectUrlFieldError(page, URL_SCHEME_MESSAGE);
+    expect(putCapture.requests).toHaveLength(0);
+  });
+
+  test('테스트 호출은 빈 URL 이면 칸 오류로 안내하고 입력하면 지운다 — 요청도 토스트도 없다 (WD-909)', async ({
+    authenticatedPage: page,
+  }) => {
+    const previewCapture = await mockApi(page, 'POST', '/api/v1/pipelines/api-call/preview', PREVIEW_OK, {
+      capture: true,
+    });
+    await openNewEditorWithTypedStep(page, 'API 스텝', 'API 호출');
+
+    await previewButton(page).click();
+    await expectUrlFieldError(page, 'URL을 입력하세요');
+    await expect(page.getByText('URL을 입력하세요')).toHaveCount(1);
+    expect(previewCapture.requests).toHaveLength(0);
+
+    await urlInput(page).fill('h');
+    await expect(urlInput(page)).not.toHaveAttribute('aria-invalid', 'true');
+    await expect(urlInput(page)).not.toHaveAttribute('aria-describedby', /.+/);
+    await expect(page.getByText('URL을 입력하세요')).toHaveCount(0);
+  });
+
+  test('테스트 호출은 형식이 틀린 URL 이면 칸 오류로 안내하고 요청·토스트 없이 입력하면 지운다 (WD-909)', async ({
+    authenticatedPage: page,
+  }) => {
+    const previewCapture = await mockApi(page, 'POST', '/api/v1/pipelines/api-call/preview', PREVIEW_OK, {
+      capture: true,
+    });
+    await openNewEditorWithTypedStep(page, 'API 스텝', 'API 호출');
+    await urlInput(page).fill('ftp://x');
+
+    await previewButton(page).click();
+    await expectUrlFieldError(page, URL_SCHEME_MESSAGE);
+    expect(previewCapture.requests).toHaveLength(0);
+    // 토스트(sonner)는 이 화면의 알림 영역에 뜨지 않는다
+    await expect(page.locator('[data-sonner-toast]')).toHaveCount(0);
+
+    await urlInput(page).fill('https://api.example.com/v1/data');
+    await expect(urlInput(page)).not.toHaveAttribute('aria-invalid', 'true');
+    await expect(page.getByText(URL_SCHEME_MESSAGE)).toHaveCount(0);
+  });
+
+  test('테스트 호출은 앞뒤 공백이 든 정상 URL 을 trim 해서 보낸다 (WD-909)', async ({ authenticatedPage: page }) => {
+    const previewCapture = await mockApi(page, 'POST', '/api/v1/pipelines/api-call/preview', PREVIEW_OK, {
+      capture: true,
+    });
+    await openNewEditorWithTypedStep(page, 'API 스텝', 'API 호출');
+    await urlInput(page).fill('  https://api.example.com/v1/data  ');
+
+    await previewButton(page).click();
+    const req = await previewCapture.waitForRequest();
+    expect((req.payload as { url: string }).url).toBe('https://api.example.com/v1/data');
+  });
+
+  test('호스트 밖 공백(쿼리의 띄어쓰기)이 든 직접 URL 은 저장되고 payload 에 그대로 나간다 (WD-909)', async ({
+    authenticatedPage: page,
+  }) => {
+    const postCapture = await mockApi(page, 'POST', '/api/v1/pipelines', { id: 7 }, { capture: true });
+    await openNewEditorWithTypedStep(page, 'API 스텝', 'API 호출');
+    await urlInput(page).fill('https://api.example.com/search?q=seoul city');
+
+    await saveButton(page).click();
+    const req = await postCapture.waitForRequest();
+    const payload = req.payload as { steps: Array<{ apiConfig: { customUrl?: string } }> };
+    expect(payload.steps[0].apiConfig.customUrl).toBe('https://api.example.com/search?q=seoul city');
+    await expect(urlInput(page)).not.toHaveAttribute('aria-invalid', 'true');
+    await expect(page.getByText(URL_SCHEME_MESSAGE)).toHaveCount(0);
+    await expect(page.getByText(URL_FORMAT_MESSAGE)).toHaveCount(0);
+  });
+
+  test('테스트 호출 성공 뒤 잘못된 URL 로 다시 호출하면 이전 성공 결과가 사라진다 (WD-909)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(page, 'POST', '/api/v1/pipelines/api-call/preview', PREVIEW_OK);
+    await openNewEditorWithTypedStep(page, 'API 스텝', 'API 호출');
+    await urlInput(page).fill('https://api.example.com/v1/data');
+    await previewButton(page).click();
+    await expect(page.getByText(PREVIEW_OK.resolvedUrl)).toBeVisible();
+
+    await urlInput(page).fill('ftp://x');
+    await previewButton(page).click();
+    await expectUrlFieldError(page, URL_SCHEME_MESSAGE);
+    await expect(page.getByText(PREVIEW_OK.resolvedUrl)).toHaveCount(0);
+  });
+
+  test('테스트 호출 URL 오류가 난 뒤 저장된 연결로 갔다가 직접 입력으로 돌아오면 오류가 없다 (WD-909)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupNewEditorMocks(page);
+    await mockApi(page, 'GET', '/api/v1/api-connections/selectable', [
+      { id: 1, name: '공공 데이터 API', authType: 'NONE', baseUrl: 'https://api.data.go.kr' },
+    ]);
+    await page.goto('/pipelines/new');
+    await page.getByPlaceholder('파이프라인 이름').fill('접근성 파이프라인');
+    await clickToolbarAddStep(page);
+    await expect(page.locator('#step-name')).toBeVisible({ timeout: 10000 });
+    await nameAndTypeStep(page, 'API 스텝', 'API 호출');
+    await urlInput(page).fill('ftp://x');
+    await previewButton(page).click();
+    await expectUrlFieldError(page, URL_SCHEME_MESSAGE);
+
+    await page.locator('[role="combobox"]:has-text("직접 입력")').click();
+    await page.getByRole('option', { name: /공공 데이터 API/ }).click();
+    await page.getByRole('combobox').filter({ hasText: '공공 데이터 API' }).click();
+    await page.getByRole('option', { name: '직접 입력' }).click();
+
+    await expect(urlInput(page)).toBeVisible();
+    await expect(urlInput(page)).not.toHaveAttribute('aria-invalid', 'true');
+    await expect(page.getByText(URL_SCHEME_MESSAGE)).toHaveCount(0);
+  });
 });

@@ -227,4 +227,89 @@ test.describe('데이터셋 상세 — API 가져오기 기본 이름 (WD-31④)
     const req = await create.waitForRequest();
     expect(req.payload).toMatchObject({ executeImmediately: true, schedule: { cronExpression: '0 0 * * *' } });
   });
+
+  /**
+   * WD-909 — 1단계 URL 오류는 토스트가 아니라 칸 아래에 보이고(accessible description·aria-invalid·포커스),
+   * 앞뒤 공백이 든 정상 URL 은 trim 해서 미리보기·생성에 보낸다.
+   */
+  test.describe('URL 형식 검사 (WD-909)', () => {
+    async function openUrlStep(page: Page) {
+      await setupDataTabMocks(page);
+      await page.goto('/data/datasets/1');
+      await expect(page.getByRole('heading', { name: '인사 급여' })).toBeVisible();
+      await page.getByRole('tab', { name: '데이터' }).click();
+      await page.getByRole('button', { name: 'API 가져오기' }).click();
+      return page.getByRole('dialog');
+    }
+
+    const cases = [
+      { name: '빈 값', value: '', message: 'URL을 입력하세요.' },
+      { name: '공백만', value: '   ', message: 'URL을 입력하세요.' },
+      { name: '스킴 없음', value: API_FULL_URL_PLACEHOLDER, message: 'URL은 http 또는 https로 시작해야 합니다.' },
+      { name: '가운데 공백', value: 'https://exa mple.com', message: 'URL 형식이 올바르지 않습니다.' },
+    ];
+
+    for (const c of cases) {
+      test(`${c.name} — 칸 아래에 오류를 보이고 다음 단계로 가지 않는다`, async ({ authenticatedPage: page }) => {
+        const dialog = await openUrlStep(page);
+        const urlInput = dialog.getByLabel('URL', { exact: false }).first();
+        await urlInput.fill(c.value);
+        await dialog.getByRole('button', { name: '다음' }).click();
+
+        await expect(urlInput).toHaveAccessibleDescription(c.message);
+        await expect(urlInput).toHaveAttribute('aria-invalid', 'true');
+        await expect(urlInput).toBeFocused();
+        await expect(page.getByText(c.message)).toHaveCount(1);
+        await expect(dialog.getByText('응답 매핑', { exact: true })).toBeVisible();
+        await expect(dialog.getByRole('button', { name: '테스트 호출' })).toHaveCount(0);
+      });
+    }
+
+    test('입력하면 오류가 지워진다', async ({ authenticatedPage: page }) => {
+      const dialog = await openUrlStep(page);
+      const urlInput = dialog.getByLabel('URL', { exact: false }).first();
+      await dialog.getByRole('button', { name: '다음' }).click();
+      await expect(urlInput).toHaveAccessibleDescription('URL을 입력하세요.');
+
+      await urlInput.pressSequentially('h');
+      await expect(page.getByText('URL을 입력하세요.')).toHaveCount(0);
+      await expect(urlInput).not.toHaveAttribute('aria-invalid', 'true');
+    });
+
+    test('앞뒤 공백이 든 정상 URL 은 통과하고 미리보기·생성에 trim 한 값을 보낸다', async ({
+      authenticatedPage: page,
+    }) => {
+      const preview = await mockApi(
+        page,
+        'POST',
+        '/api/v1/pipelines/api-call/preview',
+        { success: true, rawJson: '[]', rows: [], columns: [], totalExtractedRows: 0, errorMessage: null, resolvedUrl: null },
+        { capture: true },
+      );
+      const create = await mockApi(
+        page,
+        'POST',
+        '/api/v1/datasets/1/api-import',
+        { pipelineId: 11, triggerId: null, executionId: null },
+        { capture: true },
+      );
+      const dialog = await openUrlStep(page);
+      await dialog
+        .getByPlaceholder(API_FULL_URL_PLACEHOLDER, { exact: true })
+        .fill('  https://api.example.com/v1/data  ');
+      await dialog.getByRole('button', { name: '다음' }).click();
+      await expect(dialog.getByRole('button', { name: '테스트 호출' })).toBeVisible();
+
+      await dialog.getByRole('button', { name: '테스트 호출' }).click();
+      const previewReq = await preview.waitForRequest();
+      expect(previewReq.payload).toMatchObject({ url: 'https://api.example.com/v1/data' });
+
+      await dialog.getByRole('button', { name: '매핑 추가' }).click();
+      await dialog.getByRole('button', { name: '다음' }).click();
+      await dialog.getByRole('button', { name: '다음' }).click();
+      await dialog.getByRole('button', { name: '완료' }).click();
+      const req = await create.waitForRequest();
+      expect(req.payload).toMatchObject({ apiConfig: { url: 'https://api.example.com/v1/data' } });
+    });
+  });
 });

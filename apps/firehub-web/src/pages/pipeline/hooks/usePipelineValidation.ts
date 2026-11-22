@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 
 import { datasetsApi } from '@/api/datasets';
 import { ALL_DATASETS_QUERY_KEY, datasetDetailKey } from '@/hooks/queries/useDatasets';
+import { httpUrlError } from '@/lib/http-url';
 import { iGa } from '@/lib/utils';
 import { editorPipelineSchema } from '@/lib/validations/pipeline';
 import type { DatasetResponse } from '@/types/dataset';
@@ -90,9 +91,10 @@ export function usePipelineValidation(
         apiConnectionId: step.apiConnectionId,
       });
 
-      // API_CALL 스텝 URL 빈값 검증
+      // API_CALL 스텝 URL 검증
       // apiConnectionId가 null(직접 입력 모드)이면 customUrl, 아니면 path를 사용한다.
       // 빈값이면 서버로 요청하지 않고 클라이언트에서 즉시 차단한다 (이슈 #44).
+      // 직접 입력 모드의 값은 전체 URL 이므로 http/https 형식도 함께 본다(WD-909) — 연결 모드의 path 는 URL 이 아니라 검사하지 않는다.
       if (step.scriptType === 'API_CALL') {
         const cfg = step.apiConfig as Record<string, unknown> | undefined;
         const connectionId = step.apiConnectionId ?? null;
@@ -106,6 +108,11 @@ export function usePipelineValidation(
             field: connectionId !== null ? API_PATH_FIELD : API_CUSTOM_URL_FIELD,
             message: 'URL을 입력하세요',
           });
+        } else if (connectionId === null) {
+          const formatMessage = httpUrlError(urlValue);
+          if (formatMessage) {
+            errors.push({ stepTempId: step.tempId, field: API_CUSTOM_URL_FIELD, message: formatMessage });
+          }
         }
 
         // 응답 필드 매핑 행 검증(WD-154) — 빈 행·한쪽만 채운 행·대상 컬럼 형식/예약어/중복·출력 데이터셋에 없는 컬럼.

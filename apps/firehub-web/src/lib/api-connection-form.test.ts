@@ -5,6 +5,7 @@ import {
   AUTH_TYPE_OPTIONS,
   authTypeBadgeVariant,
   authTypeLabel,
+  baseUrlError,
   basicUsernameError,
   isApiConnectionAuthType,
 } from './api-connection-form';
@@ -36,5 +37,23 @@ describe('api-connection-form', () => {
     expect(isApiConnectionAuthType('OAUTH2')).toBe(false);
     // 객체 프로토타입 키(toString 등)를 받는 방식으로 오인하지 않는다
     expect(isApiConnectionAuthType('toString')).toBe(false);
+  });
+
+  it('baseUrlError — 빈 값은 입력 문구, 소문자 스킴만 받고, 형식은 공용 검사에 맡긴다', () => {
+    expect(baseUrlError('')).toBe('Base URL을 입력하세요.');
+    expect(baseUrlError('   ')).toBe('Base URL을 입력하세요.');
+    expect(baseUrlError('ftp://x')).toBe('Base URL은 http 또는 https로 시작해야 합니다.');
+    // 서버 DTO 는 대문자 스킴을 거절하므로 API 연결은 대문자를 막는다
+    expect(baseUrlError('HTTPS://host')).toBe('Base URL은 http 또는 https로 시작해야 합니다.');
+    expect(baseUrlError('https://')).toBe('Base URL 형식이 올바르지 않습니다.');
+    expect(baseUrlError(' https://host ')).toBeUndefined();
+    // 서버가 URI.create 로 저장해 공백을 어디서든 거절하므로 호스트 밖 공백도 막는다
+    expect(baseUrlError('https://host/a b')).toBe('Base URL 형식이 올바르지 않습니다.');
+    expect(baseUrlError('https://host?q=a b')).toBe('Base URL 형식이 올바르지 않습니다.');
+    // 사용자 정보는 서버가 URI.create 전에 떼므로(BASIC) 그 안의 공백은 받는다
+    expect(baseUrlError('https://user:p ss@host/v1')).toBeUndefined();
+    expect(baseUrlError('https://user:p ss@host/a b')).toBe('Base URL 형식이 올바르지 않습니다.');
+    // 경로의 @ 는 사용자 정보가 아니다
+    expect(baseUrlError('https://host/a b@c')).toBe('Base URL 형식이 올바르지 않습니다.');
   });
 });
