@@ -13,6 +13,7 @@ import {
 import { mockApi, type MockApiCapture } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { holdApi } from '../../fixtures/hold-api';
+import { expectTableErrorAlert } from '../../fixtures/table-error-alert';
 import {
   expectBadgesFitDeclaredWidth,
   expectKMatchesDeclaredWidths,
@@ -82,6 +83,18 @@ test.describe('API 연결 페이지', () => {
   test.beforeEach(async ({ authenticatedPage: page }) => {
     // 관리 화면 권한 가드(AdminOrPermissionRoute) 통과와 화면 안 버튼 노출을 위해 ADMIN 역할·관리 권한 코드로 오버라이드
     await setupAdminAuth(page);
+  });
+
+  // WD-978: 첫 조회가 실패하면 빈 목록(「등록된 API 연결이 없습니다.」·만들기 버튼)이 아니라 공용 실패 안내를 보인다.
+  // 정확한 경로만 가로채므로 /selectable 등 하위 경로는 성공 그대로다. 앱이 한 번 재시도하므로 500 mock 은 계속 등록돼 있다.
+  test('목록 조회가 실패하면 빈 목록 대신 실패 안내를 보인다 (WD-978)', async ({ authenticatedPage: page }) => {
+    await setupApiConnectionListMocks(page);
+    await mockApi(page, 'GET', '/api/v1/api-connections', { message: '서버 오류' }, { status: 500 });
+    await page.goto('/admin/api-connections');
+
+    await expectTableErrorAlert(page);
+    await expect(page.getByText('등록된 API 연결이 없습니다.')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '새 API 연결 만들기' })).toHaveCount(0);
   });
 
   test('API 연결 목록이 올바르게 렌더링된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {

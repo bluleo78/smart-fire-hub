@@ -42,7 +42,7 @@ import {
   TableHeader,
   TableRow,
 } from '../../components/ui/table';
-import { TableEmptyRow } from '../../components/ui/table-empty';
+import { TableEmptyRow, TableErrorRow } from '../../components/ui/table-empty';
 import { TableSkeletonRows } from '../../components/ui/table-skeleton';
 import { Tabs, TabsControlsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { Textarea } from '../../components/ui/textarea';
@@ -514,7 +514,7 @@ export default function DashboardListPage() {
   // 「내 대시보드」 탭은 내가 만든 대시보드만 — 필터 없이 부르면 서버가 남의 공유 대시보드까지 섞어 준다(WD-328). 「공유됨」은 sharedOnly 그대로.
   const mineOnly = tab === 'mine';
 
-  const { data: dashboardsData, isLoading } = useDashboards({
+  const { data: dashboardsData, isLoading, isError } = useDashboards({
     search: search || undefined,
     sharedOnly: sharedOnly || undefined,
     mineOnly: mineOnly || undefined,
@@ -606,6 +606,9 @@ export default function DashboardListPage() {
                   <tbody>
                     {isLoading ? (
                       <TableSkeletonRows columns={5} rows={5} />
+                    ) : isError && !dashboardsData ? (
+                      // 목록 조회 실패 — 0건 안내로 오해되지 않게 실패 안내를 보인다. 받아 둔 목록이 있으면 재조회 실패여도 유지한다 (WD-978)
+                      <TableErrorRow colSpan={5} />
                     ) : dashboards.length > 0 ? (
                       dashboards.map((dashboard) => (
                         <TableRow

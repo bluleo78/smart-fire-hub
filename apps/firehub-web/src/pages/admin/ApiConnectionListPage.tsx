@@ -9,7 +9,7 @@ import { PageHeading } from '@/components/PageHeading';
 import { TruncatedLink } from '@/components/TruncatedLink';
 import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
 import { FormField } from '@/components/ui/form-field';
-import { TableEmptyRow } from '@/components/ui/table-empty';
+import { TableEmptyRow, TableErrorRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { TruncatedText } from '@/components/ui/truncated-text';
 import {
@@ -93,7 +93,7 @@ export default function ApiConnectionListPage() {
   const { permissions } = useMyPermissions();
   const canWrite = permissions.has('apiconnection:write');
   const canDelete = permissions.has('apiconnection:delete');
-  const { data: connections, isLoading } = useApiConnections();
+  const { data: connections, isLoading, isError } = useApiConnections();
   const createMutation = useCreateApiConnection();
   const deleteMutation = useDeleteApiConnection();
   const refreshAllMutation = useRefreshAllApiConnections();
@@ -636,6 +636,10 @@ export default function ApiConnectionListPage() {
           <TableBody>
             {isLoading ? (
               <TableSkeletonRows columns={7} rows={3} />
+            ) : isError && !connections ? (
+              // WD-978: 첫 조회가 실패하면 빈 목록(「등록된 API 연결이 없습니다.」·만들기 버튼)으로 오인되지 않게 공용 실패 안내를 보인다.
+              // 재조회만 실패해 받아 둔 목록이 있으면 그대로 둔다(WD-146). 쓰기 권한과 무관하게 보인다.
+              <TableErrorRow colSpan={7} />
             ) : connections && connections.length > 0 ? (
               connections.map((conn) => (
                 <TableRow
