@@ -209,11 +209,11 @@ test.describe('AI 채팅 스트리밍 중 세션 전환 abort (#209)', () => {
     await chatInput.press('Enter');
     await page.waitForTimeout(300);
 
-    // 기존 세션으로 전환 (드롭다운 → 세션 선택)
+    // 기존 세션으로 전환 (펼침 목록 → 세션 선택)
     const sessionSwitcher = page.getByRole('button', { name: /대화 선택/ });
     if (await sessionSwitcher.isVisible()) {
       await sessionSwitcher.click();
-      await page.getByRole('menuitem', { name: /기존 대화/ }).first().click();
+      await page.getByRole('dialog', { name: '대화 선택' }).getByRole('button', { name: /기존 대화/ }).first().click();
     }
 
     // 스트림 해제

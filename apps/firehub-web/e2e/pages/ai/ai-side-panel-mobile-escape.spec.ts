@@ -26,7 +26,7 @@ const overlayLocator = (page: Page) => page.getByRole('dialog', { name: 'AI 어�
 /** 오버레이 안 채팅 입력창 */
 const overlayInput = (page: Page) => overlayLocator(page).getByPlaceholder('메시지를 입력하세요...');
 
-/** 대화 선택 메뉴(하위 팝오버)를 띄우기 위한 세션 목록 — 있으면 SessionSwitcher 가 드롭다운을 그린다 */
+/** 대화 선택 메뉴(하위 팝오버)를 띄우기 위한 세션 목록 — 있으면 SessionSwitcher 가 펼침 목록을 그린다 */
 const MOCK_SESSIONS = [
   {
     id: 649,
@@ -117,9 +117,9 @@ test.describe('모바일 AI 오버레이 — Esc 닫기 (WD-649)', () => {
 
   test('대화 선택 메뉴가 열려 있으면 Esc 는 메뉴만 닫고 오버레이는 남는다', async ({ authenticatedPage: page }) => {
     const overlay = overlayLocator(page);
-    // 하위 팝오버(Radix 드롭다운) — 세션 목록이 있을 때 그려지는 대화 선택 메뉴를 연다.
+    // 하위 팝오버(Radix Popover) — 세션 목록이 있을 때 그려지는 대화 선택 메뉴를 연다.
     await overlay.getByRole('button', { name: '대화 선택' }).click();
-    const menu = page.getByRole('menu');
+    const menu = page.getByRole('dialog', { name: '대화 선택' });
     await expect(menu).toBeVisible();
     await expect(menu.getByText('WD-649 테스트 대화')).toBeVisible();
 
@@ -129,6 +129,33 @@ test.describe('모바일 AI 오버레이 — Esc 닫기 (WD-649)', () => {
     await expect(overlay).toBeVisible();
 
     // 메뉴가 닫힌 뒤의 Esc 는 오버레이를 닫는다.
+    await page.keyboard.press('Escape');
+    await expect(overlay).toHaveCount(0);
+  });
+
+  test('삭제 확인 창·대화 선택 목록·오버레이가 열려 있으면 Esc 는 한 층씩만 닫는다 (WD-951)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 목록(modal Popover)·확인 창이 떠 있는 동안 오버레이는 aria-hidden 이라 role 질의로는 안 잡힌다 — 속성으로 집는다.
+    const overlay = page.locator('[role="dialog"][aria-label="AI 어시스턴트"]');
+    await overlay.getByRole('button', { name: '대화 선택' }).click();
+    const list = page.getByRole('dialog', { name: '대화 선택' });
+    await list.getByRole('button', { name: 'WD-649 테스트 대화 삭제', exact: true }).click();
+    const confirm = page.getByRole('alertdialog');
+    await expect(confirm).toBeVisible();
+
+    // 1층: 확인 창만 닫힌다 — 목록·오버레이는 남는다.
+    await page.keyboard.press('Escape');
+    await expect(confirm).toHaveCount(0);
+    await expect(list).toBeVisible();
+    await expect(overlay).toBeVisible();
+
+    // 2층: 목록만 닫힌다 — 오버레이는 남는다.
+    await page.keyboard.press('Escape');
+    await expect(list).toHaveCount(0);
+    await expect(overlay).toBeVisible();
+
+    // 3층: 오버레이가 닫힌다.
     await page.keyboard.press('Escape');
     await expect(overlay).toHaveCount(0);
   });
