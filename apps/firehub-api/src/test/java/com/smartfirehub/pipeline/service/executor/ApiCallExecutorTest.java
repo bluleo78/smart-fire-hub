@@ -2352,7 +2352,7 @@ class ApiCallExecutorTest {
     wireMock.verify(0, getRequestedFor(urlEqualTo("/api/put-target")));
   }
 
-  /** WD-969: DELETE 도 그대로 보낸다 — 본문 없는 메서드는 본문 없이 간다. */
+  /** WD-969: DELETE 도 그대로 보낸다 — 본문 없는 메서드는 본문 없이 간다(본문·Content-Type 부재 단언, 리뷰 후속 ③). */
   @Test
   void execute_deleteMethod_sendsDelete() {
     wireMock.stubFor(
@@ -2363,13 +2363,55 @@ class ApiCallExecutorTest {
                     .withHeader("Content-Type", "application/json")
                     .withBody("{\"items\":[{\"name\":\"a\",\"age\":1}]}")));
 
+    // 본문을 일부러 싣는다 — 본문이 null 이면 단언이 본문 분기가 흐트러져도 항상 통과해, 이 테스트는 회귀를 잡지 못한다(리뷰 후속).
     executor.execute(
-        withMethod(simpleGetConfig("/api/delete-target"), "DELETE", null),
+        withMethod(simpleGetConfig("/api/delete-target"), "DELETE", "{\"name\":\"a\"}"),
         "t",
         null,
         "APPEND",
         null);
 
-    wireMock.verify(deleteRequestedFor(urlEqualTo("/api/delete-target")));
+    List<LoggedRequest> deletes =
+        wireMock.findAll(deleteRequestedFor(urlEqualTo("/api/delete-target")));
+    assertThat(deletes).hasSize(1);
+    assertThat(deletes.get(0).getBody()).isEmpty();
+    assertThat(deletes.get(0).getHeader("Content-Type")).isNull();
+    wireMock.verify(0, getRequestedFor(urlEqualTo("/api/delete-target")));
+  }
+
+  /** WD-969 리뷰 후속 ①: 저장된 메서드가 빈 문자열이면 GET 으로 보낸다 — 빈 이름 요청이 전송 오류로 재시도되지 않는다. */
+  @ParameterizedTest
+  @ValueSource(strings = {"", "   "})
+  void execute_blankMethod_sendsGet(String blank) {
+    wireMock.stubFor(
+        get(urlEqualTo("/api/blank-method"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("{\"items\":[]}")));
+
+    executor.execute(
+        withMethod(simpleGetConfig("/api/blank-method"), blank, null), "t", null, "APPEND", null);
+
+    wireMock.verify(getRequestedFor(urlEqualTo("/api/blank-method")));
+    assertThat(wireMock.getAllServeEvents()).hasSize(1);
+  }
+
+  /** WD-969 리뷰 후속 ①: 표준이 아닌 메서드 값은 재시도하지 않는 안내 오류(ApiCallException)로 낸다 — 서버를 부르지 않는다. */
+  @Test
+  void execute_unknownMethod_failsWithoutRetrying() {
+    assertThatThrownBy(
+            () ->
+                executor.execute(
+                    withMethod(simpleGetConfig("/api/unknown-method"), "FETCH-IT", null),
+                    "t",
+                    null,
+                    "APPEND",
+                    null))
+        .isInstanceOf(ApiCallException.class)
+        .hasMessage(ApiCallErrorMessages.unsupportedHttpMethod("FETCH-IT"));
+
+    assertThat(wireMock.getAllServeEvents()).isEmpty();
   }
 }

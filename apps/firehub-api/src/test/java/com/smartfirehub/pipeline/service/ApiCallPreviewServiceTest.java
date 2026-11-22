@@ -21,6 +21,8 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.client.ReactorResourceFactory;
@@ -406,6 +408,28 @@ class ApiCallPreviewServiceTest {
     assertThat(response.success()).isFalse();
     assertThat(response.errorMessage())
         .isEqualTo(ApiCallErrorMessages.unsupportedPreviewMethod("DELETE"));
+  }
+
+  /** WD-969 리뷰 후속 ②: 메서드 값이 비어 있으면 GET 으로 본다 — «요청한 요청을…» 처럼 이름이 빠진 거절 안내가 뜨지 않는다. */
+  @ParameterizedTest
+  @ValueSource(strings = {"", "   "})
+  void preview_blankMethod_treatedAsGet(String blank) {
+    wireMock.stubFor(
+        get(urlEqualTo("/blank-method"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"result\":\"ok\"}]")));
+
+    ApiCallPreviewResponse response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/blank-method", blank, null, null, null, "$", null, null, null, 5000));
+
+    assertThat(response.success()).isTrue();
+    assertThat(response.errorMessage()).isNull();
+    wireMock.verify(getRequestedFor(urlEqualTo("/blank-method")));
   }
 
   // =========================================================================
@@ -1985,7 +2009,8 @@ class ApiCallPreviewServiceTest {
             .isTrue();
       } finally {
         // 컨텍스트 종료와 같은 일 — 전역 루프·연결 풀을 폐기한다(다음 HttpResources.get() 이 새로 만든다).
-        // WD-804: 전역(JVM 공용) 자원을 폐기해야만 재현된다 — 버그 경로(HttpClient.create() 의 풀·루프, DefaultDns.current())가
+        // WD-804: 전역(JVM 공용) 자원을 폐기해야만 재현된다 — 버그 경로(HttpClient.create() 의 풀·루프,
+        // DefaultDns.current())가
         // 모두 HttpResources.get() 을 보므로 setUseGlobalResources(false) 로는 DefaultDns 교체가 일어나지 않는다.
         // 같은 포크 JVM 의 다른 시험에 미치는 영향: HttpClient.create() 기반 클라이언트는 접속 때 HttpResources.get() 을
         // 다시 봐서 회복한다. 그러나 Boot 자동 구성 WebClient.Builder 커넥터는 시작 때 잡은 루프를 계속 쥐어 회복하지 못한다

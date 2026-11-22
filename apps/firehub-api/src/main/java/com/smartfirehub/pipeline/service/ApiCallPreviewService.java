@@ -16,7 +16,6 @@ import com.smartfirehub.pipeline.service.executor.SsrfProtectionService;
 import com.smartfirehub.pipeline.service.executor.SsrfSafeHttpClientFactory;
 import java.net.URI;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import org.springframework.stereotype.Service;
@@ -83,9 +82,9 @@ public class ApiCallPreviewService {
     try {
       // 0. 미리보기 지원 메서드(WD-969) — GET·POST 밖은 대상을 부르기 전에 안내한다.
       //    받은 메서드를 그대로 보내면 편집기·에이전트 안내 밖의 PUT·DELETE 가 확인 없이 쓰기가 된다
-      //    (쓰기 미리보기의 확인 절차는 WD-946 이 맡는다).
-      String previewMethod =
-          request.method() != null ? request.method().toUpperCase(Locale.ROOT) : "GET";
+      //    (쓰기 미리보기의 확인 절차는 WD-946 이 맡는다). 값 정리는 RedirectFollower.resolveMethod 한 곳에서 한다
+      //    — 비어 있으면 GET(«요청한  요청을…» 처럼 이름이 빠진 거절이 뜨던 원인), 표준이 아니면 안내 오류(WD-969 리뷰 후속).
+      String previewMethod = RedirectFollower.resolveMethod(request.method()).name();
       if (!PREVIEW_METHODS.contains(previewMethod)) {
         throw new ApiCallException(ApiCallErrorMessages.unsupportedPreviewMethod(previewMethod));
       }
@@ -236,7 +235,8 @@ public class ApiCallPreviewService {
    */
   private String executeRequest(
       URI uri, ApiCallPreviewRequest request, ApiCallAuth.ResolvedAuth auth, int timeoutMs) {
-    String method = request.method() != null ? request.method().toUpperCase(Locale.ROOT) : "GET";
+    // 메서드 값은 위 미리보기 게이트와 같은 한 곳에서 정한다(WD-969 리뷰 후속).
+    String method = RedirectFollower.resolveMethod(request.method()).name();
     return RedirectFollower.follow(
             new RedirectFollower.Request(
                 client(),
