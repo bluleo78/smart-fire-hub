@@ -643,6 +643,8 @@ export function AddMemberDialog({ canAssignRoles, canReadRoles }: { canAssignRol
                     <div className="flex gap-2">
                       <Input
                         id="member-password"
+                        // WD-908: 감싼 div 때문에 FormField 가 찾지 못해 화면이 직접 필수를 알린다
+                        aria-required
                         className="font-mono"
                         autoComplete="off"
                         spellCheck={false}

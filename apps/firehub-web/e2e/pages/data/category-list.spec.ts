@@ -489,6 +489,8 @@ test.describe('카테고리 관리 페이지', () => {
 
     // 열자마자 필수 표시(*)와 안내가 보이고, 입력과 안내가 aria-describedby 로 이어진다
     await expect(dialog.locator('label[for="create-name"]')).toHaveText('이름*');
+    // 별표는 눈으로만 보이고(접근 이름에서는 빠짐), 필수 여부는 aria-required 로 알린다 (WD-908)
+    await expect(dialog.getByRole('textbox', { name: '이름', exact: true })).toHaveAttribute('aria-required', 'true');
     await expect(hint).toBeVisible();
     await expect(nameInput).toHaveAttribute('aria-describedby', /create-name-hint/);
     // 안내가 보이는 그 화면에서 「만들기」가 꺼져 있다 — 안내가 꺼진 이유를 설명한다
@@ -526,6 +528,8 @@ test.describe('카테고리 관리 페이지', () => {
     await page.getByRole('button', { name: '소방 데이터 편집' }).click();
     await expect(page.getByRole('dialog')).toBeVisible();
     await expect(page.getByRole('dialog').locator('label[for="edit-name"]')).toHaveText('이름*');
+    // 별표는 눈으로만 보이고(접근 이름에서는 빠짐), 필수 여부는 aria-required 로 알린다 (WD-908)
+    await expect(page.getByRole('dialog').getByRole('textbox', { name: '이름', exact: true })).toHaveAttribute('aria-required', 'true');
   });
 
   test('검색 입력으로 카테고리를 필터링한다 (이슈 #75)', async ({
