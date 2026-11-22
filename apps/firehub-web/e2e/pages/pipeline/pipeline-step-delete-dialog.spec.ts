@@ -10,7 +10,6 @@
  */
 import type { Page } from '@playwright/test';
 
-import { createPipelineDetail, createStep } from '../../factories/pipeline.factory';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { grantPipelinePermissions, setupPipelineEditorMocks } from '../../fixtures/pipeline.fixture';
 
@@ -79,117 +78,6 @@ function createGate() {
     release = resolve;
   });
   return { promise, release };
-}
-
-/** 저장 중 요청 본문에서 시험이 보는 부분 */
-type SavedPayload = { steps: { name: string; scriptContent: string }[] };
-
-/** {{#1}}·{{#2}} 참조가 있는 3스텝 — 스텝 삭제가 새면 참조 번호가 밀려 저장 본문이 달라진다 */
-const ORIGINAL_NAMES = ['데이터 추출', '데이터 변환', '데이터 적재'];
-const ORIGINAL_SCRIPTS = ['SELECT * FROM source_table', 'SELECT * FROM {{#1}}', 'SELECT * FROM {{#2}}'];
-
-function createThreeStepDetail(name: string) {
-  return createPipelineDetail({
-    name,
-    steps: [
-      createStep(),
-      createStep({ id: 2, name: '데이터 변환', stepOrder: 1, scriptContent: ORIGINAL_SCRIPTS[1], dependsOnStepNames: ['데이터 추출'] }),
-      createStep({ id: 3, name: '데이터 적재', stepOrder: 2, scriptContent: ORIGINAL_SCRIPTS[2], dependsOnStepNames: ['데이터 변환'] }),
-    ],
-  });
-}
-
-/**
- * 「저장 중 삭제 창이 열려 있는데 저장이 끝나는」 상황을 만든다 (WD-952).
- * 첫 PUT 과 그 뒤 GET(재조회)을 시험이 여는 문으로 막아 두어, 저장 완료(읽기 전용 전환)와 재조회(tempId 교체)를
- * 따로 일으킬 수 있다. slowExit 이면 닫히는 창의 퇴장 애니메이션을 늘려 Presence 가 창을 계속 마운트하게 하므로
- * 「닫히는 중인 창의 삭제 버튼」을 200ms 경주 없이 결정적으로 누를 수 있다.
- * 반환 시점: 이름을 바꿔 저장을 누르고, PUT 이 걸려 있는 채로 「데이터 변환」의 삭제 창이 열려 있다.
- */
-async function openDialogWhileSaving(page: Page, options: { slowExit: boolean }) {
-  await setupPipelineEditorMocks(page, 1);
-  const putStarted = createGate();
-  const releasePut = createGate();
-  const releaseGet = createGate();
-  const refetchServed = createGate();
-  const puts: SavedPayload[] = [];
-  let saved = false;
-  await page.route(
-    (url) => url.pathname === '/api/v1/pipelines/1',
-    async (route) => {
-      if (route.request().method() === 'PUT') {
-        puts.push(route.request().postDataJSON());
-        if (puts.length === 1) {
-          putStarted.release();
-          await releasePut.promise;
-        }
-        saved = true;
-        return route.fulfill({ json: { updatedAt: '2025-01-01T00:00:00Z' } });
-      }
-      if (saved) await releaseGet.promise;
-      // 저장 뒤 재조회 응답은 이름이 달라, 편집기가 서버 상태로 동기화됐음(tempId 교체)을 화면에서 알 수 있다
-      const detail = createThreeStepDetail(saved ? '서버 이름' : '테스트 파이프라인');
-      await route.fulfill({ json: { ...detail, updatedAt: saved ? '2025-01-01T00:00:00Z' : null } });
-      if (saved) refetchServed.release();
-    },
-  );
-  await page.goto('/pipelines/1');
-  await page.getByRole('button', { name: '수정' }).click();
-  await expect(page.locator('.react-flow__node')).toHaveCount(3);
-  if (options.slowExit) {
-    await page.addStyleTag({ content: '[role="alertdialog"][data-state="closed"] { animation-duration: 8s !important; }' });
-  }
-
-  await page.locator('header input').first().fill('바뀐 이름');
-  await page.getByRole('button', { name: '저장', exact: true }).click();
-  await putStarted.promise;
-  await stepXButton(page, '데이터 변환').click();
-  await expect(page.getByRole('alertdialog')).toBeVisible();
-  // 닫히는 동안에는 버튼이 접근성 트리에서 빠지므로 자리를 열려 있을 때 재 둔다
-  const confirmBox = await dialogButton(page, '삭제').boundingBox();
-  if (!confirmBox) throw new Error('「삭제」 버튼의 자리를 재지 못했다');
-  return { confirmBox, puts, releasePut: releasePut.release, releaseGet: releaseGet.release, refetchServed: refetchServed.promise };
-}
-
-/** 두 번 그려질 시간을 기다린다 — 시간 대신 렌더 프레임으로 「다시 열렸다면 이미 그려졌을」 시점을 보장한다 */
-async function waitRenderFrames(page: Page) {
-  await page.evaluate(
-    () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
-  );
-}
-
-/** 닫히는 중인 창의 「삭제」를 누른다 — 좌표가 빗나가면 「아무 일 없음」 단언이 헛통과하므로 버튼에 닿는지 먼저 본다 */
-async function clickClosingConfirm(page: Page, box: { x: number; y: number; width: number; height: number }) {
-  await expect(page.locator('[role="alertdialog"]')).toHaveAttribute('data-state', 'closed');
-  const point = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
-  const hit = await page.evaluate(
-    ({ x, y }) => document.elementFromPoint(x, y)?.closest('[role="alertdialog"] button')?.textContent,
-    point,
-  );
-  expect(hit).toBe('삭제');
-  await page.mouse.click(point.x, point.y);
-}
-
-/**
- * 재조회가 편집기 상태로 동기화(tempId 교체)될 때까지 기다린다 — 서버 이름이 보이면 동기화된 것이다.
- * 응답 도착을 먼저 기다려, 재조회가 늦어도 화면 단언의 제한 시간을 쓰지 않는다.
- */
-async function waitRefetchApplied(page: Page, refetchServed: Promise<void>) {
-  await refetchServed;
-  await expect(
-    page.getByText('서버 이름').first(),
-    '재조회 미반영 — 삭제가 새면 미저장 상태라 동기화가 무시된다',
-  ).toBeVisible();
-}
-
-/** 편집 모드로 돌아와 이름을 다시 바꿔 저장하고, 두 번째 PUT 에 세 스텝과 참조 번호가 그대로인지 본다 */
-async function saveAgainAndExpectOriginalSteps(page: Page, puts: SavedPayload[]) {
-  await page.getByRole('button', { name: '수정' }).click();
-  await page.locator('header input').first().fill('다시 바뀐 이름');
-  await page.getByRole('button', { name: '저장', exact: true }).click();
-  await expect.poll(() => puts.length).toBe(2);
-  expect(puts[1].steps.map((step) => step.name)).toEqual(ORIGINAL_NAMES);
-  expect(puts[1].steps.map((step) => step.scriptContent)).toEqual(ORIGINAL_SCRIPTS);
 }
 
 test.describe('파이프라인 편집기 — 스텝 삭제 확인 창 (WD-952)', () => {
@@ -308,44 +196,33 @@ test.describe('파이프라인 편집기 — 스텝 삭제 확인 창 (WD-952)',
     await expect(page.getByRole('alertdialog')).toHaveCount(0);
   });
 
-  // 저장·재조회로 삭제 대상이 무효가 되면 대기 중인 삭제 요청도 버려져야 한다(WD-952 리뷰 후속)
-  test('저장이 끝나면 열려 있던 삭제 창이 닫히고 다시 수정해도 저절로 열리지 않는다', async ({ authenticatedPage: page }) => {
-    const { releasePut } = await openDialogWhileSaving(page, { slowExit: false });
-
-    // PUT 만 풀어 읽기 전용으로 바뀌게 한다 — 재조회(GET)는 아직 막혀 있어 tempId 는 그대로다
-    releasePut();
-    await expect(page.getByRole('alertdialog')).toHaveCount(0);
-
+  // 저장 중에는 편집이 잠겨(WD-953) 노드 X 가 없으므로 삭제 창을 열 수 없다 — 열린 채 저장이 끝나는 경주 자체가 사라졌다
+  test('저장이 도는 동안에는 스텝 삭제 버튼이 없어 삭제 창을 열 수 없다 (WD-953)', async ({ authenticatedPage: page }) => {
+    await setupPipelineEditorMocks(page, 1);
+    const putStarted = createGate();
+    const releasePut = createGate();
+    await page.route(
+      (url) => url.pathname === '/api/v1/pipelines/1',
+      async (route) => {
+        if (route.request().method() !== 'PUT') return route.fallback();
+        putStarted.release();
+        await releasePut.promise;
+        return route.fulfill({ json: { updatedAt: '2025-01-01T00:00:00Z' } });
+      },
+    );
+    await page.goto('/pipelines/1');
     await page.getByRole('button', { name: '수정' }).click();
-    // 창이 다시 열리면 바깥이 aria-hidden 이 되어 role 조회가 막히므로, 텍스트로 편집 모드 진입을 확인한다
-    await expect(page.getByText('수정모드').first()).toBeVisible();
-    // 다시 열렸다면 이 프레임들 안에 그려졌을 것이므로, 이 뒤의 「0」은 우연히 이른 통과가 아니다
-    await waitRenderFrames(page);
+    await expect(page.locator('.react-flow__node')).toHaveCount(2);
+    await page.locator('header input').first().fill('바뀐 이름');
+    // 저장 전에 노드 X 가 있었음을 먼저 보아 '없음' 단언이 헛통과하지 않게 한다
+    await page.locator('.react-flow__node').first().hover();
+    await expect(page.getByRole('button', { name: '스텝 삭제' }).first()).toBeVisible();
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+    await putStarted.promise;
+
+    await expect(page.getByRole('button', { name: '스텝 삭제' })).toHaveCount(0);
     await expect(page.getByRole('alertdialog')).toHaveCount(0);
-  });
-
-  test('저장이 끝난 직후 닫히는 창의 삭제를 눌러도 읽기 전용 스텝이 지워지지 않는다', async ({ authenticatedPage: page }) => {
-    const { confirmBox, puts, releasePut, releaseGet, refetchServed } = await openDialogWhileSaving(page, { slowExit: true });
-
-    releasePut();
-    // 읽기 전용이 되어 창이 닫히는 중(퇴장 애니메이션 중이라 아직 마운트되어 있다)일 때 삭제를 누른다
-    await clickClosingConfirm(page, confirmBox);
-    await expect(page.locator('.react-flow__node')).toHaveCount(3);
-
-    releaseGet();
-    // 동기화 전에 다음 편집을 시작하면 늦은 재조회와 순서가 실행마다 달라진다
-    await waitRefetchApplied(page, refetchServed);
-    await saveAgainAndExpectOriginalSteps(page, puts);
-  });
-
-  test('재조회로 tempId 가 바뀐 뒤 닫히는 창의 삭제를 눌러도 다음 저장 본문이 그대로다', async ({ authenticatedPage: page }) => {
-    const { confirmBox, puts, releasePut, releaseGet, refetchServed } = await openDialogWhileSaving(page, { slowExit: true });
-
-    releasePut();
-    releaseGet();
-    await waitRefetchApplied(page, refetchServed);
-    await clickClosingConfirm(page, confirmBox);
-
-    await saveAgainAndExpectOriginalSteps(page, puts);
+    releasePut.release();
+    await expect(page.getByRole('button', { name: '수정' })).toBeVisible();
   });
 });

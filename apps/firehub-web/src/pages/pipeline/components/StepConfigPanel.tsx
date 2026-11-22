@@ -116,6 +116,7 @@ export default function StepConfigPanel({
   // WD-954: 저장 중에 열어 둔 삭제 창이 보기 모드로 바뀐 뒤에도 남아 스텝을 지우는 것을 막는다.
   // 렌더 중 이전 readOnly 와 비교해 상태를 조정한다(useEffect 로 하면 한 프레임 동안 창이 남고,
   // react-hooks 린트의 effect 내 setState 경고도 피한다). 보기 모드가 되는 순간 창을 닫아 이후 다시 수정해도 되살아나지 않는다.
+  // 저장 중 잠금(WD-953) 뒤로는 저장 경로로 이 상황에 닿지 않아 방어용으로 남긴다.
   const [prevReadOnly, setPrevReadOnly] = useState(readOnly);
   if (prevReadOnly !== readOnly) {
     setPrevReadOnly(readOnly);
@@ -191,8 +192,10 @@ export default function StepConfigPanel({
         : null,
     [parentIntegerDrafts, selectedTempId, selectedScriptType],
   );
-  // 이 스텝의 요청일 때만 처리한다(WD-633)
-  const focusField = focusRequest && focusRequest.stepTempId === selectedTempId ? focusRequest.field : null;
+  // 이 스텝의 요청일 때만 처리한다(WD-633).
+  // 잠긴(readOnly) 동안에는 보류한다(WD-953) — 저장 전 검사가 도는 동안 패널이 잠겨 있어, 검증 실패로 요청이 생기는 순간 칸이
+  // disabled 라 포커스가 먹지 않고 요청만 지워진다. 요청을 남겨 두면 잠금이 풀린 뒤 이 effect 가 다시 돌아 포커스한다.
+  const focusField = !readOnly && focusRequest && focusRequest.stepTempId === selectedTempId ? focusRequest.field : null;
   const clearFocusRequest = () => dispatch({ type: 'CLEAR_FOCUS_REQUEST' });
   // 스크립트 편집기(CodeMirror)는 핸들로 포커스한다 — 지연 로드가 끝날 때까지 요청을 남겨 둔다
   useEffect(() => {

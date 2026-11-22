@@ -105,6 +105,10 @@ export default function PipelineEditorPage() {
     cancelEdit,
     isSaving,
   } = usePipelineEditor(pipelineId);
+  // 저장 요청이 도는 동안 편집을 막는다 — 저장은 누른 순간의 상태를 보내고 응답 뒤 MARK_SAVED 가
+  // 그 사이 편집까지 저장됨으로 표시해, 재조회가 그 편집을 조용히 지웠다(WD-953).
+  // 캔버스·설정 패널은 기존 readOnly 경로를 그대로 쓴다.
+  const editLocked = readOnly || isSaving;
   // 편집 충돌 창의 「다시 불러오기」 진행 중 — 저장 중(isSaving)과 함께 창의 버튼을 막는다
   const [isReloading, setIsReloading] = useState(false);
 
@@ -618,7 +622,7 @@ export default function PipelineEditorPage() {
             <PipelineCanvas
               state={state}
               dispatch={editorDispatch}
-              readOnly={readOnly}
+              readOnly={editLocked}
             />
           </div>
 
@@ -627,7 +631,7 @@ export default function PipelineEditorPage() {
             <StepConfigPanel
               state={state}
               dispatch={dispatch}
-              readOnly={readOnly}
+              readOnly={editLocked}
               nameInputRef={setStepNameInput}
               datasets={datasetOptions}
               datasetsLoaded={allDatasets !== undefined}

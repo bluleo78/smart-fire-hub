@@ -4,6 +4,7 @@
  * 결함: 저장 요청이 진행 중일 때 패널의 「스텝 삭제」 확인 창을 열면, 저장이 끝나 보기 모드가 되어도
  * 창이 남아 있었고 거기서 「삭제」를 누르면 저장된 스텝이 화면에서만 지워졌다.
  * 이제 보기 모드가 되면 창이 닫히고, 확인 동작도 보기 모드에서는 아무것도 지우지 않는다.
+ * WD-953 뒤: 저장 중에는 패널 「스텝 삭제」 버튼 자체가 없어 창을 열 수 없다 — 저장 뒤 스텝이 그대로인지 본다.
  */
 
 import type { UpdatePipelineRequest } from '@/types/pipeline';
@@ -19,7 +20,7 @@ test.describe('파이프라인 편집 — 저장 중 패널 삭제 창 (WD-954)'
     await grantPipelinePermissions(page);
   });
 
-  test('저장 중에 연 패널 삭제 창은 보기 모드가 되면 닫히고 스텝을 지우지 않는다(WD-954)', async ({
+  test('저장 중에는 패널 삭제 창을 열 수 없고 저장 뒤 스텝이 그대로다(WD-954·WD-953)', async ({
     authenticatedPage: page,
   }) => {
     const V1 = '2026-10-30T10:00:00.123456';
@@ -60,13 +61,13 @@ test.describe('파이프라인 편집 — 저장 중 패널 삭제 창 (WD-954)'
     await page.getByRole('button', { name: '수정' }).click();
     await page.locator('.react-flow__node', { hasText: 's2' }).click();
     await page.locator('#step-name').fill('s2-renamed');
+    // 저장 전에 패널 「스텝 삭제」가 있었음을 먼저 보아 '없음' 단언이 헛통과하지 않게 한다
+    await expect(page.getByRole('button', { name: '스텝 삭제' }).filter({ hasText: '스텝 삭제' })).toBeVisible();
     await page.getByRole('button', { name: '저장', exact: true }).click();
     await expect.poll(hold.count).toBe(1);
 
-    // 저장이 붙잡힌 동안 패널의 삭제 창을 연다
-    // 캔버스 노드의 X 도 같은 접근 이름이라, 글자가 보이는 패널 버튼만 고른다(DOM 순서에 기대지 않게).
-    await page.getByRole('button', { name: '스텝 삭제' }).filter({ hasText: '스텝 삭제' }).click();
-    await expect(page.getByRole('alertdialog')).toBeVisible();
+    // 저장이 붙잡힌 동안 패널의 「스텝 삭제」(글자 있는 것)는 없다 — 캔버스 노드의 X 와 구분하려 글자로 거른다.
+    await expect(page.getByRole('button', { name: '스텝 삭제' }).filter({ hasText: '스텝 삭제' })).toHaveCount(0);
 
     hold.release();
     // 보기 모드로 돌아온 것(수정 버튼)을 먼저 기다린 뒤 확인해야, 저장이 끝나기 전 상태로 곧바로 통과하지 않는다.

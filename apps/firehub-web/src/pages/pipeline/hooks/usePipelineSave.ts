@@ -1,5 +1,5 @@
 import type { Dispatch } from 'react';
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -56,9 +56,14 @@ export function usePipelineSave({
   const createMutation = useCreatePipeline();
   const updateMutation = useUpdatePipeline(pipelineId ?? 0);
   const [editConflict, setEditConflict] = useState(false);
+  // 저장 시도 전체(저장 전 검사 + 요청)가 도는 중인가 — 화면 반영용 state 와 겹친 호출 차단용 ref 를 함께 둔다(WD-953).
+  // 저장 전 검사(validate)는 출력 데이터셋 컬럼을 네트워크로 가져올 수 있어 mutation isPending 만 보면
+  // 그 사이 편집이 열려 있고, 그 편집은 요청에 실리지 않은 채 MARK_SAVED·재조회로 사라진다. 저장 버튼 이중 클릭도 같은 틈으로 들어온다.
+  const [persisting, setPersisting] = useState(false);
+  const persistingRef = useRef(false);
 
   /** force: 기준 버전을 보내지 않아 서버가 비교하지 않는다(「내 변경으로 덮어쓰기」) */
-  const persist = useCallback(async (force: boolean): Promise<boolean> => {
+  const persistInner = useCallback(async (force: boolean): Promise<boolean> => {
     if (!(await validate())) return false;
 
     const stepsRequest: PipelineStepRequest[] = state.steps.map((step) => ({
@@ -121,11 +126,26 @@ export function usePipelineSave({
     }
   }, [state, validate, createMutation, updateMutation, navigate, dispatch, onSaved]);
 
+  /** 저장 시도 전체를 한 번에 하나로 묶는다 — overwrite 도 같은 경로라 같은 보호를 받는다 */
+  const persist = useCallback(async (force: boolean): Promise<boolean> => {
+    // 이미 도는 중이면 두 번째 요청(이중 클릭·충돌 창 중복 클릭)을 무시한다 — 두 번째 PUT 이 409 충돌 창을 띄우는 것을 막는다
+    if (persistingRef.current) return false;
+    persistingRef.current = true;
+    setPersisting(true);
+    try {
+      return await persistInner(force);
+    } finally {
+      persistingRef.current = false;
+      setPersisting(false);
+    }
+  }, [persistInner]);
+
   const save = useCallback(() => persist(false), [persist]);
   const overwrite = useCallback(() => persist(true), [persist]);
   const dismissEditConflict = useCallback(() => setEditConflict(false), []);
 
-  const isSaving = createMutation.isPending || updateMutation.isPending;
+  // 저장 전 검사 구간도 저장 중으로 본다 — 화면이 편집을 잠그고 저장 버튼을 막는다(WD-953)
+  const isSaving = persisting || createMutation.isPending || updateMutation.isPending;
 
   return { save, overwrite, editConflict, dismissEditConflict, isSaving };
 }
