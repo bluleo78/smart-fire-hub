@@ -100,6 +100,28 @@ test.describe('파이프라인 에디터 — 스텝 설정', () => {
     await expect(page.getByRole('button', { name: '자동 정렬' })).toBeVisible();
   });
 
+  test('스텝 설정 패널의 닫기 버튼은 「스텝 설정 패널 닫기」 이름으로 불리고 누르면 패널이 닫힌다 (WD-917)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupNewEditorMocks(page);
+    await page.goto('/pipelines/new');
+
+    await clickToolbarAddStep(page);
+    const header = page.getByText(/^스텝 #1:/);
+    await expect(header).toBeVisible({ timeout: 10000 });
+
+    // 패널 루트 — 전용 data-testid 로 구조 변화에 흔들리지 않게 잡는다
+    const panel = page.getByTestId('step-config-panel');
+
+    // 기본(SQL) 스텝 패널 안에 이름 없는 button(스냅샷 줄이 `- button` 또는 `- button:` 뿐인 것)이 없어야 한다
+    const snapshot = await panel.ariaSnapshot();
+    expect(snapshot).not.toMatch(/^\s*- button\s*(\[[^\]]*\])?:?\s*$/m);
+
+    // 이름으로 닫기 버튼을 찾아 누르면 패널이 닫힌다
+    await page.getByRole('button', { name: '스텝 설정 패널 닫기' }).click();
+    await expect(header).toHaveCount(0);
+  });
+
   test('이름 미입력 상태로 저장 클릭 시 usePipelineValidation 이 실패한다', async ({
     authenticatedPage: page,
   }) => {
