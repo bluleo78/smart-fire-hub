@@ -99,6 +99,7 @@ export function PipelineCanvas({
       id: step.tempId,
       type: 'step',
       position: step.position,
+      domAttributes: STEP_DOM_ATTRS,
       data: {
         label: step.name || '(이름 없음)',
         description: step.description || undefined,
@@ -163,10 +164,16 @@ export function PipelineCanvas({
     [dispatch],
   );
 
-  const edges = useMemo<Edge[]>(() =>
-    state.steps.flatMap((step) =>
+  const edges = useMemo<Edge[]>(() => {
+    // 연결선 이름에 쓸 스텝 표시 이름을 스텝마다 한 번 만든다 — 이름이 없으면 「스텝 #순번」(WD-918)
+    const labels = new Map(state.steps.map((s, i) => [s.tempId, s.name || `스텝 #${i + 1}`]));
+    const stepLabel = (tempId: string) => labels.get(tempId) ?? '';
+    return state.steps.flatMap((step) =>
       step.dependsOnTempIds.map((depTempId) => ({
         id: `${depTempId}-${step.tempId}`,
+        // xyflow 기본 영문 「Edge from … to …」 대신 스텝 이름으로 읽히게 한다(WD-918)
+        ariaLabel: `「${stepLabel(depTempId)}」에서 「${stepLabel(step.tempId)}」(으)로 연결`,
+        domAttributes: EDGE_DOM_ATTRS,
         source: depTempId,
         target: step.tempId,
         type: 'addStep',
@@ -178,8 +185,8 @@ export function PipelineCanvas({
             state.steps.find((s) => s.tempId === depTempId)?.id,
           )?.status === 'RUNNING',
       })),
-    ),
-  [state.steps, executionData, readOnly, onInsertBetween, onRemoveEdge, selectedEdgeIds]);
+    );
+  }, [state.steps, executionData, readOnly, onInsertBetween, onRemoveEdge, selectedEdgeIds]);
 
   const onNodeClick: NodeMouseHandler = (_event, node) => {
     // SELECT_STEP is allowed in readOnly mode (non-destructive, enables ExecutionStepPanel)
@@ -285,7 +292,9 @@ export function PipelineCanvas({
           fitView
           fitViewOptions={{ maxZoom: 1, minZoom: 0.2, padding: 0.3 }}
           proOptions={{ hideAttribution: true }}
-          ariaLabelConfig={KO_ARIA_LABEL_CONFIG}
+          ariaLabelConfig={readOnly ? KO_ARIA_LABEL_CONFIG_VIEW : KO_ARIA_LABEL_CONFIG_EDIT}
+          // WD-918: 스크린리더가 캔버스 영역을 영문 기본값 대신 한국어 이름으로 읽게 한다
+          aria-label="파이프라인 다이어그램"
         >
           <Background color={resolvedTheme === 'dark' ? 'oklch(1 0 0 / 8%)' : undefined} />
           {/* WD-883: 확대·축소·전체 보기 버튼 크기는 index.css 의 .react-flow__controls-button 규칙(32×32)으로 키운다 */}
@@ -349,15 +358,45 @@ export function PipelineCanvas({
 }
 
 /**
- * @xyflow/react 컨트롤 패널/접근성 라벨의 한국어 i18n 설정.
- * ReactFlow의 ariaLabelConfig prop으로 전달하면 Controls 4개 버튼
- * (zoomIn/zoomOut/fitView/interactive) 및 컨트롤/노드/엣지 컨테이너의
- * aria-label/title이 한국어로 노출된다.
+ * @xyflow/react 컨트롤 패널/접근성 라벨의 한국어 i18n 설정 공통 부분.
+ * Controls 4개 버튼(zoomIn/zoomOut/fitView/interactive) 및 컨트롤 컨테이너의
+ * aria-label/title 이 한국어로 노출된다.
  */
-const KO_ARIA_LABEL_CONFIG = {
+const KO_CONTROLS_LABELS = {
   'controls.ariaLabel': '다이어그램 컨트롤',
   'controls.zoomIn.ariaLabel': '확대',
   'controls.zoomOut.ariaLabel': '축소',
   'controls.fitView.ariaLabel': '전체 보기',
   'controls.interactive.ariaLabel': '상호작용 잠금/해제',
 } as const;
+
+/** 스크린리더가 영문 node/edge 대신 「스텝」·「연결」로 읽게 하는 역할 설명 (WD-918) */
+const STEP_DOM_ATTRS = { 'aria-roledescription': '스텝' } as const;
+const EDGE_DOM_ATTRS = { 'aria-roledescription': '연결' } as const;
+
+/** 노드 이동 알림을 비운다 — 노드가 키보드로 실제로 움직이지 않아 「Moved…」 는 거짓 안내다 (WD-918, 이동은 WD-1046) */
+const NO_MOVE_ANNOUNCEMENT = () => '';
+
+/** 노드 안내문 — xyflow 가 키보드 켬/끔에 따라 default·keyboardDisabled 중 하나를 쓰므로 두 키에 같이 넣는다 (WD-918) */
+const EDIT_NODE_DESC =
+  '스텝 노드입니다. 노드 안에 「다음 스텝 추가」·「스텝 삭제」 버튼이 있으면 Tab 키로 이동할 수 있고, 스텝 설정은 노드를 클릭해 엽니다.';
+const VIEW_NODE_DESC = '스텝 노드입니다.';
+
+/** 수정 모드 안내문 (WD-918). 12.10 에는 handle.ariaLabel 키가 없어 연결점 이름은 바꾸지 않는다. */
+const KO_ARIA_LABEL_CONFIG_EDIT = {
+  ...KO_CONTROLS_LABELS,
+  'node.a11yDescription.default': EDIT_NODE_DESC,
+  'node.a11yDescription.keyboardDisabled': EDIT_NODE_DESC,
+  'node.a11yDescription.ariaLiveMessage': NO_MOVE_ANNOUNCEMENT,
+  'edge.a11yDescription.default':
+    '스텝 사이 연결입니다. Enter 나 Space 로 연결을 고른 뒤 Delete 나 Backspace 로 끊고, Escape 로 선택을 풉니다.',
+};
+
+/** 보기 모드 안내문 — 조작할 수 없으므로 설명만 읽힌다 (WD-918) */
+const KO_ARIA_LABEL_CONFIG_VIEW = {
+  ...KO_CONTROLS_LABELS,
+  'node.a11yDescription.default': VIEW_NODE_DESC,
+  'node.a11yDescription.keyboardDisabled': VIEW_NODE_DESC,
+  'node.a11yDescription.ariaLiveMessage': NO_MOVE_ANNOUNCEMENT,
+  'edge.a11yDescription.default': '스텝 사이 연결입니다.',
+};
