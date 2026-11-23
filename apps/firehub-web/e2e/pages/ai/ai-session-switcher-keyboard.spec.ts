@@ -426,6 +426,10 @@ test.describe('SessionSwitcher — 키보드 삭제 (WD-951)', () => {
       await openListByKeyboard(page);
       await page.keyboard.press('Enter');
       await expect.poll(() => requests.messages).toEqual(['sw-1']);
+      // 닫히는 목록이 사라질 때까지 기다린다(리뷰 후속 ②) — 닫힘 애니메이션 동안 modal Popover 가 바깥(여는 버튼)을
+      // aria-hidden 으로 가려 두어, 바로 이름 「첫째 대화」로 찾으면 닫히는 목록의 제목 버튼이 잡혀 그 대화를 한 번 더 열었다
+      // (메시지 조회 sw-1 두 번 — 시작점에서도 6번 중 3번 흔들림의 원인).
+      await expect(page.getByRole('dialog', { name: '대화 선택' })).toHaveCount(0);
       await page.getByRole('button', { name: '첫째 대화', exact: true }).click();
       await deleteByKeyboard(page, '둘째 대화');
       await expect.poll(() => requests.deletes).toEqual(['2']);
@@ -436,6 +440,8 @@ test.describe('SessionSwitcher — 키보드 삭제 (WD-951)', () => {
       await page.mouse.click(2, 2);
       expect(await focusIsOnBody(page)).toBe(true);
 
+      // 이 시점 뒤의 메시지 조회만 센다 — 갱신이 대화를 다시 열거나 바꾸면 여기에 잡힌다
+      const messagesBefore = requests.messages.length;
       const refetched = page.waitForResponse(
         (r) => new URL(r.url()).pathname === '/api/v1/ai/sessions' && r.request().method() === 'GET',
       );
@@ -447,8 +453,7 @@ test.describe('SessionSwitcher — 키보드 삭제 (WD-951)', () => {
       expect(await focusIsOnBody(page)).toBe(true);
       // 현재 대화는 그대로 — 다른 대화를 열지도 새 대화를 시작하지도 않았다
       await expect(page.getByRole('button', { name: '첫째 대화', exact: true })).toBeVisible();
-      // 같은 대화(sw-1)의 메시지 재조회는 타이밍에 따라 한 번 더 나갈 수 있어(시작점에서도 6번 중 3번) 「다른 대화를 열지 않음」만 본다
-      expect([...new Set(requests.messages)]).toEqual(['sw-1']);
+      expect(requests.messages.slice(messagesBefore)).toEqual([]);
     });
 
     test('삭제 응답보다 목록 갱신이 먼저 와서 줄이 사라져도 다음 줄 제목에 초점이 간다', async ({
@@ -525,6 +530,60 @@ test.describe('SessionSwitcher — 키보드 삭제 (WD-951)', () => {
       await expect(titleBtn(page, '새로 생긴 대화')).toBeFocused();
       // 붙잡은 요청을 모두 풀어 둔다
       requests.releaseDelete('3');
+    });
+
+    test('204 가 먼저 와 줄이 빠지고 초점이 이웃에 간 뒤, 재조회로 그 이웃마저 사라지면 첫 남은 줄로 간다 (WD-973 리뷰 후속 ③)', async ({
+      authenticatedPage: page,
+    }) => {
+      // 순서: DELETE 204 → 캐시에서 둘째가 바로 빠져 초점이 이웃(셋째)으로 → 붙잡아 둔 재조회가 셋째도 없는 서버 목록을 가져온다.
+      // 둘째의 기억은 첫 갱신에서 이미 꺼냈으므로, 초점 쥔 셋째 줄이 사라질 때 초점을 잃지 않게 따로 받아야 한다.
+      const requests = await openPanel(page, MOCK_SESSIONS, { slowDeleteIds: ['2'], holdRefetch: true });
+      await openListByKeyboard(page);
+      await deleteByKeyboard(page, '둘째 대화');
+      await expect.poll(() => requests.deletes).toEqual(['2']);
+      // 그사이 다른 곳에서 셋째가 지워졌다 — 다음 목록 GET 부터 셋째도 없다
+      requests.setSessions([MOCK_SESSIONS[0]]);
+
+      requests.releaseDelete('2');
+      await expect(titleBtn(page, '둘째 대화')).toHaveCount(0);
+      await expect(titleBtn(page, '셋째 대화')).toBeFocused();
+
+      requests.release();
+      await expect(titleBtn(page, '셋째 대화')).toHaveCount(0);
+      await expect(titleBtn(page, '첫째 대화')).toBeFocused();
+      await expect(page.getByRole('dialog', { name: '대화 선택' })).toBeVisible();
+    });
+
+    test('현재 대화를 지우면 새 대화로 바뀌어도 초점은 이웃 줄에 남는다 — 줄 사라짐 초점과 onSessionDeleted 가 다투지 않는다 (WD-973 리뷰 후속 ⑤)', async ({
+      authenticatedPage: page,
+    }) => {
+      const requests = await openPanel(page, MOCK_SESSIONS, { slowDeleteIds: ['2'] });
+      // 둘째를 현재 대화로 연다 — 선택하면 목록이 닫히고 초점은 여는 버튼(이제 이름 「둘째 대화」)으로 간다
+      await openListByKeyboard(page);
+      await titleBtn(page, '둘째 대화').focus();
+      await page.keyboard.press('Enter');
+      await expect.poll(() => requests.messages).toEqual(['sw-2']);
+      await expect(page.getByRole('dialog', { name: '대화 선택' })).toHaveCount(0);
+      const trigger = page.getByRole('button', { name: '둘째 대화', exact: true });
+      await expect(trigger).toBeFocused();
+      await page.keyboard.press('Enter');
+      await expect(page.getByRole('dialog', { name: '대화 선택' })).toBeVisible();
+
+      await deleteByKeyboard(page, '둘째 대화');
+      await expect.poll(() => requests.deletes).toEqual(['2']);
+      requests.releaseDelete('2');
+      // 줄이 사라져 이웃(셋째)으로 간 초점을 새 대화 전환(onSessionDeleted → startNewSession)이 빼앗지 않는다
+      await expect(titleBtn(page, '둘째 대화')).toHaveCount(0);
+      await expect(titleBtn(page, '셋째 대화')).toBeFocused();
+      // 새 대화로 바뀌었다 — 성공 토스트 뒤(onSessionDeleted 가 끝난 뒤)에도 초점·목록이 그대로다
+      await expect(page.getByText('대화가 삭제되었습니다.')).toBeVisible();
+      await expect(page.getByRole('dialog', { name: '대화 선택' }).locator('[aria-current="true"]')).toHaveCount(0);
+      await expect(titleBtn(page, '셋째 대화')).toBeFocused();
+      await expect(page.getByRole('dialog', { name: '대화 선택' })).toBeVisible();
+      // 닫으면 여는 버튼은 새 대화(목록에 없는 대화)라 「대화 선택」이다
+      await page.keyboard.press('Escape');
+      await expect(page.getByRole('button', { name: '대화 선택', exact: true })).toBeFocused();
+      expect(requests.messages).toEqual(['sw-2']);
     });
 
     test('실패한 삭제는 기억에서 빠져, 뒤에 그 줄이 다른 까닭으로 사라져도 초점을 그 이웃으로 끌지 않는다 (리뷰 후속 ②)', async ({
@@ -782,6 +841,27 @@ test.describe('SessionSwitcher — 키보드 삭제 (WD-951)', () => {
       requests.releaseDelete('1');
     });
 
+    test('잠긴 휴지통을 눌러도 클릭이 위로 번지지 않는다 (리뷰 후속 ①)', async ({ authenticatedPage: page }) => {
+      const requests = await openPanel(page, MOCK_SESSIONS, { slowDeleteIds: ['1'] });
+      await confirmDeleteFirst(page);
+      await expect.poll(() => requests.deletes).toEqual(['1']);
+      await expect(deleteBtn(page, '첫째 대화')).toHaveAttribute('aria-disabled', 'true');
+
+      // React 는 루트에서 이벤트를 나눠 주므로, 핸들러가 막으면 문서까지 올라오지 않는다 — 문서에 닿은 휴지통 클릭을 센다.
+      // 잠긴 버튼은 확인 창 트리거의 stopPropagation(호출자 onClick)을 건너뛰어, 막지 않으면 줄·목록을 품은 onClick 까지 번진다.
+      await page.evaluate(() => {
+        const w = window as unknown as { __trashBubbled: number };
+        w.__trashBubbled = 0;
+        document.addEventListener('click', (e) => {
+          if ((e.target as Element).closest('[aria-label="첫째 대화 삭제"]')) w.__trashBubbled += 1;
+        });
+      });
+      await deleteBtn(page, '첫째 대화').click({ force: true });
+      await expect(confirm(page)).toHaveCount(0);
+      expect(await page.evaluate(() => (window as unknown as { __trashBubbled: number }).__trashBubbled)).toBe(0);
+      requests.releaseDelete('1');
+    });
+
     for (const key of ACTIVATE_KEYS) {
       test(`키보드(${key})로 눌러도 열리지 않는다`, async ({ authenticatedPage: page }) => {
         const requests = await openPanel(page, MOCK_SESSIONS, { slowDeleteIds: ['1'] });
@@ -800,7 +880,8 @@ test.describe('SessionSwitcher — 키보드 삭제 (WD-951)', () => {
       authenticatedPage: page,
     }) => {
       const requests = await openPanel(page, MOCK_SESSIONS, { slowDeleteIds: ['1'], holdRefetch: true });
-      // 목록이 열린 채로 있어야 줄이 사라졌음을 볼 수 있다 — 키보드로 지운다(마우스 확인은 목록을 닫는다)
+      // 목록이 열린 채로 있어야 줄이 사라졌음을 볼 수 있다. 확인 창은 마우스·키보드 어느 쪽으로 확정해도 목록을 닫지 않는다
+      // (위 「확인 뒤 응답 전에…」 시험이 마우스 확정 뒤 같은 목록의 휴지통을 누른다) — 여기서는 WD-951 초점 시험과 같은 키보드 경로로 지운다
       await openListByKeyboard(page);
       await deleteBtn(page, '첫째 대화').focus();
       await page.keyboard.press('Enter');

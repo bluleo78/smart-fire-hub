@@ -21,12 +21,15 @@ export type PendingButtonProps = ComponentProps<typeof Button> & {
  * `aria-disabled` 는 포커스를 지키면서 스크린리더에 「사용 불가」를 알린다.
  *
  * 진행 중 클릭은 preventDefault 하고 호출자 onClick 을 부르지 않는다(WD-572) — 포커스된 버튼의 Enter·Space 도 click 으로 들어오므로 함께 막힌다.
+ * 위로 번지는 것도 막는다(WD-973 리뷰 후속) — 잠긴 버튼은 아무 일도 하지 않아야 한다. 호출자 onClick(예: 확인 창 트리거의
+ * stopPropagation)을 건너뛰므로, 막지 않으면 그 클릭이 버튼을 품은 행·메뉴 항목의 onClick(상세 이동·대화 선택)까지 번진다.
  * 기본 type 은 "button" 이다 — 폼 밖(다이얼로그 등)에서 써도 실수로 폼을 제출하지 않게. 폼 제출은 PendingSubmitButton 을 쓴다.
  */
 export function PendingButton({ pending, className, children, onClick, type = 'button', ...props }: PendingButtonProps) {
   const handleClick = (event: MouseEvent<HTMLButtonElement>) => {
     if (pending) {
       event.preventDefault();
+      event.stopPropagation();
       return;
     }
     onClick?.(event);

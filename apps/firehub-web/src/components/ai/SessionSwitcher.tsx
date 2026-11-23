@@ -47,6 +47,10 @@ export function SessionSwitcher({ currentSessionId, onNewSession, onSessionDelet
   // 초점이 이 컴포넌트(포털로 그려진 목록·확인 창 포함 — React 이벤트는 포털을 지나 올라온다) 안에 있었는지.
   // 초점 쥔 노드가 DOM 에서 빠질 때는 blur 가 오지 않으므로, 줄이 사라져 잃은 초점과 사용자가 치운 초점을 가른다.
   const hadFocus = useRef(false);
+  // 목록 안에서 마지막으로 초점을 받은 줄 버튼(제목·휴지통) — 그 노드가 DOM 에서 빠졌으면 초점 쥔 줄이 사라진 것이다(WD-973 리뷰 후속 ③).
+  // 목록 상자 자신은 담지 않는다: 줄이 빠지면 Radix FocusScope 가 초점을 목록 상자로 옮기는데, 그 focus 가 이 값을 덮으면
+  // 효과가 「사라진 줄」을 못 본다. 목록 밖(여는 버튼·포털의 확인 창)으로 간 초점은 null 로 지워 낡은 노드가 남지 않게 한다.
+  const lastFocused = useRef<HTMLElement | null>(null);
 
   /**
    * 지운 줄이 sessions 에서 사라진 렌더 뒤, 초점을 잃었을 때만 이웃 줄로 옮긴다 (WD-951).
@@ -63,7 +67,12 @@ export function SessionSwitcher({ currentSessionId, onNewSession, onSessionDelet
       pendingDeletes.current.delete(req);
       gone.push(req.neighborId);
     });
-    if (gone.length === 0 || !hadFocus.current) return;
+    // 지운 줄이 사라지지 않았어도 초점 쥔 줄이 사라졌으면 옮긴다(WD-973 리뷰 후속 ③) — 성공(204)이 캐시에서 지운 줄을 먼저 빼
+    // 초점이 이웃으로 간 뒤, 뒤따른 재조회가 그 이웃마저 없는 목록을 가져오면 지운 줄의 기억은 이미 꺼낸 뒤라 초점을 잃는다.
+    const focusedRowGone = lastFocused.current !== null && !lastFocused.current.isConnected;
+    // 한 번 본 사라진 노드는 지운다 — 다음 갱신에서 다시 「사라짐」으로 세지 않게
+    if (focusedRowGone) lastFocused.current = null;
+    if ((gone.length === 0 && !focusedRowGone) || !hadFocus.current) return;
     const active = document.activeElement;
     const lost = !active || active === document.body || active === contentRef.current;
     if (!lost) return;
@@ -89,8 +98,10 @@ export function SessionSwitcher({ currentSessionId, onNewSession, onSessionDelet
   return (
     <div
       className="flex items-center justify-between gap-1"
-      onFocus={() => {
+      onFocus={(e) => {
         hadFocus.current = true;
+        if (e.target === contentRef.current) return;
+        lastFocused.current = contentRef.current?.contains(e.target) ? e.target : null;
       }}
       onBlur={(e) => {
         // 창만 바꾼 blur 는 activeElement 가 그대로라 초점을 치운 것으로 보지 않는다
