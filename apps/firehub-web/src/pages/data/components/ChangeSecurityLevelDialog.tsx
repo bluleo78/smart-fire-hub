@@ -3,6 +3,7 @@ import { useId, useState } from 'react';
 import { toast } from 'sonner';
 
 import { securityLevelsApi } from '../../../api/security-levels';
+import { RequiredMark } from '../../../components/RequiredMark';
 import { Button } from '../../../components/ui/button';
 import {
   Dialog,
@@ -140,9 +141,11 @@ function ChangeSecurityLevelForm({
       </RadioGroup>
       {downgrade && (
         <div className="space-y-1.5">
-          <Label htmlFor="downgrade-reason">하향 사유 *</Label>
+          <Label htmlFor="downgrade-reason"><span>하향 사유 <RequiredMark /></span></Label>
           <Textarea
             id="downgrade-reason"
+            // 하향일 때만 보이는 필수 칸 — aria-required 로 알린다(WD-964)
+            aria-required="true"
             value={reason}
             onChange={(e) => setReason(e.target.value)}
             placeholder={`${MIN_DOWNGRADE_REASON}자 이상`}

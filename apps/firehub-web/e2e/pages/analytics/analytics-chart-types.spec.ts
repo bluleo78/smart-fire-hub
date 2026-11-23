@@ -383,8 +383,8 @@ test.describe('신규 차트 타입 선택 — ChartBuilderPage', () => {
     await expect(page.getByRole('dialog')).toBeVisible();
 
     // 이름 변경
-    await page.getByLabel('이름 *').clear();
-    await page.getByLabel('이름 *').fill('공유 차트');
+    await page.getByRole('textbox', { name: '이름', exact: true }).clear();
+    await page.getByRole('textbox', { name: '이름', exact: true }).fill('공유 차트');
 
     // 공유 토글 ON
     await page.getByRole('switch', { name: '공유 차트' }).click();

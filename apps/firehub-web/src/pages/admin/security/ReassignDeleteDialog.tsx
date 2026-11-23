@@ -1,5 +1,6 @@
 import { useState } from 'react';
 
+import { RequiredMark } from '../../../components/RequiredMark';
 import { Button } from '../../../components/ui/button';
 import {
   Dialog,
@@ -96,9 +97,10 @@ function ReassignDeleteForm({
       {usageReady && inUse && (
         <div className="space-y-4">
           <div className="space-y-1.5">
-            <Label htmlFor="reassign-target">옮길 등급 *</Label>
+            <Label htmlFor="reassign-target"><span>옮길 등급 <RequiredMark /></span></Label>
             <Select value={target} onValueChange={setTarget}>
-              <SelectTrigger id="reassign-target" aria-label="옮길 등급">
+              {/* 필수 칸은 aria-required 로 알린다(WD-964) */}
+              <SelectTrigger id="reassign-target" aria-label="옮길 등급" aria-required="true">
                 <SelectValue placeholder="선택…" />
               </SelectTrigger>
               <SelectContent>
@@ -114,9 +116,10 @@ function ReassignDeleteForm({
           </div>
           {downward && (
             <div className="space-y-1.5">
-              <Label htmlFor="reassign-reason">하향 사유 *</Label>
+              <Label htmlFor="reassign-reason"><span>하향 사유 <RequiredMark /></span></Label>
               <Textarea
                 id="reassign-reason"
+                aria-required="true"
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
                 placeholder={`${MIN_DOWNGRADE_REASON}자 이상`}

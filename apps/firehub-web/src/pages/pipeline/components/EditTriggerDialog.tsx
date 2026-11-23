@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 
 import { pipelinesApi } from '@/api/pipelines';
 import { EditConflictDialog } from '@/components/EditConflictDialog';
+import { RequiredMark } from '@/components/RequiredMark';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -245,11 +246,15 @@ export function EditTriggerDialog({ open, onOpenChange, pipelineId, trigger, onC
 
         <div className="space-y-4">
           <div className="space-y-1.5">
+            {/* 별표는 aria-hidden(RequiredMark), 필수는 입력의 aria-required 로 알린다 (WD-964) */}
             <Label htmlFor="edit-trigger-name">
-              이름 <span className="text-destructive">*</span>
+              <span>
+                이름 <RequiredMark className="text-destructive" />
+              </span>
             </Label>
             <Input
               id="edit-trigger-name"
+              aria-required="true"
               value={name}
               onChange={(e) => handleNameChange(e.target.value)}
               placeholder="트리거 이름"

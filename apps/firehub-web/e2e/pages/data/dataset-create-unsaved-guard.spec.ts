@@ -31,11 +31,11 @@ async function clickSidebarHome(page: Page) {
 }
 
 /**
- * 첫 칼럼의 데이터 타입을 고른다 — 콤보박스를 「데이터 타입 *」 라벨 이름으로 집는다(WD-398 이 라벨을 트리거에 이었다).
+ * 첫 칼럼의 데이터 타입을 고른다 — 콤보박스를 「데이터 타입」 라벨 이름으로 집는다(WD-398 이 라벨을 트리거에 이었다).
  * 표시 문구(hasText)로 거르면 현재 고른 타입에 따라 셀렉터가 바뀌어 깨지기 쉽다 (WD-642).
  */
 async function chooseColumnType(page: Page, optionName: string) {
-  await page.getByRole('combobox', { name: '데이터 타입 *' }).click();
+  await page.getByRole('combobox', { name: '데이터 타입', exact: true }).click();
   await page.getByRole('option', { name: optionName, exact: true }).click();
 }
 
@@ -274,10 +274,10 @@ test.describe('데이터셋 생성 페이지 — 미저장 입력 이탈 가드 
     await page.goto('/data/datasets/new');
     await chooseColumnType(page, '문자열(크기지정)');
     // VARCHAR 전용 최대 길이 입력이 마운트(등록)된 것을 확인한다
-    await expect(page.getByLabel('최대 길이 *')).toBeVisible();
+    await expect(page.getByRole('spinbutton', { name: '최대 길이', exact: true })).toBeVisible();
 
     await chooseColumnType(page, '텍스트');
-    await expect(page.getByLabel('최대 길이 *')).toHaveCount(0);
+    await expect(page.getByRole('spinbutton', { name: '최대 길이', exact: true })).toHaveCount(0);
 
     // 숨겨진 maxLength 값이 남지 않아 원상태와 같다 → 가드가 꺼져 있다
     expect(await beforeUnloadPrevented(page)).toBe(false);
@@ -358,13 +358,13 @@ test.describe('데이터셋 생성 페이지 — 미저장 입력 이탈 가드 
     await page.goto('/data/datasets/new');
     await fillRequired(page, '길이 데이터셋', 'len_dataset');
     await chooseColumnType(page, '문자열(크기지정)');
-    await page.getByLabel('최대 길이 *').fill('255');
+    await page.getByRole('spinbutton', { name: '최대 길이', exact: true }).fill('255');
 
     await chooseColumnType(page, '텍스트');
-    await expect(page.getByLabel('최대 길이 *')).toHaveCount(0);
+    await expect(page.getByRole('spinbutton', { name: '최대 길이', exact: true })).toHaveCount(0);
     await chooseColumnType(page, '문자열(크기지정)');
     // 다시 VARCHAR — 비워지지 않고 사용자가 넣었던 255 가 돌아온다
-    await expect(page.getByLabel('최대 길이 *')).toHaveValue('255');
+    await expect(page.getByRole('spinbutton', { name: '최대 길이', exact: true })).toHaveValue('255');
 
     await page.getByRole('button', { name: '만들기' }).click();
     const req = await capture.waitForRequest();
@@ -381,7 +381,7 @@ test.describe('데이터셋 생성 페이지 — 미저장 입력 이탈 가드 
     await page.goto('/data/datasets/new');
     await fillRequired(page, '텍스트 데이터셋', 'text_dataset');
     await chooseColumnType(page, '문자열(크기지정)');
-    await page.getByLabel('최대 길이 *').fill('255');
+    await page.getByRole('spinbutton', { name: '최대 길이', exact: true }).fill('255');
     await chooseColumnType(page, '텍스트');
 
     await page.getByRole('button', { name: '만들기' }).click();
@@ -541,11 +541,11 @@ test.describe('데이터셋 생성 페이지 — 미저장 입력 이탈 가드 
     await page.goto('/data/datasets/new');
     await fillRequired(page, '거친 데이터셋', 'hop_dataset');
     await chooseColumnType(page, '문자열(크기지정)');
-    await page.getByLabel('최대 길이 *').fill('255');
+    await page.getByRole('spinbutton', { name: '최대 길이', exact: true }).fill('255');
     await chooseColumnType(page, '텍스트');
     await chooseColumnType(page, '정수');
     await chooseColumnType(page, '문자열(크기지정)');
-    await expect(page.getByLabel('최대 길이 *')).toHaveValue('255');
+    await expect(page.getByRole('spinbutton', { name: '최대 길이', exact: true })).toHaveValue('255');
 
     await page.getByRole('button', { name: '만들기' }).click();
     const req = await capture.waitForRequest();
@@ -612,7 +612,7 @@ test.describe('데이터셋 생성 페이지 — 미저장 입력 이탈 가드 
     await page.goto('/data/datasets/new');
     await fillRequired(page, '왕복 데이터셋', 'roundtrip_dataset');
     await chooseColumnType(page, '문자열(크기지정)');
-    await page.getByLabel('최대 길이 *').fill('255');
+    await page.getByRole('spinbutton', { name: '최대 길이', exact: true }).fill('255');
 
     // VARCHAR → 텍스트 → VARCHAR 한 번 왕복한다
     const roundTrip = async () => {
@@ -622,19 +622,19 @@ test.describe('데이터셋 생성 페이지 — 미저장 입력 이탈 가드 
 
     // 첫 왕복 — 255 가 되살아난다
     await roundTrip();
-    await expect(page.getByLabel('최대 길이 *')).toHaveValue('255');
+    await expect(page.getByRole('spinbutton', { name: '최대 길이', exact: true })).toHaveValue('255');
 
     // 길이를 고친 뒤 두 번째 왕복 — 되살린 뒤 기억을 지웠으므로 옛 255 가 아니라 고친 100 이 돌아온다
-    await page.getByLabel('최대 길이 *').fill('100');
+    await page.getByRole('spinbutton', { name: '최대 길이', exact: true }).fill('100');
     await roundTrip();
-    await expect(page.getByLabel('최대 길이 *')).toHaveValue('100');
+    await expect(page.getByRole('spinbutton', { name: '최대 길이', exact: true })).toHaveValue('100');
 
     // 길이를 비운 채 떠났다 돌아오면 아무것도 되살리지 않는다(옛 100·255 모두)
-    await page.getByLabel('최대 길이 *').fill('');
+    await page.getByRole('spinbutton', { name: '최대 길이', exact: true }).fill('');
     await roundTrip();
-    await expect(page.getByLabel('최대 길이 *')).toHaveValue('');
+    await expect(page.getByRole('spinbutton', { name: '최대 길이', exact: true })).toHaveValue('');
 
-    await page.getByLabel('최대 길이 *').fill('100');
+    await page.getByRole('spinbutton', { name: '최대 길이', exact: true }).fill('100');
     await page.getByRole('button', { name: '만들기' }).click();
     const req = await capture.waitForRequest();
     expect(req.payload).toMatchObject({ columns: [{ dataType: 'VARCHAR', maxLength: 100 }] });

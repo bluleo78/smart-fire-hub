@@ -1,6 +1,7 @@
 import type { UseFormReturn } from 'react-hook-form';
 import { Controller } from 'react-hook-form';
 
+import { RequiredMark } from '../../../components/RequiredMark';
 import { Input } from '../../../components/ui/input';
 import { Label } from '../../../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
@@ -52,6 +53,9 @@ export function RowFormFields({
         const fieldError = form.formState.errors[col.columnName];
         const errorId = `${idPrefix}-${col.columnName}-error`;
         const isChanged = changedFields?.has(col.columnName) ?? false;
+        // (WD-964) NOT NULL 칼럼의 입력에만 필수임을 알린다 — NULL 허용 칼럼은 비워도 되므로 속성을 주지 않는다.
+        // (NOT NULL BOOLEAN Switch 는 늘 true/false 값을 가져 비울 수 없으므로 제외)
+        const ariaRequired = !col.isNullable ? true : undefined;
 
         return (
           <div
@@ -64,7 +68,7 @@ export function RowFormFields({
               {/* (#673) 행 추가 시 PK 필드는 사용자가 직접 값을 정해야 함을 안내하는 뱃지 */}
               {col.isPrimaryKey && <span className="text-muted-foreground text-xs ml-1">(기본 키)</span>}
               {!col.isNullable ? (
-                <span className="text-destructive ml-0.5">*</span>
+                <RequiredMark className="text-destructive ml-0.5" />
               ) : (
                 <span className="text-muted-foreground text-xs ml-1">(선택)</span>
               )}
@@ -118,6 +122,7 @@ export function RowFormFields({
                 <Input
                   id={`${idPrefix}-${col.columnName}`}
                   type="text"
+                  aria-required={ariaRequired}
                   aria-describedby={`${idPrefix}-${col.columnName}-raw-hint`}
                   {...form.register(col.columnName)}
                 />
@@ -131,12 +136,14 @@ export function RowFormFields({
               <Input
                 id={`${idPrefix}-${col.columnName}`}
                 type="date"
+                aria-required={ariaRequired}
                 {...form.register(col.columnName)}
               />
             ) : col.dataType === 'TIMESTAMP' ? (
               <Input
                 id={`${idPrefix}-${col.columnName}`}
                 type="datetime-local"
+                aria-required={ariaRequired}
                 // (#772) 기본 step(60초)이면 초·밀리초가 있는 기존 값이 stepMismatch 로 브라우저 검증에
                 // 걸려 제출이 막힌다. 'any' 로 초 단위 값을 그대로 담고 제출되게 한다.
                 step="any"
@@ -149,6 +156,7 @@ export function RowFormFields({
               <Input
                 id={`${idPrefix}-${col.columnName}`}
                 type="text"
+                aria-required={ariaRequired}
                 aria-invalid={fieldError ? true : undefined}
                 aria-describedby={fieldError ? errorId : undefined}
                 {...form.register(col.columnName)}
@@ -157,6 +165,7 @@ export function RowFormFields({
               <Input
                 id={`${idPrefix}-${col.columnName}`}
                 type="text"
+                aria-required={ariaRequired}
                 {...form.register(col.columnName)}
               />
             )}

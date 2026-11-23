@@ -9,6 +9,7 @@ import { toast } from 'sonner';
 import { datasetsApi } from '../../../api/datasets';
 import { EditConflictDialog } from '../../../components/EditConflictDialog';
 import { PendingSubmitButton } from '../../../components/PendingSubmitButton';
+import { RequiredMark } from '../../../components/RequiredMark';
 import { Badge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
 import { Card } from '../../../components/ui/card';
@@ -225,8 +226,9 @@ export const DatasetInfoTab = React.memo(function DatasetInfoTab({
             className="space-y-4"
           >
             <div className="space-y-2">
-              <Label htmlFor="name">데이터셋 이름 *</Label>
-              <Input id="name" {...infoForm.register('name')} />
+              <Label htmlFor="name"><span>데이터셋 이름 <RequiredMark /></span></Label>
+              {/* 필수 칸은 별표 글자 대신 aria-required 로 알린다(WD-964) */}
+              <Input id="name" aria-required="true" {...infoForm.register('name')} />
               {infoForm.formState.errors.name && (
                 <p className="text-sm text-destructive">
                   {infoForm.formState.errors.name.message}

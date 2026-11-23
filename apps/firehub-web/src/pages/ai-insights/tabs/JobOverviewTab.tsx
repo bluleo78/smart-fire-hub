@@ -3,6 +3,7 @@ import { useCallback, useId, useMemo, useRef, useState } from 'react';
 import { type UseFormReturn, useWatch } from 'react-hook-form';
 
 import { proactiveApi, type ProactiveJob, type ReportTemplateSummary, type TemplateSection, type TriggerType } from '@/api/proactive';
+import { RequiredMark } from '@/components/RequiredMark';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -569,7 +570,7 @@ export default function JobOverviewTab({
             바깥 span 은 Label 의 flex gap 이 별표 앞에 끼지 않게 한다. FormField 는 별표 색·간격과 문구 크기가 달라 쓰지 않는다. */}
         <Label htmlFor="job-name">
           <span>
-            작업 이름 <span aria-hidden="true">*</span>
+            작업 이름 <RequiredMark />
           </span>
         </Label>
         <Input
@@ -681,7 +682,7 @@ export default function JobOverviewTab({
           {/* WD-928: 작업 이름 칸과 같은 방식(별표 aria-hidden + aria-required) — 이유는 위 작업명 주석 참고 */}
           <Label htmlFor="job-prompt">
             <span>
-              분석 프롬프트 <span aria-hidden="true">*</span>
+              분석 프롬프트 <RequiredMark />
             </span>
           </Label>
           <Textarea

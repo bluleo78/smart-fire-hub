@@ -135,7 +135,7 @@ test.describe('차트 빌더 — MAP 히트맵 sub-mode', () => {
     // 저장 다이얼로그 열기
     await page.getByRole('button', { name: '저장' }).click();
     await expect(page.getByRole('heading', { name: '차트 저장' })).toBeVisible();
-    await page.getByLabel('이름 *').fill('히트맵 차트');
+    await page.getByRole('textbox', { name: '이름', exact: true }).fill('히트맵 차트');
     await page.getByRole('button', { name: '만들기', exact: true }).last().click();
 
     await expect.poll(() => captured).toBeDefined();

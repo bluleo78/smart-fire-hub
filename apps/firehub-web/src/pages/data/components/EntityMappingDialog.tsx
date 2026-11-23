@@ -2,6 +2,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useEffect } from 'react';
 import { useFieldArray, useForm } from 'react-hook-form';
 
+import { RequiredMark } from '../../../components/RequiredMark';
 import { Button } from '../../../components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../../components/ui/dialog';
 import { Label } from '../../../components/ui/label';
@@ -124,10 +125,13 @@ export function EntityMappingDialog({
 
         <form onSubmit={form.handleSubmit(submit, focusFirstError)} className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="entity-type">엔티티 타입 *</Label>
+            <Label htmlFor="entity-type">
+              <span>엔티티 타입 <RequiredMark /></span>
+            </Label>
             <Select value={entityType} onValueChange={handleEntityTypeChange}>
               <SelectTrigger
                 id="entity-type"
+                aria-required="true" // 필수 칸 안내(WD-964)
                 data-testid="entity-type-select"
                 // 오류가 있을 때만 무효 상태와 설명 대상을 연결한다(없을 때 매달면 존재하지 않는 노드를 가리킨다).
                 aria-invalid={form.formState.errors.entityType ? true : undefined}
@@ -154,13 +158,16 @@ export function EntityMappingDialog({
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="entity-name-column">이름 컬럼 *</Label>
+            <Label htmlFor="entity-name-column">
+              <span>이름 컬럼 <RequiredMark /></span>
+            </Label>
             <Select
               value={form.watch('nameColumn')}
               onValueChange={(v) => form.setValue('nameColumn', v, { shouldValidate: true })}
             >
               <SelectTrigger
                 id="entity-name-column"
+                aria-required="true" // 필수 칸 안내(WD-964)
                 data-testid="entity-name-column-select"
                 aria-invalid={form.formState.errors.nameColumn ? true : undefined}
                 aria-describedby={form.formState.errors.nameColumn ? 'entity-name-column-error' : undefined}

@@ -74,7 +74,7 @@ test.describe('분석 플로우', () => {
     await expect(page.getByRole('dialog')).toBeVisible();
 
     // 이름 입력
-    await page.getByLabel('이름 *').fill('새 테스트 대시보드');
+    await page.getByRole('textbox', { name: '이름', exact: true }).fill('새 테스트 대시보드');
 
     // "생성" 버튼 클릭
     await page.getByRole('button', { name: '만들기' }).click();

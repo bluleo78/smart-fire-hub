@@ -16,6 +16,7 @@ import { hasMixedSignValues, isNumericColumn, isWeightColumn } from '../../compo
 import { SharedReadOnlyNotice } from '../../components/analytics/SharedReadOnlyNotice';
 import { EditConflictDialog } from '../../components/EditConflictDialog';
 import { DetailPageTitle } from '../../components/PageTitleSync';
+import { RequiredMark } from '../../components/RequiredMark';
 import { ResourceNotFound } from '../../components/ResourceNotFound';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
@@ -278,9 +279,15 @@ function SaveDialog({
         </DialogHeader>
         <div className="space-y-4 py-2">
           <div className="space-y-1.5">
-            <Label htmlFor="chart-name">이름 *</Label>
+            {/* WD-964: 별표는 aria-hidden, 필수는 aria-required 로 알린다(native required 는 쓰지 않음) */}
+            <Label htmlFor="chart-name">
+              <span>
+                이름 <RequiredMark />
+              </span>
+            </Label>
             <Input
               id="chart-name"
+              aria-required="true"
               value={name}
               onChange={(e) => onNameChange(e.target.value)}
               placeholder="차트 이름을 입력하세요"

@@ -12,6 +12,7 @@ import {
 import { useId, useState } from 'react';
 
 import { IntegerTextInput } from '@/components/IntegerTextInput';
+import { RequiredMark } from '@/components/RequiredMark';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
@@ -232,7 +233,7 @@ export default function AiClassifyStepConfig({
         <div className="flex items-center gap-1.5 text-sm font-medium text-ai-accent">
           <MessageSquare className="h-3.5 w-3.5" />
           {/* 입력의 접근 가능한 이름 — 필수 표시(*)는 빼고 이 낱말만 쓴다(WD-633) */}
-          <span id={promptLabelId}>프롬프트</span> <span className="text-destructive ml-0.5" aria-hidden="true">*</span>
+          <span id={promptLabelId}>프롬프트</span> <RequiredMark className="text-destructive ml-0.5" />
         </div>
 
         {/* 프리셋 버튼 */}
@@ -260,7 +261,8 @@ export default function AiClassifyStepConfig({
           value={prompt}
           disabled={readOnly}
           aria-labelledby={promptLabelId}
-          aria-required="true"
+          // 잠긴(readOnly) 칸에는 필수를 알리지 않는다 — 별표 겉모양만 남긴다(WD-964)
+          aria-required={readOnly ? undefined : 'true'}
           data-error-field={AI_PROMPT_FIELD}
           aria-invalid={promptError ? true : undefined}
           aria-describedby={promptError ? promptErrorId : undefined}
@@ -275,8 +277,11 @@ export default function AiClassifyStepConfig({
       {/* === 2. 출력 컬럼 정의 === */}
       <div className="space-y-2">
         <div className="flex items-center justify-between">
-          <div className="text-sm font-medium text-ai-accent">
-            출력 컬럼 정의 <span className="text-destructive">*</span>
+          <div className="text-sm font-medium text-ai-accent" data-testid="ai-output-columns-title">
+            {/* 입력이 아니라 「컬럼 추가」 버튼으로 채우는 묶음이라 aria-required 를 줄 컨트롤이 없다 —
+                별표는 aria-hidden 이므로 sr-only 「(필수)」 로 필수 뜻을 스크린리더에 전한다 (WD-964) */}
+            출력 컬럼 정의 <RequiredMark className="text-destructive" />
+            <span className="sr-only">(필수)</span>
           </div>
           {!readOnly && (
             <Button

@@ -79,14 +79,14 @@ test.describe('이름 중복 409 — 이름 칸 오류 (WD-824)', () => {
 
     await page.getByRole('button', { name: '새 대시보드' }).click();
     const dialog = page.getByRole('dialog');
-    await dialog.getByLabel('이름 *').fill('겹치는 이름');
+    await dialog.getByRole('textbox', { name: '이름', exact: true }).fill('겹치는 이름');
     await dialog.getByRole('button', { name: '만들기' }).click();
 
     await expect(dialog.locator('#dash-name').locator('..').getByText(DASHBOARD_MSG)).toBeVisible();
     await expect(page.getByText(DASHBOARD_MSG)).toHaveCount(1);
     await expect(dialog).toBeVisible();
 
-    await dialog.getByLabel('이름 *').fill('겹치지 않는 이름');
+    await dialog.getByRole('textbox', { name: '이름', exact: true }).fill('겹치지 않는 이름');
     await expect(page.getByText(DASHBOARD_MSG)).toHaveCount(0);
   });
 

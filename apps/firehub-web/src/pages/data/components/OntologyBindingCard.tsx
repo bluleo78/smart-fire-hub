@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { toast } from 'sonner';
 
+import { RequiredMark } from '../../../components/RequiredMark';
 import { Button } from '../../../components/ui/button';
 import { Label } from '../../../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
@@ -58,9 +59,12 @@ export function OntologyBindingCard({ datasetId }: OntologyBindingCardProps) {
       ) : (
         <>
       <div className="space-y-2 max-w-sm">
-        <Label htmlFor="ontology-select">온톨로지 *</Label>
+        <Label htmlFor="ontology-select">
+          <span>온톨로지 <RequiredMark /></span>
+        </Label>
         <Select value={selected} onValueChange={setSelected}>
-          <SelectTrigger id="ontology-select" data-testid="ontology-select">
+          {/* 필수 칸 안내(WD-964) */}
+          <SelectTrigger id="ontology-select" data-testid="ontology-select" aria-required="true">
             <SelectValue placeholder="온톨로지를 선택하세요" />
           </SelectTrigger>
           <SelectContent>

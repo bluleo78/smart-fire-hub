@@ -97,7 +97,7 @@ test.describe('필드 탭 — 필드 추가·수정 이름 중복과 NULL 허용
     await page.getByRole('button', { name: '필드 추가' }).click();
     const dialog = page.getByRole('dialog');
     await expect(dialog).toBeVisible();
-    await dialog.getByLabel('필드명 *').fill('title');
+    await dialog.getByRole('textbox', { name: '필드명', exact: true }).fill('title');
     await dialog.getByRole('button', { name: '추가' }).click();
 
     await expect(dialog.getByText(FIELD_DUPLICATE_MESSAGE)).toBeVisible({ timeout: 5000 });
@@ -117,7 +117,7 @@ test.describe('필드 탭 — 필드 추가·수정 이름 중복과 NULL 허용
     await bodyRow.getByRole('button', { name: '컬럼 편집' }).click();
     const dialog = page.getByRole('dialog');
     await expect(dialog).toBeVisible({ timeout: 5000 });
-    await dialog.getByLabel('필드명 *').fill('title');
+    await dialog.getByRole('textbox', { name: '필드명', exact: true }).fill('title');
     await dialog.getByRole('button', { name: '수정' }).click();
 
     await expect(dialog.getByText(FIELD_DUPLICATE_MESSAGE)).toBeVisible({ timeout: 5000 });
@@ -172,7 +172,7 @@ test.describe('필드 탭 — 필드 추가·수정 이름 중복과 NULL 허용
     await expect(dialog.getByText(NULLABLE_LOCK_MESSAGE)).toBeVisible();
 
     // 잠긴 채로 추가하면 NULL 허용으로 보낸다.
-    await dialog.getByLabel('필드명 *').fill('memo');
+    await dialog.getByRole('textbox', { name: '필드명', exact: true }).fill('memo');
     await dialog.getByRole('button', { name: '추가' }).click();
     const req = await capture.waitForRequest();
     expect(req.payload).toMatchObject({ columnName: 'memo', isNullable: true });
@@ -194,17 +194,17 @@ test.describe('필드 탭 — 필드 추가·수정 이름 중복과 NULL 허용
     await expect(dialog.getByText(NULLABLE_LOCK_MESSAGE)).toHaveCount(0);
   });
 
-  test('필드의 「데이터 타입 *」 라벨이 타입 선택 상자와 이어져 라벨 이름으로 읽힌다 (WD-398)', async ({
+  test('필드의 「데이터 타입」 라벨이 타입 선택 상자와 이어져 라벨 이름으로 읽힌다 (WD-398)', async ({
     authenticatedPage: page,
   }) => {
     await setupDatasetMocks(page);
     await page.goto('/data/datasets/new');
 
-    const typeBox = page.getByRole('combobox', { name: '데이터 타입 *' });
+    const typeBox = page.getByRole('combobox', { name: '데이터 타입', exact: true });
     await expect(typeBox).toHaveCount(1);
     await expect(typeBox).toHaveText('텍스트');
     // 라벨을 누르면 이어진 상자가 눌려 타입 목록이 열린다(라벨 연결) — 열리면 나머지 화면은 aria-hidden 이라 상자 대신 목록을 본다
-    await page.getByText('데이터 타입 *').click();
+    await page.locator('label').filter({ hasText: '데이터 타입' }).click();
     await expect(page.getByRole('listbox')).toBeVisible();
     await expect(page.getByRole('option', { name: '텍스트' })).toBeVisible();
   });

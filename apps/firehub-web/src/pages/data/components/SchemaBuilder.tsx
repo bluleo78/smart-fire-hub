@@ -2,6 +2,7 @@ import { KeyRound, Plus, X } from 'lucide-react';
 import { useRef } from 'react';
 import { useFieldArray, useFormContext } from 'react-hook-form';
 
+import { RequiredMark } from '../../../components/RequiredMark';
 import { Button } from '../../../components/ui/button';
 import { Card } from '../../../components/ui/card';
 import { Checkbox } from '../../../components/ui/checkbox';
@@ -67,9 +68,11 @@ export function SchemaBuilder() {
           <div className="grid gap-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor={`columns.${index}.columnName`}>칼럼명 *</Label>
+                <Label htmlFor={`columns.${index}.columnName`}><span>칼럼명 <RequiredMark /></span></Label>
                 <Input
                   id={`columns.${index}.columnName`}
+                  // 필수 칸은 aria-required 로 알린다(WD-964)
+                  aria-required="true"
                   {...register(`columns.${index}.columnName`)}
                   placeholder="예: user_id"
                   // 오류 문구를 입력과 연결해 스크린 리더가 어느 칼럼의 오류인지 읽게 한다(WD-515)
@@ -94,9 +97,10 @@ export function SchemaBuilder() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor={`columns.${index}.dataType`}>데이터 타입 *</Label>
+              <Label htmlFor={`columns.${index}.dataType`}><span>데이터 타입 <RequiredMark /></span></Label>
               <ColumnTypeSelect
                 id={`columns.${index}.dataType`}
+                required
                 value={watch(`columns.${index}.dataType`)}
                 // 저장소가 GEOMETRY 를 지원하지 않으면(Tibero) 목록에서 숨긴다. 조회 전·실패 시엔 그대로 둔다. (WD-80)
                 hiddenOptions={geometrySupported ? undefined : ['GEOMETRY']}
@@ -144,9 +148,11 @@ export function SchemaBuilder() {
 
             {watch(`columns.${index}.dataType`) === 'VARCHAR' && (
               <div className="space-y-2">
-                <Label htmlFor={`columns.${index}.maxLength`}>최대 길이 *</Label>
+                <Label htmlFor={`columns.${index}.maxLength`}><span>최대 길이 <RequiredMark /></span></Label>
                 <Input
                   id={`columns.${index}.maxLength`}
+                  // VARCHAR 일 때만 렌더되므로 보일 때만 필수로 알린다(WD-964)
+                  aria-required="true"
                   type="number"
                   min={1}
                   max={maxVarcharLength}

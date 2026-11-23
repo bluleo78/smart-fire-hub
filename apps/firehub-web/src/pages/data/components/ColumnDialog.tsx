@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 
 import { datasetsApi } from '../../../api/datasets';
 import { PendingSubmitButton } from '../../../components/PendingSubmitButton';
+import { RequiredMark } from '../../../components/RequiredMark';
 import { Button } from '../../../components/ui/button';
 import { Checkbox } from '../../../components/ui/checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../../components/ui/dialog';
@@ -80,6 +81,12 @@ export function ColumnDialog({
   // 데이터가 있는 데이터셋에 NOT NULL 필드를 추가하면 기존 행이 채울 값이 없어 서버가 항상 거부한다 (WD-99).
   // 실패할 선택을 미리 막도록 추가 모드에서는 「NULL 허용」을 켠 채 잠근다(수정 모드의 데이터 보유 잠금과 같은 판정 = 행 수).
   const isNullableLockedForData = mode === 'add' && hasData;
+
+  // 수정 모드에서 데이터가 있으면 필드명·최대 길이가 잠기고, 타입은 GEOMETRY 칼럼일 때도 잠긴다.
+  // disabled 와 aria-required 가 같은 변수에서 나오도록 한 곳에 둔다 — 잠긴 칸은 입력할 수 없으므로 필수로 알리지 않는다(WD-964)
+  const nameLocked = mode === 'edit' && hasData;
+  const maxLengthLocked = mode === 'edit' && hasData;
+  const typeLocked = mode === 'edit' && (hasData || isCurrentColumnGeometry);
 
   const form = useForm<AddColumnFormData>({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -191,12 +198,13 @@ export function ColumnDialog({
           )}
 
           <div className="space-y-2">
-            <Label htmlFor="columnName">필드명 *</Label>
+            <Label htmlFor="columnName"><span>필드명 <RequiredMark /></span></Label>
             <Input
               id="columnName"
+              aria-required={nameLocked ? undefined : 'true'}
               {...form.register('columnName')}
               placeholder="예: user_id"
-              disabled={mode === 'edit' && hasData}
+              disabled={nameLocked}
             />
             {form.formState.errors.columnName && (
               <p className="text-sm text-destructive">
@@ -215,12 +223,13 @@ export function ColumnDialog({
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="dataType">데이터 타입 *</Label>
+            <Label htmlFor="dataType"><span>데이터 타입 <RequiredMark /></span></Label>
             <ColumnTypeSelect
               id="dataType"
+              required={!typeLocked}
               value={form.watch('dataType')}
               onChange={(value) => form.setValue('dataType', value as AddColumnFormData['dataType'])}
-              disabled={mode === 'edit' && (hasData || isCurrentColumnGeometry)}
+              disabled={typeLocked}
               // 현재 타입이 GEOMETRY가 아닐 때만 GEOMETRY로의 변환을 막는다.
               // (현재 타입이 GEOMETRY면 위 disabled로 select 자체가 잠긴다)
               disabledOptions={mode === 'edit' && !isCurrentColumnGeometry ? ['GEOMETRY'] : undefined}
@@ -236,15 +245,16 @@ export function ColumnDialog({
 
           {form.watch('dataType') === 'VARCHAR' && (
             <div className="space-y-2">
-              <Label htmlFor="maxLength">최대 길이 *</Label>
+              <Label htmlFor="maxLength"><span>최대 길이 <RequiredMark /></span></Label>
               <Input
                 id="maxLength"
+                aria-required={maxLengthLocked ? undefined : 'true'}
                 type="number"
                 min={1}
                 max={maxVarcharLength}
                 {...form.register('maxLength', { valueAsNumber: true })}
                 placeholder="예: 255"
-                disabled={mode === 'edit' && hasData}
+                disabled={maxLengthLocked}
               />
               {form.formState.errors.maxLength && (
                 <p className="text-sm text-destructive">

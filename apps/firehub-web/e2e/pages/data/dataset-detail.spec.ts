@@ -640,7 +640,7 @@ test.describe('데이터셋 상세 페이지', () => {
     await expect(page.getByRole('heading', { name: '데이터셋 복제' })).toBeVisible();
 
     // 기본값 확인 — 이름에 "_copy" 접미사
-    const nameInput = page.getByLabel('데이터셋 이름 *');
+    const nameInput = page.getByRole('textbox', { name: '데이터셋 이름', exact: true });
     await expect(nameInput).toHaveValue('테스트 데이터셋_copy');
 
     // 복제 버튼 클릭 → POST 호출
@@ -667,7 +667,7 @@ test.describe('데이터셋 상세 페이지', () => {
     await expect(page.getByRole('dialog')).toBeVisible();
 
     // 테이블명에 대문자 입력 (유효성 검사 실패 케이스)
-    const tableNameInput = page.getByLabel('테이블 이름 *');
+    const tableNameInput = page.getByRole('textbox', { name: '테이블 이름', exact: true });
     await tableNameInput.clear();
     await tableNameInput.fill('InvalidTable');
 
@@ -697,7 +697,7 @@ test.describe('데이터셋 상세 페이지', () => {
     await page.getByRole('button', { name: '복제' }).click();
     await expect(page.getByRole('dialog')).toBeVisible();
 
-    const tableNameInput = page.getByLabel('테이블 이름 *');
+    const tableNameInput = page.getByRole('textbox', { name: '테이블 이름', exact: true });
     await tableNameInput.fill('t_' + 'x'.repeat(55));
     await page.getByRole('dialog').getByRole('button', { name: '복제' }).click();
     await expect(page.getByText('테이블명은 56자 이하여야 합니다')).toBeVisible();
@@ -930,7 +930,7 @@ test.describe('데이터셋 상세 페이지', () => {
     const editButton = page.getByRole('button', { name: '수정' });
     await editButton.focus();
     await page.keyboard.press('Enter');
-    await expect(page.getByLabel('데이터셋 이름 *')).toBeFocused();
+    await expect(page.getByRole('textbox', { name: '데이터셋 이름', exact: true })).toBeFocused();
 
     await page.getByRole('button', { name: '취소' }).focus();
     await page.keyboard.press('Enter');

@@ -77,7 +77,7 @@ test.describe('히트맵 행/열/값 매핑 — ChartBuilderPage (#664)', () => 
     await expect(page.getByText('행/열/값(색상 기준) 컬럼을 서로 다르게 선택하세요.')).toBeVisible();
 
     await page.getByRole('button', { name: '저장' }).click();
-    await page.getByLabel('이름 *').fill('겹친 히트맵');
+    await page.getByRole('textbox', { name: '이름', exact: true }).fill('겹친 히트맵');
     await page.getByRole('dialog').getByRole('button', { name: '만들기' }).click();
 
     await expect(page.getByText('행, 열, 값 컬럼은 서로 달라야 합니다.')).toBeVisible();
@@ -126,7 +126,7 @@ test.describe('히트맵 행/열/값 매핑 — ChartBuilderPage (#664)', () => 
     ).not.toBeVisible();
 
     await page.getByRole('button', { name: '저장' }).click();
-    await page.getByLabel('이름 *').fill('요일별 시간대 트래픽 히트맵');
+    await page.getByRole('textbox', { name: '이름', exact: true }).fill('요일별 시간대 트래픽 히트맵');
     await page.getByRole('dialog').getByRole('button', { name: '만들기' }).click();
 
     const req = await cap.waitForRequest();
