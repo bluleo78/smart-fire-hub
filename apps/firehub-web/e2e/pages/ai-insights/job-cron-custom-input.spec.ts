@@ -305,18 +305,46 @@ test.describe('스마트 작업 — 「직접 입력」 칸 유지 (WD-962)', ()
       await expect(createButton(page)).toBeDisabled();
     });
 
-    test('편집: 주기가 너무 잦다는 낡은 오류도 트리거를 바꿔 다녀오면 지금 값으로 다시 맞춰진다', async ({
+    // 트리거 변경 때의 form.trigger 분기는 화면에서 관찰되지 않아(문구는 값으로, isValid 는 setValue 때 다시 계산) 눈에 보이는 동작을 지킨다.
+    // 빈 cron 의 clearErrors 분기는 「칸을 비운 채 이상 탐지를 다녀오면…」 시험이 지킨다.
+    test('편집: 스케줄 → 이상 탐지 → 스케줄로 다녀와도 보이는 이유와 저장 버튼이 지금 값에 맞는다', async ({
       authenticatedPage: page,
     }) => {
       await mockCronPreview(page, JOB_CRON_PREVIEW_PATH);
+      const writes = await captureJobWrites(page, 1);
       await openJob(page, '0 9 * * *');
       await page.getByRole('button', { name: '편집' }).click();
       await chooseCustom(page);
-      await cronInput(page).pressSequentially('0 8 * * *');
-      await chooseTrigger(page, '스케줄 + 이상 탐지');
+      await cronInput(page).pressSequentially('* * * * * *');
+      await page.keyboard.press('Tab');
 
+      await expect(cronGroup(page).getByText(TOO_FREQUENT)).toBeVisible();
+      await expect(saveButton(page)).toBeDisabled();
+
+      // 이상 탐지는 cron 이 필수도 아니고 너무 잦음 검사도 없다 — cron 칸이 숨겨지고 저장이 켜져야 한다
+      await chooseTrigger(page, '이상 탐지 (이벤트 기반)');
+      await expect(presetSelect(page)).toBeHidden();
+      await expect(saveButton(page)).toBeEnabled();
+
+      await chooseTrigger(page, '스케줄 (정기 실행)');
+      await expect(cronGroup(page).getByText(TOO_FREQUENT)).toBeVisible();
+      await expect(saveButton(page)).toBeDisabled();
+
+      await cronInput(page).fill('0 8 * * *');
+      await expect(cronGroup(page).getByText(TOO_FREQUENT)).toHaveCount(0);
+      await expect(saveButton(page)).toBeEnabled();
+
+      // 올바른 값으로 「스케줄 + 이상 탐지」로 바꿔도 칸이 남고 낡은 「실행 주기를 설정하세요」 없이 저장이 켜진다(편집 + BOTH)
+      await chooseTrigger(page, '스케줄 + 이상 탐지');
+      await expect(cronInput(page)).toBeVisible();
       await expect(cronGroup(page).getByText(UNSET)).toHaveCount(0);
       await expect(saveButton(page)).toBeEnabled();
+
+      // 다녀온 뒤 저장되는 값이 지금 화면 값과 같아야 한다 — 낡은 주기·트리거가 실리지 않는다
+      await saveButton(page).click();
+      await expect.poll(() => writes.puts.length).toBe(1);
+      expect(writes.puts[0].cronExpression).toBe('0 8 * * *');
+      expect(writes.puts[0].triggerType).toBe('BOTH');
     });
 
     // 서버는 주기·트리거를 건드리지 않는 수정을 받는다(WD-607). 예전에 공백으로 저장된 작업의 이름 수정을 화면이 막으면 안 된다.
