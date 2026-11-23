@@ -18,6 +18,7 @@ import { TableEmptyRow, TableErrorRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { useCanWriteProactive,useProactiveJobs, useReports } from '@/hooks/queries/useProactiveMessages';
 import { useLoadMoreLimit } from '@/hooks/useLoadMoreLimit';
+import { offlineListMessage, useOfflinePaused } from '@/hooks/useOnlineStatus';
 import { downloadReportPdf } from '@/hooks/useReportActions';
 import { isForbiddenError } from '@/lib/api-error';
 import { formatDate, timeAgo } from '@/lib/formatters';
@@ -35,20 +36,24 @@ export default function ReportListTab() {
   const navigate = useNavigate();
   const { limit, loadMore, pending, failed, settle } = useLoadMoreLimit();
   const {
-    data: reports = [],
+    data: reportsData,
     isLoading,
+    isPaused,
     isError,
     isSuccess,
     isPlaceholderData,
     error,
   } = useReports({ limit, offset: 0 });
+  const reports = reportsData ?? [];
+  // 데이터 없이 paused(오프라인·재시도 멈춤)면 「리포트가 없습니다」 대신 연결 대기로 그린다(WD-971)
+  const { waiting, offline } = useOfflinePaused({ data: reportsData, isPaused });
   // 「더 보기」 조회가 실패하면 렌더 중에 limit 을 마지막 성공 값으로 되돌려 보던 목록을 남긴다(WD-956) — 오류 렌더가 그려지지 않는다.
   settle({ isError, isSuccess, isPlaceholderData });
   // 조회 실패를 빈 목록으로 그리지 않는다 (WD-137) — 403 이면 권한 안내, 그 밖은 불러오기 실패 안내.
   const isForbidden = isError && isForbiddenError(error);
   // 빈 상태를 "잡이 없음" / "잡은 있으나 리포트 없음" 으로 가르기 위해 잡 목록도 본다.
   // 리포트가 하나라도 있거나 조회가 실패했으면(빈 상태를 그리지 않으므로) 이 분기 자체가 필요 없어 요청을 내지 않는다.
-  const { data: jobs = [] } = useProactiveJobs({ enabled: !isLoading && !isError && reports.length === 0 });
+  const { data: jobs = [] } = useProactiveJobs({ enabled: !isLoading && !waiting && !offline && !isError && reports.length === 0 });
   // 작업 생성은 서버가 proactive:write 로 막는다 — 권한이 없으면 눌러도 403 인 「스마트 작업 만들기」 CTA 를 숨긴다(WD-133).
   const { canWrite } = useCanWriteProactive();
 
@@ -94,8 +99,10 @@ export default function ReportListTab() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {isLoading ? (
+            {isLoading || waiting ? (
               <TableSkeletonRows columns={4} rows={5} />
+            ) : offline ? (
+              <TableEmptyRow colSpan={4} message={offlineListMessage('리포트')} />
             ) : reports.length > 0 ? (
               reports.map((report) => (
                 <TableRow

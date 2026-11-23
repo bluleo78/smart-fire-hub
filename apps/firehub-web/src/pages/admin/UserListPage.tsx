@@ -81,9 +81,10 @@ export default function UserListPage() {
     size: pageSize,
   };
   const { data: users, isLoading, isError, error: usersError, isPlaceholderData, isPaused } = useUsers(userParams);
-  // 오프라인 쪽 이동 대기는 흐림·inert 없이 안내를 보인다(WD-982, useOfflinePaused)
-  const offlinePaused = useOfflinePaused(isPaused, isPlaceholderData);
-  const isTransitioning = isPlaceholderData && !offlinePaused;
+  // 오프라인 멈춤 판정(공용 useOfflinePaused, WD-966·WD-982·WD-971): 받은 목록 없음 또는 쪽 이동 placeholder + paused 가 실제 오프라인이면 offline(안내),
+  // 데이터 없이 온라인인데 paused(탭 숨김으로 재시도 멈춤)면 waiting(스켈레톤). offline 이면 흐림·inert 없이 안내를 보인다
+  const { waiting, offline } = useOfflinePaused({ data: users, isPaused, isPlaceholderData });
+  const isTransitioning = isPlaceholderData && !offline;
 
   const { totalPages, totalElements } = useLastPageInfo(users, userParams);
 
@@ -134,9 +135,9 @@ export default function UserListPage() {
           </TableHeader>
           {/* inert: 이동 중 낡은 행을 키보드로도 열 수 없게 한다 (WD-982) */}
           <TableBody inert={isTransitioning}>
-            {isLoading || pageOutOfRange ? (
+            {isLoading || waiting || pageOutOfRange ? (
               <TableSkeletonRows columns={4} rows={5} />
-            ) : offlinePaused ? (
+            ) : offline ? (
               // 오프라인 쪽 이동 대기는 흐림·inert 없이 안내를 보인다(WD-982, useOfflinePaused)
               <TableEmptyRow colSpan={4} message={offlineListMessage('사용자')} />
             ) : isError ? (

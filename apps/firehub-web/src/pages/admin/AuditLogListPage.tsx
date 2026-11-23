@@ -594,10 +594,11 @@ export default function AuditLogListPage() {
     // 날짜 범위가 역전된 상태에서는 무의미한 조회이므로 API 호출 자체를 보류한다
     enabled: !isDateRangeInverted,
   });
+  // 오프라인 멈춤 판정(공용 useOfflinePaused, WD-966·WD-982·WD-971): 받은 목록 없음 또는 쪽 이동 placeholder + paused 가 실제 오프라인이면 offline(안내),
+  // 데이터 없이 온라인인데 paused(탭 숨김으로 재시도 멈춤)면 waiting(스켈레톤). offline 이면 흐림·inert 없이 안내를 보인다
+  const { waiting, offline } = useOfflinePaused({ data: logs, isPaused, isPlaceholderData });
 
-  // 오프라인 쪽 이동 대기는 흐림·inert 없이 안내를 보인다(WD-982, useOfflinePaused)
-  const offlinePaused = useOfflinePaused(isPaused, isPlaceholderData);
-  const isTransitioning = isPlaceholderData && !offlinePaused;
+  const isTransitioning = isPlaceholderData && !offline;
 
   const { totalPages, totalElements } = useLastPageInfo(logs, auditParams);
 
@@ -798,9 +799,9 @@ export default function AuditLogListPage() {
             {isDateRangeInverted ? (
               // 날짜 범위 역전 상태 — "결과 없음"과 구분되는 전용 메시지 (#541)
               <TableEmptyRow colSpan={7} message="날짜 범위가 올바르지 않아 조회할 수 없습니다." />
-            ) : showSkeleton ? (
+            ) : showSkeleton || waiting ? (
               <TableSkeletonRows columns={7} rows={5} />
-            ) : offlinePaused ? (
+            ) : offline ? (
               // 오프라인 쪽 이동 대기는 흐림·inert 없이 안내를 보인다(WD-982, useOfflinePaused)
               <TableEmptyRow colSpan={7} message={offlineListMessage('감사 로그')} />
             ) : isError ? (

@@ -24,6 +24,7 @@ import {
 } from '@/components/ui/tooltip';
 import { cloneSuccessMessage, useCanWriteProactive,useCloneProactiveJob, useDisableProactiveJob, useExecuteProactiveJob, useProactiveJobs, useUpdateProactiveJob } from '@/hooks/queries/useProactiveMessages';
 import { useJobToggleLock } from '@/hooks/useJobToggleLock';
+import { offlineListMessage, useOfflinePaused } from '@/hooks/useOnlineStatus';
 import { extractApiError, handleApiError, isForbiddenError, isJobAlreadyRunning } from '@/lib/api-error';
 import { cronToLabel } from '@/lib/cron-label';
 import { getExecutionDisplayStatus } from '@/lib/error-classifier';
@@ -77,7 +78,10 @@ function isAnomalyIdle(config: Record<string, unknown>): boolean {
 
 export default function ProactiveJobListPage() {
   const navigate = useNavigate();
-  const { data: jobs = [], isLoading, isError, error } = useProactiveJobs();
+  const { data: jobsData, isLoading, isError, error, isPaused } = useProactiveJobs();
+  const jobs = jobsData ?? [];
+  // 데이터 없이 paused(오프라인·재시도 멈춤)면 「스마트 작업 없음」 빈 화면 대신 표 안에서 연결 대기로 그린다(WD-971).
+  const { waiting, offline } = useOfflinePaused({ data: jobsData, isPaused });
   const updateMutation = useUpdateProactiveJob();
   const disableMutation = useDisableProactiveJob();
   const executeMutation = useExecuteProactiveJob();
@@ -170,7 +174,8 @@ export default function ProactiveJobListPage() {
     );
   }
 
-  if (!isLoading && jobs.length === 0) {
+  // 연결 대기 중에는 빈 화면(첫 작업 만들기 CTA 포함)으로 떨어지지 않고 아래 표의 대기 행으로 그린다(WD-971)
+  if (!isLoading && !waiting && !offline && jobs.length === 0) {
     return (
       <div className="space-y-4">
         {readonlyNotice}
@@ -222,8 +227,11 @@ export default function ProactiveJobListPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {isLoading ? (
+            {isLoading || waiting ? (
               <TableSkeletonRows columns={6} rows={5} />
+            ) : offline ? (
+              // 실패가 아닌 중립 대기 상태라 role=status 로 알린다. 연결되면 자동 재조회한다(WD-971).
+              <TableEmptyRow colSpan={6} message={offlineListMessage('스마트 작업')} />
             ) : jobs.length > 0 ? (
               jobs.map((job) => (
                 /* 행은 표 행 의미를 지키려고 role·tabIndex 를 주지 않는다 — 키보드 진입점은 작업명 링크,

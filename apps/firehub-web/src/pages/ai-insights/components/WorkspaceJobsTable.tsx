@@ -20,6 +20,7 @@ import {
   useAdminDisableProactiveJob,
   useWorkspaceProactiveJobs,
 } from '@/hooks/queries/useProactiveMessages';
+import { offlineListMessage, useOfflinePaused } from '@/hooks/useOnlineStatus';
 import { handleApiError } from '@/lib/api-error';
 import { parseUtcDate } from '@/lib/formatters';
 import { formatNextRunShort } from '@/lib/next-run';
@@ -43,7 +44,10 @@ const LAST_STATUS_LABELS: Record<NonNullable<ProactiveJobAdminSummary['lastExecu
  * - 켜기는 없다 — 자격 없는 사람이 남의 이름으로 자동 실행을 늘리면 안 된다.
  */
 export function WorkspaceJobsTable() {
-  const { data: jobs = [], isLoading, isError } = useWorkspaceProactiveJobs();
+  const { data: jobsData, isLoading, isError, isPaused } = useWorkspaceProactiveJobs();
+  const jobs = jobsData ?? [];
+  // 데이터 없이 paused(오프라인·재시도 멈춤)면 「스마트 작업이 없습니다」 대신 연결 대기로 그린다(WD-971)
+  const { waiting, offline } = useOfflinePaused({ data: jobsData, isPaused });
   const disableMutation = useAdminDisableProactiveJob();
   const deleteMutation = useAdminDeleteProactiveJob();
 
@@ -95,8 +99,10 @@ export function WorkspaceJobsTable() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {isLoading ? (
+            {isLoading || waiting ? (
               <TableSkeletonRows columns={7} rows={5} />
+            ) : offline ? (
+              <TableEmptyRow colSpan={7} message={offlineListMessage('워크스페이스 스마트 작업')} />
             ) : jobs.length > 0 ? (
               jobs.map((job) => (
                 <TableRow key={job.id} data-testid={`workspace-job-${job.id}`}>

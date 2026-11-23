@@ -25,6 +25,7 @@ import { TableEmptyRow, TableErrorRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { useJobExecutions } from '@/hooks/queries/useProactiveMessages';
 import { useLoadMoreLimit } from '@/hooks/useLoadMoreLimit';
+import { offlineListMessage, useOfflinePaused } from '@/hooks/useOnlineStatus';
 import { isForbiddenError } from '@/lib/api-error';
 import { getExecutionDisplayStatus } from '@/lib/error-classifier';
 import { isFocusLost } from '@/lib/focus-lost';
@@ -42,8 +43,9 @@ export default function JobExecutionsTab({ jobId }: JobExecutionsTabProps) {
 
   // RUNNING 상태 실행이 있으면 5초 폴링, 아니면 비활성화 — state 없이 직접 유도
   const {
-    data: executions = [],
+    data: executionsData,
     isLoading,
+    isPaused,
     isError,
     isSuccess,
     isPlaceholderData,
@@ -58,6 +60,10 @@ export default function JobExecutionsTab({ jobId }: JobExecutionsTabProps) {
       },
     },
   );
+
+  const executions = executionsData ?? [];
+  // 데이터 없이 paused(오프라인·재시도 멈춤)면 「실행 이력이 없습니다」 대신 연결 대기로 그린다(WD-971)
+  const { waiting, offline } = useOfflinePaused({ data: executionsData, isPaused });
 
   // 「더 보기」 조회가 실패하면 렌더 중에 limit 을 마지막 성공 값으로 되돌려 보던 목록을 남긴다(WD-956) — 오류 렌더가 그려지지 않는다.
   settle({ isError, isSuccess, isPlaceholderData });
@@ -155,8 +161,10 @@ export default function JobExecutionsTab({ jobId }: JobExecutionsTabProps) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {isLoading ? (
+            {isLoading || waiting ? (
               <TableSkeletonRows columns={4} rows={5} />
+            ) : offline ? (
+              <TableEmptyRow colSpan={4} message={offlineListMessage('실행 이력')} />
             ) : executions.length > 0 ? (
               executions.map((exec) => (
                 <TableRow
