@@ -85,10 +85,12 @@ export default function ActivityWidget({ input, onNavigate, displayMode }: Widge
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1">
                     <span className="shrink-0">{ENTITY_ICON[item.entityType] ?? ''}</span>
-                    <span className="truncate text-xs font-medium">{item.title}</span>
+                    {/* 말줄임돼도 마우스를 올리면 전체 제목이 보이게 한다 (WD-1027) */}
+                    <span className="truncate text-xs font-medium" title={item.title}>{item.title}</span>
                   </div>
                   {item.description && (
-                    <p className="truncate text-xs text-muted-foreground">{item.description}</p>
+                    /* 말줄임돼도 마우스를 올리면 전체 설명이 보이게 한다 (WD-1027) */
+                    <p className="truncate text-xs text-muted-foreground" title={item.description}>{item.description}</p>
                   )}
                 </div>
                 <span className="shrink-0 text-xs text-muted-foreground">{formatRelativeTime(item.occurredAt)}</span>

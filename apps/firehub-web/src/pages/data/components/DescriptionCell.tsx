@@ -67,7 +67,8 @@ export function DescriptionCell({
   // 조회 전용 — 연필만 숨기면 클릭 편집이 그대로 살아 있으므로 클릭 핸들러째 없는 표시 전용으로 그린다.
   if (!onStartEdit) {
     return (
-      <span className="block truncate text-sm max-w-xs">
+      // 말줄임돼도 마우스를 올리면 전체 설명이 보이게 한다 — 설명이 없어 「-」 를 보일 땐 title 없음 (WD-1027)
+      <span className="block truncate text-sm max-w-xs" title={col.description || undefined}>
         {col.description || <span className="text-muted-foreground">-</span>}
       </span>
     );
@@ -94,7 +95,8 @@ export function DescriptionCell({
       className="group flex items-center gap-1 cursor-pointer max-w-xs"
       onClick={onStartEdit}
     >
-      <span className="truncate text-sm">
+      {/* 말줄임돼도 마우스를 올리면 전체 설명이 보이게 한다 — 설명 없으면 title 없음 (WD-1027) */}
+      <span className="truncate text-sm" title={col.description || undefined}>
         {col.description || <span className="text-muted-foreground">-</span>}
       </span>
       <Pencil
