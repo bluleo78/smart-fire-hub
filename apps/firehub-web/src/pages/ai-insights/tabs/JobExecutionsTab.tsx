@@ -126,7 +126,7 @@ export default function JobExecutionsTab({ jobId }: JobExecutionsTabProps) {
    *     새 행이 붙은 것도 보조기술에 알려지지 않았다.
    * 초점은 같은 자리의 「더 보기」 → 첫 새 행 → (새 행이 없으면) 마지막 행 순으로 옮긴다 — 읽던 자리에서 이어 가게.
    * 알림은 초점을 옮긴 다음 프레임에 쓴다 — 같은 때 쓰면 새 초점의 낭독에 polite 알림이 묻힐 수 있다.
-   * 실패는 LoadMoreFailure 가 alert 로 알리고 「다시 시도」로 초점을 지키므로 여기서는 기다림만 접는다.
+   * 실패면 LoadMoreFailure 가 alert 로 알리고, 누른 때 초점이 버튼 자리에 있었으면 그 블록의 「다시 시도」로 초점을 옮긴다 — 버튼이 블록으로 바뀌며 초점이 body 로 빠지기 때문(WD-1036).
    */
   useEffect(() => {
     const load = pendingLoadRef.current;
@@ -134,6 +134,10 @@ export default function JobExecutionsTab({ jobId }: JobExecutionsTabProps) {
     // 실패면 기다림만 접는다 — 남겨 두면 나중의 성공(폴링 등)이 사용자 동작 없이 지난 개수를 알리고 초점을 옮긴다 (WD-1019)
     if (loadFailed) {
       pendingLoadRef.current = null;
+      // 키보드로 눌렀다면(초점이 버튼 자리에 있었다면) 실패 블록의 「다시 시도」로 초점을 옮긴다 — 마우스로 눌러 초점이 없던 경우는 옮기지 않는다 (WD-1036)
+      if (load.hadFocus && isFocusLost()) {
+        bottomRef.current?.querySelector<HTMLElement>('button')?.focus();
+      }
       return;
     }
     // 낡은 캐시로 먼저 보인 새 limit 은 백그라운드 재조회가 끝나야 최종 행이다 — 그때 알리고 초점을 정한다 (WD-1019)

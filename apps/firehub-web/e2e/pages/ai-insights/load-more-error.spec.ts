@@ -582,8 +582,8 @@ test.describe('실행 이력 「더 보기」 응답 대기 (WD-965)', () => {
     await waitFrames(page);
     await expect(rows).toHaveCount(20);
     await expect(status).toHaveText('');
-    // 버튼이 실패 블록으로 바뀌어 초점은 body 에 있고, 폴링이 행으로 옮기지 않는다
-    expect(await page.evaluate(() => document.activeElement === document.body)).toBe(true);
+    // 키보드로 눌러 실패했으므로 「다시 시도」에 초점이 있고, 폴링이 행으로 옮기지 않는다 (WD-1036)
+    await expect(page.getByRole('button', { name: '다시 시도' })).toBeFocused();
 
     // 「다시 시도」 — 실패한 limit=40 캐시(오류+데이터)를 다시 열어도 같은 렌더에서 되돌리지 않고 요청이 나가 40행을 받는다 (WD-1019 리뷰)
     const callsBeforeRetry = calls40;
@@ -1035,5 +1035,87 @@ test.describe('리포트 목록 「더 보기」 재조회 (WD-1037)', () => {
     await page.clock.fastForward(2_000);
     await expect(page.getByRole('alert')).toHaveText(FAIL_MESSAGE);
     await expect(rows).toHaveCount(20);
+  });
+});
+
+test.describe('「더 보기」 실패 초점 (WD-1036)', () => {
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await mockProactivePermissions(page);
+  });
+
+  /** limit=40 이 늘 500 인 실행 이력 탭을 열고 첫 20행을 기다려 행 locator 를 돌려준다. */
+  async function openAlwaysFailing(page: Page) {
+    await setupJobDetailMocks(page, 1);
+    await mockLimitedList(page, '/api/v1/proactive/jobs/1/executions', 99, executionRows);
+    await page.goto('/ai-insights/jobs/1?tab=executions');
+    const rows = page.getByRole('link', { name: /\(.*\)$/ });
+    await expect(rows).toHaveCount(20);
+    return rows;
+  }
+
+  test('실행 이력 「더 보기」를 Enter 로 눌러 실패하면 초점이 「다시 시도」로 가고 실패가 알려진다 (WD-1036)', async ({
+    authenticatedPage: page,
+  }) => {
+    const rows = await openAlwaysFailing(page);
+    await pressMoreWithKeyboard(page);
+    await expect(page.getByRole('alert')).toHaveText(FAIL_MESSAGE);
+    // 버튼이 실패 블록으로 바뀌어도 초점이 body 로 빠지지 않고 「다시 시도」로 간다
+    await expect(page.getByRole('button', { name: '다시 시도' })).toBeFocused();
+    await expect(rows).toHaveCount(20);
+  });
+
+  test('실행 이력 「더 보기」를 초점 없이 눌러 실패하면 초점을 옮기지 않는다 (WD-1036)', async ({
+    authenticatedPage: page,
+  }) => {
+    await openAlwaysFailing(page);
+    // 마우스 클릭이 초점을 주지 않는 브라우저처럼 — 초점 없이 click 만 보낸다
+    await page.getByRole('button', { name: '더 보기' }).dispatchEvent('click');
+    await expect(page.getByRole('alert')).toHaveText(FAIL_MESSAGE);
+    expect(await page.evaluate(() => document.activeElement === document.body)).toBe(true);
+  });
+
+  /** limit=40 이 늘 500 인 리포트 목록을 열고 첫 20행을 기다려 limit 별 요청 수를 돌려준다. */
+  async function openReportsAlwaysFailing(page: Page) {
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs', [createJob({ id: 3 })]);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    const counts = await mockLimitedList(page, '/api/v1/proactive/reports', 99, reportRows);
+    await page.goto('/ai-insights/reports');
+    await expect(page.getByRole('link', { name: /^리포트 \d+$/ })).toHaveCount(20);
+    return counts;
+  }
+
+  test('리포트 「더 보기」를 Enter 로 눌러 실패하면 초점이 「다시 시도」로 가고 실패가 알려진다 (WD-1036)', async ({
+    authenticatedPage: page,
+  }) => {
+    await openReportsAlwaysFailing(page);
+    await pressMoreWithKeyboard(page);
+    await expect(page.getByRole('alert')).toHaveText(FAIL_MESSAGE);
+    await expect(page.getByRole('button', { name: '다시 시도' })).toBeFocused();
+    await expect(page.getByRole('link', { name: /^리포트 \d+$/ })).toHaveCount(20);
+  });
+
+  test('리포트 「더 보기」를 초점 없이 눌러 실패하면 초점을 옮기지 않는다 (WD-1036)', async ({
+    authenticatedPage: page,
+  }) => {
+    await openReportsAlwaysFailing(page);
+    await page.getByRole('button', { name: '더 보기' }).dispatchEvent('click');
+    await expect(page.getByRole('alert')).toHaveText(FAIL_MESSAGE);
+    expect(await page.evaluate(() => document.activeElement === document.body)).toBe(true);
+  });
+
+  test('리포트 「다시 시도」를 Enter 로 눌러 또 실패해도 초점이 「다시 시도」에 남는다 (WD-1036)', async ({
+    authenticatedPage: page,
+  }) => {
+    const counts = await openReportsAlwaysFailing(page);
+    await pressMoreWithKeyboard(page);
+    await expect(page.getByRole('alert')).toHaveText(FAIL_MESSAGE);
+    const retry = page.getByRole('button', { name: '다시 시도' });
+    await expect(retry).toBeFocused();
+    // 첫 실패(요청 + 전역 재시도 1회 = 2)에 다시 시도의 실패 2번이 더해질 때까지 기다린다
+    await retry.focus();
+    await page.keyboard.press('Enter');
+    await expect.poll(() => counts[40]).toBe(4);
+    await expect(page.getByRole('alert')).toHaveText(FAIL_MESSAGE);
+    await expect(retry).toBeFocused();
   });
 });
