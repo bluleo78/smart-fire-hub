@@ -641,6 +641,63 @@ class ApiCallExecutorTest {
     verify(dataTableRowService, times(2)).insertBatch(eq("partial_table"), anyList(), anyList());
   }
 
+  @Test
+  void execute_offsetPagination_invalidTotalPath_fallsBackToPartialPageStop() {
+    // WD-1002: totalPath 문법 오류여도 부분 페이지 멈춤으로 전부 가져온다
+    // First page: full (2 rows), second page: partial (1 row) → should stop
+    wireMock.stubFor(
+        get(urlPathEqualTo("/api/bad-total"))
+            .withQueryParam("offset", equalTo("0"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody(
+                        "{\"items\":[{\"name\":\"A\",\"age\":1},{\"name\":\"B\",\"age\":2}]}")));
+
+    wireMock.stubFor(
+        get(urlPathEqualTo("/api/bad-total"))
+            .withQueryParam("offset", equalTo("2"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("{\"items\":[{\"name\":\"C\",\"age\":3}]}")));
+
+    ApiCallConfig config =
+        new ApiCallConfig(
+            baseUrl() + "/api/bad-total",
+            "GET",
+            null,
+            null,
+            null,
+            "JSON",
+            "$.items",
+            List.of(
+                new ApiCallConfig.FieldMapping("name", "name", "TEXT", null, null, null),
+                new ApiCallConfig.FieldMapping("age", "age", "INTEGER", null, null, null)),
+            "UTC",
+            new ApiCallConfig.PaginationConfig("OFFSET", 2, "offset", "limit", "$.["),
+            new ApiCallConfig.RetryConfig(0, 100, 1000),
+            5000,
+            60000,
+            100,
+            null,
+            null,
+            null,
+            null);
+
+    ApiCallExecutor.ApiCallResult result =
+        executor.execute(config, "bad_total_table", null, "APPEND", null);
+
+    assertThat(result.totalRows()).isEqualTo(3);
+    verify(dataTableRowService, times(2)).insertBatch(eq("bad_total_table"), anyList(), anyList());
+    // WD-1002 리뷰: 잘못 적은 경로가 성공으로 묻히지 않게 실행 로그에 [WARN] 이 페이지 수와 상관없이 한 번만 남는다
+    String warn = "[WARN] totalPath '$.['";
+    assertThat(result.log()).contains(warn);
+    assertThat(result.log().split(java.util.regex.Pattern.quote(warn), -1)).hasSize(2);
+  }
+
   // -------------------------------------------------------------------------
   // Test 7: 401 fails immediately without retry
   // -------------------------------------------------------------------------

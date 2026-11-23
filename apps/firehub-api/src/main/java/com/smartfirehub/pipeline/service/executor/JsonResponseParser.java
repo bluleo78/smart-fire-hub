@@ -3,6 +3,7 @@ package com.smartfirehub.pipeline.service.executor;
 import com.jayway.jsonpath.InvalidJsonException;
 import com.jayway.jsonpath.InvalidPathException;
 import com.jayway.jsonpath.JsonPath;
+import com.jayway.jsonpath.JsonPathException;
 import com.jayway.jsonpath.PathNotFoundException;
 import com.smartfirehub.pipeline.service.ValueConversion;
 import java.math.BigDecimal;
@@ -326,13 +327,24 @@ public class JsonResponseParser {
   /**
    * Reads a single value from JSON at the given path.
    *
-   * @throws ApiCallException if the path is not found
+   * <p>WD-1002: 경로를 못 찾은 경우뿐 아니라 경로 문법 오류(InvalidPathException)·평가 오류(JsonPathException)도 ApiCallException 으로 감싼다.
+   * 호출처(totalPath)가 Python 실행기의 _read_path_safe 와 똑같이 두 경우 모두 "부분/빈 페이지 멈춤"으로 되돌아가게 하기 위해서다.
+   * totalPath 는 전체 건수 힌트라 못 읽으면 빈 페이지나 페이지 크기보다 적은 페이지에서 멈춘다 — 서버가 페이지 크기보다 적게
+   * 주는 API 면 일부만 받을 수 있어, 호출처가 실행 로그에 [WARN] 을 남긴다.
+   *
+   * @throws ApiCallException 경로가 없거나, 문법이 틀렸거나, 평가 중 오류(예: 숫자에 집계 함수)가 날 때
    */
   public <T> T readPath(String json, String path, Class<T> type) {
     try {
       return JsonPath.read(json, path);
     } catch (PathNotFoundException e) {
       throw new ApiCallException("응답에서 JSON 경로를 찾을 수 없습니다: " + path, e);
+    } catch (InvalidPathException e) {
+      // PathNotFoundException 이 InvalidPathException 의 하위 클래스라 반드시 위에서 먼저 잡는다
+      throw new ApiCallException("JSON 경로 형식이 올바르지 않습니다: " + path, e);
+    } catch (JsonPathException e) {
+      // 평가 중 오류(예: 숫자에 $.total.max() 같은 집계 함수)도 Python 의 except Exception 처럼 감싸 부분 페이지 멈춤으로 보낸다
+      throw new ApiCallException("JSON 경로를 읽을 수 없습니다: " + path, e);
     }
   }
 }
