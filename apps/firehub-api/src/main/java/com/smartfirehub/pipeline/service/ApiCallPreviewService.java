@@ -11,11 +11,13 @@ import com.smartfirehub.pipeline.service.executor.ApiCallConfig;
 import com.smartfirehub.pipeline.service.executor.ApiCallErrorMessages;
 import com.smartfirehub.pipeline.service.executor.ApiCallException;
 import com.smartfirehub.pipeline.service.executor.JsonResponseParser;
+import com.smartfirehub.pipeline.service.executor.MethodOverrideNames;
 import com.smartfirehub.pipeline.service.executor.RedirectFollower;
 import com.smartfirehub.pipeline.service.executor.RequestUrlEncoding;
 import com.smartfirehub.pipeline.service.executor.SsrfProtectionService;
 import com.smartfirehub.pipeline.service.executor.SsrfSafeHttpClientFactory;
 import java.net.URI;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -137,7 +139,25 @@ public class ApiCallPreviewService {
               resolvedUrl, request.queryParams() != null ? request.queryParams() : Map.of());
       URI requestUri = urls.callUri();
       // 표시용 URL 은 옛 연결·주소에 직접 쓴 사용자 정보(아이디:비밀번호@)의 비밀번호도 가려져 있다(WD-681, AuthQueryMasker.build).
-      resolvedRequestUrl = urls.displayUrl();
+      // 한글 등 비ASCII 는 사람이 읽게 글자로 되돌려 보인다 — ASCII 이스케이프는 보낸 그대로(WD-936 리뷰 후속).
+      resolvedRequestUrl = RequestUrlEncoding.decodeForDisplay(urls.displayUrl());
+
+      // 5-1. GET 미리보기의 메서드 변경 이름 차단(WD-970) — 저장 연결(API_KEY 헤더 이름·추가 헤더·baseUrl 쿼리)이나 요청에서 온
+      //    X-HTTP-Method-Override 헤더·_method 쿼리는 대상 서버가 GET 을 DELETE 등 쓰기로 바꿔 처리하게 한다. GET 은 쓰기 확인
+      //    없이 나가므로 부르기 전에 이름만 알리고 거절한다(값·비밀은 문구에 넣지 않는다). 헤더를 쿼리보다 먼저 본다. POST 는 건드리지 않는다.
+      //    던진 ApiCallException 은 아래 catch 가 같은 문구·resolvedRequestUrl 의 실패 응답으로 바꾼다.
+      if ("GET".equals(previewMethod)) {
+        List<String> headerNames = new ArrayList<>();
+        if (request.headers() != null) headerNames.addAll(request.headers().keySet());
+        auth.applyHeaders((n, v) -> headerNames.add(n));
+        MethodOverrideNames.findOverrideHeader(headerNames)
+            .ifPresent(
+                name -> {
+                  throw new ApiCallException(
+                      ApiCallErrorMessages.methodOverrideInGetPreview(name, true));
+                });
+        rejectGetMethodOverrideQuery(previewMethod, requestUri);
+      }
 
       // 6. Execute HTTP request — Netty 가 못 부르는 호스트(밑줄 등)는 RedirectFollower 가 첫 홉부터 홉마다 요청 전에 고정
       // 문구로
@@ -193,6 +213,21 @@ public class ApiCallPreviewService {
   // ── private helpers ────────────────────────────────────────────────────────
 
   /**
+   * GET 으로 나가는 주소의 쿼리에 메서드 변경 이름(_method 등)이 있으면 거절한다(WD-970) — 첫 요청 검사와 리다이렉트 홉 검사({@code
+   * RedirectFollower.Request#hopCheck})가 같이 쓴다. GET 이 아니면 아무것도 하지 않는다(POST 는 범위 밖). 던진
+   * ApiCallException 은 사용자 문구라 미리보기 실패 응답에 그대로 나온다. 이름만 문구에 넣고 값·비밀은 넣지 않는다.
+   */
+  private static void rejectGetMethodOverrideQuery(String method, URI uri) {
+    if (!"GET".equals(method)) return;
+    MethodOverrideNames.findOverrideQuery(uri)
+        .ifPresent(
+            name -> {
+              throw new ApiCallException(
+                  ApiCallErrorMessages.methodOverrideInGetPreview(name, false));
+            });
+  }
+
+  /**
    * 프리뷰 요청의 최종 URL을 결정한다.
    *
    * <p>apiConnectionId가 있으면 connection.baseUrl + request.url()을 path로 결합한다. 없으면 request.url()을 그대로
@@ -212,7 +247,8 @@ public class ApiCallPreviewService {
   private String displayUrlOrNull(String resolvedUrl, Map<String, String> queryParams) {
     try {
       // 사용자 정보의 비밀번호는 build 가 가린다(WD-681).
-      return AuthQueryMasker.build(resolvedUrl, queryParams, null, null).displayUrl();
+      return RequestUrlEncoding.decodeForDisplay(
+          AuthQueryMasker.build(resolvedUrl, queryParams, null, null).displayUrl());
     } catch (AuthQueryMasker.InvalidRequestUrlException e) {
       return null;
     }
@@ -253,7 +289,10 @@ public class ApiCallPreviewService {
                 // 모든 홉을 합쳐 timeoutMs 한 번
                 false,
                 // 4xx·5xx 는 실행과 같은 예외·문구
-                true))
+                true,
+                // 리다이렉트 홉 검사(WD-970) — 첫 요청만 검사하면 Location: /data?_method=DELETE 로 돌려보내는 서버가 우회한다.
+                // 다음 메서드가 GET 일 때만 본다(POST 를 유지하는 307·308 은 범위 밖; 303 으로 GET 이 되면 검사).
+                ApiCallPreviewService::rejectGetMethodOverrideQuery))
         .getBody();
   }
 

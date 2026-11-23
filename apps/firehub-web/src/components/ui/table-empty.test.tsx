@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import { type ComponentType, createRef } from 'react';
+import { type ComponentType, createRef, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ANNOUNCE_DELAY_MS, TableEmptyRow, TableErrorRow } from './table-empty';
@@ -124,7 +124,12 @@ describe('TableEmptyRow 라이브 리전 (WD-815)', () => {
   });
 
   it('검색 초기화 버튼·emptyAction 은 status 밖이고 마운트 때부터 보인다', () => {
-    const { unmount } = renderRow({ colSpan: 3, searchKeyword: 'xyz', onResetSearch: () => {} });
+    const { unmount } = renderRow({
+      colSpan: 3,
+      searchKeyword: 'xyz',
+      onResetSearch: () => {},
+      resetFocusRef: createRef<HTMLElement>(),
+    });
     const button = screen.getByRole('button', { name: '검색 초기화' });
     expect(screen.getByRole('status').contains(button)).toBe(false);
     unmount();
@@ -217,40 +222,73 @@ describe('TableErrorRow (WD-938)', () => {
 });
 
 describe('TableEmptyRow 검색 초기화 초점 (WD-985)', () => {
-  /** 검색 입력과 빈 행이 같은 트리에 있는 화면을 흉내 낸다 */
-  function renderWithInput(withRef: boolean, spy: () => void) {
-    const ref = createRef<HTMLInputElement>();
-    render(
-      <>
-        <input aria-label="검색" ref={ref} />
-        <table>
-          <tbody>
-            <TableEmptyRow
-              colSpan={3}
-              searchKeyword="xyz"
-              onResetSearch={spy}
-              resetFocusRef={withRef ? ref : undefined}
-            />
-          </tbody>
-        </table>
-      </>,
-    );
+  /**
+   * 실제 목록 화면처럼 검색 입력과 빈 행을 함께 그리고, 「검색 초기화」가 검색어를 지우면 빈 행(과 그 버튼)이 사라지게 한다.
+   * attach=false 면 resetFocusRef 를 넘기되 어떤 요소에도 붙이지 않아 current 가 null 인 채로 둔다.
+   */
+  function renderWithInput(attach: boolean, spy: () => void) {
+    const inputRef = createRef<HTMLInputElement>();
+    const emptyRef = createRef<HTMLInputElement>();
+    function Screen() {
+      const [keyword, setKeyword] = useState('xyz');
+      return (
+        <>
+          <input aria-label="검색" ref={inputRef} />
+          <table>
+            <tbody>
+              {keyword ? (
+                <TableEmptyRow
+                  colSpan={3}
+                  searchKeyword={keyword}
+                  onResetSearch={() => {
+                    spy();
+                    setKeyword('');
+                  }}
+                  resetFocusRef={attach ? inputRef : emptyRef}
+                />
+              ) : (
+                <tr>
+                  <td>결과 행</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </>
+      );
+    }
+    render(<Screen />);
     return screen.getByLabelText('검색');
   }
 
-  it('검색 초기화를 누르면 onResetSearch 뒤 resetFocusRef 대상에 초점이 간다 (WD-985)', () => {
+  it('검색 초기화를 누르면 버튼이 사라져도 초점이 resetFocusRef 대상(검색 입력)에 간다 (WD-985)', () => {
     const spy = vi.fn();
     const input = renderWithInput(true, spy);
-    fireEvent.click(screen.getByRole('button', { name: '검색 초기화' }));
+    const button = screen.getByRole('button', { name: '검색 초기화' });
+    button.focus();
+    fireEvent.click(button);
     expect(spy).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('button', { name: '검색 초기화' })).toBeNull();
     expect(document.activeElement).toBe(input);
   });
 
-  it('resetFocusRef 없으면 onResetSearch 만 부르고 초점은 옮기지 않는다 (WD-985)', () => {
+  it('resetFocusRef 가 요소에 붙어 있지 않으면 버튼과 함께 초점이 body 로 떨어진다 — ref 를 붙여야 하는 까닭 (WD-985 리뷰 후속)', () => {
     const spy = vi.fn();
     const input = renderWithInput(false, spy);
-    fireEvent.click(screen.getByRole('button', { name: '검색 초기화' }));
+    const button = screen.getByRole('button', { name: '검색 초기화' });
+    // 버튼에 먼저 초점을 둔다 — 처음부터 body 면 아래 단언이 클릭과 무관하게 참이 된다
+    button.focus();
+    expect(document.activeElement).toBe(button);
+    fireEvent.click(button);
     expect(spy).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('button', { name: '검색 초기화' })).toBeNull();
     expect(document.activeElement).not.toBe(input);
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it('onResetSearch 를 넘기면서 resetFocusRef 를 빠뜨리면 타입 오류다 (WD-985 리뷰 후속)', () => {
+    // 런타임 단언이 아니라 typecheck(tsc -b)가 지키는 계약 — 아래 줄에 타입 오류가 없으면 ts-expect-error 가 typecheck 를 깨뜨린다
+    // @ts-expect-error resetFocusRef 없이 onResetSearch 만 넘길 수 없다
+    const missing = <TableEmptyRow colSpan={3} searchKeyword="xyz" onResetSearch={() => {}} />;
+    expect(missing).toBeTruthy();
   });
 });

@@ -1,3 +1,4 @@
+import { DATASET_SEARCH_DEBOUNCE_MS } from '../../../src/pages/data/dataset-list-search';
 import { createDataset } from '../../factories/dataset.factory';
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
@@ -18,8 +19,8 @@ import { expect, test } from '../../fixtures/auth.fixture';
  * 3. 입력 box 의 표시 값은 조합 중에도 깨지지 않고 사용자가 본 글자 그대로 유지된다.
  */
 test.describe('데이터셋 목록 — 검색 한글 IME 입력', () => {
-  // 검색창 debounce(300ms) + 여유 — 조합 중 앞 글자 타이머가 만료되도록 기다리는 시간
-  const DEBOUNCE_SETTLE_MS = 300 + 100;
+  // 조합 중 앞 글자 타이머가 만료되도록 기다리는 시간 = 페이지 debounce 상수 + 여유 100ms
+  const DEBOUNCE_SETTLE_MS = DATASET_SEARCH_DEBOUNCE_MS + 100;
   const datasets = [
     createDataset({ id: 1, name: '가스 누출 데이터셋' }),
     createDataset({ id: 2, name: '나무 화재 데이터셋' }),
@@ -114,7 +115,7 @@ test.describe('데이터셋 목록 — 검색 한글 IME 입력', () => {
 
   /**
    * (WD-979) 한글을 이어 치면 조합 중 앞 글자의 늦춘 onChange 가 불려 칸이 옛 값으로 덮이던 회귀.
-   * 「가」 입력 후 조합 종료 → 「나」 조합 중 debounce(300ms) 를 넘겨 기다린 뒤 「다」로 끝내는
+   * 「가」 입력 후 조합 종료 → 「나」 조합 중 debounce(DATASET_SEARCH_DEBOUNCE_MS) 를 넘겨 기다린 뒤 「다」로 끝내는
    * 순서를 실제 브라우저에서 재현해, 칸·URL·API 검색 파라미터가 모두 「가나다」로 남는지 본다.
    */
   test('(WD-979) 한글을 이어 치면 검색어가 「가나다」로 남는다', async ({
@@ -161,7 +162,7 @@ test.describe('데이터셋 목록 — 검색 한글 IME 입력', () => {
     // URL 갱신 뒤에도 칸이 옛 값으로 덮이지 않았는지 본다
     await expect(searchInput).toHaveValue('가나다');
 
-    await expect.poll(() => urls[urls.length - 1].searchParams.get('search')).toBe('가나다');
+    await expect.poll(() => urls.at(-1)?.searchParams.get('search')).toBe('가나다');
     // 마지막 요청까지 기다린 뒤에 스냅숏을 계산한다
     const searches = urls
       .slice(initialCallCount)

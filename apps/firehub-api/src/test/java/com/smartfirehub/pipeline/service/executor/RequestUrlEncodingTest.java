@@ -139,4 +139,32 @@ class RequestUrlEncodingTest {
     assertThat(enc("https://h/p\nx")).isEqualTo("https://h/p\nx");
     assertThat(enc("https://h/p?q=a\u007Fb")).isEqualTo("https://h/p?q=a\u007Fb");
   }
+
+  /** 짝 없는 서로게이트는 UTF-8 로 옮길 수 없어 %3F 로 바꾸지 않고 원문을 돌려 이후 조립이 거절하게 한다(WD-936 리뷰 후속). */
+  @Test
+  void loneSurrogate_returnedAsIs() {
+    assertThat(enc("https://h/p?q=a\uD800b")).isEqualTo("https://h/p?q=a\uD800b");
+    assertThat(enc("https://h/p\uDC00 x")).isEqualTo("https://h/p\uDC00 x");
+  }
+
+  /** 표시용: 한글의 UTF-8 묶음만 글자로 되돌리고 ASCII 이스케이프는 그대로 둔다(WD-936 리뷰 후속). */
+  @Test
+  void decodeForDisplay_decodesNonAsciiOnly() {
+    assertThat(RequestUrlEncoding.decodeForDisplay(enc("https://h/검색?q=서울 시&r=a/b")))
+        .isEqualTo("https://h/검색?q=서울%20시&r=a/b");
+    assertThat(RequestUrlEncoding.decodeForDisplay("https://h/p?q=%2F%3D%26%20x%25"))
+        .isEqualTo("https://h/p?q=%2F%3D%26%20x%25");
+    assertThat(RequestUrlEncoding.decodeForDisplay("https://h/p?q=%f0%9f%98%80"))
+        .isEqualTo("https://h/p?q=😀");
+  }
+
+  /** 잘린·잘못된 UTF-8 묶음과 가린 키(****)는 바꾸지 않는다. null·% 없는 값은 그대로. */
+  @Test
+  void decodeForDisplay_keepsInvalidSequences() {
+    assertThat(RequestUrlEncoding.decodeForDisplay("https://h/p?q=%EA%B2&r=%FF"))
+        .isEqualTo("https://h/p?q=%EA%B2&r=%FF");
+    assertThat(RequestUrlEncoding.decodeForDisplay("https://h/p?k=****Ab12"))
+        .isEqualTo("https://h/p?k=****Ab12");
+    assertThat(RequestUrlEncoding.decodeForDisplay(null)).isNull();
+  }
 }

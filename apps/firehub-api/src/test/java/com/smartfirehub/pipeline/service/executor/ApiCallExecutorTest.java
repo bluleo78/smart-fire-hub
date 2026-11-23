@@ -443,6 +443,17 @@ class ApiCallExecutorTest {
     assertThat(receivedUrls("/api/q")).containsExactly("/api/q?serviceKey=abc+d==");
   }
 
+  /** 짝 없는 서로게이트가 든 주소는 %3F 로 바꿔 부르지 않고 URL 을 만들 수 없다고 즉시 실패한다(WD-936 리뷰 후속). */
+  @Test
+  void execute_loneSurrogateInUrl_failsWithoutCall() {
+    ApiCallConfig config = simpleGetConfig("/api/q?q=a\uD800b");
+
+    assertThatThrownBy(() -> executor.execute(config, "t", null, "APPEND", null))
+        .isInstanceOf(ApiCallException.class)
+        .hasMessageStartingWith("요청 URL 을 만들 수 없습니다");
+    assertThat(wireMock.getAllServeEvents()).isEmpty();
+  }
+
   private static Map<String, String> queryAuth(String key) {
     return Map.of(
         "authType", "API_KEY", "placement", "query", "paramName", "serviceKey", "apiKey", key);

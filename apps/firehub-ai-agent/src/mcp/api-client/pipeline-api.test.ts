@@ -184,6 +184,16 @@ describe('pipelineApi (via FireHubApiClient)', () => {
       { name: 'queryParams', input: { customUrl: DATA_URL, queryParams: { _method: 'DELETE' } } },
       { name: '헤더와 같은 이름', input: { customUrl: DATA_URL, queryParams: { 'X-HTTP-Method-Override': 'PUT' } } },
       { name: 'customUrl', input: { customUrl: `${DATA_URL}?page=1&_METHOD=DELETE` } },
+      { name: '세미콜론 구분', input: { customUrl: `${DATA_URL}?page=1;_method=DELETE` } },
+      {
+        name: '연결 path 세미콜론',
+        input: { apiConnectionId: 1, path: '/data?a=1;%5Fmethod=PUT' },
+      },
+      {
+        name: '인코딩된 queryParams 키',
+        input: { customUrl: DATA_URL, queryParams: { '%5Fmethod': 'DELETE' } },
+      },
+      { name: '+ 는 공백이라 trim', input: { customUrl: `${DATA_URL}?+_method=DELETE` } },
       { name: '인코딩된 customUrl', input: { customUrl: `${DATA_URL}?%5Fmethod=DELETE` } },
       { name: '연결의 path', input: { apiConnectionId: 1, path: '/data?_method=DELETE' } },
       { name: '인증 paramName', input: { customUrl: DATA_URL, inlineAuth: { paramName: '_method', apiKey: 'DELETE' } } },
@@ -195,6 +205,24 @@ describe('pipelineApi (via FireHubApiClient)', () => {
       );
       expect(scope.isDone()).toBe(false);
       nock.cleanAll();
+    });
+
+    it('잘못된 퍼센트 인코딩 이름(?%zz=1;method=list)도 예외 없이 그대로 보낸다', async () => {
+      const url = `${DATA_URL}?%zz=1;method=list`;
+      const scope = nock(BASE_URL)
+        .post('/pipelines/api-call/preview', { ...base, url })
+        .reply(200, mock);
+      await client.previewApiCall({ ...base, customUrl: url });
+      expect(scope.isDone()).toBe(true);
+    });
+
+    it('프래그먼트(#) 안의 ?_method 는 쿼리가 아니라 그대로 보낸다', async () => {
+      const url = `${DATA_URL}#a?_method=DELETE`;
+      const scope = nock(BASE_URL)
+        .post('/pipelines/api-call/preview', { ...base, url })
+        .reply(200, mock);
+      await client.previewApiCall({ ...base, customUrl: url });
+      expect(scope.isDone()).toBe(true);
     });
 
     it('method 같은 보통 쿼리와 숫자가 붙은 다른 헤더는 그대로 보낸다', async () => {

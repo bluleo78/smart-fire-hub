@@ -54,6 +54,37 @@ interface DatasetDataTabProps {
 const SELECT_COL_WIDTH = 40;
 const ACTION_COL_WIDTH = 48;
 
+/**
+ * 행 끝 「행 N 수정」 버튼 + 툴팁.
+ * 행 수정 창을 닫으면 Radix 가 초점을 이 버튼으로 되돌리는데, 그때 focus 이벤트로 툴팁이 매번 열리는 것은 의도가 아니다.
+ * 그래서 창이 닫힌 직후(suppressUntilRef 시각 전)의 첫 "열림" 요청은 무시하고, Tab 이동·마우스 올림은 그대로 연다(WD-977 리뷰).
+ * 초점이 버튼으로 돌아오지 않는 경우(행 삭제 등)에도 억제가 남지 않도록 시각으로 1초만 유효하다.
+ */
+function EditRowButton({ label, onEdit, suppressUntilRef }: { label: string; onEdit: () => void; suppressUntilRef: { current: number } }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Tooltip
+      open={open}
+      onOpenChange={(next) => {
+        if (next && Date.now() < suppressUntilRef.current) {
+          suppressUntilRef.current = 0;
+          return;
+        }
+        setOpen(next);
+      }}
+    >
+      <TooltipTrigger asChild>
+        <Button variant="ghost" size="icon" className="h-7 w-7" aria-label={label} onClick={onEdit}
+          // 마우스를 올리는 것은 초점 복귀가 아니므로 억제 플래그를 먼저 풀어 첫 hover 가 무시되지 않게 한다
+          onPointerEnter={() => { suppressUntilRef.current = 0; }}>
+          <Pencil className="h-4 w-4" />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>행 수정</TooltipContent>
+    </Tooltip>
+  );
+}
+
 export const DatasetDataTab = React.memo(function DatasetDataTab({
   dataset,
   datasetId,
@@ -75,6 +106,16 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
   const { canImportData, canDeleteData, canApiImport } = useDatasetPermissions();
 
   const parentRef = useRef<HTMLDivElement>(null);
+  // 열 폭 훅이 요소가 바뀔 때(표가 사라졌다 다시 생김) 관찰을 갈아 끼우도록 스크롤 영역 요소를 상태로도 들고 있는다(WD-977 리뷰)
+  const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null);
+  const setScrollRef = useCallback((node: HTMLDivElement | null) => {
+    parentRef.current = node;
+    setScrollEl(node);
+  }, []);
+  // 행 수정 창을 닫은 직후 초점 복귀로 툴팁이 열리지 않게 하는 억제 끝 시각(ms) — 1회용이고 1초 뒤엔 저절로 무효(WD-977 리뷰)
+  const suppressEditTooltipUntilRef = useRef(0);
+  // 창을 수정 버튼으로 열었는지 — 더블클릭으로 열면 초점이 버튼으로 돌아오지 않으므로 억제를 걸지 않는다(WD-977 리뷰).
+  const editOpenedFromButtonRef = useRef(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
   const {
@@ -120,7 +161,7 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
   const { columnWidths, startResize } = useColumnResize({
     columns,
     // 표가 실제로 놓이는 스크롤 영역 기준 — clientWidth 가 세로 스크롤바 폭을 뺀 값이라 클래식 스크롤바에서도 넘치지 않는다(WD-977)
-    containerRef: parentRef,
+    container: scrollEl,
     // 작업 열 폭까지 빼고 데이터 열에 나눠야 표가 가로로 넘치지 않는다. 권한이 늦게 오면 값이 바뀌어 다시 계산된다(WD-977)
     reservedWidth: SELECT_COL_WIDTH + (canImportData ? ACTION_COL_WIDTH : 0),
   });
@@ -297,7 +338,7 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
             일괄 40px로는 13px이 모자랐다. E2E가 "행이 헤더에 가리지 않는다"를 직접 단언하므로,
             헤더 구성이 바뀌어 높이가 달라지면 이 값이 부족해지는 즉시 red가 된다.
           */}
-          <div ref={parentRef} className="min-h-0 flex-1 overflow-auto overscroll-contain scroll-pt-14">
+          <div ref={setScrollRef} className="min-h-0 flex-1 overflow-auto overscroll-contain scroll-pt-14">
             {/* 행 수정 버튼 툴팁용 Provider 는 표 전체에 한 번만 — AppLayout 의 Provider 는 사이드바만 감싸 본문에는 닿지 않는다 */}
             <TooltipProvider>
             <table style={{ tableLayout: 'fixed', width: '100%', borderCollapse: 'collapse' }}>
@@ -440,20 +481,11 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
                           style={{ width: ACTION_COL_WIDTH, padding: '0 8px', textAlign: 'center', borderBottom: '1px solid var(--divider)', verticalAlign: 'middle' }}
                           onDoubleClick={(e) => e.stopPropagation()}
                         >
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-7 w-7"
-                                aria-label={`행 ${virtualRow.index + 1} 수정`}
-                                onClick={() => openEditRow(row)}
-                              >
-                                <Pencil className="h-4 w-4" />
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent>행 수정</TooltipContent>
-                          </Tooltip>
+                          <EditRowButton
+                            label={`행 ${virtualRow.index + 1} 수정`}
+                            onEdit={() => { editOpenedFromButtonRef.current = true; openEditRow(row); }}
+                            suppressUntilRef={suppressEditTooltipUntilRef}
+                          />
                         </td>
                       )}
                     </tr>
@@ -529,7 +561,14 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
       {editRowState && (
         <EditRowDialog
           open={editRowState.open}
-          onOpenChange={(open) => { if (!open) setEditRowState(null); }}
+          onOpenChange={(open) => {
+            if (!open) {
+              // 버튼으로 연 창만 초점이 버튼으로 돌아오므로 그때만 툴팁 억제를 건다
+              if (editOpenedFromButtonRef.current) suppressEditTooltipUntilRef.current = Date.now() + 1000;
+              editOpenedFromButtonRef.current = false;
+              setEditRowState(null);
+            }
+          }}
           datasetId={datasetId}
           columns={dataset.columns}
           rowId={editRowState.rowId}

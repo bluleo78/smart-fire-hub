@@ -76,6 +76,7 @@ import {
   useRefreshAllApiConnections,
 } from '../../hooks/queries/useApiConnections';
 import { useMyPermissions } from '../../hooks/queries/useMyPermissions';
+import { useListRetryFocus } from '../../hooks/useListRetryFocus';
 import type { CreateApiConnectionRequest } from '../../types/api-connection';
 import { BasicAuthFields } from './components/BasicAuthFields';
 import { ExtraHeadersFields } from './components/ExtraHeadersFields';
@@ -93,7 +94,25 @@ export default function ApiConnectionListPage() {
   const { permissions } = useMyPermissions();
   const canWrite = permissions.has('apiconnection:write');
   const canDelete = permissions.has('apiconnection:delete');
-  const { data: connections, isLoading, isError, error: connectionsError } = useApiConnections();
+  const {
+    data: connections,
+    isLoading,
+    isPending,
+    isFetching,
+    isError,
+    error: connectionsError,
+    refetch,
+  } = useApiConnections();
+  // 「다시 시도」 포커스(WD-987): 실패한 목록에서 누르면 표로 초점을 옮겼다가 다시 실패하면 버튼으로 되돌린다.
+  // 403 은 다시 해도 같으므로 버튼을 두지 않는다
+  const { tableProps, retryAction } = useListRetryFocus({
+    isPending,
+    isError,
+    isFetching,
+    data: connections,
+    error: connectionsError,
+    refetch,
+  });
   const createMutation = useCreateApiConnection();
   const deleteMutation = useDeleteApiConnection();
   const refreshAllMutation = useRefreshAllApiConnections();
@@ -621,7 +640,10 @@ export default function ApiConnectionListPage() {
           WD-650: 상태 칸은 가장 넓은 배지가 들어가도록 둔다 — WD-753 부터 헬스체크 경로 없는 연결의 「점검 안 함」(배지+칸 여백 약 84px)이
           가장 넓어 4.5rem(「미확인」 기준)에서 5.25rem 으로 넓혔다 */}
       <div className="@container [--k:calc(5.25rem_+_5.25rem_+_5.75rem_+_3.75rem_+_3rem)] rounded-md border">
-        <Table>
+        <Table
+          aria-label="API 연결 목록"
+          {...tableProps}
+        >
           <TableHeader>
             <TableRow>
               <TableHead>이름</TableHead>
@@ -643,6 +665,7 @@ export default function ApiConnectionListPage() {
                 colSpan={7}
                 // 403 은 권한 안내(흐린 톤), 그 밖은 서버 사유 — 권한 문제를 일시 장애처럼 보이지 않게 한다 (WD-978 리뷰 후속)
                 {...listLoadErrorProps(connectionsError, 'API 연결')}
+                action={retryAction}
               />
             ) : connections && connections.length > 0 ? (
               connections.map((conn) => (
