@@ -199,8 +199,11 @@ test.describe('스마트 작업 폼 — 오류·안내 aria 연결 (WD-963)', ()
 
   test('주기가 없는 옛 작업은 직접 입력 칸이 오류를 읽는다 (WD-963)', async ({ authenticatedPage: page }) => {
     await mockCronPreview(page, JOB_CRON_PREVIEW_PATH);
-    await openJob(page, '', { triggerType: 'BOTH' });
+    // 안 건드린 주기 없는 수정은 필수가 아니다(WD-995) — 이상 탐지 작업을 스케줄로 바꿔야 주기가 필요해진다
+    await openJob(page, '', { triggerType: 'ANOMALY' });
     await page.getByRole('button', { name: '편집' }).click();
+    await page.locator('#job-trigger-type').click();
+    await page.getByRole('option', { name: '스케줄 (정기 실행)' }).click();
 
     // 저장된 주기가 비면 cronPreset 이 「직접 입력」이라 직접 입력 칸이 그려지고, 그 칸이 오류를 읽어야 한다
     const input = customInput(page);

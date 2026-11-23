@@ -331,18 +331,74 @@ test.describe('스마트 작업 — 「직접 입력」 칸 유지 (WD-962)', ()
       await expect(saveButton(page)).toBeEnabled();
       await saveButton(page).click();
       await expect.poll(() => writes.puts.length).toBe(1);
-      expect(writes.puts[0].cronExpression).toBe(' ');
+      // 공백 주기는 잘린 빈 값으로 정리해 보낸다 — 서버는 공백·빈 값을 같은 「없음」으로 보아 변경·400 이 아니다(WD-995)
+      expect(writes.puts[0].cronExpression).toBe('');
     });
 
-    test('편집: 저장된 주기가 없는 작업은 손대기 전부터 이유가 보이고 저장이 꺼져 있다', async ({
+    // 서버는 트리거·주기를 안 건드리는 수정은 주기가 없어도 받는다(WD-995). 화면도 이름만 고치는 저장을 막지 않는다.
+    test('편집: 주기 없는 작업도 트리거·주기를 안 건드리면 이름만 고쳐 저장된다 (WD-995)', async ({
       authenticatedPage: page,
     }) => {
       await mockCronPreview(page, JOB_CRON_PREVIEW_PATH);
+      const writes = await captureJobWrites(page, 1);
       await openJob(page, '', { triggerType: 'BOTH' });
       await page.getByRole('button', { name: '편집' }).click();
+      await page.locator('#job-name').fill('이름만 고침');
 
+      await expect(cronGroup(page).getByText(UNSET)).toHaveCount(0);
+      await expect(saveButton(page)).toBeEnabled();
+      await saveButton(page).click();
+      await expect.poll(() => writes.puts.length).toBe(1);
+      expect(writes.puts[0]).not.toHaveProperty('cronExpression');
+    });
+
+    test('편집: 안 바꾼 주기는 수정 요청에 보내지 않는다 (WD-995)', async ({ authenticatedPage: page }) => {
+      await mockCronPreview(page, JOB_CRON_PREVIEW_PATH);
+      const writes = await captureJobWrites(page, 1);
+      await openJob(page, '0 9 * * *');
+      await page.getByRole('button', { name: '편집' }).click();
+      await page.locator('#job-name').fill('이름만 고침');
+      await saveButton(page).click();
+      await expect.poll(() => writes.puts.length).toBe(1);
+      expect(writes.puts[0]).not.toHaveProperty('cronExpression');
+    });
+
+    // 끝 공백으로 저장된 옛 주기는 이름만 고쳐도 잘린 값을 보내 정리한다 — 생략하면 서버가 손대지 않아 공백이 영영 남는다(WD-995 리뷰).
+    // 서버는 공백만 다른 값을 변경으로 보지 않으므로 감사에는 남지 않는다.
+    test('편집: 끝 공백으로 저장된 주기는 이름만 고쳐도 잘린 값으로 정리된다 (WD-995)', async ({ authenticatedPage: page }) => {
+      await mockCronPreview(page, JOB_CRON_PREVIEW_PATH);
+      const writes = await captureJobWrites(page, 1);
+      await openJob(page, '0 9 * * * ');
+      await page.getByRole('button', { name: '편집' }).click();
+      await page.locator('#job-name').fill('이름만 고침');
+      await saveButton(page).click();
+      await expect.poll(() => writes.puts.length).toBe(1);
+      expect(writes.puts[0].cronExpression).toBe('0 9 * * *');
+    });
+
+    test('편집: 끝 공백 주기는 잘라 보낸다 (WD-995)', async ({ authenticatedPage: page }) => {
+      await mockCronPreview(page, JOB_CRON_PREVIEW_PATH);
+      const writes = await captureJobWrites(page, 1);
+      await openJob(page, '0 9 * * *');
+      await page.getByRole('button', { name: '편집' }).click();
+      await chooseCustom(page);
+      await cronInput(page).fill('0 10 * * * ');
+      await saveButton(page).click();
+      await expect.poll(() => writes.puts.length).toBe(1);
+      expect(writes.puts[0].cronExpression).toBe('0 10 * * *');
+    });
+
+    test('새 작업: 공백만 넣은 주기로는 만들 수 없다 (WD-995)', async ({ authenticatedPage: page }) => {
+      await setupNewJobMocks(page);
+      await mockCronPreview(page, JOB_CRON_PREVIEW_PATH);
+      await page.goto('/ai-insights/jobs/new');
+      await page.locator('#job-name').fill('공백 주기');
+      await page.locator('#job-prompt').fill('어제 결과를 요약하세요');
+      await chooseCustom(page);
+      await cronInput(page).fill('   ');
+
+      await expect(createButton(page)).toBeDisabled();
       await expect(cronGroup(page).getByText(UNSET)).toBeVisible();
-      await expect(saveButton(page)).toBeDisabled();
     });
 
     test('편집: 주기 없는 이상 탐지 작업을 스케줄로 바꾸면 이유가 보이고 저장이 꺼진다', async ({
@@ -371,7 +427,7 @@ test.describe('스마트 작업 — 「직접 입력」 칸 유지 (WD-962)', ()
       await expect(cronGroup(page).getByText(UNSET)).toHaveCount(0);
     });
 
-    test('편집: 주기가 null 인 이상 탐지 작업도 저장되고 cronExpression 은 빈 문자열로 간다', async ({
+    test('편집: 주기가 null 인 이상 탐지 작업도 저장되고 cronExpression 은 보내지 않는다', async ({
       authenticatedPage: page,
     }) => {
       await mockCronPreview(page, JOB_CRON_PREVIEW_PATH);
@@ -383,7 +439,7 @@ test.describe('스마트 작업 — 「직접 입력」 칸 유지 (WD-962)', ()
       await expect(saveButton(page)).toBeEnabled();
       await saveButton(page).click();
       await expect.poll(() => writes.puts.length).toBe(1);
-      expect(writes.puts[0].cronExpression).toBe('');
+      expect(writes.puts[0]).not.toHaveProperty('cronExpression');
     });
   });
 

@@ -204,6 +204,52 @@ class ProactiveOwnerAuditTest extends IntegrationTestBase {
     assertThat(rows.get(4).description()).isEqualTo("스마트 작업 켜기: 토글 작업2");
   }
 
+  /** [WD-995] 저장값과 공백만 다른 cron 을 다시 보낸 이름 변경은 감사에 이름만 남는다(cron 은 바뀐 게 아니다). */
+  @Test
+  void updateJob_whitespaceOnlyCronDiff_isNotAuditedAsChange() {
+    ProactiveJobResponse job =
+        jobService.createJob(
+            new CreateProactiveJobRequest(
+                "공백 cron 감사",
+                MARKER + " 프롬프트",
+                null,
+                "0 9 * * *",
+                "Asia/Seoul",
+                false,
+                "SCHEDULE",
+                Map.of("channels", List.of("CHAT"))),
+            owner);
+    inTenantFixture(
+        () ->
+            dsl.execute(
+                "UPDATE proactive_job SET cron_expression = ? WHERE id = ?",
+                "0 9 * * * ",
+                job.id()));
+
+    jobService.updateJob(
+        job.id(),
+        new UpdateProactiveJobRequest(
+            "공백 cron 감사 고침", null, null, "0 9 * * *", null, null, null, null),
+        owner);
+
+    List<Audit> rows = audits(owner, "proactive_job");
+    assertThat(rows).extracting(Audit::action).containsExactly("CREATE", "UPDATE");
+    assertThat(changedFields(rows.get(1))).containsExactly("name");
+  }
+
+  /** [WD-995] cron 이 없는 작업의 이름 변경(cron 미전송)은 통과하고 감사에 이름만 남는다. */
+  @Test
+  void updateJob_cronNullOnCronlessBoth_renameAllowed() {
+    ProactiveJobResponse job = createJob("주기 없는 작업", false);
+    inTenantFixture(
+        () -> dsl.execute("UPDATE proactive_job SET trigger_type = 'BOTH' WHERE id = ?", job.id()));
+
+    jobService.updateJob(job.id(), jobUpdate("주기 없는 작업 고침", null, null, null), owner);
+
+    List<Audit> rows = audits(owner, "proactive_job");
+    assertThat(changedFields(rows.get(1))).containsExactly("name");
+  }
+
   @Test
   void job_saveWithSameValues_writesNothing() {
     ProactiveJobResponse job = createJob("그대로 작업", false);

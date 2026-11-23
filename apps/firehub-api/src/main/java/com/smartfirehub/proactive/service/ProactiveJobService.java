@@ -266,9 +266,17 @@ public class ProactiveJobService {
     }
   }
 
-  /** 빈 값·공백을 null 로 — 「주기 없음」의 여러 표현(null·""·" ")을 같게 비교하려고 쓴다. */
+  /**
+   * 빈 값·공백을 null 로, 아니면 앞뒤 공백을 걷어 돌려준다 — 「주기 없음」의 여러 표현(null·""·" ")과 공백만 다른 같은 주기를 같게 비교하려고
+   * 쓴다(WD-995).
+   */
   private static String blankToNull(String value) {
-    return value == null || value.isBlank() ? null : value;
+    return value == null || value.isBlank() ? null : value.strip();
+  }
+
+  /** 저장할 cron — null 이 아니면 앞뒤 공백을 걷는다(WD-995). 빈 값은 지금처럼 그대로 저장 경로를 탄다(저장 형태를 바꾸지 않음). */
+  private static String stripCron(String cron) {
+    return cron == null ? null : cron.strip();
   }
 
   @Transactional(readOnly = true)
@@ -366,7 +374,7 @@ public class ProactiveJobService {
             request.name(),
             request.prompt(),
             request.templateId(),
-            request.cronExpression(),
+            stripCron(request.cronExpression()),
             request.timezone(),
             request.enabled(),
             request.triggerType(),
@@ -432,7 +440,8 @@ public class ProactiveJobService {
     // 보안 등급(S2): 메트릭 SQL 이 작성자가 볼 수 없는 데이터셋을 참조하면 거부(스펙 §4.2 6행). update 도 같은 검사 — 우회로 차단.
     metricSqlAccessChecker.requireMetricQueriesAllowed(request.config(), userId);
     requireUsableTemplate(request.templateId(), userId);
-    // 이름이 바뀐 저장만 중복을 검사한다(WD-824) — 판정 기준·이유는 ResourceNameGuard.requireUnusedOnRename 참고. 기준값은 행 잠금 뒤에 읽은 값이다.
+    // 이름이 바뀐 저장만 중복을 검사한다(WD-824) — 판정 기준·이유는 ResourceNameGuard.requireUnusedOnRename 참고. 기준값은 행 잠금
+    // 뒤에 읽은 값이다.
     nameGuard.requireUnusedOnRename(
         ResourceKind.PROACTIVE_JOB,
         userId,
@@ -448,7 +457,7 @@ public class ProactiveJobService {
             request.prompt(),
             request.templateId(),
             Boolean.TRUE.equals(request.clearTemplate()),
-            request.cronExpression(),
+            stripCron(request.cronExpression()),
             request.timezone(),
             request.enabled(),
             request.triggerType(),
@@ -474,7 +483,9 @@ public class ProactiveJobService {
     if (!Objects.equals(before.name(), after.name())) changed.add("name");
     if (!Objects.equals(before.prompt(), after.prompt())) changed.add("prompt");
     if (!Objects.equals(before.templateId(), after.templateId())) changed.add("templateId");
-    if (!Objects.equals(before.cronExpression(), after.cronExpression())) {
+    // 앞뒤 공백만 다른 주기는 바뀐 게 아니다(WD-995) — 요청 검사와 같은 정규화로 비교한다.
+    if (!Objects.equals(
+        blankToNull(before.cronExpression()), blankToNull(after.cronExpression()))) {
       changed.add("cronExpression");
     }
     if (!Objects.equals(before.timezone(), after.timezone())) changed.add("timezone");
