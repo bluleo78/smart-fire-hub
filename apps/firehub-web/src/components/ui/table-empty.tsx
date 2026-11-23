@@ -155,7 +155,7 @@ interface TableErrorRowProps {
   message?: string;
   /** 문구 글자 톤 — 기본 error(빨강), 권한 없음처럼 흐린 안내는 muted */
   tone?: 'error' | 'muted';
-  /** 셀에 더할 클래스 (예: 여백 py-12) */
+  /** 셀에 더할 클래스 — 세로 여백 등(좌우 여백은 바꾸지 않는다 — 전제 참고) */
   className?: string;
   /**
    * 문구 옆에 둘 동작 (예: "다시 시도" 버튼).
@@ -173,6 +173,11 @@ interface TableErrorRowProps {
  * - 톤 클래스는 문구 노드(DelayedStatus 의 className)에만 둔다 — td 에 두면 outline 버튼(color: inherit)인
  *   action 이 빨간/흐린 글자를 물려받아 예전 모양(버튼은 본문 글자색)이 바뀐다.
  * - 내용과 함께 마운트된 라이브 리전 낭독 누락(WD-815)을 피하려 TableEmptyRow 와 같은 DelayedStatus 를 쓴다.
+ *
+ * 전제 (WD-958):
+ * - 공용 `Table`(components/ui/table.tsx) 안에서만 쓴다 — 그 스크롤 상자가 `@container/table` 이라 100cqw 가 보이는 폭이 된다.
+ *   맨 <table> 이나 컨테이너 밖에서 쓰면 100cqw 가 뷰포트 폭으로 풀려 폭이 어긋난다.
+ * - `className` 으로 셀 좌우 여백(px-*)을 바꾸지 않는다 — 내용 상자의 left-2·-1rem 이 TableCell 의 p-2 에 맞춰져 있다(세로 여백 py-* 만).
  */
 export function TableErrorRow({
   colSpan,
@@ -184,10 +189,19 @@ export function TableErrorRow({
   return (
     <TableRow>
       <TableCell colSpan={colSpan} className={cn('text-center', className)}>
-        <DelayedStatus role="alert" className={tone === 'muted' ? 'text-muted-foreground' : 'text-destructive'}>
-          {message}
-        </DelayedStatus>
-        {action}
+        {/*
+          내용 상자 (WD-958) — 전제는 컴포넌트 JSDoc 참고.
+          - sticky left-2: 가로 스크롤돼도 보이는 영역에 붙는다(셀 p-2 = 0.5rem 과 같은 값).
+          - w-[calc(100cqw-1rem)] max-w-full: 스크롤 상자의 보이는 폭에서 셀 좌우 p-2 합을 뺀 폭 — 긴 사유는 늘어나지 않고 줄바꿈된다.
+          - px-8: 스크롤 페이드(w-10)·힌트 배지가 문구·버튼 양끝을 덮지 않게 양쪽 2.5rem 안쪽에만 둔다.
+          - whitespace-normal + overflow-wrap:anywhere: 공백 없는 긴 토큰(trace 등)도 감는다. mx-auto 는 쓰지 않는다(표가 더 넓으면 가운데가 보이는 영역 밖으로 밀림).
+        */}
+        <div className="sticky left-2 w-[calc(100cqw-1rem)] max-w-full px-8 whitespace-normal [overflow-wrap:anywhere]">
+          <DelayedStatus role="alert" className={tone === 'muted' ? 'text-muted-foreground' : 'text-destructive'}>
+            {message}
+          </DelayedStatus>
+          {action}
+        </div>
       </TableCell>
     </TableRow>
   );
