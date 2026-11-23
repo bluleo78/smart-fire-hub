@@ -157,7 +157,13 @@ test.describe('온톨로지 생명주기', () => {
       '/api/v1/ontology/3',
       createOntologySchema({ domain: '소방시설 점검', entities: [], relations: [] }),
     );
-    await page.goto('/knowledge-graph/model');
+    // WD-961: toBeHidden 은 요소가 없어도 통과하므로, 숨김을 판정하는 두 조건이 갖춰진 뒤에 단언한다.
+    // ① 선택 온톨로지 스키마(「수정 모드」 조건) — schema-graph 로 본다. 기본 선택(첫 active, id 1)의 beforeEach 스키마에
+    //    타입이 있어 그래프가 그려진다(위 id 3 빈 스키마는 뒤에 고르는 초안 것 — 빈 스키마면 OntologyEmptyState).
+    // ② 권한(useCanWriteOntology = isAdmin || ontology:write) — /auth/me/permissions 응답. 이동 전에 기다림을 등록한다.
+    const permissionsLoaded = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/v1/auth/me/permissions');
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByTestId('schema-graph'));
+    await permissionsLoaded;
 
     await expect(page.getByRole('button', { name: '새 온톨로지' })).toBeHidden();
     // 전체 문서 모달과 그 "편집" 버튼은 Task 6에서 제거됐다 — 유일한 편집 진입점인 "수정 모드"
