@@ -830,7 +830,7 @@ export default function StepConfigPanel({
                           type="button"
                           variant="ghost"
                           size="sm"
-                          className="h-7 shrink-0 px-2 text-xs text-muted-foreground hover:text-destructive"
+                          className="shrink-0 px-2 text-xs text-muted-foreground hover:text-destructive"
                           aria-label={`${depName} 연결 끊기`}
                           onClick={() =>
                             dispatch({

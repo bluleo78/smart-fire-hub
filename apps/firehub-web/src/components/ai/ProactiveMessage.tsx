@@ -115,7 +115,7 @@ export function ProactiveMessage({ message, onMarkRead, onFollowUp }: ProactiveM
             <Button
               variant="default"
               size="sm"
-              className="h-7 text-xs"
+              className="text-xs"
               onClick={(e) => {
                 e.stopPropagation();
                 setReportModalOpen(true);
@@ -135,7 +135,7 @@ export function ProactiveMessage({ message, onMarkRead, onFollowUp }: ProactiveM
         <Button
           variant="outline"
           size="sm"
-          className="h-7 text-xs"
+          className="text-xs"
           onClick={(e) => {
             e.stopPropagation();
             onFollowUp(message);

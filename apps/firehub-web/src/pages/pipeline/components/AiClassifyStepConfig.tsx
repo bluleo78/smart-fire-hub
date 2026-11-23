@@ -244,7 +244,7 @@ export default function AiClassifyStepConfig({
                 key={preset.label}
                 variant="outline"
                 size="sm"
-                className="h-7 text-xs px-2.5 border-ai-accent/30 text-ai-accent hover:bg-ai-accent-subtle hover:border-ai-accent/40 gap-1"
+                className="text-xs px-2.5 border-ai-accent/30 text-ai-accent hover:bg-ai-accent-subtle hover:border-ai-accent/40 gap-1"
                 onClick={() => applyPreset(preset)}
               >
                 <Sparkles className="h-3 w-3" />
@@ -282,7 +282,7 @@ export default function AiClassifyStepConfig({
             <Button
               variant="outline"
               size="sm"
-              className="h-7 text-xs px-2 border-ai-accent/30 text-ai-accent hover:bg-ai-accent-subtle"
+              className="text-xs px-2 border-ai-accent/30 text-ai-accent hover:bg-ai-accent-subtle"
               onClick={addOutputColumn}
               /* 컬럼이 0개라는 저장 오류는 고칠 방법이 「컬럼 추가」라 포커스를 여기로 보내고 오류 문구를 설명으로 잇는다(WD-633).
                  버튼에는 aria-invalid 가 맞지 않아(ARIA 1.2) 설명만 단다. */
