@@ -10,6 +10,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
+import { linkedAriaProps } from '@/components/ui/form-field-aria';
 import { InlineBanner } from '@/components/ui/inline-banner';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -135,7 +136,14 @@ export default function JobOverviewTab({
     markDirty();
     void form.trigger(field);
   };
-  const validatedField = (field: 'name' | 'prompt') => ({ onChange: () => markAndValidate(field) });
+  // 프롬프트를 친 횟수 — 모드 전환의 비동기 검사가 끝났을 때 그 사이 사용자가 쳤는지 가린다(WD-963 리뷰).
+  const promptEdits = useRef(0);
+  const validatedField = (field: 'name' | 'prompt') => ({
+    onChange: () => {
+      if (field === 'prompt') promptEdits.current += 1;
+      markAndValidate(field);
+    },
+  });
   // 새 작업 폼에서 「만들기」가 꺼진 이유를 칸 아래에 안내하려고 이름·프롬프트 값을 구독한다(WD-812).
   // watch() 대신 useWatch 를 쓴다 — React Compiler 린트가 watch() 를 막는다. 안내에는 「비었는가」만 필요하므로
   // compute 로 불리언만 구독해, 값이 비었다↔찼다로 바뀔 때만 다시 그린다.
@@ -257,6 +265,9 @@ export default function JobOverviewTab({
     customCronSelected || !CRON_PRESETS.some((p) => p.value !== '__custom__' && p.value === cronExpression)
       ? '__custom__'
       : cronExpression;
+  // cron 오류는 직접 입력 칸과 함께만 보인다 — 프리셋을 고른 직후 검증이 끝나기 전의 낡은 오류가, 이을 칸도 없이
+  // 프리셋 옆에 남지 않게(WD-963 리뷰). 프리셋 값은 너무 잦지 않고 빈 주기는 「직접 입력」이라 칸 없이 생길 오류는 없다.
+  const shownCronError = cronPreset === '__custom__' ? cronError : undefined;
 
   const nextRunInfo = useMemo(() => {
     const nextDate = nextRunPreview.times[0];
@@ -432,7 +443,15 @@ export default function JobOverviewTab({
               // prompt textarea는 조건부 렌더링으로만 숨겨질 뿐 RHF 상태(unregister 안 됨)에는
               // 값이 그대로 남아있어, 초기화하지 않으면 "목표 기반" 모드에서 비즈니스 질문/템플릿
               // 생성 없이도 이전 "직접 설정" 모드의 stale한 prompt가 그대로 제출되는 문제가 있었다 (#523).
-              setValue('prompt', '', { shouldValidate: true });
+              // WD-963: trigger 로 isValid 를 맞추되(#523), 손대지 않은 칸의 오류(role=alert)는 바로 지운다 — 그 사이 친 값의 오류는 남긴다.
+              setValue('prompt', '');
+              const editsAtSwitch = promptEdits.current;
+              void form.trigger('prompt').then(() => {
+                // 그 사이 치지 않았고 값도 그대로 비었으면 손대지 않은 빈 칸이라 오류만 지운다. 쳤거나 값이 바뀌었으면(생성 채움 등)
+                // 빈 값 기준의 이 검사가 늦게 끝나 낡은 「필수」 오류를 덮어썼을 수 있어, 지금 값으로 다시 검사한다(WD-963 리뷰 — 경합).
+                if (promptEdits.current === editsAtSwitch && !getValues('prompt')) form.clearErrors('prompt');
+                else void form.trigger('prompt');
+              });
               // 목표 기반 구성도 같은 이유로 비운다 — 「직접 설정」으로 돌아가 만든 작업에 양식이 몰래 붙지 않게(WD-297).
               setValue('generatedSections', null);
               discardGenerated();
@@ -558,10 +577,16 @@ export default function JobOverviewTab({
           aria-required="true"
           placeholder="일일 파이프라인 리포트"
           maxLength={200}
-          aria-describedby={showNameHint ? 'job-name-hint' : undefined}
+          // WD-963: 오류·안내 문구를 칸에 이어 스크린리더가 초점이 갈 때 이유를 읽게 한다(register 는 aria 를 돌려주지 않아 덮어쓰지 않는다)
+          {...linkedAriaProps({
+            error: errors.name ? 'job-name-error' : undefined,
+            hint: showNameHint ? 'job-name-hint' : undefined,
+          })}
           {...register('name', validatedField('name'))}
         />
-        {errors.name && <p className="text-xs text-destructive">{errors.name.message}</p>}
+        {errors.name && (
+          <p id="job-name-error" role="alert" className="text-xs text-destructive">{errors.name.message}</p>
+        )}
         {showNameHint && (
           <p id="job-name-hint" className="text-xs text-muted-foreground">
             작업 이름을 입력하면 만들 수 있습니다.
@@ -663,13 +688,21 @@ export default function JobOverviewTab({
             id="job-prompt"
             aria-required="true"
             rows={4}
+            // WD-963: Textarea 는 aria-invalid 테두리 스타일이 없어(shadcn ui 는 고치지 않는다) 사용처에서 작업 이름 칸과 같은 빨간 테두리를 준다
+            className="aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40"
             placeholder="어제 파이프라인 실행 결과를 분석하고 주요 이슈를 알려주세요."
             // 서버 상한과 같은 길이까지만 입력받는다 — 넘으면 저장이 400 으로 거부된다(WD-425)
             maxLength={MAX_JOB_PROMPT_LENGTH}
-            aria-describedby={showPromptHint ? 'job-prompt-hint' : undefined}
+            // WD-963: 작업 이름 칸과 같이 오류·안내 문구를 칸에 잇는다
+            {...linkedAriaProps({
+              error: errors.prompt ? 'job-prompt-error' : undefined,
+              hint: showPromptHint ? 'job-prompt-hint' : undefined,
+            })}
             {...register('prompt', validatedField('prompt'))}
           />
-          {errors.prompt && <p className="text-xs text-destructive">{errors.prompt.message}</p>}
+          {errors.prompt && (
+            <p id="job-prompt-error" role="alert" className="text-xs text-destructive">{errors.prompt.message}</p>
+          )}
           {showPromptHint && (
             <p id="job-prompt-hint" className="text-xs text-muted-foreground">
               분석 프롬프트를 입력하면 만들 수 있습니다.
@@ -705,8 +738,17 @@ export default function JobOverviewTab({
           {cronPreset === '__custom__' && (
             <div className="space-y-1">
               <Input
+                id="job-cron-custom"
                 placeholder="0 9 * * *"
                 className="font-mono text-sm"
+                // WD-963: 보이는 라벨이 없어 placeholder 만으로는 이름이 안정적이지 않다 — 이름과 필수, 오류·설명·빈 칸 안내를 잇는다
+                aria-label="실행 주기 직접 입력 (Cron 표현식)"
+                aria-required="true"
+                {...linkedAriaProps({
+                  error: shownCronError ? 'job-cron-error' : undefined,
+                  desc: 'job-cron-custom-desc',
+                  hint: cronEmptyHint ? 'job-cron-empty-hint' : undefined,
+                })}
                 {...register('cronExpression', {
                   onChange: (e) => {
                     // 처음부터 사용자 정의 값이던 편집도 치기 시작하면 「직접 입력」으로 고정한다
@@ -715,13 +757,18 @@ export default function JobOverviewTab({
                   },
                 })}
               />
-              <p className="text-xs text-muted-foreground">Cron 표현식 (분 시 일 월 요일)</p>
+              <p id="job-cron-custom-desc" className="text-xs text-muted-foreground">Cron 표현식 (분 시 일 월 요일)</p>
+              {/* WD-963: cron 오류 — 직접 입력 칸의 aria-describedby 로 읽힌다(글이 있을 때만 잇는다).
+                  role=alert 대신 polite: 치는 동안 문구가 글자마다 바뀌어 끼어들고, 편집 진입 때 이미 있는 오류를 곧바로 외치지 않게 한다.
+                  live 영역은 칸이 보이는 동안 늘 그려 두고 글만 바꾼다 — 문구와 함께 처음 그려진 live 영역은 스크린리더가
+                  바뀜으로 보지 않아 처음 생긴 오류를 읽지 않을 수 있다(WD-963 리뷰). 비었을 때는 sr-only 로 자리를 차지하지 않는다.
+                  이름·프롬프트 오류는 한 문구라 role=alert 그대로. */}
+              <p id="job-cron-error" aria-live="polite" className={shownCronError ? 'text-xs text-destructive' : 'sr-only'}>
+                {shownCronError}
+              </p>
             </div>
           )}
-          {cronError && (
-            <p className="text-xs text-destructive">{cronError}</p>
-          )}
-          {cronEmptyHint && <p className="text-xs text-muted-foreground">{cronEmptyHint}</p>}
+          {cronEmptyHint && <p id="job-cron-empty-hint" className="text-xs text-muted-foreground">{cronEmptyHint}</p>}
         </div>
       )}
 
