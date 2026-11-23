@@ -1,4 +1,5 @@
 import { createAuditLog } from '../../factories/admin.factory';
+import { createUser } from '../../factories/auth.factory';
 import { setupAdminAuth, setupAuditLogMocks } from '../../fixtures/admin.fixture';
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
@@ -500,6 +501,59 @@ test.describe('감사 로그 페이지', () => {
   });
 
   /**
+   * WD-1056: 목록·상세의 사용자 입력 문자열 칸(사용자·설명·리소스 ID·에러·User Agent)도
+   * RLO·ZWSP 를 \uXXXX 텍스트로 보여 표시 순서가 뒤집히지 않게 한다(저장 값은 원문 그대로).
+   */
+  test('목록·상세의 사용자·설명·리소스 ID·에러·User Agent 도 숨은 글자를 \\uXXXX 로 보인다 (WD-1056)', async ({ authenticatedPage: page }) => {
+    const rlo = '\u202E';
+    const zwsp = '\u200B';
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/admin/audit-logs',
+      createPageResponse([
+        createAuditLog({
+          id: 1,
+          username: `ad${zwsp}min`,
+          description: `API 연결 생성: 숨은${zwsp}글자${rlo}연결`,
+          resourceId: `12${rlo}34`,
+          errorMessage: `실패${rlo}원인\n\tat Foo.bar`,
+          userAgent: `Mozilla${zwsp}/5.0`,
+          result: 'FAILURE',
+        }),
+        createAuditLog({ id: 2, username: 'plain', description: null }),
+      ]),
+    );
+    await page.goto('/admin/audit-logs');
+
+    // 목록 1행: 이스케이프된 텍스트만 있고 실제 제어 글자는 없다.
+    const row1 = page.getByRole('row').nth(1);
+    await expect(row1).toContainText('ad\\u200Bmin');
+    const rowText = (await row1.textContent()) ?? '';
+    expect(rowText).toContain('API 연결 생성: 숨은\\u200B글자\\u202E연결');
+    expect(rowText).not.toContain(rlo);
+    expect(rowText).not.toContain(zwsp);
+
+    // 목록 2행: 숨은 글자가 없는 값과 null 설명(-)은 그대로.
+    const row2 = page.getByRole('row').nth(2);
+    await expect(row2).toContainText('plain');
+    await expect(row2.getByRole('cell').nth(4)).toHaveText('-');
+
+    // 상세 창: 다섯 칸 모두 이스케이프, 리소스 ID 의 RLO 도 괄호 안에 텍스트로 갇힌다.
+    await row1.click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible();
+    const text = (await dialog.textContent()) ?? '';
+    expect(text).toContain('ad\\u200Bmin');
+    expect(text).toContain('(12\\u202E34)');
+    expect(text).toContain('API 연결 생성: 숨은\\u200B글자\\u202E연결');
+    expect(text).toContain('실패\\u202E원인\n\tat Foo.bar');
+    expect(text).toContain('Mozilla\\u200B/5.0');
+    expect(text).not.toContain(rlo);
+    expect(text).not.toContain(zwsp);
+  });
+
+  /**
    * 이슈 #71: metadata 가 null/empty 인 경우 섹션 자체가 숨겨지는지 검증
    */
   test('metadata 가 null 인 경우 Metadata 섹션이 표시되지 않는다', async ({ authenticatedPage: page }) => {
@@ -624,6 +678,28 @@ test.describe('감사 로그 페이지', () => {
     await page.goto('/admin/audit-logs');
     const req = await capture.waitForRequest();
     expect(req.searchParams.get('userId')).toBeNull();
+  });
+
+  /**
+   * WD-1056: 사용자 필터 드롭다운 항목의 이름·아이디도 숨은 글자를 \uXXXX 로 보인다.
+   */
+  test('사용자 필터 항목도 숨은 글자를 \\uXXXX 로 보인다 (WD-1056)', async ({ authenticatedPage: page }) => {
+    await setupAuditLogMocks(page);
+    // setupAuditLogMocks 이후 등록해 우선순위를 가져간다.
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/users',
+      createPageResponse([createUser({ id: 7, name: '홍\u202E길동 \u2764\uFE0F', username: 'ho\u200Bng' })]),
+    );
+    await page.goto('/admin/audit-logs');
+    await page.getByLabel('사용자 필터').click();
+
+    const option = page.getByRole('option', { name: /길동/ });
+    await expect(option).toHaveText('홍\\u202E길동 \u2764\uFE0F (ho\\u200Bng)');
+    const optionText = (await option.textContent()) ?? '';
+    expect(optionText).not.toContain('\u202E');
+    expect(optionText).not.toContain('\u200B');
   });
 
   test('검색창 placeholder가 "설명으로 검색..."으로 변경되었다 (#89)', async ({ authenticatedPage: page }) => {
