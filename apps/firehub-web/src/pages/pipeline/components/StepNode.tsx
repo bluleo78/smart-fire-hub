@@ -198,6 +198,15 @@ const STATUS_CARD_BG_LIGHT: Record<NonNullable<StepNodeData['executionStatus']>,
   CANCELLED: 'rgba(249,250,251,0.6)',
 };
 
+/**
+ * 스텝 X 버튼의 Enter·Space 가 React Flow NodeWrapper 의 키 선택 처리(노드 선택·연결선 선택 해제)로
+ * 번지지 않게 끊는다(WD-955). 기본 동작(click)은 막지 않는다.
+ * Escape 는 선택 해제 의미라 그대로 올려 보낸다(위쪽 창 닫기 처리도 끊지 않게).
+ */
+function stopCanvasSelectionKeys(e: React.KeyboardEvent) {
+  if (e.key === 'Enter' || e.key === ' ') e.stopPropagation();
+}
+
 export const StepNode = memo(function StepNode({ data }: NodeProps<StepNodeType>) {
   const { resolvedTheme } = useTheme();
   const isDark = resolvedTheme === 'dark';
@@ -320,6 +329,7 @@ export const StepNode = memo(function StepNode({ data }: NodeProps<StepNodeType>
 
             {showDelete && (
               <button
+                onKeyDown={stopCanvasSelectionKeys}
                 onClick={(e) => {
                   e.stopPropagation();
                   data.onRequestDelete?.();
