@@ -135,6 +135,14 @@ public class JsonResponseParser {
     return new RawItems(rows, items.size());
   }
 
+  /**
+   * dataPath 위치의 원본 항목을 {@link #parseAndMap} 과 같은 순서·개수로 돌려준다(WD-1008 미리보기용) — 매핑 결과 행 i 가 항목 i 에서 왔음을
+   * 알아, 객체·배열이던 칸이 문자열로 바뀐 경우를 찾는 데 쓴다. 객체가 아닌 항목도 그대로 포함한다.
+   */
+  public List<?> parseItems(String json, String dataPath) {
+    return extractItems(json, dataPath);
+  }
+
   /** 매핑 설정(타입·날짜 형식·시간대)만 검사한다 — parseAndMap 과 같은 풀기 단계를 쓰며, 잘못되면 설정 오류(ApiCallException)를 던진다. */
   public void validateMappings(List<ApiCallConfig.FieldMapping> mappings) {
     resolve(mappings, null);

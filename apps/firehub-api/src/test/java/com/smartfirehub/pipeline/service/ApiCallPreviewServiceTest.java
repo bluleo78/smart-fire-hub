@@ -14,6 +14,7 @@ import com.smartfirehub.pipeline.service.executor.JsonResponseParser;
 import com.smartfirehub.pipeline.service.executor.SsrfProtectionService;
 import com.smartfirehub.pipeline.service.executor.SsrfSafeHttpClientFactory;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.AfterAll;
@@ -582,6 +583,321 @@ class ApiCallPreviewServiceTest {
 
     assertThat(response.success()).isTrue();
     assertThat(response.rows().get(0)).containsEntry("id", 1);
+  }
+
+  /** WD-1008: 매핑 모드도 원본 모드처럼 객체·배열 칸의 비밀번호를 가리고 500자로 자른다. 숫자·null 은 그대로다. */
+  @Test
+  void preview_mappedMode_nestedValue_masksPasswordAndTruncates() {
+    when(apiConnectionService.getByIdForCall(23L))
+        .thenReturn(connWithBase(23L, "BASIC", "http://localhost:" + wireMock.port()));
+    when(apiConnectionService.getDecryptedAuthConfig(23L))
+        .thenReturn(
+            java.util.Map.of("authType", "BASIC", "username", "bob", "password", "Wd1008Secret"));
+    String big = "x".repeat(700);
+    wireMock.stubFor(
+        get(urlEqualTo("/mapnested"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody(
+                        "[{\"id\":1,\"echo\":{\"pw\":\"Wd1008Secret\"},"
+                            + "\"list\":[\"a\",\"Wd1008Secret\"],"
+                            + "\"big\":[\""
+                            + big
+                            + "\"],\"nul\":null}]")));
+
+    var response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                "/mapnested",
+                "GET",
+                null,
+                null,
+                null,
+                "$",
+                List.of(
+                    new ApiCallPreviewRequest.FieldMappingPreview("id", "pk", null, null, null),
+                    new ApiCallPreviewRequest.FieldMappingPreview("echo", "echo", null, null, null),
+                    new ApiCallPreviewRequest.FieldMappingPreview("list", "list", null, null, null),
+                    new ApiCallPreviewRequest.FieldMappingPreview("big", "big", null, null, null),
+                    new ApiCallPreviewRequest.FieldMappingPreview("nul", "nul", null, null, null)),
+                23L,
+                null,
+                5000));
+
+    assertThat(response.success()).isTrue();
+    var row = response.rows().get(0);
+    assertThat(row.get("echo")).isInstanceOf(String.class);
+    assertThat((String) row.get("echo")).doesNotContain("Wd1008Secret").contains("pw");
+    assertThat(row.get("list")).isInstanceOf(String.class);
+    assertThat((String) row.get("list")).doesNotContain("Wd1008Secret").contains("\"a\"");
+    assertThat((String) row.get("big")).hasSize(501).endsWith("…");
+    assertThat(row.get("nul")).isNull();
+    assertThat(row.get("pk")).isEqualTo(1);
+  }
+
+  /** WD-1008: 소스가 null·빈칸인 매핑은 미리보기 열·행에서 빠진다. */
+  @Test
+  void preview_mappedMode_blankSourceMappings_excludedFromColumns() {
+    wireMock.stubFor(
+        get(urlEqualTo("/mapblank"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"id\":1}]")));
+
+    var response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/mapblank",
+                "GET",
+                null,
+                null,
+                null,
+                "$",
+                List.of(
+                    new ApiCallPreviewRequest.FieldMappingPreview("id", "pk", null, null, null),
+                    new ApiCallPreviewRequest.FieldMappingPreview("", "", null, null, null),
+                    new ApiCallPreviewRequest.FieldMappingPreview(null, "x", null, null, null)),
+                null,
+                null,
+                5000));
+
+    assertThat(response.success()).isTrue();
+    assertThat(response.columns()).containsExactly("pk");
+    assertThat(response.totalColumns()).isEqualTo(1);
+    assertThat(response.rows().get(0).keySet()).containsExactly("pk");
+  }
+
+  /** WD-1008 리뷰: 항목이 0개면 실행은 매핑 설정을 검사하지 않는다 — 미리보기도 잘못된 날짜 형식의 매핑(소스 빈칸 포함)을 오류로 막지 않는다. */
+  @Test
+  void preview_mappedMode_emptyResponse_invalidTypeMapping_succeeds() {
+    wireMock.stubFor(
+        get(urlEqualTo("/mapempty"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[]")));
+
+    var response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/mapempty",
+                "GET",
+                null,
+                null,
+                null,
+                "$",
+                List.of(
+                    new ApiCallPreviewRequest.FieldMappingPreview(
+                        "id", "pk", "TIMESTAMP", "yyyy-MM-dd{", null),
+                    new ApiCallPreviewRequest.FieldMappingPreview(
+                        "", "z", "TIMESTAMP", "yyyy-MM-dd{", null)),
+                null,
+                null,
+                5000));
+
+    assertThat(response.success()).isTrue();
+    assertThat(response.rows()).isEmpty();
+  }
+
+  private void stubBasic(String pw) {
+    when(apiConnectionService.getByIdForCall(23L))
+        .thenReturn(connWithBase(23L, "BASIC", "http://localhost:" + wireMock.port()));
+    when(apiConnectionService.getDecryptedAuthConfig(23L))
+        .thenReturn(java.util.Map.of("authType", "BASIC", "username", "bob", "password", pw));
+  }
+
+  private ApiCallPreviewResponse previewNestedAs(String path, String body, String dataType) {
+    return previewMapped(path, body, dataType, "echo");
+  }
+
+  /** WD-1008 최종 리뷰: 객체 칸을 TEXT·VARCHAR 로 매핑해 문자열로 바뀌어도 비밀번호가 가려진다. */
+  @Test
+  void preview_mappedMode_nestedAsText_masksPassword() {
+    stubBasic("Wd1008Secret");
+    for (String type : List.of("TEXT", "VARCHAR")) {
+      var response =
+          previewNestedAs("/maptext" + type, "[{\"echo\":{\"pw\":\"Wd1008Secret\"}}]", type);
+      assertThat(response.success()).isTrue();
+      Object cell = response.rows().get(0).get("echo");
+      assertThat(cell).isInstanceOf(String.class);
+      assertThat((String) cell).doesNotContain("Wd1008Secret");
+    }
+  }
+
+  /** WD-1008 최종 리뷰: 큰 객체를 TEXT 로 매핑해도 원본 모드 상한(500자 + 「…」)으로 잘린다. */
+  @Test
+  void preview_mappedMode_largeNestedAsText_truncated() {
+    stubBasic("Wd1008Secret");
+    var response =
+        previewNestedAs("/maptextbig", "[{\"echo\":{\"k\":\"" + "y".repeat(700) + "\"}}]", "TEXT");
+    assertThat(response.success()).isTrue();
+    assertThat((String) response.rows().get(0).get("echo")).hasSize(501).endsWith("…");
+  }
+
+  /** WD-1008 코드 리뷰: 소스가 null 인 매핑이 있고 항목이 객체가 아니면 실행이 실패하듯 미리보기도 같게 실패한다(전체 매핑으로 파싱). */
+  @Test
+  void preview_mappedMode_nullSourceMapping_nonObjectItems_failsLikeExecution() {
+    wireMock.stubFor(
+        get(urlEqualTo("/mapnullsrc"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[1,2]")));
+
+    var response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/mapnullsrc",
+                "GET",
+                null,
+                null,
+                null,
+                "$",
+                List.of(
+                    new ApiCallPreviewRequest.FieldMappingPreview("id", "pk", null, null, null),
+                    new ApiCallPreviewRequest.FieldMappingPreview(null, "x", null, null, null)),
+                null,
+                null,
+                5000));
+
+    assertThat(response.success()).isFalse();
+  }
+
+  /** WD-1008 코드 리뷰: 매핑 모드의 아주 긴 문자열 칸도 원본 모드 상한(500자 + 「…」)으로 잘린다. */
+  @Test
+  void preview_mappedMode_longStringCell_truncated() {
+    wireMock.stubFor(
+        get(urlEqualTo("/maplongstr"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"s\":\"" + "q".repeat(700) + "\"}]")));
+
+    var response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/maplongstr",
+                "GET",
+                null,
+                null,
+                null,
+                "$",
+                List.of(new ApiCallPreviewRequest.FieldMappingPreview("s", "s", null, null, null)),
+                null,
+                null,
+                5000));
+
+    assertThat(response.success()).isTrue();
+    assertThat((String) response.rows().get(0).get("s")).hasSize(501).endsWith("…");
+  }
+
+  /** 매핑 모드 미리보기 한 번 — 응답 본문과 매핑(소스=대상 이름, 같은 타입)으로 부른다. */
+  private ApiCallPreviewResponse previewMapped(
+      String path, String body, String type, String... fields) {
+    wireMock.stubFor(
+        get(urlEqualTo(path))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody(body)));
+    List<ApiCallPreviewRequest.FieldMappingPreview> mappings =
+        Arrays.stream(fields)
+            .map(f -> new ApiCallPreviewRequest.FieldMappingPreview(f, f, type, null, null))
+            .toList();
+    return service.preview(
+        new ApiCallPreviewRequest(path, "GET", null, null, null, "$", mappings, 23L, null, 5000));
+  }
+
+  /** WD-1008 반려: 매핑 모드에서 숫자로 돌아온 비밀번호(123456)도 가린다 — 타입 없음·INTEGER·DECIMAL 모두. */
+  @Test
+  void preview_mappedMode_numberPassword_masked() {
+    stubBasic("123456");
+    for (String type : Arrays.asList(null, "INTEGER", "DECIMAL")) {
+      var response = previewMapped("/mapnumpw" + type, "[{\"n\":123456,\"m\":7}]", type, "n", "m");
+      assertThat(response.success()).isTrue();
+      assertThat(response.rows().get(0).get("n")).isEqualTo("****");
+      // 비밀번호가 아닌 숫자는 숫자 그대로
+      assertThat(response.rows().get(0).get("m")).isInstanceOf(Number.class);
+    }
+  }
+
+  /** WD-1008 코드 리뷰: 소수 비밀번호(지수 표기로 바뀌는 12345678.9)도 타입 없음·DECIMAL 모두 가린다. */
+  @Test
+  void preview_mappedMode_decimalPassword_masked() {
+    stubBasic("12345678.9");
+    for (String type : Arrays.asList(null, "DECIMAL")) {
+      var response = previewMapped("/mapdecpw" + type, "[{\"n\":12345678.9}]", type, "n");
+      assertThat(response.success()).isTrue();
+      assertThat(response.rows().get(0).get("n")).isEqualTo("****");
+    }
+  }
+
+  /** WD-1008 코드 리뷰: 문자열 비밀번호 "00123456" 을 INTEGER 로 매핑해 앞자리 0 이 빠져도(123456) 원본이 비밀번호라 가린다. */
+  @Test
+  void preview_mappedMode_stringPasswordConvertedToInteger_masked() {
+    stubBasic("00123456");
+    var response = previewMapped("/mapzeropw", "[{\"pw\":\"00123456\"}]", "INTEGER", "pw");
+    assertThat(response.success()).isTrue();
+    assertThat(response.rows().get(0).get("pw")).isEqualTo("****");
+  }
+
+  /** WD-1008 반려: 매핑 모드의 500자 넘는 큰 숫자도 원본 모드처럼 잘린 문자열(500자 + 「…」)이 된다. */
+  @Test
+  void preview_mappedMode_hugeNumberCell_truncated() {
+    wireMock.stubFor(
+        get(urlEqualTo("/maphugenum"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"big\":" + "7".repeat(600) + "}]")));
+
+    var response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/maphugenum",
+                "GET",
+                null,
+                null,
+                null,
+                "$",
+                List.of(
+                    new ApiCallPreviewRequest.FieldMappingPreview("big", "big", null, null, null)),
+                null,
+                null,
+                5000));
+
+    assertThat(response.success()).isTrue();
+    Object big = response.rows().get(0).get("big");
+    assertThat(big).isInstanceOf(String.class);
+    assertThat((String) big).hasSize(501).endsWith("…");
+  }
+
+  /**
+   * WD-1008 simplify: 지수가 아주 큰 DECIMAL(1E+100000000·1E-100000000)도 1억 자 글을 만들지 않고 앞 500자 + 「…」로
+   * 잘린다.
+   */
+  @Test
+  void preview_mappedMode_hugeExponentDecimal_truncatedWithoutExpansion() {
+    stubBasic("Wd1008Secret");
+    var response =
+        previewMapped(
+            "/maphugeexp",
+            "[{\"a\":\"1E+100000000\",\"b\":\"-1E-100000000\"}]",
+            "DECIMAL",
+            "a",
+            "b");
+    assertThat(response.success()).isTrue();
+    assertThat((String) response.rows().get(0).get("a")).isEqualTo("1" + "0".repeat(499) + "…");
+    assertThat((String) response.rows().get(0).get("b")).isEqualTo("-0." + "0".repeat(497) + "…");
   }
 
   /** 매핑 모드(소스 있음)에서도 같은 잘못된 dateFormat 은 같은 설정 오류다. */

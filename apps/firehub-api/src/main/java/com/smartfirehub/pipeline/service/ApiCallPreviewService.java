@@ -204,22 +204,65 @@ public class ApiCallPreviewService {
       int totalExtractedRows;
       int totalColumns;
       int hiddenColumns = 0;
+      // authSecret 은 인증 처리 중 재대입되므로, 이후 두 분기(매핑·원본)가 가림에 함께 쓰는 값은 변하지 않는 사본으로 고정한다.
+      final AuthQueryMasker.SentSecrets secret = authSecret;
       if (hasUsableMapping(request.fieldMappings())) {
+        // 소스가 null·빈칸인 매핑은 열 목록·표시 행에서만 뺀다 — 값 없는 빈 열이 미리보기에 끼지 않게(WD-1008). 파싱은 실행과 똑같이
+        // 전체 매핑으로 한다(소스 null 매핑 + 객체 아닌 항목은 실행이 실패하므로 미리보기도 같게 실패해야 한다).
+        List<ApiCallPreviewRequest.FieldMappingPreview> usable =
+            request.fieldMappings().stream().filter(ApiCallPreviewService::isUsableSource).toList();
         List<ApiCallConfig.FieldMapping> fieldMappings = toFieldMappings(request.fieldMappings());
+        // 원본 항목 — 행 i 가 항목 i 에서 나온다(parseAndMap 과 같은 항목·순서). 변환으로 문자열이 된 중첩 칸을 찾는 데 쓴다.
+        List<?> items = jsonResponseParser.parseItems(maskedBody, effectiveDataPath);
+        // 타입·날짜 형식·시간대 검사(항목이 0개면 생략)는 parseAndMap 이 전체 매핑으로 실행과 같게 한다.
         List<Map<String, Object>> allRows =
             jsonResponseParser.parseAndMap(maskedBody, effectiveDataPath, fieldMappings, null, 0);
         columns =
-            request.fieldMappings().stream()
-                .map(ApiCallPreviewRequest.FieldMappingPreview::targetColumn)
-                .toList();
+            usable.stream().map(ApiCallPreviewRequest.FieldMappingPreview::targetColumn).toList();
         totalColumns = columns.size();
         totalExtractedRows = allRows.size();
-        previewRows =
-            authSecret.maskRows(
+        List<Map<String, Object>> shownRows =
+            secret.maskRows(
                 allRows.size() > MAX_PREVIEW_ROWS ? allRows.subList(0, MAX_PREVIEW_ROWS) : allRows);
+        // 객체·배열 칸은 원본 모드와 같이 가리고 500자로 자른다(WD-1008). 원본이 객체·배열인데 TEXT 등으로 변환돼 문자열이 된 칸도
+        // 같은 대상이다 — 변환된 글(실행이 저장할 값)은 그대로 두고 글 속 비밀번호를 가린 뒤 자른다. 스칼라 원본 칸은 maskRows 만(WD-681).
+        previewRows = new ArrayList<>(shownRows.size());
+        for (int i = 0; i < shownRows.size(); i++) {
+          Object item = items.get(i);
+          Map<String, Object> row = shownRows.get(i);
+          Map<String, Object> safe = new LinkedHashMap<>();
+          for (ApiCallPreviewRequest.FieldMappingPreview m : usable) {
+            String target = m.targetColumn();
+            if (!row.containsKey(target)) continue;
+            Object cell = row.get(target);
+            Object source = item instanceof Map<?, ?> im ? im.get(m.sourceField()) : null;
+            boolean nestedSource = source instanceof Map<?, ?> || source instanceof List<?>;
+            if (cell != null
+                && (isWholePassword(secret, source) || isWholePassword(secret, cell))) {
+              // 원본 값이나 변환된 값 전체가 비밀번호면 가린다 — 숫자로 온 123456·지수로 바뀐 소수·INTEGER 로 앞자리 0 이 빠진 "00123456"
+              // 처럼 maskRows(문자열 칸만 봄)가 놓치는 칸까지(WD-1008 반려). 부분 일치는 가리지 않는다 — 매핑 모드 스칼라는 전체
+              // 일치(WD-681)다.
+              safe.put(target, AuthQueryMasker.PASSWORD_MASK);
+            } else if (cell instanceof Map<?, ?> || cell instanceof List<?>) {
+              safe.put(target, nestedCell(secret, cell));
+            } else if (nestedSource && cell != null) {
+              // 표시 전용 글이다 — 가린 글은 실행이 저장할 값과 이스케이프가 다를 수 있다.
+              safe.put(
+                  target, truncateChars(secret.maskPasswordInMaskedBody(String.valueOf(cell))));
+            } else if (cell instanceof String str) {
+              // 아주 긴 문자열 칸도 원본 모드처럼 자른다(rawJson 상한 우회 방지). 전체 일치 비밀번호 가림(WD-681)은 maskRows 가 이미 했다.
+              safe.put(target, truncateChars(str));
+            } else if (cell instanceof Number) {
+              // 500자 넘는 큰 수는 원본 모드처럼 잘린 문자열로 바꾼다(rawJson 상한 우회 방지, WD-1008 반려). 비밀번호 가림은 위 갈래가 했다.
+              String text = plainNumberText(cell);
+              safe.put(target, text.length() > MAX_RAW_CELL_CHARS ? truncateChars(text) : cell);
+            } else {
+              safe.put(target, cell);
+            }
+          }
+          previewRows.add(safe);
+        }
       } else {
-        // 람다 없이 쓰지만 authSecret 은 재대입되므로 최종 사본을 쓴다.
-        final AuthQueryMasker.SentSecrets secret = authSecret;
         JsonResponseParser.RawItems rawItems =
             jsonResponseParser.parseRawItems(maskedBody, effectiveDataPath);
         // 요청에 (소스 필드가 빈) 매핑이 있어도 실행은 타입·날짜 형식을 검사한다 — 항목이 있으면 같은 검사를 해 미리보기만 통과하는 일을 막는다.
@@ -387,8 +430,12 @@ public class ApiCallPreviewService {
 
   /** 요청 매핑 중 sourceField 가 null·빈칸이 아닌 것이 하나라도 있는지 — 없으면(null·빈 목록·빈칸 소스만) 원본 모드(WD-947). */
   private boolean hasUsableMapping(List<ApiCallPreviewRequest.FieldMappingPreview> previews) {
-    return previews != null
-        && previews.stream().anyMatch(p -> p.sourceField() != null && !p.sourceField().isBlank());
+    return previews != null && previews.stream().anyMatch(ApiCallPreviewService::isUsableSource);
+  }
+
+  /** 매핑 소스가 null·빈칸이 아닌지 — 열로 보일 매핑인지와 원본 모드 여부를 같은 기준으로 가른다(WD-1008). */
+  private static boolean isUsableSource(ApiCallPreviewRequest.FieldMappingPreview p) {
+    return p.sourceField() != null && !p.sourceField().isBlank();
   }
 
   private List<ApiCallConfig.FieldMapping> toFieldMappings(
@@ -437,6 +484,36 @@ public class ApiCallPreviewService {
   }
 
   /**
+   * 중첩 값(Map/List)을 JSON 문자열로 바꿔 잎 값 비밀번호를 가린 뒤 500자로 자른다(가리기 전에 자르면 경계의 비밀번호 조각이 남을 수 있다). 원본
+   * 모드({@link #rawCell})와 매핑 모드가 함께 쓴다 — 두 호출처가 Map/List 인지 먼저 확인한다.
+   */
+  private static Object nestedCell(AuthQueryMasker.SentSecrets secret, Object value) {
+    String text;
+    try {
+      text = RAW_MAPPER.writeValueAsString(value);
+    } catch (JacksonException e) {
+      // 파싱된 JSON 값이라 사실상 일어나지 않는다 — 그래도 미리보기가 죽지 않게 문자열로 대신한다.
+      text = value.toString();
+    }
+    return truncateChars(secret.maskPasswordInMaskedBody(text));
+  }
+
+  /**
+   * 스칼라 값(문자열·숫자·불리언) 전체가 Basic 비밀번호와 같은지 — 숫자는 지수 표기 없는 글(plainNumberText)로도 본다(1.23456789E7 로 바뀐
+   * 12345678.9). 매핑 모드 칸 가림에 쓴다(WD-1008).
+   */
+  private static boolean isWholePassword(AuthQueryMasker.SentSecrets secret, Object value) {
+    if (!(value instanceof String || value instanceof Number || value instanceof Boolean)) {
+      return false;
+    }
+    // maskScalar 는 비밀번호가 아니면 받은 값을 그대로 돌려준다 — 같은 참조가 아니면 가린 것이다.
+    if (secret.maskScalar(value) != value) return true;
+    if (!(value instanceof Number)) return false;
+    String plain = plainNumberText(value);
+    return secret.maskScalar(plain) != plain;
+  }
+
+  /**
    * 원본 모드 셀 하나를 안전하게 만든다 — 중첩 값(Map/List)은 JSON 문자열로 바꿔 잎 값 비밀번호를 가린 뒤 자르고(가리기 전에 자르면 경계의 비밀번호 조각이
    * 남을 수 있다), 문자열·숫자·불리언은 값 전체 일치 비밀번호를 가리며, null 은 그대로 둔다.
    *
@@ -445,16 +522,7 @@ public class ApiCallPreviewService {
    * 대로 전체 일치만).
    */
   private static Object rawCell(AuthQueryMasker.SentSecrets secret, Object value) {
-    if (value instanceof Map<?, ?> || value instanceof List<?>) {
-      String text;
-      try {
-        text = RAW_MAPPER.writeValueAsString(value);
-      } catch (JacksonException e) {
-        // 파싱된 JSON 값이라 사실상 일어나지 않는다 — 그래도 미리보기가 죽지 않게 문자열로 대신한다.
-        text = value.toString();
-      }
-      return truncateChars(secret.maskPasswordInMaskedBody(text));
-    }
+    if (value instanceof Map<?, ?> || value instanceof List<?>) return nestedCell(secret, value);
     if (value instanceof Number || value instanceof Boolean) {
       // 숫자·불리언도 문자열 형태로 보고 글 속 비밀번호 규칙을 똑같이 쓴다(91234567 속 123456 도 가림). 가릴 게 없으면 원래 값(숫자 유지)이되,
       // 500자를 넘는 거대한 숫자는 잘린 문자열로 바꾼다(rawJson 상한 우회 방지).
@@ -482,7 +550,18 @@ public class ApiCallPreviewService {
     if (value instanceof Float f && Float.isFinite(f)) {
       return new BigDecimal(Float.toString(f)).toPlainString();
     }
-    if (value instanceof BigDecimal bd) return bd.toPlainString();
+    if (value instanceof BigDecimal bd) {
+      // 지수가 아주 큰 수(1E+100000000·1E-100000000)는 toPlainString 이 1억 자를 만든다 — 호출부는 500자로 자르므로 앞부분과 같은
+      // 글만
+      // 만든다(WD-1008 simplify — DECIMAL 변환 칸·원본 값이 모두 여기를 지난다).
+      if (bd.scale() < -MAX_RAW_CELL_CHARS) {
+        return bd.unscaledValue().toString() + "0".repeat(MAX_RAW_CELL_CHARS);
+      }
+      if (bd.scale() > MAX_RAW_CELL_CHARS + bd.precision()) {
+        return (bd.signum() < 0 ? "-0." : "0.") + "0".repeat(MAX_RAW_CELL_CHARS);
+      }
+      return bd.toPlainString();
+    }
     return String.valueOf(value);
   }
 
