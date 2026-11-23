@@ -30,11 +30,20 @@ const TOO_FREQUENT = /실행 주기는 1분보다 짧게 할 수 없습니다/;
 const createButton = (page: Page) => page.getByRole('button', { name: '만들기', exact: true });
 const saveButton = (page: Page) => page.getByRole('button', { name: '저장', exact: true });
 const UNSET = '실행 주기를 설정하세요';
+/** 「직접 입력」 칸이 빈 동안 보이는 회색 안내(WD-962 리뷰 후속) — 새 작업·편집 */
+const EMPTY_CREATE = 'Cron 표현식이 비어 있어 만들 수 없습니다.';
+const EMPTY_SAVE = 'Cron 표현식이 비어 있어 저장할 수 없습니다.';
 
 /** 실행 주기에서 「직접 입력」을 고른다. */
 async function chooseCustom(page: Page) {
   await presetSelect(page).click();
   await page.getByRole('option', { name: '직접 입력' }).click();
+}
+
+/** 트리거 유형을 고른다. */
+async function chooseTrigger(page: Page, label: string) {
+  await page.locator('#job-trigger-type').click();
+  await page.getByRole('option', { name: label }).click();
 }
 
 /** 기존 작업 상세를 지정한 cron 으로 띄운다(나중 등록 라우트가 이긴다). */
@@ -200,13 +209,11 @@ test.describe('스마트 작업 — 「직접 입력」 칸 유지 (WD-962)', ()
       await cronInput(page).pressSequentially('* * * * * *');
       await expect(createButton(page)).toBeDisabled();
 
-      await page.locator('#job-trigger-type').click();
-      await page.getByRole('option', { name: '이상 탐지 (이벤트 기반)' }).click();
+      await chooseTrigger(page, '이상 탐지 (이벤트 기반)');
       await expect(page.getByText(TOO_FREQUENT)).toHaveCount(0);
       await expect(createButton(page)).toBeEnabled();
 
-      await page.locator('#job-trigger-type').click();
-      await page.getByRole('option', { name: '스케줄 (정기 실행)' }).click();
+      await chooseTrigger(page, '스케줄 (정기 실행)');
       await expect(cronGroup(page).getByText(TOO_FREQUENT)).toBeVisible();
       await expect(createButton(page)).toBeDisabled();
     });
@@ -233,6 +240,83 @@ test.describe('스마트 작업 — 「직접 입력」 칸 유지 (WD-962)', ()
       await cronInput(page).pressSequentially('0');
       await page.keyboard.press('Backspace');
       await expect(unset).toBeVisible();
+    });
+
+    // WD-962 리뷰 후속 ① — 막 연 빈 칸은 빨간 오류 대신 회색 안내로 「만들기」가 꺼진 이유를 보인다
+    test('새 작업: 직접 입력 칸이 빈 동안 만들기가 꺼진 이유를 회색 안내로 보이고, 치면 사라진다', async ({
+      authenticatedPage: page,
+    }) => {
+      const writes = await openFilledNewJob(page);
+      await chooseCustom(page);
+
+      const hint = cronGroup(page).getByText(EMPTY_CREATE);
+      await expect(hint).toBeVisible();
+      await expect(hint).toHaveClass(/text-muted-foreground/);
+      await expect(cronGroup(page).getByText(UNSET)).toHaveCount(0);
+      await expect(createButton(page)).toBeDisabled();
+
+      await cronInput(page).pressSequentially('0 8 * * *');
+      await expect(hint).toHaveCount(0);
+      await expect(createButton(page)).toBeEnabled();
+      await createButton(page).click();
+      await expect.poll(() => writes.posts.length).toBe(1);
+      expect(writes.posts[0].cronExpression).toBe('0 8 * * *');
+    });
+
+    test('편집: 직접 입력 칸을 막 열면 저장이 꺼진 이유를 회색 안내로 보인다', async ({ authenticatedPage: page }) => {
+      await mockCronPreview(page, JOB_CRON_PREVIEW_PATH);
+      await openJob(page, '0 9 * * *');
+      await page.getByRole('button', { name: '편집' }).click();
+      await chooseCustom(page);
+
+      await expect(cronGroup(page).getByText(EMPTY_SAVE)).toBeVisible();
+      await expect(cronGroup(page).getByText(UNSET)).toHaveCount(0);
+      await expect(saveButton(page)).toBeDisabled();
+    });
+
+    // WD-962 리뷰 후속 ② — 트리거를 바꾸면 cron 오류를 맞춘다. 빈 직접 입력 칸은 검사하지 않고 오류만 지워 회색 안내로 이유를 보인다.
+    test('새 작업: 칸을 비운 채 이상 탐지를 다녀오면 낡은 빨간 문구 대신 회색 안내가 보이고 만들기가 꺼진다', async ({
+      authenticatedPage: page,
+    }) => {
+      await openFilledNewJob(page);
+      await chooseCustom(page);
+      await cronInput(page).pressSequentially('0');
+      await page.keyboard.press('Backspace');
+      await expect(cronGroup(page).getByText(UNSET)).toBeVisible();
+
+      await chooseTrigger(page, '이상 탐지 (이벤트 기반)');
+      await expect(createButton(page)).toBeEnabled();
+
+      await chooseTrigger(page, '스케줄 + 이상 탐지');
+      await expect(cronGroup(page).getByText(EMPTY_CREATE)).toBeVisible();
+      await expect(cronGroup(page).getByText(UNSET)).toHaveCount(0);
+      await expect(createButton(page)).toBeDisabled();
+    });
+
+    test('새 작업: 직접 입력을 막 고른 채 트리거를 바꿔도 빈 칸에 빨간 문구가 뜨지 않는다', async ({
+      authenticatedPage: page,
+    }) => {
+      await openFilledNewJob(page);
+      await chooseCustom(page);
+      await chooseTrigger(page, '스케줄 + 이상 탐지');
+
+      await expect(cronGroup(page).getByText(EMPTY_CREATE)).toBeVisible();
+      await expect(cronGroup(page).getByText(UNSET)).toHaveCount(0);
+      await expect(createButton(page)).toBeDisabled();
+    });
+
+    test('편집: 주기가 너무 잦다는 낡은 오류도 트리거를 바꿔 다녀오면 지금 값으로 다시 맞춰진다', async ({
+      authenticatedPage: page,
+    }) => {
+      await mockCronPreview(page, JOB_CRON_PREVIEW_PATH);
+      await openJob(page, '0 9 * * *');
+      await page.getByRole('button', { name: '편집' }).click();
+      await chooseCustom(page);
+      await cronInput(page).pressSequentially('0 8 * * *');
+      await chooseTrigger(page, '스케줄 + 이상 탐지');
+
+      await expect(cronGroup(page).getByText(UNSET)).toHaveCount(0);
+      await expect(saveButton(page)).toBeEnabled();
     });
 
     // 서버는 주기·트리거를 건드리지 않는 수정을 받는다(WD-607). 예전에 공백으로 저장된 작업의 이름 수정을 화면이 막으면 안 된다.
@@ -267,8 +351,7 @@ test.describe('스마트 작업 — 「직접 입력」 칸 유지 (WD-962)', ()
       await mockCronPreview(page, JOB_CRON_PREVIEW_PATH);
       await openJob(page, '', { triggerType: 'ANOMALY' });
       await page.getByRole('button', { name: '편집' }).click();
-      await page.locator('#job-trigger-type').click();
-      await page.getByRole('option', { name: '스케줄 (정기 실행)' }).click();
+      await chooseTrigger(page, '스케줄 (정기 실행)');
 
       await expect(cronGroup(page).getByText(UNSET)).toBeVisible();
       await expect(saveButton(page)).toBeDisabled();
