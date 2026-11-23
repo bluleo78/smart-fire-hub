@@ -429,7 +429,8 @@ function AddToDashboardDialog({
               >
                 <div className="font-medium text-sm">{d.name}</div>
                 {d.description && (
-                  <div className="text-xs text-muted-foreground mt-0.5 truncate">
+                  // 말줄임된 설명을 마우스 올리면 전체로 볼 수 있게 title 부여(WD-1003)
+                  <div className="text-xs text-muted-foreground mt-0.5 truncate" title={d.description}>
                     {d.description}
                   </div>
                 )}
