@@ -99,6 +99,7 @@ type TableEmptyRowProps = SearchResetProps & {
  *   (aria-hidden 속성만 떼면 일부 화면 읽기 프로그램이 낭독하지 않는다), 화면에서는 한 커밋에 바뀌어 깜빡이지 않는다.
  * - status 는 분기 밖 같은 자리에 하나만 두어, 행이 마운트된 동안 문구가 바뀌면 같은 영역의 변화로 낭독된다.
  * - 버튼·emptyAction·아이콘은 status 밖이고, 문구는 DOM 에 한 벌만 있다(sr-only 중복 없음).
+ * - [WD-1012] 내용은 TableVisibleWidthCell 안에 두어 긴 검색어도 보이는 폭 안에서 감기고 「검색 초기화」가 잘리지 않는다(셀 좌우 여백 0).
  */
 export function TableEmptyRow({
   colSpan,
@@ -113,39 +114,82 @@ export function TableEmptyRow({
 
   return (
     <TableRow>
-      <TableCell colSpan={colSpan} className="text-center text-muted-foreground py-12">
-        <div className="flex flex-col items-center gap-3">
-          {isSearchEmpty && <SearchX className="h-8 w-8 text-muted-foreground/60" aria-hidden="true" />}
-          <DelayedStatus announceKey={announceKey} className={isSearchEmpty ? 'space-y-1' : undefined}>
-            {isSearchEmpty ? (
-              <>
-                <p className="text-sm">
-                  <span className="font-medium text-foreground">'{searchKeyword}'</span>
-                  <span>에 대한 결과가 없습니다.</span>
-                </p>
-                <p className="text-xs">다른 키워드로 검색해 보세요.</p>
-              </>
-            ) : (
-              <p className="text-sm">{message}</p>
-            )}
-          </DelayedStatus>
-          {isSearchEmpty && onResetSearch && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                // 먼저 검색어를 지우고, 그다음 초점을 검색 입력으로 옮긴다(WD-985)
-                onResetSearch();
-                resetFocusRef?.current?.focus();
-              }}
-            >
-              검색 초기화
-            </Button>
+      <TableVisibleWidthCell
+        colSpan={colSpan}
+        cellClassName="text-center text-muted-foreground py-12"
+        className="flex flex-col items-center gap-3"
+      >
+        {isSearchEmpty && <SearchX className="h-8 w-8 text-muted-foreground/60" aria-hidden="true" />}
+        <DelayedStatus announceKey={announceKey} className={isSearchEmpty ? 'space-y-1' : undefined}>
+          {isSearchEmpty ? (
+            <>
+              <p className="text-sm">
+                <span className="font-medium text-foreground">'{searchKeyword}'</span>
+                <span>에 대한 결과가 없습니다.</span>
+              </p>
+              <p className="text-xs">다른 키워드로 검색해 보세요.</p>
+            </>
+          ) : (
+            <p className="text-sm">{message}</p>
           )}
-          {!isSearchEmpty && emptyAction}
-        </div>
-      </TableCell>
+        </DelayedStatus>
+        {isSearchEmpty && onResetSearch && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              // 먼저 검색어를 지우고, 그다음 초점을 검색 입력으로 옮긴다(WD-985)
+              onResetSearch();
+              resetFocusRef?.current?.focus();
+            }}
+          >
+            검색 초기화
+          </Button>
+        )}
+        {!isSearchEmpty && emptyAction}
+      </TableVisibleWidthCell>
     </TableRow>
+  );
+}
+
+/**
+ * 보이는 폭 셀 (WD-958, WD-1012) — 셀(px-0)과 그 안 내용 상자를 함께 그린다. 실패·빈 상태 행이 공유하는 내보내지 않는 내부 컴포넌트.
+ *
+ * 전제:
+ * - 공용 `Table`(components/ui/table.tsx) 안에서만 쓴다 — 그 스크롤 상자가 이 상자(data-slot="table-visible-content")가
+ *   있을 때만 크기 컨테이너가 되어 100cqw 가 보이는 폭이 된다. 맨 <table> 이나 공용 Table 밖에서 쓰면 100cqw 가 바깥 컨테이너·뷰포트 폭으로 풀려 폭이 어긋난다.
+ * - 셀 좌우 여백은 0(px-0 — 이 컴포넌트가 붙인다)이고 안쪽 여백은 내용 상자가 맡는다 — 상자 폭이 셀 여백에 묶이지 않는다.
+ *   반응형 변형(sm:px-6 등)은 덮지 못하므로 좌우 여백은 cellClassName 으로 주지 않는다.
+ *
+ * 클래스 이유:
+ * - data-slot: table.tsx 의 has-[…] 가 이 이름으로 스크롤 상자를 크기 컨테이너로 켠다 — 바꾸면 함께.
+ * - sticky left-0 w-[100cqw] max-w-full: 가로 스크롤돼도 보이는 폭 그대로 붙어 긴 문구는 늘어나지 않고 줄바꿈된다.
+ * - px-10: 스크롤 페이드(w-10)·힌트 배지가 문구·버튼 양끝을 덮지 않게 양쪽 2.5rem 안쪽에만 둔다.
+ * - whitespace-normal + overflow-wrap:anywhere: 공백 없는 긴 토큰(trace 등)도 감는다. mx-auto 는 쓰지 않는다(표가 더 넓으면 가운데가 보이는 영역 밖으로 밀림).
+ */
+function TableVisibleWidthCell({
+  colSpan,
+  cellClassName,
+  className,
+  children,
+}: {
+  colSpan: number;
+  /** 셀(td)에 더할 클래스 — 정렬·세로 여백·글자색 등. 좌우 여백은 px-0 으로 덮인다(아래 전제) */
+  cellClassName?: string;
+  /** 내용 상자에 더할 클래스 — 안쪽 배치(flex 등) */
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    // px-0 를 마지막에 둬 cellClassName 의 px-* 를 덮는다 — 셀 여백과 상자 px-10 은 한 규칙이라 이 컴포넌트가 함께 맡는다
+    <TableCell colSpan={colSpan} className={cn(cellClassName, 'px-0')}>
+      <div
+        data-slot="table-visible-content"
+        className={cn('sticky left-0 w-[100cqw] max-w-full px-10 whitespace-normal [overflow-wrap:anywhere]', className)}
+      >
+        {children}
+      </div>
+    </TableCell>
   );
 }
 
@@ -174,11 +218,8 @@ interface TableErrorRowProps {
  *   action 이 빨간/흐린 글자를 물려받아 예전 모양(버튼은 본문 글자색)이 바뀐다.
  * - 내용과 함께 마운트된 라이브 리전 낭독 누락(WD-815)을 피하려 TableEmptyRow 와 같은 DelayedStatus 를 쓴다.
  *
- * 전제 (WD-958):
- * - 공용 `Table`(components/ui/table.tsx) 안에서만 쓴다 — 그 스크롤 상자가 이 행의 내용 상자(data-slot="table-error-content")가
- *   있을 때만 크기 컨테이너가 되어 100cqw 가 보이는 폭이 된다. 맨 <table> 이나 공용 Table 밖에서 쓰면 100cqw 가 바깥 컨테이너·뷰포트 폭으로 풀려 폭이 어긋난다.
- * - 셀 좌우 여백은 0(px-0, className 뒤에 둬 px-* 를 덮는다)이고 안쪽 여백은 내용 상자가 맡는다 — 내용 상자 폭이 셀 여백에 묶이지 않는다.
- *   반응형 변형(sm:px-6 등)은 덮지 못하므로 좌우 여백은 className 으로 주지 않는다.
+ * 전제 (WD-958): 공용 `Table` 안에서만 쓰고 셀 좌우 여백은 0(px-0, className 뒤에 둬 px-* 를 덮는다)이다 —
+ * 자세한 이유는 TableVisibleWidthCell JSDoc. 반응형 변형(sm:px-6 등)은 덮지 못하므로 좌우 여백은 className 으로 주지 않는다.
  */
 export function TableErrorRow({
   colSpan,
@@ -189,21 +230,12 @@ export function TableErrorRow({
 }: TableErrorRowProps) {
   return (
     <TableRow>
-      <TableCell colSpan={colSpan} className={cn('text-center', className, 'px-0')}>
-        {/*
-          내용 상자 (WD-958) — 전제는 컴포넌트 JSDoc 참고.
-          - data-slot: table.tsx 의 has-[…] 가 이 이름으로 스크롤 상자를 크기 컨테이너로 켠다 — 바꾸면 함께.
-          - sticky left-0 w-[100cqw] max-w-full: 가로 스크롤돼도 보이는 폭 그대로 붙어 긴 사유는 늘어나지 않고 줄바꿈된다.
-          - px-10: 스크롤 페이드(w-10)·힌트 배지가 문구·버튼 양끝을 덮지 않게 양쪽 2.5rem 안쪽에만 둔다.
-          - whitespace-normal + overflow-wrap:anywhere: 공백 없는 긴 토큰(trace 등)도 감는다. mx-auto 는 쓰지 않는다(표가 더 넓으면 가운데가 보이는 영역 밖으로 밀림).
-        */}
-        <div data-slot="table-error-content" className="sticky left-0 w-[100cqw] max-w-full px-10 whitespace-normal [overflow-wrap:anywhere]">
-          <DelayedStatus role="alert" className={tone === 'muted' ? 'text-muted-foreground' : 'text-destructive'}>
-            {message}
-          </DelayedStatus>
-          {action}
-        </div>
-      </TableCell>
+      <TableVisibleWidthCell colSpan={colSpan} cellClassName={cn('text-center', className)}>
+        <DelayedStatus role="alert" className={tone === 'muted' ? 'text-muted-foreground' : 'text-destructive'}>
+          {message}
+        </DelayedStatus>
+        {action}
+      </TableVisibleWidthCell>
     </TableRow>
   );
 }
