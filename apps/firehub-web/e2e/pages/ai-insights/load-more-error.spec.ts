@@ -349,32 +349,40 @@ test.describe('실행 이력 「더 보기」 응답 대기 (WD-965)', () => {
     expect(await page.evaluate(() => document.activeElement === document.body)).toBe(true);
   });
 
-  test('실행 이력 「더 보기」 새 limit 이 낡은 캐시로 먼저 보여도 재조회가 끝난 행으로 알린다 (WD-1019)', async ({
-    authenticatedPage: page,
-  }) => {
-    // 전역 staleTime(30초)을 시험이 넘기려고 가짜 시계를 먼저 깐다 — 실제로 기다리지 않는다
+  /**
+   * 낡은 캐시 재조회 모킹 (WD-1019·WD-1038 공통) — 전역 staleTime(30초)을 넘기려고 가짜 시계를 먼저 깐다(실제로 기다리지 않는다).
+   * limit=40 첫 조회는 firstCount 건, 낡은 캐시를 다시 조회하는 두 번째부터는 gate 를 풀 때까지 붙잡았다가 refetchCount 건을 준다.
+   * 그 밖의 limit 은 limit 건. 호출 수는 calls() 로 읽는다.
+   */
+  async function mockStaleRefetch(page: Page, firstCount: number, refetchCount: number) {
     await page.clock.install();
     await setupJobDetailMocks(page, 1);
-    // limit=40 은 첫 조회에 40건, 낡은 캐시를 다시 조회하는 두 번째부터 25건(붙잡았다가 시험이 풂)
     const gate = deferred();
-    let calls40 = 0;
-    let calls60 = 0;
+    const counts: Record<number, number> = {};
     await page.route(
       (url) => url.pathname === '/api/v1/proactive/jobs/1/executions',
       async (route) => {
-        const limit = Number(new URL(route.request().url()).searchParams.get('limit') ?? '20');
+        const limit = Number(new URL(route.request().url()).searchParams.get('limit'));
+        counts[limit] = (counts[limit] ?? 0) + 1;
         let count = limit;
-        if (limit === 60) calls60 += 1;
         if (limit === 40) {
-          calls40 += 1;
-          if (calls40 >= 2) {
+          count = firstCount;
+          if (counts[40] >= 2) {
             await gate.promise;
-            count = 25;
+            count = refetchCount;
           }
         }
         return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(executionRows(count)) });
       },
     );
+    return { gate, calls: (limit: number) => counts[limit] ?? 0 };
+  }
+
+  test('실행 이력 「더 보기」 새 limit 이 낡은 캐시로 먼저 보여도 재조회가 끝난 행으로 알린다 (WD-1019)', async ({
+    authenticatedPage: page,
+  }) => {
+    // limit=40 은 첫 조회에 40건, 낡은 캐시를 다시 조회하는 두 번째부터 25건(붙잡았다가 시험이 풂)
+    const { gate, calls } = await mockStaleRefetch(page, 40, 25);
     await page.goto('/ai-insights/jobs/1?tab=executions');
     const rows = page.getByRole('link', { name: /\(.*\)$/ });
     await expect(rows).toHaveCount(20);
@@ -386,7 +394,7 @@ test.describe('실행 이력 「더 보기」 응답 대기 (WD-965)', () => {
 
     await pressMoreWithKeyboard(page);
     // 재조회(limit=40, 25건)가 붙잡힌 동안에는 낡은 캐시 40건으로 알리지 않는다
-    await expect.poll(() => calls40).toBe(2);
+    await expect.poll(() => calls(40)).toBe(2);
     // 낡은 캐시 40건이 먼저 그려진 것을 보고 나서 알림이 비어 있음을 확인한다
     await expect(rows).toHaveCount(40);
     await waitFrames(page);
@@ -396,10 +404,56 @@ test.describe('실행 이력 「더 보기」 응답 대기 (WD-965)', () => {
     await expect(more).toHaveAttribute('aria-disabled', 'true');
     await page.keyboard.press('Enter');
     await waitFrames(page);
-    expect(calls60).toBe(0);
+    expect(calls(60)).toBe(0);
 
     gate.resolve();
     await expect(rows).toHaveCount(25);
+    await expect(page.getByTestId('executions-load-status')).toHaveText(END_STATUS);
+    await expect(rows.nth(20)).toBeFocused();
+  });
+
+  /**
+   * 낡은 캐시가 limit 보다 짧은 길의 공통 준비 (WD-1038) — limit=40 첫 조회는 25건(끝 목록), 두 번째부터는 gate 를 풀 때까지 붙잡았다가
+   * refetchCount 건을 준다. 20행 → 더 보기(25행, 버튼 사라짐) → 캐시를 낡게 → 다시 눌러 재조회가 붙잡힌 때까지 진행하고,
+   * 낡은 25행이 limit(40)보다 적어도 재조회가 확정되기 전에는 버튼이 사라지지 않고 잠긴 채 초점을 지키는지 확인해 돌려준다.
+   */
+  async function pressMoreOnShortStaleCache(page: Page, refetchCount: number) {
+    const { gate, calls } = await mockStaleRefetch(page, 25, refetchCount);
+    await page.goto('/ai-insights/jobs/1?tab=executions');
+    const rows = page.getByRole('link', { name: /\(.*\)$/ });
+    const more = page.getByRole('button', { name: '더 보기' });
+    await expect(rows).toHaveCount(20);
+    await pressMoreWithKeyboard(page);
+    await expect(rows).toHaveCount(25);
+    await expect(more).toHaveCount(0);
+
+    await makeCacheStale(page, rows);
+    await pressMoreWithKeyboard(page);
+    await expect.poll(() => calls(40)).toBe(2);
+    await expect(rows).toHaveCount(25);
+    await expect(more).toBeVisible();
+    await expect(more).toHaveAttribute('aria-disabled', 'true');
+    await expect(more).toBeFocused();
+    return { rows, more, gate };
+  }
+
+  test('실행 이력 「더 보기」 낡은 캐시가 limit 보다 짧아도 재조회를 기다리는 동안 버튼이 잠긴 채 남고, 재조회가 더 가져오면 그대로 남는다 (WD-1038)', async ({
+    authenticatedPage: page,
+  }) => {
+    const { rows, more, gate } = await pressMoreOnShortStaleCache(page, 40);
+    gate.resolve();
+    await expect(rows).toHaveCount(40);
+    await expect(more).toBeVisible();
+    await expect(more).not.toHaveAttribute('aria-disabled', 'true');
+    await expect(more).toBeFocused();
+  });
+
+  test('실행 이력 「더 보기」 낡은 캐시 재조회가 여전히 limit 보다 짧으면 끝난 뒤에야 버튼이 사라지고 초점이 첫 새 행으로 간다 (WD-1038)', async ({
+    authenticatedPage: page,
+  }) => {
+    const { rows, more, gate } = await pressMoreOnShortStaleCache(page, 25);
+    gate.resolve();
+    await expect(more).toHaveCount(0);
     await expect(page.getByTestId('executions-load-status')).toHaveText(END_STATUS);
     await expect(rows.nth(20)).toBeFocused();
   });
@@ -757,7 +811,7 @@ test.describe('「더 보기」 오프라인 안내 (WD-1035)', () => {
     await pressMoreWithKeyboard(page);
     await expect(rows).toHaveCount(40);
     await expect(page.getByText(message)).toBeVisible();
-    // 낡은 캐시 기다림은 자리표시와 다른 식(loadMoreWaiting && refetchPending)으로 잠그므로 이 길에서도 잠김을 본다
+    // 낡은 캐시 기다림은 자리표시와 다른 길(settle)로 잠그므로 이 길에서도 잠김을 본다
     await expect(page.getByRole('button', { name: '더 보기' })).toHaveAttribute('aria-disabled', 'true');
 
     await page.context().setOffline(false);
@@ -814,12 +868,12 @@ test.describe('「더 보기」 오프라인 안내 (WD-1035)', () => {
     await expect(page.getByText(message)).toHaveCount(0);
   });
 
-  test('실행 이력 「더 보기」 낡은 캐시가 limit 보다 짧아 버튼이 사라져도 오프라인 연결 대기 안내는 보인다 (WD-1035 리뷰)', async ({
+  test('실행 이력 「더 보기」 낡은 캐시가 limit 보다 짧아도 오프라인 재조회 대기 중 버튼이 잠긴 채 남고 연결 대기 안내가 보인다 (WD-1035 리뷰·WD-1038)', async ({
     authenticatedPage: page,
   }) => {
     const message = offlineListMessage('실행 이력');
     await page.clock.install();
-    // limit=40 은 끝 목록(25건) — 받은 행이 limit 보다 적어 「더 보기」가 그려지지 않는다
+    // limit=40 은 끝 목록(25건) — 받은 행이 limit 보다 적어 처음에는 「더 보기」가 그려지지 않는다
     const rows = await openExecutions(page, (n) => executionRows(n === 40 ? 25 : n));
     await pressMoreWithKeyboard(page);
     await expect(rows).toHaveCount(25);
@@ -828,9 +882,10 @@ test.describe('「더 보기」 오프라인 안내 (WD-1035)', () => {
 
     await page.context().setOffline(true);
     await pressMoreWithKeyboard(page);
-    // 낡은 25행이 먼저 보이고 재조회는 멈춘다 — 버튼 보임과 상관없이 안내는 남는다
+    // 낡은 25행이 먼저 보이고 재조회는 멈춘다 — 재조회가 확정되기 전이라 버튼은 잠긴 채 남고 안내도 보인다 (WD-1038)
     await expect(rows).toHaveCount(25);
     await expect(page.getByText(message)).toBeVisible();
+    await expect(page.getByRole('button', { name: '더 보기' })).toHaveAttribute('aria-disabled', 'true');
 
     await page.context().setOffline(false);
     await expect(page.getByText(message)).toHaveCount(0);
