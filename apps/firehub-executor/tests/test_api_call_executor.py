@@ -730,6 +730,21 @@ def test_parse_and_map_basic():
     assert rows[1] == {"user_id": 2, "user_name": "Bob"}
 
 
+NO_MAPPINGS_MESSAGE = "응답 필드 매핑이 없습니다 — 응답 필드를 저장할 컬럼 매핑을 하나 이상 지정하세요"
+
+
+def test_parse_and_map_without_mappings_raises_guidance():
+    """WD-1045: 필드 매핑이 비면 빈 행 대신 안내 문구로 실패한다."""
+    with pytest.raises(ApiCallException) as e:
+        _parse_and_map({"d": [{"a": 1}]}, "$.d", [], None)
+    assert str(e.value) == NO_MAPPINGS_MESSAGE
+
+
+def test_parse_and_map_without_mappings_empty_items_returns_no_rows():
+    """WD-1045: 응답 항목이 없으면 매핑이 없어도 기존처럼 ([], 0)."""
+    assert _parse_and_map({"d": []}, "$.d", [], None) == ([], 0)
+
+
 def test_parse_and_map_empty_path():
     body = [{"id": 1}]
     mappings = [FieldMapping(source_field="id", target_column="id", data_type="INTEGER")]

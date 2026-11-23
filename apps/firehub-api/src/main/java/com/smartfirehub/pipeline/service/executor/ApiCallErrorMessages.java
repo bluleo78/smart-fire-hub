@@ -204,6 +204,14 @@ public final class ApiCallErrorMessages {
   }
 
   /**
+   * 응답 항목이 있는데 응답 필드 매핑이 하나도 없을 때(WD-1045). Python 실행기 {@code
+   * api_call_errors.no_field_mappings_message} 와 같은 문장이다 — 매핑 없이 저장된 스텝이 NPE 나 빈 행 적재 대신 이 문구로 실패한다.
+   */
+  public static String noFieldMappings() {
+    return "응답 필드 매핑이 없습니다 — 응답 필드를 저장할 컬럼 매핑을 하나 이상 지정하세요";
+  }
+
+  /**
    * 응답에 데이터 경로가 없을 때(WD-212). Python 실행기 {@code api_call_errors.data_path_not_found_message} 와 같은
    * 문장이다 — 실행기도 같은 상황을 「완료·0행」이 아니라 이 문구의 실패로 알린다.
    */
