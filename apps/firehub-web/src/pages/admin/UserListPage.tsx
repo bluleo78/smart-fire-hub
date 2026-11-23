@@ -10,6 +10,7 @@ import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { TruncatedText } from '@/components/ui/truncated-text';
 import { useDebounceValue } from '@/hooks/useDebounceValue';
 import { useLastPageInfo } from '@/hooks/useLastPageInfo';
+import { listLoadErrorProps } from '@/lib/api-error';
 import { membershipRoleLabel } from '@/lib/membership-role';
 import { parseNonNegativeInt } from '@/lib/pagination';
 
@@ -78,7 +79,7 @@ export default function UserListPage() {
     page,
     size: pageSize,
   };
-  const { data: users, isLoading, isError, isPlaceholderData } = useUsers(userParams);
+  const { data: users, isLoading, isError, error: usersError, isPlaceholderData } = useUsers(userParams);
 
   const { totalPages, totalElements } = useLastPageInfo(users, userParams);
 
@@ -132,7 +133,8 @@ export default function UserListPage() {
             {isLoading || pageOutOfRange ? (
               <TableSkeletonRows columns={4} rows={5} />
             ) : isError ? (
-              <TableErrorRow colSpan={4} />
+              // 403 은 권한 안내, 그 밖은 서버 사유·기본 문구 — 다른 목록과 같은 공용 규칙(WD-990).
+              <TableErrorRow colSpan={4} {...listLoadErrorProps(usersError, '사용자')} />
             ) : users && users.content.length > 0 ? (
               users.content.map((u) => (
                 <TableRow

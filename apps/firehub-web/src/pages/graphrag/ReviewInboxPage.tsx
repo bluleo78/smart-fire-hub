@@ -24,7 +24,7 @@ import {
   REVIEW_ITEMS_QUERY_KEY,
   useApproveReviewItem, useRejectReviewItem, useReviewItemEvidence, useReviewItemsPending,
 } from '@/hooks/queries/useReviewItems';
-import { handleApiError, isForbiddenError } from '@/lib/api-error';
+import { handleApiError, isForbiddenError, listLoadErrorProps } from '@/lib/api-error';
 import { isFocusLost } from '@/lib/focus-lost';
 import { validatePropertyCorrection } from '@/lib/property-correction';
 import type {
@@ -340,12 +340,8 @@ export default function ReviewInboxPage() {
             {!isLoading && isError && (pending?.length ?? 0) === 0 && (
               <TableErrorRow
                 colSpan={colCount}
-                tone={isForbidden ? 'muted' : 'error'}
-                message={
-                  isForbidden
-                    ? 'AI 검수 항목을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.'
-                    : '검수 항목을 불러오지 못했습니다.'
-                }
+                // 문구·tone 은 다른 목록과 같은 공용 규칙으로 정한다(WD-990).
+                {...listLoadErrorProps(error, 'AI 검수 항목')}
               />
             )}
             {!isLoading && !isError && (pending?.length ?? 0) === 0 && (

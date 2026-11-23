@@ -157,7 +157,7 @@ test.describe('데이터셋 목록 — 조회 실패·범위 밖 페이지 (WD-1
 
     await page.goto('/data/datasets');
 
-    await expectTableErrorAlert(page, '데이터셋 목록을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.');
+    await expectTableErrorAlert(page, '데이터셋 목록을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.', { tone: 'muted' });
     // alert 안만 보면 버튼이 밖에 있어도 늘 참이므로 문구를 품은 cell 안에서 센다
     const errorCell = page.getByRole('cell').filter({ hasText: '데이터셋 목록을 볼 권한이 없습니다.' });
     await expect(errorCell.getByRole('button', { name: '다시 시도' })).toHaveCount(0);
@@ -256,7 +256,7 @@ test.describe('데이터셋 목록 — 「다시 시도」 포커스 (WD-957)', 
       body: { status: 403, error: 'Forbidden', message: 'Access denied' },
     });
     held.release();
-    await expectTableErrorAlert(page, '데이터셋 목록을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.');
+    await expectTableErrorAlert(page, '데이터셋 목록을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.', { tone: 'muted' });
     await expect(page.getByRole('button', { name: '다시 시도' })).toHaveCount(0);
     await expect(table).toBeFocused();
   });

@@ -36,6 +36,7 @@ import { useMyPermissions } from '@/hooks/queries/useMyPermissions';
 import { useUsers } from '@/hooks/queries/useUsers';
 import { useDebounceValue } from '@/hooks/useDebounceValue';
 import { useLastPageInfo } from '@/hooks/useLastPageInfo';
+import { listLoadErrorProps } from '@/lib/api-error';
 import { formatDateTime, formatIpAddress } from '@/lib/formatters';
 import type { AuditLogResponse } from '@/types/auditLog';
 
@@ -585,7 +586,7 @@ export default function AuditLogListPage() {
     endDate: endDate ? toIsoDateTime(endDate, true) : undefined,
     size: pageSize,
   };
-  const { data: logs, isLoading, isError, isPlaceholderData } = useAuditLogs({
+  const { data: logs, isLoading, isError, error: logsError, isPlaceholderData } = useAuditLogs({
     ...auditParams,
     page,
     // 날짜 범위가 역전된 상태에서는 무의미한 조회이므로 API 호출 자체를 보류한다
@@ -763,7 +764,8 @@ export default function AuditLogListPage() {
             ) : isLoading ? (
               <TableSkeletonRows columns={7} rows={5} />
             ) : isError ? (
-              <TableErrorRow colSpan={7} />
+              // 403 은 권한 안내, 그 밖은 서버 사유·기본 문구 — 다른 목록과 같은 공용 규칙(WD-990).
+              <TableErrorRow colSpan={7} {...listLoadErrorProps(logsError, '감사 로그')} />
             ) : logs && logs.content.length > 0 ? (
               logs.content.map((log) => (
                 // 행 클릭 시 상세 보기 다이얼로그를 열어 truncate된 description 전문을 표시한다
