@@ -1,5 +1,9 @@
 package com.smartfirehub.pipeline.service.executor;
 
+import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
+import static com.github.tomakehurst.wiremock.client.WireMock.anyRequestedFor;
+import static com.github.tomakehurst.wiremock.client.WireMock.get;
+import static com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -8,6 +12,12 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.github.tomakehurst.wiremock.WireMockServer;
+import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
+import java.net.URI;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
@@ -53,6 +63,48 @@ class RedirectFollowerTest {
   void resolveMethod_normalizesCaseAndPadding() {
     assertThat(RedirectFollower.resolveMethod(" put ")).isEqualTo(HttpMethod.PUT);
     assertThat(RedirectFollower.resolveMethod("delete")).isEqualTo(HttpMethod.DELETE);
+  }
+
+  /**
+   * 홉 검사(hopCheck)가 예외를 던지면 그 홉은 따라가지 않는다(WD-970) — 대상 주소로 요청이 한 번도 나가지 않고, 예외가 그대로 나온다. 검사는 정해진 다음
+   * 메서드와 해석된 절대 주소를 받는다.
+   */
+  @Test
+  void follow_hopCheckThrows_doesNotSendNextHop() {
+    WireMockServer server = new WireMockServer(WireMockConfiguration.options().dynamicPort());
+    server.start();
+    try {
+      server.stubFor(
+          get(urlPathEqualTo("/r"))
+              .willReturn(aResponse().withStatus(302).withHeader("Location", "/next?x=1")));
+      List<String> seen = new ArrayList<>();
+      RedirectFollower.Request req =
+          new RedirectFollower.Request(
+              RedirectFollower.withoutAutoRedirect(
+                      WebClient.builder(), new SsrfSafeHttpClientFactory(address -> {}))
+                  .build(),
+              mock(SsrfProtectionService.class),
+              "GET",
+              URI.create("http://localhost:" + server.port() + "/r"),
+              null,
+              null,
+              ApiCallAuth.resolve(Map.of("authType", "NONE")),
+              5000,
+              false,
+              true,
+              (nextMethod, target) -> {
+                seen.add(nextMethod + " " + target.getPath());
+                throw new ApiCallException("blocked-by-hop-check");
+              });
+
+      assertThatThrownBy(() -> RedirectFollower.follow(req))
+          .isInstanceOf(ApiCallException.class)
+          .hasMessage("blocked-by-hop-check");
+      assertThat(seen).containsExactly("GET /next");
+      server.verify(0, anyRequestedFor(urlPathEqualTo("/next")));
+    } finally {
+      server.stop();
+    }
   }
 
   /** 표준이 아닌 메서드 값은 재시도하지 않는 안내 오류(ApiCallException)로 낸다 — 전송 오류로 재시도되지 않는다. */

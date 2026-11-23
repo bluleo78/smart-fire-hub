@@ -1,5 +1,7 @@
 import type { AxiosInstance } from 'axios';
 
+// 에이전트의 메서드 변경 검사는 요청 인자만 보는 첫 거름망이다. 저장된 연결(base URL 쿼리·인증 이름)과
+// 리다이렉트는 firehub-api 미리보기가 최종으로 막는다(WD-970).
 // 서버가 GET 요청을 다른 메서드로 처리하게 만드는 이름(글자·숫자만 남긴 소문자 꼴).
 const METHOD_OVERRIDE_NAMES = new Set(['xhttpmethodoverride', 'xhttpmethod', 'xmethodoverride']);
 // 글자·숫자가 아닌 문자(이름 견주기 전에 지운다).
@@ -34,6 +36,16 @@ function findMethodOverrideHeader(
   return names.find(isMethodOverrideName);
 }
 
+/** 쿼리 이름의 + 를 공백으로, %XX 를 문자로 읽는다. 잘못된 인코딩이면 원문 그대로 둔다(예외 금지). */
+function decodeQueryName(name: string): string {
+  const spaced = name.replace(/\+/g, ' ');
+  try {
+    return decodeURIComponent(spaced);
+  } catch {
+    return spaced;
+  }
+}
+
 /**
  * 미리보기 요청에 실릴 쿼리 이름 중 메서드를 바꾸는 것을 찾는다.
  * 쿼리는 주소·queryParams 말고도 인라인 인증의 paramName·key_name 으로 실린다.
@@ -44,16 +56,26 @@ function findMethodOverrideQuery(
   queryParams: Record<string, string> = {},
   inlineAuth: Record<string, string> = {},
 ): string | undefined {
-  const start = url.indexOf('?');
+  // 주소의 ? 뒤(# 앞) 원시 쿼리를 & 와 ; 로 나눈다 — ; 를 구분자로 읽는 서버(Rack 등)가 있어 (WD-970)
+  // URLSearchParams 로는 `a=1;_method=DELETE` 가 한 이름으로 뭉쳐 놓친다.
+  // # 뒤는 프래그먼트라 쿼리가 아니다 — 먼저 잘라낸 뒤 ? 를 찾는다(…/#a?_method=DELETE 는 쿼리 없음).
+  const beforeFragment = url.split('#')[0];
+  const start = beforeFragment.indexOf('?');
+  const rawQuery = start < 0 ? '' : beforeFragment.slice(start + 1);
+  const urlNames = rawQuery
+    .split(/[&;]/)
+    .filter((piece) => piece !== '')
+    .map((piece) => piece.split('=')[0]);
   const names = presentNames([
-    ...(start < 0 ? [] : new URLSearchParams(url.slice(start)).keys()),
+    ...urlNames,
     ...Object.keys(queryParams),
     inlineAuth.paramName,
     inlineAuth.key_name,
   ]);
-  return names.find(
-    (name) => name.trim().toLowerCase() === '_method' || isMethodOverrideName(name),
-  );
+  return names.find((raw) => {
+    const name = decodeQueryName(raw).trim().toLowerCase();
+    return name === '_method' || isMethodOverrideName(name);
+  });
 }
 
 export function createPipelineApi(client: AxiosInstance) {

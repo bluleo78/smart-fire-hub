@@ -1018,6 +1018,92 @@ class ApiCallPreviewServiceTest {
   // Query Params 병합 검증
   // =========================================================================
 
+  /** 직접 URL 의 쿼리에 공백이 있어도 실행기(httpx)처럼 %20 으로 인코딩해 보낸다(WD-936). */
+  @Test
+  void preview_spaceInDirectUrl_sentEncodedLikeExecutor() {
+    wireMock.stubFor(
+        get(urlPathEqualTo("/wd936/search"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"id\":1}]")));
+
+    ApiCallPreviewResponse response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/wd936/search?q=seoul city",
+                "GET",
+                null,
+                null,
+                null,
+                "$",
+                null,
+                null,
+                null,
+                5000));
+
+    assertThat(response.success()).isTrue();
+    assertThat(response.resolvedUrl()).contains("q=seoul%20city");
+    assertThat(wireMock.getAllServeEvents())
+        .extracting(e -> e.getRequest().getUrl())
+        .containsExactly("/wd936/search?q=seoul%20city");
+  }
+
+  /** 한글 경로 + 쿼리 파라미터 칸의 한글 값은 한 번만 인코딩된다(%25 이중 인코딩 없음, WD-936). */
+  @Test
+  void preview_koreanPathWithQueryParam_encodedOnce() {
+    wireMock.stubFor(
+        get(urlPathEqualTo("/wd936/%EA%B2%80%EC%83%89"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"id\":1}]")));
+
+    ApiCallPreviewResponse response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/wd936/검색",
+                "GET",
+                null,
+                java.util.Map.of("q", "서울"),
+                null,
+                "$",
+                null,
+                null,
+                null,
+                5000));
+
+    assertThat(response.success()).isTrue();
+    assertThat(wireMock.getAllServeEvents())
+        .extracting(e -> e.getRequest().getUrl())
+        .containsExactly("/wd936/%EA%B2%80%EC%83%89?q=%EC%84%9C%EC%9A%B8");
+    // 화면·AI 챗에 보이는 주소는 인코딩된 %EA… 가 아니라 읽을 수 있는 한글이다(WD-936 리뷰 후속)
+    assertThat(response.resolvedUrl()).endsWith("/wd936/검색?q=서울");
+  }
+
+  /** 짝 없는 서로게이트가 든 주소는 %3F 로 바꿔 부르지 않고 URL 을 만들 수 없다고 거절한다(WD-936 리뷰 후속). */
+  @Test
+  void preview_loneSurrogateInDirectUrl_rejectedWithoutCall() {
+    ApiCallPreviewResponse response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/wd936/p?q=a\uD800b",
+                "GET",
+                null,
+                null,
+                null,
+                "$",
+                null,
+                null,
+                null,
+                5000));
+
+    assertThat(response.success()).isFalse();
+    wireMock.verify(0, anyRequestedFor(anyUrl()));
+  }
+
   /**
    * Query Params 병합: request.queryParams(static)와 inlineAuth의 API_KEY(query placement)가 합쳐져서 URL
    * 쿼리스트링에 포함되어야 한다.
@@ -1223,7 +1309,7 @@ class ApiCallPreviewServiceTest {
 
   /**
    * 정적 쿼리 값에 {@code = 공백 한글} 이 있어도 이제 공용 규칙으로 한 번 인코딩해 호출한다(WD-200) — 예전에는 「URL 인코딩해 넣으세요」로 거부했지만
-   * 운영 실행(Python 실행기)은 같은 값을 인코딩해 보냈다. resolvedUrl 엔 보낸 인코딩 형태가 보이고 키는 가려진다.
+   * 운영 실행(Python 실행기)은 같은 값을 인코딩해 보냈다. resolvedUrl 엔 보낸 형태가 보이되 한글은 글자로(WD-936 리뷰 후속), 키는 가려진다.
    */
   @Test
   void preview_unencodedStaticParam_encodedOnce_keyStillMasked() {
@@ -1248,7 +1334,8 @@ class ApiCallPreviewServiceTest {
         .containsExactly(
             "/wd177?q=a%3Db%20%ED%95%9C%EA%B8%80"
                 + "&serviceKey=pv%2Bk%2Fe%3D%3D%EB%B9%84%EB%B0%80%20Qq77");
-    assertThat(response.resolvedUrl()).contains("q=a%3Db%20%ED%95%9C%EA%B8%80");
+    // 표시용 주소는 한글만 글자로 되돌리고 ASCII 이스케이프(%3D·%20)는 보낸 그대로다(WD-936 리뷰 후속)
+    assertThat(response.resolvedUrl()).contains("q=a%3Db%20한글");
     assertNoSecret(response.resolvedUrl(), WD177_SPECIAL_KEY);
     assertThat(response.resolvedUrl()).doesNotContain("pv%2Bk%2Fe%3D%3D");
   }
@@ -1688,12 +1775,31 @@ class ApiCallPreviewServiceTest {
   // WD-647 코드리뷰: 검사 순서·보낼 값 정리·헤더 이름 검사·비밀 가림
   // =========================================================================
 
-  /** 빈 비밀은 URL 조립보다 먼저 본다 — 기준 URL 을 만들 수 없어도 빈 비밀 안내가 나가고, 그 경우만 resolvedUrl 이 null 이다. */
+  /**
+   * 빈 비밀은 URL 조립보다 먼저 본다 — 공백이 든 주소여도 빈 비밀 안내가 나가고 아무것도 호출하지 않는다. 공백은 이제 호출 전에 인코딩되므로(WD-936) 주소는
+   * 만들 수 있고 resolvedUrl 은 인코딩된 값이다.
+   */
+  @Test
+  void preview_emptySecretWithSpaceInUrl_reportsEmptySecret() {
+    ApiCallPreviewResponse response =
+        service.preview(
+            inlinePreview("/data?q=a b", java.util.Map.of("authType", "BEARER", "token", "")));
+
+    assertThat(response.success()).isFalse();
+    assertThat(response.errorMessage()).contains("Bearer 토큰이 비어 있습니다");
+    assertThat(response.resolvedUrl()).contains("q=a%20b");
+    wireMock.verify(0, anyRequestedFor(anyUrl()));
+  }
+
+  /**
+   * 빈 비밀은 URL 조립보다 먼저 본다 — 인코딩 뒤에도 만들 수 없는 주소(쿼리 값 속 {@code =})여도 빈 비밀 안내가 이기고 resolvedUrl 은 null
+   * 이며 아무것도 호출하지 않는다(WD-936 복원).
+   */
   @Test
   void preview_emptySecretWithUnbuildableUrl_reportsEmptySecret() {
     ApiCallPreviewResponse response =
         service.preview(
-            inlinePreview("/data?q=a b", java.util.Map.of("authType", "BEARER", "token", "")));
+            inlinePreview("/data?q=a==b", java.util.Map.of("authType", "BEARER", "token", "")));
 
     assertThat(response.success()).isFalse();
     assertThat(response.errorMessage()).contains("Bearer 토큰이 비어 있습니다");
@@ -2307,5 +2413,208 @@ class ApiCallPreviewServiceTest {
     }
     // 허용 쪽 3번만 서버에 닿고, 막힌 요청은 하나도 닿지 않는다.
     wireMock.verify(3, getRequestedFor(urlEqualTo("/wd797")));
+  }
+
+  // =========================================================================
+  // WD-970: GET 미리보기의 메서드 변경 헤더·쿼리 차단
+  // =========================================================================
+
+  private ApiCallPreviewResponse previewGet(String url, Map<String, String> headers, Long connId) {
+    return service.preview(
+        new ApiCallPreviewRequest(url, "GET", headers, null, null, "$", null, connId, null, 5000));
+  }
+
+  private void assertRejected(ApiCallPreviewResponse r, String name) {
+    assertThat(r.success()).isFalse();
+    assertThat(r.errorMessage()).contains("메서드를 바꾸는").contains(name);
+    assertThat(r.errorMessage()).doesNotContain("DELETE").doesNotContain("s3cr3t");
+    wireMock.verify(0, anyRequestedFor(anyUrl()));
+  }
+
+  private void stubConn(Long id, String authType, String base, Map<String, String> authConfig) {
+    when(apiConnectionService.getByIdForCall(id)).thenReturn(connWithBase(id, authType, base));
+    when(apiConnectionService.getDecryptedAuthConfig(id)).thenReturn(authConfig);
+  }
+
+  @Test
+  void preview_get_connectionBaseUrlMethodQuery_rejectsWithoutCall() {
+    stubConn(20L, "NONE", baseUrl() + "/v1?_method=DELETE", Map.of("authType", "NONE"));
+    assertRejected(previewGet("/data", null, 20L), "_method");
+  }
+
+  @Test
+  void preview_get_connectionBaseUrlSecondQueryPieceMethod_rejectsWithoutCall() {
+    // ; 구분 쿼리는 요청 URL 조립 단계가 먼저 막아 서비스 시험으로는 닿지 않는다 — ; 분리 판정은 MethodOverrideNamesTest 가 덮는다.
+    // 여기서는 & 로 나뉜 두 번째 조각의 이름도 잡는지 본다.
+    stubConn(21L, "NONE", baseUrl() + "/v1?a=1&_method=DELETE", Map.of("authType", "NONE"));
+    assertRejected(previewGet("/data", null, 21L), "_method");
+  }
+
+  @Test
+  void preview_get_encodedMethodQueryInPath_rejectsWithoutCall() {
+    assertRejected(previewGet(baseUrl() + "/x?%5Fmethod=DELETE", null, null), "_method");
+  }
+
+  @Test
+  void preview_get_connectionApiKeyHeaderNameOverride_rejectsWithoutCall() {
+    stubConn(
+        22L,
+        "API_KEY",
+        baseUrl(),
+        Map.of(
+            "authType", "API_KEY",
+            "placement", "header",
+            "headerName", "X-HTTP-Method-Override",
+            "apiKey", "s3cr3t-DELETE"));
+    assertRejected(previewGet("/data", null, 22L), "X-HTTP-Method-Override");
+  }
+
+  @Test
+  void preview_get_connectionApiKeyQueryParamMethod_rejectsWithoutCall() {
+    stubConn(
+        23L,
+        "API_KEY",
+        baseUrl(),
+        Map.of(
+            "authType", "API_KEY",
+            "placement", "query",
+            "paramName", "_method",
+            "apiKey", "s3cr3t-DELETE"));
+    assertRejected(previewGet("/data", null, 23L), "_method");
+  }
+
+  @Test
+  void preview_get_connectionExtraHeaderOverride_rejectsWithoutCall() {
+    stubConn(
+        24L,
+        "BEARER",
+        baseUrl(),
+        Map.of(
+            "authType", "BEARER",
+            "token", "s3cr3t-DELETE",
+            "extraHeader:X-Method-Override", "s3cr3t-DELETE"));
+    assertRejected(previewGet("/data", null, 24L), "X-Method-Override");
+  }
+
+  @Test
+  void preview_get_requestHeaderOverride_rejectsWithoutCall() {
+    assertRejected(
+        previewGet(baseUrl() + "/x", Map.of("X-HTTP-Method", "DELETE"), null), "X-HTTP-Method");
+  }
+
+  @Test
+  void preview_get_plainMethodParam_stillCalls() {
+    wireMock.stubFor(
+        get(urlEqualTo("/x?method=list")).willReturn(aResponse().withStatus(200).withBody("[]")));
+    ApiCallPreviewResponse r =
+        previewGet(baseUrl() + "/x?method=list", Map.of("X-Method-Name", "a"), null);
+    assertThat(r.success()).isTrue();
+    wireMock.verify(1, anyRequestedFor(anyUrl()));
+  }
+
+  @Test
+  void preview_get_malformedPercentQueryName_notReportedAsOverride() {
+    // 깨진 퍼센트 이름(%zz)은 메서드 변경 이름으로 판정하지 않는다. 홀로 있는 % 는 실행기(httpx)처럼 %25 로 인코딩돼 요청이 그대로
+    // 나간다(WD-936 리뷰 후속의 RequestUrlEncoding) — 그래서 거절 문구가 아니라 실제로 한 번 불렸는지로 확인한다(WD-970·WD-936 겹침 풀테스트 수정).
+    wireMock.stubFor(
+        get(urlPathEqualTo("/x")).willReturn(aResponse().withStatus(200).withBody("[]")));
+    ApiCallPreviewResponse r = previewGet(baseUrl() + "/x?%zz=1", null, null);
+    assertThat(r.errorMessage() == null ? "" : r.errorMessage()).doesNotContain("메서드를 바꾸는");
+    wireMock.verify(1, getRequestedFor(urlPathEqualTo("/x")));
+  }
+
+  @Test
+  void preview_post_withMethodOverride_notRejected() {
+    wireMock.stubFor(
+        post(urlPathEqualTo("/x")).willReturn(aResponse().withStatus(200).withBody("[]")));
+    ApiCallPreviewResponse r =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/x?_method=DELETE",
+                "POST",
+                null,
+                null,
+                null,
+                "$",
+                null,
+                null,
+                null,
+                5000));
+    assertThat(r.success()).isTrue();
+    wireMock.verify(1, postRequestedFor(urlPathEqualTo("/x")));
+  }
+
+  /** 리다이렉트 Location 으로 돌아온 메서드 변경 쿼리도 GET 미리보기에서는 따라가지 않는다(WD-970). */
+  private ApiCallPreviewResponse previewMethod(String method, String path) {
+    return service.preview(
+        new ApiCallPreviewRequest(
+            baseUrl() + path, method, null, null, null, "$", null, null, null, 5000));
+  }
+
+  private void stubHopRedirect(String method, String path, int status, String location) {
+    wireMock.stubFor(
+        request(method, urlPathEqualTo(path))
+            .willReturn(aResponse().withStatus(status).withHeader("Location", location)));
+  }
+
+  @Test
+  void preview_get_redirectToMethodOverrideQuery_rejectsWithoutFollowing() {
+    stubHopRedirect("GET", "/redir", 302, "/data?_method=DELETE");
+    ApiCallPreviewResponse r = previewMethod("GET", "/redir");
+    assertThat(r.success()).isFalse();
+    assertThat(r.errorMessage()).contains("메서드를 바꾸는").contains("_method");
+    wireMock.verify(0, getRequestedFor(urlPathEqualTo("/data")));
+  }
+
+  @Test
+  void preview_get_redirectWithInjectedTextInName_messageHasOnlyStandardName() {
+    // 대상 서버가 Location 이름에 끼운 글(구분 문자로 판정을 피해 간 한글 지시문)은 안내 문구에 실리지 않는다 — 표준 이름만(WD-970 리뷰).
+    stubHopRedirect(
+        "GET", "/redir", 302, "/data?X-HTTP-Method-Override%20%EC%A7%80%EC%8B%9C%EB%AC%B8=1");
+    ApiCallPreviewResponse r = previewMethod("GET", "/redir");
+    assertThat(r.success()).isFalse();
+    assertThat(r.errorMessage()).contains("메서드를 바꾸는").contains("X-HTTP-Method-Override");
+    assertThat(r.errorMessage()).doesNotContain("지시문").doesNotContain("%20");
+    wireMock.verify(0, getRequestedFor(urlPathEqualTo("/data")));
+  }
+
+  @Test
+  void preview_get_requestHeaderWithInjectedText_messageHasOnlyStandardName() {
+    // 저장 설정·요청 헤더 이름의 원문도 안내에 넣지 않는다.
+    ApiCallPreviewResponse r =
+        previewGet(baseUrl() + "/x", Map.of("x_http_method 지시문", "DELETE"), null);
+    assertThat(r.success()).isFalse();
+    assertThat(r.errorMessage()).contains("X-HTTP-Method").doesNotContain("지시문");
+    wireMock.verify(0, anyRequestedFor(anyUrl()));
+  }
+
+  @Test
+  void preview_get_redirectToPlainMethodQuery_follows() {
+    stubHopRedirect("GET", "/redir", 302, "/data?method=list");
+    wireMock.stubFor(
+        get(urlPathEqualTo("/data")).willReturn(aResponse().withStatus(200).withBody("[]")));
+    ApiCallPreviewResponse r = previewMethod("GET", "/redir");
+    assertThat(r.success()).isTrue();
+    wireMock.verify(1, getRequestedFor(urlPathEqualTo("/data")));
+  }
+
+  @Test
+  void preview_post_303ToMethodOverrideQuery_rejectsBecauseNextHopIsGet() {
+    stubHopRedirect("POST", "/p", 303, "/data?_method=DELETE");
+    ApiCallPreviewResponse r = previewMethod("POST", "/p");
+    assertThat(r.success()).isFalse();
+    assertThat(r.errorMessage()).contains("메서드를 바꾸는").contains("_method");
+    wireMock.verify(0, getRequestedFor(urlPathEqualTo("/data")));
+  }
+
+  @Test
+  void preview_post_307ToMethodOverrideQuery_keepsPostAndFollows() {
+    // 307 은 POST 를 유지한다 — POST 미리보기는 메서드 변경 검사 범위 밖이라 막지 않는다.
+    stubHopRedirect("POST", "/p", 307, "/data?_method=DELETE");
+    wireMock.stubFor(
+        post(urlPathEqualTo("/data")).willReturn(aResponse().withStatus(200).withBody("[]")));
+    ApiCallPreviewResponse r = previewMethod("POST", "/p");
+    assertThat(r.success()).isTrue();
+    wireMock.verify(1, postRequestedFor(urlPathEqualTo("/data")));
   }
 }

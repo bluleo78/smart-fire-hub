@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BiConsumer;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.buffer.DataBufferLimitException;
 import org.springframework.http.HttpMethod;
@@ -78,6 +79,8 @@ public final class RedirectFollower {
    *     (최대 홉 수+1)×timeoutMs 동안 붙잡힌다)
    * @param failOnErrorStatus true 면 4xx·5xx 를 예외로 낸다(실행·미리보기 — 오류 본문은 읽지 않는다). false 면 마지막 응답으로
    *     돌려준다(연결 테스트가 오류 본문·헤더를 보여 준다)
+   * @param hopCheck 리다이렉트 홉마다 「다음 메서드·대상 주소」를 받는 검사(null 가능, WD-970) — 예외를 던지면 그 홉을 따라가지 않는다. 미리보기가
+   *     Location 에 실려 온 메서드 변경 쿼리(_method 등)로 첫 요청 검사를 우회하지 못하게 막는 데 쓴다
    */
   public record Request(
       WebClient client,
@@ -89,7 +92,8 @@ public final class RedirectFollower {
       ApiCallAuth.ResolvedAuth auth,
       int timeoutMs,
       boolean timeoutPerHop,
-      boolean failOnErrorStatus) {
+      boolean failOnErrorStatus,
+      BiConsumer<String, URI> hopCheck) {
 
     /** 사용자 헤더·본문 없는 GET(WD-693) — API 연결 테스트처럼 헤더·본문을 따로 주지 않는 호출용. */
     public static Request bodilessGet(
@@ -102,6 +106,32 @@ public final class RedirectFollower {
         boolean failOnErrorStatus) {
       return new Request(
           client, ssrf, "GET", uri, null, null, auth, timeoutMs, timeoutPerHop, failOnErrorStatus);
+    }
+
+    /** 홉 검사 없는 요청(WD-970 이전의 호출 모양) — hopCheck 를 null 로 위임한다. */
+    public Request(
+        WebClient client,
+        SsrfProtectionService ssrf,
+        String method,
+        URI uri,
+        Map<String, String> headers,
+        String body,
+        ApiCallAuth.ResolvedAuth auth,
+        int timeoutMs,
+        boolean timeoutPerHop,
+        boolean failOnErrorStatus) {
+      this(
+          client,
+          ssrf,
+          method,
+          uri,
+          headers,
+          body,
+          auth,
+          timeoutMs,
+          timeoutPerHop,
+          failOnErrorStatus,
+          null);
     }
   }
 
@@ -190,6 +220,10 @@ public final class RedirectFollower {
         // 다음 홉의 메서드·본문(WD-686) — 규칙은 RedirectLocations.keepsMethodAndBody 참고.
         boolean keep = RedirectLocations.keepsMethodAndBody(redirect.status(), sameOrigin);
         method = keep ? method : "GET";
+        // 홉 검사(WD-970) — 다음 메서드가 정해진 뒤, 그 주소로 보내기 전에 부른다. 예외면 다음 홉을 보내지 않는다.
+        if (req.hopCheck() != null) {
+          req.hopCheck().accept(method, target);
+        }
         uri = target;
         leftOrigin |= !sameOrigin;
         bodyDropped |= !keep;
