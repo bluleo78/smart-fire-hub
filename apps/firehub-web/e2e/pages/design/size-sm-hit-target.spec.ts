@@ -3,21 +3,23 @@
  *
  * 결함: 버튼이 `size="sm"`(buttonVariants: `h-8` = 32px)을 쓰면서 `className` 으로 `h-7`(28px)을
  * 덮어써, 디자인 시스템 최소 클릭 영역 32×32px(WD-914 → WD-926 → WD-951)에 못 미쳤다(WCAG 2.5.8 의
- * 24×24 보다 높은 우리 규칙). 세 곳의 대상 버튼을
- * 화면에 실제로 그려진 높이(`getBoundingClientRect().height`)로 재어 전부 32px 이상인지 본다.
+ * 24×24 보다 높은 우리 규칙). 세 곳의 대상 버튼을 화면에 실제로 그려진 폭·높이
+ * (`getBoundingClientRect()`)로 재어 전부 32px 이상인지 본다.
  *
  * - 대화 선택 머리(SessionSwitcher 트리거·새 대화)
  * - 데이터셋 상세 머리(쿼리 작성·차트 만들기·복제·상태 변경)
- * - 파이프라인 API_CALL 스텝 설정(추가·매핑 추가·원본 JSON 보기)
+ * - 파이프라인 API_CALL 스텝 설정(추가·매핑 추가)·미리보기(원본 JSON 보기)
  *
- * 이 시험은 먼저 실패(RED)해야 한다 — `h-7` 을 걷어내는 수정이 들어오면 통과(GREEN)한다.
- * 각 테스트는 단언 전에 「전」 캡처를 남긴다(출력 폴더는 `WD960_SHOT_DIR` 로 바꿀 수 있어
- * 고친 뒤 `after` 로 다시 찍을 수 있다).
+ * 고치기 전에는 `h-7` 덕에 28px 로 그려져 먼저 레드였고, `h-7` 을 걷어내는 수정(앞 PR #1249)이
+ * 반영돼 지금은 그린이다 — 이 시험의 몫은 그린을 지키는 것으로, `h-7` 이 다시 들어오면 레드로 떨어진다.
+ * 각 테스트는 단언 전에 캡처를 남긴다 — 단언이 실패해도 그 시점까지 찍혔으므로 증거가 남는다.
  */
 
 import { mkdirSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 
 import { API_FULL_URL_PLACEHOLDER } from '../../../src/lib/api-connection-form';
 import type { AISession } from '../../../src/types/ai';
@@ -29,39 +31,70 @@ import { expect, test } from '../../fixtures/auth.fixture';
 import { grantDatasetPermissions, setupDatasetDetailMocks } from '../../fixtures/dataset.fixture';
 import { clickToolbarAddStep, grantPipelinePermissions } from '../../fixtures/pipeline.fixture';
 
-/** 최소 클릭 영역 높이(px) — `size="sm"` 이 칠해야 하는 값 */
+// ESM 환경에서는 `__dirname`이 없으므로 `import.meta.url`로 현재 파일 디렉토리 경로를 계산한다
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+/** 최소 클릭 영역 한 변(px) — `size="sm"` 이 칠해야 하는 32×32 */
 const MIN = 32;
 
-/** 「전」 캡처 폴더 — 고친 뒤 다시 찍을 때는 `WD960_SHOT_DIR=after` 로 바꿔 같은 자리에 남긴다 */
-const SHOT_DIR = process.env.WD960_SHOT_DIR ?? 'before';
+/**
+ * 캡처 폴더 — `apps/firehub-web/test-results/tc/<suite>/` 규약을 따른다(루트 CLAUDE.md).
+ * `__dirname` 기준이라 실행 위치(cwd)와 무관하게 항상 그 폴더에 남고, 재실행하면 같은 자리에 덮어쓴다.
+ * 전/후 화면을 나눠 두려면 `WD960_SHOT_DIR` 로 하위 폴더를 지정한다 — 비어 있으면 스위트 폴더 바로 아래다
+ * (이제 수정이 반영된 화면이라 「전」이 아니다).
+ */
+const SHOT_DIR = path.resolve(
+  __dirname,
+  '..',
+  '..',
+  '..',
+  'test-results',
+  'tc',
+  'WD-960',
+  process.env.WD960_SHOT_DIR ?? '',
+);
 
 /**
- * 「전」 캡처 — 높이 단언 직전에 부른다. 단언이 실패해도 이 시점까지 찍혔으므로 증거는 남는다.
- * 폴더가 없으면 만든다(빈 폴더도 실행마다 보존된다).
+ * 단언 전 캡처 — 단언이 실패해도 이 시점까지 찍혔으므로 증거는 남는다. 폴더는 없으면 만든다.
  * @param page - 캡처할 페이지
  * @param fileName - 저장할 파일 이름(session-switcher.png 등)
  */
 async function shot(page: Page, fileName: string) {
-  const dir = `test-results/tc/WD-960/${SHOT_DIR}`;
-  mkdirSync(dir, { recursive: true });
-  await page.screenshot({ path: `${dir}/${fileName}`, fullPage: false });
+  mkdirSync(SHOT_DIR, { recursive: true });
+  await page.screenshot({ path: path.join(SHOT_DIR, fileName), fullPage: false });
 }
 
 /**
- * 접근 가능한 이름으로 찾은 버튼들의 높이를 재어 전부 `MIN` 이상인지 본다.
- * `exact` 를 쓰는 이유: 「추가」 같은 짧은 이름을 부분 매칭하면 캔버스의 「다음 스텝 추가」(h-5 = 20px)까지
- * 잡아, 고쳐야 할 28px 가 아니라 엉뚱한 버튼으로 실패한다.
- * @param page - 대상 페이지
+ * 영역 안에서 접근 가능한 이름으로 찾은 버튼들의 폭·높이를 재어 전부 `MIN` 이상인지 본다.
+ *
+ * - 영역(`scope`)을 받는 이유: 페이지 전체에서 이름으로만 찾으면 같은 이름의 다른 버튼(숨은 패널·
+ *   이 시험이 보지 않는 자리)까지 재어 범위 밖 실패를 낼 수 있다 — 이 시험이 세운 화면 줄·패널 안의
+ *   대상 버튼만 재도록 범위를 좁힌다.
+ * - `exact` 를 쓰는 이유: 「추가」 같은 짧은 이름을 부분 매칭하면 캔버스의 「다음 스텝 추가」(h-5 = 20px)까지
+ *   잡아, 고쳐야 할 28px 가 아니라 엉뚱한 버튼으로 실패한다.
+ * - 보이는 버튼만 센다: 보이지 않는 요소는 측정 대상이 아니고, `display:none` 이면 `getBoundingClientRect()`
+ *   가 0 이라 32px 미달로 잡힌다. 한 개도 보이지 않으면 아래 `first()` 대기에서 실패해
+ *   0건으로 공허하게 통과하지 않는다.
+ *
+ * @param scope - 대상 버튼이 들어 있는 영역(줄·헤더·패널)
  * @param names - 측정할 버튼의 접근 가능한 이름들(하나씩 순회)
- * @param minCount - 이름 하나당 최소 찾을 개수 — 0건으로 공허하게 통과하는 것을 막는다
  */
-async function expectMinHeight(page: Page, names: string[], minCount: number) {
+async function expectMinClickArea(scope: Locator, names: string[]) {
   for (const name of names) {
-    const heights = await page.getByRole('button', { name, exact: true }).evaluateAll((els) =>
-      els.map((el) => el.getBoundingClientRect().height),
+    const buttons = scope.getByRole('button', { name, exact: true }).filter({ visible: true });
+    await expect(buttons.first()).toBeVisible();
+    const sizes = await buttons.evaluateAll((els) =>
+      els.map((el) => {
+        const rect = el.getBoundingClientRect();
+        return { width: rect.width, height: rect.height };
+      }),
     );
-    expect(heights.length).toBeGreaterThanOrEqual(minCount);
-    for (const h of heights) expect(h).toBeGreaterThanOrEqual(MIN);
+    // `first()` 대기와 이 재해석 사이에 DOM 이 바뀌어 빈 배열이 되면 그대로 지나가지 않게 한다(0건 공허 통과 방지)
+    expect(sizes.length, `${name} 측정 결과 0건`).toBeGreaterThan(0);
+    for (const { width, height } of sizes) {
+      expect(height, `${name} 높이 ${height}px < ${MIN}px`).toBeGreaterThanOrEqual(MIN);
+      expect(width, `${name} 너비 ${width}px < ${MIN}px`).toBeGreaterThanOrEqual(MIN);
+    }
   }
 }
 
@@ -83,10 +116,13 @@ test.describe('size="sm" 버튼 최소 클릭 영역 (WD-960)', () => {
     await page.getByRole('button', { name: /AI 상태/ }).click();
     await page.getByPlaceholder('메시지를 입력하세요...').waitFor({ state: 'visible', timeout: 5_000 });
     // 트리거는 aria-label 없이 안쪽 글자로 이름을 만든다 — 현재 대화가 없어 접근 가능한 이름은 「대화 선택」이다
-    await page.getByRole('button', { name: '대화 선택', exact: true }).waitFor();
+    const trigger = page.getByRole('button', { name: '대화 선택', exact: true });
+    await trigger.waitFor();
+    // 트리거와 새 대화가 함께 있는 SessionSwitcher 줄(트리거의 바로 위 단) — 그 줄만 재는 영역으로 삼는다
+    const switcherRow = trigger.locator('xpath=..');
 
     await shot(page, 'session-switcher.png');
-    await expectMinHeight(page, ['대화 선택', '새 대화'], 1);
+    await expectMinClickArea(switcherRow, ['대화 선택', '새 대화']);
   });
 
   test('데이터셋 상세 머리 — 쿼리 작성·차트 만들기·복제·상태 변경', async ({ authenticatedPage: page }) => {
@@ -97,10 +133,14 @@ test.describe('size="sm" 버튼 최소 클릭 영역 (WD-960)', () => {
     await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
     await mockApi(page, 'GET', '/api/v1/datasets/tags', []);
     await page.goto('/data/datasets/1');
-    await page.getByRole('button', { name: '쿼리 작성', exact: true }).waitFor();
+    // 네 버튼이 나란히 있는 머리글 동작 줄(쿼리 작성의 바로 위 단)를 재는 영역으로 삼는다 —
+    // 다른 화면의 같은 이름 버튼(예: 목록의 「복제」)은 범위 밖이다
+    const queryButton = page.getByRole('button', { name: '쿼리 작성', exact: true });
+    await queryButton.waitFor();
+    const headerActions = queryButton.locator('xpath=..');
 
     await shot(page, 'dataset-detail-header.png');
-    await expectMinHeight(page, ['쿼리 작성', '차트 만들기', '복제', '상태 변경'], 1);
+    await expectMinClickArea(headerActions, ['쿼리 작성', '차트 만들기', '복제', '상태 변경']);
   });
 
   test('파이프라인 API_CALL 스텝 — 추가·매핑 추가·원본 JSON 보기', async ({ authenticatedPage: page }) => {
@@ -129,7 +169,14 @@ test.describe('size="sm" 버튼 최소 클릭 영역 (WD-960)', () => {
     await page.getByRole('button', { name: '원본 JSON 보기', exact: true }).waitFor();
 
     await shot(page, 'api-call-step.png');
-    await expectMinHeight(page, ['추가', '매핑 추가', '원본 JSON 보기'], 1);
+    // 설정 패널 내용 상자(#step-name 의 두 단 위) — 「추가」·「매핑 추가」가 들어 있는 자리다.
+    // 그 안에는 미리보기(「원본 JSON 보기」)까지 들어오지만 이름이 달라 겹치지 않고,
+    // 캔버스(「다음 스텝 추가」)는 밖이다 — 페이지 전체에서 찾지 않으므로 다른 자리의 같은 이름은 재지 않는다
+    const configPanel = page.locator('#step-name').locator('xpath=../..');
+    await expectMinClickArea(configPanel, ['추가', '매핑 추가']);
+    // 「원본 JSON 보기」 는 미리보기 카드의 토글 줄 — 그 줄만 재는 영역으로 삼는다
+    const jsonToggleRow = page.getByRole('button', { name: '원본 JSON 보기', exact: true }).locator('xpath=..');
+    await expectMinClickArea(jsonToggleRow, ['원본 JSON 보기']);
   });
 });
 
