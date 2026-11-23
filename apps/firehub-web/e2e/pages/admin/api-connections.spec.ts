@@ -12,7 +12,7 @@ import {
 } from '../../fixtures/admin.fixture';
 import { mockApi, type MockApiCapture } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
-import { holdApi } from '../../fixtures/hold-api';
+import { expectSingleHeldRequest, holdApi } from '../../fixtures/hold-api';
 import { enterWithListError } from '../../fixtures/list-retry';
 import { expectTableErrorAlert } from '../../fixtures/table-error-alert';
 import {
@@ -4440,5 +4440,113 @@ test.describe('WD-886 마스킹 도움말 버튼 히트 영역', () => {
     const valueBox = await page.getByText('***masked***', { exact: true }).boundingBox();
     const plainBox = await page.getByText('인증 유형', { exact: true }).boundingBox();
     expect(Math.abs(valueBox!.height - plainBox!.height)).toBeLessThanOrEqual(1);
+  });
+});
+
+/**
+ * WD-920 — 상세 화면 「지금 확인」: 진행 중 버튼이 초점을 잃지 않고(PendingButton),
+ * 결과 요약은 sonner 라이브 영역(aria-live=polite)으로 읽히며, 결과 카드는 「최근 테스트 결과」 이름의 region 이다.
+ */
+test.describe('지금 확인 안내·초점 (WD-920)', () => {
+  const TEST_PATH = '/api/v1/api-connections/1/test';
+  const OK_BODY = { ok: true, status: 200, latencyMs: 48, errorMessage: null };
+  const FAIL_BODY = { ok: false, status: 503, latencyMs: 30, errorMessage: '업스트림 응답 없음' };
+
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    // 쓰기 권한이 있어야 「지금 확인」 버튼이 보인다
+    await setupAdminAuth(page);
+    await mockApi(page, 'GET', '/api/v1/api-connections/1', { ...createApiConnections()[0], id: 1 });
+  });
+
+  test('키보드로 지금 확인을 눌러도 진행 중·끝난 뒤 초점이 버튼에 남고, 연타해도 요청은 한 번만 나간다', async ({
+    authenticatedPage: page,
+  }) => {
+    const held = await holdApi(page, 'POST', TEST_PATH, 200, OK_BODY);
+    await page.goto('/admin/api-connections/1');
+
+    await page.getByRole('button', { name: '지금 확인' }).focus();
+    // 빠른 Enter 두 번
+    await page.keyboard.press('Enter');
+    await page.keyboard.press('Enter');
+
+    const pending = page.getByRole('button', { name: '확인 중...' });
+    await expect(pending).toBeFocused();
+    await expect(pending).toHaveAttribute('aria-disabled', 'true');
+
+    // 진행 중 다시 Enter — PendingButton 이 막아 요청은 1회로 유지
+    await page.keyboard.press('Enter');
+    await expect(pending).toBeFocused();
+    await expectSingleHeldRequest(() => held.requests.length);
+
+    held.release();
+    const done = page.getByRole('button', { name: '지금 확인' });
+    await expect(done).toBeFocused();
+    expect(held.requests.length).toBe(1);
+  });
+
+  test('결과 요약이 라이브 영역에 읽힌다 — 성공과 실패', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'POST', TEST_PATH, OK_BODY);
+    await page.goto('/admin/api-connections/1');
+
+    const live = page.locator('[aria-live="polite"]');
+    await page.getByRole('button', { name: '지금 확인' }).click();
+    await expect(live.getByText('연결 정상 (HTTP 200, 48ms)')).toBeVisible();
+
+    // 나중에 등록한 모킹이 먼저 받는다
+    await mockApi(page, 'POST', TEST_PATH, FAIL_BODY);
+    await page.getByRole('button', { name: '지금 확인' }).click();
+    await expect(live.getByText('연결 이상: 업스트림 응답 없음')).toBeVisible();
+  });
+
+  test('같은 결과로 두 번 확인해도 두 번째 안내가 다시 추가된다', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(page, 'POST', TEST_PATH, OK_BODY);
+    await page.goto('/admin/api-connections/1');
+
+    const button = page.getByRole('button', { name: '지금 확인' });
+    await button.click();
+    const toasts = page.locator('[aria-live="polite"]').getByText('연결 정상 (HTTP 200, 48ms)');
+    // 첫 토스트가 떠 있는 동안 곧바로 두 번째를 눌러 두 개가 함께 보이는지 본다
+    await expect(toasts).toHaveCount(1);
+    await button.click();
+    await expect(toasts).toHaveCount(2);
+  });
+
+  test('요청이 500 이면 초점이 버튼에 남고 오류가 읽히며 낡은 결과 카드는 사라진다', async ({
+    authenticatedPage: page,
+  }) => {
+    // 먼저 성공 결과를 만들어 카드를 띄운다
+    await mockApi(page, 'POST', TEST_PATH, OK_BODY);
+    await page.goto('/admin/api-connections/1');
+    await page.getByRole('button', { name: '지금 확인' }).click();
+    await expect(page.getByRole('region', { name: '최근 테스트 결과' })).toHaveCount(1);
+
+    const failed = await mockApi(page, 'POST', TEST_PATH, { message: '서버 오류' }, { status: 500, capture: true });
+    const button = page.getByRole('button', { name: '지금 확인' });
+    await button.focus();
+    await page.keyboard.press('Enter');
+    await expect.poll(() => failed.requests.length).toBe(1);
+
+    await expect(page.locator('[aria-live="polite"]').getByText('서버 오류')).toBeVisible();
+    // WD-920: 실패하면 낡은 결과가 남지 않는다
+    await expect(page.getByRole('region', { name: '최근 테스트 결과' })).toHaveCount(0);
+    await expect(button).toBeFocused();
+  });
+
+  test('결과 카드는 「최근 테스트 결과」 이름의 영역이다', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'POST', TEST_PATH, OK_BODY);
+    await page.goto('/admin/api-connections/1');
+
+    await page.getByRole('button', { name: '지금 확인' }).click();
+    const region = page.getByRole('region', { name: '최근 테스트 결과' });
+    await expect(region).toHaveCount(1);
+    await expect(region.getByTestId('test-result-status')).toHaveText('성공');
+
+    // 결과가 바뀌어도 이름은 하나
+    await mockApi(page, 'POST', TEST_PATH, FAIL_BODY);
+    await page.getByRole('button', { name: '지금 확인' }).click();
+    await expect(region.getByTestId('test-result-status')).toHaveText('실패');
+    await expect(page.getByRole('region', { name: '최근 테스트 결과' })).toHaveCount(1);
   });
 });

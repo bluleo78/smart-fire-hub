@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { StatusBadge } from '@/components/api-connection/StatusBadge';
 import { PageHeading } from '@/components/PageHeading';
 import { DetailPageTitle } from '@/components/PageTitleSync';
+import { PendingButton } from '@/components/PendingButton';
 import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
 import { FormField } from '@/components/ui/form-field';
 import {
@@ -70,6 +71,7 @@ import {
   useUpdateApiConnection,
 } from '../../hooks/queries/useApiConnections';
 import { useMyPermissions } from '../../hooks/queries/useMyPermissions';
+import { useSubmitGuard } from '../../hooks/useSubmitGuard';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import type {
   ApiConnectionAuthType,
@@ -318,6 +320,8 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
   const canDelete = permissions.has('apiconnection:delete');
   // 마지막 "지금 확인" 응답을 저장 — 상태코드/응답 본문/헤더/요청 URL 노출 (#76)
   const [lastTestResult, setLastTestResult] = useState<TestConnectionResponse | null>(null);
+  // WD-920: 연타 가드
+  const guardSubmit = useSubmitGuard();
 
   // 접근성: 라벨↔입력 연결용 id 접두사 (#432).
   // 하드코딩 대신 useId() 를 써서 같은 폼이 여러 번 렌더돼도 id 충돌이 없게 한다.
@@ -735,7 +739,7 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
   };
 
   /** 연결 즉시 테스트 */
-  const handleTest = async () => {
+  const handleTest = guardSubmit(async () => {
     if (!connection) return;
     try {
       const result = await testMutation.mutateAsync(connection.id);
@@ -747,9 +751,11 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
         toast.error(`연결 이상: ${result.errorMessage ?? '알 수 없는 오류'}`);
       }
     } catch (error) {
+      // WD-920: 실패 시 낡은 결과 비움
+      setLastTestResult(null);
       handleApiError(error, '연결 테스트에 실패했습니다.');
     }
-  };
+  });
 
   /**
    * 응답 본문을 Content-Type 또는 첫 글자 기반으로 JSON pretty-print.
@@ -848,23 +854,29 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
             <p className="text-sm text-destructive">{connection.lastErrorMessage}</p>
           )}
           {canWrite && (
-            <Button
+            // WD-920: 초점 유지
+            <PendingButton
               variant="outline"
               size="sm"
-              onClick={handleTest}
-              disabled={testMutation.isPending}
+              onClick={() => handleTest()}
+              pending={testMutation.isPending}
             >
               {testMutation.isPending ? '확인 중...' : '지금 확인'}
-            </Button>
+            </PendingButton>
           )}
         </CardContent>
       </Card>
 
       {/* 최근 테스트 결과 카드 (#76): 응답 상태코드/본문/헤더/요청 URL을 함께 노출하여 디버깅 지원 */}
       {lastTestResult && (
-        <Card data-testid="test-result-card">
+        // WD-920: 토스트가 이미 낭독해 live 아님
+        <Card
+          data-testid="test-result-card"
+          role="region"
+          aria-labelledby={`${baseId}-test-result-title`}
+        >
           <CardHeader>
-            <CardTitle>최근 테스트 결과</CardTitle>
+            <CardTitle id={`${baseId}-test-result-title`}>최근 테스트 결과</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex flex-wrap items-center gap-2">
