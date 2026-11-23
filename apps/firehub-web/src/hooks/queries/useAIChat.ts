@@ -8,7 +8,7 @@ import { uploadFiles } from '../../api/files';
 import { buildScreenContext, type ScreenEntityKind, type ScreenNameLookup } from '../../components/ai/screen-context';
 import { getInvalidationKeys } from '../../components/ai/widgets/invalidationMap';
 import { buildNavigationContext } from '../../components/ai/widgets/routes';
-import { isNotFoundError } from '../../lib/api-error';
+import { isClientError, isNotFoundError } from '../../lib/api-error';
 import type { AIAttachment, AIMessage, AISession, AIStreamEvent, CanvasLayout } from '../../types/ai';
 import { dashboardDetailKey } from './useAnalytics';
 import { datasetDetailKey } from './useDatasets';
@@ -709,6 +709,9 @@ export function useAIChat(options?: {
       console.error('Failed to load session history:', error);
       toast.error('대화 이력을 불러오지 못했습니다.');
       setMessages([]); // 빈 상태 명시적 처리
+      // WD-1029: 4xx(권한 없음·삭제됨 등)는 같은 대화로 다시 해도 같은 결과라 보관한 질문을 그 대화에 보내지 않고 알린다.
+      // 5xx·네트워크 오류는 일시 장애일 수 있고 같은 대화가 그대로이므로 지금처럼 보낸다.
+      if (isClientError(error)) discardPendingAsk('대화를 불러오지 못해 「AI 에게 물어보기」 질문을 보내지 않았습니다.');
     } finally {
       // 버려진(다른 대화로 옮긴) 응답은 로딩 표시를 끄지 않는다 — 옮긴 대화가 아직 로딩 중일 때 빈 상태가 깜빡이지 않게 (WD-972)
       if (!isStale()) setLoadingHistory(false);

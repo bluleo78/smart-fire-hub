@@ -209,6 +209,7 @@ export function AIStatusChip() {
     startNewSession,
     contextTokens,
     isLoadingHistory,
+    setRestoreDraft,
   } = useAI();
 
   const { data: unreadCount = 0 } = useUnreadCount();
@@ -419,7 +420,16 @@ export function AIStatusChip() {
             onModeChange={setMode}
             onOpen={openAI}
             onNewSession={startNewSession}
-            onSendMessage={sendMessage}
+            onSendMessage={async (content) => {
+              // 보내지 못했으면(false 또는 예외) 글을 패널 입력창에 남긴다 — 빠른 입력은 이미 닫혀 자기 상태로 못 되돌린다(WD-1029)
+              try {
+                const sent = await sendMessage(content);
+                if (!sent) setRestoreDraft(content);
+              } catch (err) {
+                console.error('빠른 입력 전송 실패:', err);
+                setRestoreDraft(content);
+              }
+            }}
             isLoadingHistory={isLoadingHistory}
             messages={messages}
             isStreaming={isStreaming}

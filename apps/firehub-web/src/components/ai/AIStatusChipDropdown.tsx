@@ -10,7 +10,7 @@ interface AIStatusChipDropdownProps {
   onModeChange: (mode: AIMode) => void;
   onOpen: () => void;
   onNewSession: () => void;
-  onSendMessage: (content: string) => Promise<boolean> | void;
+  onSendMessage: (content: string) => Promise<void> | void;
   /** 대화 이력을 불러오는 중인지 — true 면 빠른 입력은 보내지 않고 글을 남긴다(WD-1004) */
   isLoadingHistory?: boolean;
   messages: AIMessage[];
@@ -109,7 +109,7 @@ function QuickInput({
   onCloseDropdown,
   sendBlocked = false,
 }: {
-  onSend: (content: string) => Promise<boolean> | void;
+  onSend: (content: string) => Promise<void> | void;
   /** 이력 로딩 중 보내기 차단(WD-1004) — 입력란은 켜 두어 글이 남는다 */
   sendBlocked?: boolean;
   onOpen: () => void;
@@ -128,12 +128,11 @@ function QuickInput({
   const handleSend = () => {
     if (!canSend) return;
     const trimmed = value.trim();
-    const result = onSend(trimmed);
+    // 못 보낸 글의 되돌림은 AIStatusChip 의 onSend 래퍼가 패널 입력창으로 한다(WD-1029) — 여기는 곧 언마운트된다
+    void onSend(trimmed);
     onOpen();
     setValue('');
     onCloseDropdown();
-    // 보내지 못했으면(false) 쓴 글을 되돌려 준다 — 그 사이 새로 쓴 글이 있으면 덮지 않는다 (WD-1004)
-    if (result) void result.then(sent => { if (!sent) setValue(cur => cur === '' ? trimmed : cur); });
   };
 
   return (

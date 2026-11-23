@@ -229,3 +229,21 @@ describe('ChatInput 보내지 못한 글 되돌리기 (WD-1004)', () => {
     expect(textarea()).toHaveValue('');
   });
 });
+
+describe('ChatInput restoreDraft (WD-1029)', () => {
+  it('입력창이 비어 있으면 restoreDraft 로 채우고 한 번 소비한다', () => {
+    const consumed = vi.fn();
+    render(<ChatInput onSend={vi.fn()} restoreDraft="남은 글" onRestoreDraftConsumed={consumed} />);
+    expect(screen.getByLabelText('메시지 입력')).toHaveValue('남은 글');
+    expect(consumed).toHaveBeenCalledTimes(1);
+  });
+
+  it('이미 쓴 글이 있으면 덮지 않고 한 번 소비한다', () => {
+    const consumed = vi.fn();
+    const { rerender } = render(<ChatInput onSend={vi.fn()} onRestoreDraftConsumed={consumed} />);
+    fireEvent.change(screen.getByLabelText('메시지 입력'), { target: { value: '쓰던 글' } });
+    rerender(<ChatInput onSend={vi.fn()} restoreDraft="남은 글" onRestoreDraftConsumed={consumed} />);
+    expect(screen.getByLabelText('메시지 입력')).toHaveValue('쓰던 글');
+    expect(consumed).toHaveBeenCalledTimes(1);
+  });
+});

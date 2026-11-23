@@ -25,6 +25,9 @@ interface AIContextValue {
    * ChatInput 의 포커스 가드와 AISidePanel 의 닫힘 시 포커스 복귀(#333)가 함께 쓴다.
    */
   openFocusOriginRef: RefObject<Element | null>;
+  /** 빠른 입력에서 보내지 못한 글(WD-1029) — 패널 입력창이 비어 있으면 채우고 비운다 */
+  restoreDraft: string | null;
+  setRestoreDraft: (draft: string | null) => void;
   openAI: () => void;
   closeAI: () => void;
   toggleAI: () => void;
@@ -72,6 +75,8 @@ export function AIProvider({ children }: { children: ReactNode }) {
   useLayoutEffect(() => {
     if (isOpen) openFocusOriginRef.current = document.activeElement;
   }, [isOpen]);
+  // 빠른 입력은 보내는 순간 패널을 열고 언마운트돼 자기 상태로 글을 되돌릴 수 없어 제공자가 들고 있는다(WD-1029)
+  const [restoreDraft, setRestoreDraft] = useState<string | null>(null);
   const [mode, setModeState] = useState<AIMode>(getStoredMode);
 
   const canvas = useCanvasState();
@@ -173,6 +178,8 @@ export function AIProvider({ children }: { children: ReactNode }) {
       isCompacting,
       compactionStartedAt,
       openFocusOriginRef,
+      restoreDraft,
+      setRestoreDraft,
       openAI,
       closeAI,
       toggleAI,
@@ -199,6 +206,7 @@ export function AIProvider({ children }: { children: ReactNode }) {
       contextTokens,
       isCompacting,
       compactionStartedAt,
+      restoreDraft,
       openAI,
       closeAI,
       toggleAI,

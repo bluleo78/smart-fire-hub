@@ -63,6 +63,10 @@ interface ChatInputProps {
   focusOnOpen?: boolean;
   /** 패널이 열린 순간의 포커스 위치(WD-579). 포커스가 아직 그 자리(예: AI 상태 칩)면 옮겨도 된다. */
   focusOriginRef?: RefObject<Element | null>;
+  /** 다른 곳(AI 상태 칩 빠른 입력)에서 보내지 못한 글(WD-1029). 입력창이 비어 있으면 채우고, 어느 쪽이든 한 번 소비한다. */
+  restoreDraft?: string | null;
+  /** restoreDraft 를 처리(채움 또는 건너뜀)했음을 알린다 — 제공자가 값을 비운다 */
+  onRestoreDraftConsumed?: () => void;
 }
 
 export function ChatInput({
@@ -75,12 +79,22 @@ export function ChatInput({
   placeholder = '메시지를 입력하세요...',
   focusOnOpen = false,
   focusOriginRef,
+  restoreDraft,
+  onRestoreDraftConsumed,
 }: ChatInputProps) {
   const [message, setMessage] = useState('');
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // 못 보낸 글 되돌림(WD-1029): 사용자가 이미 쓴 글은 덮지 않고(비었을 때만 채움), 채우든 말든 한 번 소비한다.
+  useEffect(() => {
+    if (restoreDraft == null) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 제공자의 일회성 되돌림 값을 입력창 상태로 옮기는 것이라 effect 가 맞다
+    setMessage(cur => (cur === '' ? restoreDraft : cur));
+    onRestoreDraftConsumed?.();
+  }, [restoreDraft, onRestoreDraftConsumed]);
 
   const addFiles = (newFiles: File[]) => {
     const valid: PendingFile[] = [];
