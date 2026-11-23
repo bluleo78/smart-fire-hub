@@ -42,6 +42,8 @@ import { listLoadErrorProps } from '@/lib/api-error';
 import { formatDateTime, formatIpAddress } from '@/lib/formatters';
 import type { AuditLogResponse } from '@/types/auditLog';
 
+import { escapeInvisibleForDisplay } from './audit-metadata-display';
+
 /**
  * 액션 유형 옵션 목록
  * - 백엔드(AuditLogService.log) 호출부에서 사용 중인 enum 전수: CREATE/UPDATE/DELETE/LOGIN/LOGOUT/IMPORT/EXECUTE/CANCEL/DATA_EXPORT/STATUS_CHANGE
@@ -457,19 +459,19 @@ function AuditLogDetailDialog({
             </p>
           </div>
 
-          {/* 접근 요약(WD-44) — 접근 거부·감사 등급 접근 행에서 metadata 를 한국어 한 줄로. 항목이 없으면 숨김 */}
+          {/* 접근 요약(WD-44) — 접근 거부·감사 등급 접근 행에서 metadata 를 한국어 한 줄로. 항목이 없으면 숨김. metadata 값(테이블 이름 등)의 숨은 글자는 Metadata 상자처럼 \uXXXX 로 보인다(WD-1031) */}
           {summaryParts.length > 0 && (
             <div>
               <p className="text-muted-foreground mb-1 text-xs">접근 요약</p>
-              <p data-testid="audit-access-summary">{summaryParts.join(' · ')}</p>
+              <p data-testid="audit-access-summary">{escapeInvisibleForDisplay(summaryParts.join(' · '))}</p>
             </div>
           )}
 
-          {/* 변경 요약(WD-117) — 역할 교체·역할 권한 교체 행에서 추가·제거분을 한 줄로. 항목이 없으면 숨김 */}
+          {/* 변경 요약(WD-117) — 역할 교체·역할 권한 교체 행에서 추가·제거분을 한 줄로. 항목이 없으면 숨김. 역할 이름·설명의 숨은 글자는 \uXXXX 로 보인다(WD-1031) */}
           {changeSummaryParts.length > 0 && (
             <div>
               <p className="text-muted-foreground mb-1 text-xs">변경 요약</p>
-              <p data-testid="audit-change-summary">{changeSummaryParts.join(' · ')}</p>
+              <p data-testid="audit-change-summary">{escapeInvisibleForDisplay(changeSummaryParts.join(' · '))}</p>
             </div>
           )}
 
@@ -516,7 +518,8 @@ function AuditLogDetailDialog({
                 aria-label="변경 내용(Metadata)"
                 className="bg-muted rounded-md p-3 font-mono text-xs max-h-64 overflow-auto whitespace-pre focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                {JSON.stringify(log.metadata, null, 2)}
+                {/* WD-1031: RLO·ZWSP 같은 숨은 글자는 \uXXXX 텍스트로 보이게 한다(저장 값은 그대로). */}
+                {escapeInvisibleForDisplay(JSON.stringify(log.metadata, null, 2))}
               </pre>
             </div>
           )}

@@ -431,6 +431,75 @@ test.describe('감사 로그 페이지', () => {
   });
 
   /**
+   * WD-1031: RLO·ZWSP 같은 숨은 글자는 Metadata 에서 \uXXXX 텍스트로 보인다(저장 값은 원문 그대로).
+   */
+  test('상세 창 Metadata 의 숨은 글자(RLO·ZWSP)를 \\uXXXX 로 보인다 (WD-1031)', async ({ authenticatedPage: page }) => {
+    const metadata = {
+      name: '연결\u200B이름',
+      baseUrl: 'https://evil.example.com/a\u202Emoc.knab',
+    };
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/admin/audit-logs',
+      createPageResponse([createAuditLog({ id: 1, username: 'admin', metadata })]),
+    );
+    await page.goto('/admin/audit-logs');
+    await page.getByRole('row').nth(1).click();
+
+    const region = page.getByRole('dialog').getByRole('region', { name: '변경 내용(Metadata)' });
+    await expect(region).toBeVisible();
+    const text = (await region.textContent()) ?? '';
+    // 숨은 글자는 \\uXXXX 텍스트로 바뀌어 보이고, 실제 제어 글자는 남지 않는다.
+    expect(text).toContain('\\u202E');
+    expect(text).toContain('\\u200B');
+    expect(text).not.toContain('\u202E');
+    expect(text).not.toContain('\u200B');
+    expect(text).toContain('https://evil.example.com/a');
+    expect(text).toContain('moc.knab');
+  });
+
+  /**
+   * WD-1031 code-review: Metadata 에서 만든 「변경 요약」·「접근 요약」 줄도 같은 값을 그리므로 숨은 글자를 \uXXXX 로 보인다 —
+   * Metadata 상자만 고치면 바로 위 요약 줄에서 역할 이름이 뒤집혀 보였다.
+   */
+  test('상세 창 변경 요약·접근 요약의 숨은 글자를 \\uXXXX 로 보인다 (WD-1031)', async ({ authenticatedPage: page }) => {
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/admin/audit-logs',
+      createPageResponse([
+        createAuditLog({
+          id: 1,
+          username: 'updater',
+          actionType: 'ROLE_UPDATE',
+          resource: 'role',
+          metadata: { before: { name: 'ANALYST' }, after: { name: 'admin‮resu' } },
+        }),
+        createAuditLog({
+          id: 2,
+          username: 'reader',
+          actionType: 'DATASET_ACCESS_DENIED',
+          resource: 'dataset',
+          metadata: { action: 'EXPORT', tableName: 'sales​data' },
+        }),
+      ]),
+    );
+    await page.goto('/admin/audit-logs');
+
+    await page.getByRole('row').filter({ hasText: 'updater' }).click();
+    const change = page.getByRole('dialog').getByTestId('audit-change-summary');
+    await expect(change).toContainText('admin\\u202Eresu');
+    expect((await change.textContent()) ?? '').not.toContain('‮');
+    await page.keyboard.press('Escape');
+
+    await page.getByRole('row').filter({ hasText: 'reader' }).click();
+    const access = page.getByRole('dialog').getByTestId('audit-access-summary');
+    await expect(access).toContainText('sales\\u200Bdata');
+    expect((await access.textContent()) ?? '').not.toContain('​');
+  });
+
+  /**
    * 이슈 #71: metadata 가 null/empty 인 경우 섹션 자체가 숨겨지는지 검증
    */
   test('metadata 가 null 인 경우 Metadata 섹션이 표시되지 않는다', async ({ authenticatedPage: page }) => {
