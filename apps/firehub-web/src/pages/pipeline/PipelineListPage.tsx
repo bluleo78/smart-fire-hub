@@ -10,7 +10,7 @@ import { SimplePagination } from '@/components/ui/simple-pagination';
 import { TableEmptyRow, TableErrorRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { TruncatedText } from '@/components/ui/truncated-text';
-import { handleApiError, isForbiddenError } from '@/lib/api-error';
+import { handleApiError, isForbiddenError, listLoadErrorProps } from '@/lib/api-error';
 import { iGa } from '@/lib/utils';
 
 import { Badge } from '../../components/ui/badge';
@@ -85,12 +85,13 @@ export default function PipelineListPage() {
   }
   const totalPages = pipelinesData ? pipelinesData.totalPages : lastTotalPages;
   // 불러오기 실패 안내 문구 — 권한 없음 / 다음 쪽 실패(쪽 이동이 그려지면 이동 권유 포함) / 첫 쪽 실패.
-  let errorMessage = '파이프라인 목록을 불러오지 못했습니다.';
-  if (isForbidden) {
-    errorMessage = '파이프라인을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.';
-  } else if (page > 0 && totalPages > 1) {
+  // 403·첫 쪽 실패의 문구·tone 은 공용 규칙(listLoadErrorProps)이 정하고, 쪽 이동 문구만 여기서 덮는다(WD-990).
+  const loadError = listLoadErrorProps(error, '파이프라인');
+  let errorMessage = loadError.message;
+  // 403 이면 권한 안내를 그대로 두므로 쪽 이동 문구로 덮지 않는다
+  if (!isForbidden && page > 0 && totalPages > 1) {
     errorMessage = '이 쪽을 불러오지 못했습니다. 다시 시도하거나 다른 쪽으로 이동하세요.';
-  } else if (page > 0) {
+  } else if (!isForbidden && page > 0) {
     errorMessage = '이 쪽을 불러오지 못했습니다. 다시 시도하세요.'; // 쪽 이동이 그려지지 않으면 이동 권유를 뺀다
   }
 
@@ -238,7 +239,7 @@ export default function PipelineListPage() {
               <TableErrorRow
                 colSpan={7}
                 className="py-12"
-                tone={isForbidden ? 'muted' : 'error'}
+                tone={loadError.tone}
                 message={errorMessage}
                 // 403 은 다시 해도 같아 버튼을 두지 않는다. 요청 중에는 disabled 대신 aria-disabled 로 잠가(초점 유지) 중복 요청을 막는다(WD-956).
                 action={

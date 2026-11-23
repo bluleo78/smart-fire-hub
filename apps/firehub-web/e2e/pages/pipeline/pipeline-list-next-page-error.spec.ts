@@ -45,7 +45,7 @@ async function mockPagedList(
         return route.fulfill({
           status: 500,
           contentType: 'application/json',
-          body: JSON.stringify({ status: 500, error: 'Internal Server Error', message: 'boom' }),
+          body: JSON.stringify({ status: 500, error: 'Internal Server Error' }),
         });
       }
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(pageBody(idx)) });
@@ -190,6 +190,20 @@ test.describe('파이프라인 목록 다음 쪽 조회 실패 (WD-956)', () => 
     await page.goto('/pipelines');
     await expectTableErrorAlert(page, FIRST_FAIL_MESSAGE, { action: '다시 시도' });
     await expect(page.getByRole('alert')).not.toContainText('다른 쪽');
+  });
+
+  test('첫 쪽 실패 응답에 서버 사유(message)가 있으면 그 사유를 보인다 (WD-990)', async ({ authenticatedPage: page }) => {
+    await page.route(
+      (url) => url.pathname === '/api/v1/pipelines',
+      (route) =>
+        route.fulfill({
+          status: 500,
+          contentType: 'application/json',
+          body: JSON.stringify({ message: '서버 점검 중입니다' }),
+        }),
+    );
+    await page.goto('/pipelines');
+    await expectTableErrorAlert(page, '서버 점검 중입니다', { action: '다시 시도' });
   });
 
   test('첫 쪽부터 실패하면 다시 시도만 보이고 쪽 이동은 없다 (WD-956)', async ({ authenticatedPage: page }) => {

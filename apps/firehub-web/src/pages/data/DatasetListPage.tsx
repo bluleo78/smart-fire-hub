@@ -41,7 +41,7 @@ import {
 import { useSecurityLevels } from '../../hooks/queries/useSecurityLevels';
 import { useListRetryFocus } from '../../hooks/useListRetryFocus';
 import { useRecentDatasets } from '../../hooks/useRecentDatasets';
-import { extractApiError, handleApiError, isForbiddenError } from '../../lib/api-error';
+import { handleApiError, listLoadErrorProps } from '../../lib/api-error';
 import {
   describeOriginType,
   describeStorageType,
@@ -662,11 +662,8 @@ export default function DatasetListPage() {
               <TableErrorRow
                 colSpan={8}
                 className="py-12 font-medium"
-                message={
-                  isForbiddenError(datasetsError)
-                    ? '데이터셋 목록을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.'
-                    : extractApiError(datasetsError, '데이터셋 목록을 불러오지 못했습니다.')
-                }
+                // 문구·tone(403 은 muted 권한 안내)은 다른 목록과 같은 공용 규칙으로 정한다(WD-990).
+                {...listLoadErrorProps(datasetsError, '데이터셋')}
                 action={retryAction}
               />
             ) : datasets.length > 0 ? (

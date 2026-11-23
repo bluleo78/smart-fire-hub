@@ -751,8 +751,8 @@ test.describe('쿼리 목록 페이지', () => {
     await mockApi(page, 'GET', '/api/v1/analytics/queries', { message: '권한이 없습니다' }, { status: 403 });
     await page.goto('/analytics/queries');
 
-    await expectTableErrorAlert(page, '쿼리 목록을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.');
-    await expect(page.getByRole('alert').getByText('쿼리 목록을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.')).toHaveClass(/text-muted-foreground/);
+    await expectTableErrorAlert(page, '쿼리 목록을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.', { tone: 'muted' });
+    await expect(page.getByRole('status').getByText('쿼리 목록을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.')).toHaveClass(/text-muted-foreground/);
     await expect(page.getByText('저장된 쿼리가 없습니다.')).toHaveCount(0);
     await expect(page.getByRole('button', { name: '새 쿼리 만들기' })).toHaveCount(0);
     // 403 은 다시 해도 같으므로 「다시 시도」 버튼을 두지 않는다 (WD-987)
@@ -799,17 +799,32 @@ test.describe('쿼리 목록 페이지', () => {
     await expect(page.getByText('저장 쿼리 1')).toBeVisible();
     await expect(page.getByText('저장 쿼리 3')).toBeVisible();
 
-    // 폴더 필터는 「전체 폴더」로 남아 쓸 수 있고, 폴더 대신 고를 수 없는 실패 안내 줄이 보인다 (WD-978 리뷰 후속)
+    // 폴더 필터는 「전체 폴더」로 남아 쓸 수 있고, 실패 안내는 option 이 아닌 목록 안 문구로 보인다 (WD-990)
     // — 폴더 목록 실패를 「폴더가 없음」으로 오해하지 않게 하되, 쿼리 목록은 막지 않는다
     const folderFilter = page.getByRole('combobox', { name: '폴더 필터' });
     await expect(folderFilter).toBeEnabled();
     await expect(folderFilter).toHaveText('전체 폴더');
+    // 열기 전에도 트리거 설명으로 낭독된다 (WD-990 리뷰) — 전역 재시도 1회 뒤 확정되므로 넉넉히 기다린다
+    await expect(folderFilter).toHaveAccessibleDescription('폴더 목록을 불러오지 못했습니다', { timeout: 15000 });
     await folderFilter.click();
-    // 전역 재시도 1회 뒤 실패가 확정돼야 안내 줄이 생기므로 넉넉히 기다린다
-    await expect(page.getByRole('option')).toHaveText(['전체 폴더', '폴더 목록을 불러오지 못했습니다'], { timeout: 15000 });
-    await expect(page.getByRole('option', { name: '폴더 목록을 불러오지 못했습니다' })).toHaveAttribute('aria-disabled', 'true');
+    await expect(page.getByRole('listbox').getByText('폴더 목록을 불러오지 못했습니다')).toBeVisible({ timeout: 15000 });
+    await expect(page.getByRole('option')).toHaveText(['전체 폴더']);
     // 실패가 확정된 뒤에도 표에는 실패 안내(alert)가 뜨지 않는다 — 쿼리 목록 실패와 섞이지 않는다
     await expect(page.getByRole('alert')).toHaveCount(0);
+  });
+
+  test('폴더 목록 403 은 권한 문구로 보인다 (WD-990)', async ({ authenticatedPage: page }) => {
+    await setupQueryListMocks(page, 3);
+    await mockApi(page, 'GET', '/api/v1/analytics/queries/folders', { message: 'forbidden' }, { status: 403 });
+    await page.goto('/analytics/queries');
+
+    await expect(page.getByText('저장 쿼리 1')).toBeVisible();
+    const folderFilter = page.getByRole('combobox', { name: '폴더 필터' });
+    await expect(folderFilter).toHaveAccessibleDescription('폴더 목록을 볼 권한이 없습니다', { timeout: 15000 });
+    await folderFilter.click();
+    await expect(page.getByRole('listbox').getByText('폴더 목록을 볼 권한이 없습니다')).toBeVisible();
+    await expect(page.getByText('폴더 목록을 불러오지 못했습니다')).toHaveCount(0);
+    await expect(page.getByRole('option')).toHaveText(['전체 폴더']);
   });
 });
 

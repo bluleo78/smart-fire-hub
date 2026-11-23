@@ -774,6 +774,14 @@ test.describe('감사 로그 조회 실패 안내 (WD-930)', () => {
     await mockApi(page, 'GET', '/api/v1/admin/audit-logs', { message: '서버 오류 테스트' }, { status: 500 });
     await page.goto('/admin/audit-logs');
 
-    await expectTableErrorAlert(page);
+    await expectTableErrorAlert(page, '서버 오류 테스트');
+  });
+
+  test('감사 로그 목록 403 은 권한 안내 (WD-990)', async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+    await mockApi(page, 'GET', '/api/v1/admin/audit-logs', { message: 'Access denied' }, { status: 403 });
+    await page.goto('/admin/audit-logs');
+
+    await expectTableErrorAlert(page, '감사 로그 목록을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.', { tone: 'muted' });
   });
 });

@@ -176,7 +176,7 @@ describe('TableErrorRow (WD-938)', () => {
   it('tone=muted 는 지연 전·후 모두 흐린 글자다', () => {
     renderErrorRow({ colSpan: 3, tone: 'muted' });
     const td = screen.getByRole('cell');
-    const alert = screen.getByRole('alert');
+    const alert = screen.getByRole('status');
     for (const announced of [false, true]) {
       if (announced) flush();
       expect(alert.firstElementChild?.className).toContain('text-muted-foreground');
@@ -209,15 +209,37 @@ describe('TableErrorRow (WD-938)', () => {
     expect(td.className).not.toContain('text-muted-foreground');
   });
 
-  it('문구·tone 이 바뀌어도 같은 alert 다', () => {
+  it('tone=muted 면 status·polite 로 읽는다 (WD-990)', () => {
+    renderErrorRow({ colSpan: 1, tone: 'muted', message: '권한 없음' });
+    expect(screen.getByRole('status').getAttribute('aria-live')).toBe('polite');
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('tone 이 muted → error 로 바뀌면 alert·assertive 로 바뀐다 (WD-990)', () => {
+    const { rerenderRow } = renderErrorRow({ colSpan: 1, tone: 'muted', message: '권한 없음' });
+    const statusNode = screen.getByRole('status');
+    rerenderRow({ colSpan: 1, tone: 'error', message: '권한 없음' });
+    expect(screen.getByRole('alert').getAttribute('aria-live')).toBe('assertive');
+    // 톤이 바뀌면 라이브 리전이 새 노드로 다시 마운트되어 새 긴급도로 낭독된다 (WD-990 리뷰)
+    expect(screen.getByRole('alert')).not.toBe(statusNode);
+    expect(statusNode.isConnected).toBe(false);
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+
+  it('문구가 바뀌어도 같은 alert 다', () => {
     const { rerenderRow } = renderErrorRow({ colSpan: 3, message: '첫 문구' });
     flush();
     const alert = screen.getByRole('alert');
-    rerenderRow({ colSpan: 3, message: '새 문구', tone: 'muted' });
+    rerenderRow({ colSpan: 3, message: '새 문구' });
     expect(screen.getByRole('alert')).toBe(alert);
     expect(alert.textContent).toBe('새 문구');
-    // 낭독된 뒤 tone 이 바뀌어도 문구 노드의 톤이 따라간다
-    expect(alert.firstElementChild?.className).toContain('text-muted-foreground');
+  });
+
+  it('낭독된 뒤 tone 이 바뀌어도 문구 노드의 톤이 따라간다', () => {
+    const { rerenderRow } = renderErrorRow({ colSpan: 3, message: '첫 문구' });
+    flush();
+    rerenderRow({ colSpan: 3, message: '새 문구', tone: 'muted' });
+    expect(screen.getByRole('status').firstElementChild?.className).toContain('text-muted-foreground');
   });
 });
 

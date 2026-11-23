@@ -48,7 +48,7 @@ import {
 } from '../../hooks/queries/useAnalytics';
 import { useIsOwner } from '../../hooks/useIsOwner';
 import { useListRetryFocus } from '../../hooks/useListRetryFocus';
-import { handleApiError, listLoadErrorProps } from '../../lib/api-error';
+import { handleApiError, isForbiddenError, listLoadErrorProps } from '../../lib/api-error';
 import { formatDateTimeMinute, formatRelativeTime } from '../../lib/formatters';
 import { getPageAfterDelete } from '../../lib/pagination';
 import { iGa } from '../../lib/utils';
@@ -104,7 +104,11 @@ export default function QueryListPage() {
   });
 
   // 폴더 드롭다운도 목록과 같은 탭 범위 — 「내 쿼리」에서 남의 공유 쿼리에만 있는 폴더를 고르면 늘 빈 결과가 된다(WD-328)
-  const { data: foldersData, isError: isFoldersError } = useQueryFolders({
+  const {
+    data: foldersData,
+    isError: isFoldersError,
+    error: foldersError,
+  } = useQueryFolders({
     sharedOnly: sharedOnly || undefined,
     mineOnly: mineOnly || undefined,
   });
@@ -118,6 +122,13 @@ export default function QueryListPage() {
   const totalElements = queriesData?.totalElements;
   // 빈/공백 폴더는 useQueryFolders 가 이미 걸러 준다 (WD-889)
   const folders = foldersData ?? [];
+  // 폴더 목록 실패 안내 문구 (WD-990) — 실패(데이터 없음)일 때만 값이 있다. 403 은 다시 시도해도 소용없으므로 권한 문구로 구분
+  const folderErrorText =
+    isFoldersError && !foldersData
+      ? isForbiddenError(foldersError)
+        ? '폴더 목록을 볼 권한이 없습니다'
+        : '폴더 목록을 불러오지 못했습니다'
+      : null;
 
   const handleDelete = async (id: number, name: string) => {
     try {
@@ -201,7 +212,11 @@ export default function QueryListPage() {
                   }}
                 >
                   {/* 값을 고른 뒤에도 무엇을 거르는 상자인지 읽히게 접근 이름을 붙인다 (WD-398) */}
-                  <SelectTrigger className="w-[180px]" aria-label="폴더 필터">
+                  <SelectTrigger
+                    className="w-[180px]"
+                    aria-label="폴더 필터"
+                    aria-describedby={folderErrorText ? 'query-folder-error' : undefined}
+                  >
                     <SelectValue placeholder="전체 폴더" />
                   </SelectTrigger>
                   <SelectContent>
@@ -211,14 +226,22 @@ export default function QueryListPage() {
                         {f}
                       </SelectItem>
                     ))}
-                    {/* 폴더 목록 조회 실패를 「폴더 없음」과 구분한다 — 실패해도 쿼리 목록·「전체 폴더」는 그대로 쓰고, 고를 수 없는 안내 줄만 더한다 (WD-978 리뷰 후속) */}
-                    {isFoldersError && !foldersData && (
-                      <SelectItem value="__folders_error__" disabled>
-                        폴더 목록을 불러오지 못했습니다
-                      </SelectItem>
+                    {/* 폴더 목록 조회 실패를 「폴더 없음」과 구분한다 — 실패해도 쿼리 목록·「전체 폴더」는 그대로 쓰고, 고를 수 없는 안내만 더한다 (WD-978 리뷰 후속).
+                        WD-990: SelectItem(role=option)·value 로 두면 폴더 이름과 값이 겹칠 수 있고 「고를 수 있는 항목」으로 읽혀서, 항목이 아닌 div 로 둔다.
+                        403(권한 없음)은 일시 실패와 달리 다시 시도해도 소용없으므로 권한 문구로 구분한다. */}
+                    {folderErrorText && (
+                      <div aria-hidden="true" className="px-2 py-1.5 text-sm text-muted-foreground">
+                        {folderErrorText}
+                      </div>
                     )}
                   </SelectContent>
                 </Select>
+                {/* WD-990 리뷰: 드롭다운 안 안내는 열기 전·listbox 밖이라 낭독되지 않아, 같은 문구를 화면 밖 status 로 두고 트리거 설명에 잇는다 */}
+                {folderErrorText && (
+                  <span id="query-folder-error" role="status" className="sr-only">
+                    {folderErrorText}
+                  </span>
+                )}
               </div>
 
               {/* Table */}

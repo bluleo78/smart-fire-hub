@@ -494,10 +494,10 @@ test.describe('파이프라인 목록 페이지', () => {
     await page.goto('/pipelines');
 
     const table = page.getByRole('table', { name: '파이프라인 목록' });
-    await expect(table.getByText('파이프라인을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.')).toBeVisible();
-    // 권한 안내도 alert 로 알리되(WD-938) 흐린 안내 톤을 유지한다
-    await expectTableErrorAlert(page, '파이프라인을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.');
-    await expect(page.getByRole('alert').getByText('파이프라인을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.')).toHaveClass(/text-muted-foreground/);
+    await expect(table.getByText('파이프라인 목록을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.')).toBeVisible();
+    // 권한 안내는 status·polite 로 알리되(WD-990) 흐린 안내 톤을 유지한다
+    await expectTableErrorAlert(page, '파이프라인 목록을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.', { tone: 'muted' });
+    await expect(page.getByRole('status').getByText('파이프라인 목록을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.')).toHaveClass(/text-muted-foreground/);
     await expect(table.getByText('파이프라인이 없습니다.')).toHaveCount(0);
     await expect(page.getByRole('link', { name: '새 파이프라인' })).toHaveCount(0);
     // 403 은 재시도해도 같으니 한 번만 요청한다

@@ -784,8 +784,8 @@ test.describe('대시보드 목록 페이지', () => {
     await mockApi(page, 'GET', '/api/v1/analytics/dashboards', { message: '권한이 없습니다' }, { status: 403 });
     await page.goto('/analytics/dashboards');
 
-    await expectTableErrorAlert(page, '대시보드 목록을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.');
-    await expect(page.getByRole('alert').getByText('대시보드 목록을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.')).toHaveClass(/text-muted-foreground/);
+    await expectTableErrorAlert(page, '대시보드 목록을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.', { tone: 'muted' });
+    await expect(page.getByRole('status').getByText('대시보드 목록을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.')).toHaveClass(/text-muted-foreground/);
     await expect(page.getByText('대시보드가 없습니다.')).toHaveCount(0);
     await expect(page.getByRole('button', { name: '새 대시보드 만들기' })).toHaveCount(0);
     // 403 은 다시 해도 같으므로 「다시 시도」 버튼을 두지 않는다 (WD-987)

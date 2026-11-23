@@ -918,6 +918,14 @@ test.describe('사용자 목록 조회 실패 안내 (WD-930)', () => {
     await mockApi(page, 'GET', '/api/v1/users', { message: '서버 오류 테스트' }, { status: 500 });
     await page.goto('/admin/users');
 
-    await expectTableErrorAlert(page);
+    await expectTableErrorAlert(page, '서버 오류 테스트');
+  });
+
+  test('사용자 목록 403 은 권한 안내 (WD-990)', async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+    await mockApi(page, 'GET', '/api/v1/users', { message: 'Access denied' }, { status: 403 });
+    await page.goto('/admin/users');
+
+    await expectTableErrorAlert(page, '사용자 목록을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.', { tone: 'muted' });
   });
 });

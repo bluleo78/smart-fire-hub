@@ -168,7 +168,7 @@ interface TableErrorRowProps {
 /**
  * 테이블 조회 실패 행 (WD-930).
  *
- * 실패 문구를 role="alert" 라이브 리전 안에 두어 스크린리더 사용자가 조회 실패를 알게 한다(WCAG 4.1.3).
+ * 실패 문구를 role="alert"(muted 톤은 role="status", WD-990) 라이브 리전 안에 두어 스크린리더 사용자가 조회 실패를 알게 한다(WCAG 4.1.3).
  * - alert 영역은 td 안쪽에 둔다 — td 에 role 을 덮어쓰면 표의 cell 역할이 깨지기 때문이다.
  * - 톤 클래스는 문구 노드(DelayedStatus 의 className)에만 둔다 — td 에 두면 outline 버튼(color: inherit)인
  *   action 이 빨간/흐린 글자를 물려받아 예전 모양(버튼은 본문 글자색)이 바뀐다.
@@ -187,6 +187,8 @@ export function TableErrorRow({
   className,
   action,
 }: TableErrorRowProps) {
+  // 흐린 권한 안내인지 — 낭독 방식(role)과 색을 함께 정한다 (WD-990)
+  const muted = tone === 'muted';
   return (
     <TableRow>
       <TableCell colSpan={colSpan} className={cn('text-center', className, 'px-0')}>
@@ -198,7 +200,9 @@ export function TableErrorRow({
           - whitespace-normal + overflow-wrap:anywhere: 공백 없는 긴 토큰(trace 등)도 감는다. mx-auto 는 쓰지 않는다(표가 더 넓으면 가운데가 보이는 영역 밖으로 밀림).
         */}
         <div data-slot="table-error-content" className="sticky left-0 w-[100cqw] max-w-full px-10 whitespace-normal [overflow-wrap:anywhere]">
-          <DelayedStatus role="alert" className={tone === 'muted' ? 'text-muted-foreground' : 'text-destructive'}>
+          {/* WD-990: 오류(error)만 즉시 끊어 읽는 alert·assertive. 권한 없음 같은 muted 안내는 장애가 아니라 정보라 status·polite 로 읽어 진행 중 낭독을 끊지 않는다 */}
+          {/* WD-990 리뷰: tone 을 key 로 둬 톤이 바뀌면 라이브 리전을 새로 마운트한다 — role 만 바뀐 같은 노드는 새 긴급도로 다시 낭독되지 않을 수 있다 */}
+          <DelayedStatus key={tone} role={muted ? 'status' : 'alert'} className={muted ? 'text-muted-foreground' : 'text-destructive'}>
             {message}
           </DelayedStatus>
           {action}
