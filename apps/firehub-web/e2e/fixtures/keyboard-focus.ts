@@ -7,14 +7,15 @@ import type { Locator, Page } from '@playwright/test';
  * 끝내 닿지 못하면 예외로 실패한다(키보드로 닿을 수 없다는 뜻).
  * @param page - 대상 페이지
  * @param target - 초점이 닿아야 할 요소
- * @param maxTabs - 최대 Tab 횟수(사이드바 메뉴를 지나갈 여유)
+ * @param maxTabs - 최대 키 입력 횟수(사이드바 메뉴를 지나갈 여유)
+ * @param key - 초점을 옮길 키(기본 'Tab', 거슬러 가려면 'Shift+Tab')
  */
-export async function tabUntilFocused(page: Page, target: Locator, maxTabs = 60): Promise<void> {
+export async function tabUntilFocused(page: Page, target: Locator, maxTabs = 60, key = 'Tab'): Promise<void> {
   for (let i = 0; i < maxTabs; i++) {
-    await page.keyboard.press('Tab');
+    await page.keyboard.press(key);
     if (await target.evaluate((el) => el === document.activeElement)) return;
   }
-  throw new Error(`Tab ${maxTabs}번 안에 대상에 초점이 닿지 않았다`);
+  throw new Error(`${key} ${maxTabs}번 안에 대상에 초점이 닿지 않았다`);
 }
 
 /**
