@@ -826,6 +826,40 @@ test.describe('쿼리 목록 페이지', () => {
     await expect(page.getByText('폴더 목록을 불러오지 못했습니다')).toHaveCount(0);
     await expect(page.getByRole('option')).toHaveText(['전체 폴더']);
   });
+
+  test('폴더 실패 안내 status 는 실패 전부터 빈 채로 있다가 글자만 바뀐다 (WD-990 리뷰 후속)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 글자를 담은 채 처음 붙는 라이브 리전은 스크린리더가 읽지 않는다 — 같은 노드가 미리 있고 글자만 바뀌어야 낭독된다
+    await setupQueryListMocks(page, 3);
+    let releaseFolders: () => void = () => {};
+    const foldersHeld = new Promise<void>((resolve) => {
+      releaseFolders = resolve;
+    });
+    await page.route(
+      (url) => url.pathname === '/api/v1/analytics/queries/folders',
+      async (route) => {
+        await foldersHeld;
+        await route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ message: 'forbidden' }) });
+      },
+    );
+    await page.goto('/analytics/queries');
+    await expect(page.getByText('저장 쿼리 1')).toBeVisible();
+
+    // 폴더 응답 전: 빈 status 노드가 이미 있다 — 표지를 붙여 같은 노드인지 뒤에서 확인한다
+    const status = page.locator('#query-folder-error');
+    await expect(status).toHaveAttribute('role', 'status');
+    await expect(status).toHaveText('');
+    await status.evaluate((el) => el.setAttribute('data-wd990-mark', 'kept'));
+
+    releaseFolders();
+    await expect(status).toHaveText('폴더 목록을 볼 권한이 없습니다', { timeout: 15000 });
+    // 노드를 갈아 끼우지 않고 글자만 바뀌었다
+    await expect(status).toHaveAttribute('data-wd990-mark', 'kept');
+    await expect(page.getByRole('combobox', { name: '폴더 필터' })).toHaveAccessibleDescription(
+      '폴더 목록을 볼 권한이 없습니다',
+    );
+  });
 });
 
 /**

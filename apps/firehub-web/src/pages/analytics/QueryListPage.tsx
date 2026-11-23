@@ -246,11 +246,10 @@ export default function QueryListPage() {
                   </SelectContent>
                 </Select>
                 {/* WD-990 리뷰: 드롭다운 안 안내는 열기 전·listbox 밖이라 낭독되지 않아, 같은 문구를 화면 밖 status 로 두고 트리거 설명에 잇는다 */}
-                {folderErrorText && (
-                  <span id="query-folder-error" role="status" className="sr-only">
-                    {folderErrorText}
-                  </span>
-                )}
+                {/* WD-990 리뷰 후속: 글자를 담은 채 처음 붙는 status 는 낭독되지 않아, 빈 span 을 늘 두고 글자만 바꾼다 */}
+                <span id="query-folder-error" role="status" className="sr-only">
+                  {folderErrorText}
+                </span>
               </div>
 
               {/* Table */}
