@@ -38,6 +38,7 @@ export default function ReportListTab() {
   const {
     data: reportsData,
     isLoading,
+    isFetching,
     isPaused,
     isError,
     isSuccess,
@@ -48,7 +49,11 @@ export default function ReportListTab() {
   // 데이터 없이 paused(오프라인·재시도 멈춤)면 「리포트가 없습니다」 대신 연결 대기로 그린다(WD-971)
   const { waiting, offline } = useOfflinePaused({ data: reportsData, isPaused });
   // 「더 보기」 조회가 실패하면 렌더 중에 limit 을 마지막 성공 값으로 되돌려 보던 목록을 남긴다(WD-956) — 오류 렌더가 그려지지 않는다.
-  settle({ isError, isSuccess, isPlaceholderData });
+  // 낡은 캐시로 먼저 보인 새 limit 은 재조회(isFetching)가 끝나기 전·오프라인으로 멈춘(isPaused) 동안 성공으로 세지 않는다 —
+  // 세면 이어진 재조회 실패가 묻히고, 오류 캐시를 다시 열 때 요청이 나가기도 전에 20건으로 접힌다 (WD-1037, 실행 이력 WD-1019 과 같다).
+  const refetchPending = isFetching || isPaused;
+  // 돌려받는 값 — 확정 전 재조회 중이면 「더 보기」를 잠근다 (WD-1037 리뷰)
+  const loadMoreLocked = settle({ isError, isSuccess, isPlaceholderData, refetchPending });
   // 조회 실패를 빈 목록으로 그리지 않는다 (WD-137) — 403 이면 권한 안내, 그 밖은 불러오기 실패 안내.
   const isForbidden = isError && isForbiddenError(error);
   // 빈 상태를 "잡이 없음" / "잡은 있으나 리포트 없음" 으로 가르기 위해 잡 목록도 본다.
@@ -194,7 +199,8 @@ export default function ReportListTab() {
         // isPlaceholderData 를 「더 보기 로딩 중」으로 읽는 것은 이 탭에서 키를 바꾸는 입력이 limit 뿐이기 때문이다 — 필터 등이 생기면 다시 검토한다.
         (reports.length >= limit || isPlaceholderData) && (
           <div className="py-2 flex justify-center">
-            <PendingButton variant="ghost" size="sm" pending={isPlaceholderData} onClick={loadMore}>
+            {/* 낡은 캐시로 먼저 보인 새 limit 의 재조회가 끝나기 전에도 잠근다 — 확정 전에 다시 누른 뒤 실패하면 보던 40건이 아니라 20건으로 접힌다 (WD-1037 리뷰, 실행 이력 WD-1019 와 같다) */}
+            <PendingButton variant="ghost" size="sm" pending={isPlaceholderData || loadMoreLocked} onClick={loadMore}>
               더 보기
             </PendingButton>
           </div>

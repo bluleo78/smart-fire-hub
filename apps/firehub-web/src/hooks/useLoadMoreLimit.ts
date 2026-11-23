@@ -12,7 +12,7 @@ export interface SettleStatus {
   isError: boolean;
   isSuccess: boolean;
   isPlaceholderData?: boolean;
-  refetchPending?: boolean;
+  refetchPending: boolean;
 }
 
 /**
@@ -41,16 +41,17 @@ export function useLoadMoreLimit({ initial = 20, step = 20 }: UseLoadMoreLimitOp
 
   /** 재시도 조회 중 여부 — 실패 상태에서 limit 이 마지막 성공값보다 크면 재시도 조회가 진행 중이다. */
   const pending = failed && limit > lastSuccessLimit;
-
   /**
    * 조회 결과를 반영한다 — 성공이면 기록, 「더 보기」 실패면 마지막 성공 limit 으로 되돌리고 failed 로 둔다.
    * 화면이 렌더 중에 직접 부른다(React 의 「렌더 중 setState」 패턴 — 이전 렌더 정보 저장과 같은 방식).
    * useEffect 로 부르면 오류 렌더가 한 번 그려진 뒤 보던 행이 돌아와 깜빡이지만, 렌더 중에 되돌리면 React 가 그 렌더를
    * 버리고 바로 다시 그려 화면에 오류 렌더가 나오지 않는다. 값이 실제로 바뀔 때만 setState 하므로 무한 렌더가 없다.
    * 자리표시(keepPreviousData) 데이터는 status 가 success 라도 새 limit 의 성공이 아니므로 isPlaceholderData 면 성공으로 세지 않는다.
-   * refetchPending(선택, 기본 false — isFetching || isPaused)을 넘기면 낡은 캐시로 먼저 보인 새 limit 을 재조회가 끝난 뒤에야 성공으로 센다 — 재조회 실패가 묻히지 않게 (WD-1019).
+   * 돌려주는 값은 「더 보기」 잠금 여부다 — 새 limit 이 낡은 캐시로 먼저 보여도 재조회가 끝나 확정되기 전에는 참이다.
+   * 확정 전에 다시 누르면 다음 실패가 보던 행보다 더 앞(마지막 성공)으로 접히므로 화면은 이 값으로 버튼을 잠근다 (WD-1037 리뷰).
+   * refetchPending(필수 — isFetching || isPaused)을 넘겨야 한다. 빠뜨리면 재조회 실패가 묻히므로 타입으로 강제한다 (WD-1037). 낡은 캐시로 먼저 보인 새 limit 을 재조회가 끝난 뒤에야 성공으로 센다 — 재조회 실패가 묻히지 않게 (WD-1019).
    */
-  const settle = ({ isError, isSuccess, isPlaceholderData = false, refetchPending = false }: SettleStatus) => {
+  const settle = ({ isError, isSuccess, isPlaceholderData = false, refetchPending }: SettleStatus): boolean => {
     if (isSuccess && !isPlaceholderData && !refetchPending) {
       if (lastSuccessLimit !== limit) {
         setLastSuccessLimit(limit);
@@ -63,6 +64,7 @@ export function useLoadMoreLimit({ initial = 20, step = 20 }: UseLoadMoreLimitOp
       setLimit(lastSuccessLimit);
       setFailed(true);
     }
+    return refetchPending && limit > lastSuccessLimit;
   };
 
   return { limit, loadMore, pending, failed, settle };
