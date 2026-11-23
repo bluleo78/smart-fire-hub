@@ -235,3 +235,98 @@ test.describe('「더 보기」 조회 실패 (WD-956)', () => {
     gate.resolve();
   });
 });
+
+test.describe('실행 이력 「더 보기」 응답 대기 (WD-965)', () => {
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await mockProactivePermissions(page);
+  });
+
+  test('실행 이력 「더 보기」를 Enter 로 누르면 응답 전에도 보던 행과 버튼이 남고 초점을 유지한다 (WD-965)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupJobDetailMocks(page, 1);
+    const gates: Record<number, Promise<void> | undefined> = {};
+    const counts = await mockLimitedList(page, '/api/v1/proactive/jobs/1/executions', 0, executionRows, gates);
+    await page.goto('/ai-insights/jobs/1?tab=executions');
+    const rows = page.getByRole('link', { name: /\(.*\)$/ });
+    await expect(rows).toHaveCount(20);
+
+    // limit=40 응답을 시험이 풀 때까지 붙잡는다
+    const gate = deferred();
+    gates[40] = gate.promise;
+    const more = page.getByRole('button', { name: '더 보기' });
+    await more.focus();
+    await page.keyboard.press('Enter');
+
+    // 응답 전: 보던 20행과 버튼이 남고 초점이 버튼에 있으며 스켈레톤이 없다
+    await expect(more).toBeVisible();
+    await expect(more).toHaveAttribute('aria-disabled', 'true');
+    await expect(more).toBeFocused();
+    await expect(rows).toHaveCount(20);
+    await expect(page.locator('.animate-pulse')).toHaveCount(0);
+
+    // 진행 중 다시 Enter 해도 limit=60 요청은 나가지 않는다
+    await page.keyboard.press('Enter');
+
+    gate.resolve();
+    await expect(rows).toHaveCount(40);
+    // 시간에 기대지 않고, 응답이 풀려 40행이 된 뒤에도 limit=60 요청이 한 번도 없었음을 확인한다
+    expect(counts[60] ?? 0).toBe(0);
+    await expect(more).not.toHaveAttribute('aria-disabled', 'true');
+    await expect(more).toBeFocused();
+  });
+
+  test('실행 이력 「더 보기」 응답이 끝 목록이면 버튼이 사라진다 (WD-965)', async ({ authenticatedPage: page }) => {
+    await setupJobDetailMocks(page, 1);
+    await mockLimitedList(page, '/api/v1/proactive/jobs/1/executions', 0, (n) => executionRows(n === 40 ? 25 : n));
+    await page.goto('/ai-insights/jobs/1?tab=executions');
+    const rows = page.getByRole('link', { name: /\(.*\)$/ });
+    await expect(rows).toHaveCount(20);
+    await page.getByRole('button', { name: '더 보기' }).click();
+    await expect(rows).toHaveCount(25);
+    await expect(page.getByRole('button', { name: '더 보기' })).toHaveCount(0);
+  });
+
+  test('작업을 바꾸면 새 작업의 응답 전에 이전 작업의 실행 행이 한 순간도 보이지 않는다 (WD-965)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 이 시험이 지키는 것: 작업 전환 시 새 작업은 이전 작업의 행을 보이지 않는다.
+    // 현재는 페이지의 key={jobId} 재마운트와 useJobExecutions 의 placeholderData jobId 가드 어느 쪽이든 이를 만족시킨다.
+    await setupJobDetailMocks(page, 1);
+    await setupJobDetailMocks(page, 2);
+    const gates: Record<number, Promise<void> | undefined> = {};
+    await mockLimitedList(page, '/api/v1/proactive/jobs/1/executions', 0, executionRows);
+    // 2번 작업은 실행 id 를 101 부터 다르게 두고, 응답을 시험이 풀 때까지 붙잡는다
+    const gate = deferred();
+    gates[20] = gate.promise;
+    await mockLimitedList(
+      page,
+      '/api/v1/proactive/jobs/2/executions',
+      0,
+      (n) =>
+        Array.from({ length: Math.min(n, 3) }, (_, i) =>
+          createJobExecution({ id: 101 + i, jobId: 2, startedAt: `2024-02-01T09:0${i}:00Z` }),
+        ),
+      gates,
+    );
+    await page.goto('/ai-insights/jobs/1?tab=executions');
+    await expect(page.locator('a[href*="/jobs/1/executions/"]')).toHaveCount(20);
+
+    // React Router 는 위치 변경을 startTransition 으로 적용하므로 URL 이 바뀐 직후엔 아직 1번 행이 남을 수 있다.
+    // 2번 탭이 마운트된 뒤에야 나가는 2번 실행 이력 요청을 기다린 다음에 즉시 확인한다.
+    const req = page.waitForRequest((r) => new URL(r.url()).pathname === '/api/v1/proactive/jobs/2/executions');
+    await page.evaluate(() => {
+      window.history.pushState({}, '', '/ai-insights/jobs/2?tab=executions');
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    });
+    await expect(page).toHaveURL(/jobs\/2/);
+    await req;
+    // 2번 작업 응답 대기 중: 재시도 없는 즉시 확인(1번 행도, 아직 오지 않은 2번 행도 없다)
+    expect(await page.locator('a[href*="/jobs/1/executions/"]').count()).toBe(0);
+    expect(await page.locator('a[href*="/jobs/2/executions/"]').count()).toBe(0);
+
+    gate.resolve();
+    await expect(page.locator('a[href*="/jobs/2/executions/"]')).toHaveCount(3);
+    await expect(page.locator('a[href*="/jobs/1/executions/"]')).toHaveCount(0);
+  });
+});
