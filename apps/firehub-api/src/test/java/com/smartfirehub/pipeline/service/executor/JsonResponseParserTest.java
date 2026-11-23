@@ -79,4 +79,27 @@ class JsonResponseParserTest {
         .isInstanceOf(ApiCallException.class)
         .hasMessage("JSON 경로를 읽을 수 없습니다: $.total.max()");
   }
+
+  /** WD-1045: 항목이 있는데 매핑이 null 이면 NPE 가 아니라 안내 문구의 ApiCallException 으로 실패한다. */
+  @Test
+  void parseAndMap_nullMappingsWithItems_failsWithGuidance() {
+    assertThatThrownBy(() -> parser.parseAndMap("{\"d\":[{\"a\":1}]}", "$.d", null, null, 0))
+        .isInstanceOf(ApiCallException.class)
+        .hasMessage(ApiCallErrorMessages.noFieldMappings());
+  }
+
+  /** WD-1045: 매핑이 빈 목록이어도 같은 안내 문구로 실패한다. */
+  @Test
+  void parseAndMap_emptyMappingsWithItems_failsWithGuidance() {
+    assertThatThrownBy(
+            () -> parser.parseAndMap("{\"d\":[{\"a\":1}]}", "$.d", List.of(), null, 0))
+        .isInstanceOf(ApiCallException.class)
+        .hasMessage(ApiCallErrorMessages.noFieldMappings());
+  }
+
+  /** WD-1045: 응답 항목이 없으면 매핑이 null 이어도 실패 없이 0행이다. */
+  @Test
+  void parseAndMap_nullMappingsEmptyItems_returnsNoRows() {
+    assertThat(parser.parseAndMap("{\"d\":[]}", "$.d", null, null, 0)).isEmpty();
+  }
 }

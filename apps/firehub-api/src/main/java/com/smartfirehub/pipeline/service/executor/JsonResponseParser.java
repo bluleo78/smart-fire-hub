@@ -48,6 +48,11 @@ public class JsonResponseParser {
 
     List<?> rawList = extractItems(jsonResponse, dataPath);
 
+    // 항목이 있는데 매핑이 없으면 NPE·빈 행 대신 안내 문구로 실패한다(WD-1045). 항목이 없으면 예전처럼 0행으로 둔다.
+    if (!rawList.isEmpty() && (fieldMappings == null || fieldMappings.isEmpty())) {
+      throw new ApiCallException(ApiCallErrorMessages.noFieldMappings());
+    }
+
     // 매핑별 타입·날짜 형식·시간대는 행마다가 아니라 한 번만 풀어 둔다 — 잘못된 설정은 여기서 설정 오류로 알린다(WD-431).
     // 항목이 없으면 값 변환이 없으므로 예전처럼 설정을 검사하지 않는다.
     List<ResolvedMapping> resolved =

@@ -846,6 +846,9 @@ def _parse_and_map(
     items = _extract_data(response_body, data_path)
     if not items:
         return [], 0
+    # WD-1045: 항목이 있는데 필드 매핑이 없으면 빈 행만 쌓이므로 안내 문구로 실패시킨다(Java JsonResponseParser 와 같은 순서·문구).
+    if not field_mappings:
+        raise ApiCallException(errors.no_field_mappings_message())
     resolved = [_resolve_mapping(fm, column_type_map) for fm in field_mappings]
 
     rows: List[Dict[str, Any]] = []
