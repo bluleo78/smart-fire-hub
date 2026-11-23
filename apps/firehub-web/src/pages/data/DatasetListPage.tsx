@@ -1,6 +1,6 @@
 import { onlineManager } from '@tanstack/react-query';
 import { BarChart3, Download, Eye, History, Hourglass, Info, Plus, Star, Trash2 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -114,6 +114,11 @@ function parseSortKey(raw: string | null): SortKey | null {
   return raw === 'name' || raw === 'createdAt' ? raw : null;
 }
 
+/** 분류 id 파싱 — 주소 값이 없으면 undefined(전체). 눌림 표시와 토글이 같은 비교(숫자)를 쓰게 한다(?categoryId=03 도 3). */
+function parseCategoryId(raw: string | null): number | undefined {
+  return raw ? Number(raw) : undefined;
+}
+
 /** 정렬 방향 파싱 — 잘못된 값은 none */
 function parseSortOrder(raw: string | null): SortDirection {
   return raw === 'asc' || raw === 'desc' ? raw : 'none';
@@ -135,8 +140,7 @@ export default function DatasetListPage() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   // URL → 상태 파싱 (매 렌더 시 동기화)
-  const categoryIdParam = searchParams.get('categoryId');
-  const categoryId = categoryIdParam ? Number(categoryIdParam) : undefined;
+  const categoryId = parseCategoryId(searchParams.get('categoryId'));
   const storageType = searchParams.get('storageType') || '';
   const originType = searchParams.get('originType') || '';
   const search = searchParams.get('q') || '';
@@ -176,12 +180,12 @@ export default function DatasetListPage() {
    * 순서대로 pendingWritesRef 에 쌓고, 다음 patch 의 기준(getLatestParams)은 그 마지막 항목에서 유도한다
    * (없으면 지금 searchParams) — 기준을 따로 저장하지 않으므로 두 값을 맞춰 쓸 일이 없다.
    *
-   * 렌더 중 동기화(같은 입력이면 같은 결과라 렌더가 버려지거나 여러 번 돌아도 안전):
-   * - pending 이 비었으면 할 일이 없다(새로 만드는 값 없이 일찍 빠진다).
-   * - 지금 location.search 가 pending 에 있으면 내가 쓴 주소가 도착한 것 — 그 항목까지 뺀다.
+   * 커밋 뒤 동기화(useLayoutEffect — 렌더 중 ref 를 읽고 쓰지 않는다):
+   * - 커밋된 location.search 가 pending 에 있으면 내가 쓴 주소가 도착한 것 — 그 항목까지 뺀다.
    * - pending 에 없는데 location.key 가 바뀌었으면 외부 이동(사이드바 링크·뒤로가기) — pending 을 비운다.
-   * - location.key 는 항상 최신으로 기록한다(관계없는 리렌더에서는 이미 같은 값이라 변화 없음).
-   * effect 가 아니라 렌더 중에 하는 이유: effect 는 렌더 뒤에 돌아 그 사이 클릭이 낡은 값을 쓰기 때문.
+   * - location.key·렌더된 주소는 항상 커밋된 값으로 기록한다.
+   * layout effect 인 이유: 버려지는 렌더(transition 중 끼는 옛 location 의 급한 렌더)가 ref 를 건드리지 않게 하고,
+   * 그래도 paint·클릭 이벤트보다 먼저 끝나 낡은 값을 쓸 틈이 없게 하려는 것.
    *
    * 정렬(#358) 연속 클릭 전이 유실 방지와 뒤로가기 뒤 URL 기준 정렬도 이 구조가 맡는다
    * (toggleSort 와 토글 버튼이 모두 getLatestParams 의 최신 값을 읽는다).
@@ -189,18 +193,26 @@ export default function DatasetListPage() {
   const location = useLocation();
   const pendingWritesRef = useRef<string[]>([]);
   const lastLocationKeyRef = useRef(location.key);
-  if (pendingWritesRef.current.length > 0) {
-    const arrivedIndex = pendingWritesRef.current.indexOf(searchParams.toString());
-    if (arrivedIndex >= 0) {
-      pendingWritesRef.current = pendingWritesRef.current.slice(arrivedIndex + 1);
-    } else if (location.key !== lastLocationKeyRef.current) {
-      pendingWritesRef.current = [];
-    }
-  }
-  lastLocationKeyRef.current = location.key;
   // 렌더에 온 주소를 ref 로도 들어 patchParams 가 렌더마다 새로 만들어지지 않게 한다(의존 배열에 searchParams 를 넣지 않으려고)
   const renderedParamsRef = useRef(searchParams);
-  renderedParamsRef.current = searchParams;
+  // 커밋이 확실해진 뒤(useLayoutEffect)에만 대기 목록·기준값을 갱신한다 — 렌더 중 ref 읽기·쓰기를 하지 않는다.
+  // 왜: react-router 7 은 탐색을 startTransition 으로 적용해, 새 location 의 렌더가 도는 동안 옛 location 의 급한 렌더가 끼고
+  // 버려질 수 있다. 렌더 중에 하면 버려진 렌더가 대기 항목을 빼거나 기준값을 옛 주소로 되돌려 그 사이 클릭이 정렬을 다시 지운다.
+  // layout effect 는 실제로 커밋된 주소에서만 돌고, 클릭(이벤트)보다 먼저 끝나므로 낡은 값을 쓸 틈이 없다.
+  useLayoutEffect(() => {
+    if (pendingWritesRef.current.length > 0) {
+      // 가장 최근에 쓴 같은 주소를 찾는다 — 같은 주소를 여러 번 쓴 경우([A,X,A])에도 커밋된 주소는 그 마지막 쓰기까지 반영된 것이라,
+      // 첫 항목(indexOf)만 빼면 [X,A] 가 남아 낡은 항목이 기준값이 된다.
+      const arrivedIndex = pendingWritesRef.current.lastIndexOf(searchParams.toString());
+      if (arrivedIndex >= 0) {
+        pendingWritesRef.current = pendingWritesRef.current.slice(arrivedIndex + 1);
+      } else if (location.key !== lastLocationKeyRef.current) {
+        pendingWritesRef.current = [];
+      }
+    }
+    lastLocationKeyRef.current = location.key;
+    renderedParamsRef.current = searchParams;
+  }, [searchParams, location.key]);
 
   /** 아직 렌더에 오지 않은 변경까지 포함한 최신 주소 — 마지막 pending, 없으면 렌더에 온 주소. ref 만 읽어 언제 불러도 최신이다. */
   const getLatestParams = useCallback(() => {
@@ -227,6 +239,8 @@ export default function DatasetListPage() {
           next.set(k, String(v));
         }
       }
+      // 바뀐 게 없으면(이미 같은 주소) 대기 목록에도 쌓지 않고 쓰지도 않는다 — 같은 주소가 겹쳐 쌓이거나 불필요한 탐색이 나가는 것을 공용 쪽에서 막는다
+      if (next.toString() === getLatestParams().toString()) return;
       pendingWritesRef.current.push(next.toString());
       setSearchParams(next, { replace: true });
     },
@@ -336,6 +350,7 @@ export default function DatasetListPage() {
   useEffect(() => {
     if (!pageOutOfRange || !datasetsData) return;
     const lastPage = Math.max(datasetsData.totalPages - 1, 0);
+    // 이미 목표 쪽이면 patchParams 가 쓸 것이 없다고 보고 그냥 돌아온다
     patchParams({ page: lastPage === 0 ? null : lastPage });
   }, [pageOutOfRange, datasetsData, patchParams]);
 
@@ -579,7 +594,11 @@ export default function DatasetListPage() {
                 type="button"
                 aria-pressed={categoryId === cat.id}
                 onClick={() => {
-                  patchParams({ categoryId: toggledValue('categoryId', String(cat.id)), page: null });
+                  // 눌림 표시와 같은 파싱(parseCategoryId)으로 최신 주소와 비교해 끈다 — ?categoryId=03 처럼 문자열이 달라도 같은 분류면 꺼진다
+                  patchParams({
+                    categoryId: parseCategoryId(readLatestParam('categoryId')) === cat.id ? null : cat.id,
+                    page: null,
+                  });
                 }}
               >
                 {cat.name}
