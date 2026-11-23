@@ -100,6 +100,65 @@ test.describe('파이프라인 에디터 — 스텝 설정', () => {
     await expect(page.getByRole('button', { name: '자동 정렬' })).toBeVisible();
   });
 
+  // 패널 안에 이름 없는 button(스냅샷 줄이 `- button` 또는 `- button:` 뿐인 것)이 있는지 판정 — WD-917 과 같은 방식
+  // 패널 본문 — 머리글(「스텝 #N: …」 + 닫기 버튼) 바로 다음 형제. 닫기 버튼 이름은 WD-917 몫이라 본문만 보고, 이 브랜치엔 그 data-testid 도 없어 구조로 잡는다
+  const stepPanel = (page: Page) => page.getByText(/^스텝 #1:/).locator("xpath=../following-sibling::*[1]");
+  const NAMELESS_BUTTON = /^\s*- button\s*(\[[^\]]*\])?:?\s*$/m;
+
+  test('AI 분류 스텝 — 출력 컬럼 휴지통이 줄마다 다른 이름을 갖고 이름 없는 버튼이 없다 (WD-1043)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupNewEditorMocks(page);
+    await page.goto('/pipelines/new');
+    await addAiClassifyStep(page, 'AI 스텝');
+
+    // 출력 컬럼 두 줄 추가
+    const addColumn = page.getByRole('button', { name: '컬럼 추가', exact: true });
+    await addColumn.click();
+    await addColumn.click();
+    await expect(page.getByLabel('출력 컬럼명 2')).toBeVisible();
+
+    const panel = stepPanel(page);
+    expect(await panel.ariaSnapshot()).not.toMatch(NAMELESS_BUTTON);
+
+    // 이름이 없을 때는 줄 번호만, 이름을 입력하면 이름이 따라붙는다
+    await expect(page.getByRole('button', { name: '컬럼 1 삭제' })).toBeVisible();
+    await page.getByLabel('출력 컬럼명 1').fill('label');
+    await expect(page.getByRole('button', { name: '컬럼 1 "label" 삭제' })).toBeVisible();
+
+    // 이름으로 눌러 그 줄이 지워진다 — 둘째 줄이 사라지고 첫째 줄은 남는다
+    await page.getByRole('button', { name: '컬럼 2 삭제' }).click();
+    await expect(page.getByLabel('출력 컬럼명 2')).toHaveCount(0);
+    await expect(page.getByLabel('출력 컬럼명 1')).toHaveValue('label');
+  });
+
+  test('API 호출 스텝 — 헤더 줄·컬럼 매핑 휴지통이 이름을 갖고 이름 없는 버튼이 없다 (WD-1043)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupNewEditorMocks(page);
+    await mockApi(page, 'GET', '/api/v1/api-connections/selectable', []);
+    await page.goto('/pipelines/new');
+    await clickToolbarAddStep(page);
+    await page.getByRole('combobox', { name: '스크립트 타입' }).click();
+    await page.getByRole('option', { name: 'API 호출', exact: true }).click();
+
+    // 헤더 줄 추가 — 헤더 섹션은 접혀 있어 먼저 연다
+    await page.locator('button').filter({ hasText: /^헤더$/ }).click();
+    await page.getByRole('button', { name: '추가', exact: true }).first().click();
+    // 쿼리 파라미터 줄도 추가 — 두 섹션이 같은 편집기를 써도 휴지통 이름이 겹치지 않아야 한다
+    await page.locator('button').filter({ hasText: /^쿼리 파라미터$/ }).click();
+    await page.getByRole('button', { name: '추가', exact: true }).last().click();
+    // 컬럼 매핑 줄 추가
+    await page.getByRole('button', { name: '매핑 추가' }).click();
+
+    await expect(page.getByRole('button', { name: '헤더 1번째 줄 삭제', exact: true })).toHaveCount(1);
+    await expect(page.getByRole('button', { name: '쿼리 파라미터 1번째 줄 삭제', exact: true })).toHaveCount(1);
+    await expect(page.getByRole('button', { name: '매핑 1 삭제' })).toBeVisible();
+
+    const panel = stepPanel(page);
+    expect(await panel.ariaSnapshot()).not.toMatch(NAMELESS_BUTTON);
+  });
+
   test('이름 미입력 상태로 저장 클릭 시 usePipelineValidation 이 실패한다', async ({
     authenticatedPage: page,
   }) => {

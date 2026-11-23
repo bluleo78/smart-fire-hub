@@ -361,9 +361,11 @@ export default function AiClassifyStepConfig({
                         variant="ghost"
                         size="icon"
                         className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
+                        // 아이콘뿐인 버튼이라 줄 번호(+이름)로 이름을 준다 — 줄마다 달라 음성 조작으로 고를 수 있다(WD-1043)
+                        aria-label={`컬럼 ${i + 1}${col.name ? ` "${col.name}"` : ''} 삭제`}
                         onClick={() => removeOutputColumn(i)}
                       >
-                        <Trash2 className="h-3.5 w-3.5" />
+                        <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
                       </Button>
                     )}
                   </div>
