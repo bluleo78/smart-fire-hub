@@ -551,7 +551,10 @@ public class ApiConnectionService {
     AuthQueryMasker.SentSecrets secret = auth.sentSecrets();
     // 응답의 requestUrl 은 인증 쿼리 키를 가린 표시용 URL 이다(WD-177). URL 을 만들기 전에 실패하면 키 없는 기준 URL 을 보인다.
     // 옛 연결의 baseUrl 사용자 정보는 비밀번호를 가린다(WD-681) — 이 값은 응답·화면·AI 챗으로 나간다.
-    // 표시용 URL 은 미리보기와 같은 표시 규칙(WD-1000, toDisplayUrl) — 한글은 글자로, 날것의 숨은 글자는 %XX 로 보인다(호출 URL 은 그대로).
+    // WD-991 리뷰: 헬스체크 경로·쿼리의 공백·한글은 파이프라인 실행·테스트 호출과 같은 규칙(httpx 방식)으로 한 번만 인코딩한다 — 표시 URL 을
+    // 이 뒤에 만들어 인증 문제·SSRF 차단 결과에도 인코딩된 같은 URL 이 보이게 한다. 이미 인코딩된 %XX 는 다시 인코딩하지 않는다.
+    targetUrl = RequestUrlEncoding.encodePathAndQuery(targetUrl);
+    // 표시용 URL 은 미리보기와 같은 표시 규칙(WD-1000, toDisplayUrl) — 한글은 글자로, 숨은 글자는 %XX 로 보인다(WD-991 리뷰와 합침).
     String displayUrl = RequestUrlEncoding.toDisplayUrl(BaseUrlUserInfo.mask(targetUrl));
 
     long start = System.currentTimeMillis();
@@ -576,13 +579,10 @@ public class ApiConnectionService {
       AuthQueryMasker.AuthQueryUrls urls = auth.buildUrls(targetUrl, null);
       displayUrl = RequestUrlEncoding.toDisplayUrl(urls.displayUrl()); // 첫 대입과 같은 표시 규칙(WD-1000)
       // 응답 본문/헤더를 함께 받아 디버깅용으로 노출 (#76).
-      // 쿼리 인증이면 이미 인코딩을 마친 URI 를 쓴다(WD-182) — 다시 인코딩하면 인코딩 키의 %2B 가 %252B 로 나간다. 아니면 미리보기·실행기와
-      // 같은 규칙(encodePathAndQuery)으로 인코딩한다(WD-1000) — 예전 기본 팩토리 expand 는 이미 있는 %XX 의 % 를 %25 로 다시 인코딩해
-      // 인코딩된 한글 경로가 다른 주소로 나갔다. 날것의 한글·공백은 한 번만 인코딩된다.
-      URI callUri =
-          auth.isQueryApiKey()
-              ? urls.callUri()
-              : URI.create(RequestUrlEncoding.encodePathAndQuery(urls.callUrl()));
+      // 쿼리 인증이면 이미 인코딩을 마친 URI 를 쓴다(WD-182) — 다시 인코딩하면 인코딩 키의 %2B 가 %252B 로 나간다.
+      // 쿼리 인증이 아니어도 위에서 인코딩을 마친 URL 을 그대로 쓴다(WD-991 — 다시 인코딩하면 %XX 가 %25XX). 해석할 수 없는 URL 은
+      // callUri() 가 원문 없는 InvalidRequestUrlException 으로 바꿔 아래 고정 문구 갈래를 탄다(WD-991 리뷰).
+      URI callUri = urls.callUri();
       // 리다이렉트는 미리보기·실행과 같은 RedirectFollower 로 따라간다(WD-693). Netty 가 못 부르는 호스트(밑줄 등)는 첫 홉부터 홉마다 요청
       // 전에
       // 고정 문구로 실패하고(WD-676), 리다이렉트 대상이 내부망이면 SsrfException 으로 아래에서 DOWN 결과가 된다. 4xx·5xx 도 예외 없이 마지막

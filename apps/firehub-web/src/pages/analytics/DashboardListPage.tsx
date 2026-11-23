@@ -669,7 +669,11 @@ export default function DashboardListPage() {
                                   )}
                                 </div>
                                 {dashboard.description && (
-                                  <p className="text-xs text-muted-foreground truncate max-w-xs mt-0.5">
+                                  // 설명은 truncate 로 잘리므로 title 로 전체 내용을 마우스 호버 시 보여 준다(WD-945)
+                                  <p
+                                    className="text-xs text-muted-foreground truncate max-w-xs mt-0.5"
+                                    title={dashboard.description}
+                                  >
                                     {dashboard.description}
                                   </p>
                                 )}

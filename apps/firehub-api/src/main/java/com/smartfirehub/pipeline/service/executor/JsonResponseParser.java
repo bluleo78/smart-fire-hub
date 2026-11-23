@@ -52,13 +52,18 @@ public class JsonResponseParser {
       throw new ApiCallException(ApiCallErrorMessages.notJson());
     }
 
+    // 데이터 경로가 비어 있으면(null·빈 문자열·공백) 루트 「$」로 읽는다(WD-940). API 가져오기 마법사는 경로를 비우면
+    // 빈 문자열로 저장하는데 JsonPath 는 빈 경로를 거부해 실행이 실패하기 때문이다. 미리보기(ApiCallPreviewService)와
+    // Python 실행기의 _extract_data 도 같은 규칙이다.
+    String path = (dataPath == null || dataPath.isBlank()) ? "$" : dataPath;
+
     Object extracted;
     try {
-      extracted = JsonPath.read(jsonResponse, dataPath);
+      extracted = JsonPath.read(jsonResponse, path);
     } catch (PathNotFoundException e) {
       // 실행 상세·「테스트 호출」에 그대로 보이는 문구라 한국어로 둔다(WD-150). Python 실행기도 같은 규칙·같은 문구로 실패한다(WD-212) —
       // 정의된 경로(필드·인덱스만)가 없거나, 와일드카드·필터 앞까지의 경로가 없을 때다. 와일드카드 뒤가 비면 예외 없이 빈 목록(0행)이다.
-      throw new ApiCallException(ApiCallErrorMessages.dataPathNotFound(dataPath), e);
+      throw new ApiCallException(ApiCallErrorMessages.dataPathNotFound(path), e);
     } catch (InvalidJsonException e) {
       // HTML 오류 페이지 등 JSON 이 아닌 응답 — jayway 의 영어 원문 대신 공용 안내를 쓴다(WD-150, Python 실행기와 같은 문구).
       throw new ApiCallException(ApiCallErrorMessages.notJson(), e);
@@ -66,7 +71,7 @@ public class JsonResponseParser {
       // JSONPath 문법 오류(WD-212). PathNotFoundException 이 이 클래스의 하위라 위 catch 뒤에 둔다
       // (순서를 바꾸면 「찾을 수 없음」이 문법 오류로 보인다). 예전에는 jayway 영어 원문이 스텝 오류로 그대로 저장됐다.
       // Python 실행기와 같은 문구다.
-      throw new ApiCallException(ApiCallErrorMessages.dataPathInvalid(dataPath), e);
+      throw new ApiCallException(ApiCallErrorMessages.dataPathInvalid(path), e);
     }
 
     List<?> rawList;

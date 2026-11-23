@@ -44,6 +44,9 @@ export const anomalyConfigSchema = z.object({
   cooldownMinutes: z.number().min(1, '최소 1분 이상이어야 합니다'),
 });
 
+/** 실행 주기가 비었을 때의 안내 문구 — 스키마와 폼 칸 아래 안내가 같은 문구를 쓴다. */
+export const CRON_REQUIRED_MESSAGE = '실행 주기를 설정하세요';
+
 export const proactiveJobSchema = z
   .object({
     // trim — 공백만 채운 이름을 빈 값과 같이 거부하고, 앞뒤 공백은 잘라 저장한다(WD-500, user.ts WD-275 와 같은 패턴).
@@ -78,7 +81,7 @@ export const proactiveJobSchema = z
     if (data.triggerType !== 'ANOMALY' && !data.cronExpression) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: '실행 주기를 설정하세요',
+        message: CRON_REQUIRED_MESSAGE,
         path: ['cronExpression'],
       });
     }

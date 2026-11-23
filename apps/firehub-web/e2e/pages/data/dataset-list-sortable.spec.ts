@@ -1,6 +1,20 @@
+import type { Locator, Page } from '@playwright/test';
+
 import { createCategories, createDatasets } from '../../factories/dataset.factory';
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+
+/**
+ * 여러 요소를 한 작업(한 evaluate) 안에서 차례로 클릭한다 — 클릭 사이에 React 렌더가 끼지 않게 하려는 WD-950 시험용.
+ * 못 찾는 요소가 있으면 조용히 넘어가지 않고 throw 한다(elementHandle 이 찾지 못하면 시간 초과로 던진다).
+ */
+async function clickInOneTask(page: Page, targets: Locator[]) {
+  const handles = [];
+  for (const target of targets) handles.push(await target.elementHandle());
+  await page.evaluate((els) => {
+    for (const el of els) (el as HTMLElement).click();
+  }, handles);
+}
 
 /**
  * 이슈 #80 회귀 테스트 — 데이터셋 목록 컬럼 헤더 클릭 정렬
@@ -98,10 +112,8 @@ test.describe('데이터셋 목록 — 컬럼 헤더 정렬 (#80)', () => {
     await expect(nameHeader).toHaveAttribute('aria-sort', 'ascending');
 
     // 2·3번째 클릭을 한 작업 안에서 — 사이에 렌더가 없어도 desc → none 에 도달해야 한다
-    await nameHeader.getByRole('button').evaluate((button: HTMLButtonElement) => {
-      button.click();
-      button.click();
-    });
+    const nameSort = nameHeader.getByRole('button');
+    await clickInOneTask(page, [nameSort, nameSort]);
     await expect(nameHeader).toHaveAttribute('aria-sort', 'none');
     await expect(page.getByText('현재 페이지 내 정렬이 적용됩니다')).not.toBeVisible();
     await expect(page).toHaveURL(/\/data\/datasets$/);
@@ -154,6 +166,42 @@ test.describe('데이터셋 목록 — 컬럼 헤더 정렬 (#80)', () => {
     await expect(nameHeader).toHaveAttribute('aria-sort', 'descending');
     await nameHeader.getByRole('button').click();
     await expect(nameHeader).toHaveAttribute('aria-sort', 'none');
+  });
+
+  /**
+   * 이슈 WD-950 회귀 방지 — 렌더 전에 정렬과 필터를 잇달아 바꿔도 앞 변경이 주소에서 덮이지 않아야 한다.
+   * react-router 의 setSearchParams 함수형 갱신은 prev 로 렌더 시점 스냅샷을 주므로,
+   * 한 브라우저 작업 안에서 두 번 누르면 뒤 호출이 앞 호출을 덮어썼다(정렬이 사라지고 정렬 ref 는 오지 않을 값을 기다림).
+   */
+  test('정렬 직후 화면 반영 전에 즐겨찾기 필터를 눌러도 정렬이 남는다 (WD-950)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
+    await mockApi(page, 'GET', '/api/v1/datasets', createPageResponse(createDatasets(3)));
+    await mockApi(page, 'GET', '/api/v1/datasets/tags', []);
+
+    await page.goto('/data/datasets');
+    await expect(page.getByRole('row').filter({ hasText: /^데이터셋\s/ })).toHaveCount(3);
+
+    const nameHeader = page.getByRole('columnheader', { name: /이름/ });
+    const sortButton = nameHeader.getByRole('button');
+    const favoriteButton = page.getByRole('button', { name: '즐겨찾기', exact: true });
+
+    // 정렬 클릭과 필터 클릭을 한 작업 안에서 — 사이에 렌더가 없다
+    await clickInOneTask(page, [sortButton, favoriteButton]);
+
+    await expect(favoriteButton).toHaveAttribute('aria-pressed', 'true');
+    await expect(nameHeader).toHaveAttribute('aria-sort', 'ascending');
+    const params = () => new URL(page.url()).searchParams;
+    expect(params().get('sort')).toBe('name');
+    expect(params().get('order')).toBe('asc');
+    expect(params().get('favorite')).toBe('true');
+
+    // 정렬 ref 가 풀려 있어야 다음 클릭이 desc 로 이어진다
+    await sortButton.click();
+    await expect(nameHeader).toHaveAttribute('aria-sort', 'descending');
+    expect(params().get('order')).toBe('desc');
+    expect(params().get('favorite')).toBe('true');
   });
 
   test('생성일 헤더도 정렬 가능하며 다른 컬럼 클릭 시 이전 컬럼 aria-sort 가 해제된다', async ({

@@ -8,21 +8,20 @@ import { ScrollArea } from '../ui/scroll-area';
 import { useAI } from './AIProvider';
 
 export function AISessionSidebar() {
-  const { currentSessionId, startNewSession, loadSession } = useAI();
+  const { currentSessionId, startNewSession, onSessionDeleted, loadSession } = useAI();
   const { data: sessions } = useAISessions();
   const deleteSession = useDeleteAISession();
 
   /**
    * 세션 삭제 실행 — DeleteConfirmDialog 확인 후 호출됨 (#210)
-   * 현재 활성 세션을 삭제하는 경우 startNewSession()으로 채팅 UI 초기화
+   * 성공하면 지운 것이 지금 열린 대화인지의 판단·새 대화 전환은 useAIChat(onSessionDeleted)이 최신 상태로 한다 (WD-972).
+   * 호출별 mutate 콜백은 겹친 삭제 중 마지막 것만 불려 promise 로 받는다. 실패 안내는 훅의 onError 가 띄운다.
    */
   const handleDeleteConfirmed = (sessionId: string, id: number) => {
-    const isActive = sessionId === currentSessionId;
-    deleteSession.mutate(id, {
-      onSuccess: () => {
-        if (isActive) startNewSession();
-      },
-    });
+    deleteSession
+      .mutateAsync(id)
+      .then(() => onSessionDeleted(sessionId))
+      .catch(() => {});
   };
 
   // WD-755: 세션 목록 면은 알파 없는 단색 bg-muted(/30 은 대화 영역과 갈리지 않는다) — 현재 세션(bg-accent)은 muted 보다 한 단계 위라 갈린다

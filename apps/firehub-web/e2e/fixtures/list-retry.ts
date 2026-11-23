@@ -21,10 +21,13 @@ export async function enterWithListError(
   { apiPath, pagePath }: { apiPath: string; pagePath: string },
 ) {
   let current: ListOutcome = { status: 500, body: { message: '서버 오류' } };
+  // 목록 GET 을 몇 번 불렀는지 — 누르지 않은 재조회(다시 연결 등)가 실제로 일어났는지 확인할 때 쓴다
+  let calls = 0;
   await page.route(
     (url) => url.pathname === apiPath,
     (route) => {
       if (route.request().method() !== 'GET') return route.fallback();
+      calls += 1;
       return route.fulfill({ status: current.status, contentType: 'application/json', body: JSON.stringify(current.body) });
     },
   );
@@ -34,5 +37,6 @@ export async function enterWithListError(
     setOutcome: (next: ListOutcome) => {
       current = next;
     },
+    calls: () => calls,
   };
 }

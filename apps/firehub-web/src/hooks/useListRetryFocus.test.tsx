@@ -4,8 +4,9 @@
  * 「다시 시도」 를 누르면 표로 초점을 옮기고, 재조회가 다시 실패했을 때만(사용자가 그 사이 초점을 옮기지 않았다면)
  * 버튼으로 되돌리는지, 표 mousedown 에서 tabindex 를 언제 떼는지 확인한다.
  */
-import { fireEvent, render, renderHook, screen } from '@testing-library/react';
+import { act, fireEvent, render, renderHook, screen } from '@testing-library/react';
 import { AxiosError, type AxiosResponse } from 'axios';
+import { StrictMode } from 'react';
 import { createPortal } from 'react-dom';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -21,7 +22,8 @@ interface Props {
 }
 
 // 훅을 표·버튼·바깥 입력에 연결하는 시험용 컴포넌트 — 실제 페이지처럼 tableProps·retryAction 을 그대로 펼쳐 단다
-function Harness(props: Props) {
+// rowKey 를 바꾸면 버튼을 감싼 요소가 다시 마운트된다(부모가 오류 행을 새로 그리는 경우 시늉)
+function Harness({ rowKey = 'a', ...props }: Props & { rowKey?: string }) {
   const { tableProps, retryAction } = useListRetryFocus(props);
   return (
     <div>
@@ -29,7 +31,7 @@ function Harness(props: Props) {
         <tbody>
           <tr>
             <td>
-              {retryAction}
+              <span key={rowKey}>{retryAction}</span>
               <span data-testid="cell">셀</span>
               {createPortal(<span data-testid="portal">포털</span>, document.body)}
             </td>
@@ -52,6 +54,8 @@ const failed = (refetch = vi.fn()): Props => ({
 });
 // 재조회 중 — 쿼리가 pending 이고 실패 상태가 아니다(버튼 없음)
 const PENDING = { isPending: true, isError: false, isFetching: true, error: null } as const;
+// 버튼 ref 정리 함수가 미룬 판단(queueMicrotask)이 돌 때까지 기다린다
+const flushMicrotasks = () => act(async () => {});
 // 403 로 실패한 상태 — 버튼을 두지 않는다
 const forbidden = () =>
   new AxiosError('forbidden', 'ERR_BAD_REQUEST', undefined, undefined, { status: 403 } as AxiosResponse);
@@ -118,6 +122,82 @@ describe('useListRetryFocus', () => {
     rerender(<Harness {...p} {...PENDING} />);
     rerender(<Harness {...p} error={new Error('z')} />);
     expect(document.activeElement).toBe(screen.getByRole('table'));
+  });
+
+  // 리뷰 후속(PR #1218 ①): 누르지 않고 저절로 다시 불러올 때(창 포커스 refetch·무효화·다시 마운트)
+  it('저절로 재조회돼 초점 가진 버튼이 사라지면 표로 초점, 다시 실패하면 버튼으로', async () => {
+    const p = failed();
+    const { rerender } = render(<Harness {...p} />);
+    screen.getByRole('button', { name: '다시 시도' }).focus();
+    rerender(<Harness {...p} {...PENDING} />);
+    // 버튼이 실제로 빠졌는지는 커밋 뒤 마이크로태스크에서 판단한다
+    await flushMicrotasks();
+    const table = screen.getByRole('table');
+    expect(document.activeElement).toBe(table);
+    expect(table.getAttribute('tabindex')).toBe('-1');
+    rerender(<Harness {...p} error={new Error('y')} />);
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: '다시 시도' }));
+  });
+
+  it('저절로 재조회될 때 버튼에 초점이 없었으면 초점을 옮기지 않음', async () => {
+    const p = failed();
+    const { rerender } = render(<Harness {...p} />);
+    const input = screen.getByLabelText('밖');
+    input.focus();
+    rerender(<Harness {...p} {...PENDING} />);
+    await flushMicrotasks();
+    expect(document.activeElement).toBe(input);
+    rerender(<Harness {...p} error={new Error('y')} />);
+    expect(document.activeElement).toBe(input);
+  });
+
+  // 개발 모드 StrictMode 는 새 버튼의 ref 를 떼었다 다시 붙인다 — 그때 초점을 표로 빼앗지 않아야 한다(E2E 회귀로 발견)
+  it('StrictMode 에서도 다시 실패하면 초점이 새 버튼에 남는다', async () => {
+    const p = failed();
+    const { rerender } = render(<Harness {...p} />, { wrapper: StrictMode });
+    fireEvent.click(screen.getByRole('button', { name: '다시 시도' }));
+    rerender(<Harness {...p} {...PENDING} />);
+    rerender(<Harness {...p} error={new Error('y')} />);
+    await flushMicrotasks();
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: '다시 시도' }));
+  });
+
+  it('StrictMode 에서도 저절로 재조회돼 버튼이 사라지면 표로 초점', async () => {
+    const p = failed();
+    const { rerender } = render(<Harness {...p} />, { wrapper: StrictMode });
+    screen.getByRole('button', { name: '다시 시도' }).focus();
+    rerender(<Harness {...p} {...PENDING} />);
+    await flushMicrotasks();
+    expect(document.activeElement).toBe(screen.getByRole('table'));
+  });
+
+  it('재조회 없이 버튼이 다시 마운트되면 초점이 새 버튼으로 간다', async () => {
+    const p = failed();
+    const { rerender } = render(<Harness {...p} />);
+    screen.getByRole('button', { name: '다시 시도' }).focus();
+    rerender(<Harness {...p} rowKey="b" />);
+    await flushMicrotasks();
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: '다시 시도' }));
+  });
+
+  it('재조회 없이 버튼이 사라지면(데이터를 직접 채움) 표로만 옮기고, 이후 실패가 초점을 끌어가지 않는다', async () => {
+    const p = failed();
+    const { rerender } = render(<Harness {...p} />);
+    screen.getByRole('button', { name: '다시 시도' }).focus();
+    rerender(<Harness {...p} isError={false} data={[]} error={null} />);
+    await flushMicrotasks();
+    const table = screen.getByRole('table');
+    expect(document.activeElement).toBe(table);
+    // 재조회를 기다리는 표시가 없으므로, 나중에 실패로 바뀌어도 버튼으로 옮기지 않는다
+    rerender(<Harness {...p} error={new Error('later')} />);
+    expect(document.activeElement).toBe(table);
+  });
+
+  // 리뷰 후속(PR #1218 ②): 화면이 준 className 이 포커스 링을 덮지 않고 합쳐진다
+  it('tableClassName 은 포커스 링 className 과 합쳐진다', () => {
+    const { result } = renderHook(() => useListRetryFocus({ ...failed(), tableClassName: 'min-w-[600px]' }));
+    expect(result.current.tableProps.className).toContain('focus-visible:outline-ring');
+    expect(result.current.tableProps.className).toContain('min-w-[600px]');
   });
 
   it('403 이면 showRetry 가 false 이고 retryAction 이 없다', () => {

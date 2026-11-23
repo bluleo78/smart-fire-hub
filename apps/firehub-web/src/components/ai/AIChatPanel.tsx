@@ -44,6 +44,7 @@ export function AIChatPanel({ showModeSwitch = true, showSessionSwitcher = true,
     sendMessage,
     stopStreaming,
     startNewSession,
+    onSessionDeleted,
     loadSession,
     contextTokens,
     isCompacting,
@@ -101,7 +102,7 @@ export function AIChatPanel({ showModeSwitch = true, showSessionSwitcher = true,
       {/* Session Switcher */}
       {showSessionSwitcher && (
         <div className="px-2 py-1.5 border-b">
-          <SessionSwitcher currentSessionId={currentSessionId} onNewSession={startNewSession} onSelectSession={(session) => loadSession(session.sessionId)} />
+          <SessionSwitcher currentSessionId={currentSessionId} onNewSession={startNewSession} onSessionDeleted={onSessionDeleted} onSelectSession={(session) => loadSession(session.sessionId)} />
         </div>
       )}
 

@@ -23,6 +23,7 @@ export function CanvasArea({ pages, activePageIndex, onPageChange, onRemoveWidge
     closeAI,
     currentSessionId,
     startNewSession,
+    onSessionDeleted,
     loadSession,
     contextTokens,
     isCompacting,
@@ -62,6 +63,7 @@ export function CanvasArea({ pages, activePageIndex, onPageChange, onRemoveWidge
           <SessionSwitcher
             currentSessionId={currentSessionId}
             onNewSession={startNewSession}
+            onSessionDeleted={onSessionDeleted}
             onSelectSession={(session) => loadSession(session.sessionId)}
           />
           <TokenUsageChip tokens={contextTokens} isCompacting={isCompacting} />
