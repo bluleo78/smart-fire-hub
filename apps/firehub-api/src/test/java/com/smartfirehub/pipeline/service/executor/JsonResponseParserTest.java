@@ -1,6 +1,7 @@
 package com.smartfirehub.pipeline.service.executor;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.List;
 import java.util.Map;
@@ -61,5 +62,21 @@ class JsonResponseParserTest {
     List<Map<String, Object>> rows = parser.parseAndMap("[]", "", mappings, columnTypeMap, 0);
 
     assertThat(rows).isEmpty();
+  }
+
+  /** WD-1002: 문법이 틀린 JSON 경로는 InvalidPathException 이 아니라 ApiCallException 으로 감싼다. */
+  @Test
+  void readPath_invalidSyntax_throwsApiCallException() {
+    assertThatThrownBy(() -> parser.readPath("{\"total\":3}", "$.[", Object.class))
+        .isInstanceOf(ApiCallException.class)
+        .hasMessage("JSON 경로 형식이 올바르지 않습니다: $.[");
+  }
+
+  /** WD-1002: 평가 중 오류(숫자에 집계 함수)도 ApiCallException 으로 감싸 호출처가 부분 페이지 멈춤으로 넘어가게 한다. */
+  @Test
+  void readPath_evaluationError_throwsApiCallException() {
+    assertThatThrownBy(() -> parser.readPath("{\"total\":3}", "$.total.max()", Object.class))
+        .isInstanceOf(ApiCallException.class)
+        .hasMessage("JSON 경로를 읽을 수 없습니다: $.total.max()");
   }
 }

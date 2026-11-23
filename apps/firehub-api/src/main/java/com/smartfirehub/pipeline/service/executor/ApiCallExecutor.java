@@ -231,9 +231,11 @@ public class ApiCallExecutor {
                 totalCount = n.intValue();
               }
             } catch (ApiCallException e) {
+              // 못 읽으면(없음·문법·평가 오류) 부분 페이지 멈춤으로 진행 — 이유는 readPath Javadoc(WD-1002)
               log.debug(
-                  "totalPath '{}' not found in response — using partial-page stop condition",
-                  pag.totalPath());
+                  "totalPath '{}' 를 읽지 못함({}) — 부분 페이지 멈춤 조건으로 진행",
+                  pag.totalPath(),
+                  e.getMessage());
             }
           }
 
