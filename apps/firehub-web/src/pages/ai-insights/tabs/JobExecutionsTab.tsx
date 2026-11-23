@@ -7,8 +7,8 @@
 import { Loader2 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 
+import { PendingButton } from '@/components/PendingButton';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { LoadMoreFailure } from '@/components/ui/load-more-failure';
 import { SecurityLevelBadge } from '@/components/ui/SecurityLevelBadge';
 import { StatusBadge } from '@/components/ui/status-badge';
@@ -148,11 +148,13 @@ export default function JobExecutionsTab({ jobId }: JobExecutionsTabProps) {
       {failed ? (
         <LoadMoreFailure onRetry={loadMore} pending={pending} />
       ) : (
-        executions.length >= limit && (
+        // 응답 대기 중(isPlaceholderData)에도 버튼을 남기고 pending 으로만 잠근다 — 사라지면 키보드 초점이 body 로 떨어진다(WD-965).
+        // isPlaceholderData 를 「더 보기 로딩 중」으로 읽는 것은 이 탭에서 키를 바꾸는 입력이 limit 뿐이기 때문이다 — 필터 등이 생기면 다시 검토한다.
+        (executions.length >= limit || isPlaceholderData) && (
           <div className="py-2 flex justify-center">
-            <Button variant="ghost" size="sm" onClick={loadMore}>
+            <PendingButton variant="ghost" size="sm" pending={isPlaceholderData} onClick={loadMore}>
               더 보기
-            </Button>
+            </PendingButton>
           </div>
         )
       )}
