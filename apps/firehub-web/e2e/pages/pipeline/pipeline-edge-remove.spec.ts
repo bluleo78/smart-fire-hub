@@ -82,6 +82,39 @@ test.describe('파이프라인 편집기 — 연결 끊기 (WD-346)', () => {
     await expectSavedWithoutDependency(page, captured);
   });
 
+  // 연결선 안내문(PipelineCanvas 의 edge.a11yDescription.default)이 「Enter 나 Space 로 연결을 고른 뒤
+  // Delete 나 Backspace 로 끊는다」고 말하므로, 설정(handleCanvasKeyDown·deleteKeyCode={null})이 바뀌어
+  // Space 선택·Backspace 삭제가 깨지면 이 시험이 잡는다 (WD-1049).
+  test('키보드로 연결선을 Space 로 선택하고 Backspace 를 누르면 연결이 사라진다 (WD-1049)', async ({
+    authenticatedPage: page,
+  }) => {
+    const captured = await capturePipelineSave(page);
+    await setupPipelineEditorMocks(page, 1);
+    await openEditor(page);
+
+    await page.locator('.react-flow__edge').first().focus();
+    await page.keyboard.press('Space');
+    await expect(page.locator('.react-flow__edge.selected')).toHaveCount(1);
+    await page.keyboard.press('Backspace');
+
+    await expect(page.locator('.react-flow__edge')).toHaveCount(0);
+    await expectSavedWithoutDependency(page, captured);
+  });
+
+  // 같은 안내문의 「Escape 로 선택을 풉니다」 — 선택만 풀리고 연결은 남아야 한다 (WD-1049).
+  test('연결선에서 Escape 를 누르면 선택만 풀리고 연결은 남는다 (WD-1049)', async ({ authenticatedPage: page }) => {
+    await setupPipelineEditorMocks(page, 1);
+    await openEditor(page);
+
+    await page.locator('.react-flow__edge').first().focus();
+    await page.keyboard.press('Enter');
+    await expect(page.locator('.react-flow__edge.selected')).toHaveCount(1);
+    await page.keyboard.press('Escape');
+
+    await expect(page.locator('.react-flow__edge.selected')).toHaveCount(0);
+    await expect(page.locator('.react-flow__edge')).toHaveCount(1);
+  });
+
   test('스텝 설정 패널의 의존성 목록에서 「연결 끊기」로 끊을 수 있다', async ({ authenticatedPage: page }) => {
     const captured = await capturePipelineSave(page);
     await setupPipelineEditorMocks(page, 1);
