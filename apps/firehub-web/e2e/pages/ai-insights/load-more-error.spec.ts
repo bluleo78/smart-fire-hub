@@ -280,7 +280,6 @@ test.describe('실행 이력 「더 보기」 응답 대기 (WD-965)', () => {
     await page.keyboard.press('Enter');
 
     // 응답 전: 보던 20행과 버튼이 남고 초점이 버튼에 있으며 스켈레톤이 없다
-    await expect(more).toBeVisible();
     await expect(more).toHaveAttribute('aria-disabled', 'true');
     await expect(more).toBeFocused();
     await expect(rows).toHaveCount(20);
@@ -389,5 +388,56 @@ test.describe('실행 이력 「더 보기」 응답 대기 (WD-965)', () => {
     gate.resolve();
     await expect(page.locator('a[href*="/jobs/2/executions/"]')).toHaveCount(3);
     await expect(page.locator('a[href*="/jobs/1/executions/"]')).toHaveCount(0);
+  });
+});
+
+test.describe('리포트 「더 보기」 응답 대기 (WD-1016)', () => {
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs', [createJob({ id: 3 })]);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+  });
+
+  test('리포트 「더 보기」를 Enter 로 누르면 응답 전에도 보던 행과 버튼이 남고 초점을 유지한다 (WD-1016)', async ({
+    authenticatedPage: page,
+  }) => {
+    const gates: Record<number, Promise<void> | undefined> = {};
+    const counts = await mockLimitedList(page, '/api/v1/proactive/reports', 0, reportRows, gates);
+    await page.goto('/ai-insights/reports');
+    const rows = page.getByRole('link', { name: /^리포트 \d+$/ });
+    await expect(rows).toHaveCount(20);
+
+    // limit=40 응답을 시험이 풀 때까지 붙잡는다
+    const gate = deferred();
+    gates[40] = gate.promise;
+    const more = page.getByRole('button', { name: '더 보기' });
+    await more.focus();
+    await page.keyboard.press('Enter');
+
+    // 응답 전: 보던 20행과 버튼이 남고 초점이 버튼에 있다
+    await expect(more).toBeVisible();
+    await expect(more).toHaveAttribute('aria-disabled', 'true');
+    await expect(more).toBeFocused();
+    await expect(rows).toHaveCount(20);
+
+    // 진행 중 다시 Enter — 잠금이 풀려 있으면 limit=60 이 요청된다
+    await expect.poll(() => counts[40]).toBe(1);
+    await page.keyboard.press('Enter');
+
+    gate.resolve();
+    await expect(rows).toHaveCount(40);
+    await expect(more).not.toHaveAttribute('aria-disabled', 'true');
+    await expect(more).toBeFocused();
+    expect(counts[40]).toBe(1);
+    expect(counts[60] ?? 0).toBe(0);
+  });
+
+  test('리포트 「더 보기」 응답이 끝 목록이면 버튼이 사라진다 (WD-1016)', async ({ authenticatedPage: page }) => {
+    await mockLimitedList(page, '/api/v1/proactive/reports', 0, (limit) => reportRows(Math.min(limit, 25)));
+    await page.goto('/ai-insights/reports');
+    const rows = page.getByRole('link', { name: /^리포트 \d+$/ });
+    await expect(rows).toHaveCount(20);
+    await page.getByRole('button', { name: '더 보기' }).click();
+    await expect(rows).toHaveCount(25);
+    await expect(page.getByRole('button', { name: '더 보기' })).toHaveCount(0);
   });
 });
