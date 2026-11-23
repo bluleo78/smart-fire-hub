@@ -86,6 +86,8 @@ export const pipelinesApi = {
       rawJson: string | null;
       rows: Array<Record<string, unknown>>;
       columns: string[];
+      totalColumns?: number;
+      hiddenColumns?: number;
       totalExtractedRows: number;
       errorMessage: string | null;
     }>('/pipelines/api-call/preview', data),

@@ -290,6 +290,17 @@ class ApiCallExecutorTest {
     assertThat(result.log()).doesNotContain(key);
   }
 
+  /** 한글 경로의 실행 기록 url= 은 미리보기와 같은 규칙으로 글자로 보인다(WD-1000). */
+  @Test
+  void execute_koreanPath_executionLogShowsLetters() {
+    stubEmptyItems("/%EA%B2%80%EC%83%89");
+
+    ApiCallExecutor.ApiCallResult result =
+        executor.execute(simpleGetConfig("/%EA%B2%80%EC%83%89"), "t", null, "APPEND", null);
+
+    assertThat(result.log()).contains("url=" + baseUrl() + "/검색").doesNotContain("%EA%B2");
+  }
+
   /**
    * 쿼리에 그대로 쓸 수 없는 문자가 섞인 디코딩 키(WD-182): 예전에는 「URL 인코딩된 값을 넣으세요」로 즉시 실패했다(그 전에는 키 원문이 실행 기록에 실렸다,
    * WD-177). 이제 공용 규칙으로 한 번 인코딩해 호출하고, 실행 로그엔 원문·보낸 형태가 없다.
@@ -409,13 +420,13 @@ class ApiCallExecutorTest {
   }
 
   /**
-   * 주소(기준 URL)의 쿼리 값에 인코딩 뒤에도 쓸 수 없는 문자({@code =})가 있으면 여전히 URL 을 만들 수 없다 — 원문 없는 고정 문구로, 재시도 없이 즉시
-   * 실패한다(WD-177 처리 유지, WD-936 복원). 함께 붙는 키 원문·보낸 형태도 문구에 없다.
+   * 주소(기준 URL)의 쿼리 값에 인코딩 뒤에도 쓸 수 없는 문자(제어 문자, WD-991 부터 {@code =} 는 날것으로 받는다)가 있으면 여전히 URL 을 만들 수
+   * 없다 — 원문 없는 고정 문구로, 재시도 없이 즉시 실패한다(WD-177 처리 유지, WD-936 복원). 함께 붙는 키 원문·보낸 형태도 문구에 없다.
    */
   @Test
   void execute_unbuildableBaseUrl_failsWithoutKeyAndWithoutRetry() {
     String key = "ex+k/y==비밀 Ww11";
-    ApiCallConfig config = simpleGetConfig("/api/q?q=a==b");
+    ApiCallConfig config = simpleGetConfig("/api/q?q=a\u0001b");
 
     assertThatThrownBy(() -> executor.execute(config, "t", queryAuth(key), "APPEND", null))
         .isInstanceOf(ApiCallException.class)
@@ -430,6 +441,17 @@ class ApiCallExecutorTest {
                     .doesNotContain(
                         java.net.URLEncoder.encode(key, java.nio.charset.StandardCharsets.UTF_8)));
     assertThat(wireMock.getAllServeEvents()).isEmpty();
+  }
+
+  /** 기준 URL 쿼리 값 속 = 는 인코딩하지 않고 날것 그대로 보낸다 — httpx 와 같은 바이트(WD-991). */
+  @Test
+  void execute_queryValueWithEquals_sentRaw() {
+    stubEmptyItems("/api/q");
+    ApiCallConfig config = simpleGetConfig("/api/q?serviceKey=abc+d==");
+
+    executor.execute(config, "t", Map.of("authType", "NONE"), "APPEND", null);
+
+    assertThat(receivedUrls("/api/q")).containsExactly("/api/q?serviceKey=abc+d==");
   }
 
   /** 짝 없는 서로게이트가 든 주소는 %3F 로 바꿔 부르지 않고 URL 을 만들 수 없다고 즉시 실패한다(WD-936 리뷰 후속). */
@@ -2032,10 +2054,12 @@ class ApiCallExecutorTest {
     wireMock.verify(1, getRequestedFor(urlEqualTo("/r676/noloc")));
   }
 
-  /** 문법 오류 Location(공백)은 재시도하지 않는 고정 문구로 실패한다 — 주소(쿼리 비밀)는 싣지 않는다. */
+  /**
+   * 문법 오류 Location(제어 문자 — 공백·한글은 WD-991 로 인코딩해 따라간다)은 재시도하지 않는 고정 문구로 실패한다 — 주소(쿼리 비밀)는 싣지 않는다.
+   */
   @Test
   void execute_redirectWithInvalidLocation_failsWithFixedMessage() {
-    stubRedirect("/r676/badloc", "/next page?serviceKey=SECRET676");
+    stubRedirect("/r676/badloc", "/next\tpage?serviceKey=SECRET676");
 
     assertThatThrownBy(
             () ->

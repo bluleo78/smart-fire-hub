@@ -45,6 +45,25 @@ public class JsonResponseParser {
       Map<String, String> columnTypeMap,
       int rowOffset) {
 
+    List<?> rawList = extractItems(jsonResponse, dataPath);
+
+    // 매핑별 타입·날짜 형식·시간대는 행마다가 아니라 한 번만 풀어 둔다 — 잘못된 설정은 여기서 설정 오류로 알린다(WD-431).
+    // 항목이 없으면 값 변환이 없으므로 예전처럼 설정을 검사하지 않는다.
+    List<ResolvedMapping> resolved =
+        rawList.isEmpty() ? List.of() : resolve(fieldMappings, columnTypeMap);
+    List<Map<String, Object>> result = new ArrayList<>(rawList.size());
+    for (int i = 0; i < rawList.size(); i++) {
+      // 행 번호는 응답 항목 순번(1부터, 앞 페이지 다음부터)이다(WD-431).
+      result.add(mapItem(rawList.get(i), resolved, rowOffset + i + 1));
+    }
+    return result;
+  }
+
+  /**
+   * 응답에서 dataPath 위치의 항목 목록을 꺼낸다. JSON 여부 검사·경로 오류 변환·단일 객체 감싸기·null 의 빈 목록 처리를 한곳에 둬 {@link
+   * #parseAndMap} 과 {@link #parseRawItems} 가 같은 규칙을 쓰게 한다.
+   */
+  private List<?> extractItems(String jsonResponse, String dataPath) {
     // JSON 이 아닌 응답(HTML 오류 페이지·평문·빈 본문)을 먼저 걸러 낸다(WD-150). jayway 의 기본 파서(json-smart)는 관대해서
     // HTML 을 문자열 하나로 읽어 버리고, 그러면 「데이터 경로를 찾을 수 없습니다」나 0행 성공처럼 원인과 다른 결과가 나온다.
     // Python 실행기는 resp.json() 실패로 같은 상황을 「JSON 형식이 아닙니다」로 알린다 — 같은 문구를 쓴다.
@@ -52,13 +71,18 @@ public class JsonResponseParser {
       throw new ApiCallException(ApiCallErrorMessages.notJson());
     }
 
+    // 데이터 경로가 비어 있으면(null·빈 문자열·공백) 루트 「$」로 읽는다(WD-940). API 가져오기 마법사는 경로를 비우면
+    // 빈 문자열로 저장하는데 JsonPath 는 빈 경로를 거부해 실행이 실패하기 때문이다. 미리보기(ApiCallPreviewService)와
+    // Python 실행기의 _extract_data 도 같은 규칙이다.
+    String path = (dataPath == null || dataPath.isBlank()) ? "$" : dataPath;
+
     Object extracted;
     try {
-      extracted = JsonPath.read(jsonResponse, dataPath);
+      extracted = JsonPath.read(jsonResponse, path);
     } catch (PathNotFoundException e) {
       // 실행 상세·「테스트 호출」에 그대로 보이는 문구라 한국어로 둔다(WD-150). Python 실행기도 같은 규칙·같은 문구로 실패한다(WD-212) —
       // 정의된 경로(필드·인덱스만)가 없거나, 와일드카드·필터 앞까지의 경로가 없을 때다. 와일드카드 뒤가 비면 예외 없이 빈 목록(0행)이다.
-      throw new ApiCallException(ApiCallErrorMessages.dataPathNotFound(dataPath), e);
+      throw new ApiCallException(ApiCallErrorMessages.dataPathNotFound(path), e);
     } catch (InvalidJsonException e) {
       // HTML 오류 페이지 등 JSON 이 아닌 응답 — jayway 의 영어 원문 대신 공용 안내를 쓴다(WD-150, Python 실행기와 같은 문구).
       throw new ApiCallException(ApiCallErrorMessages.notJson(), e);
@@ -66,7 +90,7 @@ public class JsonResponseParser {
       // JSONPath 문법 오류(WD-212). PathNotFoundException 이 이 클래스의 하위라 위 catch 뒤에 둔다
       // (순서를 바꾸면 「찾을 수 없음」이 문법 오류로 보인다). 예전에는 jayway 영어 원문이 스텝 오류로 그대로 저장됐다.
       // Python 실행기와 같은 문구다.
-      throw new ApiCallException(ApiCallErrorMessages.dataPathInvalid(dataPath), e);
+      throw new ApiCallException(ApiCallErrorMessages.dataPathInvalid(path), e);
     }
 
     List<?> rawList;
@@ -79,17 +103,41 @@ public class JsonResponseParser {
     } else {
       rawList = List.of(extracted);
     }
+    return rawList;
+  }
 
-    // 매핑별 타입·날짜 형식·시간대는 행마다가 아니라 한 번만 풀어 둔다 — 잘못된 설정은 여기서 설정 오류로 알린다(WD-431).
-    // 항목이 없으면 값 변환이 없으므로 예전처럼 설정을 검사하지 않는다.
-    List<ResolvedMapping> resolved =
-        rawList.isEmpty() ? List.of() : resolve(fieldMappings, columnTypeMap);
-    List<Map<String, Object>> result = new ArrayList<>(rawList.size());
-    for (int i = 0; i < rawList.size(); i++) {
-      // 행 번호는 응답 항목 순번(1부터, 앞 페이지 다음부터)이다(WD-431).
-      result.add(mapItem(rawList.get(i), resolved, rowOffset + i + 1));
+  /**
+   * 원본 모드 항목 — 객체 항목만 담은 목록과 전체 항목 수(WD-947 리뷰). 객체가 아닌 항목은 실행기(parseAndMap)가 빈 맵으로 읽어 매핑해도 NULL 만
+   * 적재되므로 행으로 만들지 않고 {@code total} 에만 센다.
+   */
+  public record RawItems(List<Map<String, Object>> objects, int total) {}
+
+  /**
+   * 매핑 없이 응답 항목을 원본 그대로 읽는다(WD-947 미리보기용). 객체 항목은 최상위 키→원래 값(중첩 객체·배열은 Map/List 그대로, 스칼라·null 도
+   * 그대로) 행이 된다. 객체가 아닌 항목(숫자·문자열 등)은 행으로 만들지 않는다 — 적재할 수 없는 {@code value} 열을 자동 채움이 고르지 않게 하려는
+   * 것(WD-947 리뷰)이며 전체 항목 수({@link RawItems#total})에만 센다. 항목마다 키가 달라도 그대로 두며 없는 키는 행에 넣지 않는다.
+   * 가림·자르기·직렬화는 호출자가 한다.
+   *
+   * @throws ApiCallException JSON 이 아니거나 dataPath 가 없거나 문법이 잘못됐을 때(parseAndMap 과 같음)
+   */
+  public RawItems parseRawItems(String json, String dataPath) {
+    List<?> items = extractItems(json, dataPath);
+    List<Map<String, Object>> rows = new ArrayList<>(items.size());
+    for (Object item : items) {
+      if (item instanceof Map<?, ?> m) {
+        Map<String, Object> row = new LinkedHashMap<>();
+        for (Map.Entry<?, ?> e : m.entrySet()) {
+          row.put(String.valueOf(e.getKey()), e.getValue());
+        }
+        rows.add(row);
+      }
     }
-    return result;
+    return new RawItems(rows, items.size());
+  }
+
+  /** 매핑 설정(타입·날짜 형식·시간대)만 검사한다 — parseAndMap 과 같은 풀기 단계를 쓰며, 잘못되면 설정 오류(ApiCallException)를 던진다. */
+  public void validateMappings(List<ApiCallConfig.FieldMapping> mappings) {
+    resolve(mappings, null);
   }
 
   /** 필드 매핑 하나를 행 루프 전에 푼 결과 — 대문자 타입(없으면 null), 날짜 형식(없으면 null), 원본 시간대. */

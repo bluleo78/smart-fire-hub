@@ -258,6 +258,97 @@ test.describe('파이프라인 에디터 — API_CALL 스텝 설정', () => {
   });
 
   /**
+   * WD-947 리뷰: 원본 모드가 열을 100개에서 잘랐으면(totalColumns > columns 수) 전체 열 수를 알리고,
+   * 같으면 그 문구를 보이지 않는다.
+   */
+  for (const [total, shown] of [
+    [150, true],
+    [100, false],
+  ] as const) {
+    test(`미리보기 열이 잘렸을 때만 전체 열 수 안내가 보인다 (totalColumns=${total}, WD-947)`, async ({
+      authenticatedPage: page,
+    }) => {
+      const columns = Array.from({ length: 100 }, (_, i) => `col_${i}`);
+      await mockApi(page, 'POST', '/api/v1/pipelines/api-call/preview', {
+        success: true,
+        rawJson: '[{"col_0":1}]',
+        rows: [{ col_0: 1 }],
+        columns,
+        totalColumns: total,
+        totalExtractedRows: 1,
+        errorMessage: null,
+        resolvedUrl: 'https://example.com/wide',
+      });
+
+      await addAndOpenApiCallStep(page);
+      await page
+        .getByPlaceholder(API_FULL_URL_PLACEHOLDER, { exact: true })
+        .fill('https://example.com/wide');
+      await page.getByRole('button', { name: '테스트 호출' }).click();
+
+      await expect(page.getByText('호출 URL')).toBeVisible({ timeout: 10000 });
+      const note = page.getByText('열 150개 중 앞 100개만 표시합니다');
+      if (shown) {
+        await expect(note).toBeVisible();
+      } else {
+        await expect(note).toHaveCount(0);
+      }
+    });
+  }
+
+  /** WD-947 리뷰: 비밀 값이 든 열을 숨겼으면(hiddenColumns > 0) 그 수를 알린다. */
+  test('숨긴 열이 있으면 개수 안내가 보인다 (hiddenColumns=2, WD-947)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(page, 'POST', '/api/v1/pipelines/api-call/preview', {
+      success: true,
+      rawJson: '[{"id":1}]',
+      rows: [{ id: 1 }],
+      columns: ['id'],
+      totalColumns: 1,
+      hiddenColumns: 2,
+      totalExtractedRows: 1,
+      errorMessage: null,
+      resolvedUrl: 'https://example.com/hidden',
+    });
+
+    await addAndOpenApiCallStep(page);
+    await page
+      .getByPlaceholder(API_FULL_URL_PLACEHOLDER, { exact: true })
+      .fill('https://example.com/hidden');
+    await page.getByRole('button', { name: '테스트 호출' }).click();
+
+    await expect(page.getByText('호출 URL')).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText('비밀 값이 들었거나 이름이 너무 긴 열 2개는 숨겼습니다')).toBeVisible();
+  });
+
+  /** WD-947 리뷰: 추출 항목이 있는데 행이 없으면(객체가 아닌 항목뿐) 이유를 알린다. */
+  test('객체가 아닌 항목뿐이면 열로 보일 수 없다는 안내가 보인다 (WD-947)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(page, 'POST', '/api/v1/pipelines/api-call/preview', {
+      success: true,
+      rawJson: '[1,2]',
+      rows: [],
+      columns: [],
+      totalColumns: 0,
+      hiddenColumns: 0,
+      totalExtractedRows: 2,
+      errorMessage: null,
+      resolvedUrl: 'https://example.com/scalars',
+    });
+
+    await addAndOpenApiCallStep(page);
+    await page
+      .getByPlaceholder(API_FULL_URL_PLACEHOLDER, { exact: true })
+      .fill('https://example.com/scalars');
+    await page.getByRole('button', { name: '테스트 호출' }).click();
+
+    await expect(page.getByText('호출 URL')).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText('객체가 아닌 항목은 열로 보일 수 없습니다')).toBeVisible();
+  });
+
+  /**
    * TC-6: 테스트 호출 실패 시 에러 메시지가 표시된다
    * - 서버 500 응답 → "호출 실패" 메시지 렌더링
    */

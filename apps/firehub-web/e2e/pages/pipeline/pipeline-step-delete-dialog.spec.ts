@@ -226,3 +226,68 @@ test.describe('파이프라인 편집기 — 스텝 삭제 확인 창 (WD-952)',
     await expect(page.getByRole('button', { name: '수정' })).toBeVisible();
   });
 });
+
+// X 버튼에서 누른 Enter·Space 가 React Flow NodeWrapper 의 키 선택 처리로 번지면 노드가 선택되며 연결선 선택이 풀린다
+test.describe('파이프라인 편집기 — 스텝 X 버튼 키보드 (WD-955)', () => {
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await grantPipelinePermissions(page);
+  });
+
+  for (const key of ['Enter', 'Space']) {
+    test(`X 버튼에서 ${key} 를 눌러도 선택된 연결선이 유지된다 (WD-955)`, async ({ authenticatedPage: page }) => {
+      await openEditor(page);
+      await selectEdge(page);
+      await stepXButton(page, '데이터 변환').focus();
+      await page.keyboard.press(key);
+      // 확인 창이 열리되 keydown·click 이 둘 다 처리돼 두 번 열리지 않았는지 확인
+      await expect(page.getByRole('alertdialog')).toHaveCount(1);
+      await expect(page.locator('.react-flow__edge.selected')).toHaveCount(1);
+      await dialogButton(page, '취소').click();
+      await expect(page.getByRole('alertdialog')).toHaveCount(0);
+      await expect(page.locator('.react-flow__edge.selected')).toHaveCount(1);
+    });
+  }
+
+  test('X 에서 Enter 로 연 창을 Escape 로 닫아도 연결선 선택이 유지되고 초점이 X 로 돌아온다 (WD-955)', async ({ authenticatedPage: page }) => {
+    await openEditor(page);
+    await selectEdge(page);
+    await stepXButton(page, '데이터 변환').focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('alertdialog')).toHaveCount(0);
+    await expect(page.locator('.react-flow__edge.selected')).toHaveCount(1);
+    await expect(stepXButton(page, '데이터 변환')).toBeFocused();
+  });
+
+  test('X 에 초점을 두고 Escape 를 눌러도 연결선 선택이 유지된다 — 창을 Escape 로 닫고 초점이 돌아온 뒤 한 번 더 눌러도 같다 (WD-955)', async ({ authenticatedPage: page }) => {
+    await openEditor(page);
+    await selectEdge(page);
+    await stepXButton(page, '데이터 변환').focus();
+    await page.keyboard.press('Escape');
+    // 「없음」 단언은 Escape 처리 전에도 통과하므로, 뒤이은 Enter 로 창이 보일 때까지 기다려 Escape 가 처리될 시간을 번 뒤 단언한다
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+    await expect(page.locator('.react-flow__edge.selected')).toHaveCount(1);
+    // 창을 Escape 로 닫으면 초점이 X 로 돌아온다 — 그 상태의 Escape 도 선택을 풀지 않는다
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('alertdialog')).toHaveCount(0);
+    await expect(stepXButton(page, '데이터 변환')).toBeFocused();
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+    await expect(page.locator('.react-flow__edge.selected')).toHaveCount(1);
+  });
+
+  // 회귀 경계: 노드 자체의 키 선택 처리는 막지 않았음을 확인한다
+  test('스텝 노드 자체에서 Enter 를 누르면 React Flow 키 선택 처리가 그대로 돌아 연결선 선택이 풀린다 (WD-955 회귀)', async ({ authenticatedPage: page }) => {
+    await openEditor(page);
+    await selectEdge(page);
+    await stepNode(page, '데이터 변환').focus();
+    await page.keyboard.press('Enter');
+    // nodes 가 제어 모드(onNodesChange 없음)라 노드에 .selected 클래스가 붙지 않는다.
+    // 대신 React Flow 의 키 선택 처리가 살아 있음을 「다른 선택(연결선)이 해제됨」으로 본다 —
+    // X 버튼에서만 이 전파를 막았으므로 노드 자체에서는 여전히 해제돼야 한다.
+    await expect(page.locator('.react-flow__edge.selected')).toHaveCount(0);
+  });
+});

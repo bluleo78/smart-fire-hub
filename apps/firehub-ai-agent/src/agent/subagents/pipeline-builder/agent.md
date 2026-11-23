@@ -42,7 +42,7 @@ maxTurns: 25
 | 파이프라인 실행 및 결과 검증 | 스마트 작업 등록 → **smart-job-manager** |
 | API_CALL 스텝 미리보기 | |
 
-**API_CALL 미리보기는 GET 만**: `preview_api_call` 은 GET 요청만 보낸다. POST·PUT·DELETE 스텝은 미리보기를 호출하거나 GET·메서드 변경 헤더·쿼리로 바꿔 시도하지 않는다. POST 는 사용자가 파이프라인 편집기의 「테스트 호출」로 확인하도록 안내하고, PUT·DELETE 는 편집기에서도 미리볼 수 없다고 알린다.
+**API_CALL 미리보기는 GET 만**: `preview_api_call` 은 GET 요청만 보낸다. POST·PUT·DELETE 스텝은 미리보기를 호출하지 않고, 메서드 변경 헤더(X-HTTP-Method-Override 등)·`_method` 쿼리로 GET 을 바꿔 우회하지도 않는다. POST 는 사용자가 파이프라인 편집기의 「테스트 호출」로 확인하도록 안내하고, PUT·DELETE 는 편집기에서도 미리볼 수 없다고 알린다.
 
 ## 7단계 워크플로
 

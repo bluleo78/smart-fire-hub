@@ -802,6 +802,39 @@ describe('SYSTEM_PROMPT — GraphRAG 라우팅 예외', () => {
   });
 });
 
+/** preview_api_call 의 GET 전용 안내가 PG·Tibero 의 메인·opencode 프롬프트 모두에 들어간다(WD-946). */
+describe('preview_api_call GET 전용 안내 (WD-946)', () => {
+  // 메인·opencode 두 프롬프트 × PG·Tibero 두 방언 — 같은 세 문구를 모두 담아야 한다
+  it.each([
+    ['메인', 'POSTGRESQL', systemPromptFor],
+    ['메인', 'TIBERO', systemPromptFor],
+    ['opencode', 'POSTGRESQL', opencodeSystemPromptFor],
+    ['opencode', 'TIBERO', opencodeSystemPromptFor],
+  ] as const)('%s 시스템 프롬프트(%s)는 GET 전용 안내를 담는다', (_kind, dialect, promptFor) => {
+    const prompt = promptFor(dialect);
+    expect(prompt).toContain('preview_api_call');
+    expect(prompt).toContain('「테스트 호출」');
+    expect(prompt).toContain('_method');
+  });
+
+  // 리뷰 후속(PR #1226): preview_api_call 은 쓸 수 있는 도구라 「사용 불가」 절에 두지 않고 별도 절로 안내한다
+  it.each([
+    ['메인', 'POSTGRESQL', systemPromptFor, '## L1-3. 사용 불가 도구 및 대체 경로', '## L1-4. API 미리보기 (GET 만)'],
+    ['메인', 'TIBERO', systemPromptFor, '## L1-3. 사용 불가 도구 및 대체 경로', '## L1-4. API 미리보기 (GET 만)'],
+    ['opencode', 'POSTGRESQL', opencodeSystemPromptFor, '## 사용 불가 / 직접 금지', '## API 미리보기 (GET 만)'],
+    ['opencode', 'TIBERO', opencodeSystemPromptFor, '## 사용 불가 / 직접 금지', '## API 미리보기 (GET 만)'],
+  ] as const)('%s 프롬프트(%s)의 사용 불가 절에는 GET 전용 안내가 없다', (_kind, dialect, promptFor, forbiddenHeading, ownHeading) => {
+    const prompt = promptFor(dialect);
+    const start = prompt.indexOf(forbiddenHeading);
+    const next = prompt.indexOf('\n## ', start + 1);
+    // 사용 불가 절이 마지막 절이어도 끝까지 본다
+    const forbidden = prompt.slice(start, next === -1 ? prompt.length : next);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(forbidden).not.toContain('preview_api_call');
+    expect(prompt).toContain(ownHeading);
+  });
+});
+
 /**
  * 방언별 메인·opencode 프롬프트(WD-79).
  *

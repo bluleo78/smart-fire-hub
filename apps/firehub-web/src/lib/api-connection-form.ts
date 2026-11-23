@@ -117,10 +117,25 @@ export function baseUrlError(baseUrl: string): string | undefined {
   return httpUrlError(value, 'Base URL');
 }
 
-/** 헬스체크 경로 — 선택 칸이라 비어도 되지만, 입력했다면 /로 시작해야 한다. */
+/** 헬스체크 경로 최대 길이 — 서버 DTO(@Size(max = 500))와 같다(WD-937 리뷰 후속). */
+export const MAX_HEALTH_CHECK_PATH_LENGTH = 500;
+
+/** 헬스체크 경로 칸 도움말 — 만들기 대화상자·상세 정보 카드가 같은 문구를 쓰도록 한 곳에 둔다(WD-937 리뷰 후속). */
+export const HEALTH_CHECK_PATH_HELP = '10분마다 자동 상태 점검. 비워두면 점검 안 함.';
+
+/**
+ * 헬스체크 경로 — 선택 칸이라 비어도 되지만, 입력했다면 /로 시작하고 500자 이하여야 한다.
+ * 길이는 서버가 받는 값(앞뒤 공백을 뗀 값)으로 센다. maxLength 속성은 붙여넣기를 말없이 잘라 버리므로 쓰지 않고
+ * 문구로 알린다(WD-937 리뷰 후속). 생성 대화상자·상세 편집이 같은 규칙을 쓴다.
+ */
 export function healthCheckPathError(path: string): string | undefined {
   const value = path.trim();
-  return value && !value.startsWith('/') ? '헬스체크 경로는 /로 시작해야 합니다.' : undefined;
+  if (!value) return undefined;
+  if (!value.startsWith('/')) return '헬스체크 경로는 /로 시작해야 합니다.';
+  if (value.length > MAX_HEALTH_CHECK_PATH_LENGTH) {
+    return `헬스체크 경로는 ${MAX_HEALTH_CHECK_PATH_LENGTH}자 이하로 입력하세요.`;
+  }
+  return undefined;
 }
 
 /** API Key 의 헤더·파라미터 이름 — 위치(placement)에 따라 라벨이 달라 문구도 맞춘다. */

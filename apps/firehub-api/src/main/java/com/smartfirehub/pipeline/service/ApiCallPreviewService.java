@@ -16,13 +16,19 @@ import com.smartfirehub.pipeline.service.executor.RedirectFollower;
 import com.smartfirehub.pipeline.service.executor.RequestUrlEncoding;
 import com.smartfirehub.pipeline.service.executor.SsrfProtectionService;
 import com.smartfirehub.pipeline.service.executor.SsrfSafeHttpClientFactory;
+import java.math.BigDecimal;
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 @Service
 @lombok.extern.slf4j.Slf4j
@@ -31,6 +37,15 @@ public class ApiCallPreviewService {
   private static final int DEFAULT_TIMEOUT_MS = 30_000;
   private static final int MAX_RAW_JSON_BYTES = 10 * 1024; // 10 KB
   private static final int MAX_PREVIEW_ROWS = 5;
+
+  /** 원본 모드에서 문자열 칸(중첩 값은 JSON 문자열)의 최대 글자 수 — rawJson 10KB 상한을 칸으로 우회하지 않게 한다(WD-947). */
+  private static final int MAX_RAW_CELL_CHARS = 500;
+
+  /** 원본 모드 columns 의 최대 개수(처음 나온 순서) — 키가 수천 개인 항목이 응답을 부풀리지 않게 한다(WD-947). */
+  private static final int MAX_RAW_COLUMNS = 100;
+
+  /** 원본 모드 중첩 값(Map/List)을 JSON 문자열 칸으로 바꾼다(스레드 안전, 저장소 관례의 Jackson 2 기본값). */
+  private static final ObjectMapper RAW_MAPPER = JsonMapper.builderWithJackson2Defaults().build();
 
   /** 미리보기가 대상에 보낼 수 있는 메서드(WD-969) — 편집기 범위와 같다. */
   private static final Set<String> PREVIEW_METHODS = Set.of("GET", "POST");
@@ -115,8 +130,8 @@ public class ApiCallPreviewService {
       authSecret = auth.sentSecrets();
 
       // 비밀이 비었거나(WD-639) 헤더 이름을 쓸 수 없으면(WD-647) 대상 서버를 부르지 않고 안내한다 — URL 조립보다 먼저 본다. 예전에는 URL
-      // 조립 오류가 먼저 나 빈 비밀 안내가 가려졌다. 다른 실패처럼 표시 URL 도 돌려주되, 인코딩 뒤에도 만들 수 없는 경우(쿼리 값 속 `=` 등)만 null
-      // 이다.
+      // 조립 오류가 먼저 나 빈 비밀 안내가 가려졌다. 다른 실패처럼 표시 URL 도 돌려주되, 인코딩 뒤에도 만들 수 없는 경우(제어 문자·잘못된 %·주소 등)만
+      // null 이다.
       // 원래 인증 Map 도 넘겨 공백만 다른 추가 헤더 키 겹침(WD-753 리뷰)도 본다 — 푼 값에서는 이미 합쳐져 보이지 않는다.
       String authProblem =
           ApiCallAuth.describeProblem(auth, authConfig, conn != null ? conn.name() : null);
@@ -128,7 +143,9 @@ public class ApiCallPreviewService {
             List.of(),
             0,
             authProblem,
-            displayUrlOrNull(resolvedUrl, request.queryParams()));
+            displayUrlOrNull(resolvedUrl, request.queryParams()),
+            0,
+            0);
       }
 
       // 4~5. Build URI(정적 쿼리 + 쿼리 인증 키) — 호출용(키 원문)과 응답용(키 가림)을 함께 만든다(WD-177). 응답의 resolvedUrl 은
@@ -141,7 +158,7 @@ public class ApiCallPreviewService {
       URI requestUri = urls.callUri();
       // 표시용 URL 은 옛 연결·주소에 직접 쓴 사용자 정보(아이디:비밀번호@)의 비밀번호도 가려져 있다(WD-681, AuthQueryMasker.build).
       // 한글 등 비ASCII 는 사람이 읽게 글자로 되돌려 보인다 — ASCII 이스케이프는 보낸 그대로(WD-936 리뷰 후속).
-      resolvedRequestUrl = RequestUrlEncoding.decodeForDisplay(urls.displayUrl());
+      resolvedRequestUrl = RequestUrlEncoding.toDisplayUrl(urls.displayUrl());
 
       // 5-1. GET 미리보기의 메서드 변경 이름 차단(WD-970) — 저장 연결(API_KEY 헤더 이름·추가 헤더·baseUrl 쿼리)이나 요청에서 온
       //    X-HTTP-Method-Override 헤더·_method 쿼리는 대상 서버가 GET 을 DELETE 등 쓰기로 바꿔 처리하게 한다. GET 은 쓰기 확인
@@ -175,28 +192,88 @@ public class ApiCallPreviewService {
       String rawJson =
           truncate(authSecret.maskPasswordInMaskedBody(maskedBody), MAX_RAW_JSON_BYTES);
 
-      // 8. Convert field mappings
-      List<ApiCallConfig.FieldMapping> fieldMappings = toFieldMappings(request.fieldMappings());
-
-      // 9. Parse response — dataPath가 비어있으면 루트($)로 대체
+      // 8~9. 응답 파싱 — dataPath가 비어있으면 루트($)로 대체
       String effectiveDataPath =
           (request.dataPath() == null || request.dataPath().isBlank()) ? "$" : request.dataPath();
-      List<Map<String, Object>> allRows =
-          jsonResponseParser.parseAndMap(maskedBody, effectiveDataPath, fieldMappings, null, 0);
 
-      List<String> columns =
-          request.fieldMappings() != null
-              ? request.fieldMappings().stream()
-                  .map(ApiCallPreviewRequest.FieldMappingPreview::targetColumn)
-                  .toList()
-              : List.of();
+      // 쓸 만한 매핑(sourceField 가 있는 것)이 하나도 없으면 원본 모드(WD-947) — 항목의 최상위 필드를 그대로 행·열로 돌려줘,
+      // 사용자·AI 가 그 이름으로 매핑을 만들 수 있게 한다. 예전에는 매핑이 없으면 행이 빈 객체, 열이 빈 목록이라 매핑할 근거가 없었다.
+      // 매핑이 하나라도 있으면 지금 동작(매핑 결과) 그대로다.
+      List<Map<String, Object>> previewRows;
+      List<String> columns;
+      int totalExtractedRows;
+      int totalColumns;
+      int hiddenColumns = 0;
+      if (hasUsableMapping(request.fieldMappings())) {
+        List<ApiCallConfig.FieldMapping> fieldMappings = toFieldMappings(request.fieldMappings());
+        List<Map<String, Object>> allRows =
+            jsonResponseParser.parseAndMap(maskedBody, effectiveDataPath, fieldMappings, null, 0);
+        columns =
+            request.fieldMappings().stream()
+                .map(ApiCallPreviewRequest.FieldMappingPreview::targetColumn)
+                .toList();
+        totalColumns = columns.size();
+        totalExtractedRows = allRows.size();
+        previewRows =
+            authSecret.maskRows(
+                allRows.size() > MAX_PREVIEW_ROWS ? allRows.subList(0, MAX_PREVIEW_ROWS) : allRows);
+      } else {
+        // 람다 없이 쓰지만 authSecret 은 재대입되므로 최종 사본을 쓴다.
+        final AuthQueryMasker.SentSecrets secret = authSecret;
+        JsonResponseParser.RawItems rawItems =
+            jsonResponseParser.parseRawItems(maskedBody, effectiveDataPath);
+        // 요청에 (소스 필드가 빈) 매핑이 있어도 실행은 타입·날짜 형식을 검사한다 — 항목이 있으면 같은 검사를 해 미리보기만 통과하는 일을 막는다.
+        if (request.fieldMappings() != null
+            && !request.fieldMappings().isEmpty()
+            && rawItems.total() > 0) {
+          jsonResponseParser.validateMappings(toFieldMappings(request.fieldMappings()));
+        }
+        List<Map<String, Object>> items = rawItems.objects();
+        totalExtractedRows = rawItems.total();
 
-      List<Map<String, Object>> previewRows =
-          authSecret.maskRows(
-              allRows.size() > MAX_PREVIEW_ROWS ? allRows.subList(0, MAX_PREVIEW_ROWS) : allRows);
+        // 항목마다 키가 다를 수 있어 앞 5행이 아니라 모든 항목의 키를 처음 나온 순서대로 모은다. 비밀이 든 키(usableRawKey)는 뺀다.
+        // 합집합은 상한 없이 세어 전체 열 수(totalColumns)로 알리고, columns 는 그중 앞 MAX_RAW_COLUMNS 개만 둔다(WD-947 리뷰).
+        // 비밀이 들었거나 이름이 너무 길어(500자 초과) 뺀 서로 다른 키는 hiddenColumns 로 센다.
+        Set<String> allKeys = new LinkedHashSet<>();
+        Set<String> hiddenKeys = new LinkedHashSet<>();
+        for (Map<String, Object> item : items) {
+          for (String k : item.keySet()) {
+            if (usableRawKey(secret, k)) allKeys.add(k);
+            else hiddenKeys.add(k);
+          }
+        }
+        hiddenColumns = hiddenKeys.size();
+        totalColumns = allKeys.size();
+        Set<String> rawKeys = new LinkedHashSet<>();
+        for (String k : allKeys) {
+          if (rawKeys.size() >= MAX_RAW_COLUMNS) break;
+          rawKeys.add(k);
+        }
+        columns = List.copyOf(rawKeys);
+
+        // 미리보기 행만 처리한다 — 열 상한을 행에도 적용하고, 값은 한 번에 가림·자르기한다.
+        previewRows = new ArrayList<>();
+        for (Map<String, Object> item :
+            items.subList(0, Math.min(items.size(), MAX_PREVIEW_ROWS))) {
+          Map<String, Object> safe = new LinkedHashMap<>();
+          for (Map.Entry<String, Object> e : item.entrySet()) {
+            if (!rawKeys.contains(e.getKey())) continue;
+            safe.put(e.getKey(), rawCell(secret, e.getValue()));
+          }
+          previewRows.add(safe);
+        }
+      }
 
       return new ApiCallPreviewResponse(
-          true, rawJson, previewRows, columns, allRows.size(), null, resolvedRequestUrl);
+          true,
+          rawJson,
+          previewRows,
+          columns,
+          totalExtractedRows,
+          null,
+          resolvedRequestUrl,
+          totalColumns,
+          hiddenColumns);
 
     } catch (Exception e) {
       // 실행(ApiCallExecutor)과 같은 분류·문구를 쓴다(WD-150) — 예전에는 e.getMessage() 를 그대로 돌려줘 같은 연결 거부가
@@ -207,11 +284,22 @@ public class ApiCallPreviewService {
       log.warn("[Preview] 실패: {} ({})", message, e.getClass().getSimpleName());
       log.debug("[Preview] 실패 상세", e);
       return new ApiCallPreviewResponse(
-          false, null, List.of(), List.of(), 0, message, resolvedRequestUrl);
+          false, null, List.of(), List.of(), 0, message, resolvedRequestUrl, 0, 0);
     }
   }
 
   // ── private helpers ────────────────────────────────────────────────────────
+
+  /**
+   * 원본 모드 키를 열·행에 쓸 수 있는지(WD-947 리뷰). BASIC 비밀번호를 부분 문자열로 품은 키, 또는 본문 가림이 보낸 비밀(쿼리 키·헤더 키·토큰)을 이미
+   * 가린 흔적({@code ****})을 품은 키, 또는 {@link #MAX_RAW_CELL_CHARS} 자를 넘는 키는 가려 둬도 매핑할 수 없고 자동 채움이 설정에
+   * 저장하므로 아예 뺀다.
+   */
+  private static boolean usableRawKey(AuthQueryMasker.SentSecrets secret, String key) {
+    if (key.length() > MAX_RAW_CELL_CHARS) return false;
+    if (key.contains(AuthQueryMasker.PASSWORD_MASK)) return false;
+    return key.equals(secret.maskPasswordInMaskedBody(key));
+  }
 
   /**
    * GET 으로 나가는 주소의 쿼리에 메서드 변경 이름(_method 등)이 있으면 거절한다(WD-970) — 첫 요청 검사와 리다이렉트 홉 검사({@code
@@ -242,13 +330,13 @@ public class ApiCallPreviewService {
   }
 
   /**
-   * 인증 문제로 부르지 않을 때 돌려줄 표시용 URL — 정적 쿼리만 붙인다(인증 키는 붙이지 않는다). 기준 URL 을 만들 수 없으면(쿼리 값 속 `=` 등 —
+   * 인증 문제로 부르지 않을 때 돌려줄 표시용 URL — 정적 쿼리만 붙인다(인증 키는 붙이지 않는다). 기준 URL 을 만들 수 없으면(제어 문자·잘못된 %·주소 등 —
    * 공백·한글은 WD-936 으로 미리 인코딩된다) null — 그 경우에도 인증 문제 안내가 URL 오류보다 먼저다(WD-647).
    */
   private String displayUrlOrNull(String resolvedUrl, Map<String, String> queryParams) {
     try {
       // 사용자 정보의 비밀번호는 build 가 가린다(WD-681).
-      return RequestUrlEncoding.decodeForDisplay(
+      return RequestUrlEncoding.toDisplayUrl(
           AuthQueryMasker.build(resolvedUrl, queryParams, null, null).displayUrl());
     } catch (AuthQueryMasker.InvalidRequestUrlException e) {
       return null;
@@ -297,14 +385,26 @@ public class ApiCallPreviewService {
         .getBody();
   }
 
+  /** 요청 매핑 중 sourceField 가 null·빈칸이 아닌 것이 하나라도 있는지 — 없으면(null·빈 목록·빈칸 소스만) 원본 모드(WD-947). */
+  private boolean hasUsableMapping(List<ApiCallPreviewRequest.FieldMappingPreview> previews) {
+    return previews != null
+        && previews.stream().anyMatch(p -> p.sourceField() != null && !p.sourceField().isBlank());
+  }
+
   private List<ApiCallConfig.FieldMapping> toFieldMappings(
       List<ApiCallPreviewRequest.FieldMappingPreview> previews) {
     if (previews == null) return List.of();
     return previews.stream()
         .map(
             p ->
+                // 날짜 형식·시간대는 요청이 준 값 그대로 넘긴다 — 실행과 같은 검사를 미리보기에서도 받게(없으면 null)
                 new ApiCallConfig.FieldMapping(
-                    p.sourceField(), p.targetColumn(), p.dataType(), null, null, null))
+                    p.sourceField(),
+                    p.targetColumn(),
+                    p.dataType(),
+                    p.dateFormat(),
+                    null,
+                    p.sourceTimezone()))
         .toList();
   }
 
@@ -334,5 +434,63 @@ public class ApiCallPreviewService {
     }
 
     return new String(bytes, 0, end, java.nio.charset.StandardCharsets.UTF_8);
+  }
+
+  /**
+   * 원본 모드 셀 하나를 안전하게 만든다 — 중첩 값(Map/List)은 JSON 문자열로 바꿔 잎 값 비밀번호를 가린 뒤 자르고(가리기 전에 자르면 경계의 비밀번호 조각이
+   * 남을 수 있다), 문자열·숫자·불리언은 값 전체 일치 비밀번호를 가리며, null 은 그대로 둔다.
+   *
+   * <p>문자열 칸은 같은 화면의 원문(rawJson)과 같게 글 속에 든 비밀번호까지 가린다 — 요청 본문·URL 을 문자열로 되돌려 주는 API(예: 에코)에서 매핑 없이
+   * 모든 칸이 보이는 원본 모드가 비밀번호를 흘리지 않게. 짧은 비밀번호는 칸 전체가 가려질 수 있지만 미리보기 표시라 안전 쪽을 택한다(매핑 모드 결과 행은 WD-681
+   * 대로 전체 일치만).
+   */
+  private static Object rawCell(AuthQueryMasker.SentSecrets secret, Object value) {
+    if (value instanceof Map<?, ?> || value instanceof List<?>) {
+      String text;
+      try {
+        text = RAW_MAPPER.writeValueAsString(value);
+      } catch (JacksonException e) {
+        // 파싱된 JSON 값이라 사실상 일어나지 않는다 — 그래도 미리보기가 죽지 않게 문자열로 대신한다.
+        text = value.toString();
+      }
+      return truncateChars(secret.maskPasswordInMaskedBody(text));
+    }
+    if (value instanceof Number || value instanceof Boolean) {
+      // 숫자·불리언도 문자열 형태로 보고 글 속 비밀번호 규칙을 똑같이 쓴다(91234567 속 123456 도 가림). 가릴 게 없으면 원래 값(숫자 유지)이되,
+      // 500자를 넘는 거대한 숫자는 잘린 문자열로 바꾼다(rawJson 상한 우회 방지).
+      // 값 전체가 비밀번호면 maskScalar 가 먼저 「****」 로 바꾼다.
+      if (secret.maskScalar(value) instanceof String whole) return whole;
+      String text = plainNumberText(value);
+      String maskedText = secret.maskPasswordInMaskedBody(text);
+      if (!maskedText.equals(text)) return truncateChars(maskedText);
+      return text.length() > MAX_RAW_CELL_CHARS ? truncateChars(text) : value;
+    }
+    Object masked = secret.maskScalar(value);
+    return masked instanceof String str
+        ? truncateChars(secret.maskPasswordInMaskedBody(str))
+        : masked;
+  }
+
+  /**
+   * 숫자·불리언을 가림·자르기용 평문 문자열로 만든다 — Double·Float 는 지수 표기(1.23456789E7)가 아닌 평문(12345678.9)으로 바꿔 원래 자리
+   * 숫자에 든 비밀번호를 가린다. 무한·NaN 은 평문이 없어 기존 문자열 그대로 둔다.
+   */
+  private static String plainNumberText(Object value) {
+    if (value instanceof Double d && Double.isFinite(d)) {
+      return new BigDecimal(Double.toString(d)).toPlainString();
+    }
+    if (value instanceof Float f && Float.isFinite(f)) {
+      return new BigDecimal(Float.toString(f)).toPlainString();
+    }
+    if (value instanceof BigDecimal bd) return bd.toPlainString();
+    return String.valueOf(value);
+  }
+
+  /** 원본 모드 문자열 칸을 {@link #MAX_RAW_CELL_CHARS} 자로 자른다 — 넘으면 앞 글자 + "…". 서로게이트 쌍은 쪼개지 않는다. */
+  private static String truncateChars(String s) {
+    if (s == null || s.length() <= MAX_RAW_CELL_CHARS) return s;
+    int end = MAX_RAW_CELL_CHARS;
+    if (Character.isHighSurrogate(s.charAt(end - 1))) end--;
+    return s.substring(0, end) + "…";
   }
 }

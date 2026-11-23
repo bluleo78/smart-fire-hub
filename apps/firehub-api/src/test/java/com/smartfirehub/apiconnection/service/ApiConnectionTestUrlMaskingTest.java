@@ -283,6 +283,84 @@ class ApiConnectionTestUrlMaskingTest extends IntegrationTestBase {
     assertThat(receivedUrl()).isEqualTo("/health?serviceKey=" + KEY);
   }
 
+  /** 한글 헬스체크 경로의 표시 URL 은 미리보기와 같은 규칙으로 글자로 보인다(WD-1000) — 호출은 인코딩된 채 나간다. */
+  @Test
+  void testConnection_koreanHealthPath_requestUrlShowsLetters() {
+    wireMock.stubFor(
+        get(urlPathEqualTo("/%EA%B2%80%EC%83%89")).willReturn(aResponse().withStatus(200)));
+    ApiConnectionResponse created =
+        apiConnectionService.create(
+            new CreateApiConnectionRequest(
+                "WD1000 korean",
+                null,
+                "API_KEY",
+                Map.of("placement", "query", "paramName", "serviceKey", "apiKey", KEY),
+                wireMockBase(),
+                "/%EA%B2%80%EC%83%89"),
+            testUserId);
+
+    TestConnectionResponse result = apiConnectionService.testConnection(created.id());
+
+    assertThat(result.requestUrl()).contains("/검색").doesNotContain("%EA%B2");
+    assertNoSecret(result.requestUrl(), KEY);
+  }
+
+  /** 헤더 인증 연결을 만들어 주어진 헬스체크 경로로 테스트한다(WD-1000 리뷰 — 호출 URL 이중 인코딩 확인용). */
+  private TestConnectionResponse testHeaderAuthWithPath(String name, String healthPath) {
+    ApiConnectionResponse created =
+        apiConnectionService.create(
+            new CreateApiConnectionRequest(
+                name,
+                null,
+                "API_KEY",
+                Map.of("placement", "header", "headerName", "X-Key", "apiKey", KEY),
+                wireMockBase(),
+                healthPath),
+            testUserId);
+    return apiConnectionService.testConnection(created.id());
+  }
+
+  /** WireMock 이 받은 유일한 요청의 원문 경로·쿼리. */
+  private static String onlyReceivedUrl() {
+    List<LoggedRequest> reqs = wireMock.findAll(anyRequestedFor(anyUrl()));
+    assertThat(reqs).hasSize(1);
+    return reqs.get(0).getUrl();
+  }
+
+  /** 이미 인코딩된 한글 경로는 이중 인코딩 없이 그대로 나가고, 표시 URL 은 글자로 보인다(WD-1000). */
+  @Test
+  void testConnection_encodedKoreanPath_sentOnceAndDisplayedAsLetters() {
+    wireMock.stubFor(
+        get(urlEqualTo("/%EA%B2%80%EC%83%89")).willReturn(aResponse().withStatus(200)));
+    TestConnectionResponse result =
+        testHeaderAuthWithPath("WD1000 enc path", "/%EA%B2%80%EC%83%89");
+    assertThat(onlyReceivedUrl()).isEqualTo("/%EA%B2%80%EC%83%89");
+    assertThat(result.requestUrl()).contains("/검색");
+  }
+
+  /** 날것의 한글·공백 경로는 한 번 인코딩돼 나간다(현재 동작 유지). */
+  @Test
+  void testConnection_rawKoreanPathWithSpace_sentEncodedOnce() {
+    wireMock.stubFor(
+        get(urlEqualTo("/%EA%B2%80%EC%83%89%20a")).willReturn(aResponse().withStatus(200)));
+    testHeaderAuthWithPath("WD1000 raw path", "/검색 a");
+    assertThat(onlyReceivedUrl()).isEqualTo("/%EA%B2%80%EC%83%89%20a");
+  }
+
+  /** 날것의 방향 제어 글자는 표시 URL 에서도 %XX 로 남는다(WD-1000). */
+  @Test
+  void testConnection_rawRtlOverrideInPath_displayedEncoded() {
+    TestConnectionResponse result = testHeaderAuthWithPath("WD1000 rlo", "/a\u202Eb");
+    assertThat(result.requestUrl()).contains("%E2%80%AE").doesNotContain("\u202E");
+  }
+
+  /** 저장된 경로에 제어 문자가 있어 인코딩이 물러서도 응답 requestUrl 에 날것 U+202E·탭이 없다(WD-1000 후속). */
+  @Test
+  void testConnection_rawRtlAndTabInPath_requestUrlHasNoRawHiddenChars() {
+    TestConnectionResponse result = testHeaderAuthWithPath("WD1000 rlo tab", "/a\u202Eb\t");
+    assertThat(result.requestUrl()).doesNotContain("\u202E").doesNotContain("\t");
+  }
+
   /** 4xx(WebClientResponseException) 경로도 표시 URL 을 쓴다. */
   @Test
   void testConnection_queryKey_http401_responseUrlMasked() {
@@ -506,8 +584,8 @@ class ApiConnectionTestUrlMaskingTest extends IntegrationTestBase {
   }
 
   /**
-   * 정말로 URL 을 만들 수 없는 경우(헬스체크 경로 쿼리에 생 공백·한글)는 여전히 고정 문구의 DOWN 이고 호출하지 않는다 — 함께 붙는 키 원문·인코딩형은 응답
-   * 어디에도 없다(WD-177 처리 유지).
+   * 정말로 URL 을 만들 수 없는 경우(헬스체크 경로 쿼리에 제어 문자)는 여전히 고정 문구의 DOWN 이고 호출하지 않는다 — 함께 붙는 키 원문·인코딩형은 응답 어디에도
+   * 없다(WD-177 처리 유지). 공백·한글은 WD-991 부터 인코딩돼 호출되므로(아래 TC) 더는 「만들 수 없는」 입력이 아니다.
    */
   @Test
   void testConnectionPayload_unbuildableUrl_downWithoutCallOrSecret() {
@@ -519,7 +597,7 @@ class ApiConnectionTestUrlMaskingTest extends IntegrationTestBase {
             "API_KEY",
             Map.of("placement", "query", "paramName", "serviceKey", "apiKey", SPECIAL_KEY),
             wireMockBase(),
-            "/health?q=a b 한글");
+            "/health?q=a\u0001b");
 
     TestConnectionResponse result = apiConnectionService.testConnectionPayload(req);
 
@@ -529,6 +607,100 @@ class ApiConnectionTestUrlMaskingTest extends IntegrationTestBase {
         .doesNotContain("URL 인코딩된 값을 넣으세요");
     assertNoSecret(result.errorMessage(), SPECIAL_KEY);
     assertNoSecret(result.requestUrl(), SPECIAL_KEY);
+    wireMock.verify(0, anyRequestedFor(anyUrl()));
+  }
+
+  // ── WD-991: 헬스체크 경로의 공백·한글을 실행기(httpx)처럼 인코딩해 부른다 ──
+
+  /** WireMock 이 받은 모든 요청의 URL(경로 무관, 디코딩하지 않은 원형). */
+  private static List<String> allReceivedUrls() {
+    return wireMock.getAllServeEvents().stream().map(e -> e.getRequest().getUrl()).toList();
+  }
+
+  private CreateApiConnectionRequest bearerReq(String name, String healthPath) {
+    return new CreateApiConnectionRequest(
+        name, null, "BEARER", Map.of("token", "tok-wd991"), wireMockBase(), healthPath);
+  }
+
+  /** 공백·한글 경로는 한 번만 %XX 로 인코딩돼 나간다(%25 없음) — 파이프라인 실행과 같은 바이트. */
+  @Test
+  void testConnectionPayload_koreanSpaceHealthPath_callsEncodedPath() {
+    wireMock.stubFor(
+        com.github.tomakehurst.wiremock.client.WireMock.any(anyUrl())
+            .willReturn(aResponse().withStatus(200)));
+
+    TestConnectionResponse result =
+        apiConnectionService.testConnectionPayload(bearerReq("WD991 path", "/상태 확인"));
+
+    assertThat(result.ok()).isTrue();
+    assertThat(allReceivedUrls()).containsExactly("/%EC%83%81%ED%83%9C%20%ED%99%95%EC%9D%B8");
+  }
+
+  /** 쿼리 인증이어도 인코딩된 경로 뒤에 인증 쿼리가 붙는다. */
+  @Test
+  void testConnectionPayload_koreanSpaceHealthPathWithQueryKey_callsEncodedPathAndKey() {
+    wireMock.stubFor(
+        com.github.tomakehurst.wiremock.client.WireMock.any(anyUrl())
+            .willReturn(aResponse().withStatus(200)));
+
+    TestConnectionResponse result =
+        apiConnectionService.testConnectionPayload(
+            new CreateApiConnectionRequest(
+                "WD991 path key",
+                null,
+                "API_KEY",
+                Map.of("placement", "query", "paramName", "serviceKey", "apiKey", KEY),
+                wireMockBase(),
+                "/상태 확인"));
+
+    assertThat(result.ok()).isTrue();
+    assertThat(allReceivedUrls())
+        .containsExactly("/%EC%83%81%ED%83%9C%20%ED%99%95%EC%9D%B8?serviceKey=" + KEY);
+    assertNoSecret(result.requestUrl(), KEY);
+  }
+
+  /** 이미 인코딩된 경로는 다시 인코딩하지 않는다(%25 없음). */
+  @Test
+  void testConnectionPayload_alreadyEncodedHealthPath_sentAsIs() {
+    wireMock.stubFor(
+        com.github.tomakehurst.wiremock.client.WireMock.any(anyUrl())
+            .willReturn(aResponse().withStatus(200)));
+
+    TestConnectionResponse result =
+        apiConnectionService.testConnectionPayload(
+            bearerReq("WD991 encoded", "/%EC%83%81%ED%83%9C"));
+
+    assertThat(result.ok()).isTrue();
+    assertThat(allReceivedUrls()).containsExactly("/%EC%83%81%ED%83%9C");
+  }
+
+  /** 저장된 연결(testConnection)도 같은 인코딩 경로로 부른다 — 저장이 공백 경로를 막지 않는 경우에만 성립한다. */
+  @Test
+  void testConnection_savedKoreanSpaceHealthPath_callsEncodedPath() {
+    wireMock.stubFor(
+        com.github.tomakehurst.wiremock.client.WireMock.any(anyUrl())
+            .willReturn(aResponse().withStatus(200)));
+    Long id = apiConnectionService.create(bearerReq("WD991 saved", "/상태 확인"), testUserId).id();
+
+    TestConnectionResponse result = apiConnectionService.testConnection(id);
+
+    assertThat(result.ok()).isTrue();
+    assertThat(allReceivedUrls()).containsExactly("/%EC%83%81%ED%83%9C%20%ED%99%95%EC%9D%B8");
+  }
+
+  /** SSRF 로 막힌 결과의 표시 URL 도 인코딩된 같은 URL 이다(WD-991 리뷰) — 막기 전 원문 한글·공백이 응답에 나가지 않는다. */
+  @Test
+  void testConnection_ssrfBlocked_displayUrlIsEncodedPath() {
+    stubHealthOk();
+    Long id = apiConnectionService.create(bearerReq("WD991 blocked", "/상태 확인"), testUserId).id();
+    useRealSsrfJudgement();
+    repointToLoopback(id, null);
+
+    TestConnectionResponse result = apiConnectionService.testConnection(id);
+
+    assertThat(result.ok()).isFalse();
+    // 표시 URL 은 한글을 글자로 되돌려 보인다(decodeForDisplay, WD-991 리뷰) — ASCII 이스케이프(%20)는 보낸 그대로다.
+    assertThat(result.requestUrl()).endsWith("/상태%20확인");
     wireMock.verify(0, anyRequestedFor(anyUrl()));
   }
 

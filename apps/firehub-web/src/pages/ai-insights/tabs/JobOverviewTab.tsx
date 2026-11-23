@@ -33,6 +33,7 @@ import { formatDate, getStatusBadgeVariant, getStatusLabel } from '@/lib/formatt
 import { formatNextRun } from '@/lib/next-run';
 import { describeTimezone, TIMEZONE_OPTIONS } from '@/lib/timezone-data';
 import {
+  CRON_REQUIRED_MESSAGE,
   goalTemplateName,
   MAX_JOB_PROMPT_LENGTH,
   type ProactiveJobFormValues,
@@ -64,6 +65,9 @@ interface JobOverviewTabProps {
   templates: ReportTemplateSummary[];
   /** 사용자 입력으로 폼이 변경됐을 때 호출 — 이탈 가드용 dirty 마킹 (이슈 #59) */
   onChange?: () => void;
+  /** 「직접 입력」 칸에 사용자가 넣은 값 — 고르지 않았으면 null(WD-962) */
+  customCronValue: string | null;
+  onCustomCronValueChange: (value: string | null) => void;
 }
 
 function ReadonlyCard({ label, value }: { label: string; value: React.ReactNode }) {
@@ -114,22 +118,24 @@ function generateAutoTemplate(question: string): TemplateSection[] {
   ];
 }
 
-export default function JobOverviewTab({ job, isNew, isEditing, form, templates, onChange }: JobOverviewTabProps) {
+export default function JobOverviewTab({
+  job, isNew, isEditing, form, templates, onChange, customCronValue, onCustomCronValueChange,
+}: JobOverviewTabProps) {
   const { register, watch, setValue, getValues, formState: { errors } } = form;
   // 접근성: 그룹 라벨↔위젯 연결용 id 접두사 (#432).
   // 기존 하드코딩 id(job-name, mode-manual 등)는 E2E 계약이라 그대로 둔다.
   const baseId = useId();
   // dirty 마킹 헬퍼 — onChange가 없으면 no-op (이슈 #59)
   const markDirty = useCallback(() => onChange?.(), [onChange]);
-  // 작업 이름·분석 프롬프트는 입력할 때마다 그 칸만 검증한다(WD-500). 폼 mode 가 onSubmit 이라, 공백만 넣으면 「생성/저장」이
-  // isValid 로 꺼져 제출이 없고 errors 도 안 채워져 칸 아래 문구가 안 보였다. 전역 mode 는 크론 등 다른 칸 동작을 바꾸므로 두지 않고,
-  // 포커스 이탈(onBlur)에는 걸지 않는다 — 손대지 않은 빈 새 작업 폼에서 칸만 지나쳐도 빨간 문구가 뜨지 않게.
-  const validatedField = (field: 'name' | 'prompt') => ({
-    onChange: () => {
-      markDirty();
-      void form.trigger(field);
-    },
-  });
+  // 작업 이름·분석 프롬프트·실행 주기(직접 입력)는 입력할 때마다 그 칸만 검증한다(WD-500, WD-962). 폼 mode 가 onSubmit 이라,
+  // 공백만 넣거나 너무 잦은 cron 을 넣으면 「생성/저장」이 isValid 로 꺼져 제출이 없고 errors 도 안 채워져 칸 아래 문구가 안 보였다.
+  // 전역 mode 는 다른 칸 동작을 바꾸므로 두지 않고, 포커스 이탈(onBlur)에는 걸지 않는다 — 손대지 않은 빈 새 작업 폼에서
+  // 칸만 지나쳐도 빨간 문구가 뜨지 않게.
+  const markAndValidate = (field: 'name' | 'prompt' | 'cronExpression') => {
+    markDirty();
+    void form.trigger(field);
+  };
+  const validatedField = (field: 'name' | 'prompt') => ({ onChange: () => markAndValidate(field) });
   // 새 작업 폼에서 「만들기」가 꺼진 이유를 칸 아래에 안내하려고 이름·프롬프트 값을 구독한다(WD-812).
   // watch() 대신 useWatch 를 쓴다 — React Compiler 린트가 watch() 를 막는다. 안내에는 「비었는가」만 필요하므로
   // compute 로 불리언만 구독해, 값이 비었다↔찼다로 바뀔 때만 다시 그린다.
@@ -226,9 +232,31 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
     setValue('templateId', null);
   }, [businessQuestion, setValue, watch]);
 
-  const cronPreset = CRON_PRESETS.find((p) => p.value !== '__custom__' && p.value === cronExpression)
-    ? cronExpression
-    : '__custom__';
+  // 「직접 입력」 칸에 사용자가 넣은 값(customCronValue)으로 칸을 유지한다(WD-962). 값이 프리셋과 같은지로만 칸을 보이면
+  // `0 9 * * 1,3` 을 치다 `0 9 * * 1`(프리셋)이 되는 순간 칸이 사라져 초점이 풀린다.
+  // 불리언이 아니라 값을 들고 있어, 충돌 재조회 등으로 폼 값이 바뀌면 기억이 저절로 어긋나 풀린다.
+  const customCronSelected = customCronValue !== null && customCronValue === cronExpression;
+
+  // 저장된 주기가 없던 작업은 칸이 비어 있어도 검증 전엔 오류가 없어 「저장」만 꺼진다 — 이유를 바로 보인다.
+  // 방금 「직접 입력」을 고른 빈 칸은 아직 안내하지 않는다.
+  const cronRequiredHint =
+    !isNew && !job?.cronExpression && !cronExpression && !customCronSelected ? CRON_REQUIRED_MESSAGE : undefined;
+
+  // 칸 아래에 보일 cron 문구 — 지금 값이 너무 잦으면 검증 전(편집 진입·트리거 되돌림)에도 바로 보이고, 그 밖의 오류는 검증 결과를 쓴다.
+  const cronError = cronTooFrequentMessage(cronForPreview) ?? errors.cronExpression?.message ?? cronRequiredHint;
+
+  // 「직접 입력」을 막 골라 칸이 빈 동안에도 「만들기/저장」은 꺼진다 — 빨간 오류 대신(막 연 칸, WD-500) 회색 안내로 이유를 보인다
+  // (WD-962 리뷰 후속). 치다가 지우면 검증 오류(cronError)가 대신 뜨므로 오류가 없을 때만 보인다.
+  // 문구는 이 칸의 사실만 말한다 — 「입력하면 만들 수 있다」고 하면 이름·프롬프트가 빈 때 틀린 약속이 된다.
+  const cronEmptyHint =
+    customCronSelected && !cronExpression && !cronError
+      ? `Cron 표현식이 비어 있어 ${isNew ? '만들' : '저장할'} 수 없습니다.`
+      : undefined;
+
+  const cronPreset =
+    customCronSelected || !CRON_PRESETS.some((p) => p.value !== '__custom__' && p.value === cronExpression)
+      ? '__custom__'
+      : cronExpression;
 
   const nextRunInfo = useMemo(() => {
     const nextDate = nextRunPreview.times[0];
@@ -579,6 +607,12 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
             markDirty();
             const triggerType = v as TriggerType;
             setValue('triggerType', triggerType);
+            // cron 규칙(필수·너무 잦음)은 트리거 유형에 따라 달라진다 — 바꾼 즉시 cron 오류를 맞춰야
+            // 이상 탐지를 다녀와도 낡은 오류가 남지 않는다(WD-962 리뷰 후속). 단, cron 이 비어 있으면 다시 검사하지 않고
+            // 오류만 지운다 — 검사하면 막 연 빈 「직접 입력」 칸에 빨간 「필수」가 떠서(WD-500) 회색 안내(cronEmptyHint)가,
+            // 저장된 주기가 없던 작업이면 cronRequiredHint 가 대신 이유를 보인다.
+            if (getValues('cronExpression')) void form.trigger('cronExpression');
+            else form.clearErrors('cronExpression');
             // 트리거 유형을 이상 탐지(ANOMALY/BOTH)로 바꿔도 여기서는 config.anomaly.enabled를
             // 건드리지 않아, 모니터링 탭을 방문하지 않고 저장하면 상단 배지는 "활성"인데
             // 실제로는 폴러 대상에서 제외돼 영원히 발화하지 않는 모순 상태가 됐다 (#655).
@@ -652,9 +686,11 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
             value={cronPreset}
             onValueChange={(v) => {
               markDirty();
+              onCustomCronValueChange(v === '__custom__' ? '' : null);
               // __custom__ 선택 시 cronExpression을 빈 값으로 설정해 커스텀 입력 필드를 표시 (#43)
               if (v === '__custom__') setValue('cronExpression', '');
-              else setValue('cronExpression', v);
+              // 프리셋은 값이 바뀌므로 바로 검증해야 이전 값 때문에 꺼진 「만들기/저장」이 켜진다. 직접 입력은 빈 칸을 막 연 것뿐이라 검증하지 않는다
+              else setValue('cronExpression', v, { shouldValidate: true });
             }}
           >
             <SelectTrigger id="job-cron-preset">
@@ -671,14 +707,21 @@ export default function JobOverviewTab({ job, isNew, isEditing, form, templates,
               <Input
                 placeholder="0 9 * * *"
                 className="font-mono text-sm"
-                {...register('cronExpression', { onChange: markDirty })}
+                {...register('cronExpression', {
+                  onChange: (e) => {
+                    // 처음부터 사용자 정의 값이던 편집도 치기 시작하면 「직접 입력」으로 고정한다
+                    onCustomCronValueChange(e.target.value);
+                    markAndValidate('cronExpression');
+                  },
+                })}
               />
               <p className="text-xs text-muted-foreground">Cron 표현식 (분 시 일 월 요일)</p>
             </div>
           )}
-          {errors.cronExpression && (
-            <p className="text-xs text-destructive">{errors.cronExpression.message}</p>
+          {cronError && (
+            <p className="text-xs text-destructive">{cronError}</p>
           )}
+          {cronEmptyHint && <p className="text-xs text-muted-foreground">{cronEmptyHint}</p>}
         </div>
       )}
 

@@ -76,11 +76,6 @@ async function expectNoRenameNotice(page: Page) {
 }
 
 /**
- * API 연결 페이지 E2E 테스트
- * - 목록 렌더링, 생성 폼, 수정, 삭제를 검증한다.
- * - 관리 화면 권한 가드(AdminOrPermissionRoute) 통과와 화면 안 버튼 노출을 위해 ADMIN 역할·관리 권한 코드로 users/me를 오버라이드한다.
- */
-/**
  * 상세 화면 저장(PUT /api-connections/1) 본문을 모은다 — 막힌 저장은 0건, 통과한 저장은 그 본문이 남는다(WD-909·WD-937 공용).
  * 다른 메서드는 앞서 건 모킹(setupApiConnectionDetailMocks)으로 넘긴다.
  */
@@ -99,6 +94,11 @@ async function capturePutBodies<T>(page: Page): Promise<T[]> {
   return putBodies;
 }
 
+/**
+ * API 연결 페이지 E2E 테스트
+ * - 목록 렌더링, 생성 폼, 수정, 삭제를 검증한다.
+ * - 관리 화면 권한 가드(AdminOrPermissionRoute) 통과와 화면 안 버튼 노출을 위해 ADMIN 역할·관리 권한 코드로 users/me를 오버라이드한다.
+ */
 test.describe('API 연결 페이지', () => {
   test.beforeEach(async ({ authenticatedPage: page }) => {
     // 관리 화면 권한 가드(AdminOrPermissionRoute) 통과와 화면 안 버튼 노출을 위해 ADMIN 역할·관리 권한 코드로 오버라이드
@@ -296,7 +296,7 @@ test.describe('API 연결 페이지', () => {
     await baseUrlInput.fill(API_BASE_URL_PLACEHOLDER);
     await page.getByRole('button', { name: '만들기' }).click();
 
-    await expect(page.getByRole('alert').filter({ hasText: 'Base URL' })).toBeVisible();
+    await expect(page.getByText(/Base URL/).and(page.locator('p[id$="-error"]'))).toBeVisible();
     expect(postCount).toBe(0);
   });
 
@@ -1005,8 +1005,8 @@ test.describe('API 연결 페이지', () => {
     // 이름 없이 바로 생성 클릭
     await page.getByRole('button', { name: '만들기' }).click();
 
-    // 유효성 검사 인라인 오류 확인(WD-561 — 토스트 대신 칸 아래 role=alert)
-    await expect(page.getByRole('alert').filter({ hasText: '연결 이름을 입력하세요.' })).toBeVisible();
+    // 유효성 검사 인라인 오류 확인(WD-561 — 토스트 대신 칸 아래 인라인 오류 — WD-937 리뷰 후속: 낭독은 첫 오류 칸 포커스가 맡아 role=alert 는 쓰지 않는다)
+    await expect(page.getByText('연결 이름을 입력하세요.')).toBeVisible();
     // 다이얼로그는 여전히 열려있어야 한다
     await expect(page.getByRole('dialog')).toBeVisible();
   });
@@ -1722,12 +1722,15 @@ test.describe('API 연결 페이지', () => {
 
     await expect(pathInput).toHaveAttribute('aria-invalid', 'true');
     // 도움말(#432)은 오류 문구와 함께 계속 읽혀야 한다
-    await expect(pathInput).toHaveAccessibleDescription(
-      /10분마다 자동 상태 점검.*헬스체크 경로는 \/로 시작해야 합니다\./,
-    );
+    // (WD-937 리뷰 후속: 설명에 오류와 도움말이 둘 다 들어 있어야 한다 — 둘의 순서는 고정하지 않는다)
+    await expect(pathInput).toHaveAccessibleDescription(/헬스체크 경로는 \/로 시작해야 합니다\./);
+    await expect(pathInput).toHaveAccessibleDescription(/10분마다 자동 상태 점검/);
     await expect(pathInput).toBeFocused();
     await expect(page.getByText('헬스체크 경로는 /로 시작해야 합니다.')).toBeVisible();
     expect(putBodies).toHaveLength(0);
+    // WD-937 리뷰 후속: 포커스가 첫 오류 칸으로 가 오류를 읽으므로 기본 정보 카드에 role=alert 가 겹쳐 뜨지 않는다
+    const infoCard = page.locator('[data-slot="card"]').filter({ has: page.getByText('기본 정보', { exact: true }) });
+    await expect(infoCard.getByRole('alert')).toHaveCount(0);
 
     // 고치면 오류가 지워지고 그 값이 저장된다
     await pathInput.fill('/health');
@@ -1735,6 +1738,34 @@ test.describe('API 연결 페이지', () => {
     await page.getByRole('button', { name: '저장' }).click();
     await expect.poll(() => putBodies.length).toBe(1);
     expect(putBodies[0].healthCheckPath).toBe('/health');
+  });
+
+  test('상세 편집 — 헬스체크 경로가 500자를 넘으면 인라인 오류·포커스로 막고 500자면 저장된다 (WD-937 리뷰 후속)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupApiConnectionDetailMocks(page, 1);
+    const putBodies = await capturePutBodies<{ healthCheckPath?: string }>(page);
+
+    await page.goto('/admin/api-connections/1');
+    await expect(page.getByRole('heading', { name: 'API 연결 상세' })).toBeVisible();
+
+    const pathInput = page.getByLabel('헬스체크 경로 (선택)', { exact: true });
+
+    // 501자(서버 @Size(max = 500) 초과) → PUT 없이 인라인 오류·포커스
+    await pathInput.fill('/' + 'a'.repeat(500));
+    await page.getByRole('button', { name: '저장' }).click();
+    await expect(pathInput).toHaveAttribute('aria-invalid', 'true');
+    await expect(pathInput).toHaveAccessibleDescription(/500자 이하/);
+    await expect(pathInput).toHaveAccessibleDescription(/10분마다 자동 상태 점검/);
+    await expect(pathInput).toBeFocused();
+    expect(putBodies).toHaveLength(0);
+
+    // 500자 → 저장된다
+    await pathInput.fill('/' + 'a'.repeat(499));
+    await expect(pathInput).not.toHaveAttribute('aria-invalid', 'true');
+    await page.getByRole('button', { name: '저장' }).click();
+    await expect.poll(() => putBodies.length).toBe(1);
+    expect(putBodies[0].healthCheckPath).toHaveLength(500);
   });
 
   test('상세 편집 — 이름과 헬스체크 경로가 함께 틀리면 둘 다 오류, 포커스는 이름 (WD-937)', async ({
@@ -2032,7 +2063,7 @@ test.describe('API 연결 필수값 인라인 오류 (WD-561)', () => {
     await expect(headerInput).toHaveAccessibleDescription('헤더 이름을 입력하세요.');
     await expect(keyInput).toHaveAttribute('aria-invalid', 'true');
     await expect(keyInput).toHaveAccessibleDescription('API 키를 입력하세요.');
-    await expect(dialog.getByRole('alert')).toHaveCount(4);
+    await expect(dialog.locator('p[id$="-error"]')).toHaveCount(4);
 
     // 화면 순서상 첫 오류 칸(연결 이름)으로 포커스
     await expect(nameInput).toBeFocused();
@@ -2074,7 +2105,7 @@ test.describe('API 연결 필수값 인라인 오류 (WD-561)', () => {
     await baseUrlInput.fill('https://api.example.com');
     await dialog.getByPlaceholder('Authorization').fill('X-API-Key');
     await dialog.getByPlaceholder('API 키를 입력하세요').fill('key-1');
-    await expect(dialog.getByRole('alert')).toHaveCount(0);
+    await expect(dialog.locator('p[id$="-error"]')).toHaveCount(0);
     await dialog.getByRole('button', { name: '만들기' }).click();
 
     const req = await capture.waitForRequest();
@@ -2100,7 +2131,7 @@ test.describe('API 연결 필수값 인라인 오류 (WD-561)', () => {
     await dialog.getByRole('button', { name: '만들기' }).click();
 
     await expect(baseUrlInput).toHaveAccessibleDescription('Base URL은 http 또는 https로 시작해야 합니다.');
-    await expect(dialog.getByRole('alert')).toHaveCount(1);
+    await expect(dialog.locator('p[id$="-error"]')).toHaveCount(1);
     await expect(baseUrlInput).toBeFocused();
     await expect(nameInput).not.toHaveAttribute('aria-invalid', 'true');
 
@@ -2108,7 +2139,7 @@ test.describe('API 연결 필수값 인라인 오류 (WD-561)', () => {
     await nameInput.fill('   ');
     await dialog.getByRole('button', { name: '만들기' }).click();
     await expect(nameInput).toHaveAccessibleDescription('연결 이름을 입력하세요.');
-    await expect(dialog.getByRole('alert')).toHaveCount(2);
+    await expect(dialog.locator('p[id$="-error"]')).toHaveCount(2);
     await expect(nameInput).toBeFocused();
   });
 
@@ -2124,8 +2155,65 @@ test.describe('API 연결 필수값 인라인 오류 (WD-561)', () => {
 
     await expect(healthInput).toHaveAttribute('aria-invalid', 'true');
     // 기존 도움말 + 오류 문구가 함께 읽힌다
-    await expect(healthInput).toHaveAccessibleDescription(/10분마다 자동 상태 점검.*헬스체크 경로는 \/로 시작해야 합니다\./);
+    await expect(healthInput).toHaveAccessibleDescription(/10분마다 자동 상태 점검/);
+    await expect(healthInput).toHaveAccessibleDescription(/헬스체크 경로는 \/로 시작해야 합니다\./);
     await expect(healthInput).toBeFocused();
+  });
+
+  test('생성 대화상자 — 헬스체크 경로 501자는 인라인 오류·포커스로 만들기·테스트 모두 막고, 500자는 요청이 나간다 (WD-937 리뷰 후속)', async ({
+    authenticatedPage: page,
+  }) => {
+    const create = await mockApi(page, 'POST', '/api/v1/api-connections', { id: 31 }, { capture: true });
+    const test = await mockApi(
+      page,
+      'POST',
+      '/api/v1/api-connections/test',
+      { status: 'UP', httpStatus: 200, latencyMs: 5, message: 'ok' },
+      { capture: true },
+    );
+    const dialog = await openCreateDialog(page);
+    await dialog.getByPlaceholder('예: Make.com API').fill('긴 경로 검증');
+    await dialog.getByPlaceholder(API_BASE_URL_PLACEHOLDER, { exact: true }).fill('https://api.example.com');
+    await dialog.getByPlaceholder('Authorization').fill('X-API-Key');
+    await dialog.getByPlaceholder('API 키를 입력하세요').fill('key-1');
+    const healthInput = dialog.getByPlaceholder('/health');
+
+    // 501자 → 만들기: 오류·포커스, 요청 없음
+    await healthInput.fill('/' + 'a'.repeat(500));
+    await dialog.getByRole('button', { name: '만들기' }).click();
+    await expect(healthInput).toHaveAttribute('aria-invalid', 'true');
+    await expect(healthInput).toHaveAccessibleDescription(/500자 이하/);
+    await expect(healthInput).toHaveAccessibleDescription(/10분마다 자동 상태 점검/);
+    await expect(healthInput).toBeFocused();
+    await expect(dialog.getByRole('alert')).toHaveCount(0);
+    expect(create.requests).toHaveLength(0);
+
+    // 501자 → 연결 테스트: 같은 규칙으로 막힌다
+    await dialog.getByRole('button', { name: '연결 테스트' }).click();
+    await expect(healthInput).toHaveAttribute('aria-invalid', 'true');
+    await expect(healthInput).toBeFocused();
+    expect(test.requests).toHaveLength(0);
+
+    // 500자 → 만들기 요청이 나간다
+    await healthInput.fill('/' + 'a'.repeat(499));
+    await expect(healthInput).not.toHaveAttribute('aria-invalid', 'true');
+    await dialog.getByRole('button', { name: '만들기' }).click();
+    await expect.poll(() => create.requests.length).toBe(1);
+    expect((create.requests[0].payload as { healthCheckPath?: string }).healthCheckPath).toHaveLength(500);
+  });
+
+  test('생성 대화상자 — 이름 비움과 헬스체크 경로 오류가 겹쳐도 role=alert 는 뜨지 않고 포커스는 이름 (WD-937 리뷰 후속)', async ({
+    authenticatedPage: page,
+  }) => {
+    const dialog = await openCreateDialog(page);
+    await dialog.getByPlaceholder(API_BASE_URL_PLACEHOLDER, { exact: true }).fill('https://api.example.com');
+    await dialog.getByPlaceholder('/health').fill('health');
+    await dialog.getByRole('button', { name: '만들기' }).click();
+
+    await expect(dialog.getByText('연결 이름을 입력하세요.')).toBeVisible();
+    await expect(dialog.getByText('헬스체크 경로는 /로 시작해야 합니다.')).toBeVisible();
+    await expect(dialog.getByRole('alert')).toHaveCount(0);
+    await expect(dialog.getByPlaceholder('예: Make.com API')).toBeFocused();
   });
 
   test('인증 유형을 바꾸면 숨겨진 칸의 오류가 지워지고, Bearer 토큰 누락은 토큰 칸에 뜬다', async ({
@@ -2141,7 +2229,7 @@ test.describe('API 연결 필수값 인라인 오류 (WD-561)', () => {
     // Bearer 로 바꾸면 헤더 이름·키 값 오류는 사라진다
     await dialog.getByRole('combobox').first().click();
     await page.getByRole('option', { name: 'Bearer Token' }).click();
-    await expect(dialog.getByRole('alert')).toHaveCount(0);
+    await expect(dialog.locator('p[id$="-error"]')).toHaveCount(0);
 
     await dialog.getByRole('button', { name: '만들기' }).click();
     const tokenInput = dialog.getByPlaceholder('토큰을 입력하세요');
@@ -2161,7 +2249,7 @@ test.describe('API 연결 필수값 인라인 오류 (WD-561)', () => {
 
     await dialog.getByRole('combobox').nth(1).click();
     await page.getByRole('option', { name: 'Query Parameter' }).click();
-    await expect(dialog.getByRole('alert')).toHaveCount(0);
+    await expect(dialog.locator('p[id$="-error"]')).toHaveCount(0);
 
     await dialog.getByRole('button', { name: '만들기' }).click();
     const paramInput = dialog.getByPlaceholder('api_key');
@@ -2172,13 +2260,13 @@ test.describe('API 연결 필수값 인라인 오류 (WD-561)', () => {
   test('다이얼로그를 닫았다 다시 열면 오류가 남아 있지 않다', async ({ authenticatedPage: page }) => {
     const dialog = await openCreateDialog(page);
     await dialog.getByRole('button', { name: '만들기' }).click();
-    await expect(dialog.getByRole('alert')).toHaveCount(4);
+    await expect(dialog.locator('p[id$="-error"]')).toHaveCount(4);
 
     await page.keyboard.press('Escape');
     await expect(dialog).toBeHidden();
     await page.getByRole('button', { name: '새 연결' }).click();
     await expect(page.getByRole('dialog')).toBeVisible();
-    await expect(page.getByRole('dialog').getByRole('alert')).toHaveCount(0);
+    await expect(page.getByRole('dialog').locator('p[id$="-error"]')).toHaveCount(0);
     await expect(page.getByRole('dialog').getByPlaceholder('예: Make.com API')).not.toHaveAttribute('aria-invalid', 'true');
   });
 
@@ -2321,14 +2409,14 @@ test.describe('API 연결 인라인 오류 후속 (WD-666)', () => {
 
     // 빈 채로 만들기 → 네 칸 오류
     await dialog.getByRole('button', { name: '만들기' }).click();
-    await expect(dialog.getByRole('alert')).toHaveCount(4);
+    await expect(dialog.locator('p[id$="-error"]')).toHaveCount(4);
 
     // 테스트에 필요한 칸만 채우고(이름·헤더 이름은 비운 채) 연결 테스트 — 오래된 오류가 모두 지워진다
     await dialog.getByPlaceholder(API_BASE_URL_PLACEHOLDER, { exact: true }).fill('https://api.example.com');
     await dialog.getByPlaceholder('API 키를 입력하세요').fill('k-123');
     await dialog.getByRole('button', { name: '연결 테스트' }).click();
     await expect(dialog.getByText('연결 성공')).toBeVisible();
-    await expect(dialog.getByRole('alert')).toHaveCount(0);
+    await expect(dialog.locator('p[id$="-error"]')).toHaveCount(0);
     await expect(dialog.getByPlaceholder('예: Make.com API')).not.toHaveAttribute('aria-invalid', 'true');
     expect(capture.requests).toHaveLength(1);
   });

@@ -282,8 +282,10 @@ class ApiCallPreviewServiceTest {
                 null,
                 "$",
                 List.of(
-                    new ApiCallPreviewRequest.FieldMappingPreview("name", "name", "TEXT"),
-                    new ApiCallPreviewRequest.FieldMappingPreview("age", "age", "INTEGER")),
+                    new ApiCallPreviewRequest.FieldMappingPreview(
+                        "name", "name", "TEXT", null, null),
+                    new ApiCallPreviewRequest.FieldMappingPreview(
+                        "age", "age", "INTEGER", null, null)),
                 null,
                 null,
                 5000));
@@ -293,6 +295,664 @@ class ApiCallPreviewServiceTest {
     assertThat(response.rows()).hasSize(2);
     assertThat(response.totalExtractedRows()).isEqualTo(2);
     assertThat(response.columns()).containsExactly("name", "age");
+    assertThat(response.totalColumns()).isEqualTo(response.columns().size());
+  }
+
+  // ── WD-947: 매핑 없는 미리보기는 원본 항목을 행으로 ──
+
+  private ApiCallPreviewResponse previewRaw(
+      List<ApiCallPreviewRequest.FieldMappingPreview> mappings) {
+    wireMock.stubFor(
+        get(urlEqualTo("/raw"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody(
+                        "[{\"id\":1,\"name\":\"a\",\"tags\":[\"x\"]},{\"id\":2,\"extra\":true}]")));
+    return service.preview(
+        new ApiCallPreviewRequest(
+            baseUrl() + "/raw", "GET", null, null, null, "$", mappings, null, null, 5000));
+  }
+
+  private void assertRawRows(ApiCallPreviewResponse response) {
+    assertThat(response.success()).isTrue();
+    assertThat(response.columns()).containsExactly("id", "name", "tags", "extra");
+    assertThat(response.totalExtractedRows()).isEqualTo(2);
+    assertThat(response.rows().get(0))
+        .containsEntry("id", 1)
+        .containsEntry("name", "a")
+        .containsEntry("tags", "[\"x\"]");
+  }
+
+  /** 매핑이 null 이면 원본 최상위 필드가 행·열로 온다. */
+  @Test
+  void preview_withoutFieldMappings_returnsRawTopLevelRows() {
+    assertRawRows(previewRaw(null));
+  }
+
+  /** 빈 매핑 목록도 원본 모드. */
+  @Test
+  void preview_emptyFieldMappings_returnsRawRows() {
+    assertRawRows(previewRaw(List.of()));
+  }
+
+  /** 웹이 보내는 빈칸 소스 매핑만 있어도 원본 모드. */
+  @Test
+  void preview_blankSourceFieldOnly_returnsRawRows() {
+    assertRawRows(
+        previewRaw(
+            List.of(new ApiCallPreviewRequest.FieldMappingPreview("", "", "TEXT", null, null))));
+  }
+
+  /** 매핑이 있으면 원본으로 바뀌지 않고 매핑 결과만 나온다. */
+  @Test
+  void preview_withFieldMapping_keepsMappedRows() {
+    ApiCallPreviewResponse response =
+        previewRaw(
+            List.of(new ApiCallPreviewRequest.FieldMappingPreview("id", "pk", "TEXT", null, null)));
+    assertThat(response.success()).isTrue();
+    assertThat(response.columns()).containsExactly("pk");
+    assertThat(response.rows().get(0).keySet()).containsExactly("pk");
+  }
+
+  /**
+   * 원본 행에서 값 전체가 BASIC 비밀번호인 칸은 가려지고, 글 속에 든 비밀번호도 가려진다 — 원본 모드는 rawJson 과 같은 규칙이라 흔한 단어 비밀번호면 다른
+   * 글도 가려질 수 있다(매핑 모드 결과 행은 전체 일치만 — preview_basicShortWordPassword_keepsRowsIntact).
+   */
+  @Test
+  void preview_rawRows_basicPasswordCellMasked() {
+    when(apiConnectionService.getByIdForCall(23L))
+        .thenReturn(connWithBase(23L, "BASIC", "http://localhost:" + wireMock.port()));
+    when(apiConnectionService.getDecryptedAuthConfig(23L))
+        .thenReturn(java.util.Map.of("authType", "BASIC", "username", "bob", "password", "admin"));
+    wireMock.stubFor(
+        get(urlEqualTo("/roles"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"role\":\"admin user\",\"pw\":\"admin\"}]")));
+
+    var response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                "/roles", "GET", null, null, null, "$", null, 23L, null, 5000));
+
+    assertThat(response.success()).isTrue();
+    assertThat(response.rows().get(0))
+        .containsEntry("role", "**** user")
+        .containsEntry("pw", "****");
+  }
+
+  /** 원본 행의 중첩 값 안에 든 BASIC 비밀번호도 가려진다(나머지 구조는 보존). */
+  @Test
+  void preview_rawRows_basicPasswordInNestedValueMasked() {
+    when(apiConnectionService.getByIdForCall(23L))
+        .thenReturn(connWithBase(23L, "BASIC", "http://localhost:" + wireMock.port()));
+    when(apiConnectionService.getDecryptedAuthConfig(23L))
+        .thenReturn(java.util.Map.of("authType", "BASIC", "username", "bob", "password", "admin"));
+    wireMock.stubFor(
+        get(urlEqualTo("/nestedpw"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"id\":1,\"user\":{\"name\":\"bob\",\"pw\":\"admin\"}}]")));
+
+    var response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                "/nestedpw", "GET", null, null, null, "$", null, 23L, null, 5000));
+
+    assertThat(response.success()).isTrue();
+    String user = (String) response.rows().get(0).get("user");
+    assertThat(user).doesNotContain("admin").contains("****").contains("name\":\"bob");
+  }
+
+  /**
+   * 원본 행의 문자열 칸 속에 든 BASIC 비밀번호도 가려진다 — 요청 본문을 문자열로 되돌려 주는 에코 API(라이브 확인에서 httpbin 의 data 칸으로 발견).
+   * 비밀번호가 없는 문자열 칸은 그대로다.
+   */
+  @Test
+  void preview_rawRows_basicPasswordInsideStringCellMasked() {
+    when(apiConnectionService.getByIdForCall(23L))
+        .thenReturn(connWithBase(23L, "BASIC", "http://localhost:" + wireMock.port()));
+    when(apiConnectionService.getDecryptedAuthConfig(23L))
+        .thenReturn(
+            java.util.Map.of("authType", "BASIC", "username", "bob", "password", "Wd947Secret"));
+    wireMock.stubFor(
+        get(urlEqualTo("/echopw"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody(
+                        "[{\"data\":\"{\\\"pw\\\":\\\"Wd947Secret\\\",\\\"pin\\\":7}\",\"city\":\"seoul\"}]")));
+
+    var response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                "/echopw", "GET", null, null, null, "$", null, 23L, null, 5000));
+
+    assertThat(response.success()).isTrue();
+    String data = (String) response.rows().get(0).get("data");
+    assertThat(data).doesNotContain("Wd947Secret");
+    assertThat(response.rows().get(0)).containsEntry("city", "seoul");
+  }
+
+  /** 원본 행의 큰 중첩 값 칸은 500자 + 「…」 로 잘리고 스칼라 칸은 그대로다. */
+  @Test
+  void preview_rawRows_largeNestedValueTruncated() {
+    String items = "[" + "\"abcdefghij\",".repeat(100) + "\"z\"]";
+    wireMock.stubFor(
+        get(urlEqualTo("/bigNested"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"id\":1,\"items\":" + items + "}]")));
+
+    var response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/bigNested", "GET", null, null, null, "$", null, null, null, 5000));
+
+    assertThat(response.success()).isTrue();
+    String cell = (String) response.rows().get(0).get("items");
+    assertThat(cell).hasSize(501).endsWith("…");
+    assertThat(response.rows().get(0)).containsEntry("id", 1);
+  }
+
+  /** WD-947 3차: 숫자 칸도 글 속 비밀번호 규칙을 따른다(91234567 속 123456) — 가릴 게 없는 숫자는 숫자로 남는다. */
+  @Test
+  void preview_rawRows_numberContainingPasswordMaskedAsString() {
+    when(apiConnectionService.getByIdForCall(23L))
+        .thenReturn(connWithBase(23L, "BASIC", "http://localhost:" + wireMock.port()));
+    when(apiConnectionService.getDecryptedAuthConfig(23L))
+        .thenReturn(java.util.Map.of("authType", "BASIC", "username", "bob", "password", "123456"));
+    wireMock.stubFor(
+        get(urlEqualTo("/numsub"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"n\":91234567,\"m\":7}]")));
+
+    var response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                "/numsub", "GET", null, null, null, "$", null, 23L, null, 5000));
+
+    assertThat(response.success()).isTrue();
+    assertThat(response.rows().get(0).get("n")).isInstanceOf(String.class);
+    assertThat(response.rows().get(0).get("n").toString()).doesNotContain("123456");
+    assertThat(response.rows().get(0).get("m")).isEqualTo(7);
+  }
+
+  /** 원본 모드 미리보기 요청의 잘못된 dateFormat 은 실행과 같은 설정 오류로 끝난다(WD-947 4차). */
+  @Test
+  void preview_rawMode_invalidDateFormatMapping_reportsConfigError() {
+    wireMock.stubFor(
+        get(urlEqualTo("/rawdf"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"id\":1}]")));
+
+    var response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/rawdf",
+                "GET",
+                null,
+                null,
+                null,
+                "$",
+                List.of(
+                    new ApiCallPreviewRequest.FieldMappingPreview(
+                        "", "t", "TIMESTAMP", "yyyy-MM-dd{", null)),
+                null,
+                null,
+                5000));
+
+    assertThat(response.success()).isFalse();
+    assertThat(response.errorMessage()).isNotBlank();
+    assertThat(response.rows()).isEmpty();
+  }
+
+  /** 원본 모드: 잘못된 sourceTimezone 도 설정 오류다. */
+  @Test
+  void preview_rawMode_invalidSourceTimezoneMapping_reportsConfigError() {
+    wireMock.stubFor(
+        get(urlEqualTo("/rawtz"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"id\":1}]")));
+
+    var response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/rawtz",
+                "GET",
+                null,
+                null,
+                null,
+                "$",
+                List.of(
+                    new ApiCallPreviewRequest.FieldMappingPreview(
+                        "", "t", "TIMESTAMP", null, "Not/AZone")),
+                null,
+                null,
+                5000));
+
+    assertThat(response.success()).isFalse();
+    assertThat(response.errorMessage()).isNotBlank();
+  }
+
+  /** 원본 모드: 올바른 dateFormat 이면 원본 행이 그대로 나온다. */
+  @Test
+  void preview_rawMode_validDateFormatMapping_returnsRawRows() {
+    wireMock.stubFor(
+        get(urlEqualTo("/rawok"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"id\":1}]")));
+
+    var response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/rawok",
+                "GET",
+                null,
+                null,
+                null,
+                "$",
+                List.of(
+                    new ApiCallPreviewRequest.FieldMappingPreview(
+                        "", "t", "TIMESTAMP", "yyyy-MM-dd HH:mm:ss", "Asia/Seoul")),
+                null,
+                null,
+                5000));
+
+    assertThat(response.success()).isTrue();
+    assertThat(response.rows().get(0)).containsEntry("id", 1);
+  }
+
+  /** 매핑 모드(소스 있음)에서도 같은 잘못된 dateFormat 은 같은 설정 오류다. */
+  @Test
+  void preview_mappedMode_invalidDateFormatMapping_reportsSameConfigError() {
+    wireMock.stubFor(
+        get(urlEqualTo("/mapdf"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"id\":1,\"at\":\"2024-01-01 00:00:00\"}]")));
+
+    var response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/mapdf",
+                "GET",
+                null,
+                null,
+                null,
+                "$",
+                List.of(
+                    new ApiCallPreviewRequest.FieldMappingPreview(
+                        "at", "t", "TIMESTAMP", "yyyy-MM-dd{", null)),
+                null,
+                null,
+                5000));
+
+    assertThat(response.success()).isFalse();
+    assertThat(response.errorMessage()).isNotBlank();
+  }
+
+  /** 지수 표기가 될 큰 소수도 평문 숫자 문자열로 비밀번호를 가린다(WD-947 4차). */
+  @Test
+  void preview_rawRows_largeDecimalContainingPasswordMasked() {
+    when(apiConnectionService.getByIdForCall(23L))
+        .thenReturn(connWithBase(23L, "BASIC", "http://localhost:" + wireMock.port()));
+    when(apiConnectionService.getDecryptedAuthConfig(23L))
+        .thenReturn(java.util.Map.of("authType", "BASIC", "username", "bob", "password", "345678"));
+    wireMock.stubFor(
+        get(urlEqualTo("/bigdec"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"amount\":12345678.9}]")));
+
+    var response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                "/bigdec", "GET", null, null, null, "$", null, 23L, null, 5000));
+
+    assertThat(response.success()).isTrue();
+    assertThat(response.rows().get(0).get("amount")).isEqualTo("12****.9");
+    assertThat(response.rows().toString()).doesNotContain("345678");
+  }
+
+  /** 가릴 것 없는 소수는 원래 Number 그대로. */
+  @Test
+  void preview_rawRows_plainDecimalStaysNumber() {
+    wireMock.stubFor(
+        get(urlEqualTo("/plaindec"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"v\":1.5}]")));
+
+    var response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/plaindec", "GET", null, null, null, "$", null, null, null, 5000));
+
+    assertThat(response.rows().get(0).get("v")).isInstanceOf(Number.class);
+    assertThat(((Number) response.rows().get(0).get("v")).doubleValue()).isEqualTo(1.5);
+  }
+
+  /** WD-947 3차: 500자 넘는 키는 뺀다(hiddenColumns), 600자리 숫자는 잘린 문자열이 된다. */
+  @Test
+  void preview_rawRows_overlongKeyHiddenAndHugeNumberTruncated() {
+    wireMock.stubFor(
+        get(urlEqualTo("/biglimits"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody(
+                        "[{\"id\":1,\""
+                            + "k".repeat(501)
+                            + "\":\"x\",\"big\":"
+                            + "7".repeat(600)
+                            + "}]")));
+
+    var response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/biglimits", "GET", null, null, null, "$", null, null, null, 5000));
+
+    assertThat(response.success()).isTrue();
+    assertThat(response.columns()).containsExactly("id", "big");
+    assertThat(response.totalColumns()).isEqualTo(2);
+    assertThat(response.hiddenColumns()).isEqualTo(1);
+    Object big = response.rows().get(0).get("big");
+    assertThat(big).isInstanceOf(String.class);
+    assertThat(((String) big).length()).isLessThanOrEqualTo(501);
+    assertThat((String) big).endsWith("…");
+  }
+
+  /** WD-947 3차: 소스 필드가 빈 매핑(TEXT)이 있어도 원본 행이 나온다(검사 통과). */
+  @Test
+  void preview_rawRows_blankSourceMappingValidStillRaw() {
+    wireMock.stubFor(
+        get(urlEqualTo("/blanksrc"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"id\":1}]")));
+
+    var response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/blanksrc",
+                "GET",
+                null,
+                null,
+                null,
+                "$",
+                List.of(new ApiCallPreviewRequest.FieldMappingPreview("", "c", "TEXT", null, null)),
+                null,
+                null,
+                5000));
+
+    assertThat(response.success()).isTrue();
+    assertThat(response.columns()).containsExactly("id");
+  }
+
+  /** 숫자로 온 BASIC 비밀번호 칸도 원본 행에서 가려진다. */
+  @Test
+  void preview_rawRows_numericPasswordValueMasked() {
+    when(apiConnectionService.getByIdForCall(23L))
+        .thenReturn(connWithBase(23L, "BASIC", "http://localhost:" + wireMock.port()));
+    when(apiConnectionService.getDecryptedAuthConfig(23L))
+        .thenReturn(java.util.Map.of("authType", "BASIC", "username", "bob", "password", "123456"));
+    wireMock.stubFor(
+        get(urlEqualTo("/numpw"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"id\":1,\"pin\":123456}]")));
+
+    var response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                "/numpw", "GET", null, null, null, "$", null, 23L, null, 5000));
+
+    assertThat(response.success()).isTrue();
+    assertThat(response.rows().get(0)).containsEntry("pin", "****").containsEntry("id", 1);
+  }
+
+  /** 비밀번호와 같은 열 이름은 원본 행·columns 에서 가려진다. */
+  @Test
+  void preview_rawRows_passwordKeyMasked() {
+    when(apiConnectionService.getByIdForCall(23L))
+        .thenReturn(connWithBase(23L, "BASIC", "http://localhost:" + wireMock.port()));
+    when(apiConnectionService.getDecryptedAuthConfig(23L))
+        .thenReturn(java.util.Map.of("authType", "BASIC", "username", "bob", "password", "admin"));
+    wireMock.stubFor(
+        get(urlEqualTo("/pwkey"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"admin\":1,\"id\":2}]")));
+
+    var response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                "/pwkey", "GET", null, null, null, "$", null, 23L, null, 5000));
+
+    assertThat(response.success()).isTrue();
+    // WD-947 리뷰: 비밀번호를 품은 키는 가려 두지 않고 열·행에서 뺀다(가린 이름 「****」 는 매핑할 수 없다).
+    assertThat(response.columns()).containsExactly("id");
+    assertThat(response.totalColumns()).isEqualTo(1);
+    assertThat(response.rows().get(0).keySet()).containsExactly("id");
+  }
+
+  /** WD-947 리뷰: 비밀번호를 부분 문자열로 품은 키(token_비밀번호)는 columns·rows 어디에도 나가지 않는다. */
+  @Test
+  void preview_rawRows_keyContainingPasswordExcluded() {
+    when(apiConnectionService.getByIdForCall(23L))
+        .thenReturn(connWithBase(23L, "BASIC", "http://localhost:" + wireMock.port()));
+    when(apiConnectionService.getDecryptedAuthConfig(23L))
+        .thenReturn(
+            java.util.Map.of("authType", "BASIC", "username", "bob", "password", "Wd947Secret"));
+    wireMock.stubFor(
+        get(urlEqualTo("/pwsubkey"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"id\":1,\"token_Wd947Secret\":\"x\"}]")));
+
+    var response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                "/pwsubkey", "GET", null, null, null, "$", null, 23L, null, 5000));
+
+    assertThat(response.success()).isTrue();
+    assertThat(response.columns()).containsExactly("id");
+    assertThat(response.rows().get(0).keySet()).containsExactly("id");
+    assertThat(response.totalColumns()).isEqualTo(1);
+    assertThat(response.hiddenColumns()).isEqualTo(1);
+    assertThat(response.columns().toString()).doesNotContain("Wd947Secret");
+    assertThat(response.rows().toString()).doesNotContain("Wd947Secret");
+  }
+
+  /** WD-947 리뷰: 본문 가림이 이미 가린 흔적(****)을 품은 키(쿼리 API 키가 든 키)는 열·행에서 뺀다. */
+  @Test
+  void preview_rawRows_keyContainingMaskedSecretExcluded() {
+    wireMock.stubFor(
+        get(urlPathEqualTo("/maskedkey"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"id\":1,\"k_" + WD177_KEY + "\":\"x\"}]")));
+
+    var response = previewWithQueryAuth(baseUrl() + "/maskedkey", WD177_KEY);
+
+    assertThat(response.success()).isTrue();
+    assertThat(response.columns()).containsExactly("id");
+    assertThat(response.rows().get(0).keySet()).containsExactly("id");
+    assertThat(response.totalColumns()).isEqualTo(1);
+    assertThat(response.columns().toString()).doesNotContain("****");
+  }
+
+  /** WD-947 리뷰: 객체가 아닌 항목은 행이 되지 않고(value 열 없음) 전체 항목 수에는 센다. */
+  @Test
+  void preview_rawRows_scalarItemsNotRows() {
+    wireMock.stubFor(
+        get(urlEqualTo("/mixed"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[1,\"a\",{\"k\":1}]")));
+    var mixed =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/mixed", "GET", null, null, null, "$", null, null, null, 5000));
+    assertThat(mixed.success()).isTrue();
+    assertThat(mixed.totalExtractedRows()).isEqualTo(3);
+    assertThat(mixed.rows()).hasSize(1);
+    assertThat(mixed.rows().get(0)).containsEntry("k", 1).hasSize(1);
+    assertThat(mixed.columns()).containsExactly("k");
+    assertThat(mixed.totalColumns()).isEqualTo(1);
+    assertThat(mixed.hiddenColumns()).isZero();
+
+    wireMock.stubFor(
+        get(urlEqualTo("/scalars"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[1,2]")));
+    var scalars =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/scalars", "GET", null, null, null, "$", null, null, null, 5000));
+    assertThat(scalars.success()).isTrue();
+    assertThat(scalars.totalExtractedRows()).isEqualTo(2);
+    assertThat(scalars.rows()).isEmpty();
+    assertThat(scalars.columns()).isEmpty();
+    assertThat(scalars.totalColumns()).isZero();
+  }
+
+  /** WD-947 리뷰: 100열에서 잘라도 전체 열 수(totalColumns)를 알린다. */
+  @Test
+  void preview_rawRows_columnsCappedReportsTotal() {
+    wireMock.stubFor(
+        get(urlEqualTo("/manyCols3"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody(manyKeysJson())));
+
+    var response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/manyCols3", "GET", null, null, null, "$", null, null, null, 5000));
+
+    assertThat(response.success()).isTrue();
+    assertThat(response.columns()).hasSize(100);
+    assertThat(response.totalColumns()).isEqualTo(150);
+    assertThat(response.rows().get(0)).hasSize(100);
+  }
+
+  /** 원본 행의 큰 스칼라 문자열 칸도 500자 + 「…」 로 잘린다. */
+  @Test
+  void preview_rawRows_largeScalarStringTruncated() {
+    wireMock.stubFor(
+        get(urlEqualTo("/bigScalar"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"blob\":\"" + "x".repeat(600) + "\"}]")));
+
+    var response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/bigScalar", "GET", null, null, null, "$", null, null, null, 5000));
+
+    assertThat(response.success()).isTrue();
+    String blob = (String) response.rows().get(0).get("blob");
+    assertThat(blob).hasSize(501).endsWith("…");
+  }
+
+  /** 원본 모드 columns 는 처음 나온 순서로 최대 100개다. */
+  @Test
+  void preview_rawRows_columnsCappedAt100() {
+    wireMock.stubFor(
+        get(urlEqualTo("/manyCols"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody(manyKeysJson())));
+
+    var response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/manyCols", "GET", null, null, null, "$", null, null, null, 5000));
+
+    assertThat(response.success()).isTrue();
+    assertThat(response.columns()).hasSize(100);
+    assertThat(response.columns().get(0)).isEqualTo("k0");
+  }
+
+  /** 열 상한은 미리보기 행에도 적용된다 — 키 150개 항목의 행도 100칸이다. */
+  @Test
+  void preview_rawRows_columnCapAppliesToRows() {
+    wireMock.stubFor(
+        get(urlEqualTo("/manyCols2"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody(manyKeysJson())));
+
+    var response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/manyCols2", "GET", null, null, null, "$", null, null, null, 5000));
+
+    assertThat(response.success()).isTrue();
+    assertThat(response.rows().get(0)).hasSize(100);
+  }
+
+  /** 키 150개를 가진 항목 하나의 JSON 배열. */
+  private static String manyKeysJson() {
+    StringBuilder sb = new StringBuilder("[{");
+    for (int i = 0; i < 150; i++) {
+      if (i > 0) sb.append(',');
+      sb.append("\"k").append(i).append("\":").append(i);
+    }
+    return sb.append("}]").toString();
   }
 
   /** 정상: dataPath를 지정하면 중첩 JSON에서 배열을 추출한다 */
@@ -1507,14 +2167,14 @@ class ApiCallPreviewServiceTest {
   }
 
   /**
-   * 빈 비밀은 URL 조립보다 먼저 본다 — 인코딩 뒤에도 만들 수 없는 주소(쿼리 값 속 {@code =})여도 빈 비밀 안내가 이기고 resolvedUrl 은 null
-   * 이며 아무것도 호출하지 않는다(WD-936 복원).
+   * 빈 비밀은 URL 조립보다 먼저 본다 — 인코딩 뒤에도 만들 수 없는 주소(쿼리 값 속 제어 문자)여도 빈 비밀 안내가 이기고 resolvedUrl 은 null 이며
+   * 아무것도 호출하지 않는다(WD-936 복원).
    */
   @Test
   void preview_emptySecretWithUnbuildableUrl_reportsEmptySecret() {
     ApiCallPreviewResponse response =
         service.preview(
-            inlinePreview("/data?q=a==b", java.util.Map.of("authType", "BEARER", "token", "")));
+            inlinePreview("/data?q=a\u0001b", java.util.Map.of("authType", "BEARER", "token", "")));
 
     assertThat(response.success()).isFalse();
     assertThat(response.errorMessage()).contains("Bearer 토큰이 비어 있습니다");
@@ -1592,7 +2252,8 @@ class ApiCallPreviewServiceTest {
         null,
         null,
         dataPath,
-        List.of(new ApiCallPreviewRequest.FieldMappingPreview(sourceField, "v", "TEXT")),
+        List.of(
+            new ApiCallPreviewRequest.FieldMappingPreview(sourceField, "v", "TEXT", null, null)),
         null,
         auth,
         5000);
@@ -1729,9 +2390,9 @@ class ApiCallPreviewServiceTest {
                 "$",
                 java.util.List.of(
                     new com.smartfirehub.pipeline.dto.ApiCallPreviewRequest.FieldMappingPreview(
-                        "auth", "auth", "TEXT"),
+                        "auth", "auth", "TEXT", null, null),
                     new com.smartfirehub.pipeline.dto.ApiCallPreviewRequest.FieldMappingPreview(
-                        "pw", "pw", "TEXT")),
+                        "pw", "pw", "TEXT", null, null)),
                 21L,
                 null,
                 5000));
@@ -1770,9 +2431,9 @@ class ApiCallPreviewServiceTest {
                 "$",
                 java.util.List.of(
                     new com.smartfirehub.pipeline.dto.ApiCallPreviewRequest.FieldMappingPreview(
-                        "role", "role", "TEXT"),
+                        "role", "role", "TEXT", null, null),
                     new com.smartfirehub.pipeline.dto.ApiCallPreviewRequest.FieldMappingPreview(
-                        "pw", "pw", "TEXT")),
+                        "pw", "pw", "TEXT", null, null)),
                 23L,
                 null,
                 5000));
@@ -2230,7 +2891,8 @@ class ApiCallPreviewServiceTest {
   @Test
   void preview_get_malformedPercentQueryName_notReportedAsOverride() {
     // 깨진 퍼센트 이름(%zz)은 메서드 변경 이름으로 판정하지 않는다. 홀로 있는 % 는 실행기(httpx)처럼 %25 로 인코딩돼 요청이 그대로
-    // 나간다(WD-936 리뷰 후속의 RequestUrlEncoding) — 그래서 거절 문구가 아니라 실제로 한 번 불렸는지로 확인한다(WD-970·WD-936 겹침 풀테스트 수정).
+    // 나간다(WD-936 리뷰 후속의 RequestUrlEncoding) — 그래서 거절 문구가 아니라 실제로 한 번 불렸는지로 확인한다(WD-970·WD-936 겹침
+    // 풀테스트 수정).
     wireMock.stubFor(
         get(urlPathEqualTo("/x")).willReturn(aResponse().withStatus(200).withBody("[]")));
     ApiCallPreviewResponse r = previewGet(baseUrl() + "/x?%zz=1", null, null);
@@ -2331,5 +2993,19 @@ class ApiCallPreviewServiceTest {
     ApiCallPreviewResponse r = previewMethod("POST", "/p");
     assertThat(r.success()).isTrue();
     wireMock.verify(1, postRequestedFor(urlPathEqualTo("/data")));
+  }
+
+  /** 미리보기 resolvedUrl 도 authority 안의 숨은 글자를 %XX 로 보이고 날것은 싣지 않는다(WD-1000 후속). */
+  @Test
+  void preview_authorityHiddenChar_resolvedUrlEncoded() {
+    // 빈 비밀 안내 경로(displayUrlOrNull)로 표시 URL 만 돌려받는다 — 호출은 하지 않는다.
+    ApiCallPreviewResponse response =
+        service.preview(
+            inlinePreview(
+                "http://local\u200Bhost:" + wireMock.port() + "/p",
+                java.util.Map.of("authType", "BEARER", "token", "")));
+
+    assertThat(response.resolvedUrl()).isNotNull().doesNotContain("\u200B");
+    assertThat(response.resolvedUrl()).contains("%E2%80%8B");
   }
 }

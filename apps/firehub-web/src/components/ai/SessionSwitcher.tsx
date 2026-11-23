@@ -25,10 +25,12 @@ function scrollIntoViewOnKeyboardFocus(e: FocusEvent<HTMLElement>) {
 interface SessionSwitcherProps {
   currentSessionId?: string | null;
   onNewSession: () => void;
+  /** 대화 삭제가 성공한 뒤 부른다 — 지운 대화가 열려 있었는지는 받는 쪽이 최신 상태로 판단한다 (WD-972) */
+  onSessionDeleted: (sessionId: string) => void;
   onSelectSession?: (session: AISession) => void;
 }
 
-export function SessionSwitcher({ currentSessionId, onNewSession, onSelectSession }: SessionSwitcherProps) {
+export function SessionSwitcher({ currentSessionId, onNewSession, onSessionDeleted, onSelectSession }: SessionSwitcherProps) {
   const [open, setOpen] = useState(false);
   const { data: sessions } = useAISessions();
   const deleteSession = useDeleteAISession();
@@ -156,7 +158,19 @@ export function SessionSwitcher({ currentSessionId, onNewSession, onSelectSessio
                         // 겹친 호출 중 마지막 것만 불리므로 promise 로 받는다. 오류 안내는 훅의 onError 가 띄운다.
                         const req = { id: session.id, neighborId };
                         pendingDeletes.current.add(req);
-                        deleteSession.mutateAsync(session.id).catch(() => pendingDeletes.current.delete(req));
+                        // 성공하면 지운 것이 지금 열린 대화인지의 판단·새 대화 전환은 useAIChat(onSessionDeleted)이 한다 (WD-972).
+                        // 성공/실패를 나눠 받아 onOk 의 오류가 실패 처리(기억에서 빼기)로 가지 않게 한다. 실패하면 현재 대화는 그대로다.
+                        deleteSession
+                          .mutateAsync(session.id)
+                          .then(
+                            () => onSessionDeleted(session.sessionId),
+                            (error) => {
+                              // 삭제 실패 안내는 훅의 onError 가 띄운다 — 원인만 남기고 기억에서 뺀다
+                              console.error('Failed to delete AI session:', error);
+                              pendingDeletes.current.delete(req);
+                            },
+                          )
+                          .catch((error) => console.error('Failed after AI session delete:', error));
                       }}
                       trigger={
                         <Button

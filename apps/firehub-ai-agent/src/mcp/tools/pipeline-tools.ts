@@ -311,7 +311,7 @@ export function registerPipelineTools(
 
     safeTool(
       'preview_api_call',
-      'API 호출을 미리보기합니다. 파이프라인에 저장하기 전에 응답 데이터를 확인할 수 있습니다. apiConnectionId 설정 시 path, 미설정 시 customUrl을 사용합니다. GET 요청만 보냅니다.',
+      'API 호출을 미리보기합니다. 파이프라인에 저장하기 전에 응답 데이터를 확인할 수 있습니다. apiConnectionId 설정 시 path, 미설정 시 customUrl을 사용합니다. GET 요청만 보냅니다. POST·PUT·DELETE 는 보낼 수 없고, X-HTTP-Method-Override 같은 메서드 변경 헤더나 `_method` 쿼리로 GET 을 바꿔 우회하는 시도도 거절됩니다. POST API 는 사용자가 파이프라인 편집기의 「테스트 호출」로 확인하도록 안내하고, PUT·DELETE 는 편집기에서도 미리볼 수 없다고 알립니다. 객체가 아닌 항목(숫자·문자열 배열)은 열로 매핑할 수 없어 행에 넣지 않습니다(실행하면 모든 열이 NULL 인 행으로 들어갑니다. rawJson 에서 봅니다). 비밀 값이 들었거나 이름이 너무 긴(500자 초과) 키는 빼고 그 수를 hiddenColumns 로 알립니다. totalColumns 가 columns 수보다 크면 앞 100개만 보인 것입니다.',
       {
         path: z
           .string()
@@ -340,10 +340,14 @@ export function registerPipelineTools(
               sourceField: z.string().describe('소스 필드명'),
               targetColumn: z.string().describe('대상 컬럼명'),
               dataType: z.string().optional().describe('데이터 타입'),
+              dateFormat: z.string().optional().describe('날짜 형식(선택) — 실행과 같은 형식 검사를 받는다'),
+              sourceTimezone: z.string().optional().describe('소스 타임존(선택)'),
             }),
           )
           .optional()
-          .describe('필드 매핑'),
+          .describe(
+            '필드 매핑. 생략하거나 비우면 항목의 최상위 필드가 그대로 행으로 오고 columns 에 필드 이름이 온다 — 그 이름으로 매핑을 만든다. 항목이 배열을 감싼 객체 하나로 오면 dataPath 를 그 배열로 지정한다(중첩 값은 500자까지만 보인다)',
+          ),
         apiConnectionId: z.number().optional().describe('저장된 API 연결 ID'),
         inlineAuth: z.record(z.string(), z.string()).optional().describe(INLINE_AUTH_DESCRIPTION),
         timeoutMs: z.number().optional().describe('타임아웃(ms)'),
@@ -356,7 +360,13 @@ export function registerPipelineTools(
         queryParams?: Record<string, string>;
         body?: string;
         dataPath: string;
-        fieldMappings?: Array<{ sourceField: string; targetColumn: string; dataType?: string }>;
+        fieldMappings?: Array<{
+          sourceField: string;
+          targetColumn: string;
+          dataType?: string;
+          dateFormat?: string;
+          sourceTimezone?: string;
+        }>;
         apiConnectionId?: number;
         inlineAuth?: Record<string, string>;
         timeoutMs?: number;

@@ -12,6 +12,17 @@ class RequestUrlEncodingTest {
     return RequestUrlEncoding.encodePathAndQuery(url);
   }
 
+  /** 참조 인코딩(WD-991) — 상대 참조·null·//authority·절대 URL. */
+  @Test
+  void encodeReference_variants() {
+    assertThat(RequestUrlEncoding.encodeReference("?q=가")).isEqualTo("?q=%EA%B0%80");
+    assertThat(RequestUrlEncoding.encodeReference(null)).isNull();
+    assertThat(RequestUrlEncoding.encodeReference("//한글.com/가 나"))
+        .isEqualTo("//한글.com/%EA%B0%80%20%EB%82%98");
+    assertThat(RequestUrlEncoding.encodeReference("https://x.com/가#f"))
+        .isEqualTo("https://x.com/%EA%B0%80");
+  }
+
   @Test
   void spaceInQuery() {
     assertThat(enc("https://example.com/search?q=seoul city"))
@@ -155,5 +166,152 @@ class RequestUrlEncodingTest {
     assertThat(RequestUrlEncoding.decodeForDisplay("https://h/p?k=****Ab12"))
         .isEqualTo("https://h/p?k=****Ab12");
     assertThat(RequestUrlEncoding.decodeForDisplay(null)).isNull();
+  }
+
+  /** 방향·보이지 않는 글자·공백류·C1·사적 사용 글자는 인코딩으로 남긴다(WD-1000). */
+  @Test
+  void decodeForDisplay_keepsInvisibleAndControlEncoded() {
+    assertThat(RequestUrlEncoding.decodeForDisplay("https://h/p?q=%E2%80%AEtxt.exe"))
+        .isEqualTo("https://h/p?q=%E2%80%AEtxt.exe");
+    assertThat(RequestUrlEncoding.decodeForDisplay("https://h/a%E2%80%8Bb"))
+        .isEqualTo("https://h/a%E2%80%8Bb");
+    assertThat(RequestUrlEncoding.decodeForDisplay("https://h/a%E2%80%A8b%E2%80%A9"))
+        .isEqualTo("https://h/a%E2%80%A8b%E2%80%A9");
+    assertThat(RequestUrlEncoding.decodeForDisplay("https://h/a%C2%A0b%E3%80%80"))
+        .isEqualTo("https://h/a%C2%A0b%E3%80%80");
+    assertThat(RequestUrlEncoding.decodeForDisplay("https://h/a%c2%85b"))
+        .isEqualTo("https://h/a%c2%85b");
+    assertThat(RequestUrlEncoding.decodeForDisplay("https://h/a%EE%80%80%EF%BB%BF"))
+        .isEqualTo("https://h/a%EE%80%80%EF%BB%BF");
+    assertThat(RequestUrlEncoding.decodeForDisplay("https://h/%EA%B2%80%E2%80%AE%EC%83%89"))
+        .isEqualTo("https://h/검%E2%80%AE색");
+  }
+
+  /** UTF-8 을 한 글자씩 — 잘못된 바이트만 인코딩으로 두고 앞뒤 정상 글자는 푼다(WD-1000). */
+  @Test
+  void decodeForDisplay_decodesPerCharacter() {
+    assertThat(RequestUrlEncoding.decodeForDisplay("https://h/%EA%B2%80%EC%83%89%FF"))
+        .isEqualTo("https://h/검색%FF");
+    assertThat(RequestUrlEncoding.decodeForDisplay("https://h/%EA%B2%EC%83%89"))
+        .isEqualTo("https://h/%EA%B2색");
+    assertThat(RequestUrlEncoding.decodeForDisplay("https://h/%C0%AF%E0%80%AF"))
+        .isEqualTo("https://h/%C0%AF%E0%80%AF");
+    assertThat(RequestUrlEncoding.decodeForDisplay("https://h/%ED%A0%80%F4%90%80%80"))
+        .isEqualTo("https://h/%ED%A0%80%F4%90%80%80");
+    assertThat(RequestUrlEncoding.decodeForDisplay("https://h/%B2%EA%B2%80"))
+        .isEqualTo("https://h/%B2검");
+    assertThat(RequestUrlEncoding.decodeForDisplay("https://h/%F0%9F%98%80%"))
+        .isEqualTo("https://h/😀%");
+    assertThat(RequestUrlEncoding.decodeForDisplay("https://h/%E%G1%EA"))
+        .isEqualTo("https://h/%E%G1%EA");
+  }
+
+  /** 한글 채움·점자 빈칸·결합 자소 결합자·변형 선택자·비문자는 표시 URL 에서도 %XX 로 남고, NFD 한글은 풀린다. (WD-1000 최종 리뷰) */
+  @Test
+  void decodeForDisplay_keepsInvisibleLettersAndNoncharactersEncoded() {
+    String[] seqs = {
+      "%E3%85%A4",
+      "%E1%85%A0",
+      "%E1%85%9F",
+      "%EF%BE%A0",
+      "%E2%A0%80",
+      "%CD%8F",
+      "%EF%B8%8F",
+      "%F3%A0%84%80",
+      "%EF%BF%BF",
+      "%EF%BF%BE"
+    };
+    for (String seq : seqs) {
+      String url = "https://h/a" + seq + "b";
+      assertThat(RequestUrlEncoding.decodeForDisplay(url)).isEqualTo(url);
+    }
+    assertThat(RequestUrlEncoding.decodeForDisplay("https://h/%E1%84%92%E1%85%A1%E1%86%AB"))
+        .isEqualTo("https://h/\u1112\u1161\u11AB");
+  }
+
+  /** RTL 글자·감싸는 표식·몽골/크메르 보이지 않는 글자·ASCII 뒤 덧씌움 표식은 인코딩으로 남는다(WD-1000). */
+  @Test
+  void decodeForDisplay_keepsRtlEnclosingAndOverlayEncoded() {
+    String[] same = {
+      "https://h/%D7%90%D7%91/123",
+      "https://h/%D8%A7",
+      "https://h/a%CC%B8b",
+      "https://h/x%E2%83%9D",
+      "https://h/a%E1%A0%8Bb",
+      "https://h/a%E1%9E%B4b",
+      "https://h/e%CC%81"
+    };
+    for (String url : same) {
+      assertThat(RequestUrlEncoding.decodeForDisplay(url)).isEqualTo(url);
+    }
+    assertThat(RequestUrlEncoding.decodeForDisplay("https://h/%E1%84%92%E1%85%A1%E1%86%AB"))
+        .isEqualTo("https://h/\u1112\u1161\u11AB");
+    assertThat(RequestUrlEncoding.decodeForDisplay("https://h/%C3%A9")).isEqualTo("https://h/é");
+    // 비ASCII 글자 뒤의 결합 표식은 푼다
+    assertThat(RequestUrlEncoding.decodeForDisplay("https://h/%C3%A9%CC%81"))
+        .isEqualTo("https://h/\u00E9\u0301");
+  }
+
+  /** 제어 문자 때문에 인코딩이 원문으로 물러서도 표시용은 숨은 글자·제어를 %XX 로 보인다(WD-1000 후속). */
+  @Test
+  void toDisplayUrl_controlCharFallback_hiddenCharsEncoded() {
+    String out = RequestUrlEncoding.toDisplayUrl("https://h/a\u202Eb\t");
+    assertThat(out).doesNotContain("\u202E").doesNotContain("\t");
+    assertThat(out).contains("%E2%80%AE").contains("%09");
+  }
+
+  /** 짝 없는 서로게이트는 WTF-8 3바이트 %XX 로 보이고 날것은 없다. */
+  @Test
+  void toDisplayUrl_loneSurrogate_shownAsWtf8Bytes() {
+    String out = RequestUrlEncoding.toDisplayUrl("https://h/a\uD800b");
+    assertThat(out).isEqualTo("https://h/a%ED%A0%80b");
+    assertThat(RequestUrlEncoding.toDisplayUrl("https://h/\uDC00\n")).contains("%ED%B0%80");
+  }
+
+  /** 물러선 경우에도 보통 글자(한글)는 글자로 둔다. */
+  @Test
+  void toDisplayUrl_fallbackKeepsKorean() {
+    assertThat(RequestUrlEncoding.toDisplayUrl("https://h/검색\t")).isEqualTo("https://h/검색%09");
+    assertThat(RequestUrlEncoding.toDisplayUrl("https://h/검색")).isEqualTo("https://h/검색");
+  }
+
+  /** authority(host) 안의 숨은 글자도 %XX 로 보인다. */
+  @Test
+  void toDisplayUrl_authorityHiddenCharEncoded() {
+    String out = RequestUrlEncoding.toDisplayUrl("https://ex\u200Bample.com/p");
+    assertThat(out).doesNotContain("\u200B").contains("%E2%80%8B");
+    assertThat(RequestUrlEncoding.toDisplayUrl("https://u:p@exam.com/p"))
+        .isEqualTo("https://u:p@exam.com/p");
+  }
+
+  /** ASCII 뒤 Mc 는 %XX 유지, 비ASCII 글자 뒤 Mc 는 푼다. */
+  @Test
+  void decodeForDisplay_spacingMarkAfterAscii_kept() {
+    assertThat(RequestUrlEncoding.decodeForDisplay("https://h/a%E0%A4%83"))
+        .isEqualTo("https://h/a%E0%A4%83");
+    assertThat(RequestUrlEncoding.decodeForDisplay("https://h/%EA%B2%80%E0%A4%83"))
+        .isEqualTo("https://h/\uAC80\u0903");
+  }
+
+  /** 아랍 숫자는 AN 사이의 중립 글자(-)를 오른쪽→왼쪽으로 풀어 순서를 뒤집으므로 인코딩 그대로 둔다. */
+  @Test
+  void decodeForDisplay_arabicIndicDigits_kept() {
+    assertThat(RequestUrlEncoding.decodeForDisplay("https://h/p/%D9%A1-%D9%A2"))
+        .isEqualTo("https://h/p/%D9%A1-%D9%A2");
+  }
+
+  /** 물러선 경우에도 fragment 는 표시 URL 에서 버린다(비밀이 실리지 않게). */
+  @Test
+  void toDisplayUrl_fallbackDropsFragment() {
+    assertThat(RequestUrlEncoding.toDisplayUrl("https://h/cb\t#access_token=SECRET"))
+        .isEqualTo("https://h/cb%09");
+  }
+
+  /** 물러선 경우에도 평소와 같이 금지 ASCII·홀로 % 를 인코딩해 두 번 적용해도 같다(멱등). */
+  @Test
+  void toDisplayUrl_fallbackIsIdempotentAndEncodesForbiddenAscii() {
+    String once = RequestUrlEncoding.toDisplayUrl("https://h/a\t\"<>|^{}%zz/검색?q=1 2\u202E");
+    assertThat(once).isEqualTo("https://h/a%09%22%3C%3E%7C%5E%7B%7D%25zz/검색?q=1%202%E2%80%AE");
+    assertThat(RequestUrlEncoding.toDisplayUrl(once)).isEqualTo(once);
   }
 }

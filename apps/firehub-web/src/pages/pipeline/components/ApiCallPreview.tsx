@@ -11,6 +11,9 @@ interface ApiCallPreviewProps {
     rawJson: string | null;
     rows: Array<Record<string, unknown>>;
     columns: string[];
+    /** 열 전체 수 — columns 보다 크면 앞 일부만 보인 것(WD-947 리뷰) */
+    totalColumns?: number;
+    hiddenColumns?: number;
     totalExtractedRows: number;
     errorMessage: string | null;
     resolvedUrl: string | null;
@@ -154,6 +157,17 @@ export default function ApiCallPreview({ result }: ApiCallPreviewProps) {
         총 <span className="font-medium text-foreground">{result.totalExtractedRows}</span>개 행
         추출 (최대 5개 표시)
       </p>
+      {result.totalColumns !== undefined && result.totalColumns > result.columns.length && (
+        <p className="text-xs text-muted-foreground">
+          열 {result.totalColumns}개 중 앞 {result.columns.length}개만 표시합니다
+        </p>
+      )}
+
+      {result.hiddenColumns !== undefined && result.hiddenColumns > 0 && (
+        <p className="text-xs text-muted-foreground">
+          비밀 값이 들었거나 이름이 너무 긴 열 {result.hiddenColumns}개는 숨겼습니다
+        </p>
+      )}
 
       {/* JSON Tree */}
       <Collapsible open={jsonOpen} onOpenChange={setJsonOpen}>
@@ -184,9 +198,14 @@ export default function ApiCallPreview({ result }: ApiCallPreviewProps) {
 
       {/* Mapped Data Table */}
       {result.columns.length === 0 || displayRows.length === 0 ? (
-        <p className="text-xs text-muted-foreground text-center py-2">
-          매핑된 데이터가 없습니다
-        </p>
+        <div className="text-center py-2 space-y-1">
+          <p className="text-xs text-muted-foreground">매핑된 데이터가 없습니다</p>
+          {result.totalExtractedRows > 0 && result.rows.length === 0 && (
+            <p className="text-xs text-muted-foreground">
+              객체가 아닌 항목은 열로 보일 수 없습니다 — 원본 JSON 에서 확인하세요
+            </p>
+          )}
+        </div>
       ) : (
         <div className="overflow-auto rounded border">
           <table className="w-full text-xs border-collapse">

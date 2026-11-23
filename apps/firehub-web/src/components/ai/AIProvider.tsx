@@ -32,6 +32,8 @@ interface AIContextValue {
   sendMessage: (content: string, files?: File[]) => void;
   stopStreaming: () => void;
   startNewSession: () => void;
+  /** 대화 삭제 성공 뒤 호출 — 지운 것이 지금 열린 대화면(스트리밍이면 서버 취소 후) 캔버스까지 초기화하며 새 대화로 바꾼다 (WD-972) */
+  onSessionDeleted: (sessionId: string) => void;
   loadSession: (sessionId: string) => void;
   // Canvas state (native mode) -- grouped to prevent AIContextValue bloat
   canvas: ReturnType<typeof useCanvasState>;
@@ -104,6 +106,7 @@ export function AIProvider({ children }: { children: ReactNode }) {
     stopStreaming,
     startNewSession: startNewSessionBase,
     loadSession: loadSessionBase,
+    handleSessionDeleted: handleSessionDeletedBase,
     contextTokens,
     isCompacting,
     compactionStartedAt,
@@ -126,6 +129,11 @@ export function AIProvider({ children }: { children: ReactNode }) {
     canvas.resetCanvas();
     startNewSessionBase();
   }, [canvas, startNewSessionBase]);
+
+  const onSessionDeleted = useCallback((sessionId: string) => {
+    // 훅이 새 대화로 바꿨을 때만 캔버스를 비운다(startNewSession 래퍼와 같은 효과)
+    if (handleSessionDeletedBase(sessionId)) canvas.resetCanvas();
+  }, [canvas, handleSessionDeletedBase]);
 
   const loadSession = useCallback(async (sessionId: string) => {
     canvas.resetCanvas();
@@ -169,6 +177,7 @@ export function AIProvider({ children }: { children: ReactNode }) {
       sendMessage,
       stopStreaming,
       startNewSession,
+      onSessionDeleted,
       loadSession,
       canvas,
     }),
@@ -193,6 +202,7 @@ export function AIProvider({ children }: { children: ReactNode }) {
       sendMessage,
       stopStreaming,
       startNewSession,
+      onSessionDeleted,
       loadSession,
       canvas,
     ]
