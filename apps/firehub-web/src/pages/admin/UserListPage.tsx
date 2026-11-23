@@ -10,6 +10,7 @@ import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { TruncatedText } from '@/components/ui/truncated-text';
 import { useDebounceValue } from '@/hooks/useDebounceValue';
 import { useLastPageInfo } from '@/hooks/useLastPageInfo';
+import { offlineListMessage, useOfflinePaused } from '@/hooks/useOnlineStatus';
 import { membershipRoleLabel } from '@/lib/membership-role';
 import { parseNonNegativeInt } from '@/lib/pagination';
 
@@ -78,7 +79,10 @@ export default function UserListPage() {
     page,
     size: pageSize,
   };
-  const { data: users, isLoading, isError, isPlaceholderData } = useUsers(userParams);
+  const { data: users, isLoading, isError, isPlaceholderData, isPaused } = useUsers(userParams);
+  // 오프라인 쪽 이동 대기는 흐림·inert 없이 안내를 보인다(WD-982, useOfflinePaused)
+  const offlinePaused = useOfflinePaused(isPaused, isPlaceholderData);
+  const isTransitioning = isPlaceholderData && !offlinePaused;
 
   const { totalPages, totalElements } = useLastPageInfo(users, userParams);
 
@@ -116,8 +120,8 @@ export default function UserListPage() {
         {/* WD-982: 쪽 이동 중 이전 행은 흐리게 하고 누를 수 없게 한다(감사 로그와 같은 방식) */}
         <Table
           aria-label="사용자 목록"
-          aria-busy={isPlaceholderData || undefined}
-          className={isPlaceholderData ? 'pointer-events-none opacity-60' : undefined}
+          aria-busy={isTransitioning || undefined}
+          className={isTransitioning ? 'pointer-events-none opacity-60' : undefined}
         >
           <TableHeader>
             <TableRow>
@@ -128,9 +132,12 @@ export default function UserListPage() {
             </TableRow>
           </TableHeader>
           {/* inert: 이동 중 낡은 행을 키보드로도 열 수 없게 한다 (WD-982) */}
-          <TableBody inert={isPlaceholderData}>
+          <TableBody inert={isTransitioning}>
             {isLoading || pageOutOfRange ? (
               <TableSkeletonRows columns={4} rows={5} />
+            ) : offlinePaused ? (
+              // 오프라인 쪽 이동 대기는 흐림·inert 없이 안내를 보인다(WD-982, useOfflinePaused)
+              <TableEmptyRow colSpan={4} message={offlineListMessage('사용자')} />
             ) : isError ? (
               <TableErrorRow colSpan={4} />
             ) : users && users.content.length > 0 ? (

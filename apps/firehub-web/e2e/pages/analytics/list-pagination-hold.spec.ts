@@ -8,7 +8,7 @@ import {
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { failPageRequests, holdRequests } from '../../fixtures/hold-api';
-import { isUnderInert } from '../../fixtures/inert-a11y';
+import { expectOfflineNoticeExposed, isUnderInert } from '../../fixtures/inert-a11y';
 
 /**
  * 분석 목록 세 화면(쿼리·차트·대시보드)의 쪽 이동 유지 (WD-982)
@@ -117,6 +117,30 @@ for (const screen of SCREENS) {
       await expect.poll(held.count).toBeGreaterThan(before);
       await expect(page.getByText(firstRowName, { exact: true })).toHaveCount(0);
       held.release();
+    });
+
+    test('오프라인에서 다음 쪽으로 가면 오프라인 안내가 보이고 페이지네이션이 남는다 (WD-982 리뷰 후속)', async ({
+      authenticatedPage: page,
+    }) => {
+      await mockPagedList(page, screen);
+      await page.goto(screen.path);
+      const nav = page.getByRole('navigation', { name: '페이지네이션' });
+      await expect(page.getByText(firstRowName, { exact: true })).toBeVisible();
+
+      await page.context().setOffline(true);
+      await nav.getByRole('button', { name: '다음 페이지' }).click();
+
+      // 캐시 없는 다음 쪽 조회가 오프라인에서 대기한다 — 흐린 이전 행만 남지 않고 안내를 보이며, 페이지네이션은 남는다
+      await expect(
+        page.getByText(`인터넷 연결이 없어 ${screen.label} 목록을 불러오지 못하고 있습니다. 연결되면 자동으로 다시 불러옵니다.`),
+      ).toBeVisible();
+      await expect(nav).toBeVisible();
+
+      // WD-982 code-review: 안내가 흐림·inert 밖에서 노출된다 — 스크린리더에 들리고 비활성처럼 보이지 않는다
+      await expectOfflineNoticeExposed(page, screen.tableName);
+
+      await page.context().setOffline(false);
+      await expect(page.getByText(`${screen.label} 2쪽 행`, { exact: true })).toBeVisible();
     });
 
     test('다음 쪽이 실패해도 페이지네이션이 남고 이전 쪽으로 돌아간다 (WD-982)', async ({

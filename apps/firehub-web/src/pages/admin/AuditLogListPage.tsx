@@ -36,6 +36,7 @@ import { useMyPermissions } from '@/hooks/queries/useMyPermissions';
 import { useUsers } from '@/hooks/queries/useUsers';
 import { useDebounceValue } from '@/hooks/useDebounceValue';
 import { useLastPageInfo } from '@/hooks/useLastPageInfo';
+import { offlineListMessage, useOfflinePaused } from '@/hooks/useOnlineStatus';
 import { formatDateTime, formatIpAddress } from '@/lib/formatters';
 import type { AuditLogResponse } from '@/types/auditLog';
 
@@ -585,12 +586,16 @@ export default function AuditLogListPage() {
     endDate: endDate ? toIsoDateTime(endDate, true) : undefined,
     size: pageSize,
   };
-  const { data: logs, isLoading, isError, isPlaceholderData } = useAuditLogs({
+  const { data: logs, isLoading, isError, isPlaceholderData, isPaused } = useAuditLogs({
     ...auditParams,
     page,
     // 날짜 범위가 역전된 상태에서는 무의미한 조회이므로 API 호출 자체를 보류한다
     enabled: !isDateRangeInverted,
   });
+
+  // 오프라인 쪽 이동 대기는 흐림·inert 없이 안내를 보인다(WD-982, useOfflinePaused)
+  const offlinePaused = useOfflinePaused(isPaused, isPlaceholderData);
+  const isTransitioning = isPlaceholderData && !offlinePaused;
 
   const { totalPages, totalElements } = useLastPageInfo(logs, auditParams);
 
@@ -740,8 +745,8 @@ export default function AuditLogListPage() {
             흐리게 하며 행 클릭(상세 열기)을 막아 낡은 행을 누르지 못하게 한다(키보드는 tbody inert). 페이지네이션 nav 는 표 밖이라 막히지 않아 포커스가 유지된다. */}
         <Table
           aria-label="감사 로그"
-          aria-busy={isPlaceholderData || undefined}
-          className={isPlaceholderData ? 'pointer-events-none opacity-60' : undefined}
+          aria-busy={isTransitioning || undefined}
+          className={isTransitioning ? 'pointer-events-none opacity-60' : undefined}
         >
           <TableHeader>
             <TableRow>
@@ -756,12 +761,15 @@ export default function AuditLogListPage() {
           </TableHeader>
           {/* inert: 이동 중 낡은 행은 마우스뿐 아니라 키보드(Tab·Enter)로도 상세를 열 수 없게 한다.
               포커스는 nav 버튼에서 이동을 시작하므로 inert 영역 안에 있지 않아 포커스가 빠지지 않는다. */}
-          <TableBody inert={isPlaceholderData}>
+          <TableBody inert={isTransitioning}>
             {isDateRangeInverted ? (
               // 날짜 범위 역전 상태 — "결과 없음"과 구분되는 전용 메시지 (#541)
               <TableEmptyRow colSpan={7} message="날짜 범위가 올바르지 않아 조회할 수 없습니다." />
             ) : isLoading ? (
               <TableSkeletonRows columns={7} rows={5} />
+            ) : offlinePaused ? (
+              // 오프라인 쪽 이동 대기는 흐림·inert 없이 안내를 보인다(WD-982, useOfflinePaused)
+              <TableEmptyRow colSpan={7} message={offlineListMessage('감사 로그')} />
             ) : isError ? (
               <TableErrorRow colSpan={7} />
             ) : logs && logs.content.length > 0 ? (
@@ -825,9 +833,10 @@ export default function AuditLogListPage() {
         </Table>
       </div>
 
-      {/* WD-982: 기억한 쪽 수가 있을 때만 그린다 — 다음 쪽 실패·이동 중에는 기억값으로 남아 이전 쪽으로 돌아갈 수 있고,
+      {/* WD-982 리뷰 후속: 응답을 받았으면(0건 결과 포함, totalPages 0) 「페이지당」 줄을 남겨 크기를 바꿀 수 있게 한다. 날짜 역순은 조회 보류라 data 가 남아 있어도 제외한다.
+          WD-982: 기억한 쪽 수가 있을 때만 그린다 — 다음 쪽 실패·이동 중에는 기억값으로 남아 이전 쪽으로 돌아갈 수 있고,
           첫 로딩·날짜 역순·첫 조회 실패(기억 0)에는 「페이지당」 줄만 홀로 보이지 않는다. 쪽 수가 1 이하면 컴포넌트가 스스로 숨긴다 */}
-      {totalPages > 0 && (
+      {(totalPages > 0 || (!!logs && !isDateRangeInverted)) && (
         <SimplePagination
           page={page}
           totalPages={totalPages}
