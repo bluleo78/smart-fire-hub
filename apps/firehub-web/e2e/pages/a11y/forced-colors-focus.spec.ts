@@ -1,3 +1,5 @@
+import { createRequire } from 'node:module';
+
 import type { Locator, Page } from '@playwright/test';
 
 import {
@@ -8,11 +10,17 @@ import { createPropertyReviewItem } from '../../factories/reviewItem.factory';
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import {
+  DATASET_WRITE_PERMISSIONS,
   grantDatasetPermissions,
+  mockDatasetReferences,
   setupDatasetDetailMocks,
   setupDatasetMocks,
 } from '../../fixtures/dataset.fixture';
 import { readFocusStyle, tabUntilFocused } from '../../fixtures/keyboard-focus';
+import {
+  grantPipelinePermissions,
+  setupPipelineEditorMocks,
+} from '../../fixtures/pipeline.fixture';
 
 /**
  * 고대비(forced-colors) 모드 전역 키보드 초점 표시 (WD-949, WD-944 후속)
@@ -37,6 +45,19 @@ async function gotoDatasetList(page: Page) {
   );
   await page.goto('/data/datasets');
   await expect(page.getByPlaceholder('데이터셋 검색...')).toBeVisible();
+}
+
+/**
+ * 검수 인박스 화면 준비(항목 없음) — 권한·빈 목록을 모킹하고 /knowledge-graph/review 로 이동한다.
+ * 항목이 있어야 하는 시험은 모킹이 달라 이 헬퍼를 쓰지 않는다.
+ */
+async function gotoReviewInbox(page: Page) {
+  await mockApi(page, 'GET', '/api/v1/auth/me/permissions', [
+    'dataset:read',
+    'dataset:write',
+  ]);
+  await mockApi(page, 'GET', '/api/v1/graphrag/review-items', []);
+  await page.goto('/knowledge-graph/review');
 }
 
 /**
@@ -258,22 +279,41 @@ test.describe('고대비 모드 전역 초점 표시 (WD-949)', () => {
     ).toBe('-2px');
   });
 
+  // WD-1020: 보통 모드(forcedColors 없음)에서도 인박스 표 초점 outline 이 안쪽으로 그려져야 한다.
+  // 기본 바깥 outline(auto 1px, offset 0)은 표 래퍼(overflow:auto)에 잘려 복귀 지점이 안 보였다.
+  test('보통 모드: 검수 인박스 표(tabindex=-1)는 안쪽 outline 이 그려져 컨테이너에 잘리지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    await gotoReviewInbox(page);
+    const table = page.getByTestId('review-inbox-table');
+    await expect(table).toBeVisible();
+    // 페이지가 직접 주는 속성 — 시험이 대신 주면 페이지 회귀를 못 잡는다
+    await expect(table).toHaveAttribute('tabindex', '-1');
+    // 키보드 직후 스크립트 초점 = 「다시 시도」 뒤 복귀 경로
+    await page.keyboard.press('Tab');
+    await table.evaluate((node) => {
+      node.focus();
+    });
+    const style = await readFocusStyle(table);
+
+    expect(style.focusVisible).toBe(true);
+    expect(style.outlineStyle).not.toBe('none');
+    expect(style.outlineStyle).not.toBe('auto');
+    expect(style.outlineWidth).toBe('2px');
+    expect(style.outlineOffset, '바깥 outline 은 표 래퍼에 잘린다').toBe('-2px');
+  });
+
   test('고대비 모드: 검수 인박스 표(tabindex=-1)는 안쪽 offset outline 이 그려진다', async ({
     authenticatedPage: page,
   }) => {
     await page.emulateMedia({ forcedColors: 'active' });
-    await mockApi(page, 'GET', '/api/v1/auth/me/permissions', [
-      'dataset:read',
-      'dataset:write',
-    ]);
-    await mockApi(page, 'GET', '/api/v1/graphrag/review-items', []);
-    await page.goto('/knowledge-graph/review');
+    await gotoReviewInbox(page);
     const table = page.getByTestId('review-inbox-table');
     await expect(table).toBeVisible();
     // 「다시 시도」 뒤 초점 복귀와 같은 경로 — 키보드 직후 스크립트로 초점을 주면 :focus-visible 이 된다
+    await expect(table).toHaveAttribute('tabindex', '-1');
     await page.keyboard.press('Tab');
     await table.evaluate((node) => {
-      node.tabIndex = -1;
       node.focus();
     });
     const style = await readFocusStyle(table);
@@ -286,7 +326,9 @@ test.describe('고대비 모드 전역 초점 표시 (WD-949)', () => {
     ).toBe('-2px');
   });
 
-  test('고대비 모드: tabindex=-1 인 role=menu 컨테이너에는 outline 이 없고 tabindex=0 인 것에는 있다', async ({
+  // WD-1020: CSS 규칙 단위 시험 — 주입 마크업으로 전역 규칙의 :not(:where(...)) 제외 문법만 본다.
+  // 실제 컴포넌트가 이 role·tabindex 를 내는지는 아래 「실제 컴포넌트」 시험이 본다.
+  test('고대비 모드(CSS 규칙 단위): tabindex=-1 인 role=menu 컨테이너에는 outline 이 없고 tabindex=0 인 것에는 있다', async ({
     authenticatedPage: page,
   }) => {
     await page.emulateMedia({ forcedColors: 'active' });
@@ -301,8 +343,6 @@ test.describe('고대비 모드 전역 초점 표시 (WD-949)', () => {
       pStyle.outlineStyle,
       '프로그램 초점 전용(tabindex=-1) 메뉴 컨테이너에는 전역 outline(solid)이 그려지면 안 된다(브라우저 기본 auto 또는 none)',
     ).toMatch(/^(auto|none)$/);
-    expect(pStyle.outlineWidth === '2px' && pStyle.outlineStyle === 'solid').toBe(false);
-
 
     expect(tStyle.focusVisible).toBe(true);
     expect(
@@ -311,7 +351,8 @@ test.describe('고대비 모드 전역 초점 표시 (WD-949)', () => {
     ).toBe('solid');
   });
 
-  test('고대비 모드: tabindex=-1 tabpanel 컨테이너에는 전역 outline 이 없다', async ({
+  // WD-1020: CSS 규칙 단위 시험 — 실제 tabpanel 은 아래 「실제 컴포넌트」 시험이 본다.
+  test('고대비 모드(CSS 규칙 단위): tabindex=-1 tabpanel 컨테이너에는 전역 outline 이 없다', async ({
     authenticatedPage: page,
   }) => {
     await page.emulateMedia({ forcedColors: 'active' });
@@ -346,6 +387,183 @@ test.describe('고대비 모드 전역 초점 표시 (WD-949)', () => {
       style.outlineStyle,
       '제외 목록의 ID 가 특이도를 올리면 이 outline:none 을 이겨 버린다',
     ).toBe('none');
+  });
+
+  /**
+   * 파이프라인 편집기(수정 모드)를 열고 xyflow 노드·연결선 locator 를 돌려준다 (WD-1020).
+   * 실제 앱 스택으로 xyflow CSS(레이어 밖 outline:none)와 전역 규칙의 특이도 싸움을 시험한다.
+   */
+  async function openPipelineEditor(page: Page) {
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await grantPipelinePermissions(page);
+    await setupPipelineEditorMocks(page, 1);
+    await page.goto('/pipelines/1');
+    await page.getByRole('button', { name: '수정' }).click();
+    const node = page.locator('.react-flow__node').first();
+    const edge = page.locator('.react-flow__edge').first();
+    await expect(node).toBeVisible();
+    await expect(edge).toBeAttached();
+    return { node, edge };
+  }
+
+  /**
+   * 노드·연결선에 키보드 직후 초점을 줘 계산 스타일을 읽는다.
+   * 연결선은 Tab 으로 안정적으로 닿기 어려워, Tab 한 번 뒤 focus() 로 :focus-visible 을 참으로 만든다.
+   */
+  async function focusAndReadNodeEdge(page: Page, node: Locator, edge: Locator) {
+    await page.keyboard.press('Tab');
+    await node.evaluate((n) => (n as HTMLElement).focus());
+    const nodeStyle = await readFocusStyle(node);
+    await edge.evaluate((n) => (n as unknown as HTMLElement).focus());
+    const edgeStyle = await readFocusStyle(edge);
+    return { nodeStyle, edgeStyle };
+  }
+
+  test('파이프라인 편집기 노드·연결선: 고대비에서는 outline 이 보이고 보통 모드에는 보강 규칙이 새지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    // 편집기는 한 번만 연다 — 첫 읽기 전에 고대비를 켠다
+    await page.emulateMedia({ forcedColors: 'active' });
+    const { node, edge } = await openPipelineEditor(page);
+    const forced = await focusAndReadNodeEdge(page, node, edge);
+    expect(forced.nodeStyle.focusVisible).toBe(true);
+    expect(forced.nodeStyle.outlineStyle, 'xyflow 노드 outline:none 을 이겨야 한다').toBe('solid');
+    expect(forced.nodeStyle.outlineWidth).toBe('2px');
+    expect(forced.edgeStyle.focusVisible).toBe(true);
+    expect(forced.edgeStyle.outlineStyle, 'xyflow 연결선 outline:none 을 이겨야 한다').toBe('solid');
+    expect(forced.edgeStyle.outlineWidth).toBe('2px');
+
+    // 보통 모드로 돌려 같은 요소를 다시 읽는다 — 보강 규칙(2px solid)이 새지 않았는지만 본다
+    await page.emulateMedia({ forcedColors: 'none' });
+    const normal = await focusAndReadNodeEdge(page, node, edge);
+    expect(normal.nodeStyle.focusVisible).toBe(true);
+    expect(normal.nodeStyle.outlineWidth === '2px' && normal.nodeStyle.outlineStyle === 'solid').toBe(false);
+    expect(normal.edgeStyle.outlineWidth === '2px' && normal.edgeStyle.outlineStyle === 'solid').toBe(false);
+  });
+
+  test('고대비 모드: maplibre 컨트롤 버튼(라이브러리 CSS outline:none)도 outline 이 보인다', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.emulateMedia({ forcedColors: 'active' });
+    await gotoDatasetList(page);
+    // 실제 라이브러리 CSS 를 그대로 주입한다 — 복사본이면 라이브러리 갱신을 따라가지 못한다
+    await page.addStyleTag({
+      // 패키지 해석으로 경로를 얻는다(cwd 가정 제거)
+      path: createRequire(import.meta.url).resolve('maplibre-gl/dist/maplibre-gl.css'),
+    });
+    const [style] = await injectAndFocus(
+      page,
+      '<div class="maplibregl-ctrl maplibregl-ctrl-group"><button id="ml-btn" type="button">+</button></div>',
+      ['#ml-btn'],
+    );
+    expect(style.focusVisible).toBe(true);
+    expect(style.outlineStyle, 'maplibre outline:none 을 이겨야 한다').toBe('solid');
+    expect(style.outlineWidth).toBe('2px');
+    expect(style.outlineOffset).toBe('-2px');
+  });
+
+  /**
+   * WD-1020: 제외 목록의 실제 컴포넌트 검증 헬퍼.
+   * 주입 마크업 시험은 라이브러리가 role·tabindex 를 바꿔도 못 잡으므로, 실제 화면을 열어
+   * 컨테이너의 role·tabindex="-1" 속성을 먼저 단언하고(바뀌면 여기서 먼저 실패),
+   * 키보드 직후 컨테이너에 focus() 를 줘 :focus-visible 인 상태에서 outline 이 없음을 단언한다.
+   * 이 헬퍼는 Tab 을 누르지 않는다 — 키보드 직후 상태가 필요하면 호출 전에 호출자가 직접 누른다
+   * (Enter 로 연 목록 상자·확인 대화상자는 이미 키보드 입력 방식이라 생략한다. Tab 은 초점 가두기·RovingFocus 로 초점을 옮겨 버린다).
+   * Radix 는 열릴 때 항목·첫 입력으로 초점을 옮기므로 컨테이너를 직접 focus() 해 규칙을 본다.
+   */
+  async function expectContainerNoOutline(container: Locator) {
+    await expect(container).toHaveAttribute('tabindex', '-1');
+    await container.evaluate((node) => (node as HTMLElement).focus());
+    await expect(container).toBeFocused();
+    const style = await readFocusStyle(container);
+    expect(style.focusVisible, '키보드 직후 초점이라 :focus-visible 이어야 한다').toBe(true);
+    expect(
+      style.outlineStyle,
+      '프로그램 초점 전용 컨테이너에는 전역 outline(solid)이 그려지면 안 된다',
+    ).toMatch(/^(auto|none)$/);
+  }
+
+  test('고대비 모드(실제 컴포넌트): 사용자 메뉴 상자 role=menu 는 tabindex=-1 이다(제외 목록 전제)', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.emulateMedia({ forcedColors: 'active' });
+    await gotoDatasetList(page);
+    const trigger = page.getByRole('button', { name: /테스트 사용자/ }).first();
+    await expect(trigger).toBeVisible();
+    await page.keyboard.press('Tab');
+    await trigger.focus();
+    await page.keyboard.press('Enter');
+    const menu = page.getByRole('menu');
+    await expect(menu).toBeVisible();
+    // Radix 메뉴(RovingFocusGroup)는 컨테이너에 초점이 오면 곧바로 첫 menuitem 으로 넘겨 컨테이너가 초점을 붙들지 못한다
+    // (실측: focus() 직후 activeElement 가 menuitem, 컨테이너 :focus-visible 거짓). 그래서 컨테이너 초점 outline 은 볼 수 없고,
+    // 실제 메뉴의 role·tabindex="-1" 속성(제외 목록의 전제)만 단언한다 — 라이브러리가 바꾸면 여기서 먼저 실패한다.
+    // 메뉴 항목 초점 outline 은 아래 「사용자 메뉴 항목」 시험이 본다.
+    await expect(menu).toHaveAttribute('role', 'menu');
+    await expect(menu).toHaveAttribute('tabindex', '-1');
+  });
+
+  test('고대비 모드(실제 컴포넌트): Select 목록 상자 role=listbox 는 tabindex=-1 이고 outline 이 없다', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.emulateMedia({ forcedColors: 'active' });
+    await gotoDatasetList(page);
+    // 데이터셋 목록 필터 Select — Radix Select 가 role=listbox 컨테이너를 연다
+    const select = page.getByRole('combobox', { name: '상태 필터' });
+    await expect(select).toBeVisible();
+    await page.keyboard.press('Tab');
+    await select.focus();
+    await page.keyboard.press('Enter');
+    const listbox = page.getByRole('listbox');
+    await expect(listbox).toBeVisible();
+    await expectContainerNoOutline(listbox);
+  });
+
+  test('고대비 모드(실제 컴포넌트): 복제 대화상자 role=dialog 는 tabindex=-1 이고 outline 이 없다', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.emulateMedia({ forcedColors: 'active' });
+    await grantDatasetPermissions(page);
+    await setupDatasetDetailMocks(page, 1);
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', []);
+    await mockApi(page, 'GET', '/api/v1/datasets/tags', []);
+    await mockApi(page, 'GET', '/api/v1/datasets/1', createDatasetDetail({ id: 1 }));
+    await page.goto('/data/datasets/1');
+    await expect(page.getByRole('heading', { name: '테스트 데이터셋' })).toBeVisible();
+    await page.getByRole('button', { name: '복제' }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('heading', { name: '데이터셋 복제' })).toBeVisible();
+    await page.keyboard.press('Tab');
+    await expectContainerNoOutline(dialog);
+  });
+
+  // 삭제 확인(alertdialog)은 데이터셋 목록의 행 삭제 버튼으로 연다(WD-143 참조 집계 모킹 필요).
+  test('고대비 모드(실제 컴포넌트): 삭제 확인 role=alertdialog 는 tabindex=-1 이고 outline 이 없다', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.emulateMedia({ forcedColors: 'active' });
+    await grantDatasetPermissions(page, [...DATASET_WRITE_PERMISSIONS, 'dataset:delete']);
+    await mockDatasetReferences(page);
+    await gotoDatasetList(page);
+    const del = page.getByRole('button', { name: '삭제' }).first();
+    await expect(del).toBeVisible();
+    await page.keyboard.press('Tab');
+    await del.focus();
+    await page.keyboard.press('Enter');
+    const alert = page.getByRole('alertdialog');
+    await expect(alert).toBeVisible();
+    await expectContainerNoOutline(alert);
+  });
+
+  test('고대비 모드(실제 컴포넌트): 검수 인박스 탭 패널 role=tabpanel 은 tabindex=-1 이고 outline 이 없다', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.emulateMedia({ forcedColors: 'active' });
+    await gotoReviewInbox(page);
+    const panel = page.getByRole('tabpanel');
+    await expect(panel).toBeVisible();
+    await page.keyboard.press('Tab');
+    await expectContainerNoOutline(panel);
   });
 
   test('고대비 모드: 사용자 메뉴 항목(tabindex=-1)은 outline 을 받고 메뉴 상자 안에서 잘리지 않는다', async ({

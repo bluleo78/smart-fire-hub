@@ -5,6 +5,13 @@ import { isForbiddenError } from '../lib/api-error';
 import { cn } from '../lib/utils';
 
 /**
+ * 초점 복귀 대상 표의 키보드 초점 윤곽 클래스 — 안쪽(-offset)으로 그려 스크롤 컨테이너(overflow)에 잘리지 않게 한다.
+ * 훅의 tableProps 와 검수 인박스 표(ReviewInboxPage)가 같은 값을 공유한다(WD-1020).
+ */
+export const TABLE_FOCUS_RETURN_CLASS =
+  'focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring';
+
+/**
  * 목록 「다시 시도」 버튼의 키보드 초점 관리 훅 (WD-957, WD-987 에서 공용화).
  *
  * 데이터 없이 실패한 목록에서 「다시 시도」를 누르면 쿼리가 pending 으로 돌아가 실패 행(과 버튼)이 사라져
@@ -132,7 +139,7 @@ export function useListRetryFocus({
     ref: tableRef,
     onMouseDown: releaseTableFocusTarget,
     className: cn(
-      'focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring',
+      TABLE_FOCUS_RETURN_CLASS,
       isPlaceholderData && 'pointer-events-none opacity-60',
       tableClassName,
     ),

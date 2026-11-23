@@ -24,6 +24,7 @@ import {
   REVIEW_ITEMS_QUERY_KEY,
   useApproveReviewItem, useRejectReviewItem, useReviewItemEvidence, useReviewItemsPending,
 } from '@/hooks/queries/useReviewItems';
+import { TABLE_FOCUS_RETURN_CLASS } from '@/hooks/useListRetryFocus';
 import { handleApiError, isForbiddenError, listLoadErrorProps } from '@/lib/api-error';
 import { isFocusLost } from '@/lib/focus-lost';
 import { validatePropertyCorrection } from '@/lib/property-correction';
@@ -322,7 +323,15 @@ export default function ReviewInboxPage() {
         {/* tabIndex=-1: Tab 순서는 건드리지 않으면서 프로그램적으로 포커스를 받을 수 있게 한다(#337 복귀 지점).
             포커스 링은 지우지 않는다 — 복귀 지점이 보이지 않으면 SC 2.4.7 위반으로 결함을 바꿔 심는 셈이다. */}
         {/* 고대비 초점 복귀 지점 표지 — 이유는 index.css 참조(WD-949) */}
-        <Table ref={tableRef} tabIndex={-1} data-focus-return data-testid="review-inbox-table">
+        {/* WD-1020: 보통 모드에서는 브라우저 기본 바깥 outline(auto 1px)이 표 래퍼(overflow:auto)에 잘려
+            복귀 지점이 안 보인다. TABLE_FOCUS_RETURN_CLASS(안쪽 outline)로 그린다. */}
+        <Table
+          ref={tableRef}
+          tabIndex={-1}
+          data-focus-return
+          data-testid="review-inbox-table"
+          className={TABLE_FOCUS_RETURN_CLASS}
+        >
           <TableHeader>
             <TableRow>
               <TableHead>종류</TableHead>

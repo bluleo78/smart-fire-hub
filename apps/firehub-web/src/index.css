@@ -701,6 +701,12 @@ html {
  * @layer 밖(unlayered)에 둬서 utilities 의 outline-none 을 이긴다. 바깥 outline 은 offset 을 두지 않는다(각 요소 값 유지).
  * 제외 대상은 프로그램 초점만 받는 컨테이너(tabindex=-1 인 menu·listbox·dialog·alertdialog·tabpanel, main, 알림 영역, cmdk)이며
  * :where() 로 감싸 특이도를 낮게 유지한다. 안쪽 offset(-2px)은 overflow 에 잘리는 복귀 지점 표지 data-focus-return 일 때만 준다.
+ *
+ * WD-1020 보강: 전역 규칙은 특이도 (0,1,0) 이라 라이브러리 CSS(레이어 밖)의 outline:none 이 이겨 키보드 초점이 사라진다.
+ *  - xyflow 노드 `.react-flow__node.selectable:focus-visible` (0,3,0), 연결선 `.react-flow__edge:focus-visible` (0,2,0)
+ *  - maplibre `.maplibregl-ctrl-group button` (0,1,1), `.maplibregl-ctrl-attrib-button` (0,1,0)
+ * 그래서 아래 보강 규칙은 !important 없이 특이도로 이긴다: 노드 (0,4,0)·연결선 (0,3,0)·maplibre 버튼 (0,2,1)·attrib (0,2,0).
+ * 라이브러리 CSS 는 앱 CSS 뒤에 로드될 수 있어 같은 특이도면 진다 — 반드시 더 높게 유지할 것.
  */
 @media (forced-colors: active) {
   :focus-visible:not(
@@ -720,6 +726,21 @@ html {
     outline: 2px solid CanvasText;
   }
   :focus-visible[data-focus-return] {
+    outline-offset: -2px;
+  }
+  /* WD-1020: xyflow 노드·연결선·여러 노드 선택 상자(방향키로 옮길 때 초점을 받음)와 maplibre 컨트롤 버튼 —
+   * 라이브러리의 outline:none 을 특이도로 이긴다. xyflow 는 offset 을 두지 않는다 — 캔버스(.react-flow, overflow:hidden)
+   * 가장자리에 붙은 노드는 윤곽 일부가 잘릴 수 있으나 보통 fitView 여백 안이다. */
+  .react-flow .react-flow__node.selectable:focus-visible,
+  .react-flow .react-flow__edge:focus-visible,
+  .react-flow .react-flow__nodesselection-rect:focus-visible,
+  .maplibregl-ctrl-group button:focus-visible,
+  .maplibregl-ctrl-attrib-button:focus-visible {
+    outline: 2px solid CanvasText;
+  }
+  /* WD-1020: maplibre 컨트롤 버튼 — 붙어 쌓인 줌 버튼끼리 바깥 outline 이 이웃 버튼에 가려지므로 안쪽 offset */
+  .maplibregl-ctrl-group button:focus-visible,
+  .maplibregl-ctrl-attrib-button:focus-visible {
     outline-offset: -2px;
   }
 }
