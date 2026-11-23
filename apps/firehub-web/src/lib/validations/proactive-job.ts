@@ -8,11 +8,29 @@ import { cronTooFrequentMessage } from '@/lib/cron-frequency';
 export const MAX_JOB_PROMPT_LENGTH = 10_000;
 
 export const channelConfigSchema = z.object({
-  type: z.enum(['CHAT', 'EMAIL', 'KAKAO', 'SLACK']),
+  // WD-994: 서버가 받는 WEBHOOK 채널(API 로 설정)을 편집 중에도 잃지 않도록 enum 에 둔다.
+  type: z.enum(['CHAT', 'EMAIL', 'KAKAO', 'SLACK', 'WEBHOOK']),
+  // WD-994: 웹훅 주소 — 화면에서 편집하지 않고 받은 값을 그대로 다시 보낸다.
+  url: z.string().optional(),
   recipientUserIds: z.array(z.number()),
   recipientEmails: z.array(z.string().email('올바른 이메일 형식이 아닙니다')),
   attachPdf: z.boolean().optional(),
-});
+  // WD-994: 웹훅 채널에는 화면이 모르는 키(secret 등)가 있을 수 있어 저장 때 지우지 않고 그대로 통과시킨다.
+}).passthrough();
+
+/** 전달 채널 타입별 화면 라벨 (WD-994) — 읽기 화면·목록·편집기가 같은 이름을 쓰도록 한곳에 둔다. */
+export const CHANNEL_TYPE_LABELS: Record<string, string> = {
+  CHAT: '채팅',
+  EMAIL: '이메일',
+  KAKAO: '카카오 알림톡',
+  SLACK: 'Slack',
+  WEBHOOK: '웹훅',
+};
+
+/** 라벨 조회 — 모르는 타입은 받은 문자열 그대로, undefined 는 빈 문자열. */
+export function channelTypeLabel(type: string | undefined): string {
+  return (type !== undefined && Object.hasOwn(CHANNEL_TYPE_LABELS, type) ? CHANNEL_TYPE_LABELS[type] : type) ?? '';
+}
 
 /**
  * 서버가 받지 않아 켤 수 없는 전달 채널 (WD-805).

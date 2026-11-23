@@ -2,7 +2,7 @@ import type { Page } from '@playwright/test';
 
 import { createJob, createTemplates } from '../../factories/ai-insight.factory';
 import { mockProactivePermissions } from '../../fixtures/ai-insight.fixture';
-import { mockApi } from '../../fixtures/api-mock';
+import { mockApi,type MockApiCapture } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 
 /**
@@ -432,5 +432,156 @@ test.describe('ChannelRecipientEditor — 4채널 확장', () => {
       await expect(section.getByText('3명에게 전달됩니다')).toBeVisible();
       await expect(section.locator('span').filter({ hasText: /^3$/ }).first()).toBeVisible();
     });
+  });
+});
+
+// WD-994: API 로 설정된 웹훅 채널이 편집·저장 중 사라지거나 저장을 막지 않는다.
+test.describe('웹훅 채널 (WD-994)', () => {
+  const HOOK = 'https://example.com/hook';
+  const CHAT = { type: 'CHAT', recipientUserIds: [], recipientEmails: [] };
+  const PUT_PATH = '/api/v1/proactive/jobs/1';
+  const GUIDE =
+    'API 로 설정된 채널입니다 — 아직 스마트 작업 결과를 웹훅으로 보내지 않습니다. 해제하면 설정에서 빠집니다.';
+
+  type SentChannel = { type: string; url?: string; secret?: string };
+
+  /** 「저장」을 눌러 나간 PUT 요청의 config.channels 와 name 을 돌려준다 */
+  async function saveAndGetPayload(page: Page, save: MockApiCapture) {
+    await page.getByRole('button', { name: '저장' }).click();
+    const req = await save.waitForRequest();
+    const payload = req.payload as { name: string; config: { channels: SentChannel[] } };
+    return { name: payload.name, channels: payload.config.channels };
+  }
+
+  /** 편집 없이 읽기 화면 상세를 모킹해 연다 */
+  async function openReadView(page: Page, channels: unknown[]) {
+    const job = createJob({ id: 1, config: { channels } });
+    await mockApi(page, 'GET', PUT_PATH, job);
+    await mockApi(page, 'GET', `${PUT_PATH}/executions`, []);
+    await mockApi(page, 'GET', '/api/v1/proactive/templates', createTemplates());
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    await mockApi(page, 'GET', `${PUT_PATH}/anomaly-events`, []);
+    await page.goto('/ai-insights/jobs/1');
+  }
+
+  test('웹훅 작업은 이름만 고쳐도 저장되고 url·secret 등 키가 보존된다', async ({ authenticatedPage: page }) => {
+    const save = await mockApi(page, 'PUT', PUT_PATH, createJob({ id: 1 }), { capture: true });
+    await setupAndNavigateToNotifyTab(page, {
+      config: { channels: [CHAT, { type: 'WEBHOOK', url: HOOK, secret: 'abc' }] },
+    });
+
+    await expect(page.getByRole('checkbox', { name: /웹훅/ })).toBeChecked({ timeout: 5000 });
+    const card = page.getByTestId('channel-card-webhook');
+    await expect(card.getByText(`웹훅 주소: ${HOOK}`)).toBeVisible();
+    await expect(card.getByText('전달 안 됨')).toBeVisible();
+    await expect(card.getByText(GUIDE)).toBeVisible();
+
+    await page.getByLabel(/작업 이름/).fill('새 이름');
+    await expect(page.getByRole('button', { name: '저장' })).toBeEnabled();
+
+    const { name, channels } = await saveAndGetPayload(page, save);
+    expect(name).toBe('새 이름');
+    // WD-994: url 뿐 아니라 화면이 모르는 키(secret)도 그대로 실린다
+    expect(channels.find((c) => c.type === 'WEBHOOK')).toMatchObject({ url: HOOK, secret: 'abc' });
+  });
+
+  test('웹훅을 해제하고 저장하면 요청에서 빠진다', async ({ authenticatedPage: page }) => {
+    const save = await mockApi(page, 'PUT', PUT_PATH, createJob({ id: 1 }), { capture: true });
+    await setupAndNavigateToNotifyTab(page, {
+      config: { channels: [CHAT, { type: 'WEBHOOK', url: HOOK }] },
+    });
+
+    const checkbox = page.getByRole('checkbox', { name: /웹훅/ });
+    await expect(checkbox).toBeChecked({ timeout: 5000 });
+    await checkbox.click();
+    await expect(page.getByTestId('channel-card-webhook')).toHaveCount(0);
+
+    const { channels } = await saveAndGetPayload(page, save);
+    const types = channels.map((c) => c.type);
+    expect(types).toContain('CHAT');
+    expect(types).not.toContain('WEBHOOK');
+  });
+
+  // WCAG 2.4.3: 카드가 사라져도 키보드 초점이 body 로 떨어지지 않고 이메일 체크박스로 간다
+  test('웹훅을 키보드로 해제하면 초점이 이메일 체크박스로 옮겨진다', async ({ authenticatedPage: page }) => {
+    await setupAndNavigateToNotifyTab(page, {
+      config: { channels: [CHAT, { type: 'WEBHOOK', url: HOOK }] },
+    });
+
+    const webhook = page.getByRole('checkbox', { name: /웹훅/ });
+    await expect(webhook).toBeChecked({ timeout: 5000 });
+    await webhook.focus();
+    await page.keyboard.press('Space');
+
+    await expect(page.getByRole('checkbox', { name: /웹훅/ })).toHaveCount(0);
+    await expect(page.getByRole('checkbox', { name: /이메일/ })).toBeFocused();
+  });
+
+  test('url 없는 웹훅도 저장이 켜진다', async ({ authenticatedPage: page }) => {
+    await setupAndNavigateToNotifyTab(page, {
+      config: { channels: [CHAT, { type: 'WEBHOOK' }] },
+    });
+
+    await expect(page.getByText('웹훅 주소: (없음)')).toBeVisible({ timeout: 5000 });
+    await page.getByLabel(/작업 이름/).fill('새 이름');
+    await expect(page.getByRole('button', { name: '저장' })).toBeEnabled();
+  });
+
+  test('구 형식 문자열 채널의 웹훅도 저장이 켜진다', async ({ authenticatedPage: page }) => {
+    await setupAndNavigateToNotifyTab(page, {
+      config: { channels: ['CHAT', 'WEBHOOK'] },
+    });
+
+    await expect(page.getByRole('checkbox', { name: /웹훅/ })).toBeChecked({ timeout: 5000 });
+    await page.getByLabel(/작업 이름/).fill('새 이름');
+    await expect(page.getByRole('button', { name: '저장' })).toBeEnabled();
+  });
+
+  test('웹훅 해제 뒤 취소하면 다시 편집할 때 되살아난다', async ({ authenticatedPage: page }) => {
+    await setupAndNavigateToNotifyTab(page, {
+      config: { channels: [CHAT, { type: 'WEBHOOK', url: HOOK }] },
+    });
+
+    await page.getByRole('checkbox', { name: /웹훅/ }).click();
+    await expect(page.getByTestId('channel-card-webhook')).toHaveCount(0);
+
+    // 해제로 폼이 dirty 해져 취소 시 이탈 확인 창이 뜬다 — 「이탈」로 변경을 버린다
+    await page.getByRole('button', { name: '취소' }).click();
+    await page.getByRole('button', { name: '이탈' }).click();
+    await page.getByRole('button', { name: '편집' }).click();
+    await expect(page.getByRole('checkbox', { name: /웹훅/ })).toBeChecked();
+  });
+
+  // 읽기 화면: 라벨은 「웹훅」(WEBHOOK 글자 없음), 웹훅 행은 「전달 안 됨」이고 「본인에게만 전달」이 아니다
+  test('읽기 화면 웹훅 행은 「웹훅」·「전달 안 됨」으로 보인다', async ({ authenticatedPage: page }) => {
+    await openReadView(page, [{ type: 'WEBHOOK', url: HOOK }]);
+
+    const section = page.getByRole('heading', { name: '전달 채널' }).locator('..');
+    await expect(section.getByText('웹훅', { exact: true })).toBeVisible({ timeout: 5000 });
+    await expect(section.getByText('WEBHOOK')).toHaveCount(0);
+    await expect(section.getByText('전달 안 됨')).toBeVisible();
+    await expect(section.getByText('본인에게만 전달')).toHaveCount(0);
+  });
+
+  // 웹훅이 둘이면 카드도 둘, 해제는 그 항목만 뺀다
+  test('웹훅이 둘이면 카드가 둘이고 하나만 해제하면 나머지만 저장된다', async ({ authenticatedPage: page }) => {
+    const save = await mockApi(page, 'PUT', PUT_PATH, createJob({ id: 1 }), { capture: true });
+    await setupAndNavigateToNotifyTab(page, {
+      config: {
+        channels: [CHAT, { type: 'WEBHOOK', url: 'https://a' }, { type: 'WEBHOOK', url: 'https://b' }],
+      },
+    });
+
+    const cards = page.getByTestId('channel-card-webhook');
+    await expect(cards).toHaveCount(2, { timeout: 5000 });
+    await expect(cards.nth(0).getByText('웹훅 주소: https://a')).toBeVisible();
+    await expect(cards.nth(1).getByText('웹훅 주소: https://b')).toBeVisible();
+
+    await cards.nth(0).getByRole('checkbox').click();
+    await expect(cards).toHaveCount(1);
+    await expect(cards.nth(0).getByText('웹훅 주소: https://b')).toBeVisible();
+
+    const { channels } = await saveAndGetPayload(page, save);
+    expect(channels.filter((c) => c.type === 'WEBHOOK').map((c) => c.url)).toEqual(['https://b']);
   });
 });
