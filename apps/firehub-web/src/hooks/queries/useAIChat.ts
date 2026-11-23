@@ -74,7 +74,15 @@ export function useAIChat(options?: {
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingMessage, setStreamingMessage] = useState<Partial<AIMessage> | null>(null);
   const [pendingUserMessage, setPendingUserMessage] = useState<string | null>(null);
-  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [currentSessionId, setCurrentSessionIdState] = useState<string | null>(null);
+  // WD-972: "지금 열린 대화" 를 동기로 읽는 ref. state 는 다음 렌더에야 반영되고 클로저는 낡아, 삭제 응답이
+  // 늦게 올 때(그 사이 다른 대화로 옮겼거나 목록 컴포넌트가 사라졌을 때)의 판단에 쓸 수 없다.
+  // 그래서 현재 대화를 바꾸는 모든 곳은 이 함수로 state 와 ref 를 함께 바꾼다.
+  const currentSessionIdRef = useRef<string | null>(null);
+  const setCurrentSessionId = useCallback((id: string | null) => {
+    currentSessionIdRef.current = id;
+    setCurrentSessionIdState(id);
+  }, []);
   const [contextTokens, setContextTokens] = useState<number | null>(null);
   const [isCompacting, setIsCompacting] = useState(false);
   // 압축 시작 시각 — 대화 영역 진행 표시의 경과 시간 계산용. 미압축 시 null.
@@ -494,7 +502,7 @@ export function useAIChat(options?: {
       navContext,
       screen,
     );
-  }, [currentSessionId, queryClient, createTrackedBlobUrl, clearCompaction]);
+  }, [currentSessionId, queryClient, createTrackedBlobUrl, clearCompaction, setCurrentSessionId]);
 
   const stopStreaming = useCallback(() => {
     if (abortControllerRef.current) {
@@ -543,6 +551,8 @@ export function useAIChat(options?: {
     setPendingUserMessage(null);
   }, [clearCompaction]);
 
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+
   const startNewSession = useCallback(() => {
     // 스트리밍 중 새 세션 시작 시 기존 SSE 스트림을 취소하여 상태 오염 방지
     if (abortControllerRef.current) {
@@ -556,11 +566,12 @@ export function useAIChat(options?: {
     pendingUserMessageObjRef.current = null;
     setIsStreaming(false);
     setIsThinking(false);
+    // 로딩 중이던 기록 요청은 loadSession 이 버리고(로딩 표시도 건드리지 않음) 여기서 로딩 표시를 끈다 (WD-972)
+    setIsLoadingHistory(false);
     setContextTokens(null);
     clearCompaction();
-  }, [clearCompaction]);
+  }, [clearCompaction, setCurrentSessionId]);
 
-  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
 
   const loadSession = useCallback(async (sessionId: string) => {
     // 스트리밍 중 다른 세션으로 전환 시 기존 SSE 스트림을 취소하여 새 세션 상태 오염 방지
@@ -597,16 +608,32 @@ export function useAIChat(options?: {
         }
       }
       if (blobPromises.length > 0) await Promise.all(blobPromises);
+      // WD-972: 기록을 기다리는 사이 다른 대화로 옮겼거나(지운 뒤 새 대화 포함) 하면 늦게 온 기록을 버린다
+      if (currentSessionIdRef.current !== sessionId) return;
       setMessages(msgs);
     } catch (error) {
+      if (currentSessionIdRef.current !== sessionId) return;
       // 세션 히스토리 로드 실패 시 사용자에게 에러 피드백 제공
       console.error('Failed to load session history:', error);
       toast.error('대화 이력을 불러오지 못했습니다.');
       setMessages([]); // 빈 상태 명시적 처리
     } finally {
-      setIsLoadingHistory(false);
+      // 버려진(다른 대화로 옮긴) 응답은 로딩 표시를 끄지 않는다 — 옮긴 대화가 아직 로딩 중일 때 빈 상태가 깜빡이지 않게 (WD-972)
+      if (currentSessionIdRef.current === sessionId) setIsLoadingHistory(false);
     }
-  }, [createTrackedBlobUrl, clearCompaction]);
+  }, [createTrackedBlobUrl, clearCompaction, setCurrentSessionId]);
+
+  /**
+   * 대화 삭제가 성공한 뒤 호출한다 (WD-972). 지운 것이 ref 기준 지금 열린 대화일 때만 새 대화로 바꾸고 true 를 돌려준다.
+   * 스트리밍 중이면 브라우저 연결만 끊지 않고 stopStreaming 으로 서버 실행까지 취소한다(WD-57).
+   */
+  const handleSessionDeleted = useCallback((sessionId: string) => {
+    if (sessionId !== currentSessionIdRef.current) return false;
+    // 스트리밍 중이 아니면 stopStreaming 이 아무것도 취소하지 않는다(내부에서 같은 조건을 본다)
+    stopStreaming();
+    startNewSession();
+    return true;
+  }, [stopStreaming, startNewSession]);
 
   return {
     messages,
@@ -624,5 +651,6 @@ export function useAIChat(options?: {
     stopStreaming,
     startNewSession,
     loadSession,
+    handleSessionDeleted,
   };
 }

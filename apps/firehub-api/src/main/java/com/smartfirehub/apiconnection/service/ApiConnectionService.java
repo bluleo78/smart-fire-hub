@@ -19,6 +19,7 @@ import com.smartfirehub.job.service.AsyncJobService;
 import com.smartfirehub.pipeline.service.executor.ApiCallAuth;
 import com.smartfirehub.pipeline.service.executor.ApiCallErrorMessages;
 import com.smartfirehub.pipeline.service.executor.RedirectFollower;
+import com.smartfirehub.pipeline.service.executor.RequestUrlEncoding;
 import com.smartfirehub.pipeline.service.executor.SsrfException;
 import com.smartfirehub.pipeline.service.executor.SsrfProtectionService;
 import com.smartfirehub.pipeline.service.executor.SsrfSafeHttpClientFactory;
@@ -44,7 +45,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.reactive.function.client.WebClient;
-import org.springframework.web.util.DefaultUriBuilderFactory;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
@@ -92,12 +92,6 @@ public class ApiConnectionService {
    * 뒤에 호스트를 다시 해석해, DNS 재바인딩으로 내부 주소에 접속할 수 있었다. 리다이렉트 홉도 같은 클라이언트로 나가므로 홉마다 같은 검사를 받는다.
    */
   private final SsrfSafeHttpClientFactory ssrfSafeHttpClientFactory;
-
-  /**
-   * 쿼리 인증이 아닌 호출 URL(경로의 한글·공백 등 인코딩 전)을 URI 로 바꾸는 팩토리 — 예전 {@code webClient.get().uri(String)} 이
-   * 쓰던 WebClient 기본 팩토리(템플릿·값 인코딩)와 같아 나가는 바이트가 바뀌지 않는다(WD-693).
-   */
-  private static final DefaultUriBuilderFactory URI_FACTORY = new DefaultUriBuilderFactory();
 
   /** 헬스체크 HTTP 호출 타임아웃(초). 메시지 문구(「응답 시간 초과(N초) — …」)와 값이 어긋나지 않도록 한 곳에서 관리한다. */
   private static final int HEALTH_CHECK_TIMEOUT_SECONDS = 5;
@@ -557,7 +551,11 @@ public class ApiConnectionService {
     AuthQueryMasker.SentSecrets secret = auth.sentSecrets();
     // 응답의 requestUrl 은 인증 쿼리 키를 가린 표시용 URL 이다(WD-177). URL 을 만들기 전에 실패하면 키 없는 기준 URL 을 보인다.
     // 옛 연결의 baseUrl 사용자 정보는 비밀번호를 가린다(WD-681) — 이 값은 응답·화면·AI 챗으로 나간다.
-    String displayUrl = BaseUrlUserInfo.mask(targetUrl);
+    // WD-991 리뷰: 헬스체크 경로·쿼리의 공백·한글은 파이프라인 실행·테스트 호출과 같은 규칙(httpx 방식)으로 한 번만 인코딩한다 — 표시 URL 을
+    // 이 뒤에 만들어 인증 문제·SSRF 차단 결과에도 인코딩된 같은 URL 이 보이게 한다. 이미 인코딩된 %XX 는 다시 인코딩하지 않는다.
+    targetUrl = RequestUrlEncoding.encodePathAndQuery(targetUrl);
+    // 표시 URL 의 한글 등 비ASCII 는 사람이 읽게 글자로 되돌린다(WD-936 의 decodeForDisplay — 미리보기와 같게, WD-991 리뷰).
+    String displayUrl = RequestUrlEncoding.decodeForDisplay(BaseUrlUserInfo.mask(targetUrl));
 
     long start = System.currentTimeMillis();
     // 이미 저장된 인증 값이 HTTP 요청에 쓸 수 없는 것이면(WD-392 전에 저장된 띄어쓰기 헤더 이름 등) 호출하지 않고 그 사유를 보인다 —
@@ -579,11 +577,12 @@ public class ApiConnectionService {
       // 쿼리 인증이 아니면 URL 을 손대지 않는다(정적 파라미터 없음 → null) — 공용 빌더(ResolvedAuth.buildUrls, WD-657).
       // 표시용 URL 은 사용자 정보 비밀번호까지 가려져 나온다(WD-681, buildUrls).
       AuthQueryMasker.AuthQueryUrls urls = auth.buildUrls(targetUrl, null);
-      displayUrl = urls.displayUrl();
+      displayUrl = RequestUrlEncoding.decodeForDisplay(urls.displayUrl());
       // 응답 본문/헤더를 함께 받아 디버깅용으로 노출 (#76).
-      // 쿼리 인증이면 이미 인코딩을 마친 URI 를 쓴다(WD-182) — 다시 인코딩하면 인코딩 키의 %2B 가 %252B 로 나간다. 쿼리 인증이 아니면 예전
-      // webClient.get().uri(String) 과 같은 기본 팩토리로 경로의 한글·공백을 인코딩한다(buildUrls 가 URL 을 손대지 않는다).
-      URI callUri = auth.isQueryApiKey() ? urls.callUri() : URI_FACTORY.expand(urls.callUrl());
+      // 쿼리 인증이면 이미 인코딩을 마친 URI 를 쓴다(WD-182) — 다시 인코딩하면 인코딩 키의 %2B 가 %252B 로 나간다.
+      // 쿼리 인증이 아니어도 위에서 인코딩을 마친 URL 을 그대로 쓴다(WD-991 — 다시 인코딩하면 %XX 가 %25XX). 해석할 수 없는 URL 은
+      // callUri() 가 원문 없는 InvalidRequestUrlException 으로 바꿔 아래 고정 문구 갈래를 탄다(WD-991 리뷰).
+      URI callUri = urls.callUri();
       // 리다이렉트는 미리보기·실행과 같은 RedirectFollower 로 따라간다(WD-693). Netty 가 못 부르는 호스트(밑줄 등)는 첫 홉부터 홉마다 요청
       // 전에
       // 고정 문구로 실패하고(WD-676), 리다이렉트 대상이 내부망이면 SsrfException 으로 아래에서 DOWN 결과가 된다. 4xx·5xx 도 예외 없이 마지막

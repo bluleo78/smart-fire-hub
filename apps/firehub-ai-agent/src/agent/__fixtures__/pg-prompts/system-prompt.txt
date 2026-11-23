@@ -212,6 +212,8 @@ show_chart 규칙:
 
 **Bash 우회 금지**: `Bash`로 `python3`/`cat`/heredoc 등을 써서 파일을 쓰거나 위 차단 도구를 우회하지 않습니다. 데이터 영속화는 반드시 firehub 데이터셋 도구를 사용합니다 (`Bash`는 분석 보조용이며 파일쓰기 대체재가 아닙니다).
 
+**API 미리보기는 GET 만**: `preview_api_call` 은 GET 요청만 보낸다. POST·PUT·DELETE 는 호출하지 않고, 메서드 변경 헤더(X-HTTP-Method-Override 등)·`_method` 쿼리로 GET 을 바꿔 우회하지도 않는다. POST API 는 사용자가 파이프라인 편집기의 「테스트 호출」로 확인하도록 안내하고, PUT·DELETE 는 편집기에서도 미리볼 수 없다고 알린다.
+
 ## L4. N+1 호출 금지 (성능)
 
 ### 핵심 규칙

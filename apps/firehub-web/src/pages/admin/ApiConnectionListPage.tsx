@@ -32,6 +32,7 @@ import {
   connectionNameError,
   type FieldErrors,
   focusFirstError,
+  HEALTH_CHECK_PATH_HELP,
   healthCheckPathError,
   withoutKeys,
 } from '@/lib/api-connection-form';
@@ -402,7 +403,7 @@ export default function ApiConnectionListPage() {
                 </DialogHeader>
                 <div className="space-y-4">
                   {/* (WD-561) 필수 칸은 FormField 로 감싸 * 표시·인라인 오류·aria 연결을 한 곳에서 처리한다 */}
-                  <FormField label="연결 이름" htmlFor={fieldId.name} error={errors.name} required>
+                  <FormField label="연결 이름" htmlFor={fieldId.name} error={errors.name} required announceError={false}>
                     <Input
                       id={fieldId.name}
                       placeholder="예: Make.com API"
@@ -425,7 +426,7 @@ export default function ApiConnectionListPage() {
                   </div>
 
                   {/* Base URL: 외부 API의 기본 URL */}
-                  <FormField label="Base URL" htmlFor={fieldId.baseUrl} error={errors.baseUrl} required>
+                  <FormField label="Base URL" htmlFor={fieldId.baseUrl} error={errors.baseUrl} required announceError={false}>
                     <Input
                       id={fieldId.baseUrl}
                       // 예시 플레이스홀더 — 까닭은 공용 상수 설명(WD-887)
@@ -439,8 +440,14 @@ export default function ApiConnectionListPage() {
                   </FormField>
 
                   {/* 헬스체크 경로: 10분마다 자동 상태 점검 */}
-                  {/* 오류가 생기면 FormField 가 도움말 id 뒤에 오류 id 를 이어 붙인다 — 도움말 연결(#432)은 유지된다 */}
-                  <FormField label="헬스체크 경로 (선택)" htmlFor={fieldId.healthCheckPath} error={errors.healthCheckPath}>
+                  {/* WD-937 리뷰 후속: 도움말은 FormField description 으로 넘겨 상세 화면과 같은 마크업·크기로 맞춘다(입력과의 연결(#432)도 FormField 가 맡는다) */}
+                  <FormField
+                    label="헬스체크 경로 (선택)"
+                    htmlFor={fieldId.healthCheckPath}
+                    error={errors.healthCheckPath}
+                    description={HEALTH_CHECK_PATH_HELP}
+                    announceError={false}
+                  >
                     <Input
                       id={fieldId.healthCheckPath}
                       placeholder="/health"
@@ -449,12 +456,7 @@ export default function ApiConnectionListPage() {
                         setHealthCheckPath(e.target.value);
                         clearError('healthCheckPath');
                       }}
-                      /* 아래 도움말 문구를 스크린리더가 함께 읽도록 연결 (#432) */
-                      aria-describedby={`${baseId}-health-path-help`}
                     />
-                    <p id={`${baseId}-health-path-help`} className="text-xs text-muted-foreground">
-                      10분마다 자동 상태 점검. 비워두면 점검 안 함.
-                    </p>
                   </FormField>
 
                   <div className="space-y-2">
@@ -507,6 +509,7 @@ export default function ApiConnectionListPage() {
                         htmlFor={fieldId.authName}
                         error={errors.authName}
                         required
+                        announceError={false}
                       >
                         <Input
                           id={fieldId.authName}
@@ -519,7 +522,7 @@ export default function ApiConnectionListPage() {
                           }}
                         />
                       </FormField>
-                      <FormField label="키 값" htmlFor={fieldId.apiKey} error={errors.apiKey} required>
+                      <FormField label="키 값" htmlFor={fieldId.apiKey} error={errors.apiKey} required announceError={false}>
                         <Input
                           id={fieldId.apiKey}
                           type="password"
@@ -535,7 +538,7 @@ export default function ApiConnectionListPage() {
                   )}
 
                   {authType === 'BEARER' && (
-                    <FormField label="Bearer Token" htmlFor={fieldId.token} error={errors.token} required>
+                    <FormField label="Bearer Token" htmlFor={fieldId.token} error={errors.token} required announceError={false}>
                       <Input
                         id={fieldId.token}
                         type="password"

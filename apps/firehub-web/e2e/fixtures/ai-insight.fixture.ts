@@ -1,5 +1,7 @@
 import type { Page } from '@playwright/test';
 
+import type { CreateProactiveJobRequest } from '@/api/proactive';
+
 import {
   createAnomalyEvent,
   createJob,
@@ -225,4 +227,35 @@ export async function setupReportViewerMocks(
     htmlContent,
   );
   await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+}
+
+/** 작업 생성(POST)·수정(PUT) 요청을 캡처한다. */
+export async function captureJobWrites(page: Page, jobId = 1) {
+  const posts: CreateProactiveJobRequest[] = [];
+  const puts: Partial<CreateProactiveJobRequest>[] = [];
+  await page.route(
+    (url) => url.pathname === '/api/v1/proactive/jobs',
+    (route) => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      posts.push(route.request().postDataJSON() as CreateProactiveJobRequest);
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(createJob({ id: 99, name: '생성된 작업' })),
+      });
+    },
+  );
+  await page.route(
+    (url) => url.pathname === `/api/v1/proactive/jobs/${jobId}`,
+    (route) => {
+      if (route.request().method() !== 'PUT') return route.fallback();
+      puts.push(route.request().postDataJSON() as Partial<CreateProactiveJobRequest>);
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ updatedAt: '2026-11-06T10:00:00.000000' }),
+      });
+    },
+  );
+  return { posts, puts };
 }

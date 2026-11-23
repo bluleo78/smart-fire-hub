@@ -680,6 +680,34 @@ test.describe('쿼리 목록 페이지', () => {
     await expect(page.getByRole('button', { name: '다시 시도' })).toBeFocused();
   });
 
+  // 리뷰 후속(PR #1218 ①): 누르지 않아도 저절로 다시 불러오면(여기서는 다시 연결 — TanStack Query 의 refetchOnReconnect)
+  // 초점 가진 「다시 시도」가 사라진다. 공용 훅이라 다섯 목록이 같으므로 쿼리 목록에서 대표로 본다.
+  test('다시 시도에 초점이 있을 때 다시 연결돼 저절로 재조회·성공하면 초점이 표에 남는다 (WD-987 리뷰 후속)', async ({ authenticatedPage: page }) => {
+    await setupQueryListMocks(page, 0);
+    const { setOutcome } = await enterWithListError(page, { apiPath: '/api/v1/analytics/queries', pagePath: '/analytics/queries' });
+    await page.getByRole('button', { name: '다시 시도' }).focus();
+    setOutcome({ status: 200, body: createPageResponse([createSavedQueryListItem({ id: 1, name: '다시 연결 쿼리' })]) });
+    await page.context().setOffline(true);
+    await page.context().setOffline(false);
+
+    await expect(page.getByText('다시 연결 쿼리', { exact: true })).toBeVisible();
+    await expect(page.getByRole('table', { name: '저장된 쿼리 목록' })).toBeFocused();
+  });
+
+  test('다시 시도에 초점이 있을 때 다시 연결돼 저절로 재조회가 또 실패하면 초점이 새 「다시 시도」로 온다 (WD-987 리뷰 후속)', async ({ authenticatedPage: page }) => {
+    await setupQueryListMocks(page, 0);
+    const { calls } = await enterWithListError(page, { apiPath: '/api/v1/analytics/queries', pagePath: '/analytics/queries' });
+    const callsBefore = calls();
+    await page.getByRole('button', { name: '다시 시도' }).focus();
+    await page.context().setOffline(true);
+    await page.context().setOffline(false);
+
+    // 다시 연결로 목록을 다시 불렀고(누르지 않음), 또 실패해 새 버튼으로 초점이 돌아온다
+    await expect.poll(calls).toBeGreaterThan(callsBefore);
+    await expectTableErrorAlert(page, '서버 오류', { action: '다시 시도' });
+    await expect(page.getByRole('button', { name: '다시 시도' })).toBeFocused();
+  });
+
   test('목록 조회가 403 이면 권한 없음 안내를 흐린 톤으로 보인다 (WD-978 리뷰 후속)', async ({ authenticatedPage: page }) => {
     // 권한 문제는 다시 해도 같으므로 일시 장애(빨간 실패 안내)처럼 보이지 않게 권한 안내로 구분한다
     await setupQueryListMocks(page, 0);

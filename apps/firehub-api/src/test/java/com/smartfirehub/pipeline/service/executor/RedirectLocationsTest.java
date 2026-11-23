@@ -15,13 +15,45 @@ class RedirectLocationsTest {
   /** 문법 오류 Location(공백)은 재시도하지 않는 ApiCallException·고정 문구 — URL 은 싣지 않는다. */
   @Test
   void resolve_invalidLocation_throwsNonRetryableFixedMessage() {
+    // 공백·한글은 이제 인코딩해 따라가므로(WD-991) 제어 문자(U+0001)로 문법 오류를 지킨다.
     assertThatThrownBy(
             () ->
                 RedirectLocations.resolve(
-                    URI.create("https://api.example.com/v1"), "/next page?serviceKey=SECRET"))
+                    URI.create("https://api.example.com/v1"), "/next\u0001page?serviceKey=SECRET"))
         .isInstanceOf(ApiCallException.class)
         .hasMessage(ApiCallErrorMessages.invalidRedirectLocation())
         .hasMessageNotContaining("SECRET");
+  }
+
+  /**
+   * 공백·한글이 든 Location 은 실행기(urljoin+httpx)처럼 인코딩해 따라간다(WD-991) — 한 번만 인코딩하고 이미 있는 %XX 는 그대로 둔다.
+   *
+   * <p>공용 사례 표(api-call-auth-vectors.json 의 redirectLocation)에는 한글·공백 사례를 넣지 않는다: Python resolver 는
+   * 인코딩 전 문자열을 돌려주고 httpx 가 보낼 때 인코딩하므로 표의 기대값이 두 쪽에서 갈린다. 그래서 Java 쪽 단위 시험으로만 지킨다.
+   */
+  @Test
+  void resolve_koreanSpaceLocation_encoded() {
+    URI base = URI.create("https://api.example.com/a/b");
+    assertThat(RedirectLocations.resolve(base, "/검색 결과?q=서울"))
+        .hasToString(
+            "https://api.example.com/%EA%B2%80%EC%83%89%20%EA%B2%B0%EA%B3%BC?q=%EC%84%9C%EC%9A%B8");
+    assertThat(RedirectLocations.resolve(base, "결과 2"))
+        .hasToString("https://api.example.com/a/%EA%B2%B0%EA%B3%BC%202");
+    assertThat(RedirectLocations.resolve(base, "https://x.com/가 나"))
+        .hasToString("https://x.com/%EA%B0%80%20%EB%82%98");
+    assertThat(RedirectLocations.resolve(base, "//x.com/가")).hasToString("https://x.com/%EA%B0%80");
+    assertThat(RedirectLocations.resolve(base, "/%EA%B2%80"))
+        .hasToString("https://api.example.com/%EA%B2%80");
+  }
+
+  /** 앞뒤의 공백·제어 문자(U+0000–U+0020)는 실행기(urlsplit)처럼 떼고 해석한다(WD-991 리뷰). */
+  @Test
+  void resolve_leadingTrailingWhitespace_stripped() {
+    URI base = URI.create("https://api.example.com/v1");
+    assertThat(RedirectLocations.resolve(base, " //cdn.example.com/data"))
+        .hasToString("https://cdn.example.com/data");
+    assertThat(RedirectLocations.resolve(base, "/next \t\n"))
+        .hasToString("https://api.example.com/next");
   }
 
   /** RFC 3986 §5.2.4 예시 — 루트 위로 올라가는 「..」 는 버린다. */
@@ -62,7 +94,7 @@ class RedirectLocationsTest {
         .hasToString("https://api.example.com/v2/items?page=2");
     assertThat(RedirectLocations.resolve(base, "next#my section"))
         .hasToString("https://api.example.com/v1/next");
-    assertThatThrownBy(() -> RedirectLocations.resolve(base, "/next page#ok"))
+    assertThatThrownBy(() -> RedirectLocations.resolve(base, "/next\u0001page#ok"))
         .isInstanceOf(ApiCallException.class)
         .hasMessage(ApiCallErrorMessages.invalidRedirectLocation());
   }
