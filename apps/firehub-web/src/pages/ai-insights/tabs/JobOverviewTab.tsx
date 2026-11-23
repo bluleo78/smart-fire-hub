@@ -245,6 +245,14 @@ export default function JobOverviewTab({
   // 칸 아래에 보일 cron 문구 — 지금 값이 너무 잦으면 검증 전(편집 진입·트리거 되돌림)에도 바로 보이고, 그 밖의 오류는 검증 결과를 쓴다.
   const cronError = cronTooFrequentMessage(cronForPreview) ?? errors.cronExpression?.message ?? cronRequiredHint;
 
+  // 「직접 입력」을 막 골라 칸이 빈 동안에도 「만들기/저장」은 꺼진다 — 빨간 오류 대신(막 연 칸, WD-500) 회색 안내로 이유를 보인다
+  // (WD-962 리뷰 후속). 치다가 지우면 검증 오류(cronError)가 대신 뜨므로 오류가 없을 때만 보인다.
+  // 문구는 이 칸의 사실만 말한다 — 「입력하면 만들 수 있다」고 하면 이름·프롬프트가 빈 때 틀린 약속이 된다.
+  const cronEmptyHint =
+    customCronSelected && !cronExpression && !cronError
+      ? `Cron 표현식이 비어 있어 ${isNew ? '만들' : '저장할'} 수 없습니다.`
+      : undefined;
+
   const cronPreset =
     customCronSelected || !CRON_PRESETS.some((p) => p.value !== '__custom__' && p.value === cronExpression)
       ? '__custom__'
@@ -599,6 +607,12 @@ export default function JobOverviewTab({
             markDirty();
             const triggerType = v as TriggerType;
             setValue('triggerType', triggerType);
+            // cron 규칙(필수·너무 잦음)은 트리거 유형에 따라 달라진다 — 바꾼 즉시 cron 오류를 맞춰야
+            // 이상 탐지를 다녀와도 낡은 오류가 남지 않는다(WD-962 리뷰 후속). 단, cron 이 비어 있으면 다시 검사하지 않고
+            // 오류만 지운다 — 검사하면 막 연 빈 「직접 입력」 칸에 빨간 「필수」가 떠서(WD-500) 회색 안내(cronEmptyHint)가,
+            // 저장된 주기가 없던 작업이면 cronRequiredHint 가 대신 이유를 보인다.
+            if (getValues('cronExpression')) void form.trigger('cronExpression');
+            else form.clearErrors('cronExpression');
             // 트리거 유형을 이상 탐지(ANOMALY/BOTH)로 바꿔도 여기서는 config.anomaly.enabled를
             // 건드리지 않아, 모니터링 탭을 방문하지 않고 저장하면 상단 배지는 "활성"인데
             // 실제로는 폴러 대상에서 제외돼 영원히 발화하지 않는 모순 상태가 됐다 (#655).
@@ -707,6 +721,7 @@ export default function JobOverviewTab({
           {cronError && (
             <p className="text-xs text-destructive">{cronError}</p>
           )}
+          {cronEmptyHint && <p className="text-xs text-muted-foreground">{cronEmptyHint}</p>}
         </div>
       )}
 

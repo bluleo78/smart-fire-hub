@@ -18,6 +18,8 @@ import com.smartfirehub.global.util.AppJsonWebClients;
 import com.smartfirehub.job.service.AsyncJobService;
 import com.smartfirehub.pipeline.service.executor.ApiCallAuth;
 import com.smartfirehub.pipeline.service.executor.ApiCallErrorMessages;
+import com.smartfirehub.pipeline.service.executor.ApiCallException;
+import com.smartfirehub.pipeline.service.executor.MethodOverrideNames;
 import com.smartfirehub.pipeline.service.executor.RedirectFollower;
 import com.smartfirehub.pipeline.service.executor.RequestUrlEncoding;
 import com.smartfirehub.pipeline.service.executor.SsrfException;
@@ -37,6 +39,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.Executor;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -583,6 +586,19 @@ public class ApiConnectionService {
       // 쿼리 인증이 아니어도 위에서 인코딩을 마친 URL 을 그대로 쓴다(WD-991 — 다시 인코딩하면 %XX 가 %25XX). 해석할 수 없는 URL 은
       // callUri() 가 원문 없는 InvalidRequestUrlException 으로 바꿔 아래 고정 문구 갈래를 탄다(WD-991 리뷰).
       URI callUri = urls.callUri();
+      // 메서드를 바꾸는 헤더·쿼리(WD-998) — 연결 테스트는 GET 인데 대상이 이를 쓰기로 처리할 수 있어 부르기 전에 막는다(미리보기 WD-970 과 같은
+      // 규칙). 헤더는 인증이 싣는 이름, 쿼리는 첫 URL(인증 쿼리 포함)과 아래 리다이렉트 홉 모두 본다. ApiCallException 은 아래 catch 에서
+      // 고정 문구(이름만, 값 없음)로 DOWN 결과가 된다.
+      List<String> sentHeaderNames = new ArrayList<>();
+      auth.applyHeaders((n, v) -> sentHeaderNames.add(n));
+      MethodOverrideNames.findOverrideHeader(sentHeaderNames)
+          .ifPresent(
+              name -> {
+                throw new ApiCallException(
+                    ApiCallErrorMessages.methodOverrideInConnectionTest(name, true));
+              });
+      rejectMethodOverrideQuery(
+          callUri, n -> ApiCallErrorMessages.methodOverrideInConnectionTest(n, false));
       // 리다이렉트는 미리보기·실행과 같은 RedirectFollower 로 따라간다(WD-693). Netty 가 못 부르는 호스트(밑줄 등)는 첫 홉부터 홉마다 요청
       // 전에
       // 고정 문구로 실패하고(WD-676), 리다이렉트 대상이 내부망이면 SsrfException 으로 아래에서 DOWN 결과가 된다. 4xx·5xx 도 예외 없이 마지막
@@ -597,7 +613,11 @@ public class ApiConnectionService {
                   auth,
                   HEALTH_CHECK_TIMEOUT_SECONDS * 1000,
                   false,
-                  false));
+                  false,
+                  // 연결 테스트는 항상 GET 이라 홉의 메서드는 보지 않는다. 이름은 대상 서버의 Location 에서 왔으므로 전용 문구를 쓴다.
+                  (method, uri) ->
+                      rejectMethodOverrideQuery(
+                          uri, ApiCallErrorMessages::methodOverrideInConnectionTestRedirect)));
 
       long latency = System.currentTimeMillis() - start;
       int status = resp.getStatusCode().value();
@@ -634,6 +654,19 @@ public class ApiConnectionService {
       return new TestConnectionResponse(
           false, null, latency, msg, displayUrl, null, Map.of(), null);
     }
+  }
+
+  /**
+   * 주소의 쿼리에 메서드를 바꾸는 이름이 있으면 {@code messageFor} 로 만든 문구의 {@link ApiCallException} 으로 거절한다(WD-998).
+   * 첫 요청 주소(이름이 사용자 설정에서 옴)와 리다이렉트 홉(이름이 대상 서버의 Location 에서 옴)이 같은 규칙에 문구만 달리 쓴다. 문구엔 표준 이름만
+   * 담는다(값·비밀 없음).
+   */
+  private static void rejectMethodOverrideQuery(URI uri, Function<String, String> messageFor) {
+    MethodOverrideNames.findOverrideQuery(uri)
+        .ifPresent(
+            name -> {
+              throw new ApiCallException(messageFor.apply(name));
+            });
   }
 
   /**

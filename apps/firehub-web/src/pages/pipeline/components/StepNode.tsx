@@ -326,7 +326,10 @@ export const StepNode = memo(function StepNode({ data }: NodeProps<StepNodeType>
                 }}
                 aria-label="스텝 삭제"
                 title="스텝 삭제"
-                className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+                // nokey: React Flow 의 isInputDOMNode 가 .nokey 안의 키 이벤트를 무시해 NodeWrapper 가 Enter·Space·Escape 로
+                // 노드를 선택하며 연결선 선택을 풀지 못한다(WD-955). stopPropagation 으로 끊으면 네이티브 이벤트가
+                // document·window 까지 못 가 앱 수준 Escape 처리(오버레이·서랍 닫기)가 죽으므로, 전파는 그대로 두고 쓴다.
+                className="nokey flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
               >
                 <X className="h-3 w-3" />
               </button>

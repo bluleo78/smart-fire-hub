@@ -22,7 +22,9 @@ function Table({ className, ...props }: React.ComponentProps<"table">) {
       <div
         ref={setContainer}
         data-slot="table-container"
-        className="relative w-full overflow-x-auto"
+        // 이 표 자신의 행에 조회 실패 행(table-empty.tsx 의 table-error-content)이 있을 때만 크기 컨테이너로 켠다 (WD-958 리뷰 후속) —
+        // 늘 켜면 내용에 맞춰 줄어드는 부모에서 표가 접히고 셀 안 TruncatedText 의 100cqw 가 바깥 wrapper 대신 이 상자로 풀린다. 근거는 TableErrorRow JSDoc.
+        className="relative w-full overflow-x-auto has-[>table>tbody>tr>td>[data-slot=table-error-content]]:[container-type:inline-size]"
       >
         <table
           data-slot="table"

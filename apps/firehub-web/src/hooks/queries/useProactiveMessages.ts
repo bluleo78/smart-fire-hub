@@ -14,6 +14,7 @@ import type {
 import { proactiveApi } from '../../api/proactive';
 import { createWithUniqueCloneName } from '../../lib/clone-name';
 import { isValidId } from '../../lib/route-id';
+import { keepPreviousWithinEntity } from './keepPreviousWithinEntity';
 import { useMyPermissions } from './useMyPermissions';
 
 /**
@@ -306,6 +307,12 @@ export function useJobExecutions(
     queryKey: KEYS.executionList(isValidId(jobId) ? jobId : null, params),
     queryFn: isValidId(jobId) ? () => proactiveApi.getJobExecutions(jobId, params).then((r) => r.data) : skipToken,
     refetchInterval: options?.refetchInterval,
+    // 「더 보기」로 limit 이 늘어 새 키가 되는 순간 보던 행이 스켈레톤으로 바뀌지 않게 이전 데이터를 유지한다(WD-965).
+    // queryKey[2](jobId) 가드는 안전망이다 — 지금은 탭이 작업마다 재마운트되지만, 재마운트 없이 작업이 바뀌어도
+    // 이전 작업의 행(남의 행)은 보이지 않게 undefined 로 둔다.
+    placeholderData: isValidId(jobId)
+      ? keepPreviousWithinEntity<ProactiveJobExecutionSummary[]>(jobId, 2)
+      : undefined,
   });
 }
 

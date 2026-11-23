@@ -1,20 +1,7 @@
-import type { Locator, Page } from '@playwright/test';
-
 import { createCategories, createDatasets } from '../../factories/dataset.factory';
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
-
-/**
- * 여러 요소를 한 작업(한 evaluate) 안에서 차례로 클릭한다 — 클릭 사이에 React 렌더가 끼지 않게 하려는 WD-950 시험용.
- * 못 찾는 요소가 있으면 조용히 넘어가지 않고 throw 한다(elementHandle 이 찾지 못하면 시간 초과로 던진다).
- */
-async function clickInOneTask(page: Page, targets: Locator[]) {
-  const handles = [];
-  for (const target of targets) handles.push(await target.elementHandle());
-  await page.evaluate((els) => {
-    for (const el of els) (el as HTMLElement).click();
-  }, handles);
-}
+import { clickInOneTask } from '../../fixtures/click-in-one-task';
 
 /**
  * 이슈 #80 회귀 테스트 — 데이터셋 목록 컬럼 헤더 클릭 정렬

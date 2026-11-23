@@ -16,3 +16,21 @@ export async function tabUntilFocused(page: Page, target: Locator, maxTabs = 60)
   }
   throw new Error(`Tab ${maxTabs}번 안에 대상에 초점이 닿지 않았다`);
 }
+
+/**
+ * 초점 표시에 관련된 계산 스타일을 읽는다 (WD-949)
+ * 고대비 초점 시험이 outline·offset·box-shadow 와 :focus-visible 여부를 한 번에 단언하도록 모은다.
+ * @param el - 스타일을 읽을 요소
+ */
+export async function readFocusStyle(el: Locator) {
+  return el.evaluate((node) => {
+    const cs = getComputedStyle(node);
+    return {
+      focusVisible: node.matches(':focus-visible'),
+      outlineStyle: cs.outlineStyle,
+      outlineWidth: cs.outlineWidth,
+      outlineOffset: cs.outlineOffset,
+      boxShadow: cs.boxShadow,
+    };
+  });
+}

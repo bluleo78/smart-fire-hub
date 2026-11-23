@@ -100,6 +100,9 @@ export function useAIChat(options?: {
   // 늦게 올 때(그 사이 다른 대화로 옮겼거나 목록 컴포넌트가 사라졌을 때)의 판단에 쓸 수 없다.
   // 그래서 현재 대화를 바꾸는 모든 곳은 이 함수로 state 와 ref 를 함께 바꾼다.
   const currentSessionIdRef = useRef<string | null>(null);
+  // WD-972: 기록 불러오기 요청 번호 — 마지막으로 요청한 loadSession(또는 새 대화 전환)만 결과를 반영하게 한다.
+  // 같은 대화를 A→B→A 로 다시 열면 세션 id 비교만으로는 먼저 보낸 낡은 응답을 가려내지 못해서 번호로도 판단한다.
+  const loadSeqRef = useRef(0);
   const setCurrentSessionId = useCallback((id: string | null) => {
     currentSessionIdRef.current = id;
     setCurrentSessionIdState(id);
@@ -587,6 +590,8 @@ export function useAIChat(options?: {
     pendingUserMessageObjRef.current = null;
     setIsStreaming(false);
     setIsThinking(false);
+    // 진행 중이던 기록 요청을 낡은 것으로 만든다(번호 증가) — 그 응답은 버려진다
+    loadSeqRef.current += 1;
     // 로딩 중이던 기록 요청은 loadSession 이 버리고(로딩 표시도 건드리지 않음) 여기서 로딩 표시를 끈다 (WD-972)
     setIsLoadingHistory(false);
     setContextTokens(null);
@@ -600,6 +605,9 @@ export function useAIChat(options?: {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
+    // 이 요청의 번호 — 응답 때 최신 번호와 다르면 낡은 응답이다
+    const seq = ++loadSeqRef.current;
+    const isStale = () => loadSeqRef.current !== seq || currentSessionIdRef.current !== sessionId;
     setIsLoadingHistory(true);
     setCurrentSessionId(sessionId);
     setMessages([]);
@@ -614,6 +622,8 @@ export function useAIChat(options?: {
       const response = await aiApi.getSessionMessages(sessionId);
       // 히스토리의 이미지 첨부에 인증된 blob URL 생성 (img 태그는 JWT 헤더를 보낼 수 없으므로)
       const msgs = response.data as AIMessage[];
+      // WD-972: 기록 응답이 낡았으면(그 사이 다른 대화로 옮김·새 요청) 이미지 blob 을 받지 않고 버린다
+      if (isStale()) return;
       const blobPromises: Promise<void>[] = [];
       for (const msg of msgs) {
         if (!msg.attachments?.length) continue;
@@ -630,17 +640,17 @@ export function useAIChat(options?: {
       }
       if (blobPromises.length > 0) await Promise.all(blobPromises);
       // WD-972: 기록을 기다리는 사이 다른 대화로 옮겼거나(지운 뒤 새 대화 포함) 하면 늦게 온 기록을 버린다
-      if (currentSessionIdRef.current !== sessionId) return;
+      if (isStale()) return;
       setMessages(msgs);
     } catch (error) {
-      if (currentSessionIdRef.current !== sessionId) return;
+      if (isStale()) return;
       // 세션 히스토리 로드 실패 시 사용자에게 에러 피드백 제공
       console.error('Failed to load session history:', error);
       toast.error('대화 이력을 불러오지 못했습니다.');
       setMessages([]); // 빈 상태 명시적 처리
     } finally {
       // 버려진(다른 대화로 옮긴) 응답은 로딩 표시를 끄지 않는다 — 옮긴 대화가 아직 로딩 중일 때 빈 상태가 깜빡이지 않게 (WD-972)
-      if (currentSessionIdRef.current === sessionId) setIsLoadingHistory(false);
+      if (!isStale()) setIsLoadingHistory(false);
     }
   }, [createTrackedBlobUrl, clearCompaction, setCurrentSessionId]);
 

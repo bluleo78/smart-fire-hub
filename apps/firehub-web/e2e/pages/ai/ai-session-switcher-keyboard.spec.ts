@@ -151,6 +151,18 @@ async function refetchStaleSessions(page: Page) {
   });
 }
 
+/**
+ * 목록을 마우스로 연다 — 열릴 때 zoom-in 애니메이션이 끝나 줄 높이가 32px 로 자리 잡을 때까지 기다린다.
+ * 애니메이션 중엔 좌표가 배율로 줄어 보여, 그 사이에 잰 boundingBox 로 누르면 엉뚱한 곳(휴지통 등)을 누르게 된다.
+ */
+async function openListByMouse(page: Page, firstTitle: string = '첫째 대화') {
+  await page.getByRole('button', { name: '대화 선택', exact: true }).click();
+  const list = page.getByRole('dialog', { name: '대화 선택' });
+  await expect(list).toBeVisible();
+  // 소수 px(배율·반올림)로 와도 기다림이 끝나도록 반올림해 비교한다(WD-1010 리뷰 후속)
+  await expect.poll(async () => Math.round((await titleBtn(page, firstTitle).boundingBox())?.height ?? 0)).toBe(32);
+}
+
 test.describe('SessionSwitcher — 키보드 삭제 (WD-951)', () => {
   test('열면 첫 제목에 초점, Tab 은 제목 → 삭제 → 다음 줄 제목으로 가고 목록 안에서 돈다', async ({
     authenticatedPage: page,
@@ -644,19 +656,27 @@ test.describe('SessionSwitcher — 키보드 삭제 (WD-951)', () => {
       expect(await rowBg(page, 1)).toBe(TRANSPARENT);
     });
 
+    // 휴지통 실제 상자(del)의 네 변 바로 바깥 2px 을 누른다 — 고정 좌표가 아니라 버튼 크기·위치가 바뀌어도
+    // 휴지통 경계 밖은 곧바로 줄(대화 열기)이 받는지를 본다(WD-1010 리뷰 후속).
     const SPOTS = [
-      { name: '오른쪽 여백', pos: (r: Box) => ({ x: r.x + r.width - 3, y: r.y + r.height / 2 }) },
-      { name: '제목과 휴지통 사이 틈', pos: (r: Box) => ({ x: r.x + r.width - 30, y: r.y + r.height / 2 }) },
-      { name: '휴지통 위 여백', pos: (r: Box) => ({ x: r.x + r.width - 18, y: r.y + 2 }) },
-      { name: '휴지통 아래 여백', pos: (r: Box) => ({ x: r.x + r.width - 18, y: r.y + r.height - 2 }) },
+      { name: '휴지통 오른쪽 바깥(오른쪽 여백)', pos: (d: Box) => ({ x: d.x + d.width + 2, y: d.y + d.height / 2 }) },
+      { name: '휴지통 왼쪽 바깥(제목과 휴지통 사이 틈)', pos: (d: Box) => ({ x: d.x - 2, y: d.y + d.height / 2 }) },
+      { name: '휴지통 위 바깥', pos: (d: Box) => ({ x: d.x + d.width / 2, y: d.y - 2 }) },
+      { name: '휴지통 아래 바깥', pos: (d: Box) => ({ x: d.x + d.width / 2, y: d.y + d.height + 2 }) },
     ];
     type Box = { x: number; y: number; width: number; height: number };
     for (const spot of SPOTS) {
       test(`줄의 ${spot.name}을 눌러도 그 대화가 열린다`, async ({ authenticatedPage: page }) => {
         const requests = await openPanel(page);
-        await page.getByRole('button', { name: '대화 선택', exact: true }).click();
-        const rect = (await page.getByRole('dialog', { name: '대화 선택' }).getByRole('listitem').nth(1).boundingBox())!;
-        const { x, y } = spot.pos(rect);
+        await openListByMouse(page);
+        const row = (await page.getByRole('dialog', { name: '대화 선택' }).getByRole('listitem').nth(1).boundingBox())!;
+        const del = (await deleteBtn(page, '둘째 대화').boundingBox())!;
+        const { x, y } = spot.pos(del);
+        // 누를 점이 그 줄 안이어야 이 시험이 「줄의 여백」을 누른 것이다
+        expect(x).toBeGreaterThan(row.x);
+        expect(x).toBeLessThan(row.x + row.width);
+        expect(y).toBeGreaterThan(row.y);
+        expect(y).toBeLessThan(row.y + row.height);
         await page.mouse.click(x, y);
         await expect.poll(() => requests.messages).toEqual(['sw-2']);
         await expect(page.getByRole('dialog', { name: '대화 선택' })).toHaveCount(0);
@@ -813,6 +833,82 @@ test.describe('SessionSwitcher — 키보드 삭제 (WD-951)', () => {
       await confirm(page).getByRole('button', { name: '삭제', exact: true }).click();
       await expect.poll(() => requests.deletes).toEqual(['1', '1']);
       requests.releaseDelete('1');
+    });
+  });
+
+  // 줄별 휴지통 클릭 영역 — WCAG 2.5.8(최소 24×24)을 줄 높이 32px 안에서 채운다
+  test.describe('휴지통 클릭 영역 (WD-1010)', () => {
+    /** 상자를 정수 px 로 반올림한다 — 하위 픽셀(24 가 23.99 처럼)로 흔들리지 않게 하되 경계는 넓히지 않고 정확히 비교한다 */
+    const rounded = (b: { x: number; y: number; width: number; height: number }) => ({
+      x: Math.round(b.x),
+      y: Math.round(b.y),
+      width: Math.round(b.width),
+      height: Math.round(b.height),
+    });
+    test('줄마다 휴지통이 24×24 이고 줄 안에 있으며 줄 높이는 32px 그대로', async ({ authenticatedPage: page }) => {
+      await openPanel(page);
+      await openListByMouse(page);
+      for (const title of MOCK_SESSIONS.map((x) => x.title ?? '')) {
+        // 줄(li)은 제목 버튼의 부모다
+        const row = rounded((await titleBtn(page, title).locator('xpath=..').boundingBox())!);
+        const del = rounded((await deleteBtn(page, title).boundingBox())!);
+        // 정확히 24×24 — 하한(2.5.8)뿐 아니라 상한도 둬, 휴지통이 옆으로 커져 줄의 대화 열기 영역을 먹으면 잡는다
+        expect(del.width).toBe(24);
+        expect(del.height).toBe(24);
+        expect(del.y).toBeGreaterThanOrEqual(row.y);
+        expect(del.y + del.height).toBeLessThanOrEqual(row.y + row.height);
+        expect(del.x).toBeGreaterThanOrEqual(row.x); // 왼쪽 경계 안
+        expect(row.x + row.width - (del.x + del.width)).toBe(4); // 오른쪽 틈(right-1)
+        expect(row.height).toBe(32);
+        // 버튼만 커지고 아이콘은 WD-951 그대로 16px — icon-xs 변형의 기본 아이콘 크기(12px)로 줄지 않는다
+        const icon = rounded((await deleteBtn(page, title).locator('svg').boundingBox())!);
+        expect(icon.width).toBe(16);
+        expect(icon.height).toBe(16);
+      }
+    });
+
+    test('휴지통 가장자리를 눌러도 확인 창만 열리고 대화는 열리지 않는다', async ({ authenticatedPage: page }) => {
+      const requests = await openPanel(page);
+      await openListByMouse(page);
+      const dialog = page.getByRole('dialog', { name: '대화 선택' });
+      // 네 가장자리 가운데 안쪽 1px — 제목 버튼이 아니라 휴지통이 받아야 한다. 모서리 끝점은 버튼의 둥근 모서리 바깥이라
+      // 원래부터 줄(제목 버튼) 영역이므로 쓰지 않는다.
+      for (const edge of ['left', 'right', 'top', 'bottom'] as const) {
+        const box = (await deleteBtn(page, '둘째 대화').boundingBox())!;
+        const cx = box.x + box.width / 2;
+        const cy = box.y + box.height / 2;
+        const p = {
+          left: { x: box.x + 1, y: cy },
+          right: { x: box.x + box.width - 1, y: cy },
+          top: { x: cx, y: box.y + 1 },
+          bottom: { x: cx, y: box.y + box.height - 1 },
+        }[edge];
+        await page.mouse.click(p.x, p.y);
+        await expect(confirm(page)).toBeVisible();
+        await page.keyboard.press('Escape');
+        await expect(confirm(page)).toHaveCount(0);
+        // Escape 는 확인 창만 닫고 목록은 남는다(「Esc 는 확인 창 → 목록 순으로 한 층씩 닫는다」와 같은 동작).
+        // 닫힘 애니메이션 중에 상태를 한 번 읽어 갈래를 나누면 경합하므로, 목록이 열린 채인지를 기다려 단언한다(WD-1010 리뷰 후속).
+        await expect(dialog).toHaveAttribute('data-state', 'open');
+        // 닫히기 시작한 목록의 낡은 'open' 을 읽고 지나가지 않게, 확인 창이 돌려준 초점이 그 휴지통에 머무는지도 본다
+        await expect(deleteBtn(page, '둘째 대화')).toBeFocused();
+      }
+      // 네 번 누르고 확인 창을 닫는 동안 나갔을 대화 열기 요청까지 한 번에 본다(고정 대기 없이)
+      expect(requests.messages).toEqual([]);
+    });
+
+    test('긴 제목은 말줄임되고 글자 영역이 휴지통 왼쪽에서 끝난다', async ({ authenticatedPage: page }) => {
+      const title = '가'.repeat(60);
+      await openPanel(page, [createAISession({ id: 5, sessionId: 'sw-long', title, updatedAt: '2026-11-23T03:00:00Z' })]);
+      await openListByMouse(page, title);
+      // 제목이 실제로 잘려 있어야 이 시험이 의미 있다
+      const clipped = await titleBtn(page, title).evaluate((btn) => btn.scrollWidth > btn.clientWidth);
+      expect(clipped).toBe(true);
+      const contentRight = await titleBtn(page, title).evaluate((btn) => {
+        return btn.getBoundingClientRect().right - parseFloat(getComputedStyle(btn).paddingRight);
+      });
+      const del = (await deleteBtn(page, title).boundingBox())!;
+      expect(contentRight).toBeLessThanOrEqual(del.x);
     });
   });
 });

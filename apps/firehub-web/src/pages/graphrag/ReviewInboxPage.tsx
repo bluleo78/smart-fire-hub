@@ -321,7 +321,8 @@ export default function ReviewInboxPage() {
         <TabsControlsContent value={filterTab} className="space-y-4">
         {/* tabIndex=-1: Tab 순서는 건드리지 않으면서 프로그램적으로 포커스를 받을 수 있게 한다(#337 복귀 지점).
             포커스 링은 지우지 않는다 — 복귀 지점이 보이지 않으면 SC 2.4.7 위반으로 결함을 바꿔 심는 셈이다. */}
-        <Table ref={tableRef} tabIndex={-1} data-testid="review-inbox-table">
+        {/* 고대비 초점 복귀 지점 표지 — 이유는 index.css 참조(WD-949) */}
+        <Table ref={tableRef} tabIndex={-1} data-focus-return data-testid="review-inbox-table">
           <TableHeader>
             <TableRow>
               <TableHead>종류</TableHead>
@@ -647,6 +648,8 @@ function EvidencePanel({ id }: { id: number }) {
     <div
       ref={liveRef}
       tabIndex={-1}
+      // 고대비 초점 복귀 지점 표지 — 이유는 index.css 참조(WD-949)
+      data-focus-return
       aria-live="polite"
       aria-busy={isLoading || retrying}
       className="rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"

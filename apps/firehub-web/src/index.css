@@ -696,6 +696,34 @@ html {
   from { opacity: 0; }
   to { opacity: 1; }
 }
+/* ===== 고대비 모드 키보드 초점 (WD-949) =====
+ * 고대비에서는 box-shadow ring 이 안 그려지므로 모든 :focus-visible 에 시스템 색 outline 을 준다.
+ * @layer 밖(unlayered)에 둬서 utilities 의 outline-none 을 이긴다. 바깥 outline 은 offset 을 두지 않는다(각 요소 값 유지).
+ * 제외 대상은 프로그램 초점만 받는 컨테이너(tabindex=-1 인 menu·listbox·dialog·alertdialog·tabpanel, main, 알림 영역, cmdk)이며
+ * :where() 로 감싸 특이도를 낮게 유지한다. 안쪽 offset(-2px)은 overflow 에 잘리는 복귀 지점 표지 data-focus-return 일 때만 준다.
+ */
+@media (forced-colors: active) {
+  :focus-visible:not(
+      :where(
+        [tabindex='-1']:is(
+          [role='menu'],
+          [role='listbox'],
+          [role='dialog'],
+          [role='alertdialog'],
+          [role='tabpanel']
+        ),
+        #main-content,
+        [data-sonner-toaster],
+        [cmdk-root]
+      )
+    ) {
+    outline: 2px solid CanvasText;
+  }
+  :focus-visible[data-focus-return] {
+    outline-offset: -2px;
+  }
+}
+
 /* ===== AI 마크다운 prose (#335) =====
  * @tailwindcss/typography는 gray 팔레트를 하드코딩한 --tw-prose-* 변수를 쓴다.
  * 이 앱은 시맨틱 토큰(--foreground/--border/--muted-foreground 등)으로 라이트·다크를

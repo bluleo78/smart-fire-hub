@@ -321,7 +321,9 @@ test.describe('지식그래프 TypeFilterPanel 모바일 폭 캔버스 압착 (#
     await setupAdminAuth(page);
     await setupOntologyMocks(page);
     await page.setViewportSize({ width: 375, height: 812 });
-    await page.goto('/knowledge-graph/model');
+    // WD-961: toBeHidden 은 요소가 아예 없어도 통과한다 — 느린 첫 진입에서 아직 안 그려진 채로 헛통과하지 않도록
+    // 그래프가 그려진 뒤(긍정 신호)에 숨김을 단언한다.
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByTestId('schema-graph'));
 
     await expect(page.getByTestId('type-filter-panel')).toBeHidden();
     // 패널을 열 수단(토글 버튼)도 이 폭에서는 죽은 컨트롤이 되지 않도록 함께 숨어야 한다.

@@ -155,7 +155,7 @@ interface TableErrorRowProps {
   message?: string;
   /** 문구 글자 톤 — 기본 error(빨강), 권한 없음처럼 흐린 안내는 muted */
   tone?: 'error' | 'muted';
-  /** 셀에 더할 클래스 (예: 여백 py-12) */
+  /** 셀에 더할 클래스 — 세로 여백(py-*) 등. 좌우 여백은 전제 참고 */
   className?: string;
   /**
    * 문구 옆에 둘 동작 (예: "다시 시도" 버튼).
@@ -173,6 +173,12 @@ interface TableErrorRowProps {
  * - 톤 클래스는 문구 노드(DelayedStatus 의 className)에만 둔다 — td 에 두면 outline 버튼(color: inherit)인
  *   action 이 빨간/흐린 글자를 물려받아 예전 모양(버튼은 본문 글자색)이 바뀐다.
  * - 내용과 함께 마운트된 라이브 리전 낭독 누락(WD-815)을 피하려 TableEmptyRow 와 같은 DelayedStatus 를 쓴다.
+ *
+ * 전제 (WD-958):
+ * - 공용 `Table`(components/ui/table.tsx) 안에서만 쓴다 — 그 스크롤 상자가 이 행의 내용 상자(data-slot="table-error-content")가
+ *   있을 때만 크기 컨테이너가 되어 100cqw 가 보이는 폭이 된다. 맨 <table> 이나 공용 Table 밖에서 쓰면 100cqw 가 바깥 컨테이너·뷰포트 폭으로 풀려 폭이 어긋난다.
+ * - 셀 좌우 여백은 0(px-0, className 뒤에 둬 px-* 를 덮는다)이고 안쪽 여백은 내용 상자가 맡는다 — 내용 상자 폭이 셀 여백에 묶이지 않는다.
+ *   반응형 변형(sm:px-6 등)은 덮지 못하므로 좌우 여백은 className 으로 주지 않는다.
  */
 export function TableErrorRow({
   colSpan,
@@ -183,11 +189,20 @@ export function TableErrorRow({
 }: TableErrorRowProps) {
   return (
     <TableRow>
-      <TableCell colSpan={colSpan} className={cn('text-center', className)}>
-        <DelayedStatus role="alert" className={tone === 'muted' ? 'text-muted-foreground' : 'text-destructive'}>
-          {message}
-        </DelayedStatus>
-        {action}
+      <TableCell colSpan={colSpan} className={cn('text-center', className, 'px-0')}>
+        {/*
+          내용 상자 (WD-958) — 전제는 컴포넌트 JSDoc 참고.
+          - data-slot: table.tsx 의 has-[…] 가 이 이름으로 스크롤 상자를 크기 컨테이너로 켠다 — 바꾸면 함께.
+          - sticky left-0 w-[100cqw] max-w-full: 가로 스크롤돼도 보이는 폭 그대로 붙어 긴 사유는 늘어나지 않고 줄바꿈된다.
+          - px-10: 스크롤 페이드(w-10)·힌트 배지가 문구·버튼 양끝을 덮지 않게 양쪽 2.5rem 안쪽에만 둔다.
+          - whitespace-normal + overflow-wrap:anywhere: 공백 없는 긴 토큰(trace 등)도 감는다. mx-auto 는 쓰지 않는다(표가 더 넓으면 가운데가 보이는 영역 밖으로 밀림).
+        */}
+        <div data-slot="table-error-content" className="sticky left-0 w-[100cqw] max-w-full px-10 whitespace-normal [overflow-wrap:anywhere]">
+          <DelayedStatus role="alert" className={tone === 'muted' ? 'text-muted-foreground' : 'text-destructive'}>
+            {message}
+          </DelayedStatus>
+          {action}
+        </div>
       </TableCell>
     </TableRow>
   );

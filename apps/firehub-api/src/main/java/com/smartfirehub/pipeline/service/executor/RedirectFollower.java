@@ -104,8 +104,32 @@ public final class RedirectFollower {
         int timeoutMs,
         boolean timeoutPerHop,
         boolean failOnErrorStatus) {
+      return bodilessGet(
+          client, ssrf, uri, auth, timeoutMs, timeoutPerHop, failOnErrorStatus, null);
+    }
+
+    /** 홉 검사를 받는 헤더·본문 없는 GET(WD-998) — 연결 테스트가 리다이렉트 홉마다 메서드 변경 쿼리를 검사하려고 쓴다. */
+    public static Request bodilessGet(
+        WebClient client,
+        SsrfProtectionService ssrf,
+        URI uri,
+        ApiCallAuth.ResolvedAuth auth,
+        int timeoutMs,
+        boolean timeoutPerHop,
+        boolean failOnErrorStatus,
+        BiConsumer<String, URI> hopCheck) {
       return new Request(
-          client, ssrf, "GET", uri, null, null, auth, timeoutMs, timeoutPerHop, failOnErrorStatus);
+          client,
+          ssrf,
+          "GET",
+          uri,
+          null,
+          null,
+          auth,
+          timeoutMs,
+          timeoutPerHop,
+          failOnErrorStatus,
+          hopCheck);
     }
 
     /** 홉 검사 없는 요청(WD-970 이전의 호출 모양) — hopCheck 를 null 로 위임한다. */

@@ -354,6 +354,13 @@ class ApiConnectionTestUrlMaskingTest extends IntegrationTestBase {
     assertThat(result.requestUrl()).contains("%E2%80%AE").doesNotContain("\u202E");
   }
 
+  /** 저장된 경로에 제어 문자가 있어 인코딩이 물러서도 응답 requestUrl 에 날것 U+202E·탭이 없다(WD-1000 후속). */
+  @Test
+  void testConnection_rawRtlAndTabInPath_requestUrlHasNoRawHiddenChars() {
+    TestConnectionResponse result = testHeaderAuthWithPath("WD1000 rlo tab", "/a\u202Eb\t");
+    assertThat(result.requestUrl()).doesNotContain("\u202E").doesNotContain("\t");
+  }
+
   /** 4xx(WebClientResponseException) 경로도 표시 URL 을 쓴다. */
   @Test
   void testConnection_queryKey_http401_responseUrlMasked() {
@@ -1390,5 +1397,218 @@ class ApiConnectionTestUrlMaskingTest extends IntegrationTestBase {
         .contains("****2468");
     result.responseHeaders().values().forEach(v -> assertNoSecret(v, keyId));
     assertThat(readStatus(created.id()).get(AC_LAST_STATUS)).isEqualTo("UP");
+  }
+
+  // ── WD-998: 연결 테스트(GET)에 메서드를 바꾸는 헤더·쿼리 이름 거절 ──────────────────────────────
+
+  /** API_KEY 헤더 배치의 평범한 설정 — 메서드 변경 이름이 없다. */
+  private static final Map<String, String> HEADER_KEY_CFG =
+      Map.of("placement", "header", "headerName", "X-Key", "apiKey", KEY);
+
+  /** 시험 공용 — /health 가 /data?_method=DELETE 로 302 하고 /data 는 200 이다. */
+  private void stubRedirectToMethodOverride() {
+    wireMock.stubFor(
+        get(urlPathEqualTo("/health"))
+            .willReturn(
+                aResponse()
+                    .withStatus(302)
+                    .withHeader("Location", wireMockBase() + "/data?_method=DELETE")));
+    wireMock.stubFor(get(urlPathEqualTo("/data")).willReturn(aResponse().withStatus(200)));
+  }
+
+  private CreateApiConnectionRequest overrideReq(
+      String name, String authType, Map<String, String> cfg, String baseUrl, String path) {
+    return new CreateApiConnectionRequest(name, null, authType, cfg, baseUrl, path);
+  }
+
+  /** 거절 공통 단언 — 이름만 담고 값(DELETE)·키는 없으며, 대상 서버에는 한 건도 가지 않는다. */
+  private static void assertOverrideRejected(
+      TestConnectionResponse r, String name, boolean header) {
+    assertThat(r.ok()).isFalse();
+    assertThat(r.errorMessage())
+        .contains("연결 테스트에는 메서드를 바꾸는 " + (header ? "헤더" : "쿼리") + " " + name)
+        .doesNotContain("DELETE")
+        .doesNotContain(KEY);
+    wireMock.verify(0, anyRequestedFor(anyUrl()));
+  }
+
+  /**
+   * 기준 URL 쿼리의 _method — 저장된 연결 테스트가 호출 전에 막고 DOWN 상태를 남긴다. 헬스체크 경로를 비워 기준 URL 자체를 부르게 해, 경로가 쿼리 뒤에
+   * 붙어 값이 「DELETE/health」 가 되지 않게 한다.
+   */
+  @Test
+  void connectionTest_baseUrlMethodQuery_rejectsBeforeCall() {
+    stubHealthOk();
+    ApiConnectionResponse created =
+        apiConnectionService.create(
+            overrideReq(
+                "WD998 base",
+                "API_KEY",
+                HEADER_KEY_CFG,
+                wireMockBase() + "/api?_method=DELETE",
+                null),
+            testUserId);
+
+    TestConnectionResponse result = apiConnectionService.testConnection(created.id(), testUserId);
+
+    assertOverrideRejected(result, "_method", false);
+    assertThat(readStatus(created.id()).get(AC_LAST_STATUS)).isEqualTo("DOWN");
+  }
+
+  /** 헬스체크 경로의 쿼리 _method(평문 이름) — 저장 전 테스트 경로. 인코딩된 이름(%5Fmethod)은 아래 별도 시험. */
+  @Test
+  void connectionTest_methodQueryInHealthPath_rejects() {
+    stubHealthOk();
+    TestConnectionResponse result =
+        apiConnectionService.testConnectionPayload(
+            overrideReq(
+                "WD998 path", "API_KEY", HEADER_KEY_CFG, wireMockBase(), "/health?_method=DELETE"));
+
+    assertOverrideRejected(result, "_method", false);
+    assertThat(result.errorMessage())
+        .isEqualTo(
+            "연결 테스트에는 메서드를 바꾸는 쿼리 _method 을(를) 보낼 수 없습니다 — 대상 서버가 GET 을 다른 메서드(쓰기)로 처리할 수 있습니다. 기본 URL·헬스체크 경로·인증 설정에서 이 이름을 빼세요");
+  }
+
+  /**
+   * 쿼리 인증이 아닌 연결도 헬스체크 경로의 %5Fmethod 를 거절한다. 호출 URI 는 인코딩을 마친 URL 을 그대로 써(WD-991) %5F 가 대상에
+   * 「_method」 로 디코딩돼 닿기 때문이다(WD-991 — %255F 로 다시 인코딩하지 않는다).
+   */
+  @Test
+  void connectionTest_encodedMethodQueryInHealthPath_nonQueryAuth_rejects() {
+    stubHealthOk();
+    TestConnectionResponse result =
+        apiConnectionService.testConnectionPayload(
+            overrideReq(
+                "WD998 enc path",
+                "API_KEY",
+                HEADER_KEY_CFG,
+                wireMockBase(),
+                "/health?%5Fmethod=DELETE"));
+
+    assertOverrideRejected(result, "_method", false);
+  }
+
+  /** 추가 인증 헤더(extraHeader:)의 이름이 메서드 변경 헤더면 거절 — 값(DELETE)·토큰은 문구에 없다. */
+  @Test
+  void connectionTest_extraHeaderNamedOverride_rejects() {
+    stubHealthOk();
+    TestConnectionResponse result =
+        apiConnectionService.testConnectionPayload(
+            overrideReq(
+                "WD998 extra",
+                "BEARER",
+                Map.of("token", KEY, "extraHeader:X-HTTP-Method-Override", "DELETE"),
+                wireMockBase(),
+                "/health"));
+
+    assertOverrideRejected(result, "X-HTTP-Method-Override", true);
+  }
+
+  /** API_KEY 헤더 이름이 메서드 변경 헤더면 거절 — 저장 전 테스트 경로. */
+  @Test
+  void connectionTest_apiKeyHeaderNamedOverride_rejects() {
+    stubHealthOk();
+    TestConnectionResponse result =
+        apiConnectionService.testConnectionPayload(
+            overrideReq(
+                "WD998 hdr",
+                "API_KEY",
+                Map.of(
+                    "placement",
+                    "header",
+                    "headerName",
+                    "X-HTTP-Method-Override",
+                    "apiKey",
+                    "DELETE"),
+                wireMockBase(),
+                "/health"));
+
+    assertOverrideRejected(result, "X-HTTP-Method-Override", true);
+  }
+
+  /** API_KEY 쿼리 파라미터 이름이 _method 면 거절. */
+  @Test
+  void connectionTest_queryApiKeyNamedMethod_rejects() {
+    stubHealthOk();
+    TestConnectionResponse result =
+        apiConnectionService.testConnectionPayload(
+            overrideReq(
+                "WD998 qkey",
+                "API_KEY",
+                Map.of("placement", "query", "paramName", "_method", "apiKey", "DELETE"),
+                wireMockBase(),
+                "/health"));
+
+    assertOverrideRejected(result, "_method", false);
+  }
+
+  /** 리다이렉트 대상 쿼리에 _method 가 있으면 따라가지 않고 거절한다. */
+  @Test
+  void connectionTest_redirectToMethodOverrideQuery_rejectsWithoutFollowing() {
+    stubRedirectToMethodOverride();
+
+    TestConnectionResponse result =
+        apiConnectionService.testConnectionPayload(
+            overrideReq("WD998 redir", "API_KEY", HEADER_KEY_CFG, wireMockBase(), "/health"));
+
+    assertThat(result.ok()).isFalse();
+    assertThat(result.errorMessage())
+        .isEqualTo(
+            "연결 테스트 중 대상 서버가 메서드를 바꾸는 쿼리 _method 이(가) 붙은 주소로 리다이렉트해 따라가지 않았습니다 — 대상 서버가 GET 을 다른 메서드(쓰기)로 처리할 수 있습니다. 대상 서버의 리다이렉트 주소를 확인하세요")
+        .doesNotContain("DELETE")
+        .doesNotContain(KEY);
+    wireMock.verify(1, getRequestedFor(urlPathEqualTo("/health")));
+    wireMock.verify(0, getRequestedFor(urlPathEqualTo("/data")));
+  }
+
+  /** 평범한 헤더·쿼리 이름이면 예전처럼 성공한다. */
+  @Test
+  void connectionTest_plainGet_stillSucceeds() {
+    stubHealthOk();
+    TestConnectionResponse result =
+        apiConnectionService.testConnectionPayload(
+            overrideReq(
+                "WD998 plain", "API_KEY", HEADER_KEY_CFG, wireMockBase(), "/health?page=1"));
+
+    assertThat(result.ok()).isTrue();
+  }
+
+  /** 쿼리 API 키 연결은 호출 URI 를 확장 없이 만들어 %5Fmethod 가 대상에 디코딩돼 닿는다 — 헬스체크 경로·기준 URL 양쪽 모두 거절한다. */
+  @Test
+  void connectionTest_queryApiKey_encodedMethodName_rejects() {
+    stubHealthOk();
+    Map<String, String> cfg =
+        Map.of("placement", "query", "paramName", "serviceKey", "apiKey", KEY);
+
+    TestConnectionResponse inPath =
+        apiConnectionService.testConnectionPayload(
+            overrideReq(
+                "WD998 qenc path", "API_KEY", cfg, wireMockBase(), "/health?%5Fmethod=DELETE"));
+    assertOverrideRejected(inPath, "_method", false);
+
+    // 헬스체크 경로를 비워(null) 기준 URL 자체를 부른다 — 경로가 쿼리 뒤에 붙지 않게.
+    TestConnectionResponse inBase =
+        apiConnectionService.testConnectionPayload(
+            overrideReq(
+                "WD998 qenc base", "API_KEY", cfg, wireMockBase() + "/api?%5Fmethod=DELETE", null));
+    assertOverrideRejected(inBase, "_method", false);
+  }
+
+  /** 저장된 연결의 리다이렉트 거절도 DOWN 상태로 남는다(대상 /data 는 부르지 않음). */
+  @Test
+  void connectionTest_savedConnection_redirectToMethodOverride_endsDown() {
+    stubRedirectToMethodOverride();
+    ApiConnectionResponse created =
+        apiConnectionService.create(
+            overrideReq("WD998 saved redir", "API_KEY", HEADER_KEY_CFG, wireMockBase(), "/health"),
+            testUserId);
+
+    TestConnectionResponse result = apiConnectionService.testConnection(created.id(), testUserId);
+
+    assertThat(result.ok()).isFalse();
+    assertThat(result.errorMessage()).contains("리다이렉트해 따라가지 않았습니다");
+    wireMock.verify(0, getRequestedFor(urlPathEqualTo("/data")));
+    assertThat(readStatus(created.id()).get(AC_LAST_STATUS)).isEqualTo("DOWN");
   }
 }
