@@ -20,8 +20,13 @@ export function AISessionSidebar() {
   const handleDeleteConfirmed = (sessionId: string, id: number) => {
     deleteSession
       .mutateAsync(id)
-      .then(() => onSessionDeleted(sessionId))
-      .catch(() => {});
+      .then(
+        () => onSessionDeleted(sessionId),
+        // 요청 실패 — 안내는 훅의 onError 가 띄운다. 화면 동작은 그대로 두고 원인만 남긴다
+        (error) => console.error('Failed to delete AI session:', error),
+      )
+      // 삭제는 성공했고 뒤따른 처리(onSessionDeleted)에서 난 오류 — 요청 실패와 구분해 남긴다
+      .catch((error) => console.error('Failed after AI session delete:', error));
   };
 
   // WD-755: 세션 목록 면은 알파 없는 단색 bg-muted(/30 은 대화 영역과 갈리지 않는다) — 현재 세션(bg-accent)은 muted 보다 한 단계 위라 갈린다

@@ -164,9 +164,13 @@ export function SessionSwitcher({ currentSessionId, onNewSession, onSessionDelet
                           .mutateAsync(session.id)
                           .then(
                             () => onSessionDeleted(session.sessionId),
-                            () => pendingDeletes.current.delete(req),
+                            (error) => {
+                              // 삭제 실패 안내는 훅의 onError 가 띄운다 — 원인만 남기고 기억에서 뺀다
+                              console.error('Failed to delete AI session:', error);
+                              pendingDeletes.current.delete(req);
+                            },
                           )
-                          .catch(() => {});
+                          .catch((error) => console.error('Failed after AI session delete:', error));
                       }}
                       trigger={
                         <Button
