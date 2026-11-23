@@ -271,8 +271,114 @@ class AuthQueryMaskerTest {
         .isNotEqualTo(secrets);
   }
 
+  /** 기준 URL 쿼리 값 속 = 는 날것 그대로 잇는다 — httpx 와 같은 바이트(WD-991). */
+  @Test
+  void build_baseQueryValueWithEquals_keptRaw() {
+    AuthQueryMasker.AuthQueryUrls urls =
+        AuthQueryMasker.build(
+            "https://api.example.com/x?serviceKey=abc+d==", Map.of("page", "1"), null, null);
+
+    assertThat(urls.callUrl()).isEqualTo("https://api.example.com/x?serviceKey=abc+d==&page=1");
+    assertThat(urls.callUri().getRawQuery()).isEqualTo("serviceKey=abc+d==&page=1");
+  }
+
+  /** 기준 쿼리에 = 가 있어도 인증 키는 공용 규칙으로 인코딩해 끝에 붙고 표시 URL 에는 원문이 없다(WD-991). */
+  @Test
+  void build_baseQueryEquals_withAuthKey_maskedDisplay() {
+    AuthQueryMasker.AuthQueryUrls urls =
+        AuthQueryMasker.build(
+            "https://api.example.com/x?serviceKey=abc+d==",
+            Map.of("serviceKey2", "k+y=="),
+            "serviceKey2",
+            "k+y==");
+
+    assertThat(urls.callUrl()).endsWith("&serviceKey2=k%2By%3D%3D");
+    assertThat(urls.displayUrl()).doesNotContain("k+y==");
+  }
+
+  /** 기준 URL 이 ? 나 & 로 끝나면 구분자를 겹쳐 쓰지 않는다(WD-991). */
+  @Test
+  void build_trailingQuestionOrAmp_noDoubleSeparator() {
+    assertThat(AuthQueryMasker.build("https://a.com/x?", Map.of("page", "1"), null, null).callUrl())
+        .isEqualTo("https://a.com/x?page=1");
+    assertThat(
+            AuthQueryMasker.build("https://a.com/x?a=1&", Map.of("page", "1"), null, null)
+                .callUrl())
+        .isEqualTo("https://a.com/x?a=1&page=1");
+  }
+
+  /** 프래그먼트는 서버로 가지 않으므로 떼고, 파라미터는 # 앞(쿼리)에 붙는다(WD-991). */
+  @Test
+  void build_fragment_paramsBeforeOrDropped() {
+    AuthQueryMasker.AuthQueryUrls urls =
+        AuthQueryMasker.build("https://a.com/x?a=1#f", Map.of("page", "1"), null, null);
+
+    assertThat(urls.callUrl()).doesNotContain("#f");
+    assertThat(urls.callUri().getRawQuery()).isEqualTo("a=1&page=1");
+  }
+
+  /** 정말 만들 수 없는 기준 URL 은 원문 없는 고정 문구로 거절한다(WD-991). */
+  @Test
+  void build_unbuildable_throwsFixedMessage() {
+    assertThatThrownBy(
+            () ->
+                AuthQueryMasker.build(
+                    "https://a.com/x?secretish=a b", Map.of("page", "1"), null, null))
+        .isInstanceOf(AuthQueryMasker.InvalidRequestUrlException.class)
+        .hasNoCause()
+        .satisfies(e -> assertThat(e.getMessage()).doesNotContain("secretish").doesNotContain("a b"));
+  }
+
   /** 스트리밍 판정을 비밀 문자열로 부른다 — 테스트에서 쓰는 비밀은 모두 최소 길이 이상이라 Scrubber 가 있다. */
   private static boolean containsSecret(String body, String secret) {
     return AuthQueryMasker.jsonValuesContainSecret(body, AuthQueryMasker.Scrubber.of(secret));
+  }
+
+  /** 호출 URL 의 경로·쿼리에 인코딩 안 된 비ASCII 가 있으면 거절한다(WD-991 리뷰) — 호출자는 RequestUrlEncoding 으로 미리 인코딩한다. */
+  @Test
+  void build_rawKoreanInQuery_throws() {
+    assertThatThrownBy(() -> AuthQueryMasker.build("https://a.com/x?q=서울", Map.of(), null, null))
+        .isInstanceOf(AuthQueryMasker.InvalidRequestUrlException.class)
+        .hasNoCause();
+  }
+
+  /** 경로의 날것 한글도 거절한다. */
+  @Test
+  void build_rawKoreanInPath_throws() {
+    assertThatThrownBy(() -> AuthQueryMasker.build("https://a.com/서울?q=1", Map.of(), null, null))
+        .isInstanceOf(AuthQueryMasker.InvalidRequestUrlException.class)
+        .hasNoCause();
+  }
+
+  /** 쿼리의 날것 대괄호는 거절한다(예전 build(true) 와 같다). */
+  @Test
+  void build_rawBracketsInQuery_throws() {
+    assertThatThrownBy(() -> AuthQueryMasker.build("https://a.com/x?a[0]=1", Map.of(), null, null))
+        .isInstanceOf(AuthQueryMasker.InvalidRequestUrlException.class)
+        .hasNoCause();
+  }
+
+  /** authority 의 대괄호(IPv6 호스트)는 거절하지 않는다. */
+  @Test
+  void build_ipv6Host_withRawEqualsInQuery_builds() {
+    AuthQueryMasker.AuthQueryUrls urls =
+        AuthQueryMasker.build("https://[::1]:8080/x?a=b==", Map.of(), null, null);
+    assertThat(urls.callUrl()).isEqualTo("https://[::1]:8080/x?a=b==");
+  }
+
+  /** 기준 쿼리의 날것 '=' 는 표시 URL 에도 그대로 남는다. */
+  @Test
+  void build_rawEqualsInBase_displayUrlKeepsIt() {
+    AuthQueryMasker.AuthQueryUrls urls =
+        AuthQueryMasker.build("https://a.com/x?serviceKey=abc+d==", Map.of("page", "1"), null, null);
+    assertThat(urls.displayUrl()).isEqualTo("https://a.com/x?serviceKey=abc+d==&page=1");
+  }
+
+  /** 표시 URL 도 호출 URL 처럼 프래그먼트를 뗀다. */
+  @Test
+  void build_fragment_strippedFromDisplayUrl() {
+    AuthQueryMasker.AuthQueryUrls urls =
+        AuthQueryMasker.build("https://a.com/x?a=1#f", Map.of("page", "1"), null, null);
+    assertThat(urls.displayUrl()).doesNotContain("#f").isEqualTo(urls.callUrl());
   }
 }

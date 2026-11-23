@@ -1483,14 +1483,14 @@ class ApiCallPreviewServiceTest {
   }
 
   /**
-   * 빈 비밀은 URL 조립보다 먼저 본다 — 인코딩 뒤에도 만들 수 없는 주소(쿼리 값 속 {@code =})여도 빈 비밀 안내가 이기고 resolvedUrl 은 null 이며 아무것도
+   * 빈 비밀은 URL 조립보다 먼저 본다 — 인코딩 뒤에도 만들 수 없는 주소(쿼리 값 속 제어 문자)여도 빈 비밀 안내가 이기고 resolvedUrl 은 null 이며 아무것도
    * 호출하지 않는다(WD-936 복원).
    */
   @Test
   void preview_emptySecretWithUnbuildableUrl_reportsEmptySecret() {
     ApiCallPreviewResponse response =
         service.preview(
-            inlinePreview("/data?q=a==b", java.util.Map.of("authType", "BEARER", "token", "")));
+            inlinePreview("/data?q=a\u0001b", java.util.Map.of("authType", "BEARER", "token", "")));
 
     assertThat(response.success()).isFalse();
     assertThat(response.errorMessage()).contains("Bearer 토큰이 비어 있습니다");

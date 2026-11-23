@@ -246,7 +246,7 @@ public final class ApiCallAuth {
      * 호출용·표시용 URL 을 만든다 — 쿼리 인증 키를 붙이는 규칙을 실행기·미리보기·연결 테스트·리다이렉트 복원이 함께 쓰도록 한 곳에 둔다(WD-657).
      *
      * <p>{@code extraParams} 가 null 이고 쿼리 인증도 아니면 URL 을 손대지 않고 그대로 돌려준다(연결 테스트 — 빌더로 다시 만들면 경로의
-     * 한글·공백에서 build(true) 가 실패해 지금 되는 연결이 깨진다). 그 밖에는 정적 파라미터 뒤에 쿼리 인증 키를 넣어 {@link
+     * 한글·공백이 다시 거절돼 지금 되는 연결이 깨진다). 그 밖에는 정적 파라미터 뒤에 쿼리 인증 키를 넣어 {@link
      * AuthQueryMasker#build} 로 만든다 — 키는 공용 규칙(QueryApiKeyEncoding)으로 한 번 인코딩되고 표시용 URL 에서는 가려진다.
      *
      * @param url 쿼리를 붙일 기준 URL

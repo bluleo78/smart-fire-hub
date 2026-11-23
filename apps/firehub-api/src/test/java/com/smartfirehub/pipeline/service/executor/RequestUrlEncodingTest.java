@@ -12,6 +12,17 @@ class RequestUrlEncodingTest {
     return RequestUrlEncoding.encodePathAndQuery(url);
   }
 
+  /** 참조 인코딩(WD-991) — 상대 참조·null·//authority·절대 URL. */
+  @Test
+  void encodeReference_variants() {
+    assertThat(RequestUrlEncoding.encodeReference("?q=가")).isEqualTo("?q=%EA%B0%80");
+    assertThat(RequestUrlEncoding.encodeReference(null)).isNull();
+    assertThat(RequestUrlEncoding.encodeReference("//한글.com/가 나"))
+        .isEqualTo("//한글.com/%EA%B0%80%20%EB%82%98");
+    assertThat(RequestUrlEncoding.encodeReference("https://x.com/가#f"))
+        .isEqualTo("https://x.com/%EA%B0%80");
+  }
+
   @Test
   void spaceInQuery() {
     assertThat(enc("https://example.com/search?q=seoul city"))
@@ -115,12 +126,12 @@ class RequestUrlEncodingTest {
   /** 백슬래시·캐럿·백틱·중괄호는 Java URI 가 날것으로 못 실어 인코딩한다. */
   @Test
   void backslashCaretBacktickBraces_encoded() {
-    assertThat(enc("https://h/p?q=\\^`{}"))
-        .isEqualTo("https://h/p?q=%5C%5E%60%7B%7D");
+    assertThat(enc("https://h/p?q=\\^`{}")).isEqualTo("https://h/p?q=%5C%5E%60%7B%7D");
   }
 
   /**
-   * 경로·쿼리의 제어 문자(탭·개행·DEL)는 실행기 httpx 가 InvalidURL 로 거절하므로 테스트 호출도 거절되도록 원문을 그대로 돌려 기존 검사가 거절하게 한다(WD-936).
+   * 경로·쿼리의 제어 문자(탭·개행·DEL)는 실행기 httpx 가 InvalidURL 로 거절하므로 테스트 호출도 거절되도록 원문을 그대로 돌려 기존 검사가 거절하게
+   * 한다(WD-936).
    */
   @Test
   void controlCharacters_returnedAsIs() {

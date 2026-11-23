@@ -2,6 +2,7 @@ package com.smartfirehub.apiconnection.service;
 
 import com.smartfirehub.global.util.ExactJsonMapper;
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
@@ -45,8 +46,10 @@ import tools.jackson.databind.node.StringNode;
  * fixtures/query-param-encoding-vectors.json}). 인증 파라미터는 같은 이름의 정적 파라미터가 있어도 하나만, 맨 끝에 붙인다(Python
  * {@code _apply_resolved_auth} 와 같은 순서).
  *
- * <p><b>URL 을 만들 수 없을 때.</b> 기준 URL(경로·이미 붙어 있던 쿼리)은 예전처럼 다시 인코딩하지 않는다. {@code build(true)} 는 그런 곳에
- * {@code = 공백 한글} 처럼 URL 에 그대로 쓸 수 없는 문자가 있으면 {@code Invalid character ... in "<값 원문>"} 을 던진다. 이
+ * <p><b>URL 을 만들 수 없을 때.</b> 기준 URL(경로·이미 붙어 있던 쿼리)은 예전처럼 다시 인코딩하지 않는다. 호출용 URL 은 Spring {@code build(true)}
+ * 대신 문자열로 이어 {@code java.net.URI} 로 검사한다(WD-991) — 쿼리 값 속 {@code =} 는 실행기(httpx)처럼 날것으로 받는다. 제어 문자·공백,
+ * 잘못된 {@code %}·authority 는 {@code URISyntaxException}(그 메시지엔 값 원문이 실린다)이고, 호출자가 미리 인코딩하지 않아 남은 경로·쿼리의
+ * 비ASCII 문자와 쿼리의 {@code [ ]} 는 따로 거절한다. 이
  * 예외가 400 응답·실행 기록·로그로 나가지 않도록 원문을 담지 않은 고정 문구의 {@link InvalidRequestUrlException} 으로 바꾼다(원인 예외를
  * cause 로 잇지 않는다 — 원인 사슬을 따라가 근본 원인 메시지를 쓰는 분류기가 다시 원문을 꺼내기 때문이다).
  */
@@ -106,8 +109,10 @@ public final class AuthQueryMasker {
       ordered.put(authParamName, params.get(authParamName));
     }
 
+    // WD-991: 표시 URL 도 호출 URL 처럼 프래그먼트를 뗀 기준 URL 에서 만들어 두 URL 이 어긋나지 않게 한다.
     // 표시용: 같은 입력에서 인증 파라미터 값만 가린 값으로 바꾼다. 나머지는 실제로 보내는 인코딩 형태 그대로 보인다(WD-200).
-    UriComponentsBuilder displayBuilder = UriComponentsBuilder.fromUriString(url);
+    String base = stripFragment(url);
+    UriComponentsBuilder displayBuilder = UriComponentsBuilder.fromUriString(base);
     ordered.forEach(
         (name, value) ->
             displayBuilder.queryParam(
@@ -122,17 +127,49 @@ public final class AuthQueryMasker {
         BaseUrlUserInfo.mask(scrubSecret(displayBuilder.build().toUriString(), authSecret));
 
     // 호출용: 이름·값을 모두 공용 규칙으로 한 번 인코딩한다(인증 키 WD-182, 정적·페이지네이션 파라미터 WD-200). 인코딩한 조각은 비예약 문자와
-    // %XX 로만 이뤄져 build(true) 검사를 항상 통과하므로, build(true) 가 실패하는 것은 기준 URL 자체가 잘못된 경우뿐이다.
-    UriComponentsBuilder callBuilder = UriComponentsBuilder.fromUriString(url);
-    ordered.forEach((name, value) -> callBuilder.queryParam(encodeParam(name), encodeParam(value)));
-    String callUrl;
+    // %XX 로만 이뤄지므로, 아래 검사에서 거절되는 것은 기준 URL 자체가 잘못된 경우뿐이다.
+    // WD-991: 기준 쿼리 값 속 '='(예: serviceKey=abc+d== 의 Base64 패딩)는 실행기(httpx)처럼 날것으로 받는다. 그래서 호출용 URL 은
+    // 문자열로 직접 잇고 java.net.URI 로 검사하며, 비ASCII·쿼리 대괄호는 따로 거절한다.
+    List<String> pairs = new ArrayList<>();
+    ordered.forEach((name, value) -> pairs.add(encodeParam(name) + "=" + encodeParam(value)));
+    // 구분자: 쿼리가 아직 없으면 '?', 있으면 '&' — 기준 URL 이 '?' 나 '&' 로 끝나면 겹쳐 쓰지 않는다.
+    String separator =
+        pairs.isEmpty() || base.endsWith("?") || base.endsWith("&")
+            ? ""
+            : base.indexOf('?') < 0 ? "?" : "&";
+    String callUrl = base + separator + String.join("&", pairs);
+    URI parsed;
     try {
-      callUrl = callBuilder.build(true).toUriString();
-    } catch (IllegalArgumentException e) {
-      // 원문을 담은 Spring 메시지를 버리고, cause 도 잇지 않는다(클래스 설명 참고).
+      parsed = new URI(callUrl);
+    } catch (URISyntaxException e) {
+      // 원문을 담은 예외를 버리고, cause 도 잇지 않는다(클래스 설명 참고).
+      throw new InvalidRequestUrlException();
+    }
+    // WD-991 리뷰: java.net.URI 는 경로·쿼리의 날것 비ASCII 와 쿼리의 '[' ']' 를 받지만 예전 build(true) 는 거절했다. 호출자는
+    // RequestUrlEncoding 으로 미리 인코딩하므로 그대로 남은 것은 거절한다. authority(IPv6 호스트의 대괄호)는 검사하지 않는다.
+    if (hasUnencoded(parsed.getRawPath(), false) || hasUnencoded(parsed.getRawQuery(), true)) {
       throw new InvalidRequestUrlException();
     }
     return new AuthQueryUrls(callUrl, displayUrl);
+  }
+
+  /**
+   * 인코딩되지 않은 글자가 남았는지 — U+0080 이상(한글 등), 쿼리면 날것 대괄호도(WD-991 리뷰). null 이면 false. 예전 build(true) 가
+   * 거절하던 것을 같게 거절한다.
+   */
+  private static boolean hasUnencoded(String s, boolean query) {
+    if (s == null) return false;
+    for (int i = 0; i < s.length(); i++) {
+      char c = s.charAt(i);
+      if (c >= 0x80 || (query && (c == '[' || c == ']'))) return true;
+    }
+    return false;
+  }
+
+  /** 프래그먼트({@code #} 부터 끝)를 뗀다 — 서버로 가지 않고, 붙이는 쿼리가 그 뒤로 밀리면 안 되기 때문이다(WD-991). */
+  private static String stripFragment(String url) {
+    int hash = url.indexOf('#');
+    return hash < 0 ? url : url.substring(0, hash);
   }
 
   /**
@@ -644,7 +681,7 @@ public final class AuthQueryMasker {
    */
   public record AuthQueryUrls(String callUrl, String displayUrl) {
 
-    /** 호출용 URI. 인코딩된 문자열을 그대로 해석한다(예전 {@code build(true).toUri()} 와 같은 값). */
+    /** 호출용 URI. 이미 인코딩된 문자열을 다시 인코딩하지 않고 그대로 해석한다(WD-991). */
     public URI callUri() {
       return URI.create(callUrl);
     }
@@ -659,7 +696,8 @@ public final class AuthQueryMasker {
 
     public InvalidRequestUrlException() {
       super(
-          "요청 URL 을 만들 수 없습니다 — 주소에 URL 에 그대로 쓸 수 없는 문자(공백·한글 등)가 있습니다."
+          "요청 URL 을 만들 수 없습니다 — 주소에 제어 문자, 잘못된 %·주소(호스트) 표기,"
+              + " 인코딩되지 않은 한글 등 URL 에 쓸 수 없는 문자가 있습니다."
               + " 주소에 직접 쓴 경로·쿼리 값은 URL 인코딩해 넣으세요"
               + "(쿼리 파라미터 칸·API 키는 인코딩한 값·인코딩하지 않은 값 모두 넣을 수 있습니다)");
     }
