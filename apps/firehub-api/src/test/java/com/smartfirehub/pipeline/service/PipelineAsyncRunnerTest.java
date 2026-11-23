@@ -1053,7 +1053,7 @@ class PipelineAsyncRunnerTest {
         null);
   }
 
-  /** WD-810 — 응답 크기 한도 거절 시험의 공통 검증: 외부 호출·임시 테이블 생성이 없어야 한다. */
+  /** API_CALL 이 호출 전에 거절하는 시험들의 공통 검증(WD-810 응답 크기 한도·WD-986 잘못된 메서드): 외부 호출·임시 테이블 생성이 없어야 한다. */
   private void verifyNoExternalCall() {
     verify(executorClient, never()).executeApiCall(any());
     verify(apiCallExecutor, never()).execute(any(), any(), any(), any(), any(), any(), any());
@@ -1078,6 +1078,30 @@ class PipelineAsyncRunnerTest {
         null,
         null,
         mb,
+        null,
+        null,
+        null,
+        null);
+  }
+
+  /** WD-986 — 변환 결과의 method 만 지정한 API_CALL 설정(나머지는 최소 설정). */
+  private ApiCallConfig apiConfigWithMethod(String method) {
+    ApiCallConfig base = minimalApiConfig();
+    return new ApiCallConfig(
+        base.url(),
+        method,
+        null,
+        null,
+        null,
+        null,
+        base.dataPath(),
+        base.fieldMappings(),
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
         null,
         null,
         null,
@@ -1308,6 +1332,35 @@ class PipelineAsyncRunnerTest {
         .isEqualTo("스텝 인증 설정의 API 키가 비어 있습니다 — 파이프라인 편집에서 이 스텝의 인증 설정을 고치세요.");
     verify(executorClient, never()).executeApiCall(any());
     verify(apiCallExecutor, never()).execute(any(), any(), any(), any(), any(), any(), any());
+  }
+
+  /**
+   * WD-986 ③ — 표준이 아닌 HTTP 메서드는 외부(Python) 실행기가 임시 테이블을 만든 뒤에 알아채지 않도록, 호출·임시 테이블 준비 전에 실패하고 저장
+   * 검증과 같은 문구를 실행 기록에 남긴다. 예전에는 잘못된 메서드가 요청 직전까지 진행돼 임시 테이블을 만든 뒤에 실패했다.
+   */
+  @Test
+  void executeStep_apiCallUnsupportedMethod_failsBeforeCall() {
+    Long pipelineId = 21L, userId = 2L, stepId = 215L, stepExecId = 315L;
+    when(objectMapper.convertValue(any(), eq(ApiCallConfig.class)))
+        .thenReturn(apiConfigWithMethod("PROPFIND"));
+
+    String status =
+        runner.executeStep(
+            stepExecId,
+            apiStepNoOutput(stepId, "api-unsupported-method", "REPLACE"),
+            pipelineId,
+            "TestPipeline",
+            userId,
+            true);
+
+    assertThat(status).isEqualTo("FAILED");
+    ArgumentCaptor<String> error = ArgumentCaptor.forClass(String.class);
+    verify(executionRepository)
+        .updateStepExecution(
+            eq(stepExecId), eq("FAILED"), isNull(), isNull(), error.capture(), isNull(), any());
+    assertThat(error.getValue()).isEqualTo(ApiCallErrorMessages.unsupportedHttpMethod("PROPFIND"));
+    // 호출(HTTP 클라이언트)·임시 테이블 생성이 없어야 한다 — 다른 "failsBeforeCall" 시험과 같은 검증.
+    verifyNoExternalCall();
   }
 
   /**

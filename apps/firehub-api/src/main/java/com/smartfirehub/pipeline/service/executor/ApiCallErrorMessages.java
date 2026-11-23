@@ -147,11 +147,14 @@ public final class ApiCallErrorMessages {
   /**
    * HTTP 메서드 값이 표준 메서드가 아닐 때(WD-969 리뷰 후속) — 설정에 저장된 값을 그대로 전송하면 WebClient 가 빈 이름 요청을 만들어 전송 오류로
    * 분류되고, 그 오류는 재시도 대상이라 같은 잘못을 N회 반복한다. 그래서 재시도하지 않는 안내 오류({@link ApiCallException})로 낸다.
+   *
+   * <p>TRACE 는 데이터 수집에 쓰지 않아 아래 권장 목록에서 빠졌지만 표준 메서드라 계속 허용한다 — 이 문구를 읽고 목록에 맞춰 허용 집합까지 줄이지
+   * 말 것(허용 검사는 {@link RedirectFollower#resolveMethod}).
    */
   public static String unsupportedHttpMethod(String method) {
     return "지원하지 않는 HTTP 메서드입니다: "
         + method
-        + " — GET·HEAD·POST·PUT·PATCH·DELETE·OPTIONS·TRACE 중 하나로 설정하세요";
+        + " — GET·HEAD·POST·PUT·PATCH·DELETE·OPTIONS 중 하나로 설정하세요";
   }
 
   public static String responseTooLarge(int maxMb) {

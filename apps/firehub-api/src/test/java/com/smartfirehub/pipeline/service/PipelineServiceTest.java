@@ -17,6 +17,7 @@ import com.smartfirehub.pipeline.exception.PipelineNameConflictException;
 import com.smartfirehub.pipeline.exception.PipelineNotFoundException;
 import com.smartfirehub.pipeline.exception.UnsafePythonScriptException;
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
+import com.smartfirehub.pipeline.service.executor.ApiCallErrorMessages;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
 import java.util.List;
@@ -3121,5 +3122,131 @@ class PipelineServiceTest extends IntegrationTestBase {
             List.of(apiStep(Map.of("path", "/changed"), connId, stepId))),
         testUserId);
     assertThat(stepsAuditCount(p.id())).isEqualTo(1);
+  }
+
+  // ===== WD-986 ①: 저장 때 표준이 아닌 HTTP 메서드 거절 =====
+
+  /**
+   * 스텝 api_config 의 method 값만 DB 에 직접 바꿔 "이미 잘못 저장된 스텝"을 만든다 — 저장 검증을 우회하는 시험용 조작(WD-986 ①).
+   *
+   * <p>인자는 고정 ASCII 값 전용이다 — JSON 을 문자열 연결로 만드므로 값에 " 나 \ 를 넣으면 조용히 깨진다.
+   */
+  private void setStoredHttpMethod(Long stepId, String method) {
+    dsl.execute(
+        "update pipeline_step set api_config = jsonb_set(api_config, '{method}', ?::jsonb) where id = ?",
+        "\"" + method + "\"",
+        stepId);
+  }
+
+  /** WD-986 ①: 표준이 아닌 메서드는 저장 때 안내와 함께 거절한다. */
+  @Test
+  void createPipeline_apiCallStepUnsupportedMethod_throwsException() {
+    CreatePipelineRequest request =
+        new CreatePipelineRequest(
+            "wd986",
+            "t",
+            List.of(apiStep(Map.of("path", "/data", "method", "PROPFIND"), null, null)));
+    assertThatThrownBy(() -> pipelineService.createPipeline(request, testUserId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("스텝 'api-step': " + ApiCallErrorMessages.unsupportedHttpMethod("PROPFIND"));
+  }
+
+  /** WD-986 ①: 대소문자·공백을 정규화해 통과한다 — 소문자 표준 메서드는 저장된다. */
+  @Test
+  void createPipeline_apiCallStepLowercaseStandardMethod_succeeds() {
+    CreatePipelineRequest request =
+        new CreatePipelineRequest(
+            "wd986-ok",
+            "t",
+            List.of(apiStep(Map.of("path", "/data", "method", "post"), null, null)));
+    assertThat(pipelineService.createPipeline(request, testUserId)).isNotNull();
+  }
+
+  /** WD-986 ①: 빈 메서드(실행기 기본 GET)는 그대로 저장된다. */
+  @Test
+  void createPipeline_apiCallStepBlankMethod_succeeds() {
+    CreatePipelineRequest request =
+        new CreatePipelineRequest(
+            "wd986-blank",
+            "t",
+            List.of(apiStep(Map.of("path", "/data", "method", "  "), null, null)));
+    assertThat(pipelineService.createPipeline(request, testUserId)).isNotNull();
+  }
+
+  /** WD-986 ①: 앞뒤 공백이 낀 표준 메서드도 저장된다 — 정규화(trim·대문자)가 흔들리지 않는지 고정. */
+  @Test
+  void createPipeline_apiCallStepPaddedStandardMethod_succeeds() {
+    CreatePipelineRequest request =
+        new CreatePipelineRequest(
+            "wd986-pad-ok",
+            "t",
+            List.of(apiStep(Map.of("path", "/data", "method", " post "), null, null)));
+    assertThat(pipelineService.createPipeline(request, testUserId)).isNotNull();
+  }
+
+  /** WD-986 ①: 앞뒤 공백이 낀 비표준 메서드는 거절되고, 메시지에는 공백이 섞인 원본이 남는다 — trim 하지 않은 원문이 화면에 보이는지 고정한다. */
+  @Test
+  void createPipeline_apiCallStepPaddedNonstandardMethod_throwsExceptionWithRawValue() {
+    CreatePipelineRequest request =
+        new CreatePipelineRequest(
+            "wd986-pad-bad",
+            "t",
+            List.of(apiStep(Map.of("path", "/data", "method", " propfind "), null, null)));
+    assertThatThrownBy(() -> pipelineService.createPipeline(request, testUserId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("스텝 'api-step': " + ApiCallErrorMessages.unsupportedHttpMethod(" propfind "));
+  }
+
+  /**
+   * WD-986 ①(내가 정한 것 1): 이미 잘못 저장된 스텝을 같은 메서드로 다시 저장하면 막지 않는다 — 막으면 설명만 고쳐도 저장할 수 없다
+   * (WD-426·WD-810 과 같은 이유). 다만 값을 바꾸면 거절한다.
+   */
+  @Test
+  void updatePipeline_apiCallStepUnchangedStoredUnsupportedMethod_passes() {
+    PipelineDetailResponse p =
+        pipelineService.createPipeline(
+            new CreatePipelineRequest(
+                "wd986-keep",
+                "t",
+                List.of(apiStep(Map.of("path", "/data", "method", "GET"), null, null))),
+            testUserId);
+    Long stepId = p.steps().get(0).id();
+    // 저장 검증을 우회해 DB 에만 잘못된 값을 심는다 — 이미 저장된 행을 흉내 낸다.
+    setStoredHttpMethod(stepId, "PROPFIND");
+
+    pipelineService.updatePipeline(
+        p.id(),
+        new UpdatePipelineRequest(
+            "wd986-keep",
+            "설명만 고침",
+            null,
+            List.of(apiStep(Map.of("path", "/data", "method", "PROPFIND"), null, stepId))),
+        testUserId);
+    // 같은 값으로 되돌린 저장이 실제로 통과해 Description 가 바뀌었는지 확인한다.
+    assertThat(pipelineService.getPipelineById(p.id()).description()).isEqualTo("설명만 고침");
+  }
+
+  /** WD-986 ①: 같은 스텝의 method 를 다른 잘못된 값으로 바꿔 갱신하면 거절한다 — 재저장 예외는 "같은 값"에만 적용된다. */
+  @Test
+  void updatePipeline_apiCallStepChangedToUnsupportedMethod_throwsException() {
+    PipelineDetailResponse p =
+        pipelineService.createPipeline(
+            new CreatePipelineRequest(
+                "wd986-change",
+                "t",
+                List.of(apiStep(Map.of("path", "/data", "method", "GET"), null, null))),
+            testUserId);
+    Long stepId = p.steps().get(0).id();
+    setStoredHttpMethod(stepId, "PROPFIND");
+
+    UpdatePipelineRequest changed =
+        new UpdatePipelineRequest(
+            "wd986-change",
+            "t",
+            null,
+            List.of(apiStep(Map.of("path", "/data", "method", "FETCH-IT"), null, stepId)));
+    assertThatThrownBy(() -> pipelineService.updatePipeline(p.id(), changed, testUserId))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("스텝 'api-step': " + ApiCallErrorMessages.unsupportedHttpMethod("FETCH-IT"));
   }
 }

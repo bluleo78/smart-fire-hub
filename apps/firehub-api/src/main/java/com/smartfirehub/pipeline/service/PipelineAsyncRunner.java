@@ -29,6 +29,7 @@ import com.smartfirehub.pipeline.service.executor.AiClassifyExecutor;
 import com.smartfirehub.pipeline.service.executor.ApiCallAuth;
 import com.smartfirehub.pipeline.service.executor.ApiCallConfig;
 import com.smartfirehub.pipeline.service.executor.ApiCallErrorMessages;
+import com.smartfirehub.pipeline.service.executor.ApiCallException;
 import com.smartfirehub.pipeline.service.executor.ApiCallExecutor;
 import com.smartfirehub.pipeline.service.executor.DbExecutorClient;
 import com.smartfirehub.pipeline.service.executor.ExecutionCancelCheck;
@@ -1228,6 +1229,16 @@ public class PipelineAsyncRunner {
             && !ApiCallExecutor.isRunnableMaxResponseSizeMb(apiCallConfig.maxResponseSizeMb())) {
           throw new ScriptExecutionException(ApiCallErrorMessages.maxResponseSizeOutOfRange());
         }
+        // WD-986: 잘못된 메서드를 임시 테이블을 만든 뒤에 알아채지 않도록 호출 전에 막는다 — 외부(Python) 실행기는 요청 직전까지 진행돼 임시
+        // 테이블을 만든 뒤에야 실패했다. 문구는 저장 검증(같은 ApiCallErrorMessages)과 같아 사용자가 고칠 곳을 같은 말로 듣는다. 표준이
+        // 아니면 RedirectFollower.resolveMethod 가 ApiCallException 으로 거절하고, 그 안내를 실행 기록에 남기도록 다시 던진다.
+        if (apiCallConfig != null) {
+          try {
+            RedirectFollower.resolveMethod(apiCallConfig.method());
+          } catch (ApiCallException e) {
+            throw new ScriptExecutionException(e.getMessage(), e);
+          }
+        }
 
         // apiConnectionId가 있으면 connection 정보 로드 (baseUrl + auth)
         ApiConnectionResponse apiConn = null;
@@ -2034,7 +2045,8 @@ public class PipelineAsyncRunner {
     Map<String, Object> request = new LinkedHashMap<>();
     request.put("url", resolvedUrl);
     // 메서드는 한 곳(RedirectFollower.resolveMethod)에서 정한다(WD-969 리뷰 후속) — 이 외부(Python) 실행기에는
-    // 메서드 검증이 없어, 비어 있는 값이 그대로 나가 재시도 대상이 되는 것을 여기서 막는다.
+    // 메서드 검증이 없어, 비어 있는 값이 그대로 나가 재시도 대상이 되는 것을 여기서 막는다. 표준이 아닌 값은 WD-986
+    // 조기 검사(임시 테이블 전)에서 이미 끊기고, 여기는 남은 값(빈 값)을 실행기와 같은 GET 으로 정규화할 뿐이다.
     request.put("method", RedirectFollower.resolveMethod(config.method()).name());
     if (config.headers() != null) request.put("headers", config.headers());
     if (config.queryParams() != null) request.put("query_params", config.queryParams());

@@ -340,7 +340,9 @@ public class ApiCallExecutor {
             // 미리보기와 같은 표시 규칙(WD-1000) — 한글 경로를 글자로 남긴다(mask 후 디코딩).
             + RequestUrlEncoding.toDisplayUrl(BaseUrlUserInfo.mask(resolvedUrl))
             + " method="
-            + config.method()
+            // 실행 기록에도 실제로 보낸 값을 남긴다(WD-986 ②) — 요청은 이미 같은 함수(resolveMethod)로
+            // 보냈으므로 재계산해도 값은 같다. 설정 원본(소문자·공백)이 로그에 그대로 남지 않는다.
+            + RedirectFollower.resolveMethod(config.method()).name()
             + " pages="
             + totalPages
             + " rows="
