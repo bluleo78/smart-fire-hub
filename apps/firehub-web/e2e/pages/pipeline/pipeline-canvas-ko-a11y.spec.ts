@@ -1,8 +1,8 @@
 /**
  * 파이프라인 캔버스 — 스크린리더 문구 한국어 (WD-918)
  *
- * xyflow 기본 안내문(영문)이 그대로 읽히고, 실제로 움직이지 않는 노드에 대해
- * 「Moved selected node right…」 같은 거짓 알림이 나오던 문제를 막는다.
+ * xyflow 기본 안내문·이동 알림(영문, 이동 전 좌표)이 그대로 읽히던 문제를 막는다.
+ * 영문 알림은 비우고 캔버스 자체 영역이 한국어 이동 알림을 낸다(WD-1046).
  * 수정 모드에는 실제 가능한 조작을, 보기 모드에는 설명만 안내한다.
  */
 import type { Page } from '@playwright/test';
@@ -11,7 +11,7 @@ import { expect, test } from '../../fixtures/auth.fixture';
 import { grantPipelinePermissions, setupPipelineEditorMocks } from '../../fixtures/pipeline.fixture';
 
 const EDIT_NODE_DESC =
-  '스텝 노드입니다. 노드 안에 「다음 스텝 추가」·「스텝 삭제」 버튼이 있으면 Tab 키로 이동할 수 있고, 스텝 설정은 노드를 클릭해 엽니다.';
+  '스텝 노드입니다. Enter 나 Space 로 스텝 설정을 열고, 설정을 연 스텝은 화살표 키로 옮깁니다(Shift 와 함께 누르면 크게). 노드 안 「다음 스텝 추가」·「스텝 삭제」 버튼은 Tab 키로 이동할 수 있습니다.';
 const EDIT_EDGE_DESC =
   '스텝 사이 연결입니다. Enter 나 Space 로 연결을 고른 뒤 Delete 나 Backspace 로 끊고, Escape 로 선택을 풉니다.';
 
@@ -50,7 +50,7 @@ test.describe('파이프라인 캔버스 — 스크린리더 문구 한국어 (W
     await expect(page.locator('.react-flow')).toHaveAttribute('aria-label', '파이프라인 다이어그램');
   });
 
-  test('수정 모드에서 노드를 고르고 화살표를 눌러도 이동 알림이 나오지 않는다', async ({ authenticatedPage: page }) => {
+  test('수정 모드에서 노드를 옮기면 xyflow 영문 알림은 비어 있고 한국어 알림이 나온다', async ({ authenticatedPage: page }) => {
     await gotoEditMode(page);
 
     const node = page.locator('.react-flow__node').first();
@@ -69,6 +69,7 @@ test.describe('파이프라인 캔버스 — 스크린리더 문구 한국어 (W
 
     await page.keyboard.press('Enter');
     await page.keyboard.press('ArrowRight');
+    await expect(page.getByTestId('canvas-move-announcement')).toContainText('옮겼습니다');
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
 
     const msgs = await page.evaluate(() => (window as unknown as LiveLogWindow).__liveMsgs);
@@ -105,7 +106,7 @@ test.describe('파이프라인 캔버스 — 스크린리더 문구 한국어 (W
     await page.goto('/pipelines/1');
     await expect(page.locator('.react-flow__edge')).toHaveCount(1);
 
-    expect(await nodeDescription(page)).toBe('스텝 노드입니다.');
+    expect(await nodeDescription(page)).toBe('스텝 노드입니다. Enter 나 Space 로 스텝 정보를 엽니다.');
     expect(await edgeDescription(page)).toBe('스텝 사이 연결입니다.');
     await expect(page.locator('.react-flow')).toHaveAttribute('aria-label', '파이프라인 다이어그램');
   });

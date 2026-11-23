@@ -9,11 +9,12 @@ import {
   type OnConnect,
   type OnEdgesChange,
   type OnNodeDrag,
+  type OnNodesChange,
   ReactFlow,
 } from '@xyflow/react';
 import { LayoutGrid, Pencil,Plus } from 'lucide-react';
 import { useTheme } from 'next-themes';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 
 import {
   AlertDialog,
@@ -100,6 +101,8 @@ export function PipelineCanvas({
       type: 'step',
       position: step.position,
       domAttributes: STEP_DOM_ATTRS,
+      // 선택된(설정이 열린) 스텝만 xyflow 가 화살표 키로 옮긴다 — 선택을 우리 상태에서 내려 줘야 한다(WD-1046)
+      selected: step.tempId === state.selectedStepId,
       data: {
         label: step.name || '(이름 없음)',
         description: step.description || undefined,
@@ -194,12 +197,60 @@ export function PipelineCanvas({
     dispatch({ type: 'SELECT_STEP', payload: { tempId: node.id } });
   };
 
+  /** 마우스로 끌린 노드 id(끌기 시작~끝) — 끌기 끝의 위치 변경과 화살표 키 이동의 위치 변경을 구분한다 */
+  const draggingIdsRef = useRef<Set<string>>(new Set());
+  /** 키보드(화살표)로 옮긴 결과를 알리는 한국어 문구 — 캔버스 자체 aria-live 영역에 그린다 */
+  const [moveAnnouncement, setMoveAnnouncement] = useState('');
+
+  /**
+   * 마우스 끌기 끝 — 사용자가 끈 노드 하나만 저장한다.
+   * xyflow 는 이미 selected 인(설정을 연) 다른 스텝도 함께 끌 대상으로 모아 그쪽 위치 변경도 보내므로,
+   * onNodesChange 로 저장하면 엉뚱한 스텝이 같이 옮겨진다(WD-1046).
+   */
   const onNodeDragStop: OnNodeDrag = (_event, node) => {
     if (readOnly) return;
     dispatch({
       type: 'UPDATE_NODE_POSITION',
       payload: { tempId: node.id, position: node.position },
     });
+  };
+
+  /**
+   * 화살표 키 이동만 steps 에 반영하고 한국어로 알린다(xyflow 영문 알림은 비워 둠, WD-1046).
+   * dragging:true 를 받은 id 는 마우스 끌기이므로 기록해 두었다가, 끝(dragging:false)에서 지우기만 하고
+   * 저장·알림은 하지 않는다 — 저장은 onNodeDragStop 이 끈 노드 하나만 한다.
+   */
+  const onNodesChange: OnNodesChange<StepNodeType> = (changes) => {
+    // 읽기 전용으로 바뀌면 끝나지 않은 끌기 id 가 남지 않게 비운다
+    if (readOnly) {
+      draggingIdsRef.current.clear();
+      return;
+    }
+    for (const change of changes) {
+      if (change.type !== 'position' || !change.position) continue;
+      if (change.dragging) {
+        draggingIdsRef.current.add(change.id);
+        continue;
+      }
+      // 끌기 끝(함께 끌린 노드 포함) — 기록만 지운다
+      if (draggingIdsRef.current.delete(change.id)) continue;
+      const index = state.steps.findIndex((s) => s.tempId === change.id);
+      const step = state.steps[index];
+      if (!step) continue;
+      dispatch({
+        type: 'UPDATE_NODE_POSITION',
+        payload: { tempId: change.id, position: change.position },
+      });
+      const dx = change.position.x - step.position.x;
+      const dy = change.position.y - step.position.y;
+      // 위치가 그대로면(경계 등) 알릴 이동이 없다 — 저장만 하고 알림은 내지 않는다
+      if (dx === 0 && dy === 0) continue;
+      const direction = dx !== 0 ? (dx > 0 ? '오른쪽' : '왼쪽') : dy > 0 ? '아래' : '위';
+      setMoveAnnouncement(
+        // 이름이 없으면 연결선 라벨과 같이 「스텝 #순번」으로 부른다
+        `「${step.name || `스텝 #${index + 1}`}」 스텝을 ${direction}(으)로 옮겼습니다 (가로 ${Math.round(change.position.x)}, 세로 ${Math.round(change.position.y)})`,
+      );
+    }
   };
 
   const onConnect: OnConnect = (connection) => {
@@ -216,6 +267,20 @@ export function PipelineCanvas({
    * 설정 패널의 버튼에 포커스가 있을 때도 연결이 지워지므로, 캔버스 안에서 누른 키만 처리한다.
    */
   const handleCanvasKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    // 노드 요소 자체에서 누른 Enter/Space 는 스텝 설정(수정)·스텝 정보(보기 — 읽기 전용 설정 또는 실행 결과) 패널을 연다 (WD-1046).
+    // xyflow 는 이 키에서 내부 선택만 하고 onNodeClick 을 부르지 않아 키보드로는 패널에 닿지 못했다.
+    // 노드 안 버튼·입력칸에서 온 키는 target 이 노드 요소가 아니므로 제외해 버튼 동작을 가로채지 않는다.
+    // 보기 모드에서도 열려야 하므로 readOnly 검사보다 먼저 처리한다.
+    if (e.key === 'Enter' || e.key === ' ') {
+      const target = e.target as HTMLElement;
+      const tempId = target.classList.contains('react-flow__node') ? target.dataset.id : undefined;
+      if (tempId) {
+        e.preventDefault(); // Space 의 페이지 스크롤 방지
+        clearEdgeSelection();
+        dispatch({ type: 'SELECT_STEP', payload: { tempId } });
+        return;
+      }
+    }
     if (readOnly || (e.key !== 'Backspace' && e.key !== 'Delete')) return;
     if ((e.target as HTMLElement).closest('input, textarea, [contenteditable="true"]')) return;
     const targets = edges.filter((edge) => edge.selected);
@@ -276,6 +341,7 @@ export function PipelineCanvas({
           defaultEdgeOptions={defaultEdgeOptions}
           onNodeClick={onNodeClick}
           onNodeDragStop={onNodeDragStop}
+          onNodesChange={onNodesChange}
           onConnect={onConnect}
           onEdgesChange={onEdgesChange}
           deleteKeyCode={null}
@@ -300,6 +366,11 @@ export function PipelineCanvas({
           {/* WD-883: 확대·축소·전체 보기 버튼 크기는 index.css 의 .react-flow__controls-button 규칙(32×32)으로 키운다 */}
           <Controls showInteractive={!readOnly} />
         </ReactFlow>
+
+        {/* 화살표 이동 알림 — xyflow 영문 알림 대신 한국어로 읽히게 하는 자체 알림 영역(WD-1046) */}
+        <div role="status" aria-live="polite" className="sr-only" data-testid="canvas-move-announcement">
+          {moveAnnouncement}
+        </div>
 
         {/* 수정모드 표시 (좌상단) */}
         {!readOnly && (
@@ -374,13 +445,13 @@ const KO_CONTROLS_LABELS = {
 const STEP_DOM_ATTRS = { 'aria-roledescription': '스텝' } as const;
 const EDGE_DOM_ATTRS = { 'aria-roledescription': '연결' } as const;
 
-/** 노드 이동 알림을 비운다 — 노드가 키보드로 실제로 움직이지 않아 「Moved…」 는 거짓 안내다 (WD-918, 이동은 WD-1046) */
+/** xyflow 는 이동 전 좌표로 알리고 같은 글이면 다시 읽히지 않아 비우고, 캔버스 자체 영역이 알린다(WD-1046) */
 const NO_MOVE_ANNOUNCEMENT = () => '';
 
 /** 노드 안내문 — xyflow 가 키보드 켬/끔에 따라 default·keyboardDisabled 중 하나를 쓰므로 두 키에 같이 넣는다 (WD-918) */
 const EDIT_NODE_DESC =
-  '스텝 노드입니다. 노드 안에 「다음 스텝 추가」·「스텝 삭제」 버튼이 있으면 Tab 키로 이동할 수 있고, 스텝 설정은 노드를 클릭해 엽니다.';
-const VIEW_NODE_DESC = '스텝 노드입니다.';
+  '스텝 노드입니다. Enter 나 Space 로 스텝 설정을 열고, 설정을 연 스텝은 화살표 키로 옮깁니다(Shift 와 함께 누르면 크게). 노드 안 「다음 스텝 추가」·「스텝 삭제」 버튼은 Tab 키로 이동할 수 있습니다.';
+const VIEW_NODE_DESC = '스텝 노드입니다. Enter 나 Space 로 스텝 정보를 엽니다.';
 
 /** 수정 모드 안내문 (WD-918). 12.10 에는 handle.ariaLabel 키가 없어 연결점 이름은 바꾸지 않는다. */
 const KO_ARIA_LABEL_CONFIG_EDIT = {
