@@ -378,6 +378,8 @@ export default function JobOverviewTab({
                   return (
                     <div key={idx} className="flex items-center gap-2">
                       <Badge variant="outline">{channelTypeLabel(ch)}</Badge>
+                      {/* WD-994 리뷰 후속: 구 형식 문자열 'WEBHOOK' 도 객체 형식처럼 「전달 안 됨」을 알린다 */}
+                      {ch === 'WEBHOOK' && <span className="text-xs text-muted-foreground">전달 안 됨</span>}
                     </div>
                   );
                 }
