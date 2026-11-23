@@ -65,6 +65,24 @@ class RedirectFollowerTest {
     assertThat(RedirectFollower.resolveMethod("delete")).isEqualTo(HttpMethod.DELETE);
   }
 
+  /** 8인자 bodilessGet 은 넘긴 홉 검사를 그대로 싣고, 7인자는 null 이다(WD-998). */
+  @Test
+  void bodilessGet_withHopCheck_passesCheckToHops() {
+    WebClient client = WebClient.builder().build();
+    SsrfProtectionService ssrf = mock(SsrfProtectionService.class);
+    URI uri = URI.create("http://example.com/x");
+    java.util.function.BiConsumer<String, URI> check = (m, u) -> {};
+
+    RedirectFollower.Request with =
+        RedirectFollower.Request.bodilessGet(client, ssrf, uri, null, 1000, false, false, check);
+    RedirectFollower.Request without =
+        RedirectFollower.Request.bodilessGet(client, ssrf, uri, null, 1000, false, false);
+
+    assertThat(with.hopCheck()).isSameAs(check);
+    assertThat(with.method()).isEqualTo("GET");
+    assertThat(without.hopCheck()).isNull();
+  }
+
   /**
    * 홉 검사(hopCheck)가 예외를 던지면 그 홉은 따라가지 않는다(WD-970) — 대상 주소로 요청이 한 번도 나가지 않고, 예외가 그대로 나온다. 검사는 정해진 다음
    * 메서드와 해석된 절대 주소를 받는다.

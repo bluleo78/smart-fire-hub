@@ -118,6 +118,25 @@ public final class ApiCallErrorMessages {
         + " 을(를) 보낼 수 없습니다 — 대상 서버가 GET 을 다른 메서드(쓰기)로 처리할 수 있습니다. 연결·요청에서 이 이름을 빼거나, 쓰기 확인은 POST 미리보기로 하세요";
   }
 
+  /**
+   * 연결 테스트(GET)에 메서드를 바꾸는 헤더·쿼리가 실려 있을 때(WD-998) — 미리보기(WD-970)와 같은 이유로 부르기 전에 막는다. 이름만 담고 값·비밀은 담지
+   * 않는다.
+   */
+  public static String methodOverrideInConnectionTest(String name, boolean header) {
+    return "연결 테스트에는 메서드를 바꾸는 "
+        + (header ? "헤더" : "쿼리")
+        + " "
+        + name
+        + " 을(를) 보낼 수 없습니다 — 대상 서버가 GET 을 다른 메서드(쓰기)로 처리할 수 있습니다. 기본 URL·헬스체크 경로·인증 설정에서 이 이름을 빼세요";
+  }
+
+  /** 연결 테스트가 리다이렉트 Location 의 메서드 변경 쿼리를 만나 따라가지 않을 때(WD-998) — 이름은 대상 서버에서 왔다. 이름만 담는다. */
+  public static String methodOverrideInConnectionTestRedirect(String name) {
+    return "연결 테스트 중 대상 서버가 메서드를 바꾸는 쿼리 "
+        + name
+        + " 이(가) 붙은 주소로 리다이렉트해 따라가지 않았습니다 — 대상 서버가 GET 을 다른 메서드(쓰기)로 처리할 수 있습니다. 대상 서버의 리다이렉트 주소를 확인하세요";
+  }
+
   /** 미리보기가 지원하지 않는 HTTP 메서드(WD-969) — 대상을 부르기 전에 낸다. */
   public static String unsupportedPreviewMethod(String method) {
     return "미리보기(테스트 호출)는 GET·POST 만 지원합니다 — 요청한 "
