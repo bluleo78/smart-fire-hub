@@ -27,6 +27,13 @@ function EdgeIconButton({
         e.stopPropagation();
         onClick();
       }}
+      // 키 선택 처리가 연결선으로 번지지 않게 Enter·Space 의 keydown 전파만 끊는다(WD-1009).
+      // React Flow EdgeWrapper.onKeyDown 은 `.nokey`·입력 요소를 보지 않고 Enter/Space 면
+      // 이 연결선을 선택하고(Escape 면 선택을 풀고) 다른 연결선·노드 선택을 풀어 버린다. 버튼의 기본 동작(click 합성)은 그대로 둔다.
+      // Escape 는 앱 수준 처리(다이얼로그 닫기 등)가 죽지 않도록 일부러 버블시킨다.
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') e.stopPropagation();
+      }}
       className={`flex h-5 w-5 items-center justify-center rounded-full border bg-background shadow-sm ${className}`}
       title={label}
       aria-label={label}
