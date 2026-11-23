@@ -124,7 +124,8 @@ describe('useListRetryFocus', () => {
     expect(document.activeElement).toBe(screen.getByRole('table'));
   });
 
-  // 리뷰 후속(PR #1218 ①): 누르지 않고 저절로 다시 불러올 때(창 포커스 refetch·무효화·다시 마운트)
+  // 리뷰 후속(PR #1218 ①): 누르지 않고 저절로 다시 불러올 때(다시 연결 refetch·무효화·다시 마운트)
+  // — 창 포커스 refetch 는 앱(main.tsx)에서 꺼져 있어 해당하지 않는다 (WD-1005)
   it('저절로 재조회돼 초점 가진 버튼이 사라지면 표로 초점, 다시 실패하면 버튼으로', async () => {
     const p = failed();
     const { rerender } = render(<Harness {...p} />);

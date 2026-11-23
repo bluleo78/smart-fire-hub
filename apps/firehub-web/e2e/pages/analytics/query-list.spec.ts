@@ -735,14 +735,19 @@ test.describe('쿼리 목록 페이지', () => {
     await setupQueryListMocks(page, 0);
     const { calls } = await enterWithListError(page, { apiPath: '/api/v1/analytics/queries', pagePath: '/analytics/queries' });
     const callsBefore = calls();
-    await page.getByRole('button', { name: '다시 시도' }).focus();
+    const retryButton = page.getByRole('button', { name: '다시 시도' });
+    // 옛 버튼에 표식을 달아 둔다 — 새 버튼으로 바뀐 뒤에야 단언하게 해 옛 DOM 이 남은 상태로 통과하지 못하게 한다 (WD-1005)
+    await retryButton.evaluate((el) => el.setAttribute('data-wd1005-old', ''));
+    await retryButton.focus();
     await page.context().setOffline(true);
     await page.context().setOffline(false);
 
     // 다시 연결로 목록을 다시 불렀고(누르지 않음), 또 실패해 새 버튼으로 초점이 돌아온다
     await expect.poll(calls).toBeGreaterThan(callsBefore);
+    // 옛 버튼이 DOM 에서 빠진 뒤(표식 0개)에야 새 버튼을 확인한다 (WD-1005)
+    await expect(page.locator('[data-wd1005-old]')).toHaveCount(0);
     await expectTableErrorAlert(page, '서버 오류', { action: '다시 시도' });
-    await expect(page.getByRole('button', { name: '다시 시도' })).toBeFocused();
+    await expect(retryButton).toBeFocused();
   });
 
   test('목록 조회가 403 이면 권한 없음 안내를 흐린 톤으로 보인다 (WD-978 리뷰 후속)', async ({ authenticatedPage: page }) => {

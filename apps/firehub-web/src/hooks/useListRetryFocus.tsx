@@ -9,7 +9,8 @@ import { cn } from '../lib/utils';
  *
  * 데이터 없이 실패한 목록에서 「다시 시도」를 누르면 쿼리가 pending 으로 돌아가 실패 행(과 버튼)이 사라져
  * 초점이 body 로 떨어진다(WCAG 2.4.3). 누르는 즉시 표로 초점을 옮겨 두고, 재조회가 끝나 다시 실패하면 버튼으로 되돌린다.
- * 누르지 않아도 저절로 다시 불러올 때(창 포커스 refetch·캐시 무효화·다시 마운트) 초점을 가진 버튼이 사라지면 같은 방식으로 표로 옮긴다.
+ * 누르지 않아도 저절로 다시 불러올 때(다시 연결 refetch·캐시 무효화(invalidateQueries)·다시 마운트) 초점을 가진 버튼이 사라지면 같은 방식으로 표로 옮긴다.
+ * 창 포커스 refetch 는 `src/main.tsx` 의 `refetchOnWindowFocus: false` 라 지금은 일어나지 않고, 그 옵션을 켰을 때만 해당한다 (WD-1005).
  *
  * 사용: `<Table {...tableProps}>`(쪽 이동 placeholder 목록은 `<tbody {...bodyProps}>` 도) 와 `<TableErrorRow action={retryAction} />` 만 달면 된다.
  * 버튼 노출 여부(showRetry)·표 ref/mousedown/포커스 링 className·버튼 JSX 는 모두 이 훅이 만든다.
