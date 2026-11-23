@@ -4,6 +4,7 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.ArrayDeque;
 import java.util.Deque;
+import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -27,10 +28,16 @@ public final class RedirectLocations {
   private static final Pattern URI_PARTS =
       Pattern.compile("^(?:([^:/?#]+):)?(?://([^/?#]*))?([^?#]*)(?:\\?([^#]*))?(?:#(.*))?$");
 
+  /** 스킴({@code scheme:}) 부분 — Python urlsplit 의 스킴 판별과 같다. */
+  private static final Pattern SCHEME_PREFIX = Pattern.compile("^([A-Za-z][A-Za-z0-9+.-]*):");
+
   private RedirectLocations() {}
 
   /**
    * {@code location} 을 {@code base} 기준으로 풀어 프래그먼트 없는 절대 URI 를 만든다.
+   *
+   * <p>Python urljoin 처럼(WD-1006) 스킴이 없거나 base 와 같은 Location 만 탭·CR·LF 를 지우고 앞쪽 공백·제어 문자를 뗀다({@link
+   * #normalizeLikeUrlsplit}). 스킴이 다르면 원문 그대로 두어 제어 문자·앞쪽 공백이 아래 검사에서 거절된다.
    *
    * @throws ApiCallException Location 이 URI 문법에 맞지 않거나 풀린 결과가 URI 가 아닐 때 — 다시 보내도 같은 Location 이 오므로
    *     재시도하지 않는다. 문구에는 URL 을 넣지 않는다(쿼리에 비밀이 있을 수 있다).
@@ -42,7 +49,17 @@ public final class RedirectLocations {
     String reference = hash >= 0 ? location.substring(0, hash) : location;
     // 공백·한글 등은 실행기(urljoin+httpx)처럼 %XX 로 인코딩해 따라간다(WD-991). 이미 있는 %XX 는 다시 인코딩하지 않고,
     // 제어 문자는 원문 그대로 남아 아래 URI 검사가 고정 문구로 거절한다.
-    reference = RequestUrlEncoding.encodeReference(reference);
+    // 스킴이 다른 Location 은 정규화하지 않는다(WD-1006) — Python urljoin 이 원문을 돌려주고 httpx 가 거절하는 것과 같다.
+    // 다만 원문에 「#」 이 있으면 뒤이은 urldefrag 가 다시 파싱하며 정리하므로 그때는 정리한 값을 쓴다.
+    String cleaned = normalizeLikeUrlsplit(reference);
+    Matcher scheme = SCHEME_PREFIX.matcher(cleaned);
+    boolean keepRaw = false;
+    if (scheme.find()) {
+      keepRaw = hash < 0 && !scheme.group(1).equalsIgnoreCase(base.getScheme());
+      // urlsplit 처럼 스킴은 소문자로 맞춘다.
+      cleaned = scheme.group(1).toLowerCase(Locale.ROOT) + cleaned.substring(scheme.end(1));
+    }
+    reference = RequestUrlEncoding.encodeReference(keepRaw ? reference : cleaned);
     try {
       // 참조 자체가 URI 문법에 맞는지 먼저 본다(공백·한글 등) — 아래 문자열 조립은 문법을 검사하지 않는다.
       new URI(reference);
@@ -182,5 +199,27 @@ public final class RedirectLocations {
       }
       return new Parts(m.group(1), m.group(2), m.group(3), m.group(4), m.group(5));
     }
+  }
+
+  /**
+   * Python {@code urlsplit} 의 Location 정규화(WD-1006) — 탭·CR·LF 는 위치와 관계없이 모두 지우고({@code
+   * _UNSAFE_URL_BYTES_TO_REMOVE}), 앞쪽 U+0000–U+0020 만 뗀다({@code
+   * lstrip(_WHATWG_C0_CONTROL_OR_SPACE)}). 끝쪽 공백은 떼지 않아 {@code %20} 으로 인코딩되고, 그 밖의 제어 문자는 남아 URI
+   * 검사가 거절한다.
+   *
+   * <p>Python {@code urljoin} 은 Location 의 스킴이 없거나 base 와 같을 때만 이 정규화를 거친다 — 스킴이 다르면 원문을 돌려주고 httpx
+   * 가 제어 문자를 거절한다. 그래서 적용 여부는 base 를 아는 {@code RedirectLocations.resolve} 가 정한다.
+   */
+  private static String normalizeLikeUrlsplit(String s) {
+    StringBuilder sb = new StringBuilder(s.length());
+    for (int i = 0; i < s.length(); i++) {
+      char c = s.charAt(i);
+      if (c != '\t' && c != '\r' && c != '\n') {
+        sb.append(c);
+      }
+    }
+    int b = 0;
+    while (b < sb.length() && sb.charAt(b) <= 0x20) b++;
+    return sb.substring(b);
   }
 }
