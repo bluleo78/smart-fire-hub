@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { isFocusLost, isMainContent } from './focus-lost';
+import { focusMainContent, isFocusLost, isMainContent } from './focus-lost';
 
 /** isFocusLost — body 뿐 아니라 건너뛰기 대상 main 으로 돌아온 포커스도 「잃음」으로 본다 (WD-968 리뷰 후속) */
 describe('isFocusLost', () => {
@@ -45,5 +45,28 @@ describe('isMainContent', () => {
     expect(isMainContent(document.querySelector('div'))).toBe(false);
     expect(isMainContent(document.body)).toBe(false);
     expect(isMainContent(null)).toBe(false);
+  });
+});
+
+/** focusMainContent — tabindex 가 없을 때만 -1 을 붙이고 초점을 준다 (WD-1039) */
+describe('focusMainContent', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('focusMainContent 는 tabindex 가 없는 main 에 tabindex=-1 을 붙이고 초점을 준다', () => {
+    document.body.innerHTML = '<main id="main-content"></main>';
+    const main = document.getElementById('main-content')!;
+    focusMainContent(main);
+    expect(main.getAttribute('tabindex')).toBe('-1');
+    expect(document.activeElement).toBe(main);
+  });
+
+  it('focusMainContent 는 이미 있는 tabindex 를 바꾸지 않는다', () => {
+    document.body.innerHTML = '<main id="main-content" tabindex="-1"></main>';
+    const main = document.getElementById('main-content')!;
+    focusMainContent(main);
+    expect(main.getAttribute('tabindex')).toBe('-1');
+    expect(document.activeElement).toBe(main);
   });
 });

@@ -114,7 +114,7 @@ test.describe('AISidePanel — 열림 시 입력창 포커스 (WD-579)', () => {
     expect(await page.evaluate(() => document.activeElement === document.body)).toBe(false);
   });
 
-  test('스트리밍 중 다시 열어 입력창 포커스를 기다리는 동안 포커스가 본문 main 에 있으면, 끝난 뒤 입력창으로 옮긴다 (WD-980)', async ({
+  test('스트리밍 중 다시 열어 입력창 포커스를 기다리는 동안 포커스가 본문 main 으로 옮겨지면, 끝난 뒤에도 main 에 남는다 (WD-1039)', async ({
     authenticatedPage: page,
   }) => {
     // 스트리밍 중에는 입력창이 비활성이라 열림 포커스가 대기한다. 그 사이 건너뛰기로 포커스가 main 에 남는 상황을 만든다.
@@ -155,7 +155,33 @@ test.describe('AISidePanel — 열림 시 입력창 포커스 (WD-579)', () => {
     await expect(page.locator('main#main-content')).toBeFocused();
     release();
     await expect(input).toBeEnabled();
+    // 사용자가 일부러 main 에 둔 초점은 입력창이 빼앗지 않는다(WD-1039)
+    await expect(page.locator('main#main-content')).toBeFocused();
+  });
+
+  test('건너뛰기 뒤 본문을 마우스로 눌러 main tabindex 가 떨어진 뒤 Control+K 로 열고 닫아도 초점이 main 으로 돌아온다 (WD-1039)', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.goto('/', { waitUntil: 'commit' });
+    const panel = page.getByTestId('ai-side-panel');
+    const main = page.locator('main#main-content');
+    await focusMain(page);
+
+    // 열던 자리 = main
+    await page.keyboard.press('Control+k');
+    await expect(panel).not.toHaveAttribute('inert', /.*/);
+    const input = panel.getByPlaceholder('메시지를 입력하세요...');
     await expect(input).toBeFocused();
+
+    // 초점이 main 을 떠난 상태에서 tabindex 가 떨어진 것과 같은 효과(마우스 누름 경로 releaseMainFocusTarget)
+    await main.evaluate((el) => el.removeAttribute('tabindex'));
+    await expect(main).not.toHaveAttribute('tabindex', /.*/);
+
+    await input.focus();
+    await page.keyboard.press('Control+k');
+    await expect(panel).toHaveAttribute('inert', /.*/);
+    await expect(main).toBeFocused();
+    expect(await page.evaluate(() => document.activeElement === document.body)).toBe(false);
   });
 
   test('전체 화면 모드가 저장된 상태에서 Control+K 로 열면 입력창에 포커스가 간다', async ({

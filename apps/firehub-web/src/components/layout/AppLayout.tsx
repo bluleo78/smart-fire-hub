@@ -32,7 +32,7 @@ import { useBranding } from '../../hooks/useBranding';
 import { useMediaQuery } from '../../hooks/useMediaQuery';
 import { useNotificationStream } from '../../hooks/useNotificationStream';
 import { useScrollRestoration } from '../../hooks/useScrollRestoration';
-import { MAIN_CONTENT_ID } from '../../lib/focus-lost';
+import { focusMainContent, MAIN_CONTENT_ID } from '../../lib/focus-lost';
 import { cn } from '../../lib/utils';
 import { AIProvider, useAI } from '../ai/AIProvider';
 import { AIStatusChip } from '../ai/AIStatusChip';
@@ -396,9 +396,8 @@ function AppLayoutInner() {
     const main = mainRef.current;
     if (!main) return;
     e.preventDefault();
-    // setAttribute 는 멱등이라 이미 -1 이어도 안전하다
-    main.setAttribute('tabindex', '-1');
-    main.focus();
+    // tabindex 가 없을 때만 -1 을 붙이고 초점을 준다(WD-1039)
+    focusMainContent(main);
   };
 
   /**

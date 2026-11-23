@@ -1,6 +1,6 @@
 import * as React from "react"
 
-import { isFocusLost, isMainContent } from "../../lib/focus-lost"
+import { focusMainContent, isFocusLost, isMainContent } from "../../lib/focus-lost"
 
 /**
  * 다이얼로그를 닫을 때 포커스를 원래 트리거로 되돌린다. (이슈 #328)
@@ -41,6 +41,11 @@ import { isFocusLost, isMainContent } from "../../lib/focus-lost"
  * "Content 바깥의 가장 최근 포커스 요소"를 트리거로 간주해 복귀시킨다.
  * 이 폴백은 `capturedRef.current === null` 인 경우 — 즉 **지금 100% 복귀에 실패하는 상태** —
  * 에서만 쓰이므로 정상 동작 중인 다이얼로그의 복귀 경로는 전혀 바뀌지 않는다.
+ *
+ * ## 포인터 트리거 (WD-1039)
+ * 「본문으로 건너뛰기」 뒤 main 에 초점이 남은 채 마우스로 버튼을 눌러 연 대화상자는(Safari 는 버튼에 초점을 주지 않는다)
+ * 열릴 때 activeElement 가 main 이라 트리거를 알 수 없다. 그래서 최근(1초 이내) 누른 요소를 기억해 두었다가 main 안의 것이면 트리거로 쓴다.
+ * 이 보정은 `onOpenAutoFocus` 가 오는 대화상자에만 적용된다 — 내부 `autoFocus` 창(#337 경로)은 열림 이벤트가 오지 않아 기존 동작 그대로다.
  */
 
 // 전역 포커스 이력 — 위 예외 폴백에서만 참조한다.
@@ -62,6 +67,26 @@ if (typeof document !== "undefined") {
     true
   )
 }
+
+// 최근 pointerdown 대상 — 초점이 main 에 남은 채 열린 대화상자의 트리거 추정에만 쓴다(WD-1039).
+// 시각은 performance.now() 로 잰다(시스템 시계 변경에 영향받지 않는다).
+const RECENT_POINTER_MS = 1000
+let lastPointer: { el: Element; at: number } | null = null
+if (typeof document !== "undefined") {
+  document.addEventListener(
+    "pointerdown",
+    (event) => {
+      const target = event.target
+      if (!(target instanceof Element)) return
+      // svg 아이콘 등 HTMLElement 가 아닌 Element 도 그대로 저장한다 — 조작 요소로 올려 잡는 정규화는 열림 때 한 곳에서만 한다.
+      lastPointer = { el: target, at: performance.now() }
+    },
+    true
+  )
+}
+
+// 누른 요소가 아이콘 등 자식일 때 실제 조작 요소(버튼·링크 등)로 올려 잡는다.
+const INTERACTIVE_SELECTOR = 'button, a[href], [tabindex], input, select, textarea, [role="button"]'
 
 /**
  * 이력에서 `content` 바깥에 있으면서 아직 살아 있는 가장 최근 요소를 찾는다.
@@ -99,8 +124,33 @@ export function useDialogFocusRestore({
       // body·본문 main(isFocusLost, WD-980)은 복귀해봐야 의미가 없으므로 캡처 대상에서 제외한다.
       // 이 이벤트가 dispatch 되었다는 것 자체가 "포커스가 아직 Content 밖"이라는 뜻이므로
       // (위 예외 설명 참고) 여기서 잡히는 것은 언제나 트리거다.
-      const trigger =
+      let trigger =
         active instanceof HTMLElement && !isFocusLost(active) ? active : null
+
+      // WD-1039: 초점이 main 에 남은 채 마우스로 연 경우 — 최근 누른 요소(main 안, Content 밖)를 트리거로 본다.
+      if (!trigger && active instanceof HTMLElement && isMainContent(active) && lastPointer) {
+        const content =
+          event.currentTarget instanceof Element
+            ? event.currentTarget
+            : event.target instanceof Element
+              ? event.target
+              : null
+        const { el, at } = lastPointer
+        // 조작 요소(버튼·링크 등)로 올려 잡되, main 자신·비활성 요소는 초점을 받지 못하거나 의미가 없어 트리거로 쓰지 않는다.
+        // 그 조작 요소가 main 안(따라서 붙어 있음)이면 누른 요소도 main 안이다. 못 찾으면 트리거 없음 — 닫힘 때 restoreFocusRef·조상·main 폴백을 탄다.
+        const interactive =
+          performance.now() - at <= RECENT_POINTER_MS && !content?.contains(el)
+            ? el.closest(INTERACTIVE_SELECTOR)
+            : null
+        if (
+          interactive instanceof HTMLElement &&
+          interactive !== active &&
+          active.contains(interactive) &&
+          !interactive.matches(":disabled")
+        ) {
+          trigger = interactive
+        }
+      }
       capturedRef.current = trigger
       openedFromLostRef.current =
         active instanceof HTMLElement && isMainContent(active) ? active : null
@@ -110,6 +160,9 @@ export function useDialogFocusRestore({
         ancestors.push(el)
       }
       ancestorsRef.current = ancestors
+
+      // 열림 판정에서 읽었으면 비운다 — 떨어진 DOM 노드를 오래 붙들지 않고, 다음 열림이 지난 누름을 재사용하지 않게 한다.
+      lastPointer = null
 
       onOpenAutoFocus?.(event)
     },
@@ -147,7 +200,11 @@ export function useDialogFocusRestore({
         // 1순위: 살아 있는 트리거. 2순위: 호출측이 지정한 대체 지점.
         // 3순위: 살아남은 가장 가까운 조상(표/목록 컨테이너) — 페이지 맨 위로 튕기는 것보다
         //        원래 위치 근처에 남는 편이 낫다. FocusScope 가 컨테이너에 포커스를 주는 것과 같은 패턴.
-        if (captured?.isConnected) return void captured.focus()
+        // focus() 가 조용히 실패할 수 있으므로(포커스 불가 요소) 실제로 받았는지 확인하고, 아니면 다음 폴백으로 흘린다.
+        if (captured?.isConnected) {
+          captured.focus()
+          if (document.activeElement === captured) return
+        }
 
         // 캡처가 아예 없었던 경우(다이얼로그 내부 `autoFocus` — 이슈 #337): 전역 이력에서
         // Content 바깥의 가장 최근 포커스 요소를 트리거로 간주한다. 살아 있지 않으면
@@ -165,9 +222,13 @@ export function useDialogFocusRestore({
         const container = ancestors.find((el) => el.isConnected)
         if (!container) {
           // 대체 지점이 전혀 없으면 열릴 때의 자리(본문 main)로 돌려준다 — 건너뛰기 뒤 단축키 도움말처럼 사라지는 트리거가 없는 대화상자(WD-968).
-          // 이력에서 온 오래된 main 은 그새 임시 tabindex 가 떼어졌을 수 있다(AppLayout releaseMainFocusTarget) —
-          // tabindex 가 없는 main 에 focus() 는 조용히 실패하므로, 포커스를 받을 수 있을 때만 돌려준다(WD-980 코드 리뷰).
-          if (lostTarget?.isConnected && lostTarget.hasAttribute("tabindex")) lostTarget.focus()
+          // main 은 그새 임시 tabindex 가 떼어졌을 수 있다(AppLayout releaseMainFocusTarget) —
+          // tabindex 가 없는 main 에 focus() 는 조용히 실패하므로 focusMainContent 가 tabindex 를 다시 붙이고 초점을 준다(WD-1039).
+          // 다만 tabindex 를 다시 붙이는 것은 이번 열림 때 초점이 main 에 있었을 때(openedFromLost)뿐이다 — 이력에서 온 오래된 main 은
+          // 사용자가 본문을 눌러 tabindex 가 떼어진 뒤라 이미 떠난 자리일 수 있어, 예전처럼 포커스를 받을 수 있을 때만 돌려준다(WD-1039 코드 리뷰).
+          if (!lostTarget?.isConnected || !isMainContent(lostTarget)) return
+          if (lostTarget === openedFromLost) focusMainContent(lostTarget)
+          else if (lostTarget.hasAttribute("tabindex")) lostTarget.focus()
           return
         }
         // 컨테이너는 보통 포커스 불가이므로 일시적으로 tabIndex 를 부여하고,

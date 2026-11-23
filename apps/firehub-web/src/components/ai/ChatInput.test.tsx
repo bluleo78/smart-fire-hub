@@ -92,28 +92,49 @@ describe('ChatInput focusOnOpen (WD-579)', () => {
     expect(textarea()).not.toHaveFocus();
   });
 
-  it('다른 포커스 요소가 없거나 포커스가 본문 main#main-content 에 있어도 free 라 열림 포커스가 입력창으로 간다 (WD-980)', () => {
-    // 포커스 요소 없음(body)
-    const first = render(<Panel focusOnOpen />);
-    expect(textarea()).toHaveFocus();
-    first.unmount();
+  it('초점이 body 면 활성화될 때 입력창으로 옮긴다', () => {
+    const { rerender } = render(<Panel focusOnOpen isStreaming />);
     (document.activeElement as HTMLElement | null)?.blur();
+    expect(document.body).toHaveFocus();
+    rerender(<Panel focusOnOpen isStreaming={false} />);
+    expect(textarea()).toHaveFocus();
+  });
 
-    // 건너뛰기 뒤 main 에 임시 tabindex=-1 로 포커스가 남은 상태
+  /** 건너뛰기 뒤처럼 main(tabindex=-1)을 공유 jsdom 문서에 붙이고, 단언이 실패해도 남지 않게 지운다 */
+  function withMain(run: (main: HTMLElement) => void) {
     const main = document.createElement('main');
     main.id = MAIN_CONTENT_ID;
     main.tabIndex = -1;
     document.body.appendChild(main);
-    // 단언이 실패해도 main 이 공유 jsdom 문서에 남아 뒤 시험을 흐리지 않게 finally 로 지운다
     try {
-      main.focus();
-      expect(main).toHaveFocus();
-      const { rerender } = render(<Panel focusOnOpen={false} />);
-      rerender(<Panel focusOnOpen />);
-      expect(textarea()).toHaveFocus();
+      run(main);
     } finally {
       main.remove();
     }
+  }
+
+  it('대기 중 초점이 본문 main 으로 옮겨지면 활성화돼도 빼앗지 않는다 (WD-1039)', () => {
+    withMain((main) => {
+      // 열던 자리는 다른 버튼이다
+      const originRef: RefObject<Element | null> = { current: null };
+      const { rerender } = render(<Panel focusOnOpen isStreaming focusOriginRef={originRef} />);
+      originRef.current = screen.getByRole('button', { name: '패널 안 버튼' });
+      main.focus();
+      expect(main).toHaveFocus();
+      rerender(<Panel focusOnOpen isStreaming={false} focusOriginRef={originRef} />);
+      expect(main).toHaveFocus();
+    });
+  });
+
+  it('열던 자리가 main 이면 활성화될 때 입력창으로 옮긴다 (WD-1039)', () => {
+    withMain((main) => {
+      const originRef: RefObject<Element | null> = { current: main };
+      const { rerender } = render(<Panel focusOnOpen isStreaming focusOriginRef={originRef} />);
+      main.focus();
+      expect(main).toHaveFocus();
+      rerender(<Panel focusOnOpen isStreaming={false} focusOriginRef={originRef} />);
+      expect(textarea()).toHaveFocus();
+    });
   });
 
   it('열던 순간의 자리(패널 밖, 예: AI 상태 칩)에 포커스가 그대로 있으면 입력창으로 옮긴다', () => {

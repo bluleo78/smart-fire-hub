@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useMediaQuery } from '../../hooks/useMediaQuery';
 import { useOverlayEscape } from '../../hooks/useOverlayEscape';
-import { isFocusLost } from '../../lib/focus-lost';
+import { focusMainContent, isFocusLost, isMainContent } from '../../lib/focus-lost';
 import { cn } from '../../lib/utils';
 import { AIChatPanel } from './AIChatPanel';
 import { useAI } from './AIProvider';
@@ -70,7 +70,11 @@ export function AISidePanel() {
         opener !== document.body &&
         !panelRef.current?.contains(opener) &&
         opener.isConnected;
-      if (stranded && restorable) opener.focus();
+      if (stranded && restorable) {
+        // main 은 마우스 누름으로 tabindex 가 떨어졌을 수 있어 focus() 만으로는 body 로 떨어진다 — tabindex 를 다시 붙여 준다(WD-1039)
+        if (isMainContent(opener)) focusMainContent(opener);
+        else opener.focus();
+      }
     }
   }, [isOpen, openFocusOriginRef]);
 
