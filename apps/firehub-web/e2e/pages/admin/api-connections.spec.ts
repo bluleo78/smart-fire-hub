@@ -79,6 +79,25 @@ async function expectNoRenameNotice(page: Page) {
  * - 목록 렌더링, 생성 폼, 수정, 삭제를 검증한다.
  * - 관리 화면 권한 가드(AdminOrPermissionRoute) 통과와 화면 안 버튼 노출을 위해 ADMIN 역할·관리 권한 코드로 users/me를 오버라이드한다.
  */
+/**
+ * 상세 화면 저장(PUT /api-connections/1) 본문을 모은다 — 막힌 저장은 0건, 통과한 저장은 그 본문이 남는다(WD-909·WD-937 공용).
+ * 다른 메서드는 앞서 건 모킹(setupApiConnectionDetailMocks)으로 넘긴다.
+ */
+async function capturePutBodies<T>(page: Page): Promise<T[]> {
+  const putBodies: T[] = [];
+  await page.route(
+    (url) => url.pathname === '/api/v1/api-connections/1',
+    (route) => {
+      if (route.request().method() === 'PUT') {
+        putBodies.push(route.request().postDataJSON());
+        return route.fulfill({ status: 200, json: { id: 1 } });
+      }
+      return route.fallback();
+    },
+  );
+  return putBodies;
+}
+
 test.describe('API 연결 페이지', () => {
   test.beforeEach(async ({ authenticatedPage: page }) => {
     // 관리 화면 권한 가드(AdminOrPermissionRoute) 통과와 화면 안 버튼 노출을 위해 ADMIN 역할·관리 권한 코드로 오버라이드
@@ -1638,17 +1657,7 @@ test.describe('API 연결 페이지', () => {
     await setupApiConnectionDetailMocks(page, 1);
 
     // PUT payload 를 캡처한다 — 틀린 값일 때는 0건이어야 한다
-    const putBodies: Array<{ baseUrl?: string }> = [];
-    await page.route(
-      (url) => url.pathname === '/api/v1/api-connections/1',
-      (route) => {
-        if (route.request().method() === 'PUT') {
-          putBodies.push(route.request().postDataJSON());
-          return route.fulfill({ status: 200, json: { id: 1 } });
-        }
-        return route.fallback();
-      },
-    );
+    const putBodies = await capturePutBodies<{ baseUrl?: string }>(page);
 
     await page.goto('/admin/api-connections/1');
     await expect(page.getByRole('heading', { name: 'API 연결 상세' })).toBeVisible();
@@ -1668,6 +1677,89 @@ test.describe('API 연결 페이지', () => {
     await page.getByRole('button', { name: '저장' }).click();
     await expect.poll(() => putBodies.length).toBe(1);
     expect(putBodies[0].baseUrl).toBe('https://fixed.example.com');
+  });
+
+  test('상세 편집 — 헬스체크 경로가 /로 시작하지 않으면 인라인 오류·포커스로 막고 고치면 지워진다 (WD-937)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupApiConnectionDetailMocks(page, 1);
+
+    // PUT payload 를 캡처한다 — 틀린 값일 때는 0건이어야 한다
+    const putBodies = await capturePutBodies<{ healthCheckPath?: string }>(page);
+
+    await page.goto('/admin/api-connections/1');
+    await expect(page.getByRole('heading', { name: 'API 연결 상세' })).toBeVisible();
+
+    const pathInput = page.getByLabel('헬스체크 경로 (선택)', { exact: true });
+
+    await pathInput.fill('health');
+    await page.getByRole('button', { name: '저장' }).click();
+
+    await expect(pathInput).toHaveAttribute('aria-invalid', 'true');
+    // 도움말(#432)은 오류 문구와 함께 계속 읽혀야 한다
+    await expect(pathInput).toHaveAccessibleDescription(
+      /10분마다 자동 상태 점검.*헬스체크 경로는 \/로 시작해야 합니다\./,
+    );
+    await expect(pathInput).toBeFocused();
+    await expect(page.getByText('헬스체크 경로는 /로 시작해야 합니다.')).toBeVisible();
+    expect(putBodies).toHaveLength(0);
+
+    // 고치면 오류가 지워지고 그 값이 저장된다
+    await pathInput.fill('/health');
+    await expect(pathInput).not.toHaveAttribute('aria-invalid', 'true');
+    await page.getByRole('button', { name: '저장' }).click();
+    await expect.poll(() => putBodies.length).toBe(1);
+    expect(putBodies[0].healthCheckPath).toBe('/health');
+  });
+
+  test('상세 편집 — 이름과 헬스체크 경로가 함께 틀리면 둘 다 오류, 포커스는 이름 (WD-937)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupApiConnectionDetailMocks(page, 1);
+
+    // PUT payload 를 캡처한다 — 틀린 값일 때는 0건이어야 한다
+    const putBodies = await capturePutBodies<{ healthCheckPath?: string }>(page);
+
+    await page.goto('/admin/api-connections/1');
+    await expect(page.getByRole('heading', { name: 'API 연결 상세' })).toBeVisible();
+
+    const pathInput = page.getByLabel('헬스체크 경로 (선택)', { exact: true });
+
+    const nameInput = page.getByLabel('연결 이름');
+    await nameInput.fill('');
+    await pathInput.fill('health');
+    await page.getByRole('button', { name: '저장' }).click();
+
+    await expect(nameInput).toHaveAttribute('aria-invalid', 'true');
+    await expect(pathInput).toHaveAttribute('aria-invalid', 'true');
+    await expect(nameInput).toBeFocused();
+    expect(putBodies).toHaveLength(0);
+  });
+
+  test('상세 편집 — 공백만이거나 앞 공백이 있는 헬스체크 경로는 오류 없이 다듬어 보낸다 (WD-937)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupApiConnectionDetailMocks(page, 1);
+
+    // PUT payload 를 캡처한다 — 공백만·앞 공백 값은 오류 없이 다듬어 보내야 한다
+    const putBodies = await capturePutBodies<{ healthCheckPath?: string }>(page);
+
+    await page.goto('/admin/api-connections/1');
+    await expect(page.getByRole('heading', { name: 'API 연결 상세' })).toBeVisible();
+
+    const pathInput = page.getByLabel('헬스체크 경로 (선택)', { exact: true });
+
+    await pathInput.fill('   ');
+    await page.getByRole('button', { name: '저장' }).click();
+    await expect.poll(() => putBodies.length).toBe(1);
+    expect(putBodies[0].healthCheckPath).toBe('');
+    await expect(pathInput).not.toHaveAttribute('aria-invalid', 'true');
+
+    await pathInput.fill(' /health');
+    await page.getByRole('button', { name: '저장' }).click();
+    await expect.poll(() => putBodies.length).toBe(2);
+    expect(putBodies[1].healthCheckPath).toBe('/health');
+    await expect(pathInput).not.toHaveAttribute('aria-invalid', 'true');
   });
 
   // (#647) 동일 테넌트 내 이름 중복 시 백엔드가 409로 거부 — 토스트 노출 + 다이얼로그 유지 검증
@@ -2265,6 +2357,53 @@ test.describe('API 연결 인라인 오류 후속 (WD-666)', () => {
     // 채워진 이름 옆에 「연결 이름을 입력하세요.」가 남으면 안 된다
     await expect(page.getByRole('alert')).toHaveCount(0);
     await expect(nameInput).not.toHaveAttribute('aria-invalid', 'true');
+  });
+
+  test('상세 화면 — 재조회로 헬스체크 경로가 서버 값으로 바뀌면 이전 오류가 남지 않는다 (WD-937)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 첫 조회는 '/'로 시작하지 않는 경로, 재조회는 올바른 경로(수정 시각 변경) — 고치지 않은 칸이 새 값을 받는 병합을 검증한다
+    let fetchCount = 0;
+    await page.route(
+      (url) => url.pathname === '/api/v1/api-connections/1',
+      async (route) => {
+        if (route.request().method() === 'GET') {
+          fetchCount += 1;
+          return route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify(
+              createApiConnection({
+                id: 1,
+                healthCheckPath: fetchCount === 1 ? 'health' : '/health',
+                updatedAt: `2024-01-0${fetchCount}T00:00:00Z`,
+              }),
+            ),
+          });
+        }
+        if (route.request().method() === 'PUT') {
+          return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 1 }) });
+        }
+        return route.continue();
+      },
+    );
+    await page.goto('/admin/api-connections/1');
+    const pathInput = page.getByLabel('헬스체크 경로 (선택)', { exact: true });
+    await expect(pathInput).toHaveValue('health');
+
+    // 고치지 않은 채 저장 → 칸 오류
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+    await expect(page.getByText('헬스체크 경로는 /로 시작해야 합니다.')).toBeVisible();
+
+    // 인증 저장 성공 뒤 재조회가 칸을 서버 값으로 채운다
+    await page.getByRole('button', { name: '인증 정보 변경' }).click();
+    await page.getByPlaceholder('Authorization').fill('X-Key');
+    await page.getByPlaceholder('새 API 키를 입력하세요').fill('new-key');
+    await page.getByRole('button', { name: '인증 저장' }).click();
+    await expect(pathInput).toHaveValue('/health');
+
+    await expect(page.getByText('헬스체크 경로는 /로 시작해야 합니다.')).toHaveCount(0);
+    await expect(pathInput).not.toHaveAttribute('aria-invalid', 'true');
   });
 
   test('상세 화면 — API_KEY 인데 저장된 키가 없으면 키 칸이 필수(*)로 보이고 유지 안내가 없으며, 비우면 키 칸 오류', async ({
