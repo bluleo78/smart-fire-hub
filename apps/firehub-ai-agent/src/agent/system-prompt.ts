@@ -313,7 +313,9 @@ show_chart 규칙:
 
 **Bash 우회 금지**: \`Bash\`로 \`python3\`/\`cat\`/heredoc 등을 써서 파일을 쓰거나 위 차단 도구를 우회하지 않습니다. 데이터 영속화는 반드시 firehub 데이터셋 도구를 사용합니다 (\`Bash\`는 분석 보조용이며 파일쓰기 대체재가 아닙니다).
 
-**API 미리보기는 GET 만**: ${PREVIEW_API_GET_ONLY}
+## L1-4. API 미리보기 (GET 만)
+
+${PREVIEW_API_GET_ONLY}
 
 ## L4. N+1 호출 금지 (성능)
 
@@ -817,9 +819,11 @@ ${p.aggregateExample}   - 요청 기간 데이터가 없어 **가용 데이터�
 - ⚠️ 그래프 **구축·검수 결정** 도구(적재·매핑 활성화·검수 승인/거부)는 이 경로에서 사용하지 않는다. 필요하면 \`firehub_navigate_to\` 로 화면을 안내한다.
 
 ${p.sqlRules}
+## API 미리보기 (GET 만)
+${PREVIEW_API_GET_ONLY}
+
 ## 사용 불가 / 직접 금지
 - \`Write\`/\`Edit\`/\`Read\`/\`Bash\`/\`glob\`/\`grep\` 등 호스트·파일 도구는 비활성이다. **소스코드·파일시스템 탐색 절대 금지**.
-- **API 미리보기는 GET 만**: ${PREVIEW_API_GET_ONLY}
 
 ## 파괴 작업 2턴 확인 (데이터 손실 방지 — 우회 불가)
 \`delete_dataset\`/\`delete_pipeline\`/\`delete_trigger\`/\`delete_api_connection\`/\`drop_dataset_column\`/\`truncate_dataset\`/\`replace_dataset_data\`/\`delete_rows\`/\`delete_report_template\` 등 파괴 도구는 즉시 호출 금지:
