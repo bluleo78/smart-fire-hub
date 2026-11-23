@@ -6,6 +6,7 @@ import { createColumn, createDatasetDetail } from '../../factories/dataset.facto
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { grantDatasetPermissions, setupDatasetDetailMocks } from '../../fixtures/dataset.fixture';
+import { readFocusStyle } from '../../fixtures/keyboard-focus';
 
 /**
  * 데이터셋 임포트 E2E 테스트
@@ -909,6 +910,26 @@ test.describe('임포트 다이얼로그 접근성 (#330 #331)', () => {
     // 수정 전에는 다이얼로그 컨테이너 <div>에 포커스가 남아 내용 교체가 고지되지 않았다.
     const heading = page.getByRole('dialog').getByRole('heading', { name: '컬럼 매핑' });
     await expect(heading).toBeFocused();
+  });
+
+  test('WD-949 고대비: 「컬럼 매핑」 제목(tabindex=-1)은 바깥 outline 이라 글자를 덮지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.emulateMedia({ forcedColors: 'active' });
+    await openMappingStep(page);
+
+    const heading = page.getByRole('dialog').getByRole('heading', { name: '컬럼 매핑' });
+    await expect(heading).toBeFocused();
+    // 키보드 직후 스크립트 초점이라 :focus-visible 이 된다(단계 전환 초점 이동과 같은 경로)
+    await page.keyboard.press('Shift+Tab');
+    await heading.evaluate((node) => node.focus());
+    const style = await readFocusStyle(heading);
+    expect(style.focusVisible).toBe(true);
+    expect(style.outlineStyle, '고대비에서 초점이 보여야 한다').toBe('solid');
+    expect(
+      parseFloat(style.outlineOffset),
+      '안쪽 offset(음수)이면 테두리가 글자를 덮는다',
+    ).toBeGreaterThanOrEqual(0);
   });
 
   test('#330 검증 진행·결과가 live region 텍스트로 고지된다', async ({ authenticatedPage: page }) => {
