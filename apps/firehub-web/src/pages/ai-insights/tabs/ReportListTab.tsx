@@ -17,6 +17,7 @@ import {
 import { TableEmptyRow, TableErrorRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { useCanWriteProactive,useProactiveJobs, useReports } from '@/hooks/queries/useProactiveMessages';
+import { useLoadMoreAnnounce } from '@/hooks/useLoadMoreAnnounce';
 import { useLoadMoreLimit } from '@/hooks/useLoadMoreLimit';
 import { offlineListMessage, useOfflinePaused } from '@/hooks/useOnlineStatus';
 import { downloadReportPdf } from '@/hooks/useReportActions';
@@ -24,6 +25,13 @@ import { isForbiddenError } from '@/lib/api-error';
 import { formatDate, timeAgo } from '@/lib/formatters';
 
 import { ProactiveReadForbiddenNotice } from '../components/ProactiveReadForbiddenNotice';
+
+/** 행의 고유 id — 훅 의존성이라 렌더마다 새로 만들지 않게 모듈 상수로 둔다 */
+const getReportExecutionId = (r: { executionId: number }) => r.executionId;
+
+/** 행마다 리포트 뷰어 링크가 하나뿐이라 링크 주소의 실행 id 로 첫 새 행을 찾는다 */
+const findReportRowLink = (tbody: HTMLElement, id: number) =>
+  tbody.querySelector<HTMLElement>(`a[href$="/executions/${id}/report"]`);
 
 /**
  * 생성된 리포트 목록 탭.
@@ -53,7 +61,27 @@ export default function ReportListTab() {
   // 세면 이어진 재조회 실패가 묻히고, 오류 캐시를 다시 열 때 요청이 나가기도 전에 20건으로 접힌다 (WD-1037, 실행 이력 WD-1019 과 같다).
   const refetchPending = isFetching || isPaused;
   // 돌려받는 값 — 확정 전 재조회 중이면 「더 보기」를 잠근다 (WD-1037 리뷰)
-  const loadMoreLocked = settle({ isError, isSuccess, isPlaceholderData, refetchPending });
+  const settleLocked = settle({ isError, isSuccess, isPlaceholderData, refetchPending });
+
+  // 「더 보기」·「다시 시도」 응답 뒤 알림·초점 옮기기와 그 응답의 끝 판정은 공용 훅이 맡는다(WD-1032, 실행 이력과 같은 규칙).
+  // 「더 보기」 응답 기다림 — 자리표시 데이터로 기다리거나 낡은 캐시 재조회가 확정되지 않음(settle).
+  // 버튼 보임·잠금과 오프라인 안내(WD-1035)가 같은 값을 본다. 행이 limit 보다 적어도 기다리는 동안은 버튼을 남겨 초점을 지킨다 (WD-1032).
+  const loadMoreLocked = isPlaceholderData || settleLocked;
+
+  const { handleLoadMore, tableWrapRef, bottomRef, statusRef } = useLoadMoreAnnounce({
+    items: reports,
+    getId: getReportExecutionId,
+    limit,
+    failed,
+    pending,
+    isSuccess,
+    isPlaceholderData,
+    refetchPending,
+    loadMore,
+    noun: '리포트',
+    noneMessage: '더 불러올 리포트가 없습니다.',
+    findRowTarget: findReportRowLink,
+  });
   // 조회 실패를 빈 목록으로 그리지 않는다 (WD-137) — 403 이면 권한 안내, 그 밖은 불러오기 실패 안내.
   const isForbidden = isError && isForbiddenError(error);
   // 빈 상태를 "잡이 없음" / "잡은 있으나 리포트 없음" 으로 가르기 위해 잡 목록도 본다.
@@ -89,7 +117,7 @@ export default function ReportListTab() {
     // 높이를 뷰포트에 고정하지 않는다 — 리포트가 몇 건뿐일 때 거대한 빈 상자가 남는다.
     // 대신 최대 높이만 제한해 목록이 길어지면 내부 스크롤이 생기게 한다.
     <div className="flex flex-col">
-      <div className="max-h-[calc(100vh-280px)] overflow-auto border rounded-md">
+      <div ref={tableWrapRef} className="max-h-[calc(100vh-280px)] overflow-auto border rounded-md">
         <Table>
           <TableHeader>
             <TableRow>
@@ -192,22 +220,29 @@ export default function ReportListTab() {
         </Table>
       </div>
 
-      {failed ? (
-        <LoadMoreFailure onRetry={loadMore} pending={pending} />
-      ) : (
-        // 응답 대기 중(isPlaceholderData)에도 버튼을 남기고 pending 으로만 잠근다 — 사라지면 키보드 초점이 body 로 떨어진다(WD-1016).
-        // isPlaceholderData 를 「더 보기 로딩 중」으로 읽는 것은 이 탭에서 키를 바꾸는 입력이 limit 뿐이기 때문이다 — 필터 등이 생기면 다시 검토한다.
-        (reports.length >= limit || isPlaceholderData) && (
-          <div className="py-2 flex justify-center">
-            {/* 낡은 캐시로 먼저 보인 새 limit 의 재조회가 끝나기 전에도 잠근다 — 확정 전에 다시 누른 뒤 실패하면 보던 40건이 아니라 20건으로 접힌다 (WD-1037 리뷰, 실행 이력 WD-1019 와 같다) */}
-            <PendingButton variant="ghost" size="sm" pending={isPlaceholderData || loadMoreLocked} onClick={loadMore}>
-              더 보기
-            </PendingButton>
-          </div>
-        )
-      )}
-      {/* 「더 보기」 기다림(자리표시)이 오프라인으로 멈추면 연결 대기 안내 (WD-1035) — 낡은 캐시 기다림은 WD-1037 */}
-      <LoadMoreOfflineNotice waiting={isPlaceholderData} isPaused={isPaused} label="리포트" />
+      <div ref={bottomRef}>
+        {failed ? (
+          <LoadMoreFailure onRetry={handleLoadMore} pending={pending} />
+        ) : (
+          // 응답 대기 중(자리표시·낡은 캐시 재조회)에도 버튼을 남기고 잠그기만 한다 — 사라지면 키보드 초점이 body 로 떨어진다(WD-1016·WD-1032).
+          // 행이 limit 보다 적어도 재조회가 확정될 때까지 남긴다 — 실행 이력(WD-1038)과 같은 규칙이다.
+          // loadMoreLocked 에 isPlaceholderData 가 들어 있어 이를 「더 보기 로딩 중」으로 읽는 것은 이 탭에서 키를 바꾸는 입력이 limit 뿐이기 때문이다 — 필터 등이 생기면 다시 검토한다.
+          (reports.length >= limit || loadMoreLocked) && (
+            <div className="py-2 flex justify-center">
+              {/* 낡은 캐시로 먼저 보인 새 limit 의 재조회가 끝나기 전에도 잠근다 — 확정 전에 다시 누른 뒤 실패하면 보던 40건이 아니라 20건으로 접힌다 (WD-1037 리뷰, 실행 이력 WD-1019 와 같다) */}
+              <PendingButton variant="ghost" size="sm" pending={loadMoreLocked} onClick={handleLoadMore}>
+                더 보기
+              </PendingButton>
+            </div>
+          )
+        )}
+        {/* 「더 보기」 기다림이 오프라인으로 멈추면 연결 대기 안내 (WD-1035·WD-1037) —
+            자리표시(isPlaceholderData)만 보면 낡은 캐시로 보인 채 재조회가 오프라인으로 멈춘 동안 안내가 없어,
+            버튼 잠금과 같은 loadMoreLocked 를 본다 (WD-1032, 실행 이력 WD-1035 리뷰·WD-1038 과 같다) */}
+        <LoadMoreOfflineNotice waiting={loadMoreLocked} isPaused={isPaused} label="리포트" />
+      </div>
+      {/* 「더 보기」 결과 알림 — 문구가 바뀔 때 읽히도록 늘 그려 둔다 (WD-1032) */}
+      <p ref={statusRef} role="status" className="sr-only" data-testid="reports-load-status" />
     </div>
   );
 }

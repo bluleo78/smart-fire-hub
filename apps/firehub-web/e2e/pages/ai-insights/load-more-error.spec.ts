@@ -270,6 +270,10 @@ async function makeCacheStale(page: Page, rows: Locator, tabs = { other: '개요
   await expect(rows).toHaveCount(20);
 }
 
+/** 리포트 목록의 limit=40 조회를 낡게 만든다 — 「리포트 양식」 탭에 갔다 온다(WD-1037). */
+const makeReportCacheStale = (page: Page, rows: Locator) =>
+  makeCacheStale(page, rows, { other: '리포트 양식', self: '생성된 리포트' });
+
 /** 프레임이 두 번 돌 때까지 기다린다 — 응답이 그려진 뒤 알림 프레임이 쓰였을 시간을 준다(WD-1019). */
 async function waitFrames(page: Page) {
   await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
@@ -760,6 +764,112 @@ test.describe('리포트 「더 보기」 응답 대기 (WD-1016)', () => {
     await expect(rows).toHaveCount(25);
     await expect(page.getByRole('button', { name: '더 보기' })).toHaveCount(0);
   });
+
+  // ── 응답 뒤 초점 이동·건수 안내 (WD-1032) — 실행 이력 WD-965 리뷰 후속·WD-1038 시험과 같은 규칙을 리포트 목록에서 확인한다 ──
+  const REPORT_END_STATUS = '리포트 5건을 더 불러왔습니다. 마지막 리포트입니다.';
+
+  test('리포트 「더 보기」 응답이 끝 목록이면 버튼이 사라지고 초점이 첫 새 행으로 가며 끝임을 알린다 (WD-1032)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockLimitedList(page, '/api/v1/proactive/reports', 0, (n) => reportRows(Math.min(n, 25)));
+    await page.goto('/ai-insights/reports');
+    const rows = page.getByRole('link', { name: /^리포트 \d+$/ });
+    await expect(rows).toHaveCount(20);
+    await pressMoreWithKeyboard(page);
+    await expect(rows).toHaveCount(25);
+    await expect(page.getByRole('button', { name: '더 보기' })).toHaveCount(0);
+    // 버튼이 사라져도 초점이 body 로 빠지지 않고 새로 받은 첫 행(21번째)으로 간다
+    await expect(rows.nth(20)).toBeFocused();
+    await expect(page.getByTestId('reports-load-status')).toHaveText(REPORT_END_STATUS);
+  });
+
+  test('리포트 「더 보기」를 초점 없이 누르면 버튼이 사라져도 초점을 옮기지 않는다 (WD-1032)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockLimitedList(page, '/api/v1/proactive/reports', 0, (n) => reportRows(Math.min(n, 25)));
+    await page.goto('/ai-insights/reports');
+    const rows = page.getByRole('link', { name: /^리포트 \d+$/ });
+    await expect(rows).toHaveCount(20);
+    // 마우스 클릭이 버튼에 초점을 주지 않는 브라우저(Safari)처럼 — 초점 없이 click 만 보낸다
+    await page.getByRole('button', { name: '더 보기' }).dispatchEvent('click');
+    await expect(rows).toHaveCount(25);
+    await expect(page.getByTestId('reports-load-status')).toHaveText(REPORT_END_STATUS);
+    await expect(rows.nth(20)).not.toBeFocused();
+  });
+
+  test('리포트 「더 보기」 응답에 새 행이 없으면 초점이 마지막 행으로 가고 더 없음을 알린다 (WD-1032)', async ({
+    authenticatedPage: page,
+  }) => {
+    // limit=40 응답도 20건 — 20건이 딱 전부였던 경우
+    await mockLimitedList(page, '/api/v1/proactive/reports', 0, (n) => reportRows(n === 40 ? 20 : n));
+    await page.goto('/ai-insights/reports');
+    const rows = page.getByRole('link', { name: /^리포트 \d+$/ });
+    await expect(rows).toHaveCount(20);
+    await pressMoreWithKeyboard(page);
+    await expect(page.getByTestId('reports-load-status')).toHaveText('더 불러올 리포트가 없습니다.');
+    await expect(page.getByRole('button', { name: '더 보기' })).toHaveCount(0);
+    await expect(rows).toHaveCount(20);
+    await expect(rows.nth(19)).toBeFocused();
+  });
+
+  test('리포트 「더 보기」 실패 뒤 「다시 시도」가 성공하면 초점이 body 로 빠지지 않고 알린다 (WD-1032)', async ({
+    authenticatedPage: page,
+  }) => {
+    // limit=40 첫 요청(+전역 재시도 1회)은 500, 그 뒤는 40건
+    await mockLimitedList(page, '/api/v1/proactive/reports', 2, reportRows);
+    await page.goto('/ai-insights/reports');
+    const rows = page.getByRole('link', { name: /^리포트 \d+$/ });
+    await expect(rows).toHaveCount(20);
+    await page.getByRole('button', { name: '더 보기' }).click();
+    await expect(page.getByRole('alert')).toHaveText(FAIL_MESSAGE);
+    await page.getByRole('button', { name: '다시 시도' }).focus();
+    await page.keyboard.press('Enter');
+    await expect(rows).toHaveCount(40);
+    // 실패 블록이 사라져도 초점이 「더 보기」로 간다
+    await expect(page.getByRole('button', { name: '더 보기' })).toBeFocused();
+    await expect(page.getByTestId('reports-load-status')).toHaveText('리포트 20건을 더 불러왔습니다.');
+  });
+
+  test('리포트 「더 보기」 낡은 캐시가 limit 보다 짧아도 재조회를 기다리는 동안 버튼이 잠긴 채 남는다 (WD-1032)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(page, 'GET', '/api/v1/proactive/templates', []);
+    await page.clock.install();
+    const gate = deferred();
+    let calls40 = 0;
+    // limit=40 첫 조회는 25건(끝 목록), 낡은 캐시를 다시 조회하는 두 번째부터는 gate 를 풀 때까지 붙잡는다
+    await page.route(
+      (url) => url.pathname === '/api/v1/proactive/reports',
+      async (route) => {
+        const limit = Number(new URL(route.request().url()).searchParams.get('limit') ?? '20');
+        let count = limit;
+        if (limit === 40) {
+          calls40 += 1;
+          count = 25;
+          if (calls40 >= 2) await gate.promise;
+        }
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(reportRows(count)) });
+      },
+    );
+    await page.goto('/ai-insights/reports');
+    const rows = page.getByRole('link', { name: /^리포트 \d+$/ });
+    const more = page.getByRole('button', { name: '더 보기' });
+    await expect(rows).toHaveCount(20);
+    await pressMoreWithKeyboard(page);
+    await expect(rows).toHaveCount(25);
+    await expect(more).toHaveCount(0);
+
+    await makeReportCacheStale(page, rows);
+    await pressMoreWithKeyboard(page);
+    await expect.poll(() => calls40).toBe(2);
+    // 낡은 25행이 limit(40)보다 적어도 재조회가 확정되기 전에는 버튼이 사라지지 않고 잠긴 채 초점을 지킨다
+    await expect(rows).toHaveCount(25);
+    await expect(more).toBeVisible();
+    await expect(more).toHaveAttribute('aria-disabled', 'true');
+    await expect(more).toBeFocused();
+    gate.resolve();
+    await expect(more).toHaveCount(0);
+  });
 });
 
 /**
@@ -845,6 +955,34 @@ test.describe('「더 보기」 오프라인 안내 (WD-1035)', () => {
     await expect(page.getByText(message)).toHaveCount(0);
   });
 
+  test('리포트 「더 보기」 낡은 캐시로 보인 채 오프라인으로 재조회가 멈추면 연결 대기 안내가 보인다 (WD-1032)', async ({
+    authenticatedPage: page,
+  }) => {
+    const message = offlineListMessage('리포트');
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs', [createJob({ id: 3 })]);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    await mockApi(page, 'GET', '/api/v1/proactive/templates', []);
+    await page.clock.install();
+    await mockLimitedList(page, '/api/v1/proactive/reports', 0, reportRows);
+    await page.goto('/ai-insights/reports');
+    const rows = page.getByRole('link', { name: /^리포트 \d+$/ });
+    await expect(rows).toHaveCount(20);
+    await pressMoreWithKeyboard(page);
+    await expect(rows).toHaveCount(40);
+
+    await makeReportCacheStale(page, rows);
+
+    await page.context().setOffline(true);
+    await pressMoreWithKeyboard(page);
+    await expect(rows).toHaveCount(40);
+    // 낡은 캐시 기다림은 자리표시가 아니라 settle 길로 잠그므로 안내도 그 값(loadMoreLocked)을 봐야 한다
+    await expect(page.getByText(message)).toBeVisible();
+    await expect(page.getByRole('button', { name: '더 보기' })).toHaveAttribute('aria-disabled', 'true');
+
+    await page.context().setOffline(false);
+    await expect(page.getByText(message)).toHaveCount(0);
+  });
+
   test('실행 이력 「더 보기」 실패 뒤 오프라인에서 「다시 시도」를 누르면 실패 블록 아래에 연결 대기 안내가 보인다 (WD-1035 리뷰)', async ({
     authenticatedPage: page,
   }) => {
@@ -914,10 +1052,6 @@ test.describe('「더 보기」 오프라인 안내 (WD-1035)', () => {
     await expect(page.getByText(message)).toHaveCount(0);
   });
 });
-
-/** 리포트 목록의 limit=40 조회를 낡게 만든다 — 「리포트 양식」 탭에 갔다 온다(WD-1037). */
-const makeReportCacheStale = (page: Page, rows: Locator) =>
-  makeCacheStale(page, rows, { other: '리포트 양식', self: '생성된 리포트' });
 
 test.describe('리포트 목록 「더 보기」 재조회 (WD-1037)', () => {
   test.beforeEach(async ({ authenticatedPage: page }) => {
