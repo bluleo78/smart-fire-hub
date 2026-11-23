@@ -106,7 +106,7 @@ test.describe('그래프 매핑·행 편집·임포트 표 필수 칸 aria-requi
     await expect(dialog.locator('#add-memo')).not.toHaveAttribute('aria-required', 'true');
   });
 
-  test('임포트 매핑 표 — NOT NULL 컬럼 옵션의 별표는 aria-hidden, 뜻은 sr-only 로 전달', async ({ authenticatedPage: page }) => {
+  test('임포트 매핑 표 — NOT NULL 컬럼 옵션의 별표는 aria-hidden, 뜻은 옵션 이름(aria-label)으로 전달', async ({ authenticatedPage: page }) => {
     await grantDatasetPermissions(page);
     await setupDatasetDetailMocks(page, 1);
     await mockApi(page, 'GET', '/api/v1/datasets/1/imports', createPageResponse([]));
@@ -121,10 +121,11 @@ test.describe('그래프 매핑·행 편집·임포트 표 필수 칸 aria-requi
     await page.getByRole('button', { name: '임포트' }).first().click();
     await page.getByRole('dialog').locator('input[type="file"]').setInputFiles(CSV_FILE);
     await page.getByRole('combobox', { name: /컬럼을 매핑할 데이터셋 컬럼/ }).first().click();
-    // 기본 데이터셋의 id 컬럼은 NOT NULL — 옵션에 별표(aria-hidden)와 sr-only 필수 안내가 있다
+    // 기본 데이터셋의 id 컬럼은 NOT NULL — 옵션에 별표(aria-hidden)가 있고, 「(필수)」는 옵션 aria-label 로 전한다.
+    // sr-only 글자를 두면 고른 뒤 트리거 값에도 따라붙어 리뷰 후속(29380ab32)에서 aria-label 로 바꿨다 — 그래서 sr-only 는 없어야 한다(WD-964)
     const option = page.getByRole('option', { name: /ID/ }).first();
     await expect(option.locator('span[aria-hidden="true"]')).toHaveText('*');
-    await expect(option.locator('span.sr-only')).toHaveText(/필수/);
+    await expect(option.locator('span.sr-only')).toHaveCount(0);
     await expect(option).toHaveAccessibleName(/필수/);
   });
 });
