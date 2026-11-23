@@ -1,7 +1,7 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import axios from 'axios';
 import { Activity, ArrowLeft, Copy } from 'lucide-react';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -182,6 +182,35 @@ export default function ProactiveJobDetailPage() {
   const fetchLatestJob = useFetchLatestProactiveJob();
   // 마지막 저장이 편집 충돌로 거부됐는가 — 참이면 EditConflictDialog 를 띄운다(WD-364)
   const [editConflict, setEditConflict] = useState(false);
+
+  // 상세 ↔ 새 작업은 같은 라우트 요소라 이동해도 컴포넌트가 재사용돼 상태가 남는다 — 상세→뒤로→/jobs/new 에 「만들기」 없이
+  // 읽기 모드로 남고, 새 작업 폼에서 앞으로 가면 편집·변경 사항 표시가 남는다. 라우트 정체('new' 또는 id)가 바뀐 렌더에서 화면 상태를 다시 잡는다.
+  // id→id(복제 뒤 뒤로 가기 등)도 같은 이유로 포함한다. 복제 직후만 편집 모드여야 하므로 이동 state 의 startEditing 으로 구분한다.
+  // key 로 페이지를 재마운트하지 않는 이유: 만들기 뒤 new→id 이동의 WD-415 「편집」 포커스(useEditModeFocus)를 지키기 위해서다 (WD-996)
+  const routeKey = isNew ? 'new' : id;
+  const [prevRouteKey, setPrevRouteKey] = useState(routeKey);
+  if (prevRouteKey !== routeKey) {
+    setPrevRouteKey(routeKey);
+    setIsEditing(isNew || (location.state as { startEditing?: boolean } | null)?.startEditing === true);
+    setIsDirty(false);
+    setEditConflict(false);
+    setLeaveDialogOpen(false);
+    setCustomCronValue(null);
+  }
+  // 복제 직후의 편집 시작 state 는 한 번만 쓴다 — 기록에 남으면 저장·취소 뒤 뒤로→앞으로 갈 때 다시 편집 모드로 열린다.
+  // 같은 경로로 replace 하므로 라우트 정체(routeKey)가 바뀌지 않아 위 다시 잡기는 돌지 않는다 (WD-996)
+  const startEditingState = (location.state as { startEditing?: boolean } | null)?.startEditing === true;
+  useEffect(() => {
+    if (startEditingState) {
+      navigate(
+        { pathname: location.pathname, search: location.search, hash: location.hash },
+        { replace: true, state: null },
+      );
+    }
+  }, [startEditingState, navigate, location.pathname, location.search, location.hash]);
+  // 최신 routeKey — 「다시 불러오기」 응답이 늦게 도착했을 때 그 사이 다른 작업으로 옮겨 갔는지 비교한다 (WD-996)
+  const routeKeyRef = useRef(routeKey);
+  routeKeyRef.current = routeKey;
   // 충돌 창의 「다시 불러오기」 진행 중 — 저장 중과 함께 창의 버튼을 막는다
   const [isReloading, setIsReloading] = useState(false);
   /**
@@ -330,6 +359,8 @@ export default function ProactiveJobDetailPage() {
       // 「기본 (선택 안 함)」을 고르면 templateId 가 null 이 되는데, 서버는 null 을 "바꾸지 않음"으로 받는다.
       // 해제 의도를 clearTemplate 로 함께 보내야 옛 템플릿이 남지 않는다 (WD-136).
       // Promise 를 돌려 충돌 창이 저장 끝까지 잠기게 하고(WD-678), 거부는 콜백이 처리하므로 삼킨다(이 화면은 isSubmitSuccessful 을 읽지 않는다).
+      // 저장 요청 중 다른 작업·새 작업으로 옮겨 가면 늦게 온 응답이 새 화면의 편집 상태를 덮지 않게 요청한 라우트를 기억한다 (WD-996)
+      const savedKey = routeKeyRef.current;
       return updateMutation.mutateAsync(
         {
           id: jobId,
@@ -344,11 +375,18 @@ export default function ProactiveJobDetailPage() {
           onSuccess: () => {
             setEditConflict(false);
             toast.success('작업이 저장되었습니다.');
+            // 그 사이 화면을 옮겼으면 새 화면(예: /jobs/new)을 읽기 모드로 바꾸지 않는다 (WD-996)
+            if (routeKeyRef.current !== savedKey) return;
             // 저장 성공 → dirty 해제 후 읽기 모드로 복귀 (이슈 #59)
             setIsDirty(false);
             setIsEditing(false);
           },
           onError: (err) => {
+            // 그 사이 화면을 옮겼으면 충돌 창·칸 오류를 새 화면에 띄우지 않고 실패만 알린다 (WD-996)
+            if (routeKeyRef.current !== savedKey) {
+              handleApiError(err, '작업 저장에 실패했습니다.');
+              return;
+            }
             // 편집 충돌은 토스트 대신 안내 창으로 — 사용자가 다시 불러올지 덮어쓸지 고른다(WD-364)
             if (isEditConflict(err)) {
               setEditConflict(true);
@@ -370,8 +408,11 @@ export default function ProactiveJobDetailPage() {
   const handleReloadLatest = async () => {
     if (!jobId) return;
     setIsReloading(true);
+    const requestedKey = routeKeyRef.current;
     try {
       const latest = await fetchLatestJob(jobId);
+      // 요청 중 다른 작업·새 작업으로 옮겨 갔다면 도착한 응답으로 폼을 덮지 않는다 (WD-996)
+      if (routeKeyRef.current !== requestedKey) return;
       form.reset(buildDefaultValues(latest));
       // 내 변경을 버렸으니 「직접 입력」 선택도 버린다 — 최신 값이 내가 친 값과 같아도 저장된 주기대로 보인다(WD-962)
       setCustomCronValue(null);
@@ -438,8 +479,8 @@ export default function ProactiveJobDetailPage() {
     cloneMutation.mutate(job, {
       onSuccess: (created) => {
         toast.success(cloneSuccessMessage(created.name));
-        navigate(`/ai-insights/jobs/${created.id}?tab=overview`);
-        setIsEditing(true);
+        // 편집 모드 시작은 이동 state 로 넘긴다 — 라우트가 바뀐 렌더의 다시 잡기가 setIsEditing 을 덮어쓰기 때문 (WD-996)
+        navigate(`/ai-insights/jobs/${created.id}?tab=overview`, { state: { startEditing: true } });
       },
       onError: (err) => handleApiError(err, '작업 복제에 실패했습니다.'),
     });
@@ -682,7 +723,9 @@ export default function ProactiveJobDetailPage() {
         </TabsList>
 
         <TabsContent value="overview">
+          {/* key: 라우트가 바뀌면 탭 안 상태(생성 모드·목표 문구 등)를 새로 시작한다. 페이지는 재마운트하지 않는다 (WD-996) */}
           <JobOverviewTab
+            key={routeKey}
             job={job}
             isNew={isNew}
             isEditing={isEditing}
@@ -700,6 +743,7 @@ export default function ProactiveJobDetailPage() {
             (안 그러면 개요·실행 이력 탭에도 모니터링 내용이 함께 보였다 — 반려 지적). */}
         <TabsContent value="monitoring" forceMount className="data-[state=inactive]:hidden">
           <JobMonitoringTab
+            key={routeKey}
             form={form}
             isEditing={isEditing}
             jobId={jobId}
