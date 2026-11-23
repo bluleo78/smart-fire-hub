@@ -203,6 +203,9 @@ test.describe('데이터셋 목록 — URL 동기화', () => {
    * 같은 작업 안에서 즐겨찾기 클릭 + history.back() 을 하면 쓴 주소(favorite=true)는 렌더에 오지 못하고 POP 주소로 덮인다.
    * 이때 대기 목록을 비우지 않으면 다음 필터가 favorite 을 되살리고 뒤로 온 정렬을 지운다.
    * WD-1047 — 실제 뒤로가기는 비동기라 대개 favorite 커밋이 POP 보다 먼저 끝나 위 겨루기가 일어나지 않는다.
+   * WD-1053 — React 19.2 는 popstate 이벤트 안에서 시작한 transition 을 동기로 렌더·커밋하고, react-router 7.13 의
+   * BrowserRouter 는 history.listen 안에서 startTransition(setState) 를 부른다. 그래서 라우터의 popstate 리스너가 끝난 뒤에는
+   * POP 렌더가 이미 커밋돼 있고, popstate 뒤 첫 타이머 작업(setTimeout 0) 시점에도 정렬 안내가 DOM 에 있다.
    * 그래서 이 시험은 뒤로가기 뒤 기본 동작(정렬 복원·다음 필터)만 지키고, 「POP 시 대기 목록 비우기」를 뺀 변이는
    * 잡지 못한다(그 갈래를 지운 변이에서 10회 모두 통과). 그 갈래는 「즐겨찾기 직후 사이드바 링크로 이동하면…」 시험이
    * 결정적으로 지킨다(같은 변이에서 5회 모두 실패).
@@ -212,22 +215,33 @@ test.describe('데이터셋 목록 — URL 동기화', () => {
   }) => {
     await setupCommon(page);
 
+    // POP 스냅샷 기록 한 건의 모양 — init script·평가 쪽 캐스트에서 같이 쓴다(타입만이라 런타임 영향 없음)
+    type PopRecord = { pressed: string | null; url: string; noticeNextTask: boolean | null };
+
     // WD-1015 스냅샷 — POP 시점의 화면 상태와 마지막 쓰기를 기록한다(겨루기가 실제로 났는지 annotation 으로 남긴다).
     // (i) popstate 마다 textContent 이 즐겨찾기 인 버튼의 aria-pressed 와 그 시점의 location.href 를 쌓고,
     // (ii) history.replaceState 를 감싸 세 번째 인자(주소)를 기록한 뒤 원본을 그대로 호출한다(원본 반환값 유지).
     // 리스너·감싸기는 addEventListener/wrap 만 써서 페이지 코드를 바꾸지 않고, SPA 탐색에서도 남는다.
     await page.addInitScript(() => {
       const w = window as unknown as {
-        __wd1015Pop: { pressed: string | null; url: string }[];
+        __wd1015Pop: PopRecord[];
         __wd1015LastWrite: string | null;
       };
       w.__wd1015Pop = [];
       window.addEventListener('popstate', () => {
         const 즐겨찾기버튼 = [...document.querySelectorAll('button')].find((b) => b.textContent === '즐겨찾기');
-        w.__wd1015Pop.push({
+        const 항목: PopRecord = {
           pressed: 즐겨찾기버튼?.getAttribute('aria-pressed') ?? null,
           url: location.href,
-        });
+          noticeNextTask: null,
+        };
+        w.__wd1015Pop.push(항목);
+        // WD-1053 — popstate 뒤 첫 타이머 작업(setTimeout 0) 시점에 정렬 안내가 DOM 에 있는지 기록한다.
+        // queueMicrotask 는 첫 리스너에서 넣어도 리스너 콜백 사이에 비워지므로 항상 라우터 리스너보다 먼저 돌아
+        // POP 커밋 전 시점을 보게 된다. 그래서 쓰지 않고 setTimeout(0) 으로 작업 경계를 넘긴다.
+        setTimeout(() => {
+          항목.noticeNextTask = document.body.textContent?.includes('현재 페이지 내 정렬이 적용됩니다') ?? false;
+        }, 0);
       });
       w.__wd1015LastWrite = null;
       const 원본_replaceState = history.replaceState.bind(history);
@@ -247,8 +261,7 @@ test.describe('데이터셋 목록 — URL 동기화', () => {
     // 사이드바 링크(push)로 정렬 없는 주소를 history 에 쌓는다 — 뒤로가기 목적지(정렬 있는 주소)를 만든다
     await page.locator('a[href="/data/datasets"]').first().click();
     await expect.poll(() => params().get('sort')).toBeNull();
-    // WD-1047 — 정렬이 켜졌을 때만 보이는 안내(DatasetListPage 정렬 범위 안내)를 POP 렌더 커밋 신호로 쓴다.
-    // 앞 화면(정렬 없음)에는 없음을 고정한다 — 뒤로가기 뒤에 뜨면 POP 렌더 커밋의 증거다
+    // 정렬이 켜졌을 때만 보이는 안내 — 앞 화면(정렬 없음)에는 없음을 전제로 고정한다(커밋 확인은 noticeNextTask, WD-1053)
     const sortNotice = page.getByText('현재 페이지 내 정렬이 적용됩니다');
     await expect(sortNotice).toBeHidden();
 
@@ -258,7 +271,7 @@ test.describe('데이터셋 목록 — URL 동기화', () => {
     // 전제 단언 — POP 이 실제로 왔고 그 전에 favorite 쓰기가 있었다. 겨루기가 났는지(pressedAtPop)는 단언하지 않는다(WD-1047).
     const { pops, lastWrite } = await page.evaluate(() => {
       const w = window as unknown as {
-        __wd1015Pop: { pressed: string | null; url: string }[];
+        __wd1015Pop: PopRecord[];
         __wd1015LastWrite: string | null;
       };
       return { pops: w.__wd1015Pop, lastWrite: w.__wd1015LastWrite };
@@ -270,10 +283,18 @@ test.describe('데이터셋 목록 — URL 동기화', () => {
 
     await expect.poll(() => params().get('sort')).toBe('name');
     expect(params().get('favorite')).toBeNull();
-    // WD-1047 모드 2 — 주소만 보면 POP 렌더 커밋 전에 다음 클릭이 들어가 대기 목록의 favorite 이 기준이 된다.
-    // 렌더 신호(정렬 안내 문구)가 보일 때까지 기다려 POP 렌더 커밋 뒤에 다음 필터를 누른다.
-    // (커밋 전 클릭이 favorite 을 되살리는 것은 제품 쪽 겨루기라 이 시험 범위 밖 — WD-1053)
-    await expect(sortNotice).toBeVisible();
+    // WD-1053 — 렌더 대기 없이 바로 다음 필터를 누르는 근거(위 문서 주석의 POP 동기 커밋)를 아래 단언이 지킨다.
+    // React·react-router 를 올려 실패하면 제품 회귀가 아니라 클릭 전 렌더 대기가 필요한지 다시 보라는 신호다.
+    // 커밋이 스케줄러 작업(MessageChannel)으로 밀리면 타이머와의 순서가 브라우저에 달려 실패 없이 지나갈 수도 있다.
+    // 이 겨루기를 만든 뒤로가기는 기록의 마지막 POP 이다
+    const readNoticeAtTimer = () =>
+      page.evaluate(() => (window as unknown as { __wd1015Pop: PopRecord[] }).__wd1015Pop.at(-1)?.noticeNextTask ?? null);
+    // 기록이 채워질 때까지(null 아님) 기다린 뒤 값을 한 번 읽어 즉시 단언한다
+    await expect.poll(readNoticeAtTimer).not.toBeNull();
+    expect(
+      await readNoticeAtTimer(),
+      'popstate 뒤 첫 타이머 작업에 POP 렌더가 커밋돼 있지 않음(정렬 안내가 DOM 에 없음)',
+    ).toBe(true);
 
     // 다음 필터 — POP 뒤 주소 + 이 필터만. favorite 이 되살아나거나 정렬이 사라지면 안 된다
     await tempButton.click();
