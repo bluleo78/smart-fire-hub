@@ -117,6 +117,7 @@ test.describe('데이터셋 목록 — URL 동기화', () => {
    * 이슈 WD-950 — 뒤로가기(POP)로 주소가 바뀐 뒤 필터를 누르면 뒤로가기 전 주소의 키가 되살아나면 안 된다(기본 동작 확인).
    * 모든 클릭이 렌더 뒤라 대기 목록이 비어 있어 고치기 전 코드도 통과한다 — 렌더 전 쓰기와 POP 이 겨루는 경우는 아래
    * 「즐겨찾기 클릭과 뒤로가기가 겨뤄도…」 시험이 맡는다.
+   * (그 시험의 판정력 한계와 결정적 커버리지 위치는 그 시험 머리 주석 — WD-1047.)
    */
   test('뒤로가기로 주소가 바뀐 뒤 필터를 누르면 뒤로가기 전 주소가 되살아나지 않는다 (WD-950)', async ({
     authenticatedPage: page,
@@ -201,15 +202,17 @@ test.describe('데이터셋 목록 — URL 동기화', () => {
    * 이슈 WD-950 리뷰 회귀 방지 — 클릭이 화면 반영 전(대기 목록이 안 빈 상태)에 뒤로가기(POP)와 겨루는 경우.
    * 같은 작업 안에서 즐겨찾기 클릭 + history.back() 을 하면 쓴 주소(favorite=true)는 렌더에 오지 못하고 POP 주소로 덮인다.
    * 이때 대기 목록을 비우지 않으면 다음 필터가 favorite 을 되살리고 뒤로 온 정렬을 지운다.
-   * (고치기 전 d0b7fe6e1^1 은 대기 목록이 없어 통과하므로, 이 시험은 POP 시 대기 목록 비우기를 뺀 코드를 잡는다.)
+   * WD-1047 — 실제 뒤로가기는 비동기라 대개 favorite 커밋이 POP 보다 먼저 끝나 위 겨루기가 일어나지 않는다.
+   * 그래서 이 시험은 뒤로가기 뒤 기본 동작(정렬 복원·다음 필터)만 지키고, 「POP 시 대기 목록 비우기」를 뺀 변이는
+   * 잡지 못한다(그 갈래를 지운 변이에서 10회 모두 통과). 그 갈래는 「즐겨찾기 직후 사이드바 링크로 이동하면…」 시험이
+   * 결정적으로 지킨다(같은 변이에서 5회 모두 실패).
    */
   test('즐겨찾기 클릭과 뒤로가기가 겨뤄도 뒤로 온 주소 위에 다음 필터가 쌓인다 (WD-950)', async ({
     authenticatedPage: page,
   }) => {
     await setupCommon(page);
 
-    // WD-1015 스냅샷 — 스냅샷이 없으면 POP 때 대기 목록이 비어 있어도(레이스가 안 일어나도) 조용히 통과한다 —
-    // 그래서 POP 시점의 화면 상태와 마지막 쓰기를 기록한다.
+    // WD-1015 스냅샷 — POP 시점의 화면 상태와 마지막 쓰기를 기록한다(겨루기가 실제로 났는지 annotation 으로 남긴다).
     // (i) popstate 마다 textContent 이 즐겨찾기 인 버튼의 aria-pressed 와 그 시점의 location.href 를 쌓고,
     // (ii) history.replaceState 를 감싸 세 번째 인자(주소)를 기록한 뒤 원본을 그대로 호출한다(원본 반환값 유지).
     // 리스너·감싸기는 addEventListener/wrap 만 써서 페이지 코드를 바꾸지 않고, SPA 탐색에서도 남는다.
@@ -244,28 +247,33 @@ test.describe('데이터셋 목록 — URL 동기화', () => {
     // 사이드바 링크(push)로 정렬 없는 주소를 history 에 쌓는다 — 뒤로가기 목적지(정렬 있는 주소)를 만든다
     await page.locator('a[href="/data/datasets"]').first().click();
     await expect.poll(() => params().get('sort')).toBeNull();
+    // WD-1047 — 정렬이 켜졌을 때만 보이는 안내(DatasetListPage 정렬 범위 안내)를 POP 렌더 커밋 신호로 쓴다.
+    // 앞 화면(정렬 없음)에는 없음을 고정한다 — 뒤로가기 뒤에 뜨면 POP 렌더 커밋의 증거다
+    const sortNotice = page.getByText('현재 페이지 내 정렬이 적용됩니다');
+    await expect(sortNotice).toBeHidden();
 
     // 한 작업 안에서 즐겨찾기 클릭(replace) 직후 뒤로가기 — 클릭이 쓴 주소는 렌더에 오기 전에 POP 이 덮는다
     await clickInOneTask(page, [favoriteButton], { thenHistoryBack: true });
 
-    // 증거 단언 — 스냅샷이 없으면 POP 때 대기 목록이 비어 있어도(레이스가 안 일어나도) 조용히 통과한다.
-    // POP 시점의 화면 상태(pressedAtPop)와 마지막 쓰기(lastWrite)를 남겨 레이스 실재를 본다.
-    const pops = await page.evaluate(
-      () => (window as unknown as { __wd1015Pop: { pressed: string | null; url: string }[] }).__wd1015Pop,
-    );
+    // 전제 단언 — POP 이 실제로 왔고 그 전에 favorite 쓰기가 있었다. 겨루기가 났는지(pressedAtPop)는 단언하지 않는다(WD-1047).
+    const { pops, lastWrite } = await page.evaluate(() => {
+      const w = window as unknown as {
+        __wd1015Pop: { pressed: string | null; url: string }[];
+        __wd1015LastWrite: string | null;
+      };
+      return { pops: w.__wd1015Pop, lastWrite: w.__wd1015LastWrite };
+    });
     expect(pops.length).toBeGreaterThan(0); // 스냅샷이 안 잡히면 이 시험의 근거 자체가 없다
-    // Step 3 관찰(5회 반복) 전부 pressedAtPop=false — POP 순간 화면은 아직 favorite 쓰기를 반영하기 전이었다.
-    // 그 상태가 늘 재현되므로 강단언으로 고정한다(대기 목록이 POP 까지 안 비워진 레이스 실재의 증거).
-    expect(pops[0].pressed).toBe('false');
-    const lastWrite = await page.evaluate(
-      () => (window as unknown as { __wd1015LastWrite: string | null }).__wd1015LastWrite,
-    );
     expect(String(lastWrite)).toContain('favorite=true'); // POP 직전에 favorite 쓰기가 있었다
-    // 아래 기록은 시도마다 관찰한 값만 남겨 리뷰·리포트에서 재확인할 때 쓴다 — 강도는 이미 위 강단언으로 고정됐다
+    // 관찰 기록만 남긴다(리뷰·리포트에서 재확인용)
     test.info().annotations.push({ type: 'wd1015-race', description: `pressedAtPop=${pops[0]?.pressed}` });
 
     await expect.poll(() => params().get('sort')).toBe('name');
     expect(params().get('favorite')).toBeNull();
+    // WD-1047 모드 2 — 주소만 보면 POP 렌더 커밋 전에 다음 클릭이 들어가 대기 목록의 favorite 이 기준이 된다.
+    // 렌더 신호(정렬 안내 문구)가 보일 때까지 기다려 POP 렌더 커밋 뒤에 다음 필터를 누른다.
+    // (커밋 전 클릭이 favorite 을 되살리는 것은 제품 쪽 겨루기라 이 시험 범위 밖 — WD-1053)
+    await expect(sortNotice).toBeVisible();
 
     // 다음 필터 — POP 뒤 주소 + 이 필터만. favorite 이 되살아나거나 정렬이 사라지면 안 된다
     await tempButton.click();
