@@ -794,6 +794,29 @@ class ApiCallPreviewServiceTest {
     assertThat(wireMock.getAllServeEvents())
         .extracting(e -> e.getRequest().getUrl())
         .containsExactly("/wd936/%EA%B2%80%EC%83%89?q=%EC%84%9C%EC%9A%B8");
+    // 화면·AI 챗에 보이는 주소는 인코딩된 %EA… 가 아니라 읽을 수 있는 한글이다(WD-936 리뷰 후속)
+    assertThat(response.resolvedUrl()).endsWith("/wd936/검색?q=서울");
+  }
+
+  /** 짝 없는 서로게이트가 든 주소는 %3F 로 바꿔 부르지 않고 URL 을 만들 수 없다고 거절한다(WD-936 리뷰 후속). */
+  @Test
+  void preview_loneSurrogateInDirectUrl_rejectedWithoutCall() {
+    ApiCallPreviewResponse response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/wd936/p?q=a\uD800b",
+                "GET",
+                null,
+                null,
+                null,
+                "$",
+                null,
+                null,
+                null,
+                5000));
+
+    assertThat(response.success()).isFalse();
+    wireMock.verify(0, anyRequestedFor(anyUrl()));
   }
 
   /**
@@ -1001,7 +1024,7 @@ class ApiCallPreviewServiceTest {
 
   /**
    * 정적 쿼리 값에 {@code = 공백 한글} 이 있어도 이제 공용 규칙으로 한 번 인코딩해 호출한다(WD-200) — 예전에는 「URL 인코딩해 넣으세요」로 거부했지만
-   * 운영 실행(Python 실행기)은 같은 값을 인코딩해 보냈다. resolvedUrl 엔 보낸 인코딩 형태가 보이고 키는 가려진다.
+   * 운영 실행(Python 실행기)은 같은 값을 인코딩해 보냈다. resolvedUrl 엔 보낸 형태가 보이되 한글은 글자로(WD-936 리뷰 후속), 키는 가려진다.
    */
   @Test
   void preview_unencodedStaticParam_encodedOnce_keyStillMasked() {
@@ -1026,7 +1049,8 @@ class ApiCallPreviewServiceTest {
         .containsExactly(
             "/wd177?q=a%3Db%20%ED%95%9C%EA%B8%80"
                 + "&serviceKey=pv%2Bk%2Fe%3D%3D%EB%B9%84%EB%B0%80%20Qq77");
-    assertThat(response.resolvedUrl()).contains("q=a%3Db%20%ED%95%9C%EA%B8%80");
+    // 표시용 주소는 한글만 글자로 되돌리고 ASCII 이스케이프(%3D·%20)는 보낸 그대로다(WD-936 리뷰 후속)
+    assertThat(response.resolvedUrl()).contains("q=a%3Db%20한글");
     assertNoSecret(response.resolvedUrl(), WD177_SPECIAL_KEY);
     assertThat(response.resolvedUrl()).doesNotContain("pv%2Bk%2Fe%3D%3D");
   }
@@ -1467,8 +1491,8 @@ class ApiCallPreviewServiceTest {
   // =========================================================================
 
   /**
-   * 빈 비밀은 URL 조립보다 먼저 본다 — 공백이 든 주소여도 빈 비밀 안내가 나가고 아무것도 호출하지 않는다. 공백은 이제 호출 전에 인코딩되므로(WD-936) 주소는 만들
-   * 수 있고 resolvedUrl 은 인코딩된 값이다.
+   * 빈 비밀은 URL 조립보다 먼저 본다 — 공백이 든 주소여도 빈 비밀 안내가 나가고 아무것도 호출하지 않는다. 공백은 이제 호출 전에 인코딩되므로(WD-936) 주소는
+   * 만들 수 있고 resolvedUrl 은 인코딩된 값이다.
    */
   @Test
   void preview_emptySecretWithSpaceInUrl_reportsEmptySecret() {
@@ -1483,8 +1507,8 @@ class ApiCallPreviewServiceTest {
   }
 
   /**
-   * 빈 비밀은 URL 조립보다 먼저 본다 — 인코딩 뒤에도 만들 수 없는 주소(쿼리 값 속 {@code =})여도 빈 비밀 안내가 이기고 resolvedUrl 은 null 이며 아무것도
-   * 호출하지 않는다(WD-936 복원).
+   * 빈 비밀은 URL 조립보다 먼저 본다 — 인코딩 뒤에도 만들 수 없는 주소(쿼리 값 속 {@code =})여도 빈 비밀 안내가 이기고 resolvedUrl 은 null
+   * 이며 아무것도 호출하지 않는다(WD-936 복원).
    */
   @Test
   void preview_emptySecretWithUnbuildableUrl_reportsEmptySecret() {

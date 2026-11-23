@@ -1,5 +1,9 @@
 package com.smartfirehub.pipeline.service.executor;
 
+import java.io.ByteArrayOutputStream;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -7,8 +11,10 @@ import java.util.regex.Pattern;
 /**
  * 직접 URL 의 경로·쿼리를 인코딩해 Python 실행기(httpx)가 받아 주는 URL 을 Java 쪽도 받게 하는 유틸 (WD-936).
  *
- * <p>무엇을: 공백·한글·{@code " < > \ ^ ` { | } [ ]} 같이 URI 에 쓸 수 없는 글자만 {@code %XX} 로 바꾼다. ({@code ^ \ ` { } | [ ]} 은 httpx 가 그대로 보내는 경우도 있으나 Java URI·{@code build(true)} 가 날것으로 실을 수 없어 인코딩한다.) 경로·쿼리에 제어 문자(U+0000–U+001F·U+007F)가 있으면 httpx 가 거절하므로 원문을 돌려줘 기존 검사가 거절하게 한다. 이미 올바른 {@code
- * %XX} 와 URI 에 허용되는 글자는 그대로 두므로 결과에 다시 적용해도 같다(멱등).
+ * <p>무엇을: 공백·한글·{@code " < > \ ^ ` { | } [ ]} 같이 URI 에 쓸 수 없는 글자만 {@code %XX} 로 바꾼다. ({@code ^ \ `
+ * { } | [ ]} 은 httpx 가 그대로 보내는 경우도 있으나 Java URI·{@code build(true)} 가 날것으로 실을 수 없어 인코딩한다.) 경로·쿼리에
+ * 제어 문자(U+0000–U+001F·U+007F)가 있으면 httpx 가 거절하므로 원문을 돌려줘 기존 검사가 거절하게 한다. 이미 올바른 {@code %XX} 와 URI 에
+ * 허용되는 글자는 그대로 두므로 결과에 다시 적용해도 같다(멱등).
  *
  * <p>왜: 「테스트 호출」·Java 실행기는 공백·한글이 든 URL 을 URI 파싱 단계에서 거절하지만, 실행기는 받아 주므로 두 경로의 동작을 맞춘다.
  */
@@ -63,6 +69,11 @@ public final class RequestUrlEncoding {
         // 테스트 호출도 거절해야 일치하므로 원문을 그대로 돌려 기존 validateUrl 이 거절하게 한다(WD-936).
         return url;
       }
+      if (cp >= Character.MIN_SURROGATE && cp <= Character.MAX_SURROGATE) {
+        // 짝 없는 서로게이트는 UTF-8 로 옮길 수 없다 — getBytes 가 조용히 '?'(%3F)로 바꿔 다른 URL 을 부르게 되므로, 원문을 그대로 돌려
+        // 이후 URI 조립(build)이 「요청 URL 을 만들 수 없습니다」로 거절하게 한다(WD-936 리뷰 후속). httpx 도 이 글자를 거절한다.
+        return url;
+      }
       if (cp == '%') {
         if (i + 2 < url.length() && isHex(url.charAt(i + 1)) && isHex(url.charAt(i + 2))) {
           sb.append(url, i, i + 3); // 올바른 %XX 는 대소문자 그대로 유지
@@ -79,6 +90,59 @@ public final class RequestUrlEncoding {
         }
       }
       i += len;
+    }
+    return sb.toString();
+  }
+
+  /**
+   * 화면·AI 챗에 보일 URL 을 사람이 읽게 바꾼다 — 비ASCII 글자(한글 등)의 UTF-8 {@code %XX} 묶음만 글자로 되돌리고, ASCII
+   * 이스케이프({@code %20}· {@code %2F}·{@code %3D} 등)는 그대로 둔다(WD-936 리뷰 후속).
+   *
+   * <p>왜: {@link #encodePathAndQuery} 뒤의 표시용 URL 은 한글 경로가 {@code %EA%B2%80…} 로 보여 읽기 어렵다. 브라우저
+   * 주소창처럼 글자만 되돌리고, 뜻이 달라질 수 있는 ASCII 이스케이프(구분자 {@code / ? & =}·공백)는 보낸 그대로 보여 실제 요청과 어긋나지 않게 한다.
+   * 올바른 UTF-8 이 아닌 묶음은 바꾸지 않는다.
+   *
+   * @param url 표시용 URL (null 가능)
+   * @return 비ASCII 묶음만 되돌린 URL. null 이면 null
+   */
+  public static String decodeForDisplay(String url) {
+    if (url == null || url.indexOf('%') < 0) {
+      return url;
+    }
+    StringBuilder sb = new StringBuilder(url.length());
+    int i = 0;
+    while (i < url.length()) {
+      // %XX 중 0x80 이상 바이트가 이어진 묶음을 모은다 — 한 글자의 UTF-8 바이트는 늘 이렇게 붙어 있다
+      int runEnd = i;
+      ByteArrayOutputStream run = new ByteArrayOutputStream();
+      while (runEnd + 2 < url.length()
+          && url.charAt(runEnd) == '%'
+          && isHex(url.charAt(runEnd + 1))
+          && isHex(url.charAt(runEnd + 2))) {
+        int b = Integer.parseInt(url.substring(runEnd + 1, runEnd + 3), 16);
+        if (b < 0x80) {
+          break;
+        }
+        run.write(b);
+        runEnd += 3;
+      }
+      if (runEnd == i) {
+        sb.append(url.charAt(i));
+        i++;
+        continue;
+      }
+      try {
+        // 엄격한 디코더 — 잘린 바이트·잘못된 UTF-8 이면 예외로 원문을 남긴다(대체 문자 �로 바꾸지 않는다)
+        sb.append(
+            StandardCharsets.UTF_8
+                .newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT)
+                .decode(ByteBuffer.wrap(run.toByteArray())));
+      } catch (CharacterCodingException e) {
+        sb.append(url, i, runEnd);
+      }
+      i = runEnd;
     }
     return sb.toString();
   }
