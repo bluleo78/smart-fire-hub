@@ -2140,6 +2140,20 @@ class ApiCallExecutorTest {
   }
 
   /**
+   * base 와 같은 스킴이고 authority 가 없는 Location(「http:next」)은 Python urljoin 처럼 지금 요청 기준 상대 경로로
+   * 따라간다(WD-1028) — 예전에는 호스트 없는 「http:next」 가 되어 주소 검사에서 실패했다.
+   */
+  @Test
+  void execute_redirectSameSchemeWithoutAuthority_followsAsRelative() {
+    stubRedirect("/r1028/items", "http:next");
+    stubEmptyItems("/r1028/next");
+
+    executor.execute(retryConfig(baseUrl() + "/r1028/items", 3, 5000), "t", null, "APPEND", null);
+
+    wireMock.verify(1, getRequestedFor(urlPathEqualTo("/r1028/next")));
+  }
+
+  /**
    * POST 가 다른 출처로 307 되면 본문 없는 GET 으로 따라간다 — Python 실행기도 다른 출처 홉부터 같은 규칙(WD-676)이라 두 실행기가 비밀을 담은
    * 본문을 다른 출처로 보내지 않는다.
    */
