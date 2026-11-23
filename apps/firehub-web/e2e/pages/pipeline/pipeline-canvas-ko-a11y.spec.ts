@@ -1,0 +1,112 @@
+/**
+ * 파이프라인 캔버스 — 스크린리더 문구 한국어 (WD-918)
+ *
+ * xyflow 기본 안내문(영문)이 그대로 읽히고, 실제로 움직이지 않는 노드에 대해
+ * 「Moved selected node right…」 같은 거짓 알림이 나오던 문제를 막는다.
+ * 수정 모드에는 실제 가능한 조작을, 보기 모드에는 설명만 안내한다.
+ */
+import type { Page } from '@playwright/test';
+
+import { expect, test } from '../../fixtures/auth.fixture';
+import { grantPipelinePermissions, setupPipelineEditorMocks } from '../../fixtures/pipeline.fixture';
+
+const EDIT_NODE_DESC =
+  '스텝 노드입니다. 노드 안에 「다음 스텝 추가」·「스텝 삭제」 버튼이 있으면 Tab 키로 이동할 수 있고, 스텝 설정은 노드를 클릭해 엽니다.';
+const EDIT_EDGE_DESC =
+  '스텝 사이 연결입니다. Enter 나 Space 로 연결을 고른 뒤 Delete 나 Backspace 로 끊고, Escape 로 선택을 풉니다.';
+
+/** 첫 노드의 aria-describedby 가 가리키는 요소 텍스트 */
+async function nodeDescription(page: Page) {
+  const node = page.locator('.react-flow__node').first();
+  const id = await node.getAttribute('aria-describedby');
+  return (await page.locator(`[id="${id}"]`).textContent()) ?? '';
+}
+
+async function edgeDescription(page: Page) {
+  return (await page.locator('[id^="react-flow__edge-desc"]').first().textContent()) ?? '';
+}
+
+/** 픽스처 파이프라인(「데이터 추출」→「데이터 변환」)을 수정 모드로 연다 */
+async function gotoEditMode(page: Page) {
+  await page.goto('/pipelines/1');
+  await page.getByRole('button', { name: '수정' }).click();
+  await expect(page.locator('.react-flow__edge')).toHaveCount(1);
+}
+
+/** 알림 영역 변경 기록을 담아 둘 window 확장 */
+type LiveLogWindow = Window & { __liveMsgs: string[] };
+
+test.describe('파이프라인 캔버스 — 스크린리더 문구 한국어 (WD-918)', () => {
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await grantPipelinePermissions(page);
+    await setupPipelineEditorMocks(page, 1);
+  });
+
+  test('수정 모드에서 노드·연결선 안내와 캔버스 이름이 한국어다', async ({ authenticatedPage: page }) => {
+    await gotoEditMode(page);
+
+    expect(await nodeDescription(page)).toBe(EDIT_NODE_DESC);
+    expect(await edgeDescription(page)).toBe(EDIT_EDGE_DESC);
+    await expect(page.locator('.react-flow')).toHaveAttribute('aria-label', '파이프라인 다이어그램');
+  });
+
+  test('수정 모드에서 노드를 고르고 화살표를 눌러도 이동 알림이 나오지 않는다', async ({ authenticatedPage: page }) => {
+    await gotoEditMode(page);
+
+    const node = page.locator('.react-flow__node').first();
+    await node.focus();
+    await expect(node).toBeFocused();
+
+    // 알림 영역에 한 번이라도 글이 들어갔다 사라지는 경우까지 잡도록 변경을 모두 기록한다
+    await page.evaluate(() => {
+      const w = window as unknown as LiveLogWindow;
+      w.__liveMsgs = [];
+      const el = document.querySelector('[id^="react-flow__aria-live"]');
+      new MutationObserver(() => {
+        if (el?.textContent) w.__liveMsgs.push(el.textContent);
+      }).observe(el!, { childList: true, characterData: true, subtree: true });
+    });
+
+    await page.keyboard.press('Enter');
+    await page.keyboard.press('ArrowRight');
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+
+    const msgs = await page.evaluate(() => (window as unknown as LiveLogWindow).__liveMsgs);
+    expect(msgs).toEqual([]);
+  });
+
+  test('노드·연결선 역할 설명이 「스텝」·「연결」이고 연결선 이름은 스텝 이름으로 읽힌다', async ({ authenticatedPage: page }) => {
+    await gotoEditMode(page);
+
+    await expect(page.locator('.react-flow__node').first()).toHaveAttribute('aria-roledescription', '스텝');
+    const edge = page.locator('.react-flow__edge').first();
+    await expect(edge).toHaveAttribute('aria-roledescription', '연결');
+    await expect(edge).toHaveAttribute('aria-label', '「데이터 추출」에서 「데이터 변환」(으)로 연결');
+  });
+
+  test('이름 없는 새 스텝과 이은 연결선은 「스텝 #n」으로 읽힌다', async ({ authenticatedPage: page }) => {
+    await gotoEditMode(page);
+
+    // 「데이터 변환」 뒤에 이름 없는 새 스텝(3번째)을 추가한다
+    await page
+      .locator('.react-flow__node')
+      .filter({ hasText: '데이터 변환' })
+      .getByRole('button', { name: '다음 스텝 추가' })
+      .click();
+    await expect(page.locator('.react-flow__edge')).toHaveCount(2);
+
+    const labels = await page
+      .locator('.react-flow__edge')
+      .evaluateAll((els) => els.map((el) => el.getAttribute('aria-label')));
+    expect(labels).toContain('「데이터 변환」에서 「스텝 #3」(으)로 연결');
+  });
+
+  test('보기 모드에서는 조작 안내 없이 설명만 읽힌다', async ({ authenticatedPage: page }) => {
+    await page.goto('/pipelines/1');
+    await expect(page.locator('.react-flow__edge')).toHaveCount(1);
+
+    expect(await nodeDescription(page)).toBe('스텝 노드입니다.');
+    expect(await edgeDescription(page)).toBe('스텝 사이 연결입니다.');
+    await expect(page.locator('.react-flow')).toHaveAttribute('aria-label', '파이프라인 다이어그램');
+  });
+});
