@@ -2229,11 +2229,13 @@ class ApiCallPreviewServiceTest {
 
   @Test
   void preview_get_malformedPercentQueryName_notReportedAsOverride() {
-    // 깨진 퍼센트 이름은 요청 URL 조립이 먼저 고정 문구로 거절한다 — 예외 없이 응답하고, 메서드 변경 거절 문구는 아니며, 요청도 나가지 않는다.
+    // 깨진 퍼센트 이름(%zz)은 메서드 변경 이름으로 판정하지 않는다. 홀로 있는 % 는 실행기(httpx)처럼 %25 로 인코딩돼 요청이 그대로
+    // 나간다(WD-936 리뷰 후속의 RequestUrlEncoding) — 그래서 거절 문구가 아니라 실제로 한 번 불렸는지로 확인한다(WD-970·WD-936 겹침 풀테스트 수정).
+    wireMock.stubFor(
+        get(urlPathEqualTo("/x")).willReturn(aResponse().withStatus(200).withBody("[]")));
     ApiCallPreviewResponse r = previewGet(baseUrl() + "/x?%zz=1", null, null);
-    assertThat(r.success()).isFalse();
-    assertThat(r.errorMessage()).contains("요청 URL 을 만들 수 없습니다").doesNotContain("메서드를 바꾸는");
-    wireMock.verify(0, anyRequestedFor(anyUrl()));
+    assertThat(r.errorMessage() == null ? "" : r.errorMessage()).doesNotContain("메서드를 바꾸는");
+    wireMock.verify(1, getRequestedFor(urlPathEqualTo("/x")));
   }
 
   @Test
