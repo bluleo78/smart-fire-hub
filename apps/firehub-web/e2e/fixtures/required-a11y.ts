@@ -20,6 +20,8 @@ export async function expectRequiredField(field: Locator, labelText: string) {
   await expectAriaRequired(field);
   await expect(field).toHaveAccessibleName(labelText);
   const id = await field.getAttribute('id');
+  // id 가 없으면 label[for="null"] 을 기다리다 엉뚱하게 실패하므로, 원인(id 없음)을 먼저 뜻이 보이게 알린다(WD-964)
+  expect(id, '필수 칸에 id 가 있어야 label[for] 로 별표를 찾는다').toBeTruthy();
   const star = field.page().locator(`label[for="${id}"] span[aria-hidden="true"]`);
   await expect(star).toHaveText('*');
 }
