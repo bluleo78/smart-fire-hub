@@ -810,21 +810,46 @@ test.describe('SessionSwitcher — 키보드 삭제 (WD-951)', () => {
       expect(await rowBg(page, 1)).toBe(TRANSPARENT);
     });
 
-    // 휴지통 실제 상자(del)의 네 변 바로 바깥 2px 을 누른다 — 고정 좌표가 아니라 버튼 크기·위치가 바뀌어도
+    // 휴지통 실제 상자(d)의 네 변 바로 바깥을 누른다 — 고정 좌표가 아니라 버튼 크기·위치가 바뀌어도
     // 휴지통 경계 밖은 곧바로 줄(대화 열기)이 받는지를 본다(WD-1010 리뷰 후속).
-    const SPOTS = [
-      { name: '휴지통 오른쪽 바깥(오른쪽 여백)', pos: (d: Box) => ({ x: d.x + d.width + 2, y: d.y + d.height / 2 }) },
-      { name: '휴지통 왼쪽 바깥(제목과 휴지통 사이 틈)', pos: (d: Box) => ({ x: d.x - 2, y: d.y + d.height / 2 }) },
-      { name: '휴지통 위 바깥', pos: (d: Box) => ({ x: d.x + d.width / 2, y: d.y - 2 }) },
-      { name: '휴지통 아래 바깥', pos: (d: Box) => ({ x: d.x + d.width / 2, y: d.y + d.height + 2 }) },
-    ];
+    // WD-1021: 2px 바깥을 누르기 전에 그 면의 여백(줄 변 − 휴지통 변)이 2px 이상인지 먼저 단언한다 — 휴지통이 줄
+    // 끝에 붙은 회귀가 「누를 점이 줄 안」 단언의 엉뚱한 설정 오류가 아니라 원인을 말하는 메시지로 실패하게.
+    // 왼쪽 여백은 줄 왼쪽 끝까지라 늘 커서 네 면을 같은 모양으로 두려는 형식이다(제목 글자와 휴지통 사이 틈은
+    // 「긴 제목은 말줄임되고 글자 영역이 휴지통 왼쪽에서 끝난다」 시험이 본다).
     type Box = { x: number; y: number; width: number; height: number };
+    const SPOTS = [
+      {
+        name: '휴지통 오른쪽 바깥(오른쪽 여백)',
+        face: '오른쪽',
+        margin: (d: Box, r: Box) => r.x + r.width - (d.x + d.width),
+        pos: (d: Box) => ({ x: d.x + d.width + 2, y: d.y + d.height / 2 }),
+      },
+      {
+        name: '휴지통 왼쪽 바깥(제목 버튼 쪽)',
+        face: '왼쪽',
+        margin: (d: Box, r: Box) => d.x - r.x,
+        pos: (d: Box) => ({ x: d.x - 2, y: d.y + d.height / 2 }),
+      },
+      {
+        name: '휴지통 위 바깥',
+        face: '위',
+        margin: (d: Box, r: Box) => d.y - r.y,
+        pos: (d: Box) => ({ x: d.x + d.width / 2, y: d.y - 2 }),
+      },
+      {
+        name: '휴지통 아래 바깥',
+        face: '아래',
+        margin: (d: Box, r: Box) => r.y + r.height - (d.y + d.height),
+        pos: (d: Box) => ({ x: d.x + d.width / 2, y: d.y + d.height + 2 }),
+      },
+    ];
     for (const spot of SPOTS) {
       test(`줄의 ${spot.name}을 눌러도 그 대화가 열린다`, async ({ authenticatedPage: page }) => {
         const requests = await openPanel(page);
         await openListByMouse(page);
         const row = (await page.getByRole('dialog', { name: '대화 선택' }).getByRole('listitem').nth(1).boundingBox())!;
         const del = (await deleteBtn(page, '둘째 대화').boundingBox())!;
+        expect(spot.margin(del, row), `${spot.face} 여백이 2px 미만 — 휴지통이 줄 끝에 붙었다`).toBeGreaterThanOrEqual(2);
         const { x, y } = spot.pos(del);
         // 누를 점이 그 줄 안이어야 이 시험이 「줄의 여백」을 누른 것이다
         expect(x).toBeGreaterThan(row.x);
@@ -1090,13 +1115,34 @@ test.describe('SessionSwitcher — 키보드 삭제 (WD-951)', () => {
 
   // 줄별 휴지통 클릭 영역 — WCAG 2.5.8(최소 24×24)을 줄 높이 32px 안에서 채운다
   test.describe('휴지통 클릭 영역 (WD-1010)', () => {
-    /** 상자를 정수 px 로 반올림한다 — 하위 픽셀(24 가 23.99 처럼)로 흔들리지 않게 하되 경계는 넓히지 않고 정확히 비교한다 */
+    // WD-1021: Esc 뒤 목록이 늦게 닫히는 회귀를 잡기 위해, 두 프레임 + 300ms 를 흘려 보낸 뒤 상태를 다시 읽는다.
+    // 반복마다 다시 읽고 다음 반복이 이어 보므로 반복 중 늦은 닫힘은 잡히고, 루프 뒤 한 번 더 기다리면 마지막 Esc 뒤
+    // 약 600ms 안에 닫히는 경우까지 잡는다(검증: 원래 시험은 놓치고 새 시험은 루프 뒤 단언에서 실패).
+    // 이 대기 창보다 늦게 닫히는 경우는 고정 대기로는 어쩔 수 없는 한계다.
+    async function settle(page: Page): Promise<void> {
+      await page.evaluate(
+        () =>
+          new Promise<void>((resolve) => {
+            requestAnimationFrame(() => {
+              requestAnimationFrame(() => setTimeout(() => resolve(), 300));
+            });
+          }),
+      );
+    }
+
+    /**
+     * 상자를 정수 px 로 반올림한다 — 크기 비교(24×24·32·16)에만 쓴다. 포함 검사는 원값으로 한다:
+     * 반올림하면 0.4px 넘침이 사라져 놓친다(WD-1021).
+     */
     const rounded = (b: { x: number; y: number; width: number; height: number }) => ({
       x: Math.round(b.x),
       y: Math.round(b.y),
       width: Math.round(b.width),
       height: Math.round(b.height),
     });
+    // WD-1021: 포함 검사 허용치 — 레이아웃 값은 1/64px(0.0156) 격자라 넘침은 최소 한 칸이다. 0.01 은 그 한 칸보다 작고
+    // 부동소수 오차보다 커서 한 칸 넘침부터 잡는다. 반올림하는 여백(4px) 단언과 달리 여백 값과 상관없이 경계 자체를 본다.
+    const EPS = 0.01;
     test('줄마다 휴지통이 24×24 이고 줄 안에 있으며 줄 높이는 32px 그대로', async ({ authenticatedPage: page }) => {
       await openPanel(page);
       await openListByMouse(page);
@@ -1104,17 +1150,20 @@ test.describe('SessionSwitcher — 키보드 삭제 (WD-951)', () => {
         // 줄(li)은 제목 버튼의 부모다
         const rawRow = (await titleBtn(page, title).locator('xpath=..').boundingBox())!;
         const rawDel = (await deleteBtn(page, title).boundingBox())!;
-        const row = rounded(rawRow);
         const del = rounded(rawDel);
         // 정확히 24×24 — 하한(2.5.8)뿐 아니라 상한도 둬, 휴지통이 옆으로 커져 줄의 대화 열기 영역을 먹으면 잡는다
         expect(del.width).toBe(24);
         expect(del.height).toBe(24);
-        expect(del.y).toBeGreaterThanOrEqual(row.y);
-        expect(del.y + del.height).toBeLessThanOrEqual(row.y + row.height);
-        expect(del.x).toBeGreaterThanOrEqual(row.x); // 왼쪽 경계 안
+        // 포함은 원값 + EPS — 반올림 값으로 비교하면 하위 픽셀 넘침을 놓친다
+        expect(rawDel.y).toBeGreaterThanOrEqual(rawRow.y - EPS);
+        expect(rawDel.y + rawDel.height).toBeLessThanOrEqual(rawRow.y + rawRow.height + EPS);
+        expect(rawDel.x).toBeGreaterThanOrEqual(rawRow.x - EPS); // 왼쪽 경계 안
+        // 위·아래 여백(top-1 = 4px) — 줄 높이나 top 이 바뀌면 크기 시험이 원인을 말하게 한다
+        expect(Math.round(rawDel.y - rawRow.y)).toBe(4);
+        expect(Math.round(rawRow.y + rawRow.height - (rawDel.y + rawDel.height))).toBe(4);
         // 오른쪽 틈(right-1) — x·width 를 따로 반올림해 빼면 오차가 쌓여 3·5 가 나올 수 있어 원값으로 빼고 한 번만 반올림한다
         expect(Math.round(rawRow.x + rawRow.width - (rawDel.x + rawDel.width))).toBe(4);
-        expect(row.height).toBe(32);
+        expect(Math.round(rawRow.height)).toBe(32);
         // 버튼만 커지고 아이콘은 WD-951 그대로 16px — icon-xs 변형의 기본 아이콘 크기(12px)로 줄지 않는다
         const icon = rounded((await deleteBtn(page, title).locator('svg').boundingBox())!);
         expect(icon.width).toBe(16);
@@ -1126,6 +1175,12 @@ test.describe('SessionSwitcher — 키보드 삭제 (WD-951)', () => {
       const requests = await openPanel(page);
       await openListByMouse(page);
       const dialog = page.getByRole('dialog', { name: '대화 선택' });
+      // 목록이 열린 채이고, 닫히기 시작한 목록의 낡은 'open' 을 읽고 지나가지 않게 확인 창이 돌려준 초점이 그 휴지통에
+      // 머무는지도 본다
+      const expectListOpenWithTrashFocus = async () => {
+        await expect(dialog).toHaveAttribute('data-state', 'open');
+        await expect(deleteBtn(page, '둘째 대화')).toBeFocused();
+      };
       // 네 가장자리 가운데 안쪽 1px — 제목 버튼이 아니라 휴지통이 받아야 한다. 모서리 끝점은 버튼의 둥근 모서리 바깥이라
       // 원래부터 줄(제목 버튼) 영역이므로 쓰지 않는다.
       for (const edge of ['left', 'right', 'top', 'bottom'] as const) {
@@ -1144,10 +1199,14 @@ test.describe('SessionSwitcher — 키보드 삭제 (WD-951)', () => {
         await expect(confirm(page)).toHaveCount(0);
         // Escape 는 확인 창만 닫고 목록은 남는다(「Esc 는 확인 창 → 목록 순으로 한 층씩 닫는다」와 같은 동작).
         // 닫힘 애니메이션 중에 상태를 한 번 읽어 갈래를 나누면 경합하므로, 목록이 열린 채인지를 기다려 단언한다(WD-1010 리뷰 후속).
-        await expect(dialog).toHaveAttribute('data-state', 'open');
-        // 닫히기 시작한 목록의 낡은 'open' 을 읽고 지나가지 않게, 확인 창이 돌려준 초점이 그 휴지통에 머무는지도 본다
-        await expect(deleteBtn(page, '둘째 대화')).toBeFocused();
+        await expectListOpenWithTrashFocus();
+        // WD-1021: 위 단언이 통과한 직후 늦게 닫히는 회귀를 잡도록, 머문 뒤 다시 본다
+        await settle(page);
+        await expectListOpenWithTrashFocus();
       }
+      // WD-1021: 마지막 반복의 단언 뒤에 닫히는 경우까지 잡도록 루프 뒤에도 한 번 더 머문 뒤 본다
+      await settle(page);
+      await expectListOpenWithTrashFocus();
       // 네 번 누르고 확인 창을 닫는 동안 나갔을 대화 열기 요청까지 한 번에 본다(고정 대기 없이)
       expect(requests.messages).toEqual([]);
     });
