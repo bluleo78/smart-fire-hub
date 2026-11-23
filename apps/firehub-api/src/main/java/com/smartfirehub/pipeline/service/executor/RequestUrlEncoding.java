@@ -45,19 +45,68 @@ public final class RequestUrlEncoding {
       return url;
     }
     // authority = "://" 뒤 첫 '/'·'?'·'#' 전까지. 한 글자도 바꾸지 않는다(호스트 검사는 기존 로직 몫).
-    int authStart = m.end();
-    int authEnd = url.length();
-    for (int i = authStart; i < url.length(); i++) {
+    return encodeFrom(url, authorityEnd(url, m.end()));
+  }
+
+  /**
+   * 리다이렉트 Location 같은 URI 참조(절대·{@code //authority}·상대 경로·{@code ?query})를 실행기(urljoin+httpx)처럼
+   * 인코딩한다(WD-991).
+   *
+   * <p>무엇을: 스킴({@code <scheme>://})이 있으면 {@link #encodePathAndQuery} 와 같고, {@code //authority} 로
+   * 시작하면 authority 뒤부터, 그 밖(상대 경로·{@code ?query})은 처음부터 경로·쿼리 규칙으로 인코딩한다. 프래그먼트·제어 문자·이미 있는 %XX 규칙은
+   * 같다.
+   *
+   * <p>왜: Python 은 공백·한글이 든 Location 도 따라가는데 Java {@code RedirectLocations.resolve} 는 URI 문법 검사에서
+   * 거절했다.
+   *
+   * @param reference Location 값 (null 가능)
+   * @return 인코딩된 참조. null 이면 null
+   */
+  public static String encodeReference(String reference) {
+    if (reference == null) {
+      return null;
+    }
+    // 앞뒤의 C0 제어 문자·공백(U+0000–U+0020)은 Python urlsplit/WHATWG 처럼 먼저 뗀다 — 안쪽 제어 문자는 아래에서 그대로 거절된다.
+    reference = stripC0AndSpace(reference);
+    Matcher m = SCHEME.matcher(reference);
+    int start = 0;
+    if (m.find()) {
+      start = authorityEnd(reference, m.end());
+    } else if (reference.startsWith("//")) {
+      start = authorityEnd(reference, 2);
+    }
+    return encodeFrom(reference, start);
+  }
+
+  /** 앞뒤의 U+0000–U+0020 을 뗀다(WD-991). */
+  private static String stripC0AndSpace(String s) {
+    int b = 0;
+    int e = s.length();
+    while (b < e && s.charAt(b) <= 0x20) b++;
+    while (e > b && s.charAt(e - 1) <= 0x20) e--;
+    return s.substring(b, e);
+  }
+
+  /** authority 의 끝 — {@code from} 부터 첫 '/'·'?'·'#' 위치(없으면 문자열 끝). */
+  private static int authorityEnd(String url, int from) {
+    for (int i = from; i < url.length(); i++) {
       char c = url.charAt(i);
       if (c == '/' || c == '?' || c == '#') {
-        authEnd = i;
-        break;
+        return i;
       }
     }
-    StringBuilder sb = new StringBuilder(url.length() + 16);
-    sb.append(url, 0, authEnd);
+    return url.length();
+  }
 
-    int i = authEnd;
+  /**
+   * {@code start} 앞은 그대로 두고 그 뒤(경로·쿼리)만 인코딩한다 — {@link #encodePathAndQuery}·{@link
+   * #encodeReference} 공용 루프(WD-991). 프래그먼트는 버리고, 제어 문자가 있으면 원문을 돌려준다.
+   */
+  private static String encodeFrom(String url, int start) {
+    StringBuilder sb = new StringBuilder(url.length() + 16);
+    sb.append(url, 0, start);
+
+    int i = start;
     while (i < url.length()) {
       int cp = url.codePointAt(i);
       int len = Character.charCount(cp);

@@ -12,6 +12,17 @@ class RequestUrlEncodingTest {
     return RequestUrlEncoding.encodePathAndQuery(url);
   }
 
+  /** 참조 인코딩(WD-991) — 상대 참조·null·//authority·절대 URL. */
+  @Test
+  void encodeReference_variants() {
+    assertThat(RequestUrlEncoding.encodeReference("?q=가")).isEqualTo("?q=%EA%B0%80");
+    assertThat(RequestUrlEncoding.encodeReference(null)).isNull();
+    assertThat(RequestUrlEncoding.encodeReference("//한글.com/가 나"))
+        .isEqualTo("//한글.com/%EA%B0%80%20%EB%82%98");
+    assertThat(RequestUrlEncoding.encodeReference("https://x.com/가#f"))
+        .isEqualTo("https://x.com/%EA%B0%80");
+  }
+
   @Test
   void spaceInQuery() {
     assertThat(enc("https://example.com/search?q=seoul city"))

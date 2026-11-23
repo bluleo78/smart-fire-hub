@@ -40,6 +40,9 @@ public final class RedirectLocations {
     // 따라가는 Python(urldefrag)과 결과가 달라진다. 첫 「#」 부터가 프래그먼트다(RFC 3986 부록 B).
     int hash = location.indexOf('#');
     String reference = hash >= 0 ? location.substring(0, hash) : location;
+    // 공백·한글 등은 실행기(urljoin+httpx)처럼 %XX 로 인코딩해 따라간다(WD-991). 이미 있는 %XX 는 다시 인코딩하지 않고,
+    // 제어 문자는 원문 그대로 남아 아래 URI 검사가 고정 문구로 거절한다.
+    reference = RequestUrlEncoding.encodeReference(reference);
     try {
       // 참조 자체가 URI 문법에 맞는지 먼저 본다(공백·한글 등) — 아래 문자열 조립은 문법을 검사하지 않는다.
       new URI(reference);

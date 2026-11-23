@@ -115,8 +115,7 @@ public class ApiCallPreviewService {
       authSecret = auth.sentSecrets();
 
       // 비밀이 비었거나(WD-639) 헤더 이름을 쓸 수 없으면(WD-647) 대상 서버를 부르지 않고 안내한다 — URL 조립보다 먼저 본다. 예전에는 URL
-      // 조립 오류가 먼저 나 빈 비밀 안내가 가려졌다. 다른 실패처럼 표시 URL 도 돌려주되, 인코딩 뒤에도 만들 수 없는 경우(쿼리 값 속 `=` 등)만 null
-      // 이다.
+      // 조립 오류가 먼저 나 빈 비밀 안내가 가려졌다. 다른 실패처럼 표시 URL 도 돌려주되, 인코딩 뒤에도 만들 수 없는 경우(제어 문자·잘못된 %·주소 등)만 null 이다.
       // 원래 인증 Map 도 넘겨 공백만 다른 추가 헤더 키 겹침(WD-753 리뷰)도 본다 — 푼 값에서는 이미 합쳐져 보이지 않는다.
       String authProblem =
           ApiCallAuth.describeProblem(auth, authConfig, conn != null ? conn.name() : null);
@@ -242,8 +241,8 @@ public class ApiCallPreviewService {
   }
 
   /**
-   * 인증 문제로 부르지 않을 때 돌려줄 표시용 URL — 정적 쿼리만 붙인다(인증 키는 붙이지 않는다). 기준 URL 을 만들 수 없으면(쿼리 값 속 `=` 등 —
-   * 공백·한글은 WD-936 으로 미리 인코딩된다) null — 그 경우에도 인증 문제 안내가 URL 오류보다 먼저다(WD-647).
+   * 인증 문제로 부르지 않을 때 돌려줄 표시용 URL — 정적 쿼리만 붙인다(인증 키는 붙이지 않는다). 기준 URL 을 만들 수 없으면(제어 문자·잘못된 %·주소 등 — 공백·한글은 WD-936 으로 미리 인코딩된다) null — 그
+   * 경우에도 인증 문제 안내가 URL 오류보다 먼저다(WD-647).
    */
   private String displayUrlOrNull(String resolvedUrl, Map<String, String> queryParams) {
     try {
