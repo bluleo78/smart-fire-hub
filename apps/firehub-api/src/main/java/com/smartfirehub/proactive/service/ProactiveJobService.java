@@ -353,11 +353,12 @@ public class ProactiveJobService {
   public ProactiveJobResponse createJob(CreateProactiveJobRequest request, Long userId) {
     // cronExpression / timezone 형식을 사전 검증한다. 잘못된 값을 그대로 저장하면 스케줄러가 silent fail 하여
     // 사용자에게는 정상 생성처럼 보이지만 실제 실행이 한 번도 일어나지 않는 좀비 상태가 된다 (#221).
-    validateCronAndTimezone(request.cronExpression(), request.timezone());
+    // cron 앞뒤 공백은 맨 앞에서 한 번 잘라 검증·저장에 같은 값을 쓴다(WD-995) — 검증한 값과 저장한 값이 갈리지 않게.
+    String cron = stripCron(request.cronExpression());
+    validateCronAndTimezone(cron, request.timezone());
     // 주기 없는 정기 실행은 저장·스케줄러 등록·감사 전에 400 으로 막는다(WD-607). 꺼 둔 채(enabled=false) 만들어도 막는다 —
     // 켜는 순간 같은 「켜짐인데 실행 안 되는」 작업이 되므로 저장 자체를 막는 편이 단순하다.
-    requireCronForScheduledTrigger(
-        effectiveTrigger(request.triggerType(), null), request.cronExpression());
+    requireCronForScheduledTrigger(effectiveTrigger(request.triggerType(), null), cron);
     // 보안 등급(S2): 메트릭 SQL 이 작성자가 볼 수 없는 데이터셋을 참조하면 거부(스펙 §4.2 6행). update 도 같은 검사 — 우회로 차단.
     metricSqlAccessChecker.requireMetricQueriesAllowed(request.config(), userId);
     requireUsableTemplate(request.templateId(), userId);
@@ -374,7 +375,7 @@ public class ProactiveJobService {
             request.name(),
             request.prompt(),
             request.templateId(),
-            stripCron(request.cronExpression()),
+            cron,
             request.timezone(),
             request.enabled(),
             request.triggerType(),
@@ -435,7 +436,10 @@ public class ProactiveJobService {
     // (WD-607) — 예전 수정 경로가 빈 시간대를 저장해 둔 옛 행은 웹이 그 값을 그대로 다시 보내므로, 검사하면 이름만 고쳐도 400 이 났다.
     String changedTimezone =
         Objects.equals(request.timezone(), before.timezone()) ? null : request.timezone();
-    validateCronAndTimezone(request.cronExpression(), changedTimezone);
+    // cron 앞뒤 공백은 한 번 잘라 검증·저장에 같은 값을 쓴다(WD-995). 변경 판정(requireCronIfSchedulingTouched)은
+    // blankToNull 로 같은 정규화를 한다.
+    String cron = stripCron(request.cronExpression());
+    validateCronAndTimezone(cron, changedTimezone);
     requireCronIfSchedulingTouched(request, before);
     // 보안 등급(S2): 메트릭 SQL 이 작성자가 볼 수 없는 데이터셋을 참조하면 거부(스펙 §4.2 6행). update 도 같은 검사 — 우회로 차단.
     metricSqlAccessChecker.requireMetricQueriesAllowed(request.config(), userId);
@@ -457,7 +461,7 @@ public class ProactiveJobService {
             request.prompt(),
             request.templateId(),
             Boolean.TRUE.equals(request.clearTemplate()),
-            stripCron(request.cronExpression()),
+            cron,
             request.timezone(),
             request.enabled(),
             request.triggerType(),

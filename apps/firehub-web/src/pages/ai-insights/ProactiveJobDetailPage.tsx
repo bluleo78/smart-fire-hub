@@ -274,7 +274,9 @@ export default function ProactiveJobDetailPage() {
     // 수정에서 저장값 그대로인 주기는 보내지 않는다 — 서버는 생략(null)이면 저장값을 그대로 둔다(WD-995).
     // 스키마가 이미 trim 한 값과 저장 원값을 그대로 비교하므로, 앞뒤 공백만 붙은 옛 주기는 잘린 값이 나가 정리된다.
     // 서버는 공백만 다른 값을 변경으로 보지 않아 감사에도 남지 않는다.
-    const cronUnchanged = !isNew && !!job && (values.cronExpression ?? '') === (job.cronExpression ?? '');
+    // 충돌 뒤 덮어쓰기(force)는 늘 보낸다 — job 은 편집 시작 때 캐시라, 다른 탭이 주기·트리거를 바꿨으면 빼고 보낼 때
+    // 사용자가 못 본 주기가 남거나 주기 없는 정기 트리거로 400 이 난다(WD-995 리뷰). 화면에 보이는 그대로 덮어쓴다.
+    const cronUnchanged = !force && !isNew && !!job && (values.cronExpression ?? '') === (job.cronExpression ?? '');
     const payload = {
       name: values.name,
       prompt: values.prompt,

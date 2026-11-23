@@ -133,8 +133,11 @@ test.describe('스마트 작업 편집 — 동시 편집 충돌 (WD-364)', () =>
     await conflictDialog(page).getByRole('button', { name: '내 변경으로 덮어쓰기' }).click();
     await expect.poll(() => server.puts.length).toBe(2);
     expect('expectedUpdatedAt' in server.puts[1]).toBe(false);
-    // 기준 버전만 빠지고 나머지는 첫 저장과 같다(toEqual 은 undefined 속성을 없는 것으로 본다)
-    expect(server.puts[1]).toEqual({ ...server.puts[0], expectedUpdatedAt: undefined });
+    // 첫 저장은 주기를 안 바꿨으니 주기를 보내지 않는다(WD-995)
+    expect(server.puts[0]).not.toHaveProperty('cronExpression');
+    // 덮어쓰기는 화면에 보이는 주기를 늘 보낸다 — 낡은 캐시와 비교해 빼면, 다른 탭이 바꾼 주기(사용자가 못 본 값)가 남거나
+    // 주기를 지운 서버에 정기 트리거만 가 400 이 난다(WD-995 리뷰). 기준 버전이 빠지고 주기가 더해진 것 말고는 첫 저장과 같다.
+    expect(server.puts[1]).toEqual({ ...server.puts[0], expectedUpdatedAt: undefined, cronExpression: '0 9 * * *' });
     await expect(conflictDialog(page)).toHaveCount(0);
     await expect(editButton(page)).toBeVisible();
     expect(server.name()).toBe('내 이름');
