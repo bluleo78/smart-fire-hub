@@ -231,7 +231,8 @@ test.describe('파이프라인 스텝 검증 오류 접근성 (WD-560)', () => {
     await openNewEditorWithBlankStep(page);
     // 1번 스텝은 비워 두고, 2번 스텝을 추가해 올바르게 채운다 — 저장 시점 선택은 2번이다
     await clickToolbarAddStep(page);
-    await expect(page.getByText('스텝 #2')).toBeVisible();
+    // 노드도 「스텝 #2」로 불리므로 패널 머리의 콜론 꼴로 좁혀 패널이 바뀐 것을 본다(WD-1049)
+    await expect(page.getByText('스텝 #2:')).toBeVisible();
     await page.locator('#step-name').fill('정상 스텝');
     await typeScript(page, 'SELECT 1');
 
@@ -239,7 +240,7 @@ test.describe('파이프라인 스텝 검증 오류 접근성 (WD-560)', () => {
     await expect(page.getByText('입력 오류를 확인하세요.')).toBeVisible();
 
     // 오류가 있는 1번 스텝 패널로 바뀌고 이름 입력에 포커스가 간다
-    await expect(page.getByText('스텝 #1')).toBeVisible();
+    await expect(page.getByText('스텝 #1:')).toBeVisible();
     const nameInput = page.locator('#step-name');
     await expect(nameInput).toHaveValue('');
     await expect(nameInput).toHaveAttribute('aria-invalid', 'true');

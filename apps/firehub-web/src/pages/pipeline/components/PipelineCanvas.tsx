@@ -43,6 +43,20 @@ interface EdgeSelection {
 const NO_EDGES: ReadonlySet<string> = new Set();
 
 /**
+ * 스텝의 표시 이름 — 이름이 없으면 「스텝 #순번」으로 부른다.
+ * 캔버스 노드·연결선 이름·이동 안내가 같은 이름을 쓰게 해 스크린리더가 어디서나 같은 말을 듣게 한다 (WD-1049).
+ */
+function stepDisplayName(name: string | undefined | null, index: number): string {
+  // 표시 이름 자체는 자르지 않는다 — 비었는지만 isUnnamedStep 으로 본다
+  return isUnnamedStep(name) ? `스텝 #${index + 1}` : (name as string);
+}
+
+/** 이름이 없는 스텝인가 — 공백뿐인 이름도 없는 것으로 본다. 표시 이름·흐린 색·배지 숨김이 같은 판정을 쓴다 (WD-1049). */
+function isUnnamedStep(name: string | undefined | null): boolean {
+  return !name?.trim();
+}
+
+/**
  * 캔버스 위에 떠 있는 outline 버튼의 칠(WD-778) — 공용 outline 은 쉬는 면·hover 면이 투명/반투명이라 팬할 때 노드·격자가 비친다.
  * 불투명 바탕(bg-background)·hover 면(라이트 accent, 다크 popover)으로 칠하되, tailwind-merge 가 variant 의
  * dark:bg-input/30·dark:hover:bg-input/50 을 걷어내도록 dark:·dark:hover: 클래스를 직접 준다.
@@ -104,7 +118,9 @@ export function PipelineCanvas({
       // 선택된(설정이 열린) 스텝만 xyflow 가 화살표 키로 옮긴다 — 선택을 우리 상태에서 내려 줘야 한다(WD-1046)
       selected: step.tempId === state.selectedStepId,
       data: {
-        label: step.name || '(이름 없음)',
+        // 이름이 없으면 연결선 라벨·이동 알림과 같이 「스텝 #순번」으로 부른다 — 스크린리더가 어디서나 같은 이름을 듣게 (WD-1049)
+        label: stepDisplayName(step.name, index),
+        isUnnamed: isUnnamedStep(step.name),
         description: step.description || undefined,
         scriptType: step.scriptType,
         stepNumber: index + 1,
@@ -169,7 +185,7 @@ export function PipelineCanvas({
 
   const edges = useMemo<Edge[]>(() => {
     // 연결선 이름에 쓸 스텝 표시 이름을 스텝마다 한 번 만든다 — 이름이 없으면 「스텝 #순번」(WD-918)
-    const labels = new Map(state.steps.map((s, i) => [s.tempId, s.name || `스텝 #${i + 1}`]));
+    const labels = new Map(state.steps.map((s, i) => [s.tempId, stepDisplayName(s.name, i)]));
     const stepLabel = (tempId: string) => labels.get(tempId) ?? '';
     return state.steps.flatMap((step) =>
       step.dependsOnTempIds.map((depTempId) => ({
@@ -248,7 +264,7 @@ export function PipelineCanvas({
       const direction = dx !== 0 ? (dx > 0 ? '오른쪽' : '왼쪽') : dy > 0 ? '아래' : '위';
       setMoveAnnouncement(
         // 이름이 없으면 연결선 라벨과 같이 「스텝 #순번」으로 부른다
-        `「${step.name || `스텝 #${index + 1}`}」 스텝을 ${direction}(으)로 옮겼습니다 (가로 ${Math.round(change.position.x)}, 세로 ${Math.round(change.position.y)})`,
+        `「${stepDisplayName(step.name, index)}」 스텝을 ${direction}(으)로 옮겼습니다 (가로 ${Math.round(change.position.x)}, 세로 ${Math.round(change.position.y)})`,
       );
     }
   };

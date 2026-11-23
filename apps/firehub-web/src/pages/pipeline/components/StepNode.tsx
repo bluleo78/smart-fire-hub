@@ -4,7 +4,10 @@ import { useTheme } from 'next-themes';
 import { memo } from 'react';
 
 export interface StepNodeData extends Record<string, unknown> {
+  // 표시 이름 — 이름이 없으면 「스텝 #순번」이 들어와 늘 비어 있지 않다(WD-1049)
   label: string;
+  // 이름 없는 스텝(흐린 글자색용) — 문구 비교 대신 이 플래그로 가른다
+  isUnnamed: boolean;
   description?: string;
   scriptType: 'SQL' | 'PYTHON' | 'API_CALL' | 'AI_CLASSIFY';
   stepNumber: number;
@@ -298,7 +301,14 @@ export const StepNode = memo(function StepNode({ data }: NodeProps<StepNodeType>
             className="flex items-center gap-1.5 text-xs font-semibold"
             style={{ color: typeConfig.color }}
           >
-            <span style={{ opacity: 0.5 }}>#{data.stepNumber}</span>
+            {/* 이름 없는 스텝은 본문이 이미 「스텝 #n」이라 번호 배지를 숨겨 스크린리더가 번호를 두 번 읽지 않게 한다 (WD-1049) */}
+            <span
+              data-testid="step-number-badge"
+              style={{ opacity: 0.5 }}
+              aria-hidden={data.isUnnamed ? true : undefined}
+            >
+              #{data.stepNumber}
+            </span>
             <typeConfig.Icon className="h-3.5 w-3.5 shrink-0" />
             <span>{typeConfig.label}</span>
           </div>
@@ -346,13 +356,13 @@ export const StepNode = memo(function StepNode({ data }: NodeProps<StepNodeType>
           <p
             className="truncate text-sm font-medium leading-snug"
             style={{
-              color: data.label && data.label !== '(이름 없음)'
+              color: !data.isUnnamed
                 ? (isDark ? 'oklch(0.93 0 0)' : 'oklch(0.145 0 0)')
                 : (isDark ? 'var(--muted-foreground)' : 'oklch(0.556 0 0)'),
             }}
-            title={data.label || '(이름 없음)'}
+            title={data.label}
           >
-            {data.label || '(이름 없음)'}
+            {data.label}
           </p>
 
           {/* Description — 2 lines reserved */}
