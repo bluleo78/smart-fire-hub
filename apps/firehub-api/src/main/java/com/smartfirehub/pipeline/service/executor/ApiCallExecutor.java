@@ -321,7 +321,8 @@ public class ApiCallExecutor {
         0,
         // 실행 기록에 남는 줄이라 주소의 사용자 정보(아이디:비밀번호@)는 비밀번호를 가린다(WD-681).
         "url="
-            + BaseUrlUserInfo.mask(resolvedUrl)
+            // 미리보기와 같은 표시 규칙(WD-1000) — 한글 경로를 글자로 남긴다(mask 후 디코딩).
+            + RequestUrlEncoding.toDisplayUrl(BaseUrlUserInfo.mask(resolvedUrl))
             + " method="
             + config.method()
             + " pages="

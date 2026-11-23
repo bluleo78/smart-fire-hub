@@ -554,8 +554,8 @@ public class ApiConnectionService {
     // WD-991 리뷰: 헬스체크 경로·쿼리의 공백·한글은 파이프라인 실행·테스트 호출과 같은 규칙(httpx 방식)으로 한 번만 인코딩한다 — 표시 URL 을
     // 이 뒤에 만들어 인증 문제·SSRF 차단 결과에도 인코딩된 같은 URL 이 보이게 한다. 이미 인코딩된 %XX 는 다시 인코딩하지 않는다.
     targetUrl = RequestUrlEncoding.encodePathAndQuery(targetUrl);
-    // 표시 URL 의 한글 등 비ASCII 는 사람이 읽게 글자로 되돌린다(WD-936 의 decodeForDisplay — 미리보기와 같게, WD-991 리뷰).
-    String displayUrl = RequestUrlEncoding.decodeForDisplay(BaseUrlUserInfo.mask(targetUrl));
+    // 표시용 URL 은 미리보기와 같은 표시 규칙(WD-1000, toDisplayUrl) — 한글은 글자로, 숨은 글자는 %XX 로 보인다(WD-991 리뷰와 합침).
+    String displayUrl = RequestUrlEncoding.toDisplayUrl(BaseUrlUserInfo.mask(targetUrl));
 
     long start = System.currentTimeMillis();
     // 이미 저장된 인증 값이 HTTP 요청에 쓸 수 없는 것이면(WD-392 전에 저장된 띄어쓰기 헤더 이름 등) 호출하지 않고 그 사유를 보인다 —
@@ -577,7 +577,7 @@ public class ApiConnectionService {
       // 쿼리 인증이 아니면 URL 을 손대지 않는다(정적 파라미터 없음 → null) — 공용 빌더(ResolvedAuth.buildUrls, WD-657).
       // 표시용 URL 은 사용자 정보 비밀번호까지 가려져 나온다(WD-681, buildUrls).
       AuthQueryMasker.AuthQueryUrls urls = auth.buildUrls(targetUrl, null);
-      displayUrl = RequestUrlEncoding.decodeForDisplay(urls.displayUrl());
+      displayUrl = RequestUrlEncoding.toDisplayUrl(urls.displayUrl()); // 첫 대입과 같은 표시 규칙(WD-1000)
       // 응답 본문/헤더를 함께 받아 디버깅용으로 노출 (#76).
       // 쿼리 인증이면 이미 인코딩을 마친 URI 를 쓴다(WD-182) — 다시 인코딩하면 인코딩 키의 %2B 가 %252B 로 나간다.
       // 쿼리 인증이 아니어도 위에서 인코딩을 마친 URL 을 그대로 쓴다(WD-991 — 다시 인코딩하면 %XX 가 %25XX). 해석할 수 없는 URL 은

@@ -290,6 +290,17 @@ class ApiCallExecutorTest {
     assertThat(result.log()).doesNotContain(key);
   }
 
+  /** 한글 경로의 실행 기록 url= 은 미리보기와 같은 규칙으로 글자로 보인다(WD-1000). */
+  @Test
+  void execute_koreanPath_executionLogShowsLetters() {
+    stubEmptyItems("/%EA%B2%80%EC%83%89");
+
+    ApiCallExecutor.ApiCallResult result =
+        executor.execute(simpleGetConfig("/%EA%B2%80%EC%83%89"), "t", null, "APPEND", null);
+
+    assertThat(result.log()).contains("url=" + baseUrl() + "/검색").doesNotContain("%EA%B2");
+  }
+
   /**
    * 쿼리에 그대로 쓸 수 없는 문자가 섞인 디코딩 키(WD-182): 예전에는 「URL 인코딩된 값을 넣으세요」로 즉시 실패했다(그 전에는 키 원문이 실행 기록에 실렸다,
    * WD-177). 이제 공용 규칙으로 한 번 인코딩해 호출하고, 실행 로그엔 원문·보낸 형태가 없다.
