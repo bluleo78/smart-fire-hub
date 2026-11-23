@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { useEffect, useState } from 'react';
 
 import { PageHeading } from '@/components/PageHeading';
 import { Badge } from '@/components/ui/badge';
@@ -588,6 +589,37 @@ export default function AuditLogListPage() {
     enabled: !isDateRangeInverted,
   });
 
+  // 캐시 정리용 클라이언트 — 범위 밖 되돌리기 때 낡은 목록 캐시를 비우는 데 쓴다
+  const queryClient = useQueryClient();
+
+  // 범위 밖 쪽(총 건수가 줄어 마지막 쪽 뒤로 밀림)은 빈 목록을 「조건에 맞는 감사 로그가 없습니다」로
+  // 오해하지 않게 마지막 유효 쪽으로 옮긴다 — 사용자 목록(WD-283)·데이터셋 목록(WD-146)과 같은 처리.
+  // isPlaceholderData 일 때는 판정하지 않는다 — 쪽을 옮기는 동안 이전 쪽 data 를 유지하는 WD-932 placeholder 는
+  // 지금 쪽의 totalPages 를 아직 모르는데, 그 값으로 범위 밖을 잡으면 진행 중인 이동이 되돌려진다(WD-982).
+  const pageOutOfRange = !!logs && !isPlaceholderData && page > 0 && page >= Math.max(logs.totalPages, 1);
+  useEffect(() => {
+    if (!pageOutOfRange || !logs) return;
+    // 되돌아갈 쪽의 캐시를 비운다 — 무효화(stale 표시)만 하면 캐시에 남은 낡은 총 건수(예: 「총 25건」)가
+    // 그대로 그려져 스크린리더가 먼저 낭독하므로, 지워 버려 되돌아간 쪽이 이전 쪽 결과를 자리표시자로 받고
+    // 곧바로 새 총 건수를 다시 읽게 한다(캐시가 남아 있으면 자리표시자 대신 낡은 값이 나온다).
+    // 키 전체를 지우는 것은 의도적이다 — 줄어든 뒤라면 이전에 본 쪽·필터 조합은 무엇이든 줄어들기 전 값이다.
+    queryClient.removeQueries({ queryKey: ['auditLogs'] });
+    // 되돌리는 setPage 는 관찰한 결과(범위 밖 쪽)에 맞춰 화면의 쪽 상태를 바로잡는 것 — 외부 시스템 동기화가 아니라
+    // 같은 화면 안의 파생 상태 교정이라 cascading render 규칙의 예외로 둔다(사용자 목록·데이터셋 목록도 같은 되돌림).
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setPage(Math.max(logs.totalPages - 1, 0));
+  }, [pageOutOfRange, logs, queryClient]);
+
+  /**
+   * 표를 스켈레톤으로 그려야 하는 때.
+   * - `isLoading`: 지금 쪽을 아직 받아오지 않았다.
+   * - `pageOutOfRange`: 범위 밖 쪽 — 되돌리는 동안.
+   * - 자리표시자가 빈 목록: 위 되돌림으로 캐시를 비운 뒤라, 남아 있던 자리표시자(범위 밖 응답의 빈 목록)가
+   *   잠깐이라도 「감사 로그가 없습니다」로 그려지면 안 된다 — 되돌아온 쪽의 새 결과가 올 때까지 스켈레톤.
+   *   자리표시자에 든 총 건수는 범위 밖 응답이 준 값이라 이미 줄어든 뒤 값이므로 낭독돼도 낡지 않다.
+   */
+  const showSkeleton = isLoading || pageOutOfRange || (!!logs && isPlaceholderData && logs.content.length === 0);
+
   /**
    * 사용자 dropdown 옵션 로드 (#89)
    * - GET /users 는 user:read — 감사 로그 화면은 audit:read 만으로 열리므로(WD-121) 권한이 있을 때만 읽고,
@@ -754,7 +786,7 @@ export default function AuditLogListPage() {
             {isDateRangeInverted ? (
               // 날짜 범위 역전 상태 — "결과 없음"과 구분되는 전용 메시지 (#541)
               <TableEmptyRow colSpan={7} message="날짜 범위가 올바르지 않아 조회할 수 없습니다." />
-            ) : isLoading ? (
+            ) : showSkeleton ? (
               <TableSkeletonRows columns={7} rows={5} />
             ) : isError ? (
               <TableErrorRow colSpan={7} />

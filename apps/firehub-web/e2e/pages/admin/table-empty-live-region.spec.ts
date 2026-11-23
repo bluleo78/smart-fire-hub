@@ -1,6 +1,7 @@
 import type { Page } from '@playwright/test';
 
 import { createAuditLog } from '../../factories/admin.factory';
+import { createChartListItem } from '../../factories/analytics.factory';
 import { createUser } from '../../factories/auth.factory';
 import { setupAdminAuth } from '../../fixtures/admin.fixture';
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
@@ -142,6 +143,41 @@ test.describe('WD-931 목록 건수 라이브 리전', () => {
   /** 결과 필터별 총 건수 — 필터 없으면 4건 */
   const TOTAL_BY_RESULT: Record<string, number> = { SUCCESS: 3, FAILURE: 0 };
 
+  /** 감사 로그 한 쪽 응답 — 요청한 쪽·쪽 크기·총 건수로 행을 만든다(쪽 모킹 셋이 함께 쓴다) */
+  function auditPageFulfill(pageNo: number, size: number, total: number) {
+    const from = pageNo * size;
+    const count = Math.max(0, Math.min(size, total - from));
+    const content = Array.from({ length: count }, (_, i) => createAuditLog({ id: from + i + 1, description: `로그 ${from + i + 1}` }));
+    return {
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(createPageResponse(content, { page: pageNo, size, totalElements: total })),
+    };
+  }
+
+  /**
+   * 응답을 붙잡아 두는 문 — 모킹한 요청이 걸리면 `arrived` 가 풀리고, 테스트가 `release()` 를 부를 때까지
+   * 응답을 미룬다. 되돌림 같은 짧은 창을 그대로 남겨 두고 관찰할 때 쓴다.
+   */
+  function held() {
+    let notifyArrived: () => void = () => {};
+    let notifyRelease: () => void = () => {};
+    const arrived = new Promise<void>((resolve) => {
+      notifyArrived = () => resolve();
+    });
+    const released = new Promise<void>((resolve) => {
+      notifyRelease = () => resolve();
+    });
+    return {
+      arrived,
+      release: () => notifyRelease(),
+      block: () => {
+        notifyArrived();
+        return released;
+      },
+    };
+  }
+
   /** 낭독되는 건수 노드 — role=status 리전 안에서 aria-hidden 이 아닌 노드(DelayedStatus 지연 뒤의 노드)만 잡는다 */
   function announcedCount(page: Page, text: string) {
     return page.locator('[role="status"] > :not([aria-hidden="true"])').filter({ hasText: text });
@@ -177,13 +213,47 @@ test.describe('WD-931 목록 건수 라이브 리전', () => {
         const total = opts.totalForPage?.(pageNo) ?? opts.total ?? TOTAL_BY_RESULT[result ?? ''] ?? 4;
         // 화면 기본 쪽 크기는 20 — 요청의 size 를 그대로 따른다
         const size = Number(sp.get('size') ?? '20');
-        const from = pageNo * size;
-        const count = Math.max(0, Math.min(size, total - from));
-        const content = Array.from({ length: count }, (_, i) => createAuditLog({ id: from + i + 1, description: `로그 ${from + i + 1}` }));
+        return route.fulfill(auditPageFulfill(pageNo, size, total));
+      },
+    );
+  }
+
+  /** 감사 로그 API 를 총 건수가 줄어든 상태로 응답한다 — 2쪽(page>=1)을 요청한 순간부터 모든 쪽이 3건, 그 전(1쪽=page 0)은 25건 */
+  async function mockAuditShrinking(page: Page) {
+    let shrunk = false;
+    await page.route(
+      (url) => url.pathname === '/api/v1/admin/audit-logs',
+      (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        const sp = new URL(route.request().url()).searchParams;
+        const pageNo = Number(sp.get('page') ?? '0');
+        // 2쪽 이상을 요청한 순간 데이터가 줄어들었다고 본다 — 줄어든 뒤에는 1쪽도 같은 건수로 준다
+        if (pageNo >= 1) shrunk = true;
+        const total = shrunk ? 3 : 25;
+        const size = Number(sp.get('size') ?? '20');
+        return route.fulfill(auditPageFulfill(pageNo, size, total));
+      },
+    );
+  }
+
+  /** 차트 목록 API 를 쪽마다 갈라 응답한다 — page 2 요청부터 총 15건으로 줄어, 쪽 되돌림이 없는 화면에 범위 밖 쪽이 그대로 머무르게 한다 */
+  async function mockChartsShrinkingAfterPage1(page: Page) {
+    await page.route(
+      (url) => url.pathname === '/api/v1/analytics/charts',
+      (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        const pageNo = Number(new URL(route.request().url()).searchParams.get('page') ?? '0');
+        // page 0·1 은 25건(3쪽), page 2 이상은 15건(2쪽) — 마지막 쪽을 누르면 page 2 를 받아 범위 밖이 된다
+        const total = pageNo < 2 ? 25 : 15;
+        const from = pageNo * 10;
+        const count = Math.max(0, Math.min(10, total - from));
+        const content = Array.from({ length: count }, (_, i) =>
+          createChartListItem({ id: from + i + 1, name: `차트 ${from + i + 1}` }),
+        );
         return route.fulfill({
           status: 200,
           contentType: 'application/json',
-          body: JSON.stringify(createPageResponse(content, { page: pageNo, size, totalElements: total })),
+          body: JSON.stringify(createPageResponse(content, { page: pageNo, size: 10, totalElements: total })),
         });
       },
     );
@@ -218,19 +288,129 @@ test.describe('WD-931 목록 건수 라이브 리전', () => {
     await expect(page.getByRole('status').filter({ hasText: '총 0건' })).toHaveCount(0);
   });
 
-  test('범위 밖 쪽이면 「총 3건」 은 라이브 리전에 두지 않는다 — 어긋난 범위·건수가 낭독되지 않게', async ({ authenticatedPage: page }) => {
-    // 3쪽(page=2)만 총 3건으로 줄어든 응답을 준다 — 앞 쪽은 25건이라 3쪽 이동이 가능하고, 이동하면 start(20) >= 총 3건 이 된다
-    await mockAuditByResult(page, { totalForPage: (pageNo) => (pageNo >= 2 ? 3 : 25) });
+  test('범위 밖 쪽이 되어도 마지막 유효 쪽으로 되돌아오고 건수는 리전 안에서 낭독된다 (WD-983)', async ({ authenticatedPage: page }) => {
+    await mockAuditShrinking(page);
     await page.goto('/admin/audit-logs');
+    // 기본 20건 → 쪽 크기 10 으로 바꿔 25건이 3쪽이 되게 한다
+    await page.getByRole('combobox', { name: '페이지 사이즈' }).click();
+    await page.getByRole('option', { name: '10', exact: true }).click();
+    await expect(announcedCount(page, '총 25건 중 1-10')).toBeVisible();
+
+    // 「마지막 페이지」를 누르기 전에 빈 안내 관찰자를 붙인다 — 되돌리는 동안(범위 밖 응답 도착 → 되돌림 → 재조회)에
+    // 표 지역에 새로 추가되는 「감사 로그가 없습니다」 계열 노드를 전부 기록한다. 끝 상태만 보는 단언은 응답 도착과
+    // 되돌림 사이 한 커밋의 일시 빈 안내(content=[] 이 그려진 한 프레임)를 놓치지만, 이 관찰자는 그림 타이밍과 무관하게
+    // DOM 에 추가되는 순간 자체를 보므로 그 한 커밋이라도 잡아낸다(holdRequests 로는 못 잡는다 — 그 짧은 틈에 대기할
+    // 네트워크 요청이 없기 때문이다).
+    await page.evaluate(() => {
+      const w = window as unknown as { __emptyAdds: string[] };
+      w.__emptyAdds = [];
+      // 「조건에 맞는 감사 로그가 없습니다」는 앞의 문구를 포함하므로 하나의 부분 문자열로 함께 잡는다
+      const pattern = /감사 로그가 없습니다/;
+      new MutationObserver((records) => {
+        for (const r of records) {
+          // childList 는 새 행/노드 삽입, characterData 는 기존 텍스트 노드의 문구 바꿈을 각각 잡는다
+          const nodes = r.type === 'characterData' ? [r.target] : Array.from(r.addedNodes);
+          for (const n of nodes) {
+            if (!(n instanceof Node)) continue;
+            const text = n.textContent ?? '';
+            // aria-hidden 이든 아니든 빈 안내 문구가 그려지는 자체가 문제 — 숨김 상태로 그려져도 기록한다
+            if (pattern.test(text)) w.__emptyAdds.push(text.trim().slice(0, 200));
+          }
+        }
+      }).observe(document.body, { childList: true, subtree: true, characterData: true });
+    });
+
+    await page.getByRole('button', { name: '마지막 페이지' }).click();
+
+    // 되돌아온 쪽(0쪽)에서 건수가 리전 안에서 낭독된다
+    await expect(announcedCount(page, '총 3건 중 1-3')).toBeVisible();
+    // 되돌리는 동안 기록된 빈 안내 노드는 하나도 없다 — 위 관찰자가 되돌림 구간의 일시 커밋을 그림 타이밍과 무관하게
+    // 봤으므로, 빈 안내가 한 번이라도 뜬 적이 있으면 여기에 남는다
+    await expect
+      .poll(() => page.evaluate(() => (window as unknown as { __emptyAdds: string[] }).__emptyAdds), {
+        message: '되돌리는 동안 표에 빈 안내 노드가 추가되면 안 된다',
+      })
+      .toEqual([]);
+    // 되돌리는 동안/뒤에 빈 안내가 남아 있지 않다 — 빈 결과로 오해하지 않게
+    await expect(page.getByRole('table').getByRole('status')).toHaveCount(0);
+    // 범위 밖 건수는 화면 어디에도 없다
+    await expect(plainCount(page, '총 3건')).toHaveCount(0);
+  });
+
+  test('되돌아온 쪽이 줄어들기 전 총 건수(25건)를 낭독 리전에 두지 않는다 (WD-983 반려)', async ({ authenticatedPage: page }) => {
+    // 되돌림 직후 되돌아간 쪽의 재조회를 잡아 두어 「낡은 건수가 남아 있는 창」 자체를 관찰한다.
+    // 잡지 않으면 재조회가 목록 하나로 그 창을 지나가 버려, 낡은 낭독이 그림 타이밍에 가려 드러나지 않는다.
+    let shrunk = false;
+    let holdPage0 = false;
+    const outOfRangePage = held();
+    const rollbackPage = held();
+
+    await page.route(
+      (url) => url.pathname === '/api/v1/admin/audit-logs',
+      async (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        const sp = new URL(route.request().url()).searchParams;
+        const pageNo = Number(sp.get('page') ?? '0');
+        const size = Number(sp.get('size') ?? '20');
+        if (pageNo >= 1) {
+          // 2쪽 이상을 요청한 순간 총 건수가 줄었다고 본다 — 줄어든 뒤에는 1쪽도 같은 값으로 준다
+          shrunk = true;
+          await outOfRangePage.block();
+        } else if (holdPage0) {
+          // 되돌아간 쪽의 재조회 — 응답을 붙잡아 두어 낡은 건수가 남아 있으면 그대로 보이게 한다
+          await rollbackPage.block();
+        }
+        return route.fulfill(auditPageFulfill(pageNo, size, shrunk ? 3 : 25));
+      },
+    );
+
+    await page.goto('/admin/audit-logs');
+    // 기본 20건 → 쪽 크기 10 으로 바꿔 25건이 3쪽이 되게 한다
     await page.getByRole('combobox', { name: '페이지 사이즈' }).click();
     await page.getByRole('option', { name: '10', exact: true }).click();
     await expect(announcedCount(page, '총 25건 중 1-10')).toBeVisible();
 
     await page.getByRole('button', { name: '마지막 페이지' }).click();
+    await outOfRangePage.arrived;
+    // 되돌아갈 쪽의 재조회를 잡아 둔 뒤에야 범위 밖 응답을 흘려보낸다 — 되돌림이 일어나는 창이 그대로 남는다
+    holdPage0 = true;
+    outOfRangePage.release();
+    await rollbackPage.arrived;
 
-    // 글자는 보이되 role=status 리전 안이 아니다
-    await expect(plainCount(page, '총 3건')).toBeVisible();
-    await expect(page.getByRole('status').filter({ hasText: '총 3건' })).toHaveCount(0);
+    // 줄어들기 전 총 건수(25)가 되돌아온 쪽에 다시 나오면 안 된다 — 낡은 건수 낭독이 곧 이슈의 결함이다
+    await expect(page.locator('[role="status"]').filter({ hasText: '총 25건' })).toHaveCount(0);
+    // 캐시가 비워져 자리는 범위 밖 응답이 준 줄어든 뒤 값(3건)으로 채워진다
+    await expect(announcedCount(page, '총 3건 중 1-3')).toBeVisible();
+    // 되돌아온 쪽은 빈 목록으로 잠깐이라도 뜨지 않는다 — 스켈레톤이 빈 안내를 대신한다
+    await expect(page.getByRole('table').getByRole('status')).toHaveCount(0);
+    // 줄어든 뒤 totalPages 가 이미 1이라 방향 버튼 nav 는 없고 사이즈 selector 만 남는다 —
+    // 줄어들기 전(3쪽) 캐시가 남아 있으면 nav 가 그대로 있으므로 이것도 낡은 캐시가 없어졌다는 근거다.
+    // (이 시점의 포커스는 방향 버튼이 사라지면서 body 로 간다 — 1쪽이라 옮길 쪽이 없어 nav 를 그리지 않는 것이 맞다)
+    await expect(page.getByRole('navigation', { name: '페이지네이션' })).toHaveCount(0);
+
+    rollbackPage.release();
+    await expect(announcedCount(page, '총 3건 중 1-3')).toBeVisible();
+    await expect(page.getByRole('table').getByRole('status')).toHaveCount(0);
+    // 되돌아온 쪽은 마지막 유효 쪽(1쪽)이고 표에는 줄어든 뒤 남은 3행이 있다
+    await expect(page.getByRole('table').getByRole('cell', { name: '로그 1' })).toBeVisible();
+  });
+
+  test('범위 밖 쪽이면 「총 15건」 은 라이브 리전에 두지 않는다 — 되돌리기 없는 화면(차트 목록)에서 재현 (WD-931)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 왜 이 화면인가: 감사 로그·사용자·데이터셋 목록에는 쪽 되돌리기가 생겨(또는 이미 있어) 범위 밖 쪽이 머무르지 않는다.
+    // 공용 SimplePagination 의 "범위 밖 건수는 낭독 리전 밖" 계약(WD-931)은 쪽 되돌림이 없는 화면에서만 재현된다 —
+    // 차트 목록(ChartListPage)이 그 화면이다(size 고정 10, 되돌리기 없음, SimplePagination 에 totalElements·pageSize 전달).
+    await mockChartsShrinkingAfterPage1(page);
+    await page.goto('/analytics/charts');
+    await expect(announcedCount(page, '총 25건 중 1-10')).toBeVisible();
+
+    await page.getByRole('button', { name: '마지막 페이지' }).click();
+
+    // 범위 밖 쪽(2쪽, 총 15건) — 되돌리기가 없어 그대로 머문다.
+    // 범위 밖이라 「중 a-b」가 붙지 않고 「총 15건」으로만 그려진다(계획 Review Focus 4 — hasText 는 부분 일치라 이 형태로만 잡는다)
+    await expect(plainCount(page, '총 15건')).toBeVisible();
+    await expect(page.getByRole('status').filter({ hasText: '총 15건' })).toHaveCount(0);
   });
 
   test('쪽을 넘기면 건수 범위가 role=status 영역 안에서 바뀐다', async ({ authenticatedPage: page }) => {
