@@ -51,6 +51,8 @@ export function AIChatPanel({ showModeSwitch = true, showSessionSwitcher = true,
     compactionStartedAt,
     isOpen,
     openFocusOriginRef,
+    restoreDraft,
+    setRestoreDraft,
   } = useAI();
 
   const hasMessages = messages.length > 0 || pendingUserMessage || streamingMessage;
@@ -150,6 +152,9 @@ export function AIChatPanel({ showModeSwitch = true, showSessionSwitcher = true,
           isUploading={isUploading}
           // 이력 로딩 중에는 보내기만 막는다(WD-1004) — 보낸 글이 이력 도착 때 덮여 사라지는 것을 방지
           sendBlocked={isLoadingHistory}
+          // 빠른 입력에서 못 보낸 글을 입력창에 남긴다(WD-1029)
+          restoreDraft={restoreDraft}
+          onRestoreDraftConsumed={() => setRestoreDraft(null)}
           focusOnOpen={isOpen}
           focusOriginRef={openFocusOriginRef}
         />

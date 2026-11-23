@@ -9,6 +9,7 @@ import {
   GRAPH_READ_RESTRICTED_MESSAGE,
   handleApiError,
   isBadCredentialsError,
+  isClientError,
   isDuplicateName,
   isGraphReadRestricted,
   isMemberGoneError,
@@ -286,5 +287,18 @@ describe('listLoadErrorProps (WD-978)', () => {
       tone: 'error',
       message: 'API 연결 목록을 불러오지 못했습니다.',
     });
+  });
+});
+
+describe('isClientError (WD-1029)', () => {
+  it.each([400, 403, 404, 422])('상태 %i 는 다시 해도 같은 4xx 라 true', (status) => {
+    expect(isClientError(axiosErrorWithStatus(status, {}))).toBe(true);
+  });
+  it.each([408, 429, 500, 503])('상태 %i 는 일시 장애로 보아 false', (status) => {
+    expect(isClientError(axiosErrorWithStatus(status, {}))).toBe(false);
+  });
+  it('응답이 없거나 axios 오류가 아니면 false', () => {
+    expect(isClientError({ isAxiosError: true })).toBe(false);
+    expect(isClientError(new Error('x'))).toBe(false);
   });
 });

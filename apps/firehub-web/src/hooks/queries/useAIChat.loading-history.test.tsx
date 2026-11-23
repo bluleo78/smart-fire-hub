@@ -6,6 +6,7 @@
  */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook } from '@testing-library/react';
+import { AxiosError } from 'axios';
 import React from 'react';
 import { toast } from 'sonner';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -419,4 +420,27 @@ describe('useAIChat — 같은 대화를 다시 열어도 보관 질문 유지 (
     expect(streamAIChat).toHaveBeenCalledTimes(1);
     expect(vi.mocked(streamAIChat).mock.calls[0][0]).toBe('질문');
   });
+});
+
+describe('useAIChat — 이력 4xx 실패 때 보관 질문 버림 (WD-1029)', () => {
+  const MSG = '대화를 불러오지 못해 「AI 에게 물어보기」 질문을 보내지 않았습니다.';
+  for (const status of [403, 404]) {
+    it(`보관 중 이력 요청이 ${status} 로 실패하면 질문을 보내지 않고 알린다`, async () => {
+      const d = deferred<{ data: unknown[] }>();
+      vi.mocked(aiApi.getSessionMessages).mockReturnValue(d.promise as never);
+      const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const { result } = renderHook(() => useAIChat(), { wrapper });
+      act(() => {
+        void result.current.loadSession('S1');
+      });
+      act(() => result.current.sendAfterHistoryLoaded('묻기 질문'));
+      await act(async () => {
+        d.reject(new AxiosError('fail', String(status), undefined, undefined, { status } as never));
+      });
+      expect(streamAIChat).not.toHaveBeenCalled();
+      expect(toast.info).toHaveBeenCalledWith(MSG);
+      expect(toast.info).toHaveBeenCalledTimes(1);
+      err.mockRestore();
+    });
+  }
 });

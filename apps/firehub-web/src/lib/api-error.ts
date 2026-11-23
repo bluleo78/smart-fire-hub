@@ -223,6 +223,17 @@ export function isNotFoundError(error: unknown): boolean {
 }
 
 /**
+ * 다시 해도 같은 결과인 클라이언트 오류(4xx) 응답인가 (WD-1029) — 보관한 작업을 이어 가지 않을 때 쓴다.
+ * 408(시간 초과)·429(요청이 너무 많음)는 잠시 뒤 다시 하면 될 수 있어 5xx 처럼 일시 장애로 보고 빼낸다.
+ */
+export function isClientError(error: unknown): boolean {
+  if (!axios.isAxiosError(error)) return false;
+  const status = error.response?.status;
+  if (status === 408 || status === 429) return false;
+  return status !== undefined && status >= 400 && status < 500;
+}
+
+/**
  * 요청이 너무 많음(429) 응답인가 (WD-686) — 화면 쿼리 동시 실행 상한(QUERY_CONCURRENCY_LIMIT)처럼 「실행 중인 것이 끝난 뒤」 다시 하라는
  * 거절이라, 곧바로 자동 재시도하면 같은 상한에 또 걸린다. 전역 쿼리 재시도(main.tsx)가 403 처럼 다시 시도하지 않는 데 쓴다.
  */

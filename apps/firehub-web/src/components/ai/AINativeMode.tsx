@@ -20,6 +20,8 @@ export function AINativeMode() {
     compactionStartedAt,
     sendMessage,
     stopStreaming,
+    restoreDraft,
+    setRestoreDraft,
   } = useAI();
 
   const [isExpanded, setIsExpanded] = useState(false);
@@ -124,6 +126,9 @@ export function AINativeMode() {
             isUploading={isUploading}
             // 이력 로딩 중에는 보내기만 막는다(WD-1004)
             sendBlocked={isLoadingHistory}
+            // 빠른 입력에서 못 보낸 글을 입력창에 남긴다(WD-1029)
+            restoreDraft={restoreDraft}
+            onRestoreDraftConsumed={() => setRestoreDraft(null)}
           />
         </div>
       </div>
