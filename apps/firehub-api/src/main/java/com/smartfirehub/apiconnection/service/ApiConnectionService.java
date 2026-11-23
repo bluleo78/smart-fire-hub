@@ -1360,11 +1360,11 @@ public class ApiConnectionService {
   }
 
   /**
-   * 기준 URL 의 쿼리·프래그먼트·userinfo 를 지운다. 저장 경로에서 쿼리 키가 붙을 일은 없지만, 혹시 붙어 있어도 감사 로그에 비밀이 남지 않게 한다 — API
-   * 호출 오류 문구와 같은 {@link ApiCallErrorMessages#redactUrl} 을 쓴다.
+   * 기준 URL 의 쿼리·프래그먼트·userinfo 를 지워 감사 로그에 비밀이 남지 않게 한다. 오류 문구와 같은 가리기지만 화면 전용 %XX 인코딩은 하지 않는다 —
+   * 감사는 저장된 baseUrl 의 사본이라 경로 글자(아랍 글자·숨은 글자 포함)를 바꾸지 않는다(WD-1014).
    */
   private static String redactBaseUrl(String baseUrl) {
-    return baseUrl == null ? null : ApiCallErrorMessages.redactUrl(baseUrl);
+    return baseUrl == null ? null : ApiCallErrorMessages.redactUrlRaw(baseUrl);
   }
 
   /** 헬스체크 경로의 쿼리·프래그먼트를 지운다 — 경로에 키를 쿼리로 적어 둔 연결이라도 감사 로그에 값이 남지 않게. */

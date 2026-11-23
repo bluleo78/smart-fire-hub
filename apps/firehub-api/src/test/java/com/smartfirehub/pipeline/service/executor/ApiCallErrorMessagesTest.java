@@ -87,6 +87,26 @@ class ApiCallErrorMessagesTest {
     assertThat(ApiCallErrorMessages.redactUrl(input)).isEqualTo(expected);
   }
 
+  /**
+   * WD-1014: 저장 값의 사본(감사 스냅샷)용 가리기는 비밀만 지우고 경로 글자는 %XX 로 바꾸지 않는다 — 아랍 글자·숨은 글자(RLO·ZWSP)도 그대로. 화면
+   * 문구용 redactUrl 과 다른 점이다.
+   */
+  @Test
+  void redactUrlRaw_keepsPathCharactersAsEntered() {
+    assertThat(
+            ApiCallErrorMessages.redactUrlRaw(
+                "https://api.example.com/\u0628\u064a\u0627\u0646\u0627\u062a"))
+        .isEqualTo("https://api.example.com/\u0628\u064a\u0627\u0646\u0627\u062a");
+    assertThat(ApiCallErrorMessages.redactUrlRaw("https://api.example.com/a\u202Eb\u200Bc"))
+        .isEqualTo("https://api.example.com/a\u202Eb\u200Bc");
+    assertThat(ApiCallErrorMessages.redactUrlRaw("http://u:p@host.example:8080/\u0628?k=S#f"))
+        .isEqualTo("http://host.example:8080/\u0628");
+    assertThat(ApiCallErrorMessages.redactUrlRaw(null)).isEmpty();
+    // 같은 입력을 화면 문구용 redactUrl 은 인코딩한다.
+    assertThat(ApiCallErrorMessages.redactUrl("https://api.example.com/a\u202Eb"))
+        .isEqualTo("https://api.example.com/a%E2%80%AEb");
+  }
+
   /** WD-676: 자유 문장 안 URL 의 userinfo 가 @ 로 여럿 이어져도 모두 지운다(Python 과 같은 패턴). */
   @Test
   void redactUrlsInText_multipleUserinfo_allRemoved() {

@@ -1366,6 +1366,57 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
         .doesNotContain("****");
   }
 
+  /** WD-1014: 아랍 글자 경로 baseUrl 의 생성 감사는 저장된 값 그대로(%XX 표시 인코딩 없이) 남는다. */
+  @Test
+  void create_audit_nonAsciiPathBaseUrl_keptAsEntered() throws Exception {
+    ApiConnectionResponse created =
+        apiConnectionService.create(
+            new CreateApiConnectionRequest(
+                "WD1014 Create",
+                null,
+                "BEARER",
+                Map.of("token", "wd1014-create-token"),
+                "https://wd1014-create.example.com/بيانات",
+                null),
+            testUserId);
+
+    List<Record> rows = connectionAudits("CREATE", created.id());
+    assertThat(rows).hasSize(1);
+    String audited = auditMetadata(rows.get(0)).get("baseUrl").asText();
+    assertThat(audited).isEqualTo(created.baseUrl()).doesNotContain("%D8");
+  }
+
+  /** WD-1014: 아랍 글자 경로로 바꾼 수정 감사도 after 는 저장 값 그대로, before 는 옛 값. */
+  @Test
+  void update_audit_nonAsciiPathBaseUrl_keptAsEntered() throws Exception {
+    ApiConnectionResponse created =
+        apiConnectionService.create(
+            new CreateApiConnectionRequest(
+                "WD1014 Update",
+                null,
+                "BEARER",
+                Map.of("token", "wd1014-update-token"),
+                "https://wd1014-update.example.com/v1",
+                null),
+            testUserId);
+
+    ApiConnectionResponse updated =
+        apiConnectionService.update(
+            created.id(),
+            new UpdateApiConnectionRequest(
+                null, null, null, null, "https://wd1014-update.example.com/بيانات", null),
+            testUserId);
+
+    List<Record> rows = connectionAudits("UPDATE", created.id());
+    assertThat(rows).hasSize(1);
+    JsonNode meta = auditMetadata(rows.get(0));
+    assertThat(meta.get("after").get("baseUrl").asText())
+        .isEqualTo(updated.baseUrl())
+        .doesNotContain("%D8");
+    assertThat(meta.get("before").get("baseUrl").asText())
+        .isEqualTo("https://wd1014-update.example.com/v1");
+  }
+
   /** 인증 정보를 바꾼 수정 — 바뀐 항목·credentialsChanged=true 가 남고, 옛 비밀·새 비밀은 남지 않는다. */
   @Test
   void update_credentialsChanged_writesUpdateAuditWithFlagTrue() throws Exception {

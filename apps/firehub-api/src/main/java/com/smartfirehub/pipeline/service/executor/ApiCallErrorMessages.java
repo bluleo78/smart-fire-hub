@@ -382,8 +382,12 @@ public final class ApiCallErrorMessages {
     return RequestUrlEncoding.encodeHiddenForDisplay(redactUrlRaw(url));
   }
 
-  /** 숨은 글자 인코딩 전의 가리기 본체 — userinfo·쿼리·프래그먼트를 버린다. */
-  private static String redactUrlRaw(String url) {
+  /**
+   * 숨은 글자 인코딩 전의 가리기 본체 — userinfo·쿼리·프래그먼트를 버린다. 저장 값의 사본(감사 등)에 쓴다 — 경로 글자를 %XX 로 바꾸지 않는다(호스트는
+   * UrlAuthority 가 소문자로 다시 쓴다). 화면 문구에는 {@link #redactUrl} 을 쓴다. null 은 "" — redactUrl(null) 이 이 값을
+   * 문구에 싣는다.
+   */
+  public static String redactUrlRaw(String url) {
     if (url == null) return "";
     try {
       URI uri = new URI(url);

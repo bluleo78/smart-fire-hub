@@ -318,8 +318,7 @@ public final class RequestUrlEncoding {
       return true;
     }
     // 방침(WD-1000 후속): 아랍 숫자(DIRECTIONALITY_ARABIC_NUMBER, U+0660 등)도 남긴다 — bidi N1 규칙상 AN 사이의 중립
-    // 글자(- = +)가
-    // 오른쪽→왼쪽으로 풀려 /p/١-٢ 가 ٢-١ 로 뒤집혀 보인다.
+    // 글자(- = +)가 오른쪽→왼쪽으로 풀려 /p/١-٢ 가 ٢-١ 로 뒤집혀 보인다.
     // 방향이 오른쪽→왼쪽인 글자는 주변 / 와 숫자의 표시 순서를 바꾼다. 감싸는 표식·몽골·크메르 보이지 않는 글자도 남긴다.
     byte dir = Character.getDirectionality(cp);
     if (dir == Character.DIRECTIONALITY_RIGHT_TO_LEFT
