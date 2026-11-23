@@ -242,3 +242,92 @@ test.describe('AISessionSidebar — 현재 활성 세션 삭제 후 UI 초기화
     await expect(page.getByText('응답 메시지입니다.')).toBeVisible({ timeout: 3_000 });
   });
 });
+
+// WD-973: 삭제 응답을 기다리는 줄의 휴지통을 다시 누르면 같은 id 로 DELETE 가 또 나갔다(두 번째는 404 → 실패 토스트).
+test.describe('삭제 중 다시 지우기 (WD-973)', () => {
+  /**
+   * 전체 화면 목록을 열고 DELETE(id=10) 응답을 시험이 쥔다.
+   * - failDelete: true 면 풀어 줄 때 500 으로 실패시킨다(false 면 204)
+   * - 돌려주는 deletes 는 서버에 닿은 DELETE 요청 수, release 는 붙잡은 응답을 푼다
+   */
+  async function openWithHeldDelete(page: Page, failDelete: boolean) {
+    const deletes: string[] = [];
+    let release: () => void = () => {};
+    await page.route(
+      (url) => url.pathname === '/api/v1/ai/sessions',
+      (route) =>
+        route.request().method() === 'GET'
+          ? route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(MOCK_SESSIONS) })
+          : route.continue(),
+    );
+    await page.route(
+      (url) => /\/api\/v1\/ai\/sessions\/\d+$/.test(url.pathname),
+      async (route) => {
+        if (route.request().method() !== 'DELETE') return route.continue();
+        deletes.push(new URL(route.request().url()).pathname.split('/').pop() ?? '');
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        return failDelete
+          ? route.fulfill({ status: 500, contentType: 'application/json', body: '{"message":"fail"}' })
+          : route.fulfill({ status: 204, body: '' });
+      },
+    );
+    await page.goto('/', { waitUntil: 'commit' });
+    await chipLocator(page).click();
+    await page.getByPlaceholder('메시지를 입력하세요...').waitFor({ state: 'visible', timeout: 5_000 });
+    await chipLocator(page).click();
+    await page.getByRole('button', { name: '새 대화' }).waitFor({ state: 'visible', timeout: 5_000 });
+    return { deletes, release: () => release() };
+  }
+
+  /** 휴지통을 눌러 확인 창을 열고 「삭제」로 확정한다 */
+  async function confirmDelete(page: Page, title: string) {
+    await page.getByRole('button', { name: `${title} 삭제` }).click({ force: true });
+    await page.getByRole('alertdialog').getByRole('button', { name: '삭제', exact: true }).click();
+  }
+
+  test('확인 뒤 응답 전에 같은 줄 휴지통을 눌러도 확인 창이 열리지 않고 DELETE 는 1건', async ({
+    authenticatedPage: page,
+  }) => {
+    const req = await openWithHeldDelete(page, false);
+    await confirmDelete(page, '활성 대화 테스트');
+    await expect.poll(() => req.deletes).toEqual(['10']);
+
+    const trash = page.getByRole('button', { name: '활성 대화 테스트 삭제' });
+    await expect(trash).toHaveAttribute('aria-disabled', 'true');
+    // 마우스를 목록 밖으로 치운 안 가리킨 상태에서도 흐리게(50%) 보여 바쁜 줄임을 알린다 — 투명(0)이 아니다
+    await page.mouse.move(1, 1);
+    await expect(trash).toHaveCSS('opacity', '0.5');
+
+    await trash.click({ force: true });
+    await expect(page.getByRole('alertdialog')).toHaveCount(0);
+    // 다른 줄은 영향이 없다
+    await expect(page.getByRole('button', { name: '다른 대화 삭제' })).not.toHaveAttribute('aria-disabled', 'true');
+    expect(req.deletes).toEqual(['10']);
+    // 붙잡은 204 를 풀고 성공 안내까지 기다린다 — 시험이 끝나기 전에 응답이 처리된 것을 확인한다
+    // (목록 GET 모킹은 늘 같은 목록을 돌려 재조회 뒤 줄이 다시 보이므로 줄 사라짐으로는 기다리지 않는다)
+    req.release();
+    await expect(page.getByText('대화가 삭제되었습니다.')).toBeVisible();
+  });
+
+  test('실패(500) 뒤에는 다시 지울 수 있다', async ({ authenticatedPage: page }) => {
+    const req = await openWithHeldDelete(page, true);
+    await confirmDelete(page, '활성 대화 테스트');
+    await expect.poll(() => req.deletes).toEqual(['10']);
+    req.release();
+
+    const trash = page.getByRole('button', { name: '활성 대화 테스트 삭제' });
+    await expect(page.getByText('대화 삭제에 실패했습니다.')).toBeVisible();
+    await expect(trash).not.toHaveAttribute('aria-disabled', 'true');
+    await trash.click({ force: true });
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+    // 다시 확정하면 두 번째 DELETE 가 실제로 나간다 — 조용히 막힌 채로 남지 않는다
+    await page.getByRole('alertdialog').getByRole('button', { name: '삭제', exact: true }).click();
+    await expect.poll(() => req.deletes).toEqual(['10', '10']);
+    await expect(trash).toHaveAttribute('aria-disabled', 'true');
+    req.release();
+    // 두 번째 실패 응답이 처리되면 다시 누를 수 있는 상태로 돌아온다
+    await expect(trash).not.toHaveAttribute('aria-disabled', 'true');
+  });
+});

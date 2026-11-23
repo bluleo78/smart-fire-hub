@@ -1,9 +1,10 @@
 import { ChevronDown, MessageSquare,Plus, Trash2 } from 'lucide-react';
 import { type FocusEvent, useEffect, useRef, useState } from 'react';
 
-import { useAISessions, useDeleteAISession } from '../../hooks/queries/useAIChat';
+import { useAISessions, useDeleteAISession, usePendingSessionDeletes } from '../../hooks/queries/useAIChat';
 import { cn } from '../../lib/utils';
 import type { AISession } from '../../types/ai';
+import { PendingButton } from '../PendingButton';
 import { Button } from '../ui/button';
 import { DeleteConfirmDialog } from '../ui/delete-confirm-dialog';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
@@ -34,6 +35,8 @@ export function SessionSwitcher({ currentSessionId, onNewSession, onSessionDelet
   const [open, setOpen] = useState(false);
   const { data: sessions } = useAISessions();
   const deleteSession = useDeleteAISession();
+  // WD-973: 삭제 요청이 진행 중인 줄 — 그 줄 휴지통을 다시 열지 못하게 한다
+  const deleting = usePendingSessionDeletes();
   // 보낸 삭제 요청마다 지운 줄(id)과 그 줄이 사라지면 초점을 옮겨 갈 이웃 줄 (WD-951). 삭제가 겹칠 수 있어 모음이다.
   // 요청 단위라 실패한 요청만 빠지고, 같은 줄에 겹친 요청이 하나라도 남아 있으면 그 줄은 계속 기억된다.
   const pendingDeletes = useRef(new Set<{ id: number; neighborId: number | undefined }>());
@@ -169,19 +172,24 @@ export function SessionSwitcher({ currentSessionId, onNewSession, onSessionDelet
                           .catch(() => {});
                       }}
                       trigger={
-                        <Button
+                        <PendingButton
                           variant="ghost"
                           size="icon"
-                          className="group/trash absolute right-2 top-1.5 h-5 w-5"
+                          className="group/trash absolute right-2 top-1.5 h-5 w-5 aria-disabled:pointer-events-auto"
+                          // WD-973: 삭제 응답 전에는 다시 못 연다. PendingButton 은 disabled 대신 aria-disabled 로 잠가 초점을 지키고
+                          // (WD-951 실패 뒤 이 버튼 초점) 클릭을 preventDefault 해 Radix 트리거가 확인 창을 열지 않는다(Enter·Space 도 click 경로).
+                          // 공용 잠금 모양의 pointer-events-none 은 되돌린다 — 줄 위에 겹친 버튼이라 클릭이 아래 제목(대화 열기)으로 새고 초점도 잃는다.
+                          pending={deleting.has(session.id)}
                           // 어느 대화의 삭제인지 이름에 담는다(전체 화면 목록 #346 과 같게). 제목 버튼의 형제라
                           // #514 처럼 제목이 두 번 읽히지 않는다.
                           aria-label={`${label} 삭제`}
                           onFocus={scrollIntoViewOnKeyboardFocus}
                         >
                           {/* 흐린 opacity-50 에 muted 색까지 겹치면 현재 줄(bg-accent) 위 대비가 3:1 아래로 떨어진다 —
-                              muted 색 하나만 두고 가리킬 때 진하게(WD-951 리뷰 후속, WCAG 1.4.11) */}
+                              muted 색 하나만 두고 가리킬 때 진하게(WD-951 리뷰 후속, WCAG 1.4.11).
+                              삭제 중(aria-disabled)의 opacity-50 은 예외 — 비활성 컨트롤은 1.4.11 대상이 아니고 눌러도 안 됨을 보인다(WD-973) */}
                           <Trash2 className="h-3 w-3 text-muted-foreground group-hover/trash:text-foreground group-focus-visible/trash:text-foreground" />
-                        </Button>
+                        </PendingButton>
                       }
                     />
                   </li>

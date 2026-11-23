@@ -1,5 +1,5 @@
-import { type QueryClient, type QueryKey, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { type QueryClient, type QueryKey, useMutation, useMutationState, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { aiApi, AIChatHttpError, streamAIChat } from '../../api/ai';
@@ -8,7 +8,7 @@ import { uploadFiles } from '../../api/files';
 import { buildScreenContext, type ScreenEntityKind, type ScreenNameLookup } from '../../components/ai/screen-context';
 import { getInvalidationKeys } from '../../components/ai/widgets/invalidationMap';
 import { buildNavigationContext } from '../../components/ai/widgets/routes';
-import type { AIAttachment, AIMessage, AIStreamEvent, CanvasLayout } from '../../types/ai';
+import type { AIAttachment, AIMessage, AISession, AIStreamEvent, CanvasLayout } from '../../types/ai';
 import { dashboardDetailKey } from './useAnalytics';
 import { datasetDetailKey } from './useDatasets';
 import { pipelineDetailKey } from './usePipelines';
@@ -51,11 +51,20 @@ export function useAISessions(page = 0, size = 20) {
   });
 }
 
+/** 대화 삭제 mutation 의 키 — usePendingSessionDeletes 가 진행 중인 삭제를 찾는 데 쓴다 (WD-973) */
+const DELETE_SESSION_MUTATION_KEY = ['ai-sessions', 'delete'] as const;
+
 export function useDeleteAISession() {
   const queryClient = useQueryClient();
   return useMutation({
+    mutationKey: DELETE_SESSION_MUTATION_KEY,
     mutationFn: aiApi.deleteSession,
-    onSuccess: () => {
+    onSuccess: (_data, id) => {
+      // WD-973: 성공 즉시 캐시에서 그 줄을 뺀다. 재조회가 끝나기 전에는 pending 도 풀려 지운 줄이 다시 눌릴 수
+      // 있고, 그러면 이미 지워진 id 로 DELETE 가 또 나가 실패 토스트가 뜬다. (query 만 건드리므로 mutationKey 와 무관)
+      queryClient.setQueriesData<AISession[]>({ queryKey: ['ai-sessions'] }, (old) =>
+        Array.isArray(old) ? old.filter((s) => s.id !== id) : old,
+      );
       queryClient.invalidateQueries({ queryKey: ['ai-sessions'] });
       toast.success('대화가 삭제되었습니다.');
     },
@@ -64,6 +73,18 @@ export function useDeleteAISession() {
       toast.error('대화 삭제에 실패했습니다.');
     },
   });
+}
+
+/**
+ * 삭제 요청이 진행 중인 세션 id 집합 (WD-973).
+ * 같은 QueryClient 를 쓰는 모든 목록(패널·전체 화면)이 공유해, 응답 전에 같은 줄을 다시 지우지 못하게 한다.
+ */
+export function usePendingSessionDeletes(): Set<number> {
+  const ids = useMutationState({
+    filters: { mutationKey: DELETE_SESSION_MUTATION_KEY, status: 'pending' },
+    select: (m) => m.state.variables as number,
+  });
+  return useMemo(() => new Set(ids), [ids]);
 }
 
 export function useAIChat(options?: {

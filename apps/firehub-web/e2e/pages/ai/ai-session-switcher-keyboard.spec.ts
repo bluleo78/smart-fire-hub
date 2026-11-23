@@ -139,6 +139,18 @@ const deleteBtn = (page: Page, title: string) =>
 const focusIsOnBody = (page: Page) => page.evaluate(() => document.activeElement === document.body);
 const confirm = (page: Page) => page.getByRole('alertdialog');
 
+/**
+ * 시계를 staleTime(30초, main.tsx) 너머로 돌리고 망 끊김→다시 붙음을 보내 대화 목록을 다시 읽게 한다.
+ * page.clock.install() 을 한 시험에서만 쓴다 — 삭제 응답을 붙잡은 채 재조회가 먼저 오는 순서를 만든다.
+ */
+async function refetchStaleSessions(page: Page) {
+  await page.clock.fastForward(31_000);
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event('offline'));
+    window.dispatchEvent(new Event('online'));
+  });
+}
+
 test.describe('SessionSwitcher — 키보드 삭제 (WD-951)', () => {
   test('열면 첫 제목에 초점, Tab 은 제목 → 삭제 → 다음 줄 제목으로 가고 목록 안에서 돈다', async ({
     authenticatedPage: page,
@@ -270,36 +282,36 @@ test.describe('SessionSwitcher — 키보드 삭제 (WD-951)', () => {
     }
 
     test('가운데 줄을 지우면 줄이 사라진 뒤 다음 줄 제목에 초점이 간다', async ({ authenticatedPage: page }) => {
-      const requests = await openPanel(page, MOCK_SESSIONS, { holdRefetch: true });
+      const requests = await openPanel(page, MOCK_SESSIONS, { slowDeleteIds: ['2'] });
       await openListByKeyboard(page);
       await deleteByKeyboard(page, '둘째 대화');
       await expect.poll(() => requests.deletes).toEqual(['2']);
 
       // 목록 갱신 전: 줄이 아직 있다. 시험이 갱신을 풀어 줄이 실제로 사라진 다음을 본다.
       await expect(titleBtn(page, '둘째 대화')).toHaveCount(1);
-      requests.release();
+      requests.releaseDelete('2');
       await expect(titleBtn(page, '둘째 대화')).toHaveCount(0);
       await expect(titleBtn(page, '셋째 대화')).toBeFocused();
     });
 
     test('끝 줄을 지우면 이전 줄 제목에 초점이 간다', async ({ authenticatedPage: page }) => {
-      const requests = await openPanel(page, MOCK_SESSIONS, { holdRefetch: true });
+      const requests = await openPanel(page, MOCK_SESSIONS, { slowDeleteIds: ['3'] });
       await openListByKeyboard(page);
       await deleteByKeyboard(page, '셋째 대화');
       await expect.poll(() => requests.deletes).toEqual(['3']);
 
-      requests.release();
+      requests.releaseDelete('3');
       await expect(titleBtn(page, '셋째 대화')).toHaveCount(0);
       await expect(titleBtn(page, '둘째 대화')).toBeFocused();
     });
 
     test('하나뿐인 줄을 지우면 목록이 닫히고 「새 대화」에 초점이 간다', async ({ authenticatedPage: page }) => {
-      const requests = await openPanel(page, [MOCK_SESSIONS[0]], { holdRefetch: true });
+      const requests = await openPanel(page, [MOCK_SESSIONS[0]], { slowDeleteIds: ['1'] });
       await openListByKeyboard(page);
       await deleteByKeyboard(page, '첫째 대화');
       await expect.poll(() => requests.deletes).toEqual(['1']);
 
-      requests.release();
+      requests.releaseDelete('1');
       await expect(page.getByText('대화 이력 없음')).toBeVisible();
       await expect(page.getByRole('dialog', { name: '대화 선택' })).toHaveCount(0);
       await expect(page.getByRole('button', { name: '새 대화' })).toBeFocused();
@@ -308,7 +320,7 @@ test.describe('SessionSwitcher — 키보드 삭제 (WD-951)', () => {
     test('마지막 대화를 지운 뒤 새 대화가 생겨도(채팅 전송) 목록은 저절로 열리지 않는다', async ({
       authenticatedPage: page,
     }) => {
-      const requests = await openPanel(page, [MOCK_SESSIONS[0]], { holdRefetch: true });
+      const requests = await openPanel(page, [MOCK_SESSIONS[0]], { slowDeleteIds: ['1'] });
       await page.route(
         (url) => url.pathname === '/api/v1/ai/chat',
         (route) =>
@@ -320,7 +332,7 @@ test.describe('SessionSwitcher — 키보드 삭제 (WD-951)', () => {
       );
       await openListByKeyboard(page);
       await deleteByKeyboard(page, '첫째 대화');
-      requests.release();
+      requests.releaseDelete('1');
       await expect(page.getByRole('button', { name: '새 대화' })).toBeFocused();
 
       // 실제 무효화 경로: 첫 메시지 전송 → 세션 생성 POST → 목록 무효화 → 목록 1개로 갱신
@@ -335,7 +347,7 @@ test.describe('SessionSwitcher — 키보드 삭제 (WD-951)', () => {
     });
 
     test('갱신 전에 Tab 으로 다른 줄로 옮긴 초점은 갱신 뒤에도 빼앗기지 않는다', async ({ authenticatedPage: page }) => {
-      const requests = await openPanel(page, MOCK_SESSIONS, { holdRefetch: true });
+      const requests = await openPanel(page, MOCK_SESSIONS, { slowDeleteIds: ['1'] });
       await openListByKeyboard(page);
       await deleteByKeyboard(page, '첫째 대화');
       await expect.poll(() => requests.deletes).toEqual(['1']);
@@ -344,13 +356,13 @@ test.describe('SessionSwitcher — 키보드 삭제 (WD-951)', () => {
       await page.keyboard.press('Tab');
       await page.keyboard.press('Tab');
       await expect(deleteBtn(page, '둘째 대화')).toBeFocused();
-      requests.release();
+      requests.releaseDelete('1');
       await expect(titleBtn(page, '첫째 대화')).toHaveCount(0);
       await expect(deleteBtn(page, '둘째 대화')).toBeFocused();
     });
 
     test('갱신 전에 Esc 로 목록을 닫으면 갱신 뒤에도 여는 버튼에 초점이 남는다', async ({ authenticatedPage: page }) => {
-      const requests = await openPanel(page, MOCK_SESSIONS, { holdRefetch: true });
+      const requests = await openPanel(page, MOCK_SESSIONS, { slowDeleteIds: ['1'] });
       const { trigger } = await openListByKeyboard(page);
       await deleteByKeyboard(page, '첫째 대화');
       await expect.poll(() => requests.deletes).toEqual(['1']);
@@ -358,7 +370,7 @@ test.describe('SessionSwitcher — 키보드 삭제 (WD-951)', () => {
       await page.keyboard.press('Escape');
       await expect(page.getByRole('dialog', { name: '대화 선택' })).toHaveCount(0);
       await expect(trigger).toBeFocused();
-      requests.release();
+      requests.releaseDelete('1');
       await expect(page.getByRole('button', { name: '대화 선택', exact: true })).toBeFocused();
       await expect(page.getByRole('dialog', { name: '대화 선택' })).toHaveCount(0);
     });
@@ -397,7 +409,7 @@ test.describe('SessionSwitcher — 키보드 삭제 (WD-951)', () => {
     test('목록을 닫고 초점이 body 인 채 갱신이 와도 대화가 남아 있으면 「새 대화」로 초점을 끌어가지 않는다', async ({
       authenticatedPage: page,
     }) => {
-      const requests = await openPanel(page, MOCK_SESSIONS, { holdRefetch: true });
+      const requests = await openPanel(page, MOCK_SESSIONS, { slowDeleteIds: ['2'] });
       // 첫째 대화를 현재 대화로 연다(목록은 선택하면 닫힌다)
       await openListByKeyboard(page);
       await page.keyboard.press('Enter');
@@ -415,7 +427,7 @@ test.describe('SessionSwitcher — 키보드 삭제 (WD-951)', () => {
       const refetched = page.waitForResponse(
         (r) => new URL(r.url()).pathname === '/api/v1/ai/sessions' && r.request().method() === 'GET',
       );
-      requests.release();
+      requests.releaseDelete('2');
       await refetched;
       // 갱신 결과가 렌더·효과까지 반영될 한 프레임을 기다린다(타이머 아님)
       await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
@@ -423,7 +435,8 @@ test.describe('SessionSwitcher — 키보드 삭제 (WD-951)', () => {
       expect(await focusIsOnBody(page)).toBe(true);
       // 현재 대화는 그대로 — 다른 대화를 열지도 새 대화를 시작하지도 않았다
       await expect(page.getByRole('button', { name: '첫째 대화', exact: true })).toBeVisible();
-      expect(requests.messages).toEqual(['sw-1']);
+      // 같은 대화(sw-1)의 메시지 재조회는 타이밍에 따라 한 번 더 나갈 수 있어(시작점에서도 6번 중 3번) 「다른 대화를 열지 않음」만 본다
+      expect([...new Set(requests.messages)]).toEqual(['sw-1']);
     });
 
     test('삭제 응답보다 목록 갱신이 먼저 와서 줄이 사라져도 다음 줄 제목에 초점이 간다', async ({
@@ -438,11 +451,7 @@ test.describe('SessionSwitcher — 키보드 삭제 (WD-951)', () => {
 
       // 서버에서는 이미 지워졌고 응답만 늦다. 목록이 낡은 뒤(30초) 망이 다시 붙으면 응답보다 먼저 다시 읽는다.
       requests.setSessions([MOCK_SESSIONS[0], MOCK_SESSIONS[2]]);
-      await page.clock.fastForward(31_000);
-      await page.evaluate(() => {
-        window.dispatchEvent(new Event('offline'));
-        window.dispatchEvent(new Event('online'));
-      });
+      await refetchStaleSessions(page);
       await expect(titleBtn(page, '둘째 대화')).toHaveCount(0);
       await expect(titleBtn(page, '셋째 대화')).toBeFocused();
       requests.releaseDelete('2');
@@ -451,14 +460,14 @@ test.describe('SessionSwitcher — 키보드 삭제 (WD-951)', () => {
     test('하나뿐인 줄을 지우고 Esc 로 닫아 여는 버튼에 있던 초점은 갱신 뒤 「새 대화」로 간다', async ({
       authenticatedPage: page,
     }) => {
-      const requests = await openPanel(page, [MOCK_SESSIONS[0]], { holdRefetch: true });
+      const requests = await openPanel(page, [MOCK_SESSIONS[0]], { slowDeleteIds: ['1'] });
       const { trigger } = await openListByKeyboard(page);
       await deleteByKeyboard(page, '첫째 대화');
       await expect.poll(() => requests.deletes).toEqual(['1']);
       await page.keyboard.press('Escape');
       await expect(trigger).toBeFocused();
 
-      requests.release();
+      requests.releaseDelete('1');
       await expect(page.getByText('대화 이력 없음')).toBeVisible();
       await expect(page.getByRole('button', { name: '새 대화' })).toBeFocused();
     });
@@ -466,7 +475,7 @@ test.describe('SessionSwitcher — 키보드 삭제 (WD-951)', () => {
     test('마지막 대화를 지우고 목록 밖 빈 자리를 누른 뒤 갱신이 와도 「새 대화」로 초점을 끌어가지 않는다', async ({
       authenticatedPage: page,
     }) => {
-      const requests = await openPanel(page, [MOCK_SESSIONS[0]], { holdRefetch: true });
+      const requests = await openPanel(page, [MOCK_SESSIONS[0]], { slowDeleteIds: ['1'] });
       const { trigger } = await openListByKeyboard(page);
       await deleteByKeyboard(page, '첫째 대화');
       await expect.poll(() => requests.deletes).toEqual(['1']);
@@ -475,7 +484,7 @@ test.describe('SessionSwitcher — 키보드 삭제 (WD-951)', () => {
       await page.mouse.click(2, 2);
       expect(await focusIsOnBody(page)).toBe(true);
 
-      requests.release();
+      requests.releaseDelete('1');
       await expect(page.getByText('대화 이력 없음')).toBeVisible();
       await expect(page.getByRole('button', { name: '새 대화' })).not.toBeFocused();
       expect(await focusIsOnBody(page)).toBe(true);
@@ -484,7 +493,11 @@ test.describe('SessionSwitcher — 키보드 삭제 (WD-951)', () => {
     test('이웃 줄도 함께 사라지면 목록 순서의 첫 남은 줄로 간다 — 나중에 생긴 줄이 위에 있어도 (리뷰 후속 ①)', async ({
       authenticatedPage: page,
     }) => {
-      const requests = await openPanel(page, MOCK_SESSIONS, { holdRefetch: true });
+      // WD-973: 성공(204)은 캐시에서 그 줄만 즉시 뺀다 — 지운 줄(셋째)은 DELETE 응답을 붙잡아 사라지는 시점을 쥐고,
+      // 이웃(둘째)은 서버 목록이 바뀐 재조회로 함께 사라지게 한다(삭제는 셋째 하나만).
+      // 시계를 쥐어 목록 조회를 낡게(staleTime 30초) 만든 뒤 재연결 이벤트로 재조회를 일으킨다
+      await page.clock.install();
+      const requests = await openPanel(page, MOCK_SESSIONS, { slowDeleteIds: ['3'] });
       await openListByKeyboard(page);
       await deleteByKeyboard(page, '셋째 대화');
       await expect.poll(() => requests.deletes).toEqual(['3']);
@@ -493,31 +506,43 @@ test.describe('SessionSwitcher — 키보드 삭제 (WD-951)', () => {
       // (인라인 ref 는 렌더마다 다시 붙어 지금은 Map 순서도 같지만, 그 구현 세부에 기대지 않음을 지킨다)
       const created = createAISession({ id: 7, sessionId: 'sw-7', title: '새로 생긴 대화', updatedAt: '2026-11-23T04:00:00Z' });
       requests.setSessions([created, MOCK_SESSIONS[0]]);
-      requests.release();
+      // 삭제 응답은 아직 붙잡힌 채 재조회(서버의 새 목록)가 먼저 도착한다 — 지운 줄(셋째)과 이웃(둘째)이 한 갱신에 함께 사라진다
+      await refetchStaleSessions(page);
       await expect(titleBtn(page, '셋째 대화')).toHaveCount(0);
+      await expect(titleBtn(page, '둘째 대화')).toHaveCount(0);
       await expect(titleBtn(page, '새로 생긴 대화')).toBeFocused();
+      // 붙잡은 요청을 모두 풀어 둔다
+      requests.releaseDelete('3');
     });
 
     test('실패한 삭제는 기억에서 빠져, 뒤에 그 줄이 다른 까닭으로 사라져도 초점을 그 이웃으로 끌지 않는다 (리뷰 후속 ②)', async ({
       authenticatedPage: page,
     }) => {
       const four = createAISession({ id: 4, sessionId: 'sw-4', title: '넷째 대화', updatedAt: '2026-11-23T00:00:00Z' });
-      const requests = await openPanel(page, [...MOCK_SESSIONS, four], { holdRefetch: true, failDeleteIds: ['3'] });
+      // 시계를 쥐어 목록 조회를 낡게(staleTime 30초) 만든 뒤 재연결 이벤트로 재조회를 일으킨다
+      await page.clock.install();
+      // 셋째 삭제는 즉시 500, 첫째 삭제는 응답을 붙잡는다
+      const requests = await openPanel(page, [...MOCK_SESSIONS, four], { slowDeleteIds: ['1'], failDeleteIds: ['3'] });
       await openListByKeyboard(page);
       // 셋째 삭제는 실패한다(이웃은 넷째)
       await deleteByKeyboard(page, '셋째 대화');
       await expect(page.getByText('대화 삭제에 실패했습니다.')).toBeVisible();
       await expect(deleteBtn(page, '셋째 대화')).toBeFocused();
 
-      // 첫째를 지운다(이웃은 둘째). 갱신 전에 다른 곳에서 셋째가 지워져 둘이 함께 사라진다
+      // 첫째를 지운다(이웃은 둘째) — 응답은 붙잡혀 있어 첫째 줄이 아직 남는다.
+      // WD-973: 성공(204)은 캐시에서 그 줄만 즉시 빼므로, 두 줄이 한 갱신에 사라지는 상황은 응답 전에 도착한 재조회로 만든다.
       await deleteByKeyboard(page, '첫째 대화');
       await expect.poll(() => requests.deletes).toEqual(['3', '1']);
+      await expect(titleBtn(page, '첫째 대화')).toHaveCount(1);
+      // 그사이 다른 곳에서 셋째가 지워졌다 — 서버 목록에서 첫째·셋째가 모두 빠진 재조회가 한 번에 도착한다
       requests.setSessions([MOCK_SESSIONS[1], four]);
-      requests.release();
+      await refetchStaleSessions(page);
       await expect(titleBtn(page, '첫째 대화')).toHaveCount(0);
       await expect(titleBtn(page, '셋째 대화')).toHaveCount(0);
       // 실패한 셋째의 기억이 남아 있으면 먼저 기억한 그 이웃(넷째)으로 간다
       await expect(titleBtn(page, '둘째 대화')).toBeFocused();
+      // 붙잡은 요청을 모두 풀어 둔다
+      requests.releaseDelete('1');
     });
 
     test('삭제가 500 으로 실패하면 오류 토스트, 줄은 남고 초점은 그 삭제 버튼에 돌아온다', async ({
@@ -709,6 +734,85 @@ test.describe('SessionSwitcher — 키보드 삭제 (WD-951)', () => {
       expect(await box.evaluate((el) => el.scrollTop)).toBe(0);
       await page.mouse.up();
       await expect.poll(() => requests.messages).toEqual(['many-8']);
+    });
+  });
+
+  // WD-973: 삭제 응답을 기다리는 줄의 휴지통을 다시 누르면 같은 id 로 DELETE 가 또 나갔다(두 번째는 404 → 실패 토스트).
+  test.describe('삭제 중 다시 지우기 (WD-973)', () => {
+    /** 첫째 대화를 지우겠다고 확인까지 누른다 — DELETE 응답은 시험이 쥔다 */
+    async function confirmDeleteFirst(page: Page) {
+      await page.getByRole('button', { name: '대화 선택', exact: true }).click();
+      await deleteBtn(page, '첫째 대화').click();
+      await confirm(page).getByRole('button', { name: '삭제', exact: true }).click();
+    }
+
+    test('확인 뒤 응답 전에 같은 줄 휴지통을 눌러도 확인 창이 열리지 않고 DELETE 는 1건', async ({
+      authenticatedPage: page,
+    }) => {
+      const requests = await openPanel(page, MOCK_SESSIONS, { slowDeleteIds: ['1'] });
+      await confirmDeleteFirst(page);
+      await expect.poll(() => requests.deletes).toEqual(['1']);
+
+      // aria-disabled 버튼은 Playwright 가 비활성으로 보고 기다리므로 force 로 실제 클릭을 보낸다
+      await deleteBtn(page, '첫째 대화').click({ force: true });
+      await expect(deleteBtn(page, '첫째 대화')).toHaveAttribute('aria-disabled', 'true');
+      await expect(confirm(page)).toHaveCount(0);
+      await expect(deleteBtn(page, '첫째 대화')).toBeFocused();
+      expect(requests.deletes).toEqual(['1']);
+      requests.releaseDelete('1');
+    });
+
+    for (const key of ACTIVATE_KEYS) {
+      test(`키보드(${key})로 눌러도 열리지 않는다`, async ({ authenticatedPage: page }) => {
+        const requests = await openPanel(page, MOCK_SESSIONS, { slowDeleteIds: ['1'] });
+        await confirmDeleteFirst(page);
+        await expect.poll(() => requests.deletes).toEqual(['1']);
+
+        await deleteBtn(page, '첫째 대화').focus();
+        await page.keyboard.press(key);
+        await expect(confirm(page)).toHaveCount(0);
+        expect(requests.deletes).toEqual(['1']);
+        requests.releaseDelete('1');
+      });
+    }
+
+    test('성공(204) 응답 뒤 재조회를 붙잡은 동안에도 줄이 사라지고 실패 토스트가 없다', async ({
+      authenticatedPage: page,
+    }) => {
+      const requests = await openPanel(page, MOCK_SESSIONS, { slowDeleteIds: ['1'], holdRefetch: true });
+      // 목록이 열린 채로 있어야 줄이 사라졌음을 볼 수 있다 — 키보드로 지운다(마우스 확인은 목록을 닫는다)
+      await openListByKeyboard(page);
+      await deleteBtn(page, '첫째 대화').focus();
+      await page.keyboard.press('Enter');
+      await confirm(page).getByRole('button', { name: '삭제', exact: true }).focus();
+      await page.keyboard.press('Enter');
+      await expect.poll(() => requests.deletes).toEqual(['1']);
+      await expect(titleBtn(page, '첫째 대화')).toHaveCount(1);
+
+      requests.releaseDelete('1');
+      // 재조회 GET 은 release() 전까지 보류 — 캐시에서 바로 빠져야 한다(캐시 제거가 없으면 이 줄이 남는다)
+      await expect(titleBtn(page, '첫째 대화')).toHaveCount(0);
+      await expect(titleBtn(page, '둘째 대화')).toHaveCount(1);
+      await expect(page.getByText('대화 삭제에 실패했습니다.')).toHaveCount(0);
+      expect(requests.deletes).toEqual(['1']);
+      requests.release();
+    });
+
+    test('실패(500) 뒤에는 다시 지울 수 있다', async ({ authenticatedPage: page }) => {
+      const requests = await openPanel(page, MOCK_SESSIONS, { slowDeleteIds: ['1'], failDeleteIds: ['1'] });
+      await confirmDeleteFirst(page);
+      await expect.poll(() => requests.deletes).toEqual(['1']);
+
+      requests.releaseDelete('1');
+      await expect(page.getByText('대화 삭제에 실패했습니다.')).toBeVisible();
+      await expect(titleBtn(page, '첫째 대화')).toHaveCount(1);
+      await expect(deleteBtn(page, '첫째 대화')).not.toHaveAttribute('aria-disabled', 'true');
+
+      await deleteBtn(page, '첫째 대화').click();
+      await expect(confirm(page)).toBeVisible();
+      await confirm(page).getByRole('button', { name: '삭제', exact: true }).click();
+      await expect.poll(() => requests.deletes).toEqual(['1', '1']);
+      requests.releaseDelete('1');
     });
   });
 });
