@@ -251,3 +251,12 @@ export function buildChartDataTable(
     .map((row) => headers.map((h) => formatChartCellValue(row[h])));
   return toLimitedTable(headers, data.length, rows, accessibleName);
 }
+
+/**
+ * 값 표를 낼 수 있는 차트 종류인가(WD-832) — 표(TABLE)는 이미 표고, 지도(MAP)는 figure·값 표를 만들지 않는다.
+ * ChartRenderer 의 figure 필요 판정과 「표로 보기」 토글 표시 조건이 이 한 곳을 같이 쓴다.
+ * 컬럼 누락·빈 데이터처럼 데이터 상태에 따른 안내는 렌더러가 알아서 보이므로 여기서는 종류만 본다.
+ */
+export function chartSupportsValueTable(chartType: ChartType): boolean {
+  return chartType !== 'TABLE' && chartType !== 'MAP';
+}

@@ -11,7 +11,9 @@ import { PendingButton } from '../PendingButton';
 import { Button } from '../ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Separator } from '../ui/separator';
+import { chartSupportsValueTable } from './chart-a11y';
 import { ChartRenderer } from './ChartRenderer';
+import { ChartTableToggle } from './ChartTableToggle';
 import { WidgetErrorBoundary } from './WidgetErrorBoundary';
 import { WidgetFreshnessBar } from './WidgetFreshnessBar';
 
@@ -33,6 +35,8 @@ interface WidgetContentProps {
   dataError: unknown;
   /** 이 위젯만 다시 조회한다 — 실패해도 토스트를 띄우지 않는다(위젯 안 안내가 이미 사유를 보인다, WD-686) */
   onRetry: () => void;
+  /** 「표로 보기」가 켜졌는가(WD-832) — 켜면 그림 자리에 값 표를 보인다 */
+  tableView: boolean;
 }
 
 /**
@@ -78,7 +82,7 @@ function WidgetErrorBox({ title, children, action }: { title: ReactNode; childre
  * 위젯 본문 — 카드가 조회한 이 위젯의 단건 차트 데이터(`/charts/{id}/data`)를 렌더링한다.
  * 데이터 조회·새로고침 상태는 카드가 소유하고(신선도 바와 같은 쿼리를 보도록), 본문은 표시만 한다.
  */
-function WidgetContent({ widget, chartData, dataLoading, dataFetching, dataError, onRetry }: WidgetContentProps) {
+function WidgetContent({ widget, chartData, dataLoading, dataFetching, dataError, onRetry, tableView }: WidgetContentProps) {
   // 차트 메타는 첫 로딩 표시에만 쓴다 — 그리는 정의는 데이터 응답의 chart 다
   const { isLoading: chartLoading } = useChart(widget.chartId);
 
@@ -167,6 +171,7 @@ function WidgetContent({ widget, chartData, dataLoading, dataFetching, dataError
           data={queryResult.rows}
           columns={queryResult.columns}
           fillParent
+          view={tableView ? 'table' : 'chart'}
           // WD-826: 카드 제목과 같은 출처(widget.chartName)를 접근 이름에 쓴다
           title={widget.chartName ?? undefined}
         />
@@ -282,6 +287,9 @@ export function DashboardWidgetCard({
     void refetch();
   }, [refetch]);
 
+  // 「표로 보기」 선택(WD-832) — 카드마다 따로, 저장하지 않는다(새로고침하면 그림으로 돌아온다)
+  const [tableView, setTableView] = useState(false);
+
   // 이동 손잡이 사용법 — 손잡이의 설명(aria-describedby)으로 읽히게 숨긴 문구의 id
   const moveHelpId = useId();
 
@@ -328,6 +336,10 @@ export function DashboardWidgetCard({
           <CardTitle role="heading" aria-level={2} className="text-xs font-medium truncate flex-1 min-w-0" title={title}>
             {title}
           </CardTitle>
+          {/* 표로 보기 토글(WD-832) — 표 종류·지도·볼 수 없는 차트는 값 표가 없어 버튼도 없다. 편집 모드에서도 제거 버튼과 나란히 둔다. */}
+          {!inaccessible && widget.chartType != null && chartSupportsValueTable(widget.chartType) && (
+            <ChartTableToggle pressed={tableView} onPressedChange={setTableView} />
+          )}
           {isEditing && onRemove && (
             <Button
               variant="ghost"
@@ -357,6 +369,7 @@ export function DashboardWidgetCard({
               dataFetching={dataFetching}
               dataError={dataError}
               onRetry={handleRetry}
+              tableView={tableView}
             />
           </WidgetErrorBoundary>
         )}

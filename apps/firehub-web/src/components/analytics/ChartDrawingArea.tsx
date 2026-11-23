@@ -1,5 +1,6 @@
 import { useContext, useLayoutEffect } from 'react';
 
+import { cn } from '../../lib/utils';
 import { ChartFigureContext } from './chart-figure-context';
 
 /**
@@ -24,11 +25,17 @@ export function ChartDrawingArea({
   style?: React.CSSProperties;
   children: React.ReactNode;
 }) {
-  const { registerDrawing } = useContext(ChartFigureContext);
+  const { registerDrawing, tableMode } = useContext(ChartFigureContext);
   // 등록 해제 함수를 그대로 cleanup 으로 돌려준다(언마운트·figure 교체 시 등록이 남지 않게)
   useLayoutEffect(() => registerDrawing(), [registerDrawing]);
+  // 표 모드(WD-832): 그림만 display:none 으로 숨긴다 — 언마운트하지 않아 등록·상태가 유지되고, 뷰의 안내문은 그대로 보인다
   return (
-    <div aria-hidden="true" data-chart-drawing="" className="h-full w-full" style={style}>
+    <div
+      aria-hidden="true"
+      data-chart-drawing=""
+      className={cn('h-full w-full', tableMode && 'hidden')}
+      style={style}
+    >
       {children}
     </div>
   );
