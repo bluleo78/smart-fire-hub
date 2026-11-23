@@ -143,15 +143,29 @@ public class ProactiveJobService {
   }
 
   /**
+   * 정기 실행(SCHEDULE·BOTH)인지 — ANOMALY 전용이 아니면 그렇다. 트리거가 null 인 옛 행은 SCHEDULE 로 본다(WD-607).
+   *
+   * @param triggerType 트리거 문자열(null 도 정기 실행으로 본다)
+   */
+  static boolean isScheduledTrigger(String triggerType) {
+    return !ProactiveJobRepository.TRIGGER_ANOMALY.equals(triggerType);
+  }
+
+  /**
    * cronExpression / timezone 값을 Spring 스케줄러가 실제로 사용하는 파서로 사전 검증한다.
+   *
+   * <p>cron 형식 검사는 트리거와 무관하게 한다(WD-993 반려) — 파서가 읽지 못하는 값을 그대로 DB 에 넣으면 정기 실행으로
+   * 되돌렸을 때 어디서 깨질지 알 수 없고, 이 검사는 이슈 이전부터 모든 트리거에 걸리던 것이다(WD-993 이 400 으로 막힌 것은
+   * 「1분보다 짧게」 간격 검사였다). ANOMALY 전용이 건너뛰는 것은 최소 실행 간격 검사뿐이다.
    *
    * <p>둘 다 null 이면 「생략」이라 통과한다(생성은 기본값, 수정은 그대로). cron 이 빈 값·공백이면 형식 검사를 건너뛴다 — 정기 실행의 주기 필수는
    * {@link #requireCronForScheduledTrigger} 가 따로 판정한다. timezone 의 빈 값·공백은 400 이다(WD-607) — 예전엔 수정
    * 요청의 빈 시간대가 그대로 저장됐다(Tibero 에서는 NOT NULL 위반 500). 값이 들어 있으면 다음 조건을 만족해야 한다.
    *
    * <ul>
-   *   <li>{@code cronExpression}: {@link CronExpression#parse} 통과 (6필드: 초 분 시 일 월 요일)
-   *   <li>{@code timezone}: {@link ZoneId#of} 통과 (IANA zone)
+   *   <li>{@code cronExpression}: {@link CronExpression#parse} 통과 (6필드: 초 분 시 일 월 요일)</li>
+   *   <li>{@code cronExpression} 최소 실행 간격(정기 실행 트리거에서만): 1분보다 잦지 않을 것(WD-366)</li>
+   *   <li>{@code timezone}: {@link ZoneId#of} 통과 (IANA zone)</li>
    * </ul>
    *
    * 실패 시 {@link ProactiveJobException} 을 던지며, {@code GlobalExceptionHandler} 가 400 으로 매핑한다. 기존 동작은
@@ -160,12 +174,14 @@ public class ProactiveJobService {
    *
    * @param cronExpression 검증할 cron 식 (nullable)
    * @param timezone 검증할 IANA timezone 문자열 (nullable)
-   * @throws ProactiveJobException 형식이 유효하지 않을 때
+   * @param effectiveTriggerType 저장 후 적용될 트리거 — 정기 실행이 아니면 최소 실행 간격 검사만 건너뛴다
+   * @throws ProactiveJobException cron 형식·최소 실행 간격·시간대가 유효하지 않을 때
    */
-  static void validateCronAndTimezone(String cronExpression, String timezone) {
+  static void validateCronAndTimezone(
+      String cronExpression, String timezone, String effectiveTriggerType) {
     if (cronExpression != null && !cronExpression.isBlank()) {
       // 등록 경로(ProactiveJobSchedulerService)와 같은 정규화를 거쳐 검증한다 (#354).
-      // 원시 문자열로 검증하면 5필드를 거부하는데, 정작 작업 편집 폼의 CRON_PRESETS 는
+      // 원시 문자열로 검증하면 5필드를 거부하는데, 정작 작업 편집 폼의 CRON_PRESETS 은
       // 5필드('0 9 * * *')를 보내므로 UI 프리셋으로 만든 작업이 400 으로 막혔다.
       // 실패 사유는 Spring 의 영어·6필드 기준 문구 대신 화면 안내(5칸)와 같은 한국어로 알린다 (WD-138).
       String reason = ProactiveCron.describeInvalid(cronExpression);
@@ -174,9 +190,13 @@ public class ProactiveJobService {
             "유효하지 않은 cron 표현식입니다: \"" + cronExpression.trim() + "\" — " + reason);
       }
       // 파이프라인 트리거와 같은 최소 실행 간격(1분) — 매초 리포트 생성이 끝없이 이어지지 않게 한다(WD-366).
-      String tooFrequent = ProactiveCron.describeTooFrequent(cronExpression);
-      if (tooFrequent != null) {
-        throw new ProactiveJobException(tooFrequent + ": \"" + cronExpression.trim() + "\"");
+      // ANOMALY 전용은 주기로 실행되지 않아 간격 제한이 쓸모없고, 이 검사가 걸리면 웹이 숨긴 주기 칸의 값을
+      // 못 고쳐 400 으로 막힌다 — 이슈가 겪은 현상이 바로 이 검사였다(WD-993).
+      if (isScheduledTrigger(effectiveTriggerType)) {
+        String tooFrequent = ProactiveCron.describeTooFrequent(cronExpression);
+        if (tooFrequent != null) {
+          throw new ProactiveJobException(tooFrequent + ": \"" + cronExpression.trim() + "\"");
+        }
       }
     }
     if (timezone != null && timezone.isBlank()) {
@@ -209,8 +229,8 @@ public class ProactiveJobService {
    * @throws ProactiveJobException 정기 실행인데 주기가 비어 있을 때
    */
   static void requireCronForScheduledTrigger(String effectiveTriggerType, String effectiveCron) {
-    boolean scheduled = !ProactiveJobRepository.TRIGGER_ANOMALY.equals(effectiveTriggerType);
-    if (scheduled && (effectiveCron == null || effectiveCron.isBlank())) {
+    if (isScheduledTrigger(effectiveTriggerType)
+        && (effectiveCron == null || effectiveCron.isBlank())) {
       throw new ProactiveJobException(SCHEDULE_REQUIRES_CRON_MESSAGE);
     }
   }
@@ -244,6 +264,10 @@ public class ProactiveJobService {
    *
    * <p>그 밖의 수정(이름·프롬프트·설정 등)은 확인하지 않는다. 주기 없는 BOTH 작업을 켜는 것도 막지 않는다 — 이상 탐지 쪽은 실제로 실행되기 때문이다. BOTH
    * 를 ANOMALY 로 바꾸며 cron 을 비우는 요청은 정기 실행이 없어지므로 통과한다.
+   *
+   * <p>정기 실행 트리거로 바뀌는 경우 effective 주기의 형식·최소 간격도 함께 검사한다(WD-993) — 요청이 cron 을 실어 보내지 않아도 저장 주기가 그대로
+   * 정기 실행에 쓰이므로, 검사하지 않으면 매초 주기의 ANOMALY 행이 정기 실행으로 바뀌며 스케줄러가 조용히 예약을 건너뛰는 좀비 작업이 된다.
+   * 재검사는 effective 트리거가 정기 실행일 때만 한다(WD-993 반려 ②) — ANOMALY 로 바꾸는 요청은 쓰이지 않을 주기에 막히지 않는다.
    */
   private static void requireCronIfSchedulingTouched(
       UpdateProactiveJobRequest request, ProactiveJobResponse before) {
@@ -263,6 +287,15 @@ public class ProactiveJobService {
             && ProactiveJobRepository.TRIGGER_SCHEDULE.equals(effectiveTrigger);
     if (triggerChanged || cronChanged || enablingSchedule) {
       requireCronForScheduledTrigger(effectiveTrigger, effectiveCron);
+      // effective 주기의 형식·최소 간격은 effective 트리거가 정기 실행일 때만 다시 본다(WD-993 반려 ②) —
+      // ANOMALY 로 바꿀 때는 정기 실행에 쓰이지 않는 숨긴 저장 주기를 다시 검사하면, 사용자가 보이지도 않는 칸의 깨진 옛 주기에
+      // 막혀 트리거를 바꿀 수 없다(이 이슈가 막혔던 현상과 같은 막힘이다). 그 주기는 정기 실행으로 되돌릴 때 위처럼 그때 다시 검사한다.
+      // 요청에 실린 주기는 위 호출(validateCronAndTimezone)에서 이미 검사했고, 여기는 요청에 없는 저장 주기를 보는 자리다.
+      if (isScheduledTrigger(effectiveTrigger)) {
+        // 같은 메서드를 쓰면 문구·규칙이 두 군데서 갈라지지 않는다. 전달하는 값은 cron 만 있고 시간대는 null —
+        // 시간대는 요청 경로에서 이미 확인했고, 이 자리에서는 주기만 본다.
+        validateCronAndTimezone(effectiveCron, null, effectiveTrigger);
+      }
     }
   }
 
@@ -355,7 +388,9 @@ public class ProactiveJobService {
     // 사용자에게는 정상 생성처럼 보이지만 실제 실행이 한 번도 일어나지 않는 좀비 상태가 된다 (#221).
     // cron 앞뒤 공백은 맨 앞에서 한 번 잘라 검증·저장에 같은 값을 쓴다(WD-995) — 검증한 값과 저장한 값이 갈리지 않게.
     String cron = stripCron(request.cronExpression());
-    validateCronAndTimezone(cron, request.timezone());
+    // 최소 실행 간격 검사는 정기 실행 트리거에서만 한다(WD-993) — ANOMALY 전용은 주기로 실행되지 않아 간격 제한이 쓸모없다.
+    validateCronAndTimezone(
+        cron, request.timezone(), effectiveTrigger(request.triggerType(), null));
     // 주기 없는 정기 실행은 저장·스케줄러 등록·감사 전에 400 으로 막는다(WD-607). 꺼 둔 채(enabled=false) 만들어도 막는다 —
     // 켜는 순간 같은 「켜짐인데 실행 안 되는」 작업이 되므로 저장 자체를 막는 편이 단순하다.
     requireCronForScheduledTrigger(effectiveTrigger(request.triggerType(), null), cron);
@@ -386,9 +421,11 @@ public class ProactiveJobService {
             .orElseThrow(() -> new ProactiveJobException("Job 생성 실패"));
     // enabled=false로 명시 생성된 잡은 스케줄러에 등록하지 않는다 (#220).
     // job.enabled()는 DB에서 다시 읽어온 값이므로 null이 아니다.
+    // 이상 탐지 전용은 cron 이 있어도 정기 실행이 아니다(WD-993).
     if (Boolean.TRUE.equals(job.enabled())
         && job.cronExpression() != null
-        && !job.cronExpression().isBlank()) {
+        && !job.cronExpression().isBlank()
+        && isScheduledTrigger(job.triggerType())) {
       schedulerService.registerSchedule(job.id(), job.cronExpression(), job.timezone());
     }
     // 감사(WD-464) — 검증·저장이 끝난 뒤 같은 트랜잭션에서 남긴다. 이름·켜짐 여부만 싣고 프롬프트·설정은 싣지 않는다.
@@ -439,7 +476,9 @@ public class ProactiveJobService {
     // cron 앞뒤 공백은 한 번 잘라 검증·저장에 같은 값을 쓴다(WD-995). 변경 판정(requireCronIfSchedulingTouched)은
     // blankToNull 로 같은 정규화를 한다.
     String cron = stripCron(request.cronExpression());
-    validateCronAndTimezone(cron, changedTimezone);
+    // 최소 실행 간격 검사는 정기 실행 트리거에서만 한다(WD-993) — ANOMALY 전용은 주기로 실행되지 않아 간격 제한이 쓸모없다.
+    validateCronAndTimezone(
+        cron, changedTimezone, effectiveTrigger(request.triggerType(), before.triggerType()));
     requireCronIfSchedulingTouched(request, before);
     // 보안 등급(S2): 메트릭 SQL 이 작성자가 볼 수 없는 데이터셋을 참조하면 거부(스펙 §4.2 6행). update 도 같은 검사 — 우회로 차단.
     metricSqlAccessChecker.requireMetricQueriesAllowed(request.config(), userId);
@@ -555,12 +594,19 @@ public class ProactiveJobService {
     ProactiveJobResponse job = proactiveJobRepository.findById(id, userId).orElse(null);
     if (enabled && job != null) {
       // 켜기 전에 저장된 cron 을 저장 때와 같은 규칙으로 확인한다(WD-366) — 매초처럼 너무 잦은 옛 잡을 다시 켜지 못하게 400 으로 알린다.
-      validateCronAndTimezone(job.cronExpression(), job.timezone());
+      // 단 ANOMALY 전용 잡은 최소 실행 간격 검사만 건너뛴다(WD-993) — 주기로 실행되지 않아 간격 제한이 쓸모없고,
+      // 이 검사가 걸리면 웹이 숨긴 주기 칸의 값을 못 고쳐 400 으로 막힌다. 형식·시간대 검사는 그대로 한다.
+      validateCronAndTimezone(
+          job.cronExpression(), job.timezone(), effectiveTrigger(null, job.triggerType()));
     }
     proactiveJobRepository.update(
         id, userId, null, null, null, false, null, null, enabled, null, null);
     if (job != null) {
-      if (enabled && job.cronExpression() != null && !job.cronExpression().isBlank()) {
+      // 이상 탐지 전용은 cron 이 있어도 정기 실행이 아니다(WD-993) — 켜도 예약하지 않는다.
+      if (enabled
+          && job.cronExpression() != null
+          && !job.cronExpression().isBlank()
+          && isScheduledTrigger(job.triggerType())) {
         schedulerService.registerSchedule(job.id(), job.cronExpression(), job.timezone());
       } else {
         schedulerService.unregisterSchedule(id);

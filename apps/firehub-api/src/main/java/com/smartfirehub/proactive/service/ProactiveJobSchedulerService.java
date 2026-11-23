@@ -89,7 +89,12 @@ public class ProactiveJobSchedulerService {
 
     for (ProactiveJobResponse job : jobs) {
       try {
-        if (job.cronExpression() != null && !job.cronExpression().isBlank()) {
+        if (!ProactiveJobService.isScheduledTrigger(job.triggerType())) {
+          // 이상 탐지 전용 작업은 cron 이 있어도 정기 실행이 아니다(WD-993) — 재기동 재등록에서도 빼뜨린다.
+          // 배포 전에 예약돼 DB 에 남은 next_execute_at 도 함께 비운다 — 비우지 않으면 목록·상세가 지난 시각을
+          // 「다음 실행」으로 보여주고, 이상 탐지 실행의 recordAttempt 는 cron 으로 다시 채워 자가 치유도 없다.
+          unregisterSchedule(job.id());
+        } else if (job.cronExpression() != null && !job.cronExpression().isBlank()) {
           registerSchedule(job.id(), job.cronExpression(), job.timezone());
         }
       } catch (Exception e) {
@@ -300,9 +305,11 @@ public class ProactiveJobSchedulerService {
 
   public void rescheduleJob(ProactiveJobResponse job) {
     unregisterSchedule(job.id());
+    // 이상 탐지 전용은 cron 이 있어도 정기 실행이 아니다(WD-993) — 해제는 그대로 두어 예약이 없으면 무해하다.
     if (Boolean.TRUE.equals(job.enabled())
         && job.cronExpression() != null
-        && !job.cronExpression().isBlank()) {
+        && !job.cronExpression().isBlank()
+        && ProactiveJobService.isScheduledTrigger(job.triggerType())) {
       registerSchedule(job.id(), job.cronExpression(), job.timezone());
     }
   }

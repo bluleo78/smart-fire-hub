@@ -46,7 +46,7 @@ describe('cronToLabel', () => {
   });
 
   /**
-   * triggerType=ANOMALY 작업은 cron 없이 저장된다(#38/#43). 정규화가 입력을 trim 하므로
+   * 주기가 없는 작업은 cron 없이 저장된다(#38/#43). 정규화가 입력을 trim 하므로
    * 가드가 없으면 TypeError 로 목록 페이지 전체가 죽는다.
    */
   it('cron이 비어 있으면 크래시 없이 "-"를 반환한다', () => {
@@ -54,6 +54,20 @@ describe('cronToLabel', () => {
     expect(cronToLabel('   ')).toBe('-');
     expect(cronToLabel(null as unknown as string)).toBe('-');
     expect(cronToLabel(undefined as unknown as string)).toBe('-');
+  });
+
+  /**
+   * WD-993 반려 ① — 이상 탐지(ANOMALY) 전용 작업은 cron 을 보존해 두지만 정기 예약 대상이 아니다.
+   * 보존 값을 그대로 라벨로 보여 주면 「매일 오전 9시」로 읽혀 정기 실행 중인 줄로 착각한다.
+   */
+  it('ANOMALY 전용은 보존된 cron 을 스케줄 라벨로 보여 주지 않는다', () => {
+    expect(cronToLabel('0 9 * * *', 'ANOMALY')).toBe('주기 없음');
+    // 주기가 비어 있는 ANOMALY 도 같은 문구 — 칸마다 표기가 갈리지 않게
+    expect(cronToLabel('', 'ANOMALY')).toBe('주기 없음');
+    // 정기 실행(SCHEDULE·BOTH)은 그대로 라벨
+    expect(cronToLabel('0 9 * * *', 'SCHEDULE')).toBe('매일 오전 9시');
+    expect(cronToLabel('0 9 * * *', 'BOTH')).toBe('매일 오전 9시');
+    expect(cronToLabel('0 9 * * *', null)).toBe('매일 오전 9시');
   });
 
   it('해석 불가 표현은 폴백임이 드러나게 감싼다', () => {

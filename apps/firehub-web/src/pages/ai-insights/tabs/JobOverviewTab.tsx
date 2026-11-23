@@ -329,16 +329,21 @@ export default function JobOverviewTab({
           {/* 같은 h2 20px 섹션 제목 (WD-811) */}
           <h2 className="text-xl leading-7 font-semibold">실행 주기</h2>
           <div className="grid grid-cols-2 gap-4">
-            <ReadonlyCard label="스케줄" value={cronToLabel(job.cronExpression ?? '')} />
+            <ReadonlyCard label="스케줄" value={cronToLabel(job.cronExpression, job.triggerType)} />
             <ReadonlyCard label="타임존" value={job.timezone} />
-            {job.nextExecuteAt ? (
+            {job.triggerType === 'ANOMALY' ? (
+              /* 이상 탐지 전용은 정기 예약 대상이 아니다(WD-993) — 배포 전 예약으로 nextExecuteAt 에 남은 값이
+                 있어도 지난 시각을 「다음 실행」으로 보여 주면 정기 실행 중인 줄로 읽힌다. 목록과 같은 '-' 로 둔다. */
+              <ReadonlyCard label="다음 실행" value="-" />
+            ) : job.nextExecuteAt ? (
               <ReadonlyCard label="다음 실행" value={formatDate(job.nextExecuteAt)} />
             ) : (
               job.enabled &&
               !!job.cronExpression?.trim() && (
                 /* 활성 + cron 이 있는데 다음 실행 시각이 없으면 스케줄러 미등록 상태다 (#354).
                    목록과 같은 신호를 상세에도 노출해, '활성' 배지만 보고 도는 줄 아는 상황을 막는다.
-                   cron 이 없는 작업(triggerType=ANOMALY)은 등록 대상이 아니므로 제외한다. */
+                   주기가 없는 작업은 등록 대상이 아니므로 제외하고, ANOMALY 는 위 갈래에서 이미 걸러져
+                   여기까지 오지 않는다(WD-993). */
                 <ReadonlyCard
                   label="다음 실행"
                   value={
