@@ -23,7 +23,7 @@ import { loginSchema } from '../lib/validations/auth';
 import type { ErrorResponse } from '../types/auth';
 
 export default function LoginPage() {
-  const { login, isAuthenticated } = useAuth();
+  const { login, isAuthenticated, isLoading } = useAuth();
   const { brandName } = useBranding(); // 런타임 브랜드명 (로그인 화면 제목)
   const [serverError, setServerError] = useState('');
   const location = useLocation();
@@ -32,10 +32,13 @@ export default function LoginPage() {
 
   // 로그아웃이 맡겨 둔 안내(예: 비밀번호 변경 뒤 재로그인 필요)를 한 번 보인다 — 로그아웃은 하드 리로드라
   // 그 전에 띄운 토스트가 사라지기 때문이다(WD-276)
+  // 부팅 인증(refresh)이 끝난 뒤에만 꺼낸다 — /login 직접 진입 시 refresh 401 이 안내를 쓰기 전에 먼저 꺼내 버리면
+  // 안내가 남아 나중에 엉뚱한 때 보인다(WD-830). 끝난 뒤에는 isLoading 이 다시 true 가 되지 않아 한 번만 보인다.
   useEffect(() => {
+    if (isLoading) return;
     const notice = takeLoginNotice();
     if (notice) toast.warning(notice);
-  }, []);
+  }, [isLoading]);
 
   const {
     register,
