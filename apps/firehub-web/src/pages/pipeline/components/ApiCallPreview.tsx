@@ -158,7 +158,7 @@ export default function ApiCallPreview({ result }: ApiCallPreviewProps) {
       {/* JSON Tree */}
       <Collapsible open={jsonOpen} onOpenChange={setJsonOpen}>
         <CollapsibleTrigger asChild>
-          <Button variant="ghost" size="sm" className="h-7 px-2 text-xs w-full justify-start">
+          <Button variant="ghost" size="sm" className="px-2 text-xs w-full justify-start">
             {jsonOpen ? (
               <ChevronDown className="h-3 w-3" />
             ) : (

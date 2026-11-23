@@ -456,7 +456,7 @@ export default function DatasetDetailPage() {
                   <Button
                     variant="outline"
                     size="sm"
-                    className="h-7 gap-1 text-xs"
+                    className="gap-1 text-xs"
                     onClick={async () => {
                       const sql = await buildPreviewSql(dataset.tableName);
                       navigate(
@@ -470,7 +470,7 @@ export default function DatasetDetailPage() {
                   <Button
                     variant="outline"
                     size="sm"
-                    className="h-7 gap-1 text-xs"
+                    className="gap-1 text-xs"
                     onClick={async () => {
                       const sql = await buildPreviewSql(dataset.tableName);
                       navigate(
@@ -485,7 +485,7 @@ export default function DatasetDetailPage() {
               )}
               {/* Clone button — 복제는 새 데이터셋을 만드는 쓰기(dataset:write)라 권한이 있을 때만 (WD-139) */}
               {canWriteDataset && (
-                <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" onClick={() => setCloneDialogOpen(true)}>
+                <Button variant="outline" size="sm" className="gap-1 text-xs" onClick={() => setCloneDialogOpen(true)}>
                   <Copy className="h-3 w-3" />
                   복제
                 </Button>
@@ -494,7 +494,7 @@ export default function DatasetDetailPage() {
               {canWriteDataset && (
                 <Popover open={statusEditOpen} onOpenChange={setStatusEditOpen}>
                   <PopoverTrigger asChild>
-                    <Button variant="ghost" size="sm" className="h-7 gap-1 text-xs text-muted-foreground">
+                    <Button variant="ghost" size="sm" className="gap-1 text-xs text-muted-foreground">
                       <Shield className="h-3 w-3" />
                       상태 변경
                     </Button>
