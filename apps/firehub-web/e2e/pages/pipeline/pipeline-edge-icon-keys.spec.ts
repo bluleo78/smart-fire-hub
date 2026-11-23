@@ -153,3 +153,36 @@ test.describe('연결선 아이콘 버튼 키보드 (WD-1009)', () => {
     await expect(page.locator('.react-flow__edge')).toHaveCount(2);
   });
 });
+
+test.describe('「다음 스텝 추가」 버튼 키보드 (WD-1030)', () => {
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await grantPipelinePermissions(page);
+  });
+
+  // 나가는 연결이 없는 「데이터 적재」 노드의 「다음 스텝 추가」 버튼
+  const addAfter = (page: Page) =>
+    page
+      .locator('.react-flow__node')
+      .filter({ has: page.getByText('데이터 적재', { exact: true }) })
+      .getByRole('button', { name: '다음 스텝 추가' });
+
+  for (const key of ['Enter', 'Space'] as const) {
+    test(`「다음 스텝 추가」 ${key} 가 선택된 연결선을 풀지 않는다`, async ({ authenticatedPage: page }) => {
+      await openEditor(page);
+      await selectEdge(page, 0);
+      await blockDefault(page, key);
+      await addAfter(page).focus();
+      await page.keyboard.press(key);
+      await expect(edge(page, 0)).toHaveClass(/selected/);
+      await expect(page.locator('.react-flow__edge.selected')).toHaveCount(1);
+      await expect(page.locator('.react-flow__node')).toHaveCount(3);
+    });
+  }
+
+  test('「다음 스텝 추가」 Enter 는 여전히 스텝을 추가한다', async ({ authenticatedPage: page }) => {
+    await openEditor(page);
+    await addAfter(page).focus();
+    await page.keyboard.press('Enter');
+    await expect(page.locator('.react-flow__node')).toHaveCount(4);
+  });
+});
