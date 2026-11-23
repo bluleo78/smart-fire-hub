@@ -259,6 +259,18 @@ export function cloneSuccessMessage(name: string) {
   return `"${name}" 작업을 꺼진 상태로 복제했습니다. 확인한 뒤 작업 목록에서 켜세요.`;
 }
 
+/**
+ * 복제를 미리 막을 이유 — 주기(cron)가 없는데 트리거가 이상 탐지 전용이 아니면(SCHEDULE·BOTH·미지정=서버 기본 SCHEDULE)
+ * cron 없이 복제 요청을 보내도 서버가 400(정기 실행에는 실행 주기가 필요)으로 거절하므로, 요청 전에 이유를 알린다(WD-1026).
+ * 주기를 웹이 지어내 채우면 사용자가 정하지 않은 일정이 생기므로 하지 않는다. 막을 이유가 없으면 null.
+ */
+export function cloneBlockedReason(job: Pick<ProactiveJob, 'cronExpression' | 'triggerType'>): string | null {
+  if (job.triggerType !== 'ANOMALY' && !job.cronExpression?.trim()) {
+    return '실행 주기가 없어 복제할 수 없습니다. 편집에서 실행 주기를 정해 저장한 뒤 복제하세요.';
+  }
+  return null;
+}
+
 export function useCloneProactiveJob() {
   const queryClient = useQueryClient();
   return useMutation({

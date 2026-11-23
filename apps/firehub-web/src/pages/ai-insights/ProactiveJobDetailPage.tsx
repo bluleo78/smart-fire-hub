@@ -24,8 +24,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { cloneSuccessMessage, useCanWriteProactive,useCloneProactiveJob, useCreateProactiveJob, useCreateProactiveTemplate, useDeleteProactiveJob, useDeleteProactiveTemplate, useDisableProactiveJob, useExecuteProactiveJob, useFetchLatestProactiveJob, useProactiveJob, useProactiveTemplates, useUpdateProactiveJob } from '@/hooks/queries/useProactiveMessages';
-import { useEditModeFocus } from '@/hooks/useEditModeFocus';
+import { cloneBlockedReason, cloneSuccessMessage, useCanWriteProactive,useCloneProactiveJob, useCreateProactiveJob, useCreateProactiveTemplate, useDeleteProactiveJob, useDeleteProactiveTemplate, useDisableProactiveJob, useExecuteProactiveJob, useFetchLatestProactiveJob, useProactiveJob, useProactiveTemplates, useUpdateProactiveJob } from '@/hooks/queries/useProactiveMessages';
+import { focusFirstEditField, useEditModeFocus } from '@/hooks/useEditModeFocus';
 import { useInvalidFlag } from '@/hooks/useInvalidFlag';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { applyDuplicateNameError, extractApiError, handleApiError, isEditConflict, isForbiddenError, isJobAlreadyRunning, NameRetryExhaustedError } from '@/lib/api-error';
@@ -140,7 +140,11 @@ export default function ProactiveJobDetailPage() {
   // 진입점을 숨기고 조회 전용으로 보인다(WD-133). 최종 판정은 서버이고 여기는 노출 결정용이다.
   const { canWrite, isLoading: isPermissionsLoading } = useCanWriteProactive();
 
-  const [isEditing, setIsEditing] = useState(isNew);
+  // 이동 state 의 편집 시작 표시 — 복제 직후(WD-996)와 목록의 막힌 복제 토스트 「편집」 이동(WD-1026)이 넘긴다
+  const startEditingState = (location.state as { startEditing?: boolean } | null)?.startEditing === true;
+  // 목록에서 「편집」 안내로 처음 들어올 때(새로 마운트)도 startEditing 이면 편집 모드로 시작한다 —
+  // 라우트 정체 변경 재설정(아래)은 이미 마운트된 페이지의 id→id 이동에서만 돌기 때문이다 (WD-1026)
+  const [isEditing, setIsEditing] = useState(isNew || startEditingState);
   // 「편집」으로 편집 폼이 열리면 첫 칸으로, 「취소」·「저장」 뒤에는 「편집」 버튼으로 포커스를 옮긴다(WD-415)
   const { editButtonRef, editRegionRef } = useEditModeFocus(isEditing);
 
@@ -204,23 +208,42 @@ export default function ProactiveJobDetailPage() {
   const [prevRouteKey, setPrevRouteKey] = useState(routeKey);
   if (prevRouteKey !== routeKey) {
     setPrevRouteKey(routeKey);
-    setIsEditing(isNew || (location.state as { startEditing?: boolean } | null)?.startEditing === true);
+    setIsEditing(isNew || startEditingState);
     setIsDirty(false);
     setEditConflict(false);
     setLeaveDialogOpen(false);
     setCustomCronValue(null);
   }
-  // 복제 직후의 편집 시작 state 는 한 번만 쓴다 — 기록에 남으면 저장·취소 뒤 뒤로→앞으로 갈 때 다시 편집 모드로 열린다.
-  // 같은 경로로 replace 하므로 라우트 정체(routeKey)가 바뀌지 않아 위 다시 잡기는 돌지 않는다 (WD-996)
-  const startEditingState = (location.state as { startEditing?: boolean } | null)?.startEditing === true;
+  // 편집 시작 state(startEditing)는 복제 직후(WD-996)와 목록의 막힌 복제 토스트 「편집」 이동(WD-1026, 새로 마운트)에서 쓰이며,
+  // 어느 쪽이든 한 번만 쓴다 — 기록에 남으면 저장·취소 뒤 뒤로→앞으로 갈 때 다시 편집 모드로 열린다.
+  // 같은 경로로 replace 하므로 라우트 정체(routeKey)가 바뀌지 않아 위 다시 잡기는 돌지 않는다.
+  // 편집 폼이 그려진 뒤 첫 칸으로 포커스를 한 번 옮겨야 하는지 — 처음부터 편집 모드로 마운트되거나 토스트 버튼에서 들어오면
+  // useEditModeFocus(WD-415)가 건너뛰어 포커스가 body 로 떨어지므로 직접 옮긴다 (WD-1026)
+  const pendingEditFocusRef = useRef(false);
+  // 토스트 「편집」의 포커스 요청 횟수 — 이미 개요 탭에서 편집 중이라 다른 의존 값이 안 바뀌어도 아래 effect 가 다시 돌게 한다
+  const [editFocusRequest, setEditFocusRequest] = useState(0);
+  const hasJob = !!job;
   useEffect(() => {
     if (startEditingState) {
+      pendingEditFocusRef.current = true;
       navigate(
         { pathname: location.pathname, search: location.search, hash: location.hash },
         { replace: true, state: null },
       );
     }
   }, [startEditingState, navigate, location.pathname, location.search, location.hash]);
+  // 폼(개요 탭·불러온 작업·편집 모드)이 실제로 그려진 뒤에 한 번만 첫 편집 칸으로 포커스한다 — 로딩 중이면 다음 렌더에 다시 시도
+  useEffect(() => {
+    if (!pendingEditFocusRef.current) return;
+    if (!isEditing || isNew || !hasJob || isLoading || activeTab !== 'overview') return;
+    // 탭 내용이 막 마운트된 같은 커밋에서는 칸이 아직 포커스를 받지 못하므로(숨김 상태) 다음 프레임에 옮긴다.
+    // 아직 못 옮겼으면 플래그를 남겨 다음 렌더에 다시 시도한다.
+    const frame = requestAnimationFrame(() => {
+      if (focusFirstEditField(editRegionRef.current)) pendingEditFocusRef.current = false;
+    });
+    return () => cancelAnimationFrame(frame);
+    // 작업 객체 대신 유무만 본다 — 재조회로 객체가 바뀔 때마다 예약한 프레임을 취소·재예약하지 않게
+  }, [isEditing, isNew, hasJob, isLoading, activeTab, editRegionRef, editFocusRequest]);
   // 최신 routeKey — 「다시 불러오기」 응답이 늦게 도착했을 때 그 사이 다른 작업으로 옮겨 갔는지 비교한다 (WD-996)
   const routeKeyRef = useRef(routeKey);
   routeKeyRef.current = routeKey;
@@ -495,6 +518,33 @@ export default function ProactiveJobDetailPage() {
 
   const handleClone = () => {
     if (!job) return;
+    // 주기 없는 작업은 서버가 400 으로 거절하므로 요청 전에 이유를 알리고, 「편집」으로 그 자리에서 편집 모드를 연다(WD-1026)
+    const blockedReason = cloneBlockedReason(job);
+    if (blockedReason) {
+      // 토스트가 떠 있는 동안 다른 작업으로 옮겼을 수 있으므로 띄운 시점의 라우트를 기억해 비교한다
+      const sourceKey = routeKeyRef.current;
+      const sourceId = job.id;
+      toast.error(blockedReason, {
+        // 같은 id 로 다시 누르면 같은 토스트를 갱신해 겹겹이 쌓이지 않게 한다
+        id: `clone-blocked-${sourceId}`,
+        action: {
+          label: '편집',
+          onClick: () => {
+            if (routeKeyRef.current !== sourceKey) {
+              // 다른 작업으로 옮겨 갔으면 현재 화면을 편집하지 않고 원본 상세를 편집 모드로 연다
+              navigate(`/ai-insights/jobs/${sourceId}?tab=overview`, { state: { startEditing: true } });
+              return;
+            }
+            // 주기 칸은 개요 탭에 있으므로 다른 탭(실행 이력 등)에서 눌렀어도 개요로 옮기고, 첫 칸 포커스를 요청한다
+            pendingEditFocusRef.current = true;
+            setEditFocusRequest((n) => n + 1);
+            if (activeTab !== 'overview') handleTabChange('overview');
+            setIsEditing(true);
+          },
+        },
+      });
+      return;
+    }
     cloneMutation.mutate(job, {
       onSuccess: (created) => {
         toast.success(cloneSuccessMessage(created.name));
