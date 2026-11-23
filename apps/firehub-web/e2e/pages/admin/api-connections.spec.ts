@@ -4550,3 +4550,179 @@ test.describe('지금 확인 안내·초점 (WD-920)', () => {
     await expect(page.getByRole('region', { name: '최근 테스트 결과' })).toHaveCount(1);
   });
 });
+
+/**
+ * WD-1048 — 상세 화면 「저장」·「인증 저장」: 저장 중에도 초점이 버튼에 남고(PendingButton, aria-disabled),
+ * 같은 mutation 을 쓰는 두 버튼이 함께 잠기되 「저장 중...」 문구는 누른 쪽에만 보인다.
+ */
+test.describe('API 연결 상세 저장 중 초점 (WD-1048)', () => {
+  const PATH = '/api/v1/api-connections/1';
+  const SAVED = { id: 1, name: '공공 데이터 API', authType: 'BEARER' };
+
+  /** 상세를 열고 「인증 정보 변경」으로 편집을 연다 — 두 저장 버튼이 함께 보인다 */
+  async function openEdit(page: Page) {
+    // 쓰기 권한이 있어야 저장 버튼이 보인다
+    await setupAdminAuth(page);
+    await setupApiConnectionDetailMocks(page, 1);
+    await page.goto('/admin/api-connections/1');
+    await page.getByRole('button', { name: '인증 정보 변경' }).click();
+  }
+
+  /** 인증 유형을 Bearer 로 바꾸고 토큰을 채운다 — 목록이 닫힌 뒤 진행한다 */
+  async function fillBearer(page: Page) {
+    await page.getByLabel('인증 유형').click();
+    await page.getByRole('option', { name: 'Bearer Token' }).click();
+    await expect(page.getByRole('option')).toHaveCount(0);
+    await page.getByPlaceholder('새 토큰을 입력하세요').fill('my-bearer-token-xyz');
+  }
+
+  test('「저장」을 키보드로 누르면 저장 중에도 초점이 남고 다시 눌러도 PUT 은 한 번이다 (WD-1048)', async ({
+    authenticatedPage: page,
+  }) => {
+    await openEdit(page);
+    const held = await holdApi(page, 'PUT', PATH, 200, SAVED);
+    await page.getByLabel('연결 이름').fill('이름만 고침');
+
+    await page.getByRole('button', { name: '저장', exact: true }).focus();
+    await page.keyboard.press('Enter');
+
+    const pending = page.getByRole('button', { name: '저장 중...' });
+    await expect(pending).toBeFocused();
+    await expect(pending).toHaveAttribute('aria-disabled', 'true');
+    // 인증 저장 버튼도 함께 잠기지만 이름은 그대로다
+    await expect(page.getByRole('button', { name: '인증 저장' })).toHaveAttribute('aria-disabled', 'true');
+
+    await page.keyboard.press('Enter');
+    await expectSingleHeldRequest(() => held.requests.length);
+
+    // (WD-1048) 붙잡은 첫 PUT 은 기본 정보 필드만 싣는다 — authType 이 없다
+    const infoBody = JSON.parse(held.requests[0] ?? '{}');
+    expect(infoBody.name).toBe('이름만 고침');
+    expect(infoBody.baseUrl).toBeTruthy();
+    expect(infoBody.authType).toBeUndefined();
+
+    held.release();
+    const done = page.getByRole('button', { name: '저장', exact: true });
+    await expect(done).toBeFocused();
+    await expect(done).not.toHaveAttribute('aria-disabled', 'true');
+    expect(held.requests.length).toBe(1);
+  });
+
+  test('「인증 저장」을 키보드로 누르면 저장 중에도 초점이 남는다 (WD-1048)', async ({
+    authenticatedPage: page,
+  }) => {
+    await openEdit(page);
+    const held = await holdApi(page, 'PUT', PATH, 200, SAVED);
+    await fillBearer(page);
+    const saveAuth = page.getByRole('button', { name: '인증 저장' });
+    await saveAuth.focus();
+    await expect(saveAuth).toBeFocused();
+    await page.keyboard.press('Enter');
+
+    const pending = page.getByRole('button', { name: '저장 중...' });
+    await expect(pending).toBeFocused();
+    await expect(pending).toHaveAttribute('aria-disabled', 'true');
+    // 기본 정보 「저장」 버튼은 함께 잠기지만 이름은 그대로다
+    const info = page.getByRole('button', { name: '저장', exact: true });
+    await expect(info).toHaveAttribute('aria-disabled', 'true');
+
+    await page.keyboard.press('Enter');
+    await expectSingleHeldRequest(() => held.requests.length);
+    // (WD-1048) 붙잡은 첫 PUT 은 인증 유형과 입력한 토큰을 싣는다
+    const authBody = JSON.parse(held.requests[0] ?? '{}');
+    expect(authBody.authType).toBe('BEARER');
+    expect(authBody.authConfig.token).toBe('my-bearer-token-xyz');
+    held.release();
+    // 저장이 끝나면 편집이 닫히고 「인증 정보 변경」으로 돌아간다
+    await expect(page.getByRole('button', { name: '인증 정보 변경' })).toBeVisible();
+    expect(held.requests.length).toBe(1);
+  });
+
+  test('저장이 실패하면 버튼이 풀리고 초점이 남는다 (WD-1048)', async ({ authenticatedPage: page }) => {
+    await openEdit(page);
+    const failed = await mockApi(page, 'PUT', PATH, { message: '서버 오류' }, { status: 500, capture: true });
+    await page.getByLabel('연결 이름').fill('이름만 고침');
+
+    const save = page.getByRole('button', { name: '저장', exact: true });
+    await save.focus();
+    await page.keyboard.press('Enter');
+    await expect.poll(() => failed.requests.length).toBe(1);
+
+    await expect(save).toBeFocused();
+    await expect(save).not.toHaveAttribute('aria-disabled', 'true');
+  });
+
+  test('「인증 저장」이 키보드로 성공하면 닫힌 편집 대신 「인증 정보 변경」에 초점이 간다 (WD-1048)', async ({
+    authenticatedPage: page,
+  }) => {
+    await openEdit(page);
+    const held = await holdApi(page, 'PUT', PATH, 200, SAVED);
+    await fillBearer(page);
+
+    await page.getByRole('button', { name: '인증 저장' }).focus();
+    await page.keyboard.press('Enter');
+    await expect.poll(() => held.requests.length).toBe(1);
+    held.release();
+
+    await expect(page.getByRole('button', { name: '인증 정보 변경' })).toBeFocused();
+  });
+
+  test('「취소」를 키보드로 누르면 「인증 정보 변경」에 초점이 간다 (WD-1048)', async ({ authenticatedPage: page }) => {
+    await openEdit(page);
+    await page.getByRole('button', { name: '취소' }).focus();
+    await page.keyboard.press('Enter');
+
+    await expect(page.getByRole('button', { name: '인증 정보 변경' })).toBeFocused();
+  });
+
+  test('저장을 기다리는 동안 다른 칸으로 옮기면 닫힌 뒤 초점을 끌어오지 않는다 (WD-1048)', async ({
+    authenticatedPage: page,
+  }) => {
+    await openEdit(page);
+    const held = await holdApi(page, 'PUT', PATH, 200, SAVED);
+    await fillBearer(page);
+
+    await page.getByRole('button', { name: '인증 저장' }).focus();
+    await page.keyboard.press('Enter');
+    await expect.poll(() => held.requests.length).toBe(1);
+    const name = page.getByLabel('연결 이름');
+    await name.click();
+    held.release();
+
+    await expect(page.getByRole('button', { name: '인증 정보 변경' })).toBeVisible();
+    await expect(name).toBeFocused();
+  });
+
+  test('「인증 저장」 진행 중에는 「취소」가 잠겨 편집이 그대로 열려 있다 (WD-1048)', async ({
+    authenticatedPage: page,
+  }) => {
+    await openEdit(page);
+    const held = await holdApi(page, 'PUT', PATH, 200, SAVED);
+    await fillBearer(page);
+
+    await page.getByRole('button', { name: '인증 저장' }).focus();
+    await page.keyboard.press('Enter');
+    await expect.poll(() => held.requests.length).toBe(1);
+
+    const cancel = page.getByRole('button', { name: '취소' });
+    await expect(cancel).toHaveAttribute('aria-disabled', 'true');
+    // aria-disabled 버튼은 Playwright 가 비활성으로 보므로 force 로 눌러 핸들러까지 닿게 한다
+    await cancel.click({ force: true });
+    await expect(page.getByRole('button', { name: '저장 중...' })).toBeVisible();
+    await expect(page.getByPlaceholder('새 토큰을 입력하세요')).toHaveValue('my-bearer-token-xyz');
+    held.release();
+  });
+
+  test('「인증 정보 변경」을 키보드로 누르면 편집 영역 첫 칸으로 초점이 간다 (WD-1048)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupAdminAuth(page);
+    await setupApiConnectionDetailMocks(page, 1);
+    await page.goto('/admin/api-connections/1');
+    // (WD-1048) 공통 훅(useEditModeFocus)이 편집을 열 때 첫 칸(인증 유형)으로 초점을 옮긴다 — 사라진 버튼 자리의 body 로 떨어지지 않는다
+    await page.getByRole('button', { name: '인증 정보 변경' }).focus();
+    await page.keyboard.press('Enter');
+
+    await expect(page.getByLabel('인증 유형')).toBeFocused();
+  });
+});
