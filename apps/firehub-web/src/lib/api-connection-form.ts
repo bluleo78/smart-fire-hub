@@ -87,9 +87,24 @@ export function focusFirstError<K extends string>(
   return true;
 }
 
-/** 연결 이름 — 비었으면 오류 문구. */
+/** 연결 이름 최대 길이 — 서버 Create/UpdateApiConnectionRequest 의 @Size(max = 100)와 같다(WD-1007). */
+const MAX_CONNECTION_NAME_LENGTH = 100;
+
+/** Base URL 최대 길이 — 서버 Create/UpdateApiConnectionRequest 의 @Size(max = 500)와 같다(WD-1007). */
+const MAX_BASE_URL_LENGTH = 500;
+
+/**
+ * 연결 이름 — 비었으면 오류 문구, 100자를 넘으면 길이 문구.
+ * 길이는 서버가 받는 값(앞뒤 공백을 뗀 값)으로 센다. maxLength 속성은 붙여넣기를 말없이 잘라 버리므로 쓰지 않고
+ * 문구로 알려 서버 400 을 미리 막는다(WD-1007).
+ */
 export function connectionNameError(name: string): string | undefined {
-  return name.trim() ? undefined : '연결 이름을 입력하세요.';
+  const value = name.trim();
+  if (!value) return '연결 이름을 입력하세요.';
+  if (value.length > MAX_CONNECTION_NAME_LENGTH) {
+    return `연결 이름은 ${MAX_CONNECTION_NAME_LENGTH}자 이하로 입력하세요.`;
+  }
+  return undefined;
 }
 
 /**
@@ -109,6 +124,10 @@ export const API_FULL_URL_PLACEHOLDER = `${API_BASE_URL_PLACEHOLDER}/v1/data`;
 export function baseUrlError(baseUrl: string): string | undefined {
   const value = baseUrl.trim();
   if (!value) return 'Base URL을 입력하세요.';
+  // 서버 @Size(max = 500) 초과는 형식 검사보다 먼저 알린다(WD-1007).
+  if (value.length > MAX_BASE_URL_LENGTH) {
+    return `Base URL은 ${MAX_BASE_URL_LENGTH}자 이하로 입력하세요.`;
+  }
   if (!/^https?:\/\//.test(value)) return 'Base URL은 http 또는 https로 시작해야 합니다.';
   // httpUrlError 는 호스트 밖 공백을 통과시키지만(실행기가 %20 으로 보냄), Base URL 은 서버가
   // URI.create 로 저장해 공백을 거절하므로 여기서는 막는다. 다만 사용자 정보는 서버가(BASIC) 그 전에 떼어

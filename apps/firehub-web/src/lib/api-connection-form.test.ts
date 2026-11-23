@@ -7,8 +7,13 @@ import {
   authTypeLabel,
   baseUrlError,
   basicUsernameError,
+  connectionNameError,
   isApiConnectionAuthType,
 } from './api-connection-form';
+
+/** 접두를 포함해 정확히 n자인 https URL */
+const URL_PREFIX = 'https://x.com/';
+const urlOfLength = (n: number) => URL_PREFIX + 'a'.repeat(n - URL_PREFIX.length);
 
 /** API 연결 칸 검증 도우미 — Basic 인증 아이디 규칙·인증 방식 표시 이름(WD-681). */
 describe('api-connection-form', () => {
@@ -37,6 +42,18 @@ describe('api-connection-form', () => {
     expect(isApiConnectionAuthType('OAUTH2')).toBe(false);
     // 객체 프로토타입 키(toString 등)를 받는 방식으로 오인하지 않는다
     expect(isApiConnectionAuthType('toString')).toBe(false);
+  });
+
+  it('connectionNameError — 빈칸은 입력 문구, 앞뒤 공백을 뗀 100자까지 받고 101자는 길이 문구 (WD-1007)', () => {
+    expect(connectionNameError('   ')).toBe('연결 이름을 입력하세요.');
+    expect(connectionNameError('a'.repeat(100))).toBeUndefined();
+    expect(connectionNameError('  ' + 'a'.repeat(100) + ' ')).toBeUndefined();
+    expect(connectionNameError('a'.repeat(101))).toBe('연결 이름은 100자 이하로 입력하세요.');
+  });
+
+  it('baseUrlError — 정확히 500자는 받고 501자는 길이 문구, 빈칸 문구가 먼저다 (WD-1007)', () => {
+    expect(baseUrlError(urlOfLength(500))).toBeUndefined();
+    expect(baseUrlError(urlOfLength(501))).toBe('Base URL은 500자 이하로 입력하세요.');
   });
 
   it('baseUrlError — 빈 값은 입력 문구, 소문자 스킴만 받고, 형식은 공용 검사에 맡긴다', () => {
