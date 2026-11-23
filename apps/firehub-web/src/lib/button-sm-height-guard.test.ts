@@ -31,21 +31,11 @@ const SRC = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const H7_TOKEN = /(?<![\w-])h-7(?![\w.-])/;
 
 /**
- * `[&` 로 시작하는 자식 선택자 클래스(`[&_svg]:h-7` 등) — 버튼이 아니라 자식 요소의 높이라 검사 전에 지운다.
+ * 다른 요소를 가리키는 임의 선택자 클래스 — `[&_svg]:h-7`(자손)·`[&>span]:h-7`(자식)·`[&~*]`·`[&+*]`(형제).
+ * 버튼이 아니라 그 요소의 높이라 검사 전에 지운다. `[&]:h-7`·`[&:hover]:h-7` 은 버튼 자신이라 남긴다(WD-1018 리뷰 후속).
  * Tailwind 임의 선택자는 공백 대신 `_` 를 쓰므로 공백·따옴표·백틱까지가 한 클래스다.
  */
-const CHILD_SELECTOR_CLASS = /\[&[^\s'"`]*/g;
-
-/**
- * 가드 제외 파일(src 기준 상대 경로) — WD-960 이 다른 곳에서 진행 중이라 파일 통째로 뺀다.
- * WD-960 머지 뒤 지운다.
- */
-const EXEMPT_FILES = new Set([
-  'components/ai/SessionSwitcher.tsx',
-  'pages/data/DatasetDetailPage.tsx',
-  'pages/pipeline/components/ApiCallStepConfig.tsx',
-  'pages/pipeline/components/ApiCallPreview.tsx',
-]);
+const OTHER_ELEMENT_SELECTOR_CLASS = /\[&[_>~+][^\s'"`]*/g;
 
 /** 대상 태그 — `Button` 과, size·className 을 그대로 넘기는 `PendingButton`·`PendingSubmitButton`. 감싼 컴포넌트가 늘면 여기에 더한다. */
 const BUTTON_TAGS = new Set(['Button', 'PendingButton', 'PendingSubmitButton']);
@@ -92,7 +82,7 @@ function scanText(text: string, rel: string): string[] {
       isButtonTag(node.tagName, source)
     ) {
       const { sm, classNameText } = inspect(node, source);
-      if (sm && H7_TOKEN.test(classNameText.replace(CHILD_SELECTOR_CLASS, ''))) {
+      if (sm && H7_TOKEN.test(classNameText.replace(OTHER_ELEMENT_SELECTOR_CLASS, ''))) {
         const line = source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;
         violations.push(`${rel}:${line}`);
       }
@@ -104,7 +94,7 @@ function scanText(text: string, rel: string): string[] {
   return violations;
 }
 
-/** src/ 아래 *.tsx 를 훑는다 — ui 폴더·*.test.tsx·예외 파일은 뺀다. */
+/** src/ 아래 *.tsx 를 훑는다 — ui 폴더·*.test.tsx 는 뺀다. */
 function scan(): string[] {
   return readdirSync(SRC, { recursive: true, encoding: 'utf8' })
     .map((rel) => rel.split('\\').join('/'))
@@ -112,8 +102,7 @@ function scan(): string[] {
       (rel) =>
         rel.endsWith('.tsx') &&
         !rel.endsWith('.test.tsx') &&
-        !rel.startsWith('components/ui/') &&
-        !EXEMPT_FILES.has(rel)
+        !rel.startsWith('components/ui/')
     )
     .sort()
     .flatMap((rel) => {
@@ -170,8 +159,15 @@ describe('scanText 판정 (WD-1018)', () => {
     ).toEqual(['x.tsx:1']);
   });
 
-  it('자식 선택자([&…]) 뒤 h-7(자식 요소 높이)은 0건', () => {
-    expect(scanText('<Button size="sm" className="[&_svg]:h-7 [&>span]:h-7" />', 'x.tsx')).toEqual([]);
+  it('다른 요소를 가리키는 선택자([&_…]·[&>…]·[&~…]·[&+…]) 뒤 h-7 은 0건', () => {
+    expect(
+      scanText('<Button size="sm" className="[&_svg]:h-7 [&>span]:h-7 [&~*]:h-7 [&+*]:h-7" />', 'x.tsx')
+    ).toEqual([]);
+  });
+
+  it('버튼 자신을 가리키는 [&]:h-7·[&:hover]:h-7 은 1건씩 (리뷰 후속)', () => {
+    expect(scanText('<Button size="sm" className="[&]:h-7" />', 'x.tsx')).toEqual(['x.tsx:1']);
+    expect(scanText('<Button size="sm" className="[&:hover]:h-7" />', 'x.tsx')).toEqual(['x.tsx:1']);
   });
 
   it('버튼 자신의 상태 변형(data-[state=open]:h-7·hover:h-7)은 1건씩', () => {
@@ -185,7 +181,7 @@ describe('scanText 판정 (WD-1018)', () => {
 });
 
 describe('src 전역 (WD-1018)', () => {
-  it('size="sm" 버튼 className 에 h-7 이 없다 (예외 4파일 제외)', () => {
+  it('size="sm" 버튼 className 에 h-7 이 없다', () => {
     const violations = scan();
     expect(
       violations,
