@@ -367,7 +367,7 @@ export function InlineChartWidget({
           <Button
             size="sm"
             variant="outline"
-            className="text-xs h-7"
+            className="text-xs"
             onClick={() => setDialogOpen(true)}
           >
             차트로 저장

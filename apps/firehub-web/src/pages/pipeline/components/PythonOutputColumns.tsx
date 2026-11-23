@@ -82,7 +82,7 @@ export default function PythonOutputColumns({
           <Button
             variant="outline"
             size="sm"
-            className="h-7 text-xs px-2"
+            className="text-xs px-2"
             onClick={addColumn}
             aria-label="출력 컬럼 추가"
           >

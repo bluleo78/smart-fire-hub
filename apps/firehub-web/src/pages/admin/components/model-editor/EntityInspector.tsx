@@ -510,7 +510,7 @@ function EditEntityForm({
             ref={addPropertyButtonRef}
             variant="outline"
             size="sm"
-            className="h-7 gap-1 px-2 text-xs"
+            className="gap-1 px-2 text-xs"
             onClick={handleAddProperty}
             disabled={addingProperty}
             aria-label={`${entity.type} 속성 추가`}

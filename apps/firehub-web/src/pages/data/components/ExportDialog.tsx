@@ -211,7 +211,7 @@ export function ExportDialog({
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-7 text-xs"
+                  className="text-xs"
                   onClick={handleToggleAll}
                 >
                   {allSelected ? '선택 해제' : '전체 선택'}

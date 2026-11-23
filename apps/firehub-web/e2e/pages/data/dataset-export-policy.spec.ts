@@ -62,6 +62,26 @@ test.describe('데이터셋 내보내기 정책 UI', () => {
     await estimate.waitForRequest();
   });
 
+  /**
+   * WD-1018: 내보내기 창 「컬럼 선택」 옆 전체 선택 버튼은 size="sm" 기본 높이(h-8=32px)를 따른다.
+   * 예전엔 className 에 h-7 을 덮어써 28px 로 그려졌다 — 다시 덮어쓰면 이 시험이 28 로 실패한다.
+   */
+  test('내보내기 창 컬럼 전체 선택 버튼 높이가 32px 이다 (WD-1018)', async ({ authenticatedPage: page }) => {
+    await detail(page, true);
+    await mockApi(page, 'GET', '/api/v1/datasets/1/export/estimate', {
+      rowCount: 2,
+      async: false,
+      hasGeometryColumn: false,
+      columns: [{ columnName: 'name', displayName: '이름', dataType: 'TEXT' }],
+    });
+    await openDataTab(page);
+    await page.getByRole('button', { name: '내보내기' }).click();
+    const toggle = page.getByRole('dialog').getByRole('button', { name: /^(전체 선택|선택 해제)$/ });
+    await expect(toggle).toBeVisible();
+    // 다이얼로그 열림 애니메이션(scale 0.95→1) 중에는 boundingBox 가 31 로 줄어 보이므로, 변환 영향이 없는 computed height 로 잰다.
+    await expect(toggle).toHaveCSS('height', '32px');
+  });
+
   test('exportAllowed=false 면 데이터 탭 내보내기는 비활성이고 사유 툴팁이 뜬다', async ({
     authenticatedPage: page,
   }) => {
