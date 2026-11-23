@@ -122,6 +122,55 @@ test.describe('파이프라인 에디터 — 스텝 설정', () => {
     await expect(header).toHaveCount(0);
   });
 
+  /** 스텝 count 개를 만들고 index 번째 노드를 눌러 패널을 연다 — 그 노드 locator 를 돌려준다 (WD-1044) */
+  async function openStepNode(page: Page, count: number, index: number) {
+    await setupNewEditorMocks(page);
+    await page.goto('/pipelines/new');
+    for (let i = 0; i < count; i++) await clickToolbarAddStep(page);
+    await expect(page.locator('.react-flow__node')).toHaveCount(count);
+    const node = page.locator('.react-flow__node').nth(index);
+    await node.click();
+    return node;
+  }
+
+  test('닫기 버튼을 Enter 로 눌러 패널을 닫으면 초점이 그 스텝 노드로 돌아간다 (WD-1044)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 스텝 2개 — 여럿 중 「연 노드」로 돌아가는지 보기 위해 두 번째 노드로 연다
+    const node = await openStepNode(page, 2, 1);
+    await page.getByRole('button', { name: '스텝 설정 패널 닫기' }).focus();
+    await page.keyboard.press('Enter');
+    await expect(node).toBeFocused();
+  });
+
+  test('닫기 버튼을 클릭해 패널을 닫아도 초점이 그 스텝 노드로 돌아간다 (WD-1044)', async ({
+    authenticatedPage: page,
+  }) => {
+    const node = await openStepNode(page, 2, 0);
+    await page.getByRole('button', { name: '스텝 설정 패널 닫기' }).click();
+    await expect(node).toBeFocused();
+  });
+
+  test('닫은 직후 초점이 이미 다른 컨트롤로 옮겨졌으면 노드가 그것을 빼앗지 않는다 (WD-1044)', async ({
+    authenticatedPage: page,
+  }) => {
+    const node = await openStepNode(page, 1, 0);
+    const nameInput = page.getByPlaceholder(/파이프라인 이름|이름 입력/).first();
+    const closeButton = page.getByRole('button', { name: '스텝 설정 패널 닫기' });
+
+    // 닫기 클릭 직후 같은 틱(다음 프레임 전)에 이름 칸으로 초점을 옮긴다
+    const nameHandle = await nameInput.elementHandle();
+    await closeButton.evaluate((close, name) => {
+      (close as HTMLElement).click();
+      (name as HTMLElement | null)?.focus();
+    }, nameHandle);
+    // 복귀 시도 상한(500ms)이 다 지나도록 기다려야 「빼앗지 않음」을 증명할 수 있어 고정 대기를 쓴다
+    await page.waitForTimeout(600);
+
+    await expect(nameInput).toBeFocused();
+    await expect(node).not.toBeFocused();
+  });
+
   test('이름 미입력 상태로 저장 클릭 시 usePipelineValidation 이 실패한다', async ({
     authenticatedPage: page,
   }) => {
