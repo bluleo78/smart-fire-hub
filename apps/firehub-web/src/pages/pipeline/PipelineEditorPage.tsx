@@ -169,6 +169,9 @@ export default function PipelineEditorPage() {
     // 다음 프레임에 복원하되, 그 사이 사용자가 포커스를 옮겼거나 대상이 사라졌으면 하지 않는다.
     // 대기 해제는 프레임 안에서 한다 — 의존값이 바뀌어 cleanup 이 프레임을 취소하면 ref 가 그대로 남아 다음 실행이 다시 시도한다(WD-992)
     const frame = requestAnimationFrame(() => {
+      // 잠금이 풀린 렌더와 이 프레임 사이에 새 저장이 시작됐으면(handleSave 가 focusBeforeSaveRef 를 새로 씀)
+      // 그 저장의 기억을 지우지도, 포커스를 옮기지도 않는다 — 앞 프레임이 새 저장의 복원 정보를 지우던 경합을 막는다(WD-992 리뷰)
+      if (saveInFlightRef.current || focusBeforeSaveRef.current !== target) return;
       clearPendingRestore();
       if (!isRestorable(target) || !focusIsUnclaimed()) return;
       target.focus({ preventScroll: true });

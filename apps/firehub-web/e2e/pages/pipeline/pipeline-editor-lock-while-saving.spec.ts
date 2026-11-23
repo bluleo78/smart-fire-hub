@@ -335,6 +335,41 @@ test.describe('파이프라인 편집 — 저장 중 편집 잠금 (WD-953)', ()
     await expect(save).toBeFocused();
   });
 
+  test('파이프라인 이름 칸에 포커스가 있던 저장이 409 충돌로 거부돼 「계속 편집」으로 창을 닫으면 그 칸으로 돌아온다 (WD-992)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockPipeline(page);
+    const hold = await holdApi(page, 'PUT', '/api/v1/pipelines/1', 409, {
+      status: 409,
+      code: 'EDIT_CONFLICT',
+      message: '다른 곳에서 변경되었습니다.',
+    });
+
+    await page.goto('/pipelines/1');
+    await page.getByRole('button', { name: '수정' }).click();
+    const nameInput = page.getByLabel('파이프라인 이름');
+    // fill 은 칸에 포커스를 둔다 — 이 포커스가 저장 시작 때 기억돼, 충돌 창이 닫힌 뒤 돌아와야 할 대상이다
+    await nameInput.fill('renamed');
+    await expect(nameInput).toBeFocused();
+    // 칸에 포커스가 있는 채 저장을 시작할 실제 입력 경로가 없어(클릭·Enter 는 저장 버튼이 포커스를 가진다)
+    // 칸 복원 시험처럼 포커스를 옮기지 않는 evaluate 클릭을 의도적으로 쓴다
+    await saveButton(page).evaluate((el) => (el as HTMLButtonElement).click());
+    await expect.poll(() => hold.requests.length).toBe(1);
+    // 저장 중에는 이름 칸이 잠겨(disabled) 포커스를 잃는다 — 이 상태에서 409 가 온다
+    await expect(nameInput).toBeDisabled();
+
+    hold.release();
+    const dialog = page.getByRole('alertdialog');
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole('button', { name: '계속 편집' }).click();
+    await expect(dialog).toHaveCount(0);
+    // 퇴장 애니메이션 뒤 Radix 의 늦은 포커스 복귀까지 덮도록 두 프레임을 기다린 뒤 본다.
+    // 고치기 전에는 창이 닫히기 전에 복원 대상(conflictTargetRef)이 지워져 저장 버튼·body 로 끝났다
+    await waitTwoFrames(page);
+    await expect(nameInput).toBeFocused();
+    await expect(nameInput).toHaveValue('renamed');
+  });
+
   test('저장이 연속 두 번 실패해도 매번 저장 전 포커스(저장 버튼)로 돌아온다 (WD-992)', async ({
     authenticatedPage: page,
   }) => {
@@ -500,6 +535,8 @@ test.describe('파이프라인 편집 — 저장 중 편집 잠금 (WD-953)', ()
     // 실패 토스트가 보이고 잠금이 풀린 뒤에도 실행 요청이 없어야 한다
     await expect(page.getByText('서버 오류').first()).toBeVisible();
     await expect(page.getByLabel('파이프라인 이름')).toBeEnabled();
+    // 「저장 후 실행」은 저장 결과를 받은 직후 실행을 부르므로, 잘못 나간 요청이 기록될 틈을 두 프레임 준 뒤 본다
+    await waitTwoFrames(page);
     expect(executes).toHaveLength(0);
   });
 
