@@ -132,4 +132,20 @@ class RedirectFollowerTest {
         .isInstanceOf(ApiCallException.class)
         .hasMessage(ApiCallErrorMessages.unsupportedHttpMethod("FETCH-IT"));
   }
+
+  /** WD-986 ④: 표준이 아닌 값은 저장한(입력한) 원문을 문구에 보인다 — 대문자 정규화값이 아니다. */
+  @Test
+  void resolveMethod_unknownMethod_reportsStoredValueVerbatim() {
+    assertThatThrownBy(() -> RedirectFollower.resolveMethod("fetch-it"))
+        .isInstanceOf(ApiCallException.class)
+        .hasMessage(ApiCallErrorMessages.unsupportedHttpMethod("fetch-it"))
+        .hasMessageContaining("fetch-it")
+        .hasMessageNotContaining("FETCH-IT");
+  }
+
+  /** 권장 목록에서 빠졌지만 허용 집합은 바꾸지 않는다는 비목표를 고정한다 — TRACE 를 막는 쪽으로 되돌리지 않게. */
+  @Test
+  void resolveMethod_traceStillAcceptedDespiteOmittedFromGuidance() {
+    assertThat(RedirectFollower.resolveMethod("TRACE")).isEqualTo(HttpMethod.TRACE);
+  }
 }

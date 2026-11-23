@@ -391,9 +391,10 @@ public final class RedirectFollower {
    * 반복한다).
    *
    * <p>비어 있지 않지만 표준 메서드가 아닌 값도 다시 보내도 같으므로 재시도하지 않는 안내 오류({@link ApiCallException})로 낸다 — {@code
-   * HttpMethod.valueOf} 는 알 수 없는 값을 받아 빈 이름·그름 이름 요청을 만드는 통로가 된다.
+   * HttpMethod.valueOf} 는 알 수 없는 값을 받아 빈 이름·그릇된 이름 요청을 만드는 통로가 된다. 안내 문구에는 비교용으로 정규화한 값이 아니라
+   * 설정·호출부가 준 원본 값을 넘긴다(WD-986) — 저장한 그대로가 화면에 보여야 고치기 쉽다.
    *
-   * @param method 설정·호부가 준 원본 값(null 허용)
+   * @param method 설정·호출부가 준 원본 값(null 허용)
    * @return 표준 메서드 — 표준이 아니면 {@link ApiCallException}
    */
   public static HttpMethod resolveMethod(String method) {
@@ -406,7 +407,8 @@ public final class RedirectFollower {
         return known;
       }
     }
-    throw new ApiCallException(ApiCallErrorMessages.unsupportedHttpMethod(normalized));
+    // 문구에는 원본 값을 넘긴다 — 대문자 정규화값(FETCH-IT)이 아니라 저장한 입력(fetch-it)이 화면에 보인다(WD-986).
+    throw new ApiCallException(ApiCallErrorMessages.unsupportedHttpMethod(method));
   }
 
   /**

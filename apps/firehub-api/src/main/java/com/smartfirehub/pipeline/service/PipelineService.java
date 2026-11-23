@@ -22,7 +22,9 @@ import com.smartfirehub.pipeline.repository.PipelineExecutionRepository.ActiveEx
 import com.smartfirehub.pipeline.repository.PipelineRepository;
 import com.smartfirehub.pipeline.repository.PipelineStepRepository;
 import com.smartfirehub.pipeline.repository.TriggerRepository;
+import com.smartfirehub.pipeline.service.executor.ApiCallException;
 import com.smartfirehub.pipeline.service.executor.ApiCallExecutor;
+import com.smartfirehub.pipeline.service.executor.RedirectFollower;
 import com.smartfirehub.pipeline.service.validator.PythonScriptValidator;
 import com.smartfirehub.pipeline.service.validator.SqlValidator;
 import com.smartfirehub.securitylevel.access.Clearance;
@@ -271,6 +273,9 @@ public class PipelineService {
         validateApiCallFieldMappings(stepRequest);
         validateApiCallPagination(stepRequest);
         validateApiCallMaxResponseSize(stepRequest, storedStep);
+        // WD-986 ①: 표준이 아닌 HTTP 메서드는 실행 시점이 아니라 저장 때 막는다 — 안내 문구는 실행기와 같다. 이미 잘못 저장된 스텝을
+        // 같은 값으로 되돌려 보내는 저장은 재저장 예외로 통과시킨다(아래 메서드 주석).
+        validateApiCallHttpMethod(stepRequest, storedStep);
       }
 
       // Validate AI_CLASSIFY step requirements
@@ -1679,6 +1684,47 @@ public class PipelineService {
         ApiCallExecutor.MIN_MAX_RESPONSE_SIZE_MB,
         ApiCallExecutor.MAX_MAX_RESPONSE_SIZE_MB,
         stepError(step.name(), MAX_RESPONSE_SIZE_RANGE_MESSAGE));
+  }
+
+  /**
+   * API_CALL HTTP 메서드의 저장 검증(WD-986 ①) — 표준이 아닌 메서드는 저장 때 안내와 함께 거절한다.
+   *
+   * <p>왜 저장에서 막나: 예전에는 표준이 아닌 값(예: PROPFIND)이 파이프라인에 저장된 뒤 실행 시점에야 안내 오류로 드러나, 저장은 성공했는데
+   * 실행만 실패했다. 판정은 실행기와 같은 한 곳({@link RedirectFollower#resolveMethod})으로 한다 — 자리마다 따로 정하면 목록·문구가
+   * 어긋난다.
+   *
+   * <p>재저장 예외: 이미 잘못 저장된 스텝을 저장본과 같은 값으로 되돌려 보내는 저장은 막지 않는다 — 막으면 설명만 고쳐도 파이프라인을 저장할
+   * 수 없다(WD-426·WD-810 의 "바뀌지 않은 스텝"과 같은 이유). 값이 바뀌면 새 값 기준으로 다시 판정한다.
+   *
+   * @param step 요청 스텝 — apiConfig null 은 앞의 빈 설정 판정이 이미 막는다(그 검사가 먼저 throw), 여기서는 방어만 한다
+   * @param storedStep 제자리 갱신할 기존 스텝(새 스텝이면 null) — 재저장 예외 비교용
+   */
+  private void validateApiCallHttpMethod(
+      PipelineStepRequest step, PipelineStepResponse storedStep) {
+    Map<String, Object> config = step.apiConfig();
+    if (config == null) {
+      return;
+    }
+    Object requested = config.get("method");
+    // 비면 실행기가 GET 으로 보낸다(resolveMethod 와 같은 해석) — 막지 않는다.
+    if (requested == null || requested.toString().isBlank()) {
+      return;
+    }
+    // 저장본과 같은 값(앞뒤 공백을 뺀 문자열 비교)은 재저장 예외 — WD-810 isUnchangedRunnableMaxResponseSize 와 같은 이유.
+    if (storedStep != null && storedStep.apiConfig() != null) {
+      Object stored = storedStep.apiConfig().get("method");
+      String storedText = stored == null ? "" : stored.toString().trim();
+      if (requested.toString().trim().equals(storedText)) {
+        return;
+      }
+    }
+    try {
+      RedirectFollower.resolveMethod(requested.toString());
+    } catch (ApiCallException e) {
+      // 기존 저장 검증과 같은 예외 타입(IllegalArgumentException → 400)으로 바꿔 던진다 — 실패 문구는 실행기와 같은
+      // ApiCallErrorMessages.unsupportedHttpMethod(원본값), stepError 가 스텝 이름을 앞에 붙인다.
+      throw new IllegalArgumentException(stepError(step.name(), e.getMessage()));
+    }
   }
 
   /**

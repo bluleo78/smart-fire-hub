@@ -2461,4 +2461,45 @@ class ApiCallExecutorTest {
 
     assertThat(wireMock.getAllServeEvents()).isEmpty();
   }
+
+  // -------------------------------------------------------------------------
+  // WD-986 ②: 실행 기록의 method= 는 실제로 보낸 값이다
+  // -------------------------------------------------------------------------
+
+  /** WD-986 ②: 실행 기록의 method= 는 실제로 보낸 값이다 — 설정 원본(소문자·공백)이 아니다. */
+  @Test
+  void execute_lowercaseMethod_logShowsSentMethod() {
+    wireMock.stubFor(
+        post(urlEqualTo("/api/lower"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("{\"items\":[]}")));
+
+    ApiCallExecutor.ApiCallResult result =
+        executor.execute(
+            withMethod(simpleGetConfig("/api/lower"), "post", null), "t", null, "APPEND", null);
+
+    assertThat(result.log()).contains("method=POST");
+    assertThat(result.log()).doesNotContain("method=post");
+  }
+
+  /** WD-986 ②: 빈 메서드는 GET 으로 보내므로 실행 기록에도 method=GET 이 남는다. */
+  @Test
+  void execute_blankMethod_logShowsGet() {
+    wireMock.stubFor(
+        get(urlEqualTo("/api/blank-method"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("{\"items\":[]}")));
+
+    ApiCallExecutor.ApiCallResult result =
+        executor.execute(
+            withMethod(simpleGetConfig("/api/blank-method"), "", null), "t", null, "APPEND", null);
+
+    assertThat(result.log()).contains("method=GET");
+  }
 }

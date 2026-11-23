@@ -61,6 +61,14 @@ class ApiCallErrorMessagesTest {
         .isEqualTo("데이터 경로(JSONPath) 형식이 올바르지 않습니다: $.data[ — 예: $.data.items");
   }
 
+  /** WD-986 ④: 안내 목록에 데이터 수집에 쓸 일이 없는 TRACE 를 권장하지 않는다(허용 자체는 표준 메서드라 그대로). */
+  @Test
+  void unsupportedHttpMethod_message_listsStandardMethodsWithoutTrace() {
+    assertThat(ApiCallErrorMessages.unsupportedHttpMethod("PROPFIND"))
+        .isEqualTo(
+            "지원하지 않는 HTTP 메서드입니다: PROPFIND — GET·HEAD·POST·PUT·PATCH·DELETE·OPTIONS 중 하나로 설정하세요");
+  }
+
   @ParameterizedTest
   @CsvSource({"30000,30", "300,0.3", "1500,1.5", "1000,1", "50,0.05"})
   void seconds_format(int ms, String expected) {
