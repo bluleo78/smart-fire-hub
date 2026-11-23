@@ -46,14 +46,76 @@ class RedirectLocationsTest {
         .hasToString("https://api.example.com/%EA%B2%80");
   }
 
-  /** 앞뒤의 공백·제어 문자(U+0000–U+0020)는 실행기(urlsplit)처럼 떼고 해석한다(WD-991 리뷰). */
+  /**
+   * 앞쪽 공백·제어 문자(U+0000–U+0020)만 떼고, 탭·CR·LF 는 어디에 있든 지운다 — Python urlsplit 과 같다(WD-1006). 끝의 공백은 떼지
+   * 않고 %20 으로 인코딩한다.
+   */
   @Test
-  void resolve_leadingTrailingWhitespace_stripped() {
+  void resolve_whitespace_matchesUrlsplit() {
     URI base = URI.create("https://api.example.com/v1");
     assertThat(RedirectLocations.resolve(base, " //cdn.example.com/data"))
         .hasToString("https://cdn.example.com/data");
     assertThat(RedirectLocations.resolve(base, "/next \t\n"))
-        .hasToString("https://api.example.com/next");
+        .hasToString("https://api.example.com/next%20");
+    assertThat(RedirectLocations.resolve(base, "/next\tpage"))
+        .hasToString("https://api.example.com/nextpage");
+    assertThat(RedirectLocations.resolve(base, "/a\r\nb?x=1\t"))
+        .hasToString("https://api.example.com/ab?x=1");
+    assertThat(RedirectLocations.resolve(base, "\thttps://cdn.example.com/x"))
+        .hasToString("https://cdn.example.com/x");
+    assertThat(RedirectLocations.resolve(base, " \t")).hasToString("https://api.example.com/v1");
+  }
+
+  /** 탭·CR·LF 를 뺀 그 밖의 제어 문자는 끝에 있어도 안쪽에 있어도 거절한다(WD-1006). */
+  @Test
+  void resolve_otherControlChars_rejected() {
+    URI base = URI.create("https://api.example.com/v1");
+    assertThatThrownBy(() -> RedirectLocations.resolve(base, "/next\u0001"))
+        .isInstanceOf(ApiCallException.class)
+        .hasMessage(ApiCallErrorMessages.invalidRedirectLocation());
+    assertThatThrownBy(() -> RedirectLocations.resolve(base, "/next\u0001page"))
+        .isInstanceOf(ApiCallException.class)
+        .hasMessage(ApiCallErrorMessages.invalidRedirectLocation());
+  }
+
+  /**
+   * Python urljoin 은 Location 스킴이 base 와 다르면 원문을 그대로 돌려주고 httpx 가 제어 문자를 거절한다 — 같은 스킴·상대 Location 만
+   * 탭·CR·LF 를 지우고 앞쪽을 떼며, 스킴이 다르면 거절한다(WD-1006).
+   */
+  @Test
+  void resolve_differentScheme_notCleaned() {
+    URI http = URI.create("http://api.example.com/v1");
+    assertThatThrownBy(() -> RedirectLocations.resolve(http, "https://x.com/p\tq"))
+        .isInstanceOf(ApiCallException.class)
+        .hasMessage(ApiCallErrorMessages.invalidRedirectLocation());
+    assertThatThrownBy(() -> RedirectLocations.resolve(http, "\u0001https://x.com/p"))
+        .isInstanceOf(ApiCallException.class)
+        .hasMessage(ApiCallErrorMessages.invalidRedirectLocation());
+    assertThatThrownBy(() -> RedirectLocations.resolve(http, " https://x.com/p"))
+        .isInstanceOf(ApiCallException.class)
+        .hasMessage(ApiCallErrorMessages.invalidRedirectLocation());
+  }
+
+  /** 스킴이 달라도 Location 에 「#」 이 있으면 Python urldefrag 가 다시 파싱하며 정리하므로 정리해서 따라간다(WD-1006). */
+  @Test
+  void resolve_differentSchemeWithFragment_cleaned() {
+    URI http = URI.create("http://api.example.com/v1");
+    assertThat(RedirectLocations.resolve(http, "https://x.com/p\tq#f"))
+        .hasToString("https://x.com/pq");
+    assertThat(RedirectLocations.resolve(http, " https://x.com/p#f"))
+        .hasToString("https://x.com/p");
+    assertThat(RedirectLocations.resolve(http, "\u0001https://x.com/p#f"))
+        .hasToString("https://x.com/p");
+  }
+
+  /** 같은 스킴(대소문자 무시)이면 탭을 지우고 따라간다(WD-1006). */
+  @Test
+  void resolve_sameScheme_cleaned() {
+    URI https = URI.create("https://api.example.com/v1");
+    assertThat(RedirectLocations.resolve(https, "https://x.com/p\tq"))
+        .hasToString("https://x.com/pq");
+    assertThat(RedirectLocations.resolve(https, "HTTPS://x.com/p\tq"))
+        .hasToString("https://x.com/pq");
   }
 
   /** RFC 3986 §5.2.4 예시 — 루트 위로 올라가는 「..」 는 버린다. */

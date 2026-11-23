@@ -313,6 +313,48 @@
       "base": "https://api.example.com/v1/items",
       "location": "next?page=3#my section",
       "expected": "https://api.example.com/v1/next?page=3"
+    },
+    {
+      "name": "tab inside relative path is removed (WD-1006)",
+      "base": "https://api.example.com/v1/items",
+      "location": "/next\tpage",
+      "expected": "https://api.example.com/nextpage"
+    },
+    {
+      "name": "CR LF inside path and trailing tab are removed (WD-1006)",
+      "base": "https://api.example.com/v1/items",
+      "location": "/a\r\nb?x=1\t",
+      "expected": "https://api.example.com/ab?x=1"
+    },
+    {
+      "name": "leading space and tab before same-scheme absolute URL are stripped (WD-1006)",
+      "base": "https://api.example.com/v1/items",
+      "location": " \thttps://cdn.example.com/x\ty",
+      "expected": "https://cdn.example.com/xy"
+    },
+    {
+      "name": "different scheme with fragment: tab removed by urldefrag (WD-1006)",
+      "base": "http://api.example.com/v1",
+      "location": "https://x.com/p\tq#f",
+      "expected": "https://x.com/pq"
+    },
+    {
+      "name": "different scheme with fragment: leading space stripped (WD-1006)",
+      "base": "http://api.example.com/v1",
+      "location": " https://x.com/p#f",
+      "expected": "https://x.com/p"
+    },
+    {
+      "name": "different scheme with fragment: leading control char stripped (WD-1006)",
+      "base": "http://api.example.com/v1",
+      "location": "\u0001https://x.com/p#f",
+      "expected": "https://x.com/p"
+    },
+    {
+      "name": "same scheme uppercase: scheme lowercased and tab removed (WD-1006)",
+      "base": "http://api.example.com/v1",
+      "location": "HTTP://x.com/p\tq",
+      "expected": "http://x.com/pq"
     }
   ],
   "redirectMethod": [

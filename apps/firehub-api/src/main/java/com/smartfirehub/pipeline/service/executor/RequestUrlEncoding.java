@@ -50,7 +50,7 @@ public final class RequestUrlEncoding {
    *
    * <p>무엇을: 스킴({@code <scheme>://})이 있으면 {@link #encodePathAndQuery} 와 같고, {@code //authority} 로
    * 시작하면 authority 뒤부터, 그 밖(상대 경로·{@code ?query})은 처음부터 경로·쿼리 규칙으로 인코딩한다. 프래그먼트·제어 문자·이미 있는 %XX 규칙은
-   * 같다.
+   * 같다. 탭·CR·LF 제거·앞쪽 공백 떼기는 호출부({@code RedirectLocations.resolve})가 정한다(WD-1006).
    *
    * <p>왜: Python 은 공백·한글이 든 Location 도 따라가는데 Java {@code RedirectLocations.resolve} 는 URI 문법 검사에서
    * 거절했다.
@@ -62,8 +62,6 @@ public final class RequestUrlEncoding {
     if (reference == null) {
       return null;
     }
-    // 앞뒤의 C0 제어 문자·공백(U+0000–U+0020)은 Python urlsplit/WHATWG 처럼 먼저 뗀다 — 안쪽 제어 문자는 아래에서 그대로 거절된다.
-    reference = stripC0AndSpace(reference);
     Matcher m = SCHEME.matcher(reference);
     int start = 0;
     if (m.find()) {
@@ -72,15 +70,6 @@ public final class RequestUrlEncoding {
       start = authorityEnd(reference, 2);
     }
     return encodeFrom(reference, start, false);
-  }
-
-  /** 앞뒤의 U+0000–U+0020 을 뗀다(WD-991). */
-  private static String stripC0AndSpace(String s) {
-    int b = 0;
-    int e = s.length();
-    while (b < e && s.charAt(b) <= 0x20) b++;
-    while (e > b && s.charAt(e - 1) <= 0x20) e--;
-    return s.substring(b, e);
   }
 
   /** authority 의 끝 — {@code from} 부터 첫 '/'·'?'·'#' 위치(없으면 문자열 끝). */

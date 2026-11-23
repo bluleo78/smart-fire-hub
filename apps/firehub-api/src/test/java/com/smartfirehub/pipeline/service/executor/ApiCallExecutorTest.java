@@ -2055,11 +2055,12 @@ class ApiCallExecutorTest {
   }
 
   /**
-   * 문법 오류 Location(제어 문자 — 공백·한글은 WD-991 로 인코딩해 따라간다)은 재시도하지 않는 고정 문구로 실패한다 — 주소(쿼리 비밀)는 싣지 않는다.
+   * 문법 오류 Location(깨진 IPv6 호스트 — 제어 문자는 Jetty 가 헤더로 못 보내 단위 시험이 맡는다. 공백·한글은 WD-991 로 인코딩해 따라간다)은
+   * 재시도하지 않는 고정 문구로 실패한다 — 주소(쿼리 비밀)는 싣지 않는다.
    */
   @Test
   void execute_redirectWithInvalidLocation_failsWithFixedMessage() {
-    stubRedirect("/r676/badloc", "/next\tpage?serviceKey=SECRET676");
+    stubRedirect("/r676/badloc", "http://[bad/next?serviceKey=SECRET676");
 
     assertThatThrownBy(
             () ->
@@ -2068,6 +2069,17 @@ class ApiCallExecutorTest {
         .isInstanceOf(ApiCallException.class)
         .hasMessage(ApiCallErrorMessages.invalidRedirectLocation());
     wireMock.verify(1, getRequestedFor(urlPathEqualTo("/r676/badloc")));
+  }
+
+  /** Location 안의 탭은 Python urlsplit 처럼 지우고 따라간다(WD-1006). */
+  @Test
+  void execute_redirectLocationWithTab_followsWithTabRemoved() {
+    stubRedirect("/r1006/tab", "/r1006/next\tpage");
+    stubEmptyItems("/r1006/nextpage");
+
+    executor.execute(retryConfig(baseUrl() + "/r1006/tab", 3, 5000), "t", null, "APPEND", null);
+
+    wireMock.verify(1, getRequestedFor(urlPathEqualTo("/r1006/nextpage")));
   }
 
   /**
