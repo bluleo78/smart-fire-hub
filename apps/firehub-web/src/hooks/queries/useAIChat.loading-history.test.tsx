@@ -237,6 +237,10 @@ describe('useAIChat — 로딩 중 보관한 AI 에게 묻기 질문 (WD-1004)',
     });
     expect(streamAIChat).toHaveBeenCalledTimes(1);
     expect(vi.mocked(streamAIChat).mock.calls[0][1]).toBe('S1');
+    // WD-1050: 5xx 는 대화를 유지하고 토스트는 기존 문구 하나다
+    expect(result.current.currentSessionId).toBe('S1');
+    expect(toast.error).toHaveBeenCalledTimes(1);
+    expect(toast.error).toHaveBeenCalledWith('대화 이력을 불러오지 못했습니다.');
     err.mockRestore();
   });
 });
@@ -422,25 +426,62 @@ describe('useAIChat — 같은 대화를 다시 열어도 보관 질문 유지 (
   });
 });
 
-describe('useAIChat — 이력 4xx 실패 때 보관 질문 버림 (WD-1029)', () => {
-  const MSG = '대화를 불러오지 못해 「AI 에게 물어보기」 질문을 보내지 않았습니다.';
-  for (const status of [403, 404]) {
-    it(`보관 중 이력 요청이 ${status} 로 실패하면 질문을 보내지 않고 알린다`, async () => {
-      const d = deferred<{ data: unknown[] }>();
-      vi.mocked(aiApi.getSessionMessages).mockReturnValue(d.promise as never);
-      const err = vi.spyOn(console, 'error').mockImplementation(() => {});
-      const { result } = renderHook(() => useAIChat(), { wrapper });
-      act(() => {
-        void result.current.loadSession('S1');
-      });
-      act(() => result.current.sendAfterHistoryLoaded('묻기 질문'));
-      await act(async () => {
-        d.reject(new AxiosError('fail', String(status), undefined, undefined, { status } as never));
-      });
-      expect(streamAIChat).not.toHaveBeenCalled();
-      expect(toast.info).toHaveBeenCalledWith(MSG);
-      expect(toast.info).toHaveBeenCalledTimes(1);
-      err.mockRestore();
+describe('useAIChat — 이력 4xx 실패 때 선택 해제·안내 하나 (WD-1029, WD-1050)', () => {
+  const ASK = '대화 이력을 불러오지 못해 「AI 에게 물어보기」 질문을 보내지 않았습니다.';
+  const PLAIN = '대화 이력을 불러오지 못했습니다.';
+  const NEW = ' 새 대화로 시작합니다.';
+
+  // [상태, 보관 질문 유무, 기대 토스트, 선택 해제 여부, 목록 무효화 여부]
+  const cases: [number, boolean, string, boolean, boolean][] = [
+    [403, true, ASK + NEW, true, false],
+    [403, false, PLAIN + NEW, true, false],
+    [404, true, ASK + NEW, true, true],
+    [404, false, PLAIN + NEW, true, true],
+    [410, true, ASK + NEW, true, true],
+    [410, false, PLAIN + NEW, true, true],
+    [400, true, ASK, false, false],
+    [400, false, PLAIN, false, false],
+    [409, true, ASK, false, false],
+    [409, false, PLAIN, false, false],
+  ];
+
+  it.each(cases)('%i 실패 (보관 질문 %s) → %s / 선택 해제 %s / 목록 무효화 %s', async (status, hadPending, message, unselect, invalidate) => {
+    const d = deferred<{ data: unknown[] }>();
+    vi.mocked(aiApi.getSessionMessages).mockReturnValue(d.promise as never);
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    // 같은 QueryClient 를 쓰고 무효화 호출을 엿본다
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const spy = vi.spyOn(qc, 'invalidateQueries');
+    const w = ({ children }: { children: React.ReactNode }) => (
+      <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(() => useAIChat(), { wrapper: w });
+    act(() => {
+      void result.current.loadSession('S1');
     });
-  }
+    if (hadPending) act(() => result.current.sendAfterHistoryLoaded('묻기 질문'));
+    await act(async () => {
+      d.reject(new AxiosError('fail', String(status), undefined, undefined, { status } as never));
+    });
+
+    expect(streamAIChat).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledTimes(1);
+    expect(toast.error).toHaveBeenCalledWith(message);
+    expect(toast.info).not.toHaveBeenCalled();
+    expect(result.current.currentSessionId).toBe(unselect ? null : 'S1');
+    expect(result.current.isLoadingHistory).toBe(false);
+    if (invalidate) expect(spy).toHaveBeenCalledWith({ queryKey: ['ai-sessions'] });
+    else expect(spy).not.toHaveBeenCalledWith({ queryKey: ['ai-sessions'] });
+
+    if (unselect) {
+      // 선택이 풀렸으므로 수동 전송은 S1 이 아닌 새 대화로 간다
+      await act(async () => {
+        await result.current.sendMessage('수동');
+      });
+      expect(streamAIChat).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(streamAIChat).mock.calls[0][0]).toBe('수동');
+      expect(vi.mocked(streamAIChat).mock.calls[0][1]).not.toBe('S1');
+    }
+    err.mockRestore();
+  });
 });

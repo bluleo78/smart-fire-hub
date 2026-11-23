@@ -6,6 +6,7 @@
  */
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { RefObject } from 'react';
+import { StrictMode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { MAX_CHAT_MESSAGE_LENGTH } from '../../lib/ai-chat-limits';
@@ -263,12 +264,44 @@ describe('ChatInput restoreDraft (WD-1029)', () => {
     expect(consumed).toHaveBeenCalledTimes(1);
   });
 
-  it('이미 쓴 글이 있으면 덮지 않고 한 번 소비한다', () => {
+  // StrictMode 이중 실행에도 초안을 한 번만 반영한다 — 비었거나 공백뿐이면 채우고, 쓰던 글이 있으면 줄을 바꿔 이어 붙인다 (WD-1050)
+  it.each([
+    ['빈 입력', '', '남은 글'],
+    ['공백뿐인 입력', '  ', '남은 글'],
+    ['쓰던 글', '쓰던 글', '쓰던 글\n남은 글'],
+  ])('StrictMode 에서 %s 일 때 초안을 한 번만 반영한다 (WD-1050)', (_name, typed, expected) => {
+    const { rerender } = render(
+      <StrictMode>
+        <ChatInput onSend={vi.fn()} onRestoreDraftConsumed={vi.fn()} />
+      </StrictMode>,
+    );
+    if (typed) fireEvent.change(screen.getByLabelText('메시지 입력'), { target: { value: typed } });
+    rerender(
+      <StrictMode>
+        <ChatInput onSend={vi.fn()} restoreDraft="남은 글" onRestoreDraftConsumed={vi.fn()} />
+      </StrictMode>,
+    );
+    expect(screen.getByLabelText('메시지 입력')).toHaveValue(expected);
+  });
+
+  it('이미 쓴 글이 있으면 줄을 바꿔 뒤에 이어 붙이고 한 번 소비한다', () => {
     const consumed = vi.fn();
     const { rerender } = render(<ChatInput onSend={vi.fn()} onRestoreDraftConsumed={consumed} />);
     fireEvent.change(screen.getByLabelText('메시지 입력'), { target: { value: '쓰던 글' } });
     rerender(<ChatInput onSend={vi.fn()} restoreDraft="남은 글" onRestoreDraftConsumed={consumed} />);
-    expect(screen.getByLabelText('메시지 입력')).toHaveValue('쓰던 글');
+    expect(screen.getByLabelText('메시지 입력')).toHaveValue('쓰던 글\n남은 글');
     expect(consumed).toHaveBeenCalledTimes(1);
+  });
+
+  it('되돌린 글을 반영한 뒤 입력창 높이를 다시 맞춘다 (WD-1050)', () => {
+    const desc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollHeight');
+    Object.defineProperty(HTMLElement.prototype, 'scrollHeight', { configurable: true, get: () => 90 });
+    try {
+      render(<ChatInput onSend={vi.fn()} restoreDraft={'첫 줄\n둘째 줄'} onRestoreDraftConsumed={vi.fn()} />);
+      expect(screen.getByLabelText('메시지 입력').style.height).toBe('90px');
+    } finally {
+      if (desc) Object.defineProperty(HTMLElement.prototype, 'scrollHeight', desc);
+      else delete (HTMLElement.prototype as unknown as Record<string, unknown>).scrollHeight;
+    }
   });
 });

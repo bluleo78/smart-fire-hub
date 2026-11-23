@@ -1,6 +1,6 @@
 import { File as FileIcon, Image, Paperclip, Send, StopCircle, X } from 'lucide-react';
 import type { ClipboardEvent, DragEvent, KeyboardEvent, RefObject } from 'react';
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { MAX_CHAT_MESSAGE_LENGTH, messageTooLongHint } from '../../lib/ai-chat-limits';
@@ -89,13 +89,29 @@ export function ChatInput({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // 못 보낸 글 되돌림(WD-1029): 사용자가 이미 쓴 글은 덮지 않고(비었을 때만 채움), 채우든 말든 한 번 소비한다.
+  // 못 보낸 글 되돌림(WD-1029): 사용자가 이미 쓴 글은 지우지 않고 줄을 바꿔 뒤에 이어 붙이며(비었거나 공백뿐이면 그냥 채움, WD-1050), 한 번 소비한다.
+  // 이어 붙이기는 멱등이 아니라, 이미 반영한 초안을 ref 로 기억해 StrictMode 이중 실행·소비 콜백 교체 재실행에도 한 번만 붙인다(WD-1050).
+  // 초안이 null 이 되면 비워, 나중의 같은 글도 다시 반영된다.
+  const appliedDraftRef = useRef<string | null>(null);
   useEffect(() => {
-    if (restoreDraft == null) return;
+    if (restoreDraft == null) {
+      appliedDraftRef.current = null;
+      return;
+    }
+    if (appliedDraftRef.current === restoreDraft) return;
+    appliedDraftRef.current = restoreDraft;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- 제공자의 일회성 되돌림 값을 입력창 상태로 옮기는 것이라 effect 가 맞다
-    setMessage(cur => (cur === '' ? restoreDraft : cur));
+    setMessage(cur => (cur.trim() === '' ? restoreDraft : `${cur}\n${restoreDraft}`));
     onRestoreDraftConsumed?.();
   }, [restoreDraft, onRestoreDraftConsumed]);
+
+  // 입력창 높이 맞춤(WD-1050) — message 가 바뀐 직후(DOM 갱신 뒤)마다 잰다. 타이핑·되돌린 글 반영(입력 이벤트 없음)·전송 뒤 비움을 모두 덮는다.
+  useLayoutEffect(() => {
+    const target = textareaRef.current;
+    if (!target) return;
+    target.style.height = 'auto';
+    target.style.height = `${Math.min(target.scrollHeight, 150)}px`;
+  }, [message]);
 
   const addFiles = (newFiles: File[]) => {
     const valid: PendingFile[] = [];
@@ -187,12 +203,6 @@ export function ChatInput({
       e.preventDefault();
       handleSend();
     }
-  };
-
-  const handleInput = (e: React.InputEvent<HTMLTextAreaElement>) => {
-    const target = e.currentTarget;
-    target.style.height = 'auto';
-    target.style.height = `${Math.min(target.scrollHeight, 150)}px`;
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -327,7 +337,6 @@ export function ChatInput({
           value={message}
           onChange={(e) => setMessage(e.target.value)}
           onKeyDown={handleKeyDown}
-          onInput={handleInput}
           onPaste={handlePaste}
           placeholder={placeholder}
           // placeholder 는 입력하면 사라져 이름이 될 수 없으므로 접근 가능한 이름을 따로 준다(WD-590).
