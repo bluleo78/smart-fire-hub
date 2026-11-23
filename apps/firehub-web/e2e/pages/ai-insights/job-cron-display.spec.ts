@@ -1,4 +1,5 @@
 import { createJob } from '../../factories/ai-insight.factory';
+import { mockProactivePermissions, setupJobDetailMocks } from '../../fixtures/ai-insight.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 
@@ -136,6 +137,35 @@ test.describe('스마트 작업 목록 — 스케줄 미등록 노출 (#354)', (
     await expect(row.getByTestId('schedule-unregistered')).toHaveCount(0);
   });
 
+  test('cron 을 보존한 이상 탐지 작업도 미등록 경고 없이 표시된다', async ({
+    authenticatedPage: page,
+  }) => {
+    // WD-993 — 트리거를 정기 → 이상 탐지로 바꾸면 cron 을 그대로 보존해 둔다(돌아갈 때 다시 입력하지 않게).
+    // 그래서 ANOMALY 행도 cronExpression 이 있고 nextExecuteAt 은 비어 있다 — 예약 대상이 아니라
+    // 이상 탐지 폴러가 돌리므로 「실행되지 않습니다」 경고는 오경고다.
+    const job = createJob({
+      id: 5,
+      name: 'cron 보존 이상 탐지 작업',
+      enabled: true,
+      triggerType: 'ANOMALY',
+      cronExpression: '0 9 * * *',
+      nextExecuteAt: null,
+    });
+
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs', [job]);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    await page.goto('/ai-insights/jobs');
+
+    const row = page.getByRole('row').filter({ hasText: 'cron 보존 이상 탐지 작업' });
+    await expect(row).toBeVisible();
+    await expect(row.getByTestId('schedule-unregistered')).toHaveCount(0);
+
+    // WD-993 반려 ① — 보존된 cron 을 「매일 오전 9시」처럼 스케줄 라벨로 보여 주면 정기 실행 중인 줄로 읽힌다
+    await expect(row).toContainText('주기 없음');
+    await expect(row).not.toContainText('매일 오전 9시');
+    await expect(row).not.toContainText('0 9 * * *');
+  });
+
   test('비활성 작업은 미등록이 아니라 "-"로 표시된다', async ({ authenticatedPage: page }) => {
     // 비활성은 의도적으로 스케줄이 해제된 상태이므로 경고 대상이 아니다
     const job = createJob({
@@ -151,5 +181,119 @@ test.describe('스마트 작업 목록 — 스케줄 미등록 노출 (#354)', (
 
     const row = page.getByRole('row').filter({ hasText: '비활성 작업' });
     await expect(row.getByTestId('schedule-unregistered')).toHaveCount(0);
+  });
+});
+
+/**
+ * 스마트 작업 상세(개요 탭) — ANOMALY 보존 cron 표기 + 다음 실행 + 미등록 게이트 (WD-993 반려 ①②④)
+ *
+ * 목록은 검증했지만 상세 탭은 없었다(반려 ④). 상세는 목록과 다른 코드 경로(ReadonlyCard)로 같은 값을 그려,
+ * 「스케줄」·「다음 실행」 카드가 각각 ANOMALY 를 따로 거르지 않으면 두 화면의 표기가 갈린다.
+ */
+test.describe('스마트 작업 상세 — ANOMALY 보존 cron 표기 (WD-993)', () => {
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await mockProactivePermissions(page);
+  });
+
+  test('보존된 cron 을 스케줄처럼 보여 주지 않고 다음 실행도 비운다', async ({
+    authenticatedPage: page,
+  }) => {
+    // 반려 ①·② — 트리거를 이상 탐지로 바꾸며 cron 을 보존해 둔 행에 배포 전 예약(nextExecuteAt)이 남아 있어도
+    // 상세는 「매일 오전 9시」·지난 시각을 정기 실행처럼 보여 주면 안 된다.
+    const job = createJob({
+      id: 6,
+      name: '상세 이상 탐지 보존 주기',
+      enabled: true,
+      triggerType: 'ANOMALY',
+      cronExpression: '0 9 * * *',
+      nextExecuteAt: '2099-01-01T09:00:00',
+    });
+    await setupJobDetailMocks(page, 6);
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/6', job);
+
+    await page.goto('/ai-insights/jobs/6');
+
+    const section = page.getByRole('heading', { name: '실행 주기' }).locator('..');
+    await expect(section).toBeVisible();
+
+    // ① 스케줄 칸 — 정기 실행 라벨이 아니라 「주기 없음」
+    await expect(section).toContainText('주기 없음');
+    await expect(section).not.toContainText('매일 오전 9시');
+
+    // ② 다음 실행 — ANOMALY 는 정기 예약 대상이 아니므로 남아 있는 예약 시각을 보여 주지 않는다
+    await expect(section).not.toContainText('2099');
+
+    // 웹 미등록 게이트 오경고 없음(#354) — 이 행은 nextExecuteAt 이 있어 경고 분기에 닿지 않는다.
+    // 분기 "순서"까지 확인하려면 아래 nextExecuteAt 없는 ANOMALY 행 테스트를 본다.
+    await expect(page.getByTestId('schedule-unregistered')).toHaveCount(0);
+  });
+
+  test('정기 실행 작업은 스케줄 라벨과 다음 실행 시각이 그대로 보인다', async ({
+    authenticatedPage: page,
+  }) => {
+    // 과잉 제외를 막는 대조 — ANOMALY 거르기가 SCHEDULE 까지 들지 않아야 한다
+    const job = createJob({
+      id: 7,
+      name: '상세 정기 실행 작업',
+      enabled: true,
+      triggerType: 'SCHEDULE',
+      cronExpression: '0 9 * * *',
+      nextExecuteAt: '2099-01-01T09:00:00',
+    });
+    await setupJobDetailMocks(page, 7);
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/7', job);
+
+    await page.goto('/ai-insights/jobs/7');
+
+    const section = page.getByRole('heading', { name: '실행 주기' }).locator('..');
+    await expect(section).toContainText('매일 오전 9시');
+    await expect(section).toContainText('2099');
+    await expect(page.getByTestId('schedule-unregistered')).toHaveCount(0);
+  });
+
+  test('활성 + cron 이 있는데 다음 실행이 없으면 상세에서도 미등록으로 경고한다', async ({
+    authenticatedPage: page,
+  }) => {
+    // #354 상세 경고가 이번 삼항 재작성으로 사라지지 않는지 — 반려 ② 고치며 분기를 갈라 놓았으므로 대조가 필요하다
+    const job = createJob({
+      id: 8,
+      name: '상세 미등록 작업',
+      enabled: true,
+      triggerType: 'SCHEDULE',
+      cronExpression: '0 9 * * *',
+      nextExecuteAt: null,
+    });
+    await setupJobDetailMocks(page, 8);
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/8', job);
+
+    await page.goto('/ai-insights/jobs/8');
+
+    await expect(page.getByTestId('schedule-unregistered')).toBeVisible();
+    await expect(page.getByTestId('schedule-unregistered')).toContainText('미등록');
+  });
+
+  test('nextExecuteAt 이 비어 있는 ANOMALY 도 미등록 경고를 뜨지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    // 위 첫 테스트는 nextExecuteAt 이 있어 경고 분기 자체에 닿지 않는다 — ANOMALY 오경고 방지는 분기 "순서"에만
+    // 의존하므로(nextExecuteAt ? … : ANOMALY ? … 처럼 뒤로 밀면 깨진다) 반드시 nextExecuteAt 없는 행으로 확인해야 한다.
+    // 목록에는 이 경우가 있었는데 상세에는 없었다(반려 ④).
+    const job = createJob({
+      id: 9,
+      name: '상세 이상 탐지 다음 실행 없음',
+      enabled: true,
+      triggerType: 'ANOMALY',
+      cronExpression: '0 9 * * *',
+      nextExecuteAt: null,
+    });
+    await setupJobDetailMocks(page, 9);
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/9', job);
+
+    await page.goto('/ai-insights/jobs/9');
+
+    await expect(page.getByTestId('schedule-unregistered')).toHaveCount(0);
+    const section = page.getByRole('heading', { name: '실행 주기' }).locator('..');
+    await expect(section).toContainText('주기 없음');
+    await expect(section).not.toContainText('2099');
   });
 });

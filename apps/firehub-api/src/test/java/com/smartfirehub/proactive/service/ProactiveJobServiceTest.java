@@ -48,6 +48,8 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
   @Autowired private DSLContext dsl;
   @Autowired private com.smartfirehub.settings.service.AiCredentialService aiCredentialService;
   @Autowired private com.smartfirehub.global.security.PermissionChecker permissionChecker;
+  // 스케줄러 예약 여부(WD-993) — ANOMALY 전용 작업이 정기 실행에 등록되지 않는지 확인하기 위한 조회용 빈
+  @Autowired private ProactiveJobSchedulerService schedulerService;
 
   @MockitoBean private ProactiveAiClient proactiveAiClient;
   @MockitoBean private ProactiveContextCollector proactiveContextCollector;
@@ -459,6 +461,164 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
         .hasMessage(ProactiveCron.TOO_FREQUENT_MESSAGE + ": \"* * * * * *\"");
   }
 
+  /** [WD-993] 이상 탐지 전용 작업에 너무 잦은 cron 이 실려도 400 으로 막히지 않는다 — 정기 실행이 아니면 최소 간격 검사를 하지 않는다. */
+  @Test
+  void createJob_anomalyWithTooFrequentCron_accepted() {
+    ProactiveJobResponse created =
+        proactiveJobService.createJob(
+            createRequest("이상 탐지 너무 잦은 주기", "* * * * * *", "Asia/Seoul", "ANOMALY"), testUserId);
+    assertThat(created.triggerType()).isEqualTo("ANOMALY");
+    assertThat(created.cronExpression()).isEqualTo("* * * * * *");
+  }
+
+  /**
+   * [WD-993 반려 ③] ANOMALY 전용이어도 cron 형식 검사는 그대로 한다 — 파서가 읽지 못하는 값을 그대로 넣으면 정기 실행으로
+   * 되돌렸을 때 어디서 깨질지 알 수 없고, 이 검사는 이슈 이전부터 모든 트리거에 걸리던 것이다(이슈의 400 은 「1분보다 짧게」 간격
+   * 검사였다).
+   */
+  @Test
+  void createJob_anomalyWithMalformedCron_rejected() {
+    assertThatThrownBy(
+            () ->
+                proactiveJobService.createJob(
+                    createRequest("이상 탐지 깨진 주기", "0 9 * *", "Asia/Seoul", "ANOMALY"),
+                    testUserId))
+        .isInstanceOf(ProactiveJobException.class)
+        .hasMessageStartingWith("유효하지 않은 cron 표현식입니다");
+  }
+
+  /**
+   * [WD-993 반려 ③ 대조] 같은 깨진 주기가 정기 실행에서도 그대로 400 이다 — 두 검사(형식·간격)가 한 가드로 묶여 있으면
+   * 한쪽만 열어도 전체 스위트가 통과해 버려, ANOMALY 쪽만 검사가 사라지는 회귀를 잡지 못한다.
+   */
+  @Test
+  void createJob_scheduleWithMalformedCron_rejected() {
+    assertThatThrownBy(
+            () ->
+                proactiveJobService.createJob(
+                    createRequest("정기 깨진 주기", "0 9 * *", "Asia/Seoul", "SCHEDULE"),
+                    testUserId))
+        .isInstanceOf(ProactiveJobException.class)
+        .hasMessageStartingWith("유효하지 않은 cron 표현식입니다");
+  }
+
+  /** [WD-993] 정기 작업에서 트리거를 이상 탐지로 바꾸며 cron 을 그대로 보내도 막히지 않는다 — 웹이 숨긴 칸의 값을 보낸다. */
+  @Test
+  void updateJob_switchingToAnomalyWithTooFrequentCron_accepted() {
+    ProactiveJobResponse created =
+        proactiveJobService.createJob(
+            createRequest("트리거 바꾸는 주기", "0 9 * * *", "Asia/Seoul", "SCHEDULE"), testUserId);
+    UpdateProactiveJobRequest request =
+        new UpdateProactiveJobRequest(null, null, null, "* * * * * *", null, null, "ANOMALY", null);
+    proactiveJobService.updateJob(created.id(), request, testUserId);
+    ProactiveJobResponse updated = proactiveJobService.getJob(created.id(), testUserId);
+    assertThat(updated.triggerType()).isEqualTo("ANOMALY");
+    assertThat(updated.cronExpression()).isEqualTo("* * * * * *");
+  }
+
+  /**
+   * [WD-993] 트리거가 NULL 인 옛 행은 SCHEDULE 로 보므로 cron 검사가 그대로 걸려야 한다(계획 Review Focus) — 검사가 약해지면 트리거 없는
+   * 옛 행이 매초 주기로 고쳐져도 모르고 통과한다.
+   */
+  @Test
+  void updateJob_nullTriggerKeepsCronValidation() {
+    ProactiveJobResponse created =
+        proactiveJobService.createJob(buildCreateRequest("트리거 없는 옛 행"), testUserId);
+    // 트리거 없는 옛 행을 흉내 낸다 — 컬럼 기본값(SCHEDULE)을 피해 DB 를 직접 NULL 로 덮는다
+    dsl.update(PROACTIVE_JOB)
+        .set(PROACTIVE_JOB.TRIGGER_TYPE, (String) null)
+        .where(PROACTIVE_JOB.ID.eq(created.id()))
+        .execute();
+
+    assertThatThrownBy(
+            () ->
+                proactiveJobService.updateJob(
+                    created.id(),
+                    new UpdateProactiveJobRequest(
+                        null, null, null, "* * * * * *", null, null, null, null),
+                    testUserId))
+        .isInstanceOf(ProactiveJobException.class)
+        .hasMessageStartingWith(ProactiveCron.TOO_FREQUENT_MESSAGE);
+    assertThat(proactiveJobService.getJob(created.id(), testUserId).cronExpression())
+        .isEqualTo("0 0 9 * * *");
+  }
+
+  /**
+   * [WD-993] ANOMALY → SCHEDULE 전환에 cron 을 보내지 않아도 저장 주기가 다시 검사된다 — 요청 값만 보다 보면 매초 주기의 ANOMALY 행이
+   * 정기 실행으로 바뀌며 스케줄러가 조용히 예약을 건너뛰어, 켜진 채 영원히 실행되지 않는 좀비 작업이 된다(WD-607/#222 와 같은 종류).
+   */
+  @Test
+  void updateJob_switchingToScheduleWithoutResendingStoredCron_rejected() {
+    ProactiveJobResponse created =
+        proactiveJobService.createJob(
+            createRequest("전환 시 주기 안 보내기", "* * * * * *", "Asia/Seoul", "ANOMALY"), testUserId);
+
+    assertThatThrownBy(
+            () ->
+                proactiveJobService.updateJob(
+                    created.id(),
+                    new UpdateProactiveJobRequest(
+                        null, null, null, null, null, null, "SCHEDULE", null),
+                    testUserId))
+        .isInstanceOf(ProactiveJobException.class)
+        .hasMessageStartingWith(ProactiveCron.TOO_FREQUENT_MESSAGE);
+    assertThat(proactiveJobService.getJob(created.id(), testUserId).triggerType())
+        .isEqualTo("ANOMALY");
+  }
+
+  /**
+   * [WD-993 반려 ②] 트리거를 이상 탐지로 바꾸는 요청은 깨진 저장 주기에 막히지 않는다 — ANOMALY 는 그 주기를 쓰지 않아, 이 자리에서 다시
+   * 검사하면 사용자가 보이지도 않는 숨은 주기 칸의 옛 값에 갇혀 트리거를 바꿀 수 없다(이슈가 겪은 막힘과 같은 막힘이다). 깨진 주기는 형식
+   * 검사 이전에 저장됐거나 다른 경로로 남은 행이라, DB 를 직접 갱신해 흉내 낸다.
+   */
+  @Test
+  void updateJob_switchingToAnomalyWithMalformedStoredCron_accepted() {
+    ProactiveJobResponse created =
+        proactiveJobService.createJob(
+            createRequest("깨진 주기를 가진 정기 작업", "0 9 * * *", "Asia/Seoul", "SCHEDULE"), testUserId);
+    dsl.update(PROACTIVE_JOB)
+        .set(PROACTIVE_JOB.CRON_EXPRESSION, "0 9 * *")
+        .where(PROACTIVE_JOB.ID.eq(created.id()))
+        .execute();
+
+    proactiveJobService.updateJob(
+        created.id(),
+        new UpdateProactiveJobRequest(null, null, null, null, null, null, "ANOMALY", null),
+        testUserId);
+
+    ProactiveJobResponse updated = proactiveJobService.getJob(created.id(), testUserId);
+    assertThat(updated.triggerType()).isEqualTo("ANOMALY");
+    // 저장 주기는 지우지 않는다 — 정기 실행으로 되돌릴 때 그대로 쓴다(WD-993)
+    assertThat(updated.cronExpression()).isEqualTo("0 9 * *");
+  }
+
+  /**
+   * [WD-993 반려 ② 대조] 같은 깨진 저장 주기로 정기 실행(SCHEDULE)을 켜면 여전히 400 이다 — 재검사를 없애 버리면 깨진 주기의 행이 정기
+   * 실행으로 바뀌어 스케줄러가 조용히 예약을 건너뛰는 좀비 작업이 된다(WD-993 이 막으려던 바로 그 상태).
+   */
+  @Test
+  void updateJob_switchingToScheduleWithMalformedStoredCron_rejected() {
+    ProactiveJobResponse created =
+        proactiveJobService.createJob(
+            createRequest("깨진 주기를 가진 이상 탐지 작업", "0 9 * * *", "Asia/Seoul", "ANOMALY"),
+            testUserId);
+    dsl.update(PROACTIVE_JOB)
+        .set(PROACTIVE_JOB.CRON_EXPRESSION, "0 9 * *")
+        .where(PROACTIVE_JOB.ID.eq(created.id()))
+        .execute();
+
+    assertThatThrownBy(
+            () ->
+                proactiveJobService.updateJob(
+                    created.id(),
+                    new UpdateProactiveJobRequest(null, null, null, null, null, null, "SCHEDULE", null),
+                    testUserId))
+        .isInstanceOf(ProactiveJobException.class)
+        .hasMessageStartingWith("유효하지 않은 cron 표현식입니다");
+    assertThat(proactiveJobService.getJob(created.id(), testUserId).triggerType())
+        .isEqualTo("ANOMALY");
+  }
+
   /** 존재하지 않는 IANA timezone 으로 생성을 시도하면 ProactiveJobException(→400) 이 발생해야 한다 (#221). */
   @Test
   void createJob_withInvalidTimezone_throws() {
@@ -476,6 +636,30 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
     assertThatThrownBy(() -> proactiveJobService.createJob(req, testUserId))
         .isInstanceOf(ProactiveJobException.class)
         .hasMessageContaining("timezone");
+  }
+
+  /**
+   * [WD-993] ANOMALY 트리거에서도 시간대 검사는 무조건 한다 — cron 검사가 트리거 가드 안으로 들어간 뒤에도 시간대 검사(잘못된 값·빈 값)가 밖에 남아
+   * 있는지 고정한다. 기존 시간대 테스트는 전부 SCHEDULE 기본값이라, 시간대 검사까지 가드 안에 중첩돼도 전체 스위트가 통과해 버린다.
+   */
+  @Test
+  void createJob_anomalyWithInvalidTimezone_stillRejected() {
+    // 존재하지 않는 IANA zone — ANOMALY 라고 시간대 검사를 건너뛰면 안 된다
+    assertThatThrownBy(
+            () ->
+                proactiveJobService.createJob(
+                    createRequest("ANOMALY 잘못된 시간대", "0 9 * * *", "Mars/Phobos", "ANOMALY"),
+                    testUserId))
+        .isInstanceOf(ProactiveJobException.class)
+        .hasMessageStartingWith("유효하지 않은 timezone");
+
+    // 빈 시간대 — WD-607 의 400 문구가 ANOMALY 에서도 그대로 나와야 한다
+    assertThatThrownBy(
+            () ->
+                proactiveJobService.createJob(
+                    createRequest("ANOMALY 빈 시간대", "0 9 * * *", "  ", "ANOMALY"), testUserId))
+        .isInstanceOf(ProactiveJobException.class)
+        .hasMessage(BLANK_TIMEZONE_MESSAGE);
   }
 
   /** 업데이트에서도 동일하게 cron / timezone 사전 검증이 적용되어야 한다 (#221). */
@@ -920,6 +1104,102 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
     }
     assertThat(proactiveJobService.getJob(created.id(), testUserId).timezone())
         .isEqualTo("Asia/Seoul");
+  }
+
+  /** [WD-993] 이상 탐지 전용 작업은 cron 이 있어도 정기 실행으로 등록하지 않는다(예약 대상이 아니다). */
+  @Test
+  void createJob_anomalyWithCron_isNotScheduled() {
+    ProactiveJobResponse created =
+        proactiveJobService.createJob(
+            createRequest("이상 탐지 주기 있음", "0 9 * * *", "Asia/Seoul", "ANOMALY"), testUserId);
+    assertThat(schedulerService.isScheduled(created.id())).isFalse();
+    // 예약 대상이 아니면 다음 실행 시각도 비어 있어야 한다(요구사항 2 — 값으로 직접 확인)
+    assertThat(created.nextExecuteAt()).isNull();
+  }
+
+  /** [WD-993] 정기 작업을 이상 탐지로 바꾸면 cron 은 남지만 예약은 해제된다. */
+  @Test
+  void updateJob_switchingScheduleToAnomaly_unregistersSchedule() {
+    ProactiveJobResponse created =
+        proactiveJobService.createJob(
+            createRequest("정기→이상 탐지", "0 9 * * *", "Asia/Seoul", "SCHEDULE"), testUserId);
+    assertThat(schedulerService.isScheduled(created.id())).isTrue();
+    proactiveJobService.updateJob(
+        created.id(),
+        new UpdateProactiveJobRequest(null, null, null, null, null, null, "ANOMALY", null),
+        testUserId);
+    assertThat(schedulerService.isScheduled(created.id())).isFalse();
+    // 해제됐으면 다음 실행 시각도 비어 있어야 한다(요구사항 2 — 값으로 직접 확인)
+    assertThat(proactiveJobService.getJob(created.id(), testUserId).nextExecuteAt()).isNull();
+  }
+
+  /** [WD-993] 이상 탐지 전용 작업을 켜도 정기 실행으로 등록하지 않는다. */
+  @Test
+  void toggleJob_anomalyOn_doesNotRegisterSchedule() {
+    ProactiveJobResponse created =
+        proactiveJobService.createJob(
+            createRequest("꺼진 이상 탐지", "0 9 * * *", "Asia/Seoul", false, "ANOMALY"), testUserId);
+    assertThat(schedulerService.isScheduled(created.id())).isFalse();
+    proactiveJobService.toggleJob(created.id(), testUserId, true);
+    assertThat(schedulerService.isScheduled(created.id())).isFalse();
+  }
+
+  /**
+   * [WD-993] 재기동 재등록(registerTenantSchedules)이 ANOMALY 전용 작업의 cron 을 정기 실행에 끼우지 않는다. 정기 잡 한 개를 함께
+   * 재등록해 스캔이 실제로 이 두 행을 집었는지 먼저 보인다 — 그래야 이 테스트가 진공 상태에서 아무 검사도 하지 않고 통과하지 않는다.
+   */
+  @Test
+  void registerTenantSchedules_skipsAnomalyJobs() {
+    ProactiveJobResponse scheduleJob =
+        proactiveJobService.createJob(
+            createRequest("재등록 정기", "0 9 * * *", "Asia/Seoul", "SCHEDULE"), testUserId);
+    ProactiveJobResponse anomalyJob =
+        proactiveJobService.createJob(
+            createRequest("재등록 이상 탐지", "0 9 * * *", "Asia/Seoul", "ANOMALY"), testUserId);
+    schedulerService.unregisterSchedule(scheduleJob.id());
+    schedulerService.unregisterSchedule(anomalyJob.id());
+
+    schedulerService.registerTenantSchedules(DEFAULT_TEST_TENANT_ID);
+
+    assertThat(schedulerService.isScheduled(scheduleJob.id()))
+        .as("스캔이 정기 잡을 다시 등록해야 한다 — 그래야 ANOMALY 제외가 의미가 있다")
+        .isTrue();
+    assertThat(schedulerService.isScheduled(anomalyJob.id())).isFalse();
+  }
+
+  /**
+   * [WD-993] 재기동 재등록이 ANOMALY 행을 건너뛰면서, 배포 전에 예약돼 남은 next_execute_at 을 함께 비운다. 비우지 않으면 목록·상세가 지난
+   * 시각을 「다음 실행」으로 보여주고, 이상 탐지 실행의 recordAttempt 는 cron 으로 다시 채워 자가 치유도 없다.
+   */
+  @Test
+  void registerTenantSchedules_clearsStaleNextExecuteAt_forAnomalyJob() {
+    ProactiveJobResponse anomalyJob =
+        proactiveJobService.createJob(
+            createRequest("재등록 남은 다음 실행", "0 9 * * *", "Asia/Seoul", "ANOMALY"), testUserId);
+    // WD-993 이전에는 ANOMALY 도 정기 실행으로 등록돼 next_execute_at 이 채워져 있었다 — 그 상태를 흉내낸다.
+    dsl.update(PROACTIVE_JOB)
+        .set(PROACTIVE_JOB.NEXT_EXECUTE_AT, LocalDateTime.of(2099, 1, 1, 0, 0))
+        .where(PROACTIVE_JOB.ID.eq(anomalyJob.id()))
+        .execute();
+    assertThat(proactiveJobService.getJob(anomalyJob.id(), testUserId).nextExecuteAt()).isNotNull();
+
+    schedulerService.registerTenantSchedules(DEFAULT_TEST_TENANT_ID);
+
+    assertThat(proactiveJobService.getJob(anomalyJob.id(), testUserId).nextExecuteAt())
+        .as("예약 대상이 아닌 ANOMALY 행은 재등록을 건너뛰면서 남은 다음 실행도 비워야 한다")
+        .isNull();
+  }
+
+  /**
+   * [WD-993] BOTH 도 정기 실행 트리거라 cron 이 있으면 예약된다 — 긍정 등록 테스트가 전부 SCHEDULE 인 채로 남으면 isScheduledTrigger
+   * 를 SCHEDULE.equals 로 좁혀도 드러나지 않고, BOTH 작업만 조용히 예약되지 않는다.
+   */
+  @Test
+  void createJob_bothWithCron_isScheduled() {
+    ProactiveJobResponse created =
+        proactiveJobService.createJob(
+            createRequest("둘 다 주기 있음", "0 9 * * *", "Asia/Seoul", "BOTH"), testUserId);
+    assertThat(schedulerService.isScheduled(created.id())).isTrue();
   }
 
   @Test

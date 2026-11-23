@@ -24,6 +24,14 @@ const LABELS: Record<string, string> = {
   '0 9 1 * *': '매월 1일 오전 9시',
 };
 
+/**
+ * 이상 탐지(ANOMALY) 전용 작업이 스케줄 칸에 보이는 값.
+ *
+ * cron 을 보존해 두더라도(WD-993 — 정기 실행으로 되돌릴 때 다시 쓴다) 정기 예약 대상이 아니라,
+ * 「매일 오전 9시」 같은 라벨로 보여 주면 사용자가 정기 실행 중인 줄 안다.
+ */
+const ANOMALY_SCHEDULE_LABEL = '주기 없음';
+
 const WEEKDAY_NAMES: Record<string, string> = {
   '0': '일요일',
   '1': '월요일',
@@ -131,9 +139,16 @@ function describeCron(fiveField: string): string | null {
  * 5필드/6필드를 모두 받아 같은 스케줄이면 같은 라벨을 낸다.
  * 해석할 수 없는 표현은 원문을 그대로 흘리지 않고 `주기: <원문>` 으로 감싸,
  * 사람이 읽는 라벨이 아니라 미해석 폴백임이 화면에서 드러나게 한다.
+ *
+ * @param cron 저장된 cron 표현식(비어 있을 수 있다)
+ * @param triggerType 트리거 — `ANOMALY` 전용이면 스케줄 라벨을 만들지 않는다(WD-993)
  */
-export function cronToLabel(cron: string): string {
-  // 스케줄 없는 작업(triggerType=ANOMALY)은 cron이 비어 있다 — 표시할 주기가 없다는 뜻.
+export function cronToLabel(cron: string | null, triggerType?: string | null): string {
+  // 이상 탐지 전용 작업은 cron 을 보존해 두지만(WD-993) 정기 실행 대상이 아니다 —
+  // 보존 값을 그대로 라벨로 보여 주면 「매일 오전 9시」로 읽혀 정기 실행처럼 착각한다.
+  if (triggerType === 'ANOMALY') return ANOMALY_SCHEDULE_LABEL;
+
+  // 주기가 없는 작업은 표시할 주기가 없다는 뜻이다.
   // 이 가드가 없으면 아래 trim()에서 TypeError 가 나 목록 페이지 전체가 죽는다.
   if (!cron || !cron.trim()) return '-';
 

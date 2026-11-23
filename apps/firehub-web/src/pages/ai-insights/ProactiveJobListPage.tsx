@@ -271,7 +271,10 @@ export default function ProactiveJobListPage() {
                       )}
                     </div>
                   </TableCell>
-                  <TableCell className="text-sm">{cronToLabel(job.cronExpression ?? '')}</TableCell>
+                  {/* ANOMALY 전용은 보존된 cron 을 스케줄 라벨로 보여 주지 않는다(WD-993) — 정기 실행 중인 줄로 읽히기 때문 */}
+                  <TableCell className="text-sm">
+                    {cronToLabel(job.cronExpression, job.triggerType)}
+                  </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
                     {job.lastExecutedAt ? timeAgo(job.lastExecutedAt) : '-'}
                     {/* 최근 실행이 실패했으면 시각 옆에 바로 알린다 (WD-134). 예약 실행이 계속 실패해도
@@ -300,9 +303,10 @@ export default function ProactiveJobListPage() {
                   <TableCell className="text-sm text-muted-foreground">
                     {/* nextExecuteAt은 타임존 표기 없는 UTC 벽시계이므로 parseUtcDate로 해석한다.
                         new Date()를 쓰면 브라우저 로컬(KST)로 파싱돼 9시간 어긋난다 (#348, #349). */}
-                    {!job.enabled || !job.cronExpression?.trim() ? (
+                    {!job.enabled || !job.cronExpression?.trim() || job.triggerType === 'ANOMALY' ? (
                       /* 스케줄 없는 작업(triggerType=ANOMALY)은 애초에 등록 대상이 아니므로
-                         next_execute_at이 비어 있는 게 정상이다 — 경고 대상에서 제외한다. */
+                         next_execute_at이 비어 있는 게 정상이다 — 경고 대상에서 제외한다.
+                         ANOMALY 전용은 cron 을 보존해 두지만(WD-993) 정기 예약 대상이 아니므로 미등록 경고 대상이 아니다. */
                       '-'
                     ) : job.nextExecuteAt ? (
                       formatNextRunShort(parseUtcDate(job.nextExecuteAt), job.timezone)
