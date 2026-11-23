@@ -26,3 +26,30 @@ export function isFocusLost(active: Element | null = document.activeElement): bo
   if (!active || active === document.body) return true;
   return isMainContent(active);
 }
+
+/**
+ * 포커스를 잃은 동안에만 selector 대상으로 포커스를 옮긴다 (WD-1044, WD-1051).
+ *
+ * 무엇: 다음 프레임부터 deadlineMs 까지 매 프레임 대상을 다시 찾아 focus() 하고, 붙으면 멈춘다.
+ * 왜: 대상이 그 사이 다시 그려지거나(캔버스가 노드를 다시 재며 잠깐 숨김) 아직 만들어지지 않아
+ *     한 번의 focus() 로는 놓칠 수 있다 — 대상이 없어도 기한까지 포기하지 않는다.
+ * 잃음(isFocusLost)이 아니면 사용자가 이미 다른 곳으로 옮긴 것이라 빼앗지 않고 멈춘다.
+ * tabIndex -1 요소(메뉴 항목 등)도 사용자가 연 자리일 수 있어 잃음으로 보지 않는다(WD-1051 코드 리뷰).
+ * preventScroll 은 대상 쪽 자체 스크롤·이동(예: React Flow)과 겹치지 않게.
+ *
+ * @param selector 포커스를 줄 요소의 CSS 선택자
+ * @param deadlineMs 다시 시도하는 기한(기본 500ms)
+ */
+export function focusWhenLost(selector: string, deadlineMs = 500): void {
+  const deadline = performance.now() + deadlineMs;
+  const attempt = () => {
+    if (!isFocusLost()) return;
+    const target = document.querySelector<HTMLElement>(selector);
+    if (target) {
+      target.focus({ preventScroll: true });
+      if (document.activeElement === target) return;
+    }
+    if (performance.now() < deadline) requestAnimationFrame(attempt);
+  };
+  requestAnimationFrame(attempt);
+}

@@ -31,7 +31,7 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { useDataset } from '@/hooks/queries/useDatasets';
 import { IntegerDraftContext, integerDraftStepPrefix, scopeIntegerDrafts, useIntegerDraftStore } from '@/hooks/useIntegerDrafts';
-import { isFocusLost } from '@/lib/focus-lost';
+import { focusWhenLost } from '@/lib/focus-lost';
 import { formatDate } from '@/lib/formatters';
 import { SYSTEM_COLUMN_NAMES } from '@/lib/validations/dataset';
 import { MAX_DESCRIPTION_LENGTH } from '@/lib/validations/description';
@@ -92,6 +92,9 @@ interface StepConfigPanelProps {
   nameInputRef?: (el: HTMLInputElement | null) => void;
 }
 
+/** 캔버스 스텝 노드의 선택자 — 닫기·삭제 뒤 초점 대상(WD-1044, WD-1051). tempId 에 따옴표 등이 있어도 깨지지 않게 escape 한다 */
+const nodeSelector = (tempId: string) => `.react-flow__node[data-id="${CSS.escape(tempId)}"]`;
+
 export default function StepConfigPanel({
   state,
   dispatch,
@@ -114,6 +117,9 @@ export default function StepConfigPanel({
 
   // 스텝 삭제 확인 다이얼로그 표시 여부 — 실수 삭제 방지 (rules-of-hooks: early return 이전 선언)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  // 「삭제」로 닫혔는지 — 그때는 공용 대화상자 복귀(사라진 트리거 대신 살아남은 조상 div 에 임시 tabindex 로 초점)를 막고
+  // 이웃 노드로 보낸다(WD-1051). 「취소」로 닫히면 지금처럼 「스텝 삭제」 버튼으로 돌아간다.
+  const deleteConfirmedRef = useRef(false);
   // WD-954: 저장 중에 열어 둔 삭제 창이 보기 모드로 바뀐 뒤에도 남아 스텝을 지우는 것을 막는다.
   // 렌더 중 이전 readOnly 와 비교해 상태를 조정한다(useEffect 로 하면 한 프레임 동안 창이 남고,
   // react-hooks 린트의 effect 내 setState 경고도 피한다). 보기 모드가 되는 순간 창을 닫아 이후 다시 수정해도 되살아나지 않는다.
@@ -382,18 +388,7 @@ export default function StepConfigPanel({
   const handleClose = () => {
     const closedId = step.tempId;
     dispatch({ type: 'SELECT_STEP', payload: { tempId: null } });
-    // 선택이 바뀌면 캔버스가 노드를 다시 재며 잠깐 숨겨 focus() 가 무시되므로, 다음 프레임부터 약 500ms 동안 매 프레임 다시 시도한다.
-    // 초점이 이미 다른 곳으로 옮겨졌으면(isFocusLost 아님) 빼앗지 않는다. preventScroll 은 React Flow 의 자체 이동과 겹치지 않게.
-    const selector = `.react-flow__node[data-id="${CSS.escape(closedId)}"]`;
-    const deadline = performance.now() + 500;
-    const restoreFocus = () => {
-      if (!isFocusLost()) return;
-      const node = document.querySelector<HTMLElement>(selector);
-      if (!node) return;
-      node.focus({ preventScroll: true });
-      if (document.activeElement !== node && performance.now() < deadline) requestAnimationFrame(restoreFocus);
-    };
-    requestAnimationFrame(restoreFocus);
+    focusWhenLost(nodeSelector(closedId));
   };
 
   const handleUpdateStep = (changes: Partial<EditorStep>) => {
@@ -410,8 +405,18 @@ export default function StepConfigPanel({
   // 그 틈의 클릭·Enter 가 여기로 들어올 수 있어, 창을 숨기는 것만으로는 막지 못한다(WD-954).
   const handleConfirmDelete = () => {
     if (readOnly) return;
+    // 지우기 전에 초점을 받을 이웃을 정한다 — 지운 뒤에는 배열에서 위치를 알 수 없다(WD-1051).
+    // 순서: 바로 다음 스텝 → 바로 앞 스텝 → 남은 스텝이 없으면 캔버스 「스텝 추가」.
+    // 확인 창이 닫히며 초점이 갈 곳을 잃으므로(아래 onCloseAutoFocus 가 공용 복귀를 막음) 키보드·마우스 모두 같게 옮긴다.
+    deleteConfirmedRef.current = true;
+    const neighbor = state.steps[stepIndex + 1] ?? state.steps[stepIndex - 1];
+    const targetSelector = neighbor
+      ? nodeSelector(neighbor.tempId)
+      : '[data-canvas-add-step]';
     dispatch({ type: 'REMOVE_STEP', payload: { tempId: step.tempId } });
     dispatch({ type: 'SELECT_STEP', payload: { tempId: null } });
+    // 노드·버튼이 늦게 그려져도 기한까지 다시 찾고, 사용자가 이미 다른 곳을 잡았으면 빼앗지 않는다(WD-1051)
+    focusWhenLost(targetSelector);
   };
 
   const nameError = getFieldError('name');
@@ -898,7 +903,14 @@ export default function StepConfigPanel({
         open={deleteDialogOpen && !readOnly}
         onOpenChange={(open) => { if (!open) setDeleteDialogOpen(false); }}
       >
-        <AlertDialogContent>
+        <AlertDialogContent
+          onCloseAutoFocus={(e) => {
+            // 「삭제」로 닫혔으면 공용 복귀를 막는다 — 초점은 handleConfirmDelete 의 focusWhenLost 가 이웃으로 옮긴다(WD-1051)
+            if (!deleteConfirmedRef.current) return;
+            deleteConfirmedRef.current = false;
+            e.preventDefault();
+          }}
+        >
           <AlertDialogHeader>
             <AlertDialogTitle>스텝 삭제</AlertDialogTitle>
             <AlertDialogDescription>

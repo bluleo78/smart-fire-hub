@@ -5,7 +5,7 @@
  * 분기를 StepConfigPanel 의 입력/버튼에서 실제로 dispatch 되도록 구동한다.
  */
 
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
@@ -169,6 +169,98 @@ test.describe('파이프라인 에디터 — 스텝 설정', () => {
 
     await expect(nameInput).toBeFocused();
     await expect(node).not.toBeFocused();
+  });
+
+  test('닫은 첫 프레임에 노드가 아직 없다가 생겨도 초점이 그 노드로 간다 (WD-1051)', async ({
+    authenticatedPage: page,
+  }) => {
+    const node = await openStepNode(page, 2, 1);
+    const closeButton = page.getByRole('button', { name: '스텝 설정 패널 닫기' });
+    const nodeHandle = await node.elementHandle();
+
+    // 닫기 클릭 직후 노드를 떼었다가 150ms 뒤 같은 자리에 다시 붙인다 — 캔버스가 노드를 다시 만드는 늦은 생성을 흉내 낸다
+    await closeButton.evaluate((close, nodeEl) => {
+      const el = nodeEl as HTMLElement;
+      const parent = el.parentNode as Node;
+      const next = el.nextSibling;
+      (close as HTMLElement).click();
+      el.remove();
+      setTimeout(() => parent.insertBefore(el, next), 150);
+    }, nodeHandle);
+
+    await expect(node).toBeFocused();
+  });
+
+  /** 버튼을 누른다 — keyboard 면 focus+Enter, 아니면 마우스 클릭 (WD-1051) */
+  async function press(page: Page, button: Locator, keyboard: boolean) {
+    if (keyboard) {
+      await button.focus();
+      await page.keyboard.press('Enter');
+    } else {
+      await button.click();
+    }
+  }
+
+  /** 패널의 「스텝 삭제」 버튼 (WD-1051) */
+  function panelDeleteButton(page: Page) {
+    return page.getByTestId('step-config-panel').getByRole('button', { name: '스텝 삭제', exact: true });
+  }
+
+  /** 패널의 「스텝 삭제」를 눌러 확인 창을 연다 (WD-1051) */
+  async function openDeleteConfirm(page: Page, keyboard: boolean) {
+    await press(page, panelDeleteButton(page), keyboard);
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+  }
+
+  /** 확인 창에서 「삭제」·「취소」를 누른다 (WD-1051) */
+  async function answerDeleteConfirm(page: Page, name: '삭제' | '취소', keyboard: boolean) {
+    await press(page, page.getByRole('alertdialog').getByRole('button', { name, exact: true }), keyboard);
+  }
+
+  /** 지금 캔버스 노드들의 data-id(tempId)를 순서대로 읽는다 (WD-1051) */
+  async function nodeIds(page: Page) {
+    return page.locator('.react-flow__node').evaluateAll((els) => els.map((e) => e.getAttribute('data-id') ?? ''));
+  }
+
+  test('가운데 스텝을 삭제하면 초점이 다음 노드로 간다 (WD-1051)', async ({ authenticatedPage: page }) => {
+    await openStepNode(page, 3, 1);
+    const ids = await nodeIds(page);
+    await openDeleteConfirm(page, true);
+    await answerDeleteConfirm(page, '삭제', true);
+
+    await expect(page.locator('.react-flow__node')).toHaveCount(2);
+    await expect(page.locator(`.react-flow__node[data-id="${ids[2]}"]`)).toBeFocused();
+  });
+
+  test('마지막 스텝을 삭제하면 초점이 앞 노드로 간다 (WD-1051)', async ({ authenticatedPage: page }) => {
+    await openStepNode(page, 2, 1);
+    const ids = await nodeIds(page);
+    await openDeleteConfirm(page, false);
+    await answerDeleteConfirm(page, '삭제', false);
+
+    await expect(page.locator('.react-flow__node')).toHaveCount(1);
+    await expect(page.locator(`.react-flow__node[data-id="${ids[0]}"]`)).toBeFocused();
+  });
+
+  test('하나뿐인 스텝을 삭제하면 초점이 「스텝 추가」로 간다 (WD-1051)', async ({ authenticatedPage: page }) => {
+    await openStepNode(page, 1, 0);
+    await openDeleteConfirm(page, true);
+    await answerDeleteConfirm(page, '삭제', true);
+
+    await expect(page.locator('.react-flow__node')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '스텝 추가', exact: true })).toBeFocused();
+  });
+
+  test('삭제 확인을 취소하면 스텝이 그대로다 (WD-1051)', async ({ authenticatedPage: page }) => {
+    await openStepNode(page, 2, 1);
+    await openDeleteConfirm(page, true);
+    await answerDeleteConfirm(page, '취소', false);
+
+    await expect(page.getByRole('alertdialog')).toHaveCount(0);
+    await expect(page.locator('.react-flow__node')).toHaveCount(2);
+    await expect(page.getByRole('button', { name: '스텝 설정 패널 닫기' })).toBeVisible();
+    // 취소는 공용 복귀 그대로 — 초점이 창을 연 「스텝 삭제」 버튼으로 돌아간다(삭제 때만 복귀를 막는다)
+    await expect(panelDeleteButton(page)).toBeFocused();
   });
 
   // 패널 안에 이름 없는 button(스냅샷 줄이 `- button` 또는 `- button:` 뿐인 것)이 있는지 판정 — WD-917 과 같은 방식
