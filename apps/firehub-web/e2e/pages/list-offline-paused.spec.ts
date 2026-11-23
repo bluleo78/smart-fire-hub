@@ -186,8 +186,8 @@ test('카테고리 목록 — 오류로 비어 있던 키를 오프라인에서 
   const { setOk } = await failUntilOk(page, '/api/v1/dataset-categories', () => [createCategory({ id: 1, name: '대기 뒤 카테고리' })]);
   // 오류로 데이터 없는 카테고리 키와 화면 조각을 온라인에서 먼저 만든 뒤 다른 화면으로 나갔다가
   await page.goto('/data/categories');
-  // 앱이 첫 실패를 한 번 재시도한 뒤 최종 오류가 되도록 빈 안내(오류도 데이터 없이 이렇게 그려진다)가 보일 때까지 기다린다
-  await expect(page.getByText('카테고리가 없습니다.')).toBeVisible();
+  // 앱이 첫 실패를 한 번 재시도한 뒤 최종 오류가 되도록 오류 행(다시 시도)이 보일 때까지 기다린다
+  await expect(page.getByRole('button', { name: '다시 시도' })).toBeVisible();
   await page.getByRole('link', { name: '데이터셋', exact: true }).first().click();
   // 데이터셋 화면 조각이 내려받아지고 그려질 때까지 기다린다 — 오프라인에서 지연 조각을 못 받아 화면 오류가 나지 않게
   await expect(page.getByText('데이터셋 1', { exact: true })).toBeVisible();
@@ -196,6 +196,8 @@ test('카테고리 목록 — 오류로 비어 있던 키를 오프라인에서 
   await page.context().setOffline(true);
   await page.getByRole('link', { name: '카테고리', exact: true }).first().click();
   const text = await expectOfflineWaiting(page, '카테고리', '카테고리가 없습니다.');
+  // 오프라인 대기 중에는 「0개」 도 그리지 않는다 (WD-1035)
+  await expect(page.getByText(/^\d+개$/)).toHaveCount(0);
 
   setOk();
   await page.context().setOffline(false);

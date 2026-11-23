@@ -36,7 +36,7 @@ import {
   TableHeader,
   TableRow,
 } from '../../components/ui/table';
-import { TableEmptyRow } from '../../components/ui/table-empty';
+import { TableEmptyRow, TableErrorRow } from '../../components/ui/table-empty';
 import { TableSkeletonRows } from '../../components/ui/table-skeleton';
 import {
   useCategories,
@@ -45,8 +45,9 @@ import {
   useDeleteCategory,
   useUpdateCategory,
 } from '../../hooks/queries/useDatasets';
+import { useListRetryFocus } from '../../hooks/useListRetryFocus';
 import { offlineListMessage, useOfflinePaused } from '../../hooks/useOnlineStatus';
-import { handleApiError, isConflictError } from '../../lib/api-error';
+import { handleApiError, isConflictError, listLoadErrorProps } from '../../lib/api-error';
 import { iGa } from '../../lib/utils';
 import type { CategoryResponse } from '../../types/dataset';
 
@@ -104,9 +105,28 @@ export default function CategoryListPage() {
   const [search, setSearch] = useState('');
   const [sortKey, setSortKey] = useState<SortKey>('name-asc');
 
-  const { data: categories, isLoading, isPaused } = useCategories();
+  const {
+    data: categories,
+    isLoading,
+    isPending,
+    isError,
+    isFetching,
+    isPaused,
+    error,
+    refetch,
+  } = useCategories();
   // 데이터 없이 paused(오프라인·재시도 멈춤)면 「카테고리가 없습니다」 대신 연결 대기로 그린다(WD-971)
   const { waiting, offline } = useOfflinePaused({ data: categories, isPaused });
+
+  // 「다시 시도」 포커스(WD-1035): 실패한 목록에서 누르면 표로 초점을 옮겼다가 다시 실패하면 버튼으로 되돌린다. 403 은 버튼을 두지 않는다
+  const { tableProps, retryAction } = useListRetryFocus({
+    isPending,
+    isError,
+    isFetching,
+    data: categories,
+    error,
+    refetch,
+  });
 
   // 필터·검색 빈 상태 문구가 같은 기준을 쓰게 한 곳에서 다듬는다
   const trimmedSearch = search.trim();
@@ -153,6 +173,9 @@ export default function CategoryListPage() {
   // 연결 대기 스켈레톤(waiting)도 로딩처럼 취급하고, 오프라인 안내 행은 빈 상태 안내처럼 개수 낭독을 멈춘다(WD-971)
   const countSilenced = !isLoading && !waiting && !hasResults;
   const totalCount = categories?.length ?? 0;
+  // WD-1035: 받은 목록이 없으면(첫 로딩·연결 대기·조회 실패) 「0개」 가 거짓 정보가 되므로 개수 노드를 그리지 않는다(영역은 남겨 둔다).
+  // 재조회 실패여도 받아 둔 목록이 있으면 그 개수는 그대로 보인다.
+  const countHidden = !categories;
   const createCategory = useCreateCategory();
   const updateCategory = useUpdateCategory(editingCategory?.id || 0);
   const deleteCategory = useDeleteCategory();
@@ -286,9 +309,11 @@ export default function CategoryListPage() {
           {/* 0건이면 표 안 status 가 안내를 읽으므로 개수는 aria-hidden 노드로 바꿔 두 번 읽히지 않게 한다(이 화면만 개수 라이브 리전이 있다).
               aria-live 값을 껐다 켜면 켜지는 렌더의 변화가 빠질 수 있어 영역은 늘 polite 로 두고 key 로 노드를 갈아 끼운다 (WD-815) */}
           <span className="text-sm text-muted-foreground" aria-live="polite">
-            <span key={countSilenced ? 'silenced' : 'announced'} aria-hidden={countSilenced ? true : undefined}>
-              {isFiltering ? `${visibleCategories.length} / ${totalCount}` : `${totalCount}개`}
-            </span>
+            {!countHidden && (
+              <span key={countSilenced ? 'silenced' : 'announced'} aria-hidden={countSilenced ? true : undefined}>
+                {isFiltering ? `${visibleCategories.length} / ${totalCount}` : `${totalCount}개`}
+              </span>
+            )}
           </span>
           <Select value={sortKey} onValueChange={(v) => setSortKey(v as SortKey)}>
             <SelectTrigger className="w-[180px]" aria-label="정렬 기준">
@@ -311,7 +336,7 @@ export default function CategoryListPage() {
       <div
         className={`@container ${showActions ? '[--k:calc(7.5rem_+_2rem)]' : '[--k:2rem]'} rounded-md border`}
       >
-        <Table>
+        <Table {...tableProps}>
           <TableHeader>
             <TableRow>
               <TableHead>이름</TableHead>
@@ -325,6 +350,13 @@ export default function CategoryListPage() {
             ) : offline ? (
               // 실패가 아닌 중립 대기 상태라 role=status(polite)로 알린다. 연결되면 자동 재조회하므로 버튼은 두지 않는다(WD-971).
               <TableEmptyRow colSpan={showActions ? 3 : 2} message={offlineListMessage('카테고리')} />
+            ) : isError && !categories ? (
+              // 목록 조회 실패 — 0건 안내로 오해되지 않게 실패 안내를 보인다. 받아 둔 목록이 있으면 재조회 실패여도 유지한다 (WD-1035)
+              <TableErrorRow
+                colSpan={showActions ? 3 : 2}
+                {...listLoadErrorProps(error, '카테고리')}
+                action={retryAction}
+              />
             ) : hasResults ? (
               visibleCategories.map((category) => (
                 <TableRow key={category.id}>
