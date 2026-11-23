@@ -70,6 +70,21 @@ describe('SearchInput', () => {
     expect(calls[calls.length - 1]).toBe('가나');
   });
 
+  it('(WD-979 리뷰 후속) Chromium 순서(change 「가나다」 → compositionEnd)면 compositionend 가 최종 값을 보낸다', () => {
+    // Chromium 은 마지막 글자의 input(change) 이 compositionend 보다 먼저 온다 — 조합 중 change 는 보류되므로
+    // compositionend 가 칸의 최종 값을 읽어 보내야 마지막 글자가 빠지지 않는다.
+    const { calls, input } = setup();
+    fireEvent.compositionStart(input);
+    fireEvent.change(input, { target: { value: '가나다' } });
+    // debounce(300ms)를 넘겨도 조합 중 change 는 보내지 않는다
+    advance(400);
+    expect(calls).toEqual([]);
+    fireEvent.compositionEnd(input);
+    advance(300);
+    expect(calls).toEqual(['가나다']);
+    expect(input.value).toBe('가나다');
+  });
+
   it('조합 중에는 onChange 가 불리지 않는다', () => {
     const { calls, input } = setup();
     fireEvent.compositionStart(input);

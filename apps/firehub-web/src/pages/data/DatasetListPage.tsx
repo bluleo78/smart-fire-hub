@@ -57,6 +57,7 @@ import { DatasetDeleteConfirmDialog } from './components/DatasetDeleteConfirmDia
 import { DatasetPreviewSheet } from './components/DatasetPreviewSheet';
 import { DatasetTypeModal, type DatasetTypeSelection } from './components/DatasetTypeModal';
 import { ExportDialog } from './components/ExportDialog';
+import { DATASET_SEARCH_DEBOUNCE_MS } from './dataset-list-search';
 
 type SortKey = 'name' | 'createdAt';
 
@@ -429,7 +430,7 @@ export default function DatasetListPage() {
             placeholder="데이터셋 검색..."
             inputRef={searchInputRef}
             // 입력이 멈춘 뒤 한 번만 검색한다(WD-513) — 글자마다 목록 요청·페이지 초기화가 나가지 않게
-            debounceMs={300}
+            debounceMs={DATASET_SEARCH_DEBOUNCE_MS}
             value={search}
             onChange={(value) => {
               patchParams({ q: value, page: null });
