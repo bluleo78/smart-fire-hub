@@ -3,6 +3,7 @@ import { mockDeleteImpact, openFirstRowDeleteDialog, setupChartBuilderMocks, set
 import { createPageResponse, mockApi, mockDeleteOnceThenNotFound } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { clickDialogBackdrop, expectBackdropClickStaysOnList } from '../../fixtures/dialog.fixture';
+import { enterWithListError } from '../../fixtures/list-retry';
 import { expectWithin } from '../../fixtures/long-name-layout';
 import { expectTableErrorAlert } from '../../fixtures/table-error-alert';
 import { expectFocusRingRoom, expectTableFits, TABLE_LAYOUT_WIDTHS } from '../../fixtures/table-layout';
@@ -421,9 +422,31 @@ test.describe('차트 목록 페이지', () => {
     await mockApi(page, 'GET', '/api/v1/analytics/charts', { message: '서버 오류' }, { status: 500 });
     await page.goto('/analytics/charts');
 
-    await expectTableErrorAlert(page, '서버 오류');
+    await expectTableErrorAlert(page, '서버 오류', { action: '다시 시도' });
     await expect(page.getByText('차트가 없습니다.')).toHaveCount(0);
     await expect(page.getByRole('button', { name: '새 차트 만들기' })).toHaveCount(0);
+  });
+
+  test('첫 조회 500 → 다시 시도 → 성공하면 목록 행이 보인다 (WD-987)', async ({ authenticatedPage: page }) => {
+    await setupChartListMocks(page, 0);
+    const { setOutcome } = await enterWithListError(page, { apiPath: '/api/v1/analytics/charts', pagePath: '/analytics/charts' });
+    setOutcome({ status: 200, body: createPageResponse([createChartListItem({ id: 1, name: '재시도 차트' })]) });
+    await page.getByRole('button', { name: '다시 시도' }).click();
+
+    await expect(page.getByText('재시도 차트', { exact: true })).toBeVisible();
+    await expect(page.getByRole('alert')).toHaveCount(0);
+    // 누른 버튼이 사라져도 초점이 body 로 떨어지지 않고 표에 남는다(WCAG 2.4.3)
+    await expect(page.getByRole('table', { name: '차트 목록' })).toBeFocused();
+  });
+
+  test('첫 조회 500 → 다시 시도 → 또 500 이면 초점이 새 「다시 시도」 버튼에 있다 (WD-987)', async ({ authenticatedPage: page }) => {
+    await setupChartListMocks(page, 0);
+    await enterWithListError(page, { apiPath: '/api/v1/analytics/charts', pagePath: '/analytics/charts' });
+    await page.getByRole('button', { name: '다시 시도' }).click();
+
+    // 재조회가 다시 실패해 새로 그려진 버튼으로 초점이 돌아와야 body 로 떨어지지 않는다(WCAG 2.4.3)
+    await expectTableErrorAlert(page, '서버 오류', { action: '다시 시도' });
+    await expect(page.getByRole('button', { name: '다시 시도' })).toBeFocused();
   });
 
   test('목록 조회가 403 이면 권한 없음 안내를 흐린 톤으로 보인다 (WD-978 리뷰 후속)', async ({ authenticatedPage: page }) => {
@@ -436,6 +459,8 @@ test.describe('차트 목록 페이지', () => {
     await expect(page.getByRole('alert').getByText('차트 목록을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.')).toHaveClass(/text-muted-foreground/);
     await expect(page.getByText('차트가 없습니다.')).toHaveCount(0);
     await expect(page.getByRole('button', { name: '새 차트 만들기' })).toHaveCount(0);
+    // 403 은 다시 해도 같으므로 「다시 시도」 버튼을 두지 않는다 (WD-987)
+    await expect(page.getByRole('button', { name: '다시 시도' })).toHaveCount(0);
   });
 });
 

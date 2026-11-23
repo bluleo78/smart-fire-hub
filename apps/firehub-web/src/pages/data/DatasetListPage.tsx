@@ -39,6 +39,7 @@ import {
   useSetFavorite,
 } from '../../hooks/queries/useDatasets';
 import { useSecurityLevels } from '../../hooks/queries/useSecurityLevels';
+import { useListRetryFocus } from '../../hooks/useListRetryFocus';
 import { useRecentDatasets } from '../../hooks/useRecentDatasets';
 import { extractApiError, handleApiError, isForbiddenError } from '../../lib/api-error';
 import {
@@ -258,36 +259,15 @@ export default function DatasetListPage() {
     includeTemp: showTempEffective || undefined,
   });
 
-  // 「다시 시도」 포커스(WD-957): 데이터 없이 실패한 목록에서 누르면 쿼리가 pending 으로 돌아가 실패 행(과 버튼)이 사라져
-  // 포커스가 body 로 떨어진다. 누르는 즉시 표로 옮겨 두고, 재조회가 끝나 다시 실패하면 버튼으로 되돌린다.
-  const tableRef = useRef<HTMLTableElement>(null);
-  const retryButtonRef = useRef<HTMLButtonElement>(null);
-  const refocusRetryRef = useRef(false);
-  const showRetry = isError && !datasetsData && !isForbiddenError(datasetsError);
-  const retryList = () => {
-    refocusRetryRef.current = true;
-    const table = tableRef.current;
-    if (table) {
-      table.tabIndex = -1;
-      // 스크롤 위치가 튀지 않게 포커스만 옮긴다
-      table.focus({ preventScroll: true });
-    }
-    refetchDatasets();
-  };
-  // tabindex 는 blur 가 아니라, 포커스가 떠난 표를 마우스로 누를 때 뗀다 — blur 에 떼면 다른 창·대화상자에서 돌아올 자리가
-  // 없어져 body 로 떨어지고, 늘 두면 표 빈 곳 클릭이 포커스를 가져간다.
-  // 표 안 행의 삭제 대화상자 같은 포털 안 클릭은 합성 이벤트로 여기까지 버블링되므로, 실제 DOM 상 표 안에서 난 누름만 처리한다.
-  const releaseTableFocusTarget = (e: React.MouseEvent<HTMLTableElement>) => {
-    if (!e.currentTarget.contains(e.target as Node)) return;
-    if (document.activeElement !== e.currentTarget) e.currentTarget.removeAttribute('tabindex');
-  };
-  useEffect(() => {
-    // 재조회 중에는 기다리고, 끝난 첫 시점에 한 번만 판단한다(이후의 무관한 실패가 포커스를 옮기지 않게 표시를 먼저 끈다)
-    if (isPending || !refocusRetryRef.current) return;
-    refocusRetryRef.current = false;
-    // 사용자가 그 사이 옮긴 포커스는 빼앗지 않는다 — 표에 그대로 있을 때만 버튼으로 돌린다
-    if (showRetry && document.activeElement === tableRef.current) retryButtonRef.current?.focus();
-  }, [isPending, showRetry, datasetsError]);
+  // 「다시 시도」 포커스(WD-957, 공용 훅 WD-987): 실패한 목록에서 누르면 표로 초점을 옮겼다가 다시 실패하면 버튼으로 되돌린다
+  const { tableProps, retryAction } = useListRetryFocus({
+    isPending,
+    isError,
+    isFetching,
+    data: datasetsData,
+    error: datasetsError,
+    refetch: refetchDatasets,
+  });
 
   const { data: levels } = useSecurityLevels();
   const deleteDataset = useDeleteDataset();
@@ -595,10 +575,8 @@ export default function DatasetListPage() {
       {/* WD-634·WD-658: --k = 헤더 선언 폭 합 + 선언 폭 없는 칸(이름) 1rem 여백. 남는 폭 R = 100cqw − --k 은 태그가 0.35 몫, 나머지는 이름이 쓴다. */}
       <div className="@container [--k:calc(2rem_+_6.25rem_+_5rem_+_7rem_+_6rem_+_6.75rem_+_3.75rem_+_1rem)] rounded-md border">
         <Table
-          ref={tableRef}
           aria-label="데이터셋 목록"
-          className="focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
-          onMouseDown={releaseTableFocusTarget}
+          {...tableProps}
         >
           <TableHeader>
             <TableRow>
@@ -645,21 +623,7 @@ export default function DatasetListPage() {
                     ? '데이터셋 목록을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.'
                     : extractApiError(datasetsError, '데이터셋 목록을 불러오지 못했습니다.')
                 }
-                // 권한 오류는 다시 시도해도 같으므로 버튼을 두지 않는다(WD-137 선례)
-                action={
-                  showRetry && (
-                    <Button
-                      ref={retryButtonRef}
-                      size="sm"
-                      variant="outline"
-                      className="mt-3"
-                      disabled={isFetching}
-                      onClick={retryList}
-                    >
-                      다시 시도
-                    </Button>
-                  )
-                }
+                action={retryAction}
               />
             ) : datasets.length > 0 ? (
               datasets.map((dataset) => (

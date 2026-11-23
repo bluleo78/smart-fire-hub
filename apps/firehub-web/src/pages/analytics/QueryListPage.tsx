@@ -47,6 +47,7 @@ import {
   useSavedQueries,
 } from '../../hooks/queries/useAnalytics';
 import { useIsOwner } from '../../hooks/useIsOwner';
+import { useListRetryFocus } from '../../hooks/useListRetryFocus';
 import { handleApiError, listLoadErrorProps } from '../../lib/api-error';
 import { formatDateTimeMinute, formatRelativeTime } from '../../lib/formatters';
 import { getPageAfterDelete } from '../../lib/pagination';
@@ -74,13 +75,32 @@ export default function QueryListPage() {
   // 「내 쿼리」 탭은 내가 만든 쿼리만 — 필터 없이 부르면 서버가 남의 공유 쿼리까지 섞어 준다(WD-328). 「공유됨」은 sharedOnly 그대로.
   const mineOnly = tab === 'mine';
 
-  const { data: queriesData, isLoading, isError, error: queriesError } = useSavedQueries({
+  const {
+    data: queriesData,
+    isLoading,
+    isPending,
+    isFetching,
+    isError,
+    error: queriesError,
+    refetch,
+  } = useSavedQueries({
     search: search || undefined,
     folder: folder || undefined,
     sharedOnly: sharedOnly || undefined,
     mineOnly: mineOnly || undefined,
     page,
     size,
+  });
+
+  // 「다시 시도」 포커스(WD-987): 실패한 목록에서 누르면 표로 초점을 옮겼다가 다시 실패하면 버튼으로 되돌린다.
+  // 403 은 다시 해도 같으므로 버튼을 두지 않는다
+  const { tableProps, retryAction } = useListRetryFocus({
+    isPending,
+    isError,
+    isFetching,
+    data: queriesData,
+    error: queriesError,
+    refetch,
   });
 
   // 폴더 드롭다운도 목록과 같은 탭 범위 — 「내 쿼리」에서 남의 공유 쿼리에만 있는 폴더를 고르면 늘 빈 결과가 된다(WD-328)
@@ -203,7 +223,10 @@ export default function QueryListPage() {
 
               {/* Table */}
               <div className="rounded-md border">
-                <Table aria-label="저장된 쿼리 목록">
+                <Table
+                  aria-label="저장된 쿼리 목록"
+                  {...tableProps}
+                >
                   <TableHeader>
                     <TableRow>
                       <TableHead>이름</TableHead>
@@ -226,6 +249,7 @@ export default function QueryListPage() {
                         colSpan={6}
                         // 403 은 권한 안내(흐린 톤), 그 밖은 서버 사유 — 권한 문제를 일시 장애처럼 보이지 않게 한다 (WD-978 리뷰 후속)
                         {...listLoadErrorProps(queriesError, '쿼리')}
+                        action={retryAction}
                       />
                     ) : queries.length > 0 ? (
                       queries.map((query) => (
