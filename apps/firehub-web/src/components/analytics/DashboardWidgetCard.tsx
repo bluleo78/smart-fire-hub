@@ -36,18 +36,26 @@ interface WidgetContentProps {
 
 /**
  * 위젯 안 오류 상자(WD-686) — 저장 쿼리 오류(「쿼리 오류」)와 조회 실패(서버 문구 + 「다시 시도」)가 같은 모양을 쓴다.
- * 쿼리 편집기 결과 영역(ResultTable)의 「쿼리 오류」 박스와 같은 형식이다.
+ * 쿼리 편집기 결과 영역(ResultTable)의 「쿼리 오류」 박스와 같은 색·테두리 형식이다(여백은 위젯 높이에 맞춰 좁혔다, WD-959).
+ * 메시지 영역만 스크롤하고 「다시 시도」는 아래에 고정 — 좁고 낮은 위젯에서 문구가 감겨 내용이 보이는 높이보다 높아지면
+ * 버튼이 잘렸다(WD-959). `min-h-0` 은 flex 자식이 콘텐츠 높이 아래로 줄어 스크롤이 생기게 하고,
+ * `max-h-full` 은 바깥 상자 안쪽 높이(2×2 기준 91px)만큼 안내 상자를 제한한다.
  */
 function WidgetErrorBox({ title, children, action }: { title: ReactNode; children?: ReactNode; action?: ReactNode }) {
   return (
-    <div className="h-full overflow-auto py-1">
-      <div role="alert" className="rounded-md border border-destructive/50 bg-destructive/10 p-3">
-        <p className="flex items-center gap-1.5 text-sm font-medium text-destructive">
-          <AlertTriangle className="h-4 w-4 shrink-0" />
-          {title}
-        </p>
-        {children}
-        {action}
+    <div className="h-full overflow-auto">
+      <div
+        role="alert"
+        className="flex max-h-full min-h-0 flex-col gap-1 rounded-md border border-destructive/50 bg-destructive/10 p-1.5"
+      >
+        <div className="min-h-0 overflow-auto">
+          <p className="flex items-center gap-1.5 text-sm font-medium text-destructive">
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            {title}
+          </p>
+          {children}
+        </div>
+        {action ? <div className="shrink-0">{action}</div> : null}
       </div>
     </div>
   );
@@ -78,7 +86,8 @@ function WidgetContent({ widget, chartData, dataLoading, dataFetching, dataError
         action={
           // 다시 조회하는 동안 잠근다 — 거듭 눌러 같은 차트 데이터 요청이 겹쳐 나가지 않게(aria-disabled 로 포커스 유지)
           // 높이를 덮어쓰지 않는다 — size="sm"(h-8)이 최소 클릭 영역 32px 를 지킨다(h-7 이 28px 로 줄이던 결함, WD-926)
-          <PendingButton pending={dataFetching} variant="outline" size="sm" className="mt-2 text-xs" onClick={onRetry}>
+          // `mt-2` 는 뺀다 — 안내 상자의 `gap-1` 이 메시지와 버튼 사이 간격을 만든다(WD-959, 상자 여백 재배치로 잘림 해결)
+          <PendingButton pending={dataFetching} variant="outline" size="sm" className="text-xs" onClick={onRetry}>
             다시 시도
           </PendingButton>
         }
