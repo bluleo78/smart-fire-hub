@@ -276,7 +276,10 @@ export const StepNode = memo(function StepNode({ data }: NodeProps<StepNodeType>
             }}
             aria-label="다음 스텝 추가"
             title="다음 스텝 추가"
-            className="absolute -right-9 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full border bg-background text-muted-foreground shadow-sm transition-colors hover:border-transparent hover:bg-accent hover:text-accent-foreground"
+            // nokey: NodeWrapper 가 Enter·Space 로 노드를 선택하며 연결선 선택을 푸는 것을 막는다(WD-1030).
+            // stopPropagation 은 앱 수준 Escape 처리까지 끊어 쓰지 않는다. 초점이 여기 있을 때 노드 키 처리
+            // (Escape 해제·화살표 이동·Delete)도 건너뛰는 것은 「스텝 삭제」(WD-955)와 같은 의도된 부작용이다.
+            className="nokey absolute -right-9 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full border bg-background text-muted-foreground shadow-sm transition-colors hover:border-transparent hover:bg-accent hover:text-accent-foreground"
           >
             <Plus className="h-3 w-3" />
           </button>
