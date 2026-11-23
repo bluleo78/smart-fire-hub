@@ -17,6 +17,7 @@ interface PageInfo {
  * 바뀌어 nav 가 다시 마운트되고, 「다음 페이지」에 둔 초점이 BODY 로 떨어진다. 실패 때도 같은 값을 넘겨 구조를 유지한다.
  * 단 조회 조건(params 에서 page 를 뺀 해시)이 바뀌면 기억을 비운다 — 옛 조건의 쪽 정보가 새 조건 실패 화면에 남으면 안 된다.
  * params 는 화면이 목록 훅에 넘기는 바로 그 객체를 넘긴다(키 기준이 placeholderData 와 같아진다).
+ * 예외: 크기 변경 중에도 쪽 이동을 남겨야 하는 화면은 size 를 뺀 객체를 넘기고 쪽 수를 기억한 건수÷지금 크기로 셀 수 있다(감사 로그, WD-1025).
  * effect 없이 렌더 중 setState 로 처리한다(react-hooks/set-state-in-effect 규칙, PipelineListPage 와 같은 꼴).
  */
 export function useLastPageInfo(
