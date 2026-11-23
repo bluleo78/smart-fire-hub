@@ -281,7 +281,8 @@ export default function AiClassifyStepConfig({
             {/* 입력이 아니라 「컬럼 추가」 버튼으로 채우는 묶음이라 aria-required 를 줄 컨트롤이 없다 —
                 별표는 aria-hidden 이므로 sr-only 「(필수)」 로 필수 뜻을 스크린리더에 전한다 (WD-964) */}
             출력 컬럼 정의 <RequiredMark className="text-destructive" />
-            <span className="sr-only">(필수)</span>
+            {/* 읽기 전용에서는 입력할 수 없으므로 옆 프롬프트 칸처럼 필수로 알리지 않는다 */}
+            {!readOnly && <span className="sr-only">(필수)</span>}
           </div>
           {!readOnly && (
             <Button

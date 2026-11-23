@@ -130,16 +130,21 @@ export function ImportMappingTable({
                       <SelectContent>
                         <SelectItem value="__none__">매핑 안 함</SelectItem>
                         {availableColumns.map((col) => (
-                          <SelectItem key={col.id} value={col.columnName}>
+                          <SelectItem
+                            key={col.id}
+                            value={col.columnName}
+                            /* NOT NULL 컬럼 표시 — 별표는 장식(aria-hidden)이라 읽히지 않으므로 옵션의 aria-label 로 「(필수)」 를 전한다(WD-964).
+                               sr-only 글자를 ItemText 안에 두면 고른 뒤 SelectValue(trigger)에도 따라붙으므로 라벨로만 전한다. */
+                            {...(col.isNullable
+                              ? {}
+                              : {
+                                  'aria-label': `${col.displayName || col.columnName} (필수)`,
+                                  // Radix 가 기본으로 다는 aria-labelledby(ItemText)가 aria-label 보다 우선하므로 걷어낸다
+                                  'aria-labelledby': undefined,
+                                })}
+                          >
                             {col.displayName || col.columnName}
-                            {/* NOT NULL 컬럼 표시 — 별표는 장식(aria-hidden)이라 읽히지 않으므로 sr-only 로 뜻을 전한다(WD-964).
-                                 입력 칸이 아니라 옵션이라 aria-required 대신 숨은 글자를 쓴다. */}
-                            {!col.isNullable && (
-                              <>
-                                <RequiredMark className="text-destructive ml-1" />
-                                <span className="sr-only"> (필수)</span>
-                              </>
-                            )}
+                            {!col.isNullable && <RequiredMark className="text-destructive ml-1" />}
                           </SelectItem>
                         ))}
                       </SelectContent>

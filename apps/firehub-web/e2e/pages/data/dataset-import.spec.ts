@@ -902,6 +902,22 @@ test.describe('임포트 다이얼로그 접근성 (#330 #331)', () => {
     expect(unnamed).toBe(0);
   });
 
+  test('WD-964 NOT NULL 컬럼을 고르면 trigger 에는 (필수) 가 없고, 옵션 목록의 그 항목은 (필수) 를 읽는다', async ({
+    authenticatedPage: page,
+  }) => {
+    await openMappingStep(page);
+    const dialog = page.getByRole('dialog');
+    const trigger = dialog.getByRole('combobox', { name: 'id 컬럼을 매핑할 데이터셋 컬럼' });
+    // 목록 항목은 별표(aria-hidden) 대신 「(필수)」 를 접근 이름으로 읽는다
+    await trigger.click();
+    const required = page.getByRole('option', { name: /\(필수\)/ });
+    await expect(required.first()).toBeVisible();
+    // NOT NULL 항목을 고른다 — 고른 값이 trigger 글자에 남을 때 「(필수)」 가 따라붙으면 안 된다
+    await required.first().click();
+    await expect(trigger).not.toContainText('(필수)');
+    await expect(trigger).toHaveAccessibleName('id 컬럼을 매핑할 데이터셋 컬럼');
+  });
+
   test('#330 2단계 진입 시 포커스가 "컬럼 매핑" 제목으로 이동한다', async ({
     authenticatedPage: page,
   }) => {

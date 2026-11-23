@@ -115,9 +115,14 @@ test.describe('파이프라인 폼 필수 칸 aria-required (WD-964)', () => {
         aiConfig: { prompt: '분류하세요', outputColumns: [] },
       }),
       field: (page: Page) => page.getByRole('textbox', { name: '프롬프트', exact: true }),
+      // 읽기 전용에서는 「출력 컬럼 정의」 제목에도 「(필수)」 를 내지 않는다(WD-964)
+      extra: async (page: Page) => {
+        await expect(page.getByTestId('ai-output-columns-title')).toBeVisible();
+        await expect(page.getByTestId('ai-output-columns-title').locator('.sr-only')).toHaveCount(0);
+      },
     },
   ];
-  for (const { title, step, field } of readOnlyCases) {
+  for (const { title, step, field, extra } of readOnlyCases) {
     test(title, async ({ authenticatedPage: page }) => {
       await setupPipelineEditorMocks(page);
       await mockApi(page, 'GET', '/api/v1/api-connections/selectable', []);
@@ -127,6 +132,7 @@ test.describe('파이프라인 폼 필수 칸 aria-required (WD-964)', () => {
       const locked = field(page);
       await expect(locked).toBeDisabled();
       await expect(locked).not.toHaveAttribute('aria-required', 'true');
+      await extra?.(page);
     });
   }
 
