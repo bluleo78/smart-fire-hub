@@ -26,6 +26,8 @@ interface EditConflictDialogProps {
   onOverwrite: ConflictAction;
   /** 다른 곳에서 시작한 저장·불러오기가 진행 중이면 버튼을 막는다(창 안 잠금과 합쳐 본다) */
   pending?: boolean;
+  /** 창이 닫힌 뒤 포커스 복귀 훅 — preventDefault 하면 Radix 기본 복귀(이전 포커스) 대신 호출측이 옮긴다 */
+  onCloseAutoFocus?: (event: Event) => void;
 }
 
 /**
@@ -48,6 +50,7 @@ export function EditConflictDialog({
   onReload,
   onOverwrite,
   pending = false,
+  onCloseAutoFocus,
 }: EditConflictDialogProps) {
   const lockedRef = useRef(false);
   const [locked, setLocked] = useState(false);
@@ -68,7 +71,7 @@ export function EditConflictDialog({
 
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
-      <AlertDialogContent>
+      <AlertDialogContent onCloseAutoFocus={onCloseAutoFocus}>
         <AlertDialogHeader>
           <AlertDialogTitle>다른 곳에서 먼저 변경되었습니다</AlertDialogTitle>
           <AlertDialogDescription>

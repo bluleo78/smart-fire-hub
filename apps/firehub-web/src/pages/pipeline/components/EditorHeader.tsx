@@ -32,7 +32,10 @@ interface EditorHeaderProps {
   isExecutionMode: boolean;
   /** 실행 상세 모드에서 현재 실행이 종료(FAILED/COMPLETED/CANCELLED)되었는지 — true일 때 재실행 버튼 노출 */
   canRerun?: boolean;
-  onSave: () => Promise<void> | void;
+  /** 저장하고 성공 여부를 돌려준다(false 면 「저장 후 실행」이 실행하지 않는다) */
+  onSave: () => Promise<boolean | void> | void;
+  /** 저장 버튼 ref — 저장 시작 때 활성 요소가 body 면 실패 뒤 포커스 복원 대상으로 쓴다(WD-953) */
+  saveButtonRef?: React.Ref<HTMLButtonElement>;
   onCancelEdit: () => void;
   onEdit: () => void;
   onExecute: () => void;
@@ -62,6 +65,7 @@ export function EditorHeader({
   isExecutionMode,
   canRerun = false,
   onSave,
+  saveButtonRef,
   onCancelEdit,
   onEdit,
   onExecute,
@@ -93,7 +97,9 @@ export function EditorHeader({
 
   async function handleSaveAndExecute() {
     setExecuteDialogOpen(false);
-    await onSave();
+    // 저장이 실패하거나 무시되면(false) 실행하지 않는다 — 저장되지 않은 정의로 실행되던 결함 방지
+    const saved = await onSave();
+    if (saved === false) return;
     onExecute();
   }
 
@@ -314,6 +320,7 @@ export function EditorHeader({
             <span className="sr-only sm:not-sr-only">취소</span>
           </Button>
           <Button
+            ref={saveButtonRef}
             onClick={onSave}
             disabled={!state.isDirty || isSaving}
           >

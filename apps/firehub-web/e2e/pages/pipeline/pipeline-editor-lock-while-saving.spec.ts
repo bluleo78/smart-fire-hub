@@ -211,4 +211,171 @@ test.describe('파이프라인 편집 — 저장 중 편집 잠금 (WD-953)', ()
     await expect(page.getByRole('alertdialog')).toHaveCount(0);
     expect(puts).toHaveLength(1);
   });
+
+  test('키보드로 시작한 저장이 500 으로 실패해 잠금이 풀리면 저장 전 포커스가 돌아온다 (WD-953)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockPipeline(page);
+    const hold = await holdApi(page, 'PUT', '/api/v1/pipelines/1', 500, { status: 500, message: '서버 오류' });
+
+    await page.goto('/pipelines/1');
+    await page.getByRole('button', { name: '수정' }).click();
+    await page.getByLabel('파이프라인 이름').fill('renamed');
+    // 실제 사용자 경로 — 이름 칸에서 Tab 으로 저장 버튼까지 가 Enter 로 저장한다
+    const save = page.getByRole('button', { name: '저장', exact: true });
+    for (let i = 0; i < 10 && !(await save.evaluate((el) => el === document.activeElement)); i++) {
+      await page.keyboard.press('Tab');
+    }
+    await expect(save).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect.poll(() => hold.requests.length).toBe(1);
+    await expect(page.getByLabel('파이프라인 이름')).toBeDisabled();
+
+    hold.release();
+    await expect(page.getByLabel('파이프라인 이름')).toBeEnabled();
+    await expect(save).toBeFocused();
+  });
+
+  test('스텝 이름 칸에서 시작한 저장이 실패하면 포커스가 그 칸으로 돌아온다 (WD-953)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockPipeline(page);
+    const hold = await holdApi(page, 'PUT', '/api/v1/pipelines/1', 500, { status: 500, message: '서버 오류' });
+
+    await page.goto('/pipelines/1');
+    await page.getByRole('button', { name: '수정' }).click();
+    await page.locator('.react-flow__node', { hasText: 's2' }).click();
+    await page.locator('#step-name').fill('s2-renamed');
+    // 저장을 포커스를 옮기지 않는 방식으로 시작한다 — 이름 칸에 포커스가 있는 채 저장이 도는 경로
+    await page.locator('#step-name').focus();
+    await page.getByRole('button', { name: '저장', exact: true }).evaluate((el) => (el as HTMLButtonElement).click());
+    await expect.poll(() => hold.requests.length).toBe(1);
+    await expect(page.locator('#step-name')).toBeDisabled();
+
+    hold.release();
+    await expect(page.locator('#step-name')).toBeEnabled();
+    await expect(page.locator('#step-name')).toBeFocused();
+  });
+
+  test('저장이 409 충돌로 거부돼 창을 닫으면 저장 전 포커스가 칸으로 돌아온다 (WD-953)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockPipeline(page);
+    const hold = await holdApi(page, 'PUT', '/api/v1/pipelines/1', 409, {
+      status: 409,
+      code: 'EDIT_CONFLICT',
+      message: '다른 곳에서 변경되었습니다.',
+    });
+
+    await page.goto('/pipelines/1');
+    await page.getByRole('button', { name: '수정' }).click();
+    await page.getByLabel('파이프라인 이름').fill('renamed');
+    await page.getByLabel('파이프라인 이름').focus();
+    await page.getByRole('button', { name: '저장', exact: true }).evaluate((el) => (el as HTMLButtonElement).click());
+    await expect.poll(() => hold.requests.length).toBe(1);
+
+    hold.release();
+    // 충돌 창이 떠 있는 동안에는 포커스가 창 안에 있다(창 뒤 칸으로 빼앗지 않는다)
+    const dialog = page.getByRole('alertdialog');
+    await expect(dialog).toBeVisible();
+    await expect(page.getByLabel('파이프라인 이름')).toBeEnabled();
+    await expect(page.getByLabel('파이프라인 이름')).not.toBeFocused();
+
+    // 「계속 편집」으로 닫으면 저장 전에 있던 이름 칸으로 돌아온다
+    await dialog.getByRole('button', { name: '계속 편집' }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(page.getByLabel('파이프라인 이름')).toBeFocused();
+    // 창의 퇴장 애니메이션 뒤 Radix 가 포커스를 body 로 되돌려도 이름 칸에 남아 있어야 한다(WD-953 리뷰)
+    await page.waitForTimeout(500);
+    await expect(page.getByLabel('파이프라인 이름')).toBeFocused();
+  });
+
+  test('스크립트 편집기(CodeMirror)에서 시작한 저장이 실패하면 포커스가 편집기로 돌아온다 (WD-953)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockPipeline(page);
+    const hold = await holdApi(page, 'PUT', '/api/v1/pipelines/1', 500, { status: 500, message: '서버 오류' });
+
+    await page.goto('/pipelines/1');
+    await page.getByRole('button', { name: '수정' }).click();
+    await page.locator('.react-flow__node', { hasText: 's2' }).click();
+    const editor = page.locator('.cm-content').first();
+    await editor.click();
+    await page.keyboard.type(' -- x');
+    await expect(editor).toBeFocused();
+    await page.getByRole('button', { name: '저장', exact: true }).evaluate((el) => (el as HTMLButtonElement).click());
+    await expect.poll(() => hold.requests.length).toBe(1);
+    await expect(page.locator('#step-name')).toBeDisabled();
+
+    hold.release();
+    await expect(page.locator('#step-name')).toBeEnabled();
+    await expect(editor).toBeFocused();
+  });
+  test('저장 중 사용자가 포커스를 다른 곳으로 옮겼으면 실패해도 되돌리지 않는다 (WD-953)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockPipeline(page);
+    const hold = await holdApi(page, 'PUT', '/api/v1/pipelines/1', 500, { status: 500, message: '서버 오류' });
+
+    await page.goto('/pipelines/1');
+    await page.getByRole('button', { name: '수정' }).click();
+    await page.getByLabel('파이프라인 이름').fill('renamed');
+    await page.getByLabel('파이프라인 이름').focus();
+    await page.getByRole('button', { name: '저장', exact: true }).evaluate((el) => (el as HTMLButtonElement).click());
+    await expect.poll(() => hold.requests.length).toBe(1);
+    // 저장이 도는 동안 사용자가 잠기지 않는 뒤로 가기 링크로 포커스를 옮긴다
+    const back = page.getByRole('link', { name: '파이프라인 목록으로' });
+    await back.focus();
+    await expect(back).toBeFocused();
+
+    hold.release();
+    await expect(page.getByLabel('파이프라인 이름')).toBeEnabled();
+    await page.waitForTimeout(300);
+    await expect(back).toBeFocused();
+  });
+
+  test('「저장 후 실행」의 저장이 실패하면 실행을 요청하지 않는다 (WD-953)', async ({ authenticatedPage: page }) => {
+    await mockPipeline(page);
+    const hold = await holdApi(page, 'PUT', '/api/v1/pipelines/1', 500, { status: 500, message: '서버 오류' });
+    const executes: string[] = [];
+    await page.route(
+      (url) => url.pathname === '/api/v1/pipelines/1/execute',
+      async (route) => {
+        executes.push(route.request().method());
+        await route.fulfill({ status: 500, contentType: 'application/json', body: '{}' });
+      },
+    );
+
+    await page.goto('/pipelines/1');
+    await page.getByRole('button', { name: '수정' }).click();
+    await page.getByLabel('파이프라인 이름').fill('renamed');
+    await page.getByRole('button', { name: '실행', exact: true }).click();
+    await page.getByRole('button', { name: '저장 후 실행' }).click();
+    await expect.poll(() => hold.requests.length).toBe(1);
+
+    hold.release();
+    await expect(page.getByLabel('파이프라인 이름')).toBeEnabled();
+    await page.waitForTimeout(500);
+    expect(executes).toHaveLength(0);
+  });
+
+  test('저장 버튼을 누르면 포커스가 body 에 남는 브라우저(Safari·Firefox 맥)도 실패 뒤 저장 버튼으로 돌아온다 (WD-953)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockPipeline(page);
+    const hold = await holdApi(page, 'PUT', '/api/v1/pipelines/1', 500, { status: 500, message: '서버 오류' });
+
+    await page.goto('/pipelines/1');
+    await page.getByRole('button', { name: '수정' }).click();
+    await page.getByLabel('파이프라인 이름').fill('renamed');
+    const save = page.getByRole('button', { name: '저장', exact: true });
+    // 클릭이 포커스를 주지 않는 브라우저 흉내 — 포커스를 body 로 빼고 click() 만 부른다
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await save.evaluate((el) => (el as HTMLButtonElement).click());
+    await expect.poll(() => hold.requests.length).toBe(1);
+
+    hold.release();
+    await expect(page.getByLabel('파이프라인 이름')).toBeEnabled();
+    await expect(save).toBeFocused();
+  });
 });

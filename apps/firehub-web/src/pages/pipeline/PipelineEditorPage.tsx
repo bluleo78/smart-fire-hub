@@ -109,6 +109,74 @@ export default function PipelineEditorPage() {
   // 그 사이 편집까지 저장됨으로 표시해, 재조회가 그 편집을 조용히 지웠다(WD-953).
   // 캔버스·설정 패널은 기존 readOnly 경로를 그대로 쓴다.
   const editLocked = readOnly || isSaving;
+  // 저장 중 잠금(disabled)이 걸리면 포커스가 있던 칸·저장 버튼이 포커스를 잃는다. 저장이 실패·충돌로 끝나 잠금이 풀려도
+  // 포커스가 body 에 남아 키보드 사용자가 처음부터 다시 Tab 해야 하므로, 잠그기 직전 포커스를 기억했다가 풀릴 때 되돌린다(WD-953).
+  const focusBeforeSaveRef = useRef<HTMLElement | null>(null);
+  // 저장 시작 때 활성 요소가 body 면(macOS Safari·Firefox 는 버튼 클릭이 포커스를 주지 않는다) 대신 복원할 저장 버튼 ref
+  const saveButtonRef = useRef<HTMLButtonElement | null>(null);
+  // 실패로 끝난 저장이 복원을 기다리는 중인지 — 복원(또는 포기)하면 false 로 되돌려, 이후 성공 직후의 잠금 해제 렌더에서 복원하지 않게 한다
+  const restorePendingRef = useRef(false);
+  // 충돌 창(409)이 떴을 때 기억해 둔 복원 대상 — 창이 닫힌 뒤 Radix FocusScope 가 포커스를 body 로 되돌리므로 창의 onCloseAutoFocus 가 이 칸으로 옮긴다
+  const conflictTargetRef = useRef<HTMLElement | null>(null);
+  // 저장 중 handleSave 가 다시 불려도 기억한 포커스를 덮어쓰지 않도록 막는 즉시 반영 플래그(state 는 다음 렌더에야 바뀐다)
+  const saveInFlightRef = useRef(false);
+  // 실패가 일어날 때마다 올려 아래 effect 를 깨우는 트리거 값 — 가드는 restorePendingRef 가 맡는다
+  const [focusRestoreSeq, setFocusRestoreSeq] = useState(0);
+  /** 기억한 포커스·복원 대기를 모두 지운다 — 성공(보기 모드 전환)·포기 때 이후 렌더에서 복원하지 않게 한다 */
+  const clearFocusRestore = () => {
+    focusBeforeSaveRef.current = null;
+    conflictTargetRef.current = null;
+    restorePendingRef.current = false;
+  };
+  /** 실패로 끝난 저장·덮어쓰기가 잠금 해제 뒤 복원을 시도하도록 effect 를 깨운다 */
+  const requestFocusRestore = () => {
+    restorePendingRef.current = true;
+    setFocusRestoreSeq((n) => n + 1);
+  };
+  /** 포커스를 되돌려도 되는 대상인지 — 아직 화면에 있고 잠기지 않았어야 한다 */
+  const isRestorable = (el: HTMLElement | null): el is HTMLElement =>
+    !!el && el.isConnected && !(el as HTMLInputElement).disabled;
+  /** 사용자가 저장 중 다른 곳으로 포커스를 옮기지 않았을 때만(body·null) 복원한다 — 옮긴 포커스를 빼앗지 않는다 */
+  const focusIsUnclaimed = () => !document.activeElement || document.activeElement === document.body;
+  // 성공(보기 모드로 전환)이면 복원하지 않아 기존 동작을 유지하고, 실패·충돌일 때만 복원한다.
+  // 검증 실패는 StepConfigPanel 이 잠금 해제 뒤 첫 오류 칸으로 포커스를 옮기므로(오류가 남아 있는 동안) 덮어쓰지 않는다.
+  useEffect(() => {
+    // 충돌 창이 뜨면 대상을 창의 onCloseAutoFocus 용으로 따로 기억한다(저장 중에도 기억해 둘 수 있게 가드보다 먼저 한다)
+    if (editConflict) {
+      conflictTargetRef.current = focusBeforeSaveRef.current ?? conflictTargetRef.current;
+      return;
+    }
+    if (!restorePendingRef.current || isSaving) return;
+    // 충돌 창을 거친 저장이면 창이 닫힐 때 onCloseAutoFocus 가 복원하므로 여기서는 포기한다
+    if (conflictTargetRef.current) {
+      clearFocusRestore();
+      return;
+    }
+    const target = focusBeforeSaveRef.current;
+    restorePendingRef.current = false;
+    focusBeforeSaveRef.current = null;
+    if (!target) return;
+    if (readOnly || state.focusRequest || state.validationErrors.length > 0) return;
+    // 다음 프레임에 복원하되, 그 사이 사용자가 포커스를 옮겼거나 대상이 사라졌으면 하지 않는다
+    const frame = requestAnimationFrame(() => {
+      if (!isRestorable(target) || !focusIsUnclaimed()) return;
+      target.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 실패 트리거·잠금·충돌 창 상태가 바뀔 때만 복원을 시도한다. readOnly·state.focusRequest·state.validationErrors 는 그 시점의 값만 필요하고(바뀔 때마다 복원하면 사용자 포커스를 빼앗는다) 복원 여부 판단용으로만 읽는다
+  }, [focusRestoreSeq, isSaving, editConflict]);
+  /** 충돌 창이 닫힌 뒤 포커스를 저장 전 칸으로 옮긴다 — Radix 의 기본 복귀(body)를 막고 사용자가 옮긴 포커스는 존중한다 */
+  const handleConflictCloseAutoFocus = (event: Event) => {
+    const target = conflictTargetRef.current;
+    conflictTargetRef.current = null;
+    if (!isRestorable(target) || readOnly) return;
+    const active = document.activeElement;
+    const content = event.target instanceof HTMLElement ? event.target : null;
+    // 포커스가 body·사라질 창 안에 있을 때만 — 그 밖(탭·링크 등)이면 사용자가 옮긴 것이다
+    if (active && active !== document.body && !(content && content.contains(active))) return;
+    event.preventDefault();
+    target.focus({ preventScroll: true });
+  };
   // 편집 충돌 창의 「다시 불러오기」 진행 중 — 저장 중(isSaving)과 함께 창의 버튼을 막는다
   const [isReloading, setIsReloading] = useState(false);
 
@@ -313,17 +381,43 @@ export default function PipelineEditorPage() {
     return () => cancelAnimationFrame(frame);
   }, [integerRevealSeq]);
 
-  const handleSave = async () => {
-    if (blockedByInvalidInteger()) return;
-    const ok = await save();
-    if (ok) setIsEditing(false);
+  /** 저장하고 성공 여부를 돌려준다 — 「저장 후 실행」이 실패·무시된 저장 뒤에 실행하지 않도록 호출측이 결과를 본다 */
+  const handleSave = async (): Promise<boolean> => {
+    // 저장이 이미 도는 중이면 무시한다 — 기억한 포커스를 덮어쓰거나 복원 트리거를 올리지 않게 맨 앞에서 돌아간다
+    if (saveInFlightRef.current || isSaving) return false;
+    if (blockedByInvalidInteger()) return false;
+    saveInFlightRef.current = true;
+    try {
+      // 잠금(disabled)이 걸리면 브라우저가 포커스를 body 로 옮기므로, 저장을 시작하는 이 시점에 포커스를 기억한다.
+      // 포커스가 body 면(Safari·Firefox 맥은 버튼 클릭이 포커스를 주지 않는다) 저장 버튼을 대신 기억한다.
+      const active = document.activeElement;
+      focusBeforeSaveRef.current =
+        active instanceof HTMLElement && active !== document.body ? active : saveButtonRef.current;
+      conflictTargetRef.current = null;
+      const ok = await save();
+      if (ok) {
+        clearFocusRestore();
+        setIsEditing(false);
+      } else {
+        requestFocusRestore();
+      }
+      return ok;
+    } finally {
+      saveInFlightRef.current = false;
+    }
   };
 
   /** 편집 충돌(WD-353) — 「내 변경으로 덮어쓰기」: 기준 버전 없이 다시 저장하고, 성공하면 보기 모드로 돌아간다 */
   const handleOverwrite = async () => {
     if (blockedByInvalidInteger()) return;
     const ok = await overwrite();
-    if (ok) setIsEditing(false);
+    if (ok) {
+      clearFocusRestore();
+      setIsEditing(false);
+    } else {
+      // 덮어쓰기도 실패하면 처음 저장을 시작한 칸으로 포커스를 되돌린다(기억해 둔 칸이 남아 있을 때만 동작)
+      requestFocusRestore();
+    }
   };
 
   /** 편집 충돌(WD-353) — 「다시 불러오기」: 최신 내용으로 바꾸고 내 변경을 버린다. 편집 모드는 유지해 이어 고칠 수 있게 한다 */
@@ -529,6 +623,7 @@ export default function PipelineEditorPage() {
           if (!open) dismissEditConflict();
         }}
         resourceLabel="파이프라인"
+        onCloseAutoFocus={handleConflictCloseAutoFocus}
         onReload={handleReloadLatest}
         onOverwrite={handleOverwrite}
         pending={isSaving || isReloading}
@@ -560,6 +655,7 @@ export default function PipelineEditorPage() {
         isExecutionMode={!!executionId}
         canRerun={canRerun}
         onSave={handleSave}
+        saveButtonRef={saveButtonRef}
         onCancelEdit={handleCancelEdit}
         onEdit={() => setIsEditing(true)}
         onExecute={handleExecute}
