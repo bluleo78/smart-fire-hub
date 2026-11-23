@@ -131,6 +131,23 @@ async function openListByKeyboard(page: Page) {
   return { trigger, list };
 }
 
+/**
+ * 목록에서 「첫째 대화」 를 눌러 현재 대화로 정한 뒤 목록을 다시 연다 (WD-1033).
+ * 세션을 고르면 목록이 닫히는데, 닫힘 애니메이션(≈150~300ms) 중에는 목록 안 제목 버튼이 남아
+ * 「첫째 대화」 라는 이름으로 그 버튼이 잡힌다 — 그 버튼을 눌러도 목록은 다시 열리지 않고 닫힘이
+ * 끝나기만 해, 이어지는 휴지통 가리킴 시험이 사라진 목록을 향해 시간 초과 난다(WD-1033).
+ * 완전히 닫힌 뒤 세션 이름으로 바뀐 여는 버튼을 누르고, 열림 애니메이션이 끝날 때까지 기다린다.
+ */
+async function openListSelectingFirstSession(page: Page) {
+  await openListByMouse(page);
+  await titleBtn(page, '첫째 대화').click();
+  const list = page.getByRole('dialog', { name: '대화 선택' });
+  await expect(list).toHaveCount(0);
+  await page.getByRole('button', { name: '첫째 대화', exact: true }).click();
+  await expect(list).toBeVisible();
+  await list.evaluate((el) => Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished)));
+}
+
 const titleBtn = (page: Page, title: string) =>
   page.getByRole('dialog', { name: '대화 선택' }).getByRole('button', { name: title, exact: true });
 const deleteBtn = (page: Page, title: string) =>
@@ -753,9 +770,7 @@ test.describe('SessionSwitcher — 키보드 삭제 (WD-951)', () => {
       authenticatedPage: page,
     }) => {
       await openPanel(page);
-      await page.getByRole('button', { name: '대화 선택', exact: true }).click();
-      await titleBtn(page, '첫째 대화').click();
-      await page.getByRole('button', { name: '첫째 대화', exact: true }).click();
+      await openListSelectingFirstSession(page);
       await page.mouse.move(2, 2);
       const contrast = () =>
         deleteBtn(page, '첫째 대화').evaluate((btn) => {
@@ -800,9 +815,7 @@ test.describe('SessionSwitcher — 키보드 삭제 (WD-951)', () => {
 
     test('현재 줄·다른 줄 휴지통 모두 가리킴·키보드 초점 때 배경이 줄과 달라진다 (WD-989)', async ({ authenticatedPage: page }) => {
       await openPanel(page);
-      await page.getByRole('button', { name: '대화 선택', exact: true }).click();
-      await titleBtn(page, '첫째 대화').click();
-      await page.getByRole('button', { name: '첫째 대화', exact: true }).click();
+      await openListSelectingFirstSession(page);
       // 색 전환(transition) 도중엔 버튼이 투명에서 줄 색으로 가는 중이라 일시적으로 달라 보인다 — 전환이 끝난 값을 읽는다.
       // 반투명 배경(어두운 테마 accent/50)은 문자열이 달라도 줄 위에 겹치면 같아 보일 수 있어, 줄 위에 섞은 실제 색끼리 비교한다.
       const differs = (name: string) =>
