@@ -207,7 +207,8 @@ export default function TriggerTab({ pipelineId }: TriggerTabProps) {
                         </p>
                       )}
                       {trigger.description && (
-                        <p className="text-xs text-muted-foreground mt-0.5 truncate">
+                        // 말줄임된 설명을 마우스 올리면 전체로 볼 수 있게 title 부여(WD-1003)
+                        <p className="text-xs text-muted-foreground mt-0.5 truncate" title={trigger.description}>
                           {trigger.description}
                         </p>
                       )}

@@ -290,7 +290,8 @@ function AddWidgetDialog({ open, onOpenChange, onAdd, isPending }: AddWidgetDial
                   >
                     <div className="font-medium">{chart.name}</div>
                     {chart.description && (
-                      <div className="text-xs opacity-70 truncate">{chart.description}</div>
+                      // 말줄임된 설명을 마우스 올리면 전체로 볼 수 있게 title 부여(WD-1003)
+                      <div className="text-xs opacity-70 truncate" title={chart.description}>{chart.description}</div>
                     )}
                     <div className="text-xs opacity-60">{chart.savedQueryName}</div>
                   </button>
@@ -926,7 +927,8 @@ export default function DashboardEditorPage() {
             )}
           </div>
           {dashboard.description && (
-            <p className="text-xs text-muted-foreground truncate">{dashboard.description}</p>
+            // 말줄임된 설명을 마우스 올리면 전체로 볼 수 있게 title 부여(WD-1003)
+            <p className="text-xs text-muted-foreground truncate" title={dashboard.description}>{dashboard.description}</p>
           )}
           <PrintTimestamp />
         </div>

@@ -740,7 +740,8 @@ export default function HomePage() {
                     <div className="flex-1 min-w-0">
                       <p className="text-sm leading-tight break-words">{item.title}</p>
                       {item.description && (
-                        <p className="text-xs text-muted-foreground mt-0.5 truncate">{item.description}</p>
+                        // 말줄임된 설명을 마우스 올리면 전체로 볼 수 있게 title 부여(WD-1003)
+                        <p className="text-xs text-muted-foreground mt-0.5 truncate" title={item.description}>{item.description}</p>
                       )}
                       <div className="flex items-center gap-2 mt-1">
                         {!item.isResolved && (
