@@ -295,6 +295,291 @@ class ApiCallPreviewServiceTest {
     assertThat(response.columns()).containsExactly("name", "age");
   }
 
+  // ── WD-947: 매핑 없는 미리보기는 원본 항목을 행으로 ──
+
+  private ApiCallPreviewResponse previewRaw(
+      List<ApiCallPreviewRequest.FieldMappingPreview> mappings) {
+    wireMock.stubFor(
+        get(urlEqualTo("/raw"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody(
+                        "[{\"id\":1,\"name\":\"a\",\"tags\":[\"x\"]},{\"id\":2,\"extra\":true}]")));
+    return service.preview(
+        new ApiCallPreviewRequest(
+            baseUrl() + "/raw", "GET", null, null, null, "$", mappings, null, null, 5000));
+  }
+
+  private void assertRawRows(ApiCallPreviewResponse response) {
+    assertThat(response.success()).isTrue();
+    assertThat(response.columns()).containsExactly("id", "name", "tags", "extra");
+    assertThat(response.totalExtractedRows()).isEqualTo(2);
+    assertThat(response.rows().get(0))
+        .containsEntry("id", 1)
+        .containsEntry("name", "a")
+        .containsEntry("tags", "[\"x\"]");
+  }
+
+  /** 매핑이 null 이면 원본 최상위 필드가 행·열로 온다. */
+  @Test
+  void preview_withoutFieldMappings_returnsRawTopLevelRows() {
+    assertRawRows(previewRaw(null));
+  }
+
+  /** 빈 매핑 목록도 원본 모드. */
+  @Test
+  void preview_emptyFieldMappings_returnsRawRows() {
+    assertRawRows(previewRaw(List.of()));
+  }
+
+  /** 웹이 보내는 빈칸 소스 매핑만 있어도 원본 모드. */
+  @Test
+  void preview_blankSourceFieldOnly_returnsRawRows() {
+    assertRawRows(
+        previewRaw(List.of(new ApiCallPreviewRequest.FieldMappingPreview("", "", "TEXT"))));
+  }
+
+  /** 매핑이 있으면 원본으로 바뀌지 않고 매핑 결과만 나온다. */
+  @Test
+  void preview_withFieldMapping_keepsMappedRows() {
+    ApiCallPreviewResponse response =
+        previewRaw(List.of(new ApiCallPreviewRequest.FieldMappingPreview("id", "pk", "TEXT")));
+    assertThat(response.success()).isTrue();
+    assertThat(response.columns()).containsExactly("pk");
+    assertThat(response.rows().get(0).keySet()).containsExactly("pk");
+  }
+
+  /**
+   * 원본 행에서 값 전체가 BASIC 비밀번호인 칸은 가려지고, 글 속에 든 비밀번호도 가려진다 — 원본 모드는 rawJson 과 같은 규칙이라 흔한 단어 비밀번호면 다른
+   * 글도 가려질 수 있다(매핑 모드 결과 행은 전체 일치만 — preview_basicShortWordPassword_keepsRowsIntact).
+   */
+  @Test
+  void preview_rawRows_basicPasswordCellMasked() {
+    when(apiConnectionService.getByIdForCall(23L))
+        .thenReturn(connWithBase(23L, "BASIC", "http://localhost:" + wireMock.port()));
+    when(apiConnectionService.getDecryptedAuthConfig(23L))
+        .thenReturn(java.util.Map.of("authType", "BASIC", "username", "bob", "password", "admin"));
+    wireMock.stubFor(
+        get(urlEqualTo("/roles"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"role\":\"admin user\",\"pw\":\"admin\"}]")));
+
+    var response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                "/roles", "GET", null, null, null, "$", null, 23L, null, 5000));
+
+    assertThat(response.success()).isTrue();
+    assertThat(response.rows().get(0))
+        .containsEntry("role", "**** user")
+        .containsEntry("pw", "****");
+  }
+
+  /** 원본 행의 중첩 값 안에 든 BASIC 비밀번호도 가려진다(나머지 구조는 보존). */
+  @Test
+  void preview_rawRows_basicPasswordInNestedValueMasked() {
+    when(apiConnectionService.getByIdForCall(23L))
+        .thenReturn(connWithBase(23L, "BASIC", "http://localhost:" + wireMock.port()));
+    when(apiConnectionService.getDecryptedAuthConfig(23L))
+        .thenReturn(java.util.Map.of("authType", "BASIC", "username", "bob", "password", "admin"));
+    wireMock.stubFor(
+        get(urlEqualTo("/nestedpw"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"id\":1,\"user\":{\"name\":\"bob\",\"pw\":\"admin\"}}]")));
+
+    var response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                "/nestedpw", "GET", null, null, null, "$", null, 23L, null, 5000));
+
+    assertThat(response.success()).isTrue();
+    String user = (String) response.rows().get(0).get("user");
+    assertThat(user).doesNotContain("admin").contains("****").contains("name\":\"bob");
+  }
+
+  /**
+   * 원본 행의 문자열 칸 속에 든 BASIC 비밀번호도 가려진다 — 요청 본문을 문자열로 되돌려 주는 에코 API(라이브 확인에서 httpbin 의 data 칸으로 발견).
+   * 비밀번호가 없는 문자열 칸은 그대로다.
+   */
+  @Test
+  void preview_rawRows_basicPasswordInsideStringCellMasked() {
+    when(apiConnectionService.getByIdForCall(23L))
+        .thenReturn(connWithBase(23L, "BASIC", "http://localhost:" + wireMock.port()));
+    when(apiConnectionService.getDecryptedAuthConfig(23L))
+        .thenReturn(
+            java.util.Map.of("authType", "BASIC", "username", "bob", "password", "Wd947Secret"));
+    wireMock.stubFor(
+        get(urlEqualTo("/echopw"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody(
+                        "[{\"data\":\"{\\\"pw\\\":\\\"Wd947Secret\\\",\\\"pin\\\":7}\",\"city\":\"seoul\"}]")));
+
+    var response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                "/echopw", "GET", null, null, null, "$", null, 23L, null, 5000));
+
+    assertThat(response.success()).isTrue();
+    String data = (String) response.rows().get(0).get("data");
+    assertThat(data).doesNotContain("Wd947Secret");
+    assertThat(response.rows().get(0)).containsEntry("city", "seoul");
+  }
+
+  /** 원본 행의 큰 중첩 값 칸은 500자 + 「…」 로 잘리고 스칼라 칸은 그대로다. */
+  @Test
+  void preview_rawRows_largeNestedValueTruncated() {
+    String items = "[" + "\"abcdefghij\",".repeat(100) + "\"z\"]";
+    wireMock.stubFor(
+        get(urlEqualTo("/bigNested"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"id\":1,\"items\":" + items + "}]")));
+
+    var response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/bigNested", "GET", null, null, null, "$", null, null, null, 5000));
+
+    assertThat(response.success()).isTrue();
+    String cell = (String) response.rows().get(0).get("items");
+    assertThat(cell).hasSize(501).endsWith("…");
+    assertThat(response.rows().get(0)).containsEntry("id", 1);
+  }
+
+  /** 숫자로 온 BASIC 비밀번호 칸도 원본 행에서 가려진다. */
+  @Test
+  void preview_rawRows_numericPasswordValueMasked() {
+    when(apiConnectionService.getByIdForCall(23L))
+        .thenReturn(connWithBase(23L, "BASIC", "http://localhost:" + wireMock.port()));
+    when(apiConnectionService.getDecryptedAuthConfig(23L))
+        .thenReturn(java.util.Map.of("authType", "BASIC", "username", "bob", "password", "123456"));
+    wireMock.stubFor(
+        get(urlEqualTo("/numpw"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"id\":1,\"pin\":123456}]")));
+
+    var response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                "/numpw", "GET", null, null, null, "$", null, 23L, null, 5000));
+
+    assertThat(response.success()).isTrue();
+    assertThat(response.rows().get(0)).containsEntry("pin", "****").containsEntry("id", 1);
+  }
+
+  /** 비밀번호와 같은 열 이름은 원본 행·columns 에서 가려진다. */
+  @Test
+  void preview_rawRows_passwordKeyMasked() {
+    when(apiConnectionService.getByIdForCall(23L))
+        .thenReturn(connWithBase(23L, "BASIC", "http://localhost:" + wireMock.port()));
+    when(apiConnectionService.getDecryptedAuthConfig(23L))
+        .thenReturn(java.util.Map.of("authType", "BASIC", "username", "bob", "password", "admin"));
+    wireMock.stubFor(
+        get(urlEqualTo("/pwkey"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"admin\":1,\"id\":2}]")));
+
+    var response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                "/pwkey", "GET", null, null, null, "$", null, 23L, null, 5000));
+
+    assertThat(response.success()).isTrue();
+    assertThat(response.columns()).containsExactly("****", "id");
+    assertThat(response.rows().get(0)).doesNotContainKey("admin");
+  }
+
+  /** 원본 행의 큰 스칼라 문자열 칸도 500자 + 「…」 로 잘린다. */
+  @Test
+  void preview_rawRows_largeScalarStringTruncated() {
+    wireMock.stubFor(
+        get(urlEqualTo("/bigScalar"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"blob\":\"" + "x".repeat(600) + "\"}]")));
+
+    var response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/bigScalar", "GET", null, null, null, "$", null, null, null, 5000));
+
+    assertThat(response.success()).isTrue();
+    String blob = (String) response.rows().get(0).get("blob");
+    assertThat(blob).hasSize(501).endsWith("…");
+  }
+
+  /** 원본 모드 columns 는 처음 나온 순서로 최대 100개다. */
+  @Test
+  void preview_rawRows_columnsCappedAt100() {
+    wireMock.stubFor(
+        get(urlEqualTo("/manyCols"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody(manyKeysJson())));
+
+    var response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/manyCols", "GET", null, null, null, "$", null, null, null, 5000));
+
+    assertThat(response.success()).isTrue();
+    assertThat(response.columns()).hasSize(100);
+    assertThat(response.columns().get(0)).isEqualTo("k0");
+  }
+
+  /** 열 상한은 미리보기 행에도 적용된다 — 키 150개 항목의 행도 100칸이다. */
+  @Test
+  void preview_rawRows_columnCapAppliesToRows() {
+    wireMock.stubFor(
+        get(urlEqualTo("/manyCols2"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody(manyKeysJson())));
+
+    var response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/manyCols2", "GET", null, null, null, "$", null, null, null, 5000));
+
+    assertThat(response.success()).isTrue();
+    assertThat(response.rows().get(0)).hasSize(100);
+  }
+
+  /** 키 150개를 가진 항목 하나의 JSON 배열. */
+  private static String manyKeysJson() {
+    StringBuilder sb = new StringBuilder("[{");
+    for (int i = 0; i < 150; i++) {
+      if (i > 0) sb.append(',');
+      sb.append("\"k").append(i).append("\":").append(i);
+    }
+    return sb.append("}]").toString();
+  }
+
   /** 정상: dataPath를 지정하면 중첩 JSON에서 배열을 추출한다 */
   @Test
   void preview_withDataPath_extractsNestedArray() {

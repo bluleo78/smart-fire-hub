@@ -367,13 +367,35 @@ public final class AuthQueryMasker {
       List<Map<String, Object>> out = null;
       for (int i = 0; i < rows.size(); i++) {
         Map<String, Object> row = rows.get(i);
-        if (row.values().stream().noneMatch(password::equals)) continue;
+        if (row.values().stream().noneMatch(v -> v instanceof String str && isPassword(str)))
+          continue;
         if (out == null) out = new ArrayList<>(rows);
         Map<String, Object> copy = new LinkedHashMap<>(row);
-        copy.replaceAll((k, v) -> password.equals(v) ? PASSWORD_MASK : v);
+        copy.replaceAll((k, v) -> v instanceof String str && isPassword(str) ? PASSWORD_MASK : v);
         out.set(i, copy);
       }
       return out != null ? out : rows;
+    }
+
+    /**
+     * 열 이름·값 하나가 Basic 비밀번호와 전체 일치하면 {@code ****} 로 바꾼다 — {@link #maskRows} 와 같은 전체 일치 규칙이다. 값은
+     * 문자열·숫자·불리언만 보고(숫자로 온 비밀번호 123456 도 가린다) 그 밖의 값은 그대로 둔다. 원본 모드 미리보기가 키와 스칼라 칸에 쓴다.
+     */
+    public Object maskScalar(Object value) {
+      if (!(value instanceof String || value instanceof Number || value instanceof Boolean)) {
+        return value;
+      }
+      return isPassword(String.valueOf(value)) ? PASSWORD_MASK : value;
+    }
+
+    /** 열 이름용 — {@link #maskScalar} 와 같은 판정. */
+    public String maskKey(String key) {
+      return isPassword(key) ? PASSWORD_MASK : key;
+    }
+
+    /** 문자열이 Basic 비밀번호와 전체 일치하는지 — 비밀번호가 없거나 null 이면 false. maskRows·maskScalar·maskKey 가 함께 쓴다. */
+    private boolean isPassword(String s) {
+      return s != null && password != null && !password.isEmpty() && password.equals(s);
     }
 
     @Override

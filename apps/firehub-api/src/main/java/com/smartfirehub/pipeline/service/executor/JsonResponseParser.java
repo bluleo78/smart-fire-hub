@@ -45,6 +45,25 @@ public class JsonResponseParser {
       Map<String, String> columnTypeMap,
       int rowOffset) {
 
+    List<?> rawList = extractItems(jsonResponse, dataPath);
+
+    // 매핑별 타입·날짜 형식·시간대는 행마다가 아니라 한 번만 풀어 둔다 — 잘못된 설정은 여기서 설정 오류로 알린다(WD-431).
+    // 항목이 없으면 값 변환이 없으므로 예전처럼 설정을 검사하지 않는다.
+    List<ResolvedMapping> resolved =
+        rawList.isEmpty() ? List.of() : resolve(fieldMappings, columnTypeMap);
+    List<Map<String, Object>> result = new ArrayList<>(rawList.size());
+    for (int i = 0; i < rawList.size(); i++) {
+      // 행 번호는 응답 항목 순번(1부터, 앞 페이지 다음부터)이다(WD-431).
+      result.add(mapItem(rawList.get(i), resolved, rowOffset + i + 1));
+    }
+    return result;
+  }
+
+  /**
+   * 응답에서 dataPath 위치의 항목 목록을 꺼낸다. JSON 여부 검사·경로 오류 변환·단일 객체 감싸기·null 의 빈 목록 처리를 한곳에 둬 {@link
+   * #parseAndMap} 과 {@link #parseRawItems} 가 같은 규칙을 쓰게 한다.
+   */
+  private List<?> extractItems(String jsonResponse, String dataPath) {
     // JSON 이 아닌 응답(HTML 오류 페이지·평문·빈 본문)을 먼저 걸러 낸다(WD-150). jayway 의 기본 파서(json-smart)는 관대해서
     // HTML 을 문자열 하나로 읽어 버리고, 그러면 「데이터 경로를 찾을 수 없습니다」나 0행 성공처럼 원인과 다른 결과가 나온다.
     // Python 실행기는 resp.json() 실패로 같은 상황을 「JSON 형식이 아닙니다」로 알린다 — 같은 문구를 쓴다.
@@ -79,17 +98,31 @@ public class JsonResponseParser {
     } else {
       rawList = List.of(extracted);
     }
+    return rawList;
+  }
 
-    // 매핑별 타입·날짜 형식·시간대는 행마다가 아니라 한 번만 풀어 둔다 — 잘못된 설정은 여기서 설정 오류로 알린다(WD-431).
-    // 항목이 없으면 값 변환이 없으므로 예전처럼 설정을 검사하지 않는다.
-    List<ResolvedMapping> resolved =
-        rawList.isEmpty() ? List.of() : resolve(fieldMappings, columnTypeMap);
-    List<Map<String, Object>> result = new ArrayList<>(rawList.size());
-    for (int i = 0; i < rawList.size(); i++) {
-      // 행 번호는 응답 항목 순번(1부터, 앞 페이지 다음부터)이다(WD-431).
-      result.add(mapItem(rawList.get(i), resolved, rowOffset + i + 1));
+  /**
+   * 매핑 없이 응답 항목을 원본 그대로 행으로 만든다(WD-947 미리보기용). 객체 항목은 최상위 키→원래 값(중첩 객체·배열은 Map/List 그대로, 스칼라·null 도
+   * 그대로), 객체가 아닌 항목은 {@code {"value": 원래 값}} 이다. 스칼라·객체가 섞인 배열에서는 스칼라의 {@code value} 열이 객체의 실제
+   * {@code value} 키와 같은 열이 된다. 항목마다 키가 달라도 그대로 두며 없는 키는 행에 넣지 않는다. 가림·자르기·직렬화는 호출자가 한다.
+   *
+   * @throws ApiCallException JSON 이 아니거나 dataPath 가 없거나 문법이 잘못됐을 때(parseAndMap 과 같음)
+   */
+  public List<Map<String, Object>> parseRawItems(String json, String dataPath) {
+    List<?> items = extractItems(json, dataPath);
+    List<Map<String, Object>> rows = new ArrayList<>(items.size());
+    for (Object item : items) {
+      Map<String, Object> row = new LinkedHashMap<>();
+      if (item instanceof Map<?, ?> m) {
+        for (Map.Entry<?, ?> e : m.entrySet()) {
+          row.put(String.valueOf(e.getKey()), e.getValue());
+        }
+      } else {
+        row.put("value", item);
+      }
+      rows.add(row);
     }
-    return result;
+    return rows;
   }
 
   /** 필드 매핑 하나를 행 루프 전에 푼 결과 — 대문자 타입(없으면 null), 날짜 형식(없으면 null), 원본 시간대. */

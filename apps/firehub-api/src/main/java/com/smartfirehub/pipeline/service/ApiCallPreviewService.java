@@ -15,11 +15,17 @@ import com.smartfirehub.pipeline.service.executor.RedirectFollower;
 import com.smartfirehub.pipeline.service.executor.SsrfProtectionService;
 import com.smartfirehub.pipeline.service.executor.SsrfSafeHttpClientFactory;
 import java.net.URI;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 @Service
 @lombok.extern.slf4j.Slf4j
@@ -28,6 +34,15 @@ public class ApiCallPreviewService {
   private static final int DEFAULT_TIMEOUT_MS = 30_000;
   private static final int MAX_RAW_JSON_BYTES = 10 * 1024; // 10 KB
   private static final int MAX_PREVIEW_ROWS = 5;
+
+  /** 원본 모드에서 문자열 칸(중첩 값은 JSON 문자열)의 최대 글자 수 — rawJson 10KB 상한을 칸으로 우회하지 않게 한다(WD-947). */
+  private static final int MAX_RAW_CELL_CHARS = 500;
+
+  /** 원본 모드 columns 의 최대 개수(처음 나온 순서) — 키가 수천 개인 항목이 응답을 부풀리지 않게 한다(WD-947). */
+  private static final int MAX_RAW_COLUMNS = 100;
+
+  /** 원본 모드 중첩 값(Map/List)을 JSON 문자열 칸으로 바꾼다(스레드 안전, 저장소 관례의 Jackson 2 기본값). */
+  private static final ObjectMapper RAW_MAPPER = JsonMapper.builderWithJackson2Defaults().build();
 
   /** 미리보기가 대상에 보낼 수 있는 메서드(WD-969) — 편집기 범위와 같다. */
   private static final Set<String> PREVIEW_METHODS = Set.of("GET", "POST");
@@ -151,28 +166,64 @@ public class ApiCallPreviewService {
       String rawJson =
           truncate(authSecret.maskPasswordInMaskedBody(maskedBody), MAX_RAW_JSON_BYTES);
 
-      // 8. Convert field mappings
-      List<ApiCallConfig.FieldMapping> fieldMappings = toFieldMappings(request.fieldMappings());
-
-      // 9. Parse response — dataPath가 비어있으면 루트($)로 대체
+      // 8~9. 응답 파싱 — dataPath가 비어있으면 루트($)로 대체
       String effectiveDataPath =
           (request.dataPath() == null || request.dataPath().isBlank()) ? "$" : request.dataPath();
-      List<Map<String, Object>> allRows =
-          jsonResponseParser.parseAndMap(maskedBody, effectiveDataPath, fieldMappings, null, 0);
 
-      List<String> columns =
-          request.fieldMappings() != null
-              ? request.fieldMappings().stream()
-                  .map(ApiCallPreviewRequest.FieldMappingPreview::targetColumn)
-                  .toList()
-              : List.of();
+      // 쓸 만한 매핑(sourceField 가 있는 것)이 하나도 없으면 원본 모드(WD-947) — 항목의 최상위 필드를 그대로 행·열로 돌려줘,
+      // 사용자·AI 가 그 이름으로 매핑을 만들 수 있게 한다. 예전에는 매핑이 없으면 행이 빈 객체, 열이 빈 목록이라 매핑할 근거가 없었다.
+      // 매핑이 하나라도 있으면 지금 동작(매핑 결과) 그대로다.
+      List<Map<String, Object>> previewRows;
+      List<String> columns;
+      int totalExtractedRows;
+      if (hasUsableMapping(request.fieldMappings())) {
+        List<ApiCallConfig.FieldMapping> fieldMappings = toFieldMappings(request.fieldMappings());
+        List<Map<String, Object>> allRows =
+            jsonResponseParser.parseAndMap(maskedBody, effectiveDataPath, fieldMappings, null, 0);
+        columns =
+            request.fieldMappings().stream()
+                .map(ApiCallPreviewRequest.FieldMappingPreview::targetColumn)
+                .toList();
+        totalExtractedRows = allRows.size();
+        previewRows =
+            authSecret.maskRows(
+                allRows.size() > MAX_PREVIEW_ROWS ? allRows.subList(0, MAX_PREVIEW_ROWS) : allRows);
+      } else {
+        // 람다 없이 쓰지만 authSecret 은 재대입되므로 최종 사본을 쓴다.
+        final AuthQueryMasker.SentSecrets secret = authSecret;
+        List<Map<String, Object>> items =
+            jsonResponseParser.parseRawItems(maskedBody, effectiveDataPath);
+        totalExtractedRows = items.size();
 
-      List<Map<String, Object>> previewRows =
-          authSecret.maskRows(
-              allRows.size() > MAX_PREVIEW_ROWS ? allRows.subList(0, MAX_PREVIEW_ROWS) : allRows);
+        // 항목마다 키가 다를 수 있어 앞 5행이 아니라 모든 항목의 키를 처음 나온 순서대로 모은다(최대 MAX_RAW_COLUMNS 개).
+        Set<String> rawKeys = new LinkedHashSet<>();
+        for (Map<String, Object> item : items) {
+          for (String k : item.keySet()) {
+            if (rawKeys.size() >= MAX_RAW_COLUMNS) break;
+            rawKeys.add(k);
+          }
+          if (rawKeys.size() >= MAX_RAW_COLUMNS) break;
+        }
+        // 열 이름도 가린다(비밀번호와 같은 키). 가린 뒤 겹치면 한 번만 둔다.
+        Set<String> maskedColumns = new LinkedHashSet<>();
+        for (String k : rawKeys) maskedColumns.add(secret.maskKey(k));
+        columns = List.copyOf(maskedColumns);
+
+        // 미리보기 행만 처리한다 — 열 상한을 행에도 적용하고, 값은 한 번에 가림·자르기한다.
+        previewRows = new ArrayList<>();
+        for (Map<String, Object> item :
+            items.subList(0, Math.min(items.size(), MAX_PREVIEW_ROWS))) {
+          Map<String, Object> safe = new LinkedHashMap<>();
+          for (Map.Entry<String, Object> e : item.entrySet()) {
+            if (!rawKeys.contains(e.getKey())) continue;
+            safe.put(secret.maskKey(e.getKey()), rawCell(secret, e.getValue()));
+          }
+          previewRows.add(safe);
+        }
+      }
 
       return new ApiCallPreviewResponse(
-          true, rawJson, previewRows, columns, allRows.size(), null, resolvedRequestUrl);
+          true, rawJson, previewRows, columns, totalExtractedRows, null, resolvedRequestUrl);
 
     } catch (Exception e) {
       // 실행(ApiCallExecutor)과 같은 분류·문구를 쓴다(WD-150) — 예전에는 e.getMessage() 를 그대로 돌려줘 같은 연결 거부가
@@ -254,6 +305,12 @@ public class ApiCallPreviewService {
         .getBody();
   }
 
+  /** 요청 매핑 중 sourceField 가 null·빈칸이 아닌 것이 하나라도 있는지 — 없으면(null·빈 목록·빈칸 소스만) 원본 모드(WD-947). */
+  private boolean hasUsableMapping(List<ApiCallPreviewRequest.FieldMappingPreview> previews) {
+    return previews != null
+        && previews.stream().anyMatch(p -> p.sourceField() != null && !p.sourceField().isBlank());
+  }
+
   private List<ApiCallConfig.FieldMapping> toFieldMappings(
       List<ApiCallPreviewRequest.FieldMappingPreview> previews) {
     if (previews == null) return List.of();
@@ -291,5 +348,38 @@ public class ApiCallPreviewService {
     }
 
     return new String(bytes, 0, end, java.nio.charset.StandardCharsets.UTF_8);
+  }
+
+  /**
+   * 원본 모드 셀 하나를 안전하게 만든다 — 중첩 값(Map/List)은 JSON 문자열로 바꿔 잎 값 비밀번호를 가린 뒤 자르고(가리기 전에 자르면 경계의 비밀번호 조각이
+   * 남을 수 있다), 문자열·숫자·불리언은 값 전체 일치 비밀번호를 가리며, null 은 그대로 둔다.
+   *
+   * <p>문자열 칸은 같은 화면의 원문(rawJson)과 같게 글 속에 든 비밀번호까지 가린다 — 요청 본문·URL 을 문자열로 되돌려 주는 API(예: 에코)에서 매핑 없이
+   * 모든 칸이 보이는 원본 모드가 비밀번호를 흘리지 않게. 짧은 비밀번호는 칸 전체가 가려질 수 있지만 미리보기 표시라 안전 쪽을 택한다(매핑 모드 결과 행은 WD-681
+   * 대로 전체 일치만).
+   */
+  private static Object rawCell(AuthQueryMasker.SentSecrets secret, Object value) {
+    if (value instanceof Map<?, ?> || value instanceof List<?>) {
+      String text;
+      try {
+        text = RAW_MAPPER.writeValueAsString(value);
+      } catch (JacksonException e) {
+        // 파싱된 JSON 값이라 사실상 일어나지 않는다 — 그래도 미리보기가 죽지 않게 문자열로 대신한다.
+        text = value.toString();
+      }
+      return truncateChars(secret.maskPasswordInMaskedBody(text));
+    }
+    Object masked = secret.maskScalar(value);
+    return masked instanceof String str
+        ? truncateChars(secret.maskPasswordInMaskedBody(str))
+        : masked;
+  }
+
+  /** 원본 모드 문자열 칸을 {@link #MAX_RAW_CELL_CHARS} 자로 자른다 — 넘으면 앞 글자 + "…". 서로게이트 쌍은 쪼개지 않는다. */
+  private static String truncateChars(String s) {
+    if (s == null || s.length() <= MAX_RAW_CELL_CHARS) return s;
+    int end = MAX_RAW_CELL_CHARS;
+    if (Character.isHighSurrogate(s.charAt(end - 1))) end--;
+    return s.substring(0, end) + "…";
   }
 }

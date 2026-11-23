@@ -343,7 +343,9 @@ export function registerPipelineTools(
             }),
           )
           .optional()
-          .describe('필드 매핑'),
+          .describe(
+            '필드 매핑. 생략하거나 비우면 항목의 최상위 필드가 그대로 행으로 오고 columns 에 필드 이름이 온다 — 그 이름으로 매핑을 만든다. 항목이 배열을 감싼 객체 하나로 오면 dataPath 를 그 배열로 지정한다(중첩 값은 500자까지만 보인다)',
+          ),
         apiConnectionId: z.number().optional().describe('저장된 API 연결 ID'),
         inlineAuth: z.record(z.string(), z.string()).optional().describe(INLINE_AUTH_DESCRIPTION),
         timeoutMs: z.number().optional().describe('타임아웃(ms)'),
