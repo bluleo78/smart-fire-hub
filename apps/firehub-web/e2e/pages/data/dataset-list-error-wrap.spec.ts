@@ -1,7 +1,7 @@
 import type { Locator, Page } from '@playwright/test';
 
-import { createCategories } from '../../factories/dataset.factory';
-import { mockApi } from '../../fixtures/api-mock';
+import { createCategories, createDatasets } from '../../factories/dataset.factory';
+import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { grantDatasetPermissions } from '../../fixtures/dataset.fixture';
 import { expectTableErrorAlert } from '../../fixtures/table-error-alert';
@@ -53,11 +53,20 @@ function expectInside(inner: Rect, box: Rect) {
   expect(inner.left).toBeGreaterThanOrEqual(box.left - 0.5);
 }
 
-// 스크롤 페이드 폭(px) — table.tsx 페이드의 w-10(2.5rem)에 묶여 있다. 문구·버튼은 이 안쪽(1px 여유)에 있어야 한다.
-const FADE = 40;
-function expectClearOfFade(inner: Rect, box: Rect) {
-  expect(inner.left).toBeGreaterThanOrEqual(box.left + FADE - 1);
-  expect(inner.right).toBeLessThanOrEqual(box.right - FADE + 1);
+/**
+ * 문구·버튼이 보이는 스크롤 페이드에 덮이지 않는다 — 페이드 폭은 화면에서 왼쪽·오른쪽을 따로 잰다(WD-958 리뷰 후속).
+ * table.tsx 의 페이드 클래스가 바뀌어도 시험이 따라간다. 375px 에서는 표가 넘쳐 한쪽 이상의 페이드가 늘 보인다(없으면 전제가 깨져 실패).
+ */
+async function expectClearOfFade(page: Page, inner: Rect) {
+  const left = page.locator('[data-slot="table-fade-left"]');
+  const right = page.locator('[data-slot="table-fade-right"]');
+  const [l, r] = await Promise.all([
+    left.count().then((n) => (n ? rectOf(left) : null)),
+    right.count().then((n) => (n ? rectOf(right) : null)),
+  ]);
+  expect(l ?? r).not.toBeNull();
+  if (l) expect(inner.left).toBeGreaterThanOrEqual(l.right - 1); // 1px 여유
+  if (r) expect(inner.right).toBeLessThanOrEqual(r.left + 1);
 }
 
 test.describe('데이터셋 목록 — 실패 행 줄바꿈 (WD-958)', () => {
@@ -69,8 +78,8 @@ test.describe('데이터셋 목록 — 실패 행 줄바꿈 (WD-958)', () => {
     expect(a.height).toBeGreaterThan((await lineHeightOf(alert)) * 1.5);
     expectInside(a, b);
     expectInside(await rectOf(retry), b);
-    expectClearOfFade(a, b);
-    expectClearOfFade(await rectOf(retry), b);
+    await expectClearOfFade(page, a);
+    await expectClearOfFade(page, await rectOf(retry));
     // 새 div 래퍼 뒤에도 alert 구조(td 안쪽·action 은 alert 밖)가 유지되는지
     await expectTableErrorAlert(page, LONG_REASON, { action: '다시 시도' });
   });
@@ -83,8 +92,8 @@ test.describe('데이터셋 목록 — 실패 행 줄바꿈 (WD-958)', () => {
     expect(a.height).toBeLessThan((await lineHeightOf(alert)) * 1.5);
     expectInside(a, b);
     expectInside(await rectOf(retry), b);
-    expectClearOfFade(a, b);
-    expectClearOfFade(await rectOf(retry), b);
+    await expectClearOfFade(page, a);
+    await expectClearOfFade(page, await rectOf(retry));
   });
 
   test('375px 표를 오른쪽 끝까지 밀어도 안내와 「다시 시도」가 보인다', async ({ authenticatedPage: page }) => {
@@ -99,8 +108,24 @@ test.describe('데이터셋 목록 — 실패 행 줄바꿈 (WD-958)', () => {
     const b = await rectOf(box);
     expectInside(await rectOf(alert), b);
     expectInside(await rectOf(retry), b);
-    expectClearOfFade(await rectOf(alert), b);
-    expectClearOfFade(await rectOf(retry), b);
+    await expectClearOfFade(page, await rectOf(alert));
+    await expectClearOfFade(page, await rectOf(retry));
+  });
+
+  // 리뷰 후속 ①: 표 스크롤 상자는 실패 행이 있을 때만 크기 컨테이너가 된다 — 늘 켜 두면 줄어드는 부모에서 표가 접히고
+  // 셀 안 TruncatedText 의 100cqw 가 바깥 wrapper 대신 이 상자로 풀린다.
+  test('표 스크롤 상자는 실패 행이 있을 때만 크기 컨테이너이고, 목록이 보일 때는 아니다', async ({ authenticatedPage: page }) => {
+    await page.setViewportSize({ width: 375, height: 720 });
+    const containerType = (l: Locator) => l.evaluate((el) => getComputedStyle(el).containerType);
+    const { box } = await gotoFailed(page, LONG_REASON);
+    expect(await containerType(box)).toBe('inline-size');
+
+    // 같은 화면에서 다시 시도해 목록이 성공하면 컨테이너가 풀린다
+    const datasets = createDatasets(2);
+    await mockApi(page, 'GET', '/api/v1/datasets', createPageResponse(datasets));
+    await page.getByRole('button', { name: '다시 시도' }).click();
+    await expect(page.getByText(datasets[0].name)).toBeVisible();
+    expect(await containerType(box)).toBe('normal');
   });
 
   test('데스크톱 1280px 에서는 문구·버튼이 셀 가운데', async ({ authenticatedPage: page }) => {

@@ -155,7 +155,7 @@ interface TableErrorRowProps {
   message?: string;
   /** 문구 글자 톤 — 기본 error(빨강), 권한 없음처럼 흐린 안내는 muted */
   tone?: 'error' | 'muted';
-  /** 셀에 더할 클래스 — 세로 여백 등(좌우 여백은 바꾸지 않는다 — 전제 참고) */
+  /** 셀에 더할 클래스 — 세로 여백(py-*) 등. 좌우 여백은 전제 참고 */
   className?: string;
   /**
    * 문구 옆에 둘 동작 (예: "다시 시도" 버튼).
@@ -175,9 +175,10 @@ interface TableErrorRowProps {
  * - 내용과 함께 마운트된 라이브 리전 낭독 누락(WD-815)을 피하려 TableEmptyRow 와 같은 DelayedStatus 를 쓴다.
  *
  * 전제 (WD-958):
- * - 공용 `Table`(components/ui/table.tsx) 안에서만 쓴다 — 그 스크롤 상자가 `@container/table` 이라 100cqw 가 보이는 폭이 된다.
- *   맨 <table> 이나 컨테이너 밖에서 쓰면 100cqw 가 뷰포트 폭으로 풀려 폭이 어긋난다.
- * - `className` 으로 셀 좌우 여백(px-*)을 바꾸지 않는다 — 내용 상자의 left-2·-1rem 이 TableCell 의 p-2 에 맞춰져 있다(세로 여백 py-* 만).
+ * - 공용 `Table`(components/ui/table.tsx) 안에서만 쓴다 — 그 스크롤 상자가 이 행의 내용 상자(data-slot="table-error-content")가
+ *   있을 때만 크기 컨테이너가 되어 100cqw 가 보이는 폭이 된다. 맨 <table> 이나 공용 Table 밖에서 쓰면 100cqw 가 바깥 컨테이너·뷰포트 폭으로 풀려 폭이 어긋난다.
+ * - 셀 좌우 여백은 0(px-0, className 뒤에 둬 px-* 를 덮는다)이고 안쪽 여백은 내용 상자가 맡는다 — 내용 상자 폭이 셀 여백에 묶이지 않는다.
+ *   반응형 변형(sm:px-6 등)은 덮지 못하므로 좌우 여백은 className 으로 주지 않는다.
  */
 export function TableErrorRow({
   colSpan,
@@ -188,15 +189,15 @@ export function TableErrorRow({
 }: TableErrorRowProps) {
   return (
     <TableRow>
-      <TableCell colSpan={colSpan} className={cn('text-center', className)}>
+      <TableCell colSpan={colSpan} className={cn('text-center', className, 'px-0')}>
         {/*
           내용 상자 (WD-958) — 전제는 컴포넌트 JSDoc 참고.
-          - sticky left-2: 가로 스크롤돼도 보이는 영역에 붙는다(셀 p-2 = 0.5rem 과 같은 값).
-          - w-[calc(100cqw-1rem)] max-w-full: 스크롤 상자의 보이는 폭에서 셀 좌우 p-2 합을 뺀 폭 — 긴 사유는 늘어나지 않고 줄바꿈된다.
-          - px-8: 스크롤 페이드(w-10)·힌트 배지가 문구·버튼 양끝을 덮지 않게 양쪽 2.5rem 안쪽에만 둔다.
+          - data-slot: table.tsx 의 has-[…] 가 이 이름으로 스크롤 상자를 크기 컨테이너로 켠다 — 바꾸면 함께.
+          - sticky left-0 w-[100cqw] max-w-full: 가로 스크롤돼도 보이는 폭 그대로 붙어 긴 사유는 늘어나지 않고 줄바꿈된다.
+          - px-10: 스크롤 페이드(w-10)·힌트 배지가 문구·버튼 양끝을 덮지 않게 양쪽 2.5rem 안쪽에만 둔다.
           - whitespace-normal + overflow-wrap:anywhere: 공백 없는 긴 토큰(trace 등)도 감는다. mx-auto 는 쓰지 않는다(표가 더 넓으면 가운데가 보이는 영역 밖으로 밀림).
         */}
-        <div className="sticky left-2 w-[calc(100cqw-1rem)] max-w-full px-8 whitespace-normal [overflow-wrap:anywhere]">
+        <div data-slot="table-error-content" className="sticky left-0 w-[100cqw] max-w-full px-10 whitespace-normal [overflow-wrap:anywhere]">
           <DelayedStatus role="alert" className={tone === 'muted' ? 'text-muted-foreground' : 'text-destructive'}>
             {message}
           </DelayedStatus>

@@ -22,9 +22,9 @@ function Table({ className, ...props }: React.ComponentProps<"table">) {
       <div
         ref={setContainer}
         data-slot="table-container"
-        // container-type 은 표 상자의 내재 폭을 0 으로 만든다 — inline-block·w-fit·폭 없는 flex/grid 항목처럼 내용에 맞춰 줄어드는 부모에 Table 을 두면 접히므로 그런 자리에는 폭을 준다.
-        // @container/table: 셀 안 내용(TableErrorRow·TruncatedText)이 이 상자의 보이는 폭을 100cqw 로 쓴다 (WD-958).
-        className="@container/table relative w-full overflow-x-auto"
+        // 이 표 자신의 행에 조회 실패 행(table-empty.tsx 의 table-error-content)이 있을 때만 크기 컨테이너로 켠다 (WD-958 리뷰 후속) —
+        // 늘 켜면 내용에 맞춰 줄어드는 부모에서 표가 접히고 셀 안 TruncatedText 의 100cqw 가 바깥 wrapper 대신 이 상자로 풀린다. 근거는 TableErrorRow JSDoc.
+        className="relative w-full overflow-x-auto has-[>table>tbody>tr>td>[data-slot=table-error-content]]:[container-type:inline-size]"
       >
         <table
           data-slot="table"
