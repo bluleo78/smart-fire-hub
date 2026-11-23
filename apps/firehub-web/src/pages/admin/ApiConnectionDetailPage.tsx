@@ -9,6 +9,7 @@ import { DetailPageTitle } from '@/components/PageTitleSync';
 import { PendingButton } from '@/components/PendingButton';
 import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
 import { FormField } from '@/components/ui/form-field';
+import { useEditModeFocus } from '@/hooks/useEditModeFocus';
 import {
   type ExtraHeaderRow,
   extraHeaderRowErrors,
@@ -336,6 +337,14 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
 
   // Auth edit state
   const [isEditingAuth, setIsEditingAuth] = useState(false);
+  // (WD-1048) 인증 편집 열림·닫힘 초점은 다른 화면과 같은 공통 훅(WD-415)에 맡긴다 — 직접 짠 ref·effect 를 쓰지 않는다.
+  // 열면 편집 영역 첫 칸으로(「인증 정보 변경」이 사라져 초점이 body 로 떨어지던 결함), 닫히면 다시 그려진 「인증 정보 변경」으로 옮긴다.
+  // 저장이 비동기로 끝나는 사이 사용자가 다른 칸(예: 이름)으로 옮겼으면 훅이 초점을 빼앗지 않는다.
+  const { editButtonRef: authChangeButtonRef, editRegionRef: authEditRef } = useEditModeFocus(isEditingAuth);
+  // (WD-1048) 어느 저장 버튼이 진행 중인지 명시 상태로 둔다 — 「저장 중...」 문구를 payload(authType 유무) 추론 대신 이 값으로 가린다.
+  // 잠금 자체는 두 버튼 모두 updateMutation.isPending 으로 건다.
+  const [savingSection, setSavingSection] = useState<'info' | 'auth' | null>(null);
+
   // 조회한 방식(옛 OAUTH2 포함)을 그대로 들고 시작하므로 조회 값 범위로 둔다
   const [authType, setAuthType] = useState<StoredApiConnectionAuthType>('API_KEY');
   const [placement, setPlacement] = useState('header');
@@ -657,6 +666,7 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
     };
     setInfoErrors(nextErrors);
     if (focusFirstError(INFO_FIELD_ORDER, nextErrors, infoFieldId)) return;
+    setSavingSection('info');
     try {
       await updateMutation.mutateAsync({
         id: connectionId,
@@ -674,6 +684,8 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
       setInitialInfo({ name, description, baseUrl, healthCheckPath });
     } catch (error) {
       handleApiError(error, '연결 정보 업데이트에 실패했습니다.');
+    } finally {
+      setSavingSection(null);
     }
   };
 
@@ -729,12 +741,15 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
       authType,
       authConfig: { ...authConfig, ...extraHeadersToConfig(extraHeaders) },
     };
+    setSavingSection('auth');
     try {
       await updateMutation.mutateAsync({ id: connectionId, data });
       toast.success('인증 정보가 업데이트되었습니다.');
       closeAuthEdit();
     } catch (error) {
       handleApiError(error, '인증 정보 업데이트에 실패했습니다.');
+    } finally {
+      setSavingSection(null);
     }
   };
 
@@ -1039,9 +1054,12 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
             <div>수정일: {formatDate(connection.updatedAt)}</div>
           </div>
           {canWrite && (
-            <Button onClick={handleSaveInfo} disabled={updateMutation.isPending}>
-              {updateMutation.isPending ? '저장 중...' : '저장'}
-            </Button>
+            // (WD-1048) 저장 중에도 초점이 남도록 disabled 대신 aria-disabled(PendingButton)로 잠근다.
+            // 두 저장 버튼이 같은 mutation 을 쓰므로 잠금은 함께 걸리되, 「저장 중...」 문구는 누른 쪽에만 보인다
+            // (인증 저장만 data.authType 을 싣는다).
+            <PendingButton onClick={handleSaveInfo} pending={updateMutation.isPending}>
+              {updateMutation.isPending && savingSection === 'info' ? '저장 중...' : '저장'}
+            </PendingButton>
           )}
         </CardContent>
       </Card>
@@ -1054,7 +1072,7 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
           <div className="flex items-center justify-between">
             <CardTitle>인증 설정</CardTitle>
             {canWrite && !isEditingAuth && (
-              <Button variant="outline" size="sm" onClick={startAuthEdit}>
+              <Button ref={authChangeButtonRef} variant="outline" size="sm" onClick={startAuthEdit}>
                 인증 정보 변경
               </Button>
             )}
@@ -1167,7 +1185,7 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
             </div>
           ) : (
             /* 편집 모드 */
-            <div className="space-y-4">
+            <div ref={authEditRef as React.RefObject<HTMLDivElement>} className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor={`${baseId}-auth-type`}>인증 유형</Label>
                 {/* 유형·위치를 바꾸면 인증 칸 오류를 비운다 — 숨겨진 칸 오류가 남아 사라진 칸으로 포커스가 가지 않게(WD-561) */}
@@ -1307,12 +1325,14 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
               />
 
               <div className="flex gap-2">
-                <Button onClick={handleSaveAuth} disabled={updateMutation.isPending}>
-                  {updateMutation.isPending ? '저장 중...' : '인증 저장'}
-                </Button>
-                <Button variant="outline" onClick={closeAuthEdit}>
+                {/* (WD-1048) aria-disabled 로 잠가 초점을 지킨다. 문구는 인증 저장 중일 때만 「저장 중...」 */}
+                <PendingButton onClick={handleSaveAuth} pending={updateMutation.isPending}>
+                  {updateMutation.isPending && savingSection === 'auth' ? '저장 중...' : '인증 저장'}
+                </PendingButton>
+                {/* (WD-1048) 저장 중엔 취소를 잠근다 — 취소로 닫힌 뒤 늦게 끝난 저장이 closeAuthEdit 를 또 불러 다시 연 편집을 닫고 비밀을 지우는 것을 막는다 */}
+                <PendingButton variant="outline" onClick={closeAuthEdit} pending={updateMutation.isPending}>
                   취소
-                </Button>
+                </PendingButton>
               </div>
             </div>
           )}
