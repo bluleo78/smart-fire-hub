@@ -112,7 +112,7 @@ export default defineConfig({
 
   use: {
     baseURL: 'http://localhost:5173',
-    trace: 'on-first-retry',    // 실패 시 트레이스 수집
+    trace: 'on-first-retry',    // 첫 재시도 때만 트레이스 수집 (--retries=0 이면 --trace on 을 넘긴다)
   },
 
   projects: [
