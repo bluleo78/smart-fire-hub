@@ -24,6 +24,10 @@ import java.util.regex.Pattern;
  *
  * <p><b>같은 스킴·authority 없는 참조는 상대 참조다(WD-1028).</b> {@code https:next} 는 base 가 {@code https} 면
  * base 기준 상대 경로로 푼다(Python urljoin 과 같다).
+ *
+ * <p><b>빈 authority 는 authority 없음이다(WD-1055).</b> {@code https:///abs}·{@code ///abs}·{@code //} 처럼 {@code //}
+ * 뒤가 비어 있으면 Python urljoin 이 빈 netloc 을 없음으로 보아 base authority 를 쓰므로 여기서도 같게 푼다. base 와 다른 스킴은
+ * 그대로 둔다.
  */
 public final class RedirectLocations {
 
@@ -69,11 +73,36 @@ public final class RedirectLocations {
       // 참조 자체가 URI 문법에 맞는지 먼저 본다(공백·한글 등) — 아래 문자열 조립은 문법을 검사하지 않는다.
       // base 와 같은 스킴이면 스킴을 뗀 나머지를 본다(WD-1028) — urljoin 은 같은 스킴을 떼고 풀며, 스킴만 있는 「https:」 는
       // JDK URI 가 문법 오류로 보지만 urljoin 에게는 빈 상대 참조(base 그대로)다.
-      new URI(sameScheme ? reference.substring(reference.indexOf(':') + 1) : reference);
+      // 빈 authority(「///abs」「//」)는 JDK URI 가 문법 오류로 보지만 urljoin 에게는 authority 없음이라, 앞의 「//」 를 떼고 검사한다
+      // (WD-1055).
+      String relative = sameScheme ? reference.substring(reference.indexOf(':') + 1) : reference;
+      // 실제 주소는 아래 resolveString 이 원래 참조로 정한다 — 여기서 고친 문자열은 문법 검사에만 쓴다.
+      new URI(dropEmptyAuthority(relative));
       return new URI(resolveString(base.toString(), reference));
     } catch (URISyntaxException e) {
       throw new ApiCallException(ApiCallErrorMessages.invalidRedirectLocation(), e);
     }
+  }
+
+  /**
+   * 문법 검사용으로 빈 authority 의 앞 「//」 를 뗀다(WD-1055) — 「//」 뒤가 없거나 「/」·「?」 로 시작하면 authority 가 비었다는 뜻이다.
+   * Python urljoin 은 빈 netloc 을 없음으로 보므로 문법 검사도 그 모양으로 해야 같은 Location 을 같이 따라간다.
+   *
+   * <p>뗀 뒤 남은 경로의 맨 앞 슬래시는 하나로 줄인다 — 「////」 처럼 슬래시가 더 이어지면 JDK URI 가 남은 「//」 를 다시 authority 시작으로
+   * 읽어 거절하기 때문이다(WD-1055 최종 리뷰). authority 가 있는 「//host/x」 등 그 밖의 문자열은 그대로 돌려줘 authority 문법을 검사받게
+   * 한다.
+   */
+  static String dropEmptyAuthority(String relative) {
+    if (!relative.startsWith("//")) {
+      return relative;
+    }
+    int i = 2;
+    while (i < relative.length() && relative.charAt(i) == '/') i++;
+    if (i == 2 && i < relative.length() && relative.charAt(i) != '?') {
+      return relative; // 「//host…」 — authority 가 있다.
+    }
+    // i > 2 면 경로가 「/」 로 시작한다 — 슬래시 하나만 남긴다. i == 2 면 빈 문자열이거나 「?…」 다.
+    return (i > 2 ? "/" : "") + relative.substring(i);
   }
 
   /**
@@ -116,6 +145,13 @@ public final class RedirectLocations {
   static String resolveString(String base, String reference) {
     Parts b = Parts.parse(base);
     Parts r = Parts.parse(reference);
+    // 빈 authority(「///abs」「https:///abs」)는 없음으로 본다(WD-1055) — Python urljoin 이 빈 netloc 을 없음으로 보기 때문이다.
+    // 스킴이 없거나 base 와 같을 때만이고, 다른 스킴은 원문 그대로 둔다(스킴이 같으면 아래 sameSchemeRelative 로 들어간다).
+    if (r.authority != null
+        && r.authority.isEmpty()
+        && (r.scheme == null || r.scheme.equalsIgnoreCase(b.scheme))) {
+      r = new Parts(r.scheme, null, r.path, r.query, r.fragment);
+    }
     String scheme;
     String authority;
     String path;

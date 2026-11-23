@@ -160,4 +160,30 @@ class RedirectLocationsTest {
         .isInstanceOf(ApiCallException.class)
         .hasMessage(ApiCallErrorMessages.invalidRedirectLocation());
   }
+
+  /**
+   * authority 가 빈 문자열인 Location(「https:///abs」「///abs」「//」)은 authority 가 없는 것으로 보고 base authority 를 쓴다
+   * (WD-1055) — Python urljoin 이 빈 netloc 을 없음으로 보기 때문이다. 다른 스킴은 그대로 둔다.
+   */
+  @Test
+  void resolve_emptyAuthority_usesBaseAuthority() {
+    URI base = URI.create("https://api.example.com/v1/items?k=v");
+    // 공용 사례 표(api-call-auth-vectors.json)에 있는 사례는 거기서 Java·Python 이 함께 본다 — 여기는 표에 없는 모양만 둔다.
+    assertThat(RedirectLocations.resolve(base, "///")).hasToString("https://api.example.com/");
+    assertThat(RedirectLocations.resolve(base, "///abs?x#f"))
+        .hasToString("https://api.example.com/abs?x");
+    assertThat(RedirectLocations.resolve(base, " ///abs"))
+        .hasToString("https://api.example.com/abs");
+    assertThat(RedirectLocations.resolve(base, "HTTPS:///abs"))
+        .hasToString("https://api.example.com/abs");
+  }
+
+  /** 문자열 해석도 빈 authority 를 없음으로 본다(WD-1055). */
+  @Test
+  void resolveString_emptyAuthority_isAbsent() {
+    assertThat(RedirectLocations.resolveString("https://h/a/b?k=v", "///c"))
+        .isEqualTo("https://h/c");
+    assertThat(RedirectLocations.resolveString("https://h/a/b?k=v", "//?q=1"))
+        .isEqualTo("https://h/a/b?q=1");
+  }
 }
