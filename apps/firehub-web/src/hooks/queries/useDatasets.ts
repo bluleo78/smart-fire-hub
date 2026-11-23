@@ -5,6 +5,7 @@ import { categoriesApi, type DatasetListParams, datasetsApi } from '../../api/da
 import { fetchAllPages } from '../../lib/fetch-all-pages';
 import type { ColumnMappingEntry, ImportMode,ImportResponse, ImportStartResponse } from '../../types/dataImport';
 import type { ApiImportRequest,CloneDatasetRequest } from '../../types/dataset';
+import { keepPreviousWhenOnlyPageChanged } from './keepPreviousWhenOnlyPageChanged';
 import { keepPreviousWithinEntity } from './keepPreviousWithinEntity';
 import { useMyPermissions } from './useMyPermissions';
 
@@ -60,6 +61,8 @@ export function useDatasets(params: DatasetListParams) {
   return useQuery({
     queryKey: [...DATASET_LIST_KEY, params],
     queryFn: () => datasetsApi.getDatasets(params).then(r => r.data),
+    // WD-982: 쪽만 바뀐 조회는 이전 쪽 data 를 이동 중 유지한다— 페이지네이션·초점이 사라지지 않게
+    placeholderData: keepPreviousWhenOnlyPageChanged(params as Record<string, unknown>),
   });
 }
 

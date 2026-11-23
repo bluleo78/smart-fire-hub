@@ -17,6 +17,7 @@ import type {
   UpdateSavedQueryRequest,
   UpdateWidgetRequest,
 } from '../../types/analytics';
+import { keepPreviousWhenOnlyPageChanged } from './keepPreviousWhenOnlyPageChanged';
 import { useMyPermissions } from './useMyPermissions';
 
 // ============================================================
@@ -37,6 +38,8 @@ export function useSavedQueries(params: {
   return useQuery({
     queryKey: [...SAVED_QUERY_LIST_KEY, params],
     queryFn: () => analyticsApi.listQueries(params).then((r) => r.data),
+    // WD-982: 쪽만 바뀐 조회는 이전 쪽 data 를 이동 중 유지한다— 페이지네이션·초점이 사라지지 않게
+    placeholderData: keepPreviousWhenOnlyPageChanged(params),
   });
 }
 
@@ -190,6 +193,8 @@ export function useCharts(params: {
   return useQuery({
     queryKey: [...CHART_LIST_KEY, params],
     queryFn: () => analyticsApi.listCharts(params).then((r) => r.data),
+    // WD-982: 쪽만 바뀐 조회는 이전 쪽 data 를 이동 중 유지한다— 페이지네이션·초점이 사라지지 않게
+    placeholderData: keepPreviousWhenOnlyPageChanged(params),
   });
 }
 
@@ -356,6 +361,8 @@ export function useDashboards(params: {
   return useQuery({
     queryKey: [...DASHBOARD_LIST_KEY, params],
     queryFn: () => analyticsApi.listDashboards(params).then((r) => r.data),
+    // WD-982: 쪽만 바뀐 조회는 이전 쪽 data 를 이동 중 유지한다— 페이지네이션·초점이 사라지지 않게
+    placeholderData: keepPreviousWhenOnlyPageChanged(params),
   });
 }
 

@@ -39,6 +39,7 @@ import {
   useSetFavorite,
 } from '../../hooks/queries/useDatasets';
 import { useSecurityLevels } from '../../hooks/queries/useSecurityLevels';
+import { useLastPageInfo } from '../../hooks/useLastPageInfo';
 import { useListRetryFocus } from '../../hooks/useListRetryFocus';
 import { useRecentDatasets } from '../../hooks/useRecentDatasets';
 import { extractApiError, handleApiError, isForbiddenError } from '../../lib/api-error';
@@ -283,7 +284,8 @@ export default function DatasetListPage() {
   const isOnline = useOnlineStatus();
 
   const { data: categoriesData } = useCategories();
-  const { data: datasetsData, isLoading, isPending, isPaused, isError, error: datasetsError, refetch: refetchDatasets, isFetching } = useDatasets({
+  // 목록 훅과 쪽 수 기억(useLastPageInfo)이 같은 조회 조건 객체를 쓴다
+  const datasetParams = {
     categoryId,
     storageType: storageType || undefined,
     originType: originType || undefined,
@@ -296,11 +298,14 @@ export default function DatasetListPage() {
     // 꺼져 있으면 싣지 않고 서버 기본(임시 숨김)에 맡긴다. 출처 필터가 있으면 서버가 그쪽을 우선해 무시하므로
     // 싣지 않는다 — 같은 결과에 캐시 키만 달라져 요청이 한 번 더 나가지 않게(WD-754)
     includeTemp: showTempEffective || undefined,
-  });
+  };
+  const { data: datasetsData, isLoading, isPending, isPaused, isError, isPlaceholderData, error: datasetsError, refetch: refetchDatasets, isFetching } = useDatasets(datasetParams);
 
   // 「다시 시도」 포커스(WD-957, 공용 훅 WD-987): 실패한 목록에서 누르면 표로 초점을 옮겼다가 다시 실패하면 버튼으로 되돌린다
-  const { tableProps, retryAction } = useListRetryFocus({
+  const { tableProps, bodyProps, retryAction } = useListRetryFocus({
     isPending,
+    // WD-982: 쪽 이동 중 이전 쪽 행 처리(pending 판정·흐림·inert)는 훅이 맡는다
+    isPlaceholderData,
     isError,
     isFetching,
     data: datasetsData,
@@ -339,14 +344,14 @@ export default function DatasetListPage() {
     if (datasetsData?.content) syncRecents(datasetsData.content);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- syncRecents 는 렌더마다 새로 만들어진다. 목록 응답이 바뀔 때만 맞춘다
   }, [datasetsData]);
-  const totalPages = datasetsData?.totalPages || 0;
-  const totalElements = datasetsData?.totalElements;
+  const { totalPages, totalElements } = useLastPageInfo(datasetsData, datasetParams);
 
   /**
    * 범위 밖 페이지 — 북마크한 뒷 페이지 주소를 데이터가 줄어든 뒤 열면 서버는 빈 페이지를 준다.
    * 「데이터셋이 없습니다」로 오해하지 않게 마지막 페이지로 옮긴다(WD-146). 옮기는 동안은 빈 안내 대신 로딩 행을 보인다.
    */
-  const pageOutOfRange = !!datasetsData && page > 0 && page >= Math.max(datasetsData.totalPages, 1);
+  // WD-982: placeholder(쪽 이동 중 이전 쪽 data)의 totalPages 는 대상 쪽의 것이 아니므로 범위 밖 판정을 하지 않는다 — 실제 응답이 와야 판정한다
+  const pageOutOfRange = !!datasetsData && !isPlaceholderData && page > 0 && page >= Math.max(datasetsData.totalPages, 1);
   useEffect(() => {
     if (!pageOutOfRange || !datasetsData) return;
     const lastPage = Math.max(datasetsData.totalPages - 1, 0);
@@ -647,10 +652,12 @@ export default function DatasetListPage() {
               <TableHead className="w-[3.75rem]" />
             </TableRow>
           </TableHeader>
-          <tbody>
+          <tbody {...bodyProps}>
             {isLoading || pageOutOfRange || (!datasetsData && isPaused && isOnline) ? (
               <TableSkeletonRows columns={8} rows={5} />
-            ) : !datasetsData && isPaused ? (
+            ) : isPaused && (!datasetsData || (isPlaceholderData && !isOnline)) ? (
+              // WD-982: placeholder 갈래는 실제 오프라인일 때만 — 온라인인데 다음 쪽 재시도가 탭 숨김으로 멈춘 paused 에서는 이전 행을 그대로 둔다.
+              // WD-982: 오프라인에서 쪽을 옮기면 placeholder 로 datasetsData 가 차 있어도 새 쪽은 못 받는 중이므로 흐린 이전 행 대신 안내를 보인다(페이지네이션은 표 밖이라 남는다).
               // 데이터 없는 paused 쿼리 중 실제 오프라인만 여기로 온다 — 온라인인데 paused(탭 숨김으로 재시도 멈춤)면 위 스켈레톤 분기가 받는다.
               // 데이터 없는 paused 쿼리(오프라인)는 isLoading 도 isError 도 아니라 빈 분기(「데이터셋이 없습니다」)로 떨어지므로 오류·빈 분기보다 먼저 잡는다(WD-966).
               // 실패가 아닌 중립 대기 상태라 alert(assertive) 대신 TableEmptyRow 의 role=status(polite)로 알린다.

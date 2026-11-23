@@ -11,12 +11,13 @@ import { cn } from '../lib/utils';
  * 초점이 body 로 떨어진다(WCAG 2.4.3). 누르는 즉시 표로 초점을 옮겨 두고, 재조회가 끝나 다시 실패하면 버튼으로 되돌린다.
  * 누르지 않아도 저절로 다시 불러올 때(창 포커스 refetch·캐시 무효화·다시 마운트) 초점을 가진 버튼이 사라지면 같은 방식으로 표로 옮긴다.
  *
- * 사용: `<Table {...tableProps}>` 와 `<TableErrorRow action={retryAction} />` 만 달면 된다.
+ * 사용: `<Table {...tableProps}>`(쪽 이동 placeholder 목록은 `<tbody {...bodyProps}>` 도) 와 `<TableErrorRow action={retryAction} />` 만 달면 된다.
  * 버튼 노출 여부(showRetry)·표 ref/mousedown/포커스 링 className·버튼 JSX 는 모두 이 훅이 만든다.
  * 표에 className 을 더 달려면 `<Table className=…>` 대신 `tableClassName` 으로 넘긴다 — 펼친 props 와 따로 주면 뒤에 쓴 쪽이 덮는다.
  */
 export function useListRetryFocus({
-  isPending,
+  isPending: isPendingProp,
+  isPlaceholderData = false,
   isError,
   isFetching,
   data,
@@ -26,6 +27,12 @@ export function useListRetryFocus({
 }: {
   /** 쿼리가 pending(데이터 없이 조회 중) 인지 */
   isPending: boolean;
+  /**
+   * 쪽 이동 중 이전 쪽 행을 placeholder 로 유지하는 목록용 (WD-982). 기본 false.
+   * 켜면 placeholder 를 진짜 data 가 아니므로 pending 으로 보고(아니면 다시 시도 뒤 재실패 때 초점이 버튼으로 못 돌아온다),
+   * 표를 흐리게·누를 수 없게 하며(tableProps) 이전 행을 키보드로도 열 수 없게 한다(bodyProps → tbody inert).
+   */
+  isPlaceholderData?: boolean;
   /** 쿼리가 실패 상태인지 */
   isError: boolean;
   /** 재조회 중인지 — 버튼 중복 클릭 방지에 쓴다 */
@@ -39,6 +46,8 @@ export function useListRetryFocus({
   /** 표에 더할 className — 포커스 링 className 과 cn() 으로 합친다 */
   tableClassName?: string;
 }) {
+  // placeholder(이전 쪽 행)는 진짜 data 가 아니므로 pending 으로 본다
+  const isPending = isPendingProp || isPlaceholderData;
   // 데이터 없는 실패일 때만 버튼을 둔다. 403 은 다시 해도 같으므로 두지 않는다 (WD-137 선례)
   const showRetry = isError && !data && !isForbiddenError(error);
   const tableRef = useRef<HTMLTableElement>(null);
@@ -123,9 +132,14 @@ export function useListRetryFocus({
     onMouseDown: releaseTableFocusTarget,
     className: cn(
       'focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring',
+      isPlaceholderData && 'pointer-events-none opacity-60',
       tableClassName,
     ),
+    'aria-busy': isPlaceholderData || undefined,
   };
+
+  // tbody 에 펼쳐 달 props — 이동 중 낡은 행을 키보드(Tab·Enter)로도 열 수 없게 한다. 포커스는 nav 버튼에 있어 빠지지 않는다.
+  const bodyProps = { inert: isPlaceholderData };
 
   // TableErrorRow 의 action 에 넘길 「다시 시도」 버튼 (버튼이 없어야 할 때는 undefined)
   const retryAction = showRetry ? (
@@ -141,5 +155,5 @@ export function useListRetryFocus({
     </Button>
   ) : undefined;
 
-  return { showRetry, tableProps, retryAction };
+  return { showRetry, tableProps, bodyProps, retryAction };
 }

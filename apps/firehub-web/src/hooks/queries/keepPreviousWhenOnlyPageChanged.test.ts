@@ -36,4 +36,14 @@ describe('keepPreviousWhenOnlyPageChanged', () => {
     const cb = keepPreviousWhenOnlyPageChanged<typeof prev>({ page: 0 });
     expect(cb(undefined, undefined)).toBeUndefined();
   });
+
+  it('키의 마지막 원소를 params 로 읽어 쪽만 바뀐 것을 가린다 (WD-982)', () => {
+    const q3 = (params: Record<string, unknown>) => ({
+      queryKey: ['analytics', 'charts', 'list', params] as const,
+    });
+    const same = keepPreviousWhenOnlyPageChanged<typeof prev>({ page: 1, search: '' });
+    expect(same(prev, q3({ page: 0, search: '' }))).toBe(prev);
+    const other = keepPreviousWhenOnlyPageChanged<typeof prev>({ page: 1, search: 'x' });
+    expect(other(prev, q3({ page: 0, search: '' }))).toBeUndefined();
+  });
 });

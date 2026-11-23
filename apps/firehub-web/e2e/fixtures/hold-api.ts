@@ -108,3 +108,24 @@ export async function expectLockedInFlight(dialog: Locator, pressedButton: Locat
   await expect(pressedButton).not.toHaveAttribute('disabled');
   await expect(pressedButton).toBeFocused();
 }
+
+/**
+ * 특정 쪽(page 쿼리 값 pageIndex) GET 요청만 실패시키고 나머지 요청은 앞서 등록한 route 에 넘기는 모킹 (WD-982).
+ *
+ * 왜: 목록 「다음 쪽 조회 실패」 시험이 쪽 이동 뒤에 이 route 를 등록한다 — 나중에 등록한 route 가 먼저 받으므로
+ * 0쪽 등 다른 요청은 fallback 으로 기존 모킹이 처리하고, 지정한 쪽만 status(기본 500)로 응답한다.
+ */
+export async function failPageRequests(page: Page, apiPath: string, pageIndex: number, status = 500) {
+  await page.route(
+    (url) => url.pathname === apiPath,
+    async (route) => {
+      const p = new URL(route.request().url()).searchParams.get('page');
+      if (route.request().method() !== 'GET' || p !== String(pageIndex)) return route.fallback();
+      await route.fulfill({
+        status,
+        contentType: 'application/json',
+        body: JSON.stringify({ message: '서버 오류' }),
+      });
+    },
+  );
+}

@@ -200,6 +200,18 @@ describe('useListRetryFocus', () => {
     expect(result.current.tableProps.className).toContain('min-w-[600px]');
   });
 
+  it('isPlaceholderData 면 흐림·aria-busy·tbody inert 를 돌려주고, 기본값에서는 아니다 (WD-982)', () => {
+    const { result } = renderHook(() => useListRetryFocus({ ...failed(), isPlaceholderData: true }));
+    expect(result.current.tableProps.className).toContain('pointer-events-none opacity-60');
+    expect(result.current.tableProps['aria-busy']).toBe(true);
+    expect(result.current.bodyProps.inert).toBe(true);
+    // placeholder 는 pending 으로 본다 — 데이터가 없는 실패여도 이동 중에는 아직 끝나지 않은 것
+    const { result: dflt } = renderHook(() => useListRetryFocus(failed()));
+    expect(dflt.current.tableProps.className).not.toContain('opacity-60');
+    expect(dflt.current.tableProps['aria-busy']).toBeUndefined();
+    expect(dflt.current.bodyProps.inert).toBe(false);
+  });
+
   it('403 이면 showRetry 가 false 이고 retryAction 이 없다', () => {
     const { result } = renderHook(() => useListRetryFocus({ ...failed(), error: forbidden() }));
     expect(result.current.showRetry).toBe(false);
