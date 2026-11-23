@@ -633,6 +633,41 @@ test.describe('SessionSwitcher — 키보드 삭제 (WD-951)', () => {
     });
   });
 
+  // WD-989·WD-1024: 기억한 삭제 없이 재조회로 초점 쥔 줄이 사라질 때 — 첫 줄이 아니라 이웃 줄로 간다
+  test.describe('재조회로 사라진 초점 줄 (WD-989)', () => {
+    const TEN = Array.from({ length: 10 }, (_, i) =>
+      createAISession({ id: i + 1, sessionId: `sw-${i + 1}`, title: `대화 ${i + 1}번`, updatedAt: `2026-11-23T${String(20 - i).padStart(2, '0')}:00:00Z` }),
+    );
+
+    test('기억한 삭제 없이 초점 쥔 줄이 재조회로 사라지면 첫 줄이 아니라 이웃 줄로 간다 (WD-989·WD-1024)', async ({
+      authenticatedPage: page,
+    }) => {
+      await page.clock.install();
+      const requests = await openPanel(page, TEN);
+      await openListByKeyboard(page);
+      await titleBtn(page, '대화 7번').focus();
+      await expect(titleBtn(page, '대화 7번')).toBeFocused();
+      requests.setSessions(TEN.filter((s) => s.id !== 7));
+      await refetchStaleSessions(page);
+      await expect(titleBtn(page, '대화 7번')).toHaveCount(0);
+      await expect(titleBtn(page, '대화 8번')).toBeFocused();
+    });
+
+    test('마지막 줄에 초점이 있다가 재조회로 사라지면 이전 줄로 간다 (WD-989·WD-1024)', async ({
+      authenticatedPage: page,
+    }) => {
+      await page.clock.install();
+      const requests = await openPanel(page, TEN);
+      await openListByKeyboard(page);
+      await titleBtn(page, '대화 10번').focus();
+      await expect(titleBtn(page, '대화 10번')).toBeFocused();
+      requests.setSessions(TEN.filter((s) => s.id !== 10));
+      await refetchStaleSessions(page);
+      await expect(titleBtn(page, '대화 10번')).toHaveCount(0);
+      await expect(titleBtn(page, '대화 9번')).toBeFocused();
+    });
+  });
+
   test.describe('마우스로 열 때 (WD-951)', () => {
     const rowBg = (page: Page, index: number) =>
       page
@@ -707,6 +742,63 @@ test.describe('SessionSwitcher — 키보드 삭제 (WD-951)', () => {
       await expect.poll(contrast).toBeGreaterThanOrEqual(3);
       await page.evaluate(() => document.documentElement.classList.add('dark'));
       await expect.poll(contrast).toBeGreaterThanOrEqual(3);
+    });
+
+    test('현재 줄·다른 줄 휴지통 모두 가리킴·키보드 초점 때 배경이 줄과 달라진다 (WD-989)', async ({ authenticatedPage: page }) => {
+      await openPanel(page);
+      await page.getByRole('button', { name: '대화 선택', exact: true }).click();
+      await titleBtn(page, '첫째 대화').click();
+      await page.getByRole('button', { name: '첫째 대화', exact: true }).click();
+      // 색 전환(transition) 도중엔 버튼이 투명에서 줄 색으로 가는 중이라 일시적으로 달라 보인다 — 전환이 끝난 값을 읽는다.
+      // 반투명 배경(어두운 테마 accent/50)은 문자열이 달라도 줄 위에 겹치면 같아 보일 수 있어, 줄 위에 섞은 실제 색끼리 비교한다.
+      const differs = (name: string) =>
+        deleteBtn(page, name).evaluate(async (btn) => {
+          const li = btn.closest('li')!;
+          await Promise.all([...btn.getAnimations(), ...li.getAnimations()].filter((a) => a instanceof CSSTransition).map((a) => a.finished));
+          const ctx = document.createElement('canvas').getContext('2d')!;
+          const rgba = (c: string) => {
+            ctx.clearRect(0, 0, 1, 1);
+            ctx.fillStyle = c;
+            ctx.fillRect(0, 0, 1, 1);
+            const d = ctx.getImageData(0, 0, 1, 1).data;
+            return [d[0], d[1], d[2], d[3] / 255];
+          };
+          const over = (top: number[], below: number[]) => {
+            const a = top[3];
+            return [0, 1, 2].map((i) => top[i] * a + below[i] * (1 - a)).concat(1);
+          };
+          // 줄 색은 불투명한 조상이 나올 때까지 아래 배경 위에 겹쳐 얻는다
+          const layers: number[][] = [];
+          for (let el: Element | null = li; el; el = el.parentElement) {
+            const c = rgba(getComputedStyle(el).backgroundColor);
+            if (c[3] > 0) layers.push(c);
+            if (c[3] >= 1) break;
+          }
+          const row = layers.reverse().reduce((acc, c) => over(c, acc), [255, 255, 255, 1]);
+          const btnColor = over(rgba(getComputedStyle(btn).backgroundColor), row);
+          // 휴지통은 줄 색이 아니라 페이지 배경(bg-background) 색으로 칠해져야 한다 — ghost 의 hover:bg-accent(/50)는
+          // 줄 위에서 거의 같은 색이라 어두운 테마에서 9 % 안팎의 미세한 차이만 남는다(그것은 통과로 보지 않는다)
+          const pageBg = over(rgba(getComputedStyle(document.body).backgroundColor), [255, 255, 255, 1]);
+          const close = (a: number[], b: number[]) => [0, 1, 2].every((i) => Math.abs(a[i] - b[i]) <= 3);
+          return close(btnColor, pageBg) && !close(btnColor, row);
+        });
+      // 현재 줄(bg-accent)과, 가리키면 줄이 hover:bg-accent 가 되는 다른 줄 모두 — ghost 의 hover:bg-accent 가 줄 색과 같다
+      for (const theme of ['light', 'dark']) {
+        if (theme === 'dark') await page.evaluate(() => document.documentElement.classList.add('dark'));
+        for (const name of ['첫째 대화', '둘째 대화']) {
+          // 가리킴만 본다 — 초점을 제목으로 옮겨 휴지통이 초점(focus-visible) 상태가 아니게 한 뒤 가리킨다
+          await titleBtn(page, name).focus();
+          await expect(deleteBtn(page, name)).not.toBeFocused();
+          await deleteBtn(page, name).hover();
+          await expect.poll(() => differs(name)).toBe(true);
+          await page.mouse.move(2, 2);
+          // 키보드 초점만 본다 — 마우스는 치우고 제목에서 Tab
+          await titleBtn(page, name).focus();
+          await page.keyboard.press('Tab');
+          await expect(deleteBtn(page, name)).toBeFocused();
+          await expect.poll(() => differs(name)).toBe(true);
+        }
+      }
     });
 
     test('키보드로 열면 초점이 간 첫 줄도 강조된다', async ({ authenticatedPage: page }) => {
@@ -917,6 +1009,82 @@ test.describe('SessionSwitcher — 키보드 삭제 (WD-951)', () => {
       await confirm(page).getByRole('button', { name: '삭제', exact: true }).click();
       await expect.poll(() => requests.deletes).toEqual(['1', '1']);
       requests.releaseDelete('1');
+    });
+  });
+
+  // 다른 곳에서 이미 지운 대화(404)·실패 뒤 목록 갱신 — WD-989
+  test.describe('이미 지운 대화 삭제 (WD-989)', () => {
+    /** 키보드로 해당 줄의 삭제 버튼까지 가서 확인 창의 삭제를 누른다 */
+    async function deleteByKeyboard(page: Page, title: string) {
+      await deleteBtn(page, title).focus();
+      await page.keyboard.press('Enter');
+      await expect(confirm(page)).toBeVisible();
+      await confirm(page).getByRole('button', { name: '삭제', exact: true }).focus();
+      await page.keyboard.press('Enter');
+      await expect(confirm(page)).toHaveCount(0);
+    }
+
+    test('이미 다른 곳에서 지운 대화를 지우면(404) 줄이 사라지고 이웃 줄에 초점이 가며 「이미 삭제된 대화입니다」가 뜬다 (WD-989)', async ({
+      authenticatedPage: page,
+    }) => {
+      const requests = await openPanel(page, MOCK_SESSIONS, { deleteStatus: 404 });
+      await openListByKeyboard(page);
+      // 다른 곳에서 이미 지웠다 — 서버 목록에서 그 줄이 빠진다(이후 목록 GET 에 반영)
+      requests.setSessions([MOCK_SESSIONS[0], MOCK_SESSIONS[2]]);
+      await deleteByKeyboard(page, '둘째 대화');
+      await expect.poll(() => requests.deletes).toEqual(['2']);
+
+      await expect(titleBtn(page, '둘째 대화')).toHaveCount(0);
+      await expect(titleBtn(page, '셋째 대화')).toBeFocused();
+      await expect(page.getByText('이미 삭제된 대화입니다.')).toBeVisible();
+      await expect(page.getByText('대화 삭제에 실패했습니다.')).toHaveCount(0);
+    });
+
+    test('현재 대화를 404 로 지우면 새 대화로 바뀐다 (WD-989)', async ({ authenticatedPage: page }) => {
+      const requests = await openPanel(page, MOCK_SESSIONS, { deleteStatus: 404 });
+      await openListByMouse(page);
+      await titleBtn(page, '첫째 대화').click();
+      await expect(page.getByRole('dialog', { name: '대화 선택' })).toHaveCount(0);
+      const current = page.getByRole('button', { name: '첫째 대화', exact: true });
+      await expect(current).toBeVisible();
+
+      await current.click();
+      requests.setSessions([MOCK_SESSIONS[1], MOCK_SESSIONS[2]]);
+      await deleteBtn(page, '첫째 대화').click();
+      await confirm(page).getByRole('button', { name: '삭제', exact: true }).click();
+      await expect.poll(() => requests.deletes).toEqual(['1']);
+
+      // 삭제 확인 뒤에도 목록이 열려 있어(modal) 뒤의 트리거는 접근성 트리에서 가려진다 — includeHidden 으로 이름만 본다
+      await expect(page.getByRole('button', { name: '대화 선택', exact: true, includeHidden: true })).toHaveCount(1);
+      await expect(page.getByText('이미 삭제된 대화입니다.')).toBeVisible();
+    });
+
+    test('삭제가 500 으로 실패하면 목록을 다시 받는다 (WD-989)', async ({ authenticatedPage: page }) => {
+      const requests = await openPanel(page, MOCK_SESSIONS, { deleteStatus: 500 });
+      let listGets = 0;
+      // DELETE 요청이 라우트에 닿은 시점의 목록 GET 수 — 그 뒤에 늘어난 GET 만 실패 뒤 재조회로 센다
+      let getsAtDelete = -1;
+      await page.route(
+        (url) => url.pathname === '/api/v1/ai/sessions',
+        (route) => {
+          if (route.request().method() === 'GET') listGets += 1;
+          return route.fallback();
+        },
+      );
+      await page.route(
+        (url) => /\/api\/v1\/ai\/sessions\/[^/]+$/.test(url.pathname),
+        (route) => {
+          if (route.request().method() === 'DELETE') getsAtDelete = listGets;
+          return route.fallback();
+        },
+      );
+      await openListByKeyboard(page);
+      await deleteByKeyboard(page, '둘째 대화');
+      await expect.poll(() => requests.deletes).toEqual(['2']);
+
+      await expect(page.getByText('대화 삭제에 실패했습니다.')).toBeVisible();
+      await expect.poll(() => getsAtDelete >= 0 && listGets > getsAtDelete).toBe(true);
+      await expect(titleBtn(page, '둘째 대화')).toHaveCount(1);
     });
   });
 

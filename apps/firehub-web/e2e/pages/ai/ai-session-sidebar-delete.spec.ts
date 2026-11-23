@@ -330,4 +330,50 @@ test.describe('삭제 중 다시 지우기 (WD-973)', () => {
     // 두 번째 실패 응답이 처리되면 다시 누를 수 있는 상태로 돌아온다
     await expect(trash).not.toHaveAttribute('aria-disabled', 'true');
   });
+
+  // WD-989: 다른 탭·기기에서 이미 지운 대화를 지우면 서버는 404 — 실패가 아니라 이미 지운 것으로 다룬다
+  test('이미 삭제된 열린 대화의 삭제(404)는 줄을 지우고 안내하며 새 대화로 바뀐다 (WD-989)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 목록은 서버 상태처럼 바뀐다 — 404 뒤 재조회에서 그 대화가 빠져 있다
+    let sessions = MOCK_SESSIONS;
+    const deletes: string[] = [];
+    await page.route(
+      (url) => url.pathname === '/api/v1/ai/sessions',
+      (route) =>
+        route.request().method() === 'GET'
+          ? route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(sessions) })
+          : route.continue(),
+    );
+    await page.route(
+      (url) => url.pathname === '/api/v1/ai/sessions/active-session-211/messages',
+      (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(MOCK_MESSAGES) }),
+    );
+    await page.route(
+      (url) => /\/api\/v1\/ai\/sessions\/\d+$/.test(url.pathname),
+      (route) => {
+        if (route.request().method() !== 'DELETE') return route.continue();
+        deletes.push(new URL(route.request().url()).pathname.split('/').pop() ?? '');
+        sessions = [MOCK_SESSIONS[1]];
+        return route.fulfill({ status: 404, contentType: 'application/json', body: '{"message":"not found"}' });
+      },
+    );
+    await page.goto('/', { waitUntil: 'commit' });
+    await chipLocator(page).click();
+    await page.getByPlaceholder('메시지를 입력하세요...').waitFor({ state: 'visible', timeout: 5_000 });
+    await chipLocator(page).click();
+    await page.getByRole('button', { name: '새 대화' }).waitFor({ state: 'visible', timeout: 5_000 });
+
+    await page.getByText('활성 대화 테스트').click();
+    await expect(page.getByText('이슈 211 테스트 메시지')).toBeVisible();
+
+    await confirmDelete(page, '활성 대화 테스트');
+    await expect.poll(() => deletes).toEqual(['10']);
+
+    await expect(page.getByText('이미 삭제된 대화입니다.')).toBeVisible();
+    await expect(page.getByText('대화 삭제에 실패했습니다.')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '활성 대화 테스트 삭제' })).toHaveCount(0);
+    await expect(page.getByText('이슈 211 테스트 메시지')).toHaveCount(0);
+    await expect(page.getByPlaceholder('메시지를 입력하세요...')).toBeEnabled();
+  });
 });
