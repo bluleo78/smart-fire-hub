@@ -66,8 +66,11 @@ export default defineConfig({
     baseURL: BASE_URL,
     // 액션(클릭 등)도 부하 시 지연·일시적 오버레이를 넘기도록 재시도 창을 넓힌다.
     actionTimeout: 15_000,
-    // on-first-retry 는 로컬 retries:0 일 때 trace 를 하나도 남기지 않아 플래키 원인을 추적할 수 없었다 — 실패 시 항상 보존한다.
-    trace: 'retain-on-failure',
+    // WD-997: 첫 재시도만 기록한다 — 로컬 retries 1 / CI 2 라서 실패 시험은 재시도 trace 가 남는다.
+    // 플래키(첫 시도 실패·재시도 통과)는 통과한 재시도의 trace 만 남고 처음 실패한 시도는 기록되지 않는다.
+    // retain-on-failure 는 매 시도를 기록해 전체 실행 한 번에 임시 파일이 수 GB 쌓여 디스크가 찼다.
+    // `--retries=0` 으로 돌리면서 trace 가 필요하면 `--trace on` 을 넘긴다.
+    trace: 'on-first-retry',
   },
 
   projects: [
