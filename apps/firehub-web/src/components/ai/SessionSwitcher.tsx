@@ -103,7 +103,7 @@ export function SessionSwitcher({ currentSessionId, onNewSession, onSessionDelet
         // 키보드로 닿지 못했다(WD-951). 펼침 목록은 줄마다 제목 버튼·삭제 버튼이 형제라 Tab 으로 둘 다 닿는다.
         <Popover modal open={open} onOpenChange={setOpen}>
           <PopoverTrigger asChild>
-            <Button variant="ghost" size="sm" className="h-7 gap-1 text-xs max-w-[180px]">
+            <Button variant="ghost" size="sm" className="gap-1 text-xs max-w-[180px]">
               <MessageSquare className="h-3 w-3 shrink-0" />
               <span className="truncate">{triggerLabel}</span>
               <ChevronDown className="h-3 w-3 shrink-0" />
@@ -211,7 +211,7 @@ export function SessionSwitcher({ currentSessionId, onNewSession, onSessionDelet
       ) : (
         <span className="text-xs text-muted-foreground">대화 이력 없음</span>
       )}
-      <Button ref={newSessionRef} variant="ghost" size="sm" className="h-7 gap-1 text-xs" onClick={onNewSession}>
+      <Button ref={newSessionRef} variant="ghost" size="sm" className="gap-1 text-xs" onClick={onNewSession}>
         <Plus className="h-3 w-3" />
         새 대화
       </Button>
