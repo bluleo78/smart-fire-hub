@@ -57,20 +57,27 @@ export function DelayedStatus({ children, announceKey, className, role = 'status
   );
 }
 
-interface TableEmptyRowProps {
+/**
+ * 「검색 초기화」 버튼과 그 뒤 초점 대상은 함께 넘긴다 (WD-985 리뷰 후속).
+ * 초기화로 검색어가 사라지면 버튼이 든 빈 행이 함께 사라져 초점이 body 로 떨어지므로,
+ * onResetSearch 를 넘기는 자리(값이 조건부로 undefined 여도)는 resetFocusRef 를 반드시 함께 넘기게 타입으로 묶는다
+ * — 템플릿을 따라 만든 새 화면이 ref 를 빠뜨려 같은 초점 유실을 되풀이하지 않게.
+ */
+type SearchResetProps =
+  | { onResetSearch?: undefined; resetFocusRef?: undefined }
+  | {
+      /** 검색어 초기화 콜백 — 제공 시 "검색 초기화" 버튼 노출 */
+      onResetSearch: (() => void) | undefined;
+      /** 「검색 초기화」 뒤 초점을 받을 검색 입력의 ref (WD-985). current 가 비어 있으면 초점이 body 로 떨어지니 꼭 붙인다. */
+      resetFocusRef: RefObject<HTMLElement | null>;
+    };
+
+type TableEmptyRowProps = SearchResetProps & {
   colSpan: number;
   /** 데이터가 절대값 0건일 때 노출할 메시지 (기본: "데이터가 없습니다.") */
   message?: string;
   /** 검색어가 있을 때 우선적으로 노출할 검색어 — 있으면 검색 결과 빈 상태 UI 사용 */
   searchKeyword?: string;
-  /** 검색어 초기화 콜백 — 제공 시 "검색 초기화" 버튼 노출 */
-  onResetSearch?: () => void;
-  /**
-   * 「검색 초기화」를 누른 뒤 초점을 받을 요소(보통 검색 입력의 ref) (WD-985).
-   * 초기화로 검색어가 사라지면 이 버튼이 함께 사라져 초점이 body 로 떨어지므로, onResetSearch 직후 이 요소로 옮긴다.
-   * 생략하면 초점을 옮기지 않는다(기존 동작).
-   */
-  resetFocusRef?: RefObject<HTMLElement | null>;
   /** 진짜 데이터 0건 상태에서 노출할 추가 CTA (예: "새 데이터셋 만들기") */
   emptyAction?: ReactNode;
   /**
@@ -78,7 +85,7 @@ interface TableEmptyRowProps {
    * (searchKeyword 를 쓰면 문구 자체가 바뀌어 낭독되므로 필요 없다)
    */
   announceKey?: string;
-}
+};
 
 /**
  * 테이블 빈 상태 행.
