@@ -5,7 +5,7 @@
  * RUNNING 상태의 실행이 있으면 5초 간격으로 자동 폴링한다.
  */
 import { Loader2 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
 import { PendingButton } from '@/components/PendingButton';
@@ -70,7 +70,9 @@ export default function JobExecutionsTab({ jobId }: JobExecutionsTabProps) {
   // 그러지 않으면 오프라인의 낡은 캐시를 성공으로 세어 알리고, 연결 뒤 재조회 실패가 다시 묻힌다 (WD-1019 리뷰)
   const refetchPending = isFetching || isPaused;
   // 「더 보기」 조회가 실패하면 렌더 중에 limit 을 마지막 성공 값으로 되돌려 보던 목록을 남긴다(WD-956) — 오류 렌더가 그려지지 않는다.
-  settle({ isError, isSuccess, isPlaceholderData, refetchPending });
+  // 돌려주는 값은 「새 limit 이 확정되기 전 재조회 중」 여부다 — 버튼 잠금·오프라인 안내가 이 값을 본다(WD-1038, 리포트 목록과 같은 settle 규칙).
+  // settle 은 렌더 중 상태를 갱신하므로 매 렌더 부른다 — 아래 잠금의 `||` 안에 넣어 건너뛰지 않게 따로 받는다.
+  const settleLocked = settle({ isError, isSuccess, isPlaceholderData, refetchPending });
 
   // 「더 보기」·「다시 시도」 응답 뒤 알림·초점 옮기기 (WD-965 리뷰 후속)
   const tableWrapRef = useRef<HTMLDivElement>(null);
@@ -90,15 +92,9 @@ export default function JobExecutionsTab({ jobId }: JobExecutionsTabProps) {
   // 「더 보기」 응답의 끝 — 실패 확정(재시도 중이 아님), 또는 자리표시·재시도·백그라운드 재조회가 모두 끝난 성공 (WD-1019)
   const loadFailed = failed && !pending;
   const loadSettled = isSuccess && !isPlaceholderData && !pending && !refetchPending;
-  // 「더 보기」 응답을 기다리는 중인지 — 렌더에서 읽어 버튼을 잠그므로 ref(pendingLoadRef)가 아닌 state 로도 둔다(WD-1019).
-  const [loadMoreWaiting, setLoadMoreWaiting] = useState(false);
-  // 「더 보기」 응답 기다림 — 자리표시 데이터로 기다리거나, 낡은 캐시로 먼저 보인 채 재조회가 끝나지 않음(isFetching·오프라인 멈춤).
-  // 버튼 잠금과 오프라인 안내(WD-1035)가 같은 기다림을 본다. 기다림이 없을 때(RUNNING 폴링 등)의 isFetching 은 잠그지 않는다.
-  const loadMoreLocked = isPlaceholderData || (loadMoreWaiting && refetchPending);
-  // 응답이 끝나면 렌더 중에 접는다 — effect 에서 setState 하면 렌더가 한 번 더 돈다. 값이 바뀔 때만 set 하므로 무한 렌더가 없다.
-  if (loadMoreWaiting && (loadFailed || loadSettled)) {
-    setLoadMoreWaiting(false);
-  }
+  // 「더 보기」 응답 기다림 — 자리표시 데이터로 기다리거나, 낡은 캐시로 먼저 보인 새 limit 의 재조회가 확정되지 않음(settle).
+  // 버튼 잠금·보임과 오프라인 안내(WD-1035)가 같은 값을 본다. 기다림이 없을 때(RUNNING 폴링 등)의 isFetching 은 잠그지 않는다.
+  const loadMoreLocked = isPlaceholderData || settleLocked;
 
   // 화면을 떠나면 아직 쓰지 않은 알림을 버린다
   useEffect(
@@ -121,7 +117,6 @@ export default function JobExecutionsTab({ jobId }: JobExecutionsTabProps) {
       statusFrameRef.current = null;
     }
     if (statusRef.current) statusRef.current.textContent = '';
-    setLoadMoreWaiting(true);
     loadMore();
   };
 
@@ -262,8 +257,10 @@ export default function JobExecutionsTab({ jobId }: JobExecutionsTabProps) {
           <LoadMoreFailure onRetry={handleLoadMore} pending={pending} />
         ) : (
           // 응답 대기 중(isPlaceholderData)에도 버튼을 남기고 pending 으로만 잠근다 — 사라지면 키보드 초점이 body 로 떨어진다(WD-965).
+          // 낡은 캐시로 먼저 보인 새 limit 은 행이 limit 보다 적어도 재조회가 확정될 때까지 잠긴 채 남긴다 — 사라지면 초점이 body 로 빠진다(WD-1038).
+          // 잠금은 리포트 목록과 같은 settle 규칙이다.
           // isPlaceholderData 를 「더 보기 로딩 중」으로 읽는 것은 이 탭에서 키를 바꾸는 입력이 limit 뿐이기 때문이다 — 필터 등이 생기면 다시 검토한다.
-          (executions.length >= limit || isPlaceholderData) && (
+          (executions.length >= limit || loadMoreLocked) && (
             <div className="py-2 flex justify-center">
               {/* 낡은 캐시로 먼저 보이는 재조회 중에도 잠근다 — 그 사이 다시 누르면 기다림의 마지막 행·행 수가 낡은 값으로 덮인다(WD-1019). */}
               <PendingButton
