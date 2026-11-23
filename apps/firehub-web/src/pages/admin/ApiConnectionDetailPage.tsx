@@ -33,6 +33,7 @@ import {
   connectionNameError,
   type FieldErrors,
   focusFirstError,
+  HEALTH_CHECK_PATH_HELP,
   healthCheckPathError,
   withoutKeys,
 } from '@/lib/api-connection-form';
@@ -969,7 +970,7 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
         </CardHeader>
         <CardContent className="space-y-4">
           {/* (WD-561) 필수 칸은 FormField 로 감싸 * 표시·인라인 오류·aria 연결을 한 곳에서 처리한다 */}
-          <FormField label="연결 이름" htmlFor={infoFieldId.name} error={infoErrors.name} required>
+          <FormField label="연결 이름" htmlFor={infoFieldId.name} error={infoErrors.name} required announceError={false}>
             <Input
               id={infoFieldId.name}
               value={name}
@@ -986,7 +987,7 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
             <Input id={`${baseId}-description`} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="연결에 대한 설명" disabled={!canWrite} maxLength={MAX_DESCRIPTION_LENGTH} />
           </div>
           {/* Base URL: 외부 API 기본 주소 */}
-          <FormField label="Base URL" htmlFor={infoFieldId.baseUrl} error={infoErrors.baseUrl} required>
+          <FormField label="Base URL" htmlFor={infoFieldId.baseUrl} error={infoErrors.baseUrl} required announceError={false}>
             <Input
               id={infoFieldId.baseUrl}
               value={baseUrl}
@@ -1000,8 +1001,15 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
             />
           </FormField>
           {/* 헬스체크 경로 */}
-          {/* 오류가 생기면 FormField 가 도움말 id 뒤에 오류 id 를 이어 붙인다 — 도움말 연결(#432)은 유지된다(WD-937) */}
-          <FormField label="헬스체크 경로 (선택)" htmlFor={infoFieldId.healthCheckPath} error={infoErrors.healthCheckPath}>
+          {/* WD-937 리뷰 후속: 도움말은 FormField description 으로 넘겨 오류가 입력 바로 아래에 오고, 입력과의 연결(#432)도 FormField 가 맡는다.
+              기본 정보 세 칸은 announceError=false — 틀린 칸이 여럿이어도 첫 오류 칸 포커스가 오류를 읽어 role=alert 가 겹치지 않는다. */}
+          <FormField
+            label="헬스체크 경로 (선택)"
+            htmlFor={infoFieldId.healthCheckPath}
+            error={infoErrors.healthCheckPath}
+            description={HEALTH_CHECK_PATH_HELP}
+            announceError={false}
+          >
             <Input
               id={infoFieldId.healthCheckPath}
               value={healthCheckPath}
@@ -1012,12 +1020,7 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
               }}
               placeholder="/health"
               disabled={!canWrite}
-              /* 아래 도움말 문구를 스크린리더가 함께 읽도록 연결 (#432) */
-              aria-describedby={`${baseId}-health-path-help`}
             />
-            <p id={`${baseId}-health-path-help`} className="text-xs text-muted-foreground">
-              10분마다 자동 상태 점검. 비워두면 점검 안 함.
-            </p>
           </FormField>
           <div className="grid grid-cols-2 gap-4 text-sm text-muted-foreground">
             <div>생성일: {formatDate(connection.createdAt)}</div>
