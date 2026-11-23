@@ -34,19 +34,27 @@ describe('useJobExecutions placeholderData (WD-965)', () => {
     proactive.getJobExecutions.mockReset();
   });
 
+  /**
+   * 시험이 직접 푸는 응답 — promise 를 쿼리 함수가 불리기 전에 미리 만든다(리뷰 후속).
+   * 쿼리 함수 안에서 release 를 채우면, 조회가 아직 시작되지 않았을 때 release() 가 undefined 를 불러 시험이 흔들린다.
+   */
+  function deferred<T>(value: T) {
+    let release!: () => void;
+    const promise = new Promise<T>((r) => {
+      release = () => r(value);
+    });
+    return { promise, release };
+  }
+
   const wrapper = () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     return ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
   };
 
   it('같은 작업에서 limit 이 늘면 이전 데이터를 유지하고 isPlaceholderData 가 참이다', async () => {
-    let release!: () => void;
+    const more = deferred({ data: [{ id: 1 }, { id: 2 }] });
     proactive.getJobExecutions.mockImplementation((_id: number, params?: { limit?: number }) =>
-      params?.limit === 40
-        ? new Promise((r) => {
-            release = () => r({ data: [{ id: 1 }, { id: 2 }] });
-          })
-        : Promise.resolve({ data: [{ id: 1 }] }),
+      params?.limit === 40 ? more.promise : Promise.resolve({ data: [{ id: 1 }] }),
     );
     const { result, rerender } = renderHook(({ limit }) => useJobExecutions(1, { limit, offset: 0 }), {
       wrapper: wrapper(),
@@ -56,19 +64,15 @@ describe('useJobExecutions placeholderData (WD-965)', () => {
     rerender({ limit: 40 });
     expect(result.current.data).toEqual([{ id: 1 }]);
     expect(result.current.isPlaceholderData).toBe(true);
-    await act(async () => release());
+    await act(async () => more.release());
     await waitFor(() => expect(result.current.isPlaceholderData).toBe(false));
   });
 
   it('작업이 바뀌면 새 작업 응답 전에 이전 작업 데이터를 보이지 않는다', async () => {
     // 2번 작업 응답은 시험이 끝에서 풀 때까지 붙잡는다 (영영 안 끝나는 promise 는 정리 단계를 막는다)
-    let release!: () => void;
+    const job2 = deferred({ data: [{ id: 22 }] });
     proactive.getJobExecutions.mockImplementation((id: number) =>
-      id === 1
-        ? Promise.resolve({ data: [{ id: 11 }] })
-        : new Promise((r) => {
-            release = () => r({ data: [{ id: 22 }] });
-          }),
+      id === 1 ? Promise.resolve({ data: [{ id: 11 }] }) : job2.promise,
     );
     const { result, rerender } = renderHook(({ jobId }) => useJobExecutions(jobId, { limit: 20, offset: 0 }), {
       wrapper: wrapper(),
@@ -78,7 +82,7 @@ describe('useJobExecutions placeholderData (WD-965)', () => {
     rerender({ jobId: 2 });
     expect(result.current.data).toBeUndefined();
     expect(result.current.isPlaceholderData).toBe(false);
-    await act(async () => release());
+    await act(async () => job2.release());
     await waitFor(() => expect(result.current.data).toEqual([{ id: 22 }]));
   });
 });
