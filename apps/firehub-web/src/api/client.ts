@@ -1,5 +1,7 @@
 import axios from 'axios';
 
+import { isUnauthorizedError } from '../lib/api-error';
+import { clearLoginNotice, SESSION_EXPIRED_NOTICE, setLoginNotice } from '../lib/login-notice';
 import type { TokenResponse } from '../types/auth';
 import { withCrossTabRefreshLock } from './refresh-lock';
 import { publishTenantSession } from './tenant-session';
@@ -8,6 +10,9 @@ let accessToken: string | null = null;
 
 export function setAccessToken(token: string | null) {
   accessToken = token;
+  // 자동 종료가 떠나기 확인 취소로 멈춘 뒤 refresh 가 성공했으면 세션이 살아난 것이다 — 뒤의 진짜 만료가 안내를 쓸 수 있게
+  // 자동 종료의 안내 주인을 푼다. 사용자 로그아웃이 맡은 안내는 풀지 않는다 — 늦은 성공이 로그아웃 안내를 덮지 않게(WD-830 리뷰).
+  if (token && noticeOwner === 'auto') noticeOwner = null;
 }
 
 export function getAccessToken(): string | null {
@@ -18,6 +23,29 @@ export function getAccessToken(): string | null {
 export const AUTH_FLAG_KEY = 'hasSession';
 
 /**
+ * 로그인 화면 안내를 누가 맡았는지 — 'auto'(refresh 실패·다른 탭 로그아웃) / 'user'(사용자가 누른 로그아웃) / null (WD-830).
+ * 이동은 막지 않고 안내만 지킨다 — 떠나기 확인(useUnsavedChangesGuard)을 취소해 페이지가 남아도 다음 로그아웃·만료가 다시
+ * 로그인 화면으로 가야 하고(WD-830 리뷰), 리로드 전 늦게 401 을 받은 요청이 먼저 맡긴 안내를 덮지 않아야 한다.
+ * 페이지가 바뀌면(리로드) 모듈과 함께 초기화되므로 따로 풀지 않는다.
+ */
+let noticeOwner: 'auto' | 'user' | null = null;
+
+/** 시험 전용 — 모듈 수준 안내 주인이 시험 사이에 남아 뒤 시험의 안내 단언이 어긋나지 않게 푼다(WD-830 리뷰). */
+export function resetNoticeOwnerForTest() {
+  noticeOwner = null;
+}
+
+/**
+ * 사용자 로그아웃을 시작했음을 먼저 맡긴다 — 서버 로그아웃 응답을 기다리는 동안 다른 요청의 401 이 「만료」 안내로 이동해
+ * 사용자 로그아웃의 안내(예: 비밀번호 변경 뒤 다시 로그인)를 덮지 않게, 기다리기 전에 부른다(WD-830 리뷰).
+ */
+export function claimUserLogout(notice?: string) {
+  noticeOwner = 'user';
+  if (notice) setLoginNotice(notice);
+  else clearLoginNotice();
+}
+
+/**
  * 세션을 끝내고 로그인 화면으로 **하드 리로드**한다 — 로그아웃·다른 탭 로그아웃·refresh 실패가 모두 이 길로 간다(WD-276).
  *
  * <p>상태만 비우고 라우터로 보내면 두 가지가 남는다 — ① react-query 캐시(staleTime 30초 동안 재요청 없이
@@ -25,8 +53,20 @@ export const AUTH_FLAG_KEY = 'hasSession';
  * 보이고, ② ProtectedRoute 가 로그아웃 순간의 주소를 딥링크(state.from, #675)로 실어 보내 다음 사람이
  * 앞 사람이 보던 화면으로 바로 이동한다. 워크스페이스 전환(AuthProvider 의 selectTenant)과 같은
  * 이유로 리로드 한 번이 캐시·401 재시도 큐·열린 SSE·history state 를 전부 비운다.
+ *
+ * <p>notice 는 로그인 화면에 한 번 보일 안내(WD-830). 없으면 남아 있던 낡은 안내를 비운다.
+ * 안내는 먼저 맡긴 쪽을 지키고(규칙은 noticeOwner) 이동은 매번 한다. userInitiated(사용자가 누른 로그아웃)는 늘 안내를 정한다 —
+ * 앞선 자동 종료의 「만료」 안내가 직접 로그아웃 뒤에 남지 않게(WD-830 리뷰).
  */
-export function endSessionAndReloadToLogin() {
+export function endSessionAndReloadToLogin(notice?: string, { userInitiated = false }: { userInitiated?: boolean } = {}) {
+  if (userInitiated) {
+    claimUserLogout(notice);
+  } else if (noticeOwner === null) {
+    noticeOwner = 'auto';
+    if (notice) setLoginNotice(notice);
+    else clearLoginNotice();
+  }
+  // 이미 맡긴 안내는 덮지 않되 이동은 늘 다시 한다 — 떠나기 확인을 취소한 뒤의 로그아웃·만료가 조용히 막히지 않게
   accessToken = null;
   localStorage.removeItem(AUTH_FLAG_KEY);
   // replace — 로그아웃 직전 화면을 history 에 남기지 않는다. 남기면 다음 사람이 「뒤로」로 그 주소를 다시 열어
@@ -131,7 +171,8 @@ async function runRefresh(): Promise<RefreshResult> {
       });
     } catch (refreshError) {
       rejectQueue(refreshError);
-      endSessionAndReloadToLogin();
+      // WD-830: 401 만 세션 만료로 안내한다(근거는 login-notice.ts)
+      endSessionAndReloadToLogin(isUnauthorizedError(refreshError) ? SESSION_EXPIRED_NOTICE : undefined);
       throw refreshError;
     }
 

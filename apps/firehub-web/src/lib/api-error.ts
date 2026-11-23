@@ -215,6 +215,15 @@ export function listLoadErrorProps(error: unknown, noun: string): { tone: 'error
 }
 
 /**
+ * 401(인증 거절) 응답인지 — axios 오류이고 상태가 401 일 때만 true (WD-830).
+ *
+ * <p>refresh 가 401 로 거절되면 세션이 만료된 것이지만, 네트워크 오류·5xx 는 서버 사정이라 만료로 보면 안 된다.
+ */
+export function isUnauthorizedError(error: unknown): boolean {
+  return axios.isAxiosError(error) && error.response?.status === 401;
+}
+
+/**
  * 찾을 수 없음(404) 응답인가 (WD-162).
  * 스마트 작업 리포트·실행 조회는 「없음」과 「작업 작성자가 아님」을 똑같이 404 로 숨기므로, 화면이 두 경우를 함께 말하는 안내를 고를 때 쓴다.
  */

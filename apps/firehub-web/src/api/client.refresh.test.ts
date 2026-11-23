@@ -7,7 +7,8 @@
 import axios from 'axios';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { authedFetch, getAccessToken, refreshAccessToken, setAccessToken, TokenRefreshError } from './client';
+import { SESSION_EXPIRED_NOTICE, takeLoginNotice } from '../lib/login-notice';
+import { authedFetch, claimUserLogout, endSessionAndReloadToLogin, getAccessToken, refreshAccessToken, resetNoticeOwnerForTest, setAccessToken, TokenRefreshError } from './client';
 
 vi.mock('./refresh-lock', () => ({
   withCrossTabRefreshLock: <T,>(fn: () => Promise<T>) => fn(),
@@ -31,6 +32,7 @@ describe('refreshAccessToken (WD-631)', () => {
 
   beforeEach(() => {
     setAccessToken('old');
+    resetNoticeOwnerForTest();
     vi.stubGlobal('location', { ...window.location, replace });
   });
   afterEach(() => {
@@ -88,6 +90,7 @@ describe('authedFetch (WD-631)', () => {
 
   beforeEach(() => {
     setAccessToken('old');
+    resetNoticeOwnerForTest();
     vi.stubGlobal('fetch', fetchMock);
     vi.stubGlobal('location', { ...window.location, replace });
   });
@@ -165,5 +168,60 @@ describe('authedFetch (WD-631)', () => {
     const networkError = new TypeError('Failed to fetch');
     fetchMock.mockRejectedValueOnce(networkError);
     await expect(authedFetch('/x')).rejects.toBe(networkError);
+  });
+});
+
+describe('endSessionAndReloadToLogin (WD-830 리뷰)', () => {
+  const replace = vi.fn();
+  const PW_NOTICE = '비밀번호가 변경되어 새 비밀번호로 다시 로그인해야 합니다';
+
+  beforeEach(() => {
+    resetNoticeOwnerForTest();
+    sessionStorage.clear();
+    vi.stubGlobal('location', { ...window.location, replace });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    replace.mockReset();
+  });
+
+  it('늦은 자동 종료는 먼저 맡긴 안내를 덮지 않지만 이동은 다시 한다 — 떠나기 확인 취소 뒤에도 막히지 않게', () => {
+    endSessionAndReloadToLogin(SESSION_EXPIRED_NOTICE);
+    endSessionAndReloadToLogin();
+    expect(replace).toHaveBeenCalledTimes(2);
+    expect(takeLoginNotice()).toBe(SESSION_EXPIRED_NOTICE);
+  });
+
+  it('사용자가 누른 로그아웃은 앞선 자동 종료의 만료 안내를 비운다', () => {
+    endSessionAndReloadToLogin(SESSION_EXPIRED_NOTICE);
+    endSessionAndReloadToLogin(undefined, { userInitiated: true });
+    expect(replace).toHaveBeenCalledTimes(2);
+    expect(takeLoginNotice()).toBeNull();
+  });
+
+  it('사용자 로그아웃을 먼저 맡기면 서버 응답을 기다리는 동안의 자동 종료가 그 안내를 바꾸지 않는다', () => {
+    claimUserLogout(PW_NOTICE);
+    endSessionAndReloadToLogin(SESSION_EXPIRED_NOTICE);
+    expect(takeLoginNotice()).toBe(PW_NOTICE);
+  });
+
+  it('자동 종료 뒤 refresh 가 성공하면 안내 주인이 풀려 뒤의 만료가 안내를 쓴다', () => {
+    endSessionAndReloadToLogin();
+    setAccessToken('recovered');
+    endSessionAndReloadToLogin(SESSION_EXPIRED_NOTICE);
+    expect(takeLoginNotice()).toBe(SESSION_EXPIRED_NOTICE);
+  });
+
+  it('사용자 로그아웃 안내는 늦은 refresh 성공으로 풀리지 않는다', () => {
+    claimUserLogout(PW_NOTICE);
+    setAccessToken('late');
+    endSessionAndReloadToLogin(SESSION_EXPIRED_NOTICE);
+    expect(takeLoginNotice()).toBe(PW_NOTICE);
+  });
+
+  it('사용자 로그아웃 뒤 늦은 자동 종료는 만료 안내를 남기지 않는다', () => {
+    endSessionAndReloadToLogin(undefined, { userInitiated: true });
+    endSessionAndReloadToLogin(SESSION_EXPIRED_NOTICE);
+    expect(takeLoginNotice()).toBeNull();
   });
 });

@@ -1,12 +1,14 @@
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { matchPath } from 'react-router-dom';
 
 import { authApi } from '../api/auth';
-import { AUTH_FLAG_KEY, endSessionAndReloadToLogin, getAccessToken, setAccessToken } from '../api/client';
+import { AUTH_FLAG_KEY, claimUserLogout, endSessionAndReloadToLogin, getAccessToken, setAccessToken } from '../api/client';
 import type { TenantSessionState } from '../api/tenant-session';
 import { subscribeTenantSession } from '../api/tenant-session';
 import { usersApi } from '../api/users';
-import { setLoginNotice } from '../lib/login-notice';
+import { isUnauthorizedError } from '../lib/api-error';
+import { clearLoginNotice, SESSION_EXPIRED_NOTICE, setLoginNotice } from '../lib/login-notice';
 import type { LoginFormData, SignupFormData } from '../lib/validations/auth';
 import type { TokenResponse, UserResponse } from '../types/auth';
 import type { RoleResponse } from '../types/role';
@@ -109,13 +111,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       try {
-        const { data: tokens } = await deduplicatedRefresh();
+        const { data: tokens } = await deduplicatedRefresh().catch((e) => {
+          // WD-830: refresh 401 만 만료 안내(근거는 login-notice.ts). /signup 은 로그인 화면으로 이어지지 않아 건너뛴다 —
+          // 라우터와 같은 규칙(끝 슬래시·대소문자 무시)으로 맞춰 /signup/ 에서도 안내가 저장만 되고 엉뚱한 때 보이지 않게(WD-830 리뷰).
+          if (!ignore && isUnauthorizedError(e) && !matchPath('/signup', window.location.pathname)) {
+            setLoginNotice(SESSION_EXPIRED_NOTICE);
+          }
+          throw e;
+        });
         if (ignore) return;
         // 테넌트 미선택(강등 포함) 상태에서도 `/users/me` 는 통과한다(권한 요구 없음) — 그래서
         // "인증됐지만 테넌트가 없다" 를 표현할 수 있고, 게이트가 로그인 화면 대신 워크스페이스
         // 선택 화면으로 보낼 수 있다. 이때 roles 는 RLS 때문에 자연히 빈 배열이 된다.
         // 비밀번호 변경 강제 상태면 applySession 이 `/users/me` 대신 `/auth/me` 를 읽는다(WD-2).
         await applySession(tokens);
+        // 부팅이 성공했으면 만료 안내는 없다 — /login 에서 성공하면 LoginPage 가 안내를 꺼내기 전에 리다이렉트돼
+        // 맡겨진 안내가 남을 수 있어 여기서 비운다(WD-830).
+        clearLoginNotice();
       } catch {
         if (ignore) return;
         setAccessToken(null);
@@ -153,6 +165,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (data: LoginFormData) => {
     const { data: tokens } = await authApi.login(data);
     localStorage.setItem(AUTH_FLAG_KEY, 'true');
+    // 소비되지 않고 남은 만료 안내를 비운다 — 로그인에 성공했으니 나중에 엉뚱하게 보이면 안 된다(WD-830)
+    clearLoginNotice();
     await applySession(tokens);
   }, [applySession]);
 
@@ -195,15 +209,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [login]);
 
   const logout = useCallback(async (options?: { notice?: string }) => {
+    // 서버 응답을 기다리는 동안 다른 요청의 401 이 「만료」로 먼저 이동해 이 안내를 덮지 않게 먼저 맡긴다(WD-830 리뷰)
+    claimUserLogout(options?.notice);
     try {
       await authApi.logout();
     } catch {
       // 서버 로그아웃이 실패해도(네트워크 등) 이 브라우저의 세션은 끝낸다 — 리로드가 곧 화면을 바꾸므로 오류를 다시 던지지 않는다
     }
-    if (options?.notice) setLoginNotice(options.notice);
     // 앞 사람의 캐시·돌아갈 주소를 다음 사람에게 남기지 않는다(WD-276). 사용자·테넌트 상태는 비우지 않는다 —
     // 비우면 리로드 전에 ProtectedRoute 가 지금 주소를 딥링크로 실어 /login 으로 먼저 보내, 화면이 두 번 바뀐다.
-    endSessionAndReloadToLogin();
+    // 사용자가 누른 로그아웃 — 종료 중이어도(떠나기 확인 취소 뒤) 다시 이동하고 안내를 정한다(WD-830 리뷰)
+    endSessionAndReloadToLogin(options?.notice, { userInitiated: true });
   }, []);
 
   const hasRole = useCallback((roleName: string) => {
