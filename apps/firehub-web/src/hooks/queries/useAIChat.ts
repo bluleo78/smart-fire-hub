@@ -8,6 +8,7 @@ import { uploadFiles } from '../../api/files';
 import { buildScreenContext, type ScreenEntityKind, type ScreenNameLookup } from '../../components/ai/screen-context';
 import { getInvalidationKeys } from '../../components/ai/widgets/invalidationMap';
 import { buildNavigationContext } from '../../components/ai/widgets/routes';
+import { isNotFoundError } from '../../lib/api-error';
 import type { AIAttachment, AIMessage, AISession, AIStreamEvent, CanvasLayout } from '../../types/ai';
 import { dashboardDetailKey } from './useAnalytics';
 import { datasetDetailKey } from './useDatasets';
@@ -58,19 +59,35 @@ export function useDeleteAISession() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationKey: DELETE_SESSION_MUTATION_KEY,
-    mutationFn: aiApi.deleteSession,
-    onSuccess: (_data, id) => {
+    // WD-989: 이미 다른 곳에서 지운 대화(404)는 원하던 결과(없음)와 같으므로 실패가 아니라 「지운 것」으로 처리한다.
+    // 호출처의 mutateAsync().then 성공 경로(현재 대화 전환·초점 이동)를 그대로 타도록 throw 하지 않고 alreadyGone 만 알린다.
+    // 404 외(500 등)는 지금처럼 그대로 throw 해 실패로 둔다.
+    mutationFn: async (id: number): Promise<{ alreadyGone: boolean }> => {
+      try {
+        await aiApi.deleteSession(id);
+        return { alreadyGone: false };
+      } catch (err) {
+        if (isNotFoundError(err)) return { alreadyGone: true };
+        throw err;
+      }
+    },
+    onSuccess: (data, id) => {
       // WD-973: 성공 즉시 캐시에서 그 줄을 뺀다. 재조회가 끝나기 전에는 pending 도 풀려 지운 줄이 다시 눌릴 수
       // 있고, 그러면 이미 지워진 id 로 DELETE 가 또 나가 실패 토스트가 뜬다. (query 만 건드리므로 mutationKey 와 무관)
+      // WD-989: 404(이미 지움)도 같다.
       queryClient.setQueriesData<AISession[]>({ queryKey: ['ai-sessions'] }, (old) =>
         Array.isArray(old) ? old.filter((s) => s.id !== id) : old,
       );
-      queryClient.invalidateQueries({ queryKey: ['ai-sessions'] });
-      toast.success('대화가 삭제되었습니다.');
+      if (data.alreadyGone) toast.info('이미 삭제된 대화입니다.');
+      else toast.success('대화가 삭제되었습니다.');
     },
     // 삭제 API 실패 시 사용자에게 오류 피드백 제공
     onError: () => {
       toast.error('대화 삭제에 실패했습니다.');
+    },
+    // WD-989: 성공·404·실패 모두 목록을 다시 받는다 — 실패해도 서버 상태와 어긋난 줄(이미 지워진 줄 등)을 바로잡는다.
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['ai-sessions'] });
     },
   });
 }

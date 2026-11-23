@@ -51,6 +51,10 @@ export function SessionSwitcher({ currentSessionId, onNewSession, onSessionDelet
   // 목록 상자 자신은 담지 않는다: 줄이 빠지면 Radix FocusScope 가 초점을 목록 상자로 옮기는데, 그 focus 가 이 값을 덮으면
   // 효과가 「사라진 줄」을 못 본다. 목록 밖(여는 버튼·포털의 확인 창)으로 간 초점은 null 로 지워 낡은 노드가 남지 않게 한다.
   const lastFocused = useRef<HTMLElement | null>(null);
+  // lastFocused 가 속한 줄의 id — 그 노드가 사라진 뒤에도 어느 줄이었는지 알기 위해 초점 때 함께 적는다
+  const lastFocusedId = useRef<number | undefined>(undefined);
+  // 직전 렌더의 목록 — 초점 쥔 줄이 재조회로 사라졌을 때 그 줄의 이웃(다음, 없으면 이전)을 옛 순서에서 찾는다 (WD-989·WD-1024)
+  const prevSessions = useRef<AISession[] | undefined>(undefined);
 
   /**
    * 지운 줄이 sessions 에서 사라진 렌더 뒤, 초점을 잃었을 때만 이웃 줄로 옮긴다 (WD-951).
@@ -60,6 +64,8 @@ export function SessionSwitcher({ currentSessionId, onNewSession, onSessionDelet
    */
   useEffect(() => {
     if (!sessions) return;
+    const prev = prevSessions.current;
+    prevSessions.current = sessions;
     // 이번 갱신에서 사라진 줄들만 모음에서 꺼낸다(아직 남은 줄은 다음 갱신까지 기억)
     const gone: (number | undefined)[] = [];
     pendingDeletes.current.forEach((req) => {
@@ -70,6 +76,8 @@ export function SessionSwitcher({ currentSessionId, onNewSession, onSessionDelet
     // 지운 줄이 사라지지 않았어도 초점 쥔 줄이 사라졌으면 옮긴다(WD-973 리뷰 후속 ③) — 성공(204)이 캐시에서 지운 줄을 먼저 빼
     // 초점이 이웃으로 간 뒤, 뒤따른 재조회가 그 이웃마저 없는 목록을 가져오면 지운 줄의 기억은 이미 꺼낸 뒤라 초점을 잃는다.
     const focusedRowGone = lastFocused.current !== null && !lastFocused.current.isConnected;
+    // 사라진 초점 줄의 id — 노드가 이미 DOM 에서 빠져 줄을 역조회할 수 없으므로 초점 때 함께 적어 둔 값을 쓴다(lastFocusedId)
+    const goneRowId = focusedRowGone ? lastFocusedId.current : undefined;
     // 한 번 본 사라진 노드는 지운다 — 다음 갱신에서 다시 「사라짐」으로 세지 않게
     if (focusedRowGone) lastFocused.current = null;
     if ((gone.length === 0 && !focusedRowGone) || !hadFocus.current) return;
@@ -85,7 +93,16 @@ export function SessionSwitcher({ currentSessionId, onNewSession, onSessionDelet
     // Map 의 넣은 순서(ref 가 붙는 순서)에 기대지 않고 sessions 순서로 고른다(WD-951 리뷰 후속).
     // 목록이 닫혀 있으면 줄 버튼이 없어 옮길 곳이 없고, 대화가 남았으니 「새 대화」로 끌어가지도 않는다.
     const neighbor = gone.map((id) => id !== undefined && titleRefs.current.get(id)).find(Boolean);
-    (neighbor || sessions.map((s) => titleRefs.current.get(s.id)).find(Boolean))?.focus();
+    // 기억한 삭제(gone)가 없는 재조회로 사라진 줄은 첫 줄이 아니라 옛 목록에서 그 줄의 다음 → 이전 이웃으로 (WD-989·WD-1024)
+    let near: HTMLButtonElement | undefined;
+    if (gone.length === 0 && goneRowId !== undefined && prev) {
+      const at = prev.findIndex((s) => s.id === goneRowId);
+      if (at >= 0) {
+        const candidates = [...prev.slice(at + 1), ...prev.slice(0, at).reverse()];
+        near = candidates.map((s) => titleRefs.current.get(s.id)).find(Boolean);
+      }
+    }
+    (neighbor || near || sessions.map((s) => titleRefs.current.get(s.id)).find(Boolean))?.focus();
   }, [sessions]);
 
   // 대화가 모두 사라지면 목록을 닫아 둔다 — open 이 true 로 남으면 이후 새 대화가 생길 때 목록이 저절로 열린다.
@@ -102,6 +119,8 @@ export function SessionSwitcher({ currentSessionId, onNewSession, onSessionDelet
         hadFocus.current = true;
         if (e.target === contentRef.current) return;
         lastFocused.current = contentRef.current?.contains(e.target) ? e.target : null;
+        const rowId = lastFocused.current?.closest('li')?.dataset.sessionId;
+        lastFocusedId.current = rowId === undefined ? undefined : Number(rowId);
       }}
       onBlur={(e) => {
         // 창만 바꾼 blur 는 activeElement 가 그대로라 초점을 치운 것으로 보지 않는다
@@ -135,6 +154,7 @@ export function SessionSwitcher({ currentSessionId, onNewSession, onSessionDelet
                 return (
                   <li
                     key={session.id}
+                    data-session-id={session.id}
                     className={cn(
                       // 초점 줄 배경은 :focus-visible 일 때만 — 마우스로 열면 Popover 가 첫 제목에 초점을 주는데
                       // focus-within 은 그 줄을 현재 줄처럼 칠해 "현재 대화"가 둘로 보였다
@@ -192,7 +212,10 @@ export function SessionSwitcher({ currentSessionId, onNewSession, onSessionDelet
                           size="icon-xs"
                           // WCAG 2.5.8 최소 24×24(icon-xs) — 줄 32px 안 세로 가운데(top-1), 오른쪽 4px(right-1).
                           // 제목의 pr-9(36px)가 휴지통 폭+여백(28px)보다 커 글자를 가리지 않는다.
-                          className="group/trash absolute right-1 top-1 aria-disabled:pointer-events-auto"
+                          // WD-989: 줄은 현재 줄이면 늘, 아니면 가리킴·초점 때 bg-accent 라 ghost 의 hover:bg-accent 가 줄 색과 같아
+                          // 휴지통 가리킴·초점이 안 보인다 — 모든 줄에서 줄과 다른 background 로.
+                          // 어두운 테마에서는 ghost 의 dark:hover:bg-accent/50 이 더 구체적이라 이기므로 dark:hover 짝을 함께 둔다(ghost 에 dark focus-visible 배경은 없다).
+                          className="group/trash absolute right-1 top-1 aria-disabled:pointer-events-auto hover:bg-background dark:hover:bg-background focus-visible:bg-background"
                           // WD-973: 삭제 응답 전에는 다시 못 연다. PendingButton 은 disabled 대신 aria-disabled 로 잠가 초점을 지키고
                           // (WD-951 실패 뒤 이 버튼 초점) 클릭을 preventDefault 해 Radix 트리거가 확인 창을 열지 않는다(Enter·Space 도 click 경로).
                           // 공용 잠금 모양의 pointer-events-none 은 되돌린다 — 줄 위에 겹친 버튼이라 클릭이 아래 제목(대화 열기)으로 새고 초점도 잃는다.
