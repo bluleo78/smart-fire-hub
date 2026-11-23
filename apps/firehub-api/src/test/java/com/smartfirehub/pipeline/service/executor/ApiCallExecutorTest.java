@@ -692,6 +692,10 @@ class ApiCallExecutorTest {
 
     assertThat(result.totalRows()).isEqualTo(3);
     verify(dataTableRowService, times(2)).insertBatch(eq("bad_total_table"), anyList(), anyList());
+    // WD-1002 리뷰: 잘못 적은 경로가 성공으로 묻히지 않게 실행 로그에 [WARN] 이 페이지 수와 상관없이 한 번만 남는다
+    String warn = "[WARN] totalPath '$.['";
+    assertThat(result.log()).contains(warn);
+    assertThat(result.log().split(java.util.regex.Pattern.quote(warn), -1)).hasSize(2);
   }
 
   // -------------------------------------------------------------------------

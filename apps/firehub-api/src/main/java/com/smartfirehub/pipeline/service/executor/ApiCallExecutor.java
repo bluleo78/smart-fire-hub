@@ -190,6 +190,8 @@ public class ApiCallExecutor {
         int pageSize = (pag.pageSize() != null) ? pag.pageSize() : DEFAULT_PAGE_SIZE;
         int offset = 0;
         Integer totalCount = null;
+        // totalPath 를 한 번 못 읽으면 페이지마다 다시 시도하지 않고, 경고도 한 번만 남긴다(WD-1002 리뷰)
+        boolean totalPathUnreadable = false;
 
         while (true) {
           // 취소 체크포인트(WD-153) — 다음 페이지를 요청하기 전. APPEND 면 지금까지 넣은 행이 남는다.
@@ -224,18 +226,30 @@ public class ApiCallExecutor {
                   totalRows);
 
           // Extract totalCount from response if configured (only needed on first page)
-          if (totalCount == null && pag.totalPath() != null && !pag.totalPath().isBlank()) {
+          if (totalCount == null
+              && !totalPathUnreadable
+              && pag.totalPath() != null
+              && !pag.totalPath().isBlank()) {
             try {
               Object raw = jsonResponseParser.readPath(responseBody, pag.totalPath(), Object.class);
               if (raw instanceof Number n) {
                 totalCount = n.intValue();
               }
             } catch (ApiCallException e) {
-              // 못 읽으면(없음·문법·평가 오류) 부분 페이지 멈춤으로 진행 — 이유는 readPath Javadoc(WD-1002)
+              // 못 읽으면(없음·문법·평가 오류) 부분 페이지 멈춤으로 진행 — 이유는 readPath Javadoc(WD-1002).
+              // 잘못 적은 경로가 성공으로 묻히지 않게 실행 로그에 경고를 한 번 남긴다 — 서버가 페이지 크기보다
+              // 적게 주는 API 면 첫 부분 페이지에서 멈춰 일부만 받을 수 있다.
+              totalPathUnreadable = true;
               log.debug(
                   "totalPath '{}' 를 읽지 못함({}) — 부분 페이지 멈춤 조건으로 진행",
                   pag.totalPath(),
                   e.getMessage());
+              executionLog
+                  .append("[WARN] totalPath '")
+                  .append(pag.totalPath())
+                  .append("' 를 읽지 못해 전체 건수 없이 진행합니다 — 페이지 크기보다 적은 페이지에서 멈춥니다(")
+                  .append(e.getMessage())
+                  .append(")\n");
             }
           }
 

@@ -329,9 +329,10 @@ public class JsonResponseParser {
    *
    * <p>WD-1002: 경로를 못 찾은 경우뿐 아니라 경로 문법 오류(InvalidPathException)·평가 오류(JsonPathException)도 ApiCallException 으로 감싼다.
    * 호출처(totalPath)가 Python 실행기의 _read_path_safe 와 똑같이 두 경우 모두 "부분/빈 페이지 멈춤"으로 되돌아가게 하기 위해서다.
-   * totalPath 는 전체 건수 힌트일 뿐이라 못 읽어도 데이터는 전부 가져온다.
+   * totalPath 는 전체 건수 힌트라 못 읽으면 빈 페이지나 페이지 크기보다 적은 페이지에서 멈춘다 — 서버가 페이지 크기보다 적게
+   * 주는 API 면 일부만 받을 수 있어, 호출처가 실행 로그에 [WARN] 을 남긴다.
    *
-   * @throws ApiCallException if the path is not found or its syntax is invalid
+   * @throws ApiCallException 경로가 없거나, 문법이 틀렸거나, 평가 중 오류(예: 숫자에 집계 함수)가 날 때
    */
   public <T> T readPath(String json, String path, Class<T> type) {
     try {
