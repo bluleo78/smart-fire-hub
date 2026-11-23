@@ -208,7 +208,9 @@ const deleteResponse = (page: Page, id: string) =>
       r.request().method() === "DELETE" &&
       r.url().endsWith(`/ai/sessions/${id}`),
   );
-/** 삭제 결과 토스트(성공/실패) 목록 — 앞서 뜬 같은 문구의 토스트와 구분하려고 개수로 센다 */
+/** 액션 전에 이미 있던 토스트에 다는 표식 — 액션 뒤 새로 뜬 토스트와 구분한다 */
+const BEFORE_ATTR = "data-wd1013-before";
+/** 삭제 결과 토스트(성공/실패) 목록 — 문구가 같은 토스트 전체(표식·닫히는 중 여부 무관) */
 const deleteToasts = (page: Page, ok: boolean) =>
   page
     .locator("[data-sonner-toast]")
@@ -216,15 +218,21 @@ const deleteToasts = (page: Page, ok: boolean) =>
 
 /**
  * 삭제 응답이 처리돼 이번 삭제의 결과 토스트가 새로 보일 때까지 기다린다 — 고정 시간 대기 대신 보이는 결과로 기다린다.
- * before: 삭제 전에 센 같은 문구의 토스트 수. 앞 토스트에 걸려 일찍 통과하지 않게 개수 증가를 기다린다.
+ * 왜 개수가 아닌 표식인가: 앞 토스트가 sonner 타이머로 사라지면 「개수 = before+1」 은 영영 안 된다.
+ * 그래서 액션 전에 이미 있던 토스트에 표식을 달아 두고, 표식 없는(= 액션 뒤 새로 생긴) 토스트 1개를 기다린다.
+ * 닫히는 중([data-removed="true"])인 토스트는 새 것이 아니므로 제외한다.
  * 토스트는 mutation 의 onSuccess/onError 에서 뜨고 호출부의 then 이 그 직후 도므로, 이게 보이면 음성 단언이 응답보다 앞서 통과하지 않는다.
  */
-const deleteSettled = (page: Page, ok: boolean, before: number) =>
-  expect(deleteToasts(page, ok)).toHaveCount(before + 1);
+const deleteSettled = (page: Page, ok: boolean) =>
+  expect(
+    deleteToasts(page, ok).and(
+      page.locator(`:not([${BEFORE_ATTR}]):not([data-removed="true"])`),
+    ),
+  ).toHaveCount(1);
 
 /**
  * action 이 일으킨 id 대화의 삭제 응답이 처리돼 결과 토스트가 보일 때까지 기다린다.
- * 왜: 「삭제 전 토스트 수 세기 → 응답 기다리기 → 토스트 증가 기다리기」 순서를 호출부마다 되풀이하지 않고 한곳에 둔다.
+ * 왜: 「기존 토스트 표식 → 응답 기다리기 → 새 토스트 기다리기」 순서를 호출부마다 되풀이하지 않고 한곳에 둔다.
  * 응답 대기는 action 보다 먼저 걸어 응답을 놓치지 않는다.
  */
 async function runAndAwaitDelete(
@@ -233,11 +241,13 @@ async function runAndAwaitDelete(
   ok: boolean,
   action: () => Promise<void> | void,
 ) {
-  const before = await deleteToasts(page, ok).count();
+  await deleteToasts(page, ok).evaluateAll((els, attr) => {
+    els.forEach((el) => el.setAttribute(attr, ""));
+  }, BEFORE_ATTR);
   const responded = deleteResponse(page, id);
   await action();
   await responded;
-  await deleteSettled(page, ok, before);
+  await deleteSettled(page, ok);
 }
 
 /** 열린 모달 목록을 닫는다 — 열린 채면 바깥(입력창·칩)이 막힌다. 삭제 확인이 끝난 뒤라 상태는 정해져 있다 */
@@ -290,6 +300,25 @@ test.describe("현재 대화 삭제 → 새 대화 (WD-972)", () => {
     await send(page, "이어서");
     await expect.poll(() => mock.chats).toEqual(["session-1"]);
     expect(mock.creates).toHaveLength(0);
+  });
+
+  test("삭제가 500 이면 실패 로그만 남고 성공 뒤 오류 로그는 없다", async ({
+    authenticatedPage: page,
+  }) => {
+    const logs: string[] = [];
+    page.on("console", (m) => {
+      if (m.type() === "error") logs.push(m.text());
+    });
+    await openPanelWithSession1(page, { deleteStatus: 500 });
+    await runAndAwaitDelete(page, "1", false, () =>
+      deleteInSwitcher(page, "첫째 대화"),
+    );
+    await expect
+      .poll(() => logs.some((l) => l.includes("Failed to delete AI session:")))
+      .toBe(true);
+    expect(logs.some((l) => l.includes("Failed after AI session delete:"))).toBe(
+      false,
+    );
   });
 
   test("응답 전 다른 대화로 옮겼으면 그대로다", async ({
@@ -392,17 +421,19 @@ test.describe("현재 대화 삭제 → 새 대화 (WD-972)", () => {
   test("같은 대화를 다시 열면 먼저 보낸 낡은 기록 응답이 화면을 덮거나 로딩을 일찍 끝내지 않는다", async ({
     authenticatedPage: page,
   }) => {
-    // 첫째 대화의 기록 요청 두 건(처음·다시 연 것)을 따로 붙잡는다 — 둘째로 갔다 돌아오면 세션 id 는 같아도 요청 번호가 다르다
+    // 첫째 대화의 기록 요청마다 route 핸들러에서 Deferred 를 만들어 큐에 넣는다 — 시험이 호출 순서대로 골라 푼다
+    // (요청 전역 순번에 기대지 않으므로 패널을 열 때 앞선 요청이 있어도 대상 요청을 어긋나지 않게 고른다)
     await mockAll(page);
-    const gates: (() => void)[] = [];
-    let requested = 0;
-    let staleSent = false;
+    type Held = { release: (sendStale: boolean) => void };
+    const held: Held[] = [];
     await page.route(
       (url) => url.pathname === "/api/v1/ai/sessions/session-1/messages",
       async (route) => {
-        const nth = requested++;
-        await new Promise<void>((resolve) => gates.push(resolve));
-        if (nth > 0) return route.fallback();
+        // 이 요청을 푸는 신호 — true 면 낡은 기록으로 응답하고, false 면 기본 모의 응답으로 넘긴다
+        let release!: (sendStale: boolean) => void;
+        const gate = new Promise<boolean>((resolve) => (release = resolve));
+        held.push({ release });
+        if (!(await gate)) return route.fallback();
         await route.fulfill({
           status: 200,
           contentType: "application/json",
@@ -415,38 +446,79 @@ test.describe("현재 대화 삭제 → 새 대화 (WD-972)", () => {
             },
           ]),
         });
-        staleSent = true;
       },
     );
     await page.goto("/", { waitUntil: "commit" });
     await chip(page).click();
     await input(page).waitFor({ state: "visible", timeout: 5_000 });
 
+    // 패널 열기는 첫째 대화 기록을 요청하지 않는다(loadSession 은 대화 선택 때만 불린다) —
+    // 그래서 base 이후 늦게 오는 앞선 요청은 없고, 이미 큐에 있는 앞선 요청은 풀어 매달리지 않게 한다.
+    const base = held.length;
+    held.slice(0, base).forEach((h) => h.release(false));
     await selectInSwitcher(page, "첫째 대화");
-    await expect.poll(() => requested).toBe(1);
+    await expect.poll(() => held.length).toBe(base + 1);
     await selectInSwitcher(page, "둘째 대화");
     await expect(page.getByText(SESSION_2_TEXT)).toBeVisible();
     await selectInSwitcher(page, "첫째 대화");
-    await expect.poll(() => requested).toBe(2);
+    await expect.poll(() => held.length).toBe(base + 2);
     const loading = page.getByText("대화 이력을 불러오는 중...");
     await expect(loading).toBeVisible();
 
-    // 먼저 보낸 낡은 응답을 푼다 — 응답이 브라우저에 닿고 화면이 한 번 그려진 뒤에도 로딩 중이고 낡은 글은 없어야 한다
-    gates[0]();
-    await expect.poll(() => staleSent).toBe(true);
+    // 낡은 응답을 풀기 전에 DOM 변화를 지켜보며 두 가지를 기록한다 — 나중에 지워져도 놓치지 않게(고정 대기 없이 관찰 기록)
+    //  1) 「낡은 기록」 문구가 한 번이라도 그려졌는가  2) 로딩 문구가 사라졌는데 첫째 대화 글은 아직 없는 순간이 있었는가(로딩 조기 종료)
+    // 렌더 배치 한계는 아래에서 낡은 응답을 받은 뒤 페인트를 한 번 끼운 다음 최신 응답을 풀어, 두 처리가 한 렌더로 묶이지 않게 해 메운다
+    await page.evaluate(
+      ([loadingText, session1Text]) => {
+        const w = window as unknown as {
+          __staleRendered: boolean;
+          __loadingEndedEarly: boolean;
+        };
+        w.__staleRendered = false;
+        w.__loadingEndedEarly = false;
+        const text = () => document.body.textContent ?? "";
+        new MutationObserver(() => {
+          const t = text();
+          if (t.includes("낡은 기록")) w.__staleRendered = true;
+          if (!t.includes(loadingText) && !t.includes(session1Text))
+            w.__loadingEndedEarly = true;
+        }).observe(document.body, {
+          subtree: true,
+          childList: true,
+          characterData: true,
+        });
+      },
+      ["대화 이력을 불러오는 중...", SESSION_1_TEXT],
+    );
+
+    // 낡은 응답을 풀고 받은 뒤 rAF 두 번(페인트 한 번)을 끼우고 최신 응답을 푼다 — 두 처리가 한 렌더로 묶이지 않게 하는 간격용이며 단언 시점이 아니다.
+    // 가정: 도착 순서 = 처리 순서 — 최신 내용이 보이면 낡은 응답 처리는 이미 끝났다.
+    const staleReceived = page.waitForResponse(
+      async (r) =>
+        r.url().endsWith("/ai/sessions/session-1/messages") &&
+        (await r.text()).includes("낡은 기록"),
+    );
+    held[base].release(true);
+    await staleReceived;
     await page.evaluate(
       () =>
-        new Promise((r) =>
-          requestAnimationFrame(() => requestAnimationFrame(r)),
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
         ),
     );
-    await expect(loading).toBeVisible();
-    await expect(page.getByText("낡은 기록")).toHaveCount(0);
-
-    // 마지막으로 요청한 응답이 와야 비로소 로딩이 끝나고 첫째 대화가 보인다
-    gates[1]();
+    held[base + 1].release(false);
     await expect(page.getByText(SESSION_1_TEXT)).toBeVisible();
     await expect(loading).toHaveCount(0);
+    // 낡은 문구는 한 번도 그려지지 않았고 최종 화면에도 없다
+    const flags = await page.evaluate(() => {
+      const w = window as unknown as {
+        __staleRendered: boolean;
+        __loadingEndedEarly: boolean;
+      };
+      return { stale: w.__staleRendered, early: w.__loadingEndedEarly };
+    });
+    expect(flags.stale).toBe(false);
+    expect(flags.early).toBe(false);
     await expect(page.getByText("낡은 기록")).toHaveCount(0);
   });
 });
