@@ -160,10 +160,14 @@ test.describe('온톨로지 생명주기', () => {
     // WD-961: toBeHidden 은 요소가 없어도 통과하므로, 숨김을 판정하는 두 조건이 갖춰진 뒤에 단언한다.
     // ① 선택 온톨로지 스키마(「수정 모드」 조건) — schema-graph 로 본다. 기본 선택(첫 active, id 1)의 beforeEach 스키마에
     //    타입이 있어 그래프가 그려진다(위 id 3 빈 스키마는 뒤에 고르는 초안 것 — 빈 스키마면 OntologyEmptyState).
-    // ② 권한(useCanWriteOntology = isAdmin || ontology:write) — /auth/me/permissions 응답. 이동 전에 기다림을 등록한다.
-    const permissionsLoaded = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/v1/auth/me/permissions');
+    // ② 권한(useCanWriteOntology = isAdmin || ontology:write) — 응답이 도착해도 React Query 가 저장하고 React 가 다시 그리기
+    //    전에는 useCanWriteOntology 가 옛 값(권한 없음 = false)을 보므로 두 버튼이 이미 숨어 있어 toBeHidden 이 틈에서 헛통과한다.
+    //    그래서 네트워크 응답이 아니라 **같은 권한 쿼리가 반영돼야만 그려지는 보이는 신호**를 기다린다:
+    //    권한 목록에 user:read 를 주고 사이드바 「사용자 관리」(permission: 'user:read' 로 갈리는 항목, AppLayout)를 기다린다.
+    //    이 항목은 ontology:write 가 없는 같은 권한 목록에서만 나타나므로, 보이는 순간 useMyPermissions 결과가 화면에 반영된 것이다.
+    await mockApi(page, 'GET', '/api/v1/auth/me/permissions', ['dataset:read', 'user:read']);
     await gotoUntilReady(page, '/knowledge-graph/model', page.getByTestId('schema-graph'));
-    await permissionsLoaded;
+    await expect(page.getByRole('link', { name: '사용자 관리' })).toBeVisible();
 
     await expect(page.getByRole('button', { name: '새 온톨로지' })).toBeHidden();
     // 전체 문서 모달과 그 "편집" 버튼은 Task 6에서 제거됐다 — 유일한 편집 진입점인 "수정 모드"
