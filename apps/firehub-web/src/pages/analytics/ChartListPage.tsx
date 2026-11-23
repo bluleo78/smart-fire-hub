@@ -30,6 +30,7 @@ import { TableSkeletonRows } from '../../components/ui/table-skeleton';
 import { Tabs, TabsControlsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { useCanAdminAnalytics, useCharts, useDeleteChart } from '../../hooks/queries/useAnalytics';
 import { useIsOwner } from '../../hooks/useIsOwner';
+import { useLastPageInfo } from '../../hooks/useLastPageInfo';
 import { useListRetryFocus } from '../../hooks/useListRetryFocus';
 import { handleApiError, listLoadErrorProps } from '../../lib/api-error';
 import { formatDateShort, formatRelativeTime } from '../../lib/formatters';
@@ -57,26 +58,31 @@ export default function ChartListPage() {
   // 「내 차트」 탭은 내가 만든 차트만 — 필터 없이 부르면 서버가 남의 공유 차트까지 섞어 준다(WD-328). 「공유됨」은 sharedOnly 그대로.
   const mineOnly = tab === 'mine';
 
+  // 목록 훅과 쪽 수 기억(useLastPageInfo)이 같은 조회 조건 객체를 쓴다
+  const chartParams = {
+    search: search || undefined,
+    sharedOnly: sharedOnly || undefined,
+    mineOnly: mineOnly || undefined,
+    page,
+    size,
+  };
   const {
     data: chartsData,
     isLoading,
     isPending,
     isFetching,
     isError,
+    isPlaceholderData,
     error: chartsError,
     refetch,
-  } = useCharts({
-    search: search || undefined,
-    sharedOnly: sharedOnly || undefined,
-    mineOnly: mineOnly || undefined,
-    page,
-    size,
-  });
+  } = useCharts(chartParams);
 
   // 「다시 시도」 포커스(WD-987): 실패한 목록에서 누르면 표로 초점을 옮겼다가 다시 실패하면 버튼으로 되돌린다.
   // 403 은 다시 해도 같으므로 버튼을 두지 않는다
-  const { tableProps, retryAction } = useListRetryFocus({
+  const { tableProps, bodyProps, retryAction } = useListRetryFocus({
     isPending,
+    // WD-982: 쪽 이동 중 이전 쪽 행 처리(pending 판정·흐림·inert)는 훅이 맡는다
+    isPlaceholderData,
     isError,
     isFetching,
     data: chartsData,
@@ -89,8 +95,7 @@ export default function ChartListPage() {
   const isOwner = useIsOwner();
 
   const charts = chartsData?.content ?? [];
-  const totalPages = chartsData?.totalPages ?? 0;
-  const totalElements = chartsData?.totalElements;
+  const { totalPages, totalElements } = useLastPageInfo(chartsData, chartParams);
 
   const handleDelete = async (id: number, name: string) => {
     try {
@@ -170,7 +175,7 @@ export default function ChartListPage() {
                       </TableHead>
                     </TableRow>
                   </TableHeader>
-                  <tbody>
+                  <tbody {...bodyProps}>
                     {isLoading ? (
                       <TableSkeletonRows columns={5} rows={5} />
                     ) : isError && !chartsData ? (

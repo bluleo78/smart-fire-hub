@@ -4,7 +4,7 @@ import { createAuditLog, createAuditLogs } from '../../factories/admin.factory';
 import { setupAdminAuth } from '../../fixtures/admin.fixture';
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
-import { holdRequests } from '../../fixtures/hold-api';
+import { failPageRequests, holdRequests } from '../../fixtures/hold-api';
 import { isUnderInert } from '../../fixtures/inert-a11y';
 
 /** 대화상자가 「열리지 않는다」를 확인하는 시간(ms) — 양성 대조에서 같은 클릭은 이보다 훨씬 빨리 연다. 중복 요청 창(DUPLICATE_WINDOW_MS)과는 뜻이 달라 따로 둔다 */
@@ -181,6 +181,57 @@ test.describe('감사 로그 페이지네이션 — 이동 중에도 목록을 �
     // 응답이 도착하면 이동 중 표시가 사라진다
     await expect(table).not.toHaveAttribute('aria-busy', 'true');
     expect(await isUnderInert(page.locator('tbody button[aria-haspopup="dialog"]').first())).toBe(false);
+  });
+
+  test('다음 쪽이 실패해도 페이지네이션이 남고 이전 쪽으로 돌아간다 (WD-982)', async ({
+    authenticatedPage: page,
+  }) => {
+    const API = '/api/v1/admin/audit-logs';
+    await mockApi(
+      page,
+      'GET',
+      API,
+      createPageResponse(createAuditLogs(20), { totalElements: 29, totalPages: 2 }),
+    );
+    await page.goto('/admin/audit-logs');
+    const nav = page.getByRole('navigation', { name: '페이지네이션' });
+    const firstRow = page.getByText('감사 로그 1', { exact: true });
+    await expect(firstRow).toBeVisible();
+
+    // 2쪽(page=1)만 500 — 나중에 등록한 route 가 먼저 받는다
+    await failPageRequests(page, API, 1);
+    // 키보드(초점+Enter)로 이동 — 실패해도 nav 가 다시 마운트되지 않아 초점이 남아야 한다 (WD-982)
+    const next = nav.getByRole('button', { name: '다음 페이지' });
+    await next.focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('alert')).toBeVisible();
+    await expect(nav).toBeVisible();
+    await expect(next).toBeFocused();
+
+    await nav.getByRole('button', { name: '이전 페이지' }).click();
+    await expect(firstRow).toBeVisible();
+    await expect(page.getByRole('alert')).toHaveCount(0);
+  });
+
+  test('기록을 받기 전(첫 로딩 지연)·날짜 역순일 때 페이지당 선택기가 보이지 않는다 (WD-982)', async ({
+    authenticatedPage: page,
+  }) => {
+    const API = '/api/v1/admin/audit-logs';
+    await mockApi(page, 'GET', API, createPageResponse(createAuditLogs(20), { totalElements: 29, totalPages: 2 }));
+    // 첫 로딩 지연 — 기억한 쪽 수가 0 이라 「페이지당」 줄만 홀로 그려지면 안 된다
+    const held = await holdRequests(page, API, 'GET');
+    await page.goto('/admin/audit-logs');
+    await expect.poll(held.count).toBeGreaterThan(0);
+    await expect(page.getByText('페이지당')).toHaveCount(0);
+    held.release();
+    await expect(page.getByText('감사 로그 1', { exact: true })).toBeVisible();
+    await expect(page.getByText('페이지당')).toBeVisible();
+
+    // 날짜 역순 — 조건이 바뀌어 기억이 비고 조회도 보류되므로 마찬가지로 숨는다
+    await page.getByLabel('종료 날짜').fill('2026-09-01');
+    await page.getByLabel('시작 날짜').fill('2026-09-08');
+    await expect(page.getByText('날짜 범위가 올바르지 않아 조회할 수 없습니다.')).toBeVisible();
+    await expect(page.getByText('페이지당')).toHaveCount(0);
   });
 
   test('필터(검색어)를 바꾸면 응답 전에 이전 조건의 행이 보이지 않는다 (WD-932)', async ({

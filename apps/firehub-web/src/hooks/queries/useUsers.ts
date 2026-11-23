@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 
 import { usersApi } from '../../api/users';
+import { keepPreviousWhenOnlyPageChanged } from './keepPreviousWhenOnlyPageChanged';
 
 /**
  * 워크스페이스 사용자 목록(GET /users, user:read).
@@ -12,5 +13,7 @@ export function useUsers(params: { search?: string; page?: number; size?: number
     queryKey: ['users', params],
     queryFn: () => usersApi.getUsers(params).then(r => r.data),
     enabled: options?.enabled ?? true,
+    // WD-982: 쪽만 바뀐 조회는 이전 쪽 data 를 이동 중 유지한다 — 페이지네이션·초점이 사라지지 않게(감사 로그 사용자 필터는 쪽이 안 바뀌어 영향 없음)
+    placeholderData: keepPreviousWhenOnlyPageChanged(params),
   });
 }

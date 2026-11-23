@@ -9,6 +9,7 @@ import { TableEmptyRow, TableErrorRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { TruncatedText } from '@/components/ui/truncated-text';
 import { useDebounceValue } from '@/hooks/useDebounceValue';
+import { useLastPageInfo } from '@/hooks/useLastPageInfo';
 import { membershipRoleLabel } from '@/lib/membership-role';
 import { parseNonNegativeInt } from '@/lib/pagination';
 
@@ -71,14 +72,19 @@ export default function UserListPage() {
   const listState = { listSearch: `?${searchParams.toString()}` };
   const openUser = (id: number) => navigate(`/admin/users/${id}`, { state: listState });
 
-  const { data: users, isLoading, isError } = useUsers({
+  // 목록 훅과 쪽 수 기억(useLastPageInfo)이 같은 조회 조건 객체를 쓴다
+  const userParams = {
     search: debouncedSearch || undefined,
     page,
     size: pageSize,
-  });
+  };
+  const { data: users, isLoading, isError, isPlaceholderData } = useUsers(userParams);
+
+  const { totalPages, totalElements } = useLastPageInfo(users, userParams);
 
   // 범위 밖 페이지(북마크·멤버가 줄어든 뒤 돌아옴)는 빈 목록을 「사용자가 없습니다」로 오해하지 않게 마지막 페이지로 옮긴다(데이터셋 목록 WD-146 과 같은 처리).
-  const pageOutOfRange = !!users && page > 0 && page >= Math.max(users.totalPages, 1);
+  // WD-982: placeholder(쪽 이동 중 이전 쪽 data)의 totalPages 로는 판정하지 않는다 — 실제 응답이 와야 판정한다
+  const pageOutOfRange = !!users && !isPlaceholderData && page > 0 && page >= Math.max(users.totalPages, 1);
   useEffect(() => {
     if (!pageOutOfRange || !users) return;
     patchParams({ page: Math.max(users.totalPages - 1, 0) });
@@ -107,7 +113,12 @@ export default function UserListPage() {
 
       {/* WD-634: 긴 값 상한 = (표 폭 100cqw − --k) × 몫. --k = 짧은 칸 선언 폭(상태) + 긴 값 칸 여백 */}
       <div className="@container [--k:calc(6rem_+_3rem)] rounded-md border">
-        <Table aria-label="사용자 목록">
+        {/* WD-982: 쪽 이동 중 이전 행은 흐리게 하고 누를 수 없게 한다(감사 로그와 같은 방식) */}
+        <Table
+          aria-label="사용자 목록"
+          aria-busy={isPlaceholderData || undefined}
+          className={isPlaceholderData ? 'pointer-events-none opacity-60' : undefined}
+        >
           <TableHeader>
             <TableRow>
               <TableHead>이름</TableHead>
@@ -116,7 +127,8 @@ export default function UserListPage() {
               <TableHead className="w-[6rem]">상태</TableHead>
             </TableRow>
           </TableHeader>
-          <TableBody>
+          {/* inert: 이동 중 낡은 행을 키보드로도 열 수 없게 한다 (WD-982) */}
+          <TableBody inert={isPlaceholderData}>
             {isLoading || pageOutOfRange ? (
               <TableSkeletonRows columns={4} rows={5} />
             ) : isError ? (
@@ -170,15 +182,14 @@ export default function UserListPage() {
         </Table>
       </div>
 
-      {users && (
-        <SimplePagination
-          page={page}
-          totalPages={users.totalPages}
-          onPageChange={setPage}
-          totalElements={users.totalElements}
-          pageSize={pageSize}
-        />
-      )}
+      {/* WD-982: 늘 그린다 — 쪽 이동 중·실패 중에도 이전 쪽으로 돌아갈 수 있게. 쪽 수가 1 이하면 컴포넌트가 스스로 숨긴다 */}
+      <SimplePagination
+        page={page}
+        totalPages={totalPages}
+        onPageChange={setPage}
+        totalElements={totalElements}
+        pageSize={pageSize}
+      />
     </div>
   );
 }

@@ -35,6 +35,7 @@ import { useAuditLogs } from '@/hooks/queries/useAuditLogs';
 import { useMyPermissions } from '@/hooks/queries/useMyPermissions';
 import { useUsers } from '@/hooks/queries/useUsers';
 import { useDebounceValue } from '@/hooks/useDebounceValue';
+import { useLastPageInfo } from '@/hooks/useLastPageInfo';
 import { formatDateTime, formatIpAddress } from '@/lib/formatters';
 import type { AuditLogResponse } from '@/types/auditLog';
 
@@ -572,7 +573,7 @@ export default function AuditLogListPage() {
    */
   const isDateRangeInverted = Boolean(startDate && endDate && startDate > endDate);
 
-  const { data: logs, isLoading, isError, isPlaceholderData } = useAuditLogs({
+  const auditParams = {
     search: debouncedSearch || undefined,
     // userId 필터 (#89): "all"/'' → undefined, 숫자 문자열은 number 변환
     userId: userId ? Number(userId) : undefined,
@@ -582,11 +583,16 @@ export default function AuditLogListPage() {
     // 날짜 범위를 ISO datetime으로 변환하여 API에 전달
     startDate: startDate ? toIsoDateTime(startDate) : undefined,
     endDate: endDate ? toIsoDateTime(endDate, true) : undefined,
-    page,
     size: pageSize,
+  };
+  const { data: logs, isLoading, isError, isPlaceholderData } = useAuditLogs({
+    ...auditParams,
+    page,
     // 날짜 범위가 역전된 상태에서는 무의미한 조회이므로 API 호출 자체를 보류한다
     enabled: !isDateRangeInverted,
   });
+
+  const { totalPages, totalElements } = useLastPageInfo(logs, auditParams);
 
   /**
    * 사용자 dropdown 옵션 로드 (#89)
@@ -819,12 +825,14 @@ export default function AuditLogListPage() {
         </Table>
       </div>
 
-      {logs && (
+      {/* WD-982: 기억한 쪽 수가 있을 때만 그린다 — 다음 쪽 실패·이동 중에는 기억값으로 남아 이전 쪽으로 돌아갈 수 있고,
+          첫 로딩·날짜 역순·첫 조회 실패(기억 0)에는 「페이지당」 줄만 홀로 보이지 않는다. 쪽 수가 1 이하면 컴포넌트가 스스로 숨긴다 */}
+      {totalPages > 0 && (
         <SimplePagination
           page={page}
-          totalPages={logs.totalPages}
+          totalPages={totalPages}
           onPageChange={setPage}
-          totalElements={logs.totalElements}
+          totalElements={totalElements}
           pageSize={pageSize}
           onPageSizeChange={(size) => {
             setPageSize(size);

@@ -47,6 +47,7 @@ import {
   useSavedQueries,
 } from '../../hooks/queries/useAnalytics';
 import { useIsOwner } from '../../hooks/useIsOwner';
+import { useLastPageInfo } from '../../hooks/useLastPageInfo';
 import { useListRetryFocus } from '../../hooks/useListRetryFocus';
 import { handleApiError, listLoadErrorProps } from '../../lib/api-error';
 import { formatDateTimeMinute, formatRelativeTime } from '../../lib/formatters';
@@ -75,27 +76,32 @@ export default function QueryListPage() {
   // 「내 쿼리」 탭은 내가 만든 쿼리만 — 필터 없이 부르면 서버가 남의 공유 쿼리까지 섞어 준다(WD-328). 「공유됨」은 sharedOnly 그대로.
   const mineOnly = tab === 'mine';
 
-  const {
-    data: queriesData,
-    isLoading,
-    isPending,
-    isFetching,
-    isError,
-    error: queriesError,
-    refetch,
-  } = useSavedQueries({
+  // 목록 훅과 쪽 수 기억(useLastPageInfo)이 같은 조회 조건 객체를 쓴다
+  const queryParams = {
     search: search || undefined,
     folder: folder || undefined,
     sharedOnly: sharedOnly || undefined,
     mineOnly: mineOnly || undefined,
     page,
     size,
-  });
+  };
+  const {
+    data: queriesData,
+    isLoading,
+    isPending,
+    isFetching,
+    isError,
+    isPlaceholderData,
+    error: queriesError,
+    refetch,
+  } = useSavedQueries(queryParams);
 
   // 「다시 시도」 포커스(WD-987): 실패한 목록에서 누르면 표로 초점을 옮겼다가 다시 실패하면 버튼으로 되돌린다.
   // 403 은 다시 해도 같으므로 버튼을 두지 않는다
-  const { tableProps, retryAction } = useListRetryFocus({
+  const { tableProps, bodyProps, retryAction } = useListRetryFocus({
     isPending,
+    // WD-982: 쪽 이동 중 이전 쪽 행 처리(pending 판정·흐림·inert)는 훅이 맡는다
+    isPlaceholderData,
     isError,
     isFetching,
     data: queriesData,
@@ -114,8 +120,7 @@ export default function QueryListPage() {
   const executeSavedQuery = useExecuteSavedQuery();
 
   const queries = queriesData?.content ?? [];
-  const totalPages = queriesData?.totalPages ?? 0;
-  const totalElements = queriesData?.totalElements;
+  const { totalPages, totalElements } = useLastPageInfo(queriesData, queryParams);
   // 빈/공백 폴더는 useQueryFolders 가 이미 걸러 준다 (WD-889)
   const folders = foldersData ?? [];
 
@@ -240,7 +245,7 @@ export default function QueryListPage() {
                       </TableHead>
                     </TableRow>
                   </TableHeader>
-                  <tbody>
+                  <tbody {...bodyProps}>
                     {isLoading ? (
                       <TableSkeletonRows columns={6} rows={5} />
                     ) : isError && !queriesData ? (
