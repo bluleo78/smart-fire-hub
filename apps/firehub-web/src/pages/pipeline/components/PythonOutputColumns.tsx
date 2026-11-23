@@ -161,15 +161,17 @@ export default function PythonOutputColumns({
                   {!readOnly ? (
                     <Button
                       variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
+                      // WD-1023: 줄 삭제 휴지통은 icon-sm(32px)으로 최소 클릭 영역 확보
+                      size="icon-sm"
+                      className="shrink-0 text-muted-foreground hover:text-destructive"
                       onClick={() => removeColumn(i)}
                       aria-label={`컬럼 ${i + 1}${col.name ? ` "${col.name}"` : ''} 삭제`}
                     >
                       <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
                     </Button>
                   ) : (
-                    <span className="h-7 w-7 shrink-0" aria-hidden="true" />
+                    // 읽기 전용 자리 채움도 휴지통(icon-sm, 32px)과 같은 크기 — 모드를 바꿔도 열 폭이 그대로(WD-1023)
+                    <span className="size-8 shrink-0" aria-hidden="true" />
                   )}
                 </div>
 

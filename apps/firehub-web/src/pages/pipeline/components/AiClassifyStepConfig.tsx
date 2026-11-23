@@ -359,8 +359,9 @@ export default function AiClassifyStepConfig({
                     {!readOnly && (
                       <Button
                         variant="ghost"
-                        size="icon"
-                        className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
+                        // WD-1023: 줄 삭제 휴지통은 icon-sm(32px)으로 최소 클릭 영역 확보
+                        size="icon-sm"
+                        className="shrink-0 text-muted-foreground hover:text-destructive"
                         onClick={() => removeOutputColumn(i)}
                       >
                         <Trash2 className="h-3.5 w-3.5" />

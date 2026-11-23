@@ -5,12 +5,14 @@ import { createCategories, createColumn, createDatasetDetail } from '../../facto
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { DATASET_WRITE_PERMISSIONS, grantDatasetPermissions } from '../../fixtures/dataset.fixture';
+import { expectTrashHitTarget } from '../../fixtures/hit-target';
 
 // 쓰기 진입점은 서버 권한이 있을 때만 보인다(WD-139) — 이 파일은 편집·적재 흐름을 검증하므로 데이터셋 쓰기 권한을 준다.
 // 개별 테스트가 다른 권한을 주면 그쪽이 나중에 등록돼 이긴다.
 test.beforeEach(async ({ authenticatedPage: page }) => {
   await grantDatasetPermissions(page);
 });
+
 
 /**
  * API 가져오기 마법사 — 기본 파이프라인 이름 E2E (WD-31④)
@@ -167,6 +169,19 @@ test.describe('데이터셋 상세 — API 가져오기 기본 이름 (WD-31④)
 
     await expect(page.getByText(serverMessage)).toBeVisible();
     await expect(page.getByText('API 임포트 생성에 실패했습니다.')).toHaveCount(0);
+  });
+
+  test('필드 매핑 줄 삭제 휴지통이 32×32 이상이다 (WD-1023)', async ({ authenticatedPage: page }) => {
+    await setupDataTabMocks(page);
+    await page.goto('/data/datasets/1');
+    await expect(page.getByRole('heading', { name: '인사 급여' })).toBeVisible();
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await page.getByRole('button', { name: 'API 가져오기' }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByPlaceholder(API_FULL_URL_PLACEHOLDER, { exact: true }).fill('https://api.example.com/v1/data');
+    await dialog.getByRole('button', { name: '다음' }).click();
+    await dialog.getByRole('button', { name: '매핑 추가' }).click();
+    await expectTrashHitTarget(dialog);
   });
 
   /** 실행 옵션(4단계)까지 마법사를 진행한다 */

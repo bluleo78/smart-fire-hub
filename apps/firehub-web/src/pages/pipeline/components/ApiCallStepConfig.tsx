@@ -300,8 +300,9 @@ function KvEditor({
           {!readOnly && (
             <Button
               variant="ghost"
-              size="icon"
-              className="h-7 w-7 shrink-0"
+              // WD-1023: 줄 삭제 휴지통은 icon-sm(32px)으로 최소 클릭 영역 확보
+              size="icon-sm"
+              className="shrink-0"
               onClick={() => handleRemove(i)}
             >
               <Trash2 className="h-3.5 w-3.5" />
@@ -942,8 +943,9 @@ export default function ApiCallStepConfig({
                   {!readOnly && (
                     <Button
                       variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 shrink-0"
+                      // WD-1023: 줄 삭제 휴지통은 icon-sm(32px)으로 최소 클릭 영역 확보
+                      size="icon-sm"
+                      className="shrink-0"
                       onClick={() => handleRemoveMapping(i)}
                     >
                       <Trash2 className="h-3.5 w-3.5" />

@@ -3,6 +3,7 @@ import type { Page } from "@playwright/test";
 import { createDataset } from "../../factories/dataset.factory";
 import { mockApi } from "../../fixtures/api-mock";
 import { expect, test } from "../../fixtures/auth.fixture";
+import { expectTrashHitTarget } from '../../fixtures/hit-target';
 import { clickToolbarAddStep, grantPipelinePermissions } from '../../fixtures/pipeline.fixture';
 
 /**
@@ -13,6 +14,7 @@ import { clickToolbarAddStep, grantPipelinePermissions } from '../../fixtures/pi
  * 63바이트 절단 방지) 편집기에서도 같은 상한·문구(「칼럼명은 63자 이하여야 합니다」)로 인라인 오류를 띄운다.
  * maxLength 로 조용히 자르지 않는다 — 붙여넣은 긴 이름이 잘려 다른 칼럼과 같아지는 것을 사용자가 모르게 되기 때문이다.
  */
+
 
 const MESSAGE = "칼럼명은 63자 이하여야 합니다";
 
@@ -67,6 +69,22 @@ test.describe("파이프라인 출력 컬럼명 길이 상한 (WD-95)", () => {
     const btn = page.getByRole("button", { name: "출력 컬럼 추가" });
     // 다시 시도하는 단언으로 잰다 — 첫 렌더 직후 한 번 읽은 boundingBox 가 흔들리지 않게(내보내기 시험과 같은 방식)
     await expect(btn).toHaveCSS("height", "32px");
+  });
+
+  test("Python 출력 컬럼 줄 삭제 휴지통이 32×32 이상이다 (WD-1023)", async ({
+    authenticatedPage: page,
+  }) => {
+    await openNewStep(page, "Python");
+    await page.getByRole("button", { name: "출력 컬럼 추가" }).click();
+    await expectTrashHitTarget(page.locator("#python-col-name-0").locator("xpath=../.."));
+  });
+
+  test("AI 분류 출력 컬럼 줄 삭제 휴지통이 32×32 이상이다 (WD-1023)", async ({
+    authenticatedPage: page,
+  }) => {
+    await openNewStep(page, "AI 분류");
+    await page.getByRole("button", { name: "컬럼 추가", exact: true }).click();
+    await expectTrashHitTarget(page.getByPlaceholder("column_name").first().locator("xpath=../.."));
   });
 
   test("Python 출력 컬럼명 64자는 인라인 오류, 63자는 오류 없음", async ({
