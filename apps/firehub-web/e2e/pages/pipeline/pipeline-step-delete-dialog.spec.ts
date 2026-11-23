@@ -260,6 +260,25 @@ test.describe('파이프라인 편집기 — 스텝 X 버튼 키보드 (WD-955)'
     await expect(stepXButton(page, '데이터 변환')).toBeFocused();
   });
 
+  test('X 에 초점을 두고 Escape 를 눌러도 연결선 선택이 유지된다 — 창을 Escape 로 닫고 초점이 돌아온 뒤 한 번 더 눌러도 같다 (WD-955)', async ({ authenticatedPage: page }) => {
+    await openEditor(page);
+    await selectEdge(page);
+    await stepXButton(page, '데이터 변환').focus();
+    await page.keyboard.press('Escape');
+    // 「없음」 단언은 Escape 처리 전에도 통과하므로, 뒤이은 Enter 로 창이 보일 때까지 기다려 Escape 가 처리될 시간을 번 뒤 단언한다
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+    await expect(page.locator('.react-flow__edge.selected')).toHaveCount(1);
+    // 창을 Escape 로 닫으면 초점이 X 로 돌아온다 — 그 상태의 Escape 도 선택을 풀지 않는다
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('alertdialog')).toHaveCount(0);
+    await expect(stepXButton(page, '데이터 변환')).toBeFocused();
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+    await expect(page.locator('.react-flow__edge.selected')).toHaveCount(1);
+  });
+
   // 회귀 경계: 노드 자체의 키 선택 처리는 막지 않았음을 확인한다
   test('스텝 노드 자체에서 Enter 를 누르면 React Flow 키 선택 처리가 그대로 돌아 연결선 선택이 풀린다 (WD-955 회귀)', async ({ authenticatedPage: page }) => {
     await openEditor(page);

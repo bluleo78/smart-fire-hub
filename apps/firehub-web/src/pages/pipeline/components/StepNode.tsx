@@ -198,15 +198,6 @@ const STATUS_CARD_BG_LIGHT: Record<NonNullable<StepNodeData['executionStatus']>,
   CANCELLED: 'rgba(249,250,251,0.6)',
 };
 
-/**
- * 스텝 X 버튼의 Enter·Space 가 React Flow NodeWrapper 의 키 선택 처리(노드 선택·연결선 선택 해제)로
- * 번지지 않게 끊는다(WD-955). 기본 동작(click)은 막지 않는다.
- * Escape 는 선택 해제 의미라 그대로 올려 보낸다(위쪽 창 닫기 처리도 끊지 않게).
- */
-function stopCanvasSelectionKeys(e: React.KeyboardEvent) {
-  if (e.key === 'Enter' || e.key === ' ') e.stopPropagation();
-}
-
 export const StepNode = memo(function StepNode({ data }: NodeProps<StepNodeType>) {
   const { resolvedTheme } = useTheme();
   const isDark = resolvedTheme === 'dark';
@@ -329,14 +320,16 @@ export const StepNode = memo(function StepNode({ data }: NodeProps<StepNodeType>
 
             {showDelete && (
               <button
-                onKeyDown={stopCanvasSelectionKeys}
                 onClick={(e) => {
                   e.stopPropagation();
                   data.onRequestDelete?.();
                 }}
                 aria-label="스텝 삭제"
                 title="스텝 삭제"
-                className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+                // nokey: React Flow 의 isInputDOMNode 가 .nokey 안의 키 이벤트를 무시해 NodeWrapper 가 Enter·Space·Escape 로
+                // 노드를 선택하며 연결선 선택을 풀지 못한다(WD-955). stopPropagation 으로 끊으면 네이티브 이벤트가
+                // document·window 까지 못 가 앱 수준 Escape 처리(오버레이·서랍 닫기)가 죽으므로, 전파는 그대로 두고 쓴다.
+                className="nokey flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
               >
                 <X className="h-3 w-3" />
               </button>
