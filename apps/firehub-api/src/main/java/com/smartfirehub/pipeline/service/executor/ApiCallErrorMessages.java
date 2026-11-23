@@ -358,6 +358,13 @@ public final class ApiCallErrorMessages {
    * + placement=query). 해석할 수 없는 문자열이면 첫 {@code ?}·{@code #} 앞까지만 남긴다.
    */
   public static String redactUrl(String url) {
+    // 가린 결과의 숨은 글자(ZWSP·RLO·탭 등)는 화면에서 안 보이거나 글자 순서를 뒤집으므로 %XX 로 보이게 한다(WD-1000).
+    // 가리기(비밀값 제거)를 끝낸 뒤에 적용하므로 마스킹 결과는 달라지지 않는다.
+    return RequestUrlEncoding.encodeHiddenForDisplay(redactUrlRaw(url));
+  }
+
+  /** 숨은 글자 인코딩 전의 가리기 본체 — userinfo·쿼리·프래그먼트를 버린다. */
+  private static String redactUrlRaw(String url) {
     if (url == null) return "";
     try {
       URI uri = new URI(url);

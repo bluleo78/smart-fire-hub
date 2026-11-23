@@ -251,4 +251,67 @@ class RequestUrlEncodingTest {
     assertThat(RequestUrlEncoding.decodeForDisplay("https://h/%C3%A9%CC%81"))
         .isEqualTo("https://h/\u00E9\u0301");
   }
+
+  /** 제어 문자 때문에 인코딩이 원문으로 물러서도 표시용은 숨은 글자·제어를 %XX 로 보인다(WD-1000 후속). */
+  @Test
+  void toDisplayUrl_controlCharFallback_hiddenCharsEncoded() {
+    String out = RequestUrlEncoding.toDisplayUrl("https://h/a\u202Eb\t");
+    assertThat(out).doesNotContain("\u202E").doesNotContain("\t");
+    assertThat(out).contains("%E2%80%AE").contains("%09");
+  }
+
+  /** 짝 없는 서로게이트는 WTF-8 3바이트 %XX 로 보이고 날것은 없다. */
+  @Test
+  void toDisplayUrl_loneSurrogate_shownAsWtf8Bytes() {
+    String out = RequestUrlEncoding.toDisplayUrl("https://h/a\uD800b");
+    assertThat(out).isEqualTo("https://h/a%ED%A0%80b");
+    assertThat(RequestUrlEncoding.toDisplayUrl("https://h/\uDC00\n")).contains("%ED%B0%80");
+  }
+
+  /** 물러선 경우에도 보통 글자(한글)는 글자로 둔다. */
+  @Test
+  void toDisplayUrl_fallbackKeepsKorean() {
+    assertThat(RequestUrlEncoding.toDisplayUrl("https://h/검색\t")).isEqualTo("https://h/검색%09");
+    assertThat(RequestUrlEncoding.toDisplayUrl("https://h/검색")).isEqualTo("https://h/검색");
+  }
+
+  /** authority(host) 안의 숨은 글자도 %XX 로 보인다. */
+  @Test
+  void toDisplayUrl_authorityHiddenCharEncoded() {
+    String out = RequestUrlEncoding.toDisplayUrl("https://ex\u200Bample.com/p");
+    assertThat(out).doesNotContain("\u200B").contains("%E2%80%8B");
+    assertThat(RequestUrlEncoding.toDisplayUrl("https://u:p@exam.com/p"))
+        .isEqualTo("https://u:p@exam.com/p");
+  }
+
+  /** ASCII 뒤 Mc 는 %XX 유지, 비ASCII 글자 뒤 Mc 는 푼다. */
+  @Test
+  void decodeForDisplay_spacingMarkAfterAscii_kept() {
+    assertThat(RequestUrlEncoding.decodeForDisplay("https://h/a%E0%A4%83"))
+        .isEqualTo("https://h/a%E0%A4%83");
+    assertThat(RequestUrlEncoding.decodeForDisplay("https://h/%EA%B2%80%E0%A4%83"))
+        .isEqualTo("https://h/\uAC80\u0903");
+  }
+
+  /** 아랍 숫자는 AN 사이의 중립 글자(-)를 오른쪽→왼쪽으로 풀어 순서를 뒤집으므로 인코딩 그대로 둔다. */
+  @Test
+  void decodeForDisplay_arabicIndicDigits_kept() {
+    assertThat(RequestUrlEncoding.decodeForDisplay("https://h/p/%D9%A1-%D9%A2"))
+        .isEqualTo("https://h/p/%D9%A1-%D9%A2");
+  }
+
+  /** 물러선 경우에도 fragment 는 표시 URL 에서 버린다(비밀이 실리지 않게). */
+  @Test
+  void toDisplayUrl_fallbackDropsFragment() {
+    assertThat(RequestUrlEncoding.toDisplayUrl("https://h/cb\t#access_token=SECRET"))
+        .isEqualTo("https://h/cb%09");
+  }
+
+  /** 물러선 경우에도 평소와 같이 금지 ASCII·홀로 % 를 인코딩해 두 번 적용해도 같다(멱등). */
+  @Test
+  void toDisplayUrl_fallbackIsIdempotentAndEncodesForbiddenAscii() {
+    String once = RequestUrlEncoding.toDisplayUrl("https://h/a\t\"<>|^{}%zz/검색?q=1 2\u202E");
+    assertThat(once).isEqualTo("https://h/a%09%22%3C%3E%7C%5E%7B%7D%25zz/검색?q=1%202%E2%80%AE");
+    assertThat(RequestUrlEncoding.toDisplayUrl(once)).isEqualTo(once);
+  }
 }
