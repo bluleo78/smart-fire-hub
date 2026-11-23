@@ -197,14 +197,21 @@ export function SessionSwitcher({ currentSessionId, onNewSession, onSessionDelet
                         deleteSession
                           .mutateAsync(session.id)
                           .then(
-                            () => onSessionDeleted(session.sessionId),
+                            () => {
+                              // 성공 뒤 처리의 오류는 여기서만 잡는다 — 끝에 .catch 를 달면 아래 거절 처리기의 오류까지 「삭제 성공 뒤」 로 잘못 남는다
+                              try {
+                                onSessionDeleted(session.sessionId);
+                              } catch (error) {
+                                console.error('Failed after AI session delete:', error);
+                              }
+                            },
                             (error) => {
                               // 삭제 실패 안내는 훅의 onError 가 띄운다 — 원인만 남기고 기억에서 뺀다
-                              console.error('Failed to delete AI session:', error);
+                              // 정리를 먼저 — 로그가 던져도 기억에서는 빠지게
                               pendingDeletes.current.delete(req);
+                              console.error('Failed to delete AI session:', error);
                             },
-                          )
-                          .catch((error) => console.error('Failed after AI session delete:', error));
+                          );
                       }}
                       trigger={
                         <PendingButton
