@@ -802,6 +802,22 @@ describe('SYSTEM_PROMPT — GraphRAG 라우팅 예외', () => {
   });
 });
 
+/** preview_api_call 의 GET 전용 안내가 PG·Tibero 의 메인·opencode 프롬프트 모두에 들어간다(WD-946). */
+describe('preview_api_call GET 전용 안내 (WD-946)', () => {
+  // 메인·opencode 두 프롬프트 × PG·Tibero 두 방언 — 같은 세 문구를 모두 담아야 한다
+  it.each([
+    ['메인', 'POSTGRESQL', systemPromptFor],
+    ['메인', 'TIBERO', systemPromptFor],
+    ['opencode', 'POSTGRESQL', opencodeSystemPromptFor],
+    ['opencode', 'TIBERO', opencodeSystemPromptFor],
+  ] as const)('%s 시스템 프롬프트(%s)는 GET 전용 안내를 담는다', (_kind, dialect, promptFor) => {
+    const prompt = promptFor(dialect);
+    expect(prompt).toContain('preview_api_call');
+    expect(prompt).toContain('「테스트 호출」');
+    expect(prompt).toContain('_method');
+  });
+});
+
 /**
  * 방언별 메인·opencode 프롬프트(WD-79).
  *

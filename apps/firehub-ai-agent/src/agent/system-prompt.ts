@@ -98,6 +98,19 @@ ${TIBERO_SQL_GUIDE}`,
   textRequery: TIBERO_TEXT_REQUERY,
 };
 
+/**
+ * preview_api_call 의 GET 전용 안내(WD-946) — 메인·opencode 프롬프트가 같은 문장을 쓴다.
+ *
+ * <p>왜: 에이전트가 POST 스텝을 미리보려고 호출하거나, 메서드 변경 헤더·쿼리로 GET 을 다른 메서드로 바꿔
+ * 거절당하는 일이 반복됐다. 도구는 GET 만 보내므로, 대안(편집기의 「테스트 호출」)까지 한 문장으로 안내한다.
+ *
+ * <p>같은 규칙의 다른 사본 — 고칠 때 함께 맞춘다: 도구 설명(mcp/tools/pipeline-tools.ts preview_api_call),
+ * 거절 문구(mcp/api-client/pipeline-api.ts GET_ONLY), pipeline-builder agent.md(PG·Tibero). 마크다운·도구 설명은
+ * 이 상수를 가져올 수 없어 사본으로 둔다.
+ */
+const PREVIEW_API_GET_ONLY =
+  '`preview_api_call` 은 GET 요청만 보낸다. POST·PUT·DELETE 는 호출하지 않고, 메서드 변경 헤더(X-HTTP-Method-Override 등)·`_method` 쿼리로 GET 을 바꿔 우회하지도 않는다. POST API 는 사용자가 파이프라인 편집기의 「테스트 호출」로 확인하도록 안내하고, PUT·DELETE 는 편집기에서도 미리볼 수 없다고 알린다.';
+
 /** 방언별 조각을 끼워 메인 시스템 프롬프트를 만든다. 본문은 한 벌이다(위 MainPromptParts 설명 참고). */
 const buildSystemPrompt = (p: MainPromptParts): string => `당신은 ${BRAND_NAME}의 AI 어시스턴트입니다.
 사용자의 데이터 관리, 파이프라인 관리, API 연결 관리, 데이터 분석 요청을 도와줍니다.
@@ -299,6 +312,8 @@ show_chart 규칙:
 | 도구 검색 | \`ToolSearch\`, claude-search | 사용 불가 — 제공된 firehub 도구만 사용 |
 
 **Bash 우회 금지**: \`Bash\`로 \`python3\`/\`cat\`/heredoc 등을 써서 파일을 쓰거나 위 차단 도구를 우회하지 않습니다. 데이터 영속화는 반드시 firehub 데이터셋 도구를 사용합니다 (\`Bash\`는 분석 보조용이며 파일쓰기 대체재가 아닙니다).
+
+**API 미리보기는 GET 만**: ${PREVIEW_API_GET_ONLY}
 
 ## L4. N+1 호출 금지 (성능)
 
@@ -804,6 +819,7 @@ ${p.aggregateExample}   - 요청 기간 데이터가 없어 **가용 데이터�
 ${p.sqlRules}
 ## 사용 불가 / 직접 금지
 - \`Write\`/\`Edit\`/\`Read\`/\`Bash\`/\`glob\`/\`grep\` 등 호스트·파일 도구는 비활성이다. **소스코드·파일시스템 탐색 절대 금지**.
+- **API 미리보기는 GET 만**: ${PREVIEW_API_GET_ONLY}
 
 ## 파괴 작업 2턴 확인 (데이터 손실 방지 — 우회 불가)
 \`delete_dataset\`/\`delete_pipeline\`/\`delete_trigger\`/\`delete_api_connection\`/\`drop_dataset_column\`/\`truncate_dataset\`/\`replace_dataset_data\`/\`delete_rows\`/\`delete_report_template\` 등 파괴 도구는 즉시 호출 금지:

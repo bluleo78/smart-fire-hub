@@ -149,6 +149,13 @@ describe('Pipeline MCP Tools', () => {
       }
     });
 
+    it('preview_api_call 설명은 GET 전용·「테스트 호출」 대안·메서드 변경 우회 금지를 안내한다', () => {
+      const description: string = server.instance._registeredTools['preview_api_call'].description;
+      expect(description).toContain('GET');
+      expect(description).toContain('「테스트 호출」');
+      expect(description).toContain('_method');
+    });
+
     it('returns isError on failure', async () => {
       (client.previewApiCall as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('API 오류'));
       const result = await invokeTool(server, 'preview_api_call', {
