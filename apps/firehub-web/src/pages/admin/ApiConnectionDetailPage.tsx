@@ -33,6 +33,7 @@ import {
   connectionNameError,
   type FieldErrors,
   focusFirstError,
+  healthCheckPathError,
   withoutKeys,
 } from '@/lib/api-connection-form';
 import { missingSecretMessage } from '@/lib/api-connection-secret';
@@ -79,8 +80,8 @@ import type { UpdateApiConnectionRequest } from '../../types/api-connection';
 import { BasicAuthFields } from './components/BasicAuthFields';
 import { ExtraHeadersFields } from './components/ExtraHeadersFields';
 
-/** 기본 정보 카드에서 인라인 오류를 보일 수 있는 칸 (WD-561) — 선언 순서가 화면 순서(첫 오류 포커스 기준)다. */
-const INFO_FIELD_ORDER = ['name', 'baseUrl'] as const;
+/** 기본 정보 카드에서 인라인 오류를 보일 수 있는 칸 (WD-561, 헬스체크 경로는 WD-937) — 선언 순서가 화면 순서(첫 오류 포커스 기준)다. */
+const INFO_FIELD_ORDER = ['name', 'baseUrl', 'healthCheckPath'] as const;
 type InfoFieldKey = (typeof INFO_FIELD_ORDER)[number];
 /** 인증 편집 칸 (WD-561) — 유형·위치에 따라 보이는 칸만 검사한다. 순서·key 는 생성 대화상자와 같은 공용 상수다(WD-666). */
 type AuthFieldKey = (typeof AUTH_FIELD_KEYS)[number];
@@ -353,6 +354,7 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
   const infoFieldId: Record<InfoFieldKey, string> = {
     name: `${baseId}-name`,
     baseUrl: `${baseId}-base-url`,
+    healthCheckPath: `${baseId}-health-path`,
   };
   const authFieldId: Record<AuthFieldKey, string> = {
     authName: `${baseId}-auth-name`,
@@ -479,7 +481,8 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
     if (mergeField(name, prev?.name, next.name, setName)) replaced.push('name');
     mergeField(description, prev?.description, next.description, setDescription);
     if (mergeField(baseUrl, prev?.baseUrl, next.baseUrl, setBaseUrl)) replaced.push('baseUrl');
-    mergeField(healthCheckPath, prev?.healthCheckPath, next.healthCheckPath, setHealthCheckPath);
+    // 헬스체크 경로도 재조회로 새 값이 되면 그 칸 오류를 지운다 — 채워진 값 옆에 이전 값의 오류가 남지 않게 (WD-937)
+    if (mergeField(healthCheckPath, prev?.healthCheckPath, next.healthCheckPath, setHealthCheckPath)) replaced.push('healthCheckPath');
     if (replaced.length > 0) setInfoErrors((errs) => withoutKeys(errs, ...replaced));
     // dirty 비교 기준 스냅샷 갱신 (#551) — 저장 없이 사이드바 이동 시 유실 경고용
     setInitialInfo(next);
@@ -633,7 +636,7 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
 
   /**
    * 기본 정보(이름/설명/baseUrl/healthCheckPath) 저장.
-   * (WD-561) 이름·Base URL 을 한꺼번에 검사해 칸마다 인라인 오류를 달고, 첫 오류 칸으로 포커스를 옮긴다.
+   * (WD-561) 이름·Base URL·헬스체크 경로(WD-937)를 한꺼번에 검사해 칸마다 인라인 오류를 달고, 첫 오류 칸으로 포커스를 옮긴다.
    */
   const handleSaveInfo = async () => {
     // 숫자만으로 된 주소 id(connectionId)로만 저장한다(WD-628) — 화면도 그 id 로 조회했다
@@ -643,6 +646,9 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
       // Base URL은 API 연결의 필수 값 — 빈 값으로 저장하면 백엔드가 null 처리해 무음으로 무시하므로 클라이언트에서 차단 (#124)
       // 형식도 생성 대화상자와 같은 규칙으로 클라이언트에서 막는다(WD-909).
       baseUrl: baseUrlError(baseUrl),
+      // 헬스체크 경로는 입력했다면 /로 시작해야 한다 — 서버(UpdateApiConnectionRequest)도 400 으로 거절하므로, 요청 전에
+      // 생성 대화상자와 같은 공용 규칙으로 칸 아래에 알린다(예전엔 토스트로만 알려 어느 칸인지 몰랐다, WD-937)
+      healthCheckPath: healthCheckPathError(healthCheckPath),
     };
     setInfoErrors(nextErrors);
     if (focusFirstError(INFO_FIELD_ORDER, nextErrors, infoFieldId)) return;
@@ -994,12 +1000,16 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
             />
           </FormField>
           {/* 헬스체크 경로 */}
-          <div className="space-y-2">
-            <Label htmlFor={`${baseId}-health-path`}>헬스체크 경로 (선택)</Label>
+          {/* 오류가 생기면 FormField 가 도움말 id 뒤에 오류 id 를 이어 붙인다 — 도움말 연결(#432)은 유지된다(WD-937) */}
+          <FormField label="헬스체크 경로 (선택)" htmlFor={infoFieldId.healthCheckPath} error={infoErrors.healthCheckPath}>
             <Input
-              id={`${baseId}-health-path`}
+              id={infoFieldId.healthCheckPath}
               value={healthCheckPath}
-              onChange={(e) => setHealthCheckPath(e.target.value)}
+              onChange={(e) => {
+                setHealthCheckPath(e.target.value);
+                // 고치기 시작하면 오류를 지운다(WD-937)
+                setInfoErrors((prev) => withoutKeys(prev, 'healthCheckPath'));
+              }}
               placeholder="/health"
               disabled={!canWrite}
               /* 아래 도움말 문구를 스크린리더가 함께 읽도록 연결 (#432) */
@@ -1008,7 +1018,7 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
             <p id={`${baseId}-health-path-help`} className="text-xs text-muted-foreground">
               10분마다 자동 상태 점검. 비워두면 점검 안 함.
             </p>
-          </div>
+          </FormField>
           <div className="grid grid-cols-2 gap-4 text-sm text-muted-foreground">
             <div>생성일: {formatDate(connection.createdAt)}</div>
             <div>수정일: {formatDate(connection.updatedAt)}</div>
