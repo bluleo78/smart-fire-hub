@@ -1,11 +1,12 @@
-import { fireEvent, render, screen } from '@testing-library/react';
-import { useState } from 'react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { useRef, useState } from 'react';
 import { describe, expect, it } from 'vitest';
 
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { MAIN_CONTENT_ID } from '@/lib/focus-lost';
 
 /**
  * 공유 포커스 복귀 훅(#328)의 회귀 가드 — 특히 #337 로 드러난
@@ -61,5 +62,62 @@ describe('useDialogFocusRestore (#328, #337)', () => {
     // 훅의 보정은 requestAnimationFrame 안에서 일어난다.
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     expect(trigger).toHaveFocus();
+  });
+});
+
+/**
+ * WD-980: 「본문으로 건너뛰기」 뒤(main#main-content 에 포커스·tabindex=-1)에 `autoFocus` 가 있는 대화상자(#337 경로)가
+ * 포커스 없이 열렸다 닫히면, 전역 포커스 이력의 오래된 항목(건너뛰기 링크)이 아니라
+ * 대체 지점(restoreFocusRef) → 없으면 본문(main)으로 돌아와야 한다.
+ */
+describe('useDialogFocusRestore — 건너뛰기 뒤 autoFocus 대화상자 (WD-980)', () => {
+  function SkipHarness({ withRestoreRef }: { withRestoreRef: boolean }) {
+    const [open, setOpen] = useState(false);
+    const restoreRef = useRef<HTMLButtonElement>(null);
+    return (
+      <div>
+        <a href={`#${MAIN_CONTENT_ID}`}>본문으로 건너뛰기</a>
+        <main id={MAIN_CONTENT_ID} tabIndex={-1}>
+          <button type="button" onClick={() => setOpen(true)}>
+            열기
+          </button>
+          <button type="button" ref={restoreRef}>
+            대체 지점
+          </button>
+        </main>
+        <AlertDialog open={open} onOpenChange={setOpen}>
+          <AlertDialogContent restoreFocusRef={withRestoreRef ? restoreRef : undefined}>
+            <AlertDialogTitle>확인</AlertDialogTitle>
+            <AlertDialogDescription>정말 실행할까요?</AlertDialogDescription>
+            <AlertDialogFooter>
+              <AlertDialogCancel autoFocus>취소</AlertDialogCancel>
+              <AlertDialogAction>확인</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </div>
+    );
+  }
+
+  it.each([
+    [true, '대체 지점'],
+    [false, 'main'],
+  ])('restoreFocusRef=%s 이면 포커스가 %s 로 돌아오고 건너뛰기 링크로 튕기지 않는다', async (withRestoreRef) => {
+    render(<SkipHarness withRestoreRef={withRestoreRef} />);
+    // 건너뛰기: 링크 → 본문 순으로 포커스(이력에 링크, main 이 차례로 남는다)
+    screen.getByRole('link', { name: '본문으로 건너뛰기' }).focus();
+    const main = document.getElementById(MAIN_CONTENT_ID)!;
+    main.focus();
+    expect(main).toHaveFocus();
+
+    // 버튼에 포커스가 가지 않는 클릭(Safari 흉내) — 포커스는 main 에 남은 채 열린다
+    fireEvent.click(screen.getByRole('button', { name: '열기' }));
+    expect(await screen.findByRole('button', { name: '취소' })).toHaveFocus();
+    fireEvent.click(screen.getByRole('button', { name: '취소' }));
+
+    await waitFor(() => expect(screen.queryByRole('button', { name: '취소' })).toBeNull());
+    const expected = withRestoreRef ? screen.getByRole('button', { name: '대체 지점' }) : main;
+    await waitFor(() => expect(expected).toHaveFocus());
+    expect(screen.getByRole('link', { name: '본문으로 건너뛰기' })).not.toHaveFocus();
   });
 });

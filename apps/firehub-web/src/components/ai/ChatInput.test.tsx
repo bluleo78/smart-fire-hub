@@ -9,6 +9,7 @@ import type { RefObject } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { MAX_CHAT_MESSAGE_LENGTH } from '../../lib/ai-chat-limits';
+import { MAIN_CONTENT_ID } from '../../lib/focus-lost';
 import { ChatInput } from './ChatInput';
 
 /** 실제 AIChatPanel 처럼 data-ai-chat-panel 경계 안에 ChatInput 을 둔다 */
@@ -89,6 +90,30 @@ describe('ChatInput focusOnOpen (WD-579)', () => {
     (document.activeElement as HTMLElement | null)?.blur();
     rerender(<Panel focusOnOpen isStreaming={false} />);
     expect(textarea()).not.toHaveFocus();
+  });
+
+  it('다른 포커스 요소가 없거나 포커스가 본문 main#main-content 에 있어도 free 라 열림 포커스가 입력창으로 간다 (WD-980)', () => {
+    // 포커스 요소 없음(body)
+    const first = render(<Panel focusOnOpen />);
+    expect(textarea()).toHaveFocus();
+    first.unmount();
+    (document.activeElement as HTMLElement | null)?.blur();
+
+    // 건너뛰기 뒤 main 에 임시 tabindex=-1 로 포커스가 남은 상태
+    const main = document.createElement('main');
+    main.id = MAIN_CONTENT_ID;
+    main.tabIndex = -1;
+    document.body.appendChild(main);
+    // 단언이 실패해도 main 이 공유 jsdom 문서에 남아 뒤 시험을 흐리지 않게 finally 로 지운다
+    try {
+      main.focus();
+      expect(main).toHaveFocus();
+      const { rerender } = render(<Panel focusOnOpen={false} />);
+      rerender(<Panel focusOnOpen />);
+      expect(textarea()).toHaveFocus();
+    } finally {
+      main.remove();
+    }
   });
 
   it('열던 순간의 자리(패널 밖, 예: AI 상태 칩)에 포커스가 그대로 있으면 입력창으로 옮긴다', () => {

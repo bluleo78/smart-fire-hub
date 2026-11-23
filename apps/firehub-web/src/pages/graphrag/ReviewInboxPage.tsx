@@ -234,7 +234,8 @@ export default function ReviewInboxPage() {
     let frames = 0;
     const check = () => {
       const active = document.activeElement;
-      if (active && active !== document.body && active.isConnected) {
+      // body 뿐 아니라 건너뛰기 뒤 본문(main)에 떨어진 포커스도 잃음으로 본다(WD-980).
+      if (active && !isFocusLost(active) && active.isConnected) {
         if (frames++ < 2) requestAnimationFrame(check);
         return;
       }

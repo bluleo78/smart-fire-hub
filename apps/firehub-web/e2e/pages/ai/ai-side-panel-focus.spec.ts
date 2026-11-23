@@ -18,6 +18,7 @@
 
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { focusMain } from '../../fixtures/focus-main';
 import { isUnderInert } from '../../fixtures/inert-a11y';
 
 /** AIStatusChip — 패널을 여는 트리거(패널 바깥) */
@@ -75,6 +76,86 @@ test.describe('AISidePanel — 열림 시 입력창 포커스 (WD-579)', () => {
     await panel.getByRole('button', { name: 'AI 어시스턴트 닫기' }).click();
     await expect(panel).toHaveAttribute('inert', /.*/);
     await expect(chip).toBeFocused();
+  });
+
+  test('닫힐 때 포커스가 본문 main 에 있으면(건너뛰기 뒤) 여는 트리거(칩)로 돌아간다 (WD-980)', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.goto('/', { waitUntil: 'commit' });
+    const panel = page.getByTestId('ai-side-panel');
+    const chip = chipLocator(page);
+    await chip.click();
+    await expect(panel.getByPlaceholder('메시지를 입력하세요...')).toBeFocused();
+
+    // 건너뛰기로 포커스가 main 에 남은 상태 — 포커스를 옮기지 않도록 DOM click 으로 닫는다
+    await focusMain(page);
+    await expect(page.locator('main#main-content')).toBeFocused();
+    await panel.getByRole('button', { name: 'AI 어시스턴트 닫기' }).evaluate((el) => (el as HTMLElement).click());
+    await expect(panel).toHaveAttribute('inert', /.*/);
+    await expect(chip).toBeFocused();
+  });
+
+  test('본문 main 에 포커스를 둔 채(건너뛰기 뒤) Control+K 로 열었다가 닫으면 포커스가 body 가 아니라 본문 main 으로 돌아온다 (WD-980)', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.goto('/', { waitUntil: 'commit' });
+    const panel = page.getByTestId('ai-side-panel');
+    await focusMain(page);
+    await expect(page.locator('main#main-content')).toBeFocused();
+
+    await page.keyboard.press('Control+k');
+    await expect(panel).not.toHaveAttribute('inert', /.*/);
+    await expect(panel.getByPlaceholder('메시지를 입력하세요...')).toBeFocused();
+
+    await page.keyboard.press('Control+k');
+    await expect(panel).toHaveAttribute('inert', /.*/);
+    // 마지막 복귀 지점으로 main — body(페이지 맨 위)로 떨어지면 안 된다
+    await expect(page.locator('main#main-content')).toBeFocused();
+    expect(await page.evaluate(() => document.activeElement === document.body)).toBe(false);
+  });
+
+  test('스트리밍 중 다시 열어 입력창 포커스를 기다리는 동안 포커스가 본문 main 에 있으면, 끝난 뒤 입력창으로 옮긴다 (WD-980)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 스트리밍 중에는 입력창이 비활성이라 열림 포커스가 대기한다. 그 사이 건너뛰기로 포커스가 main 에 남는 상황을 만든다.
+    // 기본 fixture 의 세션 목록 모킹을 나중에 등록한 빈 목록이 덮는다(Playwright 는 마지막 route 가 먼저 받는다)
+    await mockApi(page, 'GET', '/api/v1/ai/sessions', []);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    await page.route(
+      (url) => url.pathname === '/api/v1/ai/chat',
+      async (route) => {
+        await gate;
+        await route.fulfill({
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
+          body: 'data: {"type":"init","sessionId":"s-980"}\n\ndata: {"type":"done","inputTokens":1,"outputTokens":1}\n\n',
+        });
+      },
+    );
+    await page.goto('/', { waitUntil: 'commit' });
+    const panel = page.getByTestId('ai-side-panel');
+    const chip = chipLocator(page);
+    await chip.click();
+    const input = panel.getByPlaceholder('메시지를 입력하세요...');
+    await expect(input).toBeFocused();
+    await input.fill('hello');
+    await page.keyboard.press('Enter');
+    await expect(input).toBeDisabled();
+
+    // 닫았다가 칩에서 다시 연다(열던 자리 = 칩) — 스트리밍 중이라 입력창 포커스는 대기 상태
+    await page.keyboard.press('Control+k');
+    await expect(panel).toHaveAttribute('inert', /.*/);
+    await chip.focus();
+    await page.keyboard.press('Control+k');
+    await expect(panel).not.toHaveAttribute('inert', /.*/);
+
+    // 대기 중에 포커스가 본문 main 으로 떨어진다
+    await focusMain(page);
+    await expect(page.locator('main#main-content')).toBeFocused();
+    release();
+    await expect(input).toBeEnabled();
+    await expect(input).toBeFocused();
   });
 
   test('전체 화면 모드가 저장된 상태에서 Control+K 로 열면 입력창에 포커스가 간다', async ({

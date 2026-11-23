@@ -986,6 +986,27 @@ test.describe('AI 검수 인박스', () => {
       await expect(page.getByText('검수 대기 중인 항목이 없습니다.')).toBeVisible();
       await expect(page.getByTestId('review-inbox-table')).toBeFocused();
     });
+
+    // WD-980: 건너뛰기 뒤 main 에 tabindex=-1 이 남아 있어도, 행이 사라지면 main 이 아니라 표로 가야 한다.
+    test('건너뛰기 뒤 거부를 확정해 행이 사라지면 포커스가 본문(main)이 아니라 표로 간다 (WD-980)', async ({ authenticatedPage: page }) => {
+      await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createSynonymReviewItem()]);
+      await mockApi(page, 'POST', '/api/v1/graphrag/review-items/1/reject', createSynonymReviewItem({ status: 'rejected' }));
+      await gotoUntilReady(page, '/knowledge-graph/review', page.getByRole('button', { name: '거부' }));
+
+      const main = page.locator('main#main-content');
+      await page.keyboard.press('Tab');
+      await page.keyboard.press('Enter');
+      await expect(main).toBeFocused();
+
+      // 클릭해도 버튼에 포커스가 가지 않는 환경(Safari 등)을 흉내 낸다 — 포커스가 본문(main)에 남은 채 대화상자가 열린다
+      await page.getByRole('button', { name: '거부' }).evaluate((el) => (el as HTMLElement).click());
+      await mockApi(page, 'GET', '/api/v1/graphrag/review-items', []);
+      await page.getByTestId('review-decide-confirm-action').click();
+
+      await expect(page.getByText('검수 대기 중인 항목이 없습니다.')).toBeVisible();
+      await expect(page.getByTestId('review-inbox-table')).toBeFocused();
+      await expect(main).not.toBeFocused();
+    });
   });
 
   // #338/#340/#342 회귀 가드 — 표의 반복 컨트롤이 스크린리더에 상태·대상·오류 사유를 전달하는지 검증한다.
