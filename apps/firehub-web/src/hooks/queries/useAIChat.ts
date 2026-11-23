@@ -133,6 +133,19 @@ export function useAIChat(options?: {
   const [isThinking, setIsThinking] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const messagesCommittedRef = useRef(false);
+  // 대화 이력 로딩 상태. sendMessage 가 클로저 없이 최신값을 읽도록 state 와 ref 를 함께 갱신한다 (WD-1004).
+  const [isLoadingHistory, setIsLoadingHistoryState] = useState(false);
+  const isLoadingHistoryRef = useRef(false);
+  const setLoadingHistory = useCallback((v: boolean) => {
+    isLoadingHistoryRef.current = v;
+    setIsLoadingHistoryState(v);
+  }, []);
+  /**
+   * 이력 로딩 중에 들어온 「AI 에게 묻기」 질문 보관함 (WD-1004).
+   * 로딩 중 sendMessage 는 글을 버리므로 여기 두었다가, 그 로딩이 끝났을 때 아직 같은 대화가 열려 있으면 한 번 보낸다.
+   * 대화를 바꾸는 모든 동작(새 대화·다른 대화 열기·삭제 후 새 대화)이 비우므로 엉뚱한 대화로 가지 않는다. 마지막 질문 하나만 남긴다.
+   */
+  const pendingAskRef = useRef<{ content: string; sessionId: string | null } | null>(null);
   const streamingContentRef = useRef<Partial<AIMessage> | null>(null);
   // 스트리밍 중단 시 메시지 유실 방지용 — messages[]에 커밋되기 전 userMessage 보관
   const pendingUserMessageObjRef = useRef<AIMessage | null>(null);
@@ -199,7 +212,24 @@ export function useAIChat(options?: {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [isStreaming, isUploading]);
 
-  const sendMessage = useCallback(async (content: string, files?: File[]) => {
+  /**
+   * 보관한 「AI 에게 물어보기」 질문을 버리고 사용자에게 알린다 (WD-1004).
+   * 보관할 때 알림 패널은 이미 닫혀 있어 말없이 지우면 질문이 사라진 걸 알 수 없기 때문이다. 보관한 질문이 있을 때만 알린다.
+   */
+  const discardPendingAsk = useCallback((message = '대화가 바뀌어 「AI 에게 물어보기」 질문을 보내지 않았습니다.') => {
+    if (!pendingAskRef.current) return;
+    pendingAskRef.current = null;
+    toast.info(message);
+  }, []);
+
+  /** 보냈으면 true(스트리밍 시작), 어떤 이유로든 보내지 못했으면 false — 호출한 입력창이 글을 돌려주는 데 쓴다 (WD-1004). */
+  const sendMessage = useCallback(async (content: string, files?: File[]): Promise<boolean> => {
+    // WD-1004: 이력 응답이 오기 전에 보내면 loadSession 의 setMessages(msgs) 가 방금 보낸 글·답을 덮어쓴다.
+    // 그래서 로딩 중에는 보내지 않고 안내만 한다(입력창은 그대로 둔다).
+    if (isLoadingHistoryRef.current) {
+      toast.info('대화 이력을 불러오는 중입니다. 잠시 후 다시 보내 주세요.');
+      return false;
+    }
     messagesCommittedRef.current = false;
 
     // WD-57: 직전에 누른 "응답 중단"의 서버 취소가 아직 가는 중이면 먼저 도착시킨다. 순서가 뒤집히면
@@ -207,6 +237,12 @@ export function useAIChat(options?: {
     if (pendingCancelRef.current) {
       await pendingCancelRef.current;
       pendingCancelRef.current = null;
+      // WD-1004: 취소를 기다리는 사이 다른 대화를 열거나 새 대화로 바꿨으면, 여기서 보내면 옛 대화로 가거나
+      // 새로 불러온 이력에 덮인다 — 보내지 않고 안내만 한다.
+      if (isLoadingHistoryRef.current || currentSessionIdRef.current !== currentSessionId) {
+        toast.info('대화가 바뀌어 보내지 않았습니다. 다시 보내 주세요.');
+        return false;
+      }
     }
     streamSessionIdRef.current = currentSessionId;
 
@@ -232,7 +268,7 @@ export function useAIChat(options?: {
       } catch {
         toast.error('파일 업로드에 실패했습니다.');
         setIsUploading(false);
-        return;
+        return false;
       } finally {
         setIsUploading(false);
       }
@@ -543,6 +579,7 @@ export function useAIChat(options?: {
       navContext,
       screen,
     );
+    return true;
   }, [currentSessionId, queryClient, createTrackedBlobUrl, clearCompaction, setCurrentSessionId]);
 
   const stopStreaming = useCallback(() => {
@@ -592,8 +629,6 @@ export function useAIChat(options?: {
     setPendingUserMessage(null);
   }, [clearCompaction]);
 
-  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
-
   const startNewSession = useCallback(() => {
     // 스트리밍 중 새 세션 시작 시 기존 SSE 스트림을 취소하여 상태 오염 방지
     if (abortControllerRef.current) {
@@ -609,11 +644,13 @@ export function useAIChat(options?: {
     setIsThinking(false);
     // 진행 중이던 기록 요청을 낡은 것으로 만든다(번호 증가) — 그 응답은 버려진다
     loadSeqRef.current += 1;
+    // 다른 대화로 가는 것이므로 이전 대화용으로 보관한 질문은 버리고 알린다 (WD-1004)
+    discardPendingAsk();
     // 로딩 중이던 기록 요청은 loadSession 이 버리고(로딩 표시도 건드리지 않음) 여기서 로딩 표시를 끈다 (WD-972)
-    setIsLoadingHistory(false);
+    setLoadingHistory(false);
     setContextTokens(null);
     clearCompaction();
-  }, [clearCompaction, setCurrentSessionId]);
+  }, [clearCompaction, setCurrentSessionId, setLoadingHistory, discardPendingAsk]);
 
 
   const loadSession = useCallback(async (sessionId: string) => {
@@ -624,8 +661,10 @@ export function useAIChat(options?: {
     }
     // 이 요청의 번호 — 응답 때 최신 번호와 다르면 낡은 응답이다
     const seq = ++loadSeqRef.current;
+    // 새 로딩이 시작되면 이전 로딩 때 보관한 질문은 버리고 알린다. 단 같은 대화를 다시 여는 것이면 그 대화용 질문이므로 유지한다 (WD-1004)
+    if (pendingAskRef.current?.sessionId !== sessionId) discardPendingAsk();
     const isStale = () => loadSeqRef.current !== seq || currentSessionIdRef.current !== sessionId;
-    setIsLoadingHistory(true);
+    setLoadingHistory(true);
     setCurrentSessionId(sessionId);
     setMessages([]);
     setStreamingMessage(null);
@@ -639,26 +678,31 @@ export function useAIChat(options?: {
       const response = await aiApi.getSessionMessages(sessionId);
       // 히스토리의 이미지 첨부에 인증된 blob URL 생성 (img 태그는 JWT 헤더를 보낼 수 없으므로)
       const msgs = response.data as AIMessage[];
-      // WD-972: 기록 응답이 낡았으면(그 사이 다른 대화로 옮김·새 요청) 이미지 blob 을 받지 않고 버린다
+      // WD-972: 기록을 기다리는 사이 다른 대화로 옮겼거나(지운 뒤 새 대화 포함) 새 요청이 있으면 늦게 온 기록을 버린다
       if (isStale()) return;
-      const blobPromises: Promise<void>[] = [];
+      // 글 이력은 바로 보여 주고 로딩을 푼다 — 이미지 내려받기가 보내기를 막지 않게 한다 (WD-1004)
+      setMessages(msgs);
+      setLoadingHistory(false);
+      // 이미지 blob 은 배경에서 받아, 도착할 때마다 함수형 갱신으로 해당 첨부에만 previewUrl 을 넣는다.
+      // (setMessages(msgs) 로 덮으면 그 사이 사용자가 보낸 새 글이 사라지므로 덮지 않는다)
       for (const msg of msgs) {
         if (!msg.attachments?.length) continue;
         for (const att of msg.attachments) {
-          if (att.mimeType.startsWith('image/')) {
-            blobPromises.push(
-              apiClient.get(`/files/${att.id}/content`, { responseType: 'blob' })
-              .then((res) => {
-                att.previewUrl = createTrackedBlobUrl(res.data as Blob);
-              }).catch(() => {}),
-            );
-          }
+          if (!att.mimeType.startsWith('image/')) continue;
+          void apiClient.get(`/files/${att.id}/content`, { responseType: 'blob' })
+            .then((res) => {
+              // 그 사이 다른 대화로 옮겼으면 버린다
+              if (isStale()) return;
+              const url = createTrackedBlobUrl(res.data as Blob);
+              setMessages((prev) => prev.map((m) => (
+                m.id !== msg.id ? m : {
+                  ...m,
+                  attachments: m.attachments?.map((a) => (a.id === att.id ? { ...a, previewUrl: url } : a)),
+                }
+              )));
+            }).catch(() => {});
         }
       }
-      if (blobPromises.length > 0) await Promise.all(blobPromises);
-      // WD-972: 기록을 기다리는 사이 다른 대화로 옮겼거나(지운 뒤 새 대화 포함) 하면 늦게 온 기록을 버린다
-      if (isStale()) return;
-      setMessages(msgs);
     } catch (error) {
       if (isStale()) return;
       // 세션 히스토리 로드 실패 시 사용자에게 에러 피드백 제공
@@ -667,9 +711,38 @@ export function useAIChat(options?: {
       setMessages([]); // 빈 상태 명시적 처리
     } finally {
       // 버려진(다른 대화로 옮긴) 응답은 로딩 표시를 끄지 않는다 — 옮긴 대화가 아직 로딩 중일 때 빈 상태가 깜빡이지 않게 (WD-972)
-      if (!isStale()) setIsLoadingHistory(false);
+      if (!isStale()) setLoadingHistory(false);
     }
-  }, [createTrackedBlobUrl, clearCompaction, setCurrentSessionId]);
+  }, [createTrackedBlobUrl, clearCompaction, setCurrentSessionId, setLoadingHistory, discardPendingAsk]);
+
+  /**
+   * 「AI 에게 묻기」용 전송 (WD-1004). 이력 로딩 중이 아니면 바로 보내고, 로딩 중이면 지금 불러오는 대화에 묶어 보관한다.
+   * 보관한 질문은 아래 effect 가 로딩이 끝났을 때(성공·실패 모두) 그 대화가 아직 열려 있을 때만 보낸다.
+   */
+  const sendAfterHistoryLoaded = useCallback((content: string) => {
+    if (!isLoadingHistoryRef.current) {
+      void sendMessage(content);
+      return;
+    }
+    // 이미 보관한 질문이 있으면 새 질문이 그것을 대신한다 — 말없이 바뀌지 않게 알린다
+    discardPendingAsk('앞서 보관한 「AI 에게 물어보기」 질문 대신 새 질문을 보냅니다.');
+    pendingAskRef.current = { content, sessionId: currentSessionIdRef.current };
+  }, [sendMessage, discardPendingAsk]);
+
+  // 이력 로딩이 끝나면 보관한 질문을 보낸다. effect 에서 보내는 이유: 렌더가 끝난 뒤의 sendMessage 가 새로 열린 대화 id 를 알고 있다.
+  // 보낸 대화가 아직 그 대화일 때만 보내고, 어떤 경우든 비워 두 번 보내지 않는다.
+  useEffect(() => {
+    if (isLoadingHistory) return;
+    const pending = pendingAskRef.current;
+    if (!pending) return;
+    if (pending.sessionId !== currentSessionIdRef.current) {
+      // 로딩이 끝났는데 다른 대화가 열려 있으면 버리고 알린다 (WD-1004)
+      discardPendingAsk();
+      return;
+    }
+    pendingAskRef.current = null;
+    void sendMessage(pending.content);
+  }, [isLoadingHistory, sendMessage, discardPendingAsk]);
 
   /**
    * 대화 삭제가 성공한 뒤 호출한다 (WD-972). 지운 것이 ref 기준 지금 열린 대화일 때만 새 대화로 바꾸고 true 를 돌려준다.
@@ -696,6 +769,7 @@ export function useAIChat(options?: {
     currentSessionId,
     contextTokens,
     sendMessage,
+    sendAfterHistoryLoaded,
     stopStreaming,
     startNewSession,
     loadSession,

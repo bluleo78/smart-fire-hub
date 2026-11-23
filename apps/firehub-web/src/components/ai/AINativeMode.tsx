@@ -15,6 +15,7 @@ export function AINativeMode() {
     isStreaming,
     isThinking,
     isUploading,
+    isLoadingHistory,
     isCompacting,
     compactionStartedAt,
     sendMessage,
@@ -121,6 +122,8 @@ export function AINativeMode() {
             onStop={stopStreaming}
             isStreaming={isStreaming}
             isUploading={isUploading}
+            // 이력 로딩 중에는 보내기만 막는다(WD-1004)
+            sendBlocked={isLoadingHistory}
           />
         </div>
       </div>

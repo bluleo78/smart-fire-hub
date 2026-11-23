@@ -98,7 +98,7 @@ describe('useAIChat — 응답 중단 시 서버 취소 (WD-57)', () => {
     act(() => streams[0].onEvent({ type: 'init', sessionId: 'sess-order' }));
     act(() => result.current.stopStreaming());
 
-    let sent!: Promise<void>;
+    let sent!: Promise<boolean>;
     act(() => {
       sent = result.current.sendMessage('A');
     });

@@ -1,4 +1,4 @@
-import { type MutableRefObject,useEffect, useRef, useState } from 'react';
+import { type MutableRefObject,useEffect, useId, useRef, useState } from 'react';
 
 import type { AIMessage,AIMode } from '../../types/ai';
 import { Input } from '../ui/input';
@@ -10,7 +10,9 @@ interface AIStatusChipDropdownProps {
   onModeChange: (mode: AIMode) => void;
   onOpen: () => void;
   onNewSession: () => void;
-  onSendMessage: (content: string) => void;
+  onSendMessage: (content: string) => Promise<boolean> | void;
+  /** 대화 이력을 불러오는 중인지 — true 면 빠른 입력은 보내지 않고 글을 남긴다(WD-1004) */
+  isLoadingHistory?: boolean;
   messages: AIMessage[];
   isStreaming: boolean;
   isThinking: boolean;
@@ -105,25 +107,37 @@ function QuickInput({
   onOpen,
   inputFocusedRef,
   onCloseDropdown,
+  sendBlocked = false,
 }: {
-  onSend: (content: string) => void;
+  onSend: (content: string) => Promise<boolean> | void;
+  /** 이력 로딩 중 보내기 차단(WD-1004) — 입력란은 켜 두어 글이 남는다 */
+  sendBlocked?: boolean;
   onOpen: () => void;
   inputFocusedRef: MutableRefObject<boolean>;
   onCloseDropdown: () => void;
 }) {
   const [value, setValue] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
+  // 이력 로딩 중 보내기 막힘 안내 id (WD-1004)
+  const blockedHintId = useId();
+
+  // 보낼 수 있는지 — 버튼 disabled 와 Enter 가 같은 조건을 쓴다.
+  // 이력 로딩 중에는 sendMessage 가 글을 버리므로 보내지도, 지우지도, 닫지도 않는다(WD-1004)
+  const canSend = !!value.trim() && !sendBlocked;
 
   const handleSend = () => {
+    if (!canSend) return;
     const trimmed = value.trim();
-    if (!trimmed) return;
-    onSend(trimmed);
+    const result = onSend(trimmed);
     onOpen();
     setValue('');
     onCloseDropdown();
+    // 보내지 못했으면(false) 쓴 글을 되돌려 준다 — 그 사이 새로 쓴 글이 있으면 덮지 않는다 (WD-1004)
+    if (result) void result.then(sent => { if (!sent) setValue(cur => cur === '' ? trimmed : cur); });
   };
 
   return (
+    <div className="space-y-1">
     <div className="flex items-center gap-2">
       {/* WD-755: 입력란은 공용 Input(폼 컨트롤 경계 border-input·바탕) — 칩 드롭다운 크기에 맞춰 높이·글자·포커스 링만 줄인다 */}
       <Input
@@ -140,12 +154,13 @@ function QuickInput({
           }
         }}
         placeholder="AI에게 질문하기..."
+        aria-describedby={sendBlocked ? blockedHintId : undefined}
         className="h-auto flex-1 rounded-lg px-3 py-1.5 text-xs text-foreground shadow-none md:text-xs focus-visible:border-primary/50 focus-visible:ring-1 focus-visible:ring-primary"
       />
       <button
         type="button"
         onClick={handleSend}
-        disabled={!value.trim()}
+        disabled={!canSend}
         // 아이콘뿐이라 이름이 비어 있었다 — 키보드로 드롭다운에 들어오면 읽을 이름이 필요하다(WD-427)
         aria-label="질문 보내기"
         className="flex items-center justify-center rounded-lg bg-primary/20 p-1.5 text-primary transition-colors hover:bg-primary/30 disabled:opacity-40 disabled:cursor-not-allowed"
@@ -155,6 +170,13 @@ function QuickInput({
           <path d="M14 2L9.5 14L7 9L2 6.5L14 2Z" />
         </svg>
       </button>
+    </div>
+    {/* 이력 로딩 중 보내기 막힘 안내(WD-1004) — 입력란과 aria-describedby 로 잇는다 */}
+    {sendBlocked && (
+      <p id={blockedHintId} className="text-[11px] text-muted-foreground">
+        대화 이력을 불러오는 중이라 잠시 뒤에 보낼 수 있습니다.
+      </p>
+    )}
     </div>
   );
 }
@@ -166,6 +188,7 @@ export function AIStatusChipDropdown({
   onOpen,
   onNewSession,
   onSendMessage,
+  isLoadingHistory = false,
   messages,
   isStreaming,
   isThinking,
@@ -246,6 +269,7 @@ export function AIStatusChipDropdown({
         {!isAIOpen && (
           <QuickInput
             onSend={onSendMessage}
+            sendBlocked={isLoadingHistory}
             onOpen={onOpen}
             inputFocusedRef={inputFocusedRef}
             onCloseDropdown={onCloseDropdown}
