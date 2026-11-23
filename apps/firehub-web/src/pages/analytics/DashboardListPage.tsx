@@ -17,6 +17,7 @@ import { DashboardShareNotice } from '../../components/analytics/DashboardShareN
 import { WorkspaceAnalyticsTable } from '../../components/analytics/WorkspaceAnalyticsTable';
 import { EditConflictDialog } from '../../components/EditConflictDialog';
 import { PageHeading } from '../../components/PageHeading';
+import { RequiredMark } from '../../components/RequiredMark';
 import { TruncatedLink } from '../../components/TruncatedLink';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -210,9 +211,15 @@ function CreateDashboardDialog({ open, onOpenChange, onCreated }: CreateDialogPr
         </DialogHeader>
         <div className="space-y-4 py-2">
           <div className="space-y-1.5">
-            <Label htmlFor="dash-name">이름 *</Label>
+            {/* WD-964: 별표는 aria-hidden, 필수는 aria-required 로 알린다(native required 는 쓰지 않음) */}
+            <Label htmlFor="dash-name">
+              <span>
+                이름 <RequiredMark />
+              </span>
+            </Label>
             <Input
               id="dash-name"
+              aria-required="true"
               placeholder="대시보드 이름"
               value={name}
               onChange={(e) => {
@@ -416,9 +423,15 @@ function EditDashboardDialog({ dashboard, onClose }: EditDialogProps) {
         </DialogHeader>
         <div className="space-y-4 py-2">
           <div className="space-y-1.5">
-            <Label htmlFor="edit-dash-name">이름 *</Label>
+            {/* WD-964: 별표는 aria-hidden, 필수는 aria-required 로 알린다(native required 는 쓰지 않음) */}
+            <Label htmlFor="edit-dash-name">
+              <span>
+                이름 <RequiredMark />
+              </span>
+            </Label>
             <Input
               id="edit-dash-name"
+              aria-required="true"
               placeholder="대시보드 이름"
               value={name}
               onChange={(e) => {

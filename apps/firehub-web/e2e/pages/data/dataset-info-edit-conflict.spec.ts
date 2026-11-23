@@ -133,7 +133,7 @@ test.describe('데이터셋 기본 정보 — 동시 편집 충돌 (WD-575)', ()
 
     // 새 기준으로 다시 수정하면 통과한다
     await page.getByRole('button', { name: '수정' }).click();
-    await expect(page.getByLabel('데이터셋 이름 *')).toHaveValue('A 가 바꾼 이름');
+    await expect(page.getByRole('textbox', { name: '데이터셋 이름', exact: true })).toHaveValue('A 가 바꾼 이름');
     await page.getByLabel('설명').fill('다시 고친 설명');
     await page.getByRole('button', { name: '저장', exact: true }).click();
     await expect(page.getByText('데이터셋 정보가 업데이트되었습니다.')).toBeVisible();

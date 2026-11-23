@@ -3,6 +3,7 @@ import { ArrowLeft,Clock, Code, Database, Globe, Link, Loader2 } from 'lucide-re
 import { useState } from 'react';
 import { toast } from 'sonner';
 
+import { RequiredMark } from '@/components/RequiredMark';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
@@ -237,11 +238,15 @@ export function AddTriggerDialog({ open, onOpenChange, pipelineId }: AddTriggerD
             </Button>
 
             <div className="space-y-1.5">
+              {/* 별표는 aria-hidden(RequiredMark), 필수는 입력의 aria-required 로 알린다 — 접근 이름이 「이름」이 되도록 (WD-964) */}
               <Label htmlFor="trigger-name">
-                이름 <span className="text-destructive">*</span>
+                <span>
+                  이름 <RequiredMark className="text-destructive" />
+                </span>
               </Label>
               <Input
                 id="trigger-name"
+                aria-required="true"
                 value={name}
                 onChange={(e) => handleNameChange(e.target.value)}
                 placeholder="트리거 이름"

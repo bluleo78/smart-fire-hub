@@ -176,7 +176,7 @@ test.describe('데이터셋 상세 다이얼로그 — 제출 중 포커스 (WD-
     await page.getByRole('tab', { name: '필드' }).click();
     await page.getByRole('button', { name: '필드 추가' }).click();
     const dialog = page.getByRole('dialog');
-    await dialog.getByLabel('필드명 *').fill('score');
+    await dialog.getByRole('textbox', { name: '필드명', exact: true }).fill('score');
 
     await submitAndRetryWhilePending(
       page,

@@ -86,7 +86,7 @@ test.describe('대시보드 목록 페이지', () => {
     await expect(page.getByRole('heading', { name: '새 대시보드' })).toBeVisible();
 
     // 이름 입력 필드에 '테스트 대시보드' 입력
-    await page.getByLabel('이름 *').fill('테스트 대시보드');
+    await page.getByRole('textbox', { name: '이름', exact: true }).fill('테스트 대시보드');
 
     // "생성" 버튼 클릭
     await page.getByRole('button', { name: '만들기' }).click();
@@ -121,7 +121,7 @@ test.describe('대시보드 목록 페이지', () => {
 
     await page.getByRole('button', { name: '새 대시보드' }).click();
     await expect(page.getByRole('dialog')).toBeVisible();
-    await page.getByLabel('이름 *').fill('더블클릭 대시보드');
+    await page.getByRole('textbox', { name: '이름', exact: true }).fill('더블클릭 대시보드');
 
     // "생성" 버튼을 빠르게 두 번 클릭 (더블클릭 시뮬레이션)
     const createButton = page.getByRole('dialog').getByRole('button', { name: '만들기' });
@@ -139,7 +139,7 @@ test.describe('대시보드 목록 페이지', () => {
     await page.getByRole('button', { name: '새 대시보드' }).click();
 
     // 다이얼로그 내 이름 입력 필드 확인
-    await expect(page.getByLabel('이름 *')).toBeVisible();
+    await expect(page.getByRole('textbox', { name: '이름', exact: true })).toBeVisible();
   });
 
   test('삭제 버튼 클릭 시 확인 다이얼로그가 열리고 DELETE API가 호출된다', async ({ authenticatedPage: page }) => {
@@ -527,7 +527,7 @@ test.describe('대시보드 목록 페이지', () => {
     // 1) 설정 다이얼로그를 열고 이름/설명을 변경한 뒤 취소
     await page.getByRole('row', { name: /원본 이름/ }).getByLabel('설정').click();
     await expect(page.getByRole('dialog', { name: '대시보드 설정' })).toBeVisible();
-    const nameInput = page.getByLabel('이름 *');
+    const nameInput = page.getByRole('textbox', { name: '이름', exact: true });
     const descInput = page.getByLabel('설명');
     await expect(nameInput).toHaveValue('원본 이름');
     await expect(descInput).toHaveValue('원본 설명');
@@ -540,7 +540,7 @@ test.describe('대시보드 목록 페이지', () => {
     // 2) 같은 대시보드의 설정을 다시 열면 원본 값이 그대로 보여야 한다 (미저장 값이 남으면 회귀)
     await page.getByRole('row', { name: /원본 이름/ }).getByLabel('설정').click();
     await expect(page.getByRole('dialog', { name: '대시보드 설정' })).toBeVisible();
-    await expect(page.getByLabel('이름 *')).toHaveValue('원본 이름');
+    await expect(page.getByRole('textbox', { name: '이름', exact: true })).toHaveValue('원본 이름');
     await expect(page.getByLabel('설명')).toHaveValue('원본 설명');
 
     // 취소만 반복했으므로 저장 API는 한 번도 호출되지 않아야 한다
@@ -815,7 +815,7 @@ test.describe('자동 새로고침 인라인 오류 (WD-876)', () => {
     authenticatedPage: page,
   }) => {
     const { dialog } = await openCreateDialog(page);
-    await dialog.getByLabel('이름 *').fill('운영 현황');
+    await dialog.getByRole('textbox', { name: '이름', exact: true }).fill('운영 현황');
     const input = dialog.getByLabel('자동 새로고침 (초)');
     await input.fill('3');
     await recordFocusMoments(input);
@@ -846,7 +846,7 @@ test.describe('자동 새로고침 인라인 오류 (WD-876)', () => {
     const input = dialog.getByLabel('자동 새로고침 (초)');
     await expect(input).toHaveAccessibleDescription(HINT);
 
-    await dialog.getByLabel('이름 *').fill('운영 현황');
+    await dialog.getByRole('textbox', { name: '이름', exact: true }).fill('운영 현황');
     await input.fill('3');
     await dialog.getByRole('button', { name: '만들기' }).click();
 
@@ -871,7 +871,7 @@ test.describe('자동 새로고침 인라인 오류 (WD-876)', () => {
 
   test('새 대시보드 — 24시간을 넘는 값도 칸 아래에 알린다', async ({ authenticatedPage: page }) => {
     const { dialog, post } = await openCreateDialog(page);
-    await dialog.getByLabel('이름 *').fill('운영 현황');
+    await dialog.getByRole('textbox', { name: '이름', exact: true }).fill('운영 현황');
     await dialog.getByLabel('자동 새로고침 (초)').fill('86401');
     await dialog.getByRole('button', { name: '만들기' }).click();
 
@@ -879,7 +879,7 @@ test.describe('자동 새로고침 인라인 오류 (WD-876)', () => {
     expect(post.requests.length).toBe(0);
 
     // 다른 칸으로 옮겼다가 같은 잘못된 값으로 다시 만들어도 포커스가 다시 그 칸으로 온다
-    await dialog.getByLabel('이름 *').focus();
+    await dialog.getByRole('textbox', { name: '이름', exact: true }).focus();
     await dialog.getByRole('button', { name: '만들기' }).click();
     await expect(dialog.getByLabel('자동 새로고침 (초)')).toBeFocused();
     expect(post.requests.length).toBe(0);
@@ -941,7 +941,7 @@ test.describe('자동 새로고침 인라인 오류 (WD-876)', () => {
     authenticatedPage: page,
   }) => {
     const { dialog, post } = await openCreateDialog(page);
-    await dialog.getByLabel('이름 *').fill('운영 현황');
+    await dialog.getByRole('textbox', { name: '이름', exact: true }).fill('운영 현황');
     const input = dialog.getByLabel('자동 새로고침 (초)');
     const error = dialog.locator('#dash-refresh-error');
     const cases: Array<[string, string]> = [
@@ -966,7 +966,7 @@ test.describe('자동 새로고침 인라인 오류 (WD-876)', () => {
   test('새 대시보드 — 앞뒤 공백·전각 숫자(IME 전각 모드)는 30 으로 받는다 (WD-888)', async ({ authenticatedPage: page }) => {
     for (const raw of [' 30 ', '３０']) {
       const { dialog, post } = await openCreateDialog(page);
-      await dialog.getByLabel('이름 *').fill('운영 현황');
+      await dialog.getByRole('textbox', { name: '이름', exact: true }).fill('운영 현황');
       await dialog.getByLabel('자동 새로고침 (초)').fill(raw);
       await dialog.getByRole('button', { name: '만들기' }).click();
       expect((await post.waitForRequest()).payload).toMatchObject({ autoRefreshSeconds: 30 });

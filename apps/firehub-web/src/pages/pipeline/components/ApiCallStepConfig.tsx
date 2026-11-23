@@ -15,6 +15,7 @@ import { toast } from 'sonner';
 
 import { client } from '@/api/client';
 import { IntegerTextInput } from '@/components/IntegerTextInput';
+import { RequiredMark } from '@/components/RequiredMark';
 import { Button } from '@/components/ui/button';
 import {
   Collapsible,
@@ -625,7 +626,8 @@ export default function ApiCallStepConfig({
           <div className="space-y-2">
             {selectedConn && (
               <div className="space-y-1.5">
-                <Label htmlFor={`${baseId}-base-url`} className="text-xs">URL *</Label>
+                {/* 연결의 baseUrl 을 보여 주기만 하는 disabled 칸 — 사용자가 채우는 칸이 아니라 필수 표시를 주지 않는다 (WD-964) */}
+                <Label htmlFor={`${baseId}-base-url`} className="text-xs">URL</Label>
                 <Input
                   id={`${baseId}-base-url`}
                   value={selectedConn.baseUrl}
@@ -655,9 +657,14 @@ export default function ApiCallStepConfig({
         {/* inline 모드: full URL 직접 입력 */}
         {apiConnectionId === null && (
           <div className="space-y-1.5">
-            <Label htmlFor={`${baseId}-custom-url`} className="text-xs">URL *</Label>
+            {/* 직접 입력 모드에서만 그려지는 URL 칸 — 별표는 aria-hidden, 필수는 aria-required (WD-964) */}
+            <Label htmlFor={`${baseId}-custom-url`} className="text-xs">
+              <span>URL <RequiredMark /></span>
+            </Label>
             <Input
               id={`${baseId}-custom-url`}
+              // 잠긴(readOnly) 칸에는 필수를 알리지 않는다 — 별표 겉모양만 남긴다(WD-964)
+              aria-required={readOnly ? undefined : 'true'}
               ref={customUrlRef}
               // 예시 플레이스홀더 — 까닭은 공용 상수 설명(WD-887)
               placeholder={API_FULL_URL_PLACEHOLDER}

@@ -361,14 +361,14 @@ test.describe('데이터셋 상세 — 컬럼 탭', () => {
     await expect(page.getByRole('dialog')).toBeVisible();
 
     // 기본 타입(TEXT)에서는 최대 길이 필드가 없다
-    await expect(page.getByLabel('최대 길이 *')).not.toBeVisible();
+    await expect(page.getByRole('spinbutton', { name: '최대 길이', exact: true })).not.toBeVisible();
 
     // ColumnTypeSelect — combobox 클릭 후 VARCHAR 선택
     await page.getByRole('combobox').click();
     await page.getByRole('option', { name: '문자열(크기지정)' }).click();
 
     // VARCHAR 선택 후 최대 길이 필드가 나타난다
-    await expect(page.getByLabel('최대 길이 *')).toBeVisible();
+    await expect(page.getByRole('spinbutton', { name: '최대 길이', exact: true })).toBeVisible();
   });
 
   test('필드 추가 — POST payload 검증 (필드명·타입·nullable)', { tag: '@smoke' }, async ({
@@ -396,7 +396,7 @@ test.describe('데이터셋 상세 — 컬럼 탭', () => {
     await expect(page.getByRole('dialog')).toBeVisible();
 
     // 필드명 입력
-    await page.getByLabel('필드명 *').fill('score');
+    await page.getByRole('textbox', { name: '필드명', exact: true }).fill('score');
     // 표시명 입력
     await page.getByLabel('표시명').fill('점수');
     // 타입 변경 — INTEGER 선택
@@ -429,7 +429,7 @@ test.describe('데이터셋 상세 — 컬럼 탭', () => {
 
     await page.getByRole('button', { name: '필드 추가' }).click();
     await expect(page.getByRole('dialog')).toBeVisible();
-    await page.getByLabel('필드명 *').fill('c_' + 'x'.repeat(62));
+    await page.getByRole('textbox', { name: '필드명', exact: true }).fill('c_' + 'x'.repeat(62));
     await page.getByRole('dialog').getByRole('button', { name: '추가' }).click();
 
     await expect(page.getByText('칼럼명은 63자 이하여야 합니다')).toBeVisible({ timeout: 5000 });
@@ -455,7 +455,7 @@ test.describe('데이터셋 상세 — 컬럼 탭', () => {
     const dialog = page.getByRole('dialog');
     await expect(dialog).toBeVisible();
 
-    await dialog.getByLabel('필드명 *').fill('id');
+    await dialog.getByRole('textbox', { name: '필드명', exact: true }).fill('id');
     await dialog.getByRole('button', { name: '추가' }).click();
 
     await expect(dialog.getByText(/시스템 예약어라 쓸 수 없는 이름입니다/)).toBeVisible({ timeout: 5000 });
@@ -485,7 +485,7 @@ test.describe('데이터셋 상세 — 컬럼 탭', () => {
     await expect(page.getByRole('dialog').getByRole('heading', { name: '필드 수정' })).toBeVisible();
 
     // 기존 필드명이 입력 필드에 채워져 있다
-    await expect(page.getByLabel('필드명 *')).toHaveValue('name');
+    await expect(page.getByRole('textbox', { name: '필드명', exact: true })).toHaveValue('name');
   });
 
   // 설명 255자 초과 시 zod 검증에서 막히고, 에러 메시지가 화면에 표시되어야 한다 (#557)

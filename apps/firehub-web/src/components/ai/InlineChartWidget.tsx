@@ -14,6 +14,7 @@ import { MAX_DESCRIPTION_LENGTH } from '../../lib/validations/description';
 import type { ChartConfig, ChartType } from '../../types/analytics';
 import { findMissingChartColumns, getChartTypeLabel, isKnownChartType } from '../analytics/chart-missing-columns';
 import { ChartRenderer } from '../analytics/ChartRenderer';
+import { RequiredMark } from '../RequiredMark';
 import { Button } from '../ui/button';
 import {
   Dialog,
@@ -165,11 +166,15 @@ function SaveDialog({ open, onOpenChange, sql, chartType, config }: SaveDialogPr
         </DialogHeader>
         <div className="space-y-4 py-2">
           <div className="space-y-1.5">
+            {/* WD-964: 별표는 aria-hidden, 필수는 aria-required 로 알린다(native required 는 쓰지 않음) */}
             <Label htmlFor="chart-name">
-              차트 이름 <span className="text-destructive">*</span>
+              <span>
+                차트 이름 <RequiredMark className="text-destructive" />
+              </span>
             </Label>
             <Input
               id="chart-name"
+              aria-required="true"
               placeholder="차트 이름을 입력하세요"
               value={chartName}
               onChange={(e) => {

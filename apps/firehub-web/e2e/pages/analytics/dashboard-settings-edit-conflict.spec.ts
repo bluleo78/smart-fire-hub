@@ -107,7 +107,7 @@ test.describe('대시보드 설정 — 동시 편집 충돌 (WD-364)', () => {
     await page.goto('/analytics/dashboards');
 
     await openSettings(page, '버전 대시보드');
-    await settingsDialog(page).getByLabel('이름 *').fill('이름 A');
+    await settingsDialog(page).getByRole('textbox', { name: '이름', exact: true }).fill('이름 A');
     await settingsDialog(page).getByRole('button', { name: '저장' }).click();
     await expect.poll(() => server.puts.length).toBe(1);
     // 서버가 준 문자열 그대로(마이크로초 포함) — Date 로 바꾸면 잘려서 매번 충돌한다

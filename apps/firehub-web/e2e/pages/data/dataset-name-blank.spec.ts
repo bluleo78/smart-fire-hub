@@ -58,7 +58,7 @@ test.describe('데이터셋 이름 공백 검증 (WD-502)', () => {
 
     await page.goto('/data/datasets/1');
     await page.getByRole('button', { name: '수정', exact: true }).click();
-    await page.getByLabel('데이터셋 이름 *').fill('   ');
+    await page.getByRole('textbox', { name: '데이터셋 이름', exact: true }).fill('   ');
     await page.getByRole('button', { name: '저장', exact: true }).click();
 
     await expect(page.getByText('데이터셋 이름을 입력하세요')).toBeVisible();
@@ -102,12 +102,12 @@ test.describe('데이터셋 복제 이름 검증 (WD-523)', () => {
     const clone = await mockApi(page, 'POST', '/api/v1/datasets/1/clone', {}, { status: 400, capture: true });
 
     const dialog = await openCloneDialog(page);
-    await dialog.getByLabel('데이터셋 이름 *').fill('   ');
+    await dialog.getByRole('textbox', { name: '데이터셋 이름', exact: true }).fill('   ');
     await dialog.getByRole('button', { name: '복제' }).click();
 
     // 이름 칸 아래 한국어 안내가 입력에 연결되고, 서버 영어 메시지는 없다
     await expect(dialog.getByText('데이터셋 이름을 입력하세요')).toBeVisible();
-    await expect(dialog.getByLabel('데이터셋 이름 *')).toHaveAttribute('aria-invalid', 'true');
+    await expect(dialog.getByRole('textbox', { name: '데이터셋 이름', exact: true })).toHaveAttribute('aria-invalid', 'true');
     await expect(page.getByText('must not be blank')).toHaveCount(0);
     expect(clone.requests).toHaveLength(0);
   });
@@ -117,7 +117,7 @@ test.describe('데이터셋 복제 이름 검증 (WD-523)', () => {
     const clone = await mockCloneSuccess(page);
 
     const dialog = await openCloneDialog(page);
-    await dialog.getByLabel('데이터셋 이름 *').fill('  매출 복사본  ');
+    await dialog.getByRole('textbox', { name: '데이터셋 이름', exact: true }).fill('  매출 복사본  ');
     await dialog.getByRole('button', { name: '복제' }).click();
 
     const req = await clone.waitForRequest();
@@ -158,7 +158,7 @@ test.describe('데이터셋 복제 이름 검증 (WD-523)', () => {
     const clone = await mockApi(page, 'POST', '/api/v1/datasets/1/clone', {}, { status: 500, capture: true });
 
     const dialog = await openCloneDialog(page);
-    await dialog.getByLabel('데이터셋 이름 *').fill('a'.repeat(101));
+    await dialog.getByRole('textbox', { name: '데이터셋 이름', exact: true }).fill('a'.repeat(101));
     await dialog.getByRole('button', { name: '복제' }).click();
 
     await expect(dialog.getByText('이름은 100자 이하여야 합니다')).toBeVisible();

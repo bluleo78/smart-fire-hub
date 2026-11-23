@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { z } from 'zod';
 
 import { PendingSubmitButton } from '../../../components/PendingSubmitButton';
+import { RequiredMark } from '../../../components/RequiredMark';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../../components/ui/dialog';
 import { FormField } from '../../../components/ui/form-field';
 import { Input } from '../../../components/ui/input';
@@ -108,10 +109,12 @@ export function CloneDatasetDialog({ open, onOpenChange, dataset }: CloneDataset
 
         <form onSubmit={submitForm} className="space-y-4">
           <div className="space-y-1.5">
-            <Label htmlFor={`${baseId}-name`}>데이터셋 이름 *</Label>
+            <Label htmlFor={`${baseId}-name`}><span>데이터셋 이름 <RequiredMark /></span></Label>
             {/* 오류 문구를 aria-describedby/aria-invalid 로 입력에 연결한다 (#432, §J). */}
             <Input
               id={`${baseId}-name`}
+              // 필수 칸은 aria-required 로 알린다(WD-964)
+              aria-required="true"
               aria-invalid={!!form.formState.errors.name}
               aria-describedby={
                 form.formState.errors.name ? `${baseId}-name-error` : undefined
@@ -126,9 +129,10 @@ export function CloneDatasetDialog({ open, onOpenChange, dataset }: CloneDataset
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor={`${baseId}-tableName`}>테이블 이름 *</Label>
+            <Label htmlFor={`${baseId}-tableName`}><span>테이블 이름 <RequiredMark /></span></Label>
             <Input
               id={`${baseId}-tableName`}
+              aria-required="true"
               aria-invalid={!!form.formState.errors.tableName}
               // 도움말은 항상, 오류 문구는 있을 때만 연결한다.
               aria-describedby={

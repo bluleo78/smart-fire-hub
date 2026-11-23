@@ -2,6 +2,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 
+import { RequiredMark } from '../../../components/RequiredMark';
 import { Button } from '../../../components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../../components/ui/dialog';
 import { Label } from '../../../components/ui/label';
@@ -123,10 +124,13 @@ export function RelationMappingDialog({
 
         <form onSubmit={form.handleSubmit(submit, focusFirstError)} className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="relation-subject">주어 엔티티 *</Label>
+            <Label htmlFor="relation-subject">
+              <span>주어 엔티티 <RequiredMark /></span>
+            </Label>
             <Select value={subjectId} onValueChange={(v) => handleEndpointChange('subjectId', v)}>
               <SelectTrigger
                 id="relation-subject"
+                aria-required="true" // 필수 칸 안내(WD-964)
                 data-testid="relation-subject-select"
                 aria-invalid={form.formState.errors.subjectId ? true : undefined}
                 aria-describedby={form.formState.errors.subjectId ? 'relation-subject-error' : undefined}
@@ -149,10 +153,13 @@ export function RelationMappingDialog({
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="relation-object">목적어 엔티티 *</Label>
+            <Label htmlFor="relation-object">
+              <span>목적어 엔티티 <RequiredMark /></span>
+            </Label>
             <Select value={objectId} onValueChange={(v) => handleEndpointChange('objectId', v)}>
               <SelectTrigger
                 id="relation-object"
+                aria-required="true" // 필수 칸 안내(WD-964)
                 data-testid="relation-object-select"
                 aria-invalid={form.formState.errors.objectId ? true : undefined}
                 aria-describedby={form.formState.errors.objectId ? 'relation-object-error' : undefined}
@@ -175,13 +182,16 @@ export function RelationMappingDialog({
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="relation-type">관계 *</Label>
+            <Label htmlFor="relation-type">
+              <span>관계 <RequiredMark /></span>
+            </Label>
             <Select
               value={form.watch('relation')}
               onValueChange={(v) => form.setValue('relation', v, { shouldValidate: true })}
             >
               <SelectTrigger
                 id="relation-type"
+                aria-required="true" // 필수 칸 안내(WD-964)
                 data-testid="relation-type-select"
                 aria-invalid={form.formState.errors.relation ? true : undefined}
                 aria-describedby={form.formState.errors.relation ? 'relation-type-error' : undefined}

@@ -144,7 +144,7 @@ test.describe('차트 빌더 인터랙티브 흐름', () => {
     await expect(page.getByRole('heading', { name: '차트 저장' })).toBeVisible();
 
     // 이름 입력
-    const nameInput = page.getByLabel('이름 *');
+    const nameInput = page.getByRole('textbox', { name: '이름', exact: true });
     await nameInput.fill('저장된 새 차트');
 
     // 다이얼로그 내부의 "저장" 버튼 클릭 → handleSave

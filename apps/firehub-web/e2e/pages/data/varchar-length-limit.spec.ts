@@ -41,7 +41,7 @@ async function fillCreateFormWithVarchar(page: Page, length: string) {
   await page.getByPlaceholder('예: user_id').fill('title');
   await page.getByRole('combobox').filter({ hasText: '텍스트' }).click();
   await page.getByRole('option', { name: '문자열(크기지정)' }).click();
-  await page.getByLabel('최대 길이 *').fill(length);
+  await page.getByRole('spinbutton', { name: '최대 길이', exact: true }).fill(length);
 }
 
 /** 상세 화면 필드 탭에서 필드 추가 대화상자를 열고 VARCHAR(length) 를 채운다. */
@@ -52,10 +52,10 @@ async function fillAddColumnDialogWithVarchar(page: Page, length: string) {
   await page.goto('/data/datasets/1?tab=columns');
   await page.getByRole('button', { name: '필드 추가' }).click();
   const dialog = page.getByRole('dialog');
-  await dialog.getByLabel('필드명 *').fill('memo');
+  await dialog.getByRole('textbox', { name: '필드명', exact: true }).fill('memo');
   await dialog.getByRole('combobox').click();
   await page.getByRole('option', { name: '문자열(크기지정)' }).click();
-  await dialog.getByLabel('최대 길이 *').fill(length);
+  await dialog.getByRole('spinbutton', { name: '최대 길이', exact: true }).fill(length);
   return dialog;
 }
 
@@ -68,7 +68,7 @@ test.describe('VARCHAR 길이 상한은 저장소 기능 응답을 따른다 (WD
     await fillCreateFormWithVarchar(page, '5000');
 
     // 입력 칸의 max 속성도 저장소 상한이다(스피너·브라우저 범위 판정).
-    await expect(page.getByLabel('최대 길이 *')).toHaveAttribute('max', '4000');
+    await expect(page.getByRole('spinbutton', { name: '최대 길이', exact: true })).toHaveAttribute('max', '4000');
     await page.getByRole('button', { name: '만들기' }).click();
 
     await expect(page.getByText('최대 4000', { exact: true })).toBeVisible();
@@ -98,7 +98,7 @@ test.describe('VARCHAR 길이 상한은 저장소 기능 응답을 따른다 (WD
     const capture = await mockApi(page, 'POST', '/api/v1/datasets', { id: 99 }, { capture: true });
     await fillCreateFormWithVarchar(page, '10000');
 
-    await expect(page.getByLabel('최대 길이 *')).toHaveAttribute('max', '10000');
+    await expect(page.getByRole('spinbutton', { name: '최대 길이', exact: true })).toHaveAttribute('max', '10000');
     await page.getByRole('button', { name: '만들기' }).click();
 
     const req = await capture.waitForRequest();
@@ -132,7 +132,7 @@ test.describe('VARCHAR 길이 상한은 저장소 기능 응답을 따른다 (WD
     );
     const dialog = await fillAddColumnDialogWithVarchar(page, '5000');
 
-    await expect(dialog.getByLabel('최대 길이 *')).toHaveAttribute('max', '4000');
+    await expect(dialog.getByRole('spinbutton', { name: '최대 길이', exact: true })).toHaveAttribute('max', '4000');
     await dialog.getByRole('button', { name: '추가' }).click();
 
     await expect(dialog.getByText('최대 4000', { exact: true })).toBeVisible();

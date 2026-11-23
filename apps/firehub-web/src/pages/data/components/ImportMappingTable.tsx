@@ -1,6 +1,7 @@
 import { AlertTriangle, ArrowRight } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 
+import { RequiredMark } from '../../../components/RequiredMark';
 import { Badge } from '../../../components/ui/badge';
 import { InlineBanner } from '../../../components/ui/inline-banner';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
@@ -131,7 +132,14 @@ export function ImportMappingTable({
                         {availableColumns.map((col) => (
                           <SelectItem key={col.id} value={col.columnName}>
                             {col.displayName || col.columnName}
-                            {!col.isNullable && <span className="text-destructive ml-1">*</span>}
+                            {/* NOT NULL 컬럼 표시 — 별표는 장식(aria-hidden)이라 읽히지 않으므로 sr-only 로 뜻을 전한다(WD-964).
+                                 입력 칸이 아니라 옵션이라 aria-required 대신 숨은 글자를 쓴다. */}
+                            {!col.isNullable && (
+                              <>
+                                <RequiredMark className="text-destructive ml-1" />
+                                <span className="sr-only"> (필수)</span>
+                              </>
+                            )}
                           </SelectItem>
                         ))}
                       </SelectContent>

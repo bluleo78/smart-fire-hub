@@ -338,7 +338,7 @@ const onSubmit = form.handleSubmit(async (data) => {
 ## J. 접근성 (Accessibility)
 
 - `<label>`과 `<input>`은 반드시 연결되어야 한다 (`htmlFor` + `id` 또는 래핑).
-- 필수 필드는 `required` 속성과 시각적 표시(`*`) 모두 제공한다.
+- 필수 필드는 `aria-required="true"` 와 시각적 표시(`*`) 를 함께 제공한다. native `required` 는 브라우저 기본 검증 말풍선이 폼 검증(zod)과 겹쳐 쓰지 않는다. 별표는 `<RequiredMark />`(aria-hidden)로 그려 접근 이름이 "이름 *" 으로 읽히지 않게 한다.
 - 에러 상태는 `aria-invalid="true"`로 스크린 리더에 전달한다.
 - 에러 메시지는 `aria-describedby`로 Input과 연결하는 것을 권장한다.
 

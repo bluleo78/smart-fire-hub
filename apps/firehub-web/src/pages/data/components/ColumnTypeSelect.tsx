@@ -7,11 +7,13 @@ import {
 } from '../../../components/ui/select';
 
 interface ColumnTypeSelectProps {
-  // 트리거 버튼 id — 바깥 「데이터 타입 *」 <Label htmlFor> 와 이어 붙여 콤보박스가 라벨 이름으로 읽히게 한다 (WD-398)
+  // 트리거 버튼 id — 바깥 「데이터 타입」 <Label htmlFor> 와 이어 붙여 콤보박스가 라벨 이름으로 읽히게 한다 (WD-398)
   id?: string;
   value?: string;
   onChange: (value: string) => void;
   disabled?: boolean;
+  // 필수로 알릴지 — SelectTrigger 에 aria-required 를 준다(WD-964). 잠긴(disabled) 칸은 false 로 넘긴다.
+  required?: boolean;
   // 개별 옵션을 선택 불가로 표시할 값 목록. 항목 자체는 유지하여 현재 선택된
   // 값이 GEOMETRY 등 비활성 옵션이어도 라벨이 정상적으로 표시되게 한다. (#539)
   disabledOptions?: string[];
@@ -32,10 +34,10 @@ const DATA_TYPES = [
   { value: 'GEOMETRY', label: '지오메트리(좌표)' },
 ] as const;
 
-export function ColumnTypeSelect({ id, value, onChange, disabled, disabledOptions, hiddenOptions }: ColumnTypeSelectProps) {
+export function ColumnTypeSelect({ id, value, onChange, disabled, required, disabledOptions, hiddenOptions }: ColumnTypeSelectProps) {
   return (
     <Select value={value} onValueChange={onChange} disabled={disabled}>
-      <SelectTrigger id={id}>
+      <SelectTrigger id={id} aria-required={required ? 'true' : undefined}>
         <SelectValue placeholder="데이터 타입 선택" />
       </SelectTrigger>
       <SelectContent>

@@ -75,7 +75,7 @@ test.describe('박스 플롯 통계 컬럼 — ChartBuilderPage (WD-305)', () =>
     await runQueryAndSelectBoxplot(page);
 
     await page.getByRole('button', { name: '저장' }).click();
-    await page.getByLabel('이름 *').fill('통계 없는 박스 플롯');
+    await page.getByRole('textbox', { name: '이름', exact: true }).fill('통계 없는 박스 플롯');
     await page.getByRole('dialog').getByRole('button', { name: '만들기' }).click();
 
     await expect(
@@ -122,7 +122,7 @@ test.describe('박스 플롯 통계 컬럼 — ChartBuilderPage (WD-305)', () =>
     await expect(page.locator('rect[fill-opacity="0.25"]')).toHaveCount(2);
 
     await page.getByRole('button', { name: '저장' }).click();
-    await page.getByLabel('이름 *').fill('지역별 분포');
+    await page.getByRole('textbox', { name: '이름', exact: true }).fill('지역별 분포');
     await page.getByRole('dialog').getByRole('button', { name: '만들기' }).click();
 
     const req = await cap.waitForRequest();

@@ -26,7 +26,7 @@ async function setupDetailPageMocks(page: import('@playwright/test').Page) {
 async function submitAndReadToastColor(page: import('@playwright/test').Page): Promise<string> {
   await expect(page.getByRole('heading', { name: '기본 정보' })).toBeVisible({ timeout: 15000 });
   await page.getByRole('button', { name: '수정' }).click();
-  await page.getByLabel('데이터셋 이름 *').fill('색 검증용 이름');
+  await page.getByRole('textbox', { name: '데이터셋 이름', exact: true }).fill('색 검증용 이름');
   await page.getByRole('button', { name: '저장' }).click();
 
   const toast = page.locator('[data-sonner-toast]').first();
