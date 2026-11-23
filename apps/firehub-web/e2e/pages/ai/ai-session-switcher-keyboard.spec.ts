@@ -9,7 +9,7 @@
  * 초점은 toBeFocused 로, 서버 쪽 결과는 요청 수·종류로 직접 센다.
  */
 
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 
 import type { AISession } from '../../../src/types/ai';
 import { createAISession } from '../../factories/ai-session.factory';
@@ -149,6 +149,17 @@ async function refetchStaleSessions(page: Page) {
     window.dispatchEvent(new Event('offline'));
     window.dispatchEvent(new Event('online'));
   });
+}
+
+/**
+ * 600ms(감사 로그 expectStaysClosed 와 같은 창)가 지난 뒤에도 메시지 조회 기록이 expected 그대로이고
+ * 현재 대화(stillCurrent)도 그대로인지 확인한다(WD-1024) — 지금 한 번 비교하면 재조회·onSessionDeleted 뒤
+ * 늦게 나가는 조회를 놓치고, 캐시로 대화를 바꾸는 전환은 조회 기록에 남지 않는다.
+ */
+async function expectMessagesStay(page: Page, getMessages: () => string[], expected: string[], stillCurrent: Locator) {
+  await page.waitForTimeout(600);
+  expect(getMessages(), '목록 갱신·닫기 뒤 늦게라도 메시지 조회가 더 나가면 안 된다').toEqual(expected);
+  await expect(stillCurrent).toBeVisible();
 }
 
 /**
@@ -487,7 +498,13 @@ test.describe('SessionSwitcher — 키보드 삭제 (WD-951)', () => {
       expect(await focusIsOnBody(page)).toBe(true);
       // 현재 대화는 그대로 — 다른 대화를 열지도 새 대화를 시작하지도 않았다
       await expect(page.getByRole('button', { name: '첫째 대화', exact: true })).toBeVisible();
-      expect(requests.messages.slice(messagesBefore)).toEqual([]);
+      // 늦은 조회·캐시 전환까지 — 창이 지난 뒤에도 새 조회가 없고 현재 대화가 그대로다(WD-1024)
+      await expectMessagesStay(
+        page,
+        () => requests.messages.slice(messagesBefore),
+        [],
+        page.getByRole('button', { name: '첫째 대화', exact: true }),
+      );
     });
 
     test('삭제 응답보다 목록 갱신이 먼저 와서 줄이 사라져도 다음 줄 제목에 초점이 간다', async ({
@@ -617,7 +634,13 @@ test.describe('SessionSwitcher — 키보드 삭제 (WD-951)', () => {
       // 닫으면 여는 버튼은 새 대화(목록에 없는 대화)라 「대화 선택」이다
       await page.keyboard.press('Escape');
       await expect(page.getByRole('button', { name: '대화 선택', exact: true })).toBeFocused();
-      expect(requests.messages).toEqual(['sw-2']);
+      // 늦은 조회·캐시 전환까지 — 창이 지난 뒤에도 조회는 sw-2 하나뿐이고 새 대화(「대화 선택」) 그대로다(WD-1024)
+      await expectMessagesStay(
+        page,
+        () => requests.messages,
+        ['sw-2'],
+        page.getByRole('button', { name: '대화 선택', exact: true }),
+      );
     });
 
     test('실패한 삭제는 기억에서 빠져, 뒤에 그 줄이 다른 까닭으로 사라져도 초점을 그 이웃으로 끌지 않는다 (리뷰 후속 ②)', async ({
