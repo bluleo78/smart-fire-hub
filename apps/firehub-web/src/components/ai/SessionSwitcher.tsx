@@ -175,16 +175,19 @@ export function SessionSwitcher({ currentSessionId, onNewSession, onSessionDelet
                       trigger={
                         <Button
                           variant="ghost"
-                          size="icon"
-                          className="group/trash absolute right-2 top-1.5 h-5 w-5"
+                          size="icon-xs"
+                          // WCAG 2.5.8 최소 24×24(icon-xs) — 줄 32px 안 세로 가운데(top-1), 오른쪽 4px(right-1).
+                          // 제목의 pr-9(36px)가 휴지통 폭+여백(28px)보다 커 글자를 가리지 않는다.
+                          className="group/trash absolute right-1 top-1"
                           // 어느 대화의 삭제인지 이름에 담는다(전체 화면 목록 #346 과 같게). 제목 버튼의 형제라
                           // #514 처럼 제목이 두 번 읽히지 않는다.
                           aria-label={`${label} 삭제`}
                           onFocus={scrollIntoViewOnKeyboardFocus}
                         >
                           {/* 흐린 opacity-50 에 muted 색까지 겹치면 현재 줄(bg-accent) 위 대비가 3:1 아래로 떨어진다 —
-                              muted 색 하나만 두고 가리킬 때 진하게(WD-951 리뷰 후속, WCAG 1.4.11) */}
-                          <Trash2 className="h-3 w-3 text-muted-foreground group-hover/trash:text-foreground group-focus-visible/trash:text-foreground" />
+                              muted 색 하나만 두고 가리킬 때 진하게(WD-951 리뷰 후속, WCAG 1.4.11).
+                              size-4 를 밝혀 둔다 — 없으면 icon-xs 가 아이콘을 12px 로 줄여 WD-951 의 16px 보다 작아진다 */}
+                          <Trash2 className="size-4 text-muted-foreground group-hover/trash:text-foreground group-focus-visible/trash:text-foreground" />
                         </Button>
                       }
                     />
