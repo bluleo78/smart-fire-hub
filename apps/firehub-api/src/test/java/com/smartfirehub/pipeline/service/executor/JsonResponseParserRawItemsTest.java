@@ -22,10 +22,15 @@ class JsonResponseParserRawItemsTest {
     return m;
   }
 
+  /** 객체 항목 목록만 꺼낸다(RawItems.objects). */
+  private List<Map<String, Object>> objects(String json, String dataPath) {
+    return parser.parseRawItems(json, dataPath).objects();
+  }
+
   @Test
   void rawItems_objectArray_topLevelFields() {
     List<Map<String, Object>> rows =
-        parser.parseRawItems("[{\"id\":1,\"name\":\"a\"},{\"id\":2,\"name\":\"b\"}]", "$");
+        objects("[{\"id\":1,\"name\":\"a\"},{\"id\":2,\"name\":\"b\"}]", "$");
 
     assertThat(rows).containsExactly(row("id", 1, "name", "a"), row("id", 2, "name", "b"));
     // 키 순서 보존
@@ -35,8 +40,7 @@ class JsonResponseParserRawItemsTest {
   @Test
   void rawItems_nestedValues_keptAsMapAndList() {
     List<Map<String, Object>> rows =
-        parser.parseRawItems(
-            "[{\"id\":1,\"tags\":[\"x\",\"y\"],\"meta\":{\"k\":\"v\"},\"n\":null}]", "$");
+        objects("[{\"id\":1,\"tags\":[\"x\",\"y\"],\"meta\":{\"k\":\"v\"},\"n\":null}]", "$");
 
     assertThat(rows).hasSize(1);
     Map<String, Object> r = rows.get(0);
@@ -49,35 +53,50 @@ class JsonResponseParserRawItemsTest {
 
   @Test
   void rawItems_singleObject_wrapped() {
-    List<Map<String, Object>> rows = parser.parseRawItems("{\"id\":1}", "$");
+    List<Map<String, Object>> rows = objects("{\"id\":1}", "$");
 
     assertThat(rows).containsExactly(row("id", 1));
   }
 
+  /** WD-947 리뷰: 객체가 아닌 항목은 objects 에 없고(value 행 없음) total 에는 센다. */
   @Test
-  void rawItems_scalarArray_valueColumn() {
-    List<Map<String, Object>> rows = parser.parseRawItems("[1,\"a\"]", "$");
+  void rawItems_scalarItems_notInObjectsButCountedInTotal() {
+    JsonResponseParser.RawItems items = parser.parseRawItems("[1,\"a\",{\"k\":1}]", "$");
 
-    assertThat(rows).containsExactly(row("value", 1), row("value", "a"));
+    assertThat(items.objects()).containsExactly(row("k", 1));
+    assertThat(items.total()).isEqualTo(3);
+
+    JsonResponseParser.RawItems scalars = parser.parseRawItems("[1,\"a\"]", "$");
+    assertThat(scalars.objects()).isEmpty();
+    assertThat(scalars.total()).isEqualTo(2);
   }
 
   @Test
   void rawItems_dataPath_selectsNested() {
-    List<Map<String, Object>> rows =
-        parser.parseRawItems("{\"data\":{\"items\":[{\"a\":1}]}}", "$.data.items");
+    List<Map<String, Object>> rows = objects("{\"data\":{\"items\":[{\"a\":1}]}}", "$.data.items");
 
     assertThat(rows).containsExactly(row("a", 1));
   }
 
   @Test
   void rawItems_differentKeys_keptPerRow() {
-    List<Map<String, Object>> rows = parser.parseRawItems("[{\"a\":1},{\"b\":2}]", "$");
+    List<Map<String, Object>> rows = objects("[{\"a\":1},{\"b\":2}]", "$");
 
     assertThat(rows).containsExactly(row("a", 1), row("b", 2));
   }
 
   @Test
   void rawItems_nullAtPath_emptyList() {
-    assertThat(parser.parseRawItems("{\"data\":null}", "$.data")).isEmpty();
+    assertThat(objects("{\"data\":null}", "$.data")).isEmpty();
+  }
+
+  /** WD-947 3차: 매핑 설정 검사 — 잘못된 날짜 형식은 설정 오류(ApiCallException), 올바르면 통과한다. */
+  @Test
+  void validateMappings_invalidDateFormat_throws() {
+    var bad = new ApiCallConfig.FieldMapping("", "d", "DATE", "yyyy-QQQQQ-zzzz-bad{", null, null);
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> parser.validateMappings(List.of(bad)))
+        .isInstanceOf(ApiCallException.class);
+    var ok = new ApiCallConfig.FieldMapping("", "t", "TEXT", null, null, null);
+    parser.validateMappings(List.of(ok));
   }
 }

@@ -311,7 +311,7 @@ export function registerPipelineTools(
 
     safeTool(
       'preview_api_call',
-      'API 호출을 미리보기합니다. 파이프라인에 저장하기 전에 응답 데이터를 확인할 수 있습니다. apiConnectionId 설정 시 path, 미설정 시 customUrl을 사용합니다. GET 요청만 보냅니다.',
+      'API 호출을 미리보기합니다. 파이프라인에 저장하기 전에 응답 데이터를 확인할 수 있습니다. apiConnectionId 설정 시 path, 미설정 시 customUrl을 사용합니다. GET 요청만 보냅니다. 객체가 아닌 항목(숫자·문자열 배열)은 열로 매핑할 수 없어 행에 넣지 않습니다(실행하면 모든 열이 NULL 인 행으로 들어갑니다. rawJson 에서 봅니다). 비밀 값이 들었거나 이름이 너무 긴(500자 초과) 키는 빼고 그 수를 hiddenColumns 로 알립니다. totalColumns 가 columns 수보다 크면 앞 100개만 보인 것입니다.',
       {
         path: z
           .string()
@@ -340,6 +340,8 @@ export function registerPipelineTools(
               sourceField: z.string().describe('소스 필드명'),
               targetColumn: z.string().describe('대상 컬럼명'),
               dataType: z.string().optional().describe('데이터 타입'),
+              dateFormat: z.string().optional().describe('날짜 형식(선택) — 실행과 같은 형식 검사를 받는다'),
+              sourceTimezone: z.string().optional().describe('소스 타임존(선택)'),
             }),
           )
           .optional()
@@ -358,7 +360,13 @@ export function registerPipelineTools(
         queryParams?: Record<string, string>;
         body?: string;
         dataPath: string;
-        fieldMappings?: Array<{ sourceField: string; targetColumn: string; dataType?: string }>;
+        fieldMappings?: Array<{
+          sourceField: string;
+          targetColumn: string;
+          dataType?: string;
+          dateFormat?: string;
+          sourceTimezone?: string;
+        }>;
         apiConnectionId?: number;
         inlineAuth?: Record<string, string>;
         timeoutMs?: number;

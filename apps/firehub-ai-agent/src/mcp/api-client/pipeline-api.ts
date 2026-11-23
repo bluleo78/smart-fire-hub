@@ -150,7 +150,13 @@ export function createPipelineApi(client: AxiosInstance) {
       queryParams?: Record<string, string>;
       body?: string;
       dataPath: string;
-      fieldMappings?: Array<{ sourceField: string; targetColumn: string; dataType?: string }>;
+      fieldMappings?: Array<{
+        sourceField: string;
+        targetColumn: string;
+        dataType?: string;
+        dateFormat?: string;
+        sourceTimezone?: string;
+      }>;
       apiConnectionId?: number;
       inlineAuth?: Record<string, string>;
       timeoutMs?: number;

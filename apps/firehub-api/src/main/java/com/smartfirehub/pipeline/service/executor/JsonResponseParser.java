@@ -102,27 +102,37 @@ public class JsonResponseParser {
   }
 
   /**
-   * 매핑 없이 응답 항목을 원본 그대로 행으로 만든다(WD-947 미리보기용). 객체 항목은 최상위 키→원래 값(중첩 객체·배열은 Map/List 그대로, 스칼라·null 도
-   * 그대로), 객체가 아닌 항목은 {@code {"value": 원래 값}} 이다. 스칼라·객체가 섞인 배열에서는 스칼라의 {@code value} 열이 객체의 실제
-   * {@code value} 키와 같은 열이 된다. 항목마다 키가 달라도 그대로 두며 없는 키는 행에 넣지 않는다. 가림·자르기·직렬화는 호출자가 한다.
+   * 원본 모드 항목 — 객체 항목만 담은 목록과 전체 항목 수(WD-947 리뷰). 객체가 아닌 항목은 실행기(parseAndMap)가 빈 맵으로 읽어 매핑해도 NULL 만
+   * 적재되므로 행으로 만들지 않고 {@code total} 에만 센다.
+   */
+  public record RawItems(List<Map<String, Object>> objects, int total) {}
+
+  /**
+   * 매핑 없이 응답 항목을 원본 그대로 읽는다(WD-947 미리보기용). 객체 항목은 최상위 키→원래 값(중첩 객체·배열은 Map/List 그대로, 스칼라·null 도
+   * 그대로) 행이 된다. 객체가 아닌 항목(숫자·문자열 등)은 행으로 만들지 않는다 — 적재할 수 없는 {@code value} 열을 자동 채움이 고르지 않게 하려는
+   * 것(WD-947 리뷰)이며 전체 항목 수({@link RawItems#total})에만 센다. 항목마다 키가 달라도 그대로 두며 없는 키는 행에 넣지 않는다.
+   * 가림·자르기·직렬화는 호출자가 한다.
    *
    * @throws ApiCallException JSON 이 아니거나 dataPath 가 없거나 문법이 잘못됐을 때(parseAndMap 과 같음)
    */
-  public List<Map<String, Object>> parseRawItems(String json, String dataPath) {
+  public RawItems parseRawItems(String json, String dataPath) {
     List<?> items = extractItems(json, dataPath);
     List<Map<String, Object>> rows = new ArrayList<>(items.size());
     for (Object item : items) {
-      Map<String, Object> row = new LinkedHashMap<>();
       if (item instanceof Map<?, ?> m) {
+        Map<String, Object> row = new LinkedHashMap<>();
         for (Map.Entry<?, ?> e : m.entrySet()) {
           row.put(String.valueOf(e.getKey()), e.getValue());
         }
-      } else {
-        row.put("value", item);
+        rows.add(row);
       }
-      rows.add(row);
     }
-    return rows;
+    return new RawItems(rows, items.size());
+  }
+
+  /** 매핑 설정(타입·날짜 형식·시간대)만 검사한다 — parseAndMap 과 같은 풀기 단계를 쓰며, 잘못되면 설정 오류(ApiCallException)를 던진다. */
+  public void validateMappings(List<ApiCallConfig.FieldMapping> mappings) {
+    resolve(mappings, null);
   }
 
   /** 필드 매핑 하나를 행 루프 전에 푼 결과 — 대문자 타입(없으면 null), 날짜 형식(없으면 null), 원본 시간대. */

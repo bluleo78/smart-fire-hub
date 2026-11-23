@@ -67,6 +67,8 @@ interface PreviewResult {
   rawJson: string | null;
   rows: Array<Record<string, unknown>>;
   columns: string[];
+  totalColumns?: number;
+  hiddenColumns?: number;
   totalExtractedRows: number;
   errorMessage: string | null;
   resolvedUrl: string | null;

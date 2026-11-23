@@ -16,6 +16,7 @@ import com.smartfirehub.pipeline.service.executor.RedirectFollower;
 import com.smartfirehub.pipeline.service.executor.RequestUrlEncoding;
 import com.smartfirehub.pipeline.service.executor.SsrfProtectionService;
 import com.smartfirehub.pipeline.service.executor.SsrfSafeHttpClientFactory;
+import java.math.BigDecimal;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -142,7 +143,9 @@ public class ApiCallPreviewService {
             List.of(),
             0,
             authProblem,
-            displayUrlOrNull(resolvedUrl, request.queryParams()));
+            displayUrlOrNull(resolvedUrl, request.queryParams()),
+            0,
+            0);
       }
 
       // 4~5. Build URI(정적 쿼리 + 쿼리 인증 키) — 호출용(키 원문)과 응답용(키 가림)을 함께 만든다(WD-177). 응답의 resolvedUrl 은
@@ -199,6 +202,8 @@ public class ApiCallPreviewService {
       List<Map<String, Object>> previewRows;
       List<String> columns;
       int totalExtractedRows;
+      int totalColumns;
+      int hiddenColumns = 0;
       if (hasUsableMapping(request.fieldMappings())) {
         List<ApiCallConfig.FieldMapping> fieldMappings = toFieldMappings(request.fieldMappings());
         List<Map<String, Object>> allRows =
@@ -207,6 +212,7 @@ public class ApiCallPreviewService {
             request.fieldMappings().stream()
                 .map(ApiCallPreviewRequest.FieldMappingPreview::targetColumn)
                 .toList();
+        totalColumns = columns.size();
         totalExtractedRows = allRows.size();
         previewRows =
             authSecret.maskRows(
@@ -214,23 +220,36 @@ public class ApiCallPreviewService {
       } else {
         // 람다 없이 쓰지만 authSecret 은 재대입되므로 최종 사본을 쓴다.
         final AuthQueryMasker.SentSecrets secret = authSecret;
-        List<Map<String, Object>> items =
+        JsonResponseParser.RawItems rawItems =
             jsonResponseParser.parseRawItems(maskedBody, effectiveDataPath);
-        totalExtractedRows = items.size();
+        // 요청에 (소스 필드가 빈) 매핑이 있어도 실행은 타입·날짜 형식을 검사한다 — 항목이 있으면 같은 검사를 해 미리보기만 통과하는 일을 막는다.
+        if (request.fieldMappings() != null
+            && !request.fieldMappings().isEmpty()
+            && rawItems.total() > 0) {
+          jsonResponseParser.validateMappings(toFieldMappings(request.fieldMappings()));
+        }
+        List<Map<String, Object>> items = rawItems.objects();
+        totalExtractedRows = rawItems.total();
 
-        // 항목마다 키가 다를 수 있어 앞 5행이 아니라 모든 항목의 키를 처음 나온 순서대로 모은다(최대 MAX_RAW_COLUMNS 개).
-        Set<String> rawKeys = new LinkedHashSet<>();
+        // 항목마다 키가 다를 수 있어 앞 5행이 아니라 모든 항목의 키를 처음 나온 순서대로 모은다. 비밀이 든 키(usableRawKey)는 뺀다.
+        // 합집합은 상한 없이 세어 전체 열 수(totalColumns)로 알리고, columns 는 그중 앞 MAX_RAW_COLUMNS 개만 둔다(WD-947 리뷰).
+        // 비밀이 들었거나 이름이 너무 길어(500자 초과) 뺀 서로 다른 키는 hiddenColumns 로 센다.
+        Set<String> allKeys = new LinkedHashSet<>();
+        Set<String> hiddenKeys = new LinkedHashSet<>();
         for (Map<String, Object> item : items) {
           for (String k : item.keySet()) {
-            if (rawKeys.size() >= MAX_RAW_COLUMNS) break;
-            rawKeys.add(k);
+            if (usableRawKey(secret, k)) allKeys.add(k);
+            else hiddenKeys.add(k);
           }
-          if (rawKeys.size() >= MAX_RAW_COLUMNS) break;
         }
-        // 열 이름도 가린다(비밀번호와 같은 키). 가린 뒤 겹치면 한 번만 둔다.
-        Set<String> maskedColumns = new LinkedHashSet<>();
-        for (String k : rawKeys) maskedColumns.add(secret.maskKey(k));
-        columns = List.copyOf(maskedColumns);
+        hiddenColumns = hiddenKeys.size();
+        totalColumns = allKeys.size();
+        Set<String> rawKeys = new LinkedHashSet<>();
+        for (String k : allKeys) {
+          if (rawKeys.size() >= MAX_RAW_COLUMNS) break;
+          rawKeys.add(k);
+        }
+        columns = List.copyOf(rawKeys);
 
         // 미리보기 행만 처리한다 — 열 상한을 행에도 적용하고, 값은 한 번에 가림·자르기한다.
         previewRows = new ArrayList<>();
@@ -239,14 +258,22 @@ public class ApiCallPreviewService {
           Map<String, Object> safe = new LinkedHashMap<>();
           for (Map.Entry<String, Object> e : item.entrySet()) {
             if (!rawKeys.contains(e.getKey())) continue;
-            safe.put(secret.maskKey(e.getKey()), rawCell(secret, e.getValue()));
+            safe.put(e.getKey(), rawCell(secret, e.getValue()));
           }
           previewRows.add(safe);
         }
       }
 
       return new ApiCallPreviewResponse(
-          true, rawJson, previewRows, columns, totalExtractedRows, null, resolvedRequestUrl);
+          true,
+          rawJson,
+          previewRows,
+          columns,
+          totalExtractedRows,
+          null,
+          resolvedRequestUrl,
+          totalColumns,
+          hiddenColumns);
 
     } catch (Exception e) {
       // 실행(ApiCallExecutor)과 같은 분류·문구를 쓴다(WD-150) — 예전에는 e.getMessage() 를 그대로 돌려줘 같은 연결 거부가
@@ -257,11 +284,22 @@ public class ApiCallPreviewService {
       log.warn("[Preview] 실패: {} ({})", message, e.getClass().getSimpleName());
       log.debug("[Preview] 실패 상세", e);
       return new ApiCallPreviewResponse(
-          false, null, List.of(), List.of(), 0, message, resolvedRequestUrl);
+          false, null, List.of(), List.of(), 0, message, resolvedRequestUrl, 0, 0);
     }
   }
 
   // ── private helpers ────────────────────────────────────────────────────────
+
+  /**
+   * 원본 모드 키를 열·행에 쓸 수 있는지(WD-947 리뷰). BASIC 비밀번호를 부분 문자열로 품은 키, 또는 본문 가림이 보낸 비밀(쿼리 키·헤더 키·토큰)을 이미
+   * 가린 흔적({@code ****})을 품은 키, 또는 {@link #MAX_RAW_CELL_CHARS} 자를 넘는 키는 가려 둬도 매핑할 수 없고 자동 채움이 설정에
+   * 저장하므로 아예 뺀다.
+   */
+  private static boolean usableRawKey(AuthQueryMasker.SentSecrets secret, String key) {
+    if (key.length() > MAX_RAW_CELL_CHARS) return false;
+    if (key.contains(AuthQueryMasker.PASSWORD_MASK)) return false;
+    return key.equals(secret.maskPasswordInMaskedBody(key));
+  }
 
   /**
    * GET 으로 나가는 주소의 쿼리에 메서드 변경 이름(_method 등)이 있으면 거절한다(WD-970) — 첫 요청 검사와 리다이렉트 홉 검사({@code
@@ -359,8 +397,14 @@ public class ApiCallPreviewService {
     return previews.stream()
         .map(
             p ->
+                // 날짜 형식·시간대는 요청이 준 값 그대로 넘긴다 — 실행과 같은 검사를 미리보기에서도 받게(없으면 null)
                 new ApiCallConfig.FieldMapping(
-                    p.sourceField(), p.targetColumn(), p.dataType(), null, null, null))
+                    p.sourceField(),
+                    p.targetColumn(),
+                    p.dataType(),
+                    p.dateFormat(),
+                    null,
+                    p.sourceTimezone()))
         .toList();
   }
 
@@ -411,10 +455,35 @@ public class ApiCallPreviewService {
       }
       return truncateChars(secret.maskPasswordInMaskedBody(text));
     }
+    if (value instanceof Number || value instanceof Boolean) {
+      // 숫자·불리언도 문자열 형태로 보고 글 속 비밀번호 규칙을 똑같이 쓴다(91234567 속 123456 도 가림). 가릴 게 없으면 원래 값(숫자 유지)이되,
+      // 500자를 넘는 거대한 숫자는 잘린 문자열로 바꾼다(rawJson 상한 우회 방지).
+      // 값 전체가 비밀번호면 maskScalar 가 먼저 「****」 로 바꾼다.
+      if (secret.maskScalar(value) instanceof String whole) return whole;
+      String text = plainNumberText(value);
+      String maskedText = secret.maskPasswordInMaskedBody(text);
+      if (!maskedText.equals(text)) return truncateChars(maskedText);
+      return text.length() > MAX_RAW_CELL_CHARS ? truncateChars(text) : value;
+    }
     Object masked = secret.maskScalar(value);
     return masked instanceof String str
         ? truncateChars(secret.maskPasswordInMaskedBody(str))
         : masked;
+  }
+
+  /**
+   * 숫자·불리언을 가림·자르기용 평문 문자열로 만든다 — Double·Float 는 지수 표기(1.23456789E7)가 아닌 평문(12345678.9)으로 바꿔 원래 자리
+   * 숫자에 든 비밀번호를 가린다. 무한·NaN 은 평문이 없어 기존 문자열 그대로 둔다.
+   */
+  private static String plainNumberText(Object value) {
+    if (value instanceof Double d && Double.isFinite(d)) {
+      return new BigDecimal(Double.toString(d)).toPlainString();
+    }
+    if (value instanceof Float f && Float.isFinite(f)) {
+      return new BigDecimal(Float.toString(f)).toPlainString();
+    }
+    if (value instanceof BigDecimal bd) return bd.toPlainString();
+    return String.valueOf(value);
   }
 
   /** 원본 모드 문자열 칸을 {@link #MAX_RAW_CELL_CHARS} 자로 자른다 — 넘으면 앞 글자 + "…". 서로게이트 쌍은 쪼개지 않는다. */

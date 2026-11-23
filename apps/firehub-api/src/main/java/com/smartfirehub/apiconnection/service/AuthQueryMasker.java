@@ -378,8 +378,9 @@ public final class AuthQueryMasker {
     }
 
     /**
-     * 열 이름·값 하나가 Basic 비밀번호와 전체 일치하면 {@code ****} 로 바꾼다 — {@link #maskRows} 와 같은 전체 일치 규칙이다. 값은
-     * 문자열·숫자·불리언만 보고(숫자로 온 비밀번호 123456 도 가린다) 그 밖의 값은 그대로 둔다. 원본 모드 미리보기가 키와 스칼라 칸에 쓴다.
+     * 스칼라 값 하나가 Basic 비밀번호와 전체 일치하면 {@code ****} 로 바꾼다 — {@link #maskRows} 와 같은 전체 일치 규칙이다. 값은
+     * 문자열·숫자·불리언만 보고(숫자로 온 비밀번호 123456 도 가린다) 그 밖의 값은 그대로 둔다. 키는 여기가 아니라
+     * ApiCallPreviewService.usableRawKey 로 거른다. 원본 모드 미리보기가 스칼라 칸에 쓴다.
      */
     public Object maskScalar(Object value) {
       if (!(value instanceof String || value instanceof Number || value instanceof Boolean)) {
@@ -388,12 +389,7 @@ public final class AuthQueryMasker {
       return isPassword(String.valueOf(value)) ? PASSWORD_MASK : value;
     }
 
-    /** 열 이름용 — {@link #maskScalar} 와 같은 판정. */
-    public String maskKey(String key) {
-      return isPassword(key) ? PASSWORD_MASK : key;
-    }
-
-    /** 문자열이 Basic 비밀번호와 전체 일치하는지 — 비밀번호가 없거나 null 이면 false. maskRows·maskScalar·maskKey 가 함께 쓴다. */
+    /** 문자열이 Basic 비밀번호와 전체 일치하는지 — 비밀번호가 없거나 null 이면 false. maskRows·maskScalar 가 함께 쓴다. */
     private boolean isPassword(String s) {
       return s != null && password != null && !password.isEmpty() && password.equals(s);
     }
