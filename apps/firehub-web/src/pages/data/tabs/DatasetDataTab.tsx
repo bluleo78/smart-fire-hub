@@ -57,17 +57,21 @@ const ACTION_COL_WIDTH = 48;
 /**
  * 행 끝 「행 N 수정」 버튼 + 툴팁.
  * 행 수정 창을 닫으면 Radix 가 초점을 이 버튼으로 되돌리는데, 그때 focus 이벤트로 툴팁이 매번 열리는 것은 의도가 아니다.
- * 그래서 창이 닫힌 직후(suppressUntilRef 시각 전)의 첫 "열림" 요청은 무시하고, Tab 이동·마우스 올림은 그대로 연다(WD-977 리뷰).
+ * 그래서 창이 닫힌 직후(suppressRef 의 until 전)에 **창을 연 그 행**(rowId 일치) 버튼의 첫 "열림" 요청만 무시하고,
+ * Tab 이동·마우스 올림·다른 행 버튼은 그대로 연다(WD-977 리뷰, WD-999).
  * 초점이 버튼으로 돌아오지 않는 경우(행 삭제 등)에도 억제가 남지 않도록 시각으로 1초만 유효하다.
  */
-function EditRowButton({ label, onEdit, suppressUntilRef }: { label: string; onEdit: () => void; suppressUntilRef: { current: number } }) {
+type EditTooltipSuppress = { rowId: number; until: number } | null;
+
+function EditRowButton({ label, rowId, onEdit, suppressRef }: { label: string; rowId: number; onEdit: () => void; suppressRef: { current: EditTooltipSuppress } }) {
   const [open, setOpen] = useState(false);
   return (
     <Tooltip
       open={open}
       onOpenChange={(next) => {
-        if (next && Date.now() < suppressUntilRef.current) {
-          suppressUntilRef.current = 0;
+        const s = suppressRef.current;
+        if (next && s && s.rowId === rowId && Date.now() < s.until) {
+          suppressRef.current = null;
           return;
         }
         setOpen(next);
@@ -75,8 +79,9 @@ function EditRowButton({ label, onEdit, suppressUntilRef }: { label: string; onE
     >
       <TooltipTrigger asChild>
         <Button variant="ghost" size="icon" className="h-7 w-7" aria-label={label} onClick={onEdit}
-          // 마우스를 올리는 것은 초점 복귀가 아니므로 억제 플래그를 먼저 풀어 첫 hover 가 무시되지 않게 한다
-          onPointerEnter={() => { suppressUntilRef.current = 0; }}>
+          // 마우스를 올리는 것은 초점 복귀가 아니므로 이 행의 억제를 먼저 풀어 첫 hover 가 무시되지 않게 한다.
+          // 다른 행 버튼을 지나가는 것으로는 풀지 않는다 — 억제는 행마다라서(WD-999 코드 리뷰)
+          onPointerEnter={() => { if (suppressRef.current?.rowId === rowId) suppressRef.current = null; }}>
           <Pencil className="h-4 w-4" />
         </Button>
       </TooltipTrigger>
@@ -97,7 +102,7 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [sqlEditorOpen, setSqlEditorOpen] = useState(false);
   const [addRowOpen, setAddRowOpen] = useState(false);
-  const [editRowState, setEditRowState] = useState<{ open: boolean; rowId: number; data: Record<string, unknown> } | null>(null);
+  const [editRowState, setEditRowState] = useState<{ open: boolean; rowId: number; data: Record<string, unknown>; fromButton: boolean } | null>(null);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   // 조회자 기준 내보내기 가능(S4) — 서버가 명시적으로 true 를 준 경우만 허용(없거나 null 이면 fail-closed).
   const exportAllowed = dataset.exportAllowed === true;
@@ -112,10 +117,9 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
     parentRef.current = node;
     setScrollEl(node);
   }, []);
-  // 행 수정 창을 닫은 직후 초점 복귀로 툴팁이 열리지 않게 하는 억제 끝 시각(ms) — 1회용이고 1초 뒤엔 저절로 무효(WD-977 리뷰)
-  const suppressEditTooltipUntilRef = useRef(0);
-  // 창을 수정 버튼으로 열었는지 — 더블클릭으로 열면 초점이 버튼으로 돌아오지 않으므로 억제를 걸지 않는다(WD-977 리뷰).
-  const editOpenedFromButtonRef = useRef(false);
+  // 행 수정 창을 수정 버튼으로 열었다 닫은 직후, 초점 복귀로 그 행 버튼의 툴팁이 열리지 않게 하는 억제(행 id + 끝 시각 ms).
+  // 행 id 를 같이 기억해 초점이 돌아오지 못한 경우에도 다른 행 버튼 툴팁은 막지 않는다(WD-977 리뷰, WD-999).
+  const suppressEditTooltipRef = useRef<EditTooltipSuppress>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
   const {
@@ -269,10 +273,11 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
    * 행 수정 창을 연다 — 더블클릭(마우스 지름길)과 행 끝 수정 버튼(키보드 진입점, WD-977)이 같은 함수를 쓴다.
    * 컬럼 순서대로 값을 모아 EditRowDialog 에 넘긴다.
    */
-  const openEditRow = (row: Record<string, unknown>) => {
+  const openEditRow = (row: Record<string, unknown>, fromButton = false) => {
     const rowData: Record<string, unknown> = {};
     for (const col of columns) rowData[col.columnName] = row[col.columnName ?? ''];
-    setEditRowState({ open: true, rowId: row['id'] as number, data: rowData });
+    // fromButton 은 창이 실제로 열릴 때 함께 저장한다 — 열지 못한 채 남는 표시가 나중 창에 새지 않게(WD-999)
+    setEditRowState({ open: true, rowId: row['id'] as number, data: rowData, fromButton });
   };
 
   // 열 수 = 선택 열 1 + 데이터 열 + (쓰기 권한 시) 작업 열 1 — spacer 행 colSpan 이 표 전체 폭을 덮도록 맞춘다
@@ -483,8 +488,9 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
                         >
                           <EditRowButton
                             label={`행 ${virtualRow.index + 1} 수정`}
-                            onEdit={() => { editOpenedFromButtonRef.current = true; openEditRow(row); }}
-                            suppressUntilRef={suppressEditTooltipUntilRef}
+                            rowId={rowId}
+                            onEdit={() => openEditRow(row, true)}
+                            suppressRef={suppressEditTooltipRef}
                           />
                         </td>
                       )}
@@ -563,9 +569,9 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
           open={editRowState.open}
           onOpenChange={(open) => {
             if (!open) {
-              // 버튼으로 연 창만 초점이 버튼으로 돌아오므로 그때만 툴팁 억제를 건다
-              if (editOpenedFromButtonRef.current) suppressEditTooltipUntilRef.current = Date.now() + 1000;
-              editOpenedFromButtonRef.current = false;
+              // 버튼으로 연 창만 초점이 그 행 버튼으로 돌아오므로 그때만, 그 행에 한해 툴팁 억제를 건다.
+              // id 가 없는 행은 억제하지 않는다 — undefined 끼리 같다고 보면 모든 행 버튼에 억제가 번진다(WD-999 코드 리뷰)
+              if (editRowState.fromButton && editRowState.rowId != null) suppressEditTooltipRef.current = { rowId: editRowState.rowId, until: Date.now() + 1000 };
               setEditRowState(null);
             }
           }}

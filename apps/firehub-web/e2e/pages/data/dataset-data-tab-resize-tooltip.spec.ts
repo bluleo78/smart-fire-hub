@@ -99,6 +99,9 @@ test.describe('데이터셋 데이터 탭 — WD-977 리뷰 후속', () => {
     await expect(btn).toBeFocused();
     // Radix 툴팁은 focus 때 바로 열리므로, 초점이 돌아온 뒤 트리거가 닫힘 상태면 억제된 것이다
     await expect(btn).toHaveAttribute('data-state', 'closed');
+    // (WD-999) 늦게 열리는 회귀를 놓치지 않도록 잠시 뒤에도 계속 닫혀 있어야 한다
+    await page.waitForTimeout(500);
+    await expect(btn).toHaveAttribute('data-state', 'closed');
     await expect(page.getByRole('tooltip')).toHaveCount(0);
     await page.keyboard.press('Tab');
     await page.keyboard.press('Shift+Tab');
@@ -115,6 +118,29 @@ test.describe('데이터셋 데이터 탭 — WD-977 리뷰 후속', () => {
     await expect(dialog).toHaveCount(0);
     // 1초 억제 창 안에서 키보드로 버튼에 온다 — 버튼으로 연 창이 아니므로 억제하지 않아야 한다
     await page.getByRole('button', { name: '행 1 수정' }).focus();
+    await expect(page.getByRole('tooltip').first()).toBeVisible();
+  });
+
+  test('버튼으로 연 창을 닫은 뒤 초점이 그 버튼으로 돌아오지 못하면 다른 행 버튼 툴팁은 바로 열린다 (WD-999)', async ({ authenticatedPage: page }) => {
+    await setup(page, ['id', 'name']);
+    const btn3 = page.getByRole('button', { name: '행 3 수정' });
+    await btn3.focus();
+    await page.keyboard.press('Enter');
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible();
+    // 초점이 원래 버튼으로 돌아오지 못하는 상황(창을 연 사이 그 행이 사라지거나 버튼을 못 쓰게 된 경우)을 재현한다 —
+    // 모달이 열려 있으면 바깥 버튼은 접근성 트리에서 숨겨지므로 역할이 아닌 aria-label 로 잡아, 닫을 때 Radix 가
+    // 초점을 되돌리려는 그 버튼을 disabled 로 만든다(초점을 받을 수 없다). 그래서 닫은 뒤 초점은 어느 버튼에도 가지 않는다.
+    await page.locator('button[aria-label="행 3 수정"]').evaluate((el) => el.setAttribute('disabled', ''));
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    await expect(page.locator('button[aria-label="행 3 수정"]')).not.toBeFocused();
+    // 1초 억제 창 안에서 다른 행 버튼으로 키보드 초점 — 억제는 행 3 버튼 몫이므로 행 2 툴팁은 열려야 한다
+    const btn2 = page.getByRole('button', { name: '행 2 수정' });
+    await btn2.focus();
+    // 억제로 무시된 열림이 곧바로 보이는 것처럼 잡히지 않게 잠시 기다린 뒤에도 열려 있어야 한다
+    await page.waitForTimeout(300);
+    await expect(btn2).not.toHaveAttribute('data-state', 'closed');
     await expect(page.getByRole('tooltip').first()).toBeVisible();
   });
 });
