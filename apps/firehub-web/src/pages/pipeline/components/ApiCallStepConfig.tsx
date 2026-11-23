@@ -249,6 +249,8 @@ interface KvEditorProps {
   fieldError?: (field: string) => string | undefined;
   /** 오류 문구 요소 id 접두사(입력의 aria-describedby 연결용) */
   errorIdPrefix?: string;
+  /** 섹션 이름(「헤더」·「쿼리 파라미터」) — 두 섹션의 휴지통 이름이 겹치지 않게 앞에 붙인다(WD-1043) */
+  rowLabel?: string;
 }
 
 function KvEditor({
@@ -260,6 +262,7 @@ function KvEditor({
   rowField,
   fieldError,
   errorIdPrefix = 'kv',
+  rowLabel,
 }: KvEditorProps) {
   const handleAdd = () => onChange([...pairs, { key: '', value: '' }]);
   const handleRemove = (i: number) => onChange(pairs.filter((_, idx) => idx !== i));
@@ -302,9 +305,11 @@ function KvEditor({
               variant="ghost"
               size="icon"
               className="h-7 w-7 shrink-0"
+              // 아이콘뿐인 버튼 — 헤더·쿼리 파라미터 공용이라 섹션 이름 + 줄 번호(+키)로 이름을 준다(WD-1043)
+              aria-label={`${rowLabel ? `${rowLabel} ` : ''}${i + 1}번째 줄${pair.key ? ` "${pair.key}"` : ''} 삭제`}
               onClick={() => handleRemove(i)}
             >
-              <Trash2 className="h-3.5 w-3.5" />
+              <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
             </Button>
           )}
         </div>
@@ -842,6 +847,7 @@ export default function ApiCallStepConfig({
           rowField={(i) => kvRowField('headers', i)}
           fieldError={fieldError}
           errorIdPrefix={`${baseId}-header`}
+          rowLabel="헤더"
         />
       </Section>
 
@@ -862,6 +868,7 @@ export default function ApiCallStepConfig({
           rowField={(i) => kvRowField('queryParams', i)}
           fieldError={fieldError}
           errorIdPrefix={`${baseId}-query`}
+          rowLabel="쿼리 파라미터"
         />
       </Section>
 
@@ -944,9 +951,11 @@ export default function ApiCallStepConfig({
                       variant="ghost"
                       size="icon"
                       className="h-7 w-7 shrink-0"
+                      // 아이콘뿐인 버튼 — 줄 번호(+대상 컬럼)로 이름을 준다(WD-1043)
+                      aria-label={`매핑 ${i + 1}${mapping.targetColumn ? ` "${mapping.targetColumn}"` : ''} 삭제`}
                       onClick={() => handleRemoveMapping(i)}
                     >
-                      <Trash2 className="h-3.5 w-3.5" />
+                      <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
                     </Button>
                   )}
                 </div>
