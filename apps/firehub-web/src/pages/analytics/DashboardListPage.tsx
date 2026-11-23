@@ -55,6 +55,7 @@ import {
   useUpdateDashboard,
 } from '../../hooks/queries/useAnalytics';
 import { useIsOwner } from '../../hooks/useIsOwner';
+import { useListRetryFocus } from '../../hooks/useListRetryFocus';
 import { useSubmitGuard } from '../../hooks/useSubmitGuard';
 import { extractApiError, handleApiError, isDuplicateName, isEditConflict, listLoadErrorProps } from '../../lib/api-error';
 import { formatDateShort, formatRelativeTime } from '../../lib/formatters';
@@ -516,12 +517,31 @@ export default function DashboardListPage() {
   // 「내 대시보드」 탭은 내가 만든 대시보드만 — 필터 없이 부르면 서버가 남의 공유 대시보드까지 섞어 준다(WD-328). 「공유됨」은 sharedOnly 그대로.
   const mineOnly = tab === 'mine';
 
-  const { data: dashboardsData, isLoading, isError, error: dashboardsError } = useDashboards({
+  const {
+    data: dashboardsData,
+    isLoading,
+    isPending,
+    isFetching,
+    isError,
+    error: dashboardsError,
+    refetch,
+  } = useDashboards({
     search: search || undefined,
     sharedOnly: sharedOnly || undefined,
     mineOnly: mineOnly || undefined,
     page,
     size,
+  });
+
+  // 「다시 시도」 포커스(WD-987): 실패한 목록에서 누르면 표로 초점을 옮겼다가 다시 실패하면 버튼으로 되돌린다.
+  // 403 은 다시 해도 같으므로 버튼을 두지 않는다
+  const { tableProps, retryAction } = useListRetryFocus({
+    isPending,
+    isError,
+    isFetching,
+    data: dashboardsData,
+    error: dashboardsError,
+    refetch,
   });
 
   const deleteDashboard = useDeleteDashboard();
@@ -591,7 +611,10 @@ export default function DashboardListPage() {
               </div>
 
               <div className="rounded-md border">
-                <Table aria-label="대시보드 목록">
+                <Table
+                  aria-label="대시보드 목록"
+                  {...tableProps}
+                >
                   <TableHeader>
                     <TableRow>
                       <TableHead>이름</TableHead>
@@ -615,6 +638,7 @@ export default function DashboardListPage() {
                         colSpan={5}
                         // 403 은 권한 안내(흐린 톤), 그 밖은 서버 사유 — 권한 문제를 일시 장애처럼 보이지 않게 한다 (WD-978 리뷰 후속)
                         {...listLoadErrorProps(dashboardsError, '대시보드')}
+                        action={retryAction}
                       />
                     ) : dashboards.length > 0 ? (
                       dashboards.map((dashboard) => (
