@@ -31,6 +31,7 @@ export async function readFocusStyle(el: Locator) {
       outlineStyle: cs.outlineStyle,
       outlineWidth: cs.outlineWidth,
       outlineOffset: cs.outlineOffset,
+      outlineColor: cs.outlineColor,
       boxShadow: cs.boxShadow,
     };
   });

@@ -392,13 +392,14 @@ test.describe('고대비 모드 전역 초점 표시 (WD-949)', () => {
   /**
    * 파이프라인 편집기(수정 모드)를 열고 xyflow 노드·연결선 locator 를 돌려준다 (WD-1020).
    * 실제 앱 스택으로 xyflow CSS(레이어 밖 outline:none)와 전역 규칙의 특이도 싸움을 시험한다.
+   * edit=false 면 「수정」을 누르지 않은 보기 화면(readOnly — 노드에 .selectable 없음)에 머문다 (WD-1040).
    */
-  async function openPipelineEditor(page: Page) {
+  async function openPipelineEditor(page: Page, { edit = true }: { edit?: boolean } = {}) {
     await page.setViewportSize({ width: 1280, height: 720 });
     await grantPipelinePermissions(page);
     await setupPipelineEditorMocks(page, 1);
     await page.goto('/pipelines/1');
-    await page.getByRole('button', { name: '수정' }).click();
+    if (edit) await page.getByRole('button', { name: '수정' }).click();
     const node = page.locator('.react-flow__node').first();
     const edge = page.locator('.react-flow__edge').first();
     await expect(node).toBeVisible();
@@ -419,7 +420,7 @@ test.describe('고대비 모드 전역 초점 표시 (WD-949)', () => {
     return { nodeStyle, edgeStyle };
   }
 
-  test('파이프라인 편집기 노드·연결선: 고대비에서는 outline 이 보이고 보통 모드에는 보강 규칙이 새지 않는다', async ({
+  test('파이프라인 편집기 노드·연결선: 고대비에서는 CanvasText, 보통 모드에서는 링 색 초점 윤곽이 보인다 (WD-1020, WD-1040)', async ({
     authenticatedPage: page,
   }) => {
     // 편집기는 한 번만 연다 — 첫 읽기 전에 고대비를 켠다
@@ -432,13 +433,67 @@ test.describe('고대비 모드 전역 초점 표시 (WD-949)', () => {
     expect(forced.edgeStyle.focusVisible).toBe(true);
     expect(forced.edgeStyle.outlineStyle, 'xyflow 연결선 outline:none 을 이겨야 한다').toBe('solid');
     expect(forced.edgeStyle.outlineWidth).toBe('2px');
+    // offset 은 WD-1040 보통 모드 규칙에서 오고 고대비 블록은 색만 바꾼다 — 노드 4px, 연결선 2px 유지
+    expect(forced.nodeStyle.outlineOffset).toBe('4px');
+    expect(forced.edgeStyle.outlineOffset).toBe('2px');
 
-    // 보통 모드로 돌려 같은 요소를 다시 읽는다 — 보강 규칙(2px solid)이 새지 않았는지만 본다
+    // 보통 모드로 돌려 같은 요소를 다시 읽는다 — xyflow 기본 outline:none 을 이기고 링 색 윤곽이 보여야 한다 (WD-1040)
     await page.emulateMedia({ forcedColors: 'none' });
     const normal = await focusAndReadNodeEdge(page, node, edge);
     expect(normal.nodeStyle.focusVisible).toBe(true);
-    expect(normal.nodeStyle.outlineWidth === '2px' && normal.nodeStyle.outlineStyle === 'solid').toBe(false);
-    expect(normal.edgeStyle.outlineWidth === '2px' && normal.edgeStyle.outlineStyle === 'solid').toBe(false);
+    expect(normal.nodeStyle.outlineStyle).toBe('solid');
+    expect(normal.nodeStyle.outlineWidth).toBe('2px');
+    expect(normal.nodeStyle.outlineOffset, '노드는 선택 표시(카드 offset 2px)와 겹이 갈리게 4px').toBe('4px');
+    expect(normal.edgeStyle.outlineStyle).toBe('solid');
+    expect(normal.edgeStyle.outlineWidth).toBe('2px');
+    expect(normal.edgeStyle.outlineOffset).toBe('2px');
+    // 노드 outline 색이 --ring 토큰과 같아야 한다 — 임시 div 로 --ring 의 계산 색을 얻어 비교한다
+    // 색은 노드에 초점이 있는 동안 읽어야 한다 — focusAndReadNodeEdge 는 마지막에 연결선으로 초점을 옮기므로 다시 노드에 초점을 준다
+    await node.evaluate((n) => (n as HTMLElement).focus());
+    const nodeFocus = await readFocusStyle(node);
+    expect(nodeFocus.focusVisible, '색을 읽는 순간 노드가 :focus-visible 이어야 한다').toBe(true);
+    const ringColor = await page.evaluate(() => {
+      const d = document.createElement('div');
+      d.style.outline = '2px solid var(--ring)';
+      document.body.appendChild(d);
+      const c = getComputedStyle(d).outlineColor;
+      d.remove();
+      return c;
+    });
+    expect(nodeFocus.outlineColor).toBe(ringColor);
+  });
+
+  test('파이프라인 편집기 노드: 마우스로 누른 노드(:focus-visible 아님)에는 초점 윤곽이 없다 (WD-1040)', async ({
+    authenticatedPage: page,
+  }) => {
+    const { node } = await openPipelineEditor(page);
+    await node.click();
+    // 마우스 클릭은 :focus-visible 을 만들지 않는다 — 노드가 초점을 실제로 받았고(:focus) focus-visible 이 아닌지 먼저 확인해
+    // 초점이 패널로 옮겨 가 단언이 저절로 통과하는 경우를 막는다
+    const state = await node.evaluate((n) => ({
+      focused: n.matches(':focus'),
+      focusVisible: n.matches(':focus-visible'),
+      outlineStyle: getComputedStyle(n).outlineStyle,
+    }));
+    expect(state.focused, '클릭한 노드가 초점을 받아야 한다').toBe(true);
+    expect(state.focusVisible).toBe(false);
+    expect(state.outlineStyle).toBe('none');
+  });
+
+  test('파이프라인 보기 화면(readOnly) 노드: .selectable 이 없어도 키보드 초점에 링 색 윤곽이 보인다 (WD-1040)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 「수정」을 누르지 않은 보기 화면 — elementsSelectable=false 라 노드에 .selectable 이 없지만 초점은 받는다
+    const { node } = await openPipelineEditor(page, { edit: false });
+    await expect(node).not.toHaveClass(/selectable/);
+    // Tab 으로 키보드 입력 방식을 만든 뒤 focus() — 그래야 :focus-visible 이 참이 된다
+    await page.keyboard.press('Tab');
+    await node.evaluate((n) => (n as HTMLElement).focus());
+    const style = await readFocusStyle(node);
+    expect(style.focusVisible).toBe(true);
+    expect(style.outlineStyle, '브라우저 기본(auto) 윤곽이 아니라 링 색 실선이어야 한다').toBe('solid');
+    expect(style.outlineWidth).toBe('2px');
+    expect(style.outlineOffset).toBe('4px');
   });
 
   test('고대비 모드: maplibre 컨트롤 버튼(라이브러리 CSS outline:none)도 outline 이 보인다', async ({
