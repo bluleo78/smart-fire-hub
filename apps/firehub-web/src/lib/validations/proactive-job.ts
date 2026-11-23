@@ -11,7 +11,8 @@ export const channelConfigSchema = z.object({
   // WD-994: 서버가 받는 WEBHOOK 채널(API 로 설정)을 편집 중에도 잃지 않도록 enum 에 둔다.
   type: z.enum(['CHAT', 'EMAIL', 'KAKAO', 'SLACK', 'WEBHOOK']),
   // WD-994: 웹훅 주소 — 화면에서 편집하지 않고 받은 값을 그대로 다시 보낸다.
-  url: z.string().optional(),
+  // WD-994 리뷰 후속: 서버가 url:null 로 준 웹훅도 이름만 고쳐 저장되도록 null 을 받는다(거절하면 저장이 조용히 막힘).
+  url: z.string().nullish(),
   recipientUserIds: z.array(z.number()),
   recipientEmails: z.array(z.string().email('올바른 이메일 형식이 아닙니다')),
   attachPdf: z.boolean().optional(),

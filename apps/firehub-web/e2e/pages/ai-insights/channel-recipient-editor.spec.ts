@@ -443,7 +443,7 @@ test.describe('웹훅 채널 (WD-994)', () => {
   const GUIDE =
     'API 로 설정된 채널입니다 — 아직 스마트 작업 결과를 웹훅으로 보내지 않습니다. 해제하면 설정에서 빠집니다.';
 
-  type SentChannel = { type: string; url?: string; secret?: string };
+  type SentChannel = { type: string; url?: string | null; secret?: string };
 
   /** 「저장」을 눌러 나간 PUT 요청의 config.channels 와 name 을 돌려준다 */
   async function saveAndGetPayload(page: Page, save: MockApiCapture) {
@@ -527,6 +527,22 @@ test.describe('웹훅 채널 (WD-994)', () => {
     await expect(page.getByRole('button', { name: '저장' })).toBeEnabled();
   });
 
+  // WD-994 리뷰 후속: 서버가 url:null 로 준 웹훅도 스키마가 거절하지 않아 이름만 고쳐 저장되고 null 이 그대로 실린다
+  test('url 이 null 인 웹훅도 이름만 고쳐 저장된다 (WD-994 리뷰 후속)', async ({ authenticatedPage: page }) => {
+    const save = await mockApi(page, 'PUT', PUT_PATH, createJob({ id: 1 }), { capture: true });
+    await setupAndNavigateToNotifyTab(page, {
+      config: { channels: [CHAT, { type: 'WEBHOOK', url: null }] },
+    });
+
+    await expect(page.getByRole('checkbox', { name: /웹훅/ })).toBeChecked({ timeout: 5000 });
+    await page.getByLabel(/작업 이름/).fill('새 이름');
+    await expect(page.getByRole('button', { name: '저장' })).toBeEnabled();
+
+    const { name, channels } = await saveAndGetPayload(page, save);
+    expect(name).toBe('새 이름');
+    expect(channels.find((c) => c.type === 'WEBHOOK')).toMatchObject({ type: 'WEBHOOK', url: null });
+  });
+
   test('구 형식 문자열 채널의 웹훅도 저장이 켜진다', async ({ authenticatedPage: page }) => {
     await setupAndNavigateToNotifyTab(page, {
       config: { channels: ['CHAT', 'WEBHOOK'] },
@@ -561,6 +577,16 @@ test.describe('웹훅 채널 (WD-994)', () => {
     await expect(section.getByText('WEBHOOK')).toHaveCount(0);
     await expect(section.getByText('전달 안 됨')).toBeVisible();
     await expect(section.getByText('본인에게만 전달')).toHaveCount(0);
+  });
+
+  // WD-994 리뷰 후속: 구 형식 문자열 'WEBHOOK' 도 읽기 화면에서 「전달 안 됨」으로 알린다
+  test('읽기 화면 구 형식 문자열 웹훅도 「전달 안 됨」으로 보인다 (WD-994 리뷰 후속)', async ({ authenticatedPage: page }) => {
+    await openReadView(page, ['CHAT', 'WEBHOOK']);
+
+    const section = page.getByRole('heading', { name: '전달 채널' }).locator('..');
+    await expect(section.getByText('웹훅', { exact: true })).toBeVisible({ timeout: 5000 });
+    // 채팅 행에는 붙지 않고 웹훅 행에만 하나
+    await expect(section.getByText('전달 안 됨')).toHaveCount(1);
   });
 
   // 웹훅이 둘이면 카드도 둘, 해제는 그 항목만 뺀다
