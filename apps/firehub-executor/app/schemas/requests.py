@@ -164,7 +164,8 @@ class ApiCallExecuteRequest(TenantScopedRequest):
     headers: Optional[dict] = None
     query_params: Optional[dict] = None
     body: Optional[str] = None
-    data_path: str
+    # WD-1001: api 가 데이터 경로를 비워 두면 null 을 보낸다 — Java 직접 실행·미리보기와 같이 루트($)로 읽으려고 선택 값(Optional)으로 둔다.
+    data_path: Optional[str] = None
     field_mappings: List[FieldMapping]
     pagination: Optional[PaginationConfig] = None
     retry: Optional[RetryConfig] = None

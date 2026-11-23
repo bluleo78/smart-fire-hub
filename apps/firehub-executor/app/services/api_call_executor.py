@@ -833,7 +833,7 @@ def _resolve_mapping(fm: FieldMapping, column_type_map: Optional[dict] = None) -
 
 def _parse_and_map(
     response_body: Any,
-    data_path: str,
+    data_path: Optional[str],
     field_mappings: List[FieldMapping],
     column_type_map: Optional[dict],
     row_offset: int = 0,
@@ -868,7 +868,7 @@ def _parse_and_map(
     return rows, len(items)
 
 
-def _extract_data(response_body: Any, data_path: str) -> List[Any]:
+def _extract_data(response_body: Any, data_path: Optional[str]) -> List[Any]:
     """데이터 경로(JSONPath)로 응답에서 행 후보 목록을 꺼낸다 — Java ``JsonResponseParser.parseAndMap`` 과 같은 규칙(WD-212).
 
     예전에는 매치가 없거나 파싱 오류가 나도 ``[]`` 를 돌려 「완료·0행」으로 끝났다. REPLACE 출력이면 옛 데이터가 그대로 남아

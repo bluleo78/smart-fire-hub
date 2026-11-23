@@ -1091,7 +1091,7 @@ def _json_response(payload: Any) -> MagicMock:
     return resp
 
 
-def _post_api_call(test_client, headers, data_path, payload, insert_side_effect=None):
+def _post_api_call(test_client, headers, data_path, payload, insert_side_effect=None, omit_data_path=False):
     from unittest.mock import AsyncMock
 
     conn_cm = MagicMock()
@@ -1109,6 +1109,9 @@ def _post_api_call(test_client, headers, data_path, payload, insert_side_effect=
         "output_table": "ptmp_out",
         "retry": {"max_retries": 0, "initial_backoff_ms": 0, "max_backoff_ms": 0},
     }
+    if omit_data_path:
+        # WD-1001: 요청 본문에서 data_path 키 자체를 뺀다(키 누락 케이스)
+        del body["data_path"]
     with patch("app.routers.api_call.backend_of", new=AsyncMock(return_value=("POSTGRESQL", None))), patch(
         "app.db.connection.get_connection", conn_cm
     ), patch("app.services.api_call_executor.validate_url"), patch(
@@ -1160,6 +1163,20 @@ def test_route_single_object_is_one_row(test_client, mock_auth_header):
     data = resp.json()
     assert data["success"] is True and data["rows_loaded"] == 1
     assert mock_insert.call_args.args[2] == [{"station_name": "중구", "pm10": 12}]
+
+
+ROOT_LIST = [{"stationName": "종로구", "pm10Value": "41"}]
+
+
+@pytest.mark.parametrize("omit_data_path", [False, True], ids=["null", "missing-key"])
+def test_route_null_or_missing_data_path_reads_root(test_client, mock_auth_header, omit_data_path):
+    """WD-1001: api 가 data_path 를 null 로 보내거나 키가 없어도 422 가 아니라 루트($)로 읽는다."""
+    resp, _, mock_insert = _post_api_call(
+        test_client, mock_auth_header, None, ROOT_LIST, omit_data_path=omit_data_path
+    )
+    data = resp.json()
+    assert resp.status_code == 200 and data["success"] is True and data["rows_loaded"] == 1
+    assert mock_insert.call_args.args[2] == [{"station_name": "종로구", "pm10": 41}]
 
 
 def test_route_syntax_error(test_client, mock_auth_header):
