@@ -4,7 +4,7 @@ import { createPageResponse, mockApi, mockDeleteOnceThenNotFound } from '../../f
 import { expect, test } from '../../fixtures/auth.fixture';
 import { expectBackdropClickStaysOnList } from '../../fixtures/dialog.fixture';
 import { expectTableErrorAlert } from '../../fixtures/table-error-alert';
-import { expectFocusRingRoom, expectTableFits } from '../../fixtures/table-layout';
+import { expectFocusRingRoom, expectLongValueTruncated, expectTableFits } from '../../fixtures/table-layout';
 
 /**
  * 대시보드 목록 페이지 E2E 테스트
@@ -630,6 +630,32 @@ test.describe('대시보드 목록 페이지', () => {
     const tableBox = await table.boundingBox();
     expect(tableBox?.width ?? 0).toBeLessThanOrEqual(viewportWidth);
     await expect(dataRow.getByLabel('삭제')).toBeVisible();
+  });
+
+  test('말줄임된 대시보드 설명은 마우스를 올리면 전체가 보인다 (WD-945)', async ({ authenticatedPage: page }) => {
+    // 회귀 방지: 설명은 truncate 로 잘리므로 title 속성이 없으면 전체 내용을 볼 방법이 없다.
+    // 설명이 없는 행에는 빈 <p title> 이 남지 않아야 한다.
+    const longDesc = '설명'.repeat(250);
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/analytics/dashboards',
+      createPageResponse([
+        createDashboardListItem({ id: 98, name: '긴 설명 대시보드', description: longDesc }),
+        createDashboardListItem({ id: 97, name: '설명 없는 대시보드', description: null }),
+      ]),
+    );
+
+    await page.goto('/analytics/dashboards');
+
+    // 말줄임 공용 단언: 실제로 잘렸는지(scrollWidth > clientWidth) + 전체 값이 title 에 있는지
+    const desc = page.getByText(longDesc, { exact: true });
+    await expectLongValueTruncated(desc, longDesc);
+
+    // 행이 실제로 그려졌는지 먼저 확인해야 아래 "설명 없음" 단언이 빈 결과로 통과하지 않는다
+    const noDescRow = page.getByRole('row').filter({ hasText: '설명 없는 대시보드' });
+    await expect(noDescRow).toBeVisible();
+    await expect(noDescRow.locator('p.truncate')).toHaveCount(0);
   });
 
   test('대시보드 설명 입력란은 서버 상한(2,000자)까지만 입력받는다 (WD-425)', async ({ authenticatedPage: page }) => {
