@@ -33,7 +33,7 @@ import { createWithNumberedName } from '@/lib/clone-name';
 import { focusFirstInvalidInteger } from '@/lib/focus-invalid-integer';
 import { parseRouteId } from '@/lib/route-id';
 import { resolveTabParam } from '@/lib/tab-param';
-import { numberedGoalTemplateName, type ProactiveJobFormValues,proactiveJobSchema } from '@/lib/validations/proactive-job';
+import { type ChannelConfigValues, numberedGoalTemplateName, type ProactiveJobFormValues,proactiveJobSchema } from '@/lib/validations/proactive-job';
 
 import { OwnerIneligibleBadge } from './components/OwnerIneligibleBadge';
 import { ProactiveReadForbiddenNotice } from './components/ProactiveReadForbiddenNotice';
@@ -67,15 +67,17 @@ function buildDefaultValues(job?: {
   const rawChannels = Array.isArray(job.config?.channels) ? job.config.channels : [];
   const channels = rawChannels.map((ch) => {
     if (typeof ch === 'string') {
-      return { type: ch as 'CHAT' | 'EMAIL', recipientUserIds: [], recipientEmails: [] };
+      return { type: ch as ChannelConfigValues['type'], recipientUserIds: [], recipientEmails: [] };
     }
-    const c = ch as { type?: string; recipientUserIds?: number[]; recipientEmails?: string[]; attachPdf?: boolean };
+    const c = ch as { type?: string; recipientUserIds?: number[]; recipientEmails?: string[] };
+    // WD-994: 받은 객체를 통째로 펼쳐 화면이 모르는 키(웹훅 url·secret, attachPdf 등)를 잃지 않게 한다 —
+    // 스키마가 passthrough 라 저장 때 그대로 나간다. 배열 필드와 type 만 보정한다.
     return {
-      type: (c.type ?? 'CHAT') as 'CHAT' | 'EMAIL',
+      ...(ch as Record<string, unknown>),
+      type: (c.type ?? 'CHAT') as ChannelConfigValues['type'],
       recipientUserIds: c.recipientUserIds ?? [],
       recipientEmails: c.recipientEmails ?? [],
-      ...(c.attachPdf !== undefined && { attachPdf: c.attachPdf }),
-    };
+    } as ChannelConfigValues;
   });
 
   // Normalize anomaly config

@@ -29,6 +29,7 @@ import { cronToLabel } from '@/lib/cron-label';
 import { getExecutionDisplayStatus } from '@/lib/error-classifier';
 import { parseUtcDate, timeAgo } from '@/lib/formatters';
 import { formatNextRunShort } from '@/lib/next-run';
+import { CHANNEL_TYPE_LABELS, channelTypeLabel } from '@/lib/validations/proactive-job';
 
 import { OwnerIneligibleBadge } from './components/OwnerIneligibleBadge';
 import { ProactiveReadForbiddenNotice } from './components/ProactiveReadForbiddenNotice';
@@ -43,13 +44,13 @@ function channelSummary(config: Record<string, unknown>): string {
   for (const ch of channels) {
     if (typeof ch === 'string') {
       // 구 형식: channels: ['CHAT', 'EMAIL']
-      if (ch === 'CHAT') parts.push('채팅');
-      else if (ch === 'EMAIL') parts.push('이메일');
+      // WD-994: 라벨이 있는 알려진 타입만 넣는다 — 모르는 타입은 예전처럼 건너뛴다(channelTypeLabel 은 모르면 받은 문자열을 돌려줌)
+      if (Object.hasOwn(CHANNEL_TYPE_LABELS, ch)) parts.push(channelTypeLabel(ch));
     } else if (ch && typeof ch === 'object') {
       // 신 형식: channels: [{ type: 'CHAT', recipientUserIds: [...], recipientEmails: [...] }]
       const c = ch as { type?: string; recipientUserIds?: unknown[]; recipientEmails?: unknown[] };
       const userCount = (c.recipientUserIds?.length ?? 0) + (c.recipientEmails?.length ?? 0);
-      const label = c.type === 'CHAT' ? '채팅' : c.type === 'EMAIL' ? '이메일' : c.type ?? '';
+      const label = channelTypeLabel(c.type);
       if (userCount > 0) {
         parts.push(`${label} ${userCount}`);
       } else {

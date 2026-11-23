@@ -35,6 +35,7 @@ import { formatDate, getStatusBadgeVariant, getStatusLabel } from '@/lib/formatt
 import { formatNextRun } from '@/lib/next-run';
 import { describeTimezone, TIMEZONE_OPTIONS } from '@/lib/timezone-data';
 import {
+  channelTypeLabel,
   CRON_REQUIRED_MESSAGE,
   goalTemplateName,
   MAX_JOB_PROMPT_LENGTH,
@@ -372,21 +373,30 @@ export default function JobOverviewTab({
                 if (typeof ch === 'string') {
                   return (
                     <div key={idx} className="flex items-center gap-2">
-                      <Badge variant="outline">{ch === 'CHAT' ? '채팅' : ch === 'EMAIL' ? '이메일' : ch}</Badge>
+                      <Badge variant="outline">{channelTypeLabel(ch)}</Badge>
                     </div>
                   );
                 }
                 const c = ch as { type?: string; recipientUserIds?: unknown[]; recipientEmails?: unknown[] };
-                const label = c.type === 'CHAT' ? '채팅' : c.type === 'EMAIL' ? '이메일' : c.type ?? '';
+                // WD-994: 웹훅·Slack·카카오도 한글 라벨로 보인다
+                const label = channelTypeLabel(c.type);
+                const isWebhook = c.type === 'WEBHOOK';
                 const userCount = c.recipientUserIds?.length ?? 0;
                 const emailCount = c.recipientEmails?.length ?? 0;
                 return (
                   <div key={idx} className="flex items-center gap-2">
                     <Badge variant="outline">{label}</Badge>
-                    {userCount > 0 && <span className="text-xs text-muted-foreground">사용자 {userCount}명</span>}
-                    {emailCount > 0 && <span className="text-xs text-muted-foreground">외부 이메일 {emailCount}건</span>}
-                    {userCount === 0 && emailCount === 0 && (
-                      <span className="text-xs text-muted-foreground">본인에게만 전달</span>
+                    {/* WD-994: 웹훅은 아직 발송하지 않으므로 수신자 요약·「본인에게만 전달」 대신 「전달 안 됨」으로 알린다 */}
+                    {isWebhook ? (
+                      <span className="text-xs text-muted-foreground">전달 안 됨</span>
+                    ) : (
+                      <>
+                        {userCount > 0 && <span className="text-xs text-muted-foreground">사용자 {userCount}명</span>}
+                        {emailCount > 0 && <span className="text-xs text-muted-foreground">외부 이메일 {emailCount}건</span>}
+                        {userCount === 0 && emailCount === 0 && (
+                          <span className="text-xs text-muted-foreground">본인에게만 전달</span>
+                        )}
+                      </>
                     )}
                   </div>
                 );

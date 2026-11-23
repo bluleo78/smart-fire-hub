@@ -83,6 +83,28 @@ test.describe('스마트 작업 목록 페이지', () => {
     await expect(page).toHaveURL('/ai-insights/jobs/new');
   });
 
+  // WD-994: 웹훅 채널도 목록 채널 요약에 한글 라벨로 보인다(예전엔 타입 글자 그대로이거나 빠졌다)
+  test('채널 요약에 웹훅이 한글 라벨로 보인다 (WD-994)', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs', [
+      createJob({
+        id: 1,
+        name: '웹훅 작업',
+        config: {
+          channels: [
+            { type: 'CHAT', recipientUserIds: [], recipientEmails: [] },
+            { type: 'WEBHOOK', url: 'https://example.com/hook' },
+          ],
+        },
+      }),
+    ]);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+
+    await page.goto('/ai-insights/jobs');
+
+    const row = page.getByRole('row').filter({ hasText: '웹훅 작업' });
+    await expect(row.getByText('채팅 / 웹훅')).toBeVisible();
+  });
+
   test('활성 작업에 활성화 스위치가 켜진 상태로 표시된다', async ({ authenticatedPage: page }) => {
     // enabled: true 작업으로 모킹
     await mockApi(page, 'GET', '/api/v1/proactive/jobs', [
