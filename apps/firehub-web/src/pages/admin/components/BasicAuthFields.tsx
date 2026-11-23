@@ -42,7 +42,7 @@ export function BasicAuthFields({
 }: BasicAuthFieldsProps) {
   return (
     <>
-      <FormField label="아이디" htmlFor={usernameId} error={usernameError} required>
+      <FormField label="아이디" htmlFor={usernameId} error={usernameError} required announceError={false}>
         <Input
           id={usernameId}
           autoComplete="off"
@@ -51,7 +51,7 @@ export function BasicAuthFields({
           onChange={(e) => onUsernameChange(e.target.value)}
         />
       </FormField>
-      <FormField label="비밀번호" htmlFor={passwordId} error={passwordError} required={!keepPasswordHintId}>
+      <FormField label="비밀번호" htmlFor={passwordId} error={passwordError} required={!keepPasswordHintId} announceError={false}>
         <Input
           id={passwordId}
           type="password"
