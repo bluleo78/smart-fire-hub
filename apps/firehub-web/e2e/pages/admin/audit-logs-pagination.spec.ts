@@ -310,3 +310,101 @@ test.describe('감사 로그 페이지네이션 — 이동 중에도 목록을 �
     held.release();
   });
 });
+
+/**
+ * 페이지 크기를 바꾸는 동안에도 크기 선택을 유지한다 (WD-1025)
+ * 예전에는 크기가 바뀌면 쪽 정보 기억이 비워지고(logs 도 undefined) 페이지네이션이 통째로 사라져 크기 선택의 초점이 body 로 떨어졌다.
+ */
+test.describe('감사 로그 페이지네이션 — 크기 변경 중 크기 선택 유지 (WD-1025)', () => {
+  const API = '/api/v1/admin/audit-logs';
+
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+  });
+
+  /** 전체 45건 응답 모킹 — size 쿼리를 읽어 totalPages = ceil(45/size) 로 돌려주고 받은 size 를 기록한다 */
+  async function mockTotal45(page: Page) {
+    const sizes: string[] = [];
+    await page.route(
+      (url) => url.pathname === API,
+      async (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        const size = Number(new URL(route.request().url()).searchParams.get('size') ?? '20');
+        sizes.push(String(size));
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(
+            createPageResponse(createAuditLogs(Math.min(size, 45)), {
+              totalElements: 45,
+              totalPages: Math.ceil(45 / size),
+            }),
+          ),
+        });
+      },
+    );
+    return sizes;
+  }
+
+  /** 크기 선택 트리거에 초점을 두고 키보드로 옵션 50 을 고른다 */
+  async function pickSize50ByKeyboard(page: Page, trigger: Locator) {
+    await trigger.focus();
+    await page.keyboard.press('Enter');
+    // 목록이 열려 옵션이 보인 뒤에 고른다 — 열리는 중에 초점을 주면 Enter 가 헛돌 수 있다
+    const option = page.getByRole('option', { name: '50' });
+    await expect(option).toBeVisible();
+    await option.focus();
+    await page.keyboard.press('Enter');
+  }
+
+  test('크기를 바꾸고 응답을 기다리는 동안 크기 선택이 남아 초점을 잃지 않고, 응답 뒤 쪽 수가 새 크기 기준이다 (WD-1025)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockTotal45(page);
+    await page.goto('/admin/audit-logs');
+    const nav = page.getByRole('navigation', { name: '페이지네이션' });
+    const trigger = page.getByRole('combobox', { name: '페이지 사이즈' });
+    await expect(page.getByText('감사 로그 1', { exact: true })).toBeVisible();
+    await expect(nav.getByRole('button', { name: '3 페이지' })).toBeVisible();
+
+    const held = await holdRequests(page, API, 'GET');
+    await pickSize50ByKeyboard(page, trigger);
+    await expect.poll(held.count).toBeGreaterThan(0);
+
+    // 붙잡힌 동안: 크기 선택이 남고 초점이 크기 선택에 있다. 쪽 수는 기억한 45건을 새 크기(50)로 나눈 1쪽이라
+    // 옛 크기 기준 3쪽 버튼이 남지 않는다(nav 없음)
+    await expect(nav).toHaveCount(0);
+    await expect(trigger).toBeVisible();
+    await expect(trigger).toBeFocused();
+
+    held.release();
+    // 응답 뒤: 50건 기준 한 쪽에 45건이 다 보이고, 크기 선택은 초점을 유지한다
+    await expect(page.getByText('총 45건 중 1-45')).toBeVisible();
+    await expect(trigger).toBeFocused();
+  });
+
+  test('오프라인에서 크기를 바꾸면 크기 선택이 남고 연결 안내가 보이며 연결되면 새 크기로 채운다 (WD-1025)', async ({
+    authenticatedPage: page,
+  }) => {
+    const sizes = await mockTotal45(page);
+    await page.goto('/admin/audit-logs');
+    const nav = page.getByRole('navigation', { name: '페이지네이션' });
+    const trigger = page.getByRole('combobox', { name: '페이지 사이즈' });
+    await expect(page.getByText('감사 로그 1', { exact: true })).toBeVisible();
+
+    await page.context().setOffline(true);
+    await pickSize50ByKeyboard(page, trigger);
+
+    await expect(
+      page.getByText('인터넷 연결이 없어 감사 로그 목록을 불러오지 못하고 있습니다. 연결되면 자동으로 다시 불러옵니다.'),
+    ).toBeVisible();
+    // 옛 크기 기준 쪽 버튼은 남지 않고(45건·50개씩 = 1쪽) 크기 선택은 남아 초점을 쥔다
+    await expect(nav).toHaveCount(0);
+    await expect(trigger).toBeVisible();
+    await expect(trigger).toBeFocused();
+
+    await page.context().setOffline(false);
+    await expect.poll(() => sizes).toContain('50');
+    await expect(page.getByText('감사 로그 45', { exact: true })).toBeVisible();
+  });
+});

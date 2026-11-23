@@ -600,7 +600,12 @@ export default function AuditLogListPage() {
 
   const isTransitioning = isPlaceholderData && !offline;
 
-  const { totalPages, totalElements } = useLastPageInfo(logs, auditParams);
+  // 크기(size)는 기억 초기화 키에서 뺀다 (WD-1025): 크기만 바뀌면 쪽 정보 기억을 남겨 SimplePagination 이 사라졌다 다시 마운트되지 않게 한다
+  // (크기 선택의 초점 보존). 전체 건수는 크기와 무관하다. 다른 조회 조건이 바뀌면 기존대로 비운다.
+  const { totalElements } = useLastPageInfo(logs, { ...auditParams, size: undefined });
+  // 쪽 수는 기억한 건수를 지금 크기로 나눠 센다 — 응답이 없는 동안(크기 변경 대기·오프라인·실패)에도 옛 크기 기준의
+  // 없는 쪽 버튼(예: 45건·50개씩인데 3쪽)이 남지 않는다(WD-1025 code-review). 응답이 있으면 서버 totalPages 와 같다.
+  const totalPages = totalElements === undefined ? 0 : Math.ceil(totalElements / pageSize);
 
   // 캐시 정리용 클라이언트 — 범위 밖 되돌리기 때 낡은 목록 캐시를 비우는 데 쓴다
   const queryClient = useQueryClient();

@@ -23,6 +23,8 @@ interface Screen {
   apiPath: string;
   tableName: string;
   searchPlaceholder: string;
+  /** 목록이 비었을 때의 기본 문구 (검색어 없는 빈 상태) */
+  emptyText: string;
   /** 쪽 번호(0 부터)에 맞는 목록 행 하나 */
   item: (page: number) => unknown;
   /** 화면별 부가 API 모킹 */
@@ -36,6 +38,7 @@ const SCREENS: Screen[] = [
     apiPath: '/api/v1/analytics/queries',
     tableName: '저장된 쿼리 목록',
     searchPlaceholder: '쿼리 검색...',
+    emptyText: '저장된 쿼리가 없습니다.',
     item: (p) => createSavedQueryListItem({ id: p + 1, name: `쿼리 ${p + 1}쪽 행` }),
     extra: (page) => mockApi(page, 'GET', '/api/v1/analytics/queries/folders', []),
   },
@@ -45,6 +48,7 @@ const SCREENS: Screen[] = [
     apiPath: '/api/v1/analytics/charts',
     tableName: '차트 목록',
     searchPlaceholder: '차트 검색...',
+    emptyText: '차트가 없습니다.',
     item: (p) => createChartListItem({ id: p + 1, name: `차트 ${p + 1}쪽 행` }),
   },
   {
@@ -53,6 +57,7 @@ const SCREENS: Screen[] = [
     apiPath: '/api/v1/analytics/dashboards',
     tableName: '대시보드 목록',
     searchPlaceholder: '대시보드 검색...',
+    emptyText: '대시보드가 없습니다.',
     item: (p) => createDashboardListItem({ id: p + 1, name: `대시보드 ${p + 1}쪽 행` }),
   },
 ];
@@ -141,6 +146,29 @@ for (const screen of SCREENS) {
 
       await page.context().setOffline(false);
       await expect(page.getByText(`${screen.label} 2쪽 행`, { exact: true })).toBeVisible();
+    });
+
+    test('오프라인에서 검색어를 바꾸면 빈 안내 대신 연결 안내가 보이고 연결되면 채운다 (WD-1025)', async ({
+      authenticatedPage: page,
+    }) => {
+      await mockPagedList(page, screen);
+      await page.goto(screen.path);
+      await expect(page.getByText(firstRowName, { exact: true })).toBeVisible();
+
+      // 오프라인에서 캐시 없는 검색어로 바꾸면 조회가 대기한다 — 「결과가 없습니다」로 오해시키면 안 된다
+      await page.context().setOffline(true);
+      await page.getByPlaceholder(screen.searchPlaceholder).fill('다른 조건');
+
+      await expect(
+        page.getByText(`인터넷 연결이 없어 ${screen.label} 목록을 불러오지 못하고 있습니다. 연결되면 자동으로 다시 불러옵니다.`),
+      ).toBeVisible();
+      await expect(page.getByText(screen.emptyText)).toHaveCount(0);
+      await expect(page.getByText(/에 대한 결과가 없습니다/)).toHaveCount(0);
+
+      // 연결되면 자동으로 다시 불러와 행을 채우고 안내는 사라진다
+      await page.context().setOffline(false);
+      await expect(page.getByText(firstRowName, { exact: true })).toBeVisible();
+      await expect(page.getByText(/인터넷 연결이 없어/)).toHaveCount(0);
     });
 
     test('다음 쪽이 실패해도 페이지네이션이 남고 이전 쪽으로 돌아간다 (WD-982)', async ({
