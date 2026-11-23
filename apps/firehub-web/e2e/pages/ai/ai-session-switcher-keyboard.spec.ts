@@ -337,36 +337,8 @@ test.describe('SessionSwitcher — 키보드 삭제 (WD-951)', () => {
       await expect(titleBtn(page, '셋째 대화')).toBeFocused();
     });
 
-    test('줄이 사라지는 순간 초점이 본문 main 으로 떨어져도 다음 줄 제목으로 간다 (WD-980)', async ({
-      authenticatedPage: page,
-    }) => {
-      // 삭제 응답을 붙잡는다 — 지우는 중인 줄은 삭제가 성공하는 순간 감춰지므로(WD-989) 응답을 풀기 전까지 줄이 남아 있다
-      const requests = await openPanel(page, MOCK_SESSIONS, { slowDeleteIds: ['2'] });
-      await openListByKeyboard(page);
-      await deleteByKeyboard(page, '둘째 대화');
-      await expect.poll(() => requests.deletes).toEqual(['2']);
-      await expect(titleBtn(page, '둘째 대화')).toHaveCount(1);
-
-      // 건너뛰기 뒤 main 에 tabindex=-1 이 남은 상태를 재현 — 줄이 DOM 에서 빠지는 순간 main 으로 포커스를 둔다
-      await page.evaluate(() => {
-        const main = document.querySelector('main#main-content') as HTMLElement;
-        const row = Array.from(document.querySelectorAll('[role="dialog"] button')).find(
-          (b) => b.textContent?.trim() === '둘째 대화',
-        );
-        if (!row) throw new Error('지울 줄(둘째 대화)이 없다');
-        const mo = new MutationObserver(() => {
-          if (!row.isConnected) {
-            main.setAttribute('tabindex', '-1');
-            main.focus();
-            mo.disconnect();
-          }
-        });
-        mo.observe(document.body, { childList: true, subtree: true });
-      });
-      requests.releaseDelete('2');
-      await expect(titleBtn(page, '둘째 대화')).toHaveCount(0);
-      await expect(titleBtn(page, '셋째 대화')).toBeFocused();
-    });
+    // 줄이 사라질 때 초점이 본문 main 인 경우(WD-980)는 SessionSwitcher.test.tsx 단위 시험(WD-1039)이 지킨다 —
+    // modal 목록이 열린 동안에는 FocusScope 가 main 초점을 되돌려 E2E 로는 그 상태를 만들 수 없다.
 
     test('끝 줄을 지우면 이전 줄 제목에 초점이 간다', async ({ authenticatedPage: page }) => {
       const requests = await openPanel(page, MOCK_SESSIONS, { slowDeleteIds: ['3'] });

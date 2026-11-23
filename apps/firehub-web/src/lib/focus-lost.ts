@@ -1,19 +1,3 @@
-/**
- * 포커스를 잃었는지 판정한다(WD-968 리뷰 후속).
- *
- * 무엇: 버튼이 사라지거나 비활성화되는 등 포커스가 있던 요소가 없어졌을 때, 포커스가 「갈 곳 없이 떨어진」 상태인지 본다.
- * 왜: 예전에는 body 로 떨어질 때만 잃은 것으로 봤다. 그런데 「본문으로 건너뛰기」 뒤에는 본문(main#main-content)에
- *     임시 tabindex=-1 이 남아, 대화상자가 닫히며 포커스를 body 대신 main 으로 돌려준다(WD-968). main 자체는 조작할 수 없는
- *     자리라 body 와 같이 「잃은」 것으로 봐야 화면마다의 포커스 복구(편집 모드 전환·시트 선택·재시도 버튼)가 계속 동작한다.
- *
- * 건너뛰기 직후처럼 사용자가 일부러 main 에 둔 포커스도 「잃음」으로 본다 — 그 사이 비동기 작업이 끝나면 포커스가 옮겨질 수 있지만,
- * main 은 조작할 것이 없는 자리라 옮겨도 잃는 것이 없고 판정을 단순하게 두는 편이 낫다(리뷰 후속 판단).
- *
- * main 은 잃음으로 보지만, 더 나은 대상이 없을 때는 마지막 복귀 지점으로 쓸 수 있다(WD-980).
- *
- * @param active 볼 요소(기본: 지금 document.activeElement)
- * @returns 포커스가 없거나 body·본문(main#main-content) 자체에 있으면 true
- */
 /** 앱 셸 본문(main)의 id — 건너뛰기 링크 대상(AppLayout)과 포커스 잃음 판정이 같은 값을 쓴다 */
 export const MAIN_CONTENT_ID = 'main-content';
 
@@ -22,7 +6,34 @@ export function isMainContent(el: Element | null): boolean {
   return !!el && el.id === MAIN_CONTENT_ID && el.tagName === 'MAIN';
 }
 
+/**
+ * 포커스를 잃었는지 판정한다(WD-968 리뷰 후속).
+ *
+ * 무엇: 버튼이 사라지거나 비활성화되는 등 포커스가 있던 요소가 없어졌을 때, 포커스가 「갈 곳 없이 떨어진」 상태인지 본다.
+ * 왜: 예전에는 body 로 떨어질 때만 잃은 것으로 봤다. 그런데 「본문으로 건너뛰기」 뒤에는 본문(main#main-content)에
+ *     임시 tabindex=-1 이 남아, 대화상자가 닫히며 포커스를 body 대신 main 으로 돌려준다(WD-968). main 자체는 조작할 수 없는
+ *     자리라 body 와 같이 「잃은」 것으로 봐야 화면마다의 포커스 복구(편집 모드 전환·시트 선택·재시도 버튼)가 계속 동작한다.
+ *
+ * 건너뛰기 직후처럼 사용자가 일부러 main 에 둔 포커스도 이 판정은 「잃음」으로 본다(판정 자체는 그대로).
+ * 다만 ChatInput 처럼 비동기로 「초점을 끌어오는」 곳은 main 을 잃음으로 보지 않는다 — 사용자가 일부러 main 에 둔 자리를
+ * 빼앗지 않기 위해서다(WD-1039).
+ *
+ * main 은 잃음으로 보지만, 더 나은 대상이 없을 때는 마지막 복귀 지점으로 쓸 수 있다(WD-980).
+ *
+ * @param active 볼 요소(기본: 지금 document.activeElement)
+ * @returns 포커스가 없거나 body·본문(main#main-content) 자체에 있으면 true
+ */
 export function isFocusLost(active: Element | null = document.activeElement): boolean {
   if (!active || active === document.body) return true;
   return isMainContent(active);
+}
+
+/**
+ * 본문 main 에 초점을 준다(WD-1039) — tabindex 속성이 없을 때만 임시 tabindex=-1 을 붙이고 focus() 한다.
+ * 왜: main 은 기본으로 초점을 받지 못해, 마우스 누름으로 tabindex 가 떨어진 뒤(AppLayout releaseMainFocusTarget)
+ *     main 으로 복귀하려 해도 focus() 가 무시돼 body 로 떨어졌다. 이미 tabindex 가 있으면 값을 바꾸지 않는다.
+ */
+export function focusMainContent(main: HTMLElement): void {
+  if (!main.hasAttribute('tabindex')) main.setAttribute('tabindex', '-1');
+  main.focus();
 }
