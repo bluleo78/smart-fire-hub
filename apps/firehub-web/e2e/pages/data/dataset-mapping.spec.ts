@@ -1027,6 +1027,36 @@ test.describe('데이터셋 매핑 탭', () => {
       // 트리거가 언마운트됐으므로 restoreFocusRef 로 지정한 '관계 매핑 추가' 로 복귀한다.
       await expect(page.getByRole('button', { name: '관계 매핑 추가' })).toBeFocused();
     });
+
+    // WD-980: 「본문으로 건너뛰기」 뒤 main 에 tabindex=-1 이 남아, 트리거에 포커스 없이 열린 대화상자가 닫힐 때
+    // 포커스가 본문(main)에 떨어진다. main 은 「잃음」이므로 대체 지점(추가 버튼)으로 가야 한다.
+    test('건너뛰기 뒤 삭제를 확인해 행이 사라지면 포커스가 본문(main)이 아니라 표의 추가 버튼으로 이동한다 (WD-980)', async ({
+      authenticatedPage: page,
+    }) => {
+      await setupMappingMocks(page);
+      await mockApi(page, 'GET', `/api/v1/datasets/${MAPPING_DATASET_ID}/mapping`, createMappingResponse());
+      await page.goto(MAPPING_URL);
+      await expect(page.getByTestId('relation-row-OCCURRED_AT')).toBeVisible();
+
+      // 건너뛰기 링크로 본문에 포커스를 보낸다 — main 에 tabindex=-1 이 남는다
+      const main = page.locator('main#main-content');
+      await page.keyboard.press('Tab');
+      await page.keyboard.press('Enter');
+      await expect(main).toBeFocused();
+
+      // 클릭해도 버튼에 포커스가 가지 않는 환경(Safari 등)을 흉내 낸다 — 포커스가 본문(main)에 남은 채 대화상자가 열린다
+      await page
+        .getByTestId('relation-row-OCCURRED_AT')
+        .getByRole('button', { name: '삭제' })
+        .evaluate((el) => (el as HTMLElement).click());
+      const confirm = page.getByTestId('relation-delete-confirm');
+      await expect(confirm).toBeVisible();
+
+      await confirm.getByRole('button', { name: '삭제' }).click();
+      await expect(page.getByTestId('relation-row-OCCURRED_AT')).toHaveCount(0);
+      await expect(page.getByRole('button', { name: '관계 매핑 추가' })).toBeFocused();
+      await expect(main).not.toBeFocused();
+    });
   });
 });
 

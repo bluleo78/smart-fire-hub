@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 
 import { Button } from '../components/ui/button';
 import { isForbiddenError } from '../lib/api-error';
+import { isFocusLost } from '../lib/focus-lost';
 import { cn } from '../lib/utils';
 
 /**
@@ -95,7 +96,8 @@ export function useListRetryFocus({
         if (document.activeElement !== node) return;
         queueMicrotask(() => {
           // 진짜로 DOM 에서 빠졌고(StrictMode 재부착 아님), 초점이 body 로 떨어졌고, 옮길 표가 남아 있을 때만
-          const focusLost = !document.activeElement || document.activeElement === document.body;
+          // 없음·body·건너뛰기 뒤 본문 main 은 모두 잃음(WD-980)
+          const focusLost = isFocusLost();
           const removedWhileFocused = !node.isConnected && focusLost && tableRef.current?.isConnected;
           if (!removedWhileFocused) return;
           const nextButton = retryButtonRef.current;

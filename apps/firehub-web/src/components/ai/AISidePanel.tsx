@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useMediaQuery } from '../../hooks/useMediaQuery';
 import { useOverlayEscape } from '../../hooks/useOverlayEscape';
+import { isFocusLost } from '../../lib/focus-lost';
 import { cn } from '../../lib/utils';
 import { AIChatPanel } from './AIChatPanel';
 import { useAI } from './AIProvider';
@@ -41,7 +42,7 @@ export function AISidePanel() {
   const startX = useRef(0);
   const startWidth = useRef(0);
 
-  // 포커스 복귀용 refs (#333). 닫힌 패널을 inert로 만들면 내부에 있던 포커스가 <body>로 유실되므로
+  // 포커스 복귀용 refs (#333). 닫힌 패널을 inert로 만들면 내부에 있던 포커스가 <body>(또는 본문 main)로 유실되므로
   // 열 때의 트리거(AIProvider 가 기록한 openFocusOriginRef, WD-579)로 닫힐 때 되돌린다(#328과 같은 결함 방지).
   const panelRef = useRef<HTMLDivElement | null>(null);
   // 닫힘 "전환"만 감지하기 위한 이전 열림 상태.
@@ -51,14 +52,17 @@ export function AISidePanel() {
     const wasOpen = prevOpenRef.current;
     prevOpenRef.current = isOpen;
 
-    // 닫힘: 포커스가 갈 곳을 잃었을 때만(패널 내부에 남아 있거나 이미 <body>) 여는 트리거로 되돌린다.
+    // 닫힘: 포커스가 갈 곳을 잃었을 때만(패널 내부에 남아 있거나 이미 <body>·본문 main) 여는 트리거로 되돌린다.
     // 브라우저는 inert가 붙은 서브트리의 포커스를 나중에 정리해 <body>로 떨어뜨린다 — 이 이펙트
     // 시점에는 아직 정리 전이라 activeElement가 패널 내부로 잡히므로 "패널 내부인지"로 판정한다.
     // 패널 밖 컨트롤(AI 상태 칩 등)로 닫았으면 포커스가 그 컨트롤에 남아 있으니 건드리지 않는다.
     if (!isOpen && wasOpen) {
       const active = document.activeElement;
-      const stranded = !active || active === document.body || !!panelRef.current?.contains(active);
-      // 열 때의 포커스 위치가 패널 밖의 살아 있는 컨트롤일 때만 복귀 지점으로 쓴다.
+      // 「본문으로 건너뛰기」 뒤 main 에 포커스가 남아 있는 경우도 잃음으로 본다(isFocusLost, WD-980)
+      const stranded = isFocusLost(active) || !!panelRef.current?.contains(active);
+      // 열 때의 포커스 위치가 패널 밖의 살아 있는 요소일 때만 복귀 지점으로 쓴다.
+      // 본문 main 은 잃음(isFocusLost)으로 보지만 더 나은 대상이 없을 때의 마지막 복귀 지점으로는 유효하다(WD-980) —
+      // 건너뛰기 뒤 Ctrl+K 로 열었으면 닫을 때 페이지 맨 위(body)가 아니라 main 으로 돌려준다.
       // 트리거가 사라졌거나 애초에 없었으면(단축키로 열었고 포커스가 <body>였던 경우) 그대로 둔다.
       const opener = openFocusOriginRef.current;
       const restorable =

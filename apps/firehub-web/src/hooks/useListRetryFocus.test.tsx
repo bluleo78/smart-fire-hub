@@ -10,6 +10,7 @@ import { StrictMode } from 'react';
 import { createPortal } from 'react-dom';
 import { describe, expect, it, vi } from 'vitest';
 
+import { MAIN_CONTENT_ID } from '../lib/focus-lost';
 import { useListRetryFocus } from './useListRetryFocus';
 
 interface Props {
@@ -192,6 +193,29 @@ describe('useListRetryFocus', () => {
     // 재조회를 기다리는 표시가 없으므로, 나중에 실패로 바뀌어도 버튼으로 옮기지 않는다
     rerender(<Harness {...p} error={new Error('later')} />);
     expect(document.activeElement).toBe(table);
+  });
+
+  // WD-980: 버튼이 사라진 뒤 포커스가 body 가 아니라 본문 main#main-content(건너뛰기 뒤 tabindex=-1 이 남은 것)에 떨어져도 표로 옮긴다.
+  // 같은 틱(마이크로태스크 전)에 main 에 포커스를 둬 시늉한다. 'body' 는 기존 동작 회귀 확인.
+  it.each(['main', 'body'] as const)('저절로 재조회돼 버튼이 사라진 뒤 초점이 %s 에 떨어져도 표로 초점', async (landing) => {
+    const main = document.createElement('main');
+    main.id = MAIN_CONTENT_ID;
+    main.tabIndex = -1;
+    document.body.appendChild(main);
+    try {
+      const p = failed();
+      const { rerender } = render(<Harness {...p} />);
+      screen.getByRole('button', { name: '다시 시도' }).focus();
+      rerender(<Harness {...p} {...PENDING} />);
+      if (landing === 'main') main.focus();
+      expect(document.activeElement).toBe(landing === 'main' ? main : document.body);
+      await flushMicrotasks();
+      const table = screen.getByRole('table');
+      expect(document.activeElement).toBe(table);
+      expect(table.getAttribute('tabindex')).toBe('-1');
+    } finally {
+      main.remove();
+    }
   });
 
   // 리뷰 후속(PR #1218 ②): 화면이 준 className 이 포커스 링을 덮지 않고 합쳐진다

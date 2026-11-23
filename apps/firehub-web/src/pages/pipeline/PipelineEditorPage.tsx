@@ -39,6 +39,7 @@ import { IntegerDraftContext, integerDraftStepPrefix, useIntegerDrafts } from '@
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { extractApiError, handleApiError, isNotFoundError } from '@/lib/api-error';
 import { focusFirstInvalidInteger } from '@/lib/focus-invalid-integer';
+import { isFocusLost } from '@/lib/focus-lost';
 import { formatDate, getStatusBadgeVariant, getStatusLabel, parseUtcDate } from '@/lib/formatters';
 import { parseRouteId } from '@/lib/route-id';
 import type { PipelineExecutionResponse } from '@/types/pipeline';
@@ -143,8 +144,6 @@ export default function PipelineEditorPage() {
   /** 포커스를 되돌려도 되는 대상인지 — 아직 화면에 있고 잠기지 않았어야 한다 */
   const isRestorable = (el: HTMLElement | null): el is HTMLElement =>
     !!el && el.isConnected && !(el as HTMLInputElement).disabled;
-  /** 사용자가 저장 중 다른 곳으로 포커스를 옮기지 않았을 때만(body·null) 복원한다 — 옮긴 포커스를 빼앗지 않는다 */
-  const focusIsUnclaimed = () => !document.activeElement || document.activeElement === document.body;
   // 성공(보기 모드로 전환)이면 복원하지 않아 기존 동작을 유지하고, 실패·충돌일 때만 복원한다.
   // 검증 실패는 StepConfigPanel 이 잠금 해제 뒤 첫 오류 칸으로 포커스를 옮기므로(오류가 남아 있는 동안) 덮어쓰지 않는다.
   useEffect(() => {
@@ -173,7 +172,8 @@ export default function PipelineEditorPage() {
       // 그 저장의 기억을 지우지도, 포커스를 옮기지도 않는다 — 앞 프레임이 새 저장의 복원 정보를 지우던 경합을 막는다(WD-992 리뷰)
       if (saveInFlightRef.current || focusBeforeSaveRef.current !== target) return;
       clearPendingRestore();
-      if (!isRestorable(target) || !focusIsUnclaimed()) return;
+      // 사용자가 옮기지 않은 「잃은 포커스」(body·건너뛰기 뒤 본문 main — WD-980)일 때만 복원한다
+      if (!isRestorable(target) || !isFocusLost()) return;
       target.focus({ preventScroll: true });
     });
     return () => cancelAnimationFrame(frame);
@@ -186,8 +186,8 @@ export default function PipelineEditorPage() {
     if (!isRestorable(target) || readOnly) return;
     const active = document.activeElement;
     const content = event.target instanceof HTMLElement ? event.target : null;
-    // 포커스가 body·사라질 창 안에 있을 때만 — 그 밖(탭·링크 등)이면 사용자가 옮긴 것이다
-    if (active && active !== document.body && !(content && content.contains(active))) return;
+    // 포커스가 잃은 상태(body·본문 main — WD-980)이거나 사라질 창 안에 있을 때만 — 그 밖(탭·링크 등)이면 사용자가 옮긴 것이다
+    if (!isFocusLost(active) && !(content && content.contains(active))) return;
     event.preventDefault();
     target.focus({ preventScroll: true });
   };
@@ -403,10 +403,10 @@ export default function PipelineEditorPage() {
     saveInFlightRef.current = true;
     try {
       // 잠금(disabled)이 걸리면 브라우저가 포커스를 body 로 옮기므로, 저장을 시작하는 이 시점에 포커스를 기억한다.
-      // 포커스가 body 면(Safari·Firefox 맥은 버튼 클릭이 포커스를 주지 않는다) 저장 버튼을 대신 기억한다.
+      // 포커스를 잃은 상태면(body — Safari·Firefox 맥은 버튼 클릭이 포커스를 주지 않는다 — 또는 건너뛰기 뒤 본문 main, WD-980) 저장 버튼을 대신 기억한다.
       const active = document.activeElement;
       focusBeforeSaveRef.current =
-        active instanceof HTMLElement && active !== document.body ? active : saveButtonRef.current;
+        active instanceof HTMLElement && !isFocusLost(active) ? active : saveButtonRef.current;
       conflictTargetRef.current = null;
       const ok = await save();
       if (ok) {

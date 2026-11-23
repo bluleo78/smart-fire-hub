@@ -9,13 +9,20 @@
  * 건너뛰기 직후처럼 사용자가 일부러 main 에 둔 포커스도 「잃음」으로 본다 — 그 사이 비동기 작업이 끝나면 포커스가 옮겨질 수 있지만,
  * main 은 조작할 것이 없는 자리라 옮겨도 잃는 것이 없고 판정을 단순하게 두는 편이 낫다(리뷰 후속 판단).
  *
+ * main 은 잃음으로 보지만, 더 나은 대상이 없을 때는 마지막 복귀 지점으로 쓸 수 있다(WD-980).
+ *
  * @param active 볼 요소(기본: 지금 document.activeElement)
  * @returns 포커스가 없거나 body·본문(main#main-content) 자체에 있으면 true
  */
 /** 앱 셸 본문(main)의 id — 건너뛰기 링크 대상(AppLayout)과 포커스 잃음 판정이 같은 값을 쓴다 */
 export const MAIN_CONTENT_ID = 'main-content';
 
+/** 본문 main#main-content 자체인지 — isFocusLost 가 쓰는 것과 같은 판정(같은 id 라도 main 이 아니면 아니다) */
+export function isMainContent(el: Element | null): boolean {
+  return !!el && el.id === MAIN_CONTENT_ID && el.tagName === 'MAIN';
+}
+
 export function isFocusLost(active: Element | null = document.activeElement): boolean {
   if (!active || active === document.body) return true;
-  return active.id === MAIN_CONTENT_ID && active.tagName === 'MAIN';
+  return isMainContent(active);
 }

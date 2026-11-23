@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { MAX_CHAT_MESSAGE_LENGTH, messageTooLongHint } from '../../lib/ai-chat-limits';
+import { isFocusLost } from '../../lib/focus-lost';
 import { Button } from '../ui/button';
 import { Textarea } from '../ui/textarea';
 
@@ -234,7 +235,9 @@ export function ChatInput({
     // 빼앗지 않기: <body>·같은 채팅 패널 안·열던 순간의 자리일 때만 옮긴다. 열린 뒤 사용자가 다른 곳으로 옮겼으면 존중.
     const active = document.activeElement;
     const panel = el.closest('[data-ai-chat-panel]');
-    const free = active === document.body || !!panel?.contains(active) || active === focusOriginRef?.current;
+    // 포커스 없음(null)·body·본문 main(건너뛰기 뒤, WD-980)은 모두 잃음 — 옮겨도 빼앗는 것이 없다.
+    // null 도 잃음으로 보는 편이 맞다: 포커스가 있는 요소가 없다는 뜻이라 입력창으로 가도 사용자의 자리를 뺏지 않는다.
+    const free = isFocusLost(active) || !!panel?.contains(active) || active === focusOriginRef?.current;
     if (!free) return;
     // preventScroll: 폭 전환 중인 사이드 패널의 overflow-hidden 조상이 스크롤되지 않게 한다.
     el.focus({ preventScroll: true });

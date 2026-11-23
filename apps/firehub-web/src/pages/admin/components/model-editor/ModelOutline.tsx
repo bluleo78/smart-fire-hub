@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/label';
 import { SearchInput } from '@/components/ui/search-input';
 import type { OntologyElementMutations } from '@/hooks/queries/useOntologyElement';
 import type { ReportDirty } from '@/hooks/useUnsavedChangesGuard';
+import { isFocusLost } from '@/lib/focus-lost';
 import { validateDomain } from '@/lib/ontology-validation';
 import { cn } from '@/lib/utils';
 import type { OntologySchema } from '@/types/ontology';
@@ -163,9 +164,9 @@ export default function ModelOutline({
     const active = document.activeElement;
     const hiddenHas = (el: HTMLElement | null | undefined) =>
       !!el && el.offsetParent === null && el.contains(active);
+    // 없음·body·건너뛰기 뒤 본문 main 도 잃음으로 본다(WD-980)
     const lost =
-      !active ||
-      active === document.body ||
+      isFocusLost(active) ||
       hiddenHas(railButtonRef.current?.parentElement) ||
       hiddenHas(panelRef.current);
     if (!lost) return;

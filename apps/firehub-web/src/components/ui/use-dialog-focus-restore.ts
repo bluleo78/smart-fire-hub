@@ -1,5 +1,7 @@
 import * as React from "react"
 
+import { isFocusLost, isMainContent } from "../../lib/focus-lost"
+
 /**
  * 다이얼로그를 닫을 때 포커스를 원래 트리거로 되돌린다. (이슈 #328)
  *
@@ -10,11 +12,11 @@ import * as React from "react"
  * 외부 상태(`open` prop)로만 제어되는 다이얼로그에서는 항상 `null` 이다.
  * 결과적으로 복귀는 no-op 인데 `preventDefault()` 때문에
  * FocusScope 의 기본 복귀(직전 포커스 요소로 되돌리기)까지 함께 막혀
- * 포커스가 `<body>` 로 유실된다 — 키보드 사용자는 매번 페이지 맨 위에서 Tab 을 다시 눌러야 한다.
+ * 포커스가 body·본문 main(isFocusLost, WD-980)으로 유실된다 — 키보드 사용자는 매번 페이지 맨 위에서 Tab 을 다시 눌러야 한다.
  *
  * ## 어떻게 고치는가
  * 열릴 때의 `document.activeElement` 를 보관해 두고,
- * **Radix 기본 동작을 그대로 먼저 돌린 뒤** 실제로 포커스가 `<body>` 로 떨어졌을 때만 보정한다.
+ * **Radix 기본 동작을 그대로 먼저 돌린 뒤** 실제로 포커스가 body·본문 main(isFocusLost, WD-980)으로 떨어졌을 때만 보정한다.
  * 선점(preventDefault)하지 않으므로 `<Dialog.Trigger>` 를 제대로 쓰는 기존 다이얼로그의
  * 복귀 동작은 전혀 바뀌지 않는다 — 공유 컴포넌트 수정의 전역 회귀 위험을 피하기 위한 설계다.
  *
@@ -61,7 +63,11 @@ if (typeof document !== "undefined") {
   )
 }
 
-/** 이력에서 `content` 바깥에 있으면서 아직 살아 있는 가장 최근 요소를 찾는다. */
+/**
+ * 이력에서 `content` 바깥에 있으면서 아직 살아 있는 가장 최근 요소를 찾는다.
+ * 그 요소가 본문(main) 같은 「잃음」 자리여도 그대로 돌려준다 — 더 오래된 항목(건너뛰기 링크 등)까지
+ * 거슬러 가면 페이지 맨 위로 튕기므로, 호출측이 isFocusLost 로 판단해 대체 지점을 쓰게 한다(WD-980).
+ */
 function findFocusBefore(content: HTMLElement): HTMLElement | null {
   for (let i = focusHistory.length - 1; i >= 0; i--) {
     const el = focusHistory[i]
@@ -83,16 +89,21 @@ export function useDialogFocusRestore({
   // 트리거의 조상 체인. 트리거가 DOM 에서 떨어지면 parentElement 가 null 이 되므로
   // 열릴 때 미리 기록해 둬야 "살아남은 가장 가까운 조상"을 찾을 수 있다.
   const ancestorsRef = React.useRef<HTMLElement[]>([])
+  // 열릴 때 포커스가 본문(main)에 있었는지(건너뛰기 뒤 트리거에 포커스 없이 열림, WD-980).
+  // 이 경우 전역 이력의 「직전 포커스」는 오래된 요소(건너뛰기 링크 등)라 복귀 목적지로 쓰지 않는다.
+  const openedFromLostRef = React.useRef<HTMLElement | null>(null)
 
   const handleOpenAutoFocus = React.useCallback(
     (event: Event) => {
       const active = document.activeElement
-      // <body> 는 복귀해봐야 의미가 없으므로 캡처 대상에서 제외한다.
+      // body·본문 main(isFocusLost, WD-980)은 복귀해봐야 의미가 없으므로 캡처 대상에서 제외한다.
       // 이 이벤트가 dispatch 되었다는 것 자체가 "포커스가 아직 Content 밖"이라는 뜻이므로
       // (위 예외 설명 참고) 여기서 잡히는 것은 언제나 트리거다.
       const trigger =
-        active instanceof HTMLElement && active !== document.body ? active : null
+        active instanceof HTMLElement && !isFocusLost(active) ? active : null
       capturedRef.current = trigger
+      openedFromLostRef.current =
+        active instanceof HTMLElement && isMainContent(active) ? active : null
 
       const ancestors: HTMLElement[] = []
       for (let el = trigger?.parentElement; el && el !== document.body; el = el.parentElement) {
@@ -108,11 +119,16 @@ export function useDialogFocusRestore({
   const handleCloseAutoFocus = React.useCallback(
     (event: Event) => {
       onCloseAutoFocus?.(event)
-      // 소비자가 직접 포커스 목적지를 지정했으면 존중한다.
-      if (event.defaultPrevented) return
-
+      // 열릴 때 보관한 값을 지역 변수로 옮기고 곧바로 비운다 — onOpenAutoFocus 가 dispatch 되지 않는 다음 열림(#337)이
+      // 지난 열림의 값을 재사용하지 않게 한다.
       const captured = capturedRef.current
       const ancestors = ancestorsRef.current
+      const openedFromLost = openedFromLostRef.current
+      capturedRef.current = null
+      ancestorsRef.current = []
+      openedFromLostRef.current = null
+      // 소비자가 직접 포커스 목적지를 지정했으면 존중한다.
+      if (event.defaultPrevented) return
       // 이벤트는 Content 노드에서 dispatch 된다. dispatch 가 끝나면 currentTarget 이
       // null 이 되므로 여기서 동기적으로 읽어 둔다(아래 rAF 안에서는 이미 늦다).
       const content =
@@ -122,10 +138,11 @@ export function useDialogFocusRestore({
             ? event.target
             : null
       requestAnimationFrame(() => {
-        // Radix/FocusScope 기본 복귀가 성공했으면(=body 가 아니면) 손대지 않는다.
+        // Radix/FocusScope 기본 복귀가 성공했으면(=body·본문 main(isFocusLost, WD-980)이 아니면) 손대지 않는다.
         // 트리거가 언마운트된 경우 Radix 의 focus() 는 조용히 실패해 여기로 떨어진다.
         const active = document.activeElement
-        if (active && active !== document.body) return
+        // 건너뛰기 뒤 본문(main)에 떨어진 포커스도 잃음으로 본다(WD-980).
+        if (!isFocusLost(active)) return
 
         // 1순위: 살아 있는 트리거. 2순위: 호출측이 지정한 대체 지점.
         // 3순위: 살아남은 가장 가까운 조상(표/목록 컨테이너) — 페이지 맨 위로 튕기는 것보다
@@ -135,15 +152,24 @@ export function useDialogFocusRestore({
         // 캡처가 아예 없었던 경우(다이얼로그 내부 `autoFocus` — 이슈 #337): 전역 이력에서
         // Content 바깥의 가장 최근 포커스 요소를 트리거로 간주한다. 살아 있지 않으면
         // 아래 restoreFocusRef/조상 폴백으로 그대로 흘려보낸다.
-        if (!captured && content) {
+        // 그 요소가 본문(main)이면 건너뛰기 직후라 오래된 이력으로 더 거슬러 가지 않고, 아래 대체 지점 뒤 마지막에 main 으로 돌려준다.
+        let lostTarget: HTMLElement | null = openedFromLost
+        if (!captured && content && !openedFromLost) {
           const previous = findFocusBefore(content)
-          if (previous) return void previous.focus()
+          if (previous && !isFocusLost(previous)) return void previous.focus()
+          if (previous) lostTarget = previous
         }
 
         if (restoreFocusRef?.current) return void restoreFocusRef.current.focus()
 
         const container = ancestors.find((el) => el.isConnected)
-        if (!container) return
+        if (!container) {
+          // 대체 지점이 전혀 없으면 열릴 때의 자리(본문 main)로 돌려준다 — 건너뛰기 뒤 단축키 도움말처럼 사라지는 트리거가 없는 대화상자(WD-968).
+          // 이력에서 온 오래된 main 은 그새 임시 tabindex 가 떼어졌을 수 있다(AppLayout releaseMainFocusTarget) —
+          // tabindex 가 없는 main 에 focus() 는 조용히 실패하므로, 포커스를 받을 수 있을 때만 돌려준다(WD-980 코드 리뷰).
+          if (lostTarget?.isConnected && lostTarget.hasAttribute("tabindex")) lostTarget.focus()
+          return
+        }
         // 컨테이너는 보통 포커스 불가이므로 일시적으로 tabIndex 를 부여하고,
         // 포커스가 떠나면 원상복구해 Tab 순서를 오염시키지 않는다.
         if (!container.hasAttribute("tabindex")) {

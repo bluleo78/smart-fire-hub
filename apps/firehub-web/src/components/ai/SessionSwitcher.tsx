@@ -2,6 +2,7 @@ import { ChevronDown, MessageSquare,Plus, Trash2 } from 'lucide-react';
 import { type FocusEvent, useEffect, useRef, useState } from 'react';
 
 import { useAISessions, useDeleteAISession, usePendingSessionDeletes } from '../../hooks/queries/useAIChat';
+import { isFocusLost } from '../../lib/focus-lost';
 import { cn } from '../../lib/utils';
 import type { AISession } from '../../types/ai';
 import { PendingButton } from '../PendingButton';
@@ -82,7 +83,8 @@ export function SessionSwitcher({ currentSessionId, onNewSession, onSessionDelet
     if (focusedRowGone) lastFocused.current = null;
     if ((gone.length === 0 && !focusedRowGone) || !hadFocus.current) return;
     const active = document.activeElement;
-    const lost = !active || active === document.body || active === contentRef.current;
+    // body·본문 main(건너뛰기 뒤, WD-980)·목록 상자를 잃음으로 본다
+    const lost = isFocusLost(active) || active === contentRef.current;
     if (!lost) return;
     if (sessions.length === 0) {
       // 남은 대화가 없다 — 목록은 아래에서 닫히므로 「새 대화」로 옮긴다
