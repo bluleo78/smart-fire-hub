@@ -208,6 +208,32 @@ test.describe('데이터셋 목록 — URL 동기화', () => {
   }) => {
     await setupCommon(page);
 
+    // WD-1015 스냅샷 — 스냅샷이 없으면 POP 때 대기 목록이 비어 있어도(레이스가 안 일어나도) 조용히 통과한다 —
+    // 그래서 POP 시점의 화면 상태와 마지막 쓰기를 기록한다.
+    // (i) popstate 마다 textContent 이 즐겨찾기 인 버튼의 aria-pressed 와 그 시점의 location.href 를 쌓고,
+    // (ii) history.replaceState 를 감싸 세 번째 인자(주소)를 기록한 뒤 원본을 그대로 호출한다(원본 반환값 유지).
+    // 리스너·감싸기는 addEventListener/wrap 만 써서 페이지 코드를 바꾸지 않고, SPA 탐색에서도 남는다.
+    await page.addInitScript(() => {
+      const w = window as unknown as {
+        __wd1015Pop: { pressed: string | null; url: string }[];
+        __wd1015LastWrite: string | null;
+      };
+      w.__wd1015Pop = [];
+      window.addEventListener('popstate', () => {
+        const 즐겨찾기버튼 = [...document.querySelectorAll('button')].find((b) => b.textContent === '즐겨찾기');
+        w.__wd1015Pop.push({
+          pressed: 즐겨찾기버튼?.getAttribute('aria-pressed') ?? null,
+          url: location.href,
+        });
+      });
+      w.__wd1015LastWrite = null;
+      const 원본_replaceState = history.replaceState.bind(history);
+      history.replaceState = (data, unused, url) => {
+        w.__wd1015LastWrite = url == null ? null : String(url);
+        return 원본_replaceState(data, unused, url);
+      };
+    });
+
     await page.goto('/data/datasets?sort=name&order=asc');
     await expect(page.getByRole('heading', { name: /데이터셋/ })).toBeVisible();
 
@@ -221,6 +247,23 @@ test.describe('데이터셋 목록 — URL 동기화', () => {
 
     // 한 작업 안에서 즐겨찾기 클릭(replace) 직후 뒤로가기 — 클릭이 쓴 주소는 렌더에 오기 전에 POP 이 덮는다
     await clickInOneTask(page, [favoriteButton], { thenHistoryBack: true });
+
+    // 증거 단언 — 스냅샷이 없으면 POP 때 대기 목록이 비어 있어도(레이스가 안 일어나도) 조용히 통과한다.
+    // POP 시점의 화면 상태(pressedAtPop)와 마지막 쓰기(lastWrite)를 남겨 레이스 실재를 본다.
+    const pops = await page.evaluate(
+      () => (window as unknown as { __wd1015Pop: { pressed: string | null; url: string }[] }).__wd1015Pop,
+    );
+    expect(pops.length).toBeGreaterThan(0); // 스냅샷이 안 잡히면 이 시험의 근거 자체가 없다
+    // Step 3 관찰(5회 반복) 전부 pressedAtPop=false — POP 순간 화면은 아직 favorite 쓰기를 반영하기 전이었다.
+    // 그 상태가 늘 재현되므로 강단언으로 고정한다(대기 목록이 POP 까지 안 비워진 레이스 실재의 증거).
+    expect(pops[0].pressed).toBe('false');
+    const lastWrite = await page.evaluate(
+      () => (window as unknown as { __wd1015LastWrite: string | null }).__wd1015LastWrite,
+    );
+    expect(String(lastWrite)).toContain('favorite=true'); // POP 직전에 favorite 쓰기가 있었다
+    // 아래 기록은 시도마다 관찰한 값만 남겨 리뷰·리포트에서 재확인할 때 쓴다 — 강도는 이미 위 강단언으로 고정됐다
+    test.info().annotations.push({ type: 'wd1015-race', description: `pressedAtPop=${pops[0]?.pressed}` });
+
     await expect.poll(() => params().get('sort')).toBe('name');
     expect(params().get('favorite')).toBeNull();
 
@@ -239,25 +282,42 @@ test.describe('데이터셋 목록 — URL 동기화', () => {
    * 눌림 표시는 Number 비교라 눌린 상태인데, 토글이 문자열 비교면 눌린 칩을 눌러도 꺼지지 않는다.
    */
   test('?categoryId=03 으로 눌린 분류 칩을 누르면 꺼진다 (WD-950)', async ({ authenticatedPage: page }) => {
+    // web CLAUDE.md 필터/검색 → API 파라미터 검증 — 칩을 끈 뒤 재호출에 categoryId 가 없어야 한다
+    const urls: URL[] = [];
     await mockApi(page, 'GET', '/api/v1/dataset-categories', createCategories());
     await mockApi(page, 'GET', '/api/v1/datasets/tags', []);
-    await mockApi(page, 'GET', '/api/v1/datasets', createPageResponse(datasets));
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets',
+      (route) => {
+        urls.push(new URL(route.request().url()));
+        return route.fulfill({ json: createPageResponse(datasets) });
+      },
+    );
 
     await page.goto('/data/datasets?categoryId=03');
     const chip = page.getByRole('button', { name: '기타', exact: true });
     await expect(chip).toHaveAttribute('aria-pressed', 'true');
 
+    // 칩 클릭 전 — 목록 요청이 최소 한 번은 잡혀 있어야(공허 단언 방지) 마지막 요청에 categoryId 가 있어야 한다
+    await expect.poll(() => urls.length).toBeGreaterThan(0);
+    expect(urls[urls.length - 1].searchParams.get('categoryId')).not.toBeNull();
+
+    const 요청수_클릭_전 = urls.length;
     await chip.click();
 
     await expect(chip).toHaveAttribute('aria-pressed', 'false');
     expect(new URL(page.url()).searchParams.get('categoryId')).toBeNull();
+
+    // 칩을 끈 뒤 재호출이 있어야 하고, 그 마지막 요청에는 categoryId 가 없어야 한다
+    await expect.poll(() => urls.length).toBeGreaterThan(요청수_클릭_전);
+    expect(urls[urls.length - 1].searchParams.get('categoryId')).toBeNull();
   });
 
   /**
-   * 이슈 WD-950 리뷰 회귀 방지 — 같은 칩을 화면 반영 전에 세 번 눌러(쓴 주소 [A,X,A]) A 가 커밋돼도 낡은 항목이 남으면 안 된다.
-   * 도착 판정이 첫 같은 주소만 빼면 [X,A] 가 남는다. 이어서 다른 필터·같은 칩을 눌러도 켜진 상태가 이어져야 한다.
+   * 이슈 WD-950 리뷰 회귀 방지 — 3회 연타로 만든 중복 항목([A,"",A])이 남아 있으면, 파라미터 없는 외부 이동이 도착 판정에 걸려
+   * 대기 목록이 안 비워지고 낡은 favorite=true 가 다음 필터의 기준이 된다 — indexOf 로 되돌리면 이 시험이 favorite 이 되살아나는 것으로 실패한다.
    */
-  test('즐겨찾기를 화면 반영 전에 세 번 눌러도 켜진 상태가 이어진다 (WD-950)', async ({ authenticatedPage: page }) => {
+  test('즐겨찾기를 화면 반영 전에 세 번 누른 뒤 외부 이동을 거쳐도 낡은 favorite 이 다음 필터에서 되살아나지 않는다 (WD-950)', async ({ authenticatedPage: page }) => {
     await setupCommon(page);
 
     await page.goto('/data/datasets');
@@ -267,17 +327,29 @@ test.describe('데이터셋 목록 — URL 동기화', () => {
     const tempButton = page.getByRole('button', { name: '임시 데이터셋 보기' });
     const params = () => new URL(page.url()).searchParams;
 
+    // 3회 연타 — 한 작업 안에서 쓴 주소가 [A,"",A] 로 중복 쌓인다(A = favorite=true, "" = 끈 상태)
     await clickInOneTask(page, [favoriteButton, favoriteButton, favoriteButton]);
     await expect(favoriteButton).toHaveAttribute('aria-pressed', 'true');
     expect(params().get('favorite')).toBe('true');
 
-    // 다른 필터 — favorite 이 그대로 남는다
+    // 외부 이동 — 파라미터 없는 주소를 히스토리에 쌓는다. 그 주소 문자열이 대기 목록의 빈 문자열 항목과 같아지는 자리다
+    await page.locator('a[href="/data/datasets"]').first().click();
+    await expect.poll(() => params().get('favorite')).toBeNull();
+    await expect(favoriteButton).toHaveAttribute('aria-pressed', 'false');
+
+    // 다음 필터 — 대기 목록이 이때 안 비워지면 낡은 favorite=true 가 기준이 되어 favorite 이 되살아난다(변이 검사 지점)
     await tempButton.click();
     await expect(tempButton).toHaveAttribute('aria-pressed', 'true');
-    expect(params().get('favorite')).toBe('true');
     expect(params().get('showTemp')).toBe('1');
+    expect(params().get('favorite')).toBeNull();
+    await expect(favoriteButton).toHaveAttribute('aria-pressed', 'false');
 
-    // 같은 칩 — 한 번에 꺼진다
+    // 같은 칩 한 번에 끄기(기존 마지막 3줄) — 2번 단계(외부 이동) 뒤 favorite 이 꺼져 있으니 먼저 켜 두고 기존 단언을 그대로 이어 간다.
+    // 어느 쪽 토글이든 showTemp=1 이 남아야 한다.
+    await favoriteButton.click();
+    await expect(favoriteButton).toHaveAttribute('aria-pressed', 'true');
+    expect(params().get('favorite')).toBe('true');
+
     await favoriteButton.click();
     await expect(favoriteButton).toHaveAttribute('aria-pressed', 'false');
     expect(params().get('favorite')).toBeNull();
