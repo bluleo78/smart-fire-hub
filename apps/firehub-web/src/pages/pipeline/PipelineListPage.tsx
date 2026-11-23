@@ -27,6 +27,7 @@ import {
   TableRow,
 } from '../../components/ui/table';
 import { useDeletePipeline,usePipelinePermissions,usePipelines } from '../../hooks/queries/usePipelines';
+import { offlineListMessage, useOfflinePaused } from '../../hooks/useOnlineStatus';
 import { formatDateOnly, formatDateTimeMinute } from '../../lib/formatters';
 import { getPageAfterDelete } from '../../lib/pagination';
 import { PipelineDeleteConfirmDialog } from './components/PipelineDeleteConfirmDialog';
@@ -36,12 +37,17 @@ export default function PipelineListPage() {
   const [page, setPage] = useState(0);
   const size = 10;
 
-  const { data: pipelinesData, isLoading, isError, error, refetch } = usePipelines({ page, size });
+  const { data: pipelinesData, isLoading, isError, error, refetch, isPaused } = usePipelines({ page, size });
   // 「다시 시도」 수동 재시도 중 여부(WD-956). 실패한 쪽은 data 가 없어 재조회하면 v5 가 pending(isLoading)으로 되돌려
   // 스켈레톤이 오류 행을 대신하고 초점 잡힌 버튼이 언마운트된다. 그래서 재시도한 쪽에서만(retrying = retryingPage === page)
   // 오류 행과 잠긴 버튼을 유지한다 — 재시도 중 캐시에 없는 다른 쪽으로 옮기면 그 쪽에는 번지지 않는다.
   const [retryingPage, setRetryingPage] = useState<number | null>(null);
   const retrying = retryingPage === page;
+  // 데이터 없이 paused(오프라인·재시도 멈춤)면 「파이프라인이 없습니다」 대신 연결 대기로 그린다(WD-971).
+  // 「다시 시도」 중(retrying)에는 오류 행·잠긴 버튼을 그대로 두되(초점 유지, WD-956), 오프라인이면 그 행의 문구만 연결 대기로 바꾼다.
+  const { waiting, offline } = useOfflinePaused({ data: pipelinesData, isPaused });
+  // 오프라인 연결 대기 안내 문구 — 빈 행·오류 행 두 곳에서 같은 문구를 쓴다
+  const offlineMessage = offlineListMessage('파이프라인');
   const handleRetry = () => {
     // 재시도 중 겹침 클릭은 PendingButton 이 막는다(aria-disabled + 클릭 가드).
     const target = page;
@@ -183,8 +189,11 @@ export default function PipelineListPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {isLoading && !retrying ? (
+            {(isLoading || waiting) && !retrying ? (
               <TableSkeletonRows columns={7} rows={5} />
+            ) : offline && !retrying ? (
+              // 실패가 아닌 중립 대기 상태라 role=status(polite)로 알린다. 연결되면 자동 재조회하므로 버튼은 두지 않는다(WD-971).
+              <TableEmptyRow colSpan={7} message={offlineMessage} />
             ) : pipelines.length > 0 ? (
               pipelines.map((pipeline) => (
                 <TableRow
@@ -239,8 +248,10 @@ export default function PipelineListPage() {
               <TableErrorRow
                 colSpan={7}
                 className="py-12"
-                tone={loadError.tone}
-                message={errorMessage}
+                // 재시도 중 오프라인이면 실패 문구 대신 연결 대기 안내로 바꾼다(WD-971). muted 톤이면 TableErrorRow 가 role=status(polite)로 읽고
+                // 톤이 바뀌면 라이브 리전만 새로 마운트한다(WD-990) — 버튼(action)은 같은 행에 마운트된 채라 WD-956 초점이 유지되고, 연결되면 refetch 가 끝나 목록으로 바뀐다.
+                tone={offline ? 'muted' : loadError.tone}
+                message={offline ? offlineMessage : errorMessage}
                 // 403 은 다시 해도 같아 버튼을 두지 않는다. 요청 중에는 disabled 대신 aria-disabled 로 잠가(초점 유지) 중복 요청을 막는다(WD-956).
                 action={
                   isForbidden ? undefined : (

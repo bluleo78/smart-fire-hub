@@ -17,13 +17,14 @@ import { LoadMoreFailure } from '@/components/ui/load-more-failure';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
-import { TableErrorRow } from '@/components/ui/table-empty';
+import { TableEmptyRow, TableErrorRow } from '@/components/ui/table-empty';
 import { Tabs, TabsControlsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useMyPermissions } from '@/hooks/queries/useMyPermissions';
 import {
   REVIEW_ITEMS_QUERY_KEY,
   useApproveReviewItem, useRejectReviewItem, useReviewItemEvidence, useReviewItemsPending,
 } from '@/hooks/queries/useReviewItems';
+import { offlineListMessage, useOfflinePaused } from '@/hooks/useOnlineStatus';
 import { handleApiError, isForbiddenError, listLoadErrorProps } from '@/lib/api-error';
 import { isFocusLost } from '@/lib/focus-lost';
 import { validatePropertyCorrection } from '@/lib/property-correction';
@@ -200,8 +201,10 @@ export default function ReviewInboxPage() {
   };
   const {
     data, isLoading, isError, error, hasNextPage, fetchNextPage, isFetchingNextPage,
-    isFetchNextPageError,
+    isFetchNextPageError, isPaused,
   } = useReviewItemsPending(filter);
+  // 데이터 없이 paused(오프라인·재시도 멈춤)면 「검수 대기 중인 항목이 없습니다」 대신 연결 대기로 그린다(WD-971)
+  const { waiting, offline } = useOfflinePaused({ data, isPaused });
   // 조회 권한 부족(403) — 「항목 없음」 대신 권한 안내를 보이는 기준 (WD-126).
   const isForbidden = isError && isForbiddenError(error);
   // 승인·적재·정정·거부는 서버가 dataset:write 로 막는다 — 권한이 없으면 누르면 늘 실패하는 버튼을 그리지 않는다 (WD-127).
@@ -332,7 +335,7 @@ export default function ReviewInboxPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {isLoading && (
+            {(isLoading || waiting) && (
               <TableRow><TableCell colSpan={colCount} className="text-muted-foreground text-center">불러오는 중...</TableCell></TableRow>
             )}
             {/* 조회 실패를 「항목 없음」으로 그리지 않는다 (WD-126) — 403 이면 권한 안내, 그 밖은 불러오기 실패 안내.
@@ -344,7 +347,10 @@ export default function ReviewInboxPage() {
                 {...listLoadErrorProps(error, 'AI 검수 항목')}
               />
             )}
-            {!isLoading && !isError && (pending?.length ?? 0) === 0 && (
+            {offline && (
+              <TableEmptyRow colSpan={colCount} message={offlineListMessage('AI 검수')} />
+            )}
+            {!isLoading && !waiting && !offline && !isError && (pending?.length ?? 0) === 0 && (
               <TableRow><TableCell colSpan={colCount} className="text-muted-foreground text-center">검수 대기 중인 항목이 없습니다.</TableCell></TableRow>
             )}
             {pending?.map((row) => (

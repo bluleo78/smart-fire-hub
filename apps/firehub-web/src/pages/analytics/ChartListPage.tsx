@@ -79,14 +79,17 @@ export default function ChartListPage() {
     refetch,
   } = useCharts(chartParams);
 
+  // 오프라인 멈춤 판정(공용 useOfflinePaused, WD-966·WD-982·WD-971): 받은 목록 없음 또는 쪽 이동 placeholder + paused 가 실제 오프라인이면 offline(안내),
+  // 데이터 없이 온라인인데 paused(탭 숨김으로 재시도 멈춤)면 waiting(스켈레톤). offline 이면 흐림·inert 없이 안내를 보인다
+  const { waiting, offline } = useOfflinePaused({ data: chartsData, isPaused, isPlaceholderData });
+
   // 「다시 시도」 포커스(WD-987): 실패한 목록에서 누르면 표로 초점을 옮겼다가 다시 실패하면 버튼으로 되돌린다.
   // 403 은 다시 해도 같으므로 버튼을 두지 않는다
-  const offlinePaused = useOfflinePaused(isPaused, isPlaceholderData);
   const { tableProps, bodyProps, retryAction } = useListRetryFocus({
     isPending,
     // WD-982: 쪽 이동 중 이전 쪽 행 처리(pending 판정·흐림·inert)는 훅이 맡는다
     // 오프라인 쪽 이동 대기는 흐림·inert 없이 안내를 보인다(WD-982, useOfflinePaused)
-    isPlaceholderData: isPlaceholderData && !offlinePaused,
+    isPlaceholderData: isPlaceholderData && !offline,
     isError,
     isFetching,
     data: chartsData,
@@ -180,9 +183,9 @@ export default function ChartListPage() {
                     </TableRow>
                   </TableHeader>
                   <tbody {...bodyProps}>
-                    {isLoading ? (
+                    {isLoading || waiting ? (
                       <TableSkeletonRows columns={5} rows={5} />
-                    ) : offlinePaused ? (
+                    ) : offline ? (
                       // 오프라인 쪽 이동 대기는 흐림·inert 없이 안내를 보인다(WD-982, useOfflinePaused)
                       <TableEmptyRow colSpan={5} message={offlineListMessage('차트')} />
                     ) : isError && !chartsData ? (

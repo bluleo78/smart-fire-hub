@@ -78,6 +78,7 @@ import {
 } from '../../hooks/queries/useApiConnections';
 import { useMyPermissions } from '../../hooks/queries/useMyPermissions';
 import { useListRetryFocus } from '../../hooks/useListRetryFocus';
+import { offlineListMessage, useOfflinePaused } from '../../hooks/useOnlineStatus';
 import type { CreateApiConnectionRequest } from '../../types/api-connection';
 import { BasicAuthFields } from './components/BasicAuthFields';
 import { ExtraHeadersFields } from './components/ExtraHeadersFields';
@@ -99,11 +100,15 @@ export default function ApiConnectionListPage() {
     data: connections,
     isLoading,
     isPending,
+    isPaused,
     isFetching,
     isError,
     error: connectionsError,
     refetch,
   } = useApiConnections();
+  // 데이터 없이 paused(오프라인·재시도 멈춤)면 빈 목록 안내 대신 연결 대기로 그린다(WD-971)
+  const { waiting, offline } = useOfflinePaused({ data: connections, isPaused });
+
   // 「다시 시도」 포커스(WD-987): 실패한 목록에서 누르면 표로 초점을 옮겼다가 다시 실패하면 버튼으로 되돌린다.
   // 403 은 다시 해도 같으므로 버튼을 두지 않는다
   const { tableProps, retryAction } = useListRetryFocus({
@@ -659,8 +664,11 @@ export default function ApiConnectionListPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {isLoading ? (
+            {isLoading || waiting ? (
               <TableSkeletonRows columns={7} rows={3} />
+            ) : offline ? (
+              // 실패가 아닌 중립 대기 상태라 TableEmptyRow 의 role=status(polite)로 알린다. 연결되면 자동 재조회하므로 버튼은 두지 않는다(WD-971).
+              <TableEmptyRow colSpan={7} message={offlineListMessage('API 연결')} />
             ) : isError && !connections ? (
               // WD-978: 첫 조회가 실패하면 빈 목록(「등록된 API 연결이 없습니다.」·만들기 버튼)으로 오인되지 않게 공용 실패 안내를 보인다.
               // 재조회만 실패해 받아 둔 목록이 있으면 그대로 둔다(WD-146). 쓰기 권한과 무관하게 보인다.

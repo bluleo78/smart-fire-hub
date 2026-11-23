@@ -45,6 +45,7 @@ import {
   useDeleteCategory,
   useUpdateCategory,
 } from '../../hooks/queries/useDatasets';
+import { offlineListMessage, useOfflinePaused } from '../../hooks/useOnlineStatus';
 import { handleApiError, isConflictError } from '../../lib/api-error';
 import { iGa } from '../../lib/utils';
 import type { CategoryResponse } from '../../types/dataset';
@@ -103,7 +104,9 @@ export default function CategoryListPage() {
   const [search, setSearch] = useState('');
   const [sortKey, setSortKey] = useState<SortKey>('name-asc');
 
-  const { data: categories, isLoading } = useCategories();
+  const { data: categories, isLoading, isPaused } = useCategories();
+  // 데이터 없이 paused(오프라인·재시도 멈춤)면 「카테고리가 없습니다」 대신 연결 대기로 그린다(WD-971)
+  const { waiting, offline } = useOfflinePaused({ data: categories, isPaused });
 
   // 필터·검색 빈 상태 문구가 같은 기준을 쓰게 한 곳에서 다듬는다
   const trimmedSearch = search.trim();
@@ -147,7 +150,8 @@ export default function CategoryListPage() {
   const isFiltering = trimmedSearch.length > 0;
   const hasResults = visibleCategories.length > 0;
   // 로딩이 끝났는데 보일 행이 없을 때만 개수 낭독을 멈춘다 — 로딩 중(스켈레톤)에는 빈 상태 안내가 없으므로 (WD-815)
-  const countSilenced = !isLoading && !hasResults;
+  // 연결 대기 스켈레톤(waiting)도 로딩처럼 취급하고, 오프라인 안내 행은 빈 상태 안내처럼 개수 낭독을 멈춘다(WD-971)
+  const countSilenced = !isLoading && !waiting && !hasResults;
   const totalCount = categories?.length ?? 0;
   const createCategory = useCreateCategory();
   const updateCategory = useUpdateCategory(editingCategory?.id || 0);
@@ -316,8 +320,11 @@ export default function CategoryListPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {isLoading ? (
+            {isLoading || waiting ? (
               <TableSkeletonRows columns={showActions ? 3 : 2} rows={3} />
+            ) : offline ? (
+              // 실패가 아닌 중립 대기 상태라 role=status(polite)로 알린다. 연결되면 자동 재조회하므로 버튼은 두지 않는다(WD-971).
+              <TableEmptyRow colSpan={showActions ? 3 : 2} message={offlineListMessage('카테고리')} />
             ) : hasResults ? (
               visibleCategories.map((category) => (
                 <TableRow key={category.id}>

@@ -40,7 +40,7 @@ import {
 import { useSecurityLevels } from '../../hooks/queries/useSecurityLevels';
 import { useLastPageInfo } from '../../hooks/useLastPageInfo';
 import { useListRetryFocus } from '../../hooks/useListRetryFocus';
-import { offlineListMessage, useOfflinePaused, useOnlineStatus } from '../../hooks/useOnlineStatus';
+import { offlineListMessage, useOfflinePaused } from '../../hooks/useOnlineStatus';
 import { useRecentDatasets } from '../../hooks/useRecentDatasets';
 import { handleApiError, listLoadErrorProps } from '../../lib/api-error';
 import {
@@ -261,9 +261,6 @@ export default function DatasetListPage() {
   // 데이터셋 생성 유형 선택 모달 상태 — 저장 방식/출처를 먼저 고른 뒤 생성 폼으로 이동
   const [typeModalOpen, setTypeModalOpen] = useState(false);
 
-  // 실제 오프라인 여부 — isPaused 는 탭 숨김(focusManager)으로 재시도가 멈춘 경우에도 참이라 구분에 쓴다(WD-966)
-  const isOnline = useOnlineStatus();
-
   const { data: categoriesData } = useCategories();
   // 목록 훅과 쪽 수 기억(useLastPageInfo)이 같은 조회 조건 객체를 쓴다
   const datasetParams = {
@@ -282,13 +279,16 @@ export default function DatasetListPage() {
   };
   const { data: datasetsData, isLoading, isPending, isPaused, isError, isPlaceholderData, error: datasetsError, refetch: refetchDatasets, isFetching } = useDatasets(datasetParams);
 
+  // 오프라인 멈춤 판정(공용 useOfflinePaused, WD-966·WD-982·WD-971): 받은 목록 없음 또는 쪽 이동 placeholder + paused 가 실제 오프라인이면 offline(안내),
+  // 데이터 없이 온라인인데 paused(탭 숨김으로 재시도 멈춤)면 waiting(스켈레톤). offline 이면 흐림·inert 없이 안내를 보인다
+  const { waiting, offline } = useOfflinePaused({ data: datasetsData, isPaused, isPlaceholderData });
+
   // 「다시 시도」 포커스(WD-957, 공용 훅 WD-987): 실패한 목록에서 누르면 표로 초점을 옮겼다가 다시 실패하면 버튼으로 되돌린다
-  const offlinePaused = useOfflinePaused(isPaused, isPlaceholderData);
   const { tableProps, bodyProps, retryAction } = useListRetryFocus({
     isPending,
     // WD-982: 쪽 이동 중 이전 쪽 행 처리(pending 판정·흐림·inert)는 훅이 맡는다
     // 오프라인 쪽 이동 대기는 흐림·inert 없이 안내를 보인다(WD-982, useOfflinePaused)
-    isPlaceholderData: isPlaceholderData && !offlinePaused,
+    isPlaceholderData: isPlaceholderData && !offline,
     isError,
     isFetching,
     data: datasetsData,
@@ -636,9 +636,9 @@ export default function DatasetListPage() {
             </TableRow>
           </TableHeader>
           <tbody {...bodyProps}>
-            {isLoading || pageOutOfRange || (!datasetsData && isPaused && isOnline) ? (
+            {isLoading || pageOutOfRange || waiting ? (
               <TableSkeletonRows columns={8} rows={5} />
-            ) : isPaused && (!datasetsData || offlinePaused) ? (
+            ) : offline ? (
               // WD-982: placeholder 갈래는 실제 오프라인일 때만 — 온라인인데 다음 쪽 재시도가 탭 숨김으로 멈춘 paused 에서는 이전 행을 그대로 둔다.
               // WD-982: 오프라인에서 쪽을 옮기면 placeholder 로 datasetsData 가 차 있어도 새 쪽은 못 받는 중이므로 흐린 이전 행 대신 안내를 보인다(페이지네이션은 표 밖이라 남는다).
               // 데이터 없는 paused 쿼리 중 실제 오프라인만 여기로 온다 — 온라인인데 paused(탭 숨김으로 재시도 멈춤)면 위 스켈레톤 분기가 받는다.
