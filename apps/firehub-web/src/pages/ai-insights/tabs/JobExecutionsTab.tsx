@@ -5,7 +5,7 @@
  * RUNNING 상태의 실행이 있으면 5초 간격으로 자동 폴링한다.
  */
 import { Loader2 } from 'lucide-react';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
 import { PendingButton } from '@/components/PendingButton';
@@ -49,6 +49,7 @@ export default function JobExecutionsTab({ jobId }: JobExecutionsTabProps) {
     isError,
     isSuccess,
     isPlaceholderData,
+    isFetching,
     error,
   } = useJobExecutions(
     jobId,
@@ -65,8 +66,11 @@ export default function JobExecutionsTab({ jobId }: JobExecutionsTabProps) {
   // 데이터 없이 paused(오프라인·재시도 멈춤)면 「실행 이력이 없습니다」 대신 연결 대기로 그린다(WD-971)
   const { waiting, offline } = useOfflinePaused({ data: executionsData, isPaused });
 
+  // 재조회가 아직 끝나지 않음 — 오프라인이면 재조회가 멈춰(paused) isFetching 이 false 라 isPaused 도 함께 본다.
+  // 그러지 않으면 오프라인의 낡은 캐시를 성공으로 세어 알리고, 연결 뒤 재조회 실패가 다시 묻힌다 (WD-1019 리뷰)
+  const refetching = isFetching || isPaused;
   // 「더 보기」 조회가 실패하면 렌더 중에 limit 을 마지막 성공 값으로 되돌려 보던 목록을 남긴다(WD-956) — 오류 렌더가 그려지지 않는다.
-  settle({ isError, isSuccess, isPlaceholderData });
+  settle({ isError, isSuccess, isPlaceholderData, isFetching: refetching });
 
   // 「더 보기」·「다시 시도」 응답 뒤 알림·초점 옮기기 (WD-965 리뷰 후속)
   const tableWrapRef = useRef<HTMLDivElement>(null);
@@ -83,6 +87,15 @@ export default function JobExecutionsTab({ jobId }: JobExecutionsTabProps) {
   // 알림 문구는 상태가 아니라 status 영역 DOM 에 직접 쓴다 — 응답 뒤 effect 에서 setState 하면 렌더가 한 번 더 돈다.
   const statusRef = useRef<HTMLParagraphElement>(null);
   const statusFrameRef = useRef<number | null>(null);
+  // 「더 보기」 응답의 끝 — 실패 확정(재시도 중이 아님), 또는 자리표시·재시도·백그라운드 재조회가 모두 끝난 성공 (WD-1019)
+  const loadFailed = failed && !pending;
+  const loadSettled = isSuccess && !isPlaceholderData && !pending && !refetching;
+  // 「더 보기」 응답을 기다리는 중인지 — 렌더에서 읽어 버튼을 잠그므로 ref(pendingLoadRef)가 아닌 state 로도 둔다(WD-1019).
+  const [loadMoreWaiting, setLoadMoreWaiting] = useState(false);
+  // 응답이 끝나면 렌더 중에 접는다 — effect 에서 setState 하면 렌더가 한 번 더 돈다. 값이 바뀔 때만 set 하므로 무한 렌더가 없다.
+  if (loadMoreWaiting && (loadFailed || loadSettled)) {
+    setLoadMoreWaiting(false);
+  }
 
   // 화면을 떠나면 아직 쓰지 않은 알림을 버린다
   useEffect(
@@ -99,7 +112,13 @@ export default function JobExecutionsTab({ jobId }: JobExecutionsTabProps) {
       from: executions.length,
       hadFocus: !!bottomRef.current?.contains(document.activeElement),
     };
+    // 앞 응답의 알림 프레임이 아직 안 돌았으면 취소한다 — 그대로 두면 새 응답 전에 지난 문구가 다시 쓰인다 (WD-1019)
+    if (statusFrameRef.current !== null) {
+      cancelAnimationFrame(statusFrameRef.current);
+      statusFrameRef.current = null;
+    }
     if (statusRef.current) statusRef.current.textContent = '';
+    setLoadMoreWaiting(true);
     loadMore();
   };
 
@@ -113,10 +132,15 @@ export default function JobExecutionsTab({ jobId }: JobExecutionsTabProps) {
    */
   useEffect(() => {
     const load = pendingLoadRef.current;
-    // 응답 대기 중(자리표시·재시도 중)에는 아직 결과가 아니다
-    if (load === null || isPlaceholderData || pending || !(isSuccess || failed)) return;
+    if (load === null) return;
+    // 실패면 기다림만 접는다 — 남겨 두면 나중의 성공(폴링 등)이 사용자 동작 없이 지난 개수를 알리고 초점을 옮긴다 (WD-1019)
+    if (loadFailed) {
+      pendingLoadRef.current = null;
+      return;
+    }
+    // 낡은 캐시로 먼저 보인 새 limit 은 백그라운드 재조회가 끝나야 최종 행이다 — 그때 알리고 초점을 정한다 (WD-1019)
+    if (!loadSettled) return;
     pendingLoadRef.current = null;
-    if (failed) return;
     const lastIndex = executions.findIndex((e) => e.id === load.lastId);
     const firstNew = lastIndex >= 0 ? lastIndex + 1 : load.from;
     const added = executions.length - firstNew;
@@ -135,11 +159,13 @@ export default function JobExecutionsTab({ jobId }: JobExecutionsTabProps) {
         tbody?.querySelector<HTMLElement>('tr:last-child a');
       target?.focus();
     }
+    // 걸려 있는 지난 프레임이 있으면 먼저 취소한다 — 새 알림을 지난 알림이 덮지 않게 (WD-1019)
+    if (statusFrameRef.current !== null) cancelAnimationFrame(statusFrameRef.current);
     statusFrameRef.current = requestAnimationFrame(() => {
       statusFrameRef.current = null;
       if (statusRef.current) statusRef.current.textContent = message;
     });
-  }, [executions, isPlaceholderData, pending, failed, isSuccess, limit]);
+  }, [executions, loadFailed, loadSettled, limit]);
 
   // 조회 실패를 「실행 이력이 없습니다」로 그리지 않는다 (WD-137) — 403 이면 권한 안내, 그 밖은 불러오기 실패 안내.
   // 조회 권한이 없으면 표 대신 권한 안내만 보인다 — 다시 시도해도 같다.
@@ -236,7 +262,14 @@ export default function JobExecutionsTab({ jobId }: JobExecutionsTabProps) {
           // isPlaceholderData 를 「더 보기 로딩 중」으로 읽는 것은 이 탭에서 키를 바꾸는 입력이 limit 뿐이기 때문이다 — 필터 등이 생기면 다시 검토한다.
           (executions.length >= limit || isPlaceholderData) && (
             <div className="py-2 flex justify-center">
-              <PendingButton variant="ghost" size="sm" pending={isPlaceholderData} onClick={handleLoadMore}>
+              {/* 낡은 캐시로 먼저 보이는 재조회 중(isFetching·오프라인 멈춤)에도 잠근다 — 그 사이 다시 누르면 기다림의 마지막 행·행 수가 낡은 값으로 덮인다(WD-1019).
+                  기다림이 없을 때(RUNNING 폴링 등)의 isFetching 은 잠그지 않는다. */}
+              <PendingButton
+                variant="ghost"
+                size="sm"
+                pending={isPlaceholderData || (loadMoreWaiting && refetching)}
+                onClick={handleLoadMore}
+              >
                 더 보기
               </PendingButton>
             </div>

@@ -251,6 +251,11 @@ async function openExecutions(page: Page, build: (n: number) => unknown[]) {
   return rows;
 }
 
+/** 프레임이 두 번 돌 때까지 기다린다 — 응답이 그려진 뒤 알림 프레임이 쓰였을 시간을 준다(WD-1019). */
+async function waitFrames(page: Page) {
+  await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
+}
+
 /** 「더 보기」에 초점을 두고 Enter 로 누른다 — 키보드 사용자의 누름. */
 async function pressMoreWithKeyboard(page: Page) {
   await page.getByRole('button', { name: '더 보기' }).focus();
@@ -321,6 +326,268 @@ test.describe('실행 이력 「더 보기」 응답 대기 (WD-965)', () => {
     await expect(rows).toHaveCount(25);
     await expect(page.getByTestId('executions-load-status')).toHaveText(END_STATUS);
     await expect(rows.nth(20)).not.toBeFocused();
+    // 초점이 body 에 그대로 남는다 — 다른 요소로 옮겨지지 않았음을 직접 확인(WD-1019)
+    expect(await page.evaluate(() => document.activeElement === document.body)).toBe(true);
+  });
+
+  test('실행 이력 「더 보기」 새 limit 이 낡은 캐시로 먼저 보여도 재조회가 끝난 행으로 알린다 (WD-1019)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 전역 staleTime(30초)을 시험이 넘기려고 가짜 시계를 먼저 깐다 — 실제로 기다리지 않는다
+    await page.clock.install();
+    await setupJobDetailMocks(page, 1);
+    // limit=40 은 첫 조회에 40건, 낡은 캐시를 다시 조회하는 두 번째부터 25건(붙잡았다가 시험이 풂)
+    const gate = deferred();
+    let calls40 = 0;
+    let calls60 = 0;
+    await page.route(
+      (url) => url.pathname === '/api/v1/proactive/jobs/1/executions',
+      async (route) => {
+        const limit = Number(new URL(route.request().url()).searchParams.get('limit') ?? '20');
+        let count = limit;
+        if (limit === 60) calls60 += 1;
+        if (limit === 40) {
+          calls40 += 1;
+          if (calls40 >= 2) {
+            await gate.promise;
+            count = 25;
+          }
+        }
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(executionRows(count)) });
+      },
+    );
+    await page.goto('/ai-insights/jobs/1?tab=executions');
+    const rows = page.getByRole('link', { name: /\(.*\)$/ });
+    await expect(rows).toHaveCount(20);
+    await pressMoreWithKeyboard(page);
+    await expect(rows).toHaveCount(40);
+
+    // 다른 탭으로 갔다가 돌아오면 limit 이 20 으로 돌아가고, 캐시의 limit=40 조회는 낡아 있다
+    await page.clock.fastForward(60_000);
+    await page.getByRole('tab', { name: '개요' }).click();
+    await expect(rows).toHaveCount(0);
+    await page.getByRole('tab', { name: '실행 이력' }).click();
+    await expect(rows).toHaveCount(20);
+
+    await pressMoreWithKeyboard(page);
+    // 재조회(limit=40, 25건)가 붙잡힌 동안에는 낡은 캐시 40건으로 알리지 않는다
+    await expect.poll(() => calls40).toBe(2);
+    // 낡은 캐시 40건이 먼저 그려진 것을 보고 나서 알림이 비어 있음을 확인한다
+    await expect(rows).toHaveCount(40);
+    await waitFrames(page);
+    await expect(page.getByTestId('executions-load-status')).toHaveText('');
+    // 재조회 중에는 「더 보기」가 잠겨 있고 다시 눌러도 limit=60 요청이 나가지 않는다 — 기다림의 마지막 행·행 수가 낡은 값으로 덮이지 않게
+    const more = page.getByRole('button', { name: '더 보기' });
+    await expect(more).toHaveAttribute('aria-disabled', 'true');
+    await page.keyboard.press('Enter');
+    await waitFrames(page);
+    expect(calls60).toBe(0);
+
+    gate.resolve();
+    await expect(rows).toHaveCount(25);
+    await expect(page.getByTestId('executions-load-status')).toHaveText(END_STATUS);
+    await expect(rows.nth(20)).toBeFocused();
+  });
+
+  test('실행 이력 「더 보기」 앞 응답의 알림 프레임이 돌기 전에 다시 누르면 지난 알림이 다시 쓰이지 않는다 (WD-1019)', async ({
+    authenticatedPage: page,
+  }) => {
+    // requestAnimationFrame 을 시험이 쥔다 — __holdFrames 를 켠 뒤 걸린 콜백만 모아 두고 __flushFrames 로 돌린다.
+    // (다른 화면 동작이 멈추지 않게 평소에는 그대로 통과시킨다.)
+    await page.addInitScript(() => {
+      const w = window as unknown as Record<string, unknown>;
+      const origRaf = window.requestAnimationFrame.bind(window);
+      const origCancel = window.cancelAnimationFrame.bind(window);
+      const held = new Map<number, FrameRequestCallback>();
+      let nextId = 1_000_000;
+      w.__holdFrames = false;
+      w.__heldFrames = () => held.size;
+      window.requestAnimationFrame = (cb: FrameRequestCallback) => {
+        if (!w.__holdFrames) return origRaf(cb);
+        const id = nextId++;
+        held.set(id, cb);
+        return id;
+      };
+      window.cancelAnimationFrame = (id: number) => {
+        if (held.delete(id)) return;
+        origCancel(id);
+      };
+      w.__flushFrames = () => {
+        const cbs = [...held.values()];
+        held.clear();
+        cbs.forEach((cb) => cb(performance.now()));
+      };
+    });
+    await setupJobDetailMocks(page, 1);
+    const gates: Record<number, Promise<void> | undefined> = {};
+    // limit=60 은 45건 — 두 번째 응답의 문구가 첫 응답의 「20건」과 다르게
+    await mockLimitedList(
+      page,
+      '/api/v1/proactive/jobs/1/executions',
+      0,
+      (n) => executionRows(n === 60 ? 45 : n),
+      gates,
+    );
+    await page.goto('/ai-insights/jobs/1?tab=executions');
+    const rows = page.getByRole('link', { name: /\(.*\)$/ });
+    await expect(rows).toHaveCount(20);
+
+    await page.evaluate(() => {
+      (window as unknown as Record<string, unknown>).__holdFrames = true;
+    });
+    await pressMoreWithKeyboard(page);
+    await expect(rows).toHaveCount(40);
+    // 첫 응답의 알림 프레임이 걸려 있다(아직 돌지 않음)
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __heldFrames: () => number }).__heldFrames())).toBeGreaterThan(0);
+    const status = page.getByTestId('executions-load-status');
+    await expect(status).toHaveText('');
+
+    // 프레임이 돌기 전에 다시 누르고 limit=60 응답을 붙잡는다
+    const gate = deferred();
+    gates[60] = gate.promise;
+    await pressMoreWithKeyboard(page);
+    await expect(page.getByRole('button', { name: '더 보기' })).toHaveAttribute('aria-disabled', 'true');
+    // 지난 프레임을 풀어도 지난 문구(20건)가 다시 쓰이지 않는다
+    await page.evaluate(() => (window as unknown as { __flushFrames: () => void }).__flushFrames());
+    await expect(status).toHaveText('');
+
+    gate.resolve();
+    await expect(rows).toHaveCount(45);
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __heldFrames: () => number }).__heldFrames())).toBeGreaterThan(0);
+    await page.evaluate(() => (window as unknown as { __flushFrames: () => void }).__flushFrames());
+    await expect(status).toHaveText(END_STATUS);
+  });
+
+  test('실행 이력 「더 보기」 낡은 캐시 재조회가 실패하면 실패 안내와 보던 20건으로 돌아가고 나중의 성공 재조회는 알림도 초점 이동도 하지 않는다 (WD-1019)', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.clock.install();
+    await setupJobDetailMocks(page, 1);
+    // 첫 행이 RUNNING 이라 5초 폴링이 돈다 — 실패 뒤 「나중의 성공 재조회」를 시계로 결정적으로 일으킨다
+    const withRunning = (n: number) => executionRows(n).map((e, i) => (i === 0 ? { ...e, status: 'RUNNING' } : e));
+    const gate = deferred();
+    let calls40 = 0;
+    let calls20 = 0;
+    await page.route(
+      (url) => url.pathname === '/api/v1/proactive/jobs/1/executions',
+      async (route) => {
+        const limit = Number(new URL(route.request().url()).searchParams.get('limit') ?? '20');
+        if (limit === 20) calls20 += 1;
+        if (limit === 40) {
+          calls40 += 1;
+          // 2·3 번째(낡은 캐시 재조회 + 전역 재시도 1회)는 붙잡았다가 500, 그 뒤는 성공
+          if (calls40 === 2 || calls40 === 3) {
+            await gate.promise;
+            return route.fulfill({
+              status: 500,
+              contentType: 'application/json',
+              body: JSON.stringify({ status: 500, error: 'Internal Server Error', message: 'boom' }),
+            });
+          }
+        }
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(withRunning(limit)) });
+      },
+    );
+    await page.goto('/ai-insights/jobs/1?tab=executions');
+    const rows = page.getByRole('link', { name: /\(.*\)$/ });
+    await expect(rows).toHaveCount(20);
+    await pressMoreWithKeyboard(page);
+    await expect(rows).toHaveCount(40);
+
+    // 탭을 갔다 와 limit 20 으로 돌아가고, 캐시의 limit=40 조회는 낡았다
+    await page.clock.fastForward(60_000);
+    await page.getByRole('tab', { name: '개요' }).click();
+    await expect(rows).toHaveCount(0);
+    await page.getByRole('tab', { name: '실행 이력' }).click();
+    await expect(rows).toHaveCount(20);
+
+    await pressMoreWithKeyboard(page);
+    await expect.poll(() => calls40).toBe(2);
+    // 재시도 대기(1초)를 시계로 넘기고 두 번째 실패까지 끝낸다
+    gate.resolve();
+    await page.clock.fastForward(2_000);
+    await expect.poll(() => calls40).toBe(3);
+    // 실패는 조용히 묻히지 않는다 — 안내가 알려지고 보던 20행으로 되돌아간다
+    await expect(page.getByRole('alert')).toHaveText(FAIL_MESSAGE);
+    await expect(rows).toHaveCount(20);
+    await waitFrames(page);
+    const status = page.getByTestId('executions-load-status');
+    await expect(status).toHaveText('');
+
+    // 나중의 폴링 재조회(성공)가 와도 지난 「더 보기」의 알림·초점 이동이 일어나지 않는다
+    const before = calls20;
+    await page.clock.fastForward(6_000);
+    await expect.poll(() => calls20).toBeGreaterThan(before);
+    await waitFrames(page);
+    await expect(rows).toHaveCount(20);
+    await expect(status).toHaveText('');
+    // 버튼이 실패 블록으로 바뀌어 초점은 body 에 있고, 폴링이 행으로 옮기지 않는다
+    expect(await page.evaluate(() => document.activeElement === document.body)).toBe(true);
+
+    // 「다시 시도」 — 실패한 limit=40 캐시(오류+데이터)를 다시 열어도 같은 렌더에서 되돌리지 않고 요청이 나가 40행을 받는다 (WD-1019 리뷰)
+    const callsBeforeRetry = calls40;
+    await page.getByRole('button', { name: '다시 시도' }).click();
+    await expect.poll(() => calls40).toBeGreaterThan(callsBeforeRetry);
+    await expect(rows).toHaveCount(40);
+    await expect(page.getByRole('alert')).toHaveCount(0);
+  });
+
+  test('실행 이력 「더 보기」 오프라인에서 낡은 캐시로 보여도 성공으로 알리지 않고 잠긴 채 기다리며 연결 뒤 재조회 실패를 알린다 (WD-1019 리뷰)', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.clock.install();
+    await setupJobDetailMocks(page, 1);
+    let calls40 = 0;
+    let failOnline = false;
+    await page.route(
+      (url) => url.pathname === '/api/v1/proactive/jobs/1/executions',
+      async (route) => {
+        const limit = Number(new URL(route.request().url()).searchParams.get('limit') ?? '20');
+        if (limit === 40) {
+          calls40 += 1;
+          // 연결이 돌아온 뒤의 재조회(+ 전역 재시도 1회)는 실패
+          if (failOnline) {
+            return route.fulfill({
+              status: 500,
+              contentType: 'application/json',
+              body: JSON.stringify({ status: 500, error: 'Internal Server Error', message: 'boom' }),
+            });
+          }
+        }
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(executionRows(limit)) });
+      },
+    );
+    await page.goto('/ai-insights/jobs/1?tab=executions');
+    const rows = page.getByRole('link', { name: /\(.*\)$/ });
+    await expect(rows).toHaveCount(20);
+    await pressMoreWithKeyboard(page);
+    await expect(rows).toHaveCount(40);
+
+    // 탭을 갔다 와 limit 20 으로 돌아가고, 캐시의 limit=40 조회는 낡았다
+    await page.clock.fastForward(60_000);
+    await page.getByRole('tab', { name: '개요' }).click();
+    await expect(rows).toHaveCount(0);
+    await page.getByRole('tab', { name: '실행 이력' }).click();
+    await expect(rows).toHaveCount(20);
+
+    // 오프라인에서 「더 보기」 — 낡은 캐시 40행이 보이지만 재조회가 멈춰(paused) 성공으로 세지 않는다
+    await page.context().setOffline(true);
+    failOnline = true;
+    await pressMoreWithKeyboard(page);
+    await expect(rows).toHaveCount(40);
+    await waitFrames(page);
+    const status = page.getByTestId('executions-load-status');
+    await expect(status).toHaveText('');
+    // 기다림이 끝나지 않아 버튼이 잠긴 채 남는다 — 다시 눌러 기다림을 낡은 값으로 덮지 못하게
+    await expect(page.getByRole('button', { name: '더 보기' })).toHaveAttribute('aria-disabled', 'true');
+    expect(calls40).toBe(1);
+
+    // 연결이 돌아와 재조회가 실패하면 묻히지 않고 안내와 보던 20행으로 돌아간다
+    await page.context().setOffline(false);
+    await expect.poll(() => calls40).toBeGreaterThan(1);
+    await page.clock.fastForward(2_000);
+    await expect(page.getByRole('alert')).toHaveText(FAIL_MESSAGE);
+    await expect(rows).toHaveCount(20);
   });
 
   test('실행 이력 「더 보기」 응답 사이 맨 위에 새 실행이 끼어도 새로 받은 행 수와 첫 새 행이 맞다 (WD-965 리뷰 후속)', async ({

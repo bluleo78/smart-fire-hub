@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import { useLoadMoreLimit } from './useLoadMoreLimit';
 
-type Status = { isError: boolean; isSuccess: boolean; isPlaceholderData?: boolean };
+type Status = { isError: boolean; isSuccess: boolean; isPlaceholderData?: boolean; isFetching?: boolean };
 const OK: Status = { isError: false, isSuccess: true };
 const FAIL: Status = { isError: true, isSuccess: false };
 const PENDING: Status = { isError: false, isSuccess: false };
@@ -25,6 +25,25 @@ describe('useLoadMoreLimit', () => {
     const { result } = setup({ 20: OK });
     expect(result.current.limit).toBe(20);
     expect(result.current.failed).toBe(false);
+  });
+
+  it('새 limit 이 낡은 캐시(isSuccess)로 재조회 중이면 성공으로 세지 않고 재조회 실패는 failed 로 알린다 (WD-1019)', () => {
+    const statuses: Record<number, Status> = { 20: OK, 40: { isError: false, isSuccess: true, isFetching: true } };
+    const { result, rerender } = setup(statuses);
+    act(() => result.current.loadMore());
+    // 재조회 중: 낡은 캐시를 성공으로 세지 않아 limit 이 유지된다
+    expect(result.current.limit).toBe(40);
+    expect(result.current.failed).toBe(false);
+    // 재조회 실패: 되돌리고 failed
+    statuses[40] = FAIL;
+    rerender();
+    expect(result.current.limit).toBe(20);
+    expect(result.current.failed).toBe(true);
+    // 「다시 시도」: 오류 캐시를 다시 열어 isError·isFetching 이 함께 오면 되돌리지 않고 재조회를 기다린다 (WD-1019 리뷰)
+    statuses[40] = { isError: true, isSuccess: false, isFetching: true };
+    act(() => result.current.loadMore());
+    expect(result.current.limit).toBe(40);
+    expect(result.current.pending).toBe(true);
   });
 
   it('「더 보기」 조회가 실패하면 마지막 성공 limit 으로 되돌리고 failed 로 둔다', () => {
