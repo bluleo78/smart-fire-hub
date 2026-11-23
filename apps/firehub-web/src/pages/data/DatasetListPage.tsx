@@ -1,7 +1,7 @@
 import { onlineManager } from '@tanstack/react-query';
 import { BarChart3, Download, Eye, History, Hourglass, Info, Plus, Star, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { Link, useNavigate, useNavigationType, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { PageHeading } from '../../components/PageHeading';
@@ -107,6 +107,16 @@ function DatasetTypeBadge({ info: { label, known }, className }: { info: TypeLab
  */
 const DATASET_FILTER_PARAM_KEYS = ['categoryId', 'storageType', 'originType', 'status', 'securityLevel', 'favorite'] as const;
 
+/** 정렬 키 파싱 — 잘못된 값(손으로 고친 주소)은 정렬 없음(null). 렌더 값과 toggleSort 가 같은 규칙을 쓴다. */
+function parseSortKey(raw: string | null): SortKey | null {
+  return raw === 'name' || raw === 'createdAt' ? raw : null;
+}
+
+/** 정렬 방향 파싱 — 잘못된 값은 none */
+function parseSortOrder(raw: string | null): SortDirection {
+  return raw === 'asc' || raw === 'desc' ? raw : 'none';
+}
+
 /** 카테고리 칩 클래스 — WD-880: 최소 클릭 대상 32×32. 높이 h-8·최소 너비 min-w-8(한 글자 이름도 32 이상), 글자 크기는 그대로 */
 const CATEGORY_CHIP_CLASS = 'h-8 min-w-8 cursor-pointer hover:opacity-80 transition-opacity';
 
@@ -152,12 +162,54 @@ export default function DatasetListPage() {
   const securityLevelId = securityLevelParam ? Number(securityLevelParam) : undefined;
   /** 페이지당 표시 건수: 사용자가 selector 로 변경 가능 (기본 10) */
   const size = parseNonNegativeInt(searchParams.get('size'), 10) || 10;
-  const sortKeyParam = searchParams.get('sort');
-  const sortKey: SortKey | null =
-    sortKeyParam === 'name' || sortKeyParam === 'createdAt' ? sortKeyParam : null;
-  const sortOrderParam = searchParams.get('order');
-  const sortOrder: SortDirection =
-    sortOrderParam === 'asc' || sortOrderParam === 'desc' ? sortOrderParam : 'none';
+  const sortKey = parseSortKey(searchParams.get('sort'));
+  const sortOrder = parseSortOrder(searchParams.get('order'));
+
+  /**
+   * 마지막으로 쓴 주소 매개변수 (WD-950, 리뷰 반영).
+   *
+   * 왜: react-router 의 setSearchParams 함수형 갱신은 prev 로 렌더 시점 searchParams 스냅샷을 준다.
+   * 화면 반영 전에 patchParams 가 여러 번 불리면(정렬 직후 필터, 토글 두 번 등) 뒤 호출이 앞 호출을 모른 채
+   * 낡은 값 위에 써서 앞 변경이 사라진다. 그래서 내가 써 넣었지만 아직 렌더에 오지 않은 주소 문자열을
+   * 순서대로 pendingWritesRef 에 쌓고, 다음 patch 의 기준(getLatestParams)은 그 마지막 항목에서 유도한다
+   * (없으면 지금 searchParams) — 기준을 따로 저장하지 않으므로 두 값을 맞춰 쓸 일이 없다.
+   *
+   * 렌더 중 동기화(같은 입력이면 같은 결과라 렌더가 버려지거나 여러 번 돌아도 안전):
+   * - pending 이 비었으면 할 일이 없다(새로 만드는 값 없이 일찍 빠진다).
+   * - 지금 location.search 가 pending 에 있으면 내가 쓴 주소가 도착한 것 — 그 항목까지 뺀다.
+   * - pending 에 없는데 location.key 가 바뀌었으면 외부 이동(사이드바 링크·뒤로가기) — pending 을 비운다.
+   * - location.key 는 항상 최신으로 기록한다(관계없는 리렌더에서는 이미 같은 값이라 변화 없음).
+   * effect 가 아니라 렌더 중에 하는 이유: effect 는 렌더 뒤에 돌아 그 사이 클릭이 낡은 값을 쓰기 때문.
+   *
+   * 정렬(#358) 연속 클릭 전이 유실 방지와 뒤로가기 뒤 URL 기준 정렬도 이 구조가 맡는다
+   * (toggleSort 와 토글 버튼이 모두 getLatestParams 의 최신 값을 읽는다).
+   */
+  const location = useLocation();
+  const pendingWritesRef = useRef<string[]>([]);
+  const lastLocationKeyRef = useRef(location.key);
+  if (pendingWritesRef.current.length > 0) {
+    const arrivedIndex = pendingWritesRef.current.indexOf(searchParams.toString());
+    if (arrivedIndex >= 0) {
+      pendingWritesRef.current = pendingWritesRef.current.slice(arrivedIndex + 1);
+    } else if (location.key !== lastLocationKeyRef.current) {
+      pendingWritesRef.current = [];
+    }
+  }
+  lastLocationKeyRef.current = location.key;
+  // 렌더에 온 주소를 ref 로도 들어 patchParams 가 렌더마다 새로 만들어지지 않게 한다(의존 배열에 searchParams 를 넣지 않으려고)
+  const renderedParamsRef = useRef(searchParams);
+  renderedParamsRef.current = searchParams;
+
+  /** 아직 렌더에 오지 않은 변경까지 포함한 최신 주소 — 마지막 pending, 없으면 렌더에 온 주소. ref 만 읽어 언제 불러도 최신이다. */
+  const getLatestParams = useCallback(() => {
+    const pending = pendingWritesRef.current;
+    return pending.length > 0
+      ? new URLSearchParams(pending[pending.length - 1])
+      : renderedParamsRef.current;
+  }, []);
+
+  /** 아직 렌더에 오지 않은 변경까지 포함한 최신 주소 값 — 토글이 렌더 값 대신 이걸로 다음 값을 정한다. */
+  const readLatestParam = (key: string) => getLatestParams().get(key);
 
   /**
    * URL 파라미터 패치 헬퍼 — 빈 값/기본값은 키 자체를 제거하여 URL 청결성 유지.
@@ -165,56 +217,30 @@ export default function DatasetListPage() {
    */
   const patchParams = useCallback(
     (patch: Record<string, string | number | boolean | null | undefined>) => {
-      setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev);
-          for (const [k, v] of Object.entries(patch)) {
-            if (v === null || v === undefined || v === '' || v === false) {
-              next.delete(k);
-            } else {
-              next.set(k, String(v));
-            }
-          }
-          return next;
-        },
-        { replace: true },
-      );
+      const next = new URLSearchParams(getLatestParams());
+      for (const [k, v] of Object.entries(patch)) {
+        if (v === null || v === undefined || v === '' || v === false) {
+          next.delete(k);
+        } else {
+          next.set(k, String(v));
+        }
+      }
+      pendingWritesRef.current.push(next.toString());
+      setSearchParams(next, { replace: true });
     },
-    [setSearchParams],
+    [getLatestParams, setSearchParams],
   );
 
   /**
-   * 정렬 상태의 "다음 전이 기준값" — 렌더 클로저(sortKey/sortOrder) 대신 이 ref 를 본다. (#358)
-   *
-   * 왜: 헤더를 빠르게 연속 클릭하면 URL 반영(리렌더) 전에 다음 클릭 핸들러가 실행되는데,
-   * 그 핸들러는 이전 렌더의 sortOrder 를 그대로 들고 있어 전이가 유실된다
-   * (asc 에서 두 번 더 눌러도 desc→desc 로 계산되어 정렬이 해제되지 않음).
-   * react-router 의 setSearchParams 함수형 갱신도 prev 로 렌더 시점 스냅샷을 주므로 해결되지 않아,
-   * 클릭 시점에 동기적으로 전진하는 ref 를 별도의 기준값으로 둔다.
+   * 「최신 값과 비교해 켜고 끄기」 — 최신 주소의 key 값이 onValue 면 끄고(null), 아니면 켠다(onValue).
+   * 반환값은 patchParams 에 그대로 넣을 값이다(각 버튼의 page 초기화 같은 부수 효과는 호출 쪽이 정한다).
    */
-  const sortStateRef = useRef<{ key: SortKey | null; order: SortDirection }>({
-    key: sortKey,
-    order: sortOrder,
-  });
-  /** 방금 URL 로 써 넣었으나 아직 렌더에 반영되지 않은 값 — 중간 상태로 ref 가 되감기는 것을 막는다. */
-  const pendingSortRef = useRef<{ key: SortKey | null; order: SortDirection } | null>(null);
-  const navigationType = useNavigationType();
-
-  // URL 이 외부 요인(딥링크·뒤로가기·다른 필터 변경)으로 바뀌면 ref 를 URL 기준으로 되돌린다.
-  // 단, 우리가 쓴 최신 값이 아직 도착하지 않았다면(pending) 중간 상태는 무시한다.
-  // POP(뒤로/앞으로)은 URL 이 절대적 기준이므로 pending 여부와 무관하게 즉시 동기화한다.
-  useEffect(() => {
-    const pending = pendingSortRef.current;
-    if (pending && navigationType !== 'POP') {
-      if (pending.key === sortKey && pending.order === sortOrder) pendingSortRef.current = null;
-      return;
-    }
-    pendingSortRef.current = null;
-    sortStateRef.current = { key: sortKey, order: sortOrder };
-  }, [sortKey, sortOrder, navigationType]);
+  const toggledValue = (key: string, onValue: string) => (readLatestParam(key) === onValue ? null : onValue);
 
   const toggleSort = (key: SortKey) => {
-    const { key: curKey, order: curOrder } = sortStateRef.current;
+    // 렌더 값이 아니라 최신 주소의 sort·order 로 다음 전이를 계산한다(sortKey/sortOrder 와 같은 파서 — 잘못된 값은 none).
+    const curKey = parseSortKey(readLatestParam('sort'));
+    const curOrder = parseSortOrder(readLatestParam('order'));
     // 같은 컬럼 재클릭 — asc → desc → none(원본 순서) 순환. 다른 컬럼이면 asc 부터.
     let next: { key: SortKey | null; order: SortDirection };
     if (curKey !== key) next = { key, order: 'asc' };
@@ -222,8 +248,6 @@ export default function DatasetListPage() {
     else if (curOrder === 'desc') next = { key: null, order: 'none' };
     else next = { key, order: 'asc' };
 
-    sortStateRef.current = next;
-    pendingSortRef.current = next;
     patchParams({ sort: next.key, order: next.order === 'none' ? null : next.order });
   };
 
@@ -514,7 +538,7 @@ export default function DatasetListPage() {
             size="sm"
             aria-pressed={favoriteOnly}
             onClick={() => {
-              patchParams({ favorite: !favoriteOnly ? 'true' : null, page: null });
+              patchParams({ favorite: toggledValue('favorite', 'true'), page: null });
             }}
             className="gap-1.5"
           >
@@ -535,7 +559,7 @@ export default function DatasetListPage() {
               size="sm"
               aria-pressed={tempShown}
               onClick={() => {
-                patchParams({ showTemp: !showTemp ? '1' : null, page: null });
+                patchParams({ showTemp: toggledValue('showTemp', '1'), page: null });
               }}
               className="gap-1.5"
             >
@@ -574,7 +598,7 @@ export default function DatasetListPage() {
                 type="button"
                 aria-pressed={categoryId === cat.id}
                 onClick={() => {
-                  patchParams({ categoryId: categoryId === cat.id ? null : cat.id, page: null });
+                  patchParams({ categoryId: toggledValue('categoryId', String(cat.id)), page: null });
                 }}
               >
                 {cat.name}
