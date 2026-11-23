@@ -266,9 +266,17 @@ public class ProactiveJobService {
     }
   }
 
-  /** 빈 값·공백을 null 로 — 「주기 없음」의 여러 표현(null·""·" ")을 같게 비교하려고 쓴다. */
+  /**
+   * 빈 값·공백을 null 로, 아니면 앞뒤 공백을 걷어 돌려준다 — 「주기 없음」의 여러 표현(null·""·" ")과 공백만 다른 같은 주기를 같게 비교하려고
+   * 쓴다(WD-995).
+   */
   private static String blankToNull(String value) {
-    return value == null || value.isBlank() ? null : value;
+    return value == null || value.isBlank() ? null : value.strip();
+  }
+
+  /** 저장할 cron — null 이 아니면 앞뒤 공백을 걷는다(WD-995). 빈 값은 지금처럼 그대로 저장 경로를 탄다(저장 형태를 바꾸지 않음). */
+  private static String stripCron(String cron) {
+    return cron == null ? null : cron.strip();
   }
 
   @Transactional(readOnly = true)
@@ -345,11 +353,12 @@ public class ProactiveJobService {
   public ProactiveJobResponse createJob(CreateProactiveJobRequest request, Long userId) {
     // cronExpression / timezone 형식을 사전 검증한다. 잘못된 값을 그대로 저장하면 스케줄러가 silent fail 하여
     // 사용자에게는 정상 생성처럼 보이지만 실제 실행이 한 번도 일어나지 않는 좀비 상태가 된다 (#221).
-    validateCronAndTimezone(request.cronExpression(), request.timezone());
+    // cron 앞뒤 공백은 맨 앞에서 한 번 잘라 검증·저장에 같은 값을 쓴다(WD-995) — 검증한 값과 저장한 값이 갈리지 않게.
+    String cron = stripCron(request.cronExpression());
+    validateCronAndTimezone(cron, request.timezone());
     // 주기 없는 정기 실행은 저장·스케줄러 등록·감사 전에 400 으로 막는다(WD-607). 꺼 둔 채(enabled=false) 만들어도 막는다 —
     // 켜는 순간 같은 「켜짐인데 실행 안 되는」 작업이 되므로 저장 자체를 막는 편이 단순하다.
-    requireCronForScheduledTrigger(
-        effectiveTrigger(request.triggerType(), null), request.cronExpression());
+    requireCronForScheduledTrigger(effectiveTrigger(request.triggerType(), null), cron);
     // 보안 등급(S2): 메트릭 SQL 이 작성자가 볼 수 없는 데이터셋을 참조하면 거부(스펙 §4.2 6행). update 도 같은 검사 — 우회로 차단.
     metricSqlAccessChecker.requireMetricQueriesAllowed(request.config(), userId);
     requireUsableTemplate(request.templateId(), userId);
@@ -366,7 +375,7 @@ public class ProactiveJobService {
             request.name(),
             request.prompt(),
             request.templateId(),
-            request.cronExpression(),
+            cron,
             request.timezone(),
             request.enabled(),
             request.triggerType(),
@@ -427,12 +436,16 @@ public class ProactiveJobService {
     // (WD-607) — 예전 수정 경로가 빈 시간대를 저장해 둔 옛 행은 웹이 그 값을 그대로 다시 보내므로, 검사하면 이름만 고쳐도 400 이 났다.
     String changedTimezone =
         Objects.equals(request.timezone(), before.timezone()) ? null : request.timezone();
-    validateCronAndTimezone(request.cronExpression(), changedTimezone);
+    // cron 앞뒤 공백은 한 번 잘라 검증·저장에 같은 값을 쓴다(WD-995). 변경 판정(requireCronIfSchedulingTouched)은
+    // blankToNull 로 같은 정규화를 한다.
+    String cron = stripCron(request.cronExpression());
+    validateCronAndTimezone(cron, changedTimezone);
     requireCronIfSchedulingTouched(request, before);
     // 보안 등급(S2): 메트릭 SQL 이 작성자가 볼 수 없는 데이터셋을 참조하면 거부(스펙 §4.2 6행). update 도 같은 검사 — 우회로 차단.
     metricSqlAccessChecker.requireMetricQueriesAllowed(request.config(), userId);
     requireUsableTemplate(request.templateId(), userId);
-    // 이름이 바뀐 저장만 중복을 검사한다(WD-824) — 판정 기준·이유는 ResourceNameGuard.requireUnusedOnRename 참고. 기준값은 행 잠금 뒤에 읽은 값이다.
+    // 이름이 바뀐 저장만 중복을 검사한다(WD-824) — 판정 기준·이유는 ResourceNameGuard.requireUnusedOnRename 참고. 기준값은 행 잠금
+    // 뒤에 읽은 값이다.
     nameGuard.requireUnusedOnRename(
         ResourceKind.PROACTIVE_JOB,
         userId,
@@ -448,7 +461,7 @@ public class ProactiveJobService {
             request.prompt(),
             request.templateId(),
             Boolean.TRUE.equals(request.clearTemplate()),
-            request.cronExpression(),
+            cron,
             request.timezone(),
             request.enabled(),
             request.triggerType(),
@@ -474,7 +487,9 @@ public class ProactiveJobService {
     if (!Objects.equals(before.name(), after.name())) changed.add("name");
     if (!Objects.equals(before.prompt(), after.prompt())) changed.add("prompt");
     if (!Objects.equals(before.templateId(), after.templateId())) changed.add("templateId");
-    if (!Objects.equals(before.cronExpression(), after.cronExpression())) {
+    // 앞뒤 공백만 다른 주기는 바뀐 게 아니다(WD-995) — 요청 검사와 같은 정규화로 비교한다.
+    if (!Objects.equals(
+        blankToNull(before.cronExpression()), blankToNull(after.cronExpression()))) {
       changed.add("cronExpression");
     }
     if (!Objects.equals(before.timezone(), after.timezone())) changed.add("timezone");

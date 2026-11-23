@@ -174,7 +174,8 @@ export interface ProactiveJob {
   templateName: string | null;
   name: string;
   prompt: string;
-  cronExpression: string;
+  /** 정기 실행이 아닌(이상 탐지 전용 등) 작업은 null 일 수 있다 */
+  cronExpression: string | null;
   timezone: string;
   enabled: boolean;
   triggerType?: TriggerType;
@@ -248,7 +249,8 @@ export interface CreateProactiveJobRequest {
   name: string;
   prompt: string;
   templateId?: number | null;
-  cronExpression: string;
+  /** 정기 실행이면 필수(서버가 검증) — 이상 탐지 전용 복제처럼 원본에 주기가 없으면 생략한다 */
+  cronExpression?: string;
   timezone?: string;
   triggerType?: TriggerType;
   config?: Record<string, unknown>;

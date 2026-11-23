@@ -263,7 +263,7 @@ export default function ProactiveJobListPage() {
                       )}
                     </div>
                   </TableCell>
-                  <TableCell className="text-sm">{cronToLabel(job.cronExpression)}</TableCell>
+                  <TableCell className="text-sm">{cronToLabel(job.cronExpression ?? '')}</TableCell>
                   <TableCell className="text-sm text-muted-foreground">
                     {job.lastExecutedAt ? timeAgo(job.lastExecutedAt) : '-'}
                     {/* 최근 실행이 실패했으면 시각 옆에 바로 알린다 (WD-134). 예약 실행이 계속 실패해도

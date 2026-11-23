@@ -1,7 +1,7 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import axios from 'axios';
 import { Activity, ArrowLeft, Copy } from 'lucide-react';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -33,7 +33,7 @@ import { createWithNumberedName } from '@/lib/clone-name';
 import { focusFirstInvalidInteger } from '@/lib/focus-invalid-integer';
 import { parseRouteId } from '@/lib/route-id';
 import { resolveTabParam } from '@/lib/tab-param';
-import { type ChannelConfigValues, numberedGoalTemplateName, type ProactiveJobFormValues,proactiveJobSchema } from '@/lib/validations/proactive-job';
+import { type ChannelConfigValues, createProactiveJobSchema, numberedGoalTemplateName, type ProactiveJobFormValues, proactiveJobSchema } from '@/lib/validations/proactive-job';
 
 import { OwnerIneligibleBadge } from './components/OwnerIneligibleBadge';
 import { ProactiveReadForbiddenNotice } from './components/ProactiveReadForbiddenNotice';
@@ -169,8 +169,19 @@ export default function ProactiveJobDetailPage() {
     if (prefill.prompt) defaultValues.prompt = prefill.prompt;
   }
 
+  // 수정이면 저장된 트리거·주기를 기준으로 「안 건드린 주기는 필수 아님」 규칙을 적용한다(WD-995). 작업이 로드되면 resolver 도 바뀐다.
+  const jobLoaded = !!job;
+  const jobTriggerType = job?.triggerType;
+  const jobCron = job?.cronExpression;
+  const resolverSchema = useMemo(
+    () =>
+      isNew || !jobLoaded
+        ? proactiveJobSchema
+        : createProactiveJobSchema({ triggerType: jobTriggerType, cronExpression: jobCron }),
+    [isNew, jobLoaded, jobTriggerType, jobCron],
+  );
   const form = useForm<ProactiveJobFormValues>({
-    resolver: zodResolver(proactiveJobSchema),
+    resolver: zodResolver(resolverSchema),
     values: defaultValues,
   });
 
@@ -262,11 +273,17 @@ export default function ProactiveJobDetailPage() {
       focusFirstInvalidInteger();
       return;
     }
+    // 수정에서 저장값 그대로인 주기는 보내지 않는다 — 서버는 생략(null)이면 저장값을 그대로 둔다(WD-995).
+    // 스키마가 이미 trim 한 값과 저장 원값을 그대로 비교하므로, 앞뒤 공백만 붙은 옛 주기는 잘린 값이 나가 정리된다.
+    // 서버는 공백만 다른 값을 변경으로 보지 않아 감사에도 남지 않는다.
+    // 충돌 뒤 덮어쓰기(force)는 늘 보낸다 — job 은 편집 시작 때 캐시라, 다른 탭이 주기·트리거를 바꿨으면 빼고 보낼 때
+    // 사용자가 못 본 주기가 남거나 주기 없는 정기 트리거로 400 이 난다(WD-995 리뷰). 화면에 보이는 그대로 덮어쓴다.
+    const cronUnchanged = !force && !isNew && !!job && (values.cronExpression ?? '') === (job.cronExpression ?? '');
     const payload = {
       name: values.name,
       prompt: values.prompt,
       templateId: values.templateId ?? null,
-      cronExpression: values.cronExpression ?? '',
+      ...(cronUnchanged ? {} : { cronExpression: values.cronExpression ?? '' }),
       timezone: values.timezone,
       triggerType: values.triggerType,
       config: values.config,

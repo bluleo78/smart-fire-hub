@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  createProactiveJobSchema,
   goalTemplateName,
   MAX_JOB_PROMPT_LENGTH,
   numberedGoalTemplateName,
@@ -125,5 +126,41 @@ describe('goalTemplateName 미리보기 (WD-834)', () => {
     expect(out.endsWith(' 양식')).toBe(true);
     expect(out.length).toBeLessThanOrEqual(200);
     expect(out).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+  });
+});
+
+/** 수정 화면 주기 규칙(WD-995) — 트리거·주기를 저장값 그대로 두면 주기가 없어도 통과, 바꾸면 지금처럼 필수. 서버 규칙과 같다. */
+describe('createProactiveJobSchema 수정 규칙 (WD-995)', () => {
+  const edit = (triggerType: 'SCHEDULE' | 'ANOMALY' | 'BOTH', cronExpression: string) => ({
+    ...job('이름', '질문'),
+    triggerType,
+    cronExpression,
+  });
+
+  it('주기 없는 BOTH 작업을 트리거·주기 그대로 두면 통과한다', () => {
+    const schema = createProactiveJobSchema({ triggerType: 'BOTH', cronExpression: null });
+    expect(schema.safeParse(edit('BOTH', '  ')).success).toBe(true);
+  });
+
+  it('끝 공백이 남은 저장 주기를 그대로 두면 통과하고 값은 잘린다', () => {
+    const schema = createProactiveJobSchema({ triggerType: 'SCHEDULE', cronExpression: '0 9 * * * ' });
+    const r = schema.safeParse(edit('SCHEDULE', '0 9 * * * '));
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data.cronExpression).toBe('0 9 * * *');
+  });
+
+  it('주기 없는 작업의 트리거를 SCHEDULE 로 바꾸면 주기가 필수다', () => {
+    const schema = createProactiveJobSchema({ triggerType: 'BOTH', cronExpression: null });
+    expect(messageAt(schema.safeParse(edit('SCHEDULE', '')), 'cronExpression')).toBe('실행 주기를 설정하세요');
+  });
+
+  it('정기 작업의 주기를 지우면 필수 문구로 막힌다', () => {
+    const schema = createProactiveJobSchema({ triggerType: 'SCHEDULE', cronExpression: '0 9 * * *' });
+    expect(messageAt(schema.safeParse(edit('SCHEDULE', '   ')), 'cronExpression')).toBe('실행 주기를 설정하세요');
+  });
+
+  it('1분보다 잦은 옛 주기는 안 건드려도 막는다 (WD-962 — 손대기 전부터 이유를 보인다)', () => {
+    const legacy = createProactiveJobSchema({ triggerType: 'SCHEDULE', cronExpression: '* * * * * *' });
+    expect(legacy.safeParse(edit('SCHEDULE', '* * * * * *')).success).toBe(false);
   });
 });

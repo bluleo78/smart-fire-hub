@@ -249,8 +249,12 @@ export default function JobOverviewTab({
 
   // 저장된 주기가 없던 작업은 칸이 비어 있어도 검증 전엔 오류가 없어 「저장」만 꺼진다 — 이유를 바로 보인다.
   // 방금 「직접 입력」을 고른 빈 칸은 아직 안내하지 않는다.
+  // 단, 트리거를 저장된 그대로 두면 주기 없는 수정도 저장되므로(WD-995) 트리거를 바꾼 때만 안내한다.
+  const triggerUnchanged = (watch('triggerType') ?? 'SCHEDULE') === (job?.triggerType ?? 'SCHEDULE');
   const cronRequiredHint =
-    !isNew && !job?.cronExpression && !cronExpression && !customCronSelected ? CRON_REQUIRED_MESSAGE : undefined;
+    !isNew && !job?.cronExpression && !cronExpression && !customCronSelected && !triggerUnchanged
+      ? CRON_REQUIRED_MESSAGE
+      : undefined;
 
   // 칸 아래에 보일 cron 문구 — 지금 값이 너무 잦으면 검증 전(편집 진입·트리거 되돌림)에도 바로 보이고, 그 밖의 오류는 검증 결과를 쓴다.
   const cronError = cronTooFrequentMessage(cronForPreview) ?? errors.cronExpression?.message ?? cronRequiredHint;
@@ -325,7 +329,7 @@ export default function JobOverviewTab({
           {/* 같은 h2 20px 섹션 제목 (WD-811) */}
           <h2 className="text-xl leading-7 font-semibold">실행 주기</h2>
           <div className="grid grid-cols-2 gap-4">
-            <ReadonlyCard label="스케줄" value={cronToLabel(job.cronExpression)} />
+            <ReadonlyCard label="스케줄" value={cronToLabel(job.cronExpression ?? '')} />
             <ReadonlyCard label="타임존" value={job.timezone} />
             {job.nextExecuteAt ? (
               <ReadonlyCard label="다음 실행" value={formatDate(job.nextExecuteAt)} />

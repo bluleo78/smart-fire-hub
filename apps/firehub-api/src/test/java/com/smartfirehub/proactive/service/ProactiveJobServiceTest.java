@@ -793,6 +793,56 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
     }
   }
 
+  /** [WD-995] 만들 때 cron 앞뒤 공백은 정리해 저장한다. */
+  @Test
+  void createJob_stripsCron() {
+    ProactiveJobResponse created =
+        proactiveJobService.createJob(
+            createRequest("공백 cron 생성", "0 9 * * * ", "Asia/Seoul", "SCHEDULE"), testUserId);
+
+    assertThat(created.cronExpression()).isEqualTo("0 9 * * *");
+    assertThat(proactiveJobService.getJob(created.id(), testUserId).cronExpression())
+        .isEqualTo("0 9 * * *");
+  }
+
+  /** [WD-995] 고칠 때도 cron 앞뒤 공백은 정리해 저장한다. */
+  @Test
+  void updateJob_stripsCron() {
+    ProactiveJobResponse created =
+        proactiveJobService.createJob(
+            createRequest("공백 cron 수정", "0 9 * * *", "Asia/Seoul", "SCHEDULE"), testUserId);
+
+    proactiveJobService.updateJob(
+        created.id(),
+        new UpdateProactiveJobRequest(null, null, null, "  0 10 * * *  ", null, null, null, null),
+        testUserId);
+
+    assertThat(proactiveJobService.getJob(created.id(), testUserId).cronExpression())
+        .isEqualTo("0 10 * * *");
+  }
+
+  /** [WD-995] 옛 저장값(끝 공백)과 공백만 다른 cron 을 다시 보내는 이름 변경은 400 이 아니다. */
+  @Test
+  void updateJob_whitespaceOnlyCronDiff_renameAllowed() {
+    ProactiveJobResponse created =
+        proactiveJobService.createJob(
+            createRequest("공백 차이 이름", "0 9 * * *", "Asia/Seoul", "SCHEDULE"), testUserId);
+    dsl.update(PROACTIVE_JOB)
+        .set(PROACTIVE_JOB.CRON_EXPRESSION, "0 9 * * * ")
+        .where(PROACTIVE_JOB.ID.eq(created.id()))
+        .execute();
+
+    proactiveJobService.updateJob(
+        created.id(),
+        new UpdateProactiveJobRequest(
+            "공백 차이 이름 고침", null, null, "0 9 * * *", null, null, null, null),
+        testUserId);
+
+    ProactiveJobResponse updated = proactiveJobService.getJob(created.id(), testUserId);
+    assertThat(updated.name()).isEqualTo("공백 차이 이름 고침");
+    assertThat(updated.cronExpression()).isEqualTo("0 9 * * *");
+  }
+
   /** [WD-607] 웹 모양으로 트리거를 ANOMALY → SCHEDULE 로 바꾸며 cron 을 ""로 보내면 400. */
   @Test
   void updateJob_webPayloadSwitchToScheduleWithoutCron_rejected() {

@@ -65,7 +65,25 @@ export const anomalyConfigSchema = z.object({
 /** 실행 주기가 비었을 때의 안내 문구 — 스키마와 폼 칸 아래 안내가 같은 문구를 쓴다. */
 export const CRON_REQUIRED_MESSAGE = '실행 주기를 설정하세요';
 
-export const proactiveJobSchema = z
+/**
+ * 주기 문자열 정리 — 앞뒤 공백을 자르고 빈 값은 null (WD-995). 서버 blankToNull 과 같은 규칙이라
+ * 공백만 다른 주기를 「바뀌었다」고 보지 않는다.
+ */
+export function normalizeCron(v?: string | null): string | null {
+  return v?.trim() || null;
+}
+
+/**
+ * 스마트 작업 폼 스키마 팩토리 (WD-995).
+ * original 을 주면 수정 화면이다 — 트리거 유형과 주기를 저장된 값 그대로 두면(untouched) 주기가 없어도
+ * 필수 오류를 내지 않는다. 서버가 같은 조건에서 주기 없는 작업의 수정을 받기 때문이다(옛 데이터의 이름만 고치기).
+ * 만들기는 original 없이 호출해 정기 실행이면 주기를 늘 요구한다.
+ */
+export function createProactiveJobSchema(original?: {
+  triggerType?: 'SCHEDULE' | 'ANOMALY' | 'BOTH' | null;
+  cronExpression?: string | null;
+}) {
+  return z
   .object({
     // trim — 공백만 채운 이름을 빈 값과 같이 거부하고, 앞뒤 공백은 잘라 저장한다(WD-500, user.ts WD-275 와 같은 패턴).
     name: z.string().trim().min(1, '작업 이름을 입력하세요').max(200, '이름은 200자 이내여야 합니다'),
@@ -81,7 +99,8 @@ export const proactiveJobSchema = z
     // 「목표 기반」으로 만든 섹션 구성(WD-297). 서버로 보내는 작업 필드가 아니라, 생성 때 리포트 양식으로 먼저 저장해 templateId 로
     // 연결하려고 폼에 둔다. null 이면 목표 기반 구성이 없다.
     generatedSections: z.array(z.custom<TemplateSection>()).nullable().optional(),
-    cronExpression: z.string().optional(),
+    // trim — 끝 공백이 든 주기를 잘라 저장하고, 공백만 있으면 빈 값으로 본다(WD-995).
+    cronExpression: z.string().trim().optional(),
     timezone: z.string().min(1),
     triggerType: z.enum(['SCHEDULE', 'ANOMALY', 'BOTH']).optional(),
     config: z.object({
@@ -95,20 +114,31 @@ export const proactiveJobSchema = z
     }),
   })
   .superRefine((data, ctx) => {
-    // ANOMALY 전용이 아닌 경우 cronExpression 필수 (#38/#43)
-    if (data.triggerType !== 'ANOMALY' && !data.cronExpression) {
+    const cron = normalizeCron(data.cronExpression);
+    // 수정에서 트리거·주기를 저장된 그대로 두면 주기가 없어도 통과(WD-995) — 서버 규칙과 같다.
+    const untouched =
+      !!original &&
+      (data.triggerType ?? 'SCHEDULE') === (original.triggerType ?? 'SCHEDULE') &&
+      cron === normalizeCron(original.cronExpression);
+    // ANOMALY 전용이 아닌 경우 cronExpression 필수 (#38/#43) — 단 안 건드린 수정은 예외
+    if (data.triggerType !== 'ANOMALY' && !cron && !untouched) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: CRON_REQUIRED_MESSAGE,
         path: ['cronExpression'],
       });
     }
-    // 1분보다 잦은 주기(매초 등)는 서버가 거부한다 — 저장 전에 같은 문구로 막는다(WD-366)
-    const tooFrequent = data.triggerType !== 'ANOMALY' ? cronTooFrequentMessage(data.cronExpression) : undefined;
+    // 1분보다 잦은 주기(매초 등)는 서버가 거부한다 — 저장 전에 같은 문구로 막는다(WD-366).
+    // 안 건드린 옛 주기도 막는다 — 손대기 전부터 고칠 이유를 보이는 것이 WD-962 결정이다.
+    const tooFrequent = data.triggerType !== 'ANOMALY' ? cronTooFrequentMessage(cron ?? undefined) : undefined;
     if (tooFrequent) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: tooFrequent, path: ['cronExpression'] });
     }
   });
+}
+
+/** 만들기용 스키마 — 수정 예외 없이 정기 실행이면 주기가 필수다. 기존 이름 유지. */
+export const proactiveJobSchema = createProactiveJobSchema();
 
 /** 리포트 양식 이름 한도(report_template.name VARCHAR(200)). */
 const TEMPLATE_NAME_MAX = 200;
