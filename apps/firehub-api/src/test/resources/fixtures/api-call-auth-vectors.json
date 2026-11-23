@@ -355,6 +355,60 @@
       "base": "http://api.example.com/v1",
       "location": "HTTP://x.com/p\tq",
       "expected": "http://x.com/pq"
+    },
+    {
+      "name": "same scheme without authority: https:next (WD-1028)",
+      "base": "https://api.example.com/v1/items?k=v",
+      "location": "https:next",
+      "expected": "https://api.example.com/v1/next"
+    },
+    {
+      "name": "same scheme without authority: HTTPS:next (WD-1028)",
+      "base": "https://api.example.com/v1/items?k=v",
+      "location": "HTTPS:next",
+      "expected": "https://api.example.com/v1/next"
+    },
+    {
+      "name": "same scheme without authority: https:/abs?x=1 (WD-1028)",
+      "base": "https://api.example.com/v1/items?k=v",
+      "location": "https:/abs?x=1",
+      "expected": "https://api.example.com/abs?x=1"
+    },
+    {
+      "name": "same scheme without authority: https: (WD-1028)",
+      "base": "https://api.example.com/v1/items?k=v",
+      "location": "https:",
+      "expected": "https://api.example.com/v1/items?k=v"
+    },
+    {
+      "name": "same scheme without authority: https:?page=2 (WD-1028)",
+      "base": "https://api.example.com/v1/items?k=v",
+      "location": "https:?page=2",
+      "expected": "https://api.example.com/v1/items?page=2"
+    },
+    {
+      "name": "same scheme without authority: https:../up (WD-1028)",
+      "base": "https://api.example.com/v1/items?k=v",
+      "location": "https:../up",
+      "expected": "https://api.example.com/up"
+    },
+    {
+      "name": "same scheme without authority: https:next#f (WD-1028)",
+      "base": "https://api.example.com/v1/items?k=v",
+      "location": "https:next#f",
+      "expected": "https://api.example.com/v1/next"
+    },
+    {
+      "name": "same scheme without authority: colon in path stays relative (WD-1028)",
+      "base": "https://api.example.com/v1/items?k=v",
+      "location": "https:a:b",
+      "expected": "https://api.example.com/v1/a:b"
+    },
+    {
+      "name": "different scheme without authority: http:next kept as is (WD-1028)",
+      "base": "https://api.example.com/v1/items?k=v",
+      "location": "http:next",
+      "expected": "http:next"
     }
   ],
   "redirectMethod": [

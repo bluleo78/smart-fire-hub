@@ -21,6 +21,9 @@ import java.util.regex.Pattern;
  * <p><b>프래그먼트는 뗀다(WD-686).</b> 프래그먼트는 요청 줄에 실리지 않아 서버 요청에 의미가 없고, 남겨 두면 로그·오류 문구·주소 검사(SSRF)에 섞인다.
  * RFC 9110 §10.2.2 의 「Location 에 프래그먼트가 없으면 원 요청의 것을 물려받는다」도 같은 이유로 따르지 않는다. Python 은 {@code
  * urldefrag} 로 같은 지점에서 뗀다.
+ *
+ * <p><b>같은 스킴·authority 없는 참조는 상대 참조다(WD-1028).</b> {@code https:next} 는 base 가 {@code https} 면
+ * base 기준 상대 경로로 푼다(Python urljoin 과 같다).
  */
 public final class RedirectLocations {
 
@@ -54,15 +57,19 @@ public final class RedirectLocations {
     String cleaned = normalizeLikeUrlsplit(reference);
     Matcher scheme = SCHEME_PREFIX.matcher(cleaned);
     boolean keepRaw = false;
+    boolean sameScheme = false;
     if (scheme.find()) {
-      keepRaw = hash < 0 && !scheme.group(1).equalsIgnoreCase(base.getScheme());
+      sameScheme = scheme.group(1).equalsIgnoreCase(base.getScheme());
+      keepRaw = hash < 0 && !sameScheme;
       // urlsplit 처럼 스킴은 소문자로 맞춘다.
       cleaned = scheme.group(1).toLowerCase(Locale.ROOT) + cleaned.substring(scheme.end(1));
     }
     reference = RequestUrlEncoding.encodeReference(keepRaw ? reference : cleaned);
     try {
       // 참조 자체가 URI 문법에 맞는지 먼저 본다(공백·한글 등) — 아래 문자열 조립은 문법을 검사하지 않는다.
-      new URI(reference);
+      // base 와 같은 스킴이면 스킴을 뗀 나머지를 본다(WD-1028) — urljoin 은 같은 스킴을 떼고 풀며, 스킴만 있는 「https:」 는
+      // JDK URI 가 문법 오류로 보지만 urljoin 에게는 빈 상대 참조(base 그대로)다.
+      new URI(sameScheme ? reference.substring(reference.indexOf(':') + 1) : reference);
       return new URI(resolveString(base.toString(), reference));
     } catch (URISyntaxException e) {
       throw new ApiCallException(ApiCallErrorMessages.invalidRedirectLocation(), e);
@@ -99,7 +106,13 @@ public final class RedirectLocations {
     return status == 301 || status == 302 || status == 303 || status == 307 || status == 308;
   }
 
-  /** 문자열 단위 RFC 3986 참조 해석(§5.2.2, 프래그먼트 포함) — 프래그먼트는 호출부 {@link #resolve} 가 뗀다. */
+  /**
+   * 문자열 단위 RFC 3986 참조 해석(§5.2.2, 프래그먼트 포함) — 프래그먼트는 호출부 {@link #resolve} 가 뗀다.
+   *
+   * <p>§5.2.2 의 non-strict 모드처럼 base 와 같은 스킴이고 authority 가 없는 참조({@code https:c})는 스킴을 떼고 상대 참조로
+   * 푼다(WD-1028, Python urljoin 과 같게) — {@code resolveString("https://h/a/b", "https:c")} 는 {@code
+   * https://h/a/c} 다.
+   */
   static String resolveString(String base, String reference) {
     Parts b = Parts.parse(base);
     Parts r = Parts.parse(reference);
@@ -107,7 +120,11 @@ public final class RedirectLocations {
     String authority;
     String path;
     String query;
-    if (r.scheme != null) {
+    // 스킴이 base 와 같고 authority 가 없는 참조(「https:next」)는 상대 참조로 푼다(WD-1028) — Python urljoin 이 같은 스킴이면
+    // 스킴을 떼고 풀기 때문이다. authority 가 있으면(「https://x/p」) 절대 참조 그대로다.
+    boolean sameSchemeRelative =
+        r.scheme != null && r.authority == null && r.scheme.equalsIgnoreCase(b.scheme);
+    if (r.scheme != null && !sameSchemeRelative) {
       scheme = r.scheme;
       authority = r.authority;
       path = removeDotSegments(r.path);
