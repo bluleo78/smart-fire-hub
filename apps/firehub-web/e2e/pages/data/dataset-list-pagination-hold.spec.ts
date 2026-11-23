@@ -5,7 +5,7 @@ import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { grantDatasetPermissions } from '../../fixtures/dataset.fixture';
 import { failPageRequests, holdRequests } from '../../fixtures/hold-api';
-import { isUnderInert } from '../../fixtures/inert-a11y';
+import { expectOfflineNoticeExposed, isUnderInert } from '../../fixtures/inert-a11y';
 
 /**
  * 데이터셋 목록 쪽 이동 유지 (WD-982)
@@ -189,6 +189,9 @@ test('오프라인에서 다음 쪽으로 가면 오프라인 안내가 보인�
     page.getByText('인터넷 연결이 없어 데이터셋 목록을 불러오지 못하고 있습니다. 연결되면 자동으로 다시 불러옵니다.'),
   ).toBeVisible();
   await expect(nav).toBeVisible();
+
+  // WD-982 code-review: 안내가 흐림·inert 밖에서 노출된다 — 스크린리더에 들리고 비활성처럼 보이지 않는다
+  await expectOfflineNoticeExposed(page, '데이터셋 목록');
 
   await page.context().setOffline(false);
   await expect(page.getByText('데이터셋 2쪽 행', { exact: true })).toBeVisible();

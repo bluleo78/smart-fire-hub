@@ -10,6 +10,7 @@ import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { TruncatedText } from '@/components/ui/truncated-text';
 import { useDebounceValue } from '@/hooks/useDebounceValue';
 import { useLastPageInfo } from '@/hooks/useLastPageInfo';
+import { offlineListMessage, useOfflinePaused } from '@/hooks/useOnlineStatus';
 import { listLoadErrorProps } from '@/lib/api-error';
 import { membershipRoleLabel } from '@/lib/membership-role';
 import { parseNonNegativeInt } from '@/lib/pagination';
@@ -79,7 +80,10 @@ export default function UserListPage() {
     page,
     size: pageSize,
   };
-  const { data: users, isLoading, isError, error: usersError, isPlaceholderData } = useUsers(userParams);
+  const { data: users, isLoading, isError, error: usersError, isPlaceholderData, isPaused } = useUsers(userParams);
+  // 오프라인 쪽 이동 대기는 흐림·inert 없이 안내를 보인다(WD-982, useOfflinePaused)
+  const offlinePaused = useOfflinePaused(isPaused, isPlaceholderData);
+  const isTransitioning = isPlaceholderData && !offlinePaused;
 
   const { totalPages, totalElements } = useLastPageInfo(users, userParams);
 
@@ -117,8 +121,8 @@ export default function UserListPage() {
         {/* WD-982: 쪽 이동 중 이전 행은 흐리게 하고 누를 수 없게 한다(감사 로그와 같은 방식) */}
         <Table
           aria-label="사용자 목록"
-          aria-busy={isPlaceholderData || undefined}
-          className={isPlaceholderData ? 'pointer-events-none opacity-60' : undefined}
+          aria-busy={isTransitioning || undefined}
+          className={isTransitioning ? 'pointer-events-none opacity-60' : undefined}
         >
           <TableHeader>
             <TableRow>
@@ -129,9 +133,12 @@ export default function UserListPage() {
             </TableRow>
           </TableHeader>
           {/* inert: 이동 중 낡은 행을 키보드로도 열 수 없게 한다 (WD-982) */}
-          <TableBody inert={isPlaceholderData}>
+          <TableBody inert={isTransitioning}>
             {isLoading || pageOutOfRange ? (
               <TableSkeletonRows columns={4} rows={5} />
+            ) : offlinePaused ? (
+              // 오프라인 쪽 이동 대기는 흐림·inert 없이 안내를 보인다(WD-982, useOfflinePaused)
+              <TableEmptyRow colSpan={4} message={offlineListMessage('사용자')} />
             ) : isError ? (
               // 403 은 권한 안내, 그 밖은 서버 사유·기본 문구 — 다른 목록과 같은 공용 규칙(WD-990).
               <TableErrorRow colSpan={4} {...listLoadErrorProps(usersError, '사용자')} />

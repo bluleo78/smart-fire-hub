@@ -5,7 +5,7 @@ import { setupAdminAuth } from '../../fixtures/admin.fixture';
 import { createPageResponse } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { failPageRequests, holdRequests } from '../../fixtures/hold-api';
-import { isUnderInert } from '../../fixtures/inert-a11y';
+import { expectOfflineNoticeExposed, isUnderInert } from '../../fixtures/inert-a11y';
 
 /**
  * 사용자 관리 목록 쪽 이동 유지 (WD-982)
@@ -96,4 +96,28 @@ test('다음 쪽이 실패해도 페이지네이션이 남고 이전 쪽으로 �
   await nav.getByRole('button', { name: '이전 페이지' }).click();
   await expect(page.getByText(firstRowName, { exact: true })).toBeVisible();
   await expect(page.getByRole('alert')).toHaveCount(0);
+});
+
+test('오프라인에서 다음 쪽으로 가면 오프라인 안내가 보이고 페이지네이션이 남는다 (WD-982 리뷰 후속)', async ({
+  authenticatedPage: page,
+}) => {
+  await setupAdminAuth(page);
+  await mockPagedList(page);
+  await page.goto('/admin/users');
+  const nav = page.getByRole('navigation', { name: '페이지네이션' });
+  await expect(page.getByText(firstRowName, { exact: true })).toBeVisible();
+
+  await page.context().setOffline(true);
+  await nav.getByRole('button', { name: '다음 페이지' }).click();
+
+  await expect(
+    page.getByText('인터넷 연결이 없어 사용자 목록을 불러오지 못하고 있습니다. 연결되면 자동으로 다시 불러옵니다.'),
+  ).toBeVisible();
+  await expect(nav).toBeVisible();
+
+  // WD-982 code-review: 안내가 흐림·inert 밖에서 노출된다 — 스크린리더에 들리고 비활성처럼 보이지 않는다
+  await expectOfflineNoticeExposed(page, '사용자 목록');
+
+  await page.context().setOffline(false);
+  await expect(page.getByText('사용자 2쪽 행', { exact: true })).toBeVisible();
 });

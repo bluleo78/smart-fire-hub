@@ -49,6 +49,7 @@ import {
 import { useIsOwner } from '../../hooks/useIsOwner';
 import { useLastPageInfo } from '../../hooks/useLastPageInfo';
 import { useListRetryFocus } from '../../hooks/useListRetryFocus';
+import { offlineListMessage, useOfflinePaused } from '../../hooks/useOnlineStatus';
 import { handleApiError, isForbiddenError, listLoadErrorProps } from '../../lib/api-error';
 import { formatDateTimeMinute, formatRelativeTime } from '../../lib/formatters';
 import { getPageAfterDelete } from '../../lib/pagination';
@@ -91,6 +92,7 @@ export default function QueryListPage() {
     isPending,
     isFetching,
     isError,
+    isPaused,
     isPlaceholderData,
     error: queriesError,
     refetch,
@@ -98,10 +100,12 @@ export default function QueryListPage() {
 
   // 「다시 시도」 포커스(WD-987): 실패한 목록에서 누르면 표로 초점을 옮겼다가 다시 실패하면 버튼으로 되돌린다.
   // 403 은 다시 해도 같으므로 버튼을 두지 않는다
+  const offlinePaused = useOfflinePaused(isPaused, isPlaceholderData);
   const { tableProps, bodyProps, retryAction } = useListRetryFocus({
     isPending,
     // WD-982: 쪽 이동 중 이전 쪽 행 처리(pending 판정·흐림·inert)는 훅이 맡는다
-    isPlaceholderData,
+    // 오프라인 쪽 이동 대기는 흐림·inert 없이 안내를 보인다(WD-982, useOfflinePaused)
+    isPlaceholderData: isPlaceholderData && !offlinePaused,
     isError,
     isFetching,
     data: queriesData,
@@ -271,6 +275,9 @@ export default function QueryListPage() {
                   <tbody {...bodyProps}>
                     {isLoading ? (
                       <TableSkeletonRows columns={6} rows={5} />
+                    ) : offlinePaused ? (
+                      // 오프라인 쪽 이동 대기는 흐림·inert 없이 안내를 보인다(WD-982, useOfflinePaused)
+                      <TableEmptyRow colSpan={6} message={offlineListMessage('쿼리')} />
                     ) : isError && !queriesData ? (
                       // 목록 조회 실패 — 0건 안내로 오해되지 않게 실패 안내를 보인다. 받아 둔 목록이 있으면 재조회 실패여도 유지한다 (WD-978)
                       <TableErrorRow

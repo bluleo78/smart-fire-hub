@@ -1,6 +1,5 @@
-import { onlineManager } from '@tanstack/react-query';
 import { BarChart3, Download, Eye, History, Hourglass, Info, Plus, Star, Trash2 } from 'lucide-react';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -41,6 +40,7 @@ import {
 import { useSecurityLevels } from '../../hooks/queries/useSecurityLevels';
 import { useLastPageInfo } from '../../hooks/useLastPageInfo';
 import { useListRetryFocus } from '../../hooks/useListRetryFocus';
+import { offlineListMessage, useOfflinePaused, useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { useRecentDatasets } from '../../hooks/useRecentDatasets';
 import { handleApiError, listLoadErrorProps } from '../../lib/api-error';
 import {
@@ -62,25 +62,6 @@ import { ExportDialog } from './components/ExportDialog';
 import { DATASET_SEARCH_DEBOUNCE_MS } from './dataset-list-search';
 
 type SortKey = 'name' | 'createdAt';
-
-/** 오프라인으로 조회가 멈춰 있을 때 목록 자리에 보이는 안내 — 연결되면 TanStack Query 가 자동 재조회한다(WD-966) */
-const OFFLINE_PAUSED_MESSAGE = '인터넷 연결이 없어 데이터셋 목록을 불러오지 못하고 있습니다. 연결되면 자동으로 다시 불러옵니다.';
-
-/** onlineManager 구독 함수 — 모듈 범위에 고정해 렌더마다 새 함수로 재구독하지 않게 한다(useSyncExternalStore 는 subscribe 참조가 바뀌면 다시 구독한다) */
-const subscribeOnline = (onChange: () => void) => onlineManager.subscribe(onChange);
-
-/**
- * 브라우저의 실제 온라인 여부를 구독하는 훅 — TanStack Query 의 onlineManager 를 그대로 따른다.
- * isPaused 는 오프라인뿐 아니라 탭 숨김(focusManager)으로 재시도가 멈춘 경우에도 참이므로,
- * 「연결 없음」 안내는 이 값이 false 일 때만 보이게 하기 위해 쓴다(WD-966).
- */
-function useOnlineStatus(): boolean {
-  return useSyncExternalStore(
-    subscribeOnline,
-    () => onlineManager.isOnline(),
-    () => true,
-  );
-}
 
 /** 출처 필터가 골라져 있을 때 「임시 데이터셋 보기」를 비활성으로 두는 이유(WD-754·WD-776) */
 const ORIGIN_FILTER_HINT = '출처 필터를 고르면 그 출처의 데이터셋만 보여 이 옵션은 쓰이지 않습니다';
@@ -302,10 +283,12 @@ export default function DatasetListPage() {
   const { data: datasetsData, isLoading, isPending, isPaused, isError, isPlaceholderData, error: datasetsError, refetch: refetchDatasets, isFetching } = useDatasets(datasetParams);
 
   // 「다시 시도」 포커스(WD-957, 공용 훅 WD-987): 실패한 목록에서 누르면 표로 초점을 옮겼다가 다시 실패하면 버튼으로 되돌린다
+  const offlinePaused = useOfflinePaused(isPaused, isPlaceholderData);
   const { tableProps, bodyProps, retryAction } = useListRetryFocus({
     isPending,
     // WD-982: 쪽 이동 중 이전 쪽 행 처리(pending 판정·흐림·inert)는 훅이 맡는다
-    isPlaceholderData,
+    // 오프라인 쪽 이동 대기는 흐림·inert 없이 안내를 보인다(WD-982, useOfflinePaused)
+    isPlaceholderData: isPlaceholderData && !offlinePaused,
     isError,
     isFetching,
     data: datasetsData,
@@ -655,14 +638,14 @@ export default function DatasetListPage() {
           <tbody {...bodyProps}>
             {isLoading || pageOutOfRange || (!datasetsData && isPaused && isOnline) ? (
               <TableSkeletonRows columns={8} rows={5} />
-            ) : isPaused && (!datasetsData || (isPlaceholderData && !isOnline)) ? (
+            ) : isPaused && (!datasetsData || offlinePaused) ? (
               // WD-982: placeholder 갈래는 실제 오프라인일 때만 — 온라인인데 다음 쪽 재시도가 탭 숨김으로 멈춘 paused 에서는 이전 행을 그대로 둔다.
               // WD-982: 오프라인에서 쪽을 옮기면 placeholder 로 datasetsData 가 차 있어도 새 쪽은 못 받는 중이므로 흐린 이전 행 대신 안내를 보인다(페이지네이션은 표 밖이라 남는다).
               // 데이터 없는 paused 쿼리 중 실제 오프라인만 여기로 온다 — 온라인인데 paused(탭 숨김으로 재시도 멈춤)면 위 스켈레톤 분기가 받는다.
               // 데이터 없는 paused 쿼리(오프라인)는 isLoading 도 isError 도 아니라 빈 분기(「데이터셋이 없습니다」)로 떨어지므로 오류·빈 분기보다 먼저 잡는다(WD-966).
               // 실패가 아닌 중립 대기 상태라 alert(assertive) 대신 TableEmptyRow 의 role=status(polite)로 알린다.
               // 검색어·emptyAction 은 넘기지 않아 안내 문구만 보이고 버튼은 없다 — 연결되면 자동으로 다시 불러오므로 눌러서 할 일이 없다. 이전 데이터가 있으면 목록을 유지한다.
-              <TableEmptyRow colSpan={8} message={OFFLINE_PAUSED_MESSAGE} />
+              <TableEmptyRow colSpan={8} message={offlineListMessage('데이터셋')} />
             ) : isError && !datasetsData ? (
               // 조회 실패를 「데이터셋이 없습니다」로 그리지 않는다 — 서버·권한 오류를 데이터가 없다고 오해하게 된다(WD-146).
               // 이전 데이터가 있는 재조회 실패는 위 분기가 그 데이터를 그대로 보인다.

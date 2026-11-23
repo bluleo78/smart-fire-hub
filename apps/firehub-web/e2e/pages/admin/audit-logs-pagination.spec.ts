@@ -5,7 +5,7 @@ import { setupAdminAuth } from '../../fixtures/admin.fixture';
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { failPageRequests, holdRequests } from '../../fixtures/hold-api';
-import { isUnderInert } from '../../fixtures/inert-a11y';
+import { expectOfflineNoticeExposed, isUnderInert } from '../../fixtures/inert-a11y';
 
 /** 대화상자가 「열리지 않는다」를 확인하는 시간(ms) — 양성 대조에서 같은 클릭은 이보다 훨씬 빨리 연다. 중복 요청 창(DUPLICATE_WINDOW_MS)과는 뜻이 달라 따로 둔다 */
 const DIALOG_STAYS_CLOSED_MS = 600;
@@ -211,6 +211,63 @@ test.describe('감사 로그 페이지네이션 — 이동 중에도 목록을 �
     await nav.getByRole('button', { name: '이전 페이지' }).click();
     await expect(firstRow).toBeVisible();
     await expect(page.getByRole('alert')).toHaveCount(0);
+  });
+
+  test('오프라인에서 다음 쪽으로 가면 오프라인 안내가 보이고 페이지네이션이 남는다 (WD-982 리뷰 후속)', async ({
+    authenticatedPage: page,
+  }) => {
+    const API = '/api/v1/admin/audit-logs';
+    // 쪽마다 다른 행을 돌려주고 받은 page 파라미터를 기록한다 — 복구 뒤 실제로 2쪽(page=1)을 받아 왔는지 가린다
+    const requestedPages: string[] = [];
+    await page.route(
+      (url) => url.pathname === API,
+      async (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        const p = new URL(route.request().url()).searchParams.get('page') ?? '0';
+        requestedPages.push(p);
+        const logs = p === '0' ? createAuditLogs(20) : [createAuditLog({ id: 101, description: '감사 로그 2쪽 행' })];
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(createPageResponse(logs, { page: Number(p), totalElements: 29, totalPages: 2 })),
+        });
+      },
+    );
+    await page.goto('/admin/audit-logs');
+    const nav = page.getByRole('navigation', { name: '페이지네이션' });
+    await expect(page.getByText('감사 로그 1', { exact: true })).toBeVisible();
+
+    await page.context().setOffline(true);
+    await nav.getByRole('button', { name: '다음 페이지' }).click();
+
+    await expect(
+      page.getByText('인터넷 연결이 없어 감사 로그 목록을 불러오지 못하고 있습니다. 연결되면 자동으로 다시 불러옵니다.'),
+    ).toBeVisible();
+    await expect(nav).toBeVisible();
+    // WD-982 code-review: 안내가 흐림·inert 밖에서 노출된다 — 스크린리더에 들리고 비활성처럼 보이지 않는다
+    await expectOfflineNoticeExposed(page, '감사 로그');
+
+    await page.context().setOffline(false);
+    await expect(page.getByText('감사 로그 2쪽 행', { exact: true })).toBeVisible();
+    await expect(page.getByRole('status').filter({ hasText: '인터넷 연결이 없어' })).toHaveCount(0);
+    expect(requestedPages).toContain('1');
+  });
+
+  test('검색 결과가 0건이어도 페이지당 선택기가 보이고 바꾸면 size 가 전달된다 (WD-982 리뷰 후속)', async ({
+    authenticatedPage: page,
+  }) => {
+    const API = '/api/v1/admin/audit-logs';
+    const capture = await mockApi(page, 'GET', API, createPageResponse([], { totalElements: 0, totalPages: 0 }), {
+      capture: true,
+    });
+    await page.goto('/admin/audit-logs');
+    // 응답이 0건이어도 받았으므로 「페이지당」 줄은 남아 크기를 바꿀 수 있다
+    await expect(page.getByText('페이지당')).toBeVisible();
+    const sizeSelector = page.getByRole('combobox', { name: '페이지 사이즈' });
+    await expect(sizeSelector).toBeVisible();
+    await sizeSelector.click();
+    await page.getByRole('option', { name: '50' }).click();
+    await expect.poll(() => capture.lastRequest()?.searchParams.get('size')).toBe('50');
   });
 
   test('기록을 받기 전(첫 로딩 지연)·날짜 역순일 때 페이지당 선택기가 보이지 않는다 (WD-982)', async ({
