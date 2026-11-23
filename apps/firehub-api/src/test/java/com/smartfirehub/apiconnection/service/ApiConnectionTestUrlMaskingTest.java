@@ -506,8 +506,8 @@ class ApiConnectionTestUrlMaskingTest extends IntegrationTestBase {
   }
 
   /**
-   * 정말로 URL 을 만들 수 없는 경우(헬스체크 경로 쿼리에 제어 문자)는 여전히 고정 문구의 DOWN 이고 호출하지 않는다 — 함께 붙는 키 원문·인코딩형은 응답
-   * 어디에도 없다(WD-177 처리 유지). 공백·한글은 WD-991 부터 인코딩돼 호출되므로(아래 TC) 더는 「만들 수 없는」 입력이 아니다.
+   * 정말로 URL 을 만들 수 없는 경우(헬스체크 경로 쿼리에 제어 문자)는 여전히 고정 문구의 DOWN 이고 호출하지 않는다 — 함께 붙는 키 원문·인코딩형은 응답 어디에도
+   * 없다(WD-177 처리 유지). 공백·한글은 WD-991 부터 인코딩돼 호출되므로(아래 TC) 더는 「만들 수 없는」 입력이 아니다.
    */
   @Test
   void testConnectionPayload_unbuildableUrl_downWithoutCallOrSecret() {
@@ -621,7 +621,8 @@ class ApiConnectionTestUrlMaskingTest extends IntegrationTestBase {
     TestConnectionResponse result = apiConnectionService.testConnection(id);
 
     assertThat(result.ok()).isFalse();
-    assertThat(result.requestUrl()).endsWith("/%EC%83%81%ED%83%9C%20%ED%99%95%EC%9D%B8");
+    // 표시 URL 은 한글을 글자로 되돌려 보인다(decodeForDisplay, WD-991 리뷰) — ASCII 이스케이프(%20)는 보낸 그대로다.
+    assertThat(result.requestUrl()).endsWith("/상태%20확인");
     wireMock.verify(0, anyRequestedFor(anyUrl()));
   }
 

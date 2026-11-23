@@ -326,7 +326,8 @@ class AuthQueryMaskerTest {
                     "https://a.com/x?secretish=a b", Map.of("page", "1"), null, null))
         .isInstanceOf(AuthQueryMasker.InvalidRequestUrlException.class)
         .hasNoCause()
-        .satisfies(e -> assertThat(e.getMessage()).doesNotContain("secretish").doesNotContain("a b"));
+        .satisfies(
+            e -> assertThat(e.getMessage()).doesNotContain("secretish").doesNotContain("a b"));
   }
 
   /** 스트리밍 판정을 비밀 문자열로 부른다 — 테스트에서 쓰는 비밀은 모두 최소 길이 이상이라 Scrubber 가 있다. */
@@ -370,7 +371,8 @@ class AuthQueryMaskerTest {
   @Test
   void build_rawEqualsInBase_displayUrlKeepsIt() {
     AuthQueryMasker.AuthQueryUrls urls =
-        AuthQueryMasker.build("https://a.com/x?serviceKey=abc+d==", Map.of("page", "1"), null, null);
+        AuthQueryMasker.build(
+            "https://a.com/x?serviceKey=abc+d==", Map.of("page", "1"), null, null);
     assertThat(urls.displayUrl()).isEqualTo("https://a.com/x?serviceKey=abc+d==&page=1");
   }
 
@@ -380,5 +382,67 @@ class AuthQueryMaskerTest {
     AuthQueryMasker.AuthQueryUrls urls =
         AuthQueryMasker.build("https://a.com/x?a=1#f", Map.of("page", "1"), null, null);
     assertThat(urls.displayUrl()).doesNotContain("#f").isEqualTo(urls.callUrl());
+  }
+
+  /**
+   * 경로가 {@code &} 로 끝나도 쿼리가 없으면 {@code ?} 로 잇는다(WD-991 리뷰) — 예전엔 {@code &} 를 쿼리 구분자로 착각해 인증 키가 경로에
+   * 붙었다({@code /x&page=1&serviceKey=…}). Python {@code _build_request_url} 도 {@code /x&?…} 다.
+   */
+  @Test
+  void build_pathEndingWithAmp_noQuery_usesQuestionMark() {
+    Map<String, String> params = new java.util.LinkedHashMap<>();
+    params.put("page", "1");
+    params.put("serviceKey", "secretKey991");
+    AuthQueryMasker.AuthQueryUrls urls =
+        AuthQueryMasker.build("https://a.com/x&", params, "serviceKey", "secretKey991");
+    assertThat(urls.callUrl()).isEqualTo("https://a.com/x&?page=1&serviceKey=secretKey991");
+    assertThat(urls.displayUrl()).isEqualTo("https://a.com/x&?page=1&serviceKey=****y991");
+  }
+
+  /** 표시 URL 은 보낸 URL 과 같은 문자열에서 키만 가린다(WD-991 리뷰) — 같은 이름 파라미터를 묶거나 빈 {@code &&} 를 버리지 않는다. */
+  @Test
+  void build_displayUrl_sameShapeAsCallUrl() {
+    Map<String, String> params = new java.util.LinkedHashMap<>();
+    params.put("page", "2");
+    params.put("serviceKey", "secretKey991");
+    AuthQueryMasker.AuthQueryUrls urls =
+        AuthQueryMasker.build("https://a.com/x?page=1&&a=1", params, "serviceKey", "secretKey991");
+    assertThat(urls.callUrl())
+        .isEqualTo("https://a.com/x?page=1&&a=1&page=2&serviceKey=secretKey991");
+    assertThat(urls.displayUrl())
+        .isEqualTo("https://a.com/x?page=1&&a=1&page=2&serviceKey=****y991");
+  }
+
+  /** 인코딩 안 된 비ASCII 호스트는 같은 고정 문구로 거절한다(WD-991 리뷰 — 예전 build(true) 와 같다). */
+  @Test
+  void build_rawKoreanHost_throws() {
+    assertThatThrownBy(
+            () -> AuthQueryMasker.build("https://소방.kr/x", Map.of("page", "1"), null, null))
+        .isInstanceOf(AuthQueryMasker.InvalidRequestUrlException.class)
+        .hasNoCause();
+  }
+
+  /**
+   * 빌더의 검사를 거치지 않은 URL(쿼리 인증이 아닌 헬스체크 등)도 callUri() 가 원문 없는 고정 문구로 거절한다(WD-991 리뷰) — 예전엔 URI.create
+   * 의 IllegalArgumentException 이 원문 URL 을 싣고 나갔다.
+   */
+  @Test
+  void callUri_unparseable_throwsFixedMessage() {
+    AuthQueryMasker.AuthQueryUrls urls =
+        new AuthQueryMasker.AuthQueryUrls("https://a.com/x?q=sec\u0001ret", "shown");
+    assertThatThrownBy(urls::callUri)
+        .isInstanceOf(AuthQueryMasker.InvalidRequestUrlException.class)
+        .hasNoCause()
+        .satisfies(e -> assertThat(e.getMessage()).doesNotContain("sec"));
+  }
+
+  /** 빌더를 거치지 않은 URL(쿼리 인증이 아닌 헬스체크)도 callUri() 가 비ASCII 호스트를 같은 고정 문구로 거절한다(WD-991 리뷰). */
+  @Test
+  void callUri_rawKoreanHost_throwsFixedMessage() {
+    AuthQueryMasker.AuthQueryUrls urls =
+        new AuthQueryMasker.AuthQueryUrls("https://소방.kr/health", "shown");
+    assertThatThrownBy(urls::callUri)
+        .isInstanceOf(AuthQueryMasker.InvalidRequestUrlException.class)
+        .hasNoCause();
   }
 }
