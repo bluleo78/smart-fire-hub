@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test';
+import type { Locator, Page, Route } from '@playwright/test';
 
 import { createJob, createJobExecution, createReport } from '../../factories/ai-insight.factory';
 import { mockProactivePermissions, setupJobDetailMocks } from '../../fixtures/ai-insight.fixture';
@@ -11,6 +11,15 @@ import { expect, test } from '../../fixtures/auth.fixture';
  */
 
 const FAIL_MESSAGE = '다음 목록을 불러오지 못했습니다. 다시 시도하세요.';
+
+/** 목록 API 500 응답 — 「더 보기」 실패를 만든다. */
+function fulfill500(route: Route) {
+  return route.fulfill({
+    status: 500,
+    contentType: 'application/json',
+    body: JSON.stringify({ status: 500, error: 'Internal Server Error', message: 'boom' }),
+  });
+}
 
 /**
  * limit 쿼리별로 응답하는 목록 API 를 모킹하고 limit 별 요청 수를 돌려준다.
@@ -34,11 +43,7 @@ async function mockLimitedList(
       counts[limit] = (counts[limit] ?? 0) + 1;
       await gates[limit];
       if (limit === 40 && counts[40] <= failUntil40) {
-        return route.fulfill({
-          status: 500,
-          contentType: 'application/json',
-          body: JSON.stringify({ status: 500, error: 'Internal Server Error', message: 'boom' }),
-        });
+        return fulfill500(route);
       }
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(build(limit)) });
     },
@@ -251,6 +256,18 @@ async function openExecutions(page: Page, build: (n: number) => unknown[]) {
   return rows;
 }
 
+/**
+ * 캐시의 limit=40 조회를 낡게 만든다 — 시계를 넘기고 다른 탭에 갔다 오면 limit 이 20 으로 돌아가고 40 캐시는 staleTime 을 지났다(WD-1019).
+ * page.clock.install() 이 먼저 돼 있어야 한다.
+ */
+async function makeCacheStale(page: Page, rows: Locator) {
+  await page.clock.fastForward(60_000);
+  await page.getByRole('tab', { name: '개요' }).click();
+  await expect(rows).toHaveCount(0);
+  await page.getByRole('tab', { name: '실행 이력' }).click();
+  await expect(rows).toHaveCount(20);
+}
+
 /** 프레임이 두 번 돌 때까지 기다린다 — 응답이 그려진 뒤 알림 프레임이 쓰였을 시간을 준다(WD-1019). */
 async function waitFrames(page: Page) {
   await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
@@ -363,11 +380,7 @@ test.describe('실행 이력 「더 보기」 응답 대기 (WD-965)', () => {
     await expect(rows).toHaveCount(40);
 
     // 다른 탭으로 갔다가 돌아오면 limit 이 20 으로 돌아가고, 캐시의 limit=40 조회는 낡아 있다
-    await page.clock.fastForward(60_000);
-    await page.getByRole('tab', { name: '개요' }).click();
-    await expect(rows).toHaveCount(0);
-    await page.getByRole('tab', { name: '실행 이력' }).click();
-    await expect(rows).toHaveCount(20);
+    await makeCacheStale(page, rows);
 
     await pressMoreWithKeyboard(page);
     // 재조회(limit=40, 25건)가 붙잡힌 동안에는 낡은 캐시 40건으로 알리지 않는다
@@ -478,11 +491,7 @@ test.describe('실행 이력 「더 보기」 응답 대기 (WD-965)', () => {
           // 2·3 번째(낡은 캐시 재조회 + 전역 재시도 1회)는 붙잡았다가 500, 그 뒤는 성공
           if (calls40 === 2 || calls40 === 3) {
             await gate.promise;
-            return route.fulfill({
-              status: 500,
-              contentType: 'application/json',
-              body: JSON.stringify({ status: 500, error: 'Internal Server Error', message: 'boom' }),
-            });
+            return fulfill500(route);
           }
         }
         return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(withRunning(limit)) });
@@ -495,11 +504,7 @@ test.describe('실행 이력 「더 보기」 응답 대기 (WD-965)', () => {
     await expect(rows).toHaveCount(40);
 
     // 탭을 갔다 와 limit 20 으로 돌아가고, 캐시의 limit=40 조회는 낡았다
-    await page.clock.fastForward(60_000);
-    await page.getByRole('tab', { name: '개요' }).click();
-    await expect(rows).toHaveCount(0);
-    await page.getByRole('tab', { name: '실행 이력' }).click();
-    await expect(rows).toHaveCount(20);
+    await makeCacheStale(page, rows);
 
     await pressMoreWithKeyboard(page);
     await expect.poll(() => calls40).toBe(2);
@@ -547,11 +552,7 @@ test.describe('실행 이력 「더 보기」 응답 대기 (WD-965)', () => {
           calls40 += 1;
           // 연결이 돌아온 뒤의 재조회(+ 전역 재시도 1회)는 실패
           if (failOnline) {
-            return route.fulfill({
-              status: 500,
-              contentType: 'application/json',
-              body: JSON.stringify({ status: 500, error: 'Internal Server Error', message: 'boom' }),
-            });
+            return fulfill500(route);
           }
         }
         return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(executionRows(limit)) });
@@ -564,11 +565,7 @@ test.describe('실행 이력 「더 보기」 응답 대기 (WD-965)', () => {
     await expect(rows).toHaveCount(40);
 
     // 탭을 갔다 와 limit 20 으로 돌아가고, 캐시의 limit=40 조회는 낡았다
-    await page.clock.fastForward(60_000);
-    await page.getByRole('tab', { name: '개요' }).click();
-    await expect(rows).toHaveCount(0);
-    await page.getByRole('tab', { name: '실행 이력' }).click();
-    await expect(rows).toHaveCount(20);
+    await makeCacheStale(page, rows);
 
     // 오프라인에서 「더 보기」 — 낡은 캐시 40행이 보이지만 재조회가 멈춰(paused) 성공으로 세지 않는다
     await page.context().setOffline(true);

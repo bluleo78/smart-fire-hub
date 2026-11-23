@@ -68,9 +68,9 @@ export default function JobExecutionsTab({ jobId }: JobExecutionsTabProps) {
 
   // 재조회가 아직 끝나지 않음 — 오프라인이면 재조회가 멈춰(paused) isFetching 이 false 라 isPaused 도 함께 본다.
   // 그러지 않으면 오프라인의 낡은 캐시를 성공으로 세어 알리고, 연결 뒤 재조회 실패가 다시 묻힌다 (WD-1019 리뷰)
-  const refetching = isFetching || isPaused;
+  const refetchPending = isFetching || isPaused;
   // 「더 보기」 조회가 실패하면 렌더 중에 limit 을 마지막 성공 값으로 되돌려 보던 목록을 남긴다(WD-956) — 오류 렌더가 그려지지 않는다.
-  settle({ isError, isSuccess, isPlaceholderData, isFetching: refetching });
+  settle({ isError, isSuccess, isPlaceholderData, refetchPending });
 
   // 「더 보기」·「다시 시도」 응답 뒤 알림·초점 옮기기 (WD-965 리뷰 후속)
   const tableWrapRef = useRef<HTMLDivElement>(null);
@@ -89,7 +89,7 @@ export default function JobExecutionsTab({ jobId }: JobExecutionsTabProps) {
   const statusFrameRef = useRef<number | null>(null);
   // 「더 보기」 응답의 끝 — 실패 확정(재시도 중이 아님), 또는 자리표시·재시도·백그라운드 재조회가 모두 끝난 성공 (WD-1019)
   const loadFailed = failed && !pending;
-  const loadSettled = isSuccess && !isPlaceholderData && !pending && !refetching;
+  const loadSettled = isSuccess && !isPlaceholderData && !pending && !refetchPending;
   // 「더 보기」 응답을 기다리는 중인지 — 렌더에서 읽어 버튼을 잠그므로 ref(pendingLoadRef)가 아닌 state 로도 둔다(WD-1019).
   const [loadMoreWaiting, setLoadMoreWaiting] = useState(false);
   // 응답이 끝나면 렌더 중에 접는다 — effect 에서 setState 하면 렌더가 한 번 더 돈다. 값이 바뀔 때만 set 하므로 무한 렌더가 없다.
@@ -267,7 +267,7 @@ export default function JobExecutionsTab({ jobId }: JobExecutionsTabProps) {
               <PendingButton
                 variant="ghost"
                 size="sm"
-                pending={isPlaceholderData || (loadMoreWaiting && refetching)}
+                pending={isPlaceholderData || (loadMoreWaiting && refetchPending)}
                 onClick={handleLoadMore}
               >
                 더 보기
