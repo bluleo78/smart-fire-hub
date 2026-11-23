@@ -696,22 +696,31 @@ html {
   from { opacity: 0; }
   to { opacity: 1; }
 }
-/* ===== 고대비 모드 키보드 초점 =====
- * 고대비(forced-colors) 모드 전역 키보드 초점 표시 (WD-949, WD-944 후속).
- * 앱의 초점 표시는 대부분 outline-none + box-shadow ring 인데, 고대비 모드에서는 box-shadow 가
- * 그려지지 않아 키보드 초점이 사라진다. 그래서 고대비일 때만 모든 :focus-visible 에 시스템 색
- * (CanvasText) outline 을 그린다 — 보통 모드 겉모습은 그대로다.
- * 이 규칙은 의도적으로 @layer 밖(unlayered)에 둔다. 레이어 없는 선언이 utilities 레이어의
- * outline-none / focus-visible:outline-none 보다 우선하므로, 27곳 클래스를 하나씩 고치지 않아도 이긴다.
- * (마우스 클릭 초점은 :focus-visible 이 아니라 걸리지 않는다.)
- * outline-offset 은 일부러 두지 않는다 — 레이어 밖 선언이라 둘 경우 안쪽(-outline-offset-2 등)으로
- * 그리려는 요소의 offset 을 덮어써 overflow 조상에 잘리므로, 각 요소의 기존 offset 을 그대로 쓴다.
- * [tabindex='-1'] 은 제외한다 — 메뉴·Select·대화 상자 내용처럼 프로그램으로만 초점을 받는 컨테이너는
- * 키보드 초점 대상이 아니라 전체에 테두리가 그려지면 안 된다(안의 항목이 각자 초점 표시를 가진다).
+/* ===== 고대비 모드 키보드 초점 (WD-949) =====
+ * 고대비에서는 box-shadow ring 이 안 그려지므로 모든 :focus-visible 에 시스템 색 outline 을 준다.
+ * @layer 밖(unlayered)에 둬서 utilities 의 outline-none 을 이긴다. 바깥 outline 은 offset 을 두지 않는다(각 요소 값 유지).
+ * 제외 대상은 프로그램 초점만 받는 컨테이너(tabindex=-1 인 menu·listbox·dialog·alertdialog·tabpanel, main, 알림 영역, cmdk)이며
+ * :where() 로 감싸 특이도를 낮게 유지한다. 안쪽 offset(-2px)은 overflow 에 잘리는 복귀 지점 표지 data-focus-return 일 때만 준다.
  */
 @media (forced-colors: active) {
-  :focus-visible:not([tabindex='-1']) {
+  :focus-visible:not(
+      :where(
+        [tabindex='-1']:is(
+          [role='menu'],
+          [role='listbox'],
+          [role='dialog'],
+          [role='alertdialog'],
+          [role='tabpanel']
+        ),
+        #main-content,
+        [data-sonner-toaster],
+        [cmdk-root]
+      )
+    ) {
     outline: 2px solid CanvasText;
+  }
+  :focus-visible[data-focus-return] {
+    outline-offset: -2px;
   }
 }
 
