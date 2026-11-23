@@ -41,7 +41,7 @@ public final class RequestUrlEncoding {
       return url;
     }
     // authority = "://" 뒤 첫 '/'·'?'·'#' 전까지. 한 글자도 바꾸지 않는다(호스트 검사는 기존 로직 몫).
-    return encodeFrom(url, authorityEnd(url, m.end()));
+    return encodeFrom(url, authorityEnd(url, m.end()), false);
   }
 
   /**
@@ -71,7 +71,7 @@ public final class RequestUrlEncoding {
     } else if (reference.startsWith("//")) {
       start = authorityEnd(reference, 2);
     }
-    return encodeFrom(reference, start);
+    return encodeFrom(reference, start, false);
   }
 
   /** 앞뒤의 U+0000–U+0020 을 뗀다(WD-991). */
@@ -96,9 +96,11 @@ public final class RequestUrlEncoding {
 
   /**
    * {@code start} 앞은 그대로 두고 그 뒤(경로·쿼리)만 인코딩한다 — {@link #encodePathAndQuery}·{@link
-   * #encodeReference} 공용 루프(WD-991). 프래그먼트는 버리고, 제어 문자가 있으면 원문을 돌려준다.
+   * #encodeReference} 공용 루프(WD-991). 프래그먼트는 버리고, 제어 문자·짝 없는 서로게이트가 있으면 {@code display} 가 false 면
+   * 원문을 돌려주고(기존 검사가 거절), true(표시 전용)면 물러서지 않고 제어 문자는 {@code %XX}, 서로게이트는 WTF-8 3바이트 {@code %XX} 로
+   * 인코딩한다.
    */
-  private static String encodeFrom(String url, int start) {
+  private static String encodeFrom(String url, int start, boolean display) {
     StringBuilder sb = new StringBuilder(url.length() + 16);
     sb.append(url, 0, start);
 
@@ -112,11 +114,24 @@ public final class RequestUrlEncoding {
       if (cp <= 0x1F || cp == 0x7F) {
         // 제어 문자(U+0000–U+001F·U+007F)가 경로·쿼리(fragment 앞)에 있으면 실행기 httpx 가 InvalidURL 로 거절한다 —
         // 테스트 호출도 거절해야 일치하므로 원문을 그대로 돌려 기존 validateUrl 이 거절하게 한다(WD-936).
+        if (display) {
+          appendPercent(sb, cp);
+          i += len;
+          continue;
+        }
         return url;
       }
       if (cp >= Character.MIN_SURROGATE && cp <= Character.MAX_SURROGATE) {
         // 짝 없는 서로게이트는 UTF-8 로 옮길 수 없다 — getBytes 가 조용히 '?'(%3F)로 바꿔 다른 URL 을 부르게 되므로, 원문을 그대로 돌려
         // 이후 URI 조립(build)이 「요청 URL 을 만들 수 없습니다」로 거절하게 한다(WD-936 리뷰 후속). httpx 도 이 글자를 거절한다.
+        // 표시 전용은 보낼 값이 아니므로 WTF-8 3바이트로 써 날것을 싣지 않는다.
+        if (display) {
+          appendPercent(sb, 0xE0 | (cp >> 12));
+          appendPercent(sb, 0x80 | ((cp >> 6) & 0x3F));
+          appendPercent(sb, 0x80 | (cp & 0x3F));
+          i += len;
+          continue;
+        }
         return url;
       }
       if (cp == '%') {
@@ -149,9 +164,10 @@ public final class RequestUrlEncoding {
    * <p>WD-1000 규칙: (1) UTF-8 을 한 글자씩 해석한다 — 잘못된 바이트(고아 연속 바이트·잘린 묶음·과잉 길이·서로게이트·U+10FFFF 초과)는 그
    * 바이트만 인코딩으로 두고 앞뒤 정상 글자는 푼다. (2) 방향 제어·제로폭 같은 보이지 않는 글자(FORMAT)·줄·문단·공백류 구분자·제어(C1 포함)·사적 사용·미할당
    * 글자는 풀면 화면에서 사라지거나 순서·모양이 속이므로 입력의 {@code %XX} 원문(대소문자 포함)을 그대로 남긴다. (3) 그 밖에도 남기는 글자: 오른쪽→왼쪽 방향
-   * 글자(히브리·아랍 등, 주변의 {@code /}·숫자 순서를 뒤섞음), 감싸는 표식(ENCLOSING_MARK), 몽골 변형 선택자·모음 구분자(U+180B–180F)와
-   * 크메르 보이지 않는 모음(U+17B4–17B5), 그리고 ASCII 글자 바로 뒤에 오는 결합 표식(U+0338 처럼 {@code /}·글자 위에 덧씌워 모양을 바꿈).
-   * 비ASCII 글자 뒤의 결합 표식(NFD 한글·악센트)은 풀린다. 이 규칙 밖의 모든 모양 속임을 막는다고 보장하지는 않는다.
+   * 글자(히브리·아랍 등)와 아랍 숫자(AN — 주변의 {@code /}·{@code -}·숫자 순서를 뒤섞음), 감싸는 표식(ENCLOSING_MARK), 몽골 변형
+   * 선택자·모음 구분자(U+180B–180F)와 크메르 보이지 않는 모음(U+17B4–17B5), 그리고 ASCII 글자 바로 뒤에 오는 결합 표식(Mn·Mc, U+0338
+   * 처럼 {@code /}·글자 위에 덧씌워 모양을 바꿈). 비ASCII 글자 뒤의 결합 표식(NFD 한글·악센트)은 풀린다. 이 규칙 밖의 모든 모양 속임을 막는다고
+   * 보장하지는 않는다.
    *
    * @param url 표시용 URL (null 가능)
    * @return 보이는 비ASCII 글자만 되돌린 URL. null 이면 null
@@ -189,19 +205,65 @@ public final class RequestUrlEncoding {
   }
 
   /**
-   * 화면·AI 챗에 보일 URL 을 만든다 — 날것의 숨은 글자까지 {@link #encodePathAndQuery} 로 인코딩한 뒤 {@link #decodeForDisplay} 로 보이는
-   * 글자만 되돌린다(WD-1000). 미리보기·연결 테스트·실행 기록이 같은 표시 규칙을 쓰게 한 곳에 모은다. 이미 인코딩된 URL 에 써도 같다(멱등).
+   * 화면·AI 챗에 보일 URL 을 만든다(WD-1000). 표시 전용 인코딩({@code encodeFrom(display=true)})으로 경로·쿼리의 공백·금지
+   * ASCII·홀로 {@code %}·제어 문자·짝 없는 서로게이트를 {@code %XX} 로 바꾸고 fragment 는 버린다 — 보내는 요청용 {@link
+   * #encodePathAndQuery} 처럼 원문으로 물러서지 않는다. 이어서 {@link #encodeHiddenForDisplay} 가 authority(사용자
+   * 정보·호스트)까지 포함해 날것의 숨은 글자를 {@code %XX} 로 바꾸고, {@link #decodeForDisplay} 가 보이는 글자만 되돌린다. 미리보기·연결
+   * 테스트·실행 기록이 같은 표시 규칙을 쓰게 한 곳에 모은다. {@code <scheme>://} 로 시작하지 않는 값은 경로 인코딩 없이 숨은 글자 인코딩만 한다. 이미
+   * 표시된 URL 에 다시 써도 같다(멱등).
    *
    * @param url 사용자 정보·인증 키를 이미 가린 URL (null 가능)
    * @return 표시용 URL. null 이면 null
    */
   public static String toDisplayUrl(String url) {
-    return decodeForDisplay(encodePathAndQuery(url));
+    if (url == null) {
+      return null;
+    }
+    Matcher m = SCHEME.matcher(url);
+    String encoded = m.find() ? encodeFrom(url, authorityEnd(url, m.end()), true) : url;
+    return decodeForDisplay(encodeHiddenForDisplay(encoded));
+  }
+
+  /**
+   * 날것의 숨은 글자(제어·{@link #isHiddenType}·ASCII 에 덧씌우는 결합 표식)를 UTF-8 {@code %XX} 로 바꾼다 — 표시 전용. 짝 없는
+   * 서로게이트는 UTF-8 로 못 바꾸므로 코드 유닛을 WTF-8 3바이트({@code U+D800 → %ED%A0%80})로 써 날것이 화면에 실리지 않고 원문을 추적할 수
+   * 있게 한다. 보통 글자·이미 있는 {@code %XX} 는 그대로 둔다.
+   */
+  static String encodeHiddenForDisplay(String s) {
+    if (s == null) {
+      return null;
+    }
+    StringBuilder sb = new StringBuilder(s.length() + 16);
+    int i = 0;
+    while (i < s.length()) {
+      int cp = s.codePointAt(i);
+      int len = Character.charCount(cp);
+      if (cp >= Character.MIN_SURROGATE && cp <= Character.MAX_SURROGATE) {
+        // 짝 없는 서로게이트(codePointAt 이 유닛 그대로 돌려줌) → WTF-8 3바이트
+        appendPercent(sb, 0xE0 | (cp >> 12));
+        appendPercent(sb, 0x80 | ((cp >> 6) & 0x3F));
+        appendPercent(sb, 0x80 | (cp & 0x3F));
+      } else if (isHiddenType(cp) || overlaysAscii(cp, sb)) {
+        for (byte b : s.substring(i, i + len).getBytes(StandardCharsets.UTF_8)) {
+          appendPercent(sb, b & 0xFF);
+        }
+      } else {
+        sb.appendCodePoint(cp);
+      }
+      i += len;
+    }
+    return sb.toString();
+  }
+
+  /** {@code %XX}(대문자 16진) 한 바이트를 붙인다. */
+  private static void appendPercent(StringBuilder sb, int b) {
+    sb.append('%').append(HEX[(b >> 4) & 0xF]).append(HEX[b & 0xF]);
   }
 
   /** 결합 표식이 바로 앞 출력 ASCII 글자에 덧씌워지는지 — {@code /}·글자 모양을 바꾸므로 원문을 남긴다. 비ASCII 글자 뒤(NFD 한글 등)는 푼다. */
   private static boolean overlaysAscii(int cp, StringBuilder sb) {
-    return Character.getType(cp) == Character.NON_SPACING_MARK
+    int type = Character.getType(cp);
+    return (type == Character.NON_SPACING_MARK || type == Character.COMBINING_SPACING_MARK)
         && sb.length() > 0
         && sb.charAt(sb.length() - 1) < 0x80;
   }
@@ -266,10 +328,14 @@ public final class RequestUrlEncoding {
         || (cp >= 0xE0100 && cp <= 0xE01EF)) {
       return true;
     }
+    // 방침(WD-1000 후속): 아랍 숫자(DIRECTIONALITY_ARABIC_NUMBER, U+0660 등)도 남긴다 — bidi N1 규칙상 AN 사이의 중립
+    // 글자(- = +)가
+    // 오른쪽→왼쪽으로 풀려 /p/١-٢ 가 ٢-١ 로 뒤집혀 보인다.
     // 방향이 오른쪽→왼쪽인 글자는 주변 / 와 숫자의 표시 순서를 바꾼다. 감싸는 표식·몽골·크메르 보이지 않는 글자도 남긴다.
     byte dir = Character.getDirectionality(cp);
     if (dir == Character.DIRECTIONALITY_RIGHT_TO_LEFT
         || dir == Character.DIRECTIONALITY_RIGHT_TO_LEFT_ARABIC
+        || dir == Character.DIRECTIONALITY_ARABIC_NUMBER
         || (cp >= 0x180B && cp <= 0x180F)
         || (cp >= 0x17B4 && cp <= 0x17B5)) {
       return true;

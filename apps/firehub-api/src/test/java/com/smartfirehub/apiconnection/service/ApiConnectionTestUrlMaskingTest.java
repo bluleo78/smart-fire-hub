@@ -354,6 +354,13 @@ class ApiConnectionTestUrlMaskingTest extends IntegrationTestBase {
     assertThat(result.requestUrl()).contains("%E2%80%AE").doesNotContain("\u202E");
   }
 
+  /** 저장된 경로에 제어 문자가 있어 인코딩이 물러서도 응답 requestUrl 에 날것 U+202E·탭이 없다(WD-1000 후속). */
+  @Test
+  void testConnection_rawRtlAndTabInPath_requestUrlHasNoRawHiddenChars() {
+    TestConnectionResponse result = testHeaderAuthWithPath("WD1000 rlo tab", "/a\u202Eb\t");
+    assertThat(result.requestUrl()).doesNotContain("\u202E").doesNotContain("\t");
+  }
+
   /** 4xx(WebClientResponseException) 경로도 표시 URL 을 쓴다. */
   @Test
   void testConnection_queryKey_http401_responseUrlMasked() {

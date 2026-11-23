@@ -75,7 +75,7 @@ class ApiCallErrorMessagesTest {
         "https://api.example.com/v1/data?serviceKey=SECRET123|https://api.example.com/v1/data",
         "http://user:pass@host.example:8080/p?x=1#frag|http://host.example:8080/p",
         "https://api.example.com|https://api.example.com",
-        "http://exa mple.com/a?serviceKey=SECRET123|http://exa mple.com/a",
+        "http://exa mple.com/a?serviceKey=SECRET123|http://exa%20mple.com/a",
         "example.com/x?k=SECRET123|example.com/x",
         // WD-676: 밑줄 든 호스트(getHost() 가 null)도 스킴·호스트·포트·경로로 다시 만든다 — userinfo·쿼리가 남지 않는다.
         "https://svc:S3cret@my_api.internal/x?key=K|https://my_api.internal/x",
@@ -163,5 +163,33 @@ class ApiCallErrorMessagesTest {
             new RuntimeException(new UnknownHostException("second.invalid")));
     assertThat(ApiCallErrorMessages.describe(new RuntimeException("outer", hop), 1000))
         .isEqualTo(ApiCallErrorMessages.unknownHost("second.invalid"));
+  }
+
+  /**
+   * WD-1000: SSRF 검사 오류 문구에 든 URL 도 숨은 글자(ZWSP·RLO·탭)를 날것으로 싣지 않고 %XX 로 보인다. 가리기(쿼리·프래그먼트 제거)는
+   * 그대로다.
+   */
+  @Test
+  void ssrfMessages_hiddenCharsShownAsPercent() {
+    SsrfProtectionService service = new SsrfProtectionService();
+
+    String noHost =
+        org.junit.jupiter.api.Assertions.assertThrows(
+                SsrfException.class,
+                () -> service.validateUrl("https://httpbin\u200b.org/anything"))
+            .getMessage();
+    assertThat(noHost).doesNotContain("\u200b").contains("%E2%80%8B");
+
+    String badFormat =
+        org.junit.jupiter.api.Assertions.assertThrows(
+                SsrfException.class,
+                () -> service.validateUrl("https://httpbin.org/anything/a\u202eb\t#frag"))
+            .getMessage();
+    assertThat(badFormat)
+        .doesNotContain("\u202e")
+        .doesNotContain("\t")
+        .doesNotContain("frag")
+        .contains("%E2%80%AE")
+        .contains("%09");
   }
 }
