@@ -29,7 +29,9 @@ interface AIContextValue {
   closeAI: () => void;
   toggleAI: () => void;
   setMode: (mode: AIMode) => void;
-  sendMessage: (content: string, files?: File[]) => void;
+  sendMessage: (content: string, files?: File[]) => Promise<boolean>;
+  /** 이력 로딩 중이면 그 대화에 묶어 보관했다가 로딩이 끝나면(같은 대화일 때만) 보낸다 — 「AI 에게 묻기」용 (WD-1004) */
+  sendAfterHistoryLoaded: (content: string) => void;
   stopStreaming: () => void;
   startNewSession: () => void;
   /** 대화 삭제 성공 뒤 호출 — 지운 것이 지금 열린 대화면(스트리밍이면 서버 취소 후) 캔버스까지 초기화하며 새 대화로 바꾼다 (WD-972) */
@@ -103,6 +105,7 @@ export function AIProvider({ children }: { children: ReactNode }) {
     pendingUserMessage,
     currentSessionId,
     sendMessage,
+    sendAfterHistoryLoaded,
     stopStreaming,
     startNewSession: startNewSessionBase,
     loadSession: loadSessionBase,
@@ -175,6 +178,7 @@ export function AIProvider({ children }: { children: ReactNode }) {
       toggleAI,
       setMode,
       sendMessage,
+      sendAfterHistoryLoaded,
       stopStreaming,
       startNewSession,
       onSessionDeleted,
@@ -200,6 +204,7 @@ export function AIProvider({ children }: { children: ReactNode }) {
       toggleAI,
       setMode,
       sendMessage,
+      sendAfterHistoryLoaded,
       stopStreaming,
       startNewSession,
       onSessionDeleted,

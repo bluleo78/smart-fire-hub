@@ -50,11 +50,14 @@ interface PendingFile {
 }
 
 interface ChatInputProps {
-  onSend: (message: string, files?: File[]) => void;
+  /** 보냈는지 돌려주면(false = 보내지 못함) 입력창이 글·첨부를 되돌려 준다 (WD-1004) */
+  onSend: (message: string, files?: File[]) => Promise<boolean> | void;
   onStop?: () => void;
   isStreaming?: boolean;
   isUploading?: boolean;
   disabled?: boolean;
+  /** 보내기만 막는다(WD-1004). 대화 이력을 불러오는 동안 true — 글 입력·첨부는 계속 허용하고 Enter·전송 버튼만 무효로 한다. */
+  sendBlocked?: boolean;
   placeholder?: string;
   /** 패널 열림 여부(WD-579). false→true 로 바뀌면(열린 채 마운트 포함) 입력창에 포커스한다. 미지정이면 포커스하지 않는다. */
   focusOnOpen?: boolean;
@@ -68,6 +71,7 @@ export function ChatInput({
   isStreaming = false,
   isUploading = false,
   disabled = false,
+  sendBlocked = false,
   placeholder = '메시지를 입력하세요...',
   focusOnOpen = false,
   focusOriginRef,
@@ -121,18 +125,42 @@ export function ChatInput({
   const isTooLong = trimmed.length > MAX_CHAT_MESSAGE_LENGTH;
   // 패널 모드(사이드·전체화면)가 바뀌어도 id 가 겹치지 않게 useId 로 만든다
   const tooLongHintId = useId();
+  // 이력 로딩 중 보내기 막힘 안내 id (WD-1004)
+  const blockedHintId = useId();
   // 보낼 수 있는 상태 — 글이나 첨부가 있고, 길이 초과·스트리밍·업로드 중이 아닐 때. 버튼 활성과 Enter 전송이 같은 조건을 쓴다.
-  const canSend = (trimmed.length > 0 || pendingFiles.length > 0) && !isTooLong && !isStreaming && !isUploading;
+  // sendBlocked(WD-1004)도 여기서 거른다 — handleSend 가 실행되지 않으므로 쓴 글·첨부가 지워지지 않고 남는다.
+  const canSend = (trimmed.length > 0 || pendingFiles.length > 0) && !isTooLong && !isStreaming && !isUploading && !sendBlocked;
 
   const handleSend = () => {
     if (!canSend) return;
 
-    onSend(trimmed, pendingFiles.length > 0 ? pendingFiles.map(f => f.file) : undefined);
+    const sentFiles = pendingFiles.map(f => f.file);
+    const result = onSend(trimmed, sentFiles.length > 0 ? sentFiles : undefined);
     setMessage('');
     setPendingFiles(prev => {
       prev.forEach(f => { if (f.previewUrl) URL.revokeObjectURL(f.previewUrl); });
       return [];
     });
+    // 보내지 못했으면(false) 글·첨부를 되돌려 준다 (WD-1004). 그 사이 새로 쓴 글/첨부가 있으면 덮지 않는다.
+    // 이미지 미리보기 URL 은 위에서 해제했으므로 되돌릴 때 File 로 다시 만든다.
+    if (result) {
+      void result.then(sent => {
+        if (sent) return;
+        setMessage(cur => (cur === '' ? trimmed : cur));
+        if (sentFiles.length > 0) {
+          setPendingFiles(cur => {
+            if (cur.length > 0) return cur;
+            const restored: PendingFile[] = [];
+            for (const file of sentFiles) {
+              const category = getCategory(file.type);
+              if (!category) continue;
+              restored.push({ file, category, previewUrl: category === 'IMAGE' ? URL.createObjectURL(file) : undefined });
+            }
+            return restored;
+          });
+        }
+      });
+    }
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
   };
 
@@ -289,7 +317,7 @@ export function ChatInput({
           aria-label="메시지 입력"
           // 길이 초과 안내를 입력창과 잇는다 — 스크린리더가 입력창에서 바로 이유를 듣게(WD-631)
           aria-invalid={isTooLong || undefined}
-          aria-describedby={isTooLong ? tooLongHintId : undefined}
+          aria-describedby={[isTooLong ? tooLongHintId : null, sendBlocked ? blockedHintId : null].filter(Boolean).join(' ') || undefined}
           disabled={isDisabled}
           className="min-h-[44px] max-h-[150px] resize-none text-sm"
           rows={1}
@@ -322,6 +350,12 @@ export function ChatInput({
           </Button>
         )}
       </div>
+      {/* 이력 로딩 중 보내기 막힘 안내(WD-1004) — 말없이 안 보내지면 고장으로 보이므로 이유를 알린다. 입력창과 aria-describedby 로 잇는다. */}
+      {sendBlocked && (
+        <p id={blockedHintId} className="px-1 text-xs text-muted-foreground">
+          대화 이력을 불러오는 중이라 잠시 뒤에 보낼 수 있습니다.
+        </p>
+      )}
       {/* 메시지 길이 초과 안내(WD-631) — 서버 검증 문구와 같은 표현 + 현재 길이. 초과 동안만 보인다.
           role="alert" 를 두지 않는 이유: 글자마다 숫자가 바뀌어 매 입력마다 다시 읽히기 때문 — 입력창의 aria-describedby 로 잇는다. */}
       {isTooLong && (

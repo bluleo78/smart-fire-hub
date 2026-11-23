@@ -205,8 +205,10 @@ export function AIStatusChip() {
     messages,
     streamingMessage,
     sendMessage,
+    sendAfterHistoryLoaded,
     startNewSession,
     contextTokens,
+    isLoadingHistory,
   } = useAI();
 
   const { data: unreadCount = 0 } = useUnreadCount();
@@ -418,6 +420,7 @@ export function AIStatusChip() {
             onOpen={openAI}
             onNewSession={startNewSession}
             onSendMessage={sendMessage}
+            isLoadingHistory={isLoadingHistory}
             messages={messages}
             isStreaming={isStreaming}
             isThinking={isThinking}
@@ -472,7 +475,8 @@ export function AIStatusChip() {
                 setMode('side');
                 openAI();
               }
-              sendMessage(content);
+              // 이력 로딩 중이면 그 대화에 묶어 보관했다가 로딩이 끝나면 보낸다 — 대화가 바뀌면 버려진다 (WD-1004)
+              sendAfterHistoryLoaded(content);
             }}
           />
         )}

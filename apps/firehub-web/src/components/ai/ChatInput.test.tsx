@@ -4,7 +4,7 @@
  * 패널 열림 여부(focusOnOpen)가 false→true 로 바뀔 때 입력창에 포커스하는 동작을 검증한다.
  * 스트리밍 SSE 를 E2E 로 붙잡아 두기 어려워 disabled→enabled 전환·가드는 여기서 다룬다.
  */
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { RefObject } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -181,5 +181,51 @@ describe('ChatInput 메시지 길이 상한 (WD-631)', () => {
     expect(sendButton()).toBeEnabled();
     expect(screen.queryByText(/자 이하로 입력하세요/)).toBeNull();
     expect(textarea()).not.toHaveAttribute('aria-describedby');
+  });
+});
+
+describe('ChatInput 보내지 못한 글 되돌리기 (WD-1004)', () => {
+  it('onSend 가 false 로 풀리면 글과 첨부를 입력창에 돌려준다', async () => {
+    URL.createObjectURL = vi.fn(() => 'blob:x');
+    URL.revokeObjectURL = vi.fn();
+    const onSend = vi.fn(() => Promise.resolve(false));
+    const { container } = render(<ChatInput onSend={onSend} />);
+    fireEvent.change(textarea(), { target: { value: '안녕' } });
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(['a'], 'a.png', { type: 'image/png' });
+    fireEvent.change(input, { target: { files: [file] } });
+    expect(await screen.findByText('a.png')).toBeInTheDocument();
+
+    fireEvent.keyDown(textarea(), { key: 'Enter' });
+    // 보내자마자 비운다
+    expect(textarea()).toHaveValue('');
+    expect(onSend).toHaveBeenCalledWith('안녕', [file]);
+
+    // 보내지 못했다는 결과가 오면 되돌린다
+    await waitFor(() => expect(textarea()).toHaveValue('안녕'));
+    expect(screen.getByText('a.png')).toBeInTheDocument();
+  });
+
+  it('그 사이 새로 쓴 글이 있으면 덮지 않는다', async () => {
+    let resolve!: (v: boolean) => void;
+    const onSend = vi.fn(() => new Promise<boolean>(r => { resolve = r; }));
+    render(<ChatInput onSend={onSend} />);
+    fireEvent.change(textarea(), { target: { value: '첫 글' } });
+    fireEvent.keyDown(textarea(), { key: 'Enter' });
+    fireEvent.change(textarea(), { target: { value: '새 글' } });
+    resolve(false);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(textarea()).toHaveValue('새 글');
+  });
+
+  it('onSend 가 true 로 풀리면 비운 채로 둔다', async () => {
+    const onSend = vi.fn(() => Promise.resolve(true));
+    render(<ChatInput onSend={onSend} />);
+    fireEvent.change(textarea(), { target: { value: '안녕' } });
+    fireEvent.keyDown(textarea(), { key: 'Enter' });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(textarea()).toHaveValue('');
   });
 });

@@ -148,6 +148,8 @@ export function AIChatPanel({ showModeSwitch = true, showSessionSwitcher = true,
           onStop={stopStreaming}
           isStreaming={isStreaming}
           isUploading={isUploading}
+          // 이력 로딩 중에는 보내기만 막는다(WD-1004) — 보낸 글이 이력 도착 때 덮여 사라지는 것을 방지
+          sendBlocked={isLoadingHistory}
           focusOnOpen={isOpen}
           focusOriginRef={openFocusOriginRef}
         />
