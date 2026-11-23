@@ -29,6 +29,7 @@ import { createCategories } from '../../factories/dataset.factory';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { grantDatasetPermissions, setupDatasetDetailMocks } from '../../fixtures/dataset.fixture';
+import { expectTrashHitTarget } from '../../fixtures/hit-target';
 import { clickToolbarAddStep, grantPipelinePermissions } from '../../fixtures/pipeline.fixture';
 
 // ESM 환경에서는 `__dirname`이 없으므로 `import.meta.url`로 현재 파일 디렉토리 경로를 계산한다
@@ -97,6 +98,7 @@ async function expectMinClickArea(scope: Locator, names: string[]) {
     }
   }
 }
+
 
 test.describe('size="sm" 버튼 최소 클릭 영역 (WD-960)', () => {
   test('대화 선택 머리 — 대화 전환 트리거·새 대화', async ({ authenticatedPage: page }) => {
@@ -177,6 +179,22 @@ test.describe('size="sm" 버튼 최소 클릭 영역 (WD-960)', () => {
     // 「원본 JSON 보기」 는 미리보기 카드의 토글 줄 — 그 줄만 재는 영역으로 삼는다
     const jsonToggleRow = page.getByRole('button', { name: '원본 JSON 보기', exact: true }).locator('xpath=..');
     await expectMinClickArea(jsonToggleRow, ['원본 JSON 보기']);
+  });
+
+  test('파이프라인 API_CALL 스텝 — 헤더·매핑 줄 삭제 휴지통이 32×32 이상이다 (WD-1023)', async ({ authenticatedPage: page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await grantPipelinePermissions(page);
+    await setupEditorMocks(page);
+    await addAndOpenApiCallStep(page);
+
+    // 헤더 섹션은 기본이 접힘 — 연 뒤 「추가」·「매핑 추가」로 줄을 하나씩 만든다
+    await page.locator('button').filter({ hasText: /^헤더$/ }).click();
+    await page.getByRole('button', { name: '추가', exact: true }).click();
+    await page.getByRole('button', { name: '매핑 추가', exact: true }).click();
+
+    const configPanel = page.locator('#step-name').locator('xpath=../..');
+    // 헤더 1줄 + 매핑 2줄(기본 매핑 줄 포함)의 휴지통 3개를 모두 잰다
+    await expectTrashHitTarget(configPanel, 3);
   });
 });
 

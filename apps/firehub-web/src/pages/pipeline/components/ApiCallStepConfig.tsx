@@ -303,8 +303,9 @@ function KvEditor({
           {!readOnly && (
             <Button
               variant="ghost"
-              size="icon"
-              className="h-7 w-7 shrink-0"
+              // WD-1023: 줄 삭제 휴지통은 icon-sm(32px)으로 최소 클릭 영역 확보
+              size="icon-sm"
+              className="shrink-0"
               // 아이콘뿐인 버튼 — 헤더·쿼리 파라미터 공용이라 섹션 이름 + 줄 번호(+키)로 이름을 준다(WD-1043)
               aria-label={`${rowLabel ? `${rowLabel} ` : ''}${i + 1}번째 줄${pair.key ? ` "${pair.key}"` : ''} 삭제`}
               onClick={() => handleRemove(i)}
@@ -949,8 +950,9 @@ export default function ApiCallStepConfig({
                   {!readOnly && (
                     <Button
                       variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 shrink-0"
+                      // WD-1023: 줄 삭제 휴지통은 icon-sm(32px)으로 최소 클릭 영역 확보
+                      size="icon-sm"
+                      className="shrink-0"
                       // 아이콘뿐인 버튼 — 줄 번호(+대상 컬럼)로 이름을 준다(WD-1043)
                       aria-label={`매핑 ${i + 1}${mapping.targetColumn ? ` "${mapping.targetColumn}"` : ''} 삭제`}
                       onClick={() => handleRemoveMapping(i)}

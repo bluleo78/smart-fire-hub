@@ -630,8 +630,9 @@ export function ApiImportWizard({
                   </Select>
                   <Button
                     variant="ghost"
-                    size="icon"
-                    className="h-7 w-7 shrink-0"
+                    // WD-1023: 줄 삭제 휴지통은 icon-sm(32px)으로 최소 클릭 영역 확보
+                    size="icon-sm"
+                    className="shrink-0"
                     onClick={() =>
                       setFieldMappings((prev) => prev.filter((_, idx) => idx !== i))
                     }
