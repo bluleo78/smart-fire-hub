@@ -196,11 +196,14 @@ test.describe('「더 보기」 조회 실패 (WD-956)', () => {
     await expect(page.getByRole('button', { name: '더 보기' })).toHaveCount(0);
     expect(counts[40]).toBe(2);
 
-    await page.getByRole('button', { name: '다시 시도' }).click();
+    await page.getByRole('button', { name: '다시 시도' }).focus();
+    await page.keyboard.press('Enter');
 
     await expect(page.getByRole('link', { name: /\(.*\)$/ })).toHaveCount(40);
     await expect(page.getByRole('alert')).toHaveCount(0);
     expect(counts[40]).toBe(3);
+    // 실패 블록이 사라져도 초점이 body 로 빠지지 않고 같은 자리의 「더 보기」로 간다(WD-965 리뷰 후속)
+    await expect(page.getByRole('button', { name: '더 보기' })).toBeFocused();
   });
 
   test('실행 이력 RUNNING 폴링 재조회 중에도 다시 시도가 잠기지 않고 초점을 유지한다 (WD-956)', async ({
@@ -235,6 +238,24 @@ test.describe('「더 보기」 조회 실패 (WD-956)', () => {
     gate.resolve();
   });
 });
+
+const END_STATUS = '실행 이력 5건을 더 불러왔습니다. 마지막 실행 이력입니다.';
+
+/** 작업 1 실행 이력 탭을 build 응답으로 열고 첫 20행이 보이길 기다린 뒤 행 링크 locator 를 돌려준다(WD-965 리뷰 후속). */
+async function openExecutions(page: Page, build: (n: number) => unknown[]) {
+  await setupJobDetailMocks(page, 1);
+  await mockLimitedList(page, '/api/v1/proactive/jobs/1/executions', 0, build);
+  await page.goto('/ai-insights/jobs/1?tab=executions');
+  const rows = page.getByRole('link', { name: /\(.*\)$/ });
+  await expect(rows).toHaveCount(20);
+  return rows;
+}
+
+/** 「더 보기」에 초점을 두고 Enter 로 누른다 — 키보드 사용자의 누름. */
+async function pressMoreWithKeyboard(page: Page) {
+  await page.getByRole('button', { name: '더 보기' }).focus();
+  await page.keyboard.press('Enter');
+}
 
 test.describe('실행 이력 「더 보기」 응답 대기 (WD-965)', () => {
   test.beforeEach(async ({ authenticatedPage: page }) => {
@@ -274,17 +295,57 @@ test.describe('실행 이력 「더 보기」 응답 대기 (WD-965)', () => {
     expect(counts[60] ?? 0).toBe(0);
     await expect(more).not.toHaveAttribute('aria-disabled', 'true');
     await expect(more).toBeFocused();
+    // 새로 받은 행 수를 화면 밖 status 영역으로 알린다(리뷰 후속)
+    const status = page.getByTestId('executions-load-status');
+    await expect(status).toHaveAttribute('role', 'status');
+    await expect(status).toHaveText('실행 이력 20건을 더 불러왔습니다.');
   });
 
-  test('실행 이력 「더 보기」 응답이 끝 목록이면 버튼이 사라진다 (WD-965)', async ({ authenticatedPage: page }) => {
-    await setupJobDetailMocks(page, 1);
-    await mockLimitedList(page, '/api/v1/proactive/jobs/1/executions', 0, (n) => executionRows(n === 40 ? 25 : n));
-    await page.goto('/ai-insights/jobs/1?tab=executions');
-    const rows = page.getByRole('link', { name: /\(.*\)$/ });
-    await expect(rows).toHaveCount(20);
-    await page.getByRole('button', { name: '더 보기' }).click();
+  test('실행 이력 「더 보기」 응답이 끝 목록이면 버튼이 사라지고 초점이 첫 새 행으로 가며 끝임을 알린다 (WD-965 리뷰 후속)', async ({
+    authenticatedPage: page,
+  }) => {
+    const rows = await openExecutions(page, (n) => executionRows(n === 40 ? 25 : n));
+    await pressMoreWithKeyboard(page);
     await expect(rows).toHaveCount(25);
     await expect(page.getByRole('button', { name: '더 보기' })).toHaveCount(0);
+    // 버튼이 사라져도 초점이 body 로 빠지지 않고 새로 받은 첫 행(21번째)으로 간다
+    await expect(rows.nth(20)).toBeFocused();
+    await expect(page.getByTestId('executions-load-status')).toHaveText(END_STATUS);
+  });
+
+  test('실행 이력 「더 보기」를 초점 없이 누르면 버튼이 사라져도 초점을 옮기지 않는다 (WD-965 리뷰 후속)', async ({
+    authenticatedPage: page,
+  }) => {
+    const rows = await openExecutions(page, (n) => executionRows(n === 40 ? 25 : n));
+    // 마우스 클릭이 버튼에 초점을 주지 않는 브라우저(Safari)처럼 — 초점 없이 click 만 보낸다
+    await page.getByRole('button', { name: '더 보기' }).dispatchEvent('click');
+    await expect(rows).toHaveCount(25);
+    await expect(page.getByTestId('executions-load-status')).toHaveText(END_STATUS);
+    await expect(rows.nth(20)).not.toBeFocused();
+  });
+
+  test('실행 이력 「더 보기」 응답 사이 맨 위에 새 실행이 끼어도 새로 받은 행 수와 첫 새 행이 맞다 (WD-965 리뷰 후속)', async ({
+    authenticatedPage: page,
+  }) => {
+    // limit=40 응답은 기다리는 사이 시작된 실행(id 999)이 맨 위에 붙고 그 뒤로 25건이 온다
+    const fresh = createJobExecution({ id: 999, jobId: 1, startedAt: '2024-01-02T09:00:00Z' });
+    const rows = await openExecutions(page, (n) => (n === 40 ? [fresh, ...executionRows(25)] : executionRows(n)));
+    await pressMoreWithKeyboard(page);
+    await expect(rows).toHaveCount(26);
+    // 위치(21번째)가 아니라 누른 때 마지막 행(id 20) 뒤의 행(id 21)으로 간다
+    await expect(page.locator('a[href$="/jobs/1/executions/21"]')).toBeFocused();
+    await expect(page.getByTestId('executions-load-status')).toHaveText(END_STATUS);
+  });
+
+  test('실행 이력 「더 보기」 응답에 새 행이 없으면 초점이 마지막 행으로 가고 더 없음을 알린다 (WD-965 리뷰 후속)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 정확히 20건으로 끝나는 목록 — 버튼이 한 번 더 보이고 빈 추가 응답으로 사라진다
+    const rows = await openExecutions(page, (n) => executionRows(Math.min(n, 20)));
+    await pressMoreWithKeyboard(page);
+    await expect(page.getByRole('button', { name: '더 보기' })).toHaveCount(0);
+    await expect(rows.nth(19)).toBeFocused();
+    await expect(page.getByTestId('executions-load-status')).toHaveText('더 불러올 실행 이력이 없습니다.');
   });
 
   test('작업을 바꾸면 새 작업의 응답 전에 이전 작업의 실행 행이 한 순간도 보이지 않는다 (WD-965)', async ({
