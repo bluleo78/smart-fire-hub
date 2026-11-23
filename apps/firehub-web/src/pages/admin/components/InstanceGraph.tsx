@@ -654,8 +654,15 @@ export default function InstanceGraph({ graph, activeTypes, search, onNodeSelect
       {/* Cytoscape 캔버스 마운트 지점 — 항상 렌더해 cy 라이프사이클을 단순하게 유지한다.
           canvas는 대체 텍스트가 없어 접근성 트리에서 제외하고, 아래 GraphKeyboardList가 텍스트 대체물을 담당한다.
           isolate: expand-collapse 플러그인의 큐 캔버스가 250ms 뒤 z-index 999 로 컨테이너 안에 붙는데, 쌓임 맥락이 없으면
-          그 값이 컨테이너 밖 오버레이(모바일 타입 필터 칩 z-10)까지 덮는다 — 컨테이너를 쌓임 맥락으로 가둬 막는다 (WD-922). */}
-      <div ref={containerRef} className="isolate h-full w-full" aria-hidden="true" />
+          그 값이 컨테이너 밖 오버레이(모바일 타입 필터 칩 z-10)까지 덮는다 — 컨테이너를 쌓임 맥락으로 가둬 막는다 (WD-922).
+          [&>canvas.expand-collapse-canvas]:absolute·top-0·left-0: 그 큐 캔버스는 위치 지정 없이 덧붙었다가 디바운스된 sizeCanvas 가
+          뒤늦게 absolute/top/left 를 인라인으로 넣어, 흐름 안에 있다가 튀어나가며 화면이 밀렸다(레이아웃 시프트 약 0.26).
+          플러그인이 나중에 넣는 값과 같은 위치로 처음부터 고정해 시프트를 없앤다 (WD-822). */}
+      <div
+        ref={containerRef}
+        className="isolate h-full w-full [&>canvas.expand-collapse-canvas]:absolute [&>canvas.expand-collapse-canvas]:top-0 [&>canvas.expand-collapse-canvas]:left-0"
+        aria-hidden="true"
+      />
 
       {/* 키보드·스크린리더 전용 노드 목록(#326) — 포커스 시 오버레이로 드러난다. */}
       <GraphKeyboardList
