@@ -4,9 +4,9 @@ import { describe, expect, it } from 'vitest';
 import { type SettleStatus, useLoadMoreLimit } from './useLoadMoreLimit';
 
 type Status = SettleStatus;
-const OK: Status = { isError: false, isSuccess: true };
-const FAIL: Status = { isError: true, isSuccess: false };
-const PENDING: Status = { isError: false, isSuccess: false };
+const OK: Status = { isError: false, isSuccess: true, refetchPending: false };
+const FAIL: Status = { isError: true, isSuccess: false, refetchPending: false };
+const PENDING: Status = { isError: false, isSuccess: false, refetchPending: false };
 
 /**
  * 화면처럼 매 렌더에 「지금 limit 의 조회 상태」를 settle 로 넘기는 훅.
@@ -110,11 +110,29 @@ describe('useLoadMoreLimit', () => {
     expect(result.current.failed).toBe(false);
   });
   it('자리표시 데이터의 성공은 새 limit 의 성공으로 세지 않아 그 뒤 실패는 이전 성공 limit 으로 되돌린다', () => {
-    const PLACEHOLDER: Status = { isError: false, isSuccess: true, isPlaceholderData: true };
+    const PLACEHOLDER: Status = { isError: false, isSuccess: true, isPlaceholderData: true, refetchPending: false };
     const { result } = setup({ 20: OK, 40: PLACEHOLDER, 60: FAIL });
     act(() => result.current.loadMore());
     act(() => result.current.loadMore());
     expect(result.current.limit).toBe(20);
     expect(result.current.failed).toBe(true);
+  });
+
+  it('settle 은 새 limit 이 확정되기 전 재조회 중일 때만 잠금(true)을 돌려준다 (WD-1037 리뷰)', () => {
+    const statuses: Record<number, Status> = { 20: OK, 40: { isError: false, isSuccess: true, refetchPending: true } };
+    const { result, rerender } = renderHook(() => {
+      const api = useLoadMoreLimit();
+      const locked = api.settle(statuses[api.limit] ?? PENDING);
+      return { ...api, locked };
+    });
+    // 확정된 limit 의 조회는 잠그지 않는다
+    expect(result.current.locked).toBe(false);
+    act(() => result.current.loadMore());
+    // 낡은 캐시로 먼저 보인 40 의 재조회 중 — 잠근다
+    expect(result.current.locked).toBe(true);
+    // 재조회가 끝나 40 이 확정되면 풀린다
+    statuses[40] = OK;
+    rerender();
+    expect(result.current.locked).toBe(false);
   });
 });

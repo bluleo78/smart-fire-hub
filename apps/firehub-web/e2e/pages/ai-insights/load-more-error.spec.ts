@@ -258,13 +258,14 @@ async function openExecutions(page: Page, build: (n: number) => unknown[]) {
 
 /**
  * 캐시의 limit=40 조회를 낡게 만든다 — 시계를 넘기고 다른 탭에 갔다 오면 limit 이 20 으로 돌아가고 40 캐시는 staleTime 을 지났다(WD-1019).
+ * 기본은 작업 상세 「실행 이력」(「개요」에 갔다 옴), 리포트 목록은 tabs 로 탭 이름을 넘긴다(WD-1037).
  * page.clock.install() 이 먼저 돼 있어야 한다.
  */
-async function makeCacheStale(page: Page, rows: Locator) {
+async function makeCacheStale(page: Page, rows: Locator, tabs = { other: '개요', self: '실행 이력' }) {
   await page.clock.fastForward(60_000);
-  await page.getByRole('tab', { name: '개요' }).click();
+  await page.getByRole('tab', { name: tabs.other }).click();
   await expect(rows).toHaveCount(0);
-  await page.getByRole('tab', { name: '실행 이력' }).click();
+  await page.getByRole('tab', { name: tabs.self }).click();
   await expect(rows).toHaveCount(20);
 }
 
@@ -703,5 +704,128 @@ test.describe('리포트 「더 보기」 응답 대기 (WD-1016)', () => {
     await page.getByRole('button', { name: '더 보기' }).click();
     await expect(rows).toHaveCount(25);
     await expect(page.getByRole('button', { name: '더 보기' })).toHaveCount(0);
+  });
+});
+
+/** 리포트 목록의 limit=40 조회를 낡게 만든다 — 「리포트 양식」 탭에 갔다 온다(WD-1037). */
+const makeReportCacheStale = (page: Page, rows: Locator) =>
+  makeCacheStale(page, rows, { other: '리포트 양식', self: '생성된 리포트' });
+
+test.describe('리포트 목록 「더 보기」 재조회 (WD-1037)', () => {
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs', [createJob({ id: 3 })]);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    await mockApi(page, 'GET', '/api/v1/proactive/templates', []);
+  });
+
+  /** limit=40 의 n 번째 요청을 붙잡았다가 500 으로 답하는 리포트 목록 모킹 — failCalls 에 든 번호만 실패. */
+  async function mockReports(page: Page, failCalls: (n: number) => boolean, gate?: Promise<void>) {
+    const state = { calls40: 0, calls60: 0 };
+    await page.route(
+      (url) => url.pathname === '/api/v1/proactive/reports',
+      async (route) => {
+        const limit = Number(new URL(route.request().url()).searchParams.get('limit') ?? '20');
+        if (limit === 60) {
+          state.calls60 += 1;
+        }
+        if (limit === 40) {
+          state.calls40 += 1;
+          if (failCalls(state.calls40)) {
+            await gate;
+            return fulfill500(route);
+          }
+        }
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(reportRows(limit)) });
+      },
+    );
+    return state;
+  }
+
+  test('리포트 목록: 낡은 캐시로 먼저 보인 더 보기의 재조회가 500 이면 실패를 알리고 20건으로 돌아간다', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.clock.install();
+    const gate = deferred();
+    // 2·3 번째(낡은 캐시 재조회 + 전역 재시도 1회)는 실패, 그 뒤는 성공
+    const state = await mockReports(page, (n) => n === 2 || n === 3, gate.promise);
+    await page.goto('/ai-insights/reports');
+    const rows = page.getByRole('link', { name: /^리포트 \d+$/ });
+    await expect(rows).toHaveCount(20);
+    await page.getByRole('button', { name: '더 보기' }).click();
+    await expect(rows).toHaveCount(40);
+
+    await makeReportCacheStale(page, rows);
+
+    await page.getByRole('button', { name: '더 보기' }).click();
+    await expect.poll(() => state.calls40).toBe(2);
+    // 재조회가 끝나기 전에는 버튼이 잠긴다 — 다시 눌러도 limit=60 요청이 나가지 않는다(WD-1037 리뷰)
+    const more = page.getByRole('button', { name: '더 보기' });
+    await expect(more).toHaveAttribute('aria-disabled', 'true');
+    // 잠긴 버튼은 클릭으로 누를 수 없어(Playwright 는 aria-disabled 를 사용 불가로 본다) 키보드로 누른다
+    await more.focus();
+    await page.keyboard.press('Enter');
+    expect(state.calls60).toBe(0);
+    gate.resolve();
+    await page.clock.fastForward(2_000);
+    await expect.poll(() => state.calls40).toBe(3);
+    // 실패는 묻히지 않는다 — 안내가 알려지고 보던 20행으로 돌아간다
+    await expect(page.getByRole('alert')).toHaveText(FAIL_MESSAGE);
+    await expect(rows).toHaveCount(20);
+  });
+
+  test('리포트 목록: 오류 캐시로 다시 시도하면 요청이 나가고 성공하면 40건이 보인다', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.clock.install();
+    const gate = deferred();
+    const state = await mockReports(page, (n) => n === 2 || n === 3, gate.promise);
+    await page.goto('/ai-insights/reports');
+    const rows = page.getByRole('link', { name: /^리포트 \d+$/ });
+    await expect(rows).toHaveCount(20);
+    await page.getByRole('button', { name: '더 보기' }).click();
+    await expect(rows).toHaveCount(40);
+    await makeReportCacheStale(page, rows);
+    await page.getByRole('button', { name: '더 보기' }).click();
+    await expect.poll(() => state.calls40).toBe(2);
+    gate.resolve();
+    await page.clock.fastForward(2_000);
+    await expect.poll(() => state.calls40).toBe(3);
+    await expect(page.getByRole('alert')).toHaveText(FAIL_MESSAGE);
+    await expect(rows).toHaveCount(20);
+
+    // 40 캐시는 이제 오류+데이터 — 다시 시도가 같은 렌더에서 접히지 않고 요청이 나가 40행을 받는다
+    const before = state.calls40;
+    await page.getByRole('button', { name: '다시 시도' }).click();
+    await expect.poll(() => state.calls40).toBeGreaterThan(before);
+    await expect(rows).toHaveCount(40);
+    await expect(page.getByRole('alert')).toHaveCount(0);
+  });
+
+  test('리포트 목록: 오프라인으로 재조회가 멈추면 성공으로 세지 않는다', async ({ authenticatedPage: page }) => {
+    await page.clock.install();
+    let failOnline = false;
+    const state = await mockReports(page, () => failOnline);
+    await page.goto('/ai-insights/reports');
+    const rows = page.getByRole('link', { name: /^리포트 \d+$/ });
+    await expect(rows).toHaveCount(20);
+    await page.getByRole('button', { name: '더 보기' }).click();
+    await expect(rows).toHaveCount(40);
+    await makeReportCacheStale(page, rows);
+
+    // 오프라인에서 「더 보기」 — 낡은 캐시 40행이 보이지만 재조회가 멈춰(paused) 성공으로 세지 않는다
+    await page.context().setOffline(true);
+    failOnline = true;
+    await page.getByRole('button', { name: '더 보기' }).click();
+    await expect(rows).toHaveCount(40);
+    // 기다림이 끝나지 않아 버튼이 잠긴 채 남는다 — 실행 이력(WD-1019)과 같다
+    await expect(page.getByRole('button', { name: '더 보기' })).toHaveAttribute('aria-disabled', 'true');
+    expect(state.calls40).toBe(1);
+
+    // 연결이 돌아와 재조회가 실패하면 묻히지 않고 안내와 보던 20행으로 돌아간다
+    await page.context().setOffline(false);
+    await expect.poll(() => state.calls40).toBeGreaterThan(1);
+    await page.clock.fastForward(2_000);
+    await expect(page.getByRole('alert')).toHaveText(FAIL_MESSAGE);
+    await expect(rows).toHaveCount(20);
   });
 });
