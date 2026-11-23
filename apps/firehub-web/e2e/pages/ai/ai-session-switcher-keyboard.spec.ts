@@ -161,6 +161,9 @@ async function openListByMouse(page: Page, firstTitle: string = '첫째 대화')
   await expect(list).toBeVisible();
   // 소수 px(배율·반올림)로 와도 기다림이 끝나도록 반올림해 비교한다(WD-1010 리뷰 후속)
   await expect.poll(async () => Math.round((await titleBtn(page, firstTitle).boundingBox())?.height ?? 0)).toBe(32);
+  // 높이가 반올림으로 32 가 돼도 확대 애니메이션 끝자락(배율 0.99 등)일 수 있다 — 부하가 큰 풀테스트에서 그 사이에 잰
+  // 좌표가 1px 어긋났다. 목록의 애니메이션이 모두 끝날 때까지 기다린다(풀테스트 실패 수정, WD-1021).
+  await list.evaluate((el) => Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished)));
 }
 
 test.describe('SessionSwitcher — 키보드 삭제 (WD-951)', () => {
@@ -850,15 +853,18 @@ test.describe('SessionSwitcher — 키보드 삭제 (WD-951)', () => {
       await openListByMouse(page);
       for (const title of MOCK_SESSIONS.map((x) => x.title ?? '')) {
         // 줄(li)은 제목 버튼의 부모다
-        const row = rounded((await titleBtn(page, title).locator('xpath=..').boundingBox())!);
-        const del = rounded((await deleteBtn(page, title).boundingBox())!);
+        const rawRow = (await titleBtn(page, title).locator('xpath=..').boundingBox())!;
+        const rawDel = (await deleteBtn(page, title).boundingBox())!;
+        const row = rounded(rawRow);
+        const del = rounded(rawDel);
         // 정확히 24×24 — 하한(2.5.8)뿐 아니라 상한도 둬, 휴지통이 옆으로 커져 줄의 대화 열기 영역을 먹으면 잡는다
         expect(del.width).toBe(24);
         expect(del.height).toBe(24);
         expect(del.y).toBeGreaterThanOrEqual(row.y);
         expect(del.y + del.height).toBeLessThanOrEqual(row.y + row.height);
         expect(del.x).toBeGreaterThanOrEqual(row.x); // 왼쪽 경계 안
-        expect(row.x + row.width - (del.x + del.width)).toBe(4); // 오른쪽 틈(right-1)
+        // 오른쪽 틈(right-1) — x·width 를 따로 반올림해 빼면 오차가 쌓여 3·5 가 나올 수 있어 원값으로 빼고 한 번만 반올림한다
+        expect(Math.round(rawRow.x + rawRow.width - (rawDel.x + rawDel.width))).toBe(4);
         expect(row.height).toBe(32);
         // 버튼만 커지고 아이콘은 WD-951 그대로 16px — icon-xs 변형의 기본 아이콘 크기(12px)로 줄지 않는다
         const icon = rounded((await deleteBtn(page, title).locator('svg').boundingBox())!);
