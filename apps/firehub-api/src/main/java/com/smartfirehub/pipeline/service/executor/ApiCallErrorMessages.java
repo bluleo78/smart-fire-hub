@@ -106,6 +106,18 @@ public final class ApiCallErrorMessages {
     return "호스트 이름을 찾을 수 없습니다: " + host;
   }
 
+  /**
+   * GET 미리보기에 메서드를 바꾸는 헤더·쿼리가 실려 있을 때(WD-970) — 대상 서버가 GET 을 쓰기로 처리할 수 있어 부르기 전에 막는다. 이름만 담고 값·비밀은
+   * 담지 않는다.
+   */
+  public static String methodOverrideInGetPreview(String name, boolean header) {
+    return "GET 미리보기에는 메서드를 바꾸는 "
+        + (header ? "헤더" : "쿼리")
+        + " "
+        + name
+        + " 을(를) 보낼 수 없습니다 — 대상 서버가 GET 을 다른 메서드(쓰기)로 처리할 수 있습니다. 연결·요청에서 이 이름을 빼거나, 쓰기 확인은 POST 미리보기로 하세요";
+  }
+
   /** 미리보기가 지원하지 않는 HTTP 메서드(WD-969) — 대상을 부르기 전에 낸다. */
   public static String unsupportedPreviewMethod(String method) {
     return "미리보기(테스트 호출)는 GET·POST 만 지원합니다 — 요청한 "

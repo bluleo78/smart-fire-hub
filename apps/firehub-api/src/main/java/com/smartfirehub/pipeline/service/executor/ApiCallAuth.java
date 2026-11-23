@@ -517,8 +517,11 @@ public final class ApiCallAuth {
     return url != null && paramName != null && !stripQueryParam(url, paramName).equals(url);
   }
 
-  /** 쿼리 파라미터 이름을 디코딩한다. 잘못된 % 시퀀스면 원문 그대로 비교한다. */
-  private static String decodeName(String raw) {
+  /**
+   * 쿼리 파라미터 이름을 디코딩한다(UTF-8, + 는 공백). 잘못된 % 시퀀스면 원문 그대로 비교한다 — 같은 패키지의 {@link MethodOverrideNames}
+   * 도 같은 규칙으로 쓴다(WD-970).
+   */
+  static String decodeName(String raw) {
     try {
       return URLDecoder.decode(raw, StandardCharsets.UTF_8);
     } catch (IllegalArgumentException e) {
