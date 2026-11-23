@@ -1,4 +1,6 @@
 import { type QueryClient, type QueryKey, useMutation, useMutationState, useQuery, useQueryClient } from '@tanstack/react-query';
+import axios from 'axios';
+import type { RefObject } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
@@ -8,7 +10,7 @@ import { uploadFiles } from '../../api/files';
 import { buildScreenContext, type ScreenEntityKind, type ScreenNameLookup } from '../../components/ai/screen-context';
 import { getInvalidationKeys } from '../../components/ai/widgets/invalidationMap';
 import { buildNavigationContext } from '../../components/ai/widgets/routes';
-import { isClientError, isNotFoundError } from '../../lib/api-error';
+import { isClientError, isForbiddenError, isNotFoundError } from '../../lib/api-error';
 import type { AIAttachment, AIMessage, AISession, AIStreamEvent, CanvasLayout } from '../../types/ai';
 import { dashboardDetailKey } from './useAnalytics';
 import { datasetDetailKey } from './useDatasets';
@@ -216,10 +218,15 @@ export function useAIChat(options?: {
    * 보관한 「AI 에게 물어보기」 질문을 버리고 사용자에게 알린다 (WD-1004).
    * 보관할 때 알림 패널은 이미 닫혀 있어 말없이 지우면 질문이 사라진 걸 알 수 없기 때문이다. 보관한 질문이 있을 때만 알린다.
    */
-  const discardPendingAsk = useCallback((message = '대화가 바뀌어 「AI 에게 물어보기」 질문을 보내지 않았습니다.') => {
-    if (!pendingAskRef.current) return;
+  const discardPendingAsk = useCallback((
+    message = '대화가 바뀌어 「AI 에게 물어보기」 질문을 보내지 않았습니다.',
+    options?: { silent?: boolean },
+  ): boolean => {
+    if (!pendingAskRef.current) return false;
     pendingAskRef.current = null;
-    toast.info(message);
+    // silent(WD-1050): 호출부가 자기 안내 토스트로 합칠 때 알림 없이 비운다
+    if (!options?.silent) toast.info(message);
+    return true;
   }, []);
 
   /** 보냈으면 true(스트리밍 시작), 어떤 이유로든 보내지 못했으면 false — 호출한 입력창이 글을 돌려주는 데 쓴다 (WD-1004). */
@@ -707,16 +714,35 @@ export function useAIChat(options?: {
       if (isStale()) return;
       // 세션 히스토리 로드 실패 시 사용자에게 에러 피드백 제공
       console.error('Failed to load session history:', error);
-      toast.error('대화 이력을 불러오지 못했습니다.');
-      setMessages([]); // 빈 상태 명시적 처리
-      // WD-1029: 4xx(권한 없음·삭제됨 등)는 같은 대화로 다시 해도 같은 결과라 보관한 질문을 그 대화에 보내지 않고 알린다.
-      // 5xx·네트워크 오류는 일시 장애일 수 있고 같은 대화가 그대로이므로 지금처럼 보낸다.
-      if (isClientError(error)) discardPendingAsk('대화를 불러오지 못해 「AI 에게 물어보기」 질문을 보내지 않았습니다.');
+      if (isClientError(error)) {
+        // WD-1050: 보관 질문은 알림 없이 비우고 안내 토스트 하나로 합친다(기본 discardPendingAsk 는 토스트를 또 띄우므로 silent).
+        const hadPending = discardPendingAsk(undefined, { silent: true });
+        const gone = isNotFoundError(error) || (axios.isAxiosError(error) && error.response?.status === 410);
+        // 권한 없음·없어진 대화는 다시 해도 같은 결과라 그 대화 선택을 풀고 새 대화로 시작한다.
+        const unselect = gone || isForbiddenError(error);
+        const base = hadPending
+          ? '대화 이력을 불러오지 못해 「AI 에게 물어보기」 질문을 보내지 않았습니다.'
+          : '대화 이력을 불러오지 못했습니다.';
+        toast.error(unselect ? `${base} 새 대화로 시작합니다.` : base);
+        if (unselect) {
+          // startNewSession 이 스트림 ref·로딩·압축까지 함께 정리한다(보관 질문은 위에서 이미 비웠다).
+          startNewSession();
+          // 404·410 은 그 대화가 없어진 것이므로 목록을 다시 받게 한다
+          if (gone) void queryClient.invalidateQueries({ queryKey: ['ai-sessions'] });
+        } else {
+          // 그 밖의 4xx(400·409 등)는 대화를 유지한다
+          setMessages([]);
+        }
+      } else {
+        // 5xx·네트워크 오류는 일시 장애일 수 있어 대화를 유지하고 보관 질문도 지금처럼 보낸다
+        toast.error('대화 이력을 불러오지 못했습니다.');
+        setMessages([]); // 빈 상태 명시적 처리
+      }
     } finally {
       // 버려진(다른 대화로 옮긴) 응답은 로딩 표시를 끄지 않는다 — 옮긴 대화가 아직 로딩 중일 때 빈 상태가 깜빡이지 않게 (WD-972)
       if (!isStale()) setLoadingHistory(false);
     }
-  }, [createTrackedBlobUrl, clearCompaction, setCurrentSessionId, setLoadingHistory, discardPendingAsk]);
+  }, [createTrackedBlobUrl, clearCompaction, setCurrentSessionId, setLoadingHistory, discardPendingAsk, startNewSession, queryClient]);
 
   /**
    * 「AI 에게 묻기」용 전송 (WD-1004). 이력 로딩 중이 아니면 바로 보내고, 로딩 중이면 지금 불러오는 대화에 묶어 보관한다.
@@ -770,6 +796,8 @@ export function useAIChat(options?: {
     streamingMessage,
     pendingUserMessage,
     currentSessionId,
+    // 동기로 바뀌는 현재 대화 ref(읽기 전용) — 제공자가 초안을 지금 대화에 묶을 때 쓴다(WD-1050)
+    currentSessionIdRef: currentSessionIdRef as RefObject<string | null>,
     contextTokens,
     sendMessage,
     sendAfterHistoryLoaded,

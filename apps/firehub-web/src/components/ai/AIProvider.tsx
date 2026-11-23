@@ -76,7 +76,8 @@ export function AIProvider({ children }: { children: ReactNode }) {
     if (isOpen) openFocusOriginRef.current = document.activeElement;
   }, [isOpen]);
   // 빠른 입력은 보내는 순간 패널을 열고 언마운트돼 자기 상태로 글을 되돌릴 수 없어 제공자가 들고 있는다(WD-1029)
-  const [restoreDraft, setRestoreDraft] = useState<string | null>(null);
+  // 초안은 넣은 순간의 대화 id 와 함께 보관한다 — 다른 대화로 새어 들어가지 않게(WD-1050)
+  const [draft, setDraft] = useState<{ content: string; sessionId: string | null } | null>(null);
   const [mode, setModeState] = useState<AIMode>(getStoredMode);
 
   const canvas = useCanvasState();
@@ -109,6 +110,7 @@ export function AIProvider({ children }: { children: ReactNode }) {
     streamingMessage,
     pendingUserMessage,
     currentSessionId,
+    currentSessionIdRef,
     sendMessage,
     sendAfterHistoryLoaded,
     stopStreaming,
@@ -119,6 +121,26 @@ export function AIProvider({ children }: { children: ReactNode }) {
     isCompacting,
     compactionStartedAt,
   } = useAIChat({ onCanvasWidget: handleCanvasWidget });
+
+  // 훅이 setCurrentSessionId 안에서 동기로 바꾸는 ref 로 초안을 지금 대화에 묶는다(커밋을 기다리지 않음, WD-1050)
+  const setRestoreDraft = useCallback((content: string | null) => {
+    setDraft(content == null ? null : { content, sessionId: currentSessionIdRef.current });
+  }, [currentSessionIdRef]);
+
+  // 렌더 중 상태 조정(WD-1050): 열림→닫힘 또는 대화 변경이면 초안을 비운다.
+  // 닫힘→열림은 비우지 않는다 — 빠른 입력은 같은 배치에서 초안을 넣고 패널을 연다.
+  const [prevIsOpen, setPrevIsOpen] = useState(isOpen);
+  const [prevSessionId, setPrevSessionId] = useState(currentSessionId);
+  if (prevIsOpen !== isOpen || prevSessionId !== currentSessionId) {
+    setPrevIsOpen(isOpen);
+    setPrevSessionId(currentSessionId);
+    // 대화가 바뀐 경우엔 초안의 sessionId 가 새 대화와 다를 때만 비운다 — 같은 배치에 들어온 새 대화용 초안은 남긴다(WD-1050)
+    const sessionChanged = prevSessionId !== currentSessionId;
+    if ((prevIsOpen && !isOpen) || (sessionChanged && draft && draft.sessionId !== currentSessionId)) setDraft(null);
+  }
+  // 초안은 「보내지 못한 그 순간의 현재 대화」에 묶인다. 사용자가 다른 대화를 연 뒤 실패하면
+  // 그 대화 입력창에 나타난다(그 대화에서 다시 보내라는 뜻) — 현재 대화와 같을 때만 입력창에 넘긴다(WD-1050).
+  const restoreDraft = draft && draft.sessionId === currentSessionId ? draft.content : null;
 
   const openAI = useCallback(() => setIsOpen(true), []);
   const closeAI = useCallback(() => setIsOpen(false), []);
@@ -207,6 +229,7 @@ export function AIProvider({ children }: { children: ReactNode }) {
       isCompacting,
       compactionStartedAt,
       restoreDraft,
+      setRestoreDraft,
       openAI,
       closeAI,
       toggleAI,
