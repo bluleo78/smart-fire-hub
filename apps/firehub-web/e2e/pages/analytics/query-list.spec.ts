@@ -8,10 +8,16 @@ import { mockDeleteImpact, openFirstRowDeleteDialog, setupQueryEditorMocks, setu
 import { createPageResponse, mockApi, mockDeleteOnceThenNotFound } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { clickDialogBackdrop, expectBackdropClickStaysOnList } from '../../fixtures/dialog.fixture';
+import { tabUntilFocused } from '../../fixtures/keyboard-focus';
 import { enterWithListError } from '../../fixtures/list-retry';
 import { expectWithin } from '../../fixtures/long-name-layout';
 import { expectTableErrorAlert } from '../../fixtures/table-error-alert';
-import { expectFocusRingRoom, expectTableFits, TABLE_LAYOUT_WIDTHS } from '../../fixtures/table-layout';
+import {
+  expectFocusRingRoom,
+  expectForcedColorsOutlineRoom,
+  expectTableFits,
+  TABLE_LAYOUT_WIDTHS,
+} from '../../fixtures/table-layout';
 
 /**
  * 쿼리 목록 페이지 E2E 테스트
@@ -510,6 +516,37 @@ test.describe('쿼리 목록 페이지', () => {
 
     const link = page.getByRole('table').getByRole('link', { name: '저장 쿼리 1', exact: true });
     await expectFocusRingRoom(link);
+  });
+
+  test('고대비 모드에서 이름 링크 초점 outline 이 잘리지 않는다 (WD-976)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 고대비 outline 은 링크 밖 4px(2px + offset 2px) — 공유 배지·설명이 붙은 행과,
+    // 상한까지 늘어 말줄임된(감싸기 안쪽 끝에 붙는) 긴 이름 행 모두 감싸기 여유가 4px 이상이어야 한다
+    const longName = 'a'.repeat(200);
+    await setupQueryListMocks(page, 1);
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/analytics/queries',
+      createPageResponse([
+        createSavedQueryListItem({ id: 1, name: '저장 쿼리 1', isShared: true, description: '설명' }),
+        createSavedQueryListItem({ id: 2, name: longName }),
+      ]),
+    );
+
+    for (const width of TABLE_LAYOUT_WIDTHS) {
+      await page.setViewportSize({ width, height: 720 });
+      await page.goto('/analytics/queries');
+      for (const name of ['저장 쿼리 1', longName]) {
+        const link = page.getByRole('table').getByRole('link', { name, exact: true });
+        await expect(link).toBeVisible();
+        // 검색 칸을 Tab 시작점으로 — 링크마다 같은 자리에서 출발한다
+        await page.getByPlaceholder(/검색|search/i).click();
+        await tabUntilFocused(page, link);
+        await expectForcedColorsOutlineRoom(page, link);
+      }
+    }
   });
 
   test('200자 이상 긴 쿼리 이름이 셀 영역을 벗어나지 않고 truncate된다', async ({

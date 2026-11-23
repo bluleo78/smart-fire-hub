@@ -1,4 +1,4 @@
-import { expect, type Locator } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
 
 /**
  * 긴 값 말줄임을 검증할 뷰포트 폭 (WD-634)
@@ -233,16 +233,11 @@ export async function expectValueNotTruncated(valueEl: Locator) {
 }
 
 /**
- * 링크에 포커스 링(ring-2)이 그려지고, 조상의 overflow 에 잘리지 않을 여백이 있는지 검증한다 (WD-933)
- * - 말줄임용 overflow:hidden 조상이 링크에 딱 붙어 있으면 키보드 포커스 링 바깥쪽이 잘려 보이지 않는다.
- * - overflow 가 visible 이 아닌 가장 가까운 조상이 링크보다 사방 2px 이상 넓어야 한다.
- * @param link - 포커스 링을 검사할 링크
+ * 링크와 overflow 가 visible 이 아닌 가장 가까운 조상 사이의 네 변 여백(px)을 잰다 (WD-933·WD-976 공용)
+ * - 말줄임용 overflow:hidden 조상에 초점 표시(ring·outline)가 잘리는지 보는 두 검사가 같은 규칙으로 잰다.
+ * - 조상이 없으면 실패시킨다.
  */
-export async function expectFocusRingRoom(link: Locator) {
-  await expect(link).toBeVisible();
-  // 여백만 재면 링 자체가 사라져도 통과한다 — 초점을 주고 2px 링이 그려지는지 먼저 본다
-  await link.focus();
-  await expect(link, '포커스 링이 없다').toHaveCSS('box-shadow', /0px 0px 0px 2px/);
+async function expectOverflowRoom(link: Locator, need: number, label: string) {
   const gaps = await link.evaluate((el) => {
     let anc = el.parentElement;
     while (anc && getComputedStyle(anc).overflow === 'visible') anc = anc.parentElement;
@@ -258,6 +253,45 @@ export async function expectFocusRingRoom(link: Locator) {
   });
   expect(gaps, 'overflow 조상 없음').not.toBeNull();
   for (const [side, gap] of Object.entries(gaps!)) {
-    expect(gap, `${side} 여백`).toBeGreaterThanOrEqual(2);
+    expect(gap, `${side} ${label}`).toBeGreaterThanOrEqual(need);
+  }
+}
+
+/**
+ * 링크에 포커스 링(ring-2)이 그려지고, 조상의 overflow 에 잘리지 않을 여백이 있는지 검증한다 (WD-933)
+ * - 말줄임용 overflow:hidden 조상이 링크에 딱 붙어 있으면 키보드 포커스 링 바깥쪽이 잘려 보이지 않는다.
+ * - overflow 가 visible 이 아닌 가장 가까운 조상이 링크보다 사방 2px 이상 넓어야 한다.
+ * @param link - 포커스 링을 검사할 링크
+ */
+export async function expectFocusRingRoom(link: Locator) {
+  await expect(link).toBeVisible();
+  // 여백만 재면 링 자체가 사라져도 통과한다 — 초점을 주고 2px 링이 그려지는지 먼저 본다
+  await link.focus();
+  await expect(link, '포커스 링이 없다').toHaveCSS('box-shadow', /0px 0px 0px 2px/);
+  await expectOverflowRoom(link, 2, '여백');
+}
+
+/**
+ * 고대비(forced-colors) 모드에서 키보드 초점 outline 이 overflow 조상에 잘리지 않는지 검사한다 (WD-976).
+ * - 고대비에서 `outline-hidden` 은 `outline: 2px solid transparent; outline-offset: 2px` 로 바뀌어
+ *   링크 밖 4px 까지 그려진다 — 보통 모드 ring(2px) 여백만으로는 잘린다.
+ * - 필요한 여백은 계산 스타일(outline-width + outline-offset)로 정해 공용 초점 모양이 바뀌어도 따라간다.
+ * - 호출 전 호출자가 Tab 으로 링크에 :focus-visible 초점을 옮겨 둬야 한다. 끝나면 forced-colors 에뮬레이션을 끈다.
+ * @param page - forced-colors 에뮬레이션을 켤 페이지
+ * @param link - 초점이 가 있는 링크
+ */
+export async function expectForcedColorsOutlineRoom(page: Page, link: Locator): Promise<void> {
+  await page.emulateMedia({ forcedColors: 'active' });
+  try {
+    await expect(link).toBeFocused();
+    const outline = await link.evaluate((el) => {
+      const cs = getComputedStyle(el);
+      return { style: cs.outlineStyle, need: parseFloat(cs.outlineWidth) + parseFloat(cs.outlineOffset) };
+    });
+    expect(outline.style, '고대비에서 outline 이 없으면 초점이 안 보인다').not.toBe('none');
+    await expectOverflowRoom(link, outline.need, `여백(필요 ${outline.need}px)`);
+  } finally {
+    // 뒤따르는 보통 모드 검사(ring box-shadow 등)가 고대비에 묶이지 않게 에뮬레이션을 되돌린다
+    await page.emulateMedia({ forcedColors: null });
   }
 }
