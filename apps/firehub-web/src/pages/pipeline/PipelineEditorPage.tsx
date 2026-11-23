@@ -606,6 +606,45 @@ export default function PipelineEditorPage() {
   // 신규 생성("새 파이프라인")과 편집(파이프라인 이름) 모두를 sr-only h1로 보강하여 스크린리더에 노출한다.
   const headingText = pipelineId ? state.name || '파이프라인 편집' : '새 파이프라인';
 
+  // 개요 패널 공용 클래스(WD-919) — 저장 후 <TabsContent> 와 저장 전 일반 <div> 가 같은 테두리·라운드·스크롤·반응형 배치를 쓴다.
+  // rounded-md 는 <TabsContent> 기본 클래스(tabs.tsx)의 상단 6px 라운드다 — 저장 후엔 twMerge 가 기본값과 중복을 잡아
+  // 출력이 그대로이고, 저장 전 일반 <div> 에서는 이걸 빼면 상단 모서리가 각져 화면이 달라지므로 공용 상수에 함께 둔다.
+  // 모바일(375px)에서 캔버스 width=0px 붕괴 방지: 모바일은 세로 스택(flex-col), lg+ 에서 가로 배치(flex-row).
+  // 좁은 화면에서는 실행 상세(WD-309)처럼 캔버스를 위(고정 높이)·설정 패널을 아래(내용 높이)로 쌓고 전체를 세로 스크롤한다 —
+  // 캔버스가 남은 높이를 다 차지하면 패널이 화면 맨 아래 118px 에 갇혀 SQL·데이터셋 칸을 한두 줄씩만 보며 고쳐야 했다(WD-456).
+  const overviewPanelClassName =
+    'flex-1 flex flex-col min-h-0 overflow-y-auto lg:flex-row lg:overflow-hidden mt-0 border rounded-md rounded-b-lg';
+
+  // 개요 본문(캔버스 + 스텝 설정 패널)을 한 곳에 둔다(WD-919) — 저장 전 <div> 와 저장 후 <TabsContent> 두 갈래가
+  // 같은 마크업을 그리게 해 중복을 막는다.
+  const overviewPanelBody = (
+    <>
+      {/* Canvas: 가로 배치 시 남은 너비, 세로 배치(모바일) 시 320px 고정 높이 */}
+      <div className="h-[320px] shrink-0 min-w-0 lg:h-auto lg:flex-1 lg:shrink">
+        <PipelineCanvas
+          state={state}
+          dispatch={editorDispatch}
+          readOnly={editLocked}
+        />
+      </div>
+
+      {/* Right panel — 숫자 칸 무효 원문 보관소를 내려 준다(스텝 범위로 좁히는 것은 패널이 한다) (WD-906 후속) */}
+      <IntegerDraftContext.Provider value={integerDraftStore}>
+        <StepConfigPanel
+          state={state}
+          dispatch={dispatch}
+          readOnly={editLocked}
+          nameInputRef={setStepNameInput}
+          datasets={datasetOptions}
+          datasetsLoaded={allDatasets !== undefined}
+          pipelineInfo={pipelineInfo}
+          pipelineId={pipelineId}
+          serverSteps={pipelineData?.steps}
+        />
+      </IntegerDraftContext.Provider>
+    </>
+  );
+
   return (
     <div className="h-[calc(100vh-64px)] w-full overflow-hidden flex flex-col">
       <h1 className="sr-only">{headingText}</h1>
@@ -684,8 +723,9 @@ export default function PipelineEditorPage() {
       />
 
       {/* Main content with tabs */}
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col min-h-0">
-        {pipelineId && (
+      {/* 저장 전(/pipelines/new)에는 탭 목록이 없으므로 탭 목록·패널을 그리지 않는다(WD-919) — 표시는 지금과 같게 */}
+      {pipelineId ? (
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col min-h-0">
           <TabsList className="border-b justify-start px-4 shrink-0">
             <TabsTrigger
               value="overview"
@@ -718,188 +758,161 @@ export default function PipelineEditorPage() {
               실행 이력
             </TabsTrigger>
           </TabsList>
-        )}
 
-        {/* 모바일(375px)에서 캔버스 width=0px 붕괴 방지: 모바일은 세로 스택(flex-col), lg+ 에서 가로 배치(flex-row).
-            좁은 화면에서는 실행 상세(WD-309)처럼 캔버스를 위(고정 높이)·설정 패널을 아래(내용 높이)로 쌓고 탭 전체를 세로 스크롤한다 —
-            캔버스가 남은 높이를 다 차지하면 패널이 화면 맨 아래 118px 에 갇혀 SQL·데이터셋 칸을 한두 줄씩만 보며 고쳐야 했다(WD-456). */}
-        <TabsContent
-          value="overview"
-          className="flex-1 flex flex-col min-h-0 overflow-y-auto lg:flex-row lg:overflow-hidden mt-0 border rounded-b-lg"
-        >
-          {/* Canvas: 가로 배치 시 남은 너비, 세로 배치(모바일) 시 320px 고정 높이 */}
-          <div className="h-[320px] shrink-0 min-w-0 lg:h-auto lg:flex-1 lg:shrink">
-            <PipelineCanvas
-              state={state}
-              dispatch={editorDispatch}
-              readOnly={editLocked}
-            />
-          </div>
+          <TabsContent value="overview" className={overviewPanelClassName}>{overviewPanelBody}</TabsContent>
 
-          {/* Right panel — 숫자 칸 무효 원문 보관소를 내려 준다(스텝 범위로 좁히는 것은 패널이 한다) (WD-906 후속) */}
-          <IntegerDraftContext.Provider value={integerDraftStore}>
-            <StepConfigPanel
-              state={state}
-              dispatch={dispatch}
-              readOnly={editLocked}
-              nameInputRef={setStepNameInput}
-              datasets={datasetOptions}
-              datasetsLoaded={allDatasets !== undefined}
-              pipelineInfo={pipelineInfo}
-              pipelineId={pipelineId}
-              serverSteps={pipelineData?.steps}
-            />
-          </IntegerDraftContext.Provider>
-        </TabsContent>
+          <TabsContent value="triggers" className="flex-1 overflow-hidden mt-0 border rounded-b-lg">
+            <TriggerTab pipelineId={pipelineId} />
+          </TabsContent>
 
-        <TabsContent value="triggers" className="flex-1 overflow-hidden mt-0 border rounded-b-lg">
-          <TriggerTab pipelineId={pipelineId!} />
-        </TabsContent>
-
-        <TabsContent value="executions" className="flex-1 overflow-hidden mt-0 border rounded-b-lg">
-          {executionId && executionData ? (
-            /*
-              실행 상세 뷰: 캔버스 + 사이드패널. lg+ 는 가로 배치, 좁은 화면(모바일)은 DAG 를 위(고정 높이)·패널을 아래로
-              쌓고 전체를 세로 스크롤한다 — 가로 배치면 400px 패널이 화면을 다 차지해 DAG 가 폭 0 이 되었다(WD-309).
-            */
-            <div className="h-full flex flex-col min-h-0 overflow-y-auto lg:flex-row lg:overflow-hidden">
-              <div className="h-[320px] shrink-0 min-w-0 lg:h-auto lg:flex-1 lg:shrink">
-                <PipelineCanvas
-                  state={state}
-                  dispatch={dispatch}
-                  readOnly={true}
-                  executionData={executionData}
+          <TabsContent value="executions" className="flex-1 overflow-hidden mt-0 border rounded-b-lg">
+            {executionId && executionData ? (
+              /*
+                실행 상세 뷰: 캔버스 + 사이드패널. lg+ 는 가로 배치, 좁은 화면(모바일)은 DAG 를 위(고정 높이)·패널을 아래로
+                쌓고 전체를 세로 스크롤한다 — 가로 배치면 400px 패널이 화면을 다 차지해 DAG 가 폭 0 이 되었다(WD-309).
+              */
+              <div className="h-full flex flex-col min-h-0 overflow-y-auto lg:flex-row lg:overflow-hidden">
+                <div className="h-[320px] shrink-0 min-w-0 lg:h-auto lg:flex-1 lg:shrink">
+                  <PipelineCanvas
+                    state={state}
+                    dispatch={dispatch}
+                    readOnly={true}
+                    executionData={executionData}
+                  />
+                </div>
+                <ExecutionStepPanel
+                  execution={executionData}
+                  selectedStep={
+                    selectedEditorStep ? { id: selectedEditorStep.id, name: selectedEditorStep.name } : undefined
+                  }
+                  onClose={() => dispatch({ type: 'SELECT_STEP', payload: { tempId: null } })}
+                  /* 서버가 준 저장된 정의 — 편집 중인 미저장 상태가 아니라 저장본에서 출력 데이터셋 이름을 찾는다(WD-209) */
+                  pipelineSteps={pipelineData?.steps}
                 />
               </div>
-              <ExecutionStepPanel
-                execution={executionData}
-                selectedStep={
-                  selectedEditorStep ? { id: selectedEditorStep.id, name: selectedEditorStep.name } : undefined
-                }
-                onClose={() => dispatch({ type: 'SELECT_STEP', payload: { tempId: null } })}
-                /* 서버가 준 저장된 정의 — 편집 중인 미저장 상태가 아니라 저장본에서 출력 데이터셋 이름을 찾는다(WD-209) */
-                pipelineSteps={pipelineData?.steps}
-              />
-            </div>
-          ) : showExecutionsError ? (
-            /* 조회 실패는 「기록 없음」과 구분해 알리고 다시 받게 한다(WD-884 리뷰 후속) — 트리거 탭 조회 실패(WD-244)와 같은 role=alert·아이콘 모양. */
-            <div role="alert" className="flex flex-col items-center justify-center h-full px-4 text-center">
-              <History className="h-12 w-12 text-muted-foreground/30 mb-4" aria-hidden="true" />
-              <p className="text-muted-foreground text-sm">
-                {extractApiError(executionsError, executionsErrorFallback)}
-              </p>
-              <div className="mt-3 flex gap-2">
-                {!executionsNotFound && (
-                  <Button variant="outline" size="sm" disabled={isExecutionsFetching} onClick={() => refetchExecutions()}>
-                    다시 시도
-                  </Button>
-                )}
-                {/* 뒤쪽 페이지가 실패하면 표·페이지 나눔이 사라져 같은 페이지만 다시 받게 된다 — 첫 페이지로 나갈 길을 둔다 */}
-                {executionPage > 0 && (
-                  <Button variant="outline" size="sm" onClick={() => setExecutionPage(0)}>
-                    첫 페이지로
-                  </Button>
+            ) : showExecutionsError ? (
+              /* 조회 실패는 「기록 없음」과 구분해 알리고 다시 받게 한다(WD-884 리뷰 후속) — 트리거 탭 조회 실패(WD-244)와 같은 role=alert·아이콘 모양. */
+              <div role="alert" className="flex flex-col items-center justify-center h-full px-4 text-center">
+                <History className="h-12 w-12 text-muted-foreground/30 mb-4" aria-hidden="true" />
+                <p className="text-muted-foreground text-sm">
+                  {extractApiError(executionsError, executionsErrorFallback)}
+                </p>
+                <div className="mt-3 flex gap-2">
+                  {!executionsNotFound && (
+                    <Button variant="outline" size="sm" disabled={isExecutionsFetching} onClick={() => refetchExecutions()}>
+                      다시 시도
+                    </Button>
+                  )}
+                  {/* 뒤쪽 페이지가 실패하면 표·페이지 나눔이 사라져 같은 페이지만 다시 받게 된다 — 첫 페이지로 나갈 길을 둔다 */}
+                  {executionPage > 0 && (
+                    <Button variant="outline" size="sm" onClick={() => setExecutionPage(0)}>
+                      첫 페이지로
+                    </Button>
+                  )}
+                </div>
+              </div>
+            ) : !executions || executions.length === 0 ? (
+              /* 빈 상태 안내(WD-884) — 한 줄만 보이던 것을 트리거 탭 빈 상태와 같은 모양(아이콘+상태+다음 행동)으로 맞춘다.
+                 실행 권한이 없으면 헤더의 「실행」 버튼이 숨겨지므로(WD-219) 그 버튼을 가리키는 문구 대신
+                 기록이 쌓이는 때를 안내한다. 트리거 쓰기 권한이 없으면 트리거 추가 안내도 뺀다. */
+              <div className="flex flex-col items-center justify-center h-full px-4 text-center">
+                <History className="h-12 w-12 text-muted-foreground/30 mb-4" aria-hidden="true" />
+                <p className="text-muted-foreground text-sm">실행 기록이 없습니다.</p>
+                {/* 다음 행동 안내는 빈 결과가 확인됐을 때만(isConfirmedEmpty, WD-884) */}
+                {isConfirmedEmpty && (
+                  <p className="text-muted-foreground text-xs mt-1">
+                    {runHint}
+                  </p>
                 )}
               </div>
-            </div>
-          ) : !executions || executions.length === 0 ? (
-            /* 빈 상태 안내(WD-884) — 한 줄만 보이던 것을 트리거 탭 빈 상태와 같은 모양(아이콘+상태+다음 행동)으로 맞춘다.
-               실행 권한이 없으면 헤더의 「실행」 버튼이 숨겨지므로(WD-219) 그 버튼을 가리키는 문구 대신
-               기록이 쌓이는 때를 안내한다. 트리거 쓰기 권한이 없으면 트리거 추가 안내도 뺀다. */
-            <div className="flex flex-col items-center justify-center h-full px-4 text-center">
-              <History className="h-12 w-12 text-muted-foreground/30 mb-4" aria-hidden="true" />
-              <p className="text-muted-foreground text-sm">실행 기록이 없습니다.</p>
-              {/* 다음 행동 안내는 빈 결과가 확인됐을 때만(isConfirmedEmpty, WD-884) */}
-              {isConfirmedEmpty && (
-                <p className="text-muted-foreground text-xs mt-1">
-                  {runHint}
-                </p>
-              )}
-            </div>
-          ) : (
-            <ScrollArea className="h-full">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-16">#ID</TableHead>
-                    <TableHead>상태</TableHead>
-                    <TableHead>트리거</TableHead>
-                    <TableHead>실행자</TableHead>
-                    <TableHead>시작시간</TableHead>
-                    <TableHead>소요시간</TableHead>
-                    {/* 진행 중 실행의 「실행 취소」 버튼 열(WD-153) — 화면에는 머리글 글자를 보이지 않고 보조기기에만 알린다 */}
-                    <TableHead className="w-32">
-                      <span className="sr-only">작업</span>
-                    </TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {executions.map((exec: PipelineExecutionResponse) => (
-                    <TableRow
-                      key={exec.id}
-                      className="cursor-pointer hover:bg-muted/50"
-                      onClick={() => navigate(`/pipelines/${state.pipelineId}/executions/${exec.id}`)}
-                    >
-                      <TableCell className="font-mono text-xs">
-                        {/* 키보드 접근성(WD-436): 행 클릭은 마우스로만 열리므로 실행 번호를 실행 상세 링크로 둔다 — Tab 으로 닿고
-                            Enter 로 열린다. 링크 이름은 번호 그대로 둔다(칸 이름이 바뀌지 않게 — 「ID」 열 머리글이 함께 읽힌다).
-                            클릭은 행 onClick 과 겹쳐 두 번 이동하지 않게 번지지 않게 막는다. */}
-                        <RouterLink
-                          to={`/pipelines/${state.pipelineId}/executions/${exec.id}`}
-                          className="rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          {exec.id}
-                        </RouterLink>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={getStatusBadgeVariant(exec.status)}>
-                          {getStatusLabel(exec.status)}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                          {exec.triggeredBy === 'SCHEDULE' && <><Clock className="h-3 w-3" />스케줄</>}
-                          {exec.triggeredBy === 'API' && <><Code className="h-3 w-3" />API</>}
-                          {exec.triggeredBy === 'PIPELINE_CHAIN' && <><Link className="h-3 w-3" />연쇄</>}
-                          {exec.triggeredBy === 'WEBHOOK' && <><Globe className="h-3 w-3" />웹훅</>}
-                          {exec.triggeredBy === 'DATASET_CHANGE' && <><Database className="h-3 w-3" />데이터 변경</>}
-                          {(!exec.triggeredBy || exec.triggeredBy === 'MANUAL') && <><User className="h-3 w-3" />수동</>}
-                        </span>
-                      </TableCell>
-                      <TableCell className="text-sm">{exec.executedBy}</TableCell>
-                      <TableCell className="text-sm">{formatDate(exec.startedAt)}</TableCell>
-                      <TableCell className="text-sm">
-                        <DurationText
-                          startedAt={exec.startedAt}
-                          completedAt={exec.completedAt}
-                          running={exec.status === 'RUNNING'}
-                        />
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <ExecutionRowCancelButton
-                          state={canExecutePipeline ? getExecutionCancelState(exec) : 'hidden'}
-                          pending={cancelExecutionMutation.isPending && cancelExecutionMutation.variables === exec.id}
-                          executionId={exec.id}
-                          onClick={() => setCancelTargetExecId(exec.id)}
-                        />
-                      </TableCell>
+            ) : (
+              <ScrollArea className="h-full">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-16">#ID</TableHead>
+                      <TableHead>상태</TableHead>
+                      <TableHead>트리거</TableHead>
+                      <TableHead>실행자</TableHead>
+                      <TableHead>시작시간</TableHead>
+                      <TableHead>소요시간</TableHead>
+                      {/* 진행 중 실행의 「실행 취소」 버튼 열(WD-153) — 화면에는 머리글 글자를 보이지 않고 보조기기에만 알린다 */}
+                      <TableHead className="w-32">
+                        <span className="sr-only">작업</span>
+                      </TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-              {/* 실행 이력 페이지 나눔·총 건수(WD-532) — 한 페이지만 그려 이력이 쌓여도 표가 끝없이 길어지지 않는다. */}
-              <SimplePagination
-                page={executionPage}
-                totalPages={executionPageData?.totalPages ?? 0}
-                totalElements={executionPageData?.totalElements}
-                pageSize={executionPageData?.size}
-                onPageChange={setExecutionPage}
-              />
-            </ScrollArea>
-          )}
-        </TabsContent>
-      </Tabs>
+                  </TableHeader>
+                  <TableBody>
+                    {executions.map((exec: PipelineExecutionResponse) => (
+                      <TableRow
+                        key={exec.id}
+                        className="cursor-pointer hover:bg-muted/50"
+                        onClick={() => navigate(`/pipelines/${state.pipelineId}/executions/${exec.id}`)}
+                      >
+                        <TableCell className="font-mono text-xs">
+                          {/* 키보드 접근성(WD-436): 행 클릭은 마우스로만 열리므로 실행 번호를 실행 상세 링크로 둔다 — Tab 으로 닿고
+                              Enter 로 열린다. 링크 이름은 번호 그대로 둔다(칸 이름이 바뀌지 않게 — 「ID」 열 머리글이 함께 읽힌다).
+                              클릭은 행 onClick 과 겹쳐 두 번 이동하지 않게 번지지 않게 막는다. */}
+                          <RouterLink
+                            to={`/pipelines/${state.pipelineId}/executions/${exec.id}`}
+                            className="rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {exec.id}
+                          </RouterLink>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={getStatusBadgeVariant(exec.status)}>
+                            {getStatusLabel(exec.status)}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                            {exec.triggeredBy === 'SCHEDULE' && <><Clock className="h-3 w-3" />스케줄</>}
+                            {exec.triggeredBy === 'API' && <><Code className="h-3 w-3" />API</>}
+                            {exec.triggeredBy === 'PIPELINE_CHAIN' && <><Link className="h-3 w-3" />연쇄</>}
+                            {exec.triggeredBy === 'WEBHOOK' && <><Globe className="h-3 w-3" />웹훅</>}
+                            {exec.triggeredBy === 'DATASET_CHANGE' && <><Database className="h-3 w-3" />데이터 변경</>}
+                            {(!exec.triggeredBy || exec.triggeredBy === 'MANUAL') && <><User className="h-3 w-3" />수동</>}
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-sm">{exec.executedBy}</TableCell>
+                        <TableCell className="text-sm">{formatDate(exec.startedAt)}</TableCell>
+                        <TableCell className="text-sm">
+                          <DurationText
+                            startedAt={exec.startedAt}
+                            completedAt={exec.completedAt}
+                            running={exec.status === 'RUNNING'}
+                          />
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <ExecutionRowCancelButton
+                            state={canExecutePipeline ? getExecutionCancelState(exec) : 'hidden'}
+                            pending={cancelExecutionMutation.isPending && cancelExecutionMutation.variables === exec.id}
+                            executionId={exec.id}
+                            onClick={() => setCancelTargetExecId(exec.id)}
+                          />
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                {/* 실행 이력 페이지 나눔·총 건수(WD-532) — 한 페이지만 그려 이력이 쌓여도 표가 끝없이 길어지지 않는다. */}
+                <SimplePagination
+                  page={executionPage}
+                  totalPages={executionPageData?.totalPages ?? 0}
+                  totalElements={executionPageData?.totalElements}
+                  pageSize={executionPageData?.size}
+                  onPageChange={setExecutionPage}
+                />
+              </ScrollArea>
+            )}
+          </TabsContent>
+        </Tabs>
+      ) : (
+        // 저장 전에는 탭 목록이 없으므로 탭 패널 역할을 주지 않는다(WD-919) — 표시는 지금과 같게
+        <div className={overviewPanelClassName}>{overviewPanelBody}</div>
+      )}
     </div>
   );
 }
