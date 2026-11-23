@@ -179,6 +179,7 @@ Smart Fire Hub 프론트엔드(`apps/firehub-web`)에서 사용하는 UI 컴포�
 | `message` | `string` | 선택 | 기본값: "데이터가 없습니다." |
 | `searchKeyword` | `string` | 선택 | 있으면 검색 결과 0건 안내를 대신 표시 |
 | `onResetSearch` | `() => void` | 선택 | 검색 0건일 때 "검색 초기화" 버튼 |
+| `resetFocusRef` | `RefObject<HTMLElement \| null>` | `onResetSearch` 와 함께 필수 | 「검색 초기화」 뒤 초점을 받을 검색 입력의 ref. 버튼이 빈 행과 함께 사라지므로 이 ref 가 요소에 붙어 있지 않으면 초점이 body 로 떨어진다(WD-985) |
 | `emptyAction` | `ReactNode` | 선택 | 검색어가 없는 0건일 때의 동작 |
 | `announceKey` | `string` | 선택 | 바뀌면 같은 문구도 다시 낭독 |
 
