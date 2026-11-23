@@ -22,7 +22,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { cloneSuccessMessage, useCanWriteProactive,useCloneProactiveJob, useDisableProactiveJob, useExecuteProactiveJob, useProactiveJobs, useUpdateProactiveJob } from '@/hooks/queries/useProactiveMessages';
+import { cloneBlockedReason, cloneSuccessMessage, useCanWriteProactive,useCloneProactiveJob, useDisableProactiveJob, useExecuteProactiveJob, useProactiveJobs, useUpdateProactiveJob } from '@/hooks/queries/useProactiveMessages';
 import { useJobToggleLock } from '@/hooks/useJobToggleLock';
 import { offlineListMessage, useOfflinePaused } from '@/hooks/useOnlineStatus';
 import { extractApiError, handleApiError, isForbiddenError, isJobAlreadyRunning } from '@/lib/api-error';
@@ -118,6 +118,19 @@ export default function ProactiveJobListPage() {
 
   const handleClone = (e: React.MouseEvent, job: ProactiveJob) => {
     e.stopPropagation();
+    // 주기 없는 작업은 서버가 400 으로 거절하므로 요청 전에 이유를 알리고, 「편집」으로 원본 상세를 편집 모드로 연다(WD-1026)
+    const blockedReason = cloneBlockedReason(job);
+    if (blockedReason) {
+      toast.error(blockedReason, {
+        // 연타해도 같은 토스트를 갱신해 겹겹이 쌓이지 않게 한다
+        id: `clone-blocked-${job.id}`,
+        action: {
+          label: '편집',
+          onClick: () => navigate(`/ai-insights/jobs/${job.id}?tab=overview`, { state: { startEditing: true } }),
+        },
+      });
+      return;
+    }
     cloneMutation.mutate(job, {
       onSuccess: (created) => {
         toast.success(cloneSuccessMessage(created.name));

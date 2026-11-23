@@ -1516,3 +1516,112 @@ test.describe('스마트 작업 상세 — ?tab= 보정 (WD-871)', () => {
     });
   }
 });
+
+// 주기 없는 작업 복제 안내 (WD-1026) — cron 없이 POST 하면 서버가 400 으로 거절하므로 요청 전에 막고 편집으로 안내한다.
+test.describe('주기 없는 작업 복제 안내 (WD-1026)', () => {
+  const BLOCKED_MESSAGE = '실행 주기가 없어 복제할 수 없습니다. 편집에서 실행 주기를 정해 저장한 뒤 복제하세요.';
+
+  /** 원본 작업을 모킹하고 복제 POST 요청 캡처를 돌려준다 (나중 등록이 우선이라 기본 모킹을 덮어쓴다) */
+  async function setupSource(page: import('@playwright/test').Page, overrides: Parameters<typeof createJob>[0]) {
+    await setupJobDetailMocks(page, 1);
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1', createJob({ id: 1, ...overrides }));
+    return mockApi(
+      page,
+      'POST',
+      '/api/v1/proactive/jobs',
+      createJob({ id: 99, name: '복사본', enabled: false }),
+      { capture: true },
+    );
+  }
+
+  test('주기 없는 BOTH 작업을 복제하면 요청 없이 이유를 알리고 「편집」으로 편집 모드가 된다', async ({ authenticatedPage: page }) => {
+    const cloneCapture = await setupSource(page, { cronExpression: null, triggerType: 'BOTH' });
+
+    await page.goto('/ai-insights/jobs/1');
+    await page.getByRole('button', { name: '복제' }).click();
+
+    await expect(page.getByText(BLOCKED_MESSAGE)).toBeVisible();
+    expect(cloneCapture.requests).toHaveLength(0);
+    // 아직 편집 모드가 아니다
+    await expect(page.getByRole('button', { name: '저장', exact: true })).toHaveCount(0);
+
+    // 토스트의 「편집」 으로 그 자리에서 편집 모드가 된다
+    await page.locator('[data-sonner-toast]').getByRole('button', { name: '편집' }).click();
+    await expect(page.getByRole('button', { name: '저장', exact: true })).toBeVisible();
+    expect(cloneCapture.requests).toHaveLength(0);
+  });
+
+  test('cron 이 공백뿐인 BOTH 작업도 복제를 막는다', async ({ authenticatedPage: page }) => {
+    const blankCron = await setupSource(page, { cronExpression: '   ', triggerType: 'BOTH' });
+    await page.goto('/ai-insights/jobs/1');
+    await page.getByRole('button', { name: '복제' }).click();
+    await expect(page.getByText(BLOCKED_MESSAGE)).toBeVisible();
+    expect(blankCron.requests).toHaveLength(0);
+  });
+
+  // triggerType 이 없는 옛 작업은 서버 기본값(SCHEDULE)이므로 같다
+  test('triggerType 없는 작업도 복제를 막는다', async ({ authenticatedPage: page }) => {
+    const noType = await setupSource(page, { cronExpression: null, triggerType: undefined });
+    await page.goto('/ai-insights/jobs/1');
+    await page.getByRole('button', { name: '복제' }).click();
+    await expect(page.getByText(BLOCKED_MESSAGE)).toBeVisible();
+    expect(noType.requests).toHaveLength(0);
+  });
+
+  test('복제를 두 번 눌러도 막힘 토스트는 하나만 보인다', async ({ authenticatedPage: page }) => {
+    await setupSource(page, { cronExpression: null, triggerType: 'BOTH' });
+    await page.goto('/ai-insights/jobs/1');
+    await page.getByRole('button', { name: '복제' }).click();
+    await page.getByRole('button', { name: '복제' }).click();
+    await expect(page.getByText(BLOCKED_MESSAGE)).toHaveCount(1);
+  });
+
+  test('실행 이력 탭에서 토스트 「편집」을 누르면 개요 탭으로 옮겨 편집 모드가 되고 첫 칸에 포커스가 간다', async ({ authenticatedPage: page }) => {
+    await setupSource(page, { cronExpression: null, triggerType: 'BOTH' });
+    await page.goto('/ai-insights/jobs/1?tab=executions');
+    await page.getByRole('button', { name: '복제' }).click();
+    await page.locator('[data-sonner-toast]').getByRole('button', { name: '편집' }).click();
+
+    await expect(page).toHaveURL(/tab=overview/);
+    await expect(page.getByRole('button', { name: '저장', exact: true })).toBeVisible();
+    // 포커스가 body 로 떨어지지 않고 편집 폼 안의 칸에 있다
+    await expect(page.getByRole('tabpanel').locator(':focus')).toHaveCount(1);
+  });
+
+  test('토스트가 떠 있는 동안 다른 작업으로 옮긴 뒤 「편집」을 누르면 원본 작업이 편집 모드로 열린다', async ({ authenticatedPage: page }) => {
+    await setupSource(page, { cronExpression: null, triggerType: 'BOTH' });
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/2', createJob({ id: 2, name: '다른 작업', cronExpression: '0 9 * * *' }));
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/2/executions', []);
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/2/anomaly-events', []);
+    await page.goto('/ai-insights/jobs/1');
+    await page.getByRole('button', { name: '복제' }).click();
+    await expect(page.getByText(BLOCKED_MESSAGE)).toBeVisible();
+
+    // 앱 안에서 다른 작업으로 이동(히스토리 push) — 토스트는 남아 있다
+    await page.evaluate(() => {
+      window.history.pushState({}, '', '/ai-insights/jobs/2');
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    });
+    await expect(page).toHaveURL(/\/jobs\/2/);
+    await expect(page.getByRole('button', { name: '저장', exact: true })).toHaveCount(0);
+
+    await page.locator('[data-sonner-toast]').getByRole('button', { name: '편집' }).click();
+    await expect(page).toHaveURL(/\/jobs\/1\?tab=overview/);
+    await expect(page.getByRole('button', { name: '저장', exact: true })).toBeVisible();
+  });
+
+  test('주기 없는 ANOMALY 작업은 그대로 복제한다', async ({ authenticatedPage: page }) => {
+    const cloneCapture = await setupSource(page, { cronExpression: null, triggerType: 'ANOMALY' });
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/99', createJob({ id: 99, name: '복사본', enabled: false }));
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/99/executions', []);
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/99/anomaly-events', []);
+
+    await page.goto('/ai-insights/jobs/1');
+    await page.getByRole('button', { name: '복제' }).click();
+
+    const req = await cloneCapture.waitForRequest();
+    expect(cloneCapture.requests).toHaveLength(1);
+    expect(req.payload).toMatchObject({ triggerType: 'ANOMALY' });
+    await expect(page.getByText(BLOCKED_MESSAGE)).toHaveCount(0);
+  });
+});

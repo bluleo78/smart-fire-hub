@@ -7,6 +7,18 @@ const FOCUSABLE =
   'input:not([type="hidden"]):not([disabled]), textarea:not([disabled]), select:not([disabled]), [role="combobox"]:not([disabled]), [contenteditable="true"], button:not([disabled]):not([role="tab"])';
 
 /**
+ * 편집 영역의 첫 포커스 가능한 칸으로 포커스를 옮긴다 — useEditModeFocus 와 같은 대상.
+ * 편집 모드가 이미 켜진 채 마운트되거나(목록 토스트 「편집」 이동) 포커스가 토스트 버튼에 있어 훅이 건너뛰는 경우에
+ * 호출 쪽이 직접 쓴다 (WD-1026). 옮겼으면 true.
+ */
+export function focusFirstEditField(region: HTMLElement | null): boolean {
+  const target = region?.querySelector<HTMLElement>(FOCUSABLE);
+  if (!target) return false;
+  target.focus();
+  return true;
+}
+
+/**
  * 같은 자리를 보기 ↔ 편집 폼으로 바꾸는 화면의 포커스 이동 (WD-415).
  *
  * 무엇: 「수정」을 누르면 그 버튼이 사라지고 폼이 그려지는데, 포커스를 옮기는 코드가 없어
@@ -35,7 +47,7 @@ export function useEditModeFocus(isEditing: boolean) {
     if (!focusLost && !(scope && scope.contains(active))) return;
 
     if (isEditing) {
-      editRegionRef.current?.querySelector<HTMLElement>(FOCUSABLE)?.focus();
+      focusFirstEditField(editRegionRef.current);
     } else {
       editButtonRef.current?.focus();
     }

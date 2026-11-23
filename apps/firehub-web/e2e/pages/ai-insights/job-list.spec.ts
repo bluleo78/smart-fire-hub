@@ -388,3 +388,41 @@ test.describe('스마트 작업 목록 페이지', () => {
     await expect(row.getByTestId('last-run-failed')).toHaveCount(0);
   });
 });
+
+// 주기 없는 작업 복제 안내 (WD-1026) — 요청 전에 막고 「편집」으로 원본 상세 편집 모드로 보낸다.
+test.describe('주기 없는 작업 복제 안내 (WD-1026)', () => {
+  test('목록에서 주기 없는 BOTH 작업을 복제하면 요청 없이 이유를 알리고 「편집」으로 원본 상세 편집 모드로 간다', async ({ authenticatedPage: page }) => {
+    const source = createJob({ id: 7, name: '주기 없는 잡', cronExpression: null, triggerType: 'BOTH' });
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs', [source]);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    const cloneCapture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/proactive/jobs',
+      createJob({ id: 99, name: '복사본', enabled: false }),
+      { capture: true },
+    );
+    // 「편집」 으로 이동하는 원본 상세 API
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/7', source);
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/7/executions', []);
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/7/anomaly-events', []);
+    await mockApi(page, 'GET', '/api/v1/proactive/templates', []);
+
+    await page.goto('/ai-insights/jobs');
+    await page.getByRole('button', { name: '복제' }).click();
+
+    await expect(page.getByText('실행 주기가 없어 복제할 수 없습니다. 편집에서 실행 주기를 정해 저장한 뒤 복제하세요.')).toBeVisible();
+    expect(cloneCapture.requests).toHaveLength(0);
+
+    // 연타해도 토스트는 하나
+    await page.getByRole('button', { name: '복제' }).click();
+    await expect(page.getByText('실행 주기가 없어 복제할 수 없습니다. 편집에서 실행 주기를 정해 저장한 뒤 복제하세요.')).toHaveCount(1);
+
+    await page.locator('[data-sonner-toast]').getByRole('button', { name: '편집' }).click();
+    await expect(page).toHaveURL(/\/ai-insights\/jobs\/7/);
+    await expect(page.getByRole('button', { name: '저장', exact: true })).toBeVisible();
+    // 새로 마운트된 상세에서도 포커스가 body 로 떨어지지 않고 편집 폼 안의 칸에 있다
+    await expect(page.getByRole('tabpanel').locator(':focus')).toHaveCount(1);
+    expect(cloneCapture.requests).toHaveLength(0);
+  });
+});
