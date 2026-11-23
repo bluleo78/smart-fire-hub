@@ -696,6 +696,22 @@ html {
   from { opacity: 0; }
   to { opacity: 1; }
 }
+/* ===== 파이프라인 캔버스 보통 모드 키보드 초점 (WD-1040) =====
+ * xyflow 기본 CSS 의 `.react-flow__node.selectable:focus-visible` (0,3,0)·`.react-flow__edge:focus-visible` (0,2,0)
+ * outline:none 을 `.react-flow` 조상 하나를 더 붙인 특이도로 이긴다(!important 없음). 같은 특이도의 고대비 블록이
+ * 뒤에서 CanvasText 로 이기도록 반드시 그 앞에 둔다.
+ * 노드: 선택 표시(안쪽 카드 offset 2px) 바깥에 서도록 offset 4px. `.selectable` 없는 선택자는 보기 화면(readOnly) 노드용 —
+ * 그곳은 xyflow outline:none 이 없어 브라우저 기본 윤곽을 덮는다. 연결선·여러 노드 선택 상자는 offset 2px. */
+.react-flow .react-flow__node:focus-visible,
+.react-flow .react-flow__node.selectable:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 4px;
+}
+.react-flow .react-flow__edge:focus-visible,
+.react-flow .react-flow__nodesselection-rect:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
 /* ===== 고대비 모드 키보드 초점 (WD-949) =====
  * 고대비에서는 box-shadow ring 이 안 그려지므로 모든 :focus-visible 에 시스템 색 outline 을 준다.
  * @layer 밖(unlayered)에 둬서 utilities 의 outline-none 을 이긴다. 바깥 outline 은 offset 을 두지 않는다(각 요소 값 유지).
@@ -729,8 +745,11 @@ html {
     outline-offset: -2px;
   }
   /* WD-1020: xyflow 노드·연결선·여러 노드 선택 상자(방향키로 옮길 때 초점을 받음)와 maplibre 컨트롤 버튼 —
-   * 라이브러리의 outline:none 을 특이도로 이긴다. xyflow 는 offset 을 두지 않는다 — 캔버스(.react-flow, overflow:hidden)
-   * 가장자리에 붙은 노드는 윤곽 일부가 잘릴 수 있으나 보통 fitView 여백 안이다. */
+   * 라이브러리의 outline:none 을 특이도로 이긴다. offset 은 위쪽 WD-1040 보통 모드 규칙(노드 4px, 연결선·선택 상자 2px)이 이미 주므로
+   * 여기서는 색만 CanvasText 로 바꾼다(링이 StepNode 선택 윤곽 바깥에 놓인다) — 캔버스(.react-flow, overflow:hidden)
+   * 가장자리에 붙은 노드는 윤곽 일부가 잘릴 수 있으나 보통 fitView 여백 안이다(방향키·끌기로 가장자리에 붙이면 일부 잘림).
+   * 보기 화면(readOnly)의 .selectable 없는 노드도 위 WD-1040 규칙에 맞춰 같이 둔다. */
+  .react-flow .react-flow__node:focus-visible,
   .react-flow .react-flow__node.selectable:focus-visible,
   .react-flow .react-flow__edge:focus-visible,
   .react-flow .react-flow__nodesselection-rect:focus-visible,
