@@ -5,6 +5,7 @@ import { useChart, useChartData } from '../../hooks/queries/useAnalytics';
 import { useWidgetVisibility } from '../../hooks/useWidgetVisibility';
 import { extractApiError, handleApiError } from '../../lib/api-error';
 import { type KeyboardLayoutAction, keyToLayoutAction } from '../../lib/dashboard-layout-keyboard';
+import { cn } from '../../lib/utils';
 import { type ChartDataResponse, type DashboardWidget, MAX_AUTO_REFRESH_SECONDS } from '../../types/analytics';
 import { PendingButton } from '../PendingButton';
 import { Button } from '../ui/button';
@@ -36,19 +37,31 @@ interface WidgetContentProps {
 
 /**
  * 위젯 안 오류 상자(WD-686) — 저장 쿼리 오류(「쿼리 오류」)와 조회 실패(서버 문구 + 「다시 시도」)가 같은 모양을 쓴다.
- * 쿼리 편집기 결과 영역(ResultTable)의 「쿼리 오류」 박스와 같은 색·테두리 형식이다(여백은 위젯 높이에 맞춰 좁혔다, WD-959).
+ * 쿼리 편집기 결과 영역(ResultTable)의 「쿼리 오류」 박스와 같은 색·테두리 형식이다.
  * 메시지 영역만 스크롤하고 「다시 시도」는 아래에 고정 — 좁고 낮은 위젯에서 문구가 감겨 내용이 보이는 높이보다 높아지면
  * 버튼이 잘렸다(WD-959). `min-h-0` 은 flex 자식이 콘텐츠 높이 아래로 줄어 스크롤이 생기게 하고,
  * `max-h-full` 은 바깥 상자 안쪽 높이(2×2 기준 91px)만큼 안내 상자를 제한한다.
+ *
+ * 여백(WD-959 리뷰 후속 ③): 여백 축소(`p-3` → `p-1.5`)는 「다시 시도」 버튼까지 짧은 위젯 안에 넣기 위한 것이라
+ * 버튼이 있는 상자(조회 실패)에만 적용한다. 버튼이 없는 「쿼리 오류」 상자도 같은 `p-1.5` 로 줄면 넓은 위젯의
+ * 안내 상자까지 함께 좁아져 안내 여백이 불필요하게 조여지므로, 그 상자는 원래 여백(`p-3`)을 그대로 쓴다.
+ * 두 상자의 여백이 달라 보여도 잘림이 생기는 조건(버튼이 있는 상자)에만 좁히는 편이 안내를 덜 깨뜨린다.
+ *
+ * 안내 문구 영역은 `tabIndex` 를 받아 키보드로 포커스할 수 있다(WD-959 리뷰 후속 ④, WCAG 2.1.1) — 스크롤되는
+ * 영역에 키보드로 닿지 못하면 긴 문구를 화살표 키로 읽을 수 없다. 포커스 시 `role=group` 이름으로 무엇인지 읽힌다.
  */
 function WidgetErrorBox({ title, children, action }: { title: ReactNode; children?: ReactNode; action?: ReactNode }) {
   return (
     <div className="h-full overflow-auto">
       <div
         role="alert"
-        className="flex max-h-full min-h-0 flex-col gap-1 rounded-md border border-destructive/50 bg-destructive/10 p-1.5"
+        className={cn(
+          'flex max-h-full min-h-0 flex-col gap-1 rounded-md border border-destructive/50 bg-destructive/10',
+          // 버튼이 있을 때만 좁은 여백 — 위 주석 ③
+          action ? 'p-1.5' : 'p-3',
+        )}
       >
-        <div className="min-h-0 overflow-auto">
+        <div className="min-h-0 overflow-auto" tabIndex={0} role="group" aria-label="오류 안내">
           <p className="flex items-center gap-1.5 text-sm font-medium text-destructive">
             <AlertTriangle className="h-4 w-4 shrink-0" />
             {title}
