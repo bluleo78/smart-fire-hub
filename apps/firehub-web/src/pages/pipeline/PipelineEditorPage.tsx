@@ -124,8 +124,15 @@ export default function PipelineEditorPage() {
   const [focusRestoreSeq, setFocusRestoreSeq] = useState(0);
   /** 기억한 포커스·복원 대기를 모두 지운다 — 성공(보기 모드 전환)·포기 때 이후 렌더에서 복원하지 않게 한다 */
   const clearFocusRestore = () => {
-    focusBeforeSaveRef.current = null;
+    clearPendingRestore();
     conflictTargetRef.current = null;
+  };
+  /**
+   * 복원 대기(restorePendingRef·focusBeforeSaveRef)만 지운다 — conflictTargetRef 는 남긴다(WD-992).
+   * 충돌 창은 퇴장 애니메이션이 끝난 뒤에야 onCloseAutoFocus 를 부르는데, 그 전에 effect 가 대상을 지우면 복원이 사라진다.
+   */
+  const clearPendingRestore = () => {
+    focusBeforeSaveRef.current = null;
     restorePendingRef.current = false;
   };
   /** 실패로 끝난 저장·덮어쓰기가 잠금 해제 뒤 복원을 시도하도록 effect 를 깨운다 */
@@ -147,18 +154,25 @@ export default function PipelineEditorPage() {
       return;
     }
     if (!restorePendingRef.current || isSaving) return;
-    // 충돌 창을 거친 저장이면 창이 닫힐 때 onCloseAutoFocus 가 복원하므로 여기서는 포기한다
+    // 충돌 창을 거친 저장이면 창이 닫힐 때 onCloseAutoFocus 가 복원한다 — 대상(conflictTargetRef)은 그쪽이 읽고 지우도록 남기고
+    // 여기서는 복원 대기만 끝낸다(WD-992: 창 퇴장 애니메이션 전에 대상을 지우면 Radix 기본 복귀(body)로 끝났다)
     if (conflictTargetRef.current) {
-      clearFocusRestore();
+      clearPendingRestore();
       return;
     }
     const target = focusBeforeSaveRef.current;
-    restorePendingRef.current = false;
-    focusBeforeSaveRef.current = null;
-    if (!target) return;
-    if (readOnly || state.focusRequest || state.validationErrors.length > 0) return;
-    // 다음 프레임에 복원하되, 그 사이 사용자가 포커스를 옮겼거나 대상이 사라졌으면 하지 않는다
+    // 대상이 없거나 포기(보기 모드·검증 오류 등)면 대기를 지운다 — 이후 렌더에서 복원하지 않게
+    if (!target || readOnly || state.focusRequest || state.validationErrors.length > 0) {
+      clearPendingRestore();
+      return;
+    }
+    // 다음 프레임에 복원하되, 그 사이 사용자가 포커스를 옮겼거나 대상이 사라졌으면 하지 않는다.
+    // 대기 해제는 프레임 안에서 한다 — 의존값이 바뀌어 cleanup 이 프레임을 취소하면 ref 가 그대로 남아 다음 실행이 다시 시도한다(WD-992)
     const frame = requestAnimationFrame(() => {
+      // 잠금이 풀린 렌더와 이 프레임 사이에 새 저장이 시작됐으면(handleSave 가 focusBeforeSaveRef 를 새로 씀)
+      // 그 저장의 기억을 지우지도, 포커스를 옮기지도 않는다 — 앞 프레임이 새 저장의 복원 정보를 지우던 경합을 막는다(WD-992 리뷰)
+      if (saveInFlightRef.current || focusBeforeSaveRef.current !== target) return;
+      clearPendingRestore();
       if (!isRestorable(target) || !focusIsUnclaimed()) return;
       target.focus({ preventScroll: true });
     });
