@@ -5,7 +5,7 @@ import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { grantDatasetPermissions } from '../../fixtures/dataset.fixture';
 import { expectTableErrorAlert } from '../../fixtures/table-error-alert';
-import { expectClearOfFade, expectInside, lineHeightOf, rectOf } from '../../fixtures/table-visible-width';
+import { expectClearOfFade, expectContentInset, expectInside, lineHeightOf, rectOf } from '../../fixtures/table-visible-width';
 
 /**
  * 데이터셋 목록 — 조회 실패 행의 긴 사유 줄바꿈 (WD-958)
@@ -52,6 +52,7 @@ test.describe('데이터셋 목록 — 실패 행 줄바꿈 (WD-958)', () => {
     expectInside(await rectOf(retry), b);
     await expectClearOfFade(page, a);
     await expectClearOfFade(page, await rectOf(retry));
+    await expectContentInset(page);
     // 새 div 래퍼 뒤에도 alert 구조(td 안쪽·action 은 alert 밖)가 유지되는지
     await expectTableErrorAlert(page, LONG_REASON, { action: '다시 시도' });
   });
@@ -66,6 +67,7 @@ test.describe('데이터셋 목록 — 실패 행 줄바꿈 (WD-958)', () => {
     expectInside(await rectOf(retry), b);
     await expectClearOfFade(page, a);
     await expectClearOfFade(page, await rectOf(retry));
+    await expectContentInset(page);
   });
 
   test('375px 표를 오른쪽 끝까지 밀어도 안내와 「다시 시도」가 보인다', async ({ authenticatedPage: page }) => {
@@ -82,6 +84,7 @@ test.describe('데이터셋 목록 — 실패 행 줄바꿈 (WD-958)', () => {
     expectInside(await rectOf(retry), b);
     await expectClearOfFade(page, await rectOf(alert));
     await expectClearOfFade(page, await rectOf(retry));
+    await expectContentInset(page);
   });
 
   // 리뷰 후속 ①: 표 스크롤 상자는 실패 행이 있을 때만 크기 컨테이너가 된다 — 늘 켜 두면 줄어드는 부모에서 표가 접히고
@@ -106,5 +109,6 @@ test.describe('데이터셋 목록 — 실패 행 줄바꿈 (WD-958)', () => {
     const r = await rectOf(retry);
     const td = await rectOf(page.locator('td[colspan]').filter({ has: retry }));
     expect(Math.abs((r.left + r.right) / 2 - (td.left + td.right) / 2)).toBeLessThanOrEqual(1);
+    await expectContentInset(page);
   });
 });

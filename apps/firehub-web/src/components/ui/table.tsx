@@ -24,6 +24,8 @@ function Table({ className, ...props }: React.ComponentProps<"table">) {
         data-slot="table-container"
         // 이 표 자신의 행에 실패·빈 상태 행(table-empty.tsx 의 table-visible-content)이 있을 때만 크기 컨테이너로 켠다 (WD-958 리뷰 후속) —
         // 늘 켜면 내용에 맞춰 줄어드는 부모에서 표가 접히고 셀 안 TruncatedText 의 100cqw 가 바깥 wrapper 대신 이 상자로 풀린다. 근거는 TableVisibleWidthCell JSDoc.
+        // 주의: 실패·빈 상태 행이 보일 때는 inline-size 컨테이너가 켜져 표 상자의 내재 폭이 0 이 된다 — inline-block·w-fit·폭 없는 flex/grid 부모 안의 표는
+        // 그 행이 보일 때만 접힐 수 있으니 그런 자리에는 폭을 준다.
         className="relative w-full overflow-x-auto has-[>table>tbody>tr>td>[data-slot=table-visible-content]]:[container-type:inline-size]"
       >
         <table
