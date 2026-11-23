@@ -4,7 +4,7 @@ import { memo, useMemo } from 'react';
 import type { ChartConfig, ChartType } from '../../types/analytics';
 import { AreaChartView } from './AreaChartView';
 import { BarChartView } from './BarChartView';
-import { buildChartAccessibleName, buildChartDataTable } from './chart-a11y';
+import { buildChartAccessibleName, buildChartDataTable, chartSupportsValueTable } from './chart-a11y';
 import { findMissingChartColumns, isKnownChartType, normalizeYAxis, resolveChartAxes } from './chart-missing-columns';
 import { findMissingChartAxesMessage } from './chart-required-axes';
 import { ChartAccessibleFigure } from './ChartAccessibleFigure';
@@ -33,6 +33,8 @@ export interface ChartRendererProps {
   height?: number;
   /** When true, stretches to fill parent container height instead of using fixed pixels */
   fillParent?: boolean;
+  /** 'table' 이면 그림 대신 값 표를 화면에 보인다(WD-832) — 기본 'chart'. 문자열 원시값이라 MemoChartRenderer 비교에 안전하다. */
+  view?: 'chart' | 'table';
   /**
    * 컬럼 누락 안내의 해결 문구(WD-88). 제목과 없는 컬럼 목록은 어디서나 같고, 해결 방법만 문맥에 따라 다르다.
    * 대시보드 위젯·차트 편집은 기본값(사람이 승인한 문구)을 쓰고, 저장된 쿼리·차트 편집이 없는 AI 챗은 자기 문구를 넘긴다.
@@ -134,6 +136,7 @@ export function ChartRenderer({
   missingColumnsHint = DEFAULT_MISSING_COLUMNS_HINT,
   inferAxes = true,
   title,
+  view = 'chart',
 }: ChartRendererProps) {
   // WD-88: 원본 쿼리의 컬럼 이름이 바뀌면 저장된 축 설정이 없는 컬럼을 가리켜, 차트가 빈 격자·범례만 그린 채
   // 아무 안내도 하지 않았다. 설정 컬럼이 하나라도 결과에 없으면 틀린 그림 대신 원인과 해결 방법을 보여 준다.
@@ -162,8 +165,7 @@ export function ChartRenderer({
   // WD-831: 모르는 타입(LLM 이 만든 값 등)은 switch default 의 안내로 가므로 figure 를 만들지 않는다.
   const needsFigure =
     isKnownChartType(chartType) &&
-    chartType !== 'TABLE' &&
-    chartType !== 'MAP' &&
+    chartSupportsValueTable(chartType) &&
     missingColumns.length === 0 &&
     data.length > 0;
   const accessible = useMemo(() => {
@@ -309,7 +311,12 @@ export function ChartRenderer({
   // 뷰가 그림 대신 안내만 돌려주면 figure 는 이름·표를 내지 않는다(ChartAccessibleFigure). figure 가 fillParent 래퍼 역할도 겸한다.
   // 여기까지 오면 needsFigure(TABLE·MAP·모르는 타입·컬럼 누락·빈 데이터 아님)는 항상 참이라 accessible 에 값이 있다.
   return (
-    <ChartAccessibleFigure name={accessible!.name} table={accessible!.table} fillParent={fillParent}>
+    <ChartAccessibleFigure
+      name={accessible!.name}
+      table={accessible!.table}
+      fillParent={fillParent}
+      view={view}
+    >
       {chart}
     </ChartAccessibleFigure>
   );

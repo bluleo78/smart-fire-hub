@@ -7,10 +7,12 @@ import { toast } from 'sonner';
 import { analyticsApi } from '../../api/analytics';
 import { AxisConfigPanel } from '../../components/analytics/AxisConfigPanel';
 import { BOXPLOT_REQUIRED_COLUMNS_LABEL, findMissingBoxplotStats } from '../../components/analytics/boxplot-stats';
+import { chartSupportsValueTable } from '../../components/analytics/chart-a11y';
 import { findMissingChartColumns } from '../../components/analytics/chart-missing-columns';
 import { findMissingChartAxesMessage } from '../../components/analytics/chart-required-axes';
 import { ChartConfigWithheldNotice } from '../../components/analytics/ChartConfigWithheldNotice';
 import { MemoChartRenderer } from '../../components/analytics/ChartRenderer';
+import { ChartTableToggle } from '../../components/analytics/ChartTableToggle';
 import { ChartTypeSelector } from '../../components/analytics/ChartTypeSelector';
 import { hasMixedSignValues, isNumericColumn, isWeightColumn } from '../../components/analytics/numeric-columns';
 import { SharedReadOnlyNotice } from '../../components/analytics/SharedReadOnlyNotice';
@@ -482,6 +484,8 @@ export default function ChartBuilderPage() {
   // Form state
   const [selectedQueryId, setSelectedQueryId] = useState<number | null>(initialQueryId);
   const [chartType, setChartType] = useState<ChartType>('BAR');
+  // WD-832: 미리보기 「표로 보기」 토글 — 차트 종류를 바꿔도 유지한다(표·지도 종류에서는 버튼이 없고 렌더러도 view 를 무시한다)
+  const [tableView, setTableView] = useState(false);
   const [config, setConfig] = useState<ChartConfig>({
     xAxis: '',
     yAxis: [],
@@ -1159,11 +1163,17 @@ export default function ChartBuilderPage() {
           <CardHeader className="px-4 pb-0">
             <div className="flex items-center justify-between">
               <CardTitle className="text-sm">미리보기</CardTitle>
-              {queryRows.length > 0 && (
-                <span className="text-xs text-muted-foreground">
-                  {queryTruncated ? `상위 ${queryRows.length}행 기준` : `${queryRows.length}행 기준`}
-                </span>
-              )}
+              <div className="flex items-center gap-2">
+                {queryRows.length > 0 && (
+                  <span className="text-xs text-muted-foreground">
+                    {queryTruncated ? `상위 ${queryRows.length}행 기준` : `${queryRows.length}행 기준`}
+                  </span>
+                )}
+                {/* WD-832: 값 표를 낼 수 있는 종류이고 미리보기 차트가 그려질 때만 — 가려진 설정·미실행 상태에는 버튼이 없다 */}
+                {!configWithheld && queryColumns.length > 0 && chartSupportsValueTable(chartType) && (
+                  <ChartTableToggle pressed={tableView} onPressedChange={setTableView} />
+                )}
+              </div>
             </div>
           </CardHeader>
           <Separator />
@@ -1200,6 +1210,8 @@ export default function ChartBuilderPage() {
                   data={queryRows}
                   columns={queryColumns}
                   fillParent
+                  // WD-832: 문자열 원시값만 넘겨 WD-821 memo 를 유지한다
+                  view={tableView ? 'table' : 'chart'}
                   // WD-505: 사용자가 비운 축을 결과 컬럼으로 추론하지 않는다 — 문자 컬럼이 값으로 읽혀 NaN 이 그려졌다
                   inferAxes={false}
                   // WD-826: 접근 이름에는 서버에 저장된 차트 이름만 쓴다(새 차트는 undefined → 축 정보로 자동 생성).

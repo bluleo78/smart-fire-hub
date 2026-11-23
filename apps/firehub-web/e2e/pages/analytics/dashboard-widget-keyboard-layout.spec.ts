@@ -54,7 +54,7 @@ test.describe("대시보드 편집 — 키보드 배치 조작 (WD-324)", () => 
     await expect(page.getByText("테스트 차트", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "편집" }).click();
 
-    // 키보드만으로 닿는지 — 「위젯 제거」에서 Shift+Tab 하면 바로 앞 손잡이로 간다
+    // 키보드만으로 닿는지 — 「표로 보기」(WD-832)에서 Shift+Tab 하면 바로 앞 손잡이로 간다
     const handle = page.getByRole("button", {
       name: "「테스트 차트」 위젯 이동·크기 조절",
     });
@@ -62,7 +62,11 @@ test.describe("대시보드 편집 — 키보드 배치 조작 (WD-324)", () => 
     await expect(handle).toHaveAccessibleDescription(
       "화살표 키로 한 칸씩 옮기고, Shift 와 화살표 키로 크기를 바꿉니다.",
     );
-    await page.getByTitle("위젯 제거").focus();
+    // 「표로 보기」에서 Tab 하면 다음으로 「위젯 제거」(편집 모드)에 닿는다(WD-832)
+    await page.getByRole("button", { name: "표로 보기" }).focus();
+    await page.keyboard.press("Tab");
+    await expect(page.getByTitle("위젯 제거")).toBeFocused();
+    await page.getByRole("button", { name: "표로 보기" }).focus();
     await page.keyboard.press("Shift+Tab");
     await expect(handle).toBeFocused();
 

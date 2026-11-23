@@ -8,9 +8,13 @@ import { createContext } from 'react';
  * 스크린리더만 「차트 이름 + 값 표」를 읽게 되어 시각 사용자와 정보가 어긋나기 때문이다.
  * ChartDrawingArea 가 마운트될 때 register 를 부르고, 돌려받은 함수로 언마운트 시 등록을 푼다.
  * figure 밖(단독 사용·테스트)에서는 아무것도 하지 않는 기본값을 쓴다.
+ *
+ * tableMode(WD-832): 「표로 보기」가 켜져 값 표가 화면에 보이는 중이면 true. 그림 영역(ChartDrawingArea)이 이 값을 보고
+ * 자기만 숨긴다 — figure 가 자식 전체를 숨기면 뷰의 안내문(파이 음수 제외·항목 많음 등)까지 사라지기 때문이다.
  */
-export const ChartFigureContext = createContext<{ registerDrawing: () => () => void }>({
+export const ChartFigureContext = createContext<{ registerDrawing: () => () => void; tableMode: boolean }>({
   registerDrawing: () => () => {},
+  tableMode: false,
 });
 
 /**
