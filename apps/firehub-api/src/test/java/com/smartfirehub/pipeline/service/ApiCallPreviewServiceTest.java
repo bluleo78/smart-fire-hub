@@ -733,6 +733,69 @@ class ApiCallPreviewServiceTest {
   // Query Params 병합 검증
   // =========================================================================
 
+  /** 직접 URL 의 쿼리에 공백이 있어도 실행기(httpx)처럼 %20 으로 인코딩해 보낸다(WD-936). */
+  @Test
+  void preview_spaceInDirectUrl_sentEncodedLikeExecutor() {
+    wireMock.stubFor(
+        get(urlPathEqualTo("/wd936/search"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"id\":1}]")));
+
+    ApiCallPreviewResponse response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/wd936/search?q=seoul city",
+                "GET",
+                null,
+                null,
+                null,
+                "$",
+                null,
+                null,
+                null,
+                5000));
+
+    assertThat(response.success()).isTrue();
+    assertThat(response.resolvedUrl()).contains("q=seoul%20city");
+    assertThat(wireMock.getAllServeEvents())
+        .extracting(e -> e.getRequest().getUrl())
+        .containsExactly("/wd936/search?q=seoul%20city");
+  }
+
+  /** 한글 경로 + 쿼리 파라미터 칸의 한글 값은 한 번만 인코딩된다(%25 이중 인코딩 없음, WD-936). */
+  @Test
+  void preview_koreanPathWithQueryParam_encodedOnce() {
+    wireMock.stubFor(
+        get(urlPathEqualTo("/wd936/%EA%B2%80%EC%83%89"))
+            .willReturn(
+                aResponse()
+                    .withStatus(200)
+                    .withHeader("Content-Type", "application/json")
+                    .withBody("[{\"id\":1}]")));
+
+    ApiCallPreviewResponse response =
+        service.preview(
+            new ApiCallPreviewRequest(
+                baseUrl() + "/wd936/검색",
+                "GET",
+                null,
+                java.util.Map.of("q", "서울"),
+                null,
+                "$",
+                null,
+                null,
+                null,
+                5000));
+
+    assertThat(response.success()).isTrue();
+    assertThat(wireMock.getAllServeEvents())
+        .extracting(e -> e.getRequest().getUrl())
+        .containsExactly("/wd936/%EA%B2%80%EC%83%89?q=%EC%84%9C%EC%9A%B8");
+  }
+
   /**
    * Query Params 병합: request.queryParams(static)와 inlineAuth의 API_KEY(query placement)가 합쳐져서 URL
    * 쿼리스트링에 포함되어야 한다.
@@ -1403,12 +1466,31 @@ class ApiCallPreviewServiceTest {
   // WD-647 코드리뷰: 검사 순서·보낼 값 정리·헤더 이름 검사·비밀 가림
   // =========================================================================
 
-  /** 빈 비밀은 URL 조립보다 먼저 본다 — 기준 URL 을 만들 수 없어도 빈 비밀 안내가 나가고, 그 경우만 resolvedUrl 이 null 이다. */
+  /**
+   * 빈 비밀은 URL 조립보다 먼저 본다 — 공백이 든 주소여도 빈 비밀 안내가 나가고 아무것도 호출하지 않는다. 공백은 이제 호출 전에 인코딩되므로(WD-936) 주소는 만들
+   * 수 있고 resolvedUrl 은 인코딩된 값이다.
+   */
+  @Test
+  void preview_emptySecretWithSpaceInUrl_reportsEmptySecret() {
+    ApiCallPreviewResponse response =
+        service.preview(
+            inlinePreview("/data?q=a b", java.util.Map.of("authType", "BEARER", "token", "")));
+
+    assertThat(response.success()).isFalse();
+    assertThat(response.errorMessage()).contains("Bearer 토큰이 비어 있습니다");
+    assertThat(response.resolvedUrl()).contains("q=a%20b");
+    wireMock.verify(0, anyRequestedFor(anyUrl()));
+  }
+
+  /**
+   * 빈 비밀은 URL 조립보다 먼저 본다 — 인코딩 뒤에도 만들 수 없는 주소(쿼리 값 속 {@code =})여도 빈 비밀 안내가 이기고 resolvedUrl 은 null 이며 아무것도
+   * 호출하지 않는다(WD-936 복원).
+   */
   @Test
   void preview_emptySecretWithUnbuildableUrl_reportsEmptySecret() {
     ApiCallPreviewResponse response =
         service.preview(
-            inlinePreview("/data?q=a b", java.util.Map.of("authType", "BEARER", "token", "")));
+            inlinePreview("/data?q=a==b", java.util.Map.of("authType", "BEARER", "token", "")));
 
     assertThat(response.success()).isFalse();
     assertThat(response.errorMessage()).contains("Bearer 토큰이 비어 있습니다");

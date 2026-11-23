@@ -151,6 +151,9 @@ public class ApiCallExecutor {
     // 조회(ApiConnectionReader)가 Map 의 authType 을 컬럼으로 덮어 준 덕분일 뿐이었다.
     ApiCallAuth.ResolvedAuth auth = ApiCallAuth.resolve(conn, decryptedAuthConfig);
 
+    // 실행기(httpx)와 같은 URL 을 받도록 공백·한글을 한 번만 인코딩한다 — 검사·URI 조립이 공백에서 실패하지 않게(WD-936).
+    resolvedUrl = RequestUrlEncoding.encodePathAndQuery(resolvedUrl);
+
     // 2. SSRF guard on the initial URL
     ssrfProtectionService.validateUrl(resolvedUrl);
 

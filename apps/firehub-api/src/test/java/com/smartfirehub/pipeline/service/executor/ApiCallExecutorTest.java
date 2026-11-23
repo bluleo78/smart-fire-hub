@@ -396,18 +396,30 @@ class ApiCallExecutorTest {
         .containsExactly("/api/q?token=abc%2Bd%3D%3D", "/api/q?token=abc%2Bd%3D%3D");
   }
 
+  /** 직접 URL 의 쿼리에 공백이 있어도 SSRF 검사 전에 %20 으로 인코딩해 호출한다(WD-936). */
+  @Test
+  void execute_spaceInDirectUrl_encodedAndSucceeds() {
+    stubEmptyItems("/api/q");
+    ApiCallConfig config = simpleGetConfig("/api/q?q=seoul city");
+
+    ApiCallExecutor.ApiCallResult result = executor.execute(config, "t", null, "APPEND", null);
+
+    assertThat(result).isNotNull();
+    assertThat(receivedUrls("/api/q")).containsExactly("/api/q?q=seoul%20city");
+  }
+
   /**
-   * 주소(기준 URL)에 직접 쓴 쿼리에 쓸 수 없는 문자가 있으면 여전히 URL 을 만들 수 없다 — 원문 없는 고정 문구로, 재시도 없이 즉시 실패한다(WD-177 처리
-   * 유지). 함께 붙는 키 원문·보낸 형태도 문구에 없다.
+   * 주소(기준 URL)의 쿼리 값에 인코딩 뒤에도 쓸 수 없는 문자({@code =})가 있으면 여전히 URL 을 만들 수 없다 — 원문 없는 고정 문구로, 재시도 없이 즉시 실패한다(WD-177
+   * 처리 유지, WD-936 복원). 함께 붙는 키 원문·보낸 형태도 문구에 없다.
    */
   @Test
   void execute_unbuildableBaseUrl_failsWithoutKeyAndWithoutRetry() {
     String key = "ex+k/y==비밀 Ww11";
-    ApiCallConfig config = simpleGetConfig("/api/q?q=a b 한글");
+    ApiCallConfig config = simpleGetConfig("/api/q?q=a==b");
 
     assertThatThrownBy(() -> executor.execute(config, "t", queryAuth(key), "APPEND", null))
         .isInstanceOf(ApiCallException.class)
-        // 재시도 소진 문구(「API 호출에 실패했습니다: …」)로 감싸이지 않은 고정 문구 그대로여야 한다 — 재시도 경로를 타지 않았다는 뜻.
+        // 재시도 소진 문구로 감싸이지 않은 고정 문구여야 한다 — 재시도 경로를 타지 않았다는 뜻.
         .hasMessageStartingWith("요청 URL 을 만들 수 없습니다")
         .satisfies(
             e ->
