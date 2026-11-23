@@ -1201,12 +1201,13 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
                       </SelectContent>
                     </Select>
                   </div>
-                  {/* 라벨 텍스트만 placement 에 따라 바뀌고 입력은 하나뿐이라 id 는 고정한다 */}
+                  {/* 라벨만 placement 따라 바뀌고 입력은 하나라 id 고정. 오류는 초점+aria-describedby 로 읽어 role=alert 는 끈다(WD-1007) */}
                   <FormField
                     label={placement === 'query' ? '파라미터 이름' : '헤더 이름'}
                     htmlFor={authFieldId.authName}
                     error={authErrors.authName}
                     required
+                    announceError={false}
                   >
                     <Input
                       id={authFieldId.authName}
@@ -1225,6 +1226,7 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
                     htmlFor={authFieldId.apiKey}
                     error={authErrors.apiKey}
                     required={!storedMaskedKey}
+                    announceError={false}
                   >
                     <Input
                       id={authFieldId.apiKey}
@@ -1249,7 +1251,7 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
               )}
 
               {authType === 'BEARER' && (
-                <FormField label="Bearer Token" htmlFor={authFieldId.token} error={authErrors.token} required>
+                <FormField label="Bearer Token" htmlFor={authFieldId.token} error={authErrors.token} required announceError={false}>
                   <Input
                     id={authFieldId.token}
                     type="password"

@@ -267,9 +267,13 @@ export default function ApiConnectionListPage() {
    * 한 대화상자에 두 방식이 섞였다. 테스트를 누를 때마다 지난 인라인 오류(앞선 만들기·테스트의 것)를 지우고, 테스트에 필요한 칸만 다시 단다
    * (연결 이름·헤더 이름은 테스트에 없어도 되므로 오류를 달지 않는다). 테스트 결과(성공·실패)는 예전처럼 대화상자 안 결과 상자로,
    * 서버 호출 실패는 토스트로 알린다.
+   *
+   * WD-1007: 연결 이름은 비어 있으면 'dry-run' 으로 보내 막지 않지만, 입력했는데 서버 한도(100자)를 넘으면 만들기와 같은
+   * 인라인 오류·포커스로 막는다(그대로 보내면 서버 400 토스트만 떴다). 빈 이름은 길이 오류가 아니므로 통과시킨다.
    */
   const handleTest = async () => {
     const nextErrors: CreateFieldErrors = {
+      name: name.trim() ? connectionNameError(name) : undefined,
       baseUrl: baseUrlError(baseUrl),
       healthCheckPath: healthCheckPathError(healthCheckPath),
       ...secretFieldErrors(),
