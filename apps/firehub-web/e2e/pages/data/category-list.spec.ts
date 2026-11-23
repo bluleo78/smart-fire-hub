@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 
-import { createCategories } from '../../factories/dataset.factory';
+import { createCategories, createCategory } from '../../factories/dataset.factory';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { grantDatasetPermissions } from '../../fixtures/dataset.fixture';
@@ -793,4 +793,74 @@ test.describe('카테고리 목록 긴 이름·설명 말줄임 (WD-559)', () =>
       await expectValueNotTruncated(row.getByText(DESC, { exact: true }));
     });
   }
+});
+
+// WD-1035: 목록 조회가 실패하면 「카테고리가 없습니다」·「0개」 로 오해되지 않게 오류 행을 보이고 개수는 그리지 않는다
+test.describe('카테고리 목록 조회 실패 (WD-1035)', () => {
+  test('카테고리 목록 조회가 실패하면 오류 행과 다시 시도가 보이고 개수는 그리지 않는다 (WD-1035)', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', { message: '서버 오류' }, { status: 500 });
+    await page.goto('/data/categories');
+
+    // 앱이 첫 실패를 한 번 재시도하므로 최종 오류 UI(다시 시도)를 기다린다
+    await expect(page.getByRole('button', { name: '다시 시도' })).toBeVisible();
+    await expect(page.getByText('서버 오류')).toBeVisible();
+    await expect(page.getByText('카테고리가 없습니다.')).toHaveCount(0);
+    await expect(page.getByText(/^\d+개$/)).toHaveCount(0);
+  });
+
+  test('카테고리 목록 실패 뒤 다시 시도가 성공하면 행과 개수가 보인다 (WD-1035)', async ({ authenticatedPage: page }) => {
+    let ok = false;
+    let requests = 0;
+    await page.route(
+      (url) => url.pathname === '/api/v1/dataset-categories',
+      (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        requests += 1;
+        if (ok) {
+          return route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify([createCategory({ id: 1, name: '다시 받은 카테고리' })]),
+          });
+        }
+        return route.fulfill({
+          status: 500,
+          contentType: 'application/json',
+          body: JSON.stringify({ message: '서버 오류' }),
+        });
+      },
+    );
+    await page.goto('/data/categories');
+    const retry = page.getByRole('button', { name: '다시 시도' });
+    await expect(retry).toBeVisible();
+
+    ok = true;
+    const before = requests;
+    await retry.click();
+
+    await expect.poll(() => requests).toBeGreaterThan(before);
+    await expect(page.getByText('다시 받은 카테고리')).toBeVisible();
+    await expect(page.getByText('1개')).toBeVisible();
+    await expect(page.getByRole('button', { name: '다시 시도' })).toHaveCount(0);
+  });
+
+  test('카테고리 목록 첫 로딩 중에는 「0개」 를 그리지 않고 받은 뒤 개수를 보인다 (WD-1035 리뷰)', async ({ authenticatedPage: page }) => {
+    const held = await holdApi(page, 'GET', '/api/v1/dataset-categories', 200, [createCategory({ id: 1, name: '받은 카테고리' })]);
+    await page.goto('/data/categories');
+    // 응답을 붙잡은 동안(스켈레톤) 개수가 없어야 한다 — 「0개」 가 거짓 개수로 읽히지 않게
+    await expect.poll(() => held.requests.length).toBeGreaterThan(0);
+    await expect(page.getByText(/^\d+개$/)).toHaveCount(0);
+    held.release();
+    await expect(page.getByText('받은 카테고리')).toBeVisible();
+    await expect(page.getByText('1개')).toBeVisible();
+  });
+
+  test('카테고리 목록 403 은 다시 시도 없이 권한 안내만 보이고 개수는 그리지 않는다 (WD-1035)', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', { message: '권한이 없습니다' }, { status: 403 });
+    await page.goto('/data/categories');
+
+    await expect(page.getByText('카테고리 목록을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.')).toBeVisible();
+    await expect(page.getByRole('button', { name: '다시 시도' })).toHaveCount(0);
+    await expect(page.getByText(/^\d+개$/)).toHaveCount(0);
+  });
 });

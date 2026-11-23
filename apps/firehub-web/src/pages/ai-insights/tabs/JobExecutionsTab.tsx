@@ -10,7 +10,7 @@ import { Link, useNavigate } from 'react-router-dom';
 
 import { PendingButton } from '@/components/PendingButton';
 import { Badge } from '@/components/ui/badge';
-import { LoadMoreFailure } from '@/components/ui/load-more-failure';
+import { LoadMoreFailure, LoadMoreOfflineNotice } from '@/components/ui/load-more-failure';
 import { SecurityLevelBadge } from '@/components/ui/SecurityLevelBadge';
 import { StatusBadge } from '@/components/ui/status-badge';
 import {
@@ -92,6 +92,9 @@ export default function JobExecutionsTab({ jobId }: JobExecutionsTabProps) {
   const loadSettled = isSuccess && !isPlaceholderData && !pending && !refetchPending;
   // 「더 보기」 응답을 기다리는 중인지 — 렌더에서 읽어 버튼을 잠그므로 ref(pendingLoadRef)가 아닌 state 로도 둔다(WD-1019).
   const [loadMoreWaiting, setLoadMoreWaiting] = useState(false);
+  // 「더 보기」 응답 기다림 — 자리표시 데이터로 기다리거나, 낡은 캐시로 먼저 보인 채 재조회가 끝나지 않음(isFetching·오프라인 멈춤).
+  // 버튼 잠금과 오프라인 안내(WD-1035)가 같은 기다림을 본다. 기다림이 없을 때(RUNNING 폴링 등)의 isFetching 은 잠그지 않는다.
+  const loadMoreLocked = isPlaceholderData || (loadMoreWaiting && refetchPending);
   // 응답이 끝나면 렌더 중에 접는다 — effect 에서 setState 하면 렌더가 한 번 더 돈다. 값이 바뀔 때만 set 하므로 무한 렌더가 없다.
   if (loadMoreWaiting && (loadFailed || loadSettled)) {
     setLoadMoreWaiting(false);
@@ -262,12 +265,11 @@ export default function JobExecutionsTab({ jobId }: JobExecutionsTabProps) {
           // isPlaceholderData 를 「더 보기 로딩 중」으로 읽는 것은 이 탭에서 키를 바꾸는 입력이 limit 뿐이기 때문이다 — 필터 등이 생기면 다시 검토한다.
           (executions.length >= limit || isPlaceholderData) && (
             <div className="py-2 flex justify-center">
-              {/* 낡은 캐시로 먼저 보이는 재조회 중(isFetching·오프라인 멈춤)에도 잠근다 — 그 사이 다시 누르면 기다림의 마지막 행·행 수가 낡은 값으로 덮인다(WD-1019).
-                  기다림이 없을 때(RUNNING 폴링 등)의 isFetching 은 잠그지 않는다. */}
+              {/* 낡은 캐시로 먼저 보이는 재조회 중에도 잠근다 — 그 사이 다시 누르면 기다림의 마지막 행·행 수가 낡은 값으로 덮인다(WD-1019). */}
               <PendingButton
                 variant="ghost"
                 size="sm"
-                pending={isPlaceholderData || (loadMoreWaiting && refetchPending)}
+                pending={loadMoreLocked}
                 onClick={handleLoadMore}
               >
                 더 보기
@@ -275,6 +277,7 @@ export default function JobExecutionsTab({ jobId }: JobExecutionsTabProps) {
             </div>
           )
         )}
+        <LoadMoreOfflineNotice waiting={loadMoreLocked} isPaused={isPaused} label="실행 이력" />
       </div>
       {/* 「더 보기」 결과 알림 — 문구가 바뀔 때 읽히도록 늘 그려 둔다(WD-965 리뷰 후속). */}
       <p ref={statusRef} role="status" className="sr-only" data-testid="executions-load-status" />

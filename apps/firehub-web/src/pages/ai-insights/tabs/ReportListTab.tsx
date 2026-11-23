@@ -4,7 +4,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { PendingButton } from '@/components/PendingButton';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { LoadMoreFailure } from '@/components/ui/load-more-failure';
+import { LoadMoreFailure, LoadMoreOfflineNotice } from '@/components/ui/load-more-failure';
 import { SecurityLevelBadge } from '@/components/ui/SecurityLevelBadge';
 import {
   Table,
@@ -200,6 +200,8 @@ export default function ReportListTab() {
           </div>
         )
       )}
+      {/* 「더 보기」 기다림(자리표시)이 오프라인으로 멈추면 연결 대기 안내 (WD-1035) — 낡은 캐시 기다림은 WD-1037 */}
+      <LoadMoreOfflineNotice waiting={isPlaceholderData} isPaused={isPaused} label="리포트" />
     </div>
   );
 }

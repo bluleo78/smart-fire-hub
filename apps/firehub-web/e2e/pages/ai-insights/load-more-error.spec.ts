@@ -1,5 +1,6 @@
 import type { Locator, Page, Route } from '@playwright/test';
 
+import { offlineListMessage } from '../../../src/hooks/useOnlineStatus';
 import { createJob, createJobExecution, createReport } from '../../factories/ai-insight.factory';
 import { mockProactivePermissions, setupJobDetailMocks } from '../../fixtures/ai-insight.fixture';
 import { mockApi } from '../../fixtures/api-mock';
@@ -703,5 +704,157 @@ test.describe('리포트 「더 보기」 응답 대기 (WD-1016)', () => {
     await page.getByRole('button', { name: '더 보기' }).click();
     await expect(rows).toHaveCount(25);
     await expect(page.getByRole('button', { name: '더 보기' })).toHaveCount(0);
+  });
+});
+
+/**
+ * 「더 보기」 오프라인 안내 E2E (WD-1035)
+ * - 오프라인에서 「더 보기」를 누르면 보던 행을 지키고 버튼은 잠긴 채, 버튼 아래에 연결 대기 안내가 보이며 연결되면 사라진다.
+ */
+test.describe('「더 보기」 오프라인 안내 (WD-1035)', () => {
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await mockProactivePermissions(page);
+  });
+
+  test('실행 이력 「더 보기」를 오프라인에서 누르면 보던 행이 남고 버튼 아래 연결 대기 안내가 보이며 연결되면 이어 받는다 (WD-1035)', async ({
+    authenticatedPage: page,
+  }) => {
+    const message = offlineListMessage('실행 이력');
+    const rows = await openExecutions(page, executionRows);
+
+    // 오프라인이 돼도 누르기 전에는 안내가 없다
+    await page.context().setOffline(true);
+    await expect(page.getByText(message)).toHaveCount(0);
+
+    await pressMoreWithKeyboard(page);
+    // 보던 20행 유지 + 안내 + 버튼 잠김·초점 유지
+    await expect(rows).toHaveCount(20);
+    await expect(page.getByText(message)).toBeVisible();
+    await expect(page.getByRole('status').filter({ hasText: message })).toBeVisible();
+    const more = page.getByRole('button', { name: '더 보기' });
+    await expect(more).toHaveAttribute('aria-disabled', 'true');
+    await expect(more).toBeFocused();
+
+    // 연결되면 이어 받고 안내가 사라진다
+    await page.context().setOffline(false);
+    await expect(rows).toHaveCount(40);
+    await expect(page.getByText(message)).toHaveCount(0);
+  });
+
+  test('실행 이력 「더 보기」 낡은 캐시로 보인 채 오프라인으로 재조회가 멈추면 연결 대기 안내가 보인다 (WD-1035)', async ({
+    authenticatedPage: page,
+  }) => {
+    const message = offlineListMessage('실행 이력');
+    await page.clock.install();
+    const rows = await openExecutions(page, executionRows);
+    await pressMoreWithKeyboard(page);
+    await expect(rows).toHaveCount(40);
+
+    await makeCacheStale(page, rows);
+
+    await page.context().setOffline(true);
+    await pressMoreWithKeyboard(page);
+    await expect(rows).toHaveCount(40);
+    await expect(page.getByText(message)).toBeVisible();
+    // 낡은 캐시 기다림은 자리표시와 다른 식(loadMoreWaiting && refetchPending)으로 잠그므로 이 길에서도 잠김을 본다
+    await expect(page.getByRole('button', { name: '더 보기' })).toHaveAttribute('aria-disabled', 'true');
+
+    await page.context().setOffline(false);
+    await expect(page.getByText(message)).toHaveCount(0);
+  });
+
+  test('리포트 「더 보기」를 오프라인에서 누르면 보던 행이 남고 버튼 아래 연결 대기 안내가 보이며 연결되면 이어 받는다 (WD-1035)', async ({
+    authenticatedPage: page,
+  }) => {
+    const message = offlineListMessage('리포트');
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs', [createJob({ id: 3 })]);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    await mockLimitedList(page, '/api/v1/proactive/reports', 0, reportRows);
+    await page.goto('/ai-insights/reports');
+    const rows = page.getByRole('link', { name: /^리포트 \d+$/ });
+    await expect(rows).toHaveCount(20);
+
+    await page.context().setOffline(true);
+    await expect(page.getByText(message)).toHaveCount(0);
+
+    await pressMoreWithKeyboard(page);
+    await expect(rows).toHaveCount(20);
+    await expect(page.getByText(message)).toBeVisible();
+    await expect(page.getByRole('status').filter({ hasText: message })).toBeVisible();
+    const more = page.getByRole('button', { name: '더 보기' });
+    await expect(more).toHaveAttribute('aria-disabled', 'true');
+    await expect(more).toBeFocused();
+
+    await page.context().setOffline(false);
+    await expect(rows).toHaveCount(40);
+    await expect(page.getByText(message)).toHaveCount(0);
+  });
+
+  test('실행 이력 「더 보기」 실패 뒤 오프라인에서 「다시 시도」를 누르면 실패 블록 아래에 연결 대기 안내가 보인다 (WD-1035 리뷰)', async ({
+    authenticatedPage: page,
+  }) => {
+    const message = offlineListMessage('실행 이력');
+    await setupJobDetailMocks(page, 1);
+    // limit=40 은 처음 두 요청(전역 재시도 포함)만 실패
+    await mockLimitedList(page, '/api/v1/proactive/jobs/1/executions', 2, executionRows);
+    await page.goto('/ai-insights/jobs/1?tab=executions');
+    const rows = page.getByRole('link', { name: /\(.*\)$/ });
+    await expect(rows).toHaveCount(20);
+    await page.getByRole('button', { name: '더 보기' }).click();
+    await expect(page.getByRole('alert')).toHaveText(FAIL_MESSAGE);
+
+    await page.context().setOffline(true);
+    await page.getByRole('button', { name: '다시 시도' }).click();
+    await expect(rows).toHaveCount(20);
+    await expect(page.getByText(message)).toBeVisible();
+
+    await page.context().setOffline(false);
+    await expect(rows).toHaveCount(40);
+    await expect(page.getByText(message)).toHaveCount(0);
+  });
+
+  test('실행 이력 「더 보기」 낡은 캐시가 limit 보다 짧아 버튼이 사라져도 오프라인 연결 대기 안내는 보인다 (WD-1035 리뷰)', async ({
+    authenticatedPage: page,
+  }) => {
+    const message = offlineListMessage('실행 이력');
+    await page.clock.install();
+    // limit=40 은 끝 목록(25건) — 받은 행이 limit 보다 적어 「더 보기」가 그려지지 않는다
+    const rows = await openExecutions(page, (n) => executionRows(n === 40 ? 25 : n));
+    await pressMoreWithKeyboard(page);
+    await expect(rows).toHaveCount(25);
+
+    await makeCacheStale(page, rows);
+
+    await page.context().setOffline(true);
+    await pressMoreWithKeyboard(page);
+    // 낡은 25행이 먼저 보이고 재조회는 멈춘다 — 버튼 보임과 상관없이 안내는 남는다
+    await expect(rows).toHaveCount(25);
+    await expect(page.getByText(message)).toBeVisible();
+
+    await page.context().setOffline(false);
+    await expect(page.getByText(message)).toHaveCount(0);
+  });
+
+  test('리포트 「더 보기」 실패 뒤 오프라인에서 「다시 시도」를 누르면 실패 블록 아래에 연결 대기 안내가 보인다 (WD-1035 리뷰)', async ({
+    authenticatedPage: page,
+  }) => {
+    const message = offlineListMessage('리포트');
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs', [createJob({ id: 3 })]);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    await mockLimitedList(page, '/api/v1/proactive/reports', 2, reportRows);
+    await page.goto('/ai-insights/reports');
+    const rows = page.getByRole('link', { name: /^리포트 \d+$/ });
+    await expect(rows).toHaveCount(20);
+    await page.getByRole('button', { name: '더 보기' }).click();
+    await expect(page.getByRole('alert')).toHaveText(FAIL_MESSAGE);
+
+    await page.context().setOffline(true);
+    await page.getByRole('button', { name: '다시 시도' }).click();
+    await expect(rows).toHaveCount(20);
+    await expect(page.getByText(message)).toBeVisible();
+
+    await page.context().setOffline(false);
+    await expect(rows).toHaveCount(40);
+    await expect(page.getByText(message)).toHaveCount(0);
   });
 });
