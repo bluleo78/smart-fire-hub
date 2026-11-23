@@ -31,6 +31,7 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { useDataset } from '@/hooks/queries/useDatasets';
 import { IntegerDraftContext, integerDraftStepPrefix, scopeIntegerDrafts, useIntegerDraftStore } from '@/hooks/useIntegerDrafts';
+import { isFocusLost } from '@/lib/focus-lost';
 import { formatDate } from '@/lib/formatters';
 import { SYSTEM_COLUMN_NAMES } from '@/lib/validations/dataset';
 import { MAX_DESCRIPTION_LENGTH } from '@/lib/validations/description';
@@ -376,8 +377,23 @@ export default function StepConfigPanel({
   const isIncrementalSql =
     step.scriptType === 'SQL' && /\{\{\s*last_run_at\s*\}\}/.test(step.scriptContent ?? '');
 
+  // 닫기 버튼으로 패널을 닫는다. 버튼이 패널과 함께 사라지면 초점이 BODY 로 떨어져(WCAG 2.4.3)
+  // 키보드 사용자가 Tab 을 처음부터 다시 눌러야 하므로, 닫은 스텝의 캔버스 노드로 초점을 돌려준다 (WD-1044).
   const handleClose = () => {
+    const closedId = step.tempId;
     dispatch({ type: 'SELECT_STEP', payload: { tempId: null } });
+    // 선택이 바뀌면 캔버스가 노드를 다시 재며 잠깐 숨겨 focus() 가 무시되므로, 다음 프레임부터 약 500ms 동안 매 프레임 다시 시도한다.
+    // 초점이 이미 다른 곳으로 옮겨졌으면(isFocusLost 아님) 빼앗지 않는다. preventScroll 은 React Flow 의 자체 이동과 겹치지 않게.
+    const selector = `.react-flow__node[data-id="${CSS.escape(closedId)}"]`;
+    const deadline = performance.now() + 500;
+    const restoreFocus = () => {
+      if (!isFocusLost()) return;
+      const node = document.querySelector<HTMLElement>(selector);
+      if (!node) return;
+      node.focus({ preventScroll: true });
+      if (document.activeElement !== node && performance.now() < deadline) requestAnimationFrame(restoreFocus);
+    };
+    requestAnimationFrame(restoreFocus);
   };
 
   const handleUpdateStep = (changes: Partial<EditorStep>) => {
