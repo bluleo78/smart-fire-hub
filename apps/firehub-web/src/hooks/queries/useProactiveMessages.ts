@@ -329,17 +329,68 @@ export function useJobExecutions(
 }
 
 /**
+ * 리포트 목록 한 번에 받을 수 있는 최대 건수 — 서버 ProactiveReportController.MAX_LIMIT 과 같은 값이어야 한다.
+ * 서버가 이보다 큰 limit 을 이 값으로 조용히 자르므로, 클라이언트도 이 크기로 나눠 요청한다(WD-1058).
+ */
+const REPORT_PAGE_MAX = 100;
+
+/**
+ * 요청 limit 이 서버 상한을 넘으면 REPORT_PAGE_MAX 건씩 차례로 받아 이어 붙인다(WD-1058).
+ * - limit ≤ 상한이면 기존과 같은 요청 하나만 보낸다.
+ * - 받은 조각이 요청한 크기보다 짧으면 서버 끝이므로 멈춘다.
+ * - 조각 사이에 새 리포트가 생겨 offset 이 밀리면 같은 행이 다시 올 수 있어 executionId 로 중복을 거른다.
+ * - 조각 하나라도 실패하면 오류를 던진다 — 부분 결과를 돌려주면 「더 보기 실패 → 이전 limit 복귀」(WD-956)을 못 탄다.
+ */
+async function fetchReportsChunked(params?: {
+  limit?: number;
+  offset?: number;
+}): Promise<ReportListItem[]> {
+  const limit = params?.limit;
+  if (limit === undefined || limit <= REPORT_PAGE_MAX) {
+    return proactiveApi.listReports(params).then((r) => r.data);
+  }
+  const baseOffset = params?.offset ?? 0;
+  const seen = new Set<number>();
+  const result: ReportListItem[] = [];
+  // 중복 제거로 짧아지면 부족분을 더 받는다 — 조각 수를 미리 정하면 짧은 결과를 화면이 끝으로 오판한다.
+  // 서버가 계속 겹치는 행만 주는 이상 상황에서 무한 반복하지 않도록 조각 수 상한을 둔다.
+  const maxChunks = Math.ceil(limit / REPORT_PAGE_MAX) + 2;
+  let nextOffset = baseOffset;
+  for (let i = 0; i < maxChunks && result.length < limit; i++) {
+    const size = Math.min(REPORT_PAGE_MAX, limit - result.length);
+    const chunk = await proactiveApi
+      .listReports({ limit: size, offset: nextOffset })
+      .then((r) => r.data);
+    // 다음 offset 은 중복 제거 전 받은 길이만큼 옮긴다(서버 기준 위치가 그만큼 소비됐다)
+    nextOffset += chunk.length;
+    for (const item of chunk) {
+      if (!seen.has(item.executionId)) {
+        seen.add(item.executionId);
+        result.push(item);
+      }
+    }
+    // 요청보다 짧은 조각은 서버 끝이다
+    if (chunk.length < size) break;
+  }
+  // 안전망: 반복 조건상 limit 을 넘지 않지만, 서버가 요청보다 많이 돌려줘도 화면 건수를 지킨다
+  return result.slice(0, limit);
+}
+
+/**
  * 잡 횡단 리포트 목록 조회 — 리포트 화면의 목록 탭에서 사용.
  *
  * params가 쿼리 키에 포함되므로 "더 보기"로 limit을 늘리면 새 캐시 엔트리가 된다.
  * keepPreviousData 없이는 그 순간 data가 undefined가 되어 이미 보고 있던 행들이
  * 스켈레톤으로 바뀐다 — 목록이 깜빡이지 않도록 이전 데이터를 유지한다.
+ *
+ * 서버가 limit 을 100 으로 자르므로 limit 이 100 을 넘으면 100건씩 나눠 받아 이어 붙인다 —
+ * 그러지 않으면 「더 보기」가 100행에서 멈추고 화면이 그것을 목록 끝으로 오판한다(WD-1058).
  */
 export function useReports(params?: { limit?: number; offset?: number }) {
   return useQuery<ReportListItem[]>({
     placeholderData: keepPreviousData,
     queryKey: KEYS.reports(params),
-    queryFn: () => proactiveApi.listReports(params).then((r) => r.data),
+    queryFn: () => fetchReportsChunked(params),
   });
 }
 
