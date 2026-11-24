@@ -443,8 +443,12 @@ test.describe('DatasetColumnsTab — Null 100% 컬럼 강조 (#91)', () => {
     await page.goto(`/data/datasets/${DATASET_ID}`);
     await page.getByRole('tab', { name: '필드' }).click();
 
-    // 헤더 카운터: "이상 1개" 표시
-    await expect(page.getByTestId('empty-column-count')).toHaveText('(이상 1개)');
+    // 헤더 카운터: 제목 밖 별도 요소에 「값이 모두 비어 있는 필드 1개」 (WD-1084)
+    await expect(page.getByTestId('empty-column-count')).toHaveText('값이 모두 비어 있는 필드 1개');
+    // 제목 이름에 경고 문구가 섞이지 않는다 (WD-1084)
+    await expect(
+      page.getByRole('heading', { level: 2, name: '필드 목록 (2개)', exact: true }),
+    ).toBeVisible();
 
     // 강조된 행이 정확히 1개 존재 (data-testid 마커)
     const emptyRows = page.getByTestId('empty-column-row');
@@ -452,6 +456,39 @@ test.describe('DatasetColumnsTab — Null 100% 컬럼 강조 (#91)', () => {
 
     // "비어있음" 배지 노출
     await expect(page.getByText('비어있음')).toBeVisible();
+  });
+
+  test('빈 필드가 2개면 표시가 「값이 모두 비어 있는 필드 2개」다 (WD-1084)', async ({
+    authenticatedPage: page,
+  }) => {
+    const empty = { nullCount: 100, nullPercent: 100, distinctCount: 0, topValues: [] };
+    await setupDatasetDetailMocks(page, DATASET_ID);
+    await mockApi(page, 'GET', `/api/v1/datasets/${DATASET_ID}/stats`, createColumnStats({ id: empty, name: empty }));
+    await page.goto(`/data/datasets/${DATASET_ID}`);
+    await page.getByRole('tab', { name: '필드' }).click();
+
+    await expect(page.getByTestId('empty-column-count')).toHaveText('값이 모두 비어 있는 필드 2개');
+    await expect(page.getByTestId('empty-column-row')).toHaveCount(2);
+  });
+
+  test('샘플 통계(10만 행 초과)로 센 빈 필드는 「샘플 기준」을 붙여 단정하지 않는다 (WD-1084)', async ({
+    authenticatedPage: page,
+  }) => {
+    // name 만 샘플에서 100% NULL — 샘플 통계라 「모두 비어 있다」가 아니라 「샘플 기준」이어야 한다.
+    await setupDatasetDetailMocks(page, DATASET_ID);
+    await mockApi(
+      page,
+      'GET',
+      `/api/v1/datasets/${DATASET_ID}/stats`,
+      createColumnStats({
+        id: { sampled: true },
+        name: { nullCount: 100, nullPercent: 100, distinctCount: 0, topValues: [], sampled: true },
+      }),
+    );
+    await page.goto(`/data/datasets/${DATASET_ID}`);
+    await page.getByRole('tab', { name: '필드' }).click();
+
+    await expect(page.getByTestId('empty-column-count')).toHaveText('값이 모두 비어 있는 필드 1개 (샘플 기준)');
   });
 
   test('100% NULL 컬럼이 없으면 카운터/배지/강조가 모두 노출되지 않는다', async ({
