@@ -87,30 +87,31 @@ export const DatasetColumnsTab = React.memo(function DatasetColumnsTab({
     handlers,
   } = useColumnManager({ dataset, datasetId });
 
-  // (#91) 100% NULL인 컬럼 수를 집계 — 헤더에 "이상 N개" 보조 메트릭으로 노출하고, 행도 시각 강조한다.
-  const emptyColumnCount = React.useMemo(() => {
-    let count = 0;
-    for (const col of localColumns) {
-      const stats = statsMap.get(col.columnName);
-      if (stats && stats.nullPercent >= 100) count += 1;
-    }
-    return count;
-  }, [localColumns, statsMap]);
+  // (#91) 100% NULL인 컬럼 수를 집계 — 헤더에 "값이 모두 비어 있는 필드 N개" 보조 메트릭으로 노출하고, 행도 시각 강조한다.
+  // (WD-1084) 경고 문구가 h2 접근 이름(「필드 목록 (N개)」)에 섞이지 않도록 h2 밖 형제 요소로 두고, '이상'이라는 모호한 말 대신 뜻을 풀어 쓴다.
+  // (WD-1084 리뷰) 10만 행을 넘는 데이터셋은 통계가 샘플이라 nullPercent 100 이 「샘플에서 모두 비어 있음」일 뿐이다 —
+  // 세는 필드 중 하나라도 샘플 통계면 문구에 「샘플 기준」을 붙여 「모두 비어 있다」고 단정하지 않는다.
+  const emptyColumnStats = React.useMemo(
+    () =>
+      localColumns
+        .map((col) => statsMap.get(col.columnName))
+        .filter((stats) => stats !== undefined && stats.nullPercent >= 100),
+    [localColumns, statsMap],
+  );
+  const emptyColumnCount = emptyColumnStats.length;
+  const emptyCountSampled = emptyColumnStats.some((stats) => stats?.sampled);
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-xl leading-7 font-semibold">
-          필드 목록 ({dataset.columns.length}개)
+        <div className="flex flex-wrap items-baseline gap-x-2">
+          <h2 className="text-xl leading-7 font-semibold">필드 목록 ({dataset.columns.length}개)</h2>
           {emptyColumnCount > 0 && (
-            <span
-              className="ml-2 text-sm font-normal text-destructive"
-              data-testid="empty-column-count"
-            >
-              (이상 {emptyColumnCount}개)
+            <span className="text-sm font-normal text-destructive" data-testid="empty-column-count">
+              값이 모두 비어 있는 필드 {emptyColumnCount}개{emptyCountSampled && ' (샘플 기준)'}
             </span>
           )}
-        </h2>
+        </div>
         {canWriteDataset && (
           <div className="flex items-center gap-2">
             {/* 기본 키 일괄 설정 — 복합 PK 변경 진입점 (#117) */}
