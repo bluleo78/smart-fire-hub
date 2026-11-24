@@ -42,7 +42,7 @@ import { listLoadErrorProps } from '@/lib/api-error';
 import { formatDateTime, formatIpAddress } from '@/lib/formatters';
 import type { AuditLogResponse } from '@/types/auditLog';
 
-import { escapeInvisibleForDisplay } from './audit-metadata-display';
+import { escapeInvisibleForDisplay, escapeInvisibleInText } from './audit-metadata-display';
 
 /**
  * 액션 유형 옵션 목록
@@ -425,7 +425,8 @@ function AuditLogDetailDialog({
             </div>
             <div>
               <p className="text-muted-foreground mb-1 text-xs">사용자</p>
-              <p className="font-medium">{log.username}</p>
+              {/* 사용자 입력 문자열 — 숨은 글자를 보이게(WD-1056 — 원문용, 탭·이모지는 그대로) */}
+              <p className="font-medium">{escapeInvisibleInText(log.username)}</p>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -435,7 +436,8 @@ function AuditLogDetailDialog({
             </div>
             <div>
               <p className="text-muted-foreground mb-1 text-xs">리소스</p>
-              <p>{formatAuditResource(log.resource)}{log.resourceId ? ` (${log.resourceId})` : ''}</p>
+              {/* 사용자 입력 문자열(리소스 ID) — 숨은 글자를 보이게(WD-1056 — 원문용, 탭·이모지는 그대로) */}
+              <p>{formatAuditResource(log.resource)}{log.resourceId ? ` (${escapeInvisibleInText(log.resourceId)})` : ''}</p>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -455,7 +457,8 @@ function AuditLogDetailDialog({
           <div>
             <p className="text-muted-foreground mb-1 text-xs">설명</p>
             <p className="bg-muted rounded-md p-3 whitespace-pre-wrap break-words">
-              {log.description ?? '-'}
+              {/* 사용자 입력 문자열 — 숨은 글자를 보이게(WD-1056 — 원문용, 탭·이모지는 그대로). null 이면 기존 대체값 */}
+              {log.description != null ? escapeInvisibleInText(log.description) : '-'}
             </p>
           </div>
 
@@ -480,7 +483,8 @@ function AuditLogDetailDialog({
             <div>
               <p className="text-muted-foreground mb-1 text-xs">에러 메시지</p>
               <p className="bg-muted text-destructive rounded-md p-3 whitespace-pre-wrap break-words">
-                {log.errorMessage}
+                {/* 사용자 입력 문자열 — 숨은 글자를 보이게(WD-1056 — 원문용, 탭·이모지는 그대로) */}
+                {escapeInvisibleInText(log.errorMessage)}
               </p>
             </div>
           )}
@@ -495,7 +499,8 @@ function AuditLogDetailDialog({
             <div>
               <p className="text-muted-foreground mb-1 text-xs">User Agent</p>
               <p className="bg-muted rounded-md p-3 font-mono text-xs break-all">
-                {log.userAgent}
+                {/* 사용자 입력 문자열 — 숨은 글자를 보이게(WD-1056 — 원문용, 탭·이모지는 그대로) */}
+                {escapeInvisibleInText(log.userAgent)}
               </p>
             </div>
           )}
@@ -694,7 +699,7 @@ export default function AuditLogListPage() {
               <SelectItem value="all">전체 사용자</SelectItem>
               {usersPage?.content.map((u) => (
                 <SelectItem key={u.id} value={String(u.id)}>
-                  {u.name} ({u.username})
+                  {escapeInvisibleInText(u.name)} ({escapeInvisibleInText(u.username)})
                 </SelectItem>
               ))}
             </SelectContent>
@@ -840,10 +845,12 @@ export default function AuditLogListPage() {
                       {formatDateTime(log.actionTime)}
                     </button>
                   </TableCell>
-                  <TableCell className="font-medium">{log.username}</TableCell>
+                  {/* 사용자 입력 문자열 — 숨은 글자를 보이게(WD-1056 — 원문용, 탭·이모지는 그대로) */}
+                  <TableCell className="font-medium">{escapeInvisibleInText(log.username)}</TableCell>
                   <TableCell>{formatAuditAction(log.actionType)}</TableCell>
                   <TableCell>{formatAuditResource(log.resource)}</TableCell>
-                  <TableCell className="max-w-xs truncate">{log.description ?? '-'}</TableCell>
+                  {/* 사용자 입력 문자열 — 숨은 글자를 보이게(WD-1056 — 원문용, 탭·이모지는 그대로). null 이면 기존 대체값 */}
+                  <TableCell className="max-w-xs truncate">{log.description != null ? escapeInvisibleInText(log.description) : '-'}</TableCell>
                   <TableCell>
                     <Badge variant={log.result === 'SUCCESS' ? 'default' : 'destructive'}>
                       {log.result === 'SUCCESS' ? '성공' : '실패'}

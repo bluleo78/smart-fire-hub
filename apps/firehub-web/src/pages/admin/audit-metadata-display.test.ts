@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { escapeInvisibleForDisplay } from './audit-metadata-display';
+import { escapeInvisibleForDisplay, escapeInvisibleInText } from './audit-metadata-display';
 
 /** WD-1031: 감사 로그 metadata 표시용 숨은 글자 이스케이프 */
 describe('escapeInvisibleForDisplay', () => {
@@ -31,5 +31,27 @@ describe('escapeInvisibleForDisplay', () => {
   it('들여쓴 JSON 의 줄바꿈·공백은 유지한다', () => {
     const json = JSON.stringify({ a: 'x' }, null, 2);
     expect(escapeInvisibleForDisplay(json)).toBe(json);
+  });
+});
+
+/** WD-1056: 감사 로그 원문 문자열(사용자·설명·오류·User-Agent·리소스 ID)용 이스케이프 */
+describe('escapeInvisibleInText', () => {
+  // [설명, 입력, 기대]
+  it.each([
+    ['RLO·ZWSP 는 바꾼다', 'a\u202Eb\u200Bc', 'a\\u202Eb\\u200Bc'],
+    ['BOM 은 바꾼다', '\uFEFFx', '\\uFEFFx'],
+    ['탭·CR·LF·공백은 그대로(스택 트레이스)', 'x\r\n\tat Foo (Bar.java:1)', 'x\r\n\tat Foo (Bar.java:1)'],
+    ['NUL 등 그 밖의 제어는 바꾼다', 'a\u0000b', 'a\\u0000b'],
+    ['VS16 이모지(❤\uFE0F)는 그대로', '❤\uFE0F 매출', '❤\uFE0F 매출'],
+    ['키캡(1\uFE0F\u20E3)은 그대로', '1\uFE0F\u20E3', '1\uFE0F\u20E3'],
+    ['ZWJ 가족 이모지는 그대로', '\u{1F468}\u200D\u{1F469}\u200D\u{1F467}', '\u{1F468}\u200D\u{1F469}\u200D\u{1F467}'],
+    ['피부색 + ZWJ 이모지는 그대로', '\u{1F469}\u{1F3FD}\u200D\u{1F4BB}', '\u{1F469}\u{1F3FD}\u200D\u{1F4BB}'],
+    ['VS16 + ZWJ(❤\uFE0F\u200D🔥)는 그대로', '❤\uFE0F\u200D\u{1F525}', '❤\uFE0F\u200D\u{1F525}'],
+    ['글자 사이 ZWJ 는 바꾼다', 'ad\u200Dmin', 'ad\\u200Dmin'],
+    ['이모지 뒤라도 다음이 이모지가 아니면 ZWJ 는 바꾼다', '\u{1F600}\u200Dx', '\u{1F600}\\u200Dx'],
+    ['글자 뒤 변이 선택자는 바꾼다', 'a\uFE0F', 'a\\uFE0F'],
+    ['맨 앞 변이 선택자는 바꾼다', '\uFE0Fa', '\\uFE0Fa'],
+  ])('%s', (_label, input, expected) => {
+    expect(escapeInvisibleInText(input)).toBe(expected);
   });
 });
