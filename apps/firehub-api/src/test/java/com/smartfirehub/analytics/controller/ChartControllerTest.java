@@ -488,6 +488,25 @@ class ChartControllerTest {
     verify(chartService, never()).create(any(), anyLong());
   }
 
+  /** WD-1105: 채움 문자·점자 빈칸·결합 문자만인 이름도 화면엔 빈 이름이라 400 — 서비스는 부르지 않는다. */
+  @Test
+  void createChart_invisibleOnlyName_returns400() throws Exception {
+    mockAuth("analytics:write");
+    for (String blank : new String[] {"\u3164", "\u2800", "\u0301"}) {
+      mockMvc
+          .perform(
+              post("/api/v1/analytics/charts")
+                  .header("Authorization", "Bearer valid-token")
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(
+                      objectMapper.writeValueAsString(
+                          new CreateChartRequest(blank, "설명", 1L, "bar", Map.of(), false))))
+          .andExpect(status().isBadRequest())
+          .andExpect(jsonPath("$.errors.name").value("이름을 비울 수 없습니다."));
+    }
+    verify(chartService, never()).create(any(), anyLong());
+  }
+
   /**
    * WD-1086 반-목표: 글자가 낀 이름에 폭 없는 문자(Cf)가 섞여 있어도 201 이어야 한다 — Cf 를 공백으로만 보되, 포함 여부로 거절하는 규칙이 생기면
    * 프롬프트 안의 U+200B 가 낀 정상 이름이 400 으로 막히기 때문이다. NBSP 로 둘러싼 정상 이름, 이모지가 낀 이름도 함께 확인한다 — 정상·CJK·이모지
