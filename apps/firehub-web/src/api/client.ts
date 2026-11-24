@@ -9,6 +9,8 @@ import { publishTenantSession } from './tenant-session';
 let accessToken: string | null = null;
 
 export function setAccessToken(token: string | null) {
+  // 값이 있는 토큰이 저장되면 세션이 살아난 것 — 남은 만료 표식부터 비운다(WD-1082)
+  if (token) clearSessionExpiredError();
   accessToken = token;
   // 자동 종료가 떠나기 확인 취소로 멈춘 뒤 refresh 가 성공했으면 세션이 살아난 것이다 — 뒤의 진짜 만료가 안내를 쓸 수 있게
   // 자동 종료의 안내 주인을 푼다. 사용자 로그아웃이 맡은 안내는 풀지 않는다 — 늦은 성공이 로그아웃 안내를 덮지 않게(WD-830 리뷰).
@@ -30,9 +32,45 @@ export const AUTH_FLAG_KEY = 'hasSession';
  */
 let noticeOwner: 'auto' | 'user' | null = null;
 
+/**
+ * 세션이 401 만료로 끝난 뒤 남은 첫 만료 오류 (WD-1082).
+ *
+ * <p>세션을 끝낸 뒤에도 화면(떠나기 확인 취소)에 남으면, 뒤에 붙는 조회가 다시 401 을 받아 새 갱신 사이클을
+ * 시작하고 그 실패가 다시 endSessionAndReloadToLogin 을 불러 확인 창을 되풀이한다. refresh 401 은 되돌릴 수
+ * 없으므로(쿠키가 이미 죽었다) 같은 만료를 갱신으로 확인할 필요는 없다 — 첫 오류를 그대로 돌려준다.
+ * 표식은 **HTTP 갱신만** 막는다 — 로그인 이동은 남긴다(아래 refreshAccessToken). 이동까지 막으면 첫 이동을
+ * 떠나기 확인으로 취소한 탭이 가드를 푼 뒤에도 /login 으로 가지 못하고 죽은 화면에 남는다(WD-830 위반).
+ * 값이 있는 토큰이 저장되면(로그인·회복) 세션이 살아난 것이므로 비운다(WD-830 의 뒤의 만료가 안내를 쓸 수 있게).
+ * 네트워크·서버 오류로 실패한 갱신은 표식을 켜지 않는다 — 그때는 오늘처럼 다시 시도한다.
+ */
+let sessionExpiredError: unknown = null;
+
+/**
+ * 만료 이동을 마지막으로 건 화면(pathname) (WD-1082 반려).
+ *
+ * <p>표식이 켜진 뒤의 갱신 거절은 로그인 이동을 다시 건다 — 첫 이동이 떠나기 확인으로 취소돼 탭이 남아 있어도,
+ * 사용자가 화면을 옮길 때는 반드시 로그인 화면으로 가야 하기 때문이다(WD-830 「이동은 늘 다시 한다」).
+ * 다만 **화면이 그대로인 배경 요청**이 이동을 되풀이해 건드리면 확인 창이 다시 떠 취소한 사용자를 계속 괴롭힌다
+ * (WD-1082 완료 기준 — 확인 창은 처음 한 번). 그래서 마지막으로 이동을 건 화면을 기억해 두고, 그 화면의
+ * 요청에는 이동을 다시 건드리지 않는다. 화면이 바뀌면(사용자의 이동) 다시 건다.
+ */
+let expiredNavPath: string | null = null;
+
 /** 시험 전용 — 모듈 수준 안내 주인이 시험 사이에 남아 뒤 시험의 안내 단언이 어긋나지 않게 푼다(WD-830 리뷰). */
 export function resetNoticeOwnerForTest() {
   noticeOwner = null;
+}
+
+/**
+ * 만료 표식과 그 이동 기록을 비운다 (WD-1082 반려).
+ *
+ * <p>세션이 살아났을 때 부른다 — 이 탭의 로그인(`setAccessToken(<값>)`)과, 다른 탭이 다시 로그인해
+ * 공유 refresh 쿠키가 살아난 경우(`AuthContext` 의 storage 이벤트 핸들러)가 그때다. 표식이 남아 있으면
+ * 이 탭은 HTTP 갱신을 다시 시도하지 못해, 되살릴 수 있는 세션을 죽은 채로 두고 /login 으로만 가게 된다.
+ */
+export function clearSessionExpiredError() {
+  sessionExpiredError = null;
+  expiredNavPath = null;
 }
 
 /**
@@ -132,6 +170,17 @@ function rejectQueue(error: unknown) {
  * - 갱신 실패 → 대기 요청을 모두 그 오류로 실패시키고 세션을 끝낸다(로그인 화면으로 하드 리로드).
  */
 export function refreshAccessToken(): Promise<RefreshResult> {
+  // 만료로 세션을 이미 끝낸 뒤다 — 같은 만료를 갱신으로 다시 확인할 일이 없어 HTTP 갱신 요청을 만들지 않는다(WD-1082).
+  // 다만 로그인 이동은 남긴다(WD-830 「이동은 늘 다시 한다」) — 가드로 첫 이동이 막힌 탭이 가드를 푼 뒤
+  // 화면을 옮길 때 비로소 로그인 화면으로 가게 하려는 것이다(위 expiredNavPath · 아래 sessionExpiredError 주석).
+  if (sessionExpiredError !== null) {
+    const path = window.location.pathname;
+    if (path !== expiredNavPath) {
+      expiredNavPath = path;
+      endSessionAndReloadToLogin(SESSION_EXPIRED_NOTICE);
+    }
+    return Promise.reject(sessionExpiredError);
+  }
   if (isRefreshing) {
     if (failedQueue.length >= MAX_QUEUE_SIZE) {
       return Promise.reject(new Error('Too many queued requests'));
@@ -171,8 +220,16 @@ async function runRefresh(): Promise<RefreshResult> {
       });
     } catch (refreshError) {
       rejectQueue(refreshError);
+      // 401 만료인지 한 번 판정해 표식과 안내에 함께 쓴다 — 같은 오류를 두 번 판정하지 않게.
+      const isSessionExpired = isUnauthorizedError(refreshError);
+      // 401 만료로 세션을 끝낸 뒤의 첫 오류를 남긴다 — 이후 갱신을 막아 확인 창을 되풀이하지 않게(WD-1082). 네트워크·서버 오류는 켜지 않는다.
+      // 이동을 건 화면도 함께 남긴다 — 같은 화면의 배경 요청은 뒤에 이동을 다시 건드리지 않게(아래 refreshAccessToken).
+      if (isSessionExpired) {
+        sessionExpiredError = refreshError;
+        expiredNavPath = window.location.pathname;
+      }
       // WD-830: 401 만 세션 만료로 안내한다(근거는 login-notice.ts)
-      endSessionAndReloadToLogin(isUnauthorizedError(refreshError) ? SESSION_EXPIRED_NOTICE : undefined);
+      endSessionAndReloadToLogin(isSessionExpired ? SESSION_EXPIRED_NOTICE : undefined);
       throw refreshError;
     }
 

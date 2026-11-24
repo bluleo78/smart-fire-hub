@@ -8,7 +8,7 @@ import axios from 'axios';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SESSION_EXPIRED_NOTICE, takeLoginNotice } from '../lib/login-notice';
-import { authedFetch, claimUserLogout, endSessionAndReloadToLogin, getAccessToken, refreshAccessToken, resetNoticeOwnerForTest, setAccessToken, TokenRefreshError } from './client';
+import { authedFetch, claimUserLogout, clearSessionExpiredError, endSessionAndReloadToLogin, getAccessToken, refreshAccessToken, resetNoticeOwnerForTest, setAccessToken, TokenRefreshError } from './client';
 
 vi.mock('./refresh-lock', () => ({
   withCrossTabRefreshLock: <T,>(fn: () => Promise<T>) => fn(),
@@ -27,12 +27,21 @@ function deferredRefresh() {
   return { resolve, reject };
 }
 
+/** isUnauthorizedError 가 401 로 판정하는 모양(axios 오류 + response.status 401)의 refresh 실패 — 만료 표식(WD-1082)을 켜는 오류. */
+function expiredRefreshError() {
+  return Object.assign(new Error('refresh 401'), {
+    isAxiosError: true,
+    response: { status: 401 },
+  });
+}
+
 describe('refreshAccessToken (WD-631)', () => {
   const replace = vi.fn();
 
   beforeEach(() => {
     setAccessToken('old');
     resetNoticeOwnerForTest();
+    clearSessionExpiredError();
     vi.stubGlobal('location', { ...window.location, replace });
   });
   afterEach(() => {
@@ -76,6 +85,92 @@ describe('refreshAccessToken (WD-631)', () => {
     expect(replace).toHaveBeenCalledWith('/login');
     expect(getAccessToken()).toBeNull();
   });
+
+  it('401 만료로 끝난 뒤의 갱신은 같은 오류를 그대로 거절하고 갱신 요청을 다시 보내지 않는다(WD-1082)', async () => {
+    const expired = expiredRefreshError();
+    vi.spyOn(axios, 'post').mockRejectedValue(expired);
+
+    await expect(refreshAccessToken()).rejects.toBe(expired);
+    // 표식이 남아 두 번째 호출은 HTTP 없이 저장한 오류만 받는다
+    await expect(refreshAccessToken()).rejects.toBe(expired);
+    expect(axios.post).toHaveBeenCalledTimes(1);
+  });
+
+  it('값이 있는 토큰을 다시 저장하면 만료 표식이 풀려 다시 갱신을 보낼 수 있다(WD-1082)', async () => {
+    // 401 만료로 끝나게 해 표식을 켠다
+    const expired = expiredRefreshError();
+    vi.spyOn(axios, 'post')
+      .mockRejectedValueOnce(expired)
+      .mockResolvedValue({ data: { accessToken: 'new', activeTenantId: 1, memberships: [] } } as never);
+
+    await expect(refreshAccessToken()).rejects.toBe(expired);
+    await expect(refreshAccessToken()).rejects.toBe(expired);
+    expect(axios.post).toHaveBeenCalledTimes(1);
+
+    // 값이 있는 토큰이 저장되면 표식이 풀려 다시 갱신할 수 있어야 한다 — 로그인·회복이 갱신을 영구히 막지 않게.
+    // clearSessionExpiredError() 를 부르지 않는다 — setAccessToken(<값>) 이 표식을 비우는 계약 자체를 시험한다(WD-1082).
+    setAccessToken('recovered');
+
+    await expect(refreshAccessToken()).resolves.toEqual({ token: 'new' });
+    expect(axios.post).toHaveBeenCalledTimes(2);
+  });
+
+  it('네트워크 오류로 실패한 갱신은 만료 표식을 켜지 않는다 — 다음 갱신은 다시 요청을 보낸다(WD-1082)', async () => {
+    vi.spyOn(axios, 'post')
+      .mockRejectedValueOnce(new TypeError('network'))
+      .mockResolvedValue({ data: { accessToken: 'new', activeTenantId: 1, memberships: [] } } as never);
+
+    await expect(refreshAccessToken()).rejects.toBeInstanceOf(TypeError);
+    await expect(refreshAccessToken()).resolves.toEqual({ token: 'new' });
+    expect(axios.post).toHaveBeenCalledTimes(2);
+  });
+
+  it('다른 탭이 다시 로그인해 표식을 비우면 다시 HTTP 갱신을 보낼 수 있다(WD-1082 반려)', async () => {
+    const expired = expiredRefreshError();
+    vi.spyOn(axios, 'post')
+      .mockRejectedValueOnce(expired)
+      .mockResolvedValue({ data: { accessToken: 'new', activeTenantId: 1, memberships: [] } } as never);
+
+    // 401 만료로 끝나게 해 표식을 켠다
+    await expect(refreshAccessToken()).rejects.toBe(expired);
+    await expect(refreshAccessToken()).rejects.toBe(expired);
+    expect(axios.post).toHaveBeenCalledTimes(1);
+
+    // 다른 탭이 다시 로그인하면 AuthContext 의 storage 핸들러가 이 표식을 비운다 —
+    // 비워지지 않으면 이 탭은 공유 refresh 쿠키로 되살릴 수 있는 세션까지 영구히 갱신하지 못한다(WD-1082 반려)
+    clearSessionExpiredError();
+
+    await expect(refreshAccessToken()).resolves.toEqual({ token: 'new' });
+    expect(axios.post).toHaveBeenCalledTimes(2);
+  });
+
+  it('만료 표식은 HTTP 갱신만 막고, 화면을 옮긴 뒤의 요청에만 로그인 이동을 다시 건다(WD-1082 반려)', async () => {
+    takeLoginNotice(); // 앞 시험에 소비되지 않고 남은 안내를 비운다
+    const expired = expiredRefreshError();
+    vi.spyOn(axios, 'post').mockRejectedValue(expired);
+    vi.stubGlobal('location', { pathname: '/data/datasets', replace });
+
+    // 첫 갱신 401 — 표식을 켜고 지금 화면에서 로그인 화면으로 이동한다
+    await expect(refreshAccessToken()).rejects.toBe(expired);
+    expect(axios.post).toHaveBeenCalledTimes(1);
+    expect(replace).toHaveBeenCalledTimes(1);
+    expect(replace).toHaveBeenLastCalledWith('/login');
+
+    // 같은 화면의 배경 요청 — HTTP 갱신도 하지 않고 이동도 다시 하지 않는다(떠나기 확인 창을 되풀이해 띄우지 않는다)
+    await expect(refreshAccessToken()).rejects.toBe(expired);
+    expect(axios.post).toHaveBeenCalledTimes(1);
+    expect(replace).toHaveBeenCalledTimes(1);
+
+    // 사용자가 화면을 옮긴 뒤의 요청 — 갱신은 막되 로그인 이동은 다시 한다(가드를 푼 탭이 죽은 화면에 남지 않는다)
+    vi.stubGlobal('location', { pathname: '/pipelines', replace });
+    await expect(refreshAccessToken()).rejects.toBe(expired);
+    expect(axios.post).toHaveBeenCalledTimes(1);
+    expect(replace).toHaveBeenCalledTimes(2);
+    expect(replace).toHaveBeenLastCalledWith('/login');
+
+    // 안내는 첫 종료 때 맡긴 만료 안내가 그대로다 — 되풀이 이동이 안내를 바꾸지 않는다
+    expect(takeLoginNotice()).toBe(SESSION_EXPIRED_NOTICE);
+  });
 });
 
 /** 본문 읽기(text)를 추적할 수 있는 지정 상태 응답 */
@@ -91,6 +186,8 @@ describe('authedFetch (WD-631)', () => {
   beforeEach(() => {
     setAccessToken('old');
     resetNoticeOwnerForTest();
+    // 이 파일의 다른 시험에서 켠 만료 표식이 여기의 갱신을 막지 않게 — 표식은 시험 간에 남지 않는다(WD-1082 반려)
+    clearSessionExpiredError();
     vi.stubGlobal('fetch', fetchMock);
     vi.stubGlobal('location', { ...window.location, replace });
   });
@@ -177,6 +274,7 @@ describe('endSessionAndReloadToLogin (WD-830 리뷰)', () => {
 
   beforeEach(() => {
     resetNoticeOwnerForTest();
+    clearSessionExpiredError();
     sessionStorage.clear();
     vi.stubGlobal('location', { ...window.location, replace });
   });

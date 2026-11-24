@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { matchPath } from 'react-router-dom';
 
 import { authApi } from '../api/auth';
-import { AUTH_FLAG_KEY, claimUserLogout, endSessionAndReloadToLogin, getAccessToken, setAccessToken } from '../api/client';
+import { AUTH_FLAG_KEY, claimUserLogout, clearSessionExpiredError, endSessionAndReloadToLogin, getAccessToken, setAccessToken } from '../api/client';
 import type { TenantSessionState } from '../api/tenant-session';
 import { subscribeTenantSession } from '../api/tenant-session';
 import { usersApi } from '../api/users';
@@ -145,15 +145,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // 구독하지 않으면 강등 후 UI 가 이유 없는 전 API 403 루프에 빠진다(api/tenant-session.ts 참조).
   useEffect(() => subscribeTenantSession(applyTenantState), [applyTenantState]);
 
-  // 다른 탭에서의 로그아웃을 감지해 이 탭도 즉시 인증 상태를 초기화한다(#565).
+  // 다른 탭에서의 로그인·로그아웃을 감지해 이 탭도 같은 세션을 반영한다(#565).
   // `storage` 이벤트는 변경을 일으킨 탭 자신에게는 발생하지 않고 다른 탭에서만 발생하므로,
-  // 여기서 초기화가 일어난다면 그 원인은 항상 "다른 탭의 로그아웃"이다. 액세스 토큰은
+  // 여기서 일어나는 일의 원인은 항상 "다른 탭의 로그인·로그아웃"이다. 액세스 토큰은
   // 탭마다 별도의 JS 메모리에 있어 이 통지 없이는 만료(최대 30분) 전까지 계속 인증된 것처럼
-  // 동작한다. 토큰을 버리고 로그인 화면으로 하드 리로드한다 — 상태만 비우면 ProtectedRoute 가
+  // 동작한다. 로그아웃은 토큰을 버리고 로그인 화면으로 하드 리로드한다 — 상태만 비우면 ProtectedRoute 가
   // 지금 주소를 딥링크로 남기고 캐시도 그대로라, 이 탭에서 다음 사람이 로그인하면 앞 사람 화면이 보인다(WD-276).
   useEffect(() => {
     const handleStorage = (event: StorageEvent) => {
-      if (event.key !== AUTH_FLAG_KEY || event.newValue !== null) return;
+      if (event.key !== AUTH_FLAG_KEY) return;
+      // 다른 탭이 다시 로그인하면 이 탭의 만료 표식부터 비운다 — 표식이 남으면 이 탭은 HTTP 갱신을 다시
+      // 시도하지 못해, 공유 refresh 쿠키로 되살릴 수 있는 세션까지 죽은 채로 둔다(WD-1082 반려).
+      if (event.newValue !== null) {
+        clearSessionExpiredError();
+        return;
+      }
       // 다른 탭의 로그아웃도 로그아웃이다 — 이 탭의 캐시·돌아갈 주소도 남기지 않는다(WD-276).
       // 토큰이 없는 탭(로그인·가입 화면 등)은 버릴 것이 없으니 리로드하지 않는다 — 입력 중인 폼을 지우지 않게.
       if (getAccessToken() !== null) endSessionAndReloadToLogin();

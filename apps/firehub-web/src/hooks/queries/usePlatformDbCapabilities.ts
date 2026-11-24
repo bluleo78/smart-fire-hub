@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 
 import { getPlatformDbCapabilities } from '../../api/platformDb';
+import { isUnauthorizedError } from '../../lib/api-error';
 import type { DocumentSearchMode } from '../../types/document';
 import { useAuth } from '../useAuth';
 
@@ -23,7 +24,9 @@ export function usePlatformDbCapabilities() {
     queryFn: getPlatformDbCapabilities,
     staleTime: 30_000,
     refetchInterval: (query) => (query.state.data?.vectorStoreAvailable === false ? STORE_DOWN_REFETCH_MS : false),
-    retry: 2,
+    // 기본 재시도는 401 을 뺀다(WD-1082) — 오버라이드가 defaultOptions.retry 를 대신하므로 여기서도 빼지 않으면
+    // 만료 401 이 두 번 더 재시도된다. 횟수는 기존 `retry: 2` 와 같다(실패 0회째·1회째 뒤에만 다시 시도).
+    retry: (failureCount, error) => !isUnauthorizedError(error) && failureCount < 2,
     enabled: isAuthenticated,
   });
 }

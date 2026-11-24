@@ -9,7 +9,7 @@
 import type { Page } from '@playwright/test';
 
 import { mockApi } from '../../fixtures/api-mock';
-import { expect, test } from '../../fixtures/auth.fixture';
+import { expect, MOCK_TOKEN_RESPONSE, test } from '../../fixtures/auth.fixture';
 
 const EXPIRED_TEXT = '세션이 만료되어 다시 로그인해 주세요';
 const REFRESH_URL = '/api/v1/auth/refresh';
@@ -31,6 +31,16 @@ function watchRefresh(page: Page) {
   page.on('request', (r) => { if (isRefresh(r.url())) state.requested += 1; });
   page.on('requestfinished', (r) => { if (isRefresh(r.url())) state.settled += 1; });
   page.on('requestfailed', (r) => { if (isRefresh(r.url())) state.settled += 1; });
+  return state;
+}
+
+/** /auth 를 뺀 API 요청 수 — 같은 화면의 재요청이 실제로 나갔는지 보기 위한 계수기(WD-1082 반려). */
+function watchApiRequests(page: Page) {
+  const state = { count: 0 };
+  page.on('request', (r) => {
+    const url = r.url();
+    if (url.includes('/api/v1/') && !url.includes('/api/v1/auth/')) state.count += 1;
+  });
   return state;
 }
 
@@ -269,5 +279,188 @@ test.describe('사용 중 세션 만료 안내 (WD-830)', () => {
     await page.getByRole('menuitem', { name: '로그아웃' }).click();
     await expect(page).toHaveURL(/\/login$/);
     await expectNoNotice(page);
+  });
+
+  test('세션 만료 뒤 재시도로 떠나기 확인이 다시 뜨지 않는다 (WD-1082)', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'POST', '/api/v1/auth/logout', {});
+    await page.goto('/');
+    await expect(page.getByRole('heading', { name: '홈' })).toBeVisible();
+
+    // 떠나기 확인 가드 — 첫 확인을 취소한다
+    await page.evaluate(() => {
+      const guard = (e: BeforeUnloadEvent) => {
+        e.preventDefault();
+        e.returnValue = '';
+      };
+      (window as unknown as { __guard: typeof guard }).__guard = guard;
+      window.addEventListener('beforeunload', guard);
+    });
+    let dialogs = 0;
+    page.on('dialog', (dialog) => {
+      dialogs += 1;
+      void dialog.dismiss();
+    });
+    const refresh = watchRefresh(page);
+
+    // 사용 중 세션 만료 — 모든 API 401, refresh 도 늘 401 (WD-1078 시험의 "원래 설정")
+    await page.route('**/api/v1/**', (route) => {
+      const url = route.request().url();
+      if (url.includes('/auth/signup-status') || url.includes('/auth/logout')) return route.fallback();
+      return route.fulfill({ status: 401, contentType: 'application/json', body: '{}' });
+    });
+    await page.route(`**${REFRESH_URL}`, (route) =>
+      route.fulfill({ status: 401, contentType: 'application/json', body: '{}' }),
+    );
+
+    const goTo = (path: string) =>
+      page.evaluate((p) => {
+        history.pushState({}, '', p);
+        window.dispatchEvent(new PopStateEvent('popstate'));
+      }, path);
+
+    goTo('/data/datasets');
+    await expect.poll(() => dialogs).toBeGreaterThanOrEqual(1);
+    await expect.poll(() => refresh.settled).toBeGreaterThanOrEqual(1);
+    // 취소했으니 그 화면에 남는다
+    await expect(page).not.toHaveURL(/\/login$/);
+
+    // 같은 화면에서의 재요청 한 건 — 검색어를 바꿔 목록을 다시 부른다(주소의 pathname 은 그대로다).
+    // 표식은 HTTP 갱신만 막으므로 이 요청은 갱신을 만들지 않고, 로그인 이동도 다시 건드리지 않는다(WD-1082 반려).
+    const api = watchApiRequests(page);
+    const before = api.count;
+    await page.getByPlaceholder('데이터셋 검색...').fill('검색어');
+    await expect.poll(() => api.count).toBeGreaterThan(before);
+
+    // 재요청이 끝난 뒤에도 두 번째 만료 이동·두 번째 갱신이 없는지 본다
+    await page.waitForTimeout(1000);
+
+    // 갱신은 한 번만 요청한다 — 표식이 두 번째 HTTP 갱신을 만들지 않는다
+    expect(refresh.requested).toBe(1);
+    // 확인 창은 처음 한 번뿐이다 — 취소한 사용자에게 다시 뜨지 않는다
+    expect(dialogs).toBe(1);
+    await expect(page).not.toHaveURL(/\/login$/);
+  });
+
+  test('떠나기 확인을 취소한 뒤 가드를 풀고 이어진 요청은 로그인 화면으로 보낸다 (WD-1082 반려)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(page, 'POST', '/api/v1/auth/logout', {});
+    await page.goto('/');
+    await expect(page.getByRole('heading', { name: '홈' })).toBeVisible();
+
+    // 떠나기 확인 가드 — 첫 확인을 취소한다(사용자가 그 화면에 남기로 함)
+    await page.evaluate(() => {
+      const guard = (e: BeforeUnloadEvent) => {
+        e.preventDefault();
+        e.returnValue = '';
+      };
+      (window as unknown as { __guard: typeof guard }).__guard = guard;
+      window.addEventListener('beforeunload', guard);
+    });
+    let dialogs = 0;
+    page.on('dialog', (dialog) => {
+      dialogs += 1;
+      void dialog.dismiss();
+    });
+    const refresh = watchRefresh(page);
+
+    // 사용 중 세션 만료 — 모든 API 401, refresh 도 늘 401 (WD-1078 시험의 "원래 설정")
+    await page.route('**/api/v1/**', (route) => {
+      const url = route.request().url();
+      if (url.includes('/auth/signup-status') || url.includes('/auth/logout')) return route.fallback();
+      return route.fulfill({ status: 401, contentType: 'application/json', body: '{}' });
+    });
+    await page.route(`**${REFRESH_URL}`, (route) =>
+      route.fulfill({ status: 401, contentType: 'application/json', body: '{}' }),
+    );
+
+    const goTo = (path: string) =>
+      page.evaluate((p) => {
+        history.pushState({}, '', p);
+        window.dispatchEvent(new PopStateEvent('popstate'));
+      }, path);
+
+    await goTo('/data/datasets');
+    await expect.poll(() => dialogs).toBeGreaterThanOrEqual(1);
+    await expect.poll(() => refresh.settled).toBeGreaterThanOrEqual(1);
+    // 취소했으니 머문다
+    await expect(page).not.toHaveURL(/\/login$/);
+    expect(refresh.requested).toBe(1);
+
+    // 변경을 버린 셈으로 가드를 풀고 다른 화면으로 간다 — 이어지는 요청은 만료 표식으로 곧바로 거절되지만,
+    // 표식이 로그인 이동까지 막지 않으므로 /login 으로 가야 한다(죽은 화면에 남지 않음, WD-830 이동은 늘 다시 한다)
+    await page.evaluate(() => {
+      window.removeEventListener('beforeunload', (window as unknown as { __guard: EventListener }).__guard);
+    });
+    await goTo('/pipelines');
+
+    await expect(page).toHaveURL(/\/login$/);
+    // HTTP 갱신은 처음 한 번뿐이다 — 표식이 갱신 요청을 다시 만들지 않는다
+    expect(refresh.requested).toBe(1);
+    // 가드를 푼 뒤에는 확인 창 없이 간다
+    expect(dialogs).toBe(1);
+  });
+
+  test('만료로 멈춘 뒤 다른 탭이 다시 로그인하면 이 탭의 갱신이 살아난다 (WD-1082 반려)', async ({ authenticatedPage: tabA }) => {
+    await mockApi(tabA, 'POST', '/api/v1/auth/logout', {});
+    await tabA.goto('/');
+    await expect(tabA.getByRole('heading', { name: '홈' })).toBeVisible();
+
+    // 떠나기 확인 가드 — 첫 확인을 취소해 만료 이동이 막히고 이 탭이 남는다
+    await tabA.evaluate(() => {
+      const guard = (e: BeforeUnloadEvent) => {
+        e.preventDefault();
+        e.returnValue = '';
+      };
+      (window as unknown as { __guard: typeof guard }).__guard = guard;
+      window.addEventListener('beforeunload', guard);
+    });
+    let dialogs = 0;
+    tabA.on('dialog', (dialog) => {
+      dialogs += 1;
+      void dialog.dismiss();
+    });
+    const refresh = watchRefresh(tabA);
+
+    // 사용 중 세션 만료 — 모든 API 401, refresh 도 늘 401 (WD-1078 시험의 "원래 설정")
+    await tabA.route('**/api/v1/**', (route) => {
+      const url = route.request().url();
+      if (url.includes('/auth/signup-status') || url.includes('/auth/logout')) return route.fallback();
+      return route.fulfill({ status: 401, contentType: 'application/json', body: '{}' });
+    });
+    await tabA.route(`**${REFRESH_URL}`, (route) =>
+      route.fulfill({ status: 401, contentType: 'application/json', body: '{}' }),
+    );
+
+    await tabA.evaluate(() => {
+      history.pushState({}, '', '/data/datasets');
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    });
+    await expect.poll(() => dialogs).toBeGreaterThanOrEqual(1);
+    await expect.poll(() => refresh.settled).toBeGreaterThanOrEqual(1);
+    await expect(tabA).not.toHaveURL(/\/login$/);
+    expect(refresh.requested).toBe(1);
+    // 만료 이동이 세션 표식을 지웠다 — 다른 탭의 로그인이 표식에 변화를 주려면 지금 비어 있어야 한다
+    expect(await tabA.evaluate(() => localStorage.getItem('hasSession'))).toBeNull();
+
+    // 다른 탭 — 로그인은 AuthContext 에서 그대로 `localStorage.setItem('hasSession', 'true')` 다.
+    // 같은 오리진·같은 localStorage 를 쓰므로 여기서 넣으면 이 탭에 storage 이벤트가 간다.
+    const tabB = await tabA.context().newPage();
+    await tabB.goto('/login');
+    await tabB.evaluate(() => localStorage.setItem('hasSession', 'true'));
+    // storage 이벤트는 문서 사이로 곧바로 건너간다 — 이 탭이 표식을 비우는 사이의 여유
+    await tabA.waitForTimeout(500);
+    // 갱신은 아직 한 번뿐이다 — 표식이 남아 있으면 이 아래의 재요청도 갱신을 만들지 못한다
+    expect(refresh.requested).toBe(1);
+
+    // 다른 탭의 로그인으로 표식이 비워졌다면, 이 탭의 갱신은 다시 시도되어 살아난다(WD-1082 반려 · 검토자 지적)
+    await tabA.route(`**${REFRESH_URL}`, (route) => route.fulfill({ json: MOCK_TOKEN_RESPONSE }));
+    await tabA.getByPlaceholder('데이터셋 검색...').fill('검색어');
+    await expect.poll(() => refresh.requested, { timeout: 10000 }).toBeGreaterThanOrEqual(2);
+
+    // 갱신이 다시 살아났으니 로그인 이동·확인 창은 없다 — 이 탭은 그대로 쓸 수 있다
+    await tabA.waitForTimeout(1000);
+    expect(dialogs).toBe(1);
+    await expect(tabA).not.toHaveURL(/\/login$/);
   });
 });
