@@ -357,7 +357,12 @@ export default function JobOverviewTab({
               )
             )}
             {job.lastExecutedAt && (
-              <ReadonlyCard label="마지막 실행" value={formatDate(job.lastExecutedAt)} />
+              /* 작업 시간대 기준 + 약어로 보인다(WD-1097) — 같은 카드의 「타임존」·「다음 실행」(WD-1077)과 같은 기준이어야 한다.
+                 formatDate 는 브라우저 시간대·이름 없이 보여 UTC 브라우저에선 KST 작업의 실행이 다른 날·시각으로 읽혔다. */
+              <ReadonlyCard
+                label="마지막 실행"
+                value={formatNextRunWithZone(parseUtcDate(job.lastExecutedAt), job.timezone)}
+              />
             )}
           </div>
         </div>
