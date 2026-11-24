@@ -26,6 +26,19 @@ class RedirectLocationsTest {
   }
 
   /**
+   * 글자로 시작하지 않는 「스킴」 Location 은 ./ 를 붙여 상대 참조로 검사하지만(WD-1060), 제어 문자가 섞이면 여전히 고정 문구로 거절한다.
+   */
+  @Test
+  void resolve_nonSchemeColonWithControlChar_stillRejected() {
+    assertThatThrownBy(
+            () ->
+                RedirectLocations.resolve(
+                    URI.create("https://api.example.com/v1/items"), "1x:a\u0001b"))
+        .isInstanceOf(ApiCallException.class)
+        .hasMessage(ApiCallErrorMessages.invalidRedirectLocation());
+  }
+
+  /**
    * 공백·한글이 든 Location 은 실행기(urljoin+httpx)처럼 인코딩해 따라간다(WD-991) — 한 번만 인코딩하고 이미 있는 %XX 는 그대로 둔다.
    *
    * <p>공용 사례 표(api-call-auth-vectors.json 의 redirectLocation)에는 한글·공백 사례를 넣지 않는다: Python resolver 는
