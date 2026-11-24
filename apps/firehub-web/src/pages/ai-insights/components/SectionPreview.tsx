@@ -1,7 +1,11 @@
+import { ChartLine, Lightbulb, TriangleAlert } from 'lucide-react';
+
 import type { TemplateSection } from '@/api/proactive';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { getSectionTypeDef } from '@/lib/template-section-types';
+
+import { SectionTypeIcon } from './SectionTypeIcon';
 
 /** 미리보기에서 변수 치환에 사용할 샘플 값 */
 const SAMPLE_VARIABLES: Record<string, string> = {
@@ -113,7 +117,8 @@ function renderContentPlaceholder(section: TemplateSection) {
       // 알림 섹션 — 앰버 경고 배너 플레이스홀더
       return (
         <div className="bg-warning-subtle border border-warning/30 rounded p-2 flex items-center gap-2">
-          <span className="text-warning text-sm">⚠️</span>
+          {/* WD-893: 이모지 대신 lucide 아이콘 */}
+          <TriangleAlert aria-hidden="true" className="size-4 shrink-0 text-warning" />
           <div className="h-2 bg-warning/20 rounded w-3/4" />
         </div>
       );
@@ -136,7 +141,7 @@ function renderContentPlaceholder(section: TemplateSection) {
       );
 
     case 'chart':
-      // 차트 섹션 — 차트 영역 플레이스홀더 (📈 아이콘 + 막대 모양)
+      // 차트 섹션 — 차트 영역 플레이스홀더 (ChartLine 아이콘 + 막대 모양)
       return (
         <div className="bg-muted/50 rounded p-3 flex flex-col items-center justify-center gap-2 h-16">
           <div className="flex items-end gap-1 h-8">
@@ -148,15 +153,18 @@ function renderContentPlaceholder(section: TemplateSection) {
               />
             ))}
           </div>
-          <span className="text-[10px] text-muted-foreground">📈 차트 영역</span>
+          <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
+            <ChartLine aria-hidden="true" className="size-3" />
+            차트 영역
+          </span>
         </div>
       );
 
     case 'recommendation':
-      // 권고사항 섹션 — 💡 카드 플레이스홀더
+      // 권고사항 섹션 — Lightbulb 카드 플레이스홀더
       return (
         <div className="bg-success-subtle border border-success/30 rounded p-2 flex items-start gap-2">
-          <span className="text-sm mt-0.5">💡</span>
+          <Lightbulb aria-hidden="true" className="size-4 shrink-0 mt-0.5 text-success" />
           <div className="space-y-1.5 flex-1">
             <div className="h-2 bg-success/20 rounded w-full" />
             <div className="h-2 bg-success/20 rounded w-4/5" />
@@ -191,7 +199,7 @@ function renderSection(section: TemplateSection, index: number, depth = 0): Reac
       <div key={section.key || index} style={{ marginLeft: indent }}>
         {/* 그룹 헤더 */}
         <div className={`flex items-center gap-2 py-1.5 px-2 rounded border-l-3 ${def?.color ?? 'border-l-violet-500'} bg-muted mb-2`}>
-          <span className="text-sm">{def?.icon}</span>
+          <SectionTypeIcon def={def} />
           <span className="text-sm font-semibold flex-1">{section.label || '그룹'}</span>
           {section.required && <span className="w-1.5 h-1.5 rounded-full bg-warning shrink-0" title="필수 섹션" />}
           <Badge variant="outline" className="text-[10px]">group</Badge>
@@ -216,12 +224,14 @@ function renderSection(section: TemplateSection, index: number, depth = 0): Reac
   return (
     <div
       key={section.key || index}
+      // WD-893: 시험이 스타일 클래스가 아니라 이 표시로 섹션 카드를 찾는다
+      data-testid="section-preview-card"
       className={`flex flex-col gap-2 py-2 px-2 rounded border border-l-3 ${def?.color ?? 'border-l-gray-500'} bg-card`}
       style={{ marginLeft: indent }}
     >
       {/* 섹션 헤더: 아이콘, 레이블, 필수 표시, 타입 뱃지 */}
       <div className="flex items-center gap-2">
-        <span className="text-sm">{def?.icon}</span>
+        <SectionTypeIcon def={def} />
         <span className="text-sm flex-1 font-medium">{section.label}</span>
         {section.required && (
           <span className="w-1.5 h-1.5 rounded-full bg-warning shrink-0" title="필수 섹션" />

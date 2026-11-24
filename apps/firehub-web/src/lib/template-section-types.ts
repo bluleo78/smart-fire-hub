@@ -1,8 +1,14 @@
+import type { LucideIcon } from 'lucide-react';
+import {
+  ArrowLeftRight, ChartLine, Clock, Folder, LayoutGrid, Lightbulb, List, Minus, Table, TriangleAlert, Type,
+} from 'lucide-react';
+
 import type { SectionType, TemplateSection } from '../api/proactive';
 
 export interface SectionTypeDefinition {
   type: SectionType;
-  icon: string;
+  // WD-893: 이모지는 OS·폰트마다 모양이 달라 lucide 컴포넌트로 통일한다
+  icon: LucideIcon;
   label: string;
   description: string;
   color: string; // Tailwind border color class
@@ -17,7 +23,7 @@ export interface SectionTypeDefinition {
 export const SECTION_TYPES: SectionTypeDefinition[] = [
   {
     type: 'text',
-    icon: '📝',
+    icon: Type,
     label: 'Text',
     description: '마크다운 서술형 텍스트. 요약, 분석, 인사이트 설명.',
     color: 'border-l-blue-500',
@@ -25,7 +31,7 @@ export const SECTION_TYPES: SectionTypeDefinition[] = [
   },
   {
     type: 'cards',
-    icon: '📊',
+    icon: LayoutGrid,
     label: 'Cards',
     description: '핵심 수치 카드. KPI, 통계 요약, 전주/전월 비교.',
     color: 'border-l-amber-500',
@@ -33,7 +39,7 @@ export const SECTION_TYPES: SectionTypeDefinition[] = [
   },
   {
     type: 'list',
-    icon: '📋',
+    icon: List,
     label: 'List',
     description: '항목 나열. 주요 이슈, 변경사항, 권고사항.',
     color: 'border-l-slate-500',
@@ -41,7 +47,7 @@ export const SECTION_TYPES: SectionTypeDefinition[] = [
   },
   {
     type: 'table',
-    icon: '📑',
+    icon: Table,
     label: 'Table',
     description: '행/열 구조 데이터. 순위표, 비교표, 상세 통계.',
     color: 'border-l-indigo-500',
@@ -49,7 +55,7 @@ export const SECTION_TYPES: SectionTypeDefinition[] = [
   },
   {
     type: 'comparison',
-    icon: '🔄',
+    icon: ArrowLeftRight,
     label: 'Comparison',
     description: '기간 비교. 전주/전월/전년 대비 변화율 표시.',
     color: 'border-l-purple-500',
@@ -57,7 +63,7 @@ export const SECTION_TYPES: SectionTypeDefinition[] = [
   },
   {
     type: 'alert',
-    icon: '⚠️',
+    icon: TriangleAlert,
     label: 'Alert',
     description: '경고/알림. 이상치, 임계값 초과, 긴급 권고.',
     color: 'border-l-red-500',
@@ -65,7 +71,7 @@ export const SECTION_TYPES: SectionTypeDefinition[] = [
   },
   {
     type: 'timeline',
-    icon: '🕐',
+    icon: Clock,
     label: 'Timeline',
     description: '시간순 이벤트 나열. 사건 경과, 작업 히스토리.',
     color: 'border-l-cyan-500',
@@ -73,7 +79,7 @@ export const SECTION_TYPES: SectionTypeDefinition[] = [
   },
   {
     type: 'chart',
-    icon: '📈',
+    icon: ChartLine,
     label: 'Chart',
     description: '차트/그래프 설명. 데이터 시각화 결과를 서술적으로 설명.',
     color: 'border-l-green-500',
@@ -81,7 +87,7 @@ export const SECTION_TYPES: SectionTypeDefinition[] = [
   },
   {
     type: 'recommendation',
-    icon: '💡',
+    icon: Lightbulb,
     label: 'Recommendation',
     description: 'AI 권고사항. 분석 결과를 바탕으로 제안하는 조치/개선 사항.',
     color: 'border-l-emerald-500',
@@ -89,7 +95,7 @@ export const SECTION_TYPES: SectionTypeDefinition[] = [
   },
   {
     type: 'group',
-    icon: '📁',
+    icon: Folder,
     label: 'Group',
     description: '섹션 그룹/챕터. 하위 섹션을 묶는 컨테이너.',
     color: 'border-l-violet-500',
@@ -97,7 +103,7 @@ export const SECTION_TYPES: SectionTypeDefinition[] = [
   },
   {
     type: 'divider',
-    icon: '➖',
+    icon: Minus,
     label: 'Divider',
     description: '구분선. 섹션 간 시각적 구분.',
     color: 'border-l-gray-500',

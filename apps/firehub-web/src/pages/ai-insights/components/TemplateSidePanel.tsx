@@ -23,8 +23,8 @@ function GuideTab() {
           onClick={() => setExpandedType(expandedType === st.type ? null : st.type)}
         >
           <div className="flex items-center justify-between">
-            <div className="font-medium text-sm">
-              {st.icon} {st.label}
+            <div className="inline-flex items-center gap-1 font-medium text-sm">
+              <st.icon aria-hidden="true" className="size-3.5" /> {st.label}
             </div>
           </div>
           <p className="text-xs text-muted-foreground mt-1">{st.description}</p>

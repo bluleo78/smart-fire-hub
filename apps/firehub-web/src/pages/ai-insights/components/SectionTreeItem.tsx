@@ -14,6 +14,8 @@ import {
 import { getSectionTypeDef, SECTION_TYPES } from '@/lib/template-section-types';
 import { cn } from '@/lib/utils';
 
+import { SectionTypeIcon } from './SectionTypeIcon';
+
 interface SectionTreeItemProps {
   section: TemplateSection;
   depth: number;
@@ -100,7 +102,7 @@ export function SectionTreeItem({
       )}
 
       {/* Icon + Label */}
-      <span className="text-base">{def?.icon}</span>
+      <SectionTypeIcon def={def} />
       <span className={cn('flex-1 truncate', isGroup && 'font-medium')}>
         {section.label}
       </span>
@@ -129,6 +131,8 @@ export function SectionTreeItem({
               variant="ghost"
               size="icon-sm"
               className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+              // WD-893: 아이콘만 있는 버튼이라 스크린리더가 「버튼」으로만 읽던 것을 이름으로 알린다
+              aria-label="하위 섹션 추가"
               onClick={(e) => e.stopPropagation()}
             >
               <Plus className="h-3 w-3" />
@@ -145,7 +149,7 @@ export function SectionTreeItem({
                     onAddChild(t.type as SectionType);
                   }}
                 >
-                  <span className="mr-2">{t.icon}</span> {t.label}
+                  <t.icon aria-hidden="true" /> {t.label}
                 </DropdownMenuItem>
               ))}
           </DropdownMenuContent>

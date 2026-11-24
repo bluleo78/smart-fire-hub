@@ -142,9 +142,13 @@ export async function setupTemplateListMocks(page: Page) {
  * 템플릿 상세 페이지 API 모킹
  * - 단건 템플릿 조회와 목록을 모킹한다.
  * @param templateId - 모킹할 템플릿 ID (기본값: 1)
+ * @param template - 돌려줄 템플릿 (기본값: 팩토리 기본 템플릿) — 섹션 구성을 바꿔 시험할 때 넘긴다(WD-893)
  */
-export async function setupTemplateDetailMocks(page: Page, templateId = 1) {
-  const template = createTemplate({ id: templateId });
+export async function setupTemplateDetailMocks(
+  page: Page,
+  templateId = 1,
+  template = createTemplate({ id: templateId }),
+) {
   await mockApi(page, 'GET', `/api/v1/proactive/templates/${templateId}`, template);
   await mockApi(page, 'GET', '/api/v1/proactive/templates', [template]);
   await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
