@@ -2,6 +2,20 @@ import { createCategories, createDataset } from '../../factories/dataset.factory
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { clickInOneTask } from '../../fixtures/click-in-one-task';
+import { grantDatasetPermissions, mockDatasetReferences } from '../../fixtures/dataset.fixture';
+
+/**
+ * WD-1062: 최종 주소가 ms 동안 expected(pathname+search) 그대로 유지되는지 100ms 간격으로 표집한다.
+ * 왜: expect.poll(...).toBe 는 첫 표집에서 통과해 버려, 그 뒤 늦게 일어나는 낡은 page 쓰기를 놓친다.
+ */
+async function expectUrlStays(page: import('@playwright/test').Page, expected: string, ms = 1000) {
+  const deadline = Date.now() + ms;
+  do {
+    const url = new URL(page.url());
+    expect(url.pathname + url.search).toBe(expected);
+    await page.waitForTimeout(100);
+  } while (Date.now() < deadline);
+}
 
 /**
  * 데이터셋 목록 — URL 쿼리 파라미터 동기화 (#94) E2E 테스트.
@@ -467,5 +481,171 @@ test.describe('데이터셋 목록 — URL 동기화', () => {
     await expect(favoriteButton).toHaveAttribute('aria-pressed', 'false');
     expect(params().get('favorite')).toBeNull();
     expect(params().get('showTemp')).toBe('1');
+  });
+
+  /**
+   * 이슈 WD-1062 — 범위 밖 페이지 보정 effect 가 옛 응답의 totalPages 로 계산한 page 를, 그 사이 외부 이동(사이드바 링크)으로 이미 떠난 주소에 쓰지 않아야 한다.
+   * 재현: page=5 목록 응답을 앱 안(XHR 래핑)에서 붙잡아 두었다가, 한 브라우저 태스크에서 사이드바 링크 클릭 직후 응답을 푼다.
+   * 보정 effect 의 가드가 없으면 최종 주소가 /data/datasets?page=2 로 오염된다(가드 제거 시 6/6 실패 확인).
+   */
+  test('범위 밖 페이지 보정 직전에 사이드바로 이동하면 보정이 새 주소에 page 를 쓰지 않는다 (WD-1062)', async ({ authenticatedPage: page }) => {
+    const urls: URL[] = [];
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', []);
+    await mockApi(page, 'GET', '/api/v1/datasets/tags', []);
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets',
+      (route) => {
+        const url = new URL(route.request().url());
+        urls.push(url);
+        // page=5 는 범위 밖 — 데이터는 3쪽(총 30건)뿐이라 빈 응답. 그 밖은 일반 목록
+        if (url.searchParams.get('page') === '5') {
+          return route.fulfill({ json: createPageResponse([], { page: 5, size: 10, totalElements: 30, totalPages: 3 }) });
+        }
+        return route.fulfill({ json: createPageResponse(datasets) });
+      },
+    );
+
+    // page=5 목록 응답을 앱 안에서 붙잡아 둔다 — XHR 처리기(axios)로 가는 이벤트 전달을 window.__wd1062Deliver() 가 부를 때까지 미룬다
+    await page.addInitScript(() => {
+      const w = window as unknown as { __wd1062Pending: Array<() => void>; __wd1062Deliver: () => void };
+      w.__wd1062Pending = [];
+      w.__wd1062Deliver = () => {
+        const queued = w.__wd1062Pending.splice(0);
+        for (const run of queued) run();
+      };
+      const urlOf = new WeakMap<XMLHttpRequest, string>();
+      const origOpen = XMLHttpRequest.prototype.open;
+      XMLHttpRequest.prototype.open = function (this: XMLHttpRequest, method: string, url: string | URL, ...rest: unknown[]) {
+        urlOf.set(this, String(url));
+        return (origOpen as (...a: unknown[]) => void).call(this, method, url, ...rest);
+      } as typeof XMLHttpRequest.prototype.open;
+      for (const name of ['onreadystatechange', 'onloadend', 'onload'] as const) {
+        // onload·onloadend 는 상위 프로토타입(XMLHttpRequestEventTarget)에 있어 체인을 거슬러 올라가 찾는다
+        let owner: object | null = XMLHttpRequest.prototype;
+        while (owner && !Object.getOwnPropertyDescriptor(owner, name)) owner = Object.getPrototypeOf(owner);
+        const desc = Object.getOwnPropertyDescriptor(owner!, name)!;
+        Object.defineProperty(owner!, name, {
+          ...desc,
+          set(this: XMLHttpRequest, fn: ((ev: Event) => void) | null) {
+            desc.set!.call(
+              this,
+              fn &&
+                ((ev: Event) => {
+                  if ((urlOf.get(this) ?? '').includes('page=5') && this.readyState === 4) w.__wd1062Pending.push(() => fn.call(this, ev));
+                  else fn.call(this, ev);
+                }),
+            );
+          },
+        });
+      }
+    });
+
+    // 붙잡은 응답 때문에 load 가 늦으므로 기다리지 않고 시작만 한다 — 실패는 아래에서 await 해 시험 실패로 드러낸다
+    const navigation = page.goto('/data/datasets?page=5');
+    await page.waitForFunction(() => (window as unknown as { __wd1062Pending?: unknown[] }).__wd1062Pending?.length);
+    // 한 브라우저 태스크 안에서 사이드바 이동을 시작하고 곧바로 붙잡은 응답을 푼다 — 응답 렌더·보정 effect 가 아직 커밋되지 않은 이동 transition 과 겹친다
+    await page.evaluate(() => {
+      const w = window as unknown as { __wd1062Deliver: () => void; __sidebarClicked?: boolean };
+      // 링크가 실제로 있어 눌렸을 때만 표식을 남긴다 — 사이드바가 바뀌어 클릭이 없으면 아래 표식 단언이 실패한다
+      const link = document.querySelector<HTMLAnchorElement>('a[href="/data/datasets"]');
+      if (link) {
+        link.click();
+        w.__sidebarClicked = true;
+      }
+      w.__wd1062Deliver();
+    });
+
+    // 이동 뒤 주소에 page 가 없고 경로가 그대로이며, 보정이 늦게 써도 잡히도록 안정적으로 유지되는지 폴링한다
+    await expect
+      .poll(() => new URL(page.url()).pathname + new URL(page.url()).search)
+      .toBe('/data/datasets');
+    await expectUrlStays(page, '/data/datasets');
+    await navigation;
+    // 트리거(사이드바 클릭)가 실제로 일어났어야 이 시험이 의미가 있다
+    expect(await page.evaluate(() => (window as unknown as { __sidebarClicked?: boolean }).__sidebarClicked)).toBe(true);
+  });
+
+  /**
+   * WD-1062 삭제 시험 공통 준비 — 3쪽(page=2)이 마지막 1건(id 21)뿐인 목록, 붙잡아 둘 DELETE 응답, 진입·삭제 확인 클릭까지 한다.
+   * 왜: 이 한 건을 지우면 보정이 page=1 을 쓰려 하므로, 응답을 늦춘 사이 주소를 바꿔 낡은 보정을 재현한다.
+   * releaseDelete 로 DELETE 응답을 풀고, 삭제 요청이 나갈 때까지 기다린 뒤 돌아온다.
+   */
+  async function setupGatedLastPageDelete(page: import('@playwright/test').Page) {
+    await grantDatasetPermissions(page);
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', []);
+    await mockApi(page, 'GET', '/api/v1/datasets/tags', []);
+    await mockDatasetReferences(page);
+    const lastItem = createDataset({ id: 21, name: '스물한번째 데이터셋', tableName: 'dataset_21' });
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets',
+      (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        const requestedPage = new URL(route.request().url()).searchParams.get('page') ?? '0';
+        const body =
+          requestedPage === '2'
+            ? createPageResponse([lastItem], { page: 2, size: 10, totalElements: 21, totalPages: 3 })
+            : createPageResponse(datasets, { page: Number(requestedPage), size: 10, totalElements: 21, totalPages: 3 });
+        return route.fulfill({ json: body });
+      },
+    );
+    let releaseDelete: () => void = () => {};
+    const deleteGate = new Promise<void>((resolve) => {
+      releaseDelete = resolve;
+    });
+    let deleteRequested = false;
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets/21',
+      async (route) => {
+        if (route.request().method() !== 'DELETE') return route.fallback();
+        deleteRequested = true;
+        await deleteGate;
+        return route.fulfill({ json: {} });
+      },
+    );
+
+    await page.goto('/data/datasets?page=2');
+    const row = page.getByRole('row', { name: /스물한번째 데이터셋/ });
+    await row.getByRole('button', { name: '삭제' }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: '삭제' }).click();
+    await expect.poll(() => deleteRequested).toBe(true);
+    return { releaseDelete };
+  }
+
+  /**
+   * 이슈 WD-1062 — 삭제 응답을 기다리는 사이 필터를 바꾸면, 삭제 뒤 page 보정이 이미 바뀐 주소(page 없음)에 page 를 되써서는 안 된다.
+   * 왜: handleDelete 의 보정은 await 뒤에 실행돼 클릭 시점의 page·행 수로 계산한다. 그 사이 주소가 바뀌었으면 그 계산은 낡은 값이다.
+   */
+  test('삭제 응답 전에 필터를 바꾸면 삭제 뒤 page 보정이 새 필터 주소에 쓰지 않는다 (WD-1062)', async ({ authenticatedPage: page }) => {
+    const { releaseDelete } = await setupGatedLastPageDelete(page);
+
+    // 확인 창이 열려 있어도 동작하도록 한 태스크 안에서 즐겨찾기 필터를 누른다
+    await clickInOneTask(page, [page.getByRole('button', { name: '즐겨찾기', exact: true })]);
+    await expect
+      .poll(() => {
+        const params = new URL(page.url()).searchParams;
+        return [params.get('favorite'), params.get('page')];
+      })
+      .toEqual(['true', null]);
+
+    releaseDelete();
+    await expect(page.getByText(/삭제되었습니다/)).toBeVisible();
+    await expectUrlStays(page, '/data/datasets?favorite=true');
+  });
+
+  /**
+   * 이슈 WD-1062 — 삭제 응답을 기다리는 사이 사이드바로 다른 화면(/pipelines)에 떠났다면, 삭제 뒤 page 보정이 그 화면 주소에 page 를 쓰지 않아야 한다.
+   * 왜: 보정은 await 뒤에 실행되므로 이미 떠난 경로에 ?page=1 을 덧붙이면 엉뚱한 화면 주소가 오염된다.
+   */
+  test('삭제 응답 전에 다른 화면으로 떠나면 삭제 뒤 page 보정이 그 주소에 쓰지 않는다 (WD-1062)', async ({ authenticatedPage: page }) => {
+    const { releaseDelete } = await setupGatedLastPageDelete(page);
+
+    // 사이드바의 파이프라인 링크로 떠난다 — 확인 창 잔여 상태와 무관하게 누르려고 한 태스크 안에서 클릭한다
+    await clickInOneTask(page, [page.locator('a[href="/pipelines"]').first()]);
+    await expect.poll(() => new URL(page.url()).pathname).toBe('/pipelines');
+
+    releaseDelete();
+    await expect(page.getByText(/삭제되었습니다/)).toBeVisible();
+    // 보정이 /pipelines 에 page 를 덧붙이지 않는다
+    await expectUrlStays(page, '/pipelines');
   });
 });

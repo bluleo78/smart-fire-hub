@@ -96,6 +96,17 @@ function parseSortKey(raw: string | null): SortKey | null {
   return raw === 'name' || raw === 'createdAt' ? raw : null;
 }
 
+/**
+ * WD-1062: search 문자열에서 정렬 보기 설정(sort·order)을 뺀 문자열을 돌려준다.
+ * 왜: 정렬은 클라이언트 보기 설정이라 page 를 초기화하지 않으므로, 보정 시점의 주소 비교(addressChangedSince)에서는 무시해야 한다.
+ */
+function withoutSortKeys(search: string): string {
+  const params = new URLSearchParams(search);
+  params.delete('sort');
+  params.delete('order');
+  return params.toString();
+}
+
 /** 분류 id 파싱 — 주소 값이 없으면 undefined(전체). 눌림 표시와 토글이 같은 비교(숫자)를 쓰게 한다(?categoryId=03 도 3). */
 function parseCategoryId(raw: string | null): number | undefined {
   return raw ? Number(raw) : undefined;
@@ -208,7 +219,7 @@ export default function DatasetListPage() {
    * 아직 렌더에 오지 않은 변경까지 포함한 최신 주소 — 마지막 pending, 없으면 렌더에 온 주소.
    * 실제 주소와 어긋나면(커밋 전 외부 이동) pending 을 비우는 부수 효과가 있으므로 렌더 중에는 부르지 않는다.
    * 호출처는 이벤트 처리기(필터·정렬 클릭)와 effect·비동기 뒤 호출(페이지 범위 보정 effect, handleDelete 의 await 뒤 page 보정)이다
-   * — 뒤의 둘은 사용자가 이미 떠난 주소 위에 쓸 수 있는 기존 결함이 있어 WD-1062 에서 다룬다.
+   * — 뒤의 둘은 낡은 값으로 계산한 page 를 떠난 주소에 쓰지 않도록 addressChangedSince 로 최신 주소와 대조한다(WD-1062).
    */
   const getLatestParams = useCallback(() => {
     const pending = pendingWritesRef.current;
@@ -227,6 +238,19 @@ export default function DatasetListPage() {
     }
     return base;
   }, []);
+
+  /**
+   * WD-1062: snapshot(과거 시점의 search 문자열) 이후 주소가 바뀌었는지 — 범위 보정 effect 와 handleDelete 의 await 뒤 보정이 함께 쓴다.
+   * 왜: 두 보정은 옛 값으로 page 를 계산하므로, (1) 다른 화면으로 떠났거나(경로 변경) (2) 조회 조건(필터·검색·page)이 바뀌었으면 쓰지 않아야 한다.
+   * 정렬(sort·order)은 클라이언트 보기 설정이라 page 를 초기화하지 않으므로 비교에서 뺀다 — 정렬만 바꾼 경우엔 보정이 여전히 유효하다.
+   */
+  const addressChangedSince = useCallback(
+    (snapshot: string) => {
+      if (window.location.pathname !== renderedPathnameRef.current) return true;
+      return withoutSortKeys(getLatestParams().toString()) !== withoutSortKeys(snapshot);
+    },
+    [getLatestParams],
+  );
 
   /** 아직 렌더에 오지 않은 변경까지 포함한 최신 주소 값 — 토글이 렌더 값 대신 이걸로 다음 값을 정한다. */
   const readLatestParam = (key: string) => getLatestParams().get(key);
@@ -361,10 +385,13 @@ export default function DatasetListPage() {
   const pageOutOfRange = !!datasetsData && !isPlaceholderData && page > 0 && page >= Math.max(datasetsData.totalPages, 1);
   useEffect(() => {
     if (!pageOutOfRange || !datasetsData) return;
+    // WD-1062: 이 effect 는 옛 응답의 totalPages 로 값을 계산한다. 그 사이 사용자가 다른 주소로 이미 떠났다면(렌더된 주소 ≠ 실제 최신 주소)
+    // 그 값을 새 주소에 덮어쓰지 않는다 — 새 주소의 응답이 오면 다시 판정한다.
+    if (addressChangedSince(searchParams.toString())) return;
     const lastPage = Math.max(datasetsData.totalPages - 1, 0);
     // 이미 목표 쪽이면 patchParams 가 쓸 것이 없다고 보고 그냥 돌아온다
     patchParams({ page: lastPage === 0 ? null : lastPage });
-  }, [pageOutOfRange, datasetsData, patchParams]);
+  }, [pageOutOfRange, datasetsData, patchParams, addressChangedSince, searchParams]);
 
   // 검색어를 뺀 여섯 필터(카테고리·저장방식·출처·상태·보안등급·즐겨찾기) 중 하나라도 걸려 있는지 (WD-879).
   // 0건 빈 상태가 「데이터셋이 없습니다」(데이터 자체가 없음)인지 「조건에 맞는 데이터셋이 없습니다」(필터로 걸러짐)인지 가르는 기준이다.
@@ -385,6 +412,9 @@ export default function DatasetListPage() {
 
   const handleDelete = async (id: number, name: string) => {
     try {
+      // 삭제 응답을 기다리는 사이 사용자가 필터·정렬을 바꿀 수 있어, 시작 시점의 주소를 기억해 둔다(WD-1062).
+      // 왜: 아래 nextPage 가 렌더된 page·rawDatasets 로 계산되므로 기준 주소도 같은 렌더의 searchParams 여야 한다(getLatestParams 는 이미 다른 주소일 수 있다)
+      const paramsAtStart = searchParams.toString();
       await deleteDataset.mutateAsync(id);
       // 지운 데이터셋 카드가 「최근 접근」에 남지 않게 뺀다 (WD-390)
       removeRecent(id);
@@ -392,7 +422,9 @@ export default function DatasetListPage() {
       // "검색 결과 없음" 오표시(#549)를 방지한다. page 는 URL 쿼리 파라미터라
       // setPage 대신 patchParams 로 갱신한다 (0 페이지는 파라미터 제거로 표현).
       const nextPage = getPageAfterDelete(rawDatasets.length, page);
-      if (nextPage !== page) {
+      // 왜: nextPage 는 클릭 시점의 page·행 수로 계산한 값이다. 그 사이 주소가 바뀌었다면(다른 필터 → page 초기화 등)
+      // 이미 새 조건의 첫 쪽을 보고 있으므로 낡은 page 를 되쓰면 새 주소를 덮어쓴다 — 주소가 그대로일 때만 보정한다.
+      if (nextPage !== page && !addressChangedSince(paramsAtStart)) {
         patchParams({ page: nextPage === 0 ? null : nextPage });
       }
       toast.success(`데이터셋 "${name}"${iGa(name)} 삭제되었습니다.`);
