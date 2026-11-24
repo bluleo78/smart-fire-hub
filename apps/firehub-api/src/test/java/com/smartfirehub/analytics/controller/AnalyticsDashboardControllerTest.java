@@ -18,6 +18,7 @@ import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
@@ -266,6 +267,42 @@ class AnalyticsDashboardControllerTest {
             jsonPath("$.errors.autoRefreshSeconds")
                 .value(CreateDashboardRequest.AUTO_REFRESH_MAX_MESSAGE));
     verify(dashboardService, never()).update(anyLong(), any(), anyLong());
+  }
+
+  /**
+   * WD-1079: 수정은 이름을 생략(null, 변경 없음)할 수 있지만 빈 값·공백만으로 바꿀 수는 없다 — 400, 서비스는 부르지 않는다. 앞뒤 공백이 낀 정상 이름은
+   * 통과한다.
+   */
+  @Test
+  void updateDashboard_blankName_returns400_nullOrPaddedOk() throws Exception {
+    for (String blank : new String[] {"", "   ", " \n\t", "\u3000\u3000", "\u00A0"}) {
+      mockMvc
+          .perform(
+              put("/api/v1/analytics/dashboards/1")
+                  .header("Authorization", "Bearer test-token")
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(objectMapper.writeValueAsString(Map.of("name", blank))))
+          .andExpect(status().isBadRequest())
+          .andExpect(jsonPath("$.errors.name").value("이름을 비울 수 없습니다."));
+    }
+    verify(dashboardService, never()).update(anyLong(), any(), anyLong());
+
+    when(dashboardService.update(anyLong(), any(UpdateDashboardRequest.class), anyLong()))
+        .thenReturn(sampleDashboard());
+    mockMvc
+        .perform(
+            put("/api/v1/analytics/dashboards/1")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"description\":\"설명만\"}"))
+        .andExpect(status().isOk());
+    mockMvc
+        .perform(
+            put("/api/v1/analytics/dashboards/1")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(Map.of("name", "  매출  "))))
+        .andExpect(status().isOk());
   }
 
   // ── DELETE /api/v1/analytics/dashboards/{id} ───────────────────────────────

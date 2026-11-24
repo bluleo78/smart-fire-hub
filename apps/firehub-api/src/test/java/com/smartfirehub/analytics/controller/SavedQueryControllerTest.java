@@ -393,7 +393,8 @@ class SavedQueryControllerTest {
     for (UpdateSavedQueryRequest request :
         List.of(
             new UpdateSavedQueryRequest(null, null, "   ", null, null, null),
-            new UpdateSavedQueryRequest(" \n", null, null, null, null, null))) {
+            new UpdateSavedQueryRequest(" \n", null, null, null, null, null),
+            new UpdateSavedQueryRequest("\u3000", null, null, null, null, null))) {
       mockMvc
           .perform(
               put("/api/v1/analytics/queries/1")
