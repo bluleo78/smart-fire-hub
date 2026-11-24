@@ -2,14 +2,20 @@ package com.smartfirehub.analytics.dto;
 
 import com.smartfirehub.global.validation.DescriptionLimits;
 import com.smartfirehub.global.validation.MaxJsonSize;
+import com.smartfirehub.global.validation.TextRules;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import java.util.Map;
 
 /** 차트 생성 요청. */
 public record CreateChartRequest(
-    @NotBlank @Size(max = 200) String name,
+    // WD-1081: @NotBlank 가 못 거르는 NBSP 류를 HAS_TEXT 로 막아 수정 DTO 와 같은 판정(이유는 TextRules)
+    @NotBlank
+        @Size(max = 200)
+        @Pattern(regexp = TextRules.HAS_TEXT, message = TextRules.NAME_BLANK_MESSAGE)
+        String name,
     @Size(max = DescriptionLimits.MAX_LENGTH, message = DescriptionLimits.CHART_TOO_LONG)
         String description,
     @NotNull Long savedQueryId,

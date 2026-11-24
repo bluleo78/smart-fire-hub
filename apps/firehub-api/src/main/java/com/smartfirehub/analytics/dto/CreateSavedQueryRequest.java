@@ -1,15 +1,23 @@
 package com.smartfirehub.analytics.dto;
 
 import com.smartfirehub.global.validation.DescriptionLimits;
+import com.smartfirehub.global.validation.TextRules;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
 /** 저장 쿼리 생성 요청. */
 public record CreateSavedQueryRequest(
-    @NotBlank @Size(max = 200) String name,
+    // WD-1081: @NotBlank 가 못 거르는 NBSP 류를 HAS_TEXT 로 막아 수정 DTO 와 같은 판정(이유는 TextRules)
+    @NotBlank
+        @Size(max = 200)
+        @Pattern(regexp = TextRules.HAS_TEXT, message = TextRules.NAME_BLANK_MESSAGE)
+        String name,
     @Size(max = DescriptionLimits.MAX_LENGTH, message = DescriptionLimits.QUERY_TOO_LONG)
         String description,
+    // WD-1081: SQL 도 같다 — @NotBlank 는 NBSP 류를 못 거르므로 @Pattern(HAS_TEXT) 가 메운다
     @NotBlank
+        @Pattern(regexp = TextRules.HAS_TEXT, message = TextRules.SQL_BLANK_MESSAGE)
         @Size(
             max = CreateSavedQueryRequest.SQL_MAX_LENGTH,
             message = CreateSavedQueryRequest.SQL_TOO_LONG_MESSAGE)

@@ -419,4 +419,52 @@ class ChartControllerTest {
                 .content(objectMapper.writeValueAsString(Map.of("name", "  매출  "))))
         .andExpect(status().isOk());
   }
+
+  /**
+   * WD-1081: 만들기도 수정(WD-1079)과 같이 빈 값·전각 공백·NBSP 만인 이름을 400 으로 거른다. 앞뒤에 전각 공백이 낀 정상 이름은 201 — 서비스는
+   * 400 일 때 부르지 않는다. 빈 값·ASCII 공백·U+3000 은 {@code @NotBlank} 문구("필수 입력값입니다."), NBSP 류는
+   * {@code @Pattern} 문구("이름을 비울 수 없습니다.")로 400 문구가 갈린다.
+   */
+  @Test
+  void createChart_blankName_returns400_paddedOk() throws Exception {
+    mockAuth("analytics:write");
+    when(chartService.create(any(CreateChartRequest.class), eq(1L)))
+        .thenReturn(sampleChartResponse(42L));
+
+    for (String blank : new String[] {"\u00A0", "\u2007", "\u202F", "\u00A0\u3000"}) {
+      CreateChartRequest req = new CreateChartRequest(blank, "desc", 1L, "bar", Map.of(), false);
+      mockMvc
+          .perform(
+              post("/api/v1/analytics/charts")
+                  .header("Authorization", "Bearer valid-token")
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(objectMapper.writeValueAsString(req)))
+          .andExpect(status().isBadRequest())
+          .andExpect(jsonPath("$.errors.name").value("이름을 비울 수 없습니다."));
+    }
+    // WD-1081 반-목표: 빈 값·ASCII 공백·U+3000 은 @NotBlank(String.isBlank)가 잡아 기존 문구를 그대로 유지한다
+    for (String blank : new String[] {"   ", "", "\u3000\u3000", " \u3000 "}) {
+      mockMvc
+          .perform(
+              post("/api/v1/analytics/charts")
+                  .header("Authorization", "Bearer valid-token")
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(
+                      objectMapper.writeValueAsString(
+                          new CreateChartRequest(blank, "desc", 1L, "bar", Map.of(), false))))
+          .andExpect(status().isBadRequest())
+          .andExpect(jsonPath("$.errors.name").value("필수 입력값입니다."));
+    }
+    verify(chartService, never()).create(any(), anyLong());
+
+    CreateChartRequest padded =
+        new CreateChartRequest("\u3000차트\u3000", "desc", 1L, "bar", Map.of(), false);
+    mockMvc
+        .perform(
+            post("/api/v1/analytics/charts")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(padded)))
+        .andExpect(status().isCreated());
+  }
 }
