@@ -292,7 +292,7 @@ test.describe('WD-931 목록 건수 라이브 리전', () => {
     await mockAuditShrinking(page);
     await page.goto('/admin/audit-logs');
     // 기본 20건 → 쪽 크기 10 으로 바꿔 25건이 3쪽이 되게 한다
-    await page.getByRole('combobox', { name: '페이지 사이즈' }).click();
+    await page.getByRole('combobox', { name: '페이지당' }).click();
     await page.getByRole('option', { name: '10', exact: true }).click();
     await expect(announcedCount(page, '총 25건 중 1-10')).toBeVisible();
 
@@ -366,7 +366,7 @@ test.describe('WD-931 목록 건수 라이브 리전', () => {
 
     await page.goto('/admin/audit-logs');
     // 기본 20건 → 쪽 크기 10 으로 바꿔 25건이 3쪽이 되게 한다
-    await page.getByRole('combobox', { name: '페이지 사이즈' }).click();
+    await page.getByRole('combobox', { name: '페이지당' }).click();
     await page.getByRole('option', { name: '10', exact: true }).click();
     await expect(announcedCount(page, '총 25건 중 1-10')).toBeVisible();
 
@@ -417,7 +417,7 @@ test.describe('WD-931 목록 건수 라이브 리전', () => {
     await mockAuditByResult(page, { total: 25 });
     await page.goto('/admin/audit-logs');
     // 쪽 크기를 10 으로 바꿔 25건을 3쪽으로 나눈다
-    await page.getByRole('combobox', { name: '페이지 사이즈' }).click();
+    await page.getByRole('combobox', { name: '페이지당' }).click();
     await page.getByRole('option', { name: '10', exact: true }).click();
     await expect(announcedCount(page, '총 25건 중 1-10')).toBeVisible();
 

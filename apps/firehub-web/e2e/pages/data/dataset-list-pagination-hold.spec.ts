@@ -90,7 +90,7 @@ test('쪽 이동 중 쪽 크기를 바꾸면 이전 행이 남지 않는다 (WD-
   await nav.getByRole('button', { name: '다음 페이지' }).click();
   await expect.poll(held.count).toBeGreaterThan(0);
   const before = held.count();
-  await page.getByRole('combobox', { name: '페이지 사이즈' }).click();
+  await page.getByRole('combobox', { name: '페이지당' }).click();
   await page.getByRole('option', { name: '20', exact: true }).click();
   await expect.poll(held.count).toBeGreaterThan(before);
   await expect(page.getByText(firstRowName, { exact: true })).toHaveCount(0);
