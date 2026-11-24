@@ -8,6 +8,7 @@ import {
   createJobExecution,
   createJobs,
   createMessage,
+  createReport,
   createTemplate,
   createTemplates,
 } from '../factories/ai-insight.factory';
@@ -258,4 +259,44 @@ export async function captureJobWrites(page: Page, jobId = 1) {
     },
   );
   return { posts, puts };
+}
+
+/**
+ * 서버 limit 상한(ProactiveReportController.MAX_LIMIT = 100)을 흉내 낸 리포트 목록 모킹 (WD-1058).
+ * 100건 넘는 「더 보기」가 offset 조각으로 나눠 받는지 보려고 150건 서버처럼 limit 을 100 으로 자르고 offset 을 지킨다.
+ * - failOffset: 그 offset 의 요청만 500 으로 답한다(뒤 조각 실패).
+ * - shiftFromOffset: 그 offset 부터의 요청은 조각 사이에 새 리포트 한 건이 맨 위에 생긴 것처럼 한 칸 앞(offset-1)부터 준다 —
+ *   실제 서버에서는 새 리포트가 그 뒤 모든 offset 을 한 칸씩 민다.
+ * 돌려주는 배열에 받은 요청을 `limit=<n>&offset=<n>` 꼴로 쌓는다.
+ */
+export async function mockClampedReports(
+  page: Page,
+  options: { failOffset?: number; shiftFromOffset?: number } = {},
+): Promise<string[]> {
+  const all = Array.from({ length: 150 }, (_, i) =>
+    createReport({ executionId: 1000 + i, title: `리포트 ${i + 1}`, summary: null }),
+  );
+  const requests: string[] = [];
+  await page.route(
+    (url) => url.pathname === '/api/v1/proactive/reports',
+    (route) => {
+      const q = new URL(route.request().url()).searchParams;
+      const limit = Number(q.get('limit') ?? 20);
+      const offset = Number(q.get('offset') ?? 0);
+      requests.push(`limit=${limit}&offset=${offset}`);
+      if (options.failOffset !== undefined && offset === options.failOffset) {
+        return route.fulfill({
+          status: 500,
+          contentType: 'application/json',
+          body: JSON.stringify({ status: 500, error: 'Internal Server Error', message: 'boom' }),
+        });
+      }
+      // 서버 상한과 같은 클램프
+      const size = Math.min(Math.max(limit, 1), 100);
+      const shifted = options.shiftFromOffset !== undefined && offset >= options.shiftFromOffset;
+      const from = shifted ? offset - 1 : offset;
+      return route.fulfill({ status: 200, body: JSON.stringify(all.slice(from, from + size)) });
+    },
+  );
+  return requests;
 }

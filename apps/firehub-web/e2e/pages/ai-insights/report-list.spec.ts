@@ -1,5 +1,7 @@
+import type { Locator, Page } from '@playwright/test';
+
 import { createJob, createReport, createTemplate } from '../../factories/ai-insight.factory';
-import { mockProactivePermissions } from '../../fixtures/ai-insight.fixture';
+import { mockClampedReports, mockProactivePermissions } from '../../fixtures/ai-insight.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 
@@ -184,6 +186,95 @@ test.describe('리포트 목록', () => {
     await expect(page.getByText('리포트 1', { exact: true })).toBeVisible({ timeout: 300 });
     // 응답이 도착하면 추가 행이 붙는다
     await expect(page.getByText('리포트 21', { exact: true })).toBeVisible();
+  });
+
+  // WD-1058: 서버 상한(100)을 흉내 낸 150건 모킹(fixture)에 이 화면이 함께 부르는 잡·알림 수 모킹을 더한다.
+  async function setupClampedReports(
+    page: Page,
+    options?: { failOffset?: number; shiftFromOffset?: number },
+  ): Promise<string[]> {
+    const requests = await mockClampedReports(page, options);
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs', [JOB]);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    return requests;
+  }
+
+  // 「더 보기」를 눌러 20건씩 늘며 행 수가 to 가 될 때까지 매번 늘어난 수를 확인한다(WD-1058)
+  async function clickMoreUntil(rows: Locator, more: Locator, to: number): Promise<void> {
+    for (let n = (await rows.count()) + 20; n <= to; n += 20) {
+      await more.click();
+      await expect(rows).toHaveCount(n);
+    }
+  }
+
+  test('리포트가 100건을 넘어도 더 보기로 101번째부터 보이고 끝에서만 버튼이 사라진다 (WD-1058)', async ({
+    authenticatedPage: page,
+  }) => {
+    const requests = await setupClampedReports(page);
+    const rows = page.locator('tbody tr');
+    const more = page.getByRole('button', { name: '더 보기' });
+
+    await page.goto('/ai-insights/reports');
+    await expect(rows).toHaveCount(20);
+
+    // 20 -> 120: 100건 이후 구간은 두 번째 조각(offset 100)으로 받아야 한다
+    await clickMoreUntil(rows, more, 120);
+    await expect(page.getByRole('link', { name: '리포트 120', exact: true })).toBeVisible();
+    await expect(more).toBeVisible();
+    expect(requests).toContain('limit=100&offset=0');
+    expect(requests).toContain('limit=20&offset=100');
+
+    // 120 -> 150: 서버 끝(150건)에서만 버튼이 사라지고 끝 안내가 나온다
+    await more.click();
+    await expect(rows).toHaveCount(140);
+    await more.click();
+    await expect(rows).toHaveCount(150);
+    await expect(more).toHaveCount(0);
+    // 140 -> 150 은 10건이 늘었으므로 「없습니다」가 아니라 「마지막 리포트입니다」로 끝을 알린다(120 에서 잘못 끝나지 않는다)
+    await expect(page.getByTestId('reports-load-status')).toHaveText(
+      '리포트 10건을 더 불러왔습니다. 마지막 리포트입니다.',
+    );
+  });
+
+  test('100건 넘은 더 보기에서 조각이 한 행 겹쳐도 거짓 끝 없이 limit 만큼 보인다 (WD-1058)', async ({
+    authenticatedPage: page,
+  }) => {
+    const requests = await setupClampedReports(page, { shiftFromOffset: 100 });
+    const rows = page.locator('tbody tr');
+    const more = page.getByRole('button', { name: '더 보기' });
+
+    await page.goto('/ai-insights/reports');
+    await expect(rows).toHaveCount(20);
+    await clickMoreUntil(rows, more, 120);
+    // 두 번째 조각이 한 행 겹쳐도 부족분을 더 받아 120행이 채워지고 중복 행이 없다
+    await expect(page.getByRole('link', { name: '리포트 100', exact: true })).toHaveCount(1);
+    // 밀린 뒤 구간(101~120)이 하나도 빠지지 않는다 — 새 리포트가 뒤 offset 을 모두 한 칸 미는 서버 상태
+    for (let i = 101; i <= 120; i++) {
+      await expect(page.getByRole('link', { name: `리포트 ${i}`, exact: true })).toHaveCount(1);
+    }
+    await expect(more).toBeVisible();
+    await expect(page.getByText('마지막 리포트입니다')).toHaveCount(0);
+    expect(requests.some((r) => /^limit=\d+&offset=1[12]\d$/.test(r))).toBe(true);
+  });
+
+  test('100건 넘은 더 보기에서 뒤 조각이 실패하면 보던 행이 남고 다시 시도할 수 있다 (WD-1058)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupClampedReports(page, { failOffset: 100 });
+    const rows = page.locator('tbody tr');
+    const more = page.getByRole('button', { name: '더 보기' });
+
+    await page.goto('/ai-insights/reports');
+    await expect(rows).toHaveCount(20);
+
+    // 100행까지는 첫 조각 하나라 성공한다
+    await clickMoreUntil(rows, more, 100);
+    // 120 요청은 두 번째 조각(offset 100)이 500 — 부분 결과 없이 실패해 보던 100행으로 돌아간다
+    await more.click();
+    await expect(page.getByRole('alert')).toHaveText('다음 목록을 불러오지 못했습니다. 다시 시도하세요.');
+    await expect(rows).toHaveCount(100);
+    // 실패 안내 아래에서 「다시 시도」로 이어 받을 수 있다(WD-956 방식)
+    await expect(page.getByRole('button', { name: '다시 시도' })).toBeVisible();
   });
 
   test('양식 상세 편집 중에도 사이드바 리포트 메뉴가 활성으로 남는다', async ({
