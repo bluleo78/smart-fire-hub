@@ -8,7 +8,7 @@
 /** 팔레트 한 칸 — base(500)와 테마별 텍스트/윤곽선 shade(라이트 700 / 다크 300)를 묶어 둔다. */
 export interface PaletteEntry {
   base: string; // 500 — 범례 점·인스턴스 노드 배경
-  textLight: string; // 700 — 라이트 모드 텍스트/윤곽선
+  textLight: string; // 700(amber·orange·lime 은 800, WD-1070) — 라이트 모드 텍스트/윤곽선
   textDark: string; // 300 — 다크 모드 텍스트/윤곽선
 }
 
@@ -18,17 +18,22 @@ export interface PaletteEntry {
  * 뒤 6개는 앞 6개와 색상환에서 최대한 떨어진 tailwind 계열을 골랐다.
  * 각 엔트리의 textLight/textDark는 #377에서 확보한 대비 계약(윤곽선 ≥3:1, 라벨 ≥4.5:1)을
  * 만족해야 하며, ontology-colors.contrast.test.ts가 12칸 전부를 전수 단언한다.
+ *
+ * WD-1070: amber·orange·lime 의 textLight 는 700 이 아니라 800 이다. 노드 tint(10%)를 실제 라이트 페이지
+ * 배경(indigo 기준 #f6f7f9) 위에 합성하면 700 은 4.36~4.39:1 로 라벨 AA(4.5:1)에 못 미쳐서(#ffffff
+ * 기준으로만 통과했었다) 한 단계 어둡게 했다. ontology-colors.contrast.test.ts 가 6개 테마 조합의
+ * 실제 --background 위에서 12칸 전부(와 폴백 회색)를 단언한다.
  */
 export const PALETTE: readonly PaletteEntry[] = [
   { base: '#ef4444', textLight: '#b91c1c', textDark: '#fca5a5' }, // red
   { base: '#3b82f6', textLight: '#1d4ed8', textDark: '#93c5fd' }, // blue
-  { base: '#f59e0b', textLight: '#b45309', textDark: '#fcd34d' }, // amber
+  { base: '#f59e0b', textLight: '#92400e', textDark: '#fcd34d' }, // amber
   { base: '#ec4899', textLight: '#be185d', textDark: '#f9a8d4' }, // pink
   { base: '#10b981', textLight: '#047857', textDark: '#6ee7b7' }, // emerald
   { base: '#8b5cf6', textLight: '#6d28d9', textDark: '#c4b5fd' }, // violet
   { base: '#06b6d4', textLight: '#0e7490', textDark: '#67e8f9' }, // cyan
-  { base: '#f97316', textLight: '#c2410c', textDark: '#fdba74' }, // orange
-  { base: '#84cc16', textLight: '#4d7c0f', textDark: '#bef264' }, // lime
+  { base: '#f97316', textLight: '#9a3412', textDark: '#fdba74' }, // orange
+  { base: '#84cc16', textLight: '#3f6212', textDark: '#bef264' }, // lime
   { base: '#d946ef', textLight: '#a21caf', textDark: '#f0abfc' }, // fuchsia
   { base: '#14b8a6', textLight: '#0f766e', textDark: '#5eead4' }, // teal
   { base: '#6366f1', textLight: '#4338ca', textDark: '#a5b4fc' }, // indigo
@@ -39,20 +44,19 @@ export const DEFAULT_TYPE_COLOR = '#64748b';
 const DEFAULT_TEXT_LIGHT = '#334155';
 const DEFAULT_TEXT_DARK = '#cbd5e1';
 
-// #rrggbb → rgba(r,g,b,alpha) 변환. tint 배경 계산에 사용.
-const hexToRgba = (hex: string, alpha: number): string => {
-  const h = hex.replace('#', '');
-  const r = parseInt(h.slice(0, 2), 16);
-  const g = parseInt(h.slice(2, 4), 16);
-  const b = parseInt(h.slice(4, 6), 16);
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-};
+/**
+ * 노드 배경 tint 알파 — 라이트 10% / 다크 14%.
+ * cytoscape 는 background-color 의 rgba 알파를 무시하므로(WD-1070), 스키마 그래프는 불투명 base 색에
+ * 이 값을 background-opacity 로 따로 넘긴다.
+ */
+export function nodeTintAlpha(isDark: boolean): number {
+  return isDark ? 0.14 : 0.1;
+}
 
 // 커스텀 노드가 사용하는 테마별 색상 묶음.
 export interface EntityColorSet {
   base: string; // 타입색 500 — border·범례 점에 사용
   text: string; // 대비 통과 텍스트 색(테마별 700/300 shade)
-  tint: string; // 옅은 배경 tint(테마별 alpha)
 }
 
 /**
@@ -65,7 +69,7 @@ export interface TypePalette {
   color(type: string): string;
   /** 타입 노드의 윤곽선 색(테마별 700/300 shade) — #377. */
   contour(type: string, isDark: boolean): string;
-  /** 타입 + 테마로 노드 색상 묶음(base/text/tint)을 계산. */
+  /** 타입 + 테마로 노드 색상 묶음(base/text)을 계산. */
   colorSet(type: string, isDark: boolean): EntityColorSet;
 }
 
@@ -113,11 +117,10 @@ export function createTypePalette(types: readonly string[]): TypePalette {
     if (!entry) return isDark ? DEFAULT_TEXT_DARK : DEFAULT_TEXT_LIGHT;
     return isDark ? entry.textDark : entry.textLight;
   };
-  // light: 배경 10% tint + 700 텍스트, dark: 배경 14% tint + 300 텍스트 — 두 경우 모두 AA 통과.
+  // base 는 불투명 색 — 배경 옅기는 nodeTintAlpha 를 background-opacity 로 따로 적용한다.
   const colorSet = (type: string, isDark: boolean): EntityColorSet => ({
     base: color(type),
     text: contour(type, isDark),
-    tint: hexToRgba(color(type), isDark ? 0.14 : 0.1),
   });
 
   return { color, contour, colorSet };

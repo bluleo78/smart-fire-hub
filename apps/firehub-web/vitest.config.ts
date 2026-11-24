@@ -31,6 +31,7 @@ export default defineConfig({
         'node_modules/**',
         '**/*.test.ts',
         '**/*.test.tsx',
+        '**/*.test-helpers.ts',
         '**/*.d.ts',
         'vitest.config.ts',
         'vite.config.ts',

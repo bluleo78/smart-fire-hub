@@ -1,5 +1,7 @@
+import { nodeTintAlpha } from '@/lib/ontology-colors';
 import type { EntityTypeDef } from '@/types/ontology';
 
+import { composite, contrast, hexToRgb } from '../../../src/styles/theme-tokens.test-helpers';
 import { createOntologySummaries } from '../../factories/mapping.factory';
 import { createOntologyGraph, createOntologySchema } from '../../factories/ontology.factory';
 import { mockOntologyGraph, setupAdminAuth } from '../../fixtures/admin.fixture';
@@ -131,6 +133,82 @@ test.describe('#396 엔티티 타입 색상 — 데모 이름과 다른 온톨�
       // 모드별 shade가 실제로 다르다는 것까지 고정 — 라이트는 700, 다크는 300 계열이다.
       // (같은 값이 나오면 위 단언들이 두 테스트에서 같은 것을 보고 있다는 뜻이라 공허해진다.)
       expect(borders).toContain(mode === 'dark' ? '#fca5a5' : '#b91c1c');
+    });
+  }
+
+  // WD-1070: cytoscape 는 background-color 의 rgba 알파를 버려 노드가 원색(500)으로 칠해지고, 700/300 라벨이
+  // 배경에 묻혔다(약 2:1). 노드 레이어 캔버스의 실제 픽셀(padding 영역)을 읽어 컨테이너 배경 위에 합성한
+  // "보이는 배경"과 라벨 색의 WCAG 대비를 잰다 — data(bg) 문자열만 보면 이 결함을 그대로 통과시키기 때문이다.
+  for (const mode of ['light', 'dark'] as const) {
+    test(`${mode}: 스키마 캔버스 노드 배경이 옅은 tint 라 라벨 대비가 4.5:1 이상이다 (WD-1070)`, async ({
+      authenticatedPage: page,
+    }) => {
+      await page.addInitScript((m) => localStorage.setItem('theme', m), mode);
+      await selectCustomOntology(page);
+      await expect(page.getByTestId('schema-graph')).toHaveAttribute(
+        'data-node-count',
+        String(CUSTOM_TYPE_NAMES.length),
+      );
+      await expect(page.locator('html')).toHaveClass(new RegExp(`\\b${mode}\\b`));
+
+      // cytoscape 가 아직 칠하기 전이거나 재배치 직후면 픽셀이 비어 있을 수 있어, 칠해질 때까지 측정·단언을 재시도한다.
+      await expect(async () => {
+        const results = await page.evaluate(() => {
+          type CyNode = {
+            data(k: string): string;
+            renderedBoundingBox(): { x1: number; y1: number; y2: number };
+          };
+          const cy = (window as unknown as { __ontologySchemaCy?: { nodes(): { map<T>(fn: (n: CyNode) => T): T[] } } })
+            .__ontologySchemaCy;
+          const container = document.querySelector('[data-testid="schema-graph"]');
+          const nodeCanvas = container?.querySelector<HTMLCanvasElement>('canvas[data-id="layer2-node"]');
+          const nodeCtx = nodeCanvas?.getContext('2d');
+          if (!cy || !container || !nodeCanvas || !nodeCtx) return [];
+
+          // 1x1 캔버스로 임의 CSS 색(oklch 등)을 RGBA 로 변환한다.
+          const probe = document.createElement('canvas');
+          probe.width = 1;
+          probe.height = 1;
+          const pctx = probe.getContext('2d')!;
+          const toRgba = (css: string): number[] => {
+            pctx.clearRect(0, 0, 1, 1);
+            pctx.fillStyle = css;
+            pctx.fillRect(0, 0, 1, 1);
+            return [...pctx.getImageData(0, 0, 1, 1).data];
+          };
+          // 컨테이너부터 위로 올라가며 처음 불투명한 배경을 찾는다(컨테이너 자체는 투명일 수 있다).
+          let bg = [255, 255, 255, 255];
+          for (let el: Element | null = container; el; el = el.parentElement) {
+            const c = toRgba(getComputedStyle(el).backgroundColor);
+            if (c[3] === 255) {
+              bg = c;
+              break;
+            }
+          }
+          const dpr = window.devicePixelRatio || 1;
+          // 날 데이터만 돌려준다 — 합성·대비 계산은 Node 쪽에서 공용 헬퍼로 한다.
+          return cy.nodes().map((n) => {
+            const box = n.renderedBoundingBox();
+            // 왼쪽 안쪽 3.5px, 세로 가운데 — 윤곽선(1.5px)과 라벨(약 +5px부터) 사이의 순수 배경 padding 영역.
+            // 실측: x1+0~2 는 윤곽선·안티앨리어싱, x1+5 부터는 라벨 글리프라 +3.5 가 안전하다.
+            const px = Math.round((box.x1 + 3.5) * dpr);
+            const py = Math.round(((box.y1 + box.y2) / 2) * dpr);
+            return { sample: [...nodeCtx.getImageData(px, py, 1, 1).data], bg, text: n.data('text') };
+          });
+        });
+
+        expect(results).toHaveLength(CUSTOM_TYPE_NAMES.length);
+        // 기대 알파 — 소스의 tint 상수를 255 스케일로 옮긴 값. 샘플 점이 노드를 빗나가면(alpha 0 → 페이지 배경)
+        // 대비가 공허하게 통과하므로 알파가 tint 값 근처인지 고정한다.
+        const expectedAlpha = Math.round(nodeTintAlpha(mode === 'dark') * 255);
+        for (const { sample, bg, text } of results) {
+          const [r, g, b, a] = sample;
+          expect(a).toBeLessThan(255); // 원색 불투명이 아니다
+          expect(Math.abs(a - expectedAlpha)).toBeLessThanOrEqual(6);
+          const visible = composite({ r, g, b, a: a / 255 }, { r: bg[0], g: bg[1], b: bg[2], a: 1 });
+          expect(contrast(hexToRgb(text), visible)).toBeGreaterThanOrEqual(4.5);
+        }
+      }).toPass({ timeout: 10_000 });
     });
   }
 

@@ -1,6 +1,6 @@
 import type cytoscape from 'cytoscape';
 
-import { graphChrome } from '@/lib/ontology-colors';
+import { graphChrome, nodeTintAlpha } from '@/lib/ontology-colors';
 
 // 스키마 그래프 스타일시트 — 타입 노드는 data(bg/border/text)(테마별 tint·윤곽선·대비 텍스트), 엣지는 크롬 색.
 // 크롬 색은 InstanceGraph와 공유하는 단일 소스(ontology-colors.ts)에서 가져온다 (#377).
@@ -15,7 +15,11 @@ export function buildStylesheet(isDark: boolean, background?: string): cytoscape
       selector: 'node',
       style: {
         shape: 'round-rectangle',
+        // WD-1070: cytoscape 는 background-color 의 rgba 알파를 버려 rgba tint 를 넘기면 원색으로 칠해진다.
+        // data(bg)에는 불투명 base 색을 담고, 옅기는 background-opacity 로 표현한다.
+        // node:selected 규칙은 이 두 속성을 건드리지 않아야 선택 노드도 tint 를 유지한다.
         'background-color': 'data(bg)',
+        'background-opacity': nodeTintAlpha(isDark),
         'border-color': 'data(border)',
         'border-width': 1.5,
         label: 'data(label)',

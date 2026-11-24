@@ -11,30 +11,8 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { createTypePalette, DEFAULT_TYPE_COLOR, graphChrome, PALETTE } from './ontology-colors';
-
-/** `#rrggbb` → [r,g,b] */
-function rgb(hex: string): [number, number, number] {
-  const h = hex.replace('#', '');
-  return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)) as [number, number, number];
-}
-
-/** WCAG 2.x 상대휘도 */
-function luminance(hex: string): number {
-  const [r, g, b] = rgb(hex);
-  const lin = (v: number) => {
-    const c = v / 255;
-    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
-  };
-  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
-}
-
-function contrast(a: string, b: string): number {
-  const l1 = luminance(a);
-  const l2 = luminance(b);
-  const [hi, lo] = l1 > l2 ? [l1, l2] : [l2, l1];
-  return (hi + 0.05) / (lo + 0.05);
-}
+import { composite, contrast, hexToRgb, token } from '../styles/theme-tokens.test-helpers';
+import { createTypePalette, DEFAULT_TYPE_COLOR, graphChrome, nodeTintAlpha, PALETTE } from './ontology-colors';
 
 const MODES = [
   { name: 'light', isDark: false },
@@ -46,27 +24,27 @@ describe('색 변환 엔진', () => {
   it('알려진 대비값을 재현한다', () => {
     // 이슈 본문의 픽셀 샘플링 실측치(#d3cfc7 on #ffffff = 1.55)를 픽스처로 고정해
     // 계산기가 틀렸을 때 아래 단언 전체가 공허해지는 것을 막는다.
-    expect(contrast('#d3cfc7', '#ffffff')).toBeCloseTo(1.55, 1);
-    expect(contrast('#3f3b36', '#121110')).toBeCloseTo(1.7, 1);
-    expect(contrast('#f59e0b', '#ffffff')).toBeCloseTo(2.15, 1);
+    expect(contrast(hexToRgb('#d3cfc7'), hexToRgb('#ffffff'))).toBeCloseTo(1.55, 1);
+    expect(contrast(hexToRgb('#3f3b36'), hexToRgb('#121110'))).toBeCloseTo(1.7, 1);
+    expect(contrast(hexToRgb('#f59e0b'), hexToRgb('#ffffff'))).toBeCloseTo(2.15, 1);
   });
 });
 
 describe('#377 그래프 엣지', () => {
   it.each(MODES)('$name: 엣지선이 캔버스 배경 대비 ≥ 3 (SC 1.4.11)', ({ isDark }) => {
     const c = graphChrome(isDark);
-    expect(contrast(c.edge, c.bg), `edge=${c.edge} bg=${c.bg}`).toBeGreaterThanOrEqual(3);
+    expect(contrast(hexToRgb(c.edge), hexToRgb(c.bg)), `edge=${c.edge} bg=${c.bg}`).toBeGreaterThanOrEqual(3);
   });
 
   it.each(MODES)('$name: 엣지 라벨이 캔버스 배경 대비 ≥ 4.5 (SC 1.4.3)', ({ isDark }) => {
     const c = graphChrome(isDark);
-    expect(contrast(c.muted, c.bg)).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(hexToRgb(c.muted), hexToRgb(c.bg))).toBeGreaterThanOrEqual(4.5);
   });
 
   it.each(MODES)('$name: 노드 라벨·선택 링도 계속 통과한다', ({ isDark }) => {
     const c = graphChrome(isDark);
-    expect(contrast(c.label, c.bg)).toBeGreaterThanOrEqual(4.5);
-    expect(contrast(c.ring, c.bg)).toBeGreaterThanOrEqual(3);
+    expect(contrast(hexToRgb(c.label), hexToRgb(c.bg))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(hexToRgb(c.ring), hexToRgb(c.bg))).toBeGreaterThanOrEqual(3);
   });
 });
 
@@ -92,7 +70,7 @@ describe('#377 노드 윤곽선 (#396 팔레트 12칸 전수)', () => {
     'light/PALETTE[$i]: 윤곽선(textLight)이 캔버스 배경 대비 ≥ 3 (SC 1.4.11)',
     ({ textLight }) => {
       const c = graphChrome(false);
-      expect(contrast(textLight, c.bg), `contour=${textLight}`).toBeGreaterThanOrEqual(3);
+      expect(contrast(hexToRgb(textLight), hexToRgb(c.bg)), `contour=${textLight}`).toBeGreaterThanOrEqual(3);
     },
   );
 
@@ -100,7 +78,7 @@ describe('#377 노드 윤곽선 (#396 팔레트 12칸 전수)', () => {
     'dark/PALETTE[$i]: 윤곽선(textDark)이 캔버스 배경 대비 ≥ 3 (SC 1.4.11)',
     ({ textDark }) => {
       const c = graphChrome(true);
-      expect(contrast(textDark, c.bg), `contour=${textDark}`).toBeGreaterThanOrEqual(3);
+      expect(contrast(hexToRgb(textDark), hexToRgb(c.bg)), `contour=${textDark}`).toBeGreaterThanOrEqual(3);
     },
   );
 
@@ -108,7 +86,7 @@ describe('#377 노드 윤곽선 (#396 팔레트 12칸 전수)', () => {
     const c = graphChrome(isDark);
     const palette = createTypePalette(['Incident']);
     const contour = palette.contour('알수없는타입', isDark);
-    expect(contrast(contour, c.bg), `contour=${contour}`).toBeGreaterThanOrEqual(3);
+    expect(contrast(hexToRgb(contour), hexToRgb(c.bg)), `contour=${contour}`).toBeGreaterThanOrEqual(3);
   });
 
   it('타입 base(500) 색은 그대로 둔다 — 범례 점·드로어 점과 인상을 공유하기 때문', () => {
@@ -193,7 +171,7 @@ describe('#396 / #493 createTypePalette', () => {
     expect(palette.color('없는타입')).toBe(DEFAULT_TYPE_COLOR);
     expect(palette.contour('없는타입', false)).toBe('#334155');
     expect(palette.contour('없는타입', true)).toBe('#cbd5e1');
-    expect(palette.colorSet('없는타입', false).tint).toBe('rgba(100, 116, 139, 0.1)');
+    expect(palette.colorSet('없는타입', false)).toEqual({ base: DEFAULT_TYPE_COLOR, text: '#334155' });
   });
 
   it('중복 타입명이 섞여도 색이 밀리지 않는다', () => {
@@ -206,5 +184,30 @@ describe('#396 / #493 createTypePalette', () => {
     const input = ['C', 'A', 'B'];
     createTypePalette(input);
     expect(input).toEqual(['C', 'A', 'B']);
+  });
+});
+
+// WD-1070: 노드 배경은 base 를 background-opacity(tint 알파)로 캔버스 위에 합성한 색이다. 라벨 대비는
+// 그 합성색 기준이어야 한다. 배경은 리터럴이 아니라 index.css 의 실제 --background 6개 테마 조합
+// (indigo/ocean/sunset × 라이트/다크)이다 — 순백·폴백 기준으로는 통과해도 실제 배경에서는
+// amber/orange/lime 700 이 4.5 미만이었다. 폴백 회색 쌍(미등록 타입)도 함께 본다.
+describe('노드 tint 합성 배경 위 라벨 대비 — 실제 테마 배경 (WD-1070)', () => {
+  const palette = createTypePalette([]);
+  const fallback = (isDark: boolean) => palette.colorSet('없는타입', isDark).text;
+  const CASES = [
+    ...PALETTE.map((p) => ({ name: p.base, base: p.base, light: p.textLight, dark: p.textDark })),
+    { name: `fallback ${DEFAULT_TYPE_COLOR}`, base: DEFAULT_TYPE_COLOR, light: fallback(false), dark: fallback(true) },
+  ];
+  const THEME_MODES = ['indigo', 'ocean', 'sunset'].flatMap((t) => [
+    [`${t}-light`, false] as const,
+    [`${t}-dark`, true] as const,
+  ]);
+
+  it.each(THEME_MODES)('%s(isDark=%s): 모든 타입 라벨 ≥ 4.5:1', (theme, isDark) => {
+    for (const { base, light, dark } of CASES) {
+      const bg = composite({ ...hexToRgb(base), a: nodeTintAlpha(isDark) }, token(theme, '--background'));
+      const label = isDark ? dark : light;
+      expect(contrast(hexToRgb(label), bg), `${theme} ${base}/${label}`).toBeGreaterThanOrEqual(4.5);
+    }
   });
 });
