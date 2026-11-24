@@ -139,7 +139,7 @@ export function TemplateJsonEditor({ value, onChange, readonly = false }: Templa
               key={st.type}
               variant="outline"
               size="sm"
-              className="h-6 px-2 text-xs gap-1"
+              className="px-2 text-xs gap-1"
               onClick={() => handleInsertSection(st.snippet)}
             >
               <span>{st.icon}</span>

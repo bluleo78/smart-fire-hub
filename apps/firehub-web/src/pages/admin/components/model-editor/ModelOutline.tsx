@@ -201,8 +201,8 @@ export default function ModelOutline({
           <Button
             ref={collapseButtonRef}
             variant="ghost"
-            size="icon"
-            className="h-6 w-6 @min-[856px]/kg-body:hidden"
+            size="icon-sm"
+            className="@min-[856px]/kg-body:hidden"
             onClick={() => onExpandedChange(false)}
             aria-label="목록 접기"
             aria-expanded
@@ -238,8 +238,7 @@ export default function ModelOutline({
               <Button
                 ref={addEntityTypeButtonRef}
                 variant="ghost"
-                size="icon"
-                className="h-6 w-6"
+                size="icon-sm"
                 onClick={onAddEntityType}
                 aria-label="타입 추가"
               >
@@ -290,8 +289,7 @@ export default function ModelOutline({
             {onAddRelation && (
               <Button
                 variant="ghost"
-                size="icon"
-                className="h-6 w-6"
+                size="icon-sm"
                 onClick={onAddRelation}
                 aria-label="관계 추가"
               >

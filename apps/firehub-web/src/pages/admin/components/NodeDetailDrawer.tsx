@@ -163,7 +163,7 @@ export default function NodeDetailDrawer({
           <span className="h-3 w-3 rounded-full" style={{ background: palette.color(node.type) }} />
           <Heading className="text-sm font-semibold">{node.type}</Heading>
         </div>
-        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onClose} aria-label="닫기">
+        <Button variant="ghost" size="icon-sm" onClick={onClose} aria-label="닫기">
           <X className="h-4 w-4" />
         </Button>
       </div>

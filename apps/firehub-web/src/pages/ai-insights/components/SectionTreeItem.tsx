@@ -127,8 +127,8 @@ export function SectionTreeItem({
           <DropdownMenuTrigger asChild>
             <Button
               variant="ghost"
-              size="icon"
-              className="h-6 w-6 opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+              size="icon-sm"
+              className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
               onClick={(e) => e.stopPropagation()}
             >
               <Plus className="h-3 w-3" />
@@ -155,8 +155,8 @@ export function SectionTreeItem({
       {/* Delete button - visible on hover */}
       <Button
         variant="ghost"
-        size="icon"
-        className="h-6 w-6 opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+        size="icon-sm"
+        className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
         aria-label={`${section.label} 섹션 삭제`}
         data-testid="section-delete"
         onClick={(e) => {

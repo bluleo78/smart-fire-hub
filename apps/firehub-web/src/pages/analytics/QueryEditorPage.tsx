@@ -991,7 +991,7 @@ export default function QueryEditorPage() {
             <Button
               variant="ghost"
               size="sm"
-              className="h-6 px-2 text-xs text-muted-foreground"
+              className="px-2 text-xs text-muted-foreground"
               onClick={() => setSidebarChoice(!sidebarOpen)}
             >
               {sidebarOpen ? (

@@ -309,8 +309,8 @@ export function DashboardWidgetCard({
             <>
               <Button
                 variant="ghost"
-                size="icon"
-                className="h-5 w-5 shrink-0 text-muted-foreground rounded-sm print:hidden"
+                size="icon-sm"
+                className="shrink-0 text-muted-foreground rounded-sm print:hidden"
                 aria-label={`「${title}」 위젯 이동·크기 조절`}
                 aria-describedby={moveHelpId}
                 title="화살표: 이동 · Shift+화살표: 크기 조절"
@@ -331,8 +331,8 @@ export function DashboardWidgetCard({
           {isEditing && onRemove && (
             <Button
               variant="ghost"
-              size="icon"
-              className="h-5 w-5 shrink-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-sm print:hidden"
+              size="icon-sm"
+              className="shrink-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-sm print:hidden"
               onClick={(e) => {
                 e.stopPropagation();
                 onRemove(widget.id);
