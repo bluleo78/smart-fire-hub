@@ -158,7 +158,7 @@ test.describe('#396 엔티티 타입 색상 — 데모 이름과 다른 온톨�
             data(k: string): string;
             renderedBoundingBox(): { x1: number; y1: number; y2: number };
           };
-          const cy = (window as unknown as { __ontologySchemaCy?: { nodes(): { map<T>(fn: (n: CyNode) => T): T[] } } })
+          const cy = (window as unknown as { __ontologySchemaCy?: { zoom(): number; nodes(): { map<T>(fn: (n: CyNode) => T): T[] } } })
             .__ontologySchemaCy;
           const container = document.querySelector('[data-testid="schema-graph"]');
           const nodeCanvas = container?.querySelector<HTMLCanvasElement>('canvas[data-id="layer2-node"]');
@@ -185,14 +185,16 @@ test.describe('#396 엔티티 타입 색상 — 데모 이름과 다른 온톨�
               break;
             }
           }
-          const dpr = window.devicePixelRatio || 1;
+          // 화면(CSS px) → 캔버스 픽셀 배율 — devicePixelRatio 대신 캔버스 실제 크기로 구한다(cytoscape 가 쓰는 배율 그대로).
+          const scale = nodeCanvas.width / nodeCanvas.clientWidth;
+          // 노드 안쪽 오프셋(그래프 좌표) — 윤곽선 1.5px + padding 10px 의 가운데. 줌을 곱해 화면 px 로 옮긴다
+          // (뷰포트·줌이 바뀌어도 윤곽선과 라벨 사이 순수 배경 영역을 읽게 — WD-1070 리뷰 후속).
+          const inset = (1.5 + 10 / 2) * cy.zoom();
           // 날 데이터만 돌려준다 — 합성·대비 계산은 Node 쪽에서 공용 헬퍼로 한다.
           return cy.nodes().map((n) => {
             const box = n.renderedBoundingBox();
-            // 왼쪽 안쪽 3.5px, 세로 가운데 — 윤곽선(1.5px)과 라벨(약 +5px부터) 사이의 순수 배경 padding 영역.
-            // 실측: x1+0~2 는 윤곽선·안티앨리어싱, x1+5 부터는 라벨 글리프라 +3.5 가 안전하다.
-            const px = Math.round((box.x1 + 3.5) * dpr);
-            const py = Math.round(((box.y1 + box.y2) / 2) * dpr);
+            const px = Math.round((box.x1 + inset) * scale);
+            const py = Math.round(((box.y1 + box.y2) / 2) * scale);
             return { sample: [...nodeCtx.getImageData(px, py, 1, 1).data], bg, text: n.data('text') };
           });
         });
