@@ -1,3 +1,5 @@
+import type { Page } from '@playwright/test';
+
 import { createJob } from '../../factories/ai-insight.factory';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
@@ -67,5 +69,76 @@ test.describe('스마트 작업 목록 — 다음 실행 컬럼 (#348)', () => {
     const row = page.getByRole('row').filter({ hasText: '비활성 작업' });
     await expect(row).toContainText('-');
     await expect(row).not.toContainText('09:00');
+  });
+});
+
+/**
+ * 상세·목록 「다음 실행」 작업 시간대 + 약어 (WD-1077)
+ *
+ * 상세 카드가 formatDate 로 브라우저 시간대·이름 없이 보여(UTC 브라우저에서 「오전 12:00」) 바로 위
+ * 「타임존 Asia/Seoul」 카드·편집 미리보기(「09:00 KST」)와 같은 실행이 다른 시각처럼 보였다.
+ * 브라우저를 UTC 로 고정해 작업 시간대 기준 시각과 그 시각의 약어(서머타임 반영)가 나오는지 본다.
+ */
+test.describe('스마트 작업 「다음 실행」 작업 시간대 표기 (WD-1077)', () => {
+  test.use({ timezoneId: 'UTC' });
+
+  async function mockDetail(page: Page, job: ReturnType<typeof createJob>) {
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs', [job]);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    await mockApi(page, 'GET', `/api/v1/proactive/jobs/${job.id}`, job);
+    await mockApi(page, 'GET', `/api/v1/proactive/jobs/${job.id}/executions`, []);
+    await mockApi(page, 'GET', '/api/v1/proactive/templates', []);
+  }
+
+  test('서울 작업 — 상세는 「09:00 KST」, 목록도 KST', async ({ authenticatedPage: page }) => {
+    // 3일 뒤 UTC 00:00 = KST 09:00 (현재 시각 기준 — 오늘/내일 분기를 피한다)
+    const job = createJob({
+      id: 31,
+      name: '서울 다음 실행 작업',
+      enabled: true,
+      triggerType: 'SCHEDULE',
+      cronExpression: '0 9 * * *',
+      timezone: 'Asia/Seoul',
+      nextExecuteAt: toServerLocalDateTime(seoulNineAmInDays(3)),
+    });
+    await mockDetail(page, job);
+
+    await page.goto('/ai-insights/jobs/31');
+    const card = page.getByText('다음 실행', { exact: true }).locator('..');
+    await expect(card).toContainText('09:00 KST');
+    await expect(card).not.toContainText('오전 12:00');
+
+    await page.goto('/ai-insights/jobs');
+    const row = page.getByRole('row').filter({ hasText: '서울 다음 실행 작업' });
+    await expect(row).toContainText(/09:00 KST/);
+  });
+
+  test('뉴욕 작업(겨울) — 상세는 EST, 목록도 EST', async ({ authenticatedPage: page }) => {
+    // 뉴욕 09:00 EST = UTC 14:00. 서머타임(EDT)이면 시각이 달라지므로 다가오는 1월 15일(겨울)로 잡는다 — 현재 시각 기준.
+    const now = new Date();
+    // 이번 해 1월 15일이 이미 지났으면(15일 포함 이후) 다음 해로 — 늘 앞으로 올 겨울 날짜가 되게 한다.
+    const passed = now.getUTCMonth() > 0 || now.getUTCDate() >= 15;
+    const year = passed ? now.getUTCFullYear() + 1 : now.getUTCFullYear();
+    // eslint-disable-next-line no-restricted-syntax -- epoch 숫자 인자(서버 날짜 문자열 아님, #691 대상 아님)
+    const winterNine = new Date(Date.UTC(year, 0, 15, 14, 0, 0));
+    const job = createJob({
+      id: 32,
+      name: '뉴욕 다음 실행 작업',
+      enabled: true,
+      triggerType: 'SCHEDULE',
+      cronExpression: '0 9 * * *',
+      timezone: 'America/New_York',
+      nextExecuteAt: toServerLocalDateTime(winterNine),
+    });
+    await mockDetail(page, job);
+
+    await page.goto('/ai-insights/jobs/32');
+    const card = page.getByText('다음 실행', { exact: true }).locator('..');
+    await expect(card).toContainText('09:00 EST');
+
+    await page.goto('/ai-insights/jobs');
+    const row = page.getByRole('row').filter({ hasText: '뉴욕 다음 실행 작업' });
+    await expect(row).toContainText(/09:00 EST/);
+    await expect(row).not.toContainText('14:00');
   });
 });

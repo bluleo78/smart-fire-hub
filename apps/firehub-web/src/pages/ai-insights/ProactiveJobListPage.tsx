@@ -29,7 +29,7 @@ import { extractApiError, handleApiError, isForbiddenError, isJobAlreadyRunning 
 import { cronToLabel } from '@/lib/cron-label';
 import { getExecutionDisplayStatus } from '@/lib/error-classifier';
 import { parseUtcDate, timeAgo } from '@/lib/formatters';
-import { formatNextRunShort } from '@/lib/next-run';
+import { formatNextRunShortWithZone } from '@/lib/next-run';
 import { CHANNEL_TYPE_LABELS, channelTypeLabel } from '@/lib/validations/proactive-job';
 
 import { OwnerIneligibleBadge } from './components/OwnerIneligibleBadge';
@@ -322,7 +322,8 @@ export default function ProactiveJobListPage() {
                          ANOMALY 전용은 cron 을 보존해 두지만(WD-993) 정기 예약 대상이 아니므로 미등록 경고 대상이 아니다. */
                       '-'
                     ) : job.nextExecuteAt ? (
-                      formatNextRunShort(parseUtcDate(job.nextExecuteAt), job.timezone)
+                      /* 작업 시간대 기준임을 약어로 밝힌다(WD-1077) — 모르는 시간대여도 던지지 않는 공용 함수. */
+                      formatNextRunShortWithZone(parseUtcDate(job.nextExecuteAt), job.timezone)
                     ) : (
                       /* 활성인데 다음 실행 시각이 없다 = 스케줄러에 등록되지 못한 상태 (#354).
                          next_execute_at은 등록 성공 시에만 채워지므로 미등록의 관측 가능한 신호가 된다.
