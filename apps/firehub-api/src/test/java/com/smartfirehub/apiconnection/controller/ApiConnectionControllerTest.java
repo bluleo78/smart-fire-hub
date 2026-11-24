@@ -2,6 +2,7 @@ package com.smartfirehub.apiconnection.controller;
 
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -29,6 +30,8 @@ import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
@@ -220,6 +223,48 @@ class ApiConnectionControllerTest {
         .andExpect(status().isOk());
 
     verify(apiConnectionService).update(eq(1L), any(UpdateApiConnectionRequest.class), eq(1L));
+  }
+
+  /** WD-1080: 수정으로 이름을 빈 문자열·공백(전각·NBSP 포함)만으로 바꿀 수 없다 — 400, 서비스 미호출. */
+  @ParameterizedTest
+  @ValueSource(strings = {"", "   ", " \n\t", "　　", " "})
+  void update_blankName_returns400(String name) throws Exception {
+    mockMvc
+        .perform(
+            put("/api/v1/api-connections/1")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(Map.of("name", name))))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.name").value("이름을 비울 수 없습니다."));
+
+    verify(apiConnectionService, never()).update(anyLong(), any(), anyLong());
+  }
+
+  /** WD-1080: 이름 생략(변경 없음)과 앞뒤 공백이 있는 정상 이름은 통과한다. */
+  @Test
+  void update_nameOmitted_or_padded_passes() throws Exception {
+    when(apiConnectionService.update(anyLong(), any(UpdateApiConnectionRequest.class), anyLong()))
+        .thenReturn(sampleConnection());
+
+    mockMvc
+        .perform(
+            put("/api/v1/api-connections/1")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"description\":\"설명\"}"))
+        .andExpect(status().isOk());
+
+    mockMvc
+        .perform(
+            put("/api/v1/api-connections/1")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"name\":\"  매출 API  \"}"))
+        .andExpect(status().isOk());
+
+    verify(apiConnectionService, times(2))
+        .update(eq(1L), any(UpdateApiConnectionRequest.class), eq(1L));
   }
 
   @Test

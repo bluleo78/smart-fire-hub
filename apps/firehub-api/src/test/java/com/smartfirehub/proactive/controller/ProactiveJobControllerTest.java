@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -41,6 +42,8 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
@@ -217,6 +220,71 @@ class ProactiveJobControllerTest {
     verify(proactiveJobService).updateJob(eq(10L), captor.capture(), eq(1L));
     assertThat(captor.getValue().templateId()).isNull();
     assertThat(captor.getValue().clearTemplate()).isTrue();
+  }
+
+  /** WD-1080: 수정으로 이름을 빈 문자열·공백(전각·NBSP 포함)만으로 바꿀 수 없다 — 400, 서비스 미호출. */
+  @ParameterizedTest
+  @ValueSource(strings = {"", "   ", " \n\t", "　　", " "})
+  void updateJob_blankName_returns400(String name) throws Exception {
+    mockAuth("proactive:write");
+
+    mockMvc
+        .perform(
+            put("/api/v1/proactive/jobs/10")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(Map.of("name", name))))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.name").value("이름을 비울 수 없습니다."));
+
+    verify(proactiveJobService, never()).updateJob(anyLong(), any(), anyLong());
+  }
+
+  /** WD-1080: 프롬프트도 빈 값·공백만으로 바꿀 수 없다 — 이름은 정상이므로 name 오류는 없어야 한다. */
+  @ParameterizedTest
+  @ValueSource(strings = {"", "   ", " \n\t", "　　", " "})
+  void updateJob_blankPrompt_returns400(String prompt) throws Exception {
+    mockAuth("proactive:write");
+
+    mockMvc
+        .perform(
+            put("/api/v1/proactive/jobs/10")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    objectMapper.writeValueAsString(Map.of("name", "정상 이름", "prompt", prompt))))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.prompt").value("프롬프트를 비울 수 없습니다."))
+        .andExpect(jsonPath("$.errors.name").doesNotExist());
+
+    verify(proactiveJobService, never()).updateJob(anyLong(), any(), anyLong());
+  }
+
+  /** WD-1080: 이름·프롬프트를 생략한 부분 수정과 앞뒤 공백·줄바꿈이 섞인 정상 값은 그대로 통과한다. */
+  @Test
+  void updateJob_partialWithoutNameOrPrompt_passes() throws Exception {
+    mockAuth("proactive:write");
+    when(proactiveJobService.updateJob(eq(10L), any(), eq(1L))).thenReturn(LocalDateTime.now());
+
+    mockMvc
+        .perform(
+            put("/api/v1/proactive/jobs/10")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"enabled\":false}"))
+        .andExpect(status().isOk());
+
+    mockMvc
+        .perform(
+            put("/api/v1/proactive/jobs/10")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    objectMapper.writeValueAsString(
+                        Map.of("name", "  매출 알림  ", "prompt", "분석\n해 줘"))))
+        .andExpect(status().isOk());
+
+    verify(proactiveJobService, times(2)).updateJob(eq(10L), any(), eq(1L));
   }
 
   @Test
