@@ -520,6 +520,54 @@ test.describe('쿼리 에디터 페이지', () => {
   });
 
   /**
+   * 회귀 테스트 — WD-1075
+   * ResultTable 을 memo 로 감쌌으므로, SQL 을 고쳐도 이전 결과가 그대로 남고(재렌더로 지워지지 않음)
+   * 다시 실행하면 새 응답 행이 옛 행을 대체해야 한다(낡은 데이터가 남지 않음).
+   */
+  test('SQL 을 고쳐도 이전 결과가 유지되고, 다시 실행하면 새 결과가 옛 결과를 대체한다 (WD-1075)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupNewQueryEditorMocks(page);
+
+    // 실행 순서대로 돌려줄 행 — 첫 실행은 [0], 두 번째 실행은 [1]
+    const rows = [
+      { id: 1, name: '첫 결과 행' },
+      { id: 9, name: '두번째 결과 행' },
+    ];
+    const payloads: unknown[] = [];
+    await page.route('**/api/v1/analytics/queries/execute', (route) => {
+      const body = createQueryResult({
+        columns: ['id', 'name'],
+        rows: [rows[payloads.length]],
+        totalRows: 1,
+      });
+      payloads.push(route.request().postDataJSON());
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+    });
+
+    await page.goto('/analytics/queries/new');
+    await page.locator('.cm-content').click();
+    await page.keyboard.type('SELECT 1');
+    await page.getByRole('button', { name: '실행' }).click();
+    await expect(page.getByText('첫 결과 행')).toBeVisible();
+
+    // SQL 편집 — 페이지가 다시 그려져도 이전 결과 표는 그대로여야 한다
+    // 실행 버튼을 눌러 포커스가 옮겨졌으므로 편집기를 다시 눌러 끝에 이어 쓴다
+    await page.locator('.cm-content').click();
+    await page.keyboard.press('End');
+    await page.keyboard.type(' + 1');
+    await expect(page.getByText('미저장 변경사항')).toBeVisible();
+    await expect(page.getByText('첫 결과 행')).toBeVisible();
+
+    // 다시 실행 — 새 응답이 옛 행을 대체하고, 요청에는 고친 SQL 이 실린다
+    await page.getByRole('button', { name: '실행' }).click();
+    await expect(page.getByText('두번째 결과 행')).toBeVisible();
+    await expect(page.getByText('첫 결과 행')).toHaveCount(0);
+    expect(payloads).toHaveLength(2);
+    expect(payloads[1]).toMatchObject({ sql: 'SELECT 1 + 1' });
+  });
+
+  /**
    * 회귀 테스트: 쿼리 결과 테이블에서 null 값이 'NULL' 텍스트가 아닌 dash('-')로 표시된다 (refs #13)
    */
   test('쿼리 결과 테이블에서 null 값은 NULL 텍스트가 아닌 dash(-)로 표시된다', async ({
