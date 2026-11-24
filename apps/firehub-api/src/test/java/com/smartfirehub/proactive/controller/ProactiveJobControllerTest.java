@@ -224,6 +224,27 @@ class ProactiveJobControllerTest {
     assertThat(captor.getValue().clearTemplate()).isTrue();
   }
 
+  /** NBSP 계열만인 이름의 만들기는 400 — 다듬으면 빈 이름이 되므로 서비스까지 가지 않는다(WD-1085). */
+  @ParameterizedTest
+  @ValueSource(strings = {"\u00A0", "\u2007", "\u202F", "\u3000\u00A0"})
+  void createJob_blankUnicodeName_returns400(String name) throws Exception {
+    mockAuth("proactive:write");
+    CreateProactiveJobRequest req =
+        new CreateProactiveJobRequest(
+            name, "요약해줘", null, "0 0 9 * * *", "Asia/Seoul", null, "SCHEDULE", Map.of());
+
+    mockMvc
+        .perform(
+            post("/api/v1/proactive/jobs")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(req)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.name").value("이름을 비울 수 없습니다."));
+
+    verify(proactiveJobService, never()).createJob(any(), anyLong());
+  }
+
   /** WD-1080: 수정으로 이름을 빈 문자열·공백(전각·NBSP 포함)만으로 바꿀 수 없다 — 400, 서비스 미호출. */
   @ParameterizedTest
   @ValueSource(strings = {"", "   ", " \n\t", "　　", " "})

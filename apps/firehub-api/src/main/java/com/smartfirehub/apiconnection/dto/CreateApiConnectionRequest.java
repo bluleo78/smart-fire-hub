@@ -1,6 +1,7 @@
 package com.smartfirehub.apiconnection.dto;
 
 import com.smartfirehub.global.validation.DescriptionLimits;
+import com.smartfirehub.global.validation.TextRules;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
@@ -8,7 +9,11 @@ import java.util.Map;
 
 /** API 연결 생성 요청 DTO. baseUrl은 필수, healthCheckPath는 선택(null 허용). */
 public record CreateApiConnectionRequest(
-    @NotBlank @Size(max = 100) String name,
+    // @NotBlank 는 NBSP 계열을 글자로 봐, 다듬은 뒤 빈 이름이 저장되던 것을 막는다(WD-1085, WD-1081 과 같은 방식).
+    @NotBlank
+        @Size(max = 100)
+        @Pattern(regexp = TextRules.HAS_TEXT, message = TextRules.NAME_BLANK_MESSAGE)
+        String name,
     @Size(max = DescriptionLimits.MAX_LENGTH, message = DescriptionLimits.API_CONNECTION_TOO_LONG)
         String description,
     @NotBlank String authType,

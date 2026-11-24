@@ -56,8 +56,7 @@ class ProactiveJobDuplicateNameTest extends IntegrationTestBase {
 
   private ProactiveJobResponse create(String name, Long userId) {
     return service.createJob(
-        new CreateProactiveJobRequest(
-            name, "프롬프트", null, null, null, false, "ANOMALY", Map.of()),
+        new CreateProactiveJobRequest(name, "프롬프트", null, null, null, false, "ANOMALY", Map.of()),
         userId);
   }
 
@@ -121,5 +120,59 @@ class ProactiveJobDuplicateNameTest extends IntegrationTestBase {
         owner);
 
     assertThat(service.getJob(id, owner).prompt()).isEqualTo("새 프롬프트");
+  }
+
+  // ── WD-1085: 앞뒤 유니코드 공백을 걷어낸 뒤 중복 검사·저장 ─────────────────────────────────
+
+  /** 전각 공백(U+3000)·NBSP 로 감싼 이름도 같은 이름으로 본다 — SQL 의 trim 은 ASCII 공백만 걷는다. */
+  @Test
+  void create_rejectsUnicodePaddedDuplicate() {
+    create("주간 보고", owner);
+    assertThatThrownBy(() -> create("\u3000주간 보고 ", owner))
+        .isInstanceOf(DuplicateResourceNameException.class);
+    assertThatThrownBy(() -> create("\u00A0주간 보고\u00A0", owner))
+        .isInstanceOf(DuplicateResourceNameException.class);
+  }
+
+  /** 저장되는 이름은 앞뒤 공백이 걷힌 값이다. */
+  @Test
+  void create_storesStrippedName() {
+    assertThat(create("  새 작업  ", owner).name()).isEqualTo("새 작업");
+    assertThat(create("\u3000전각 작업\u3000", owner).name()).isEqualTo("전각 작업");
+  }
+
+  /** 다른 작업의 이름에 NBSP 만 덧대 바꾸면 중복으로 거절된다(WD-1085). */
+  @Test
+  void update_rename_rejectsPaddedExistingName() {
+    create("주간 보고", owner);
+    ProactiveJobResponse b = create("다른 작업", owner);
+    assertThatThrownBy(
+            () ->
+                service.updateJob(
+                    b.id(),
+                    new UpdateProactiveJobRequest(
+                        "\u3000주간 보고", null, null, null, null, null, null, null),
+                    owner))
+        .isInstanceOf(DuplicateResourceNameException.class);
+    assertThatThrownBy(
+            () ->
+                service.updateJob(
+                    b.id(),
+                    new UpdateProactiveJobRequest(
+                        " 주간 보고", null, null, null, null, null, null, null),
+                    owner))
+        .isInstanceOf(DuplicateResourceNameException.class);
+  }
+
+  /** 자기 이름에 공백만 덧댄 수정은 성공하고 걷어낸 이름으로 저장된다. */
+  @Test
+  void update_selfNameWithPadding_succeedsAndStrips() {
+    ProactiveJobResponse a = create("주간 보고", owner);
+    service.updateJob(
+        a.id(),
+        new UpdateProactiveJobRequest(
+            "\u3000주간 보고\u3000", null, null, null, null, null, null, null),
+        owner);
+    assertThat(service.getJob(a.id(), owner).name()).isEqualTo("주간 보고");
   }
 }

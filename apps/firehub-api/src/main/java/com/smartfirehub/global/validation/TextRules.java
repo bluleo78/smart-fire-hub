@@ -1,5 +1,7 @@
 package com.smartfirehub.global.validation;
 
+import java.util.regex.Pattern;
+
 /**
  * 수정 요청 문자열 필드의 「생략은 되지만 비울 수는 없다」 검증 정규식의 단일 원본(WD-1079).
  *
@@ -41,6 +43,17 @@ public final class TextRules {
    * 때문이다.
    */
   public static final String HAS_TEXT_OR_EMPTY = "(?U)(?s)(\\A\\z|.*[^\\s\\p{Cf}].*)";
+
+  /** 앞뒤 유니코드 공백(전각 U+3000·NBSP 포함) — {@link #strip} 용. */
+  private static final Pattern EDGE_SPACE = Pattern.compile("(?U)^\\s+|\\s+$");
+
+  /**
+   * 앞뒤 유니코드 공백을 걷어낸다(WD-1085). {@code String.strip()} 은 NBSP(U+00A0) 를 공백으로 보지 않아 {@link #HAS_TEXT}
+   * 와 판정이 갈라지므로 같은 {@code (?U)\s} 기준을 쓴다. null 은 null(수정 요청의 「변경 없음」).
+   */
+  public static String strip(String value) {
+    return value == null ? null : EDGE_SPACE.matcher(value).replaceAll("");
+  }
 
   private TextRules() {}
 }

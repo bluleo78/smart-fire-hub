@@ -14,6 +14,7 @@ import com.smartfirehub.apiconnection.dto.CreateApiConnectionRequest;
 import com.smartfirehub.apiconnection.dto.TestConnectionResponse;
 import com.smartfirehub.apiconnection.dto.UpdateApiConnectionRequest;
 import com.smartfirehub.apiconnection.exception.ApiConnectionException;
+import com.smartfirehub.apiconnection.exception.ApiConnectionNameAlreadyExistsException;
 import com.smartfirehub.apiconnection.exception.ApiConnectionNotFoundException;
 import com.smartfirehub.apiconnection.service.ApiConnectionService;
 import com.smartfirehub.global.config.SecurityConfig;
@@ -146,6 +147,24 @@ class ApiConnectionControllerTest {
                             null, null, null, Map.of("token", "****0000"), null, null))))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.message").value(message));
+  }
+
+  /** HTTP 경로에서 공백 감싼 이름이 400 이 아니라 서비스까지 가서 중복이면 409 (WD-1085, 다듬기 자체는 서비스 시험이 덮는다). */
+  @Test
+  void update_paddedName_reachesServiceAndDuplicateReturns409() throws Exception {
+    when(apiConnectionService.update(anyLong(), any(UpdateApiConnectionRequest.class), anyLong()))
+        .thenThrow(new ApiConnectionNameAlreadyExistsException("매출 API"));
+
+    mockMvc
+        .perform(
+            put("/api/v1/api-connections/1")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"name\":\"  매출 API  \"}"))
+        .andExpect(status().isConflict());
+
+    verify(apiConnectionService)
+        .update(anyLong(), any(UpdateApiConnectionRequest.class), anyLong());
   }
 
   /** 없는(또는 다른 워크스페이스의) 연결 조회는 404 · 한국어 문구다(WD-180). 예전에는 「ApiConnection not found: N」 영어 원문이었다. */
@@ -522,6 +541,26 @@ class ApiConnectionControllerTest {
   private static CreateApiConnectionRequest createRequestWithDescription(String description) {
     return new CreateApiConnectionRequest(
         "GitHub API", description, "BEARER", Map.of("token", "t"), "https://api.github.com", null);
+  }
+
+  /** NBSP 계열만인 이름의 만들기는 400 — 다듬으면 빈 이름이 되므로 서비스까지 가지 않는다(WD-1085). */
+  @ParameterizedTest
+  @ValueSource(strings = {"\u00A0", "\u2007", "\u202F", "\u3000\u00A0"})
+  void create_blankUnicodeName_returns400(String name) throws Exception {
+    CreateApiConnectionRequest request =
+        new CreateApiConnectionRequest(
+            name, null, "BEARER", Map.of("token", "t"), "https://api.github.com", null);
+
+    mockMvc
+        .perform(
+            post("/api/v1/api-connections")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.name").value("이름을 비울 수 없습니다."));
+
+    verify(apiConnectionService, never()).create(any(), anyLong());
   }
 
   /** WD-520: 생성 — 설명이 정확히 2,000자면 201, 2,001자면 400 + 한국어 사유로 서비스까지 가지 않는다. */

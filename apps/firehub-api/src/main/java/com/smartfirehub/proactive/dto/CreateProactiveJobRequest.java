@@ -1,6 +1,7 @@
 package com.smartfirehub.proactive.dto;
 
 import com.smartfirehub.global.validation.MaxJsonSize;
+import com.smartfirehub.global.validation.TextRules;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
@@ -25,10 +26,12 @@ import java.util.Map;
  * 작업 목록 응답이 둘을 통째로 실어 내 작업 목록이 10MB 가 됐다.
  */
 public record CreateProactiveJobRequest(
+    // @NotBlank 는 NBSP 계열을 글자로 봐, 다듬은 뒤 빈 이름이 저장되던 것을 막는다(WD-1085, WD-1081 과 같은 방식).
     @NotBlank
         @Size(
             max = CreateProactiveJobRequest.NAME_MAX_LENGTH,
             message = CreateProactiveJobRequest.NAME_TOO_LONG_MESSAGE)
+        @Pattern(regexp = TextRules.HAS_TEXT, message = TextRules.NAME_BLANK_MESSAGE)
         String name,
     @NotBlank
         @Size(

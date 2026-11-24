@@ -15,6 +15,7 @@ import com.smartfirehub.apiconnection.repository.ApiConnectionRepository.HealthC
 import com.smartfirehub.audit.service.AuditLogService;
 import com.smartfirehub.global.exception.SerializationException;
 import com.smartfirehub.global.util.AppJsonWebClients;
+import com.smartfirehub.global.validation.TextRules;
 import com.smartfirehub.job.service.AsyncJobService;
 import com.smartfirehub.pipeline.service.executor.ApiCallAuth;
 import com.smartfirehub.pipeline.service.executor.ApiCallErrorMessages;
@@ -116,12 +117,14 @@ public class ApiConnectionService {
                 resolveMaskedSecrets(request.authConfig(), null, false), baseUrl.moved()));
     // 입력 검증(인증 정보·기준 URL, 400)은 이름 중복(409)보다 먼저 — 입력 자체가 틀린 요청은 400 으로 답한다.
     String normalizedBaseUrl = validateAndNormalizeBaseUrl(baseUrl.baseUrl());
-    validateNameNotDuplicated(request.name());
+    // 앞뒤 유니코드 공백을 걷어낸 이름으로 중복 검사·저장·감사한다(WD-1085) — 공백 붙인 이름이 중복 검사를 비켜 가던 것을 막는다.
+    String name = TextRules.strip(request.name());
+    validateNameNotDuplicated(name);
 
     String encryptedConfig = serializeAndEncrypt(normalizedConfig);
     Long id =
         repository.save(
-            request.name(),
+            name,
             request.description(),
             request.authType(),
             encryptedConfig,
@@ -134,8 +137,8 @@ public class ApiConnectionService {
         userId,
         "CREATE",
         id,
-        "API 연결 생성: " + request.name(),
-        connectionSnapshot(request.name(), request.authType(), normalizedBaseUrl));
+        "API 연결 생성: " + name,
+        connectionSnapshot(name, request.authType(), normalizedBaseUrl));
 
     return reader.getById(id);
   }
@@ -330,16 +333,18 @@ public class ApiConnectionService {
     }
 
     // 이름을 변경하는 경우에만 중복 검사 — 자기 자신은 제외 (#647)
-    if (request.name() != null && !request.name().isBlank()) {
-      if (repository.existsByNameExcludingId(request.name(), id)) {
-        throw new ApiConnectionNameAlreadyExistsException(request.name());
+    // 앞뒤 유니코드 공백을 걷어낸 이름으로 검사·저장한다(WD-1085). null 은 변경 없음.
+    String name = TextRules.strip(request.name());
+    if (name != null) {
+      if (repository.existsByNameExcludingId(name, id)) {
+        throw new ApiConnectionNameAlreadyExistsException(name);
       }
     }
 
     String normalizedHealthCheckPath = normalizeHealthCheckPath(request.healthCheckPath());
     repository.update(
         id,
-        request.name(),
+        name,
         request.description(),
         effectiveAuthType,
         encryptedConfig,
@@ -359,6 +364,7 @@ public class ApiConnectionService {
         id,
         existing,
         request,
+        name,
         effectiveAuthType,
         normalizedBaseUrl,
         normalizedHealthCheckPath,
@@ -1291,6 +1297,7 @@ public class ApiConnectionService {
       Long id,
       ApiConnectionRow existing,
       UpdateApiConnectionRequest request,
+      String name,
       String authType,
       String normalizedBaseUrl,
       String normalizedHealthCheckPath,
@@ -1302,7 +1309,8 @@ public class ApiConnectionService {
     String beforeHealthCheckPath = existing.healthCheckPath();
 
     // 리포지토리 규칙대로 실제로 저장되는 값을 구한다 — null 은 미변경, 헬스체크 경로 "" 는 NULL 로 지움(#115).
-    String afterName = request.name() != null ? request.name() : beforeName;
+    // 이름은 update 가 앞뒤 공백을 걷어낸 값(name)을 받아 저장값과 맞춘다(WD-1085).
+    String afterName = name != null ? name : beforeName;
     String afterDescription =
         request.description() != null ? request.description() : beforeDescription;
     String afterBaseUrl = normalizedBaseUrl != null ? normalizedBaseUrl : beforeBaseUrl;

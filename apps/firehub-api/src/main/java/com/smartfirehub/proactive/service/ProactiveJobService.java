@@ -5,6 +5,7 @@ import com.smartfirehub.global.exception.EditConflictException;
 import com.smartfirehub.global.naming.ResourceKind;
 import com.smartfirehub.global.naming.ResourceNameGuard;
 import com.smartfirehub.global.tenant.TenantContext;
+import com.smartfirehub.global.validation.TextRules;
 import com.smartfirehub.notification.dto.NotificationEvent;
 import com.smartfirehub.notification.service.SseEmitterRegistry;
 import com.smartfirehub.proactive.dto.AnomalyEvent;
@@ -398,16 +399,18 @@ public class ProactiveJobService {
     metricSqlAccessChecker.requireMetricQueriesAllowed(request.config(), userId);
     requireUsableTemplate(request.templateId(), userId);
     // 같은 소유자에게 같은 이름이 이미 있으면 409(WD-824) — 잠금 아래에서 검사해 동시 생성 둘이 모두 통과하지 못한다.
+    // 앞뒤 유니코드 공백(전각 U+3000·NBSP 포함)을 걷어낸 이름으로 검사·저장한다(WD-1085) — 공백 붙인 이름이 중복 검사를 비켜 가던 것을 막는다.
+    String name = TextRules.strip(request.name());
     nameGuard.requireUnused(
         ResourceKind.PROACTIVE_JOB,
         userId,
-        request.name(),
-        () -> proactiveJobRepository.existsByOwnerAndName(userId, request.name(), null));
+        name,
+        () -> proactiveJobRepository.existsByOwnerAndName(userId, name, null));
 
     Long id =
         proactiveJobRepository.create(
             userId,
-            request.name(),
+            name,
             request.prompt(),
             request.templateId(),
             cron,
@@ -485,18 +488,20 @@ public class ProactiveJobService {
     requireUsableTemplate(request.templateId(), userId);
     // 이름이 바뀐 저장만 중복을 검사한다(WD-824) — 판정 기준·이유는 ResourceNameGuard.requireUnusedOnRename 참고. 기준값은 행 잠금
     // 뒤에 읽은 값이다.
+    // 앞뒤 유니코드 공백을 걷어낸 이름으로 비교·저장한다(WD-1085) — null(변경 없음)은 그대로 null.
+    String name = TextRules.strip(request.name());
     nameGuard.requireUnusedOnRename(
         ResourceKind.PROACTIVE_JOB,
         userId,
         before.name(),
-        request.name(),
-        () -> proactiveJobRepository.existsByOwnerAndName(userId, request.name(), id));
+        name,
+        () -> proactiveJobRepository.existsByOwnerAndName(userId, name, id));
 
     LocalDateTime savedUpdatedAt =
         proactiveJobRepository.update(
             id,
             userId,
-            request.name(),
+            name,
             request.prompt(),
             request.templateId(),
             Boolean.TRUE.equals(request.clearTemplate()),
