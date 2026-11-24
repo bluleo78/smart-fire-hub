@@ -448,16 +448,24 @@ export function useDeleteDashboard() {
   });
 }
 
-export function useAddWidget(dashboardId: number) {
+/**
+ * 위젯 추가. 대시보드를 방금 만들어 id 를 훅 생성 시점에 모르는 경우(WD-1076)를 위해
+ * mutate 변수의 dashboardId 가 인자보다 우선한다.
+ */
+export function useAddWidget(dashboardId?: number) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (data: AddWidgetRequest) =>
-      analyticsApi.addWidget(dashboardId, data).then((r) => r.data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['analytics', 'dashboards', dashboardId] });
+    mutationFn: ({ dashboardId: targetId, ...data }: AddWidgetRequest & { dashboardId?: number }) =>
+      analyticsApi.addWidget(targetId ?? dashboardId!, data).then((r) => r.data),
+    onSuccess: (_result, vars) => {
+      queryClient.invalidateQueries({
+        queryKey: ['analytics', 'dashboards', vars.dashboardId ?? dashboardId],
+      });
+      // 목록 캐시의 widgetCount 가 추가 전 값으로 남지 않게 목록도 비운다
+      queryClient.invalidateQueries({ queryKey: DASHBOARD_LIST_KEY });
     },
-    // WD-367: 다른 곳에서 지운 차트(404)면 차트 고르기 목록을 다시 읽어 그 차트를 뺀다 —
-    // 무한 스크롤 목록만 무효화한다(['analytics','charts'] 전체면 위젯마다 차트 데이터 쿼리까지 다시 돈다).
+    // WD-367: 다른 곳에서 지운 차트(404)면 차트 고르기 무한 스크롤 목록만 다시 읽어 그 차트를 뺀다
+    // (['analytics','charts'] 전체면 위젯마다 차트 데이터 쿼리까지 다시 돈다).
     onError: (error) => {
       if (isNotFoundError(error)) {
         queryClient.invalidateQueries({ queryKey: [...CHART_LIST_KEY, 'infinite'] });

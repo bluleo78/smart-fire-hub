@@ -1,6 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, BarChart2, Download, FileImage, FileType,LayoutDashboard,Loader2, Lock, Play,Save } from 'lucide-react';
-import { useCallback,useEffect, useId, useMemo, useRef, useState } from 'react';
+import { type FormEvent, useCallback,useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -51,16 +51,21 @@ import { Skeleton } from '../../components/ui/skeleton';
 import { Switch } from '../../components/ui/switch';
 import {
   CHART_LIST_KEY,
+  DASHBOARD_LIST_KEY,
+  dashboardDetailKey,
   useAddWidget,
   useAllDashboards,
   useAllSavedQueries,
   useChart,
   useCreateChart,
+  useCreateDashboard,
   useExecuteSavedQuery,
   useUpdateChart,
 } from '../../hooks/queries/useAnalytics';
 import { useInvalidateListsOnEntryNotFound } from '../../hooks/queries/useInvalidateListsOnEntryNotFound';
+import { useAuth } from '../../hooks/useAuth';
 import { useIsOwner } from '../../hooks/useIsOwner';
+import { useSubmitGuard } from '../../hooks/useSubmitGuard';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import { extractApiError, handleApiError, isDuplicateName, isEditConflict } from '../../lib/api-error';
 import {
@@ -69,6 +74,7 @@ import {
   findChartSvg,
   sanitizeFilename,
 } from '../../lib/chart-export';
+import { MAX_WIDGET_POSITION_Y } from '../../lib/dashboard-grid-limits';
 import { parseRouteId } from '../../lib/route-id';
 import { MAX_DESCRIPTION_LENGTH } from '../../lib/validations/description';
 import type { Chart, ChartConfig,ChartType } from '../../types/analytics';
@@ -366,92 +372,223 @@ function AddToDashboardDialog({
   // 거르지 않으면 남의 대시보드를 골랐을 때 서버가 404 로 거절해 「대시보드를 찾을 수 없습니다」가 뜬다.
   const isOwner = useIsOwner();
   const dashboards = (allDashboards ?? []).filter((d) => isOwner(d.createdBy));
+  // 사용자 정보를 아직 못 읽었으면 useIsOwner 가 모두 false 라 내 대시보드가 있어도 빈 목록처럼 보인다 —
+  // 빈 상태(만들기 입력) 판정에서는 「불러오는 중」으로 취급한다(WD-1076).
+  const { user } = useAuth();
+  const isUserLoading = user == null;
+
+  // 빈 상태(WD-1076)에서 새 대시보드 이름과 중복 409 서버 문구 — 이름을 고치면 문구가 사라진다
+  const [newName, setNewName] = useState('');
+  const [nameError, setNameError] = useState<string | null>(null);
 
   // 다이얼로그를 열 때마다 선택 초기화 — state-based tracking으로 cascading render 방지
   const [openTracker, setOpenTracker] = useState(false);
   if (open !== openTracker) {
     setOpenTracker(open);
-    if (open) setSelectedDashboardId(null);
+    if (open) {
+      setSelectedDashboardId(null);
+      setNewName('');
+      setNameError(null);
+    }
   }
 
-  const addWidget = useAddWidget(selectedDashboardId ?? 0);
+  // 대상 대시보드 id 는 두 경로 모두 mutate 변수로 넘긴다 — 훅이 선택 상태를 따라가면 진행 중 선택 변경이 대상을 바꾼다
+  const addWidget = useAddWidget();
+  const createDashboard = useCreateDashboard();
+  const queryClient = useQueryClient();
+  // 같은 틱의 연속 클릭·Enter 연타로 대시보드가 둘 만들어지는 것을 동기 잠금으로 막는다
+  const guardSubmit = useSubmitGuard();
 
-  const handleAdd = async () => {
-    if (!selectedDashboardId) return;
-    // MAP 차트는 전체 폭, 큰 높이로 배치 (DashboardEditorPage와 동일 규칙)
+  // 만들고 추가 진행 중에는 목록 재조회로 새 대시보드가 보여도 빈 상태 화면을 유지한다 —
+  // 목록 화면으로 바뀌면 사용자가 새 대시보드를 골라 차트가 두 번 들어간다. 조회 실패는 「없음」이 아니다(#737).
+  const [isCreating, setIsCreating] = useState(false);
+  const isListLoading = isLoading || isUserLoading;
+  const isEmptyState =
+    isCreating || (!isListLoading && !isError && dashboards.length === 0);
+
+  // 위젯 위치·크기: MAP 은 전체 폭·큰 높이 (DashboardEditorPage 와 동일 규칙)
+  // positionY 는 호출부가 대상 대시보드의 기존 위젯 아래로 계산해 넘긴다 (서버 상한 240 이하여야 한다)
+  const buildWidgetRequest = (positionY: number) => {
     const isMapChart = chartType === 'MAP';
+    return {
+      chartId,
+      positionX: 0,
+      positionY,
+      width: isMapChart ? 12 : 6,
+      height: isMapChart ? 6 : 4,
+    };
+  };
+
+  // 내 대시보드가 없을 때(WD-1076) 이름만으로 대시보드를 만들고 차트를 한 번에 넣는다.
+  const handleCreateAndAdd = guardSubmit(async () => {
+    const name = newName.trim();
+    if (!name) return;
+    setNameError(null);
+    setIsCreating(true);
     try {
-      await addWidget.mutateAsync({
-        chartId,
-        positionX: 0,
-        positionY: 9999, // 가장 아래 배치 (서버에서 정렬)
-        width: isMapChart ? 12 : 6,
-        height: isMapChart ? 6 : 4,
+      let newId: number;
+      try {
+        // 설명·자동 새로고침은 보내지 않는다 — 나중에 대시보드에서 고친다
+        const created = await createDashboard.mutateAsync({ name, isShared: false });
+        newId = created.id;
+      } catch (error) {
+        // 이름 중복(409)은 서버 문구를 입력 아래에 보이고 토스트는 생략한다
+        if (isDuplicateName(error)) {
+          setNameError(extractApiError(error, '이미 있는 대시보드 이름입니다. 다른 이름을 입력하세요.'));
+          return;
+        }
+        handleApiError(error, '대시보드 생성에 실패했습니다.');
+        return;
+      }
+      try {
+        await addWidget.mutateAsync({ dashboardId: newId, ...buildWidgetRequest(0) }); // 새 대시보드는 비어 있어 맨 위(0)
+        toast.success(`'${name}' 대시보드를 만들고 차트를 추가했습니다.`);
+        onOpenChange(false);
+        navigate(`/analytics/dashboards/${newId}`);
+      } catch (error) {
+        // 만들기는 성공했으므로 대화상자를 유지하고 새 대시보드를 미리 선택해 바로 「추가」를 다시 누를 수 있게 한다
+        setSelectedDashboardId(newId);
+        handleApiError(error, '대시보드에 차트 추가 실패');
+        // 목록 재조회가 끝나기 전에 만들기 상태를 풀면 새 대시보드 없는 빈 입력이 잠깐 떠 같은 이름 재시도가 409 가 된다
+        await queryClient.invalidateQueries({ queryKey: DASHBOARD_LIST_KEY });
+      }
+    } finally {
+      setIsCreating(false);
+    }
+  });
+
+  // 「추가」 진행 중(상세 조회 + 위젯 추가) 여부 — 이 동안 「추가」·목록 선택·닫기를 막는다(WD-1076 반려)
+  const [isAdding, setIsAdding] = useState(false);
+  // 만들고 추가·추가 어느 쪽이든 진행 중이면 닫기·취소를 막는다
+  const isBusy = isCreating || isAdding;
+
+  // 같은 잠금(guardSubmit)으로 감싸 같은 틱의 연속 클릭도 한 번만 추가한다
+  const handleAdd = guardSubmit(async () => {
+    // 누른 순간의 대상을 고정한다 — 상세 조회를 기다리는 동안 선택이 바뀌어도 위젯·토스트·이동이 같은 대시보드를 향하게
+    const targetId = selectedDashboardId;
+    if (!targetId) return;
+    const targetName = dashboards.find((d) => d.id === targetId)?.name ?? '대시보드';
+    setIsAdding(true);
+    try {
+      // 대상 대시보드의 기존 위젯 맨 아래(y+h 최댓값)에 넣는다. 상세 캐시를 공유하고, 오래된 값이면 다시 읽는다.
+      const detail = await queryClient.fetchQuery({
+        queryKey: dashboardDetailKey(targetId),
+        queryFn: () => analyticsApi.getDashboard(targetId).then((r) => r.data),
+        staleTime: 0,
       });
-      const target = dashboards.find((d) => d.id === selectedDashboardId);
-      toast.success(`'${target?.name ?? '대시보드'}'에 차트가 추가되었습니다.`);
+      const bottom = detail.widgets.reduce((acc, w) => Math.max(acc, w.positionY + w.height), 0);
+      const positionY = Math.min(bottom, MAX_WIDGET_POSITION_Y);
+      await addWidget.mutateAsync({ dashboardId: targetId, ...buildWidgetRequest(positionY) });
+      toast.success(`'${targetName}'에 차트가 추가되었습니다.`);
       onOpenChange(false);
       // 사용자가 결과를 즉시 확인할 수 있도록 대시보드 상세로 이동
-      navigate(`/analytics/dashboards/${selectedDashboardId}`);
+      navigate(`/analytics/dashboards/${targetId}`);
     } catch (error) {
       handleApiError(error, '대시보드에 차트 추가 실패');
+    } finally {
+      setIsAdding(false);
     }
+  });
+
+  // 진행 중에는 닫지 못하게 한다 — 닫아도 요청은 계속돼 뒤늦게 이동·토스트가 나온다
+  const handleOpenChange = (next: boolean) => {
+    if (!next && isBusy) return;
+    onOpenChange(next);
+  };
+
+  // form 으로 감싸 빈 상태의 이름 입력에서 Enter 로도 제출된다
+  const handleSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    if (isEmptyState) void handleCreateAndAdd();
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>대시보드에 추가</DialogTitle>
           <DialogDescription>
-            이 차트를 추가할 대시보드를 선택하세요.
+            {isEmptyState
+              ? '새 대시보드를 만들어 이 차트를 넣으세요.'
+              : '이 차트를 추가할 대시보드를 선택하세요.'}
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-2 py-2 max-h-80 overflow-y-auto">
-          {isLoading ? (
-            <p className="text-sm text-muted-foreground">대시보드 목록을 불러오는 중...</p>
-          ) : isError ? (
-            // 조회 실패를 "대시보드 없음"으로 위장하지 않는다 (#737)
-            <p role="alert" className="text-sm text-destructive">대시보드 목록을 불러오지 못했습니다.</p>
-          ) : dashboards.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              사용 가능한 대시보드가 없습니다. 먼저 대시보드를 생성해 주세요.
-            </p>
-          ) : (
-            dashboards.map((d) => (
-              <button
-                key={d.id}
-                type="button"
-                onClick={() => setSelectedDashboardId(d.id)}
-                className={`w-full text-left px-3 py-2 rounded border transition-colors ${
-                  selectedDashboardId === d.id
-                    ? 'border-primary bg-primary/5'
-                    : 'border-border hover:bg-muted'
-                }`}
-              >
-                <div className="font-medium text-sm">{d.name}</div>
-                {d.description && (
-                  // 말줄임된 설명을 마우스 올리면 전체로 볼 수 있게 title 부여(WD-1003)
-                  <div className="text-xs text-muted-foreground mt-0.5 truncate" title={d.description}>
-                    {d.description}
-                  </div>
+        <form onSubmit={handleSubmit}>
+          <div className="space-y-2 py-2 max-h-80 overflow-y-auto">
+            {isListLoading && !isCreating ? (
+              <p className="text-sm text-muted-foreground">대시보드 목록을 불러오는 중...</p>
+            ) : isError ? (
+              // 조회 실패를 "대시보드 없음"으로 위장하지 않는다 (#737)
+              <p role="alert" className="text-sm text-destructive">대시보드 목록을 불러오지 못했습니다.</p>
+            ) : isEmptyState ? (
+              <div className="space-y-1.5">
+                <p className="text-sm text-muted-foreground">
+                  아직 대시보드가 없습니다.
+                </p>
+                <Label htmlFor="add-dash-new-name">새 대시보드 이름</Label>
+                <Input
+                  id="add-dash-new-name"
+                  value={newName}
+                  onChange={(e) => {
+                    setNewName(e.target.value);
+                    setNameError(null);
+                  }}
+                  maxLength={200}
+                  aria-invalid={nameError ? true : undefined}
+                  aria-describedby={nameError ? 'add-dash-name-error' : undefined}
+                />
+                {nameError && (
+                  <p id="add-dash-name-error" role="alert" className="text-sm text-destructive">
+                    {nameError}
+                  </p>
                 )}
-              </button>
-            ))
-          )}
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            취소
-          </Button>
-          <Button
-            onClick={handleAdd}
-            disabled={!selectedDashboardId || addWidget.isPending}
-          >
-            {addWidget.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-            추가
-          </Button>
-        </DialogFooter>
+              </div>
+            ) : (
+              dashboards.map((d) => (
+                <button
+                  key={d.id}
+                  type="button"
+                  onClick={() => setSelectedDashboardId(d.id)}
+                  disabled={isAdding}
+                  aria-pressed={selectedDashboardId === d.id}
+                  className={`w-full text-left px-3 py-2 rounded border transition-colors ${
+                    selectedDashboardId === d.id
+                      ? 'border-primary bg-primary/5'
+                      : 'border-border hover:bg-muted'
+                  }`}
+                >
+                  <div className="font-medium text-sm">{d.name}</div>
+                  {d.description && (
+                    // 말줄임된 설명을 마우스 올리면 전체로 볼 수 있게 title 부여(WD-1003)
+                    <div className="text-xs text-muted-foreground mt-0.5 truncate" title={d.description}>
+                      {d.description}
+                    </div>
+                  )}
+                </button>
+              ))
+            )}
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" disabled={isBusy} onClick={() => onOpenChange(false)}>
+              취소
+            </Button>
+            {isEmptyState ? (
+              <Button type="submit" disabled={!newName.trim() || isCreating}>
+                {isCreating && <Loader2 className="h-4 w-4 animate-spin" />}
+                만들고 추가
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                onClick={() => void handleAdd()}
+                disabled={!selectedDashboardId || isAdding}
+              >
+                {isAdding && <Loader2 className="h-4 w-4 animate-spin" />}
+                추가
+              </Button>
+            )}
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );
