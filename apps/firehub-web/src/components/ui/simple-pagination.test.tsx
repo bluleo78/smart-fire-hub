@@ -65,3 +65,17 @@ describe('SimplePagination 방향 버튼 가드', () => {
     expect(onPageChange).toHaveBeenLastCalledWith(0);
   });
 });
+
+/**
+ * 페이지 사이즈 콤보박스 접근 이름 단위 시험 (WD-1066, WCAG 2.5.3 Label in Name).
+ * 보이는 라벨과 같은 이름으로 콤보박스를 찾을 수 있어야 음성 명령·스크린리더가
+ * 사용자가 보는 라벨 그대로 불러도 맞는 컨트롤을 잡는다.
+ */
+describe('SimplePagination 페이지 사이즈 콤보박스 접근 이름', () => {
+  it('페이지 사이즈 콤보박스의 접근 가능한 이름은 보이는 라벨 「페이지당」이다 (WD-1066, WCAG 2.5.3)', () => {
+    render(
+      <SimplePagination page={0} totalPages={3} onPageChange={vi.fn()} totalElements={30} pageSize={10} onPageSizeChange={vi.fn()} />
+    );
+    expect(screen.getByRole('combobox', { name: '페이지당' })).toBeInTheDocument();
+  });
+});

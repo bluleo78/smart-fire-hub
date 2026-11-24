@@ -41,7 +41,7 @@ test('데이터셋 목록의 페이지 사이즈 선택 상자가 32px 다 (WD-9
   await setupAdminAuth(page);
   await page.goto('/data/datasets');
 
-  const pageSizeSelect = page.getByRole('combobox', { name: '페이지 사이즈' });
+  const pageSizeSelect = page.getByRole('combobox', { name: '페이지당' });
   // 목록 응답이 도착해야 페이지네이션이 그려진다 — 존재를 먼저 기다려 evaluateAll 이 빈 배열로 통과하지 않게 한다.
   await expect(pageSizeSelect).toHaveCount(1);
 

@@ -1,6 +1,7 @@
 // 출처: apps/firehub-web/src/components/ui/simple-pagination.tsx 에서 복사(P7-c2a, R-2).
 // 공유 패키지로 추출하지 않는 것이 확정 결정이다. 원본을 고칠 일이 생기면 양쪽을 함께 본다.
 import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
+import { useId } from 'react';
 
 import { Button } from './button';
 import {
@@ -79,6 +80,9 @@ export function SimplePagination({
   onPageSizeChange,
   pageSizeOptions = [10, 20, 50, 100],
 }: SimplePaginationProps) {
+  // 보이는 라벨 「페이지당」을 콤보박스 접근 이름에 그대로 연결한다(WD-1066, WCAG 2.5.3 Label in Name)
+  const sizeLabelId = useId();
+
   // 보여줄 게 아무것도 없으면 숨김 (단, 사이즈 selector 가 있으면 한 페이지여도 표시)
   if (totalPages <= 1 && !onPageSizeChange) return null;
 
@@ -104,12 +108,12 @@ export function SimplePagination({
       )}
       {showSizeSelector && (
         <div className="flex items-center gap-2">
-          <span className="text-sm text-muted-foreground">페이지당</span>
+          <span id={sizeLabelId} className="text-sm text-muted-foreground">페이지당</span>
           <Select
             value={String(pageSize)}
             onValueChange={(v) => onPageSizeChange!(Number(v))}
           >
-            <SelectTrigger className="h-8 w-[80px]" aria-label="페이지 사이즈">
+            <SelectTrigger className="h-8 w-[80px]" aria-labelledby={sizeLabelId}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

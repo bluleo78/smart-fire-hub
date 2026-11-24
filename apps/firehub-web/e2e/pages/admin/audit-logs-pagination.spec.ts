@@ -84,7 +84,7 @@ test.describe('감사 로그 페이지네이션 - 강화 (이슈 #65)', () => {
     await expect.poll(() => capture.lastRequest()?.searchParams.get('page')).toBe('19');
 
     // 페이지 사이즈를 50으로 변경
-    const sizeSelector = page.getByRole('combobox', { name: '페이지 사이즈' });
+    const sizeSelector = page.getByRole('combobox', { name: '페이지당' });
     await sizeSelector.click();
     await page.getByRole('option', { name: '50' }).click();
 
@@ -263,7 +263,7 @@ test.describe('감사 로그 페이지네이션 — 이동 중에도 목록을 �
     await page.goto('/admin/audit-logs');
     // 응답이 0건이어도 받았으므로 「페이지당」 줄은 남아 크기를 바꿀 수 있다
     await expect(page.getByText('페이지당')).toBeVisible();
-    const sizeSelector = page.getByRole('combobox', { name: '페이지 사이즈' });
+    const sizeSelector = page.getByRole('combobox', { name: '페이지당' });
     await expect(sizeSelector).toBeVisible();
     await sizeSelector.click();
     await page.getByRole('option', { name: '50' }).click();
@@ -363,7 +363,7 @@ test.describe('감사 로그 페이지네이션 — 크기 변경 중 크기 선
     await mockTotal45(page);
     await page.goto('/admin/audit-logs');
     const nav = page.getByRole('navigation', { name: '페이지네이션' });
-    const trigger = page.getByRole('combobox', { name: '페이지 사이즈' });
+    const trigger = page.getByRole('combobox', { name: '페이지당' });
     await expect(page.getByText('감사 로그 1', { exact: true })).toBeVisible();
     await expect(nav.getByRole('button', { name: '3 페이지' })).toBeVisible();
 
@@ -389,7 +389,7 @@ test.describe('감사 로그 페이지네이션 — 크기 변경 중 크기 선
     const sizes = await mockTotal45(page);
     await page.goto('/admin/audit-logs');
     const nav = page.getByRole('navigation', { name: '페이지네이션' });
-    const trigger = page.getByRole('combobox', { name: '페이지 사이즈' });
+    const trigger = page.getByRole('combobox', { name: '페이지당' });
     await expect(page.getByText('감사 로그 1', { exact: true })).toBeVisible();
 
     await page.context().setOffline(true);
