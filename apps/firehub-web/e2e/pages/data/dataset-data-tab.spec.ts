@@ -765,4 +765,111 @@ test.describe('데이터셋 상세 — 데이터 탭', () => {
     await expect(result).not.toContainText('123456789012.12346');
     await expect(result).not.toContainText('9007199254740992');
   });
+
+  // WD-1087: 서버는 한 번에 1000행까지만 지우는데 확인 창은 그대로 열려 400 이 났고, 토스트도 서버 이유 없이 「삭제에 실패했습니다.」였다.
+  test.describe('행 삭제 상한·서버 이유 (WD-1087)', () => {
+    /** 행 n개를 한 응답으로 주는 데이터 route + 삭제 POST 캡처를 준비하고 데이터 탭을 연다. */
+    async function openWithRows(
+      page: import('@playwright/test').Page,
+      count: number,
+      deleteOptions: { status?: number; body?: unknown } = {},
+    ) {
+      await setupDataTabMocks(page);
+      await page.route(
+        (url) => url.pathname === '/api/v1/datasets/1/data',
+        (route) =>
+          route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({
+              columns: datasetDetail.columns,
+              rows: Array.from({ length: count }, (_, i) => ({
+                _id: 1000 + i,
+                id: i + 1,
+                name: `row${i + 1}`,
+                amount: i,
+              })),
+              page: 0,
+              size: count,
+              totalElements: count,
+              totalPages: 1,
+            }),
+          }),
+      );
+      const del = await mockApi(
+        page,
+        'POST',
+        '/api/v1/datasets/1/data/delete',
+        deleteOptions.body ?? { deletedCount: count },
+        { capture: true, status: deleteOptions.status },
+      );
+      await page.goto('/data/datasets/1');
+      await page.getByRole('tab', { name: '데이터' }).click();
+      await expect(page.getByText('row1', { exact: true })).toBeVisible();
+      return del;
+    }
+
+    /** 선택 바의 「삭제」로 확인 창을 연다. */
+    const openDeleteDialog = (page: import('@playwright/test').Page) =>
+      page.getByText(/개 행 선택됨/).locator('..').getByRole('button', { name: '삭제' }).click();
+
+    /** 확인 창의 「삭제」를 누른다. */
+    const confirmDelete = (page: import('@playwright/test').Page) =>
+      page.getByRole('alertdialog').getByRole('button', { name: '삭제', exact: true }).click();
+
+    test('1000개를 넘게 고르면 확인 창이 상한을 알리고 삭제를 막는다', async ({ authenticatedPage: page }) => {
+      const del = await openWithRows(page, 1001);
+      await page.getByRole('checkbox', { name: '전체 선택' }).click();
+      await openDeleteDialog(page);
+
+      const dialog = page.getByRole('alertdialog');
+      await expect(
+        dialog.getByText(
+          '한 번에 1000개 행까지 삭제할 수 있습니다. 지금 1001개를 선택했습니다 — 선택을 1000개 이하로 줄여 주세요.',
+        ),
+      ).toBeVisible();
+      await expect(dialog.getByRole('button', { name: '삭제', exact: true })).toBeDisabled();
+      // 꺼진 버튼이라 누를 수 없다 — 창을 여는 동안 삭제 요청이 나가지 않았는지만 본다
+      expect(del.requests).toHaveLength(0);
+    });
+
+    test('정확히 1000개면 지금처럼 삭제된다', async ({ authenticatedPage: page }) => {
+      const del = await openWithRows(page, 1000);
+      await page.getByRole('checkbox', { name: '전체 선택' }).click();
+      await openDeleteDialog(page);
+      await confirmDelete(page);
+
+      await expect(page.getByText('1000개 행이 삭제되었습니다.')).toBeVisible();
+      expect(del.requests).toHaveLength(1);
+      expect((del.requests[0].payload as { rowIds: number[] }).rowIds).toHaveLength(1000);
+    });
+
+    test('삭제가 400 이면 서버 이유를 토스트로 보인다', async ({ authenticatedPage: page }) => {
+      await openWithRows(page, 2, {
+        status: 400,
+        body: {
+          status: 400,
+          error: 'Bad Request',
+          message: '입력값이 올바르지 않습니다.',
+          errors: { rowIds: '삭제할 행을 1개 이상 1000개 이하로 선택하세요.' },
+          code: 'VALIDATION_FAILED',
+        },
+      });
+      await page.getByRole('checkbox', { name: '행 1 선택' }).click();
+      await page.getByRole('checkbox', { name: '행 2 선택' }).click();
+      await openDeleteDialog(page);
+      await confirmDelete(page);
+
+      await expect(page.getByText('삭제할 행을 1개 이상 1000개 이하로 선택하세요.')).toBeVisible();
+    });
+
+    test('삭제가 본문 없는 500 이면 기본 문구를 보인다', async ({ authenticatedPage: page }) => {
+      await openWithRows(page, 2, { status: 500, body: '' });
+      await page.getByRole('checkbox', { name: '행 1 선택' }).click();
+      await openDeleteDialog(page);
+      await confirmDelete(page);
+
+      await expect(page.getByText('삭제에 실패했습니다.')).toBeVisible();
+    });
+  });
 });

@@ -19,7 +19,9 @@ import { OnceAlertDialogAction } from '../../../components/ui/once-alert-dialog-
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../../components/ui/tooltip';
 import { useDatasetData, useDatasetPermissions, useDeleteDataRows } from '../../../hooks/queries/useDatasets';
 import { useColumnStatsMap } from '../../../hooks/useColumnStatsMap';
+import { handleApiError } from '../../../lib/api-error';
 import { toCsvCell } from '../../../lib/csv';
+import { MAX_DELETE_ROWS } from '../../../lib/dataset-row-limits';
 import { formatCellValue, getRawCellValue,isNullValue } from '../../../lib/formatters';
 import type { DatasetDetailResponse } from '../../../types/dataset';
 import { DataTableToolbar } from '../components/DataTableToolbar';
@@ -239,6 +241,9 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
     toast.success(`${selectedRows.length}개 행을 CSV로 내보냈습니다.`);
   }, [selectedRowIds, allRows, columns, dataset.name]);
 
+  // WD-1087: 서버 상한(1000행)을 넘는 선택은 확인 창에서 막는다 — 렌더 때 계산하므로 별도 state 가 필요 없다.
+  const overDeleteLimit = selectedRowIds.size > MAX_DELETE_ROWS;
+
   const handleDeleteConfirm = useCallback(() => {
     const ids = Array.from(selectedRowIds);
     deleteRows.mutate(ids, {
@@ -247,8 +252,9 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
         setSelectedRowIds(new Set());
         setDeleteDialogOpen(false);
       },
-      onError: () => {
-        toast.error('삭제에 실패했습니다.');
+      onError: (err) => {
+        // WD-1087: 서버가 준 이유(검증 문구 등)를 보이고, 본문이 없으면 기본 문구를 쓴다.
+        handleApiError(err, '삭제에 실패했습니다.');
         setDeleteDialogOpen(false);
       },
     });
@@ -532,14 +538,16 @@ export const DatasetDataTab = React.memo(function DatasetDataTab({
           <AlertDialogHeader>
             <AlertDialogTitle>행 삭제 확인</AlertDialogTitle>
             <AlertDialogDescription>
-              선택한 {selectedRowIds.size}개 행을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.
+              {overDeleteLimit
+                ? `한 번에 ${MAX_DELETE_ROWS}개 행까지 삭제할 수 있습니다. 지금 ${selectedRowIds.size}개를 선택했습니다 — 선택을 ${MAX_DELETE_ROWS}개 이하로 줄여 주세요.`
+                : `선택한 ${selectedRowIds.size}개 행을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.`}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>취소</AlertDialogCancel>
             {/* WD-13: 색 className 흉내 대신 variant — 다크 모드·호버 토큰이 Button destructive 와 같아진다 */}
             {/* WD-522: 더블클릭해도 행 삭제 요청은 한 번만 — 창이 열린 동안 확인을 한 번만 받는다 */}
-            <OnceAlertDialogAction variant="destructive" onClick={handleDeleteConfirm}>
+            <OnceAlertDialogAction variant="destructive" disabled={overDeleteLimit} onClick={handleDeleteConfirm}>
               삭제
             </OnceAlertDialogAction>
           </AlertDialogFooter>
