@@ -629,11 +629,18 @@ public class ProactiveJobService {
     return executionRepository.findSummariesByJobId(jobId, limit, offset);
   }
 
+  /** 없는 실행 id 와 다른 작업의 실행 id 가 함께 쓰는 404 문구(WD-1088) — 컨트롤러 소속 검증도 이 값을 쓴다. */
+  public static final String EXECUTION_NOT_FOUND_MESSAGE = "실행을 찾을 수 없습니다.";
+
+  /**
+   * 실행 단건 조회. 없는 id 는 다른 작업의 실행 id 와 같은 404 「실행을 찾을 수 없습니다.」 — 상태·문구가 갈리면 남의 작업에 그 id 가 있는지 떠볼 수
+   * 있어서다(WD-1088).
+   */
   @Transactional(readOnly = true)
   public ProactiveJobExecutionResponse getExecution(Long executionId) {
     return executionRepository
         .findById(executionId)
-        .orElseThrow(() -> new ProactiveJobException("Execution을 찾을 수 없습니다: " + executionId));
+        .orElseThrow(() -> new ProactiveJobNotFoundException(EXECUTION_NOT_FOUND_MESSAGE));
   }
 
   /**

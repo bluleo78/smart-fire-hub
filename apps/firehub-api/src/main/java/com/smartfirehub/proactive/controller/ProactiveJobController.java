@@ -13,6 +13,8 @@ import com.smartfirehub.proactive.dto.ProactiveResult;
 import com.smartfirehub.proactive.dto.RecipientResponse;
 import com.smartfirehub.proactive.dto.UpdateProactiveJobRequest;
 import com.smartfirehub.proactive.dto.UpdateProactiveJobResponse;
+import com.smartfirehub.proactive.exception.ProactiveJobException;
+import com.smartfirehub.proactive.exception.ProactiveJobNotFoundException;
 import com.smartfirehub.proactive.repository.AnomalyEventRepository;
 import com.smartfirehub.proactive.service.PdfExportService;
 import com.smartfirehub.proactive.service.ProactiveJobService;
@@ -33,6 +35,11 @@ import tools.jackson.databind.ObjectMapper;
 @RequestMapping("/api/v1/proactive/jobs")
 @RequiredArgsConstructor
 public class ProactiveJobController {
+
+  // 실행 리포트 조회 오류 문구 — 본문 없는 400/404 대신 원인을 알린다 (WD-1088)
+  private static final String MSG_NOT_COMPLETED = "완료된 실행만 리포트를 열거나 내려받을 수 있습니다.";
+  private static final String MSG_NO_RESULT = "이 실행에는 리포트 결과가 없습니다.";
+  private static final String MSG_HTML_REPORT_MISSING = "이 실행에는 HTML 리포트가 없습니다.";
 
   private final ProactiveJobService proactiveJobService;
   private final PdfExportService pdfExportService;
@@ -172,11 +179,7 @@ public class ProactiveJobController {
     Long userId = (Long) authentication.getPrincipal();
     // Job 소유권 검증
     proactiveJobService.getJob(jobId, userId);
-    // 실행 조회 + jobId 소속 검증
-    ProactiveJobExecutionResponse execution = proactiveJobService.getExecution(executionId);
-    if (!jobId.equals(execution.jobId())) {
-      return ResponseEntity.notFound().build();
-    }
+    ProactiveJobExecutionResponse execution = requireExecutionOfJob(jobId, executionId);
     // 리포트 등급 > 작성자의 현재 등급이면 403(WD-198). 소속 검증 뒤에 둔다 — 남의 실행 id 로 등급 존재를 떠보지 못하게.
     proactiveJobService.requireReportViewable(execution, userId);
     return ResponseEntity.ok(execution);
@@ -191,9 +194,6 @@ public class ProactiveJobController {
     // PDF 는 내려받기라 열람 판정에 더해 리포트 등급의 내보내기 정책도 본다(WD-198)
     ProactiveJobExecutionResponse execution =
         getValidatedExecution(jobId, executionId, userId, true);
-    if (execution == null) {
-      return ResponseEntity.badRequest().build();
-    }
     ProactiveResult result =
         JsonConversions.convertValue(objectMapper, execution.result(), ProactiveResult.class);
 
@@ -213,8 +213,8 @@ public class ProactiveJobController {
   }
 
   /**
-   * 실행 결과의 HTML 리포트를 반환한다. htmlContent가 없으면 404를 반환한다. 프론트엔드 ReportViewerPage에서 DOMPurify를 거쳐 렌더링에
-   * 사용한다.
+   * 실행 결과의 HTML 리포트를 반환한다. 프론트엔드 ReportViewerPage에서 DOMPurify를 거쳐 렌더링에 사용한다. 오류는 원인 문구가 든
+   * ErrorResponse 다(WD-1088) — 작업·실행 짝 불일치·htmlContent 없음 404, 리포트 등급 403, 완료 아님·결과 없음 400.
    */
   @GetMapping("/{jobId}/executions/{executionId}/html")
   @RequirePermission("proactive:read")
@@ -222,13 +222,14 @@ public class ProactiveJobController {
       @PathVariable Long jobId, @PathVariable Long executionId, Authentication authentication) {
     Long userId = (Long) authentication.getPrincipal();
     proactiveJobService.getJob(jobId, userId);
-    ProactiveResult result = getValidatedResult(jobId, executionId, userId, false);
-    if (result == null) {
-      return ResponseEntity.badRequest().build();
-    }
+    ProactiveJobExecutionResponse execution =
+        getValidatedExecution(jobId, executionId, userId, false);
+    ProactiveResult result =
+        JsonConversions.convertValue(objectMapper, execution.result(), ProactiveResult.class);
 
+    // 본문 없는 404 대신 원인이 든 한국어 메시지로 응답한다 (WD-1088)
     if (result.htmlContent() == null || result.htmlContent().isBlank()) {
-      return ResponseEntity.notFound().build();
+      throw new ProactiveJobNotFoundException(MSG_HTML_REPORT_MISSING);
     }
 
     return ResponseEntity.ok()
@@ -237,35 +238,34 @@ public class ProactiveJobController {
   }
 
   /**
-   * execution이 해당 job에 속하고 COMPLETED 상태인지 검증한 후 ProactiveResult를 반환한다. 검증 실패 시 null을 반환하며, 호출측에서
-   * badRequest 등으로 처리한다.
-   *
-   * <p>소속 검증을 통과한 실행은 리포트 등급 판정(WD-198)을 받는다 — 작성자의 현재 등급으로 열 수 없으면 403. {@code export} 면 내보내기
-   * 정책(PDF)까지 본다.
+   * 소속·열람(또는 내보내기) 권한·완료 여부를 확인한 실행. 순서는 짝 불일치(404) → 등급 판정(403) → 완료 아님(400) → 결과 없음(400) 이다. 짝
+   * 불일치를 먼저 보아 남의 실행 id 로 등급 존재를 떠보지 못하게 한다(WD-198, WD-1088).
    */
-  private ProactiveResult getValidatedResult(
-      Long jobId, Long executionId, Long userId, boolean export) {
-    ProactiveJobExecutionResponse execution =
-        getValidatedExecution(jobId, executionId, userId, export);
-    return execution == null
-        ? null
-        : JsonConversions.convertValue(objectMapper, execution.result(), ProactiveResult.class);
-  }
-
-  /** 소속·열람(또는 내보내기) 권한·완료 여부를 확인한 실행. 리포트로 쓸 수 없으면 null. */
   private ProactiveJobExecutionResponse getValidatedExecution(
       Long jobId, Long executionId, Long userId, boolean export) {
-    ProactiveJobExecutionResponse execution = proactiveJobService.getExecution(executionId);
-    if (!jobId.equals(execution.jobId())) {
-      return null;
-    }
+    ProactiveJobExecutionResponse execution = requireExecutionOfJob(jobId, executionId);
     if (export) {
       proactiveJobService.requireReportExportable(execution, userId);
     } else {
       proactiveJobService.requireReportViewable(execution, userId);
     }
-    if (!"COMPLETED".equals(execution.status()) || execution.result() == null) {
-      return null;
+    if (!"COMPLETED".equals(execution.status())) {
+      throw new ProactiveJobException(MSG_NOT_COMPLETED);
+    }
+    if (execution.result() == null) {
+      throw new ProactiveJobException(MSG_NO_RESULT);
+    }
+    return execution;
+  }
+
+  /**
+   * 실행을 읽고 그 작업에 속하는지 본다. 없는 id·다른 작업의 id 모두 같은 404 「실행을 찾을 수 없습니다.」 — 상태·문구가 갈리면 남의 작업에 그 id 가 있는지
+   * 떠볼 수 있다(WD-1088). 등급 판정보다 먼저 불러야 한다(WD-198).
+   */
+  private ProactiveJobExecutionResponse requireExecutionOfJob(Long jobId, Long executionId) {
+    ProactiveJobExecutionResponse execution = proactiveJobService.getExecution(executionId);
+    if (!jobId.equals(execution.jobId())) {
+      throw new ProactiveJobNotFoundException(ProactiveJobService.EXECUTION_NOT_FOUND_MESSAGE);
     }
     return execution;
   }
