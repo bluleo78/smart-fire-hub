@@ -31,6 +31,7 @@ import { Button } from '@/components/ui/button';
 import type { ExecutionDetailResponse } from '@/types/pipeline';
 
 import type { EditorAction,PipelineEditorState } from '../hooks/usePipelineEditor';
+import { applyNodeOverrides } from '../utils/node-overrides';
 import { isUnnamedStep, stepDisplayName } from '../utils/step-display-name';
 import { findStepExecution } from '../utils/step-execution';
 import { AddStepEdge } from './AddStepEdge';
@@ -174,8 +175,8 @@ export function PipelineCanvas({
       type: 'step',
       position: step.position,
       domAttributes: STEP_DOM_ATTRS,
-      // 선택된(설정이 열린) 스텝만 xyflow 가 화살표 키로 옮긴다 — 선택을 우리 상태에서 내려 줘야 한다(WD-1046)
-      selected: step.tempId === state.selectedStepId,
+      // 선택 여부는 여기서 고정 false — 선택 노드만 applyNodeOverrides 가 덧씌운다(WD-1074, 화살표 키 이동 WD-1046)
+      selected: false,
       data: {
         // 이름이 없으면 연결선 라벨·이동 알림과 같이 「스텝 #순번」으로 부른다 — 스크린리더가 어디서나 같은 이름을 듣게 (WD-1049)
         label: stepDisplayName(step.name, index),
@@ -183,7 +184,7 @@ export function PipelineCanvas({
         description: step.description || undefined,
         scriptType: step.scriptType,
         stepNumber: index + 1,
-        isSelected: step.tempId === state.selectedStepId,
+        isSelected: false,
         hasError: state.validationErrors.some((e) => e.stepTempId === step.tempId),
         hasOutgoingEdge: outgoingSet.has(step.tempId),
         // 실행 기록은 스텝 id 로 찾는다(WD-108) — 이름으로 찾으면 삭제된 동명 스텝의 기록이 새 스텝에 붙는다.
@@ -195,15 +196,12 @@ export function PipelineCanvas({
           : () => dispatch({ type: 'ADD_STEP_AFTER', payload: { sourceTempId: step.tempId } }),
       } satisfies StepNodeData,
     })),
-  [state.steps, state.selectedStepId, state.validationErrors, outgoingSet, executionData, readOnly, dispatch]);
+  [state.steps, state.validationErrors, outgoingSet, executionData, readOnly, dispatch]);
 
-  /** 끄는 중이면 끈 노드 하나만 위치를 바꾼 새 객체로 갈아 끼운다 — 다른 노드는 같은 객체라 다시 그리지 않는다 */
+  /** 선택·끌기 덧씌우기 — 선택 노드와 끄는 노드만 새 객체라 선택해도 나머지 노드는 다시 그리지 않는다(WD-1074) */
   const nodes = useMemo<StepNodeType[]>(
-    () =>
-      liveDragOverride
-        ? baseNodes.map((n) => (n.id === liveDragOverride.id ? { ...n, position: liveDragOverride.position } : n))
-        : baseNodes,
-    [baseNodes, liveDragOverride],
+    () => applyNodeOverrides(baseNodes, state.selectedStepId, liveDragOverride),
+    [baseNodes, state.selectedStepId, liveDragOverride],
   );
 
   /**

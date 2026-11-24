@@ -7,7 +7,9 @@
 
 import type { Locator, Page } from '@playwright/test';
 
-import { mockApi } from '../../fixtures/api-mock';
+import { createDataset } from '../../factories/dataset.factory';
+import { createPipelineDetail, createStep } from '../../factories/pipeline.factory';
+import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { clickToolbarAddStep, grantPipelinePermissions } from '../../fixtures/pipeline.fixture';
 
@@ -710,5 +712,46 @@ test.describe('파이프라인 에디터 — 스텝 설정', () => {
     const deps = page.getByTestId('step-config-panel').getByRole('group', { name: '의존성' });
     await expect(deps.getByText('→ 원본')).toBeVisible();
     await expect(deps.getByRole('button', { name: '원본 연결 끊기' })).toBeVisible();
+  });
+
+  test('이전 스텝 출력은 입력 데이터셋 후보 맨 앞에 「[스텝1] …」로 오고 나머지가 뒤따른다 (WD-1074)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 스텝1(추출 → 중간 20) → 스텝2(변환 → 최종 30) 사슬. 스텝2 패널의 입력 후보 순서·중복 제외가
+    // Map 으로 바꾼 뒤(WD-1074)에도 그대로인지 본다 — 결과가 같아야 하는 리팩터의 안전망이다.
+    const detail = createPipelineDetail({
+      id: 1,
+      steps: [
+        createStep({ id: 1, name: '추출', outputDatasetId: 20, outputDatasetName: '중간' }),
+        createStep({ id: 2, name: '변환', stepOrder: 1, outputDatasetId: 30, outputDatasetName: '최종', dependsOnStepNames: ['추출'] }),
+      ],
+    });
+    await mockApi(page, 'GET', '/api/v1/pipelines/1', detail);
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/executions', createPageResponse([]));
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/triggers', []);
+    await mockApi(page, 'GET', '/api/v1/pipelines/1/trigger-events', []);
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/datasets',
+      createPageResponse(
+        [
+          createDataset({ id: 10, name: '원본', tableName: 't_src' }),
+          createDataset({ id: 20, name: '중간', tableName: 't_mid' }),
+          createDataset({ id: 30, name: '최종', tableName: 't_out' }),
+        ],
+        { size: 1000 },
+      ),
+    );
+    await page.goto('/pipelines/1');
+    await page.getByRole('button', { name: '수정' }).click();
+    await page.locator('.react-flow__node').nth(1).click();
+    await page.getByRole('combobox', { name: '입력 데이터셋' }).click();
+    const options = page.getByRole('option');
+    // 앞 스텝 출력(중간)이 「[스텝1]」 접두로 맨 앞, 일반 목록에서는 빠져 3개, 나머지는 원래 순서(원본·최종)
+    await expect(options.nth(0)).toContainText('[스텝1] 중간');
+    await expect(options).toHaveCount(3);
+    await expect(options.nth(1)).toContainText('원본');
+    await expect(options.nth(2)).toContainText('최종');
   });
 });
