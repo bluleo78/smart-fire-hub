@@ -373,11 +373,10 @@ export default function ProactiveJobListPage() {
                         <div className="flex items-center gap-1">
                           <Tooltip>
                             <TooltipTrigger asChild>
-                              {/* 히트 영역 32×32, 아이콘 24px — 디자인 최소 클릭 영역을 넘기고(WD-891) 아이콘은 버튼 안에서 오조작 없이 또렷하게 보이게 한다 */}
+                              {/* 히트 영역 32×32(size="icon-sm" = size-8, WD-924), 아이콘 24px — 디자인 최소 클릭 영역을 넘기고(WD-891) 아이콘은 버튼 안에서 오조작 없이 또렷하게 보이게 한다 */}
                               <Button
-                                size="icon"
+                                size="icon-sm"
                                 variant="ghost"
-                                className="h-8 w-8"
                                 aria-label="복제"
                                 onClick={(e) => handleClone(e, job)}
                                 disabled={cloneMutation.isPending}
@@ -391,9 +390,8 @@ export default function ProactiveJobListPage() {
                             <TooltipTrigger asChild>
                               {/* 히트 영역 32×32, 아이콘 24px — 디자인 최소 클릭 영역을 넘긴다(WD-891) */}
                               <Button
-                                size="icon"
+                                size="icon-sm"
                                 variant="ghost"
-                                className="h-8 w-8"
                                 aria-label="지금 실행"
                                 onClick={(e) => handleExecute(e, job)}
                                 disabled={executeMutation.isPending}

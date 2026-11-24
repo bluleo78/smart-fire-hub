@@ -77,10 +77,10 @@ test.describe('320px 리플로우 (#345)', () => {
     await page.goto('/knowledge-graph/review');
     await expect(page.getByText('전기적 요인')).toBeVisible();
 
-    // 줄바꿈 도입이 데스크톱 표현을 바꾸지 않아야 한다 — 탭 5개가 한 줄(높이 40px, WD-891 로
-    // 히트 영역 확보를 위해 36px→40px)에 그대로 있어야 한다. 단언은 50 미만으로 여유를 둔다.
+    // 줄바꿈 도입이 데스크톱 표현을 바꾸지 않아야 한다 — 탭 5개가 한 줄(높이 40px, WD-883 으로
+    // 히트 영역 확보를 위해 36px→40px)에 그대로 있어야 한다. sm 이상은 h-10(40px) 고정 — 45 미만 단언은 줄바꿈·두 줄(48px 이상)로 늘어남을 잡는다(WD-924).
     const box = await page.locator('[data-slot=tabs-list]').boundingBox();
-    expect(box?.height).toBeLessThan(50);
+    expect(box?.height).toBeLessThan(45);
     expect(await mainOverflow(page)).toBe(0);
   });
 });

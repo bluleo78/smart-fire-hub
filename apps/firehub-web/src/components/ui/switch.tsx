@@ -21,16 +21,17 @@ function Switch({
       data-slot="switch"
       data-size={size}
       className={cn(
-        "peer group/switch inline-flex shrink-0 items-center justify-center rounded-full border border-transparent bg-transparent transition-all outline-none focus-visible:border-ring focus-visible:ring-ring focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50 h-8 w-8",
+        "peer group/switch inline-flex shrink-0 items-center justify-center rounded-full border border-transparent bg-transparent transition-all outline-none disabled:cursor-not-allowed disabled:opacity-50 h-8 w-8",
         className
       )}
       {...props}
     >
-      {/* 시각 알약(track) — 상태색·테두리·그림자·알약 크기를 루트에서 옮겨 왔다. data-state 도 루트의 그룹에서 읽는다. */}
+      {/* 시각 알약(track) — 상태색·테두리·그림자·알약 크기를 루트에서 옮겨 왔다. data-state 도 루트의 그룹에서 읽는다.
+          WD-924: 키보드 포커스 링도 루트(32×32 원)가 아니라 알약에 그린다 — 루트의 focus-visible 을 group-focus-visible/switch 로 읽어 알약 모양 링이 되게 한다. */}
       <span
         data-slot="switch-track"
         className={cn(
-          "flex shrink-0 items-center rounded-full border border-transparent shadow-xs transition-all group-data-[size=default]/switch:h-[1.15rem] group-data-[size=default]/switch:w-8 group-data-[size=sm]/switch:h-3.5 group-data-[size=sm]/switch:w-6 group-data-[state=checked]/switch:bg-primary group-data-[state=unchecked]/switch:bg-input dark:group-data-[state=unchecked]/switch:bg-input/80"
+          "flex shrink-0 items-center rounded-full border border-transparent shadow-xs transition-all group-focus-visible/switch:border-ring group-focus-visible/switch:ring-ring group-focus-visible/switch:ring-[3px] group-data-[size=default]/switch:h-[1.15rem] group-data-[size=default]/switch:w-8 group-data-[size=sm]/switch:h-3.5 group-data-[size=sm]/switch:w-6 group-data-[state=checked]/switch:bg-primary group-data-[state=unchecked]/switch:bg-input dark:group-data-[state=unchecked]/switch:bg-input/80"
         )}
       >
         <SwitchPrimitive.Thumb
