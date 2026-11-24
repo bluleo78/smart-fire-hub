@@ -146,7 +146,7 @@ export const DatasetColumnsTab = React.memo(function DatasetColumnsTab({
               const isExpanded = expandedColumnId === col.id;
               const isEditingDesc = editingColumnId === col.id;
 
-              // (#91) NULL 비율 100% → 행 좌측에 destructive 보더 + 미세한 배경, "비어있음" 배지 노출
+              // (#91) NULL 비율 100% → 행 좌측에 destructive 보더 + 미세한 배경, "비어있음" 배지 노출 (샘플 통계면 전체가 비었다고 단정할 수 없어 「샘플에서 비어있음」 — WD-1093)
               const isAllNull = !!stats && stats.nullPercent >= 100;
               const rowClass = [
                 // WD-755: 펼친 행은 단색 bg-muted — TableRow 의 hover(hover:bg-muted/50)와 같은 값이면
@@ -213,7 +213,7 @@ export const DatasetColumnsTab = React.memo(function DatasetColumnsTab({
                           <NullProgressBar percent={stats.nullPercent} />
                           {isAllNull && (
                             <Badge variant="destructive" className="shrink-0 text-[10px]">
-                              비어있음
+                              {stats.sampled ? '샘플에서 비어있음' : '비어있음'}
                             </Badge>
                           )}
                         </div>

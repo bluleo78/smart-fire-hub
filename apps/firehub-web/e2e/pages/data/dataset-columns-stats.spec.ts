@@ -451,7 +451,9 @@ test.describe('DatasetColumnsTab — Null 100% 컬럼 강조 (#91)', () => {
     await expect(emptyRows).toHaveCount(1);
 
     // "비어있음" 배지 노출
-    await expect(page.getByText('비어있음')).toBeVisible();
+    await expect(page.getByText('비어있음', { exact: true })).toBeVisible();
+    // 샘플이 아닌 데이터셋의 배지 글자가 「샘플에서 비어있음」으로 바뀌지 않음을 지킨다 (WD-1093)
+    await expect(page.getByText('샘플에서 비어있음')).toHaveCount(0);
   });
 
   test('100% NULL 컬럼이 없으면 카운터/배지/강조가 모두 노출되지 않는다', async ({
@@ -463,6 +465,31 @@ test.describe('DatasetColumnsTab — Null 100% 컬럼 강조 (#91)', () => {
 
     await expect(page.getByTestId('empty-column-count')).toHaveCount(0);
     await expect(page.getByTestId('empty-column-row')).toHaveCount(0);
+    // 부분 일치를 일부러 쓴다 — 「비어있음」·「샘플에서 비어있음」 어느 배지도 없어야 한다 (WD-1093)
     await expect(page.getByText('비어있음')).toHaveCount(0);
+  });
+
+  test('샘플 통계로 100% NULL 인 행은 「샘플에서 비어있음」 배지를 보인다 (WD-1093)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 샘플 기반 통계(sampled=true)는 전체가 비었다고 단정할 수 없어 글자가 달라야 한다
+    await setupDatasetDetailMocks(page, DATASET_ID);
+    await mockApi(
+      page,
+      'GET',
+      `/api/v1/datasets/${DATASET_ID}/stats`,
+      createColumnStats({
+        id: { sampled: true },
+        name: { nullCount: 100, nullPercent: 100, distinctCount: 0, topValues: [], sampled: true },
+      }),
+    );
+
+    await page.goto(`/data/datasets/${DATASET_ID}`);
+    await page.getByRole('tab', { name: '필드' }).click();
+
+    const emptyRow = page.getByTestId('empty-column-row');
+    await expect(emptyRow).toHaveCount(1);
+    await expect(emptyRow.getByText('샘플에서 비어있음', { exact: true })).toBeVisible();
+    await expect(page.getByText('비어있음', { exact: true })).toHaveCount(0);
   });
 });
