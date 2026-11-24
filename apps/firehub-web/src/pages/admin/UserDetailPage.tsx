@@ -1,6 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, UserX } from 'lucide-react';
-import { useCallback,useEffect,useId,useMemo,useState } from 'react';
+import { type ReactNode,useCallback,useEffect,useId,useMemo,useState } from 'react';
 import { useLocation, useNavigate,useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -22,7 +22,7 @@ import {
 } from '../../components/ui/alert-dialog';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
+import { Card, CardContent, CardHeader } from '../../components/ui/card';
 import { Checkbox } from '../../components/ui/checkbox';
 import { InlineBanner } from '../../components/ui/inline-banner';
 import { Label } from '../../components/ui/label';
@@ -62,6 +62,20 @@ const USER_NOT_FOUND_MESSAGE = '사용자를 찾을 수 없습니다.';
 export default function UserDetailPage() {
   const { id } = useParams<{ id: string }>();
   return <UserDetailView key={id} />;
+}
+
+/**
+ * 사용자 상세 카드 제목 — 공용 CardTitle(div) 대신 제목 요소(h2)로 그려 스크린리더 제목 목록(H 키)으로
+ * 「기본 정보」·「활성」·「역할」 섹션을 찾게 한다(WD-1067, WCAG 1.3.1). 페이지 h1 「사용자 상세」 다음 단계이고
+ * 제거 구역(MemberDangerZone)의 h2 와 같은 단계다. 모양은 CardTitle 과 같게(클래스·data-slot 그대로, 크기 변화 없음)
+ * 두므로 CardTitle 스타일을 바꾸면 여기도 맞춘다 — components/ui 는 shadcn 생성물이라 손대지 않는다.
+ */
+function CardSectionHeading({ children }: { children: ReactNode }) {
+  return (
+    <h2 data-slot="card-title" className="leading-none font-semibold">
+      {children}
+    </h2>
+  );
 }
 
 function UserDetailView() {
@@ -349,7 +363,7 @@ function UserDetailView() {
 
       <Card>
         <CardHeader>
-          <CardTitle>기본 정보</CardTitle>
+          <CardSectionHeading>기본 정보</CardSectionHeading>
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="grid grid-cols-[120px_1fr] gap-2 text-sm">
@@ -400,7 +414,7 @@ function UserDetailView() {
       {canWriteUser && (
         <Card>
           <CardHeader>
-            <CardTitle>이 워크스페이스에서 활성</CardTitle>
+            <CardSectionHeading>이 워크스페이스에서 활성</CardSectionHeading>
           </CardHeader>
           <CardContent className="space-y-2">
             {/* WD-3: 스위치는 멤버십만 바꾼다 — 전역 비활성 계정은 켜 둬도 로그인할 수 없다는 사실을 조작 전에 읽히도록
@@ -501,7 +515,7 @@ function UserDetailView() {
       {canAssignRoles ? (
         <Card>
           <CardHeader>
-            <CardTitle>역할 할당</CardTitle>
+            <CardSectionHeading>역할 할당</CardSectionHeading>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-3">
@@ -546,7 +560,7 @@ function UserDetailView() {
         // 역할 할당 권한이 없으면 체크박스·저장 대신 지금 가진 역할만 읽기 전용으로 보인다(WD-121) — 저장하면 서버가 403 이다.
         <Card>
           <CardHeader>
-            <CardTitle>역할</CardTitle>
+            <CardSectionHeading>역할</CardSectionHeading>
           </CardHeader>
           <CardContent>
             {user.roles.length > 0 ? (
