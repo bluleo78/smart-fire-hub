@@ -13,6 +13,7 @@ import type { ChartConfig } from '../../types/analytics';
 import { HIDDEN_CHART_ROOT_PROPS } from './chart-figure-context';
 import {
   CHART_SERIES_COLORS,
+  chartAnimationActive,
   formatYAxisTick,
   LINE_CURSOR_STYLE,
   TOOLTIP_CONTENT_STYLE,
@@ -29,6 +30,7 @@ interface AreaChartViewProps {
 export function AreaChartView({ config, data, height }: AreaChartViewProps) {
   const { xAxis, yAxis, showLegend = true, showGrid = true, stacked = false, colors } = config;
   const palette = colors?.length ? colors : CHART_SERIES_COLORS;
+  const animate = chartAnimationActive(data.length);
 
   return (
     <ChartDrawingArea>
@@ -72,7 +74,7 @@ export function AreaChartView({ config, data, height }: AreaChartViewProps) {
                 fill={color}
                 fillOpacity={0.2}
                 strokeWidth={2}
-                stackId={stacked ? 'stack' : undefined}
+                stackId={stacked ? 'stack' : undefined}                isAnimationActive={animate}
               />
             );
           })}

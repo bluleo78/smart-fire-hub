@@ -13,7 +13,12 @@ import {
 import type { ChartConfig } from '../../types/analytics';
 import { getScatterGroupLabel, getScatterUsedY } from './chart-derived-data';
 import { HIDDEN_CHART_ROOT_PROPS } from './chart-figure-context';
-import { CHART_SERIES_COLORS, TOOLTIP_CONTENT_STYLE, TOOLTIP_ITEM_STYLE } from './chart-styles';
+import {
+  CHART_SERIES_COLORS,
+  chartAnimationActive,
+  TOOLTIP_CONTENT_STYLE,
+  TOOLTIP_ITEM_STYLE,
+} from './chart-styles';
 import { ChartDrawingArea } from './ChartDrawingArea';
 import { toPlotNumber } from './numeric-columns';
 
@@ -92,6 +97,9 @@ export function ScatterChartView({ config, data, height }: ScatterChartViewProps
     scatterGroups = [{ name: 'value', data: [], color: palette[0] }];
   }
 
+  // 점 수(모든 그룹 합) 기준 — 막대·선의 행 수와 같은 뜻. 그룹별이 아니라 전체로 한 번 정한다(WD-1072)
+  const animate = chartAnimationActive(scatterGroups.reduce((sum, g) => sum + g.data.length, 0));
+
   return (
     <ChartDrawingArea>
       {/* WD-826: 그림은 숨기고 대체 표가 값을 전한다 */}
@@ -133,7 +141,14 @@ export function ScatterChartView({ config, data, height }: ScatterChartViewProps
           />
           {showLegend && <Legend wrapperStyle={{ fontSize: 12 }} />}
           {scatterGroups.map((g) => (
-            <Scatter key={g.name} name={g.name} data={g.data} fill={g.color} opacity={0.7} />
+            <Scatter
+              key={g.name}
+              name={g.name}
+              data={g.data}
+              fill={g.color}
+              opacity={0.7}
+              isAnimationActive={animate}
+            />
           ))}
         </ScatterChart>
       </ResponsiveContainer>

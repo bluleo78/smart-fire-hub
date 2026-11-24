@@ -93,3 +93,14 @@ export const seqColor = (i: number) => CHART_SEQ_COLORS[Math.min(i, CHART_SEQ_CO
  * 칠하므로, 본문 텍스트 기준(4.5:1)을 만족하는 팝오버 전경색으로 덮는다 (#375, SC 1.4.3).
  */
 export const TOOLTIP_ITEM_STYLE = { color: 'var(--popover-foreground)' } as const;
+
+/**
+ * 이 행(또는 점) 수를 넘는 차트는 recharts 시리즈 애니메이션을 끈다 (WD-1072).
+ * 500행 차트의 애니메이션이 프레임마다 SVG 를 다시 그려 200~500ms 장기 작업이 이어지기 때문이다.
+ */
+export const CHART_ANIMATION_MAX_ROWS = 100;
+
+/** 그리는 데이터 행(또는 점) 수가 기준 이하일 때만 시리즈 애니메이션을 켠다 (WD-1072). */
+export function chartAnimationActive(rowCount: number): boolean {
+  return rowCount <= CHART_ANIMATION_MAX_ROWS;
+}

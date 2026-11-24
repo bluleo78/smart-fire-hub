@@ -7,8 +7,8 @@
  * #778: 위젯은 자기 단건 쿼리(useChartData) 하나로 표시 데이터·신선도 바·새로고침을 모두 처리한다.
  * 신선도 바의 실패 배지는 이 위젯 쿼리의 isError 만 따르고, 새로고침 버튼은 이 위젯 쿼리의 refetch 를 부른다.
  */
-import { fireEvent, render, screen } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Chart, ChartDataResponse, DashboardWidget } from '../../types/analytics';
 
@@ -35,7 +35,13 @@ vi.mock('./ChartRenderer', () => ({
 }));
 
 import { EmptyResponseError } from '../../lib/api-error';
+import { __resetWidgetRenderQueueForTest } from '../../lib/widget-render-queue';
 import { DashboardWidgetCard } from './DashboardWidgetCard';
+
+// 그리기 차례 큐는 모듈 상태라 시험 사이에 비운다(WD-1072)
+beforeEach(() => {
+  __resetWidgetRenderQueueForTest();
+});
 
 const DIV_ZERO = 'ERROR: division by zero\nSQLState: 22012';
 
@@ -256,5 +262,69 @@ describe('DashboardWidgetCard — 조회 성공·데이터 없음 (WD-693)', () 
 
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '다시 시도' })).not.toBeInTheDocument();
+  });
+});
+
+describe('DashboardWidgetCard — 그리기 차례 큐 (WD-1072)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    useChartMock.mockReturnValue({ data: chart, isLoading: false });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const okState = () =>
+    chartDataState({ data: { chart, queryResult: queryResult({ rows: [{ cat: 'a', v: 1 }], totalRows: 1 }) } });
+
+  it('차트 데이터가 있는 카드 둘은 하나씩 차례로 그린다', () => {
+    useChartDataMock.mockReturnValue(okState());
+    render(
+      <>
+        <DashboardWidgetCard widget={widget} isEditing={false} />
+        <DashboardWidgetCard widget={{ ...widget, id: 2 }} isEditing={false} />
+      </>,
+    );
+
+    // 처음에는 하나만 그려지고 다른 하나는 스피너
+    expect(screen.getAllByTestId('chart-renderer')).toHaveLength(1);
+
+    // 보이는 탭의 차례 넘김은 이중 rAF(프레임 두 번)
+    act(() => {
+      vi.advanceTimersByTime(32);
+    });
+    expect(screen.getAllByTestId('chart-renderer')).toHaveLength(2);
+  });
+
+  it('오류 카드는 줄을 서지 않아 옆 정상 카드가 바로 그려진다', () => {
+    useChartDataMock.mockImplementation((chartId: number) =>
+      chartId === 1
+        ? chartDataState({ data: { chart, queryResult: queryResult({ columns: [], error: DIV_ZERO }) } })
+        : okState(),
+    );
+    render(
+      <>
+        <DashboardWidgetCard widget={widget} isEditing={false} />
+        <DashboardWidgetCard widget={{ ...widget, id: 2, chartId: 2 }} isEditing={false} />
+      </>,
+    );
+
+    expect(screen.getByRole('alert')).toHaveTextContent('쿼리 오류');
+    expect(screen.getAllByTestId('chart-renderer')).toHaveLength(1);
+  });
+
+  it('0행 카드는 줄을 서지 않아 옆 카드가 바로 그려진다', () => {
+    useChartDataMock.mockImplementation((chartId: number) =>
+      chartId === 1 ? chartDataState({ data: { chart, queryResult: queryResult() } }) : okState(),
+    );
+    render(
+      <>
+        <DashboardWidgetCard widget={widget} isEditing={false} />
+        <DashboardWidgetCard widget={{ ...widget, id: 2, chartId: 2 }} isEditing={false} />
+      </>,
+    );
+
+    // 0행 카드(빈 안내)와 정상 카드 모두 차례 대기 없이 그려진다
+    expect(screen.getAllByTestId('chart-renderer')).toHaveLength(2);
   });
 });

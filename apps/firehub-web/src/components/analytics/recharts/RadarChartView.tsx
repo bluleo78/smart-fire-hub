@@ -6,12 +6,18 @@ Radar,   RadarChart, ResponsiveContainer,
 Tooltip, } from 'recharts';
 
 import { HIDDEN_CHART_ROOT_PROPS } from '../chart-figure-context';
-import { CHART_SERIES_COLORS, TOOLTIP_CONTENT_STYLE, TOOLTIP_ITEM_STYLE } from '../chart-styles';
+import {
+  CHART_SERIES_COLORS,
+  chartAnimationActive,
+  TOOLTIP_CONTENT_STYLE,
+  TOOLTIP_ITEM_STYLE,
+} from '../chart-styles';
 import type { ChartViewProps } from '../chart-view-props';
 import { ChartDrawingArea } from '../ChartDrawingArea';
 
 // height 가 없으면 부모를 채운다 — ChartViewProps 참고(WD-845)
 export function RadarChartView({ data, config, height }: ChartViewProps) {
+  const animate = chartAnimationActive(data.length);
   return (
     <ChartDrawingArea>
       {/* WD-826: 그림은 숨기고 대체 표가 값을 전한다 */}
@@ -35,6 +41,7 @@ export function RadarChartView({ data, config, height }: ChartViewProps) {
               stroke={CHART_SERIES_COLORS[i % CHART_SERIES_COLORS.length]}
               fill={CHART_SERIES_COLORS[i % CHART_SERIES_COLORS.length]}
               fillOpacity={0.2}
+              isAnimationActive={animate}
             />
           ))}
           {config.yAxis.length > 1 && config.showLegend !== false && (

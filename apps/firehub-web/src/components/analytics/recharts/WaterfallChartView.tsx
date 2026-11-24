@@ -9,7 +9,7 @@ XAxis, YAxis, } from 'recharts';
 
 import { transformWaterfallData, type WaterfallRow } from '../chart-derived-data';
 import { HIDDEN_CHART_ROOT_PROPS } from '../chart-figure-context';
-import { TOOLTIP_CONTENT_STYLE, TOOLTIP_ITEM_STYLE } from '../chart-styles';
+import { chartAnimationActive, TOOLTIP_CONTENT_STYLE, TOOLTIP_ITEM_STYLE } from '../chart-styles';
 import type { ChartViewProps } from '../chart-view-props';
 import { ChartDrawingArea } from '../ChartDrawingArea';
 
@@ -36,6 +36,8 @@ export function WaterfallChartView({ data, config, height }: ChartViewProps) {
     );
   }
 
+  const animate = chartAnimationActive(rows.length);
+
   return (
     <ChartDrawingArea>
       {/* WD-826: 그림은 숨기고 대체 표가 값을 전한다 */}
@@ -53,13 +55,13 @@ export function WaterfallChartView({ data, config, height }: ChartViewProps) {
             ] as [string, string]}
           />
           {/* 투명 spacer */}
-          <Bar dataKey="base" stackId="wf" fill="transparent" />
+          <Bar dataKey="base" stackId="wf" fill="transparent" isAnimationActive={animate} />
           {/* 양수 bar (녹색) */}
-          <Bar dataKey="positive" stackId="wf" radius={[2, 2, 0, 0]}>
+          <Bar dataKey="positive" stackId="wf" radius={[2, 2, 0, 0]} isAnimationActive={animate}>
             {rows.map((_, i) => <Cell key={i} fill="var(--success)" />)}
           </Bar>
           {/* 음수 bar (빨간색) */}
-          <Bar dataKey="negative" stackId="wf" radius={[2, 2, 0, 0]}>
+          <Bar dataKey="negative" stackId="wf" radius={[2, 2, 0, 0]} isAnimationActive={animate}>
             {rows.map((_, i) => <Cell key={i} fill="var(--destructive)" />)}
           </Bar>
         </ComposedChart>

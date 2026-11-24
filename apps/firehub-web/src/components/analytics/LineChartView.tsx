@@ -13,6 +13,7 @@ import type { ChartConfig } from '../../types/analytics';
 import { HIDDEN_CHART_ROOT_PROPS } from './chart-figure-context';
 import {
   CHART_SERIES_COLORS,
+  chartAnimationActive,
   formatYAxisTick,
   LINE_CURSOR_STYLE,
   TOOLTIP_CONTENT_STYLE,
@@ -29,6 +30,7 @@ interface LineChartViewProps {
 export function LineChartView({ config, data, height }: LineChartViewProps) {
   const { xAxis, yAxis, showLegend = true, showGrid = true, colors } = config;
   const palette = colors?.length ? colors : CHART_SERIES_COLORS;
+  const animate = chartAnimationActive(data.length);
 
   return (
     <ChartDrawingArea>
@@ -69,7 +71,7 @@ export function LineChartView({ config, data, height }: LineChartViewProps) {
               stroke={palette[i % palette.length]}
               strokeWidth={2}
               dot={data.length <= 50}
-              activeDot={{ r: 4 }}
+              activeDot={{ r: 4 }}              isAnimationActive={animate}
             />
           ))}
         </LineChart>
