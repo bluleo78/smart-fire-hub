@@ -232,7 +232,7 @@ test.describe('파이프라인 스텝 검증 오류 접근성 (WD-560)', () => {
     // 1번 스텝은 비워 두고, 2번 스텝을 추가해 올바르게 채운다 — 저장 시점 선택은 2번이다
     await clickToolbarAddStep(page);
     // 노드도 「스텝 #2」로 불리므로 패널 머리의 콜론 꼴로 좁혀 패널이 바뀐 것을 본다(WD-1049)
-    await expect(page.getByText('스텝 #2:')).toBeVisible();
+    await expect(page.getByTestId('step-config-panel-title').filter({ hasText: /^스텝 #2(:|$)/ })).toBeVisible();
     await page.locator('#step-name').fill('정상 스텝');
     await typeScript(page, 'SELECT 1');
 
@@ -240,7 +240,7 @@ test.describe('파이프라인 스텝 검증 오류 접근성 (WD-560)', () => {
     await expect(page.getByText('입력 오류를 확인하세요.')).toBeVisible();
 
     // 오류가 있는 1번 스텝 패널로 바뀌고 이름 입력에 포커스가 간다
-    await expect(page.getByText('스텝 #1:')).toBeVisible();
+    await expect(page.getByTestId('step-config-panel-title').filter({ hasText: /^스텝 #1(:|$)/ })).toBeVisible();
     const nameInput = page.locator('#step-name');
     await expect(nameInput).toHaveValue('');
     await expect(nameInput).toHaveAttribute('aria-invalid', 'true');
@@ -448,7 +448,7 @@ test.describe('파이프라인 스텝 검증 오류 접근성 (WD-560)', () => {
     await page.getByPlaceholder('파이프라인 이름').fill('이름 변경');
     await saveAndExpectFailureAnnouncedOnce(page);
 
-    await expect(page.getByText(/^스텝 #1:/)).toBeVisible();
+    await expect(page.getByTestId('step-config-panel-title').filter({ hasText: /^스텝 #1(:|$)/ })).toBeVisible();
     const pathInput = page.getByLabel('추가 경로');
     await expect(pathInput).toBeFocused();
     await expect(pathInput).toHaveAttribute('aria-invalid', 'true');
@@ -499,10 +499,10 @@ test.describe('파이프라인 스텝 검증 오류 접근성 (WD-560)', () => {
     await openNewEditorWithTypedStep(page, 'API 스텝', 'API 호출');
     await setOffsetPageSize(page, '-5');
     await clickToolbarAddStep(page);
-    await expect(page.getByText(/^스텝 #2:/)).toBeVisible();
+    await expect(page.getByTestId('step-config-panel-title').filter({ hasText: /^스텝 #2(:|$)/ })).toBeVisible();
     await nameAndTypeStep(page, 'AI 스텝', 'AI 분류');
     await clickToolbarAddStep(page);
-    await expect(page.getByText(/^스텝 #3:/)).toBeVisible();
+    await expect(page.getByTestId('step-config-panel-title').filter({ hasText: /^스텝 #3(:|$)/ })).toBeVisible();
 
     // 선택된 3번에 오류가 있으므로 3번에 머물고 이름 칸으로 포커스
     await saveAndExpectFailureAnnouncedOnce(page);
@@ -524,7 +524,7 @@ test.describe('파이프라인 스텝 검증 오류 접근성 (WD-560)', () => {
 
     // 1번 재선택 — 접혀 있던 페이지네이션 절은 오류가 있어 펴진 채로 다시 그려진다
     await node('API 스텝').click();
-    await expect(page.getByText(/^스텝 #1:/)).toBeVisible();
+    await expect(page.getByTestId('step-config-panel-title').filter({ hasText: /^스텝 #1(:|$)/ })).toBeVisible();
     await expectErrorsNotLive(['URL을 입력하세요']);
     // 페이지 크기 범위 오류는 입력 중에 읽히도록 polite 영역에 있다 — 이미 내용이 든 채 새로 마운트된 영역은 읽지 않는다(alert 아님)
     const sizeError = page.getByText(PAGE_SIZE_MESSAGE, { exact: true });
@@ -535,12 +535,12 @@ test.describe('파이프라인 스텝 검증 오류 접근성 (WD-560)', () => {
 
     // 2번 재선택
     await node('AI 스텝').click();
-    await expect(page.getByText(/^스텝 #2:/)).toBeVisible();
+    await expect(page.getByTestId('step-config-panel-title').filter({ hasText: /^스텝 #2(:|$)/ })).toBeVisible();
     await expectErrorsNotLive(['프롬프트를 입력하세요', '출력 컬럼을 최소 1개 정의하세요']);
 
     // 3번 재선택 — WD-560 의 이름·스크립트 오류도 라이브 영역이 아니다
     await page.locator('.react-flow__node').nth(2).click();
-    await expect(page.getByText(/^스텝 #3:/)).toBeVisible();
+    await expect(page.getByTestId('step-config-panel-title').filter({ hasText: /^스텝 #3(:|$)/ })).toBeVisible();
     await expectErrorsNotLive(['스텝 이름을 입력하세요', '스크립트를 입력하세요']);
 
     // 재선택은 저장 실패 안내(토스트)를 새로 띄우지 않는다
@@ -665,7 +665,7 @@ test.describe('파이프라인 스텝 검증 오류 접근성 (WD-560)', () => {
     await page.getByPlaceholder('파이프라인 이름').fill('이름 변경');
     await saveAndExpectFailureAnnouncedOnce(page);
 
-    await expect(page.getByText(/^스텝 #1:/)).toBeVisible();
+    await expect(page.getByTestId('step-config-panel-title').filter({ hasText: /^스텝 #1(:|$)/ })).toBeVisible();
     await expectUrlFieldError(page, URL_SCHEME_MESSAGE);
     expect(putCapture.requests).toHaveLength(0);
   });

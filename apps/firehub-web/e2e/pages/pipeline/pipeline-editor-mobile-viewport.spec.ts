@@ -220,7 +220,7 @@ test.describe('파이프라인 에디터 — 모바일 스텝 설정 패널 (WD-
     await page.getByRole('button', { name: '수정', exact: true }).click();
     await page.locator('.react-flow__node').filter({ has: page.getByText('데이터 추출', { exact: true }) }).click();
 
-    const header = page.getByText(/^스텝 #1:/);
+    const header = page.getByTestId('step-config-panel-title').filter({ hasText: /^스텝 #1(:|$)/ });
     await expect(header).toBeVisible();
     // 패널 = 머리글을 품은 가장 가까운 border-t 상자. 안쪽 스크롤 영역이 내용보다 작으면(예전 118px) 잘려 있는 것이다
     const panel = header.locator('xpath=ancestor::div[contains(@class,"border-t")][1]');
@@ -274,7 +274,7 @@ test.describe('파이프라인 에디터 — 모바일 스텝 설정 패널 (WD-
     await page.getByRole('button', { name: '수정', exact: true }).click();
     await page.locator('.react-flow__node').filter({ has: page.getByText('데이터 추출', { exact: true }) }).click();
 
-    const header = page.getByText(/^스텝 #1:/);
+    const header = page.getByTestId('step-config-panel-title').filter({ hasText: /^스텝 #1(:|$)/ });
     await expect(header).toBeVisible();
     const panel = header.locator('xpath=ancestor::div[contains(@class,"border-t")][1]');
     const panelBox = (await panel.boundingBox())!;

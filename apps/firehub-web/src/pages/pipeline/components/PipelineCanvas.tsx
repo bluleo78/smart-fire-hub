@@ -31,6 +31,7 @@ import { Button } from '@/components/ui/button';
 import type { ExecutionDetailResponse } from '@/types/pipeline';
 
 import type { EditorAction,PipelineEditorState } from '../hooks/usePipelineEditor';
+import { isUnnamedStep, stepDisplayName } from '../utils/step-display-name';
 import { findStepExecution } from '../utils/step-execution';
 import { AddStepEdge } from './AddStepEdge';
 import { StepNode, type StepNodeData, type StepNodeType } from './StepNode';
@@ -49,20 +50,6 @@ interface EdgeSelection {
   ids: ReadonlySet<string>;
 }
 const NO_EDGES: ReadonlySet<string> = new Set();
-
-/**
- * 스텝의 표시 이름 — 이름이 없으면 「스텝 #순번」으로 부른다.
- * 캔버스 노드·연결선 이름·이동 안내가 같은 이름을 쓰게 해 스크린리더가 어디서나 같은 말을 듣게 한다 (WD-1049).
- */
-function stepDisplayName(name: string | undefined | null, index: number): string {
-  // 표시 이름 자체는 자르지 않는다 — 비었는지만 isUnnamedStep 으로 본다
-  return isUnnamedStep(name) ? `스텝 #${index + 1}` : (name as string);
-}
-
-/** 이름이 없는 스텝인가 — 공백뿐인 이름도 없는 것으로 본다. 표시 이름·흐린 색·배지 숨김이 같은 판정을 쓴다 (WD-1049). */
-function isUnnamedStep(name: string | undefined | null): boolean {
-  return !name?.trim();
-}
 
 /**
  * 캔버스 위에 떠 있는 outline 버튼의 칠(WD-778) — 공용 outline 은 쉬는 면·hover 면이 투명/반투명이라 팬할 때 노드·격자가 비친다.
