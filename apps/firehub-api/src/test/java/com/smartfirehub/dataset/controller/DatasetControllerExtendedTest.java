@@ -34,8 +34,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
+import java.util.stream.LongStream;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
@@ -210,17 +215,65 @@ class DatasetControllerExtendedTest {
         .andExpect(jsonPath("$.deletedCount").value(3));
   }
 
+  /** WD-1083: 빈·누락·null·1000 초과 rowIds 는 원인(한국어 문구)이 있는 400 이어야 하고 서비스는 호출되지 않는다. */
+  @ParameterizedTest
+  @MethodSource("invalidRowIdsBodies")
+  void deleteDataRows_invalidIds_returns400WithMessage(String body) throws Exception {
+    mockMvc
+        .perform(
+            post("/api/v1/datasets/1/data/delete")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.rowIds").value("삭제할 행을 1개 이상 1000개 이하로 선택하세요."));
+
+    verify(datasetDataService, never()).deleteDataRows(anyLong(), anyList(), anyLong());
+  }
+
+  static Stream<String> invalidRowIdsBodies() {
+    return Stream.of(
+        "{\"rowIds\":[]}",
+        "{\"rowIds\":null}",
+        "{}",
+        "{\"rowIds\":["
+            + LongStream.rangeClosed(1, 1001)
+                .mapToObj(String::valueOf)
+                .collect(Collectors.joining(","))
+            + "]}");
+  }
+
+  /** WD-1083: rowIds 안의 null 요소도 400 이며 서비스는 호출되지 않는다. */
   @Test
-  void deleteDataRows_emptyIds_returnsBadRequest() throws Exception {
-    DataDeleteRequest req = new DataDeleteRequest(List.of());
+  void deleteDataRows_nullElement_returns400() throws Exception {
+    mockMvc
+        .perform(
+            post("/api/v1/datasets/1/data/delete")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"rowIds\":[null]}"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors['rowIds[0]']").value("행 ID 는 비어 있을 수 없습니다."));
+
+    verify(datasetDataService, never()).deleteDataRows(anyLong(), anyList(), anyLong());
+  }
+
+  /** WD-1083: 경계값 1000개는 허용된다. */
+  @Test
+  void deleteDataRows_exactly1000_returnsOk() throws Exception {
+    List<Long> ids = LongStream.rangeClosed(1, 1000).boxed().toList();
+    when(datasetDataService.deleteDataRows(anyLong(), anyList(), anyLong()))
+        .thenReturn(new DataDeleteResponse(1000));
 
     mockMvc
         .perform(
             post("/api/v1/datasets/1/data/delete")
                 .header("Authorization", "Bearer test-token")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(req)))
-        .andExpect(status().isBadRequest());
+                .content(objectMapper.writeValueAsString(new DataDeleteRequest(ids))))
+        .andExpect(status().isOk());
+
+    verify(datasetDataService).deleteDataRows(anyLong(), anyList(), anyLong());
   }
 
   @Test

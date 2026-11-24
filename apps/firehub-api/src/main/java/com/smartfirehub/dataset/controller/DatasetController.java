@@ -231,14 +231,9 @@ public class DatasetController {
   @RequirePermission("data:delete")
   public ResponseEntity<DataDeleteResponse> deleteDataRows(
       @PathVariable Long id,
-      @RequestBody DataDeleteRequest request,
+      @Valid @RequestBody DataDeleteRequest request,
       Authentication authentication) {
-    if (request.rowIds() == null || request.rowIds().isEmpty()) {
-      return ResponseEntity.badRequest().build();
-    }
-    if (request.rowIds().size() > 1000) {
-      return ResponseEntity.badRequest().build();
-    }
+    // rowIds 개수·null 검증은 DataDeleteRequest 의 Bean Validation 이 맡는다(WD-1083).
     // 변경 감사(WD-463)의 행위자로 남기기 위해 요청 사용자를 넘긴다.
     DataDeleteResponse response =
         datasetDataService.deleteDataRows(
