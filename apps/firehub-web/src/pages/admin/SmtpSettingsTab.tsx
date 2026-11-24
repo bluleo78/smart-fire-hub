@@ -2,8 +2,10 @@ import { Info, Mail, RotateCcw, Save, Send } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 
+import { CardSectionHeading } from '@/components/CardSectionHeading';
+
 import { Button } from '../../components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
+import { Card, CardContent, CardHeader } from '../../components/ui/card';
 import { FormField } from '../../components/ui/form-field';
 import { InlineBanner } from '../../components/ui/inline-banner';
 import { Input } from '../../components/ui/input';
@@ -101,10 +103,10 @@ export default function SmtpSettingsTab({ state }: { state: SmtpSettingsFormStat
   return (
     <Card className="card-hover">
       <CardHeader>
-        <CardTitle className="flex items-center gap-2">
+        <CardSectionHeading className="flex items-center gap-2">
           <Mail className="h-4 w-4" />
           SMTP 서버 설정
-        </CardTitle>
+        </CardSectionHeading>
       </CardHeader>
       <CardContent className="space-y-6">
         {/* "지금 화면을 믿지 말고 다시 읽어라" 안내 — 사용자가 다시 조작해야 하는 상태라 사라지는

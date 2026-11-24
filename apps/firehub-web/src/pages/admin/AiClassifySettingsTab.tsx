@@ -1,8 +1,10 @@
 import { Info, RotateCcw, Save } from 'lucide-react';
 import { useState } from 'react';
 
+import { CardSectionHeading } from '@/components/CardSectionHeading';
+
 import { Button } from '../../components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
+import { Card, CardContent, CardHeader } from '../../components/ui/card';
 import { InlineBanner } from '../../components/ui/inline-banner';
 import { Label } from '../../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
@@ -86,7 +88,7 @@ export default function AiClassifySettingsTab({
   return (
     <Card className="card-hover">
       <CardHeader>
-        <CardTitle>분류 모델 설정</CardTitle>
+        <CardSectionHeading>분류 모델 설정</CardSectionHeading>
       </CardHeader>
       <CardContent className="space-y-6">
         {cred.staleNotice && <InlineBanner variant="warning">{cred.staleNotice}</InlineBanner>}
