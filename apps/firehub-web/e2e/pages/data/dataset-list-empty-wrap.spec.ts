@@ -24,6 +24,7 @@ test.beforeEach(async ({ authenticatedPage: page }) => {
 /**
  * 검색어로 진입해 「검색 초기화」가 보일 때까지 기다린다.
  * URL ?q= 의 검색어가 목록 조회의 search 파라미터로 그대로 갔는지도 확인한다 — 0건 안내가 그 검색어의 결과여야 한다.
+ * 지연 낭독 노드 갈아끼움(WD-815)이 끝난 뒤에 값을 돌려준다 — 갈아끼기 전에 재면 WD-1063 플레이크로 돌아온다.
  */
 async function gotoEmpty(page: Page, keyword: string = KW) {
   const listRequest = page.waitForRequest((req) => {
@@ -34,9 +35,16 @@ async function gotoEmpty(page: Page, keyword: string = KW) {
   await listRequest;
   const reset = page.getByRole('button', { name: '검색 초기화' });
   await expect(reset).toBeVisible();
+  const status = page.getByRole('status').filter({ hasText: '에 대한 결과가 없습니다' });
+  // 안내 문구는 마운트 뒤 ANNOUNCE_DELAY_MS(100ms)에 노드를 갈아끼운다(지연 낭독, WD-815) —
+  // 갈아끼우는 순간에 재면 떨어져 나간 노드를 잡아 높이 0·줄높이 normal 로 나와 헛실패한다(WD-1063).
+  // 준비가 끝나면 pending 노드의 aria-hidden 이 없어지니 그때까지 기다린 뒤에 잰다.
+  // DelayedStatus 가 갈아끼우는 바로 밑 자식(:scope >)에만 대응 — 그 노드 안쪽 깊은 곳의 장식용
+  // aria-hidden 은 세지 않아 대기 참조가 갈아끼움 노드 하나로 고정된다(대기 타임아웃 방지).
+  await expect(status.locator(':scope > [aria-hidden]')).toHaveCount(0);
   return {
     box: page.locator('[data-slot="table-container"]'),
-    status: page.getByRole('status').filter({ hasText: '에 대한 결과가 없습니다' }),
+    status,
     reset,
   };
 }
