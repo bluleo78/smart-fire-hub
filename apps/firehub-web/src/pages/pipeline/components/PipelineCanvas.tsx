@@ -15,7 +15,7 @@ import {
 } from '@xyflow/react';
 import { LayoutGrid, Pencil,Plus } from 'lucide-react';
 import { useTheme } from 'next-themes';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   AlertDialog,
@@ -50,6 +50,53 @@ interface EdgeSelection {
   ids: ReadonlySet<string>;
 }
 const NO_EDGES: ReadonlySet<string> = new Set();
+
+/**
+ * 초점 이동 재시도 상한(WD-1034) — 새 노드는 xyflow 의 치수 측정 전까지 visibility: hidden 이라 focus() 가 무시되고,
+ * 프레임마다 다시 시도해야 한다. 60Hz 기준 약 0.5초 — 측정·이름 입력 초점 효과보다 넉넉히 길게, 대신 무한 루프는 막는다.
+ * 시도 횟수는 초점 예약(PendingNodeFocus.attempts)에 남겨 steps 가 바뀌어도 리셋되지 않으므로,
+ * 체인이 새로 띄워져도 한 예약 전체가 이 한도로 막힌다.
+ */
+const MAX_FOCUS_ATTEMPTS = 30;
+
+/** 초점 이동 예약 하나 — 대상 노드 id 와, 이 예약이 쓴 재시도 횟수를 함께 든다(WD-1034) */
+interface PendingNodeFocus {
+  id: string;
+  /**
+   * 이 예약이 쓴 재시도 횟수 — effect 본문이 아니라 예약에 남겨 두는 것이 중요하다.
+   * steps 가 바뀌면 effect 가 다시 돌며 재시도 체인을 새로 띄우는데, 그때마다 0 으로 리셋되면
+   * 상한이 무력화되어 예약이 오래 남아 뒤에 엉뚱한 초점 이동이 일어난다.
+   */
+  attempts: number;
+}
+
+/**
+ * 초점 이동(WD-1034, WCAG 2.4.3) — 예약한 노드를 data-id 로 찾아 초점을 옮기고, 실제로 옮겨갔는지 돌려준다.
+ * 요소가 아직 안 보이면(visibility: hidden) focus() 가 조용히 무시되므로 activeElement 로 확인한다.
+ * id 는 UUID·난수에서 나온 값이라 셀렉터 주입은 어렵지만, 방어로 CSS.escape 를 지난다(StepConfigPanel 과 동일).
+ * 초점 이동에 tabIndex 이 필요하면 잠시 넣었다가 초점 후 원래대로 되돌린다 —
+ * 원래부터 tabIndex 있던 요소는 건드리지 않는다(이미 포커스 가능하면 속성을 바꾸지 않는다).
+ */
+function focusNodeById(id: string): boolean {
+  const el = document.querySelector<HTMLElement>(`.react-flow__node[data-id="${CSS.escape(id)}"]`);
+  if (!el) return false;
+  const hadTabIndex = el.hasAttribute('tabindex');
+  if (!hadTabIndex) el.setAttribute('tabindex', '-1');
+  // preventScroll — 초점 대상은 사용자가 방금 조작한 캔버스 안이라 스크롤이 필요 없고,
+  // 캔버스 스크롤이 React Flow 의 자체 이동과 겹치지 않게 한다(StepConfigPanel·WD-1044 와 동일).
+  el.focus({ preventScroll: true });
+  if (!hadTabIndex) el.removeAttribute('tabindex');
+  return document.activeElement === el;
+}
+
+/**
+ * 키보드에서 온 activation 인가 — 버튼의 합성 click 은 detail 0(키보드), 마우스는 1 이상이고,
+ * 키보드 Delete 로 연결선을 끊는 경로는 detail 자체가 없다. 초점 이동 예약은 이 쪽에서만 한다
+ * (설계 비목표: 마우스 클릭 경로의 초점 이동 변경 — WD-1034).
+ */
+function isKeyboardActivation(detail?: number): boolean {
+  return detail === undefined || detail === 0;
+}
 
 /**
  * 캔버스 위에 떠 있는 outline 버튼의 칠(WD-778) — 공용 outline 은 쉬는 면·hover 면이 투명/반투명이라 팬할 때 노드·격자가 비친다.
@@ -189,20 +236,109 @@ export function PipelineCanvas({
     });
   };
 
+  /**
+   * 초점 이동 예약(WD-1034, WCAG 2.4.3) — 「연결 끊기」 버튼·키보드 Delete 로 대상이 DOM 에서 빠지면
+   * 브라우저가 초점을 body 로 되돌려 키보드 사용자가 캔버스에서 자리를 잃는다. 사라지기 전에 초점 대상을
+   * 예약해 두고, steps 갱신 뒤 실행되는 effect 가 렌더 이후 실제 요소에 초점을 옮긴다.
+   * 예약은 노드뿐이다 — 연결선 초점은 AddStepEdge.tsx 의 focusEdgeElement 가 직접 맡는다(WD-1034).
+   * 파일 안에서만 쓴다(export 안 함 — Task 도 인터페이스로 이것만 본다).
+   */
+  const pendingFocusRef = useRef<PendingNodeFocus | null>(null);
+  /**
+   * 「스텝 삽입」 초점 예약(WD-1034) — 새 스텝의 tempId 는 dispatch 를 해야 알 수 있으므로,
+   * 무엇이 새로 생겼는지 대조할 원본 steps 와 기준이 되는 targetId 를 함께 보관한다.
+   * (설계 접근 2번: 새 노드는 커밋 이후에야 DOM 에 존재한다.)
+   */
+  const pendingInsertRef = useRef<{ beforeSteps: PipelineEditorState['steps']; targetId: string } | null>(null);
+  /**
+   * 초점 재시도 체인의 세대(WD-1034) — steps 가 바뀔 때마다 새 체인을 띄우는데, 이전 체인이 살아 있으면
+   * 오래된 예약으로 초점이 다시 움직인다. 체인마다 번호를 하나씩 받아 두고, 매 프레임 그 번호가 최신인지
+   * 확인해 오래된 체인은 스스로 멈춘다 — 사용자가 그 사이에 옮긴 초점을 되찾지 않게 하려는 것이다.
+   */
+  const focusChainSeqRef = useRef(0);
+
+  /** 초점을 노드로 옮기게 예약한다 — 키보드 경로에서만 불린다(isKeyboardActivation 참고, WD-1034) */
+  const queueNodeFocus = useCallback((tempId: string) => {
+    pendingFocusRef.current = { id: tempId, attempts: 0 };
+  }, []);
+
   /** 연결 끊기 — 연결선의 「연결 끊기」 버튼과 키보드 삭제가 같은 동작을 쓴다 */
   const onRemoveEdge = useCallback(
-    (sourceId: string, targetId: string) => {
+    (sourceId: string, targetId: string, detail?: number) => {
+      // 끊긴 연결의 앞(source) 노드로 초점을 옮기게 — dispatch 전에 예약해야 갱신 effect 가 이를 본다.
+      if (isKeyboardActivation(detail)) queueNodeFocus(sourceId);
       dispatch({ type: 'REMOVE_EDGE', payload: { sourceTempId: sourceId, targetTempId: targetId } });
     },
-    [dispatch],
+    [dispatch, queueNodeFocus],
   );
 
   const onInsertBetween = useCallback(
-    (sourceId: string, targetId: string) => {
+    (sourceId: string, targetId: string, detail?: number) => {
+      // 새 스텝 노드는 이 dispatch 다음 렌더에야 존재하므로, 원본 steps 를 예약해 두고 effect 에서
+      // 새로 생긴 tempId 를 찾아 초점을 옮긴다(설계 접근 2번 — pendingInsertRef 선언부).
+      if (isKeyboardActivation(detail)) {
+        pendingInsertRef.current = { beforeSteps: state.steps, targetId };
+      }
       dispatch({ type: 'INSERT_STEP_BETWEEN', payload: { sourceTempId: sourceId, targetTempId: targetId } });
     },
-    [dispatch],
+    [dispatch, state.steps],
   );
+
+  /**
+   * 초점 이동 effect(WD-1034, WCAG 2.4.3) — steps 가 바뀔 때 예약된 초점 대상을 실제 DOM 요소로 옮긴다.
+   * 「스텝 삽입」으로 생긴 새 노드는 이 렌더 이후에야 DOM 에 존재하므로 여기서 찾는다.
+   * 요소가 아직 안 보이면(위 focusNodeById) requestAnimationFrame 으로 초점이 실제로 옮겨갈 때까지 다시 시도하고,
+   * 한계에 닿으면 예약을 비운다. 이전 체인은 cleanup 취소와 세대 토큰 두 겹으로 끊는다(아래 체인 시작·return).
+   */
+  useEffect(() => {
+    // 「스텝 삽입」: 원본 steps 와 대조해 새로 생긴 tempId 를 찾는다 — INSERT_STEP_BETWEEN 은 새 스텝을
+    // 맨 뒤에 붙이므로 배열 위치가 아니라 추가된 것(diff)으로 찾고, target 이 그 스텝에 의존하는지로 확인한다.
+    const insert = pendingInsertRef.current;
+    if (insert) {
+      pendingInsertRef.current = null;
+      const added = state.steps.filter((s) => !insert.beforeSteps.some((b) => b.tempId === s.tempId));
+      const target = state.steps.find((s) => s.tempId === insert.targetId);
+      const newStep =
+        added.length === 1 && target?.dependsOnTempIds.includes(added[0].tempId) ? added[0] : null;
+      if (newStep) pendingFocusRef.current = { id: newStep.tempId, attempts: 0 };
+    }
+
+    const pending = pendingFocusRef.current;
+    if (!pending) return;
+
+    // 새 체인 — 세대 번호를 하나 올려 이전 체인(아직 프레임을 기다리고 있을 수 있는)이 스스로 멈추게 한다.
+    // 이전 체인을 멈추지 않으면 오래된 예약이 최대 30프레임(≈0.5초, 백그라운드 탭에서는 프레임이
+    // 멈춰 있다 한꺼번에 훅씬 뒤에 도착한다) 동안 초점 이동을 계속 시도해 사용자가 옮긴 초점을 되찾는다 —
+    // 이 이슈가 고치려는 결함 자체가 이런 오래된 체인이다(WD-1034).
+    const seq = ++focusChainSeqRef.current;
+    let frame = 0;
+    // 새 노드는 xyflow 가 치수를 측정하기 전 visibility: hidden 이라(위) 한 번에 안 되고,
+    // 스텝 삽입 시 이름 입력에 초점을 주는 기존 효과(WD-545, 부모 effect)보다 뒤에 초점을 옮겨야 초점이 노드로 남는다
+    // (effect 는 다음 훅에 이어 즉시, rAF 는 그보다 뒤에 — 그래서 프레임 단위 재시도가 그 뒤를 따른다).
+    const attempt = () => {
+      // 세대가 바뀌었으면(더 새 effect 가 체인을 띄웠거나 unmount 로 취소됐으면) 이 체인은 끝 —
+      // 초점을 건드리지도 않고 물러난다. 오래된 체인의 초점 이동이 곧 이 결함이므로 맨 앞에서 끊는다.
+      if (seq !== focusChainSeqRef.current) return;
+      // 시도 횟수를 예약에 남긴다 — steps 가 바뀌어 이 effect 가 다시 돌아도 리셋되지 않아
+      // 한 예약 전체가 MAX_FOCUS_ATTEMPTS 회로 막힌다.
+      pending.attempts += 1;
+      if (focusNodeById(pending.id)) {
+        // 초점 이동 성공 — 예약을 비운다(이미 다른 예약이 들어왔다면 그 쪽은 지우지 않는다)
+        if (pendingFocusRef.current === pending) pendingFocusRef.current = null;
+      } else if (pending.attempts < MAX_FOCUS_ATTEMPTS) {
+        // 아직 그려지지 않았거나 안 보여서 초점이 먹지 않았다 — 한 프레임 뒤 다시 시도한다
+        frame = requestAnimationFrame(attempt);
+      } else if (pendingFocusRef.current === pending) {
+        // 한계까지 시도해도 못 옮겼다 — 예약을 비운다(남겨 두면 나중에 엉뚱한 초점 이동이 일어난다)
+        pendingFocusRef.current = null;
+      }
+    };
+    attempt();
+    // 예약된 다음 프레임을 취소한다 — steps 가 다시 바뀌거나 unmount 될 때 이 체인이 살아 남으면
+    // 오래된 예약의 초점 이동이 뒤에 그어진다(백그라운드 탭에선 프레임이 멈춰 있다 오랜 뒤에 한꺼번에
+    // 도착하기도 한다). 두 겹(여기 취소 + 위 세대 검사)으로 오래된 초점 이동을 막는다(WD-1034).
+    return () => cancelAnimationFrame(frame);
+  }, [state.steps]);
 
   const edges = useMemo<Edge[]>(() => {
     // 연결선 이름에 쓸 스텝 표시 이름을 스텝마다 한 번 만든다 — 이름이 없으면 「스텝 #순번」(WD-918)
@@ -334,6 +470,8 @@ export function PipelineCanvas({
     const targets = edges.filter((edge) => edge.selected);
     if (targets.length === 0) return;
     e.preventDefault();
+    // 연결선을 하나씩 끊는다 — 각 끊기가 onRemoveEdge 안에서 초점을 앞 노드로 옮기게 예약하며(키보드 경로),
+    // 여러 연결선이 한 번에 끊기면 마지막 예약이 남아 그 앞 노드로 초점이 간다(WD-1034).
     for (const edge of targets) onRemoveEdge(edge.source, edge.target);
   };
 
