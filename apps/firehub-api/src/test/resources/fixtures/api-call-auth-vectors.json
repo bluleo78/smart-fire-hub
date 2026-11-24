@@ -409,6 +409,84 @@
       "base": "https://api.example.com/v1/items?k=v",
       "location": "http:next",
       "expected": "http:next"
+    },
+    {
+      "name": "empty authority with same scheme: https:///abs (WD-1055)",
+      "base": "https://api.example.com/v1/items?k=v",
+      "location": "https:///abs",
+      "expected": "https://api.example.com/abs"
+    },
+    {
+      "name": "empty authority with same scheme: https:// (WD-1055)",
+      "base": "https://api.example.com/v1/items?k=v",
+      "location": "https://",
+      "expected": "https://api.example.com/v1/items?k=v"
+    },
+    {
+      "name": "empty authority without scheme: ///abs (WD-1055)",
+      "base": "https://api.example.com/v1/items?k=v",
+      "location": "///abs",
+      "expected": "https://api.example.com/abs"
+    },
+    {
+      "name": "empty authority without scheme: // (WD-1055)",
+      "base": "https://api.example.com/v1/items?k=v",
+      "location": "//",
+      "expected": "https://api.example.com/v1/items?k=v"
+    },
+    {
+      "name": "empty authority without scheme: //?q=1 (WD-1055)",
+      "base": "https://api.example.com/v1/items?k=v",
+      "location": "//?q=1",
+      "expected": "https://api.example.com/v1/items?q=1"
+    },
+    {
+      "name": "empty authority with same scheme: https://?q=1 (WD-1055)",
+      "base": "https://api.example.com/v1/items?k=v",
+      "location": "https://?q=1",
+      "expected": "https://api.example.com/v1/items?q=1"
+    },
+    {
+      "name": "empty authority with same scheme: https:/// (WD-1055)",
+      "base": "https://api.example.com/v1/items?k=v",
+      "location": "https:///",
+      "expected": "https://api.example.com/"
+    },
+    {
+      "name": "empty authority with different scheme kept as is: http:///abs (WD-1055)",
+      "base": "https://api.example.com/v1/items?k=v",
+      "location": "http:///abs",
+      "expected": "http:///abs"
+    },
+    {
+      "name": "multi-slash empty authority: //// (WD-1055)",
+      "base": "https://api.example.com/v1/items?k=v",
+      "location": "////",
+      "expected": "https://api.example.com//"
+    },
+    {
+      "name": "multi-slash empty authority: https://// (WD-1055)",
+      "base": "https://api.example.com/v1/items?k=v",
+      "location": "https:////",
+      "expected": "https://api.example.com//"
+    },
+    {
+      "name": "multi-slash empty authority: https:////x (WD-1055)",
+      "base": "https://api.example.com/v1/items?k=v",
+      "location": "https:////x",
+      "expected": "https://api.example.com//x"
+    },
+    {
+      "name": "multi-slash empty authority: ////x (WD-1055)",
+      "base": "https://api.example.com/v1/items?k=v",
+      "location": "////x",
+      "expected": "https://api.example.com//x"
+    },
+    {
+      "name": "multi-slash empty authority: ////?q=1 (WD-1055)",
+      "base": "https://api.example.com/v1/items?k=v",
+      "location": "////?q=1",
+      "expected": "https://api.example.com//?q=1"
     }
   ],
   "redirectMethod": [
