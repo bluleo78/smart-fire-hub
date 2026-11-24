@@ -64,7 +64,8 @@ export function RoleClearanceCard({
   const baseId = useId();
   // 등급을 실제로 바꿀 수 있는가 — role:write 가 있어도 범위 밖 역할이면 잠근다(WD-444).
   const editable = canEdit && !scopeLockReason;
-  // 범위 잠금 안내 문단 id — 안내가 보일 때만(없는 id 를 가리키지 않게) 그룹·각 라디오의 접근 설명으로 잇는다(WD-1068).
+  // 범위 잠금 안내 문단 id — 안내가 보일 때만(없는 id 를 가리키지 않게) 각 라디오의 접근 설명으로 잇는다(WD-1068).
+  // 그룹에는 잇지 않는다 — 그룹과 라디오 양쪽에 두면 그룹에 들어갈 때와 라디오마다 잠금 이유를 두 번 듣는다(권한 체크박스와 같게 항목에만).
   const scopeLockId = canEdit && scopeLockReason ? `${baseId}-scope-lock` : undefined;
 
   const current = clearance ? String(clearance.securityLevelId) : '';
@@ -156,7 +157,6 @@ export function RoleClearanceCard({
               onValueChange={setDraft}
               disabled={!editable}
               aria-label="데이터 열람 등급"
-              aria-describedby={scopeLockId}
               className="gap-3"
             >
               {levels.map((l, i) => {

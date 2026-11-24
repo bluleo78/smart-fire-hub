@@ -394,7 +394,8 @@ test.describe('역할 관리 — role:read', () => {
     const hint = card.getByText('자신에게 없는 권한을 가진 역할이라 열람 등급을 바꿀 수 없습니다');
     await expect(hint).toBeVisible();
     const group = card.getByRole('radiogroup', { name: '데이터 열람 등급' });
-    await expect(group).toHaveAttribute('aria-describedby', (await hint.getAttribute('id'))!);
+    // 잠금 이유는 각 라디오에만 잇고 그룹에는 두지 않는다 — 두 번 읽히지 않게(WD-1068 리뷰 후속)
+    await expect(group).not.toHaveAttribute('aria-describedby', /.+/);
     for (const name of ['공개', '내부', '민감', '기밀']) {
       await expect(card.getByRole('radio', { name })).toBeDisabled();
     }
