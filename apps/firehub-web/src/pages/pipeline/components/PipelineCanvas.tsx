@@ -379,8 +379,11 @@ export function PipelineCanvas({
       <div className="relative flex h-full w-full flex-col items-center justify-center gap-4 rounded-lg border-2 border-dashed border-border bg-muted">
         <p className="text-muted-foreground">첫 번째 스텝을 추가하세요</p>
         {!readOnly && (
+          // 패널 「스텝 삭제」로 스텝이 하나도 남지 않으면 초점을 이 버튼으로 보낸다(WD-1051).
+          // 속성 이름을 바꾸면 StepConfigPanel 의 선택자도 맞춘다.
           <button
             onClick={handleAddStep}
+            data-canvas-add-step=""
             className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow hover:bg-primary/90"
           >
             <Plus className="h-5 w-5" />
