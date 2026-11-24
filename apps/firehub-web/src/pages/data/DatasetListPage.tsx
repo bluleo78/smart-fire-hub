@@ -169,6 +169,11 @@ export default function DatasetListPage() {
    * layout effect 인 이유: 버려지는 렌더(transition 중 끼는 옛 location 의 급한 렌더)가 ref 를 건드리지 않게 하고,
    * 그래도 paint·클릭 이벤트보다 먼저 끝나 낡은 값을 쓸 틈이 없게 하려는 것.
    *
+   * 실제 주소 대조(WD-1061): 외부 이동(사이드바 링크)은 history 를 즉시 쓰지만 커밋·layout effect 는 transition 렌더 뒤라,
+   * 그 사이 클릭은 낡은 기준(이미 지운 favorite·sort)을 읽어 되살린다. 그래서 getLatestParams 가 window.location 을 직접
+   * 대조해, 같은 경로인데 기준(마지막 pending 또는 렌더된 주소)과 실제 주소가 다르면 외부 이동으로 보고 pending 을 비운 뒤
+   * 실제 주소를 기준으로 쓴다(경로가 다르면 다른 페이지로 가는 중이라 기존 기준 유지).
+   *
    * 정렬(#358) 연속 클릭 전이 유실 방지와 뒤로가기 뒤 URL 기준 정렬도 이 구조가 맡는다
    * (toggleSort 와 토글 버튼이 모두 getLatestParams 의 최신 값을 읽는다).
    */
@@ -177,6 +182,8 @@ export default function DatasetListPage() {
   const lastLocationKeyRef = useRef(location.key);
   // 렌더에 온 주소를 ref 로도 들어 patchParams 가 렌더마다 새로 만들어지지 않게 한다(의존 배열에 searchParams 를 넣지 않으려고)
   const renderedParamsRef = useRef(searchParams);
+  // 렌더(커밋)된 경로 — getLatestParams 가 실제 주소의 경로와 비교해 같은 페이지 안 외부 이동만 가른다(WD-1061)
+  const renderedPathnameRef = useRef(location.pathname);
   // 커밋이 확실해진 뒤(useLayoutEffect)에만 대기 목록·기준값을 갱신한다 — 렌더 중 ref 읽기·쓰기를 하지 않는다.
   // 왜: react-router 7 은 탐색을 startTransition 으로 적용해, 새 location 의 렌더가 도는 동안 옛 location 의 급한 렌더가 끼고
   // 버려질 수 있다. 렌더 중에 하면 버려진 렌더가 대기 항목을 빼거나 기준값을 옛 주소로 되돌려 그 사이 클릭이 정렬을 다시 지운다.
@@ -194,14 +201,29 @@ export default function DatasetListPage() {
     }
     lastLocationKeyRef.current = location.key;
     renderedParamsRef.current = searchParams;
-  }, [searchParams, location.key]);
+    renderedPathnameRef.current = location.pathname;
+  }, [searchParams, location.key, location.pathname]);
 
-  /** 아직 렌더에 오지 않은 변경까지 포함한 최신 주소 — 마지막 pending, 없으면 렌더에 온 주소. ref 만 읽어 언제 불러도 최신이다. */
+  /**
+   * 아직 렌더에 오지 않은 변경까지 포함한 최신 주소 — 마지막 pending, 없으면 렌더에 온 주소.
+   * 실제 주소와 어긋나면(커밋 전 외부 이동) pending 을 비우는 부수 효과가 있으므로 이벤트 처리기에서만 부른다(렌더 중 호출 금지).
+   */
   const getLatestParams = useCallback(() => {
     const pending = pendingWritesRef.current;
-    return pending.length > 0
-      ? new URLSearchParams(pending[pending.length - 1])
-      : renderedParamsRef.current;
+    // 기준 — 마지막 pending, 없으면 렌더에 온 주소
+    const base = pending.length > 0 ? new URLSearchParams(pending[pending.length - 1]) : renderedParamsRef.current;
+    // WD-1061: 실제 주소(window.location)가 기준과 다르면 아직 커밋 전인 외부 이동이 이미 주소를 바꾼 것 — 실제 주소 위에 쓴다
+    // 가정: BrowserRouter·basename 없음(App.tsx) — history 를 동기로 쓰고 window.location.pathname 이 라우터 경로와 같다.
+    // basename·다른 라우터를 쓰게 되면 경로 비교가 늘 어긋나 이 대조가 꺼지므로 함께 고쳐야 한다.
+    const live = new URLSearchParams(window.location.search);
+    if (
+      window.location.pathname === renderedPathnameRef.current &&
+      live.toString() !== base.toString()
+    ) {
+      pendingWritesRef.current = [];
+      return live;
+    }
+    return base;
   }, []);
 
   /** 아직 렌더에 오지 않은 변경까지 포함한 최신 주소 값 — 토글이 렌더 값 대신 이걸로 다음 값을 정한다. */

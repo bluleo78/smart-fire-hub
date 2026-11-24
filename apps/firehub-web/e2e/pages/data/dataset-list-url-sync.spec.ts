@@ -199,13 +199,58 @@ test.describe('데이터셋 목록 — URL 동기화', () => {
   });
 
   /**
+   * 이슈 WD-1061 — 외부 이동(사이드바 링크)은 history 를 즉시 쓰지만 커밋·layout effect 는 transition 렌더 뒤라,
+   * 그 사이 클릭이 낡은 기준(지운 favorite)을 읽어 되살린다. 한 작업 안에서 즐겨찾기 → 사이드바 → 임시 보기를 누른다.
+   */
+  test('즐겨찾기·사이드바 이동·임시 보기를 한 작업에서 누르면 favorite 이 되살아나지 않는다 (WD-1061)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupCommon(page);
+
+    await page.goto('/data/datasets');
+    await expect(page.getByRole('heading', { name: /데이터셋/ })).toBeVisible();
+
+    const favoriteButton = page.getByRole('button', { name: '즐겨찾기', exact: true });
+    const tempButton = page.getByRole('button', { name: '임시 데이터셋 보기' });
+
+    await clickInOneTask(page, [favoriteButton, page.locator('a[href="/data/datasets"]').first(), tempButton]);
+
+    await expect(tempButton).toHaveAttribute('aria-pressed', 'true');
+    const params = new URL(page.url()).searchParams;
+    expect(params.get('showTemp')).toBe('1');
+    expect(params.get('favorite')).toBeNull();
+  });
+
+  /** 이슈 WD-1061 — 같은 갈래를 정렬로: 사이드바 이동(정렬 없는 주소) 직후 임시 보기가 지운 sort 를 되살리지 않아야 한다. */
+  test('정렬된 목록에서 사이드바 이동·임시 보기를 한 작업에서 누르면 sort 가 되살아나지 않는다 (WD-1061)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupCommon(page);
+
+    await page.goto('/data/datasets?sort=name&order=asc');
+    await expect(page.getByRole('heading', { name: /데이터셋/ })).toBeVisible();
+
+    const tempButton = page.getByRole('button', { name: '임시 데이터셋 보기' });
+
+    await clickInOneTask(page, [page.locator('a[href="/data/datasets"]').first(), tempButton]);
+
+    await expect(tempButton).toHaveAttribute('aria-pressed', 'true');
+    const params = new URL(page.url()).searchParams;
+    expect(params.get('showTemp')).toBe('1');
+    expect(params.get('sort')).toBeNull();
+    expect(params.get('order')).toBeNull();
+  });
+
+  /**
    * 이슈 WD-950 리뷰 회귀 방지 — 클릭이 화면 반영 전(대기 목록이 안 빈 상태)에 뒤로가기(POP)와 겨루는 경우.
    * 같은 작업 안에서 즐겨찾기 클릭 + history.back() 을 하면 쓴 주소(favorite=true)는 렌더에 오지 못하고 POP 주소로 덮인다.
    * 이때 대기 목록을 비우지 않으면 다음 필터가 favorite 을 되살리고 뒤로 온 정렬을 지운다.
    * WD-1047 — 실제 뒤로가기는 비동기라 대개 favorite 커밋이 POP 보다 먼저 끝나 위 겨루기가 일어나지 않는다.
    * 그래서 이 시험은 뒤로가기 뒤 기본 동작(정렬 복원·다음 필터)만 지키고, 「POP 시 대기 목록 비우기」를 뺀 변이는
-   * 잡지 못한다(그 갈래를 지운 변이에서 10회 모두 통과). 그 갈래는 「즐겨찾기 직후 사이드바 링크로 이동하면…」 시험이
-   * 결정적으로 지킨다(같은 변이에서 5회 모두 실패).
+   * 잡지 못한다(그 갈래를 지운 변이에서 10회 모두 통과).
+   * WD-1061 — 이제 getLatestParams 가 실제 주소와 대조해 어긋나면 대기 목록을 비우므로, 「POP 시 대기 목록 비우기」 갈래를
+   * 지워도 「즐겨찾기 직후 사이드바 링크로 이동하면…」 시험은 통과한다(두 장치가 겹쳐 지킨다 — 그 갈래 하나만 지키는 시험은 없다).
+   * 이 시험은 여전히 POP 렌더 커밋 뒤에 다음 필터를 누르므로 「커밋 전 POP + 다음 필터」 경로는 직접 겨루지 않는다.
    */
   test('즐겨찾기 클릭과 뒤로가기가 겨뤄도 뒤로 온 주소 위에 다음 필터가 쌓인다 (WD-950)', async ({
     authenticatedPage: page,
@@ -272,7 +317,8 @@ test.describe('데이터셋 목록 — URL 동기화', () => {
     expect(params().get('favorite')).toBeNull();
     // WD-1047 모드 2 — 주소만 보면 POP 렌더 커밋 전에 다음 클릭이 들어가 대기 목록의 favorite 이 기준이 된다.
     // 렌더 신호(정렬 안내 문구)가 보일 때까지 기다려 POP 렌더 커밋 뒤에 다음 필터를 누른다.
-    // (커밋 전 클릭이 favorite 을 되살리는 것은 제품 쪽 겨루기라 이 시험 범위 밖 — WD-1053)
+    // (커밋 전 클릭이 favorite 을 되살리던 제품 쪽 겨루기는 WD-1061 에서 getLatestParams 의 실제 주소 대조로 막았다 —
+    //  결정적 시험은 「…한 작업에서 누르면 favorite 이 되살아나지 않는다 (WD-1061)」)
     await expect(sortNotice).toBeVisible();
 
     // 다음 필터 — POP 뒤 주소 + 이 필터만. favorite 이 되살아나거나 정렬이 사라지면 안 된다
