@@ -85,6 +85,52 @@ test.describe('리포트 양식 목록 페이지', () => {
     await expect(page.getByRole('button', { name: '첫 템플릿 만들기' })).toBeVisible();
   });
 
+  // 20px·h3 없음 = h1 다음 h2 위계 사다리 회복 확인 (WD-892)
+  test('섹션 제목은 h1 아래 h2(20px)다 (WD-892)', async ({ authenticatedPage: page }) => {
+    await setupTemplateListMocks(page);
+    await page.goto('/ai-insights/templates');
+
+    for (const name of ['기본 템플릿', '커스텀 템플릿']) {
+      const h2 = page.getByRole('heading', { level: 2, name });
+      await expect(h2).toBeVisible();
+      expect(await h2.evaluate((el) => getComputedStyle(el).fontSize)).toBe('20px');
+      await expect(page.getByRole('heading', { level: 3, name })).toHaveCount(0);
+    }
+  });
+
+  // 빈 커스텀 목록에서도 섹션 제목이 h2 로 남는지 확인 — 빈 상태 분기 누락 방지 (WD-892)
+  test('커스텀 목록이 비어도 「커스텀 템플릿」 h2 가 보인다 (WD-892)', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/v1/proactive/templates', [
+      createTemplate({ id: 1, name: '일일 현황 리포트', builtin: true }),
+    ]);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    await page.goto('/ai-insights/templates');
+
+    await expect(page.getByRole('heading', { level: 2, name: '커스텀 템플릿' })).toBeVisible();
+  });
+
+  // 20px 로 커진 h2 가 좁은 화면에서 「새 템플릿」 버튼과 겹치거나 화면 밖으로 밀리지 않는지 확인 (WD-892)
+  test('375px 에서도 h2 제목 때문에 가로 스크롤이 생기지 않는다 (WD-892)', async ({ authenticatedPage: page }) => {
+    await page.setViewportSize({ width: 375, height: 812 });
+    await setupTemplateListMocks(page);
+    await page.goto('/ai-insights/templates');
+
+    const heading = page.getByRole('heading', { level: 2, name: '커스텀 템플릿' });
+    await expect(heading).toBeVisible();
+    const h2 = await heading.boundingBox();
+    const btn = await page.getByRole('button', { name: '새 템플릿' }).boundingBox();
+    expect(h2).not.toBeNull();
+    expect(btn).not.toBeNull();
+    // 제목이 뷰포트 안에 온전히 들어온다
+    expect(h2!.x).toBeGreaterThanOrEqual(0);
+    expect(h2!.x + h2!.width).toBeLessThanOrEqual(375);
+    // 제목과 버튼 사각형이 겹치지 않는다(가로로 떨어지거나 세로로 떨어짐)
+    const disjoint =
+      h2!.x + h2!.width <= btn!.x || btn!.x + btn!.width <= h2!.x ||
+      h2!.y + h2!.height <= btn!.y || btn!.y + btn!.height <= h2!.y;
+    expect(disjoint).toBe(true);
+  });
+
   test('템플릿 추가 버튼 클릭 시 새 템플릿 페이지로 이동한다', async ({ authenticatedPage: page }) => {
     await setupTemplateListMocks(page);
     // 새 템플릿 페이지에서 필요한 API 모킹
