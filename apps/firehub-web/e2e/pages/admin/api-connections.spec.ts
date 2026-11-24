@@ -274,6 +274,32 @@ test.describe('API 연결 페이지', () => {
     expect((req.payload as Record<string, unknown>).authType).toBeTruthy();
   });
 
+  // WD-1114: 폭 없는 문자(U+200B)만인 이름은 빈 값으로 보고 서버 요청 없이 칸 오류로 막는다
+  test('이름이 폭 없는 문자(U+200B)만이면 만들기가 막히고 요청이 나가지 않는다 (WD-1114)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupApiConnectionListMocks(page);
+    let postCount = 0;
+    await page.route('**/api/v1/api-connections', (route) => {
+      if (route.request().method() === 'POST') {
+        postCount += 1;
+        return route.fulfill({ status: 201, json: { id: 10, name: 'x', authType: 'API_KEY' } });
+      }
+      return route.fallback();
+    });
+    await page.goto('/admin/api-connections');
+    await page.getByRole('button', { name: '새 연결' }).click();
+
+    await page.getByPlaceholder('예: Make.com API').fill('\u200B');
+    await page.getByPlaceholder(API_BASE_URL_PLACEHOLDER, { exact: true }).fill('https://api.example.com');
+    await page.getByPlaceholder('Authorization').fill('X-API-Key');
+    await page.getByPlaceholder('API 키를 입력하세요').fill('test-api-key-12345');
+    await page.getByRole('button', { name: '만들기' }).click();
+
+    await expect(page.getByText('연결 이름을 입력하세요.')).toBeVisible();
+    expect(postCount).toBe(0);
+  });
+
   // WD-887: 플레이스홀더가 값처럼 보여 옮겨 적은 예시가 막히던 문제 — 이제 "예:" 예시임을 드러낸다
   test('WD-887: Base URL 플레이스홀더는 바꿔 넣을 예시(예:)이고 그대로 넣으면 클라이언트에서 막힌다', async ({
     authenticatedPage: page,

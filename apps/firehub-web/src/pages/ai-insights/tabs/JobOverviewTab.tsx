@@ -33,6 +33,7 @@ import { cronToLabel } from '@/lib/cron-label';
 import { getExecutionDisplayStatus } from '@/lib/error-classifier';
 import { formatDate, getStatusBadgeVariant, getStatusLabel, parseUtcDate } from '@/lib/formatters';
 import { formatNextRunWithZone } from '@/lib/next-run';
+import { hasVisibleText } from '@/lib/text-rules';
 import { describeTimezone, TIMEZONE_OPTIONS } from '@/lib/timezone-data';
 import {
   channelTypeLabel,
@@ -149,8 +150,8 @@ export default function JobOverviewTab({
   // 새 작업 폼에서 「만들기」가 꺼진 이유를 칸 아래에 안내하려고 이름·프롬프트 값을 구독한다(WD-812).
   // watch() 대신 useWatch 를 쓴다 — React Compiler 린트가 watch() 를 막는다. 안내에는 「비었는가」만 필요하므로
   // compute 로 불리언만 구독해, 값이 비었다↔찼다로 바뀔 때만 다시 그린다.
-  const nameEmpty = useWatch({ control: form.control, name: 'name', compute: (v) => !(v ?? '').trim() });
-  const promptEmpty = useWatch({ control: form.control, name: 'prompt', compute: (v) => !(v ?? '').trim() });
+  const nameEmpty = useWatch({ control: form.control, name: 'name', compute: (v) => !hasVisibleText(v) });
+  const promptEmpty = useWatch({ control: form.control, name: 'prompt', compute: (v) => !hasVisibleText(v) });
   // 안내는 새 작업에서만, 칸이 비어 있고 오류 문구가 없을 때만 보인다 — 오류 문구(공백만 입력 등)와 겹치지 않게 한다.
   const showPromptHint = isNew && promptEmpty && !errors.prompt;
   const channels = watch('config.channels');
@@ -198,7 +199,8 @@ export default function JobOverviewTab({
 
   const handleGenerateTemplate = useCallback(async () => {
     const question = businessQuestion.trim();
-    if (!question) return;
+    // WD-1114: 폭 없는 문자만인 질문은 빈 질문 — 프롬프트·자동 이름에 실리면 폼이 곧바로 막힌다
+    if (!hasVisibleText(question)) return;
     const seq = ++generationSeqRef.current;
     setIsGenerating(true);
     setAutoSections(null);
@@ -231,7 +233,7 @@ export default function JobOverviewTab({
     // 템플릿 생성으로 prompt가 채워진 뒤에는 즉시 재검증해 "생성" 버튼이 다시 활성화되도록 한다.
     setValue('prompt', businessQuestion.trim(), { shouldValidate: true });
     // 공백만 든 이름도 비었다고 보고 자동 이름을 채운다(WD-500) — 스키마가 trim 후 거부하므로 그대로 두면 생성이 막힌다.
-    if (!watch('name')?.trim()) {
+    if (!hasVisibleText(watch('name'))) {
       // Generate a name from the question (first 30 chars)
       const autoName = businessQuestion.trim().slice(0, 30) + (businessQuestion.trim().length > 30 ? '...' : '');
       // shouldValidate: true — 위 prompt 검증 시점엔 이름이 비어 폼이 invalid 로 판정되므로, 이름을 채운 뒤 다시 검증해야
@@ -542,7 +544,7 @@ export default function JobOverviewTab({
             variant="outline"
             size="sm"
             onClick={handleGenerateTemplate}
-            disabled={!businessQuestion.trim() || isGenerating}
+            disabled={!hasVisibleText(businessQuestion) || isGenerating}
           >
             <Sparkles className="h-3.5 w-3.5" />
             {isGenerating ? '생성 중...' : '템플릿 자동 생성'}

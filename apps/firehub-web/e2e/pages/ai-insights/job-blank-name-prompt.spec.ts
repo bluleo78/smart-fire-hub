@@ -85,6 +85,22 @@ test.describe('스마트 작업 — 공백만 입력한 이름·프롬프트 (WD
     await expect.poll(() => writes.posts.length).toBe(1);
   });
 
+  // WD-1114: 보이지 않는 문자(U+200B)만인 값도 공백만과 같이 막는다 — 서버가 거절하는 값을 폼이 통과시키던 문제
+  test('새 작업: 폭 없는 문자(U+200B)만인 프롬프트는 칸 오류로 막고 요청이 나가지 않는다 (WD-1114)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupNewJobMocks(page);
+    const writes = await captureJobWrites(page);
+    await page.goto('/ai-insights/jobs/new');
+
+    await page.locator('#job-name').fill('일일 리포트');
+    await page.locator('#job-prompt').fill('\u200B');
+    await page.locator('#job-prompt').blur();
+    await expect(page.locator('#job-prompt').locator('..').getByText(PROMPT_REQUIRED)).toBeVisible();
+    await expect(createButton(page)).toBeDisabled();
+    expect(writes.posts).toHaveLength(0);
+  });
+
   test('새 작업: 탭·줄바꿈만 있는 프롬프트도 빈 값으로 막는다', async ({ authenticatedPage: page }) => {
     await setupNewJobMocks(page);
     const writes = await captureJobWrites(page);

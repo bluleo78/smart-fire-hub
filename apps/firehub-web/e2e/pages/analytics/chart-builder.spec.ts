@@ -174,6 +174,60 @@ test.describe('차트 빌더 페이지', () => {
   });
 
   /**
+   * 회귀 테스트 — WD-1114
+   * 저장 다이얼로그 이름이 폭 없는 문자(U+200B)뿐이면 hasVisibleText 가 빈 값으로 판정해 만들기 버튼이 막혀야 한다.
+   * 보이는 글자가 섞이면(「\u200B차트」) 정상 저장 가능해야 한다 — 판정이 지나치게 엄격해진 회귀도 함께 막는다.
+   */
+  test('저장 다이얼로그 이름이 폭 없는 문자뿐이면 만들기가 막히고 POST 가 가지 않는다 (WD-1114)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupNewChartBuilderMocks(page);
+    await mockApi(page, 'POST', '/api/v1/analytics/queries/1/execute', createQueryResult());
+    const createCapture = await mockApi(
+      page,
+      'POST',
+      '/api/v1/analytics/charts',
+      { id: 99, name: '\u200B차트', chartType: 'BAR' },
+      { capture: true },
+    );
+
+    // 차트 생성 POST 호출 수를 센다 (막힌 동안 0 이어야 함)
+    let postCount = 0;
+    page.on('request', (r) => {
+      if (r.method() === 'POST' && new URL(r.url()).pathname === '/api/v1/analytics/charts') {
+        postCount += 1;
+      }
+    });
+
+    await page.goto('/analytics/charts/new');
+    await page.getByRole('combobox').click();
+    await page.getByRole('option', { name: '저장 쿼리 1' }).click();
+    await page.getByRole('button', { name: '쿼리 실행' }).click();
+    await expect(page.getByText(/행 로드됨/).first()).toBeVisible();
+
+    await page.getByRole('button', { name: '저장' }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible();
+
+    const nameInput = page.getByPlaceholder('차트 이름을 입력하세요');
+    const submit = dialog.getByRole('button', { name: '만들기' });
+
+    // 폭 없는 문자만 → 비활성, 강제 클릭해도 요청 없음
+    await nameInput.fill('\u200B');
+    await expect(submit).toBeDisabled();
+    await submit.click({ force: true });
+    expect(postCount).toBe(0);
+
+    // 보이는 글자가 섞이면 활성 → POST 전송
+    await nameInput.fill('\u200B차트');
+    await expect(submit).toBeEnabled();
+    await submit.click();
+    const req = await createCapture.waitForRequest();
+    expect(req.payload).toMatchObject({ name: '\u200B차트' });
+    expect(postCount).toBe(1);
+  });
+
+  /**
    * 회귀 테스트 — WD-105
    * exactValues 는 쿼리 편집기 결과 표 전용이다. 차트 빌더(미리보기·자동 설정)는 rows 숫자를 그대로 써야 한다 —
    * 원문이 rows 를 덮으면 차트·대시보드의 typeof number 소비자가 깨진다. 구분이 되도록 exactValues 에 rows 와 다른 값을 넣는다.

@@ -8,6 +8,7 @@
 
 import { isBlankLikeServer } from '@/lib/api-connection-secret';
 import { httpUrlError, stripUrlUserInfo } from '@/lib/http-url';
+import { hasVisibleText } from '@/lib/text-rules';
 import type { ApiConnectionAuthType, StoredApiConnectionAuthType } from '@/types/api-connection';
 
 /** 칸 key → 오류 문구. 오류가 없는 칸은 키가 없다. */
@@ -100,7 +101,8 @@ const MAX_BASE_URL_LENGTH = 500;
  */
 export function connectionNameError(name: string): string | undefined {
   const value = name.trim();
-  if (!value) return '연결 이름을 입력하세요.';
+  // WD-1114: 폭 없는 문자(U+200B 등)만인 이름도 빈 값으로 본다 — 서버가 거절하는 값을 폼이 통과시키지 않는다.
+  if (!hasVisibleText(value)) return '연결 이름을 입력하세요.';
   if (value.length > MAX_CONNECTION_NAME_LENGTH) {
     return `연결 이름은 ${MAX_CONNECTION_NAME_LENGTH}자 이하로 입력하세요.`;
   }

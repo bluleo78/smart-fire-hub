@@ -543,6 +543,26 @@ class ApiConnectionControllerTest {
         "GitHub API", description, "BEARER", Map.of("token", "t"), "https://api.github.com", null);
   }
 
+  /** WD-1114: 이름이 빈 값("")·공백뿐이어도 TextRules 문구 하나로 거절한다(@NotBlank 기본 문구가 아님). */
+  @ParameterizedTest
+  @ValueSource(strings = {"", "   "})
+  void create_emptyName_returnsKoreanMessage(String name) throws Exception {
+    CreateApiConnectionRequest request =
+        new CreateApiConnectionRequest(
+            name, null, "BEARER", Map.of("token", "t"), "https://api.github.com", null);
+
+    mockMvc
+        .perform(
+            post("/api/v1/api-connections")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.name").value("이름을 비울 수 없습니다."));
+
+    verify(apiConnectionService, never()).create(any(), anyLong());
+  }
+
   /** NBSP 계열만인 이름의 만들기는 400 — 다듬으면 빈 이름이 되므로 서비스까지 가지 않는다(WD-1085). */
   @ParameterizedTest
   @ValueSource(strings = {"\u00A0", "\u2007", "\u202F", "\u3000\u00A0", "\u200B", "\u2060\uFEFF"})

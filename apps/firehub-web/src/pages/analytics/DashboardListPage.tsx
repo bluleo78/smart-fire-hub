@@ -64,6 +64,7 @@ import { extractApiError, handleApiError, isDuplicateName, isEditConflict, listL
 import { formatDateShort, formatRelativeTime } from '../../lib/formatters';
 import { getPageAfterDelete } from '../../lib/pagination';
 import { isIntegerSyntax } from '../../lib/settings-number';
+import { hasVisibleText } from '../../lib/text-rules';
 import { iGa } from '../../lib/utils';
 import {
   type CreateDashboardRequest,
@@ -169,7 +170,7 @@ function CreateDashboardDialog({ open, onOpenChange, onCreated }: CreateDialogPr
   const guardSubmit = useSubmitGuard();
 
   const handleSubmit = guardSubmit(async () => {
-    if (!name.trim()) return;
+    if (!hasVisibleText(name)) return;
     setNameError(null);
     setRefreshError(null);
     const parsedAutoRefresh = parseAutoRefreshInput(autoRefresh);
@@ -272,7 +273,7 @@ function CreateDashboardDialog({ open, onOpenChange, onCreated }: CreateDialogPr
           <Button variant="outline" onClick={() => onOpenChange(false)}>취소</Button>
           <Button
             onClick={() => handleSubmit()}
-            disabled={!name.trim() || createDashboard.isPending}
+            disabled={!hasVisibleText(name) || createDashboard.isPending}
           >
             만들기
           </Button>
@@ -341,7 +342,7 @@ function EditDashboardDialog({ dashboard, onClose }: EditDialogProps) {
 
   /** force: 기준 버전을 보내지 않아 서버가 비교하지 않는다 — 편집 충돌 뒤 「내 변경으로 덮어쓰기」(WD-364) */
   const submitSettings = async (force: boolean) => {
-    if (!dashboard || !name.trim()) return;
+    if (!dashboard || !hasVisibleText(name)) return;
     setNameError(null);
     setRefreshError(null);
     const parsedAutoRefresh = parseAutoRefreshInput(autoRefresh);
@@ -488,7 +489,7 @@ function EditDashboardDialog({ dashboard, onClose }: EditDialogProps) {
           <Button variant="outline" onClick={onClose}>취소</Button>
           <Button
             onClick={() => handleSave()}
-            disabled={!name.trim() || updateDashboard.isPending}
+            disabled={!hasVisibleText(name) || updateDashboard.isPending}
           >
             저장
           </Button>

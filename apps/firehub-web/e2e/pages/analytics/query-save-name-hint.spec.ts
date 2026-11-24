@@ -40,6 +40,11 @@ test.describe('쿼리 저장 다이얼로그 — 이름 안내 (WD-828)', () => 
     await expect(hint).toHaveText('이름을 입력하면 만들 수 있습니다.');
     await expect(createBtn).toBeDisabled();
 
+    // 폭 없는 문자(U+200B)만이어도 같다 (WD-1114)
+    await input.fill('\u200B');
+    await expect(hint).toHaveText('이름을 입력하면 만들 수 있습니다.');
+    await expect(createBtn).toBeDisabled();
+
     // 이름을 넣으면 안내가 사라지고 버튼이 켜진다
     await input.fill('새 이름');
     await expect(hint).toHaveCount(0);

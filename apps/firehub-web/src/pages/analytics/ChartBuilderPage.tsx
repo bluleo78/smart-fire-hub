@@ -76,6 +76,7 @@ import {
 } from '../../lib/chart-export';
 import { MAX_WIDGET_POSITION_Y } from '../../lib/dashboard-grid-limits';
 import { parseRouteId } from '../../lib/route-id';
+import { hasVisibleText } from '../../lib/text-rules';
 import { MAX_DESCRIPTION_LENGTH } from '../../lib/validations/description';
 import type { Chart, ChartConfig,ChartType } from '../../types/analytics';
 
@@ -334,7 +335,7 @@ function SaveDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             취소
           </Button>
-          <Button onClick={onSave} disabled={!name.trim() || isSaving}>
+          <Button onClick={onSave} disabled={!hasVisibleText(name) || isSaving}>
             {isSaving && <Loader2 className="h-4 w-4 animate-spin" />}
             {isEdit ? '저장' : '만들기'}
           </Button>
@@ -422,7 +423,7 @@ function AddToDashboardDialog({
   // 내 대시보드가 없을 때(WD-1076) 이름만으로 대시보드를 만들고 차트를 한 번에 넣는다.
   const handleCreateAndAdd = guardSubmit(async () => {
     const name = newName.trim();
-    if (!name) return;
+    if (!hasVisibleText(name)) return;
     setNameError(null);
     setIsCreating(true);
     try {
@@ -573,7 +574,7 @@ function AddToDashboardDialog({
               취소
             </Button>
             {isEmptyState ? (
-              <Button type="submit" disabled={!newName.trim() || isCreating}>
+              <Button type="submit" disabled={!hasVisibleText(newName) || isCreating}>
                 {isCreating && <Loader2 className="h-4 w-4 animate-spin" />}
                 만들고 추가
               </Button>
@@ -861,7 +862,7 @@ export default function ChartBuilderPage() {
 
   /** force: 기준 버전을 보내지 않아 서버가 비교하지 않는다 — 편집 충돌 뒤 「내 변경으로 덮어쓰기」(WD-364) */
   const handleSave = async (force = false) => {
-    if (!saveForm.name.trim()) return;
+    if (!hasVisibleText(saveForm.name)) return;
     setNameError(null);
     if (!selectedQueryId) {
       toast.error('쿼리를 선택하세요.');

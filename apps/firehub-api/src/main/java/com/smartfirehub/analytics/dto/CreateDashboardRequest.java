@@ -10,7 +10,7 @@ import jakarta.validation.constraints.Size;
 
 public record CreateDashboardRequest(
     // WD-1081: @NotBlank 가 못 거르는 NBSP 류를 HAS_TEXT 로 막아 수정 DTO 와 같은 판정(이유는 TextRules)
-    @NotBlank
+    @NotBlank(message = TextRules.NAME_BLANK_MESSAGE)
         @Size(max = 200)
         @Pattern(regexp = TextRules.HAS_TEXT, message = TextRules.NAME_BLANK_MESSAGE)
         String name,

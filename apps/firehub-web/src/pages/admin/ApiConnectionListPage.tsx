@@ -39,6 +39,7 @@ import {
 import { missingSecretMessage } from '@/lib/api-connection-secret';
 import { handleApiError, listLoadErrorProps } from '@/lib/api-error';
 import { formatDateShort } from '@/lib/formatters';
+import { hasVisibleText } from '@/lib/text-rules';
 import { MAX_DESCRIPTION_LENGTH } from '@/lib/validations/description';
 import type { ApiConnectionAuthType, TestConnectionResponse } from '@/types/api-connection';
 
@@ -277,8 +278,10 @@ export default function ApiConnectionListPage() {
    * 인라인 오류·포커스로 막는다(그대로 보내면 서버 400 토스트만 떴다). 빈 이름은 길이 오류가 아니므로 통과시킨다.
    */
   const handleTest = async () => {
+    // WD-1114: 보이지 않는 문자만인 이름은 「빈 이름」 — 오류를 달지 않고 아래에서 'dry-run' 으로 보낸다(한 판정을 두 곳에서 쓴다)
+    const nameBlank = !hasVisibleText(name);
     const nextErrors: CreateFieldErrors = {
-      name: name.trim() ? connectionNameError(name) : undefined,
+      name: nameBlank ? undefined : connectionNameError(name),
       baseUrl: baseUrlError(baseUrl),
       healthCheckPath: healthCheckPathError(healthCheckPath),
       ...secretFieldErrors(),
@@ -297,7 +300,8 @@ export default function ApiConnectionListPage() {
     setTestResult(null);
     try {
       const response = await apiConnectionsApi.testPayload({
-        name: name.trim() || 'dry-run',
+        // 빈 이름은 'dry-run' 으로 — 그대로 보내면 서버 HAS_TEXT 400(WD-1114)
+        name: nameBlank ? 'dry-run' : name.trim(),
         description: undefined,
         authType,
         authConfig,
