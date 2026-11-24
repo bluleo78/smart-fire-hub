@@ -546,7 +546,7 @@ export function ExecutionStepPanel({
               : '실행 정보'}
         </span>
         {(selectedStep?.name || deletedStep) && (
-          <Button variant="ghost" size="icon" className="h-7 w-7" aria-label="스텝 상세 닫기" onClick={handleClose}>
+          <Button variant="ghost" size="icon-sm" aria-label="스텝 상세 닫기" onClick={handleClose}>
             <X className="h-4 w-4" />
           </Button>
         )}

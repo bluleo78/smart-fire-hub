@@ -923,7 +923,7 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="h-6 px-2"
+                    className="px-2"
                     onClick={() => handleCopy(lastTestResult.requestUrl ?? '', '요청 URL')}
                     aria-label="요청 URL 복사"
                   >
@@ -969,7 +969,7 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-6 px-2"
+                      className="px-2"
                       onClick={() =>
                         handleCopy(lastTestResult.responseBodyPreview ?? '', '응답 본문')
                       }

@@ -127,7 +127,7 @@ export const DatasetColumnsTab = React.memo(function DatasetColumnsTab({
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="w-6" />
+              <TableHead className="w-8" />
               <TableHead>순서</TableHead>
               <TableHead>필드명</TableHead>
               <TableHead>표시명</TableHead>
@@ -163,11 +163,10 @@ export const DatasetColumnsTab = React.memo(function DatasetColumnsTab({
                     className={rowClass || undefined}
                     data-testid={isAllNull ? 'empty-column-row' : undefined}
                   >
-                    <TableCell className="w-6 p-1">
+                    <TableCell className="w-8 p-1">
                       <Button
                         variant="ghost"
-                        size="icon"
-                        className="h-6 w-6"
+                        size="icon-sm"
                         onClick={() => handlers.toggleExpand(col.id)}
                         disabled={!hasData}
                       >
@@ -238,8 +237,7 @@ export const DatasetColumnsTab = React.memo(function DatasetColumnsTab({
                             <TooltipTrigger asChild>
                               <Button
                                 variant="ghost"
-                                size="icon"
-                                className="h-7 w-7"
+                                size="icon-sm"
                                 aria-label="컬럼 위로 이동"
                                 onClick={() => handlers.moveColumn(index, 'up')}
                                 disabled={index === 0 || isReorderPending}
@@ -253,8 +251,7 @@ export const DatasetColumnsTab = React.memo(function DatasetColumnsTab({
                             <TooltipTrigger asChild>
                               <Button
                                 variant="ghost"
-                                size="icon"
-                                className="h-7 w-7"
+                                size="icon-sm"
                                 aria-label="컬럼 아래로 이동"
                                 onClick={() => handlers.moveColumn(index, 'down')}
                                 disabled={index === localColumns.length - 1 || isReorderPending}

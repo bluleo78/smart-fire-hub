@@ -78,7 +78,7 @@ function EditRowButton({ label, rowId, onEdit, suppressRef }: { label: string; r
       }}
     >
       <TooltipTrigger asChild>
-        <Button variant="ghost" size="icon" className="h-7 w-7" aria-label={label} onClick={onEdit}
+        <Button variant="ghost" size="icon-sm" aria-label={label} onClick={onEdit}
           // 마우스를 올리는 것은 초점 복귀가 아니므로 이 행의 억제를 먼저 풀어 첫 hover 가 무시되지 않게 한다.
           // 다른 행 버튼을 지나가는 것으로는 풀지 않는다 — 억제는 행마다라서(WD-999 코드 리뷰)
           onPointerEnter={() => { if (suppressRef.current?.rowId === rowId) suppressRef.current = null; }}>

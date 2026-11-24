@@ -744,7 +744,7 @@ export default function OntologyPage() {
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-6 shrink-0 rounded-full px-2 text-xs"
+                  className="shrink-0 rounded-full px-2 text-xs"
                   onClick={() => setActiveTypes(new Set())}
                 >
                   전체 보기
@@ -893,8 +893,7 @@ export default function OntologyPage() {
                 <span className="text-xs font-medium uppercase text-muted-foreground">편집</span>
                 <Button
                   variant="ghost"
-                  size="icon"
-                  className="h-6 w-6"
+                  size="icon-sm"
                   onClick={closeInspector}
                   aria-label="편집 패널 닫기"
                 >

@@ -181,8 +181,7 @@ export function DatasetSecurityTab({ dataset }: { dataset: DatasetDetailResponse
                       {canGrant && (
                         <Button
                           variant="ghost"
-                          size="icon"
-                          className="h-7 w-7"
+                          size="icon-sm"
                           aria-label={`${g.subjectName} 제거`}
                           title={isLast ? '마지막 항목은 제거할 수 없습니다' : undefined}
                           disabled={isLast || remove.isPending}

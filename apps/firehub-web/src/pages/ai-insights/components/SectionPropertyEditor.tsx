@@ -208,7 +208,7 @@ export function SectionPropertyEditor({ section, onUpdate }: SectionPropertyEdit
                     key={v.key}
                     variant="ghost"
                     size="sm"
-                    className="h-6 px-2 text-xs font-mono"
+                    className="px-2 text-xs font-mono"
                     onClick={() => {
                       const current = section.content ?? '';
                       onUpdate({ content: current + `{{${v.key}}}` });

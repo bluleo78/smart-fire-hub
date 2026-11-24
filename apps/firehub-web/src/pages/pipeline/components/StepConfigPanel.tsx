@@ -435,7 +435,7 @@ export default function StepConfigPanel({
       <div className="flex items-center justify-between px-4 py-3 border-b shrink-0">
         <span className="font-medium text-sm truncate">스텝 #{stepNumber}: {step.name || '(이름 없음)'}</span>
         {/* 아이콘만 있는 버튼 — aria-label 로 접근 이름(WCAG 4.1.2, WD-917) */}
-        <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" onClick={handleClose} aria-label="스텝 설정 패널 닫기">
+        <Button variant="ghost" size="icon-sm" className="shrink-0" onClick={handleClose} aria-label="스텝 설정 패널 닫기">
           <X className="h-4 w-4" />
         </Button>
       </div>

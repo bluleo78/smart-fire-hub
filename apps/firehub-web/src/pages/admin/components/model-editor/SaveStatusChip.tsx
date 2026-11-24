@@ -48,7 +48,7 @@ export default function SaveStatusChip({ state, onRetry }: Props) {
             <Button
               variant="ghost"
               size="sm"
-              className="h-5 px-1.5 text-xs text-destructive underline-offset-2 hover:underline"
+              className="px-1.5 text-xs text-destructive underline-offset-2 hover:underline"
               onClick={onRetry}
               data-testid="save-status-retry"
             >

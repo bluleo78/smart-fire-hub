@@ -67,7 +67,7 @@ export function CanvasArea({ pages, activePageIndex, onPageChange, onRemoveWidge
             onSelectSession={(session) => loadSession(session.sessionId)}
           />
           <TokenUsageChip tokens={contextTokens} isCompacting={isCompacting} />
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={closeAI}>
+          <Button variant="ghost" size="icon-sm" onClick={closeAI}>
             <X className="h-3.5 w-3.5" />
           </Button>
         </div>

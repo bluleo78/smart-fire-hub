@@ -421,8 +421,7 @@ export default function DatasetDetailPage() {
                   {canClassify && (
                     <Button
                       variant="ghost"
-                      size="icon"
-                      className="h-6 w-6"
+                      size="icon-sm"
                       aria-label="보안 등급 변경"
                       title="보안 등급 변경"
                       onClick={() => setLevelDialogOpen(true)}
@@ -578,7 +577,7 @@ export default function DatasetDetailPage() {
               {canWriteDataset && (
               <Popover open={tagInputOpen} onOpenChange={setTagInputOpen}>
                 <PopoverTrigger asChild>
-                  <Button variant="ghost" size="sm" className="h-6 w-6 p-0 rounded-full" title="태그 추가">
+                  <Button variant="ghost" size="sm" className="w-8 p-0 rounded-full" title="태그 추가">
                     <Plus className="h-3 w-3" />
                   </Button>
                 </PopoverTrigger>

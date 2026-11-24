@@ -104,7 +104,7 @@ export function AISessionSidebar() {
                     trigger={
                       <PendingButton
                         variant="ghost"
-                        size="icon"
+                        size="icon-sm"
                         // 키보드 포커스 시에도 보이게 한다 (#346). focus-within까지 거는 이유:
                         // 다이얼로그가 마우스로 닫히며 트리거로 포커스를 되돌릴 때(#337)는
                         // :focus-visible이 걸리지 않아 focus-visible만으로는 다시 투명해진다.
@@ -112,7 +112,7 @@ export function AISessionSidebar() {
                         // 쉬는 상태의 opacity-0 과 focus-within 의 opacity-60 을 모두 이기도록 삭제 중 흐림은 !important —
                         // 삭제 중인 줄은 투명하지 않고 흐리게(50%) 보여 바쁜 줄임을 알린다. 공용 잠금의 pointer-events-none 은 되돌려
                         // 누른 클릭이 줄로 새지 않고 버튼에 초점이 남게 한다.
-                        className="h-6 w-6 shrink-0 opacity-0 group-hover:opacity-60 group-focus-within:opacity-60 hover:!opacity-100 focus-visible:!opacity-100 aria-disabled:!opacity-50 aria-disabled:pointer-events-auto"
+                        className="shrink-0 opacity-0 group-hover:opacity-60 group-focus-within:opacity-60 hover:!opacity-100 focus-visible:!opacity-100 aria-disabled:!opacity-50 aria-disabled:pointer-events-auto"
                         pending={busy}
                         aria-label={`${label} 삭제`}
                       >
