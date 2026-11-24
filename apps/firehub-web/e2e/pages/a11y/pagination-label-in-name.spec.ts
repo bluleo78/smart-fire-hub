@@ -30,7 +30,7 @@ test.describe('페이지 사이즈 콤보박스 접근 이름 (WD-1066)', () => 
 
     // 보이는 라벨과 접근 이름이 한 세트여야 WCAG 2.5.3 전제가 고정된다
     await expect(page.getByText('페이지당', { exact: true })).toBeVisible();
-    // 접근 가능한 이름이 보이는 라벨 「페이지당」과 일치해야 한다(WD-1066)
-    await expect(page.getByRole('combobox', { name: '페이지당' })).toBeVisible();
+    // 접근 가능한 이름이 보이는 라벨 「페이지당」과 정확히 일치해야 한다(WD-1066, 리뷰 후속 — exact 로 부분 일치까지 통과하지 못하게 고정)
+    await expect(page.getByRole('combobox', { name: '페이지당', exact: true })).toBeVisible();
   });
 });
