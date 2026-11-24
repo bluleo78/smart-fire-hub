@@ -238,12 +238,13 @@ export default function SchemaGraph({
     const nodes = activeEntities.map((e) => {
       // #377: 테두리는 base(500)가 아니라 윤곽선 색을 쓴다 — base는 라이트 tint 배경 위에서
       // Cause 2.15 / Equipment 2.54:1로 SC 1.4.11(3:1)에 미달한다.
-      const { text, tint } = palette.colorSet(e.type, isDark);
+      const { text, base } = palette.colorSet(e.type, isDark);
       return {
         data: {
           id: nodeIdFor(e.id, e.type),
           label: e.type,
-          bg: tint,
+          // WD-1070: 불투명 base — 옅기는 스타일시트의 background-opacity 가 맡는다(rgba 알파는 cytoscape 가 무시).
+          bg: base,
           border: palette.contour(e.type, isDark),
           text,
           entityId: e.id,
