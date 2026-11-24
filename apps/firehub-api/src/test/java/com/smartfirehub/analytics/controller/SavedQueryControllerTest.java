@@ -643,4 +643,78 @@ class SavedQueryControllerTest {
           .andExpect(status().isOk());
     }
   }
+
+  /**
+   * WD-1081: 만들기도 빈 값·전각 공백·NBSP 만인 이름과 SQL 을 400 으로 거른다(서비스 미호출). 앞뒤 전각 공백이 낀 정상 이름은 201. 빈
+   * 값·ASCII 공백·U+3000 은 {@code @NotBlank} 문구, NBSP 류는 {@code @Pattern} 문구로 400 문구가 갈린다.
+   */
+  @Test
+  void createQuery_blankNameOrSql_returns400_paddedOk() throws Exception {
+    for (String blank : new String[] {"\u00A0", "\u2007", "\u202F", "\u00A0\u3000"}) {
+      mockMvc
+          .perform(
+              post("/api/v1/analytics/queries")
+                  .header("Authorization", "Bearer test-token")
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(
+                      objectMapper.writeValueAsString(
+                          new CreateSavedQueryRequest(
+                              blank, "설명", "SELECT 1", null, "reports", false))))
+          .andExpect(status().isBadRequest())
+          .andExpect(jsonPath("$.errors.name").value("이름을 비울 수 없습니다."));
+    }
+    for (String blank : new String[] {"\u00A0", "\u2007", "\u202F", "\u00A0\u3000"}) {
+      mockMvc
+          .perform(
+              post("/api/v1/analytics/queries")
+                  .header("Authorization", "Bearer test-token")
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(
+                      objectMapper.writeValueAsString(
+                          new CreateSavedQueryRequest("쿼리", "설명", blank, null, "reports", false))))
+          .andExpect(status().isBadRequest())
+          .andExpect(jsonPath("$.errors.sqlText").value("SQL을 비울 수 없습니다."));
+    }
+    // WD-1081 반-목표: 빈 값·ASCII 공백·U+3000 은 @NotBlank(String.isBlank)가 잡아 기존 문구를 그대로 유지한다
+    for (String blank : new String[] {"   ", "", "\u3000\u3000", " \u3000 "}) {
+      mockMvc
+          .perform(
+              post("/api/v1/analytics/queries")
+                  .header("Authorization", "Bearer test-token")
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(
+                      objectMapper.writeValueAsString(
+                          new CreateSavedQueryRequest(
+                              blank, "설명", "SELECT 1", null, "reports", false))))
+          .andExpect(status().isBadRequest())
+          .andExpect(jsonPath("$.errors.name").value("필수 입력값입니다."));
+    }
+    // SQL 도 빈 값·ASCII 공백·U+3000 은 @NotBlank 문구가 먼저 뽑힌다
+    for (String blank : new String[] {"", "   ", "\u3000", " \u3000 "}) {
+      mockMvc
+          .perform(
+              post("/api/v1/analytics/queries")
+                  .header("Authorization", "Bearer test-token")
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(
+                      objectMapper.writeValueAsString(
+                          new CreateSavedQueryRequest("쿼리", "설명", blank, null, "reports", false))))
+          .andExpect(status().isBadRequest())
+          .andExpect(jsonPath("$.errors.sqlText").value("필수 입력값입니다."));
+    }
+    verify(savedQueryService, never()).create(any(), anyLong());
+
+    when(savedQueryService.create(any(CreateSavedQueryRequest.class), anyLong()))
+        .thenReturn(sampleQuery());
+    mockMvc
+        .perform(
+            post("/api/v1/analytics/queries")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    objectMapper.writeValueAsString(
+                        new CreateSavedQueryRequest(
+                            "\u3000쿼리\u3000", "설명", "SELECT 1", null, "reports", false))))
+        .andExpect(status().isCreated());
+  }
 }

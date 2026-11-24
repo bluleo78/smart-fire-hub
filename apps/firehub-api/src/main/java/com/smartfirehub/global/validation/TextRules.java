@@ -7,11 +7,21 @@ package com.smartfirehub.global.validation;
  * 값만 거른다. {@code (?U)} 가 없으면 Java 의 {@code \S} 가 ASCII 공백만 공백으로 보아, 한국어 입력기가 넣는 전각 공백(U+3000)·줄바꿈
  * 없는 공백(U+00A0)만으로 된 이름이 「글자가 있는」 값으로 통과했다(WD-1079 코드 리뷰). 저장 쿼리(WD-446)·차트·대시보드 수정이 같은 값을 쓴다 —
  * 엔드포인트마다 공백 판정이 갈라지지 않게 하기 위해서다.
+ *
+ * <p>만들기 DTO(차트·대시보드·저장 쿼리, WD-1081)도 {@code @NotBlank} 옆에 같은 값을 붙인다 —
+ * {@code @NotBlank}(String.isBlank) 는 U+3000 은 거르지만 NBSP 계열(U+00A0·U+2007·U+202F)은 글자로 보아, 만들기에서 받은
+ * 이름을 수정에서 거르는 어긋남이 생겼다. 이 값을 바꾸면 만들기·수정 검증이 함께 바뀐다.
  */
 public final class TextRules {
 
   /** 유니코드 공백이 아닌 글자가 하나 이상 있다 — {@code @Pattern(regexp = HAS_TEXT)} 로 쓴다(null 은 통과). */
   public static final String HAS_TEXT = "(?U)(?s).*\\S.*";
+
+  /** 이름이 {@link #HAS_TEXT} 를 어겼을 때의 문구 — 만들기·수정 DTO 가 같은 문구를 쓰게 한 곳에 둔다(WD-1081). */
+  public static final String NAME_BLANK_MESSAGE = "이름을 비울 수 없습니다.";
+
+  /** SQL 이 {@link #HAS_TEXT} 를 어겼을 때의 문구(WD-1081). */
+  public static final String SQL_BLANK_MESSAGE = "SQL을 비울 수 없습니다.";
 
   private TextRules() {}
 }
