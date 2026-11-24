@@ -150,3 +150,84 @@ test.describe('리포트 뷰어 페이지', () => {
     await expect(page).toHaveURL(/\/ai-insights\/reports\?from=list$/);
   });
 });
+
+/**
+ * WD-1096: 리포트 뷰어 오류 화면이 서버가 준 원인 문구(WD-1088)를 보이는지 검증한다.
+ * 서버 문구가 없으면(본문 없는 오류) 기존 고정 문구로 돌아간다.
+ */
+test.describe('리포트 뷰어 오류 문구 (WD-1096)', () => {
+  const htmlPath = '/api/v1/proactive/jobs/1/executions/1/html';
+
+  // html 경로를 지정한 상태·본문으로 덮어쓰고 뷰어로 이동한다
+  async function openWithError(
+    page: import('@playwright/test').Page,
+    status: number,
+    body: unknown,
+  ) {
+    await setupReportViewerMocks(page, 1, 1, null);
+    await mockApi(page, 'GET', htmlPath, body, { status });
+    await page.goto('/ai-insights/jobs/1/executions/1/report');
+  }
+
+  test('400 이면 서버가 준 원인 문구를 보인다 (WD-1096)', async ({ authenticatedPage: page }) => {
+    await openWithError(page, 400, {
+      status: 400,
+      error: 'Bad Request',
+      message: '완료된 실행만 리포트를 열거나 내려받을 수 있습니다.',
+    });
+    await expect(
+      page.getByText('완료된 실행만 리포트를 열거나 내려받을 수 있습니다.', { exact: true }),
+    ).toBeVisible();
+    await expect(page.getByText('리포트를 불러올 수 없습니다.')).toHaveCount(0);
+  });
+
+  test('HTML 없음 404 면 서버 문구만 보이고 작성자 안내는 없다 (WD-1096)', async ({
+    authenticatedPage: page,
+  }) => {
+    await openWithError(page, 404, {
+      status: 404,
+      error: 'Not Found',
+      message: '이 실행에는 HTML 리포트가 없습니다.',
+    });
+    await expect(page.getByTestId('report-not-found').locator('p')).toHaveText(
+      '이 실행에는 HTML 리포트가 없습니다.',
+    );
+    await expect(page.getByText('리포트 전문은 작업을 만든 사람만')).toHaveCount(0);
+  });
+
+  test('작업 없음 404 의 내부 문구는 보이지 않고 기존 안내를 보인다 (WD-1096)', async ({
+    authenticatedPage: page,
+  }) => {
+    await openWithError(page, 404, {
+      status: 404,
+      error: 'Not Found',
+      message: 'Proactive Job을 찾을 수 없습니다: 1',
+    });
+    await expect(page.getByTestId('report-not-found').locator('p')).toHaveText(
+      '리포트를 찾을 수 없습니다. 리포트 전문은 작업을 만든 사람만 열 수 있습니다.',
+    );
+    await expect(page.getByText('Proactive Job')).toHaveCount(0);
+  });
+
+  test('본문 없는 404 는 기존 안내를 그대로 보인다 (WD-1096)', async ({ authenticatedPage: page }) => {
+    await openWithError(page, 404, '');
+    await expect(page.getByTestId('report-not-found')).toContainText(
+      '리포트를 찾을 수 없습니다. 리포트 전문은 작업을 만든 사람만 열 수 있습니다.',
+    );
+  });
+
+  test('서버 문구가 있는 500 도 고정 문구를 보인다 (WD-1096)', async ({ authenticatedPage: page }) => {
+    await openWithError(page, 500, { status: 500, error: 'Internal Server Error', message: '서버 오류' });
+    await expect(page.getByText('리포트를 불러올 수 없습니다.', { exact: true })).toBeVisible({
+      timeout: 15000,
+    });
+    await expect(page.getByText('서버 오류')).toHaveCount(0);
+  });
+
+  test('본문 없는 500 은 기존 문구를 보인다 (WD-1096)', async ({ authenticatedPage: page }) => {
+    await openWithError(page, 500, '');
+    await expect(page.getByText('리포트를 불러올 수 없습니다.', { exact: true })).toBeVisible({
+      timeout: 15000,
+    });
+  });
+});

@@ -273,6 +273,25 @@ export const USER_NOT_IN_WORKSPACE_CODE = 'USER_NOT_IN_WORKSPACE';
 export const MEMBER_GONE_MESSAGE = '이 워크스페이스에서 찾을 수 없는 사용자입니다. 이미 제거되었을 수 있습니다.';
 
 /**
+ * HTML 리포트가 없는 실행의 404 문구 (WD-1096).
+ * 서버(WD-1088 ProactiveJobController MSG_HTML_REPORT_MISSING)가 HTML 없는 실행에 주는 404 문구와 같은 값이어야 한다.
+ */
+export const REPORT_HTML_MISSING_MESSAGE = '이 실행에는 HTML 리포트가 없습니다.';
+
+/**
+ * 실행 리포트 HTML 조회 404 가 「HTML 리포트 없음」인가 (WD-1096).
+ * 이 404 는 작성자 확인을 통과한 뒤라 문구를 그대로 보여도 된다. 같은 404 라도 작업 없음·작성자 아님은 서버가
+ * 내부 문구(작업 id 포함)를 주므로 보이면 안 된다 — 서버가 구분 code 를 주지 않아 문구로 가른다.
+ */
+export function isReportHtmlMissing(error: unknown): boolean {
+  return (
+    axios.isAxiosError(error) &&
+    error.response?.status === 404 &&
+    (error.response.data as ErrorResponse | undefined)?.message === REPORT_HTML_MISSING_MESSAGE
+  );
+}
+
+/**
  * 사용자 관리 대상이 이 워크스페이스의 멤버가 아니라는 404 인가(WD-288) — 열어 둔 사이 다른 관리자가 제거한 경우다.
  * 상태 코드만 보지 않고 code 까지 봐서, 없는 경로·역할 같은 다른 404 를 「제거된 멤버」로 오인하지 않는다.
  */
