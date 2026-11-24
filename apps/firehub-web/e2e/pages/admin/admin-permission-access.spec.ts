@@ -365,7 +365,11 @@ test.describe('역할 관리 — role:read', () => {
     await expect(page.getByRole('checkbox', { name: 'DATASET_WRITE' })).toBeChecked();
     await expect(page.getByRole('checkbox', { name: 'DATASET_WRITE' })).toHaveAttribute(
       'aria-describedby',
-      'perm-scope-lock-hint',
+      'perm-2-desc perm-scope-lock-hint',
+    );
+    // 설명(WD-1068)과 잠금 이유가 함께 접근 설명으로 읽힌다
+    await expect(page.getByRole('checkbox', { name: 'DATASET_WRITE' })).toHaveAccessibleDescription(
+      '데이터셋 수정 자신에게 없는 권한을 가진 역할이라 권한을 바꿀 수 없습니다',
     );
     await expect(page.getByText('자신에게 없는 권한은 추가할 수 없습니다')).toHaveCount(0);
     await expect(page.getByRole('button', { name: '권한 저장' })).toBeDisabled();
@@ -395,6 +399,10 @@ test.describe('역할 관리 — role:read', () => {
       await expect(card.getByRole('radio', { name })).toBeDisabled();
     }
     await expect(card.getByRole('radio', { name: '내부' })).toBeChecked();
+    // 라디오에 바로 닿아도 등급 설명 뒤에 잠금 이유가 함께 읽힌다(WD-1068 — 권한 체크박스와 같은 순서)
+    await expect(card.getByRole('radio', { name: '내부' })).toHaveAccessibleDescription(
+      /자신에게 없는 권한을 가진 역할이라 열람 등급을 바꿀 수 없습니다$/,
+    );
     await expect(card.getByRole('button', { name: '저장' })).toHaveCount(0);
     await nextFrame(page);
     expect(preview.requests).toHaveLength(0);

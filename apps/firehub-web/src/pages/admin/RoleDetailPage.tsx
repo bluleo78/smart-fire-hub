@@ -637,32 +637,44 @@ function RoleDetailView() {
                 {permissionCategoryLabel(category)}
               </h3>
               <div className="space-y-2">
-                {perms.map((perm) => (
-                  // flex-wrap: 범위 안내처럼 긴 보조 문구가 설명을 좁은 칸으로 짜부라뜨리지 않고 다음 줄로 내려가게 한다
-                  <div key={perm.id} className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                    <Checkbox
-                      id={`perm-${perm.id}`}
-                      checked={selectedPermissionIds.includes(perm.id)}
-                      onCheckedChange={(checked) => handlePermissionToggle(perm.id, checked === true)}
-                      disabled={role.isSystem || !canEditPermissions || lockHintId(perm) !== undefined}
-                      aria-describedby={lockHintId(perm)}
-                    />
-                    <Label htmlFor={`perm-${perm.id}`} className="text-sm">
-                      {perm.code}
-                    </Label>
-                    {perm.description && (
-                      <span className="text-sm text-muted-foreground">- {perm.description}</span>
-                    )}
-                    {PYTHON_READ_NOTICE_PERMISSIONS.has(perm.code) && (
-                      // 더 이상 위험 경고가 아니라 범위 안내라 warning 대신 muted 로 둔다(WD-29).
-                      // 한 줄을 다 쓰고(basis-full) 체크박스 폭+간격(pl-7)만큼 들여 권한 이름과 왼쪽을 맞춘다.
-                      <span className="basis-full pl-7 text-xs text-muted-foreground">
-                        Python 스크립트는 실행 주체의 열람 등급 안의 데이터만 읽습니다(트리거 실행은 트리거를 만든 사용자
-                        기준). 허용 목록이 필요한 등급은 읽을 수 없습니다.
-                      </span>
-                    )}
-                  </div>
-                ))}
+                {perms.map((perm) => {
+                  // 눈에 보이는 설명·Python 범위 안내·잠금 이유를 체크박스의 접근 설명으로 잇는다(WD-1068, WCAG 1.3.1).
+                  // 없는 요소의 id 를 가리키지 않도록 해당할 때만 넣고, 하나도 없으면 속성 자체를 뺀다.
+                  const descId = perm.description ? `perm-${perm.id}-desc` : undefined;
+                  const pythonId = PYTHON_READ_NOTICE_PERMISSIONS.has(perm.code) ? `perm-${perm.id}-python` : undefined;
+                  const lockId = lockHintId(perm);
+                  const describedBy = [descId, pythonId, lockId].filter(Boolean).join(' ') || undefined;
+                  return (
+                    // flex-wrap: 범위 안내처럼 긴 보조 문구가 설명을 좁은 칸으로 짜부라뜨리지 않고 다음 줄로 내려가게 한다
+                    <div key={perm.id} className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                      <Checkbox
+                        id={`perm-${perm.id}`}
+                        checked={selectedPermissionIds.includes(perm.id)}
+                        onCheckedChange={(checked) => handlePermissionToggle(perm.id, checked === true)}
+                        disabled={role.isSystem || !canEditPermissions || lockId !== undefined}
+                        aria-describedby={describedBy}
+                      />
+                      <Label htmlFor={`perm-${perm.id}`} className="text-sm">
+                        {perm.code}
+                      </Label>
+                      {perm.description && (
+                        // 「- 」 구분 기호는 장식이라 접근 설명(id)·스크린리더 밖에 둔다
+                        <span className="text-sm text-muted-foreground">
+                          <span aria-hidden="true">- </span>
+                          <span id={descId}>{perm.description}</span>
+                        </span>
+                      )}
+                      {pythonId && (
+                        // 더 이상 위험 경고가 아니라 범위 안내라 warning 대신 muted 로 둔다(WD-29).
+                        // 한 줄을 다 쓰고(basis-full) 체크박스 폭+간격(pl-7)만큼 들여 권한 이름과 왼쪽을 맞춘다.
+                        <span id={pythonId} className="basis-full pl-7 text-xs text-muted-foreground">
+                          Python 스크립트는 실행 주체의 열람 등급 안의 데이터만 읽습니다(트리거 실행은 트리거를 만든 사용자
+                          기준). 허용 목록이 필요한 등급은 읽을 수 없습니다.
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           ))}
