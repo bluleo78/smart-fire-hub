@@ -20,6 +20,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.smartfirehub.global.config.SecurityConfig;
+import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.security.JwtAuthenticationFilter;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
@@ -48,6 +49,7 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -423,7 +425,10 @@ class ProactiveJobControllerTest {
         .perform(
             get("/api/v1/proactive/jobs/10/executions/99")
                 .header("Authorization", "Bearer valid-token"))
-        .andExpect(status().isNotFound());
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.message").value("실행을 찾을 수 없습니다."));
+    // 짝이 안 맞으면 등급 판정까지 가지 않는다 (WD-1088)
+    verify(proactiveJobService, never()).requireReportViewable(any(), anyLong());
   }
 
   /**
@@ -498,81 +503,101 @@ class ProactiveJobControllerTest {
         .generatePdf(any(), eq("daily-report"), eq(completedAt), eq("Asia/Seoul"));
   }
 
-  @Test
-  void downloadExecutionPdf_whenMismatchedJob_returnsBadRequest() throws Exception {
-    mockAuth("proactive:read");
-    when(proactiveJobService.getJob(10L, 1L)).thenReturn(sampleJob());
-    // getValidatedResult 내부에서 jobId 불일치 → null → 400
-    ProactiveJobExecutionResponse exec =
-        new ProactiveJobExecutionResponse(
-            99L,
-            77L,
-            "COMPLETED",
-            LocalDateTime.now(),
-            LocalDateTime.now(),
-            null,
-            null,
-            null,
-            LocalDateTime.now(),
-            null);
-    when(proactiveJobService.getExecution(99L)).thenReturn(exec);
-
+  /** WD-1088 — PDF·HTML 의 작업·실행 짝 불일치는 404 「실행을 찾을 수 없습니다.」, 등급 판정보다 먼저(남의 실행 id 로 등급을 떠보지 못하게). */
+  @ParameterizedTest
+  @ValueSource(strings = {"pdf", "html"})
+  void report_whenMismatchedJob_returns404BeforeLevelCheck(String kind) throws Exception {
+    mockExecutionForReport(77L, "COMPLETED", Map.of("title", "t"));
     mockMvc
         .perform(
-            get("/api/v1/proactive/jobs/10/executions/99/pdf")
+            get("/api/v1/proactive/jobs/10/executions/99/" + kind)
                 .header("Authorization", "Bearer valid-token"))
-        .andExpect(status().isBadRequest());
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.message").value("실행을 찾을 수 없습니다."));
+    verify(proactiveJobService, never()).requireReportExportable(any(), anyLong());
+    verify(proactiveJobService, never()).requireReportViewable(any(), anyLong());
   }
 
-  @Test
-  void downloadExecutionPdf_whenNotCompleted_returnsBadRequest() throws Exception {
+  private void mockExecutionForReport(String status, Map<String, Object> result) {
+    mockExecutionForReport(10L, status, result);
+  }
+
+  private void mockExecutionForReport(Long jobId, String status, Map<String, Object> result) {
     mockAuth("proactive:read");
     when(proactiveJobService.getJob(10L, 1L)).thenReturn(sampleJob());
-    // status != COMPLETED 분기
-    ProactiveJobExecutionResponse exec =
-        new ProactiveJobExecutionResponse(
-            99L,
-            10L,
-            "RUNNING",
-            LocalDateTime.now(),
-            null,
-            null,
-            null,
-            null,
-            LocalDateTime.now(),
-            null);
-    when(proactiveJobService.getExecution(99L)).thenReturn(exec);
+    when(proactiveJobService.getExecution(99L))
+        .thenReturn(
+            new ProactiveJobExecutionResponse(
+                99L,
+                jobId,
+                status,
+                LocalDateTime.now(),
+                null,
+                null,
+                result,
+                null,
+                LocalDateTime.now(),
+                null));
+  }
 
+  /** WD-1088 — 완료 아님은 PDF·HTML 모두 원인 문구가 든 400. */
+  @ParameterizedTest
+  @ValueSource(strings = {"pdf", "html"})
+  void report_whenNotCompleted_returns400WithMessage(String kind) throws Exception {
+    mockExecutionForReport("RUNNING", Map.of("title", "t"));
     mockMvc
         .perform(
-            get("/api/v1/proactive/jobs/10/executions/99/pdf")
+            get("/api/v1/proactive/jobs/10/executions/99/" + kind)
                 .header("Authorization", "Bearer valid-token"))
-        .andExpect(status().isBadRequest());
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value("완료된 실행만 리포트를 열거나 내려받을 수 있습니다."));
   }
 
-  @Test
-  void getExecutionHtml_whenBadValidation_returnsBadRequest() throws Exception {
-    mockAuth("proactive:read");
-    when(proactiveJobService.getJob(10L, 1L)).thenReturn(sampleJob());
-    ProactiveJobExecutionResponse exec =
-        new ProactiveJobExecutionResponse(
-            99L,
-            77L,
-            "COMPLETED",
-            LocalDateTime.now(),
-            LocalDateTime.now(),
-            null,
-            null,
-            null,
-            LocalDateTime.now(),
-            null);
-    when(proactiveJobService.getExecution(99L)).thenReturn(exec);
+  /** WD-1088 — 완료인데 result 가 없으면 PDF·HTML 모두 원인 문구가 든 400. */
+  @ParameterizedTest
+  @ValueSource(strings = {"pdf", "html"})
+  void report_whenResultNull_returns400WithMessage(String kind) throws Exception {
+    mockExecutionForReport("COMPLETED", null);
+    mockMvc
+        .perform(
+            get("/api/v1/proactive/jobs/10/executions/99/" + kind)
+                .header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value("이 실행에는 리포트 결과가 없습니다."));
+  }
 
+  /**
+   * WD-1088 — 등급 판정(403)이 완료 검사(400)보다 먼저다: 등급을 못 보는 진행 중 실행은 400 이 아니라 403. 완료 여부로 등급을 떠보지 못하게 하는
+   * 기존 순서를 고정한다.
+   */
+  @ParameterizedTest
+  @ValueSource(strings = {"pdf", "html"})
+  void report_whenLevelBlockedAndNotCompleted_returns403(String kind) throws Exception {
+    mockExecutionForReport("RUNNING", Map.of("title", "t"));
+    CodedApiException blocked =
+        new CodedApiException(HttpStatus.FORBIDDEN, "REPORT_LEVEL_BLOCKED", "등급 차단");
+    if (kind.equals("pdf")) {
+      doThrow(blocked).when(proactiveJobService).requireReportExportable(any(), anyLong());
+    } else {
+      when(proactiveJobService.requireReportViewable(any(), anyLong())).thenThrow(blocked);
+    }
+    mockMvc
+        .perform(
+            get("/api/v1/proactive/jobs/10/executions/99/" + kind)
+                .header("Authorization", "Bearer valid-token"))
+        .andExpect(status().isForbidden());
+  }
+
+  /** WD-1088 — HTML 본문이 공백뿐이면 원인 문구가 든 404. */
+  @Test
+  void getExecutionHtml_whenHtmlBlank_returns404WithMessage() throws Exception {
+    mockExecutionForReport("COMPLETED", Map.of("htmlContent", "  "));
     mockMvc
         .perform(
             get("/api/v1/proactive/jobs/10/executions/99/html")
                 .header("Authorization", "Bearer valid-token"))
-        .andExpect(status().isBadRequest());
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.message").value("이 실행에는 HTML 리포트가 없습니다."));
   }
 
   @Test

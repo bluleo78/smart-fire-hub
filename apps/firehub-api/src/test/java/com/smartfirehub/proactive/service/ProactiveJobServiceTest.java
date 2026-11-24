@@ -1479,12 +1479,12 @@ class ProactiveJobServiceTest extends IntegrationTestBase {
     assertThat(result.status()).isEqualTo("COMPLETED");
   }
 
-  /** 단건 실행 조회 — 존재하지 않는 ID */
+  /** 단건 실행 조회 — 존재하지 않는 ID 는 다른 작업의 실행과 같은 404 문구(WD-1088) */
   @Test
   void getExecution_throws_when_not_found() {
     assertThatThrownBy(() -> proactiveJobService.getExecution(999999L))
-        .isInstanceOf(ProactiveJobException.class)
-        .hasMessageContaining("999999");
+        .isInstanceOf(ProactiveJobNotFoundException.class)
+        .hasMessage("실행을 찾을 수 없습니다.");
   }
 
   // ── 이상 탐지 이벤트 테스트 ──
