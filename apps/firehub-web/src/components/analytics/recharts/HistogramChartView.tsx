@@ -8,7 +8,12 @@ Tooltip, XAxis, YAxis, } from 'recharts';
 
 import { binHistogramValues, getHistogramBinCount, readHistogramValues } from '../chart-derived-data';
 import { HIDDEN_CHART_ROOT_PROPS } from '../chart-figure-context';
-import { BAR_CURSOR_STYLE,TOOLTIP_CONTENT_STYLE, TOOLTIP_ITEM_STYLE } from '../chart-styles';
+import {
+  BAR_CURSOR_STYLE,
+  chartAnimationActive,
+  TOOLTIP_CONTENT_STYLE,
+  TOOLTIP_ITEM_STYLE,
+} from '../chart-styles';
 import type { ChartViewProps } from '../chart-view-props';
 import { ChartDrawingArea } from '../ChartDrawingArea';
 
@@ -50,7 +55,12 @@ export function HistogramChartView({ data, config, height }: ChartViewProps) {
             cursor={BAR_CURSOR_STYLE}
             formatter={(v: number | undefined) => [v ?? 0, '빈도']}
           />
-          <Bar dataKey="count" fill="var(--chart-1)" radius={[2, 2, 0, 0]} />
+          <Bar
+            dataKey="count"
+            fill="var(--chart-1)"
+            radius={[2, 2, 0, 0]}
+            isAnimationActive={chartAnimationActive(binnedData.length)}
+          />
         </BarChart>
       </ResponsiveContainer>
     </ChartDrawingArea>

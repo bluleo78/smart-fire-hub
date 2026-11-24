@@ -14,6 +14,7 @@ import { HIDDEN_CHART_ROOT_PROPS } from './chart-figure-context';
 import {
   BAR_CURSOR_STYLE,
   CHART_SERIES_COLORS,
+  chartAnimationActive,
   formatYAxisTick,
   TOOLTIP_CONTENT_STYLE,
   TOOLTIP_ITEM_STYLE,
@@ -29,6 +30,7 @@ interface BarChartViewProps {
 export function BarChartView({ config, data, height }: BarChartViewProps) {
   const { xAxis, yAxis, showLegend = true, showGrid = true, stacked = false, colors } = config;
   const palette = colors?.length ? colors : CHART_SERIES_COLORS;
+  const animate = chartAnimationActive(data.length);
 
   return (
     <ChartDrawingArea>
@@ -67,7 +69,7 @@ export function BarChartView({ config, data, height }: BarChartViewProps) {
               dataKey={col}
               fill={palette[i % palette.length]}
               stackId={stacked ? 'stack' : undefined}
-              radius={stacked ? undefined : [2, 2, 0, 0]}
+              radius={stacked ? undefined : [2, 2, 0, 0]}              isAnimationActive={animate}
             />
           ))}
         </BarChart>

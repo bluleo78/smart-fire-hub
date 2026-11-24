@@ -1,11 +1,12 @@
 import { AlertTriangle, EyeOff, GripVertical, Loader2, Lock, X } from 'lucide-react';
-import { type KeyboardEvent, type ReactNode, useCallback, useId, useRef, useState } from 'react';
+import { type ComponentProps, type KeyboardEvent, type ReactNode, useCallback, useId, useRef, useState } from 'react';
 
 import { useChart, useChartData } from '../../hooks/queries/useAnalytics';
 import { useWidgetVisibility } from '../../hooks/useWidgetVisibility';
 import { extractApiError, handleApiError } from '../../lib/api-error';
 import { type KeyboardLayoutAction, keyToLayoutAction } from '../../lib/dashboard-layout-keyboard';
 import { cn } from '../../lib/utils';
+import { useWidgetRenderTurn } from '../../lib/widget-render-queue';
 import { type ChartDataResponse, type DashboardWidget, MAX_AUTO_REFRESH_SECONDS } from '../../types/analytics';
 import { PendingButton } from '../PendingButton';
 import { Button } from '../ui/button';
@@ -78,6 +79,31 @@ function WidgetErrorBox({ title, children, action }: { title: ReactNode; childre
   );
 }
 
+/** 위젯 본문 로딩 스피너 — 첫 조회 중이거나 그릴 차례를 기다리는 동안(WD-1072) 같은 모양을 보인다 */
+function WidgetBodySpinner() {
+  return (
+    <div className="flex items-center justify-center h-full">
+      <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+    </div>
+  );
+}
+
+/**
+ * ChartRenderer 를 실제로 그리는 자리(WD-1072) — 위젯 여러 개가 한 커밋에 recharts 를 그리면 메인 스레드가 길게 막히므로
+ * ready(그릴 SVG 가 있음: 표 보기 아님·행 있음)일 때만 줄을 서 차례를 받은 뒤 그린다. 기다리는 동안은 스피너.
+ * 오류·권한 없음·0행·표 보기는 그릴 무거운 차트가 없으니 줄을 서지 않는다(옆 카드의 차례를 막지 않게).
+ * 한 번 차례를 받으면 true 를 유지해 새로고침 중 차트가 스피너로 돌아가지 않는다(이미 받은 뒤의 동작은 그대로).
+ */
+function QueuedChartArea({
+  ready,
+  tableView,
+  ...rendererProps
+}: { ready: boolean; tableView: boolean } & Omit<ComponentProps<typeof ChartRenderer>, 'fillParent' | 'view'>) {
+  const hasTurn = useWidgetRenderTurn(ready);
+  if (ready && !hasTurn) return <WidgetBodySpinner />;
+  return <ChartRenderer {...rendererProps} fillParent view={tableView ? 'table' : 'chart'} />;
+}
+
 /**
  * 위젯 본문 — 카드가 조회한 이 위젯의 단건 차트 데이터(`/charts/{id}/data`)를 렌더링한다.
  * 데이터 조회·새로고침 상태는 카드가 소유하고(신선도 바와 같은 쿼리를 보도록), 본문은 표시만 한다.
@@ -114,11 +140,7 @@ function WidgetContent({ widget, chartData, dataLoading, dataFetching, dataError
 
   // 아직 받은 데이터가 없다(첫 조회 중이거나, 화면 밖이라 조회를 미룬 위젯) — 로딩 표시
   if (isInitialLoading || !chartData) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-      </div>
-    );
+    return <WidgetBodySpinner />;
   }
 
   // 원본 데이터를 볼 수 없음(스펙 §5-4, 목업 s4 ①) — 오류가 아니다. 빨간 오류·재시도 대신 차분한 잠금 상태,
@@ -165,13 +187,13 @@ function WidgetContent({ widget, chartData, dataLoading, dataFetching, dataError
   return (
     <div className="flex h-full flex-col">
       <div className="relative min-h-0 flex-1" data-testid="dashboard-widget-chart-area">
-        <ChartRenderer
+        <QueuedChartArea
+          ready={!tableView && queryResult.rows.length > 0}
           chartType={effectiveChart.chartType}
           config={effectiveConfig}
           data={queryResult.rows}
           columns={queryResult.columns}
-          fillParent
-          view={tableView ? 'table' : 'chart'}
+          tableView={tableView}
           // WD-826: 카드 제목과 같은 출처(widget.chartName)를 접근 이름에 쓴다
           title={widget.chartName ?? undefined}
         />
