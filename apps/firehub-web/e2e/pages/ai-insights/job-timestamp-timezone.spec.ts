@@ -1,3 +1,5 @@
+import type { Page } from '@playwright/test';
+
 import { createJob } from '../../factories/ai-insight.factory';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
@@ -31,6 +33,8 @@ test.describe('스마트 작업 타임스탬프 타임존 (#349)', () => {
       lastExecutedAt: toServerLocalDateTime(executedAt),
       // 다음 실행은 이 테스트 관심사가 아니므로 비운다
       nextExecuteAt: null,
+      // WD-1097: 마지막 실행은 작업 시간대(약어 포함)로 보이므로 시간대를 명시한다
+      timezone: 'Asia/Seoul',
     });
 
     await mockApi(page, 'GET', '/api/v1/proactive/jobs', [job]);
@@ -43,21 +47,72 @@ test.describe('스마트 작업 타임스탬프 타임존 (#349)', () => {
     await expect(row).toContainText('5분 전');
     await expect(row).not.toContainText('시간 전');
 
-    // 상세 — formatDate(UTC 파싱)와 목록의 해석이 일치해야 한다.
-    // 미래 시각이 아니라 방금 지난 시각으로 렌더되는지, 로컬 표기 문자열로 직접 확인한다.
-    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1', job);
-    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1/executions', []);
-    await mockApi(page, 'GET', '/api/v1/proactive/templates', []);
-    await page.goto('/ai-insights/jobs/1');
+    // 상세 — 목록과 같은 시각(UTC 파싱)을 작업 시간대(Asia/Seoul) 기준 「HH:MM KST」로 보여야 한다(WD-1097).
+    // 미래 시각이 아니라 방금 지난 시각으로 렌더되는지 확인한다.
+    await openJobDetail(page, job);
 
     // 기대 문자열은 브라우저 안에서 만든다 — Node와 브라우저의 ko-KR ICU 출력이 달라
     // 테스트 프로세스에서 만든 문자열로 비교하면 표기 차이로 헛되이 깨진다
-    const expectedLocal = await page.evaluate(
-      // eslint-disable-next-line no-restricted-syntax -- 인자는 toISOString() 결과(Z 포함) — 타임존이 명시돼 #691 대상 아님
-      (iso) => new Date(iso).toLocaleString('ko-KR'),
+    // WD-1097: 상세 「마지막 실행」은 작업 시간대(Asia/Seoul) 시각 + 약어(KST)로 보인다.
+    const expectedTime = await page.evaluate(
+      (iso) =>
+        // eslint-disable-next-line no-restricted-syntax -- 인자는 toISOString() 결과(Z 포함) — 타임존이 명시돼 #691 대상 아님
+        new Date(iso).toLocaleTimeString('ko-KR', {
+          timeZone: 'Asia/Seoul',
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false,
+        }),
       executedAt.toISOString(),
     );
-    await expect(page.getByText('마지막 실행')).toBeVisible();
-    await expect(page.getByText(expectedLocal, { exact: false })).toBeVisible();
+    await expect(lastRunValue(page)).toContainText(`${expectedTime} KST`);
+  });
+});
+
+/** 「마지막 실행」 카드의 값 영역(라벨 p 의 다음 형제 div) */
+function lastRunValue(page: Page) {
+  return page
+    .getByText('마지막 실행', { exact: true })
+    .locator('xpath=following-sibling::div[1]');
+}
+
+/** 작업 상세(id 1) 진입 — 상세가 부르는 API 를 모킹하고 상세로 간다 */
+async function openJobDetail(page: Page, job: ReturnType<typeof createJob>) {
+  await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+  await mockApi(page, 'GET', '/api/v1/proactive/jobs/1', job);
+  await mockApi(page, 'GET', '/api/v1/proactive/jobs/1/executions', []);
+  await mockApi(page, 'GET', '/api/v1/proactive/templates', []);
+  await page.goto('/ai-insights/jobs/1');
+}
+
+test.describe('스마트 작업 마지막 실행 시간대 (WD-1097)', () => {
+  // 컨테이너 기본처럼 브라우저 시간대를 UTC 로 둔다 — 브라우저 시간으로 찍으면 날짜가 하루 앞서 보이던 재현 조건
+  test.use({ timezoneId: 'UTC' });
+
+  /** 16:39:05 UTC(= 다음 날 01:39 KST)에 마지막으로 실행된 매일 09시 작업 */
+  const jobIn = (timezone: string) =>
+    createJob({
+      id: 1,
+      lastExecutedAt: '2026-11-24T16:39:05',
+      nextExecuteAt: '2026-11-25T00:00:00',
+      timezone,
+      cronExpression: '0 9 * * *',
+    });
+
+  test('브라우저가 UTC 여도 마지막 실행은 작업 시간대(KST) 날짜·시각으로 보인다 (WD-1097)', async ({
+    authenticatedPage: page,
+  }) => {
+    await openJobDetail(page, jobIn('Asia/Seoul'));
+    const value = lastRunValue(page);
+    await expect(value).toHaveText(/2026\. 11\. 25\..*01:39 KST$/);
+    await expect(value).not.toContainText('오후 4:39');
+  });
+
+  test('작업 시간대가 UTC+9 여도 상세가 깨지지 않고 마지막 실행이 보인다 (WD-1097)', async ({
+    authenticatedPage: page,
+  }) => {
+    await openJobDetail(page, jobIn('UTC+9'));
+    // Intl 이 거부하는 시간대는 브라우저 시간대(여기서는 UTC)로 대신 보인다 — 16:39 UTC 그대로
+    await expect(lastRunValue(page)).toHaveText(/16:39 UTC$/);
   });
 });
