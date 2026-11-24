@@ -360,6 +360,133 @@ test.describe('감사 로그 페이지', () => {
   });
 
   /**
+   * WD-1110: 설명이 길어도 대화상자가 뷰포트 안에 머물러 안쪽에서 스크롤된다.
+   * - 설명 10,000 자 → 대화상자 높이 6,372px 로 뷰포트(900px)를 벗어나 제목·닫기 X 가 화면 밖으로 밀렸다.
+   * - 공용 DialogContent 의 max-h + overflow-y-auto 가 실제 브라우저에서 렌더·스크롤까지 되는지 고정한다
+   *   (단위 테스트는 클래스 문자열만 본다 — 여기서는 좌표·스크롤·초점을 직접 잰다).
+   */
+  test('긴 설명에서도 대화상자가 뷰포트 안에서 스크롤된다 (WD-1110)', async ({ authenticatedPage: page }) => {
+    // 이슈 실측과 같은 900px 높이 뷰포트에서 재한다 — 기본 뷰포트(720px)로는 오차가 생긴다.
+    await page.setViewportSize({ width: 1440, height: 900 });
+
+    // 설명 10,000 자(공백 없음 · break-words 로 줄바꿈) — 수정 전 대화상자 높이가 6,372px 까지 늘어난 값.
+    // metadata 도 조금 넣는다 — 없으면 탭 대상이 닫기 X 하나뿐이라, 이슈가 겪은
+    // 「설명 아래 폴드의 metadata <pre> 에서 초점이 시작한다」 시나리오가 재현되지 않는다(수정 전 테스트의 빈틈).
+    // 값은 항목 두 개로 작게 둔다 — 아래 3) 의 설명 끝 단언이 <p> 다음에 오는 내용이 짧음을 전제로 하기 때문.
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/admin/audit-logs',
+      createPageResponse([
+        createAuditLog({
+          id: 1,
+          description: 'A'.repeat(10000),
+          username: 'admin',
+          metadata: { before: { name: 'old' }, after: { name: 'new' } },
+        }),
+      ]),
+    );
+    await page.goto('/admin/audit-logs');
+    await expect(page.getByRole('cell', { name: 'admin' })).toBeVisible();
+
+    // 행 클릭 → 상세 다이얼로그 열기
+    await page.getByRole('row').nth(1).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible();
+
+    // 0) 열자마자 맨 위( scrollTop = 0 )여야 한다 — 열 때 맨 위에서 시작해야 제목·닫기 버튼이 보인다.
+    //    첫 탭 대상인 폴드 아래 metadata <pre> 에 초점이 가도(위 mock) 컨테이너가 같이 스크롤되지 않아야 한다는 뜻이고,
+    //    아래 1) 박스 좌표 단언으로는 이 스크롤 여부를 알 수 없다(박스는 스크롤과 무관한 컨테이너 기하라 항상 통과한다).
+    await expect.poll(() => dialog.evaluate((el) => el.scrollTop)).toBe(0);
+
+    // 1) 뷰포트 안 정렬 — 열린 직후 대화상자 박스가 0~900 안에 들어온다(수정 전: y = -2,736).
+    const box = await dialog.boundingBox();
+    expect(box, '대화상자가 그려지지 않았다').not.toBeNull();
+    expect(box!.y).toBeGreaterThanOrEqual(0);
+    expect(box!.y + box!.height).toBeLessThanOrEqual(900);
+
+    // 2) 대화상자 자체가 세로 스크롤 컨테이너다 — 내용(설명 10,000 자)이 높이 제한보다 커야 한다.
+    //    scrollHeight === clientHeight 면 스크롤이 없어 긴 내용을 읽을 수 없다(수정 전 상태).
+    const scroll = await dialog.evaluate((el) => ({
+      scrollHeight: el.scrollHeight,
+      clientHeight: el.clientHeight,
+    }));
+    expect(scroll.scrollHeight).toBeGreaterThan(scroll.clientHeight);
+
+    // 3) 끝까지 내리면 설명 마지막 글자가 화면 안에 들어온다.
+    const description = dialog.locator('p', { hasText: 'A'.repeat(50) });
+    const scrolled = await dialog.evaluate((el) => {
+      el.scrollTop = el.scrollHeight;
+      return { scrollTop: el.scrollTop, max: el.scrollHeight - el.clientHeight };
+    });
+    expect(scrolled.max).toBeGreaterThan(0);
+    // 소수점 반올림 오차 1px 허용 — 끝까지 내려갔다는 뜻이면 충분하다.
+    expect(scrolled.scrollTop).toBeGreaterThanOrEqual(scrolled.max - 1);
+    const descriptionBox = await description.boundingBox();
+    expect(descriptionBox, '설명 문단이 그려지지 않았다').not.toBeNull();
+    // 설명의 끝(마지막 글자)이 뷰포트 아래로 새지 않는다 — 박스 아래 끝이 900 안에 있고 화면 밖 위도 아니다.
+    expect(descriptionBox!.y + descriptionBox!.height).toBeLessThanOrEqual(900);
+    expect(descriptionBox!.y + descriptionBox!.height).toBeGreaterThan(0);
+
+    // 4) 「되돌아오면 다시 보인다」 — 바닥(설명 끝)까지 내려간 상태에서 위로 되돌아오면 닫기 버튼이 다시 화면에 나온다.
+    //    스크롤 중에도 제목·닫기 버튼을 화면에 고정해 두는 것은 별도 구조 변경 범위라 이번 이슈에선 하지 않는다
+    //    (DialogContent 안에 스크롤 컨테이너를 하나 더 두는 일이라 공용 38개 호출처가 미침 — WD-1110 이슈 챗 결정).
+    //    그래서 바닥에서 X 가 화면에 있는지는 고정하지 않고, 위 3) 단계에서 바닥을 밟은 뒤 되돌아오면
+    //    다시 보인다는 것만 고정한다 — 되돌아오는 경로가 깨져 X 에 다시 못 닿으면 이 단계에서 걸린다.
+    await dialog.evaluate((el) => {
+      el.scrollTop = 0;
+    });
+    // 되돌아오기가 끝난 상태에서 재야 한다 — 되돌리기가 반영되지 않으면 이 대기에서 멈춘다.
+    await expect.poll(() => dialog.evaluate((el) => el.scrollTop)).toBe(0);
+    const closeButton = dialog.getByRole('button', { name: '닫기' });
+    const closeButtonBox = await closeButton.boundingBox();
+    expect(closeButtonBox, '닫기 버튼이 그려지지 않았다').not.toBeNull();
+    expect(closeButtonBox!.y).toBeGreaterThanOrEqual(0);
+    expect(closeButtonBox!.y + closeButtonBox!.height).toBeLessThanOrEqual(900);
+
+    // 5) Tab 으로 초점을 옮긴 뒤에도 (5-1) 초점이 대화상자 **안**에 있고, (5-2) 화면 안에 있어야 한다
+    //    (수정 전: 초점이 화면 밖 요소에 고정돼 Tab 해도 화면 안으로 들어오지 않았다).
+    // 5-0) 재현의 출발점 — 열자마자 초점이 폴드 아래(뷰포트 900px 바깥) metadata <pre> 에 있어야 한다.
+    //      metadata 가 없으면 탭 대상이 닫기 X 하나뿐이라 Tab 이 맨 위에서만 돌고,
+    //      이슈 본문의 「y=3,539 아래에서 Tab 시작」 경로가 한 번도 겪어지지 않는다(수정 전 테스트의 빈틈).
+    const startFocus = await dialog.evaluate((dialogEl) => {
+      const active = document.activeElement;
+      const pre = dialogEl.querySelector('pre[role="region"]');
+      const rect = active && active !== document.body ? active.getBoundingClientRect() : null;
+      return { isMetadataPre: !!active && !!pre && active === pre, top: rect?.top ?? null };
+    });
+    expect(startFocus.isMetadataPre, '초점이 폴드 아래 metadata <pre> 에서 시작하지 않았다').toBe(true);
+    expect(startFocus.top, '초점 요소가 그려지지 않았다').not.toBeNull();
+    // 900px 뷰포트 바깥(아래)에서 시작해야 「Tab 으면 화면 안으로 들어와야 한다」가 의미를 가진다.
+    // 고의로 고정한 동작이다 — 열 때 초점을 화면 안에 두는 것은 WD-1120(후속)에서 바꿀 일이라,
+    // 그 이슈가 랜드되면 이 단언도 함께 바꾼다(지금은 여기가 막히지 않으면 후속 수정을 놓친다).
+    expect(startFocus.top!).toBeGreaterThanOrEqual(900);
+
+    await page.keyboard.press('Tab');
+    const focusInfo = await dialog.evaluate((dialogEl) => {
+      const active = document.activeElement;
+      const pre = dialogEl.querySelector('pre[role="region"]');
+      const inside = !!active && active !== document.body && dialogEl.contains(active);
+      const rect = active && active !== document.body ? active.getBoundingClientRect() : null;
+      return {
+        inside,
+        isMetadataPre: !!active && !!pre && active === pre,
+        top: rect?.top ?? null,
+        bottom: rect?.bottom ?? null,
+      };
+    });
+    // 5-1) page.getByRole('dialog') 요소의 후손이어야 한다 — 뒤에 깔린 배경 요소(테이블 행 등)에 초점이 나가도
+    //      「화면 안에 있다」는 단언만으로는 통과해 버려서 초점 이탈 회귀를 놓친다.
+    expect(focusInfo.inside, '초점이 대화상자 밖으로 나갔다').toBe(true);
+    // 5-1-2) 5-0 의 <pre> 가 그대로면 Tab 이 움직이지 않은 것 — 출발점과 도착점이 달라야 재현 경로다.
+    expect(focusInfo.isMetadataPre, 'Tab 후에도 초점이 metadata <pre> 에 머물렀다').toBe(false);
+    expect(focusInfo.top, '초점 요소가 그려지지 않았다').not.toBeNull();
+    // 5-2) 초점 요소의 좌표가 뷰포트(0~900) 안에 있어야 한다.
+    expect(focusInfo.top!).toBeGreaterThanOrEqual(0);
+    expect(focusInfo.bottom!).toBeLessThanOrEqual(900);
+  });
+
+  /**
    * 이슈 #71: metadata(JSON payload) 필드 표시 검증
    * - metadata 가 있는 경우 JSON.stringify(..., null, 2) 형태로 들여쓰기 렌더되는지 확인
    */
