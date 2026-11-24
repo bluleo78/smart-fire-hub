@@ -227,13 +227,26 @@ test.describe('사용 중 세션 만료 안내 (WD-830)', () => {
       void dialog.dismiss();
     });
     const refresh = watchRefresh(page);
-    // 사용 중 만료 — 모든 API 401, refresh 도 401
-    await page.route('**/api/v1/**', (route) =>
-      route.request().url().includes('/auth/signup-status') || route.request().url().includes('/auth/logout')
-        ? route.fallback()
-        : route.fulfill({ status: 401, contentType: 'application/json', body: '{}' }),
-    );
-    await mockApi(page, 'POST', REFRESH_URL, {}, { status: 401 });
+    // 사용 중 만료 — 모든 API 401, refresh 도 401.
+    // 첫 refresh 401(=만료) 뒤로는 API 를 네트워크 오류로 끊는다. react-query 재시도(1회·1초 뒤, src/main.tsx)가
+    // 다시 401→refresh 401 로 두 번째 자동 만료 이동을 일으키면, 가드를 푼 뒤 로그아웃을 누르기 전에
+    // 그 이동이 먼저 /login 으로 보내 버리는 겨루기가 생긴다(WD-1078).
+    let sessionGone = false;
+    await page.route('**/api/v1/**', (route) => {
+      const url = route.request().url();
+      if (url.includes('/auth/signup-status') || url.includes('/auth/logout')) return route.fallback();
+      if (sessionGone) return route.abort();
+      return route.fulfill({ status: 401, contentType: 'application/json', body: '{}' });
+    });
+    // catch-all 뒤에 등록해야 이 라우트가 먼저 걸린다(Playwright 는 나중 라우트부터). 첫 refresh 만 401(=만료)이다.
+    // 끊기 직전 401 을 받은 요청의 뒤늦은 refresh 는 응답하지 않고 묶는다 — 401 이든 네트워크 오류든 실패하면
+    // runRefresh(src/api/client.ts)가 다시 이동해 같은 겨루기가 된다. 묶인 동안 다른 401 은 갱신 큐에서 기다리므로
+    // 로그아웃은 위 mockApi(200)로 받는다. 두 번째 자동 만료 이동 자체는 WD-1082.
+    await page.route(`**${REFRESH_URL}`, (route) => {
+      if (sessionGone) return;
+      sessionGone = true;
+      return route.fulfill({ status: 401, contentType: 'application/json', body: '{}' });
+    });
     const goTo = (path: string) =>
       page.evaluate((p) => {
         history.pushState({}, '', p);
@@ -247,6 +260,8 @@ test.describe('사용 중 세션 만료 안내 (WD-830)', () => {
     await expect(page).not.toHaveURL(/\/login$/);
 
     // 직접 로그아웃 — 다시 이동하고, 앞선 만료 안내는 남지 않는다
+    // 지울 안내가 실제로 있어야 아래 「안내 없음」 단언이 의미 있다(헛통과 방지, WD-1078)
+    expect(await page.evaluate(() => sessionStorage.getItem('loginNotice'))).toBe(EXPIRED_TEXT);
     await page.evaluate(() => {
       window.removeEventListener('beforeunload', (window as unknown as { __guard: EventListener }).__guard);
     });
