@@ -2,6 +2,7 @@ import { Bot, Boxes, Mail, RotateCcw, Save, Settings, ShieldCheck, Tags } from '
 import { lazy, type ReactNode, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
+import { CardSectionHeading } from '@/components/CardSectionHeading';
 import { PageHeading } from '@/components/PageHeading';
 
 import { settingsApi } from '../../api/settings';
@@ -17,7 +18,7 @@ import {
 } from '../../components/ui/alert-dialog';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
+import { Card, CardContent, CardHeader } from '../../components/ui/card';
 import { FormField, FormFieldLabelRow } from '../../components/ui/form-field';
 import { linkedAriaProps } from '../../components/ui/form-field-aria';
 import { InlineBanner } from '../../components/ui/inline-banner';
@@ -636,7 +637,8 @@ function AdminSettingsPage() {
           <Card className="card-hover">
             <CardContent className="flex flex-col items-center justify-center py-16">
               <Settings className="h-12 w-12 text-muted-foreground mb-4" />
-              <p className="text-base leading-6 font-semibold">일반 설정</p>
+              {/* WD-1069: 빈 상태 제목이지만 탭 안 섹션 제목이므로 모양 그대로 h2 로 둔다. */}
+              <h2 className="text-base leading-6 font-semibold">일반 설정</h2>
               <p className="text-sm text-muted-foreground mt-1">
                 준비 중입니다
               </p>
@@ -649,7 +651,7 @@ function AdminSettingsPage() {
         <TabsContent ref={aiTabRef} value="ai" className="mt-6 space-y-6">
           <Card className="card-hover">
             <CardHeader>
-              <CardTitle>모델 설정</CardTitle>
+              <CardSectionHeading>모델 설정</CardSectionHeading>
             </CardHeader>
             <CardContent className="space-y-6">
               {/* "지금 화면을 믿지 말고 다시 읽어라" 안내 — 두 자원 각자의 슬롯을 따로 그린다.
@@ -782,11 +784,11 @@ function AdminSettingsPage() {
           <Card className="card-hover">
             <CardHeader>
               {/* 이 카드에는 별도 Label 이 없으므로(제목이 곧 필드 이름) 기본값 힌트를 제목 줄에 붙인다. */}
-              <CardTitle className="flex flex-wrap items-center gap-2">
+              <CardSectionHeading className="flex flex-wrap items-center gap-2">
                 {/* 아래 Textarea 의 aria-labelledby 대상 — placeholder 는 입력하면 사라져 이름이 못 된다(WD-590). */}
                 <span id="ai-system-prompt-label">시스템 프롬프트</span>
                 {defaultHint(isDefault('ai.system_prompt'))}
-              </CardTitle>
+              </CardSectionHeading>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">

@@ -9,7 +9,7 @@ test.describe('데이터 보안 설정 접근', () => {
     await setupSecurityLevelMocks(page);
     await page.goto('/admin/settings');
     await expect(page).toHaveURL(/\/admin\/settings$/);
-    await expect(page.getByRole('heading', { name: '설정' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '설정', exact: true })).toBeVisible();
     await expect(page.getByTestId('security-level-row')).toHaveCount(4);
     await expect(page.getByRole('tab', { name: 'AI 에이전트' })).toHaveCount(0);
     // 사이드바 관리 섹션에는 설정만

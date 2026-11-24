@@ -52,7 +52,7 @@ test.describe('설정 페이지', () => {
     await page.goto('/admin/settings');
 
     // 페이지 제목 확인
-    await expect(page.getByRole('heading', { name: '설정' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '설정', exact: true })).toBeVisible();
 
     // 탭 목록 확인
     await expect(page.getByRole('tab', { name: '일반' })).toBeVisible();

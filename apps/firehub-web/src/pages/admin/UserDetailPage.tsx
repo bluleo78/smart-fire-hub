@@ -1,9 +1,10 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, UserX } from 'lucide-react';
-import { type ReactNode,useCallback,useEffect,useId,useMemo,useState } from 'react';
+import { useCallback,useEffect,useId,useMemo,useState } from 'react';
 import { useLocation, useNavigate,useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
+import { CardSectionHeading } from '@/components/CardSectionHeading';
 import { PageHeading } from '@/components/PageHeading';
 
 import { rolesApi } from '../../api/roles';
@@ -62,20 +63,6 @@ const USER_NOT_FOUND_MESSAGE = '사용자를 찾을 수 없습니다.';
 export default function UserDetailPage() {
   const { id } = useParams<{ id: string }>();
   return <UserDetailView key={id} />;
-}
-
-/**
- * 사용자 상세 카드 제목 — 공용 CardTitle(div) 대신 제목 요소(h2)로 그려 스크린리더 제목 목록(H 키)으로
- * 「기본 정보」·「활성」·「역할」 섹션을 찾게 한다(WD-1067, WCAG 1.3.1). 페이지 h1 「사용자 상세」 다음 단계이고
- * 제거 구역(MemberDangerZone)의 h2 와 같은 단계다. 모양은 CardTitle 과 같게(클래스·data-slot 그대로, 크기 변화 없음)
- * 두므로 CardTitle 스타일을 바꾸면 여기도 맞춘다 — components/ui 는 shadcn 생성물이라 손대지 않는다.
- */
-function CardSectionHeading({ children }: { children: ReactNode }) {
-  return (
-    <h2 data-slot="card-title" className="leading-none font-semibold">
-      {children}
-    </h2>
-  );
 }
 
 function UserDetailView() {

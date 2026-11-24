@@ -4,6 +4,8 @@ import { Plus } from 'lucide-react';
 import { useId, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
+import { CardSectionHeading } from '@/components/CardSectionHeading';
+
 import { securityLevelsApi } from '../../../api/security-levels';
 import { EditConflictDialog } from '../../../components/EditConflictDialog';
 import {
@@ -21,7 +23,6 @@ import {
   Card,
   CardContent,
   CardHeader,
-  CardTitle,
 } from '../../../components/ui/card';
 import { Checkbox } from '../../../components/ui/checkbox';
 import {
@@ -269,7 +270,7 @@ export default function SecuritySettingsTab() {
       )}
       <Card className="card-hover">
         <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle>보안 등급</CardTitle>
+          <CardSectionHeading>보안 등급</CardSectionHeading>
           <Button size="sm" variant="outline" onClick={() => setAddOpen(true)}>
             <Plus className="h-4 w-4" />
             등급 추가

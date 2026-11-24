@@ -1,5 +1,7 @@
 import { Boxes, Info, PlugZap, RefreshCw, RotateCcw, Save } from 'lucide-react';
 
+import { CardSectionHeading } from '@/components/CardSectionHeading';
+
 import type { EmbeddingProviderType } from '../../api/embedding';
 import { HostingLocationField } from '../../components/admin/HostingLocationField';
 import {
@@ -14,7 +16,7 @@ import {
   AlertDialogTrigger,
 } from '../../components/ui/alert-dialog';
 import { Button } from '../../components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
+import { Card, CardContent, CardHeader } from '../../components/ui/card';
 import { FormField } from '../../components/ui/form-field';
 import { InlineBanner } from '../../components/ui/inline-banner';
 import { Input } from '../../components/ui/input';
@@ -159,10 +161,10 @@ export default function EmbeddingSettingsTab({
 
       <Card className="card-hover">
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
+          <CardSectionHeading className="flex items-center gap-2">
             <Boxes className="h-4 w-4" />
             임베딩 provider 설정
-          </CardTitle>
+          </CardSectionHeading>
         </CardHeader>
         <CardContent className="space-y-6">
           <div className="space-y-2">
@@ -319,10 +321,10 @@ export default function EmbeddingSettingsTab({
       {/* 재임베딩 — 현재 공간 기준 진행률 + 잡 상태 + 전체 재임베딩 실행 */}
       <Card className="card-hover">
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
+          <CardSectionHeading className="flex items-center gap-2">
             <RefreshCw className="h-4 w-4" />
             재임베딩
-          </CardTitle>
+          </CardSectionHeading>
         </CardHeader>
         <CardContent className="space-y-6">
           <div className="text-sm">
