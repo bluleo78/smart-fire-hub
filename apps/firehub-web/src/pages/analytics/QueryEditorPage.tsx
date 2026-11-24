@@ -19,7 +19,7 @@ import {
   Play,
   Save,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo,useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo,useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -202,7 +202,8 @@ interface ResultTableProps {
   result: AnalyticsQueryResult;
 }
 
-function ResultTable({ result }: ResultTableProps) {
+// WD-1075: SQL 입력(부모 상태)마다 큰 결과 표를 다시 그리지 않도록 memo — result 참조가 같으면 건너뛴다.
+const ResultTable = memo(function ResultTable({ result }: ResultTableProps) {
   if (result.error) {
     return (
       <div className="rounded-md border border-destructive/50 bg-destructive/10 p-4">
@@ -276,7 +277,7 @@ function ResultTable({ result }: ResultTableProps) {
       </table>
     </div>
   );
-}
+});
 
 // ============================================================
 // Save Dialog
@@ -546,19 +547,19 @@ export default function QueryEditorPage() {
 
   // 빈/공백 폴더는 useQueryFolders 가 이미 걸러 준다 (WD-889)
   const folders = foldersData ?? [];
-  const tables = schemaInfo?.tables ?? [];
+  // WD-1075: 스키마 미로딩 시 매 렌더 새 [] 가 되면 memo 된 SchemaExplorer 가 입력마다 다시 그려진다 — 참조를 고정한다.
+  const tables = useMemo(() => schemaInfo?.tables ?? [], [schemaInfo?.tables]);
 
   // Build CodeMirror schema map: { tableName: [columnName, ...] }
   const cmSchema = useMemo(() => {
-    const schemaTables = schemaInfo?.tables ?? [];
     const map: Record<string, string[]> = {};
-    for (const table of schemaTables) {
+    for (const table of tables) {
       // Tibero 는 `schema.table` 로 참조하므로 자동완성 키도 한정 이름으로 맞춘다(WD-76)
       const key = qualifiedName(table.tableName, schemaInfo ?? {});
       map[key] = table.columns.map((c) => c.columnName);
     }
     return map;
-  }, [schemaInfo]);
+  }, [schemaInfo, tables]);
 
   /** 서버 쿼리로 편집기 내용과 기준 버전을 함께 채운다 — 초기 로드·재조회·충돌 후 「다시 불러오기」가 같은 길을 쓴다 */
   const applySavedQuery = useCallback((query: SavedQuery) => {
@@ -825,6 +826,11 @@ export default function QueryEditorPage() {
     view.focus();
   }, []);
 
+  // WD-1075: 인라인 화살표는 렌더마다 새 함수라 memo SchemaExplorer 를 무력화한다 — 참조를 고정한다.
+  const handleSchemaRetry = useCallback(() => {
+    void refetchSchema();
+  }, [refetchSchema]);
+
   if (!isNew && queryLoading) {
     return (
       <div className="space-y-4">
@@ -979,7 +985,7 @@ export default function QueryEditorPage() {
             isLoading={schemaLoading}
             // WD-912: 데이터를 한 번이라도 받았으면(0건 성공 포함) 배경 재조회 실패로 빈 상태를 오류로 덮지 않는다.
             error={schemaInfo ? null : schemaError}
-            onRetry={() => void refetchSchema()}
+            onRetry={handleSchemaRetry}
             isFetching={schemaFetching}
           />
         </div>

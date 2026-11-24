@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronRight, MoreHorizontal, Plus, Search, Table2, X } from 'lucide-react';
-import { type KeyboardEvent, useMemo, useRef, useState } from 'react';
+import { type KeyboardEvent, memo, useMemo, useRef, useState } from 'react';
 
 import { PendingButton } from '../../../components/PendingButton';
 import {
@@ -36,7 +36,8 @@ interface SchemaExplorerProps {
   isFetching?: boolean;
 }
 
-export function SchemaExplorer({
+// WD-1075: 부모(쿼리 편집기)가 SQL 입력마다 다시 그려져도 props 가 같으면 테이블 목록을 건너뛴다.
+export const SchemaExplorer = memo(function SchemaExplorer({
   tables,
   dialect,
   schema,
@@ -360,4 +361,4 @@ export function SchemaExplorer({
       )}
     </div>
   );
-}
+});
