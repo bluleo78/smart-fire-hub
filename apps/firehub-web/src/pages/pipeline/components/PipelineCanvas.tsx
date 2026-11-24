@@ -11,6 +11,7 @@ import {
   type OnNodeDrag,
   type OnNodesChange,
   ReactFlow,
+  type XYPosition,
 } from '@xyflow/react';
 import { LayoutGrid, Pencil,Plus } from 'lucide-react';
 import { useTheme } from 'next-themes';
@@ -33,6 +34,13 @@ import type { EditorAction,PipelineEditorState } from '../hooks/usePipelineEdito
 import { findStepExecution } from '../utils/step-execution';
 import { AddStepEdge } from './AddStepEdge';
 import { StepNode, type StepNodeData, type StepNodeType } from './StepNode';
+
+/** 끄는 중 노드 위치 덮어쓰기 — 만든 때의 steps 를 함께 들고 있어 그것이 바뀌면 무효가 된다 */
+interface DragOverride {
+  id: string;
+  position: XYPosition;
+  steps: PipelineEditorState['steps'];
+}
 
 /** 선택된 연결선 id 와, 그 선택을 만든 때의 steps·모드(이것이 바뀌면 선택은 무효) */
 interface EdgeSelection {
@@ -109,7 +117,24 @@ export function PipelineCanvas({
     return set;
   }, [state.steps]);
 
-  const nodes = useMemo<StepNodeType[]>(() =>
+  /**
+   * 마우스로 끄는 동안만 쓰는 로컬 위치(WD-1057) — 노드가 state.steps 로 제어돼 위치는 끌기 끝에서만 반영되므로
+   * 끄는 중에는 노드가 제자리였다. 매 움직임을 reducer 에 저장하면 변경 표시·되돌리기 이력이 오염되므로
+   * 끈 노드 하나(onNodeDrag 의 node)의 위치만 여기 두고 nodes 에서 덮어쓴다. 끌기 끝에서 지운다.
+   */
+  const [dragOverride, setDragOverride] = useState<DragOverride | null>(null);
+  /**
+   * 덮어쓰기는 만든 때의 steps 에 묶고 편집 모드에서만 쓴다(edgeSelection 과 같은 패턴) — onNodeDragStop 없이 끌기가 끊겨도
+   * (xyflow abortDrag: 터치 두 손가락·노드 사라짐) steps 가 바뀌면(저장·자동 정렬·화살표) 옛 덮어쓰기는 저절로 무시돼
+   * step.position 을 계속 가리지 않는다. 끄는 동안 steps 는 그대로라 유효하다. 덮어쓴 id 가 steps 에 없으면 아무 노드에도 쓰이지 않는다.
+   */
+  const liveDragOverride =
+    dragOverride && !readOnly && dragOverride.steps === state.steps
+      ? dragOverride
+      : null;
+
+  /** 스텝 상태로 만든 노드 — 끄는 동안 바뀌지 않아 마우스가 움직일 때마다 전체를 다시 만들지 않는다 */
+  const baseNodes = useMemo<StepNodeType[]>(() =>
     state.steps.map((step, index) => ({
       id: step.tempId,
       type: 'step',
@@ -137,6 +162,15 @@ export function PipelineCanvas({
       } satisfies StepNodeData,
     })),
   [state.steps, state.selectedStepId, state.validationErrors, outgoingSet, executionData, readOnly, dispatch]);
+
+  /** 끄는 중이면 끈 노드 하나만 위치를 바꾼 새 객체로 갈아 끼운다 — 다른 노드는 같은 객체라 다시 그리지 않는다 */
+  const nodes = useMemo<StepNodeType[]>(
+    () =>
+      liveDragOverride
+        ? baseNodes.map((n) => (n.id === liveDragOverride.id ? { ...n, position: liveDragOverride.position } : n))
+        : baseNodes,
+    [baseNodes, liveDragOverride],
+  );
 
   /**
    * 선택된 연결선 — 엣지를 state.steps 에서 매 렌더 새로 만들기 때문에 React Flow 의 선택 변경을
@@ -223,12 +257,23 @@ export function PipelineCanvas({
    * xyflow 는 이미 selected 인(설정을 연) 다른 스텝도 함께 끌 대상으로 모아 그쪽 위치 변경도 보내므로,
    * onNodesChange 로 저장하면 엉뚱한 스텝이 같이 옮겨진다(WD-1046).
    */
-  const onNodeDragStop: OnNodeDrag = (_event, node) => {
+  const onNodeDragStop: OnNodeDrag<StepNodeType> = (_event, node) => {
+    // 읽기 전용이어도 덮어쓰기는 먼저 비운다(잔재 방지)
+    setDragOverride(null);
     if (readOnly) return;
     dispatch({
       type: 'UPDATE_NODE_POSITION',
       payload: { tempId: node.id, position: node.position },
     });
+  };
+
+  /**
+   * 끄는 동안 — 사용자가 잡은 노드(node) 하나의 위치만 덮어쓰기로 둔다(WD-1057).
+   * onNodesChange 의 dragging 변경은 함께 끌린 selected 노드도 보내므로 쓰지 않는다.
+   */
+  const onNodeDrag: OnNodeDrag<StepNodeType> = (_event, node) => {
+    if (readOnly) return;
+    setDragOverride({ id: node.id, position: node.position, steps: state.steps });
   };
 
   /**
@@ -356,6 +401,7 @@ export function PipelineCanvas({
           edgeTypes={edgeTypes}
           defaultEdgeOptions={defaultEdgeOptions}
           onNodeClick={onNodeClick}
+          onNodeDrag={onNodeDrag}
           onNodeDragStop={onNodeDragStop}
           onNodesChange={onNodesChange}
           onConnect={onConnect}

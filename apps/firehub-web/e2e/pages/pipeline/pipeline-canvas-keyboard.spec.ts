@@ -250,3 +250,87 @@ test.describe('파이프라인 캔버스 — 노드 Enter/Space (WD-1046)', () =
     await expect(page.getByTestId('canvas-move-announcement')).toBeEmpty();
   });
 });
+
+/** 「데이터 변환」 글자 가운데를 눌러 (+80, +50) 만큼 끈다 — 마우스는 누른 채로 둔다(놓기는 호출한 쪽에서) */
+async function pressAndDragBy80x50(page: Page, node: Locator) {
+  const grab = (await node.getByText('데이터 변환').first().boundingBox())!;
+  const sx = grab.x + grab.width / 2;
+  const sy = grab.y + grab.height / 2;
+  await page.mouse.move(sx, sy);
+  await page.mouse.down();
+  await page.mouse.move(sx + 80, sy + 50, { steps: 5 });
+}
+
+test.describe('WD-1057 끄는 동안 노드가 포인터를 따라간다', () => {
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await grantPipelinePermissions(page);
+    await setupPipelineEditorMocks(page, 1);
+  });
+
+  test('끄는 도중 노드가 포인터를 따라 움직이고 놓은 위치가 남는다', async ({ authenticatedPage: page }) => {
+    await gotoEditMode(page);
+    const node = stepNode(page, '데이터 변환');
+    const p0 = await nodeXY(node);
+    const box0 = (await node.boundingBox())!;
+    const edgePath = page.locator('.react-flow__edge path').first();
+    const d0 = await edgePath.getAttribute('d');
+    await pressAndDragBy80x50(page, node);
+
+    // 놓기 전 — 연결선도 끈 노드를 따라 다시 그려져야 한다
+    expect(await edgePath.getAttribute('d')).not.toBe(d0);
+    // 놓기 전 — 화면상 노드가 이미 포인터를 따라와 있어야 한다
+    const boxMid = (await node.boundingBox())!;
+    expect(boxMid.x - box0.x).toBeGreaterThan(60);
+    expect(boxMid.y - box0.y).toBeGreaterThan(30);
+
+    await page.mouse.up();
+    const boxEnd = (await node.boundingBox())!;
+    expect(Math.abs(boxEnd.x - boxMid.x)).toBeLessThanOrEqual(5);
+    expect(Math.abs(boxEnd.y - boxMid.y)).toBeLessThanOrEqual(5);
+    // 놓은 위치가 편집 상태(steps)에 저장돼 다른 상태 변경 뒤에도 남는다.
+    // (위치는 PUT 본문에 실리지 않는 화면 상태라 저장 요청 대신 재렌더 뒤 위치로 확인한다)
+    const p1 = await nodeXY(node);
+    expect(p1.x - p0.x).toBeGreaterThan(40);
+    await page.locator('.react-flow__node').first().click();
+    expect(await nodeXY(node)).toEqual(p1);
+  });
+
+  test('끈 노드는 놓은 뒤 화살표 이동이 그대로 반영된다(덮어쓰기 잔재 없음)', async ({ authenticatedPage: page }) => {
+    await gotoEditMode(page);
+    const node = stepNode(page, '데이터 변환');
+    await pressAndDragBy80x50(page, node);
+    await page.mouse.up();
+    const p1 = await nodeXY(node);
+
+    // 끈 노드에 설정을 열고 화살표 — 위치가 5px 움직여야 한다
+    await node.click();
+    await expect(page.locator('#step-name')).toHaveValue('데이터 변환');
+    await node.focus();
+    await page.keyboard.press('ArrowRight');
+    await expect.poll(async () => (await nodeXY(node)).x).toBe(p1.x + 5);
+  });
+
+  test('설정을 연 스텝은 다른 스텝을 끄는 도중에도 움직이지 않는다', async ({ authenticatedPage: page }) => {
+    await gotoEditMode(page);
+    // 「데이터 추출」을 눌러 설정을 연다(selected) — 이 스텝이 함께 끌리거나 덮어쓰기 잔재로 움직이면 안 된다
+    const opened = page.locator('.react-flow__node').nth(0);
+    await opened.click();
+    await expect(page.locator('#step-name')).toHaveValue('데이터 추출');
+    const a0 = (await opened.boundingBox())!;
+
+    const other = page.locator('.react-flow__node').nth(1);
+    const b0 = (await other.boundingBox())!;
+    await pressAndDragBy80x50(page, other);
+
+    const aMid = (await opened.boundingBox())!;
+    const bMid = (await other.boundingBox())!;
+    expect(bMid.x - b0.x).toBeGreaterThan(60);
+    expect(Math.abs(aMid.x - a0.x)).toBeLessThanOrEqual(1);
+    expect(Math.abs(aMid.y - a0.y)).toBeLessThanOrEqual(1);
+
+    await page.mouse.up();
+    const aEnd = (await opened.boundingBox())!;
+    expect(Math.abs(aEnd.x - a0.x)).toBeLessThanOrEqual(1);
+    expect(Math.abs(aEnd.y - a0.y)).toBeLessThanOrEqual(1);
+  });
+});
