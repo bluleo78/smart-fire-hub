@@ -64,6 +64,8 @@ export function RoleClearanceCard({
   const baseId = useId();
   // 등급을 실제로 바꿀 수 있는가 — role:write 가 있어도 범위 밖 역할이면 잠근다(WD-444).
   const editable = canEdit && !scopeLockReason;
+  // 범위 잠금 안내 문단 id — 안내가 보일 때만(없는 id 를 가리키지 않게) 그룹·각 라디오의 접근 설명으로 잇는다(WD-1068).
+  const scopeLockId = canEdit && scopeLockReason ? `${baseId}-scope-lock` : undefined;
 
   const current = clearance ? String(clearance.securityLevelId) : '';
   const selected = draft ?? current;
@@ -154,18 +156,31 @@ export function RoleClearanceCard({
               onValueChange={setDraft}
               disabled={!editable}
               aria-label="데이터 열람 등급"
-              aria-describedby={canEdit && scopeLockReason ? `${baseId}-scope-lock` : undefined}
+              aria-describedby={scopeLockId}
               className="gap-3"
             >
-              {levels.map((l, i) => (
-                <Label key={l.id} htmlFor={`${baseId}-${l.id}`} className="flex items-start gap-2 font-normal">
-                  <RadioGroupItem id={`${baseId}-${l.id}`} value={String(l.id)} aria-label={l.name} className="mt-0.5" />
-                  <span className="space-y-1">
-                    <SecurityLevelBadge level={l} />
-                    <span className="block text-sm text-muted-foreground">{cumulativeDescription(levels, i)}</span>
-                  </span>
-                </Label>
-              ))}
+              {levels.map((l, i) => {
+                const descId = `${baseId}-${l.id}-desc`;
+                return (
+                  <Label key={l.id} htmlFor={`${baseId}-${l.id}`} className="flex items-start gap-2 font-normal">
+                    {/* 등급 설명을 라디오의 접근 설명으로 잇는다(WD-1068, WCAG 1.3.1).
+                        범위 잠금이면 잠금 이유도 뒤에 이어, 라디오에 바로 닿은 사용자도 왜 못 바꾸는지 듣게 한다(권한 체크박스와 같은 순서). */}
+                    <RadioGroupItem
+                      id={`${baseId}-${l.id}`}
+                      value={String(l.id)}
+                      aria-label={l.name}
+                      aria-describedby={[descId, scopeLockId].filter(Boolean).join(' ')}
+                      className="mt-0.5"
+                    />
+                    <span className="space-y-1">
+                      <SecurityLevelBadge level={l} />
+                      <span id={descId} className="block text-sm text-muted-foreground">
+                        {cumulativeDescription(levels, i)}
+                      </span>
+                    </span>
+                  </Label>
+                );
+              })}
             </RadioGroup>
             <p className="text-sm text-muted-foreground">
               {`이 역할 사용자 ${clearance.userCount}명. 여러 역할이 있으면 가장 높은 등급이 적용됩니다.`}
