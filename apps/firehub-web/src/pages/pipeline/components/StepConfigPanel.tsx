@@ -221,31 +221,36 @@ export default function StepConfigPanel({
   const loadStrategyHelpId = `${baseId}-load-strategy-help`;
   const dependenciesLabelId = `${baseId}-dependencies-label`;
 
+  // WD-1074 — 스텝마다 datasets.find 하던 O(스텝×데이터셋)을 id→데이터셋 Map 한 번 조회로 줄인다.
+  // 같은 id 가 중복되면 find 와 같이 첫 항목이 이기도록 먼저 들어간 것을 유지한다.
+  const datasetById = useMemo(() => {
+    const map = new Map<number, DatasetOption>();
+    for (const d of datasets) if (!map.has(d.id)) map.set(d.id, d);
+    return map;
+  }, [datasets]);
+
   const inputDatasetOptions = useMemo<DatasetOption[]>(() => {
     if (!step) return [];
     const prevStepDatasets: DatasetOption[] = [];
     const prevStepDatasetIds = new Set<number>();
 
-    const otherSteps = state.steps
-      .map((s, i) => ({ step: s, number: i + 1 }))
-      .filter(({ step: s }) => s.tempId !== step.tempId);
-
-    for (const { step: s, number } of otherSteps) {
+    // 현재 스텝(index = stepNumber - 1) 앞의 스텝만 이전 스텝이다 — 자기 자신은 자연히 제외된다.
+    for (let index = 0; index < stepNumber - 1; index++) {
+      const s = state.steps[index];
       // 자동 생성 스텝은 현재 임시 데이터셋(autoOutputDatasetId)을 입력 후보로 보여 준다(WD-222 — 저장 출력은 null 이지만 표시는 유지).
       const prevOutputId = s.outputDatasetId ?? s.autoOutputDatasetId ?? null;
-      if (number < stepNumber && prevOutputId != null) {
-        const ds = datasets.find((d) => d.id === prevOutputId);
-        if (ds) {
-          prevStepDatasets.push({ ...ds, name: `[스텝${number}] ${ds.name}` });
-          prevStepDatasetIds.add(ds.id);
-        }
+      if (prevOutputId == null) continue;
+      const ds = datasetById.get(prevOutputId);
+      if (ds) {
+        prevStepDatasets.push({ ...ds, name: `[스텝${index + 1}] ${ds.name}` });
+        prevStepDatasetIds.add(ds.id);
       }
     }
 
     // 이미 이전 스텝 출력으로 등장한 데이터셋은 중복 제외하고 일반 데이터셋을 추가
     const regularDatasets = datasets.filter((d) => !prevStepDatasetIds.has(d.id));
     return [...prevStepDatasets, ...regularDatasets];
-  }, [step, state.steps, stepNumber, datasets]);
+  }, [step, state.steps, stepNumber, datasets, datasetById]);
 
   // 이 스텝이 의존하는 스텝 중 영구 출력 데이터셋이 없는 (임시 출력) 스텝들
   const tempDependencySteps = useMemo(() => {
