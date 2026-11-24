@@ -27,14 +27,15 @@ import java.util.Map;
  */
 public record CreateProactiveJobRequest(
     // @NotBlank 는 NBSP 계열을 글자로 봐, 다듬은 뒤 빈 이름이 저장되던 것을 막는다(WD-1085, WD-1081 과 같은 방식).
-    @NotBlank
+    // WD-1114: 빈 값("")도 공백뿐인 값과 같은 문구로 안내하려고 @NotBlank 문구를 TextRules 로 맞춘다
+    @NotBlank(message = TextRules.NAME_BLANK_MESSAGE)
         @Size(
             max = CreateProactiveJobRequest.NAME_MAX_LENGTH,
             message = CreateProactiveJobRequest.NAME_TOO_LONG_MESSAGE)
         @Pattern(regexp = TextRules.HAS_TEXT, message = TextRules.NAME_BLANK_MESSAGE)
         String name,
     // 프롬프트도 이름처럼 NBSP·폭 없는 문자만인 값을 글자로 보지 않게 한다 — 수정(WD-1080)과 판정을 맞춘다(WD-1104).
-    @NotBlank
+    @NotBlank(message = TextRules.PROMPT_BLANK_MESSAGE)
         @Size(
             max = CreateProactiveJobRequest.PROMPT_MAX_LENGTH,
             message = CreateProactiveJobRequest.PROMPT_TOO_LONG_MESSAGE)

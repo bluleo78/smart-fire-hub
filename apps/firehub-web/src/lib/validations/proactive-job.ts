@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { TemplateSection } from '@/api/proactive';
 import { cloneName } from '@/lib/clone-name';
 import { cronTooFrequentMessage } from '@/lib/cron-frequency';
+import { hasVisibleText } from '@/lib/text-rules';
 
 /** 분석 프롬프트 길이 상한(자) — 서버 CreateProactiveJobRequest.PROMPT_MAX_LENGTH 와 같다(WD-425). */
 export const MAX_JOB_PROMPT_LENGTH = 10_000;
@@ -87,14 +88,20 @@ export function createProactiveJobSchema(original?: {
   return z
   .object({
     // trim — 공백만 채운 이름을 빈 값과 같이 거부하고, 앞뒤 공백은 잘라 저장한다(WD-500, user.ts WD-275 와 같은 패턴).
-    name: z.string().trim().min(1, '작업 이름을 입력하세요').max(200, '이름은 200자 이내여야 합니다'),
+    // WD-1114: 폭 없는 문자만인 이름도 빈 값과 같이 거부한다(min(1) 은 U+200B 를 통과시킴).
+    name: z
+      .string()
+      .trim()
+      .refine(hasVisibleText, '작업 이름을 입력하세요')
+      .max(200, '이름은 200자 이내여야 합니다'),
     // 상한은 서버 CreateProactiveJobRequest.PROMPT_MAX_LENGTH 와 같다(WD-425). 입력란 maxLength 는 타이핑만 막으므로, 리포트에서
     // 프리필한 긴 질문처럼 코드로 채운 값도 저장 전에 여기서 잡는다.
     // trim — 공백·탭·줄바꿈만 있는 프롬프트는 빈 값으로 보고 거부, 앞뒤 공백은 잘라 저장한다(WD-500).
     prompt: z
       .string()
       .trim()
-      .min(1, '분석 프롬프트를 입력하세요')
+      // WD-1114: 폭 없는 문자만인 프롬프트도 빈 값으로 거부한다
+      .refine(hasVisibleText, '분석 프롬프트를 입력하세요')
       .max(MAX_JOB_PROMPT_LENGTH, '분석 프롬프트는 10,000자 이내여야 합니다'),
     templateId: z.number().nullable().optional(),
     // 「목표 기반」으로 만든 섹션 구성(WD-297). 서버로 보내는 작업 필드가 아니라, 생성 때 리포트 양식으로 먼저 저장해 templateId 로

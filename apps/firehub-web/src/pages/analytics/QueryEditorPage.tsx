@@ -79,6 +79,7 @@ import { downloadBlob, filenameFromContentDisposition, localDateStamp } from '..
 import { parseRouteId } from '../../lib/route-id';
 import { sqlRunShortcut } from '../../lib/sql-run-shortcut';
 import { RUN_SHORTCUT_LABEL } from '../../lib/sql-run-shortcut-label';
+import { hasVisibleText } from '../../lib/text-rules';
 import { cn } from '../../lib/utils';
 import { MAX_DESCRIPTION_LENGTH } from '../../lib/validations/description';
 import type { AnalyticsQueryResult, SavedQuery } from '../../types/analytics';
@@ -323,7 +324,7 @@ function SaveDialog({
   nameError,
 }: SaveDialogProps) {
   // 버튼을 끄는 규칙과 안내를 보이는 규칙이 어긋나지 않게 한 값으로 쓴다(WD-828).
-  const nameMissing = !name.trim();
+  const nameMissing = !hasVisibleText(name);
   // 이름이 비어 만들기·저장 버튼이 꺼진 이유를 이름 칸 아래에 알린다. FormField 는 오류와 안내를 함께 그리므로
   // 중복 오류(WD-824)가 보이면 안내를 빼서 한 번에 한 메시지만 둔다.
   const nameHint =
@@ -611,7 +612,7 @@ export default function QueryEditorPage() {
 
   const handleExecute = useCallback(async () => {
     if (runningRef.current) return;
-    if (!sql.trim()) {
+    if (!hasVisibleText(sql)) {
       toast.error('실행할 SQL을 입력하세요.');
       return;
     }
@@ -658,10 +659,10 @@ export default function QueryEditorPage() {
 
   /** force: 기준 버전을 보내지 않아 서버가 비교하지 않는다 — 편집 충돌 뒤 「내 변경으로 덮어쓰기」(WD-364) */
   const handleSave = async (force = false) => {
-    if (savingRef.current || !saveForm.name.trim()) return;
+    if (savingRef.current || !hasVisibleText(saveForm.name)) return;
 
     // 클라이언트 측 SQL 빈값 검증 — 서버 400 이전에 인라인 오류를 표시하여 UX 개선 (이슈 #195)
-    if (!sql.trim()) {
+    if (!hasVisibleText(sql)) {
       setSaveError('SQL을 입력해야 저장할 수 있습니다.');
       return;
     }
@@ -921,7 +922,7 @@ export default function QueryEditorPage() {
           <Button
             size="sm"
             onClick={handleExecute}
-            disabled={isRunning || !sql.trim()}
+            disabled={isRunning || !hasVisibleText(sql)}
             className="gap-1.5"
           >
             {isRunning ? (

@@ -46,6 +46,8 @@ describe('api-connection-form', () => {
 
   it('connectionNameError — 빈칸은 입력 문구, 앞뒤 공백을 뗀 100자까지 받고 101자는 길이 문구 (WD-1007)', () => {
     expect(connectionNameError('   ')).toBe('연결 이름을 입력하세요.');
+    // WD-1114: 폭 없는 문자만인 이름도 빈칸과 같다 — 만들기·수정 화면이 같은 함수를 쓴다
+    expect(connectionNameError('\u200B')).toBe('연결 이름을 입력하세요.');
     expect(connectionNameError('a'.repeat(100))).toBeUndefined();
     expect(connectionNameError('  ' + 'a'.repeat(100) + ' ')).toBeUndefined();
     expect(connectionNameError('a'.repeat(101))).toBe('연결 이름은 100자 이하로 입력하세요.');

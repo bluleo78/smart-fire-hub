@@ -10,7 +10,8 @@ import java.util.Map;
 /** API 연결 생성 요청 DTO. baseUrl은 필수, healthCheckPath는 선택(null 허용). */
 public record CreateApiConnectionRequest(
     // @NotBlank 는 NBSP 계열을 글자로 봐, 다듬은 뒤 빈 이름이 저장되던 것을 막는다(WD-1085, WD-1081 과 같은 방식).
-    @NotBlank
+    // WD-1114: 빈 값("")도 공백뿐인 값과 같은 문구로 안내하려고 @NotBlank 문구를 TextRules 로 맞춘다
+    @NotBlank(message = TextRules.NAME_BLANK_MESSAGE)
         @Size(max = 100)
         @Pattern(regexp = TextRules.HAS_TEXT, message = TextRules.NAME_BLANK_MESSAGE)
         String name,

@@ -289,7 +289,46 @@ class ProactiveJobControllerTest {
     verify(proactiveJobService).createJob(any(), eq(1L));
   }
 
-  /** WD-1104: prompt 가 null 이면 기존 @NotBlank 가 거절한다(문구는 기본값). */
+  /** WD-1114: 프롬프트가 빈 값("")·공백뿐이어도 한 문구로 거절한다 — @NotBlank 기본 문구가 아니라 TextRules 문구. */
+  @ParameterizedTest
+  @ValueSource(strings = {"", "   "})
+  void createJob_emptyOrSpacePrompt_returnsKoreanMessage(String prompt) throws Exception {
+    mockAuth("proactive:write");
+    CreateProactiveJobRequest req =
+        new CreateProactiveJobRequest(
+            "daily", prompt, null, "0 0 9 * * *", "Asia/Seoul", null, "SCHEDULE", Map.of());
+
+    mockMvc
+        .perform(
+            post("/api/v1/proactive/jobs")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(req)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.prompt").value("프롬프트를 비울 수 없습니다."));
+    verify(proactiveJobService, never()).createJob(any(), anyLong());
+  }
+
+  /** WD-1114: 이름이 빈 값("")이어도 TextRules 문구 하나로 거절한다. */
+  @Test
+  void createJob_emptyName_returnsKoreanMessage() throws Exception {
+    mockAuth("proactive:write");
+    CreateProactiveJobRequest req =
+        new CreateProactiveJobRequest(
+            "", "분석", null, "0 0 9 * * *", "Asia/Seoul", null, "SCHEDULE", Map.of());
+
+    mockMvc
+        .perform(
+            post("/api/v1/proactive/jobs")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(req)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.name").value("이름을 비울 수 없습니다."));
+    verify(proactiveJobService, never()).createJob(any(), anyLong());
+  }
+
+  /** WD-1104: prompt 가 null 이어도 같은 문구로 거절한다(WD-1114). */
   @Test
   void createJob_missingPrompt_returns400NotBlank() throws Exception {
     mockAuth("proactive:write");
@@ -304,7 +343,7 @@ class ProactiveJobControllerTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(req)))
         .andExpect(status().isBadRequest())
-        .andExpect(jsonPath("$.errors.prompt").exists());
+        .andExpect(jsonPath("$.errors.prompt").value("프롬프트를 비울 수 없습니다."));
     verify(proactiveJobService, never()).createJob(any(), anyLong());
   }
 

@@ -687,9 +687,9 @@ class SavedQueryControllerTest {
                           new CreateSavedQueryRequest(
                               blank, "설명", "SELECT 1", null, "reports", false))))
           .andExpect(status().isBadRequest())
-          .andExpect(jsonPath("$.errors.name").value("필수 입력값입니다."));
+          .andExpect(jsonPath("$.errors.name").value("이름을 비울 수 없습니다."));
     }
-    // SQL 도 빈 값·ASCII 공백·U+3000 은 @NotBlank 문구가 먼저 뽑힌다
+    // SQL 도 빈 값·ASCII 공백·U+3000 이 같은 TextRules 문구로 나온다(WD-1114)
     for (String blank : new String[] {"", "   ", "\u3000", " \u3000 "}) {
       mockMvc
           .perform(
@@ -700,7 +700,7 @@ class SavedQueryControllerTest {
                       objectMapper.writeValueAsString(
                           new CreateSavedQueryRequest("쿼리", "설명", blank, null, "reports", false))))
           .andExpect(status().isBadRequest())
-          .andExpect(jsonPath("$.errors.sqlText").value("필수 입력값입니다."));
+          .andExpect(jsonPath("$.errors.sqlText").value("SQL을 비울 수 없습니다."));
     }
     verify(savedQueryService, never()).create(any(), anyLong());
 
@@ -743,9 +743,8 @@ class SavedQueryControllerTest {
   @Test
   void executeOrExportCheck_blankSql_orBlankFolder_returns400_nullFolderOk() throws Exception {
     for (String blank : new String[] {"   ", "\u00A0", "\u200B"}) {
-      // "   " 은 @NotBlank 도 함께 어기므로 NotBlank 우선 순위로 그 문구가 먼저다(WD-1081 저장 쿼리 sqlText 와 같은 판정)
-      // NBSP·Cf 만이면 @NotBlank 를 지나므로 @Pattern(HAS_TEXT) 문구가 나온다
-      String sqlMessage = "   ".equals(blank) ? "필수 입력값입니다." : "SQL을 비울 수 없습니다.";
+      // WD-1114: @NotBlank 도 TextRules 문구라 공백·NBSP·Cf 어느 쪽이든 같은 문구다
+      String sqlMessage = "SQL을 비울 수 없습니다.";
       mockMvc
           .perform(
               post("/api/v1/analytics/queries/execute")

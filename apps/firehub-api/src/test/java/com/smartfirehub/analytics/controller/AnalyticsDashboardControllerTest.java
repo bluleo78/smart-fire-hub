@@ -610,7 +610,7 @@ class AnalyticsDashboardControllerTest {
           .andExpect(status().isBadRequest())
           .andExpect(jsonPath("$.errors.name").value("이름을 비울 수 없습니다."));
     }
-    // WD-1081 반-목표: 빈 값·ASCII 공백·U+3000 은 @NotBlank(String.isBlank)가 잡아 기존 문구를 그대로 유지한다
+    // WD-1081 반-목표: 빈 값·ASCII 공백·U+3000 은 @NotBlank 가 잡으며 문구는 TextRules 로 같다(WD-1114)
     for (String blank : new String[] {"   ", "", "\u3000\u3000", " \u3000 "}) {
       mockMvc
           .perform(
@@ -621,7 +621,7 @@ class AnalyticsDashboardControllerTest {
                       objectMapper.writeValueAsString(
                           new CreateDashboardRequest(blank, "설명", false, null))))
           .andExpect(status().isBadRequest())
-          .andExpect(jsonPath("$.errors.name").value("필수 입력값입니다."));
+          .andExpect(jsonPath("$.errors.name").value("이름을 비울 수 없습니다."));
     }
     verify(dashboardService, never()).create(any(), anyLong());
 
