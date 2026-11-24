@@ -12,7 +12,7 @@ import type { Page, Route } from '@playwright/test';
 
 import type { UpdateProactiveJobRequest } from '@/api/proactive';
 
-import { createJob, createTemplates } from '../../factories/ai-insight.factory';
+import { createJob, createJobExecution, createTemplates } from '../../factories/ai-insight.factory';
 import { mockProactivePermissions } from '../../fixtures/ai-insight.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
@@ -20,14 +20,25 @@ import { expect, test } from '../../fixtures/auth.fixture';
 /** 서버 버전 — 마이크로초까지 있는 문자열을 그대로 되돌려 보내는지 확인하려고 소수점 6자리를 쓴다 */
 const V1 = '2026-10-30T10:00:00.123456';
 
-/** 버전을 가진 가짜 작업 서버. PUT 의 기준 버전이 다르면 409 EDIT_CONFLICT, 같거나 없으면 반영하고 새 버전만 돌려준다 */
-async function mockVersionedJob(page: Page) {
+/**
+ * 버전을 가진 가짜 작업 서버. PUT 의 기준 버전이 다르면 409 EDIT_CONFLICT, 같거나 없으면 반영하고 새 버전만 돌려준다.
+ *
+ * `running`: 최근 실행을 실행 중으로 두어 상세 조회가 5초마다 다시 받아진다 — 편집 중 재조회가 실제로 오는 경로를
+ * 시험하려는 것이다(WD-1042 반려: 값 시드는 멈추는데 기준 버전만 서버를 따라가던 것).
+ */
+async function mockVersionedJob(page: Page, opts?: { running?: boolean }) {
   let version = V1;
   let seq = 1;
   let name = '버전 작업';
   const puts: UpdateProactiveJobRequest[] = [];
 
-  const detail = () => createJob({ id: 1, name, updatedAt: version });
+  const detail = () =>
+    createJob({
+      id: 1,
+      name,
+      updatedAt: version,
+      ...(opts?.running ? { lastExecution: createJobExecution({ status: 'RUNNING' }) } : {}),
+    });
   /** 다른 탭(다른 사람)이 먼저 저장했다 — 서버 내용(이름)과 버전이 바뀐다 */
   const otherTabSaves = (nextName: string) => {
     name = nextName;
@@ -141,6 +152,34 @@ test.describe('스마트 작업 편집 — 동시 편집 충돌 (WD-364)', () =>
     await expect(conflictDialog(page)).toHaveCount(0);
     await expect(editButton(page)).toBeVisible();
     expect(server.name()).toBe('내 이름');
+  });
+
+  test('편집 중 재조회로 다른 곳의 저장을 받아도 기준 버전이 멈춰 있다가 저장은 409 충돌 창으로 간다 (WD-1042 반려)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 값 시드(폼 내용)는 멈추는데 기준 버전만 서버를 따라가면, 다른 곳의 저장을 재조회로 받은 뒤 내 저장이
+    // 409 없이 그 변경을 덮어쓴다(WD-364 낙관적 잠금 무력화). 실행 중 상태라 상세 조회가 5초마다 다시 받아진다.
+    const server = await mockVersionedJob(page, { running: true });
+    await page.goto('/ai-insights/jobs/1');
+    await expect(page.getByRole('heading', { name: '버전 작업' })).toBeVisible();
+
+    await editName(page, '내 이름');
+    // 다른 탭(다른 사람)이 먼저 저장한다 — 서버 내용과 버전이 함께 바뀐다
+    server.otherTabSaves('다른 탭 이름');
+
+    // 재조회가 실제로 왔는지 화면 제목(h1 = 조회 job, 실시간)으로 먼저 확정한다 — 이 확인이 없으면
+    // 기준이 재조회를 따라가지 않아도 통과하는 테스트가 된다(기준 멈춤 없이도 버전이 옛 값이라 409 가 나기 때문)
+    await expect(page.getByRole('heading', { level: 1, name: '다른 탭 이름' })).toBeVisible();
+
+    await saveButton(page).click();
+
+    // 기준이 멈춰 있어(재조회 전 버전) 서버는 409 — 기준이 재조회를 따라가면 200 이라 남의 변경이 덮어써진다
+    await expect(conflictDialog(page)).toBeVisible();
+    expect(server.puts[0].expectedUpdatedAt).toBe(V1);
+    // 남의 변경은 지워지지 않았다
+    expect(server.name()).toBe('다른 탭 이름');
+    // 내 편집 내용은 그대로 남아 충돌 창에서 고를 수 있다
+    await expect(page.locator('#job-name')).toHaveValue('내 이름');
   });
 
   test('「다시 불러오기」는 내 변경을 버리고 최신 내용으로 바꾸며(편집 모드 유지), 이어 저장하면 최신 버전을 기준으로 보낸다', async ({

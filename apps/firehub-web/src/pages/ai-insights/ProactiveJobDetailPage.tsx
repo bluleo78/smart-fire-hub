@@ -166,8 +166,31 @@ export default function ProactiveJobDetailPage() {
   // 이탈 다이얼로그 확인 후 실행할 동작 — 'back'(목록 이동) 또는 'cancel-edit'(편집 취소)
   const [leaveAction, setLeaveAction] = useState<'back' | 'cancel-edit'>('back');
 
+  // 폼 기본값의 원천 — 조회 재조회로 job 이 바뀌면 여기에 먼저 반영된다.
+  // 편집 중·미저장인 동안에는 재조회 결과로 폼을 다시 채우지 않는다: 저장 성공이 목록·상세를 재조회하면
+  // RHF `values` 재동기화가 지금 다시 채운 내용을 서버 값으로 덮어 지운다 — 저장 요청이 도는 동안 다른
+  // 화면을 거쳐 같은 작업으로 돌아와 다시 쓴 내용이 늦은 응답으로 사라지는 경로(WD-1042 완료 기준 1).
+  // 편집이 끝나면(저장 성공·취소) 다시 조회 값에 맞추고, 한 번도 채워 본 적 없는 job(첫 로드)은 막지 않는다.
+  // 값 시드만 막고 기준 버전은 서버 값을 따라가면, 폼은 옛 값인데 기준만 앞으로 가 편집 중 다른 곳에서 저장된
+  // 변경이 409 없이 내 저장으로 덮어써진다(WD-364 낙관적 잠금 무력화) — 그래서 기준도 함께 막는다(baseJob).
+  const [seedSource, setSeedSource] = useState(job);
+  const holdFormSeed = isEditing && isDirty && !isNew && !!seedSource;
+  useEffect(() => {
+    if (!holdFormSeed) setSeedSource(job);
+  }, [job, holdFormSeed]);
+
+  // 저장 기준이 되는 job — 시드를 멈춘 동안(편집·미저장)에는 멈춘 시점의 조회 결과를 그대로 쓰고,
+  // 그 밖에는 최신 조회 값을 쓴다. 기준 버전(baseUpdatedAt)과 주기 비교(cronUnchanged)가 이 값을 따르므로,
+  // 시드와 기준이 어긋나지 않는다. 기준은 저장 성공 응답으로도 앞으로 밀지 않는다 — 왕복 재편집으로 늦은 응답이
+  // 가드에 걸려 isDirty 를 못 풀면 폼은 늘 첫 저장 이전 내용이라, 그 위 재저장은 서버(첫 저장 반영)와 버전이
+  // 달라야 409 로 막힌다. 버전만 앞당기면 재저장이 첫 저장 내용을 충돌 없이 되돌린다(WD-1042 반려 3).
+  // 멈춘 동안 다른 곳이 서버 값을 바꾸면 내 저장은 기준 버전이 달라 409 EDIT_CONFLICT 로 충돌 창으로 간다(WD-1042 반려).
+  const baseJob = holdFormSeed ? seedSource : job;
+
   // prefill이 있으면 기본값에 리포트 제목/질문을 덮어씌워 폼을 미리 채운다 (이슈 #213)
-  const defaultValues = buildDefaultValues(job);
+  // 기본값도 baseJob 을 쓴다 — 멈춰 있지 않을 때는 seedSource(이펙트라 한 렌더 늦다) 대신 지금 job 을 바로 쓰므로
+  // 첫 로드·/jobs/new 로 가는 프레임에 옛 내용이 한 프레임 비치지 않는다. 멈춰 있을 때는 둘이 같다(WD-1042 반려 후속).
+  const defaultValues = buildDefaultValues(baseJob);
   if (prefill && isNew) {
     if (prefill.name) defaultValues.name = prefill.name;
     if (prefill.prompt) defaultValues.prompt = prefill.prompt;
@@ -206,14 +229,26 @@ export default function ProactiveJobDetailPage() {
   // key 로 페이지를 재마운트하지 않는 이유: 만들기 뒤 new→id 이동의 WD-415 「편집」 포커스(useEditModeFocus)를 지키기 위해서다 (WD-996)
   const routeKey = isNew ? 'new' : id;
   const [prevRouteKey, setPrevRouteKey] = useState(routeKey);
+  // 이동 카운터 — 라우트가 바뀔 때마다 1 증가한다. 문자열(routeKey) 비교는 요청 중 A → /jobs/new → A 되돌아오기처럼
+  // 같은 경로로 돌아오면 값이 다시 같아 가드가 무력화되지만, 카운터는 되돌아와도 계속 커져 시작 시점 값과 반드시 어긋난다 (WD-1042)
+  const navSeqRef = useRef(0);
   if (prevRouteKey !== routeKey) {
     setPrevRouteKey(routeKey);
+    navSeqRef.current += 1;
     setIsEditing(isNew || startEditingState);
     setIsDirty(false);
     setEditConflict(false);
     setLeaveDialogOpen(false);
     setCustomCronValue(null);
   }
+  /**
+   * 요청을 시작한 시점(카운터·경로)과 지금을 비교해 그 사이 화면이 바뀌었는지 한 곳에서 판정한다.
+   *
+   * 카운터만 비교하면 같은 작업으로 왕복하는 동안 늦게 온 응답이 지금 화면을 덮고, 경로만 비교하면
+   * 왕복 뒤 값이 다시 같아 가드가 무력화된다 — 두 축이 함께여야 가드가 선다(WD-996, WD-1042).
+   */
+  const movedAway = (seq: number, path: string) =>
+    navSeqRef.current !== seq || window.location.pathname !== path;
   // 편집 시작 state(startEditing)는 복제 직후(WD-996)와 목록의 막힌 복제 토스트 「편집」 이동(WD-1026, 새로 마운트)에서 쓰이며,
   // 어느 쪽이든 한 번만 쓴다 — 기록에 남으면 저장·취소 뒤 뒤로→앞으로 갈 때 다시 편집 모드로 열린다.
   // 같은 경로로 replace 하므로 라우트 정체(routeKey)가 바뀌지 않아 위 다시 잡기는 돌지 않는다.
@@ -250,15 +285,25 @@ export default function ProactiveJobDetailPage() {
   // 충돌 창의 「다시 불러오기」 진행 중 — 저장 중과 함께 창의 버튼을 막는다
   const [isReloading, setIsReloading] = useState(false);
   /**
-   * 저장의 기준 버전(WD-364 낙관적 잠금) — 서버 값과 다르면 409 EDIT_CONFLICT. 서버 문자열 그대로 보낸다(Date 로 바꾸면 마이크로초가 잘린다).
+   * 저장의 기준 버전(WD-364 낙관적 잠금) — 서버 값과 다르면 409 EDIT_CONFLICT. 서버 문자열 그대로 보내다(Date 로 바꾸면 마이크로초가 잘린다).
    *
-   * 다른 편집 화면과 달리 조회 값(job.updatedAt)을 그대로 쓴다. 이 폼은 react-hook-form 의 values 로 채워져, 조회 결과의 폼 필드가
-   * 하나라도 바뀌면 폼 내용이 그 값으로 다시 채워진다 — 내용과 기준이 함께 바뀐다. 폼 필드가 그대로인 재조회(실행 상태 폴링, 켜기·끄기 등
-   * 보내지 않는 필드만 바뀐 경우)는 기준만 넘어가지만, 그때 저장하는 필드는 다른 곳에서 바뀌지 않았으므로 덮어써 잃는 변경이 없다.
-   * 편집 시작 시점에 고정하면 오히려 내 「끄기」나 폴링 뒤 저장이 자기 변경과 충돌한다. 저장 직후 재조회 전에는 훅이 캐시의 updatedAt 을
-   * 응답 값으로 바꿔 둔다(useUpdateProactiveJob).
+   * 기준은 위 `baseJob` 을 따른다 — 시드를 멈춘 동안(미저장 편집 중)에는 그 시점의 조회 결과로 고정되고,
+   * 그 밖에는 최신 조회 값을 쓴다. 폼 내용(시드)과 기준이 한 쌍이어야, 편집 중 다른 곳에서 저장된 뒤 재조회가
+   * 와도 내 저장이 409 없이 그 변경을 덮어쓰지 않는다(WD-1042 반려 — WD-364 무력화).
+   *
+   * 편집 중 재조회가 와도 기준이 따라가지 않는 대신, 그 사이 서버 값이 바뀌면 저장이 409 로 막혀 충돌 창으로
+   * 간다. 그때 「다시 불러오기」는 최신 값으로 시드를 다시 받고, 「내 변경으로 덮어쓰기」는 기준을 빼고 보낸다.
+   * 기준이 앞으로 가는 것은 저장 응답이 아니라 재조회뿐이다 — useUpdateProactiveJob 이 성공 응답의 updatedAt 을
+   * 캐시에 먼저 반영하고, 그 성공이 isDirty 를 풀어 시드가 최신 조회 값을 다시 따르게 하기 때문이다(WD-364 재조회 전 재저장 대비).
+   * 왕복 재편집으로 그 성공의 가드 판정이 걸려 isDirty 를 못 풀면(시드·기준은 멈춘 채로) 재저장은 첫 저장 이전
+   * 버전을 든다 — 왕복 후 폼은 늘 첫 저장 이전 내용이라 그 재저장의 409 는 맞는 충돌이고, 충돌 창의
+   * 「다시 불러오기」로 첫 저장 내용을 다시 받아 쓴다. 기준을 응답으로 밀면 재저장이 첫 저장을 충돌 없이
+   * 되돌려 버린다(WD-1042 반려 3).
+   *
+   * 다른 편집 화면과 달리 편집 시작 시점에 무조건 고정하지 않는 이유: 폼이 없는 상태(초기 로드)나 미저장 상태에서는
+   * 서버 값이 곧 기준이다 — 그렇게 두지 않으면 내 「끄기」나 폴링 뒤 저장이 자기 변경과 충돌한다.
    */
-  const baseUpdatedAt = job?.updatedAt ?? null;
+  const baseUpdatedAt = baseJob?.updatedAt ?? null;
   const deleteMutation = useDeleteProactiveJob();
   const disableMutation = useDisableProactiveJob();
   const executeMutation = useExecuteProactiveJob();
@@ -328,9 +373,12 @@ export default function ProactiveJobDetailPage() {
     // 수정에서 저장값 그대로인 주기는 보내지 않는다 — 서버는 생략(null)이면 저장값을 그대로 둔다(WD-995).
     // 스키마가 이미 trim 한 값과 저장 원값을 그대로 비교하므로, 앞뒤 공백만 붙은 옛 주기는 잘린 값이 나가 정리된다.
     // 서버는 공백만 다른 값을 변경으로 보지 않아 감사에도 남지 않는다.
-    // 충돌 뒤 덮어쓰기(force)는 늘 보낸다 — job 은 편집 시작 때 캐시라, 다른 탭이 주기·트리거를 바꿨으면 빼고 보낼 때
-    // 사용자가 못 본 주기가 남거나 주기 없는 정기 트리거로 400 이 난다(WD-995 리뷰). 화면에 보이는 그대로 덮어쓴다.
-    const cronUnchanged = !force && !isNew && !!job && (values.cronExpression ?? '') === (job.cronExpression ?? '');
+    // 충돌 뒤 덮어쓰기(force)는 늘 보낸다 — baseJob 은 미저장 편집 중에는 편집 기준 시점의 캐시라, 다른 탭이 주기·트리거를
+    // 바꿨으면 빼고 보낼 때 사용자가 못 본 주기가 남거나 주기 없는 정기 트리거로 400 이 난다(WD-995 리뷰).
+    // 화면에 보이는 그대로 덮어쓴다.
+    // 비교 대상도 baseJob 이다 — 폼(시드)은 멈춘 시점의 주기를 들고 있으니, 서버 값과 비교하면 안 건드린 주기가
+    // 바뀐 것으로 잘못 잡혀 남의 주기를 내 값으로 되돌린다(WD-1042 반려 — 기준 버전과 같은 쌍이어야 한다).
+    const cronUnchanged = !force && !isNew && !!baseJob && (values.cronExpression ?? '') === (baseJob.cronExpression ?? '');
     const payload = {
       name: values.name,
       prompt: values.prompt,
@@ -344,6 +392,13 @@ export default function ProactiveJobDetailPage() {
     if (isNew) {
       if (isCreatingRef.current) return;
       isCreatingRef.current = true;
+      // 만들기 요청 시작 시점의 이동 카운터 — 늦게 온 성공은 이동을, 실패는 지금 폼의 칸 오류를 막는다.
+      // 양식 저장(await) 앞에서 잡는다 — 그 대기 동안 화면이 바뀌어도 가드 창이 이미 시작돼 요청 전체가 가드에 들어가기 때문이다.
+      // 콜백은 숫자만 클로저로 받고 비교 대상은 매번 navSeqRef.current 를 새로 읽는다(WD-1042)
+      const startSeq = navSeqRef.current;
+      // 카운터는 렌더가 다시 돌아야 늘어나는데 react-router 의 갱신은 startTransition 안에 있어 그 사이 창이 남는다 —
+      // window.location 은 history 를 건드리는 순간 바뀌므로 카운터와 함께 봐야 그 창까지 덮는다(WD-1042 반려 재검)
+      const startPath = window.location.pathname;
       // 목표 기반 구성이 있으면 먼저 「<작업 이름> 양식」으로 저장해 그 양식을 작업에 연결한다(WD-297, 사람 결정 A안).
       let goalTemplateId: number | null = null;
       if (values.generatedSections?.length) {
@@ -379,7 +434,10 @@ export default function ProactiveJobDetailPage() {
       }
       createMutation.mutate(goalTemplateId == null ? payload : { ...payload, templateId: goalTemplateId }, {
         onSuccess: (created) => {
+          // 알림은 글로벌이라 화면을 덮지 않는다 — 가드 판정과 무관하게 띄운다
           toast.success('작업이 생성되었습니다.');
+          // 요청 중 다른 화면(예: 작업 상세)으로 옮겨 갔으면 새 작업 상세로 끌고 가지 않는다 (WD-1042)
+          if (movedAway(startSeq, startPath)) return;
           // 저장 성공 → dirty 해제 후 신규 작업 상세로 이동 (이슈 #59)
           setIsDirty(false);
           setIsEditing(false);
@@ -392,6 +450,12 @@ export default function ProactiveJobDetailPage() {
           // 서버가 거절한 경우에만 작업 없이 남는 양식을 지운다(삭제 실패는 사용자 오류 안내가 먼저라 조용히 넘긴다).
           // 응답 없는 실패(시간 초과·연결 끊김)는 서버가 작업을 이미 만들었을 수 있어 지우지 않는다 — 지우면 그 작업의 양식이 끊긴다(ON DELETE SET NULL).
           if (goalTemplateId != null && axios.isAxiosError(err) && err.response) deleteTemplateMutation.mutate(goalTemplateId);
+          // 요청 중 다른 화면으로 옮겨 갔으면 남의 폼에 이름 오류를 붙이지 않고 실패만 알린다 —
+          // 중복 409(WD-824) 문구는 떠난 그 폼에 속한 것이므로 이 화면에는 일반 실패 안내만 남긴다 (WD-1042)
+          if (movedAway(startSeq, startPath)) {
+            toast.error('작업 생성에 실패했습니다.');
+            return;
+          }
           // 이름 중복 409(WD-824)는 서버 문구를 이름 칸 오류로 붙이고 토스트는 생략한다
           if (applyDuplicateNameError(form.setError, err)) return;
           handleApiError(err, '작업 생성에 실패했습니다.');
@@ -401,8 +465,12 @@ export default function ProactiveJobDetailPage() {
       // 「기본 (선택 안 함)」을 고르면 templateId 가 null 이 되는데, 서버는 null 을 "바꾸지 않음"으로 받는다.
       // 해제 의도를 clearTemplate 로 함께 보내야 옛 템플릿이 남지 않는다 (WD-136).
       // Promise 를 돌려 충돌 창이 저장 끝까지 잠기게 하고(WD-678), 거부는 콜백이 처리하므로 삼킨다(이 화면은 isSubmitSuccessful 을 읽지 않는다).
-      // 저장 요청 중 다른 작업·새 작업으로 옮겨 가면 늦게 온 응답이 새 화면의 편집 상태를 덮지 않게 요청한 라우트를 기억한다 (WD-996)
-      const savedKey = routeKeyRef.current;
+      // 저장 요청 중 다른 작업·새 작업으로 옮겨 가면 늦게 온 응답이 새 화면의 편집 상태를 덮지 않게, 요청 시작 시점의
+      // 이동 카운터를 기억한다 — 같은 작업으로 왕복해도 카운터는 계속 커져 가드가 풀리지 않는다 (WD-996, WD-1042).
+      // 카운터는 렌더이후에야 늘어나고 react-router 의 갱신은 startTransition 안이라 그 사이 창이 남기에,
+      // history 를 건드리는 순간 바뀌는 window.location 을 함께 비교한다(WD-1042 반려 재검)
+      const savedSeq = navSeqRef.current;
+      const savedPath = window.location.pathname;
       return updateMutation.mutateAsync(
         {
           id: jobId,
@@ -415,17 +483,22 @@ export default function ProactiveJobDetailPage() {
         },
         {
           onSuccess: () => {
-            setEditConflict(false);
+            // 알림은 글로벌이라 화면을 덮지 않는다 — 가드 판정과 무관하게 띄운다
             toast.success('작업이 저장되었습니다.');
-            // 그 사이 화면을 옮겼으면 새 화면(예: /jobs/new)을 읽기 모드로 바꾸지 않는다 (WD-996)
-            if (routeKeyRef.current !== savedKey) return;
-            // 저장 성공 → dirty 해제 후 읽기 모드로 복귀 (이슈 #59)
+            // 시드 기준 버전은 여기서 앞으로 밀지 않는다 — 왕복 재편집으로 아래 가드에 걸려 isDirty 를 못 풀면
+            // 폼은 늘 첫 저장 이전 내용이라, 그 위 재저장은 서버(첫 저장 반영)와 버전이 달라야 409 로 막힌다.
+            // 버전만 내 응답으로 밀면 재저장이 첫 저장 내용을 충돌 없이 되돌려 버린다(WD-1042 반려 3).
+            // 정상 경로(가드가 풀린 저장)의 전진은 성공이 isDirty 를 풀어 시드가 최신 조회 값을 다시 따를 때 이뤄진다.
+            // 그 사이 화면을 옮겼으면 새 화면의 충돌 창·편집 상태를 바꾸지 않는다 (WD-996, WD-1042)
+            if (movedAway(savedSeq, savedPath)) return;
+            // 저장 성공 → 충돌 창 닫고 dirty 해제 후 읽기 모드로 복귀 (이슈 #59)
+            setEditConflict(false);
             setIsDirty(false);
             setIsEditing(false);
           },
           onError: (err) => {
-            // 그 사이 화면을 옮겼으면 충돌 창·칸 오류를 새 화면에 띄우지 않고 실패만 알린다 (WD-996)
-            if (routeKeyRef.current !== savedKey) {
+            // 그 사이 화면을 옮겼으면 충돌 창·칸 오류를 새 화면에 띄우지 않고 실패만 알린다 (WD-996, WD-1042)
+            if (movedAway(savedSeq, savedPath)) {
               handleApiError(err, '작업 저장에 실패했습니다.');
               return;
             }
@@ -450,11 +523,12 @@ export default function ProactiveJobDetailPage() {
   const handleReloadLatest = async () => {
     if (!jobId) return;
     setIsReloading(true);
-    const requestedKey = routeKeyRef.current;
+    const requestedSeq = navSeqRef.current;
+    const requestedPath = window.location.pathname;
     try {
       const latest = await fetchLatestJob(jobId);
-      // 요청 중 다른 작업·새 작업으로 옮겨 갔다면 도착한 응답으로 폼을 덮지 않는다 (WD-996)
-      if (routeKeyRef.current !== requestedKey) return;
+      // 요청 중 다른 작업·새 작업으로 옮겨 갔다면 도착한 응답으로 폼을 덮지 않는다 (WD-996, WD-1042)
+      if (movedAway(requestedSeq, requestedPath)) return;
       form.reset(buildDefaultValues(latest));
       // 내 변경을 버렸으니 「직접 입력」 선택도 버린다 — 최신 값이 내가 친 값과 같아도 저장된 주기대로 보인다(WD-962)
       setCustomCronValue(null);
@@ -555,7 +629,15 @@ export default function ProactiveJobDetailPage() {
     });
   };
 
-  const isSaving = createMutation.isPending || updateMutation.isPending || createTemplateMutation.isPending;
+  // 저장 진행 표시는 화면 종류로 나눈다 — 버튼 라벨(isNew ? '만들기' : '저장')과 같은 축이다 (WD-1042 검토 반려 1·3)
+  // · 수정 화면(isNew 아님): updateMutation 이 끝날 때까지 라우트와 상관없이 잠긴다. 저장 시작 카운터와 같을 때만
+  //   잠그면 A 저장 중 A → /jobs/new → A 되돌아오기나 B 이동에서 잠금이 풀려 두 번째 PUT 이 나가
+  //   내 저장끼리 409 충돌 창을 냈다 — 고치기 전엔 잠겨 있던 것이라 회귀다(반려 1·2).
+  // · 새 작업 화면(isNew): 만들기(create)·양식 저장(createTemplate)이 pending 인 동안에만 잠긴다. 작업 상세에서 편집을
+  //   시작해도 남의 만들기 진행으로 「저장 중...」에 잠기지 않게 하는 거울 결함 방지다(반려 3).
+  const isSaving = isNew
+    ? createMutation.isPending || createTemplateMutation.isPending
+    : updateMutation.isPending;
   // 더블클릭 중복 실행 방지용 ref — disabled 상태 전파 지연 대응 (#49)
   const isExecutingRef = useRef(false);
 
