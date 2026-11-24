@@ -181,6 +181,33 @@ test.describe('워크스페이스 전체 보기 — 관리자 (WD-192)', () => {
     await expect(page.getByText('"꺼진 작업" 작업을 삭제했습니다.')).toBeVisible();
   });
 
+  test('관리자 — 다음 실행에 작업 시간대 약어가 붙고 브라우저가 모르는 시간대(UTC+9)도 표가 깨지지 않는다 (WD-1092)', async ({ authenticatedPage: page }) => {
+    // nextExecuteAt 은 시간대 표기 없는 UTC 벽시계 문자열 — 3일 뒤 UTC 00:00(서울 09:00)·14:00
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const utcWall = (hour: number) => {
+      const d = new Date();
+      d.setUTCDate(d.getUTCDate() + 3);
+      return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}T${pad(hour)}:00:00`;
+    };
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs', []);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    await mockProactiveAdminPermissions(page);
+    await mockApi(page, 'GET', '/api/v1/proactive/admin/jobs', [
+      createAdminJobRow({ id: 20, name: '서울 작업', timezone: 'Asia/Seoul', nextExecuteAt: utcWall(0) }),
+      createAdminJobRow({ id: 21, name: '뉴욕 작업', timezone: 'America/New_York', nextExecuteAt: utcWall(14) }),
+      // Intl 이 거부하는 시간대 — 표 전체가 깨지지 않고 브라우저 시간대로 대체돼야 한다
+      createAdminJobRow({ id: 22, name: '이상 시간대 작업', timezone: 'UTC+9', nextExecuteAt: utcWall(14) }),
+    ]);
+
+    await page.goto('/ai-insights/jobs?view=workspace');
+
+    await expect(page.getByRole('table', { name: '워크스페이스 전체 스마트 작업' })).toBeVisible();
+    // 다음 실행은 네 번째 셀
+    await expect(page.getByTestId('workspace-job-20').getByRole('cell').nth(3)).toHaveText(/09:00 KST$/);
+    await expect(page.getByTestId('workspace-job-21').getByRole('cell').nth(3)).toHaveText(/ E[SD]T$/);
+    await expect(page.getByTestId('workspace-job-22').getByRole('cell').nth(3)).toHaveText(/\d{2}:\d{2} \S+$/);
+  });
+
   test('관리자 — 관리자 목록 오류는 빈 상태가 아니라 불러오기 실패로 보인다', async ({ authenticatedPage: page }) => {
     await mockApi(page, 'GET', '/api/v1/proactive/jobs', []);
     await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
