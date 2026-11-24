@@ -70,12 +70,32 @@ public class ResourceNameGuard {
     }
   }
 
-  /** 정규화 비교로 이름이 바뀌었는지. */
+  /**
+   * 이름이 바뀌었는지 — 중복 검사 SQL({@code lower(trim(name))})과 같은 기준으로 본다.
+   *
+   * <p>(WD-1085) 서비스가 저장 전에 이름의 유니코드 공백(NBSP·전각 공백 포함)을 걷으므로, {@code "Sales "} 로 저장된 옛 행을 {@code
+   * "Sales"} 로 다시 저장하는 일이 생긴다. SQL {@code trim} 은 ASCII 공백만 걷어 두 이름을 다르게 보는데, 잠금 키의 {@link #normalize}({@code
+   * String.strip()} — 전각 공백도 걷는다)로 판정하면 「개명 아님」이 되어 다른 행의 {@code "Sales"} 와 겹치는 저장이 중복 검사 없이 통과했다. 그래서
+   * SQL 이 다르게 볼 수 있으면 개명으로 판정해 검사를 돌린다(검사는 자기 자신을 빼므로 잘못 막지 않는다).
+   */
   static boolean renamed(String before, String after) {
     if (before == null || after == null) {
       return before != after;
     }
-    return !normalize(before).equals(normalize(after));
+    return !sqlComparable(before).equals(sqlComparable(after));
+  }
+
+  /** SQL {@code lower(trim(x))} 와 같은 비교값 — 앞뒤 ASCII 공백(U+0020)만 걷고 소문자로 바꾼다. */
+  private static String sqlComparable(String name) {
+    int start = 0;
+    int end = name.length();
+    while (start < end && name.charAt(start) == ' ') {
+      start++;
+    }
+    while (end > start && name.charAt(end - 1) == ' ') {
+      end--;
+    }
+    return name.substring(start, end).toLowerCase(Locale.ROOT);
   }
 
   /**

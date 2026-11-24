@@ -13,6 +13,7 @@ import com.smartfirehub.apiconnection.dto.ApiConnectionSelectableResponse;
 import com.smartfirehub.apiconnection.dto.CreateApiConnectionRequest;
 import com.smartfirehub.apiconnection.dto.UpdateApiConnectionRequest;
 import com.smartfirehub.apiconnection.exception.ApiConnectionException;
+import com.smartfirehub.apiconnection.exception.ApiConnectionNameAlreadyExistsException;
 import com.smartfirehub.apiconnection.exception.ApiConnectionNotFoundException;
 import com.smartfirehub.apiconnection.repository.ApiConnectionRepository;
 import com.smartfirehub.global.exception.CryptoException;
@@ -548,7 +549,7 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
                 apiConnectionService.create(
                     validReq("https://dup-b.example.com", dupName), testUserId))
         .isInstanceOf(
-            com.smartfirehub.apiconnection.exception.ApiConnectionNameAlreadyExistsException.class)
+            ApiConnectionNameAlreadyExistsException.class)
         .hasMessageContaining(dupName);
   }
 
@@ -579,7 +580,7 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
 
     assertThatThrownBy(() -> apiConnectionService.update(connB.id(), updateReq, testUserId))
         .isInstanceOf(
-            com.smartfirehub.apiconnection.exception.ApiConnectionNameAlreadyExistsException.class)
+            ApiConnectionNameAlreadyExistsException.class)
         .hasMessageContaining(nameA);
   }
 
@@ -2972,4 +2973,77 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
   private static final String BASIC_USERINFO_UNREADABLE_MESSAGE =
       "저장된 인증 정보를 읽을 수 없어 기준 URL 의 아이디·비밀번호(새로 입력했거나 이 연결의 기준 URL 에 남아 있던 것)를 인증 정보로 옮길 수"
           + " 없습니다 — 이 연결을 수정하려면 authConfig 에 username·password(추가 헤더가 있으면 함께)를 모두 다시 입력하세요";
+
+  // ── WD-1085: 앞뒤 유니코드 공백을 걷어낸 뒤 중복 검사·저장 ─────────────────────────────────
+
+  /** 앞뒤 공백을 붙여도 같은 이름이면 만들기가 거절된다 — 정확 일치 비교를 비켜 가던 것(WD-1085). */
+  @Test
+  void create_paddedDuplicateName_throws() {
+    String base = "WD1085 매출 API " + System.nanoTime();
+    apiConnectionService.create(validReq("https://wd1085-a.example.com", base), testUserId);
+
+    assertThatThrownBy(
+            () ->
+                apiConnectionService.create(
+                    validReq("https://wd1085-b.example.com", "  " + base + "  "), testUserId))
+        .isInstanceOf(
+            ApiConnectionNameAlreadyExistsException.class);
+  }
+
+  /** NBSP·전각 공백으로 감싼 이름은 걷어낸 값으로 저장된다. */
+  @Test
+  void create_storesStrippedName() {
+    String base = "WD1085 새 API " + System.nanoTime();
+    ApiConnectionResponse created =
+        apiConnectionService.create(
+            validReq("https://wd1085-c.example.com", " " + base + "\u3000"), testUserId);
+    assertThat(created.name()).isEqualTo(base);
+  }
+
+  /** 다른 연결의 이름에 공백만 덧대 바꾸면 중복으로 거절된다. */
+  @Test
+  void update_toPaddedExistingName_throws() {
+    String nameA = "WD1085 UpA " + System.nanoTime();
+    apiConnectionService.create(validReq("https://wd1085-d.example.com", nameA), testUserId);
+    ApiConnectionResponse connB =
+        apiConnectionService.create(
+            validReq("https://wd1085-e.example.com", "WD1085 UpB " + System.nanoTime()),
+            testUserId);
+
+    UpdateApiConnectionRequest req =
+        new UpdateApiConnectionRequest("  " + nameA + "  ", null, null, null, null, null);
+    assertThatThrownBy(() -> apiConnectionService.update(connB.id(), req, testUserId))
+        .isInstanceOf(
+            ApiConnectionNameAlreadyExistsException.class);
+  }
+
+  /** 자기 이름에 공백만 덧댄 수정은 성공하고 걷어낸 이름으로 저장된다(자기 자신은 중복이 아니다). */
+  @Test
+  void update_selfNameWithPadding_succeedsAndStrips() {
+    String name = "WD1085 Self " + System.nanoTime();
+    ApiConnectionResponse a =
+        apiConnectionService.create(validReq("https://wd1085-f.example.com", name), testUserId);
+
+    ApiConnectionResponse updated =
+        apiConnectionService.update(
+            a.id(),
+            new UpdateApiConnectionRequest("  " + name + "  ", null, null, null, null, null),
+            testUserId);
+    assertThat(updated.name()).isEqualTo(name);
+  }
+
+  /** 이름을 보내지 않은(null) 수정은 이름을 바꾸지 않는다 — 다듬기가 「변경 없음」을 깨지 않는다. */
+  @Test
+  void update_nullName_keepsName() {
+    String name = "WD1085 Keep " + System.nanoTime();
+    ApiConnectionResponse a =
+        apiConnectionService.create(validReq("https://wd1085-g.example.com", name), testUserId);
+
+    ApiConnectionResponse updated =
+        apiConnectionService.update(
+            a.id(),
+            new UpdateApiConnectionRequest(null, "설명만", null, null, null, null),
+            testUserId);
+    assertThat(updated.name()).isEqualTo(name);
+  }
 }

@@ -25,6 +25,16 @@ class ResourceNameGuardTest {
     assertThat(ResourceNameGuard.renamed("Sales", "Sales2")).isTrue();
   }
 
+  /**
+   * NBSP 가 붙은 옛 이름에서 그 공백만 지운 저장은 개명으로 본다(WD-1085 리뷰) — SQL lower(trim()) 은 NBSP 를 걷지 않아 두 이름을
+   * 다르게 보므로, 개명으로 판정해 중복 검사를 돌려야 다른 행의 「Sales」와 겹치는 저장을 막는다.
+   */
+  @Test
+  void renamed_treatsNbspRemovalAsRename() {
+    assertThat(ResourceNameGuard.renamed("Sales ", "Sales")).isTrue();
+    assertThat(ResourceNameGuard.renamed("　Sales", "Sales")).isTrue();
+  }
+
   /** 이름 변경 판정 뒤 중복 검사를 호출하는지 — taken 호출 횟수로 검사 여부를 본다. */
   private static int checks(String before, String newName, boolean taken) {
     ResourceNameGuard guard = new ResourceNameGuard(mock(PlatformLocks.class));
