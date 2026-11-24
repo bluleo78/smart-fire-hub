@@ -23,7 +23,7 @@ import {
 import { offlineListMessage, useOfflinePaused } from '@/hooks/useOnlineStatus';
 import { handleApiError } from '@/lib/api-error';
 import { parseUtcDate } from '@/lib/formatters';
-import { formatNextRunShort } from '@/lib/next-run';
+import { formatNextRunShortWithZone } from '@/lib/next-run';
 
 import { OwnerIneligibleBadge } from './OwnerIneligibleBadge';
 
@@ -126,9 +126,11 @@ export function WorkspaceJobsTable() {
                     )}
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
-                    {/* nextExecuteAt 은 타임존 표기 없는 UTC 벽시계다 — 내 작업 목록과 같은 해석을 쓴다 (#348) */}
+                    {/* nextExecuteAt 은 타임존 표기 없는 UTC 벽시계다 — 내 작업 목록과 같은 해석을 쓴다 (#348).
+                        WD-1092: 시각 뒤에 작업 시간대 이름표(KST 등)를 붙여 다른 시간대 작업과 헷갈리지 않게 하고,
+                        Intl 이 거부하는 시간대 값이 와도 표 전체가 깨지지 않도록 공용 포매터(브라우저 시간대로 대체)를 쓴다 */}
                     {job.enabled && job.nextExecuteAt
-                      ? formatNextRunShort(parseUtcDate(job.nextExecuteAt), job.timezone ?? 'Asia/Seoul')
+                      ? formatNextRunShortWithZone(parseUtcDate(job.nextExecuteAt), job.timezone ?? 'Asia/Seoul')
                       : '-'}
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
