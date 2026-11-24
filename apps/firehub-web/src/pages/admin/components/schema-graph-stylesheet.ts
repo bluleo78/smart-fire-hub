@@ -2,7 +2,8 @@ import type cytoscape from 'cytoscape';
 
 import { graphChrome, nodeTintAlpha } from '@/lib/ontology-colors';
 
-// 스키마 그래프 스타일시트 — 타입 노드는 data(bg/border/text)(테마별 tint·윤곽선·대비 텍스트), 엣지는 크롬 색.
+// 스키마 그래프 스타일시트 — 타입 노드는 data(bg)=불투명 base 색(옅기는 background-opacity = nodeTintAlpha),
+// data(border)=윤곽선, data(text)=대비 텍스트. bg 에 rgba 를 넣지 않는다 — cytoscape 가 알파를 버린다(WD-1070). 엣지는 크롬 색.
 // 크롬 색은 InstanceGraph와 공유하는 단일 소스(ontology-colors.ts)에서 가져온다 (#377).
 // 컴포넌트 파일(.tsx)에서 분리한 이유: react-refresh는 컴포넌트 외 export가 섞이면 fast refresh가
 // 깨진다는 lint 규칙(react-refresh/only-export-components)이 있어, 유닛 테스트에서 직접 호출할 수
