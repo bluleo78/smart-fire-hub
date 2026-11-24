@@ -84,3 +84,38 @@ export function timeZoneLabel(date: Date, timezone: string): string {
 export function browserTimeZone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone;
 }
+
+/**
+ * 다음 실행 시각 뒤에 붙일 시간대 이름표(WD-1077). 고정 약어 표에 있으면 그 시각 기준 약어(KST·EST/EDT),
+ * 표에 없는 지역(Asia/Kolkata 등)은 timeZoneLabel 의 「UTC+5:30」 로 대신한다 — 이름표가 비어 시각만 덩그러니 남지 않게.
+ */
+export function nextRunZoneLabel(date: Date, timezone: string): string {
+  return describeTimezone(timezone, date).abbr || timeZoneLabel(date, timezone);
+}
+
+/**
+ * 시간대 처리가 실패하면(백엔드는 「UTC+9」 같은 ZoneId 를 받지만 Intl 은 RangeError 로 거부한다) 브라우저 시간대로
+ * 바꿔 보인다 — 한 행 때문에 목록 표나 상세 화면 전체가 깨지지 않게 한다. 이름표도 브라우저 시간대 것이라 어긋나지 않는다.
+ */
+function withZoneFallback(
+  date: Date,
+  timezone: string,
+  format: (date: Date, tz: string) => string,
+): string {
+  try {
+    return `${format(date, timezone)} ${nextRunZoneLabel(date, timezone)}`;
+  } catch {
+    const local = browserTimeZone();
+    return `${format(date, local)} ${nextRunZoneLabel(date, local)}`;
+  }
+}
+
+/** 상세·편집 미리보기용: 「2026. 11. 25. (수) 09:00 KST」 (WD-1077). */
+export function formatNextRunWithZone(date: Date, timezone: string): string {
+  return withZoneFallback(date, timezone, formatNextRun);
+}
+
+/** 목록용: 「내일 09:00 KST」 (WD-1077). */
+export function formatNextRunShortWithZone(date: Date, timezone: string): string {
+  return withZoneFallback(date, timezone, formatNextRunShort);
+}

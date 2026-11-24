@@ -31,8 +31,8 @@ import { useCronPreview } from '@/hooks/queries/useCronPreview';
 import { cronTooFrequentMessage } from '@/lib/cron-frequency';
 import { cronToLabel } from '@/lib/cron-label';
 import { getExecutionDisplayStatus } from '@/lib/error-classifier';
-import { formatDate, getStatusBadgeVariant, getStatusLabel } from '@/lib/formatters';
-import { formatNextRun } from '@/lib/next-run';
+import { formatDate, getStatusBadgeVariant, getStatusLabel, parseUtcDate } from '@/lib/formatters';
+import { formatNextRunWithZone } from '@/lib/next-run';
 import { describeTimezone, TIMEZONE_OPTIONS } from '@/lib/timezone-data';
 import {
   channelTypeLabel,
@@ -278,11 +278,8 @@ export default function JobOverviewTab({
   const nextRunInfo = useMemo(() => {
     const nextDate = nextRunPreview.times[0];
     if (!nextDate) return null;
-    // 약어는 다음 실행 시각 기준으로 고른다(WD-417) — 서머타임 기간이면 EDT·AEDT 처럼 그때의 이름을 붙인다.
-    return {
-      text: formatNextRun(nextDate, timezone),
-      abbr: describeTimezone(timezone, nextDate).abbr,
-    };
+    // 상세·목록과 같은 규칙(WD-1077): 약어는 다음 실행 시각 기준(WD-417, 서머타임), 표에 없으면 UTC 오프셋.
+    return formatNextRunWithZone(nextDate, timezone);
   }, [nextRunPreview.times, timezone]);
 
   if (!isEditing && !isNew && job) {
@@ -336,7 +333,9 @@ export default function JobOverviewTab({
                  있어도 지난 시각을 「다음 실행」으로 보여 주면 정기 실행 중인 줄로 읽힌다. 목록과 같은 '-' 로 둔다. */
               <ReadonlyCard label="다음 실행" value="-" />
             ) : job.nextExecuteAt ? (
-              <ReadonlyCard label="다음 실행" value={formatDate(job.nextExecuteAt)} />
+              /* 작업 시간대 기준 + 약어로 보인다(WD-1077) — formatDate 는 브라우저 시간대·이름 없이 보여
+                 바로 위 「타임존」 카드·편집 미리보기와 같은 실행이 다른 시각처럼 보였다. 약어는 그 시각 기준(서머타임 반영). */
+              <ReadonlyCard label="다음 실행" value={formatNextRunWithZone(parseUtcDate(job.nextExecuteAt), job.timezone)} />
             ) : (
               job.enabled &&
               !!job.cronExpression?.trim() && (
@@ -826,7 +825,7 @@ export default function JobOverviewTab({
       {/* 다음 실행 시간 — ANOMALY 전용 트리거에서는 불필요 (#38) */}
       {watch('triggerType') !== 'ANOMALY' && nextRunInfo && (
         <InlineBanner variant="info" icon={<span>📅</span>}>
-          다음 실행: <strong>{nextRunInfo.text}{nextRunInfo.abbr ? ` ${nextRunInfo.abbr}` : ''}</strong>
+          다음 실행: <strong>{nextRunInfo}</strong>
         </InlineBanner>
       )}
       {/* 서버 계산 대기(입력 디바운스 포함)·실패 안내 (WD-391) */}

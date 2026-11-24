@@ -3,7 +3,14 @@
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
-import { formatNextRun, formatNextRunShort, timeZoneLabel } from './next-run';
+import {
+  formatNextRun,
+  formatNextRunShort,
+  formatNextRunShortWithZone,
+  formatNextRunWithZone,
+  nextRunZoneLabel,
+  timeZoneLabel,
+} from './next-run';
 
 describe('formatNextRun', () => {
   it('날짜/요일/시각 포함 문자열 반환', () => {
@@ -49,5 +56,30 @@ describe('timeZoneLabel (WD-385)', () => {
   });
   it('표에 없는 지역은 UTC 오프셋으로 보인다', () => {
     expect(timeZoneLabel(new Date(Date.UTC(2026, 9, 29, 5, 30)), 'Asia/Kolkata')).toBe('UTC+5:30');
+  });
+});
+
+describe('시간대 이름표를 붙인 다음 실행 (WD-1077)', () => {
+  const winter = new Date('2026-11-25T14:00:00Z');
+  const summer = new Date('2026-07-15T13:00:00Z');
+
+  it('서울은 KST', () => {
+    expect(nextRunZoneLabel(new Date('2026-11-25T00:00:00Z'), 'Asia/Seoul')).toBe('KST');
+    expect(formatNextRunWithZone(new Date('2026-11-25T00:00:00Z'), 'Asia/Seoul')).toContain('09:00 KST');
+  });
+  it('뉴욕은 겨울 EST, 여름 EDT', () => {
+    expect(formatNextRunWithZone(winter, 'America/New_York')).toContain('09:00 EST');
+    expect(formatNextRunWithZone(summer, 'America/New_York')).toContain('09:00 EDT');
+  });
+  it('표에 없는 Asia/Kolkata 는 UTC+5:30', () => {
+    expect(nextRunZoneLabel(winter, 'Asia/Kolkata')).toBe('UTC+5:30');
+    expect(formatNextRunWithZone(winter, 'Asia/Kolkata')).toContain('UTC+5:30');
+    expect(formatNextRunShortWithZone(winter, 'Asia/Kolkata')).toContain('UTC+5:30');
+  });
+  it('Intl 이 모르는 시간대(UTC+9)여도 던지지 않고 비어 있지 않은 문자열을 준다', () => {
+    expect(() => formatNextRunWithZone(winter, 'UTC+9')).not.toThrow();
+    expect(formatNextRunWithZone(winter, 'UTC+9').length).toBeGreaterThan(0);
+    expect(() => formatNextRunShortWithZone(winter, 'UTC+9')).not.toThrow();
+    expect(formatNextRunShortWithZone(winter, 'UTC+9').length).toBeGreaterThan(0);
   });
 });
