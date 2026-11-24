@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -466,5 +467,52 @@ class ChartControllerTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(padded)))
         .andExpect(status().isCreated());
+  }
+
+  /** WD-1086: 폭 없는 문자(Cf)만인 이름은 @NotBlank 도 @Pattern 도 못 거르던 틈 — 400. */
+  @Test
+  void createChart_formatOnlyName_returns400() throws Exception {
+    mockAuth("analytics:write");
+    for (String blank : new String[] {"\u200B", "\uFEFF", "\u200B\u200B", "\u00A0\u200B"}) {
+      mockMvc
+          .perform(
+              post("/api/v1/analytics/charts")
+                  .header("Authorization", "Bearer valid-token")
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(
+                      objectMapper.writeValueAsString(
+                          new CreateChartRequest(blank, "설명", 1L, "bar", Map.of(), false))))
+          .andExpect(status().isBadRequest())
+          .andExpect(jsonPath("$.errors.name").value("이름을 비울 수 없습니다."));
+    }
+    verify(chartService, never()).create(any(), anyLong());
+  }
+
+  /**
+   * WD-1086 반-목표: 글자가 낀 이름에 폭 없는 문자(Cf)가 섞여 있어도 201 이어야 한다 — Cf 를 공백으로만 보되, 포함 여부로 거절하는 규칙이 생기면
+   * 프롬프트 안의 U+200B 가 낀 정상 이름이 400 으로 막히기 때문이다. NBSP 로 둘러싼 정상 이름, 이모지가 낀 이름도 함께 확인한다 — 정상·CJK·이모지
+   * 이름은 그대로 통과해야 한다.
+   */
+  @Test
+  void createChart_cfInsideRealName_returnsCreated() throws Exception {
+    mockAuth("analytics:write");
+    when(chartService.create(any(CreateChartRequest.class), eq(1L)))
+        .thenReturn(sampleChartResponse(42L));
+
+    // Cf 포함 이름이 400 으로 갈라지면 HAS_TEXT 가 Cf 까지 거절하는 쪽으로 회귀한 것이다.
+    // 표본을 한 변수에 두는 건 호출 횟수를 목록 길이로 확인하기 위함 — 표본을 늘릴 때마다 개수를 따로 손보지 않게 한다.
+    String[] acceptedNames = {"차트\u200B", "\u200B매출\uFEFF", "\u00A0매출\u00A0", "\uD83D\uDCC8매출"};
+    for (String name : acceptedNames) {
+      mockMvc
+          .perform(
+              post("/api/v1/analytics/charts")
+                  .header("Authorization", "Bearer valid-token")
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(
+                      objectMapper.writeValueAsString(
+                          new CreateChartRequest(name, "설명", 1L, "bar", Map.of(), false))))
+          .andExpect(status().isCreated());
+    }
+    verify(chartService, times(acceptedNames.length)).create(any(), anyLong());
   }
 }
