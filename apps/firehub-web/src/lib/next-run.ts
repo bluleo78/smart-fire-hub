@@ -26,7 +26,10 @@ export function formatNextRun(date: Date, timezone: string): string {
 
 /**
  * 목록 페이지용 간결한 포맷.
- * 24시간 이내 → "내일 09:00", 그 외 → "4월 3일 09:00"
+ * - 그 시간대 기준 날짜가 오늘이면(이미 지난 시각 포함) → "오늘 09:00"
+ * - 아직 오지 않았고 24시간 이내 → "내일 09:00"
+ * - 그 외(이미 지난 날짜 포함) → "4월 3일 09:00", 올해가 아니면 "2026년 12월 30일 09:00"
+ * 지난 날짜를 「내일」로 보이면 서버가 갱신하지 못한 낡은 시각이 곧 실행될 것처럼 읽힌다(WD-1099).
  */
 export function formatNextRunShort(date: Date, timezone: string): string {
   const now = new Date();
@@ -40,14 +43,19 @@ export function formatNextRunShort(date: Date, timezone: string): string {
     hour12: false,
   });
 
-  if (diffHours <= 24) {
-    const todayInTz = new Date().toLocaleDateString('ko-KR', { timeZone: timezone });
-    const dateInTz = date.toLocaleDateString('ko-KR', { timeZone: timezone });
-    return todayInTz === dateInTz ? `오늘 ${time}` : `내일 ${time}`;
-  }
+  // 날짜 비교는 UTC 가 아니라 그 시간대 기준으로 한다
+  const todayInTz = new Date().toLocaleDateString('ko-KR', { timeZone: timezone });
+  const dateInTz = date.toLocaleDateString('ko-KR', { timeZone: timezone });
+  if (todayInTz === dateInTz) return `오늘 ${time}`;
+  // 「내일」은 아직 오지 않은(diffMs > 0) 24시간 이내만 — 지난 날짜는 아래 날짜 표기로 (WD-1099)
+  if (diffMs > 0 && diffHours <= 24) return `내일 ${time}`;
 
+  // 올해가 아닌 날짜(해를 넘긴 낡은 시각 등)는 연도를 붙여 올해 날짜로 읽히지 않게 한다 (WD-1099).
+  // 위에서 만든 ko-KR 날짜 문자열(「2026. 4. 11.」)의 앞 마디가 연도라 Intl 을 다시 부르지 않고 비교한다.
+  const sameYear = dateInTz.split('.')[0] === todayInTz.split('.')[0];
   const formatted = date.toLocaleDateString('ko-KR', {
     timeZone: timezone,
+    ...(sameYear ? {} : { year: 'numeric' }),
     month: 'long',
     day: 'numeric',
   });
@@ -93,17 +101,23 @@ export function nextRunZoneLabel(date: Date, timezone: string): string {
   return describeTimezone(timezone, date).abbr || timeZoneLabel(date, timezone);
 }
 
+/** 작업 시간대가 비었을 때의 기본값 — 서버 스케줄러가 시간대 없는 작업을 Asia/Seoul 로 돌리는 규칙과 같다 (WD-1099). */
+const DEFAULT_JOB_TIMEZONE = 'Asia/Seoul';
+
 /**
  * 시간대 처리가 실패하면(백엔드는 「UTC+9」 같은 ZoneId 를 받지만 Intl 은 RangeError 로 거부한다) 브라우저 시간대로
  * 바꿔 보인다 — 한 행 때문에 목록 표나 상세 화면 전체가 깨지지 않게 한다. 이름표도 브라우저 시간대 것이라 어긋나지 않는다.
  */
 function withZoneFallback(
   date: Date,
-  timezone: string,
+  timezone: string | null | undefined,
   format: (date: Date, tz: string) => string,
 ): string {
+  // 앞뒤 공백을 떼고, 비었으면 서버 스케줄러처럼 Asia/Seoul 로 본다 — 빈 값·공백 섞인 값을 그대로 Intl 에 넘기면
+  // RangeError 로 브라우저 시간대가 보여 실제 실행 시각과 어긋난다 (WD-1099)
+  const zone = timezone?.trim() || DEFAULT_JOB_TIMEZONE;
   try {
-    return `${format(date, timezone)} ${nextRunZoneLabel(date, timezone)}`;
+    return `${format(date, zone)} ${nextRunZoneLabel(date, zone)}`;
   } catch {
     const local = browserTimeZone();
     return `${format(date, local)} ${nextRunZoneLabel(date, local)}`;
@@ -111,11 +125,11 @@ function withZoneFallback(
 }
 
 /** 상세·편집 미리보기용: 「2026. 11. 25. (수) 09:00 KST」 (WD-1077). */
-export function formatNextRunWithZone(date: Date, timezone: string): string {
+export function formatNextRunWithZone(date: Date, timezone: string | null | undefined): string {
   return withZoneFallback(date, timezone, formatNextRun);
 }
 
-/** 목록용: 「내일 09:00 KST」 (WD-1077). */
-export function formatNextRunShortWithZone(date: Date, timezone: string): string {
+/** 목록용: 「내일 09:00 KST」 (WD-1077). 지난 시각은 「4월 10일 09:00 KST」 (WD-1099). */
+export function formatNextRunShortWithZone(date: Date, timezone: string | null | undefined): string {
   return withZoneFallback(date, timezone, formatNextRunShort);
 }

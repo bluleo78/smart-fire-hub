@@ -52,6 +52,37 @@ test.describe('스마트 작업 목록 — 다음 실행 컬럼 (#348)', () => {
     await expect(row).not.toContainText('18:00');
   });
 
+  test('이미 지난 다음 실행 시각은 「내일」이 아니라 날짜로 보인다 (WD-1099)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 2일 전 서울 09:00 — 서버가 아직 갱신하지 못한 지난 시각
+    const past = seoulNineAmInDays(-2);
+    const job = createJob({
+      id: 3,
+      name: '지난 다음 실행 작업',
+      enabled: true,
+      triggerType: 'SCHEDULE',
+      cronExpression: '0 9 * * *',
+      timezone: 'Asia/Seoul',
+      nextExecuteAt: toServerLocalDateTime(past),
+    });
+
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs', [job]);
+    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    await page.goto('/ai-insights/jobs');
+
+    const row = page.getByRole('row').filter({ hasText: '지난 다음 실행 작업' });
+    const dateText = past.toLocaleDateString('ko-KR', {
+      timeZone: 'Asia/Seoul',
+      month: 'long',
+      day: 'numeric',
+    });
+    await expect(row).toContainText('09:00');
+    await expect(row).toContainText('KST');
+    await expect(row).toContainText(dateText);
+    await expect(row).not.toContainText('내일');
+  });
+
   test('비활성 작업은 다음 실행이 없으므로 "-"로 표시된다', async ({ authenticatedPage: page }) => {
     // 비활성 잡은 스케줄이 해제되므로 백엔드가 next_execute_at 을 비운다
     const job = createJob({
