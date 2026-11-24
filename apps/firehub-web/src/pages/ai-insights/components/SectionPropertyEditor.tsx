@@ -127,7 +127,7 @@ export function SectionPropertyEditor({ section, onUpdate }: SectionPropertyEdit
                       .filter(t => t.type !== 'group' && t.type !== 'divider')
                       .map(t => (
                         <SelectItem key={t.type} value={t.type}>
-                          {t.icon} {t.label}
+                          <t.icon aria-hidden="true" /> {t.label}
                         </SelectItem>
                       ))}
                   </SelectContent>
@@ -242,8 +242,8 @@ export function SectionPropertyEditor({ section, onUpdate }: SectionPropertyEdit
             {/* 아래는 입력이 아니라 정적 안내 블록이므로 label 이 아니라 span 이다 (#432) */}
             <span className="block text-sm leading-none font-medium">타입 가이드</span>
             <div className="bg-muted rounded-md p-3 text-xs text-muted-foreground">
-              <span className="font-medium" style={{ color: 'var(--primary)' }}>
-                {typeDef.icon} {typeDef.label}
+              <span className="inline-flex items-center gap-1 font-medium" style={{ color: 'var(--primary)' }}>
+                <typeDef.icon aria-hidden="true" className="size-3.5" /> {typeDef.label}
               </span>
               {' — '}
               {typeDef.description}

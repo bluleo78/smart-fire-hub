@@ -146,7 +146,7 @@ export function SectionTreeBuilder({
               .filter(t => t.type !== 'group')
               .map(t => (
                 <DropdownMenuItem key={t.type} onClick={() => onAdd(t.type as SectionType)}>
-                  <span className="mr-2">{t.icon}</span> {t.label}
+                  <t.icon aria-hidden="true" /> {t.label}
                 </DropdownMenuItem>
               ))}
           </DropdownMenuContent>
