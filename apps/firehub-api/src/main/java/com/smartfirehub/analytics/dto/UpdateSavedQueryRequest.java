@@ -1,6 +1,7 @@
 package com.smartfirehub.analytics.dto;
 
 import com.smartfirehub.global.validation.DescriptionLimits;
+import com.smartfirehub.global.validation.TextRules;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import java.time.LocalDateTime;
@@ -16,11 +17,11 @@ import java.time.LocalDateTime;
  *     EDIT_CONFLICT 로 거부한다. null 이면 비교하지 않는다(기준을 보내지 않는 기존 호출부, "내 변경으로 덮어쓰기").
  */
 public record UpdateSavedQueryRequest(
-    @Size(max = 200) @Pattern(regexp = "(?s).*\\S.*", message = "이름을 비울 수 없습니다.") String name,
+    @Size(max = 200) @Pattern(regexp = TextRules.HAS_TEXT, message = "이름을 비울 수 없습니다.") String name,
     @Size(max = DescriptionLimits.MAX_LENGTH, message = DescriptionLimits.QUERY_TOO_LONG)
         String description,
     // 길이 상한은 생성과 같다(WD-425 — 이유는 CreateSavedQueryRequest.SQL_MAX_LENGTH)
-    @Pattern(regexp = "(?s).*\\S.*", message = "SQL을 비울 수 없습니다.")
+    @Pattern(regexp = TextRules.HAS_TEXT, message = "SQL을 비울 수 없습니다.")
         @Size(
             max = CreateSavedQueryRequest.SQL_MAX_LENGTH,
             message = CreateSavedQueryRequest.SQL_TOO_LONG_MESSAGE)

@@ -384,4 +384,39 @@ class ChartControllerTest {
           .andExpect(status().isOk());
     }
   }
+
+  /** WD-1079: 수정은 이름 생략(null)은 되지만 빈 값·공백만으로 바꿀 수 없다 — 400, 앞뒤 공백이 낀 이름은 200. */
+  @Test
+  void updateChart_blankName_returns400_nullOrPaddedOk() throws Exception {
+    mockAuth("analytics:write");
+    when(chartService.update(eq(5L), any(UpdateChartRequest.class), eq(1L)))
+        .thenReturn(sampleChartResponse(5L));
+
+    for (String blank : new String[] {"", "   ", " \n\t", "\u3000\u3000", "\u00A0"}) {
+      mockMvc
+          .perform(
+              put("/api/v1/analytics/charts/5")
+                  .header("Authorization", "Bearer valid-token")
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(objectMapper.writeValueAsString(Map.of("name", blank))))
+          .andExpect(status().isBadRequest())
+          .andExpect(jsonPath("$.errors.name").value("이름을 비울 수 없습니다."));
+    }
+    verify(chartService, never()).update(anyLong(), any(), anyLong());
+
+    mockMvc
+        .perform(
+            put("/api/v1/analytics/charts/5")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"description\":\"설명만\"}"))
+        .andExpect(status().isOk());
+    mockMvc
+        .perform(
+            put("/api/v1/analytics/charts/5")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(Map.of("name", "  매출  "))))
+        .andExpect(status().isOk());
+  }
 }
