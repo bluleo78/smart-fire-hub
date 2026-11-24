@@ -27,7 +27,9 @@ import { expectSingleHeldRequest, holdApi } from '../../fixtures/hold-api';
 
 /**
  * 그래프 탐색 탭의 그래프 의존 컨트롤(이름 검색·타입 묶기·타입 필터 패널·패널 접기 토글)이 각각 count 개인지 본다.
- * 읽기 제한(WD-28)·조회 실패(WD-870)·목록 게이트(WD-894: 목록 오류·403·로딩·지식 모델 없음) 상태에선 넷 다 0, 일반 상태에선 넷 다 1 — 넷을 한 묶음으로 단언해 하나만 빠지는 회귀를 잡는다.
+ * 읽기 제한(WD-28)·조회 실패(WD-870)·목록 게이트의 확정 상태(WD-894: 목록 오류·403·지식 모델 없음)에선 넷 다 0,
+ * 일반 상태에선 넷 다 1 — 넷을 한 묶음으로 단언해 하나만 빠지는 회귀를 잡는다.
+ * 목록 로딩 구간은 이 묶음이 아니다(패널 자리는 스켈레톤, 토글만 비활성 — WD-1041): 그 구간엔 expectTypeFilterReserving 를 쓴다.
  */
 async function expectGraphControls(page: Page, count: 0 | 1) {
   await expect(page.getByPlaceholder('이름 검색')).toHaveCount(count);
@@ -38,10 +40,26 @@ async function expectGraphControls(page: Page, count: 0 | 1) {
 /**
  * 타입 필터 패널과 그 접기 토글이 각각 count 개인지 본다 — 두 탭 모두에 있는 컨트롤이라
  * 이름 검색·타입 묶기가 없는 지식 모델 탭(WD-915)은 expectGraphControls 대신 이것만 쓴다.
+ * 스켈레톤은 확정 상태에서 항상 0개로 함께 단언한다 — WD-1041: 확정 상태에 스켈레톤이 남으면 WD-894 회귀.
  */
 async function expectTypeFilterControls(page: Page, count: 0 | 1) {
   await expect(page.getByTestId('type-filter-panel')).toHaveCount(count);
+  await expect(page.getByTestId('type-filter-panel-skeleton')).toHaveCount(0);
   await expect(page.getByRole('button', { name: /^타입 필터 (접기|펼치기)$/ })).toHaveCount(count);
+}
+
+/**
+ * 목록 로딩 구간의 자리 잡기(WD-1041) — 살아 있는 컨트롤은 없고, 자리만 스켈레톤과
+ * 비활성 토글이 차지한다. WD-894(로딩에서 컨트롤 숨김)와 모순되지 않게: 보이는 것은
+ * 눌리는 컨트롤이 아니라 자리 표시다.
+ */
+async function expectTypeFilterReserving(page: Page) {
+  // 살아 있는 패널은 없다 — 로딩 스켈레톤이 자리를 대신한다.
+  await expect(page.getByTestId('type-filter-panel')).toHaveCount(0);
+  await expect(page.getByTestId('type-filter-panel-skeleton')).toBeVisible();
+  const toggle = page.getByRole('button', { name: /^타입 필터 (접기|펼치기)$/ });
+  await expect(toggle).toHaveCount(1);
+  await expect(toggle).toBeDisabled();
 }
 
 /**
@@ -794,8 +812,10 @@ test.describe('지식그래프 시각화 페이지', () => {
     // 단언하면 렌더가 시작되기도 전에 통과해 버려 공허해진다 — 로딩 상태를 긍정으로 지목한다.
     await expect(page.getByTestId('graph-loading')).toBeVisible();
     await expect(page.getByText('아직 지식 모델이 없습니다')).toHaveCount(0);
-    // 로딩 중에도 그래프가 없으니 그래프 의존 컨트롤은 숨는다(WD-894).
-    await expectGraphControls(page, 0);
+    // 이름 검색·타입 묶기는 로딩 중에도 숨는다(이슈 범위 밖 — 기존 동작 유지).
+    await expect(page.getByPlaceholder('이름 검색')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '타입 묶기' })).toHaveCount(0);
+    await expectTypeFilterReserving(page);
 
     // 목록을 풀어 주면 정상적으로 그래프가 그려지고 컨트롤이 되살아난다.
     listHeld.release();
@@ -829,9 +849,10 @@ test.describe('지식그래프 시각화 페이지', () => {
     await expectGraphControls(page, 1);
   });
 
-  // WD-915: 지식 모델 탭도 목록 게이트(로딩·오류)가 본문을 대신하면 그래프가 없다 — 타입 필터 패널·접기 토글을 숨기고 회복되면 되살린다.
+  // WD-915: 지식 모델 탭도 목록 게이트가 본문을 대신하면 그래프가 없다 — 회복되면 타입 필터 패널·접기 토글이 되살아난다.
+  // 구간별 계약이 다르다: 로딩 구간만 «자리 잡기(WD-1041)»(스켈레톤 + 비활성 토글), 오류·없음 구간은 그대로 «숨김(WD-894·WD-915)».
   // 이름 검색·타입 묶기는 인스턴스 탭 전용이라 지식 모델 탭에는 원래 없다(expectGraphControls(page, 1)을 쓰지 않는 이유).
-  test('지식 모델 탭도 목록 로딩 게이트에서는 타입 필터 패널·접기 토글을 숨기고, 풀리면 다시 보인다 (WD-915)', async ({
+  test('지식 모델 탭도 목록 로딩 게이트에서는 타입 필터 자리를 스켈레톤으로 잡고, 풀리면 패널이 된다 (WD-915·WD-1041)', async ({
     authenticatedPage: page,
   }) => {
     await setupOntologyMocks(page);
@@ -840,7 +861,7 @@ test.describe('지식그래프 시각화 페이지', () => {
     await page.goto('/knowledge-graph/model');
 
     await expect(page.getByTestId('graph-loading')).toBeVisible();
-    await expectTypeFilterControls(page, 0);
+    await expectTypeFilterReserving(page);
 
     listHeld.release();
     await expectTypeFilterControls(page, 1);
