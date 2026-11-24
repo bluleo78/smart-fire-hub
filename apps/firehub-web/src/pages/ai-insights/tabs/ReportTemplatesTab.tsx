@@ -66,7 +66,8 @@ export default function ReportTemplatesTab() {
       {/* Built-in templates */}
       <div className="space-y-4">
         <div>
-          <h3 className="text-base font-semibold">기본 템플릿</h3>
+          {/* WD-892: 페이지 h1 바로 아래 위계가 h3 로 건너뛰지 않도록 h2 로 둔다(같은 화면군 JobOverviewTab 과 동일 크기) */}
+          <h2 className="text-xl leading-7 font-semibold">기본 템플릿</h2>
           <p className="text-sm text-muted-foreground mt-1">시스템에서 제공하는 기본 리포트 템플릿입니다.</p>
         </div>
         {/* 동일 행의 카드 높이를 균일하게 맞추기 위해 items-stretch(기본값) 유지 */}
@@ -113,7 +114,7 @@ export default function ReportTemplatesTab() {
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="text-base font-semibold">커스텀 템플릿</h3>
+            <h2 className="text-xl leading-7 font-semibold">커스텀 템플릿</h2>
             <p className="text-sm text-muted-foreground mt-1">직접 만든 리포트 템플릿입니다.</p>
           </div>
           {canWrite && (
