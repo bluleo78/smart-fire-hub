@@ -5,6 +5,8 @@ import type { TypePalette } from '@/lib/ontology-colors';
 import { cn } from '@/lib/utils';
 import type { EntityTypeDef, GraphData } from '@/types/ontology';
 
+import { typeFilterPanelRootClass } from './type-filter-panel-root';
+
 interface Props {
   // (#677 정리) 이 패널은 entities만 읽으므로 스키마 전체(domain/schemaVersion/relations)를 받을
   // 필요가 없다 — 호출부가 여러 온톨로지를 합친 목록을 넘길 때도 가짜 스키마 객체를 만들지 않아도 된다.
@@ -81,15 +83,9 @@ export default function TypeFilterPanel({ entities: entityList, graph, activeTyp
 
   return (
     <div
-      className={cn(
-        // (#414) sm(640px) 미만에서는 collapsed 상태와 무관하게 항상 숨긴다 — w-64(256px) + 캔버스
-        // 최소폭(280px, OntologyPage.tsx의 min-w-[280px])이 536px로, 640px부터는 이 조합이 항상
-        // 들어가지만 그 미만(모바일 375px 등)에서는 캔버스가 뷰포트 밖으로 밀리거나 슬리버로
-        // 압착된다. (ModelOutline/인스펙터도 예전엔 창 폭 xl 미만에서 숨었지만(#403), 지금은 본문
-        // 컨테이너 폭 기준으로 접기 막대·선택 시에만 붙는 패널로 바뀌었다 — WD-130.)
-        'hidden shrink-0 flex-col overflow-hidden border-r transition-[width] duration-200 sm:flex',
-        collapsed ? 'sm:w-0 sm:border-r-0' : 'sm:w-64',
-      )}
+      // 루트 클래스의 단일 원본은 typeFilterPanelRootClass — 목록 로딩 스켈레톤이 같은 함수로 같은
+      // 폭·보더에 서야 교체 시 레이아웃이 밀리지 않으므로(WD-1041) 여기에 문자열을 따로 두지 않는다.
+      className={typeFilterPanelRootClass(collapsed)}
       data-testid="type-filter-panel"
       // inert: 접힌 패널의 내부 컨트롤을 포커스 순서와 접근성 트리에서 동시에 제거한다(#327).
       // aria-hidden만으로는 접근성 트리에서만 빠지고 탭 스톱이 남아, 보이지 않는 곳에 포커스가 갇혔다.

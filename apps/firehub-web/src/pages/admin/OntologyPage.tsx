@@ -33,6 +33,7 @@ import OntologyManageDialog from './components/OntologyManageDialog';
 import OntologySelect from './components/OntologySelect';
 import OntologyStatusBanner from './components/OntologyStatusBanner';
 import SchemaGraph, { type SchemaGraphSelection } from './components/SchemaGraph';
+import { typeFilterPanelRootClass } from './components/type-filter-panel-root';
 import TypeFilterPanel from './components/TypeFilterPanel';
 
 // 캔버스 로딩 중 표시하는 스켈레톤 — 컨테이너를 꽉 채워 레이아웃 시프트를 막는다.
@@ -41,6 +42,25 @@ import TypeFilterPanel from './components/TypeFilterPanel';
 // 테스트를 한 번 겪었다. 로딩 상태를 긍정으로 지목할 수 있는 선택자가 필요하다.
 function GraphLoading() {
   return <Skeleton className="h-full w-full" data-testid="graph-loading" />;
+}
+
+// 목록 로딩 구간의 타입 필터 자리 표시(WD-1041) — 루트 클래스는 TypeFilterPanel 이 쓰는
+// typeFilterPanelRootClass 한 원본을 그대로 받으므로 폭·테두리가 언제나 같고, 응답이 와서 실제
+// 패널로 갈아타는 순간에도 레이아웃이 밀리지 않는다.
+// 예전엔 로딩 중엔 패널·토글이 아예 없었다가 응답과 함께 생겨, 토글 등장이 제목 h1 을, 패널 등장이
+// 그래프 영역을 밀어 진입 때 0.134 레이아웃 시프트가 났다 — 로딩은 "숨김"이 아니라 "자리 유지"다.
+// 라이브 리전·inert 없음: 포커스·낭독 대상이 아니라 자리만 차지하는 장식이므로(DS 스켈레톤 관례) 그대로 둔다.
+function TypeFilterPanelSkeleton({ collapsed }: { collapsed: boolean }) {
+  return (
+    <div className={typeFilterPanelRootClass(collapsed)} data-testid="type-filter-panel-skeleton">
+      {/* 헤더·검색칸·목록 세 자리를 잡는 자리 표시 — 실제 패널의 상단 배치와 같은 높이 층을 만든다. */}
+      <div className="flex flex-col gap-3 p-4">
+        <Skeleton className="h-4 w-24" />
+        <Skeleton className="h-8 w-full" />
+        <Skeleton className="h-3 w-3/4" />
+      </div>
+    </div>
+  );
 }
 
 // 캔버스 에러 상태 — 아이콘 + 메시지 + 재시도 버튼(하우스 error 패턴). 재시도는 해당 쿼리 refetch를 호출한다.
@@ -245,13 +265,24 @@ export default function OntologyPage() {
   // "표시할 수 없습니다" 옆에 있으면 필터만 바꾸면 보일 것처럼 읽힌다(디자인 검토 M-2) — 숨긴다.
   // 온톨로지 선택기는 제한에서 벗어나는 유일한 출구라 유지한다. 인스턴스 탭 전용 판정이다.
   const graphRestricted = tab === 'instance' && isGraphReadRestricted(graphError);
-  // 그래프가 없어 눌러도 반응 없는 컨트롤(이름 검색·타입 묶기·타입 필터·접기 토글)을 숨기는 판정이다.
-  // 사유: 목록 게이트(두 탭, WD-894·WD-915) / 인스턴스 탭의 읽기 제한·조회 실패(WD-870, 재시도 중 isError 가 유지되는 동안도 숨김).
+  // 목록 게이트가 "끝난" 상태(오류·403·지식 모델 없음) — 그래프가 없어 컨트롤을 완전히 숨긴다(WD-894·WD-915).
+  // 로딩 중에도 effectiveOntologyId 는 null 이라서 "없음"으로 보이지만, 그건 아직 끝나지 않은 게이트다 —
+  // 여기에 로딩까지 집어넣으면 아래 reservingControlSpace 가 영원히 거짓이 되어 자리를 못 잡는다(WD-1041).
+  const ontologyListSettled =
+    isOntologyListError || (!isOntologyListLoading && effectiveOntologyId == null);
+  // 그래프가 없어 눌려도 반응 없는 컨트롤(이름 검색·타입 묶기·타입 필터·접기 토글)을 숨기는 판정.
+  // 로딩은 여기서 뺀다 — 로딩은 "숨김"이 아니라 "자리 유지"다(WD-1041): 로딩 중 토글·패널이 없었다가
+  // 응답과 함께 생기면 토글 등장이 제목을, 패널 등장이 그래프 영역을 밀어 진입 레이아웃 시프트가 났다.
+  // 사유: 목록 게이트의 확정 상태(두 탭, WD-894·WD-915) / 인스턴스 탭의 읽기 제한·조회 실패(WD-870, 재시도 중 isError 가 유지되는 동안도 숨김).
   // 본문 분기(renderInstanceTab)는 제한/오류를 계속 구분하므로 graphRestricted 는 그대로 두고 컨트롤 숨김 판정에만 이 값을 쓴다.
   const graphUnavailable =
-    ontologyListGated || (tab === 'instance' && (graphRestricted || isGraphError));
+    ontologyListSettled || (tab === 'instance' && (graphRestricted || isGraphError));
+  // 목록 응답을 기다리는 동안만 — 확정으로 숨길 상태가 아닐 때 자리만 잡는다.
+  const reservingControlSpace = isOntologyListLoading && !graphUnavailable;
   // 인스턴스 탭 그래프 도구(검색·타입 묶기)를 그릴지 — 목록 게이트(WD-894)·읽기 제한·조회 실패(WD-870)이면 숨긴다(위 사유).
-  const showGraphTools = tab === 'instance' && !graphUnavailable;
+  // 로딩 중에도 그대로 숨는다(기존과 같은 결과 — 이슈 범위 밖): 그래프가 없어 이름 검색·타입 묶기는
+  // 로딩 구간에도 살려 두지 않고, 자리만 토글·패널이 잡는다(새 계약 WD-1041).
+  const showGraphTools = tab === 'instance' && !graphUnavailable && !isOntologyListLoading;
 
   // 온톨로지를 바꾸면 이전 선택/편집 상태가 새 컨텍스트에 잘못 남지 않도록 초기화한다.
   // useEffect 대신 렌더 중 이전 값 비교(React 권장 패턴)로 처리한다 — setState-in-effect의
@@ -467,7 +498,9 @@ export default function OntologyPage() {
    * 목록의 로딩·에러도 effectiveOntologyId 를 null 로 만들기 때문에, 그 둘을 먼저 걸러내지 않으면
    * 매 첫 진입마다 없다고 단정했다가 뒤늦게 바뀌고, 목록이 실패하면 재시도 경로도 없이 그 오답에 갇힌다.
    * 지식 모델 탭이 예전에 이 게이트 없이 selectedOntology 만 봐서, 0개 테넌트에서 스켈레톤에 갇혔다.
-   * 게이트를 띄울지는 위쪽 `ontologyListGated` 하나로 정한다 — 컨트롤 숨김(graphUnavailable)과 어긋나지 않게(WD-894).
+   * 게이트를 띄울지는 위쪽 `ontologyListGated` 하나로 정한다 — 컨트롤 숨김(graphUnavailable)과는
+   * 목록 로딩 구간만 어긋난다: 본문은 로딩 스켈레톤을 띄우지만(게이트), 컨트롤은 그 구간에 자리를
+   * 미리 잡는다(자리 유지 WD-1041). 확정 상태(오류·403·없음)에서는 둘 다 숨김으로 다시 일치한다(WD-894).
    */
   const renderOntologyListGate = (emptyDescription: string) => {
     if (!ontologyListGated) return null;
@@ -545,7 +578,9 @@ export default function OntologyPage() {
             받지 않아, 편집 모드에서 이 버튼을 누르면 aria-pressed만 바뀌고 화면은 그대로였다(무력한 컨트롤).
             (#414) sm(640px) 미만에서는 TypeFilterPanel 자체가 collapsed 상태와 무관하게 항상 숨으므로
             이 토글도 함께 숨긴다 — 안 그러면 눌러도 아무 효과가 없는 죽은 컨트롤이 된다.
-            목록 게이트(WD-894)·읽기 제한·조회 실패(WD-870)에서도 그래프가 없어 눌러도 소용없으니 숨긴다. */}
+            목록 게이트의 확정 상태(WD-894·WD-915)·읽기 제한·조회 실패(WD-870)에서도 그래프가 없어 눌러도 소용없으니 숨긴다.
+            로딩 구간(WD-1041)에는 숨기지 않고 자리만 잡으려고 비활성으로 그린다 — 응답과 함께 토글이
+            새로 생기면 그 등장이 제목 h1 을 밀어 진입 레이아웃 시프트가 났다. */}
         {!showEditor && !graphUnavailable && (
           <Button
             variant="ghost"
@@ -554,6 +589,7 @@ export default function OntologyPage() {
             onClick={() => setFilterCollapsed((v) => !v)}
             aria-label={filterCollapsed ? '타입 필터 펼치기' : '타입 필터 접기'}
             aria-pressed={!filterCollapsed}
+            disabled={reservingControlSpace}
           >
             {filterCollapsed ? <PanelLeft className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
           </Button>
@@ -688,7 +724,11 @@ export default function OntologyPage() {
             onExpandedChange={setOutlineExpanded}
             railButtonRef={outlineRailButtonRef}
           />
-        ) : graphUnavailable ? null : (
+        ) : graphUnavailable ? null : reservingControlSpace ? (
+          // 목록 게이트·읽기 제한·조회 실패면 숨기고, 로딩 중에는 자리만 스켈레톤으로 잡는다(WD-1041) —
+          // 패널이 응답과 함께 새로 생기면 그 등장이 오른쪽 그래프 영역을 밀어 진입 레이아웃 시프트가 났다.
+          <TypeFilterPanelSkeleton collapsed={filterCollapsed} />
+        ) : (
           // 목록 게이트(WD-894)·읽기 제한·조회 실패(WD-870)이면 그래프가 없어 필터가 무의미하므로 그리지 않는다.
           <TypeFilterPanel
             entities={filterEntities}
