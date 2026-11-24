@@ -261,6 +261,9 @@ export default function DatasetListPage() {
    */
   const patchParams = useCallback(
     (patch: Record<string, string | number | boolean | null | undefined>) => {
+      // WD-1065: 다른 페이지로 가는 중(행 클릭 → 상세)이면 목록 주소를 다시 쓰지 않는다 — 쓰면 이미 시작된 이동을 덮어써 취소된다.
+      // 렌더된 경로와 실제 경로가 다르면 커밋 전 이동 중이라는 뜻이다(대조는 WD-1061 이 만든 renderedPathnameRef).
+      if (window.location.pathname !== renderedPathnameRef.current) return;
       const next = new URLSearchParams(getLatestParams());
       for (const [k, v] of Object.entries(patch)) {
         if (v === null || v === undefined || v === '' || v === false) {

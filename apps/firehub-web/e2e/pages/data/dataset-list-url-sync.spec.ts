@@ -1,8 +1,8 @@
-import { createCategories, createDataset } from '../../factories/dataset.factory';
+import { createCategories, createDataset, createDatasetDetail } from '../../factories/dataset.factory';
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { clickInOneTask } from '../../fixtures/click-in-one-task';
-import { grantDatasetPermissions, mockDatasetReferences } from '../../fixtures/dataset.fixture';
+import { grantDatasetPermissions, mockDatasetReferences, setupDatasetDetailMocks } from '../../fixtures/dataset.fixture';
 
 /**
  * WD-1062: 최종 주소가 ms 동안 expected(pathname+search) 그대로 유지되는지 100ms 간격으로 표집한다.
@@ -290,6 +290,37 @@ test.describe('데이터셋 목록 — URL 동기화', () => {
           ]
         : null;
     }).toEqual(['true', null, null, null]);
+  });
+
+  /**
+   * 이슈 WD-1065 — 행 클릭(상세 이동)이 커밋되기 전에 누른 필터가 목록 주소를 다시 써 이동을 취소한다.
+   * 두 클릭을 한 evaluate 안에서 연달아 눌러 렌더가 끼지 않는다(기존 clickInOneTask).
+   */
+  test('행 클릭으로 상세로 가는 이동이 커밋되기 전에 필터를 누르면 이동이 취소되지 않는다 (WD-1065)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 목록 요청 모킹(가져온 값은 쓰지 않는다 — 단언은 화면 주소로 한다)
+    await setupCapturingList(page);
+    // 이동이 성공해도 상세 오류 → 목록 되돌이에 빠지지 않게 상세 응답을 함께 모킹한다
+    await setupDatasetDetailMocks(page, 1);
+    // 상세 이름을 목록 행과 맞춘다 — 같은 데이터셋의 상세로 갔는지 이름으로 확인하려고
+    await mockApi(page, 'GET', '/api/v1/datasets/1', createDatasetDetail({ id: 1, name: '고객 데이터셋' }));
+
+    await page.goto('/data/datasets');
+    await expect(page.getByRole('heading', { name: /데이터셋/ })).toBeVisible();
+
+    const favoriteButton = page.getByRole('button', { name: '즐겨찾기', exact: true });
+    const firstRow = page.getByRole('row').filter({ has: page.getByRole('link', { name: /고객 데이터셋/ }) }).first();
+
+    // 1) 행 클릭(상세 이동 시작) 2) 같은 작업 안에서 즐겨찾기 필터
+    await clickInOneTask(page, [firstRow, favoriteButton]);
+
+    // 기대: 상세로 이동이 살아남는다(고치기 전에는 목록 주소 + favorite=true 로 덮여 이 곳에 남는다)
+    await expect(page).toHaveURL(/\/data\/datasets\/1$/);
+    await expect(page.getByRole('heading', { name: '고객 데이터셋', exact: false })).toBeVisible();
+
+    // 이동이 살아남았고(위 단언) 그 주소에 즐겨찾기 패치가 남아 있지 않다 — 이동을 덮은 패치가 나가지 않았다는 근거
+    expect(new URL(page.url()).searchParams.get('favorite')).toBeNull();
   });
 
   /**
