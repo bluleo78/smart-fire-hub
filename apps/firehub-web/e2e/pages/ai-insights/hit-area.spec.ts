@@ -9,6 +9,7 @@ import {
 } from '../../fixtures/ai-insight.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { readFocusStyle } from '../../fixtures/keyboard-focus';
 
 /**
  * AI 인사이트 화면군 히트 영역 회귀 시험 (WD-891)
@@ -136,6 +137,21 @@ test.describe('AI 인사이트 히트 영역 32×32 (WD-891)', () => {
       const gap = trackBox.x + trackBox.width - (thumbBox.x + thumbBox.width);
       expect.soft(gap, '스위치 thumb 의 track 오른쪽 여백').toBeGreaterThanOrEqual(MIN_THUMB_GAP);
     }
+
+    // 4) 키보드 포커스 링은 알약(track)에 그려져야 한다(WD-924) — 루트(32×32 rounded-full)에 그리면 알약이 아니라 원형 링이 보인다.
+    // 링은 Tailwind ring 이 box-shadow 로 그린다 — 포커스 뒤 루트의 box-shadow 는 none 이어야 하고, 알약에는 3px 링 층이 있어야 한다.
+    await checkedSwitch.focus();
+    // 키보드 포커스(:focus-visible)여야 링이 뜬다 — 프로그램 focus() 는 직전 입력이 키보드가 아니면 focus-visible 이 아닐 수 있어 Tab 왕복으로 확정한다.
+    await page.keyboard.press('Shift+Tab');
+    await page.keyboard.press('Tab');
+    await expect(checkedSwitch).toBeFocused();
+    const rootFocus = await readFocusStyle(checkedSwitch);
+    expect(rootFocus.focusVisible, '스위치가 키보드 포커스(:focus-visible) 상태가 아니다').toBe(true);
+    expect(rootFocus.boxShadow, '스위치 루트(히트 상자)에 포커스 링이 그려졌다 — 원형 링이 된다 (WD-924)').toBe('none');
+    // 알약에는 3px 링(ring-[3px] — box-shadow 의 퍼짐 3px 층)이 그려져야 한다. track 은 transition-all 이라 전환이 끝날 때까지 다시 읽는다.
+    await expect
+      .poll(async () => (await readFocusStyle(track)).boxShadow, { message: '스위치 알약(track)에 3px 포커스 링이 없다 (WD-924)' })
+      .toContain('0px 0px 0px 3px');
   });
 
   test('작업 상세의 개요·모니터링·실행 이력 탭이 32×32 이상이다', async ({ authenticatedPage: page }) => {
