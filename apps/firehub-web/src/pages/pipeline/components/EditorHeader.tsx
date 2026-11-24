@@ -21,7 +21,7 @@ import { useEditModeFocus } from '@/hooks/useEditModeFocus';
 import { syncOverflowTitle } from '@/lib/overflow-title';
 
 import type { EditorAction,PipelineEditorState } from '../hooks/usePipelineEditor';
-import { PIPELINE_NAME_REQUIRED_MESSAGE } from '../hooks/usePipelineValidation';
+import { isPipelineNameBlank, PIPELINE_NAME_REQUIRED_MESSAGE } from '../hooks/usePipelineValidation';
 import type { ExecutionCancelState } from '../utils/execution-cancel';
 
 interface EditorHeaderProps {
@@ -84,8 +84,9 @@ export function EditorHeader({
   const { canExecutePipeline, canWritePipeline } = usePipelinePermissions();
   // 「수정」으로 이름 칸이 편집 가능해지면 그 칸으로, 「취소」·「저장」 뒤에는 「수정」 버튼으로 포커스를 옮긴다(WD-415)
   const { editButtonRef, editRegionRef } = useEditModeFocus(isEditing);
-  // 편집 중 이름이 비었으면(공백만도 비어 있음) 이름 칸 아래에 입력 안내를 보인다(WD-812)
-  const showNameHint = !readOnly && !state.name.trim();
+  // 편집 중 이름이 비었으면(공백만도 비어 있음) 이름 칸 아래에 입력 안내를 보인다(WD-812).
+  // 저장 버튼·「저장 후 실행」도 이 값으로 끈다 — 저장 검증과 같은 판정(isPipelineNameBlank)이라 안내·버튼·검증이 어긋나지 않는다(WD-1090)
+  const showNameHint = !readOnly && isPipelineNameBlank(state.name);
 
   function handleExecuteClick() {
     if (state.isDirty) {
@@ -277,11 +278,20 @@ export function EditorHeader({
                   <AlertDialogTitle>저장하지 않은 변경사항</AlertDialogTitle>
                   <AlertDialogDescription>
                     저장하지 않은 변경사항이 있습니다. 저장 후 실행하시겠습니까?
+                    {/* WD-1090: 「저장 후 실행」을 끄는 이유를 창 설명 안에 둔다 — 창이 열릴 때 설명과 함께 읽힌다 */}
+                    {showNameHint && (
+                      <span className="mt-2 block text-destructive">
+                        {PIPELINE_NAME_REQUIRED_MESSAGE}
+                      </span>
+                    )}
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
                   <AlertDialogCancel>취소</AlertDialogCancel>
-                  <AlertDialogAction onClick={handleSaveAndExecute}>
+                  <AlertDialogAction
+                    onClick={handleSaveAndExecute}
+                    disabled={showNameHint}
+                  >
                     저장 후 실행
                   </AlertDialogAction>
                 </AlertDialogFooter>
@@ -322,7 +332,8 @@ export function EditorHeader({
           <Button
             ref={saveButtonRef}
             onClick={onSave}
-            disabled={!state.isDirty || isSaving}
+            disabled={!state.isDirty || isSaving || showNameHint}
+            aria-describedby={showNameHint ? 'pipeline-name-hint' : undefined}
           >
             <Save className="h-4 w-4" />
             <span className="sr-only sm:not-sr-only">저장</span>
