@@ -227,13 +227,24 @@ test.describe('사용 중 세션 만료 안내 (WD-830)', () => {
       void dialog.dismiss();
     });
     const refresh = watchRefresh(page);
-    // 사용 중 만료 — 모든 API 401, refresh 도 401
-    await page.route('**/api/v1/**', (route) =>
-      route.request().url().includes('/auth/signup-status') || route.request().url().includes('/auth/logout')
-        ? route.fallback()
-        : route.fulfill({ status: 401, contentType: 'application/json', body: '{}' }),
-    );
-    await mockApi(page, 'POST', REFRESH_URL, {}, { status: 401 });
+    // 사용 중 만료 — 모든 API 401, refresh 도 401.
+    // 첫 refresh 401(=만료) 뒤로는 API 를 네트워크 오류로 끊는다. react-query 재시도(1회·1초 뒤, src/main.tsx)가
+    // 다시 401→refresh 401 로 두 번째 자동 만료 이동을 일으키면, 가드를 푼 뒤 로그아웃을 누르기 전에
+    // 그 이동이 먼저 /login 으로 보내 버리는 겨루기가 생긴다(WD-1078).
+    // (끊기 전에 401 을 이미 받은 요청은 refresh 를 한 번 더 시작할 수 있지만, 수 ms 안이라 가드가 켜진 동안이어서
+    //  취소되는 확인 창이 하나 더 뜰 뿐이다 — 그래서 dialogs 는 >= 1 로 본다.)
+    let sessionGone = false;
+    await page.route('**/api/v1/**', (route) => {
+      const url = route.request().url();
+      if (url.includes('/auth/signup-status') || url.includes('/auth/logout')) return route.fallback();
+      if (sessionGone) return route.abort();
+      return route.fulfill({ status: 401, contentType: 'application/json', body: '{}' });
+    });
+    // catch-all 뒤에 등록해야 refresh 요청에 이 라우트가 먼저 걸린다(Playwright 는 나중에 등록한 라우트부터 확인)
+    await page.route(`**${REFRESH_URL}`, (route) => {
+      sessionGone = true;
+      return route.fulfill({ status: 401, contentType: 'application/json', body: '{}' });
+    });
     const goTo = (path: string) =>
       page.evaluate((p) => {
         history.pushState({}, '', p);
@@ -247,6 +258,10 @@ test.describe('사용 중 세션 만료 안내 (WD-830)', () => {
     await expect(page).not.toHaveURL(/\/login$/);
 
     // 직접 로그아웃 — 다시 이동하고, 앞선 만료 안내는 남지 않는다
+    // 지울 안내가 실제로 있어야 아래 「안내 없음」 단언이 의미 있다(헛통과 방지, WD-1078)
+    expect(await page.evaluate(() => sessionStorage.getItem('loginNotice'))).toBe(EXPIRED_TEXT);
+    // 가드를 풀기 전에 시작된 refresh 가 모두 끝났는지 본다 — 끝나지 않은 refresh 가 가드 뒤에 만료 이동을 하지 않게(WD-1078)
+    await expect.poll(() => refresh.requested - refresh.settled).toBe(0);
     await page.evaluate(() => {
       window.removeEventListener('beforeunload', (window as unknown as { __guard: EventListener }).__guard);
     });
