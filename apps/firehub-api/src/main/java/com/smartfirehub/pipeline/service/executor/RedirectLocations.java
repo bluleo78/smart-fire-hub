@@ -10,7 +10,8 @@ import java.util.regex.Pattern;
 
 /**
  * 리다이렉트 Location 을 지금 요청 기준 절대 주소로 푼다(WD-676) — RFC 3986 §5.2.2(참조 해석)·§5.2.3(merge)·§5.2.4(점 구간
- * 제거)를 raw 구성요소 그대로 따른다.
+ * 제거)를 raw 구성요소 그대로 따른다. 다만 상대 경로 병합에서는 Python urljoin 처럼 가운데 빈 구간을 버린다(WD-1060 — RFC 3986
+ * 이면 {@code a//b} 가 {@code /v1/a//b} 이지만 urljoin 은 {@code /v1/a/b}). 스킴은 글자로 시작할 때만 인정한다(WD-1060).
  *
  * <p><b>왜 {@link URI#resolve(String)} 를 쓰지 않는가.</b> JDK 의 resolve 는 RFC 2396 기준이라 (1) path 가 빈
  * base({@code https://api.example.com?k=v})에 슬래시 없는 상대 경로({@code items})를 붙이면 {@code
@@ -27,9 +28,14 @@ import java.util.regex.Pattern;
  */
 public final class RedirectLocations {
 
-  /** RFC 3986 부록 B 의 구성요소 분해 정규식 — 스킴·authority·경로·쿼리·프래그먼트. */
+  /**
+   * RFC 3986 부록 B 의 구성요소 분해 정규식 — 스킴·authority·경로·쿼리·프래그먼트. 스킴 그룹만 부록 B 의 {@code [^:/?#]+} 대신
+   * 글자로 시작하는 스킴 문법으로 좁혔다(WD-1060) — Python urlsplit 처럼 「1x:」「+x:」「:foo」 는 스킴이 아니라 경로 첫 구간이고,
+   * 그 뒤 「//」 도 authority 가 아니라 경로다(「1x://evil.com/p」 는 base 호스트에 머문다).
+   */
   private static final Pattern URI_PARTS =
-      Pattern.compile("^(?:([^:/?#]+):)?(?://([^/?#]*))?([^?#]*)(?:\\?([^#]*))?(?:#(.*))?$");
+      Pattern.compile(
+          "^(?:([A-Za-z][A-Za-z0-9+.-]*):)?(?://([^/?#]*))?([^?#]*)(?:\\?([^#]*))?(?:#(.*))?$");
 
   /** 스킴({@code scheme:}) 부분 — Python urlsplit 의 스킴 판별과 같다. */
   private static final Pattern SCHEME_PREFIX = Pattern.compile("^([A-Za-z][A-Za-z0-9+.-]*):");
@@ -58,7 +64,8 @@ public final class RedirectLocations {
     Matcher scheme = SCHEME_PREFIX.matcher(cleaned);
     boolean keepRaw = false;
     boolean sameScheme = false;
-    if (scheme.find()) {
+    boolean hasScheme = scheme.find();
+    if (hasScheme) {
       sameScheme = scheme.group(1).equalsIgnoreCase(base.getScheme());
       keepRaw = hash < 0 && !sameScheme;
       // urlsplit 처럼 스킴은 소문자로 맞춘다.
@@ -69,11 +76,32 @@ public final class RedirectLocations {
       // 참조 자체가 URI 문법에 맞는지 먼저 본다(공백·한글 등) — 아래 문자열 조립은 문법을 검사하지 않는다.
       // base 와 같은 스킴이면 스킴을 뗀 나머지를 본다(WD-1028) — urljoin 은 같은 스킴을 떼고 풀며, 스킴만 있는 「https:」 는
       // JDK URI 가 문법 오류로 보지만 urljoin 에게는 빈 상대 참조(base 그대로)다.
-      new URI(sameScheme ? reference.substring(reference.indexOf(':') + 1) : reference);
+      String toCheck = sameScheme ? reference.substring(reference.indexOf(':') + 1) : reference;
+      if ((!hasScheme || sameScheme) && colonBeforeDelimiter(toCheck)) {
+        // 글자로 시작하지 않는 「1x:next」 는 스킴이 아니라 상대 경로다(WD-1060) — Python urlsplit 이 유효 스킴(SCHEME_PREFIX)이
+        // 아니면 경로로 보기 때문이다. 같은 스킴 접두를 뗀 나머지(「https:1x:next」→「1x:next」, 「https::foo」→「:foo」)도
+        // 같은 이유로 상대 경로다. 그런데 JDK URI 는 이를 잘못된 스킴으로 거절하므로, 「./」 를 앞에 붙여 경로로 검사한다
+        // (검사용일 뿐 — 결과 조립에는 원래 reference 를 쓴다).
+        toCheck = "./" + toCheck;
+      }
+      new URI(toCheck);
       return new URI(resolveString(base.toString(), reference));
     } catch (URISyntaxException e) {
       throw new ApiCallException(ApiCallErrorMessages.invalidRedirectLocation(), e);
     }
+  }
+
+  /**
+   * 첫 「/」·「?」·「#」 앞에 「:」 가 있는지(WD-1060) — 스킴처럼 보이는 접두가 있는지 본다. 「#」 은 방어용으로만 넣었다 — {@link
+   * #resolve} 가 프래그먼트를 이미 떼어 이 메서드에는 「#」 이 오지 않는다.
+   */
+  private static boolean colonBeforeDelimiter(String s) {
+    for (int i = 0; i < s.length(); i++) {
+      char c = s.charAt(i);
+      if (c == ':') return true;
+      if (c == '/' || c == '?' || c == '#') return false;
+    }
+    return false;
   }
 
   /**
@@ -107,7 +135,9 @@ public final class RedirectLocations {
   }
 
   /**
-   * 문자열 단위 RFC 3986 참조 해석(§5.2.2, 프래그먼트 포함) — 프래그먼트는 호출부 {@link #resolve} 가 뗀다.
+   * 문자열 단위 RFC 3986 참조 해석(§5.2.2, 프래그먼트 포함) — 프래그먼트는 호출부 {@link #resolve} 가 뗀다. 상대 경로 병합만은
+   * urljoin 처럼 가운데 빈 구간을 버린다(WD-1060, {@code resolveString("https://h/v1/items", "a//b")} 는 {@code
+   * https://h/v1/a/b}).
    *
    * <p>§5.2.2 의 non-strict 모드처럼 base 와 같은 스킴이고 authority 가 없는 참조({@code https:c})는 스킴을 떼고 상대 참조로
    * 푼다(WD-1028, Python urljoin 과 같게) — {@code resolveString("https://h/a/b", "https:c")} 는 {@code
@@ -143,7 +173,9 @@ public final class RedirectLocations {
           if (r.path.startsWith("/")) {
             path = removeDotSegments(r.path);
           } else {
-            path = removeDotSegments(merge(b, r.path));
+            // Python urljoin 은 상대 경로를 합칠 때 첫·끝을 뺀 가운데 빈 구간(「//」)을 버린 뒤 점 구간을 푼다(WD-1060).
+            // base 의 빈 구간도 같이 버린다. 절대 경로(「/a//b」)는 위 갈래라 빈 구간을 그대로 둔다.
+            path = removeDotSegments(dropEmptyMiddleSegments(merge(b, r.path)));
           }
           query = r.query;
         }
@@ -168,6 +200,19 @@ public final class RedirectLocations {
     }
     int slash = base.path.lastIndexOf('/');
     return slash >= 0 ? base.path.substring(0, slash + 1) + refPath : refPath;
+  }
+
+  /** 「/」 로 나눈 구간 중 첫·끝을 뺀 가운데 빈 구간을 버린다 — Python {@code segments[1:-1] = filter(None, segments[1:-1])} (WD-1060). */
+  private static String dropEmptyMiddleSegments(String path) {
+    // 빈 구간이 없으면(대부분의 Location) 나누지 않고 그대로 돌려준다.
+    if (path.indexOf("//") < 0) return path;
+    String[] seg = path.split("/", -1);
+    if (seg.length <= 2) return path;
+    StringBuilder sb = new StringBuilder(seg[0]);
+    for (int i = 1; i < seg.length - 1; i++) {
+      if (!seg[i].isEmpty()) sb.append('/').append(seg[i]);
+    }
+    return sb.append('/').append(seg[seg.length - 1]).toString();
   }
 
   /** §5.2.4 점 구간 제거 — 「.」「..」 구간을 지운다. 루트 위로 올라가는 「..」 는 버린다. */
