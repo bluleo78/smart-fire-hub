@@ -11,17 +11,36 @@ package com.smartfirehub.global.validation;
  * <p>만들기 DTO(차트·대시보드·저장 쿼리, WD-1081)도 {@code @NotBlank} 옆에 같은 값을 붙인다 —
  * {@code @NotBlank}(String.isBlank) 는 U+3000 은 거르지만 NBSP 계열(U+00A0·U+2007·U+202F)은 글자로 보아, 만들기에서 받은
  * 이름을 수정에서 거르는 어긋남이 생겼다. 이 값을 바꾸면 만들기·수정 검증이 함께 바뀐다.
+ *
+ * <p>{@code @NotBlank}(String.isBlank) 와 {@code (?U)\S} 는 Unicode White_Space 만 공백으로 보아, 폭 없는
+ * 문자(U+200B·U+2060·U+FEFF)만인 이름·SQL 이 글자로 통과했다(WD-1086) — {@code Cf} 도 제외한다. 이 값을 바꾸면 이름·SQL·프롬프트
+ * 검증이 함께 바뀐다.
  */
 public final class TextRules {
 
-  /** 유니코드 공백이 아닌 글자가 하나 이상 있다 — {@code @Pattern(regexp = HAS_TEXT)} 로 쓴다(null 은 통과). */
-  public static final String HAS_TEXT = "(?U)(?s).*\\S.*";
+  /** 유니코드 공백·Cf 가 아닌 글자가 하나 이상 있다 — {@code @Pattern(regexp = HAS_TEXT)} 로 쓴다(null 은 통과). */
+  public static final String HAS_TEXT = "(?U)(?s).*[^\\s\\p{Cf}].*";
 
   /** 이름이 {@link #HAS_TEXT} 를 어겼을 때의 문구 — 만들기·수정 DTO 가 같은 문구를 쓰게 한 곳에 둔다(WD-1081). */
   public static final String NAME_BLANK_MESSAGE = "이름을 비울 수 없습니다.";
 
   /** SQL 이 {@link #HAS_TEXT} 를 어겼을 때의 문구(WD-1081). */
   public static final String SQL_BLANK_MESSAGE = "SQL을 비울 수 없습니다.";
+
+  /**
+   * 폴더 이름이 {@link #HAS_TEXT_OR_EMPTY} 를 어겼을 때의 문구(WD-1086) — 선택 필드라 @Pattern 만 쓰는 folder 가 이 문구를
+   * 쓴다. "" 는 「값 없음」이라 통과하므로 거절되는 값은 공백·NBSP·Cf 만인 비어 있지 않은 값이다.
+   */
+  public static final String FOLDER_BLANK_MESSAGE = "폴더 이름을 비울 수 없습니다.";
+
+  /**
+   * 선택 필드용 — 빈 문자열은 「값 없음」이라 허용하고, 비어 있지 않으면서 공백·NBSP·Cf 만인 값만 거절한다(WD-1086).
+   *
+   * <p>update 의 folder "" 는 「폴더 없음」 신호(WD-197)라 통과해야 한다 — {@link #HAS_TEXT} 는 글자를 하나 이상 요구해 "" 를
+   * 거절한다. 끝을 {@code \A\z} 로 잡는 건 Java 정규식의 {@code $} 가 마지막 줄바꿈 앞에서도 맞아, "^$" 로는 "\n" 만인 값이 새어 들어가기
+   * 때문이다.
+   */
+  public static final String HAS_TEXT_OR_EMPTY = "(?U)(?s)(\\A\\z|.*[^\\s\\p{Cf}].*)";
 
   private TextRules() {}
 }

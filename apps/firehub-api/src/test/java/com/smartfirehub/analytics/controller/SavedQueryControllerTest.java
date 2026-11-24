@@ -717,4 +717,133 @@ class SavedQueryControllerTest {
                             "\u3000쿼리\u3000", "설명", "SELECT 1", null, "reports", false))))
         .andExpect(status().isCreated());
   }
+
+  /** WD-1086: 폭 없는 문자(Cf)만인 SQL 도 400 — @NotBlank(String.isBlank)가 Cf 는 글자로 본다. */
+  @Test
+  void createQuery_formatOnlySql_returns400() throws Exception {
+    for (String blank : new String[] {"\u200B", "\uFEFF", "\u200B\u200B"}) {
+      mockMvc
+          .perform(
+              post("/api/v1/analytics/queries")
+                  .header("Authorization", "Bearer test-token")
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(
+                      objectMapper.writeValueAsString(
+                          new CreateSavedQueryRequest("쿼리", "설명", blank, null, "reports", false))))
+          .andExpect(status().isBadRequest())
+          .andExpect(jsonPath("$.errors.sqlText").value("SQL을 비울 수 없습니다."));
+    }
+    verify(savedQueryService, never()).create(any(), anyLong());
+  }
+
+  /**
+   * WD-1086: 분석 실행·내보내기 확인 SQL 과 저장 쿼리 folder 는 @NotBlank 만 있어 공백만 값이 서비스(DB)까지 갔다. 공백만·NBSP·Cf 만이면
+   * 400 필드 오류로 막히고 서비스는 부르지 않는다. folder 는 선택 필드라 null 은 그대로 201.
+   */
+  @Test
+  void executeOrExportCheck_blankSql_orBlankFolder_returns400_nullFolderOk() throws Exception {
+    for (String blank : new String[] {"   ", "\u00A0", "\u200B"}) {
+      // "   " 은 @NotBlank 도 함께 어기므로 NotBlank 우선 순위로 그 문구가 먼저다(WD-1081 저장 쿼리 sqlText 와 같은 판정)
+      // NBSP·Cf 만이면 @NotBlank 를 지나므로 @Pattern(HAS_TEXT) 문구가 나온다
+      String sqlMessage = "   ".equals(blank) ? "필수 입력값입니다." : "SQL을 비울 수 없습니다.";
+      mockMvc
+          .perform(
+              post("/api/v1/analytics/queries/execute")
+                  .header("Authorization", "Bearer test-token")
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(
+                      objectMapper.writeValueAsString(new AnalyticsQueryRequest(blank, 100, true))))
+          .andExpect(status().isBadRequest())
+          .andExpect(jsonPath("$.errors.sql").value(sqlMessage));
+
+      mockMvc
+          .perform(
+              post("/api/v1/analytics/queries/export-check")
+                  .header("Authorization", "Bearer test-token")
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(objectMapper.writeValueAsString(new ExportCheckRequest(blank))))
+          .andExpect(status().isBadRequest())
+          .andExpect(jsonPath("$.errors.sql").value(sqlMessage));
+
+      mockMvc
+          .perform(
+              post("/api/v1/analytics/queries")
+                  .header("Authorization", "Bearer test-token")
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(
+                      objectMapper.writeValueAsString(
+                          new CreateSavedQueryRequest("쿼리", "설명", "SELECT 1", null, blank, false))))
+          .andExpect(status().isBadRequest())
+          .andExpect(jsonPath("$.errors.folder").value("폴더 이름을 비울 수 없습니다."));
+    }
+    verify(guardedSqlExecutor, never()).executeAnalytics(any(), any(), anyInt(), anyBoolean());
+    verify(guardedSqlExecutor, never()).judgeAnalytics(any(), any());
+    verify(savedQueryService, never()).create(any(), anyLong());
+
+    // folder null 은 선택 필드 — 그대로 만든다(선택값을 못 보내면 기존 호출부가 깨진다)
+    when(savedQueryService.create(any(CreateSavedQueryRequest.class), anyLong()))
+        .thenReturn(sampleQuery());
+    mockMvc
+        .perform(
+            post("/api/v1/analytics/queries")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    objectMapper.writeValueAsString(
+                        new CreateSavedQueryRequest("쿼리", "설명", "SELECT 1", null, null, false))))
+        .andExpect(status().isCreated());
+
+    // 수정(WD-1081 처럼) — folder 만 공백이면 400, 생략(null)은 통과
+    mockMvc
+        .perform(
+            put("/api/v1/analytics/queries/1")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    objectMapper.writeValueAsString(
+                        new UpdateSavedQueryRequest(null, null, null, null, "\u00A0", null))))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.folder").value("폴더 이름을 비울 수 없습니다."));
+  }
+
+  /**
+   * WD-1086(1 라운드): update 의 "" 는 「폴더 없음」 신호라 그대로 서비스까지 가야 한다 — null 은 "변경 없음"이라 "" 가 폴더를 비우는 유일한
+   * 길이다(WD-197, web 의 폴더 없음 select 도 '' 를 보낸다). "" 와 실텍스트 folder 는 통과, 공백만·NBSP·Cf 만은 위 시험이 400 으로
+   * 막는다.
+   */
+  @Test
+  void folderEmptyString_clearFolderPath_accepted() throws Exception {
+    // 생성: "" 와 앞뒤 공백이 낀 실텍스트 folder 는 그대로 201 — "" 는 저장 단계에서 null 로 비워진다
+    when(savedQueryService.create(any(CreateSavedQueryRequest.class), anyLong()))
+        .thenReturn(sampleQuery());
+    for (String folder : new String[] {"", " reports"}) {
+      mockMvc
+          .perform(
+              post("/api/v1/analytics/queries")
+                  .header("Authorization", "Bearer test-token")
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(
+                      objectMapper.writeValueAsString(
+                          new CreateSavedQueryRequest(
+                              "쿼리", "설명", "SELECT 1", null, folder, false))))
+          .andExpect(status().isCreated());
+    }
+
+    // 수정: "" 가 검증을 통과해 서비스에 실제로 도착해야 폴더를 비울 수 있다
+    when(savedQueryService.update(anyLong(), any(UpdateSavedQueryRequest.class), anyLong()))
+        .thenReturn(sampleQuery());
+    mockMvc
+        .perform(
+            put("/api/v1/analytics/queries/1")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    objectMapper.writeValueAsString(
+                        new UpdateSavedQueryRequest(null, null, null, null, "", null))))
+        .andExpect(status().isOk());
+    org.mockito.ArgumentCaptor<UpdateSavedQueryRequest> captor =
+        org.mockito.ArgumentCaptor.forClass(UpdateSavedQueryRequest.class);
+    verify(savedQueryService).update(eq(1L), captor.capture(), eq(1L));
+    assertThat(captor.getValue().folder()).isEmpty();
+  }
 }

@@ -23,7 +23,10 @@ public record CreateSavedQueryRequest(
             message = CreateSavedQueryRequest.SQL_TOO_LONG_MESSAGE)
         String sqlText,
     Long datasetId,
-    @Size(max = 100) String folder,
+    // WD-1086: 선택 필드라 null·"" 은 그대로("" 는 「폴더 없음」 신호, WD-197) — 공백만·NBSP·Cf 만인 값만 거절한다
+    @Size(max = 100)
+        @Pattern(regexp = TextRules.HAS_TEXT_OR_EMPTY, message = TextRules.FOLDER_BLANK_MESSAGE)
+        String folder,
     boolean isShared) {
 
   /**
