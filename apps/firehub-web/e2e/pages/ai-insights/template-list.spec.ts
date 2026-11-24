@@ -129,6 +129,10 @@ test.describe('리포트 양식 목록 페이지', () => {
       h2!.x + h2!.width <= btn!.x || btn!.x + btn!.width <= h2!.x ||
       h2!.y + h2!.height <= btn!.y || btn!.y + btn!.height <= h2!.y;
     expect(disjoint).toBe(true);
+    // 시험 이름대로 실제 가로 스크롤이 없음을 단언한다(WD-892 리뷰 후속).
+    // 앱 셸이 문서 루트를 잘라(h-dvh overflow-hidden) 페이지는 <main overflow-auto> 안에서 스크롤되므로 main 의 넘침을 잰다.
+    const overflow = await page.locator('main').evaluate((el) => el.scrollWidth - el.clientWidth);
+    expect(overflow).toBeLessThanOrEqual(0);
   });
 
   test('템플릿 추가 버튼 클릭 시 새 템플릿 페이지로 이동한다', async ({ authenticatedPage: page }) => {
