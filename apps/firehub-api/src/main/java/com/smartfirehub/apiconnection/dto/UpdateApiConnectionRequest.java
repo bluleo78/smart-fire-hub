@@ -11,7 +11,8 @@ import java.util.Map;
  * 생략(null)은 되지만 빈·공백만의 값으로는 바꿀 수 없다(WD-1080).
  */
 public record UpdateApiConnectionRequest(
-    @Size(max = 100) @Pattern(regexp = TextRules.HAS_TEXT, message = "이름을 비울 수 없습니다.") String name,
+    @Size(max = 100) @Pattern(regexp = TextRules.HAS_TEXT, message = TextRules.NAME_BLANK_MESSAGE)
+        String name,
     @Size(max = DescriptionLimits.MAX_LENGTH, message = DescriptionLimits.API_CONNECTION_TOO_LONG)
         String description,
     String authType,
