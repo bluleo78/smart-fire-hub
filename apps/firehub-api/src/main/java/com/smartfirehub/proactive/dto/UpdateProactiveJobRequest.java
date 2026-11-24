@@ -16,8 +16,8 @@ import java.util.Map;
  * <p>이름·프롬프트·config 의 상한은 생성 요청과 같다(WD-425 — 이유는 {@link CreateProactiveJobRequest}). 생략(null)은 "변경
  * 없음"이라 그대로 통과한다.
  *
- * <p>이름·프롬프트를 보냈다면 빈 문자열·공백(전각·NBSP 포함)만으로는 바꿀 수 없다(WD-1080, {@link TextRules#HAS_TEXT}). 생성 DTO 의
- * {@code @NotBlank} 는 전각·NBSP 를 공백으로 보지 않는다(WD-1081).
+ * <p>이름·프롬프트를 보냈다면 빈 문자열·공백(전각·NBSP·폭 없는 문자 포함)만으로는 바꿀 수 없다(WD-1080, {@link
+ * TextRules#HAS_TEXT}). 생성 DTO 도 같은 판정을 써서 이후 만든 값을 수정에서 거절하는 일이 없다(WD-1085·WD-1104).
  *
  * @param expectedUpdatedAt 편집을 시작할 때 읽은 작업의 {@code updatedAt}(WD-364 낙관적 잠금). 지금 저장된 값과 다르면 409
  *     EDIT_CONFLICT 로 거부한다. null 이면 비교하지 않는다(AI 도구·목록의 켜기 토글 등 기존 호출부, "내 변경으로 덮어쓰기").
@@ -26,12 +26,12 @@ public record UpdateProactiveJobRequest(
     @Size(
             max = CreateProactiveJobRequest.NAME_MAX_LENGTH,
             message = CreateProactiveJobRequest.NAME_TOO_LONG_MESSAGE)
-        @Pattern(regexp = TextRules.HAS_TEXT, message = "이름을 비울 수 없습니다.")
+        @Pattern(regexp = TextRules.HAS_TEXT, message = TextRules.NAME_BLANK_MESSAGE)
         String name,
     @Size(
             max = CreateProactiveJobRequest.PROMPT_MAX_LENGTH,
             message = CreateProactiveJobRequest.PROMPT_TOO_LONG_MESSAGE)
-        @Pattern(regexp = TextRules.HAS_TEXT, message = "프롬프트를 비울 수 없습니다.")
+        @Pattern(regexp = TextRules.HAS_TEXT, message = TextRules.PROMPT_BLANK_MESSAGE)
         String prompt,
     Long templateId,
     String cronExpression,

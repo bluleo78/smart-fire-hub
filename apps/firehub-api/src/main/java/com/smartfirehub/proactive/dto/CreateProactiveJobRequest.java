@@ -33,10 +33,12 @@ public record CreateProactiveJobRequest(
             message = CreateProactiveJobRequest.NAME_TOO_LONG_MESSAGE)
         @Pattern(regexp = TextRules.HAS_TEXT, message = TextRules.NAME_BLANK_MESSAGE)
         String name,
+    // 프롬프트도 이름처럼 NBSP·폭 없는 문자만인 값을 글자로 보지 않게 한다 — 수정(WD-1080)과 판정을 맞춘다(WD-1104).
     @NotBlank
         @Size(
             max = CreateProactiveJobRequest.PROMPT_MAX_LENGTH,
             message = CreateProactiveJobRequest.PROMPT_TOO_LONG_MESSAGE)
+        @Pattern(regexp = TextRules.HAS_TEXT, message = TextRules.PROMPT_BLANK_MESSAGE)
         String prompt,
     Long templateId,
     String cronExpression,

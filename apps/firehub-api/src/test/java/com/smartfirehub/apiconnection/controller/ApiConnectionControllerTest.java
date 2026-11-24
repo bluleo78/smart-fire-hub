@@ -545,7 +545,7 @@ class ApiConnectionControllerTest {
 
   /** NBSP 계열만인 이름의 만들기는 400 — 다듬으면 빈 이름이 되므로 서비스까지 가지 않는다(WD-1085). */
   @ParameterizedTest
-  @ValueSource(strings = {"\u00A0", "\u2007", "\u202F", "\u3000\u00A0"})
+  @ValueSource(strings = {"\u00A0", "\u2007", "\u202F", "\u3000\u00A0", "\u200B", "\u2060\uFEFF"})
   void create_blankUnicodeName_returns400(String name) throws Exception {
     CreateApiConnectionRequest request =
         new CreateApiConnectionRequest(

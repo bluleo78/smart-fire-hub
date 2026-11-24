@@ -26,6 +26,9 @@ public final class TextRules {
   /** 이름이 {@link #HAS_TEXT} 를 어겼을 때의 문구 — 만들기·수정 DTO 가 같은 문구를 쓰게 한 곳에 둔다(WD-1081). */
   public static final String NAME_BLANK_MESSAGE = "이름을 비울 수 없습니다.";
 
+  /** 프롬프트가 {@link #HAS_TEXT} 를 어겼을 때의 문구 — 스마트 작업 만들기·수정 DTO 가 같은 문구를 쓰게 한 곳에 둔다(WD-1104). */
+  public static final String PROMPT_BLANK_MESSAGE = "프롬프트를 비울 수 없습니다.";
+
   /** SQL 이 {@link #HAS_TEXT} 를 어겼을 때의 문구(WD-1081). */
   public static final String SQL_BLANK_MESSAGE = "SQL을 비울 수 없습니다.";
 
