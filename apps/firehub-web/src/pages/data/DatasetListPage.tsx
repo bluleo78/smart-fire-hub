@@ -206,7 +206,9 @@ export default function DatasetListPage() {
 
   /**
    * 아직 렌더에 오지 않은 변경까지 포함한 최신 주소 — 마지막 pending, 없으면 렌더에 온 주소.
-   * 실제 주소와 어긋나면(커밋 전 외부 이동) pending 을 비우는 부수 효과가 있으므로 이벤트 처리기에서만 부른다(렌더 중 호출 금지).
+   * 실제 주소와 어긋나면(커밋 전 외부 이동) pending 을 비우는 부수 효과가 있으므로 렌더 중에는 부르지 않는다.
+   * 호출처는 이벤트 처리기(필터·정렬 클릭)와 effect·비동기 뒤 호출(페이지 범위 보정 effect, handleDelete 의 await 뒤 page 보정)이다
+   * — 뒤의 둘은 사용자가 이미 떠난 주소 위에 쓸 수 있는 기존 결함이 있어 WD-1062 에서 다룬다.
    */
   const getLatestParams = useCallback(() => {
     const pending = pendingWritesRef.current;

@@ -20,6 +20,23 @@ test.describe('데이터셋 목록 — URL 동기화', () => {
     await mockApi(page, 'GET', '/api/v1/datasets', createPageResponse(datasets));
   }
 
+  /**
+   * setupCommon 과 같은 모킹에 목록 요청 주소를 모은다 — 화면 주소뿐 아니라 실제로 나간 조회 조건까지 단언하려고(WD-1061).
+   */
+  async function setupCapturingList(page: import('@playwright/test').Page) {
+    const urls: URL[] = [];
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', []);
+    await mockApi(page, 'GET', '/api/v1/datasets/tags', []);
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets',
+      (route) => {
+        urls.push(new URL(route.request().url()));
+        return route.fulfill({ json: createPageResponse(datasets) });
+      },
+    );
+    return urls;
+  }
+
   test('검색어 입력 시 URL 에 q 파라미터가 추가되고 새로고침 시 복원된다 (#94)', async ({
     authenticatedPage: page,
   }) => {
@@ -205,7 +222,7 @@ test.describe('데이터셋 목록 — URL 동기화', () => {
   test('즐겨찾기·사이드바 이동·임시 보기를 한 작업에서 누르면 favorite 이 되살아나지 않는다 (WD-1061)', async ({
     authenticatedPage: page,
   }) => {
-    await setupCommon(page);
+    const urls = await setupCapturingList(page);
 
     await page.goto('/data/datasets');
     await expect(page.getByRole('heading', { name: /데이터셋/ })).toBeVisible();
@@ -219,13 +236,19 @@ test.describe('데이터셋 목록 — URL 동기화', () => {
     const params = new URL(page.url()).searchParams;
     expect(params.get('showTemp')).toBe('1');
     expect(params.get('favorite')).toBeNull();
+
+    // 마지막 목록 요청도 임시 포함만 싣고 즐겨찾기 조건(favoriteOnly)은 빠져야 한다
+    await expect.poll(() => {
+      const last = urls[urls.length - 1];
+      return last ? [last.searchParams.get('includeTemp'), last.searchParams.get('favoriteOnly')] : null;
+    }).toEqual(['true', null]);
   });
 
   /** 이슈 WD-1061 — 같은 갈래를 정렬로: 사이드바 이동(정렬 없는 주소) 직후 임시 보기가 지운 sort 를 되살리지 않아야 한다. */
   test('정렬된 목록에서 사이드바 이동·임시 보기를 한 작업에서 누르면 sort 가 되살아나지 않는다 (WD-1061)', async ({
     authenticatedPage: page,
   }) => {
-    await setupCommon(page);
+    const urls = await setupCapturingList(page);
 
     await page.goto('/data/datasets?sort=name&order=asc');
     await expect(page.getByRole('heading', { name: /데이터셋/ })).toBeVisible();
@@ -239,6 +262,20 @@ test.describe('데이터셋 목록 — URL 동기화', () => {
     expect(params.get('showTemp')).toBe('1');
     expect(params.get('sort')).toBeNull();
     expect(params.get('order')).toBeNull();
+
+    // 마지막 목록 요청 — 임시 포함만 싣는다. 정렬은 화면에서 하므로(서버 정렬 조건 sortBy·sortDir 를 싣지 않는다)
+    // 요청에 정렬 조건이 끼지 않았는지와 즐겨찾기 조건이 없는지를 함께 본다
+    await expect.poll(() => {
+      const last = urls[urls.length - 1];
+      return last
+        ? [
+            last.searchParams.get('includeTemp'),
+            last.searchParams.get('favoriteOnly'),
+            last.searchParams.get('sortBy'),
+            last.searchParams.get('sortDir'),
+          ]
+        : null;
+    }).toEqual(['true', null, null, null]);
   });
 
   /**
