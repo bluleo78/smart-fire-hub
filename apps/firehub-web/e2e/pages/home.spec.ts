@@ -664,7 +664,7 @@ test.describe('홈 페이지', () => {
   /**
    * 회귀: 이슈 #62 — 섹션 헤딩(h2/h3)이 SR 네비게이션을 위해 존재해야 한다
    * - 수정 전: <h1>홈</h1> 단 1개만 존재 → SR이 섹션 점프 불가
-   * - 수정 후: 각 시각 섹션마다 h2/h3 존재 (시스템 건강 상태/주의 필요/퀵 액션/활동 피드 + 카드별 h3)
+   * - 수정 후: 각 시각 섹션마다 h2/h3 존재 (시스템 건강 상태/주의 필요/퀵 액션/최근 사용(WD-1071)/활동 피드 + 카드별 h3)
    * - WCAG SC 2.4.6 (Headings and Labels) 준수
    */
   test('각 섹션마다 시멘틱 헤딩(h2/h3)이 존재한다 (이슈 #62)', async ({ authenticatedPage: page }) => {
@@ -676,15 +676,47 @@ test.describe('홈 페이지', () => {
     // h2 — 페이지 1단계 섹션들 (sr-only 포함하여 accessible name으로 검증)
     await expect(page.getByRole('heading', { level: 2, name: '시스템 건강 상태' })).toBeAttached();
     await expect(page.getByRole('heading', { level: 2, name: '퀵 액션' })).toBeAttached();
+    await expect(page.getByRole('heading', { level: 2, name: '최근 사용' })).toBeAttached();
     await expect(page.getByRole('heading', { level: 2, name: '활동 피드' })).toBeAttached();
 
-    // h3 — ZONE 4 위젯 그리드 내 카드들 (대시보드/데이터셋은 항상 표시)
+    // h3 — 최근 사용(h2) 아래 카드들 (대시보드/데이터셋은 항상 표시, 순서는 WD-1071 시험)
     await expect(page.getByRole('heading', { level: 3, name: '최근 대시보드' })).toBeAttached();
     await expect(page.getByRole('heading', { level: 3, name: '최근 데이터셋' })).toBeAttached();
 
     // 헤딩 개수 sanity — 최소 6개(이전 1개 → 회귀 방지)
     const headingCount = await page.locator('h1, h2, h3').count();
     expect(headingCount).toBeGreaterThanOrEqual(6);
+  });
+
+  /**
+   * 회귀: WD-1071 — ZONE 4(최근 사용)에 자체 h2 가 없어 카드 h3 가 「퀵 액션」 h2 아래로 묶였다.
+   * - 수정 후: sr-only h2 「최근 사용」이 퀵 액션과 카드 h3 사이에 놓이고 region 이름으로 노출된다.
+   */
+  test('최근 사용 영역은 자체 h2 아래에 카드 h3 를 둔다 (WD-1071)', async ({ authenticatedPage: page }) => {
+    await page.goto('/');
+
+    // 기대 순서·단계: 퀵 액션(h2) < 최근 사용(h2) < 최근 대시보드(h3) < 최근 데이터셋(h3) < 활동 피드(h2)
+    const expected = [
+      { text: '퀵 액션', level: 'H2' },
+      { text: '최근 사용', level: 'H2' },
+      { text: '최근 대시보드', level: 'H3' },
+      { text: '최근 데이터셋', level: 'H3' },
+      { text: '활동 피드', level: 'H2' },
+    ];
+    // 순서를 한 번에 읽으므로, 비교할 제목이 모두 그려진 뒤 읽는다(늦게 그려진 제목이 빠지지 않게)
+    for (const { text } of expected) {
+      await expect(page.getByRole('heading', { name: text, exact: true })).toBeAttached();
+    }
+    const names = expected.map((h) => h.text);
+    const headings = await page.locator('h1, h2, h3').evaluateAll((els) =>
+      els.map((el) => ({ text: (el.textContent ?? '').trim(), level: el.tagName })),
+    );
+    // 문서 순서대로 걸러 한 번에 비교 — 빠지거나 순서·단계가 다르면 실패한다
+    expect(headings.filter((h) => names.includes(h.text))).toEqual(expected);
+
+    await expect(
+      page.getByRole('region', { name: '최근 사용' }).getByRole('heading', { level: 3, name: '최근 대시보드' }),
+    ).toBeVisible();
   });
 
   /**

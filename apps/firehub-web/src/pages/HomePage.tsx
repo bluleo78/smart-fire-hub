@@ -452,15 +452,17 @@ export default function HomePage() {
           넓어져 「전체 보기」·시각·배지가 잘렸다. 바깥·안쪽 그리드 모두 grid-cols-1(minmax(0,1fr))로 칸 최소 너비를 0 으로 둬 칸 폭 안에
           가두고 이름은 말줄임한다. 좁은 카드에서는 머리줄의 「총 N개·전체 보기」가 다음 줄로 내려간다. */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
-        {/* ZONE 4 — 최근 사용 (좌측 3cols, 2x2 위젯 그리드) */}
-        <div className="lg:col-span-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+        {/* ZONE 4 — 최근 사용 (좌측 3cols, 2x2 위젯 그리드)
+            WD-1071: 자체 h2 가 없어 카드 h3 가 「퀵 액션」 h2 아래로 묶였다. section + sr-only h2 로 영역을 분리한다(시각 불변). */}
+        <section aria-labelledby="home-recent-heading" className="lg:col-span-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <h2 id="home-recent-heading" className="sr-only">최근 사용</h2>
           {/* 최근 대시보드 */}
           <Card className="py-2 gap-1 flex flex-col card-hover">
             <CardHeader className="px-3 pb-0">
               <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
                 <CardTitle className="text-sm font-semibold flex items-center gap-2">
                   <LayoutDashboard className="h-4 w-4 text-muted-foreground" />
-                  {/* h3: ZONE 4 위젯 그리드 내 하위 섹션 헤딩 */}
+                  {/* h3: 최근 사용(h2) 아래 하위 섹션 헤딩 (WD-1071) */}
                   <h3 className="text-sm font-semibold m-0">최근 대시보드</h3>
                 </CardTitle>
                 <div className="flex items-center gap-2">
@@ -639,7 +641,7 @@ export default function HomePage() {
               </CardContent>
             </Card>
           )}
-        </div>
+        </section>
 
         {/* ZONE 5 — 활동 피드 (우측 2cols) */}
         <Card className="lg:col-span-2 py-2 gap-1 flex flex-col card-hover">
