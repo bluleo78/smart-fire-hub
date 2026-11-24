@@ -39,6 +39,7 @@ import type { PipelineStepResponse } from '@/types/pipeline';
 
 import { useErrorFieldFocus } from '../hooks/useErrorFieldFocus';
 import type { EditorAction, EditorStep,PipelineEditorState } from '../hooks/usePipelineEditor';
+import { isUnnamedStep, stepDisplayName } from '../utils/step-display-name';
 import DatasetCombobox from './DatasetCombobox';
 import { IncrementalProcessingSection } from './IncrementalProcessingSection';
 // 타입만 가져온다 — 편집기 청크는 아래 lazy 로 계속 지연 로드된다
@@ -428,7 +429,11 @@ export default function StepConfigPanel({
     >
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b shrink-0">
-        <span className="font-medium text-sm truncate">스텝 #{stepNumber}: {step.name || '(이름 없음)'}</span>
+        {/* 이름이 없으면(공백뿐 포함) 「스텝 #n」만 — 캔버스와 같은 판정(WD-1059) */}
+        <span className="font-medium text-sm truncate" data-testid="step-config-panel-title">
+          스텝 #{stepNumber}
+          {!isUnnamedStep(step.name) && `: ${step.name}`}
+        </span>
         {/* 아이콘만 있는 버튼 — aria-label 로 접근 이름(WCAG 4.1.2, WD-917) */}
         <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" onClick={handleClose} aria-label="스텝 설정 패널 닫기">
           <X className="h-4 w-4" />
@@ -576,7 +581,8 @@ export default function StepConfigPanel({
                           className="inline-flex items-center rounded px-1.5 py-0.5 text-xs font-mono font-semibold border transition-colors hover:bg-accent bg-ai-accent-subtle border-ai-accent/30 text-ai-accent"
                           title={`클릭하여 {{#${number}}} 삽입`}
                         >
-                          {`{{#${number}}}`} {s.name || '(이름 없음)'}
+                          {/* 이름이 없으면 캔버스와 같은 「스텝 #n」(WD-1059) */}
+                          {`{{#${number}}}`} {stepDisplayName(s.name, number - 1)}
                         </button>
                       ))}
                     </div>
@@ -810,7 +816,8 @@ export default function StepConfigPanel({
                 {tempDependencySteps.length > 0 && (
                   <p className="text-xs text-muted-foreground">
                     이전 스텝의 출력 데이터셋이 실행 시 자동으로 입력됩니다:
-                    {' '}{tempDependencySteps.map((s) => s.name).join(', ')}
+                    {/* 이름 없는 의존 스텝도 빈칸이 아니라 캔버스와 같은 「스텝 #n」으로 적는다(WD-1059) */}
+                    {' '}{tempDependencySteps.map((s) => stepDisplayName(s.name, state.steps.indexOf(s))).join(', ')}
                   </p>
                 )}
               </div>
@@ -837,9 +844,11 @@ export default function StepConfigPanel({
                 <p className="text-sm text-muted-foreground">(없음)</p>
               ) : (
                 step.dependsOnTempIds.map((depId) => {
-                  const depStep = state.steps.find((s) => s.tempId === depId);
+                  // 순번이 필요해 findIndex 로 한 번만 찾는다 — 이름이 없으면 캔버스와 같이 「스텝 #n」(n = 편집기 안 순번)(WD-1059)
+                  const depIndex = state.steps.findIndex((s) => s.tempId === depId);
+                  const depStep = depIndex >= 0 ? state.steps[depIndex] : undefined;
                   // 화면 글자와 버튼 이름이 같은 대상을 가리키도록 한 번만 정한다
-                  const depName = depStep ? depStep.name || '(이름 없음)' : '(알 수 없음)';
+                  const depName = depStep ? stepDisplayName(depStep.name, depIndex) : '(알 수 없음)';
                   return (
                     <div key={depId} className="flex items-center justify-between gap-2 text-sm">
                       <span className="min-w-0 truncate">→ {depName}</span>

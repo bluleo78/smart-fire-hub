@@ -107,7 +107,7 @@ test.describe('파이프라인 에디터 — 스텝 설정', () => {
     await page.goto('/pipelines/new');
 
     await clickToolbarAddStep(page);
-    const header = page.getByText(/^스텝 #1:/);
+    const header = page.getByTestId('step-config-panel-title').filter({ hasText: /^스텝 #1(:|$)/ });
     await expect(header).toBeVisible({ timeout: 10000 });
 
     // 패널 루트 — 전용 data-testid 로 구조 변화에 흔들리지 않게 잡는다
@@ -173,7 +173,7 @@ test.describe('파이프라인 에디터 — 스텝 설정', () => {
 
   // 패널 안에 이름 없는 button(스냅샷 줄이 `- button` 또는 `- button:` 뿐인 것)이 있는지 판정 — WD-917 과 같은 방식
   // 패널 본문 — 머리글(「스텝 #N: …」 + 닫기 버튼) 바로 다음 형제. 닫기 버튼 이름은 WD-917 몫이라 본문만 보고, 이 브랜치엔 그 data-testid 도 없어 구조로 잡는다
-  const stepPanel = (page: Page) => page.getByText(/^스텝 #1:/).locator("xpath=../following-sibling::*[1]");
+  const stepPanel = (page: Page) => page.getByTestId('step-config-panel-title').locator("xpath=../following-sibling::*[1]");
   const NAMELESS_BUTTON = /^\s*- button\s*(\[[^\]]*\])?:?\s*$/m;
 
   test('AI 분류 스텝 — 출력 컬럼 휴지통이 줄마다 다른 이름을 갖고 이름 없는 버튼이 없다 (WD-1043)', async ({
@@ -548,5 +548,75 @@ test.describe('파이프라인 에디터 — 스텝 설정', () => {
     }
     await expect(batchB).toHaveValue('20');
     await expect(batchB).not.toHaveAttribute('aria-invalid', 'true');
+  });
+
+  /**
+   * 스텝 3개 체인(#1 이름 비움 → #2 이름 공백뿐 → #3)을 만든다 — 노드의 「다음 스텝 추가」로 이어 만들어 각 스텝이 앞 스텝에 의존한다 (WD-1059).
+   * 끝나면 #3 패널이 열려 있다.
+   */
+  async function buildUnnamedChain(page: Page) {
+    await setupNewEditorMocks(page);
+    await page.goto('/pipelines/new');
+    await clickToolbarAddStep(page);
+    const nodes = page.locator('.react-flow__node');
+    await nodes.nth(0).getByRole('button', { name: '다음 스텝 추가' }).click();
+    await expect(nodes).toHaveCount(2);
+    await page.locator('#step-name').fill('   ');
+    await nodes.nth(1).getByRole('button', { name: '다음 스텝 추가' }).click();
+    await expect(nodes).toHaveCount(3);
+    await expect(page.getByTestId('step-config-panel-title')).toHaveText('스텝 #3');
+  }
+
+  test('이름 없는 스텝을 설정 패널도 캔버스처럼 「스텝 #n」으로 부른다 — 의존성·참조 버튼·입력 안내 (WD-1059)', async ({
+    authenticatedPage: page,
+  }) => {
+    await buildUnnamedChain(page);
+    const panel = page.getByTestId('step-config-panel');
+
+    // #3 의존성 — 이름이 비거나 공백뿐인 #2 를 「스텝 #2」로 부르고 연결 끊기 버튼 이름도 같다
+    const deps = panel.getByRole('group', { name: '의존성' });
+    await expect(deps.getByText('→ 스텝 #2')).toBeVisible();
+    await expect(deps.getByRole('button', { name: '스텝 #2 연결 끊기' })).toBeVisible();
+
+    // SQL 스텝 참조 버튼 — 선행 스텝 #1·#2
+    await expect(panel.getByRole('button', { name: '{{#1}} 스텝 #1' })).toBeVisible();
+    await expect(panel.getByRole('button', { name: '{{#2}} 스텝 #2' })).toBeVisible();
+
+    // 입력 안내 문단이 의존 스텝을 빈칸이 아니라 「스텝 #2」로 적는다
+    await expect(panel.getByText('이전 스텝의 출력 데이터셋이 실행 시 자동으로 입력됩니다')).toContainText('스텝 #2');
+
+    // #2 패널 — 이름이 빈 #1 에 의존
+    await page.locator('.react-flow__node').nth(1).click();
+    await expect(page.getByTestId('step-config-panel-title')).toHaveText('스텝 #2');
+    const deps2 = panel.getByRole('group', { name: '의존성' });
+    await expect(deps2.getByText('→ 스텝 #1')).toBeVisible();
+    await expect(deps2.getByRole('button', { name: '스텝 #1 연결 끊기' })).toBeVisible();
+    await expect(panel.getByText('이전 스텝의 출력 데이터셋이 실행 시 자동으로 입력됩니다')).toContainText('스텝 #1');
+
+    // 패널 안 어디에도 「(이름 없음)」이 없다
+    await expect(panel.getByText('(이름 없음)')).toHaveCount(0);
+  });
+
+  test('설정 패널 머리는 이름이 없으면 「스텝 #n」, 있으면 「스텝 #n: 이름」이다 (WD-1059)', async ({
+    authenticatedPage: page,
+  }) => {
+    await buildUnnamedChain(page);
+    const title = page.getByTestId('step-config-panel-title');
+    await expect(title).toHaveText('스텝 #3');
+    await page.locator('#step-name').fill('적재');
+    await expect(title).toHaveText('스텝 #3: 적재');
+  });
+
+  test('의존 스텝에 이름이 있으면 의존성·연결 끊기 버튼이 그 이름을 쓴다 (WD-1059)', async ({
+    authenticatedPage: page,
+  }) => {
+    await buildUnnamedChain(page);
+    // #2 에 이름을 주고 #3 패널로 돌아온다
+    await page.locator('.react-flow__node').nth(1).click();
+    await page.locator('#step-name').fill('원본');
+    await page.locator('.react-flow__node').nth(2).click();
+    const deps = page.getByTestId('step-config-panel').getByRole('group', { name: '의존성' });
+    await expect(deps.getByText('→ 원본')).toBeVisible();
+    await expect(deps.getByRole('button', { name: '원본 연결 끊기' })).toBeVisible();
   });
 });

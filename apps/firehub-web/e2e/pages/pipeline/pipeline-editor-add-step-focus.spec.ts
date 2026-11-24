@@ -35,7 +35,7 @@ test.describe('파이프라인 에디터 — 스텝 추가 후 포커스 (WD-545
     await page.keyboard.press('Enter');
 
     // 새 스텝(#1)의 설정 패널이 열리고 이름 입력이 포커스를 받는다 — body 로 떨어지지 않는다
-    await expect(page.getByText('스텝 #1:')).toBeVisible();
+    await expect(page.getByTestId('step-config-panel-title').filter({ hasText: /^스텝 #1(:|$)/ })).toBeVisible();
     const stepName = page.locator('#step-name');
     await expect(stepName).toBeFocused();
     expect(await page.evaluate(() => document.activeElement?.tagName)).not.toBe('BODY');
@@ -60,7 +60,7 @@ test.describe('파이프라인 에디터 — 스텝 추가 후 포커스 (WD-545
 
     // 세 번째(새) 스텝이 선택되고 그 이름 입력(빈 값)에 포커스가 있다
     await expect(page.locator('.react-flow__node')).toHaveCount(3);
-    await expect(page.getByText('스텝 #3:')).toBeVisible();
+    await expect(page.getByTestId('step-config-panel-title').filter({ hasText: /^스텝 #3(:|$)/ })).toBeVisible();
     const stepName = page.locator('#step-name');
     await expect(stepName).toBeFocused();
     await expect(stepName).toHaveValue('');
