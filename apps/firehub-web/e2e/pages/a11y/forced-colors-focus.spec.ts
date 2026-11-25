@@ -7,6 +7,10 @@ import {
   createDatasets,
 } from '../../factories/dataset.factory';
 import { createPropertyReviewItem } from '../../factories/reviewItem.factory';
+import {
+  mockProactivePermissions,
+  setupJobListMocks,
+} from '../../fixtures/ai-insight.fixture';
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import {
@@ -731,4 +735,50 @@ test.describe('고대비 모드 전역 초점 표시 (WD-949)', () => {
       await expectNormalRing(page, t);
     });
   }
+});
+
+/** 스위치 키보드 초점 위치 (WD-1091) — 고대비에서 바깥선이 32×32 루트가 아니라 알약(track)에 그려지는지 본다. */
+test.describe('스위치 초점 바깥선 위치 (WD-1091)', () => {
+  /**
+   * 활동 목록의 첫 스위치에 키보드 초점을 준다 — Shift+Tab·Tab 왕복으로 :focus-visible 을 확정한다(WD-924 시험과 같은 방식).
+   * :focus-visible 이 아니면 「outline 없음」 단언이 공허하게 통과하므로 여기서 확인한다.
+   */
+  async function focusFirstSwitch(page: Page) {
+    await mockProactivePermissions(page);
+    await setupJobListMocks(page, 2);
+    await page.goto('/ai-insights/jobs');
+    const root = page.getByRole('switch').first();
+    await expect(root).toBeVisible();
+    await root.focus();
+    await page.keyboard.press('Shift+Tab');
+    await page.keyboard.press('Tab');
+    await expect(root).toBeFocused();
+    const rootFocus = await readFocusStyle(root);
+    expect(rootFocus.focusVisible, '스위치가 키보드 초점(:focus-visible) 상태가 아니다').toBe(true);
+    return { rootFocus, track: root.locator('[data-slot="switch-track"]') };
+  }
+
+  test('고대비 모드에서 스위치 초점 바깥선이 알약(track)에 그려진다', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.emulateMedia({ forcedColors: 'active' });
+    const { rootFocus, track } = await focusFirstSwitch(page);
+
+    expect(rootFocus.outlineStyle, '루트(32×32 원형 히트 상자)에 바깥선이 그려졌다 (WD-1091)').toBe('none');
+    // 고대비에서는 알약의 outline 전환을 꺼 초점 즉시 2px solid / offset 1px 이어야 한다 — poll 없이 바로 읽는다.
+    // 색은 고대비가 시스템 색으로 덮어써 단언하지 않는다.
+    const trackFocus = await readFocusStyle(track);
+    expect(
+      [trackFocus.outlineStyle, trackFocus.outlineWidth, trackFocus.outlineOffset],
+      '알약(track)에 2px solid / offset 1px 바깥선이 없다 (WD-1091)',
+    ).toEqual(['solid', '2px', '1px']);
+  });
+
+  test('보통 모드에서는 알약에 outline 이 없다(ring 만)', async ({ authenticatedPage: page }) => {
+    await page.emulateMedia({ forcedColors: 'none' });
+    const { track } = await focusFirstSwitch(page);
+    // WD-924 의 3px ring 은 그대로여야 한다 — toHaveCSS 가 전환이 끝날 때까지 다시 읽는다.
+    await expect(track, '알약(track)의 WD-924 ring 이 없다').toHaveCSS('box-shadow', /0px 0px 0px 3px/);
+    await expect(track, '보통 모드 알약에 outline 이 생겼다 (WD-1091)').toHaveCSS('outline-style', 'none');
+  });
 });

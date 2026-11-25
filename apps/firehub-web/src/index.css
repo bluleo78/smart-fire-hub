@@ -762,6 +762,17 @@ html {
   .maplibregl-ctrl-attrib-button:focus-visible {
     outline-offset: -2px;
   }
+  /* WD-1091: 스위치 루트는 32×32 원형 히트 상자라, 고대비에서 위 전역 outline 이 원 둘레에 그려진다(보통 모드 WD-924 ring 은
+   * box-shadow 라 고대비에서 안 보인다). 루트 outline 을 끄고 시각 알약에 그린다 — offset 1px 로 바깥 끝이 ring(3px)과 같다.
+   * 알약의 transition-all 이 outline 을 150ms 동안 키우지 않게 전환은 색으로만 좁힌다. 이 레이어 밖 블록 안에 둬야 전역 규칙을 이긴다. */
+  [data-slot='switch']:focus-visible {
+    outline: none;
+  }
+  [data-slot='switch']:focus-visible > [data-slot='switch-track'] {
+    outline: 2px solid CanvasText;
+    outline-offset: 1px;
+    transition-property: background-color, border-color;
+  }
 }
 
 /* ===== AI 마크다운 prose (#335) =====
