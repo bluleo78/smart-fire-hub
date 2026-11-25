@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { matchPath } from 'react-router-dom';
 
 import { authApi } from '../api/auth';
-import { abandonForSwitchedUser, AUTH_FLAG_KEY, claimUserLogout, clearSessionExpiredError, endSessionAndReloadToLogin, getAccessToken, isOtherSessionUser, refreshAccessTokenBestEffort, setAccessToken } from '../api/client';
+import { abandonForSwitchedUser, AUTH_FLAG_KEY, claimUserLogout, clearSessionExpiredError, endSessionAndReloadToLogin, getAccessToken, hasSessionEndedMarker, isOtherSessionUser, refreshAccessTokenBestEffort, setAccessToken } from '../api/client';
 import type { TenantSessionState } from '../api/tenant-session';
 import { subscribeTenantSession } from '../api/tenant-session';
 import { usersApi } from '../api/users';
@@ -163,7 +163,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       // 다른 탭의 로그아웃도 로그아웃이다 — 이 탭의 캐시·돌아갈 주소도 남기지 않는다(WD-276).
       // 토큰이 없는 탭(로그인·가입 화면 등)은 버릴 것이 없으니 리로드하지 않는다 — 입력 중인 폼을 지우지 않게.
-      if (getAccessToken() !== null) endSessionAndReloadToLogin();
+      // 토큰이 null 이어도 세션 끝 표식이 있으면 리로드한다 — 이유는 hasSessionEndedMarker JSDoc 참조(WD-1142).
+      if (getAccessToken() !== null || hasSessionEndedMarker()) endSessionAndReloadToLogin();
     };
     window.addEventListener('storage', handleStorage);
     return () => window.removeEventListener('storage', handleStorage);

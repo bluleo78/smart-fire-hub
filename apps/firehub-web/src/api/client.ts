@@ -107,6 +107,16 @@ let noticeOwner: 'auto' | 'user' | null = null;
 let sessionExpiredError: unknown = null;
 
 /**
+ * 세션 끝 표식이 켜져 있는지 (WD-1142) — refresh 401 만료와 사용자 바뀜 둘 다 이 표식을 켠다.
+ * 어느 쪽이든 남은 탭은 다른 탭의 로그아웃 때 /login 으로 가야 한다(공용 PC 에 앞 사람 화면이 남는 위험, WD-276).
+ * 사용자 바뀜으로 토큰을 버리고 남은 탭은 getAccessToken() 이 null 이라, 다른 탭 로그아웃 storage 핸들러가
+ * 토큰만 보면 리로드를 건너뛴다 — 표식도 함께 보게 하려고 읽기 전용으로 내보낸다.
+ */
+export function hasSessionEndedMarker(): boolean {
+  return sessionExpiredError !== null;
+}
+
+/**
  * 만료 이동을 마지막으로 건 화면(pathname) (WD-1082 반려).
  *
  * <p>표식이 켜진 뒤의 갱신 거절은 로그인 이동을 다시 건다 — 첫 이동이 떠나기 확인으로 취소돼 탭이 남아 있어도,

@@ -329,3 +329,19 @@ describe('isUserSwitchedError (WD-1122)', () => {
     expect(isUserSwitchedError('x')).toBe(false);
   });
 });
+
+describe('extractApiError 사용자 바뀜 (WD-1142)', () => {
+  it('UserSwitchedError 와 그것을 cause 로 가진 TokenRefreshError 는 안내 문구를 돌려준다', () => {
+    const msg = '다른 사용자로 로그인되어 화면을 다시 엽니다.';
+    expect(extractApiError(new UserSwitchedError(), '저장에 실패했습니다')).toBe(msg);
+    expect(extractApiError(new Error('x', { cause: new UserSwitchedError() }), '저장에 실패했습니다')).toBe(msg);
+  });
+
+  it('일반 Error 는 fallback 그대로', () => {
+    expect(extractApiError(new Error('x'), '저장에 실패했습니다')).toBe('저장에 실패했습니다');
+  });
+
+  it('extractApiErrorAsync 도 같은 안내를 돌려준다', async () => {
+    expect(await extractApiErrorAsync(new UserSwitchedError(), '실패')).toBe('다른 사용자로 로그인되어 화면을 다시 엽니다.');
+  });
+});

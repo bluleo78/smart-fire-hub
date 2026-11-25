@@ -10,7 +10,8 @@
 
 import type { Page } from '@playwright/test';
 
-import { expect, test } from '../../fixtures/auth.fixture';
+import { mockApi } from '../../fixtures/api-mock';
+import { expect, jwtFor, MOCK_TOKEN_RESPONSE, test } from '../../fixtures/auth.fixture';
 
 /** AI 채팅 패널을 연다 (사이드 패널). */
 async function openChatPanel(page: Page) {
@@ -73,5 +74,25 @@ test.describe('AI 채팅 요청 거절 시 서버 오류 문구 표시 (WD-550)'
     await sendMessage(page, '안녕');
 
     await expect(page.getByText('오류: 요청을 처리하지 못했습니다 (HTTP 502)')).toBeVisible({ timeout: 5_000 });
+  });
+
+  // WD-1142: 스트림을 여는 요청의 갱신이 「다른 사용자 로그인」으로 끝나면 네트워크 실패가 아니라 바뀜 문구를 남긴다.
+  test('채팅 스트림 중 다른 사용자 로그인이 감지되면 네트워크 실패가 아니라 바뀜 문구를 남긴다 (WD-1142)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 이 탭의 사용자는 1 — 부팅 refresh 가 sub 1 토큰을 준다(client.ts 가 사용자를 알아보려면 JWT 모양이어야 한다)
+    await mockApi(page, 'POST', '/api/v1/auth/refresh', { ...MOCK_TOKEN_RESPONSE, accessToken: jwtFor('1') });
+    // 떠나기 확인(스트리밍 중 beforeunload)을 취소해 화면 재열기가 막힌 탭을 남긴다
+    page.on('dialog', (dialog) => void dialog.dismiss());
+    await mockChatRejected(page, 401, JSON.stringify({ status: 401, message: 'expired' }));
+    await openChatPanel(page);
+    // 공유 refresh 쿠키가 이제 다른 사용자(2)의 것이다 — 401 뒤 갱신이 sub 2 토큰을 돌려준다
+    await page.route('**/api/v1/auth/refresh', (route) =>
+      route.fulfill({ json: { ...MOCK_TOKEN_RESPONSE, accessToken: jwtFor('2') } }),
+    );
+    await sendMessage(page, '안녕');
+
+    await expect(page.getByText('오류: 다른 사용자로 로그인되어 화면을 다시 엽니다.')).toBeVisible({ timeout: 5_000 });
+    await expect(page.getByText('네트워크 연결에 실패했습니다')).toHaveCount(0);
   });
 });

@@ -10,7 +10,7 @@ import { uploadFiles } from '../../api/files';
 import { buildScreenContext, type ScreenEntityKind, type ScreenNameLookup } from '../../components/ai/screen-context';
 import { getInvalidationKeys } from '../../components/ai/widgets/invalidationMap';
 import { buildNavigationContext } from '../../components/ai/widgets/routes';
-import { isClientError, isForbiddenError, isNotFoundError } from '../../lib/api-error';
+import { extractApiError, isClientError, isForbiddenError, isNotFoundError } from '../../lib/api-error';
 import { registerLeaveBlocker } from '../../lib/unsaved-changes-guard-registry';
 import type { AIAttachment, AIMessage, AISession, AIStreamEvent, CanvasLayout } from '../../types/ai';
 import { dashboardDetailKey } from './useAnalytics';
@@ -568,9 +568,10 @@ export function useAIChat(options?: {
         // 사라지지 않도록 한다.
         // 서버가 HTTP 오류로 거절한 경우(WD-550)엔 네트워크 문구 대신 서버가 준 문구(검증 실패 등)를 보여 준다.
         // 문구가 없으면 상태 코드라도 알려 네트워크 장애로 오인하지 않게 한다.
+        // 사용자 바뀜(WD-1142)은 extractApiError 가 바뀜 문구로, 그 밖의 비-HTTP 실패는 네트워크 문구로 돌려준다.
         const errorContent = error instanceof AIChatHttpError
           ? `오류: ${error.serverMessage ?? `요청을 처리하지 못했습니다 (HTTP ${error.status})`}`
-          : '오류: 네트워크 연결에 실패했습니다. 다시 시도해주세요.';
+          : `오류: ${extractApiError(error, '네트워크 연결에 실패했습니다. 다시 시도해주세요.')}`;
         if (!messagesCommittedRef.current) {
           messagesCommittedRef.current = true;
           setMessages(prev => [...prev, userMessage, {

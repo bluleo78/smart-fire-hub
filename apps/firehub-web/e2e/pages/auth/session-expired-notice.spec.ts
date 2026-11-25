@@ -10,7 +10,7 @@ import type { Page } from '@playwright/test';
 
 import { setupAdminAuth, setupRoleDetailMocks } from '../../fixtures/admin.fixture';
 import { mockApi } from '../../fixtures/api-mock';
-import { expect, MOCK_TOKEN_RESPONSE, test } from '../../fixtures/auth.fixture';
+import { expect, jwtFor, MOCK_TOKEN_RESPONSE, test } from '../../fixtures/auth.fixture';
 import { setupSecurityLevelMocks } from '../../fixtures/security-level.fixture';
 
 const EXPIRED_TEXT = '세션이 만료되어 다시 로그인해 주세요';
@@ -215,12 +215,6 @@ async function expireSession(page: Page) {
   );
 }
 
-/** 이 파일 시험용 JWT — client.ts 의 readTokenSubject 가 읽는 모양(`헤더.base64url({"sub":"<id>"}).서명`)이다(WD-1122). */
-function jwtFor(sub: string) {
-  const payload = Buffer.from(JSON.stringify({ sub })).toString('base64url');
-  return `header.${payload}.sig`;
-}
-
 test.describe('사용 중 세션 만료 안내 (WD-830)', () => {
   test('사용 중 refresh 가 401 이면 로그인 화면에 만료 안내가 한 번 보인다', async ({ authenticatedPage: page }) => {
     await expireMidSession(page, { status: 401 });
@@ -254,55 +248,40 @@ test.describe('사용 중 세션 만료 안내 (WD-830)', () => {
   }
 
   test('로그아웃 때 떠나기 확인을 취소한 뒤 다시 로그아웃하면 로그인 화면으로 간다 (WD-830 리뷰)', async ({ authenticatedPage: page }) => {
-    await mockApi(page, 'POST', '/api/v1/auth/logout', {});
-    await page.goto('/');
-    await expect(page.getByRole('heading', { name: '홈' })).toBeVisible();
-    // 저장하지 않은 변경이 있는 화면(useUnsavedChangesGuard)처럼 떠나기 확인을 건다 — 첫 확인은 취소한다
-    await page.evaluate(() => {
-      const guard = (e: BeforeUnloadEvent) => {
-        e.preventDefault();
-        e.returnValue = '';
-      };
-      (window as unknown as { __guard: typeof guard }).__guard = guard;
-      window.addEventListener('beforeunload', guard);
-    });
+    // 실제 dirty 폼(레지스트리에 등록되는 가드)으로 떠나기 확인을 건다 (WD-1142) — 직접 단 beforeunload 리스너는 레지스트리에 없다.
+    // 첫 확인은 취소한다
+    await openRoleEditor(page);
+    await roleNameInput(page).fill('EDITOR_X');
     const dialogs = dismissDialogs(page);
     const logout = async () => {
-      await page.getByText('테스트 사용자', { exact: true }).click();
+      await page.getByText('관리자', { exact: true }).click();
       await page.getByRole('menuitem', { name: '로그아웃' }).click();
     };
 
     await logout();
     await expect.poll(() => dialogs.count).toBe(1);
     // 취소했으니 머문다
-    await expect(page).toHaveURL(/\/$/);
+    await expect(page).toHaveURL(/\/admin\/roles\/3$/);
 
     // 변경을 버린 셈으로 가드를 풀고 다시 로그아웃하면 이번에는 로그인 화면으로 간다 — 종료 표시가 남아 조용히 막히지 않는다
-    await page.evaluate(() => {
-      window.removeEventListener('beforeunload', (window as unknown as { __guard: EventListener }).__guard);
-    });
+    await roleNameInput(page).fill('EDITOR');
     // 취소로 남아 있을 수 있는 사용자 메뉴를 닫고 다시 연다
     await page.keyboard.press('Escape');
     await expect(page.getByRole('menu')).toHaveCount(0);
     await logout();
     await expectNoNotice(page);
     await expect(page).toHaveURL(/\/login$/);
+    // 확인 창은 처음 한 번뿐이다 — 가드를 푼 뒤 로그아웃은 확인 없이 간다 (WD-1142)
+    expect(dialogs.count).toBe(1);
   });
 
   test('만료 이동 때 떠나기 확인을 취소한 뒤 직접 로그아웃하면 만료 안내 없이 로그인 화면으로 간다 (WD-830 리뷰)', async ({
     authenticatedPage: page,
   }) => {
-    await mockApi(page, 'POST', '/api/v1/auth/logout', {});
-    await page.goto('/');
-    await expect(page.getByRole('heading', { name: '홈' })).toBeVisible();
-    await page.evaluate(() => {
-      const guard = (e: BeforeUnloadEvent) => {
-        e.preventDefault();
-        e.returnValue = '';
-      };
-      (window as unknown as { __guard: typeof guard }).__guard = guard;
-      window.addEventListener('beforeunload', guard);
-    });
+    // 실제 dirty 폼(레지스트리에 등록되는 가드)으로 시험한다 (WD-1142) — 직접 단 beforeunload 리스너는 레지스트리에 없어
+    // 가드로 보이지 않으므로 같은 화면 배경 요청이 이동을 다시 거는 경로까지 실제로 닫혔는지 확인되지 않았다.
+    await openRoleEditor(page);
+    await roleNameInput(page).fill('EDITOR_X');
     const dialogs = dismissDialogs(page);
     const refresh = watchRefresh(page);
     // 사용 중 만료 — 모든 API 401, refresh 도 401.
@@ -325,14 +304,10 @@ test.describe('사용 중 세션 만료 안내 (WD-830)', () => {
       sessionGone = true;
       return route.fulfill({ status: 401, contentType: 'application/json', body: '{}' });
     });
-    const goTo = (path: string) =>
-      page.evaluate((p) => {
-        history.pushState({}, '', p);
-        window.dispatchEvent(new PopStateEvent('popstate'));
-      }, path);
 
-    await goTo('/data/datasets');
-    await expect.poll(() => dialogs.count).toBeGreaterThanOrEqual(1);
+    // 저장 — 401 → 갱신도 401 → 만료 이동의 떠나기 확인이 뜬다. 취소했으니 그 화면에 남는다.
+    await roleInfoSave(page).click();
+    await expect.poll(() => dialogs.count).toBe(1);
     await expect.poll(() => refresh.settled).toBeGreaterThanOrEqual(1);
     // 취소했으니 머문다 — 만료 안내는 이미 맡겨져 있다
     await expect(page).not.toHaveURL(/\/login$/);
@@ -340,13 +315,14 @@ test.describe('사용 중 세션 만료 안내 (WD-830)', () => {
     // 직접 로그아웃 — 다시 이동하고, 앞선 만료 안내는 남지 않는다
     // 지울 안내가 실제로 있어야 아래 「안내 없음」 단언이 의미 있다(헛통과 방지, WD-1078)
     expect(await page.evaluate(() => sessionStorage.getItem('loginNotice'))).toBe(EXPIRED_TEXT);
-    await page.evaluate(() => {
-      window.removeEventListener('beforeunload', (window as unknown as { __guard: EventListener }).__guard);
-    });
-    await page.getByText('테스트 사용자', { exact: true }).click();
+    // 변경을 버려(처음 값으로 되돌려) 가드를 푼다
+    await roleNameInput(page).fill('EDITOR');
+    await page.getByText('관리자', { exact: true }).click();
     await page.getByRole('menuitem', { name: '로그아웃' }).click();
     await expect(page).toHaveURL(/\/login$/);
     await expectNoNotice(page);
+    // 확인 창은 처음 한 번뿐이다 — 실제 폼에서도 두 번 뜨지 않는다 (WD-1142)
+    expect(dialogs.count).toBe(1);
   });
 
   test('세션 만료 뒤 재시도로 떠나기 확인이 다시 뜨지 않는다 (WD-1082)', async ({ authenticatedPage: page }) => {
@@ -375,6 +351,49 @@ test.describe('사용 중 세션 만료 안내 (WD-830)', () => {
     // 갱신은 한 번만 요청한다 — 표식이 두 번째 HTTP 갱신을 만들지 않는다
     expect(refresh.requested).toBe(1);
     // 확인 창은 처음 한 번뿐이다 — 취소한 사용자에게 다시 뜨지 않는다
+    expect(dialogs.count).toBe(1);
+    await expect(page).not.toHaveURL(/\/login$/);
+  });
+
+  test('역할 편집 화면에서 모든 GET 이 401 이어도 query 재시도로 떠나기 확인이 다시 뜨지 않는다 (WD-1142)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 저장(PUT)이 아닌 GET 쿼리가 401 을 맞아도 react-query 가 재시도하지 않아야 한다(main.tsx — WD-1082, WD-1142) —
+    // 재시도하면 같은 화면에서 만료 이동·확인 창이 한 번 더 걸린다. 실제 dirty 폼으로 가드를 건다.
+    await openRoleEditor(page);
+    await roleNameInput(page).fill('EDITOR_X');
+    const card = page.getByTestId('role-clearance-card');
+    await mockApi(page, 'POST', '/api/v1/roles/3/clearance/preview', {
+      callerLostDatasetCount: 0,
+      topLevelRoleCountAfter: 1,
+      roleUserCount: 14,
+    });
+    await mockApi(page, 'PUT', '/api/v1/roles/3/clearance', {}, { status: 204 });
+    await card.getByRole('radio', { name: /민감/ }).check();
+    await expect(card.getByRole('button', { name: '저장' })).toBeEnabled();
+    const dialogs = dismissDialogs(page);
+    const refresh = watchRefresh(page);
+    const getUrls: string[] = [];
+    // 이 화면의 GET 은 모두 401, 갱신도 401 — 등급 저장(PUT)은 성공하고 그 뒤 무효화된 쿼리 GET 이 401 을 맞는다
+    await page.route('**/api/v1/**', (route) => {
+      if (route.request().method() !== 'GET') return route.fallback();
+      getUrls.push(route.request().url());
+      return route.fulfill({ status: 401, contentType: 'application/json', body: '{}' });
+    });
+    await page.route(`**${REFRESH_URL}`, (route) =>
+      route.fulfill({ status: 401, contentType: 'application/json', body: '{}' }),
+    );
+
+    await card.getByRole('button', { name: '저장' }).click();
+    await expect.poll(() => dialogs.count).toBe(1);
+    await expect.poll(() => refresh.settled).toBeGreaterThanOrEqual(1);
+    expect(getUrls.length).toBeGreaterThanOrEqual(1);
+    // react-query 의 재시도 지연(기본 1초)을 넘겨 기다린다 — 재시도가 있었다면 그 사이 두 번째 요청·확인 창이 나타난다(없음을 보는 단언)
+    await page.waitForTimeout(1500);
+    await nextFrames(page);
+    // 401 GET 은 재시도되지 않는다 — 재시도는 같은 주소를 한 번 더 부르므로 어떤 GET 주소도 두 번 나가지 않아야 한다(WD-1142)
+    expect(getUrls.filter((u, i) => getUrls.indexOf(u) !== i)).toEqual([]);
+    expect(refresh.requested).toBe(1);
     expect(dialogs.count).toBe(1);
     await expect(page).not.toHaveURL(/\/login$/);
   });
@@ -434,6 +453,87 @@ test.describe('사용 중 세션 만료 안내 (WD-830)', () => {
     expect(await tabA.evaluate(() => localStorage.getItem('hasSession'))).toBe('true');
     // 확인 창은 처음 한 번뿐이다 — 홈으로 다시 열 때 가드가 풀려 있어 다시 뜨지 않는다
     expect(dialogs.count).toBe(1);
+  });
+
+  test('사용자 바뀜으로 남은 탭은 다른 탭이 로그아웃하면 로그인 화면으로 다시 연다 (WD-1142)', async ({
+    authenticatedPage: tabA,
+  }) => {
+    await mockApi(tabA, 'POST', REFRESH_URL, { ...MOCK_TOKEN_RESPONSE, accessToken: jwtFor('1') });
+    await openRoleEditor(tabA);
+    await roleNameInput(tabA).fill('EDITOR_X');
+    const dialogs = dismissDialogs(tabA);
+    const refresh = watchRefresh(tabA);
+    await expireSession(tabA);
+    await roleInfoSave(tabA).click();
+    await expect.poll(() => dialogs.count).toBeGreaterThanOrEqual(1);
+    await expect.poll(() => refresh.settled).toBeGreaterThanOrEqual(1);
+
+    // 다른 사용자(2) 가 로그인 — 이 탭은 다음 갱신에서 사용자 바뀜을 알아본다
+    await tabA.route(`**${REFRESH_URL}`, (route) =>
+      route.fulfill({ json: { ...MOCK_TOKEN_RESPONSE, accessToken: jwtFor('2') } }),
+    );
+    await watchHasSessionStorageEvent(tabA);
+    const tabB = await tabA.context().newPage();
+    await tabB.goto('/login');
+    await tabB.evaluate(() => localStorage.setItem('hasSession', 'true'));
+    await waitHasSessionStorageEvent(tabA);
+
+    // 폼이 여전히 dirty 라 홈 이동의 확인 창을 취소하면 탭이 사용자 바뀜 표식만 든 채 남는다
+    const before = dialogs.count;
+    await roleInfoSave(tabA).click();
+    await expect.poll(() => dialogs.count).toBeGreaterThan(before);
+    await expect(tabA).not.toHaveURL(/\/login$/);
+
+    // 가드를 풀고(변경 되돌림), 다른 탭의 로그아웃을 흉내 낸다 — 토큰은 이미 없지만 표식이 있어 로그인 화면으로 다시 연다
+    await roleNameInput(tabA).fill('EDITOR');
+    await tabA.evaluate(() => {
+      window.dispatchEvent(new StorageEvent('storage', { key: 'hasSession', oldValue: 'true', newValue: null }));
+    });
+    await expect(tabA).toHaveURL(/\/login$/);
+  });
+
+  test('역할 상세 저장 중 다른 사용자 로그인이 감지되면 일반 저장 실패 토스트를 띄우지 않는다 (WD-1142)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 이 탭의 사용자는 1 — 부팅 refresh 가 sub 1 토큰을 준다
+    await mockApi(page, 'POST', REFRESH_URL, { ...MOCK_TOKEN_RESPONSE, accessToken: jwtFor('1') });
+    await openRoleEditor(page);
+    await roleNameInput(page).fill('EDITOR_X');
+    const dialogs = dismissDialogs(page);
+    const refresh = watchRefresh(page);
+    // 저장 요청은 붙잡아 둔다 — 저장 중 입력을 더 고쳐야 RoleDetailPage 가 오류를 직접 토스트(extractApiError)로 보인다(WD-866).
+    // 사용자 바뀜이면 일반 실패 문구가 아니라 바뀜 안내여야 한다(WD-1142).
+    let releasePut: () => void = () => {};
+    const putGate = new Promise<void>((resolve) => {
+      releasePut = resolve;
+    });
+    await page.route(
+      (url) => url.pathname === ROLE_API_PATH,
+      async (route) => {
+        if (route.request().method() !== 'PUT') return route.fallback();
+        await putGate;
+        return route.fulfill({ status: 401, contentType: 'application/json', body: '{}' });
+      },
+    );
+    // 공유 refresh 쿠키는 이제 다른 사용자(2)의 것이다 — 401 뒤의 갱신이 sub 2 토큰을 돌려준다
+    await page.route(`**${REFRESH_URL}`, (route) =>
+      route.fulfill({ json: { ...MOCK_TOKEN_RESPONSE, accessToken: jwtFor('2') } }),
+    );
+
+    await roleInfoSave(page).click();
+    await roleNameInput(page).fill('EDITOR_XY');
+    releasePut();
+
+    // 홈으로 다시 여는 떠나기 확인을 취소해 남은 탭에 머문다
+    await expect.poll(() => dialogs.count).toBe(1);
+    await expect.poll(() => refresh.settled).toBeGreaterThanOrEqual(1);
+    // 호출부가 직접 띄우는 토스트가 사용자 바뀜 안내로 나온다 — 실제로 그 직접 토스트 경로가 탔다는 증거다
+    const toasts = page.locator('[data-sonner-toast]');
+    await expect(toasts.filter({ hasText: '다른 사용자로 로그인되어 화면을 다시 엽니다.' })).toHaveCount(1);
+    // 일반 저장 실패 토스트는 없다 — 곧 다시 열릴 화면에 「저장에 실패」로 읽히지 않는다
+    await nextFrames(page);
+    await expect(toasts.filter({ hasText: '실패' })).toHaveCount(0);
+    await expect(page).not.toHaveURL(/\/login$/);
   });
 
   test('떠나기 확인을 취소한 뒤 가드를 풀고 이어진 요청은 로그인 화면으로 보낸다 (WD-1082 반려)', async ({

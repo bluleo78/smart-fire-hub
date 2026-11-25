@@ -32,26 +32,27 @@ interface ActiveGuardEntry {
   onIntercepted: () => void;
 }
 
-let activeGuard: ActiveGuardEntry | null = null;
+// 여러 가드가 동시에 마운트될 수 있다(WD-1142) — 단일 칸이면 나중 등록이 앞 가드를 덮어쓰고, 그 해제가 앞 가드까지 지워
+// dirty 폼이 있어도 떠나기 확인이 사라진다. Set 이라 등록 순서가 유지된다.
+const activeGuards = new Set<ActiveGuardEntry>();
 // 사용자가 다이얼로그에서 "이탈"을 확정해 실제로 뒤로가기를 재실행할 때,
 // 다음 popstate 1회는 dirty 여부와 무관하게 그냥 통과시키기 위한 1회성 플래그.
 let bypassNextPop = false;
 let installed = false;
 
 /**
- * 현재 페이지의 dirty 가드를 등록한다. 동시에 하나만 활성화될 수 있다(페이지 단위 훅이므로
- * 실제로 한 번에 하나만 마운트된다). 언마운트 시 반환된 함수로 해제해야 한다.
+ * 현재 페이지의 dirty 가드를 등록한다. 여럿이 동시에 있을 수 있다(WD-1142). 언마운트 시 반환된 함수로 해제해야 한다.
  */
 export function registerActiveGuard(entry: ActiveGuardEntry): () => void {
-  activeGuard = entry;
+  activeGuards.add(entry);
   return () => {
-    if (activeGuard === entry) activeGuard = null;
+    activeGuards.delete(entry);
   };
 }
 
 /**
  * 떠나기를 막는 다중 진입점 집합 (WD-1122).
- * activeGuard 는 페이지 하나만 쓰는 단일 슬롯이라 덮어쓰면 페이지 가드가 사라진다. 스트리밍·업로드 중 beforeunload 만 거는
+ * activeGuards 는 페이지 가드 집합이고 이것은 그와 따로 사는 차단 조건이다. 스트리밍·업로드 중 beforeunload 만 거는
  * 곳(useAIChat)처럼 페이지 가드와 따로 사는 차단 조건은 여기에 함수로 등록한다 — 여러 개가 동시에 있어도 된다.
  */
 const leaveBlockers = new Set<() => boolean>();
@@ -77,7 +78,7 @@ export function registerLeaveBlocker(isBlocking: () => boolean): () => void {
  */
 export function hasActiveLeaveGuard(): boolean {
   // 페이지 가드가 등록됐고 dirty 인지(WD-1122)
-  if (activeGuard !== null && activeGuard.isDirty()) return true;
+  if ([...activeGuards].some((g) => g.isDirty())) return true;
   for (const isBlocking of leaveBlockers) {
     if (isBlocking()) return true;
   }
@@ -115,7 +116,9 @@ export function installPopstateGuardInterceptor(): void {
       bypassNextPop = false;
       return;
     }
-    if (!activeGuard || !activeGuard.isDirty()) return;
+    // dirty 인 가드 중 마지막에 (재)등록된 것을 쓴다(WD-1142) — 같은 항목을 해제 뒤 다시 등록하면 Set 의 끝으로 옮겨진다. 없으면 가로채지 않는다.
+    const guard = [...activeGuards].reverse().find((g) => g.isDirty());
+    if (!guard) return;
 
     // 라우터를 포함한 이후 모든 popstate 리스너가 이 이벤트를 아예 보지 못하게 막는다.
     // → 라우터의 location이 갱신되지 않으므로 현재 페이지가 언마운트되지 않는다.
@@ -124,7 +127,7 @@ export function installPopstateGuardInterceptor(): void {
     // 브라우저는 이미 실제 히스토리 이동을 완료한 상태(popstate는 취소 불가능)이므로,
     // 주소창만 원래 경로로 되돌린다. 라우터는 이 pushState를 모르지만 애초에 이 popstate를
     // 못 봤으므로 라우터 내부 location 상태와도 어긋나지 않는다.
-    window.history.pushState(null, '', activeGuard.restorePath());
-    activeGuard.onIntercepted();
+    window.history.pushState(null, '', guard.restorePath());
+    guard.onIntercepted();
   });
 }

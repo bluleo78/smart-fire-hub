@@ -108,3 +108,41 @@ describe('registerLeaveBlocker · hasActiveLeaveGuard (WD-1122)', () => {
     expect(hasActiveLeaveGuard()).toBe(false);
   });
 });
+
+describe('활성 가드 여럿 (WD-1142)', () => {
+  const base = { restorePath: () => '/', onIntercepted: () => {} };
+  const offs: Array<() => void> = [];
+  afterEach(() => {
+    // 시험이 실패해도 가드가 새지 않게 한다
+    while (offs.length) offs.pop()?.();
+  });
+
+  it('앞 가드가 dirty 면 뒤 가드를 해제해도 hasActiveLeaveGuard 는 true, 모두 clean 이면 false', () => {
+    const offA = registerActiveGuard({ ...base, isDirty: () => true });
+    offs.push(offA);
+    const offB = registerActiveGuard({ ...base, isDirty: () => false });
+    offs.push(offB);
+    offB();
+    expect(hasActiveLeaveGuard()).toBe(true);
+    offA();
+    offs.push(registerActiveGuard({ ...base, isDirty: () => false }));
+    offs.push(registerActiveGuard({ ...base, isDirty: () => false }));
+    expect(hasActiveLeaveGuard()).toBe(false);
+  });
+
+  it('popstate 는 dirty 인 마지막 등록 가드를 가로챈다', () => {
+    installPopstateGuardInterceptor();
+    const first = vi.fn();
+    const last = vi.fn();
+    const clean = vi.fn();
+    offs.push(registerActiveGuard({ ...base, isDirty: () => true, onIntercepted: first }));
+    offs.push(registerActiveGuard({ ...base, isDirty: () => true, onIntercepted: last }));
+    offs.push(registerActiveGuard({ ...base, isDirty: () => false, onIntercepted: clean }));
+    const url = window.location.href;
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    window.history.replaceState(null, '', url);
+    expect(last).toHaveBeenCalledTimes(1);
+    expect(first).not.toHaveBeenCalled();
+    expect(clean).not.toHaveBeenCalled();
+  });
+});
