@@ -356,6 +356,12 @@ export function useDeleteImpact(kind: 'query' | 'chart', id: number, options?: {
 /** 대시보드 목록 쿼리 키 접두 — 목록 접두 규칙은 useInvalidateListsOnEntryNotFound 참고 */
 export const DASHBOARD_LIST_KEY = ['analytics', 'dashboards', 'list'] as const;
 
+/**
+ * 「대시보드에 추가」 전체 목록 쿼리 키 — useAllDashboards 와 seedDashboardInListCache 가 같은 키를 쓰도록 한곳에 둔다.
+ * 문자열을 따로 적으면 한쪽만 바뀔 때 씨앗이 조용히 다른 캐시에 들어간다.
+ */
+export const ALL_DASHBOARDS_KEY = [...DASHBOARD_LIST_KEY, 'all'] as const;
+
 export function useDashboards(params: {
   search?: string;
   sharedOnly?: boolean;
@@ -379,7 +385,7 @@ export function useDashboards(params: {
  */
 export function useAllDashboards() {
   return useQuery({
-    queryKey: [...DASHBOARD_LIST_KEY, 'all'],
+    queryKey: ALL_DASHBOARDS_KEY,
     queryFn: () =>
       fetchAllPages(
         (page, size) => analyticsApi.listDashboards({ page, size }).then((r) => r.data),
@@ -397,8 +403,7 @@ export function useAllDashboards() {
  * 같은 id 가 이미 있으면(재조회가 먼저 반영된 경우) 아무것도 하지 않는다 — 항목이 두 번 보이지 않게.
  */
 export function seedDashboardInListCache(queryClient: QueryClient, created: Dashboard): void {
-  const key = [...DASHBOARD_LIST_KEY, 'all'];
-  const prev = queryClient.getQueryData<DashboardListItem[]>(key) ?? [];
+  const prev = queryClient.getQueryData<DashboardListItem[]>(ALL_DASHBOARDS_KEY) ?? [];
   if (prev.some((d) => d.id === created.id)) return;
   const item: DashboardListItem = {
     id: created.id,
@@ -406,14 +411,15 @@ export function seedDashboardInListCache(queryClient: QueryClient, created: Dash
     description: created.description,
     isShared: created.isShared,
     autoRefreshSeconds: created.autoRefreshSeconds,
-    // 새 대시보드는 위젯이 없지만, 만든 응답의 위젯 수를 실어 목록 계약(widgetCount)을 지킨다
-    widgetCount: created.widgets.length,
+    // 새 대시보드는 위젯이 없지만, 만든 응답의 위젯 수를 실어 목록 계약(widgetCount)을 지킨다.
+    // 응답에 widgets 가 없어도(방어) 던지지 않고 0 으로 둔다 — 씨앗은 보조 수단이라 만들기 흐름을 깨면 안 된다
+    widgetCount: created.widgets?.length ?? 0,
     createdByName: created.createdByName,
     createdBy: created.createdBy,
     createdAt: created.createdAt,
     updatedAt: created.updatedAt,
   };
-  queryClient.setQueryData(key, [item, ...prev]);
+  queryClient.setQueryData<DashboardListItem[]>(ALL_DASHBOARDS_KEY, [item, ...prev]);
 }
 
 /**

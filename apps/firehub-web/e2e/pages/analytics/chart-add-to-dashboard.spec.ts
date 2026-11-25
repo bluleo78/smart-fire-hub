@@ -10,6 +10,7 @@ import {
 } from '../../factories/analytics.factory';
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { holdApi } from '../../fixtures/hold-api';
 
 /**
  * 이슈 #97: 차트→대시보드 워크플로우 — 차트에서 "대시보드에 추가" 단축 액션 부재
@@ -131,9 +132,14 @@ test.describe('대시보드가 없을 때 만들고 추가 (WD-1076)', () => {
   /**
    * 만들기 전 빈 목록·만든 뒤 새 대시보드를 돌려주는 목록 라우트.
    * failListAfterCreate 면 만든 뒤 목록 GET 을 전부 500 으로 돌려 재조회 실패를 재현한다 —
-   * 만든 결과가 씨앗만으로 목록에 남는지(WD-1106 ③)를 볼 때 쓴다.
+   * 만든 결과가 씨앗으로 목록에 남는지(재조회는 배경, WD-1106 ③)를 볼 때 쓴다.
+   * holdListAfterCreate 가 있으면 만든 뒤 목록 GET 을 그 약속이 풀릴 때까지 붙잡아 「재조회가 끝나기 전」 상태를
+   * 시간 추측 없이 결정적으로 만든다(WD-1076 단언 복원).
    */
-  async function mockCreatableList(page: Page, options?: { failListAfterCreate?: boolean }) {
+  async function mockCreatableList(
+    page: Page,
+    options?: { failListAfterCreate?: boolean; holdListAfterCreate?: Promise<void> },
+  ) {
     const state = { created: false, listGetsAfterCreate: 0 };
     await page.route(
       (url) => url.pathname === LIST_PATH,
@@ -144,6 +150,7 @@ test.describe('대시보드가 없을 때 만들고 추가 (WD-1076)', () => {
         }
         if (state.created) {
           state.listGetsAfterCreate++;
+          if (options?.holdListAfterCreate) await options.holdListAfterCreate;
           if (options?.failListAfterCreate) {
             return route.fulfill({
               status: 500,
@@ -253,6 +260,34 @@ test.describe('대시보드가 없을 때 만들고 추가 (WD-1076)', () => {
     await expect.poll(() => widget.requests.length).toBe(2);
   });
 
+  // WD-1148: 부분 실패 토스트는 서버 사유를 보이고, 재시도로 나을 수 있는 경우(5xx)에만 재시도 안내를 붙인다
+  async function createThenFailWidget(page: Page, status: number, message: string) {
+    await mockCreatableList(page);
+    await mockApi(page, 'POST', `${LIST_PATH}/77/widgets`, { message }, { status });
+    await openDialog(page);
+    await page.getByLabel('새 대시보드 이름').fill('첫 대시보드');
+    await page.getByRole('button', { name: '만들고 추가' }).click();
+  }
+
+  test('위젯 추가가 403 이면 서버 사유를 보이고 다시 누르라는 안내는 붙이지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    await createThenFailWidget(page, 403, '이 대시보드를 수정할 권한이 없습니다.');
+    const toast = page.locator('[data-sonner-toast]').filter({ hasText: '대시보드를 만들었지만' });
+    await expect(toast).toContainText('이 대시보드를 수정할 권한이 없습니다.');
+    // 4xx 는 다시 눌러도 같은 결과라 재시도 안내가 없어야 한다
+    await expect(toast).not.toContainText('「추가」를 다시 누르세요');
+  });
+
+  test('위젯 추가가 500 이면 「추가」를 다시 누르라는 안내를 붙인다', async ({
+    authenticatedPage: page,
+  }) => {
+    await createThenFailWidget(page, 500, '데이터 저장소 응답 지연');
+    const toast = page.locator('[data-sonner-toast]').filter({ hasText: '대시보드를 만들었지만' });
+    // 서버 사유와 안내가 마침표로 구분돼 함께 보인다
+    await expect(toast).toContainText('데이터 저장소 응답 지연. 「추가」를 다시 누르세요');
+  });
+
   test('만들고 추가가 진행 중이면 목록 화면으로 바뀌지 않아 중복 추가를 못 한다', async ({
     authenticatedPage: page,
   }) => {
@@ -306,7 +341,7 @@ test.describe('대시보드가 없을 때 만들고 추가 (WD-1076)', () => {
   test('위젯 추가가 빨리 실패하고 목록 재조회도 실패하면 만든 대시보드가 목록에 남고 재시도할 수 있다', async ({
     authenticatedPage: page,
   }) => {
-    // 만든 뒤 목록 재조회는 전부 실패한다 — 만든 결과는 씨앗만으로 목록에 남아야 한다
+    // 만든 뒤 목록 재조회는 전부 실패한다 — 만든 결과는 씨앗으로 목록에 남아야 한다(재조회 성공에 기대지 않는다)
     await mockCreatableList(page, { failListAfterCreate: true });
     // 위젯 POST 는 첫 시도만 500, 재시도부터는 정상 응답
     let widgetAttempts = 0;
@@ -334,20 +369,54 @@ test.describe('대시보드가 없을 때 만들고 추가 (WD-1076)', () => {
     await dialog.getByLabel('새 대시보드 이름').fill('첫 대시보드');
     await dialog.getByRole('button', { name: '만들고 추가' }).click();
 
-    // 「만들고 추가」 누른 뒤 대기 없이 단언한다(고정 대기 없음) — 씨앗만으로 항목·선택이 보여야 한다
+    // 「만들고 추가」 누른 뒤 고정 대기 없이 단언한다 — 씨앗으로 항목·선택이 즉시 보이고,
+    // 목록 재조회(여기서는 실패)는 배경에서 끝나도 이 상태가 유지돼야 한다
     const item = dialog.getByRole('button', { name: '첫 대시보드' });
     await expect(item).toBeVisible();
     await expect(item).toHaveAttribute('aria-pressed', 'true');
     // 만들기 입력칸은 없다 — 남은 게 없는 빈 칸에 같은 이름을 넣으면 409 가 난다
     await expect(dialog.getByLabel('새 대시보드 이름')).toHaveCount(0);
     // 안내 문구도 방금 만든 뒤의 부분 실패를 알린다
-    await expect(page.getByText('대시보드를 만들었지만 차트 추가에 실패했습니다')).toBeVisible();
+    // (WD-1148: 문구가 서버 사유 + 5xx 재시도 안내로 바뀌었다)
+    await expect(page.getByText('대시보드를 만들었지만 차트를 추가하지 못했습니다')).toBeVisible();
 
     // 그 항목을 다시 골라 「추가」를 누르면 위젯 POST 가 재시도돼 정상 응답으로 성공한다
     await item.click();
     await dialog.getByRole('button', { name: '추가', exact: true }).click();
     await expect(page).toHaveURL(/\/analytics\/dashboards\/77$/);
     expect(widgetAttempts).toBe(2);
+  });
+
+  test('위젯 추가가 실패해도 목록 재조회가 끝나기 전엔 만들기 상태가 유지되고, 끝나면 새 대시보드가 선택된 목록이 된다', async ({
+    authenticatedPage: page,
+  }) => {
+    // 만든 뒤 목록 GET 을 우리가 풀어 줄 때까지 붙잡는다 — 위젯 추가는 그 사이 500 으로 실패한다
+    let release: () => void = () => {};
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const state = await mockCreatableList(page, { holdListAfterCreate: hold });
+    await mockApi(page, 'POST', `${LIST_PATH}/77/widgets`, { message: '서버 오류' }, { status: 500 });
+    await openDialog(page);
+    const dialog = page.getByRole('dialog');
+    await dialog.getByLabel('새 대시보드 이름').fill('첫 대시보드');
+    await dialog.getByRole('button', { name: '만들고 추가' }).click();
+
+    // 위젯 실패 토스트가 떴고 재조회 GET 이 붙잡힌 상태 — 만들기는 아직 끝나지 않았다(isCreating)
+    await expect(page.locator('[data-sonner-toast]').filter({ hasText: '대시보드를 만들었지만' })).toBeVisible();
+    await expect.poll(() => state.listGetsAfterCreate).toBeGreaterThanOrEqual(1);
+    // 붙잡힌 동안: 만들고 추가는 꺼져 있고, 입력칸은 비지 않은 채 입력한 이름을 그대로 들고 있으며, 목록 항목은 아직 없다
+    await expect(dialog.getByRole('button', { name: '만들고 추가' })).toBeDisabled();
+    await expect(dialog.getByLabel('새 대시보드 이름')).toHaveValue('첫 대시보드');
+    // 「지금 한 번」 센다 — toHaveCount 는 timeout:0 이어도 무한 재시도라 재조회가 끝난 뒤의 항목까지 기다려 버린다
+    expect(await dialog.getByRole('button', { name: '첫 대시보드' }).count()).toBe(0);
+
+    // 재조회를 풀면 목록 화면으로 바뀌어 새 대시보드가 선택돼 있고 만들기 입력칸은 사라진다
+    release();
+    const item = dialog.getByRole('button', { name: '첫 대시보드' });
+    await expect(item).toBeVisible();
+    await expect(item).toHaveAttribute('aria-pressed', 'true');
+    await expect(dialog.getByLabel('새 대시보드 이름')).toHaveCount(0);
   });
 
   test('만들고 추가 진행 중에는 취소가 꺼지고 Escape 로 닫히지 않으며 이동도 일어나지 않는다', async ({
@@ -391,6 +460,68 @@ test.describe('대시보드가 없을 때 만들고 추가 (WD-1076)', () => {
     await expect(
       page.getByRole('dialog').getByRole('button', { name: '첫 대시보드' }),
     ).toHaveCount(1);
+  });
+
+  test('방금 만든 대시보드 뒤 목록 재조회가 실패해 다른 대시보드를 누르면 「다시 시도」로 복구한다 (WD-1148 반려)', async ({
+    authenticatedPage: page,
+  }) => {
+    const created = createDashboardListItem({ id: 77, name: '첫 대시보드', widgetCount: 0 });
+    const other = createDashboardListItem({ id: 78, name: '재무 대시보드' });
+    // 목록 GET: 만들기 전 빈 목록 → 만든 뒤 [77, 78] → 이후 fail 이 켜지면 500 (복구되면 다시 성공)
+    const state = { created: false, fail: false };
+    await page.route(
+      (url) => url.pathname === LIST_PATH,
+      (route) => {
+        if (route.request().method() === 'POST') {
+          state.created = true;
+          return route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify(createdDetail) });
+        }
+        if (state.fail) {
+          return route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ message: '서버 오류' }) });
+        }
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(createPageResponse(state.created ? [created, other] : [])),
+        });
+      },
+    );
+    // 위젯 추가는 항상 500 — 만든 뒤 부분 실패로 77 이 선택된 채 대화상자가 남는다
+    await page.route(`**${LIST_PATH}/77/widgets`, (route) =>
+      route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ message: '서버 오류' }) }),
+    );
+    // 가상 시계 — 목록 쿼리 staleTime 을 건너뛰어 재연결 때 재조회가 일어나게 한다
+    await page.clock.install();
+    await openDialog(page);
+    const dialog = page.getByRole('dialog');
+    await dialog.getByLabel('새 대시보드 이름').fill('첫 대시보드');
+    await dialog.getByRole('button', { name: '만들고 추가' }).click();
+    const createdItem = dialog.getByRole('button', { name: '첫 대시보드' });
+    await expect(createdItem).toHaveAttribute('aria-pressed', 'true');
+
+    // 목록 재조회가 실패하게 한다 — 방금 만든 대시보드가 선택된 동안은 오류 안내가 뜨지 않는다
+    state.fail = true;
+    await page.clock.fastForward(60_000);
+    await page.evaluate(() => {
+      window.dispatchEvent(new Event('offline'));
+      window.dispatchEvent(new Event('online'));
+    });
+    await page.clock.fastForward(10_000);
+    await expect(dialog.getByRole('alert')).toHaveCount(0);
+
+    // 다른 대시보드를 누르면 오류 안내와 「다시 시도」가 뜨고, 목록은 그대로 보이며 「추가」는 꺼진다
+    await dialog.getByRole('button', { name: '재무 대시보드' }).click();
+    await expect(dialog.getByRole('alert')).toContainText('대시보드 목록을 불러오지 못했습니다.');
+    await expect(dialog.getByRole('button', { name: '다시 시도' })).toBeVisible();
+    await expect(createdItem).toBeVisible();
+    await expect(dialog.getByRole('button', { name: '재무 대시보드' })).toBeVisible();
+    await expect(dialog.getByRole('button', { name: '추가', exact: true })).toBeDisabled();
+
+    // 서버가 살아난 뒤 「다시 시도」 — 오류가 걷히고 「추가」가 다시 켜진다
+    state.fail = false;
+    await dialog.getByRole('button', { name: '다시 시도' }).click();
+    await expect(dialog.getByRole('alert')).toHaveCount(0);
+    await expect(dialog.getByRole('button', { name: '추가', exact: true })).toBeEnabled();
   });
 });
 
@@ -609,6 +740,39 @@ test.describe('대시보드에 추가 — 진행 중 선택 변경·연속 클�
 test.describe('대시보드에 추가 — 떠난 뒤 이동 금지·미저장 변경 가드 (WD-1106)', () => {
   const LIST_PATH = '/api/v1/analytics/dashboards';
 
+  /**
+   * 미저장 변경이 있는 채 대시보드에 추가하고, 이동 확인(가드) 창에서 「취소」까지 한다(WD-1148).
+   * 추가는 끝났지만 화면은 차트 빌더(/analytics/charts/1)에 남아 「대시보드로 가기」 토스트가 뜨는 상태가 된다.
+   */
+  async function openDirtyAddThenCancelGuard(page: Page) {
+    await setupBuilder(page);
+    await page.route(`**${LIST_PATH}/10/widgets`, (route) => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(createWidget({ id: 999 })),
+      });
+    });
+
+    await page.goto('/analytics/charts/1');
+    await page
+      .getByRole('button', { name: '대시보드에 추가' })
+      .dispatchEvent('click', { bubbles: true });
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await page.getByText('영업 대시보드').click();
+    // 대화상자가 열린 채로 차트 설정을 바꿔 isDirty 를 켠다
+    await page.locator('button[aria-label="선 차트"]').dispatchEvent('click');
+    await expect(page.getByText('미저장 변경사항')).toBeVisible();
+    await page.getByRole('button', { name: '추가', exact: true }).click();
+
+    // 가드 확인 창에서 「취소」 — 차트 화면에 남는다
+    const guard = page.getByRole('alertdialog');
+    await expect(guard.getByText('저장하지 않은 변경사항이 있습니다. 이탈하시겠습니까?')).toBeVisible();
+    await guard.getByRole('button', { name: '취소' }).click();
+    await expect(page).toHaveURL('/analytics/charts/1');
+  }
+
   /** 차트 빌더 + 대시보드 목록(영업·10)·상세·차트 목록을 한 번에 모킹한다. */
   async function setupBuilder(page: Page) {
     await mockApi(page, 'GET', '/api/v1/analytics/charts/1', createChart({ id: 1, chartType: 'BAR' }));
@@ -689,6 +853,103 @@ test.describe('대시보드에 추가 — 떠난 뒤 이동 금지·미저장 �
     await expect(page).toHaveURL('/analytics/charts');
   });
 
+  test('추가 요청 도중 같은 화면에서 다른 차트로 바뀌었으면 완료 뒤 대시보드로 끌려가지 않는다 (WD-1148)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupBuilder(page);
+    // 차트 B(2) 도 열 수 있어야 한다
+    await mockApi(page, 'GET', '/api/v1/analytics/charts/2', createChart({ id: 2, name: '차트 B', chartType: 'BAR' }));
+
+    // 위젯 POST 를 우리가 풀어 줄 때까지 붙잡는다 — 그 사이 차트 B 로 바꾼다
+    const held = await holdApi(page, 'POST', `${LIST_PATH}/10/widgets`, 200, createWidget({ id: 999 }));
+
+    // 같은 ChartBuilderPage 가 :id 만 바뀐 채 살아 있는 상황을 만든다. 차트가 아직 캐시에 없으면 로딩 화면이
+    // 대화상자를 언마운트해 기존 mountedRef 가드가 우연히 막아 주므로, 차트 B 를 먼저 열어 캐시에 담아 둔 뒤
+    // 차트 A 로 갔다가 다시 차트 B 로 돌아온다 — 두 번째 전환은 로딩 없이 바로 그려진다.
+    // page.goto 는 문서를 갈아끼우므로 앞 이동은 앱 안 history 이동(pushState + popstate)을, 돌아오는 이동은 실제 뒤로 가기를 쓴다.
+    const spaGo = async (path: string, idx: number) => {
+      await page.evaluate(
+        ({ path, idx }) => {
+          // React Router 가 쓰는 history state 모양(idx·key)을 맞춰야 popstate 를 이동으로 읽는다
+          window.history.pushState({ usr: null, key: `wd1148-${idx}`, idx }, '', path);
+          window.dispatchEvent(new PopStateEvent('popstate'));
+        },
+        { path, idx },
+      );
+      await expect(page).toHaveURL(path);
+    };
+    await page.goto('/analytics/charts/2');
+    await expect(page.getByText('차트 B').first()).toBeVisible();
+    await spaGo('/analytics/charts/1', 90);
+    await expect(page.getByText('테스트 차트').first()).toBeVisible();
+
+    await addViaDialog(page);
+    await expect.poll(() => held.requests.length).toBe(1);
+
+    // 응답 전에 차트 B 로 바꾼다 — 캐시된 차트라 로딩 없이 같은 페이지·대화상자가 살아 있다
+    await page.goBack();
+    await expect(page).toHaveURL('/analytics/charts/2');
+    await expect(page.getByText('차트 B').first()).toBeVisible();
+
+    // 응답을 푼다 — 성공 토스트가 뜨면 응답이 살아 있는 문서에서 처리된 것이다
+    held.release();
+    await expect(page.getByText("'영업 대시보드'에 차트가 추가되었습니다.")).toBeVisible();
+    // 시작한 차트(A)가 아니므로 대시보드로 이동하지 않고 차트 B 에 남는다
+    await expect(page).toHaveURL('/analytics/charts/2');
+  });
+
+  test('기존 대시보드를 고른 채 목록 재조회가 실패하면 오류 안내가 보인다 (WD-1148)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupBuilder(page);
+    // 처음 목록은 성공, 이후 재조회(대화상자를 닫았다 다시 열 때가 아니라 무효화 시)는 500
+    const state = { fail: false };
+    await page.route(
+      (url) => url.pathname === LIST_PATH,
+      (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        if (state.fail) {
+          return route.fulfill({
+            status: 500,
+            contentType: 'application/json',
+            body: JSON.stringify({ message: '서버 오류' }),
+          });
+        }
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(
+            createPageResponse([createDashboardListItem({ id: 10, name: '영업 대시보드' })]),
+          ),
+        });
+      },
+    );
+    // 목록 쿼리의 staleTime(30초)을 가상 시계로 건너뛰어, 재연결 때 재조회가 일어나게 한다
+    await page.clock.install();
+    await page.goto('/analytics/charts/1');
+    await page.getByRole('button', { name: '대시보드에 추가' }).click();
+    await page.getByText('영업 대시보드').click();
+    await expect(page.getByRole('alert')).toHaveCount(0);
+
+    // 기존 대시보드를 고른 채 재조회가 실패하게 한다 — 방금 만든 대시보드가 아니므로
+    // 선택이 있어도 오류 안내를 감추면 안 된다(#737, WD-1148)
+    state.fail = true;
+    await page.clock.fastForward(60_000);
+    // 온라인 상태가 바뀌어야(오프라인 → 온라인) 재연결 재조회가 돈다
+    await page.evaluate(() => {
+      window.dispatchEvent(new Event('offline'));
+      window.dispatchEvent(new Event('online'));
+    });
+    // 쿼리 재시도 대기(1초)도 가상 시계라 시계를 더 흘려 보낸다
+    await page.clock.fastForward(5_000);
+    // 오류 안내에는 「다시 시도」 버튼이 함께 있고, 캐시된 목록은 그대로 보인다(WD-1148 반려)
+    await expect(page.getByRole('alert')).toContainText('대시보드 목록을 불러오지 못했습니다.');
+    await expect(page.getByRole('alert').getByRole('button', { name: '다시 시도' })).toBeVisible();
+    await expect(page.getByText('영업 대시보드')).toBeVisible();
+    // 목록이 오류 안내로 가려진 동안에는 보이지 않는 선택에 추가하지 못하게 「추가」가 꺼져야 한다(WD-1148 리뷰)
+    await expect(page.getByRole('button', { name: '추가', exact: true })).toBeDisabled();
+  });
+
   test('미저장 변경이 있으면 추가 성공 뒤 이동도 「저장하지 않은 변경사항」 확인을 지난다', async ({
     authenticatedPage: page,
   }) => {
@@ -744,5 +1005,84 @@ test.describe('대시보드에 추가 — 떠난 뒤 이동 금지·미저장 �
     await secondGuard.getByRole('button', { name: '이탈' }).click();
     await expect(page).toHaveURL('/analytics/charts');
     expect(state.count).toBe(1);
+  });
+
+  test('미저장 변경이 있어 이동이 취소되면 「대시보드로 가기」 토스트가 뜨고, 누르면 대시보드로 간다 (WD-1148)', async ({
+    authenticatedPage: page,
+  }) => {
+    await openDirtyAddThenCancelGuard(page);
+
+    // 추가는 이미 끝났으므로 대시보드로 가는 길을 토스트 버튼으로 다시 열어 준다
+    const goButton = page.getByRole('button', { name: '대시보드로 가기' });
+    await expect(goButton).toBeVisible();
+    await goButton.click();
+
+    // 아직 미저장 변경이 있어 확인 창이 다시 뜬다 — 「이탈」 하면 대시보드로 간다
+    const secondGuard = page.getByRole('alertdialog');
+    await expect(secondGuard.getByText('저장하지 않은 변경사항이 있습니다. 이탈하시겠습니까?')).toBeVisible();
+    await secondGuard.getByRole('button', { name: '이탈' }).click();
+    await expect(page).toHaveURL(/\/analytics\/dashboards\/10$/);
+  });
+
+  test('클릭 때는 깨끗했다가 응답 전에 고쳐도 가드 취소 뒤 「대시보드로 가기」 토스트가 뜬다 (WD-1148 반려)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupBuilder(page);
+    // 응답을 붙잡아 두 상태(클릭 시 깨끗함 → 응답 전 dirty)를 시간에 기대지 않고 만든다
+    const held = await holdApi(page, 'POST', `${LIST_PATH}/10/widgets`, 200, createWidget({ id: 999 }));
+    await page.goto('/analytics/charts/1');
+    await addViaDialog(page);
+    await expect.poll(() => held.requests.length).toBe(1);
+
+    // 요청이 나간 뒤에 차트 설정을 고쳐 dirty 로 만든다(모달 뒤라 이벤트를 직접 보낸다)
+    await page.locator('button[aria-label="선 차트"]').dispatchEvent('click');
+    await expect(page.getByText('미저장 변경사항')).toBeVisible();
+    held.release();
+
+    // 가드가 열린다 — 「취소」하면 낡은 dirty 로 경로를 잃지 않아 토스트가 뜬다
+    const guard = page.getByRole('alertdialog');
+    await expect(guard.getByText('저장하지 않은 변경사항이 있습니다. 이탈하시겠습니까?')).toBeVisible();
+    await guard.getByRole('button', { name: '취소' }).click();
+    await expect(page).toHaveURL('/analytics/charts/1');
+    await expect(page.getByRole('button', { name: '대시보드로 가기' })).toBeVisible();
+  });
+
+  test('「대시보드로 가기」 토스트는 차트 화면을 떠나면 사라진다 (WD-1148 리뷰)', async ({
+    authenticatedPage: page,
+  }) => {
+    await openDirtyAddThenCancelGuard(page);
+    // 토스트는 본문 문구로 찾는다 — 떠난 뒤의 역할 트리에서는 sonner 토스트 버튼이 접근성 이름으로 잡히지 않는 경우가 있다
+    const toastText = page.getByText('대시보드에 추가했습니다.');
+    await expect(toastText).toBeVisible();
+
+    // 토스트를 누르지 않고 다른 화면으로 떠난다(이탈 확인)
+    await page.getByRole('button', { name: '목록으로 돌아가기' }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: '이탈' }).click();
+    await expect(page).toHaveURL('/analytics/charts');
+
+    // 떠난 뒤에도 남은 토스트를 누르면 낡은 상태로 가드를 건너뛰고 이동하므로, 토스트 자체가 없어야 한다
+    // toHaveCount 는 재시도라 토스트가 제 시간(약 4초)에 저절로 사라질 때까지 기다려 통과해 버린다 —
+    // 떠난 직후의 개수를 한 번에 읽어 「떠날 때 닫혔는가」만 가린다
+    // sonner 는 닫는 토스트를 퇴장 애니메이션 동안 DOM 에 두고 data-removed 를 달므로, 닫히는 중인 것은 제외하고 센다
+    const liveToast = page.locator('[data-sonner-toast]:not([data-removed="true"])', {
+      hasText: '대시보드에 추가했습니다.',
+    });
+    // 닫힘 표시가 반영되는 짧은 시간(1초)만 기다린다 — 토스트 자체 만료(약 4초)까지 기다리면 버그가 있어도 통과한다
+    await expect.poll(() => liveToast.count(), { timeout: 1000 }).toBe(0);
+  });
+
+  test('대시보드 이동이 아닌 가드 취소에는 「대시보드로 가기」 토스트가 없다 (WD-1148)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupBuilder(page);
+    await page.goto('/analytics/charts/1');
+    await page.locator('button[aria-label="선 차트"]').click();
+    await expect(page.getByText('미저장 변경사항')).toBeVisible();
+    await page.getByRole('button', { name: '목록으로 돌아가기' }).click();
+    const guard = page.getByRole('alertdialog');
+    await expect(guard).toBeVisible();
+    await guard.getByRole('button', { name: '취소' }).click();
+    await expect(page).toHaveURL('/analytics/charts/1');
+    await expect(page.getByRole('button', { name: '대시보드로 가기' })).toHaveCount(0);
   });
 });
