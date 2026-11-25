@@ -52,11 +52,15 @@ export async function expectDialogWithinViewportHeight(page: Page, dialog: Locat
 }
 
 /**
- * 사용자처럼 마우스 휠로 스크롤해 대상이 뷰포트 안에 완전히 들어올 때까지 내린다 (WD-1140).
+ * 사용자처럼 마우스 휠로 스크롤해 대상이 가장 가까운 스크롤 컨테이너 안에 완전히 들어올 때까지 내린다 (WD-1140, WD-1152).
  * scrollTop 직접 대입은 overflow-hidden 요소도 스크롤시켜 버그를 가리므로 실제 휠 입력을 쓴다.
+ * 「가장 가까운 스크롤 컨테이너」 = 대상의 조상 중 overflow-y 가 auto/scroll 이고 scrollHeight > clientHeight 인 첫 요소(없으면 window).
+ * 도달 판정은 그 컨테이너 사각형(window 면 innerHeight) 안에 대상 사각형이 완전히 들어오는가 — 컨테이너에 가려진 채
+ * window 기준으로만 「보임」이라 통과하는 헛통과를 막는다.
+ * 시작 때 이미 완전히 보이면 휠로 닿는지 확인할 수 없으므로 오류를 던진다 — 공회전 시험을 만들지 않기 위함.
  * @param page - 대상 페이지
  * @param dialog - 대화상자 locator (`at` 가 없으면 그 중앙에 마우스를 둔다)
- * @param target - 뷰포트 안으로 들어와야 하는 요소
+ * @param target - 스크롤 컨테이너 안으로 들어와야 하는 요소
  * @param opts.at - 마우스를 둘 안쪽 영역. 가로 중앙, 세로는 위에서 min(높이/2, 40) 지점에 둔다
  * @param opts.deltaY - 휠 한 번의 이동량 (기본 200)
  */
@@ -66,6 +70,28 @@ export async function wheelUntilInViewport(
   target: Locator,
   opts: { at?: Locator; deltaY?: number } = {},
 ): Promise<void> {
+  // 대상이 가장 가까운 스크롤 컨테이너(없으면 window) 안에 완전히 들어와 있는지 — 브라우저 안에서 판정한다.
+  const isFullyVisible = () =>
+    target.evaluate((el) => {
+      let container: Element | null = el.parentElement;
+      while (container) {
+        const oy = getComputedStyle(container).overflowY;
+        if ((oy === 'auto' || oy === 'scroll') && container.scrollHeight > container.clientHeight) break;
+        container = container.parentElement;
+      }
+      const r = el.getBoundingClientRect();
+      // 창 안에도 들어와야 한다 — 컨테이너 안이어도 창 밖이면 사용자에게 보이지 않는다
+      const inWindow = r.top >= 0 && r.bottom <= window.innerHeight;
+      if (!container) return inWindow;
+      const c = container.getBoundingClientRect();
+      return inWindow && r.top >= c.top && r.bottom <= c.bottom;
+    });
+
+  // 처음부터 보이면 휠 도달을 확인할 수 없다 — 헛통과 대신 실패시킨다.
+  if (await isFullyVisible()) {
+    throw new Error('wheelUntilInViewport: 대상이 처음부터 보여 휠 도달을 확인할 수 없다');
+  }
+
   const area = opts.at ?? dialog;
   const box = await area.boundingBox();
   expect(box, '휠을 둘 영역이 그려지지 않았다').not.toBeNull();
@@ -74,13 +100,10 @@ export async function wheelUntilInViewport(
   await expect
     .poll(async () => {
       await page.mouse.wheel(0, opts.deltaY ?? 200);
-      return target.evaluate((el) => {
-        const r = el.getBoundingClientRect();
-        return r.top >= 0 && r.bottom <= window.innerHeight;
-      });
+      return isFullyVisible();
     })
     .toBe(true);
-  await expect(target).toBeInViewport();
+  await expect(target).toBeInViewport({ ratio: 1 });
 }
 
 /**

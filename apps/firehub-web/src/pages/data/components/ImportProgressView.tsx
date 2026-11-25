@@ -108,6 +108,36 @@ function ProgressBar({ value }: ProgressBarProps) {
   );
 }
 
+/**
+ * WD-1152: 3단계 공통 틀 — 바깥 칸은 스크롤하지 않고, 본문만 스크롤하며 동작 줄은 그 밖 푸터에 둔다(2단계 푸터와 같은 클래스).
+ * 닫기/확인 버튼이 긴 내용에 묻히지 않도록 대기·진행 두 갈래가 같은 구조를 쓴다.
+ * 본문의 min-h-24 는 아주 낮은 화면에서 0px 로 접히지 않게 하는 최소 높이(WD-1140), min-w-0 + overflow-x-hidden 은 긴 값이 3단계를 가로로 넘치게 하지 않도록 막는다(표는 자체 overflow-x-auto).
+ */
+function ProgressShell({
+  bodyClassName,
+  footer,
+  children,
+}: {
+  bodyClassName: string;
+  footer: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div
+        data-testid="import-progress-body"
+        className={`min-h-24 min-w-0 flex-1 overflow-y-auto overflow-x-hidden ${bodyClassName}`}
+      >
+        {children}
+      </div>
+      {/* 스크롤 영역 밖 푸터라 긴 오류 목록에도 늘 보인다 */}
+      <div data-testid="import-progress-footer" className="shrink-0 flex justify-end gap-2 pt-4 border-t bg-background">
+        {footer}
+      </div>
+    </div>
+  );
+}
+
 export function ImportProgressView({ progress, onClose, failedErrors }: ImportProgressViewProps) {
   const stage = progress?.stage ?? 'PENDING';
   const pct = progress?.progress ?? 0;
@@ -126,123 +156,126 @@ export function ImportProgressView({ progress, onClose, failedErrors }: ImportPr
 
   if (isPending || !progress) {
     return (
-      <div className="flex flex-col items-center justify-center gap-4 py-10">
-        <Loader2 className="w-10 h-10 animate-spin text-info" />
-        <p className="text-sm text-muted-foreground">작업 대기 중...</p>
-        <Button variant="outline" size="sm" onClick={onClose}>
-          닫기
-        </Button>
-      </div>
+      <ProgressShell
+        bodyClassName="flex flex-col py-10"
+        footer={
+          <Button variant="outline" size="sm" onClick={onClose}>
+            닫기
+          </Button>
+        }
+      >
+        {/* justify-center 는 내용이 박스보다 클 때 위로 넘쳐 스크롤로 닿지 못한다 — 안쪽 래퍼의 my-auto 로 넘치지 않을 때만 가운데에 둔다 */}
+        <div className="my-auto flex flex-col items-center gap-4">
+          <Loader2 className="w-10 h-10 animate-spin text-info" />
+          <p className="text-sm text-muted-foreground">작업 대기 중...</p>
+        </div>
+      </ProgressShell>
     );
   }
 
   return (
-    <div className="space-y-6 py-2">
-      {/* Stage stepper — 진행 상황을 확인할 수 없어 멈춘 경우(WD-203)엔 어느 단계가 실패했다고 표시할 근거가 없으므로 숨긴다 */}
-      {!progress.unobservable && (
-        <div className="flex items-start justify-between gap-1">
-          {STAGES.map((s, idx) => (
-            <div key={s} className="flex items-center flex-1">
-              <StepIndicator stage={s} label={STAGE_LABELS[s]} currentStage={stage} failedProgress={pct} />
-              {idx < STAGES.length - 1 && (
-                <div className="flex-1 h-px bg-border mx-1 mt-[-12px]" />
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Progress bar — VALIDATING은 분모가 없어 스피너(indeterminate), INSERTING은 % 바 */}
-      {!isTerminal && isValidatingIndeterminate && (
-        <div className="flex flex-col items-center gap-2 py-2">
-          <Loader2 className="w-6 h-6 animate-spin text-info" />
-          <p className="text-sm text-muted-foreground">검증 중…</p>
-          {progress.processedRows !== undefined && (
-            <p className="text-xs text-muted-foreground">{progress.processedRows.toLocaleString()}행 검사됨</p>
-          )}
-        </div>
-      )}
-      {!isTerminal && !isValidatingIndeterminate && (
-        <div className="space-y-1.5">
-          <ProgressBar value={pct} />
-          <div className="flex justify-end">
-            <span className="text-xs text-muted-foreground">{pct}%</span>
-          </div>
-        </div>
-      )}
-
-      {/* Status message */}
-      {stage === 'COMPLETED' && (
-        <InlineBanner variant="success" icon={<CheckCircle2 />} title="임포트 완료">
-          <div className="text-muted-foreground space-y-1">
-            {progress.totalRows !== undefined && (
-              <p>전체: {progress.totalRows.toLocaleString()}행</p>
-            )}
-            {progress.successRows !== undefined && (
-              <p>성공: <span className="text-success font-medium">{progress.successRows.toLocaleString()}행</span></p>
-            )}
-            {progress.errorRows !== undefined && progress.errorRows > 0 && (
-              <p>오류: <span className="text-destructive font-medium">{progress.errorRows.toLocaleString()}행</span></p>
-            )}
-            {/* 빈 줄·쉼표만 있는 줄·엑셀 빈 행은 적재하지 않는다 — 전체 행 수와 파일 줄 수가 다른 이유를 알린다(WD-255) */}
-            {progress.skippedRows !== undefined && progress.skippedRows > 0 && (
-              <p>빈 행 건너뜀: {progress.skippedRows.toLocaleString()}행</p>
-            )}
-            {/* 업서트는 실제로 추가·갱신된 행 수를 알린다 — 「성공」은 파일의 유효 행 수라 실제 반영 수와 다를 수 있다(WD-387) */}
-            {progress.insertedRows !== undefined && progress.updatedRows !== undefined && (
-              <p data-testid="import-upsert-counts">
-                반영: 추가 {progress.insertedRows.toLocaleString()}행 · 갱신 {progress.updatedRows.toLocaleString()}행
-              </p>
-            )}
-            {/* 같은 키가 파일에 여러 번 있으면 키마다 마지막 행만 반영한다(WD-387) */}
-            {progress.duplicateKeyRows !== undefined && progress.duplicateKeyRows > 0 && (
-              <p data-testid="import-duplicate-keys">
-                파일 안 같은 키 {progress.duplicateKeyRows.toLocaleString()}행은 건너뛰고 키마다 마지막 행만 반영했습니다
-              </p>
-            )}
-          </div>
-        </InlineBanner>
-      )}
-
-      {stage === 'FAILED' && (
-        <div className="rounded-md border border-destructive/20 bg-destructive/5 p-4 space-y-2">
-          <div className="flex items-center gap-2 text-destructive font-medium">
-            <XCircle className="w-5 h-5" />
-            {/* 진행 상황을 확인할 수 없어 추적을 멈춘 경우(WD-203)엔 임포트가 실패했다고 단정하지 않는다 */}
-            <span>{progress.unobservable ? '진행 상황 확인 불가' : '임포트 실패'}</span>
-          </div>
-          {progress.errorMessage && (
-            <p className="text-sm text-destructive pl-7">{progress.errorMessage}</p>
-          )}
-          {/* 실패 시점의 상세 오류(행/컬럼/값/오류)는 진행 이벤트엔 없고 이력(ImportResponse)에서 조회해 전달받는다 */}
-          {failedErrors && failedErrors.length > 0 && (
-            <div className="pl-7">
-              <ValidationErrorTable errors={failedErrors} />
-            </div>
-          )}
-        </div>
-      )}
-
-      {!isTerminal && !isValidatingIndeterminate && (
-        <div className="space-y-1">
-          <p className="text-sm text-center text-muted-foreground">
-            {stage === 'INSERTING' && progress.processedRows !== undefined && progress.totalRows !== undefined
-              ? `${progress.processedRows.toLocaleString()} / ${progress.totalRows.toLocaleString()} 행 처리 중...`
-              : progress.message || `${STAGE_LABELS[stage]} 중...`}
-          </p>
-        </div>
-      )}
-
-      {/* Action button */}
-      <div className="flex justify-end pt-2 border-t">
-        <Button
-          variant={isTerminal ? 'default' : 'outline'}
-          size="sm"
-          onClick={handleClose}
-        >
+    <ProgressShell
+      bodyClassName="space-y-6 py-2"
+      footer={
+        <Button variant={isTerminal ? 'default' : 'outline'} size="sm" onClick={handleClose}>
           {isTerminal ? '확인' : '닫기'}
         </Button>
-      </div>
-    </div>
+      }
+    >
+        {/* Stage stepper — 진행 상황을 확인할 수 없어 멈춘 경우(WD-203)엔 어느 단계가 실패했다고 표시할 근거가 없으므로 숨긴다 */}
+        {!progress.unobservable && (
+          <div className="flex items-start justify-between gap-1">
+            {STAGES.map((s, idx) => (
+              <div key={s} className="flex items-center flex-1">
+                <StepIndicator stage={s} label={STAGE_LABELS[s]} currentStage={stage} failedProgress={pct} />
+                {idx < STAGES.length - 1 && (
+                  <div className="flex-1 h-px bg-border mx-1 mt-[-12px]" />
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Progress bar — VALIDATING은 분모가 없어 스피너(indeterminate), INSERTING은 % 바 */}
+        {!isTerminal && isValidatingIndeterminate && (
+          <div className="flex flex-col items-center gap-2 py-2">
+            <Loader2 className="w-6 h-6 animate-spin text-info" />
+            <p className="text-sm text-muted-foreground">검증 중…</p>
+            {progress.processedRows !== undefined && (
+              <p className="text-xs text-muted-foreground break-words">{progress.processedRows.toLocaleString()}행 검사됨</p>
+            )}
+          </div>
+        )}
+        {!isTerminal && !isValidatingIndeterminate && (
+          <div className="space-y-1.5">
+            <ProgressBar value={pct} />
+            <div className="flex justify-end">
+              <span className="text-xs text-muted-foreground">{pct}%</span>
+            </div>
+          </div>
+        )}
+
+        {/* Status message */}
+        {stage === 'COMPLETED' && (
+          <InlineBanner variant="success" icon={<CheckCircle2 />} title="임포트 완료">
+            <div className="text-muted-foreground space-y-1">
+              {progress.totalRows !== undefined && (
+                <p>전체: {progress.totalRows.toLocaleString()}행</p>
+              )}
+              {progress.successRows !== undefined && (
+                <p>성공: <span className="text-success font-medium">{progress.successRows.toLocaleString()}행</span></p>
+              )}
+              {progress.errorRows !== undefined && progress.errorRows > 0 && (
+                <p>오류: <span className="text-destructive font-medium">{progress.errorRows.toLocaleString()}행</span></p>
+              )}
+              {/* 빈 줄·쉼표만 있는 줄·엑셀 빈 행은 적재하지 않는다 — 전체 행 수와 파일 줄 수가 다른 이유를 알린다(WD-255) */}
+              {progress.skippedRows !== undefined && progress.skippedRows > 0 && (
+                <p>빈 행 건너뜀: {progress.skippedRows.toLocaleString()}행</p>
+              )}
+              {/* 업서트는 실제로 추가·갱신된 행 수를 알린다 — 「성공」은 파일의 유효 행 수라 실제 반영 수와 다를 수 있다(WD-387) */}
+              {progress.insertedRows !== undefined && progress.updatedRows !== undefined && (
+                <p data-testid="import-upsert-counts">
+                  반영: 추가 {progress.insertedRows.toLocaleString()}행 · 갱신 {progress.updatedRows.toLocaleString()}행
+                </p>
+              )}
+              {/* 같은 키가 파일에 여러 번 있으면 키마다 마지막 행만 반영한다(WD-387) */}
+              {progress.duplicateKeyRows !== undefined && progress.duplicateKeyRows > 0 && (
+                <p data-testid="import-duplicate-keys">
+                  파일 안 같은 키 {progress.duplicateKeyRows.toLocaleString()}행은 건너뛰고 키마다 마지막 행만 반영했습니다
+                </p>
+              )}
+            </div>
+          </InlineBanner>
+        )}
+
+        {stage === 'FAILED' && (
+          <div className="rounded-md border border-destructive/20 bg-destructive/5 p-4 space-y-2">
+            <div className="flex items-center gap-2 text-destructive font-medium">
+              <XCircle className="w-5 h-5" />
+              {/* 진행 상황을 확인할 수 없어 추적을 멈춘 경우(WD-203)엔 임포트가 실패했다고 단정하지 않는다 */}
+              <span>{progress.unobservable ? '진행 상황 확인 불가' : '임포트 실패'}</span>
+            </div>
+            {progress.errorMessage && (
+              <p className="text-sm text-destructive pl-7 break-words [overflow-wrap:anywhere]">{progress.errorMessage}</p>
+            )}
+            {/* 실패 시점의 상세 오류(행/컬럼/값/오류)는 진행 이벤트엔 없고 이력(ImportResponse)에서 조회해 전달받는다 */}
+            {failedErrors && failedErrors.length > 0 && (
+              <div className="pl-7">
+                <ValidationErrorTable errors={failedErrors} />
+              </div>
+            )}
+          </div>
+        )}
+
+        {!isTerminal && !isValidatingIndeterminate && (
+          <div className="space-y-1">
+            <p className="text-sm text-center text-muted-foreground break-words [overflow-wrap:anywhere]">
+              {stage === 'INSERTING' && progress.processedRows !== undefined && progress.totalRows !== undefined
+                ? `${progress.processedRows.toLocaleString()} / ${progress.totalRows.toLocaleString()} 행 처리 중...`
+                : progress.message || `${STAGE_LABELS[stage]} 중...`}
+            </p>
+          </div>
+        )}
+    </ProgressShell>
   );
 }

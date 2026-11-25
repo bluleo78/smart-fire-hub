@@ -119,8 +119,8 @@ export function ImportMappingDialog(props: ImportMappingDialogProps) {
             </div>
 
             {/*
-             * sticky footer: 스크롤 영역 밖에 위치하여 콘텐츠 길이에 상관없이
-             * 취소/임포트 버튼이 항상 뷰포트 내에 표시된다.
+             * sticky footer: 스크롤 영역 밖에 위치한다. 낮지 않은 화면에서는 스크롤 영역 밖 푸터라 늘 보이고,
+             * 아주 낮은 화면은 바깥 스크롤(마지막 수단)으로 닿는다.
              * shrink-0: flex 컨테이너에서 footer가 축소되지 않도록 고정한다.
              */}
             <div className="shrink-0 flex justify-end gap-2 pt-4 border-t bg-background">
@@ -150,8 +150,8 @@ export function ImportMappingDialog(props: ImportMappingDialogProps) {
         )}
 
         {step === 3 && (
-          // WD-1140: 3단계도 안쪽에서 스크롤한다 — 실패 오류 목록이 길면 「확인」 버튼이 화면 밖으로 밀렸다.
-          <div className="relative min-h-24 flex-1 overflow-y-auto">
+          // WD-1140/WD-1152: 3단계 바깥 칸은 스크롤하지 않는다 — 본문 스크롤과 푸터(확인/닫기)는 ImportProgressView 가 나눠 맡는다.
+          <div className="flex min-h-0 flex-1 flex-col">
             <ImportProgressView progress={importProgress} onClose={handlers.close} failedErrors={failedErrors} />
           </div>
         )}

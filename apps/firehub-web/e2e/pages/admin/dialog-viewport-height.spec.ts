@@ -49,6 +49,8 @@ test.describe('대화상자 높이 — 보이는 뷰포트 기준 (WD-1123)', ()
       .getByTestId('add-member-dialog-scroll')
       .evaluate((el) => ({ scrollHeight: el.scrollHeight, clientHeight: el.clientHeight }));
     expect(inner.scrollHeight).toBeGreaterThan(inner.clientHeight);
+    // WD-1152: 바깥 대화상자는 스크롤하지 않아야 한다(이중 스크롤 회귀 방지).
+    await expectNoOuterScroll(dialog);
   });
   test('아주 낮은 높이(568×320)에서 멤버 추가 대화상자 하단 버튼에 바깥 스크롤로 닿는다 (WD-1140)', async ({
     authenticatedPage: page,
@@ -63,10 +65,10 @@ test.describe('대화상자 높이 — 보이는 뷰포트 기준 (WD-1123)', ()
 
     // 하단 버튼은 처음엔 뷰포트 밖이다 — 이 사전 단언이 없으면 시험이 공회전으로 통과할 수 있다.
     // 푸터는 sm 미만에서 flex-col-reverse 라 「취소」가 맨 아래에 놓인다 — 그 버튼이 대상이다.
-    const primary = dialog.getByRole('button', { name: '취소' });
-    await expect(primary).not.toBeInViewport();
+    const bottom = dialog.getByRole('button', { name: '취소' });
+    await expect(bottom).not.toBeInViewport();
 
-    await wheelUntilInViewport(page, dialog, primary);
+    await wheelUntilInViewport(page, dialog, bottom);
   });
 
   test('SQL 보기 창은 긴 SQL 이어도 뷰포트 높이의 60% 를 넘지 않는다 (WD-1140)', async ({ authenticatedPage: page }) => {
@@ -137,8 +139,9 @@ test.describe('대화상자 높이 — 보이는 뷰포트 기준 (WD-1123)', ()
 
     const content = page.getByTestId('inline-chart-sql-dialog-content');
     await expect(content).toBeVisible();
-    const box = await content.boundingBox();
-    expect(box!.height).toBeLessThanOrEqual(900 * 0.6 + 1);
+    // WD-1152: boundingBox 는 열림 애니메이션(scale) 중 값이라 부정확하다 — 레이아웃 높이(clientHeight)로 잰다.
+    const contentHeight = await content.evaluate((el) => el.clientHeight);
+    expect(contentHeight).toBeLessThanOrEqual(900 * 0.6 + 1);
 
     await expectNoOuterScroll(page.getByRole('dialog', { name: '실행 SQL' }));
   });
@@ -160,14 +163,15 @@ test.describe('대화상자 높이 — 보이는 뷰포트 기준 (WD-1123)', ()
     // 숨은 input(absolute)이 안쪽 영역에 클립되도록 영역이 relative 여야 바깥 scrollHeight 가 부풀지 않는다.
     await expectNoOuterScroll(dialog);
   });
-  test('375×420 에서도 멤버 추가 대화상자 하단 버튼에 휠 스크롤로 닿는다 (WD-1140)', async ({
+  test('375×420 에서도 멤버 추가 대화상자 하단 버튼이 처음부터 완전히 보인다 (WD-1140)', async ({
     authenticatedPage: page,
   }) => {
     await page.setViewportSize({ width: 375, height: 420 });
     const dialog = await openAddMemberDialog(page);
 
-    // 이 높이에서는 하단 버튼이 이미 보일 수 있어 사전 not.toBeInViewport 는 두지 않는다 — 닿는지만 본다.
+    // WD-1152: 이 높이에서는 하단 버튼이 처음부터 완전히 보인다(확인함). 휠 도달 도우미는 「처음부터 보임」을
+    // 오류로 막으므로 휠 대신 직접 보임을 단언한다 — 휠이 필요한 경우는 568×320·568×200·긴 실패 목록 시험이 지킨다.
     const bottom = dialog.getByRole('button', { name: '취소' });
-    await wheelUntilInViewport(page, dialog, bottom);
+    await expect(bottom).toBeInViewport({ ratio: 1 });
   });
 });
