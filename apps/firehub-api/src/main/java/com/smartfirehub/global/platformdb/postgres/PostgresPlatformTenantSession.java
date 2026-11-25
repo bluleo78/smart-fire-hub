@@ -50,4 +50,13 @@ public class PostgresPlatformTenantSession implements PlatformTenantSession {
   public void applyToCurrentTransaction(long tenantId) {
     dsl.getObject().execute(SET_TENANT_GUC_DSL_SQL, String.valueOf(tenantId));
   }
+
+  /**
+   * 현재 트랜잭션의 테넌트 값을 빈 문자열로 비운다(WD-1132). RLS 식의 {@code NULLIF(..., '')} 가 NULL 로 읽어 테넌트 미설정과 같아지고,
+   * 트랜잭션-로컬이라 커밋/롤백 때 어차피 사라진다.
+   */
+  @Override
+  public void clearCurrentTransaction() {
+    dsl.getObject().execute(SET_TENANT_GUC_DSL_SQL, "");
+  }
 }

@@ -13,9 +13,11 @@ import com.smartfirehub.role.repository.RoleRepository;
 import com.smartfirehub.role.service.RoleGrantGuard;
 import com.smartfirehub.tenant.dto.TenantMembership;
 import com.smartfirehub.tenant.repository.MembershipRepository;
+import com.smartfirehub.tenant.repository.TenantRepository;
 import com.smartfirehub.user.dto.AddMemberRequest;
 import com.smartfirehub.user.dto.AddMemberResponse;
 import com.smartfirehub.user.dto.MemberLookupResponse;
+import com.smartfirehub.user.dto.OwnershipTransferResult;
 import com.smartfirehub.user.dto.UserDetailResponse;
 import com.smartfirehub.user.dto.UserListResponse;
 import com.smartfirehub.user.dto.UserResponse;
@@ -61,6 +63,8 @@ public class UserService {
   private final AuditLogService auditLogService;
   private final RefreshTokenRepository refreshTokenRepository;
   private final TenantMemberAdder tenantMemberAdder;
+  private final OwnershipTransferService ownershipTransferService;
+  private final TenantRepository tenantRepository;
   private final RoleGrantGuard roleGrantGuard;
   // 정지·제거된 멤버의 그 워크스페이스 알림 스트림을 닫는다(WD-187)
   private final SseEmitterRegistry sseEmitterRegistry;
@@ -100,13 +104,14 @@ public class UserService {
   }
 
   /**
-   * 관리 경로의 사용자 상세. 현재 테넌트의 멤버가 아니면 404.
+   * 관리 경로의 사용자 상세. 현재 테넌트의 멤버가 아니면 404. 호출자 기준 필드(소유권 이전 카드용, WD-1132)를 함께 채운다 — {@code viewerId} 가
+   * null 이면 {@code viewerIsOwner} 는 false.
    *
    * <p><b>왜 403 이 아니라 404 인가:</b> 403 은 "그 id 의 사용자는 존재하지만 너는 볼 수 없다" 를 알려 준다. 그러면 다른 테넌트의 사용자 id 를
    * 훑어 존재 여부를 열거할 수 있다(계정 열거). 남의 테넌트 사용자는 이 테넌트 입장에서 <b>없는 것</b>으로 보이는 것이 옳다.
    */
   @Transactional(readOnly = true)
-  public UserDetailResponse getUserById(Long id) {
+  public UserDetailResponse getUserById(Long id, Long viewerId) {
     long tenantId = TenantContext.require("사용자 상세");
     TenantMembership membership = requireTenantMember(id);
     UserDetailResponse base = loadDetail(id);
@@ -121,7 +126,85 @@ public class UserService {
         base.roles(),
         membership.role(),
         isLastActiveAdmin(id, membership, tenantId),
-        base.isActive());
+        base.isActive(),
+        tenantRepository.findName(tenantId).orElse(null),
+        firstOwnerName(tenantId),
+        viewerId != null && isOwner(viewerId, tenantId));
+  }
+
+  /** 사용자가 이 테넌트의 OWNER 멤버십을 가졌는가(멤버가 아니면 false). */
+  private boolean isOwner(Long userId, long tenantId) {
+    return membershipRepository
+        .findInTenant(userId, tenantId)
+        .map(TenantMembership::isOwner)
+        .orElse(false);
+  }
+
+  /**
+   * 이 테넌트의 「지금 소유자」 이름 — OWNER 중 멤버십이 ACTIVE 이고 계정도 활성인 첫 사람(user_id 오름차순). 소유권 이전 카드가 보인다. 정지·비활성
+   * 소유자를 지금 소유자로 보이면 실제로 일할 수 있는 소유자가 있는 것처럼 오해하므로 건너뛰고, 해당자가 없으면 null 이다(카드는 「지정된 소유자가 없습니다」).
+   */
+  private String firstOwnerName(long tenantId) {
+    return membershipRepository.findOwnerUserIds(tenantId).stream()
+        .filter(id -> isActiveOwner(id, tenantId))
+        .findFirst()
+        .flatMap(userRepository::findById)
+        .map(UserResponse::name)
+        .orElse(null);
+  }
+
+  /** OWNER 멤버십이 ACTIVE 이고 전역 계정도 활성인가. */
+  private boolean isActiveOwner(Long userId, long tenantId) {
+    return membershipRepository
+            .findInTenant(userId, tenantId)
+            .map(TenantMembership::isActive)
+            .orElse(false)
+        && userRepository.findById(userId).map(UserResponse::isActive).orElse(false);
+  }
+
+  /**
+   * 워크스페이스 소유자 본인이 다른 활성 멤버에게 소유권을 넘긴다(WD-1132). 호출자가 소유자가 아니면 403, 자기 자신이면 400.
+   *
+   * <p>자기 자신 400 을 소유자 403 보다 뒤, 서비스 판정(이미 유일 소유자 409)보다 앞에 둔다 — 소유자가 자기에게 넘기려는 경우 "이미 소유자" 409 가
+   * 아니라 입력 오류 400 으로 보이게 한다. 소유자 판정은 테넌트 잠금을 잡은 뒤 읽어, 동시에 두 번 넘기는 요청이 낡은 소유자 상태로 통과하지 못하게 한다. 이전과
+   * 감사는 한 트랜잭션이다.
+   */
+  @Transactional
+  public void transferOwnership(Long callerId, Long targetUserId, String confirmName) {
+    long tenantId = TenantContext.require("소유권 이전");
+    userRepository.acquireMemberAdminGuardLock(tenantId);
+    if (!isOwner(callerId, tenantId)) {
+      throw new CodedApiException(
+          HttpStatus.FORBIDDEN, "NOT_WORKSPACE_OWNER", "워크스페이스 소유자만 소유권을 넘길 수 있습니다");
+    }
+    if (callerId.equals(targetUserId)) {
+      throw new IllegalArgumentException("자기 자신에게는 소유권을 넘길 수 없습니다");
+    }
+    // ADMIN 부여에 roleGrantGuard 를 따로 걸지 않는다 — 소유권 이전은 소유자만 할 수 있는 최상위 권한이고, 대상은 ADMIN 의 상위인 OWNER 가
+    // 된다.
+    // 역할 가드는 role:assign 위임자가 자기 범위 밖 역할로 올라서는 것을 막는 장치인데, 소유자에게는 올라설 위가 없다.
+    OwnershipTransferResult result =
+        ownershipTransferService.transfer(tenantId, targetUserId, confirmName);
+    audit(
+        callerId,
+        "OWNER_TRANSFER",
+        targetUserId,
+        "워크스페이스 소유권 이전",
+        Map.of(
+            "fromUserIds",
+            result.fromUserIds(),
+            "toUserId",
+            result.toUserId(),
+            "grantedAdmin",
+            result.grantedAdmin()));
+    // 소유권 이전으로 새로 받은 ADMIN 도 역할 부여다 — 다른 ADMIN 부여 경로처럼 ROLE_ASSIGN 으로 남겨 「누가 ADMIN 을 줬나」를
+    // 추적한다(WD-117).
+    // 부여 직전 상태는 지금 역할에서 ADMIN 만 뺀 것이다(이전은 ADMIN 추가 외에 역할을 바꾸지 않는다).
+    for (Long grantedUserId : result.grantedAdminUserIds()) {
+      List<RoleResponse> after = roleRepository.findByUserId(grantedUserId);
+      List<RoleResponse> before = after.stream().filter(r -> !"ADMIN".equals(r.name())).toList();
+      auditRoleAssign(callerId, grantedUserId, before, after);
+    }
   }
 
   /**
@@ -554,7 +637,8 @@ public class UserService {
     }
     if (removesAdmin && membership.isOwner()) {
       // 소유자 잠금 방지(WD-282) — 정지·제거를 막는 이유(assertRemovable)와 같다. ADMIN 을 빼면 소유자는 이 워크스페이스의 관리 화면과
-      // 자기 역할 복구(role:assign)를 잃는데, 다른 ADMIN 이 남아 있으면 마지막 ADMIN 보호는 통과한다. 소유권 이전이 생기기 전까지 막는다.
+      // 자기 역할 복구(role:assign)를 잃는데, 다른 ADMIN 이 남아 있으면 마지막 ADMIN 보호는 통과한다. 소유권은 소유권
+      // 이전(transferOwnership)으로만 바뀐다 — 이전 뒤 옛 소유자는 OWNER 가 아니라 이 보호를 받지 않는다.
       throw new IllegalStateException("워크스페이스 소유자의 ADMIN 역할은 뺄 수 없습니다");
     }
     if (removesAdmin && isLastActiveAdmin(userId, membership, tenantId)) {

@@ -8,7 +8,7 @@ import axios from 'axios';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SESSION_EXPIRED_NOTICE, takeLoginNotice } from '../lib/login-notice';
-import { authedFetch, claimUserLogout, clearSessionExpiredError, endSessionAndReloadToLogin, getAccessToken, refreshAccessToken, resetNoticeOwnerForTest, setAccessToken, TokenRefreshError } from './client';
+import { authedFetch, claimUserLogout, clearSessionExpiredError, endSessionAndReloadToLogin, getAccessToken, refreshAccessToken, refreshAccessTokenBestEffort, resetNoticeOwnerForTest, setAccessToken, TokenRefreshError } from './client';
 
 vi.mock('./refresh-lock', () => ({
   withCrossTabRefreshLock: <T,>(fn: () => Promise<T>) => fn(),
@@ -170,6 +170,61 @@ describe('refreshAccessToken (WD-631)', () => {
 
     // 안내는 첫 종료 때 맡긴 만료 안내가 그대로다 — 되풀이 이동이 안내를 바꾸지 않는다
     expect(takeLoginNotice()).toBe(SESSION_EXPIRED_NOTICE);
+  });
+});
+
+describe('refreshAccessTokenBestEffort (WD-1132)', () => {
+  const replace = vi.fn();
+
+  beforeEach(() => {
+    setAccessToken('old');
+    resetNoticeOwnerForTest();
+    clearSessionExpiredError();
+    vi.stubGlobal('location', { ...window.location, replace });
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    replace.mockReset();
+  });
+
+  it('진행 중인 갱신이 있으면 합류하지 않고 끝나길 기다린 뒤 새로 한 번 더 갱신한다', async () => {
+    const first = deferredRefresh();
+    const inFlight = refreshAccessToken();
+    const bestEffort = refreshAccessTokenBestEffort();
+    // 두 번째 refresh 는 서버 변경 뒤 상태를 돌려준다 — 첫 갱신이 끝난 뒤에야 시작돼야 한다.
+    const second = deferredRefresh();
+    expect(axios.post).toHaveBeenCalledTimes(1);
+
+    first.resolve({ data: { accessToken: 'stale', activeTenantId: 1, memberships: [] } });
+    await expect(inFlight).resolves.toEqual({ token: 'stale' });
+    await vi.waitFor(() => expect(axios.post).toHaveBeenCalledTimes(2));
+    second.resolve({ data: { accessToken: 'fresh', activeTenantId: 1, memberships: [] } });
+
+    await expect(bestEffort).resolves.toEqual({ token: 'fresh' });
+    expect(getAccessToken()).toBe('fresh');
+  });
+
+  it('401 이 아닌 실패는 세션을 끝내지 않고 거절만 한다 — 다음 갱신은 다시 보낼 수 있다', async () => {
+    vi.spyOn(axios, 'post').mockRejectedValue(new TypeError('network'));
+    await expect(refreshAccessTokenBestEffort()).rejects.toBeInstanceOf(TypeError);
+    expect(replace).not.toHaveBeenCalled();
+    expect(getAccessToken()).toBe('old');
+
+    vi.spyOn(axios, 'post').mockResolvedValue({ data: { accessToken: 'new', activeTenantId: 1, memberships: [] } });
+    await expect(refreshAccessToken()).resolves.toEqual({ token: 'new' });
+  });
+
+  it('401(refresh 토큰 무효)이면 평소처럼 세션을 끝낸다', async () => {
+    const expired = expiredRefreshError();
+    vi.spyOn(axios, 'post').mockRejectedValue(expired);
+    await expect(refreshAccessTokenBestEffort()).rejects.toBe(expired);
+    expect(replace).toHaveBeenCalledWith('/login');
+  });
+
+  it('테넌트 강등이면 { demoted: true } 를 돌려준다', async () => {
+    vi.spyOn(axios, 'post').mockResolvedValue({ data: { accessToken: 'new', activeTenantId: null, memberships: [] } });
+    await expect(refreshAccessTokenBestEffort()).resolves.toEqual({ demoted: true });
   });
 });
 

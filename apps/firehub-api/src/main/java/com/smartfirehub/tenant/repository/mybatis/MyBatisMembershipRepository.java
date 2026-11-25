@@ -93,6 +93,21 @@ public class MyBatisMembershipRepository implements MembershipRepository {
   }
 
   @Override
+  public int updateRole(Long userId, long tenantId, String role) {
+    return mapper.updateRole(userId, tenantId, role);
+  }
+
+  @Override
+  public List<Long> findOwnerUserIds(long tenantId) {
+    return mapper.selectOwnerUserIds(tenantId);
+  }
+
+  @Override
+  public int demoteOwnersExcept(long tenantId, Long exceptUserId) {
+    return mapper.demoteOwnersExcept(tenantId, exceptUserId);
+  }
+
+  @Override
   public int delete(Long userId, long tenantId) {
     return mapper.delete(userId, tenantId);
   }

@@ -339,7 +339,7 @@ class UserControllerTest {
             true,
             LocalDateTime.now(),
             List.of());
-    when(userService.getUserById(2L)).thenReturn(detail);
+    when(userService.getUserById(eq(2L), eq(1L))).thenReturn(detail);
 
     mockMvc
         .perform(get("/api/v1/users/2").header("Authorization", "Bearer valid-token"))
@@ -650,6 +650,47 @@ class UserControllerTest {
         .perform(delete("/api/v1/users/2/membership").header("Authorization", "Bearer valid-token"))
         .andExpect(status().isNoContent());
     verify(userService).removeMember(eq(2L), any());
+  }
+
+  @Test
+  void transferOwnership_withPermission_returnsNoContent() throws Exception {
+    mockAuthentication("user:write");
+
+    mockMvc
+        .perform(
+            post("/api/v1/users/2/ownership")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"confirmName\":\"Acme\"}"))
+        .andExpect(status().isNoContent());
+
+    verify(userService).transferOwnership(eq(1L), eq(2L), eq("Acme"));
+  }
+
+  @Test
+  void transferOwnership_blankConfirmName_badRequest() throws Exception {
+    mockAuthentication("user:write");
+
+    mockMvc
+        .perform(
+            post("/api/v1/users/2/ownership")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"confirmName\":\"  \"}"))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
+  void transferOwnership_withoutPermission_forbidden() throws Exception {
+    mockAuthentication("user:read");
+
+    mockMvc
+        .perform(
+            post("/api/v1/users/2/ownership")
+                .header("Authorization", "Bearer valid-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"confirmName\":\"Acme\"}"))
+        .andExpect(status().isForbidden());
   }
 
   @Test

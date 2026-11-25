@@ -30,4 +30,6 @@ export const usersApi = {
   lookupMember: (email: string) => client.post<MemberLookupResponse>('/users/member-lookup', { email }),
   /** 이 워크스페이스에서 제거 — 계정과 만든 데이터는 남는다. */
   removeMember: (id: number) => client.delete(`/users/${id}/membership`),
+  /** 워크스페이스 소유권을 이 사용자에게 넘긴다(WD-1132) — confirmName 은 워크스페이스 이름(서버가 trim 후 정확 비교). 204. */
+  transferOwnership: (id: number, confirmName: string) => client.post(`/users/${id}/ownership`, { confirmName }),
 };

@@ -14,6 +14,12 @@ export interface UserDetailResponse {
   membershipRole?: 'OWNER' | 'ADMIN' | 'MEMBER' | null;
   /** 이 사용자가 이 워크스페이스의 마지막 활성 ADMIN 인가 — 정지·제거 버튼 비활성 판단용(최종 판정은 서버). */
   lastActiveAdmin?: boolean;
+  /** 이 워크스페이스(테넌트) 이름 — 소유권 넘기기 확인 입력의 정답(WD-1132). 자기 프로필 경로에서는 null. */
+  workspaceName?: string | null;
+  /** 지금 소유자의 이름 — 소유자가 없으면 null. */
+  workspaceOwnerName?: string | null;
+  /** 조회한 사람이 이 워크스페이스의 소유자인가 — 소유권 넘기기 버튼 노출 판단용(최종 판정은 서버). */
+  viewerIsOwner?: boolean;
 }
 
 

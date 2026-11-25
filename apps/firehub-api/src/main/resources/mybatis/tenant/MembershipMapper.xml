@@ -103,6 +103,20 @@
      WHERE user_id = #{userId} AND tenant_id = #{tenantId}
   </update>
 
+  <update id="updateRole">
+    UPDATE membership SET role = #{role,jdbcType=VARCHAR}
+     WHERE user_id = #{userId} AND tenant_id = #{tenantId}
+  </update>
+
+  <select id="selectOwnerUserIds" resultType="java.lang.Long">
+    SELECT user_id FROM membership WHERE tenant_id = #{tenantId} AND role = 'OWNER' ORDER BY user_id ASC
+  </select>
+
+  <update id="demoteOwnersExcept">
+    UPDATE membership SET role = 'ADMIN'
+     WHERE tenant_id = #{tenantId} AND role = 'OWNER' AND user_id &lt;&gt; #{exceptUserId}
+  </update>
+
   <delete id="delete">
     DELETE FROM membership WHERE user_id = #{userId} AND tenant_id = #{tenantId}
   </delete>

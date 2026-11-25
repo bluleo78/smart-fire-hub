@@ -303,4 +303,42 @@ test.describe('플랫폼 감사 로그 (WD-4)', () => {
     await page.getByRole('option', { name: '계정 잠금' }).click();
     await expect.poll(() => capture.requests.at(-1)?.searchParams.get('actionType')).toBe('ACCOUNT_LOCKED');
   });
+
+  test('소유자 지정 행(WD-1132): 소유권 이전·역할 부여가 한글 라벨로 보이고 필터로 조회된다', async ({ authenticatedPage: page }) => {
+    const capture = await mockApi(page, 'GET', PATH, createAuditPage([
+      createAuditLog({
+        id: 811,
+        username: 'ops-owner@example.com',
+        actionType: 'OWNER_TRANSFER',
+        resource: 'tenant',
+        resourceId: '1',
+        description: '운영자가 테넌트 소유자를 지정',
+        metadata: { plane: 'platform', tenantSlug: 'hanbit', tenantName: '한빛소방서' },
+      }),
+      createAuditLog({
+        id: 812,
+        username: 'ops-role@example.com',
+        actionType: 'ROLE_ASSIGN',
+        resource: 'tenant',
+        resourceId: '1',
+        description: '소유권 이전으로 ADMIN 역할 부여',
+        metadata: { plane: 'platform', tenantSlug: 'hanbit', tenantName: '한빛소방서' },
+      }),
+    ]), { capture: true });
+    await page.goto('/audit-logs');
+
+    const rowOf = (text: string) =>
+      page.getByRole('table', { name: '플랫폼 감사 로그' }).getByRole('row').filter({ hasText: text });
+    await expect(rowOf('ops-owner@example.com').getByRole('cell').nth(2)).toHaveText('소유권 이전');
+    await expect(rowOf('ops-role@example.com').getByRole('cell').nth(2)).toHaveText('역할 부여');
+    await expect(page.getByText('OWNER_TRANSFER')).toHaveCount(0);
+    await expect(page.getByText('ROLE_ASSIGN')).toHaveCount(0);
+
+    await page.getByRole('combobox', { name: '액션' }).click();
+    await page.getByRole('option', { name: '소유권 이전' }).click();
+    await expect.poll(() => capture.requests.at(-1)?.searchParams.get('actionType')).toBe('OWNER_TRANSFER');
+    await page.getByRole('combobox', { name: '액션' }).click();
+    await page.getByRole('option', { name: '역할 부여' }).click();
+    await expect.poll(() => capture.requests.at(-1)?.searchParams.get('actionType')).toBe('ROLE_ASSIGN');
+  });
 });

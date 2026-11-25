@@ -42,5 +42,13 @@ public interface MembershipMapper {
       @Param("tenantId") Long tenantId,
       @Param("status") String status);
 
+  int updateRole(
+      @Param("userId") Long userId, @Param("tenantId") Long tenantId, @Param("role") String role);
+
+  List<Long> selectOwnerUserIds(@Param("tenantId") Long tenantId);
+
+  int demoteOwnersExcept(
+      @Param("tenantId") Long tenantId, @Param("exceptUserId") Long exceptUserId);
+
   int delete(@Param("userId") Long userId, @Param("tenantId") Long tenantId);
 }

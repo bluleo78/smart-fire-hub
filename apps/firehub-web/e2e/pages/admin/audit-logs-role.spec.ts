@@ -142,3 +142,48 @@ test.describe('감사 로그 — 역할·권한 액션(WD-117)', () => {
     await expect(dialog.getByText('변경 요약', { exact: true })).toHaveCount(0);
   });
 });
+
+/**
+ * 감사 로그 — 소유권 이전(WD-1132)
+ * - 웹 넘기기가 남기는 OWNER_TRANSFER(resource=user)가 영문 raw 대신 「소유권 이전」으로 보이고,
+ *   액션 필터 「멤버 관리」 그룹에서 골라 actionType 쿼리로 실린다.
+ */
+const OWNER_TRANSFER = createAuditLog({
+  id: 61,
+  username: 'transferer',
+  actionType: 'OWNER_TRANSFER',
+  resource: 'user',
+  resourceId: '7',
+  description: '워크스페이스 소유권 이전',
+  metadata: { fromUserIds: [1], toUserId: 7, grantedAdmin: false },
+});
+
+test.describe('감사 로그 — 소유권 이전(WD-1132)', () => {
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+    await mockApi(page, 'GET', '/api/v1/admin/audit-logs', createPageResponse([OWNER_TRANSFER]));
+  });
+
+  test('OWNER_TRANSFER 행이 「소유권 이전」 라벨로 보이고 필터로 고를 수 있다', async ({ authenticatedPage: page }) => {
+    const warnings: string[] = [];
+    page.on('console', (m) => {
+      if (m.type() === 'warning' && m.text().startsWith('[AuditLog]')) warnings.push(m.text());
+    });
+    await page.goto('/admin/audit-logs');
+    const row = page.getByRole('row').filter({ hasText: 'transferer' });
+    await expect(row.getByRole('cell', { name: '소유권 이전', exact: true })).toBeVisible();
+    await expect(page.getByRole('cell', { name: 'OWNER_TRANSFER', exact: true })).toHaveCount(0);
+
+    const req = page.waitForRequest(
+      (r) =>
+        new URL(r.url()).pathname === '/api/v1/admin/audit-logs' &&
+        new URL(r.url()).searchParams.get('actionType') === 'OWNER_TRANSFER',
+    );
+    const trigger = page.getByRole('combobox', { name: '액션 유형 필터' });
+    await trigger.click();
+    await page.getByRole('group', { name: '멤버 관리', exact: true }).getByRole('option', { name: '소유권 이전', exact: true }).click();
+    await req;
+    await expect(trigger).toHaveText('소유권 이전');
+    expect(warnings).toEqual([]);
+  });
+});

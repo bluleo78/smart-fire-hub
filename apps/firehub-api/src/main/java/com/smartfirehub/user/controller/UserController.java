@@ -125,8 +125,10 @@ public class UserController {
 
   @GetMapping("/{id}")
   @RequirePermission("user:read")
-  public ResponseEntity<UserDetailResponse> getUserById(@PathVariable Long id) {
-    UserDetailResponse user = userService.getUserById(id);
+  public ResponseEntity<UserDetailResponse> getUserById(
+      Authentication authentication, @PathVariable Long id) {
+    // 호출자 id 를 넘겨 상세가 viewerIsOwner(소유권 이전 카드 노출)를 채운다(WD-1132).
+    UserDetailResponse user = userService.getUserById(id, (Long) authentication.getPrincipal());
     return ResponseEntity.ok(user);
   }
 
@@ -159,6 +161,18 @@ public class UserController {
   public ResponseEntity<Void> removeMember(Authentication authentication, @PathVariable Long id) {
     Long callerId = (Long) authentication.getPrincipal();
     userService.removeMember(id, callerId);
+    return ResponseEntity.noContent().build();
+  }
+
+  /** 워크스페이스 소유자 본인이 다른 활성 멤버에게 소유권을 넘긴다(WD-1132). 소유자 여부·자기 자신은 서비스가 판정한다. */
+  @PostMapping("/{id}/ownership")
+  @RequirePermission("user:write")
+  public ResponseEntity<Void> transferOwnership(
+      Authentication authentication,
+      @PathVariable Long id,
+      @Valid @RequestBody OwnershipTransferRequest request) {
+    Long callerId = (Long) authentication.getPrincipal();
+    userService.transferOwnership(callerId, id, request.confirmName());
     return ResponseEntity.noContent().build();
   }
 }

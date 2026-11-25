@@ -51,6 +51,7 @@ import type { UserDetailResponse } from '../../types/user';
 import { AccountDisabledBadge } from './components/AccountDisabledBadge';
 import { MemberDangerZone } from './components/MemberDangerZone';
 import { memberLockReason, roleLockReason } from './components/memberLockReason';
+import { WorkspaceOwnerCard } from './components/WorkspaceOwnerCard';
 
 /** 들어올 때 사용자가 없거나(코드 없는 404) 주소의 id 가 잘못됐을 때의 화면 안 안내 (WD-581) */
 const USER_NOT_FOUND_MESSAGE = '사용자를 찾을 수 없습니다.';
@@ -498,6 +499,18 @@ function UserDetailView() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* 소유권 넘기기(WD-1132) — 성공하면 옛·새 소유자 표시가 바뀌므로 상세를 다시 읽어 카드·배지를 갱신한다 */}
+      <WorkspaceOwnerCard
+        user={user}
+        onTransferred={() => {
+          // 재조회가 실패해도 처리되지 않은 거부로 새지 않게 안내한다(이전 자체는 이미 성공했다)
+          // 소유권을 넘기면 서버가 대상에게 ADMIN 을 부여하므로, 역할 체크 상태도 새 역할로 다시 맞춘다
+          // (user 만 갈아끼우면 체크박스 상태가 첫 로드 값에 머물러 ADMIN 이 해제·비활성으로 남는다. 넘기기는 명시적 동작이라 미저장 체크는 버려도 된다)
+          reloadUserRoles(user.id)
+            .catch(error => handleApiError(error, '최신 정보를 불러오지 못했습니다. 새로고침해 주세요.'));
+        }}
+      />
 
       {canAssignRoles ? (
         <Card>

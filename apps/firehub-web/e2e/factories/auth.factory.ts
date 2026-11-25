@@ -65,6 +65,10 @@ export function createUserDetail(overrides?: Partial<UserDetailResponse>): UserD
     // 멤버십 정보(WD-2) — 기본은 잠금 사유가 없는 일반 멤버
     membershipRole: 'MEMBER',
     lastActiveAdmin: false,
+    // 워크스페이스 소유권 넘기기(WD-1132) — 기본은 카드가 안 그려지는 값(워크스페이스 이름 없음)
+    workspaceName: null,
+    workspaceOwnerName: null,
+    viewerIsOwner: false,
     ...overrides,
   };
 }

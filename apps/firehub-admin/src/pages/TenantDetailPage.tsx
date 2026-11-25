@@ -11,6 +11,7 @@ import { MembershipRoleBadge } from '@/components/MembershipRoleBadge';
 import { MembershipStatusBadge } from '@/components/MembershipStatusBadge';
 import { PermissionDeniedBanner } from '@/components/PermissionDeniedBanner';
 import { AddTenantMemberDialog } from '@/components/tenant/AddTenantMemberDialog';
+import { AssignTenantOwnerDialog } from '@/components/tenant/AssignTenantOwnerDialog';
 import { TenantDataStoreCard } from '@/components/tenant/TenantDataStoreCard';
 import { TenantVectorStoreCard } from '@/components/tenant/TenantVectorStoreCard';
 import { TenantStatusBadge } from '@/components/TenantStatusBadge';
@@ -40,8 +41,9 @@ import { TableEmptyRow } from '@/components/ui/table-empty';
 import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { useAuth } from '@/hooks/useAuth';
 import { formatDateTimeMinute } from '@/lib/formatters';
-import { isForbidden, isNotFound } from '@/lib/http-errors';
+import { isForbidden, isNotFound, serverMessage } from '@/lib/http-errors';
 import { eulReul } from '@/lib/utils';
+import type { TenantMemberResponse } from '@/types/platform';
 
 /**
  * 테넌트 상세.
@@ -57,6 +59,8 @@ export default function TenantDetailPage() {
   const { hasPermission } = useAuth();
   const [isSuspendDialogOpen, setIsSuspendDialogOpen] = useState(false);
   const [isAddMemberOpen, setIsAddMemberOpen] = useState(false);
+  // 「소유자로 지정」 확인 창의 대상 멤버. null 이면 닫혀 있다.
+  const [ownerTarget, setOwnerTarget] = useState<TenantMemberResponse | null>(null);
 
   // 4xx(권한 없음 등)는 재시도해도 결과가 같다 — 이 사실은 화면이 아니라 상태코드의
   // 성질이므로 전역 기본값(main.tsx 의 `retry`)이 판정한다. 화면별로 `retry: false` 를
@@ -110,6 +114,23 @@ export default function TenantDetailPage() {
       invalidateTenant();
     },
     onError: () => toast.error('테넌트 활성화에 실패했습니다.'),
+  });
+
+  /**
+   * 소유자 지정(WD-1132). 결과 처리는 훅 수준 onSuccess/onError 에 둔다 — 확인 창은 확인 즉시 닫히며 언마운트되는데,
+   * `mutate(vars, { onSuccess })` 의 호출별 콜백은 그 컴포넌트가 사라지면 TanStack Query v5 가 버려 응답이 늦을 때 토스트가 사라진다.
+   * 소유자가 바뀌면 멤버 역할 열이 달라지므로 멤버 목록을 다시 읽는다.
+   */
+  const assignOwnerMutation = useMutation({
+    mutationFn: (v: { userId: number; confirmName: string }) =>
+      tenantsApi.assignOwner(tenantId, v.userId, v.confirmName),
+    onSuccess: () => {
+      toast.success('소유자를 지정했습니다');
+      void queryClient.invalidateQueries({ queryKey: [TENANT_MEMBERS_KEY, tenantId] });
+    },
+    // 400·404·409 는 서버 문구가 곧 원인 안내다.
+    onError: (error) =>
+      toast.error(serverMessage(error, [400, 404, 409]) ?? '소유자 지정에 실패했습니다.'),
   });
 
   if (tenantQuery.isLoading) {
@@ -282,12 +303,15 @@ export default function TenantDetailPage() {
                       <TableHead>이메일</TableHead>
                       <TableHead>역할</TableHead>
                       <TableHead>상태</TableHead>
+                      <TableHead className="w-32">
+                        <span className="sr-only">작업</span>
+                      </TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {membersQuery.isLoading ? (
                       // 로딩 중을 "0명"으로 보여주지 않는다 — 위 에러 분기와 같은 이유다.
-                      <TableSkeletonRows columns={4} rows={3} />
+                      <TableSkeletonRows columns={5} rows={3} />
                     ) : membersQuery.data && membersQuery.data.length > 0 ? (
                       membersQuery.data.map((m) => (
                         <TableRow key={m.userId}>
@@ -304,10 +328,20 @@ export default function TenantDetailPage() {
                               {m.accountActive === false && <AccountDisabledBadge />}
                             </div>
                           </TableCell>
+                          <TableCell className="text-right">
+                            {/* 소유자 본인·정지된 멤버십·비활성 계정은 대상이 아니다(서버도 409 로 거절). 권한(platform:tenant:create)이
+                                없으면 눌러도 403 이라 버튼을 그리지 않는다(멤버 추가와 같은 기준). 확인 창은 누르는 즉시 닫히므로, 요청이 끝나기 전에 같은 지정을
+                                다시 열어 두 번 보내지 못하게 요청 중에는 버튼을 잠근다. 정지된 테넌트는 복구 수단이라 막지 않는다. */}
+                            {hasPermission('platform:tenant:create') && m.role !== 'OWNER' && m.status === 'ACTIVE' && m.accountActive && (
+                              <Button variant="outline" size="sm" disabled={assignOwnerMutation.isPending} onClick={() => setOwnerTarget(m)}>
+                                소유자로 지정
+                              </Button>
+                            )}
+                          </TableCell>
                         </TableRow>
                       ))
                     ) : (
-                      <TableEmptyRow colSpan={4} message="멤버가 없습니다." />
+                      <TableEmptyRow colSpan={5} message="멤버가 없습니다." />
                     )}
                   </TableBody>
                 </Table>
@@ -323,6 +357,16 @@ export default function TenantDetailPage() {
         open={isAddMemberOpen}
         onOpenChange={setIsAddMemberOpen}
         onAdded={invalidateAfterMemberAdd}
+      />
+
+      <AssignTenantOwnerDialog
+        target={ownerTarget}
+        tenantName={tenant.name}
+        onClose={() => setOwnerTarget(null)}
+        onConfirm={(userId, confirmName) => {
+          setOwnerTarget(null);
+          assignOwnerMutation.mutate({ userId, confirmName });
+        }}
       />
 
       {/*

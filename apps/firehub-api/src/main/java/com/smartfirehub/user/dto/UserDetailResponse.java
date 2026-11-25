@@ -13,6 +13,9 @@ import java.util.List;
  * @param lastActiveAdmin 이 사용자가 현재 테넌트의 마지막 활성 ADMIN 인가 — 웹이 정지·제거 버튼을 비활성+툴팁으로 그린다(최종 판정은 서버)
  * @param accountActive 전역 계정 활성 여부({@code user.is_active}, WD-3). 관리 경로에서는 isActive(멤버십)와 다를 수 있다 —
  *     운영자가 비활성화한 계정. 자기 프로필 경로에서는 isActive 와 같다
+ * @param workspaceName 현재 워크스페이스 이름(WD-1132) — 소유권 이전 확인 창이 쓴다. 관리 경로만 채우고 자기 프로필 경로는 null
+ * @param workspaceOwnerName 현재 소유자 이름(여럿이면 첫 번째, 없으면 null). 관리 경로만 채운다
+ * @param viewerIsOwner 이 응답을 요청한 호출자가 현재 워크스페이스 소유자인가(관리 경로만, 자기 프로필 경로는 false)
  */
 public record UserDetailResponse(
     Long id,
@@ -24,7 +27,10 @@ public record UserDetailResponse(
     List<RoleResponse> roles,
     String membershipRole,
     boolean lastActiveAdmin,
-    boolean accountActive) {
+    boolean accountActive,
+    String workspaceName,
+    String workspaceOwnerName,
+    boolean viewerIsOwner) {
 
   /** 멤버십 정보가 필요 없는 기존 호출처(테스트 등)용 보조 생성자 — isActive 가 곧 전역 활성이다. */
   public UserDetailResponse(
@@ -35,6 +41,8 @@ public record UserDetailResponse(
       boolean isActive,
       LocalDateTime createdAt,
       List<RoleResponse> roles) {
-    this(id, username, email, name, isActive, createdAt, roles, null, false, isActive);
+    this(
+        id, username, email, name, isActive, createdAt, roles, null, false, isActive, null, null,
+        false);
   }
 }

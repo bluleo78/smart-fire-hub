@@ -20,6 +20,8 @@ export interface AuthContextValue {
   hasRole: (roleName: string) => boolean;
   isAdmin: boolean;
   refreshUser: () => Promise<void>;
+  /** 토큰을 갱신해 멤버십 목록(전환기 역할 라벨)과 사용자·역할을 다시 읽는다 — 서버가 내 멤버십 역할을 바꾼 뒤(소유권 이전, WD-1132) 쓴다. */
+  refreshSession: () => Promise<void>;
   /**
    * 서버 저장이 끝난 프로필 값(이름·이메일)을 현재 사용자 상태에 바로 반영한다(WD-665).
    * 저장 뒤 다시 읽기(refreshUser)가 실패해도 헤더·아바타가 예전 이름에 머물지 않게 하려는 것 — 서버를 다시 부르지 않는다.

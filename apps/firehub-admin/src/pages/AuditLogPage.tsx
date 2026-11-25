@@ -38,6 +38,9 @@ const ACTION_LABELS: Record<string, string> = {
   // WD-290: 워크스페이스가 하나로 정해지지 않는 계정의 잠금·비밀번호 변경도 여기 남는다(없는 아이디는 로그인 실패 행만).
   ACCOUNT_LOCKED: '계정 잠금',
   PASSWORD_CHANGE: '비밀번호 변경',
+  // WD-1132: 운영자 콘솔의 소유자 지정(OWNER_TRANSFER)과 그때 새로 준 ADMIN 역할(ROLE_ASSIGN) — 라벨이 없으면 원문 코드가 보인다.
+  OWNER_TRANSFER: '소유권 이전',
+  ROLE_ASSIGN: '역할 부여',
 };
 
 /**

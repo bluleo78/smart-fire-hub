@@ -211,6 +211,79 @@ public abstract class MembershipRepositoryContractTest extends AccessContractBas
     assertThat(call(() -> repository().findInTenant(user, tenantB))).isPresent();
   }
 
+  @Test
+  @DisplayName("updateRole 은 그 테넌트의 그 멤버 role 만 바꾸고 바뀐 행 수 1 을 돌려준다")
+  void updateRole_changesOnlyThatMembership() {
+    long other = fx.createUser(prefix + "-r", null);
+    fx.createMembership(other, tenantA, "ACTIVE");
+    assertThat(call(() -> repository().updateRole(user, tenantA, "ADMIN"))).isEqualTo(1);
+
+    assertThat(call(() -> repository().updateRole(user, tenantA, "OWNER"))).isEqualTo(1);
+
+    assertThat(call(() -> repository().findInTenant(user, tenantA)).orElseThrow().role())
+        .isEqualTo("OWNER");
+    assertThat(call(() -> repository().findInTenant(other, tenantA)).orElseThrow().role())
+        .isNotEqualTo("OWNER");
+    assertThat(call(() -> repository().findInTenant(user, tenantB)).orElseThrow().role())
+        .isNotEqualTo("OWNER");
+  }
+
+  @Test
+  @DisplayName("updateRole 은 멤버십이 없으면 0")
+  void updateRole_missingMembership_returnsZero() {
+    assertThat(call(() -> repository().updateRole(-1L, tenantA, "OWNER"))).isZero();
+  }
+
+  @Test
+  @DisplayName("demoteOwnersExcept 는 대상 외 OWNER 를 모두 ADMIN 으로 내리고 다른 테넌트는 건드리지 않는다")
+  void demoteOwnersExcept_demotesAllOtherOwners() {
+    long o1 = fx.createUser(prefix + "-o1", null);
+    long o2 = fx.createUser(prefix + "-o2", null);
+    fx.createMembership(o1, tenantA, "ACTIVE");
+    fx.createMembership(o2, tenantA, "ACTIVE");
+    fx.createMembership(o1, tenantB, "ACTIVE");
+    call(() -> repository().updateRole(o1, tenantA, "OWNER"));
+    call(() -> repository().updateRole(o2, tenantA, "OWNER"));
+    call(() -> repository().updateRole(user, tenantA, "OWNER"));
+    call(() -> repository().updateRole(o1, tenantB, "OWNER"));
+
+    assertThat(call(() -> repository().demoteOwnersExcept(tenantA, user))).isEqualTo(2);
+
+    assertThat(call(() -> repository().findInTenant(user, tenantA)).orElseThrow().role())
+        .isEqualTo("OWNER");
+    assertThat(call(() -> repository().findInTenant(o1, tenantA)).orElseThrow().role())
+        .isEqualTo("ADMIN");
+    assertThat(call(() -> repository().findInTenant(o2, tenantA)).orElseThrow().role())
+        .isEqualTo("ADMIN");
+    assertThat(call(() -> repository().findInTenant(o1, tenantB)).orElseThrow().role())
+        .isEqualTo("OWNER");
+  }
+
+  @Test
+  @DisplayName("findOwnerUserIds 는 그 테넌트 OWNER 를 user_id 오름차순으로, 멤버십 상태와 무관하게 돌려주고 다른 테넌트는 뺀다")
+  void findOwnerUserIds_ascending_ignoresStatus_excludesOtherTenants() {
+    long o1 = fx.createUser(prefix + "-o1", null);
+    long o2 = fx.createUser(prefix + "-o2", null);
+    long other = fx.createUser(prefix + "-o3", null);
+    fx.createMembership(o1, tenantA, "ACTIVE");
+    // 정지된 소유자도 소유자다 — 소유권 이전이 모든 OWNER 행을 내려야 하므로 상태로 거르지 않는다.
+    fx.createMembership(o2, tenantA, "SUSPENDED");
+    fx.createMembership(other, tenantB, "ACTIVE");
+    call(() -> repository().updateRole(o1, tenantA, "OWNER"));
+    call(() -> repository().updateRole(o2, tenantA, "OWNER"));
+    call(() -> repository().updateRole(other, tenantB, "OWNER"));
+
+    assertThat(call(() -> repository().findOwnerUserIds(tenantA)))
+        .containsExactly(Math.min(o1, o2), Math.max(o1, o2));
+    assertThat(call(() -> repository().findOwnerUserIds(tenantB))).containsExactly(other);
+  }
+
+  @Test
+  @DisplayName("findOwnerUserIds 는 소유자가 없으면 빈 목록")
+  void findOwnerUserIds_noOwner_empty() {
+    assertThat(call(() -> repository().findOwnerUserIds(tenantA))).isEmpty();
+  }
+
   /** 주어진 id 앞에 없는 id 1199 개를 붙인 목록(IN 목록 1000 개 상한을 넘기려고). 중복도 하나 섞는다. */
   private static List<Long> manyIds(long... real) {
     List<Long> ids = new ArrayList<>();

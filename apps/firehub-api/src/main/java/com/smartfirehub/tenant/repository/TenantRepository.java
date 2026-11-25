@@ -29,4 +29,7 @@ public interface TenantRepository {
    * 예외로 거부한다(시드가 부분 커밋되는 것을 막는다).
    */
   void provisionDefaults(long tenantId);
+
+  /** 그 id 테넌트의 이름(WD-1132 소유권 이전의 확인 이름 대조·상세 표시용). 없으면 빈 값. */
+  java.util.Optional<String> findName(long tenantId);
 }

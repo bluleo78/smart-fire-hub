@@ -144,7 +144,7 @@ class UserServiceTest extends IntegrationTestBase {
         .set(USER_ROLE.ROLE_ID, adminRoleId)
         .execute();
 
-    UserDetailResponse result = userService.getUserById(testUserId);
+    UserDetailResponse result = userService.getUserById(testUserId, null);
 
     assertThat(result.id()).isEqualTo(testUserId);
     assertThat(result.username()).isEqualTo("testuser@example.com");
@@ -154,7 +154,7 @@ class UserServiceTest extends IntegrationTestBase {
 
   @Test
   void getUserById_notFound_throwsException() {
-    assertThatThrownBy(() -> userService.getUserById(999L))
+    assertThatThrownBy(() -> userService.getUserById(999L, null))
         .isInstanceOf(UserNotFoundException.class);
   }
 
@@ -162,7 +162,7 @@ class UserServiceTest extends IntegrationTestBase {
   void updateProfile_success() {
     userService.updateProfile(testUserId, "New Name", "new@example.com");
 
-    UserDetailResponse updated = userService.getUserById(testUserId);
+    UserDetailResponse updated = userService.getUserById(testUserId, null);
     assertThat(updated.name()).isEqualTo("New Name");
     assertThat(updated.email()).isEqualTo("new@example.com");
   }
@@ -182,7 +182,7 @@ class UserServiceTest extends IntegrationTestBase {
 
     userService.updateProfile(testUserId, "New Name", "taken@example.com");
 
-    assertThat(userService.getUserById(testUserId).email()).isEqualTo("taken@example.com");
+    assertThat(userService.getUserById(testUserId, null).email()).isEqualTo("taken@example.com");
   }
 
   @Test
@@ -232,7 +232,7 @@ class UserServiceTest extends IntegrationTestBase {
     // callerId를 testUserId와 다르게 설정하여 자기 자신 역할 제거 보호 로직 비활성화
     userService.setUserRoles(testUserId, List.of(adminRoleId, userRoleId), callerId);
 
-    UserDetailResponse detail = userService.getUserById(testUserId);
+    UserDetailResponse detail = userService.getUserById(testUserId, null);
     assertThat(detail.roles()).hasSize(2);
   }
 
@@ -254,7 +254,7 @@ class UserServiceTest extends IntegrationTestBase {
     assertThatThrownBy(() -> userService.setUserRoles(testUserId, screenSaw, screenSaw, callerId))
         .isInstanceOf(EditConflictException.class)
         .hasMessage(UserService.ROLES_EDIT_CONFLICT_MESSAGE);
-    assertThat(userService.getUserById(testUserId).roles())
+    assertThat(userService.getUserById(testUserId, null).roles())
         .extracting(r -> r.name())
         .containsExactly("USER");
 
@@ -290,7 +290,7 @@ class UserServiceTest extends IntegrationTestBase {
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("자기 자신은 정지하거나 제거할 수 없습니다");
 
-    UserDetailResponse detail = userService.getUserById(testUserId);
+    UserDetailResponse detail = userService.getUserById(testUserId, null);
     assertThat(detail.isActive()).isTrue();
   }
 
@@ -299,7 +299,7 @@ class UserServiceTest extends IntegrationTestBase {
     // 자기 자신을 "활성화"하는 것은 위험하지 않으므로 차단 대상이 아니다 (active=true 는 통과).
     userService.setUserActive(testUserId, true, testUserId);
 
-    UserDetailResponse detail = userService.getUserById(testUserId);
+    UserDetailResponse detail = userService.getUserById(testUserId, null);
     assertThat(detail.isActive()).isTrue();
   }
 

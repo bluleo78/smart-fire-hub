@@ -1,6 +1,7 @@
 package com.smartfirehub.platform.service;
 
 import com.smartfirehub.audit.service.AuditLogService;
+import com.smartfirehub.platform.dto.TenantSummaryResponse;
 import com.smartfirehub.user.dto.UserResponse;
 import com.smartfirehub.user.repository.UserRepository;
 import java.util.LinkedHashMap;
@@ -54,5 +55,16 @@ public class PlatformAuditRecorder {
         "SUCCESS",
         null,
         metadata);
+  }
+
+  /**
+   * 테넌트 대상 감사가 공유하는 details 의 앞머리(테넌트 id·slug)를 새 맵으로 만든다(WD-1132 — 멤버 추가·소유자 지정이 같은 모양을 쓴다). 키 순서
+   * 유지를 위해 LinkedHashMap.
+   */
+  static Map<String, Object> tenantAuditDetails(long tenantId, TenantSummaryResponse tenant) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("tenantId", tenantId);
+    details.put("tenantSlug", tenant.slug());
+    return details;
   }
 }
