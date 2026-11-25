@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 import { expect } from '@playwright/test';
 
 /**
@@ -33,4 +33,20 @@ export async function expectBackdropClickStaysOnList(page: Page, deleteRequests:
   await expect(dialog).toBeHidden();
   await expect(page).toHaveURL(listUrl);
   expect(deleteRequests).toHaveLength(0);
+}
+
+/**
+ * 대화상자가 열림 애니메이션(zoom-in-95)을 마친 뒤 세로로 뷰포트 안에 있는지 확인한다 (WD-1123).
+ * 애니메이션 중에는 95% 로 줄어든 박스라 「뷰포트 안」 단언이 느슨해지므로 먼저 애니메이션이 끝나길 기다린다.
+ * 높이는 page.viewportSize() 에서 읽어 시험마다 숫자를 되풀이하지 않는다.
+ * @param page - 대상 페이지(뷰포트 크기를 읽는다)
+ * @param dialog - 대화상자 locator
+ */
+export async function expectDialogWithinViewportHeight(page: Page, dialog: Locator): Promise<void> {
+  await expect.poll(() => dialog.evaluate((el) => el.getAnimations().length)).toBe(0);
+  const height = page.viewportSize()!.height;
+  const box = await dialog.boundingBox();
+  expect(box, '대화상자가 그려지지 않았다').not.toBeNull();
+  expect(box!.y).toBeGreaterThanOrEqual(0);
+  expect(box!.y + box!.height).toBeLessThanOrEqual(height);
 }

@@ -80,8 +80,10 @@ function AlertDialogContent({
         // 예전 anywhere 로 같은 동작이었고, 일반 Dialog 에는 새 동작이다(WD-660). 지금 대화상자 안의 pre-wrap 블록은 이미 스스로
         // break-words·break-all·wrapLongLines 로 감도록 만든 것이라 의도와 맞고, whitespace-pre 블록은 줄바꿈 자체가 없어 물려받은 break-word 의 영향이 없다.
         // (b) AlertDialogHeader 의 직접 자식 밖에 있는 inline-block·flex·grid 후손은 최소 내용 폭이 줄지 않으니, 그런 요소에 긴 값을 넣으면 그 요소에 직접 min-w-0 / wrap-anywhere 를 준다(상속으로 전부 끊지 않는 의도된 선택).
+        // WD-1123: 높이 제한 + 세로 스크롤 — 일반 DialogContent(WD-1110)와 같은 처리. 내용(참조 목록 등)이 길거나 뷰포트가 낮으면
+        // 확인 창이 뷰포트를 벗어나 위·아래가 잘리고 「삭제」 버튼에 닿을 수 없다. 근거·감수한 점은 dialog.tsx 주석(WD-1110)에 둔다.
         className={cn(
-          "grid-cols-[minmax(0,1fr)] wrap-break-word bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 group/alert-dialog-content fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border p-6 shadow-lg duration-200 data-[size=sm]:max-w-xs data-[size=default]:sm:max-w-lg",
+          "grid-cols-[minmax(0,1fr)] wrap-break-word bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 group/alert-dialog-content fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] max-h-[calc(100dvh-4rem)] overflow-y-auto translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border p-6 shadow-lg duration-200 data-[size=sm]:max-w-xs data-[size=default]:sm:max-w-lg",
           className
         )}
         {...props}

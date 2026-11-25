@@ -4,6 +4,7 @@ import { createDatasetReferences } from '../../factories/dataset.factory';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { grantDatasetPermissions, mockDatasetReferences, setupDatasetMocks } from '../../fixtures/dataset.fixture';
+import { expectDialogWithinViewportHeight } from '../../fixtures/dialog.fixture';
 
 // 생성·수정·삭제 진입점은 권한이 있을 때만 보인다(WD-144) — 기본 인증 fixture 는 권한이 비어 있으므로 쓰기 흐름을 검증하는 이 spec 은
 // 데이터셋 쓰기 권한(dataset:write·dataset:delete 포함)을 준다. 조회 전용 노출은 dataset-list-permissions.spec.ts 가 검증한다.
@@ -151,5 +152,53 @@ test.describe('데이터셋 삭제 — 쓰는 곳 안내 (WD-143)', () => {
     // 열린 채 라우트가 바뀌어 창이 언마운트돼도 Radix 의 스크롤 잠금·포인터 차단이 body 에 남지 않아야 한다
     await expect(page.getByRole('alertdialog')).toHaveCount(0);
     await expect.poll(() => page.evaluate(() => document.body.style.pointerEvents)).not.toBe('none');
+  });
+
+  /**
+   * WD-1123: 낮은 뷰포트(360px)에서도 확인 창이 뷰포트 안에 머물고, 안쪽에서 스크롤해 「삭제」 버튼에 닿는다.
+   * - 참조 목록이 길어 AlertDialogContent 높이가 뷰포트를 넘으면 위·아래가 잘려 삭제 버튼에 닿을 수 없었다.
+   * - 클래스 존재는 단위 테스트(src/components/ui/alert-dialog.test.tsx)가 고정한다 — 여기서는 좌표·스크롤·클릭을 실제 브라우저에서 직접 잰다.
+   */
+  test('낮은 뷰포트에서도 확인 창이 뷰포트 안에 머물고 스크롤해 삭제 버튼에 닿는다 (WD-1123)', async ({ authenticatedPage: page }) => {
+    await page.setViewportSize({ width: 375, height: 360 });
+    await setupDatasetMocks(page);
+    await mockDatasetReferences(
+      page,
+      createDatasetReferences({
+        pipelines: [
+          { id: 10, name: '일일 적재' },
+          { id: 11, name: '주간 집계' },
+          { id: 12, name: '월간 보고' },
+          { id: 13, name: '연간 정산' },
+        ],
+        dashboards: [{ id: 20, name: '영업 현황' }],
+        hiddenDashboardCount: 2,
+        proactiveJobs: [{ id: 30, name: '아침 브리핑' }],
+        triggers: [{ id: 40, name: '변경 감지', pipelineId: 10, pipelineName: '일일 적재' }],
+      }),
+    );
+    const deleteCapture = await mockApi(page, 'DELETE', '/api/v1/datasets/1', {}, { capture: true });
+
+    const dialog = await openDeleteDialog(page);
+    await expect(dialog.getByTestId('dataset-references')).toBeVisible();
+
+    // 1) 뷰포트 안 정렬 — 열림 애니메이션(zoom-in-95)이 끝난 뒤 잰다(진행 중엔 95% 로 줄어든 박스라 단언이 느슨해진다).
+    await expectDialogWithinViewportHeight(page, dialog);
+
+    // 2) 대화상자 자체가 세로 스크롤 컨테이너다 — 내용이 높이 제한보다 커야 한다.
+    const scroll = await dialog.evaluate((el) => ({ scrollHeight: el.scrollHeight, clientHeight: el.clientHeight }));
+    expect(scroll.scrollHeight).toBeGreaterThan(scroll.clientHeight);
+
+    // 3) 끝까지 내리면 「삭제」 버튼이 뷰포트 안에 들어오고, 눌러 DELETE 가 나간다.
+    await dialog.evaluate((el) => {
+      el.scrollTop = el.scrollHeight;
+    });
+    const confirm = dialog.getByRole('button', { name: '삭제' });
+    const btn = await confirm.boundingBox();
+    expect(btn, '삭제 버튼이 그려지지 않았다').not.toBeNull();
+    expect(btn!.y + btn!.height).toBeLessThanOrEqual(360);
+    await confirm.click();
+    const req = await deleteCapture.waitForRequest();
+    expect(req.url.pathname).toBe('/api/v1/datasets/1');
   });
 });

@@ -66,7 +66,8 @@ export function AddRowDialog({ open, onOpenChange, datasetId, columns }: AddRowD
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[80vh] overflow-y-auto overscroll-contain">
+      {/* WD-1123: vh 는 모바일 주소창을 포함한 높이라 가려지므로 dvh(보이는 높이)로 맞춘다. */}
+      <DialogContent className="max-h-[80dvh] overflow-y-auto overscroll-contain">
         <DialogHeader>
           <DialogTitle>행 추가</DialogTitle>
           <DialogDescription className="sr-only">데이터셋에 새 행을 추가합니다.</DialogDescription>

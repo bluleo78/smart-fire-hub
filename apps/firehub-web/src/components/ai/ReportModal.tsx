@@ -114,7 +114,8 @@ export default function ReportModal({ open, onClose, jobId, executionId }: Repor
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="sm:max-w-5xl h-[85vh] flex flex-col p-0 gap-0" showCloseButton={false}>
+      {/* WD-1123: dvh 기준 높이 + overflow-hidden — 바깥은 스크롤하지 않고 안쪽 영역만 스크롤한다(공용 overflow-y-auto 덮어씀). */}
+      <DialogContent className="sm:max-w-5xl h-[85dvh] flex flex-col overflow-hidden p-0 gap-0" showCloseButton={false}>
         {/* 헤더 — 제목, 상태 뱃지, 시간, 액션 버튼 */}
         {/* WD-351: 좁은 폭(390·375)에서 버튼 묶음은 줄지 않고 제목 쪽만 줄어 「리포트 / #2」「1시간 / 전」처럼 단어 중간에서
             쪼개졌다. 왼쪽 묶음에 min-w-0 을 두고 제목·배지는 줄지 않게(제목은 아주 긴 번호만 9rem 에서 말줄임), 덜 중요한

@@ -59,7 +59,8 @@ export default function ReportPreviewDialog({
 }: ReportPreviewDialogProps) {
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="sm:max-w-4xl flex flex-col max-h-[85vh]">
+      {/* WD-1123: dvh 기준 높이 + overflow-hidden — 바깥은 스크롤하지 않고 안쪽 영역만 스크롤한다(공용 overflow-y-auto 덮어씀). */}
+      <DialogContent className="sm:max-w-4xl flex flex-col max-h-[85dvh] overflow-hidden">
         {/* 헤더 — 리포트 제목과 원본 질문 표시 */}
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>

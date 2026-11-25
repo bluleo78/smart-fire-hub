@@ -482,7 +482,8 @@ export function AddMemberDialog({ canAssignRoles, canReadRoles }: { canAssignRol
         </Button>
       </DialogTrigger>
       <DialogContent
-        className="flex max-h-[85vh] flex-col"
+        // WD-1123: dvh 기준 높이 + overflow-hidden — 바깥은 스크롤하지 않고 안쪽 영역만 스크롤한다(공용 overflow-y-auto 덮어씀).
+        className="flex max-h-[85dvh] flex-col overflow-hidden"
         // 결과 화면은 "닫기" 단일 주 버튼만 둔다(우상단 X 와 이름이 겹치지 않게). Esc 는 그대로 허용.
         showCloseButton={!created}
         // 결과 화면은 비밀번호를 다시 볼 수 없으므로 바깥 클릭으로 실수로 닫히지 않게 한다.
@@ -547,7 +548,7 @@ export function AddMemberDialog({ canAssignRoles, canReadRoles }: { canAssignRol
                 이 워크스페이스에 사용자를 추가합니다. 이미 가입된 이메일이면 기존 계정이 추가됩니다.
               </DialogDescription>
             </DialogHeader>
-            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto">
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto" data-testid="add-member-dialog-scroll">
               {/* 정지 멤버 상세 링크는 오류 문구 바로 뒤(같은 줄)에 둔다(와이어프레임 ③). 오류 문구가 이메일 입력의
                   aria-describedby 라 링크도 그 입력의 설명으로 함께 읽힌다. */}
               <FormField

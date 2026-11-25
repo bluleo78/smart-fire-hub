@@ -328,7 +328,9 @@ export function InlineChartWidget({
 
       {/* SQL 모달 — 전체 SQL을 구문 강조 + 줄바꿈 + 세로 스크롤로 표시. 복사 버튼 제공. */}
       <Dialog open={sqlDialogOpen} onOpenChange={setSqlDialogOpen}>
-        <DialogContent className="sm:max-w-[720px]">
+        {/* WD-1123: 공용 DialogContent 의 바깥 스크롤과 안쪽 SQL 박스 스크롤이 겹치지 않게 바깥은 overflow-hidden flex 컬럼으로 두고
+            안쪽 박스만 남은 높이(dvh 제한)를 채워 스크롤한다. 예전 안쪽 max-h-[60vh] 는 vh 기준이라 낮은 뷰포트에서 이중 스크롤을 만들었다. */}
+        <DialogContent className="flex flex-col overflow-hidden sm:max-w-[720px]">
           <DialogHeader>
             <DialogTitle>실행 SQL</DialogTitle>
             <DialogDescription className="sr-only">
@@ -336,7 +338,7 @@ export function InlineChartWidget({
             </DialogDescription>
           </DialogHeader>
           <div
-            className="max-h-[60vh] overflow-auto overscroll-contain rounded-md"
+            className="min-h-0 flex-1 overflow-auto overscroll-contain rounded-md"
             data-testid="inline-chart-sql-dialog-content"
           >
             <SyntaxHighlighter

@@ -235,7 +235,8 @@ export function EditTriggerDialog({ open, onOpenChange, pipelineId, trigger, onC
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto overscroll-contain" onCloseAutoFocus={onCloseAutoFocus}>
+      {/* WD-1123: vh 는 모바일 주소창을 포함한 높이라 가려지므로 dvh(보이는 높이)로 맞춘다. */}
+      <DialogContent className="max-h-[85dvh] overflow-y-auto overscroll-contain" onCloseAutoFocus={onCloseAutoFocus}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             트리거 편집

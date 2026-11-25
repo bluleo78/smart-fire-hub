@@ -198,7 +198,8 @@ export function AddTriggerDialog({ open, onOpenChange, pipelineId }: AddTriggerD
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto overscroll-contain">
+      {/* WD-1123: vh 는 모바일 주소창을 포함한 높이라 가려지므로 dvh(보이는 높이)로 맞춘다. */}
+      <DialogContent className="max-h-[85dvh] overflow-y-auto overscroll-contain">
         <DialogHeader>
           <DialogTitle>
             {step === 1 ? '새 트리거' : `새 트리거 - ${typeInfo?.label}`}
