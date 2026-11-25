@@ -348,8 +348,8 @@ public class ApiConnectionService {
     }
 
     // 이름을 변경하는 경우에만 중복 검사 — 자기 자신은 제외 (#647)
-    // 앞뒤 유니코드 공백을 걷어낸 이름으로 검사·저장한다(WD-1085). null 은 변경 없음.
-    String name = TextRules.strip(request.name());
+    // 다듬기 전 원래 값을 넘긴다 — 저장 이름 그대로 보낸 저장이 이름을 다듬지 않게 하려면 원래 값 비교가 먼저여야 한다(WD-1145). null 은 변경 없음.
+    String name = request.name();
     if (name != null) {
       name = resolveUpdatedName(id, existing.name(), name);
     }
@@ -1050,33 +1050,44 @@ public class ApiConnectionService {
   }
 
   /**
-   * 이름 잠금을 잡는다(WD-1107·WD-1129). 잠금 키는 중복 SQL(TRANSLATE 로 모든 유니코드 공백을 ASCII 공백으로 본다)의 상위 집합이어야 하는데,
-   * WD-1108 이후 가드의 normalize 가 유니코드 공백을 ASCII 로 바꾸는 일까지 하므로 이름을 그대로 넘긴다. create()·update() 가 같은 키를
-   * 쓰도록 잠금은 모두 이 메서드로 잡는다.
+   * 이름 잠금을 잡는다(WD-1107·WD-1129·WD-1145). 잠금 키는 중복 SQL 이 같다고 보는 이름이면 반드시 같은 키가 되어야 한다. 중복 SQL 은 DB
+   * 마다 다르다 — PG 는 유니코드 공백을 ASCII 로 바꾼 뒤 {@code lower(trim)}, Tibero 는 {@code lower(trim)} 만 한다. 가드의
+   * {@code ResourceNameGuard.normalize}(유니코드 공백→ASCII + strip + 소문자)는 두 규칙 모두의 상위 집합이라 어느 DB 에서도
+   * 안전하다. 그래서 이름을 그대로 넘긴다. create()·update() 가 같은 키를 쓰도록 잠금은 모두 이 메서드로 잡는다.
    */
   private void lockName(String name) {
     nameGuard.lock(ResourceKind.API_CONNECTION, NAME_LOCK_OWNER, name);
   }
 
   /**
-   * 수정 요청 이름을 저장할 이름으로 확정한다(WD-1107, WD-1129). {@code before} 는 update() 가 행 잠금(FOR UPDATE) 뒤에 읽은
-   * 저장 이름이라 최신이다.
+   * 수정 요청 이름을 저장할 이름으로 확정한다(WD-1107, WD-1129, WD-1145). {@code before} 는 update() 가 행 잠금(FOR
+   * UPDATE) 뒤에 읽은 저장 이름이라 최신이고, {@code rawRequestedName} 은 다듬기 전 요청 값이다.
    *
    * <ul>
-   *   <li>저장된 이름과 글자 그대로 같으면 그대로 둔다.
-   *   <li>앞뒤 공백만 다르면(V168 이 겹침이라 건너뛴 옛 공백 행 포함) 이름 잠금을 잡고 다른 행과 겹치는지 본다 — 겹치면(대소문자만 다른 행 포함) 저장된
-   *       이름을 유지해 유니크 인덱스에 걸리지 않게 하고, 겹치지 않으면 다듬은 이름으로 저장한다.
-   *   <li>실제 개명이면 이름 잠금을 잡은 뒤 중복 검사한다(409).
+   *   <li>저장된 이름과 글자 그대로 같으면(다듬기 전 값 비교) 잠금·검사 없이 그대로 둔다 — 다듬어 저장하면 이름이 몰래 바뀌고 감사에도 변경으로 남는다.
+   *   <li>앞뒤 공백만 다르면(대소문자·가운데 글자는 같음, V168 이 겹침이라 건너뛴 옛 공백 행 포함) 보이는 변화가 없는 요청이므로 409 를 내지 않는다. 이름
+   *       잠금 아래에서 다른 행과 겹치면 저장된 이름을 유지해 유니크 인덱스(정확 일치)에 걸리지 않게 하고, 겹치지 않으면 다듬은 요청 이름으로 저장한다.
+   *   <li>그 밖에 보이는 변화(대소문자·가운데 공백 종류·다른 글자)는 정상 개명이다. 이름 잠금을 잡은 뒤 DB 중복 규칙({@code
+   *       existsByNameExcludingId}) 으로 판정해 겹치면 409 를 낸다 — 조용히 무시하면 사용자는 바뀐 줄 안다.
    * </ul>
+   *
+   * <p>자바는 DB 중복 규칙을 흉내 내지 않는다. 같은 이름 판정은 DB 에 맡기고, 요청 이름은 다른 행을 못 찾았을 때만 저장하므로 유니크 인덱스 (tenant_id,
+   * name) 를 어기지 않는다.
    */
-  private String resolveUpdatedName(Long id, String before, String requestedName) {
-    if (before.equals(requestedName)) {
+  private String resolveUpdatedName(Long id, String before, String rawRequestedName) {
+    if (before.equals(rawRequestedName)) {
       return before;
     }
-    boolean trimOnly = TextRules.strip(before).equals(requestedName);
+    String requestedName = TextRules.strip(rawRequestedName);
+    if (requestedName.equals(before)) {
+      // 저장 이름이 이미 다듬어진 값 — 결과가 같으니 잠금·중복 조회를 건너뛴다
+      return before;
+    }
+    // 앞뒤 공백만 다른 요청 — 대소문자 구분 비교(보이는 변화 없음)
+    boolean edgeSpaceOnly = TextRules.strip(before).equals(requestedName);
     lockName(requestedName);
     boolean overlaps = repository.existsByNameExcludingId(requestedName, id);
-    if (trimOnly) {
+    if (edgeSpaceOnly) {
       return overlaps ? before : requestedName;
     }
     if (overlaps) {
@@ -1087,8 +1098,9 @@ public class ApiConnectionService {
 
   /**
    * 동일 테넌트 내 이름 중복을 막는다(#647) — 이름 잠금 아래에서 부른다(WD-1107). 비교는 PostgreSQL 에서는 유니코드 공백(탭·NBSP·전각 등)을
-   * ASCII 공백으로 바꾼 뒤 {@code lower(trim)} 하고(WD-1129), Tibero 는 이전과 같은 {@code lower(trim)} 이다. 테넌트
-   * 경계는 RLS 가 건다.
+   * ASCII 공백으로 바꾼 뒤 {@code lower(trim)} 하고(WD-1129), Tibero 는 ASCII 공백만 걷는 {@code lower(trim)} 이다
+   * (비 UTF-8 문자셋에서 유니코드 바인딩이 '?' 로 바뀌면 거짓 중복이 날 수 있어 의도적으로 뺐다, WD-1145). 두 DB 의 규칙이 다르므로 잠금 키는 두
+   * 규칙의 상위 집합이다 ({@link #lockName}). 테넌트 경계는 RLS 가 건다.
    */
   private void validateNameNotDuplicated(String name) {
     if (repository.existsByName(name)) {
@@ -1359,7 +1371,8 @@ public class ApiConnectionService {
     String beforeHealthCheckPath = existing.healthCheckPath();
 
     // 리포지토리 규칙대로 실제로 저장되는 값을 구한다 — null 은 미변경, 헬스체크 경로 "" 는 NULL 로 지움(#115).
-    // 이름은 update 가 앞뒤 공백을 걷어낸 값(name)을 받아 저장값과 맞춘다(WD-1085).
+    // 이름(name)은 update 가 실제로 저장하기로 한 값을 넘긴다 — 다듬은 요청 이름일 수도, 저장 이름 유지 경로에서는 다듬지 않은 저장 이름일 수도
+    // 있다(WD-1085, WD-1145).
     String afterName = name != null ? name : beforeName;
     String afterDescription =
         request.description() != null ? request.description() : beforeDescription;

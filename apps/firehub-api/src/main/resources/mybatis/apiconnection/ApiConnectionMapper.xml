@@ -136,6 +136,10 @@
     PG 의 TRIM 은 U+0020 만 걷기 때문이다. 이름 가운데의 공백 종류도 같게 본다.
     Tibero 는 이전 비교(LOWER(TRIM))를 그대로 둔다 — 유니코드 바인드 문자가 비 UTF-8 문자셋에서 '?' 로 바뀌면 이름 속 모든 '?' 가
     공백으로 매핑돼 거짓 중복이 날 수 있어 검증 전에는 넣지 않는다(V168 의 Tibero 와 같은 미검증 상태). ws/sp 파라미터는 무시한다.
+    그래서 두 DB 의 중복 규칙은 같지 않다 — PG: 유니코드 공백→ASCII 후 lower(trim), Tibero: ASCII 공백만 걷는 lower(trim)(WD-1145).
+    서비스의 잠금 키(ResourceNameGuard.normalize)는 두 규칙 모두의 상위 집합이라 안전하다.
+    PG 의 ws 는 U+1680·U+2028 등 비 Latin-1 문자를 바인딩하므로 PG 서버 인코딩 UTF8 이 전제다(이 플랫폼 DB 는 UTF8 로 만든다) —
+    다른 인코딩이면 바인딩이 실패한다(WD-1145).
   -->
   <select id="countByName" resultType="java.lang.Long" databaseId="postgresql">
     SELECT COUNT(*) FROM api_connection ac

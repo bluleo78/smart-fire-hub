@@ -34,7 +34,6 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
-import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -47,8 +46,7 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
 
   @Autowired private ApiConnectionService apiConnectionService;
 
-  /** 호출 순서(행 잠금 → 읽기)를 InOrder 로 확인하려 스파이로 둔다(WD-1129) — 기본은 실제 구현에 위임한다. */
-  @MockitoSpyBean private ApiConnectionRepository apiConnectionRepository;
+  @Autowired private ApiConnectionRepository apiConnectionRepository;
 
   @Autowired private DSLContext dsl;
 
@@ -550,8 +548,7 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
             () ->
                 apiConnectionService.create(
                     validReq("https://dup-b.example.com", dupName), testUserId))
-        .isInstanceOf(
-            ApiConnectionNameAlreadyExistsException.class)
+        .isInstanceOf(ApiConnectionNameAlreadyExistsException.class)
         .hasMessageContaining(dupName);
   }
 
@@ -581,8 +578,7 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
         new UpdateApiConnectionRequest(nameA, null, null, null, null, null);
 
     assertThatThrownBy(() -> apiConnectionService.update(connB.id(), updateReq, testUserId))
-        .isInstanceOf(
-            ApiConnectionNameAlreadyExistsException.class)
+        .isInstanceOf(ApiConnectionNameAlreadyExistsException.class)
         .hasMessageContaining(nameA);
   }
 
@@ -2988,8 +2984,7 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
             () ->
                 apiConnectionService.create(
                     validReq("https://wd1085-b.example.com", "  " + base + "  "), testUserId))
-        .isInstanceOf(
-            ApiConnectionNameAlreadyExistsException.class);
+        .isInstanceOf(ApiConnectionNameAlreadyExistsException.class);
   }
 
   /** NBSP·전각 공백으로 감싼 이름은 걷어낸 값으로 저장된다. */
@@ -3015,8 +3010,7 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
     UpdateApiConnectionRequest req =
         new UpdateApiConnectionRequest("  " + nameA + "  ", null, null, null, null, null);
     assertThatThrownBy(() -> apiConnectionService.update(connB.id(), req, testUserId))
-        .isInstanceOf(
-            ApiConnectionNameAlreadyExistsException.class);
+        .isInstanceOf(ApiConnectionNameAlreadyExistsException.class);
   }
 
   /** 자기 이름에 공백만 덧댄 수정은 성공하고 걷어낸 이름으로 저장된다(자기 자신은 중복이 아니다). */
@@ -3059,7 +3053,8 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
                 name,
                 null,
                 "API_KEY",
-                encryptionService.encrypt("{\"placement\":\"header\",\"headerName\":\"X-Key\",\"apiKey\":\"secret\"}"),
+                encryptionService.encrypt(
+                    "{\"placement\":\"header\",\"headerName\":\"X-Key\",\"apiKey\":\"secret\"}"),
                 testUserId,
                 "https://api.example.com",
                 null));
@@ -3100,9 +3095,7 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
 
     ApiConnectionResponse updated =
         apiConnectionService.update(
-            id,
-            new UpdateApiConnectionRequest(lower, "새 설명", null, null, null, null),
-            testUserId);
+            id, new UpdateApiConnectionRequest(lower, "새 설명", null, null, null, null), testUserId);
 
     assertThat(updated.description()).isEqualTo("새 설명");
   }
@@ -3139,6 +3132,7 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
 
     assertThat(updated.name()).isEqualTo(base.toUpperCase());
   }
+
   // ── WD-1107 코드 리뷰: 옛 공백 행은 설명만 고쳐도 저장된 이름 그대로 두고, 실제 개명만 검사한다 ──
 
   @Test
@@ -3169,11 +3163,29 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
     assertThat(updated.name()).isEqualTo(base + "\u00a0");
   }
 
+  /** 옛 공백 행을 다른 행의 이름(대소문자만 다름)으로 바꾸는 요청은 보이는 변화(대소문자)이므로 DB 중복 규칙으로 판정해 409 다(WD-1145). */
   @Test
   void update_renameLegacyPaddedRowToOtherRowsCase_rejected() {
     String base = "SALES" + System.nanoTime();
     saveRaw(base);
     Long id = saveRaw(base.toLowerCase() + " ");
+
+    assertThatThrownBy(
+            () ->
+                apiConnectionService.update(
+                    id,
+                    new UpdateApiConnectionRequest(base, null, null, null, null, null),
+                    testUserId))
+        .isInstanceOf(ApiConnectionNameAlreadyExistsException.class)
+        .hasMessage("이미 사용 중인 이름입니다: " + base);
+  }
+
+  /** 옛 공백 행을 다른 행의 이름(글자가 다름)으로 바꾸는 진짜 개명은 겹치면 409 다 — 앞뒤 공백만 다른 갈래로 새지 않는지 지킨다(WD-1145). */
+  @Test
+  void update_renameLegacyPaddedRowToOtherRowsName_rejected() {
+    String base = "SALES" + System.nanoTime();
+    saveRaw(base);
+    Long id = saveRaw("Other" + System.nanoTime() + " ");
 
     assertThatThrownBy(
             () ->
@@ -3199,6 +3211,19 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
     assertThat(updated.name()).isEqualTo(base);
   }
 
+  /** 앞뒤가 탭·NBSP 인 옛 행도 앞뒤 공백만 다른 요청으로 보고, 겹침이 없으면 다듬은 이름으로 저장한다(WD-1145). */
+  @Test
+  void update_trimOnlyRename_unicodeEdgeSpace_noOtherRow_storesTrimmedName() {
+    String base = "Sales" + System.nanoTime();
+    Long id = saveRaw("\t" + base + "\u00a0");
+
+    ApiConnectionResponse updated =
+        apiConnectionService.update(
+            id, new UpdateApiConnectionRequest(base, "설명", null, null, null, null), testUserId);
+
+    assertThat(updated.name()).isEqualTo(base);
+  }
+
   @Test
   void update_trimOnlyRename_caseVariantRowExists_keepsStoredName() {
     String base = "Sales" + System.nanoTime();
@@ -3210,20 +3235,6 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
             id, new UpdateApiConnectionRequest(base, null, null, null, null, null), testUserId);
 
     assertThat(updated.name()).isEqualTo(base + " ");
-  }
-
-  /** 수정은 행 잠금(findNameForUpdate)을 먼저 잡고 그 뒤에 existing 을 읽는다 — 감사 이전 값이 잠금 아래 행에서 나온다(WD-1129). */
-  @Test
-  void update_locksRowBeforeReadingExisting() {
-    Long id = saveRaw("Order" + System.nanoTime());
-    org.mockito.Mockito.clearInvocations(apiConnectionRepository);
-
-    apiConnectionService.update(
-        id, new UpdateApiConnectionRequest(null, "새 설명", null, null, null, null), testUserId);
-
-    org.mockito.InOrder order = org.mockito.Mockito.inOrder(apiConnectionRepository);
-    order.verify(apiConnectionRepository).findNameForUpdate(id);
-    order.verify(apiConnectionRepository).findById(id);
   }
 
   /** 안쪽 공백 종류만 다른 이름(NBSP vs 공백)도 생성 시 중복(409)이다(WD-1129). */
@@ -3255,7 +3266,10 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
     assertThat(updated.description()).isEqualTo("새 설명");
   }
 
-  /** 이름에 저장된 패딩 이름을 그대로 보내도(글자 그대로 같음) 저장 이름은 바뀌지 않는다(WD-1129). */
+  /**
+   * 이름에 저장된 패딩 이름을 그대로 보내면(글자 그대로 같음, 같은 이름 행이 옆에 있어도) 바로 유지한다 — 잠금·검사 없이 저장 이름 그대로(WD-1129,
+   * WD-1145).
+   */
   @Test
   void update_descriptionOnly_nameEqualsStoredPadded_keepsStoredName() {
     String base = "Sales" + System.nanoTime();
@@ -3268,5 +3282,91 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
             id, new UpdateApiConnectionRequest(padded, "새 설명", null, null, null, null), testUserId);
 
     assertThat(updated.name()).isEqualTo(padded);
+  }
+
+  // ── WD-1145: 저장 이름 그대로 보낸 저장은 이름을 다듬지 않고, 앞뒤 공백만 다른 요청은 유지, 보이는 변화는 DB 중복 규칙으로 판정 ──
+
+  /** 옆 행이 없어도 저장된 패딩 이름을 그대로 보내면 이름이 다듬어지지 않고, 감사 changedFields 에도 name 이 없다(WD-1145). */
+  @Test
+  void update_descriptionOnly_nameEqualsStoredPadded_noOtherRow_keepsStoredName() throws Exception {
+    String base = "Legacy" + System.nanoTime();
+    String padded = "\t" + base + " ";
+    Long id = saveRaw(padded);
+
+    ApiConnectionResponse updated =
+        apiConnectionService.update(
+            id, new UpdateApiConnectionRequest(padded, "새 설명", null, null, null, null), testUserId);
+
+    assertThat(updated.name()).isEqualTo(padded);
+    assertThat(updated.description()).isEqualTo("새 설명");
+    List<Record> rows = connectionAudits("UPDATE", id);
+    assertThat(rows).isNotEmpty();
+    JsonNode meta = auditMetadata(rows.get(rows.size() - 1));
+    assertThat(jsonTexts(meta.get("changedFields"))).doesNotContain("name");
+  }
+
+  /** 대소문자가 바뀐 보이는 변화라도 겹치는 행이 없으면 요청 이름으로 저장한다(WD-1145). */
+  @Test
+  void update_caseChange_noOtherRow_storesRequested() {
+    String base = "Sales" + System.nanoTime();
+    Long id = saveRaw(base + " ");
+
+    ApiConnectionResponse updated =
+        apiConnectionService.update(
+            id,
+            new UpdateApiConnectionRequest(base.toLowerCase(), null, null, null, null, null),
+            testUserId);
+
+    assertThat(updated.name()).isEqualTo(base.toLowerCase());
+  }
+
+  /** 대소문자가 바뀐 보이는 변화가 다른 행과 겹치면 조용히 무시하지 않고 409 를 낸다(WD-1145). */
+  @Test
+  void update_caseChange_overlapsOtherRow_rejected() {
+    String base = "Sales" + System.nanoTime();
+    Long id = saveRaw(base + " ");
+    saveRaw(base.toUpperCase());
+
+    assertThatThrownBy(
+            () ->
+                apiConnectionService.update(
+                    id,
+                    new UpdateApiConnectionRequest(
+                        base.toLowerCase(), null, null, null, null, null),
+                    testUserId))
+        .isInstanceOf(ApiConnectionNameAlreadyExistsException.class);
+  }
+
+  /** 안쪽 공백 종류만 바뀐 보이는 변화(ASCII 공백 → 전각 공백)가 다른 행과 겹치면 409 를 낸다(WD-1145). */
+  @Test
+  void update_innerSpaceOnly_overlapsOtherRow_rejected() {
+    String suffix = String.valueOf(System.nanoTime());
+    Long id = saveRaw("Inner Space " + suffix);
+    saveRaw("inner\u3000space " + suffix);
+
+    assertThatThrownBy(
+            () ->
+                apiConnectionService.update(
+                    id,
+                    new UpdateApiConnectionRequest(
+                        "Inner\u3000Space " + suffix, null, null, null, null, null),
+                    testUserId))
+        .isInstanceOf(ApiConnectionNameAlreadyExistsException.class);
+  }
+
+  /** 안쪽 공백만 바뀌고 겹치는 행이 없으면 요청 이름으로 저장한다(WD-1145). */
+  @Test
+  void update_innerSpaceOnly_noOtherRow_storesRequested() {
+    String suffix = String.valueOf(System.nanoTime());
+    Long id = saveRaw("Inner Space " + suffix);
+
+    ApiConnectionResponse updated =
+        apiConnectionService.update(
+            id,
+            new UpdateApiConnectionRequest(
+                "Inner\u3000Space " + suffix, null, null, null, null, null),
+            testUserId);
+
+    assertThat(updated.name()).isEqualTo("Inner\u3000Space " + suffix);
   }
 }
