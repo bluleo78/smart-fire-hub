@@ -1,4 +1,4 @@
-import { queryOptions, skipToken, useInfiniteQuery, useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import { type QueryClient, queryOptions, skipToken, useInfiniteQuery, useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
 import { analyticsApi } from '../../api/analytics';
@@ -13,6 +13,8 @@ import type {
   CreateChartRequest,
   CreateDashboardRequest,
   CreateSavedQueryRequest,
+  Dashboard,
+  DashboardListItem,
   UpdateChartRequest,
   UpdateDashboardRequest,
   UpdateSavedQueryRequest,
@@ -387,18 +389,60 @@ export function useAllDashboards() {
 }
 
 /**
+ * 방금 만든 대시보드를 「대시보드에 추가」 목록 캐시 맨 앞에 씨앗으로 넣는다(WD-1106 ③).
+ *
+ * 왜: 만들기(POST)는 성공했는데 목록 재조회가 실패하면 만든 결과가 캐시에 없어
+ * 대화상자가 오류 화면으로 바뀌고 선택까지 잃는다 — 만든 순간 씨앗을 넣어
+ * 부분 실패에서도 목록·선택이 그대로 남게 한다.
+ * 같은 id 가 이미 있으면(재조회가 먼저 반영된 경우) 아무것도 하지 않는다 — 항목이 두 번 보이지 않게.
+ */
+export function seedDashboardInListCache(queryClient: QueryClient, created: Dashboard): void {
+  const key = [...DASHBOARD_LIST_KEY, 'all'];
+  const prev = queryClient.getQueryData<DashboardListItem[]>(key) ?? [];
+  if (prev.some((d) => d.id === created.id)) return;
+  const item: DashboardListItem = {
+    id: created.id,
+    name: created.name,
+    description: created.description,
+    isShared: created.isShared,
+    autoRefreshSeconds: created.autoRefreshSeconds,
+    // 새 대시보드는 위젯이 없지만, 만든 응답의 위젯 수를 실어 목록 계약(widgetCount)을 지킨다
+    widgetCount: created.widgets.length,
+    createdByName: created.createdByName,
+    createdBy: created.createdBy,
+    createdAt: created.createdAt,
+    updatedAt: created.updatedAt,
+  };
+  queryClient.setQueryData(key, [item, ...prev]);
+}
+
+/**
  * 대시보드 단건 조회 캐시 키 (WD-759).
  * useDashboard 와 AI 화면 컨텍스트의 캐시 이름 조회(useAIChat)가 같은 키를 쓰도록 한곳에 둔다 — 키가 어긋나면 조용히 이름이 빠진다.
  * 조회하지 않는 잘못된 id 는 useDashboard 가 null 로 넘긴다.
  */
 export const dashboardDetailKey = (id: number | null) => ['analytics', 'dashboards', id] as const;
 
+/**
+ * 대시보드 단건 조회 쿼리 옵션 — useDashboard(화면 조회)와 차트 추가 대화상자의 fetchQuery(추가 직전 재조회)가
+ * 같은 키·조회 함수를 쓰도록 한곳에 둔다. 키가 어긋나면 둘이 같은 캐시 항목을 못 나눠 읽는다.
+ * 유효 id 만 받는다 — 잘못된 id 를 걸러내는 게이트는 호출부가 맡는다(useDashboard 는 isValidId,
+ * 추가 대화상자는 선택이 확정된 targetId). fetchQuery({...opts, staleTime: 0}) 에 스프레드로 넘겨야 하므로
+ * 반환형에 skipToken 유니온을 넣지 않는다.
+ */
+export function dashboardDetailQueryOptions(id: number) {
+  return {
+    queryKey: dashboardDetailKey(id),
+    queryFn: () => analyticsApi.getDashboard(id).then((r) => r.data),
+  };
+}
+
 /** 대시보드 단건 조회. id 가 없으면(null·undefined — 잘못된 주소 id) skipToken 으로 조회하지 않는다(WD-661). */
 export function useDashboard(id: number | null | undefined) {
   return useQuery({
-    // 양의 정수가 아니면(0·NaN 포함) 조회하지 않는다(WD-667)
+    // 양의 정수가 아니면(0·NaN 포함) 조회하지 않는다(WD-667) — 게이트는 이 훅이 맡는다
     queryKey: dashboardDetailKey(isValidId(id) ? id : null),
-    queryFn: isValidId(id) ? () => analyticsApi.getDashboard(id).then((r) => r.data) : skipToken,
+    queryFn: isValidId(id) ? dashboardDetailQueryOptions(id).queryFn : skipToken,
   });
 }
 
