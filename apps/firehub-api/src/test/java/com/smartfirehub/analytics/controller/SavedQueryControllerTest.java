@@ -736,6 +736,23 @@ class SavedQueryControllerTest {
     verify(savedQueryService, never()).create(any(), anyLong());
   }
 
+  /** WD-1105: 채움 문자·제어 문자만인 분석 실행 SQL 도 400 — 가드 실행기는 부르지 않는다. */
+  @Test
+  void executeAnalytics_invisibleOnlySql_returns400() throws Exception {
+    for (String blank : new String[] {"\u3164", "\u0000"}) {
+      mockMvc
+          .perform(
+              post("/api/v1/analytics/queries/execute")
+                  .header("Authorization", "Bearer test-token")
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(
+                      objectMapper.writeValueAsString(new AnalyticsQueryRequest(blank, 100, true))))
+          .andExpect(status().isBadRequest())
+          .andExpect(jsonPath("$.errors.sql").value("SQL을 비울 수 없습니다."));
+    }
+    verify(guardedSqlExecutor, never()).executeAnalytics(any(), any(), anyInt(), anyBoolean());
+  }
+
   /**
    * WD-1086: 분석 실행·내보내기 확인 SQL 과 저장 쿼리 folder 는 @NotBlank 만 있어 공백만 값이 서비스(DB)까지 갔다. 공백만·NBSP·Cf 만이면
    * 400 필드 오류로 막히고 서비스는 부르지 않는다. folder 는 선택 필드라 null 은 그대로 201.
