@@ -69,7 +69,8 @@ export function BarChartView({ config, data, height }: BarChartViewProps) {
               dataKey={col}
               fill={palette[i % palette.length]}
               stackId={stacked ? 'stack' : undefined}
-              radius={stacked ? undefined : [2, 2, 0, 0]}              isAnimationActive={animate}
+              radius={stacked ? undefined : [2, 2, 0, 0]}
+              isAnimationActive={animate}
             />
           ))}
         </BarChart>

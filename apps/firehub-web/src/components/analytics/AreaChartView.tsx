@@ -74,7 +74,8 @@ export function AreaChartView({ config, data, height }: AreaChartViewProps) {
                 fill={color}
                 fillOpacity={0.2}
                 strokeWidth={2}
-                stackId={stacked ? 'stack' : undefined}                isAnimationActive={animate}
+                stackId={stacked ? 'stack' : undefined}
+                isAnimationActive={animate}
               />
             );
           })}

@@ -1,5 +1,5 @@
 import { AlertTriangle, EyeOff, GripVertical, Loader2, Lock, X } from 'lucide-react';
-import { type ComponentProps, type KeyboardEvent, type ReactNode, useCallback, useId, useRef, useState } from 'react';
+import { type ComponentProps, type KeyboardEvent, type ReactNode, useCallback, useId, useMemo, useRef, useState } from 'react';
 
 import { useChart, useChartData } from '../../hooks/queries/useAnalytics';
 import { useWidgetVisibility } from '../../hooks/useWidgetVisibility';
@@ -13,6 +13,7 @@ import { Button } from '../ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Separator } from '../ui/separator';
 import { chartSupportsValueTable } from './chart-a11y';
+import { chartNeedsRenderTurn } from './chart-render-turn';
 import { ChartRenderer } from './ChartRenderer';
 import { ChartTableToggle } from './ChartTableToggle';
 import { WidgetErrorBoundary } from './WidgetErrorBoundary';
@@ -90,15 +91,23 @@ function WidgetBodySpinner() {
 
 /**
  * ChartRenderer 를 실제로 그리는 자리(WD-1072) — 위젯 여러 개가 한 커밋에 recharts 를 그리면 메인 스레드가 길게 막히므로
- * ready(그릴 SVG 가 있음: 표 보기 아님·행 있음)일 때만 줄을 서 차례를 받은 뒤 그린다. 기다리는 동안은 스피너.
+ * ready(그릴 SVG 가 있음: 표 보기 아님·행 있음·차트 종류·안내도 본다 — chartNeedsRenderTurn, WD-1113)일 때만 줄을 서 차례를 받은 뒤 그린다. 기다리는 동안은 스피너.
  * 오류·권한 없음·0행·표 보기는 그릴 무거운 차트가 없으니 줄을 서지 않는다(옆 카드의 차례를 막지 않게).
  * 한 번 차례를 받으면 true 를 유지해 새로고침 중 차트가 스피너로 돌아가지 않는다(이미 받은 뒤의 동작은 그대로).
+ * 판정은 여기서 메모한다 — WidgetContent 는 오류·로딩 갈래에서 일찍 돌아가므로 그 위에 훅을 둘 수 없고,
+ * 행 전체를 훑는 판정을 매 렌더(새로고침 스피너 토글 등)마다 다시 돌리지 않게 한다(WD-1113 code-review).
  */
 function QueuedChartArea({
-  ready,
   tableView,
   ...rendererProps
-}: { ready: boolean; tableView: boolean } & Omit<ComponentProps<typeof ChartRenderer>, 'fillParent' | 'view'>) {
+}: { tableView: boolean } & Omit<ComponentProps<typeof ChartRenderer>, 'fillParent' | 'view'>) {
+  const { chartType, config, columns, data } = rendererProps;
+  const needsTurn = useMemo(
+    () => chartNeedsRenderTurn(chartType, config, columns, data),
+    [chartType, config, columns, data],
+  );
+  // 표 보기는 SVG 를 그리지 않으므로 메모 밖에서 바로 거른다
+  const ready = !tableView && needsTurn;
   const hasTurn = useWidgetRenderTurn(ready);
   if (ready && !hasTurn) return <WidgetBodySpinner />;
   return <ChartRenderer {...rendererProps} fillParent view={tableView ? 'table' : 'chart'} />;
@@ -188,7 +197,6 @@ function WidgetContent({ widget, chartData, dataLoading, dataFetching, dataError
     <div className="flex h-full flex-col">
       <div className="relative min-h-0 flex-1" data-testid="dashboard-widget-chart-area">
         <QueuedChartArea
-          ready={!tableView && queryResult.rows.length > 0}
           chartType={effectiveChart.chartType}
           config={effectiveConfig}
           data={queryResult.rows}

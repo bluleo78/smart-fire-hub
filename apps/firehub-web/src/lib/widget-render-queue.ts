@@ -1,12 +1,16 @@
 import { startTransition, useEffect, useState } from 'react';
 
-/**
- * 대시보드 위젯 그리기 차례 큐 (WD-1072).
+/*
+ * 대시보드 위젯 그리기 차례 큐 (WD-1072, WD-1113).
  *
- * 위젯 12개가 한 커밋에서 recharts 를 모두 그리면 메인 스레드가 2.6초 막힌다.
- * 위젯마다 차례를 받아 하나씩 그리게 해 긴 작업을 쪼갠다.
- * 모듈 단위 큐라 같은 화면의 모든 위젯이 한 줄을 공유한다.
+ * 위젯 여러 개가 한 커밋에서 recharts 를 한꺼번에 그리면 메인 스레드가 길게 막혀, 위젯마다 차례를 받아 하나씩 그린다.
+ * 끌기 중에는 커밋이 밀려 반납이 늦어지고 뒤의 위젯이 모두 서므로, 차례를 쥔 지 500ms 가 지나면 강제로 넘긴다.
+ * 단, 커밋 안 된 강제 차례는 최대 하나만 둔다 — 아니면 긴 끌기 뒤 한꺼번에 그려져 수 초짜리 긴 작업이 되살아난다.
  */
+
+/** 차례를 받은 뒤 이 시간 안에 반납하지 않으면 강제로 반납시킨다(ms). */
+export const RENDER_TURN_RELEASE_MS = 500;
+
 type Grant = () => void;
 
 /** 줄 선 항목 — 차례를 주는 함수 자체가 항목이다(indexOf 로 같은 항목을 찾는다). */
@@ -14,6 +18,18 @@ const queue: Grant[] = [];
 let current: Grant | null = null;
 /** 반납 뒤 다음 차례를 주기 전 걸어 둔 rAF id — null 이 아니면 이중 rAF 대기 중이다(바깥 콜백은 안쪽 id 로 바로 바꿔 넣는다). */
 let waitId: number | null = null;
+/** 현재 차례를 쥔 쪽의 상한 타이머 — 반납되면 취소한다. */
+let releaseTimer: ReturnType<typeof setTimeout> | null = null;
+/** 상한으로 강제 반납됐지만 아직 제 반납(커밋·언마운트)이 오지 않은 차례 — 최대 하나만 둔다. */
+let forcedOutstanding: Grant | null = null;
+/** 지금 쥔 쪽의 상한이 지났지만 forcedOutstanding 때문에 넘기지 못한 상태 — forcedOutstanding 이 반납되는 순간 leave() 가 즉시 넘긴다. */
+let capOverdue = false;
+
+/** 상한 타이머를 취소한다. */
+function cancelReleaseTimer() {
+  if (releaseTimer !== null) clearTimeout(releaseTimer);
+  releaseTimer = null;
+}
 
 /** 대기 중인 rAF 를 취소한다. */
 function cancelWait() {
@@ -25,8 +41,33 @@ function cancelWait() {
 function grantNext() {
   cancelWait();
   if (current || queue.length === 0) return;
-  current = queue.shift()!;
-  current();
+  const grant = queue.shift()!;
+  current = grant;
+  capOverdue = false;
+  armReleaseTimer(grant);
+  grant();
+}
+
+/** 쥔 쪽의 상한 타이머를 건다. 늦게 온 타이머는 current 가 바뀌었으면 아무것도 하지 않는다. */
+function armReleaseTimer(grant: Grant) {
+  cancelReleaseTimer();
+  releaseTimer = setTimeout(() => {
+    releaseTimer = null;
+    if (current !== grant) return;
+    if (forcedOutstanding !== null) {
+      // 이미 커밋 안 된 강제 차례가 있다 — 또 넘기면 끌기 뒤 한꺼번에 그리게 되므로 표시만 한다.
+      // 타이머는 다시 걸지 않는다: 밀린 차례가 반납되면 leave() 가 곧바로 넘기고, 쥔 쪽이 먼저 반납하면 release() 가 표시를 지운다.
+      capOverdue = true;
+      return;
+    }
+    forceRelease(grant);
+  }, RENDER_TURN_RELEASE_MS);
+}
+
+/** 커밋을 기다리지 않고 차례를 넘긴다. 이 grant 는 제 반납이 올 때까지 forcedOutstanding 으로 남는다. */
+function forceRelease(grant: Grant) {
+  forcedOutstanding = grant;
+  release(grant);
 }
 
 /**
@@ -43,8 +84,24 @@ function grantNext() {
 function leave(grant: Grant) {
   const i = queue.indexOf(grant);
   if (i >= 0) queue.splice(i, 1);
+  if (forcedOutstanding === grant) {
+    // 밀렸던 강제 차례가 이제 커밋(또는 언마운트)됐다 — 다음 강제 반납을 다시 허용한다
+    forcedOutstanding = null;
+    if (capOverdue && current !== null) {
+      // 상한이 이미 지난 채 막혀 있던 쪽은 500ms 를 더 기다리지 않고 곧바로 넘긴다
+      forceRelease(current);
+      return;
+    }
+  }
+  release(grant);
+}
+
+/** grant 가 쥔 차례면 반납하고 다음 차례를 예약한다(아니면 아무것도 하지 않는다). */
+function release(grant: Grant) {
   if (current === grant) {
     current = null;
+    capOverdue = false;
+    cancelReleaseTimer();
     if (document.visibilityState !== 'visible') {
       grantNext();
       return;
@@ -90,5 +147,15 @@ export function useWidgetRenderTurn(ready: boolean): boolean {
 export function __resetWidgetRenderQueueForTest(): void {
   queue.length = 0;
   current = null;
+  forcedOutstanding = null;
+  capOverdue = false;
   cancelWait();
+  cancelReleaseTimer();
+}
+
+/** 시험용: 반납하지 않는 원시 grant 를 줄 세우고 반납 함수를 돌려준다(커밋이 밀리는 위젯 흉내). */
+export function __enqueueRawGrantForTest(grant: () => void): () => void {
+  queue.push(grant);
+  if (waitId === null) grantNext();
+  return () => leave(grant);
 }
