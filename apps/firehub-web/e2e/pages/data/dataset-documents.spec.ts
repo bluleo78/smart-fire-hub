@@ -448,7 +448,9 @@ test.describe('문서 검색 한글 조합 (WD-1143)', () => {
   /** 조합 이벤트를 흉내 내는 헬퍼 — IME spec 과 같은 방식(native setter + input/composition 이벤트) */
   const fire = (
     input: Locator,
-    steps: Array<['start' | 'end' | 'set' | 'enter' | 'safariEnter' | 'plainEnter' | 'keyup', string?]>,
+    steps: Array<
+      ['start' | 'end' | 'set' | 'enter' | 'safariEnter' | 'plainEnter' | 'keyup' | 'imeKeyup' | 'repeatEnter', string?]
+    >,
   ) =>
     input.evaluate((el: HTMLInputElement, s) => {
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
@@ -468,6 +470,14 @@ test.describe('문서 검색 한글 조합 (WD-1143)', () => {
         } else if (kind === 'keyup') {
           // 실제 브라우저는 확정 Enter 를 뗄 때 keyup 을 보낸다 — 훅은 이때 뒤따르는 Enter 거르기를 끝낸다
           el.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', keyCode: 13, bubbles: true }));
+        } else if (kind === 'imeKeyup') {
+          // IME 가 확정 Enter 의 keyup 을 key 'Process'·keyCode 229(물리 키 정보 없음)로 보내는 경우
+          el.dispatchEvent(new KeyboardEvent('keyup', { key: 'Process', keyCode: 229, bubbles: true }));
+        } else if (kind === 'repeatEnter') {
+          // Enter 를 누르고 있을 때 오는 자동 반복 keydown
+          el.dispatchEvent(
+            new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, repeat: true, bubbles: true }),
+          );
         } else if (kind === 'plainEnter') {
           // 조합 확정 직후 같은 차례에 따라오는 일반 Enter(keyCode 13)
           el.dispatchEvent(
@@ -520,6 +530,50 @@ test.describe('문서 검색 한글 조합 (WD-1143)', () => {
     await fire(input, [['plainEnter']]);
     await fire(input, [['keyup']]);
     // 구별되는 검색어로 새로 누른 Enter 는 검색된다 — 뒤따른 Enter 가 중복 검색했다면 ['소방','소방','소방2']
+    await input.fill('소방2');
+    await input.press('Enter');
+    await expect
+      .poll(() => capture.requests.map((r) => (r.payload as { query: string }).query))
+      .toEqual(['소방', '소방2']);
+  });
+
+  test('확정 Enter 의 keyup 이 Process/229 로 와도 다음 Enter 한 번에 검색한다 (WD-1159 리뷰 후속)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDocumentDatasetMocks(page, DATASET_ID, createDocuments(1));
+    const capture = await mockApi(page, 'POST', '/api/v1/documents/search', [], { capture: true });
+    await page.goto(`/data/datasets/${DATASET_ID}?tab=documents`);
+    const input = page.getByPlaceholder('검색어를 입력하세요');
+    await input.focus();
+
+    // 뒤따르는 일반 Enter 없이(그것이 거르기를 써 버리지 않게) 확정 Enter 의 keyup 만 Process/229 로 온다
+    await fire(input, [['start'], ['set', '소방'], ['enter'], ['end', '소방'], ['imeKeyup']]);
+    await expect.poll(() => capture.requests.length).toBe(1);
+    // 거르기가 남아 있으면 이 Enter 가 먹혀 ['소방'] 에 머문다
+    await input.fill('소방2');
+    await input.press('Enter');
+    await expect
+      .poll(() => capture.requests.map((r) => (r.payload as { query: string }).query))
+      .toEqual(['소방', '소방2']);
+  });
+
+  test('확정 뒤 Enter 를 누르고 있어도 자동 반복으로 다시 검색하지 않는다 (WD-1159 리뷰 후속)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDocumentDatasetMocks(page, DATASET_ID, createDocuments(1));
+    const capture = await mockApi(page, 'POST', '/api/v1/documents/search', [], { capture: true });
+    await page.goto(`/data/datasets/${DATASET_ID}?tab=documents`);
+    const input = page.getByPlaceholder('검색어를 입력하세요');
+    await input.focus();
+
+    await fire(input, [['start'], ['set', '소방'], ['enter'], ['end', '소방'], ['plainEnter']]);
+    await expect.poll(() => capture.requests.length).toBe(1);
+    // 실제 자동 반복은 첫 검색 응답이 온 뒤에도 이어진다 — 요청 중 막기(isPending)가 아니라 반복 거르기로 막히는지 보려고 응답을 기다린 뒤 보낸다
+    await page.waitForTimeout(200);
+    await fire(input, [['repeatEnter']]);
+    await page.waitForTimeout(200);
+    await fire(input, [['repeatEnter'], ['keyup']]);
+    // 구별되는 검색어로 새 Enter — 자동 반복이 검색했다면 ['소방','소방',…,'소방2']
     await input.fill('소방2');
     await input.press('Enter');
     await expect
