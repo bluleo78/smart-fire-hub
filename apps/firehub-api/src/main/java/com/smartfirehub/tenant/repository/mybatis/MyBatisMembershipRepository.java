@@ -53,9 +53,10 @@ public class MyBatisMembershipRepository implements MembershipRepository {
     return mapper.countActiveMembership(userId, tenantId) > 0;
   }
 
+  /** 첫 가입자를 기본 워크스페이스 OWNER 로 삽입한다(WD-1100). */
   @Override
-  public void createDefaultMembership(Long userId) {
-    insertMember(userId, DEFAULT_TENANT_ID);
+  public void createDefaultOwnerMembership(Long userId) {
+    mapper.insertOwnerMember(userId, DEFAULT_TENANT_ID);
   }
 
   @Override

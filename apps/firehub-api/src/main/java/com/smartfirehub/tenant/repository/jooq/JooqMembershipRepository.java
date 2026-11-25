@@ -93,9 +93,10 @@ public class JooqMembershipRepository implements MembershipRepository {
             .and(T_STATUS.eq("ACTIVE")));
   }
 
+  /** 첫 가입자를 기본 워크스페이스 OWNER 로 삽입한다(WD-1100). insertMember 와 같은 모양에 role 만 OWNER. */
   @Override
-  public void createDefaultMembership(Long userId) {
-    insertMember(userId, DEFAULT_TENANT_ID);
+  public void createDefaultOwnerMembership(Long userId) {
+    insertWithRole(userId, DEFAULT_TENANT_ID, "OWNER");
   }
 
   @Override
@@ -146,10 +147,19 @@ public class JooqMembershipRepository implements MembershipRepository {
 
   @Override
   public void insertMember(Long userId, long tenantId) {
+    insertWithRole(userId, tenantId, "MEMBER");
+  }
+
+  /**
+   * 멤버십 한 행을 ACTIVE 상태로 넣는다 — insertMember(MEMBER)와 createDefaultOwnerMembership(OWNER)이
+   * 함께 쓴다. 두 INSERT 는 역할 값만 다르므로 본문을 한 곳에 둬서, 열 구성이 바뀔 때 한쪽만 고쳐지는 일을
+   * 막는다.
+   */
+  private void insertWithRole(Long userId, long tenantId, String role) {
     dsl.insertInto(MEMBERSHIP)
         .set(M_USER_ID, userId)
         .set(M_TENANT_ID, tenantId)
-        .set(M_ROLE, "MEMBER")
+        .set(M_ROLE, role)
         .set(M_STATUS, "ACTIVE")
         .execute();
   }

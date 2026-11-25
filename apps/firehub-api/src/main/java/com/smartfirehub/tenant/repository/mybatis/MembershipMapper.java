@@ -35,6 +35,8 @@ public interface MembershipMapper {
 
   int insertMember(@Param("userId") Long userId, @Param("tenantId") Long tenantId);
 
+  int insertOwnerMember(@Param("userId") Long userId, @Param("tenantId") Long tenantId);
+
   int updateStatus(
       @Param("userId") Long userId,
       @Param("tenantId") Long tenantId,

@@ -102,18 +102,21 @@ public abstract class MembershipRepositoryContractTest extends AccessContractBas
   }
 
   @Test
-  @DisplayName("createDefaultMembership 은 기본 테넌트(1)에 ACTIVE MEMBER 로 넣는다")
-  void createDefaultMembership_joinsDefaultTenant() {
-    long fresh = fx.createUser(prefix + "-new", null);
+  @DisplayName("createDefaultOwnerMembership 은 기본 테넌트(1)에 ACTIVE OWNER 로 넣는다(WD-1100)")
+  void createDefaultOwnerMembership_joinsDefaultTenantAsOwner() {
+    long fresh = fx.createUser(prefix + "-owner", null);
 
     call(
         () -> {
-          repository().createDefaultMembership(fresh);
+          repository().createDefaultOwnerMembership(fresh);
           return null;
         });
 
-    assertThat(call(() -> repository().findInTenant(fresh, MembershipRepository.DEFAULT_TENANT_ID)))
-        .contains(new TenantMembership(fresh, "MEMBER", "ACTIVE"));
+    var membership =
+        call(() -> repository().findInTenant(fresh, MembershipRepository.DEFAULT_TENANT_ID))
+            .orElseThrow();
+    assertThat(membership).isEqualTo(new TenantMembership(fresh, "OWNER", "ACTIVE"));
+    assertThat(membership.isOwner()).isTrue();
   }
 
   @Test

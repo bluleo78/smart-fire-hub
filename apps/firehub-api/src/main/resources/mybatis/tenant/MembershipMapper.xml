@@ -93,6 +93,11 @@
     INSERT INTO membership (user_id, tenant_id, role, status) VALUES (#{userId}, #{tenantId}, 'MEMBER', 'ACTIVE')
   </insert>
 
+  <!-- 첫 가입자: ACTIVE OWNER(WD-1100). -->
+  <insert id="insertOwnerMember">
+    INSERT INTO membership (user_id, tenant_id, role, status) VALUES (#{userId}, #{tenantId}, 'OWNER', 'ACTIVE')
+  </insert>
+
   <update id="updateStatus">
     UPDATE membership SET status = #{status,jdbcType=VARCHAR}
      WHERE user_id = #{userId} AND tenant_id = #{tenantId}
