@@ -1,8 +1,6 @@
 package com.smartfirehub.analytics;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
 import com.smartfirehub.support.PostgresTestContainer;
 import db.migration.V170__blank_saved_query_folder_to_null;
@@ -14,7 +12,6 @@ import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.Map;
 import org.flywaydb.core.Flyway;
-import org.flywaydb.core.api.migration.Context;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -81,9 +78,30 @@ class SavedQueryFolderBlankMigrationTest {
       assertThat(applyV170(c)).isZero(); // 재실행(멱등) — 바뀐 행 0
       assertThat(folderOf(c, ok)).isEqualTo("reports");
 
-      // V171(Tibero 짝)은 V170 의 고정 판정을 다시 부르므로 V170 뒤에는 바뀐 행 0(멱등)이다(WD-1144).
+      // V171(Tibero 짝)은 자기 고정 판정을 쓰지만 V170 이 이미 비웠으므로 바뀐 행 0(멱등)이다(WD-1144, WD-1161).
       assertThat(applyV171(c)).isZero();
       assertThat(folderOf(c, letterRlo)).isEqualTo("a\u202E");
+    }
+  }
+
+  /**
+   * V171 이 V170 에 기대지 않고 자기 판정만으로 비우는지 — V170 뒤에 들어온 Cf·Cc 만인 행을 V171 단독으로 NULL 로 만든다(WD-1161).
+   */
+  @Test
+  void V170_뒤에_들어온_Cf_만인_폴더를_V171_만으로_NULL_로_만든다() throws Exception {
+    flyway("169").migrate();
+    try (Connection c = connect()) {
+      applyV170(c);
+      long zwsp = insert(c, "ZWSP", "\u200B", "k"); // NULL (Cf)
+      long ctrl = insert(c, "제어", "\u0001", "l"); // NULL (Cc)
+      long kept = insert(c, "글자ZWSP", "a\u200B", "m"); // 유지
+
+      assertThat(applyV171(c)).isEqualTo(2);
+      assertThat(folderOf(c, zwsp)).isNull();
+      assertThat(folderOf(c, ctrl)).isNull();
+      assertThat(folderOf(c, kept)).isEqualTo("a\u200B");
+
+      assertThat(applyV171(c)).isZero(); // 재실행(멱등)
     }
   }
 
@@ -176,11 +194,11 @@ class SavedQueryFolderBlankMigrationTest {
     return V170__blank_saved_query_folder_to_null.blankOutBlankFolders(connection);
   }
 
-  /** V171 본문(PG 짝)을 Flyway Context 목으로 실행하고, 바뀐 행 수 대신 남은 빈 폴더 수(0 이어야 함)를 돌려준다. */
+  /**
+   * V171 본문(PG 짝)의 public static 헬퍼를 직접 실행해 바뀐 행 수를 돌려준다. V170 헬퍼를 다시 부르지 않아야 V171 자신의 고정 판정만 검증된다
+   * (WD-1161).
+   */
   private static int applyV171(Connection connection) throws Exception {
-    Context context = mock(Context.class);
-    when(context.getConnection()).thenReturn(connection);
-    new V171__blank_saved_query_folder_cf_to_null().migrate(context);
-    return V170__blank_saved_query_folder_to_null.blankOutBlankFolders(connection);
+    return V171__blank_saved_query_folder_cf_to_null.blankOutBlankFolders(connection);
   }
 }

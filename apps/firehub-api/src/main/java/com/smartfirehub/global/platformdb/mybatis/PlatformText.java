@@ -1,6 +1,7 @@
 package com.smartfirehub.global.platformdb.mybatis;
 
 import com.smartfirehub.global.util.LikePatternUtils;
+import com.smartfirehub.global.validation.TextRules;
 
 /**
  * MyBatis 리포지토리가 문장에 넘기기 전 문자열을 정리하는 공용 헬퍼(WD-710).
@@ -20,7 +21,12 @@ public final class PlatformText {
     return search == null || search.isBlank() ? null : LikePatternUtils.containsPattern(search);
   }
 
-  /** 빈 문자열(공백만 포함)을 null 로 — 갱신의 「비움」(WD-197·WD-135)과 비어 있으면 거르지 않는 필터가 함께 쓴다. */
+  /**
+   * 빈 문자열(공백만 포함)을 null 로 — 갱신의 「비움」(WD-197·WD-135)과 비어 있으면 거르지 않는 필터가 함께 쓴다.
+   *
+   * <p>{@code String.isBlank()} 라 Cf(폭 없는 문자)만인 값을 글자로 본다. 분석 자산의 설명·폴더처럼 화면에 보이는 글자 기준으로 비워야 하는
+   * 값은 {@link TextRules#textOrNull} 을 쓴다(WD-1161).
+   */
   public static String blankToNull(String value) {
     return value == null || value.isBlank() ? null : value;
   }

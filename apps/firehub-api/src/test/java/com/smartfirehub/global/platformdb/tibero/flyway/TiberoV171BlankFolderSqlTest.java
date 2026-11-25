@@ -148,6 +148,19 @@ class TiberoV171BlankFolderSqlTest {
                     .ifPresent(c -> Assertions.fail("주석 아닌 줄에 U+%04X: %s".formatted(c, line))));
   }
 
+  @Test
+  @DisplayName("V171 의 모든 UNISTR 인자는 `\\XXXX` 연속만이다 — 다른 글자가 섞이면 코드점 검사가 못 본다(WD-1161)")
+  void UNISTR_인자는_16진_이스케이프_연속만이다() throws IOException {
+    String code = codeLines(read()).collect(Collectors.joining("\n"));
+    Matcher u = UNISTR_ARG.matcher(code);
+    int count = 0;
+    while (u.find()) {
+      count++;
+      assertThat(u.group(1)).as("UNISTR 인자").matches("(\\\\[0-9A-F]{4})+");
+    }
+    assertThat(count).as("UNISTR 인자를 찾을 수 없다").isPositive();
+  }
+
   private static String read() throws IOException {
     assertThat(Files.exists(TIBERO)).as("%s 가 없다", TIBERO).isTrue();
     return Files.readString(TIBERO);

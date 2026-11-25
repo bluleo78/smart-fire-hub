@@ -176,11 +176,35 @@ public abstract class ChartRepositoryContractTest extends TenantPairContractBase
     assertThat(n.dashboardCount()).isZero();
     ChartResponse e = inA(() -> repository().findById(emptyConfig, me)).orElseThrow();
     assertThat(e.config()).isEmpty();
-    if (emptyStringIsNull()) {
-      assertThat(e.description()).isNull();
-    } else {
-      assertThat(e.description()).isEmpty();
+    // WD-1161: 빈 설명은 DB 와 무관하게 늘 NULL 로 저장한다
+    assertThat(e.description()).isNull();
+  }
+
+  @Test
+  @DisplayName("insert·update — 보이는 글자가 없는 설명(Cf·전각 공백·공백)은 NULL, 글자가 있으면 그대로 (WD-1161)")
+  void insert_and_update_noTextDescription_storedAsNull() {
+    int i = 0;
+    for (String blank : new String[] {"\u200B", "\u3164", "  "}) {
+      Long id =
+          insertA(
+              me, new CreateChartRequest(prefix + "-nt" + i++, blank, query, "BAR", null, false));
+      assertThat(owned(id).description()).as("만들기 %s", blank).isNull();
     }
+    Long keep =
+        insertA(me, new CreateChartRequest(prefix + "-k1", " 설명 ", query, "BAR", null, false));
+    assertThat(owned(keep).description()).isEqualTo(" 설명 ");
+    Long keep2 =
+        insertA(me, new CreateChartRequest(prefix + "-k2", "a\u200B", query, "BAR", null, false));
+    assertThat(owned(keep2).description()).isEqualTo("a\u200B");
+
+    runA(
+        () ->
+            repository()
+                .update(keep, new UpdateChartRequest(null, "\u200B", null, null, null), me));
+    assertThat(owned(keep).description()).as("update 로 비움").isNull();
+    runA(() -> repository().update(keep, new UpdateChartRequest(null, null, null, null, null), me));
+    assertThat(owned(keep).description()).as("null 은 변경 없음").isNull();
+    assertThat(owned(keep).name()).isEqualTo(prefix + "-k1");
   }
 
   @Test

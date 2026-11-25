@@ -2,6 +2,7 @@ package com.smartfirehub.analytics.repository.mybatis;
 
 import static com.smartfirehub.global.platformdb.mybatis.PlatformText.blankToNull;
 import static com.smartfirehub.global.platformdb.mybatis.PlatformText.searchPattern;
+import static com.smartfirehub.global.validation.TextRules.textOrNull;
 
 import com.smartfirehub.analytics.dto.ChartListItemResponse;
 import com.smartfirehub.analytics.dto.ChartResponse;
@@ -132,7 +133,8 @@ public class MyBatisChartRepository implements ChartRepository {
     ChartInsert row =
         new ChartInsert(
             req.name(),
-            req.description(),
+            // WD-1161: 보이는 글자가 없는 설명은 NULL 로 저장(jOOQ 판·저장 쿼리와 같은 TextRules 판정)
+            textOrNull(req.description()),
             req.savedQueryId(),
             req.chartType(),
             writeConfig(req.config()),
@@ -149,7 +151,8 @@ public class MyBatisChartRepository implements ChartRepository {
   }
 
   /**
-   * 넘긴 필드만 고친다 — null 은 「변경 없음」, 설명의 빈 문자열(공백만 포함)은 「비움」(NULL, WD-197). config 는 null 이 아닐 때만 쓰고 빈
+   * 넘긴 필드만 고친다 — null 은 「변경 없음」, 설명이 글자 없으면 「비움」(NULL, WD-197·{@link
+   * com.smartfirehub.global.validation.TextRules#textOrNull}, WD-1161). config 는 null 이 아닐 때만 쓰고 빈
    * 맵은 {@code {}} 로 덮어쓴다(jOOQ 판과 같다). 수정 시각은 jOOQ 판과 같은 자바 시각을 바인딩한다.
    */
   @Override
@@ -158,7 +161,7 @@ public class MyBatisChartRepository implements ChartRepository {
         id,
         req.name(),
         req.description() != null,
-        blankToNull(req.description()),
+        textOrNull(req.description()),
         req.chartType(),
         req.config() == null ? null : writeConfig(req.config()),
         req.isShared(),
