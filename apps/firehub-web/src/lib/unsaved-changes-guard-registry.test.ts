@@ -10,6 +10,7 @@ import {
   bypassNextPopstateGuard,
   hasActiveLeaveGuard,
   installPopstateGuardInterceptor,
+  pickInterceptingGuard,
   registerActiveGuard,
   registerLeaveBlocker,
 } from './unsaved-changes-guard-registry';
@@ -144,5 +145,20 @@ describe('활성 가드 여럿 (WD-1142)', () => {
     expect(last).toHaveBeenCalledTimes(1);
     expect(first).not.toHaveBeenCalled();
     expect(clean).not.toHaveBeenCalled();
+  });
+
+  it('pickInterceptingGuard — 뒤에서부터 dirty 인 첫 가드, 모두 clean 이면 undefined (WD-1160)', () => {
+    const a = { ...base, isDirty: () => true };
+    let bDirty = true;
+    const b = { ...base, isDirty: () => bDirty };
+    offs.push(registerActiveGuard(a));
+    offs.push(registerActiveGuard(b));
+    expect(pickInterceptingGuard()).toBe(b);
+    bDirty = false;
+    expect(pickInterceptingGuard()).toBe(a);
+    offs.pop()?.();
+    offs.pop()?.();
+    offs.push(registerActiveGuard({ ...base, isDirty: () => false }));
+    expect(pickInterceptingGuard()).toBeUndefined();
   });
 });

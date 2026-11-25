@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { UserSwitchedError } from '../lib/api-error';
 import { SESSION_EXPIRED_NOTICE, takeLoginNotice } from '../lib/login-notice';
 import { hasActiveLeaveGuard } from '../lib/unsaved-changes-guard-registry';
-import { authedFetch, claimUserLogout, clearSessionExpiredError, endSessionAndReloadToLogin, getAccessToken, isOtherSessionUser, readTokenSubject, refreshAccessToken, refreshAccessTokenBestEffort, resetNoticeOwnerForTest, resetSessionUserForTest, setAccessToken, TokenRefreshError } from './client';
+import { authedFetch, claimSessionEndRenavigation, claimUserLogout, clearSessionExpiredError, endSessionAndReloadToLogin, getAccessToken, isOtherSessionUser, readTokenSubject, refreshAccessToken, refreshAccessTokenBestEffort, resetNoticeOwnerForTest, resetSessionUserForTest, setAccessToken, TokenRefreshError } from './client';
 import { publishTenantSession } from './tenant-session';
 
 vi.mock('./refresh-lock', () => ({
@@ -533,5 +533,47 @@ describe('endSessionAndReloadToLogin (WD-830 리뷰)', () => {
     endSessionAndReloadToLogin(undefined, { userInitiated: true });
     endSessionAndReloadToLogin(SESSION_EXPIRED_NOTICE);
     expect(takeLoginNotice()).toBeNull();
+  });
+});
+
+describe('claimSessionEndRenavigation (WD-1160)', () => {
+  const replace = vi.fn();
+
+  beforeEach(() => {
+    resetNoticeOwnerForTest();
+    clearSessionExpiredError();
+    vi.mocked(hasActiveLeaveGuard).mockReturnValue(false);
+    vi.stubGlobal('location', { ...window.location, pathname: '/form', replace });
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    replace.mockReset();
+  });
+
+  /** 만료 표식을 켜고 /form 에서 첫 이동을 건 상태로 만든다 */
+  async function endSessionOnForm() {
+    vi.spyOn(axios, 'post').mockRejectedValue(expiredRefreshError());
+    await expect(refreshAccessToken()).rejects.toBeTruthy();
+  }
+
+  it('이동을 건 화면과 같고 가드가 걸려 있으면 false 이고 경로는 그대로다', async () => {
+    await endSessionOnForm();
+    vi.mocked(hasActiveLeaveGuard).mockReturnValue(true);
+    expect(claimSessionEndRenavigation()).toBe(false);
+    expect(claimSessionEndRenavigation()).toBe(false);
+  });
+
+  it('화면이 바뀌었으면 true 이고, 그 화면이 새 기준이 된다', async () => {
+    await endSessionOnForm();
+    vi.mocked(hasActiveLeaveGuard).mockReturnValue(true);
+    vi.stubGlobal('location', { ...window.location, pathname: '/other', replace });
+    expect(claimSessionEndRenavigation()).toBe(true);
+    expect(claimSessionEndRenavigation()).toBe(false);
+  });
+
+  it('가드가 없으면 같은 화면이어도 true', async () => {
+    await endSessionOnForm();
+    expect(claimSessionEndRenavigation()).toBe(true);
   });
 });
