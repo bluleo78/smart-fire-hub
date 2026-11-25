@@ -710,16 +710,34 @@ test.describe('파이프라인 에디터 — 스텝 설정', () => {
     await expect(deps.getByRole('button', { name: '원본 연결 끊기' })).toBeVisible();
   });
 
-  test('이전 스텝 출력은 입력 데이터셋 후보 맨 앞에 「[스텝1] …」로 오고 나머지가 뒤따른다 (WD-1074)', async ({
-    authenticatedPage: page,
-  }) => {
-    // 스텝1(추출 → 중간 20) → 스텝2(변환 → 최종 30) 사슬. 스텝2 패널의 입력 후보 순서·중복 제외가
-    // Map 으로 바꾼 뒤(WD-1074)에도 그대로인지 본다 — 결과가 같아야 하는 리팩터의 안전망이다.
+  // WD-1074/WD-1089 공통 설정 — 기본은 스텝1(추출 → 중간 20) → 스텝2(변환 → 최종 30) 사슬과 데이터셋 10 원본·20 중간·30 최종을
+  // 목 처리하고 수정 모드로 들어간다. step2InputIds 는 스텝2 가 이미 입력으로 골라 둔 데이터셋 id,
+  // steps·extraDatasets 는 다른 사슬(삽입 스텝 등)을 쓰는 시험이 기본 스텝을 바꾸고 데이터셋을 더할 때 쓴다.
+  async function openInputCandidateChain(
+    page: import('@playwright/test').Page,
+    {
+      step2InputIds = [],
+      steps,
+      extraDatasets = [],
+    }: {
+      step2InputIds?: number[];
+      steps?: ReturnType<typeof createStep>[];
+      extraDatasets?: ReturnType<typeof createDataset>[];
+    } = {},
+  ) {
     const detail = createPipelineDetail({
       id: 1,
-      steps: [
+      steps: steps ?? [
         createStep({ id: 1, name: '추출', outputDatasetId: 20, outputDatasetName: '중간' }),
-        createStep({ id: 2, name: '변환', stepOrder: 1, outputDatasetId: 30, outputDatasetName: '최종', dependsOnStepNames: ['추출'] }),
+        createStep({
+          id: 2,
+          name: '변환',
+          stepOrder: 1,
+          outputDatasetId: 30,
+          outputDatasetName: '최종',
+          dependsOnStepNames: ['추출'],
+          inputDatasetIds: step2InputIds,
+        }),
       ],
     });
     await mockApi(page, 'GET', '/api/v1/pipelines/1', detail);
@@ -735,19 +753,100 @@ test.describe('파이프라인 에디터 — 스텝 설정', () => {
           createDataset({ id: 10, name: '원본', tableName: 't_src' }),
           createDataset({ id: 20, name: '중간', tableName: 't_mid' }),
           createDataset({ id: 30, name: '최종', tableName: 't_out' }),
+          ...extraDatasets,
         ],
         { size: 1000 },
       ),
     );
     await page.goto('/pipelines/1');
     await page.getByRole('button', { name: '수정' }).click();
+  }
+
+  test('이전 스텝 출력은 입력 데이터셋 후보 맨 앞에 「[스텝1] …」로 오고 자기 출력은 후보에서 빠진다 (WD-1074, WD-1089)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 스텝2 패널의 입력 후보 순서·중복 제외가 Map 으로 바꾼 뒤(WD-1074)에도 그대로인지, 그리고 자기 출력(최종)이
+    // 후보에 없는지(WD-1089 — 자기 출력을 입력으로 고르면 자기 참조라 의미가 없다) 본다.
+    await openInputCandidateChain(page);
     await page.locator('.react-flow__node').nth(1).click();
     await page.getByRole('combobox', { name: '입력 데이터셋' }).click();
     const options = page.getByRole('option');
-    // 앞 스텝 출력(중간)이 「[스텝1]」 접두로 맨 앞, 일반 목록에서는 빠져 3개, 나머지는 원래 순서(원본·최종)
+    await expect(options).toHaveCount(2);
     await expect(options.nth(0)).toContainText('[스텝1] 중간');
-    await expect(options).toHaveCount(3);
     await expect(options.nth(1)).toContainText('원본');
-    await expect(options.nth(2)).toContainText('최종');
+    await expect(page.getByRole('option', { name: /최종/ })).toHaveCount(0);
+  });
+
+  test('스텝1 패널의 입력 후보 끝에 뒤 스텝 출력이 「[스텝2·뒤] 최종」으로 온다 (WD-1089)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 뒤 스텝 출력은 이번 실행에선 늦게 채워지지만 이전 실행 결과를 읽는 쓰임이 있어 지우지 않고 끝에 표시만 달리한다.
+    await openInputCandidateChain(page);
+    await page.locator('.react-flow__node').nth(0).click();
+    await page.getByRole('combobox', { name: '입력 데이터셋' }).click();
+    const options = page.getByRole('option');
+    await expect(options).toHaveCount(2);
+    await expect(options.nth(0)).toContainText('원본');
+    await expect(options.nth(1)).toContainText('[스텝2·뒤] 최종');
+    await expect(page.getByRole('option', { name: /중간/ })).toHaveCount(0);
+  });
+
+  test('자기 출력을 이미 입력으로 골라 둔 스텝은 「[이 스텝 출력] …」 칩·후보가 보인다 (WD-1089)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 이미 선택된 자기 출력이 후보에서 빠지면 콤보박스가 칩 대신 숨은 수만 보여 사용자가 해제할 수 없다 —
+    // 그래서 선택돼 있을 때만 「[이 스텝 출력]」으로 맨 끝에 남긴다.
+    await openInputCandidateChain(page, { step2InputIds: [20, 30] });
+    await page.locator('.react-flow__node').nth(1).click();
+    const panel = page.getByTestId('step-config-panel');
+    await expect(panel.getByText('[이 스텝 출력] 최종')).toBeVisible();
+    await page.getByRole('combobox', { name: '입력 데이터셋' }).click();
+    const options = page.getByRole('option');
+    await expect(options.last()).toContainText('[이 스텝 출력] 최종');
+  });
+
+  test('목록 끝에 붙은 삽입 스텝이 실제 선행이면 「·뒤」 표시 없이 일반 후보로 온다 (WD-1089)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 「스텝 삽입」은 새 스텝을 목록 끝에 붙인다 — 추출 → 삽입 → 변환 순으로 실행되지만 목록은 [추출, 변환, 삽입] 이다.
+    // 「·뒤」 는 실제 후행(자손) 스텝에만 붙어야 하므로 변환 패널에서 삽입 스텝 출력(보조)은 표시 없이 일반 후보다.
+    await openInputCandidateChain(page, {
+      steps: [
+        createStep({ id: 1, name: '추출', outputDatasetId: 20, outputDatasetName: '중간' }),
+        createStep({
+          id: 2,
+          name: '변환',
+          stepOrder: 1,
+          outputDatasetId: 30,
+          outputDatasetName: '최종',
+          dependsOnStepNames: ['삽입'],
+        }),
+        createStep({
+          id: 3,
+          name: '삽입',
+          stepOrder: 2,
+          outputDatasetId: 40,
+          outputDatasetName: '보조',
+          dependsOnStepNames: ['추출'],
+        }),
+      ],
+      extraDatasets: [createDataset({ id: 40, name: '보조', tableName: 't_aux' })],
+    });
+    await page.locator('.react-flow__node').filter({ hasText: '변환' }).click();
+    await page.getByRole('combobox', { name: '입력 데이터셋' }).click();
+    const options = page.getByRole('option');
+    // [스텝1] 중간(앞) → 원본 → 보조(표시 없음). 자기 출력 최종은 없다.
+    await expect(options).toHaveCount(3);
+    await expect(options.nth(0)).toContainText('[스텝1] 중간');
+    await expect(options.nth(1)).toContainText('원본');
+    await expect(options.nth(2)).toContainText('보조');
+    await expect(page.getByRole('option', { name: /·뒤/ })).toHaveCount(0);
+
+    // 삽입 스텝 패널에서는 변환이 실제 후행이므로 「[스텝2·뒤] 최종」 이 끝에 온다(목록상 앞이어도).
+    await page.keyboard.press('Escape');
+    await page.locator('.react-flow__node').filter({ hasText: '삽입' }).click();
+    await page.getByRole('combobox', { name: '입력 데이터셋' }).click();
+    await expect(page.getByRole('option').last()).toContainText('[스텝2·뒤] 최종');
+    await expect(page.getByRole('option').first()).toContainText('[스텝1] 중간');
   });
 });
