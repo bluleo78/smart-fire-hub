@@ -10,7 +10,7 @@ import { createOntologyGraph, createOntologySchema } from '../../factories/ontol
 import { mockOntologyGraph, setupAdminAuth } from '../../fixtures/admin.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
-import { clickDialogBackdrop } from '../../fixtures/dialog.fixture';
+import { clickDialogBackdrop, expectNoOuterScroll } from '../../fixtures/dialog.fixture';
 import { gotoUntilReady } from '../../fixtures/first-visit'; // WD-903: 첫 진입 직후 클릭은 대상이 보일 때까지 먼저 기다린다
 
 // 지식 모델 탭의 온톨로지 생명주기 — 선택·생성·활성화·은퇴·삭제.
@@ -636,5 +636,19 @@ test.describe('온톨로지 생명주기', () => {
 
     const req = await capture.waitForRequest();
     expect(req.payload).toEqual({ description: '수정됨' });
+  });
+
+  // WD-1140: 바깥 overflow-hidden 을 걷은 뒤에도 보통 높이에서는 바깥 DialogContent 가 스크롤하지 않는다.
+  test('관리 다이얼로그는 보통 높이(1440×900)에서 바깥이 스크롤하지 않는다 (WD-1140)', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await gotoUntilReady(page, '/knowledge-graph/model', page.getByRole('combobox', { name: '온톨로지 선택' }));
+    await page.getByRole('combobox', { name: '온톨로지 선택' }).click();
+    await page.getByRole('option', { name: /온톨로지 관리/ }).click();
+
+    const dialog = page.getByTestId('ontology-manage-dialog');
+    await expect(dialog).toBeVisible();
+    await expectNoOuterScroll(dialog);
   });
 });

@@ -59,8 +59,8 @@ export default function ReportPreviewDialog({
 }: ReportPreviewDialogProps) {
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      {/* WD-1123: dvh 기준 높이 + overflow-hidden — 바깥은 스크롤하지 않고 안쪽 영역만 스크롤한다(공용 overflow-y-auto 덮어씀). */}
-      <DialogContent className="sm:max-w-4xl flex flex-col max-h-[85dvh] overflow-hidden">
+      {/* WD-1123: dvh 높이 제한. WD-1140: overflow-hidden 을 빼 아주 낮은 화면에서는 바깥 스크롤이 마지막 수단이 된다. */}
+      <DialogContent className="sm:max-w-4xl flex flex-col max-h-[85dvh]">
         {/* 헤더 — 리포트 제목과 원본 질문 표시 */}
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
@@ -74,9 +74,9 @@ export default function ReportPreviewDialog({
           `overflow-auto`를 주면 안 된다: ScrollArea 루트는 overflow-hidden이어야 하고 실제 스크롤은
           내부 Viewport가 담당한다(scroll-area.tsx:12). tailwind-merge가 루트의 overflow-hidden을
           overflow-auto로 덮어쓰면 루트와 Viewport가 각각 스크롤하는 이중 스크롤이 된다.
-          min-h-0은 flex 자식이 기본 min-height:auto라 줄어들지 않는 것을 막는다.
+          min-h-24는 flex 자식이 줄어들되 96px 아래로는 접히지 않게 한다(WD-1140).
         */}
-        <ScrollArea className="min-h-0 flex-1 pr-1">
+        <ScrollArea className="min-h-24 flex-1 pr-1">
           <div className="space-y-4 py-2 pr-3">
             {sections.map((section, idx) => {
               const content = sectionContents?.[section.key];

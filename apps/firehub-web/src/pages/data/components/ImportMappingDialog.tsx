@@ -41,17 +41,17 @@ export function ImportMappingDialog(props: ImportMappingDialogProps) {
       {/*
        * flex flex-col: 높이는 공용 DialogContent 의 max-h(100dvh-4rem) 로 제한하면서(WD-1123)
        * 내부를 flex 컬럼으로 구성해 스크롤 영역과 footer를 분리한다.
-       * overflow-hidden: DialogContent 자체는 스크롤하지 않고 내부 영역이 스크롤하도록 한다.
+       * WD-1140: overflow-hidden 은 뺐다 — 안쪽 래퍼가 먼저 스크롤하고, 극단적으로 낮은 화면에서는 바깥이 마지막 수단으로 스크롤한다.
        */}
-      <DialogContent className="flex flex-col overflow-hidden">
+      <DialogContent className="flex flex-col">
         <DialogHeader>
           <DialogTitle>파일 임포트</DialogTitle>
           <DialogDescription className="sr-only">파일을 업로드하고 컬럼을 매핑하여 데이터셋에 가져옵니다.</DialogDescription>
         </DialogHeader>
 
         {step === 1 && (
-          // WD-1123: 대화상자가 overflow-hidden 이라 낮은 뷰포트에서 업로드 영역이 잘려 닿을 수 없었다 — 매핑 단계처럼 안쪽에서 스크롤한다.
-          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain">
+          // WD-1123: 낮은 뷰포트에서 업로드 영역이 잘리지 않게 매핑 단계처럼 안쪽에서 스크롤한다.
+          <div className="relative min-h-24 flex-1 space-y-4 overflow-y-auto">
             <FileUploadZone onFileSelect={handlers.fileSelect} disabled={status.isPreviewing} />
             {status.isPreviewing && (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -66,9 +66,10 @@ export function ImportMappingDialog(props: ImportMappingDialogProps) {
           <>
             {/*
              * flex-1 overflow-y-auto: 컨텐츠 영역이 남은 공간을 차지하며 세로 스크롤된다.
-             * min-h-0: flex 자식 요소의 기본 min-height 제약을 해제해 올바른 스크롤이 되도록 한다.
+             * WD-1140: min-h-24 는 영역이 0 으로 찌그러지지 않게, relative 는 sr-only(absolute) 자식이 바깥 scrollHeight 를 부풀리지 않게,
+             * overscroll-contain 없음은 끝에서 휠이 바깥으로 이어져 영역 밖 푸터에 닿게 한다.
              */}
-            <div className="flex-1 overflow-y-auto overscroll-contain min-h-0 space-y-6 min-w-0">
+            <div className="relative flex-1 overflow-y-auto min-h-24 space-y-6 min-w-0">
               {/*
                * 엑셀이면 어느 시트를 가져오는지 맨 위에 보여 준다(WD-253). 시트를 바꿔 미리보기를 다시 받는 동안에도
                * 아래 매핑 표를 언마운트하지 않는다 — 표가 다시 마운트되면 제목으로 포커스를 끌어가기 때문(#330).
@@ -149,7 +150,10 @@ export function ImportMappingDialog(props: ImportMappingDialogProps) {
         )}
 
         {step === 3 && (
-          <ImportProgressView progress={importProgress} onClose={handlers.close} failedErrors={failedErrors} />
+          // WD-1140: 3단계도 안쪽에서 스크롤한다 — 실패 오류 목록이 길면 「확인」 버튼이 화면 밖으로 밀렸다.
+          <div className="relative min-h-24 flex-1 overflow-y-auto">
+            <ImportProgressView progress={importProgress} onClose={handlers.close} failedErrors={failedErrors} />
+          </div>
         )}
       </DialogContent>
     </Dialog>

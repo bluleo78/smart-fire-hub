@@ -10,6 +10,7 @@
 
 import { mockProactivePermissions } from '../fixtures/ai-insight.fixture';
 import { expect,test } from '../fixtures/auth.fixture';
+import { expectNoOuterScroll } from '../fixtures/dialog.fixture';
 
 /** SSE 이벤트 직렬화 — 각 이벤트를 "data: {json}\n\n" 형태로 변환 */
 function sseEvent(data: Record<string, unknown>): string {
@@ -326,5 +327,20 @@ test.describe('AI 리포트 빌더 위젯', () => {
     // 콘텐츠가 없는 섹션은 빈 상태 표시
     const emptyLabels = page.getByText('(내용 없음)');
     await expect(emptyLabels.first()).toBeVisible();
+  });
+
+  // WD-1140: 바깥 overflow-hidden 을 걷은 뒤에도 보통 높이에서는 미리보기 대화상자 바깥이 스크롤하지 않는다.
+  test('미리보기 대화상자는 보통 높이(1440×900)에서 바깥이 스크롤하지 않는다 (WD-1140)', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await mockChatSSEWithReportWidget(page);
+    await openChatAndSend(page, '이번 달 매출이 왜 떨어졌나요?');
+    await expect(page.getByText('매출 분석 리포트')).toBeVisible({ timeout: 10000 });
+    await page.getByRole('button', { name: '미리보기' }).click();
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByText('핵심 요약')).toBeVisible();
+    await expectNoOuterScroll(dialog);
   });
 });

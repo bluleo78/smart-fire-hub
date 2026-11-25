@@ -50,3 +50,45 @@ export async function expectDialogWithinViewportHeight(page: Page, dialog: Locat
   expect(box!.y).toBeGreaterThanOrEqual(0);
   expect(box!.y + box!.height).toBeLessThanOrEqual(height);
 }
+
+/**
+ * 사용자처럼 마우스 휠로 스크롤해 대상이 뷰포트 안에 완전히 들어올 때까지 내린다 (WD-1140).
+ * scrollTop 직접 대입은 overflow-hidden 요소도 스크롤시켜 버그를 가리므로 실제 휠 입력을 쓴다.
+ * @param page - 대상 페이지
+ * @param dialog - 대화상자 locator (`at` 가 없으면 그 중앙에 마우스를 둔다)
+ * @param target - 뷰포트 안으로 들어와야 하는 요소
+ * @param opts.at - 마우스를 둘 안쪽 영역. 가로 중앙, 세로는 위에서 min(높이/2, 40) 지점에 둔다
+ * @param opts.deltaY - 휠 한 번의 이동량 (기본 200)
+ */
+export async function wheelUntilInViewport(
+  page: Page,
+  dialog: Locator,
+  target: Locator,
+  opts: { at?: Locator; deltaY?: number } = {},
+): Promise<void> {
+  const area = opts.at ?? dialog;
+  const box = await area.boundingBox();
+  expect(box, '휠을 둘 영역이 그려지지 않았다').not.toBeNull();
+  const y = opts.at ? box!.y + Math.min(box!.height / 2, 40) : box!.y + box!.height / 2;
+  await page.mouse.move(box!.x + box!.width / 2, y);
+  await expect
+    .poll(async () => {
+      await page.mouse.wheel(0, opts.deltaY ?? 200);
+      return target.evaluate((el) => {
+        const r = el.getBoundingClientRect();
+        return r.top >= 0 && r.bottom <= window.innerHeight;
+      });
+    })
+    .toBe(true);
+  await expect(target).toBeInViewport();
+}
+
+/**
+ * 바깥 대화상자가 스크롤하지 않는지 확인한다 — scrollHeight <= clientHeight + 1 (WD-1140).
+ * 바깥 overflow-hidden 을 걷은 뒤에도 보통 높이에서는 안쪽 영역만 스크롤해야 한다는 회귀 방지용.
+ * @param dialog - 바깥 대화상자 locator
+ */
+export async function expectNoOuterScroll(dialog: Locator): Promise<void> {
+  const outer = await dialog.evaluate((el) => ({ scrollHeight: el.scrollHeight, clientHeight: el.clientHeight }));
+  expect(outer.scrollHeight).toBeLessThanOrEqual(outer.clientHeight + 1);
+}
