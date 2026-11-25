@@ -4,6 +4,7 @@ import static org.jooq.impl.DSL.*;
 
 import com.smartfirehub.apiconnection.repository.ApiConnectionRepository;
 import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
+import com.smartfirehub.global.validation.TextRules;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -63,8 +64,12 @@ public class JooqApiConnectionRepository implements ApiConnectionRepository {
   private static final Field<String> AC_LAST_ERROR_MESSAGE =
       field(name("api_connection", "last_error_message"), String.class);
 
-  /** lower(trim) 비교의 열 쪽(값 쪽은 {@link #normalizedName}) — JooqProactiveJobRepository 와 같은 꼴(WD-1107). */
-  private static final Field<String> AC_NAME_NORMALIZED = lower(trim(AC_NAME));
+  /**
+   * lower(trim(translate)) 비교의 열 쪽(값 쪽은 {@link #normalizedName}) — JooqProactiveJobRepository 와 같은
+   * 꼴(WD-1107). PG 의 TRIM 은 U+0020 만 걷으므로 유니코드 공백(탭·NBSP·전각 등)을 먼저 ASCII 공백으로 바꾼다(WD-1129). MyBatis
+   * 쪽과 같은 TRANSLATE 라 이름 가운데의 공백 종류도 같게 본다.
+   */
+  private static final Field<String> AC_NAME_NORMALIZED = normalize(AC_NAME);
 
   /** 전체 열 조회 결과 한 행을 도메인 값으로 옮긴다. */
   private static ApiConnectionRow toRow(Record r) {
@@ -312,9 +317,19 @@ public class JooqApiConnectionRepository implements ApiConnectionRepository {
         .fetchOptional(AC_NAME);
   }
 
-  /** lower(trim) 비교의 값 쪽(WD-1107). */
+  /** lower(trim) 비교의 값 쪽(WD-1107) — 열 쪽과 같은 꼴로 정규화한다(WD-1129). */
   private static Field<String> normalizedName(String name) {
-    return lower(trim(val(name, String.class)));
+    return normalize(val(name, String.class));
+  }
+
+  /** 유니코드 공백 → ASCII 공백 → trim → lower (WD-1129). */
+  private static Field<String> normalize(Field<String> name) {
+    return lower(
+        trim(
+            translate(
+                name,
+                val(TextRules.EDGE_SPACE_CHARS, String.class),
+                val(TextRules.EDGE_SPACE_AS_ASCII, String.class))));
   }
 
   /**

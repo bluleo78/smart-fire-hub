@@ -57,11 +57,18 @@ public interface ApiConnectionMapper {
   /** 헬스체크 경로가 있는 연결 목록. */
   List<HealthCheckTarget> selectHealthCheckable();
 
-  /** 같은 이름의 연결 수. */
-  long countByName(@Param("name") String name);
+  /**
+   * 같은 이름의 연결 수. ws·sp 는 TRANSLATE 의 유니코드 공백 목록과 같은 길이의 ASCII 공백 목록(WD-1129,
+   * TextRules.EDGE_SPACE_CHARS·EDGE_SPACE_AS_ASCII).
+   */
+  long countByName(@Param("name") String name, @Param("ws") String ws, @Param("sp") String sp);
 
-  /** 자기 자신을 뺀 같은 이름의 연결 수. */
-  long countByNameExcludingId(@Param("name") String name, @Param("excludeId") Long excludeId);
+  /** 자기 자신을 뺀 같은 이름의 연결 수. ws·sp 의미는 {@link #countByName}. */
+  long countByNameExcludingId(
+      @Param("name") String name,
+      @Param("excludeId") Long excludeId,
+      @Param("ws") String ws,
+      @Param("sp") String sp);
 
   /** 행 잠금(FOR UPDATE)으로 저장된 이름을 읽는다 — 없으면 null(WD-1107). */
   String selectNameForUpdate(@Param("id") Long id);

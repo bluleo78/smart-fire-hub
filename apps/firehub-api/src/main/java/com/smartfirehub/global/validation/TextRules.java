@@ -72,6 +72,23 @@ public final class TextRules {
    */
   public static final String HAS_TEXT_OR_EMPTY = "(?U)(?s)(\\A\\z|" + HAS_VISIBLE + ")";
 
+  /**
+   * Java {@code (?U)\s} 와 같은 유니코드 공백 문자 집합(WD-1129) — U+0009-000D, U+0020, U+0085, U+00A0, U+1680,
+   * U+2000-200A, U+2028, U+2029, U+202F, U+205F, U+3000. DB 의 이름 중복 비교가 {@code TRANSLATE(이름, 이 값,
+   * {@link #EDGE_SPACE_AS_ASCII})} 로 ASCII 공백으로 바꾼 뒤 TRIM 하도록 쓴다(PG 의 TRIM 은 U+0020 만 걷는다). 정규식 대신
+   * TRANSLATE 를 쓰는 건 PG·Tibero 모두 같은 시그니처로 지원하기 때문이다. 이 집합을 바꾸면 TextRulesTest 의 전수 비교가 깨져 알려 준다.
+   */
+  public static final String EDGE_SPACE_CHARS =
+      "\t\n\u000B\f\r\u0020\u0085\u00A0\u1680"
+          + "\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200A"
+          + "\u2028\u2029\u202F\u205F\u3000";
+
+  /**
+   * {@link #EDGE_SPACE_CHARS} 와 같은 길이의 U+0020 문자열(WD-1129) — TRANSLATE 의 세 번째 인자. 길이가 다르면 PG 는 남는
+   * 문자를 지워 버리므로 같은 길이여야 하고, 상수 시험이 이를 고정한다.
+   */
+  public static final String EDGE_SPACE_AS_ASCII = " ".repeat(EDGE_SPACE_CHARS.length());
+
   /** 앞뒤 유니코드 공백(전각 U+3000·NBSP 포함) — {@link #strip} 용. */
   private static final Pattern EDGE_SPACE = Pattern.compile("(?U)^\\s+|\\s+$");
 
@@ -81,6 +98,22 @@ public final class TextRules {
    */
   public static String strip(String value) {
     return value == null ? null : EDGE_SPACE.matcher(value).replaceAll("");
+  }
+
+  /**
+   * 이름 안팎의 모든 유니코드 공백 문자를 ASCII 공백으로 바꾼다(WD-1129) — API 연결 중복 SQL 의 TRANSLATE 비교와 같은 기준의 잠금 키를 만들 때 쓴다.
+   * null 은 null.
+   */
+  public static String spacesToAscii(String value) {
+    if (value == null) {
+      return null;
+    }
+    StringBuilder sb = new StringBuilder(value.length());
+    for (int i = 0; i < value.length(); i++) {
+      char c = value.charAt(i);
+      sb.append(EDGE_SPACE_CHARS.indexOf(c) >= 0 ? ' ' : c);
+    }
+    return sb.toString();
   }
 
   private TextRules() {}

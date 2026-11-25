@@ -128,7 +128,7 @@ public class ApiConnectionService {
     // 앞뒤 유니코드 공백을 걷어낸 이름으로 중복 검사·저장·감사한다(WD-1085) — 공백 붙인 이름이 중복 검사를 비켜 가던 것을 막는다.
     String name = TextRules.strip(request.name());
     // 검사 전에 이름 잠금을 잡아 같은 이름(대소문자·공백 무시)의 동시 생성을 직렬화한다(WD-1107). 잠금은 이 트랜잭션이 끝날 때 풀린다.
-    nameGuard.lock(ResourceKind.API_CONNECTION, NAME_LOCK_OWNER, name);
+    lockName(name);
     validateNameNotDuplicated(name);
 
     String encryptedConfig = serializeAndEncrypt(normalizedConfig);
@@ -207,6 +207,9 @@ public class ApiConnectionService {
    */
   @Transactional
   public ApiConnectionResponse update(Long id, UpdateApiConnectionRequest request, Long userId) {
+    // 행 잠금(FOR UPDATE)을 먼저 잡고 그 뒤에 읽는다(WD-1129) — 감사의 이전 값(이름·설명·인증·주소·헬스 경로)과 헬스 상태 초기화 판단이
+    // 커밋 전까지 다른 트랜잭션이 바꿀 수 없는 행에서 나오게 한다. 없으면 404.
+    repository.findNameForUpdate(id).orElseThrow(() -> new ApiConnectionNotFoundException(id));
     ApiConnectionRow existing =
         repository.findById(id).orElseThrow(() -> new ApiConnectionNotFoundException(id));
     String currentAuthType = existing.authType();
@@ -346,7 +349,7 @@ public class ApiConnectionService {
     // 앞뒤 유니코드 공백을 걷어낸 이름으로 검사·저장한다(WD-1085). null 은 변경 없음.
     String name = TextRules.strip(request.name());
     if (name != null) {
-      name = resolveUpdatedName(id, name);
+      name = resolveUpdatedName(id, existing.name(), name);
     }
 
     String normalizedHealthCheckPath = normalizeHealthCheckPath(request.healthCheckPath());
@@ -1045,23 +1048,44 @@ public class ApiConnectionService {
   }
 
   /**
-   * 수정 요청 이름을 저장할 이름으로 확정한다(WD-1107). 행 잠금(FOR UPDATE)으로 저장된 이름을 다시 읽어, 앞뒤 공백만 다르면 저장된 이름을 그대로 쓴다
-   * (V168 이 겹침이라 건너뛴 옛 공백 행이 설명만 고칠 때 유니크 인덱스에 걸리지 않게). 실제 개명이면 이름 잠금을 잡은 뒤 중복 검사한다(409).
+   * 이름 잠금을 잡는다(WD-1107·WD-1129). 잠금 키는 중복 SQL(TRANSLATE 로 모든 유니코드 공백을 ASCII 공백으로 본다)의 상위 집합이어야 한다 —
+   * 가드의 strip/lower 만으로는 안쪽 NBSP·탭 차이로 다른 키가 돼 동시 생성·변경이 직렬화되지 않으므로 공백 종류를 먼저 같게 만든다.
+   * create()·update() 가 같은 키를 쓰도록 잠금은 모두 이 메서드로 잡는다.
    */
-  private String resolveUpdatedName(Long id, String requestedName) {
-    String before =
-        repository.findNameForUpdate(id).orElseThrow(() -> new ApiConnectionNotFoundException(id));
-    if (TextRules.strip(before).equals(requestedName)) {
+  private void lockName(String name) {
+    nameGuard.lock(ResourceKind.API_CONNECTION, NAME_LOCK_OWNER, TextRules.spacesToAscii(name));
+  }
+
+  /**
+   * 수정 요청 이름을 저장할 이름으로 확정한다(WD-1107, WD-1129). {@code before} 는 update() 가 행 잠금(FOR UPDATE) 뒤에 읽은 저장 이름이라 최신이다.
+   *
+   * <ul>
+   *   <li>저장된 이름과 글자 그대로 같으면 그대로 둔다.
+   *   <li>앞뒤 공백만 다르면(V168 이 겹침이라 건너뛴 옛 공백 행 포함) 이름 잠금을 잡고 다른 행과 겹치는지 본다 — 겹치면(대소문자만 다른 행 포함) 저장된
+   *       이름을 유지해 유니크 인덱스에 걸리지 않게 하고, 겹치지 않으면 다듬은 이름으로 저장한다.
+   *   <li>실제 개명이면 이름 잠금을 잡은 뒤 중복 검사한다(409).
+   * </ul>
+   */
+  private String resolveUpdatedName(Long id, String before, String requestedName) {
+    if (before.equals(requestedName)) {
       return before;
     }
-    nameGuard.lock(ResourceKind.API_CONNECTION, NAME_LOCK_OWNER, requestedName);
-    if (repository.existsByNameExcludingId(requestedName, id)) {
+    boolean trimOnly = TextRules.strip(before).equals(requestedName);
+    lockName(requestedName);
+    boolean overlaps = repository.existsByNameExcludingId(requestedName, id);
+    if (trimOnly) {
+      return overlaps ? before : requestedName;
+    }
+    if (overlaps) {
       throw new ApiConnectionNameAlreadyExistsException(requestedName);
     }
     return requestedName;
   }
 
-  /** 동일 테넌트 내 이름 중복을 막는다(#647) — {@code lower(trim)} 비교이며 이름 잠금 아래에서 부른다(WD-1107). 테넌트 경계는 RLS 가 건다. */
+  /**
+   * 동일 테넌트 내 이름 중복을 막는다(#647) — 이름 잠금 아래에서 부른다(WD-1107). 비교는 PostgreSQL 에서는 유니코드 공백(탭·NBSP·전각 등)을 ASCII 공백으로
+   * 바꾼 뒤 {@code lower(trim)} 하고(WD-1129), Tibero 는 이전과 같은 {@code lower(trim)} 이다. 테넌트 경계는 RLS 가 건다.
+   */
   private void validateNameNotDuplicated(String name) {
     if (repository.existsByName(name)) {
       throw new ApiConnectionNameAlreadyExistsException(name);
@@ -1323,6 +1347,7 @@ public class ApiConnectionService {
       String normalizedBaseUrl,
       String normalizedHealthCheckPath,
       boolean credentialsChanged) {
+    // existing 은 update() 가 행 잠금 뒤에 읽은 값이라 이전 값이 일관된다(WD-1129).
     String beforeName = existing.name();
     String beforeDescription = existing.description();
     String beforeAuthType = existing.authType();

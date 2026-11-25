@@ -2,6 +2,7 @@ package com.smartfirehub.apiconnection.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import com.smartfirehub.apiconnection.repository.ApiConnectionRepository.ApiConnectionRow;
 import com.smartfirehub.apiconnection.repository.ApiConnectionRepository.HealthCheckTarget;
@@ -517,6 +518,45 @@ abstract class ApiConnectionRepositoryContractTest extends TenantPairContractBas
     assertThat(inA(() -> repository().existsByName(prefix + "-Sale"))).isFalse();
     // 값 쪽도 앞뒤 ASCII 공백을 걷어낸다 — 질의 이름에 공백이 붙어도 같은 이름으로 본다(WD-1107).
     assertThat(inA(() -> repository().existsByName(" " + prefix + "-sales "))).isTrue();
+  }
+
+  /** 탭·전각 공백 등 유니코드 앞뒤 공백도 걷고 비교한다(WD-1129). */
+  @Test
+  @DisplayName("existsByName 은 탭·전각 등 유니코드 앞뒤 공백도 무시하고 비교한다 (WD-1129)")
+  void existsByName_ignoresUnicodeEdgeSpaces() {
+    assumeTrue(supportsUnicodeSpaceNormalization());
+    long sales = rawSaveA("\t" + prefix + "-Sales ");
+    rawSaveA("\u3000" + prefix + "-Ops\u3000");
+
+    assertThat(inA(() -> repository().existsByName(prefix + "-sales"))).isTrue();
+    assertThat(inA(() -> repository().existsByName(prefix + "-OPS"))).isTrue();
+    assertThat(inA(() -> repository().existsByNameExcludingId(prefix + "-sales", sales))).isFalse();
+  }
+
+  /** 이름 가운데의 NBSP 는 ASCII 공백과 같게 본다 — TRANSLATE 가 가운데까지 바꾸는 설계 결정(WD-1129). */
+  @Test
+  @DisplayName("existsByName 은 이름 가운데 NBSP 를 ASCII 공백과 같게 본다 (WD-1129)")
+  void existsByName_middleNbspCountsAsSpace() {
+    assumeTrue(supportsUnicodeSpaceNormalization());
+    rawSaveA(prefix + "-a\u00A0b");
+
+    assertThat(inA(() -> repository().existsByName(prefix + "-a b"))).isTrue();
+  }
+
+  /**
+   * 유니코드 공백 정규화 비교를 지원하는 구현인지(WD-1129). Tibero 는 비 UTF-8 문자셋에서 유니코드 바인드가 깨질 수 있어 이전 LOWER(TRIM) 비교를 유지하므로
+   * 서브클래스가 false 로 재정의해 해당 시험을 건너뛴다.
+   */
+  protected boolean supportsUnicodeSpaceNormalization() {
+    return true;
+  }
+
+  /** 이름을 가공 없이 그대로 저장한다(WD-1129). */
+  private long rawSaveA(String rawName) {
+    return inA(
+        () ->
+            repository()
+                .save(rawName, null, "API_KEY", "enc", user, "https://raw.example.com", null));
   }
 
   /** 자기 자신은 제외하고, 대소문자만 다른 다른 행과는 충돌로 본다(WD-1107). */
