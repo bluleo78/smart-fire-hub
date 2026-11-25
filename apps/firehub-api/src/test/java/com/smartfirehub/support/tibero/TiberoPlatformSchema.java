@@ -8,6 +8,7 @@ import com.zaxxer.hikari.HikariDataSource;
 import java.sql.PreparedStatement;
 import java.util.concurrent.ThreadLocalRandom;
 import javax.sql.DataSource;
+import org.apache.ibatis.session.SqlSessionFactory;
 import org.mybatis.spring.SqlSessionTemplate;
 import org.springframework.aop.framework.ProxyFactory;
 import org.springframework.dao.DuplicateKeyException;
@@ -159,6 +160,11 @@ public final class TiberoPlatformSchema {
    */
   public TransactionTemplate tx() {
     return transactionTemplate;
+  }
+
+  /** 런타임 풀 팩토리(운영과 같은 조립) — 저장소가 매퍼와 같은 databaseId 를 읽게 넘기는 용도(WD-1154). */
+  public SqlSessionFactory sqlSessionFactory() {
+    return sqlSessionTemplate.getSqlSessionFactory();
   }
 
   /** 런타임 풀 팩토리에 묶인 매퍼(스프링 트랜잭션에 참여하는 SqlSessionTemplate 경유). */

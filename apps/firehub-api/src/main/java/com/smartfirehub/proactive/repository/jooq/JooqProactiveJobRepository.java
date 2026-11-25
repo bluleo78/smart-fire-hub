@@ -3,7 +3,6 @@ package com.smartfirehub.proactive.repository.jooq;
 import static org.jooq.impl.DSL.*;
 
 import com.smartfirehub.global.dto.LockedRowVersion;
-import com.smartfirehub.global.naming.NameComparison;
 import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.global.validation.TextRules;
 import com.smartfirehub.proactive.dto.ProactiveJobResponse;
@@ -446,11 +445,5 @@ public class JooqProactiveJobRepository implements ProactiveJobRepository {
       c = c.and(PJ_ID.ne(excludeId));
     }
     return dsl.fetchExists(dsl.selectOne().from(PROACTIVE_JOB).where(c));
-  }
-
-  /** jOOQ 구현은 PostgreSQL 전용 — SQL 이 유니코드 공백까지 걷는다(WD-1108). */
-  @Override
-  public NameComparison nameComparison() {
-    return NameComparison.UNICODE_TRIM;
   }
 }
