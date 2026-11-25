@@ -4,7 +4,7 @@ import static org.jooq.impl.DSL.*;
 
 import com.smartfirehub.apiconnection.repository.ApiConnectionRepository;
 import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
-import com.smartfirehub.global.validation.TextRules;
+import com.smartfirehub.global.validation.PgEdgeSpaceChars;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -33,6 +33,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class JooqApiConnectionRepository implements ApiConnectionRepository {
 
   private final DSLContext dsl;
+  private final PgEdgeSpaceChars edgeSpaceChars;
 
   private static final Table<?> API_CONNECTION = table(name("api_connection"));
   private static final Field<Long> AC_ID = field(name("api_connection", "id"), Long.class);
@@ -63,13 +64,6 @@ public class JooqApiConnectionRepository implements ApiConnectionRepository {
       field(name("api_connection", "last_latency_ms"), Long.class);
   private static final Field<String> AC_LAST_ERROR_MESSAGE =
       field(name("api_connection", "last_error_message"), String.class);
-
-  /**
-   * lower(trim(translate)) 비교의 열 쪽(값 쪽은 {@link #normalizedName}) — JooqProactiveJobRepository 와 같은
-   * 꼴(WD-1107). PG 의 TRIM 은 U+0020 만 걷으므로 유니코드 공백(탭·NBSP·전각 등)을 먼저 ASCII 공백으로 바꾼다(WD-1129). MyBatis
-   * 쪽과 같은 TRANSLATE 라 이름 가운데의 공백 종류도 같게 본다.
-   */
-  private static final Field<String> AC_NAME_NORMALIZED = normalize(AC_NAME);
 
   /** 전체 열 조회 결과 한 행을 도메인 값으로 옮긴다. */
   private static ApiConnectionRow toRow(Record r) {
@@ -294,7 +288,7 @@ public class JooqApiConnectionRepository implements ApiConnectionRepository {
   @Override
   public boolean existsByName(String name) {
     return dsl.fetchExists(
-        dsl.selectOne().from(API_CONNECTION).where(AC_NAME_NORMALIZED.eq(normalizedName(name))));
+        dsl.selectOne().from(API_CONNECTION).where(normalize(AC_NAME).eq(normalizedName(name))));
   }
 
   /** {@inheritDoc} */
@@ -303,7 +297,7 @@ public class JooqApiConnectionRepository implements ApiConnectionRepository {
     return dsl.fetchExists(
         dsl.selectOne()
             .from(API_CONNECTION)
-            .where(AC_NAME_NORMALIZED.eq(normalizedName(name)))
+            .where(normalize(AC_NAME).eq(normalizedName(name)))
             .and(AC_ID.ne(excludeId)));
   }
 
@@ -318,22 +312,13 @@ public class JooqApiConnectionRepository implements ApiConnectionRepository {
   }
 
   /** lower(trim) 비교의 값 쪽(WD-1107) — 열 쪽과 같은 꼴로 정규화한다(WD-1129). */
-  private static Field<String> normalizedName(String name) {
+  private Field<String> normalizedName(String name) {
     return normalize(val(name, String.class));
   }
 
-  /**
-   * 유니코드 공백 → ASCII 공백 → trim → lower (WD-1129). jOOQ 경로는 PG 전용이다(Tibero 는 MyBatis). WD-1145:
-   * {@code EDGE_SPACE_CHARS} 는 U+1680·U+2028 등 비 Latin-1 문자를 바인딩하므로 PG 서버 인코딩 UTF8 이 전제다(이 플랫폼 DB 는
-   * UTF8 로 만든다) — 다른 인코딩이면 바인딩이 실패한다.
-   */
-  private static Field<String> normalize(Field<String> name) {
-    return lower(
-        trim(
-            translate(
-                name,
-                val(TextRules.EDGE_SPACE_CHARS, String.class),
-                val(TextRules.EDGE_SPACE_AS_ASCII, String.class))));
+  /** 유니코드 공백 → ASCII 공백 → trim → lower (WD-1129, 비 UTF8 폴백은 PgEdgeSpaceChars 참고 WD-1162). */
+  private Field<String> normalize(Field<String> name) {
+    return edgeSpaceChars.normalize(name);
   }
 
   /**

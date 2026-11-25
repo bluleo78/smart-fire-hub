@@ -613,6 +613,83 @@ test.describe('API 연결 페이지', () => {
     });
   });
 
+  // WD-1162 — 서버가 저장 이름을 유지했을 때 띄우는 안내 문구
+  const KEPT_NAME_NOTICE = '같은 이름의 연결이 있어 앞뒤 공백을 다듬지 않고 저장된 이름 「결제 API 」을 유지했습니다.';
+
+  /**
+   * WD-1162 — 앞뒤 공백만 다른 이름으로 저장했는데 같은 이름의 다른 연결과 겹쳐 서버가 저장 이름을 그대로 둔 경우,
+   * 응답 이름이 보낸 이름과 달라 「공백을 안 다듬고 유지했다」고 알린다(안 알리면 저장됐는데 이름이 그대로라 의아하다).
+   */
+  test('이름 앞뒤 공백만 다른 저장이 서버에서 저장 이름을 유지하면 안내 토스트를 띄운다 (WD-1162)', async ({ authenticatedPage: page }) => {
+    await setupApiConnectionDetailMocks(page, 1);
+    await mockApi(page, 'GET', '/api/v1/api-connections/1', createApiConnection({ id: 1, name: '결제 API ' }));
+    const capture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/api-connections/1',
+      createApiConnection({ id: 1, name: '결제 API ' }),
+      { capture: true },
+    );
+
+    await page.goto('/admin/api-connections/1');
+    await expect(page.getByRole('heading', { name: 'API 연결 상세' })).toBeVisible();
+
+    // 이름 칸을 직접 고쳐(뒤 공백 제거) 저장 — 다듬은 이름이 나가고, 서버가 저장 이름을 유지하면 안내가 뜬다
+    await page.getByLabel('이름', { exact: false }).first().fill('결제 API');
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+
+    const req = await capture.waitForRequest();
+    expect((req.payload as { name: string }).name).toBe('결제 API');
+    await expect(page.getByText('연결 정보가 업데이트되었습니다.')).toBeVisible();
+    await expect(page.getByText(KEPT_NAME_NOTICE)).toBeVisible();
+  });
+
+  test('설명만 고친 저장은 저장 이름을 그대로 보내고 안내를 띄우지 않는다 (WD-1162)', async ({ authenticatedPage: page }) => {
+    await setupApiConnectionDetailMocks(page, 1);
+    await mockApi(page, 'GET', '/api/v1/api-connections/1', createApiConnection({ id: 1, name: '결제 API ' }));
+    const capture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/api-connections/1',
+      createApiConnection({ id: 1, name: '결제 API ' }),
+      { capture: true },
+    );
+
+    await page.goto('/admin/api-connections/1');
+    await expect(page.getByRole('heading', { name: 'API 연결 상세' })).toBeVisible();
+
+    await page.getByLabel('설명 (선택)', { exact: true }).fill('새 설명');
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+
+    const req = await capture.waitForRequest();
+    expect((req.payload as { name: string }).name).toBe('결제 API ');
+    await expect(page.getByText('연결 정보가 업데이트되었습니다.')).toBeVisible();
+    await expect(page.getByText(/앞뒤 공백을 다듬지 않고/)).toHaveCount(0);
+  });
+
+  test('응답 이름이 보낸 이름과 같으면 유지 안내를 띄우지 않는다 (WD-1162)', async ({ authenticatedPage: page }) => {
+    await setupApiConnectionDetailMocks(page, 1);
+    await mockApi(page, 'GET', '/api/v1/api-connections/1', createApiConnection({ id: 1, name: '결제 API ' }));
+    const capture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/api-connections/1',
+      createApiConnection({ id: 1, name: '결제 API ' }),
+      { capture: true },
+    );
+
+    await page.goto('/admin/api-connections/1');
+    await expect(page.getByRole('heading', { name: 'API 연결 상세' })).toBeVisible();
+
+    await page.getByLabel('설명 (선택)', { exact: true }).fill('새 설명');
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+
+    await capture.waitForRequest();
+    await expect(page.getByText('연결 정보가 업데이트되었습니다.')).toBeVisible();
+    // 안내는 성공 토스트와 같은 시점에 뜨므로, 성공 토스트가 보인 뒤 한 번 세어 없음을 본다
+    await expect(page.getByText(/앞뒤 공백을 다듬지 않고/)).toHaveCount(0);
+  });
+
   /**
    * 이슈 #551 회귀 방지 — API 연결 상세 페이지 미저장 변경 이탈 가드.
    * useUnsavedChangesGuard(#86 도입) 가 이 페이지에도 적용되어야 사이드바 이동 시

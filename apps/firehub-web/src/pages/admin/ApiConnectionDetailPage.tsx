@@ -43,6 +43,7 @@ import { missingSecretMessage } from '@/lib/api-connection-secret';
 import { handleApiError } from '@/lib/api-error';
 import { formatDate } from '@/lib/formatters';
 import { parseRouteId } from '@/lib/route-id';
+import { stripEdgeSpace } from '@/lib/text-rules';
 import { MAX_DESCRIPTION_LENGTH } from '@/lib/validations/description';
 
 import { Badge } from '../../components/ui/badge';
@@ -667,11 +668,13 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
     setInfoErrors(nextErrors);
     if (focusFirstError(INFO_FIELD_ORDER, nextErrors, infoFieldId)) return;
     setSavingSection('info');
+    // WD-1162: 이름을 안 고쳤으면 저장 이름을 그대로 보내 서버가 이름을 건드리지 않게 하고, 고쳤으면 서버와 같은 유니코드 공백 기준으로 다듬는다.
+    const sentName = name === initialInfo?.name ? name : stripEdgeSpace(name);
     try {
-      await updateMutation.mutateAsync({
+      const saved = await updateMutation.mutateAsync({
         id: connectionId,
         data: {
-          name: name.trim(),
+          name: sentName,
           description: description.trim() || undefined,
           baseUrl: baseUrl.trim(),
           // 빈 문자열도 그대로 전달해야 backend 가 명시적 clear 로 인식한다 (#115)
@@ -679,8 +682,17 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
         },
       });
       toast.success('연결 정보가 업데이트되었습니다.');
+      // WD-1162: 서버가 겹침 때문에 공백을 안 다듬고 저장 이름을 유지했으면(공백 차이일 때만) 알린다.
+      if (
+        saved?.name !== undefined &&
+        saved.name !== sentName &&
+        stripEdgeSpace(saved.name) === stripEdgeSpace(sentName)
+      ) {
+        toast.info(`같은 이름의 연결이 있어 앞뒤 공백을 다듬지 않고 저장된 이름 「${saved.name}」을 유지했습니다.`);
+      }
       // 저장 성공 시 dirty 기준 스냅샷을 현재 입력값으로 갱신 (#551)
       // trim() 전 원본 상태값을 그대로 기준으로 삼아야 이후 dirty 비교가 실제 입력창 값과 어긋나지 않는다.
+      // WD-1162: 서버가 이름을 유지해도 dirty 가 안 남는다 — 재조회가 손대지 않은 칸을 서버 값으로 맞춘다(mergeField).
       setInitialInfo({ name, description, baseUrl, healthCheckPath });
     } catch (error) {
       handleApiError(error, '연결 정보 업데이트에 실패했습니다.');

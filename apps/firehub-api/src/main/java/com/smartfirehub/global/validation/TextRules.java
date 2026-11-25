@@ -95,6 +95,17 @@ public final class TextRules {
    */
   public static final String EDGE_SPACE_AS_ASCII = " ".repeat(EDGE_SPACE_CHARS.length());
 
+  /**
+   * {@link #EDGE_SPACE_CHARS} 중 ASCII(U+0080 미만) 6자(WD-1162) — 비 UTF8 PG 에서 PgEdgeSpaceChars 가 물러서는 집합(제약은 그
+   * 클래스 참고). 걸러 만들어 항상 부분집합이다.
+   */
+  public static final String ASCII_EDGE_SPACE_CHARS =
+      EDGE_SPACE_CHARS
+          .chars()
+          .filter(c -> c < 0x80)
+          .collect(StringBuilder::new, StringBuilder::appendCodePoint, StringBuilder::append)
+          .toString();
+
   /** 앞뒤 유니코드 공백(전각 U+3000·NBSP 포함) — {@link #strip} 용. */
   private static final Pattern EDGE_SPACE = Pattern.compile("(?U)^\\s+|\\s+$");
 

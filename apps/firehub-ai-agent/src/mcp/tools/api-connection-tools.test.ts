@@ -430,6 +430,56 @@ describe('API Connection MCP Tools', () => {
     });
   });
 
+  describe('update_api_connection — 저장 이름 유지 알림 (WD-1162)', () => {
+    it('요청 이름이 같은 이름 충돌로 앞뒤 공백을 유지하면 결과에 안내 note 를 붙인다', async () => {
+      (client.updateApiConnection as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 1, name: '결제 API ' });
+      const result = await invokeTool(server, 'update_api_connection', { id: 1, name: '결제 API' });
+      const body = JSON.parse(result.content[0].text);
+      expect(body.name).toBe('결제 API ');
+      expect(body.note).toBe(
+        '같은 이름의 연결이 있어 앞뒤 공백을 다듬지 않고 저장된 이름 「결제 API 」을 유지했습니다.',
+      );
+    });
+
+    it('서버가 요청 이름의 공백을 다듬은 것이면 note 를 붙이지 않는다', async () => {
+      (client.updateApiConnection as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 1, name: '결제 API' });
+      const result = await invokeTool(server, 'update_api_connection', { id: 1, name: '  결제 API ' });
+      const body = JSON.parse(result.content[0].text);
+      expect(body.name).toBe('결제 API');
+      expect(body).not.toHaveProperty('note');
+    });
+
+    it('응답 이름이 공백 차이가 아니라 아예 다른 이름이면 note 를 붙이지 않는다', async () => {
+      (client.updateApiConnection as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 1, name: 'X' });
+      const result = await invokeTool(server, 'update_api_connection', { id: 1, name: '결제 API' });
+      const body = JSON.parse(result.content[0].text);
+      expect(body.name).toBe('X');
+      expect(body).not.toHaveProperty('note');
+    });
+
+    it('저장 이름을 그대로 다시 보내 서버가 그대로 돌려주면 note 를 붙이지 않는다', async () => {
+      (client.updateApiConnection as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 1, name: '결제 API ' });
+      const result = await invokeTool(server, 'update_api_connection', { id: 1, name: '결제 API ' });
+      const body = JSON.parse(result.content[0].text);
+      expect(body.name).toBe('결제 API ');
+      expect(body).not.toHaveProperty('note');
+    });
+
+    it('서버 기준(유니코드 White_Space)으로 U+0085 를 걷은 이름이면 note 를 붙이지 않는다', async () => {
+      (client.updateApiConnection as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 1, name: '결제 API' });
+      const result = await invokeTool(server, 'update_api_connection', { id: 1, name: '결제 API\u0085' });
+      const body = JSON.parse(result.content[0].text);
+      expect(body).not.toHaveProperty('note');
+    });
+
+    it('name 을 보내지 않았으면 note 를 붙이지 않는다', async () => {
+      (client.updateApiConnection as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 1, name: 'x ' });
+      const result = await invokeTool(server, 'update_api_connection', { id: 1, description: '설명' });
+      const body = JSON.parse(result.content[0].text);
+      expect(body).not.toHaveProperty('note');
+    });
+  });
+
   describe('test_api_connection', () => {
     it('calls apiClient.testApiConnection with id', async () => {
       const result = await invokeTool(server, 'test_api_connection', { id: 4 });
