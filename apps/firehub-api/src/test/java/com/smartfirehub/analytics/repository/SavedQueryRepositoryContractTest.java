@@ -130,6 +130,14 @@ public abstract class SavedQueryRepositoryContractTest extends TenantPairContrac
   }
 
   @Test
+  @DisplayName("insert — Cf(폭 없는 문자)만인 폴더는 NULL 로 저장된다 (WD-1103)")
+  void insert_cfOnlyFolder_becomesNull() {
+    // String.isBlank() 는 U+200B 를 글자로 보아 폴더를 그대로 남겼다 — jOOQ·MyBatis 둘 다 TextRules 로 비운다.
+    Long id = insertA(me, req(prefix + "-cf", "\u200B", false));
+    assertThat(inA(() -> repository().findRawByIdUnrestricted(id)).orElseThrow().folder()).isNull();
+  }
+
+  @Test
   @DisplayName("findById — 주인과, 공유된 쿼리는 다른 사용자도 본다 / findByIdForOwner 는 주인만 / 다른 테넌트는 empty")
   void findById_visibility() {
     Long mine = insertA(me, req(prefix + "-mine", null, false));
@@ -284,6 +292,9 @@ public abstract class SavedQueryRepositoryContractTest extends TenantPairContrac
     assertThat(count("sales", "f1", null, null)).isEqualTo(1);
     assertThat(listIds(null, "f1", null, null, 0, 50)).hasSize(3);
     assertThat(count(null, " ", null, null)).as("빈 폴더는 거르지 않는다").isEqualTo(5);
+    assertThat(count(null, "\u200B", null, null))
+        .as("Cf 만인 필터 값은 빈 값 — jOOQ·MyBatis 모두 필터를 거든다")
+        .isEqualTo(5);
   }
 
   @Test
@@ -447,6 +458,33 @@ public abstract class SavedQueryRepositoryContractTest extends TenantPairContrac
                     me));
     assertThat(raw(id).isShared()).isFalse();
     assertThat(raw(id).description()).isEqualTo("새 설명");
+  }
+
+  @Test
+  @DisplayName("update — 설명·폴더에 Cf(폭 없는 문자)만 넣으면 NULL 로 비워진다 (WD-1103)")
+  void update_cfOnlyFolderAndDescription_becomesNull() {
+    Long id = insertA(me, req(prefix + "-cf2", "reports", false));
+    runA(
+        () ->
+            repository()
+                .update(
+                    id,
+                    new UpdateSavedQueryRequest(null, "\u200B", null, null, "\u3000", null, null),
+                    me));
+    // String.isBlank() 는 U+200B·U+3000 을 글자로 보아 옛 값이 그대로 남았다 — jOOQ·MyBatis 둘 다 TextRules 로 비운다.
+    assertThat(raw(id).folder()).isNull();
+    assertThat(raw(id).description()).isNull();
+    assertThat(raw(id).name()).isEqualTo(prefix + "-cf2");
+
+    // null 은 「변경 없음」 — Cf 를 넣었다고 이름이 지워지지 않아야 한다.
+    runA(
+        () ->
+            repository()
+                .update(
+                    id, new UpdateSavedQueryRequest(null, null, null, null, null, null, null), me));
+    assertThat(raw(id).folder()).isNull();
+    assertThat(raw(id).description()).isNull();
+    assertThat(raw(id).name()).isEqualTo(prefix + "-cf2");
   }
 
   @Test

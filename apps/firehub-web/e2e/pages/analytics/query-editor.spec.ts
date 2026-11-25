@@ -439,9 +439,9 @@ test.describe('쿼리 에디터 페이지', () => {
   test('폴더 목록에 빈 폴더가 섞여 와도 저장 대화상자 폴더 칸을 열 수 있다 (WD-889)', async ({
     authenticatedPage: page,
   }) => {
-    // 옛 서버·캐시가 "" / 공백 폴더를 돌려줘도 Radix SelectItem 빈 value 예외가 나면 안 된다
+    // 옛 서버·캐시가 "" / 공백 / Cf(U+200B) 폴더를 돌려줘도 Radix SelectItem 빈 value 예외가 나면 안 된다
     await mockApi(page, 'GET', '/api/v1/analytics/queries/schema', { tables: [] });
-    await mockApi(page, 'GET', '/api/v1/analytics/queries/folders', ['', '  ', '운영']);
+    await mockApi(page, 'GET', '/api/v1/analytics/queries/folders', ['', '  ', '\u200B', '운영']);
 
     await page.goto('/analytics/queries/new?sql=' + encodeURIComponent('SELECT 1'));
     await expect(page.getByText('새 쿼리')).toBeVisible();
@@ -472,6 +472,26 @@ test.describe('쿼리 에디터 페이지', () => {
     await page.getByRole('button', { name: '저장' }).click();
     await expect(page.getByRole('dialog')).toBeVisible();
     await expect(page.getByRole('dialog').getByLabel('폴더')).toHaveText('폴더 없음');
+  });
+
+  test('Cf 만인 옛 폴더 쿼리를 열어 저장하면 folder 를 빈 값으로 보내 400 이 나지 않는다 (WD-1103)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(page, 'GET', '/api/v1/analytics/queries/1', createSavedQuery({ id: 1, folder: '\u200B' }));
+    await mockApi(page, 'GET', '/api/v1/analytics/queries/schema', { tables: [] });
+    await mockApi(page, 'GET', '/api/v1/analytics/queries/folders', ['운영']);
+    const cap = await mockApi(page, 'PUT', '/api/v1/analytics/queries/1', createSavedQuery({ id: 1, folder: null }), { capture: true });
+
+    await page.goto('/analytics/queries/1');
+    await expect(page.locator('[data-slot="badge"]')).toHaveCount(0); // 폴더 뱃지 없음
+
+    await page.getByRole('button', { name: '저장' }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await expect(page.getByRole('dialog').getByLabel('폴더')).toHaveText('폴더 없음');
+    await page.getByRole('dialog').getByRole('button', { name: '저장' }).click();
+
+    const req = await cap.waitForRequest();
+    expect(req.payload).toMatchObject({ folder: '' });
   });
 
   test('스키마 탐색기 — 테이블 숨기기/보기 토글', async ({ authenticatedPage: page }) => {

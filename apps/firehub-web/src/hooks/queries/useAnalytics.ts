@@ -5,6 +5,7 @@ import { analyticsApi } from '../../api/analytics';
 import { isNotFoundError } from '../../lib/api-error';
 import { fetchAllPages } from '../../lib/fetch-all-pages';
 import { isValidId } from '../../lib/route-id';
+import { hasVisibleText } from '../../lib/text-rules';
 import type {
   AddWidgetRequest,
   AnalyticsAdminKind,
@@ -168,11 +169,13 @@ export function useQueryFolders(params: { sharedOnly?: boolean; mineOnly?: boole
 }
 
 /**
- * 폴더 값이 실제 이름을 가졌는지 — 빈 문자열·공백만 있는 옛 폴더는 「폴더 없음」으로 본다 (WD-889).
+ * 폴더 값이 실제 이름을 가졌는지 — 빈 문자열·공백만 있는 옛 폴더(WD-889)에 Cf(폭 없는 문자)만 있는
+ * 옛 폴더도 함께(WD-1103) 「폴더 없음」으로 본다. 서버 `TextRules.HAS_TEXT` 와 같은 판정이라 `trim()`
+ * 은 U+200B 를 남겨 400 을 냈다. 판정 원본은 `src/lib/text-rules.ts` `hasVisibleText`.
  * 폴더 목록 거르기와 쿼리 화면(목록 폴더 칸·편집기 뱃지·저장 폼)이 같은 기준을 쓰게 한 곳에 둔다.
  */
 export function hasFolder(folder: string | null | undefined): folder is string {
-  return !!folder && folder.trim() !== '';
+  return typeof folder === 'string' && hasVisibleText(folder);
 }
 
 // ============================================================

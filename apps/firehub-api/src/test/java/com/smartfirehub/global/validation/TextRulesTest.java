@@ -96,4 +96,19 @@ class TextRulesTest {
     assertThat(Pattern.matches(TextRules.HAS_TEXT_OR_EMPTY, "\uDB40\uDC00")).isFalse();
     assertThat(Pattern.matches(TextRules.HAS_TEXT_OR_EMPTY, "폴더")).isTrue();
   }
+
+  // WD-1103: 코드에서 쓰는 판정이 HAS_TEXT 정규식과 같은지 — 갈라지면 저장소·서비스가 서로 다르게 판단한다
+  @Test
+  void hasText는_정규식과_같은_판정이다() {
+    assertThat(TextRules.hasText("쿼리")).isTrue();
+    assertThat(TextRules.hasText("a b")).isTrue();
+    assertThat(TextRules.hasText(null)).isFalse();
+    assertThat(TextRules.hasText("")).isFalse();
+    assertThat(TextRules.hasText(" ")).isFalse();
+    assertThat(TextRules.hasText("\u00A0")).isFalse();          // NBSP
+    assertThat(TextRules.hasText("\u3000")).isFalse();          // 전각 공백 U+3000
+    assertThat(TextRules.hasText("\u200B")).isFalse();          // 폭 없는 문자 U+200B
+    assertThat(TextRules.hasText("\u200B \uFEFF")).isFalse();  // 공백·Cf 혼합
+    assertThat(TextRules.hasText("a\u200Bb")).isTrue();         // 글자 사이의 Cf 는 글자가 남는다
+  }
 }

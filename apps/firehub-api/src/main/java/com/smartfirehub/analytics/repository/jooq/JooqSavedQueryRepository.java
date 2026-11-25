@@ -10,6 +10,7 @@ import com.smartfirehub.analytics.repository.SavedQueryRepository;
 import com.smartfirehub.global.dto.LockedRowVersion;
 import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.global.util.LikePatternUtils;
+import com.smartfirehub.global.validation.TextRules;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.securitylevel.repository.jooq.JooqDatasetVisibility;
 import java.time.LocalDateTime;
@@ -133,8 +134,9 @@ public class JooqSavedQueryRepository implements SavedQueryRepository {
           SQ_NAME.likeIgnoreCase(pattern, '\\').or(SQ_DESCRIPTION.likeIgnoreCase(pattern, '\\')));
     }
 
-    if (folder != null && !folder.isBlank()) {
-      conditions.add(SQ_FOLDER.eq(folder));
+    String folderFilter = blankToNull(folder);
+    if (folderFilter != null) {
+      conditions.add(SQ_FOLDER.eq(folderFilter));
     }
 
     Condition combined = conditions.stream().reduce(Condition::and).orElse(trueCondition());
@@ -198,8 +200,9 @@ public class JooqSavedQueryRepository implements SavedQueryRepository {
           SQ_NAME.likeIgnoreCase(pattern, '\\').or(SQ_DESCRIPTION.likeIgnoreCase(pattern, '\\')));
     }
 
-    if (folder != null && !folder.isBlank()) {
-      conditions.add(SQ_FOLDER.eq(folder));
+    String folderFilter = blankToNull(folder);
+    if (folderFilter != null) {
+      conditions.add(SQ_FOLDER.eq(folderFilter));
     }
 
     Condition combined = conditions.stream().reduce(Condition::and).orElse(trueCondition());
@@ -361,13 +364,15 @@ public class JooqSavedQueryRepository implements SavedQueryRepository {
     var update = dsl.update(SQ).set(SQ_UPDATED_BY, userId).set(SQ_UPDATED_AT, LocalDateTime.now());
 
     if (req.name() != null) update = update.set(SQ_NAME, req.name());
-    // 설명: 생략(null)은 "변경 없음", 빈 문자열(공백만 포함)은 "설명을 지움"으로 해석해 DB 값을 NULL로 비운다(WD-197).
+    // 설명: 생략(null)은 "변경 없음", 빈 문자열(공백·NBSP·전각 공백·Cf 만 포함)은 "설명을 지움"으로 해석해 DB 값을 NULL로
+    // 비운다(WD-197·WD-1103).
     // 웹이 지운 설명을 빈 문자열로 보내도 이전에는 null과 같이 무시돼 옛 설명이 그대로 남았다.
     if (req.description() != null)
       update = update.set(SQ_DESCRIPTION, blankToNull(req.description()));
     if (req.sqlText() != null) update = update.set(SQ_SQL_TEXT, req.sqlText());
     if (req.datasetId() != null) update = update.set(SQ_DATASET_ID, req.datasetId());
-    // 폴더: 생략(null)은 "변경 없음", 빈 문자열은 "폴더 없음으로 옮김"으로 해석해 NULL로 비운다(WD-197).
+    // 폴더: 생략(null)은 "변경 없음", 빈 문자열(공백·NBSP·전각 공백·Cf 만 포함)은 "폴더 없음으로 옮김"으로 해석해 NULL로
+    // 비운다(WD-197·WD-1103).
     // 폴더는 이름 문자열이라 설명과 같은 신호(빈 문자열)를 쓰면 별도 플래그 없이 의도를 구분할 수 있다.
     if (req.folder() != null) update = update.set(SQ_FOLDER, blankToNull(req.folder()));
     if (req.isShared() != null) update = update.set(SQ_IS_SHARED, req.isShared());
@@ -432,12 +437,16 @@ public class JooqSavedQueryRepository implements SavedQueryRepository {
   }
 
   /**
-   * 갱신 요청의 빈 문자열(공백만 포함)을 NULL 로 바꾼다(WD-197).
+   * 갱신 요청·필터 값의 빈 문자열(공백·NBSP·전각 공백·Cf 만 포함)을 NULL 로 바꾼다(WD-197).
    *
    * <p>갱신 API 는 null 을 "변경 없음"으로 쓰므로, 사용자가 값을 지웠다는 뜻은 빈 문자열로 받는다. 저장할 때는 "값 없음"을 NULL 한 가지로 맞춰
    * 목록·상세가 "" 와 NULL 을 따로 다루지 않게 한다.
+   *
+   * <p>{@code String.isBlank()} 는 Cf(폭 없는 문자)만인 값을 글자로 보아 {@code TextRules.HAS_TEXT} 와 갈렸다(WD-1103)
+   * — 한 판정으로 맞춘다. MyBatis 판({@code MyBatisSavedQueryRepository#blankToNull})과 같은 값이어야 계약 시험이 어긋나지
+   * 않는다.
    */
   private static String blankToNull(String value) {
-    return value == null || value.isBlank() ? null : value;
+    return value == null || !TextRules.hasText(value) ? null : value;
   }
 }

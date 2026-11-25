@@ -75,6 +75,9 @@ public final class TextRules {
    */
   public static final String HAS_TEXT_OR_EMPTY = "(?U)(?s)(\\A\\z|" + HAS_VISIBLE + ")";
 
+  /** {@link #HAS_TEXT} 를 한 번 컴파일한 정규식 — 매번 컴파일하지 않도록 static final 로 둔다. */
+  private static final Pattern HAS_TEXT_PATTERN = Pattern.compile(HAS_TEXT);
+
   /** 앞뒤 유니코드 공백(전각 U+3000·NBSP 포함) — {@link #strip} 용. */
   private static final Pattern EDGE_SPACE = Pattern.compile("(?U)^\\s+|\\s+$");
 
@@ -84,6 +87,16 @@ public final class TextRules {
    */
   public static String strip(String value) {
     return value == null ? null : EDGE_SPACE.matcher(value).replaceAll("");
+  }
+
+  /**
+   * 값에 공백(전각·NBSP 포함)·Cf 가 아닌 글자가 하나 이상 있는지(WD-1103).
+   *
+   * <p>{@link #HAS_TEXT} 와 같은 판정을 코드에서 쓰게 한다 — 저장소의 「빈 값이면 NULL」, 폴더 목록 걸러 내기가 각자 {@code
+   * String.isBlank()} 를 쓰면 Cf(폭 없는 문자)만인 값을 서로 다르게 본다(WD-1086 후속). null 은 글자가 없으므로 false.
+   */
+  public static boolean hasText(String value) {
+    return value != null && HAS_TEXT_PATTERN.matcher(value).matches();
   }
 
   private TextRules() {}
