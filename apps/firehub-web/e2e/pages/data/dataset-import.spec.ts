@@ -6,6 +6,7 @@ import { createColumn, createDatasetDetail } from '../../factories/dataset.facto
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { grantDatasetPermissions, setupDatasetDetailMocks } from '../../fixtures/dataset.fixture';
+import { expectNoOuterScroll, wheelUntilInViewport } from '../../fixtures/dialog.fixture';
 import { readFocusStyle } from '../../fixtures/keyboard-focus';
 
 /**
@@ -31,6 +32,27 @@ function createPreviewResponse() {
       { fileColumn: 'name', datasetColumn: 'name', matchType: 'EXACT', confidence: 1.0 },
     ],
     totalRows: 2,
+  };
+}
+
+/**
+ * 컬럼·행이 많은 미리보기 응답 — 2단계 안쪽 스크롤 영역이 실제로 넘치게 한다(WD-1140).
+ * 작은 응답으로는 안쪽이 넘치지 않아 유령 바깥 스크롤·휠 이어짐 같은 회귀를 잡지 못한다.
+ */
+function createLargePreviewResponse() {
+  const headers = Array.from({ length: 15 }, (_, i) => `col${i}`);
+  return {
+    fileHeaders: headers,
+    sampleRows: Array.from({ length: 8 }, (_, r) => Object.fromEntries(headers.map((h) => [h, `${h}-${r}`]))),
+    // 앞 두 컬럼만 데이터셋 컬럼(id·name)에 매핑해 임포트를 활성화하고, 나머지는 매핑 없음으로 둬 행만 늘린다
+    suggestedMappings: headers.map((h, i) =>
+      i === 0
+        ? { fileColumn: h, datasetColumn: 'id', matchType: 'EXACT', confidence: 1.0 }
+        : i === 1
+          ? { fileColumn: h, datasetColumn: 'name', matchType: 'EXACT', confidence: 1.0 }
+          : { fileColumn: h, datasetColumn: null, matchType: 'NONE', confidence: 0 },
+    ),
+    totalRows: 8,
   };
 }
 
@@ -1603,5 +1625,167 @@ test.describe('엑셀 시트 선택 (WD-253)', () => {
     await expect(dialog.getByText('임포트 완료')).toBeVisible({ timeout: 10_000 });
     expect(importSheetNames).toEqual([null]);
     expect(importBody).not.toContain('name="sheetName"');
+  });
+
+  /**
+   * WD-1140 — 3단계(진행/결과)는 안쪽 스크롤 래퍼가 없어, 낮은 화면에서 실패 목록이 길면
+   * 대화상자가 overflow-hidden 에 잘려 「확인」 버튼이 닿지 않았다.
+   */
+  test('낮은 뷰포트에서 가져오기 실패 목록이 길어도 끝까지 스크롤해 닫기에 닿는다 (WD-1140)', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.setViewportSize({ width: 375, height: 420 });
+    await setupImportMocks(page);
+    await mockApi(page, 'POST', `/api/v1/datasets/${DATASET_ID}/imports/preview`, createPreviewResponse());
+
+    // 실패 오류 30건 — ValidationErrorTable 행으로 렌더된다
+    const errors = Array.from({ length: 30 }, (_, i) => ({
+      rowNumber: i + 1,
+      columnName: 'name',
+      value: `값-${i + 1}`,
+      error: `검증 오류 ${i + 1}`,
+    }));
+    // 진행 SSE 를 FAILED 로 덮어쓴다(나중에 등록한 라우트가 이긴다)
+    await page.route(
+      (url) => url.pathname.includes('/jobs/') && url.pathname.includes('/progress'),
+      (route) => {
+        const sseData = JSON.stringify({
+          jobId: 'job-123',
+          jobType: 'IMPORT',
+          stage: 'FAILED',
+          progress: 100,
+          metadata: { totalRows: 30, processedRows: 30, successRows: 0, errorRows: 30 },
+          message: '임포트 실패',
+          errorMessage: '검증 오류가 있습니다',
+        });
+        return route.fulfill({
+          status: 200,
+          contentType: 'text/event-stream',
+          body: `data: ${sseData}\n\nevent: complete\ndata: done\n\n`,
+        });
+      },
+    );
+    // 이력(GET)은 FAILED + errorDetails, 업로드(POST)는 jobId 반환
+    await page.route(
+      (url) => url.pathname === `/api/v1/datasets/${DATASET_ID}/imports`,
+      (route) => {
+        if (route.request().method() === 'POST') {
+          return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(createImportStartResponse()) });
+        }
+        const failed = {
+          ...createImportRecord(),
+          status: 'FAILED',
+          totalRows: 30,
+          successRows: 0,
+          errorRows: 30,
+          errorDetails: JSON.stringify({ errors }),
+        };
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(createPageResponse([failed])),
+        });
+      },
+    );
+
+    await page.goto(`/data/datasets/${DATASET_ID}`);
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await page.getByRole('button', { name: '임포트' }).first().click();
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/imports/preview') && r.status() === 200),
+      page.getByRole('dialog').locator('input[type="file"]').setInputFiles(CSV_FILE),
+    ]);
+
+    const dialog = page.getByRole('dialog');
+    await dialog.getByRole('button', { name: '임포트' }).click();
+    await expect(dialog.getByText('검증 오류 30', { exact: true })).toBeAttached({ timeout: 10_000 });
+
+    // 사용자처럼 휠로 끝까지 내려 확인 버튼에 닿는지 본다
+    await wheelUntilInViewport(page, dialog, dialog.getByRole('button', { name: '확인' }), { deltaY: 600 });
+    await expect(dialog.getByText('검증 오류 30', { exact: true })).toBeInViewport();
+  });
+
+  /**
+   * WD-1140 — DialogContent 의 overflow-hidden 을 뺐으므로(바깥은 마지막 수단) 보통 높이에서는
+   * 바깥 대화상자가 스크롤되면 안 된다. 안쪽 래퍼가 스크롤을 맡는지 2단계·3단계(완료)에서 확인한다.
+   */
+  test('보통 높이(1440x900)에서는 2단계·3단계 완료에서 바깥 대화상자가 스크롤되지 않는다 (WD-1140)', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await setupImportMocks(page);
+    await mockApi(page, 'POST', `/api/v1/datasets/${DATASET_ID}/imports/preview`, createLargePreviewResponse());
+    await mockApi(page, 'POST', `/api/v1/datasets/${DATASET_ID}/imports`, createImportStartResponse());
+
+    await page.goto(`/data/datasets/${DATASET_ID}`);
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await page.getByRole('button', { name: '임포트' }).first().click();
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/imports/preview') && r.status() === 200),
+      page.getByRole('dialog').locator('input[type="file"]').setInputFiles(CSV_FILE),
+    ]);
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('heading', { name: '컬럼 매핑' })).toBeVisible();
+    // 안쪽 영역이 실제로 넘쳐야(스크롤 가능) 바깥 무스크롤 단언이 의미가 있다
+    const inner = dialog.locator('div.overflow-y-auto').first();
+    expect(await inner.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
+    await expectNoOuterScroll(dialog);
+
+    await dialog.getByRole('button', { name: '임포트' }).click();
+    await expect(dialog.getByText('임포트 완료')).toBeVisible({ timeout: 10_000 });
+    await expectNoOuterScroll(dialog);
+  });
+
+  /** WD-1140 — 오류 표가 없는 완료 화면도 낮은 화면에서 휠로 내리면 「확인」에 닿는다 */
+  test('낮은 뷰포트(375x420)에서 3단계 완료 화면도 스크롤해 확인 버튼에 닿는다 (WD-1140)', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.setViewportSize({ width: 375, height: 420 });
+    await setupImportMocks(page);
+    await mockApi(page, 'POST', `/api/v1/datasets/${DATASET_ID}/imports/preview`, createPreviewResponse());
+    await mockApi(page, 'POST', `/api/v1/datasets/${DATASET_ID}/imports`, createImportStartResponse());
+
+    await page.goto(`/data/datasets/${DATASET_ID}`);
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await page.getByRole('button', { name: '임포트' }).first().click();
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/imports/preview') && r.status() === 200),
+      page.getByRole('dialog').locator('input[type="file"]').setInputFiles(CSV_FILE),
+    ]);
+
+    const dialog = page.getByRole('dialog');
+    await dialog.getByRole('button', { name: '임포트' }).click();
+    await expect(dialog.getByText('임포트 완료')).toBeVisible({ timeout: 10_000 });
+
+    await wheelUntilInViewport(page, dialog, dialog.getByRole('button', { name: '확인' }), { deltaY: 600 });
+  });
+
+  /**
+   * WD-1140 — 안쪽 영역에 overscroll-contain 이 있으면 끝에서 휠이 바깥 DialogContent 로 이어지지 않아
+   * 아주 낮은 화면에서 푸터(취소/임포트)에 닿을 수 없었다.
+   */
+  test('아주 낮은 뷰포트(568x200)에서 2단계 매핑 영역 위 휠로 푸터 버튼에 닿는다 (WD-1140)', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.setViewportSize({ width: 568, height: 200 });
+    await setupImportMocks(page);
+    await mockApi(page, 'POST', `/api/v1/datasets/${DATASET_ID}/imports/preview`, createLargePreviewResponse());
+
+    await page.goto(`/data/datasets/${DATASET_ID}`);
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await page.getByRole('button', { name: '임포트' }).first().click();
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/imports/preview') && r.status() === 200),
+      page.getByRole('dialog').locator('input[type="file"]').setInputFiles(CSV_FILE),
+    ]);
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('heading', { name: '컬럼 매핑' })).toBeVisible();
+    const inner = dialog.locator('div.overflow-y-auto').first();
+    expect(await inner.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
+
+    // 헤더가 아닌 안쪽 매핑 영역 위에 마우스를 둔다
+    await wheelUntilInViewport(page, dialog, dialog.getByRole('button', { name: '취소' }), { at: inner, deltaY: 400 });
   });
 });

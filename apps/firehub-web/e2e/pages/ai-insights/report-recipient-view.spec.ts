@@ -6,6 +6,7 @@ import { createJobExecution, createMessage } from '../../factories/ai-insight.fa
 import { setupJobListMocks, setupNotificationPanelMocks } from '../../fixtures/ai-insight.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { expectNoOuterScroll } from '../../fixtures/dialog.fixture';
 
 /**
  * 스마트 작업 리포트를 받은 사람(작업 작성자가 아님)의 화면 E2E (WD-162).
@@ -169,5 +170,41 @@ test.describe('리포트를 받은 사람의 화면 (WD-162)', () => {
     await expect(page.getByTestId('execution-not-found')).toHaveText(EXECUTION_NOT_FOUND);
 
     await shot(page, 'after-execution-detail-404.png');
+  });
+
+  // WD-1140: 바깥 overflow-hidden 을 걷은 뒤에도 보통 높이에서는 리포트 모달 바깥이 스크롤하지 않는다(고정 높이 유지).
+  test('리포트 모달은 보통 높이(1440×900)에서 바깥이 스크롤하지 않는다 (WD-1140)', async ({ authenticatedPage: page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await setupNotificationPanelMocks(page, [
+      createMessage({
+        jobId: 7,
+        executionId: 3,
+        title: '주간 화재 현황',
+        jobName: 'writer_주간현황',
+        content: { summary: SUMMARY, jobId: '7', executionId: '3' },
+        canViewReport: true,
+      }),
+    ]);
+    await setupJobListMocks(page);
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/proactive/jobs/7/executions/3',
+      createJobExecution({ id: 3, jobId: 7, status: 'COMPLETED' }),
+    );
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/proactive/jobs/7/executions/3/html',
+      '<html><body><h1>주간 화재 현황 본문</h1></body></html>',
+    );
+
+    await openMessageDetail(page, '주간 화재 현황');
+    await page.getByRole('dialog', { name: 'AI 인사이트 알림' }).getByRole('button', { name: '리포트 보기' }).click();
+
+    const modal = page.getByRole('dialog', { name: '리포트 #3' });
+    await expect(modal).toBeVisible();
+    await expect(modal.frameLocator('iframe[title="리포트"]').getByRole('heading', { name: '주간 화재 현황 본문' })).toBeVisible();
+    await expectNoOuterScroll(modal);
   });
 });

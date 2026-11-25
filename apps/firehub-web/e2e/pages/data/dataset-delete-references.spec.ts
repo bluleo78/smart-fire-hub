@@ -194,9 +194,8 @@ test.describe('데이터셋 삭제 — 쓰는 곳 안내 (WD-143)', () => {
       el.scrollTop = el.scrollHeight;
     });
     const confirm = dialog.getByRole('button', { name: '삭제' });
-    const btn = await confirm.boundingBox();
-    expect(btn, '삭제 버튼이 그려지지 않았다').not.toBeNull();
-    expect(btn!.y + btn!.height).toBeLessThanOrEqual(360);
+    // WD-1140: 좌표 산수 대신 버튼이 뷰포트 안에 온전히 보이는지 직접 단언한다.
+    await expect(confirm).toBeInViewport({ ratio: 1 });
     await confirm.click();
     const req = await deleteCapture.waitForRequest();
     expect(req.url.pathname).toBe('/api/v1/datasets/1');
