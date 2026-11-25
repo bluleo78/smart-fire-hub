@@ -36,6 +36,9 @@ export function pickBestMessage(errData: ErrorResponse, fallback: string): strin
   return errData.message || fallback;
 }
 
+/** 사용자 바뀜 안내 문구 — UserSwitchedError 와 extractApiError 가 같은 문구를 보이도록 한 곳에 둔다 (WD-1142). */
+export const USER_SWITCHED_MESSAGE = '다른 사용자로 로그인되어 화면을 다시 엽니다.';
+
 /**
  * 갱신 결과가 이 탭의 사용자와 다른 사용자의 것이라 새 토큰을 쓰지 않고 끝냈음을 나타낸다 (WD-1122).
  * client.ts 가 던진다 — api-error 가 client 를 import 하면 순환이 되어 여기에 두고, 모두 여기서 import 한다.
@@ -43,7 +46,7 @@ export function pickBestMessage(errData: ErrorResponse, fallback: string): strin
  */
 export class UserSwitchedError extends Error {
   constructor() {
-    super('다른 사용자로 로그인되어 화면을 다시 엽니다.');
+    super(USER_SWITCHED_MESSAGE);
     this.name = 'UserSwitchedError';
   }
 }
@@ -85,6 +88,8 @@ export class CloneNameExhaustedError extends NameRetryExhaustedError {
  * Blob 형태로 오므로, 이를 텍스트로 읽어 JSON 파싱을 시도한다.
  */
 export function extractApiError(error: unknown, fallback: string): string {
+  // 사용자 바뀜(WD-1142) — 호출부 실패 문구 대신 화면이 곧 다시 열린다는 안내를 보인다.
+  if (isUserSwitchedError(error)) return USER_SWITCHED_MESSAGE;
   // 이름 재시도 소진(WD-834·WD-837) — 서버 문구 대신 호출부가 정한 안내를 보인다.
   if (error instanceof NameRetryExhaustedError) return error.message;
   if (axios.isAxiosError(error) && error.response?.data) {
@@ -108,6 +113,8 @@ export async function extractApiErrorAsync(
   error: unknown,
   fallback: string,
 ): Promise<string> {
+  // 사용자 바뀜(WD-1142) — 동기판과 같은 안내를 보인다.
+  if (isUserSwitchedError(error)) return USER_SWITCHED_MESSAGE;
   if (error instanceof NameRetryExhaustedError) return error.message;
   if (axios.isAxiosError(error) && error.response?.data) {
     const data = error.response.data;

@@ -2,7 +2,7 @@ import type { Page } from '@playwright/test';
 
 import { createTokenResponse, createUser } from '../../factories/auth.factory';
 import { mockApi } from '../../fixtures/api-mock';
-import { expect, MOCK_USER_DETAIL, seedSessionOnce, test } from '../../fixtures/auth.fixture';
+import { expect, jwtFor, MOCK_USER_DETAIL, seedSessionOnce, test } from '../../fixtures/auth.fixture';
 
 /**
  * 첫 로그인 비밀번호 변경 강제(WD-2) — /change-password.
@@ -123,7 +123,6 @@ test.describe('비밀번호 변경 강제', () => {
     await seedSessionOnce(page);
     // 부팅 refresh(1회차)는 사용자 1 의 pwc 토큰, 변경 직후 refresh(2회차 이후)는 다른 탭이 로그인한 사용자 2 의 토큰.
     // client.ts 가 sub 를 읽는 JWT 모양이어야 사용자를 알아본다.
-    const jwtFor = (sub: string) => `header.${Buffer.from(JSON.stringify({ sub })).toString('base64url')}.sig`;
     let refreshCount = 0;
     await page.route((url) => url.pathname === '/api/v1/auth/refresh', (route) => {
       refreshCount += 1;

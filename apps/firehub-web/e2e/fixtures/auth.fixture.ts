@@ -55,6 +55,15 @@ export const MOCK_TOKEN_RESPONSE: TokenResponse = {
   unavailableWorkspaces: [],
 };
 
+/**
+ * 시험용 JWT — client.ts 의 readTokenSubject 가 읽는 모양(`헤더.base64url({"sub":"<id>"}).서명`)이다 (WD-1122·WD-1142).
+ * 사용자 바뀜 시험에서 refresh 응답의 사용자를 구분하는 데 쓴다.
+ */
+export function jwtFor(sub: string): string {
+  const payload = Buffer.from(JSON.stringify({ sub })).toString('base64url');
+  return `header.${payload}.sig`;
+}
+
 /** 모킹용 역할 정보 */
 const MOCK_ROLE: RoleResponse = {
   id: 1,
