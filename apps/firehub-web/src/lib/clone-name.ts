@@ -14,7 +14,7 @@ import { CloneNameExhaustedError, isDuplicateName } from './api-error';
 export const NAME_MAX_LENGTH = 200;
 
 /** 문자열을 UTF-16 `maxUnits` 단위 안으로 자른다 — 끝이 서로게이트 쌍의 앞쪽(high surrogate)이면 그것까지 빼 쌍을 가르지 않는다. */
-function truncateUtf16(text: string, maxUnits: number): string {
+export function truncateUtf16(text: string, maxUnits: number): string {
   if (text.length <= maxUnits) return text;
   let end = Math.max(0, maxUnits);
   const last = text.charCodeAt(end - 1);

@@ -123,3 +123,42 @@ describe('SearchInput', () => {
     expect(input.value).toBe('x');
   });
 });
+
+/**
+ * maxLength 자체 강제 (WD-1131)
+ * 한글 조합이 끝날 때 브라우저가 maxlength 를 지키지 않고 값을 넘겨도 컴포넌트가 잘라 보낸다.
+ */
+describe('SearchInput maxLength (WD-1131)', () => {
+  const setupMax = (maxLength?: number) => {
+    const onChange = vi.fn();
+    render(<SearchInput value="" onChange={onChange} maxLength={maxLength} />);
+    return { onChange, input: screen.getByRole('textbox') as HTMLInputElement };
+  };
+
+  it('조합 끝 값이 maxLength 를 넘으면 잘라 표시하고 잘린 값으로 onChange', () => {
+    const { onChange, input } = setupMax(5);
+    fireEvent.compositionStart(input);
+    fireEvent.change(input, { target: { value: '가나다라마바사' } });
+    fireEvent.compositionEnd(input);
+    expect(onChange).toHaveBeenLastCalledWith('가나다라마');
+    expect(input.value).toBe('가나다라마');
+  });
+
+  it('일반 입력 값이 maxLength 를 넘어도 잘라 보낸다', () => {
+    const { onChange, input } = setupMax(3);
+    fireEvent.change(input, { target: { value: 'abcdef' } });
+    expect(onChange).toHaveBeenLastCalledWith('abc');
+  });
+
+  it('maxLength 가 없으면 자르지 않는다', () => {
+    const { onChange, input } = setupMax();
+    fireEvent.change(input, { target: { value: 'a'.repeat(2000) } });
+    expect(onChange.mock.calls[0][0]).toHaveLength(2000);
+  });
+
+  it('끝이 서로게이트 쌍에 걸치면 반쪽을 버린다', () => {
+    const { onChange, input } = setupMax(3);
+    fireEvent.change(input, { target: { value: 'ab😀c' } });
+    expect(onChange).toHaveBeenLastCalledWith('ab');
+  });
+});

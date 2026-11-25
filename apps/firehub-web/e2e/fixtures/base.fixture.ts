@@ -1,6 +1,22 @@
-import { type Page,test as base } from '@playwright/test';
+import { type Locator, type Page, test as base } from '@playwright/test';
 
 import { mockApi } from './api-mock';
+
+/**
+ * 한글 조합이 끝나는 순간 maxlength 를 넘긴 값이 들어오는 상황을 흉내 낸다 (WD-1131).
+ * Chromium fill() 은 maxlength 를 지키므로, 조합 시작 → 값 직접 주입 → input → compositionend 순으로
+ * 이벤트를 보내 조합이 끝날 때 maxlength 를 지키지 않는 브라우저를 재현한다.
+ */
+export async function simulateOverlongCompositionEnd(locator: Locator, text: string) {
+  await locator.evaluate((el: HTMLInputElement, value: string) => {
+    el.focus();
+    el.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    setter.call(el, value);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: value.slice(0, 1) }));
+  }, text);
+}
 
 /**
  * 홈 페이지(대시보드) API 모킹 헬퍼

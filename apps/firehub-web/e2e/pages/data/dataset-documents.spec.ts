@@ -3,6 +3,7 @@ import { createBinding, createOntologySummaries } from '../../factories/mapping.
 import { createOntologySchema } from '../../factories/ontology.factory';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { simulateOverlongCompositionEnd } from '../../fixtures/base.fixture';
 import { grantDatasetPermissions } from '../../fixtures/dataset.fixture';
 import { setupDocumentDatasetMocks } from '../../fixtures/document.fixture';
 
@@ -250,6 +251,21 @@ test.describe('문서 데이터셋 상세', () => {
 
     // 안내 문구 확인
     await expect(page.getByText('위의 업로드 영역에서 PDF, Word, 텍스트 파일을 추가하세요')).toBeVisible();
+  });
+
+  test('한글 조합이 maxLength 를 넘겨 끝나도 1,000자로 잘라 검색한다 (WD-1131)', async ({ authenticatedPage: page }) => {
+    await setupDocumentDatasetMocks(page, DATASET_ID, createDocuments(1));
+    const capture = await mockApi(page, 'POST', '/api/v1/documents/search', [], { capture: true });
+
+    await page.goto(`/data/datasets/${DATASET_ID}?tab=documents`);
+    const input = page.getByPlaceholder('검색어를 입력하세요');
+    // 조합이 끝날 때 maxlength 를 지키지 않는 브라우저를 흉내 낸다.
+    await simulateOverlongCompositionEnd(input, '가'.repeat(1200));
+    await expect(input).toHaveValue('가'.repeat(1000));
+    await page.getByRole('button', { name: '검색' }).click();
+
+    const req = await capture.waitForRequest();
+    expect((req.payload as { query: string }).query).toHaveLength(1000);
   });
 
   /**

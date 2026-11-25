@@ -2260,7 +2260,7 @@
       "type": "object",
       "properties": {
         "search": {
-          "description": "사용자명 또는 설명 검색어",
+          "description": "사용자명 또는 설명 검색어 (최대 1,000자 — 넘으면 앞 1,000자로 잘라 검색하고 결과에 searchTruncated 로 알린다)",
           "type": "string"
         },
         "userId": {
@@ -2269,15 +2269,18 @@
         },
         "actionType": {
           "description": "액션 유형 필터 (CREATE, UPDATE, DELETE, LOGIN, LOGOUT 등)",
-          "type": "string"
+          "type": "string",
+          "maxLength": 100
         },
         "resource": {
           "description": "리소스 유형 필터 (dataset, pipeline, user, trigger, role, api_connection 등)",
-          "type": "string"
+          "type": "string",
+          "maxLength": 100
         },
         "result": {
           "description": "결과 상태 필터 (SUCCESS, FAILURE)",
-          "type": "string"
+          "type": "string",
+          "maxLength": 100
         },
         "startDate": {
           "description": "조회 시작 일시 (ISO 8601, 사용자 시간대 오프셋 포함, 예: 2026-09-01T00:00:00+09:00). 날짜만 주어진 질의는 해당 날짜의 00:00:00+09:00으로 지정한다. 오프셋을 빼면 한국 시간(+09:00)으로 보고 붙인다.",
