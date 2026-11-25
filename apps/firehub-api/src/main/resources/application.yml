@@ -55,6 +55,9 @@ spring:
 
 server:
   port: 8080
+  # WD-1111: 요청 헤더(요청줄 포함) 한도 32KB. 감사 로그 검색어 한글 1,000자는 URL 인코딩하면 약 9KB 이고 인증 헤더도 붙는데,
+  # Tomcat 기본 8KB 를 넘으면 앱 예외 처리를 거치지 않은 HTML 400 이 온다. 무제한은 아니다(과대 요청은 계속 거절).
+  max-http-request-header-size: 32KB
 
 # JobRunr 8 은 설정 접두를 org.jobrunr → jobrunr 로 바꿨다(WD-792). 옛 접두는 아무 경고 없이 무시되므로(skip-create 가 꺼져
 # 런타임 롤이 CREATE TABLE 을 하다 기동 실패) 이 키들을 옛 이름으로 되돌리지 말 것.

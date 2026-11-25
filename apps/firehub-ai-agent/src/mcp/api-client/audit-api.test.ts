@@ -103,6 +103,27 @@ describe('auditApi (via FireHubApiClient)', () => {
     expect(result.totalElements).toBe(0);
   });
 
+  // WD-1111: 서버 상한(1,000자)을 넘는 검색어는 1,000자로 잘라 보내고, search 가 없으면 파라미터도 없다.
+  it('listAuditLogs clamps a 1,500-char search to 1,000 chars (WD-1111)', async () => {
+    const mock = { content: [], totalElements: 0, totalPages: 0, number: 0, size: 20 };
+    nock(BASE_URL)
+      .get('/admin/audit-logs')
+      .query({ search: '가'.repeat(1000) })
+      .reply(200, mock);
+    const result = await client.listAuditLogs({ search: '가'.repeat(1500) });
+    expect(result.totalElements).toBe(0);
+  });
+
+  it('listAuditLogs omits search when undefined (WD-1111)', async () => {
+    const mock = { content: [], totalElements: 0, totalPages: 0, number: 0, size: 20 };
+    nock(BASE_URL)
+      .get('/admin/audit-logs')
+      .query((q) => !('search' in q))
+      .reply(200, mock);
+    const result = await client.listAuditLogs({ search: undefined, size: 20 });
+    expect(result.totalElements).toBe(0);
+  });
+
   it('listAuditLogs passes search + page + size params', async () => {
     const mock = { content: [], totalElements: 0, totalPages: 0, number: 1, size: 50 };
     nock(BASE_URL)

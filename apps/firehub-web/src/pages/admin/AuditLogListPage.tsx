@@ -40,6 +40,7 @@ import { useLastPageInfo } from '@/hooks/useLastPageInfo';
 import { offlineListMessage, useOfflinePaused } from '@/hooks/useOnlineStatus';
 import { listLoadErrorProps } from '@/lib/api-error';
 import { formatDateTime, formatIpAddress } from '@/lib/formatters';
+import { MAX_SEARCH_QUERY_LENGTH } from '@/lib/validations/search-query';
 import type { AuditLogResponse } from '@/types/auditLog';
 
 import { escapeInvisibleForDisplay, escapeInvisibleInText } from './audit-metadata-display';
@@ -682,6 +683,8 @@ export default function AuditLogListPage() {
           placeholder="설명으로 검색..."
           value={search}
           onChange={handleSearchChange}
+          // WD-1111: 서버가 1,000자 초과 검색어를 400 으로 거절하므로 입력 단계에서 같은 상한을 건다
+          maxLength={MAX_SEARCH_QUERY_LENGTH}
         />
 
         {/*

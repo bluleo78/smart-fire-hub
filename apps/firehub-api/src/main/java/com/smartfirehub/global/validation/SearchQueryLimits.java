@@ -7,6 +7,8 @@ package com.smartfirehub.global.validation;
  * provider 로 보내고 키워드 검색 SQL 에도 싣는다. 상한이 없으면 수 MB 질의 하나로 외부 임베딩 비용과 DB 부하를 키울 수 있어, 두 요청 DTO 가 같은 값을
  * 쓰도록 여기 한 곳에 둔다.
  *
+ * <p>감사 로그 목록({@code GET /admin/audit-logs} 의 search 파라미터, WD-1111)도 같은 상한을 쓴다.
+ *
  * <p>길이 기준은 {@code String.length()}(UTF-16 코드 단위)다 — 이모지 같은 서로게이트 쌍은 2자로 세지만 상한이 넉넉해 실사용에 영향이 없다.
  * 생략(null)은 {@code @Size} 가 통과시키므로 빈/누락 질의의 기존 처리(서비스의 빈 검색어 400 등)는 그대로다.
  */

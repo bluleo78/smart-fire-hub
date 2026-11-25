@@ -5,7 +5,9 @@ import com.smartfirehub.audit.service.AuditLogService;
 import com.smartfirehub.audit.time.AuditTimes;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.security.RequirePermission;
+import com.smartfirehub.global.validation.SearchQueryLimits;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
+import jakarta.validation.constraints.Size;
 import java.time.ZoneId;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -27,7 +29,14 @@ public class AuditLogController {
   @GetMapping
   @RequirePermission("audit:read")
   public ResponseEntity<PageResponse<AuditLogResponse>> getAuditLogs(
-      @RequestParam(required = false) String search,
+      // WD-1111: 검색어 상한(1,000자). 상한이 없으면 긴 한글 검색어가 요청줄 한도에 걸려 Tomcat 의 HTML 400 이 왔다.
+      // 컨트롤러 파라미터 검증은 Spring 6.1+ 내장(HandlerMethodValidationException → GlobalExceptionHandler 가
+      // errors 맵 JSON 400).
+      @RequestParam(required = false)
+          @Size(
+              max = SearchQueryLimits.MAX_QUERY_LENGTH,
+              message = SearchQueryLimits.QUERY_TOO_LONG)
+          String search,
       @RequestParam(required = false) Long userId,
       @RequestParam(required = false) String actionType,
       @RequestParam(required = false) String resource,

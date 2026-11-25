@@ -21,6 +21,11 @@ interface SearchInputProps {
   debounceMs?: number;
   /** 안쪽 input 요소의 ref (WD-985) — 「검색 초기화」 뒤 초점을 검색 입력으로 돌려주려는 호출부가 넘긴다 */
   inputRef?: Ref<HTMLInputElement>;
+  /**
+   * 입력 글자 수 상한(WD-1111) — 안쪽 input 의 maxLength 로 그대로 넘긴다. 서버가 길이 상한을 두고 400 으로 거절하는 검색(감사 로그 등)이
+   * 사용자가 애초에 넘기지 못하게 막으려고 쓴다. 생략하면 제한 없음(기존 호출부 동작 그대로).
+   */
+  maxLength?: number;
 }
 
 /**
@@ -36,7 +41,7 @@ interface SearchInputProps {
  * - 조합이 끝나면(`compositionend`) 최종 글자를 한 번에 부모에 전달한다.
  * - IME를 쓰지 않는 영문/숫자 입력은 기존과 동일하게 매 입력마다 즉시 전달된다.
  */
-export function SearchInput({ placeholder = '검색...', 'aria-label': ariaLabel, value, onChange, className, debounceMs, inputRef }: SearchInputProps) {
+export function SearchInput({ placeholder = '검색...', 'aria-label': ariaLabel, value, onChange, className, debounceMs, inputRef, maxLength }: SearchInputProps) {
   // 조합 중 표시되는 임시 글자를 담는 내부 상태. 부모 value와 분리해 IME 끊김을 방지한다.
   const [draft, setDraft] = useState(value);
   // 직전 렌더에서 받은 외부 value. 외부 value 변동을 렌더 중에 감지하기 위한 비교 기준.
@@ -125,6 +130,8 @@ export function SearchInput({ placeholder = '검색...', 'aria-label': ariaLabel
         // aria-label: 스크린리더에서 입력 목적을 인식할 수 있도록 aria-label 전달.
         // placeholder는 VoiceOver/NVDA에서 accessible name으로 처리되지 않으므로 명시 필요.
         aria-label={ariaLabel ?? placeholder}
+        // WD-1111: 상한이 있으면 브라우저가 붙여넣기·입력을 그 길이로 잘라 받는다
+        maxLength={maxLength}
         value={draft}
         onChange={handleChange}
         onCompositionStart={handleCompositionStart}

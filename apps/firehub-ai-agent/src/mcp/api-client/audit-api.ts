@@ -1,3 +1,4 @@
+import { clampSearchQuery } from './request-limits.js';
 import type { AxiosInstance } from 'axios';
 
 /** 감사 로그 항목 */
@@ -51,7 +52,10 @@ export function createAuditApi(client: AxiosInstance) {
       page?: number;
       size?: number;
     }): Promise<AuditLogPage> {
-      const response = await client.get<AuditLogPage>('/admin/audit-logs', { params });
+      // WD-1111: 검색어가 서버 상한(1,000자)을 넘어 400 이 되지 않도록 다른 검색 API 와 같이 api-client 에서 자른다.
+      const sent =
+        params?.search === undefined ? params : { ...params, search: clampSearchQuery(params.search) };
+      const response = await client.get<AuditLogPage>('/admin/audit-logs', { params: sent });
       return response.data;
     },
   };

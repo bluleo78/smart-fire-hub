@@ -1057,3 +1057,52 @@ test.describe('감사 로그 조회 실패 안내 (WD-930)', () => {
     await expectTableErrorAlert(page, '감사 로그 목록을 볼 권한이 없습니다. 관리자에게 권한을 요청하세요.', { tone: 'muted' });
   });
 });
+
+/**
+ * 검색어 길이 상한 (WD-1111)
+ * - 검색 칸은 1,000자까지만 받고(maxLength), 그 길이로 요청한다 — 서버 상한(400)을 화면에서 먼저 막는다.
+ * - 서버가 400 을 주면 표 오류 행이 서버 사유(errors.search)를 보인다(listLoadErrorProps → pickBestMessage).
+ */
+test.describe('감사 로그 검색어 길이 상한 (WD-1111)', () => {
+  test('검색 입력은 1,000자까지만 받고 그 길이로 요청한다', async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+    const capture = await mockApi(
+      page,
+      'GET',
+      '/api/v1/admin/audit-logs',
+      createPageResponse([createAuditLog({ id: 1 })]),
+      { capture: true },
+    );
+    await page.goto('/admin/audit-logs');
+    await capture.waitForRequest();
+
+    const searchInput = page.getByPlaceholder('설명으로 검색...');
+    await expect(searchInput).toHaveAttribute('maxlength', '1000');
+
+    // 1,200자를 한 번에 넣어도 브라우저가 1,000자로 잘라 받는다.
+    await searchInput.fill('가'.repeat(1200));
+    await expect(searchInput).toHaveValue('가'.repeat(1000));
+    await expect
+      .poll(() => capture.lastRequest()?.searchParams.get('search')?.length)
+      .toBe(1000);
+  });
+
+  test('서버가 검색어 길이로 400 을 주면 표에 그 사유가 보인다', async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/admin/audit-logs',
+      {
+        status: 400,
+        error: 'Bad Request',
+        message: '입력값이 올바르지 않습니다.',
+        errors: { search: '검색어는 최대 1,000자까지 입력할 수 있습니다.' },
+      },
+      { status: 400 },
+    );
+    await page.goto('/admin/audit-logs');
+
+    await expectTableErrorAlert(page, '검색어는 최대 1,000자까지 입력할 수 있습니다.');
+  });
+});
