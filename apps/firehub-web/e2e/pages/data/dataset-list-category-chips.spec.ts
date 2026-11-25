@@ -240,8 +240,7 @@ test.describe('데이터셋 목록 — 카테고리 칩 접기 (WD-1073)', () =>
   });
 
   // WD-1138: 아주 좁은 칸(약 150px)에서도 「+N 더 보기」가 잘리지 않아야 한다 — 보이는 칩이 줄어들어 버튼 자리를 내준다.
-  // 고른 칩이 있으면 「전체」(32)+고른 칩(32)+버튼(약 95)+간격·여백이 최소 약 180px 라 150px 은 물리적으로 못 담는다 —
-  // 그 경우는 190px, 고른 칩이 없으면 150px 로 좁힌다.
+  // WD-1151: 칸이 「전체」+고른 칩+「+N 더 보기」 전체 버튼을 못 담을 만큼 좁으면 버튼이 「+N」 으로 줄어 150px·120px 에서도 잘리지 않는다.
   async function narrowGroupTo(page: Page, px = 150) {
     await groupOf(page).evaluate((el, w) => {
       (el.parentElement as HTMLElement).style.width = `${w}px`;
@@ -263,6 +262,37 @@ test.describe('데이터셋 목록 — 카테고리 칩 접기 (WD-1073)', () =>
     for (const w of widths) expect(w).toBeGreaterThanOrEqual(32);
   }
 
+  /** 짧은 「+N」 버튼 단언 — 글자는 정확히 +N, 접근 이름은 「+N 더 보기」, 칸 안에 들어간다. */
+  async function expectCompactButton(page: Page) {
+    await expect(moreBtn(page)).toHaveText(/^\+\d+$/);
+    await expect(moreBtn(page)).toHaveAccessibleName(/^\+\d+ 더 보기$/);
+    await expectMoreInsideGroup(page);
+    // N 은 숨은 칩 수(전체 칩 수 - 보이는 칩 수)와 같다
+    const text = (await moreBtn(page).innerText()).trim();
+    const n = Number(/^\+(\d+)$/.exec(text)![1]);
+    const total = await groupOf(page).locator('button[aria-pressed]').count();
+    const hidden = await hiddenChipCount(page);
+    expect(n).toBe(hidden);
+    expect(total - hidden).toBeGreaterThanOrEqual(1);
+  }
+
+  /** 보이는 칩마다 「title 이 있음 ⇔ 이름이 실제로 잘림(scrollWidth > clientWidth)」 이어야 한다 — 매우 좁으면 「전체」도 잘려 title 이 달린다. */
+  async function expectTitleOnlyWhenTruncated(page: Page) {
+    const rows = await groupOf(page)
+      .locator('button[aria-pressed]')
+      .evaluateAll((els) =>
+        els
+          .filter((el) => getComputedStyle(el).display !== 'none')
+          .map((el) => {
+            const span = el.querySelector('span');
+            // 제품 규칙(lib/overflow-title)과 같은 1px 허용으로 잘림을 판정한다
+            return { truncated: !!span && span.scrollWidth - 1 > span.clientWidth, title: el.getAttribute('title'), text: el.textContent };
+          }),
+      );
+    expect(rows.length).toBeGreaterThan(0);
+    for (const r of rows) expect(r.title, `칩 ${r.text}`).toBe(r.truncated ? r.text : null);
+  }
+
   test('아주 좁은 칸에서도 +N 더 보기가 잘리지 않는다 — 고른 칩 없음 (WD-1138)', async ({ authenticatedPage: page }) => {
     await setup(page, 34);
     await page.goto('/data/datasets');
@@ -272,7 +302,21 @@ test.describe('데이터셋 목록 — 카테고리 칩 접기 (WD-1073)', () =>
     await expectMoreInsideGroup(page);
   });
 
-  test('아주 좁은 칸에서도 +N 더 보기가 잘리지 않는다 — 긴 이름 칩을 고른 상태 (WD-1138)', async ({
+  test('120px 칸 + 고른 칩 없음이면 버튼이 「+N」 으로 줄어 잘리지 않고 눌린다 (WD-1151)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setup(page, 34);
+    await page.goto('/data/datasets');
+    await expect(allBtn(page)).toBeVisible();
+    await narrowGroupTo(page, 120);
+    await expect(moreBtn(page)).toBeVisible();
+    await expectCompactButton(page);
+    await moreBtn(page).click();
+    await expect(foldBtn(page)).toHaveText('접기');
+    await expect(foldBtn(page)).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  test('아주 좁은 칸에서도 +N 더 보기가 잘리지 않는다 — 긴 이름 칩을 고른 상태 (WD-1138·WD-1151)', async ({
     authenticatedPage: page,
   }) => {
     await setup(page, 34);
@@ -281,12 +325,89 @@ test.describe('데이터셋 목록 — 카테고리 칩 접기 (WD-1073)', () =>
     await mockApi(page, 'GET', '/api/v1/dataset-categories', cats);
     await page.goto('/data/datasets?categoryId=34');
     await expect(groupOf(page).getByRole('button', { name: longName, exact: true })).toBeVisible();
-    await narrowGroupTo(page, 190);
+    await narrowGroupTo(page, 150);
     await expect(moreBtn(page)).toBeVisible();
-    await expectMoreInsideGroup(page);
+    await expectCompactButton(page);
     // 말줄임된 칩은 title 로 전체 이름을 보인다(「전체」는 달지 않는다).
     await expect(groupOf(page).getByRole('button', { name: longName, exact: true })).toHaveAttribute('title', longName);
-    await expect(allBtn(page)).not.toHaveAttribute('title', /.*/);
+    await expectTitleOnlyWhenTruncated(page);
+    // 눌러 펼치면 「접기」 글자·aria-expanded=true
+    await moreBtn(page).click();
+    await expect(foldBtn(page)).toHaveText('접기');
+    await expect(foldBtn(page)).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  test('카테고리 하나를 고른 좁은 칸에서는 숨은 칩이 없어 「+0」 버튼이 없다 (WD-1151 code-review)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setup(page, 1);
+    const longName = '아주긴카테고리이름'.repeat(4);
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', [createCategory({ id: 1, name: longName })]);
+    await page.goto('/data/datasets?categoryId=1');
+    const chip = groupOf(page).getByRole('button', { name: longName, exact: true });
+    await expect(chip).toBeVisible();
+    await narrowGroupTo(page, 150);
+    // 다시 재고 그린 뒤: 고른 칩은 보이고(말줄임), 줄은 한 줄, 더 보기 버튼은 없다
+    await expect(chip).toHaveAttribute('title', longName);
+    await expect(chip).toBeVisible();
+    await expect(moreBtn(page)).toHaveCount(0);
+    expect(await heightOf(page)).toBeLessThanOrEqual(ONE_ROW_MAX);
+  });
+
+  test('루트 글자 크기가 커서 칩 최소 너비가 늘어도 더 보기 버튼이 잘리지 않는다 (WD-1151 code-review)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setup(page, 34);
+    const longName = '아주긴카테고리이름'.repeat(4);
+    const cats = makeCategories(34).map((c) => (c.id === 34 ? { ...c, name: longName } : c));
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', cats);
+    await page.goto('/data/datasets?categoryId=34');
+    // 브라우저 기본 글자 크기 20px 처럼 루트를 키운다 — min-w-8(2rem)은 40px 가 된다.
+    // 회귀 지킴이: 고정 32px 로 계산하던 옛 코드도 이 폭들에서는 통과한다(경계 폭이 좁아 판별 폭을 고정하기 어렵다).
+    await page.evaluate(() => {
+      document.documentElement.style.fontSize = '20px';
+    });
+    await expect(groupOf(page).getByRole('button', { name: longName, exact: true })).toBeVisible();
+    for (const px of [170, 200, 230]) {
+      await narrowGroupTo(page, px);
+      await expect(moreBtn(page)).toBeVisible();
+      await expectMoreInsideGroup(page);
+    }
+  });
+
+  test('중간 폭(320px)에서 긴 이름 칩을 골라도 칩이 말줄임되고 버튼은 「+N 더 보기」 전체 글자다 (WD-1151)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setup(page, 34);
+    const longName = '아주긴카테고리이름'.repeat(4);
+    const cats = makeCategories(34).map((c) => (c.id === 34 ? { ...c, name: longName } : c));
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', cats);
+    await page.setViewportSize({ width: 320, height: 900 });
+    await page.goto('/data/datasets?categoryId=34');
+    const chip = groupOf(page).getByRole('button', { name: longName, exact: true });
+    await expect(chip).toBeVisible();
+    await expect(moreBtn(page)).toBeVisible();
+    await expect(moreBtn(page)).toHaveText(/^\+\d+ 더 보기$/);
+    await expectMoreInsideGroup(page);
+    // 고른 칩은 보이되 이름이 말줄임(잘림)된다
+    const truncated = await chip.locator('span').evaluate((el) => el.scrollWidth > el.clientWidth);
+    expect(truncated).toBe(true);
+  });
+
+  test('150px 에서 짧아진 버튼은 칸을 넓히면 「+N 더 보기」 전체 글자로 돌아온다 (WD-1151)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setup(page, 34);
+    const longName = '아주긴카테고리이름'.repeat(4);
+    const cats = makeCategories(34).map((c) => (c.id === 34 ? { ...c, name: longName } : c));
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', cats);
+    await page.goto('/data/datasets?categoryId=34');
+    await expect(groupOf(page).getByRole('button', { name: longName, exact: true })).toBeVisible();
+    await narrowGroupTo(page, 150);
+    await expectCompactButton(page);
+    await narrowGroupTo(page, 600);
+    await expect(moreBtn(page)).toHaveText(/^\+\d+ 더 보기$/);
+    await expectMoreInsideGroup(page);
   });
 
   test('칸 폭이 0 이어도(측정된 갈래) 「전체」와 고른 칩이 보인다 (WD-1138)', async ({ authenticatedPage: page }) => {
@@ -425,5 +546,108 @@ test.describe('데이터셋 목록 — 카테고리 칩 접기 (WD-1073)', () =>
     await page.setViewportSize({ width: 2560, height: 900 });
     await expect(foldBtn(page)).toHaveCount(0);
     await expect(allBtn(page)).not.toBeFocused();
+  });
+  // WD-1151: 카테고리 수가 바뀐 직후의 임시 렌더(측정 없음)에서는 초점을 판단하지 않는다 — 회귀 방지용(null 측정 갈래).
+  // 단독으로는 변경 전에도 통과한다(수가 다르면 측정이 null 이라 이펙트가 일찍 돌아온다). 같은 수 갈래는 아래 테스트가 가른다.
+  test('접힌 채 앞쪽 칩에 초점이 있을 때 카테고리가 하나 늘어도 초점이 그 칩에 남는다 (WD-1151)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 쿼리 staleTime(30초)을 넘겨 재연결(online) 때 목록이 다시 조회되게 가짜 시계를 쓴다
+    await page.clock.install();
+    await setup(page, 12);
+    await page.setViewportSize({ width: 600, height: 900 });
+    await page.goto('/data/datasets');
+    await expect(moreBtn(page)).toBeVisible();
+    const chip = groupOf(page).getByRole('button', { name: '카테고리2', exact: true });
+    await chip.focus();
+    await expect(chip).toBeFocused();
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', makeCategories(13));
+    await page.clock.fastForward(31_000);
+    await page.context().setOffline(true);
+    await page.context().setOffline(false);
+    await expect(groupOf(page).locator('button[aria-pressed]')).toHaveCount(14);
+    await expect(chip).toBeFocused();
+    await expect(allBtn(page)).not.toBeFocused();
+  });
+
+  // WD-1151 최종 리뷰: 같은 수로 이름·순서만 바뀐 응답이 오면 낡은 측정(너비)이 길이가 맞아 null 이 되지 않는다.
+  // 낡은 너비로 계산한 임시 렌더가 초점 칩을 숨기면 이펙트가 초점을 「전체」로 옮겨 버렸다 — 측정은 items 신원으로 낡음을 판단한다.
+  test('같은 수로 이름·순서가 바뀐 응답이 와도 초점 칩이 새 측정에서 보이면 초점이 그 칩에 남는다 (WD-1151)', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.clock.install();
+    await setup(page, 12);
+    // 처음: 이름이 긴 12개 — 한 줄에 다 못 들어가 접힌다. 초점 칩(대상칩)은 둘째 자리라 보인다.
+    const before = Array.from({ length: 12 }, (_, i) =>
+      createCategory({ id: i + 1, name: i === 1 ? '대상칩' : `아주긴카테고리이름${i + 1}` }),
+    );
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', before);
+    await page.setViewportSize({ width: 1200, height: 900 });
+    await page.goto('/data/datasets');
+    await expect(moreBtn(page)).toBeVisible();
+    const chip = groupOf(page).getByRole('button', { name: '대상칩', exact: true });
+    await expect(chip).toBeVisible();
+    await chip.focus();
+    await expect(chip).toBeFocused();
+    // 같은 12개이지만 대상칩 앞에 이름이 짧은 새 카테고리 10개가 들어와 대상칩이 11번째 자리로 밀린다 —
+    // 낡은 너비로는 숨고, 새로 재면 짧은 이름이라 전부 한 줄에 들어가 보인다. (대상칩 DOM 노드는 옮기지 않는다 —
+    // 옮기면 브라우저가 초점을 잃어 이 테스트가 가리려는 갈래와 무관하게 실패한다.)
+    const after = [
+      ...Array.from({ length: 10 }, (_, i) => createCategory({ id: 101 + i, name: `c${i + 1}` })),
+      before[1],
+      createCategory({ id: 12, name: 'c11' }),
+    ];
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', after);
+    await page.clock.fastForward(31_000);
+    await page.context().setOffline(true);
+    await page.context().setOffline(false);
+    // 새 응답이 반영돼 더 보기가 사라지고(전부 보임) 대상칩이 맨 뒤에 놓일 때까지 기다린다
+    await expect(groupOf(page).getByRole('button', { name: 'c1', exact: true })).toBeVisible();
+    await expect(moreBtn(page)).toHaveCount(0);
+    await expect(chip).toBeVisible();
+    await expect(chip).toBeFocused();
+    await expect(allBtn(page)).not.toBeFocused();
+  });
+
+  test('넓은 칸에서는 칩 button 에 title 이 없다 (WD-1151)', async ({ authenticatedPage: page }) => {
+    await setup(page, 3);
+    await page.goto('/data/datasets');
+    await expect(page.getByRole('button', { name: '카테고리3', exact: true })).toBeVisible();
+    const titled = await groupOf(page)
+      .locator('button[aria-pressed]')
+      .evaluateAll((els) => els.filter((el) => el.hasAttribute('title')).length);
+    expect(titled).toBe(0);
+  });
+
+  test('title 은 말줄임된 칩에만 달리고 잘리지 않은 보이는 칩에는 없다 (WD-1151)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 600px 접힘 — 보이는 칩이 줄어들 수 있어도(shrinkable) 잘리지 않았으면 title 이 없어야 한다
+    await setup(page, 12);
+    await page.setViewportSize({ width: 600, height: 900 });
+    await page.goto('/data/datasets');
+    await expect(moreBtn(page)).toBeVisible();
+    const titled = await groupOf(page)
+      .locator('button[aria-pressed]')
+      .evaluateAll((els) => els.filter((el) => el.hasAttribute('title')).length);
+    expect(titled).toBe(0);
+  });
+
+  test('320px 에서 말줄임된 고른 칩에는 title=이름이 달리고, 칸을 넓혀 잘림이 풀리면 사라진다 (WD-1151)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setup(page, 34);
+    const longName = '아주긴카테고리이름'.repeat(4);
+    const cats = makeCategories(34).map((c) => (c.id === 34 ? { ...c, name: longName } : c));
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', cats);
+    await page.setViewportSize({ width: 320, height: 900 });
+    await page.goto('/data/datasets?categoryId=34');
+    const chip = groupOf(page).getByRole('button', { name: longName, exact: true });
+    await expect(chip).toBeVisible();
+    await expect(chip).toHaveAttribute('title', longName);
+    await expectTitleOnlyWhenTruncated(page);
+    // 칸을 넓혀 말줄임이 풀리면 title 도 사라진다
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await expect(chip).not.toHaveAttribute('title', /.*/);
   });
 });
