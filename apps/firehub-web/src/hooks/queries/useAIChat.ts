@@ -11,6 +11,7 @@ import { buildScreenContext, type ScreenEntityKind, type ScreenNameLookup } from
 import { getInvalidationKeys } from '../../components/ai/widgets/invalidationMap';
 import { buildNavigationContext } from '../../components/ai/widgets/routes';
 import { isClientError, isForbiddenError, isNotFoundError } from '../../lib/api-error';
+import { registerLeaveBlocker } from '../../lib/unsaved-changes-guard-registry';
 import type { AIAttachment, AIMessage, AISession, AIStreamEvent, CanvasLayout } from '../../types/ai';
 import { dashboardDetailKey } from './useAnalytics';
 import { datasetDetailKey } from './useDatasets';
@@ -211,7 +212,14 @@ export function useAIChat(options?: {
       e.returnValue = '';
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+    // 같은 조건(스트리밍/업로드 중)을 「떠나기 막는 것」 집합에도 등록한다 (WD-1122). beforeunload 리스너는 가드 레지스트리 밖이라
+    // client.ts 의 만료 표식이 「가드 없음」으로 오판해 같은 화면의 배경 요청마다 로그인 이동·확인 창을 되풀이했다.
+    // 위에서 막혀 있을 때만 이 지점에 오므로 항상 true 를 돌려주면 되고, 정리 시 리스너와 함께 해제한다.
+    const unregisterLeaveBlocker = registerLeaveBlocker(() => true);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      unregisterLeaveBlocker();
+    };
   }, [isStreaming, isUploading]);
 
   /**

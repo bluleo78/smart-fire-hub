@@ -8,8 +8,10 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 import {
   bypassNextPopstateGuard,
+  hasActiveLeaveGuard,
   installPopstateGuardInterceptor,
   registerActiveGuard,
+  registerLeaveBlocker,
 } from './unsaved-changes-guard-registry';
 
 describe('bypassNextPopstateGuard 취소 함수 (WD-673)', () => {
@@ -60,5 +62,49 @@ describe('bypassNextPopstateGuard 취소 함수 (WD-673)', () => {
     cancel();
     pop();
     expect(onIntercepted).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('hasActiveLeaveGuard — 페이지 dirty 가드 (WD-1122)', () => {
+  it('등록이 없으면 false, dirty 여부를 따르고, 해제 뒤 false', () => {
+    expect(hasActiveLeaveGuard()).toBe(false);
+    let dirty = false;
+    const unregister = registerActiveGuard({ isDirty: () => dirty, restorePath: () => '/', onIntercepted: vi.fn() });
+    expect(hasActiveLeaveGuard()).toBe(false);
+    dirty = true;
+    expect(hasActiveLeaveGuard()).toBe(true);
+    unregister();
+    expect(hasActiveLeaveGuard()).toBe(false);
+  });
+});
+
+describe('registerLeaveBlocker · hasActiveLeaveGuard (WD-1122)', () => {
+  it('차단 조건이 여럿이어도 하나라도 참이면 true, 해제하면 빠진다', () => {
+    expect(hasActiveLeaveGuard()).toBe(false);
+    let a = false;
+    let b = false;
+    const offA = registerLeaveBlocker(() => a);
+    const offB = registerLeaveBlocker(() => b);
+    expect(hasActiveLeaveGuard()).toBe(false);
+    b = true;
+    expect(hasActiveLeaveGuard()).toBe(true);
+    b = false;
+    a = true;
+    expect(hasActiveLeaveGuard()).toBe(true);
+    offA();
+    expect(hasActiveLeaveGuard()).toBe(false);
+    b = true;
+    expect(hasActiveLeaveGuard()).toBe(true);
+    offB();
+    expect(hasActiveLeaveGuard()).toBe(false);
+  });
+
+  it('페이지 dirty 가드도 포함하고, 차단 조건이 페이지 가드를 덮어쓰지 않는다', () => {
+    const offGuard = registerActiveGuard({ isDirty: () => true, restorePath: () => '/', onIntercepted: () => {} });
+    const offBlocker = registerLeaveBlocker(() => false);
+    expect(hasActiveLeaveGuard()).toBe(true);
+    offBlocker();
+    offGuard();
+    expect(hasActiveLeaveGuard()).toBe(false);
   });
 });

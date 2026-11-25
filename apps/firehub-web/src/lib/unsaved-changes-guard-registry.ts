@@ -49,6 +49,41 @@ export function registerActiveGuard(entry: ActiveGuardEntry): () => void {
   };
 }
 
+/**
+ * 떠나기를 막는 다중 진입점 집합 (WD-1122).
+ * activeGuard 는 페이지 하나만 쓰는 단일 슬롯이라 덮어쓰면 페이지 가드가 사라진다. 스트리밍·업로드 중 beforeunload 만 거는
+ * 곳(useAIChat)처럼 페이지 가드와 따로 사는 차단 조건은 여기에 함수로 등록한다 — 여러 개가 동시에 있어도 된다.
+ */
+const leaveBlockers = new Set<() => boolean>();
+
+/**
+ * 떠나기를 막는 조건을 등록한다 (WD-1122). isBlocking 은 호출 시점의 최신 값을 돌려줘야 한다.
+ * 반환 함수로 해제한다(같은 함수를 두 번 등록해도 Set 이라 하나로 취급되니, 호출마다 새 함수를 넘긴다).
+ *
+ * <p>규칙: `beforeunload` 리스너를 직접 거는 모든 곳은 같은 조건을 이 함수(또는 useUnsavedChangesGuard 의 registerActiveGuard)로도
+ * 등록해야 한다. 안 그러면 client.ts 의 만료·사용자 바뀜 이동이 그 확인 창을 모른 채 같은 화면의 배경 요청마다 이동을 되풀이해
+ * 확인 창을 계속 띄운다. 이 규칙은 `leave-blocker-rule.test.ts` 가 소스를 훑어 지킨다(WD-1122).
+ */
+export function registerLeaveBlocker(isBlocking: () => boolean): () => void {
+  leaveBlockers.add(isBlocking);
+  return () => {
+    leaveBlockers.delete(isBlocking);
+  };
+}
+
+/**
+ * 떠나기 확인이 걸릴 수 있는 상태인지 (WD-1122) — 페이지 dirty 가드 또는 등록된 차단 조건 중 하나라도 참이면 true.
+ * client.ts 의 만료 표식이 같은 화면의 배경 요청에 로그인 이동(=beforeunload 확인 창)을 되풀이할지 가르는 데 쓴다.
+ */
+export function hasActiveLeaveGuard(): boolean {
+  // 페이지 가드가 등록됐고 dirty 인지(WD-1122)
+  if (activeGuard !== null && activeGuard.isDirty()) return true;
+  for (const isBlocking of leaveBlockers) {
+    if (isBlocking()) return true;
+  }
+  return false;
+}
+
 // (WD-673) 우회 표시를 건 차례 번호 — 취소 함수가 자기가 건 표시일 때만 지우도록 구분한다.
 let bypassSeq = 0;
 

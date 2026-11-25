@@ -7,6 +7,7 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { UserSwitchedError } from '../lib/api-error';
 import { AIChatHttpError, SESSION_EXPIRED_MESSAGE, streamAIChat } from './ai';
 import { authedFetch, TokenRefreshError } from './client';
 
@@ -66,6 +67,15 @@ describe('streamAIChat 스트림 열기 전 오류 (WD-631)', () => {
     expect(error).toBeInstanceOf(AIChatHttpError);
     expect((error as AIChatHttpError).status).toBe(401);
     expect((error as AIChatHttpError).serverMessage).toBe(SESSION_EXPIRED_MESSAGE);
+  });
+
+  it('다른 사용자 감지로 끝난 갱신은 만료 안내로 바꾸지 않고 UserSwitchedError 를 그대로 올린다(WD-1122)', async () => {
+    const switched = new UserSwitchedError();
+    vi.mocked(authedFetch).mockRejectedValue(new TokenRefreshError(switched));
+
+    const { error } = await run();
+
+    expect(error).toBe(switched);
   });
 
   it('네트워크 실패는 로그인 만료로 바꾸지 않고 그대로 올린다', async () => {

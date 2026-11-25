@@ -10,7 +10,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 
 import App from './App.tsx'
-import { isEmptyResponseError, isForbiddenError, isTooManyRequestsError, isUnauthorizedError } from './lib/api-error'
+import { isEmptyResponseError, isForbiddenError, isTooManyRequestsError, isUnauthorizedError, isUserSwitchedError } from './lib/api-error'
 import { installScrollbarAutoHide } from './lib/scrollbar-autohide'
 import { installPopstateGuardInterceptor } from './lib/unsaved-changes-guard-registry'
 
@@ -34,12 +34,15 @@ const queryClient = new QueryClient({
       // 갱신 뒤 재발송도 401 이거나 테넌트 강등이라 첫 401 을 그대로 reject 한 경우다. 셋 다 재시도해도
       // 결과가 같다. 재시도는 1초 뒤 다시 401 → refresh 401 을 만들어 만료 이동을 한 번 더 일으키고,
       // 떠나기 확인을 취소한 사용자에게 확인 창을 다시 띄웠다.
+      // 다른 사용자 전환(UserSwitchedError, 그것을 감싼 TokenRefreshError)도 재시도하지 않는다 (WD-1122) —
+      // 이미 홈으로 하드 이동 중이고, 재시도는 같은 거절만 되풀이하며 이동을 한 번 더 건다.
       // 그 밖은 1회 재시도.
       retry: (failureCount, error) =>
         !isForbiddenError(error) &&
         !isTooManyRequestsError(error) &&
         !isEmptyResponseError(error) &&
         !isUnauthorizedError(error) &&
+        !isUserSwitchedError(error) &&
         failureCount < 1,
       staleTime: 30_000,
       refetchOnWindowFocus: false,

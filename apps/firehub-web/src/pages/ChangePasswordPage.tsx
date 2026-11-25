@@ -1,5 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Loader2 } from 'lucide-react';
+import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -15,6 +16,7 @@ import { useGuardedSubmit } from '../hooks/useSubmitGuard';
 import {
   applyFieldErrors,
   extractApiError,
+  isUserSwitchedError,
   isWrongCurrentPasswordError,
   PASSWORD_CHANGE_FAILED_MESSAGE,
 } from '../lib/api-error';
@@ -33,6 +35,8 @@ import { forcedPasswordChangeSchema } from '../lib/validations/user';
 export default function ChangePasswordPage() {
   const { isLoading, isAuthenticated, mustChangePassword, completePasswordChange, logout } = useAuth();
   const navigate = useNavigate();
+  // 사용자 바뀜으로 `/` 이동 중이면 폼을 잠가 둔다 — 이동이 취소(떠나기 확인 거부)돼도 이미 바뀐 비밀번호를 다시 제출하지 않게(WD-1122)
+  const [switchedAway, setSwitchedAway] = useState(false);
   const {
     register,
     handleSubmit,
@@ -46,6 +50,8 @@ export default function ChangePasswordPage() {
   });
 
   const onSubmit = async (data: ChangePasswordFormData) => {
+    // 이미 바뀐 비밀번호를 Enter 로 다시 제출하지 않게 한다(WD-1122)
+    if (switchedAway) return;
     try {
       await usersApi.changePassword({ currentPassword: data.currentPassword, newPassword: data.newPassword });
     } catch (error) {
@@ -62,7 +68,12 @@ export default function ChangePasswordPage() {
     // '/' 에서 ProtectedRoute 가 바로 진입 또는 선택 화면으로 나눈다.
     try {
       await completePasswordChange();
-    } catch {
+    } catch (error) {
+      // 다른 사용자 감지(WD-1122) — 이미 `/` 로 하드 이동 중이다. 성공 토스트·navigate·로그아웃 어느 것도 하지 않는다.
+      if (isUserSwitchedError(error)) {
+        setSwitchedAway(true);
+        return;
+      }
       // 비밀번호는 이미 바뀌어 이 폼을 다시 제출하면 400 이다(데드엔드). refresh 가 실패했다면 세션을
       // 정리하고 새 비밀번호로 다시 로그인하게 보낸다. 변경 자체는 성공했으므로 error 가 아니라 비차단 경고(06 §D),
       // 문구는 토스트 규칙대로 한 문장·마침표 없음.
@@ -132,7 +143,7 @@ export default function ChangePasswordPage() {
                 {...register('confirmPassword')}
               />
             </FormField>
-            <PendingSubmitButton className="w-full" size="lg" pending={isSubmitting}>
+            <PendingSubmitButton className="w-full" size="lg" pending={isSubmitting || switchedAway}>
               {isSubmitting && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
               변경하고 계속
             </PendingSubmitButton>

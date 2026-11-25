@@ -7,12 +7,16 @@
 import axios from 'axios';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { UserSwitchedError } from '../lib/api-error';
 import { SESSION_EXPIRED_NOTICE, takeLoginNotice } from '../lib/login-notice';
-import { authedFetch, claimUserLogout, clearSessionExpiredError, endSessionAndReloadToLogin, getAccessToken, refreshAccessToken, resetNoticeOwnerForTest, setAccessToken, TokenRefreshError } from './client';
+import { hasActiveLeaveGuard } from '../lib/unsaved-changes-guard-registry';
+import { authedFetch, claimUserLogout, clearSessionExpiredError, endSessionAndReloadToLogin, getAccessToken, isOtherSessionUser, readTokenSubject, refreshAccessToken, resetNoticeOwnerForTest, resetSessionUserForTest, setAccessToken, TokenRefreshError } from './client';
+import { publishTenantSession } from './tenant-session';
 
 vi.mock('./refresh-lock', () => ({
   withCrossTabRefreshLock: <T,>(fn: () => Promise<T>) => fn(),
 }));
+vi.mock('../lib/unsaved-changes-guard-registry', () => ({ hasActiveLeaveGuard: vi.fn(() => false) }));
 vi.mock('./tenant-session', () => ({ publishTenantSession: vi.fn() }));
 
 /** 지연 응답을 손으로 풀 수 있는 refresh 목 */
@@ -35,10 +39,19 @@ function expiredRefreshError() {
   });
 }
 
+/** header.<base64url(JSON{sub})>.sig 모양의 JWT (WD-1122) */
+function jwt(sub: unknown) {
+  const payload = btoa(JSON.stringify({ sub })).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return `header.${payload}.sig`;
+}
+
 describe('refreshAccessToken (WD-631)', () => {
   const replace = vi.fn();
 
   beforeEach(() => {
+    resetSessionUserForTest();
+    vi.mocked(hasActiveLeaveGuard).mockReturnValue(true);
+    vi.mocked(publishTenantSession).mockClear();
     setAccessToken('old');
     resetNoticeOwnerForTest();
     clearSessionExpiredError();
@@ -170,6 +183,150 @@ describe('refreshAccessToken (WD-631)', () => {
 
     // 안내는 첫 종료 때 맡긴 만료 안내가 그대로다 — 되풀이 이동이 안내를 바꾸지 않는다
     expect(takeLoginNotice()).toBe(SESSION_EXPIRED_NOTICE);
+  });
+
+  describe('WD-1122', () => {
+    const okResponse = (token: string) => ({ data: { accessToken: token, activeTenantId: 1, memberships: [] } }) as never;
+
+    it('readTokenSubject — sub 를 base64url 로 읽고 못 읽으면 null', () => {
+      expect(readTokenSubject(jwt('42'))).toBe('42');
+      // base64url 문자(-, _)가 나오는 payload — '???>>>' 는 표준 base64 로 '+' '/' 가 든다
+      expect(readTokenSubject(jwt('???>>>~~~'))).toBe('???>>>~~~');
+      expect(readTokenSubject('mock-jwt-access-token')).toBeNull();
+      expect(readTokenSubject('a.!!!.b')).toBeNull();
+      expect(readTokenSubject(jwt(42))).toBeNull();
+      expect(readTokenSubject(jwt(undefined))).toBeNull();
+    });
+
+    it('다른 사용자의 토큰으로 갱신되면 새 토큰을 쓰지 않고 / 로 하드 이동한다', async () => {
+      localStorage.setItem('hasSession', 'true');
+      setAccessToken(jwt('1'));
+      const d = deferredRefresh();
+      const a = refreshAccessToken();
+      const b = refreshAccessToken();
+      d.resolve(okResponse(jwt('2')));
+
+      await expect(a).rejects.toBeInstanceOf(UserSwitchedError);
+      await expect(b).rejects.toBeInstanceOf(UserSwitchedError);
+      expect(getAccessToken()).toBeNull();
+      expect(replace).toHaveBeenCalledTimes(1);
+      expect(replace).toHaveBeenCalledWith('/');
+      expect(localStorage.getItem('hasSession')).toBe('true');
+      expect(publishTenantSession).not.toHaveBeenCalled();
+      localStorage.removeItem('hasSession');
+    });
+
+    it('같은 사용자의 토큰이면 그대로 되살아난다', async () => {
+      setAccessToken(jwt('1'));
+      vi.spyOn(axios, 'post').mockResolvedValue(okResponse(jwt('1')));
+      await expect(refreshAccessToken()).resolves.toEqual({ token: jwt('1') });
+      expect(replace).not.toHaveBeenCalled();
+    });
+
+    it('디코드 못 하는 토큰이면 비교하지 않는다', async () => {
+      setAccessToken('mock-a');
+      vi.spyOn(axios, 'post').mockResolvedValue(okResponse(jwt('2')));
+      await expect(refreshAccessToken()).resolves.toEqual({ token: jwt('2') });
+      expect(replace).not.toHaveBeenCalled();
+    });
+
+    it('다른 사용자 감지 뒤 같은 화면의 다음 갱신은 HTTP 갱신을 보내지 않고, 가드가 걸려 있으면 다시 이동하지 않는다', async () => {
+      vi.stubGlobal('location', { pathname: '/form', replace });
+      setAccessToken(jwt('1'));
+      const post = vi.spyOn(axios, 'post').mockResolvedValue(okResponse(jwt('2')));
+      await expect(refreshAccessToken()).rejects.toBeInstanceOf(UserSwitchedError);
+      expect(replace).toHaveBeenCalledTimes(1);
+
+      await expect(refreshAccessToken()).rejects.toBeInstanceOf(UserSwitchedError);
+      expect(post).toHaveBeenCalledTimes(1);
+      expect(replace).toHaveBeenCalledTimes(1);
+
+      // 가드가 풀리면 / 로 다시 이동한다
+      vi.mocked(hasActiveLeaveGuard).mockReturnValue(false);
+      await expect(refreshAccessToken()).rejects.toBeInstanceOf(UserSwitchedError);
+      expect(post).toHaveBeenCalledTimes(1);
+      expect(replace).toHaveBeenCalledTimes(2);
+      expect(replace).toHaveBeenLastCalledWith('/');
+    });
+
+    it('가드가 없으면 같은 화면의 요청도 로그인 이동을 다시 건다(①), 가드가 있으면 걸지 않는다', async () => {
+      const expired = expiredRefreshError();
+      vi.spyOn(axios, 'post').mockRejectedValue(expired);
+      vi.stubGlobal('location', { pathname: '/data', replace });
+      await expect(refreshAccessToken()).rejects.toBe(expired);
+      expect(replace).toHaveBeenCalledTimes(1);
+
+      vi.mocked(hasActiveLeaveGuard).mockReturnValue(true);
+      await expect(refreshAccessToken()).rejects.toBe(expired);
+      expect(replace).toHaveBeenCalledTimes(1);
+
+      vi.mocked(hasActiveLeaveGuard).mockReturnValue(false);
+      await expect(refreshAccessToken()).rejects.toBe(expired);
+      expect(replace).toHaveBeenCalledTimes(2);
+      expect(replace).toHaveBeenLastCalledWith('/login');
+      expect(axios.post).toHaveBeenCalledTimes(1);
+    });
+
+    it('401 뒤에는 재시도 없이 바로 굳는다 — 두 번째 호출은 refresh 를 보내지 않는다(WD-1122)', async () => {
+      takeLoginNotice(); // 앞 시험에 남은 안내를 비운다
+      vi.stubGlobal('location', { pathname: '/data', replace });
+      const expired = expiredRefreshError();
+      const post = vi.spyOn(axios, 'post').mockRejectedValue(expired);
+      await expect(refreshAccessToken()).rejects.toBe(expired);
+      expect(replace).toHaveBeenCalledWith('/login');
+      await expect(refreshAccessToken()).rejects.toBe(expired);
+      await expect(refreshAccessToken()).rejects.toBe(expired);
+      expect(post).toHaveBeenCalledTimes(1);
+      // 만료 안내는 그대로 맡겨 둔다 — 로그인 화면에서 안내가 보여야 한다
+      expect(takeLoginNotice()).toBe(SESSION_EXPIRED_NOTICE);
+    });
+
+    it('다른 탭이 hasSession 을 켜도(storage 핸들러) 사용자 바뀜 표식은 남아 HTTP 갱신을 보내지 않는다, 일반 만료 표식은 비워진다(WD-1122)', async () => {
+      setAccessToken(jwt('1'));
+      const post = vi.spyOn(axios, 'post').mockResolvedValue(okResponse(jwt('2')));
+      await expect(refreshAccessToken()).rejects.toBeInstanceOf(UserSwitchedError);
+      expect(post).toHaveBeenCalledTimes(1);
+
+      clearSessionExpiredError({ keepSwitched: true });
+      await expect(refreshAccessToken()).rejects.toBeInstanceOf(UserSwitchedError);
+      expect(post).toHaveBeenCalledTimes(1);
+
+      // 일반 만료 표식은 같은 호출로 비워져 갱신이 다시 나간다
+      clearSessionExpiredError();
+      post.mockRejectedValue(expiredRefreshError());
+      await expect(refreshAccessToken()).rejects.toBeTruthy();
+      expect(post).toHaveBeenCalledTimes(2);
+      clearSessionExpiredError({ keepSwitched: true });
+      post.mockResolvedValue(okResponse('mock-ok'));
+      await expect(refreshAccessToken()).resolves.toEqual({ token: 'mock-ok' });
+      expect(post).toHaveBeenCalledTimes(3);
+    });
+
+    it('떠나기를 막는 것(스트리밍 등)이 걸려 있으면 같은 화면의 요청이 이동을 되풀이하지 않는다', async () => {
+      const expired = expiredRefreshError();
+      vi.spyOn(axios, 'post').mockRejectedValue(expired);
+      vi.stubGlobal('location', { pathname: '/chat', replace });
+      vi.mocked(hasActiveLeaveGuard).mockReturnValue(false);
+      await expect(refreshAccessToken()).rejects.toBe(expired);
+      expect(replace).toHaveBeenCalledTimes(1);
+      vi.mocked(hasActiveLeaveGuard).mockReturnValue(true);
+      await expect(refreshAccessToken()).rejects.toBe(expired);
+      await expect(refreshAccessToken()).rejects.toBe(expired);
+      expect(replace).toHaveBeenCalledTimes(1);
+    });
+
+    it('isOtherSessionUser — 둘 다 디코드되고 다를 때만 true', () => {
+      setAccessToken(jwt('1'));
+      expect(isOtherSessionUser(jwt('2'))).toBe(true);
+      expect(isOtherSessionUser(jwt('1'))).toBe(false);
+      expect(isOtherSessionUser('not-a-jwt')).toBe(false);
+      resetSessionUserForTest();
+      expect(isOtherSessionUser(jwt('2'))).toBe(false);
+    });
+
+    it('UserSwitchedError 는 한국어 안내 문구를 가진다', () => {
+      expect(new UserSwitchedError().message).toBe('다른 사용자로 로그인되어 화면을 다시 엽니다.');
+    });
   });
 });
 
