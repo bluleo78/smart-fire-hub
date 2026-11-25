@@ -2,7 +2,7 @@ package com.smartfirehub.proactive.repository.mybatis;
 
 import com.smartfirehub.global.dto.LockedRowVersion;
 import com.smartfirehub.global.naming.NameComparison;
-import com.smartfirehub.global.platformdb.PlatformDbType;
+import com.smartfirehub.global.platformdb.mybatis.MyBatisPlatformConfig;
 import com.smartfirehub.global.platformdb.mybatis.PlatformJson;
 import com.smartfirehub.global.platformdb.mybatis.PlatformMyBatisRepository;
 import com.smartfirehub.global.validation.TextRules;
@@ -16,7 +16,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import org.springframework.beans.factory.annotation.Value;
+import org.apache.ibatis.session.SqlSessionFactory;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.ObjectMapper;
 
@@ -34,25 +34,23 @@ public class MyBatisProactiveJobRepository implements ProactiveJobRepository {
   private final ProactiveJobMapper mapper;
   private final ObjectMapper objectMapper;
 
-  /** 이 설치본의 이름 비교 기준(WD-1108) — 생성 시 플랫폼 DB 설정으로 한 번 정한다. */
+  /** 이 설치본의 이름 비교 기준(WD-1108) — 매퍼가 문을 고르는 MyBatis databaseId 에서 한 번 정한다(WD-1154). */
   private final NameComparison nameComparison;
 
   /**
-   * @param platformDbType 플랫폼 DB 종류 설정값({@code postgres}|{@code tibero}, 없으면 postgres) —
-   *     {@code @ConditionalOnTiberoPlatformDb} 와 같은 설정 키. (WD-1108) 매퍼 SQL 분기는 MyBatis
-   *     databaseId(JDBC 제품명)로 정해지므로 둘은 같은 플랫폼 DB 설정에서 나올 뿐 코드로 묶여 있지 않다 — 설정과 실제 접속 DB 가 어긋나면 개명 판정
-   *     기준과 SQL 이 달라질 수 있다.
+   * SqlSessionFactory 의 databaseId 는 매퍼가 {@code countByOwnerAndName} 판(postgresql·공통)을 고르는 값과 같다 —
+   * 개명 판정 기준도 그 값에서 정해 SQL 과 항상 같은 출처에서 나오게 한다(WD-1154). postgresql 판만 유니코드 공백 변환 SQL 이라
+   * UNICODE_TRIM, 그 밖(tibero 등 공통 문)은 ASCII_TRIM.
    */
   public MyBatisProactiveJobRepository(
-      ProactiveJobMapper mapper,
-      ObjectMapper objectMapper,
-      @Value("${" + PlatformDbType.PROPERTY + ":postgres}") String platformDbType) {
+      ProactiveJobMapper mapper, ObjectMapper objectMapper, SqlSessionFactory sqlSessionFactory) {
     this.mapper = mapper;
     this.objectMapper = objectMapper;
     this.nameComparison =
-        "tibero".equalsIgnoreCase(platformDbType)
-            ? NameComparison.ASCII_TRIM
-            : NameComparison.UNICODE_TRIM;
+        MyBatisPlatformConfig.POSTGRESQL.equals(
+                sqlSessionFactory.getConfiguration().getDatabaseId())
+            ? NameComparison.UNICODE_TRIM
+            : NameComparison.ASCII_TRIM;
   }
 
   @Override
@@ -207,7 +205,10 @@ public class MyBatisProactiveJobRepository implements ProactiveJobRepository {
         null);
   }
 
-  /** 같은 소유자·같은 이름 존재 여부(WD-824) — WD-1108: PG 는 유니코드 공백 변환 뒤 비교, Tibero 는 lower(trim). */
+  /**
+   * 같은 소유자·같은 이름 존재 여부(WD-824) — WD-1108: PG 는 유니코드 공백 변환 뒤 비교, 그 밖(Tibero·미매핑 DB)은 공통 문
+   * lower(trim).
+   */
   @Override
   public boolean existsByOwnerAndName(long ownerId, String name, Long excludeId) {
     // 유니코드 공백 변환 인자는 PostgreSQL 분기에서만 쓴다(WD-1108).
@@ -217,9 +218,9 @@ public class MyBatisProactiveJobRepository implements ProactiveJobRepository {
   }
 
   /**
-   * 이 설치본의 SQL 이 쓰는 비교 기준(WD-1108). {@code countByOwnerAndName} 이 DB 별 SQL(PG 는 유니코드 공백 변환, Tibero
-   * 는 ASCII trim)로 갈리므로 개명 판정도 같은 DB 기준을 따라야 한다 — 매퍼 databaseId 와 같은 플랫폼 DB 설정에서 생성 시 한 번 정한다(코드로
-   * 묶이진 않음 — 생성자 주석 참고).
+   * 이 설치본의 SQL 이 쓰는 비교 기준(WD-1108). {@code countByOwnerAndName} 이 DB 별 SQL(PG 는 유니코드 공백 변환, 그 밖은 공통
+   * ASCII trim)로 갈리므로 개명 판정도 같은 기준을 따라야 한다 — 매퍼가 문을 고르는 databaseId 에서 생성 시 한 번 정하므로 둘이 어긋나지
+   * 않는다(WD-1154).
    */
   @Override
   public NameComparison nameComparison() {

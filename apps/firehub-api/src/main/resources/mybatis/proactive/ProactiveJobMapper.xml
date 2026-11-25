@@ -168,6 +168,10 @@
     WD-1108: PostgreSQL 은 유니코드 공백(NBSP·전각 등, ws)을 ASCII 공백(sp)으로 바꾼 뒤 TRIM·LOWER 한다 — PG 의 TRIM 은 U+0020 만 걷어
     옛 행의 앞뒤 유니코드 공백을 놓치기 때문이다(WD-1129 ApiConnectionMapper 와 같은 방식).
     Tibero 는 이전 비교(lower(trim))를 그대로 둔다(비 UTF-8 문자셋에서 거짓 중복 우려 — ws/sp 는 무시).
+    WD-1154: 저장소 규칙대로 공통 문 + postgresql 덮어쓰기 구조다. databaseId 없는 아래 문 = 공통 문(ASCII trim)이며 Tibero 와
+    매핑되지 않은 DB 가 모두 이 문을 쓴다. 개명 판정(MyBatisProactiveJobRepository 생성자)도 같은 databaseId 를 읽으므로 SQL 과
+    판정이 어긋나지 않는다. (databaseId 가 null 이면 PG 전용 조각이 풀리지 않아 SqlSessionFactory 전체 조립이 먼저 실패하므로
+    알 수 없는 DB 가 동작한다는 뜻은 아니다.)
   -->
   <select id="countByOwnerAndName" resultType="_long" databaseId="postgresql">
     SELECT COUNT(*) FROM proactive_job t
@@ -178,7 +182,7 @@
     </if>
   </select>
 
-  <select id="countByOwnerAndName" resultType="_long" databaseId="tibero">
+  <select id="countByOwnerAndName" resultType="_long">
     SELECT COUNT(*) FROM proactive_job t
      WHERE t.user_id = #{ownerId}
        AND lower(trim(t.name)) = lower(trim(#{name}))

@@ -64,6 +64,12 @@ public class MyBatisPlatformConfig {
   /** Tibero 의 databaseId. 벤더별 전역 설정(null 바인드 타입·타입 핸들러)을 이 값으로 가른다. */
   static final String TIBERO = "tibero";
 
+  /**
+   * PostgreSQL 의 databaseId — 매퍼 XML 의 {@code databaseId="postgresql"} 판과 같은 값. 저장소가 매퍼가 고른 문에 맞춰
+   * 판정을 정할 때(예: 스마트 작업 개명 판정, WD-1154) 같은 상수를 쓴다.
+   */
+  public static final String POSTGRESQL = "postgresql";
+
   /** 매퍼 XML 위치. */
   static final String MAPPER_LOCATIONS = "classpath*:mybatis/**/*.xml";
 
@@ -154,7 +160,7 @@ public class MyBatisPlatformConfig {
   /** JDBC 제품명 → databaseId. Tibero JDBC 는 제품명을 "Tibero" 로 보고한다. 매핑에 없는 제품은 databaseId 가 null 이다. */
   static VendorDatabaseIdProvider databaseIdProvider() {
     Properties vendors = new Properties();
-    vendors.setProperty("PostgreSQL", "postgresql");
+    vendors.setProperty("PostgreSQL", POSTGRESQL);
     vendors.setProperty("Tibero", TIBERO);
     VendorDatabaseIdProvider provider = new VendorDatabaseIdProvider();
     provider.setProperties(vendors);
