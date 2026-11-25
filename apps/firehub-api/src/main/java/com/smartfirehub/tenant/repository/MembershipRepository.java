@@ -45,13 +45,12 @@ public interface MembershipRepository {
   boolean hasActiveMembership(Long userId, Long tenantId);
 
   /**
-   * 회원가입한 사용자를 기본 테넌트(id=1)에 ACTIVE MEMBER 로 가입시킨다.
+   * 첫 가입자 전용: 기본 워크스페이스에 OWNER·ACTIVE 로 합류시킨다(WD-1100, V81).
    *
-   * <p>왜: 멤버십이 하나도 없는 사용자는 어떤 테넌트도 선택할 수 없어 테넌트 미선택 토큰만 발급받고, RLS 가 모든 행을 막아 모든 API 에서 403 을
-   * 받는다(잠김). 자가 가입 사용자를 잠그지 않기 위해 가입과 동시에 기본 워크스페이스에 합류시킨다. 운영자가 다른 테넌트로 프로비저닝하는 것은 이후
-   * 단계(operator-driven provisioning)에서 다룬다 — 이 메서드는 그 대상이 아니다.
+   * <p>새 설치본의 기본 테넌트에는 소유자가 없어, 첫 가입자가 MEMBER 로 들어가면 소유자 보호(정지·제거·ADMIN 회수 금지)가 걸릴 대상이 없다. 그래서
+   * 첫 가입자만 이 메서드로 OWNER 가 되고, 이후 멤버 추가는 {@link #insertMember} 로 MEMBER 를 만든다.
    */
-  void createDefaultMembership(Long userId);
+  void createDefaultOwnerMembership(Long userId);
 
   /** 이 테넌트에서의 멤버십(ACTIVE·SUSPENDED 모두). tenant.status 는 보지 않는다(관리 경로). */
   Optional<TenantMembership> findInTenant(Long userId, long tenantId);

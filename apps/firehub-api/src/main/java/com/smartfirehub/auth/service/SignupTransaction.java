@@ -40,7 +40,8 @@ public class SignupTransaction {
    * 관리자가 멤버 추가로 만든다.
    *
    * <p>첫 가입자는 기본 테넌트 USER·ADMIN 과 함께 플랫폼 SUPER_ADMIN 도 받는다(WD-748) — 새 설치본에서 운영자 콘솔에 들어갈 계정이 이 사람
-   * 하나뿐이기 때문이다. 세 역할 중 하나라도 시드가 없으면 예외로 가입 전체(사용자·역할·멤버십)를 되돌린다.
+   * 하나뿐이기 때문이다. 또 기본 워크스페이스에는 OWNER 로 합류한다(WD-1100). 세 역할 중 하나라도 시드가 없으면 예외로 가입 전체(사용자·역할·멤버십)를
+   * 되돌린다.
    */
   @Transactional
   public UserResponse execute(SignupRequest request) {
@@ -86,7 +87,8 @@ public class SignupTransaction {
 
     // 멤버십이 하나도 없으면 테넌트 미선택 토큰만 발급되어 RLS 가 모든 API 를 막는다(잠김).
     // 자가 가입 사용자를 잠그지 않기 위해 가입과 동시에 기본 워크스페이스에 합류시킨다.
-    membershipRepository.createDefaultMembership(user.id());
+    // 첫 가입자 = 기본 워크스페이스 소유자(WD-1100) — 소유자 보호(정지·제거·ADMIN 회수 금지)가 살아 있게 OWNER 로 넣는다.
+    membershipRepository.createDefaultOwnerMembership(user.id());
 
     return user;
   }

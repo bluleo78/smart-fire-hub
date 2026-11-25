@@ -13,6 +13,7 @@ import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
 import com.smartfirehub.support.TestUsers;
+import com.smartfirehub.tenant.repository.MembershipRepository;
 import com.smartfirehub.user.repository.UserRepository;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -54,6 +55,7 @@ class SignupClosureTest extends IntegrationTestBase {
 
   @MockitoSpyBean private UserRepository userRepository;
   @Autowired private AuthService authService;
+  @Autowired private MembershipRepository membershipRepository;
   @Autowired private DSLContext dsl;
   @Autowired private PasswordEncoder passwordEncoder;
   @Autowired private MockMvc mockMvc;
@@ -123,6 +125,54 @@ class SignupClosureTest extends IntegrationTestBase {
                     .from("membership")
                     .where("user_id = ? and tenant_id = 1", user.id())))
         .isTrue();
+  }
+
+  /**
+   * 첫 가입자는 기본 워크스페이스의 OWNER 다(WD-1100). MEMBER 로 들어가면 소유자 보호(정지·제거·ADMIN 회수 금지)가 걸릴 대상이 없어
+   * 새 설치본의 워크스페이스에 소유자가 비게 된다.
+   */
+  @Test
+  void firstSignup_becomesDefaultTenantOwner() {
+    TenantContext.clear();
+
+    var user = authService.signup(req("first-owner"));
+    created.add(user.id());
+
+    var membership = membershipRepository.findInTenant(user.id(), 1L).orElseThrow();
+    assertThat(membership.role()).isEqualTo("OWNER");
+    assertThat(membership.isOwner()).isTrue();
+    assertThat(membership.status()).isEqualTo("ACTIVE");
+  }
+
+  /** 멤버 추가 경로(insertMember)는 여전히 MEMBER 를 만들고, 이 시험이 만든 사용자 중 OWNER 는 첫 가입자 하나뿐이다. */
+  @Test
+  void secondMember_staysMember() {
+    TenantContext.clear();
+    var first = authService.signup(req("owner-first"));
+    created.add(first.id());
+
+    String u = "second-" + System.nanoTime() + "@example.com";
+    long secondId =
+        dsl.insertInto(USER)
+            .set(USER.USERNAME, u)
+            .set(USER.EMAIL, u)
+            .set(USER.PASSWORD, passwordEncoder.encode("Password123"))
+            .set(USER.NAME, "두번째")
+            .returning(USER.ID)
+            .fetchOne()
+            .getId();
+    created.add(secondId);
+    membershipRepository.insertMember(secondId, 1L);
+
+    assertThat(membershipRepository.findInTenant(secondId, 1L).orElseThrow().role())
+        .isEqualTo("MEMBER");
+    assertThat(
+            dsl.fetchCount(
+                dsl.selectOne()
+                    .from("membership")
+                    .where(
+                        "tenant_id = 1 and role = 'OWNER' and user_id > ?", baselineMaxId)))
+        .isEqualTo(1);
   }
 
   /** 사용자가 가진 플랫폼 역할 이름(전역 테이블이라 테넌트 컨텍스트와 무관). */
