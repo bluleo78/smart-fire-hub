@@ -71,7 +71,8 @@ export function LineChartView({ config, data, height }: LineChartViewProps) {
               stroke={palette[i % palette.length]}
               strokeWidth={2}
               dot={data.length <= 50}
-              activeDot={{ r: 4 }}              isAnimationActive={animate}
+              activeDot={{ r: 4 }}
+              isAnimationActive={animate}
             />
           ))}
         </LineChart>

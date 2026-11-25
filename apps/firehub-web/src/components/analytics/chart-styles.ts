@@ -100,7 +100,10 @@ export const TOOLTIP_ITEM_STYLE = { color: 'var(--popover-foreground)' } as cons
  */
 export const CHART_ANIMATION_MAX_ROWS = 100;
 
-/** 그리는 데이터 행(또는 점) 수가 기준 이하일 때만 시리즈 애니메이션을 켠다 (WD-1072). */
+/**
+ * 그리는 데이터 행(또는 점) 수가 기준 이하일 때만 시리즈 애니메이션을 켠다 (WD-1072).
+ * BoxPlot·Candlestick 은 직접 그린 SVG 라 애니메이션이 없고 Heatmap(nivo)은 animate={false} — 적용 대상 아님(WD-1113).
+ */
 export function chartAnimationActive(rowCount: number): boolean {
   return rowCount <= CHART_ANIMATION_MAX_ROWS;
 }

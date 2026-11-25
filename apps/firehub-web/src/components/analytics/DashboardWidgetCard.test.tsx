@@ -35,7 +35,7 @@ vi.mock('./ChartRenderer', () => ({
 }));
 
 import { EmptyResponseError } from '../../lib/api-error';
-import { __resetWidgetRenderQueueForTest } from '../../lib/widget-render-queue';
+import { __enqueueRawGrantForTest, __resetWidgetRenderQueueForTest } from '../../lib/widget-render-queue';
 import { DashboardWidgetCard } from './DashboardWidgetCard';
 
 // 그리기 차례 큐는 모듈 상태라 시험 사이에 비운다(WD-1072)
@@ -326,5 +326,20 @@ describe('DashboardWidgetCard — 그리기 차례 큐 (WD-1072)', () => {
 
     // 0행 카드(빈 안내)와 정상 카드 모두 차례 대기 없이 그려진다
     expect(screen.getAllByTestId('chart-renderer')).toHaveLength(2);
+  });
+
+  it('TABLE 위젯은 앞 차트가 차례를 쥐고 있어도 스피너 없이 표를 바로 보인다 (WD-1113)', () => {
+    // 앞 차트가 차례를 쥐고 반납하지 않는 상황을 흉내
+    __enqueueRawGrantForTest(() => {});
+    const tableChart = { ...chart, chartType: 'TABLE' } as Chart;
+    useChartMock.mockReturnValue({ data: tableChart, isLoading: false });
+    useChartDataMock.mockReturnValue(
+      chartDataState({
+        data: { chart: tableChart, queryResult: queryResult({ rows: [{ cat: 'a', v: 1 }], totalRows: 1 }) },
+      }),
+    );
+    render(<DashboardWidgetCard widget={{ ...widget, chartType: 'TABLE' }} isEditing={false} />);
+
+    expect(screen.getByTestId('chart-renderer')).toBeInTheDocument();
   });
 });
