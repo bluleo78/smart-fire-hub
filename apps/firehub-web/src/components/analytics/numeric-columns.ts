@@ -53,6 +53,15 @@ export function toPlotNumber(value: unknown): number | null {
 }
 
 /**
+ * 산점도 X 컬럼이 숫자로 하나도 읽히지 않는가(WD-308) — 그러면 뷰가 「X축은 숫자 컬럼이어야 합니다」 안내만 그린다.
+ * ChartRenderer 의 축 안내 건너뛰기와 위젯 그리기 차례 판정(chartNeedsRenderTurn)이 같은 규칙을 쓰도록 하나로 둔다(WD-1146).
+ * X 를 고르지 않았거나 행이 없으면 false.
+ */
+export function isScatterXNotNumeric(xAxis: string, rows: Record<string, unknown>[]): boolean {
+  return !!xAxis && rows.length > 0 && !rows.some((row) => toPlotNumber(row[xAxis]) !== null);
+}
+
+/**
  * 값이 「비어 있지 않은데 숫자로 읽히지 않는가」(WD-505).
  * 빈 값(isEmptyValue 가 참 — WD-841)은 false 이고, 비어 있지 않은데 숫자로 읽을 수 없는 값(문자 '서울'·불리언 등)만 true 다.
  */

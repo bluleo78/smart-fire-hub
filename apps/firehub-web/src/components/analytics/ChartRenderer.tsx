@@ -11,7 +11,7 @@ import { ChartAccessibleFigure } from './ChartAccessibleFigure';
 import { LineChartView } from './LineChartView';
 import { MapChartView } from './MapChartView';
 import { HeatmapChartView } from './nivo/HeatmapChartView';
-import { toPlotNumber } from './numeric-columns';
+import { isScatterXNotNumeric } from './numeric-columns';
 import { PieChartView } from './PieChartView';
 import { BoxPlotChartView } from './recharts/BoxPlotChartView';
 import { CandlestickChartView } from './recharts/CandlestickChartView';
@@ -195,12 +195,7 @@ export function ChartRenderer({
   // 단, 산점도의 X 가 숫자로 읽히지 않으면 Y 를 골라도 그릴 수 없으므로 뷰의 「X축은 숫자 컬럼이어야 합니다」(WD-308)가
   // 진짜 원인이다 — 축 안내를 건너뛰고 뷰에 맡긴다(뷰는 Y 가 비어도 X 검사를 먼저 한다).
   // 이 검사는 추론하지 않을 때(빌더)만 필요하다 — 대시보드·AI 챗에서 행을 훑지 않게 !inferAxes 를 먼저 본다.
-  const scatterXNotNumeric =
-    !inferAxes &&
-    chartType === 'SCATTER' &&
-    !!config.xAxis &&
-    data.length > 0 &&
-    !data.some((row) => toPlotNumber(row[config.xAxis]) !== null);
+  const scatterXNotNumeric = !inferAxes && chartType === 'SCATTER' && isScatterXNotNumeric(config.xAxis, data);
   if (!inferAxes && !scatterXNotNumeric) {
     const axesMessage = findMissingChartAxesMessage(chartType, config);
     if (axesMessage) {

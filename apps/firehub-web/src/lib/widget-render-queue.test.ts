@@ -1,12 +1,16 @@
-import { act, renderHook } from '@testing-library/react';
+import { act, render, renderHook } from '@testing-library/react';
+import { createElement, Suspense } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  __enqueueRawGrantForTest,
-  __resetWidgetRenderQueueForTest,
+  __widgetRenderQueueTestApi,
   RENDER_TURN_RELEASE_MS,
+  RENDERING_RELEASE_CAP_MS,
   useWidgetRenderTurn,
 } from './widget-render-queue';
+
+// 시험 API 는 MODE==='test' 에서만 존재한다(vitest 기본)
+const api = __widgetRenderQueueTestApi!;
 
 // WD-1072: 위젯 그리기 차례 큐 — 한 번에 하나씩만 차례를 받는지 검증한다.
 // 보이는 탭의 차례 넘김은 이중 rAF — 프레임(16ms)을 두 번 진행하면 다음 위젯이 차례를 받는다
@@ -20,6 +24,25 @@ function tick() {
   frame();
 }
 
+/**
+ * 렌더는 시작했지만 커밋하지 못하는 위젯을 흉내 낸다 — 차례(turn===true)를 받아 렌더하는 도중 영원히 서스펜드해
+ * 전환이 커밋되지 않으므로 반납(effect cleanup)이 오지 않는다. 훅은 렌더 단계에서 markRendering 을 이미 불렀다.
+ */
+function mountStuckRenderer() {
+  const never = new Promise<void>(() => {});
+  const onRender = vi.fn();
+  function Stuck({ n }: { n: number }) {
+    const turn = useWidgetRenderTurn(true);
+    onRender();
+    if (turn) throw never;
+    void n; // n 은 같은 차례를 다시 렌더시키기 위한 prop 일 뿐 쓰지 않는다
+    return null;
+  }
+  const element = (n: number) => createElement(Suspense, { fallback: null }, createElement(Stuck, { n }));
+  const view = render(element(0));
+  return { view, element, renders: () => onRender.mock.calls.length };
+}
+
 /** document.visibilityState 를 스텁한다 */
 function setVisibility(state: 'visible' | 'hidden') {
   Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state });
@@ -29,7 +52,7 @@ describe('useWidgetRenderTurn', () => {
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'requestAnimationFrame', 'cancelAnimationFrame'] });
     setVisibility('visible');
-    __resetWidgetRenderQueueForTest();
+    api.reset();
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -138,8 +161,46 @@ describe('useWidgetRenderTurn', () => {
 
   // WD-1113: 차례를 받고도 반납하지 못하는 위젯(커밋이 밀림)이 줄 전체를 세우지 않게 하는 상한
   describe('반납 시간 상한', () => {
+    // WD-1146: 렌더를 시작한 차례는 500ms 에 강제 반납하지 않고 렌더 중 상한(8초)에 넘긴다
+    it('렌더가 시작된 차례는 500ms 가 지나도 넘기지 않고 RENDERING_RELEASE_CAP_MS 에 넘긴다', () => {
+      const a = mountStuckRenderer();
+      const b = renderHook(() => useWidgetRenderTurn(true));
+      expect(a.renders()).toBeGreaterThan(1);
+      act(() => {
+        vi.advanceTimersByTime(RENDER_TURN_RELEASE_MS);
+      });
+      tick();
+      expect(b.result.current).toBe(false);
+      act(() => {
+        vi.advanceTimersByTime(RENDERING_RELEASE_CAP_MS);
+      });
+      tick();
+      expect(b.result.current).toBe(true);
+    });
+
+    it('같은 차례가 여러 번 렌더돼도 렌더 중 상한은 처음 렌더부터 잰다', () => {
+      const a = mountStuckRenderer();
+      const b = renderHook(() => useWidgetRenderTurn(true));
+      expect(a.renders()).toBeGreaterThan(1);
+      act(() => {
+        vi.advanceTimersByTime(RENDERING_RELEASE_CAP_MS - 100);
+      });
+      // 같은 차례를 다시 렌더시켜도(markRendering 재호출) 상한이 새로 시작되면 안 된다
+      a.view.rerender(a.element(1));
+      act(() => {
+        vi.advanceTimersByTime(50);
+      });
+      tick();
+      expect(b.result.current).toBe(false);
+      act(() => {
+        vi.advanceTimersByTime(18);
+      });
+      tick();
+      expect(b.result.current).toBe(true);
+    });
+
     it('차례를 받은 위젯이 커밋하지 못해도 RENDER_TURN_RELEASE_MS 가 지나면 다음 위젯이 차례를 받는다', () => {
-      __enqueueRawGrantForTest(() => {});
+      api.enqueueRawGrant(() => {});
       const b = renderHook(() => useWidgetRenderTurn(true));
       act(() => {
         vi.advanceTimersByTime(RENDER_TURN_RELEASE_MS - 1);
@@ -153,9 +214,9 @@ describe('useWidgetRenderTurn', () => {
     });
 
     it('상한으로 반납된 뒤 늦게 온 반납은 다음 차례를 두 번 주지 않는다', () => {
-      const leave1 = __enqueueRawGrantForTest(() => {});
+      const leave1 = api.enqueueRawGrant(() => {});
       const g2 = vi.fn();
-      __enqueueRawGrantForTest(g2);
+      api.enqueueRawGrant(g2);
       const c = renderHook(() => useWidgetRenderTurn(true));
       act(() => {
         vi.advanceTimersByTime(RENDER_TURN_RELEASE_MS);
@@ -174,7 +235,7 @@ describe('useWidgetRenderTurn', () => {
       // a 는 커밋 직후 반납한다
       renderHook(() => useWidgetRenderTurn(true));
       const g2 = vi.fn();
-      __enqueueRawGrantForTest(g2);
+      api.enqueueRawGrant(g2);
       const c = renderHook(() => useWidgetRenderTurn(true));
       tick();
       expect(g2).toHaveBeenCalledTimes(1);
@@ -186,9 +247,9 @@ describe('useWidgetRenderTurn', () => {
     });
 
     it('cap 으로 넘긴 차례가 커밋되지 않은 동안에는 다음 차례를 또 강제로 넘기지 않는다', () => {
-      __enqueueRawGrantForTest(() => {});
+      api.enqueueRawGrant(() => {});
       const g2 = vi.fn();
-      __enqueueRawGrantForTest(g2);
+      api.enqueueRawGrant(g2);
       const c = renderHook(() => useWidgetRenderTurn(true));
       act(() => {
         vi.advanceTimersByTime(RENDER_TURN_RELEASE_MS);
@@ -209,9 +270,9 @@ describe('useWidgetRenderTurn', () => {
     });
 
     it('cap 으로 넘긴 차례가 반납되면 다음 강제 반납이 다시 가능해진다', () => {
-      const leave1 = __enqueueRawGrantForTest(() => {});
+      const leave1 = api.enqueueRawGrant(() => {});
       const g2 = vi.fn();
-      __enqueueRawGrantForTest(g2);
+      api.enqueueRawGrant(g2);
       const c = renderHook(() => useWidgetRenderTurn(true));
       act(() => {
         vi.advanceTimersByTime(RENDER_TURN_RELEASE_MS);
@@ -234,7 +295,7 @@ describe('useWidgetRenderTurn', () => {
 
     it('숨은 탭에서는 상한 반납도 바로 다음 차례를 준다', () => {
       setVisibility('hidden');
-      __enqueueRawGrantForTest(() => {});
+      api.enqueueRawGrant(() => {});
       const b = renderHook(() => useWidgetRenderTurn(true));
       act(() => {
         vi.advanceTimersByTime(RENDER_TURN_RELEASE_MS);

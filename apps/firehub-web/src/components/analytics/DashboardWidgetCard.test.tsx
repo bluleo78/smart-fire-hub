@@ -35,12 +35,12 @@ vi.mock('./ChartRenderer', () => ({
 }));
 
 import { EmptyResponseError } from '../../lib/api-error';
-import { __enqueueRawGrantForTest, __resetWidgetRenderQueueForTest } from '../../lib/widget-render-queue';
+import { __widgetRenderQueueTestApi } from '../../lib/widget-render-queue';
 import { DashboardWidgetCard } from './DashboardWidgetCard';
 
 // 그리기 차례 큐는 모듈 상태라 시험 사이에 비운다(WD-1072)
 beforeEach(() => {
-  __resetWidgetRenderQueueForTest();
+  __widgetRenderQueueTestApi!.reset();
 });
 
 const DIV_ZERO = 'ERROR: division by zero\nSQLState: 22012';
@@ -330,7 +330,7 @@ describe('DashboardWidgetCard — 그리기 차례 큐 (WD-1072)', () => {
 
   it('TABLE 위젯은 앞 차트가 차례를 쥐고 있어도 스피너 없이 표를 바로 보인다 (WD-1113)', () => {
     // 앞 차트가 차례를 쥐고 반납하지 않는 상황을 흉내
-    __enqueueRawGrantForTest(() => {});
+    __widgetRenderQueueTestApi!.enqueueRawGrant(() => {});
     const tableChart = { ...chart, chartType: 'TABLE' } as Chart;
     useChartMock.mockReturnValue({ data: tableChart, isLoading: false });
     useChartDataMock.mockReturnValue(

@@ -174,10 +174,36 @@ test.describe('대시보드 위젯 — 그리기 차례 큐 (WD-1072)', () => {
     await expect(area.locator('.animate-spin')).toHaveCount(0);
   });
 
-  // 「TABLE 은 그리기 차례를 받지 않는다」는 판정 자체는 단위 시험(chart-render-turn.test.ts, DashboardWidgetCard.test.tsx)이 본다.
-  // E2E 에서는 차례 반납 상한 500ms 때문에 차례를 받아도 지연이 짧아 관찰되지 않는다 — 여기서는 사용자에게 보이는 결과만 확인한다.
-  test('표(TABLE) 위젯은 다른 차트 응답을 기다리는 동안에도 표를 보인다 (WD-1113)', async ({ authenticatedPage: page }) => {
+  // 차례 대기 자체는 단위 시험(DashboardWidgetCard.test — 차례를 쥔 원시 grant)으로 본다. 여기서는 스피너가 한 번도 나타나지 않음을 관찰자로 본다.
+  // 강제 반납 E2E 는 더하지 않는다 — 실브라우저에서 렌더 시간을 결정적으로 만들 수 없다.
+  test('표(TABLE) 위젯은 다른 차트 응답을 기다리는 동안에도 스피너 없이 표를 보인다 (WD-1113)', async ({ authenticatedPage: page }) => {
     test.setTimeout(60_000);
+    // 표 위젯(제목 「위젯 6」 카드) 안에 차례 대기 스피너가 한 번이라도 붙으면 기록한다 — 사라진 뒤 확인하는 toHaveCount(0) 은 순간 스피너를 놓친다
+    await page.addInitScript(() => {
+      const w = window as unknown as { __tableSpinnerSeen: boolean; __tableSpinnerObserverReady: boolean };
+      w.__tableSpinnerSeen = false;
+      // 차례 대기 스피너만 본다 — 백그라운드 새로고침 Loader2 도 animate-spin 이라 클래스로 보면 우연히 걸린다
+      const AREA = '[data-testid="widget-render-turn-spinner"]';
+      // spec 의 card() 와 같은 방법 — data-slot="card" 중 제목 텍스트가 「위젯 6」 인 카드
+      const inTableCard = (el: Element) => {
+        const c = el.closest('[data-slot="card"]');
+        return !!c && Array.from(c.querySelectorAll('*')).some((n) => n.children.length === 0 && n.textContent === '위젯 6');
+      };
+      const check = (el: Element) => {
+        if (el.matches(AREA) && inTableCard(el)) w.__tableSpinnerSeen = true;
+      };
+      new MutationObserver((list) => {
+        for (const m of list) {
+          if (m.type === 'attributes' && m.target instanceof Element) check(m.target);
+          m.addedNodes.forEach((n) => {
+            if (!(n instanceof Element)) return;
+            check(n);
+            n.querySelectorAll(AREA).forEach(check);
+          });
+        }
+      }).observe(document, { attributes: true, attributeFilter: ['class'], subtree: true, childList: true });
+      w.__tableSpinnerObserverReady = true;
+    });
     let release: () => void = () => {};
     const released = new Promise<void>((resolve) => {
       release = resolve;
@@ -191,14 +217,20 @@ test.describe('대시보드 위젯 — 그리기 차례 큐 (WD-1072)', () => {
     });
     await page.goto('/analytics/dashboards/1');
 
+    const seen = () =>
+      page.evaluate(() => (window as unknown as { __tableSpinnerSeen?: boolean }).__tableSpinnerSeen);
+    // 관찰자가 실제로 심겼는지 따로 본다 — undefined 로 통과하는 일을 막는다
+    expect(await page.evaluate(() => (window as unknown as { __tableSpinnerObserverReady?: boolean }).__tableSpinnerObserverReady)).toBe(true);
+
     const table = card(page, '위젯 6');
     await expect(table.getByRole('cell', { name: 'c0', exact: true })).toBeVisible({ timeout: 30_000 });
-    await expect(table.locator('[data-testid="dashboard-widget-chart-area"] .animate-spin')).toHaveCount(0);
+    expect(await seen()).toBe(false);
     // 붙잡은 동안 다른 차트는 아직 하나도 그려지지 않았다
     await expect(page.locator('[data-testid="chart-figure"][data-has-drawing="true"]')).toHaveCount(0);
 
     release();
     await expect(page.locator('[data-testid="chart-figure"][data-has-drawing="true"]')).toHaveCount(5, { timeout: 30_000 });
+    expect(await seen()).toBe(false);
   });
 
   /** 애니메이션 관찰 결과(브라우저 안 __animReport 가 돌려준다) */

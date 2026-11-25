@@ -6,10 +6,16 @@ import { startTransition, useEffect, useState } from 'react';
  * 위젯 여러 개가 한 커밋에서 recharts 를 한꺼번에 그리면 메인 스레드가 길게 막혀, 위젯마다 차례를 받아 하나씩 그린다.
  * 끌기 중에는 커밋이 밀려 반납이 늦어지고 뒤의 위젯이 모두 서므로, 차례를 쥔 지 500ms 가 지나면 강제로 넘긴다.
  * 단, 커밋 안 된 강제 차례는 최대 하나만 둔다 — 아니면 긴 끌기 뒤 한꺼번에 그려져 수 초짜리 긴 작업이 되살아난다.
+ * 두 단계 상한(WD-1146): 차례를 받은 위젯이 렌더를 시작했다면(훅이 turn===true 로 렌더) 느린 렌더 도중에 강제로 넘기면
+ * 렌더가 쪼개져 오히려 비싸지므로, 그때부터는 상한을 RENDERING_RELEASE_CAP_MS 로 늘려 다시 건다.
+ * 500ms 상한은 렌더가 시작조차 못 한(커밋이 밀린) 차례에만 적용된다.
  */
 
-/** 차례를 받은 뒤 이 시간 안에 반납하지 않으면 강제로 반납시킨다(ms). */
+/** 차례를 받았지만 아직 렌더를 시작하지 않은 쪽의 상한 — 이 시간 안에 렌더가 시작되지 않으면 강제로 반납시킨다(ms). */
 export const RENDER_TURN_RELEASE_MS = 500;
+
+/** 렌더를 시작한 차례의 상한(ms) — 느린 렌더를 중간에 쪼개지 않도록 넉넉하되, 멈춘 위젯이 줄을 영원히 세우지는 않게 한다. */
+export const RENDERING_RELEASE_CAP_MS = 8000;
 
 type Grant = () => void;
 
@@ -24,6 +30,8 @@ let releaseTimer: ReturnType<typeof setTimeout> | null = null;
 let forcedOutstanding: Grant | null = null;
 /** 지금 쥔 쪽의 상한이 지났지만 forcedOutstanding 때문에 넘기지 못한 상태 — forcedOutstanding 이 반납되는 순간 leave() 가 즉시 넘긴다. */
 let capOverdue = false;
+/** 지금 쥔 차례(current)의 렌더가 시작됐는가 — true 면 상한이 RENDERING_RELEASE_CAP_MS 로 걸려 있다. 새 차례를 줄 때 지운다. */
+let rendering = false;
 
 /** 상한 타이머를 취소한다. */
 function cancelReleaseTimer() {
@@ -43,13 +51,14 @@ function grantNext() {
   if (current || queue.length === 0) return;
   const grant = queue.shift()!;
   current = grant;
+  rendering = false;
   capOverdue = false;
-  armReleaseTimer(grant);
+  armReleaseTimer(grant, RENDER_TURN_RELEASE_MS);
   grant();
 }
 
-/** 쥔 쪽의 상한 타이머를 건다. 늦게 온 타이머는 current 가 바뀌었으면 아무것도 하지 않는다. */
-function armReleaseTimer(grant: Grant) {
+/** 쥔 쪽의 상한 타이머를 ms 로 건다. 늦게 온 타이머는 current 가 바뀌었으면 아무것도 하지 않는다. */
+function armReleaseTimer(grant: Grant, ms: number) {
   cancelReleaseTimer();
   releaseTimer = setTimeout(() => {
     releaseTimer = null;
@@ -61,7 +70,19 @@ function armReleaseTimer(grant: Grant) {
       return;
     }
     forceRelease(grant);
-  }, RENDER_TURN_RELEASE_MS);
+  }, ms);
+}
+
+/**
+ * 차례를 쥔 grant 가 렌더를 시작했음을 알린다 — 상한을 RENDERING_RELEASE_CAP_MS 로 다시 건다.
+ * 멱등이다: 이미 표시됐거나 쥔 차례가 아니면(강제 반납된 뒤의 늦은 렌더 등) 아무것도 하지 않는다.
+ * 이미 지나 있던 상한 표시(capOverdue)도 지운다 — 렌더가 시작됐으니 더는 밀린 차례가 아니다.
+ */
+function markRendering(grant: Grant): void {
+  if (current !== grant || rendering) return;
+  rendering = true;
+  capOverdue = false;
+  armReleaseTimer(grant, RENDERING_RELEASE_CAP_MS);
 }
 
 /** 커밋을 기다리지 않고 차례를 넘긴다. 이 grant 는 제 반납이 올 때까지 forcedOutstanding 으로 남는다. */
@@ -128,25 +149,31 @@ if (typeof document !== 'undefined') {
  */
 export function useWidgetRenderTurn(ready: boolean): boolean {
   const [turn, setTurn] = useState(false);
+  // 안정된 grant 하나 — 렌더에서 읽어 markRendering 에 넘기고, effect 는 같은 함수를 줄 세운다(ref 를 렌더에서 읽지 않으려는 것).
+  // 차례 부여는 낮은 우선순위 전환으로 — 입력이 끼어들 수 있게 한다.
+  const [grant] = useState<Grant>(() => () => startTransition(() => setTurn(true)));
+
+  // 렌더 단계 부작용이지만 멱등이고 current === grant 가드가 있어 StrictMode 이중 렌더·중단된 transition 에도 안전하다.
+  // 렌더 단계에서 하는 이유: 커밋은 렌더가 끝난 뒤라, 느린 렌더 도중 500ms 강제 반납을 막으려면 렌더 시작 시점에 알아야 한다.
+  if (turn) markRendering(grant);
 
   useEffect(() => {
     // 차례를 이미 받았으면 줄을 다시 서지 않는다. turn 이 true 로 바뀌며 이전 effect 의 cleanup 이 반납한다.
     if (turn || !ready) return;
-    // 차례 부여는 낮은 우선순위 전환으로 — 입력이 끼어들 수 있게 한다.
-    const grant: Grant = () => startTransition(() => setTurn(true));
     queue.push(grant);
     // 반납 직후 대기 중이면 기다린다(grantNext 가 대기를 취소하므로 여기서 거른다). 쥔 쪽이 있는지는 grantNext 가 본다.
     if (waitId === null) grantNext();
     return () => leave(grant);
-  }, [ready, turn]);
+  }, [ready, turn, grant]);
 
   return turn;
 }
 
 /** 시험용: 모듈 상태 초기화. */
-export function __resetWidgetRenderQueueForTest(): void {
+function resetForTest(): void {
   queue.length = 0;
   current = null;
+  rendering = false;
   forcedOutstanding = null;
   capOverdue = false;
   cancelWait();
@@ -154,8 +181,15 @@ export function __resetWidgetRenderQueueForTest(): void {
 }
 
 /** 시험용: 반납하지 않는 원시 grant 를 줄 세우고 반납 함수를 돌려준다(커밋이 밀리는 위젯 흉내). */
-export function __enqueueRawGrantForTest(grant: () => void): () => void {
+function enqueueRawGrantForTest(grant: () => void): () => void {
   queue.push(grant);
   if (waitId === null) grantNext();
   return () => leave(grant);
 }
+
+/**
+ * 시험 전용 API 묶음. Vite 가 import.meta.env.MODE 를 빌드 시 상수로 바꿔 운영 번들에서는 undefined 로 굳고
+ * 위 두 함수도 죽은 코드로 제거된다.
+ */
+export const __widgetRenderQueueTestApi =
+  import.meta.env.MODE === 'test' ? { reset: resetForTest, enqueueRawGrant: enqueueRawGrantForTest } : undefined;
