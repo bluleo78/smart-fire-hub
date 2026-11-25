@@ -1,7 +1,11 @@
 import { z } from 'zod/v4';
 import type { FireHubApiClient } from '../api-client.js';
 import type { SafeToolFn, JsonResultFn } from '../firehub-mcp-server.js';
-import { MAX_AUDIT_FILTER_LENGTH, MAX_SEARCH_QUERY_LENGTH } from '../api-client/request-limits.js';
+import {
+  MAX_AUDIT_FILTER_LENGTH,
+  MAX_SEARCH_QUERY_LENGTH,
+  clampSearchQuery,
+} from '../api-client/request-limits.js';
 import { KST_UTC_OFFSET } from './kst-time.js';
 
 /** WD-1131: 검색어 상한을 설명·안내 문구에 쓰는 표기("1,000") — 상수에서 만들어 문구와 실제 상한이 어긋나지 않게 한다 */
@@ -93,8 +97,10 @@ export function registerAuditTools(
         const result = await apiClient.listAuditLogs(params);
         // WD-1131: api-client 가 search 를 1,000자로 잘라 보내므로, 잘렸으면 결과에 알려 LLM 이
         // 전체 검색어 기준 결과로 오해하지 않게 한다. 안 잘렸으면 api 결과를 그대로 돌려준다.
+        // WD-1143: 판정은 실제 자르기(clampSearchQuery)의 결과로 한다 — 지금은 길이 비교와 같지만, 자르기 규칙이 바뀌어도
+        //   안내가 실제로 보낸 검색어와 어긋나지 않게 한 곳(clampSearchQuery)만 기준으로 삼는다.
         const truncated =
-          args.search !== undefined && args.search.length > MAX_SEARCH_QUERY_LENGTH;
+          args.search !== undefined && clampSearchQuery(args.search) !== args.search;
         return jsonResult(
           truncated
             ? {

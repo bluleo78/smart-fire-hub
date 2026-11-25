@@ -123,6 +123,14 @@ describe('Audit MCP Tools', () => {
       expect(body.totalElements).toBe(1);
     });
 
+    // WD-1143: 서로게이트 쌍(이모지)이 상한 경계에 걸려도 실제 자르기 결과(clampSearchQuery)대로 잘림을 알린다(경계 고정용 회귀 테스트).
+    it('search 가 999자 + 이모지(1,001 유닛)이면 searchTruncated 를 붙인다 (WD-1143)', async () => {
+      (client.listAuditLogs as ReturnType<typeof vi.fn>).mockResolvedValue({ content: [] });
+      const result = await invokeTool(server, 'list_audit_logs', { search: 'a'.repeat(999) + '😀' });
+      const body = JSON.parse(result.content[0].text);
+      expect(body.searchTruncated).toBe(true);
+    });
+
     it('search 가 1,000자 이하이면 잘림 표시가 없다 (WD-1131)', async () => {
       (client.listAuditLogs as ReturnType<typeof vi.fn>).mockResolvedValue({ content: [] });
       const result = await invokeTool(server, 'list_audit_logs', { search: '가'.repeat(1000) });

@@ -1,4 +1,5 @@
-import { truncateUtf16 } from '../clone-name';
+// clone-name 대신 의존 없는 utf16 모듈에서 가져온다 (WD-1143)
+import { truncateUtf16 } from '../utf16';
 
 /**
  * 검색어 길이 상한(WD-600) — api `SearchQueryLimits.MAX_QUERY_LENGTH`

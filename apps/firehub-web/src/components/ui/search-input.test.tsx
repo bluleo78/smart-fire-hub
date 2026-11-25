@@ -162,3 +162,43 @@ describe('SearchInput maxLength (WD-1131)', () => {
     expect(onChange).toHaveBeenLastCalledWith('ab');
   });
 });
+
+describe('SearchInput 바깥 값 상한 (WD-1143)', () => {
+  it('처음부터 상한을 넘는 value 는 잘라 표시하고 onChange 를 한 번 부른다', () => {
+    const onChange = vi.fn();
+    render(<SearchInput value="abcdef" onChange={onChange} maxLength={3} />);
+    expect(screen.getByRole('textbox')).toHaveValue('abc');
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith('abc');
+  });
+
+  it('다시 그릴 때 들어온 긴 value 도 자르고 알린다', () => {
+    const onChange = vi.fn();
+    const { rerender } = render(<SearchInput value="ab" onChange={onChange} maxLength={3} />);
+    expect(onChange).not.toHaveBeenCalled();
+    rerender(<SearchInput value="xyzw" onChange={onChange} maxLength={3} />);
+    expect(screen.getByRole('textbox')).toHaveValue('xyz');
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith('xyz');
+  });
+
+  it('상한 이하 value 는 알리지 않는다', () => {
+    const onChange = vi.fn();
+    render(<SearchInput value="ab" onChange={onChange} maxLength={3} />);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('서로게이트 쌍을 쪼개지 않고 자른다', () => {
+    const onChange = vi.fn();
+    render(<SearchInput value={'a😀'} onChange={onChange} maxLength={2} />);
+    expect(screen.getByRole('textbox')).toHaveValue('a');
+    expect(onChange).toHaveBeenCalledWith('a');
+  });
+
+  it('maxLength 가 없으면 그대로 두고 알리지 않는다', () => {
+    const onChange = vi.fn();
+    render(<SearchInput value="abcdef" onChange={onChange} />);
+    expect(screen.getByRole('textbox')).toHaveValue('abcdef');
+    expect(onChange).not.toHaveBeenCalled();
+  });
+});

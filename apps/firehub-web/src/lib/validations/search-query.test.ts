@@ -17,8 +17,10 @@ describe('clampToMaxLength', () => {
   });
 
   it('끝이 서로게이트 쌍의 앞 반쪽에서 끊기면 그 반쪽을 버린다', () => {
-    // '😀' 는 코드 유닛 2개 — 상한 1 로 자르면 앞 반쪽만 남으므로 빈 문자열이 된다
+    // '😀' 는 코드 유닛 2개 — 한도 2 면 앞 반쪽이 끊겨 'a', 한도 3 이면 쌍이 온전해 'a😀' (WD-1143)
     expect(clampToMaxLength('a😀', 2)).toBe('a');
     expect(clampToMaxLength('a😀', 3)).toBe('a😀');
+    // 이모지 하나뿐이고 한도 1 이면 쌍을 가를 수 없어 빈 문자열이 된다 (WD-1143)
+    expect(clampToMaxLength('😀', 1)).toBe('');
   });
 });
