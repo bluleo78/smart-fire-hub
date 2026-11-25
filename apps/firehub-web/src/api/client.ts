@@ -262,8 +262,32 @@ export function refreshAccessToken(): Promise<RefreshResult> {
   return runRefresh();
 }
 
-/** 실제 갱신 한 번 — refreshAccessToken 이 갱신 중이 아닐 때만 부른다. */
-async function runRefresh(): Promise<RefreshResult> {
+/**
+ * 서버가 내 멤버십을 바꾼 뒤(소유권 이전 등, WD-1132) 새 상태를 읽으려는 **최선 노력** 갱신.
+ *
+ * <p>{@link refreshAccessToken} 과 다른 점 두 가지.
+ * (1) 진행 중인 갱신에 합류하지 않는다 — 그 갱신은 서버 변경 <b>이전</b> 멤버십을 읽었을 수 있어 전환기 라벨이 낡는다.
+ *     진행 중인 갱신이 끝나기를 기다린 뒤 같은 잠금(isRefreshing)·대기열 아래에서 **새로** 한 번 갱신한다.
+ * (2) 401(refresh 토큰 무효)이 아닌 실패(네트워크·5xx)는 세션을 끝내지 않고 호출자에게 거절만 한다 — 이미 성공한 작업 뒤의 부가 갱신이라
+ *     일시 장애로 로그인 화면으로 쫓아내면 안 된다. 401 은 평소처럼 세션을 끝낸다.
+ */
+export async function refreshAccessTokenBestEffort(): Promise<RefreshResult> {
+  // 진행 중인 갱신이 끝나기를 기다린다(합류한 결과는 버린다). 대기열이 가득 차 즉시 거절돼도 무한히 돌지 않게 횟수를 제한한다.
+  for (let i = 0; isRefreshing && i < 5; i += 1) {
+    await refreshAccessToken().catch(() => undefined);
+  }
+  if (isRefreshing) {
+    throw new Error('Refresh already in progress');
+  }
+  // 만료로 세션을 이미 끝낸 뒤라면 평소 경로(이동·거절)를 그대로 따른다.
+  if (sessionExpiredError !== null) {
+    return refreshAccessToken();
+  }
+  return runRefresh({ bestEffort: true });
+}
+
+/** 실제 갱신 한 번 — refreshAccessToken 이 갱신 중이 아닐 때만 부른다. bestEffort 면 401 이 아닌 실패에 세션을 끝내지 않는다. */
+async function runRefresh(options: { bestEffort?: boolean } = {}): Promise<RefreshResult> {
   isRefreshing = true;
   try {
     let data: TokenResponse;
@@ -310,6 +334,10 @@ async function runRefresh(): Promise<RefreshResult> {
       if (isSessionExpired) {
         sessionExpiredError = refreshError;
         expiredNavPath = window.location.pathname;
+      }
+      // 최선 노력 갱신(WD-1132)의 일시 장애(401 아님)는 세션을 끝내지 않고 거절만 한다.
+      if (options.bestEffort && !isSessionExpired) {
+        throw refreshError;
       }
       // WD-830: 401 만 세션 만료로 안내한다(근거는 login-notice.ts)
       endSessionAndReloadToLogin(isSessionExpired ? SESSION_EXPIRED_NOTICE : undefined);

@@ -151,9 +151,8 @@ public class JooqMembershipRepository implements MembershipRepository {
   }
 
   /**
-   * 멤버십 한 행을 ACTIVE 상태로 넣는다 — insertMember(MEMBER)와 createDefaultOwnerMembership(OWNER)이
-   * 함께 쓴다. 두 INSERT 는 역할 값만 다르므로 본문을 한 곳에 둬서, 열 구성이 바뀔 때 한쪽만 고쳐지는 일을
-   * 막는다.
+   * 멤버십 한 행을 ACTIVE 상태로 넣는다 — insertMember(MEMBER)와 createDefaultOwnerMembership(OWNER)이 함께 쓴다. 두
+   * INSERT 는 역할 값만 다르므로 본문을 한 곳에 둬서, 열 구성이 바뀔 때 한쪽만 고쳐지는 일을 막는다.
    */
   private void insertWithRole(Long userId, long tenantId, String role) {
     dsl.insertInto(MEMBERSHIP)
@@ -169,6 +168,34 @@ public class JooqMembershipRepository implements MembershipRepository {
     return dsl.update(MEMBERSHIP)
         .set(M_STATUS, status)
         .where(M_USER_ID.eq(userId).and(M_TENANT_ID.eq(tenantId)))
+        .execute();
+  }
+
+  /** 이 테넌트의 그 사용자 멤버십 role 만 바꾼다. 소유권 이전(WD-1132)에서 새 소유자 승격에 쓴다. */
+  @Override
+  public int updateRole(Long userId, long tenantId, String role) {
+    return dsl.update(MEMBERSHIP)
+        .set(M_ROLE, role)
+        .where(M_USER_ID.eq(userId).and(M_TENANT_ID.eq(tenantId)))
+        .execute();
+  }
+
+  /** 이 테넌트의 OWNER 사용자 id(오름차순). */
+  @Override
+  public List<Long> findOwnerUserIds(long tenantId) {
+    return dsl.select(M_USER_ID)
+        .from(MEMBERSHIP)
+        .where(M_TENANT_ID.eq(tenantId).and(M_ROLE.eq("OWNER")))
+        .orderBy(M_USER_ID)
+        .fetch(M_USER_ID);
+  }
+
+  /** exceptUserId 외의 OWNER 를 ADMIN 으로 내린다 — 이전 후 소유자를 한 명으로 유지하려는 것(WD-1132). */
+  @Override
+  public int demoteOwnersExcept(long tenantId, Long exceptUserId) {
+    return dsl.update(MEMBERSHIP)
+        .set(M_ROLE, "ADMIN")
+        .where(M_TENANT_ID.eq(tenantId).and(M_ROLE.eq("OWNER")).and(M_USER_ID.ne(exceptUserId)))
         .execute();
   }
 

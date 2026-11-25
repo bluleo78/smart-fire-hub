@@ -171,13 +171,14 @@ class MembershipLifecycleServiceTest extends IntegrationTestBase {
             .orElseThrow();
     assertThat(row.isActive()).isTrue();
     assertThat(row.accountActive()).isFalse();
-    var detail = TenantContext.runScopedGet(tenantA, () -> userService.getUserById(member));
+    var detail = TenantContext.runScopedGet(tenantA, () -> userService.getUserById(member, null));
     assertThat(detail.isActive()).isTrue();
     assertThat(detail.accountActive()).isFalse();
     assertThat(detail.lastActiveAdmin()).isFalse();
 
     inA(() -> userService.setUserActive(member, false, owner));
-    var suspended = TenantContext.runScopedGet(tenantA, () -> userService.getUserById(member));
+    var suspended =
+        TenantContext.runScopedGet(tenantA, () -> userService.getUserById(member, null));
     assertThat(suspended.isActive()).isFalse();
     assertThat(suspended.accountActive()).isFalse();
   }
@@ -185,7 +186,7 @@ class MembershipLifecycleServiceTest extends IntegrationTestBase {
   /** WD-3: 평범한 활성 계정은 accountActive=true, 자기 프로필(/users/me)은 isActive 와 같은 전역 값이다. */
   @Test
   void activeAccount_accountActiveTrue_andMyProfileMirrorsGlobal() {
-    var detail = TenantContext.runScopedGet(tenantA, () -> userService.getUserById(member));
+    var detail = TenantContext.runScopedGet(tenantA, () -> userService.getUserById(member, null));
     assertThat(detail.accountActive()).isTrue();
     var me = userService.getMyProfile(member);
     assertThat(me.accountActive()).isEqualTo(me.isActive()).isTrue();
@@ -198,7 +199,7 @@ class MembershipLifecycleServiceTest extends IntegrationTestBase {
     var page = TenantContext.runScopedGet(tenantA, () -> userService.getUsers(null, 0, 50));
     var row = page.content().stream().filter(u -> u.id().equals(member)).findFirst().orElseThrow();
     assertThat(row.isActive()).isFalse();
-    var detail = TenantContext.runScopedGet(tenantA, () -> userService.getUserById(member));
+    var detail = TenantContext.runScopedGet(tenantA, () -> userService.getUserById(member, null));
     assertThat(detail.isActive()).isFalse();
     assertThat(detail.membershipRole()).isEqualTo("MEMBER");
 
@@ -358,9 +359,10 @@ class MembershipLifecycleServiceTest extends IntegrationTestBase {
             dsl.execute(
                 "delete from user_role where user_id = ? and role_id = (select id from role where name = 'ADMIN')",
                 owner));
-    var detail = TenantContext.runScopedGet(tenantA, () -> userService.getUserById(admin));
+    var detail = TenantContext.runScopedGet(tenantA, () -> userService.getUserById(admin, null));
     assertThat(detail.lastActiveAdmin()).isTrue();
-    var memberDetail = TenantContext.runScopedGet(tenantA, () -> userService.getUserById(member));
+    var memberDetail =
+        TenantContext.runScopedGet(tenantA, () -> userService.getUserById(member, null));
     assertThat(memberDetail.lastActiveAdmin()).isFalse();
   }
 
@@ -383,7 +385,7 @@ class MembershipLifecycleServiceTest extends IntegrationTestBase {
 
     for (Runnable op :
         List.<Runnable>of(
-            () -> userService.getUserById(member),
+            () -> userService.getUserById(member, null),
             () -> userService.setUserRoles(member, List.of(), owner),
             () -> userService.setUserActive(member, false, owner),
             () -> userService.removeMember(member, owner))) {

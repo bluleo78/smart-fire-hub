@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { matchPath } from 'react-router-dom';
 
 import { authApi } from '../api/auth';
-import { abandonForSwitchedUser, AUTH_FLAG_KEY, claimUserLogout, clearSessionExpiredError, endSessionAndReloadToLogin, getAccessToken, isOtherSessionUser, setAccessToken } from '../api/client';
+import { abandonForSwitchedUser, AUTH_FLAG_KEY, claimUserLogout, clearSessionExpiredError, endSessionAndReloadToLogin, getAccessToken, isOtherSessionUser, refreshAccessTokenBestEffort, setAccessToken } from '../api/client';
 import type { TenantSessionState } from '../api/tenant-session';
 import { subscribeTenantSession } from '../api/tenant-session';
 import { usersApi } from '../api/users';
@@ -250,6 +250,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await fetchUserWithRoles();
   }, [fetchUserWithRoles]);
 
+  // 소유권 이전처럼 서버가 내 멤버십 역할을 바꾼 뒤(WD-1132) 전환기 라벨·프로필을 새로 읽는다 — refresh 응답이 현재 멤버십 목록을 싣는다.
+  // 실패해도 이미 성공한 작업을 막지 않도록 호출처가 무시한다(리로드하면 어차피 갱신된다).
+  // WD-1132: refreshAccessTokenBestEffort 는 공유 갱신 잠금·대기열 아래에서 (진행 중인 갱신이 있으면 끝나길 기다린 뒤) 새로 갱신하고,
+  // 새 토큰 저장과 테넌트·멤버십 통지(publishTenantSession → applyTenantState)까지 한다 — 전환기 라벨이 서버 변경 뒤 상태로 갱신된다.
+  // 일시 장애(401 아님)는 세션을 끝내지 않고 거절만 한다(호출처가 무시). 강등({ demoted })이면 역할을 읽어도 소용없고 403 이라 건너뛴다.
+  const refreshSession = useCallback(async () => {
+    const result = await refreshAccessTokenBestEffort();
+    if (result.demoted) return;
+    await fetchUserWithRoles();
+  }, [fetchUserWithRoles]);
+
   // 저장이 끝난 프로필 값을 사용자 상태에 덮어쓴다(WD-665) — 다시 읽기가 실패해도 헤더·아바타가 새 이름을 보이게 한다.
   // 로그인 전(user 없음)이면 덮어쓸 대상이 없으므로 그대로 둔다.
   const applySavedProfile = useCallback((saved: Pick<UserResponse, 'name' | 'email'>) => {
@@ -257,8 +268,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const ctxValue = useMemo(
-    () => ({ user, roles, isLoading, isAuthenticated, login, signup, logout, hasRole, isAdmin, refreshUser, applySavedProfile, activeTenantId, tenantOptions, unavailableWorkspaces, selectTenant, mustChangePassword, completePasswordChange }),
-    [user, roles, isLoading, isAuthenticated, login, signup, logout, hasRole, isAdmin, refreshUser, applySavedProfile, activeTenantId, tenantOptions, unavailableWorkspaces, selectTenant, mustChangePassword, completePasswordChange]
+    () => ({ user, roles, isLoading, isAuthenticated, login, signup, logout, hasRole, isAdmin, refreshUser, refreshSession, applySavedProfile, activeTenantId, tenantOptions, unavailableWorkspaces, selectTenant, mustChangePassword, completePasswordChange }),
+    [user, roles, isLoading, isAuthenticated, login, signup, logout, hasRole, isAdmin, refreshUser, refreshSession, applySavedProfile, activeTenantId, tenantOptions, unavailableWorkspaces, selectTenant, mustChangePassword, completePasswordChange]
   );
 
   return (

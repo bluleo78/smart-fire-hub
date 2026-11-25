@@ -37,6 +37,12 @@ export const tenantsApi = {
    */
   addMember: (id: number, body: AddTenantMemberRequest) =>
     client.post<AddTenantMemberResponse>(`/tenants/${id}/members`, body),
+  /**
+   * 멤버를 워크스페이스 유일한 소유자로 지정한다(WD-1132). 204. 400 확인 이름 불일치, 404 멤버 아님·없는 테넌트,
+   * 409 이미 유일한 소유자·비활성 대상. 정지된 테넌트도 허용한다.
+   */
+  assignOwner: (id: number, userId: number, confirmName: string) =>
+    client.post<void>(`/tenants/${id}/owner`, { userId, confirmName }),
   /** 선택 가능한 저장소 백엔드 목록. 플래그가 꺼진 백엔드는 available=false. */
   dataStoreBackends: () => client.get<DataStoreBackendOption[]>('/tenants/data-store/backends'),
   /** 생성 전 연결 테스트(DBA_AUTO 전용). 접속 실패도 200 + ok=false 로 온다. */

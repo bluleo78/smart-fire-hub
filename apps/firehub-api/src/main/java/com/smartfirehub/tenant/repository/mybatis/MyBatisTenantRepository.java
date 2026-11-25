@@ -34,6 +34,12 @@ public class MyBatisTenantRepository implements TenantRepository {
   }
 
   @Override
+  @Transactional(readOnly = true)
+  public java.util.Optional<String> findName(long tenantId) {
+    return java.util.Optional.ofNullable(mapper.selectName(tenantId));
+  }
+
+  @Override
   @Transactional(propagation = Propagation.MANDATORY)
   public void provisionDefaults(long tenantId) {
     mapper.provisionDefaults(tenantId);

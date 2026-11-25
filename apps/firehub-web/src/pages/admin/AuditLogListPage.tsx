@@ -129,6 +129,8 @@ const MEMBER_ACTION_TYPES = [
   { value: 'MEMBER_SUSPEND', label: '멤버십 정지' },
   { value: 'MEMBER_REACTIVATE', label: '멤버십 재활성화' },
   { value: 'MEMBER_REMOVE', label: '멤버 제거' },
+  // WD-1132: 워크스페이스 소유권 이전(웹 넘기기·콘솔 지정). 라벨이 없으면 원문 코드가 노출되고 필터로 고를 수 없다.
+  { value: 'OWNER_TRANSFER', label: '소유권 이전' },
 ];
 
 /**

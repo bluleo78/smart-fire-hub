@@ -52,6 +52,13 @@ public abstract class TenantRepositoryContractTest extends AccessContractBase {
   }
 
   @Test
+  @DisplayName("findName 은 있는 테넌트의 이름을, 없는 id 는 빈 값을 돌려준다")
+  void findName_presentAndMissing() {
+    assertThat(fx.noTenant(() -> repository().findName(active))).contains(fx.tenantName(active));
+    assertThat(fx.noTenant(() -> repository().findName(-1L))).isEmpty();
+  }
+
+  @Test
   @DisplayName("기본값 시드는 원본 테넌트의 시스템 역할·권한을 복제하고 기본 등급·분류·OWNER 의 ADMIN 을 만들며, 다시 불러도 늘지 않는다")
   void provisionDefaults_copiesSourceSystemRoles_idempotent() {
     // OWNER 멤버는 시드가 그 테넌트의 ADMIN 을 배정한다(V121, Tibero V156.1). MEMBER 는 아무 역할도 받지 않는다.

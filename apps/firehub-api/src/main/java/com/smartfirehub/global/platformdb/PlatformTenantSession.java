@@ -40,6 +40,16 @@ public interface PlatformTenantSession {
   void applyToCurrentTransaction(long tenantId);
 
   /**
+   * 이미 열린 현재 Spring 트랜잭션의 테넌트 값을 비운다(WD-1132) — 같은 트랜잭션·같은 커넥션에서 테넌트 범위 작업을 마친 뒤 테넌트 없는(NULL) 행을 써야
+   * 할 때 쓴다(운영자 평면 감사: 소유자 변경과 감사를 한 트랜잭션으로 묶는다). 이후 문장은 테넌트 미설정 상태의 RLS 를 받는다.
+   *
+   * <p>기본 구현은 지원하지 않음으로 던진다 — 필요한 구현체(PG·Tibero)만 재정의한다.
+   */
+  default void clearCurrentTransaction() {
+    throw new UnsupportedOperationException("현재 트랜잭션의 테넌트 값 비우기를 지원하지 않는 구현체다");
+  }
+
+  /**
    * 커넥션에 심은 테넌트 값을 지운다(트랜잭션 매니저가 커넥션을 풀에 돌려주기 직전에 부른다, WD-492).
    *
    * <p>기본 구현은 아무것도 하지 않는다 — 값이 트랜잭션-로컬인 DB(PG)는 커밋/롤백이 이미 지웠기 때문이다. 세션 범위 값을 쓰는 구현체만 재정의한다.

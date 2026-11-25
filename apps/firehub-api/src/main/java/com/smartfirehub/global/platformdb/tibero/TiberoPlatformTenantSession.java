@@ -65,17 +65,49 @@ public class TiberoPlatformTenantSession implements PlatformTenantSession {
    */
   @Override
   public void applyToCurrentTransaction(long tenantId) {
+    withCurrentTransactionConnection(
+        "플랫폼 DB 트랜잭션 밖에서 테넌트 컨텍스트를 심을 수 없다 — 세션 범위 값이라 지워 줄 자리가 없다(WD-492)",
+        "Tibero 테넌트 컨텍스트 설정 실패",
+        connection -> applyToConnection(connection, tenantId));
+  }
+
+  /**
+   * 이미 열린 현재 트랜잭션의 커넥션에서 테넌트 컨텍스트를 지운다(WD-1132). {@link #applyToCurrentTransaction} 과 같은 풀 묶임 검사를
+   * 한다.
+   *
+   * @throws IllegalStateException 이 풀이 현재 트랜잭션에 묶여 있지 않을 때
+   * @throws DataAccessResourceFailureException 패키지 호출이 실패했을 때
+   */
+  @Override
+  public void clearCurrentTransaction() {
+    withCurrentTransactionConnection(
+        "플랫폼 DB 트랜잭션 밖에서 테넌트 컨텍스트를 지울 수 없다(WD-1132)",
+        "Tibero 테넌트 컨텍스트 지우기 실패",
+        this::clearConnection);
+  }
+
+  /** 현재 트랜잭션 커넥션에 하는 작업 — SQLException 을 그대로 던질 수 있게 따로 둔다. */
+  @FunctionalInterface
+  private interface ConnectionOp {
+    void run(Connection connection) throws SQLException;
+  }
+
+  /**
+   * 현재 트랜잭션에 묶인 커넥션을 빌려 작업한다(WD-1132 — 심기·지우기가 같은 풀 묶임 검사·자원 반납을 공유한다). 트랜잭션이 이 풀에 묶여 있지 않으면 세션 범위
+   * 값을 지워 줄 자리가 없어 거절한다. 트랜잭션은 이미 열려 있으므로 실패는 CannotCreateTransactionException 이 아니라 자원(세션) 실패로
+   * 알린다.
+   */
+  private void withCurrentTransactionConnection(
+      String outsideTransactionMessage, String failureMessage, ConnectionOp op) {
     if (!TransactionSynchronizationManager.isActualTransactionActive()
         || !TransactionSynchronizationManager.hasResource(dataSource)) {
-      throw new IllegalStateException(
-          "플랫폼 DB 트랜잭션 밖에서 테넌트 컨텍스트를 심을 수 없다 — 세션 범위 값이라 지워 줄 자리가 없다(WD-492)");
+      throw new IllegalStateException(outsideTransactionMessage);
     }
     Connection connection = DataSourceUtils.getConnection(dataSource);
     try {
-      applyToConnection(connection, tenantId);
+      op.run(connection);
     } catch (SQLException e) {
-      // 트랜잭션은 이미 열려 있으므로 CannotCreateTransactionException 이 아니다 — 자원(세션) 실패로 알린다.
-      throw new DataAccessResourceFailureException("Tibero 테넌트 컨텍스트 설정 실패", e);
+      throw new DataAccessResourceFailureException(failureMessage, e);
     } finally {
       DataSourceUtils.releaseConnection(connection, dataSource);
     }

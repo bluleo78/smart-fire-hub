@@ -47,8 +47,8 @@ public interface MembershipRepository {
   /**
    * 첫 가입자 전용: 기본 워크스페이스에 OWNER·ACTIVE 로 합류시킨다(WD-1100, V81).
    *
-   * <p>새 설치본의 기본 테넌트에는 소유자가 없어, 첫 가입자가 MEMBER 로 들어가면 소유자 보호(정지·제거·ADMIN 회수 금지)가 걸릴 대상이 없다. 그래서
-   * 첫 가입자만 이 메서드로 OWNER 가 되고, 이후 멤버 추가는 {@link #insertMember} 로 MEMBER 를 만든다.
+   * <p>새 설치본의 기본 테넌트에는 소유자가 없어, 첫 가입자가 MEMBER 로 들어가면 소유자 보호(정지·제거·ADMIN 회수 금지)가 걸릴 대상이 없다. 그래서 첫
+   * 가입자만 이 메서드로 OWNER 가 되고, 이후 멤버 추가는 {@link #insertMember} 로 MEMBER 를 만든다.
    */
   void createDefaultOwnerMembership(Long userId);
 
@@ -72,6 +72,25 @@ public interface MembershipRepository {
 
   /** 정지/재활성. 이 테넌트 행만 바꾼다. 반환값은 바뀐 행 수(0 이면 비멤버). */
   int updateStatus(Long userId, long tenantId, String status);
+
+  /**
+   * 멤버십 role 라벨(OWNER|ADMIN|MEMBER)을 바꾼다(WD-1132 소유권 이전). 이 테넌트의 그 사용자 행만 바꾸고 반환값은 바뀐 행 수(0 이면
+   * 비멤버).
+   */
+  int updateRole(Long userId, long tenantId, String role);
+
+  /**
+   * 그 테넌트에서 {@code exceptUserId} 가 아닌 OWNER 를 모두 ADMIN 으로 내린다(WD-1132). 반환값은 바뀐 행 수.
+   *
+   * <p>왜: 소유권 이전 뒤 소유자가 정확히 한 명만 남도록 이전 소유자(와 혹시 남은 다른 소유자)를 강등하는 데 쓴다.
+   */
+  int demoteOwnersExcept(long tenantId, Long exceptUserId);
+
+  /**
+   * 그 테넌트의 OWNER 멤버십 사용자 id(user_id 오름차순, 상태 무관). 소유권 이전(WD-1132)에서 내려갈 옛 소유자를 모으고 상세에 현재 소유자 이름을
+   * 보일 때 쓴다.
+   */
+  List<Long> findOwnerUserIds(long tenantId);
 
   /** 테넌트에서 제거. 계정·다른 테넌트 멤버십은 그대로다. */
   int delete(Long userId, long tenantId);

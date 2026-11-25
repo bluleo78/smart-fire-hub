@@ -97,11 +97,12 @@ class UserManagementTenantScopeTest extends IntegrationTestBase {
   @DisplayName("상세: 남의 테넌트 사용자 id 로 조회하면 404 — 존재를 알려 주지 않는다")
   void getUserByIdHidesOtherTenantUser() {
     // 긍정: 자기 테넌트 사용자는 정상 조회된다.
-    var own = TenantContext.runScopedGet(tenantA, () -> userService.getUserById(userA));
+    var own = TenantContext.runScopedGet(tenantA, () -> userService.getUserById(userA, null));
     assertThat(own.id()).isEqualTo(userA);
 
     // 부정: 남의 테넌트 사용자는 "없는 사용자" 다. 403 이면 id 를 훑어 계정을 열거할 수 있다.
-    assertThatThrownBy(() -> TenantContext.runScoped(tenantA, () -> userService.getUserById(userB)))
+    assertThatThrownBy(
+            () -> TenantContext.runScoped(tenantA, () -> userService.getUserById(userB, null)))
         .isInstanceOf(UserNotFoundException.class);
   }
 

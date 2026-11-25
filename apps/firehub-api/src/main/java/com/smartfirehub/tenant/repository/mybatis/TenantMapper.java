@@ -17,6 +17,9 @@ public interface TenantMapper {
   /** 그 id 의 ACTIVE 테넌트 행 수(0 또는 1). */
   int countActive(@Param("tenantId") Long tenantId);
 
+  /** 그 id 테넌트의 이름(없으면 null). */
+  String selectName(@Param("tenantId") Long tenantId);
+
   /** 기본 역할·권한매핑·양식·분류·등급 시드 루틴을 부른다(PG 함수, Tibero FH_TENANT 패키지 프로시저). */
   void provisionDefaults(@Param("tenantId") Long tenantId);
 }

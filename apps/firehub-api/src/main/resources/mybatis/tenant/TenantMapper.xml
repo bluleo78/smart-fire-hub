@@ -16,6 +16,10 @@
     SELECT COUNT(*) FROM tenant WHERE id = #{tenantId} AND status = 'ACTIVE'
   </select>
 
+  <select id="selectName" resultType="java.lang.String">
+    SELECT name FROM tenant WHERE id = #{tenantId}
+  </select>
+
   <!-- PG: void 함수를 SELECT 로 부른다(서비스·jOOQ 에 있던 문장 그대로). MyBatis 의 갱신 실행은 execute() 라 결과 집합을 돌려줘도 된다. -->
   <update id="provisionDefaults" databaseId="postgresql">
     SELECT provision_tenant_defaults(#{tenantId})

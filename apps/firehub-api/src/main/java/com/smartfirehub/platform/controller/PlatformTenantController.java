@@ -11,6 +11,7 @@ import com.smartfirehub.platform.dto.PlatformAddMemberRequest;
 import com.smartfirehub.platform.dto.TenantCreatedResponse;
 import com.smartfirehub.platform.dto.TenantDataStoreResponse;
 import com.smartfirehub.platform.dto.TenantMemberResponse;
+import com.smartfirehub.platform.dto.TenantOwnerAssignRequest;
 import com.smartfirehub.platform.dto.TenantSummaryResponse;
 import com.smartfirehub.platform.dto.TenantVectorStoreResponse;
 import com.smartfirehub.platform.dto.VectorStoreSetupRequest;
@@ -112,6 +113,22 @@ public class PlatformTenantController {
       Authentication authentication) {
     return ResponseEntity.status(HttpStatus.CREATED)
         .body(memberService.addMember(tenantId, request, (Long) authentication.getPrincipal()));
+  }
+
+  /**
+   * 테넌트의 소유자를 지정한다(WD-1132) — 대상 외 모든 OWNER 는 ADMIN 으로 내려가고 대상이 유일한 소유자가 된다. 정지된 테넌트도 허용한다(소유자와 연락이
+   * 안 될 때의 복구 수단).
+   *
+   * <p>권한은 멤버 추가와 같은 {@code platform:tenant:create} — 테넌트를 만든 운영자가 그 테넌트의 소유자를 바로잡을 수 있어야 한다.
+   */
+  @PostMapping("/{tenantId}/owner")
+  @RequirePermission("platform:tenant:create")
+  public ResponseEntity<Void> assignOwner(
+      @PathVariable long tenantId,
+      @Valid @RequestBody TenantOwnerAssignRequest request,
+      Authentication authentication) {
+    memberService.assignOwner(tenantId, request, (Long) authentication.getPrincipal());
+    return ResponseEntity.noContent().build();
   }
 
   // ── 데이터셋 저장소(WD-73) ────────────────────────────────────────────────

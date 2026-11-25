@@ -48,6 +48,15 @@ public class JooqTenantRepository implements TenantRepository {
   }
 
   @Override
+  @Transactional(readOnly = true)
+  public java.util.Optional<String> findName(long tenantId) {
+    return dsl.select(field(name("tenant", "name"), String.class))
+        .from(table(name("tenant")))
+        .where(field(name("tenant", "id"), Long.class).eq(tenantId))
+        .fetchOptional(field(name("tenant", "name"), String.class));
+  }
+
+  @Override
   @Transactional(propagation = Propagation.MANDATORY)
   public void provisionDefaults(long tenantId) {
     dsl.execute("select provision_tenant_defaults(?)", tenantId);
