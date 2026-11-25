@@ -12,6 +12,7 @@ import type {
   UpdateReportTemplateRequest,
 } from '../../api/proactive';
 import { proactiveApi } from '../../api/proactive';
+import { handleApiError } from '../../lib/api-error';
 import { createWithUniqueCloneName } from '../../lib/clone-name';
 import { isValidId } from '../../lib/route-id';
 import { keepPreviousWithinEntity } from './keepPreviousWithinEntity';
@@ -131,13 +132,25 @@ export function useFetchLatestProactiveJob() {
   );
 }
 
-export function useCreateProactiveJob() {
+/**
+ * 스마트 작업 만들기.
+ *
+ * 실패 처리는 훅 수준 `onError` 에 둔다 — `mutate(...)` 로 주는 `onError` 는 화면이 언마운트되면 리스너가 없어
+ * 아예 실행되지 않아(WD-1109 반려 3), 이탈 뒤 늦게 온 실패의 토스트·만든 양식 정리·이름 칸 오류가 통째로 사라졌다.
+ * `useMutation({ onError })` 는 Mutation 이 살아 있는 한 화면이 없어도 불리므로, 화면이 넘긴 처리를 여기서 부른다.
+ */
+export function useCreateProactiveJob(options?: { onError?: (error: unknown) => void }) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (data: CreateProactiveJobRequest) =>
       proactiveApi.createJob(data).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: KEYS.jobs });
+    },
+    onError: (error) => {
+      if (options?.onError) options.onError(error);
+      // 화면이 처리를 넘기지 않았을 때의 기본 — 서버가 말한 사유(없으면 fallback)를 남긴다
+      else handleApiError(error, '작업 생성에 실패했습니다.');
     },
   });
 }
