@@ -2,6 +2,7 @@ package com.smartfirehub.audit.controller;
 
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -10,9 +11,11 @@ import com.smartfirehub.audit.dto.AuditLogResponse;
 import com.smartfirehub.audit.service.AuditLogService;
 import com.smartfirehub.global.config.SecurityConfig;
 import com.smartfirehub.global.dto.PageResponse;
+import com.smartfirehub.global.exception.GlobalExceptionHandler;
 import com.smartfirehub.global.security.JwtAuthenticationFilter;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
+import com.smartfirehub.global.validation.SearchQueryLimits;
 import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
@@ -30,7 +33,8 @@ import org.springframework.test.web.servlet.MockMvc;
 
 @SuppressWarnings("null")
 @WebMvcTest(AuditLogController.class)
-@Import({SecurityConfig.class, JwtAuthenticationFilter.class})
+// WD-1111: 파라미터 검증 실패가 errors 맵 JSON 400 으로 번역되는지 보려고 전역 예외 처리기를 함께 올린다.
+@Import({SecurityConfig.class, JwtAuthenticationFilter.class, GlobalExceptionHandler.class})
 class AuditLogControllerTest {
 
   // WebMvcConfig 가 DatasetAccessInterceptor(→DatasetAccessGuard)를 등록하므로 슬라이스에도 빈이 있어야 한다.
@@ -215,6 +219,54 @@ class AuditLogControllerTest {
                 .param("userId", "42"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.totalElements").value(0));
+  }
+
+  /** WD-1111: 상한(1,000자) 딱 그 길이의 검색어는 통과해 서비스에 그대로 전달된다. */
+  @Test
+  void searchAtMaxLength_returns200() throws Exception {
+    mockAuthentication("audit:read");
+    String search = "가".repeat(SearchQueryLimits.MAX_QUERY_LENGTH);
+    when(auditLogService.getAuditLogs(VIEWER, search, null, null, null, null, null, null, 0, 20))
+        .thenReturn(new PageResponse<>(List.of(), 0, 20, 0, 0));
+
+    mockMvc
+        .perform(
+            get("/api/v1/admin/audit-logs")
+                .header("Authorization", "Bearer valid-token")
+                .param("search", search))
+        .andExpect(status().isOk());
+    verify(auditLogService).getAuditLogs(VIEWER, search, null, null, null, null, null, null, 0, 20);
+  }
+
+  /** WD-1111: 1,001자 검색어는 서비스(DB) 까지 가지 않고 필드 오류 JSON 400 으로 거절된다. */
+  @Test
+  void searchOverMaxLength_returns400WithFieldError() throws Exception {
+    mockAuthentication("audit:read");
+
+    mockMvc
+        .perform(
+            get("/api/v1/admin/audit-logs")
+                .header("Authorization", "Bearer valid-token")
+                .param("search", "a".repeat(SearchQueryLimits.MAX_QUERY_LENGTH + 1)))
+        .andExpect(status().isBadRequest())
+        .andExpect(content().contentTypeCompatibleWith("application/json"))
+        .andExpect(jsonPath("$.errors.search").value(SearchQueryLimits.QUERY_TOO_LONG));
+    verifyNoInteractions(auditLogService);
+  }
+
+  /** WD-1111: 빈 검색어는 기존대로 통과한다(상한 검증이 빈 값을 막지 않는다). */
+  @Test
+  void blankSearch_stillOk() throws Exception {
+    mockAuthentication("audit:read");
+    when(auditLogService.getAuditLogs(VIEWER, "", null, null, null, null, null, null, 0, 20))
+        .thenReturn(new PageResponse<>(List.of(), 0, 20, 0, 0));
+
+    mockMvc
+        .perform(
+            get("/api/v1/admin/audit-logs")
+                .header("Authorization", "Bearer valid-token")
+                .param("search", ""))
+        .andExpect(status().isOk());
   }
 
   @Test
