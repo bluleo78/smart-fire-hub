@@ -805,11 +805,11 @@ test.describe('파이프라인 에디터 — 스텝 설정', () => {
     await expect(options.last()).toContainText('[이 스텝 출력] 최종');
   });
 
-  test('목록 끝에 붙은 삽입 스텝이 실제 선행이면 「·뒤」 표시 없이 일반 후보로 온다 (WD-1089)', async ({
+  test('목록 끝에 붙은 삽입 스텝이 실제 선행이면 조상 라벨로 맨 앞에 온다 (WD-1089, WD-1139)', async ({
     authenticatedPage: page,
   }) => {
     // 「스텝 삽입」은 새 스텝을 목록 끝에 붙인다 — 추출 → 삽입 → 변환 순으로 실행되지만 목록은 [추출, 변환, 삽입] 이다.
-    // 「·뒤」 는 실제 후행(자손) 스텝에만 붙어야 하므로 변환 패널에서 삽입 스텝 출력(보조)은 표시 없이 일반 후보다.
+    // 「·뒤」 는 실제 후행(자손) 스텝에만 붙어야 하므로 변환 패널에서 삽입 스텝은 선행(조상)으로 「[스텝3] 보조」 라벨을 받는다.
     await openInputCandidateChain(page, {
       steps: [
         createStep({ id: 1, name: '추출', outputDatasetId: 20, outputDatasetName: '중간' }),
@@ -835,11 +835,11 @@ test.describe('파이프라인 에디터 — 스텝 설정', () => {
     await page.locator('.react-flow__node').filter({ hasText: '변환' }).click();
     await page.getByRole('combobox', { name: '입력 데이터셋' }).click();
     const options = page.getByRole('option');
-    // [스텝1] 중간(앞) → 원본 → 보조(표시 없음). 자기 출력 최종은 없다.
+    // 기대를 이슈대로 바꾼다 — 삽입 스텝은 선행이라 「[스텝3] 보조」로 조상 자리(맨 앞)에 온다.
     await expect(options).toHaveCount(3);
     await expect(options.nth(0)).toContainText('[스텝1] 중간');
-    await expect(options.nth(1)).toContainText('원본');
-    await expect(options.nth(2)).toContainText('보조');
+    await expect(options.nth(1)).toContainText('[스텝3] 보조');
+    await expect(options.nth(2)).toContainText('원본');
     await expect(page.getByRole('option', { name: /·뒤/ })).toHaveCount(0);
 
     // 삽입 스텝 패널에서는 변환이 실제 후행이므로 「[스텝2·뒤] 최종」 이 끝에 온다(목록상 앞이어도).
@@ -848,5 +848,144 @@ test.describe('파이프라인 에디터 — 스텝 설정', () => {
     await page.getByRole('combobox', { name: '입력 데이터셋' }).click();
     await expect(page.getByRole('option').last()).toContainText('[스텝2·뒤] 최종');
     await expect(page.getByRole('option').first()).toContainText('[스텝1] 중간');
+  });
+
+  // WD-1139 현상 1 — 목록 위치만 보고 앞 스텝을 선행(조상)으로 그리면, 서로 의존하지 않는 병렬 스텝의 출력에도
+  // [스텝1] 이 붙는다. 의존이 없을 땐 라벨 없이 무라벨 일반 후보로 나와야 한다.
+  test('병렬 스텝은 입력 후보에 [스텝1] 라벨이 붙지 않는다 (WD-1139)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 추출(출력 20)과 변환(출력 30)이 서로 의존하지 않는 고정물 — 변환은 dependsOnStepNames 가 비어 있다.
+    await openInputCandidateChain(page, {
+      steps: [
+        createStep({ id: 1, name: '추출', outputDatasetId: 20, outputDatasetName: '중간' }),
+        createStep({
+          id: 2,
+          name: '변환',
+          stepOrder: 1,
+          outputDatasetId: 30,
+          outputDatasetName: '최종',
+          dependsOnStepNames: [],
+        }),
+      ],
+    });
+    await page.locator('.react-flow__node').filter({ hasText: '변환' }).click();
+    await page.getByRole('combobox', { name: '입력 데이터셋' }).click();
+    const options = page.getByRole('option');
+    // 자기 출력(최종 30)은 후보에서 빠지고, 조상·자손이 없으므로 무라벨 일반 후보(원본·중간) 2개만 남는다.
+    await expect(options).toHaveCount(2);
+    await expect(options.nth(0)).toContainText('원본');
+    await expect(options.nth(1)).toContainText('중간');
+    await expect(options.filter({ hasText: '스텝1' })).toHaveCount(0);
+  });
+
+  // WD-1139 현상 3 — 앞 스텝 출력과 자기 출력이 같은 데이터셋이면 조상 라벨([스텝1])이 먼저 붙어
+  // 자기 출력 칩·후보가 겹치거나 사라진다. 자기 출력을 먼저 판정해 [스텝1] 은 없고 [이 스텝 출력] 이 한 번만 남아야 한다.
+  test('같은 데이터셋이자 자기 출력은 [스텝1] 없이 [이 스텝 출력] 칩·후보로 한 번만 온다 (WD-1139)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 추출 출력 = 변환 출력 = 데이터셋 30, 그리고 변환은 이미 그것을 입력으로 골라 둔 상태.
+    await openInputCandidateChain(page, {
+      steps: [
+        createStep({ id: 1, name: '추출', outputDatasetId: 30, outputDatasetName: '최종' }),
+        createStep({
+          id: 2,
+          name: '변환',
+          stepOrder: 1,
+          outputDatasetId: 30,
+          outputDatasetName: '최종',
+          dependsOnStepNames: ['추출'],
+          inputDatasetIds: [30],
+        }),
+      ],
+    });
+    await page.locator('.react-flow__node').filter({ hasText: '변환' }).click();
+    const panel = page.getByTestId('step-config-panel');
+    // 칩은 자기 출력 이름 하나만 붙고, 조상(추출) 출력과 같은 데이터셋이라 [스텝1] 라벨 칩은 없다.
+    await expect(panel.getByText('[이 스텝 출력] 최종')).toHaveCount(1);
+    await expect(panel.getByText('[스텝1]')).toHaveCount(0);
+
+    // 후보를 열어도 [스텝1] 이 붙은 30 은 없고, [이 스텝 출력] 옵션은 정확히 한 번만 나온다.
+    await page.getByRole('combobox', { name: '입력 데이터셋' }).click();
+    const options = page.getByRole('option');
+    await expect(options).toHaveCount(3);
+    await expect(options.filter({ hasText: '[스텝1]' })).toHaveCount(0);
+    await expect(options.filter({ hasText: '[이 스텝 출력]' })).toHaveCount(1);
+  });
+
+  // WD-1139 현상 3 + 이 계획의 Review Focus 2 — 같은 데이터셋이어도 입력으로 골라 두지 않았으면([스텝 출력] 미선택)
+  // 자기 출력은 조상 출력과 겹치더라도 후보에서 완전히 빠져야 한다(라벨·칩 어느 쪽으로도 살아남지 않는다).
+  test('미선택 자기 출력은 조상 출력이어도 후보에서 빠진다 (WD-1139)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 현상 3 과 같은 고정물(추출 출력 30, 변환 출력 30) — 다만 변환은 입력으로 아무것도 고르지 않은 상태.
+    await openInputCandidateChain(page, {
+      steps: [
+        createStep({ id: 1, name: '추출', outputDatasetId: 30, outputDatasetName: '최종' }),
+        createStep({
+          id: 2,
+          name: '변환',
+          stepOrder: 1,
+          outputDatasetId: 30,
+          outputDatasetName: '최종',
+          dependsOnStepNames: ['추출'],
+          inputDatasetIds: [],
+        }),
+      ],
+    });
+    await page.locator('.react-flow__node').filter({ hasText: '변환' }).click();
+    await page.getByRole('combobox', { name: '입력 데이터셋' }).click();
+    const options = page.getByRole('option');
+    // 자기 출력(30)이 미선택이라 완전히 빠지고, 남은 건 무라벨 일반 후보 2개뿐이다.
+    await expect(options).toHaveCount(2);
+    await expect(options.nth(0)).toContainText('원본');
+    await expect(options.nth(1)).toContainText('중간');
+    await expect(options.filter({ hasText: '[스텝1]' })).toHaveCount(0);
+    await expect(options.filter({ hasText: '[이 스텝 출력]' })).toHaveCount(0);
+  });
+
+  // WD-1139 현상 4 — [이 스텝 출력] 칩을 해제해도 저장 payload 에 남으면 해제가 반영되지 않은 것이다.
+  // 화면(입력) → API payload 전체를 본다(apps/firehub-web/CLAUDE.md 테스트 품질 기준 1번).
+  test('칩 해제 후 저장 payload 의 inputDatasetIds 에서 그 데이터셋이 빠진다 (WD-1139)', async ({
+    authenticatedPage: page,
+  }) => {
+    // 수정 모드의 저장은 PUT /api/v1/pipelines/1 로 나간다 — 요청 본문을 캡처해 스텝 입력을 확인한다.
+    const putCapture = await mockApi(page, 'PUT', '/api/v1/pipelines/1', {}, { capture: true });
+    // 현상 3 과 같은 상태 — 추출·변환 출력이 모두 30 이고 변환은 30 을 입력으로 골라 둔다.
+    await openInputCandidateChain(page, {
+      steps: [
+        createStep({ id: 1, name: '추출', outputDatasetId: 30, outputDatasetName: '최종' }),
+        createStep({
+          id: 2,
+          name: '변환',
+          stepOrder: 1,
+          outputDatasetId: 30,
+          outputDatasetName: '최종',
+          dependsOnStepNames: ['추출'],
+          inputDatasetIds: [30],
+        }),
+      ],
+    });
+    await page.locator('.react-flow__node').filter({ hasText: '변환' }).click();
+    const panel = page.getByTestId('step-config-panel');
+    await expect(panel.getByText('[이 스텝 출력] 최종')).toHaveCount(1);
+
+    // 콤보박스를 열어 자기 출력 옵션을 클릭하면 해제된다(멀티 모드 토글) — 옵션은 곧바로 후보에서 사라진다.
+    await page.getByRole('combobox', { name: '입력 데이터셋' }).click();
+    const selfOption = page.getByRole('option', { name: '[이 스텝 출력]' });
+    await expect(selfOption).toHaveCount(1);
+    await selfOption.click();
+    await expect(selfOption).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await expect(panel.getByText('[이 스텝 출력] 최종')).toHaveCount(0);
+
+    // 해제로 값이 바뀌어 저장 버튼이 켜진다 — 눌러 PUT 본문을 캡처한다.
+    const saveButton = page.getByRole('button', { name: '저장', exact: true });
+    await expect(saveButton).toBeEnabled();
+    await saveButton.click();
+    const req = await putCapture.waitForRequest();
+    const payload = req.payload as { steps: Array<{ inputDatasetIds: number[] }> };
+    expect(payload.steps[1].inputDatasetIds).toEqual([]);
+    expect(payload.steps[1].inputDatasetIds).not.toContain(30);
   });
 });
