@@ -118,7 +118,8 @@ describe('Audit MCP Tools', () => {
       const result = await invokeTool(server, 'list_audit_logs', { search: '가'.repeat(1500) });
       const body = JSON.parse(result.content[0].text);
       expect(body.searchTruncated).toBe(true);
-      expect(body.searchNotice).toContain('1,000자');
+      expect(body.searchNotice).toContain('1,000자를 넘어');
+      expect(body.searchNotice).toContain('앞 1,000자로만');
       expect(body.content).toEqual([{ id: 1 }]);
       expect(body.totalElements).toBe(1);
     });
@@ -129,6 +130,9 @@ describe('Audit MCP Tools', () => {
       const result = await invokeTool(server, 'list_audit_logs', { search: 'a'.repeat(999) + '😀' });
       const body = JSON.parse(result.content[0].text);
       expect(body.searchTruncated).toBe(true);
+      // WD-1159: 안내의 「앞 N자」는 실제 보낸 길이(서로게이트 쌍을 피해 999자)여야 한다 — 상한(1,000)을 그대로 쓰지 않는다
+      expect(body.searchNotice).toContain('앞 999자로만');
+      expect(body.searchNotice).not.toContain('앞 1,000자');
     });
 
     it('search 가 1,000자 이하이면 잘림 표시가 없다 (WD-1131)', async () => {

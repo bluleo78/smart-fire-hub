@@ -60,7 +60,7 @@ export function registerAuditTools(
           .string()
           .optional()
           .describe(
-            `사용자명 또는 설명 검색어 (최대 ${SEARCH_LIMIT_TEXT}자 — 넘으면 앞 ${SEARCH_LIMIT_TEXT}자로 잘라 검색하고 결과에 searchTruncated 로 알린다)`,
+            `사용자명 또는 설명 검색어 (최대 ${SEARCH_LIMIT_TEXT}자 — 넘으면 앞 최대 ${SEARCH_LIMIT_TEXT}자로 잘라 검색하고(끝 이모지 등 서로게이트 쌍이 걸리면 그보다 짧다) 결과에 searchTruncated 로 알린다)`,
           ),
         userId: z
           .number()
@@ -99,15 +99,16 @@ export function registerAuditTools(
         // 전체 검색어 기준 결과로 오해하지 않게 한다. 안 잘렸으면 api 결과를 그대로 돌려준다.
         // WD-1143: 판정은 실제 자르기(clampSearchQuery)의 결과로 한다 — 지금은 길이 비교와 같지만, 자르기 규칙이 바뀌어도
         //   안내가 실제로 보낸 검색어와 어긋나지 않게 한 곳(clampSearchQuery)만 기준으로 삼는다.
-        const truncated =
-          args.search !== undefined && clampSearchQuery(args.search) !== args.search;
+        // WD-1159: 안내의 「앞 N자」는 상한이 아니라 실제 보낸 길이(clamped.length)로 쓴다 — 서로게이트 쌍을 피해 상한보다 1 짧을 수 있다.
+        const clamped = args.search === undefined ? undefined : clampSearchQuery(args.search);
+        const truncated = clamped !== undefined && clamped !== args.search;
         return jsonResult(
           truncated
             ? {
                 ...result,
                 searchTruncated: true,
                 searchNotice:
-                  `검색어가 ${SEARCH_LIMIT_TEXT}자를 넘어 앞 ${SEARCH_LIMIT_TEXT}자로만 검색했습니다 — 전체 검색어 기준 결과가 아닙니다.`,
+                  `검색어가 ${SEARCH_LIMIT_TEXT}자를 넘어 앞 ${clamped.length.toLocaleString('en-US')}자로만 검색했습니다 — 전체 검색어 기준 결과가 아닙니다.`,
               }
             : result,
         );
