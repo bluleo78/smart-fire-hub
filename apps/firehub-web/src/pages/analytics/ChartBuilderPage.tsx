@@ -52,7 +52,8 @@ import { Switch } from '../../components/ui/switch';
 import {
   CHART_LIST_KEY,
   DASHBOARD_LIST_KEY,
-  dashboardDetailKey,
+  dashboardDetailQueryOptions,
+  seedDashboardInListCache,
   useAddWidget,
   useAllDashboards,
   useAllSavedQueries,
@@ -357,15 +358,18 @@ interface AddToDashboardDialogProps {
   onOpenChange: (open: boolean) => void;
   chartId: number;
   chartType: ChartType;
+  // 미저장 변경 가드를 지나게 하려고 부모의 requestNavigate 를 받는다 — 직접 navigate 하면 가드를 우회한다(WD-1106 ②)
+  onNavigate: (to: string) => void;
 }
 
-function AddToDashboardDialog({
+// 이름 내보내기 — 이 컴포넌트를 렌더링하는 단위 시험이 쓴다(WD-1106 ⑤)
+export function AddToDashboardDialog({
   open,
   onOpenChange,
   chartId,
   chartType,
+  onNavigate,
 }: AddToDashboardDialogProps) {
-  const navigate = useNavigate();
   const [selectedDashboardId, setSelectedDashboardId] = useState<number | null>(null);
   // 첫 페이지(100개)만 쓰면 101번째 이후 대시보드가 조용히 빠지므로 전 페이지를 모은다 (#737)
   const { data: allDashboards, isLoading, isError } = useAllDashboards();
@@ -373,10 +377,10 @@ function AddToDashboardDialog({
   // 거르지 않으면 남의 대시보드를 골랐을 때 서버가 404 로 거절해 「대시보드를 찾을 수 없습니다」가 뜬다.
   const isOwner = useIsOwner();
   const dashboards = (allDashboards ?? []).filter((d) => isOwner(d.createdBy));
-  // 사용자 정보를 아직 못 읽었으면 useIsOwner 가 모두 false 라 내 대시보드가 있어도 빈 목록처럼 보인다 —
-  // 빈 상태(만들기 입력) 판정에서는 「불러오는 중」으로 취급한다(WD-1076).
-  const { user } = useAuth();
-  const isUserLoading = user == null;
+  // 인증 로딩이 끝나기 전에는 useIsOwner 가 모두 false 라 내 대시보드가 있어도 빈 목록처럼 보인다 —
+  // 그래서 빈 상태(만들기 입력) 판정에서는 로딩으로 취급한다(WD-1076). 기준은 user == null 이 아니라 인증
+  // isLoading 이다 — 사용자 조회가 실패해 user 가 계속 null 이어도 로딩이 끝나면 빈 목록으로 간다(WD-1106 ⑤).
+  const { isLoading: isAuthLoading } = useAuth();
 
   // 빈 상태(WD-1076)에서 새 대시보드 이름과 중복 409 서버 문구 — 이름을 고치면 문구가 사라진다
   const [newName, setNewName] = useState('');
@@ -399,11 +403,22 @@ function AddToDashboardDialog({
   const queryClient = useQueryClient();
   // 같은 틱의 연속 클릭·Enter 연타로 대시보드가 둘 만들어지는 것을 동기 잠금으로 막는다
   const guardSubmit = useSubmitGuard();
+  // (WD-1106 ①) 떠난 뒤 이동 금지 — 요청 도중 사용자가 다른 화면으로 떠나 이 컴포넌트가 언마운트되면,
+  // 늦게 온 성공 응답이 이동을 다시 불러 사용자를 대시보드로 끌고 간다. 성공 직후 이 ref 로 떠남을 가른다.
+  // setup 에서 true 로 되살리는 건 StrictMode(개발) 이 마운트→정리→재마운트를 한 번 더 도는 동작 때문 —
+  // 정리만 남으면 재마운트 뒤에도 false 로 굳어 이동이 영영 안 일어난다.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   // 만들고 추가 진행 중에는 목록 재조회로 새 대시보드가 보여도 빈 상태 화면을 유지한다 —
   // 목록 화면으로 바뀌면 사용자가 새 대시보드를 골라 차트가 두 번 들어간다. 조회 실패는 「없음」이 아니다(#737).
   const [isCreating, setIsCreating] = useState(false);
-  const isListLoading = isLoading || isUserLoading;
+  const isListLoading = isLoading || isAuthLoading;
   const isEmptyState =
     isCreating || (!isListLoading && !isError && dashboards.length === 0);
 
@@ -432,6 +447,9 @@ function AddToDashboardDialog({
         // 설명·자동 새로고침은 보내지 않는다 — 나중에 대시보드에서 고친다
         const created = await createDashboard.mutateAsync({ name, isShared: false });
         newId = created.id;
+        // 만든 결과를 목록 캐시에 씨앗으로 넣는다 — 재조회 성공에 기대지 않도록,
+        // 재조회가 실패해도 목록에 항목과 선택이 남아 재시도할 수 있다(WD-1106 ③)
+        seedDashboardInListCache(queryClient, created);
       } catch (error) {
         // 이름 중복(409)은 서버 문구를 입력 아래에 보이고 토스트는 생략한다
         if (isDuplicateName(error)) {
@@ -445,11 +463,14 @@ function AddToDashboardDialog({
         await addWidget.mutateAsync({ dashboardId: newId, ...buildWidgetRequest(0) }); // 새 대시보드는 비어 있어 맨 위(0)
         toast.success(`'${name}' 대시보드를 만들고 차트를 추가했습니다.`);
         onOpenChange(false);
-        navigate(`/analytics/dashboards/${newId}`);
-      } catch (error) {
+        // 떠나 있는 동안(언마운트)에는 이동하지 않는다(WD-1106 ①) — 이동은 가드를 지난다(②)
+        if (mountedRef.current) onNavigate(`/analytics/dashboards/${newId}`);
+      } catch {
         // 만들기는 성공했으므로 대화상자를 유지하고 새 대시보드를 미리 선택해 바로 「추가」를 다시 누를 수 있게 한다
         setSelectedDashboardId(newId);
-        handleApiError(error, '대시보드에 차트 추가 실패');
+        // 방금 만든 뒤의 부분 실패라 안내가 다르다 — 목록 재조회까지 실패해도 만든 항목을
+        // 다시 골라 재시도할 수 있게 알린다(일반 오류 문구는 재시도 방법을 말해 주지 않는다)
+        toast.error('대시보드를 만들었지만 차트 추가에 실패했습니다 — 목록에서 다시 골라 「추가」를 누르세요.');
         // 목록 재조회가 끝나기 전에 만들기 상태를 풀면 새 대시보드 없는 빈 입력이 잠깐 떠 같은 이름 재시도가 409 가 된다
         await queryClient.invalidateQueries({ queryKey: DASHBOARD_LIST_KEY });
       }
@@ -471,19 +492,24 @@ function AddToDashboardDialog({
     const targetName = dashboards.find((d) => d.id === targetId)?.name ?? '대시보드';
     setIsAdding(true);
     try {
-      // 대상 대시보드의 기존 위젯 맨 아래(y+h 최댓값)에 넣는다. 상세 캐시를 공유하고, 오래된 값이면 다시 읽는다.
+      // 대상 대시보드의 기존 위젯 맨 아래(y+h 최댓값)에 넣는다. 상세 캐시를 공유하고, 오래된 값이면 다시 읽는다 —
+      // 쿼리 옵션은 useDashboard 와 같은 한 곳에서 쓴다(키·조회 함수가 어긋나면 캐시를 못 나눠 읽는다)
       const detail = await queryClient.fetchQuery({
-        queryKey: dashboardDetailKey(targetId),
-        queryFn: () => analyticsApi.getDashboard(targetId).then((r) => r.data),
+        ...dashboardDetailQueryOptions(targetId),
         staleTime: 0,
       });
       const bottom = detail.widgets.reduce((acc, w) => Math.max(acc, w.positionY + w.height), 0);
-      const positionY = Math.min(bottom, MAX_WIDGET_POSITION_Y);
-      await addWidget.mutateAsync({ dashboardId: targetId, ...buildWidgetRequest(positionY) });
+      // 아래 끝이 상한을 넘는 자리에 넣으면 기존 위젯과 겹친다 — 그래서 자리가 없으면 넣지 않는다(WD-1106 ④)
+      if (bottom > MAX_WIDGET_POSITION_Y) {
+        toast.error(`이 대시보드는 위젯을 둘 자리가 없습니다(마지막 행 ${bottom}, 상한 ${MAX_WIDGET_POSITION_Y}). 대시보드에서 위젯을 옮긴 뒤 다시 시도하세요.`);
+        return;
+      }
+      await addWidget.mutateAsync({ dashboardId: targetId, ...buildWidgetRequest(bottom) });
       toast.success(`'${targetName}'에 차트가 추가되었습니다.`);
       onOpenChange(false);
-      // 사용자가 결과를 즉시 확인할 수 있도록 대시보드 상세로 이동
-      navigate(`/analytics/dashboards/${targetId}`);
+      // 사용자가 결과를 즉시 확인할 수 있도록 대시보드 상세로 이동 —
+      // 떠나 있는 동안(언마운트)에는 하지 않고(WD-1106 ①), 미저장 변경이 있으면 가드 확인을 지난다(②)
+      if (mountedRef.current) onNavigate(`/analytics/dashboards/${targetId}`);
     } catch (error) {
       handleApiError(error, '대시보드에 차트 추가 실패');
     } finally {
@@ -518,8 +544,9 @@ function AddToDashboardDialog({
           <div className="space-y-2 py-2 max-h-80 overflow-y-auto">
             {isListLoading && !isCreating ? (
               <p className="text-sm text-muted-foreground">대시보드 목록을 불러오는 중...</p>
-            ) : isError ? (
-              // 조회 실패를 "대시보드 없음"으로 위장하지 않는다 (#737)
+            ) : isError && !dashboards.some((d) => d.id === selectedDashboardId) ? (
+              // 조회 실패를 "대시보드 없음"으로 위장하지 않는다(#737) — 다만 방금 만든 것이 목록에
+              // 있는 동안에는 오류 화면이 선택을 덮지 않는다(WD-1106 ③): 재시도할 항목을 보여 줘야 한다
               <p role="alert" className="text-sm text-destructive">대시보드 목록을 불러오지 못했습니다.</p>
             ) : isEmptyState ? (
               <div className="space-y-1.5">
@@ -1369,6 +1396,7 @@ export default function ChartBuilderPage() {
           onOpenChange={setAddToDashboardOpen}
           chartId={chartId}
           chartType={chartType}
+          onNavigate={requestNavigate}
         />
       )}
 
