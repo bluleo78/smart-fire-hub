@@ -202,3 +202,34 @@ describe('SearchInput 바깥 값 상한 (WD-1143)', () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 });
+
+describe('SearchInput 마운트·조합 끝 자르기 (WD-1159)', () => {
+  it('상한 이하 값으로 마운트하면 onChange 를 부르지 않는다', () => {
+    const onChange = vi.fn();
+    render(<SearchInput value="abc" onChange={onChange} maxLength={1000} />);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('상한을 넘는 값으로 마운트하면 잘린 값으로 한 번 부른다', () => {
+    const onChange = vi.fn();
+    render(<SearchInput value={'a'.repeat(1001)} onChange={onChange} maxLength={1000} />);
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange.mock.calls[0][0]).toHaveLength(1000);
+  });
+
+  it('조합 중 부모가 상한을 넘긴 값을 내려도 조합이 끝나면 잘린 값으로 맞춘다', () => {
+    const onChange = vi.fn();
+    const { rerender } = render(<SearchInput value="" onChange={onChange} maxLength={1000} />);
+    const input = screen.getByRole('textbox') as HTMLInputElement;
+    fireEvent.compositionStart(input);
+    // 조합 중 부모가 상한을 넘는 값을 내려준다(효과는 조합 중이라 건너뜀)
+    const over = 'a'.repeat(1001);
+    rerender(<SearchInput value={over} onChange={onChange} maxLength={1000} />);
+    // 조합 중 입력된 값은 그대로 칸에 있다
+    fireEvent.change(input, { target: { value: over } });
+    fireEvent.compositionEnd(input);
+    expect(onChange).toHaveBeenCalled();
+    expect(onChange.mock.calls.at(-1)![0].length).toBeLessThanOrEqual(1000);
+    expect(input.value.length).toBeLessThanOrEqual(1000);
+  });
+});

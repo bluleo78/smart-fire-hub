@@ -1,6 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { Info, PauseCircle } from 'lucide-react';
-import { type SyntheticEvent, useRef, useState } from 'react';
+import { type SyntheticEvent, useState } from 'react';
 import { toast } from 'sonner';
 
 import { Button } from '../../../components/ui/button';
@@ -13,7 +13,7 @@ import {
   PLATFORM_DB_CAPABILITIES_KEY,
   usePlatformDbFeatures,
 } from '../../../hooks/queries/usePlatformDbCapabilities';
-import { isImeComposing } from '../../../hooks/useOverlayEscape';
+import { useImeSafeEnter } from '../../../hooks/useImeSafeEnter';
 import { clampToMaxLength, MAX_SEARCH_QUERY_LENGTH } from '../../../lib/validations/search-query';
 import type { DocumentSearchHit, DocumentSearchMode } from '../../../types/document';
 
@@ -38,12 +38,10 @@ export function DocumentSearchPanel({ datasetId }: DocumentSearchPanelProps) {
   const [searchedMode, setSearchedMode] = useState<DocumentSearchMode>('HYBRID');
   // 확장된 청크 ID 집합 — 클릭 시 content를 펼쳐서 전문을 보여주는 accordion 패턴 (#291).
   const [expandedChunks, setExpandedChunks] = useState<Set<number>>(new Set());
-  // WD-1143: 한글 IME 조합 중 여부 — 조합 중에는 값을 자르지 않고(조합 문자 깨짐 방지) Enter 로 검색하지 않는다.
-  const isComposingRef = useRef(false);
   // WD-1143: 조합이 끝났거나(compositionend) 조합 중 포커스를 잃었을 때(compositionend 가 오지 않을 수 있다)
   //   조합 상태를 풀고 상한으로 자른 값을 남긴다.
+  //   조합 여부 ref 는 훅(useImeSafeEnter)이 갱신한다 — 여기서는 값 자르기만 한다.
   const finishComposition = (e: SyntheticEvent<HTMLInputElement>) => {
-    isComposingRef.current = false;
     setQuery(clampToMaxLength(e.currentTarget.value, MAX_SEARCH_QUERY_LENGTH));
   };
   const search = useSearchDocuments();
@@ -71,9 +69,17 @@ export function DocumentSearchPanel({ datasetId }: DocumentSearchPanelProps) {
     });
   };
 
-  const handleSearch = () => {
+  // 벡터 저장소(Qdrant)가 잠깐 내려가 있으면 검색이 늘 빈 결과다(WD-724) — 안내를 띄우고 검색을 막는다.
+  const storeDown = !features.vectorStoreAvailable;
+
+  /**
+   * 검색 실행. Enter 는 입력칸의 DOM 값(조합 확정 직후엔 상태가 아직 낡았을 수 있다)을, 버튼은 상태 query 를 넘긴다.
+   * 검색 버튼 비활성 조건(저장소 중단·요청 중·빈 값)과 같게 막는다.
+   */
+  const handleSearch = (raw: string) => {
+    if (storeDown || search.isPending) return;
     // WD-1143: 조합 중 버튼 클릭 등으로 상한을 넘은 값이 상태에 있을 수 있어 보내기 전에 한 번 더 자른다.
-    const q = clampToMaxLength(query, MAX_SEARCH_QUERY_LENGTH).trim();
+    const q = clampToMaxLength(raw, MAX_SEARCH_QUERY_LENGTH).trim();
     if (!q) return;
     setSearchedMode(effectiveMode);
     search.mutate(
@@ -89,6 +95,9 @@ export function DocumentSearchPanel({ datasetId }: DocumentSearchPanelProps) {
     );
   };
 
+  // WD-1159: 한글 조합 확정 Enter 한 번으로 검색 — 브라우저별 Enter 순서 차이는 훅이 흡수한다.
+  const imeEnter = useImeSafeEnter(handleSearch);
+
   // 벡터·트라이그램이 모두 꺼진 설치본(Tibero)은 쓸 수 있는 모드가 없다 — 늘 빈 결과를 내는 검색창 대신 안내만 둔다.
   if (availableModes.length === 0) {
     return (
@@ -101,10 +110,7 @@ export function DocumentSearchPanel({ datasetId }: DocumentSearchPanelProps) {
     );
   }
 
-  // 벡터 저장소(Qdrant)가 잠깐 내려가 있으면 검색이 늘 빈 결과다(WD-724) — 안내를 띄우고 검색 버튼을 막는다.
-  // 설치본이 지원하지 않는 경우(위 Tibero 안내)와 달리 복구되면 저절로 사라진다(기능 상태를 주기로 다시 묻는다).
-  const storeDown = !features.vectorStoreAvailable;
-
+  // storeDown 안내는 복구되면 저절로 사라진다(기능 상태를 주기로 다시 묻는다) — 위 Tibero 안내와 다르다.
   return (
     <section className="space-y-3">
       <h2 className="text-lg font-semibold">문서 검색</h2>
@@ -137,23 +143,26 @@ export function DocumentSearchPanel({ datasetId }: DocumentSearchPanelProps) {
               // WD-1143: 조합 중에는 자르면 조합 문자가 깨지므로 그대로 두고, 조합이 끝날 때(onCompositionEnd) 자른다.
               onChange={(e) =>
                 setQuery(
-                  isComposingRef.current
+                  imeEnter.isComposingRef.current
                     ? e.target.value
                     : clampToMaxLength(e.target.value, MAX_SEARCH_QUERY_LENGTH),
                 )
               }
-              onCompositionStart={() => {
-                isComposingRef.current = true;
+              onCompositionStart={imeEnter.onCompositionStart}
+              // finishComposition 먼저 — 칸 값을 상한으로 자른 뒤 훅이 검색한다.
+              onCompositionEnd={(e) => {
+                finishComposition(e);
+                imeEnter.onCompositionEnd(e);
               }}
-              onCompositionEnd={finishComposition}
-              onBlur={finishComposition}
-              onKeyDown={(e) => {
-                // WD-1143: 조합 중 Enter 는 음절 확정이지 검색 의도가 아니다 — 반쪽 음절로 검색하지 않는다.
-                if (isImeComposing(e.nativeEvent) || isComposingRef.current) return;
-                if (e.key === 'Enter' && !storeDown) handleSearch();
+              onBlur={(e) => {
+                finishComposition(e);
+                imeEnter.onBlur();
               }}
+              // WD-1143: 조합 중 Enter 는 확정용이라 바로 검색하지 않고, WD-1159: 확정되면 훅이 한 번 검색한다.
+              onKeyDown={imeEnter.onKeyDown}
+              onKeyUp={imeEnter.onKeyUp}
             />
-            <Button type="button" disabled={!query.trim() || search.isPending || storeDown} onClick={handleSearch}>
+            <Button type="button" disabled={!query.trim() || search.isPending || storeDown} onClick={() => handleSearch(query)}>
               {search.isPending ? '검색 중...' : '검색'}
             </Button>
           </div>

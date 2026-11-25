@@ -448,7 +448,7 @@ test.describe('문서 검색 한글 조합 (WD-1143)', () => {
   /** 조합 이벤트를 흉내 내는 헬퍼 — IME spec 과 같은 방식(native setter + input/composition 이벤트) */
   const fire = (
     input: Locator,
-    steps: Array<['start' | 'end' | 'set' | 'enter', string?]>,
+    steps: Array<['start' | 'end' | 'set' | 'enter' | 'safariEnter' | 'plainEnter' | 'keyup', string?]>,
   ) =>
     input.evaluate((el: HTMLInputElement, s) => {
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
@@ -460,6 +460,19 @@ test.describe('문서 검색 한글 조합 (WD-1143)', () => {
         } else if (kind === 'set') {
           setter.call(el, v ?? '');
           el.dispatchEvent(new Event('input', { bubbles: true }));
+        } else if (kind === 'safariEnter') {
+          // Safari 순서: compositionend 뒤에 keyCode 229 / isComposing=false 인 Enter 가 도착한다
+          el.dispatchEvent(
+            new KeyboardEvent('keydown', { key: 'Enter', keyCode: 229, isComposing: false, bubbles: true }),
+          );
+        } else if (kind === 'keyup') {
+          // 실제 브라우저는 확정 Enter 를 뗄 때 keyup 을 보낸다 — 훅은 이때 뒤따르는 Enter 거르기를 끝낸다
+          el.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', keyCode: 13, bubbles: true }));
+        } else if (kind === 'plainEnter') {
+          // 조합 확정 직후 같은 차례에 따라오는 일반 Enter(keyCode 13)
+          el.dispatchEvent(
+            new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, isComposing: false, bubbles: true }),
+          );
         } else {
           // 조합 중 Enter: 브라우저는 isComposing=true / keyCode 229 로 보낸다
           el.dispatchEvent(
@@ -469,7 +482,7 @@ test.describe('문서 검색 한글 조합 (WD-1143)', () => {
       }
     }, steps);
 
-  test('조합 중 Enter 는 검색하지 않고 조합이 끝난 뒤 Enter 는 온전한 검색어로 검색한다', async ({
+  test('조합 중 Enter 는 compositionend 에 검색 1번으로 이어지고 같은 차례 일반 Enter 는 중복 검색하지 않는다', async ({
     authenticatedPage: page,
   }) => {
     await setupDocumentDatasetMocks(page, DATASET_ID, createDocuments(1));
@@ -478,16 +491,74 @@ test.describe('문서 검색 한글 조합 (WD-1143)', () => {
     const input = page.getByPlaceholder('검색어를 입력하세요');
     await input.focus();
 
-    await fire(input, [['start'], ['set', '소방'], ['enter']]);
-    // 조합 중 Enter 로는 요청이 나가지 않는다
-    await page.waitForTimeout(300);
-    expect(capture.requests).toHaveLength(0);
+    // 조합 중 Enter 는 보류되고, 조합이 끝나는 순간 칸 값으로 한 번 검색한다(같은 차례 일반 Enter 는 건너뛴다)
+    await fire(input, [['start'], ['set', '소방'], ['enter'], ['end', '소방'], ['plainEnter'], ['keyup']]);
+    await expect.poll(() => capture.requests.length).toBe(1);
+    expect((capture.requests[0].payload as { query: string }).query).toBe('소방');
 
-    await fire(input, [['end', '소방']]);
+    // 구별되는 검색어로 다시 Enter — 앞 같은 차례 일반 Enter 가 중복 검색을 냈다면 ['소방','소방','소방2'] 가 되어 실패한다
+    await input.fill('소방2');
     await input.press('Enter');
-    const req = await capture.waitForRequest();
-    expect((req.payload as { query: string }).query).toBe('소방');
-    expect(capture.requests).toHaveLength(1);
+    await expect
+      .poll(() => capture.requests.map((r) => (r.payload as { query: string }).query))
+      .toEqual(['소방', '소방2']);
+  });
+
+  test('macOS Chrome 처럼 뒤따르는 일반 Enter 가 다음 task 로 와도 중복 검색하지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDocumentDatasetMocks(page, DATASET_ID, createDocuments(1));
+    const capture = await mockApi(page, 'POST', '/api/v1/documents/search', [], { capture: true });
+    await page.goto(`/data/datasets/${DATASET_ID}?tab=documents`);
+    const input = page.getByPlaceholder('검색어를 입력하세요');
+    await input.focus();
+
+    await fire(input, [['start'], ['set', '소방'], ['enter'], ['end', '소방']]);
+    await expect.poll(() => capture.requests.length).toBe(1);
+    // 시간이 흐른 뒤(다른 task) 같은 누름의 Enter keydown·keyup 이 따로 도착한다
+    await page.waitForTimeout(50);
+    await fire(input, [['plainEnter']]);
+    await fire(input, [['keyup']]);
+    // 구별되는 검색어로 새로 누른 Enter 는 검색된다 — 뒤따른 Enter 가 중복 검색했다면 ['소방','소방','소방2']
+    await input.fill('소방2');
+    await input.press('Enter');
+    await expect
+      .poll(() => capture.requests.map((r) => (r.payload as { query: string }).query))
+      .toEqual(['소방', '소방2']);
+  });
+
+  test('Safari 순서(compositionend 뒤 keyCode 229 Enter)도 검색 1번으로 처리한다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDocumentDatasetMocks(page, DATASET_ID, createDocuments(1));
+    const capture = await mockApi(page, 'POST', '/api/v1/documents/search', [], { capture: true });
+    await page.goto(`/data/datasets/${DATASET_ID}?tab=documents`);
+    const input = page.getByPlaceholder('검색어를 입력하세요');
+    await input.focus();
+
+    await fire(input, [['start'], ['set', '소방'], ['end', '소방'], ['safariEnter']]);
+    await expect.poll(() => capture.requests.length).toBe(1);
+    // 구별되는 검색어로 다시 Enter — 앞에서 중복 검색이 따라왔다면 순서가 어긋나 실패한다
+    await input.fill('소방2');
+    await input.press('Enter');
+    await expect
+      .poll(() => capture.requests.map((r) => (r.payload as { query: string }).query))
+      .toEqual(['소방', '소방2']);
+  });
+
+  test('빈 값으로 조합 Enter 는 검색하지 않는다', async ({ authenticatedPage: page }) => {
+    await setupDocumentDatasetMocks(page, DATASET_ID, createDocuments(1));
+    const capture = await mockApi(page, 'POST', '/api/v1/documents/search', [], { capture: true });
+    await page.goto(`/data/datasets/${DATASET_ID}?tab=documents`);
+    const input = page.getByPlaceholder('검색어를 입력하세요');
+    await input.focus();
+
+    await fire(input, [['start'], ['enter'], ['end', ''], ['keyup']]);
+    // 이어서 값을 넣고 Enter 해 요청이 1건 오면, 앞의 빈 값 Enter 로는 요청이 없었음이 확정된다
+    await input.fill('소방');
+    await input.press('Enter');
+    await expect.poll(() => capture.requests.length).toBe(1);
+    expect((capture.requests[0].payload as { query: string }).query).toBe('소방');
   });
 
   test('조합 중에는 상한을 넘는 값을 자르지 않고 조합이 끝나면 1,000자로 자른다', async ({
@@ -504,6 +575,23 @@ test.describe('문서 검색 한글 조합 (WD-1143)', () => {
 
     await fire(input, [['end', '가']]);
     await expect(input).toHaveValue('가'.repeat(1000));
+  });
+
+  test('조합이 끝난 뒤 칸 표시값 길이와 보낸 검색어 길이가 같다(1,000자)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDocumentDatasetMocks(page, DATASET_ID, createDocuments(1));
+    const capture = await mockApi(page, 'POST', '/api/v1/documents/search', [], { capture: true });
+    await page.goto(`/data/datasets/${DATASET_ID}?tab=documents`);
+    const input = page.getByPlaceholder('검색어를 입력하세요');
+    await input.focus();
+
+    await fire(input, [['start'], ['set', '가'.repeat(1001)], ['enter'], ['end', '가'], ['keyup']]);
+    await expect(input).toHaveValue('가'.repeat(1000));
+    await expect.poll(() => capture.requests.length).toBe(1);
+    const query = (capture.requests[0].payload as { query: string }).query;
+    expect(query).toHaveLength(1000);
+    expect(query).toBe(await input.inputValue());
   });
 
   test('조합 중 포커스를 잃어 compositionend 가 없어도 다시 포커스해 Enter 하면 검색한다', async ({
@@ -526,7 +614,7 @@ test.describe('문서 검색 한글 조합 (WD-1143)', () => {
     expect(capture.requests).toHaveLength(1);
   });
 
-  test('조합 중 상한을 넘은 값으로 검색 버튼을 눌러도 1,000자 이하로 보낸다', async ({
+  test('조합 중 상한을 넘은 값으로 검색 버튼을 눌러도 정확히 1,000자로 보낸다', async ({
     authenticatedPage: page,
   }) => {
     await setupDocumentDatasetMocks(page, DATASET_ID, createDocuments(1));
@@ -536,9 +624,14 @@ test.describe('문서 검색 한글 조합 (WD-1143)', () => {
     await input.focus();
 
     await fire(input, [['start'], ['set', '가'.repeat(1001)]]);
-    await page.getByRole('button', { name: '검색' }).click();
+    // Playwright click 은 칸을 blur 해 onBlur 자르기가 먼저 일어난다 — 포커스를 옮기지 않도록 DOM click 을 직접 보낸다
+    await page
+      .getByRole('button', { name: '검색', exact: true })
+      .evaluate((el) => (el as HTMLButtonElement).click());
 
-    const req = await capture.waitForRequest();
-    expect((req.payload as { query: string }).query.length).toBeLessThanOrEqual(1000);
+    await expect.poll(() => capture.requests.length).toBe(1);
+    const query = (capture.requests[0].payload as { query: string }).query;
+    expect(query).toHaveLength(1000);
+    expect(query).toBe('가'.repeat(1000));
   });
 });

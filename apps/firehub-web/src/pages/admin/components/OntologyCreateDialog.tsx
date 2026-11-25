@@ -129,6 +129,7 @@ export default function OntologyCreateDialog({ open, onOpenChange, onCreated }: 
             onKeyDown={(e) => {
               // 한글 IME 조합 중 Enter 는 글자 확정 키라 제출하면 안 된다(WD-819). 요청 중 중복 Enter 는 useSubmitGuard 가 막는다.
               // Safari 는 조합 확정 Enter 를 isComposing=false·keyCode 229 로 보내므로 공용 isImeComposing 으로 함께 거른다.
+              // 만들기는 확정 동작이라 조합 확정 Enter 로 바로 만들지 않도록 두 번 누름을 유지한다(WD-1159, 검색칸과 다름).
               if (e.key !== 'Enter' || isImeComposing(e.nativeEvent)) return;
               void submit();
             }}
