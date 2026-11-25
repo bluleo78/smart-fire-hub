@@ -151,7 +151,8 @@ export function ImportMappingDialog(props: ImportMappingDialogProps) {
 
         {step === 3 && (
           // WD-1140/WD-1152: 3단계 바깥 칸은 스크롤하지 않는다 — 본문 스크롤과 푸터(확인/닫기)는 ImportProgressView 가 나눠 맡는다.
-          <div className="flex min-h-0 flex-1 flex-col">
+          // min-h-40(160px) ≥ 본문 최소 96px + 푸터 ~49px — ProgressShell(ImportProgressView)은 이 칸을 채우기만 하므로 최소 높이는 여기 한 곳에서만 지킨다(값을 바꾸면 그쪽 주석도 함께 고친다). 아주 낮은 화면(≈200px)에서 칸이 내용보다 작아져 푸터가 칸 밖으로 넘치지 않게 하고, 모자란 높이는 바깥 대화상자 스크롤(마지막 수단)이 받는다.
+          <div data-testid="import-step3" className="flex min-h-40 flex-1 flex-col">
             <ImportProgressView progress={importProgress} onClose={handlers.close} failedErrors={failedErrors} />
           </div>
         )}

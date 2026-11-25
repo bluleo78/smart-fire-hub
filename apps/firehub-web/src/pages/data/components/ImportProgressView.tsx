@@ -109,9 +109,8 @@ function ProgressBar({ value }: ProgressBarProps) {
 }
 
 /**
- * WD-1152: 3단계 공통 틀 — 바깥 칸은 스크롤하지 않고, 본문만 스크롤하며 동작 줄은 그 밖 푸터에 둔다(2단계 푸터와 같은 클래스).
- * 닫기/확인 버튼이 긴 내용에 묻히지 않도록 대기·진행 두 갈래가 같은 구조를 쓴다.
- * 본문의 min-h-24 는 아주 낮은 화면에서 0px 로 접히지 않게 하는 최소 높이(WD-1140), min-w-0 + overflow-x-hidden 은 긴 값이 3단계를 가로로 넘치게 하지 않도록 막는다(표는 자체 overflow-x-auto).
+ * WD-1152: 3단계 공통 틀 — 본문만 스크롤하고 동작 줄은 그 밖 푸터에 둬 긴 내용에도 닫기/확인 버튼이 늘 보인다(대기·진행 공용).
+ * 낮은 화면에서 내용이 칸 밖으로 넘치지 않게 하는 최소 높이(min-h-40)는 ImportMappingDialog 3단계 칸이 지키고, 여기서는 그 칸을 채우기만 한다.
  */
 function ProgressShell({
   bodyClassName,
@@ -126,7 +125,7 @@ function ProgressShell({
     <div className="flex min-h-0 flex-1 flex-col">
       <div
         data-testid="import-progress-body"
-        className={`min-h-24 min-w-0 flex-1 overflow-y-auto overflow-x-hidden ${bodyClassName}`}
+        className={`min-h-24 min-w-0 flex-1 overflow-auto ${bodyClassName}`}
       >
         {children}
       </div>
