@@ -29,7 +29,8 @@ export function isFocusLost(active: Element | null = document.activeElement): bo
 
 /**
  * 포커스가 갈 곳 없이 body 로 떨어졌는지만 본다(본문 main 은 잃음으로 보지 않는다) — WD-1138.
- * 초점을 「끌어오는」 쪽(ChatInput·카테고리 칩 초점 복구 등)이 쓴다: 사용자가 건너뛰기 링크로 일부러 main 에 둔 자리를 빼앗지 않는다(WD-1039).
+ * 쓰는 곳: isFocusLost(위 판정의 body 쪽 절반)와 DatasetCategoryChips 의 초점 복구(WD-1138) — 초점을 「끌어오는」 쪽이라
+ * 사용자가 건너뛰기 링크로 일부러 main 에 둔 자리를 빼앗지 않는다(WD-1039).
  */
 export function isFocusDropped(active: Element | null = document.activeElement): boolean {
   return !active || active === document.body;
