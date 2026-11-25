@@ -24,8 +24,15 @@ export function isMainContent(el: Element | null): boolean {
  * @returns 포커스가 없거나 body·본문(main#main-content) 자체에 있으면 true
  */
 export function isFocusLost(active: Element | null = document.activeElement): boolean {
-  if (!active || active === document.body) return true;
-  return isMainContent(active);
+  return isFocusDropped(active) || isMainContent(active);
+}
+
+/**
+ * 포커스가 갈 곳 없이 body 로 떨어졌는지만 본다(본문 main 은 잃음으로 보지 않는다) — WD-1138.
+ * 초점을 「끌어오는」 쪽(ChatInput·카테고리 칩 초점 복구 등)이 쓴다: 사용자가 건너뛰기 링크로 일부러 main 에 둔 자리를 빼앗지 않는다(WD-1039).
+ */
+export function isFocusDropped(active: Element | null = document.activeElement): boolean {
+  return !active || active === document.body;
 }
 
 /**

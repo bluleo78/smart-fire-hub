@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { focusMainContent, isFocusLost, isMainContent } from './focus-lost';
+import { focusMainContent, isFocusDropped, isFocusLost, isMainContent } from './focus-lost';
 
 /** isFocusLost — body 뿐 아니라 건너뛰기 대상 main 으로 돌아온 포커스도 「잃음」으로 본다 (WD-968 리뷰 후속) */
 describe('isFocusLost', () => {
@@ -30,6 +30,26 @@ describe('isFocusLost', () => {
     const div = document.createElement('div');
     div.id = 'main-content';
     expect(isFocusLost(div)).toBe(false);
+  });
+});
+
+/** isFocusDropped — body·null 만 true, 본문 main 은 잃음으로 보지 않는다(초점을 끌어오는 쪽용, WD-1138) */
+describe('isFocusDropped', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('activeElement 가 없거나 body 면 떨어진 것이다', () => {
+    expect(isFocusDropped(null)).toBe(true);
+    expect(isFocusDropped(document.body)).toBe(true);
+  });
+
+  it('본문 main#main-content 에 있으면 떨어진 것이 아니다', () => {
+    document.body.innerHTML = '<main id="main-content" tabindex="-1"></main>';
+    const main = document.getElementById('main-content')!;
+    main.focus();
+    expect(isFocusDropped()).toBe(false);
+    expect(isFocusLost()).toBe(true);
   });
 });
 
