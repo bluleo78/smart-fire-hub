@@ -216,12 +216,20 @@ export default function AuditLogPage() {
               data.content.map((log) => (
                 <TableRow key={log.id}>
                   <TableCell className="whitespace-nowrap tabular-nums">{formatDateTimeSecond(log.actionTime)}</TableCell>
-                  <TableCell>{log.username}</TableCell>
+                  {/* 행위자 칸 — 공백 없는 긴 이메일이 열을 밀지 않도록 안쪽 div 로 폭을 묶고 어디서든 줄바꿈한다(WD-1158) */}
+                  <TableCell className="whitespace-normal">
+                    <div className="max-w-[240px] [overflow-wrap:anywhere]">{log.username}</div>
+                  </TableCell>
                   <TableCell>{ACTION_LABELS[log.actionType] ?? log.actionType}</TableCell>
-                  {/* 대상 칸 — 소유권 이전 행은 「옛 소유자들 → 새 소유자 · 테넌트」로 길어질 수 있어 줄바꿈해 결과 칸이 표 밖으로 밀리지 않게 한다(WD-1158) */}
-                  <TableCell className="max-w-[320px] whitespace-normal break-words">{targetOf(log)}</TableCell>
-                  <TableCell className="max-w-[280px] truncate" title={log.description ?? undefined}>
-                    {log.description ?? '-'}
+                  {/* 대상 칸 — 소유권 이전 행은 「옛 소유자들 → 새 소유자 · 테넌트」로 길어질 수 있다. 셀의 max-width 는 표 열 폭을 못 묶고 공백 없는 긴 이메일은 꺾이지 않으므로, 안쪽 div 로 폭을 묶고 anywhere 로 어디서든 줄바꿈해 결과 칸이 밀리지 않게 한다(WD-1158) */}
+                  <TableCell className="whitespace-normal">
+                    <div className="max-w-[320px] [overflow-wrap:anywhere]">{targetOf(log)}</div>
+                  </TableCell>
+                  {/* 설명 칸 — td 의 max-width 는 열 폭을 못 묶으므로 안쪽 div 에서 말줄임해 긴 설명이 열을 넓히지 않게 한다(WD-1158) */}
+                  <TableCell>
+                    <div className="max-w-[280px] truncate" title={log.description ?? undefined}>
+                      {log.description ?? '-'}
+                    </div>
                   </TableCell>
                   <TableCell>
                     {log.result === 'SUCCESS' ? (
