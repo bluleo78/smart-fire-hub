@@ -116,6 +116,9 @@ public class MyBatisApiConnectionRepository implements ApiConnectionRepository {
     return mapper.selectHealthCheckable();
   }
 
+  // WD-1145: PG 에서는 EDGE_SPACE_CHARS(U+1680·U+2028 등 비 Latin-1 문자)를 ws 로 바인딩하므로 PG 서버 인코딩 UTF8 이
+  // 전제다(이 플랫폼 DB 는 UTF8 로 만든다) — 다른 인코딩이면 바인딩이 실패한다.
+  // Tibero 매퍼는 ws/sp 를 쓰지 않는다(ASCII 공백만 걷는 lower(trim)).
   @Override
   public boolean existsByName(String name) {
     return mapper.countByName(name, TextRules.EDGE_SPACE_CHARS, TextRules.EDGE_SPACE_AS_ASCII) > 0;

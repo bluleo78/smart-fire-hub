@@ -322,7 +322,11 @@ public class JooqApiConnectionRepository implements ApiConnectionRepository {
     return normalize(val(name, String.class));
   }
 
-  /** 유니코드 공백 → ASCII 공백 → trim → lower (WD-1129). */
+  /**
+   * 유니코드 공백 → ASCII 공백 → trim → lower (WD-1129). jOOQ 경로는 PG 전용이다(Tibero 는 MyBatis). WD-1145:
+   * {@code EDGE_SPACE_CHARS} 는 U+1680·U+2028 등 비 Latin-1 문자를 바인딩하므로 PG 서버 인코딩 UTF8 이 전제다(이 플랫폼 DB 는
+   * UTF8 로 만든다) — 다른 인코딩이면 바인딩이 실패한다.
+   */
   private static Field<String> normalize(Field<String> name) {
     return lower(
         trim(

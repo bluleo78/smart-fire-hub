@@ -7,9 +7,12 @@ import static org.jooq.impl.DSL.table;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.inOrder;
 
 import com.smartfirehub.apiconnection.dto.TestConnectionResponse;
+import com.smartfirehub.apiconnection.dto.UpdateApiConnectionRequest;
 import com.smartfirehub.apiconnection.repository.ApiConnectionRepository;
 import com.smartfirehub.apiconnection.service.ApiConnectionHealthCheckScheduler;
 import com.smartfirehub.apiconnection.service.ApiConnectionNotifier;
@@ -26,6 +29,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.InOrder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
@@ -137,6 +141,8 @@ class ApiConnectionTenantTest extends IntegrationTestBase {
   void cleanUp() {
     // 롤백이 없으므로 심은 행을 직접 지운다. RLS 가 걸리면 DELETE 도 테넌트 스코프이므로
     // 각자의 컨텍스트에서 지운다.
+    // update 시험이 남긴 감사 로그가 사용자를 참조하므로 사용자 삭제 전에 지운다(테넌트 스코프).
+    TenantRlsTestSupport.runInTenantTransaction(tx, tenantA, () -> deleteAuditLogs(userA));
     TenantRlsTestSupport.runInTenantTransaction(tx, tenantA, () -> deleteConnection(connA));
     TenantRlsTestSupport.runInTenantTransaction(tx, tenantB, () -> deleteConnection(connB));
     TenantRlsTestSupport.deleteUser(dsl, userA);
@@ -206,6 +212,30 @@ class ApiConnectionTenantTest extends IntegrationTestBase {
             "com.smartfirehub.apiconnection.repository.jooq.JooqApiConnectionRepository.updateHealthStatus");
   }
 
+  /**
+   * 수정은 행 잠금(findNameForUpdate)을 먼저 잡고 그 뒤에 existing 을 읽는다 — 감사 이전 값이 잠금 아래 행에서 나온다(WD-1129).
+   *
+   * <p>리포지토리 스파이가 있는 이 클래스로 옮겨 왔다(WD-1145) — 서비스 시험 클래스가 스파이 때문에 별도 스프링 컨텍스트를 띄우지 않고 컨텍스트 캐시를 공유하게
+   * 하려는 것이다.
+   */
+  @Test
+  @DisplayName("update 는 행 잠금(findNameForUpdate)을 existing 읽기(findById)보다 먼저 한다")
+  void update_locksRowBeforeReadingExisting() {
+    clearInvocations(repository);
+
+    TenantContext.set(tenantA);
+    try {
+      apiConnectionService.update(
+          connA, new UpdateApiConnectionRequest(null, "새 설명", null, null, null, null), userA);
+    } finally {
+      TenantContext.clear();
+    }
+
+    InOrder order = inOrder(repository);
+    order.verify(repository).findNameForUpdate(connA);
+    order.verify(repository).findById(connA);
+  }
+
   // ── 픽스처 헬퍼 ────────────────────────────────────────────────────────────
 
   /**
@@ -226,6 +256,13 @@ class ApiConnectionTenantTest extends IntegrationTestBase {
         .returning(field(name("id"), Long.class))
         .fetchOne()
         .get(field(name("id"), Long.class));
+  }
+
+  /** 이 사용자가 남긴 감사 로그를 지운다 — update 가 감사 행을 남겨 뒤이은 사용자 삭제가 FK 에 막히지 않게. */
+  private void deleteAuditLogs(Long userId) {
+    dsl.deleteFrom(table(name("audit_log")))
+        .where(field(name("user_id"), Long.class).eq(userId))
+        .execute();
   }
 
   private void deleteConnection(Long id) {
