@@ -34,6 +34,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -46,7 +47,8 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
 
   @Autowired private ApiConnectionService apiConnectionService;
 
-  @Autowired private ApiConnectionRepository apiConnectionRepository;
+  /** 호출 순서(행 잠금 → 읽기)를 InOrder 로 확인하려 스파이로 둔다(WD-1129) — 기본은 실제 구현에 위임한다. */
+  @MockitoSpyBean private ApiConnectionRepository apiConnectionRepository;
 
   @Autowired private DSLContext dsl;
 
@@ -3181,5 +3183,90 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
                     testUserId))
         .isInstanceOf(ApiConnectionNameAlreadyExistsException.class)
         .hasMessage("이미 사용 중인 이름입니다: " + base);
+  }
+
+  // ── WD-1129: 공백만 다른 개명은 겹침이 없으면 다듬은 이름 저장, 감사 이전 이름은 잠금 아래 값 ──
+
+  @Test
+  void update_trimOnlyRename_noOtherRow_storesTrimmedName() {
+    String base = "Sales" + System.nanoTime();
+    Long id = saveRaw(base + " ");
+
+    ApiConnectionResponse updated =
+        apiConnectionService.update(
+            id, new UpdateApiConnectionRequest(base, null, null, null, null, null), testUserId);
+
+    assertThat(updated.name()).isEqualTo(base);
+  }
+
+  @Test
+  void update_trimOnlyRename_caseVariantRowExists_keepsStoredName() {
+    String base = "Sales" + System.nanoTime();
+    Long id = saveRaw(base + " ");
+    saveRaw(base.toLowerCase());
+
+    ApiConnectionResponse updated =
+        apiConnectionService.update(
+            id, new UpdateApiConnectionRequest(base, null, null, null, null, null), testUserId);
+
+    assertThat(updated.name()).isEqualTo(base + " ");
+  }
+
+  /** 수정은 행 잠금(findNameForUpdate)을 먼저 잡고 그 뒤에 existing 을 읽는다 — 감사 이전 값이 잠금 아래 행에서 나온다(WD-1129). */
+  @Test
+  void update_locksRowBeforeReadingExisting() {
+    Long id = saveRaw("Order" + System.nanoTime());
+    org.mockito.Mockito.clearInvocations(apiConnectionRepository);
+
+    apiConnectionService.update(
+        id, new UpdateApiConnectionRequest(null, "새 설명", null, null, null, null), testUserId);
+
+    org.mockito.InOrder order = org.mockito.Mockito.inOrder(apiConnectionRepository);
+    order.verify(apiConnectionRepository).findNameForUpdate(id);
+    order.verify(apiConnectionRepository).findById(id);
+  }
+
+  /** 안쪽 공백 종류만 다른 이름(NBSP vs 공백)도 생성 시 중복(409)이다(WD-1129). */
+  @Test
+  void create_innerSpaceVariantOfExistingName_rejected() {
+    String base = "a" + System.nanoTime();
+    apiConnectionService.create(validReq("https://inner-a.example.com", base + " b"), testUserId);
+
+    assertThatThrownBy(
+            () ->
+                apiConnectionService.create(
+                    validReq("https://inner-b.example.com", base + "\u00A0b"), testUserId))
+        .isInstanceOf(ApiConnectionNameAlreadyExistsException.class);
+  }
+
+  /** 탭·NBSP 로 감싼 옛 행이 같은 이름의 다른 행 옆에 있어도 이름 없는 수정은 이름을 그대로 둔다(WD-1129). */
+  @Test
+  void update_descriptionOnly_nameNull_paddedLegacyRow_keepsStoredName() {
+    String base = "Sales" + System.nanoTime();
+    String padded = "\t" + base + "\u00A0";
+    saveRaw(base);
+    Long id = saveRaw(padded);
+
+    ApiConnectionResponse updated =
+        apiConnectionService.update(
+            id, new UpdateApiConnectionRequest(null, "새 설명", null, null, null, null), testUserId);
+
+    assertThat(updated.name()).isEqualTo(padded);
+    assertThat(updated.description()).isEqualTo("새 설명");
+  }
+
+  /** 이름에 저장된 패딩 이름을 그대로 보내도(글자 그대로 같음) 저장 이름은 바뀌지 않는다(WD-1129). */
+  @Test
+  void update_descriptionOnly_nameEqualsStoredPadded_keepsStoredName() {
+    String base = "Sales" + System.nanoTime();
+    String padded = "\t" + base + "\u00A0";
+    saveRaw(base);
+    Long id = saveRaw(padded);
+
+    ApiConnectionResponse updated =
+        apiConnectionService.update(
+            id, new UpdateApiConnectionRequest(padded, "새 설명", null, null, null, null), testUserId);
+
+    assertThat(updated.name()).isEqualTo(padded);
   }
 }

@@ -111,4 +111,32 @@ class TextRulesTest {
     assertThat(TextRules.hasText("\u200B \uFEFF")).isFalse();  // 공백·Cf 혼합
     assertThat(TextRules.hasText("a\u200Bb")).isTrue();         // 글자 사이의 Cf 는 글자가 남는다
   }
+
+  /**
+   * EDGE_SPACE_CHARS 는 Java (?U)\\s 와 같은 집합이고, 대응 문자열은 같은 길이의 ASCII 공백이다(WD-1129). 길이가 다르면 PG
+   * TRANSLATE 가 남는 문자를 지워 버린다.
+   */
+  @Test
+  void edgeSpaceChars_matchesUnicodeWhiteSpace() {
+    for (int c = 0; c <= 0xFFFF; c++) {
+      String ch = String.valueOf((char) c);
+      assertThat(TextRules.EDGE_SPACE_CHARS.indexOf(c) >= 0)
+          .as("U+%04X", c)
+          .isEqualTo(Pattern.matches("(?U)\\s", ch));
+    }
+    assertThat(TextRules.EDGE_SPACE_AS_ASCII).hasSameSizeAs(TextRules.EDGE_SPACE_CHARS);
+    assertThat(TextRules.EDGE_SPACE_AS_ASCII.chars()).allMatch(c -> c == ' ');
+  }
+
+  /** spacesToAscii 는 안팎의 모든 유니코드 공백을 U+0020 으로 바꾸고 null 은 null 이다(WD-1129). */
+  @Test
+  void spacesToAscii_mapsEveryUnicodeSpaceToAscii() {
+    assertThat(TextRules.spacesToAscii("\ta\u00A0b\u3000c ")).isEqualTo(" a b c ");
+    assertThat(TextRules.spacesToAscii("abc")).isEqualTo("abc");
+    assertThat(TextRules.spacesToAscii(null)).isNull();
+    for (int i = 0; i < TextRules.EDGE_SPACE_CHARS.length(); i++) {
+      assertThat(TextRules.spacesToAscii(String.valueOf(TextRules.EDGE_SPACE_CHARS.charAt(i))))
+          .isEqualTo(" ");
+    }
+  }
 }

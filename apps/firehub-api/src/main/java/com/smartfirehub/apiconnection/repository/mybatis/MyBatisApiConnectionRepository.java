@@ -4,6 +4,7 @@ import com.smartfirehub.apiconnection.repository.ApiConnectionRepository;
 import com.smartfirehub.apiconnection.repository.mybatis.ApiConnectionRows.ApiConnectionInsert;
 import com.smartfirehub.apiconnection.repository.mybatis.ApiConnectionRows.PreviousStatus;
 import com.smartfirehub.global.platformdb.mybatis.PlatformMyBatisRepository;
+import com.smartfirehub.global.validation.TextRules;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -117,12 +118,14 @@ public class MyBatisApiConnectionRepository implements ApiConnectionRepository {
 
   @Override
   public boolean existsByName(String name) {
-    return mapper.countByName(name) > 0;
+    return mapper.countByName(name, TextRules.EDGE_SPACE_CHARS, TextRules.EDGE_SPACE_AS_ASCII) > 0;
   }
 
   @Override
   public boolean existsByNameExcludingId(String name, Long excludeId) {
-    return mapper.countByNameExcludingId(name, excludeId) > 0;
+    return mapper.countByNameExcludingId(
+            name, excludeId, TextRules.EDGE_SPACE_CHARS, TextRules.EDGE_SPACE_AS_ASCII)
+        > 0;
   }
 
   /** 행 잠금으로 저장된 이름을 그대로 읽는다(WD-1107) — 없으면 빈 값. */
