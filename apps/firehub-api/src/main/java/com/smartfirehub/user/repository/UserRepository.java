@@ -1,6 +1,7 @@
 package com.smartfirehub.user.repository;
 
 import com.smartfirehub.user.dto.UserResponse;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -88,6 +89,12 @@ public interface UserRepository {
    * 거치지 않은 기존 선택값은 찾지 못한다.
    */
   List<UserResponse> findByIds(long tenantId, List<Long> ids);
+
+  /**
+   * 주어진 ID 의 사용자를 테넌트·멤버십 상태와 무관하게 일괄 조회한다(WD-1158) — 정지·제거된 옛 소유자의 이름까지 감사에 싣는 데 쓴다. 없는 id 는 결과에서
+   * 빠지고 순서는 보장하지 않는다.
+   */
+  List<UserResponse> findAllByIds(Collection<Long> ids);
 
   /** {@link #findAllPaginated} 의 총건수. 같은 테넌트 술어를 반드시 함께 적용해야 페이지가 맞는다. */
   long countAll(long tenantId, String search);

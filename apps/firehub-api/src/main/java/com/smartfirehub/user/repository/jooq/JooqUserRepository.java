@@ -16,6 +16,7 @@ import com.smartfirehub.global.util.LikePatternUtils;
 import com.smartfirehub.user.dto.UserResponse;
 import com.smartfirehub.user.repository.UserRepository;
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
@@ -225,6 +226,14 @@ public class JooqUserRepository implements UserRepository {
         .limit(size)
         .offset((long) page * size)
         .fetch(this::mapToUserResponse);
+  }
+
+  @Override
+  public List<UserResponse> findAllByIds(Collection<Long> ids) {
+    if (ids == null || ids.isEmpty()) {
+      return List.of();
+    }
+    return dsl.select(USER_FIELDS).from(USER).where(USER.ID.in(ids)).fetch(this::mapToUserResponse);
   }
 
   @Override

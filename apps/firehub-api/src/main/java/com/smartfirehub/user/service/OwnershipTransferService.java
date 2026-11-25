@@ -1,6 +1,7 @@
 package com.smartfirehub.user.service;
 
 import com.smartfirehub.global.exception.CodedApiException;
+import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.validation.TextRules;
 import com.smartfirehub.role.dto.RoleResponse;
 import com.smartfirehub.role.repository.RoleRepository;
@@ -8,10 +9,13 @@ import com.smartfirehub.tenant.dto.TenantMembership;
 import com.smartfirehub.tenant.repository.MembershipRepository;
 import com.smartfirehub.tenant.repository.TenantRepository;
 import com.smartfirehub.user.dto.OwnershipTransferResult;
+import com.smartfirehub.user.dto.UserResponse;
 import com.smartfirehub.user.exception.UserNotFoundException;
 import com.smartfirehub.user.repository.UserRepository;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -46,6 +50,13 @@ public class OwnershipTransferService {
    */
   @Transactional
   public OwnershipTransferResult transfer(long tenantId, Long targetUserId, String confirmName) {
+    // WD-1158: 역할 테이블이 RLS 대상이라 TenantContext 가 대상 테넌트와 다르면 다른 워크스페이스의 역할·멤버십을 건드리거나 0행을 읽는다 —
+    // 호출 계약(「그 테넌트로 잡혀 있어야 한다」)을 주석이 아니라 코드로 강제하고, 어긋나면 아무것도 바꾸기 전에 거부한다.
+    long scopedTenantId = TenantContext.require("소유권 이전");
+    if (scopedTenantId != tenantId) {
+      throw new IllegalStateException(
+          "소유권 이전 대상 워크스페이스(" + tenantId + ")와 현재 테넌트 범위(" + scopedTenantId + ")가 다릅니다");
+    }
     userRepository.acquireMemberAdminGuardLock(tenantId);
 
     // 확인 이름: 저장 이름·입력 모두 앞뒤 공백(TextRules.strip — NBSP·전각 공백 포함, 웹 stripEdgeSpace 와 같은 유니코드
@@ -96,7 +107,20 @@ public class OwnershipTransferService {
     List<Long> candidates = new ArrayList<>();
     candidates.add(targetUserId);
     candidates.addAll(fromUserIds);
+    // WD-1158: 정지·비활성 옛 소유자에게는 ADMIN 을 새로 주지 않는다.
+    // 강등(위)은 그대로지만, 일할 수 없는 계정에 관리 권한을 심으면 재활성될 때 의도치 않게 관리자가 된다.
+    // 활성 판정은 「계정 활성 + 멤버십 ACTIVE」 뿐이고 테넌트 상태는 보지 않는다.
+    // 콘솔은 정지된 테넌트의 소유자도 지정할 수 있어야 하는데(복구 수단),
+    // 테넌트 상태까지 보면 그때 새 소유자조차 ADMIN 을 못 받는다. 새 소유자는 위에서 활성이 확인됐다.
+    Set<Long> activeIds =
+        userRepository.findByIds(tenantId, candidates).stream()
+            .filter(UserResponse::isActive)
+            .map(UserResponse::id)
+            .collect(Collectors.toSet());
     for (Long userId : candidates) {
+      if (!activeIds.contains(userId)) {
+        continue;
+      }
       if (!userRepository.hasAdminRole(userId)) {
         userRepository.addRole(userId, adminRoleId);
         grantedAdminUserIds.add(userId);

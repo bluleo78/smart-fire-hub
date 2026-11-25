@@ -8,6 +8,7 @@ import com.smartfirehub.user.dto.UserResponse;
 import com.smartfirehub.user.repository.UserRepository;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
@@ -113,6 +114,18 @@ public class MyBatisUserRepository implements UserRepository {
   public List<UserResponse> findAllPaginated(long tenantId, String search, int page, int size) {
     return mapper.selectPage(
         tenantId, PlatformText.searchPattern(search), size, (long) page * size);
+  }
+
+  @Override
+  public List<UserResponse> findAllByIds(Collection<Long> ids) {
+    List<UserResponse> result = new ArrayList<>();
+    if (ids == null) {
+      return result;
+    }
+    for (List<Long> chunk : InChunks.of(new ArrayList<>(ids))) {
+      result.addAll(mapper.selectByIds(chunk));
+    }
+    return result;
   }
 
   @Override

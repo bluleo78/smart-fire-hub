@@ -60,7 +60,10 @@ function Body({
   const [input, setInput] = useState('');
   // 앞뒤 공백만 허용한다(서버와 같은 규칙) — 대소문자는 구분한다.
   // 저장 이름도 trim 해 비교한다(WD-1132 리뷰) — 이름이 " Acme " 처럼 공백을 가져도 공백 없이 입력해 통과할 수 있어야 한다. 서버도 같은 규칙.
-  const matches = stripEdgeSpace(input) === stripEdgeSpace(tenantName);
+  // WD-1158: 빈 입력(공백뿐 포함)은 이름과 같아 보여도 확인으로 치지 않는다 — 이름이 공백뿐인 테넌트에서 아무것도 안 쳐도 통과하던 구멍.
+  // 같은 입력을 두 번 다듬지 않게 한 번만 계산한다.
+  const trimmedInput = stripEdgeSpace(input);
+  const matches = trimmedInput !== '' && trimmedInput === stripEdgeSpace(tenantName);
 
   return (
     <>
@@ -85,7 +88,7 @@ function Body({
         <AlertDialogAction
           variant="destructive"
           disabled={!matches}
-          onClick={() => onConfirm(target.userId, stripEdgeSpace(input))}
+          onClick={() => onConfirm(target.userId, trimmedInput)}
         >
           소유자로 지정
         </AlertDialogAction>

@@ -53,6 +53,19 @@ test.describe('테넌트 소유자 지정 (WD-1132)', () => {
     expect(request.payload).toEqual({ userId: 11, confirmName: '한빛소방서' });
   });
 
+  // WD-1158: 테넌트 이름이 공백뿐이면 공백만 입력해도 일치하던 구멍 — 빈 입력은 이름과 무관하게 막는다.
+  test('테넌트 이름이 공백뿐이어도 공백만 입력하면 「소유자로 지정」이 비활성이다', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', '/api/platform/tenants/1', { ...TENANT, name: '   ' });
+    await mockApi(page, 'GET', '/api/platform/tenants/1/members', MEMBERS);
+    await page.goto('/tenants/1');
+    await expect(page.getByRole('cell', { name: 'lee@example.com' })).toBeVisible();
+
+    await page.getByRole('button', { name: '소유자로 지정' }).click();
+    const dialog = page.getByRole('alertdialog');
+    await dialog.getByLabel('확인하려면 테넌트 이름을 입력하세요').fill('   ');
+    await expect(dialog.getByRole('button', { name: '소유자로 지정' })).toBeDisabled();
+  });
+
   test('platform:tenant:create 권한이 없으면 「소유자로 지정」 버튼이 없다', async ({ page }) => {
     await loginAs(page, ['platform:tenant:read', 'platform:member:read']);
     await mockApi(page, 'GET', '/api/platform/tenants/1', TENANT);

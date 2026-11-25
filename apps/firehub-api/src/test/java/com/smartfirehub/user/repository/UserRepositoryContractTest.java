@@ -315,6 +315,27 @@ abstract class UserRepositoryContractTest extends AccessContractBase {
     assertThat(login(() -> repository().findByIds(tenantA, null))).isEmpty();
   }
 
+  /**
+   * findAllByIds(WD-1158): 테넌트·멤버십 상태와 무관하게 id 로 찾고, 없는 id 는 빠지며, 중복 id 는 한 번만 나오고, 빈·null 입력은 빈 결과다
+   * (순서는 계약이 아니다). jOOQ·MyBatis(Tibero) 두 구현이 같은 결과를 내는지 본다.
+   */
+  @Test
+  void findAllByIds_ignoresTenantAndMembershipState_dedupsAndOmitsMissing() {
+    long active = member("all-act", tenantA, "ACTIVE");
+    long suspended = member("all-sus", tenantA, "SUSPENDED");
+    long otherTenant = member("all-oth", tenantB, "ACTIVE");
+
+    List<UserResponse> found =
+        login(
+            () ->
+                repository()
+                    .findAllByIds(List.of(active, suspended, otherTenant, active, -1L)));
+
+    assertThat(ids(found)).containsExactlyInAnyOrder(active, suspended, otherTenant);
+    assertThat(login(() -> repository().findAllByIds(List.of()))).isEmpty();
+    assertThat(login(() -> repository().findAllByIds(null))).isEmpty();
+  }
+
   /** IN 목록이 한도(Tibero 1000)를 넘어도 나눠 조회해 끝쪽 id 까지 찾는다. */
   @Test
   void findByIds_manyIds_areChunked_andFindMemberAtTheEnd() {
