@@ -63,6 +63,9 @@ public class JooqApiConnectionRepository implements ApiConnectionRepository {
   private static final Field<String> AC_LAST_ERROR_MESSAGE =
       field(name("api_connection", "last_error_message"), String.class);
 
+  /** lower(trim) 비교의 열 쪽(값 쪽은 {@link #normalizedName}) — JooqProactiveJobRepository 와 같은 꼴(WD-1107). */
+  private static final Field<String> AC_NAME_NORMALIZED = lower(trim(AC_NAME));
+
   /** 전체 열 조회 결과 한 행을 도메인 값으로 옮긴다. */
   private static ApiConnectionRow toRow(Record r) {
     return new ApiConnectionRow(
@@ -282,20 +285,36 @@ public class JooqApiConnectionRepository implements ApiConnectionRepository {
         .fetch(r -> new HealthCheckTarget(r.get(AC_ID), r.get(AC_NAME)));
   }
 
-  /**
-   * 동일 이름의 API 연결이 이미 존재하는지 확인한다 (#647). RLS(V96) 정책이 현재 트랜잭션의 {@code app.tenant_id} GUC로 자동 필터링하므로
-   * 여기서 tenant_id를 명시적으로 조건에 넣을 필요가 없다 — 이미 pipeline.name 유니크 인덱스(V93)에서 검증된 것과 동일한 전제다.
-   */
+  /** {@inheritDoc} */
   @Override
   public boolean existsByName(String name) {
-    return dsl.fetchExists(dsl.selectOne().from(API_CONNECTION).where(AC_NAME.eq(name)));
+    return dsl.fetchExists(
+        dsl.selectOne().from(API_CONNECTION).where(AC_NAME_NORMALIZED.eq(normalizedName(name))));
   }
 
-  /** 이름 중복 확인 시 자기 자신(id)은 제외한다 — update()에서 이름을 바꾸지 않는 경우 자기 자신과 충돌 판정되는 것을 방지. */
+  /** {@inheritDoc} */
   @Override
   public boolean existsByNameExcludingId(String name, Long excludeId) {
     return dsl.fetchExists(
-        dsl.selectOne().from(API_CONNECTION).where(AC_NAME.eq(name)).and(AC_ID.ne(excludeId)));
+        dsl.selectOne()
+            .from(API_CONNECTION)
+            .where(AC_NAME_NORMALIZED.eq(normalizedName(name)))
+            .and(AC_ID.ne(excludeId)));
+  }
+
+  /** 행 잠금으로 저장된 이름을 그대로 읽는다(WD-1107) — 없으면 빈 값. */
+  @Override
+  public Optional<String> findNameForUpdate(Long id) {
+    return dsl.select(AC_NAME)
+        .from(API_CONNECTION)
+        .where(AC_ID.eq(id))
+        .forUpdate()
+        .fetchOptional(AC_NAME);
+  }
+
+  /** lower(trim) 비교의 값 쪽(WD-1107). */
+  private static Field<String> normalizedName(String name) {
+    return lower(trim(val(name, String.class)));
   }
 
   /**

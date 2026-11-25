@@ -63,6 +63,9 @@ public interface ApiConnectionMapper {
   /** 자기 자신을 뺀 같은 이름의 연결 수. */
   long countByNameExcludingId(@Param("name") String name, @Param("excludeId") Long excludeId);
 
+  /** 행 잠금(FOR UPDATE)으로 저장된 이름을 읽는다 — 없으면 null(WD-1107). */
+  String selectNameForUpdate(@Param("id") Long id);
+
   /** id 로 보이는 연결 수. */
   long countById(@Param("id") Long id);
 

@@ -106,13 +106,20 @@ public interface ApiConnectionRepository {
   List<HealthCheckTarget> findHealthCheckable();
 
   /**
-   * 동일 이름의 API 연결이 이미 존재하는지 확인한다 (#647). RLS(V96) 정책이 현재 트랜잭션의 {@code app.tenant_id} GUC로 자동 필터링하므로
-   * 여기서 tenant_id를 명시적으로 조건에 넣을 필요가 없다 — 이미 pipeline.name 유니크 인덱스(V93)에서 검증된 것과 동일한 전제다.
+   * 동일 이름의 API 연결이 이미 존재하는지 확인한다 (#647). 비교는 {@code lower(trim(name))} 로 대소문자·앞뒤 공백을 무시한다 — 다른
+   * 자원(WD-824)과 같은 기준이다(WD-1107). RLS(V96) 정책이 현재 트랜잭션의 {@code app.tenant_id} GUC로 자동 필터링하므로 여기서
+   * tenant_id를 명시적으로 조건에 넣을 필요가 없다 — 이미 pipeline.name 유니크 인덱스(V93)에서 검증된 것과 동일한 전제다.
    */
   boolean existsByName(String name);
 
-  /** 이름 중복 확인 시 자기 자신(id)은 제외한다 — update()에서 이름을 바꾸지 않는 경우 자기 자신과 충돌 판정되는 것을 방지. */
+  /** {@link #existsByName} 과 같은 기준으로 확인하되 id 행은 제외한다(WD-1107). */
   boolean existsByNameExcludingId(String name, Long excludeId);
+
+  /**
+   * 행 잠금({@code FOR UPDATE})으로 지금 저장된 이름을 그대로(정규화 없이) 읽는다(WD-1107). 수정 때 「이름이 실제로 바뀌는가」를 잠금 아래 최신
+   * 값으로 판단하려는 용도다. 행이 없거나 다른 워크스페이스 행(RLS)이면 빈 값.
+   */
+  Optional<String> findNameForUpdate(Long id);
 
   /**
    * 이 id 의 API 연결이 현재 워크스페이스에서 보이는지 확인한다(WD-176). {@link #existsByName} 과 같이 RLS(V96) 정책이 {@code

@@ -125,6 +125,12 @@ public class MyBatisApiConnectionRepository implements ApiConnectionRepository {
     return mapper.countByNameExcludingId(name, excludeId) > 0;
   }
 
+  /** 행 잠금으로 저장된 이름을 그대로 읽는다(WD-1107) — 없으면 빈 값. */
+  @Override
+  public Optional<String> findNameForUpdate(Long id) {
+    return Optional.ofNullable(mapper.selectNameForUpdate(id));
+  }
+
   @Override
   public boolean existsById(Long id) {
     return mapper.countById(id) > 0;

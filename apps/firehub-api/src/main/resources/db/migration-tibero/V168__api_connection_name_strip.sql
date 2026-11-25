@@ -1,0 +1,6 @@
+-- V168: api_connection.name 옛 행의 앞뒤 공백 정리 (WD-1107) — PG V168 과 짝(MigrationParityTest). Tibero 는 DML 을 넣지 않는다.
+--
+-- 이유는 PG V168 과 같은 데이터 정리이지만 Tibero 에서는 하지 않는다.
+--   - Tibero 설치본은 V155 기준선(최근)부터 시작해 NBSP·전각 공백으로 감싼 옛 행이 드물다.
+--   - 실서버로 정규식 표기(REGEXP_REPLACE 의 유니코드 White_Space 범위)를 확인할 수 없어, 검증 안 된 DML 을 넣지 않는다.
+--   - 중복 검사 질의의 LOWER(TRIM(name)) 가 ASCII 공백으로 감싼 옛 행은 이미 잡는다.

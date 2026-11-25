@@ -3046,4 +3046,140 @@ class ApiConnectionServiceTest extends IntegrationTestBase {
             testUserId);
     assertThat(updated.name()).isEqualTo(name);
   }
+
+  // ── WD-1107: 이름 중복 판정은 대소문자·앞뒤 공백을 무시하고, 개명일 때만 검사한다 ──────────────
+
+  /** 저장소로 직접 저장해(서비스 검사 우회) 옛 행을 흉내 낸다. */
+  private Long saveRaw(String name) {
+    return tx.execute(
+        s ->
+            apiConnectionRepository.save(
+                name,
+                null,
+                "API_KEY",
+                encryptionService.encrypt("{\"placement\":\"header\",\"headerName\":\"X-Key\",\"apiKey\":\"secret\"}"),
+                testUserId,
+                "https://api.example.com",
+                null));
+  }
+
+  @Test
+  void create_rejectsNameDifferingOnlyByCase() {
+    String base = "Sales" + System.nanoTime();
+    apiConnectionService.create(validReq("https://wd1107-a.example.com", base), testUserId);
+    String lower = base.toLowerCase();
+
+    assertThatThrownBy(
+            () ->
+                apiConnectionService.create(
+                    validReq("https://wd1107-a.example.com", lower), testUserId))
+        .isInstanceOf(ApiConnectionNameAlreadyExistsException.class)
+        .hasMessage("이미 사용 중인 이름입니다: " + lower);
+  }
+
+  @Test
+  void create_rejectsNameMatchingLegacyPaddedRow() {
+    String base = "Sales" + System.nanoTime();
+    saveRaw(base + " ");
+
+    assertThatThrownBy(
+            () ->
+                apiConnectionService.create(
+                    validReq("https://wd1107-b.example.com", base), testUserId))
+        .isInstanceOf(ApiConnectionNameAlreadyExistsException.class);
+  }
+
+  @Test
+  void update_descriptionOnly_onLegacyCaseDuplicate_allowed() {
+    String base = "Sales" + System.nanoTime();
+    saveRaw(base);
+    String lower = base.toLowerCase();
+    Long id = saveRaw(lower);
+
+    ApiConnectionResponse updated =
+        apiConnectionService.update(
+            id,
+            new UpdateApiConnectionRequest(lower, "새 설명", null, null, null, null),
+            testUserId);
+
+    assertThat(updated.description()).isEqualTo("새 설명");
+  }
+
+  @Test
+  void update_renameToOtherRowsNameDifferingByCase_rejected() {
+    String base = "Sales" + System.nanoTime();
+    apiConnectionService.create(validReq("https://wd1107-c.example.com", base), testUserId);
+    ApiConnectionResponse other =
+        apiConnectionService.create(
+            validReq("https://wd1107-c.example.com", "Other" + System.nanoTime()), testUserId);
+
+    assertThatThrownBy(
+            () ->
+                apiConnectionService.update(
+                    other.id(),
+                    new UpdateApiConnectionRequest(
+                        base.toUpperCase(), null, null, null, null, null),
+                    testUserId))
+        .isInstanceOf(ApiConnectionNameAlreadyExistsException.class);
+  }
+
+  @Test
+  void update_changeOwnNameCaseOnly_allowed() {
+    String base = "Sales" + System.nanoTime();
+    ApiConnectionResponse a =
+        apiConnectionService.create(validReq("https://wd1107-d.example.com", base), testUserId);
+
+    ApiConnectionResponse updated =
+        apiConnectionService.update(
+            a.id(),
+            new UpdateApiConnectionRequest(base.toUpperCase(), null, null, null, null, null),
+            testUserId);
+
+    assertThat(updated.name()).isEqualTo(base.toUpperCase());
+  }
+  // ── WD-1107 코드 리뷰: 옛 공백 행은 설명만 고쳐도 저장된 이름 그대로 두고, 실제 개명만 검사한다 ──
+
+  @Test
+  void update_descriptionOnly_onLegacyPaddedRow_besideExactName_keepsStoredName() {
+    String base = "Sales" + System.nanoTime();
+    saveRaw(base);
+    Long id = saveRaw(base + " ");
+
+    ApiConnectionResponse updated =
+        apiConnectionService.update(
+            id, new UpdateApiConnectionRequest(base, "새 설명", null, null, null, null), testUserId);
+
+    assertThat(updated.description()).isEqualTo("새 설명");
+    assertThat(updated.name()).isEqualTo(base + " ");
+  }
+
+  @Test
+  void update_descriptionOnly_onLegacyNbspRow_besideExactName_allowed() {
+    String base = "A" + System.nanoTime();
+    saveRaw(base);
+    Long id = saveRaw(base + "\u00a0");
+
+    ApiConnectionResponse updated =
+        apiConnectionService.update(
+            id, new UpdateApiConnectionRequest(base, "새 설명", null, null, null, null), testUserId);
+
+    assertThat(updated.description()).isEqualTo("새 설명");
+    assertThat(updated.name()).isEqualTo(base + "\u00a0");
+  }
+
+  @Test
+  void update_renameLegacyPaddedRowToOtherRowsCase_rejected() {
+    String base = "SALES" + System.nanoTime();
+    saveRaw(base);
+    Long id = saveRaw(base.toLowerCase() + " ");
+
+    assertThatThrownBy(
+            () ->
+                apiConnectionService.update(
+                    id,
+                    new UpdateApiConnectionRequest(base, null, null, null, null, null),
+                    testUserId))
+        .isInstanceOf(ApiConnectionNameAlreadyExistsException.class)
+        .hasMessage("이미 사용 중인 이름입니다: " + base);
+  }
 }
