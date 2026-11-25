@@ -7,7 +7,7 @@ import { extractApiError, handleApiError } from '../../lib/api-error';
 import { type KeyboardLayoutAction, keyToLayoutAction } from '../../lib/dashboard-layout-keyboard';
 import { cn } from '../../lib/utils';
 import { useWidgetRenderTurn } from '../../lib/widget-render-queue';
-import { type ChartDataResponse, type DashboardWidget, MAX_AUTO_REFRESH_SECONDS } from '../../types/analytics';
+import { type ChartConfig, type ChartDataResponse, type DashboardWidget, MAX_AUTO_REFRESH_SECONDS } from '../../types/analytics';
 import { PendingButton } from '../PendingButton';
 import { Button } from '../ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
@@ -80,14 +80,23 @@ function WidgetErrorBox({ title, children, action }: { title: ReactNode; childre
   );
 }
 
-/** 위젯 본문 로딩 스피너 — 첫 조회 중이거나 그릴 차례를 기다리는 동안(WD-1072) 같은 모양을 보인다 */
-function WidgetBodySpinner() {
+/**
+ * 위젯 본문 로딩 스피너 — 첫 조회 중이거나 그릴 차례를 기다리는 동안(WD-1072) 같은 모양을 보인다.
+ * testId 는 차례 대기 스피너만 시험이 따로 집어 볼 수 있게 선택으로 받는다(WD-1146).
+ */
+function WidgetBodySpinner({ testId }: { testId?: string }) {
   return (
-    <div className="flex items-center justify-center h-full">
+    <div className="flex items-center justify-center h-full" data-testid={testId}>
       <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
     </div>
   );
 }
+
+/**
+ * 설정이 가려졌을 때 쓰는 빈 차트 설정 — 모듈 상수로 둬 매 렌더 새 객체가 생겨
+ * QueuedChartArea 의 useMemo 판정이 깨지지 않게 한다(WD-1146).
+ */
+const EMPTY_CHART_CONFIG: ChartConfig = Object.freeze({ xAxis: '', yAxis: [] as string[] });
 
 /**
  * ChartRenderer 를 실제로 그리는 자리(WD-1072) — 위젯 여러 개가 한 커밋에 recharts 를 그리면 메인 스레드가 길게 막히므로
@@ -101,15 +110,16 @@ function QueuedChartArea({
   tableView,
   ...rendererProps
 }: { tableView: boolean } & Omit<ComponentProps<typeof ChartRenderer>, 'fillParent' | 'view'>) {
-  const { chartType, config, columns, data } = rendererProps;
+  const { chartType, config, columns, data, inferAxes } = rendererProps;
+  // inferAxes 는 undefined 일 수 있다 — 그러면 판정 함수의 기본값(true)이 렌더러와 같게 적용된다
   const needsTurn = useMemo(
-    () => chartNeedsRenderTurn(chartType, config, columns, data),
-    [chartType, config, columns, data],
+    () => chartNeedsRenderTurn(chartType, config, columns, data, inferAxes),
+    [chartType, config, columns, data, inferAxes],
   );
   // 표 보기는 SVG 를 그리지 않으므로 메모 밖에서 바로 거른다
   const ready = !tableView && needsTurn;
   const hasTurn = useWidgetRenderTurn(ready);
-  if (ready && !hasTurn) return <WidgetBodySpinner />;
+  if (ready && !hasTurn) return <WidgetBodySpinner testId="widget-render-turn-spinner" />;
   return <ChartRenderer {...rendererProps} fillParent view={tableView ? 'table' : 'chart'} />;
 }
 
@@ -191,7 +201,7 @@ function WidgetContent({ widget, chartData, dataLoading, dataFetching, dataError
   const effectiveChart = chartData.chart;
   // 메타 조회는 설정이 가려지면 config 가 null 이다(WD-31②). queryResult 가 있으면 데이터 응답(config 항상 객체)이
   // 쓰이므로 실제로는 닿지 않지만, 렌더러가 null 에서 깨지지 않게 빈 설정으로 좁힌다.
-  const effectiveConfig = effectiveChart.config ?? { xAxis: '', yAxis: [] };
+  const effectiveConfig = effectiveChart.config ?? EMPTY_CHART_CONFIG;
 
   return (
     <div className="flex h-full flex-col">
