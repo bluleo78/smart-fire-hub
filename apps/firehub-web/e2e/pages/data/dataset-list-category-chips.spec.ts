@@ -41,6 +41,9 @@ async function setup(page: Page, categoryCount: number, categoryDelayMs = 0) {
 const groupOf = (page: Page) => page.getByRole('group', { name: '카테고리' });
 const heightOf = async (page: Page) => (await groupOf(page).boundingBox())!.height;
 const moreBtn = (page: Page) => page.getByRole('button', { name: /더 보기$/ });
+/** 「전체」 칩·「접기」 버튼 로케이터 — WD-1138 초점 유지 테스트에서 쓴다. */
+const allBtn = (page: Page) => page.getByRole('button', { name: '전체', exact: true });
+const foldBtn = (page: Page) => groupOf(page).getByRole('button', { name: '접기', exact: true });
 
 /** 묶음 안에서 숨은(display:none) 칩 수. */
 async function hiddenChipCount(page: Page) {
@@ -234,5 +237,193 @@ test.describe('데이터셋 목록 — 카테고리 칩 접기 (WD-1073)', () =>
     await expect(moreBtn(page)).toBeVisible();
     await expect(moreBtn(page)).toHaveAttribute('aria-expanded', 'false');
     expect(await heightOf(page)).toBeLessThanOrEqual(ONE_ROW_MAX);
+  });
+
+  // WD-1138: 아주 좁은 칸(약 150px)에서도 「+N 더 보기」가 잘리지 않아야 한다 — 보이는 칩이 줄어들어 버튼 자리를 내준다.
+  // 고른 칩이 있으면 「전체」(32)+고른 칩(32)+버튼(약 95)+간격·여백이 최소 약 180px 라 150px 은 물리적으로 못 담는다 —
+  // 그 경우는 190px, 고른 칩이 없으면 150px 로 좁힌다.
+  async function narrowGroupTo(page: Page, px = 150) {
+    await groupOf(page).evaluate((el, w) => {
+      (el.parentElement as HTMLElement).style.width = `${w}px`;
+    }, px);
+  }
+  async function expectMoreInsideGroup(page: Page) {
+    // 좁힌 뒤 ResizeObserver 로 다시 재고 그릴 때까지 기다린다
+    await expect
+      .poll(async () => {
+        const g = (await groupOf(page).boundingBox())!;
+        const b = (await moreBtn(page).boundingBox())!;
+        return b.x + b.width - (g.x + g.width);
+      })
+      .toBeLessThanOrEqual(0.5);
+    const chips = groupOf(page).locator('button[aria-pressed]');
+    const widths = await chips.evaluateAll((els) =>
+      els.filter((el) => getComputedStyle(el).display !== 'none').map((el) => el.getBoundingClientRect().width),
+    );
+    for (const w of widths) expect(w).toBeGreaterThanOrEqual(32);
+  }
+
+  test('아주 좁은 칸에서도 +N 더 보기가 잘리지 않는다 — 고른 칩 없음 (WD-1138)', async ({ authenticatedPage: page }) => {
+    await setup(page, 34);
+    await page.goto('/data/datasets');
+    await expect(allBtn(page)).toBeVisible();
+    await narrowGroupTo(page);
+    await expect(moreBtn(page)).toBeVisible();
+    await expectMoreInsideGroup(page);
+  });
+
+  test('아주 좁은 칸에서도 +N 더 보기가 잘리지 않는다 — 긴 이름 칩을 고른 상태 (WD-1138)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setup(page, 34);
+    const longName = '아주긴카테고리이름'.repeat(4);
+    const cats = makeCategories(34).map((c) => (c.id === 34 ? { ...c, name: longName } : c));
+    await mockApi(page, 'GET', '/api/v1/dataset-categories', cats);
+    await page.goto('/data/datasets?categoryId=34');
+    await expect(groupOf(page).getByRole('button', { name: longName, exact: true })).toBeVisible();
+    await narrowGroupTo(page, 190);
+    await expect(moreBtn(page)).toBeVisible();
+    await expectMoreInsideGroup(page);
+    // 말줄임된 칩은 title 로 전체 이름을 보인다(「전체」는 달지 않는다).
+    await expect(groupOf(page).getByRole('button', { name: longName, exact: true })).toHaveAttribute('title', longName);
+    await expect(allBtn(page)).not.toHaveAttribute('title', /.*/);
+  });
+
+  test('칸 폭이 0 이어도(측정된 갈래) 「전체」와 고른 칩이 보인다 (WD-1138)', async ({ authenticatedPage: page }) => {
+    // 범위: 측정은 있지만 칸 폭이 0 인 경우 — 측정된 갈래의 「전체」+고른 칩 최소 2개(max(2, …))를 지킨다.
+    // 측정 전 갈래(측정값 없음)는 레이아웃 이펙트가 칠하기 전에 끝내 E2E 로 관찰할 수 없어 이 시험이 닿지 않는다.
+    await page.addInitScript(() => {
+      const desc = Object.getOwnPropertyDescriptor(Element.prototype, 'clientWidth')!;
+      Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+        configurable: true,
+        get() {
+          return this.getAttribute('aria-label') === '카테고리' ? 0 : desc.get!.call(this);
+        },
+      });
+    });
+    await setup(page, 34);
+    await page.goto('/data/datasets?categoryId=34');
+    await expect(allBtn(page)).toBeVisible();
+    const chip34 = groupOf(page).getByRole('button', { name: '카테고리34', exact: true });
+    await expect(chip34).toBeVisible();
+    await expect(chip34).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  test('더 보기 버튼의 aria-controls 가 칩 묶음 id 와 같다 (WD-1138)', async ({ authenticatedPage: page }) => {
+    await setup(page, 34);
+    await page.goto('/data/datasets');
+    await expect(moreBtn(page)).toBeVisible();
+    const groupId = await groupOf(page).getAttribute('id');
+    expect(groupId).toBeTruthy();
+    await expect(moreBtn(page)).toHaveAttribute('aria-controls', groupId!);
+  });
+
+  test('칩을 고르면 목록 요청에 categoryId 가 실리고 「전체」는 빠진다 (WD-1138)', async ({ authenticatedPage: page }) => {
+    await setup(page, 5);
+    const isList = (r: { url(): string }, id: string | null) => {
+      const u = new URL(r.url());
+      return u.pathname === '/api/v1/datasets' && u.searchParams.get('categoryId') === id;
+    };
+    // 처음부터 분류 3 으로 진입해 같은 질의 캐시에 가려지지 않게 한 뒤, 다른 칩(4)과 「전체」 요청을 각각 새로 관찰한다
+    const initial = page.waitForRequest((r) => isList(r, '3'));
+    await page.goto('/data/datasets?categoryId=3');
+    await initial;
+    const with4 = page.waitForRequest((r) => isList(r, '4'));
+    await groupOf(page).getByRole('button', { name: '카테고리4', exact: true }).click();
+    await with4;
+    const without = page.waitForRequest((r) => isList(r, null));
+    await allBtn(page).click();
+    await without;
+  });
+
+  // WD-1138: 초점을 가진 요소가 창 크기 변화로 사라지거나 숨으면 초점이 body 로 떨어지지 않고 「전체」로 가야 한다.
+
+  test('펼친 채 「접기」에 초점이 있을 때 창이 넓어져 버튼이 사라지면 초점이 「전체」로 간다 (WD-1138)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setup(page, 12);
+    await page.setViewportSize({ width: 600, height: 900 });
+    await page.goto('/data/datasets');
+    await moreBtn(page).click();
+    await foldBtn(page).focus();
+    await expect(foldBtn(page)).toBeFocused();
+    await page.setViewportSize({ width: 2560, height: 900 });
+    await expect(foldBtn(page)).toHaveCount(0);
+    await expect(allBtn(page)).toBeFocused();
+  });
+
+  test('초점을 「전체」로 옮겨도 스크롤 위치는 그대로다 (WD-1138)', async ({ authenticatedPage: page }) => {
+    // 낮은 창에서 「접기」에 초점을 둔 채 아래로 스크롤하고 넓히면, 초점은 「전체」로 가되 화면이 칩 줄로 튀지 않아야 한다(preventScroll).
+    await setup(page, 12);
+    await page.setViewportSize({ width: 600, height: 260 });
+    await page.goto('/data/datasets');
+    await moreBtn(page).click();
+    await foldBtn(page).focus();
+    // 칩 묶음을 감싼 스크롤 상자(없으면 문서)의 scrollTop 을 읽는다 — toBottom 이면 먼저 맨 아래로 내린다
+    const scrollerTop = (toBottom = false) =>
+      groupOf(page).evaluate((el, bottom) => {
+        let n: HTMLElement | null = el.parentElement;
+        while (n && !(n.scrollHeight > n.clientHeight && /auto|scroll/.test(getComputedStyle(n).overflowY))) n = n.parentElement;
+        const s = n ?? (document.scrollingElement as HTMLElement);
+        if (bottom) s.scrollTop = s.scrollHeight;
+        return s.scrollTop;
+      }, toBottom);
+    await scrollerTop(true);
+    expect(await scrollerTop()).toBeGreaterThan(0);
+    // 칩 줄이 화면 위로 스크롤돼 나가 있는지 확인해 둔다
+    expect((await groupOf(page).boundingBox())!.y).toBeLessThan(0);
+    await page.setViewportSize({ width: 2560, height: 260 });
+    await expect(foldBtn(page)).toHaveCount(0);
+    await expect(allBtn(page)).toBeFocused();
+    // 넓히면 내용 높이가 줄어 스크롤 값은 달라질 수 있지만, focus() 가 칩 줄을 화면으로 끌어오지는 않아야 한다
+    expect(await scrollerTop()).toBeGreaterThan(0);
+    expect((await groupOf(page).boundingBox())!.y).toBeLessThan(0);
+  });
+
+  test('접힌 채 끝 칩에 초점이 있을 때 창이 좁아져 칩이 숨으면 초점이 「전체」로 간다 (WD-1138)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setup(page, 12);
+    await page.setViewportSize({ width: 2560, height: 900 });
+    await page.goto('/data/datasets');
+    const last = page.getByRole('button', { name: '카테고리12', exact: true });
+    await last.focus();
+    await expect(last).toBeFocused();
+    await page.setViewportSize({ width: 600, height: 900 });
+    await expect(moreBtn(page)).toBeVisible();
+    await expect(last).toBeHidden();
+    await expect(allBtn(page)).toBeFocused();
+  });
+
+  test('묶음 밖으로 초점을 옮기거나 빈 곳을 눌러 뺀 뒤 창을 바꾸면 초점을 끌어오지 않는다 (WD-1138)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setup(page, 12);
+    await page.setViewportSize({ width: 600, height: 900 });
+    await page.goto('/data/datasets');
+    await moreBtn(page).click();
+    await foldBtn(page).focus();
+    // 묶음 밖(탭 이동)
+    await page.keyboard.press('Tab');
+    // 같은 요소인지 신원으로 비교하려고 지금 활성 요소에 표식을 단다(tagName 만으로는 다른 요소와 구분되지 않는다)
+    const outside = await page.evaluate(() => {
+      document.activeElement?.setAttribute('data-wd1138-outside', '1');
+      return document.activeElement?.tagName;
+    });
+    expect(outside).not.toBe('BODY');
+    await expect(groupOf(page).locator(':focus')).toHaveCount(0);
+    await page.setViewportSize({ width: 2560, height: 900 });
+    await expect(foldBtn(page)).toHaveCount(0);
+    await expect(allBtn(page)).not.toBeFocused();
+    expect(await page.evaluate(() => document.activeElement?.getAttribute('data-wd1138-outside'))).toBe('1');
+
+    // 마우스로 빈 곳을 눌러 body 로 뺀 경우
+    await page.setViewportSize({ width: 600, height: 900 });
+    await moreBtn(page).click();
+    await foldBtn(page).focus();
+    await page.evaluate(() => (document.activeElement as HTMLElement).blur());
+    await page.setViewportSize({ width: 2560, height: 900 });
+    await expect(foldBtn(page)).toHaveCount(0);
+    await expect(allBtn(page)).not.toBeFocused();
   });
 });
