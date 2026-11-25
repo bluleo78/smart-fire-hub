@@ -120,7 +120,8 @@ public class MyBatisSavedQueryRepository implements SavedQueryRepository {
     SavedQueryInsert row =
         new SavedQueryInsert(
             req.name(),
-            req.description(),
+            // 설명도 폴더·update 와 같은 판정으로 공백·Cf 만이면 NULL 로 저장한다 (WD-1144)
+            blankToNull(req.description()),
             req.sqlText(),
             req.datasetId(),
             // WD-889: 빈 폴더("")는 NULL 로 저장 — 폴더 목록에 빈 항목이 생겨 화면이 깨지던 문제 방지

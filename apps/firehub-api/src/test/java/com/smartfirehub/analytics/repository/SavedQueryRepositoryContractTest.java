@@ -27,7 +27,7 @@ import org.junit.jupiter.api.Test;
  *
  * <p>saved_query 는 테넌트 정책(RLS) 아래 있어 호출은 늘 테넌트 컨텍스트로 감싼다. 공유 가시성(Review Focus 4): 남의 비공유 쿼리는 목록·건수·
  * 단건·폴더에 안 나오고 공유된 것은 나온다, {@code shareQueries} 는 이번에 실제로 공유로 바뀐 내 쿼리만 돌려준다. 연결 데이터셋 이름은 조회자가 볼 수
- * 없는 등급이면 null 로 가리고 id 는 남긴다. 빈 문자열은 DB 가 다르게 저장하므로({@code emptyStringIsNull}) 기대값을 훅으로 가른다.
+ * 없는 등급이면 null 로 가리고 id 는 남긴다. 설명은 빈 문자열·공백·Cf 만이어도 모든 DB 에서 null 로 저장된다(WD-1144, blankToNull) — 기대값을 DB 별로 가르지 않는다.
  */
 public abstract class SavedQueryRepositoryContractTest extends TenantPairContractBase {
 
@@ -107,7 +107,7 @@ public abstract class SavedQueryRepositoryContractTest extends TenantPairContrac
   }
 
   @Test
-  @DisplayName("insert — 설명·폴더·데이터셋이 null 이면 null, 빈 설명은 DB 규칙대로 저장된다")
+  @DisplayName("insert — 설명·폴더·데이터셋이 null 이면 null, 빈 설명도 null 로 저장된다")
   void insert_nullsAndEmptyDescription() {
     Long id = insertA(me, req(prefix + "-n", null, false));
     RawSavedQuery raw = inA(() -> repository().findRawByIdUnrestricted(id)).orElseThrow();
@@ -122,11 +122,31 @@ public abstract class SavedQueryRepositoryContractTest extends TenantPairContrac
         insertA(me, new CreateSavedQueryRequest(prefix + "-e", "", "SELECT 1", null, null, false));
     String stored =
         inA(() -> repository().findRawByIdUnrestricted(empty)).orElseThrow().description();
-    if (emptyStringIsNull()) {
-      assertThat(stored).isNull();
-    } else {
-      assertThat(stored).isEmpty();
+    // 빈 설명도 이제 blankToNull 로 두 DB 모두 NULL (WD-1144)
+    assertThat(stored).isNull();
+  }
+
+  @Test
+  @DisplayName("insert — 공백·Cf 만인 설명은 NULL, 보이는 설명은 그대로 (WD-1144)")
+  void insert_blankDescription_storedAsNull() {
+    for (String blank : new String[] {"\u200B", "  \u3000"}) {
+      Long id =
+          insertA(
+              me,
+              new CreateSavedQueryRequest(prefix + "-bd", blank, "SELECT 1", null, null, false));
+      assertThat(inA(() -> repository().findRawByIdUnrestricted(id)).orElseThrow().description())
+          .isNull();
     }
+  }
+
+  @Test
+  @DisplayName("insert — 보이는 설명은 그대로 저장된다 (WD-1144)")
+  void insert_visibleDescription_kept() {
+    Long id =
+        insertA(
+            me, new CreateSavedQueryRequest(prefix + "-vd", "설명", "SELECT 1", null, null, false));
+    assertThat(inA(() -> repository().findRawByIdUnrestricted(id)).orElseThrow().description())
+        .isEqualTo("설명");
   }
 
   @Test

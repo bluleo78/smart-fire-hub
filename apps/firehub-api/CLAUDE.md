@@ -60,7 +60,7 @@ Package base: `com.smartfirehub`. Feature-sliced 도메인 모듈, 각 모듈은
 - Repository 레이어는 `DSLContext`로 type-safe SQL 작성
 - jOOQ 코드젠 결과: `src/main/generated/` (public 스키마 전용)
 - `data` 스키마의 동적 테이블은 `DataTableService`에서 raw SQL로 관리
-- Flyway 마이그레이션: `src/main/resources/db/migration/V{n}__*.sql` (V1~V26)
+- Flyway 마이그레이션: `src/main/resources/db/migration/V{n}__*.sql`
 
 ### Pipeline Execution Engine
 
@@ -183,9 +183,11 @@ docker exec smart-fire-hub-db-1 psql -U app -d smartfirehub -c 'SELECT * FROM "u
 Flyway는 DB 스키마 버전 관리 도구이다. 아래 규칙을 반드시 준수할 것.
 
 ### 마이그레이션 파일
-- 경로: `src/main/resources/db/migration/V{n}__*.sql`
-- 현재 최신: V78 (데이터셋 매핑)
-- 새 마이그레이션 추가 시 번호를 순차 증가 (V31, V32, ...)
+- SQL: `src/main/resources/db/migration/V{n}__*.sql`
+- Java: `src/main/java/db/migration/V{n}__*.java` — PG SQL 로 못 하는 판정(예: `\p{Cf}`)이나 트랜잭션·동적 대상이 필요할 때만 (예: V125, V170, V171)
+- Java 마이그레이션은 체크섬이 없으니 `TextRules` 같은 런타임 클래스를 참조하지 말고 판정을 클래스 안에 고정한다 (예: V170 의 `HAS_TEXT_AT_V170`)
+- Tibero 짝: `src/main/resources/db/migration-tibero/` — 기준선 V155(스키마)·V155.1(시드) 뒤로는 PG 의 Vn 마다 같은 버전 파일이 필요하다. Tibero 전용 버전은 화이트리스트로만 허용. `MigrationParityTest` 가 검사한다
+- 새 마이그레이션은 마지막 버전 다음 번호를 쓴다 (고정 「현재 최신」 표기는 두지 않는다)
 
 ### baseline-on-migrate 설정 (중요)
 ```yaml
@@ -194,7 +196,7 @@ spring:
   flyway:
     enabled: true
     baseline-on-migrate: true    # 기존 DB에 flyway_schema_history가 없을 때 자동 baseline 생성
-    baseline-version: 48         # 현재 최신 마이그레이션 버전과 일치시킬 것
+    baseline-version: 80         # 기록 표가 없는 기존 DB 에만 쓰인다 (PG 만 — Tibero 는 baseline-on-migrate false)
 ```
 
 **이 설정이 필요한 이유:**
@@ -205,12 +207,12 @@ spring:
 ### 절대 하지 말 것
 - `pnpm db:reset`으로 로컬 DB를 날리지 않는다 (사용자 데이터 손실)
 - `flyway clean`을 실행하지 않는다 (모든 스키마 삭제)
-- `baseline-version`을 실제 최신 마이그레이션보다 낮게 설정하지 않는다 (이미 적용된 마이그레이션을 재실행하려 시도)
+- `baseline-version`(80)을 낮추지 않는다 (이미 적용된 마이그레이션을 재실행하려 시도). 올릴 필요도 없다 — 기록 표가 없는 기존 DB 에서만 쓰여 최신 버전과 맞출 필요가 없다
 
 ### 새 마이그레이션 추가 시 체크리스트
-1. `baseline-version`을 새 마이그레이션 버전으로 업데이트 (예: V28 추가 시 `baseline-version: 28`)
-2. 마이그레이션 SQL에 `IF NOT EXISTS` 사용 권장 (멱등성 보장)
-3. 새 권한 추가 시 seed INSERT 포함
+1. 마이그레이션 SQL에 `IF NOT EXISTS` 사용 권장 (멱등성 보장)
+2. 새 권한 추가 시 seed INSERT 포함
+3. Tibero 짝 파일 추가 (`MigrationParityTest` 통과)
 
 ## Key Conventions
 
