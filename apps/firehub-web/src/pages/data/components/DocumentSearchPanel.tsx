@@ -1,6 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { Info, PauseCircle } from 'lucide-react';
-import { useState } from 'react';
+import { type SyntheticEvent, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { Button } from '../../../components/ui/button';
@@ -13,6 +13,7 @@ import {
   PLATFORM_DB_CAPABILITIES_KEY,
   usePlatformDbFeatures,
 } from '../../../hooks/queries/usePlatformDbCapabilities';
+import { isImeComposing } from '../../../hooks/useOverlayEscape';
 import { clampToMaxLength, MAX_SEARCH_QUERY_LENGTH } from '../../../lib/validations/search-query';
 import type { DocumentSearchHit, DocumentSearchMode } from '../../../types/document';
 
@@ -37,6 +38,14 @@ export function DocumentSearchPanel({ datasetId }: DocumentSearchPanelProps) {
   const [searchedMode, setSearchedMode] = useState<DocumentSearchMode>('HYBRID');
   // 확장된 청크 ID 집합 — 클릭 시 content를 펼쳐서 전문을 보여주는 accordion 패턴 (#291).
   const [expandedChunks, setExpandedChunks] = useState<Set<number>>(new Set());
+  // WD-1143: 한글 IME 조합 중 여부 — 조합 중에는 값을 자르지 않고(조합 문자 깨짐 방지) Enter 로 검색하지 않는다.
+  const isComposingRef = useRef(false);
+  // WD-1143: 조합이 끝났거나(compositionend) 조합 중 포커스를 잃었을 때(compositionend 가 오지 않을 수 있다)
+  //   조합 상태를 풀고 상한으로 자른 값을 남긴다.
+  const finishComposition = (e: SyntheticEvent<HTMLInputElement>) => {
+    isComposingRef.current = false;
+    setQuery(clampToMaxLength(e.currentTarget.value, MAX_SEARCH_QUERY_LENGTH));
+  };
   const search = useSearchDocuments();
   const queryClient = useQueryClient();
   // 플랫폼 DB 가 끈 검색 기능(WD-495). 조회 중·실패면 둘 다 켜짐이라 PG 설치본 화면은 그대로다.
@@ -63,7 +72,8 @@ export function DocumentSearchPanel({ datasetId }: DocumentSearchPanelProps) {
   };
 
   const handleSearch = () => {
-    const q = query.trim();
+    // WD-1143: 조합 중 버튼 클릭 등으로 상한을 넘은 값이 상태에 있을 수 있어 보내기 전에 한 번 더 자른다.
+    const q = clampToMaxLength(query, MAX_SEARCH_QUERY_LENGTH).trim();
     if (!q) return;
     setSearchedMode(effectiveMode);
     search.mutate(
@@ -124,8 +134,24 @@ export function DocumentSearchPanel({ datasetId }: DocumentSearchPanelProps) {
               maxLength={MAX_SEARCH_QUERY_LENGTH}
               value={query}
               // WD-1131: 한글 IME 조합이 끝나며 브라우저가 maxlength 를 넘긴 값을 줄 수 있어 직접 잘라 400 요청을 막는다.
-              onChange={(e) => setQuery(clampToMaxLength(e.target.value, MAX_SEARCH_QUERY_LENGTH))}
-              onKeyDown={(e) => { if (e.key === 'Enter' && !storeDown) handleSearch(); }}
+              // WD-1143: 조합 중에는 자르면 조합 문자가 깨지므로 그대로 두고, 조합이 끝날 때(onCompositionEnd) 자른다.
+              onChange={(e) =>
+                setQuery(
+                  isComposingRef.current
+                    ? e.target.value
+                    : clampToMaxLength(e.target.value, MAX_SEARCH_QUERY_LENGTH),
+                )
+              }
+              onCompositionStart={() => {
+                isComposingRef.current = true;
+              }}
+              onCompositionEnd={finishComposition}
+              onBlur={finishComposition}
+              onKeyDown={(e) => {
+                // WD-1143: 조합 중 Enter 는 음절 확정이지 검색 의도가 아니다 — 반쪽 음절로 검색하지 않는다.
+                if (isImeComposing(e.nativeEvent) || isComposingRef.current) return;
+                if (e.key === 'Enter' && !storeDown) handleSearch();
+              }}
             />
             <Button type="button" disabled={!query.trim() || search.isPending || storeDown} onClick={handleSearch}>
               {search.isPending ? '검색 중...' : '검색'}

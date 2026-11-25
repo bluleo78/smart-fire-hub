@@ -1,3 +1,5 @@
+import type { Locator } from '@playwright/test';
+
 import { createDocument, createDocuments } from '../../factories/document.factory';
 import { createBinding, createOntologySummaries } from '../../factories/mapping.factory';
 import { createOntologySchema } from '../../factories/ontology.factory';
@@ -435,5 +437,108 @@ test.describe('문서 데이터셋 상세', () => {
       await expect(page.getByTestId('ontology-binding-card')).toHaveCount(0);
       await expect(page.getByTestId('ontology-bound-status')).toHaveText('연결된 온톨로지: 화재조사 보고서');
     });
+  });
+});
+
+/**
+ * WD-1143: 문서 검색 칸의 한글 조합 처리.
+ * 조합 중에는 값을 자르지 않고(조합 문자가 깨지지 않게), 조합 중 Enter(음절 확정)로는 검색하지 않는다.
+ */
+test.describe('문서 검색 한글 조합 (WD-1143)', () => {
+  /** 조합 이벤트를 흉내 내는 헬퍼 — IME spec 과 같은 방식(native setter + input/composition 이벤트) */
+  const fire = (
+    input: Locator,
+    steps: Array<['start' | 'end' | 'set' | 'enter', string?]>,
+  ) =>
+    input.evaluate((el: HTMLInputElement, s) => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+      for (const [kind, v] of s) {
+        if (kind === 'start') {
+          el.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+        } else if (kind === 'end') {
+          el.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: v ?? '' }));
+        } else if (kind === 'set') {
+          setter.call(el, v ?? '');
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+        } else {
+          // 조합 중 Enter: 브라우저는 isComposing=true / keyCode 229 로 보낸다
+          el.dispatchEvent(
+            new KeyboardEvent('keydown', { key: 'Enter', keyCode: 229, isComposing: true, bubbles: true }),
+          );
+        }
+      }
+    }, steps);
+
+  test('조합 중 Enter 는 검색하지 않고 조합이 끝난 뒤 Enter 는 온전한 검색어로 검색한다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDocumentDatasetMocks(page, DATASET_ID, createDocuments(1));
+    const capture = await mockApi(page, 'POST', '/api/v1/documents/search', [], { capture: true });
+    await page.goto(`/data/datasets/${DATASET_ID}?tab=documents`);
+    const input = page.getByPlaceholder('검색어를 입력하세요');
+    await input.focus();
+
+    await fire(input, [['start'], ['set', '소방'], ['enter']]);
+    // 조합 중 Enter 로는 요청이 나가지 않는다
+    await page.waitForTimeout(300);
+    expect(capture.requests).toHaveLength(0);
+
+    await fire(input, [['end', '소방']]);
+    await input.press('Enter');
+    const req = await capture.waitForRequest();
+    expect((req.payload as { query: string }).query).toBe('소방');
+    expect(capture.requests).toHaveLength(1);
+  });
+
+  test('조합 중에는 상한을 넘는 값을 자르지 않고 조합이 끝나면 1,000자로 자른다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDocumentDatasetMocks(page, DATASET_ID, createDocuments(1));
+    await mockApi(page, 'POST', '/api/v1/documents/search', [], { capture: true });
+    await page.goto(`/data/datasets/${DATASET_ID}?tab=documents`);
+    const input = page.getByPlaceholder('검색어를 입력하세요');
+    await input.focus();
+
+    await fire(input, [['start'], ['set', '가'.repeat(1001)]]);
+    await expect(input).toHaveValue('가'.repeat(1001));
+
+    await fire(input, [['end', '가']]);
+    await expect(input).toHaveValue('가'.repeat(1000));
+  });
+
+  test('조합 중 포커스를 잃어 compositionend 가 없어도 다시 포커스해 Enter 하면 검색한다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDocumentDatasetMocks(page, DATASET_ID, createDocuments(1));
+    const capture = await mockApi(page, 'POST', '/api/v1/documents/search', [], { capture: true });
+    await page.goto(`/data/datasets/${DATASET_ID}?tab=documents`);
+    const input = page.getByPlaceholder('검색어를 입력하세요');
+    await input.focus();
+
+    await fire(input, [['start'], ['set', '소방']]);
+    // compositionend 없이 포커스만 잃는다
+    await input.evaluate((el: HTMLInputElement) => el.blur());
+    await input.focus();
+    await input.press('Enter');
+
+    const req = await capture.waitForRequest();
+    expect((req.payload as { query: string }).query).toBe('소방');
+    expect(capture.requests).toHaveLength(1);
+  });
+
+  test('조합 중 상한을 넘은 값으로 검색 버튼을 눌러도 1,000자 이하로 보낸다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupDocumentDatasetMocks(page, DATASET_ID, createDocuments(1));
+    const capture = await mockApi(page, 'POST', '/api/v1/documents/search', [], { capture: true });
+    await page.goto(`/data/datasets/${DATASET_ID}?tab=documents`);
+    const input = page.getByPlaceholder('검색어를 입력하세요');
+    await input.focus();
+
+    await fire(input, [['start'], ['set', '가'.repeat(1001)]]);
+    await page.getByRole('button', { name: '검색' }).click();
+
+    const req = await capture.waitForRequest();
+    expect((req.payload as { query: string }).query.length).toBeLessThanOrEqual(1000);
   });
 });

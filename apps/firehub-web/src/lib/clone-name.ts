@@ -1,4 +1,6 @@
 import { CloneNameExhaustedError, isDuplicateName } from './api-error';
+// UTF-16 자르기는 의존 없는 utf16 모듈에 두고 가져와 쓴다 (WD-1143)
+import { truncateUtf16 } from './utf16';
 
 /**
  * 「복제」로 만드는 사본 이름(WD-430).
@@ -12,15 +14,6 @@ import { CloneNameExhaustedError, isDuplicateName } from './api-error';
  * 코드 포인트 수도 ≤ N 이라 늘 들어간다(더 엄격한 쪽에 맞춤). 자르는 자리에 서로게이트 쌍이 걸리면 쌍을 통째로 빼 깨진 글자가 남지 않게 한다.
  */
 export const NAME_MAX_LENGTH = 200;
-
-/** 문자열을 UTF-16 `maxUnits` 단위 안으로 자른다 — 끝이 서로게이트 쌍의 앞쪽(high surrogate)이면 그것까지 빼 쌍을 가르지 않는다. */
-export function truncateUtf16(text: string, maxUnits: number): string {
-  if (text.length <= maxUnits) return text;
-  let end = Math.max(0, maxUnits);
-  const last = text.charCodeAt(end - 1);
-  if (end > 0 && last >= 0xd800 && last <= 0xdbff) end -= 1;
-  return text.slice(0, end);
-}
 
 /**
  * @param separator 원래 이름과 접미사 사이 글자 — 기본은 공백(「이름 (복사본)」), 데이터셋 복제는 빈 문자열(「이름_copy」, WD-523).

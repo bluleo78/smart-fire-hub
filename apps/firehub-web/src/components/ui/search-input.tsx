@@ -44,7 +44,8 @@ interface SearchInputProps {
  */
 export function SearchInput({ placeholder = '검색...', 'aria-label': ariaLabel, value, onChange, className, debounceMs, inputRef, maxLength }: SearchInputProps) {
   // 조합 중 표시되는 임시 글자를 담는 내부 상태. 부모 value와 분리해 IME 끊김을 방지한다.
-  const [draft, setDraft] = useState(value);
+  // WD-1143: 처음 받은 바깥 값이 상한을 넘으면 잘라서 시작한다.
+  const [draft, setDraft] = useState(() => clampToMaxLength(value, maxLength));
   // 직전 렌더에서 받은 외부 value. 외부 value 변동을 렌더 중에 감지하기 위한 비교 기준.
   const [lastExternal, setLastExternal] = useState(value);
   // 한글 IME 조합 진행 여부.
@@ -67,9 +68,20 @@ export function SearchInput({ placeholder = '검색...', 'aria-label': ariaLabel
   if (value !== lastExternal) {
     setLastExternal(value);
     if (!isComposing) {
-      setDraft(value);
+      // WD-1143: 상한을 넘는 바깥 값은 잘라 표시한다(부모 알림은 아래 effect 에서)
+      setDraft(clampToMaxLength(value, maxLength));
     }
   }
+  // WD-1143: 바깥 value 가 상한을 넘으면 잘린 값을 부모에 즉시(디바운스 없이) 알려 부모 상태를 맞춘다.
+  //   렌더 중 부모 setState 를 피하려고 effect 에서 부른다. 조합 중에는 글자를 깨뜨리지 않도록 건너뛰고
+  //   조합이 끝나면 사용자가 조합한 값(잘린 값)이 바깥 값을 대신한다. 부모가 잘린 값을 내려주면 상한 이하라 다시 부르지 않는다.
+  useEffect(() => {
+    if (isComposing) return;
+    const clamped = clampToMaxLength(value, maxLength);
+    if (clamped !== value) onChange(clamped);
+    // isComposing·onChange 는 의도적으로 제외 — 조합 종료·콜백 변경만으로 재알림하지 않는다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value, maxLength]);
   // 부모가 값을 바꿨으면(탭 전환으로 검색 초기화 등) 늦춰 둔 옛 입력이 뒤늦게 덮어쓰지 않게 취소한다(WD-513).
   // 렌더 중에는 ref 를 바꾸지 않도록 effect 에서 한다.
   useEffect(() => {
