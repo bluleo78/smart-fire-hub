@@ -462,7 +462,12 @@ function ReviewRow(props: {
         <TableCell>
           <Badge variant="secondary">{isSynonym ? '동의어' : isProperty ? '속성' : isEntity ? '엔티티' : isRelation ? '관계' : row.itemType}</Badge>
         </TableCell>
-        <TableCell className="max-w-md">
+        {/* WD-1133: 공용 TableCell 은 whitespace-nowrap 이라 공백 없는 긴 토큰이 칸을 넘쳐 옆(신호·조치) 칸을 덮는다.
+            이 칸만 줄바꿈을 허용하고 어디서든 끊어 칸 안에서 감기게 한다(공용 table.tsx 는 건드리지 않는다).
+            배지(공용 Badge 는 whitespace-nowrap)도 같은 이유로 넘치므로, 이 칸 안의 배지는 칸에서 한 번에 감기게 한다
+            (data-slot=badge 하위 선택자 — 배지가 새로 생겨도 개별로 클래스를 달지 않아 회귀하지 않는다).
+            min-w-48: 375px 에서 칸이 가장 넓은 배지 폭까지 줄면 속성 보정 입력창이 너무 좁아지므로 폭 하한을 둔다. */}
+        <TableCell className="min-w-48 max-w-md whitespace-normal [overflow-wrap:anywhere] [&_[data-slot=badge]]:max-w-full [&_[data-slot=badge]]:whitespace-normal [&_[data-slot=badge]]:[overflow-wrap:anywhere]">
           {isSynonym && <SynonymContent payload={row.payload as SynonymPayload} rationale={row.reason} />}
           {isProperty && (
             <PropertyContent
@@ -514,7 +519,8 @@ function ReviewRow(props: {
         <TableRow>
           {/* 토글이 aria-controls로 가리키는 패널 컨테이너. 로딩 → 결과 전환이 비동기로 조용히 일어나므로
               aria-live/aria-busy로 고지한다(#338, SC 4.1.3). */}
-          <TableCell colSpan={canDecide ? 4 : 3} className="bg-muted">
+          {/* WD-1133: 공용 TableCell 의 whitespace-nowrap 을 풀어 긴 근거 문장이 칸 밖으로 밀리지 않게 한다. */}
+          <TableCell colSpan={canDecide ? 4 : 3} className="bg-muted whitespace-normal">
             {/* id/live region은 <td>가 아니라 내부 div에 둔다 — td에 role을 덮으면 표 셀 시맨틱이 깨진다. */}
             <div id={evidencePanelId} aria-label={`${targetSummary} 원문 근거`} role="group">
               <EvidencePanel id={row.id} />
@@ -526,6 +532,8 @@ function ReviewRow(props: {
   );
 }
 
+// WD-1133: 내용 칸 배지는 공용 Badge 의 whitespace-nowrap 때문에 공백 없는 긴 타입·관계명이 칸을 밀어 넓힌다.
+// 배지 className 에 max-w-full + 줄바꿈 허용을 얹어 칸 안에서 감기게 한다(아래 4개 Content 공통).
 function SynonymContent({ payload, rationale }: { payload: SynonymPayload; rationale: string | null }) {
   return (
     <div className="space-y-1">
@@ -648,7 +656,7 @@ function EvidencePanel({ id }: { id: number }) {
         {data.map((c) => (
           <div key={c.chunkId} className="text-sm">
             <span className="text-muted-foreground text-xs">청크 #{c.chunkId}</span>
-            <p className="whitespace-pre-wrap">{c.content}</p>
+            <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">{c.content}</p>
           </div>
         ))}
       </div>

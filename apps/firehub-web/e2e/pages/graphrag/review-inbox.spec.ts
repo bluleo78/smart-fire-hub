@@ -4,7 +4,7 @@ import { createDatePropertyReviewItem, createEntityReviewItem, createEvidenceChu
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { gotoUntilReady } from '../../fixtures/first-visit'; // WD-903: 첫 진입 직후 조작은 대상이 보일 때까지 먼저 기다린다
-import { expectNoHorizontalOverflow } from '../../fixtures/long-unbroken-name';
+import { expectInsideHorizontally, expectNoHorizontalOverflow, NARROW_DESKTOP_VIEWPORT } from '../../fixtures/long-unbroken-name';
 import { expectTableErrorAlert } from '../../fixtures/table-error-alert';
 
 test.describe('AI 검수 인박스', () => {
@@ -108,6 +108,90 @@ test.describe('AI 검수 인박스', () => {
     await expect(page.getByText('전기적 요인')).toBeVisible();
     await expect(page.getByText('0.707')).toBeVisible();
     await expect(page.getByText('“수천만원대”')).toBeVisible();
+  });
+
+  // WD-1133: 공용 TableCell 의 whitespace-nowrap 때문에 공백 없는 긴 토큰이 내용 칸을 넘쳐 옆 칸(신호·조치)을 덮었다.
+  // 내용 칸 안에서 감겨야 하고, 조치 버튼은 표 밖으로 밀리지 않아야 한다.
+  const LONG_TOKEN = 'LongEntityNameWithoutAnySpaceCharacter'.repeat(3);
+  // 긴 토큰이 들어간 항목 종류별 케이스 — 본문(synonym)·배지(property/relation)가 각각 칸을 밀어내지 않는지 본다.
+  const longTokenCases = [
+    {
+      name: '동의어 이름·사유',
+      items: () => [
+        createSynonymReviewItem({ id: 1, payload: { entityType: '고객사', nameA: LONG_TOKEN, nameB: '상하이' }, reason: LONG_TOKEN }),
+        createSynonymReviewItem({ id: 3 }),
+      ],
+    },
+    {
+      name: '속성 propertyName 배지',
+      items: () => [
+        createPropertyReviewItem({
+          id: 1,
+          payload: { entityKey: '3:창고 화재', entityType: 'Incident', propertyName: LONG_TOKEN, dataType: 'text', rawText: '값', sourceChunkIds: [7] },
+        }),
+        createSynonymReviewItem({ id: 3 }),
+      ],
+    },
+    {
+      name: '관계 relType 배지',
+      items: () => [
+        createRelationReviewItem({
+          id: 1,
+          payload: { subjectKey: '12:노후 배선', relType: LONG_TOKEN, objectKey: '34:창고 화재', subjectName: '노후 배선', objectName: '창고 화재', sourceChunkIds: [9] },
+        }),
+        createSynonymReviewItem({ id: 3 }),
+      ],
+    },
+  ];
+  // 내용 칸 글자 상자의 오른쪽 끝이 다음(신호) 칸 왼쪽 끝을 넘지 않고, 칸 자체도 가로로 넘치지 않는다 (WD-1133)
+  async function expectNoCoverNextCell(cell: Locator, label: string) {
+    const m = await cell.evaluate((td) => {
+      const range = document.createRange();
+      range.selectNodeContents(td);
+      const textRight = Math.max(...Array.from(range.getClientRects()).map((r) => r.right));
+      const next = td.nextElementSibling as HTMLElement;
+      return { textRight, nextLeft: next.getBoundingClientRect().left, overflow: td.scrollWidth - td.clientWidth };
+    });
+    expect(m.textRight, `${label} 내용 글자가 신호 칸을 덮음`).toBeLessThanOrEqual(m.nextLeft + 1);
+    expect(m.overflow, `${label} 내용 칸 가로 넘침(px)`).toBeLessThanOrEqual(1);
+  }
+  // 한 번 진입한 뒤 뷰포트만 바꿔 가며(새로고침 없이) 다시 잰다 — 뷰포트만 다른 케이스를 따로 띄우지 않는다.
+  const longTokenViewports = [{ width: 1440, height: 900 }, NARROW_DESKTOP_VIEWPORT];
+  for (const c of longTokenCases) {
+    test(`내용 칸의 공백 없는 긴 토큰(${c.name})이 감겨 신호·조치 칸을 덮지 않는다 (WD-1133)`, async ({
+      authenticatedPage: page,
+    }) => {
+      await mockApi(page, 'GET', '/api/v1/graphrag/review-items', c.items());
+      await page.goto('/knowledge-graph/review');
+
+      const table = page.getByTestId('review-inbox-table');
+      const row = table.getByRole('row').filter({ hasText: LONG_TOKEN }).first();
+      for (const viewport of longTokenViewports) {
+        const label = `${viewport.width}px`;
+        await page.setViewportSize(viewport);
+        await expect(row).toBeVisible();
+        await expectNoCoverNextCell(row.locator('td').filter({ hasText: LONG_TOKEN }).first(), label);
+        // 승인(적용) 버튼이 표 밖으로 밀리지 않는다
+        await expectInsideHorizontally(row.getByRole('button', { name: /승인|적용|적재/ }).first(), table, `${label} 조치 버튼`, { content: false });
+        await expectNoHorizontalOverflow(page);
+      }
+    });
+  }
+
+  // WD-1133: 근거 패널(colSpan 칸)도 공백 없는 긴 URL 이 칸·표를 넘치지 않고 감겨야 한다.
+  test('원문 근거의 공백 없는 긴 URL 이 감겨 표 밖으로 넘치지 않는다 (WD-1133)', async ({ authenticatedPage: page }) => {
+    const url = 'https://example.com/' + 'a'.repeat(200);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createSynonymReviewItem({ id: 1 })]);
+    await mockApi(page, 'GET', '/api/v1/graphrag/review-items/1/evidence', [createEvidenceChunk({ content: url })]);
+    await page.goto('/knowledge-graph/review');
+
+    const table = page.getByTestId('review-inbox-table');
+    await table.getByRole('button', { name: /원문 근거 보기/ }).first().click();
+    await expect(table.getByText(url)).toBeVisible();
+
+    await expectInsideHorizontally(table.getByRole('button', { name: /승인/ }).first(), table, '조치 버튼', { content: false });
+    await expectNoHorizontalOverflow(page);
   });
 
   // WD-813: 제목이 앱 다른 화면의 h1 체계(28px/600/tracking-tight)와 같아야 한다.
@@ -1108,17 +1192,32 @@ test.describe('AI 검수 인박스', () => {
       const rejectButton = page.getByRole('button', { name: /거부$/ }).first();
       const beforeBox = await rejectButton.boundingBox();
       expect(beforeBox).not.toBeNull();
+      // 내용 칸 폭 하한(min-w-48)으로 표가 다시 넓어져 버튼은 뷰포트 오른쪽 밖에서 시작한다.
       expect(beforeBox!.x).toBeGreaterThanOrEqual(375);
+      const beforeX = beforeBox!.x;
 
-      // 힌트를 따라 우측 끝까지 스크롤하면 조치 버튼이 뷰포트 안으로 들어온다.
+      // 힌트를 따라 우측 끝까지 스크롤하면 조치 버튼이 실제로 왼쪽으로 움직여 뷰포트 안으로 들어온다.
       await container.evaluate((el) => { el.scrollLeft = el.scrollWidth; });
       await expect.poll(async () => {
         const box = await rejectButton.boundingBox();
-        return box !== null && box.x >= 0 && box.x < 375;
+        return box !== null && box.x < beforeX && box.x >= 0 && box.x + box.width <= 375;
       }).toBe(true);
 
       // 끝까지 스크롤했으니 더 이상 스크롤할 곳이 없어 우측 힌트는 사라진다.
       await expect(rightHint).toHaveCount(0);
+    });
+
+    // WD-1133: 375px 에서 내용 칸이 줄어도 속성 보정 입력창이 쓸 만한 폭(160px)을 유지해야 한다.
+    test('375px 뷰포트에서 속성 보정 입력창 폭이 160px 이상이다 (WD-1133)', async ({ authenticatedPage: page }) => {
+      await page.setViewportSize({ width: 375, height: 700 });
+      await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createPropertyReviewItem()]);
+      await page.goto('/knowledge-graph/review');
+
+      const input = page.getByTestId('review-inbox-table').getByRole('textbox').first();
+      await expect(input).toBeVisible();
+      const box = await input.boundingBox();
+      expect(box).not.toBeNull();
+      expect(box!.width, '보정 입력창 폭(px)').toBeGreaterThanOrEqual(160);
     });
   });
 });
