@@ -84,6 +84,8 @@ describe('formatNextRunShort — 지난 시각 (WD-1099)', () => {
     const date = new Date('2026-04-14T00:00:00Z');
     expect(formatNextRunShortWithZone(date, ' Asia/Seoul ')).toBe('4월 14일 09:00 KST');
   });
+  // 편집 칸의 시간대는 Select 라 비울 수 없다 — 빈 값은 옛 저장 행뿐이고 서버 스케줄러가 그런 행을 Asia/Seoul 로
+  // 돌리므로, 화면도 같은 기본값으로 읽어야 실제 실행 시각과 어긋나지 않는다.
   it('시간대가 비어 있으면 Asia/Seoul 로 본다', () => {
     const date = new Date('2026-04-14T00:00:00Z');
     expect(formatNextRunShortWithZone(date, null)).toBe('4월 14일 09:00 KST');
@@ -146,5 +148,67 @@ describe('formatNextRunShort — 올해가 아닌 날짜는 연도를 붙인다 
   });
   it('올해 날짜는 연도 없이 보인다', () => {
     expect(formatNextRunShort(new Date('2027-01-05T00:00:00Z'), 'Asia/Seoul')).toBe('1월 5일 09:00');
+  });
+});
+
+describe('지난 시각 「지남」·달력 판정 (WD-1147)', () => {
+  beforeAll(() => {
+    vi.useFakeTimers();
+  });
+  afterAll(() => {
+    vi.useRealTimers();
+  });
+
+  it('목록 표기는 지난 시각 뒤에 「 · 지남」을 붙인다', () => {
+    // KST 2026-04-11 15:00
+    vi.setSystemTime(new Date('2026-04-11T06:00:00Z'));
+    expect(formatNextRunShortWithZone(new Date('2026-04-11T00:00:00Z'), 'Asia/Seoul')).toBe('오늘 09:00 KST · 지남');
+    expect(formatNextRunShortWithZone(new Date('2026-04-10T00:00:00Z'), 'Asia/Seoul')).toBe('4월 10일 09:00 KST · 지남');
+    expect(formatNextRunShortWithZone(new Date('2025-12-30T00:00:00Z'), 'Asia/Seoul')).toBe(
+      '2025년 12월 30일 09:00 KST · 지남',
+    );
+  });
+  it('미래이거나 지금과 같은 시각이면 「지남」이 없다', () => {
+    vi.setSystemTime(new Date('2026-04-11T06:00:00Z'));
+    expect(formatNextRunShortWithZone(new Date('2026-04-11T09:00:00Z'), 'Asia/Seoul')).toBe('오늘 18:00 KST');
+    expect(formatNextRunShortWithZone(new Date('2026-04-11T06:00:00Z'), 'Asia/Seoul')).toBe('오늘 15:00 KST');
+  });
+  it('상세·편집용 표기에는 「지남」을 붙이지 않는다', () => {
+    vi.setSystemTime(new Date('2026-04-11T06:00:00Z'));
+    expect(formatNextRunWithZone(new Date('2026-04-10T00:00:00Z'), 'Asia/Seoul')).not.toContain('지남');
+  });
+  it('서머타임으로 23시간인 날에도 「내일」은 달력 다음 날만', () => {
+    // 뉴욕 2026-03-08 00:30 EST — 이날은 23시간
+    vi.setSystemTime(new Date('2026-03-08T05:30:00Z'));
+    // 3/10 00:30 EDT: 경과 23시간이지만 모레라서 「내일」이 아니다
+    expect(formatNextRunShort(new Date('2026-03-10T04:30:00Z'), 'America/New_York')).toBe('3월 10일 00:30');
+    expect(formatNextRunShort(new Date('2026-03-09T03:59:00Z'), 'America/New_York')).toBe('오늘 23:59');
+    expect(formatNextRunShort(new Date('2026-03-09T04:30:00Z'), 'America/New_York')).toBe('내일 00:30');
+  });
+  it('23시간짜리 날을 건너 24시간 안이어도 달력으로 모레면 「내일」이 아니다', () => {
+    // 뉴욕 3/7 23:30 EST. 3/9 00:10 EDT 는 23시간 40분 뒤(3/8 이 23시간)라 옛 diffHours<=24 판정은 「내일」로 읽었지만 달력으로는 모레다
+    vi.setSystemTime(new Date('2026-03-08T04:30:00Z'));
+    expect(formatNextRunShort(new Date('2026-03-09T04:10:00Z'), 'America/New_York')).toBe('3월 9일 00:10');
+  });
+  it('같은 해 판정은 숫자 연도 조각으로 한다 — 다른 해만 연도가 붙는다', () => {
+    vi.setSystemTime(new Date('2026-04-11T06:00:00Z'));
+    expect(formatNextRunShort(new Date('2026-04-20T00:00:00Z'), 'Asia/Seoul')).toBe('4월 20일 09:00');
+    expect(formatNextRunShort(new Date('2027-04-20T00:00:00Z'), 'Asia/Seoul')).toBe('2027년 4월 20일 09:00');
+    expect(formatNextRunShort(new Date('2025-04-20T00:00:00Z'), 'Asia/Seoul')).toBe('2025년 4월 20일 09:00');
+  });
+  it('Intl 이 모르는 시간대(UTC+9)의 지난 시각도 던지지 않고 「 · 지남」으로 끝난다', () => {
+    vi.setSystemTime(new Date('2026-04-11T06:00:00Z'));
+    const past = new Date('2026-04-10T00:00:00Z');
+    expect(() => formatNextRunShortWithZone(past, 'UTC+9')).not.toThrow();
+    expect(formatNextRunShortWithZone(past, 'UTC+9').endsWith(' · 지남')).toBe(true);
+  });
+  it('잘못된 시각(Invalid Date)이어도 던지지 않고 「지남」이 없다', () => {
+    // 서버 nextExecuteAt 이 깨지면 Intl 이 RangeError 를 던져 목록 표 전체가 깨졌었다
+    const bad = new Date('not-a-date');
+    expect(() => formatNextRunShortWithZone(bad, 'Asia/Seoul')).not.toThrow();
+    expect(() => formatNextRunWithZone(bad, 'Asia/Seoul')).not.toThrow();
+    // 코드베이스 규칙(formatters.ts)처럼 시각 없음은 「-」, 「지남」은 붙지 않는다
+    expect(formatNextRunShortWithZone(bad, 'Asia/Seoul')).toBe('-');
+    expect(formatNextRunWithZone(bad, 'Asia/Seoul')).toBe('-');
   });
 });
