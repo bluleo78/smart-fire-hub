@@ -75,8 +75,12 @@ test.describe('문서 검색 — 벡터 저장소 일시 중단 (WD-724)', () =>
     authenticatedPage: page,
   }) => {
     // 화면을 열 때는 정상 — 그 뒤 저장소가 내려가 서버가 빈 목록을 준 경우다.
+    // 제목이 보여도 첫 기능 조회가 아직 UP 목에 닿지 않았을 수 있고, 그 사이 DOWN 을 등록하면
+    // 첫 조회가 DOWN 을 받아 버튼이 미리 막혀 클릭이 시간 초과로 실패한다(WD-1155) — 그래서 첫 UP 응답이 온 뒤 바꾼다.
     await mockApi(page, 'GET', CAPS_PATH, UP);
+    const initialCaps = page.waitForResponse((res) => new URL(res.url()).pathname === CAPS_PATH);
     const search = await gotoDocumentsTab(page);
+    await initialCaps;
     await expect(page.getByText(PAUSED_BANNER)).toHaveCount(0);
 
     const caps = await mockApi(page, 'GET', CAPS_PATH, DOWN, { capture: true });
