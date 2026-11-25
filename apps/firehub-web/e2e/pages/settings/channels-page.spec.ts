@@ -1,9 +1,9 @@
-import type { Locator } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 
 import type { ChannelSetting } from '../../../src/api/channels';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
-import { holdRequests } from '../../fixtures/hold-api';
+import { expectSingleHeldRequest, holdApi, holdRequests } from '../../fixtures/hold-api';
 import { expectSingleLine } from '../../fixtures/long-name-layout';
 import { expectNoHorizontalOverflow } from '../../fixtures/long-unbroken-name';
 
@@ -857,5 +857,93 @@ test.describe('채널 설정 페이지', () => {
 
     // #FEE500 → rgb(254, 229, 0)
     expect(bgColor).toBe('rgb(254, 229, 0)');
+  });
+});
+
+/** 선호 저장 요청 중 스위치 (WD-1150) — 비활성(disabled)이 아니라 busy 로 두고 토글은 무시한다. */
+test.describe('채널 스위치 요청 중 busy (WD-1150)', () => {
+  const PATH = '/api/v1/channels/settings/EMAIL/preference';
+
+  /** 성공 뒤 재조회가 새 값(EMAIL 꺼짐)을 돌려주도록 채널 목록 GET 모킹을 바꾼다. */
+  async function mockEmailOffSettings(page: Page) {
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/channels/settings',
+      MOCK_CHANNEL_SETTINGS.map((s) => (s.channel === 'EMAIL' ? { ...s, enabled: false } : s)),
+    );
+  }
+
+  test('요청 중 클릭·Space 를 더 해도 요청은 1회, disabled 없이 aria-busy', async ({ authenticatedPage: page }) => {
+    await setupChannelMocks(page);
+    const held = await holdApi(page, 'PATCH', PATH, 204, {});
+    await page.goto('/settings/channels');
+    const sw = page.getByRole('switch', { name: '이메일 채널 활성화' });
+    await expect(sw).toBeChecked();
+    await sw.click();
+    await expect(sw).toHaveAttribute('aria-busy', 'true');
+    // 요청 중에는 요청한 값(꺼짐)을 바로 보이고, 보조기기에는 aria-disabled 로 토글이 무시됨을 알린다
+    await expect(sw).toHaveAttribute('data-state', 'unchecked');
+    await expect(sw).toHaveAttribute('aria-disabled', 'true');
+    // 진짜 비활성이 아니므로 disabled 속성이 없다
+    await expect(sw).not.toHaveAttribute('disabled');
+    // aria-disabled 라 Playwright 가 비활성으로 보고 기다리므로 force 로 실제 클릭을 보낸다(앱이 무시해야 한다)
+    await sw.click({ force: true });
+    await sw.focus();
+    await page.keyboard.press('Space');
+    await expectSingleHeldRequest(() => held.requests.length);
+    // 성공 후 재조회가 새 값(꺼짐)을 돌려주도록 목록 모킹을 바꿔 둔다
+    await mockEmailOffSettings(page);
+    held.release();
+    await expect(sw).not.toHaveAttribute('aria-busy');
+    await expect(sw).not.toHaveAttribute('aria-disabled');
+    await expect(sw).toHaveAttribute('data-state', 'unchecked');
+  });
+
+  test('PATCH 성공 뒤 재조회가 끝날 때까지 요청한 값을 유지한다 (옛 값 깜빡임 없음)', async ({ authenticatedPage: page }) => {
+    await setupChannelMocks(page);
+    const held = await holdApi(page, 'PATCH', PATH, 204, {});
+    await page.goto('/settings/channels');
+    const sw = page.getByRole('switch', { name: '이메일 채널 활성화' });
+    await expect(sw).toBeChecked();
+    // 재조회(GET 목록)는 새 값(꺼짐)을 돌려주도록 바꾸고, PATCH 성공 뒤 그 응답을 붙잡는다 — 목록 모킹을 먼저 바꾸고 붙잡기를 나중에 건다
+    await mockEmailOffSettings(page);
+    const refetch = await holdRequests(page, '/api/v1/channels/settings', 'GET');
+    // 클릭 전부터 data-state 변화를 모두 기록한다 — 고정 대기 없이 옛 값(checked)이 한 번이라도 비치면 잡아내기 위함
+    await sw.evaluate((el) => {
+      const w = window as unknown as { __states: string[] };
+      w.__states = [];
+      new MutationObserver(() => w.__states.push(el.getAttribute('data-state') ?? '')).observe(el, {
+        attributes: true,
+        attributeFilter: ['data-state'],
+      });
+    });
+    await sw.click();
+    await expect(sw).toHaveAttribute('aria-busy', 'true');
+    held.release();
+    // PATCH 는 끝났지만 재조회는 아직 — 옛 서버 값(켜짐)으로 되돌아가지 않고 요청한 값(꺼짐)과 busy 가 유지돼야 한다
+    await expect.poll(refetch.count).toBeGreaterThanOrEqual(1);
+    await expect(sw).toHaveAttribute('data-state', 'unchecked');
+    await expect(sw).toHaveAttribute('aria-busy', 'true');
+    refetch.release();
+    await expect(sw).not.toHaveAttribute('aria-busy');
+    await expect(sw).toHaveAttribute('data-state', 'unchecked');
+    const states = await page.evaluate(() => (window as unknown as { __states: string[] }).__states);
+    expect(states, '재조회 전후로 옛 값(checked)으로 깜빡였다 (WD-1150)').not.toContain('checked');
+  });
+
+  test('요청이 500 으로 끝나면 원래 상태로 돌아오고 aria-busy 가 사라진다', async ({ authenticatedPage: page }) => {
+    await setupChannelMocks(page);
+    const held = await holdApi(page, 'PATCH', PATH, 500, { message: '서버 오류' });
+    await page.goto('/settings/channels');
+    const sw = page.getByRole('switch', { name: '이메일 채널 활성화' });
+    await sw.click();
+    await expect(sw).toHaveAttribute('aria-busy', 'true');
+    await expect(sw).toHaveAttribute('data-state', 'unchecked');
+    held.release();
+    await expect(sw).not.toHaveAttribute('aria-busy');
+    // 실패하면 서버 값(켜짐)으로 돌아온다
+    await expect(sw).toBeChecked();
+    await expect(page.getByText('채널 설정 변경에 실패했습니다.')).toBeVisible();
   });
 });

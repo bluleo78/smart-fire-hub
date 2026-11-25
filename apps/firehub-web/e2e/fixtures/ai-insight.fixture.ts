@@ -49,11 +49,12 @@ export async function mockProactiveAdminPermissions(page: Page) {
 /**
  * 작업 목록 페이지 API 모킹
  * - 프로액티브 잡 목록과 읽지 않은 메시지 수를 모킹한다.
- * @param count - 목록에 포함할 잡 수 (기본값: 3)
- * @param jobs - 주면 count 대신 이 목록을 그대로 돌려준다(켜짐·꺼짐 섞인 목록 등 특정 잡이 필요한 시험용)
+ * @param countOrJobs - 숫자면 그 수만큼 `createJobs(n)` (기본값: 3), 배열이면 그 목록을 그대로 돌려준다(켜짐·꺼짐 섞인 목록 등 특정 잡이 필요한 시험용)
+ * @param jobs - 세 번째 인자는 옛 호출용(`setupJobListMocks(page, 2, jobs)`) — 주면 이것이 이긴다
  */
-export async function setupJobListMocks(page: Page, count = 3, jobs?: ProactiveJob[]) {
-  await mockApi(page, 'GET', '/api/v1/proactive/jobs', jobs ?? createJobs(count));
+export async function setupJobListMocks(page: Page, countOrJobs: number | ProactiveJob[] = 3, jobs?: ProactiveJob[]) {
+  const list = jobs ?? (Array.isArray(countOrJobs) ? countOrJobs : createJobs(countOrJobs));
+  await mockApi(page, 'GET', '/api/v1/proactive/jobs', list);
   await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
 }
 

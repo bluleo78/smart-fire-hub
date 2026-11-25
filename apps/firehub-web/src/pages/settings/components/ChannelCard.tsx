@@ -245,7 +245,14 @@ export function ChannelCard({ setting }: ChannelCardProps) {
     });
   };
 
+  // 요청 중 여부와 화면에 보일 켜짐 값 — 요청 중에는 요청한 값을 바로 보이고, 아니면 서버 값을 쓴다.
+  const pending = updatePreference.isPending;
+  const shownEnabled = pending ? (updatePreference.variables?.enabled ?? enabled) : enabled;
+
   const handleToggle = (checked: boolean) => {
+    // 요청 중 토글 무시 — 중복 요청 방지. 요청 중을 disabled 로 두면 고대비에서 GrayText 로 깜빡여
+    // 상태가 바뀐 것처럼 읽히므로 disabled 대신 aria-busy 로 표시한다 (진짜 비활성과 구분, WD-1150).
+    if (pending) return;
     updatePreference.mutate(
       { channel, enabled: checked },
       {
@@ -294,9 +301,15 @@ export function ChannelCard({ setting }: ChannelCardProps) {
               <TooltipTrigger asChild>
                 <div>
                   <Switch
-                    checked={connected ? enabled : false}
+                    // 요청 중에는 요청한 값을 바로 보인다(WD-511 선례) — 실패하면 pending 이 풀려 서버 값으로 돌아온다.
+                    checked={connected && shownEnabled}
                     onCheckedChange={handleToggle}
-                    disabled={isChatChannel || updatePreference.isPending || !connected}
+                    disabled={isChatChannel || !connected}
+                    aria-busy={pending || undefined}
+                    // disabled 는 고대비 GrayText 를 부르므로 쓰지 않고, 토글이 무시됨을 보조기기에 알리려 aria-disabled 를 함께 둔다.
+                    aria-disabled={pending || undefined}
+                    // 요청 중임을 보이는 사용자에게 색이 아닌 커서로만 알린다(불투명도·GrayText 는 쓰지 않아 고대비 색은 그대로).
+                    className="aria-busy:cursor-progress"
                     aria-label={`${label} 채널 활성화`}
                   />
                 </div>

@@ -812,8 +812,14 @@ html {
     background-color: var(--switch-fc-track);
     border-color: var(--switch-fc-border);
   }
+  /* WD-1150: 꺼짐 CanvasText 손잡이가 CanvasText 테두리에 바로 붙어 경계가 안 보인다 — Canvas 1px outline 으로 틈을 둔다.
+   * outline-offset -1px 로 링을 손잡이 안쪽에 그린다 — 기본(0)이면 링이 손잡이 밖 1px(알약 테두리 자리)을 덮어
+   * 테두리가 지워지고(꺼짐은 왼쪽이 열려 보이고 켜짐은 손잡이가 오른쪽으로 불거진다), 안쪽이면 테두리는 그대로 두고 1px 틈만 남는다.
+   * 켜짐·비활성은 손잡이가 알약 안쪽 색과 달라 틈이 있어도 해롭지 않아 상태 구분 없이 공통으로 둔다. */
   [data-slot='switch-thumb'] {
     background-color: var(--switch-fc-thumb);
+    outline: 1px solid Canvas;
+    outline-offset: -1px;
   }
 }
 

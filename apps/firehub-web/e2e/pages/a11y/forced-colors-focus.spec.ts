@@ -3,11 +3,13 @@ import { createRequire } from 'node:module';
 import type { Locator, Page } from '@playwright/test';
 
 import { createJob } from '../../factories/ai-insight.factory';
+import { createRole, createUserDetail } from '../../factories/auth.factory';
 import {
   createDatasetDetail,
   createDatasets,
 } from '../../factories/dataset.factory';
 import { createPropertyReviewItem } from '../../factories/reviewItem.factory';
+import { setupAdminAuth } from '../../fixtures/admin.fixture';
 import {
   mockProactivePermissions,
   setupJobListMocks,
@@ -21,6 +23,7 @@ import {
   setupDatasetDetailMocks,
   setupDatasetMocks,
 } from '../../fixtures/dataset.fixture';
+import { holdApi } from '../../fixtures/hold-api';
 import { readFocusStyle, tabUntilFocused } from '../../fixtures/keyboard-focus';
 import {
   grantPipelinePermissions,
@@ -817,7 +820,7 @@ test.describe('고대비 스위치 켜짐·꺼짐 구분 (WD-1137)', () => {
   async function openOnOffSwitches(page: Page) {
     await page.emulateMedia({ forcedColors: 'active' });
     await mockProactivePermissions(page);
-    await setupJobListMocks(page, 2, [
+    await setupJobListMocks(page, [
       createJob({ id: 1, name: '켜진 잡', enabled: true }),
       createJob({ id: 2, name: '꺼진 잡', enabled: false }),
     ]);
@@ -861,31 +864,135 @@ test.describe('고대비 스위치 켜짐·꺼짐 구분 (WD-1137)', () => {
     expect([track.outlineStyle, track.outlineWidth], '알약의 초점 outline 이 사라졌다 (WD-1091)').toEqual(['solid', '2px']);
   });
 
-  test('고대비 모드에서 비활성 스위치는 투명도 없이 GrayText 로 그려진다', async ({
-    authenticatedPage: page,
-  }) => {
-    const sw = await openOnOffSwitches(page);
-    const enabledOff = await readSwitchColors(sw.off);
-    // 이 화면엔 비활성 스위치가 없어 CSS 규칙만 확인한다 — Radix 루트(<button>)에 disabled 를 직접 걸어 :disabled 를 만든다
-    await page.getByRole('switch').evaluateAll((els) => els.forEach((el) => el.setAttribute('disabled', '')));
-    // 알약은 transition-all 이라 테두리·배경색이 150ms 동안 옮겨 간다 — 꺼짐 테두리가 손잡이 색(GrayText)에,
-    // 켜짐 알약 배경이 그 색에 닿을 때까지 기다린다(고정 대기 없이)
-    let on = await readSwitchColors(sw.on);
-    let off = await readSwitchColors(sw.off);
+  /**
+   * 고대비에서 `color: <시스템 색 이름>`(GrayText, Highlight 등)인 요소의 계산 색 — 시스템 색 이름은 계산 시 rgb 로 풀리므로
+   * 스위치 색과 같은 표기로 비교하려고 페이지 안에서 직접 읽는다.
+   */
+  async function readSystemColor(page: Page, name: string) {
+    return page.evaluate((colorName) => {
+      const probe = document.createElement('span');
+      probe.style.color = colorName;
+      document.body.appendChild(probe);
+      const color = getComputedStyle(probe).color;
+      probe.remove();
+      return color;
+    }, name);
+  }
+
+  /** 사용자 상세 자기 계정(id 2) — 켜진 채 잠긴 실제 비활성 스위치(UserDetailPage)가 나오는 화면을 고대비로 연다. */
+  async function openOwnAccountSwitch(page: Page) {
+    await page.emulateMedia({ forcedColors: 'active' });
+    await setupAdminAuth(page);
+    await mockApi(page, 'GET', '/api/v1/roles', [createRole({ id: 1, name: 'USER', isSystem: true })]);
+    await mockApi(page, 'GET', '/api/v1/users/2', createUserDetail({ id: 2, name: '관리자', username: 'admin@example.com' }));
+    await page.goto('/admin/users/2');
+    return page.locator('[data-testid="suspend-lock-trigger"] [data-slot="switch"]');
+  }
+
+  test('실제 비활성 스위치 — 사용자 상세 자기 계정(켜짐·비활성)', async ({ authenticatedPage: page }) => {
+    const sw = await openOwnAccountSwitch(page);
+    await expect(sw, '실제 마크업이 disabled 가 아니다').toBeDisabled();
+    await expect(sw).toHaveAttribute('data-disabled', '');
+    await expect(sw).toHaveAttribute('data-state', 'checked');
+    const grayText = await readSystemColor(page, 'GrayText');
+    // 알약은 transition-all 이라 색이 150ms 동안 옮겨 간다 — 고정 대기 없이 GrayText 에 닿을 때까지 기다린다
+    // 마지막으로 읽은 색을 아래 단언에 재사용한다(poll 통과 시점의 값)
+    let on!: Awaited<ReturnType<typeof readSwitchColors>>;
     await expect
       .poll(async () => {
-        on = await readSwitchColors(sw.on);
-        off = await readSwitchColors(sw.off);
-        return off.trackBorder === off.thumbBg && on.trackBg === off.thumbBg;
-      }, { message: '비활성 꺼짐 테두리·손잡이, 켜짐 알약이 같은 비활성 색(GrayText)이 아니다 (WD-1137)' })
-      .toBe(true);
-    for (const c of [on, off]) {
-      // opacity-50 은 시스템 색을 Canvas 와 섞어 팔레트 밖 색을 만든다 — 고대비에서는 되돌린다
-      expect(c.rootOpacity, `${c.state}: 비활성 스위치에 반투명이 남았다 (WD-1137)`).toBe('1');
-    }
-    // 꺼짐 비활성: (위에서 테두리·손잡이가 같은 GrayText 임을 확인) 활성 테두리(CanvasText)와 달라야 한다
-    expect(off.trackBorder, '비활성 꺼짐 테두리가 활성과 같다 (WD-1137)').not.toBe(enabledOff.trackBorder);
-    // 켜짐 비활성: (위에서 알약이 GrayText 로 채워짐을 확인) 손잡이는 알약과 다른 색 — 켜짐·꺼짐이 채움으로도 구분된다
+        on = await readSwitchColors(sw);
+        return on.trackBg;
+      }, { message: '비활성 켜짐 알약이 GrayText 로 채워지지 않았다 (WD-1137)' })
+      .toBe(grayText);
+    // opacity-50 은 시스템 색을 Canvas 와 섞어 팔레트 밖 색을 만든다 — 고대비에서는 되돌린다
+    expect(on.rootOpacity, '비활성 스위치에 반투명이 남았다 (WD-1137)').toBe('1');
+    // 켜짐 비활성: 손잡이는 알약과 다른 색 — 켜짐·꺼짐이 채움으로도 구분된다
     expect(on.thumbBg, '비활성 켜짐 손잡이가 알약 배경과 같다 (WD-1137)').not.toBe(on.trackBg);
+  });
+
+  test('실제 비활성 스위치 — 미연결 채널(꺼짐·비활성)', async ({ authenticatedPage: page }) => {
+    await page.emulateMedia({ forcedColors: 'active' });
+    await mockApi(page, 'GET', '/api/v1/channels/settings', [
+      { channel: 'KAKAO', enabled: false, connected: false, needsReauth: false, displayAddress: '카카오톡', oauthStartUrl: null, workspaceId: null },
+    ]);
+    await page.goto('/settings/channels');
+    const sw = page.getByRole('switch', { name: /카카오.*채널 활성화/ });
+    await expect(sw, '실제 마크업이 disabled 가 아니다').toBeDisabled();
+    await expect(sw).toHaveAttribute('data-state', 'unchecked');
+    const grayText = await readSystemColor(page, 'GrayText');
+    // 마지막으로 읽은 색을 아래 단언에 재사용한다(poll 통과 시점의 값)
+    let off!: Awaited<ReturnType<typeof readSwitchColors>>;
+    await expect
+      .poll(async () => {
+        off = await readSwitchColors(sw);
+        return [off.trackBorder, off.thumbBg];
+      }, { message: '비활성 꺼짐 테두리·손잡이가 GrayText 가 아니다 (WD-1137)' })
+      .toEqual([grayText, grayText]);
+    expect(off.rootOpacity, '비활성 스위치에 반투명이 남았다 (WD-1137)').toBe('1');
+  });
+
+  test('꺼짐 손잡이에 Canvas 틈 (WD-1150)', async ({ authenticatedPage: page }) => {
+    const sw = await openOnOffSwitches(page);
+    const thumb = sw.off.locator('[data-slot="switch-thumb"]');
+    // 꺼짐 CanvasText 손잡이가 CanvasText 테두리에 붙어 경계가 안 보이던 문제 — Canvas outline 으로 틈을 둔다
+    await expect(thumb).toHaveCSS('outline-style', 'solid');
+    await expect(thumb).toHaveCSS('outline-width', '1px');
+    // 링이 알약 테두리를 덮지 않도록 손잡이 안쪽에 그린다
+    await expect(thumb).toHaveCSS('outline-offset', '-1px');
+    // 보통 모드에는 이 규칙이 없다
+    await page.emulateMedia({ forcedColors: 'none' });
+    await expect(thumb).toHaveCSS('outline-style', 'none');
+  });
+
+  /**
+   * 요청 중 채널 스위치 색 검증 — 같은 화면의 건드리지 않은 활성 스위치(REF, 요청한 값과 같은 상태)와 색이 정확히 같아야 한다.
+   * 왜: 「GrayText 가 아님」만 보면 어떤 색이든 통과한다. 활성 스위치와 동일하다고 단언해야 busy 가 비활성 색을 쓰지 않음이 확정된다.
+   * requested: 클릭 뒤 보이는 요청한 값. 반대 상태의 KAKAO 를 누르고, 그 상태의 EMAIL(참조)과 비교한다.
+   */
+  async function expectBusyMatchesEnabledSwitch(page: Page, requestedChecked: boolean) {
+    await page.emulateMedia({ forcedColors: 'active' });
+    await mockApi(page, 'GET', '/api/v1/channels/settings', [
+      { channel: 'KAKAO', enabled: !requestedChecked, connected: true, needsReauth: false, displayAddress: '카카오톡', oauthStartUrl: null, workspaceId: null },
+      { channel: 'EMAIL', enabled: requestedChecked, connected: true, needsReauth: false, displayAddress: 'test@example.com', oauthStartUrl: null, workspaceId: null },
+    ]);
+    const held = await holdApi(page, 'PATCH', '/api/v1/channels/settings/KAKAO/preference', 204, {});
+    await page.goto('/settings/channels');
+    const sw = page.getByRole('switch', { name: /카카오.*채널 활성화/ });
+    const ref = page.getByRole('switch', { name: /이메일.*채널 활성화/ });
+    const state = requestedChecked ? 'checked' : 'unchecked';
+    await expect(sw).toHaveAttribute('data-state', requestedChecked ? 'unchecked' : 'checked');
+    await expect(ref).toHaveAttribute('data-state', state);
+    const grayText = await readSystemColor(page, 'GrayText');
+    await sw.click();
+    // 요청 중: 진짜 비활성이 아니라 busy — disabled 속성이 없다
+    await expect(sw).toHaveAttribute('aria-busy', 'true');
+    await expect(sw).toHaveAttribute('data-state', state);
+    await expect(sw, '요청 중 스위치가 disabled 로 바뀌었다 (WD-1150)').not.toHaveAttribute('disabled');
+    // 알약 색 전환(150ms)이 끝나면 요청한 상태의 활성 스위치와 색이 같아야 한다
+    const refColors = await readSwitchColors(ref);
+    // 마지막으로 읽은 색을 아래 단언에 재사용한다(poll 통과 시점의 값)
+    let c!: Awaited<ReturnType<typeof readSwitchColors>>;
+    await expect
+      .poll(async () => {
+        c = await readSwitchColors(sw);
+        return [c.trackBg, c.trackBorder, c.thumbBg];
+      }, { message: `요청 중 ${state} 스위치가 활성 ${state} 스위치와 색이 다르다 (WD-1150)` })
+      .toEqual([refColors.trackBg, refColors.trackBorder, refColors.thumbBg]);
+    expect([c.trackBg, c.trackBorder, c.thumbBg], '요청 중 색에 GrayText 가 섞였다 (WD-1150)').not.toContain(grayText);
+    // 켜짐 요청은 Highlight 알약을 유지한다 — 참조 스위치도 같은 색이므로 GrayText 가 아님과 함께 켜짐 채움이 유지됨을 확인
+    if (requestedChecked) {
+      const highlight = await readSystemColor(page, 'Highlight');
+      expect(c.trackBg, '켜짐 요청 중 알약이 Highlight 가 아니다 (WD-1150)').toBe(highlight);
+    }
+    held.release();
+    await expect(sw).not.toHaveAttribute('aria-busy');
+  }
+
+  test('요청 중인 채널 스위치(꺼짐 요청)는 활성 꺼짐 스위치와 같은 색 (WD-1150)', async ({ authenticatedPage: page }) => {
+    await expectBusyMatchesEnabledSwitch(page, false);
+  });
+
+  test('요청 중인 채널 스위치(켜짐 요청)는 활성 켜짐 스위치와 같은 색(Highlight) (WD-1150)', async ({ authenticatedPage: page }) => {
+    await expectBusyMatchesEnabledSwitch(page, true);
   });
 });
