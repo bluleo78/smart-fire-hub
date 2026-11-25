@@ -63,6 +63,14 @@ const CRON_PRESETS = [
 
 interface JobOverviewTabProps {
   job: ProactiveJob | undefined;
+  /**
+   * 검증 스키마(resolverSchema)와 같은 기준 작업 — 폼 시드·주기 비교(cronUnchanged)가 쓰는 멈춘 값(baseJob).
+   *
+   * `triggerUnchanged`·`cronRequiredHint` 도 이것을 써야 「안 건드린 주기는 필수 아님」 판정과 안내가 어긋나지 않는다:
+   * 최신 조회 값을 쓰면 편집 중 다른 곳이 트리거·주기를 바꾼 순간 안내가 제멋대로 뜨고 저장 버튼 판정과 갈린다(WD-1109 반려 2).
+   * 표시용(읽기 카드·활성 여부)은 `job` 을 그대로 쓴다.
+   */
+  baseJob: ProactiveJob | undefined;
   isNew: boolean;
   isEditing: boolean;
   form: UseFormReturn<ProactiveJobFormValues>;
@@ -123,7 +131,7 @@ function generateAutoTemplate(question: string): TemplateSection[] {
 }
 
 export default function JobOverviewTab({
-  job, isNew, isEditing, form, templates, onChange, customCronValue, onCustomCronValueChange,
+  job, baseJob, isNew, isEditing, form, templates, onChange, customCronValue, onCustomCronValueChange,
 }: JobOverviewTabProps) {
   const { register, watch, setValue, getValues, formState: { errors } } = form;
   // 접근성: 그룹 라벨↔위젯 연결용 id 접두사 (#432).
@@ -252,9 +260,11 @@ export default function JobOverviewTab({
   // 저장된 주기가 없던 작업은 칸이 비어 있어도 검증 전엔 오류가 없어 「저장」만 꺼진다 — 이유를 바로 보인다.
   // 방금 「직접 입력」을 고른 빈 칸은 아직 안내하지 않는다.
   // 단, 트리거를 저장된 그대로 두면 주기 없는 수정도 저장되므로(WD-995) 트리거를 바꾼 때만 안내한다.
-  const triggerUnchanged = (watch('triggerType') ?? 'SCHEDULE') === (job?.triggerType ?? 'SCHEDULE');
+  // 기준은 resolverSchema 와 같은 baseJob 이다 — 최신 조회 값을 쓰면 편집 중 다른 곳이 트리거를 바꾼 순간
+  // 안내가 제멋대로 뜨고 저장 버튼 판정과 갈린다(WD-1109 반려 2).
+  const triggerUnchanged = (watch('triggerType') ?? 'SCHEDULE') === (baseJob?.triggerType ?? 'SCHEDULE');
   const cronRequiredHint =
-    !isNew && !job?.cronExpression && !cronExpression && !customCronSelected && !triggerUnchanged
+    !isNew && !baseJob?.cronExpression && !cronExpression && !customCronSelected && !triggerUnchanged
       ? CRON_REQUIRED_MESSAGE
       : undefined;
 

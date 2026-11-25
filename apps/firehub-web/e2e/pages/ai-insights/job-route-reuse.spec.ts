@@ -464,8 +464,10 @@ test.describe('스마트 작업 — 상세 ↔ 새 작업 화면 재사용 (WD-9
     await expect(
       page.getByText(/작업 생성에 실패했습니다|이미 사용 중인 이름입니다/).first(),
     ).toBeVisible();
-    // 가드를 지나면 다른 폼(작업 1)에는 이름 오류가 붙지 않고 칸 값도 그대로여야 한다
-    await expect(page.getByText('이미 사용 중인 이름입니다.')).toHaveCount(0);
+    // 가드를 지나면 다른 폼(작업 1)에는 이름 「칸」 오류가 붙지 않아야 한다 — 칸 오류는 errors.name 일 때만
+    // 렌더되는 #job-name-error 하나로 좁혀 단언한다. 토스트 본문으로 세면 WD-1109 이후 이 폼도 서버 토스트를
+    // 띄워 같은 문구를 카운트하게 되어(약 4.9초간 1) 의도와 무관한 레이스가 생긴다.
+    await expect(page.locator('#job-name-error')).toHaveCount(0);
     await expect(page.locator('#job-name')).toHaveValue('매일 현황 리포트');
 
     // 긍정 대조: 같은 409 를 새 작업 폼에서 실제로 받으면 오류가 붙는다 — 위 0개 단언이 무의미하지 않다는 증거
@@ -476,6 +478,8 @@ test.describe('스마트 작업 — 상세 ↔ 새 작업 화면 재사용 (WD-9
     await page.locator('#job-prompt').fill('프롬프트');
     await page.getByRole('button', { name: '만들기', exact: true }).click();
 
-    await expect(page.getByText('이미 사용 중인 이름입니다.')).toBeVisible();
+    // 긍정 대조의 목적은 「이름 칸 오류가 실제로 붙는다」는 것이므로 칸 오류(#job-name-error)의 본문으로 좁힌다.
+    // 토스트 본문으로 세면 위 464행에서 띄운 서버 토스트(WD-1109)와 겹쳐 strict mode 위반이 난다.
+    await expect(page.locator('#job-name-error')).toHaveText('이미 사용 중인 이름입니다.');
   });
 });

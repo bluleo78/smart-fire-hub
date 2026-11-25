@@ -1,7 +1,7 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import axios from 'axios';
 import { Activity, ArrowLeft, Copy } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -41,6 +41,21 @@ import { ProactiveWriteNotice } from './components/ProactiveWriteNotice';
 import JobExecutionsTab from './tabs/JobExecutionsTab';
 import JobMonitoringTab from './tabs/JobMonitoringTab';
 import JobOverviewTab from './tabs/JobOverviewTab';
+
+/**
+ * 이동 가드 판정에 쓰는 위치 값 — **경로(pathname) 만** 담는다.
+ *
+ * 쿼리·해시는 여기에 넣지 않는다: `?tab=executions` 같은 탭 전환은 폼을 들고 있는 이 페이지 안에서 일어나
+ * 떠남이 아니기 때문이다(WD-1109 반려 1). 값을 넣어 두면 저장 중 탭을 바꾼 순간 성공한 저장이 「이탈」으로
+ * 읽혀 편집 모드·미저장 표시가 남고, 다음 저장이 자기 저장과 409 로 부딪힌다.
+ * 단위 테스트(nav-location.test.ts)가 이 함수를 직접 검증한다.
+ */
+// 컴포넌트 파일에서 함수를 함께 export 하면 react-refresh 규칙에 걸리지만, 이 훅이 없는 순수 헬퍼는
+// 페이지 모듈 안에 두고 테스트가 직접 부르는 편이 가드 판정 기준을 한 곳에서 보존한다 (WD-1109).
+// eslint-disable-next-line react-refresh/only-export-components
+export function navLocationKey(): string {
+  return window.location.pathname;
+}
 
 function buildDefaultValues(job?: {
   name: string;
@@ -197,9 +212,11 @@ export default function ProactiveJobDetailPage() {
   }
 
   // 수정이면 저장된 트리거·주기를 기준으로 「안 건드린 주기는 필수 아님」 규칙을 적용한다(WD-995). 작업이 로드되면 resolver 도 바뀐다.
+  // 기준은 폼 시드·주기 비교(cronUnchanged)와 같은 baseJob 이다 — 편집 중 재조회로 job 이 바뀌면 멈춘 폼과 어긋나,
+  // 남이 바꾼 주기 덕분에 내 빈 주기가 필수로 뒤바뀌어 저장이 막힌다(WD-1109).
   const jobLoaded = !!job;
-  const jobTriggerType = job?.triggerType;
-  const jobCron = job?.cronExpression;
+  const jobTriggerType = baseJob?.triggerType;
+  const jobCron = baseJob?.cronExpression;
   const resolverSchema = useMemo(
     () =>
       isNew || !jobLoaded
@@ -212,7 +229,12 @@ export default function ProactiveJobDetailPage() {
     values: defaultValues,
   });
 
-  const createMutation = useCreateProactiveJob();
+  // 만드는 요청 하나의 실패 처리 자리 — 훅의 onError 가 이 자리를 불러, 화면이 이탈로 언마운트된 뒤에도
+  // 같은 처리(양식 정리·서버 사유 토스트·이름 칸 오류)가 돈다(WD-1109 반려 3). mutate(...) 로 넘기는 onError 는
+  // 화면이 없어지면 리스너가 없어 실행되지 않는다. 요청을 보낼 때 그 요청의 시점·만든 양식으로 갈아 끼운다 —
+  // 만드는 일은 한 번에 하나다(isCreatingRef).
+  const createFailureHandlerRef = useRef<(error: unknown) => void>(() => {});
+  const createMutation = useCreateProactiveJob({ onError: (error) => createFailureHandlerRef.current(error) });
   // 목표 기반 작업은 섹션 구성을 리포트 양식으로 먼저 저장한 뒤 연결한다(WD-297). 작업 생성이 실패하면 방금 만든 양식을 지운다.
   const createTemplateMutation = useCreateProactiveTemplate();
   const deleteTemplateMutation = useDeleteProactiveTemplate();
@@ -232,23 +254,35 @@ export default function ProactiveJobDetailPage() {
   // 이동 카운터 — 라우트가 바뀔 때마다 1 증가한다. 문자열(routeKey) 비교는 요청 중 A → /jobs/new → A 되돌아오기처럼
   // 같은 경로로 돌아오면 값이 다시 같아 가드가 무력화되지만, 카운터는 되돌아와도 계속 커져 시작 시점 값과 반드시 어긋난다 (WD-1042)
   const navSeqRef = useRef(0);
-  if (prevRouteKey !== routeKey) {
+  // 라우트 정체가 이번 렌더에서 바뀌었는가 — 아래 파생 상태 재설정의 조건. 카운터(ref)는 렌더에서 건드리지 않는다.
+  const routeChanged = prevRouteKey !== routeKey;
+  if (routeChanged) {
     setPrevRouteKey(routeKey);
-    navSeqRef.current += 1;
     setIsEditing(isNew || startEditingState);
     setIsDirty(false);
     setEditConflict(false);
     setLeaveDialogOpen(false);
     setCustomCronValue(null);
   }
+  // 카운터 증가는 커밋 직후(useLayoutEffect)로 옮긴다 — 렌더 중 ref 쓰기는 버려진 렌더(뒤에 다시 그려지지 않을 렌더)에서도
+  // 값이 올라가, 화면은 그대로인데 「멈춘 이동」으로 읽혀 저장 성공 뒤에도 편집 모드·미저장 표시가 남았다(WD-1109).
+  // 의존 값은 routeChanged 가 아니라 routeKey 자체다 — routeChanged 는 위 렌더 중 setPrevRouteKey 재설정 때문에
+  // 두 번째 렌더(실제 커밋되는 렌더)에선 항상 false 로 남아, [routeChanged] 로 두면 effect 가 한 번도 안 돌아
+  // 카운터 축이 죽는다(왕복 가드 회귀로 확인됨). routeKey 는 두 렌더에서 같은 새 값이라 커밋의 의존 비교에 걸려
+  // 라우트가 바뀔 때마다 한 번씩 오르고, 마운트 때 1 오른 것은 모든 판정이 시작 시점 값과 상대 비교라 무방하다.
+  // 늦게 온 응답은 여전히 카운터 축 가드에 걸린다(WD-1042 두 축 구조 유지).
+  useLayoutEffect(() => {
+    navSeqRef.current += 1;
+  }, [routeKey]);
   /**
-   * 요청을 시작한 시점(카운터·경로)과 지금을 비교해 그 사이 화면이 바뀌었는지 한 곳에서 판정한다.
+   * 요청을 시작한 시점(카운터·위치)과 지금을 비교해 그 사이 화면이 바뀌었는지 한 곳에서 판정한다.
    *
-   * 카운터만 비교하면 같은 작업으로 왕복하는 동안 늦게 온 응답이 지금 화면을 덮고, 경로만 비교하면
+   * 카운터만 비교하면 같은 작업으로 왕복하는 동안 늦게 온 응답이 지금 화면을 덮고, 위치만 비교하면
    * 왕복 뒤 값이 다시 같아 가드가 무력화된다 — 두 축이 함께여야 가드가 선다(WD-996, WD-1042).
+   * 위치 축은 경로(navLocationKey) 로만 비교한다 — 쿼리·해시(탭 전환)는 이 페이지 안의 일이라 떠남이 아니다(WD-1109 반려 1).
    */
-  const movedAway = (seq: number, path: string) =>
-    navSeqRef.current !== seq || window.location.pathname !== path;
+  const movedAway = (seq: number, locationKey: string) =>
+    navSeqRef.current !== seq || navLocationKey() !== locationKey;
   // 편집 시작 state(startEditing)는 복제 직후(WD-996)와 목록의 막힌 복제 토스트 「편집」 이동(WD-1026, 새로 마운트)에서 쓰이며,
   // 어느 쪽이든 한 번만 쓴다 — 기록에 남으면 저장·취소 뒤 뒤로→앞으로 갈 때 다시 편집 모드로 열린다.
   // 같은 경로로 replace 하므로 라우트 정체(routeKey)가 바뀌지 않아 위 다시 잡기는 돌지 않는다.
@@ -285,7 +319,7 @@ export default function ProactiveJobDetailPage() {
   // 충돌 창의 「다시 불러오기」 진행 중 — 저장 중과 함께 창의 버튼을 막는다
   const [isReloading, setIsReloading] = useState(false);
   /**
-   * 저장의 기준 버전(WD-364 낙관적 잠금) — 서버 값과 다르면 409 EDIT_CONFLICT. 서버 문자열 그대로 보내다(Date 로 바꾸면 마이크로초가 잘린다).
+   * 저장의 기준 버전(WD-364 낙관적 잠금) — 서버 값과 다르면 409 EDIT_CONFLICT. 서버 문자열 그대로 보낸다(Date 로 바꾸면 마이크로초가 잘린다).
    *
    * 기준은 위 `baseJob` 을 따른다 — 시드를 멈춘 동안(미저장 편집 중)에는 그 시점의 조회 결과로 고정되고,
    * 그 밖에는 최신 조회 값을 쓴다. 폼 내용(시드)과 기준이 한 쌍이어야, 편집 중 다른 곳에서 저장된 뒤 재조회가
@@ -396,9 +430,10 @@ export default function ProactiveJobDetailPage() {
       // 양식 저장(await) 앞에서 잡는다 — 그 대기 동안 화면이 바뀌어도 가드 창이 이미 시작돼 요청 전체가 가드에 들어가기 때문이다.
       // 콜백은 숫자만 클로저로 받고 비교 대상은 매번 navSeqRef.current 를 새로 읽는다(WD-1042)
       const startSeq = navSeqRef.current;
-      // 카운터는 렌더가 다시 돌아야 늘어나는데 react-router 의 갱신은 startTransition 안에 있어 그 사이 창이 남는다 —
-      // window.location 은 history 를 건드리는 순간 바뀌므로 카운터와 함께 봐야 그 창까지 덮는다(WD-1042 반려 재검)
-      const startPath = window.location.pathname;
+      // 카운터는 커밋이 끝나야 늘어나는데 react-router 의 갱신은 startTransition 안에 있어 그 사이 창이 남는다 —
+      // window.location 은 history 를 건드리는 순간 바뀌므로 카운터와 함께 봐야 그 창까지 덮는다.
+      // 비교 값은 경로만 — 탭 전환(?tab)은 떠남이 아니므로 세지 않는다(WD-1042 반려 재검, WD-1109 반려 1)
+      const startPath = navLocationKey();
       // 목표 기반 구성이 있으면 먼저 「<작업 이름> 양식」으로 저장해 그 양식을 작업에 연결한다(WD-297, 사람 결정 A안).
       let goalTemplateId: number | null = null;
       if (values.generatedSections?.length) {
@@ -432,6 +467,21 @@ export default function ProactiveJobDetailPage() {
           return;
         }
       }
+      // 이 요청의 실패 처리를 훅 onError 자리에 끼워 넣는다 — 이탈로 화면이 없어진 뒤에도 화면이 넘긴 이 처리가
+      // 그대로 돈다(mutate 로 주는 onError 는 리스너가 없어 실행되지 않는다, WD-1109 반려 3)
+      createFailureHandlerRef.current = (err) => {
+        // 서버가 거절한 경우에만 작업 없이 남는 양식을 지운다(삭제 실패는 사용자 오류 안내가 먼저라 조용히 넘긴다).
+        // 응답 없는 실패(시간 초과·연결 끊김)는 서버가 작업을 이미 만들었을 수 있어 지우지 않는다 — 지우면 그 작업의 양식이 끊긴다(ON DELETE SET NULL).
+        if (goalTemplateId != null && axios.isAxiosError(err) && err.response) deleteTemplateMutation.mutate(goalTemplateId);
+        // 이동 뒤에도 서버 사유(400·403)를 잃지 않는다 — 칸 오류는 이미 다른 화면이라 붙이지 않고 토스트만 남긴다(WD-1109)
+        if (movedAway(startSeq, startPath)) {
+          handleApiError(err, '작업 생성에 실패했습니다.');
+          return;
+        }
+        // 이름 중복 409(WD-824)는 서버 문구를 이름 칸 오류로 붙이고 토스트는 생략한다
+        if (applyDuplicateNameError(form.setError, err)) return;
+        handleApiError(err, '작업 생성에 실패했습니다.');
+      };
       createMutation.mutate(goalTemplateId == null ? payload : { ...payload, templateId: goalTemplateId }, {
         onSuccess: (created) => {
           // 알림은 글로벌이라 화면을 덮지 않는다 — 가드 판정과 무관하게 띄운다
@@ -446,20 +496,6 @@ export default function ProactiveJobDetailPage() {
         onSettled: () => {
           isCreatingRef.current = false;
         },
-        onError: (err) => {
-          // 서버가 거절한 경우에만 작업 없이 남는 양식을 지운다(삭제 실패는 사용자 오류 안내가 먼저라 조용히 넘긴다).
-          // 응답 없는 실패(시간 초과·연결 끊김)는 서버가 작업을 이미 만들었을 수 있어 지우지 않는다 — 지우면 그 작업의 양식이 끊긴다(ON DELETE SET NULL).
-          if (goalTemplateId != null && axios.isAxiosError(err) && err.response) deleteTemplateMutation.mutate(goalTemplateId);
-          // 요청 중 다른 화면으로 옮겨 갔으면 남의 폼에 이름 오류를 붙이지 않고 실패만 알린다 —
-          // 중복 409(WD-824) 문구는 떠난 그 폼에 속한 것이므로 이 화면에는 일반 실패 안내만 남긴다 (WD-1042)
-          if (movedAway(startSeq, startPath)) {
-            toast.error('작업 생성에 실패했습니다.');
-            return;
-          }
-          // 이름 중복 409(WD-824)는 서버 문구를 이름 칸 오류로 붙이고 토스트는 생략한다
-          if (applyDuplicateNameError(form.setError, err)) return;
-          handleApiError(err, '작업 생성에 실패했습니다.');
-        },
       });
     } else {
       // 「기본 (선택 안 함)」을 고르면 templateId 가 null 이 되는데, 서버는 null 을 "바꾸지 않음"으로 받는다.
@@ -467,10 +503,11 @@ export default function ProactiveJobDetailPage() {
       // Promise 를 돌려 충돌 창이 저장 끝까지 잠기게 하고(WD-678), 거부는 콜백이 처리하므로 삼킨다(이 화면은 isSubmitSuccessful 을 읽지 않는다).
       // 저장 요청 중 다른 작업·새 작업으로 옮겨 가면 늦게 온 응답이 새 화면의 편집 상태를 덮지 않게, 요청 시작 시점의
       // 이동 카운터를 기억한다 — 같은 작업으로 왕복해도 카운터는 계속 커져 가드가 풀리지 않는다 (WD-996, WD-1042).
-      // 카운터는 렌더이후에야 늘어나고 react-router 의 갱신은 startTransition 안이라 그 사이 창이 남기에,
-      // history 를 건드리는 순간 바뀌는 window.location 을 함께 비교한다(WD-1042 반려 재검)
+      // 카운터는 커밋이 끝나야 늘어나고 react-router 의 갱신은 startTransition 안이라 그 사이 창이 남기에,
+      // history 를 건드리는 순간 바뀌는 window.location 을 카운터와 함께 비교한다 — 값은 경로만(WD-1042 반려 재검,
+      // WD-1109 반려 1 — 탭 전환은 떠남이 아니다)
       const savedSeq = navSeqRef.current;
-      const savedPath = window.location.pathname;
+      const savedPath = navLocationKey();
       return updateMutation.mutateAsync(
         {
           id: jobId,
@@ -524,7 +561,8 @@ export default function ProactiveJobDetailPage() {
     if (!jobId) return;
     setIsReloading(true);
     const requestedSeq = navSeqRef.current;
-    const requestedPath = window.location.pathname;
+    // 위치 축도 경로만 — 「다시 불러오기」는 이 페이지 안의 일이라 탭이 바뀌어도 결과를 반영한다(WD-1109 반려 1)
+    const requestedPath = navLocationKey();
     try {
       const latest = await fetchLatestJob(jobId);
       // 요청 중 다른 작업·새 작업으로 옮겨 갔다면 도착한 응답으로 폼을 덮지 않는다 (WD-996, WD-1042)
@@ -878,6 +916,8 @@ export default function ProactiveJobDetailPage() {
           <JobOverviewTab
             key={routeKey}
             job={job}
+            // 검증 스키마(resolverSchema)와 같은 기준 — 폼 시드와 같은 멈춘 값(WD-1109 반려 2)
+            baseJob={baseJob}
             isNew={isNew}
             isEditing={isEditing}
             form={form}
