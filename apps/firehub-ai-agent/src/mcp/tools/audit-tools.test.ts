@@ -35,6 +35,12 @@ describe('Audit MCP Tools', () => {
     server = createFireHubMcpServer(client);
   });
 
+  /** 등록된 list_audit_logs 도구의 입력 스키마 shape 를 꺼낸다 (WD-1131 스키마 검증용). */
+  function getListAuditLogsShape() {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (server.instance as any)._registeredTools['list_audit_logs'].inputSchema.shape;
+  }
+
   describe('list_audit_logs', () => {
     it('calls apiClient.listAuditLogs with args', async () => {
       const args = { search: 'admin', actionType: 'LOGIN', page: 0, size: 20 };
@@ -88,8 +94,7 @@ describe('Audit MCP Tools', () => {
     });
 
     it('스키마 설명이 오프셋 포함을 요구한다 (WD-11)', () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const shape = (server.instance as any)._registeredTools['list_audit_logs'].inputSchema.shape;
+      const shape = getListAuditLogsShape();
       expect(shape.startDate.description).toContain('+09:00');
       expect(shape.endDate.description).toContain('+09:00');
     });
@@ -105,6 +110,38 @@ describe('Audit MCP Tools', () => {
       const result = await invokeTool(server, 'list_audit_logs', {});
       expect(client.listAuditLogs).toHaveBeenCalledWith({});
       expect(result.isError).toBeFalsy();
+    });
+
+    // WD-1131: api-client 가 search 를 1,000자로 잘라 보내므로, 잘렸다는 사실을 결과로 알려 LLM 이 전체 검색어 기준으로 오해하지 않게 한다.
+    it('search 가 1,000자를 넘으면 결과에 searchTruncated 와 안내를 붙인다 (WD-1131)', async () => {
+      (client.listAuditLogs as ReturnType<typeof vi.fn>).mockResolvedValue({ content: [{ id: 1 }], totalElements: 1 });
+      const result = await invokeTool(server, 'list_audit_logs', { search: '가'.repeat(1500) });
+      const body = JSON.parse(result.content[0].text);
+      expect(body.searchTruncated).toBe(true);
+      expect(body.searchNotice).toContain('1,000자');
+      expect(body.content).toEqual([{ id: 1 }]);
+      expect(body.totalElements).toBe(1);
+    });
+
+    it('search 가 1,000자 이하이면 잘림 표시가 없다 (WD-1131)', async () => {
+      (client.listAuditLogs as ReturnType<typeof vi.fn>).mockResolvedValue({ content: [] });
+      const result = await invokeTool(server, 'list_audit_logs', { search: '가'.repeat(1000) });
+      const body = JSON.parse(result.content[0].text);
+      expect(body.searchTruncated).toBeUndefined();
+      expect(body.searchNotice).toBeUndefined();
+    });
+
+    it('actionType·resource·result 가 100자를 넘으면 스키마가 거절한다 (WD-1131)', () => {
+      const shape = getListAuditLogsShape();
+      for (const key of ['actionType', 'resource', 'result']) {
+        expect(shape[key].safeParse('a'.repeat(100)).success).toBe(true);
+        expect(shape[key].safeParse('a'.repeat(101)).success).toBe(false);
+      }
+    });
+
+    it('search 설명에 1,000자 상한이 적혀 있다 (WD-1131)', () => {
+      const shape = getListAuditLogsShape();
+      expect(shape.search.description).toContain('1,000자');
     });
 
     it('returns isError on failure', async () => {

@@ -26,5 +26,16 @@ public final class SearchQueryLimits {
   /** 상한 초과 안내 — 어노테이션 속성이라 컴파일 시간 상수여야 한다(숫자를 바꾸면 문구의 "1,000" 도 바꾼다). */
   public static final String QUERY_TOO_LONG = "검색어는 최대 1,000자까지 입력할 수 있습니다.";
 
+  /**
+   * 자유 문자열 필터(감사 로그 actionType·resource·result 등)의 최대 길이 — 100자(WD-1131). 요청 헤더 한도가 32KB 로 넓어져 긴 값이 그대로 DB
+   * 조건으로 가므로 컨트롤러에서 막는다. 대응 상수(값을 바꾸면 함께 바꾼다): ai-agent {@code MAX_AUDIT_FILTER_LENGTH}
+   * (apps/firehub-ai-agent/src/mcp/api-client/request-limits.ts).
+   */
+  public static final int MAX_FILTER_LENGTH = 100;
+
+  /** 필터 길이 초과 안내 — 상수 {@link #MAX_FILTER_LENGTH} 로 만든 컴파일 시간 상수라 어노테이션 속성에 쓸 수 있다. */
+  public static final String FILTER_TOO_LONG =
+      "필터 값은 최대 " + MAX_FILTER_LENGTH + "자까지 입력할 수 있습니다.";
+
   private SearchQueryLimits() {}
 }

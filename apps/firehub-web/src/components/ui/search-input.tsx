@@ -2,6 +2,7 @@ import { Search, X } from 'lucide-react';
 import { type ChangeEvent, type CompositionEvent, type Ref, useEffect, useRef, useState } from 'react';
 
 import { cn } from '@/lib/utils';
+import { clampToMaxLength } from '@/lib/validations/search-query';
 
 import { Input } from './input';
 
@@ -91,12 +92,12 @@ export function SearchInput({ placeholder = '검색...', 'aria-label': ariaLabel
   const hasValue = draft.length > 0;
 
   const handleChange = (e: ChangeEvent<HTMLInputElement>) => {
-    const next = e.target.value;
+    // WD-1131: 조합 중에는 자르지 않는다 — 조합 중인 글자를 잘라 내면 IME 가 만든 음절이 깨진다.
+    //   조합이 끝나는 compositionend 에서 자른다. 조합이 아닌 입력은 여기서 바로 자른다.
+    const next = isComposing ? e.target.value : clampToMaxLength(e.target.value, maxLength);
     setDraft(next);
     // 조합 중이면 onChange 발화 보류 — compositionend 에서 최종값을 한 번에 전달한다.
-    if (!isComposing) {
-      emit(next);
-    }
+    if (!isComposing) emit(next);
   };
 
   const handleCompositionStart = () => {
@@ -108,7 +109,8 @@ export function SearchInput({ placeholder = '검색...', 'aria-label': ariaLabel
 
   const handleCompositionEnd = (e: CompositionEvent<HTMLInputElement>) => {
     setIsComposing(false);
-    const next = e.currentTarget.value;
+    // WD-1131: 조합이 끝난 최종값이 maxLength 를 넘었으면 잘라 표시하고 잘린 값만 부모에 보낸다.
+    const next = clampToMaxLength(e.currentTarget.value, maxLength);
     setDraft(next);
     emit(next);
   };

@@ -3,6 +3,7 @@ import { createUser } from '../../factories/auth.factory';
 import { setupAdminAuth, setupAuditLogMocks } from '../../fixtures/admin.fixture';
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { simulateOverlongCompositionEnd } from '../../fixtures/base.fixture';
 import { expectTableErrorAlert } from '../../fixtures/table-error-alert';
 
 /**
@@ -1085,6 +1086,31 @@ test.describe('감사 로그 검색어 길이 상한 (WD-1111)', () => {
     await expect
       .poll(() => capture.lastRequest()?.searchParams.get('search')?.length)
       .toBe(1000);
+  });
+
+  test('한글 조합이 maxLength 를 넘겨 끝나도 1,000자로 잘라 요청한다 (WD-1131)', async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+    const capture = await mockApi(
+      page,
+      'GET',
+      '/api/v1/admin/audit-logs',
+      createPageResponse([createAuditLog({ id: 1 })]),
+      { capture: true },
+    );
+    await page.goto('/admin/audit-logs');
+    await capture.waitForRequest();
+
+    const searchInput = page.getByPlaceholder('설명으로 검색...');
+    // 조합이 끝날 때 maxlength 를 지키지 않는 브라우저를 흉내 낸다.
+    await simulateOverlongCompositionEnd(searchInput, '가'.repeat(1200));
+
+    await expect(searchInput).toHaveValue('가'.repeat(1000));
+    await expect
+      .poll(() => capture.lastRequest()?.searchParams.get('search')?.length)
+      .toBe(1000);
+    // 표 조회 실패 행(TableErrorRow)의 alert 이 없어야 한다 — 서버가 400 으로 거절하지 않았다는 뜻
+    await expect(page.getByRole('cell').filter({ has: page.getByRole('alert') })).toHaveCount(0);
+    await expect(page.getByText('검색어는 최대 1,000자까지 입력할 수 있습니다.')).toHaveCount(0);
   });
 
   test('서버가 검색어 길이로 400 을 주면 표에 그 사유가 보인다', async ({ authenticatedPage: page }) => {

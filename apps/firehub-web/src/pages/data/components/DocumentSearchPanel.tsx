@@ -13,7 +13,7 @@ import {
   PLATFORM_DB_CAPABILITIES_KEY,
   usePlatformDbFeatures,
 } from '../../../hooks/queries/usePlatformDbCapabilities';
-import { MAX_SEARCH_QUERY_LENGTH } from '../../../lib/validations/search-query';
+import { clampToMaxLength, MAX_SEARCH_QUERY_LENGTH } from '../../../lib/validations/search-query';
 import type { DocumentSearchHit, DocumentSearchMode } from '../../../types/document';
 
 /** 검색 모드 탭 라벨. 표시 순서·노출 여부는 availableSearchModes 가 정한다. */
@@ -123,7 +123,8 @@ export function DocumentSearchPanel({ datasetId }: DocumentSearchPanelProps) {
               // 서버 검색어 상한(1,000자, WD-600)과 같은 값 — 넘기면 400 이 되므로 입력 단계에서 막는다.
               maxLength={MAX_SEARCH_QUERY_LENGTH}
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              // WD-1131: 한글 IME 조합이 끝나며 브라우저가 maxlength 를 넘긴 값을 줄 수 있어 직접 잘라 400 요청을 막는다.
+              onChange={(e) => setQuery(clampToMaxLength(e.target.value, MAX_SEARCH_QUERY_LENGTH))}
               onKeyDown={(e) => { if (e.key === 'Enter' && !storeDown) handleSearch(); }}
             />
             <Button type="button" disabled={!query.trim() || search.isPending || storeDown} onClick={handleSearch}>

@@ -1,5 +1,7 @@
 package com.smartfirehub.audit.controller;
 
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -25,6 +27,8 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
@@ -252,6 +256,40 @@ class AuditLogControllerTest {
         .andExpect(content().contentTypeCompatibleWith("application/json"))
         .andExpect(jsonPath("$.errors.search").value(SearchQueryLimits.QUERY_TOO_LONG));
     verifyNoInteractions(auditLogService);
+  }
+
+  /** WD-1131: 자유 문자열 필터(actionType·resource·result)는 101자부터 서비스(DB) 전에 필드 오류 JSON 400 으로 거절된다. */
+  @ParameterizedTest
+  @ValueSource(strings = {"actionType", "resource", "result"})
+  void filterOverMaxLength_returns400WithFieldError(String param) throws Exception {
+    mockAuthentication("audit:read");
+
+    mockMvc
+        .perform(
+            get("/api/v1/admin/audit-logs")
+                .header("Authorization", "Bearer valid-token")
+                .param(param, "a".repeat(SearchQueryLimits.MAX_FILTER_LENGTH + 1)))
+        .andExpect(status().isBadRequest())
+        .andExpect(content().contentTypeCompatibleWith("application/json"))
+        .andExpect(jsonPath("$.errors." + param).value(SearchQueryLimits.FILTER_TOO_LONG));
+    verifyNoInteractions(auditLogService);
+  }
+
+  /** WD-1131: 상한(100자) 딱 그 길이의 필터 값은 통과해 서비스까지 전달된다. */
+  @ParameterizedTest
+  @ValueSource(strings = {"actionType", "resource", "result"})
+  void filterAtMaxLength_passes(String param) throws Exception {
+    mockAuthentication("audit:read");
+    when(auditLogService.getAuditLogs(
+            any(), any(), any(), any(), any(), any(), any(), any(), anyInt(), anyInt()))
+        .thenReturn(new PageResponse<>(List.of(), 0, 20, 0, 0));
+
+    mockMvc
+        .perform(
+            get("/api/v1/admin/audit-logs")
+                .header("Authorization", "Bearer valid-token")
+                .param(param, "a".repeat(SearchQueryLimits.MAX_FILTER_LENGTH)))
+        .andExpect(status().isOk());
   }
 
   /** WD-1111: 빈 검색어는 기존대로 통과한다(상한 검증이 빈 값을 막지 않는다). */

@@ -38,9 +38,12 @@ public class AuditLogController {
               message = SearchQueryLimits.QUERY_TOO_LONG)
           String search,
       @RequestParam(required = false) Long userId,
-      @RequestParam(required = false) String actionType,
-      @RequestParam(required = false) String resource,
-      @RequestParam(required = false) String result,
+      @RequestParam(required = false) @Size(max = SearchQueryLimits.MAX_FILTER_LENGTH, message = SearchQueryLimits.FILTER_TOO_LONG)
+          String actionType,
+      @RequestParam(required = false) @Size(max = SearchQueryLimits.MAX_FILTER_LENGTH, message = SearchQueryLimits.FILTER_TOO_LONG)
+          String resource,
+      @RequestParam(required = false) @Size(max = SearchQueryLimits.MAX_FILTER_LENGTH, message = SearchQueryLimits.FILTER_TOO_LONG)
+          String result,
       // WD-11: 오프셋이 있으면 그 순간을 저장 TZ 로 바꾼다(웹은 toISOString 의 Z 를 보낸다). 오프셋 없는 값은
       // ai-agent 호환으로 저장 벽시계 그대로. 형식 오류는 IllegalArgumentException → 400.
       @RequestParam(required = false) String startDate,

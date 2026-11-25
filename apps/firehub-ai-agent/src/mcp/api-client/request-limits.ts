@@ -13,6 +13,13 @@
 export const MAX_SEARCH_QUERY_LENGTH = 1_000;
 
 /**
+ * 감사 로그 목록의 actionType·resource·result 필터 길이 상한(WD-1131) — api
+ * `SearchQueryLimits.MAX_FILTER_LENGTH`
+ * (apps/firehub-api/src/main/java/com/smartfirehub/global/validation/SearchQueryLimits.java)와 같은 값.
+ */
+export const MAX_AUDIT_FILTER_LENGTH = 100;
+
+/**
  * embed() 한 번의 api 호출에 싣는 최대 텍스트 개수 — api `EmbedRequest.MAX_TEXTS`
  * (apps/firehub-api/src/main/java/com/smartfirehub/admin/embedding/EmbedRequest.java)와 같은 값.
  */
