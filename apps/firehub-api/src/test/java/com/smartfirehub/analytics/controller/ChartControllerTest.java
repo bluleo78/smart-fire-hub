@@ -488,11 +488,14 @@ class ChartControllerTest {
     verify(chartService, never()).create(any(), anyLong());
   }
 
-  /** WD-1105: 채움 문자·점자 빈칸·결합 문자만인 이름도 화면엔 빈 이름이라 400 — 서비스는 부르지 않는다. */
+  /**
+   * WD-1105: 채움 문자·점자 빈칸·결합 문자만인 이름도 화면엔 빈 이름이라 400 — 서비스는 부르지 않는다. WD-1126: 14평면 무시 코드
+   * 포인트(U+E0000)만인 이름도 같다.
+   */
   @Test
   void createChart_invisibleOnlyName_returns400() throws Exception {
     mockAuth("analytics:write");
-    for (String blank : new String[] {"\u3164", "\u2800", "\u0301"}) {
+    for (String blank : new String[] {"\u3164", "\u2800", "\u0301", "\uDB40\uDC00"}) {
       mockMvc
           .perform(
               post("/api/v1/analytics/charts")

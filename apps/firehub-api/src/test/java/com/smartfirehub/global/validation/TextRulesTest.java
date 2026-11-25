@@ -53,7 +53,12 @@ class TextRulesTest {
         "\u2065",
         "\uFFF0",
         "\uD800",
-        " \n\t"
+        " \n\t",
+        // WD-1126: 배정 안 된 14평면 무시 코드 포인트(U+E0000·E0005·E0FFF)만인 값, 이미 Mn 이라 거절되던 변이 선택자 보충(U+E0100)
+        "\uDB40\uDC00",
+        "\uDB43\uDFFF",
+        "\uDB40\uDC05",
+        "\uDB40\uDD00"
       })
   void hasText_rejectsInvisibleOnly(String value) {
     assertThat(Pattern.matches(TextRules.HAS_TEXT, value)).isFalse();
@@ -61,7 +66,22 @@ class TextRulesTest {
 
   /** WD-1105 반-목표 — 한글 자모·이모지(변이 선택자 포함)·결합 문자가 붙은 글자·숨은 문자가 섞인 정상 값은 통과한다. */
   @ParameterizedTest
-  @ValueSource(strings = {"\u314E", "\u2764\uFE0F", "e\u0301", "a\u3164", "차트\u200B", "매출", "a", "\uD83D\uDE00"})
+  @ValueSource(
+      strings = {
+        "\u314E",
+        "\u2764\uFE0F",
+        "e\u0301",
+        "a\u3164",
+        "차트\u200B",
+        "매출",
+        "a",
+        "\uD83D\uDE00",
+        // WD-1126: 잉글랜드 깃발 태그 시퀀스(🏴 이 글자), 글자 + U+E0000
+        "\uD83C\uDFF4\uDB40\uDC67\uDB40\uDC62\uDB40\uDC65\uDB40\uDC6E\uDB40\uDC67\uDB40\uDC7F",
+        "a\uDB40\uDC00",
+        // WD-1126: 범위 위 끝 고정 — 블록 밖 U+E1000 은 거절 대상이 아니다(범위가 넓어지면 잡힌다)
+        "\uDB44\uDC00"
+      })
   void hasText_acceptsVisible(String value) {
     assertThat(Pattern.matches(TextRules.HAS_TEXT, value)).isTrue();
   }
@@ -72,6 +92,8 @@ class TextRulesTest {
     assertThat(Pattern.matches(TextRules.HAS_TEXT_OR_EMPTY, "")).isTrue();
     assertThat(Pattern.matches(TextRules.HAS_TEXT_OR_EMPTY, "\u3164")).isFalse();
     assertThat(Pattern.matches(TextRules.HAS_TEXT_OR_EMPTY, "\u2800")).isFalse();
+    // WD-1126: 14평면 무시 코드 포인트만인 선택 필드 값도 거절
+    assertThat(Pattern.matches(TextRules.HAS_TEXT_OR_EMPTY, "\uDB40\uDC00")).isFalse();
     assertThat(Pattern.matches(TextRules.HAS_TEXT_OR_EMPTY, "폴더")).isTrue();
   }
 }
