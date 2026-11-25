@@ -1,3 +1,5 @@
+import type { Locator, Page } from '@playwright/test';
+
 import { ALL_PLATFORM_PERMISSIONS, createAuditLog, createAuditPage } from './factories/platform.factory';
 import { mockApi } from './fixtures/api-mock';
 import { expect, loginAs, test } from './fixtures/auth.fixture';
@@ -419,4 +421,66 @@ test.describe('플랫폼 감사 로그 (WD-4)', () => {
     const row = page.getByRole('table', { name: '플랫폼 감사 로그' }).getByRole('row').filter({ hasText: 'ops-long@example.com' });
     await expect(row.getByText('성공')).toBeInViewport({ ratio: 1 });
   });
+
+  // WD-1158: 공백 없는 긴 이메일 하나(~90자)도 대상 칸 안에서 꺾여야 한다 — 칸의 max-width 는 열 폭을 못 묶어 배지가 밀렸다.
+  test('소유권 이전 행(WD-1158): 공백 없는 긴 단일 이메일도 결과 배지가 화면 안, 가로 넘침 없음', async ({ authenticatedPage: page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    const longEmail = 'averyveryveryverylongownername.with.no.spaces.at.all@some-very-long-domain-example.com';
+    await mockApi(page, 'GET', PATH, createAuditPage([
+      createAuditLog({
+        id: 825,
+        username: 'ops-nobreak@example.com',
+        actionType: 'OWNER_TRANSFER',
+        resource: 'tenant',
+        resourceId: '1',
+        description: '운영자가 테넌트 소유자를 지정',
+        metadata: {
+          plane: 'platform',
+          tenantSlug: 'hanbit-fire-station',
+          tenantName: '한빛소방서 본부',
+          toUsername: longEmail,
+          fromUsernames: [longEmail],
+        },
+      }),
+    ]));
+    await page.goto('/audit-logs');
+
+    const row = page.getByRole('table', { name: '플랫폼 감사 로그' }).getByRole('row').filter({ hasText: 'ops-nobreak@example.com' });
+    await expect(row.getByText('성공')).toBeInViewport({ ratio: 1 });
+    await expectBadgeInsideScrollBox(page, row.getByText('성공'));
+  });
+
+  // WD-1158: 행위자·설명 칸도 폭이 묶여야 한다 — 긴 단일 이메일 행위자, 공백 없는 긴 대상, 300자 설명이 열을 밀어 배지가 잘리면 안 된다.
+  test('일반 행(WD-1158): 긴 행위자·대상·설명에도 결과 배지가 표 스크롤 상자 안, 넘침 없음', async ({ authenticatedPage: page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    const longEmail = 'averyveryveryverylongactorname.with.no.spaces.at.all@some-very-long-domain-example.com';
+    const longTarget = 'targetaccountwithaveryveryverylongname.and.no.spaces.anywhere.at.all@another-long-domain-example.com';
+    await mockApi(page, 'GET', PATH, createAuditPage([
+      createAuditLog({
+        id: 826,
+        username: longEmail,
+        actionType: 'ACCOUNT_STATUS_CHANGE',
+        resource: 'user',
+        resourceId: '9',
+        description: '긴설명'.repeat(100),
+        metadata: { plane: 'platform', targetUsername: longTarget },
+      }),
+    ]));
+    await page.goto('/audit-logs');
+
+    const row = page.getByRole('table', { name: '플랫폼 감사 로그' }).getByRole('row').filter({ hasText: longTarget });
+    await expectBadgeInsideScrollBox(page, row.getByText('성공'));
+  });
 });
+
+/** 결과 배지가 화면 안이고, 표 스크롤 상자(overflow-x-auto 부모)가 가로로 넘치지 않으며 배지 오른쪽 끝이 상자 안인지 단언한다. */
+async function expectBadgeInsideScrollBox(page: Page, badge: Locator) {
+  await expect(badge).toBeInViewport({ ratio: 1 });
+  const box = await page.getByRole('table', { name: '플랫폼 감사 로그' }).evaluate((table) => {
+    const wrap = table.parentElement as HTMLElement;
+    return { scrollWidth: wrap.scrollWidth, clientWidth: wrap.clientWidth, right: wrap.getBoundingClientRect().right };
+  });
+  expect(box.scrollWidth).toBeLessThanOrEqual(box.clientWidth);
+  const badgeRight = await badge.evaluate((el) => el.getBoundingClientRect().right);
+  expect(badgeRight).toBeLessThanOrEqual(box.right);
+}
