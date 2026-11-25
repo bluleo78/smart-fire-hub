@@ -172,7 +172,8 @@ export function ColumnDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto overscroll-contain">
+      {/* WD-1123: max-h/overflow 는 공용 DialogContent(100dvh-4rem + overflow-y-auto)에 맡겨 모바일 주소창 변동에도 화면 안에 들어오게 한다. */}
+      <DialogContent className="overscroll-contain">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription className="sr-only">데이터셋 컬럼을 추가하거나 수정합니다.</DialogDescription>

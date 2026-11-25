@@ -409,7 +409,8 @@ export default function ApiConnectionListPage() {
                   새 연결
                 </Button>
               </DialogTrigger>
-              <DialogContent className="max-h-[90vh] overflow-y-auto overscroll-contain">
+              {/* WD-1123: max-h/overflow 는 공용 DialogContent(100dvh-4rem + overflow-y-auto)에 맡겨 모바일 주소창 변동에도 화면 안에 들어오게 한다. */}
+              <DialogContent className="overscroll-contain">
                 <DialogHeader>
                   <DialogTitle>새 API 연결</DialogTitle>
                   <DialogDescription className="sr-only">새 외부 API 연결을 추가합니다.</DialogDescription>

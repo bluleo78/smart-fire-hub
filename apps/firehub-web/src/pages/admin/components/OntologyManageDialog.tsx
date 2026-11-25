@@ -67,7 +67,8 @@ export default function OntologyManageDialog({ open, onOpenChange, onSelect }: O
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[85vh] flex-col sm:max-w-3xl" data-testid="ontology-manage-dialog">
+      {/* WD-1123: dvh 기준 높이 + overflow-hidden — 바깥은 스크롤하지 않고 안쪽 영역만 스크롤한다(공용 overflow-y-auto 덮어씀). */}
+      <DialogContent className="flex max-h-[85dvh] flex-col overflow-hidden sm:max-w-3xl" data-testid="ontology-manage-dialog">
         <DialogHeader>
           <DialogTitle>온톨로지 관리</DialogTitle>
           <DialogDescription>
@@ -76,7 +77,7 @@ export default function OntologyManageDialog({ open, onOpenChange, onSelect }: O
         </DialogHeader>
         {/* 온톨로지가 늘어날수록 표 높이가 뷰포트를 넘어설 수 있다(#454) — DialogHeader(제목·설명·닫기 버튼)는
             항상 보이게 고정하고, 표만 별도 스크롤 컨테이너로 감싼다. */}
-        <div className="max-h-[60vh] overflow-y-auto overscroll-contain" data-testid="ontology-manage-dialog-scroll">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain" data-testid="ontology-manage-dialog-scroll">
           <Table>
             <TableHeader>
               <TableRow>

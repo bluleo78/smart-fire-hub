@@ -296,7 +296,8 @@ export function ApiImportWizard({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto overscroll-contain">
+      {/* WD-1123: max-h/overflow 는 공용 DialogContent(100dvh-4rem + overflow-y-auto)에 맡겨 모바일 주소창 변동에도 화면 안에 들어오게 한다. */}
+      <DialogContent className="overscroll-contain">
         <DialogHeader>
           <DialogTitle>API 가져오기 — {datasetName}</DialogTitle>
           <DialogDescription className="sr-only">외부 API를 통해 데이터셋에 데이터를 가져옵니다.</DialogDescription>

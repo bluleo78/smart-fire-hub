@@ -39,18 +39,19 @@ export function ImportMappingDialog(props: ImportMappingDialogProps) {
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
       {/*
-       * flex flex-col + max-h-[90vh]: 다이얼로그 전체 높이를 뷰포트 90%로 제한하면서
+       * flex flex-col: 높이는 공용 DialogContent 의 max-h(100dvh-4rem) 로 제한하면서(WD-1123)
        * 내부를 flex 컬럼으로 구성해 스크롤 영역과 footer를 분리한다.
        * overflow-hidden: DialogContent 자체는 스크롤하지 않고 내부 영역이 스크롤하도록 한다.
        */}
-      <DialogContent className="flex flex-col max-h-[90vh] overflow-hidden overflow-x-hidden">
+      <DialogContent className="flex flex-col overflow-hidden">
         <DialogHeader>
           <DialogTitle>파일 임포트</DialogTitle>
           <DialogDescription className="sr-only">파일을 업로드하고 컬럼을 매핑하여 데이터셋에 가져옵니다.</DialogDescription>
         </DialogHeader>
 
         {step === 1 && (
-          <div className="space-y-4">
+          // WD-1123: 대화상자가 overflow-hidden 이라 낮은 뷰포트에서 업로드 영역이 잘려 닿을 수 없었다 — 매핑 단계처럼 안쪽에서 스크롤한다.
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain">
             <FileUploadZone onFileSelect={handlers.fileSelect} disabled={status.isPreviewing} />
             {status.isPreviewing && (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">

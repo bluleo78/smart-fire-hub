@@ -115,7 +115,8 @@ export function EntityMappingDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto overscroll-contain" data-testid="entity-mapping-dialog">
+      {/* WD-1123: max-h/overflow 는 공용 DialogContent(100dvh-4rem + overflow-y-auto)에 맡겨 모바일 주소창 변동에도 화면 안에 들어오게 한다. */}
+      <DialogContent className="overscroll-contain" data-testid="entity-mapping-dialog">
         <DialogHeader>
           <DialogTitle>{initial ? '엔티티 매핑 수정' : '엔티티 매핑 추가'}</DialogTitle>
           <DialogDescription className="sr-only">
