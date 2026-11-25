@@ -34,10 +34,13 @@ public final class TextRules {
    * <p>{@code \p{Cs}}(홀로 쓰인 서로게이트 — DB 에 저장도 못 한다)와 배정 안 된 Default_Ignorable 코드 포인트 U+2065·U+FFF0-FFF8 도
    * 뺀다 — Cn 이라 Cf 에 안 걸리고, {@code \p{Cn}} 전체는 JDK 가 아직 모르는 새 글자를 거절할 수 있어 쓰지 않는다. 정상 서로게이트 쌍(이모지)은 한
    * 코드 포인트로 읽혀 글자로 남는다.
+   *
+   * <p>배정 안 된 14평면 무시 코드 포인트는 블록 전체(U+E0000-E0FFF)를 뺀다 — 배정된 태그·변이 선택자는 이미 Cf·Mn 이다(WD-1126).
    */
   private static final String NON_VISIBLE =
       "\\s\\p{Cf}\\p{Cc}\\p{Mn}\\p{Me}\\u115F\\u1160\\u3164\\uFFA0\\u2800"
-          + "\\p{Cs}\\u2065\\uFFF0-\\uFFF8";
+          + "\\p{Cs}\\u2065\\uFFF0-\\uFFF8"
+          + "\\x{E0000}-\\x{E0FFF}";
 
   /** 보이는 글자가 하나 이상 있는 값의 본문 — {@link #HAS_TEXT}·{@link #HAS_TEXT_OR_EMPTY} 가 같은 판정을 쓰게 한 곳에 둔다. */
   private static final String HAS_VISIBLE = ".*[^" + NON_VISIBLE + "].*";
