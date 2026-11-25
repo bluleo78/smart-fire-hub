@@ -1,6 +1,7 @@
 import type { Page } from '@playwright/test';
 
-import { createJob } from '../../factories/ai-insight.factory';
+import { createAdminJobRow, createJob } from '../../factories/ai-insight.factory';
+import { mockProactiveAdminPermissions, setupJobListMocks } from '../../fixtures/ai-insight.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 
@@ -39,8 +40,7 @@ test.describe('스마트 작업 목록 — 다음 실행 컬럼 (#348)', () => {
       nextExecuteAt: toServerLocalDateTime(nextRun),
     });
 
-    await mockApi(page, 'GET', '/api/v1/proactive/jobs', [job]);
-    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    await setupJobListMocks(page, 0, [job]);
     await page.goto('/ai-insights/jobs');
 
     const row = page.getByRole('row').filter({ hasText: '다음 실행 표시 작업' });
@@ -67,8 +67,7 @@ test.describe('스마트 작업 목록 — 다음 실행 컬럼 (#348)', () => {
       nextExecuteAt: toServerLocalDateTime(past),
     });
 
-    await mockApi(page, 'GET', '/api/v1/proactive/jobs', [job]);
-    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    await setupJobListMocks(page, 0, [job]);
     await page.goto('/ai-insights/jobs');
 
     const row = page.getByRole('row').filter({ hasText: '지난 다음 실행 작업' });
@@ -93,8 +92,7 @@ test.describe('스마트 작업 목록 — 다음 실행 컬럼 (#348)', () => {
       nextExecuteAt: null,
     });
 
-    await mockApi(page, 'GET', '/api/v1/proactive/jobs', [job]);
-    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    await setupJobListMocks(page, 0, [job]);
     await page.goto('/ai-insights/jobs');
 
     const row = page.getByRole('row').filter({ hasText: '비활성 작업' });
@@ -114,8 +112,7 @@ test.describe('스마트 작업 「다음 실행」 작업 시간대 표기 (WD-
   test.use({ timezoneId: 'UTC' });
 
   async function mockDetail(page: Page, job: ReturnType<typeof createJob>) {
-    await mockApi(page, 'GET', '/api/v1/proactive/jobs', [job]);
-    await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+    await setupJobListMocks(page, 0, [job]);
     await mockApi(page, 'GET', `/api/v1/proactive/jobs/${job.id}`, job);
     await mockApi(page, 'GET', `/api/v1/proactive/jobs/${job.id}/executions`, []);
     await mockApi(page, 'GET', '/api/v1/proactive/templates', []);
@@ -171,5 +168,56 @@ test.describe('스마트 작업 「다음 실행」 작업 시간대 표기 (WD-
     const row = page.getByRole('row').filter({ hasText: '뉴욕 다음 실행 작업' });
     await expect(row).toContainText(/09:00 EST/);
     await expect(row).not.toContainText('14:00');
+  });
+});
+
+/**
+ * 「다음 실행」이 이미 지난 시각이면 「· 지남」, 내일은 그 시간대 달력 기준 (WD-1147)
+ *
+ * 서버가 아직 갱신하지 못한 과거 시각이 「오늘 09:00 KST」로만 보여 곧 실행될 것처럼 읽혔다.
+ * 시계를 KST 2026-04-11 15:00 (= 2026-04-11T06:00:00Z)으로 고정해 과거(오늘 09:00)·미래(내일 09:00)
+ * 두 행의 표기를 내 작업·워크스페이스 전체 두 화면에서 모두 확인한다.
+ */
+test.describe('스마트 작업 「다음 실행」 지남 표기 (WD-1147)', () => {
+  const FIXED_NOW = new Date('2026-04-11T06:00:00Z');
+  /** 서버 직렬화 형식(타임존 없는 UTC 벽시계) — 오늘 KST 09:00 = 이미 지남 */
+  const PAST = '2026-04-11T00:00:00';
+  /** 내일 KST 09:00 = 아직 오지 않음 */
+  const FUTURE = '2026-04-12T00:00:00';
+
+  test('내 작업 — 지난 행은 「오늘 09:00 KST · 지남」, 미래 행은 「내일 09:00 KST」', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.clock.setFixedTime(FIXED_NOW);
+    await setupJobListMocks(page, 0, [
+      createJob({ id: 1, name: '지남 작업', enabled: true, timezone: 'Asia/Seoul', nextExecuteAt: PAST }),
+      createJob({ id: 2, name: '내일 작업', enabled: true, timezone: 'Asia/Seoul', nextExecuteAt: FUTURE }),
+    ]);
+    await page.goto('/ai-insights/jobs');
+
+    const pastRow = page.getByRole('row').filter({ hasText: '지남 작업' });
+    await expect(pastRow).toContainText('오늘 09:00 KST · 지남');
+
+    const futureRow = page.getByRole('row').filter({ hasText: '내일 작업' });
+    await expect(futureRow).toContainText('내일 09:00 KST');
+    await expect(futureRow).not.toContainText('지남');
+  });
+
+  test('워크스페이스 전체 — 지난 행에만 「· 지남」이 붙는다', async ({ authenticatedPage: page }) => {
+    await page.clock.setFixedTime(FIXED_NOW);
+    await mockProactiveAdminPermissions(page);
+    await setupJobListMocks(page, 0, []);
+    await mockApi(page, 'GET', '/api/v1/proactive/admin/jobs', [
+      createAdminJobRow({ id: 10, name: '지남 작업', nextExecuteAt: PAST }),
+      createAdminJobRow({ id: 11, name: '내일 작업', nextExecuteAt: FUTURE }),
+    ]);
+    await page.goto('/ai-insights/jobs?view=workspace');
+
+    const pastRow = page.getByTestId('workspace-job-10');
+    await expect(pastRow).toContainText('오늘 09:00 KST · 지남');
+
+    const futureRow = page.getByTestId('workspace-job-11');
+    await expect(futureRow).toContainText('내일 09:00 KST');
+    await expect(futureRow).not.toContainText('지남');
   });
 });
