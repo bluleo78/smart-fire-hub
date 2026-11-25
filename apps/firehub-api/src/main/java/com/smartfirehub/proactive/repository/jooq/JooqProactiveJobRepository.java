@@ -3,7 +3,9 @@ package com.smartfirehub.proactive.repository.jooq;
 import static org.jooq.impl.DSL.*;
 
 import com.smartfirehub.global.dto.LockedRowVersion;
+import com.smartfirehub.global.naming.NameComparison;
 import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
+import com.smartfirehub.global.validation.TextRules;
 import com.smartfirehub.proactive.dto.ProactiveJobResponse;
 import com.smartfirehub.proactive.repository.ProactiveJobRepository;
 import com.smartfirehub.proactive.util.ProactiveTime;
@@ -422,14 +424,33 @@ public class JooqProactiveJobRepository implements ProactiveJobRepository {
     }
   }
 
-  /** 같은 소유자·같은 이름(lower(trim) 비교) 존재 여부(WD-824). */
+  /** 이름 비교용 정규화: 앞뒤 유니코드 공백도 걷는다(WD-1108). */
+  private static Field<String> normalizeName(Field<String> name) {
+    return lower(
+        trim(
+            translate(
+                name,
+                val(TextRules.EDGE_SPACE_CHARS, String.class),
+                val(TextRules.EDGE_SPACE_AS_ASCII, String.class))));
+  }
+
+  /** 같은 소유자·같은 이름(유니코드 공백·대소문자 무시) 존재 여부(WD-824, WD-1108). */
   @Override
   public boolean existsByOwnerAndName(long ownerId, String name, Long excludeId) {
+    // 유니코드 공백 → ASCII 공백 → trim → lower (WD-1108, WD-1129 와 같은 방식).
     Condition c =
-        PJ_USER_ID.eq(ownerId).and(lower(trim(PJ_NAME)).eq(lower(trim(val(name, String.class)))));
+        PJ_USER_ID
+            .eq(ownerId)
+            .and(normalizeName(PJ_NAME).eq(normalizeName(val(name, String.class))));
     if (excludeId != null) {
       c = c.and(PJ_ID.ne(excludeId));
     }
     return dsl.fetchExists(dsl.selectOne().from(PROACTIVE_JOB).where(c));
+  }
+
+  /** jOOQ 구현은 PostgreSQL 전용 — SQL 이 유니코드 공백까지 걷는다(WD-1108). */
+  @Override
+  public NameComparison nameComparison() {
+    return NameComparison.UNICODE_TRIM;
   }
 }

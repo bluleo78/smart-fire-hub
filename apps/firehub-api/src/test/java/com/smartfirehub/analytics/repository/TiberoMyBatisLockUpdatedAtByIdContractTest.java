@@ -58,7 +58,7 @@ class TiberoMyBatisLockUpdatedAtByIdContractTest extends LockUpdatedAtByIdContra
     proactiveJobRepository =
         poc.transactional(
             ProactiveJobRepository.class,
-            new MyBatisProactiveJobRepository(poc.mapper(ProactiveJobMapper.class), om));
+            new MyBatisProactiveJobRepository(poc.mapper(ProactiveJobMapper.class), om, "tibero"));
   }
 
   @Override

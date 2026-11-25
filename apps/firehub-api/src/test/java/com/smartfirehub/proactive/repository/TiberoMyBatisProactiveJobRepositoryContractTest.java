@@ -29,7 +29,8 @@ class TiberoMyBatisProactiveJobRepositoryContractTest extends ProactiveJobReposi
             ProactiveJobRepository.class,
             new MyBatisProactiveJobRepository(
                 poc.mapper(ProactiveJobMapper.class),
-                JsonMapper.builderWithJackson2Defaults().build()));
+                JsonMapper.builderWithJackson2Defaults().build(),
+                "tibero"));
   }
 
   @Override
