@@ -1,6 +1,5 @@
 package com.smartfirehub.analytics.repository.mybatis;
 
-import static com.smartfirehub.global.platformdb.mybatis.PlatformText.blankToNull;
 import static com.smartfirehub.global.platformdb.mybatis.PlatformText.searchPattern;
 
 import com.smartfirehub.analytics.dto.CreateSavedQueryRequest;
@@ -14,6 +13,7 @@ import com.smartfirehub.global.dto.LockedRowVersion;
 import com.smartfirehub.global.platformdb.mybatis.InChunks;
 import com.smartfirehub.global.platformdb.mybatis.PlatformMyBatisRepository;
 import com.smartfirehub.global.platformdb.mybatis.PlatformSharing;
+import com.smartfirehub.global.validation.TextRules;
 import com.smartfirehub.securitylevel.access.DatasetVisibility;
 import com.smartfirehub.securitylevel.repository.mybatis.MyBatisDatasetVisibility;
 import java.time.LocalDateTime;
@@ -138,8 +138,8 @@ public class MyBatisSavedQueryRepository implements SavedQueryRepository {
   }
 
   /**
-   * 넘긴 필드만 고친다 — null 은 「변경 없음」, 설명·폴더의 빈 문자열(공백만 포함)은 「비움」(NULL, WD-197). 수정 시각은 jOOQ 판과 같은 자바 시각을
-   * 바인딩한다.
+   * 넘긴 필드만 고친다 — null 은 「변경 없음」, 설명·폴더의 빈 문자열(공백·NBSP·전각 공백·Cf 만 포함)은 「비움」(NULL, WD-197·WD-1103).
+   * 수정 시각은 jOOQ 판과 같은 자바 시각을 바인딩한다.
    */
   @Override
   public void update(Long id, UpdateSavedQueryRequest req, Long userId) {
@@ -182,5 +182,20 @@ public class MyBatisSavedQueryRepository implements SavedQueryRepository {
   @Override
   public boolean existsByOwnerAndName(long ownerId, String name, Long excludeId) {
     return mapper.countByOwnerAndName(ownerId, name, excludeId) > 0;
+  }
+
+  /**
+   * 갱신 요청·필터 값의 빈 문자열(공백·NBSP·전각 공백·Cf 만 포함)을 NULL 로 바꾼다(WD-197, WD-1103).
+   *
+   * <p>갱신 API 는 null 을 "변경 없음"으로 쓰므로, 사용자가 값을 지웠다는 뜻은 빈 문자열로 받는다. 저장할 때는 "값 없음"을 NULL 한 가지로 맞춰
+   * 목록·상세가 "" 와 NULL 을 따로 다루지 않는다.
+   *
+   * <p>공용 {@code PlatformText.blankToNull} 대신 {@link TextRules#hasText} 를 쓰는 것은 저장 쿼리에 한정한다 —
+   * {@code String.isBlank()} 는 Cf(폭 없는 문자)만인 값을 글자로 보아 옛 폴더가 계속 남았다(WD-1103). 공용 헬퍼는 차트·대시보드·데이터셋 등
+   * 다른 MyBatis 저장소와 그 jOOQ 짝이 함께 쓰므로 여기서 넓히지 않고, jOOQ 판({@code
+   * JooqSavedQueryRepository#blankToNull})과 짝을 맞추는 자리에만 둔다.
+   */
+  private static String blankToNull(String value) {
+    return value == null || !TextRules.hasText(value) ? null : value;
   }
 }

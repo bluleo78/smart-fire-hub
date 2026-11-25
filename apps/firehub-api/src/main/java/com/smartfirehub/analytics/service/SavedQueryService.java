@@ -17,6 +17,7 @@ import com.smartfirehub.global.exception.EditConflictException;
 import com.smartfirehub.global.naming.ResourceKind;
 import com.smartfirehub.global.naming.ResourceNameGuard;
 import com.smartfirehub.global.util.NormalizedSql;
+import com.smartfirehub.global.validation.TextRules;
 import com.smartfirehub.pipeline.exception.TiberoUnqualifiedTableException;
 import com.smartfirehub.pipeline.exception.UnsafeSqlException;
 import com.smartfirehub.pipeline.service.PipelineDataSchema;
@@ -390,8 +391,9 @@ public class SavedQueryService {
   @Transactional(readOnly = true)
   public List<String> getFolders(Boolean sharedOnly, Boolean mineOnly, Long userId) {
     // WD-889: 옛 데이터의 빈·공백 폴더("")는 목록에서 뺀다 — 드롭다운 항목이 빈 값이면 화면이 깨졌다.
+    // WD-1103: Cf(폭 없는 문자)만인 폴더도 함께 뺀다 — String.isBlank() 는 그것을 글자로 보아 목록에 샌다.
     return savedQueryRepository.findDistinctFolders(sharedOnly, mineOnly, userId).stream()
-        .filter(f -> f != null && !f.isBlank())
+        .filter(TextRules::hasText)
         .toList();
   }
 }

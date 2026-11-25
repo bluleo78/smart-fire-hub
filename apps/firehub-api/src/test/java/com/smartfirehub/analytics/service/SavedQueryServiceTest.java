@@ -373,11 +373,14 @@ class SavedQueryServiceTest extends IntegrationTestBase {
     createQuery("Ops", "SELECT 1", "운영", false, ownerUserId);
     insertLegacyBlankFolderQuery("Legacy Blank", "");
     insertLegacyBlankFolderQuery("Legacy Spaces", "   ");
+    insertLegacyBlankFolderQuery("Legacy Zero Width", "\u200B");
 
     List<String> folders = savedQueryService.getFolders(null, null, ownerUserId);
 
     assertThat(folders).contains("운영");
     assertThat(folders).allMatch(f -> f != null && !f.isBlank());
+    // WD-1103: Cf 만인 폴더도 isBlank() 로는 글자로 남아 목록에 샌다 — TextRules.hasText 로 함께 뺀다
+    assertThat(folders).doesNotContain("\u200B");
   }
 
   /** WD-889: 옛 데이터(folder = '')를 복제해도 새 쿼리의 folder 는 NULL 이다. */
