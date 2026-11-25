@@ -1,16 +1,77 @@
 import axios from 'axios';
 
-import { isUnauthorizedError } from '../lib/api-error';
+import { isUnauthorizedError, UserSwitchedError } from '../lib/api-error';
 import { clearLoginNotice, SESSION_EXPIRED_NOTICE, setLoginNotice } from '../lib/login-notice';
+import { hasActiveLeaveGuard } from '../lib/unsaved-changes-guard-registry';
 import type { TokenResponse } from '../types/auth';
 import { withCrossTabRefreshLock } from './refresh-lock';
 import { publishTenantSession } from './tenant-session';
 
 let accessToken: string | null = null;
 
+/**
+ * 이 탭이 쥔 사용자 id(JWT sub) (WD-1122). 갱신 결과의 사용자와 비교해, 만료된 탭이 다른 탭의 **다른 사용자** 쿠키로
+ * 되살아나 앞 사용자의 캐시·폼을 든 채 새 사용자로 동작하는 것을 막는다. 디코드 못 하는 토큰은 기억하지 않는다.
+ */
+let sessionUserId: string | null = null;
+
+/**
+ * JWT payload 의 sub(문자열)를 읽는다 (WD-1122). base64url(`-`·`_`·패딩 없음)을 처리하고, 어떤 실패든 null —
+ * 디코드 못 하는 토큰으로 비교·리로드 고리를 만들지 않으려는 것이다.
+ */
+export function readTokenSubject(token: string): string | null {
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4);
+    const bytes = Uint8Array.from(atob(padded), (c) => c.charCodeAt(0));
+    const payload: unknown = JSON.parse(new TextDecoder().decode(bytes));
+    if (typeof payload !== 'object' || payload === null) return null;
+    const sub = (payload as { sub?: unknown }).sub;
+    return typeof sub === 'string' ? sub : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 이 토큰이 이 탭의 사용자가 아닌 **다른 사용자**의 것인지 (WD-1122). 두 sub 가 모두 디코드되고 서로 다를 때만 true —
+ * 디코드 못 하면 비교하지 않는다(리로드 고리 방지). AuthContext 의 비밀번호 변경 갱신처럼 refreshAccessToken 을
+ * 거치지 않는 갱신 경로가 같은 판정을 쓰게 한다.
+ */
+export function isOtherSessionUser(token: string): boolean {
+  const sub = readTokenSubject(token);
+  return sessionUserId !== null && sub !== null && sub !== sessionUserId;
+}
+
+/**
+ * 다른 사용자의 토큰을 받았을 때 이 탭의 세션을 버리고 `/` 로 하드 이동한다(WD-1122).
+ * runRefresh 와 AuthContext 의 비밀번호 변경 갱신이 같은 처리를 하게 한 곳에 둔다 — 메모리 토큰 비움,
+ * 사용자 바뀜 표식·이동 화면 기록(뒤의 같은 화면 요청은 refreshAccessToken 의 같은 규칙으로 처리), 하드 이동.
+ * 첫 감지는 만료 흐름과 같이 늘 한 번 이동한다(가드가 있으면 확인 창도 이때 한 번). 대기 큐 거절은 호출자 몫이다.
+ */
+export function abandonForSwitchedUser(): UserSwitchedError {
+  const switched = new UserSwitchedError();
+  accessToken = null;
+  sessionExpiredError = switched;
+  expiredNavPath = window.location.pathname;
+  window.location.replace('/');
+  return switched;
+}
+
+/** 시험 전용 — 모듈 수준 사용자 id 가 시험 사이에 남지 않게 푼다(WD-1122). */
+export function resetSessionUserForTest() {
+  sessionUserId = null;
+}
+
 export function setAccessToken(token: string | null) {
   // 값이 있는 토큰이 저장되면 세션이 살아난 것 — 남은 만료 표식부터 비운다(WD-1082)
-  if (token) clearSessionExpiredError();
+  if (token) {
+    clearSessionExpiredError();
+    const sub = readTokenSubject(token);
+    if (sub !== null) sessionUserId = sub;
+  }
   accessToken = token;
   // 자동 종료가 떠나기 확인 취소로 멈춘 뒤 refresh 가 성공했으면 세션이 살아난 것이다 — 뒤의 진짜 만료가 안내를 쓸 수 있게
   // 자동 종료의 안내 주인을 푼다. 사용자 로그아웃이 맡은 안내는 풀지 않는다 — 늦은 성공이 로그아웃 안내를 덮지 않게(WD-830 리뷰).
@@ -67,8 +128,13 @@ export function resetNoticeOwnerForTest() {
  * <p>세션이 살아났을 때 부른다 — 이 탭의 로그인(`setAccessToken(<값>)`)과, 다른 탭이 다시 로그인해
  * 공유 refresh 쿠키가 살아난 경우(`AuthContext` 의 storage 이벤트 핸들러)가 그때다. 표식이 남아 있으면
  * 이 탭은 HTTP 갱신을 다시 시도하지 못해, 되살릴 수 있는 세션을 죽은 채로 두고 /login 으로만 가게 된다.
+ *
+ * <p>keepSwitched (WD-1122): 다른 탭의 로그인은 이 탭에 「다른 사용자 감지」 표식이 켜진 바로 그 원인일 수 있다.
+ * 그때 표식까지 지우면 이 탭이 다른 사용자의 쿠키로 다시 갱신해 앞 사용자의 캐시·폼을 든 채 새 사용자로 동작하게 되므로,
+ * storage 핸들러는 true 로 불러 UserSwitchedError 표식만 남긴다(일반 만료 표식만 비운다).
  */
-export function clearSessionExpiredError() {
+export function clearSessionExpiredError({ keepSwitched = false }: { keepSwitched?: boolean } = {}) {
+  if (keepSwitched && sessionExpiredError instanceof UserSwitchedError) return;
   sessionExpiredError = null;
   expiredNavPath = null;
 }
@@ -175,9 +241,13 @@ export function refreshAccessToken(): Promise<RefreshResult> {
   // 화면을 옮길 때 비로소 로그인 화면으로 가게 하려는 것이다(위 expiredNavPath · 아래 sessionExpiredError 주석).
   if (sessionExpiredError !== null) {
     const path = window.location.pathname;
-    if (path !== expiredNavPath) {
+    // 화면이 바뀌었거나, 떠나기를 막는 것(dirty 가드·스트리밍/업로드 중 beforeunload)이 풀렸으면 이동을 다시 건다(WD-1122) —
+    // 같은 화면이어도 모두 풀렸다면 첫 이동이 취소된 채 죽은 화면에 남은 탭이므로 확인 창을 되풀이할 위험이 없다.
+    // 하나라도 걸려 있으면 다시 걸지 않는다.
+    if (path !== expiredNavPath || !hasActiveLeaveGuard()) {
       expiredNavPath = path;
-      endSessionAndReloadToLogin(SESSION_EXPIRED_NOTICE);
+      if (sessionExpiredError instanceof UserSwitchedError) window.location.replace('/');
+      else endSessionAndReloadToLogin(SESSION_EXPIRED_NOTICE);
     }
     return Promise.reject(sessionExpiredError);
   }
@@ -206,6 +276,14 @@ async function runRefresh(): Promise<RefreshResult> {
         }),
       ));
 
+      // 다른 사용자의 토큰이면 새 토큰을 쓰지 않는다(WD-1122) — 저장·테넌트 게시·대기 요청 재개보다 먼저 판정한다.
+      // 둘 다 디코드된 때만 비교하고, 로그아웃(hasSession 삭제)은 하지 않고 `/` 로 하드 이동해 캐시·폼을 폐기한다.
+      if (isOtherSessionUser(data.accessToken)) {
+        const switched = abandonForSwitchedUser();
+        rejectQueue(switched);
+        throw switched;
+      }
+
       tenantId = data.activeTenantId ?? null;
       setAccessToken(data.accessToken);
       // 새 토큰의 테넌트 상태를 AuthContext 로 흘린다. refresh 는 멤버십/테넌트 상태를 재검증해
@@ -219,11 +297,16 @@ async function runRefresh(): Promise<RefreshResult> {
         unavailableWorkspaces: data.unavailableWorkspaces ?? [],
       });
     } catch (refreshError) {
+      // 다른 사용자 감지는 위에서 이미 큐·표식·이동을 끝냈다 — 로그아웃 경로(hasSession 삭제)로 흘리지 않는다(WD-1122)
+      if (refreshError instanceof UserSwitchedError) throw refreshError;
       rejectQueue(refreshError);
       // 401 만료인지 한 번 판정해 표식과 안내에 함께 쓴다 — 같은 오류를 두 번 판정하지 않게.
       const isSessionExpired = isUnauthorizedError(refreshError);
       // 401 만료로 세션을 끝낸 뒤의 첫 오류를 남긴다 — 이후 갱신을 막아 확인 창을 되풀이하지 않게(WD-1082). 네트워크·서버 오류는 켜지 않는다.
       // 이동을 건 화면도 함께 남긴다 — 같은 화면의 배경 요청은 뒤에 이동을 다시 건드리지 않게(아래 refreshAccessToken).
+      // 탭 사이 잠금(Web Locks)이 없는 환경(평문 http 배포 등)의 401 도 잠금 있는 환경과 똑같이 표식을 켠다 — 되확인·재시도는 없다(WD-1122).
+      // 회전 경쟁에서 진 탭의 401 이 이미 hasSession 을 지워(아래 endSessionAndReloadToLogin) 이긴 탭까지 로그아웃시키므로,
+      // 다시 보내 되살리는 길은 없다. 잠금 없는 배포에서 회전 경쟁의 패자 탭이 세션을 끝내는 것은 WD-1122 이전부터의 동작이며 이번 범위 밖이다.
       if (isSessionExpired) {
         sessionExpiredError = refreshError;
         expiredNavPath = window.location.pathname;

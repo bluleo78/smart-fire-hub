@@ -37,6 +37,27 @@ export function pickBestMessage(errData: ErrorResponse, fallback: string): strin
 }
 
 /**
+ * 갱신 결과가 이 탭의 사용자와 다른 사용자의 것이라 새 토큰을 쓰지 않고 끝냈음을 나타낸다 (WD-1122).
+ * client.ts 가 던진다 — api-error 가 client 를 import 하면 순환이 되어 여기에 두고, 모두 여기서 import 한다.
+ * 화면은 곧 `/` 로 다시 열리므로 handleApiError 는 이 오류에 토스트를 띄우지 않는다.
+ */
+export class UserSwitchedError extends Error {
+  constructor() {
+    super('다른 사용자로 로그인되어 화면을 다시 엽니다.');
+    this.name = 'UserSwitchedError';
+  }
+}
+
+/**
+ * 다른 사용자 감지로 끝난 오류인지 (WD-1122) — UserSwitchedError 자신이거나, 그것을 `cause` 로 감싼 오류(TokenRefreshError)다.
+ * client.ts 를 import 하면 순환이 되므로 `cause` 를 일반적으로 검사한다.
+ */
+export function isUserSwitchedError(e: unknown): boolean {
+  if (e instanceof UserSwitchedError) return true;
+  return e instanceof Error && e.cause instanceof UserSwitchedError;
+}
+
+/**
  * 이름 겹침 재시도 소진(WD-837) — 시도 상한(NAME_RETRY_MAX_ATTEMPTS) 안에서 비어 있는 이름을 찾지 못했다.
  * 서버 409 문구는 사용자가 이름을 쓴 적 없는 복제·파생 이름에서 뜻이 어긋나므로, 호출부가 정한 안내를 message 로 담고
  * extractApiError·extractApiErrorAsync 가 그대로 보여 준다(instanceof).
@@ -163,6 +184,8 @@ export function applyFieldErrors<T extends FieldValues>(
 }
 
 export function handleApiError(error: unknown, fallback: string): void {
+  // 다른 사용자 감지(WD-1122) — 페이지가 곧 다시 열리므로 오류 토스트를 띄우지 않는다.
+  if (isUserSwitchedError(error)) return;
   toast.error(extractApiError(error, fallback));
 }
 
@@ -173,6 +196,8 @@ export async function handleApiErrorAsync(
   error: unknown,
   fallback: string,
 ): Promise<void> {
+  // 다른 사용자 감지(WD-1122) — 페이지가 곧 다시 열리므로 오류 토스트를 띄우지 않는다.
+  if (isUserSwitchedError(error)) return;
   const message = await extractApiErrorAsync(error, fallback);
   toast.error(message);
 }

@@ -13,10 +13,12 @@ import {
   isDuplicateName,
   isGraphReadRestricted,
   isMemberGoneError,
+  isUserSwitchedError,
   isWrongCurrentPasswordError,
   listLoadErrorProps,
   mapFieldErrors,
   NameRetryExhaustedError,
+  UserSwitchedError,
 } from './api-error';
 
 // toast 는 부수효과만 확인한다 — 실제 sonner 렌더는 E2E 몫이다. vi.mock 은 호이스팅되므로 import 아래에 둬도
@@ -300,5 +302,30 @@ describe('isClientError (WD-1029)', () => {
   it('응답이 없거나 axios 오류가 아니면 false', () => {
     expect(isClientError({ isAxiosError: true })).toBe(false);
     expect(isClientError(new Error('x'))).toBe(false);
+  });
+});
+
+describe('handleApiError — 다른 사용자 감지 (WD-1122)', () => {
+  it('UserSwitchedError 는 토스트를 띄우지 않는다(화면이 곧 다시 열린다)', () => {
+    vi.mocked(toast.error).mockClear();
+    handleApiError(new UserSwitchedError(), '실패');
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it('UserSwitchedError 를 cause 로 감싼 오류도 토스트를 띄우지 않는다', () => {
+    vi.mocked(toast.error).mockClear();
+    handleApiError(new Error('Token refresh failed', { cause: new UserSwitchedError() }), '실패');
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+});
+
+describe('isUserSwitchedError (WD-1122)', () => {
+  it('UserSwitchedError 자신 또는 그것을 cause 로 가진 오류만 true', () => {
+    expect(isUserSwitchedError(new UserSwitchedError())).toBe(true);
+    expect(isUserSwitchedError(new Error('x', { cause: new UserSwitchedError() }))).toBe(true);
+    expect(isUserSwitchedError(new Error('x', { cause: new Error('y') }))).toBe(false);
+    expect(isUserSwitchedError(new Error('x'))).toBe(false);
+    expect(isUserSwitchedError(null)).toBe(false);
+    expect(isUserSwitchedError('x')).toBe(false);
   });
 });

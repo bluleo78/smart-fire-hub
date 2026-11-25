@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { matchPath } from 'react-router-dom';
 
 import { authApi } from '../api/auth';
-import { AUTH_FLAG_KEY, claimUserLogout, clearSessionExpiredError, endSessionAndReloadToLogin, getAccessToken, setAccessToken } from '../api/client';
+import { abandonForSwitchedUser, AUTH_FLAG_KEY, claimUserLogout, clearSessionExpiredError, endSessionAndReloadToLogin, getAccessToken, isOtherSessionUser, setAccessToken } from '../api/client';
 import type { TenantSessionState } from '../api/tenant-session';
 import { subscribeTenantSession } from '../api/tenant-session';
 import { usersApi } from '../api/users';
@@ -157,7 +157,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // 다른 탭이 다시 로그인하면 이 탭의 만료 표식부터 비운다 — 표식이 남으면 이 탭은 HTTP 갱신을 다시
       // 시도하지 못해, 공유 refresh 쿠키로 되살릴 수 있는 세션까지 죽은 채로 둔다(WD-1082 반려).
       if (event.newValue !== null) {
-        clearSessionExpiredError();
+        // 다른 사용자 감지 표식은 남긴다(WD-1122) — 이 탭은 앞 사용자의 캐시·폼을 들고 있어 새 사용자로 되살아나면 안 된다.
+        clearSessionExpiredError({ keepSwitched: true });
         return;
       }
       // 다른 탭의 로그아웃도 로그아웃이다 — 이 탭의 캐시·돌아갈 주소도 남기지 않는다(WD-276).
@@ -181,9 +182,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
    *
    * <p>서버 DB 의 표식은 이미 꺼졌지만 **지금 쥔 access token 에는 pwc 가 남아 있다** — 그대로 두면
    * 다른 API 가 계속 403 이다. refresh 로 표식이 꺼진 새 토큰을 받아 세션을 다시 세운다.
+   *
+   * <p>WD-1122: 여기서 쓰는 deduplicatedRefresh 는 client.ts 의 refreshAccessToken(사용자 전환 검사)을 거치지 않는다.
+   * 그 사이 다른 탭이 다른 사용자로 로그인해 쿠키가 바뀌었을 수 있으므로 여기서 직접 isOtherSessionUser 로 확인하고,
+   * 다른 사용자면 이 세션을 세우지 않고 `/` 로 하드 이동해 앞 사용자의 캐시·폼을 폐기한다.
    */
   const completePasswordChange = useCallback(async () => {
     const { data: tokens } = await deduplicatedRefresh();
+    if (isOtherSessionUser(tokens.accessToken)) {
+      // runRefresh 와 같은 처리(토큰 비움·사용자 바뀜 표식·하드 이동) — 이후 요청이 옛 토큰으로 나가거나 재갱신하지 않게 한다(WD-1122)
+      // 정상 반환하면 호출자(ChangePasswordPage)가 성공 토스트·navigate 로 이동을 덮는다 — 사용자 바뀜 오류로 끝내 알린다
+      throw abandonForSwitchedUser();
+    }
     await applySession(tokens);
   }, [applySession]);
 

@@ -119,6 +119,34 @@ test.describe('비밀번호 변경 강제', () => {
     expect(refreshCount).toBeGreaterThanOrEqual(2);
   });
 
+  test('변경 직후 갱신이 다른 사용자의 토큰이면 성공 토스트 없이 / 로 하드 이동한다 (WD-1122)', async ({ authMockedPage: page }) => {
+    await seedSessionOnce(page);
+    // 부팅 refresh(1회차)는 사용자 1 의 pwc 토큰, 변경 직후 refresh(2회차 이후)는 다른 탭이 로그인한 사용자 2 의 토큰.
+    // client.ts 가 sub 를 읽는 JWT 모양이어야 사용자를 알아본다.
+    const jwtFor = (sub: string) => `header.${Buffer.from(JSON.stringify({ sub })).toString('base64url')}.sig`;
+    let refreshCount = 0;
+    await page.route((url) => url.pathname === '/api/v1/auth/refresh', (route) => {
+      refreshCount += 1;
+      const body = refreshCount === 1
+        ? { ...PWC_TOKEN, accessToken: jwtFor('1') }
+        : createTokenResponse({ accessToken: jwtFor('2') });
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+    });
+    await mockApi(page, 'GET', '/api/v1/auth/me', PWC_ME);
+    await mockApi(page, 'PUT', '/api/v1/users/me/password', null, { status: 204 });
+
+    await page.goto('/change-password');
+    await page.getByLabel(CURRENT_PASSWORD).fill('TempPass1x');
+    await page.getByLabel(NEW_PASSWORD).fill('NewPass1x');
+    await page.getByLabel(CONFIRM_PASSWORD).fill('NewPass1x');
+    await page.getByRole('button', { name: '변경하고 계속' }).click();
+
+    // `/` 로 하드 이동했고 성공 토스트는 뜨지 않았다
+    await expect(page).toHaveURL(/\/$/);
+    await expect(page.getByText('비밀번호가 변경되었습니다')).toHaveCount(0);
+    expect(refreshCount).toBeGreaterThanOrEqual(2);
+  });
+
   test('멤버십 여러 개(테넌트 미선택): 변경 화면이 먼저, 성공 후 워크스페이스 선택 화면', async ({ authMockedPage: page }) => {
     await seedSessionOnce(page);
     const memberships = [

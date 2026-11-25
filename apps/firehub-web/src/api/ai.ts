@@ -3,7 +3,7 @@ import {
   MAX_SCREEN_CONTEXT_LENGTH,
   truncateChatContext,
 } from '../lib/ai-chat-limits';
-import { pickBestMessage } from '../lib/api-error';
+import { isUserSwitchedError, pickBestMessage } from '../lib/api-error';
 import type { AIMessage, AISession, AIStreamEvent } from '../types/ai';
 import type { ErrorResponse } from '../types/auth';
 import { authedFetch, client, TokenRefreshError } from './client';
@@ -95,6 +95,8 @@ async function openChatStream(
     });
   } catch (error) {
     // 갱신 실패(세션 종료 중)·대기 초과는 네트워크 실패가 아니라 로그인 만료로 안내한다. 네트워크 실패·중단은 그대로 올린다.
+    // 다른 사용자 감지로 끝난 갱신은 만료가 아니다(WD-1122) — 화면이 곧 다시 열리므로 만료 안내로 바꾸지 않고 그대로 올린다.
+    if (isUserSwitchedError(error)) throw error instanceof Error && error.cause ? error.cause : error;
     if (error instanceof TokenRefreshError) throw new AIChatHttpError(401, SESSION_EXPIRED_MESSAGE);
     throw error;
   }
