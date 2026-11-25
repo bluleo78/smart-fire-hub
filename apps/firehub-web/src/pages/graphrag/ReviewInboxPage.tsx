@@ -467,7 +467,7 @@ function ReviewRow(props: {
             배지(공용 Badge 는 whitespace-nowrap)도 같은 이유로 넘치므로, 이 칸 안의 배지는 칸에서 한 번에 감기게 한다
             (data-slot=badge 하위 선택자 — 배지가 새로 생겨도 개별로 클래스를 달지 않아 회귀하지 않는다).
             min-w-48: 375px 에서 칸이 가장 넓은 배지 폭까지 줄면 속성 보정 입력창이 너무 좁아지므로 폭 하한을 둔다. */}
-        <TableCell className="min-w-48 max-w-md whitespace-normal [overflow-wrap:anywhere] [&_[data-slot=badge]]:max-w-full [&_[data-slot=badge]]:whitespace-normal [&_[data-slot=badge]]:[overflow-wrap:anywhere]">
+        <TableCell className="min-w-48 whitespace-normal [overflow-wrap:anywhere] [&_[data-slot=badge]]:max-w-full [&_[data-slot=badge]]:whitespace-normal [&_[data-slot=badge]]:[overflow-wrap:anywhere]">
           {isSynonym && <SynonymContent payload={row.payload as SynonymPayload} rationale={row.reason} />}
           {isProperty && (
             <PropertyContent
@@ -533,7 +533,8 @@ function ReviewRow(props: {
 }
 
 // WD-1133: 내용 칸 배지는 공용 Badge 의 whitespace-nowrap 때문에 공백 없는 긴 타입·관계명이 칸을 밀어 넓힌다.
-// 배지 className 에 max-w-full + 줄바꿈 허용을 얹어 칸 안에서 감기게 한다(아래 4개 Content 공통).
+// 감기는 처리를 아래 4개 Content 의 배지 className 에 두지 않고 부모 TableCell(위)의
+// `[&_[data-slot=badge]]` 선택자로 한 번에 준다 — 배지가 새로 생겨도 빠지지 않는다.
 function SynonymContent({ payload, rationale }: { payload: SynonymPayload; rationale: string | null }) {
   return (
     <div className="space-y-1">
