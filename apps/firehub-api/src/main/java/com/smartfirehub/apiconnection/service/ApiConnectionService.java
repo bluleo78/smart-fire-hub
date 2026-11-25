@@ -68,7 +68,9 @@ public class ApiConnectionService {
   /** 이름 중복 검사를 직렬화하는 공용 잠금(WD-1107) — 대소문자만 다른 이름의 동시 생성·개명이 둘 다 통과하는 것을 막는다. */
   private final ResourceNameGuard nameGuard;
 
-  /** 이름 잠금 키의 소유자 id. API 연결은 사용자별이 아닌 테넌트 공용이라 소유자가 없어 0 으로 고정한다(테넌트는 가드가 잠금 키에 따로 넣는다, WD-1107). */
+  /**
+   * 이름 잠금 키의 소유자 id. API 연결은 사용자별이 아닌 테넌트 공용이라 소유자가 없어 0 으로 고정한다(테넌트는 가드가 잠금 키에 따로 넣는다, WD-1107).
+   */
   private static final long NAME_LOCK_OWNER = 0L;
 
   /**
@@ -1048,16 +1050,17 @@ public class ApiConnectionService {
   }
 
   /**
-   * 이름 잠금을 잡는다(WD-1107·WD-1129). 잠금 키는 중복 SQL(TRANSLATE 로 모든 유니코드 공백을 ASCII 공백으로 본다)의 상위 집합이어야 한다 —
-   * 가드의 strip/lower 만으로는 안쪽 NBSP·탭 차이로 다른 키가 돼 동시 생성·변경이 직렬화되지 않으므로 공백 종류를 먼저 같게 만든다.
-   * create()·update() 가 같은 키를 쓰도록 잠금은 모두 이 메서드로 잡는다.
+   * 이름 잠금을 잡는다(WD-1107·WD-1129). 잠금 키는 중복 SQL(TRANSLATE 로 모든 유니코드 공백을 ASCII 공백으로 본다)의 상위 집합이어야 하는데,
+   * WD-1108 이후 가드의 normalize 가 유니코드 공백을 ASCII 로 바꾸는 일까지 하므로 이름을 그대로 넘긴다. create()·update() 가 같은 키를
+   * 쓰도록 잠금은 모두 이 메서드로 잡는다.
    */
   private void lockName(String name) {
-    nameGuard.lock(ResourceKind.API_CONNECTION, NAME_LOCK_OWNER, TextRules.spacesToAscii(name));
+    nameGuard.lock(ResourceKind.API_CONNECTION, NAME_LOCK_OWNER, name);
   }
 
   /**
-   * 수정 요청 이름을 저장할 이름으로 확정한다(WD-1107, WD-1129). {@code before} 는 update() 가 행 잠금(FOR UPDATE) 뒤에 읽은 저장 이름이라 최신이다.
+   * 수정 요청 이름을 저장할 이름으로 확정한다(WD-1107, WD-1129). {@code before} 는 update() 가 행 잠금(FOR UPDATE) 뒤에 읽은
+   * 저장 이름이라 최신이다.
    *
    * <ul>
    *   <li>저장된 이름과 글자 그대로 같으면 그대로 둔다.
@@ -1083,8 +1086,9 @@ public class ApiConnectionService {
   }
 
   /**
-   * 동일 테넌트 내 이름 중복을 막는다(#647) — 이름 잠금 아래에서 부른다(WD-1107). 비교는 PostgreSQL 에서는 유니코드 공백(탭·NBSP·전각 등)을 ASCII 공백으로
-   * 바꾼 뒤 {@code lower(trim)} 하고(WD-1129), Tibero 는 이전과 같은 {@code lower(trim)} 이다. 테넌트 경계는 RLS 가 건다.
+   * 동일 테넌트 내 이름 중복을 막는다(#647) — 이름 잠금 아래에서 부른다(WD-1107). 비교는 PostgreSQL 에서는 유니코드 공백(탭·NBSP·전각 등)을
+   * ASCII 공백으로 바꾼 뒤 {@code lower(trim)} 하고(WD-1129), Tibero 는 이전과 같은 {@code lower(trim)} 이다. 테넌트
+   * 경계는 RLS 가 건다.
    */
   private void validateNameNotDuplicated(String name) {
     if (repository.existsByName(name)) {

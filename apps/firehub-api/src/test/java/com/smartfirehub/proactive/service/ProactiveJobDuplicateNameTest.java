@@ -134,6 +134,14 @@ class ProactiveJobDuplicateNameTest extends IntegrationTestBase {
         .isInstanceOf(DuplicateResourceNameException.class);
   }
 
+  /** 안쪽 전각 공백만 다른 이름도 같은 이름이다 — SQL translate 와 잠금 키가 같은 기준(WD-1108, WD-1129 와 같음). */
+  @Test
+  void create_rejectsInnerUnicodeSpaceVariant() {
+    create("주간 보고", owner);
+    assertThatThrownBy(() -> create("주간\u3000보고", owner))
+        .isInstanceOf(DuplicateResourceNameException.class);
+  }
+
   /** 저장되는 이름은 앞뒤 공백이 걷힌 값이다. */
   @Test
   void create_storesStrippedName() {
@@ -174,5 +182,66 @@ class ProactiveJobDuplicateNameTest extends IntegrationTestBase {
             "\u3000주간 보고\u3000", null, null, null, null, null, null, null),
         owner);
     assertThat(service.getJob(a.id(), owner).name()).isEqualTo("주간 보고");
+  }
+
+  // ── WD-1108: 옛 행의 앞뒤 유니코드 공백 — SQL 비교가 ASCII 공백만 걷어 놓치던 것 ─────────────────
+
+  private Long insertLegacy(Long userId, String name) {
+    return inTenantFixture(
+        () ->
+            dsl.fetchOne(
+                    "INSERT INTO proactive_job (user_id, name, prompt, enabled, trigger_type, config)"
+                        + " VALUES (?, ?, 'p', false, 'ANOMALY', '{}'::jsonb) RETURNING id",
+                    userId,
+                    name)
+                .get(0, Long.class));
+  }
+
+  /** 옛 행 이름이 전각·NBSP 로 감싸져 있어도 같은 이름 생성을 막는다(WD-1108). */
+  @Test
+  void create_rejectsWhenLegacyRowHasUnicodePadding() {
+    insertLegacy(owner, "\u3000주간 보고");
+    assertThatThrownBy(() -> create("주간 보고", owner))
+        .isInstanceOf(DuplicateResourceNameException.class);
+    insertLegacy(owner, "NBSP 작업\u00A0");
+    assertThatThrownBy(() -> create("NBSP 작업", owner))
+        .isInstanceOf(DuplicateResourceNameException.class);
+  }
+
+  /** 이름을 안 바꾼 수정은 앞뒤 유니코드 공백이 붙은 옛 행이어도 막지 않는다(WD-1108). */
+  @Test
+  void update_promptOnlyOnUnicodePaddedLegacyRow_notBlocked() {
+    Long id1 = insertLegacy(owner, "\u3000주간 보고");
+    insertLegacy(owner, "주간 보고");
+
+    service.updateJob(
+        id1,
+        new UpdateProactiveJobRequest("\u3000주간 보고", "새 프롬프트", null, null, null, null, null, null),
+        owner);
+
+    assertThat(service.getJob(id1, owner).prompt()).isEqualTo("새 프롬프트");
+  }
+
+  /** 다른 작업의 옛(전각 패딩) 이름으로 개명하면 중복으로 거절한다(WD-1108). */
+  @Test
+  void update_renameToUnicodeVariantOfOtherJob_rejected() {
+    Long id1 = insertLegacy(owner, "보고 A");
+    insertLegacy(owner, "\u3000주간 보고");
+
+    assertThatThrownBy(
+            () ->
+                service.updateJob(
+                    id1,
+                    new UpdateProactiveJobRequest(
+                        "주간 보고", null, null, null, null, null, null, null),
+                    owner))
+        .isInstanceOf(DuplicateResourceNameException.class);
+  }
+
+  /** 다른 사용자의 패딩된 이름은 막지 않는다(WD-1108). */
+  @Test
+  void create_allowedWhenOtherOwnerHasUnicodePaddedName() {
+    insertLegacy(other, "\u3000주간 보고");
+    assertThat(create("주간 보고", owner).name()).isEqualTo("주간 보고");
   }
 }

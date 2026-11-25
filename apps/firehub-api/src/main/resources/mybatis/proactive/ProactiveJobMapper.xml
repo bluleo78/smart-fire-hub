@@ -163,8 +163,22 @@
     DELETE FROM proactive_job WHERE id = #{id} AND tenant_id = #{tenantId}
   </delete>
 
-  <!-- WD-824: 같은 소유자 스마트 작업 이름 중복 검사(lower(trim) 비교). excludeId 는 수정 시 자기 자신 제외. -->
-  <select id="countByOwnerAndName" resultType="_long">
+  <!--
+    WD-824: 같은 소유자 스마트 작업 이름 중복 검사. excludeId 는 수정 시 자기 자신 제외.
+    WD-1108: PostgreSQL 은 유니코드 공백(NBSP·전각 등, ws)을 ASCII 공백(sp)으로 바꾼 뒤 TRIM·LOWER 한다 — PG 의 TRIM 은 U+0020 만 걷어
+    옛 행의 앞뒤 유니코드 공백을 놓치기 때문이다(WD-1129 ApiConnectionMapper 와 같은 방식).
+    Tibero 는 이전 비교(lower(trim))를 그대로 둔다(비 UTF-8 문자셋에서 거짓 중복 우려 — ws/sp 는 무시).
+  -->
+  <select id="countByOwnerAndName" resultType="_long" databaseId="postgresql">
+    SELECT COUNT(*) FROM proactive_job t
+     WHERE t.user_id = #{ownerId}
+       AND lower(trim(translate(t.name, #{ws}, #{sp}))) = lower(trim(translate(#{name}, #{ws}, #{sp})))
+    <if test="excludeId != null">
+       AND t.id &lt;&gt; #{excludeId}
+    </if>
+  </select>
+
+  <select id="countByOwnerAndName" resultType="_long" databaseId="tibero">
     SELECT COUNT(*) FROM proactive_job t
      WHERE t.user_id = #{ownerId}
        AND lower(trim(t.name)) = lower(trim(#{name}))

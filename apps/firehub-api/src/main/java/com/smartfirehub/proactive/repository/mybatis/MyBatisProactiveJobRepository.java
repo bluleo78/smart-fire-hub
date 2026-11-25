@@ -1,8 +1,11 @@
 package com.smartfirehub.proactive.repository.mybatis;
 
 import com.smartfirehub.global.dto.LockedRowVersion;
+import com.smartfirehub.global.naming.NameComparison;
+import com.smartfirehub.global.platformdb.PlatformDbType;
 import com.smartfirehub.global.platformdb.mybatis.PlatformJson;
 import com.smartfirehub.global.platformdb.mybatis.PlatformMyBatisRepository;
+import com.smartfirehub.global.validation.TextRules;
 import com.smartfirehub.proactive.dto.ProactiveJobResponse;
 import com.smartfirehub.proactive.repository.ProactiveJobRepository;
 import com.smartfirehub.proactive.repository.mybatis.ProactiveJobRows.JobInsert;
@@ -13,6 +16,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.ObjectMapper;
 
@@ -30,9 +34,25 @@ public class MyBatisProactiveJobRepository implements ProactiveJobRepository {
   private final ProactiveJobMapper mapper;
   private final ObjectMapper objectMapper;
 
-  public MyBatisProactiveJobRepository(ProactiveJobMapper mapper, ObjectMapper objectMapper) {
+  /** 이 설치본의 이름 비교 기준(WD-1108) — 생성 시 플랫폼 DB 설정으로 한 번 정한다. */
+  private final NameComparison nameComparison;
+
+  /**
+   * @param platformDbType 플랫폼 DB 종류 설정값({@code postgres}|{@code tibero}, 없으면 postgres) —
+   *     {@code @ConditionalOnTiberoPlatformDb} 와 같은 설정 키. (WD-1108) 매퍼 SQL 분기는 MyBatis
+   *     databaseId(JDBC 제품명)로 정해지므로 둘은 같은 플랫폼 DB 설정에서 나올 뿐 코드로 묶여 있지 않다 — 설정과 실제 접속 DB 가 어긋나면 개명 판정
+   *     기준과 SQL 이 달라질 수 있다.
+   */
+  public MyBatisProactiveJobRepository(
+      ProactiveJobMapper mapper,
+      ObjectMapper objectMapper,
+      @Value("${" + PlatformDbType.PROPERTY + ":postgres}") String platformDbType) {
     this.mapper = mapper;
     this.objectMapper = objectMapper;
+    this.nameComparison =
+        "tibero".equalsIgnoreCase(platformDbType)
+            ? NameComparison.ASCII_TRIM
+            : NameComparison.UNICODE_TRIM;
   }
 
   @Override
@@ -187,9 +207,22 @@ public class MyBatisProactiveJobRepository implements ProactiveJobRepository {
         null);
   }
 
-  /** 같은 소유자·같은 이름(lower(trim) 비교) 존재 여부(WD-824). */
+  /** 같은 소유자·같은 이름 존재 여부(WD-824) — WD-1108: PG 는 유니코드 공백 변환 뒤 비교, Tibero 는 lower(trim). */
   @Override
   public boolean existsByOwnerAndName(long ownerId, String name, Long excludeId) {
-    return mapper.countByOwnerAndName(ownerId, name, excludeId) > 0;
+    // 유니코드 공백 변환 인자는 PostgreSQL 분기에서만 쓴다(WD-1108).
+    return mapper.countByOwnerAndName(
+            ownerId, name, excludeId, TextRules.EDGE_SPACE_CHARS, TextRules.EDGE_SPACE_AS_ASCII)
+        > 0;
+  }
+
+  /**
+   * 이 설치본의 SQL 이 쓰는 비교 기준(WD-1108). {@code countByOwnerAndName} 이 DB 별 SQL(PG 는 유니코드 공백 변환, Tibero
+   * 는 ASCII trim)로 갈리므로 개명 판정도 같은 DB 기준을 따라야 한다 — 매퍼 databaseId 와 같은 플랫폼 DB 설정에서 생성 시 한 번 정한다(코드로
+   * 묶이진 않음 — 생성자 주석 참고).
+   */
+  @Override
+  public NameComparison nameComparison() {
+    return nameComparison;
   }
 }

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.smartfirehub.global.dto.LockedRowVersion;
 import com.smartfirehub.global.json.StoredJsonAssert;
+import com.smartfirehub.global.naming.NameComparison;
 import com.smartfirehub.proactive.dto.ProactiveJobResponse;
 import com.smartfirehub.proactive.repository.ProactiveJobRepository.WorkspaceJobRow;
 import com.smartfirehub.user.repository.AccessFixtures.ProactiveJobStored;
@@ -491,5 +492,30 @@ abstract class ProactiveJobRepositoryContractTest extends TenantPairContractBase
     assertThat(fx.proactiveJobStored(ja2)).isNull();
     assertThat(fx.proactiveJobStored(jb)).isNotNull();
     assertThat(inA(() -> repository().deleteInTenant(ja, tenantA))).isZero();
+  }
+
+  /**
+   * 이름 중복 SQL 의 기준을 실행해 본다(WD-1108) — 앞뒤 전각 공백이 붙은 옛 행은 PG(jOOQ·MyBatis) 에서 같은 이름이고, Tibero 의 lower(trim) 은 ASCII
+   * 만 걷으므로 다른 이름이다. 구현이 알리는 {@code nameComparison()} 이 이 결과와 일치해야 개명 판정이 SQL 과 어긋나지 않는다.
+   */
+  @Test
+  @DisplayName("existsByOwnerAndName 은 대소문자·ASCII 공백을 무시하고 유니코드 공백은 nameComparison 기준으로 비교한다")
+  void existsByOwnerAndName_followsNameComparison() {
+    long legacy = createJob(tenantA, userA, "\u3000Sales-" + prefix, true);
+
+    createJob(tenantA, userA, " Ascii-" + prefix + " ", true);
+    assertThat(inA(() -> repository().existsByOwnerAndName(userA, "ascii-" + prefix, null)))
+        .as("ASCII 공백·대소문자는 항상 무시")
+        .isTrue();
+    boolean unicode = repository().nameComparison() == NameComparison.UNICODE_TRIM;
+    assertThat(inA(() -> repository().existsByOwnerAndName(userA, "Sales-" + prefix, null)))
+        .as("앞뒤 전각 공백은 UNICODE_TRIM 일 때만 같은 이름")
+        .isEqualTo(unicode);
+    assertThat(inA(() -> repository().existsByOwnerAndName(userA, "Sales-" + prefix, legacy)))
+        .as("자기 자신은 제외")
+        .isFalse();
+    assertThat(inA(() -> repository().existsByOwnerAndName(userA2, "Sales-" + prefix, null)))
+        .as("다른 소유자")
+        .isFalse();
   }
 }
