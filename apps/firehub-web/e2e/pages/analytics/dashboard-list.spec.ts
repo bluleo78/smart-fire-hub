@@ -109,6 +109,20 @@ test.describe('대시보드 목록 페이지', () => {
     await expect(page.getByRole('button', { name: '만들기' })).toBeEnabled();
   });
 
+  test('새 대시보드 이름이 한글 채움 문자(U+3164)만이면 만들기 버튼이 꺼진다 (WD-1124)', async ({ authenticatedPage: page }) => {
+    await setupDashboardListMocks(page, 2);
+    await page.goto('/analytics/dashboards');
+    await page.getByRole('button', { name: '새 대시보드' }).click();
+
+    const nameInput = page.getByRole('textbox', { name: '이름', exact: true });
+    // 서버 WD-1105 가 빈 이름으로 거절하는 값 — 폼도 같은 판정으로 막는다
+    await nameInput.fill('\u3164');
+    await expect(page.getByRole('button', { name: '만들기' })).toBeDisabled();
+    // 보이는 글자가 섞이면 켜진다
+    await nameInput.fill('a\u3164');
+    await expect(page.getByRole('button', { name: '만들기' })).toBeEnabled();
+  });
+
   test('생성 버튼을 빠르게 두 번 클릭해도 POST가 한 번만 호출된다 (#546)', async ({ authenticatedPage: page }) => {
     await setupDashboardListMocks(page, 1);
     await page.goto('/analytics/dashboards');
