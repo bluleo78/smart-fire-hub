@@ -1719,6 +1719,8 @@ test.describe('엑셀 시트 선택 (WD-253)', () => {
         });
       })
       .toBe(true);
+    // 마지막 행이 본문 사각형 안일 뿐 아니라 창 안에도 완전히 보여야 한다
+    await expect(last).toBeInViewport({ ratio: 1 });
   });
 
   /**
@@ -1853,7 +1855,7 @@ test.describe('엑셀 시트 선택 (WD-253)', () => {
 
   /**
    * WD-1152 — 아주 낮은 뷰포트(568x200)에서도 3단계 본문이 0px 로 접히지 않는다(WD-1140 의 min-h-24 최소 높이 유지).
-   * 본문이 접히면 결과 문구·오류 표가 보이지도 닿지도 않기 때문이다. 「확인」은 바깥 스크롤(마지막 수단)로 닿는다.
+   * 본문이 접히면 결과 문구·오류 표가 보이지도 닿지도 않기 때문이다. 3단계 칸이 본문+푸터를 품어(푸터가 칸 밖으로 안 넘침) 「확인」은 처음부터 보이고, 숨은 오류 행은 본문 휠로 닿는다.
    */
   test('568x200 에서 3단계 본문이 최소 높이를 지키고 결과와 「확인」에 닿는다 (WD-1152)', async ({
     authenticatedPage: page,
@@ -1871,15 +1873,21 @@ test.describe('엑셀 시트 선택 (WD-253)', () => {
     const body = page.getByTestId('import-progress-body');
     // 최소 높이(min-h-24 = 96px) 아래로 접히지 않는다
     expect(await body.evaluate((el) => el.clientHeight)).toBeGreaterThanOrEqual(96);
-    // 결과 문구는 본문 안에서 닿을 수 있다(필요하면 본문을 스크롤)
-    const failedText = dialog.getByText('임포트 실패', { exact: true });
-    await failedText.scrollIntoViewIfNeeded();
-    await expect(failedText).toBeInViewport();
+    // 3단계 바깥 칸(wrapper)이 본문+푸터를 다 품는다 — 푸터가 칸 밖으로 넘치면 안 된다(WD-1152 후속)
+    const wrapper = page.getByTestId('import-step3');
+    const m = await wrapper.evaluate((el) => {
+      const footer = el.querySelector('[data-testid="import-progress-footer"]')!.getBoundingClientRect();
+      return { footerBottom: footer.bottom, wrapperBottom: el.getBoundingClientRect().bottom };
+    });
+    expect(m.footerBottom, `푸터 하단 ${m.footerBottom} / 칸 하단 ${m.wrapperBottom}`).toBeLessThanOrEqual(m.wrapperBottom + 0.5);
 
-    // 568x200 에서는 「확인」이 스크롤 영역 밖 푸터라 처음부터 창 안에 완전히 보인다(본문이 최소 높이 96px 로 줄고 푸터가 고정되므로).
-    // 그래서 휠로 닿는지 보는 도우미(처음부터 보이면 던진다)는 쓰지 않고, 완전히 보임을 직접 단언한다.
+    // 측정(568x200): 열린 직후 「임포트 실패」(y 84~108)는 본문 하단(94)에 걸려 일부만 보이고, 「확인」 푸터(94~143)는 창 안(높이 200)에 있다.
+    // 「확인」은 처음부터 보이므로 휠 도우미(숨은 대상 전용, 처음부터 보이면 던진다) 대신 직접 단언한다.
     const confirm = page.getByTestId('import-progress-footer').getByRole('button', { name: '확인' });
     await expect(confirm).toBeInViewport({ ratio: 1 });
+    // 숨은 대상은 사용자처럼 본문 위 휠로 닿는다(scrollIntoViewIfNeeded 금지). 「임포트 실패」는 14px 만 내리면 되므로 작은 폭으로 돌린다.
+    await wheelUntilInViewport(page, dialog, dialog.getByText('임포트 실패', { exact: true }), { at: body, deltaY: 20 });
+    await wheelUntilInViewport(page, dialog, dialog.getByText('검증 오류 30', { exact: true }), { at: body });
   });
 
   /**
