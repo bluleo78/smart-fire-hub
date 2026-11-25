@@ -1631,7 +1631,7 @@ test.describe('엑셀 시트 선택 (WD-253)', () => {
    * WD-1140 — 3단계(진행/결과)는 안쪽 스크롤 래퍼가 없어, 낮은 화면에서 실패 목록이 길면
    * 대화상자가 overflow-hidden 에 잘려 「확인」 버튼이 닿지 않았다.
    */
-  test('낮은 뷰포트에서 가져오기 실패 목록이 길어도 끝까지 스크롤해 닫기에 닿는다 (WD-1140)', async ({
+  test('낮은 뷰포트에서 가져오기 실패 목록이 길어도 확인은 처음부터 보이고 목록은 본문이 끝까지 스크롤된다 (WD-1140)', async ({
     authenticatedPage: page,
   }) => {
     await page.setViewportSize({ width: 375, height: 420 });
@@ -1700,9 +1700,215 @@ test.describe('엑셀 시트 선택 (WD-253)', () => {
     await dialog.getByRole('button', { name: '임포트' }).click();
     await expect(dialog.getByText('검증 오류 30', { exact: true })).toBeAttached({ timeout: 10_000 });
 
-    // 사용자처럼 휠로 끝까지 내려 확인 버튼에 닿는지 본다
-    await wheelUntilInViewport(page, dialog, dialog.getByRole('button', { name: '확인' }), { deltaY: 600 });
-    await expect(dialog.getByText('검증 오류 30', { exact: true })).toBeInViewport();
+    // WD-1152: 「확인」은 스크롤 영역 밖 푸터라 휠 없이 처음부터 보인다 — 긴 목록은 본문(import-progress-body)이 스크롤한다.
+    await expect(
+      page.getByTestId('import-progress-footer').getByRole('button', { name: '확인' }),
+    ).toBeInViewport({ ratio: 1 });
+    const body = page.getByTestId('import-progress-body');
+    expect(await body.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
+    // 본문을 휠로 끝까지 내리면 마지막 오류 행이 본문 사각형 안에 들어온다
+    const last = dialog.getByText('검증 오류 30', { exact: true });
+    await body.hover();
+    await expect
+      .poll(async () => {
+        await page.mouse.wheel(0, 600);
+        return last.evaluate((el) => {
+          const c = el.closest('[data-testid="import-progress-body"]')!.getBoundingClientRect();
+          const r = el.getBoundingClientRect();
+          return r.top >= c.top && r.bottom <= c.bottom;
+        });
+      })
+      .toBe(true);
+  });
+
+  /**
+   * WD-1152 — 진행 SSE 가 주어진 stage 로 응답하게 하고 3단계까지 올린다.
+   * 실패 오류 목록(errors)이 있으면 이력(GET)에 FAILED + errorDetails 로 내려 ValidationErrorTable 이 그려지게 한다.
+   * stage 가 FAILED 가 아니면(진행 중) SSE 를 끝내지 않고 이벤트 하나만 보낸다.
+   */
+  async function openStep3(
+    page: import('@playwright/test').Page,
+    opts: { stage: 'FAILED' | 'VALIDATING' | 'PENDING'; errors?: { rowNumber: number; columnName: string; value: string; error: string }[] },
+  ) {
+    const errors = opts.errors ?? [];
+    const failed = opts.stage === 'FAILED';
+    const pending = opts.stage === 'PENDING';
+    // 진행 이벤트 본문 — SSE 와 REST 폴링 두 경로가 같은 값을 쓰도록 한 번만 만든다
+    const evt = {
+      jobId: 'job-123',
+      jobType: 'IMPORT',
+      stage: opts.stage,
+      progress: failed ? 100 : 10,
+      metadata: { totalRows: errors.length, processedRows: errors.length, successRows: 0, errorRows: errors.length },
+      message: failed ? '임포트 실패' : '검증 중',
+      errorMessage: failed ? '검증 오류가 있습니다' : null,
+    };
+    await setupImportMocks(page);
+    await mockApi(page, 'POST', `/api/v1/datasets/${DATASET_ID}/imports/preview`, createPreviewResponse());
+    await page.route(
+      (url) => url.pathname.includes('/jobs/') && url.pathname.includes('/progress'),
+      (route) => {
+        // 대기(PENDING) 시험은 첫 이벤트가 오지 않아야 하므로 응답을 붙잡아 둔다
+        if (pending) return;
+        // 종료 전이면 complete 이벤트를 보내지 않아 3단계가 진행 중으로 남는다
+        const tail = failed ? 'event: complete\ndata: done\n\n' : '';
+        return route.fulfill({
+          status: 200,
+          contentType: 'text/event-stream',
+          body: `data: ${JSON.stringify(evt)}\n\n${tail}`,
+        });
+      },
+    );
+    // SSE 가 한 이벤트 뒤 닫히면 useJobProgress 가 REST 폴링(GET /jobs/{id}/status)으로 넘어간다 — 같은 단계를 돌려줘 상태를 안정시킨다
+    await page.route(
+      (url) => url.pathname === '/api/v1/jobs/job-123/status',
+      (route) => {
+        if (pending) return;
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(evt) });
+      },
+    );
+    await page.route(
+      (url) => url.pathname === `/api/v1/datasets/${DATASET_ID}/imports`,
+      (route) => {
+        if (route.request().method() === 'POST') {
+          return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(createImportStartResponse()) });
+        }
+        const failedRecord = {
+          ...createImportRecord(),
+          status: 'FAILED',
+          totalRows: errors.length,
+          successRows: 0,
+          errorRows: errors.length,
+          errorDetails: JSON.stringify({ errors }),
+        };
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(createPageResponse(failed ? [failedRecord] : [])),
+        });
+      },
+    );
+    await page.goto(`/data/datasets/${DATASET_ID}`);
+    await page.getByRole('tab', { name: '데이터' }).click();
+    await page.getByRole('button', { name: '임포트' }).first().click();
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/imports/preview') && r.status() === 200),
+      page.getByRole('dialog').locator('input[type="file"]').setInputFiles(CSV_FILE),
+    ]);
+    const dialog = page.getByRole('dialog');
+    await dialog.getByRole('button', { name: '임포트' }).click();
+    return dialog;
+  }
+
+  /** WD-1152 — 검증 오류가 아주 많아도 「확인」은 스크롤 영역 밖 푸터라 스크롤 없이 보이고, 목록은 본문이 스크롤한다 */
+  test('1280x800 에서 검증 오류 80건이어도 3단계 「확인」이 스크롤 없이 보이고 누르면 닫힌다 (WD-1152)', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    const errors = Array.from({ length: 80 }, (_, i) => ({
+      rowNumber: i + 1,
+      columnName: 'name',
+      value: `값-${i + 1}`,
+      error: `검증 오류 ${i + 1}`,
+    }));
+    const dialog = await openStep3(page, { stage: 'FAILED', errors });
+
+    // 휠 없이 푸터의 「확인」이 완전히 보인다
+    await expect(
+      page.getByTestId('import-progress-footer').getByRole('button', { name: '확인' }),
+    ).toBeInViewport({ ratio: 1 });
+    // 80건이면 1280x800 에서도 넘친다 — 긴 목록은 본문이 스크롤한다(푸터는 스크롤 밖)
+    const body = page.getByTestId('import-progress-body');
+    await expect
+      .poll(() => body.evaluate((el) => el.scrollHeight > el.clientHeight), { timeout: 10_000 })
+      .toBe(true);
+    await expectNoOuterScroll(dialog);
+
+    await page.getByTestId('import-progress-footer').getByRole('button', { name: '확인' }).click();
+    await expect(dialog).toBeHidden();
+  });
+
+  /**
+   * WD-1152 — 375px 에서 3단계 본문이 가로로 넘치지 않는다(오류 표는 자체 가로 스크롤).
+   * 본문의 min-w-0 + overflow-x-hidden 을 빼도 표의 overflow-x-auto 가 이미 막아 현재 버그를 재현하지는 않는다(확인함) —
+   * 이후 본문 구조가 바뀌어도 가로 넘침이 생기지 않도록 지키는 회귀 방지용 시험이다.
+   */
+  test('375px 3단계에 가로 스크롤이 없다 (WD-1152)', async ({ authenticatedPage: page }) => {
+    await page.setViewportSize({ width: 375, height: 700 });
+    const longValue = 'x'.repeat(200);
+    const errors = Array.from({ length: 5 }, (_, i) => ({
+      rowNumber: i + 1,
+      columnName: 'name',
+      value: `${longValue}-${i + 1}`,
+      error: `검증 오류 ${i + 1} ${longValue}`,
+    }));
+    const dialog = await openStep3(page, { stage: 'FAILED', errors });
+    await expect(dialog.getByText('임포트 실패')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId('import-progress-footer')).toBeVisible();
+
+    const body = page.getByTestId('import-progress-body');
+    const dims = await body.evaluate((el) => ({ scrollWidth: el.scrollWidth, clientWidth: el.clientWidth }));
+    expect(dims.scrollWidth).toBeLessThanOrEqual(dims.clientWidth);
+  });
+
+  /**
+   * WD-1152 — 아주 낮은 뷰포트(568x200)에서도 3단계 본문이 0px 로 접히지 않는다(WD-1140 의 min-h-24 최소 높이 유지).
+   * 본문이 접히면 결과 문구·오류 표가 보이지도 닿지도 않기 때문이다. 「확인」은 바깥 스크롤(마지막 수단)로 닿는다.
+   */
+  test('568x200 에서 3단계 본문이 최소 높이를 지키고 결과와 「확인」에 닿는다 (WD-1152)', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.setViewportSize({ width: 568, height: 200 });
+    const errors = Array.from({ length: 30 }, (_, i) => ({
+      rowNumber: i + 1,
+      columnName: 'name',
+      value: `값-${i + 1}`,
+      error: `검증 오류 ${i + 1}`,
+    }));
+    const dialog = await openStep3(page, { stage: 'FAILED', errors });
+    await expect(dialog.getByText('검증 오류 30', { exact: true })).toBeAttached({ timeout: 10_000 });
+
+    const body = page.getByTestId('import-progress-body');
+    // 최소 높이(min-h-24 = 96px) 아래로 접히지 않는다
+    expect(await body.evaluate((el) => el.clientHeight)).toBeGreaterThanOrEqual(96);
+    // 결과 문구는 본문 안에서 닿을 수 있다(필요하면 본문을 스크롤)
+    const failedText = dialog.getByText('임포트 실패', { exact: true });
+    await failedText.scrollIntoViewIfNeeded();
+    await expect(failedText).toBeInViewport();
+
+    // 568x200 에서는 「확인」이 스크롤 영역 밖 푸터라 처음부터 창 안에 완전히 보인다(본문이 최소 높이 96px 로 줄고 푸터가 고정되므로).
+    // 그래서 휠로 닿는지 보는 도우미(처음부터 보이면 던진다)는 쓰지 않고, 완전히 보임을 직접 단언한다.
+    const confirm = page.getByTestId('import-progress-footer').getByRole('button', { name: '확인' });
+    await expect(confirm).toBeInViewport({ ratio: 1 });
+  });
+
+  /**
+   * WD-1152 — 대기(PENDING) 화면이 아주 낮은 뷰포트(568x200)에서 내용이 위로 넘쳐 잘리지 않는다.
+   * justify-center 는 내용이 박스보다 클 때 위쪽이 스크롤로도 닿지 못하게 잘리므로, 스피너가 본문 위쪽 안에 있어야 한다.
+   */
+  test('568x200 대기 화면에서 스피너가 본문 위로 잘리지 않는다 (WD-1152)', async ({ authenticatedPage: page }) => {
+    await page.setViewportSize({ width: 568, height: 200 });
+    await openStep3(page, { stage: 'PENDING' });
+    const body = page.getByTestId('import-progress-body');
+    await expect(page.getByText('작업 대기 중...')).toBeAttached({ timeout: 10_000 });
+    const m = await body.evaluate((el) => {
+      const spinner = el.querySelector('svg')!.getBoundingClientRect();
+      return { scrollTop: el.scrollTop, bodyTop: el.getBoundingClientRect().top, spinnerTop: spinner.top };
+    });
+    expect(m.scrollTop).toBe(0);
+    expect(m.spinnerTop).toBeGreaterThanOrEqual(m.bodyTop);
+  });
+
+  /** WD-1152 — 진행 중(종료 전) 3단계도 푸터에 「닫기」가 있고, 누르면 확인 후 닫힌다 */
+  test('진행 중 3단계는 푸터에 「닫기」가 보이고 누르면 닫힌다 (WD-1152)', async ({ authenticatedPage: page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    const dialog = await openStep3(page, { stage: 'VALIDATING' });
+    const footer = page.getByTestId('import-progress-footer');
+    await expect(footer.getByRole('button', { name: '닫기' })).toBeVisible({ timeout: 10_000 });
+    // 종료 전 닫기는 window.confirm 을 거친다 — 수락한다
+    page.once('dialog', (d) => d.accept());
+    await footer.getByRole('button', { name: '닫기' }).click();
+    await expect(dialog).toBeHidden();
   });
 
   /**
@@ -1737,8 +1943,8 @@ test.describe('엑셀 시트 선택 (WD-253)', () => {
     await expectNoOuterScroll(dialog);
   });
 
-  /** WD-1140 — 오류 표가 없는 완료 화면도 낮은 화면에서 휠로 내리면 「확인」에 닿는다 */
-  test('낮은 뷰포트(375x420)에서 3단계 완료 화면도 스크롤해 확인 버튼에 닿는다 (WD-1140)', async ({
+  /** WD-1140 — 오류 표가 없는 완료 화면은 낮은 화면(375x420)에서도 「확인」이 처음부터 보인다 (WD-1152) */
+  test('낮은 뷰포트(375x420)에서 3단계 완료 화면은 확인 버튼이 처음부터 완전히 보인다 (WD-1140)', async ({
     authenticatedPage: page,
   }) => {
     await page.setViewportSize({ width: 375, height: 420 });
@@ -1758,7 +1964,9 @@ test.describe('엑셀 시트 선택 (WD-253)', () => {
     await dialog.getByRole('button', { name: '임포트' }).click();
     await expect(dialog.getByText('임포트 완료')).toBeVisible({ timeout: 10_000 });
 
-    await wheelUntilInViewport(page, dialog, dialog.getByRole('button', { name: '확인' }), { deltaY: 600 });
+    // WD-1152: 오류 표가 없는 완료 화면은 이 높이에서 「확인」이 처음부터 완전히 보인다(확인함). 휠 도달 도우미는
+    // 「처음부터 보임」을 오류로 막으므로 직접 보임을 단언한다 — 휠이 필요한 경우는 긴 실패 목록·568×200 시험이 지킨다.
+    await expect(dialog.getByRole('button', { name: '확인' })).toBeInViewport({ ratio: 1 });
   });
 
   /**
