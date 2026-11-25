@@ -8,7 +8,9 @@ public enum ResourceKind {
   CHART("차트"),
   DASHBOARD("대시보드"),
   PROACTIVE_JOB("스마트 작업"),
-  REPORT_TEMPLATE("리포트 양식");
+  REPORT_TEMPLATE("리포트 양식"),
+  /** API 연결 — 테넌트 공용 자원(WD-1107). */
+  API_CONNECTION("API 연결");
 
   private final String label;
 

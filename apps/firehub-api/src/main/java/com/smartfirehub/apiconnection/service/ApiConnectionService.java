@@ -14,6 +14,8 @@ import com.smartfirehub.apiconnection.repository.ApiConnectionRepository.ApiConn
 import com.smartfirehub.apiconnection.repository.ApiConnectionRepository.HealthCheckTarget;
 import com.smartfirehub.audit.service.AuditLogService;
 import com.smartfirehub.global.exception.SerializationException;
+import com.smartfirehub.global.naming.ResourceKind;
+import com.smartfirehub.global.naming.ResourceNameGuard;
 import com.smartfirehub.global.util.AppJsonWebClients;
 import com.smartfirehub.global.validation.TextRules;
 import com.smartfirehub.job.service.AsyncJobService;
@@ -62,6 +64,12 @@ import tools.jackson.databind.ObjectMapper;
 public class ApiConnectionService {
 
   private final ApiConnectionRepository repository;
+
+  /** 이름 중복 검사를 직렬화하는 공용 잠금(WD-1107) — 대소문자만 다른 이름의 동시 생성·개명이 둘 다 통과하는 것을 막는다. */
+  private final ResourceNameGuard nameGuard;
+
+  /** 이름 잠금 키의 소유자 id. API 연결은 사용자별이 아닌 테넌트 공용이라 소유자가 없어 0 으로 고정한다(테넌트는 가드가 잠금 키에 따로 넣는다, WD-1107). */
+  private static final long NAME_LOCK_OWNER = 0L;
 
   /**
    * 조회 전용 협력자. testConnection 이 조회를 자기호출하면 프록시가 우회돼 트랜잭션이 열리지 않으므로 별도 빈으로 분리해 두고 반드시 이 참조를 통해 호출한다.
@@ -119,6 +127,8 @@ public class ApiConnectionService {
     String normalizedBaseUrl = validateAndNormalizeBaseUrl(baseUrl.baseUrl());
     // 앞뒤 유니코드 공백을 걷어낸 이름으로 중복 검사·저장·감사한다(WD-1085) — 공백 붙인 이름이 중복 검사를 비켜 가던 것을 막는다.
     String name = TextRules.strip(request.name());
+    // 검사 전에 이름 잠금을 잡아 같은 이름(대소문자·공백 무시)의 동시 생성을 직렬화한다(WD-1107). 잠금은 이 트랜잭션이 끝날 때 풀린다.
+    nameGuard.lock(ResourceKind.API_CONNECTION, NAME_LOCK_OWNER, name);
     validateNameNotDuplicated(name);
 
     String encryptedConfig = serializeAndEncrypt(normalizedConfig);
@@ -336,9 +346,7 @@ public class ApiConnectionService {
     // 앞뒤 유니코드 공백을 걷어낸 이름으로 검사·저장한다(WD-1085). null 은 변경 없음.
     String name = TextRules.strip(request.name());
     if (name != null) {
-      if (repository.existsByNameExcludingId(name, id)) {
-        throw new ApiConnectionNameAlreadyExistsException(name);
-      }
+      name = resolveUpdatedName(id, name);
     }
 
     String normalizedHealthCheckPath = normalizeHealthCheckPath(request.healthCheckPath());
@@ -1037,10 +1045,23 @@ public class ApiConnectionService {
   }
 
   /**
-   * 동일 테넌트 내 이름 중복을 막는다 (#647). {@code api_connection.name}에는 유니크 제약이 없어(V93 주석 참고) 같은 이름의 연결이 여러 개
-   * 생성될 수 있었고, 목록/삭제 확인 다이얼로그가 이름만으로 항목을 구분해 오삭제 위험이 있었다. RLS 정책이 테넌트 경계를 자동으로 걸어주므로 여기서는 이름만 검사하면
-   * 된다.
+   * 수정 요청 이름을 저장할 이름으로 확정한다(WD-1107). 행 잠금(FOR UPDATE)으로 저장된 이름을 다시 읽어, 앞뒤 공백만 다르면 저장된 이름을 그대로 쓴다
+   * (V168 이 겹침이라 건너뛴 옛 공백 행이 설명만 고칠 때 유니크 인덱스에 걸리지 않게). 실제 개명이면 이름 잠금을 잡은 뒤 중복 검사한다(409).
    */
+  private String resolveUpdatedName(Long id, String requestedName) {
+    String before =
+        repository.findNameForUpdate(id).orElseThrow(() -> new ApiConnectionNotFoundException(id));
+    if (TextRules.strip(before).equals(requestedName)) {
+      return before;
+    }
+    nameGuard.lock(ResourceKind.API_CONNECTION, NAME_LOCK_OWNER, requestedName);
+    if (repository.existsByNameExcludingId(requestedName, id)) {
+      throw new ApiConnectionNameAlreadyExistsException(requestedName);
+    }
+    return requestedName;
+  }
+
+  /** 동일 테넌트 내 이름 중복을 막는다(#647) — {@code lower(trim)} 비교이며 이름 잠금 아래에서 부른다(WD-1107). 테넌트 경계는 RLS 가 건다. */
   private void validateNameNotDuplicated(String name) {
     if (repository.existsByName(name)) {
       throw new ApiConnectionNameAlreadyExistsException(name);

@@ -132,11 +132,16 @@
   </select>
 
   <select id="countByName" resultType="java.lang.Long">
-    SELECT COUNT(*) FROM api_connection ac WHERE ac.name = #{name}
+    SELECT COUNT(*) FROM api_connection ac WHERE LOWER(TRIM(ac.name)) = LOWER(TRIM(#{name}))
   </select>
 
   <select id="countByNameExcludingId" resultType="java.lang.Long">
-    SELECT COUNT(*) FROM api_connection ac WHERE ac.name = #{name} AND ac.id &lt;&gt; #{excludeId}
+    SELECT COUNT(*) FROM api_connection ac WHERE LOWER(TRIM(ac.name)) = LOWER(TRIM(#{name})) AND ac.id &lt;&gt; #{excludeId}
+  </select>
+
+  <!-- 행 잠금으로 저장된 이름 그대로(WD-1107) — 개명 판정을 잠금 아래 최신 값으로 하려고 읽는다. -->
+  <select id="selectNameForUpdate" resultType="java.lang.String">
+    SELECT ac.name FROM api_connection ac WHERE ac.id = #{id} FOR UPDATE
   </select>
 
   <select id="countById" resultType="java.lang.Long">

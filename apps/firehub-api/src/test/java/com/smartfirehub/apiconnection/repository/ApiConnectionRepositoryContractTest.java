@@ -496,6 +496,61 @@ abstract class ApiConnectionRepositoryContractTest extends TenantPairContractBas
     assertThat(inB(() -> repository().existsByNameExcludingId(name, b))).isFalse();
   }
 
+  /** 이름 중복 판정은 대소문자·앞뒤 공백을 무시한다 — 다른 자원(WD-824)과 같은 기준(WD-1107). */
+  @Test
+  @DisplayName("existsByName 은 대소문자·앞뒤 ASCII 공백을 무시하고 비교한다 (WD-1107)")
+  void existsByName_ignoresCaseAndAsciiEdgeSpaces() {
+    inA(
+        () ->
+            repository()
+                .save(
+                    prefix + "-Sales ",
+                    null,
+                    "API_KEY",
+                    "enc",
+                    user,
+                    "https://s.example.com",
+                    null));
+
+    assertThat(inA(() -> repository().existsByName(prefix + "-sales"))).isTrue();
+    assertThat(inA(() -> repository().existsByName(prefix + "-SALES"))).isTrue();
+    assertThat(inA(() -> repository().existsByName(prefix + "-Sale"))).isFalse();
+    // 값 쪽도 앞뒤 ASCII 공백을 걷어낸다 — 질의 이름에 공백이 붙어도 같은 이름으로 본다(WD-1107).
+    assertThat(inA(() -> repository().existsByName(" " + prefix + "-sales "))).isTrue();
+  }
+
+  /** 자기 자신은 제외하고, 대소문자만 다른 다른 행과는 충돌로 본다(WD-1107). */
+  @Test
+  @DisplayName("existsByNameExcludingId 는 대소문자를 무시하고 자기 자신만 제외한다 (WD-1107)")
+  void existsByNameExcludingId_ignoresCase_excludesSelf() {
+    long a1 = saveA("Sales", null);
+    long b1 = saveA("Other", null);
+
+    assertThat(inA(() -> repository().existsByNameExcludingId(prefix + "-sales", a1))).isFalse();
+    assertThat(inA(() -> repository().existsByNameExcludingId(prefix + "-sales", b1))).isTrue();
+  }
+
+  /** 행 잠금으로 저장된 이름을 그대로(정규화 없이) 읽고, 없는 id 는 빈 값이다(WD-1107). */
+  @Test
+  @DisplayName("findNameForUpdate 는 저장된 이름을 그대로 돌려주고 없는 id 는 빈 값이다 (WD-1107)")
+  void findNameForUpdate_returnsStoredName_orEmpty() {
+    long id =
+        inA(
+            () ->
+                repository()
+                    .save(
+                        " " + prefix + "-Sales",
+                        null,
+                        "API_KEY",
+                        "enc",
+                        user,
+                        "https://n.example.com",
+                        null));
+
+    assertThat(inA(() -> repository().findNameForUpdate(id))).contains(" " + prefix + "-Sales");
+    assertThat(inA(() -> repository().findNameForUpdate(-1L))).isEmpty();
+  }
+
   /** deleteById 는 지운 행 수를 돌려준다 — 두 번째 삭제(동시 삭제의 패자)는 0. */
   @Test
   @DisplayName("deleteById 는 지운 행 수를 돌려준다 — 이미 지워졌으면 0")
