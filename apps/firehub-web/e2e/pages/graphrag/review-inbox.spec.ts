@@ -4,7 +4,7 @@ import { createDatePropertyReviewItem, createEntityReviewItem, createEvidenceChu
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { gotoUntilReady } from '../../fixtures/first-visit'; // WD-903: 첫 진입 직후 조작은 대상이 보일 때까지 먼저 기다린다
-import { expectInsideHorizontally, expectNoHorizontalOverflow, NARROW_DESKTOP_VIEWPORT } from '../../fixtures/long-unbroken-name';
+import { expectInsideHorizontally, expectNoHorizontalOverflow, expectNoOverflowWithin, NARROW_DESKTOP_VIEWPORT } from '../../fixtures/long-unbroken-name';
 import { expectTableErrorAlert } from '../../fixtures/table-error-alert';
 
 test.describe('AI 검수 인박스', () => {
@@ -172,7 +172,11 @@ test.describe('AI 검수 인박스', () => {
         await expect(row).toBeVisible();
         await expectNoCoverNextCell(row.locator('td').filter({ hasText: LONG_TOKEN }).first(), label);
         // 승인(적용) 버튼이 표 밖으로 밀리지 않는다
-        await expectInsideHorizontally(row.getByRole('button', { name: /승인|적용|적재/ }).first(), table, `${label} 조치 버튼`, { content: false });
+        // WD-1149: 기준을 <table> 자신이 아니라 스크롤 상자로 — 표가 늘어도 늘 통과하던 단언이다.
+        const scroller = page.locator('[data-slot="table-container"]');
+        await expectInsideHorizontally(row.getByRole('button', { name: /승인|적용|적재/ }).first(), scroller, `${label} 조치 버튼`, { content: false });
+        // WD-1149: overflow-x-auto 컨테이너가 넘침을 삼켜 문서·main 은 그대로라, 표가 넘치는 회귀를 여기서 잡는다.
+        await expectNoOverflowWithin(scroller, `${label} 표 컨테이너`);
         await expectNoHorizontalOverflow(page);
       }
     });
@@ -190,7 +194,10 @@ test.describe('AI 검수 인박스', () => {
     await table.getByRole('button', { name: /원문 근거 보기/ }).first().click();
     await expect(table.getByText(url)).toBeVisible();
 
-    await expectInsideHorizontally(table.getByRole('button', { name: /승인/ }).first(), table, '조치 버튼', { content: false });
+    // WD-1149: 표 밖으로 넘치지 않는다는 시험의 진짜 대상은 스크롤 상자다 — <table> 은 내용만큼 넓어져도 늘 자기 안이라 통과했다.
+    const scroller = page.locator('[data-slot="table-container"]');
+    await expectInsideHorizontally(table.getByRole('button', { name: /승인/ }).first(), scroller, '조치 버튼', { content: false });
+    await expectNoOverflowWithin(scroller, '표 컨테이너');
     await expectNoHorizontalOverflow(page);
   });
 
