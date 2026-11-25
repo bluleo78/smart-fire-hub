@@ -15,11 +15,43 @@
 
 import type { Page } from '@playwright/test';
 
-import { mockProactivePermissions, setupNewJobMocks } from '../../fixtures/ai-insight.fixture';
+import { createJob } from '../../factories/ai-insight.factory';
+import { mockProactivePermissions, setupJobDetailMocks, setupNewJobMocks } from '../../fixtures/ai-insight.fixture';
 import { expect, test } from '../../fixtures/auth.fixture';
 
 const SERVER_MSG = '이미 사용 중인 작업 이름입니다.';
 const FALLBACK_MSG = '작업 생성에 실패했습니다.';
+// 떠난 뒤 이름 중복 — 서버 문구 대신 보낸 이름을 넣은 문구 (WD-1153)
+const SERVER_DUP_MSG = '이미 있는 스마트 작업 이름입니다. 다른 이름을 입력하세요.';
+const DUP_TOAST = '「주간 보고」 작업을 만들지 못했습니다 — 같은 이름의 작업이 이미 있습니다.';
+
+/** 같은 SPA 안에서 기록 항목을 하나 쌓고 라우터에 알린다 — 새로고침 없이 다른 화면으로 옮긴다 */
+async function pushHistoryEntry(page: Page, path: string) {
+  await page.evaluate((to) => {
+    const idx = ((window.history.state as { idx?: number } | null)?.idx ?? 0) + 1;
+    const state = { usr: null, key: `wd1153-${idx}`, idx };
+    window.history.pushState(state, '', to);
+    window.dispatchEvent(new PopStateEvent('popstate', { state }));
+  }, path);
+}
+
+/** 새 작업 폼에 이름 「주간 보고」·프롬프트를 채우고 만들기를 눌러 요청이 서버에 닿을 때까지 기다린다 */
+async function fillAndSubmit(page: Page, hold: Awaited<ReturnType<typeof holdCreateRequest>>) {
+  await page.goto('/ai-insights/jobs/new');
+  await page.locator('#job-name').fill('주간 보고');
+  await page.locator('#job-prompt').fill('어제 결과를 요약하세요');
+  await page.getByRole('button', { name: '만들기', exact: true }).click();
+  await hold.requested;
+}
+
+/** 만들기를 보낸 뒤 사이드바 홈으로 이탈을 확정해 화면을 언마운트한다 */
+async function createThenLeave(page: Page, hold: Awaited<ReturnType<typeof holdCreateRequest>>) {
+  await fillAndSubmit(page, hold);
+  await page.getByRole('navigation').getByRole('link', { name: '홈' }).click();
+  await page.getByRole('alertdialog').getByRole('button', { name: '이탈' }).click();
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.locator('#job-name')).toHaveCount(0);
+}
 
 /**
  * POST /api/v1/proactive/jobs 응답을 테스트가 풀어줄 때까지 붙잡는다 —
@@ -86,5 +118,65 @@ test.describe('스마트 작업 새 폼 — 이탈 뒤 만들기 실패의 서�
     await expect(page.getByText(FALLBACK_MSG)).toHaveCount(0);
     // 다른 화면(홈)에 머문다 — 실패 응답이 사용자를 새 작업으로 끌고 가지 않는다
     expect(new URL(page.url()).pathname).toBe('/');
+  });
+});
+
+test.describe('스마트 작업 새 폼 — 떠난 뒤 도착한 이름 중복 실패 (WD-1153)', () => {
+  // 떠난 뒤 돌아간 곳이 같은 경로의 새 작업 화면이든 다른 작업 화면이든 같은 문구로 알린다
+  const returnTargets = [
+    { label: '새 작업으로 돌아온', path: '/ai-insights/jobs/new', ready: (page: Page) => expect(page.locator('#job-name')).toBeVisible() },
+    { label: '다른 작업 화면에서', path: '/ai-insights/jobs/1', ready: (page: Page) => expect(page.getByRole('button', { name: '편집', exact: true })).toBeVisible() },
+  ];
+  for (const target of returnTargets) {
+    test(`떠난 뒤 ${target.label} 도착한 이름 중복 실패를 서버 문구가 아니라 작업 이름 넣은 토스트로 알린다 (WD-1153)`, async ({
+      authenticatedPage: page,
+    }) => {
+      const hold = await holdCreateRequest(page);
+      await setupNewJobMocks(page);
+      await setupJobDetailMocks(page, 1);
+      await createThenLeave(page, hold);
+
+      await pushHistoryEntry(page, target.path);
+      await target.ready(page);
+
+      hold.release(409, { status: 409, code: 'DUPLICATE_NAME', message: SERVER_DUP_MSG });
+
+      await expect(page.getByText(DUP_TOAST)).toBeVisible();
+      await expect(page.locator('#job-name-error')).toHaveCount(0);
+      await expect(page.getByText(SERVER_DUP_MSG)).toHaveCount(0);
+    });
+  }
+});
+
+test.describe('스마트 작업 새 폼 — 만들기 성공 알림 (WD-1153)', () => {
+  test('떠난 뒤 늦게 온 만들기 성공을 작업 이름 넣은 토스트로 알리고 경로는 그대로 둔다 (WD-1153)', async ({
+    authenticatedPage: page,
+  }) => {
+    const hold = await holdCreateRequest(page);
+    await setupNewJobMocks(page);
+    await createThenLeave(page, hold);
+
+    hold.release(201, createJob({ id: 77, name: '주간 보고' }));
+
+    // 떠난 뒤에도 성공이 이름과 함께 남는다 (수정 전: 화면이 없어 mutate 의 onSuccess 가 실행되지 않아 토스트가 없었다)
+    await expect(page.getByText('「주간 보고」 작업이 생성되었습니다.')).toBeVisible();
+    // 이름 없는 보편 문구는 함께 뜨지 않는다 — 토스트는 한 번만 난다
+    await expect(page.getByText('작업이 생성되었습니다.', { exact: true })).toHaveCount(0);
+    // 떠난 곳(홈)에 그대로 머문다 — 새 작업 상세로 끌고 가지 않는다
+    expect(new URL(page.url()).pathname).toBe('/');
+  });
+
+  test('머문 채 성공하면 「작업이 생성되었습니다.」 한 번만 뜨고 상세로 간다 (WD-1153)', async ({
+    authenticatedPage: page,
+  }) => {
+    const hold = await holdCreateRequest(page);
+    await setupNewJobMocks(page);
+    await setupJobDetailMocks(page, 77);
+
+    await fillAndSubmit(page, hold);
+    hold.release(201, createJob({ id: 77, name: '주간 보고' }));
+
+    await expect(page).toHaveURL(/\/ai-insights\/jobs\/77$/);
+    await expect(page.getByText('작업이 생성되었습니다.', { exact: true })).toHaveCount(1);
   });
 });

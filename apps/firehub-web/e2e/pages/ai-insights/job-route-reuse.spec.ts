@@ -456,17 +456,17 @@ test.describe('스마트 작업 — 상세 ↔ 새 작업 화면 재사용 (WD-9
     await expect(saveButton).toBeEnabled();
     // 전제 확인 — 늦은 409 가 아직 도착하지 않았다(POST 가 아직 붙잡혀 있음). 위 두 단언이 진행 중인 요청 위에서
     // 선 것임을 이 자리에서만 본다(끝의 긍정 대조가 멀리 있어 여기로는 안 보인다)
-    await expect(page.getByText(/작업 생성에 실패했습니다|이미 사용 중인 이름입니다/)).toHaveCount(0);
+    await expect(page.getByText(/작업 생성에 실패했습니다|이미 사용 중인 이름입니다|작업을 만들지 못했습니다/)).toHaveCount(0);
 
     releaseSave();
-    // 응답 처리 완료 앵커 — 가드면 실패 토스트, 무가드면 칸 오류가 반드시 하나 나타난다.
-    // 이 중 하나를 기다려야 아래 0개 단언이 「아직 응답 전」에 통과하는 레이스가 없다
+    // 응답 처리 완료 앵커 — 떠난 뒤 이름 중복은 서버 문구 대신 보낸 이름을 넣은 토스트로 알린다(WD-1153).
+    // 이 토스트가 뜬 뒤에 아래 단언을 해야 「아직 응답 전」에 0개로 통과하는 레이스가 없다
     await expect(
-      page.getByText(/작업 생성에 실패했습니다|이미 사용 중인 이름입니다/).first(),
+      page.getByText('「새 작업」 작업을 만들지 못했습니다 — 같은 이름의 작업이 이미 있습니다.'),
     ).toBeVisible();
-    // 가드를 지나면 다른 폼(작업 1)에는 이름 「칸」 오류가 붙지 않아야 한다 — 칸 오류는 errors.name 일 때만
-    // 렌더되는 #job-name-error 하나로 좁혀 단언한다. 토스트 본문으로 세면 WD-1109 이후 이 폼도 서버 토스트를
-    // 띄워 같은 문구를 카운트하게 되어(약 4.9초간 1) 의도와 무관한 레이스가 생긴다.
+    // 서버 문구는 떠난 칸을 가리키는 말이라 다른 화면에 남지 않는다
+    await expect(page.getByText('이미 사용 중인 이름입니다.')).toHaveCount(0);
+    // 가드를 지나면 다른 폼(작업 1)에는 이름 「칸」 오류가 붙지 않아야 한다
     await expect(page.locator('#job-name-error')).toHaveCount(0);
     await expect(page.locator('#job-name')).toHaveValue('매일 현황 리포트');
 

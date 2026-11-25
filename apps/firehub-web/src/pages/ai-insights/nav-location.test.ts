@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { navLocationKey } from './ProactiveJobDetailPage';
+import { navLocationKey } from './nav-location';
 
 describe('navLocationKey (WD-1109 반려 1)', () => {
   it('경로만 돌려준다 — 쿼리·해시는 떠남이 아니다', () => {

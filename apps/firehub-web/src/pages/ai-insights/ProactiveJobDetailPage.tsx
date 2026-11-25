@@ -6,7 +6,7 @@ import { useForm } from 'react-hook-form';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
-import { proactiveApi } from '@/api/proactive';
+import { proactiveApi, type ProactiveJob } from '@/api/proactive';
 import { EditConflictDialog } from '@/components/EditConflictDialog';
 import { PageHeading } from '@/components/PageHeading';
 import { DetailPageTitle } from '@/components/PageTitleSync';
@@ -28,7 +28,7 @@ import { cloneBlockedReason, cloneSuccessMessage, useCanWriteProactive,useCloneP
 import { focusFirstEditField, useEditModeFocus } from '@/hooks/useEditModeFocus';
 import { useInvalidFlag } from '@/hooks/useInvalidFlag';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
-import { applyDuplicateNameError, extractApiError, handleApiError, isEditConflict, isForbiddenError, isJobAlreadyRunning, NameRetryExhaustedError } from '@/lib/api-error';
+import { applyDuplicateNameError, extractApiError, handleApiError, isDuplicateName, isEditConflict, isForbiddenError, isJobAlreadyRunning, NameRetryExhaustedError } from '@/lib/api-error';
 import { createWithNumberedName } from '@/lib/clone-name';
 import { focusFirstInvalidInteger } from '@/lib/focus-invalid-integer';
 import { parseRouteId } from '@/lib/route-id';
@@ -38,24 +38,10 @@ import { type ChannelConfigValues, createProactiveJobSchema, numberedGoalTemplat
 import { OwnerIneligibleBadge } from './components/OwnerIneligibleBadge';
 import { ProactiveReadForbiddenNotice } from './components/ProactiveReadForbiddenNotice';
 import { ProactiveWriteNotice } from './components/ProactiveWriteNotice';
+import { navLocationKey } from './nav-location';
 import JobExecutionsTab from './tabs/JobExecutionsTab';
 import JobMonitoringTab from './tabs/JobMonitoringTab';
 import JobOverviewTab from './tabs/JobOverviewTab';
-
-/**
- * 이동 가드 판정에 쓰는 위치 값 — **경로(pathname) 만** 담는다.
- *
- * 쿼리·해시는 여기에 넣지 않는다: `?tab=executions` 같은 탭 전환은 폼을 들고 있는 이 페이지 안에서 일어나
- * 떠남이 아니기 때문이다(WD-1109 반려 1). 값을 넣어 두면 저장 중 탭을 바꾼 순간 성공한 저장이 「이탈」으로
- * 읽혀 편집 모드·미저장 표시가 남고, 다음 저장이 자기 저장과 409 로 부딪힌다.
- * 단위 테스트(nav-location.test.ts)가 이 함수를 직접 검증한다.
- */
-// 컴포넌트 파일에서 함수를 함께 export 하면 react-refresh 규칙에 걸리지만, 이 훅이 없는 순수 헬퍼는
-// 페이지 모듈 안에 두고 테스트가 직접 부르는 편이 가드 판정 기준을 한 곳에서 보존한다 (WD-1109).
-// eslint-disable-next-line react-refresh/only-export-components
-export function navLocationKey(): string {
-  return window.location.pathname;
-}
 
 function buildDefaultValues(job?: {
   name: string;
@@ -229,12 +215,9 @@ export default function ProactiveJobDetailPage() {
     values: defaultValues,
   });
 
-  // 만드는 요청 하나의 실패 처리 자리 — 훅의 onError 가 이 자리를 불러, 화면이 이탈로 언마운트된 뒤에도
-  // 같은 처리(양식 정리·서버 사유 토스트·이름 칸 오류)가 돈다(WD-1109 반려 3). mutate(...) 로 넘기는 onError 는
-  // 화면이 없어지면 리스너가 없어 실행되지 않는다. 요청을 보낼 때 그 요청의 시점·만든 양식으로 갈아 끼운다 —
-  // 만드는 일은 한 번에 하나다(isCreatingRef).
-  const createFailureHandlerRef = useRef<(error: unknown) => void>(() => {});
-  const createMutation = useCreateProactiveJob({ onError: (error) => createFailureHandlerRef.current(error) });
+  // 만들기는 아래 submitJob 에서 mutateAsync 로 기다려 결과를 처리한다 — mutate(...) 의 onSuccess/onError 는 화면이
+  // 언마운트되면 실행되지 않지만 mutateAsync 의 promise 는 마운트와 무관하게 끝나, 이탈 뒤 늦게 온 성공·실패도 같은 처리가 돈다(WD-1109 반려 3, WD-1153).
+  const createMutation = useCreateProactiveJob();
   // 목표 기반 작업은 섹션 구성을 리포트 양식으로 먼저 저장한 뒤 연결한다(WD-297). 작업 생성이 실패하면 방금 만든 양식을 지운다.
   const createTemplateMutation = useCreateProactiveTemplate();
   const deleteTemplateMutation = useDeleteProactiveTemplate();
@@ -274,6 +257,14 @@ export default function ProactiveJobDetailPage() {
   useLayoutEffect(() => {
     navSeqRef.current += 1;
   }, [routeKey]);
+  // 화면이 사라질 때도 떠남으로 센다 — 같은 경로로 돌아와도 옛 요청의 판정이 「떠남」으로 읽히게 한다(WD-1153).
+  // 라우트 이동 증가와 같은 useLayoutEffect 로 두어 언마운트 커밋 즉시 반영한다.
+  useLayoutEffect(() => {
+    const seqRef = navSeqRef; // react-hooks/exhaustive-deps 가 정리 함수의 ref.current 읽기를 경고하므로 별칭 유지
+    return () => {
+      seqRef.current += 1;
+    };
+  }, []);
   /**
    * 요청을 시작한 시점(카운터·위치)과 지금을 비교해 그 사이 화면이 바뀌었는지 한 곳에서 판정한다.
    *
@@ -467,36 +458,45 @@ export default function ProactiveJobDetailPage() {
           return;
         }
       }
-      // 이 요청의 실패 처리를 훅 onError 자리에 끼워 넣는다 — 이탈로 화면이 없어진 뒤에도 화면이 넘긴 이 처리가
-      // 그대로 돈다(mutate 로 주는 onError 는 리스너가 없어 실행되지 않는다, WD-1109 반려 3)
-      createFailureHandlerRef.current = (err) => {
+      // mutateAsync 의 promise 는 화면이 언마운트돼도 끝까지 이어져 이탈 뒤 도착한 결과도 아래에서 처리된다(WD-1153).
+      // 성공 처리는 try 밖에 둔다 — 이동 같은 후속 처리의 예외를 이미 서버에서 만든 작업의 생성 실패로 오인하지 않기 위해서다.
+      let created: ProactiveJob;
+      try {
+        created = await createMutation.mutateAsync(goalTemplateId == null ? payload : { ...payload, templateId: goalTemplateId });
+      } catch (err) {
         // 서버가 거절한 경우에만 작업 없이 남는 양식을 지운다(삭제 실패는 사용자 오류 안내가 먼저라 조용히 넘긴다).
         // 응답 없는 실패(시간 초과·연결 끊김)는 서버가 작업을 이미 만들었을 수 있어 지우지 않는다 — 지우면 그 작업의 양식이 끊긴다(ON DELETE SET NULL).
         if (goalTemplateId != null && axios.isAxiosError(err) && err.response) deleteTemplateMutation.mutate(goalTemplateId);
         // 이동 뒤에도 서버 사유(400·403)를 잃지 않는다 — 칸 오류는 이미 다른 화면이라 붙이지 않고 토스트만 남긴다(WD-1109)
         if (movedAway(startSeq, startPath)) {
-          handleApiError(err, '작업 생성에 실패했습니다.');
+          // 이름 중복은 서버 문구(「이미 있는 … 다른 이름을 입력하세요」)가 이미 떠난 칸을 가리키는 말이라 맥락이 없다 —
+          // 보낸 이름을 넣어 어떤 작업이 안 만들어졌는지 알려 준다(WD-1153)
+          if (isDuplicateName(err)) {
+            toast.error(`「${payload.name}」 작업을 만들지 못했습니다 — 같은 이름의 작업이 이미 있습니다.`);
+          } else {
+            handleApiError(err, '작업 생성에 실패했습니다.');
+          }
           return;
         }
         // 이름 중복 409(WD-824)는 서버 문구를 이름 칸 오류로 붙이고 토스트는 생략한다
         if (applyDuplicateNameError(form.setError, err)) return;
         handleApiError(err, '작업 생성에 실패했습니다.');
-      };
-      createMutation.mutate(goalTemplateId == null ? payload : { ...payload, templateId: goalTemplateId }, {
-        onSuccess: (created) => {
-          // 알림은 글로벌이라 화면을 덮지 않는다 — 가드 판정과 무관하게 띄운다
-          toast.success('작업이 생성되었습니다.');
-          // 요청 중 다른 화면(예: 작업 상세)으로 옮겨 갔으면 새 작업 상세로 끌고 가지 않는다 (WD-1042)
-          if (movedAway(startSeq, startPath)) return;
-          // 저장 성공 → dirty 해제 후 신규 작업 상세로 이동 (이슈 #59)
-          setIsDirty(false);
-          setIsEditing(false);
-          navigate(`/ai-insights/jobs/${created.id}`);
-        },
-        onSettled: () => {
-          isCreatingRef.current = false;
-        },
-      });
+        return;
+      } finally {
+        // 만드는 일 한 번의 끝에서 중복 클릭 가드만 푼다
+        isCreatingRef.current = false;
+      }
+      // 요청 중 다른 화면(예: 작업 상세)으로 옮겨 갔으면 새 작업 상세로 끌고 가지 않는다 (WD-1042)
+      if (movedAway(startSeq, startPath)) {
+        // 떠난 화면에서는 어떤 작업이 만들어졌는지 서버가 돌려준 이름으로 알린다 — 알림은 글로벌이라 화면을 덮지 않는다(WD-1153)
+        toast.success(`「${created.name}」 작업이 생성되었습니다.`);
+        return;
+      }
+      toast.success('작업이 생성되었습니다.');
+      // 저장 성공 → dirty 해제 후 신규 작업 상세로 이동 (이슈 #59)
+      setIsDirty(false);
+      setIsEditing(false);
+      navigate(`/ai-insights/jobs/${created.id}`);
     } else {
       // 「기본 (선택 안 함)」을 고르면 templateId 가 null 이 되는데, 서버는 null 을 "바꾸지 않음"으로 받는다.
       // 해제 의도를 clearTemplate 로 함께 보내야 옛 템플릿이 남지 않는다 (WD-136).

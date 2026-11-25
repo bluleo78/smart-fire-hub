@@ -5,7 +5,7 @@
  * 주기(cronExpression)가 job 에 반영되면 resolverSchema 가 그 최신 job 을 기준으로 「안 건드린 주기는
  * 필수 아님」(WD-995) 판정을 다시 해, 멈춰 있는 폼의 빈 주기가 「실행 주기를 설정하세요」로 바뀌며
  * 저장 버튼이 꺼졌다. 폼 시드·주기 비교(cronUnchanged)는 멈춘 baseJob 을 따르므로 검증 기준도
- * baseJob 을 따르야 한다.
+ * baseJob 을 따라야 한다.
  *
  * 모킹: 첫 GET 은 주기 없는 BOTH 작업(triggerType 'BOTH', cronExpression null, 최근 실행 RUNNING),
  * 둘째 GET 부터는 다른 곳이 주기를 받은 값(cronExpression '0 9 * * *')을 싣는다 — 폴링 재조회 경로 그대로를 시험한다.
@@ -36,21 +36,28 @@ test.describe('스마트 작업 편집 — 재조회한 주기로 저장을 막�
     await mockApi(page, 'GET', '/api/v1/proactive/templates', createTemplates());
     await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
 
-    // 최근 실행이 실행 중이라 상세 조회(useProactiveJob 의 refetchInterval = RUN_POLL_MS)가 계속 다시 받아진다.
-    // 첫 응답만 주기 없이, 둘째 응답부터 다른 곳이 받은 주기를 싣는다 — 재조회로 주기가 바뀌는 경로 그대로를 시험한다.
-    let gets = 0;
+    // 프롬프트를 고친 뒤(dirty)에야 재조회 응답을 풀어 시드·기준이 재조회 전 값으로 확정되게 한다(WD-1153)
+    let unlock: () => void = () => {};
+    const fillDone = new Promise<void>((resolve) => {
+      unlock = resolve;
+    });
+    let arrived = 0;
+    let responded = 0;
     await page.route(
       (url) => url.pathname === '/api/v1/proactive/jobs/7',
       async (route: Route) => {
         if (route.request().method() !== 'GET') return route.fallback();
-        gets += 1;
+        const nth = ++arrived;
+        // 첫 응답은 그대로, 둘째 응답부터는 프롬프트를 고친 뒤에야 다른 곳이 받은 주기를 실어 보낸다
+        if (nth > 1) await fillDone;
         const job = createJob({
           id: 7,
           triggerType: 'BOTH',
-          cronExpression: gets === 1 ? null : '0 9 * * *',
+          cronExpression: nth === 1 ? null : '0 9 * * *',
           lastExecution: createJobExecution({ status: 'RUNNING' }),
         });
-        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(job) });
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(job) });
+        responded += 1;
       },
     );
 
@@ -61,9 +68,11 @@ test.describe('스마트 작업 편집 — 재조회한 주기로 저장을 막�
     await page.getByRole('button', { name: '편집' }).click();
     await expect(page.locator('#job-prompt')).toBeVisible();
     await page.locator('#job-prompt').fill('재조회 뒤에도 저장되는 프롬프트');
+    await expect(page.getByText('미저장 변경사항')).toBeVisible();
+    unlock();
 
-    // 폴링 주기(RUN_POLL_MS) 동안 기다린 뒤, 두 번째 GET 이 실제로 나갔는지로 재조회를 확정한다 — 고정 sleep 대신
-    await expect.poll(() => gets, { timeout: 15_000 }).toBeGreaterThanOrEqual(2);
+    // 폴링 재조회 응답이 실제로 돌아왔는지를 응답 횟수로 확정한다 — 고정 sleep 대신
+    await expect.poll(() => responded, { timeout: 15_000 }).toBeGreaterThanOrEqual(2);
 
     // 재조회 뒤에도 계속 고치면(입력할 때마다 그 칸이 다시 검증된다) 최신 기준으로 판정이 돌아간다 —
     // 이 한 번의 검증이 있어야 재조회가 스키마 기준에 반영되는지 실제로 볼 수 있다
