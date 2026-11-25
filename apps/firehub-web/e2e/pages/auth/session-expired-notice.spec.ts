@@ -443,18 +443,19 @@ test.describe('사용 중 세션 만료 안내 (WD-830)', () => {
     // 만료 이동이 세션 표식을 지웠다 — 다른 탭의 로그인이 표식에 변화를 주려면 지금 비어 있어야 한다
     expect(await tabA.evaluate(() => localStorage.getItem('hasSession'))).toBeNull();
 
+    // 다른 탭이 다시 로그인했으니 공유 refresh 쿠키가 살아 있다 — 갱신 응답을 성공으로 먼저 바꿔 둔다.
+    // 다른 탭의 로그인 뒤로 미루면, 표식이 비워진 직후 배경 요청(AI 세션 목록 재시도 등)이 그 사이에 갱신을
+    // 401 로 받아 시험이 시각에 따라 갈린다(풀테스트 d1d1a79e9 에서 재시도까지 실패 — 갱신 2회).
+    await tabA.route(`**${REFRESH_URL}`, (route) => route.fulfill({ json: MOCK_TOKEN_RESPONSE }));
+
     // 다른 탭 — 로그인은 AuthContext 에서 그대로 `localStorage.setItem('hasSession', 'true')` 다.
     // 같은 오리진·같은 localStorage 를 쓰므로 여기서 넣으면 이 탭에 storage 이벤트가 간다.
     const tabB = await tabA.context().newPage();
     await tabB.goto('/login');
     await tabB.evaluate(() => localStorage.setItem('hasSession', 'true'));
-    // storage 이벤트는 문서 사이로 곧바로 건너간다 — 이 탭이 표식을 비우는 사이의 여유
-    await tabA.waitForTimeout(500);
-    // 갱신은 아직 한 번뿐이다 — 표식이 남아 있으면 이 아래의 재요청도 갱신을 만들지 못한다
-    expect(refresh.requested).toBe(1);
 
-    // 다른 탭의 로그인으로 표식이 비워졌다면, 이 탭의 갱신은 다시 시도되어 살아난다(WD-1082 반려 · 검토자 지적)
-    await tabA.route(`**${REFRESH_URL}`, (route) => route.fulfill({ json: MOCK_TOKEN_RESPONSE }));
+    // 다른 탭의 로그인으로 표식이 비워졌다면, 이 탭의 갱신은 다시 시도되어 살아난다(WD-1082 반려 · 검토자 지적).
+    // 배경 재요청이 먼저 갱신을 만들 수도 있어, 검색으로 요청을 하나 더 만들어 갱신 재시도를 결정적으로 일으킨다.
     await tabA.getByPlaceholder('데이터셋 검색...').fill('검색어');
     await expect.poll(() => refresh.requested, { timeout: 10000 }).toBeGreaterThanOrEqual(2);
 
