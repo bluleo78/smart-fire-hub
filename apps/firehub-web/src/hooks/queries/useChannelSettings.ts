@@ -33,9 +33,9 @@ export function useUpdateChannelPreferenceMutation() {
   return useMutation({
     mutationFn: ({ channel, enabled }: { channel: ChannelType; enabled: boolean }) =>
       updateChannelPreference(channel, enabled),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: QUERY_KEY });
-    },
+    // invalidateQueries 의 promise 를 돌려줘 재조회가 캐시에 반영될 때까지 isPending 을 유지한다 —
+    // 안 그러면 PATCH 직후 재조회 전에 스위치가 옛 서버 값으로 잠깐 되돌아가는 깜빡임이 생긴다 (WD-1150).
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: QUERY_KEY }),
   });
 }
 
