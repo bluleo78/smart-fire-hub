@@ -20,8 +20,8 @@ class TextRulesTest {
   /** 전각 공백(U+3000)·NBSP 계열(U+00A0·U+202F)도 걷힌다 — String.strip() 은 NBSP 를 못 걷는다. */
   @Test
   void strip_removesFullwidthAndNbsp() {
-    assertThat(TextRules.strip("　a　")).isEqualTo("a");
-    assertThat(TextRules.strip(" a ")).isEqualTo("a");
+    assertThat(TextRules.strip("\u3000a\u3000")).isEqualTo("a");
+    assertThat(TextRules.strip("\u00A0a\u202F")).isEqualTo("a");
   }
 
   /** null 은 null(수정의 「변경 없음」), 공백 없는 값은 그대로. */
@@ -145,9 +145,9 @@ class TextRulesTest {
   void textOrNull_nullsValuesWithoutVisibleText() {
     assertThat(TextRules.textOrNull(null)).isNull();
     assertThat(TextRules.textOrNull("")).isNull();
-    assertThat(TextRules.textOrNull("  　")).isNull(); // 공백·NBSP·전각 공백
-    assertThat(TextRules.textOrNull("​ㅤ")).isNull(); // Cf·한글 채움 문자
+    assertThat(TextRules.textOrNull(" \u00A0\u3000")).isNull(); // 공백·NBSP·전각 공백
+    assertThat(TextRules.textOrNull("\u200B\u3164")).isNull(); // Cf·한글 채움 문자
     assertThat(TextRules.textOrNull(" 설명 ")).isEqualTo(" 설명 "); // 글자가 있으면 다듬지 않고 그대로
-    assertThat(TextRules.textOrNull("a​")).isEqualTo("a​");
+    assertThat(TextRules.textOrNull("a\u200B")).isEqualTo("a\u200B");
   }
 }
