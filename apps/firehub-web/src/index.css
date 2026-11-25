@@ -764,7 +764,8 @@ html {
   }
   /* WD-1091: 스위치 루트는 32×32 원형 히트 상자라, 고대비에서 위 전역 outline 이 원 둘레에 그려진다(보통 모드 WD-924 ring 은
    * box-shadow 라 고대비에서 안 보인다). 루트 outline 을 끄고 시각 알약에 그린다 — offset 1px 로 바깥 끝이 ring(3px)과 같다.
-   * 알약의 transition-all 이 outline 을 150ms 동안 키우지 않게 전환은 색으로만 좁힌다. 이 레이어 밖 블록 안에 둬야 전역 규칙을 이긴다. */
+   * 알약의 transition-all 이 outline 을 150ms 동안 키우지 않게 전환은 색으로만 좁힌다. 루트 규칙은 특이도 (0,2,0) 이라
+   * 위 전역 :focus-visible 규칙((0,1,0) — :not() 안의 :where() 는 특이도 0)을 !important 없이 이긴다. */
   [data-slot='switch']:focus-visible {
     outline: none;
   }
@@ -772,6 +773,47 @@ html {
     outline: 2px solid CanvasText;
     outline-offset: 1px;
     transition-property: background-color, border-color;
+  }
+  /* WD-1137: 고대비는 알약 상태색(bg-primary·bg-input)과 손잡이 bg-background 를 모두 Canvas 로 덮어 켜짐·꺼짐이 같은
+   * 빈 알약으로 보였다. 강제 색을 끄고(forced-color-adjust:none) 시스템 색을 직접 준다 — Windows 고대비 토글 관례대로
+   * 꺼짐 = 테두리 알약 + CanvasText 손잡이(왼쪽), 켜짐 = Highlight 로 채운 알약 + HighlightText 손잡이(오른쪽).
+   * 강제 색을 끄면 투명 테두리도 그대로 투명이라 테두리 색을 직접 준다. 같은 이유로 고대비가 지우던 box-shadow
+   * (shadow-xs·WD-924 초점 ring)도 되살아나 시스템 팔레트 밖 색이 보이므로 직접 끈다 — 초점은 위 outline 이 맡는다. */
+  [data-slot='switch-track'],
+  [data-slot='switch-thumb'] {
+    forced-color-adjust: none;
+    box-shadow: none;
+  }
+  /* 상태별 색은 루트의 변수로만 바꾸고 알약·손잡이는 변수를 읽는다 — 새 상태는 변수 한 줄로 더한다.
+   * 비활성: opacity-50 은 시스템 색을 Canvas 와 섞어 팔레트 밖 색이 되고 살아 있는 토글처럼 보이므로 투명도를 되돌리고
+   * 시스템 비활성 색 GrayText 로 그린다 — 꺼짐은 GrayText 테두리·손잡이, 켜짐은 GrayText 로 채운 알약 + Canvas 손잡이.
+   * :disabled 규칙은 checked 규칙과 특이도가 같아(0,2,0) 뒤에 둬야 이긴다. */
+  [data-slot='switch'] {
+    --switch-fc-track: Canvas;
+    --switch-fc-border: CanvasText;
+    --switch-fc-thumb: CanvasText;
+  }
+  [data-slot='switch'][data-state='checked'] {
+    --switch-fc-track: Highlight;
+    --switch-fc-border: Highlight;
+    --switch-fc-thumb: HighlightText;
+  }
+  [data-slot='switch']:disabled {
+    opacity: 1;
+    --switch-fc-track: Canvas;
+    --switch-fc-border: GrayText;
+    --switch-fc-thumb: GrayText;
+  }
+  [data-slot='switch'][data-state='checked']:disabled {
+    --switch-fc-track: GrayText;
+    --switch-fc-thumb: Canvas;
+  }
+  [data-slot='switch-track'] {
+    background-color: var(--switch-fc-track);
+    border-color: var(--switch-fc-border);
+  }
+  [data-slot='switch-thumb'] {
+    background-color: var(--switch-fc-thumb);
   }
 }
 

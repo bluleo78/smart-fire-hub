@@ -2,6 +2,7 @@ import { createRequire } from 'node:module';
 
 import type { Locator, Page } from '@playwright/test';
 
+import { createJob } from '../../factories/ai-insight.factory';
 import {
   createDatasetDetail,
   createDatasets,
@@ -737,25 +738,29 @@ test.describe('고대비 모드 전역 초점 표시 (WD-949)', () => {
   }
 });
 
+/**
+ * 스위치에 키보드 초점을 준다 — Shift+Tab·Tab 왕복으로 :focus-visible 을 확정한다(WD-924 시험과 같은 방식).
+ * :focus-visible 이 아니면 「outline 없음」 단언이 공허하게 통과하므로 여기서 확인한다.
+ */
+async function focusSwitchByKeyboard(page: Page, root: Locator) {
+  await expect(root).toBeVisible();
+  await root.focus();
+  await page.keyboard.press('Shift+Tab');
+  await page.keyboard.press('Tab');
+  await expect(root).toBeFocused();
+  const rootFocus = await readFocusStyle(root);
+  expect(rootFocus.focusVisible, '스위치가 키보드 초점(:focus-visible) 상태가 아니다').toBe(true);
+  return { rootFocus, track: root.locator('[data-slot="switch-track"]') };
+}
+
 /** 스위치 키보드 초점 위치 (WD-1091) — 고대비에서 바깥선이 32×32 루트가 아니라 알약(track)에 그려지는지 본다. */
 test.describe('스위치 초점 바깥선 위치 (WD-1091)', () => {
-  /**
-   * 활동 목록의 첫 스위치에 키보드 초점을 준다 — Shift+Tab·Tab 왕복으로 :focus-visible 을 확정한다(WD-924 시험과 같은 방식).
-   * :focus-visible 이 아니면 「outline 없음」 단언이 공허하게 통과하므로 여기서 확인한다.
-   */
+  /** 활동 목록의 첫 스위치에 키보드 초점을 준다. */
   async function focusFirstSwitch(page: Page) {
     await mockProactivePermissions(page);
     await setupJobListMocks(page, 2);
     await page.goto('/ai-insights/jobs');
-    const root = page.getByRole('switch').first();
-    await expect(root).toBeVisible();
-    await root.focus();
-    await page.keyboard.press('Shift+Tab');
-    await page.keyboard.press('Tab');
-    await expect(root).toBeFocused();
-    const rootFocus = await readFocusStyle(root);
-    expect(rootFocus.focusVisible, '스위치가 키보드 초점(:focus-visible) 상태가 아니다').toBe(true);
-    return { rootFocus, track: root.locator('[data-slot="switch-track"]') };
+    return focusSwitchByKeyboard(page, page.getByRole('switch').first());
   }
 
   test('고대비 모드에서 스위치 초점 바깥선이 알약(track)에 그려진다', async ({
@@ -780,5 +785,107 @@ test.describe('스위치 초점 바깥선 위치 (WD-1091)', () => {
     // WD-924 의 3px ring 은 그대로여야 한다 — toHaveCSS 가 전환이 끝날 때까지 다시 읽는다.
     await expect(track, '알약(track)의 WD-924 ring 이 없다').toHaveCSS('box-shadow', /0px 0px 0px 3px/);
     await expect(track, '보통 모드 알약에 outline 이 생겼다 (WD-1091)').toHaveCSS('outline-style', 'none');
+  });
+});
+
+/** 고대비 스위치 상태 구분 (WD-1137) — 고대비가 손잡이·알약 배경을 Canvas 로 지워 켜짐·꺼짐이 같아 보이던 문제. */
+test.describe('고대비 스위치 켜짐·꺼짐 구분 (WD-1137)', () => {
+  /** 알약·손잡이의 고대비 관련 계산 스타일을 한 번에 읽는다. */
+  async function readSwitchColors(root: Locator) {
+    return root.evaluate((el) => {
+      const track = el.querySelector('[data-slot="switch-track"]') as HTMLElement;
+      const thumb = el.querySelector('[data-slot="switch-thumb"]') as HTMLElement;
+      const t = getComputedStyle(track);
+      const h = getComputedStyle(thumb);
+      return {
+        state: el.getAttribute('data-state'),
+        rootOpacity: getComputedStyle(el).opacity,
+        trackBg: t.backgroundColor,
+        trackBorder: t.borderTopColor,
+        trackShadow: t.boxShadow,
+        thumbBg: h.backgroundColor,
+        thumbShadow: h.boxShadow,
+        thumbAdjust: h.forcedColorAdjust,
+      };
+    });
+  }
+
+  /**
+   * 고대비로 켜진 잡·꺼진 잡 하나씩인 활동 목록을 연다 — 스위치를 누르면 서버 응답으로 상태가 돌아오므로
+   * 누르지 않고 두 상태를 나란히 읽는다.
+   */
+  async function openOnOffSwitches(page: Page) {
+    await page.emulateMedia({ forcedColors: 'active' });
+    await mockProactivePermissions(page);
+    await setupJobListMocks(page, 2, [
+      createJob({ id: 1, name: '켜진 잡', enabled: true }),
+      createJob({ id: 2, name: '꺼진 잡', enabled: false }),
+    ]);
+    await page.goto('/ai-insights/jobs');
+    const switches = page.getByRole('switch');
+    await expect(switches).toHaveCount(2);
+    await expect(switches.nth(0)).toHaveAttribute('data-state', 'checked');
+    await expect(switches.nth(1)).toHaveAttribute('data-state', 'unchecked');
+    return { on: switches.nth(0), off: switches.nth(1) };
+  }
+
+  test('고대비 모드에서 스위치 손잡이가 보이고 켜짐·꺼짐 알약 색이 다르다', async ({
+    authenticatedPage: page,
+  }) => {
+    const sw = await openOnOffSwitches(page);
+    const on = await readSwitchColors(sw.on);
+    const off = await readSwitchColors(sw.off);
+    for (const c of [on, off]) {
+      // 손잡이가 강제 색(Canvas)으로 지워지지 않아야 하고, 알약 배경과 다른 색이어야 보인다
+      expect(c.thumbAdjust, `${c.state}: 손잡이가 고대비 강제 색으로 덮인다 (WD-1137)`).toBe('none');
+      expect(c.thumbBg, `${c.state}: 손잡이 색이 알약 배경과 같아 보이지 않는다 (WD-1137)`).not.toBe(c.trackBg);
+      // 강제 색을 껐으니 알약 테두리를 직접 줘야 한다 — 투명이면 꺼짐 알약 윤곽이 사라진다
+      expect(c.trackBorder, `${c.state}: 알약 테두리가 투명이다 (WD-1137)`).not.toBe('rgba(0, 0, 0, 0)');
+      // 강제 색을 끄면 shadow-xs 가 되살아난다 — 팔레트 밖 회색 그림자가 없어야 한다
+      expect([c.trackShadow, c.thumbShadow], `${c.state}: 고대비에서 그림자가 그려진다 (WD-1137)`).toEqual(['none', 'none']);
+    }
+    // 위치만이 아니라 채움으로도 구분 — 켜짐·꺼짐 알약 배경과 손잡이 색이 달라야 한다
+    expect(on.trackBg, '켜짐·꺼짐 알약 배경이 같다 (WD-1137)').not.toBe(off.trackBg);
+    expect(on.thumbBg, '켜짐·꺼짐 손잡이 색이 같다 (WD-1137)').not.toBe(off.thumbBg);
+  });
+
+  test('고대비 모드에서 키보드 초점을 받은 스위치에 테마색 ring(box-shadow)이 되살아나지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    const sw = await openOnOffSwitches(page);
+    const { track: trackLocator } = await focusSwitchByKeyboard(page, sw.on);
+    const c = await readSwitchColors(sw.on);
+    // WD-924 ring(3px box-shadow)이 2px CanvasText outline 아래로 비치면 안 된다 — 초점 표시는 outline 만
+    expect(c.trackShadow, '고대비 초점에서 알약에 ring(box-shadow)이 그려진다 (WD-1137)').toBe('none');
+    const track = await readFocusStyle(trackLocator);
+    expect([track.outlineStyle, track.outlineWidth], '알약의 초점 outline 이 사라졌다 (WD-1091)').toEqual(['solid', '2px']);
+  });
+
+  test('고대비 모드에서 비활성 스위치는 투명도 없이 GrayText 로 그려진다', async ({
+    authenticatedPage: page,
+  }) => {
+    const sw = await openOnOffSwitches(page);
+    const enabledOff = await readSwitchColors(sw.off);
+    // 이 화면엔 비활성 스위치가 없어 CSS 규칙만 확인한다 — Radix 루트(<button>)에 disabled 를 직접 걸어 :disabled 를 만든다
+    await page.getByRole('switch').evaluateAll((els) => els.forEach((el) => el.setAttribute('disabled', '')));
+    // 알약은 transition-all 이라 테두리·배경색이 150ms 동안 옮겨 간다 — 꺼짐 테두리가 손잡이 색(GrayText)에,
+    // 켜짐 알약 배경이 그 색에 닿을 때까지 기다린다(고정 대기 없이)
+    let on = await readSwitchColors(sw.on);
+    let off = await readSwitchColors(sw.off);
+    await expect
+      .poll(async () => {
+        on = await readSwitchColors(sw.on);
+        off = await readSwitchColors(sw.off);
+        return off.trackBorder === off.thumbBg && on.trackBg === off.thumbBg;
+      }, { message: '비활성 꺼짐 테두리·손잡이, 켜짐 알약이 같은 비활성 색(GrayText)이 아니다 (WD-1137)' })
+      .toBe(true);
+    for (const c of [on, off]) {
+      // opacity-50 은 시스템 색을 Canvas 와 섞어 팔레트 밖 색을 만든다 — 고대비에서는 되돌린다
+      expect(c.rootOpacity, `${c.state}: 비활성 스위치에 반투명이 남았다 (WD-1137)`).toBe('1');
+    }
+    // 꺼짐 비활성: (위에서 테두리·손잡이가 같은 GrayText 임을 확인) 활성 테두리(CanvasText)와 달라야 한다
+    expect(off.trackBorder, '비활성 꺼짐 테두리가 활성과 같다 (WD-1137)').not.toBe(enabledOff.trackBorder);
+    // 켜짐 비활성: (위에서 알약이 GrayText 로 채워짐을 확인) 손잡이는 알약과 다른 색 — 켜짐·꺼짐이 채움으로도 구분된다
+    expect(on.thumbBg, '비활성 켜짐 손잡이가 알약 배경과 같다 (WD-1137)').not.toBe(on.trackBg);
   });
 });
