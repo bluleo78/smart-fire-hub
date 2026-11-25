@@ -117,6 +117,16 @@ public final class TextRules {
   }
 
   /**
+   * 보이는 글자가 없는 값({@link #hasText} 가 false — 공백·NBSP·전각 공백·Cf 등뿐)을 null 로, 아니면 그대로 돌려준다(WD-1161).
+   *
+   * <p>저장 쿼리·차트·대시보드의 설명·폴더를 저장할 때 「값 없음」을 NULL 한 가지로 맞춘다 — 갱신 API 는 null 을 「변경 없음」, 빈 문자열을
+   * 「비움」으로 받으므로 저장 직전에 쓴다. jOOQ·MyBatis 저장소가 각자 복사본을 두면 판정이 갈려 계약 시험이 어긋나므로 이 한 곳만 쓴다.
+   */
+  public static String textOrNull(String value) {
+    return hasText(value) ? value : null;
+  }
+
+  /**
    * 이름 안팎의 모든 유니코드 공백 문자를 ASCII 공백으로 바꾼다(WD-1129) — API 연결 중복 SQL 의 TRANSLATE 비교와 같은 기준의 잠금 키를 만들 때 쓴다.
    * null 은 null.
    */

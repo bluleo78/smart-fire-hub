@@ -139,4 +139,15 @@ class TextRulesTest {
           .isEqualTo(" ");
     }
   }
+
+  /** textOrNull 은 보이는 글자가 없으면 null, 있으면 값 그대로다 — 저장소가 설명·폴더를 저장할 때 쓴다(WD-1161). */
+  @Test
+  void textOrNull_nullsValuesWithoutVisibleText() {
+    assertThat(TextRules.textOrNull(null)).isNull();
+    assertThat(TextRules.textOrNull("")).isNull();
+    assertThat(TextRules.textOrNull("  　")).isNull(); // 공백·NBSP·전각 공백
+    assertThat(TextRules.textOrNull("​ㅤ")).isNull(); // Cf·한글 채움 문자
+    assertThat(TextRules.textOrNull(" 설명 ")).isEqualTo(" 설명 "); // 글자가 있으면 다듬지 않고 그대로
+    assertThat(TextRules.textOrNull("a​")).isEqualTo("a​");
+  }
 }

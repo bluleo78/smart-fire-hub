@@ -481,6 +481,20 @@ public abstract class SavedQueryRepositoryContractTest extends TenantPairContrac
   }
 
   @Test
+  @DisplayName("update — 빈 문자열 설명은 NULL 로 비워진다 (WD-1161)")
+  void update_emptyDescription_becomesNull() {
+    Long id =
+        insertA(
+            me, new CreateSavedQueryRequest(prefix + "-ed", "설명", "SELECT 1", null, null, false));
+    runA(
+        () ->
+            repository()
+                .update(
+                    id, new UpdateSavedQueryRequest(null, "", null, null, null, null, null), me));
+    assertThat(raw(id).description()).isNull();
+  }
+
+  @Test
   @DisplayName("update — 설명·폴더에 Cf(폭 없는 문자)만 넣으면 NULL 로 비워진다 (WD-1103)")
   void update_cfOnlyFolderAndDescription_becomesNull() {
     Long id = insertA(me, req(prefix + "-cf2", "reports", false));

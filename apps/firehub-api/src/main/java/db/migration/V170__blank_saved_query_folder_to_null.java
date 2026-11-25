@@ -23,6 +23,9 @@ import org.flywaydb.core.api.migration.Context;
  *
  * <p><b>NULL 을 택한 까닭</b> — 「이름 없음」 같은 가짜 폴더는 무관한 쿼리들을 한 폴더로 뭉치고, NULL 은 이미 「폴더 없음」으로 읽힌다(WD-1103 설계
  * 6).
+ *
+ * <p><b>바로잡는 글</b> — Tibero V170 헤더의 "PG 는 TextRules.hasText 로 판정·목록을 바꿀 때 TextRules 와 함께 고칠 것" 문구는 낡았다 — PG
+ * 는 고정 정규식을 쓰고, Tibero 파일은 체크섬 때문에 고치지 못한다(WD-1161).
  */
 public class V170__blank_saved_query_folder_to_null extends BaseJavaMigration {
 

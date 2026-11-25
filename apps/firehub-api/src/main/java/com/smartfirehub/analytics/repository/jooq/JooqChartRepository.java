@@ -11,6 +11,7 @@ import com.smartfirehub.analytics.repository.ChartRepository;
 import com.smartfirehub.global.dto.LockedRowVersion;
 import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.global.util.LikePatternUtils;
+import com.smartfirehub.global.validation.TextRules;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -318,7 +319,7 @@ public class JooqChartRepository implements ChartRepository {
     String configJson = mapToJson(req.config());
     return dsl.insertInto(C)
         .set(C_NAME, req.name())
-        .set(C_DESCRIPTION, req.description())
+        .set(C_DESCRIPTION, TextRules.textOrNull(req.description()))
         .set(C_SAVED_QUERY_ID, req.savedQueryId())
         .set(C_CHART_TYPE, req.chartType())
         .set(C_CONFIG, JSON.valueOf(configJson))
@@ -347,7 +348,7 @@ public class JooqChartRepository implements ChartRepository {
     // 설명: 생략(null)은 "변경 없음", 빈 문자열(공백만 포함)은 "설명을 지움"으로 해석해 DB 값을 NULL로 비운다(WD-197).
     // 웹이 지운 설명을 빈 문자열로 보내도 이전에는 null과 같이 무시돼 옛 설명이 그대로 남았다.
     if (req.description() != null)
-      update = update.set(C_DESCRIPTION, blankToNull(req.description()));
+      update = update.set(C_DESCRIPTION, TextRules.textOrNull(req.description()));
     if (req.chartType() != null) update = update.set(C_CHART_TYPE, req.chartType());
     if (req.config() != null) update = update.set(C_CONFIG, JSON.valueOf(mapToJson(req.config())));
     if (req.isShared() != null) update = update.set(C_IS_SHARED, req.isShared());
@@ -460,15 +461,6 @@ public class JooqChartRepository implements ChartRepository {
     }
   }
 
-  /**
-   * 갱신 요청의 빈 문자열(공백만 포함)을 NULL 로 바꾼다(WD-197).
-   *
-   * <p>갱신 API 는 null 을 "변경 없음"으로 쓰므로, 사용자가 값을 지웠다는 뜻은 빈 문자열로 받는다. 저장할 때는 "값 없음"을 NULL 한 가지로 맞춰
-   * 목록·상세가 "" 와 NULL 을 따로 다루지 않게 한다.
-   */
-  private static String blankToNull(String value) {
-    return value == null || value.isBlank() ? null : value;
-  }
 
   /** 같은 소유자·같은 이름(lower(trim) 비교) 존재 여부(WD-824). */
   @Override

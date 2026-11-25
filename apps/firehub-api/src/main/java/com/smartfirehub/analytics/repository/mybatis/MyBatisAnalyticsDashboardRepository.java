@@ -1,7 +1,7 @@
 package com.smartfirehub.analytics.repository.mybatis;
 
-import static com.smartfirehub.global.platformdb.mybatis.PlatformText.blankToNull;
 import static com.smartfirehub.global.platformdb.mybatis.PlatformText.searchPattern;
+import static com.smartfirehub.global.validation.TextRules.textOrNull;
 
 import com.smartfirehub.analytics.dto.CreateDashboardRequest;
 import com.smartfirehub.analytics.dto.DashboardResponse;
@@ -98,7 +98,12 @@ public class MyBatisAnalyticsDashboardRepository implements AnalyticsDashboardRe
   public Long insert(CreateDashboardRequest req, Long userId) {
     DashboardInsert row =
         new DashboardInsert(
-            req.name(), req.description(), req.isShared(), req.autoRefreshSeconds(), userId);
+            req.name(),
+            // WD-1161: 보이는 글자가 없는 설명은 NULL 로 저장(jOOQ 판·저장 쿼리와 같은 TextRules 판정)
+            textOrNull(req.description()),
+            req.isShared(),
+            req.autoRefreshSeconds(),
+            userId);
     mapper.insert(row);
     return row.getId();
   }
@@ -110,7 +115,8 @@ public class MyBatisAnalyticsDashboardRepository implements AnalyticsDashboardRe
   }
 
   /**
-   * 넘긴 필드만 고친다 — null 은 「변경 없음」, 설명의 빈 문자열(공백만 포함)은 「비움」(NULL, WD-197). 자동 새로고침은 값이 있으면 그 값, 없고
+   * 넘긴 필드만 고친다 — null 은 「변경 없음」, 설명이 글자 없으면 「비움」(NULL, WD-197·{@link
+   * com.smartfirehub.global.validation.TextRules#textOrNull}, WD-1161). 자동 새로고침은 값이 있으면 그 값, 없고
    * clearAutoRefresh 가 참이면 NULL(#568). 수정자·수정 시각은 늘 쓰고, 수정 시각은 jOOQ 판과 같은 자바 시각을 바인딩한다.
    */
   @Override
@@ -119,7 +125,7 @@ public class MyBatisAnalyticsDashboardRepository implements AnalyticsDashboardRe
         id,
         req.name(),
         req.description() != null,
-        blankToNull(req.description()),
+        textOrNull(req.description()),
         req.isShared(),
         req.autoRefreshSeconds(),
         Boolean.TRUE.equals(req.clearAutoRefresh()),
