@@ -158,6 +158,76 @@ class PlatformTenantOwnerAssignTest extends IntegrationTestBase {
     assertThat(granted).containsExactlyInAnyOrder(target, ownerUserId);
   }
 
+  /**
+   * 콘솔 지정도 그 워크스페이스의 감사 화면에 남는다(WD-1158) — 테넌트 범위 OWNER_TRANSFER 1건(metadata.via=console)과 ADMIN 을
+   * 받은 사용자마다 ROLE_ASSIGN. 다른 테넌트 범위에서는 보이지 않는다.
+   */
+  @Test
+  void assignOwner_writesWorkspaceScopedAudit() throws Exception {
+    long tenantId = createTenant();
+    long target = addMember(tenantId, "MEMBER");
+    long otherTenant = createTenant();
+    // 옛 소유자의 ADMIN 을 떼어 대상·옛 소유자 둘 다 ADMIN 을 새로 받게 한다.
+    TenantRlsTestSupport.runInTenantTransaction(
+        tx,
+        tenantId,
+        () ->
+            dsl.execute(
+                "delete from user_role where user_id = ? and tenant_id = ?",
+                ownerUserId,
+                tenantId));
+
+    MockHttpServletResponse response = assignOwner(tenantId, target, tenantName(tenantId));
+
+    assertThat(response.getStatus()).isEqualTo(204);
+    List<Record> transfers = scopedAudit(tenantId, "OWNER_TRANSFER");
+    assertThat(transfers).hasSize(1);
+    JsonNode meta = objectMapper.readTree(transfers.get(0).get("metadata", String.class));
+    assertThat(meta.get("via").asText()).isEqualTo("console");
+    assertThat(meta.get("toUserId").asLong()).isEqualTo(target);
+    List<Record> roleRows = scopedAudit(tenantId, "ROLE_ASSIGN");
+    assertThat(roleRows).hasSize(2);
+    List<String> granted = new ArrayList<>();
+    for (Record row : roleRows) {
+      granted.add(row.get("resource_id", String.class));
+      // 공용 감사 도우미가 쓴 행 모양 — 콘솔 경로만 via=console 을 싣고, ADMIN 추가만 있다(WD-1158)
+      JsonNode roleMeta = objectMapper.readTree(row.get("metadata", String.class));
+      assertThat(roleMeta.get("via").asText()).isEqualTo("console");
+      assertThat(roleMeta.get("added").toString()).isEqualTo("[\"ADMIN\"]");
+      assertThat(roleMeta.get("removed").size()).isZero();
+      assertThat(roleMeta.get("before").toString()).doesNotContain("ADMIN");
+      assertThat(roleMeta.get("after").toString()).contains("ADMIN");
+    }
+    assertThat(granted)
+        .containsExactlyInAnyOrder(String.valueOf(target), String.valueOf(ownerUserId));
+    // 다른 테넌트 범위에서는 0건
+    assertThat(scopedAudit(otherTenant, "OWNER_TRANSFER")).isEmpty();
+    assertThat(scopedAudit(otherTenant, "ROLE_ASSIGN")).isEmpty();
+  }
+
+  /**
+   * 플랫폼 OWNER_TRANSFER 행 details 에 새 소유자 username(toUsername)과 옛 소유자 username 목록(fromUsernames)이
+   * 실린다(WD-1158).
+   */
+  @Test
+  void assignOwner_platformAuditIncludesUsernames() throws Exception {
+    long tenantId = createTenant();
+    long target = addMember(tenantId, "MEMBER");
+    String targetName =
+        dsl.fetchOne("select username from \"user\" where id = ?", target).get(0, String.class);
+    String ownerName =
+        dsl.fetchOne("select username from \"user\" where id = ?", ownerUserId)
+            .get(0, String.class);
+
+    MockHttpServletResponse response = assignOwner(tenantId, target, tenantName(tenantId));
+
+    assertThat(response.getStatus()).isEqualTo(204);
+    JsonNode meta = objectMapper.readTree(platformAudit(tenantId).get("metadata", String.class));
+    assertThat(meta.get("toUsername").asText()).isEqualTo(targetName);
+    assertThat(meta.get("fromUsernames")).hasSize(1);
+    assertThat(meta.get("fromUsernames").get(0).asText()).isEqualTo(ownerName);
+  }
+
   /** 소유자가 없는 테넌트(복구 상황)에서는 대상만 OWNER 가 되고 fromUserIds 는 빈 목록이다. */
   @Test
   void assignOwner_noExistingOwner_promotesOnly() throws Exception {
@@ -254,6 +324,36 @@ class PlatformTenantOwnerAssignTest extends IntegrationTestBase {
 
     assertThat(response.getStatus()).isEqualTo(204);
     assertThat(membershipRole(target, tenantId)).isEqualTo("OWNER");
+  }
+
+  /**
+   * 정지된 테넌트에서도 ADMIN 부여가 정상이다(WD-1158) — 활성 판정이 테넌트 상태를 보면 정지 테넌트에서는 새 소유자도 활성 옛 소유자도 ADMIN 을 받지
+   * 못한다.
+   */
+  @Test
+  void assignOwner_suspendedTenant_stillGrantsAdmin() throws Exception {
+    long tenantId = createTenant();
+    long target = addMember(tenantId, "MEMBER");
+    TenantRlsTestSupport.runInTenantTransaction(
+        tx,
+        tenantId,
+        () ->
+            dsl.execute(
+                "delete from user_role where user_id = ? and tenant_id = ?",
+                ownerUserId,
+                tenantId));
+    MockHttpServletResponse suspend =
+        mockMvc
+            .perform(authed(post("/api/platform/tenants/" + tenantId + "/suspend")))
+            .andReturn()
+            .getResponse();
+    assertThat(suspend.getStatus()).as("테넌트 정지").isIn(200, 204);
+
+    MockHttpServletResponse response = assignOwner(tenantId, target, tenantName);
+
+    assertThat(response.getStatus()).isEqualTo(204);
+    assertThat(roleNames(target, tenantId)).contains("ADMIN");
+    assertThat(roleNames(ownerUserId, tenantId)).contains("ADMIN");
   }
 
   /** 없는 테넌트는 404. */
@@ -370,6 +470,24 @@ class PlatformTenantOwnerAssignTest extends IntegrationTestBase {
                     userId,
                     tenantId)
                 .map(r -> r.get(0, String.class)));
+  }
+
+  /**
+   * 테넌트 {@code scope} 범위(RLS)에서 보이는 콘솔 지정 감사 행(metadata.via=console). tenant_id 조건 없이 RLS 가 거른다.
+   */
+  private List<Record> scopedAudit(long scope, String action) {
+    return TenantRlsTestSupport.runInTenantTransaction(
+        tx,
+        scope,
+        () ->
+            dsl.fetch(
+                "select resource_id, metadata::text as metadata from audit_log"
+                    + " where action_type = ? and metadata->>'via' = 'console'",
+                action));
+  }
+
+  private String tenantName(long tenantId) {
+    return dsl.fetchOne("select name from tenant where id = ?", tenantId).get(0, String.class);
   }
 
   /** tenant NULL 플랫폼 감사 행(OWNER_TRANSFER). 없으면 null. */

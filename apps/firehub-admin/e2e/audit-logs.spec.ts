@@ -341,4 +341,82 @@ test.describe('플랫폼 감사 로그 (WD-4)', () => {
     await page.getByRole('option', { name: '역할 부여' }).click();
     await expect.poll(() => capture.requests.at(-1)?.searchParams.get('actionType')).toBe('ROLE_ASSIGN');
   });
+  // WD-1158: 소유권 이전 행은 숫자 id 가 아니라 옛 소유자 → 새 소유자 이름으로 보인다. 이름 없는 옛 행은 기존 표기 그대로.
+  test('소유권 이전 행(WD-1158): 대상 칸에 옛 소유자 → 새 소유자 이름, 이름 없는 옛 행은 기존 표기', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', PATH, createAuditPage([
+      createAuditLog({
+        id: 821,
+        username: 'ops-new@example.com',
+        actionType: 'OWNER_TRANSFER',
+        resource: 'tenant',
+        resourceId: '1',
+        description: '운영자가 테넌트 소유자를 지정',
+        metadata: { plane: 'platform', tenantSlug: 'hanbit', tenantName: '한빛소방서', toUsername: 'new@x', fromUsernames: ['old@x', 'old2@x'] },
+      }),
+      createAuditLog({
+        id: 822,
+        username: 'ops-legacy@example.com',
+        actionType: 'OWNER_TRANSFER',
+        resource: 'tenant',
+        resourceId: '1',
+        description: '운영자가 테넌트 소유자를 지정',
+        metadata: { plane: 'platform', tenantSlug: 'hanbit', tenantName: '한빛소방서' },
+      }),
+    ]));
+    await page.goto('/audit-logs');
+
+    const rowOf = (text: string) =>
+      page.getByRole('table', { name: '플랫폼 감사 로그' }).getByRole('row').filter({ hasText: text });
+    await expect(rowOf('ops-new@example.com').getByRole('cell', { name: /old@x, old2@x → new@x/ })).toBeVisible();
+    await expect(rowOf('ops-new@example.com').getByRole('cell', { name: /한빛소방서 \(hanbit\)/ })).toBeVisible();
+    await expect(rowOf('ops-legacy@example.com').getByRole('cell', { name: '한빛소방서 (hanbit)', exact: true })).toBeVisible();
+    await expect(rowOf('ops-legacy@example.com').getByText('→')).toHaveCount(0);
+  });
+  // WD-1158: 옛 소유자가 없던 테넌트의 복구 지정 — fromUsernames 가 비어도 새 소유자 이름은 대상 칸에 보인다.
+  test('소유권 이전 행(WD-1158): 옛 소유자가 없으면 → 새 소유자 · 테넌트', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', PATH, createAuditPage([
+      createAuditLog({
+        id: 823,
+        username: 'ops-recover@example.com',
+        actionType: 'OWNER_TRANSFER',
+        resource: 'tenant',
+        resourceId: '1',
+        description: '운영자가 테넌트 소유자를 지정',
+        metadata: { plane: 'platform', tenantSlug: 'hanbit', tenantName: '한빛소방서', toUsername: 'new@x', fromUsernames: [] },
+      }),
+    ]));
+    await page.goto('/audit-logs');
+
+    const cell = page
+      .getByRole('table', { name: '플랫폼 감사 로그' })
+      .getByRole('row')
+      .filter({ hasText: 'ops-recover@example.com' })
+      .getByRole('cell', { name: '→ new@x · 한빛소방서 (hanbit)', exact: true });
+    await expect(cell).toBeVisible();
+  });
+  // WD-1158: 옛 소유자 여럿의 긴 대상 칸이 줄바꿈되어 1280px 화면에서 결과 배지가 표 밖(가로 스크롤)으로 밀리지 않는다.
+  test('소유권 이전 행(WD-1158): 긴 대상 칸에도 결과 배지가 화면 안에 있다', async ({ authenticatedPage: page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await mockApi(page, 'GET', PATH, createAuditPage([
+      createAuditLog({
+        id: 824,
+        username: 'ops-long@example.com',
+        actionType: 'OWNER_TRANSFER',
+        resource: 'tenant',
+        resourceId: '1',
+        description: '운영자가 테넌트 소유자를 지정',
+        metadata: {
+          plane: 'platform',
+          tenantSlug: 'hanbit-fire-station',
+          tenantName: '한빛소방서 본부',
+          toUsername: 'new-owner-account@example.com',
+          fromUsernames: ['old-owner-one@example.com', 'old-owner-two@example.com'],
+        },
+      }),
+    ]));
+    await page.goto('/audit-logs');
+
+    const row = page.getByRole('table', { name: '플랫폼 감사 로그' }).getByRole('row').filter({ hasText: 'ops-long@example.com' });
+    await expect(row.getByText('성공')).toBeInViewport({ ratio: 1 });
+  });
 });

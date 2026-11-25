@@ -97,6 +97,17 @@ test.describe('워크스페이스 소유권 넘기기 (WD-1132)', () => {
     expect(post.lastRequest()?.payload).toEqual({ confirmName: '서울 소방 허브' });
   });
 
+  test('공백만 입력하면 넘기기 버튼이 비활성이다 — 저장 이름이 공백뿐이어도 같다 (WD-1158)', async ({ authenticatedPage: page }) => {
+    for (const workspaceName of ['서울 소방 허브', ' 서울 소방 허브 ', '   ']) {
+      await openDetail(page, member({ workspaceName }));
+      await page.getByRole('button', { name: '소유권 넘기기…' }).click();
+      const dialog = page.getByRole('alertdialog');
+      const confirm = dialog.getByRole('button', { name: '소유권 넘기기', exact: true });
+      await dialog.getByLabel('확인하려면 워크스페이스 이름을 입력하세요').fill('   ');
+      await expect(confirm).toBeDisabled();
+    }
+  });
+
   test('넘긴 뒤 역할 할당의 ADMIN 체크가 새 역할로 맞춰진다', async ({ authenticatedPage: page }) => {
     // 처음엔 ADMIN 이 없는 멤버(USER 만)
     await openDetail(page, member({ roles: [createRole({ id: 1, name: 'USER', description: '일반 사용자', isSystem: true })] }));

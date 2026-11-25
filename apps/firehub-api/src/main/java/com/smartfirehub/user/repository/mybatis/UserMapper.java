@@ -38,6 +38,8 @@ public interface UserMapper {
       @Param("limit") int limit,
       @Param("offset") long offset);
 
+  List<UserResponse> selectByIds(@Param("ids") List<Long> ids);
+
   List<UserResponse> selectActiveMembersByIds(
       @Param("tenantId") Long tenantId, @Param("ids") List<Long> ids);
 

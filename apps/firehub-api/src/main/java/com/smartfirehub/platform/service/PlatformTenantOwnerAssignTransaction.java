@@ -4,9 +4,15 @@ import com.smartfirehub.global.platformdb.PlatformTenantSession;
 import com.smartfirehub.platform.dto.TenantOwnerAssignRequest;
 import com.smartfirehub.platform.dto.TenantSummaryResponse;
 import com.smartfirehub.user.dto.OwnershipTransferResult;
+import com.smartfirehub.user.dto.UserResponse;
+import com.smartfirehub.user.repository.UserRepository;
+import com.smartfirehub.user.service.OwnershipTransferAuditor;
 import com.smartfirehub.user.service.OwnershipTransferService;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,6 +27,9 @@ import org.springframework.transaction.annotation.Transactional;
  * {@link PlatformTenantSession#clearCurrentTransaction} 으로 같은 트랜잭션의 테넌트 값만 비우고 감사를 쓴다. 감사는 마지막에 쓰므로
  * 비운 뒤 테넌트 범위 문장이 없다.
  *
+ * <p>WD-1158: 같은 트랜잭션에서 그 테넌트 워크스페이스 감사 로그에도 같은 모양의 행(OWNER_TRANSFER·ROLE_ASSIGN, via=console)을 쓴다.
+ * 이 행은 테넌트 범위가 살아 있는 동안(비우기 전에) 써야 tenant_id 가 대상 테넌트로 찍힌다.
+ *
  * <p>호출자가 {@code TenantContext.runScoped(tenantId, ...)} 범위 안에서 불러야 한다({@link
  * PlatformTenantMemberAddTransaction} 과 같은 이유 — 별도 빈이라야 {@code @Transactional} 프록시가 적용된다).
  */
@@ -31,8 +40,14 @@ public class PlatformTenantOwnerAssignTransaction {
   private final OwnershipTransferService ownershipTransferService;
   private final PlatformAuditRecorder auditRecorder;
   private final PlatformTenantSession tenantSession;
+  // WD-1158: 워크스페이스 범위 감사(테넌트 안 화면에 보이는 행, 웹 경로와 공용)와 이름 조회용
+  private final OwnershipTransferAuditor ownershipTransferAuditor;
+  private final UserRepository userRepository;
 
-  /** 소유자를 바꾸고 같은 트랜잭션에서 OWNER_TRANSFER 와 사용자별 ROLE_ASSIGN 감사를 남긴다. */
+  /**
+   * 소유자를 바꾸고 같은 트랜잭션에서 플랫폼 감사(OWNER_TRANSFER·사용자별 ROLE_ASSIGN)와, 그에 앞서 같은 모양의 워크스페이스 범위 감사
+   * (WD-1158, via=console)를 남긴다. 워크스페이스 행은 테넌트 범위(GUC)가 살아 있을 때 써서 대상 테넌트의 것으로 찍힌다.
+   */
   @Transactional
   public void execute(
       long tenantId,
@@ -41,6 +56,23 @@ public class PlatformTenantOwnerAssignTransaction {
       long operatorId) {
     OwnershipTransferResult result =
         ownershipTransferService.transfer(tenantId, request.userId(), request.confirmName());
+
+    // 이름은 한 번의 일괄 조회로 읽는다(user 는 전역 테이블) — 새 소유자·옛 소유자·운영자(감사 행위자). 지워진 계정은 결과에서 빠지므로
+    // 운영자 이름은 "unknown" 으로 대체하고, 소유자 이름 목록에서는 뺀다(null 을 싣지 않는다). 옛 소유자 순서는 fromUserIds 순서를 따른다.
+    List<Long> nameIds = new ArrayList<>(result.fromUserIds());
+    nameIds.add(result.toUserId());
+    nameIds.add(operatorId);
+    Map<Long, String> usernames =
+        userRepository.findAllByIds(nameIds).stream()
+            .collect(Collectors.toMap(UserResponse::id, UserResponse::username, (a, b) -> a));
+    String operatorName = usernames.getOrDefault(operatorId, "unknown");
+    // WD-1158: 콘솔 지정도 그 워크스페이스 관리자의 감사 화면에 남긴다(웹 경로와 같은 행, via=console).
+    // 행의 tenant_id 는 DB DEFAULT(GUC)로 정해지므로, 테넌트 범위가 살아 있는 clearCurrentTransaction 전에 써야 한다.
+    ownershipTransferAuditor.logTransfer(
+        operatorId, operatorName, result, Map.of("via", "console"));
+    String toUsername = usernames.get(result.toUserId());
+    List<String> fromUsernames =
+        result.fromUserIds().stream().map(usernames::get).filter(Objects::nonNull).toList();
 
     // 테넌트 범위 작업은 끝났다 — 이제부터는 테넌트 없는(NULL) 플랫폼 감사 행을 쓴다.
     // 주의: 이 줄과 감사 기록 사이에는 테넌트 범위 문장(RLS 테이블 읽기·쓰기)을 더하지 말 것 — 테넌트 값이 비어 0행을 읽거나 RLS 가 거부한다. 감사 뒤에는
@@ -51,6 +83,9 @@ public class PlatformTenantOwnerAssignTransaction {
     details.put("fromUserIds", result.fromUserIds());
     details.put("toUserId", result.toUserId());
     details.put("grantedAdmin", result.grantedAdmin());
+    // WD-1158: 콘솔 감사 화면 표시용 이름(Task 3 이 읽는 키 — toUsername·fromUsernames)
+    details.put("toUsername", toUsername);
+    details.put("fromUsernames", fromUsernames);
     auditRecorder.record(
         operatorId,
         "OWNER_TRANSFER",

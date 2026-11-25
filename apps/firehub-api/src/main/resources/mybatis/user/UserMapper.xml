@@ -88,6 +88,11 @@
      <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.pageClause"/>
   </select>
 
+  <select id="selectByIds" resultMap="userRow">
+    SELECT <include refid="userColumns"/> <include refid="fromUser"/>
+     WHERE u.id IN <foreach collection="ids" item="i" open="(" separator="," close=")">#{i}</foreach>
+  </select>
+
   <select id="selectActiveMembersByIds" resultMap="userRow">
     SELECT <include refid="userColumns"/> <include refid="fromUser"/>
      WHERE EXISTS (SELECT 1 FROM membership m WHERE m.user_id = u.id AND m.tenant_id = #{tenantId} AND m.status = 'ACTIVE')

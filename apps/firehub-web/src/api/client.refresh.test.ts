@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { UserSwitchedError } from '../lib/api-error';
 import { SESSION_EXPIRED_NOTICE, takeLoginNotice } from '../lib/login-notice';
 import { hasActiveLeaveGuard } from '../lib/unsaved-changes-guard-registry';
-import { authedFetch, claimUserLogout, clearSessionExpiredError, endSessionAndReloadToLogin, getAccessToken, isOtherSessionUser, readTokenSubject, refreshAccessToken, refreshAccessTokenBestEffort, resetNoticeOwnerForTest, resetSessionUserForTest, setAccessToken, TokenRefreshError } from './client';
+import { authedFetch, claimUserLogout, clearSessionExpiredError, endSessionAndReloadToLogin, getAccessToken, hasSessionEndedMarker, isOtherSessionUser, readTokenSubject, refreshAccessToken, refreshAccessTokenBestEffort, resetNoticeOwnerForTest, resetSessionUserForTest, setAccessToken, TokenRefreshError } from './client';
 import { publishTenantSession } from './tenant-session';
 
 vi.mock('./refresh-lock', () => ({
@@ -382,6 +382,117 @@ describe('refreshAccessTokenBestEffort (WD-1132)', () => {
   it('테넌트 강등이면 { demoted: true } 를 돌려준다', async () => {
     vi.spyOn(axios, 'post').mockResolvedValue({ data: { accessToken: 'new', activeTenantId: null, memberships: [] } });
     await expect(refreshAccessTokenBestEffort()).resolves.toEqual({ demoted: true });
+  });
+
+  describe('줄 선 요청 구제 (WD-1158)', () => {
+    /** best-effort 갱신을 지연 응답으로 띄우고 그 뒤에 일반 갱신 요청(줄 선 요청)을 세운다. */
+    function startWithWaiter() {
+      const first = deferredRefresh();
+      const bestEffort = refreshAccessTokenBestEffort();
+      const waiter = refreshAccessToken();
+      return { first, bestEffort, waiter };
+    }
+
+    it('best-effort 일시 오류(500·네트워크) 때 줄 선 요청은 일반 갱신을 한 번 더 시도해 성공하면 새 토큰으로 재요청된다', async () => {
+      const { first, bestEffort, waiter } = startWithWaiter();
+      const post = vi.spyOn(axios, 'post');
+      post.mockResolvedValueOnce({ data: { accessToken: 'retried', activeTenantId: 1, memberships: [] } });
+      first.reject(new TypeError('network'));
+
+      await expect(waiter).resolves.toEqual({ token: 'retried' });
+      // 재시도가 성공해 상태가 새로워졌으므로 best-effort 호출자도 그 결과로 성공한다.
+      await expect(bestEffort).resolves.toEqual({ token: 'retried' });
+      expect(getAccessToken()).toBe('retried');
+      expect(replace).not.toHaveBeenCalled();
+    });
+
+    it('재시도도 (401 아닌) 실패하면 대기열을 그 오류로 거절하고 세션은 끝내지 않으며 더 시도하지 않는다', async () => {
+      const { first, bestEffort, waiter } = startWithWaiter();
+      const bestEffortRejected = expect(bestEffort).rejects.toBeInstanceOf(TypeError);
+      const retryError = new Error('retry 500');
+      const post = vi.spyOn(axios, 'post');
+      post.mockRejectedValueOnce(retryError);
+      const waiterRejected = expect(waiter).rejects.toBe(retryError);
+      first.reject(new TypeError('network'));
+
+      await waiterRejected;
+      await bestEffortRejected;
+      // 처음 best-effort 한 번 + 재시도 한 번 — 그 이상은 없다.
+      expect(post).toHaveBeenCalledTimes(2);
+      // 일시 장애 두 번으로 로그아웃시키지 않는다.
+      expect(replace).not.toHaveBeenCalled();
+      expect(getAccessToken()).toBe('old');
+      expect(hasSessionEndedMarker()).toBe(false);
+    });
+
+    it('재시도가 401 이면 세션을 끝내고 대기열을 그 오류로 거절한다', async () => {
+      const { first, bestEffort, waiter } = startWithWaiter();
+      const bestEffortRejected = expect(bestEffort).rejects.toBeInstanceOf(TypeError);
+      const expired = expiredRefreshError();
+      const post = vi.spyOn(axios, 'post');
+      post.mockRejectedValueOnce(expired);
+      const waiterRejected = expect(waiter).rejects.toBe(expired);
+      first.reject(new TypeError('network'));
+
+      await waiterRejected;
+      await bestEffortRejected;
+      expect(post).toHaveBeenCalledTimes(2);
+      expect(replace).toHaveBeenCalledWith('/login');
+    });
+
+    it('잠금: 재시도가 진행 중인 동안 들어온 새 요청은 병렬 갱신 없이 재시도 결과를 받는다', async () => {
+      const { first, bestEffort, waiter } = startWithWaiter();
+      // 재시도의 응답을 손으로 풀 수 있게 먼저 바꿔 둔다.
+      const second = deferredRefresh();
+      first.reject(new TypeError('network'));
+      await vi.waitFor(() => expect(axios.post).toHaveBeenCalledTimes(2));
+      const late = refreshAccessToken();
+      expect(axios.post).toHaveBeenCalledTimes(2);
+
+      second.resolve({ data: { accessToken: 'retried', activeTenantId: 1, memberships: [] } });
+      await expect(waiter).resolves.toEqual({ token: 'retried' });
+      await expect(late).resolves.toEqual({ token: 'retried' });
+      await expect(bestEffort).resolves.toEqual({ token: 'retried' });
+      expect(axios.post).toHaveBeenCalledTimes(2);
+    });
+
+    it('잠금: 재시도 직후 이어진 새 요청도 정상적으로 새 갱신을 시작하고 완료된다(잠금이 정확히 한 번만 풀린다)', async () => {
+      const { first, bestEffort, waiter } = startWithWaiter();
+      const post = vi.spyOn(axios, 'post');
+      post.mockResolvedValueOnce({ data: { accessToken: 'retried', activeTenantId: 1, memberships: [] } });
+      first.reject(new TypeError('network'));
+      await expect(waiter).resolves.toEqual({ token: 'retried' });
+      await expect(bestEffort).resolves.toEqual({ token: 'retried' });
+
+      // 재시도 완료 뒤 새 갱신 하나가 시작돼 진행 중일 때 — 두 번째 요청은 그 갱신에 합류해야 하고 새 post 를 만들면 안 된다.
+      const before = vi.mocked(axios.post).mock.calls.length;
+      const next = deferredRefresh();
+      const a = refreshAccessToken();
+      const b = refreshAccessToken();
+      expect(vi.mocked(axios.post).mock.calls.length - before).toBe(1);
+      next.resolve({ data: { accessToken: 'n', activeTenantId: 1, memberships: [] } });
+      await expect(a).resolves.toEqual({ token: 'n' });
+      await expect(b).resolves.toEqual({ token: 'n' });
+    });
+
+    it('줄 선 요청이 없으면 재시도하지 않는다', async () => {
+      const post = vi.spyOn(axios, 'post').mockRejectedValue(new TypeError('network'));
+      await expect(refreshAccessTokenBestEffort()).rejects.toBeInstanceOf(TypeError);
+      expect(post).toHaveBeenCalledTimes(1);
+    });
+
+    it('best-effort 401 은 지금처럼 세션을 끝내고 대기열도 거절한다 — 재시도 없음', async () => {
+      const { first, bestEffort, waiter } = startWithWaiter();
+      const expired = expiredRefreshError();
+      const bestEffortRejected = expect(bestEffort).rejects.toBe(expired);
+      const waiterRejected = expect(waiter).rejects.toBe(expired);
+      first.reject(expired);
+
+      await waiterRejected;
+      await bestEffortRejected;
+      expect(axios.post).toHaveBeenCalledTimes(1);
+      expect(replace).toHaveBeenCalledWith('/login');
+    });
   });
 });
 

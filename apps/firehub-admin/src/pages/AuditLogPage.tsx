@@ -46,12 +46,22 @@ const ACTION_LABELS: Record<string, string> = {
 /**
  * 대상: 계정 조치는 metadata.targetUsername, 테넌트 생명주기는 "이름 (slug)"(WD-12 — 숫자 id 는 운영자에게 의미가 없다),
  * 둘 다 없으면 resourceId, 그것도 없으면 '-'.
+ * WD-1158: 소유권 이전(OWNER_TRANSFER)은 "옛1, 옛2 → 새 · 테넌트", 옛 소유자가 없던 테넌트의 복구 지정은 "→ 새 · 테넌트",
+ * 이름 키가 없는 옛 행은 기존 테넌트 표기 그대로.
  */
 function targetOf(log: PlatformAuditLogResponse): string {
   const m = log.metadata;
   if (typeof m?.targetUsername === 'string') return m.targetUsername;
   if (typeof m?.tenantSlug === 'string') {
-    return typeof m.tenantName === 'string' ? `${m.tenantName} (${m.tenantSlug})` : m.tenantSlug;
+    const tenant = typeof m.tenantName === 'string' ? `${m.tenantName} (${m.tenantSlug})` : m.tenantSlug;
+    // WD-1158: 소유권 이전은 옛 소유자 → 새 소유자 이름을 앞에 붙인다(서버가 이름을 못 찾은 사용자는 이미 뺀다).
+    // 이름 키가 없는 옛 행은 기존 테넌트 표기 그대로.
+    // 옛 소유자가 없던 테넌트(복구 지정)는 fromUsernames 가 비거나 없다 — 그래도 새 소유자 이름은 보여야 한다.
+    if (log.actionType === 'OWNER_TRANSFER' && typeof m.toUsername === 'string') {
+      const from = Array.isArray(m.fromUsernames) ? m.fromUsernames.filter((n): n is string => typeof n === 'string') : [];
+      return from.length > 0 ? `${from.join(', ')} → ${m.toUsername} · ${tenant}` : `→ ${m.toUsername} · ${tenant}`;
+    }
+    return tenant;
   }
   return log.resourceId ?? '-';
 }
@@ -208,7 +218,8 @@ export default function AuditLogPage() {
                   <TableCell className="whitespace-nowrap tabular-nums">{formatDateTimeSecond(log.actionTime)}</TableCell>
                   <TableCell>{log.username}</TableCell>
                   <TableCell>{ACTION_LABELS[log.actionType] ?? log.actionType}</TableCell>
-                  <TableCell>{targetOf(log)}</TableCell>
+                  {/* 대상 칸 — 소유권 이전 행은 「옛 소유자들 → 새 소유자 · 테넌트」로 길어질 수 있어 줄바꿈해 결과 칸이 표 밖으로 밀리지 않게 한다(WD-1158) */}
+                  <TableCell className="max-w-[320px] whitespace-normal break-words">{targetOf(log)}</TableCell>
                   <TableCell className="max-w-[280px] truncate" title={log.description ?? undefined}>
                     {log.description ?? '-'}
                   </TableCell>

@@ -222,18 +222,6 @@ let failedQueue: Array<{
 
 const MAX_QUEUE_SIZE = 100;
 
-/** 대기 요청을 모두 같은 갱신 결과(새 토큰 또는 강등)로 완료한다 */
-function resolveQueue(result: RefreshResult) {
-  failedQueue.forEach((prom) => prom.resolve(result));
-  failedQueue = [];
-}
-
-/** 대기 요청을 모두 갱신 실패 오류로 실패시킨다 */
-function rejectQueue(error: unknown) {
-  failedQueue.forEach((prom) => prom.reject(error));
-  failedQueue = [];
-}
-
 /**
  * 액세스 토큰을 갱신한다 — axios 응답 인터셉터와 fetch 로 직접 보내는 AI 채팅 스트림(streamAIChat, WD-631)이 **같은** 경로를 쓴다.
  *
@@ -296,73 +284,118 @@ export async function refreshAccessTokenBestEffort(): Promise<RefreshResult> {
   return runRefresh({ bestEffort: true });
 }
 
-/** 실제 갱신 한 번 — refreshAccessToken 이 갱신 중이 아닐 때만 부른다. bestEffort 면 401 이 아닌 실패에 세션을 끝내지 않는다. */
+/** runRefresh 의 정산 값 — 호출자에게 줄 결과/오류와, 대기 요청에게 줄 오류(재시도 실패 시 호출자와 다를 수 있다) */
+type Settlement =
+  | { ok: true; result: RefreshResult }
+  | { ok: false; error: unknown; waitersError: unknown };
+
+/**
+ * 실제 갱신 한 번 — refreshAccessToken 이 갱신 중이 아닐 때만 부른다. bestEffort 면 401 이 아닌 실패에 세션을 끝내지 않는다.
+ *
+ * <p>잠금 플래그(isRefreshing)는 여기서 **단 한 번** 올리고 내린다(WD-1158). 줄 선 요청 구제 재시도도 이 잠금 안에서 돌아,
+ * 재시도 도중·직후에 다른 갱신이 끼어들어 병렬 갱신(refresh 토큰 회전 → 401 → 로그아웃)이 되는 틈이 없다.
+ *
+ * <p>구제 재시도(WD-1158): 최선 노력 갱신의 일시 장애(401·사용자 바뀜 아님)는 부가 갱신의 실패일 뿐이라, 그 사이 줄 선 일반 요청까지
+ * 같이 거절하면 멀쩡한 요청이 실패한다. 대기열이 있으면 정확히 한 번만 다시 시도한다(반복 없음). 재시도 성공이면 호출자와 대기 요청이
+ * 모두 그 결과를 받고, 재시도 실패면 대기 요청은 재시도의 오류로, 호출자는 처음 오류로 거절한다(재시도 401 은 doRefresh 안에서
+ * 이미 세션을 끝냈고, 그 밖의 실패는 세션을 끝내지 않는다).
+ *
+ * <p>대기열 정산과 잠금 해제는 **같은 동기 구간**에서 한다 — 사이에 틈이 있으면 그 틈에 줄 선 요청이 정산되지도 깨어나지도 못한다.
+ */
 async function runRefresh(options: { bestEffort?: boolean } = {}): Promise<RefreshResult> {
   isRefreshing = true;
+  let settled: Settlement;
   try {
-    let data: TokenResponse;
-    let tenantId: number | null;
-    try {
-      // 다른 탭의 갱신과 겹치지 않게 탭 사이 잠금 안에서 보낸다(WD-438) — 겹치면 진 쪽 401 이 모든 탭 로그아웃이 된다.
-      ({ data } = await withCrossTabRefreshLock(() =>
-        axios.post<TokenResponse>('/api/v1/auth/refresh', null, {
-          withCredentials: true,
-        }),
-      ));
+    settled = { ok: true, result: await doRefresh(options) };
+  } catch (error) {
+    settled = { ok: false, error, waitersError: error };
+    if (
+      options.bestEffort &&
+      !(error instanceof UserSwitchedError) &&
+      !isUnauthorizedError(error) &&
+      failedQueue.length > 0
+    ) {
+      try {
+        settled = { ok: true, result: await doRefresh(options) };
+      } catch (retryError) {
+        settled = { ok: false, error, waitersError: retryError };
+      }
+    }
+  }
+  // 아래 구간은 await 없이 이어진다 — 잠금을 풀고 대기열을 정산한다.
+  const waiters = failedQueue;
+  failedQueue = [];
+  isRefreshing = false;
+  if (settled.ok) {
+    const { result } = settled;
+    waiters.forEach((prom) => prom.resolve(result));
+    return result;
+  }
+  const { waitersError } = settled;
+  waiters.forEach((prom) => prom.reject(waitersError));
+  throw settled.error;
+}
 
-      // 다른 사용자의 토큰이면 새 토큰을 쓰지 않는다(WD-1122) — 저장·테넌트 게시·대기 요청 재개보다 먼저 판정한다.
-      // 둘 다 디코드된 때만 비교하고, 로그아웃(hasSession 삭제)은 하지 않고 `/` 로 하드 이동해 캐시·폼을 폐기한다.
-      if (isOtherSessionUser(data.accessToken)) {
-        const switched = abandonForSwitchedUser();
-        rejectQueue(switched);
-        throw switched;
-      }
+/**
+ * 갱신 본체 — 한 번만 시도하며 잠금(isRefreshing)과 대기열을 건드리지 않는다. 재시도·정산은 runRefresh 몫이다.
+ * bestEffort 면 401 이 아닌 실패는 세션을 끝내지 않고 오류만 던지고, 401 은 평소처럼 세션을 끝낸다.
+ */
+async function doRefresh(options: { bestEffort?: boolean } = {}): Promise<RefreshResult> {
+  let data: TokenResponse;
+  let tenantId: number | null;
+  try {
+    // 다른 탭의 갱신과 겹치지 않게 탭 사이 잠금 안에서 보낸다(WD-438) — 겹치면 진 쪽 401 이 모든 탭 로그아웃이 된다.
+    ({ data } = await withCrossTabRefreshLock(() =>
+      axios.post<TokenResponse>('/api/v1/auth/refresh', null, {
+        withCredentials: true,
+      }),
+    ));
 
-      tenantId = data.activeTenantId ?? null;
-      setAccessToken(data.accessToken);
-      // 새 토큰의 테넌트 상태를 AuthContext 로 흘린다. refresh 는 멤버십/테넌트 상태를 재검증해
-      // 정지된 경우 activeTenantId=null 로 **강등**하는데, 그 신호를 여기서 버리면 UI 는 이유를
-      // 모른 채 전 API 403 루프에 빠진다(tenant-session.ts 주석 참조).
-      publishTenantSession({
-        activeTenantId: tenantId,
-        memberships: data.memberships ?? [],
-        // 강등 직후 선택 화면이 정지 사유를 보여줄 수 있게 함께 흘린다(WD-281). 빠뜨리면 백그라운드
-        // refresh 가 컨텍스트의 목록을 비워 「참여 중인 워크스페이스가 없습니다」로 되돌아간다.
-        unavailableWorkspaces: data.unavailableWorkspaces ?? [],
-      });
-    } catch (refreshError) {
-      // 다른 사용자 감지는 위에서 이미 큐·표식·이동을 끝냈다 — 로그아웃 경로(hasSession 삭제)로 흘리지 않는다(WD-1122)
-      if (refreshError instanceof UserSwitchedError) throw refreshError;
-      rejectQueue(refreshError);
-      // 401 만료인지 한 번 판정해 표식과 안내에 함께 쓴다 — 같은 오류를 두 번 판정하지 않게.
-      const isSessionExpired = isUnauthorizedError(refreshError);
-      // 401 만료로 세션을 끝낸 뒤의 첫 오류를 남긴다 — 이후 갱신을 막아 확인 창을 되풀이하지 않게(WD-1082). 네트워크·서버 오류는 켜지 않는다.
-      // 이동을 건 화면도 함께 남긴다 — 같은 화면의 배경 요청은 뒤에 이동을 다시 건드리지 않게(아래 refreshAccessToken).
-      // 탭 사이 잠금(Web Locks)이 없는 환경(평문 http 배포 등)의 401 도 잠금 있는 환경과 똑같이 표식을 켠다 — 되확인·재시도는 없다(WD-1122).
-      // 회전 경쟁에서 진 탭의 401 이 이미 hasSession 을 지워(아래 endSessionAndReloadToLogin) 이긴 탭까지 로그아웃시키므로,
-      // 다시 보내 되살리는 길은 없다. 잠금 없는 배포에서 회전 경쟁의 패자 탭이 세션을 끝내는 것은 WD-1122 이전부터의 동작이며 이번 범위 밖이다.
-      if (isSessionExpired) {
-        sessionExpiredError = refreshError;
-        expiredNavPath = window.location.pathname;
-      }
-      // 최선 노력 갱신(WD-1132)의 일시 장애(401 아님)는 세션을 끝내지 않고 거절만 한다.
-      if (options.bestEffort && !isSessionExpired) {
-        throw refreshError;
-      }
-      // WD-830: 401 만 세션 만료로 안내한다(근거는 login-notice.ts)
-      endSessionAndReloadToLogin(isSessionExpired ? SESSION_EXPIRED_NOTICE : undefined);
-      throw refreshError;
+    // 다른 사용자의 토큰이면 새 토큰을 쓰지 않는다(WD-1122) — 저장·테넌트 게시·대기 요청 재개보다 먼저 판정한다.
+    // 둘 다 디코드된 때만 비교하고, 로그아웃(hasSession 삭제)은 하지 않고 `/` 로 하드 이동해 캐시·폼을 폐기한다.
+    if (isOtherSessionUser(data.accessToken)) {
+      throw abandonForSwitchedUser();
     }
 
-    // 강등됐다면 대기 중인 요청을 재시도하지 않는다. 테넌트 없는 토큰으로 보내면 GUC 가 비어
-    // 전부 403 이 확정이고, 그 사이 게이트가 다시 그려질 뿐이다 — 확실히 실패할 요청 뭉치를
-    // 보내 403 폭탄과 그만큼의 에러 토스트를 만드는 대신 여기서 끊는다(각 호출자가 자기 오류로 실패).
-    const result: RefreshResult = tenantId === null ? { demoted: true } : { token: data.accessToken };
-    resolveQueue(result);
-    return result;
-  } finally {
-    isRefreshing = false;
+    tenantId = data.activeTenantId ?? null;
+    setAccessToken(data.accessToken);
+    // 새 토큰의 테넌트 상태를 AuthContext 로 흘린다. refresh 는 멤버십/테넌트 상태를 재검증해
+    // 정지된 경우 activeTenantId=null 로 **강등**하는데, 그 신호를 여기서 버리면 UI 는 이유를
+    // 모른 채 전 API 403 루프에 빠진다(tenant-session.ts 주석 참조).
+    publishTenantSession({
+      activeTenantId: tenantId,
+      memberships: data.memberships ?? [],
+      // 강등 직후 선택 화면이 정지 사유를 보여줄 수 있게 함께 흘린다(WD-281). 빠뜨리면 백그라운드
+      // refresh 가 컨텍스트의 목록을 비워 「참여 중인 워크스페이스가 없습니다」로 되돌아간다.
+      unavailableWorkspaces: data.unavailableWorkspaces ?? [],
+    });
+  } catch (refreshError) {
+    // 다른 사용자 감지는 위에서 이미 큐·표식·이동을 끝냈다 — 로그아웃 경로(hasSession 삭제)로 흘리지 않는다(WD-1122)
+    if (refreshError instanceof UserSwitchedError) throw refreshError;
+    // 401 만료인지 한 번 판정해 표식과 안내에 함께 쓴다 — 같은 오류를 두 번 판정하지 않게.
+    const isSessionExpired = isUnauthorizedError(refreshError);
+    // 401 만료로 세션을 끝낸 뒤의 첫 오류를 남긴다 — 이후 갱신을 막아 확인 창을 되풀이하지 않게(WD-1082). 네트워크·서버 오류는 켜지 않는다.
+    // 이동을 건 화면도 함께 남긴다 — 같은 화면의 배경 요청은 뒤에 이동을 다시 건드리지 않게(아래 refreshAccessToken).
+    // 탭 사이 잠금(Web Locks)이 없는 환경(평문 http 배포 등)의 401 도 잠금 있는 환경과 똑같이 표식을 켠다 — 되확인·재시도는 없다(WD-1122).
+    // 회전 경쟁에서 진 탭의 401 이 이미 hasSession 을 지워(아래 endSessionAndReloadToLogin) 이긴 탭까지 로그아웃시키므로,
+    // 다시 보내 되살리는 길은 없다. 잠금 없는 배포에서 회전 경쟁의 패자 탭이 세션을 끝내는 것은 WD-1122 이전부터의 동작이며 이번 범위 밖이다.
+    if (isSessionExpired) {
+      sessionExpiredError = refreshError;
+      expiredNavPath = window.location.pathname;
+    }
+    // 최선 노력 갱신(WD-1132)의 일시 장애(401 아님)는 세션을 끝내지 않고 거절만 한다.
+    if (options.bestEffort && !isSessionExpired) {
+      throw refreshError;
+    }
+    // WD-830: 401 만 세션 만료로 안내한다(근거는 login-notice.ts)
+    endSessionAndReloadToLogin(isSessionExpired ? SESSION_EXPIRED_NOTICE : undefined);
+    throw refreshError;
   }
+
+  // 강등됐다면 대기 중인 요청을 재시도하지 않는다. 테넌트 없는 토큰으로 보내면 GUC 가 비어
+  // 전부 403 이 확정이고, 그 사이 게이트가 다시 그려질 뿐이다 — 확실히 실패할 요청 뭉치를
+  // 보내 403 폭탄과 그만큼의 에러 토스트를 만드는 대신 여기서 끊는다(각 호출자가 자기 오류로 실패).
+  return tenantId === null ? { demoted: true } : { token: data.accessToken };
 }
 
 /**

@@ -198,7 +198,7 @@ class OwnershipTransferServiceTest extends IntegrationTestBase {
     assertThatThrownBy(
             () ->
                 TenantContext.runScopedGet(
-                    tenantA, () -> transferService.transfer(99_999_999L, admin, tenantName)))
+                    99_999_999L, () -> transferService.transfer(99_999_999L, admin, tenantName)))
         .isInstanceOf(CodedApiException.class)
         .extracting(e -> ((CodedApiException) e).status().value())
         .isEqualTo(404);
@@ -338,6 +338,68 @@ class OwnershipTransferServiceTest extends IntegrationTestBase {
         TenantContext.runScopedGet(
             tenantA, () -> userService.getUserById(member, second).workspaceOwnerName());
     assertThat(none).isNull();
+  }
+
+  /** 정지(멤버십 SUSPENDED)·비활성(계정) 옛 공동 소유자는 강등만 되고 ADMIN 을 받지 않는다. 활성 옛 소유자는 기존처럼 받는다(WD-1158). */
+  @Test
+  void transfer_doesNotGrantAdminToInactiveOldOwner() {
+    long suspended = create("suspended");
+    long deactivated = create("deactivated");
+    long activeOld = create("activeold");
+    for (long id : new long[] {suspended, deactivated, activeOld}) {
+      dsl.execute(
+          "update membership set role = 'OWNER' where user_id = ? and tenant_id = ?", id, tenantA);
+    }
+    membershipRepository.updateStatus(suspended, tenantA, "SUSPENDED");
+    dsl.execute("update \"user\" set is_active = false where id = ?", deactivated);
+
+    OwnershipTransferResult result = transfer(member, tenantName);
+
+    assertThat(roleOf(suspended)).isEqualTo("ADMIN");
+    assertThat(roleOf(deactivated)).isEqualTo("ADMIN");
+    assertThat(roleOf(activeOld)).isEqualTo("ADMIN");
+    assertThat(hasAdminRole(suspended)).isFalse();
+    assertThat(hasAdminRole(deactivated)).isFalse();
+    assertThat(hasAdminRole(activeOld)).isTrue();
+    assertThat(result.grantedAdminUserIds())
+        .containsExactlyInAnyOrder(member, activeOld)
+        .doesNotContain(suspended, deactivated);
+  }
+
+  /** TenantContext 가 다른 테넌트인 채 transfer 를 부르면 거부하고 아무것도 바꾸지 않는다(WD-1158). */
+  @Test
+  void transfer_rejectsMismatchedTenantContext() {
+    assertThatThrownBy(
+            () ->
+                TenantContext.runScopedGet(
+                    DEFAULT_TEST_TENANT_ID,
+                    () -> transferService.transfer(tenantA, admin, tenantName)))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(roleOf(owner)).isEqualTo("OWNER");
+    assertThat(roleOf(admin)).isNotEqualTo("OWNER");
+  }
+
+  /** 소유자 셋(정지 1·활성 2) — 정지를 건너뛰고 활성 중 user_id 가 가장 작은 소유자 이름이 나온다(일괄 조회 뒤에도 순서 유지, WD-1158). */
+  @Test
+  void getUserById_workspaceOwnerName_firstActiveOwner_batch() {
+    long second = create("second");
+    long third = create("third");
+    for (long id : new long[] {second, third}) {
+      dsl.execute(
+          "update membership set role = 'OWNER' where user_id = ? and tenant_id = ?", id, tenantA);
+    }
+    dsl.execute(
+        "update membership set status = 'SUSPENDED' where user_id = ? and tenant_id = ?",
+        owner,
+        tenantA);
+    String secondName =
+        dsl.fetchOne("select name from \"user\" where id = ?", second).get(0, String.class);
+
+    String shown =
+        TenantContext.runScopedGet(
+            tenantA, () -> userService.getUserById(member, third).workspaceOwnerName());
+
+    assertThat(shown).isEqualTo(secondName);
   }
 
   /** ADMIN 을 이미 가진 사용자만 오가면 ROLE_ASSIGN 은 남지 않고 grantedAdminUserIds 도 비어 있다. */

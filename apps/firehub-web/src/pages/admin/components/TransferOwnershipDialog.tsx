@@ -64,7 +64,10 @@ function TransferOwnershipBody({
   const [input, setInput] = useState('');
   // 정확 비교(대소문자 구분)이되 앞뒤 공백만 허용한다 — 서버 규칙과 같다
   // 저장 이름도 trim 해 비교한다(WD-1132 리뷰) — 이름이 " Acme " 처럼 공백을 가져도 공백 없이 입력해 통과할 수 있어야 한다. 서버도 같은 규칙.
-  const matches = stripEdgeSpace(input) === stripEdgeSpace(workspaceName);
+  // WD-1158: 입력이 공백뿐이면(trim 후 빈 문자열) 이름이 공백뿐인 워크스페이스에서 빈 입력이 「일치」로 통과하므로 따로 막는다.
+  // 같은 입력을 두 번 다듬지 않게 한 번만 계산한다.
+  const trimmedInput = stripEdgeSpace(input);
+  const matches = trimmedInput !== '' && trimmedInput === stripEdgeSpace(workspaceName);
 
   return (
     <>
@@ -91,7 +94,7 @@ function TransferOwnershipBody({
       </div>
       <AlertDialogFooter>
         <AlertDialogCancel>취소</AlertDialogCancel>
-        <OnceAlertDialogAction variant="destructive" disabled={!matches} onClick={() => onConfirm(stripEdgeSpace(input))}>
+        <OnceAlertDialogAction variant="destructive" disabled={!matches} onClick={() => onConfirm(trimmedInput)}>
           소유권 넘기기
         </OnceAlertDialogAction>
       </AlertDialogFooter>

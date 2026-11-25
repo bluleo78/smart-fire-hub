@@ -57,6 +57,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 public class UserService {
 
   private final UserRepository userRepository;
+  private final OwnershipTransferAuditor ownershipTransferAuditor;
   private final RoleRepository roleRepository;
   private final PasswordEncoder passwordEncoder;
   private final MembershipRepository membershipRepository;
@@ -145,21 +146,24 @@ public class UserService {
    * 소유자를 지금 소유자로 보이면 실제로 일할 수 있는 소유자가 있는 것처럼 오해하므로 건너뛰고, 해당자가 없으면 null 이다(카드는 「지정된 소유자가 없습니다」).
    */
   private String firstOwnerName(long tenantId) {
-    return membershipRepository.findOwnerUserIds(tenantId).stream()
-        .filter(id -> isActiveOwner(id, tenantId))
+    // WD-1158: 소유자마다 멤버십·계정을 따로 조회하던 N+1 을 없앤다 — 활성 거름 한 번 + 사용자 일괄 조회 한 번. 순서는 소유자 id 오름차순
+    // 그대로 유지한다(일괄 조회 결과의 순서는 보장되지 않으므로 id 로 찾는다).
+    List<Long> ownerIds = membershipRepository.findOwnerUserIds(tenantId);
+    if (ownerIds.isEmpty()) {
+      return null;
+    }
+    // 활성 판정은 이전 isActiveOwner 와 같다 — 멤버십 ACTIVE(findByIds 가 거름) + 계정 활성. 테넌트 상태는 보지 않는다(정지 테넌트에서도
+    // 이름이 보여야 한다).
+    Map<Long, UserResponse> byId =
+        userRepository.findByIds(tenantId, ownerIds).stream()
+            .filter(UserResponse::isActive)
+            .collect(Collectors.toMap(UserResponse::id, u -> u, (a, b) -> a));
+    return ownerIds.stream()
+        .map(byId::get)
+        .filter(Objects::nonNull)
         .findFirst()
-        .flatMap(userRepository::findById)
         .map(UserResponse::name)
         .orElse(null);
-  }
-
-  /** OWNER 멤버십이 ACTIVE 이고 전역 계정도 활성인가. */
-  private boolean isActiveOwner(Long userId, long tenantId) {
-    return membershipRepository
-            .findInTenant(userId, tenantId)
-            .map(TenantMembership::isActive)
-            .orElse(false)
-        && userRepository.findById(userId).map(UserResponse::isActive).orElse(false);
   }
 
   /**
@@ -185,26 +189,8 @@ public class UserService {
     // 역할 가드는 role:assign 위임자가 자기 범위 밖 역할로 올라서는 것을 막는 장치인데, 소유자에게는 올라설 위가 없다.
     OwnershipTransferResult result =
         ownershipTransferService.transfer(tenantId, targetUserId, confirmName);
-    audit(
-        callerId,
-        "OWNER_TRANSFER",
-        targetUserId,
-        "워크스페이스 소유권 이전",
-        Map.of(
-            "fromUserIds",
-            result.fromUserIds(),
-            "toUserId",
-            result.toUserId(),
-            "grantedAdmin",
-            result.grantedAdmin()));
-    // 소유권 이전으로 새로 받은 ADMIN 도 역할 부여다 — 다른 ADMIN 부여 경로처럼 ROLE_ASSIGN 으로 남겨 「누가 ADMIN 을 줬나」를
-    // 추적한다(WD-117).
-    // 부여 직전 상태는 지금 역할에서 ADMIN 만 뺀 것이다(이전은 ADMIN 추가 외에 역할을 바꾸지 않는다).
-    for (Long grantedUserId : result.grantedAdminUserIds()) {
-      List<RoleResponse> after = roleRepository.findByUserId(grantedUserId);
-      List<RoleResponse> before = after.stream().filter(r -> !"ADMIN".equals(r.name())).toList();
-      auditRoleAssign(callerId, grantedUserId, before, after);
-    }
+    // 워크스페이스 감사(OWNER_TRANSFER + 새 ADMIN 사용자별 ROLE_ASSIGN)는 콘솔 경로와 공용 도우미가 쓴다.
+    ownershipTransferAuditor.logTransfer(callerId, actorName(callerId), result, null);
   }
 
   /**
@@ -499,17 +485,20 @@ public class UserService {
         .id();
   }
 
+  /** 감사 행위자 username — 감사 테이블 NOT NULL 이라 조회하고, 지워진 계정이면 "unknown". */
+  private String actorName(Long callerId) {
+    return userRepository.findById(callerId).map(UserResponse::username).orElse("unknown");
+  }
+
   /**
    * 멤버 관리 감사 로그. 행위자 username 은 감사 테이블 NOT NULL 이라 조회해서 넣는다. audit_log.tenant_id 는 GUC 기본값 — 호출
    * 트랜잭션의 현재 테넌트로 기록된다.
    */
   private void audit(
       Long callerId, String action, Long targetUserId, String description, Object metadata) {
-    String callerName =
-        userRepository.findById(callerId).map(UserResponse::username).orElse("unknown");
     auditLogService.log(
         callerId,
-        callerName,
+        actorName(callerId),
         action,
         "user",
         String.valueOf(targetUserId),
@@ -671,21 +660,8 @@ public class UserService {
    */
   private void auditRoleAssign(
       Long callerId, Long userId, List<RoleResponse> before, List<RoleResponse> after) {
-    Set<Long> beforeIds = before.stream().map(RoleResponse::id).collect(Collectors.toSet());
-    Set<Long> afterIds = after.stream().map(RoleResponse::id).collect(Collectors.toSet());
-    if (beforeIds.equals(afterIds)) {
-      return; // 실제 변경 없음 — 감사 생략
-    }
-    Map<String, Object> metadata = new LinkedHashMap<>();
-    metadata.put("before", before.stream().map(RoleResponse::name).toList());
-    metadata.put("after", after.stream().map(RoleResponse::name).toList());
-    metadata.put(
-        "added",
-        after.stream().filter(r -> !beforeIds.contains(r.id())).map(RoleResponse::name).toList());
-    metadata.put(
-        "removed",
-        before.stream().filter(r -> !afterIds.contains(r.id())).map(RoleResponse::name).toList());
-    audit(callerId, "ROLE_ASSIGN", userId, "역할 변경", metadata);
+    ownershipTransferAuditor.logRoleAssign(
+        callerId, actorName(callerId), userId, before, after, null);
   }
 
   /**
