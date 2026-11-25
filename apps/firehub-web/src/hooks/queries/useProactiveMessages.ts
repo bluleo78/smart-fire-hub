@@ -12,7 +12,6 @@ import type {
   UpdateReportTemplateRequest,
 } from '../../api/proactive';
 import { proactiveApi } from '../../api/proactive';
-import { handleApiError } from '../../lib/api-error';
 import { createWithUniqueCloneName } from '../../lib/clone-name';
 import { isValidId } from '../../lib/route-id';
 import { keepPreviousWithinEntity } from './keepPreviousWithinEntity';
@@ -135,22 +134,17 @@ export function useFetchLatestProactiveJob() {
 /**
  * 스마트 작업 만들기.
  *
- * 실패 처리는 훅 수준 `onError` 에 둔다 — `mutate(...)` 로 주는 `onError` 는 화면이 언마운트되면 리스너가 없어
- * 아예 실행되지 않아(WD-1109 반려 3), 이탈 뒤 늦게 온 실패의 토스트·만든 양식 정리·이름 칸 오류가 통째로 사라졌다.
- * `useMutation({ onError })` 는 Mutation 이 살아 있는 한 화면이 없어도 불리므로, 화면이 넘긴 처리를 여기서 부른다.
+ * 결과(성공·실패) 처리는 호출하는 화면이 `mutateAsync` 의 promise 로 한다 — `mutate(...)` 에 주는 콜백은 화면이
+ * 언마운트되면 실행되지 않지만 promise 는 마운트와 무관하게 끝나, 이탈 뒤 늦게 온 결과도 알릴 수 있다(WD-1109, WD-1153).
+ * 그래서 오류 토스트는 여기서 띄우지 않고(호출처가 이름 중복 등을 구분해 처리), 목록 캐시 무효화만 맡는다.
  */
-export function useCreateProactiveJob(options?: { onError?: (error: unknown) => void }) {
+export function useCreateProactiveJob() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (data: CreateProactiveJobRequest) =>
       proactiveApi.createJob(data).then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: KEYS.jobs });
-    },
-    onError: (error) => {
-      if (options?.onError) options.onError(error);
-      // 화면이 처리를 넘기지 않았을 때의 기본 — 서버가 말한 사유(없으면 fallback)를 남긴다
-      else handleApiError(error, '작업 생성에 실패했습니다.');
     },
   });
 }
