@@ -54,7 +54,8 @@ import {
 } from '../../lib/formatters';
 import { getPageAfterDelete, parseNonNegativeInt } from '../../lib/pagination';
 import { cn, iGa } from '../../lib/utils';
-import type { DatasetResponse } from '../../types/dataset';
+import type { CategoryResponse, DatasetResponse } from '../../types/dataset';
+import { DatasetCategoryChips } from './components/DatasetCategoryChips';
 import { DatasetDeleteConfirmDialog } from './components/DatasetDeleteConfirmDialog';
 import { DatasetPreviewSheet } from './components/DatasetPreviewSheet';
 import { DatasetTypeModal, type DatasetTypeSelection } from './components/DatasetTypeModal';
@@ -84,6 +85,9 @@ function DatasetTypeBadge({ info: { label, known }, className }: { info: TypeLab
     </Badge>
   );
 }
+
+/** 카테고리 응답 전 빈 목록 — 매 렌더 새 배열이 되지 않게 모듈 상수로 둔다. */
+const EMPTY_CATEGORIES: CategoryResponse[] = [];
 
 /**
  * 목록 필터의 URL 키(검색어 q 제외) — 「조건에 맞는 데이터셋이 없습니다」 판정과 「필터 초기화」가 함께 쓴다 (WD-879).
@@ -116,9 +120,6 @@ function parseCategoryId(raw: string | null): number | undefined {
 function parseSortOrder(raw: string | null): SortDirection {
   return raw === 'asc' || raw === 'desc' ? raw : 'none';
 }
-
-/** 카테고리 칩 클래스 — WD-880: 최소 클릭 대상 32×32. 높이 h-8·최소 너비 min-w-8(한 글자 이름도 32 이상), 글자 크기는 그대로 */
-const CATEGORY_CHIP_CLASS = 'h-8 min-w-8 cursor-pointer hover:opacity-80 transition-opacity';
 
 /**
  * URL 쿼리 파라미터를 단일 진실 소스(single source of truth)로 사용한다 (refs #94).
@@ -355,7 +356,7 @@ export default function DatasetListPage() {
   const { canWriteDataset, canDeleteDataset } = useDatasetPermissions();
   const { recents, removeRecent, syncRecents } = useRecentDatasets();
 
-  const categories = categoriesData || [];
+  const categories = categoriesData ?? EMPTY_CATEGORIES;
   const rawDatasets = datasetsData?.content || [];
   /**
    * 정렬이 적용된 데이터셋 목록 (현재 페이지 내).
@@ -612,47 +613,17 @@ export default function DatasetListPage() {
           </ExportBlockedTooltip>
         </div>
 
-        {/* Category Chip Filter — 칩은 button 이라 Tab·Enter 로 거른다(WD-396). 고른 칩은 색만이 아니라
-            aria-pressed 로 스크린리더에 알리고, 묶음 이름 「카테고리」로 무엇을 거르는 칩인지 읽힌다. */}
-        <div className="flex gap-2 flex-wrap" role="group" aria-label="카테고리">
-          <Badge
-            asChild
-            variant={categoryId === undefined ? 'default' : 'outline'}
-            className={CATEGORY_CHIP_CLASS}
-          >
-            <button
-              type="button"
-              aria-pressed={categoryId === undefined}
-              onClick={() => {
-                patchParams({ categoryId: null, page: null });
-              }}
-            >
-              전체
-            </button>
-          </Badge>
-          {categories.map((cat) => (
-            <Badge
-              key={cat.id}
-              asChild
-              variant={categoryId === cat.id ? 'default' : 'outline'}
-              className={CATEGORY_CHIP_CLASS}
-            >
-              <button
-                type="button"
-                aria-pressed={categoryId === cat.id}
-                onClick={() => {
-                  // 눌림 표시와 같은 파싱(parseCategoryId)으로 최신 주소와 비교해 끈다 — ?categoryId=03 처럼 문자열이 달라도 같은 분류면 꺼진다
-                  patchParams({
-                    categoryId: parseCategoryId(readLatestParam('categoryId')) === cat.id ? null : cat.id,
-                    page: null,
-                  });
-                }}
-              >
-                {cat.name}
-              </button>
-            </Badge>
-          ))}
-        </div>
+        {/* Category Chip Filter — 한 줄로 접고 「+N 더 보기」 로 펼친다(WD-1073). 칩 접근성은 컴포넌트가 맡는다(WD-396). */}
+        <DatasetCategoryChips
+          categories={categories}
+          selectedId={categoryId}
+          onSelect={(id) => {
+            // 「전체」(null)는 필터를 지우고, 칩은 눌림 표시와 같은 파싱(parseCategoryId)으로 최신 주소와 비교해 끈다 —
+            // ?categoryId=03 처럼 문자열이 달라도 같은 분류면 꺼진다
+            const toggled = parseCategoryId(readLatestParam('categoryId')) === id ? null : id;
+            patchParams({ categoryId: id === null ? null : toggled, page: null });
+          }}
+        />
       </div>
 
       {/* 클라이언트 사이드 정렬 범위 안내 — 정렬 활성 시에만 표시하여 혼동 방지 (이슈 #173) */}
