@@ -241,7 +241,7 @@ test.describe('스마트 작업 — 상세 ↔ 새 작업 화면 재사용 (WD-9
     await expect(createButton).toHaveText('만들기');
 
     releaseSave();
-    // 회수가 실제로 일어났다는 확신 — 토스트는 onSuccess 가 가드와 무관하게 띄우기 때문이다
+    // 회수가 실제로 일어났다는 확신 — 토스트는 mutateAsync 성공 처리(try 밖)가 가드와 무관하게 띄우기 때문이다
     await expect(page.getByText('작업이 저장되었습니다.')).toBeVisible();
 
     // 회수 후에도 그대로 — 늦게 온 응답이 /jobs/new 의 만들기 버튼을 잠그지 않는다
@@ -331,7 +331,8 @@ test.describe('스마트 작업 — 상세 ↔ 새 작업 화면 재사용 (WD-9
     await expect(page.getByRole('button', { name: '저장 중...', exact: true })).toBeDisabled();
 
     releaseSave();
-    // 응답 처리와 가드 판정을 먼저 확정한다 — 토스트는 onSuccess 가 띄우고 가드 바로 앞이라, 이게 보여야 늦은 응답이 도착해 판정이 끝난 상태다
+    // 응답 처리와 가드 판정을 먼저 확정한다 — 토스트는 mutateAsync 성공 처리(try 밖)가 가드 바로 앞에서 띄우고,
+    // 이게 보여야 늦은 응답이 도착해 판정이 끝난 상태다
     await expect(page.getByText('작업이 저장되었습니다.')).toBeVisible();
 
     // 늦은 저장 응답이 돌아와도 지금 편집 중인 내용·미저장 표시·편집 모드가 유지돼야 한다.
@@ -385,8 +386,8 @@ test.describe('스마트 작업 — 상세 ↔ 새 작업 화면 재사용 (WD-9
 
     // history 를 /jobs/1 → /jobs/new 로 만든다 — 앱 안에는 이 방향의 직접 링크가 없어
     // history 스택에 새 작업 항목을 추가한 뒤 popstate 로 라우터를 깬다.
-    // 목록을 뒤로 가기 목표로 두면 컴포넌트가 언마운트돼 늦은 응답의 콜백 자체가
-    // 실행되지 않아(TanStack Query 가 구독자 없이 콜백을 부르지 않는다) 가드를 시험할 수 없다.
+    // 목록을 뒤로 가기 목표로 두면 작업 상세가 통째로 사라져, 늦은 응답의 mutateAsync promise
+    // 후속이 지금 그려진 상세를 다른 상세로 끌지 않는지 가드를 시험할 수 없다.
     await pushHistoryEntry(page, '/ai-insights/jobs/new');
     await expect(page).toHaveURL(/\/ai-insights\/jobs\/new$/);
     await expect(page.getByRole('button', { name: '만들기', exact: true })).toBeVisible();
@@ -403,8 +404,9 @@ test.describe('스마트 작업 — 상세 ↔ 새 작업 화면 재사용 (WD-9
     await expect(page).toHaveURL(/\/ai-insights\/jobs\/1$/);
 
     releaseSave();
-    // 응답 처리와 가드 판정을 먼저 확정한다 — 토스트는 onSuccess 가 가드보다 앞에서 띄우기 때문이다
-    await expect(page.getByText('작업이 생성되었습니다.')).toBeVisible();
+    // 응답 처리와 가드 판정을 먼저 확정한다 — 토스트는 이탈 뒤 늦게 온 결과를 mutateAsync promise 로 처리하는
+    // 성공 분기가 이탈을 판정한 자리에서 띄우기 때문이다
+    await expect(page.getByText('「매일 현황 리포트」 작업이 생성되었습니다.')).toBeVisible();
 
     // 늦은 성공 응답에도 작업 1 상세에 그대로 남아 있어야 한다 — id=2 상세로 끌려가지 않음
     await expect(page).toHaveURL(/\/ai-insights\/jobs\/1$/);

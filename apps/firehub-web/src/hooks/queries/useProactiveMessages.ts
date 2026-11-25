@@ -1,5 +1,6 @@
 import { keepPreviousData, skipToken, useMutation, useQuery, useQueryClient, type UseQueryOptions } from '@tanstack/react-query';
 import { useCallback } from 'react';
+import { toast } from 'sonner';
 
 import type {
   CreateProactiveJobRequest,
@@ -136,9 +137,12 @@ export function useFetchLatestProactiveJob() {
  *
  * 결과(성공·실패) 처리는 호출하는 화면이 `mutateAsync` 의 promise 로 한다 — `mutate(...)` 에 주는 콜백은 화면이
  * 언마운트되면 실행되지 않지만 promise 는 마운트와 무관하게 끝나, 이탈 뒤 늦게 온 결과도 알릴 수 있다(WD-1109, WD-1153).
- * 그래서 오류 토스트는 여기서 띄우지 않고(호출처가 이름 중복 등을 구분해 처리), 목록 캐시 무효화만 맡는다.
+ * 계약: `mutateAsync` 를 쓰는 호출처는 거부(rejection)를 반드시 자기가 잡고, 토스트·칸 오류를 직접 다루므로 기본 오류
+ * 토스트와 겹치지 않도록 `silentError: true` 를 함께 넘긴다(현재 상세 페이지 호출처). 반면 `mutate()` 만 쓰는 호출처는
+ * 아래 기본 onError 가 오류 토스트를 띄워 조용한 실패가 남지 않는다(WD-1156).
+ * 목록 캐시 무효화는 여기서 맡는다.
  */
-export function useCreateProactiveJob() {
+export function useCreateProactiveJob(options?: { silentError?: boolean }) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (data: CreateProactiveJobRequest) =>
@@ -146,6 +150,8 @@ export function useCreateProactiveJob() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: KEYS.jobs });
     },
+    // 위 계약의 기본 오류 처리 — silentError 를 안 넘긴 호출처가 여기서 실패 토스트를 남긴다(WD-1156)
+    onError: options?.silentError ? undefined : () => toast.error('작업 생성에 실패했습니다.'),
   });
 }
 
