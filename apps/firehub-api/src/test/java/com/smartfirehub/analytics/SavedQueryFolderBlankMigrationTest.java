@@ -1,9 +1,12 @@
 package com.smartfirehub.analytics;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import com.smartfirehub.support.PostgresTestContainer;
 import db.migration.V170__blank_saved_query_folder_to_null;
+import db.migration.V171__blank_saved_query_folder_cf_to_null;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -11,6 +14,7 @@ import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.Map;
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.migration.Context;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -59,16 +63,27 @@ class SavedQueryFolderBlankMigrationTest {
       long nbsp = insert(c, "NBSP", "\u00A0", "c"); // NULL
       long zwsp = insert(c, "ZWSP", "\u200B", "d"); // NULL
       long mixed = insert(c, "혼합", "a\u200B", "e"); // 유지 (글자 사이 Cf)
+      long rlo = insert(c, "RLO", "\u202E", "h"); // NULL (Cf)
+      long fill = insert(c, "채움", "\u3164", "i"); // NULL (한글 채움 문자)
+      long letterRlo = insert(c, "글자RLO", "a\u202E", "j"); // 유지
 
-      applyV170(c); // 같은 파일의 헬퍼 호출
+      // 비울 행: ws·nbsp·zwsp·rlo·fill = 5 — 반환값이 바뀐 행 수와 같아야 한다.
+      assertThat(applyV170(c)).isEqualTo(5); // 같은 파일의 헬퍼 호출
+      assertThat(folderOf(c, rlo)).isNull();
+      assertThat(folderOf(c, fill)).isNull();
+      assertThat(folderOf(c, letterRlo)).isEqualTo("a\u202E");
       assertThat(folderOf(c, ok)).isEqualTo("reports");
       assertThat(folderOf(c, ws)).isNull();
       assertThat(folderOf(c, nbsp)).isNull();
       assertThat(folderOf(c, zwsp)).isNull();
       assertThat(folderOf(c, mixed)).isEqualTo("a\u200B");
 
-      applyV170(c); // 재실행(멱등)
+      assertThat(applyV170(c)).isZero(); // 재실행(멱등) — 바뀐 행 0
       assertThat(folderOf(c, ok)).isEqualTo("reports");
+
+      // V171(Tibero 짝)은 V170 의 고정 판정을 다시 부르므로 V170 뒤에는 바뀐 행 0(멱등)이다(WD-1144).
+      assertThat(applyV171(c)).isZero();
+      assertThat(folderOf(c, letterRlo)).isEqualTo("a\u202E");
     }
   }
 
@@ -158,6 +173,14 @@ class SavedQueryFolderBlankMigrationTest {
 
   /** V170 본문을 같은 파일의 public static 헬퍼로 직접 실행한다(계획의 applyV170 별칭 — 재실행 검사도 같은 코드를 부른다). */
   private static int applyV170(Connection connection) throws Exception {
+    return V170__blank_saved_query_folder_to_null.blankOutBlankFolders(connection);
+  }
+
+  /** V171 본문(PG 짝)을 Flyway Context 목으로 실행하고, 바뀐 행 수 대신 남은 빈 폴더 수(0 이어야 함)를 돌려준다. */
+  private static int applyV171(Connection connection) throws Exception {
+    Context context = mock(Context.class);
+    when(context.getConnection()).thenReturn(connection);
+    new V171__blank_saved_query_folder_cf_to_null().migrate(context);
     return V170__blank_saved_query_folder_to_null.blankOutBlankFolders(connection);
   }
 }

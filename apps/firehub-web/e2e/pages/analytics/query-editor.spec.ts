@@ -483,6 +483,8 @@ test.describe('쿼리 에디터 페이지', () => {
     const cap = await mockApi(page, 'PUT', '/api/v1/analytics/queries/1', createSavedQuery({ id: 1, folder: null }), { capture: true });
 
     await page.goto('/analytics/queries/1');
+    // 쿼리가 로드되기 전에 뱃지 0 을 단언하면 로드 전부터 통과해 버리므로 제목이 보일 때까지 기다린다
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('테스트 쿼리');
     await expect(page.locator('[data-slot="badge"]')).toHaveCount(0); // 폴더 뱃지 없음
 
     await page.getByRole('button', { name: '저장' }).click();
