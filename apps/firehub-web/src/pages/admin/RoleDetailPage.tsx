@@ -37,7 +37,13 @@ import { useMyPermissions } from '../../hooks/queries/useMyPermissions';
 import { useAuth } from '../../hooks/useAuth';
 import { useIsMounted } from '../../hooks/useIsMounted';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
-import { extractApiError, isEditConflict, isNotFoundError, mapFieldErrors } from '../../lib/api-error';
+import {
+  extractApiError,
+  isBadRequestError,
+  isEditConflict,
+  isNotFoundError,
+  mapFieldErrors,
+} from '../../lib/api-error';
 import { permissionCategoryLabel } from '../../lib/permission-category';
 import { parseRouteId } from '../../lib/route-id';
 import type { UpdateRoleFormData } from '../../lib/validations/role';
@@ -129,6 +135,8 @@ function RoleDetailView() {
   const editedSinceSubmitRef = useRef(false);
   // 서버 400 이 칸에 붙인 오류의 칸 이름 — 고치면 그 칸 오류를 지운다(위 구독).
   const serverFieldErrorsRef = useRef<Set<string>>(new Set());
+  // WD-1102: 충돌 창이 열린 채 난 400 의 칸 포커스 — 창이 닫힌 뒤(onCloseAutoFocus)에 옮길 칸을 잠시 담아 둔다.
+  const pendingConflictFocusRef = useRef<'name' | 'description' | null>(null);
   useEffect(() => {
     const subscription = form.watch((_values, { name }) => {
       if (name !== 'name' && name !== 'description') return;
@@ -338,28 +346,45 @@ function RoleDetailView() {
       }
       // 저장 요청 중에 이름·설명을 더 고쳤으면(WD-866): 400 입력 검증 오류는 지금 입력에 대한 것이 아니므로 넘긴다 — 다음 저장이 새로 판정한다.
       // 그 밖의 실패(500·403·네트워크)는 저장되지 않았다는 사실이 그대로라 알린다. 입력은 이미 바뀌었으니 입력란 아래 대신 토스트로.
-      // 칸 오류 매핑(WD-865)보다 먼저 봐야 고친 칸에 옛 오류가 다시 붙지 않는다.
+      // 칸 오류 매핑(WD-865·WD-1102)보다 먼저 봐야 고친 칸에 옛 오류가 다시 붙지 않는다.
       if (editedSinceSubmitRef.current) {
         if (!(axios.isAxiosError(error) && error.response?.status === 400)) {
           toast.error(extractApiError(error, '역할 업데이트에 실패했습니다.'));
         }
         return;
       }
-      // 400 의 설명 필드 오류는 설명 칸에 붙인다(WD-865). 설명 오류가 실린 응답일 때만 — 이름 오류 흐름은 아래 그대로(WD-866 범위).
-      // 이 화면은 root 를 그리지 않으므로 설명 외 필드 문구는 기존 역할 오류 영역으로 잇는다.
-      const mapped = mapFieldErrors(error, form.setError, ['description']);
-      if (mapped?.setFields.includes('description')) {
-        serverFieldErrorsRef.current = new Set(['description']);
-        form.setFocus('description');
+      // 400 의 필드별 오류(errors)는 해당 칸(이름·설명)에 붙이고 첫 오류 칸으로 포커스한다(WD-865, WD-1102 에서 이름까지 확대) — 생성 대화상자(RoleListPage)와 같은 규칙.
+      // 이 화면은 root 를 그리지 않으므로 이름·설명 외 필드 문구는 기존 역할 오류 영역으로 잇는다(모르는 필드만 있어도 이름 칸에 붙이지 않는다).
+      // errors 가 {} 이거나 문구가 모두 빈 400 은 mapFieldErrors 가 null 이라 아래 기존 400 분기로 간다.
+      // WD-1102: 400 은 입력 문제라 덮어쓰기 저장에서 났어도 충돌 안내 창이 칸 오류·포커스를 가리지 않게 먼저 닫는다.
+      // 창이 닫히면 Radix 가 포커스를 옛 트리거로 돌려놓으므로, 창이 열려 있었다면 칸 포커스는 닫힘 뒤 onCloseAutoFocus 에서 옮긴다.
+      const wasConflictOpen = isRoleInfoConflictOpen;
+      const isBadRequest = isBadRequestError(error);
+      if (isBadRequest) setIsRoleInfoConflictOpen(false);
+      const focusField = (field: 'name' | 'description') => {
+        if (wasConflictOpen) pendingConflictFocusRef.current = field;
+        else form.setFocus(field);
+      };
+      const mapped = mapFieldErrors(error, form.setError, ['name', 'description']);
+      if (mapped) {
+        if (mapped.setFields.length > 0) {
+          serverFieldErrorsRef.current = new Set(mapped.setFields);
+          focusField(mapped.setFields.includes('name') ? 'name' : 'description');
+        }
         if (mapped.unknownMessage) setRoleError(mapped.unknownMessage);
         return;
       }
-      if (axios.isAxiosError(error) && error.response?.data) {
-        const errData = error.response.data as ErrorResponse;
-        setRoleError(errData.message || '역할 업데이트에 실패했습니다.');
-      } else {
-        setRoleError('역할 업데이트에 실패했습니다.');
+      const errData = axios.isAxiosError(error) ? (error.response?.data as ErrorResponse | undefined) : undefined;
+      // WD-1102: 필드 errors 가 없는 400 은 「이름을 바꿔 저장했고 서버가 사유를 보낸」 경우에만 이름 문제(예: 이름 중복)로 본다 —
+      // 생성 대화상자(RoleListPage)와 같은 규칙으로 이름 칸 오류(role=alert·aria-invalid)로 붙이고 포커스를 돌린다. 이름을 고치면 위 구독이 지운다.
+      // 이름을 안 바꿨거나(설명만 저장, 시스템 역할 제한 등) 메시지가 비면 이름 탓이 아니므로 아래 공통 오류 영역으로 보낸다.
+      if (isBadRequest && errData?.message && data.name !== role.name) {
+        form.setError('name', { type: 'server', message: errData.message });
+        serverFieldErrorsRef.current = new Set(['name']);
+        focusField('name');
+        return;
       }
+      setRoleError(errData?.message || '역할 업데이트에 실패했습니다.');
     } finally {
       setIsSavingRole(false);
     }
@@ -533,7 +558,9 @@ function RoleDetailView() {
               />
             </FormField>
             {roleError && (
-              <p className="text-sm text-destructive">{roleError}</p>
+              <p className="text-sm text-destructive" role="alert">
+                {roleError}
+              </p>
             )}
             {/* 시스템 역할은 수정 불가 — isSystem 플래그로 저장 버튼도 비활성화. role:write 가 없으면 버튼 자체를 숨긴다(WD-121). */}
             {canWriteRole && (
@@ -561,6 +588,14 @@ function RoleDetailView() {
         open={isRoleInfoConflictOpen}
         onOpenChange={setIsRoleInfoConflictOpen}
         resourceLabel="역할 정보"
+        onCloseAutoFocus={event => {
+          const field = pendingConflictFocusRef.current;
+          if (!field) return;
+          // Radix 기본 복귀(옛 트리거)를 막고 오류가 붙은 칸으로 포커스를 옮긴다 (WD-1102)
+          event.preventDefault();
+          pendingConflictFocusRef.current = null;
+          form.setFocus(field);
+        }}
         pending={isSavingRole}
         onReload={reloadRoleInfo}
         onOverwrite={() => form.handleSubmit(data => onRoleSubmit(data, true))()}

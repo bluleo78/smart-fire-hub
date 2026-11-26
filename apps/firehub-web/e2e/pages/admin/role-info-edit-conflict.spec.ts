@@ -294,8 +294,10 @@ test.describe('역할 상세 — 지난 저장 오류 (WD-866)', () => {
     await expect(message).toBeVisible();
     expect(payloads[1]).toMatchObject({ name: 'TESTROLE2' });
 
-    // 설명만 고쳐도 사라진다
+    // 이름 칸 오류(WD-1102)라 설명만 고치면 남고, 이름을 고쳐야 사라진다
     await page.getByLabel('설명').fill('다른 설명');
+    await expect(message).toBeVisible();
+    await page.getByLabel('역할 이름').fill('TESTROLE3');
     await expect(message).toBeHidden();
   });
 
