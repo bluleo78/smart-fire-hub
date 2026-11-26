@@ -281,11 +281,13 @@ export default function StepConfigPanel({
         selfTail.push({ ...ds, name: `[이 스텝 출력] ${ds.name}` });
       } else if (!ds && datasetsLoaded && step.inputDatasetIds.includes(selfOutputId)) {
         // 자기 출력 데이터셋이 목록에 없으면(삭제됨 등) 칩이 안 그려져 자기 참조를 지울 수 없다(WD-1164) —
-        // 이름을 알 수 없으므로 id 로 대체 라벨을 만들어 칩을 보여 해제할 수 있게 한다. 로딩 중에는 깜빡임을 막으려 만들지 않는다.
+        // 목록에 없는 데이터셋은 outputHidden/hiddenCount 가 「열람 권한 없음」으로 다루는 것과 같은 상황이라, id·이름을 노출하지 않고
+        // 같은 문구로 칩을 보여 해제(X)만 가능하게 한다. 이 id 는 후보(datasets)에 들어가므로 DatasetCombobox 의 hiddenCount(잠금 칩)에서는
+        // 빠져 한 데이터셋이 두 칩으로 겹치지 않는다. 로딩 중에는 깜빡임을 막으려 만들지 않는다.
         selfTail.push({
           id: selfOutputId,
-          name: `[이 스텝 출력] 데이터셋 #${selfOutputId}`,
-          tableName: '목록에 없음',
+          name: '[이 스텝 출력] 열람 권한 없음',
+          tableName: '',
         });
       }
     }
@@ -342,10 +344,12 @@ export default function StepConfigPanel({
     // 조상 판정은 입력 후보(inputDatasetOptions)와 같은 collectAncestorTempIds 헬퍼로 얻는다 —
     // 두 UI(스텝 참조 버튼 vs 입력 후보)가 서로 다른 기준으로 선행을 그리지 않게 통일한다(WD-1139).
     const ancestorTempIds = collectAncestorTempIds(state.steps, step.tempId);
+    // 순환(잘못된 편집 상태)으로 조상이면서 자손인 스텝은 선행으로 보지 않는다 — 입력 후보와 같은 규칙(WD-1164).
+    const descendantTempIds = collectDescendantTempIds(state.steps, step.tempId);
 
     return state.steps
       .map((s, i) => ({ step: s, number: i + 1 }))
-      .filter(({ step: s }) => ancestorTempIds.has(s.tempId));
+      .filter(({ step: s }) => ancestorTempIds.has(s.tempId) && !descendantTempIds.has(s.tempId));
   }, [state.steps, step]);
 
   if (!step) {
