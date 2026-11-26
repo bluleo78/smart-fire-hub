@@ -93,6 +93,18 @@ test.describe('플랫폼 감사 로그 (WD-4)', () => {
     expect(fits).toBe(true);
   });
 
+  // WD-1130: 서버가 actor·target 을 1,000자로 막는다(초과 시 400) — 입력란이 같은 길이에서 막혀 400 이 나지 않게 한다.
+  test('행위자·대상 입력은 서버 상한(1,000자)에서 막힌다 (WD-1130)', async ({ authenticatedPage: page }) => {
+    await mockApi(page, 'GET', PATH, createAuditPage([]));
+    await page.goto('/audit-logs');
+    await expect(page.getByLabel('행위자')).toHaveAttribute('maxlength', '1000');
+    await expect(page.getByLabel('대상')).toHaveAttribute('maxlength', '1000');
+    await page.getByLabel('행위자').fill('a'.repeat(1001));
+    await expect(page.getByLabel('행위자')).toHaveValue('a'.repeat(1000));
+    await page.getByLabel('대상').fill('b'.repeat(1001));
+    await expect(page.getByLabel('대상')).toHaveValue('b'.repeat(1000));
+  });
+
   test('필터: 행위자·대상·액션·기간(로컬 자정 순간)을 쿼리로 보내고 페이지를 0 으로 되돌린다', async ({ authenticatedPage: page }) => {
     const capture = await mockApi(page, 'GET', PATH, createAuditPage([createAuditLog()], { totalPages: 3, totalElements: 50 }), { capture: true });
     await page.goto('/audit-logs');

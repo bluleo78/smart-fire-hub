@@ -3,7 +3,9 @@ package com.smartfirehub.platform.controller;
 import com.smartfirehub.audit.dto.AuditLogResponse;
 import com.smartfirehub.global.dto.PageResponse;
 import com.smartfirehub.global.security.RequirePermission;
+import com.smartfirehub.global.validation.SearchQueryLimits;
 import com.smartfirehub.platform.service.PlatformAuditLogService;
+import jakarta.validation.constraints.Size;
 import java.time.OffsetDateTime;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -35,9 +37,22 @@ public class PlatformAuditLogController {
   @GetMapping
   @RequirePermission("platform:member:read")
   public ResponseEntity<PageResponse<AuditLogResponse>> search(
-      @RequestParam(required = false) String actor,
-      @RequestParam(required = false) String target,
-      @RequestParam(required = false) String actionType,
+      // WD-1130: 테넌트 감사 로그(WD-1111/1131)와 같은 길이 상한 — 긴 값이 LIKE 검색까지 그대로 가지 않게 막는다
+      @RequestParam(required = false)
+          @Size(
+              max = SearchQueryLimits.MAX_QUERY_LENGTH,
+              message = SearchQueryLimits.QUERY_TOO_LONG)
+          String actor,
+      @RequestParam(required = false)
+          @Size(
+              max = SearchQueryLimits.MAX_QUERY_LENGTH,
+              message = SearchQueryLimits.QUERY_TOO_LONG)
+          String target,
+      @RequestParam(required = false)
+          @Size(
+              max = SearchQueryLimits.MAX_FILTER_LENGTH,
+              message = SearchQueryLimits.FILTER_TOO_LONG)
+          String actionType,
       @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
           OffsetDateTime from,
       @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
