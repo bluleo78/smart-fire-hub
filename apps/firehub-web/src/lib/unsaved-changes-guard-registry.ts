@@ -56,6 +56,15 @@ export function registerActiveGuard(entry: ActiveGuardEntry): () => void {
   };
 }
 
+// E2E 빌드 전용 시험 훅 (WD-1174 리뷰 후속) — 실제 화면은 페이지당 가드가 하나라 「다른 등록 가드가 dirty」인 상황을
+// 브라우저 시험에서 만들 수 없다. 번들된 모듈을 시험에서 불러올 수 없으므로(preview 모드) 등록 함수만 window 에 노출한다.
+// E2E 빌드에서만 켠다 — 평소 개발 세션·운영 빌드에는 남기지 않는다(운영·일반 dev 는 __E2E__ 가 false 라 이 블록이 빠진다, vite.config.ts).
+if (__E2E__ && typeof window !== 'undefined') {
+  (window as unknown as { __unsavedGuardRegistry?: { registerActiveGuard: typeof registerActiveGuard } }).__unsavedGuardRegistry = {
+    registerActiveGuard,
+  };
+}
+
 /**
  * 이동 한 번에 확인을 물을 가드 하나를 고른다 (WD-1160).
  * 정책: dirty 가드가 여럿이어도 확인은 한 번, 가장 나중에 등록된(Set 뒤쪽) dirty 가드가 묻는다.

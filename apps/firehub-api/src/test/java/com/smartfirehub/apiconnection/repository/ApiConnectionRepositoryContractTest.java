@@ -544,10 +544,11 @@ abstract class ApiConnectionRepositoryContractTest extends TenantPairContractBas
   @Test
   @DisplayName("existsByNameExcludingId 는 앞쪽 공백 행과 뒤쪽 공백 행을 같은 이름으로 본다 (WD-1172)")
   void existsByNameExcludingId_leadingVsTrailingSpace() {
-    rawSaveA(" 결제 API");
-    long b = rawSaveA("결제 API ");
+    // 실행마다 다른 prefix 를 붙여 앞선 실행·다른 시험의 행과 겹치지 않게 한다(WD-1172 리뷰 후속)
+    rawSaveA(" " + prefix + "-결제 API");
+    long b = rawSaveA(prefix + "-결제 API ");
 
-    assertThat(inA(() -> repository().existsByNameExcludingId("결제 API", b))).isTrue();
+    assertThat(inA(() -> repository().existsByNameExcludingId(prefix + "-결제 API", b))).isTrue();
   }
 
   /** 이름을 가공 없이 그대로 저장한다(WD-1129). */

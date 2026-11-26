@@ -7,7 +7,8 @@ import {
 } from '../../fixtures/admin.fixture';
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
-import { holdApi } from '../../fixtures/hold-api';
+import { clickInOneTask } from '../../fixtures/click-in-one-task';
+import { expectSingleHeldRequest, holdApi } from '../../fixtures/hold-api';
 import { expectTableErrorAlert } from '../../fixtures/table-error-alert';
 import {
   expectLongValueTruncated,
@@ -508,6 +509,36 @@ test.describe('사용자 관리 페이지', () => {
     held.release();
     await expect(toggle, '실패 후 낙관 값이 화면에 남았다 (WD-1168)').toHaveAttribute('data-state', 'checked');
     await expect(statusLabel).toHaveText('활성');
+    await expect(toggle).not.toHaveAttribute('aria-busy');
+  });
+
+  // WD-1168 리뷰 후속: 정지→활성 방향(확인 창 없음)에서 같은 순간에 들어온 두 번째 토글도 PUT 은 하나만 만든다 —
+  // 가드가 렌더 값(isTogglingActive) 하나뿐이면 다시 그려지기 전의 두 번째 트리거가 통과할 수 있다(동기 깃발이 함께 막는다).
+  test('정지→활성 방향에서 같은 순간의 두 번째 토글도 PUT 은 한 번만 나간다 (WD-1168 리뷰 후속)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupUserDetailMocks(page, 1);
+    // 확인 창 없이 즉시 토글되는 방향을 쓰므로 정지 상태(isActive false) 사용자로 덮어쓴다
+    await mockApi(page, 'GET', '/api/v1/users/1', createUserDetail({
+      id: 1,
+      name: '테스트 사용자',
+      username: 'user1',
+      email: 'user1@example.com',
+      isActive: false,
+    }));
+    const held = await holdApi(page, 'PUT', '/api/v1/users/1/active', 200, { id: 1, isActive: true });
+    await page.goto('/admin/users/1');
+
+    const toggle = page.getByRole('switch');
+    await expect(toggle).not.toBeChecked();
+
+    // 같은 자바스크립트 작업 안에서 두 번 눌린다 — 두 번째는 첫 요청의 결과가 아직 그려지기 전에 들어온다(WD-950 공용 헬퍼)
+    await clickInOneTask(page, [toggle, toggle]);
+    await expectSingleHeldRequest(() => held.requests.length, '같은 순간의 두 번째 토글이 PUT 을 더 만들었다 (WD-1168 리뷰 후속)');
+    await expect(page.getByRole('alertdialog')).toHaveCount(0);
+
+    held.release();
+    await expect(toggle).toHaveAttribute('data-state', 'checked');
     await expect(toggle).not.toHaveAttribute('aria-busy');
   });
 

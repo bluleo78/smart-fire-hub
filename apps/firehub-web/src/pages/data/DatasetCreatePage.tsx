@@ -1,7 +1,7 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FormProvider, useForm } from 'react-hook-form';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { PageHeading } from '../../components/PageHeading';
@@ -18,10 +18,14 @@ import { useRhfDirtyReader } from '../../hooks/useRhfDirtyReader';
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard';
 import { extractApiError, handleApiError } from '../../lib/api-error';
 import { getOriginTypeLabel, getStorageTypeLabel } from '../../lib/formatters';
+import { pickInterceptingGuard } from '../../lib/unsaved-changes-guard-registry';
 import type { CreateDatasetFormData } from '../../lib/validations/dataset';
 import { createDatasetSchema, makeCreateDatasetSchema } from '../../lib/validations/dataset';
 import { MAX_DESCRIPTION_LENGTH } from '../../lib/validations/description';
 import { SchemaBuilder } from './components/SchemaBuilder';
+
+/** 만든 뒤 남았을 때의 「상세 보기」 안내 토스트 id (WD-1174 리뷰 후속) — 다시 띄우면 하나로 바꾸고, 화면을 떠나면 닫는다. */
+const CREATED_NOTICE_TOAST_ID = 'dataset-create-created-notice';
 
 export default function DatasetCreatePage() {
   const { data: categoriesData } = useCategories();
@@ -91,6 +95,8 @@ export default function DatasetCreatePage() {
     aliveRef.current = true;
     return () => {
       aliveRef.current = false;
+      // (WD-1174 리뷰 후속) 「상세 보기」 안내는 이 화면의 가드로 이동하므로 화면을 떠나면 함께 닫는다 — 남기면 눌러도 아무 일이 없다.
+      toast.dismiss(CREATED_NOTICE_TOAST_ID);
     };
   }, []);
 
@@ -104,7 +110,8 @@ export default function DatasetCreatePage() {
   // 이 화면에서 만든 데이터셋 (WD-662) — 상세 경로, 만들 때 이 생성 화면의 경로,
   // 확인창이 떠 있는 동안 만들어져 「취소」(남기) 때 상세로 보낼지(goOnStay, WD-642 에서 공용 훅에 있던 것을 옮김).
   const createdRef = useRef<{ detailPath: string; formPathname: string; goOnStay: boolean } | null>(null);
-  const navigate = useNavigate();
+  // requestNavigate 를 handleStay 가 부르기 위한 ref (WD-1174) — handleStay 는 가드 훅 호출보다 앞서 정의돼 onStay 로 넘어가므로 직접 참조하면 선언 순서가 순환한다.
+  const requestNavigateRef = useRef<((to: string) => boolean) | null>(null);
 
   // 사용자가 아직 이 화면 인스턴스로 그 경로에 있는가 (WD-642, WD-662) — 인스턴스가 살아 있고 실제 주소가 같을 때만 참이다.
   // 마운트 여부만으로는 부족하다: react-router 가 이동을 startTransition 으로 처리해, 주소는 이미 바뀌었어도
@@ -121,8 +128,29 @@ export default function DatasetCreatePage() {
     const created = createdRef.current;
     if (!created?.goOnStay) return;
     created.goOnStay = false;
-    if (isStillOn(created.formPathname)) navigate(created.detailPath);
-  }, [isStillOn, navigate]);
+    const { detailPath, formPathname } = created;
+    if (!isStillOn(formPathname)) return;
+    // (WD-1174 리뷰 후속) 다른 등록 가드가 dirty 면 상세 이동을 다시 묻지 않는다 — 「취소」는 그 변경을 지키려는 뜻인데, 다시 물으면
+    // 「취소」마다 창이 또 떠 「이탈」(그 변경을 버림) 말고는 빠져나갈 수 없다. 대신 이미 만들어졌음을 알리고 상세 바로가기를 남긴다
+    // (누르면 가드를 거쳐 다시 묻는다). 이 화면의 재제출도 이미 막혀 「만들기」를 누르면 같은 상세로 보낸다(WD-662).
+    // 안내는 닫을 때까지 남긴다 — 변경을 정리하는 데 기본 4초보다 오래 걸린다. 「상세 보기」가 다시 확인 창을 열면 goOnStay 를 다시 켜
+    // 그 창에서 또 「취소」해도 이 안내가 다시 뜬다(바로가기 없이 생성 폼에 남지 않게).
+    if (pickInterceptingGuard()) {
+      toast.info('데이터셋은 이미 만들어졌습니다. 저장하지 않은 변경을 정리한 뒤 상세로 이동하세요.', {
+        id: CREATED_NOTICE_TOAST_ID,
+        duration: Infinity,
+        action: {
+          label: '상세 보기',
+          onClick: () => {
+            if (requestNavigateRef.current?.(detailPath)) created.goOnStay = true;
+          },
+        },
+      });
+      return;
+    }
+    // 막을 가드가 없으면 바로 이동한다(창을 다시 열지 않으므로 「취소」의 handleCancel 이중 호출과 부딪히지 않는다).
+    requestNavigateRef.current?.(detailPath);
+  }, [isStillOn]);
 
   // 미저장 입력 판정 (WD-642) — 가드가 물을 때만 현재 값을 기본값과 직접 비교한다(useRhfDirtyReader 참고).
   // shouldDirty 를 빠뜨린 setValue 도 잡히고, URL 쿼리(storageType/originType)로 정해진 초기값만으로는 dirty 가 되지 않는다.
@@ -135,6 +163,7 @@ export default function DatasetCreatePage() {
   const { dialog: unsavedChangesDialog, requestNavigate, isDialogOpen } = useUnsavedChangesGuard(readIsDirty, {
     onStay: handleStay,
   });
+  requestNavigateRef.current = requestNavigate;
 
   // 폼 ref — Cmd/Ctrl+S 단축키에서 submit 트리거에 사용 (#100)
   const formRef = useRef<HTMLFormElement>(null);
@@ -245,7 +274,9 @@ export default function DatasetCreatePage() {
       resetToSaved(data);
       // 상세로 이동한다. 이탈 확인창이 떠 있으면 끌고 가지 않고 사용자의 선택을 기다린다 (WD-642, WD-662) —
       // 「이탈」이면 가려던 곳으로(WD-577 의 "이탈 선택 → 상세로 가지 않음"과 같다), 「취소」면 handleStay 가 만든 데이터셋 상세로 보낸다.
-      if (!createdRef.current.goOnStay) navigate(detailPath);
+      // (WD-1174) 자기 폼은 resetToSaved 로 깨끗하므로 바로 이동하고, 다른 등록 가드가 dirty 일 때만 묻는다.
+      // (WD-1174 리뷰 후속) 그렇게 창이 열렸으면 goOnStay 를 켠다 — 「취소」해도 handleStay 가 만든 데이터셋 상세로 보낸다.
+      if (!createdRef.current.goOnStay && requestNavigate(detailPath)) createdRef.current.goOnStay = true;
     } catch (error) {
       // 떠난 화면의 저장 실패도 알린다 (WD-642) — 성공은 떠난 뒤에도 알리므로 실패만 숨기면 만들어졌는지 알 수 없다.
       // 다른 화면 위에 뜨므로 어느 데이터셋의 일인지와 저장되지 않았다는 결과를 함께 적는다.

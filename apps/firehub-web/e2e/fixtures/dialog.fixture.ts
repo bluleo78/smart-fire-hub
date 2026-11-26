@@ -149,3 +149,19 @@ export async function expectNoOuterScroll(dialog: Locator): Promise<void> {
   const outer = await dialog.evaluate((el) => ({ scrollHeight: el.scrollHeight, clientHeight: el.clientHeight }));
   expect(outer.scrollHeight).toBeLessThanOrEqual(outer.clientHeight + 1);
 }
+
+/**
+ * 떠나기 가드의 「저장하지 않은 변경사항」 확인 창 (useUnsavedChangesGuard).
+ * @param page - 대상 페이지
+ */
+export function unsavedChangesDialog(page: Page): Locator {
+  return page.getByRole('alertdialog', { name: '저장하지 않은 변경사항' });
+}
+
+/**
+ * 떠나기 가드 확인 창이 열린 상태인지 기다린다 (WD-1174) — 닫히는 중인 창(data-state=closed)을 누르지 않게 열린 상태를 확인한다.
+ * @param page - 대상 페이지
+ */
+export async function expectUnsavedChangesDialogOpen(page: Page): Promise<void> {
+  await expect(unsavedChangesDialog(page)).toHaveAttribute('data-state', 'open');
+}

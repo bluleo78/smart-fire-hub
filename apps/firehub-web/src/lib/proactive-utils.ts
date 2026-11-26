@@ -49,7 +49,10 @@ export const REPORT_LIST_FALLBACK = { path: '/ai-insights/reports', label: '리�
  *
  * 목적지만 정하려고 작업을 따로 조회하지 않는다(WD-671) — 예전엔 기록 없이 열 때마다 GET /jobs/{id} 를 더 부르고,
  * 응답을 기다리는 동안 돌아가기를 잠가 요청이 멈추면 돌아갈 길이 없었다.
- * jobReadable 은 「조회 데이터가 있는가」로 넘긴다 — 재조회가 잠깐 실패해도 데이터는 남아 목적지가 도중에 뒤집히지 않는다.
+ * jobReadable 은 그 화면이 지금 목적지를 읽을 수 있는지 **호출부가 정해** 넘긴다 — 리포트 뷰어는 조회 오류가 있으면
+ * 캐시 데이터가 있어도 false 로 넘긴다(WD-1177): 화면이 권한·오류 안내인 동안 목적지를 작업 상세로 알리면
+ * 그 안내 화면으로 되돌아가기 때문이다. 실행 상세는 실행 조회 데이터가 있으면 true 로 넘겨, 재조회가 잠깐 실패해도
+ * 목적지가 도중에 뒤집히지 않게 한다.
  */
 export function jobBackFallback(
   jobId: number | null | undefined,
@@ -119,4 +122,46 @@ export function reportHtmlErrorKind(error: unknown): ReportHtmlErrorKind | null 
   if (isReportLevelBlocked(error)) return { kind: 'level-blocked' };
   if (isForbiddenError(error)) return { kind: 'forbidden' };
   return { kind: 'message', text: reportHtmlErrorText(error) };
+}
+
+/** 리포트 본문을 무엇으로 표시할지 — 실행 상세·리포트 모달·리포트 뷰어 세 화면이 공유하는 판정 결과. */
+export type ReportBodyState =
+  | { state: 'level-blocked' }
+  | { state: 'forbidden' }
+  | { state: 'html' }
+  | { state: 'fallback' }
+  | { state: 'message'; text: string };
+
+/**
+ * 리포트 본문 표시 상태 판정 (WD-1177·WD-1098).
+ * 실행 상세·리포트 모달·리포트 뷰어 세 화면이 한 우선순위를 쓰게 한곳에 둔다 — 화면마다 복제하면 어긋난다.
+ * 우선순위: 등급 차단 → 권한 부족(403) → 캐시 HTML → 폴백 → 문구.
+ * - 403 이어도 등급 차단·권한 부족일 때만 전용 상태로 가른다(그 밖의 오류는 캐시 HTML 이 이긴다).
+ *   권한 403 은 캐시 HTML 보다 앞선다 — 권한을 잃은 뒤 재조회가 403 이면 남은 본문을 보여주면 안 되기 때문이다(WD-1177).
+ * - 문구는 오류가 있으면 reportHtmlErrorKind 가 만든 서버 사유 문구, 오류가 없으면 '리포트가 없습니다.'
+ * - `meta` 로 실행(메타) 조회의 오류와 읽힘 여부를 함께 넘기면, 실행을 못 읽은 경우 그 문구가 HTML 오류 문구보다
+ *   먼저다(WD-1098) — HTML 없음 404 를 먼저 보이면 섹션을 못 읽었을 뿐인 실행도 「리포트가 없다」로 읽힌다.
+ *
+ * @param htmlError 리포트 HTML 조회 오류
+ * @param rawHtml 캐시된 HTML 본문(없으면 null)
+ * @param hasFallback 마크다운 폴백에 보일 섹션이 있는가
+ * @param meta 실행(메타) 조회 오류와 읽힘 여부 — 모달만 넘긴다(실행 상세는 실행을 읽은 뒤에만 이 자리에 온다)
+ */
+export function reportBodyState(
+  htmlError: unknown,
+  rawHtml: string | null,
+  hasFallback: boolean,
+  meta?: { error?: unknown; executionLoaded?: boolean },
+): ReportBodyState {
+  const htmlKind = reportHtmlErrorKind(htmlError);
+  const metaKind = reportHtmlErrorKind(meta?.error);
+  if (htmlKind?.kind === 'level-blocked' || metaKind?.kind === 'level-blocked') return { state: 'level-blocked' };
+  if (htmlKind?.kind === 'forbidden' || metaKind?.kind === 'forbidden') return { state: 'forbidden' };
+  if (rawHtml) return { state: 'html' };
+  if (hasFallback) return { state: 'fallback' };
+  if (meta?.executionLoaded === false && metaKind?.kind === 'message') {
+    return { state: 'message', text: metaKind.text };
+  }
+  if (htmlKind?.kind === 'message') return { state: 'message', text: htmlKind.text };
+  return { state: 'message', text: '리포트가 없습니다.' };
 }
