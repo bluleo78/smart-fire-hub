@@ -49,10 +49,15 @@ const ACTION_LABELS: Record<string, string> = {
  * 둘 다 없으면 resourceId, 그것도 없으면 '-'.
  * WD-1158: 소유권 이전(OWNER_TRANSFER)은 "옛1, 옛2 → 새 · 테넌트", 옛 소유자가 없던 테넌트의 복구 지정은 "→ 새 · 테넌트",
  * 이름 키가 없는 옛 행은 기존 테넌트 표기 그대로.
+ * WD-1180: 최초 운영자 가입(BOOTSTRAP_SIGNUP)은 계정 숫자 id 대신 metadata.username, 멤버 추가(MEMBER_ADD)·그 짝 역할 부여(ROLE_ASSIGN)는
+ * "멤버 · 테넌트"(누가 추가됐는지가 빠져 있었다). 저장소 확인·재발급은 서버가 싣는 tenantSlug·tenantName 으로 "이름 (slug)" 가 된다.
+ * 해당 키가 없는 옛 행은 기존 표기(resourceId 등) 그대로.
  */
 function targetOf(log: PlatformAuditLogResponse): string {
   const m = log.metadata;
   if (typeof m?.targetUsername === 'string') return m.targetUsername;
+  // WD-1180: 부트스트랩 가입 행은 resourceId 가 계정 숫자 id 라 의미가 없다 — 가입한 아이디를 보인다.
+  if (log.actionType === 'BOOTSTRAP_SIGNUP' && typeof m?.username === 'string') return m.username;
   if (typeof m?.tenantSlug === 'string') {
     const tenant = typeof m.tenantName === 'string' ? `${m.tenantName} (${m.tenantSlug})` : m.tenantSlug;
     // WD-1158: 소유권 이전은 옛 소유자 → 새 소유자 이름을 앞에 붙인다(서버가 이름을 못 찾은 사용자는 이미 뺀다).
@@ -61,6 +66,11 @@ function targetOf(log: PlatformAuditLogResponse): string {
     if (log.actionType === 'OWNER_TRANSFER' && typeof m.toUsername === 'string') {
       const from = Array.isArray(m.fromUsernames) ? m.fromUsernames.filter((n): n is string => typeof n === 'string') : [];
       return from.length > 0 ? `${from.join(', ')} → ${m.toUsername} · ${tenant}` : `→ ${m.toUsername} · ${tenant}`;
+    }
+    // WD-1180: 멤버 추가·역할 부여는 추가된 멤버를 앞에 붙인다(소유권 이전과 같은 " · " 구분). username 이 없는 행(소유권 이전이 남기는
+    // ROLE_ASSIGN 등)은 기존 테넌트 표기 그대로.
+    if ((log.actionType === 'MEMBER_ADD' || log.actionType === 'ROLE_ASSIGN') && typeof m.username === 'string') {
+      return `${m.username} · ${tenant}`;
     }
     return tenant;
   }

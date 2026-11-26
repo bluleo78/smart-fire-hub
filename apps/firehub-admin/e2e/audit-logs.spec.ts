@@ -408,6 +408,29 @@ test.describe('플랫폼 감사 로그 (WD-4)', () => {
       .getByRole('cell', { name: '→ new@x · 한빛소방서 (hanbit)', exact: true });
     await expect(cell).toBeVisible();
   });
+  // WD-1180: 숫자 id 만 보이던 대상 칸 — 저장소 확인·재발급은 "이름 (slug)", 최초 운영자 가입은 username,
+  // 멤버 추가·역할 부여는 "멤버 · 테넌트"(소유권 이전과 같은 모양). 키가 없는 옛 행은 resourceId 폴백.
+  test('대상 칸(WD-1180): 저장소 확인·재발급·최초 가입·멤버 추가·역할 부여가 사람이 읽는 이름으로 보인다', async ({ authenticatedPage: page }) => {
+    const tenantMeta = { plane: 'platform', tenantId: 7, tenantSlug: 'acme', tenantName: '에이콤' };
+    await mockApi(page, 'GET', PATH, createAuditPage([
+      createAuditLog({ id: 901, username: 'ops-verify@example.com', actionType: 'TENANT_DATA_STORE_VERIFY', resource: 'tenant', resourceId: '7', description: '검증', metadata: { ...tenantMeta, result: 'READY' } }),
+      createAuditLog({ id: 902, username: 'ops-reissue@example.com', actionType: 'TENANT_DATA_STORE_SCRIPT_REISSUE', resource: 'tenant', resourceId: '7', description: '재발급', metadata: { ...tenantMeta, dataStoreBackend: 'TIBERO' } }),
+      createAuditLog({ id: 903, username: 'ops-signup@example.com', actionType: 'BOOTSTRAP_SIGNUP', resource: 'user', resourceId: '55', description: '가입', metadata: { plane: 'platform', username: 'first-admin' } }),
+      createAuditLog({ id: 904, username: 'ops-member@example.com', actionType: 'MEMBER_ADD', resource: 'tenant', resourceId: '7', description: '멤버 추가', metadata: { plane: 'platform', tenantId: 7, tenantSlug: 'acme', userId: 3, username: 'kim@x' } }),
+      createAuditLog({ id: 905, username: 'ops-role@example.com', actionType: 'ROLE_ASSIGN', resource: 'tenant', resourceId: '7', description: '역할 부여', metadata: { plane: 'platform', tenantId: 7, tenantSlug: 'acme', userId: 3, username: 'kim@x', added: ['ADMIN'] } }),
+      createAuditLog({ id: 906, username: 'ops-old-verify@example.com', actionType: 'TENANT_DATA_STORE_VERIFY', resource: 'tenant', resourceId: '9', description: '옛 행', metadata: { plane: 'platform', result: 'READY' } }),
+    ]));
+    await page.goto('/audit-logs');
+
+    const targetOf = (actor: string) =>
+      page.getByRole('table', { name: '플랫폼 감사 로그' }).getByRole('row').filter({ hasText: actor }).getByRole('cell').nth(3);
+    await expect(targetOf('ops-verify@example.com')).toHaveText('에이콤 (acme)');
+    await expect(targetOf('ops-reissue@example.com')).toHaveText('에이콤 (acme)');
+    await expect(targetOf('ops-signup@example.com')).toHaveText('first-admin');
+    await expect(targetOf('ops-member@example.com')).toHaveText('kim@x · acme');
+    await expect(targetOf('ops-role@example.com')).toHaveText('kim@x · acme');
+    await expect(targetOf('ops-old-verify@example.com')).toHaveText('9');
+  });
   // WD-1158: 옛 소유자 여럿의 긴 대상 칸이 줄바꿈되어 1280px 화면에서 결과 배지가 표 밖(가로 스크롤)으로 밀리지 않는다.
   test('소유권 이전 행(WD-1158): 긴 대상 칸에도 결과 배지가 화면 안에 있다', async ({ authenticatedPage: page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
