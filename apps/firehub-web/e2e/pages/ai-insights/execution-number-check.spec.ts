@@ -1,4 +1,4 @@
-import { createJobExecution } from '../../factories/ai-insight.factory';
+import { createJob, createJobExecution } from '../../factories/ai-insight.factory';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 
@@ -29,6 +29,8 @@ async function openWith(
     createJobExecution({ id: 1, jobId: 1, status: 'COMPLETED', result }),
   );
   await mockApi(page, 'GET', '/api/v1/proactive/jobs/1/executions/1/html', '', { status: 404 });
+  // 실행 상세가 「실행 시각」 시간대를 위해 작업도 읽는다(WD-1175) — 목 없는 요청에 기대지 않게 같이 목한다
+  await mockApi(page, 'GET', '/api/v1/proactive/jobs/1', createJob({ id: 1 }));
   await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
   await page.goto('/ai-insights/jobs/1/executions/1');
   await expect(page.getByTestId('execution-summary')).toBeVisible();

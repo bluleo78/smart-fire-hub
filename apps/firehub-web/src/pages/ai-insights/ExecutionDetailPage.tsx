@@ -21,12 +21,13 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { InlineBanner } from '@/components/ui/inline-banner';
 import { SecurityLevelBadge } from '@/components/ui/SecurityLevelBadge';
-import { useExecution, useExecutionHtml } from '@/hooks/queries/useProactiveMessages';
+import { useExecution, useExecutionHtml, useProactiveJobTimezone } from '@/hooks/queries/useProactiveMessages';
 import { useJobGoBack } from '@/hooks/useGoBack';
 import { useReportActions } from '@/hooks/useReportActions';
 import { isForbiddenError, isNotFoundError, isReportLevelBlocked } from '@/lib/api-error';
 import { classifyExecutionOutcome, getExecutionDisplayStatus } from '@/lib/error-classifier';
-import { formatDate, formatDuration, getStatusBadgeVariant, getStatusLabel, timeAgo } from '@/lib/formatters';
+import { formatDuration, getStatusBadgeVariant, getStatusLabel, timeAgo } from '@/lib/formatters';
+import { formatExecutionStartInZone } from '@/lib/next-run';
 import { EXECUTION_NOT_FOUND_NOTICE, getSections, reportHtmlErrorKind } from '@/lib/proactive-utils';
 import { parseRouteId } from '@/lib/route-id';
 
@@ -84,6 +85,8 @@ function ExecutionDetailContent({ jobIdNum, executionIdNum }: { jobIdNum: number
 
   // 실행 데이터 조회 — RUNNING 상태일 때 5초 폴링
   const { data: execution, isLoading, isError, error } = useExecution(jobIdNum, executionIdNum);
+  // WD-1175: 「실행 시각」을 실행 이력과 같은 작업 시간대+약어로 보이려고 작업을 읽는다(이력 탭에서 들어오면 같은 캐시).
+  const { data: jobTimezone, isPending: jobPending, isError: jobError } = useProactiveJobTimezone(jobIdNum);
 
   // 돌아갈 기록이 없을 때의 목적지는 리포트 보기와 같은 규칙이다(WD-671, jobBackFallback) — 실행 조회가 성공했으면
   // 작업을 읽을 수 있으니 작업 상세, 403·404·다른 오류면 리포트 목록. 새 탭으로 연 삭제된 작업·남의 작업의 실행이
@@ -173,6 +176,14 @@ function ExecutionDetailContent({ jobIdNum, executionIdNum }: { jobIdNum: number
   const isSkipped = outcome?.type === 'skipped';
   const displayStatus = getExecutionDisplayStatus(execution.status, execution.errorMessage);
 
+  // 「실행 시각」 글자 (WD-1175) — 실행 이력과 같은 작업 시간대+약어. 규칙은 formatExecutionStartInZone 참고
+  // (조회 중 '-', 아는 시간대 우선, 모르고 실패면 브라우저 시간대+약어). 본문은 실행 조회만으로 보이던 그대로다.
+  const startedAtText = formatExecutionStartInZone(execution.startedAt, {
+    pending: jobPending,
+    error: jobError,
+    timezone: jobTimezone,
+  });
+
   return (
     <div className="px-6 py-4 space-y-6">
       {/* 고정 헤더: 뒤로가기 + 실행 번호 */}
@@ -208,7 +219,7 @@ function ExecutionDetailContent({ jobIdNum, executionIdNum }: { jobIdNum: number
         {/* 실행 시각 */}
         <div className="rounded-lg border bg-card p-4">
           <p className="text-xs text-muted-foreground mb-1">실행 시각</p>
-          <p className="text-sm font-medium">{formatDate(execution.startedAt)}</p>
+          <p className="text-sm font-medium">{startedAtText}</p>
           <p className="text-xs text-muted-foreground">{timeAgo(execution.startedAt)}</p>
         </div>
 
