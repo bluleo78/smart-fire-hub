@@ -91,9 +91,10 @@ function ExecutionDetailContent({ jobIdNum, executionIdNum }: { jobIdNum: number
   // 뒤로 가기는 여기서 한 번만 만들어 안내 화면·본문의 버튼에 내려준다(WD-667).
   const { goBack } = useJobGoBack(jobIdNum, execution !== undefined);
 
-  // HTML 리포트 조회 — COMPLETED 상태이고 result가 있을 때만 활성화. 리포트 보기·모달과 같은 훅·캐시를 쓴다(WD-661)
+  // HTML 리포트 조회 — COMPLETED 상태일 때 활성화. 리포트 보기·모달과 같은 훅·캐시를 쓴다(WD-661)
+  // result 가 없어도 조회한다(WD-1098) — 서버의 400 「이 실행에는 리포트 결과가 없습니다.」를 받아 빈 영역 대신 안내를 보인다.
   const { data: htmlResponse, error: htmlError } = useExecutionHtml(jobIdNum, executionIdNum, {
-    enabled: execution?.status === 'COMPLETED' && execution?.result != null,
+    enabled: execution?.status === 'COMPLETED',
   });
 
   const rawHtml = htmlResponse?.data ?? null;

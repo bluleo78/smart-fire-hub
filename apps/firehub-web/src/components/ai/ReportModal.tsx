@@ -82,6 +82,30 @@ export default function ReportModal({ open, onClose, jobId, executionId }: Repor
   const sections = execution?.result ? getSections(execution.result) : [];
   const isLoading = htmlLoading || metaLoading;
 
+  // 본문에 그릴 것 하나를 한곳에서 고른다(WD-1098) — 블록마다 조건을 따로 두면 안내와 리포트·폴백이 한 본문에 겹쳤다.
+  // 우선순위: 로딩 > 등급 차단(캐시된 HTML 이 있어도) > HTML 리포트 > 권한 부족 > 마크다운 폴백 > 빈 상태.
+  const bodyKind: 'loading' | 'level-blocked' | 'html' | 'forbidden' | 'fallback' | 'empty' = isLoading
+    ? 'loading'
+    : levelBlocked
+      ? 'level-blocked'
+      : rawHtml
+        ? 'html'
+        : forbidden
+          ? 'forbidden'
+          : sections.length > 0
+            ? 'fallback'
+            : 'empty';
+
+  // 빈 상태 문구 — 실행 조회가 403 밖 오류로 실패해 실행(곧 마크다운 섹션)을 모르면 그 문구가 먼저다.
+  // HTML 없음 404 를 먼저 보이면 섹션을 못 읽었을 뿐인 실행도 「리포트가 없다」로 읽힌다.
+  // 실행을 읽었으면 HTML 조회 오류 문구(뷰어와 같은 규칙), 둘 다 없으면 기본 문구.
+  const emptyStateText =
+    !execution && metaErrorKind?.kind === 'message'
+      ? metaErrorKind.text
+      : htmlErrorKind?.kind === 'message'
+        ? htmlErrorKind.text
+        : '리포트가 없습니다.';
+
   // PDF 다운로드 + 인쇄 공통 훅
   const { handleDownloadPdf, handlePrint, downloading } = useReportActions({
     jobId,
@@ -98,10 +122,9 @@ export default function ReportModal({ open, onClose, jobId, executionId }: Repor
 
   /**
    * 마크다운 폴백 렌더링
-   * HTML 리포트가 없지만 실행 결과(result)가 있을 때 섹션별 마크다운으로 표시
+   * HTML 리포트가 없고 실행 결과에 보일 섹션이 있을 때 섹션별 마크다운으로 표시(등급 차단·권한 부족이면 그리지 않는다)
    */
   const renderMarkdownFallback = () => {
-
     return (
       <div ref={contentRef} className="p-6 space-y-6 overflow-auto h-full">
         {sections.map((section) => (
@@ -196,16 +219,16 @@ export default function ReportModal({ open, onClose, jobId, executionId }: Repor
           </div>
         </DialogHeader>
 
-        {/* 본문 — 로딩 / HTML 리포트 / 마크다운 폴백 / 빈 상태 */}
+        {/* 본문 — bodyKind 하나만 그린다(로딩 / 등급 차단 / HTML 리포트 / 권한 부족 / 마크다운 폴백 / 빈 상태) */}
         <div className="relative min-h-24 flex-1 overflow-hidden">
-          {isLoading && (
+          {bodyKind === 'loading' && (
             <div className="flex items-center justify-center h-full gap-2 text-muted-foreground">
               <Loader2 className="h-5 w-5 animate-spin" />
               <span className="text-sm">리포트를 불러오는 중...</span>
             </div>
           )}
 
-          {!isLoading && levelBlocked && (
+          {bodyKind === 'level-blocked' && (
             <div className="flex items-center justify-center h-full px-6">
               <RestrictedNotice
                 message={REPORT_LEVEL_BLOCKED_MESSAGE}
@@ -216,26 +239,25 @@ export default function ReportModal({ open, onClose, jobId, executionId }: Repor
           )}
 
           {/* HTML 리포트가 있으면 iframe으로 렌더링 */}
-          {!isLoading && rawHtml && (
+          {bodyKind === 'html' && rawHtml && (
             <div className="h-full bg-white">
               <ReportIframe ref={iframeRef} html={rawHtml} />
             </div>
           )}
 
-          {/* 권한 부족(403) — 등급 차단 안내 다음, 오류 문구 대신 권한 안내 (WD-1098) */}
-          {!isLoading && forbidden && !rawHtml && (
+          {/* 권한 부족(403) — 오류 문구 대신 권한 안내 (WD-137·WD-1098) */}
+          {bodyKind === 'forbidden' && (
             <ProactiveReadForbiddenNotice subject="리포트" testId="report-modal-forbidden" />
           )}
 
           {/* HTML이 없고 마크다운 섹션이 있으면 마크다운 폴백 */}
-          {!isLoading && !rawHtml && sections.length > 0 && renderMarkdownFallback()}
+          {bodyKind === 'fallback' && renderMarkdownFallback()}
 
-          {/* 리포트도 결과도 없는 빈 상태 — HTML 조회 오류가 있으면 뷰어와 같은 규칙의 안내를 보인다(WD-1098).
-              등급 차단·권한 부족은 위 블록이 먼저이고, 마크다운 섹션이 있으면 이 블록은 나오지 않는다.
+          {/* 리포트도 섹션도 없는 빈 상태 — 문구 규칙은 emptyStateText.
               result 가 있어도 섹션이 없으면(예: {}) 폴백이 비므로 이 블록이 맡는다. */}
-          {!isLoading && !levelBlocked && !forbidden && !rawHtml && sections.length === 0 && (
+          {bodyKind === 'empty' && (
             <div className="flex items-center justify-center h-full text-muted-foreground">
-              <p className="text-sm">{htmlErrorKind?.kind === 'message' ? htmlErrorKind.text : '리포트가 없습니다.'}</p>
+              <p className="text-sm">{emptyStateText}</p>
             </div>
           )}
         </div>
