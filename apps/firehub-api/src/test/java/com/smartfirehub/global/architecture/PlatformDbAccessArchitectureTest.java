@@ -106,7 +106,11 @@ class PlatformDbAccessArchitectureTest {
    * 존재 이유다. 영구 면제.
    */
   static final Set<String> PLATFORM_DB_WIRING =
-      Set.of("com.smartfirehub.global.config.PipelineSandboxDataSourceConfig");
+      Set.of(
+          "com.smartfirehub.global.config.PipelineSandboxDataSourceConfig",
+          // PG 이름 비교식 조각(WD-1162) — 기동 때 플랫폼 DSLContext 로 server_encoding 을 한 번 읽고, jOOQ 리포지토리 구현에
+          // lower(trim(translate(...))) Field 를 만들어 준다. PG 플랫폼 DB 에서만 뜨는(@ConditionalOnPostgresPlatformDb) 부품이다.
+          "com.smartfirehub.global.validation.PgEdgeSpaceChars");
 
   /**
    * PG JDBC 드라이버({@code org.postgresql..}) 직접 사용 중 {@code TENANT_DATA_PATH}·{@code
