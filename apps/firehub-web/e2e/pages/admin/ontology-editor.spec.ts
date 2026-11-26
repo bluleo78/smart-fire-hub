@@ -304,8 +304,9 @@ test.describe('ModelOutline — 타입/관계 검색', () => {
 
     // 아무 타입에도 매치되지 않는 검색어 — 빈 상태 안내 문구가 보인다.
     await page.getByLabel('타입 검색').fill('존재하지않는타입');
-    await expect(entityList.getByRole('button')).toHaveCount(0);
-    await expect(entityList).toContainText('검색 결과가 없습니다.');
+    // WD-1178: 0건 안내 안에 「검색 초기화」 버튼이 생겼으므로 타입 행(outline-entity-*)만 센다.
+    await expect(entityList.locator('[data-testid^="outline-entity-"]')).toHaveCount(0);
+    await expect(entityList).toContainText("'존재하지않는타입'에 대한 결과가 없습니다.");
   });
 
   test('관계 검색은 subject → relation → object 전체 텍스트를 대상으로 부분일치한다', async ({ authenticatedPage: page }) => {
@@ -329,6 +330,51 @@ test.describe('ModelOutline — 타입/관계 검색', () => {
     // 검색어를 지우면 전체 목록이 돌아온다.
     await page.getByLabel('관계 검색').fill('');
     await expect(relationList.getByRole('button')).toHaveCount(6);
+  });
+
+  // WD-1178: 0건 안내를 공용 SearchNoResult 로 — 검색어 인용 + 「검색 초기화」 + 초점 복귀.
+  test('타입 검색 0건이면 검색어를 인용하고 검색 초기화로 되돌린 뒤 초점이 타입 검색에 간다 (WD-1178)', async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+    await setupOntologyMocks(page);
+    await openEditMode(page);
+
+    await page.getByLabel('타입 검색').fill('없는타입');
+    const group = page.getByTestId('model-outline-entities').getByRole('group', { name: '타입 검색 결과' });
+    await expect(group).toContainText("'없는타입'에 대한 결과가 없습니다.");
+    await group.getByRole('button', { name: '검색 초기화' }).click();
+
+    await expect(page.getByTestId('model-outline-entities').getByRole('button')).toHaveCount(6);
+    await expect(page.getByLabel('타입 검색')).toHaveValue('');
+    await expect(page.getByLabel('타입 검색')).toBeFocused();
+  });
+
+  // 타입·관계가 둘 다 0건이면 「검색 초기화」 가 둘 — 각 버튼은 자기 섹션만 비우고 초점도 자기 입력으로 간다.
+  test('관계 검색 0건도 같은 안내이고 검색 초기화는 관계 검색만 비운다 (WD-1178)', async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+    await setupOntologyMocks(page);
+    await openEditMode(page);
+
+    await page.getByLabel('타입 검색').fill('build');
+    await page.getByLabel('관계 검색').fill('없는관계');
+    const group = page.getByTestId('model-outline-relations').getByRole('group', { name: '관계 검색 결과' });
+    await expect(group).toContainText("'없는관계'에 대한 결과가 없습니다.");
+    await group.getByRole('button', { name: '검색 초기화' }).click();
+
+    await expect(page.getByTestId('model-outline-relations').getByRole('button')).toHaveCount(6);
+    await expect(page.getByLabel('관계 검색')).toHaveValue('');
+    await expect(page.getByLabel('관계 검색')).toBeFocused();
+    await expect(page.getByLabel('타입 검색')).toHaveValue('build');
+    await expect(page.getByTestId('model-outline-entities').getByRole('button')).toHaveCount(1);
+  });
+
+  test('공백뿐인 검색어는 0건 안내 없이 전체를 보인다 (WD-1178)', async ({ authenticatedPage: page }) => {
+    await setupAdminAuth(page);
+    await setupOntologyMocks(page);
+    await openEditMode(page);
+
+    await page.getByLabel('타입 검색').fill('   ');
+    await expect(page.getByTestId('model-outline-entities').getByRole('button')).toHaveCount(6);
+    await expect(page.getByTestId('model-outline-entities').getByRole('group', { name: '타입 검색 결과' })).toHaveCount(0);
   });
 });
 
