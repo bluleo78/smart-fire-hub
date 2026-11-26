@@ -996,6 +996,61 @@ test.describe('고대비 스위치 켜짐·꺼짐 구분 (WD-1137)', () => {
   test('요청 중인 채널 스위치(켜짐 요청)는 활성 켜짐 스위치와 같은 색(Highlight) (WD-1150)', async ({ authenticatedPage: page }) => {
     await expectBusyMatchesEnabledSwitch(page, true);
   });
+
+  /**
+   * 요청 중인 사용자 상세 활성 스위치 색 (WD-1168) — 「GrayText 가 아님」만으로는 어떤 색이든 통과하므로,
+   * 요청을 푼 뒤 같은 상태가 된 유휴 스위치 색과 정확히 같은지까지 단언한다(WD-1150 헬퍼와 같은 방법).
+   * 사용자 상세에는 스위치가 하나뿐이라 참조를 같은 스위치의 유휴 상태에서 얻는다.
+   * 대상은 id 1 — id 2 는 setupAdminAuth 의 자기 계정이라 정지 잠금(suspendLock) 갈래의 진짜 disabled 로 렌더링된다.
+   */
+  test('요청 중인 사용자 상세 활성 스위치는 유휴 스위치와 같은 색이고 GrayText 가 아니다 (WD-1168)', async ({ authenticatedPage: page }) => {
+    await page.emulateMedia({ forcedColors: 'active' });
+    await setupAdminAuth(page);
+    await mockApi(page, 'GET', '/api/v1/roles', [createRole({ id: 1, name: 'USER', isSystem: true })]);
+    await mockApi(page, 'GET', '/api/v1/users/1', createUserDetail({ id: 1, name: '테스트 사용자', username: 'user1', isActive: true }));
+    const held = await holdApi(page, 'PUT', '/api/v1/users/1/active', 200, { id: 1, isActive: false });
+    await page.goto('/admin/users/1');
+
+    const sw = page.getByRole('switch', { name: '이 워크스페이스에서 활성' });
+    await expect(sw).toBeChecked();
+    await sw.click();
+    await page.getByRole('alertdialog').getByRole('button', { name: '정지' }).click();
+    // 닫힘 오버레이(z-50, 200ms)가 남아 있으면 아래 클릭이 오버레이에 먹힌다
+    await expect(page.getByRole('alertdialog')).toHaveCount(0);
+
+    await expect(sw).toHaveAttribute('aria-busy', 'true');
+    await expect(sw, '요청 중 스위치가 disabled 로 바뀌었다 (WD-1168)').not.toHaveAttribute('disabled');
+    await expect(sw).toHaveAttribute('data-state', 'unchecked');
+    const grayText = await readSystemColor(page, 'GrayText');
+    // 알약 색 전환(150ms)이 끝날 때까지 기다린다 — 마지막으로 읽은 색을 아래 단언에 쓴다.
+    // 전환 중간 값을 그대로 비교에 쓰면 유휴 색과 어긋나 오패스가 나므로, 연속 두 판독이 같아질 때(안정화)까지 센다.
+    let prevBusy = '';
+    let busy!: Awaited<ReturnType<typeof readSwitchColors>>;
+    await expect
+      .poll(async () => {
+        busy = await readSwitchColors(sw);
+        const same = busy.trackBg === prevBusy;
+        prevBusy = busy.trackBg;
+        return same && busy.trackBg !== grayText;
+      }, { message: '요청 중 알약이 고정되지 않았다 (WD-1168)' })
+      .toBe(true);
+    expect([busy.trackBg, busy.trackBorder, busy.thumbBg], '요청 중 색에 GrayText 가 섞였다 (WD-1168)')
+      .not.toContain(grayText);
+    // 반투명(opacity < 1)이 busy 상태에 남으면 색 비교만으로는 통과하므로 루트 불투명도까지 단언한다(WD-1168)
+    expect(busy.rootOpacity, '요청 중 스위치 루트에 반투명이 남았다 (WD-1168)').toBe('1');
+
+    // 요청을 풀면 같은 상태(정지)의 유휴 스위치가 된다 — busy 색이 그 유휴 색과 같아야 한다
+    held.release();
+    await expect(sw).not.toHaveAttribute('aria-busy');
+    await expect(sw).toHaveAttribute('data-state', 'unchecked');
+    let idle!: Awaited<ReturnType<typeof readSwitchColors>>;
+    await expect
+      .poll(async () => {
+        idle = await readSwitchColors(sw);
+        return [idle.trackBg, idle.trackBorder, idle.thumbBg];
+      }, { message: '유휴 스위치 색이 고정되지 않았다 (WD-1168)' })
+      .toEqual([busy.trackBg, busy.trackBorder, busy.thumbBg]);
+  });
 });
 
 /**
