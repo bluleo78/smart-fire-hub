@@ -358,24 +358,28 @@ test.describe('플랫폼 감사 로그 (WD-4)', () => {
 
   // WD-1157: 서버가 플랫폼 감사로 쓰는 멤버 추가·저장소 연결 확인/스크립트 재발급·최초 운영자 가입도 원문 코드가 아니라 라벨로 보여야 한다.
   test('테넌트 멤버·저장소·최초 가입 행(WD-1157): 한글 라벨로 보이고 필터로 조회된다', async ({ authenticatedPage: page }) => {
-    // 목 행의 resource·metadata 는 서버가 실제로 쓰는 모양이다(PlatformTenantMemberService·TenantDataStoreSetupService·PlatformAuthService).
+    // 목 행의 resource·resourceId·description·metadata 는 서버가 실제로 기록하는 값이다(PlatformTenantMemberService.addMember·TenantDataStoreSetupService.verify/reissueScript·PlatformAuthService.afterBootstrapSignup).
+    // 멤버 추가 details 는 tenantName 이 없고(id·slug 만), 저장소 감사는 tenantName 까지 싣는다(WD-1180).
     const capture = await mockApi(page, 'GET', PATH, createAuditPage([
       createAuditLog({
         id: 821, username: 'member-ops@example.com', actionType: 'MEMBER_ADD', resource: 'tenant', resourceId: '1',
         description: '새 계정을 만들어 테넌트 멤버로 추가',
-        metadata: { plane: 'platform', tenantSlug: 'acme', tenantName: '에이씨엠이', username: 'kim@example.com', created: true, roles: ['USER'] },
+        metadata: { plane: 'platform', tenantId: 1, tenantSlug: 'acme', userId: 31, username: 'kim@example.com', created: true, roles: ['USER'] },
       }),
       createAuditLog({
         id: 822, username: 'verify-ops@example.com', actionType: 'TENANT_DATA_STORE_VERIFY', resource: 'tenant', resourceId: '1',
-        description: '데이터 저장소 연결 점검', metadata: { result: 'OK', failedAccounts: [] },
+        description: '테넌트 데이터셋 저장소 계정 검증',
+        metadata: { plane: 'platform', tenantId: 1, tenantSlug: 'acme', tenantName: '에이씨엠이', result: 'READY', failedAccounts: [] },
       }),
       createAuditLog({
         id: 823, username: 'reissue-ops@example.com', actionType: 'TENANT_DATA_STORE_SCRIPT_REISSUE', resource: 'tenant', resourceId: '1',
-        description: '초기화 스크립트 재발급', metadata: { dataStoreBackend: 'POSTGRES' },
+        description: '테넌트 데이터셋 저장소 스크립트 재발급',
+        metadata: { plane: 'platform', tenantId: 1, tenantSlug: 'acme', tenantName: '에이씨엠이', dataStoreBackend: 'TIBERO' },
       }),
       createAuditLog({
         id: 824, username: 'first-ops@example.com', actionType: 'BOOTSTRAP_SIGNUP', resource: 'user', resourceId: '1',
-        description: '첫 플랫폼 운영자 계정 생성', metadata: { username: 'first-ops@example.com', roles: ['SUPER_ADMIN'] },
+        description: '첫 운영자 계정 가입(부트스트랩)',
+        metadata: { plane: 'platform', username: 'first-ops@example.com', ip: '10.0.0.5', roles: ['SUPER_ADMIN', 'ADMIN', 'USER'] },
       }),
     ]), { capture: true });
     await page.goto('/audit-logs');
@@ -386,6 +390,11 @@ test.describe('플랫폼 감사 로그 (WD-4)', () => {
     await expect(rowOf('verify-ops@example.com').getByRole('cell').nth(2)).toHaveText('저장소 연결 확인');
     await expect(rowOf('reissue-ops@example.com').getByRole('cell').nth(2)).toHaveText('저장소 스크립트 재발급');
     await expect(rowOf('first-ops@example.com').getByRole('cell').nth(2)).toHaveText('최초 운영자 가입');
+    // WD-1180: 대상 칸 — 멤버 추가는 「멤버 · slug」, 저장소 확인·재발급은 「이름 (slug)」, 최초 가입은 가입 아이디(resourceId 숫자 아님).
+    await expect(rowOf('member-ops@example.com').getByRole('cell', { name: 'kim@example.com · acme', exact: true })).toBeVisible();
+    await expect(rowOf('verify-ops@example.com').getByRole('cell', { name: '에이씨엠이 (acme)', exact: true })).toBeVisible();
+    await expect(rowOf('reissue-ops@example.com').getByRole('cell', { name: '에이씨엠이 (acme)', exact: true })).toBeVisible();
+    await expect(rowOf('first-ops@example.com').getByRole('cell').nth(3)).toHaveText('first-ops@example.com');
     for (const code of ['MEMBER_ADD', 'TENANT_DATA_STORE_VERIFY', 'TENANT_DATA_STORE_SCRIPT_REISSUE', 'BOOTSTRAP_SIGNUP']) {
       await expect(page.getByText(code, { exact: true })).toHaveCount(0);
     }
