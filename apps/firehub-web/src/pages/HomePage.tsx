@@ -50,6 +50,14 @@ import { cn } from '../lib/utils';
 const HEALTH_METRIC_BUTTON_CLASS =
   'flex min-h-8 min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-left rounded-md outline-none focus-visible:ring-[3px] focus-visible:ring-ring hover:opacity-80 transition-opacity cursor-pointer';
 
+/**
+ * 최근 사용 카드의 작은 텍스트 링크(「전체 보기」·「만들기」)용 클릭 영역 확장 클래스 (WD-1115).
+ * 글자 크기 그대로면 박스 높이가 16~17px 뿐이라 디자인 가이드의 최소 클릭 타깃 32×32 에 못 미친다.
+ * min-h-8/min-w-8 로 박스 자체를 32px 이상으로 키우고(글자 크기·색은 그대로, 가운데 정렬),
+ * -my-1.5 음수 세로 여백으로 늘어난 만큼(위·아래 6px)을 되돌려 카드 머리줄·빈 상태 문장의 줄 높이는 늘지 않게 한다.
+ */
+const HOME_LINK_HIT_AREA = 'inline-flex min-h-8 min-w-8 items-center justify-center -my-1.5';
+
 function ActivityIcon({ eventType }: { eventType: string }) {
   const t = eventType.toUpperCase();
   if (t.includes('FAIL') || t.includes('ERROR')) return <XCircle className="h-4 w-4 text-destructive shrink-0" />;
@@ -471,7 +479,7 @@ export default function HomePage() {
                   )}
                   <Link
                     to="/analytics/dashboards"
-                    className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                    className={`${HOME_LINK_HIT_AREA} text-xs text-muted-foreground hover:text-foreground transition-colors`}
                   >
                     전체 보기
                   </Link>
@@ -504,7 +512,7 @@ export default function HomePage() {
               ) : (
                 <p className="text-sm text-muted-foreground py-1.5">
                   대시보드가 없습니다.{' '}
-                  <Link to="/analytics/dashboards" className="text-primary hover:underline">만들기</Link>
+                  <Link to="/analytics/dashboards" className={`${HOME_LINK_HIT_AREA} text-primary hover:underline`}>만들기</Link>
                 </p>
               )}
             </CardContent>
@@ -524,7 +532,7 @@ export default function HomePage() {
                   )}
                   <Link
                     to="/data/datasets"
-                    className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                    className={`${HOME_LINK_HIT_AREA} text-xs text-muted-foreground hover:text-foreground transition-colors`}
                   >
                     전체 보기
                   </Link>
@@ -569,7 +577,7 @@ export default function HomePage() {
                   {canWriteDataset && (
                     <>
                       {' '}
-                      <Link to="/data/datasets/new" className="text-primary hover:underline">만들기</Link>
+                      <Link to="/data/datasets/new" className={`${HOME_LINK_HIT_AREA} text-primary hover:underline`}>만들기</Link>
                     </>
                   )}
                 </p>
