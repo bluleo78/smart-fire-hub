@@ -73,7 +73,16 @@ class PlatformMapperLoadTest {
           "tibero:com.smartfirehub.apiconnection.repository.mybatis.ApiConnectionMapper.countByNameExcludingId",
           "PG 전용 — Tibero 는 selectNamesExcludingId + Java 비교(WD-1172)",
           "tibero:com.smartfirehub.proactive.repository.mybatis.ProactiveJobMapper.countByOwnerAndName",
-          "PG 전용 — Tibero 는 selectNamesByOwner + Java 비교(WD-1172)");
+          "PG 전용 — Tibero 는 selectNamesByOwner + Java 비교(WD-1172)",
+          // WD-1181: 리포트 양식·저장 쿼리·분석 대시보드·차트도 같은 방식으로 바꿔 공통(Tibero) COUNT 문을 지웠다.
+          "tibero:com.smartfirehub.proactive.repository.mybatis.ReportTemplateMapper.countByOwnerAndName",
+          "PG 전용 — Tibero 는 selectNamesByOwner + Java 비교(WD-1181)",
+          "tibero:com.smartfirehub.analytics.repository.mybatis.SavedQueryMapper.countByOwnerAndName",
+          "PG 전용 — Tibero 는 selectNamesByOwner + Java 비교(WD-1181)",
+          "tibero:com.smartfirehub.analytics.repository.mybatis.AnalyticsDashboardMapper.countByOwnerAndName",
+          "PG 전용 — Tibero 는 selectNamesByOwner + Java 비교(WD-1181)",
+          "tibero:com.smartfirehub.analytics.repository.mybatis.ChartMapper.countByOwnerAndName",
+          "PG 전용 — Tibero 는 selectNamesByOwner + Java 비교(WD-1181)");
 
   /** {@code @PlatformMapper} 인터페이스(운영 {@code @MapperScan} 과 같은 기준). 한 번만 스캔한다. */
   private static final List<Class<?>> MAPPERS = scanPlatformMappers();
