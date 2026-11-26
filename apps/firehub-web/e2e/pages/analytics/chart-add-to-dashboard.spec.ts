@@ -1085,4 +1085,50 @@ test.describe('대시보드에 추가 — 떠난 뒤 이동 금지·미저장 �
     await expect(page).toHaveURL('/analytics/charts/1');
     await expect(page.getByRole('button', { name: '대시보드로 가기' })).toHaveCount(0);
   });
+
+  /**
+   * (WD-1166) 차트 목록 → 차트 빌더로 들어와(뒤로 갈 기록을 만들고) 추가 요청을 붙잡아 둔 채 차트 설정을 고치고,
+   * 브라우저 뒤로가기로 가드 확인 창을 연 뒤 추가 응답을 풀어 준다. 창은 뒤로가기가 연 것 하나여야 한다.
+   */
+  async function openBackGuardThenReleaseAdd(page: Page) {
+    await setupBuilder(page);
+    const held = await holdApi(page, 'POST', `${LIST_PATH}/10/widgets`, 200, createWidget({ id: 999 }));
+    await page.goto('/analytics/charts');
+    await page.getByText('테스트 차트').first().click();
+    await expect(page).toHaveURL('/analytics/charts/1');
+    await addViaDialog(page);
+    await expect.poll(() => held.requests.length).toBe(1);
+    await page.locator('button[aria-label="선 차트"]').dispatchEvent('click');
+    await expect(page.getByText('미저장 변경사항')).toBeVisible();
+
+    // 브라우저 뒤로가기 — 가드가 막아 URL 이 복원되고 확인 창이 열린다
+    await page.goBack();
+    const guard = page.getByRole('alertdialog');
+    await expect(guard.getByText('저장하지 않은 변경사항이 있습니다. 이탈하시겠습니까?')).toBeVisible();
+    await expect(page).toHaveURL('/analytics/charts/1');
+    held.release();
+    // 추가 응답이 처리될 때까지 기다린다 — finishAdded 가 토스트 직후 같은 동기 구간에서 이동 요청을 하므로, 토스트가 보이면 요청은 끝났다
+    await expect(page.getByText(/에 차트가 추가되었습니다/)).toBeVisible();
+    // 추가 완료의 이동 요청은 열린 창의 대상을 바꾸지 않고 창도 늘리지 않는다
+    await expect(page.getByRole('alertdialog')).toHaveCount(1);
+    return guard;
+  }
+
+  test('뒤로가기 확인 창이 열린 중 추가가 끝나도 「이탈」은 대시보드가 아니라 뒤로 간다 (WD-1166)', async ({
+    authenticatedPage: page,
+  }) => {
+    const guard = await openBackGuardThenReleaseAdd(page);
+    await guard.getByRole('button', { name: '이탈' }).click();
+    await expect(page).toHaveURL('/analytics/charts');
+    await expect(page).not.toHaveURL(/dashboards\/10/);
+  });
+
+  test('뒤로가기 확인 창이 열린 중 추가가 끝나고 「취소」하면 「대시보드로 가기」 토스트가 뜬다 (WD-1166)', async ({
+    authenticatedPage: page,
+  }) => {
+    const guard = await openBackGuardThenReleaseAdd(page);
+    await guard.getByRole('button', { name: '취소' }).click();
+    await expect(page).toHaveURL('/analytics/charts/1');
+    await expect(page.getByRole('button', { name: '대시보드로 가기' })).toBeVisible();
+  });
 });
