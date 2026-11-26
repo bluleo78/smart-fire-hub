@@ -100,7 +100,8 @@ public interface ChartMapper {
 
   /**
    * 같은 소유자·같은 이름(앞뒤 공백·대소문자 무시)의 차트 수(WD-824). excludeId 가 null 이면 제외 없음. ws/sp 는 PG 판이 유니코드 공백을
-   * ASCII 공백으로 바꾸는 translate 인자다(WD-1094) — 공통 문(Tibero 등)은 쓰지 않는다.
+   * ASCII 공백으로 바꾸는 translate 인자다(WD-1094) — PostgreSQL 전용 문이며, 비 PG(Tibero)는 {@link
+   * #selectNamesByOwner} 로 이름을 읽어 Java 에서 비교한다(WD-1181).
    */
   long countByOwnerAndName(
       @Param("ownerId") long ownerId,
@@ -108,4 +109,11 @@ public interface ChartMapper {
       @Param("excludeId") Long excludeId,
       @Param("ws") String ws,
       @Param("sp") String sp);
+
+  /**
+   * 비 PG(Tibero) 이름 중복 판정용 — 소유자의 차트 이름 목록(WD-1181). 유니코드 값을 바인딩하지 않고 정수 id 만 바인딩하며, 비교는 저장소가 Java
+   * 로 한다. excludeId 가 null 이면 제외 없음.
+   */
+  List<String> selectNamesByOwner(
+      @Param("ownerId") long ownerId, @Param("excludeId") Long excludeId);
 }

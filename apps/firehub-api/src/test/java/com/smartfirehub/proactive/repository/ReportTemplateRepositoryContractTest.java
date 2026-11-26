@@ -59,8 +59,8 @@ abstract class ReportTemplateRepositoryContractTest extends TenantPairContractBa
   }
 
   /**
-   * 이름 중복 SQL 의 기준을 실행해 본다(WD-1094) — 앞뒤 전각 공백이 붙은 옛 행은 PG(jOOQ·MyBatis) 에서 같은 이름이고, Tibero 의
-   * lower(trim) 은 ASCII 만 걷으므로 다른 이름이다. 구현이 알리는 {@code nameComparison()} 이 이 결과와 일치해야 개명 판정이 SQL 과
+   * 이름 중복 SQL 의 기준을 실행해 본다(WD-1094) — 앞뒤 전각 공백이 붙은 옛 행은 모든 구현에서 같은 이름이다(WD-1181 부터 Tibero 도 이름 목록을
+   * 읽어 Java 에서 UNICODE_TRIM 으로 비교한다). 구현이 알리는 {@code nameComparison()} 이 이 결과와 일치해야 개명 판정이 SQL 과
    * 어긋나지 않는다. 내장 양식(user_id NULL)과도 같은 기준으로 겹친다.
    */
   @Test
@@ -73,13 +73,13 @@ abstract class ReportTemplateRepositoryContractTest extends TenantPairContractBa
     assertThat(inA(() -> repository().existsByOwnerAndName(userA, "ascii-" + prefix, null)))
         .as("ASCII 공백·대소문자는 항상 무시")
         .isTrue();
-    boolean unicode = repository().nameComparison() == NameComparison.UNICODE_TRIM;
+    assertThat(repository().nameComparison()).isEqualTo(NameComparison.UNICODE_TRIM);
     assertThat(inA(() -> repository().existsByOwnerAndName(userA, "Sales-" + prefix, null)))
-        .as("앞뒤 전각 공백은 UNICODE_TRIM 일 때만 같은 이름")
-        .isEqualTo(unicode);
+        .as("앞뒤 전각 공백도 같은 이름")
+        .isTrue();
     assertThat(inA(() -> repository().existsByOwnerAndName(userA, "Builtin-" + prefix, null)))
         .as("내장 양식도 같은 기준")
-        .isEqualTo(unicode);
+        .isTrue();
     assertThat(inA(() -> repository().existsByOwnerAndName(userA, "Sales-" + prefix, legacy)))
         .as("자기 자신은 제외")
         .isFalse();

@@ -106,8 +106,8 @@ public interface ChartRepository {
 
   /**
    * {@link #existsByOwnerAndName} 의 SQL 이 쓰는 이름 비교 기준(WD-1094). 개명 판정이 이 기준을 따라야 SQL 이 같게 보는 이름을
-   * 개명으로 놓치지 않는다 — DB 마다 SQL 이 달라 구현이 답한다. 기본값은 PostgreSQL(jOOQ) 구현의 UNICODE_TRIM 이고 MyBatis 구현만
-   * databaseId 로 재정의한다.
+   * 개명으로 놓치지 않는다 — DB 마다 SQL 이 달라 구현이 답한다. PostgreSQL(jOOQ)·MyBatis(PG·Tibero) 구현
+   * 모두 UNICODE_TRIM 이다 — Tibero 도 이름 목록 + Java 비교로 같은 기준을 쓴다(WD-1181).
    */
   default NameComparison nameComparison() {
     return NameComparison.UNICODE_TRIM;
