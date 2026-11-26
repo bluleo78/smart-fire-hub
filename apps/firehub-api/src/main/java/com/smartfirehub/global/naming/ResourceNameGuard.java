@@ -4,6 +4,7 @@ import com.smartfirehub.global.exception.DuplicateResourceNameException;
 import com.smartfirehub.global.platformdb.PlatformLocks;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.validation.TextRules;
+import java.util.Collection;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.function.BooleanSupplier;
@@ -106,24 +107,42 @@ public class ResourceNameGuard {
    * 같게, 이름 전체의 유니코드 공백을 ASCII 공백으로 바꾼({@link TextRules#spacesToAscii}) 뒤 앞뒤 ASCII 공백(U+0020)만 걷고
    * 소문자로 비교한다. {@code String.strip()} 은 U+001C~U+001F·탭·개행도 걷지만 SQL {@code trim} 은 걷지 않으므로 쓰지 않는다 —
    * 쓰면 {@code "Sales\u001f"} 로 저장된 옛 행을 {@code "Sales"} 로 바꿔도 「개명 아님」이 되어 중복 검사가 생략된다. 전각 공백만 제거한
-   * 저장은 개명이 아니고, 안쪽 공백 종류만 다른 이름은 같은 이름이다. Tibero 는 SQL 이 ASCII 만 걷으므로 ASCII_TRIM 을 쓴다.
+   * 저장은 개명이 아니고, 안쪽 공백 종류만 다른 이름은 같은 이름이다. (WD-1172) Tibero 도 이름 목록을 읽어 Java 에서 이 UNICODE_TRIM 비교값으로 비교하므로
+   * PG 와 같은 기준이다.
    */
   static boolean renamed(String before, String after, NameComparison comparison) {
     if (before == null || after == null) {
       return before != after;
     }
-    return !comparable(before, comparison).equals(comparable(after, comparison));
+    return !comparisonKey(before, comparison).equals(comparisonKey(after, comparison));
   }
 
   /**
    * 기준별 비교값(WD-1108) — UNICODE_TRIM 은 유니코드 공백을 ASCII 로 바꾼 뒤 {@link #sqlComparable}, ASCII_TRIM 은 바로
    * {@link #sqlComparable}. 잠금 키 {@link #normalize} 는 의도적 상위 집합이라 비교값으로 쓰지 않는다.
+   *
+   * <p>(WD-1172) 공개 — Tibero 처럼 SQL 로 유니코드 공백을 못 바꾸는 저장소가 이름 목록을 읽어 Java 에서
+   * PG SQL 과 같은 기준으로 비교할 때 이 하나를 쓴다(복사본 금지).
    */
-  private static String comparable(String name, NameComparison comparison) {
+  public static String comparisonKey(String name, NameComparison comparison) {
     if (comparison == NameComparison.UNICODE_TRIM) {
       return sqlComparable(TextRules.spacesToAscii(name));
     }
     return sqlComparable(name);
+  }
+
+  /**
+   * 저장된 이름 목록에 name 과 UNICODE_TRIM 기준으로 같은 이름이 있는지(WD-1172) — Tibero 처럼 SQL 로 유니코드 공백을 못 바꾸는
+   * 저장소가 이름 목록을 읽어 PG SQL 과 같은 기준으로 중복을 볼 때 쓴다(저장소마다 비교 블록을 복사하지 않게). name 이 null 이면
+   * false, 목록의 null 이름은 건너뛴다.
+   */
+  public static boolean containsName(Collection<String> stored, String name) {
+    if (name == null) {
+      return false;
+    }
+    String key = comparisonKey(name, NameComparison.UNICODE_TRIM);
+    return stored.stream()
+        .anyMatch(s -> s != null && comparisonKey(s, NameComparison.UNICODE_TRIM).equals(key));
   }
 
   /** SQL {@code lower(trim(x))} 와 같은 비교값 — 앞뒤 ASCII 공백(U+0020)만 걷고 소문자로 바꾼다. */

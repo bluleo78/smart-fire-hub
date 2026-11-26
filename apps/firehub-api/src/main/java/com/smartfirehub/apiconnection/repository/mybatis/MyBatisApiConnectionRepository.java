@@ -3,11 +3,14 @@ package com.smartfirehub.apiconnection.repository.mybatis;
 import com.smartfirehub.apiconnection.repository.ApiConnectionRepository;
 import com.smartfirehub.apiconnection.repository.mybatis.ApiConnectionRows.ApiConnectionInsert;
 import com.smartfirehub.apiconnection.repository.mybatis.ApiConnectionRows.PreviousStatus;
+import com.smartfirehub.global.naming.ResourceNameGuard;
+import com.smartfirehub.global.platformdb.mybatis.MyBatisPlatformConfig;
 import com.smartfirehub.global.platformdb.mybatis.PlatformMyBatisRepository;
 import com.smartfirehub.global.validation.TextRules;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import org.apache.ibatis.session.SqlSessionFactory;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -23,8 +26,18 @@ public class MyBatisApiConnectionRepository implements ApiConnectionRepository {
 
   private final ApiConnectionMapper mapper;
 
-  public MyBatisApiConnectionRepository(ApiConnectionMapper mapper) {
+  /**
+   * postgresql databaseId 면 SQL 이름 비교, 그 밖(Tibero)은 이름 목록 + Java 비교(WD-1172). 스마트 작업 저장소와 같은 방식으로 한
+   * 번 읽는다.
+   */
+  private final boolean postgres;
+
+  public MyBatisApiConnectionRepository(
+      ApiConnectionMapper mapper, SqlSessionFactory sqlSessionFactory) {
     this.mapper = mapper;
+    this.postgres =
+        MyBatisPlatformConfig.POSTGRESQL.equals(
+            sqlSessionFactory.getConfiguration().getDatabaseId());
   }
 
   @Override
@@ -119,14 +132,31 @@ public class MyBatisApiConnectionRepository implements ApiConnectionRepository {
   // WD-1162: MyBatis 는 Tibero·시험 전용 — 운영 PG 경로(jOOQ)의 인코딩별 공백 집합은 PgEdgeSpaceChars 참고.
   @Override
   public boolean existsByName(String name) {
-    return mapper.countByName(name, TextRules.EDGE_SPACE_CHARS, TextRules.EDGE_SPACE_AS_ASCII) > 0;
+    if (postgres) {
+      return mapper.countByName(name, TextRules.EDGE_SPACE_CHARS, TextRules.EDGE_SPACE_AS_ASCII)
+          > 0;
+    }
+    return existsByNameInJava(name, null);
   }
 
   @Override
   public boolean existsByNameExcludingId(String name, Long excludeId) {
-    return mapper.countByNameExcludingId(
-            name, excludeId, TextRules.EDGE_SPACE_CHARS, TextRules.EDGE_SPACE_AS_ASCII)
-        > 0;
+    if (postgres) {
+      return mapper.countByNameExcludingId(
+              name, excludeId, TextRules.EDGE_SPACE_CHARS, TextRules.EDGE_SPACE_AS_ASCII)
+          > 0;
+    }
+    return existsByNameInJava(name, excludeId);
+  }
+
+  /**
+   * 비 PG 이름 중복 — 이름 목록을 읽어 PG SQL 과 같은 UNICODE_TRIM 비교값으로 Java 에서 비교한다(WD-1172). SQL 에 유니코드를 바인딩하지
+   * 않으므로 비 UTF-8 Tibero 에서 '?' 가 공백으로 오인되지 않는다. name 이 null 이면 false(서비스가 먼저 검증한다).
+   */
+  private boolean existsByNameInJava(String name, Long excludeId) {
+    // 이름을 전부 읽는다(O(n)) — 테넌트별 API 연결 수가 적어 감수한다(WD-1172).
+    return name != null
+        && ResourceNameGuard.containsName(mapper.selectNamesExcludingId(excludeId), name);
   }
 
   /** 행 잠금으로 저장된 이름을 그대로 읽는다(WD-1107) — 없으면 빈 값. */

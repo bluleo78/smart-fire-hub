@@ -72,9 +72,9 @@ public interface ProactiveJobMapper {
   int deleteInTenant(@Param("id") Long id, @Param("tenantId") long tenantId);
 
   /**
-   * 같은 소유자·같은 이름(앞뒤 공백·대소문자 무시)의 행 수(WD-824). excludeId 가 null 이면 제외 없음. PostgreSQL 은 ws 의 유니코드 공백을
-   * sp 의 ASCII 공백으로 바꿔 비교한다(WD-1108; TextRules.EDGE_SPACE_CHARS·EDGE_SPACE_AS_ASCII). Tibero 는 둘을
-   * 무시한다.
+   * 같은 소유자·같은 이름(앞뒤 공백·대소문자 무시)의 행 수(WD-824) — PostgreSQL 전용 문이다. excludeId 가 null 이면 제외 없음. ws 의
+   * 유니코드 공백을 sp 의 ASCII 공백으로 바꿔 비교한다(WD-1108; TextRules.EDGE_SPACE_CHARS·EDGE_SPACE_AS_ASCII). 비
+   * PG(Tibero)는 이 문 대신 {@link #selectNamesByOwner} 로 이름을 읽어 Java 에서 비교한다(WD-1172).
    */
   long countByOwnerAndName(
       @Param("ownerId") long ownerId,
@@ -82,4 +82,11 @@ public interface ProactiveJobMapper {
       @Param("excludeId") Long excludeId,
       @Param("ws") String ws,
       @Param("sp") String sp);
+
+  /**
+   * 비 PG(Tibero) 이름 중복 판정용 — 소유자의 작업 이름 목록(WD-1172). 유니코드 값을 바인딩하지 않고 정수 id 만 바인딩하며, 비교는 저장소가 Java
+   * 로 한다. excludeId 가 null 이면 제외 없음.
+   */
+  List<String> selectNamesByOwner(
+      @Param("ownerId") long ownerId, @Param("excludeId") Long excludeId);
 }

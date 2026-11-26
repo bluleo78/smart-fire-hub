@@ -2,6 +2,8 @@ package com.smartfirehub.proactive.repository.mybatis;
 
 import com.smartfirehub.global.dto.LockedRowVersion;
 import com.smartfirehub.global.naming.NameComparison;
+import com.smartfirehub.global.naming.ResourceNameGuard;
+import com.smartfirehub.global.platformdb.mybatis.MyBatisPlatformConfig;
 import com.smartfirehub.global.platformdb.mybatis.PlatformJson;
 import com.smartfirehub.global.platformdb.mybatis.PlatformMyBatisRepository;
 import com.smartfirehub.global.validation.TextRules;
@@ -33,16 +35,19 @@ public class MyBatisProactiveJobRepository implements ProactiveJobRepository {
   private final ProactiveJobMapper mapper;
   private final ObjectMapper objectMapper;
 
-  /** 이 설치본의 이름 비교 기준(WD-1108) — 매퍼가 문을 고르는 MyBatis databaseId 에서 한 번 정한다(WD-1154). */
-  private final NameComparison nameComparison;
+  /**
+   * postgresql databaseId 면 SQL 이름 비교, 그 밖(Tibero)은 이름 목록 + Java 비교(WD-1172). SqlSessionFactory 의
+   * databaseId 에서 한 번 정한다.
+   */
+  private final boolean postgres;
 
-  /** 이름 비교 기준은 SqlSessionFactory 의 databaseId 에서 정한다({@link NameComparison#forDatabaseId}). */
   public MyBatisProactiveJobRepository(
       ProactiveJobMapper mapper, ObjectMapper objectMapper, SqlSessionFactory sqlSessionFactory) {
     this.mapper = mapper;
     this.objectMapper = objectMapper;
-    this.nameComparison =
-        NameComparison.forDatabaseId(sqlSessionFactory.getConfiguration().getDatabaseId());
+    this.postgres =
+        MyBatisPlatformConfig.POSTGRESQL.equals(
+            sqlSessionFactory.getConfiguration().getDatabaseId());
   }
 
   @Override
@@ -198,24 +203,28 @@ public class MyBatisProactiveJobRepository implements ProactiveJobRepository {
   }
 
   /**
-   * 같은 소유자·같은 이름 존재 여부(WD-824) — WD-1108: PG 는 유니코드 공백 변환 뒤 비교, 그 밖(Tibero·미매핑 DB)은 공통 문
-   * lower(trim).
+   * 같은 소유자·같은 이름 존재 여부(WD-824) — PG 는 유니코드 공백 변환 뒤 SQL 로 비교하고(WD-1108), 그 밖(Tibero)은 소유자의 이름 목록을 읽어
+   * PG 와 같은 UNICODE_TRIM 비교값으로 Java 에서 비교한다(WD-1172).
    */
   @Override
   public boolean existsByOwnerAndName(long ownerId, String name, Long excludeId) {
-    // 유니코드 공백 변환 인자는 PostgreSQL 분기에서만 쓴다(WD-1108).
-    return mapper.countByOwnerAndName(
-            ownerId, name, excludeId, TextRules.EDGE_SPACE_CHARS, TextRules.EDGE_SPACE_AS_ASCII)
-        > 0;
+    if (postgres) {
+      return mapper.countByOwnerAndName(
+              ownerId, name, excludeId, TextRules.EDGE_SPACE_CHARS, TextRules.EDGE_SPACE_AS_ASCII)
+          > 0;
+    }
+    // 비 PG 는 소유자의 이름을 전부 읽는다(O(n)) — 소유자별 스마트 작업 수가 적어 감수한다(WD-1172).
+    // name 이 null 이면 서비스가 먼저 검증하므로 조회 없이 false
+    return name != null
+        && ResourceNameGuard.containsName(mapper.selectNamesByOwner(ownerId, excludeId), name);
   }
 
   /**
-   * 이 설치본의 SQL 이 쓰는 비교 기준(WD-1108). {@code countByOwnerAndName} 이 DB 별 SQL(PG 는 유니코드 공백 변환, 그 밖은 공통
-   * ASCII trim)로 갈리므로 개명 판정도 같은 기준을 따라야 한다 — 매퍼가 문을 고르는 databaseId 에서 생성 시 한 번 정하므로 둘이 어긋나지
-   * 않는다(WD-1154).
+   * 개명 판정 비교 기준(WD-1108) — PG SQL 도, 비 PG 의 Java 비교도 UNICODE_TRIM 이라 databaseId 와 무관하게
+   * 하나다(WD-1172).
    */
   @Override
   public NameComparison nameComparison() {
-    return nameComparison;
+    return NameComparison.UNICODE_TRIM;
   }
 }
