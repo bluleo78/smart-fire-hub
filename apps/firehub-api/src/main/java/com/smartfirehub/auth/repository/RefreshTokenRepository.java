@@ -67,6 +67,16 @@ public interface RefreshTokenRepository {
   Optional<UUID> findFamilyIdByTokenHash(String tokenHash);
 
   /**
+   * 토큰 행의 소유 정보(패밀리·사용자·평면) — 이 브라우저 세션 로그아웃(WD-1176)이 쓴다.
+   *
+   * <p>JWT 클레임 대신 행에서 읽는 이유: 만료된 토큰은 JWT 파싱이 실패하지만 행은 남아 있고, 평면도 행 값이 진실이다.
+   */
+  Optional<TokenOwner> findOwnerByTokenHash(String tokenHash);
+
+  /** {@link #findOwnerByTokenHash} 결과 — 폐기 여부·만료와 무관하게 행 그대로다. */
+  record TokenOwner(UUID familyId, Long userId, String plane) {}
+
+  /**
    * 아직 살아 있는 토큰 하나를 폐기한다.
    *
    * @return 이번 호출이 폐기했으면 true. 같은 토큰으로 동시에 들어온 다른 갱신이 먼저 폐기했다면(행 잠금을 기다린 뒤 {@code revoked=true} 를

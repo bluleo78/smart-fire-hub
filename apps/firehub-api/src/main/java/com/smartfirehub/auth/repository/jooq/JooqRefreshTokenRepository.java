@@ -83,6 +83,14 @@ public class JooqRefreshTokenRepository implements RefreshTokenRepository {
   }
 
   @Override
+  public Optional<TokenOwner> findOwnerByTokenHash(String tokenHash) {
+    return dsl.select(FAMILY_ID, REFRESH_TOKEN.USER_ID, REFRESH_TOKEN.PLANE)
+        .from(REFRESH_TOKEN)
+        .where(REFRESH_TOKEN.TOKEN_HASH.eq(tokenHash))
+        .fetchOptional(r -> new TokenOwner(r.value1(), r.value2(), r.value3()));
+  }
+
+  @Override
   public boolean revokeByTokenHash(String tokenHash) {
     return dsl.update(REFRESH_TOKEN)
             .set(REFRESH_TOKEN.REVOKED, true)

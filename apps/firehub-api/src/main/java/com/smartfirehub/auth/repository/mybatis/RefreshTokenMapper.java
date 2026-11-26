@@ -33,6 +33,9 @@ public interface RefreshTokenMapper {
   /** family_id 를 36자 문자열로 읽는다(PG uuid·Tibero VARCHAR2(36) 공통). 없으면 null. */
   String selectFamilyId(@Param("tokenHash") String tokenHash);
 
+  /** 토큰 행의 패밀리·사용자·평면(WD-1176). 없으면 null. */
+  TokenOwnerRow selectOwner(@Param("tokenHash") String tokenHash);
+
   int revokeByTokenHash(
       @Param("tokenHash") String tokenHash, @Param("revokedAt") LocalDateTime revokedAt);
 

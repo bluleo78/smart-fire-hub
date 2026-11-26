@@ -103,6 +103,8 @@ test.describe('비밀번호 변경 강제', () => {
     await mockApi(page, 'GET', '/api/v1/auth/me', PWC_ME);
     await mockApi(page, 'PUT', '/api/v1/users/me/password', null, { status: 204 });
     const logout = await mockApi(page, 'POST', '/api/v1/auth/logout', null, { status: 204, capture: true });
+    // 이 브라우저 세션만 끝내는 서버 로그아웃(WD-1176) — 남은 리프레시 쿠키로 다음 사람이 세션을 되살리지 못하게 한다.
+    const sessionLogout = await mockApi(page, 'POST', '/api/v1/auth/logout/session', null, { status: 204, capture: true });
 
     await page.goto('/change-password');
     await page.getByLabel(CURRENT_PASSWORD).fill('TempPass1x');
@@ -120,7 +122,37 @@ test.describe('비밀번호 변경 강제', () => {
     // 401 이 나 리프레시 토큰도 지우지 못한다. 이 자리의 logout() 은 serverLogout: false 로 서버 로그아웃을 아예 보내지 않는다
     // (WD-1141 반려 2차 2) — 401 자리의 표식(sessionEndStarted)에 기대지 않아도 된다(WD-1141 반려 3차 3).
     expect(logout.requests).toHaveLength(0);
+    // 전체 기기 로그아웃은 안 보내되, 이 세션 로그아웃은 정확히 한 번 보낸다(WD-1176)
+    expect(sessionLogout.requests).toHaveLength(1);
+    // 본문에 현재 사용자 id 가 실려, 서버가 공유 쿠키의 주인이 다른 사용자면 끊지 않는다
+    expect(sessionLogout.requests[0].payload).toEqual({ expectedUserId: PWC_ME.id });
     expect(refreshCount).toBeGreaterThanOrEqual(2);
+  });
+
+  test('변경 성공 후 refresh 가 실패하고 이 세션 로그아웃도 실패해도 로그인 화면으로 보낸다', async ({ authMockedPage: page }) => {
+    await seedSessionOnce(page);
+    let refreshCount = 0;
+    await page.route((url) => url.pathname === '/api/v1/auth/refresh', (route) => {
+      refreshCount += 1;
+      return refreshCount === 1
+        ? route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(PWC_TOKEN) })
+        : route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ status: 500, message: 'boom' }) });
+    });
+    await mockApi(page, 'GET', '/api/v1/auth/me', PWC_ME);
+    await mockApi(page, 'PUT', '/api/v1/users/me/password', null, { status: 204 });
+    // 이 세션 로그아웃이 500 이어도 best-effort 라 로그인 화면 이동을 막지 않아야 한다
+    const sessionLogout = await mockApi(page, 'POST', '/api/v1/auth/logout/session',
+      { status: 500, message: 'boom' }, { status: 500, capture: true });
+
+    await page.goto('/change-password');
+    await page.getByLabel(CURRENT_PASSWORD).fill('TempPass1x');
+    await page.getByLabel(NEW_PASSWORD).fill('NewPass1x');
+    await page.getByLabel(CONFIRM_PASSWORD).fill('NewPass1x');
+    await page.getByRole('button', { name: '변경하고 계속' }).click();
+
+    await expect(page).toHaveURL(/\/login$/);
+    await expect(page.getByText('비밀번호가 변경되어 새 비밀번호로 다시 로그인해야 합니다')).toBeVisible();
+    expect(sessionLogout.requests).toHaveLength(1);
   });
 
   test('변경 직후 갱신이 다른 사용자의 토큰이면 성공 토스트 없이 / 로 하드 이동한다 (WD-1122)', async ({ authMockedPage: page }) => {
@@ -137,6 +169,8 @@ test.describe('비밀번호 변경 강제', () => {
     });
     await mockApi(page, 'GET', '/api/v1/auth/me', PWC_ME);
     await mockApi(page, 'PUT', '/api/v1/users/me/password', null, { status: 204 });
+    // 다른 계정으로 바뀐 갈래는 지금 쿠키가 다른 사용자 것이라 이 세션 로그아웃을 보내면 안 된다(WD-1176)
+    const sessionLogout = await mockApi(page, 'POST', '/api/v1/auth/logout/session', null, { status: 204, capture: true });
 
     await page.goto('/change-password');
     await page.getByLabel(CURRENT_PASSWORD).fill('TempPass1x');
@@ -147,6 +181,7 @@ test.describe('비밀번호 변경 강제', () => {
     // `/` 로 하드 이동했고 성공 토스트는 뜨지 않았다
     await expect(page).toHaveURL(/\/$/);
     await expect(page.getByText('비밀번호가 변경되었습니다')).toHaveCount(0);
+    expect(sessionLogout.requests).toHaveLength(0);
     expect(refreshCount).toBeGreaterThanOrEqual(2);
   });
 

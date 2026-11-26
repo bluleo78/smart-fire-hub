@@ -8,12 +8,16 @@ import com.smartfirehub.auth.dto.LoginRequest;
 import com.smartfirehub.auth.dto.TokenResponse;
 import com.smartfirehub.auth.exception.InvalidCredentialsException;
 import com.smartfirehub.auth.exception.InvalidTokenException;
+import com.smartfirehub.auth.exception.RefreshTokenReusedException;
 import com.smartfirehub.auth.repository.RefreshTokenRepository;
+import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TestUsers;
 import com.smartfirehub.user.dto.UserResponse;
 import com.smartfirehub.user.exception.UserDeactivatedException;
 import com.smartfirehub.user.repository.UserRepository;
+import java.time.LocalDateTime;
+import java.util.UUID;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -35,6 +39,8 @@ class AuthServiceTest extends IntegrationTestBase {
   @Autowired private PasswordEncoder passwordEncoder;
 
   @Autowired private UserRepository userRepository;
+  @Autowired private JwtTokenProvider jwtTokenProvider;
+  @Autowired private RefreshTokenRepository refreshTokenRepository;
 
   // 가입 규칙은 SignupClosureTest 가 소유한다(WD-2 — 첫 사용자 전용).
 
@@ -261,5 +267,163 @@ class AuthServiceTest extends IntegrationTestBase {
 
     assertThat(result.id()).isEqualTo(created.id());
     assertThat(result.username()).isEqualTo("test@example.com");
+  }
+
+  private UserResponse createLogoutUser() {
+    return TestUsers.createMember(
+        dsl,
+        fixtureTransactionTemplate,
+        passwordEncoder,
+        "logout-session@example.com",
+        "logout-session@example.com",
+        "Password123",
+        "Logout Session",
+        DEFAULT_TEST_TENANT_ID);
+  }
+
+  private TokenResponse loginLogoutUser() {
+    return authService.login(new LoginRequest("logout-session@example.com", "Password123"));
+  }
+
+  /** 이 브라우저 세션 로그아웃(WD-1176) — 이 패밀리만 끝나고 같은 사용자의 다른 패밀리는 살아 있다. */
+  @Test
+  void logoutSession_revokesOnlyThisFamily() {
+    createLogoutUser();
+    TokenResponse a = loginLogoutUser();
+    TokenResponse b = loginLogoutUser();
+
+    authService.logoutSession(a.refreshToken(), null);
+
+    assertThatThrownBy(() -> authService.refresh(a.refreshToken()))
+        .isInstanceOfAny(InvalidTokenException.class, RefreshTokenReusedException.class);
+    assertThat(authService.refresh(b.refreshToken()).accessToken()).isNotBlank();
+  }
+
+  /** 이미 회전돼 폐기된 옛 토큰으로 불러도 그 패밀리(= 새 토큰 포함)가 끝난다. */
+  @Test
+  void logoutSession_withRotatedToken_revokesItsFamily() {
+    createLogoutUser();
+    TokenResponse a = loginLogoutUser();
+    TokenResponse rotated = authService.refresh(a.refreshToken());
+
+    authService.logoutSession(a.refreshToken(), null);
+
+    assertThatThrownBy(() -> authService.refresh(rotated.refreshToken()))
+        .isInstanceOfAny(InvalidTokenException.class, RefreshTokenReusedException.class);
+  }
+
+  /** 없음·빈값·모르는 문자열은 조용히 무시하고 다른 세션에 영향이 없다. */
+  @Test
+  void logoutSession_unknownOrBlank_doesNothing() {
+    createLogoutUser();
+    TokenResponse other = loginLogoutUser();
+
+    authService.logoutSession(null, null);
+    authService.logoutSession("", null);
+    authService.logoutSession("garbage", null);
+
+    assertThat(authService.refresh(other.refreshToken()).accessToken()).isNotBlank();
+  }
+
+  /** 운영자(플랫폼) 평면 토큰은 이 엔드포인트가 건드리지 않는다. */
+  @Test
+  void logoutSession_platformToken_doesNothing() {
+    UserResponse user = createLogoutUser();
+    String platformRefresh = jwtTokenProvider.generatePlatformRefreshToken(user.id());
+    refreshTokenRepository.save(
+        user.id(),
+        RefreshTokenHasher.hash(platformRefresh),
+        LocalDateTime.now().plusDays(1),
+        UUID.randomUUID(),
+        RefreshTokenRepository.PLANE_PLATFORM);
+
+    authService.logoutSession(platformRefresh, null);
+
+    assertThat(refreshTokenRepository.isTokenRevoked(RefreshTokenHasher.hash(platformRefresh)))
+        .isFalse();
+  }
+
+  /** 폐기가 일어나면 LOGOUT 감사 행이 하나 남는다. */
+  @Test
+  void logoutSession_writesLogoutAudit() {
+    UserResponse user = createLogoutUser();
+    TokenResponse a = loginLogoutUser();
+
+    authService.logoutSession(a.refreshToken(), null);
+
+    assertThat(sessionLogoutAuditRows(user.id())).isEqualTo(1);
+  }
+
+  /** expectedUserId 가 쿠키 행의 사용자와 다르면 아무것도 폐기하지 않고 false(쿠키를 지우지 말라). */
+  @Test
+  void logoutSession_otherExpectedUser_keepsFamily_returnsFalse() {
+    UserResponse user = createLogoutUser();
+    TokenResponse a = loginLogoutUser();
+
+    boolean clear = authService.logoutSession(a.refreshToken(), user.id() + 1000);
+
+    assertThat(clear).isFalse();
+    assertThat(authService.refresh(a.refreshToken()).accessToken()).isNotBlank();
+  }
+
+  /** 일치하면 폐기하고 true, null(옛 호출)도 폐기하고 true. */
+  @Test
+  void logoutSession_matchingOrNullExpectedUser_revokes_returnsTrue() {
+    UserResponse user = createLogoutUser();
+    TokenResponse a = loginLogoutUser();
+    TokenResponse b = loginLogoutUser();
+
+    assertThat(authService.logoutSession(a.refreshToken(), user.id())).isTrue();
+    assertThat(authService.logoutSession(b.refreshToken(), null)).isTrue();
+
+    assertThatThrownBy(() -> authService.refresh(a.refreshToken()))
+        .isInstanceOfAny(InvalidTokenException.class, RefreshTokenReusedException.class);
+    assertThatThrownBy(() -> authService.refresh(b.refreshToken()))
+        .isInstanceOfAny(InvalidTokenException.class, RefreshTokenReusedException.class);
+  }
+
+  /** 만료된 웹 토큰(행은 남아 있음)도 패밀리가 폐기되고 LOGOUT 감사 행이 남는다. */
+  @Test
+  void logoutSession_expiredWebToken_revokesAndAudits() {
+    UserResponse user = createLogoutUser();
+    TokenResponse a = loginLogoutUser();
+    dsl.execute(
+        "update refresh_token set expires_at = ? where user_id = ?",
+        LocalDateTime.now().minusDays(1),
+        user.id());
+
+    assertThat(authService.logoutSession(a.refreshToken(), user.id())).isTrue();
+
+    assertThat(refreshTokenRepository.isTokenRevoked(RefreshTokenHasher.hash(a.refreshToken())))
+        .isTrue();
+    assertThat(sessionLogoutAuditRows(user.id())).isEqualTo(1);
+  }
+
+  /** 만료된 운영자(PLATFORM) 행은 JWT 파싱이 실패해도 행의 평면으로 걸러져 폐기되지 않고 false 다. */
+  @Test
+  void logoutSession_expiredPlatformRow_notRevoked() {
+    UserResponse user = createLogoutUser();
+    String platformRefresh = jwtTokenProvider.generatePlatformRefreshToken(user.id());
+    String hash = RefreshTokenHasher.hash(platformRefresh);
+    refreshTokenRepository.save(
+        user.id(),
+        hash,
+        LocalDateTime.now().minusDays(1),
+        UUID.randomUUID(),
+        RefreshTokenRepository.PLANE_PLATFORM);
+
+    assertThat(authService.logoutSession(platformRefresh, null)).isFalse();
+
+    assertThat(refreshTokenRepository.isTokenRevoked(hash)).isFalse();
+  }
+
+  /** 이 기기 세션 로그아웃(WD-1176) 감사 행 수. */
+  private int sessionLogoutAuditRows(Long userId) {
+    return dsl.fetchOne(
+            "select count(*)::int from audit_log where user_id = ? and action_type = 'LOGOUT'"
+                + " and description = ?",
+            userId,
+            "로그아웃(이 기기 세션)")
+        .get(0, Integer.class);
   }
 }

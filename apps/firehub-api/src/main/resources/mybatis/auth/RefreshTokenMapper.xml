@@ -37,6 +37,12 @@
     SELECT CAST(family_id AS VARCHAR(36)) FROM refresh_token WHERE token_hash = #{tokenHash}
   </select>
 
+  <!-- 로그아웃(WD-1176)용 소유 정보. 별칭은 TokenOwnerRow 세터 이름과 대소문자 무관하게 맞는다(Tibero 대문자 별칭 포함). -->
+  <select id="selectOwner" resultType="com.smartfirehub.auth.repository.mybatis.TokenOwnerRow">
+    SELECT CAST(family_id AS VARCHAR(36)) AS familyId, user_id AS userId, plane AS plane
+      FROM refresh_token WHERE token_hash = #{tokenHash}
+  </select>
+
   <!-- revoked_at 은 유예 판정(WD-1141)이 읽는다 — 폐기할 때마다 함께 갱신한다. -->
   <update id="revokeByTokenHash">
     UPDATE refresh_token

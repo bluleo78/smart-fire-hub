@@ -88,6 +88,29 @@ abstract class RefreshTokenRepositoryContractTest extends AuthRepositoryContract
   }
 
   @Test
+  void findOwnerByTokenHash_returnsFamilyUserAndPlane_evenWhenExpired() {
+    UUID family = UUID.randomUUID();
+    repository().save(userId, prefix + "o1", future(), family);
+    repository()
+        .save(
+            otherUserId,
+            prefix + "o2",
+            LocalDateTime.now().minusDays(1),
+            family,
+            RefreshTokenRepository.PLANE_PLATFORM);
+
+    assertThat(repository().findOwnerByTokenHash(prefix + "o1"))
+        .contains(
+            new RefreshTokenRepository.TokenOwner(
+                family, userId, RefreshTokenRepository.PLANE_WEB));
+    assertThat(repository().findOwnerByTokenHash(prefix + "o2"))
+        .contains(
+            new RefreshTokenRepository.TokenOwner(
+                family, otherUserId, RefreshTokenRepository.PLANE_PLATFORM));
+    assertThat(repository().findOwnerByTokenHash(prefix + "none")).isEmpty();
+  }
+
+  @Test
   void revokeByTokenHash_firstTrue_thenFalse_unknownFalse() {
     repository().save(userId, prefix + "r1", future(), UUID.randomUUID());
 
