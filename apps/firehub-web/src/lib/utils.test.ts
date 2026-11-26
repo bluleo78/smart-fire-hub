@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { eulReul, euroRo, waGwa } from './utils';
+import { eulReul, euroRo, iGa, waGwa } from './utils';
 
 describe('eulReul (WD-15)', () => {
   it('한글 음절: 받침 유무', () => {
@@ -38,6 +38,32 @@ describe('waGwa (WD-1135)', () => {
     expect(waGwa('Acme')).toBe('와(과)');
     expect(waGwa('')).toBe('와(과)');
     expect(waGwa('漢')).toBe('와(과)');
+  });
+});
+
+describe('iGa (WD-1179)', () => {
+  it('한글 음절: 받침 있으면 이, 없으면 가', () => {
+    expect(iGa('서울역')).toBe('이');
+    expect(iGa('서울시')).toBe('가');
+    expect(iGa('힣')).toBe('이'); // 한글 음절 상한(0xD7A3)
+  });
+  it('끝 공백을 건너뛴다', () => {
+    expect(iGa('서울역 ')).toBe('이');
+    expect(iGa('서울시\t')).toBe('가');
+  });
+  it('숫자: DIGITS_WITH_BATCHIM(0·1·3·6·7·8) 이 / 2·4·5·9 가', () => {
+    expect(iGa('파이프라인1')).toBe('이');
+    expect(iGa('파이프라인2')).toBe('가');
+    expect(iGa('10')).toBe('이');
+    for (const d of ['0', '1', '3', '6', '7', '8']) expect(iGa(`소방서${d}`)).toBe('이');
+    for (const d of ['2', '4', '5', '9']) expect(iGa(`소방서${d}`)).toBe('가');
+  });
+  it('영문·전각·기호·빈 값·공백뿐·한자: 병기', () => {
+    expect(iGa('dataset')).toBe('이(가)');
+    expect(iGa('Ａ')).toBe('이(가)');
+    expect(iGa('漢')).toBe('이(가)');
+    expect(iGa('')).toBe('이(가)');
+    expect(iGa('   ')).toBe('이(가)');
   });
 });
 
