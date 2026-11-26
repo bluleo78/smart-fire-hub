@@ -1,6 +1,5 @@
 import { keepPreviousData, skipToken, useMutation, useQuery, useQueryClient, type UseQueryOptions } from '@tanstack/react-query';
 import { useCallback } from 'react';
-import { toast } from 'sonner';
 
 import type {
   CreateProactiveJobRequest,
@@ -13,6 +12,7 @@ import type {
   UpdateReportTemplateRequest,
 } from '../../api/proactive';
 import { proactiveApi } from '../../api/proactive';
+import { handleApiError } from '../../lib/api-error';
 import { createWithUniqueCloneName } from '../../lib/clone-name';
 import { isValidId } from '../../lib/route-id';
 import { keepPreviousWithinEntity } from './keepPreviousWithinEntity';
@@ -150,8 +150,10 @@ export function useCreateProactiveJob(options?: { silentError?: boolean }) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: KEYS.jobs });
     },
-    // 위 계약의 기본 오류 처리 — silentError 를 안 넘긴 호출처가 여기서 실패 토스트를 남긴다(WD-1156)
-    onError: options?.silentError ? undefined : () => toast.error('작업 생성에 실패했습니다.'),
+    // 위 계약의 기본 오류 처리 — silentError 를 안 넘긴 호출처가 여기서 실패 토스트를 남긴다(WD-1156).
+    // 문구는 handleApiError 로 감싼다 — 서버가 409·403 처럼 이유를 말한 응답이면 그 문구가 먼저 보이고,
+    // 알 수 없는 오류일 때만 이 fallback 을 쓴다(리뷰 후속 지적 1).
+    onError: options?.silentError ? undefined : (err) => handleApiError(err, '작업 생성에 실패했습니다.'),
   });
 }
 
