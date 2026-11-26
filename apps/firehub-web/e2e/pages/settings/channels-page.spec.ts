@@ -314,6 +314,31 @@ test.describe('채널 설정 페이지', () => {
     await expect(dialog.getByRole('button', { name: '취소' })).toHaveAttribute('data-variant', 'outline');
   });
 
+  test('연결 해제 성공 뒤 재조회가 500 이면 「최신이 아닐 수 있음」 안내가 뜨고, 다시 불러오기로 맞춰진다 (WD-1169 리뷰)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupKakaoConnectedMocks(page);
+    await page.goto('/settings/channels');
+    await expect(page.getByRole('button', { name: '연결 해제' })).toBeVisible();
+    const deleted = await mockApi(page, 'DELETE', '/api/v1/channels/settings/KAKAO', {}, { status: 204, capture: true });
+    // 첫 조회는 끝났으므로 연결 해제 뒤 재조회만 500 으로 실패시킨다
+    await mockApi(page, 'GET', '/api/v1/channels/settings', { message: '서버 오류' }, { status: 500 });
+    await page.getByRole('button', { name: '연결 해제' }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: '연결 해제' }).click();
+    await expect.poll(() => deleted.requests.length).toBe(1);
+    await expect(page.getByText('카카오 알림톡 연결이 해제되었습니다.')).toBeVisible();
+    // 연결 해제는 재조회로만 카드가 바뀌므로 카드는 옛 「연결됨」 그대로다 — 토스트와 어긋남을 안내로 알린다
+    const notice = page.getByRole('status').filter({ hasText: '최신 채널 설정을 불러오지 못했습니다.' });
+    await expect(notice).toBeVisible();
+    // 보여 줄 카드가 있으므로 카드를 가리는 빨간 오류 배너는 아니다
+    await expect(page.getByText('채널 설정을 불러오는 데 실패했습니다.', { exact: false })).toHaveCount(0);
+    // 서버가 다시 응답하면 「다시 불러오기」로 실제 상태(미연결)에 맞춰지고 안내가 사라진다
+    await mockApi(page, 'GET', '/api/v1/channels/settings', MOCK_CHANNEL_SETTINGS);
+    await notice.getByRole('button', { name: '다시 불러오기' }).click();
+    await expect(notice).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '연결 해제' })).toHaveCount(0);
+  });
+
   /**
    * 회귀 테스트: EMAIL 채널 미연결 시 SMTP 안내 툴팁이 표시되어야 한다 (#16)
    * - 이메일 스위치가 disabled 상태일 때 hover하면 SMTP 설정 안내 툴팁이 나타나야 함
@@ -900,7 +925,60 @@ test.describe('채널 스위치 요청 중 busy (WD-1150)', () => {
     await expect(sw).toHaveAttribute('data-state', 'unchecked');
   });
 
-  test('PATCH 성공 뒤 재조회가 끝날 때까지 요청한 값을 유지한다 (옛 값 깜빡임 없음)', async ({ authenticatedPage: page }) => {
+  test('요청 중에는 스위치 옆에 스피너가 보이고 끝나면 사라지며, 스위치는 움직이지 않는다 (WD-1169)', async ({ authenticatedPage: page }) => {
+    await setupChannelMocks(page);
+    const held = await holdApi(page, 'PATCH', PATH, 204, {});
+    await page.goto('/settings/channels');
+    const sw = page.getByRole('switch', { name: '이메일 채널 활성화' });
+    const spinner = page.getByTestId('channel-switch-pending-EMAIL');
+    await expect(sw).toBeChecked();
+    await expect(spinner).toHaveCount(0);
+    const before = await sw.boundingBox();
+    expect(before).not.toBeNull();
+    await sw.click();
+    await expect(spinner).toBeVisible();
+    // 장식이므로 보조기기에는 숨긴다(상태는 스위치의 aria-busy 가 알린다)
+    await expect(spinner).toHaveAttribute('aria-hidden', 'true');
+    // 스피너 자리를 늘 확보하므로 스위치 위치가 그대로다
+    expect((await sw.boundingBox())?.x).toBe(before?.x);
+    held.release();
+    await expect(spinner).toHaveCount(0);
+  });
+
+  test('고대비에서도 스피너가 보인다 (WD-1169)', async ({ authenticatedPage: page }) => {
+    await page.emulateMedia({ forcedColors: 'active' });
+    await setupChannelMocks(page);
+    const held = await holdApi(page, 'PATCH', PATH, 204, {});
+    await page.goto('/settings/channels');
+    const sw = page.getByRole('switch', { name: '이메일 채널 활성화' });
+    const spinner = page.getByTestId('channel-switch-pending-EMAIL');
+    await expect(sw).toBeChecked();
+    await sw.click();
+    await expect(spinner).toBeVisible();
+    // 강제 색 모드에서도 스피너를 그리는 선(stroke)이 실제 색이고, 뒤 배경색과 달라야 보인다 — Loader2 는 stroke 로 그린다.
+    // currentColor 가 배경과 같은 색으로 풀리면 비투명이어도 보이지 않으므로 가장 가까운 불투명 배경과 비교한다
+    const { stroke, background } = await spinner.evaluate((el) => {
+      let node: Element | null = el.parentElement;
+      let bg = 'rgba(0, 0, 0, 0)';
+      while (node) {
+        const c = getComputedStyle(node).backgroundColor;
+        if (c !== 'rgba(0, 0, 0, 0)' && c !== 'transparent') {
+          bg = c;
+          break;
+        }
+        node = node.parentElement;
+      }
+      return { stroke: getComputedStyle(el).stroke, background: bg };
+    });
+    expect(stroke).not.toMatch(/^(none|transparent|rgba\(0, 0, 0, 0\))$/);
+    expect(stroke).not.toBe(background);
+    // 진짜 disabled 가 아니므로 GrayText 로 바뀌지 않는다
+    await expect(sw).not.toHaveAttribute('disabled');
+    held.release();
+    await expect(spinner).toHaveCount(0);
+  });
+
+  test('PATCH 성공에서 잠김이 풀리고 재조회가 붙잡혀도 요청한 값을 유지한다 (WD-1169)', async ({ authenticatedPage: page }) => {
     await setupChannelMocks(page);
     const held = await holdApi(page, 'PATCH', PATH, 204, {});
     await page.goto('/settings/channels');
@@ -921,15 +999,80 @@ test.describe('채널 스위치 요청 중 busy (WD-1150)', () => {
     await sw.click();
     await expect(sw).toHaveAttribute('aria-busy', 'true');
     held.release();
-    // PATCH 는 끝났지만 재조회는 아직 — 옛 서버 값(켜짐)으로 되돌아가지 않고 요청한 값(꺼짐)과 busy 가 유지돼야 한다
     await expect.poll(refetch.count).toBeGreaterThanOrEqual(1);
-    await expect(sw).toHaveAttribute('data-state', 'unchecked');
-    await expect(sw).toHaveAttribute('aria-busy', 'true');
-    refetch.release();
+    // 재조회를 놓기 전 — 잠김은 PATCH 성공에서 풀리고, 캐시 선반영으로 요청한 값(꺼짐)과 토스트가 보인다 (WD-1169)
     await expect(sw).not.toHaveAttribute('aria-busy');
+    await expect(sw).not.toHaveAttribute('aria-disabled');
+    await expect(sw).toHaveAttribute('data-state', 'unchecked');
+    await expect(page.getByText('이메일 채널이 비활성화되었습니다.')).toBeVisible();
+    refetch.release();
     await expect(sw).toHaveAttribute('data-state', 'unchecked');
     const states = await page.evaluate(() => (window as unknown as { __states: string[] }).__states);
     expect(states, '재조회 전후로 옛 값(checked)으로 깜빡였다 (WD-1150)').not.toContain('checked');
+  });
+
+  test('PATCH 성공 뒤 재조회가 500 이어도 스위치는 새 값·토스트와 일치한다 (WD-1169)', async ({ authenticatedPage: page }) => {
+    await setupChannelMocks(page);
+    const held = await holdApi(page, 'PATCH', PATH, 204, {});
+    await page.goto('/settings/channels');
+    const sw = page.getByRole('switch', { name: '이메일 채널 활성화' });
+    await expect(sw).toBeChecked();
+    // 첫 조회는 끝났으므로 이후 재조회만 500 으로 실패시킨다
+    await mockApi(page, 'GET', '/api/v1/channels/settings', { message: '서버 오류' }, { status: 500 });
+    let failedGets = 0;
+    page.on('response', (res) => {
+      if (new URL(res.url()).pathname === '/api/v1/channels/settings' && res.request().method() === 'GET' && res.status() === 500) {
+        failedGets += 1;
+      }
+    });
+    await sw.click();
+    held.release();
+    await expect(sw).toHaveAttribute('data-state', 'unchecked');
+    await expect(sw).not.toHaveAttribute('aria-busy');
+    await expect(page.getByText('이메일 채널이 비활성화되었습니다.')).toBeVisible();
+    // 재조회가 500 으로 끝난 뒤에도(앱의 1회 재시도까지 실패해 오류 상태가 된 뒤에도) 새 값이 유지돼야 한다
+    await expect.poll(() => failedGets, { timeout: 10_000 }).toBeGreaterThanOrEqual(2);
+    await expect(sw).toHaveAttribute('data-state', 'unchecked');
+    // 카드는 맞게 보이므로 빨간 오류 배너로 가리지 않고, 서버와 다를 수 있다는 가벼운 안내만 띄운다 (WD-1169 리뷰)
+    await expect(page.getByText('채널 설정을 불러오는 데 실패했습니다.', { exact: false })).toHaveCount(0);
+    await expect(page.getByRole('status').filter({ hasText: '최신 채널 설정을 불러오지 못했습니다.' })).toBeVisible();
+  });
+
+  test('성공 직후 다시 토글하면 두 번째 PATCH 가 나간다 (WD-1169)', async ({ authenticatedPage: page }) => {
+    await setupChannelMocks(page);
+    const bodies: unknown[] = [];
+    await page.route(
+      (url) => url.pathname === PATH,
+      async (route) => {
+        if (route.request().method() !== 'PATCH') return route.fallback();
+        bodies.push(route.request().postDataJSON());
+        await route.fulfill({ status: 204, contentType: 'application/json', body: '{}' });
+      },
+    );
+    await page.goto('/settings/channels');
+    const sw = page.getByRole('switch', { name: '이메일 채널 활성화' });
+    await expect(sw).toBeChecked();
+    // 재조회는 붙잡아 둔다 — 재조회가 끝나기 전에도 다시 토글할 수 있어야 한다
+    const refetch = await holdRequests(page, '/api/v1/channels/settings', 'GET');
+    await sw.click();
+    await expect.poll(refetch.count).toBeGreaterThanOrEqual(1);
+    await expect(sw).not.toHaveAttribute('aria-busy');
+    await sw.click();
+    await expect.poll(() => bodies.length).toBe(2);
+    expect(bodies).toEqual([{ enabled: false }, { enabled: true }]);
+    // 두 번째 토글의 재조회까지 붙잡힌 뒤 놓고, 붙잡은 재조회가 모두(끝나거나 취소돼) 정리될 때까지 기다린다 —
+    // 시험이 끝난 뒤 남은 요청이 다음 시험을 흔들지 않게
+    await expect.poll(refetch.count).toBeGreaterThanOrEqual(2);
+    let settledGets = 0;
+    const onSettled = (req: { url: () => string; method: () => string }) => {
+      if (new URL(req.url()).pathname === '/api/v1/channels/settings' && req.method() === 'GET') settledGets += 1;
+    };
+    page.on('requestfinished', onSettled);
+    page.on('requestfailed', onSettled);
+    refetch.release();
+    await expect.poll(() => settledGets).toBeGreaterThanOrEqual(refetch.count());
+    await expect(sw).toBeChecked();
+    await expect(sw).not.toHaveAttribute('aria-busy');
   });
 
   test('요청이 500 으로 끝나면 원래 상태로 돌아오고 aria-busy 가 사라진다', async ({ authenticatedPage: page }) => {
