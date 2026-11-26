@@ -12,6 +12,7 @@ import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.SmartInitializingSingleton;
 
 /** PG 이름 비교 공백 집합이 서버 인코딩에 따라 고르는지(WD-1162) — 스프링 없이 DSLContext 를 mock 으로 둔다. */
 class PgEdgeSpaceCharsTest {
@@ -33,7 +34,7 @@ class PgEdgeSpaceCharsTest {
     DSLContext dsl = mock(DSLContext.class);
     when(dsl.fetchValue("SHOW server_encoding")).thenReturn("LATIN1");
     PgEdgeSpaceChars chars = new PgEdgeSpaceChars(dsl);
-    chars.init();
+    chars.afterSingletonsInstantiated();
 
     PgEdgeSpaceChars.TranslatePair pair = chars.translatePair();
     assertThat(pair.from()).isEqualTo(TextRules.ASCII_EDGE_SPACE_CHARS);
@@ -48,7 +49,7 @@ class PgEdgeSpaceCharsTest {
     DSLContext dsl = mock(DSLContext.class);
     when(dsl.fetchValue("SHOW server_encoding")).thenReturn("UTF8");
     PgEdgeSpaceChars chars = new PgEdgeSpaceChars(dsl);
-    chars.init();
+    chars.afterSingletonsInstantiated();
 
     PgEdgeSpaceChars.TranslatePair pair = chars.translatePair();
     assertThat(pair.from()).isEqualTo(TextRules.EDGE_SPACE_CHARS);
@@ -61,7 +62,7 @@ class PgEdgeSpaceCharsTest {
     DSLContext dsl = mock(DSLContext.class);
     when(dsl.fetchValue("SHOW server_encoding")).thenThrow(new RuntimeException("boom"));
     PgEdgeSpaceChars chars = new PgEdgeSpaceChars(dsl);
-    chars.init();
+    chars.afterSingletonsInstantiated();
 
     PgEdgeSpaceChars.TranslatePair pair = chars.translatePair();
     assertThat(pair.from()).isEqualTo(TextRules.EDGE_SPACE_CHARS);
@@ -72,7 +73,7 @@ class PgEdgeSpaceCharsTest {
   }
 
   @Test
-  void init_전에는_조회_없이_유니코드_쌍을_돌려준다() {
+  void 인코딩_읽기_전에는_조회_없이_유니코드_쌍을_돌려준다() {
     DSLContext dsl = mock(DSLContext.class);
     PgEdgeSpaceChars chars = new PgEdgeSpaceChars(dsl);
 
@@ -80,6 +81,16 @@ class PgEdgeSpaceCharsTest {
     assertThat(pair.from()).isEqualTo(TextRules.EDGE_SPACE_CHARS);
     assertThat(pair.from()).hasSameSizeAs(pair.to());
     verifyNoInteractions(dsl);
+  }
+
+  /**
+   * WD-1162 리뷰 후속 — 인코딩은 웹 서버가 요청을 받기 전에 읽어야 한다. ApplicationReadyEvent 는 서버가 연 뒤라 그 사이 요청이 500 이 될 수
+   * 있었다. SmartInitializingSingleton 콜백은 컨텍스트 refresh 안(finishRefresh 전)에 불린다.
+   */
+  @Test
+  void 인코딩은_요청을_받기_전_싱글톤_초기화_콜백에서_읽는다() {
+    assertThat(new PgEdgeSpaceChars(mock(DSLContext.class)))
+        .isInstanceOf(SmartInitializingSingleton.class);
   }
 
   @Test
@@ -93,7 +104,7 @@ class PgEdgeSpaceCharsTest {
     DSLContext dsl = mock(DSLContext.class);
     when(dsl.fetchValue("SHOW server_encoding")).thenReturn("LATIN1");
     PgEdgeSpaceChars chars = new PgEdgeSpaceChars(dsl);
-    chars.init();
+    chars.afterSingletonsInstantiated();
 
     String sql = DSL.using(SQLDialect.POSTGRES).renderInlined(chars.normalize(DSL.field("n", String.class)));
     assertThat(sql).startsWith("lower(trim(translate(n, '");

@@ -5,15 +5,14 @@ import lombok.extern.slf4j.Slf4j;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.impl.DSL;
-import org.springframework.boot.context.event.ApplicationReadyEvent;
-import org.springframework.context.event.EventListener;
+import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.stereotype.Component;
 
 /**
  * PG 이름 비교 SQL({@code lower(trim(translate(...)))})에 바인딩할 공백 문자 집합을 서버 인코딩에 맞춰 고른다(WD-1162).
  *
  * <p>{@link TextRules#EDGE_SPACE_CHARS} 는 U+1680·U+2028 등 비 Latin-1 문자를 바인딩하므로 PG 서버 인코딩이 UTF8 이
- * 아니면 (LATIN1·EUC_KR 등) 바인딩이 실패한다(WD-1145 는 UTF8 을 전제했다). 그래서 기동 때({@link #init}) 트랜잭션 밖에서 {@code
+ * 아니면 (LATIN1·EUC_KR 등) 바인딩이 실패한다(WD-1145 는 UTF8 을 전제했다). 그래서 기동 때({@link #afterSingletonsInstantiated}) 트랜잭션 밖에서 {@code
  * SHOW server_encoding} 을 한 번만 읽어 쌍을 캐시한다. 요청 경로({@link #translatePair})는 DB 를 절대 조회하지 않는다 — 리포지토리의
  * {@code @Transactional} 안에서 조회가 실패하면 PG 는 트랜잭션을 abort 시켜 이후 쿼리가 500 이 되기 때문이다. 조회가 실패했거나 아직 안 돌았으면
  * 지금 동작(유니코드 집합)을 쓴다.
@@ -24,7 +23,7 @@ import org.springframework.stereotype.Component;
 @Slf4j
 @Component
 @ConditionalOnPostgresPlatformDb
-public class PgEdgeSpaceChars {
+public class PgEdgeSpaceChars implements SmartInitializingSingleton {
 
   /** TRANSLATE 의 from·to 한 쌍 — 같은 해석에서 나와 길이가 항상 같다(길이가 다르면 PG 가 남는 문자를 지운다). */
   record TranslatePair(String from, String to) {}
@@ -35,16 +34,23 @@ public class PgEdgeSpaceChars {
 
   private final DSLContext dsl;
 
-  /** 현재 쌍 — init 이 비 UTF8 일 때만 ASCII 쌍으로 덮어쓰고 이후엔 읽기만 하므로 volatile 로 충분하다. */
+  /** 현재 쌍 — afterSingletonsInstantiated 가 비 UTF8 일 때만 ASCII 쌍으로 덮어쓰고 이후엔 읽기만 하므로 volatile 로 충분하다. */
   private volatile TranslatePair pair = UNICODE_PAIR;
 
   public PgEdgeSpaceChars(DSLContext dsl) {
     this.dsl = dsl;
   }
 
-  /** 기동 완료 때 서버 인코딩을 트랜잭션 밖에서 한 번 읽는다. 실패하면 경고 한 번만 남기고 유니코드 쌍을 그대로 쓴다. */
-  @EventListener(ApplicationReadyEvent.class)
-  public void init() {
+  /**
+   * 모든 싱글톤을 만든 직후(웹 서버가 요청을 받기 전) 서버 인코딩을 트랜잭션 밖에서 한 번 읽는다. 실패하면 경고 한 번만 남기고 유니코드 쌍을 그대로
+   * 쓴다.
+   *
+   * <p>WD-1162 리뷰 후속: 예전엔 ApplicationReadyEvent 에서 읽어, 웹 서버가 연 뒤 그 이벤트 전에 들어온 요청은 아직 유니코드 쌍이라 비 UTF8
+   * PG 에서 500 이 날 수 있었다. 내장 웹 서버는 컨텍스트 refresh 마지막(finishRefresh)에 요청을 받기 시작하므로, 그 전에 불리는 이 콜백에서
+   * 읽는다. 이 시점엔 트랜잭션이 없다.
+   */
+  @Override
+  public void afterSingletonsInstantiated() {
     try {
       Object encoding = dsl.fetchValue("SHOW server_encoding");
       String value = encoding == null ? null : encoding.toString();

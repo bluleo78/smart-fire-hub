@@ -690,6 +690,98 @@ test.describe('API 연결 페이지', () => {
     await expect(page.getByText(/앞뒤 공백을 다듬지 않고/)).toHaveCount(0);
   });
 
+  test('이름을 고쳐 저장하면 다듬은 이름을 보내고, 서버가 같은 이름으로 저장하면 안내를 띄우지 않는다 (WD-1162)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupApiConnectionDetailMocks(page, 1);
+    await mockApi(page, 'GET', '/api/v1/api-connections/1', createApiConnection({ id: 1, name: '결제 API ' }));
+    // 서버가 이름을 다듬어 저장했다(겹침 없음) — 응답 이름이 보낸(다듬은) 이름과 같다
+    const capture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/api-connections/1',
+      createApiConnection({ id: 1, name: '환불 API' }),
+      { capture: true },
+    );
+
+    await page.goto('/admin/api-connections/1');
+    await expect(page.getByRole('heading', { name: 'API 연결 상세' })).toBeVisible();
+
+    await page.getByLabel('이름', { exact: false }).first().fill('  환불 API ');
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+
+    const req = await capture.waitForRequest();
+    expect((req.payload as { name: string }).name).toBe('환불 API');
+    await expect(page.getByText('연결 정보가 업데이트되었습니다.')).toBeVisible();
+    await expect(page.getByText(/앞뒤 공백을 다듬지 않고/)).toHaveCount(0);
+  });
+
+  /**
+   * WD-1162 리뷰 후속 — 저장 뒤 기준·칸 값은 서버가 저장한 이름이다. 예전엔 입력값(다듬기 전)을 기준으로 두어, 저장 뒤 재조회가
+   * 끝나기 전에 다시 저장하면 다듬지 않은 이름을 「안 고침」으로 보고 그대로 보내 서버가 다듬어 돌려주므로 겹침이 없어도 유지 안내가 떴다.
+   * 재조회 응답을 붙잡아 두어 「재조회가 끝나기 전 다시 저장」 순서를 시간에 기대지 않고 만든다.
+   */
+  test('저장 뒤 재조회가 끝나기 전에 다시 저장해도 저장된 이름을 그대로 보내고 안내를 띄우지 않는다 (WD-1162)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupApiConnectionDetailMocks(page, 1);
+    await mockApi(page, 'GET', '/api/v1/api-connections/1', createApiConnection({ id: 1, name: '결제 API' }));
+    const capture = await mockApi(
+      page,
+      'PUT',
+      '/api/v1/api-connections/1',
+      createApiConnection({ id: 1, name: '환불 API' }),
+      { capture: true },
+    );
+
+    await page.goto('/admin/api-connections/1');
+    await expect(page.getByRole('heading', { name: 'API 연결 상세' })).toBeVisible();
+
+    // 첫 로드 뒤의 상세 재조회는 시험이 풀어 줄 때까지 응답하지 않는다(나중에 건 route 가 먼저 받는다)
+    let releaseRefetch: () => void = () => {};
+    const refetchHeld = new Promise<void>((resolve) => {
+      releaseRefetch = resolve;
+    });
+    await page.route(
+      (url) => url.pathname === '/api/v1/api-connections/1',
+      async (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        // 시험이 중간에 실패해 풀어 주지 못해도 정리가 멈추지 않게 15초 뒤에는 스스로 풀린다
+        await Promise.race([refetchHeld, new Promise<void>((resolve) => setTimeout(resolve, 15_000))]);
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(createApiConnection({ id: 1, name: '환불 API', description: '두 번째 저장' })),
+        });
+      },
+    );
+
+    const nameInput = page.getByLabel('이름', { exact: false }).first();
+    await nameInput.fill('  환불 API ');
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+    const first = await capture.waitForRequest();
+    expect((first.payload as { name: string }).name).toBe('환불 API');
+    await expect(page.getByText('연결 정보가 업데이트되었습니다.')).toBeVisible();
+    // 칸 값도 서버가 저장한 이름으로 바뀐다(재조회는 아직 붙잡혀 있다)
+    await expect(nameInput).toHaveValue('환불 API');
+
+    // 재조회가 끝나기 전에 설명만 고쳐 다시 저장 — 이름은 저장된 이름 그대로 나가고 유지 안내는 없다
+    await page.getByLabel('설명 (선택)', { exact: true }).fill('두 번째 저장');
+    // 두 번째 PUT 응답을 받은 뒤 안내 여부를 본다(안내는 응답을 받은 그 자리에서 뜬다)
+    const secondPut = page.waitForResponse(
+      (res) => res.url().endsWith('/api/v1/api-connections/1') && res.request().method() === 'PUT',
+    );
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+    await secondPut;
+    expect(capture.requests).toHaveLength(2);
+    expect(capture.requests[1].payload as { name: string; description: string }).toMatchObject({
+      name: '환불 API',
+      description: '두 번째 저장',
+    });
+    await expect(page.getByText(/앞뒤 공백을 다듬지 않고/)).toHaveCount(0);
+    releaseRefetch();
+  });
+
   /**
    * 이슈 #551 회귀 방지 — API 연결 상세 페이지 미저장 변경 이탈 가드.
    * useUnsavedChangesGuard(#86 도입) 가 이 페이지에도 적용되어야 사이드바 이동 시
