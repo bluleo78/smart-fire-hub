@@ -17,20 +17,26 @@ import java.time.LocalDateTime;
  *     EDIT_CONFLICT 로 거부한다. null 이면 비교하지 않는다(기준을 보내지 않는 기존 호출부, "내 변경으로 덮어쓰기").
  */
 public record UpdateSavedQueryRequest(
-    @Size(max = 200) @Pattern(regexp = TextRules.HAS_TEXT, message = TextRules.NAME_BLANK_MESSAGE)
+    // WD-1125: NUL(U+0000) 문자는 검증 단계에서 칸 오류로 막는다(이유는 TextRules.NO_NUL)
+    @Size(max = 200)
+        @Pattern(regexp = TextRules.HAS_TEXT, message = TextRules.NAME_BLANK_MESSAGE)
+        @Pattern(regexp = TextRules.NO_NUL, message = TextRules.NUL_MESSAGE)
         String name,
     @Size(max = DescriptionLimits.MAX_LENGTH, message = DescriptionLimits.QUERY_TOO_LONG)
+        @Pattern(regexp = TextRules.NO_NUL, message = TextRules.NUL_MESSAGE)
         String description,
     // 길이 상한은 생성과 같다(WD-425 — 이유는 CreateSavedQueryRequest.SQL_MAX_LENGTH)
     @Pattern(regexp = TextRules.HAS_TEXT, message = TextRules.SQL_BLANK_MESSAGE)
         @Size(
             max = CreateSavedQueryRequest.SQL_MAX_LENGTH,
             message = CreateSavedQueryRequest.SQL_TOO_LONG_MESSAGE)
+        @Pattern(regexp = TextRules.NO_NUL, message = TextRules.NUL_MESSAGE)
         String sqlText,
     Long datasetId,
     // WD-1086: null 은 "변경 없음", "" 는 「폴더 없음」 신호(WD-197)라 둘 다 통과 — 공백만·NBSP·Cf 만인 값만 거절한다(생성과 같은 판정)
     @Size(max = 100)
         @Pattern(regexp = TextRules.HAS_TEXT_OR_EMPTY, message = TextRules.FOLDER_BLANK_MESSAGE)
+        @Pattern(regexp = TextRules.NO_NUL, message = TextRules.NUL_MESSAGE)
         String folder,
     Boolean isShared,
     LocalDateTime expectedUpdatedAt) {

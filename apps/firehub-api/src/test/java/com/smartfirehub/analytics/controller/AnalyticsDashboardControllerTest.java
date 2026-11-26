@@ -14,6 +14,7 @@ import com.smartfirehub.global.exception.GlobalExceptionHandler;
 import com.smartfirehub.global.security.JwtAuthenticationFilter;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
+import com.smartfirehub.global.validation.TextRules;
 import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import java.time.LocalDateTime;
@@ -636,5 +637,45 @@ class AnalyticsDashboardControllerTest {
                     objectMapper.writeValueAsString(
                         new CreateDashboardRequest("\u3000대시보드\u3000", "설명", false, null))))
         .andExpect(status().isCreated());
+  }
+
+  /**
+   * WD-1125: 이름·설명에 NUL(U+0000)이 섞이면 만들기·수정 모두 400 필드 오류이고 서비스는 부르지 않는다. 수정은 다른 칸을 생략(null,
+   * 변경 없음)해도 NUL 칸만 걸린다.
+   */
+  @Test
+  void dashboard_nulInNameOrDescription_returns400FieldError() throws Exception {
+    String nul = TextRules.NUL_MESSAGE;
+    String[][] createCases = {
+      {"name", "{\"name\":\"이름\\u0000\"}"},
+      {"description", "{\"name\":\"대시보드\",\"description\":\"설\\u0000명\"}"},
+    };
+    for (String[] c : createCases) {
+      mockMvc
+          .perform(
+              post("/api/v1/analytics/dashboards")
+                  .header("Authorization", "Bearer test-token")
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(c[1]))
+          .andExpect(status().isBadRequest())
+          .andExpect(jsonPath("$.errors." + c[0]).value(nul));
+    }
+    verify(dashboardService, never()).create(any(), anyLong());
+
+    String[][] updateCases = {
+      {"name", "{\"name\":\"이름\\u0000\"}"},
+      {"description", "{\"description\":\"설\\u0000명\"}"},
+    };
+    for (String[] c : updateCases) {
+      mockMvc
+          .perform(
+              put("/api/v1/analytics/dashboards/1")
+                  .header("Authorization", "Bearer test-token")
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(c[1]))
+          .andExpect(status().isBadRequest())
+          .andExpect(jsonPath("$.errors." + c[0]).value(nul));
+    }
+    verify(dashboardService, never()).update(anyLong(), any(), anyLong());
   }
 }

@@ -17,10 +17,14 @@ import java.util.Map;
  *     EDIT_CONFLICT 로 거부한다. null 이면 비교하지 않는다(기준을 보내지 않는 기존 호출부, "내 변경으로 덮어쓰기").
  */
 public record UpdateChartRequest(
+    // WD-1125: NUL(U+0000) 문자는 검증 단계에서 칸 오류로 막는다(이유는 TextRules.NO_NUL)
     // null 은 통과하고(생략), 값이 있으면 공백 아닌 글자가 하나 이상 있어야 한다(WD-1079)
-    @Size(max = 200) @Pattern(regexp = TextRules.HAS_TEXT, message = TextRules.NAME_BLANK_MESSAGE)
+    @Size(max = 200)
+        @Pattern(regexp = TextRules.HAS_TEXT, message = TextRules.NAME_BLANK_MESSAGE)
+        @Pattern(regexp = TextRules.NO_NUL, message = TextRules.NUL_MESSAGE)
         String name,
     @Size(max = DescriptionLimits.MAX_LENGTH, message = DescriptionLimits.CHART_TOO_LONG)
+        @Pattern(regexp = TextRules.NO_NUL, message = TextRules.NUL_MESSAGE)
         String description,
     String chartType,
     // 상한은 생성과 같다(WD-425 — 이유는 CreateChartRequest.CONFIG_MAX_BYTES)

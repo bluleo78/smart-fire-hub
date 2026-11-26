@@ -28,6 +28,7 @@ import com.smartfirehub.global.security.JwtAuthenticationFilter;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.global.validation.DescriptionLimits;
+import com.smartfirehub.global.validation.TextRules;
 import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import java.util.LinkedHashMap;
@@ -536,5 +537,49 @@ class ChartControllerTest {
           .andExpect(status().isCreated());
     }
     verify(chartService, times(acceptedNames.length)).create(any(), anyLong());
+  }
+
+  /**
+   * WD-1125: 이름·설명에 NUL(U+0000)이 섞이면 만들기·수정 모두 400 필드 오류({@code errors.name}·{@code errors.description})이고
+   * 서비스는 부르지 않는다 — PG text 가 0x00 을 거부해 DB 에서야 칸 모르는 400 이 나던 것을 검증 단계로 당긴다.
+   */
+  @Test
+  void chart_nulInNameOrDescription_returns400FieldError() throws Exception {
+    mockAuth("analytics:write");
+    String nul = TextRules.NUL_MESSAGE;
+    String[][] createCases = {
+      {"name", "{\"name\":\"이름\\u0000\",\"savedQueryId\":1,\"chartType\":\"bar\",\"config\":{}}"},
+      {
+        "description",
+        "{\"name\":\"차트\",\"description\":\"설\\u0000명\",\"savedQueryId\":1,\"chartType\":\"bar\",\"config\":{}}"
+      },
+    };
+    for (String[] c : createCases) {
+      mockMvc
+          .perform(
+              post("/api/v1/analytics/charts")
+                  .header("Authorization", "Bearer valid-token")
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(c[1]))
+          .andExpect(status().isBadRequest())
+          .andExpect(jsonPath("$.errors." + c[0]).value(nul));
+    }
+    verify(chartService, never()).create(any(), anyLong());
+
+    String[][] updateCases = {
+      {"name", "{\"name\":\"이름\\u0000\"}"},
+      {"description", "{\"description\":\"설\\u0000명\"}"},
+    };
+    for (String[] c : updateCases) {
+      mockMvc
+          .perform(
+              put("/api/v1/analytics/charts/5")
+                  .header("Authorization", "Bearer valid-token")
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(c[1]))
+          .andExpect(status().isBadRequest())
+          .andExpect(jsonPath("$.errors." + c[0]).value(nul));
+    }
+    verify(chartService, never()).update(anyLong(), any(), anyLong());
   }
 }

@@ -9,14 +9,17 @@ import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
 public record CreateDashboardRequest(
+    // WD-1125: NUL(U+0000) 문자는 검증 단계에서 칸 오류로 막는다(이유는 TextRules.NO_NUL)
     // WD-1081: @NotBlank 가 못 거르는 NBSP 류를 HAS_TEXT 로 막아 수정 DTO 와 같은 판정(이유는 TextRules)
     @NotBlank(message = TextRules.NAME_BLANK_MESSAGE)
         @Size(max = 200)
         @Pattern(regexp = TextRules.HAS_TEXT, message = TextRules.NAME_BLANK_MESSAGE)
+        @Pattern(regexp = TextRules.NO_NUL, message = TextRules.NUL_MESSAGE)
         String name,
     @Size(
             max = CreateDashboardRequest.DESCRIPTION_MAX_LENGTH,
             message = CreateDashboardRequest.DESCRIPTION_TOO_LONG_MESSAGE)
+        @Pattern(regexp = TextRules.NO_NUL, message = TextRules.NUL_MESSAGE)
         String description,
     boolean isShared,
     @Min(5)

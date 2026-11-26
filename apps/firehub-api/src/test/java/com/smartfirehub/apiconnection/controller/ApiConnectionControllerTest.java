@@ -22,6 +22,7 @@ import com.smartfirehub.global.security.JwtAuthenticationFilter;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.global.validation.DescriptionLimits;
+import com.smartfirehub.global.validation.TextRules;
 import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.securitylevel.access.DatasetAccessGuard;
 import java.time.LocalDateTime;
@@ -643,5 +644,56 @@ class ApiConnectionControllerTest {
                   .content(objectMapper.writeValueAsString(ok)))
           .andExpect(status().isOk());
     }
+  }
+
+  /** WD-1125: 이름·설명·주소·헬스체크 경로에 NUL(U+0000)이 섞이면 칸 이름이 붙은 400 이고 서비스까지 가지 않는다. */
+  @Test
+  void create_nulInTextFields_returns400WithFieldErrors() throws Exception {
+    String nul = TextRules.NUL_MESSAGE;
+    String ok = "https://a.com/";
+    Object[][] cases = {
+      {"연결\u0000", null, ok, null, "name"},
+      {"연결", "설명\u0000", ok, null, "description"},
+      {"연결", null, "https://a.com/\u0000", null, "baseUrl"},
+      {"연결", null, ok, "/h\u0000", "healthCheckPath"},
+    };
+    for (Object[] c : cases) {
+      CreateApiConnectionRequest request =
+          new CreateApiConnectionRequest(
+              (String) c[0], (String) c[1], "NONE", null, (String) c[2], (String) c[3]);
+      mockMvc
+          .perform(
+              post("/api/v1/api-connections")
+                  .header("Authorization", "Bearer test-token")
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(objectMapper.writeValueAsString(request)))
+          .andExpect(status().isBadRequest())
+          .andExpect(jsonPath("$.errors." + c[4]).value(nul));
+    }
+    verify(apiConnectionService, never()).create(any(), anyLong());
+  }
+
+  /** WD-1125: 수정도 같다 — NUL 이 든 칸만 오류, 나머지 칸은 null(변경 없음). */
+  @Test
+  void update_nulInTextFields_returns400WithFieldErrors() throws Exception {
+    String nul = TextRules.NUL_MESSAGE;
+    UpdateApiConnectionRequest[] requests = {
+      new UpdateApiConnectionRequest("연결\u0000", null, null, null, null, null),
+      new UpdateApiConnectionRequest(null, "설명\u0000", null, null, null, null),
+      new UpdateApiConnectionRequest(null, null, null, null, "https://a.com/\u0000", null),
+      new UpdateApiConnectionRequest(null, null, null, null, null, "/h\u0000"),
+    };
+    String[] fields = {"name", "description", "baseUrl", "healthCheckPath"};
+    for (int i = 0; i < requests.length; i++) {
+      mockMvc
+          .perform(
+              put("/api/v1/api-connections/1")
+                  .header("Authorization", "Bearer test-token")
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(objectMapper.writeValueAsString(requests[i])))
+          .andExpect(status().isBadRequest())
+          .andExpect(jsonPath("$.errors." + fields[i]).value(nul));
+    }
+    verify(apiConnectionService, never()).update(anyLong(), any(), anyLong());
   }
 }

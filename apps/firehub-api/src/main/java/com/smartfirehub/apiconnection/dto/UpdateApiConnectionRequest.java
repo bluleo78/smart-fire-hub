@@ -11,14 +11,21 @@ import java.util.Map;
  * 생략(null)은 되지만 빈·공백만의 값으로는 바꿀 수 없다(WD-1080).
  */
 public record UpdateApiConnectionRequest(
-    @Size(max = 100) @Pattern(regexp = TextRules.HAS_TEXT, message = TextRules.NAME_BLANK_MESSAGE)
+    // WD-1125: NUL(U+0000) 문자는 검증 단계에서 칸 오류로 막는다(이유는 TextRules.NO_NUL)
+    @Size(max = 100)
+        @Pattern(regexp = TextRules.HAS_TEXT, message = TextRules.NAME_BLANK_MESSAGE)
+        @Pattern(regexp = TextRules.NO_NUL, message = TextRules.NUL_MESSAGE)
         String name,
     @Size(max = DescriptionLimits.MAX_LENGTH, message = DescriptionLimits.API_CONNECTION_TOO_LONG)
+        @Pattern(regexp = TextRules.NO_NUL, message = TextRules.NUL_MESSAGE)
         String description,
     String authType,
     Map<String, String> authConfig,
     @Pattern(regexp = "^https?://.+|^$", message = "http:// 또는 https://로 시작하는 URL이어야 합니다")
         @Size(max = 500)
+        @Pattern(regexp = TextRules.NO_NUL, message = TextRules.NUL_MESSAGE)
         String baseUrl,
-    @Pattern(regexp = "^/.*|^$", message = "경로는 /로 시작해야 합니다") @Size(max = 500)
+    @Pattern(regexp = "^/.*|^$", message = "경로는 /로 시작해야 합니다")
+        @Size(max = 500)
+        @Pattern(regexp = TextRules.NO_NUL, message = TextRules.NUL_MESSAGE)
         String healthCheckPath) {}
