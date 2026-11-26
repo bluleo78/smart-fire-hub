@@ -66,8 +66,18 @@ export function euroRo(word: string): '로' | '으로' | '(으)로' {
   return '(으)로';
 }
 
-/** 마지막 음절 받침 유무에 따라 "이"/"가" 반환 */
-export function iGa(word: string) {
-  const code = word.charCodeAt(word.length - 1) - 0xac00;
-  return code >= 0 && code % 28 > 0 ? '이' : '가';
+/**
+ * 주격 조사 "이"/"가"(WD-1179).
+ * - 한글 음절: 마지막 음절 받침이 있으면 "이", 없으면 "가"
+ * - 숫자: 읽기 끝소리가 받침 있는 숫자(DIGITS_WITH_BATCHIM: 0·1·3·6·7·8)면 "이", 아니면 "가"
+ * - 그 밖(영문·기호·빈 값·한자 등): 발음을 철자로 정할 수 없어 "이(가)" 병기 — eulReul·waGwa 와 같은 이유
+ * 이전 구현은 마지막 글자 코드만 봐서 끝 공백·숫자 이름("데이터셋 1"가)에서 틀린 조사를 냈다.
+ */
+export function iGa(word: string): '이' | '가' | '이(가)' {
+  const last = lastChar(word);
+  if (last === '') return '이(가)';
+  const code = last.charCodeAt(0);
+  if (code >= 0xac00 && code <= 0xd7a3) return (code - 0xac00) % 28 > 0 ? '이' : '가';
+  if (last >= '0' && last <= '9') return DIGITS_WITH_BATCHIM.includes(last) ? '이' : '가';
+  return '이(가)';
 }
