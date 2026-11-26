@@ -16,6 +16,7 @@ import { TableSkeletonRows } from '@/components/ui/table-skeleton';
 import { useDebounceValue } from '@/hooks/useDebounceValue';
 import { formatDateTimeSecond, localMidnightIso } from '@/lib/formatters';
 import { isForbidden } from '@/lib/http-errors';
+import { MAX_AUDIT_SEARCH_LENGTH } from '@/lib/search-limits';
 import type { PlatformAuditLogResponse } from '@/types/platform';
 
 const PAGE_SIZE = 20;
@@ -153,11 +154,11 @@ export default function AuditLogPage() {
       <div className="flex flex-wrap items-end gap-3">
         <div className="space-y-1">
           <Label htmlFor={actorId}>행위자</Label>
-          <Input id={actorId} className="w-48" placeholder="아이디 일부" value={actor} onChange={(e) => setActor(e.target.value)} />
+          <Input id={actorId} className="w-48" placeholder="아이디 일부" maxLength={MAX_AUDIT_SEARCH_LENGTH} value={actor} onChange={(e) => setActor(e.target.value)} />
         </div>
         <div className="space-y-1">
           <Label htmlFor={targetId}>대상</Label>
-          <Input id={targetId} className="w-64" placeholder="아이디·테넌트 이름·식별자 일부" value={target} onChange={(e) => setTarget(e.target.value)} />
+          <Input id={targetId} className="w-64" placeholder="아이디·테넌트 이름·식별자 일부" maxLength={MAX_AUDIT_SEARCH_LENGTH} value={target} onChange={(e) => setTarget(e.target.value)} />
         </div>
         <div className="space-y-1">
           <span className="text-sm font-medium">액션</span>

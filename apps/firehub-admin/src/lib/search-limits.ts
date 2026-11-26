@@ -14,3 +14,10 @@ export const MAX_SEARCH_RESULTS = 20;
  * 입력란이 이 길이에서 막히게 해 서버로 보내지 않는다(WD-317).
  */
 export const MAX_QUERY_LENGTH = 100;
+
+/**
+ * 플랫폼 감사 로그 검색(행위자·대상) 입력 길이 상한. 서버 SearchQueryLimits.MAX_QUERY_LENGTH(1,000자)와 짝이다 —
+ * 넘기면 서버가 400 을 돌려 목록이 실패로 보이므로 입력란이 이 길이에서 막히게 한다(WD-1130).
+ * 위 계정 검색용 MAX_QUERY_LENGTH(100)와는 서버 한도가 달라 별도 상수로 둔다.
+ */
+export const MAX_AUDIT_SEARCH_LENGTH = 1000;

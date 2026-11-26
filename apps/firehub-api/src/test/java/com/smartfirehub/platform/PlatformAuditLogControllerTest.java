@@ -12,6 +12,7 @@ import com.smartfirehub.audit.time.AuditTimes;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.global.tenant.TenantContext;
 import com.smartfirehub.global.tenant.TenantProvisioningService;
+import com.smartfirehub.global.validation.SearchQueryLimits;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
 import com.smartfirehub.support.TestUsers;
@@ -114,8 +115,11 @@ class PlatformAuditLogControllerTest extends IntegrationTestBase {
   private org.springframework.test.web.servlet.ResultActions list(String... params)
       throws Exception {
     var req = get("/api/platform/audit-logs").header("Authorization", "Bearer " + operatorToken);
-    req.param("actor", marker);
-    for (int i = 0; i < params.length; i += 2) req.param(params[i], params[i + 1]);
+    // WD-1130: actor 기본값(marker)을 깔고 호출자 값이 덮어쓴다 — 두 값이 쉼표로 합쳐지면 길이 시험이 왜곡된다
+    var query = new java.util.LinkedHashMap<String, String>();
+    query.put("actor", marker);
+    for (int i = 0; i < params.length; i += 2) query.put(params[i], params[i + 1]);
+    query.forEach(req::param);
     return mockMvc.perform(req);
   }
 
@@ -282,5 +286,31 @@ class PlatformAuditLogControllerTest extends IntegrationTestBase {
         .perform(get("/api/platform/audit-logs").header("Authorization", "Bearer " + tenantToken))
         .andExpect(status().isForbidden());
     mockMvc.perform(get("/api/platform/audit-logs")).andExpect(status().isUnauthorized());
+  }
+
+  /** WD-1130: actor·target 은 1,000자까지 허용 — 상한 경계값은 통과한다(결과는 0건이어도 200). */
+  @Test
+  void searchTerms_atLimit_ok() throws Exception {
+    list("actor", "가".repeat(1000)).andExpect(status().isOk());
+    list("target", "가".repeat(1000)).andExpect(status().isOk());
+  }
+
+  /** WD-1130: actor·target 이 1,001자면 파라미터 이름 키의 필드 오류 400. */
+  @Test
+  void searchTerms_overLimit_fieldError400() throws Exception {
+    list("actor", "a".repeat(1001))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.actor").value(SearchQueryLimits.QUERY_TOO_LONG));
+    list("target", "a".repeat(1001))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.target").value(SearchQueryLimits.QUERY_TOO_LONG));
+  }
+
+  /** WD-1130: actionType 은 100자 상한 — 101자면 400. */
+  @Test
+  void actionType_overLimit_fieldError400() throws Exception {
+    list("actionType", "A".repeat(101))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.actionType").value(SearchQueryLimits.FILTER_TOO_LONG));
   }
 }
