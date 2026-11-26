@@ -15,6 +15,7 @@
 import type { Page } from '@playwright/test';
 
 import { mockProactivePermissions, setupJobDetailMocks } from '../../fixtures/ai-insight.fixture';
+import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 
 // 500 응답 본문의 서버 사유 — 이탈 뒤에도 토스트에 그대로 남아야 한다
@@ -94,6 +95,19 @@ async function saveThenLeave(page: Page) {
   await expect(page.locator('#job-name')).toHaveCount(0);
 }
 
+/**
+ * 상세에서 목록으로 떠나고, 목록 화면이 실제로 목록 GET 을 보냈는지까지 확인한다 —
+ * 주소만 바뀌면 라우트가 그려지지 않았을 수 있고, 이탈이 확정돼야 그 뒤의 응답이 「이탈 뒤에 도착한 것」이기 때문이다(WD-1156 리뷰 후속 지적 4).
+ * 목록 본문은 이 시험이 보는 대상이 아니라(목록 행 단언 없음) 빈 목록으로 새로 등록해 확정한다 — 나중 등록이 이기는 규칙에 걸려 이 등록이 이긴다.
+ */
+async function leaveToJobList(page: Page) {
+  const list = await mockApi(page, 'GET', '/api/v1/proactive/jobs', [], { capture: true });
+  const before = list.requests.length;
+  await pushHistoryEntry(page, '/ai-insights/jobs');
+  await expect(page).toHaveURL(/\/ai-insights\/jobs$/);
+  await expect.poll(() => list.requests.length, { timeout: 10_000 }).toBeGreaterThan(before);
+}
+
 test.beforeEach(async ({ authenticatedPage: page }) => {
   // 편집·저장 버튼은 쓰기 권한이 있을 때만 보인다(WD-133)
   await mockProactivePermissions(page);
@@ -107,8 +121,8 @@ test.describe('스마트 작업 편집 — 저장 중 이탈한 뒤 늦게 온 �
     await saveThenLeave(page);
 
     // 상세에서 목록으로 남은 이동 — 가드는 언마운트로 풀려 있어 pushState + popstate 로 그대로 간다
-    await pushHistoryEntry(page, '/ai-insights/jobs');
-    await expect(page).toHaveURL(/\/ai-insights\/jobs$/);
+    // 목록 GET 이 실제로 갔는지까지 봐야 이탈이 확정된 것이다(리뷰 후속 지적 4)
+    await leaveToJobList(page);
 
     // 화면이 없어진 뒤에 도착한 실패 응답 — 서버 사유를 담은 500
     hold.release(500, { message: SERVER_MSG });
@@ -127,8 +141,7 @@ test.describe('스마트 작업 편집 — 저장 중 이탈한 뒤 늦게 온 �
     await editAndSave(page, hold);
     await saveThenLeave(page);
 
-    await pushHistoryEntry(page, '/ai-insights/jobs');
-    await expect(page).toHaveURL(/\/ai-insights\/jobs$/);
+    await leaveToJobList(page);
 
     // 머물렀다면 EditConflictDialog 로 갔을 409 — 이탈이 확인된 뒤에야 도착한다
     hold.release(409, { status: 409, code: 'EDIT_CONFLICT', message: CONFLICT_MSG });
@@ -158,8 +171,12 @@ test.describe('스마트 작업 편집 — 저장 중 이탈한 뒤 늦게 온 �
     // 화면이 없어진 뒤에 도착한 성공도 토스트로 남는다(ProactiveJobDetailPage 성공 분기의 문구)
     await expect(page.getByText('작업이 저장되었습니다.')).toBeVisible();
 
-    // 같은 작업 상세로 돌아왔을 때도 읽기 모드다 — 늦게 온 성공이 편집 폼을 되살리지 않는다
+    // 같은 작업 상세로 돌아왔을 때도 읽기 모드다 — 늦게 온 성공이 편집 폼을 되살리지 않는다.
+    // 주소를 먼저 확정하고 편집 칸(#job-name) 부재를 함께 봐야, 엉뚱한 화면에서 같은 이름의 버튼을 찾아
+    // 통과해 버리지 않는다 — 이 단언은 지금 이 주소·이 폼 부재가 깨질 때만 실패해야 한다(리뷰 후속 지적 3)
     await pushHistoryEntry(page, '/ai-insights/jobs/1');
+    await expect(page).toHaveURL(/\/ai-insights\/jobs\/1$/);
+    await expect(page.locator('#job-name')).toHaveCount(0);
     await expect(page.getByRole('button', { name: '편집', exact: true })).toBeVisible();
   });
 });

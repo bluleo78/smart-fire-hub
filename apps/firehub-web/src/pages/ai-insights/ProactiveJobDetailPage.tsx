@@ -548,9 +548,10 @@ export default function ProactiveJobDetailPage() {
       setIsEditing(false);
     }
   })(e)
-    // 만들기 성공 후속(토스트·navigate)이 던져도 호출처(제출 핸들러·충돌 창)에 처리되지 않은 rejection 이 남지 않게
-    // 삼킨다 — 편집 분기와 같은 방식(WD-1156). 내부 오류는 각 분기의 try/catch 가 이미 잡는다.
-    .catch(() => undefined);
+    // 이 콜백(제출 핸들러 전체)이 던져도 호출처에 처리되지 않은 rejection 이 남지 않게 막는다(WD-1156, 편집 분기와 같은 방식).
+    // 오류는 각 분기의 try/catch 가 이미 잡으므로 여기까지 오는 것은 성공 후속(토스트·navigate) 예외다 —
+    // 기록 없이 삼키지 않도록 콘솔에 남긴다(리뷰 후속 지적 2), 메시지는 콜백 전체를 가리키게 넓힌다.
+    .catch((err) => console.error('스마트 작업 저장 처리 실패:', err));
   const handleSave = submitJob(false);
 
   /**
