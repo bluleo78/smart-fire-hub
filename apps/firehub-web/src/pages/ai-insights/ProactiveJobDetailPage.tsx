@@ -217,7 +217,7 @@ export default function ProactiveJobDetailPage() {
 
   // 만들기는 아래 submitJob 에서 mutateAsync 로 기다려 결과를 처리한다 — mutate(...) 의 onSuccess/onError 는 화면이
   // 언마운트되면 실행되지 않지만 mutateAsync 의 promise 는 마운트와 무관하게 끝나, 이탈 뒤 늦게 온 성공·실패도 같은 처리가 돈다(WD-1109 반려 3, WD-1153).
-  const createMutation = useCreateProactiveJob();
+  const createMutation = useCreateProactiveJob({ silentError: true }); // 이 화면은 토스트·칸 오류를 직접 처리하므로 기본 토스트를 끈다(WD-1156)
   // 목표 기반 작업은 섹션 구성을 리포트 양식으로 먼저 저장한 뒤 연결한다(WD-297). 작업 생성이 실패하면 방금 만든 양식을 지운다.
   const createTemplateMutation = useCreateProactiveTemplate();
   const deleteTemplateMutation = useDeleteProactiveTemplate();
@@ -500,7 +500,7 @@ export default function ProactiveJobDetailPage() {
     } else {
       // 「기본 (선택 안 함)」을 고르면 templateId 가 null 이 되는데, 서버는 null 을 "바꾸지 않음"으로 받는다.
       // 해제 의도를 clearTemplate 로 함께 보내야 옛 템플릿이 남지 않는다 (WD-136).
-      // Promise 를 돌려 충돌 창이 저장 끝까지 잠기게 하고(WD-678), 거부는 콜백이 처리하므로 삼킨다(이 화면은 isSubmitSuccessful 을 읽지 않는다).
+      // 충돌 창이 저장 끝까지 잠기게 하는 Promise 는 바깥의 submitJob 감싸기가 돌려준다(WD-678).
       // 저장 요청 중 다른 작업·새 작업으로 옮겨 가면 늦게 온 응답이 새 화면의 편집 상태를 덮지 않게, 요청 시작 시점의
       // 이동 카운터를 기억한다 — 같은 작업으로 왕복해도 카운터는 계속 커져 가드가 풀리지 않는다 (WD-996, WD-1042).
       // 카운터는 커밋이 끝나야 늘어나고 react-router 의 갱신은 startTransition 안이라 그 사이 창이 남기에,
@@ -508,8 +508,8 @@ export default function ProactiveJobDetailPage() {
       // WD-1109 반려 1 — 탭 전환은 떠남이 아니다)
       const savedSeq = navSeqRef.current;
       const savedPath = navLocationKey();
-      return updateMutation.mutateAsync(
-        {
+      try {
+        await updateMutation.mutateAsync({
           id: jobId,
           data: {
             ...payload,
@@ -517,40 +517,40 @@ export default function ProactiveJobDetailPage() {
             // 편집 기준 버전(WD-364) — 그 사이 다른 곳에서 저장됐으면 서버가 409 EDIT_CONFLICT 로 거부한다
             ...(force ? {} : { expectedUpdatedAt: baseUpdatedAt }),
           },
-        },
-        {
-          onSuccess: () => {
-            // 알림은 글로벌이라 화면을 덮지 않는다 — 가드 판정과 무관하게 띄운다
-            toast.success('작업이 저장되었습니다.');
-            // 시드 기준 버전은 여기서 앞으로 밀지 않는다 — 왕복 재편집으로 아래 가드에 걸려 isDirty 를 못 풀면
-            // 폼은 늘 첫 저장 이전 내용이라, 그 위 재저장은 서버(첫 저장 반영)와 버전이 달라야 409 로 막힌다.
-            // 버전만 내 응답으로 밀면 재저장이 첫 저장 내용을 충돌 없이 되돌려 버린다(WD-1042 반려 3).
-            // 정상 경로(가드가 풀린 저장)의 전진은 성공이 isDirty 를 풀어 시드가 최신 조회 값을 다시 따를 때 이뤄진다.
-            // 그 사이 화면을 옮겼으면 새 화면의 충돌 창·편집 상태를 바꾸지 않는다 (WD-996, WD-1042)
-            if (movedAway(savedSeq, savedPath)) return;
-            // 저장 성공 → 충돌 창 닫고 dirty 해제 후 읽기 모드로 복귀 (이슈 #59)
-            setEditConflict(false);
-            setIsDirty(false);
-            setIsEditing(false);
-          },
-          onError: (err) => {
-            // 그 사이 화면을 옮겼으면 충돌 창·칸 오류를 새 화면에 띄우지 않고 실패만 알린다 (WD-996, WD-1042)
-            if (movedAway(savedSeq, savedPath)) {
-              handleApiError(err, '작업 저장에 실패했습니다.');
-              return;
-            }
-            // 편집 충돌은 토스트 대신 안내 창으로 — 사용자가 다시 불러올지 덮어쓸지 고른다(WD-364)
-            if (isEditConflict(err)) {
-              setEditConflict(true);
-              return;
-            }
-            if (applyDuplicateNameError(form.setError, err)) return;
-            handleApiError(err, '작업 저장에 실패했습니다.');
-          },
-        },
-      ).catch(() => undefined);
+        });
+      } catch (err) {
+        // 그 사이 화면을 옮겼으면 충돌 창·칸 오류를 새 화면에 띄우지 않고 실패만 알린다 (WD-996, WD-1042)
+        if (movedAway(savedSeq, savedPath)) {
+          handleApiError(err, '작업 저장에 실패했습니다.');
+          return;
+        }
+        // 편집 충돌은 토스트 대신 안내 창으로 — 사용자가 다시 불러올지 덮어쓸지 고른다(WD-364)
+        if (isEditConflict(err)) {
+          setEditConflict(true);
+          return;
+        }
+        if (applyDuplicateNameError(form.setError, err)) return;
+        handleApiError(err, '작업 저장에 실패했습니다.');
+        return;
+      }
+      // 성공 처리는 try 밖에 둔다 — 토스트·가드 판정 같은 후속 처리의 예외를 이미 서버에 저장된 작업의 실패로 오인하지 않기 위해서다.
+      // 알림은 글로벌이라 화면을 덮지 않는다 — 가드 판정과 무관하게 띄운다
+      toast.success('작업이 저장되었습니다.');
+      // 시드 기준 버전은 여기서 앞으로 밀지 않는다 — 왕복 재편집으로 아래 가드에 걸려 isDirty 를 못 풀면
+      // 폼은 늘 첫 저장 이전 내용이라, 그 위 재저장은 서버(첫 저장 반영)와 버전이 달라야 409 로 막힌다.
+      // 버전만 내 응답으로 밀면 재저장이 첫 저장 내용을 충돌 없이 되돌려 버린다(WD-1042 반려 3).
+      // 정상 경로(가드가 풀린 저장)의 전진은 성공이 isDirty 를 풀어 시드가 최신 조회 값을 다시 따를 때 이뤄진다.
+      // 그 사이 화면을 옮겼으면 새 화면의 충돌 창·편집 상태를 바꾸지 않는다 (WD-996, WD-1042)
+      if (movedAway(savedSeq, savedPath)) return;
+      // 저장 성공 → 충돌 창 닫고 dirty 해제 후 읽기 모드로 복귀 (이슈 #59)
+      setEditConflict(false);
+      setIsDirty(false);
+      setIsEditing(false);
     }
-  })(e);
+  })(e)
+    // 만들기 성공 후속(토스트·navigate)이 던져도 호출처(제출 핸들러·충돌 창)에 처리되지 않은 rejection 이 남지 않게
+    // 삼킨다 — 편집 분기와 같은 방식(WD-1156). 내부 오류는 각 분기의 try/catch 가 이미 잡는다.
+    .catch(() => undefined);
   const handleSave = submitJob(false);
 
   /**
