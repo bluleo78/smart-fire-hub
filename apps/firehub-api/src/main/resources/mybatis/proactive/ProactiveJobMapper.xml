@@ -47,6 +47,8 @@
       <arg column="enabled" javaType="java.lang.Boolean"/>
       <arg column="next_execute_at" javaType="java.time.LocalDateTime"/>
       <arg column="timezone" javaType="java.lang.String"/>
+      <arg column="cron_expression" javaType="java.lang.String"/>
+      <arg column="trigger_type" javaType="java.lang.String"/>
     </constructor>
   </resultMap>
 
@@ -133,7 +135,8 @@
 
   <sql id="workspaceColumns">
     proactive_job.id AS id, proactive_job.name AS name, proactive_job.user_id AS user_id, u.name AS owner_name,
-    proactive_job.enabled AS enabled, proactive_job.next_execute_at AS next_execute_at, proactive_job.timezone AS timezone
+    proactive_job.enabled AS enabled, proactive_job.next_execute_at AS next_execute_at, proactive_job.timezone AS timezone,
+    proactive_job.cron_expression AS cron_expression, proactive_job.trigger_type AS trigger_type
   </sql>
 
   <sql id="workspaceFrom">

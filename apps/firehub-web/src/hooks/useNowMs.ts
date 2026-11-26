@@ -23,3 +23,13 @@ export function useNowMs(active: boolean, intervalMs = 1000): number {
 
   return nowMs;
 }
+
+/**
+ * 1분마다 갱신되는 「지금」(Date) — 목록의 「오늘/내일·지남」처럼 분 단위로 다시 판정해야 하는 표기용(WD-1167).
+ * 렌더 한 번만 판정하면 열어 둔 화면이 지난 시각을 알리지 못한다. `active` 가 false 면 타이머를 걸지 않는다.
+ */
+export function useMinuteNow(active: boolean): Date {
+  const nowMs = useNowMs(active, 60_000);
+  // eslint-disable-next-line no-restricted-syntax -- 문자열 파싱이 아니라 epoch ms 숫자를 Date 로 바꾼다
+  return new Date(nowMs);
+}

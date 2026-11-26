@@ -432,6 +432,9 @@ abstract class ProactiveJobRepositoryContractTest extends TenantPairContractBase
     assertThat(r1.enabled()).isTrue();
     assertThat(r1.nextExecuteAt()).isEqualTo(next);
     assertThat(r1.timezone()).isEqualTo("Asia/Seoul");
+    // 정기 실행 판정용 두 열(WD-1167) — 저장된 값 그대로
+    assertThat(r1.cronExpression()).isEqualTo("0 0 9 * * *");
+    assertThat(r1.triggerType()).isEqualTo("SCHEDULE");
     assertThat(rows.get(0).enabled()).isFalse();
     assertThat(rows.get(0).ownerId()).isEqualTo(userA2);
 
@@ -443,8 +446,12 @@ abstract class ProactiveJobRepositoryContractTest extends TenantPairContractBase
 
     assertThat(inA(() -> repository().findWorkspaceRow(j1, tenantA)))
         .get()
-        .extracting(WorkspaceJobRow::id, WorkspaceJobRow::ownerName)
-        .containsExactly(j1, "n");
+        .extracting(
+            WorkspaceJobRow::id,
+            WorkspaceJobRow::ownerName,
+            WorkspaceJobRow::cronExpression,
+            WorkspaceJobRow::triggerType)
+        .containsExactly(j1, "n", "0 0 9 * * *", "SCHEDULE");
     assertThat(inA(() -> repository().findWorkspaceRow(jb, tenantA))).as("남의 테넌트 작업").isEmpty();
     assertThat(inA(() -> repository().findWorkspaceRow(j1, tenantB))).isEmpty();
     assertThat(inA(() -> repository().findWorkspaceRow(-1L, tenantA))).isEmpty();

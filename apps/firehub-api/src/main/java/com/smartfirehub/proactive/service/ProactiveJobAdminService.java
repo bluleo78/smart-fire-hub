@@ -89,6 +89,9 @@ public class ProactiveJobAdminService {
             row -> {
               Optional<String> code = eligibility.getOrDefault(row.ownerId(), Optional.empty());
               ProactiveJobExecutionResponse last = latest.get(row.id());
+              // 정기 예약 작업이 아니면 DB 에 남은 낡은 다음 실행을 비운다 — 놓친 실행처럼 보이지 않게(WD-1167)
+              boolean scheduled =
+                  ProactiveJobService.isScheduledJob(row.triggerType(), row.cronExpression());
               return new ProactiveJobAdminSummaryResponse(
                   row.id(),
                   row.name(),
@@ -96,7 +99,7 @@ public class ProactiveJobAdminService {
                   row.enabled(),
                   code.isEmpty(),
                   code.orElse(null),
-                  row.nextExecuteAt(),
+                  scheduled ? row.nextExecuteAt() : null,
                   row.timezone(),
                   last != null ? last.status() : null);
             })

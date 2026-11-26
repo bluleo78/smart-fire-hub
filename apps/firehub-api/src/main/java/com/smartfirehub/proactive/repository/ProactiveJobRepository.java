@@ -133,7 +133,10 @@ public interface ProactiveJobRepository {
       String ownerName,
       Boolean enabled,
       LocalDateTime nextExecuteAt,
-      String timezone) {}
+      String timezone,
+      // 정기 실행 여부 판정용(WD-1167) — 응답에는 싣지 않는다
+      String cronExpression,
+      String triggerType) {}
 
   /** 이 워크스페이스의 스마트 작업 전부(최소 열 + 작성자 이름). 작성자 이름은 같은 질의에서 조인해 N+1 을 피한다. */
   List<WorkspaceJobRow> findWorkspaceRows(long tenantId);

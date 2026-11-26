@@ -221,3 +221,48 @@ test.describe('스마트 작업 「다음 실행」 지남 표기 (WD-1147)', ()
     await expect(futureRow).not.toContainText('지남');
   });
 });
+
+/**
+ * 열어 둔 목록 — 실행 시각이 지나면 새로고침 없이 「· 지남」으로 바뀐다 (WD-1167)
+ *
+ * 렌더 한 번만 판정하면 열어 둔 화면이 놓친 실행을 알리지 못했다. 시계를 설치(타이머 동작)한 뒤
+ * 2분 앞당겨 1분 주기 갱신이 「지남」을 붙이는지 확인한다. (setFixedTime 은 타이머를 멈추므로 쓰지 않는다)
+ */
+test.describe('열어 둔 목록 — 시각이 지나면 「· 지남」 (WD-1167)', () => {
+  // eslint-disable-next-line no-restricted-syntax -- 문자열 파싱이 아니라 Date.UTC 로 조립한 epoch 숫자다
+  const START = new Date(Date.UTC(2026, 3, 11, 8, 59, 0)); // 2026-04-11T08:59:00Z = KST 17:59
+  /** KST 18:00 — 시작 1분 뒤 */
+  const NEXT = '2026-04-11T09:00:00';
+
+  test('내 작업 — 시각 전에는 「지남」 없음, 2분 뒤 「· 지남」', async ({ authenticatedPage: page }) => {
+    await page.clock.install({ time: START });
+    await setupJobListMocks(page, 0, [
+      createJob({ id: 1, name: '곧 실행', enabled: true, timezone: 'Asia/Seoul', nextExecuteAt: NEXT }),
+    ]);
+    await page.goto('/ai-insights/jobs');
+
+    const row = page.getByRole('row').filter({ hasText: '곧 실행' });
+    await expect(row).toContainText('오늘 18:00 KST');
+    await expect(row).not.toContainText('지남');
+
+    await page.clock.fastForward(120_000);
+    await expect(row).toContainText('오늘 18:00 KST · 지남');
+  });
+
+  test('워크스페이스 전체 — 시각 전에는 「지남」 없음, 2분 뒤 「· 지남」', async ({ authenticatedPage: page }) => {
+    await page.clock.install({ time: START });
+    await mockProactiveAdminPermissions(page);
+    await setupJobListMocks(page, 0, []);
+    await mockApi(page, 'GET', '/api/v1/proactive/admin/jobs', [
+      createAdminJobRow({ id: 10, name: '곧 실행', nextExecuteAt: NEXT }),
+    ]);
+    await page.goto('/ai-insights/jobs?view=workspace');
+
+    const row = page.getByTestId('workspace-job-10');
+    await expect(row).toContainText('오늘 18:00 KST');
+    await expect(row).not.toContainText('지남');
+
+    await page.clock.fastForward(120_000);
+    await expect(row).toContainText('오늘 18:00 KST · 지남');
+  });
+});
