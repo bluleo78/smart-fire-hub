@@ -230,7 +230,7 @@ export default function DatasetDetailPage() {
   useInvalidateListsOnEntryNotFound({ isLoadingError, error: fetchError }, DATASET_LIST_KEY);
 
   // 조회 실패 처리 (#96) — isError 분기가 없던 시절엔 스켈레톤에 갇혀 무한 표시되었다.
-  // 첫 조회 404(isEntryNotFound)는 화면 안 안내가 맡고(WD-581), 그 밖의 실패(500·네트워크·재조회 중 404)는 토스트 + 목록 이동을 유지한다.
+  // 첫 조회 404(isEntryNotFound)는 화면 안 안내가 맡고(WD-581), 그 밖의 실패(500·네트워크·재조회 중 404)는 토스트 후 떠나기 가드(requestNavigate)를 거쳐 목록으로 간다 — 편집 중(dirty)이면 확인 창을 먼저 띄운다 (WD-1174).
   useEffect(() => {
     if (!isError) return;
     // 지워졌거나 볼 수 없게 된(404) 데이터셋은 「최근 접근」에서도 뺀다 — 카드가 남아 눌러도 같은 오류만 반복되지 않게 (WD-390).
@@ -245,10 +245,11 @@ export default function DatasetDetailPage() {
         ? '데이터셋을 찾을 수 없습니다.'
         : '데이터셋을 불러오지 못했습니다. 잠시 후 다시 시도하세요.',
     );
-    navigate('/data/datasets');
+    // (WD-1174) 편집 중 재조회 실패로 직접 navigate 하면 가드를 우회해 편집 내용이 사라진다 — 가드를 거친다
+    requestNavigate('/data/datasets');
     // datasetId 를 넣어 404 데이터셋에서 다른 404 데이터셋으로 옮겨 가도 두 번째 것도 「최근 접근」에서 빠지게 한다 (WD-581).
     // removeRecent 는 useCallback 으로 고정돼 있고 fetchError 는 새 실패 때만 바뀌어 반복 실행되지 않는다.
-  }, [isError, isEntryNotFound, fetchError, navigate, datasetId, removeRecent]);
+  }, [isError, isEntryNotFound, fetchError, requestNavigate, datasetId, removeRecent]);
 
   useEffect(() => {
     if (dataset) {
@@ -348,9 +349,11 @@ export default function DatasetDetailPage() {
       />
     );
   }
-  // 그 밖의 에러는 위 useEffect에서 navigate 처리되므로 빈 컨테이너 렌더링.
+  // 빈 컨테이너는 첫 조회 실패(dataset 없음)일 때만 그린다. 이동은 위 useEffect 가 떠나기 가드(requestNavigate)를 거쳐 처리한다 (WD-1174).
   // 로딩 또는 dataset 미도착 시에만 스켈레톤 표시 (#96).
-  if (isError) {
+  // (WD-1174) 재조회 실패는 이전 데이터가 남아 있다 — 빈 화면으로 바꾸면 편집 중인 정보 탭과 확인 창이 함께 사라지므로,
+  // 데이터가 없을 때(첫 조회 실패)만 빈 컨테이너로 두고 재조회 실패는 그대로 그려 가드 확인 창이 뜰 수 있게 한다.
+  if (isError && !dataset) {
     return <div />;
   }
   if (isLoading || !dataset) {
@@ -458,7 +461,8 @@ export default function DatasetDetailPage() {
                     className="gap-1 text-xs"
                     onClick={async () => {
                       const sql = await buildPreviewSql(dataset.tableName);
-                      navigate(
+                      // (WD-1174) 직접 navigate 는 편집 중 떠나기 가드를 우회한다 — requestNavigate 로 확인을 거친다
+                      requestNavigate(
                         `/analytics/queries/new?datasetId=${dataset.id}&sql=${encodeURIComponent(sql)}`
                       );
                     }}
@@ -472,7 +476,8 @@ export default function DatasetDetailPage() {
                     className="gap-1 text-xs"
                     onClick={async () => {
                       const sql = await buildPreviewSql(dataset.tableName);
-                      navigate(
+                      // (WD-1174) 직접 navigate 는 편집 중 떠나기 가드를 우회한다 — requestNavigate 로 확인을 거친다
+                      requestNavigate(
                         `/analytics/charts/new?queryId=adhoc&sql=${encodeURIComponent(sql)}&datasetId=${dataset.id}`
                       );
                     }}
