@@ -23,13 +23,19 @@
  */
 
 /** 현재 마운트된 페이지가 등록하는 가드 진입점 */
-interface ActiveGuardEntry {
+export interface ActiveGuardEntry {
   /** 현재 dirty 상태 여부(최신 값을 매번 조회) */
   isDirty: () => boolean;
   /** popstate로 이동하기 직전의 경로(pushState로 되돌릴 대상) */
   restorePath: () => string;
   /** 가로채기 성공 시 호출 — 다이얼로그 오픈 등 후속 처리 */
   onIntercepted: () => void;
+  /**
+   * 「떠나는 중」 표시를 쓰고 끈다 (WD-1160). true: 어느 가드에서 「이탈」이 확정돼 이 가드도 끈다 —
+   * 다음 화면이 로딩되는 동안(WD-651 창) 남은 dirty 가드가 두 번째 확인·beforeunload 를 띄우지 않게 하기 위함이다.
+   * false: 확정한 이동이 일어나지 않았을 때(WD-673) 가드를 다시 켠다.
+   */
+  setLeaving?: (leaving: boolean) => void;
 }
 
 // 여러 가드가 동시에 마운트될 수 있다(WD-1142) — 단일 칸이면 나중 등록이 앞 가드를 덮어쓰고, 그 해제가 앞 가드까지 지워
@@ -47,6 +53,38 @@ export function registerActiveGuard(entry: ActiveGuardEntry): () => void {
   activeGuards.add(entry);
   return () => {
     activeGuards.delete(entry);
+  };
+}
+
+/**
+ * 이동 한 번에 확인을 물을 가드 하나를 고른다 (WD-1160).
+ * 정책: dirty 가드가 여럿이어도 확인은 한 번, 가장 나중에 등록된(Set 뒤쪽) dirty 가드가 묻는다.
+ * 「이탈」을 확정하면 이동하므로 다른 dirty 폼도 함께 버려진다(markAllGuardsLeaving 으로 모두 떠남 처리한다).
+ * popstate 인터셉터와 훅의 click 캡처가 같은 규칙을 쓰도록 여기 한 곳에 둔다.
+ *
+ * 훅은 마운트당 한 번만 등록하므로 등록 순서 = 이펙트 실행 순서다.
+ * - 마운트 시점이 다른 가드끼리는 마운트 순서다.
+ * - React 는 이펙트를 자식부터 돌려, 같은 커밋에 부모·자식이 함께 마운트되면 부모가 나중에 등록돼 부모가 묻는다.
+ *   (확정하면 모두 버려지므로 무방하고, 실제 호출처는 페이지당 하나라 중첩은 없다.)
+ *
+ * 고를 가드가 없으면 undefined(가로채지 않음).
+ */
+export function pickInterceptingGuard(): ActiveGuardEntry | undefined {
+  return [...activeGuards].reverse().find((g) => g.isDirty());
+}
+
+/**
+ * 「이탈」 확정 시 등록된 모든 가드를 떠나는 중으로 돌린다 (WD-1160) — 확인 한 번이 다른 dirty 폼도 버리는 정책과
+ * 코드를 맞춘다. 안 그러면 다음 화면 로딩 중(WD-651 창) 다른 dirty 가드가 살아 있어 Back 이 두 번째 확인을 띄우고,
+ * 강제 새로고침에 beforeunload 가 뜨며 hasActiveLeaveGuard() 도 true 로 남는다.
+ * 확정한 이동이 일어나지 않았을 때(WD-673) 부르라고 모든 가드를 다시 켜는 함수를 돌려준다.
+ * 이후 재무장은 각 가드의 기존 규칙(location 정착·폼이 깨끗해짐)이 맡는다.
+ */
+export function markAllGuardsLeaving(): () => void {
+  const marked = [...activeGuards];
+  for (const g of marked) g.setLeaving?.(true);
+  return () => {
+    for (const g of marked) g.setLeaving?.(false);
   };
 }
 
@@ -116,8 +154,8 @@ export function installPopstateGuardInterceptor(): void {
       bypassNextPop = false;
       return;
     }
-    // dirty 인 가드 중 마지막에 (재)등록된 것을 쓴다(WD-1142) — 같은 항목을 해제 뒤 다시 등록하면 Set 의 끝으로 옮겨진다. 없으면 가로채지 않는다.
-    const guard = [...activeGuards].reverse().find((g) => g.isDirty());
+    // dirty 인 가드 중 나중에 등록된 것 하나만 쓴다(WD-1142·WD-1160, pickInterceptingGuard 참고). 없으면 가로채지 않는다.
+    const guard = pickInterceptingGuard();
     if (!guard) return;
 
     // 라우터를 포함한 이후 모든 popstate 리스너가 이 이벤트를 아예 보지 못하게 막는다.

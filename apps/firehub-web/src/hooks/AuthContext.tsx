@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { matchPath } from 'react-router-dom';
 
 import { authApi } from '../api/auth';
-import { abandonForSwitchedUser, AUTH_FLAG_KEY, claimUserLogout, clearSessionExpiredError, endSessionAndReloadToLogin, getAccessToken, hasSessionEndedMarker, isOtherSessionUser, refreshAccessTokenBestEffort, setAccessToken } from '../api/client';
+import { abandonForSwitchedUser, AUTH_FLAG_KEY, claimSessionEndRenavigation, claimUserLogout, clearSessionExpiredError, endSessionAndReloadToLogin, getAccessToken, hasSessionEndedMarker, isOtherSessionUser, refreshAccessTokenBestEffort, setAccessToken } from '../api/client';
 import type { TenantSessionState } from '../api/tenant-session';
 import { subscribeTenantSession } from '../api/tenant-session';
 import { usersApi } from '../api/users';
@@ -164,7 +164,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // 다른 탭의 로그아웃도 로그아웃이다 — 이 탭의 캐시·돌아갈 주소도 남기지 않는다(WD-276).
       // 토큰이 없는 탭(로그인·가입 화면 등)은 버릴 것이 없으니 리로드하지 않는다 — 입력 중인 폼을 지우지 않게.
       // 토큰이 null 이어도 세션 끝 표식이 있으면 리로드한다 — 이유는 hasSessionEndedMarker JSDoc 참조(WD-1142).
-      if (getAccessToken() !== null || hasSessionEndedMarker()) endSessionAndReloadToLogin();
+      // 표식만으로 리로드하는 경우는 갱신 거절과 같은 규칙(claimSessionEndRenavigation)을 따른다(WD-1160) —
+      // 같은 화면에서 이미 이동을 걸었다 떠나기 확인을 취소한 탭에 확인 창을 또 띄우지 않고 미룬다.
+      // 미뤄도 화면을 옮기거나 가드가 풀린 뒤 다음 요청의 갱신 거절이 로그인으로 보낸다.
+      if (getAccessToken() !== null || (hasSessionEndedMarker() && claimSessionEndRenavigation())) endSessionAndReloadToLogin();
     };
     window.addEventListener('storage', handleStorage);
     return () => window.removeEventListener('storage', handleStorage);

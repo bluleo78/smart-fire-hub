@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { authApi } from '../api/auth';
 import { clearSessionExpiredError, getAccessToken, isOtherSessionUser, refreshAccessToken, setAccessToken } from '../api/client';
 import { UserSwitchedError } from '../lib/api-error';
+import { registerLeaveBlocker } from '../lib/unsaved-changes-guard-registry';
 import { AuthProvider } from './AuthContext';
 import { useAuth } from './useAuth';
 
@@ -62,5 +63,76 @@ describe('completePasswordChange (WD-1122)', () => {
     expect(getAccessToken()).toBeNull();
     await expect(refreshAccessToken()).rejects.toBeInstanceOf(UserSwitchedError);
     expect(post).not.toHaveBeenCalled();
+  });
+});
+
+describe('다른 탭 로그아웃 storage 핸들러 — 세션 끝 표식 탭 (WD-1160)', () => {
+  const replace = vi.fn();
+  const wrapper = ({ children }: { children: ReactNode }) => <AuthProvider>{children}</AuthProvider>;
+  let unregister: (() => void) | null = null;
+
+  /** 다른 탭의 로그아웃 — hasSession 제거 통지 */
+  function otherTabLogout() {
+    act(() => {
+      window.dispatchEvent(new StorageEvent('storage', { key: 'hasSession', newValue: null }));
+    });
+  }
+
+  /** 사용자 바뀜으로 표식을 켜고(토큰 null) 지금 화면에서 첫 이동을 건 상태로 만든다 */
+  async function markSessionEnded() {
+    setAccessToken('old-token');
+    vi.mocked(isOtherSessionUser).mockReturnValue(true);
+    const { result } = renderHook(() => useAuth(), { wrapper });
+    await act(async () => {
+      await expect(result.current.completePasswordChange()).rejects.toBeInstanceOf(UserSwitchedError);
+    });
+    replace.mockClear();
+  }
+
+  beforeEach(() => {
+    vi.mocked(isOtherSessionUser).mockReturnValue(false);
+    localStorage.removeItem('hasSession');
+    vi.stubGlobal('location', { ...window.location, pathname: '/form', replace });
+    vi.mocked(authApi.refresh).mockResolvedValue({
+      data: { accessToken: 'tok', activeTenantId: null, memberships: [] },
+    } as never);
+  });
+  afterEach(() => {
+    unregister?.();
+    unregister = null;
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
+    clearSessionExpiredError();
+    setAccessToken(null);
+  });
+
+  it('같은 화면에서 이미 이동을 걸었고 떠나기 가드가 걸려 있으면 로그인 이동을 다시 걸지 않는다', async () => {
+    await markSessionEnded();
+    unregister = registerLeaveBlocker(() => true);
+    otherTabLogout();
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it('화면이 바뀌었으면 이동을 건다', async () => {
+    await markSessionEnded();
+    unregister = registerLeaveBlocker(() => true);
+    vi.stubGlobal('location', { ...window.location, pathname: '/other', replace });
+    otherTabLogout();
+    expect(replace).toHaveBeenCalledWith('/login');
+  });
+
+  it('가드가 없으면 같은 화면이어도 이동을 건다', async () => {
+    await markSessionEnded();
+    otherTabLogout();
+    expect(replace).toHaveBeenCalledWith('/login');
+  });
+
+  it('토큰이 있으면(표식 없음) 가드와 상관없이 지금처럼 이동한다', async () => {
+    renderHook(() => useAuth(), { wrapper });
+    setAccessToken('live');
+    unregister = registerLeaveBlocker(() => true);
+    otherTabLogout();
+    expect(replace).toHaveBeenCalledWith('/login');
   });
 });

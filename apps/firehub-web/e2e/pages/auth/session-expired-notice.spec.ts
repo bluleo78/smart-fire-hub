@@ -176,18 +176,24 @@ function dismissDialogs(page: Page) {
 /**
  * 이 탭이 `hasSession` storage 이벤트를 받았는지 조건으로 알기 위한 표시를 단다 (WD-1122) — 앱의 리스너보다 늦게 달려
  * 앱 처리가 끝난 뒤에 불린다. 다른 탭의 로그인 신호가 이 탭에 닿았는지 고정 대기 없이 기다리는 데 쓴다.
+ * removalOnly 가 true 면 삭제(`newValue === null`, 다른 탭 로그아웃) 이벤트만 따로 표시한다 — 앞선 설정 이벤트와 구분하기 위해서다.
  */
-async function watchHasSessionStorageEvent(page: Page) {
-  await page.evaluate(() => {
+async function watchHasSessionStorageEvent(page: Page, removalOnly = false) {
+  await page.evaluate((removal) => {
+    const flags = window as unknown as Record<string, boolean>;
+    const flag = removal ? '__storageRemovalSeen' : '__storageSeen';
     window.addEventListener('storage', (e) => {
-      if (e.key === 'hasSession') (window as unknown as { __storageSeen: boolean }).__storageSeen = true;
+      if (e.key === 'hasSession' && (!removal || e.newValue === null)) flags[flag] = true;
     });
-  });
+  }, removalOnly);
 }
 
 /** watchHasSessionStorageEvent 의 표시가 켜질 때까지 기다린다 — 이벤트 처리가 끝난 뒤에 다음 요청을 만들기 위해서다. */
-async function waitHasSessionStorageEvent(page: Page) {
-  await page.waitForFunction(() => (window as unknown as { __storageSeen?: boolean }).__storageSeen === true);
+async function waitHasSessionStorageEvent(page: Page, removalOnly = false) {
+  await page.waitForFunction(
+    (removal) => (window as unknown as Record<string, boolean>)[removal ? '__storageRemovalSeen' : '__storageSeen'] === true,
+    removalOnly,
+  );
 }
 
 /** 역할 저장(PUT) 요청·완료 횟수 — 같은 화면 요청이 실제로 나가 응답까지 끝났는지 조건으로 기다리기 위한 계수기. */
@@ -373,11 +379,19 @@ test.describe('사용 중 세션 만료 안내 (WD-830)', () => {
     await expect(card.getByRole('button', { name: '저장' })).toBeEnabled();
     const dialogs = dismissDialogs(page);
     const refresh = watchRefresh(page);
-    const getUrls: string[] = [];
+    // 401 을 받은 주소를 모아 두고, 그 뒤에 같은 주소가 다시 요청되면 재시도로 센다.
+    // (화면 로드가 같은 주소를 두 번 부르는 정상 중복은 401 전이라 걸리지 않는다.)
+    const expired = new Set<string>();
+    const retried: string[] = [];
+    const isApiGet = (r: { url(): string; method(): string }) =>
+      r.method() === 'GET' && r.url().includes('/api/v1/');
+    page.on('request', (r) => { if (isApiGet(r) && expired.has(r.url())) retried.push(r.url()); });
+    page.on('response', (res) => {
+      if (isApiGet(res.request()) && res.status() === 401) expired.add(res.url());
+    });
     // 이 화면의 GET 은 모두 401, 갱신도 401 — 등급 저장(PUT)은 성공하고 그 뒤 무효화된 쿼리 GET 이 401 을 맞는다
     await page.route('**/api/v1/**', (route) => {
       if (route.request().method() !== 'GET') return route.fallback();
-      getUrls.push(route.request().url());
       return route.fulfill({ status: 401, contentType: 'application/json', body: '{}' });
     });
     await page.route(`**${REFRESH_URL}`, (route) =>
@@ -387,12 +401,12 @@ test.describe('사용 중 세션 만료 안내 (WD-830)', () => {
     await card.getByRole('button', { name: '저장' }).click();
     await expect.poll(() => dialogs.count).toBe(1);
     await expect.poll(() => refresh.settled).toBeGreaterThanOrEqual(1);
-    expect(getUrls.length).toBeGreaterThanOrEqual(1);
+    await expect.poll(() => expired.size).toBeGreaterThanOrEqual(1);
     // react-query 의 재시도 지연(기본 1초)을 넘겨 기다린다 — 재시도가 있었다면 그 사이 두 번째 요청·확인 창이 나타난다(없음을 보는 단언)
     await page.waitForTimeout(1500);
     await nextFrames(page);
-    // 401 GET 은 재시도되지 않는다 — 재시도는 같은 주소를 한 번 더 부르므로 어떤 GET 주소도 두 번 나가지 않아야 한다(WD-1142)
-    expect(getUrls.filter((u, i) => getUrls.indexOf(u) !== i)).toEqual([]);
+    // 401 GET 은 재시도되지 않는다 — 401 을 받은 각 주소는 그 첫 401 뒤에 다시 요청되지 않아야 한다(WD-1142)
+    expect(retried).toEqual([]);
     expect(refresh.requested).toBe(1);
     expect(dialogs.count).toBe(1);
     await expect(page).not.toHaveURL(/\/login$/);
@@ -484,12 +498,91 @@ test.describe('사용 중 세션 만료 안내 (WD-830)', () => {
     await expect.poll(() => dialogs.count).toBeGreaterThan(before);
     await expect(tabA).not.toHaveURL(/\/login$/);
 
-    // 가드를 풀고(변경 되돌림), 다른 탭의 로그아웃을 흉내 낸다 — 토큰은 이미 없지만 표식이 있어 로그인 화면으로 다시 연다
+    // 가드를 풀고(변경 되돌림), 다른 탭이 실제로 로그아웃한다(표식 제거 → storage 이벤트) — 토큰은 이미 없지만 표식이 있어 로그인 화면으로 다시 연다
     await roleNameInput(tabA).fill('EDITOR');
-    await tabA.evaluate(() => {
-      window.dispatchEvent(new StorageEvent('storage', { key: 'hasSession', oldValue: 'true', newValue: null }));
-    });
+    await tabB.evaluate(() => localStorage.removeItem('hasSession'));
     await expect(tabA).toHaveURL(/\/login$/);
+  });
+
+  test('만료 이동을 취소한 뒤 같은 화면 배경 요청에는 확인이 다시 뜨지 않고, 다른 화면으로 옮기면 로그인 화면으로 간다 (WD-1160)', async ({
+    authenticatedPage: page,
+  }) => {
+    await openRoleEditor(page);
+    await roleNameInput(page).fill('EDITOR_X');
+    // 만료 이동의 beforeunload 확인 창(네이티브)은 취소한다 — 이후 사용자의 화면 이동은 앱 안 확인 창(alertdialog)으로 묻는다
+    const dialogs = dismissDialogs(page);
+    const refresh = watchRefresh(page);
+    const puts = watchRolePuts(page);
+    await expireSession(page);
+
+    // 저장 — 401 → 갱신도 401 → 만료 이동의 떠나기 확인이 뜨고 취소한다
+    await roleInfoSave(page).click();
+    await expect.poll(() => dialogs.count).toBe(1);
+    await expect.poll(() => refresh.settled).toBeGreaterThanOrEqual(1);
+    await expect(page).not.toHaveURL(/\/login$/);
+
+    // 같은 화면 배경 요청 — 확인 창이 다시 뜨지 않는다
+    await roleInfoSave(page).click();
+    await expect.poll(() => puts.settled).toBeGreaterThanOrEqual(2);
+    await nextFrames(page);
+    expect(dialogs.count).toBe(1);
+    await expect(page).not.toHaveURL(/\/login$/);
+
+    // 다른 화면의 요청은 401 이 되게 한다 — 화면을 옮긴 뒤의 요청이 로그인 이동을 다시 걸어야 한다
+    await page.route('**/api/v1/**', (route) =>
+      route.request().url().includes('/auth/signup-status')
+        ? route.fallback()
+        : route.fulfill({ status: 401, contentType: 'application/json', body: '{}' }),
+    );
+    // 사이드바 링크로 다른 화면 이동 — 가드의 확인 창이 뜨고 「이탈」을 누르면 옮겨 간다
+    await page.getByRole('link', { name: '사용자 관리' }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: '이탈' }).click();
+    await expect(page).toHaveURL(/\/login$/);
+    // 네이티브 확인 창은 처음 한 번뿐이다 — 이동·로그인 화면 하드 이동에 다시 뜨지 않는다
+    expect(dialogs.count).toBe(1);
+    // HTTP 갱신은 처음 한 번뿐이다
+    expect(refresh.requested).toBe(1);
+  });
+
+  test('사용자 바뀜 뒤 떠나기 확인을 취소한 탭은 다른 탭이 로그아웃해도 같은 화면에서 확인이 다시 뜨지 않는다 (WD-1160)', async ({
+    authenticatedPage: tabA,
+  }) => {
+    await mockApi(tabA, 'POST', REFRESH_URL, { ...MOCK_TOKEN_RESPONSE, accessToken: jwtFor('1') });
+    await openRoleEditor(tabA);
+    await roleNameInput(tabA).fill('EDITOR_X');
+    const dialogs = dismissDialogs(tabA);
+    const refresh = watchRefresh(tabA);
+    await expireSession(tabA);
+    await roleInfoSave(tabA).click();
+    await expect.poll(() => dialogs.count).toBeGreaterThanOrEqual(1);
+    await expect.poll(() => refresh.settled).toBeGreaterThanOrEqual(1);
+
+    // 다른 사용자(2) 가 로그인해 이 탭이 사용자 바뀜 표식을 든 채 남는다
+    await tabA.route(`**${REFRESH_URL}`, (route) =>
+      route.fulfill({ json: { ...MOCK_TOKEN_RESPONSE, accessToken: jwtFor('2') } }),
+    );
+    await watchHasSessionStorageEvent(tabA);
+    const tabB = await tabA.context().newPage();
+    await tabB.goto('/login');
+    await tabB.evaluate(() => localStorage.setItem('hasSession', 'true'));
+    await waitHasSessionStorageEvent(tabA);
+    const before = dialogs.count;
+    await roleInfoSave(tabA).click();
+    await expect.poll(() => dialogs.count).toBeGreaterThan(before);
+    await expect(tabA).not.toHaveURL(/\/login$/);
+
+    // 폼은 여전히 dirty(가드 유지) — 다른 탭 로그아웃의 storage 이벤트가 이 탭에 닿은 것을 조건으로 알고 기다린다
+    const afterCancel = dialogs.count;
+    await watchHasSessionStorageEvent(tabA, true);
+    await tabB.evaluate(() => localStorage.removeItem('hasSession'));
+    await waitHasSessionStorageEvent(tabA, true);
+    await nextFrames(tabA);
+
+    // 같은 화면에서 이미 취소했으니 확인 창이 다시 뜨지 않고 화면에 머문다
+    expect(dialogs.count).toBe(afterCancel);
+    await expect(tabA).not.toHaveURL(/\/login$/);
+    // 앱 안 떠나기 확인 창(alertdialog)도 다시 열리지 않았다
+    await expect(tabA.getByRole('alertdialog')).toHaveCount(0);
   });
 
   test('역할 상세 저장 중 다른 사용자 로그인이 감지되면 일반 저장 실패 토스트를 띄우지 않는다 (WD-1142)', async ({

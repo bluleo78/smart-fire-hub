@@ -12,7 +12,13 @@ import {
   AlertDialogTitle,
 } from '../components/ui/alert-dialog';
 import { isSameLocationPath } from '../lib/location-path';
-import { bypassNextPopstateGuard, registerActiveGuard } from '../lib/unsaved-changes-guard-registry';
+import {
+  type ActiveGuardEntry,
+  bypassNextPopstateGuard,
+  markAllGuardsLeaving,
+  pickInterceptingGuard,
+  registerActiveGuard,
+} from '../lib/unsaved-changes-guard-registry';
 
 /**
  * (WD-673) popstate 경로 「이탈」의 history.back() 이 실제로 이동했는지 기다리는 시간(ms).
@@ -45,7 +51,7 @@ export const BACK_NOOP_REARM_MS = 1000;
  *   // 두 번째 인자(선택) { onStay } 는 확인창에서 「취소」/Esc 로 남기를 고른 때 한 번 불린다 (WD-662).
  *   return <>{...page UI}{dialog}</>;
  *
- * - (이슈 #634) 위 (1)의 document click 캡처는 클릭 경로에 `<a href>`가 있을 때만 동작한다.
+ * - (이슈 #634) 위 (2)의 document click 캡처는 클릭 경로에 `<a href>`가 있을 때만 동작한다.
  *   페이지 내 "뒤로가기" 버튼처럼 `<button onClick={() => navigate(...)}>`로 프로그래매틱하게
  *   이동하는 경로는 `<a>` 요소가 없어 가드를 우회한다. 이런 인페이지 이동 버튼은 `navigate()`를
  *   직접 호출하지 말고 이 훅이 반환하는 `requestNavigate(to)`를 통해서만 이동해야 한다 —
@@ -102,8 +108,20 @@ export function useUnsavedChangesGuard(
   }, [currentPath]);
 
   // (WD-673) popstate 경로 「이탈」의 뒤로 가기 대기(popstate 리스너·제한 시간 타이머) 정리 함수 — 언마운트 때도 부른다.
-  const pendingBackCleanupRef = useRef<(() => void) | null>(null);
-  useEffect(() => () => pendingBackCleanupRef.current?.(), []);
+  // (WD-1160) clear 는 대기만 치우고 재무장은 하지 않는다(새 확정이 앞선 대기를 치울 때 쓴다). rearmAll 은 함께 떠나는 중으로
+  // 돌린 다른 가드를 다시 켜는 함수로, 언마운트 때만 clear 뒤에 따로 부른다.
+  const pendingBackCleanupRef = useRef<{ clear: () => void; rearmAll: () => void } | null>(null);
+  useEffect(
+    () => () => {
+      // 언마운트로 정리될 때 아직 popstate 가 안 온(뒤로 가기가 일어났는지 모르는) 상태면 다른 가드를 다시 켠다.
+      // popstate 가 오면 ref 가 비워지므로 이 경로로 오지 않는다.
+      const pending = pendingBackCleanupRef.current;
+      if (!pending) return;
+      pending.clear();
+      pending.rearmAll();
+    },
+    [],
+  );
 
   useEffect(() => {
     isDirtyRef.current = isDirty;
@@ -143,7 +161,39 @@ export function useUnsavedChangesGuard(
     return !leavingRef.current;
   }, [readDirty]);
 
-  // (1) document click 캡처 — 사이드바/AppLayout 등 모든 <a href> 클릭을 가로챈다.
+  // (1) popstate 가로채기 — `unsaved-changes-guard-registry`의 전역 인터셉터(main.tsx에서 1회
+  // 설치, 라우터보다 먼저 등록됨)에 현재 페이지를 "활성 가드"로 등록해둔다. 실제 popstate 처리는
+  // 그 인터셉터가 담당하며, dirty일 때 라우터로의 전파를 막고(stopImmediatePropagation) URL을
+  // 원복한 뒤 `onIntercepted`로 이 다이얼로그를 연다. 원복 경로는 locationRef(currentPath)로
+  // popstate 발생 시점의 최신 경로를 참조한다.
+  // (WD-1160) 등록은 마운트당 한 번 — 항목이 쓰는 함수(guardActive·currentPath·setOpenState)는 모두 안정 콜백이라
+  // 이펙트가 다시 돌지 않는다. 그래서 레지스트리 Set 순서 = 등록(이펙트) 순서가 유지되고(시점이 다른 가드는 마운트 순서, 같은 커밋의 부모·자식은 자식 먼저라 부모가 뒤), 이 항목을 ref 에 보관해
+  // click 캡처가 「내가 고른 가드인가」를 비교한다. (이전 의존성 변화로 재등록되면 Set 끝으로 옮겨져 순서가 흔들렸다.)
+  const entryRef = useRef<ActiveGuardEntry | null>(null);
+  useEffect(() => {
+    const entry: ActiveGuardEntry = {
+      isDirty: guardActive,
+      restorePath: currentPath,
+      onIntercepted: () => {
+        // pendingTo는 popstate에서는 알 수 없으므로 확정 시 history.back()을 재실행해야 한다
+        // (handleConfirm 참고). 단, 다이얼로그는 즉시 표시해 사용자에게 dirty 상태임을 알린다.
+        setPendingTo(null);
+        setOpenState(true);
+      },
+      // (WD-1160) 다른 가드에서 「이탈」이 확정되면 이 가드도 떠나는 중으로 — 재무장은 settleLeaving·guardActive 가 맡는다.
+      setLeaving: (leaving) => {
+        leavingRef.current = leaving;
+      },
+    };
+    entryRef.current = entry;
+    const unregister = registerActiveGuard(entry);
+    return () => {
+      unregister();
+      entryRef.current = null;
+    };
+  }, [guardActive, currentPath, setOpenState]);
+
+  // (2) document click 캡처 — 사이드바/AppLayout 등 모든 <a href> 클릭을 가로챈다.
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       // 수정자 키(Cmd/Ctrl/Shift/Alt) 또는 우클릭은 새 탭 등 외부 의도이므로 그대로 둔다.
@@ -175,8 +225,10 @@ export function useUnsavedChangesGuard(
       // 같은 경로(다른 search·hash 포함)면 통과 — pathname 동일 시만 통과로 한정한다.
       if (url.pathname === locationRef.current.pathname) return;
       // 가드 판정(dirty·이탈 중 여부)은 가로챌 링크 이동임이 확인된 뒤에만 한다 (WD-662·WD-651) — 판정 함수가 폼 전체를
-      // 비교하므로 화면의 모든 클릭(버튼·입력 칸 등)마다 비교하지 않게 한다. 결과는 이전과 같다.
-      if (!guardActive()) return;
+      // 비교하므로 화면의 모든 클릭(버튼·입력 칸 등)마다 비교하지 않게 한다.
+      // (WD-1160) 가드가 여럿이면 popstate 와 같은 규칙으로 고른 하나(나중에 등록된 dirty)만 묻는다 — 내 항목이 고른 가드면
+      // dirty 이면서 이탈 중이 아님(isDirty 가 guardActive)이 이미 보장되므로 따로 guardActive 를 부르지 않는다.
+      if (pickInterceptingGuard() !== entryRef.current) return;
 
       // 이동 가로채기
       e.preventDefault();
@@ -189,26 +241,7 @@ export function useUnsavedChangesGuard(
     document.addEventListener('click', handler, true);
     return () => document.removeEventListener('click', handler, true);
     // 경로는 locationRef 로 읽고 판정·열기는 안정 콜백(guardActive·setOpenState)이라 마운트당 한 번만 구독한다 (WD-651·WD-642).
-  }, [guardActive, setOpenState]);
-
-  // (2) popstate 가로채기 — `unsaved-changes-guard-registry`의 전역 인터셉터(main.tsx에서 1회
-  // 설치, 라우터보다 먼저 등록됨)에 현재 페이지를 "활성 가드"로 등록해둔다. 실제 popstate 처리는
-  // 그 인터셉터가 담당하며, dirty일 때 라우터로의 전파를 막고(stopImmediatePropagation) URL을
-  // 원복한 뒤 `onIntercepted`로 이 다이얼로그를 연다. 원복 경로는 locationRef(currentPath)로
-  // popstate 발생 시점의 최신 경로를 참조한다.
-  useEffect(() => {
-    const unregister = registerActiveGuard({
-      isDirty: guardActive,
-      restorePath: currentPath,
-      onIntercepted: () => {
-        // pendingTo는 popstate에서는 알 수 없으므로 확정 시 history.back()을 재실행해야 한다
-        // (handleConfirm 참고). 단, 다이얼로그는 즉시 표시해 사용자에게 dirty 상태임을 알린다.
-        setPendingTo(null);
-        setOpenState(true);
-      },
-    });
-    return unregister;
-  }, [guardActive, currentPath, setOpenState]);
+  }, [setOpenState]);
 
   // (2-1) (WD-651) 같은 기록 항목으로 뒤로 가기하면 커밋된 location 이 바뀌지 않아 위 이펙트가 돌지 않으므로 popstate 에서 settleLeaving.
   // 이 리스너는 페이지 마운트 시점에 등록돼 항상 전역 인터셉터·라우터보다 나중에 실행된다(#562 참고) — 그래서 이 뒤로 가기
@@ -258,7 +291,10 @@ export function useUnsavedChangesGuard(
     // (WD-651) 이탈 확정 즉시 가드를 끈다(leavingRef 설명 참고). popstate 경로(history.back())여도 같다.
     // (WD-673) popstate 경로에서 history.back() 이 아무 일도 하지 않으면(되돌아갈 기록이 없는 드문 경우) 주소가 바뀌지 않아
     // settleLeaving 이 불리지 않는다 — 아래 else 분기가 제한 시간 안에 popstate 가 없으면 가드를 다시 켠다.
+    // (WD-1160) 확인은 한 번이고 확정하면 다른 dirty 폼도 버려지므로, 같은 화면의 모든 가드를 함께 떠나는 중으로 돌린다.
+    // 클릭·popstate 두 경로 모두 해당한다.
     leavingRef.current = true;
+    const rearmAll = markAllGuardsLeaving();
     setOpenState(false);
     const to = pendingTo;
     setPendingTo(null);
@@ -270,7 +306,7 @@ export function useUnsavedChangesGuard(
       // 인터셉터가 이번 이동을 막아둔 상태이므로, 사용자가 "이탈"을 확정하면
       // 다음 popstate 1회는 가드를 우회하도록 표시한 뒤 실제 뒤로가기를 재실행한다.
       setTimeout(() => {
-        pendingBackCleanupRef.current?.();
+        pendingBackCleanupRef.current?.clear();
         const cancelBypass = bypassNextPopstateGuard();
         // (WD-673) 뒤로 가기가 실제로 일어났는지 popstate 한 번으로 확인한다. BACK_NOOP_REARM_MS 안에 오지 않으면
         // 아무 데도 가지 않은 것이므로 가드를 다시 켜고, 쓰이지 않은 우회 표시도 거둔다 — 남겨 두면 다음의 진짜 뒤로 가기가
@@ -286,11 +322,19 @@ export function useUnsavedChangesGuard(
           finish();
           cancelBypass();
           leavingRef.current = false;
+          // (WD-1160) 함께 끈 다른 가드도 다시 켠다.
+          rearmAll();
         }, BACK_NOOP_REARM_MS);
         window.addEventListener('popstate', finish);
-        pendingBackCleanupRef.current = () => {
-          finish();
-          cancelBypass();
+        // 확인한 가드가 타이머 전에 언마운트되면 타이머도 함께 지워지므로 언마운트 정리가 rearmAll 을 대신 불러야
+        // 남은 dirty 가드가 떠나는 중으로 영영 남지 않는다. 새 확정이 앞선 대기를 치우는 clear 는
+        // 새 확정이 막 건 떠남 표시를 되돌리면 안 되므로 재무장하지 않는다.
+        pendingBackCleanupRef.current = {
+          clear: () => {
+            finish();
+            cancelBypass();
+          },
+          rearmAll,
         };
         window.history.back();
       }, 0);

@@ -127,6 +127,22 @@ export function hasSessionEndedMarker(): boolean {
  */
 let expiredNavPath: string | null = null;
 
+/**
+ * 세션 끝 뒤 로그인 이동을 지금 다시 걸어도 되는지 판정하고, 된다면 이 화면을 이동을 건 화면으로 기록한다 (WD-1160).
+ *
+ * <p>규칙은 한 곳에만 둔다 — 갱신 거절(refreshAccessToken)과 다른 탭 로그아웃(AuthContext storage 핸들러)이 같은 판정을 써야,
+ * 같은 화면에서 이미 이동을 걸었다 떠나기 확인을 취소한 탭이 어느 경로로든 확인 창을 되풀이해 만나지 않는다.
+ * - WD-1082: 확인 창은 같은 화면에서 처음 한 번만 — 같은 화면이고 떠나기를 막는 것이 아직 걸려 있으면 false.
+ * - WD-830/WD-1122: 이동은 늘 다시 한다 — 화면이 바뀌었거나 막는 것이 풀렸으면 true.
+ * 표식이 꺼져 있을 때는 부르지 않는다(호출자가 표식을 먼저 본다).
+ */
+export function claimSessionEndRenavigation(): boolean {
+  const path = window.location.pathname;
+  if (path === expiredNavPath && hasActiveLeaveGuard()) return false;
+  expiredNavPath = path;
+  return true;
+}
+
 /** 시험 전용 — 모듈 수준 안내 주인이 시험 사이에 남아 뒤 시험의 안내 단언이 어긋나지 않게 푼다(WD-830 리뷰). */
 export function resetNoticeOwnerForTest() {
   noticeOwner = null;
@@ -238,12 +254,10 @@ export function refreshAccessToken(): Promise<RefreshResult> {
   // 다만 로그인 이동은 남긴다(WD-830 「이동은 늘 다시 한다」) — 가드로 첫 이동이 막힌 탭이 가드를 푼 뒤
   // 화면을 옮길 때 비로소 로그인 화면으로 가게 하려는 것이다(위 expiredNavPath · 아래 sessionExpiredError 주석).
   if (sessionExpiredError !== null) {
-    const path = window.location.pathname;
     // 화면이 바뀌었거나, 떠나기를 막는 것(dirty 가드·스트리밍/업로드 중 beforeunload)이 풀렸으면 이동을 다시 건다(WD-1122) —
     // 같은 화면이어도 모두 풀렸다면 첫 이동이 취소된 채 죽은 화면에 남은 탭이므로 확인 창을 되풀이할 위험이 없다.
-    // 하나라도 걸려 있으면 다시 걸지 않는다.
-    if (path !== expiredNavPath || !hasActiveLeaveGuard()) {
-      expiredNavPath = path;
+    // 하나라도 걸려 있으면 다시 걸지 않는다. 판정은 claimSessionEndRenavigation 한 곳(다른 탭 로그아웃과 공유, WD-1160).
+    if (claimSessionEndRenavigation()) {
       if (sessionExpiredError instanceof UserSwitchedError) window.location.replace('/');
       else endSessionAndReloadToLogin(SESSION_EXPIRED_NOTICE);
     }

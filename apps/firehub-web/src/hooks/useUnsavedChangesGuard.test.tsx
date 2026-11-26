@@ -29,14 +29,20 @@ const registered = vi.hoisted(() => ({
   isDirty: null as null | (() => boolean),
   onIntercepted: null as null | (() => void),
   cancelBypass: null as null | ReturnType<typeof vi.fn>,
+  entry: null as null | { isDirty: () => boolean; onIntercepted: () => void },
 }));
 vi.mock('../lib/unsaved-changes-guard-registry', () => ({
   registerActiveGuard: (entry: { isDirty: () => boolean; onIntercepted: () => void }) => {
     registered.isDirty = entry.isDirty;
     registered.onIntercepted = entry.onIntercepted;
+    registered.entry = entry;
     return () => {};
   },
+  // (WD-1160) click 캡처가 고르는 가드 — 이 파일은 가드 하나만 쓰므로 마지막 등록 항목이 dirty 일 때 그것을 돌려준다.
+  pickInterceptingGuard: () => (registered.entry?.isDirty() ? registered.entry : undefined),
   bypassNextPopstateGuard: vi.fn(() => registered.cancelBypass),
+  // (WD-1160) 가드가 하나뿐이라 다른 가드를 끌 일이 없다 — 되돌림 함수만 돌려준다.
+  markAllGuardsLeaving: () => () => {},
 }));
 
 /**
