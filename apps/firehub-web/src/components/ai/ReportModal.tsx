@@ -26,9 +26,10 @@ import {
 import { RestrictedNotice } from '@/components/ui/restricted-notice';
 import { useExecution, useExecutionHtml } from '@/hooks/queries/useProactiveMessages';
 import { useReportActions } from '@/hooks/useReportActions';
-import { isReportLevelBlocked, REPORT_LEVEL_BLOCKED_MESSAGE } from '@/lib/api-error';
+import { REPORT_LEVEL_BLOCKED_MESSAGE } from '@/lib/api-error';
 import { getStatusBadgeVariant, getStatusLabel, timeAgo } from '@/lib/formatters';
-import { getSections } from '@/lib/proactive-utils';
+import { getSections, reportHtmlErrorKind } from '@/lib/proactive-utils';
+import { ProactiveReadForbiddenNotice } from '@/pages/ai-insights/components/ProactiveReadForbiddenNotice';
 
 /** ReactMarkdown remark 플러그인 — GFM(테이블, 취소선 등) 지원 */
 const REMARK_PLUGINS = [remarkGfm];
@@ -68,9 +69,17 @@ export default function ReportModal({ open, onClose, jobId, executionId }: Repor
     enabled: open,
   });
   // 리포트 등급이 작성자의 현재 보안 등급보다 높아 서버가 403 으로 막았는가(WD-198) — 「리포트가 없습니다」 대신 등급 안내를 보인다.
-  const levelBlocked = isReportLevelBlocked(htmlError) || isReportLevelBlocked(metaError);
+  // 갈래 우선순위(등급 차단 > 권한 부족)는 공용 분류 함수 한곳에 있다(WD-1098). HTML·메타 어느 쪽 오류든 해당된다.
+  const htmlErrorKind = reportHtmlErrorKind(htmlError);
+  const metaErrorKind = reportHtmlErrorKind(metaError);
+  const levelBlocked = htmlErrorKind?.kind === 'level-blocked' || metaErrorKind?.kind === 'level-blocked';
+
+  // 조회 권한 부족(403, 등급 차단 아님) — 일시 오류처럼 읽히는 「불러올 수 없습니다」 대신 권한 안내를 보인다(WD-137·WD-1098).
+  const forbidden = !levelBlocked && (htmlErrorKind?.kind === 'forbidden' || metaErrorKind?.kind === 'forbidden');
 
   const rawHtml = htmlResponse?.data ?? null;
+  // 마크다운 폴백에 보일 섹션 — result 가 있어도 섹션이 없으면(예: {}) 폴백은 그려지지 않으므로 빈 상태 판단은 섹션 기준이다(WD-1098).
+  const sections = execution?.result ? getSections(execution.result) : [];
   const isLoading = htmlLoading || metaLoading;
 
   // PDF 다운로드 + 인쇄 공통 훅
@@ -92,9 +101,6 @@ export default function ReportModal({ open, onClose, jobId, executionId }: Repor
    * HTML 리포트가 없지만 실행 결과(result)가 있을 때 섹션별 마크다운으로 표시
    */
   const renderMarkdownFallback = () => {
-    if (!execution?.result) return null;
-    const sections = getSections(execution.result);
-    if (sections.length === 0) return null;
 
     return (
       <div ref={contentRef} className="p-6 space-y-6 overflow-auto h-full">
@@ -216,13 +222,20 @@ export default function ReportModal({ open, onClose, jobId, executionId }: Repor
             </div>
           )}
 
-          {/* HTML이 없고 결과가 있으면 마크다운 폴백 */}
-          {!isLoading && !rawHtml && execution?.result && renderMarkdownFallback()}
+          {/* 권한 부족(403) — 등급 차단 안내 다음, 오류 문구 대신 권한 안내 (WD-1098) */}
+          {!isLoading && forbidden && !rawHtml && (
+            <ProactiveReadForbiddenNotice subject="리포트" testId="report-modal-forbidden" />
+          )}
 
-          {/* 리포트도 결과도 없는 빈 상태 */}
-          {!isLoading && !levelBlocked && !rawHtml && !execution?.result && (
+          {/* HTML이 없고 마크다운 섹션이 있으면 마크다운 폴백 */}
+          {!isLoading && !rawHtml && sections.length > 0 && renderMarkdownFallback()}
+
+          {/* 리포트도 결과도 없는 빈 상태 — HTML 조회 오류가 있으면 뷰어와 같은 규칙의 안내를 보인다(WD-1098).
+              등급 차단·권한 부족은 위 블록이 먼저이고, 마크다운 섹션이 있으면 이 블록은 나오지 않는다.
+              result 가 있어도 섹션이 없으면(예: {}) 폴백이 비므로 이 블록이 맡는다. */}
+          {!isLoading && !levelBlocked && !forbidden && !rawHtml && sections.length === 0 && (
             <div className="flex items-center justify-center h-full text-muted-foreground">
-              <p className="text-sm">리포트가 없습니다.</p>
+              <p className="text-sm">{htmlErrorKind?.kind === 'message' ? htmlErrorKind.text : '리포트가 없습니다.'}</p>
             </div>
           )}
         </div>

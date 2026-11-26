@@ -311,6 +311,12 @@ export const MEMBER_GONE_MESSAGE = '이 워크스페이스에서 찾을 수 없�
 export const REPORT_HTML_MISSING_MESSAGE = '이 실행에는 HTML 리포트가 없습니다.';
 
 /**
+ * 리포트 HTML 을 불러오지 못했을 때의 고정 안내 (WD-1098).
+ * 서버가 사용자용 원인을 주지 않은 오류(5xx·403·네트워크 등)에 쓴다 — 서버 원문은 내부 문구일 수 있어 보이지 않는다.
+ */
+export const REPORT_LOAD_ERROR_MESSAGE = '리포트를 불러올 수 없습니다.';
+
+/**
  * 실행 리포트 HTML 조회 404 가 「HTML 리포트 없음」인가 (WD-1096).
  * 이 404 는 작성자 확인을 통과한 뒤라 문구를 그대로 보여도 된다. 같은 404 라도 작업 없음·작성자 아님은 서버가
  * 내부 문구(작업 id 포함)를 주므로 보이면 안 된다 — 서버가 구분 code 를 주지 않아 문구로 가른다.

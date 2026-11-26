@@ -27,7 +27,7 @@ import { useReportActions } from '@/hooks/useReportActions';
 import { isForbiddenError, isNotFoundError, isReportLevelBlocked } from '@/lib/api-error';
 import { classifyExecutionOutcome, getExecutionDisplayStatus } from '@/lib/error-classifier';
 import { formatDate, formatDuration, getStatusBadgeVariant, getStatusLabel, timeAgo } from '@/lib/formatters';
-import { EXECUTION_NOT_FOUND_NOTICE, getSections } from '@/lib/proactive-utils';
+import { EXECUTION_NOT_FOUND_NOTICE, getSections, reportHtmlErrorKind } from '@/lib/proactive-utils';
 import { parseRouteId } from '@/lib/route-id';
 
 import { BackButton } from './components/BackButton';
@@ -92,7 +92,7 @@ function ExecutionDetailContent({ jobIdNum, executionIdNum }: { jobIdNum: number
   const { goBack } = useJobGoBack(jobIdNum, execution !== undefined);
 
   // HTML 리포트 조회 — COMPLETED 상태이고 result가 있을 때만 활성화. 리포트 보기·모달과 같은 훅·캐시를 쓴다(WD-661)
-  const { data: htmlResponse } = useExecutionHtml(jobIdNum, executionIdNum, {
+  const { data: htmlResponse, error: htmlError } = useExecutionHtml(jobIdNum, executionIdNum, {
     enabled: execution?.status === 'COMPLETED' && execution?.result != null,
   });
 
@@ -160,6 +160,11 @@ function ExecutionDetailContent({ jobIdNum, executionIdNum }: { jobIdNum: number
   const sections = execution.status === 'COMPLETED' && execution.result && !rawHtml
     ? getSections(execution.result)
     : [];
+
+  // COMPLETED 인데 HTML 도 섹션도 없고 HTML 조회가 오류일 때만 안내 갈래를 정한다 (WD-1098) — 갈래 규칙은 공용 함수 한곳.
+  const htmlErrorKind = execution.status === 'COMPLETED' && !rawHtml && sections.length === 0
+    ? reportHtmlErrorKind(htmlError)
+    : null;
 
   // 실패·건너뜀 카드 분류 (WD-191) — 서버는 의도된 건너뜀(작업 주인 정지·권한 없음·워크스페이스 정지)도 FAILED 로 남기므로
   // 사유 문구로 가려낸다. 건너뜀이면 상태 뱃지도 「실패」(빨강) 대신 「건너뜀」(중립)으로 보여 카드와 어긋나지 않게 한다.
@@ -387,6 +392,23 @@ function ExecutionDetailContent({ jobIdNum, executionIdNum }: { jobIdNum: number
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* COMPLETED + HTML 도 섹션도 없고 HTML 조회가 오류 — 빈 영역 대신 뷰어와 같은 규칙의 안내 (WD-1098).
+          등급 차단·권한 부족(403)은 전용 안내가 먼저고, 그 밖의 오류만 공용 문구를 쓴다. */}
+      {htmlErrorKind?.kind === 'level-blocked' && (
+        <ReportLevelBlockedNotice testId="execution-report-level-blocked" />
+      )}
+      {htmlErrorKind?.kind === 'forbidden' && (
+        <ProactiveReadForbiddenNotice subject="리포트" testId="execution-report-forbidden" />
+      )}
+      {htmlErrorKind?.kind === 'message' && (
+        <div
+          className="rounded-lg border bg-card p-6 text-center"
+          data-testid="execution-report-html-error"
+        >
+          <p className="text-sm text-muted-foreground">{htmlErrorKind.text}</p>
         </div>
       )}
     </div>
