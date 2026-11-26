@@ -3,6 +3,7 @@ package com.smartfirehub.proactive.repository.jooq;
 import static org.jooq.impl.DSL.*;
 
 import com.smartfirehub.global.dto.LockedRowVersion;
+import com.smartfirehub.global.naming.NameComparison;
 import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
 import com.smartfirehub.global.validation.PgEdgeSpaceChars;
 import com.smartfirehub.proactive.dto.ProactiveJobResponse;
@@ -441,5 +442,11 @@ public class JooqProactiveJobRepository implements ProactiveJobRepository {
       c = c.and(PJ_ID.ne(excludeId));
     }
     return dsl.fetchExists(dsl.selectOne().from(PROACTIVE_JOB).where(c));
+  }
+
+  /** existsByOwnerAndName 의 PG 유니코드 공백 변환 SQL 과 같은 기준(WD-1165). */
+  @Override
+  public NameComparison nameComparison() {
+    return NameComparison.UNICODE_TRIM;
   }
 }
