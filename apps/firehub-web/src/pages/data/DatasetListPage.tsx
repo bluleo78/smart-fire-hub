@@ -773,75 +773,79 @@ export default function DatasetListPage() {
                   <TableCell className="tabular-nums" title={formatDateTimeMinute(dataset.createdAt)}>
                     {formatDateOnly(dataset.createdAt)}
                   </TableCell>
-                  <TableCell className="relative">
-                    {/* 행 작업 버튼 — 마우스를 올리거나 키보드 포커스가 안에 들어오면 보인다(WD-412: Tab 으로 와도 보이지 않던 문제) */}
-                    {/* WD-880: 아래 미리보기·프로파일·내보내기 버튼은 최소 클릭 대상 32×32(size="icon-sm"). 오버레이는 top-1/2 -translate-y-1/2 로 세로 가운데라 커져도 행 안에 든다 */}
-                    <div className="absolute right-10 top-1/2 -translate-y-1/2 flex gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity bg-background/90 backdrop-blur-sm rounded-md p-1 shadow-sm z-10">
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        title="미리보기"
-                        aria-label="미리보기"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setPreviewDatasetId(dataset.id);
-                          setPreviewDatasetName(dataset.name);
-                          setPreviewOpen(true);
-                        }}
-                      >
-                        <Eye size={14} />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        title="프로파일"
-                        aria-label="프로파일"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          navigate(`/data/datasets/${dataset.id}?tab=data`);
-                        }}
-                      >
-                        <BarChart3 size={14} />
-                      </Button>
-                      {/* 보조 다운로드 아이콘은 조회자 기준 내보내기 불가면 숨긴다(S4, 스펙 §5-4) — true 일 때만(fail-closed) */}
-                      {dataset.exportAllowed === true && (
+                  <TableCell>
+                    {/* WD-1117: 호버 툴바를 삭제 버튼 왼쪽 가장자리 기준(right-full + mr-1)으로 띄워 둘이 겹치지 않게 한다.
+                        삭제 권한이 없으면 묶음 폭이 0 이라 툴바는 칸 시작 가장자리 왼쪽(생성일 칸 위)에 뜬다 — 예전 right-10 도 그 칸을 덮었다. */}
+                    <div className="relative inline-flex items-center">
+                      {/* 행 작업 버튼 — 마우스를 올리거나 키보드 포커스가 안에 들어오면 보인다(WD-412: Tab 으로 와도 보이지 않던 문제) */}
+                      {/* WD-880: 아래 미리보기·프로파일·내보내기 버튼은 최소 클릭 대상 32×32(size="icon-sm"). 오버레이는 top-1/2 -translate-y-1/2 로 세로 가운데라 커져도 행 안에 든다 */}
+                      <div className="absolute right-full mr-1 top-1/2 -translate-y-1/2 flex gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity bg-background/90 backdrop-blur-sm rounded-md p-1 shadow-sm z-10">
                         <Button
                           variant="ghost"
                           size="icon-sm"
-                          title="내보내기"
-                          aria-label="내보내기"
+                          title="미리보기"
+                          aria-label="미리보기"
                           onClick={(e) => {
-                            // refs #95: navigate 가 아닌 ExportDialog 오픈 — 라벨/아이콘과 동작 일치
                             e.stopPropagation();
-                            setExportDatasetId(dataset.id);
-                            setExportDatasetName(dataset.name);
-                            setExportOpen(true);
+                            setPreviewDatasetId(dataset.id);
+                            setPreviewDatasetName(dataset.name);
+                            setPreviewOpen(true);
                           }}
                         >
-                          <Download size={14} />
+                          <Eye size={14} />
                         </Button>
-                      )}
-                    </div>
-
-                    {/* Delete button — 창을 열면 이 데이터셋을 쓰는 곳(파이프라인·대시보드 등)을 먼저 보여 준다(WD-143).
-                        삭제 권한(dataset:delete)이 있을 때만 보인다(WD-144). */}
-                    {canDeleteDataset && (
-                      <DatasetDeleteConfirmDialog
-                        datasetId={dataset.id}
-                        itemName={dataset.name}
-                        onConfirm={() => handleDelete(dataset.id, dataset.name)}
-                        trigger={
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          title="프로파일"
+                          aria-label="프로파일"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            navigate(`/data/datasets/${dataset.id}?tab=data`);
+                          }}
+                        >
+                          <BarChart3 size={14} />
+                        </Button>
+                        {/* 보조 다운로드 아이콘은 조회자 기준 내보내기 불가면 숨긴다(S4, 스펙 §5-4) — true 일 때만(fail-closed) */}
+                        {dataset.exportAllowed === true && (
                           <Button
                             variant="ghost"
-                            size="sm"
-                            aria-label="삭제"
-                            onClick={(e) => e.stopPropagation()}
+                            size="icon-sm"
+                            title="내보내기"
+                            aria-label="내보내기"
+                            onClick={(e) => {
+                              // refs #95: navigate 가 아닌 ExportDialog 오픈 — 라벨/아이콘과 동작 일치
+                              e.stopPropagation();
+                              setExportDatasetId(dataset.id);
+                              setExportDatasetName(dataset.name);
+                              setExportOpen(true);
+                            }}
                           >
-                            <Trash2 className="h-4 w-4" />
+                            <Download size={14} />
                           </Button>
-                        }
-                      />
-                    )}
+                        )}
+                      </div>
+
+                      {/* Delete button — 창을 열면 이 데이터셋을 쓰는 곳(파이프라인·대시보드 등)을 먼저 보여 준다(WD-143).
+                          삭제 권한(dataset:delete)이 있을 때만 보인다(WD-144). */}
+                      {canDeleteDataset && (
+                        <DatasetDeleteConfirmDialog
+                          datasetId={dataset.id}
+                          itemName={dataset.name}
+                          onConfirm={() => handleDelete(dataset.id, dataset.name)}
+                          trigger={
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              aria-label="삭제"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          }
+                        />
+                      )}
+                    </div>
                   </TableCell>
                 </TableRow>
               ))
