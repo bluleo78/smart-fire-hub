@@ -22,8 +22,11 @@ const ALLOWLIST: Record<string, string> = {};
  * 그래서 파서(TSX)가 만든 트리의 모든 토큰 앞 여백에서 주석 범위(앞·뒤)를 모아 그 범위만 지운다 —
  * JSX 글은 주석 후보에서 빼므로 그 안의 `/*` 는 주석이 아니다.
  */
-function stripComments(src: string): string {
-  const sf = ts.createSourceFile('x.tsx', src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+function stripComments(src: string, fileName = 'x.tsx'): string {
+  // (WD-1160) 확장자로 ScriptKind 를 고른다 — `.ts` 를 TSX 로 파싱하면 `<string>x` 같은 꺾쇠 타입 단언이 JSX 로 읽혀
+  // 그 뒤 주석 경계가 틀어진다(JsxText 는 주석 후보에서 빠져 주석이 안 걷힌다).
+  const kind = /\.tsx$/.test(fileName) ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+  const sf = ts.createSourceFile(fileName, src, ts.ScriptTarget.Latest, true, kind);
   const ranges = new Map<number, number>();
   const collect = (node: ts.Node) => {
     // JSDoc 노드는 주석 자체라 그 안은 훑지 않는다 — 주석 범위는 이를 가진 토큰의 앞 여백에서 이미 잡힌다
@@ -66,16 +69,19 @@ describe('beforeunload 리스너는 떠나기 차단 등록을 함께 한다 (WD
     const registers = /registerLeaveBlocker\(|registerActiveGuard\(/;
     // 파서(stripComments)는 비싸니, 규칙이 찾는 글자(beforeunload·useBeforeUnload)가 아예 없는 파일은 건너뛰고 일치한 파일에만 돌린다.
     const mightListen = (text: string) => /beforeunload|BeforeUnload/.test(text);
-    const withListener = files.filter((f) => {
-      const text = readFileSync(f, 'utf8');
-      return mightListen(text) && listener.test(stripComments(text));
-    });
+    // 파일마다 한 번만 읽고 파싱해 두고, 아래 등록 검사도 같은 결과를 쓴다.
+    const withListener = files
+      .map((f) => {
+        const text = readFileSync(f, 'utf8');
+        return { f, stripped: mightListen(text) ? stripComments(text, f) : '' };
+      })
+      .filter(({ stripped }) => listener.test(stripped));
     // 규칙이 아무것도 검사하지 않는 빈 시험이 되지 않게 — 현재 알려진 리스너(useUnsavedChangesGuard·useAIChat)가 잡혀야 한다
     expect(withListener.length).toBeGreaterThan(0);
     const offenders = withListener
-      .map((f) => f.slice(SRC.length + 1))
-      .filter((rel) => !ALLOWLIST[rel])
-      .filter((rel) => !registers.test(stripComments(readFileSync(join(SRC, rel), 'utf8'))));
+      .filter(({ f }) => !ALLOWLIST[f.slice(SRC.length + 1)])
+      .filter(({ stripped }) => !registers.test(stripped))
+      .map(({ f }) => f.slice(SRC.length + 1));
     expect(offenders).toEqual([]);
   });
 });
@@ -130,5 +136,14 @@ describe('stripComments (WD-1142)', () => {
   it("문자열 속 '/*' 는 주석 시작이 아니다 — 뒤의 실제 beforeunload 줄이 남는다", () => {
     const src = "<input accept='image/*' />\nwindow.addEventListener('beforeunload', f);";
     expect(stripComments(src)).toContain("addEventListener('beforeunload'");
+  });
+
+  it('.ts 소스의 꺾쇠 타입 단언 뒤 주석도 걷는다 — 확장자로 TS 파싱 (WD-1160)', () => {
+    const src = 'const v = <string>raw; // registerLeaveBlocker(\nconst z = 1;';
+    const out = stripComments(src, 'x.ts');
+    expect(registers.test(out)).toBe(false);
+    expect(out).toContain('const z = 1;');
+    // 대조: 같은 소스를 TSX 로 읽으면 JSX 로 오인해 주석이 남는다
+    expect(registers.test(stripComments(src))).toBe(true);
   });
 });

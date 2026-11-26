@@ -30,6 +30,8 @@ const registered = vi.hoisted(() => ({
   onIntercepted: null as null | (() => void),
   cancelBypass: null as null | ReturnType<typeof vi.fn>,
   entry: null as null | { isDirty: () => boolean; onIntercepted: () => void },
+  // (WD-1160) markAllGuardsLeaving 이 돌려주는 「다른 가드 다시 켜기」 함수 — 호출 횟수로 재무장 여부를 본다.
+  rearmAll: null as null | (() => void),
 }));
 vi.mock('../lib/unsaved-changes-guard-registry', () => ({
   registerActiveGuard: (entry: { isDirty: () => boolean; onIntercepted: () => void }) => {
@@ -42,7 +44,7 @@ vi.mock('../lib/unsaved-changes-guard-registry', () => ({
   pickInterceptingGuard: () => (registered.entry?.isDirty() ? registered.entry : undefined),
   bypassNextPopstateGuard: vi.fn(() => registered.cancelBypass),
   // (WD-1160) 가드가 하나뿐이라 다른 가드를 끌 일이 없다 — 되돌림 함수만 돌려준다.
-  markAllGuardsLeaving: () => () => {},
+  markAllGuardsLeaving: () => () => registered.rearmAll?.(),
 }));
 
 /**
@@ -299,6 +301,7 @@ describe('useUnsavedChangesGuard — popstate 경로 이탈의 뒤로 가기가 
     vi.useFakeTimers();
     registered.isDirty = null;
     registered.cancelBypass = vi.fn();
+    registered.rearmAll = vi.fn() as unknown as () => void;
     savedUrl = window.location.href;
     window.history.replaceState(null, '', '/form');
     // jsdom 의 history.back() 대신 아무 일도 하지 않는 뒤로 가기(되돌아갈 기록이 없는 경우)를 흉내 낸다
@@ -347,5 +350,68 @@ describe('useUnsavedChangesGuard — popstate 경로 이탈의 뒤로 가기가 
     });
     expect(registered.isDirty?.()).toBe(false);
     expect(registered.cancelBypass).not.toHaveBeenCalled();
+  });
+});
+
+describe('useUnsavedChangesGuard — popstate 경로 이탈 뒤 언마운트 (WD-1160)', () => {
+  let savedUrl = '';
+  let backSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    vi.useFakeTimers();
+    registered.isDirty = null;
+    registered.cancelBypass = vi.fn();
+    registered.rearmAll = vi.fn() as unknown as () => void;
+    savedUrl = window.location.href;
+    window.history.replaceState(null, '', '/form');
+    backSpy = vi.spyOn(window.history, 'back').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    backSpy.mockRestore();
+    vi.useRealTimers();
+    window.history.replaceState(null, '', savedUrl);
+  });
+
+  /** popstate 경로로 「이탈」 확정 → history.back() 실행까지. 확정 전에 걸린 리스너가 popstate 때 먼저 돈다. */
+  function confirmLeaveViaPopstate() {
+    act(() => registered.onIntercepted?.());
+    fireEvent.click(screen.getByRole('button', { name: '이탈' }));
+    act(() => {
+      vi.advanceTimersByTime(0);
+    });
+    expect(backSpy).toHaveBeenCalledTimes(1);
+  }
+
+  it('라우터가 popstate 디스패치 중 페이지를 언마운트해도(이동이 일어남) 다른 가드를 다시 켜지 않는다', () => {
+    const { unmount } = render(wrap(<GuardedPage dirty />));
+    // 라우터의 popstate 리스너 흉내 — 훅의 대기 리스너(finish)보다 먼저 등록돼 먼저 돌고, 같은 디스패치 중 페이지를 언마운트한다.
+    const routerLike = () => unmount();
+    window.addEventListener('popstate', routerLike);
+    try {
+      confirmLeaveViaPopstate();
+      window.history.replaceState(null, '', '/elsewhere');
+      act(() => {
+        window.dispatchEvent(new PopStateEvent('popstate'));
+      });
+      act(() => {
+        vi.advanceTimersByTime(BACK_NOOP_REARM_MS * 2);
+      });
+      expect(registered.rearmAll).not.toHaveBeenCalled();
+      expect(registered.cancelBypass).not.toHaveBeenCalled();
+    } finally {
+      window.removeEventListener('popstate', routerLike);
+    }
+  });
+
+  it('popstate 없이 언마운트되면 제한 시간 뒤 다른 가드를 다시 켜고 우회 표시를 거둔다', () => {
+    const { unmount } = render(wrap(<GuardedPage dirty />));
+    confirmLeaveViaPopstate();
+    unmount();
+    // 언마운트 직후엔 아직 기다리는 중이다
+    expect(registered.rearmAll).not.toHaveBeenCalled();
+    act(() => {
+      vi.advanceTimersByTime(BACK_NOOP_REARM_MS);
+    });
+    expect(registered.rearmAll).toHaveBeenCalledTimes(1);
+    expect(registered.cancelBypass).toHaveBeenCalledTimes(1);
   });
 });

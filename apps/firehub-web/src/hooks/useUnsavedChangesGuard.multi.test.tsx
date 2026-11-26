@@ -2,10 +2,11 @@
  * useUnsavedChangesGuard 여러 가드 단위 테스트 (WD-1160)
  *
  * 같은 화면에 가드가 둘 마운트돼(바깥 Page·안쪽 Editor) 모두 dirty 여도 이동 한 번에 확인은 한 번, 나중에 등록된 dirty 가드가
- * 묻는지 본다. 실제 레지스트리·전역 popstate 인터셉터를 쓰므로 레지스트리를 모킹하는 useUnsavedChangesGuard.test.tsx 와 파일을 나눴다.
+ * 묻는지 본다. 끝의 requestNavigate 묶음은 내 폼이 깨끗해도 다른 가드가 dirty 이면 그 가드가 묻는지 본다(WD-1160). 실제 레지스트리·전역 popstate 인터셉터를 쓰므로 레지스트리를 모킹하는 useUnsavedChangesGuard.test.tsx 와 파일을 나눴다.
  */
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { useEffect } from 'react';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -50,11 +51,12 @@ function Screen({ pageDirty, editorDirty }: { pageDirty: boolean; editorDirty: b
 }
 
 /** Editor 를 조건부로 마운트하는 화면 — 확인한 가드(Editor)만 사라지는 경우를 만든다. */
-function ToggleScreen({ showEditor }: { showEditor: boolean }) {
+function ToggleScreen({ showEditor, pageDirty = true }: { showEditor: boolean; pageDirty?: boolean }) {
   return (
     <MemoryRouter initialEntries={['/form']}>
       <a href="/other">다른 곳</a>
-      <Guarded name="Page" dirty />
+      <a href="/another">또 다른 곳</a>
+      <Guarded name="Page" dirty={pageDirty} />
       {showEditor && <Guarded name="Editor" dirty />}
     </MemoryRouter>
   );
@@ -219,6 +221,13 @@ describe('useUnsavedChangesGuard — 여러 가드 (WD-1160)', () => {
       });
       // 뒤로 가기는 일어나지 않았는데(popstate 없음) 확인한 가드가 먼저 사라진다
       rerender(<ToggleScreen showEditor={false} />);
+      // 대기(타이머)는 언마운트로 치워지지 않고 살아 있다 — 아직은 떠나는 중이라 가로채지 않는다
+      fireEvent.click(screen.getByText('다른 곳'));
+      expect(dialogs()).toHaveLength(0);
+      // 제한 시간 안에 popstate 가 없었으므로 타이머가 남은 가드(Page)를 다시 켠다
+      act(() => {
+        vi.advanceTimersByTime(BACK_NOOP_REARM_MS);
+      });
       fireEvent.click(screen.getByText('다른 곳'));
       expect(dialogs()).toHaveLength(1);
       expect(hasActiveLeaveGuard()).toBe(true);
@@ -226,5 +235,146 @@ describe('useUnsavedChangesGuard — 여러 가드 (WD-1160)', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('오래된 대기의 재무장이 그 뒤 다른 가드가 확정한 떠남을 되돌리지 않는다 (WD-1160)', () => {
+    vi.useFakeTimers();
+    try {
+      const backSpy = vi.spyOn(window.history, 'back').mockImplementation(() => {});
+      const { rerender } = render(<ToggleScreen showEditor />);
+      // Editor 가 popstate 경로로 확정(no-op 뒤로 가기) → Editor 언마운트, 대기(1초 타이머)는 살아 있다
+      act(() => {
+        window.dispatchEvent(new PopStateEvent('popstate'));
+      });
+      fireEvent.click(screen.getByRole('button', { name: '이탈' }));
+      act(() => {
+        vi.advanceTimersByTime(0);
+      });
+      rerender(<ToggleScreen showEditor={false} />);
+      // 제한 시간 안에 Page 폼이 초기화됐다 다시 편집돼(깨끗해지면 떠남 표시가 풀린다) 링크 이동을 확정한다
+      rerender(<ToggleScreen showEditor={false} pageDirty={false} />);
+      rerender(<ToggleScreen showEditor={false} />);
+      act(() => {
+        vi.advanceTimersByTime(BACK_NOOP_REARM_MS / 2);
+      });
+      fireEvent.click(screen.getByText('다른 곳'));
+      expect(dialogs()).toHaveLength(1);
+      fireEvent.click(screen.getByRole('button', { name: '이탈' }));
+      act(() => {
+        vi.advanceTimersByTime(0);
+      });
+      expect(hasActiveLeaveGuard()).toBe(false);
+      // 이제 Editor 의 오래된 타이머가 돈다 — Page 의 새 떠남 표시를 되돌리면 안 된다
+      act(() => {
+        vi.advanceTimersByTime(BACK_NOOP_REARM_MS);
+      });
+      expect(hasActiveLeaveGuard()).toBe(false);
+      fireEvent.click(screen.getByText('또 다른 곳'));
+      expect(dialogs()).toHaveLength(0);
+      backSpy.mockRestore();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+/** requestNavigate 를 노출하는 가드 화면 — 확인 창 문구는 같아 name 으로 구분한다. onStay·isDialogOpen 을 보관소에 남긴다. */
+const reqLog: { stayed: string[]; isOpen: Record<string, () => boolean> } = { stayed: [], isOpen: {} };
+function RequestForm({ name, dirty }: { name: string; dirty: boolean }) {
+  const { dialog, requestNavigate, isDialogOpen } = useUnsavedChangesGuard(dirty, {
+    onStay: () => reqLog.stayed.push(name),
+  });
+  useEffect(() => {
+    reqLog.isOpen[name] = isDialogOpen;
+  }, [name, isDialogOpen]);
+  return (
+    <section aria-label={name}>
+      <button type="button" onClick={() => requestNavigate('/other')}>
+        {name} 이동
+      </button>
+      {dialog}
+    </section>
+  );
+}
+
+function Where() {
+  return <span data-testid="where">{useLocation().pathname}</span>;
+}
+
+function renderTwo(aDirty: boolean, bDirty: boolean) {
+  return render(
+    <MemoryRouter initialEntries={['/start']}>
+      <Where />
+      <Routes>
+        <Route
+          path="/start"
+          element={
+            <>
+              <RequestForm name="A" dirty={aDirty} />
+              <RequestForm name="B" dirty={bDirty} />
+            </>
+          }
+        />
+        <Route path="/other" element={<div>다른 화면</div>} />
+      </Routes>
+    </MemoryRouter>,
+  );
+}
+
+async function flushTimers() {
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 20));
+  });
+}
+
+describe('requestNavigate — 다른 가드가 dirty 일 때 (WD-1160)', () => {
+  beforeEach(() => {
+    reqLog.stayed = [];
+    reqLog.isOpen = {};
+  });
+
+  it('내 폼(A)이 깨끗해도 다른 가드(B)가 dirty 이면 A 자신의 확인 창이 열린다 — 취소하면 A 의 onStay 만 불리고 이동하지 않는다', async () => {
+    renderTwo(false, true);
+    expect(reqLog.isOpen.A()).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'A 이동' }));
+    // 확인 창은 하나, 호출한 A 가 열림을 안다
+    expect(dialogs()).toHaveLength(1);
+    expect(reqLog.isOpen.A()).toBe(true);
+    expect(reqLog.isOpen.B()).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: '취소' }));
+    await flushTimers();
+    expect(reqLog.stayed).toEqual(['A']);
+    expect(screen.getByTestId('where')).toHaveTextContent('/start');
+  });
+
+  it('확정하면 한 번 이동하고 B 도 떠나는 중으로 돌아간다', async () => {
+    renderTwo(false, true);
+    expect(hasActiveLeaveGuard()).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'A 이동' }));
+    await flushTimers();
+    expect(screen.getByTestId('where')).toHaveTextContent('/start');
+    fireEvent.click(screen.getByRole('button', { name: '이탈' }));
+    await flushTimers();
+    expect(screen.getByTestId('where')).toHaveTextContent('/other');
+    expect(hasActiveLeaveGuard()).toBe(false);
+  });
+
+  it('모두 깨끗하면 바로 이동한다', async () => {
+    renderTwo(false, false);
+    fireEvent.click(screen.getByRole('button', { name: 'A 이동' }));
+    await flushTimers();
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(screen.getByTestId('where')).toHaveTextContent('/other');
+  });
+
+  it('내 폼이 dirty 이면 내 확인 창으로 묻고 확정하면 이동한다(기존 동작)', async () => {
+    renderTwo(true, false);
+    fireEvent.click(screen.getByRole('button', { name: 'A 이동' }));
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument();
+    await flushTimers();
+    expect(screen.getByTestId('where')).toHaveTextContent('/start');
+    fireEvent.click(screen.getByRole('button', { name: '이탈' }));
+    await flushTimers();
+    expect(screen.getByTestId('where')).toHaveTextContent('/other');
   });
 });

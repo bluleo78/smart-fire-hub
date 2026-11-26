@@ -73,6 +73,9 @@ export function pickInterceptingGuard(): ActiveGuardEntry | undefined {
   return [...activeGuards].reverse().find((g) => g.isDirty());
 }
 
+// (WD-1160) 떠남 표시를 건 차례 번호 — 되돌림 함수가 자기보다 새 확정이 없을 때만 동작하도록 구분한다.
+let leavingSeq = 0;
+
 /**
  * 「이탈」 확정 시 등록된 모든 가드를 떠나는 중으로 돌린다 (WD-1160) — 확인 한 번이 다른 dirty 폼도 버리는 정책과
  * 코드를 맞춘다. 안 그러면 다음 화면 로딩 중(WD-651 창) 다른 dirty 가드가 살아 있어 Back 이 두 번째 확인을 띄우고,
@@ -83,7 +86,11 @@ export function pickInterceptingGuard(): ActiveGuardEntry | undefined {
 export function markAllGuardsLeaving(): () => void {
   const marked = [...activeGuards];
   for (const g of marked) g.setLeaving?.(true);
+  const seq = ++leavingSeq;
   return () => {
+    // 그 뒤 새 「이탈」 확정(더 큰 번호)이 있었으면 이 되돌림은 오래된 것이다 — 언마운트된 가드의 대기 타이머가 늦게 돌아
+    // 다른 가드가 방금 건 떠남 표시를 다시 끄면(두 번째 확인·beforeunload) 안 되므로 아무것도 하지 않는다. (bypassSeq 와 같은 방식)
+    if (leavingSeq !== seq) return;
     for (const g of marked) g.setLeaving?.(false);
   };
 }
