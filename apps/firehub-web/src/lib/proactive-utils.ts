@@ -1,3 +1,16 @@
+import {
+  extractApiError,
+  isBadRequestError,
+  isForbiddenError,
+  isNotFoundError,
+  isReportHtmlMissing,
+  isReportLevelBlocked,
+  isUserSwitchedError,
+  REPORT_HTML_MISSING_MESSAGE,
+  REPORT_LOAD_ERROR_MESSAGE,
+  USER_SWITCHED_MESSAGE,
+} from './api-error';
+
 /**
  * Proactive 메시지 공통 유틸리티
  */
@@ -70,4 +83,40 @@ export function getSections(content: Record<string, unknown>): Section[] {
     return [{ key: 'content', label: '분석 결과', content: content.rawText }];
   }
   return [];
+}
+
+/**
+ * 리포트 HTML 조회 오류 → 사용자 안내 문구 (WD-1098).
+ * 뷰어·모달·실행 상세가 같은 규칙을 쓰도록 한곳에 둔다 — 화면마다 복제하면 어긋난다.
+ * - 400: 서버 문구(완료 아님·결과 없음 같은 사용자용 원인). 없으면 고정 문구.
+ * - 404 + HTML 없음: 서버 문구 그대로(작성자 확인을 통과한 뒤라 보여도 된다).
+ * - 그 밖의 404: 작업 없음·작성자 아님을 함께 말하는 안내(내부 문구 숨김).
+ * - 사용자 전환: 화면을 다시 여는 중이라는 안내.
+ * - 그 밖(5xx·403·네트워크 등): 서버 원문을 숨기고 고정 문구.
+ * 403(권한 부족)·등급 차단은 호출부가 먼저 전용 안내로 가른다 — 이 함수는 그 밖의 오류 문구만 정한다.
+ */
+export function reportHtmlErrorText(error: unknown): string {
+  if (isUserSwitchedError(error)) return USER_SWITCHED_MESSAGE;
+  if (isBadRequestError(error)) return extractApiError(error, REPORT_LOAD_ERROR_MESSAGE);
+  if (isReportHtmlMissing(error)) return REPORT_HTML_MISSING_MESSAGE;
+  if (isNotFoundError(error)) return REPORT_NOT_FOUND_NOTICE;
+  return REPORT_LOAD_ERROR_MESSAGE;
+}
+
+/** 리포트 HTML 조회 오류의 화면 갈래 — 등급 차단·권한 부족(403)은 전용 안내, 그 밖은 문구. */
+export type ReportHtmlErrorKind =
+  | { kind: 'level-blocked' }
+  | { kind: 'forbidden' }
+  | { kind: 'message'; text: string };
+
+/**
+ * 리포트 HTML 조회 오류를 화면 갈래로 분류한다 (WD-1098).
+ * 갈래 우선순위(등급 차단 > 권한 부족 > 그 밖의 문구)를 한곳에 둬 뷰어·모달·실행 상세가 어긋나지 않게 한다.
+ * 등급 차단도 403 이므로 반드시 권한 부족보다 먼저 가른다. 오류가 없으면 null.
+ */
+export function reportHtmlErrorKind(error: unknown): ReportHtmlErrorKind | null {
+  if (!error) return null;
+  if (isReportLevelBlocked(error)) return { kind: 'level-blocked' };
+  if (isForbiddenError(error)) return { kind: 'forbidden' };
+  return { kind: 'message', text: reportHtmlErrorText(error) };
 }
