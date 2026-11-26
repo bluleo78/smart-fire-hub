@@ -86,7 +86,7 @@ PW_PORT=6151 pnpm exec playwright test           # E2E (기본 5051 — 다른 �
 
 개발자는 위 앱별 명령 중 **바뀐 파일(`git diff --name-only $(git merge-base origin/main HEAD) HEAD`)에 해당하는 것만** 돌리고 PR 본문에 명령과 결과를 적는다. push 게이트(`pnpm test:full`)는 돌리지 않는다 — 합친 main 의 회귀는 검토자가 머지 뒤 아래 「풀테스트」로 잡는다.
 - api: 바꾼 패키지(`--tests "com.smartfirehub.<패키지>.*"`). 공용(`global`·보안 설정·마이그레이션·jOOQ)을 바꿨으면 그 기능을 쓰는 패키지까지 넓힌다. 커밋 전 바꾼 파일만 spotless(6절 「포맷터 전체 실행 금지」).
-- ↳ 마이그레이션(`apps/firehub-api/src/main/resources/db/migration/`): `./gradlew generateJooq` 결과를 같은 커밋에. 번호(`V<n>__`)가 origin/main 의 마지막보다 큰지 커밋 전에 `pnpm check:migrations origin/main HEAD` 로 본다(그 뒤 main 과 겹치면 검토자가 손 머지에서 옮긴다 — 8절).
+- ↳ 마이그레이션(`apps/firehub-api/src/main/resources/db/migration/` — Java `src/main/java/db/migration/`·Tibero `db/migration-tibero/`(소수점 후속 V<n>.<m> 허용)·DataStore `db/datastore-postgres/` 도 묶음별로 본다): `./gradlew generateJooq` 결과를 같은 커밋에. 번호(`V<n>__`)가 origin/main 의 마지막보다 큰지 커밋 전에 `pnpm check:migrations origin/main HEAD` 로 본다(그 뒤 main 과 겹치면 검토자가 손 머지에서 옮긴다 — 8절).
 - web: `pnpm typecheck` · 바꾼 도메인 E2E(`e2e/pages/<도메인>/`) · 바꾼 단위 테스트. 공유 영역(components/api/lib/hooks/types, `e2e/` 헬퍼, `vite.config.ts`·`playwright.config.ts`)을 바꿨으면 E2E 전체.
 - ai-agent·admin·channel·executor: 그 앱의 테스트 전체(위 명령). **풀테스트는 web·api 만 돈다** — 이 앱들의 회귀는 개발자 테스트가 유일한 확인이라 줄이지 않는다.
 - 훅·스크립트(`scripts/husky/`·`.husky/`·`scripts/check-migration-versions*`): `pnpm test:hooks`.
@@ -321,7 +321,7 @@ playwright-cli -s=wl-$STACK_ID close
 
 **검토자는 테스트를 직접 돌리지 않는다(WP-1959)** — 로컬 합친 검사·격리 스택·vitest·gradle 어느 것도 검토자가 리뷰 중에 돌리지 않는다. 테스트는 개발자의 바뀐 범위 테스트와 머지 뒤 검토자의 풀테스트(3절 — 리뷰할 것이 없을 때)가 돌리고, 검토자는 리뷰 때 그 결과와 근거를 보고 머지하거나 반려한다. 예전에는 main 이 같은 앱을 고쳤으면 검토자가 최신 main 과 합친 상태로 그 앱 테스트를 돌렸는데(WD-506 조건부 합친 검사·묶음), PR 마다 api 전체(약 35분)를 검토자 한 명이 줄지어 돌아 모든 개발자가 함께 멈췄다(smart-workplace 2026-11-22).
 
-0. **마이그레이션 번호 확인(늘, 머지 직전)**: `git fetch origin main <PR 브랜치>` 뒤 `pnpm check:migrations origin/main origin/<PR 브랜치>`(테스트가 아니라 몇 초 걸리는 번호 비교다). PR 이 더한 `V<n>__*.sql` 이 origin/main 의 가장 큰 번호보다 크고 서로·main 과 겹치지 않는지 본다 — 두 PR 이 같은 번호를 각자 더하면 git 충돌 없이 합친 main 에서 Flyway 가 깨진다. 실패(종료 코드 1)면 손 머지(위 「바로 머지」)에서 PR 쪽 번호를 옮겨 머지한다(개발자에게 돌려보내지 않는다). 마이그레이션을 더한 PR 이 둘 이상이면 하나씩 머지하며, 앞의 것이 머지된 뒤 다음 PR 을 다시 확인한다.
+0. **마이그레이션 번호 확인(늘, 머지 직전)**: `git fetch origin main <PR 브랜치>` 뒤 `pnpm check:migrations origin/main origin/<PR 브랜치>`(테스트가 아니라 몇 초 걸리는 번호 비교다). PR 이 더한 `V<n>__*.sql`·`*.java`(PG 는 SQL+Java 한 번호 공간, Tibero 는 `migration-tibero/` 따로 — 소수점 후속 허용, DataStore 는 `datastore-postgres/` 따로) 가 origin/main 의 가장 큰 번호보다 크고 서로·main 과 겹치지 않는지 본다 — 두 PR 이 같은 번호를 각자 더하면 git 충돌 없이 합친 main 에서 Flyway 가 깨진다. 실패(종료 코드 1)면 손 머지(위 「바로 머지」)에서 PR 쪽 번호를 옮겨 머지한다(개발자에게 돌려보내지 않는다). 마이그레이션을 더한 PR 이 둘 이상이면 하나씩 머지하며, 앞의 것이 머지된 뒤 다음 PR 을 다시 확인한다.
 1. **테스트 근거 확인**: PR 본문의 바뀐 범위 테스트 결과(3절 「바뀐 범위 테스트를 고르는 법」대로 돌렸는지)를 본다. push 게이트 결과는 요구하지 않는다(WP-2003). 함께 들어가 깨지는 의미 충돌은 머지 뒤 풀테스트(3절)가 잡는다. 다만 풀테스트가 보지 않는 앱(ai-agent·admin·channel·executor)을 바꾼 PR 은 그 앱의 테스트 전체 결과가 있어야 한다.
 2. **테스트가 필요하면 반려한다**: 검토자가 보기에 테스트가 더 필요하면 직접 돌리지 않고 무엇을 왜 돌려야 하는지 적어 반려한다 — 개발자가 돌리고 결과를 PR 에 적어 다시 부탁한다. 완료 기준의 근거(테스트·캡처·라이브 검증)가 모자라거나 의심스러울 때 — 어느 기준에 무엇이 모자란지 적는다. 「push 게이트를 돌려 주세요」로는 반려하지 않는다.
 3. **하나씩**: 같은 파일·영역(DB 마이그레이션, 공통 컴포넌트·토큰, 공통 유틸·테스트 헬퍼)을 고치는 PR 은 앞의 것이 머지된 뒤 다음 PR 의 충돌·마이그레이션 번호를 다시 보고 머지한다.
