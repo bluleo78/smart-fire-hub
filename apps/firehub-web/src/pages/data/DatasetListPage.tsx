@@ -775,11 +775,12 @@ export default function DatasetListPage() {
                   </TableCell>
                   <TableCell>
                     {/* WD-1117: 호버 툴바를 삭제 버튼 왼쪽 가장자리 기준(right-full + mr-1)으로 띄워 둘이 겹치지 않게 한다.
-                        삭제 권한이 없으면 묶음 폭이 0 이라 툴바는 칸 시작 가장자리 왼쪽(생성일 칸 위)에 뜬다 — 예전 right-10 도 그 칸을 덮었다. */}
-                    <div className="relative inline-flex items-center">
+                        WD-1117 리뷰 후속: 삭제 권한이 없으면 묶음 폭이 0 이라 right-full 기준이면 툴바가 생성일 칸을 통째로 덮고 표 스크롤 상자 밖으로 잘릴 수 있다.
+                        이때는 묶음을 칸 폭 전체(w-full justify-end)로 펴고 툴바를 칸 오른쪽 끝(right-0)에 붙인다 — 예전 right-10 과 비슷한 위치. 권한 있을 때 모양은 그대로. */}
+                    <div className={cn('relative inline-flex items-center', !canDeleteDataset && 'w-full justify-end')}>
                       {/* 행 작업 버튼 — 마우스를 올리거나 키보드 포커스가 안에 들어오면 보인다(WD-412: Tab 으로 와도 보이지 않던 문제) */}
                       {/* WD-880: 아래 미리보기·프로파일·내보내기 버튼은 최소 클릭 대상 32×32(size="icon-sm"). 오버레이는 top-1/2 -translate-y-1/2 로 세로 가운데라 커져도 행 안에 든다 */}
-                      <div className="absolute right-full mr-1 top-1/2 -translate-y-1/2 flex gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity bg-background/90 backdrop-blur-sm rounded-md p-1 shadow-sm z-10">
+                      <div className={cn('absolute top-1/2 -translate-y-1/2 flex gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity bg-background/90 backdrop-blur-sm rounded-md p-1 shadow-sm z-10', canDeleteDataset ? 'right-full mr-1' : 'right-0')}>
                         <Button
                           variant="ghost"
                           size="icon-sm"
