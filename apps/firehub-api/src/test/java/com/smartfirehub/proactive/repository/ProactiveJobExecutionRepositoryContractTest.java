@@ -593,6 +593,21 @@ abstract class ProactiveJobExecutionRepositoryContractTest extends TenantPairCon
     assertThat(inB(() -> repository().findReportsByUserId(userA, 20, 0))).as("다른 테넌트").isEmpty();
   }
 
+  /** WD-1101 — 목록 항목이 작업의 시간대를 실어, 웹이 리포트 완료 시각을 그 작업의 시간대로 표시할 수 있다. */
+  @Test
+  @DisplayName("findReportsByUserId 는 작업의 timezone 을 jobTimezone 으로 돌려준다")
+  void findReportsByUserId_returnsJobTimezone() {
+    long jobId =
+        fx.createProactiveJobWithTimezone(tenantA, userA, "뉴욕 작업-" + prefix, "America/New_York");
+    reportInA(jobId, "뉴욕 리포트", "요약문");
+
+    List<ReportListItemResponse> reports =
+        inA(() -> repository().findReportsByUserId(userA, 20, 0));
+
+    assertThat(reports).hasSize(1);
+    assertThat(reports.get(0).jobTimezone()).isEqualTo("America/New_York");
+  }
+
   /** Review Focus 5 — 본문이 4000 바이트를 크게 넘어도(Tibero JSON_VALUE 한도) 리포트로 나오고 제목·요약이 맞다. */
   @Test
   @DisplayName("htmlContent 가 10KB 를 넘는 리포트도 목록에 나오고 제목·요약·등급이 맞다")

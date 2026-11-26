@@ -97,6 +97,8 @@ public class JooqProactiveJobExecutionRepository implements ProactiveJobExecutio
   private static final Field<Long> PJ_ID = field(name("proactive_job", "id"), Long.class);
   private static final Field<Long> PJ_USER_ID = field(name("proactive_job", "user_id"), Long.class);
   private static final Field<String> PJ_NAME = field(name("proactive_job", "name"), String.class);
+  private static final Field<String> PJ_TIMEZONE =
+      field(name("proactive_job", "timezone"), String.class);
 
   @Override
   public Long create(Long jobId) {
@@ -329,7 +331,14 @@ public class JooqProactiveJobExecutionRepository implements ProactiveJobExecutio
     Field<String> effectiveTitle = coalesce(nullif(trim(title), val("")), PJ_NAME);
 
     return dsl.select(
-            withLevel(PJE_ID, PJE_JOB_ID, PJ_NAME, effectiveTitle, summary, PJE_COMPLETED_AT))
+            withLevel(
+                PJE_ID,
+                PJE_JOB_ID,
+                PJ_NAME,
+                PJ_TIMEZONE,
+                effectiveTitle,
+                summary,
+                PJE_COMPLETED_AT))
         .from(PROACTIVE_JOB_EXECUTION)
         .join(PROACTIVE_JOB)
         .on(PJE_JOB_ID.eq(PJ_ID))
@@ -348,6 +357,7 @@ public class JooqProactiveJobExecutionRepository implements ProactiveJobExecutio
                     r.get(PJE_ID),
                     r.get(PJE_JOB_ID),
                     r.get(PJ_NAME),
+                    r.get(PJ_TIMEZONE),
                     r.get(effectiveTitle),
                     r.get(summary),
                     r.get(PJE_COMPLETED_AT),

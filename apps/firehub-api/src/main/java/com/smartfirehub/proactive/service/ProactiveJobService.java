@@ -728,6 +728,7 @@ public class ProactiveJobService {
                         r.executionId(),
                         r.jobId(),
                         r.jobName(),
+                        r.jobTimezone(),
                         r.title(),
                         null,
                         r.completedAt(),

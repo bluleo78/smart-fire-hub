@@ -645,6 +645,9 @@ public interface AccessFixtures {
       String triggerType,
       String configJson);
 
+  /** 시간대(IANA id)를 정해 선제 작업 하나를 만든다(WD-1101 — 리포트 목록의 작업 시간대 시험용). 나머지는 기본 작업과 같다(SCHEDULE, 활성). */
+  long createProactiveJobWithTimezone(long tenantId, long userId, String name, String timezone);
+
   /** 리포트 템플릿 하나(userId null 허용 — 시스템 템플릿). 테넌트 정리 때 지운다. */
   long createReportTemplate(long tenantId, Long userId, String name);
 

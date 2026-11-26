@@ -155,6 +155,7 @@ public class MyBatisProactiveJobExecutionRepository implements ProactiveJobExecu
                     row.executionId(),
                     row.jobId(),
                     row.jobName(),
+                    row.jobTimezone(),
                     row.title(),
                     row.summary(),
                     row.completedAt(),

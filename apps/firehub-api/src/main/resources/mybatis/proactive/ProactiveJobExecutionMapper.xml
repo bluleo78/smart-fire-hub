@@ -37,6 +37,7 @@
       <arg column="execution_id" javaType="java.lang.Long"/>
       <arg column="job_id" javaType="java.lang.Long"/>
       <arg column="job_name" javaType="java.lang.String"/>
+      <arg column="job_timezone" javaType="java.lang.String"/>
       <arg column="title" javaType="java.lang.String"/>
       <arg column="summary" javaType="java.lang.String"/>
       <arg column="completed_at" javaType="java.time.LocalDateTime"/>
@@ -243,6 +244,7 @@
 
   <select id="findReports" resultMap="reportRow">
     SELECT pje.id AS execution_id, pje.job_id AS job_id, pj.name AS job_name,
+           pj.timezone AS job_timezone,
            <include refid="reportTitleSummary"/>, pje.completed_at AS completed_at,
            <include refid="levelColumns"/>
       FROM proactive_job_execution pje

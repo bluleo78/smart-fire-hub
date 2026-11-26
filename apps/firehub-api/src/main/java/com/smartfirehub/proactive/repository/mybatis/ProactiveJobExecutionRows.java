@@ -36,6 +36,7 @@ public final class ProactiveJobExecutionRows {
       Long executionId,
       Long jobId,
       String jobName,
+      String jobTimezone,
       String title,
       String summary,
       LocalDateTime completedAt,

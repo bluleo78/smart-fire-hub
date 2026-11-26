@@ -28,12 +28,15 @@ import { useLoadMoreLimit } from '@/hooks/useLoadMoreLimit';
 import { offlineListMessage, useOfflinePaused } from '@/hooks/useOnlineStatus';
 import { isForbiddenError } from '@/lib/api-error';
 import { getExecutionDisplayStatus } from '@/lib/error-classifier';
-import { formatDate, formatDuration, getExecutionStatusType, getStatusLabel, timeAgo } from '@/lib/formatters';
+import { formatDuration, getExecutionStatusType, getStatusLabel, timeAgo } from '@/lib/formatters';
+import { formatInstantInZone } from '@/lib/next-run';
 
 import { ProactiveReadForbiddenNotice } from '../components/ProactiveReadForbiddenNotice';
 
 interface JobExecutionsTabProps {
   jobId: number;
+  /** 작업 시간대 — 시작 시각을 이 시간대+약어로 보인다(WD-1101). 비면 Asia/Seoul. */
+  timezone?: string | null;
 }
 
 /** 행의 고유 id — 훅 의존성이라 렌더마다 새로 만들지 않게 모듈 상수로 둔다 */
@@ -43,7 +46,7 @@ const getExecutionId = (e: { id: number }) => e.id;
 const findExecutionRowLink = (tbody: HTMLElement, id: number) =>
   tbody.querySelector<HTMLElement>(`a[href$="/executions/${id}"]`);
 
-export default function JobExecutionsTab({ jobId }: JobExecutionsTabProps) {
+export default function JobExecutionsTab({ jobId, timezone }: JobExecutionsTabProps) {
   const navigate = useNavigate();
   const { limit, loadMore, pending, failed, settle } = useLoadMoreLimit();
 
@@ -140,7 +143,8 @@ export default function JobExecutionsTab({ jobId }: JobExecutionsTabProps) {
                         className="rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         onClick={(e) => e.stopPropagation()}
                       >
-                        {formatDate(exec.startedAt)} ({timeAgo(exec.startedAt)})
+                        {/* 브라우저 시간대가 아니라 작업 시간대+약어로 — 개요 「마지막 실행」과 같은 표기(WD-1101) */}
+                        {formatInstantInZone(exec.startedAt, timezone)} ({timeAgo(exec.startedAt)})
                       </Link>
                       {/* 리포트 등급 배지(WD-198) — 실행 동안 읽은 데이터셋의 최고 등급.
                           목록 칸이라 말줄임 + title(WD-658), 상한은 데이터셋 목록과 같게 둬 시작 시각 링크 폭을 남긴다 (WD-864) */}

@@ -4,6 +4,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import {
+  formatInstantInZone,
   formatNextRun,
   formatNextRunShort,
   formatNextRunShortWithZone,
@@ -210,5 +211,24 @@ describe('지난 시각 「지남」·달력 판정 (WD-1147)', () => {
     // 코드베이스 규칙(formatters.ts)처럼 시각 없음은 「-」, 「지남」은 붙지 않는다
     expect(formatNextRunShortWithZone(bad, 'Asia/Seoul')).toBe('-');
     expect(formatNextRunWithZone(bad, 'Asia/Seoul')).toBe('-');
+  });
+});
+
+describe('formatInstantInZone', () => {
+  it('서버 UTC 시각을 작업 시간대+약어로 보인다', () => {
+    expect(formatInstantInZone('2026-11-24T16:39:05', 'Asia/Seoul')).toBe('2026. 11. 25. (수) 01:39 KST');
+  });
+  it('시간대가 없거나 비면 Asia/Seoul 로 본다', () => {
+    expect(formatInstantInZone('2026-11-24T16:39:05', null)).toBe('2026. 11. 25. (수) 01:39 KST');
+    expect(formatInstantInZone('2026-11-24T16:39:05', undefined)).toBe('2026. 11. 25. (수) 01:39 KST');
+    expect(formatInstantInZone('2026-11-24T16:39:05', '  ')).toBe('2026. 11. 25. (수) 01:39 KST');
+  });
+  it('Z 표기가 있는 시각도 같은 순간으로 읽는다', () => {
+    expect(formatInstantInZone('2026-11-24T16:39:05Z', 'America/New_York')).toBe('2026. 11. 24. (화) 11:39 EST');
+  });
+  it('시각이 없거나 깨졌으면 「-」', () => {
+    expect(formatInstantInZone(null, 'Asia/Seoul')).toBe('-');
+    expect(formatInstantInZone(undefined, 'Asia/Seoul')).toBe('-');
+    expect(formatInstantInZone('not-a-date', 'Asia/Seoul')).toBe('-');
   });
 });
