@@ -791,6 +791,25 @@ test.describe('스위치 초점 바깥선 위치 (WD-1091)', () => {
   });
 });
 
+/**
+ * 켜진 잡·꺼진 잡 하나씩인 활동 목록을 연다(기본 고대비, 초점은 주지 않는다) — 스위치를 누르면 서버 응답으로 상태가
+ * 돌아오므로 누르지 않고 두 상태를 나란히 읽는다. WD-1137·WD-1136 이 함께 쓴다.
+ */
+async function openOnOffSwitches(page: Page, forcedColors: 'active' | 'none' = 'active') {
+  await page.emulateMedia({ forcedColors });
+  await mockProactivePermissions(page);
+  await setupJobListMocks(page, [
+    createJob({ id: 1, name: '켜진 잡', enabled: true }),
+    createJob({ id: 2, name: '꺼진 잡', enabled: false }),
+  ]);
+  await page.goto('/ai-insights/jobs');
+  const switches = page.getByRole('switch');
+  await expect(switches).toHaveCount(2);
+  await expect(switches.nth(0)).toHaveAttribute('data-state', 'checked');
+  await expect(switches.nth(1)).toHaveAttribute('data-state', 'unchecked');
+  return { on: switches.nth(0), off: switches.nth(1) };
+}
+
 /** 고대비 스위치 상태 구분 (WD-1137) — 고대비가 손잡이·알약 배경을 Canvas 로 지워 켜짐·꺼짐이 같아 보이던 문제. */
 test.describe('고대비 스위치 켜짐·꺼짐 구분 (WD-1137)', () => {
   /** 알약·손잡이의 고대비 관련 계산 스타일을 한 번에 읽는다. */
@@ -813,24 +832,6 @@ test.describe('고대비 스위치 켜짐·꺼짐 구분 (WD-1137)', () => {
     });
   }
 
-  /**
-   * 고대비로 켜진 잡·꺼진 잡 하나씩인 활동 목록을 연다 — 스위치를 누르면 서버 응답으로 상태가 돌아오므로
-   * 누르지 않고 두 상태를 나란히 읽는다.
-   */
-  async function openOnOffSwitches(page: Page) {
-    await page.emulateMedia({ forcedColors: 'active' });
-    await mockProactivePermissions(page);
-    await setupJobListMocks(page, [
-      createJob({ id: 1, name: '켜진 잡', enabled: true }),
-      createJob({ id: 2, name: '꺼진 잡', enabled: false }),
-    ]);
-    await page.goto('/ai-insights/jobs');
-    const switches = page.getByRole('switch');
-    await expect(switches).toHaveCount(2);
-    await expect(switches.nth(0)).toHaveAttribute('data-state', 'checked');
-    await expect(switches.nth(1)).toHaveAttribute('data-state', 'unchecked');
-    return { on: switches.nth(0), off: switches.nth(1) };
-  }
 
   test('고대비 모드에서 스위치 손잡이가 보이고 켜짐·꺼짐 알약 색이 다르다', async ({
     authenticatedPage: page,
@@ -994,5 +995,40 @@ test.describe('고대비 스위치 켜짐·꺼짐 구분 (WD-1137)', () => {
 
   test('요청 중인 채널 스위치(켜짐 요청)는 활성 켜짐 스위치와 같은 색(Highlight) (WD-1150)', async ({ authenticatedPage: page }) => {
     await expectBusyMatchesEnabledSwitch(page, true);
+  });
+});
+
+/**
+ * 고대비 스위치 히트 상자 테두리 (WD-1136) — 루트(32×32)의 투명 테두리를 고대비가 시스템 색으로 그려
+ * 초점 없는 스위치 둘레에 원이 보이던 문제. 켜짐·꺼짐 둘 다 원이 없고, 보통 모드 레이아웃은 그대로여야 한다.
+ */
+test.describe('고대비 스위치 히트 상자 테두리 (WD-1136)', () => {
+  test('고대비 모드에서 초점 없는 스위치 루트에 테두리가 그려지지 않는다', async ({
+    authenticatedPage: page,
+  }) => {
+    const { on, off } = await openOnOffSwitches(page);
+    for (const [name, root] of [['켜짐', on], ['꺼짐', off]] as const) {
+      const widths = await root.evaluate((el) => {
+        const s = getComputedStyle(el);
+        return [s.borderTopWidth, s.borderRightWidth, s.borderBottomWidth, s.borderLeftWidth];
+      });
+      expect(widths, `${name} 스위치 루트에 테두리가 남았다 (WD-1136)`).toEqual(['0px', '0px', '0px', '0px']);
+    }
+  });
+
+  test('루트 테두리를 빼도 히트 상자 32×32 와 알약 위치는 그대로다', async ({
+    authenticatedPage: page,
+  }) => {
+    const { on: root } = await openOnOffSwitches(page, 'none');
+    // 루트·알약 상자를 한 번에 읽는다
+    const { box, track } = await root.evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      const t = (el.querySelector('[data-slot="switch-track"]') as HTMLElement).getBoundingClientRect();
+      return { box: [r.width, r.height], track: { left: t.left - r.left, top: t.top - r.top, width: t.width } };
+    });
+    expect(box, '루트 히트 상자가 32×32 가 아니다 (WD-1136)').toEqual([32, 32]);
+    expect(Math.round(track.left), '알약 left 오프셋 (WD-1136)').toBe(0);
+    expect(Math.round(track.top), '알약 top 오프셋 (WD-1136)').toBe(7);
+    expect(Math.round(track.width), '알약 너비 (WD-1136)').toBe(32);
   });
 });
