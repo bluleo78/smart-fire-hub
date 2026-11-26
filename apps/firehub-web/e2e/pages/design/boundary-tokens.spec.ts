@@ -169,6 +169,24 @@ test.describe('영역 경계 단계 — 데이터셋 목록 (WD-755)', () => {
         // 클래스에 /50 같은 알파를 덧대지 않는다(§1-7) — 라이트는 불투명 토큰 그대로(다크 --muted 는 토큰 자체가 반투명이라 칠한 알파는 재지 않는다)
         if (theme === 'light') expect(await paintedAlpha(thead)).toBe(255);
       });
+
+      await test.step('머리 띠 모서리 — 스크롤 상자(table-container)도 바깥 둥근 상자와 같은 반지름으로 잘라 thead 직각 모서리가 삐져나오지 않는다 (WD-1121 후속)', async () => {
+        const table = page.getByRole('table', { name: '데이터셋 목록' });
+        const container = table.locator('xpath=..');
+        const wrapper = table.locator('xpath=../..');
+        const radii = async (loc: Locator) =>
+          loc.evaluate((el) => {
+            const st = getComputedStyle(el);
+            return { tl: st.borderTopLeftRadius, tr: st.borderTopRightRadius, overflowX: st.overflowX };
+          });
+        const w = await radii(wrapper);
+        const c = await radii(container);
+        expect(parseFloat(w.tl)).toBeGreaterThan(0);
+        expect(c.tl).toBe(w.tl);
+        expect(c.tr).toBe(w.tr);
+        // 반지름이 있어도 overflow 가 visible 이면 자식 배경이 잘리지 않는다
+        expect(c.overflowX).not.toBe('visible');
+      });
     });
   }
 });

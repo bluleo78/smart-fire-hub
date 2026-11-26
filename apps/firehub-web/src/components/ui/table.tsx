@@ -17,6 +17,8 @@ function Table({ className, ...props }: React.ComponentProps<"table">) {
   // (흰 4.5%)이라 카드 위에 또 칠하면 9% 남짓으로 겹쳐 표만 밝은 사각형으로 떠 보인다 — 카드 면이 이미 표 면 역할을 한다.
   // 이 변형은 `:where([data-slot=card]) &` 로 찍혀 특이도가 bg-card 와 같고(0,1,0) 변형 유틸이라 뒤에 오므로 카드 안에서는 이긴다.
   // rounded-[inherit]: 바깥 「rounded-md border」 상자의 모서리 밖으로 면이 삐져나오지 않게(WD-755).
+  // WD-1121 후속: 머리 띠(thead bg-muted)를 칠하게 되면서 안쪽 스크롤 상자(table-container)에도 같은 rounded-[inherit] 를 준다 —
+  // overflow-x-auto 가 이미 자식을 이 상자 모양으로 자르므로, 반지름이 없으면 thead 의 직각 모서리가 둥근 테두리 밖으로 삐져나온다.
   return (
     <div className="relative w-full rounded-[inherit] bg-card in-data-[slot=card]:bg-transparent">
       <div
@@ -26,7 +28,7 @@ function Table({ className, ...props }: React.ComponentProps<"table">) {
         // 늘 켜면 내용에 맞춰 줄어드는 부모에서 표가 접히고 셀 안 TruncatedText 의 100cqw 가 바깥 wrapper 대신 이 상자로 풀린다. 근거는 TableVisibleWidthCell JSDoc.
         // 주의: 실패·빈 상태 행이 보일 때는 inline-size 컨테이너가 켜져 표 상자의 내재 폭이 0 이 된다 — inline-block·w-fit·폭 없는 flex/grid 부모 안의 표는
         // 그 행이 보일 때만 접힐 수 있으니 그런 자리에는 폭을 준다.
-        className="relative w-full overflow-x-auto has-[>table>tbody>tr>td>[data-slot=table-visible-content]]:[container-type:inline-size]"
+        className="relative w-full overflow-x-auto rounded-[inherit] has-[>table>tbody>tr>td>[data-slot=table-visible-content]]:[container-type:inline-size]"
       >
         <table
           data-slot="table"
