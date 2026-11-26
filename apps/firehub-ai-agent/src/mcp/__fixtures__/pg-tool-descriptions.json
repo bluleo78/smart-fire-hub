@@ -2260,7 +2260,7 @@
       "type": "object",
       "properties": {
         "search": {
-          "description": "사용자명 또는 설명 검색어 (최대 1,000자 — 넘으면 앞 1,000자로 잘라 검색하고 결과에 searchTruncated 로 알린다)",
+          "description": "사용자명 또는 설명 검색어 (최대 1,000자 — 넘으면 앞 최대 1,000자로 잘라 검색하고(끝 이모지 등 서로게이트 쌍이 걸리면 그보다 짧다) 결과에 searchTruncated 로 알린다)",
           "type": "string"
         },
         "userId": {
