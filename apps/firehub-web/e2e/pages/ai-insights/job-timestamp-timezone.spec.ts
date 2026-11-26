@@ -178,6 +178,59 @@ test.describe('스마트 작업 실행·리포트·생성 시각 시간대 (WD-1
   });
 });
 
+/**
+ * 실행 상세 화면이 부르는 API 모킹 후 진입 (WD-1175) — 작업 응답(시간대 출처)도 여기서 목한다.
+ * status 를 주면 그 상태로 작업 조회를 실패시킨다.
+ */
+async function openExecutionDetail(page: Page, job: unknown, options?: { status: number }) {
+  await mockApi(page, 'GET', '/api/v1/proactive/jobs/1', job, options);
+  await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+  await mockApi(
+    page,
+    'GET',
+    '/api/v1/proactive/jobs/1/executions/5',
+    createJobExecution({
+      id: 5,
+      jobId: 1,
+      status: 'COMPLETED',
+      startedAt: AT,
+      completedAt: '2026-11-24T16:40:05',
+    }),
+  );
+  await mockApi(page, 'GET', '/api/v1/proactive/jobs/1/executions/5/html', '', { status: 404 });
+  await page.goto('/ai-insights/jobs/1/executions/5');
+}
+
+/** 실행 상세 「실행 시각」 카드의 값 줄 */
+function executionTimeValue(page: Page) {
+  return page.getByText('실행 시각', { exact: true }).locator('xpath=following-sibling::p[1]');
+}
+
+test.describe('실행 상세 실행 시각 시간대 (WD-1175)', () => {
+  // 브라우저는 UTC — 브라우저 시간대로 찍으면 날짜가 하루 앞서 보이던 재현 조건
+  test.use({ timezoneId: 'UTC' });
+
+  test('실행 상세 실행 시각은 작업 시간대+약어 (WD-1175)', async ({ authenticatedPage: page }) => {
+    await openExecutionDetail(page, createJob({ id: 1, timezone: 'Asia/Seoul' }));
+    await expect(executionTimeValue(page)).toHaveText(SEOUL_TEXT);
+  });
+
+  test('실행 상세 실행 시각은 작업이 뉴욕이면 뉴욕 시각 (WD-1175)', async ({
+    authenticatedPage: page,
+  }) => {
+    await openExecutionDetail(page, createJob({ id: 1, timezone: 'America/New_York' }));
+    await expect(executionTimeValue(page)).toHaveText('2026. 11. 24. (화) 11:39 EST');
+  });
+
+  // 작업 시간대를 모르면 Asia/Seoul 로 단정하지 않고 브라우저 시간대(여기서는 UTC)+약어로 보인다 — 뉴욕 작업이 KST 로 잘못 읽히지 않게
+  test('작업을 읽지 못하면 실행 시각은 브라우저 시간대+약어로 보인다 (WD-1175)', async ({
+    authenticatedPage: page,
+  }) => {
+    await openExecutionDetail(page, { message: '작업을 찾을 수 없습니다.' }, { status: 404 });
+    await expect(executionTimeValue(page)).toHaveText('2026. 11. 24. (화) 16:39 UTC');
+  });
+});
+
 /** 리포트 목록 화면이 부르는 API 모킹 */
 async function mockReports(page: Page, reports: ReturnType<typeof createReport>[]) {
   await mockApi(page, 'GET', '/api/v1/proactive/reports', reports);

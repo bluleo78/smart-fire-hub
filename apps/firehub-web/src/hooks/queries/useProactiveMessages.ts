@@ -116,6 +116,19 @@ export function useProactiveJob(id: number) {
 }
 
 /**
+ * 작업 시간대만 읽는다(WD-1175 — 실행 상세 「실행 시각」용). useProactiveJob 과 같은 캐시 키라 작업 상세에서 들어오면 추가 요청이 없고,
+ * 바뀌지 않는 값이라 실행 중 폴링을 하지 않는다(실행 상세는 실행을 따로 폴링한다). select 로 시간대만 골라 다른 칸이 바뀌어도 다시 그리지 않는다.
+ */
+export function useProactiveJobTimezone(id: number) {
+  return useQuery({
+    queryKey: KEYS.job(id),
+    queryFn: () => proactiveApi.getJob(id).then((r) => r.data),
+    enabled: !!id,
+    select: (job) => job.timezone,
+  });
+}
+
+/**
  * 편집 충돌의 「다시 불러오기」용(WD-364) — 캐시를 무시하고 최신 작업을 서버에서 받아 캐시도 그 값으로 바꾼다.
  * 화면은 돌려받은 값으로 폼과 기준 버전을 직접 채운다(캐시 갱신만으로는 같은 내용일 때 폼이 다시 채워지지 않는다).
  */

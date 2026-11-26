@@ -174,3 +174,21 @@ export function formatInstantInZone(iso: string | null | undefined, timezone: st
   if (!iso) return '-';
   return formatNextRunWithZone(parseUtcDate(iso), timezone);
 }
+
+/**
+ * 실행 상세 「실행 시각」 글자를 만든다(WD-1175).
+ * - 작업 조회 중(pending)이면 '-' — Asia/Seoul 로 먼저 그렸다가 바뀌는 깜빡임을 피한다.
+ * - 아는 시간대(timezone !== undefined — 작업을 한 번이라도 읽었음, null 은 「시간대 없음」)를 먼저 쓴다.
+ *   백그라운드 재조회가 실패해도(error=true, 캐시 값은 남음) 캐시된 시간대를 유지한다.
+ * - 시간대를 모르고 조회가 실패했으면 KST 로 단정하지 않고 브라우저 시간대+약어로 보인다.
+ * - 그 밖(모르는데 실패도 아님)이면 기본(Asia/Seoul).
+ */
+export function formatExecutionStartInZone(
+  iso: string | null | undefined,
+  job: { pending: boolean; error: boolean; timezone: string | null | undefined },
+): string {
+  if (job.pending) return '-';
+  if (job.timezone !== undefined) return formatInstantInZone(iso, job.timezone);
+  if (job.error) return formatInstantInZone(iso, browserTimeZone());
+  return formatInstantInZone(iso, null);
+}

@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 
-import { createJobExecution } from '../../factories/ai-insight.factory';
+import { createJob, createJobExecution } from '../../factories/ai-insight.factory';
 import { setupExecutionDetailMocks } from '../../fixtures/ai-insight.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
@@ -53,6 +53,8 @@ test.describe('실행 상세 페이지', () => {
     await mockApi(page, 'GET', '/api/v1/proactive/jobs/1/executions/2', failedExecution);
     await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
 
+    // 실행 상세가 시각 시간대 때문에 작업도 읽는다 (WD-1175)
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1', createJob({ id: 1 }));
     await page.goto('/ai-insights/jobs/1/executions/2');
 
     // "실패" 뱃지 확인 (FAILED → 실패)
@@ -73,6 +75,8 @@ test.describe('실행 상세 페이지', () => {
     await mockApi(page, 'GET', '/api/v1/proactive/jobs/1/executions/3', runningExecution);
     await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
 
+    // 실행 상세가 시각 시간대 때문에 작업도 읽는다 (WD-1175)
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1', createJob({ id: 1 }));
     await page.goto('/ai-insights/jobs/1/executions/3');
 
     // "실행중" 뱃지 확인 — getStatusLabel('RUNNING') = '실행중' (공백 없음)
@@ -107,6 +111,8 @@ test.describe('실행 상세 페이지', () => {
     await mockApi(page, 'GET', '/api/v1/proactive/jobs/1/executions/4', failedExecution);
     await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
 
+    // 실행 상세가 시각 시간대 때문에 작업도 읽는다 (WD-1175)
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1', createJob({ id: 1 }));
     await page.goto('/ai-insights/jobs/1/executions/4');
 
     // 에러 메시지 요소가 렌더링되었는지 확인
@@ -134,6 +140,8 @@ test.describe('실행 상세 페이지', () => {
     );
     await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
 
+    // 실행 상세가 시각 시간대 때문에 작업도 읽는다 (WD-1175)
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1', createJob({ id: 1 }));
     await page.goto('/ai-insights/jobs/1/executions/5');
 
     const card = page.getByTestId('execution-error');
@@ -163,6 +171,8 @@ test.describe('실행 상세 페이지', () => {
     );
     await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
 
+    // 실행 상세가 시각 시간대 때문에 작업도 읽는다 (WD-1175)
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1', createJob({ id: 1 }));
     await page.goto('/ai-insights/jobs/1/executions/7');
 
     const card = page.getByTestId('execution-error');
@@ -190,6 +200,8 @@ test.describe('실행 상세 페이지', () => {
     );
     await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
 
+    // 실행 상세가 시각 시간대 때문에 작업도 읽는다 (WD-1175)
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1', createJob({ id: 1 }));
     await page.goto('/ai-insights/jobs/1/executions/6');
 
     const card = page.getByTestId('execution-skipped');
@@ -243,6 +255,8 @@ test.describe('실행 상세 — 제목 위계 (WD-929)', () => {
       );
       await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
 
+      // 실행 상세가 시각 시간대 때문에 작업도 읽는다 (WD-1175)
+      await mockApi(page, 'GET', '/api/v1/proactive/jobs/1', createJob({ id: 1 }));
       await page.goto(`/ai-insights/jobs/1/executions/${c.id}`);
       await expect(page.getByTestId(c.testId)).toBeVisible();
 

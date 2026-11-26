@@ -4,6 +4,8 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import {
+  browserTimeZone,
+  formatExecutionStartInZone,
   formatInstantInZone,
   formatNextRun,
   formatNextRunShort,
@@ -230,5 +232,27 @@ describe('formatInstantInZone', () => {
     expect(formatInstantInZone(null, 'Asia/Seoul')).toBe('-');
     expect(formatInstantInZone(undefined, 'Asia/Seoul')).toBe('-');
     expect(formatInstantInZone('not-a-date', 'Asia/Seoul')).toBe('-');
+  });
+});
+
+describe('formatExecutionStartInZone', () => {
+  const ISO = '2026-11-24T16:39:05';
+  it('작업 조회 중이면 「-」', () => {
+    expect(formatExecutionStartInZone(ISO, { pending: true, error: false, timezone: undefined })).toBe('-');
+  });
+  it('재조회가 실패해도 아는 시간대(캐시)를 유지한다', () => {
+    expect(formatExecutionStartInZone(ISO, { pending: false, error: true, timezone: 'America/New_York' })).toBe(
+      '2026. 11. 24. (화) 11:39 EST',
+    );
+  });
+  it('작업을 읽었고 시간대가 null 이면 Asia/Seoul', () => {
+    expect(formatExecutionStartInZone(ISO, { pending: false, error: false, timezone: null })).toBe(
+      '2026. 11. 25. (수) 01:39 KST',
+    );
+  });
+  it('시간대를 모르고 조회가 실패했으면 브라우저 시간대', () => {
+    expect(formatExecutionStartInZone(ISO, { pending: false, error: true, timezone: undefined })).toBe(
+      formatInstantInZone(ISO, browserTimeZone()),
+    );
   });
 });

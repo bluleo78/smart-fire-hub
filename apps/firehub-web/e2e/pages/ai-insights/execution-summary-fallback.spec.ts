@@ -1,4 +1,4 @@
-import { createJobExecution } from '../../factories/ai-insight.factory';
+import { createJob, createJobExecution } from '../../factories/ai-insight.factory';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 
@@ -38,6 +38,8 @@ test.describe('실행 상세 — HTML 없는 폴백의 요약 (#363)', () => {
     await mockApi(page, 'GET', '/api/v1/proactive/jobs/1/executions/1/html', '', { status: 404 });
     await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
 
+    // 실행 상세가 시각 시간대 때문에 작업도 읽는다 (WD-1175)
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1', createJob({ id: 1 }));
     await page.goto('/ai-insights/jobs/1/executions/1');
 
     // 이 이슈의 현상 — 폴백 경로에서 총평이 통째로 사라졌다
@@ -60,6 +62,8 @@ test.describe('실행 상세 — HTML 없는 폴백의 요약 (#363)', () => {
     );
     await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
 
+    // 실행 상세가 시각 시간대 때문에 작업도 읽는다 (WD-1175)
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1', createJob({ id: 1 }));
     await page.goto('/ai-insights/jobs/1/executions/1');
 
     await expect(page.getByTestId('execution-summary')).toContainText(SUMMARY_TEXT);
@@ -76,6 +80,8 @@ test.describe('실행 상세 — HTML 없는 폴백의 요약 (#363)', () => {
     await mockApi(page, 'GET', '/api/v1/proactive/jobs/1/executions/2/html', '', { status: 404 });
     await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
 
+    // 실행 상세가 시각 시간대 때문에 작업도 읽는다 (WD-1175)
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1', createJob({ id: 1 }));
     await page.goto('/ai-insights/jobs/1/executions/2');
 
     await expect(page.getByText(SECTION_TEXT)).toBeVisible();

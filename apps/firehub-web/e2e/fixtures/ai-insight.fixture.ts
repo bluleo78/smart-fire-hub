@@ -188,6 +188,8 @@ export async function setupExecutionDetailMocks(
       { status: 404 },
     );
   }
+  // WD-1175: 실행 상세가 작업 시간대를 얻으려고 작업도 읽는다
+  await mockApi(page, 'GET', `/api/v1/proactive/jobs/${jobId}`, createJob({ id: jobId }));
   await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
 }
 
