@@ -133,6 +133,22 @@ public class RefreshTokenRecord extends UpdatableRecordImpl<RefreshTokenRecord> 
         return (String) get(7);
     }
 
+    /**
+     * Setter for <code>public.refresh_token.revoked_at</code>. revoked=true 로
+     * 바뀐 시각. NULL 은 유예 판정을 하지 않는다(마이그레이션 이전 행).
+     */
+    public void setRevokedAt(LocalDateTime value) {
+        set(8, value);
+    }
+
+    /**
+     * Getter for <code>public.refresh_token.revoked_at</code>. revoked=true 로
+     * 바뀐 시각. NULL 은 유예 판정을 하지 않는다(마이그레이션 이전 행).
+     */
+    public LocalDateTime getRevokedAt() {
+        return (LocalDateTime) get(8);
+    }
+
     // -------------------------------------------------------------------------
     // Primary key information
     // -------------------------------------------------------------------------
@@ -156,7 +172,7 @@ public class RefreshTokenRecord extends UpdatableRecordImpl<RefreshTokenRecord> 
     /**
      * Create a detached, initialised RefreshTokenRecord
      */
-    public RefreshTokenRecord(Long id, Long userId, String tokenHash, LocalDateTime expiresAt, Boolean revoked, LocalDateTime createdAt, UUID familyId, String plane) {
+    public RefreshTokenRecord(Long id, Long userId, String tokenHash, LocalDateTime expiresAt, Boolean revoked, LocalDateTime createdAt, UUID familyId, String plane, LocalDateTime revokedAt) {
         super(RefreshToken.REFRESH_TOKEN);
 
         setId(id);
@@ -167,6 +183,7 @@ public class RefreshTokenRecord extends UpdatableRecordImpl<RefreshTokenRecord> 
         setCreatedAt(createdAt);
         setFamilyId(familyId);
         setPlane(plane);
+        setRevokedAt(revokedAt);
         resetTouchedOnNotNull();
     }
 }

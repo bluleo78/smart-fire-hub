@@ -25,16 +25,26 @@ public interface RefreshTokenMapper {
 
   int countRevoked(@Param("tokenHash") String tokenHash);
 
+  /**
+   * 이미 폐기된 토큰의 폐기 시각 (WD-1141 회전 유예). 없으면 null 이고, 그때는 유예를 적용하지 않는다.
+   */
+  LocalDateTime selectRevokedAt(@Param("tokenHash") String tokenHash);
+
   /** family_id 를 36자 문자열로 읽는다(PG uuid·Tibero VARCHAR2(36) 공통). 없으면 null. */
   String selectFamilyId(@Param("tokenHash") String tokenHash);
 
-  int revokeByTokenHash(@Param("tokenHash") String tokenHash);
+  int revokeByTokenHash(
+      @Param("tokenHash") String tokenHash, @Param("revokedAt") LocalDateTime revokedAt);
 
-  int revokeByFamilyId(@Param("familyId") UUID familyId);
+  int revokeByFamilyId(
+      @Param("familyId") UUID familyId, @Param("revokedAt") LocalDateTime revokedAt);
 
-  int revokeAllByUserIdAndPlane(@Param("userId") Long userId, @Param("plane") String plane);
+  int revokeAllByUserIdAndPlane(
+      @Param("userId") Long userId,
+      @Param("plane") String plane,
+      @Param("revokedAt") LocalDateTime revokedAt);
 
-  int revokeAllByUserId(@Param("userId") Long userId);
+  int revokeAllByUserId(@Param("userId") Long userId, @Param("revokedAt") LocalDateTime revokedAt);
 
   /** 만료됐거나, 폐기되고 생성 뒤 {@code revokedBefore} 이전인 토큰을 지운다. */
   int deleteExpired(

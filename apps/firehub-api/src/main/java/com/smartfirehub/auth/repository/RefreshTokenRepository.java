@@ -1,6 +1,7 @@
 package com.smartfirehub.auth.repository;
 
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -20,6 +21,27 @@ public interface RefreshTokenRepository {
   /** 운영자 콘솔 평면. */
   String PLANE_PLATFORM = "PLATFORM";
 
+  /**
+   * {@code revoked_at} 에 적을(그리고 회전 유예를 잴) 시각 — **UTC 벽시계**로 고정한다 (WD-1141 반려 3차 5).
+   *
+   * <p>왜 JVM 기본 시간대({@code LocalDateTime.now()})를 쓰지 않는가: 폐기는 한 노드의 JVM 시계로 찍히고 유예 판정은 다른 노드의 JVM 시계로
+   * 잰다. 두 노드의 기본 시간대가 어긋나면 5초 유예가 몇 시간씩 벌어져, 유예 밖의 재사용(탈취)까지 관용하거나 그 반대가 된다. 이 열을 쓰고 읽는
+   * 자리가 **여기 하나**로 모여 있으니 기준을 한 곳에 고정한다.
+   *
+   * <p>왜 DB 시각(CURRENT_TIMESTAMP) 대신 UTC 인스턴트인가: 네 폐기 경로(jOOQ 1 · MyBatis 3)가 전부 애플리케이션에서 값을 만들어
+   * 바인딩하고, DB 는 이 열을 스스로 쓰지 않는다. 값을 만드는 쪽을 한 곳으로 모으는 편이 문장별 {@code CURRENT_TIMESTAMP} 를 넣는 것보다
+   * 적다. UTC 로 두면 배포 환경의 시간대·서머타임에도 값이 그대로이고, JDBC 는 {@code LocalDateTime} 를 벽시계 그대로 왕복한다
+   * ({@code RefreshTokenRepositoryContractTest#expiresAt_roundTripsAsWallClock}).
+   *
+   * <p>**이 값을 쓰는 자리와 유예를 잴 자리({@code RefreshTokenRotation#withinGrace})는 항상 이것을 써야 한다** — 한쪽만 바꾸면 유예
+   * 창 전체가 그만큼 어긋난다. 테스트가 유예 안/밖을 재현할 때도 이 값에서 빼야 한다.
+   *
+   * @return UTC 벽시계 기준의 지금
+   */
+  static LocalDateTime revokedAtNow() {
+    return LocalDateTime.now(ZoneOffset.UTC);
+  }
+
   /** 웹 평면 토큰을 저장한다. */
   void save(Long userId, String tokenHash, LocalDateTime expiresAt, UUID familyId);
 
@@ -29,6 +51,18 @@ public interface RefreshTokenRepository {
   boolean existsValidToken(String tokenHash);
 
   boolean isTokenRevoked(String tokenHash);
+
+  /**
+   * 이미 폐기된 토큰의 폐기 시각을 돌려준다 (WD-1141 — 회전 유예).
+   *
+   * <p>회전 직후 짧은 시간 안에 재제시된 토큰이 "동시 갱신의 진 쪽"인지 "오래된 재사용(탈취)"인지 가르는 근거다. 아직 폐기되지 않았거나, 폐기 시각이 없는
+   * 행({@code revoked_at} 컬럼 이전에 폐기된 행)이면 비어 있다 — 비어 있으면 유예를 적용하지 않는다.
+   *
+   * <p>이 값의 기준 시계는 {@link #revokedAtNow()} 와 같다.
+   *
+   * @return 폐기 시각. 유예 판정에만 쓴다.
+   */
+  Optional<LocalDateTime> findRevokedAt(String tokenHash);
 
   Optional<UUID> findFamilyIdByTokenHash(String tokenHash);
 

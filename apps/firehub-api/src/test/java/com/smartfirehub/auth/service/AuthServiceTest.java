@@ -1,5 +1,6 @@
 package com.smartfirehub.auth.service;
 
+import static com.smartfirehub.jooq.Tables.REFRESH_TOKEN;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -7,6 +8,7 @@ import com.smartfirehub.auth.dto.LoginRequest;
 import com.smartfirehub.auth.dto.TokenResponse;
 import com.smartfirehub.auth.exception.InvalidCredentialsException;
 import com.smartfirehub.auth.exception.InvalidTokenException;
+import com.smartfirehub.auth.repository.RefreshTokenRepository;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TestUsers;
 import com.smartfirehub.user.dto.UserResponse;
@@ -143,6 +145,15 @@ class AuthServiceTest extends IntegrationTestBase {
 
     // Logout revokes all tokens
     authService.logout(user.id());
+
+    // 회전 유예(WD-1141)는 폐기 직후 5초만 관용한다 — 유예 밖 재제시가 재사용 탐지에 걸리는지 본다.
+    dsl.update(REFRESH_TOKEN)
+        .set(REFRESH_TOKEN.REVOKED_AT, RefreshTokenRepository.revokedAtNow().minusSeconds(6))
+        .where(
+            REFRESH_TOKEN
+                .TOKEN_HASH
+                .eq(RefreshTokenHasher.hash(loginResult.refreshToken())))
+        .execute();
 
     // Try to use the revoked refresh token — reuse detection kicks in
     assertThatThrownBy(() -> authService.refresh(loginResult.refreshToken()))

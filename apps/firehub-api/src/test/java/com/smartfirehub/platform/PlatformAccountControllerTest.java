@@ -258,6 +258,11 @@ class PlatformAccountControllerTest extends IntegrationTestBase {
         .andExpect(status().isNoContent());
 
     assertThat(active(target)).isTrue();
+    // 회전 유예(WD-1141)는 폐기 직후 5초만 관용한다 — 유예 밖 재제시가 재사용 탐지에 걸리는지 본다.
+    dsl.execute(
+        "UPDATE refresh_token SET revoked_at = ? WHERE token_hash = ?",
+        RefreshTokenRepository.revokedAtNow().minusSeconds(6),
+        RefreshTokenHasher.hash(oldRefresh));
     assertThatThrownBy(() -> authService.refresh(oldRefresh))
         .isInstanceOf(InvalidTokenException.class)
         .hasMessageContaining("이미 사용된 토큰");

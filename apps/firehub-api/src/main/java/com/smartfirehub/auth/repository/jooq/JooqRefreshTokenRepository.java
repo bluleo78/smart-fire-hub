@@ -13,7 +13,13 @@ import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.springframework.stereotype.Repository;
 
-/** RefreshTokenRepository 의 jOOQ(PostgreSQL) 구현 — WD-485. */
+/**
+ * RefreshTokenRepository 의 jOOQ(PostgreSQL) 구현 — WD-485.
+ *
+ * <p>네 폐기 경로 전부가 {@code revoked_at} 을 함께 갱신한다 — 회전 유예 판정(WD-1141)이 이 시각에 걸리기 때문이다.
+ * 어느 경로에서만 빠지면 그 경로의 유예는 영원히 동작하지 않는다. 시각은 {@link RefreshTokenRepository#revokedAtNow()} —
+ * 유예를 잴 쪽도 같은 기준이라야 5초가 5초다(WD-1141 반려 3차 5).
+ */
 @Repository
 @ConditionalOnPostgresPlatformDb
 @RequiredArgsConstructor
@@ -60,6 +66,15 @@ public class JooqRefreshTokenRepository implements RefreshTokenRepository {
   }
 
   @Override
+  public Optional<LocalDateTime> findRevokedAt(String tokenHash) {
+    return dsl.select(REFRESH_TOKEN.REVOKED_AT)
+        .from(REFRESH_TOKEN)
+        .where(REFRESH_TOKEN.TOKEN_HASH.eq(tokenHash))
+        .and(REFRESH_TOKEN.REVOKED.eq(true))
+        .fetchOptional(REFRESH_TOKEN.REVOKED_AT);
+  }
+
+  @Override
   public Optional<UUID> findFamilyIdByTokenHash(String tokenHash) {
     return dsl.select(FAMILY_ID)
         .from(REFRESH_TOKEN)
@@ -71,6 +86,7 @@ public class JooqRefreshTokenRepository implements RefreshTokenRepository {
   public boolean revokeByTokenHash(String tokenHash) {
     return dsl.update(REFRESH_TOKEN)
             .set(REFRESH_TOKEN.REVOKED, true)
+            .set(REFRESH_TOKEN.REVOKED_AT, RefreshTokenRepository.revokedAtNow())
             .where(REFRESH_TOKEN.TOKEN_HASH.eq(tokenHash))
             .and(REFRESH_TOKEN.REVOKED.eq(false))
             .execute()
@@ -81,6 +97,7 @@ public class JooqRefreshTokenRepository implements RefreshTokenRepository {
   public void revokeByFamilyId(UUID familyId) {
     dsl.update(REFRESH_TOKEN)
         .set(REFRESH_TOKEN.REVOKED, true)
+        .set(REFRESH_TOKEN.REVOKED_AT, RefreshTokenRepository.revokedAtNow())
         .where(FAMILY_ID.eq(familyId))
         .and(REFRESH_TOKEN.REVOKED.eq(false))
         .execute();
@@ -90,6 +107,7 @@ public class JooqRefreshTokenRepository implements RefreshTokenRepository {
   public void revokeAllWebByUserId(Long userId) {
     dsl.update(REFRESH_TOKEN)
         .set(REFRESH_TOKEN.REVOKED, true)
+        .set(REFRESH_TOKEN.REVOKED_AT, RefreshTokenRepository.revokedAtNow())
         .where(REFRESH_TOKEN.USER_ID.eq(userId))
         .and(REFRESH_TOKEN.PLANE.eq(PLANE_WEB))
         .and(REFRESH_TOKEN.REVOKED.eq(false))
@@ -100,6 +118,7 @@ public class JooqRefreshTokenRepository implements RefreshTokenRepository {
   public void revokeAllByUserId(Long userId) {
     dsl.update(REFRESH_TOKEN)
         .set(REFRESH_TOKEN.REVOKED, true)
+        .set(REFRESH_TOKEN.REVOKED_AT, RefreshTokenRepository.revokedAtNow())
         .where(REFRESH_TOKEN.USER_ID.eq(userId))
         .and(REFRESH_TOKEN.REVOKED.eq(false))
         .execute();
