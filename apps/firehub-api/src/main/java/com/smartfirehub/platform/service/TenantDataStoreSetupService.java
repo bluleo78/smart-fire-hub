@@ -408,7 +408,7 @@ public class TenantDataStoreSetupService {
               log.warn("검증 도중 저장소 비밀번호가 재발급되어 READY 로 바꾸지 않음: tenant={}", tenantId);
             }
           }
-          Map<String, Object> details = new LinkedHashMap<>();
+          Map<String, Object> details = tenantAuditDetails(tenantId);
           details.put("result", result);
           details.put("failedAccounts", failed);
           auditRecorder.record(
@@ -447,14 +447,35 @@ public class TenantDataStoreSetupService {
     TiberoAccountPlan plan =
         TiberoAccountPlan.generate(tenantId, row.tablespace(), passwordGenerator);
     repository.replacePasswords(tenantId, toStoredAccounts(plan));
+    Map<String, Object> details = tenantAuditDetails(tenantId);
+    details.put("dataStoreBackend", row.backend().name());
     auditRecorder.record(
         operatorId,
         "TENANT_DATA_STORE_SCRIPT_REISSUE",
         "tenant",
         String.valueOf(tenantId),
         "테넌트 데이터셋 저장소 스크립트 재발급",
-        Map.of("dataStoreBackend", row.backend().name()));
+        details);
     return new DataStoreScriptResponse(plan.script());
+  }
+
+  /**
+   * 저장소 감사(VERIFY·SCRIPT_REISSUE) details 의 앞머리 — 테넌트 id·slug·이름(WD-1180).
+   *
+   * <p>숫자 id 만 남기면 콘솔 감사 로그 「대상」 열에 "7" 만 보이고 대상 필터도 slug·이름으로 찾지 못한다(다른 테넌트 감사와 같은 키를 써야 한다). 테넌트를
+   * 못 찾으면(방금 삭제 등) id 만 남기고 감사 자체는 막지 않는다.
+   */
+  private Map<String, Object> tenantAuditDetails(long tenantId) {
+    Map<String, Object> details = new LinkedHashMap<>();
+    tenantRepository
+        .findById(tenantId)
+        .ifPresentOrElse(
+            tenant -> {
+              details.putAll(PlatformAuditRecorder.tenantAuditDetails(tenantId, tenant));
+              details.put("tenantName", tenant.name());
+            },
+            () -> details.put("tenantId", tenantId));
+    return details;
   }
 
   private void requireTenant(long tenantId) {

@@ -484,6 +484,26 @@ public abstract class AuditLogRepositoryContractTest extends AccessContractBase 
         .containsExactly(byUser, bySlug);
   }
 
+  @Test
+  @DisplayName("findPlatform 대상 필터는 metadata.username(최초 운영자 가입·멤버 추가의 대상 멤버)도 부분일치로 찾는다 — WD-1180")
+  void findPlatform_targetMatchesMetadataUsername() {
+    String actor = prefix + "-op";
+    long signup =
+        platformRow(
+            actor + "1", "BOOTSTRAP_SIGNUP", "7", base, "{\"username\":\"Boot-" + prefix + "\"}");
+    long member =
+        platformRow(
+            actor + "2",
+            "MEMBER_ADD",
+            "8",
+            base.minusMinutes(1),
+            "{\"tenantSlug\":\"acme\",\"username\":\"Mem-" + prefix + "\"}");
+    platformRow(actor + "3", "TENANT_CREATE", "9", base.minusMinutes(2), "{\"tenantSlug\":\"zz\"}");
+
+    assertThat(ids(platformFind(actor, "boot-" + prefix, null, 0, 10))).containsExactly(signup);
+    assertThat(ids(platformFind(actor, "MEM-" + prefix, null, 0, 10))).containsExactly(member);
+  }
+
   private long platformRow(
       String username, String action, String resourceId, LocalDateTime t, String meta) {
     return fx.insertAuditLog(null, username, action, "tenant", resourceId, "p", t, meta);
