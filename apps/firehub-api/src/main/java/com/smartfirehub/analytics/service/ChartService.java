@@ -167,12 +167,15 @@ public class ChartService {
         chartRepository
             .findByIdForOwner(id, userId)
             .orElseThrow(() -> new ChartNotFoundException());
-    // 이름이 바뀐 저장만 중복을 검사한다(WD-824) — 판정 기준·이유는 ResourceNameGuard.requireUnusedOnRename 참고. 기준값은 행 잠금 뒤에 읽은 값이다.
+    // 이름이 바뀐 저장만 중복을 검사한다(WD-824) — 판정 기준·이유는 ResourceNameGuard.requireUnusedOnRename 참고. 기준값은 행 잠금
+    // 뒤에 읽은 값이다.
     nameGuard.requireUnusedOnRename(
         ResourceKind.CHART,
         userId,
         auditBefore.name(),
         req.name(),
+        // 개명 판정은 저장소 SQL 이 실제로 쓰는 비교 기준을 따른다(WD-1094) — PG 는 유니코드 공백까지, Tibero 는 ASCII 만.
+        chartRepository.nameComparison(),
         () -> chartRepository.existsByOwnerAndName(userId, req.name(), id));
     String effectiveType = req.chartType() != null ? req.chartType() : existing.chartType();
     java.util.Map<String, Object> effectiveConfig =

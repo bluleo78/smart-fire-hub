@@ -9,6 +9,7 @@ import com.smartfirehub.analytics.dto.DashboardResponse.DashboardWidgetResponse;
 import com.smartfirehub.analytics.dto.DeleteImpactResponse.DashboardRawRef;
 import com.smartfirehub.analytics.dto.UpdateDashboardRequest;
 import com.smartfirehub.global.dto.LockedRowVersion;
+import com.smartfirehub.global.naming.NameComparison;
 import com.smartfirehub.user.repository.TenantPairContractBase;
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -67,6 +68,31 @@ public abstract class AnalyticsDashboardRepositoryContractTest extends TenantPai
 
   private long count(String search, Boolean sharedOnly, Boolean mineOnly) {
     return inA(() -> repository().countAll(search, sharedOnly, mineOnly, me));
+  }
+
+  /**
+   * 이름 중복 SQL 의 기준을 실행해 본다(WD-1094) — 앞뒤 전각 공백이 붙은 이름은 PG(jOOQ·MyBatis) 에서 같은 이름이고, Tibero 의
+   * lower(trim) 은 ASCII 만 걷으므로 다른 이름이다. 구현이 알리는 {@code nameComparison()} 이 이 결과와 일치해야 개명 판정이 SQL 과
+   * 어긋나지 않는다. (DTO 가 앞뒤 공백을 걷으므로 저장 행이 아니라 조회 인자 쪽에 공백을 덧댄다.)
+   */
+  @Test
+  @DisplayName("existsByOwnerAndName 은 대소문자·ASCII 공백을 무시하고 유니코드 공백은 nameComparison 기준으로 비교한다")
+  void existsByOwnerAndName_followsNameComparison() {
+    Long id = insertA(me, req("Board-" + prefix, false));
+
+    assertThat(inA(() -> repository().existsByOwnerAndName(me, " board-" + prefix + " ", null)))
+        .as("ASCII 공백·대소문자는 항상 무시")
+        .isTrue();
+    boolean unicode = repository().nameComparison() == NameComparison.UNICODE_TRIM;
+    assertThat(inA(() -> repository().existsByOwnerAndName(me, "\u3000Board-" + prefix, null)))
+        .as("앞뒤 전각 공백은 UNICODE_TRIM 일 때만 같은 이름")
+        .isEqualTo(unicode);
+    assertThat(inA(() -> repository().existsByOwnerAndName(me, "Board-" + prefix, id)))
+        .as("자기 자신은 제외")
+        .isFalse();
+    assertThat(inA(() -> repository().existsByOwnerAndName(other, "Board-" + prefix, null)))
+        .as("다른 소유자")
+        .isFalse();
   }
 
   private DashboardResponse owned(Long id) {

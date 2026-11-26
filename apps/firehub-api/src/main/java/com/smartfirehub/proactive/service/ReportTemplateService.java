@@ -28,6 +28,7 @@ public class ReportTemplateService {
 
   /** 작성자 본인의 생성·수정·삭제 감사(WD-464). */
   private final ProactiveAuditRecorder auditRecorder;
+
   // 같은 소유자(+기본 양식) 안 이름 중복 방지(WD-824)
   private final ResourceNameGuard nameGuard;
 
@@ -112,12 +113,15 @@ public class ReportTemplateService {
         request.expectedUpdatedAt(), currentUpdatedAt, EDIT_CONFLICT_MESSAGE);
     // 감사 비교용 저장 전 값(WD-464) — 행 잠금 뒤에 다시 읽어, 기준 버전 없이 들어온 저장(AI 도구)도 동시 저장의 값이 섞이지 않게 한다.
     ReportTemplateResponse before = reportTemplateRepository.findById(id).orElse(template);
-    // 이름이 바뀐 저장만 중복을 검사한다(WD-824) — 판정 기준·이유는 ResourceNameGuard.requireUnusedOnRename 참고. 기준값은 행 잠금 뒤에 읽은 값이다.
+    // 이름이 바뀐 저장만 중복을 검사한다(WD-824) — 판정 기준·이유는 ResourceNameGuard.requireUnusedOnRename 참고. 기준값은 행 잠금
+    // 뒤에 읽은 값이다.
     nameGuard.requireUnusedOnRename(
         ResourceKind.REPORT_TEMPLATE,
         userId,
         before.name(),
         request.name(),
+        // 개명 판정은 저장소 SQL 이 실제로 쓰는 비교 기준을 따른다(WD-1094) — PG 는 유니코드 공백까지, Tibero 는 ASCII 만.
+        reportTemplateRepository.nameComparison(),
         () -> reportTemplateRepository.existsByOwnerAndName(userId, request.name(), id));
     LocalDateTime savedUpdatedAt =
         reportTemplateRepository.update(

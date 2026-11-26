@@ -28,7 +28,9 @@ class TiberoMyBatisChartRepositoryContractTest extends ChartRepositoryContractTe
         poc.transactional(
             ChartRepository.class,
             new MyBatisChartRepository(
-                poc.mapper(ChartMapper.class), JsonMapper.builderWithJackson2Defaults().build()));
+                poc.mapper(ChartMapper.class),
+                JsonMapper.builderWithJackson2Defaults().build(),
+                poc.sqlSessionFactory()));
   }
 
   @Override

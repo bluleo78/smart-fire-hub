@@ -4,6 +4,7 @@ import static org.jooq.impl.DSL.*;
 
 import com.smartfirehub.global.dto.LockedRowVersion;
 import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
+import com.smartfirehub.global.validation.PgEdgeSpaceChars;
 import com.smartfirehub.proactive.dto.ReportTemplateResponse;
 import com.smartfirehub.proactive.dto.ReportTemplateSummaryResponse;
 import com.smartfirehub.proactive.repository.ReportTemplateRepository;
@@ -44,6 +45,10 @@ import tools.jackson.databind.ObjectMapper;
 public class JooqReportTemplateRepository implements ReportTemplateRepository {
 
   private final DSLContext dsl;
+
+  /** 이름 비교용 공백 정규화 SQL — PG 서버 인코딩별 translate 쌍을 고른다(WD-1162). */
+  private final PgEdgeSpaceChars edgeSpaceChars;
+
   private final ObjectMapper objectMapper;
 
   private static final Table<?> REPORT_TEMPLATE = table(name("report_template"));
@@ -240,14 +245,17 @@ public class JooqReportTemplateRepository implements ReportTemplateRepository {
     }
   }
 
-  /** 본인 양식 + 기본 양식(user_id NULL) 중 같은 이름(lower(trim) 비교) 존재 여부(WD-824). */
+  /** 본인 양식 + 기본 양식(user_id NULL) 중 같은 이름(유니코드 공백·대소문자 무시) 존재 여부(WD-824, WD-1094). */
   @Override
   public boolean existsByOwnerAndName(long ownerId, String name, Long excludeId) {
     Condition c =
         RT_USER_ID
             .isNull()
             .or(RT_USER_ID.eq(ownerId))
-            .and(lower(trim(RT_NAME)).eq(lower(trim(val(name, String.class)))));
+            .and(
+                edgeSpaceChars
+                    .normalize(RT_NAME)
+                    .eq(edgeSpaceChars.normalize(val(name, String.class))));
     if (excludeId != null) {
       c = c.and(RT_ID.ne(excludeId));
     }

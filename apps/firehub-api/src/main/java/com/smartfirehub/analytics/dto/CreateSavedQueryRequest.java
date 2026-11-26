@@ -30,6 +30,14 @@ public record CreateSavedQueryRequest(
     boolean isShared) {
 
   /**
+   * 이름 앞뒤의 유니코드 공백(전각 U+3000·NBSP 포함)을 걷어 저장·중복 검사가 같은 값을 보게 한다(WD-1094). 공백만 다른 이름이 중복 검사를 비켜 가던
+   * 것을 막는다.
+   */
+  public CreateSavedQueryRequest {
+    name = TextRules.strip(name);
+  }
+
+  /**
    * SQL 길이 상한 — 100,000자(WD-425). 상한이 없어 500만 자 SQL 도 저장됐다. 손으로 쓰거나 AI 가 만드는 분석 쿼리는 수천 자를 넘지 않는다.
    */
   public static final int SQL_MAX_LENGTH = 100_000;

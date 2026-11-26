@@ -116,4 +116,113 @@ class DashboardDuplicateNameTest extends IntegrationTestBase {
 
     assertThat(updated.description()).isEqualTo("새 설명");
   }
+
+  // ── WD-1094: 앞뒤 유니코드 공백을 걷어낸 뒤 중복 검사·저장 (스마트 작업 WD-1085·WD-1108 과 같은 판정) ─────────
+
+  private Long insertLegacy(Long userId, String name) {
+    return inTenantFixture(
+        () ->
+            dsl.fetchOne(
+                    "INSERT INTO dashboard (name, is_shared, created_by)"
+                        + " VALUES (?, false, ?) RETURNING id",
+                    name,
+                    userId)
+                .get(0, Long.class));
+  }
+
+  /** 전각 공백·NBSP 로 감싼 이름도 같은 이름으로 본다 — SQL 의 trim 은 ASCII 공백만 걷는다. */
+  @Test
+  void create_rejectsUnicodePaddedDuplicate() {
+    create("매출", owner);
+    assertThatThrownBy(() -> create("\u3000매출", owner))
+        .isInstanceOf(DuplicateResourceNameException.class);
+    assertThatThrownBy(() -> create("매출 ", owner))
+        .isInstanceOf(DuplicateResourceNameException.class);
+    assertThatThrownBy(() -> create("\u00A0매출\u00A0", owner))
+        .isInstanceOf(DuplicateResourceNameException.class);
+  }
+
+  /** 안쪽 전각 공백만 다른 이름도 같은 이름이다(translate). */
+  @Test
+  void create_rejectsInnerUnicodeSpaceVariant() {
+    create("매 출", owner);
+    assertThatThrownBy(() -> create("매\u3000출", owner))
+        .isInstanceOf(DuplicateResourceNameException.class);
+  }
+
+  /** 저장되는 이름은 앞뒤 공백이 걷힌 값이다. */
+  @Test
+  void create_storesStrippedName() {
+    assertThat(create("\u3000매출 ", owner).name()).isEqualTo("매출");
+  }
+
+  /** 다른 대시보드 이름에 공백만 덧대 바꾸면 중복으로 거절된다. */
+  @Test
+  void update_rename_rejectsPaddedExistingName() {
+    create("매출", owner);
+    DashboardResponse b = create("다른 대시보드", owner);
+    assertThatThrownBy(
+            () ->
+                service.update(
+                    b.id(), new UpdateDashboardRequest("\u3000매출", null, null, null, null), owner))
+        .isInstanceOf(DuplicateResourceNameException.class);
+  }
+
+  /** 자기 이름에 공백만 덧댄 수정은 성공하고 걷어낸 이름으로 저장된다. */
+  @Test
+  void update_selfNameWithPadding_succeedsAndStrips() {
+    DashboardResponse a = create("매출", owner);
+    DashboardResponse updated =
+        service.update(
+            a.id(), new UpdateDashboardRequest("\u3000매출\u3000", null, null, null, null), owner);
+    assertThat(updated.name()).isEqualTo("매출");
+  }
+
+  /** 옛 행 이름이 전각 공백으로 감싸져 있어도 같은 이름 생성을 막는다. */
+  @Test
+  void create_rejectsWhenLegacyRowHasUnicodePadding() {
+    insertLegacy(owner, "매출\u3000");
+    assertThatThrownBy(() -> create("매출", owner))
+        .isInstanceOf(DuplicateResourceNameException.class);
+  }
+
+  /** 옛(패딩된) 행 자신을 걷어낸 이름으로 고치는 수정은 막히지 않는다 — 자기 자신은 비교에서 제외. */
+  @Test
+  void update_selfLegacyPaddedRow_notBlocked() {
+    Long id = insertLegacy(owner, "매출\u3000");
+    DashboardResponse updated =
+        service.update(id, new UpdateDashboardRequest("매출", null, null, null, null), owner);
+    assertThat(updated.name()).isEqualTo("매출");
+  }
+
+  /**
+   * 옛(패딩된) 행 옆에 같은 이름의 정상 행이 있어도, 그 옛 행의 설명만 고치는 저장은 막히지 않는다(WD-1094).
+   *
+   * <p>서버가 이름을 걷어내므로 편집 화면의 「매출　」 저장은 「매출」로 들어온다. 개명 판정이 ASCII 비교면 개명으로 보고 409 가 난다. 유니코드
+   * 비교(nameComparison) 여야 개명이 아니라서 통과한다.
+   */
+  @Test
+  void update_legacyPaddedRowNextToSameName_descriptionOnly_succeeds() {
+    insertLegacy(owner, "매출");
+    Long id = insertLegacy(owner, "매출\u3000");
+    DashboardResponse updated =
+        service.update(id, new UpdateDashboardRequest("매출", "새 설명", null, null, null), owner);
+    assertThat(updated.description()).isEqualTo("새 설명");
+  }
+
+  /** 다른 소유자의 패딩된 이름은 막지 않는다. */
+  @Test
+  void create_allowedWhenOtherOwnerHasUnicodePaddedName() {
+    insertLegacy(other, "\u3000매출");
+    assertThat(create("매출", owner).name()).isEqualTo("매출");
+  }
+
+  /** 수정 요청에서 name 이 null(바꾸지 않음)이면 strip 이 null 을 유지해 이름이 그대로다. */
+  @Test
+  void update_nullName_keepsName() {
+    DashboardResponse a = create("매출", owner);
+    DashboardResponse updated =
+        service.update(a.id(), new UpdateDashboardRequest(null, "설명", null, null, null), owner);
+    assertThat(updated.name()).isEqualTo("매출");
+  }
 }

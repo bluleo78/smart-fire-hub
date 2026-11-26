@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.RETURNS_DEEP_STUBS;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -18,6 +19,8 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import org.apache.ibatis.session.Configuration;
+import org.apache.ibatis.session.SqlSessionFactory;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -36,6 +39,13 @@ class MyBatisAnalyticsShareAndConfigUnitTest {
 
   private final ObjectMapper objectMapper = JsonMapper.builderWithJackson2Defaults().build();
 
+  /** 생성자가 databaseId 를 읽으므로 빈 설정을 돌려주는 가짜 팩토리를 넘긴다(이 시험은 이름 비교를 보지 않는다). */
+  private static SqlSessionFactory factory() {
+    SqlSessionFactory factory = mock(SqlSessionFactory.class);
+    when(factory.getConfiguration()).thenReturn(new Configuration());
+    return factory;
+  }
+
   @Test
   @DisplayName("shareCharts — 잠근 대상 수와 바꾼 행 수가 다르면 IllegalStateException")
   void shareCharts_countMismatchThrows() {
@@ -43,7 +53,7 @@ class MyBatisAnalyticsShareAndConfigUnitTest {
     when(mapper.selectShareTargetsForUpdate(anyList(), eq(7L)))
         .thenReturn(List.of(new IdName(1L, "a"), new IdName(2L, "b")));
     when(mapper.markShared(anyList())).thenReturn(1);
-    MyBatisChartRepository repository = new MyBatisChartRepository(mapper, objectMapper);
+    MyBatisChartRepository repository = new MyBatisChartRepository(mapper, objectMapper, factory());
 
     assertThatThrownBy(() -> repository.shareCharts(List.of(1L, 2L), 7L))
         .isInstanceOf(IllegalStateException.class)
@@ -59,7 +69,9 @@ class MyBatisAnalyticsShareAndConfigUnitTest {
         .thenReturn(List.of(new IdName(9L, "z"), new IdName(3L, "c")));
     when(mapper.markShared(anyList())).thenReturn(2);
 
-    assertThat(new MyBatisChartRepository(mapper, objectMapper).shareCharts(List.of(3L, 9L), 7L))
+    assertThat(
+            new MyBatisChartRepository(mapper, objectMapper, factory())
+                .shareCharts(List.of(3L, 9L), 7L))
         .containsExactly(Map.entry(3L, "c"), Map.entry(9L, "z"));
   }
 
@@ -70,7 +82,8 @@ class MyBatisAnalyticsShareAndConfigUnitTest {
     when(mapper.selectShareTargetsForUpdate(anyList(), eq(7L)))
         .thenReturn(List.of(new IdName(1L, "a")));
     when(mapper.markShared(anyList())).thenReturn(0);
-    MyBatisSavedQueryRepository repository = new MyBatisSavedQueryRepository(mapper);
+    MyBatisSavedQueryRepository repository =
+        new MyBatisSavedQueryRepository(mapper, mock(SqlSessionFactory.class, RETURNS_DEEP_STUBS));
 
     assertThatThrownBy(() -> repository.shareQueries(List.of(1L), 7L))
         .isInstanceOf(IllegalStateException.class)
@@ -85,7 +98,7 @@ class MyBatisAnalyticsShareAndConfigUnitTest {
       ChartMapper mapper = mock(ChartMapper.class);
       when(mapper.selectDetail(1L, 2L, false)).thenReturn(row(json));
       assertThat(
-              new MyBatisChartRepository(mapper, objectMapper)
+              new MyBatisChartRepository(mapper, objectMapper, factory())
                   .findById(1L, 2L)
                   .orElseThrow()
                   .config())
@@ -102,14 +115,14 @@ class MyBatisAnalyticsShareAndConfigUnitTest {
     for (Map<String, Object> config :
         Arrays.<Map<String, Object>>asList(null, Map.of(), unserializable)) {
       ChartMapper mapper = mock(ChartMapper.class);
-      new MyBatisChartRepository(mapper, objectMapper)
+      new MyBatisChartRepository(mapper, objectMapper, factory())
           .insert(new CreateChartRequest("n", null, 1L, "BAR", config, false), 2L);
       ArgumentCaptor<ChartInsert> captor = ArgumentCaptor.forClass(ChartInsert.class);
       verify(mapper).insert(captor.capture());
       assertThat(captor.getValue().getConfigJson()).isEqualTo("{}");
     }
     ChartMapper mapper = mock(ChartMapper.class);
-    new MyBatisChartRepository(mapper, objectMapper)
+    new MyBatisChartRepository(mapper, objectMapper, factory())
         .insert(new CreateChartRequest("n", null, 1L, "BAR", Map.of("k", 1), false), 2L);
     ArgumentCaptor<ChartInsert> captor = ArgumentCaptor.forClass(ChartInsert.class);
     verify(mapper).insert(captor.capture());

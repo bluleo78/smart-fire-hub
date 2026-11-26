@@ -28,6 +28,14 @@ public record CreateChartRequest(
     boolean isShared) {
 
   /**
+   * 이름 앞뒤의 유니코드 공백(전각 U+3000·NBSP 포함)을 걷어 저장·중복 검사가 같은 값을 보게 한다(WD-1094). 공백만 다른 이름이 중복 검사를 비켜 가던
+   * 것을 막는다.
+   */
+  public CreateChartRequest {
+    name = TextRules.strip(name);
+  }
+
+  /**
    * 차트 설정(config) 직렬화 크기 상한 — 64KB(UTF-8 바이트, WD-425). 차트 목록 응답이 config 를 통째로 싣기 때문에, 상한이 없으면 공유 차트
    * 하나가 모든 사용자의 목록을 수 MB 로 부풀린다. 화면·AI 도구가 만드는 config 는 축·컬럼 이름 몇 개라 1KB 안팎이다.
    */

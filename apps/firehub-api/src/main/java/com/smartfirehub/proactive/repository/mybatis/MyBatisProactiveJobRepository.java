@@ -2,7 +2,6 @@ package com.smartfirehub.proactive.repository.mybatis;
 
 import com.smartfirehub.global.dto.LockedRowVersion;
 import com.smartfirehub.global.naming.NameComparison;
-import com.smartfirehub.global.platformdb.mybatis.MyBatisPlatformConfig;
 import com.smartfirehub.global.platformdb.mybatis.PlatformJson;
 import com.smartfirehub.global.platformdb.mybatis.PlatformMyBatisRepository;
 import com.smartfirehub.global.validation.TextRules;
@@ -37,20 +36,13 @@ public class MyBatisProactiveJobRepository implements ProactiveJobRepository {
   /** 이 설치본의 이름 비교 기준(WD-1108) — 매퍼가 문을 고르는 MyBatis databaseId 에서 한 번 정한다(WD-1154). */
   private final NameComparison nameComparison;
 
-  /**
-   * SqlSessionFactory 의 databaseId 는 매퍼가 {@code countByOwnerAndName} 판(postgresql·공통)을 고르는 값과 같다 —
-   * 개명 판정 기준도 그 값에서 정해 SQL 과 항상 같은 출처에서 나오게 한다(WD-1154). postgresql 판만 유니코드 공백 변환 SQL 이라
-   * UNICODE_TRIM, 그 밖(tibero 등 공통 문)은 ASCII_TRIM.
-   */
+  /** 이름 비교 기준은 SqlSessionFactory 의 databaseId 에서 정한다({@link NameComparison#forDatabaseId}). */
   public MyBatisProactiveJobRepository(
       ProactiveJobMapper mapper, ObjectMapper objectMapper, SqlSessionFactory sqlSessionFactory) {
     this.mapper = mapper;
     this.objectMapper = objectMapper;
     this.nameComparison =
-        MyBatisPlatformConfig.POSTGRESQL.equals(
-                sqlSessionFactory.getConfiguration().getDatabaseId())
-            ? NameComparison.UNICODE_TRIM
-            : NameComparison.ASCII_TRIM;
+        NameComparison.forDatabaseId(sqlSessionFactory.getConfiguration().getDatabaseId());
   }
 
   @Override
