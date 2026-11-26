@@ -152,7 +152,7 @@
   <!--
     플랫폼 감사(WD-4) — tenant_id IS NULL 만. 컨텍스트가 없으면 정책도 NULL 행만 보여 주지만 조건을 명시해, 컨텍스트가 남아 있으면 정책(그 테넌트
     행만)과 이 조건(NULL 행만)이 겹치지 않아 0행이 된다(fail-closed). 대상은 resource_id 정확 일치 또는 metadata 의 대상 아이디·테넌트
-    slug·이름 부분일치. 시각은 [from, to).
+    slug·이름·username(최초 운영자 가입·멤버 추가의 대상 계정, WD-1180) 부분일치. 시각은 [from, to).
   -->
   <sql id="platformWhere">
     WHERE audit_log.tenant_id IS NULL
@@ -161,7 +161,8 @@
       AND (audit_log.resource_id = #{target}
            OR LOWER(<include refid="metadataField"><property name="key" value="targetUsername"/></include>) LIKE LOWER(#{targetPattern}) ESCAPE '\'
            OR LOWER(<include refid="metadataField"><property name="key" value="tenantSlug"/></include>) LIKE LOWER(#{targetPattern}) ESCAPE '\'
-           OR LOWER(<include refid="metadataField"><property name="key" value="tenantName"/></include>) LIKE LOWER(#{targetPattern}) ESCAPE '\')
+           OR LOWER(<include refid="metadataField"><property name="key" value="tenantName"/></include>) LIKE LOWER(#{targetPattern}) ESCAPE '\'
+           OR LOWER(<include refid="metadataField"><property name="key" value="username"/></include>) LIKE LOWER(#{targetPattern}) ESCAPE '\')
     </if>
     <if test="actionType != null">AND audit_log.action_type = #{actionType}</if>
     <if test="fromInclusive != null">AND audit_log.action_time &gt;= #{fromInclusive}</if>

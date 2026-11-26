@@ -96,6 +96,13 @@ public class JooqAuditLogRepository implements AuditLogRepository {
       field("({0} ->> 'tenantName')", String.class, AL_METADATA);
 
   /**
+   * metadata 의 username — 최초 운영자 가입(BOOTSTRAP_SIGNUP)·멤버 추가(MEMBER_ADD/ROLE_ASSIGN)의 대상
+   * 계정(WD-1180).
+   */
+  private static final Field<String> AL_TARGET_MEMBER_USERNAME =
+      field("({0} ->> 'username')", String.class, AL_METADATA);
+
+  /**
    * 응답 매핑({@link #mapToResponse})이 읽는 13개 컬럼(WD-16). 조회 4곳이 같은 목록을 쓴다 — 컬럼을 더할 때 한 곳만 고치면 되고, 매핑이
    * 필드로 읽으므로 순서는 의미가 없다.
    */
@@ -344,7 +351,8 @@ public class JooqAuditLogRepository implements AuditLogRepository {
                   .eq(t)
                   .or(AL_TARGET_USERNAME.likeIgnoreCase(pattern, '\\'))
                   .or(AL_TARGET_TENANT_SLUG.likeIgnoreCase(pattern, '\\'))
-                  .or(AL_TARGET_TENANT_NAME.likeIgnoreCase(pattern, '\\')));
+                  .or(AL_TARGET_TENANT_NAME.likeIgnoreCase(pattern, '\\'))
+                  .or(AL_TARGET_MEMBER_USERNAME.likeIgnoreCase(pattern, '\\')));
     }
     if (actionType != null && !actionType.isBlank()) {
       condition = condition.and(AL_ACTION_TYPE.eq(actionType));

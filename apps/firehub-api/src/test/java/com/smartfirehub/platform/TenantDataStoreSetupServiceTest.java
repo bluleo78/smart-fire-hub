@@ -627,6 +627,56 @@ class TenantDataStoreSetupServiceTest {
     verifyNoInteractions(tester, auditRecorder);
   }
 
+  /** WD-1180: 콘솔 「대상」 열이 숫자 id 대신 "이름 (slug)" 를 보이고 대상 필터가 slug·이름으로 찾도록 감사 details 에 둘을 싣는다. */
+  private void givenTenantSummary() {
+    when(tenantRepository.findById(TID))
+        .thenReturn(
+            Optional.of(
+                new com.smartfirehub.platform.dto.TenantSummaryResponse(
+                    TID, "acme", "에이콤", "ACTIVE", 1, java.time.LocalDateTime.now())));
+  }
+
+  @Test
+  void verify_auditDetails_includeTenantSlugAndName_wd1180() {
+    givenStore(DataStoreProvisionMode.SCRIPT, TenantDataStoreStatus.PENDING);
+    givenTenantSummary();
+    givenReversibleDecrypt();
+    when(repository.findAccounts(TID)).thenReturn(storedAccounts());
+    when(tester.verifyAccounts(any(), eq("GENIA_T42"), any())).thenReturn(checks());
+
+    service.verify(TID, 9L);
+
+    @SuppressWarnings("unchecked")
+    ArgumentCaptor<Map<String, Object>> details = ArgumentCaptor.forClass(Map.class);
+    verify(auditRecorder)
+        .record(eq(9L), eq("TENANT_DATA_STORE_VERIFY"), any(), any(), any(), details.capture());
+    assertThat(details.getValue())
+        .containsEntry("tenantId", TID)
+        .containsEntry("tenantSlug", "acme")
+        .containsEntry("tenantName", "에이콤")
+        .containsEntry("result", "READY");
+  }
+
+  @Test
+  void reissueScript_auditDetails_includeTenantSlugAndName_wd1180() {
+    givenStore(DataStoreProvisionMode.SCRIPT, TenantDataStoreStatus.PENDING);
+    givenTenantSummary();
+    givenFakeEncryption();
+
+    service.reissueScript(TID, 9L);
+
+    @SuppressWarnings("unchecked")
+    ArgumentCaptor<Map<String, Object>> details = ArgumentCaptor.forClass(Map.class);
+    verify(auditRecorder)
+        .record(
+            eq(9L), eq("TENANT_DATA_STORE_SCRIPT_REISSUE"), any(), any(), any(), details.capture());
+    assertThat(details.getValue())
+        .containsEntry("tenantId", TID)
+        .containsEntry("tenantSlug", "acme")
+        .containsEntry("tenantName", "에이콤")
+        .containsEntry("dataStoreBackend", "TIBERO");
+  }
+
   @Test
   void verifyDetailReissue_unknownTenant_notFound() {
     when(tenantRepository.existsById(TID)).thenReturn(false);
