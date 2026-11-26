@@ -447,7 +447,11 @@ class PlatformAccountControllerTest extends IntegrationTestBase {
     listAccounts().andExpect(status().isOk()).andExpect(jsonPath("$.size").value(20));
   }
 
-  /** size 상한(100)·하한(1), page 음수는 400 — 감사 로그 목록과 같은 규칙. */
+  /**
+   * size 상한(100)·하한(1), page 음수는 400 으로 거절한다(PlatformAccountService.list) — 플랫폼 콘솔의 짝인 플랫폼 감사 로그
+   * (PlatformAuditLogService.list)와 같은 규칙이다. 테넌트 감사 로그(AuditLogController, WD-293)만 범위 밖 값을 400 이 아니라
+   * page=0·size 1~100 으로 보정해 200 을 준다(WD-1112).
+   */
   @Test
   void list_rejectsOutOfRangePaging() throws Exception {
     listAccounts("size", "100").andExpect(status().isOk());
