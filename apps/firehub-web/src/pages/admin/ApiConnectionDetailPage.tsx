@@ -481,6 +481,7 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
    *   예전엔 재조회마다 모두 서버 값으로 덮어, 저장 안 한 설명이 인증 저장 뒤 사라졌다(WD-777 결함 1).
    * - 기준은 새 응답 값으로 바꾼다 — 고친 칸은 여전히 「고침」이라 미저장 경고가 남는다(#551).
    * - 새 값으로 바꾼 칸의 인라인 오류만 지운다(WD-666·WD-777 결함 5) — 지킨 칸은 여전히 틀릴 수 있어 오류를 둔다.
+   * - 저장 전에 떠난 옛 응답은 여기로 오지 않는다 — 저장 성공 무효화(cancelRefetch)가 버린다(useUpdateApiConnection, WD-1173).
    */
   const mergeInfoFields = useEffectEvent((conn: ApiConnectionResponse) => {
     const next = {

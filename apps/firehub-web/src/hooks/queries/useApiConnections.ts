@@ -49,7 +49,9 @@ export function useUpdateApiConnection() {
     mutationFn: ({ id, data }: { id: number; data: UpdateApiConnectionRequest }) =>
       apiConnectionsApi.update(id, data).then(r => r.data),
     onSuccess: (_data, variables) => {
-      queryClient.invalidateQueries({ queryKey: [QUERY_KEY] });
+      // WD-1173: cancelRefetch 로 저장 전에 떠난 상세 재조회(접두 [QUERY_KEY] 가 상세 키도 덮는다)의 결과를 버리고 새로 조회한다 —
+      // 옛 응답이 저장 뒤 도착하면 상세 화면 칸별 병합(WD-777)이 저장한 이름을 되돌린다. e2e 「WD-1173 저장 전에 떠난 재조회」가 지킨다.
+      queryClient.invalidateQueries({ queryKey: [QUERY_KEY] }, { cancelRefetch: true });
       queryClient.invalidateQueries({ queryKey: [QUERY_KEY, variables.id] });
     },
   });
