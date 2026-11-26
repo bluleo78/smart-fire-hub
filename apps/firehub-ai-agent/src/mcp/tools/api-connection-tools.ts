@@ -121,6 +121,9 @@ function isExtraHeaderField(field: string): boolean {
   );
 }
 
+/** 앞뒤 공백 제거 — 서버 TextRules.strip((?U)\s)에 맞춰 유니코드 White_Space 기준(JS trim() 은 U+0085·U+FEFF 에서 어긋남, WD-1162). */
+const stripEdgeSpace = (v: string) => v.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, '');
+
 /**
  * authConfig가 명백히 placeholder/더미 값을 포함하는지 검증한다.
  * 빈 문자열·공백만·`none`/`dummy` 등 placeholder는 거부.
@@ -297,6 +300,20 @@ export function registerApiConnectionTools(
         // authConfig가 제공된 경우 더미 값 차단 (#255 회귀 방지)
         assertAuthConfigNotPlaceholder(data.authType, data.authConfig);
         const result = await apiClient.updateApiConnection(id, data);
+        // WD-1162: 서버가 같은 이름 충돌로 저장 이름을 유지한 경우(공백 차이일 때만)에 note 를 붙인다.
+        const savedName = (result as { name?: unknown } | undefined)?.name;
+        if (
+          data.name !== undefined &&
+          typeof savedName === 'string' &&
+          savedName !== data.name &&
+          savedName !== stripEdgeSpace(data.name) &&
+          stripEdgeSpace(savedName) === stripEdgeSpace(data.name)
+        ) {
+          return jsonResult({
+            ...(result as Record<string, unknown>),
+            note: `같은 이름의 연결이 있어 앞뒤 공백을 다듬지 않고 저장된 이름 「${savedName}」을 유지했습니다.`,
+          });
+        }
         return jsonResult(result);
       },
     ),

@@ -1073,6 +1073,11 @@ public class ApiConnectionService {
    *
    * <p>자바는 DB 중복 규칙을 흉내 내지 않는다. 같은 이름 판정은 DB 에 맡기고, 요청 이름은 다른 행을 못 찾았을 때만 저장하므로 유니크 인덱스 (tenant_id,
    * name) 를 어기지 않는다.
+   *
+   * <p>「앞뒤 공백만 다름」 판정은 자바 {@code TextRules.strip}(유니코드 공백, {@code (?U)\s})이라 두 DB 모두 같다. 하지만 겹침 판정
+   * SQL 은 DB 마다 다르다 — PG 는 유니코드 공백을 ASCII 로 바꾼 뒤 {@code lower(trim)}(비 UTF8 폴백은 PgEdgeSpaceChars 참고),
+   * Tibero 는 ASCII 공백만 걷는 {@code lower(trim)} 이다. 그래서 Tibero 에서는 NBSP 로 감싼 이름이 겹침으로 잡히지 않아 다듬은 이름으로
+   * 저장될 수 있다(유니크 인덱스는 정확 일치라 안전, WD-1162).
    */
   private String resolveUpdatedName(Long id, String before, String rawRequestedName) {
     if (before.equals(rawRequestedName)) {

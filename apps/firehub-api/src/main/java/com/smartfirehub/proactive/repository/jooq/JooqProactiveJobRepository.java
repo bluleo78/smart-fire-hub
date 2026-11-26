@@ -4,7 +4,7 @@ import static org.jooq.impl.DSL.*;
 
 import com.smartfirehub.global.dto.LockedRowVersion;
 import com.smartfirehub.global.platformdb.ConditionalOnPostgresPlatformDb;
-import com.smartfirehub.global.validation.TextRules;
+import com.smartfirehub.global.validation.PgEdgeSpaceChars;
 import com.smartfirehub.proactive.dto.ProactiveJobResponse;
 import com.smartfirehub.proactive.repository.ProactiveJobRepository;
 import com.smartfirehub.proactive.util.ProactiveTime;
@@ -41,6 +41,7 @@ import tools.jackson.databind.ObjectMapper;
 public class JooqProactiveJobRepository implements ProactiveJobRepository {
 
   private final DSLContext dsl;
+  private final PgEdgeSpaceChars edgeSpaceChars;
   private final ObjectMapper objectMapper;
 
   private static final Table<?> PROACTIVE_JOB = table(name("proactive_job"));
@@ -423,14 +424,9 @@ public class JooqProactiveJobRepository implements ProactiveJobRepository {
     }
   }
 
-  /** 이름 비교용 정규화: 앞뒤 유니코드 공백도 걷는다(WD-1108). */
-  private static Field<String> normalizeName(Field<String> name) {
-    return lower(
-        trim(
-            translate(
-                name,
-                val(TextRules.EDGE_SPACE_CHARS, String.class),
-                val(TextRules.EDGE_SPACE_AS_ASCII, String.class))));
+  /** 이름 비교용 정규화: 앞뒤 유니코드 공백도 걷는다(WD-1108, 비 UTF8 폴백은 PgEdgeSpaceChars 참고 WD-1162). */
+  private Field<String> normalizeName(Field<String> name) {
+    return edgeSpaceChars.normalize(name);
   }
 
   /** 같은 소유자·같은 이름(유니코드 공백·대소문자 무시) 존재 여부(WD-824, WD-1108). */
