@@ -17,11 +17,12 @@ function Switch({
     // 아래 안쪽 [data-slot=switch-track] 이 담당해, 알약 크기(32×18)는 그대로 두고 히트 영역만 넓힌다.
     // data-size 는 루트에만 붙으므로 안쪽 요소는 group-data-[size=…]/switch 로 읽는다 — 루트 크기는 두 값이
     // 같으므로 size 마다 나누지 않고 h-8 w-8 하나로 둔다(모든 크기의 히트 상자가 32×32).
+    // WD-1136: 루트에는 border 를 두지 않는다 — 투명 테두리도 고대비(forced-colors)가 시스템 색으로 그려 초점 없는 스위치 둘레에 32×32 원이 보였다(border-box 라 빼도 크기·알약 위치는 그대로).
     <SwitchPrimitive.Root
       data-slot="switch"
       data-size={size}
       className={cn(
-        "peer group/switch inline-flex shrink-0 items-center justify-center rounded-full border border-transparent bg-transparent transition-all outline-none disabled:cursor-not-allowed disabled:opacity-50 h-8 w-8",
+        "peer group/switch inline-flex shrink-0 items-center justify-center rounded-full bg-transparent transition-all outline-none disabled:cursor-not-allowed disabled:opacity-50 h-8 w-8",
         className
       )}
       {...props}

@@ -48,7 +48,7 @@ export const BACK_NOOP_REARM_MS = 1000;
  * 사용법:
  *   const { dialog, requestNavigate } = useUnsavedChangesGuard(isDirty);
  *   // isDirty 대신 판정 함수(() => boolean)를 넘기면 이동 시도·beforeunload 때에만 불러 판정한다 (WD-642).
- *   // 두 번째 인자(선택) { onStay } 는 확인창에서 「취소」/Esc 로 남기를 고른 때 한 번 불린다 (WD-662).
+ *   // 두 번째 인자(선택) { onStay } 는 확인창에서 「취소」/Esc 로 남기를 고른 때 한 번, { onLeave } 는 「이탈」을 확정한 때 한 번 불린다 (WD-662·WD-1166).
  *   return <>{...page UI}{dialog}</>;
  *
  * - (이슈 #634) 위 (2)의 document click 캡처는 클릭 경로에 `<a href>`가 있을 때만 동작한다.
@@ -56,10 +56,14 @@ export const BACK_NOOP_REARM_MS = 1000;
  *   이동하는 경로는 `<a>` 요소가 없어 가드를 우회한다. 이런 인페이지 이동 버튼은 `navigate()`를
  *   직접 호출하지 말고 이 훅이 반환하는 `requestNavigate(to)`를 통해서만 이동해야 한다 —
  *   dirty 상태면 다이얼로그를 띄우고, 아니면 즉시 navigate 한다.
+ *   (WD-1166) requestNavigate 는 boolean 을 돌려준다 — 먼저 막을 가드가 있는지 보고, 없으면(깨끗해졌거나 「이탈」 확정 직후라
+ *   떠나는 중이면, 창이 열려 있어도) 바로 이동하고 false. 막을 가드가 있으면 true: 이동하지 않았고 확인 창이 열려 있다(새로 열었거나
+ *   이미 열려 있어 그 대상을 그대로 둔 경우, 취소하면 onStay·「이탈」하면 onLeave 가 불린다).
+ *   (참고) 이미 열린 창은 이 훅의 창만 본다 — 같은 화면의 다른 가드 창이 열려 있으면 그 창의 대상은 보호하지 않는다(WD-1160 이후 동작).
  */
 export function useUnsavedChangesGuard(
   isDirty: boolean | (() => boolean),
-  options?: { onStay?: () => void },
+  options?: { onStay?: () => void; onLeave?: () => void },
 ) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -127,6 +131,11 @@ export function useUnsavedChangesGuard(
   useEffect(() => {
     onStayRef.current = options?.onStay;
   }, [options?.onStay]);
+  // (WD-1166) 「이탈」 확정 콜백도 같은 방식으로 최신 것을 ref 로 든다 — 확인 창이 열려 있던 확정에서만 한 번 불린다.
+  const onLeaveRef = useRef(options?.onLeave);
+  useEffect(() => {
+    onLeaveRef.current = options?.onLeave;
+  }, [options?.onLeave]);
   // (WD-642) isDirty 로 함수를 넘기면 이동 시도·beforeunload 때에만 불러 판정한다 —
   // 매 렌더마다 폼 전체를 비교하지 않고, 필요한 순간에 최신 값으로 판단하게 한다.
   const readDirty = useCallback(() => {
@@ -256,20 +265,28 @@ export function useUnsavedChangesGuard(
   // dirty면 <a> 클릭 가로채기와 동일하게 다이얼로그를 띄우고, 아니면 바로 navigate 한다.
   // 페이지는 navigate()를 직접 호출하는 대신 이 함수를 통해서만 이동해야 click 캡처의
   // <a> 탐지 사각지대를 우회하지 않는다.
+  // (WD-1166) 반환값 — true: 이 호출로는 이동하지 않았고 확인 창이 열려 있다(취소하면 onStay 가 불린다).
+  // false: 가로챌 가드가 없어(창이 열려 있어도) 바로 이동했다. 호출한 쪽이 「창이 열렸는가」를 isDialogOpen() 으로 따로 추측하지 않게 한다.
   const requestNavigate = useCallback(
-    (to: string) => {
+    (to: string): boolean => {
       // (WD-1160) click·popstate 와 같은 규칙으로 막을 가드가 있는지 본다. navigate() 는 click 캡처·popstate 를 거치지 않아
       // 내 폼이 깨끗해도 다른 등록 가드(dirty)를 모르고 지나가면 그 폼의 변경이 조용히 유실된다.
-      // 막을 가드가 없으면 바로 이동한다.
+      // 막을 가드가 없으면 바로 이동한다. (「이탈」 확정 직후에는 모든 가드가 떠나는 중이라 여기로 와 묻지 않고 이동한다.)
+      // (WD-1166) 이 판정을 열림 여부보다 먼저 한다 — 창이 열려 있어도 그 사이 폼이 깨끗해졌다면 막을 것이 없고,
+      // 이동하면 화면이 바뀌어 창도 사라지므로 대상을 유지(true)하지 않고 이동(false)한다.
       if (!pickInterceptingGuard()) {
         navigate(to);
-        return;
+        return false;
       }
+      // (WD-1166) 막을 가드가 있는데 이미 열린 창이 있으면 대상을 덮어쓰지 않는다 — popstate 로 열린 창(pendingTo=null)을 덮으면 「이탈」이
+      // 뒤로 가기가 아니라 이 요청의 대상으로 가고, 앞선 요청의 창이면 처음 대상이 바뀐다. 창은 그대로 두고 열려 있음(true)만 알린다.
+      if (openRef.current) return true;
       // 내 폼이 dirty 이든 다른 가드가 dirty 이든 호출한 쪽의 확인 창을 연다 — 문구(「저장하지 않은 변경사항이 있습니다」)가 어느 쪽이어도 참이고,
       // 호출한 화면이 자기 isDialogOpen()·onStay 로 판단하므로(남기·재제출 등) 다른 가드의 창에 넘기면 호출자가 열림·취소를 알 수 없다.
       // 확정하면 이 훅의 handleConfirm 이 이동하고 markAllGuardsLeaving 으로 다른 dirty 폼도 함께 버린다.
       setPendingTo(to);
       setOpenState(true);
+      return true;
     },
     [navigate, setOpenState],
   );
@@ -293,7 +310,10 @@ export function useUnsavedChangesGuard(
     // 클릭·popstate 두 경로 모두 해당한다.
     leavingRef.current = true;
     const rearmAll = markAllGuardsLeaving();
+    // (WD-1166) 닫기 전에 열림 여부를 읽어 둔다 — 이미 닫힌 뒤의 중복 호출에는 onLeave 를 부르지 않는다.
+    const wasOpen = openRef.current;
     setOpenState(false);
+    if (wasOpen) onLeaveRef.current?.();
     const to = pendingTo;
     setPendingTo(null);
     if (to) {

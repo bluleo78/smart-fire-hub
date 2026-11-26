@@ -42,6 +42,12 @@ const ACTION_LABELS: Record<string, string> = {
   // WD-1132: 운영자 콘솔의 소유자 지정(OWNER_TRANSFER)과 그때 새로 준 ADMIN 역할(ROLE_ASSIGN) — 라벨이 없으면 원문 코드가 보인다.
   OWNER_TRANSFER: '소유권 이전',
   ROLE_ASSIGN: '역할 부여',
+  // WD-1157: 테넌트 멤버 추가(PlatformTenantMemberService)·저장소 연결 확인/스크립트 재발급(TenantDataStoreSetupService)·
+  // 최초 운영자 가입(PlatformAuthService)도 플랫폼 감사 로그에 남는다 — 라벨이 없으면 원문 코드가 보인다.
+  MEMBER_ADD: '멤버 추가',
+  TENANT_DATA_STORE_VERIFY: '저장소 연결 확인',
+  TENANT_DATA_STORE_SCRIPT_REISSUE: '저장소 스크립트 재발급',
+  BOOTSTRAP_SIGNUP: '최초 운영자 가입',
 };
 
 /**

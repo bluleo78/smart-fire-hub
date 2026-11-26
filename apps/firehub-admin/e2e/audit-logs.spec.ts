@@ -355,6 +355,52 @@ test.describe('플랫폼 감사 로그 (WD-4)', () => {
     await page.getByRole('option', { name: '역할 부여' }).click();
     await expect.poll(() => capture.requests.at(-1)?.searchParams.get('actionType')).toBe('ROLE_ASSIGN');
   });
+
+  // WD-1157: 서버가 플랫폼 감사로 쓰는 멤버 추가·저장소 연결 확인/스크립트 재발급·최초 운영자 가입도 원문 코드가 아니라 라벨로 보여야 한다.
+  test('테넌트 멤버·저장소·최초 가입 행(WD-1157): 한글 라벨로 보이고 필터로 조회된다', async ({ authenticatedPage: page }) => {
+    // 목 행의 resource·metadata 는 서버가 실제로 쓰는 모양이다(PlatformTenantMemberService·TenantDataStoreSetupService·PlatformAuthService).
+    const capture = await mockApi(page, 'GET', PATH, createAuditPage([
+      createAuditLog({
+        id: 821, username: 'member-ops@example.com', actionType: 'MEMBER_ADD', resource: 'tenant', resourceId: '1',
+        description: '새 계정을 만들어 테넌트 멤버로 추가',
+        metadata: { plane: 'platform', tenantSlug: 'acme', tenantName: '에이씨엠이', username: 'kim@example.com', created: true, roles: ['USER'] },
+      }),
+      createAuditLog({
+        id: 822, username: 'verify-ops@example.com', actionType: 'TENANT_DATA_STORE_VERIFY', resource: 'tenant', resourceId: '1',
+        description: '데이터 저장소 연결 점검', metadata: { result: 'OK', failedAccounts: [] },
+      }),
+      createAuditLog({
+        id: 823, username: 'reissue-ops@example.com', actionType: 'TENANT_DATA_STORE_SCRIPT_REISSUE', resource: 'tenant', resourceId: '1',
+        description: '초기화 스크립트 재발급', metadata: { dataStoreBackend: 'POSTGRES' },
+      }),
+      createAuditLog({
+        id: 824, username: 'first-ops@example.com', actionType: 'BOOTSTRAP_SIGNUP', resource: 'user', resourceId: '1',
+        description: '첫 플랫폼 운영자 계정 생성', metadata: { username: 'first-ops@example.com', roles: ['SUPER_ADMIN'] },
+      }),
+    ]), { capture: true });
+    await page.goto('/audit-logs');
+
+    const rowOf = (text: string) =>
+      page.getByRole('table', { name: '플랫폼 감사 로그' }).getByRole('row').filter({ hasText: text });
+    await expect(rowOf('member-ops@example.com').getByRole('cell').nth(2)).toHaveText('멤버 추가');
+    await expect(rowOf('verify-ops@example.com').getByRole('cell').nth(2)).toHaveText('저장소 연결 확인');
+    await expect(rowOf('reissue-ops@example.com').getByRole('cell').nth(2)).toHaveText('저장소 스크립트 재발급');
+    await expect(rowOf('first-ops@example.com').getByRole('cell').nth(2)).toHaveText('최초 운영자 가입');
+    for (const code of ['MEMBER_ADD', 'TENANT_DATA_STORE_VERIFY', 'TENANT_DATA_STORE_SCRIPT_REISSUE', 'BOOTSTRAP_SIGNUP']) {
+      await expect(page.getByText(code, { exact: true })).toHaveCount(0);
+    }
+
+    await page.getByRole('combobox', { name: '액션' }).click();
+    for (const label of ['멤버 추가', '저장소 연결 확인', '저장소 스크립트 재발급', '최초 운영자 가입']) {
+      await expect(page.getByRole('option', { name: label })).toBeVisible();
+    }
+    await page.getByRole('option', { name: '멤버 추가' }).click();
+    await expect.poll(() => capture.requests.at(-1)?.searchParams.get('actionType')).toBe('MEMBER_ADD');
+    await page.getByRole('combobox', { name: '액션' }).click();
+    await page.getByRole('option', { name: '저장소 스크립트 재발급' }).click();
+    await expect.poll(() => capture.requests.at(-1)?.searchParams.get('actionType')).toBe('TENANT_DATA_STORE_SCRIPT_REISSUE');
+  });
+
   // WD-1158: 소유권 이전 행은 숫자 id 가 아니라 옛 소유자 → 새 소유자 이름으로 보인다. 이름 없는 옛 행은 기존 표기 그대로.
   test('소유권 이전 행(WD-1158): 대상 칸에 옛 소유자 → 새 소유자 이름, 이름 없는 옛 행은 기존 표기', async ({ authenticatedPage: page }) => {
     await mockApi(page, 'GET', PATH, createAuditPage([

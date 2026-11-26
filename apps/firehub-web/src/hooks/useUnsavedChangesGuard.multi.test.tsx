@@ -279,18 +279,34 @@ describe('useUnsavedChangesGuard — 여러 가드 (WD-1160)', () => {
 });
 
 /** requestNavigate 를 노출하는 가드 화면 — 확인 창 문구는 같아 name 으로 구분한다. onStay·isDialogOpen 을 보관소에 남긴다. */
-const reqLog: { stayed: string[]; isOpen: Record<string, () => boolean> } = { stayed: [], isOpen: {} };
+const reqLog: {
+  stayed: string[];
+  left: string[];
+  isOpen: Record<string, () => boolean>;
+  results: boolean[];
+} = {
+  stayed: [],
+  left: [],
+  isOpen: {},
+  results: [],
+};
 function RequestForm({ name, dirty }: { name: string; dirty: boolean }) {
   const { dialog, requestNavigate, isDialogOpen } = useUnsavedChangesGuard(dirty, {
     onStay: () => reqLog.stayed.push(name),
+    // (WD-1166) 「이탈」 확정 때 불리는 콜백 — 호출 횟수를 본다
+    onLeave: () => reqLog.left.push(name),
   });
   useEffect(() => {
     reqLog.isOpen[name] = isDialogOpen;
   }, [name, isDialogOpen]);
   return (
     <section aria-label={name}>
-      <button type="button" onClick={() => requestNavigate('/other')}>
+      <button type="button" onClick={() => reqLog.results.push(requestNavigate('/other'))}>
         {name} 이동
+      </button>
+      {/* (WD-1166) 대상이 다른 두 번째 요청 — 열린 창의 대상을 바꾸지 않는지 본다 */}
+      <button type="button" onClick={() => reqLog.results.push(requestNavigate('/dash'))}>
+        {name} 대시보드
       </button>
       {dialog}
     </section>
@@ -301,10 +317,11 @@ function Where() {
   return <span data-testid="where">{useLocation().pathname}</span>;
 }
 
-function renderTwo(aDirty: boolean, bDirty: boolean) {
-  return render(
+function TwoScreen({ aDirty, bDirty }: { aDirty: boolean; bDirty: boolean }) {
+  return (
     <MemoryRouter initialEntries={['/start']}>
       <Where />
+      <a href="/other">링크 이동</a>
       <Routes>
         <Route
           path="/start"
@@ -316,9 +333,14 @@ function renderTwo(aDirty: boolean, bDirty: boolean) {
           }
         />
         <Route path="/other" element={<div>다른 화면</div>} />
+        <Route path="/dash" element={<div>대시보드 화면</div>} />
       </Routes>
-    </MemoryRouter>,
+    </MemoryRouter>
   );
+}
+
+function renderTwo(aDirty: boolean, bDirty: boolean) {
+  return render(<TwoScreen aDirty={aDirty} bDirty={bDirty} />);
 }
 
 async function flushTimers() {
@@ -330,7 +352,9 @@ async function flushTimers() {
 describe('requestNavigate — 다른 가드가 dirty 일 때 (WD-1160)', () => {
   beforeEach(() => {
     reqLog.stayed = [];
+    reqLog.left = [];
     reqLog.isOpen = {};
+    reqLog.results = [];
   });
 
   it('내 폼(A)이 깨끗해도 다른 가드(B)가 dirty 이면 A 자신의 확인 창이 열린다 — 취소하면 A 의 onStay 만 불리고 이동하지 않는다', async () => {
@@ -376,5 +400,141 @@ describe('requestNavigate — 다른 가드가 dirty 일 때 (WD-1160)', () => {
     fireEvent.click(screen.getByRole('button', { name: '이탈' }));
     await flushTimers();
     expect(screen.getByTestId('where')).toHaveTextContent('/other');
+  });
+});
+
+describe('requestNavigate 결과 — 가로챔 여부·열린 대상 유지·onLeave (WD-1166)', () => {
+  let savedUrl = '';
+  beforeAll(() => installPopstateGuardInterceptor());
+  beforeEach(() => {
+    savedUrl = window.location.href;
+    reqLog.stayed = [];
+    reqLog.left = [];
+    reqLog.isOpen = {};
+    reqLog.results = [];
+    window.history.replaceState(null, '', '/start');
+  });
+  afterEach(() => {
+    window.history.replaceState(null, '', savedUrl);
+  });
+
+  it('모두 깨끗하면 이동하고 false', async () => {
+    renderTwo(false, false);
+    fireEvent.click(screen.getByRole('button', { name: 'A 이동', hidden: true }));
+    await flushTimers();
+    expect(reqLog.results).toEqual([false]);
+    expect(screen.getByTestId('where')).toHaveTextContent('/other');
+  });
+
+  it('dirty 면 확인 창을 열고 true — 이동하지 않는다', async () => {
+    renderTwo(true, false);
+    fireEvent.click(screen.getByRole('button', { name: 'A 이동', hidden: true }));
+    await flushTimers();
+    expect(reqLog.results).toEqual([true]);
+    expect(dialogs()).toHaveLength(1);
+    expect(screen.getByTestId('where')).toHaveTextContent('/start');
+  });
+
+  it('「이탈」 확정 직후 창에서는 묻지 않고 이동하고 false (WD-1166 ①)', async () => {
+    renderTwo(true, false);
+    fireEvent.click(screen.getByRole('button', { name: 'A 이동', hidden: true }));
+    // 확정 → navigate 는 다음 tick 이라 아직 /start. 이 사이에 다시 요청한다.
+    fireEvent.click(screen.getByRole('button', { name: '이탈' }));
+    fireEvent.click(screen.getByRole('button', { name: 'A 이동', hidden: true }));
+    expect(reqLog.results).toEqual([true, false]);
+    expect(dialogs()).toHaveLength(0);
+    await flushTimers();
+    expect(reqLog.stayed).toEqual([]);
+    expect(screen.getByTestId('where')).toHaveTextContent('/other');
+  });
+
+  it('popstate 로 열린 창에서는 대상을 바꾸지 않고 true — 「이탈」은 뒤로 가기 (WD-1166 ③)', () => {
+    vi.useFakeTimers();
+    try {
+      const backSpy = vi.spyOn(window.history, 'back').mockImplementation(() => {});
+      renderTwo(true, false);
+      act(() => {
+        window.dispatchEvent(new PopStateEvent('popstate'));
+      });
+      expect(dialogs()).toHaveLength(1);
+      fireEvent.click(screen.getByRole('button', { name: 'A 대시보드', hidden: true }));
+      expect(reqLog.results).toEqual([true]);
+      expect(dialogs()).toHaveLength(1);
+      fireEvent.click(screen.getByRole('button', { name: '이탈' }));
+      act(() => {
+        vi.advanceTimersByTime(0);
+      });
+      expect(backSpy).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId('where')).toHaveTextContent('/start');
+      // 뒤로 가기 대기(타이머·popstate 리스너)와 우회 표시를 끝내 다음 시험에 전역 상태를 남기지 않는다
+      act(() => {
+        vi.advanceTimersByTime(BACK_NOOP_REARM_MS);
+      });
+      backSpy.mockRestore();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('링크 클릭으로 열린 창에서도 대상을 바꾸지 않고 true — 「이탈」은 링크 대상으로 이동 (WD-1166)', async () => {
+    renderTwo(true, false);
+    fireEvent.click(screen.getByRole('link', { name: '링크 이동' }));
+    expect(dialogs()).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: 'A 대시보드', hidden: true }));
+    expect(reqLog.results).toEqual([true]);
+    expect(dialogs()).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: '이탈' }));
+    await flushTimers();
+    expect(screen.getByTestId('where')).toHaveTextContent('/other');
+  });
+
+  it('popstate 로 열린 창에서 요청 뒤 「취소」면 onStay 1회', () => {
+    renderTwo(true, false);
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'A 대시보드', hidden: true }));
+    expect(reqLog.results).toEqual([true]);
+    fireEvent.click(screen.getByRole('button', { name: '취소' }));
+    expect(reqLog.stayed).toEqual(['A']);
+    expect(dialogs()).toHaveLength(0);
+  });
+
+  it('requestNavigate 로 열린 창에 두 번째 요청이 와도 첫 대상으로 이동', async () => {
+    renderTwo(true, false);
+    fireEvent.click(screen.getByRole('button', { name: 'A 이동', hidden: true }));
+    fireEvent.click(screen.getByRole('button', { name: 'A 대시보드', hidden: true }));
+    expect(reqLog.results).toEqual([true, true]);
+    fireEvent.click(screen.getByRole('button', { name: '이탈' }));
+    await flushTimers();
+    expect(screen.getByTestId('where')).toHaveTextContent('/other');
+  });
+
+  it('창이 열린 중 폼이 깨끗해지면 막을 가드가 없으니 이동하고 false', async () => {
+    const { rerender } = renderTwo(true, false);
+    fireEvent.click(screen.getByRole('button', { name: 'A 이동', hidden: true }));
+    expect(dialogs()).toHaveLength(1);
+    rerender(<TwoScreen aDirty={false} bDirty={false} />);
+    fireEvent.click(screen.getByRole('button', { name: 'A 대시보드', hidden: true }));
+    expect(reqLog.results).toEqual([true, false]);
+    await flushTimers();
+    expect(screen.getByTestId('where')).toHaveTextContent('/dash');
+  });
+
+  it('「이탈」 확정이면 onLeave 1회·onStay 0회', async () => {
+    renderTwo(true, false);
+    fireEvent.click(screen.getByRole('button', { name: 'A 이동', hidden: true }));
+    fireEvent.click(screen.getByRole('button', { name: '이탈' }));
+    await flushTimers();
+    expect(reqLog.left).toEqual(['A']);
+    expect(reqLog.stayed).toEqual([]);
+  });
+
+  it('「취소」면 onLeave 0회', () => {
+    renderTwo(true, false);
+    fireEvent.click(screen.getByRole('button', { name: 'A 이동', hidden: true }));
+    fireEvent.click(screen.getByRole('button', { name: '취소' }));
+    expect(reqLog.left).toEqual([]);
+    expect(reqLog.stayed).toEqual(['A']);
   });
 });

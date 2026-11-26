@@ -81,7 +81,7 @@ test.describe('데이터셋 삭제 — 쓰는 곳 안내 (WD-143)', () => {
     await confirm.click();
     const req = await deleteCapture.waitForRequest();
     expect(req.url.pathname).toBe('/api/v1/datasets/1');
-    await expect(page.getByText('데이터셋 "데이터셋 1"가 삭제되었습니다.')).toBeVisible();
+    await expect(page.getByText('데이터셋 "데이터셋 1"이 삭제되었습니다.')).toBeVisible();
   });
 
   test('참조를 불러오는 동안에는 삭제 버튼이 꺼져 있고, 응답이 오면 켜진다', async ({ authenticatedPage: page }) => {

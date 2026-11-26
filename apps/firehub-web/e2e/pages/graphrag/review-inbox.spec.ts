@@ -101,6 +101,65 @@ test.describe('AI 검수 인박스', () => {
     await expect(table.getByText('검수 대기 중인 항목이 없습니다.')).toHaveCount(0);
   });
 
+  // WD-1134: 0건 안내가 공용 TableEmptyRow 가 아니라 그 자리에서 만든 인라인 TableRow 라
+  // 디자인 시스템 「직접 만들지 않는다」 규칙을 어기고, role="status" 밖이라 낭독되지 않으며,
+  // 같은 표 안의 오프라인 안내와 모양이 갈린다.
+  test('0건 안내가 공용 TableEmptyRow 안에서 role=status 로 낭독되고 보이는 폭 셀 안에 있다 (WD-1134)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockApi(page, 'GET', '/api/v1/graphrag/review-items', []);
+    await page.goto('/knowledge-graph/review');
+
+    const table = page.getByTestId('review-inbox-table');
+    // 안내가 role="status" 라이브 리전 안에 있어야 스크린리더가 「0건」을 낭독한다(WD-815)
+    await expect(table.getByRole('status').getByText('검수 대기 중인 항목이 없습니다.')).toBeVisible();
+    // 공용 TableVisibleWidthCell 을 거쳐야 가로 스크롤돼도 문구가 보이는 폭 안에서 고정된다(WD-958·WD-1012)
+    await expect(table.locator('td').filter({ has: page.locator('[data-slot="table-visible-content"]') })).toHaveCount(1);
+  });
+
+  // WD-1134: 로딩 자리가 공용 TableSkeletonRows 가 아니라 인라인 텍스트 한 줄이라
+  // 디자인 시스템 1번 순서를 어기고, 표에 aria-busy 가 걸리지 않아 보조기기가
+  // 「불러오는 중」을 모른다. useOfflinePaused 의 "waiting 은 스켈레톤으로 그린다" 지시와도 어긋난다.
+  test('목록을 불러오는 동안 공용 스켈레톤 행과 표 aria-busy 가 보이고 인라인 「불러오는 중」 행은 없다 (WD-1134)', async ({
+    authenticatedPage: page,
+  }) => {
+    // GET 응답을 붙잡아 두었다가 release() 를 부를 때까지 내려 보내지 않는 도우미 — 로딩 상태에서만 단언하기 위함
+    const holdGet = async (path: string, body: string) => {
+      let release!: () => void;
+      const held = new Promise<void>((r) => { release = r; });
+      await page.route((url) => url.pathname === path, async (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        await held;
+        return route.fulfill({ status: 200, contentType: 'application/json', body });
+      });
+      return release;
+    };
+    // 권한 응답도 붙잡아 권한 확인 전(조치 열 없음 = 3열) 첫 화면을 재현한다 — 스켈레톤 열 수가 헤더와 달라지지 않는지 보기 위함
+    const releasePermissions = await holdGet('/api/v1/auth/me/permissions', '["dataset:read"]');
+    const releaseItems = await holdGet('/api/v1/graphrag/review-items', '[]');
+
+    await page.goto('/knowledge-graph/review');
+    const table = page.getByTestId('review-inbox-table');
+
+    // 표는 불러오는 동안 aria-busy 이고, tbody 에 공용 스켈레톤 행이 그려진다
+    await expect(table).toHaveAttribute('aria-busy', 'true');
+    await expect(table.locator('tbody tr[aria-hidden="true"] [data-slot="skeleton"]').first()).toBeVisible();
+    // 스켈레톤 셀 수는 헤더 열 수와 같다(권한 확인 전 = 3열)
+    const headerCount = await table.locator('thead th').count();
+    const skeletonCells = await table.locator('tbody tr[aria-hidden="true"]').first().locator('td').count();
+    // 조치 열이 아직 없는 첫 화면 3열을 못 박는다 — 헤더·스켈레톤이 함께 4열로 바뀌어도 통과해 버리는 공백을 막는다
+    expect(headerCount).toBe(3);
+    expect(skeletonCells).toBe(headerCount);
+    // 인라인 텍스트 한 줄은 그리지 않는다
+    await expect(table.getByText('불러오는 중...')).toHaveCount(0);
+
+    releasePermissions();
+    releaseItems();
+    // 응답이 오면 aria-busy 가 풀리고 0건 안내가 나온다 — 속성 자체가 없어야 한다(false 잔존도 못 잡는다)
+    await expect(table).not.toHaveAttribute('aria-busy');
+    await expect(table.getByRole('status').getByText('검수 대기 중인 항목이 없습니다.')).toBeVisible();
+  });
+
   test('동의어·속성 항목이 렌더링된다', { tag: '@smoke' }, async ({ authenticatedPage: page }) => {
     await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createSynonymReviewItem(), createPropertyReviewItem()]);
     await page.goto('/knowledge-graph/review');
