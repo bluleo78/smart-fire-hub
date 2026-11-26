@@ -1019,23 +1019,50 @@ test.describe('채널 스위치 요청 중 busy (WD-1150)', () => {
     await expect(sw).toBeChecked();
     // 첫 조회는 끝났으므로 이후 재조회만 500 으로 실패시킨다
     await mockApi(page, 'GET', '/api/v1/channels/settings', { message: '서버 오류' }, { status: 500 });
-    let failedGets = 0;
-    page.on('response', (res) => {
-      if (new URL(res.url()).pathname === '/api/v1/channels/settings' && res.request().method() === 'GET' && res.status() === 500) {
-        failedGets += 1;
-      }
-    });
     await sw.click();
     held.release();
     await expect(sw).toHaveAttribute('data-state', 'unchecked');
     await expect(sw).not.toHaveAttribute('aria-busy');
     await expect(page.getByText('이메일 채널이 비활성화되었습니다.')).toBeVisible();
-    // 재조회가 500 으로 끝난 뒤에도(앱의 1회 재시도까지 실패해 오류 상태가 된 뒤에도) 새 값이 유지돼야 한다
-    await expect.poll(() => failedGets, { timeout: 10_000 }).toBeGreaterThanOrEqual(2);
+    // 재조회가 실패로 끝나면(앱의 재시도 횟수와 무관하게) 서버와 다를 수 있다는 가벼운 안내가 뜬다 — 요청 수가 아니라 보이는 안내로 기다린다 (WD-1169 리뷰 후속)
+    await expect(page.getByRole('status').filter({ hasText: '최신 채널 설정을 불러오지 못했습니다.' })).toBeVisible({
+      timeout: 10_000,
+    });
+    // 재조회가 실패로 끝난 뒤에도 새 값이 유지되고, 카드는 맞게 보이므로 빨간 오류 배너로 가리지 않는다 (WD-1169 리뷰)
     await expect(sw).toHaveAttribute('data-state', 'unchecked');
-    // 카드는 맞게 보이므로 빨간 오류 배너로 가리지 않고, 서버와 다를 수 있다는 가벼운 안내만 띄운다 (WD-1169 리뷰)
     await expect(page.getByText('채널 설정을 불러오는 데 실패했습니다.', { exact: false })).toHaveCount(0);
-    await expect(page.getByRole('status').filter({ hasText: '최신 채널 설정을 불러오지 못했습니다.' })).toBeVisible();
+  });
+
+  test('재조회가 계속 실패하는 중 다시 토글이 성공해도, 다음 재조회가 끝나기 전에 안내가 사라지지 않는다 (WD-1169 리뷰 후속)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupChannelMocks(page);
+    await page.goto('/settings/channels');
+    const sw = page.getByRole('switch', { name: '이메일 채널 활성화' });
+    await expect(sw).toBeChecked();
+    // 첫 조회 뒤로는 재조회가 늘 500 — 첫 토글 뒤 안내가 뜬다
+    await mockApi(page, 'GET', '/api/v1/channels/settings', { message: '서버 오류' }, { status: 500 });
+    await mockApi(page, 'PATCH', PATH, {}, { status: 204 });
+    const notice = page.getByRole('status').filter({ hasText: '최신 채널 설정을 불러오지 못했습니다.' });
+    await sw.click();
+    await expect(sw).toHaveAttribute('data-state', 'unchecked');
+    await expect(notice).toBeVisible({ timeout: 10_000 });
+
+    // 다시 토글이 성공하면 캐시에 새 값을 쓴다(setQueryData). 그 뒤 재조회를 붙잡아, 결과가 오기 전에도 안내가 남는지 본다 —
+    // 캐시 쓰기는 서버에서 받아 온 것이 아니라 안내를 지울 근거가 아니다
+    const refetch = await holdApi(page, 'GET', '/api/v1/channels/settings', 500, { message: '서버 오류' });
+    await sw.click();
+    await expect(sw).toHaveAttribute('data-state', 'checked');
+    await expect(page.getByText('이메일 채널이 활성화되었습니다.')).toBeVisible();
+    await expect.poll(() => refetch.requests.length).toBeGreaterThan(0);
+    // 붙잡힌 동안 안내가 사라졌다면 다시 뜰 길이 없으므로 짧게만 기다려 바로 실패시킨다
+    await expect(notice).toBeVisible({ timeout: 1000 });
+
+    // 붙잡은 재조회도 500 으로 끝나면(앱 재시도 포함) 안내는 그대로다 — 조회가 끝나 「다시 불러오기」가 다시 눌릴 수 있게 된 뒤 본다
+    refetch.release();
+    await expect(notice.getByRole('button', { name: '다시 불러오기' })).toBeEnabled({ timeout: 10_000 });
+    await expect(notice).toBeVisible();
+    await expect(sw).toHaveAttribute('data-state', 'checked');
   });
 
   test('성공 직후 다시 토글하면 두 번째 PATCH 가 나간다 (WD-1169)', async ({ authenticatedPage: page }) => {

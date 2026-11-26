@@ -1,4 +1,5 @@
 import { AlertTriangle, BellRing } from 'lucide-react';
+import { useState } from 'react';
 
 import { PageHeading } from '@/components/PageHeading';
 import { Button } from '@/components/ui/button';
@@ -18,7 +19,18 @@ const CHANNEL_SKELETON_ORDER: readonly ChannelType[] = ['CHAT', 'EMAIL', 'KAKAO'
  * - 각 카드에서 채널 활성화 토글 및 OAuth 연동/해제가 가능하다.
  */
 export default function ChannelsPage() {
-  const { data: settings, isLoading, isError, isFetching, refetch } = useChannelSettings();
+  const { data: settings, isLoading, isError, isFetching, fetchStatus, refetch } = useChannelSettings();
+
+  // 마지막으로 끝난 조회가 실패했는지 (WD-1169 리뷰 후속) — 조회가 실제로 끝나는 순간(fetchStatus → idle)의 결과로만 정한다.
+  // isError 를 그대로 쓰면 토글 성공의 캐시 쓰기(setQueryData)가 오류를 지워, 재조회가 계속 실패하는 중에도
+  // 다음 재조회가 끝날 때까지(~1초) 안내가 사라져 화면이 최신인 것처럼 보였다. 캐시 쓰기는 서버에서 받아 온 값이 아니므로 지울 근거가 아니다.
+  // 오프라인으로 멈춘 조회(paused)도 끝난 것이 아니라 그대로 둔다.
+  const [lastFetchFailed, setLastFetchFailed] = useState(isError);
+  const [prevFetchStatus, setPrevFetchStatus] = useState(fetchStatus);
+  if (prevFetchStatus !== fetchStatus) {
+    setPrevFetchStatus(fetchStatus);
+    if (fetchStatus === 'idle') setLastFetchFailed(isError);
+  }
 
   return (
     <div className="space-y-6">
@@ -53,7 +65,7 @@ export default function ChannelsPage() {
       {/* 재조회 실패 안내 — 카드는 마지막으로 받은(또는 저장 성공으로 반영한) 값이라 오류 배너로 가리지 않고,
           서버와 다를 수 있음만 알린다. 연결 해제·Slack 연결처럼 성공 뒤 재조회로만 카드가 바뀌는 동작에서
           재조회가 실패하면 카드가 옛 상태로 남으므로 이 안내가 없으면 토스트와 어긋난 채 아무 신호가 없다 (WD-1169 리뷰) */}
-      {isError && settings && (
+      {lastFetchFailed && settings && (
         <InlineBanner
           variant="warning"
           icon={<AlertTriangle />}
