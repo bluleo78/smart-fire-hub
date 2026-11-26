@@ -1,5 +1,7 @@
 import type { Page } from '@playwright/test';
 
+import type { UpdateRoleRequest } from '@/types/role';
+
 import { createPermission, createRoleDetail } from '../../factories/admin.factory';
 import { createRole } from '../../factories/auth.factory';
 import {
@@ -30,6 +32,46 @@ async function saveRoleInfo(page: Page) {
     .filter({ hasText: '역할 정보' })
     .getByRole('button', { name: '저장', exact: true })
     .click();
+}
+
+/**
+ * 역할 3 상세에서 이름을 바꿔 저장 → 409 충돌 창 → 「내 변경으로 덮어쓰기」까지 진행하고, 덮어쓰기 PUT 을 붙잡아 둔 채 돌려준다 (WD-1102 리뷰 후속).
+ * 기준(expectedUpdatedAt)을 실은 저장은 늘 409, 기준이 없는 덮어쓰기 저장은 release() 할 때까지 붙잡았다가 주어진 응답을 준다 —
+ * 덮어쓰기 요청이 진행 중일 때 창을 닫거나 입력을 고치는 경우를 시간에 기대지 않고 만든다.
+ */
+async function openHeldOverwrite(page: Page, name: string, status: number, body: unknown) {
+  await setupRoleDetailMocks(page, 3, false);
+  let release: () => void = () => {};
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let overwrites = 0;
+  await page.route(
+    (url) => url.pathname === '/api/v1/roles/3',
+    async (route) => {
+      if (route.request().method() !== 'PUT') return route.fallback();
+      if ((route.request().postDataJSON() as UpdateRoleRequest).expectedUpdatedAt) {
+        return route.fulfill({
+          status: 409,
+          contentType: 'application/json',
+          body: JSON.stringify({ status: 409, code: 'EDIT_CONFLICT', message: '다른 관리자가 먼저 바꿨습니다' }),
+        });
+      }
+      overwrites += 1;
+      await released;
+      return route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+    },
+  );
+
+  await page.goto('/admin/roles/3');
+  const nameInput = page.getByLabel('역할 이름');
+  await nameInput.fill(name);
+  await saveRoleInfo(page);
+  const dialog = page.getByRole('alertdialog', { name: '다른 곳에서 먼저 변경되었습니다' });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole('button', { name: '내 변경으로 덮어쓰기' }).click();
+  await expect.poll(() => overwrites).toBe(1);
+  return { release, dialog, nameInput };
 }
 
 test.describe('역할 관리 페이지', () => {
@@ -967,6 +1009,81 @@ test.describe('역할 관리 페이지', () => {
     await expect(dialog).toBeHidden();
     await expect(page.locator('#role-name-error')).toHaveText('이미 존재하는 역할 이름입니다: ADMIN');
     await expect(nameInput).toBeFocused();
+  });
+
+  test('역할 상세 — 덮어쓰기 중 Escape 로 창을 닫은 뒤 중복 이름 400 이면 이름 칸에 바로 포커스하고 다음 창 닫힘이 포커스를 빼앗지 않는다 (WD-1102)', async ({
+    authenticatedPage: page,
+  }) => {
+    const DUP = '이미 존재하는 역할 이름입니다: ADMIN';
+    const { release, dialog, nameInput } = await openHeldOverwrite(page, 'ADMIN', 400, { status: 400, message: DUP });
+
+    // 덮어쓰기 요청이 끝나기 전에 Escape 로 창을 닫는다 — 그 뒤 400 이 온다
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden();
+    release();
+
+    // 창이 이미 닫혔으니 포커스 기록만 남기지 않고 이름 칸으로 바로 옮긴다
+    await expect(page.locator('#role-name-error')).toHaveText(DUP);
+    await expect(nameInput).toBeFocused();
+
+    // 다음 저장의 충돌 창을 닫을 때 지난 기록이 포커스를 이름 칸으로 빼앗지 않는다(Radix 기본 복귀 — 저장 버튼)
+    await page.getByLabel('설명').fill('다른 설명');
+    await saveRoleInfo(page);
+    await expect(dialog).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden();
+    await expect(
+      page.locator('[data-slot="card"]').filter({ hasText: '역할 정보' }).getByRole('button', { name: '저장', exact: true }),
+    ).toBeFocused();
+  });
+
+  test('역할 상세 — 덮어쓰기 중 Escape 직후(닫힘 애니메이션 중) 중복 이름 400 이 와도 닫힘이 끝난 뒤 이름 칸에 포커스가 남는다 (WD-1102)', async ({
+    authenticatedPage: page,
+  }) => {
+    const DUP = '이미 존재하는 역할 이름입니다: ADMIN';
+    const { release, dialog, nameInput } = await openHeldOverwrite(page, 'ADMIN', 400, { status: 400, message: DUP });
+
+    // 창이 닫히기를 기다리지 않고 바로 400 을 돌려준다 — 닫힘 애니메이션 중 옮긴 포커스가 닫힘이 끝난 뒤에도 남아야 한다(Radix 가 옛 트리거로 되돌리지 않는지)
+    await page.keyboard.press('Escape');
+    release();
+
+    await expect(dialog).toBeHidden();
+    await expect(page.locator('#role-name-error')).toHaveText(DUP);
+    await expect(nameInput).toBeFocused();
+  });
+
+  test('역할 상세 — 덮어쓰기 중 입력을 고친 뒤 400 이 오면 충돌 창을 닫고 옛 오류는 붙이지 않는다 (WD-1102)', async ({
+    authenticatedPage: page,
+  }) => {
+    const DUP = '이미 존재하는 역할 이름입니다: ADMIN';
+    const { release, dialog, nameInput } = await openHeldOverwrite(page, 'ADMIN', 400, { status: 400, message: DUP });
+
+    // 창 뒤 입력란 값을 프로그램으로 바꾼다 — 모달이 뒤를 막아 fill({ force }) 도 닿지 않는다. 「저장 중 편집」 갈래를 만든다
+    await nameInput.evaluate((el: HTMLInputElement) => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(el, 'ADMIN2');
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    release();
+
+    // 400 은 입력 문제 — 창이 닫히고, 고친 입력에 옛 오류는 붙지 않는다
+    await expect(dialog).toBeHidden();
+    await expect(page.locator('#role-name-error')).toHaveCount(0);
+    await expect(nameInput).toHaveValue('ADMIN2');
+  });
+
+  test('역할 상세 — 덮어쓰기 저장이 500 이면 창을 열어 둔 채 토스트로 알리고 창 뒤에는 오류를 쓰지 않는다 (WD-1102)', async ({
+    authenticatedPage: page,
+  }) => {
+    const SERVER_MSG = '서버 오류로 저장하지 못했습니다';
+    const { release, dialog } = await openHeldOverwrite(page, 'NEWNAME', 500, { status: 500, message: SERVER_MSG });
+    release();
+
+    await expect(page.locator('[data-sonner-toast]').filter({ hasText: SERVER_MSG })).toBeVisible();
+    // 창은 그대로 — 다시 덮어쓰거나 다시 불러올 수 있다
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole('button', { name: '내 변경으로 덮어쓰기' })).toBeEnabled();
+    // 창 뒤 역할 오류 영역에는 쓰지 않는다
+    await expect(page.locator('form').filter({ has: page.getByLabel('역할 이름') }).getByText(SERVER_MSG)).toHaveCount(0);
   });
 
   test('역할 상세 — 저장 500 은 공통 오류(alert)로, 이름 칸은 오류 아님 (WD-1102)', async ({

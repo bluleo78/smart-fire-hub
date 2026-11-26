@@ -137,6 +137,15 @@ function RoleDetailView() {
   const serverFieldErrorsRef = useRef<Set<string>>(new Set());
   // WD-1102: 충돌 창이 열린 채 난 400 의 칸 포커스 — 창이 닫힌 뒤(onCloseAutoFocus)에 옮길 칸을 잠시 담아 둔다.
   const pendingConflictFocusRef = useRef<'name' | 'description' | null>(null);
+  // 충돌 창이 「지금」 열려 있는지 — 저장 요청이 끝난 시점에 읽는다. 상태 값은 요청을 보낸 때의 렌더에 묶여 있어,
+  // 요청 중에 Escape 로 창을 닫았으면 열림으로 잘못 읽고 포커스 기록만 남겼다(WD-1102 리뷰 후속).
+  const roleInfoConflictOpenRef = useRef(false);
+  /** 충돌 창 열고 닫기 — 열림 기록을 함께 맞추고, 새로 열 때는 지난 포커스 기록을 비운다(남은 기록이 다음 닫힘에서 포커스를 빼앗지 않게). */
+  const setRoleInfoConflictOpen = useCallback((open: boolean) => {
+    roleInfoConflictOpenRef.current = open;
+    if (open) pendingConflictFocusRef.current = null;
+    setIsRoleInfoConflictOpen(open);
+  }, []);
   useEffect(() => {
     const subscription = form.watch((_values, { name }) => {
       if (name !== 'name' && name !== 'description') return;
@@ -303,7 +312,7 @@ function RoleDetailView() {
         ...(overwrite ? {} : { expectedUpdatedAt: roleInfoBaselineUpdatedAt }),
       });
       if (!isMounted()) return;
-      setIsRoleInfoConflictOpen(false);
+      setRoleInfoConflictOpen(false);
       // 저장한 값을 폼의 새 기준값으로 삼는다 (WD-119) — 안 하면 isDirty 가 true 로 남아 저장 직후 이동에도
       // 「저장하지 않은 변경사항」 경고가 뜬다. keepValues: 저장 요청 중에 더 입력한 내용은 지우지 않는다 —
       // reset 은 isDirty 를 false 로 두므로, 저장값과 달라진 칸은 setValue 로 다시 dirty 표시한다.
@@ -341,26 +350,26 @@ function RoleDetailView() {
       }
       // 편집 충돌은 입력란 아래 오류 대신 안내 창으로 — 다시 불러올지 덮어쓸지 고른다(WD-575)
       if (isEditConflict(error)) {
-        setIsRoleInfoConflictOpen(true);
+        setRoleInfoConflictOpen(true);
         return;
       }
-      // 저장 요청 중에 이름·설명을 더 고쳤으면(WD-866): 400 입력 검증 오류는 지금 입력에 대한 것이 아니므로 넘긴다 — 다음 저장이 새로 판정한다.
-      // 그 밖의 실패(500·403·네트워크)는 저장되지 않았다는 사실이 그대로라 알린다. 입력은 이미 바뀌었으니 입력란 아래 대신 토스트로.
-      // 칸 오류 매핑(WD-865·WD-1102)보다 먼저 봐야 고친 칸에 옛 오류가 다시 붙지 않는다.
-      if (editedSinceSubmitRef.current) {
-        if (!(axios.isAxiosError(error) && error.response?.status === 400)) {
-          toast.error(extractApiError(error, '역할 업데이트에 실패했습니다.'));
-        }
+      // WD-1102: 400 은 입력 문제라 덮어쓰기 저장에서 났어도 충돌 안내 창을 먼저 닫는다 — 아래 편집 중 갈래로 넘기는 400 도 같다.
+      // 창이 닫히면 Radix 가 포커스를 옛 트리거로 돌려놓으므로, 창이 지금 열려 있었다면 칸 포커스는 닫힘 뒤 onCloseAutoFocus 에서 옮긴다.
+      const wasConflictOpen = roleInfoConflictOpenRef.current;
+      const isBadRequest = isBadRequestError(error);
+      if (isBadRequest) setRoleInfoConflictOpen(false);
+      // 입력란 아래 대신 토스트로 알리는 두 경우 — 칸 오류 매핑(WD-865·WD-1102)보다 먼저 봐야 한다.
+      // ① 저장 요청 중에 이름·설명을 더 고쳤으면(WD-866): 400 입력 검증 오류는 지금 입력에 대한 것이 아니므로 넘긴다(다음 저장이 새로 판정 —
+      //    고친 칸에 옛 오류가 다시 붙지 않게). 그 밖의 실패(500·403·네트워크)는 저장되지 않았다는 사실이 그대로라 토스트로 알린다.
+      // ② 덮어쓰기(충돌 창이 열린 채) 저장의 400 밖 실패는 창 뒤 입력란 아래에 쓰면 보이지 않는다 —
+      //    창 위에 보이는 토스트로 알리고 창은 그대로 두어 다시 덮어쓰거나 다시 불러올 수 있게 한다(WD-1102 리뷰 후속).
+      if (editedSinceSubmitRef.current || (wasConflictOpen && !isBadRequest)) {
+        if (!isBadRequest) toast.error(extractApiError(error, '역할 업데이트에 실패했습니다.'));
         return;
       }
       // 400 의 필드별 오류(errors)는 해당 칸(이름·설명)에 붙이고 첫 오류 칸으로 포커스한다(WD-865, WD-1102 에서 이름까지 확대) — 생성 대화상자(RoleListPage)와 같은 규칙.
       // 이 화면은 root 를 그리지 않으므로 이름·설명 외 필드 문구는 기존 역할 오류 영역으로 잇는다(모르는 필드만 있어도 이름 칸에 붙이지 않는다).
       // errors 가 {} 이거나 문구가 모두 빈 400 은 mapFieldErrors 가 null 이라 아래 기존 400 분기로 간다.
-      // WD-1102: 400 은 입력 문제라 덮어쓰기 저장에서 났어도 충돌 안내 창이 칸 오류·포커스를 가리지 않게 먼저 닫는다.
-      // 창이 닫히면 Radix 가 포커스를 옛 트리거로 돌려놓으므로, 창이 열려 있었다면 칸 포커스는 닫힘 뒤 onCloseAutoFocus 에서 옮긴다.
-      const wasConflictOpen = isRoleInfoConflictOpen;
-      const isBadRequest = isBadRequestError(error);
-      if (isBadRequest) setIsRoleInfoConflictOpen(false);
       const focusField = (field: 'name' | 'description') => {
         if (wasConflictOpen) pendingConflictFocusRef.current = field;
         else form.setFocus(field);
@@ -403,7 +412,7 @@ function RoleDetailView() {
       setRoleInfoBaselineUpdatedAt(latest.updatedAt ?? null);
       form.reset({ name: latest.name, description: latest.description ?? '' });
       setRoleError('');
-      setIsRoleInfoConflictOpen(false);
+      setRoleInfoConflictOpen(false);
     } catch (error) {
       if (!isMounted()) return;
       if (isNotFoundError(error)) {
@@ -586,7 +595,7 @@ function RoleDetailView() {
       {/* 이름·설명 저장 편집 충돌 안내(WD-575) — 다시 불러오기는 최신 이름·설명으로 폼을 되돌리고, 덮어쓰기는 기준 없이 다시 저장한다 */}
       <EditConflictDialog
         open={isRoleInfoConflictOpen}
-        onOpenChange={setIsRoleInfoConflictOpen}
+        onOpenChange={setRoleInfoConflictOpen}
         resourceLabel="역할 정보"
         onCloseAutoFocus={event => {
           const field = pendingConflictFocusRef.current;
