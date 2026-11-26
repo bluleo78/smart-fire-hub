@@ -17,7 +17,9 @@ import com.smartfirehub.analytics.repository.mybatis.ChartRows.ChartRow;
 import com.smartfirehub.global.dto.LockedRowVersion;
 import com.smartfirehub.global.exception.SerializationException;
 import com.smartfirehub.global.naming.NameComparison;
+import com.smartfirehub.global.naming.ResourceNameGuard;
 import com.smartfirehub.global.platformdb.mybatis.InChunks;
+import com.smartfirehub.global.platformdb.mybatis.MyBatisPlatformConfig;
 import com.smartfirehub.global.platformdb.mybatis.PlatformJson;
 import com.smartfirehub.global.platformdb.mybatis.PlatformMyBatisRepository;
 import com.smartfirehub.global.platformdb.mybatis.PlatformSharing;
@@ -50,16 +52,19 @@ public class MyBatisChartRepository implements ChartRepository {
   private final ChartMapper mapper;
   private final ObjectMapper objectMapper;
 
-  /** 이 설치본의 이름 비교 기준(WD-1094) — 매퍼가 문을 고르는 MyBatis databaseId 에서 한 번 정한다. */
-  private final NameComparison nameComparison;
+  /**
+   * postgresql databaseId 면 SQL 이름 비교, 그 밖(Tibero)은 이름 목록 + Java 비교(WD-1181). SqlSessionFactory 의
+   * databaseId 에서 한 번 정한다.
+   */
+  private final boolean postgres;
 
-  /** 이름 비교 기준은 SqlSessionFactory 의 databaseId 에서 정한다({@link NameComparison#forDatabaseId}). */
   public MyBatisChartRepository(
       ChartMapper mapper, ObjectMapper objectMapper, SqlSessionFactory sqlSessionFactory) {
     this.mapper = mapper;
     this.objectMapper = objectMapper;
-    this.nameComparison =
-        NameComparison.forDatabaseId(sqlSessionFactory.getConfiguration().getDatabaseId());
+    this.postgres =
+        MyBatisPlatformConfig.POSTGRESQL.equals(
+            sqlSessionFactory.getConfiguration().getDatabaseId());
   }
 
   @Override
@@ -277,19 +282,28 @@ public class MyBatisChartRepository implements ChartRepository {
   }
 
   /**
-   * 같은 소유자·같은 이름(대소문자·앞뒤 공백 무시) 존재 여부(WD-824). PG 는 앞뒤 유니코드 공백까지 translate 로 걷고, 그 밖의 DB 는 ASCII
-   * 공백만 걷는다(WD-1094).
+   * 같은 소유자의 같은 이름 존재 여부(WD-824) — PG 는 유니코드 공백 변환 뒤 SQL 로 비교하고(WD-1094), 그 밖(Tibero)은 이름 목록을 읽어 PG
+   * 와 같은 UNICODE_TRIM 비교값으로 Java 에서 비교한다(WD-1181).
    */
   @Override
   public boolean existsByOwnerAndName(long ownerId, String name, Long excludeId) {
-    return mapper.countByOwnerAndName(
-            ownerId, name, excludeId, TextRules.EDGE_SPACE_CHARS, TextRules.EDGE_SPACE_AS_ASCII)
-        > 0;
+    if (postgres) {
+      return mapper.countByOwnerAndName(
+              ownerId, name, excludeId, TextRules.EDGE_SPACE_CHARS, TextRules.EDGE_SPACE_AS_ASCII)
+          > 0;
+    }
+    // 비 PG 는 소유자의 이름을 전부 읽는다(O(n)) — 소유자별 개수가 적어 감수한다(WD-1181).
+    // name 이 null 이면 서비스가 먼저 검증하므로 조회 없이 false
+    return name != null
+        && ResourceNameGuard.containsName(mapper.selectNamesByOwner(ownerId, excludeId), name);
   }
 
-  /** SQL 이 쓰는 비교 기준(WD-1094) — 생성 시 databaseId 로 정한 값. */
+  /**
+   * 개명 판정 비교 기준(WD-1094) — PG SQL 도, 비 PG 의 Java 비교도 UNICODE_TRIM 이라 databaseId 와 무관하게
+   * 하나다(WD-1181).
+   */
   @Override
   public NameComparison nameComparison() {
-    return nameComparison;
+    return NameComparison.UNICODE_TRIM;
   }
 }
