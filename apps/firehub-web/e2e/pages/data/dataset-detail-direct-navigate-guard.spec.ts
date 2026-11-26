@@ -14,8 +14,13 @@ import { createCategories } from '../../factories/dataset.factory';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { grantDatasetPermissions, setupDatasetDetailMocks } from '../../fixtures/dataset.fixture';
+import { unsavedChangesDialog } from '../../fixtures/dialog.fixture';
 
-const guardDialog = (page: Page) => page.getByRole('alertdialog', { name: '저장하지 않은 변경사항' });
+const guardDialog = unsavedChangesDialog;
+
+/** 재조회 실패 뒤 남은 화면의 낡은 데이터 안내 (리뷰 후속). */
+const staleBanner = (page: Page) =>
+  page.getByRole('status').filter({ hasText: '최신 데이터셋 정보를 불러오지 못했습니다' });
 
 /** 상세 GET 을 실패로 바꿀 수 있는 모킹을 깔고 화면을 연다. */
 async function openDetail(page: Page) {
@@ -106,6 +111,79 @@ test.describe('WD-1174 상세 직접 이동도 떠나기 가드를 거친다', (
     await expect(guardDialog(page)).toBeHidden();
     await expect(page).toHaveURL(/\/data\/datasets\/\d+$/);
     await expect(page.getByLabel('설명')).toHaveValue('고친 설명');
+  });
+
+  test('재조회 실패 확인 창에서 「취소」하면 낡은 데이터 안내가 남고, 편집을 끝내도 저절로 떠나지 않으며 안내의 「목록으로」로 간다 (리뷰 후속)', async ({
+    authenticatedPage: page,
+  }) => {
+    const control = await openDetail(page);
+    await startEditing(page);
+
+    control.fail = true;
+    await addTagToRefetch(page);
+    await expect(guardDialog(page)).toBeVisible();
+
+    await guardDialog(page).getByRole('button', { name: '취소' }).click();
+    await expect(guardDialog(page)).toBeHidden();
+    // 예전엔 아무 안내 없이 옛 화면에 남았다 — 이제 서버와 다를 수 있음을 알린다
+    const banner = staleBanner(page);
+    await expect(banner).toBeVisible();
+
+    // 편집을 끝내도(깨끗해져도) 저절로 떠나지 않는다 — 값 되돌리기·저장 직후에 엉뚱하게 떠나지 않게
+    await page.getByRole('button', { name: '취소' }).click();
+    await page.waitForTimeout(300);
+    await expect(page).toHaveURL(/\/data\/datasets\/\d+$/);
+
+    await banner.getByRole('button', { name: '목록으로' }).click();
+    await expect(page).toHaveURL(/\/data\/datasets$/);
+  });
+
+  test('낡은 데이터 안내의 「다시 불러오기」가 성공하면 안내가 사라진다 (리뷰 후속)', async ({ authenticatedPage: page }) => {
+    const control = await openDetail(page);
+    await startEditing(page);
+
+    control.fail = true;
+    await addTagToRefetch(page);
+    await guardDialog(page).getByRole('button', { name: '취소' }).click();
+    const banner = staleBanner(page);
+    await expect(banner).toBeVisible();
+
+    // 다시 불러오기가 또 실패하면 그 사실을 알린다(실패 알림은 구간당 한 번이라 따로 알려야 한다)
+    await banner.getByRole('button', { name: '다시 불러오기' }).click();
+    await expect(page.getByText('데이터셋을 다시 불러오지 못했습니다')).toBeVisible();
+    await expect(banner).toBeVisible();
+
+    control.fail = false;
+    await expect(banner.getByRole('button', { name: '다시 불러오기' })).not.toHaveAttribute('aria-disabled', 'true');
+    await banner.getByRole('button', { name: '다시 불러오기' }).click();
+    await expect(banner).toBeHidden();
+    // 편집 중이던 값은 그대로다
+    await expect(page.getByLabel('설명')).toHaveValue('고친 설명');
+  });
+
+  test('재조회가 404 면 삭제 안내를 띄우고 「다시 불러오기」는 두지 않는다 (리뷰 후속)', async ({ authenticatedPage: page }) => {
+    await openDetail(page);
+    await startEditing(page);
+
+    // 기본 상세 모킹보다 나중에 등록해 먼저 받는다 — 재조회부터 404
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets/1',
+      (route) =>
+        route.request().method() === 'GET'
+          ? route.fulfill({
+              status: 404,
+              contentType: 'application/json',
+              body: JSON.stringify({ status: 404, message: '데이터셋을 찾을 수 없습니다' }),
+            })
+          : route.fallback(),
+    );
+    await addTagToRefetch(page);
+    await guardDialog(page).getByRole('button', { name: '취소' }).click();
+
+    const banner = page.getByRole('status').filter({ hasText: '이 데이터셋은 삭제되었거나 볼 수 없게 되었습니다' });
+    await expect(banner).toBeVisible();
+    await expect(banner.getByRole('button', { name: '다시 불러오기' })).toHaveCount(0);
+    await expect(banner.getByRole('button', { name: '목록으로' })).toBeVisible();
   });
 
   test('깨끗한 상태에서 재조회가 실패하면 지금처럼 바로 목록으로 간다', async ({ authenticatedPage: page }) => {

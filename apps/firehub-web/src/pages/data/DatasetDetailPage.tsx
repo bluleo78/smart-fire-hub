@@ -1,5 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query';
 import {
+  AlertTriangle,
   ArrowLeft,
   BarChart2,
   ChevronLeft,
@@ -14,17 +15,19 @@ import {
   Star,
   X,
 } from 'lucide-react';
-import { useEffect, useLayoutEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { Breadcrumb } from '../../components/layout/Breadcrumb';
 import { PageHeading } from '../../components/PageHeading';
 import { DetailPageTitle } from '../../components/PageTitleSync';
+import { PendingButton } from '../../components/PendingButton';
 import { ResourceNotFound } from '../../components/ResourceNotFound';
 import { TruncatedTitle } from '../../components/TruncatedTitle';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
+import { InlineBanner } from '../../components/ui/inline-banner';
 import { Input } from '../../components/ui/input';
 import {
   Popover,
@@ -141,7 +144,7 @@ export default function DatasetDetailPage() {
   // isError: 존재하지 않는 데이터셋 ID(404 등) 접근 시 에러 상태를 감지한다 (#96)
   // isLoadingError: 받아 둔 데이터 없이 실패했다(첫 조회 실패) — 재조회 실패와 가르는 데 쓴다 (WD-581)
   // dataset을 먼저 선언하여 하위 탭 타입 판별(isDocument)·useEffect 의존성에 활용한다.
-  const { data: dataset, isLoading, isError, isLoadingError, error: fetchError } = useDataset(datasetId);
+  const { data: dataset, isLoading, isError, isLoadingError, error: fetchError, refetch, isFetching } = useDataset(datasetId);
 
   // URL ?tab= 파라미터로 초기 탭 설정 — 직접 URL 접근·새로고침 시에도 올바른 탭이 활성화되어야 함
   // dataset 로드 전에는 isDocument=false이므로 validTabs는 전체 목록. 로드 후 useEffect가 재계산.
@@ -231,25 +234,39 @@ export default function DatasetDetailPage() {
 
   // 조회 실패 처리 (#96) — isError 분기가 없던 시절엔 스켈레톤에 갇혀 무한 표시되었다.
   // 첫 조회 404(isEntryNotFound)는 화면 안 안내가 맡고(WD-581), 그 밖의 실패(500·네트워크·재조회 중 404)는 토스트 후 떠나기 가드(requestNavigate)를 거쳐 목록으로 간다 — 편집 중(dirty)이면 확인 창을 먼저 띄운다 (WD-1174).
+  // 이번 실패 구간을 이미 알렸는가 (WD-1174 리뷰 후속) — 「취소」로 남은 뒤 재시도(포커스·태그 추가 등)가 또 실패해 새 오류 객체가 와도
+  // 토스트·확인 창을 다시 띄우지 않는다. 알린 데이터셋 id 를 들어, 같은 화면에서 다른 데이터셋(이미 실패가 캐시된 것 포함)으로 옮기면 새로 알린다. 조회가 성공해 isError 가 풀려도 새로 알린다.
+  const fetchErrorNotifiedRef = useRef<number | null>(null);
   useEffect(() => {
-    if (!isError) return;
+    if (!isError) {
+      fetchErrorNotifiedRef.current = null;
+      return;
+    }
     // 지워졌거나 볼 수 없게 된(404) 데이터셋은 「최근 접근」에서도 뺀다 — 카드가 남아 눌러도 같은 오류만 반복되지 않게 (WD-390).
     // 네트워크 오류 등 일시적 실패는 이력을 지우지 않는다. 화면 안 안내(WD-581)로 바뀐 뒤에도 그대로 지운다.
     if (isNotFoundError(fetchError)) {
       removeRecent(datasetId);
     }
-    if (isEntryNotFound) return;
+    if (isEntryNotFound || fetchErrorNotifiedRef.current === datasetId) return;
+    fetchErrorNotifiedRef.current = datasetId;
     // 재조회 중 404 만 「찾을 수 없음」이다 — 일시적 실패(500·네트워크)에는 다시 시도를 권한다(WD-646)
     toast.error(
       isNotFoundError(fetchError)
         ? '데이터셋을 찾을 수 없습니다.'
         : '데이터셋을 불러오지 못했습니다. 잠시 후 다시 시도하세요.',
     );
-    // (WD-1174) 편집 중 재조회 실패로 직접 navigate 하면 가드를 우회해 편집 내용이 사라진다 — 가드를 거친다
+    // (WD-1174) 편집 중 재조회 실패로 직접 navigate 하면 가드를 우회해 편집 내용이 사라진다 — 가드를 거친다.
+    // 「취소」로 남으면 아래 낡은 데이터 안내(isStale)가 이 상태를 계속 알리고 목록·다시 불러오기를 맡는다.
     requestNavigate('/data/datasets');
     // datasetId 를 넣어 404 데이터셋에서 다른 404 데이터셋으로 옮겨 가도 두 번째 것도 「최근 접근」에서 빠지게 한다 (WD-581).
     // removeRecent 는 useCallback 으로 고정돼 있고 fetchError 는 새 실패 때만 바뀌어 반복 실행되지 않는다.
   }, [isError, isEntryNotFound, fetchError, requestNavigate, datasetId, removeRecent]);
+  // 재조회가 실패해 마지막으로 받은 내용을 보여 주는 중 (WD-1174 리뷰 후속) — 확인 창에서 「취소」해 남았거나 다른 가드가 막아 남은 경우다.
+  // 리다이렉트를 편집 상태 변화에 묶으면 값을 되돌리는 순간·저장 직후 재조회 전에 엉뚱하게 떠나므로, 상태를 화면에 알리고 사용자가 고르게 한다.
+  // 조회가 다시 성공하면(저장 뒤 무효화·다시 불러오기) isError 가 풀려 사라진다.
+  const isStale = isError && !!dataset && !isEntryNotFound;
+  // 그중 재조회 404 — 지워졌거나 볼 수 없게 됐다. 다시 불러와도 같으므로 안내 문구·버튼을 가른다.
+  const isStaleGone = isStale && isNotFoundError(fetchError);
 
   useEffect(() => {
     if (dataset) {
@@ -375,6 +392,42 @@ export default function DatasetDetailPage() {
     <div className={fillsHeight ? 'flex h-full min-h-0 flex-col gap-6' : 'space-y-6'}>
       {/* 탭 제목에 서버에서 불러온 저장된 이름을 붙인다 (WD-534) */}
       <DetailPageTitle name={dataset.name} />
+      {/* 낡은 데이터 안내 (WD-1174 리뷰 후속) — 재조회 실패 뒤 남은 화면은 서버와 다르거나(500) 이미 지워진(404) 데이터셋이다.
+          목록 이동은 편집 중이면 떠나기 확인을 거친다. 404 는 다시 불러와도 같으므로 다시 불러오기를 두지 않는다. */}
+      {isStale && (
+        <InlineBanner
+          variant="warning"
+          icon={<AlertTriangle />}
+          className={fillsHeight ? 'shrink-0' : undefined}
+          actions={
+            <>
+              {!isStaleGone && (
+                // 진행 중 잠금은 pending — disabled 면 누른 버튼의 포커스가 body 로 떨어진다(WD-637)
+                <PendingButton
+                  size="sm"
+                  variant="outline"
+                  pending={isFetching}
+                  // 사용자가 누른 재시도의 실패는 직접 알린다 — 실패 알림은 실패 구간당 한 번이라 effect 가 다시 알리지 않는다
+                  onClick={() =>
+                    void refetch().then((result) => {
+                      if (result.isError) toast.error('데이터셋을 다시 불러오지 못했습니다. 잠시 후 다시 시도하세요.');
+                    })
+                  }
+                >
+                  다시 불러오기
+                </PendingButton>
+              )}
+              <Button size="sm" variant="outline" onClick={() => requestNavigate('/data/datasets')}>
+                목록으로
+              </Button>
+            </>
+          }
+        >
+          {isStaleGone
+            ? '이 데이터셋은 삭제되었거나 볼 수 없게 되었습니다. 화면은 마지막으로 불러온 내용입니다.'
+            : '최신 데이터셋 정보를 불러오지 못했습니다. 화면이 실제 내용과 다를 수 있습니다.'}
+        </InlineBanner>
+      )}
       <div className={fillsHeight ? 'shrink-0' : undefined}>
         {/* 상위 경로 표시용 breadcrumb (#101) — 사용자가 현재 위치를 인지하고 상위 목록으로 빠르게 이동할 수 있도록 함 */}
         <Breadcrumb
