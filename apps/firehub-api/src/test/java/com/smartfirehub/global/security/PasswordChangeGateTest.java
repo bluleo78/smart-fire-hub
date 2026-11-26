@@ -150,7 +150,7 @@ class PasswordChangeGateTest extends IntegrationTestBase {
   }
 
   @Test
-  void allowlist_isExactlyTheNineHandlers() {
+  void allowlist_isExactlyTheTenHandlers() {
     Set<String> actual = new TreeSet<>();
     handlerMapping
         .getHandlerMethods()
@@ -169,6 +169,8 @@ class PasswordChangeGateTest extends IntegrationTestBase {
                 "GET /api/v1/auth/signup-status",
                 "POST /api/v1/auth/refresh",
                 "POST /api/v1/auth/logout",
+                // 리프레시 쿠키만으로 이 기기 세션을 끝낸다 — 비밀번호 변경 뒤 갱신 실패 갈래가 부른다(WD-1176)
+                "POST /api/v1/auth/logout/session",
                 "GET /api/v1/auth/me",
                 "GET /api/v1/auth/memberships",
                 "POST /api/v1/auth/select-tenant",
