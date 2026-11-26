@@ -15,6 +15,10 @@ import java.util.UUID;
  * 판정한다(WD-268).
  *
  * <p>빈 문자열 토큰 해시는 {@link EmptyKeys} 센티널로 바꿔 저장·조회한다(Tibero 가 {@code ''} 를 NULL 로 보기 때문).
+ *
+ * <p>네 폐기 경로 전부가 {@code revoked_at} 을 함께 갱신한다 — 회전 유예 판정(WD-1141)이 이 시각에 걸리기 때문이다.
+ * 어느 경로에서만 빠지면 그 경로의 유예는 영원히 동작하지 않는다. 시각은 {@link RefreshTokenRepository#revokedAtNow()} —
+ * 유예를 잴 쪽도 같은 기준이라야 5초가 5초다(WD-1141 반려 3차 5).
  */
 @PlatformMyBatisRepository
 public class MyBatisRefreshTokenRepository implements RefreshTokenRepository {
@@ -56,23 +60,28 @@ public class MyBatisRefreshTokenRepository implements RefreshTokenRepository {
   }
 
   @Override
+  public Optional<LocalDateTime> findRevokedAt(String tokenHash) {
+    return Optional.ofNullable(mapper.selectRevokedAt(EmptyKeys.key(tokenHash)));
+  }
+
+  @Override
   public boolean revokeByTokenHash(String tokenHash) {
-    return mapper.revokeByTokenHash(EmptyKeys.key(tokenHash)) > 0;
+    return mapper.revokeByTokenHash(EmptyKeys.key(tokenHash), RefreshTokenRepository.revokedAtNow()) > 0;
   }
 
   @Override
   public void revokeByFamilyId(UUID familyId) {
-    mapper.revokeByFamilyId(familyId);
+    mapper.revokeByFamilyId(familyId, RefreshTokenRepository.revokedAtNow());
   }
 
   @Override
   public void revokeAllWebByUserId(Long userId) {
-    mapper.revokeAllByUserIdAndPlane(userId, PLANE_WEB);
+    mapper.revokeAllByUserIdAndPlane(userId, PLANE_WEB, RefreshTokenRepository.revokedAtNow());
   }
 
   @Override
   public void revokeAllByUserId(Long userId) {
-    mapper.revokeAllByUserId(userId);
+    mapper.revokeAllByUserId(userId, RefreshTokenRepository.revokedAtNow());
   }
 
   @Override

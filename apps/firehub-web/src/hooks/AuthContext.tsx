@@ -3,7 +3,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { matchPath } from 'react-router-dom';
 
 import { authApi } from '../api/auth';
-import { abandonForSwitchedUser, AUTH_FLAG_KEY, claimUserLogout, clearSessionExpiredError, endSessionAndReloadToLogin, getAccessToken, hasSessionEndedMarker, isOtherSessionUser, refreshAccessTokenBestEffort, setAccessToken } from '../api/client';
+// refreshSession 은 아래 컨텍스트 메서드(소유권 이전 뒤 멤버십 재읽기, WD-1132)와 같은 이름이라 별명을 쓴다 —
+// client.refreshSession 은 비밀번호 변경 직후 갱신용이라 두 개가 다르다(WD-1141).
+import { abandonForSwitchedUser, AUTH_FLAG_KEY, claimUserLogout, clearSessionExpiredError, endSessionAndReloadToLogin, getAccessToken, hasSessionEndedMarker, hasSessionEndStarted, isOtherSessionUser, refreshAccessTokenBestEffort, refreshSession as refreshSessionAfterPasswordChange, setAccessToken } from '../api/client';
 import type { TenantSessionState } from '../api/tenant-session';
 import { subscribeTenantSession } from '../api/tenant-session';
 import { usersApi } from '../api/users';
@@ -17,6 +19,7 @@ import { AuthContext } from './auth-context-value';
 
 // React StrictMode(dev)에서 useEffect가 두 번 실행되어 refresh API가 중복 호출되는 것을 방지.
 // 동시 호출 시 동일한 Promise를 반환하여 실제 HTTP 요청은 한 번만 발생한다.
+// 부팅(initAuth)에서만 쓴다 — 비밀번호 변경 직후 갱신은 같은 탭 갱신 큐를 거치는 client.refreshSession 으로 보낸다(WD-1141).
 let pendingRefresh: Promise<{ data: TokenResponse }> | null = null;
 function deduplicatedRefresh() {
   if (!pendingRefresh) {
@@ -184,14 +187,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
    * <p>서버 DB 의 표식은 이미 꺼졌지만 **지금 쥔 access token 에는 pwc 가 남아 있다** — 그대로 두면
    * 다른 API 가 계속 403 이다. refresh 로 표식이 꺼진 새 토큰을 받아 세션을 다시 세운다.
    *
-   * <p>WD-1122: 여기서 쓰는 deduplicatedRefresh 는 client.ts 의 refreshAccessToken(사용자 전환 검사)을 거치지 않는다.
-   * 그 사이 다른 탭이 다른 사용자로 로그인해 쿠키가 바뀌었을 수 있으므로 여기서 직접 isOtherSessionUser 로 확인하고,
+   * <p>WD-1141: 갱신은 client.ts 의 refreshSession — 같은 탭의 401 재시도 갱신·대기 큐(refreshAccessToken)를
+   * 거치므로 authApi.refresh 로 따로 보낼 때의 큐 우회 경쟁에 들어가지 않고, 그 갱신의 응답 전체
+   * (memberships·mustChangePassword 포함)를 그대로 받아 applySession 이 반영한다.
+   *
+   * <p>WD-1122: 갱신 결과의 토큰이 이 탭의 사용자가 아닌 다른 사용자의 것일 수 있으므로 isOtherSessionUser 로 확인하고,
    * 다른 사용자면 이 세션을 세우지 않고 `/` 로 하드 이동해 앞 사용자의 캐시·폼을 폐기한다.
    */
   const completePasswordChange = useCallback(async () => {
-    const { data: tokens } = await deduplicatedRefresh();
+    const tokens = await refreshSessionAfterPasswordChange();
+    // 같은 사용자 판정은 refreshSessionAfterPasswordChange 안의 doRefresh(WD-1122)가 이미 마친 뒤 — 실전에서는 이 검사가 걸리는
+    // 일이 없다. 남겨 두는 이유는 방어선이기 때문: 갱신 경로가 바뀌어도 다른 사용자로 세션을 세우지 못하게 한다.
     if (isOtherSessionUser(tokens.accessToken)) {
-      // runRefresh 와 같은 처리(토큰 비움·사용자 바뀜 표식·하드 이동) — 이후 요청이 옛 토큰으로 나가거나 재갱신하지 않게 한다(WD-1122)
+      // doRefresh 와 같은 처리(토큰 비움·사용자 바뀜 표식·하드 이동) — 이후 요청이 옛 토큰으로 나가거나 재갱신하지 않게 한다(WD-1122)
       // 정상 반환하면 호출자(ChangePasswordPage)가 성공 토스트·navigate 로 이동을 덮는다 — 사용자 바뀜 오류로 끝내 알린다
       throw abandonForSwitchedUser();
     }
@@ -225,13 +233,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await login({ username: data.username, password: data.password });
   }, [login]);
 
-  const logout = useCallback(async (options?: { notice?: string }) => {
+  const logout = useCallback(async (options?: { notice?: string; serverLogout?: boolean }) => {
     // 서버 응답을 기다리는 동안 다른 요청의 401 이 「만료」로 먼저 이동해 이 안내를 덮지 않게 먼저 맡긴다(WD-830 리뷰)
     claimUserLogout(options?.notice);
-    try {
-      await authApi.logout();
-    } catch {
-      // 서버 로그아웃이 실패해도(네트워크 등) 이 브라우저의 세션은 끝낸다 — 리로드가 곧 화면을 바꾸므로 오류를 다시 던지지 않는다
+    // 세션 종료를 이미 시작한 자리(예: 비밀번호 변경 갱신 실패로 doRefresh 가 먼저 로그인 화면을 연 뒤)에는
+    // 보낼 서버 로그아웃도 없고 이동 중 POST 가 잘릴 수 있다 — 안내만 남기고 건너뛴다(WD-1141 반려 2차 4).
+    // 「끝냈는지」는 다른 탭이 지울 수 있는 공유 표식(hasSession)이 아니라, 이 탭이 종료를 시작할 때 세운 명시 표식으로
+    // 가른다(WD-1141 반려 2차 4) — 공유 표식은 이 탭의 세션 종료 원인을 나타내지 못하기 때문이다.
+    // 그 표식은 **갱신 실패로 세션을 끝내는 자리에서는 401 만료일 때만** 켜진다(WD-1141 반려 3차 3) — 401 이 아닌 갱신 실패(네트워크·5xx)로는
+    // 서버 세션이 아직 살아 있고, 그 자리를 지나간 표식이 떠나기 확인 취소로 남아 있으면 나중의 진짜 로그아웃까지
+    // POST 를 건너뛰어 공용 PC 에서 리프레시 토큰이 살아남는다(WD-276). 로그아웃처럼 서버 세션이 이미 끝난 자리는 표식을 켠다.
+    // serverLogout: false 는 호출자가 「서버 세션은 신경 쓰지 말고 이 브라우저 정리만」 하겠다는 뜻이다 —
+    // 비밀번호 변경 갱신 실패(ChangePasswordPage)가 그곳이고, 그 시점의 액세스 토큰은 이미 비어 POST 가 401 이 나
+    // 리프레시 토큰도 지우지 못하며, 되려 다른 기기의 세션까지 한꺼번에 끊을 수 있다(WD-1141 반려 2차 2).
+    if (options?.serverLogout !== false && !hasSessionEndStarted()) {
+      try {
+        await authApi.logout();
+      } catch {
+        // 서버 로그아웃이 실패해도(네트워크 등) 이 브라우저의 세션은 끝낸다 — 리로드가 곧 화면을 바꾸므로 오류를 다시 던지지 않는다
+      }
     }
     // 앞 사람의 캐시·돌아갈 주소를 다음 사람에게 남기지 않는다(WD-276). 사용자·테넌트 상태는 비우지 않는다 —
     // 비우면 리로드 전에 ProtectedRoute 가 지금 주소를 딥링크로 실어 /login 으로 먼저 보내, 화면이 두 번 바뀐다.

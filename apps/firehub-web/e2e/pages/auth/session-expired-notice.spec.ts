@@ -297,7 +297,7 @@ test.describe('사용 중 세션 만료 안내 (WD-830)', () => {
     });
     // catch-all 뒤에 등록해야 이 라우트가 먼저 걸린다(Playwright 는 나중 라우트부터). 첫 refresh 만 401(=만료)이다.
     // 끊기 직전 401 을 받은 요청의 뒤늦은 refresh 는 응답하지 않고 묶는다 — 401 이든 네트워크 오류든 실패하면
-    // runRefresh(src/api/client.ts)가 다시 이동해 같은 겨루기가 된다. 묶인 동안 다른 401 은 갱신 큐에서 기다리므로
+    // doRefresh(src/api/client.ts)가 다시 이동해 같은 겨루기가 된다. 묶인 동안 다른 401 은 갱신 큐에서 기다리므로
     // 로그아웃은 위 mockApi(200)로 받는다. 두 번째 자동 만료 이동 자체는 WD-1082.
     await page.route(`**${REFRESH_URL}`, (route) => {
       if (sessionGone) return;

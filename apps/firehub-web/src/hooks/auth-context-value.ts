@@ -14,9 +14,12 @@ export interface AuthContextValue {
   signup: (data: SignupFormData) => Promise<void>;
   /**
    * 세션을 끝내고 /login 으로 하드 리로드한다(WD-276). `notice` 는 리로드 뒤 로그인 화면에서 한 번 보일 안내다 —
-   * 리로드 전에 띄운 토스트는 사라지므로 로그아웃 이유를 알려야 할 때 쓴다.
+   * 리로드 전에 띄운 토스트는 사라지므로 로그아웃 이유를 알려야 할 때 쓴다(WD-830).
+   *
+   * <p>`serverLogout: false` 를 주면 서버 로그아웃(`POST /auth/logout`)을 보내지 않고 이 브라우저 정리만 한다(WD-1141 반려 2차 2) —
+   * 비밀번호 변경 갱신 실패처럼 서버 세션을 끊어도 이득이 없는 자리에서 쓴다. 기본은 true 다.
    */
-  logout: (options?: { notice?: string }) => Promise<void>;
+  logout: (options?: { notice?: string; serverLogout?: boolean }) => Promise<void>;
   hasRole: (roleName: string) => boolean;
   isAdmin: boolean;
   refreshUser: () => Promise<void>;

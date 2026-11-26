@@ -112,10 +112,14 @@ test.describe('비밀번호 변경 강제', () => {
 
     // 비밀번호는 이미 바뀌었으므로 같은 폼을 다시 내게 하지 않고(데드엔드) 세션을 정리해 로그인으로 보낸다.
     // 경고는 리로드 뒤 로그인 화면에서 보인다 — 로그아웃 전에 띄우면 리로드와 함께 사라진다(WD-276)
-    await logout.waitForRequest();
     await expect(page).toHaveURL(/\/login$/);
     await expect(page.getByLabel('아이디 (이메일)')).toBeVisible();
     await expect(page.getByText('비밀번호가 변경되어 새 비밀번호로 다시 로그인해야 합니다')).toBeVisible();
+    // 갱신이 401 이 아니라 500 으로 끝나면 서버 로그아웃을 보내지 않는다(WD-1141 반려 2차 2) —
+    // POST /auth/logout 은 모든 기기의 웹 세션을 한꺼번에 끊는 데다, 그 시점의 액세스 토큰이 이미 만료라
+    // 401 이 나 리프레시 토큰도 지우지 못한다. 이 자리의 logout() 은 serverLogout: false 로 서버 로그아웃을 아예 보내지 않는다
+    // (WD-1141 반려 2차 2) — 401 자리의 표식(sessionEndStarted)에 기대지 않아도 된다(WD-1141 반려 3차 3).
+    expect(logout.requests).toHaveLength(0);
     expect(refreshCount).toBeGreaterThanOrEqual(2);
   });
 

@@ -26,27 +26,38 @@
        AND revoked = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>
   </select>
 
+  <!-- 회전 유예(WD-1141)가 읽는 폐기 시각. revoked 행이 아니면 row 가 없어 null 이다. -->
+  <select id="selectRevokedAt" resultType="java.time.LocalDateTime">
+    SELECT revoked_at FROM refresh_token
+     WHERE token_hash = #{tokenHash}
+       AND revoked = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>
+  </select>
+
   <select id="selectFamilyId" resultType="java.lang.String">
     SELECT CAST(family_id AS VARCHAR(36)) FROM refresh_token WHERE token_hash = #{tokenHash}
   </select>
 
+  <!-- revoked_at 은 유예 판정(WD-1141)이 읽는다 — 폐기할 때마다 함께 갱신한다. -->
   <update id="revokeByTokenHash">
     UPDATE refresh_token
-       SET revoked = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>
+       SET revoked = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>,
+           revoked_at = #{revokedAt}
      WHERE token_hash = #{tokenHash}
        AND revoked = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlFalse"/>
   </update>
 
   <update id="revokeByFamilyId">
     UPDATE refresh_token
-       SET revoked = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>
+       SET revoked = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>,
+           revoked_at = #{revokedAt}
      WHERE family_id = #{familyId,jdbcType=OTHER}
        AND revoked = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlFalse"/>
   </update>
 
   <update id="revokeAllByUserIdAndPlane">
     UPDATE refresh_token
-       SET revoked = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>
+       SET revoked = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>,
+           revoked_at = #{revokedAt}
      WHERE user_id = #{userId}
        AND plane = #{plane}
        AND revoked = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlFalse"/>
@@ -54,7 +65,8 @@
 
   <update id="revokeAllByUserId">
     UPDATE refresh_token
-       SET revoked = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>
+       SET revoked = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlTrue"/>,
+           revoked_at = #{revokedAt}
      WHERE user_id = #{userId}
        AND revoked = <include refid="com.smartfirehub.global.platformdb.mybatis.PlatformSql.sqlFalse"/>
   </update>

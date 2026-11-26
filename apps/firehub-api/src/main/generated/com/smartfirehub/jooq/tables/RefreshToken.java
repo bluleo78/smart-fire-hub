@@ -103,6 +103,12 @@ public class RefreshToken extends TableImpl<RefreshTokenRecord> {
      */
     public final TableField<RefreshTokenRecord, String> PLANE = createField(DSL.name("plane"), SQLDataType.VARCHAR(16).nullable(false).defaultValue(DSL.field(DSL.raw("'WEB'::character varying"), SQLDataType.VARCHAR)), this, "");
 
+    /**
+     * The column <code>public.refresh_token.revoked_at</code>. revoked=true 로
+     * 바뀐 시각. NULL 은 유예 판정을 하지 않는다(마이그레이션 이전 행).
+     */
+    public final TableField<RefreshTokenRecord, LocalDateTime> REVOKED_AT = createField(DSL.name("revoked_at"), SQLDataType.LOCALDATETIME(6), this, "revoked=true 로 바뀐 시각. NULL 은 유예 판정을 하지 않는다(마이그레이션 이전 행).");
+
     private RefreshToken(Name alias, Table<RefreshTokenRecord> aliased) {
         this(alias, aliased, (Field<?>[]) null, null);
     }

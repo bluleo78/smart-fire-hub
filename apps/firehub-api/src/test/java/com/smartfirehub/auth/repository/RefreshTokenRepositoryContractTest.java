@@ -151,6 +151,50 @@ abstract class RefreshTokenRepositoryContractTest extends AuthRepositoryContract
     assertThat(repository().isTokenRevoked(prefix + "other")).isFalse();
   }
 
+  /**
+   * 네 폐기 경로가 모두 {@code revoked_at} 을 찍는지 본다 (WD-1141 — 회전 유예 판정의 근거).
+   *
+   * <p>이 열이 어느 경로에서만 빠지면 그 경로의 유예는 영원히 동작하지 않는다. 그런데 실패 방향이 fail-safe 라(유예가 안 되면 과거처럼 패밀리가 죽을
+   * 뿐) 다른 시험은 전부 통과하고 회귀가 조용히 과거로 돌아온다 — 그래서 유예 시험 대신 여기서 경로별로 고정한다. jOOQ(PG)·MyBatis(PG)·MyBatis(Tibero)
+   * 세 구현이 이 계약 테스트를 물려받아 한 번에 돈다(WD-1141 리뷰 Important).
+   */
+  @Test
+  void allRevokePaths_stampRevokedAt_forGraceDecision() {
+    UUID family = UUID.randomUUID();
+    repository().save(userId, prefix + "g1", future(), family);
+    repository().save(userId, prefix + "g2", future(), family);
+    repository().save(userId, prefix + "g3", future(), UUID.randomUUID());
+    repository()
+        .save(
+            userId,
+            prefix + "g4",
+            future(),
+            UUID.randomUUID(),
+            RefreshTokenRepository.PLANE_PLATFORM);
+    repository().save(otherUserId, prefix + "g5", future(), UUID.randomUUID());
+
+    assertThat(repository().revokeByTokenHash(prefix + "g1")).isTrue();
+    repository().revokeByFamilyId(family);
+    repository().revokeAllWebByUserId(userId);
+    repository().revokeAllByUserId(userId);
+
+    assertThat(repository().findRevokedAt(prefix + "g1"))
+        .as("회전 폐기(revokeByTokenHash)")
+        .isPresent();
+    assertThat(repository().findRevokedAt(prefix + "g2"))
+        .as("패밀리 폐기(revokeByFamilyId)")
+        .isPresent();
+    assertThat(repository().findRevokedAt(prefix + "g3"))
+        .as("웹 로그아웃 폐기(revokeAllWebByUserId)")
+        .isPresent();
+    assertThat(repository().findRevokedAt(prefix + "g4"))
+        .as("전량 폐기(revokeAllByUserId)")
+        .isPresent();
+    assertThat(repository().findRevokedAt(prefix + "g5"))
+        .as("남의 토큰은 건드리지 않는다")
+        .isEmpty();
+  }
+
   @Test
   void deleteExpiredTokens_removesExpired_andOldRevoked_keepsLiveAndRecentRevoked() {
     repository()
