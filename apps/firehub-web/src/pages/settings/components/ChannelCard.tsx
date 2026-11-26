@@ -1,4 +1,4 @@
-import { Bell, Mail, Send } from 'lucide-react';
+import { Bell, Loader2, Mail, Send } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 
@@ -299,7 +299,17 @@ export function ChannelCard({ setting }: ChannelCardProps) {
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
-                <div>
+                <div className="flex items-center gap-1.5">
+                  {/* 요청 중 스피너 자리 (WD-1169) — 스위치가 움직이지 않게 폭을 늘 확보하고 pending 일 때만 그린다(currentColor 라 고대비에서도 보임) */}
+                  <span className="inline-flex h-4 w-4 items-center justify-center">
+                    {pending && (
+                      <Loader2
+                        className="h-3.5 w-3.5 animate-spin text-muted-foreground"
+                        aria-hidden="true"
+                        data-testid={`channel-switch-pending-${channel}`}
+                      />
+                    )}
+                  </span>
                   <Switch
                     // 요청 중에는 요청한 값을 바로 보인다(WD-511 선례) — 실패하면 pending 이 풀려 서버 값으로 돌아온다.
                     checked={connected && shownEnabled}
@@ -308,7 +318,7 @@ export function ChannelCard({ setting }: ChannelCardProps) {
                     aria-busy={pending || undefined}
                     // disabled 는 고대비 GrayText 를 부르므로 쓰지 않고, 토글이 무시됨을 보조기기에 알리려 aria-disabled 를 함께 둔다.
                     aria-disabled={pending || undefined}
-                    // 요청 중임을 보이는 사용자에게 색이 아닌 커서로만 알린다(불투명도·GrayText 는 쓰지 않아 고대비 색은 그대로).
+                    // 요청 중임을 커서와 옆의 스피너로 알린다(불투명도·GrayText 는 쓰지 않아 고대비 색은 그대로, WD-1169).
                     className="aria-busy:cursor-progress"
                     aria-label={`${label} 채널 활성화`}
                   />

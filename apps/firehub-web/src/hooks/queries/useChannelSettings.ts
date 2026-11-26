@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import {
+  type ChannelSetting,
   type ChannelType,
   disconnectChannel,
   getChannelSettings,
@@ -33,9 +34,14 @@ export function useUpdateChannelPreferenceMutation() {
   return useMutation({
     mutationFn: ({ channel, enabled }: { channel: ChannelType; enabled: boolean }) =>
       updateChannelPreference(channel, enabled),
-    // invalidateQueries 의 promise 를 돌려줘 재조회가 캐시에 반영될 때까지 isPending 을 유지한다 —
-    // 안 그러면 PATCH 직후 재조회 전에 스위치가 옛 서버 값으로 잠깐 되돌아가는 깜빡임이 생긴다 (WD-1150).
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: QUERY_KEY }),
+    // PATCH 성공 즉시 캐시에 새 값을 써서 잠김이 풀려도 옛 값으로 깜빡이지 않게 한다(WD-1150). 재조회 promise 는
+    // 돌려주지 않아 잠김은 PATCH 동안만이고, 재조회가 실패·지연돼도 새 값이 남아 토스트와 맞는다 (WD-1169).
+    onSuccess: (_, { channel, enabled }) => {
+      queryClient.setQueryData<ChannelSetting[]>(QUERY_KEY, (prev) =>
+        prev?.map((s) => (s.channel === channel ? { ...s, enabled } : s)),
+      );
+      void queryClient.invalidateQueries({ queryKey: QUERY_KEY });
+    },
   });
 }
 
