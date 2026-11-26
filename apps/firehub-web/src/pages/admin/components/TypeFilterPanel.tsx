@@ -1,6 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 
 import { SearchInput } from '@/components/ui/search-input';
+import { SearchNoResult } from '@/components/ui/table-empty';
 import type { TypePalette } from '@/lib/ontology-colors';
 import { cn } from '@/lib/utils';
 import type { EntityTypeDef, GraphData } from '@/types/ontology';
@@ -40,6 +41,8 @@ const RESOLUTION_LABEL: Record<string, string> = {
 // 접기(collapsed) 시 폭 0으로 트랜지션해 캔버스를 넓힌다.
 export default function TypeFilterPanel({ entities: entityList, graph, activeTypes, onToggle, onReset, collapsed, search = '', palette }: Props) {
   const [filter, setFilter] = useState('');
+  // WD-1128: 「검색 초기화」 뒤 초점을 타입 검색 입력으로 돌려주기 위한 ref(SearchNoResult 의 resetFocusRef).
+  const filterInputRef = useRef<HTMLInputElement>(null);
 
   // resolution별로 타입을 그룹화.
   // (#407) entities는 왔지만 빈 배열인 경우는 "정상적으로 비어있는 온톨로지"이므로 데모
@@ -78,8 +81,17 @@ export default function TypeFilterPanel({ entities: entityList, graph, activeTyp
   // 필터 활성 여부 — 빈 activeTypes는 전체 활성으로 본다.
   const isActive = (t: string) => activeTypes.size === 0 || activeTypes.has(t);
   // 패널 내 검색어로 타입 이름을 부분일치 필터.
-  const q = filter.trim().toLowerCase();
+  const trimmedFilter = filter.trim();
+  const q = trimmedFilter.toLowerCase();
   const matches = (t: string) => q === '' || t.toLowerCase().includes(q);
+  // WD-1128: 그룹별 보이는 타입을 한 번만 계산해 렌더와 0건 판정이 같은 집합을 보게 한다
+  // (따로 계산하면 두 조건이 어긋나 빈 패널이나 잘못된 0건 안내가 날 수 있다).
+  const visibleGroups = groups
+    .map((group) => ({ label: group.label, visible: group.types.filter(matches) }))
+    .filter((group) => group.visible.length > 0);
+  // 검색어(공백 제외)가 있는데 보이는 타입이 하나도 없으면 빈 패널 대신 공용 0건 안내를 띄운다.
+  // 그룹이 0개(빈 온톨로지·로딩 중)면 검색 탓이 아니므로 allTypes.length > 0 일 때만 판정한다.
+  const noResult = q !== '' && allTypes.length > 0 && visibleGroups.length === 0;
 
   return (
     <div
@@ -104,17 +116,28 @@ export default function TypeFilterPanel({ entities: entityList, graph, activeTyp
 
       {/* 패널 내 타입 검색(타입 다수 대비). */}
       <div className="px-4 pb-3">
-        <SearchInput placeholder="타입 검색" aria-label="타입 검색" value={filter} onChange={setFilter} className="w-full" />
+        <SearchInput placeholder="타입 검색" aria-label="타입 검색" value={filter} onChange={setFilter} className="w-full" inputRef={filterInputRef} />
       </div>
 
       {/* resolution 그룹별 타입 목록. */}
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-4" data-testid="type-filter-list">
-        {groups.map((group) => {
-          const visible = group.types.filter(matches);
-          if (visible.length === 0) return null;
+        {noResult && (
+          // WD-1128: InstanceGraph·TableEmptyRow 와 같은 래퍼 — 글자색 text-muted-foreground, max-w-full.
+          // 긴 검색어는 SearchNoResultText 의 overflow-wrap:anywhere 가 줄바꿈하므로 break-all 은 쓰지 않는다.
+          // role=group + 이름: 그래프 탐색 탭에선 InstanceGraph 도 자기 0건 안내(「검색 초기화」)를 함께 띄우므로,
+          // 스크린리더가 이 버튼이 어느 검색(패널의 타입 검색)을 초기화하는지 구분하도록 영역에 이름을 준다.
+          <div
+            role="group"
+            aria-label="타입 검색 결과"
+            className="flex max-w-full flex-col items-center gap-3 px-2 pt-8 text-center text-muted-foreground"
+          >
+            <SearchNoResult searchKeyword={trimmedFilter} onResetSearch={() => setFilter('')} resetFocusRef={filterInputRef} />
+          </div>
+        )}
+        {visibleGroups.map(({ label, visible }) => {
           return (
-            <div key={group.label} className="mb-3">
-              <div className="px-2 py-1 text-xs font-medium uppercase text-muted-foreground">{group.label}</div>
+            <div key={label} className="mb-3">
+              <div className="px-2 py-1 text-xs font-medium uppercase text-muted-foreground">{label}</div>
               <div className="space-y-0.5">
                 {visible.map((t) => {
                   const active = isActive(t);
