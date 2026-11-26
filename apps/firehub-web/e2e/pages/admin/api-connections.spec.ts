@@ -4921,3 +4921,52 @@ test.describe('API 연결 상세 저장 중 초점 (WD-1048)', () => {
     await expect(page.getByLabel('인증 유형')).toBeFocused();
   });
 });
+
+test.describe('WD-1173 저장 전에 떠난 재조회', () => {
+  test('저장 전에 떠난 재조회가 저장 뒤 옛 이름으로 도착해도 저장한 이름이 남고 미저장 경고가 없다', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupAdminAuth(page);
+    const path = '/api/v1/api-connections/1';
+    const stored = createApiConnection({ id: 1, name: '옛 이름' });
+    await mockApi(page, 'GET', path, stored);
+    await page.goto('/admin/api-connections/1');
+    await expect(page.getByLabel('연결 이름')).toHaveValue('옛 이름');
+
+    await mockApi(page, 'POST', `${path}/test`, { ok: true, status: 200, latencyMs: 80, errorMessage: null });
+
+    // 「지금 확인」의 무효화가 띄운 상세 GET 을 저장이 끝날 때까지 붙잡는다. 확인 시각이 달라야 연결 참조가 바뀌어 칸별 병합이 돈다(같은 JSON 이면 구조 공유로 병합이 돌지 않는다).
+    // 저장 성공 뒤 무효화는 이 요청의 결과만 버린다 — 조회에 AbortSignal 을 넘기지 않아 옛 응답은 실제로 도착한다.
+    const held = await holdApi(page, 'GET', path, 200, { ...stored, lastCheckedAt: '2026-11-26T12:00:00Z' });
+    await page.getByRole('button', { name: '지금 확인' }).click();
+    await expect.poll(() => held.requests.length).toBeGreaterThan(0);
+
+    // 저장 뒤 무효화 재조회는 새 이름을 받는다 — 나중에 등록한 route 가 먼저라, 붙잡는 route 는 이미 떠난 첫 GET 만 잡고 있다
+    const renamed = { ...stored, name: '새 이름' };
+    await mockApi(page, 'PUT', path, renamed);
+    await mockApi(page, 'GET', path, renamed);
+    await page.getByLabel('연결 이름').fill('새 이름');
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+    await expect(page.getByText('연결 정보가 업데이트되었습니다.')).toBeVisible();
+
+    // 저장 전에 떠난 재조회가 이제 옛 이름으로 도착한다
+    const staleArrived = page.waitForResponse(
+      async (res) =>
+        res.request().method() === 'GET' &&
+        new URL(res.url()).pathname === path &&
+        (await res.json()).name === '옛 이름',
+    );
+    held.release();
+    await staleArrived;
+
+    // 「바뀌지 않음」은 한 번 보고 끝낼 수 없다 — 병합 효과가 늦게 돌아도 잡도록 0.5초 동안 거듭 본다
+    const nameInput = page.getByLabel('연결 이름');
+    for (let i = 0; i < 5; i += 1) {
+      await expect(nameInput).toHaveValue('새 이름', { timeout: 0 });
+      await page.waitForTimeout(100);
+    }
+    // 저장한 값이 기준이 돼 미저장 경고 없이 다른 화면으로 이동한다
+    await page.getByRole('navigation').getByRole('link', { name: '사용자 관리' }).click();
+    await expect(page).toHaveURL(/\/admin\/users/);
+  });
+});
