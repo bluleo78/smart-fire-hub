@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchInput } from '@/components/ui/search-input';
+import { SearchNoResult } from '@/components/ui/table-empty';
 import type { OntologyElementMutations } from '@/hooks/queries/useOntologyElement';
 import type { ReportDirty } from '@/hooks/useUnsavedChangesGuard';
 import { isFocusLost } from '@/lib/focus-lost';
@@ -110,6 +111,10 @@ export default function ModelOutline({
   // 대상으로 하므로 검색어 state를 분리한다.
   const [entityFilter, setEntityFilter] = useState('');
   const [relationFilter, setRelationFilter] = useState('');
+  // WD-1178: 0건 안내의 「검색 초기화」 뒤 초점을 자기 섹션 검색 입력으로 돌려주기 위한 ref
+  // (SearchInput 의 inputRef + SearchNoResult 의 resetFocusRef). 섹션마다 따로 둬야 버튼이 자기 입력으로 간다.
+  const entityInputRef = useRef<HTMLInputElement>(null);
+  const relationInputRef = useRef<HTMLInputElement>(null);
   const entityQuery = entityFilter.trim().toLowerCase();
   const relationQuery = relationFilter.trim().toLowerCase();
   const filteredEntities = useMemo(
@@ -253,6 +258,7 @@ export default function ModelOutline({
                 aria-label="타입 검색"
                 value={entityFilter}
                 onChange={setEntityFilter}
+                inputRef={entityInputRef}
                 className="h-7 w-full text-xs"
               />
             </div>
@@ -277,7 +283,7 @@ export default function ModelOutline({
               );
             })}
             {entities.length > 0 && filteredEntities.length === 0 && (
-              <p className="px-2 py-1.5 text-xs text-muted-foreground">검색 결과가 없습니다.</p>
+              <OutlineSearchNoResult label="타입 검색 결과" keyword={entityFilter.trim()} onReset={() => setEntityFilter('')} inputRef={entityInputRef} />
             )}
           </div>
         </div>
@@ -304,6 +310,7 @@ export default function ModelOutline({
                 aria-label="관계 검색"
                 value={relationFilter}
                 onChange={setRelationFilter}
+                inputRef={relationInputRef}
                 className="h-7 w-full text-xs"
               />
             </div>
@@ -330,11 +337,35 @@ export default function ModelOutline({
               );
             })}
             {relations.length > 0 && filteredRelations.length === 0 && (
-              <p className="px-2 py-1.5 text-xs text-muted-foreground">검색 결과가 없습니다.</p>
+              <OutlineSearchNoResult label="관계 검색 결과" keyword={relationFilter.trim()} onReset={() => setRelationFilter('')} inputRef={relationInputRef} />
             )}
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * 개요 섹션(타입·관계) 검색 0건 안내 (WD-1178) — 읽기 모드 TypeFilterPanel(WD-1128)과 같은 공용 SearchNoResult
+ * (검색어 인용 + 「검색 초기화」 + role=status 낭독)를 쓴다. 타입·관계가 동시에 0건일 수 있어 role=group + 이름으로
+ * 어느 검색의 초기화 버튼인지 구분하고, 초기화 뒤 초점은 그 섹션 검색 입력(inputRef)으로 간다.
+ * 좁은 개요 섹션 안이라 위아래 여백은 py-4(읽기 패널 pt-8 보다 작게) — 섹션 사이가 벌어지지 않게.
+ */
+function OutlineSearchNoResult({
+  label,
+  keyword,
+  onReset,
+  inputRef,
+}: {
+  label: string;
+  keyword: string;
+  onReset: () => void;
+  inputRef: React.RefObject<HTMLInputElement | null>;
+}) {
+  return (
+    <div role="group" aria-label={label} className="flex max-w-full flex-col items-center gap-3 px-2 py-4 text-center text-muted-foreground">
+      <SearchNoResult searchKeyword={keyword} onResetSearch={onReset} resetFocusRef={inputRef} />
     </div>
   );
 }
