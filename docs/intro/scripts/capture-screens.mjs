@@ -180,7 +180,7 @@ async function main() {
     // 행 위에 마우스가 있으면 동작 아이콘이 생성일을 가린다 — 빈 곳으로 옮긴 뒤 찍는다
     await page.mouse.move(1000, 760);
     await settle(page, 500);
-    await soft(mark(page, 'datasets', 'level', page.getByText('보안 등급: 전체').first()));
+    await soft(mark(page, 'datasets', 'level', page.getByRole('combobox', { name: '보안 등급 필터' })));
     await shoot(page, 'datasets');
     await page.getByRole('button', { name: /새 데이터셋|데이터셋 추가/ }).first().click();
     await page.getByRole('dialog').waitFor({ timeout: 10000 });
