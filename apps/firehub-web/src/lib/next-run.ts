@@ -6,13 +6,12 @@ import { describeTimezone } from './timezone-data';
 
 /** 형식기 종류별 로캘·옵션 — formatNextRunShort 가 쓰는 형식기를 한곳에서 정의한다. 옵션은 예전 toLocale 호출과 같다. */
 const FORMATTER_SPECS = {
-  // 달력 날짜 판정용 숫자 조각 (formatToParts)
-  // formatNextRun 용 — 날짜(연·월·일·요일)와 시각을 각각 toLocale*String 과 같은 옵션으로 만든다
+  // formatNextRun 용 날짜(연·월·일·요일) — toLocaleDateString 과 같은 옵션. 시각은 아래 time 과 옵션이 같아 그것을 쓴다
   nextRunDate: {
     locale: 'ko-KR',
     options: { year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'short' },
   },
-  nextRunTime: { locale: 'ko-KR', options: { hour: '2-digit', minute: '2-digit', hour12: false } },
+  // 달력 날짜 판정용 숫자 조각 (formatToParts)
   ymd: { locale: 'en-US', options: { year: 'numeric', month: 'numeric', day: 'numeric' } },
   time: { locale: 'ko-KR', options: { hour: '2-digit', minute: '2-digit', hour12: false } },
   monthDay: { locale: 'ko-KR', options: { month: 'long', day: 'numeric' } },
@@ -41,7 +40,7 @@ function getFormatter(kind: keyof typeof FORMATTER_SPECS, timezone: string): Int
  */
 export function formatNextRun(date: Date, timezone: string): string {
   const formatted = getFormatter('nextRunDate', timezone).format(date);
-  const time = getFormatter('nextRunTime', timezone).format(date);
+  const time = getFormatter('time', timezone).format(date);
   return `${formatted} ${time}`;
 }
 
