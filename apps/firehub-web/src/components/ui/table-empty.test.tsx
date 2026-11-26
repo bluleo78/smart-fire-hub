@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { type ComponentType, createRef, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ANNOUNCE_DELAY_MS, TableEmptyRow, TableErrorRow } from './table-empty';
+import { ANNOUNCE_DELAY_MS, SearchNoResult, TableEmptyRow, TableErrorRow } from './table-empty';
 
 /** 빈·실패 행은 <tr> 이므로 table/tbody 로 감싸 렌더한다. */
 function renderInTable<P extends object>(Row: ComponentType<P>, props: P) {
@@ -312,5 +312,41 @@ describe('TableEmptyRow 검색 초기화 초점 (WD-985)', () => {
     // @ts-expect-error resetFocusRef 없이 onResetSearch 만 넘길 수 없다
     const missing = <TableEmptyRow colSpan={3} searchKeyword="xyz" onResetSearch={() => {}} />;
     expect(missing).toBeTruthy();
+  });
+});
+
+describe('SearchNoResult 단독 사용 (WD-1127)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('표 밖에서도 검색어·안내 문구를 role=status 안에 보인다', () => {
+    render(<SearchNoResult searchKeyword="abc" />);
+    const status = screen.getByRole('status');
+    expect(status).toHaveTextContent("'abc'");
+    expect(status).toHaveTextContent('에 대한 결과가 없습니다.');
+    expect(status).toHaveTextContent('다른 키워드로 검색해 보세요.');
+  });
+
+  it('onResetSearch 가 없으면 「검색 초기화」 버튼이 없다', () => {
+    render(<SearchNoResult searchKeyword="abc" />);
+    expect(screen.queryByRole('button', { name: '검색 초기화' })).toBeNull();
+  });
+
+  it('「검색 초기화」 클릭 시 콜백을 부르고 resetFocusRef 요소에 초점을 준다', () => {
+    const onReset = vi.fn();
+    const ref = createRef<HTMLInputElement>();
+    render(
+      <>
+        <input ref={ref} aria-label="검색" />
+        <SearchNoResult searchKeyword="abc" onResetSearch={onReset} resetFocusRef={ref} />
+      </>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: '검색 초기화' }));
+    expect(onReset).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(ref.current);
   });
 });

@@ -63,7 +63,7 @@ export function DelayedStatus({ children, announceKey, className, role = 'status
  * onResetSearch 를 넘기는 자리(값이 조건부로 undefined 여도)는 resetFocusRef 를 반드시 함께 넘기게 타입으로 묶는다
  * — 템플릿을 따라 만든 새 화면이 ref 를 빠뜨려 같은 초점 유실을 되풀이하지 않게.
  */
-type SearchResetProps =
+export type SearchResetProps =
   | { onResetSearch?: undefined; resetFocusRef?: undefined }
   | {
       /** 검색어 초기화 콜백 — 제공 시 "검색 초기화" 버튼 노출 */
@@ -88,6 +88,82 @@ type TableEmptyRowProps = SearchResetProps & {
 };
 
 /**
+ * 검색 0건 안내 — 아이콘 + 「'키워드'에 대한 결과가 없습니다.」 라이브 리전 + 「검색 초기화」 버튼 (WD-1127).
+ *
+ * 왜 꺼냈나: 그래프 탐색 등 표 밖의 검색 0건도 표와 같은 카피·낭독 방식·초점 규칙(WD-985)을 쓰게 하려고
+ * TableEmptyRow 의 검색 분기를 그대로 옮겼다. 표 안 DOM·문구·낭독 동작은 이전과 같다.
+ * - 아이콘·DelayedStatus·버튼을 Fragment 형제로 돌려준다 — 감싸는 레이아웃(flex 등)은 호출부가 맡는다.
+ * - 버튼은 onResetSearch 가 있을 때만 나온다. 클릭하면 검색어를 먼저 지우고 resetFocusRef 요소로 초점을 옮긴다(WD-985).
+ * - 긴 검색어 감김은 SearchNoResultText 의 [overflow-wrap:anywhere] 가 맡는다(이유는 그쪽 JSDoc).
+ */
+export function SearchNoResult({
+  searchKeyword,
+  onResetSearch,
+  resetFocusRef,
+  announceKey,
+  iconClassName,
+}: SearchResetProps & {
+  searchKeyword: string;
+  /** 바뀌면 문구가 같아도 다시 낭독한다 */
+  announceKey?: string;
+  /** 아이콘 클래스 덮어쓰기 (기본 h-8 w-8 text-muted-foreground/60) */
+  iconClassName?: string;
+}) {
+  return (
+    <>
+      <SearchNoResultIcon className={iconClassName} />
+      <DelayedStatus announceKey={announceKey} className="space-y-1">
+        <SearchNoResultText searchKeyword={searchKeyword} />
+      </DelayedStatus>
+      {onResetSearch && <ResetButton label="검색 초기화" onReset={onResetSearch} focusRef={resetFocusRef} />}
+    </>
+  );
+}
+
+/** 검색 0건 아이콘 — SearchNoResult 와 TableEmptyRow 가 공유한다 (WD-1127) */
+function SearchNoResultIcon({ className }: { className?: string }) {
+  return <SearchX className={className ?? 'h-8 w-8 text-muted-foreground/60'} aria-hidden="true" />;
+}
+
+/** 검색 0건 문구 — DelayedStatus 안에 둘 내용. 공백 없는 긴 검색어는 [overflow-wrap:anywhere] 가 감는다: flex 열에서는 break-words 가 min-content 폭을 줄이지 못해 좁은 오버레이에서 넘치기 때문이다 (WD-1127) */
+function SearchNoResultText({ searchKeyword }: { searchKeyword: string }) {
+  return (
+    <>
+      <p className="text-sm [overflow-wrap:anywhere]">
+        <span className="font-medium text-foreground">'{searchKeyword}'</span>
+        <span>에 대한 결과가 없습니다.</span>
+      </p>
+      <p className="text-xs">다른 키워드로 검색해 보세요.</p>
+    </>
+  );
+}
+
+/** 초기화 버튼 — 먼저 되돌린 뒤, 그다음 초점을 검색 입력으로 옮긴다(WD-985). 검색 초기화·타입 필터 초기화(WD-1127)가 함께 쓴다 */
+export function ResetButton({
+  label,
+  onReset,
+  focusRef,
+}: {
+  label: string;
+  onReset: () => void;
+  focusRef?: RefObject<HTMLElement | null>;
+}) {
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      onClick={() => {
+        onReset();
+        focusRef?.current?.focus();
+      }}
+    >
+      {label}
+    </Button>
+  );
+}
+
+/**
  * 테이블 빈 상태 행.
  *
  * - searchKeyword가 있으면 검색 결과 0건 UI ("'<keyword>'에 대한 결과가 없습니다." + "검색 초기화" 버튼)
@@ -110,6 +186,7 @@ export function TableEmptyRow({
   emptyAction,
   announceKey,
 }: TableEmptyRowProps) {
+  // 검색어가 있으면 검색 0건 UI, 없으면 기본 빈 상태
   const isSearchEmpty = !!searchKeyword;
 
   return (
@@ -119,33 +196,13 @@ export function TableEmptyRow({
         cellClassName="text-center text-muted-foreground py-12"
         className="flex flex-col items-center gap-3"
       >
-        {isSearchEmpty && <SearchX className="h-8 w-8 text-muted-foreground/60" aria-hidden="true" />}
+        {/* 표 안 DOM 구조(아이콘·status·버튼 위치)는 그대로 둔다 — status 는 분기 밖 같은 자리라 검색어 유무가 바뀌어도 같은 요소다(WD-815).
+            조각은 표 밖에서 쓰는 SearchNoResult 와 공유한다(WD-1127) */}
+        {isSearchEmpty && <SearchNoResultIcon />}
         <DelayedStatus announceKey={announceKey} className={isSearchEmpty ? 'space-y-1' : undefined}>
-          {isSearchEmpty ? (
-            <>
-              <p className="text-sm">
-                <span className="font-medium text-foreground">'{searchKeyword}'</span>
-                <span>에 대한 결과가 없습니다.</span>
-              </p>
-              <p className="text-xs">다른 키워드로 검색해 보세요.</p>
-            </>
-          ) : (
-            <p className="text-sm">{message}</p>
-          )}
+          {isSearchEmpty ? <SearchNoResultText searchKeyword={searchKeyword} /> : <p className="text-sm">{message}</p>}
         </DelayedStatus>
-        {isSearchEmpty && onResetSearch && (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              // 먼저 검색어를 지우고, 그다음 초점을 검색 입력으로 옮긴다(WD-985)
-              onResetSearch();
-              resetFocusRef?.current?.focus();
-            }}
-          >
-            검색 초기화
-          </Button>
-        )}
+        {isSearchEmpty && onResetSearch && <ResetButton label="검색 초기화" onReset={onResetSearch} focusRef={resetFocusRef} />}
         {!isSearchEmpty && emptyAction}
       </TableVisibleWidthCell>
     </TableRow>

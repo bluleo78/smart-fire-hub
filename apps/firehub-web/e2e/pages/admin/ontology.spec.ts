@@ -1278,10 +1278,10 @@ test.describe('지식그래프 캔버스 키보드 접근성 (#326, #327)', () =
     await expect(typeList.getByRole('button', { name: /^Incident/ })).toHaveText('Incident2');
     await expect(typeList.getByRole('button', { name: /^Building/ })).toHaveText('Building1');
 
-    // 어떤 노드에도 매칭되지 않는 검색어 — 캔버스는 "조건에 맞는 노드가 없습니다"를 보여주고,
+    // 어떤 노드에도 매칭되지 않는 검색어 — 캔버스는 검색 0건 안내(검색어 인용, WD-1127)를 보여주고,
     // 배지도 전부 0으로 떨어져야 한다.
     await page.getByPlaceholder('이름 검색').fill('존재하지않는이름XYZ123');
-    await expect(page.getByText('조건에 맞는 노드가 없습니다.')).toBeVisible();
+    await expect(page.getByTestId('instance-graph-no-results')).toContainText('에 대한 결과가 없습니다.');
     await expect(typeList.getByRole('button', { name: /^Incident/ })).toHaveText('Incident0');
     await expect(typeList.getByRole('button', { name: /^Building/ })).toHaveText('Building0');
 
