@@ -1,6 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, UserX } from 'lucide-react';
-import { useCallback,useEffect,useId,useMemo,useState } from 'react';
+import { useCallback,useEffect,useId,useMemo,useRef,useState } from 'react';
 import { useLocation, useNavigate,useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -96,6 +96,12 @@ function UserDetailView() {
   const [isTogglingActive, setIsTogglingActive] = useState(false);
   /** 요청한 활성 값 — 요청이 끝나기 전에 스위치에 바로 보여 낙관 상태를 만든다(WD-1168). 실패하면 null 로 되돌아 서버 값을 쓴다. */
   const [pendingActive, setPendingActive] = useState<boolean | null>(null);
+  // 요청 중 토글을 막는 **동기** 깃발(WD-1168 리뷰 후속) — 값이 바뀌는 즉시 읽힌다
+  const toggleActiveBusyRef = useRef(false);
+  // 두 진입점(handleToggleActive·handleSwitchChange)이 함께 쓰는 요청 중 판정 — 주된 가드는 위 깃발이고
+  // 렌더 값(isTogglingActive)은 예비다. 렌더 값만으로는 setState 후 다음 렌더 전에 들어온 두 번째
+  // 트리거(정지→활성 방향은 확인 창이 없어 핸들러까지 바로 온다)를 막지 못한다.
+  const isActiveToggleBusy = () => toggleActiveBusyRef.current || isTogglingActive;
   // 비활성화 확인 다이얼로그 표시 상태 — 활성→비활성 방향일 때만 열린다
   const [isDeactivateDialogOpen, setIsDeactivateDialogOpen] = useState(false);
   // 역할 전체 해제 확인 다이얼로그 표시 상태 — "역할 저장" 시점에 선택된 역할이 0개일 때만 열린다 (#512)
@@ -271,24 +277,30 @@ function UserDetailView() {
    */
   const handleToggleActive = async () => {
     // 요청 중 토글 무시 — WD-1168. disabled 를 쓰지 않으므로 진입이 막히지 않는다(클릭·Enter 모두 여기서 걸린다).
-    if (isTogglingActive) return;
+    if (isActiveToggleBusy()) return;
     if (!user) return;
     // 자기 자신의 멤버십 정지 차단 (#73)
     if (currentUser?.id === user.id && user.isActive) {
       toast.error('자기 자신은 정지할 수 없습니다');
       return;
     }
+    toggleActiveBusyRef.current = true;
     setIsTogglingActive(true);
-    // 요청한 값을 바로 보여 낙관 상태로 만든다 — 응답을 기다리는 동안 스위치·라벨이 같은 값을 가리키게(WD-1168)
-    setPendingActive(!user.isActive);
+    // 요청한 값을 바로 보여 낙관 상태로 만든다 — 응답을 기다리는 동안 스위치·라벨이 같은 값을 가리키게(WD-1168).
+    // 목표값을 미리 잡아 두어, 완료 시점의 갱신도 같은 값으로 확정한다(prev 반전은 요청 중 재조회가 서버 값을 먼저
+    // 반영한 뒤 도착하면 한 번 더 뒤집는다 — WD-1168 리뷰 후속).
+    const targetActive = !user.isActive;
+    setPendingActive(targetActive);
     try {
-      await usersApi.setUserActive(user.id, { active: !user.isActive });
+      await usersApi.setUserActive(user.id, { active: targetActive });
       if (!isMounted()) {
         // 화면은 떠났지만 목록 캐시의 상태 열은 바뀌었으니 무효화만 한다
         void queryClient.invalidateQueries({ queryKey: ['users'] });
         return;
       }
-      setUser({ ...user, isActive: !user.isActive });
+      // 요청 중 저장한 역할 등 최신 값이 놓이지 않게 함수형으로 갱신한다 — 스프레드는 클릭 시점의 user 로 덮어써
+      // 그 사이 바뀐 값(예: 요청 중 저장한 역할)을 되돌릴 수 있다(WD-1168 리뷰 후속). isActive 만 목표값으로 확정.
+      setUser((prev) => (prev ? { ...prev, isActive: targetActive } : prev));
       // 목록 캐시(staleTime 30s)의 상태 열이 낡지 않도록 무효화
       await queryClient.invalidateQueries({ queryKey: ['users'] });
       toast.success(user.isActive ? '멤버십이 정지되었습니다' : '멤버십이 재활성화되었습니다');
@@ -296,9 +308,11 @@ function UserDetailView() {
       if (!isMounted()) return;
       if (!leaveIfMemberGone(error)) handleApiError(error, '상태 변경에 실패했습니다.');
     } finally {
-      // 낙관 값은 여기서 정리한다 — 실패면 null 로 되돌아 서버 값을 다시 보고, 성공은 위 setUser 값으로 이어진다(한 프레임에 배치 반영)
+      // 낙관 값은 여기서 정리한다 — 실패면 null 로 되돌아 서버 값을 다시 보고, 성공은 위 setUser 값과 같아
+      // 표시가 어긋나지 않는다. invalidateQueries 를 기다린 뒤라 같은 프레임 배치는 아니다(WD-1168 리뷰 후속).
       setPendingActive(null);
       setIsTogglingActive(false);
+      toggleActiveBusyRef.current = false;
     }
   };
 
@@ -307,8 +321,9 @@ function UserDetailView() {
    * 활성화 방향(비활성→활성)일 때는 즉시 API를 호출한다. (#50)
    */
   const handleSwitchChange = () => {
-    // 요청 중 토글 무시 — 확인 창을 띄우지 않게(WD-1168)
-    if (isTogglingActive) return;
+    // 요청 중 토글 무시 — 확인 창을 띄우지 않게(WD-1168). 같은 요청 중 판정을 쓴다(리뷰 후속 —
+    // 비활성→활성 방향은 확인 창이 없어 렌더 전의 두 번째 트리거가 여기까지 바로 온다).
+    if (isActiveToggleBusy()) return;
     if (!user) return;
     if (user.isActive) {
       // 활성 → 비활성: 파괴적 액션이므로 확인 다이얼로그 표시
