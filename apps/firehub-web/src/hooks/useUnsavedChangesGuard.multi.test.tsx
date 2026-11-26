@@ -339,6 +339,21 @@ function TwoScreen({ aDirty, bDirty }: { aDirty: boolean; bDirty: boolean }) {
   );
 }
 
+/** (WD-1166 리뷰 후속) 가드가 Routes 밖(레이아웃)에 있어 이동해도 남는 화면 */
+function LayoutScreen({ dirty }: { dirty: boolean }) {
+  return (
+    <MemoryRouter initialEntries={['/start']}>
+      <Where />
+      <RequestForm name="L" dirty={dirty} />
+      <Routes>
+        <Route path="/start" element={<div>시작 화면</div>} />
+        <Route path="/other" element={<div>다른 화면</div>} />
+        <Route path="/dash" element={<div>대시보드 화면</div>} />
+      </Routes>
+    </MemoryRouter>
+  );
+}
+
 function renderTwo(aDirty: boolean, bDirty: boolean) {
   return render(<TwoScreen aDirty={aDirty} bDirty={bDirty} />);
 }
@@ -450,8 +465,9 @@ describe('requestNavigate 결과 — 가로챔 여부·열린 대상 유지·onL
 
   it('popstate 로 열린 창에서는 대상을 바꾸지 않고 true — 「이탈」은 뒤로 가기 (WD-1166 ③)', () => {
     vi.useFakeTimers();
+    // (WD-1166 리뷰 후속) 목·타이머 정리를 finally 에서 한다 — 단언이 실패해도 뒤 시험이 가짜 history.back·타이머를 물려받지 않게
+    const backSpy = vi.spyOn(window.history, 'back').mockImplementation(() => {});
     try {
-      const backSpy = vi.spyOn(window.history, 'back').mockImplementation(() => {});
       renderTwo(true, false);
       act(() => {
         window.dispatchEvent(new PopStateEvent('popstate'));
@@ -466,14 +482,34 @@ describe('requestNavigate 결과 — 가로챔 여부·열린 대상 유지·onL
       });
       expect(backSpy).toHaveBeenCalledTimes(1);
       expect(screen.getByTestId('where')).toHaveTextContent('/start');
-      // 뒤로 가기 대기(타이머·popstate 리스너)와 우회 표시를 끝내 다음 시험에 전역 상태를 남기지 않는다
-      act(() => {
-        vi.advanceTimersByTime(BACK_NOOP_REARM_MS);
-      });
-      backSpy.mockRestore();
     } finally {
-      vi.useRealTimers();
+      try {
+        // 뒤로 가기 대기(타이머·popstate 리스너)와 우회 표시를 끝내 다음 시험에 전역 상태를 남기지 않는다
+        act(() => {
+          vi.advanceTimersByTime(BACK_NOOP_REARM_MS);
+        });
+      } finally {
+        backSpy.mockRestore();
+        vi.useRealTimers();
+      }
     }
+  });
+
+  it('창이 열린 채 폼이 깨끗해지면 이동하며 창을 닫는다 — 이동 뒤에도 남는 가드 (WD-1166 리뷰 후속)', async () => {
+    // 레이아웃처럼 Routes 밖에 걸린 가드라 이동해도 언마운트되지 않는다 — 창을 닫지 않으면 이동 뒤에도 남는다
+    const { rerender } = render(<LayoutScreen dirty />);
+    fireEvent.click(screen.getByRole('button', { name: 'L 이동', hidden: true }));
+    expect(dialogs()).toHaveLength(1);
+    rerender(<LayoutScreen dirty={false} />);
+    fireEvent.click(screen.getByRole('button', { name: 'L 대시보드', hidden: true }));
+    expect(reqLog.results).toEqual([true, false]);
+    await flushTimers();
+    expect(screen.getByTestId('where')).toHaveTextContent('/dash');
+    expect(dialogs()).toHaveLength(0);
+    expect(reqLog.isOpen.L()).toBe(false);
+    // 사용자가 고른 것이 아니므로 onStay·onLeave 는 불리지 않는다
+    expect(reqLog.stayed).toEqual([]);
+    expect(reqLog.left).toEqual([]);
   });
 
   it('링크 클릭으로 열린 창에서도 대상을 바꾸지 않고 true — 「이탈」은 링크 대상으로 이동 (WD-1166)', async () => {
