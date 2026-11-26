@@ -873,6 +873,71 @@ test.describe('홈 페이지', () => {
   });
 
   /**
+   * WD-1116: 「최근 사용」 카드가 정확히 3장이면 2열 그리드의 오른쪽 아래 칸이 비었다.
+   * 이제 마지막 카드(임포트 또는 실행)가 두 칸을 채우고, 2장·4장일 때는 그대로 반 폭이다.
+   */
+  async function mockRecentCards(page: Page, opts: { imports: boolean; executions: boolean }) {
+    await mockApi(page, 'GET', '/api/v1/dashboard/stats', {
+      totalDatasets: 10,
+      sourceDatasets: 6,
+      derivedDatasets: 4,
+      totalPipelines: 5,
+      activePipelines: 3,
+      recentImports: opts.imports
+        ? [{ id: 1, datasetName: '임포트 데이터셋', fileName: 'a.csv', status: 'COMPLETED', createdAt: '2026-05-15T10:00:00' }]
+        : [],
+      recentExecutions: opts.executions
+        ? [{ id: 1, pipelineName: '실행 파이프라인', status: 'COMPLETED', createdAt: '2026-05-15T10:00:00' }]
+        : [],
+    });
+  }
+
+  /** 「최근 사용」 section 과 그 직계 카드들의 박스를 읽는다. */
+  async function recentCardBoxes(page: Page) {
+    const section = page.locator('section[aria-labelledby="home-recent-heading"]');
+    const cards = section.locator(':scope > div');
+    const sectionBox = (await section.boundingBox())!;
+    const boxes = [];
+    for (const card of await cards.all()) boxes.push((await card.boundingBox())!);
+    return { sectionBox, boxes };
+  }
+
+  for (const [name, imports, executions, title] of [
+    ['임포트 없음·실행 있음', false, true, '최근 실행'],
+    ['임포트 있음·실행 없음', true, false, '최근 임포트'],
+  ] as const) {
+    test(`최근 사용 카드가 3장(${name})이면 마지막 카드가 두 칸을 채운다 (WD-1116)`, async ({ authenticatedPage: page }) => {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await mockRecentCards(page, { imports, executions });
+      await page.goto('/');
+      await expect(page.getByRole('heading', { name: title })).toBeVisible();
+
+      const { sectionBox, boxes } = await recentCardBoxes(page);
+      expect(boxes).toHaveLength(3);
+      // 위 두 장은 나란히(같은 줄) 반 폭
+      expect(Math.abs(boxes[0].y - boxes[1].y)).toBeLessThanOrEqual(1);
+      // 마지막 카드는 아래 줄에서 첫 카드 왼쪽 끝~둘째 카드 오른쪽 끝까지 — 빈 칸이 없다
+      expect(boxes[2].y).toBeGreaterThan(boxes[0].y + 10);
+      expect(Math.abs(boxes[2].x - boxes[0].x)).toBeLessThanOrEqual(1);
+      expect(Math.abs(boxes[2].x + boxes[2].width - (boxes[1].x + boxes[1].width))).toBeLessThanOrEqual(1);
+      expect(Math.abs(boxes[2].width - sectionBox.width)).toBeLessThanOrEqual(1);
+    });
+  }
+
+  test('최근 사용 카드가 4장이면 모두 반 폭이다 (WD-1116)', async ({ authenticatedPage: page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await mockRecentCards(page, { imports: true, executions: true });
+    await page.goto('/');
+    await expect(page.getByRole('heading', { name: '최근 실행' })).toBeVisible();
+
+    const { sectionBox, boxes } = await recentCardBoxes(page);
+    expect(boxes).toHaveLength(4);
+    for (const box of boxes) {
+      expect(box.width).toBeLessThan(sectionBox.width * 0.55);
+    }
+  });
+
+  /**
    * 이슈 #226 — 활동 피드 더보기 버튼 제거 후 무한 스크롤로 전환
    * - sentinel 진입 시 자동으로 page=1 요청이 발생하고 누적 렌더되는지 검증
    * - 1페이지/2페이지가 같은 컨테이너에 누적되어 스크롤 위치가 보존되는지 검증

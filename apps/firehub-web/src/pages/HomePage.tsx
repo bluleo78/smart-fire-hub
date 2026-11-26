@@ -211,6 +211,13 @@ export default function HomePage() {
     && !attentionFailed
     && (!attentionItems || attentionItems.length === 0);
 
+  // WD-1116: 「최근 사용」은 대시보드·데이터셋 카드가 항상 있고 임포트·실행 카드는 데이터가 있을 때만 그려진다.
+  // 정확히 3장이면 sm 이상 2열 그리드의 오른쪽 아래 칸이 비므로, 마지막 카드(임포트 또는 실행)가 두 칸을 채운다.
+  // 2장·4장이거나 모바일(1열)이면 그대로 둔다.
+  const showImportsCard = !!stats && stats.recentImports.length > 0;
+  const showExecutionsCard = canReadPipeline && !!stats && stats.recentExecutions.length > 0;
+  const lastCardSpansTwo = showImportsCard !== showExecutionsCard;
+
   return (
     <div className="space-y-6">
       {/* Page header */}
@@ -588,8 +595,8 @@ export default function HomePage() {
           </Card>
 
           {/* 최근 임포트 */}
-          {stats && stats.recentImports.length > 0 && (
-            <Card className="py-2 gap-1 flex flex-col card-hover">
+          {showImportsCard && (
+            <Card className={cn('py-2 gap-1 flex flex-col card-hover', lastCardSpansTwo && 'sm:col-span-2')}>
               <CardHeader className="px-3 pb-0">
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-sm font-semibold flex items-center gap-2">
@@ -622,8 +629,8 @@ export default function HomePage() {
           )}
 
           {/* 최근 실행 */}
-          {canReadPipeline && stats && stats.recentExecutions.length > 0 && (
-            <Card className="py-2 gap-1 flex flex-col card-hover">
+          {showExecutionsCard && (
+            <Card className={cn('py-2 gap-1 flex flex-col card-hover', lastCardSpansTwo && 'sm:col-span-2')}>
               <CardHeader className="px-3 pb-0">
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-sm font-semibold flex items-center gap-2">
