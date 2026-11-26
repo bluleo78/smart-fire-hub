@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 
-import { createJob } from '../../factories/ai-insight.factory';
+import { createJob, createJobExecution, createReport } from '../../factories/ai-insight.factory';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 
@@ -116,3 +116,71 @@ test.describe('스마트 작업 마지막 실행 시간대 (WD-1097)', () => {
     await expect(lastRunValue(page)).toHaveText(/16:39 UTC$/);
   });
 });
+
+// 서버 시각 16:39:05 UTC = 작업 시간대(Asia/Seoul) 다음 날 01:39 — 팩토리 기본 시간대가 Asia/Seoul 이다
+const AT = '2026-11-24T16:39:05';
+const SEOUL_TEXT = '2026. 11. 25. (수) 01:39 KST';
+
+test.describe('스마트 작업 실행·리포트·생성 시각 시간대 (WD-1101)', () => {
+  // 브라우저는 UTC — 브라우저 시간대로 찍으면 날짜가 하루 앞서 보이던 재현 조건
+  test.use({ timezoneId: 'UTC' });
+
+  test('실행 이력 시작 시각은 작업 시간대+약어', async ({ authenticatedPage: page }) => {
+    // 서버 시각 16:39:05 UTC = 작업 시간대(Asia/Seoul) 다음 날 01:39
+    await openJobDetail(page, createJob({ id: 1 }));
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1/executions', [
+      createJobExecution({ id: 5, jobId: 1, startedAt: AT, completedAt: '2026-11-24T16:40:05' }),
+    ]);
+    await page.reload();
+    await page.getByRole('tab', { name: '실행 이력' }).click();
+
+    const row = page.getByRole('row').filter({ hasText: '2026. 11. 25.' });
+    await expect(row).toContainText(SEOUL_TEXT);
+    // 상대시간은 같은 칸에 괄호로 이어진다
+    await expect(row).toContainText(/01:39 KST\s*\(/);
+    await expect(row).not.toContainText('오후 4:39:05');
+  });
+
+  test('생성일은 작업 시간대+약어', async ({ authenticatedPage: page }) => {
+    await openJobDetail(
+      page,
+      createJob({ id: 1, createdAt: AT }),
+    );
+    const value = page
+      .getByText('생성일', { exact: true })
+      .locator('xpath=following-sibling::div[1]');
+    await expect(value).toContainText(SEOUL_TEXT);
+  });
+
+  test('리포트 목록은 행마다 그 작업 시간대', async ({ authenticatedPage: page }) => {
+    await mockReports(page, [
+      createReport({ executionId: 1, title: '서울 리포트', completedAt: AT }),
+      createReport({ executionId: 2, title: '뉴욕 리포트', jobTimezone: 'America/New_York', completedAt: AT }),
+    ]);
+    await page.goto('/ai-insights/reports');
+    await expect(page.getByRole('row').filter({ hasText: '서울 리포트' })).toContainText(
+      SEOUL_TEXT,
+    );
+    // formatNextRunWithZone 이 11월 뉴욕을 EST 로 낸다(next-run.test.ts 와 동일)
+    await expect(page.getByRole('row').filter({ hasText: '뉴욕 리포트' })).toContainText(
+      '2026. 11. 24. (화) 11:39 EST',
+    );
+  });
+
+  test('jobTimezone 없는 리포트 행은 Asia/Seoul', async ({ authenticatedPage: page }) => {
+    await mockReports(page, [
+      createReport({ executionId: 3, title: '무시간대 리포트', jobTimezone: null, completedAt: AT }),
+    ]);
+    await page.goto('/ai-insights/reports');
+    await expect(page.getByRole('row').filter({ hasText: '무시간대 리포트' })).toContainText(
+      SEOUL_TEXT,
+    );
+  });
+});
+
+/** 리포트 목록 화면이 부르는 API 모킹 */
+async function mockReports(page: Page, reports: ReturnType<typeof createReport>[]) {
+  await mockApi(page, 'GET', '/api/v1/proactive/reports', reports);
+  await mockApi(page, 'GET', '/api/v1/proactive/jobs', []);
+  await mockApi(page, 'GET', '/api/v1/proactive/messages/unread-count', { count: 0 });
+}

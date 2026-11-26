@@ -310,6 +310,8 @@ export interface ReportListItem {
   executionId: number;
   jobId: number;
   jobName: string;
+  /** 작업 시간대(IANA) — 완료 시각을 이 시간대+약어로 보인다(WD-1101). 없으면 Asia/Seoul 로 본다. */
+  jobTimezone?: string | null;
   title: string;
   summary: string | null;
   completedAt: string;

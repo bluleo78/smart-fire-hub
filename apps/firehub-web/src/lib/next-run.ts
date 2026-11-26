@@ -1,32 +1,18 @@
+import { parseUtcDate } from './formatters';
 import { describeTimezone } from './timezone-data';
 
 // 다음 실행 시각 「계산」은 화면에서 하지 않는다 — 서버 미리보기 API(useCronPreview)가 스케줄러와 같은 서머타임 규칙으로
 // 계산한다(WD-391). 이 파일은 받은 시각의 표시 형식만 맡는다.
 
-/**
- * 다음 실행 시간을 사람이 읽기 쉬운 형식으로 포맷한다.
- * 편집 폼용: "2026-04-03 (목) 09:00 KST"
- */
-export function formatNextRun(date: Date, timezone: string): string {
-  const formatted = date.toLocaleDateString('ko-KR', {
-    timeZone: timezone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    weekday: 'short',
-  });
-  const time = date.toLocaleTimeString('ko-KR', {
-    timeZone: timezone,
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  });
-  return `${formatted} ${time}`;
-}
-
 /** 형식기 종류별 로캘·옵션 — formatNextRunShort 가 쓰는 형식기를 한곳에서 정의한다. 옵션은 예전 toLocale 호출과 같다. */
 const FORMATTER_SPECS = {
   // 달력 날짜 판정용 숫자 조각 (formatToParts)
+  // formatNextRun 용 — 날짜(연·월·일·요일)와 시각을 각각 toLocale*String 과 같은 옵션으로 만든다
+  nextRunDate: {
+    locale: 'ko-KR',
+    options: { year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'short' },
+  },
+  nextRunTime: { locale: 'ko-KR', options: { hour: '2-digit', minute: '2-digit', hour12: false } },
   ymd: { locale: 'en-US', options: { year: 'numeric', month: 'numeric', day: 'numeric' } },
   time: { locale: 'ko-KR', options: { hour: '2-digit', minute: '2-digit', hour12: false } },
   monthDay: { locale: 'ko-KR', options: { month: 'long', day: 'numeric' } },
@@ -46,6 +32,17 @@ function getFormatter(kind: keyof typeof FORMATTER_SPECS, timezone: string): Int
     formatterCache.set(key, formatter);
   }
   return formatter;
+}
+
+/**
+ * 다음 실행 시간을 사람이 읽기 쉬운 형식으로 포맷한다.
+ * 편집 폼용: "2026-04-03 (목) 09:00 KST"
+ * 목록 행마다 불리므로 Intl 형식기는 캐시된 것을 쓴다(toLocale*String 과 같은 옵션이라 출력은 같다).
+ */
+export function formatNextRun(date: Date, timezone: string): string {
+  const formatted = getFormatter('nextRunDate', timezone).format(date);
+  const time = getFormatter('nextRunTime', timezone).format(date);
+  return `${formatted} ${time}`;
 }
 
 /**
@@ -167,4 +164,14 @@ export function formatNextRunShortWithZone(date: Date, timezone: string | null |
   const text = withZoneFallback(date, timezone, (d, tz) => formatNextRunShort(d, tz, now));
   // 잘못된 시각은 NaN 비교가 false 라 「지남」이 붙지 않는다
   return date.getTime() < now.getTime() ? `${text} · 지남` : text;
+}
+
+/**
+ * 서버가 준 과거·기록 시각(UTC ISO, 시간대 표기 없으면 UTC 로 간주)을 작업 시간대 기준 + 약어로 보인다(WD-1101).
+ * 「2026. 11. 25. (수) 01:39 KST」 꼴. 시간대가 비면 Asia/Seoul 로 본다(위 withZoneFallback 의 규칙 하나뿐).
+ * 값이 없거나 읽을 수 없으면 「-」.
+ */
+export function formatInstantInZone(iso: string | null | undefined, timezone: string | null | undefined): string {
+  if (!iso) return '-';
+  return formatNextRunWithZone(parseUtcDate(iso), timezone);
 }

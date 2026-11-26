@@ -22,7 +22,8 @@ import { useLoadMoreLimit } from '@/hooks/useLoadMoreLimit';
 import { offlineListMessage, useOfflinePaused } from '@/hooks/useOnlineStatus';
 import { downloadReportPdf } from '@/hooks/useReportActions';
 import { isForbiddenError } from '@/lib/api-error';
-import { formatDate, timeAgo } from '@/lib/formatters';
+import { timeAgo } from '@/lib/formatters';
+import { formatInstantInZone } from '@/lib/next-run';
 
 import { ProactiveReadForbiddenNotice } from '../components/ProactiveReadForbiddenNotice';
 
@@ -178,7 +179,8 @@ export default function ReportListTab() {
                     </Badge>
                   </TableCell>
                   <TableCell className="text-sm">
-                    {formatDate(report.completedAt)} ({timeAgo(report.completedAt)})
+                    {/* 행의 작업 시간대+약어로 보인다 — 브라우저 시간대면 UTC 브라우저에서 날짜가 어긋난다(WD-1101) */}
+                    {formatInstantInZone(report.completedAt, report.jobTimezone)} ({timeAgo(report.completedAt)})
                   </TableCell>
                   <TableCell className="text-center">
                     {/* hover-only로 숨기지 않는다 — 터치·키보드에서 접근 불가가 된다 */}

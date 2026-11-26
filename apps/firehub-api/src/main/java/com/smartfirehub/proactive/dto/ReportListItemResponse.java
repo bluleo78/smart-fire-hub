@@ -14,6 +14,11 @@ public record ReportListItemResponse(
     Long jobId,
     /** 리포트가 어느 스마트 작업에서 나왔는지 표시하기 위한 잡 이름 */
     String jobName,
+    /**
+     * 잡의 시간대(IANA id, 예: Asia/Seoul) — 웹이 완료 시각을 브라우저 시간대가 아닌 그 잡의 시간대로 표시하는 데 쓴다. completedAt 은 서버
+     * 시각 그대로라 시간대 없이는 어느 시각인지 해석할 수 없다. 값이 없으면 null.
+     */
+    String jobTimezone,
     /** result.title이 비어 있으면 잡 이름으로 대체된 유효 제목 */
     String title,
     /** result.summary — 목록에서 제목 아래 한 줄 요약으로 노출. 없으면 null */

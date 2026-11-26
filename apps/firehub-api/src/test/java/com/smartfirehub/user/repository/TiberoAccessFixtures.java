@@ -1596,6 +1596,18 @@ public class TiberoAccessFixtures implements AccessFixtures {
   }
 
   @Override
+  public long createProactiveJobWithTimezone(
+      long tenantId, long userId, String name, String timezone) {
+    return poc.insertReturningId(
+        "INSERT INTO proactive_job (tenant_id, user_id, name, prompt, cron_expression, timezone,"
+            + " enabled) VALUES (?, ?, ?, 'fx prompt', '0 0 9 * * *', ?, 1)",
+        tenantId,
+        userId,
+        name,
+        timezone);
+  }
+
+  @Override
   public long createProactiveJob(long tenantId, long userId, String name) {
     return poc.insertReturningId(
         "INSERT INTO proactive_job (tenant_id, user_id, name, prompt, cron_expression, enabled)"

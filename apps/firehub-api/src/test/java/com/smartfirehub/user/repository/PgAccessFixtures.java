@@ -1497,6 +1497,21 @@ public class PgAccessFixtures implements AccessFixtures {
   }
 
   @Override
+  public long createProactiveJobWithTimezone(
+      long tenantId, long userId, String name, String timezone) {
+    return inTenant(
+        tenantId,
+        () ->
+            dsl.fetchOne(
+                    "insert into proactive_job (user_id, name, prompt, cron_expression, timezone,"
+                        + " enabled) values (?, ?, 'fx prompt', '0 0 9 * * *', ?, true) returning id",
+                    userId,
+                    name,
+                    timezone)
+                .get(0, Long.class));
+  }
+
+  @Override
   public long createProactiveJob(long tenantId, long userId, String name) {
     return inTenant(
         tenantId,

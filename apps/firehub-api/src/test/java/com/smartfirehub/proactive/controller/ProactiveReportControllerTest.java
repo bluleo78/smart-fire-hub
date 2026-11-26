@@ -58,7 +58,14 @@ class ProactiveReportControllerTest {
 
   private ReportListItemResponse sampleReport() {
     return new ReportListItemResponse(
-        11L, 3L, "월간 화재 통계", "8월 리포트", "요약문", LocalDateTime.of(2026, 8, 10, 9, 0), null);
+        11L,
+        3L,
+        "월간 화재 통계",
+        "America/New_York",
+        "8월 리포트",
+        "요약문",
+        LocalDateTime.of(2026, 8, 10, 9, 0),
+        null);
   }
 
   @Test
@@ -73,6 +80,7 @@ class ProactiveReportControllerTest {
         .andExpect(jsonPath("$[0].executionId").value(11))
         .andExpect(jsonPath("$[0].jobId").value(3))
         .andExpect(jsonPath("$[0].jobName").value("월간 화재 통계"))
+        .andExpect(jsonPath("$[0].jobTimezone").value("America/New_York"))
         .andExpect(jsonPath("$[0].title").value("8월 리포트"));
   }
 

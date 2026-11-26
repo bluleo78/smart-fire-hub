@@ -34,13 +34,25 @@ export const TIMEZONE_OPTIONS: TimezoneOption[] = [
   { value: 'UTC', stdAbbr: 'UTC', stdOffsetMinutes: 0 },
 ];
 
+/** 시간대별 longOffset 형식기 캐시 — 목록 행마다 Intl.DateTimeFormat 을 새로 만드는 비용을 피한다. 생성 실패는 담지 않는다. */
+const offsetFormatterCache = new Map<string, Intl.DateTimeFormat>();
+
+function getOffsetFormatter(timeZone: string): Intl.DateTimeFormat {
+  let formatter = offsetFormatterCache.get(timeZone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat('en-US', { timeZone, timeZoneName: 'longOffset' });
+    offsetFormatterCache.set(timeZone, formatter);
+  }
+  return formatter;
+}
+
 /**
  * 시간대의 그 시각 UTC 시차(분)를 Intl 로 구한다. 'longOffset' 은 「GMT-04:00」·「GMT+05:30」·「GMT」(0) 꼴이다.
  * 해석하지 못하면 null — 부르는 쪽이 표준시로 대신한다.
  */
 export function utcOffsetMinutes(timeZone: string, at: Date): number | null {
   try {
-    const part = new Intl.DateTimeFormat('en-US', { timeZone, timeZoneName: 'longOffset' })
+    const part = getOffsetFormatter(timeZone)
       .formatToParts(at)
       .find((p) => p.type === 'timeZoneName')?.value;
     if (!part) return null;

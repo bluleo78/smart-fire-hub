@@ -87,6 +87,8 @@ export function createReport(overrides?: Partial<ReportListItem>): ReportListIte
     title: '8월 화재 통계 리포트',
     summary: '8월 화재 건수는 전월 대비 12% 감소했습니다.',
     completedAt: '2026-08-10T09:00:00',
+    // 리포트 목록 시각은 행의 작업 시간대로 보인다(WD-1101)
+    jobTimezone: 'Asia/Seoul',
     ...overrides,
   };
 }

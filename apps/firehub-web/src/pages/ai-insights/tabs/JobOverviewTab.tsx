@@ -31,8 +31,8 @@ import { useCronPreview } from '@/hooks/queries/useCronPreview';
 import { cronTooFrequentMessage } from '@/lib/cron-frequency';
 import { cronToLabel } from '@/lib/cron-label';
 import { getExecutionDisplayStatus } from '@/lib/error-classifier';
-import { formatDate, getStatusBadgeVariant, getStatusLabel, parseUtcDate } from '@/lib/formatters';
-import { formatNextRunWithZone } from '@/lib/next-run';
+import { getStatusBadgeVariant, getStatusLabel, parseUtcDate } from '@/lib/formatters';
+import { formatInstantInZone, formatNextRunWithZone } from '@/lib/next-run';
 import { hasVisibleText } from '@/lib/text-rules';
 import { describeTimezone, TIMEZONE_OPTIONS } from '@/lib/timezone-data';
 import {
@@ -313,7 +313,11 @@ export default function JobOverviewTab({
               // 실제 동작인 "기본 형식"으로 명시한다 (#364)
               value={job.templateName ?? <span className="text-muted-foreground">기본 형식</span>}
             />
-            <ReadonlyCard label="생성일" value={formatDate(job.createdAt)} />
+            <ReadonlyCard
+              label="생성일"
+              // 작업 시간대+약어로 보인다(WD-1101) — 브라우저 시간대면 다른 날·시각으로 읽힌다
+              value={formatInstantInZone(job.createdAt, job.timezone)}
+            />
             <ReadonlyCard
               label="활성 여부"
               value={
@@ -373,7 +377,7 @@ export default function JobOverviewTab({
                  formatDate 는 브라우저 시간대·이름 없이 보여 UTC 브라우저에선 KST 작업의 실행이 다른 날·시각으로 읽혔다. */
               <ReadonlyCard
                 label="마지막 실행"
-                value={formatNextRunWithZone(parseUtcDate(job.lastExecutedAt), job.timezone)}
+                value={formatInstantInZone(job.lastExecutedAt, job.timezone)}
               />
             )}
           </div>
