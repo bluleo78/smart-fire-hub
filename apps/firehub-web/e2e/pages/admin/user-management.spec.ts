@@ -7,6 +7,7 @@ import {
 } from '../../fixtures/admin.fixture';
 import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { holdApi } from '../../fixtures/hold-api';
 import { expectTableErrorAlert } from '../../fixtures/table-error-alert';
 import {
   expectLongValueTruncated,
@@ -448,6 +449,66 @@ test.describe('사용자 관리 페이지', () => {
     // PUT API payload 검증 — active: false 가 전달되어야 한다 (현재 isActive=true → 반전)
     const req = await capture.waitForRequest();
     expect(req.payload).toMatchObject({ active: false });
+  });
+
+  // WD-1168: 요청 중 스위치는 disabled 가 아니라 busy 다 — 고대비에서 GrayText 로 깜빡이지 않고
+  // 토글을 무시해 요청은 한 번만 나간다(WD-1150·WD-511 과 같은 방식).
+  test('요청 중인 활성 스위치는 disabled 가 아니고 aria-busy 이며 토글을 무시한다 (WD-1168)', async ({ authenticatedPage: page }) => {
+    await setupUserDetailMocks(page, 1);
+    const held = await holdApi(page, 'PUT', '/api/v1/users/1/active', 200, { id: 1, isActive: false });
+    await page.goto('/admin/users/1');
+
+    const toggle = page.getByRole('switch');
+    // 옆 라벨은 Label 요소로 찾는다 — 「정지」라는 글자는 닫히는 확인 창의 「정지」 버튼과 겹쳐 strict-mode 충돌을 낸다
+    const statusLabel = page.locator('label').filter({ hasText: /^(활성|정지)$/ });
+    await expect(toggle).toBeChecked();
+    await expect(statusLabel).toHaveText('활성');
+    await toggle.click();
+    await page.getByRole('alertdialog').getByRole('button', { name: '정지' }).click();
+    // 확인 창이 사라질 때까지 기다린다 — 닫힘 오버레이(z-50, 200ms)가 남아 있으면 아래 스위치 클릭이 오버레이에 먹힌다
+    await expect(page.getByRole('alertdialog')).toHaveCount(0);
+
+    // 요청 중: busy 속성만 있고 disabled 는 없다
+    await expect(toggle).toHaveAttribute('aria-busy', 'true');
+    await expect(toggle).toHaveAttribute('aria-disabled', 'true');
+    await expect(toggle, '요청 중 스위치가 disabled 로 바뀌었다 (WD-1168)').not.toHaveAttribute('disabled');
+    // 요청한 값을 바로 보인다(낙관) — 스위치와 옆 라벨이 같은 값을 가리킨다
+    await expect(toggle).toHaveAttribute('data-state', 'unchecked');
+    await expect(statusLabel).toHaveText('정지');
+
+    // 토글 무시 — 클릭·Enter 둘 다 요청을 더 만들지 않는다(핸들러 조기 return 이 막는다).
+    // aria-disabled=true 를 Playwright 이 「비활성」으로 보므로 보통 click() 은 enabled 대기에서 멈춘다 — force 로 보낸다.
+    await toggle.click({ force: true });
+    await toggle.press('Enter');
+    await page.waitForTimeout(300);
+    expect(held.requests, '요청 중 토글이 요청을 더 만들었다 (WD-1168)').toHaveLength(1);
+    // 두 번 누른 뒤에도 확인 창이 다시 뜨지 않았다
+    await expect(page.getByRole('alertdialog')).toHaveCount(0);
+
+    held.release();
+    await expect(toggle).not.toHaveAttribute('aria-busy');
+    // 서버가 응답한 값(비활성)이 화면에 반영됐다
+    await expect(toggle).toHaveAttribute('data-state', 'unchecked');
+  });
+
+  // WD-1168: 요청이 실패하면 낙관 값이 남지 않고 원래(서버) 상태로 돌아온다.
+  test('활성 스위치 요청이 실패하면 원래 상태로 돌아온다 (WD-1168)', async ({ authenticatedPage: page }) => {
+    await setupUserDetailMocks(page, 1);
+    const held = await holdApi(page, 'PUT', '/api/v1/users/1/active', 500, { message: 'boom' });
+    await page.goto('/admin/users/1');
+
+    const toggle = page.getByRole('switch');
+    const statusLabel = page.locator('label').filter({ hasText: /^(활성|정지)$/ });
+    await toggle.click();
+    await page.getByRole('alertdialog').getByRole('button', { name: '정지' }).click();
+    await expect(page.getByRole('alertdialog')).toHaveCount(0);
+    await expect(toggle).toHaveAttribute('data-state', 'unchecked'); // 요청한 값(낙관)
+    await expect(statusLabel, '요청 중 라벨이 스위치와 갈렸다 (WD-1168)').toHaveText('정지');
+
+    held.release();
+    await expect(toggle, '실패 후 낙관 값이 화면에 남았다 (WD-1168)').toHaveAttribute('data-state', 'checked');
+    await expect(statusLabel).toHaveText('활성');
+    await expect(toggle).not.toHaveAttribute('aria-busy');
   });
 
   // WD-816: 행에서 button 역할을 빼고(표 행 의미 유지) 이름 칸 링크가 키보드·보조기기 진입점이 된다

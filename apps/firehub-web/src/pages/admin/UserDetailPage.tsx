@@ -94,6 +94,8 @@ function UserDetailView() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSavingRoles, setIsSavingRoles] = useState(false);
   const [isTogglingActive, setIsTogglingActive] = useState(false);
+  /** 요청한 활성 값 — 요청이 끝나기 전에 스위치에 바로 보여 낙관 상태를 만든다(WD-1168). 실패하면 null 로 되돌아 서버 값을 쓴다. */
+  const [pendingActive, setPendingActive] = useState<boolean | null>(null);
   // 비활성화 확인 다이얼로그 표시 상태 — 활성→비활성 방향일 때만 열린다
   const [isDeactivateDialogOpen, setIsDeactivateDialogOpen] = useState(false);
   // 역할 전체 해제 확인 다이얼로그 표시 상태 — "역할 저장" 시점에 선택된 역할이 0개일 때만 열린다 (#512)
@@ -268,6 +270,8 @@ function UserDetailView() {
    * 자기 자신의 계정은 비활성화할 수 없다.
    */
   const handleToggleActive = async () => {
+    // 요청 중 토글 무시 — WD-1168. disabled 를 쓰지 않으므로 진입이 막히지 않는다(클릭·Enter 모두 여기서 걸린다).
+    if (isTogglingActive) return;
     if (!user) return;
     // 자기 자신의 멤버십 정지 차단 (#73)
     if (currentUser?.id === user.id && user.isActive) {
@@ -275,6 +279,8 @@ function UserDetailView() {
       return;
     }
     setIsTogglingActive(true);
+    // 요청한 값을 바로 보여 낙관 상태로 만든다 — 응답을 기다리는 동안 스위치·라벨이 같은 값을 가리키게(WD-1168)
+    setPendingActive(!user.isActive);
     try {
       await usersApi.setUserActive(user.id, { active: !user.isActive });
       if (!isMounted()) {
@@ -290,6 +296,8 @@ function UserDetailView() {
       if (!isMounted()) return;
       if (!leaveIfMemberGone(error)) handleApiError(error, '상태 변경에 실패했습니다.');
     } finally {
+      // 낙관 값은 여기서 정리한다 — 실패면 null 로 되돌아 서버 값을 다시 보고, 성공은 위 setUser 값으로 이어진다(한 프레임에 배치 반영)
+      setPendingActive(null);
       setIsTogglingActive(false);
     }
   };
@@ -299,6 +307,8 @@ function UserDetailView() {
    * 활성화 방향(비활성→활성)일 때는 즉시 API를 호출한다. (#50)
    */
   const handleSwitchChange = () => {
+    // 요청 중 토글 무시 — 확인 창을 띄우지 않게(WD-1168)
+    if (isTogglingActive) return;
     if (!user) return;
     if (user.isActive) {
       // 활성 → 비활성: 파괴적 액션이므로 확인 다이얼로그 표시
@@ -331,6 +341,9 @@ function UserDetailView() {
   }
 
   if (!user) return null;
+
+  // 요청 중에는 요청한 값을, 그 밖에는 서버 값을 보인다 — 스위치와 옆 라벨이 같은 값을 가리키게(WD-1168).
+  const shownActive = isTogglingActive && pendingActive !== null ? pendingActive : user.isActive;
 
   // 정지·제거 잠금 사유(자기 자신/OWNER/마지막 활성 ADMIN/비 ADMIN 이 ADMIN 대상 — WD-277) — 표시용 안내이며 최종 판정은 서버
   const suspendLock = memberLockReason(user, currentUser?.id, '정지', isCallerAdmin);
@@ -365,8 +378,9 @@ function UserDetailView() {
             <span>{formatDateShort(user.createdAt)}</span>
             <span className="text-muted-foreground">상태</span>
             <span className="inline-flex items-center gap-2">
-              {/* 목록과 같은 멤버십 상태 표기(활성/정지, WD-2) + 전역 계정 비활성 배지(WD-3). */}
-              <Badge variant={user.isActive ? 'success' : 'secondary'}>{user.isActive ? '활성' : '정지'}</Badge>
+              {/* 목록과 같은 멤버십 상태 표기(활성/정지, WD-2) + 전역 계정 비활성 배지(WD-3).
+                  요청 중에도 스위치·라벨과 같은 값을 보이게 한다(WD-1168). */}
+              <Badge variant={shownActive ? 'success' : 'secondary'}>{shownActive ? '활성' : '정지'}</Badge>
               {user.accountActive === false && <AccountDisabledBadge />}
             </span>
           </div>
@@ -435,13 +449,18 @@ function UserDetailView() {
               ) : (
                 <Switch
                   id={activeSwitchId}
-                  checked={user.isActive}
+                  checked={shownActive}
                   onCheckedChange={handleSwitchChange}
-                  disabled={isTogglingActive}
+                  // 요청 중에는 disabled 를 쓰지 않는다 — 고대비에서 GrayText 로 깜빡여 상태가 바뀐 것처럼 읽힌다(WD-1150·WD-1168).
+                  // 진짜 비활성(정지 잠금)은 위 suspendLock 갈래의 disabled 가 담당한다.
+                  aria-busy={isTogglingActive || undefined}
+                  aria-disabled={isTogglingActive || undefined}
+                  // 요청 중임을 색이 아니라 커서로만 알린다(불투명도·GrayText 없음)
+                  className="aria-busy:cursor-progress"
                   aria-label="이 워크스페이스에서 활성"
                 />
               )}
-              <Label htmlFor={activeSwitchId}>{user.isActive ? '활성' : '정지'}</Label>
+              <Label htmlFor={activeSwitchId}>{shownActive ? '활성' : '정지'}</Label>
             </div>
             <p className="text-[13px] text-muted-foreground">
               끄면 이 워크스페이스에만 접근할 수 없습니다. 다른 워크스페이스와 계정 자체는 영향 없음.
