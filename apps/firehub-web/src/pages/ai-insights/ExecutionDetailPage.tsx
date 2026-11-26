@@ -175,9 +175,16 @@ function ExecutionDetailContent({ jobIdNum, executionIdNum }: { jobIdNum: number
     ? reportBodyState(htmlError, rawHtml, sections.length > 0)
     : null;
 
-  // 차단 403(등급 차단·권한) 여부 — 요약 카드와 수치 출처 경고 배너를 함께 감춘다(WD-1177 「안내만」).
+  // 본문 표시를 판정하기 전(HTML 조회가 아직 끝나지 않은) 여부 — 로딩 표시와 요약 감춤에 쓴다(WD-1177 리뷰 후속).
+  const bodyPending = execution.status === 'COMPLETED' && htmlPending;
+
+  // 차단 403(등급 차단·권한) 여부 — 요약·수치 배너 감춤(hideResultContent)의 한 갈래다(WD-1177 「안내만」).
   // 둘 다 result 에서 나온 리포트 내용이라, 열 수 없다는 안내만 남기고 403 앞에서 감춰야 한다.
   const isBlocked403 = bodyState?.state === 'level-blocked' || bodyState?.state === 'forbidden';
+
+  // 요약·수치 배너를 감출 때 — 403 확정 전(HTML 조회 중)에도 함께 감춘다(WD-1177 리뷰 후속 ①).
+  // htmlPending 동안 보였다가 403 이 확정되면 내용이 사라지므로, 열 수 있을 때가 확인되기 전까지는 감춘다.
+  const hideResultContent = bodyPending || isBlocked403;
 
   // 실패·건너뜀 카드 분류 (WD-191) — 서버는 의도된 건너뜀(작업 주인 정지·권한 없음·워크스페이스 정지)도 FAILED 로 남기므로
   // 사유 문구로 가려낸다. 건너뜀이면 상태 뱃지도 「실패」(빨강) 대신 「건너뜀」(중립)으로 보여 카드와 어긋나지 않게 한다.
@@ -297,9 +304,10 @@ function ExecutionDetailContent({ jobIdNum, executionIdNum }: { jobIdNum: number
 
       {/* 출처를 확인하지 못한 수치 경고 — 요약 카드 위에 둔다(WD-767).
           정적 안내이므로 InlineBanner 기본 role=status/aria-live 를 role=note 로 덮어쓴다.
-          차단 403 때는 요약과 함께 감춘다 — 배너가 담는 수치·문맥도 result 의 리포트 내용이라
-          「열 수 없습니다」 안내만 남기는 완료 기준(WD-1177 「안내만」)을 넘기면 안 된다. */}
-      {!isBlocked403 && numberCheck && (
+          차단 403 때는 요약과 함께, 그 확정 전(HTML 조회 중)도 함께 감춘다(hideResultContent) —
+          배너가 담는 수치·문맥도 result 의 리포트 내용이라 「열 수 없습니다」 안내만 남기는
+          완료 기준(WD-1177 「안내만」)을 넘기면 안 되고, 403 앞에서 보였다가 사라지면 안 되기 때문이다. */}
+      {!hideResultContent && numberCheck && (
         <InlineBanner
           variant="warning"
           role="note"
@@ -332,14 +340,32 @@ function ExecutionDetailContent({ jobIdNum, executionIdNum }: { jobIdNum: number
           HTML 리포트(rawHtml) 유무와 무관하게 항상 렌더한다 (#363).
           이전에는 rawHtml 분기 안에만 있어서, htmlContent 없이 sections만 있는
           폴백 경로에서는 AI가 만든 총평이 화면 어디에도 나오지 않았다.
-          단, 차단 403(등급 차단·권한)일 때는 수치 경고 배너와 함께 요약까지 감춘다 — 안내만 보이는 완료 기준(WD-1177). */}
-      {execution.status === 'COMPLETED' && summary && !isBlocked403 && (
+          단, 차단 403(등급 차단·권한)과 그 확정 전(HTML 조회 중)은 수치 경고 배너와 함께 요약까지 감춘다 —
+          안내만 보이는 완료 기준(WD-1177)과 「보였다가 403 에서 사라지는 내용 없음」(리뷰 후속 ①). */}
+      {summary && !hideResultContent && (
         // WD-755: 요약은 아래 리포트와 갈라지는 영역 면이라 알파 없는 단색 bg-muted(§1-7 — /50 은 상태 표시에만)
         <div className="rounded-lg border bg-muted p-6" data-testid="execution-summary">
           <h2 className="text-sm font-semibold mb-3">요약</h2>
           <div className={PROSE_CLASSES}>
             <ReactMarkdown remarkPlugins={REMARK_PLUGINS}>{summary}</ReactMarkdown>
           </div>
+        </div>
+      )}
+
+      {/* 본문 표시를 판정하기 전(HTML 조회 중) — 본문 자리가 빈칸이지 않게 로딩 표시 (WD-1177 리뷰 후속 ②).
+          이전에는 bodyState 가 null 인 동안 아무것도 안 그려져 본문 자리가 빈칸이었고(요청이 멈추면 계속 빈칸),
+          그 아래 어떤 상태도 안내되지 않았다. 판정이 끝나는 동안만 스피너를 보여 진행을 알린다.
+          role=status·aria-live=polite — 상태를 알리는 임시 영역이라 screen reader 에도 시작·끝을 말해 준다
+          (ARIA 4.1.3 status message). */}
+      {bodyPending && (
+        <div
+          className="flex items-center justify-center gap-2 rounded-lg border bg-card p-6 text-muted-foreground"
+          data-testid="execution-report-loading"
+          role="status"
+          aria-live="polite"
+        >
+          <Loader2 className="h-5 w-5 animate-spin" />
+          <span className="text-sm">리포트를 불러오는 중...</span>
         </div>
       )}
 

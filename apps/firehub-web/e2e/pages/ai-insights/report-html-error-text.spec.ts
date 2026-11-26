@@ -4,6 +4,7 @@ import { createJob, createJobExecution, createMessage, createReport } from '../.
 import { setupJobListMocks, setupNotificationPanelMocks, setupReportViewerMocks } from '../../fixtures/ai-insight.fixture';
 import { mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
+import { holdApi } from '../../fixtures/hold-api';
 
 /**
  * 리포트 HTML 조회 오류 안내 E2E (WD-1098·WD-1177)
@@ -405,9 +406,74 @@ test.describe('리포트 HTML 조회 오류 안내 (WD-1098)', () => {
     await expect(page.getByTestId('execution-report-html-error')).toHaveText(HTML_MISSING, { timeout: 15000 });
   });
 
+  // ── WD-1177 리뷰 후속 ① — 403 확정 전(HTML 로딩 중)에도 요약·수치 배너를 감춘다 ──
+  test('실행 상세 — 느린 HTML 403 에서 요약·수치 배너가 처음부터 보이지 않는다 (WD-1177)', async ({
+    authenticatedPage: page,
+  }) => {
+    await mockDetail(page, 403, '현재 보안 등급으로 열 수 없는 리포트입니다', 'REPORT_SECURITY_LEVEL_BLOCKED', {
+      execution: createJobExecution({
+        id: 5,
+        jobId: 1,
+        status: 'COMPLETED',
+        result: {
+          summary: '이번 주 화재 출동 12건',
+          numberCheck: { checked: true, unverifiedTotal: 1, unverified: [{ text: '12건', context: '리포트 요약' }] },
+        },
+      }),
+    });
+    // html 응답을 붙잡아 403 확정 전(로딩 중) 화면을 관찰한다 — delayMs 는 느린 CI 에서 확인 전에 응답이 와 버릴 수
+    // 있어 쓰지 않는다(hold-api 주석, WD-637). 나중에 등록한 holdApi 가 mockDetail 이 먼저 건 즉시 403 목을 덮어쓴다.
+    const held = await holdApi(page, 'GET', '/api/v1/proactive/jobs/1/executions/5/html', 403, {
+      status: 403,
+      error: 'Error',
+      message: '현재 보안 등급으로 열 수 없는 리포트입니다',
+      code: 'REPORT_SECURITY_LEVEL_BLOCKED',
+    });
+    await page.goto('/ai-insights/jobs/1/executions/5');
+
+    // 로딩 표시가 뜬 = HTML 응답 오기 전 창임을 먼저 확정해, 「그 시점에 세어 0」 가짜 통과를 막는다(WD-1177 리뷰)
+    await expect(page.getByTestId('execution-report-loading')).toBeVisible();
+    // 403 확정 전이라도 result 요약·수치 배너는 감춰져 있다 — 보였다가 403 에서 사라지면 안 된다
+    await expect(page.getByTestId('execution-summary')).toHaveCount(0);
+    await expect(page.getByTestId('number-check-banner')).toHaveCount(0);
+
+    // 응답을 풀어 403 확정 — 안내만, 요약·배너는 처음부터 끝까지 없다(로딩 표시도 치운다)
+    held.release();
+    await expect(page.getByTestId('execution-report-level-blocked')).toBeVisible({ timeout: 15000 });
+    await expect(page.getByTestId('execution-report-loading')).toHaveCount(0);
+    await expect(page.getByTestId('execution-summary')).toHaveCount(0);
+    await expect(page.getByTestId('number-check-banner')).toHaveCount(0);
+  });
+
+  // ── WD-1177 리뷰 후속 ② — 느린 HTML 동안 본문 자리가 빈칸이 아니고, 응답이 오면 본문이 그려진다 ──
+  test('실행 상세 — 느린 HTML 로딩 표시 후 본문 iframe 이 그려진다 (WD-1177)', async ({ authenticatedPage: page }) => {
+    await mockDetail(page, 404, HTML_MISSING, undefined, {
+      execution: createJobExecution({
+        id: 5,
+        jobId: 1,
+        status: 'COMPLETED',
+        result: { summary: '이번 주 화재 출동 12건' },
+      }),
+    });
+    // html 200 을 붙잡아 로딩 중 화면을 시간에 기대지 않고 만든다 — 나중에 등록한 목이 이긴다(holdApi 도
+    // mockDetail 이 먼저 건 404 목을 덮어쓴다). delayMs 는 느린 CI 에서 응답이 확인 전에 와 버릴 수 있어 쓰지 않는다.
+    const held = await holdApi(page, 'GET', '/api/v1/proactive/jobs/1/executions/5/html', 200, CACHED_HTML);
+    await page.goto('/ai-insights/jobs/1/executions/5');
+
+    // 로딩 중 — 본문 자리에 로딩 표시가 있고(빈칸 아님), 아직 iframe 은 없다
+    await expect(page.getByTestId('execution-report-loading')).toBeVisible();
+    await expect(page.getByTestId('execution-summary')).toHaveCount(0);
+    await expect(page.locator('iframe')).toHaveCount(0);
+
+    // 응답을 풀면 로딩 표시가 없어지고 HTML 본문이 그려진다(요약도 함께 보인다)
+    held.release();
+    await expect(page.locator('iframe')).toHaveCount(1, { timeout: 15000 });
+    await expect(page.getByTestId('execution-report-loading')).toHaveCount(0);
+    await expect(page.getByTestId('execution-summary')).toBeVisible();
+  });
+
   // ── WD-1177 — 캐시된 HTML 뒤 재조회가 403 이면 권한 안내만 — 캐시가 안내를 덮지 않는다 ──
   test('모달 — 캐시된 HTML 뒤 재조회가 403 이면 권한 안내만 보인다 (WD-1177)', async ({ authenticatedPage: page }) => {
-    const CACHED_HTML = '<html><body>리포트 본문</body></html>';
     // staleTime(30초) 을 넘겨 재조회를 유도하기 위한 가짜 시계 — 앱 캐시 설정은 건드리지 않는다
     await page.clock.install();
     await openReportModal(
@@ -453,22 +519,11 @@ test.describe('리포트 HTML 조회 오류 안내 (WD-1098)', () => {
   test('뷰어 — 캐시된 HTML 뒤 재조회가 403 이면 권한 안내만 보이고 iframe 이 없다 (WD-1177)', async ({
     authenticatedPage: page,
   }) => {
-    const CACHED_HTML = '<html><body>리포트 본문</body></html>';
     const report = createReport({ jobId: 1, executionId: 1 });
     // staleTime(30초) 을 넘겨 재조회를 유도하기 위한 가짜 시계 — 앱 캐시 설정은 건드리지 않는다
     await page.clock.install();
-    await mockApi(page, 'GET', '/api/v1/proactive/reports', [report]);
-    await mockApi(page, 'GET', '/api/v1/proactive/jobs', [createJob({ id: report.jobId })]);
-    await setupReportViewerMocks(page, report.jobId, report.executionId, CACHED_HTML);
-
-    // 목록 → 뷰어 앱 안 이동 — 먼저 캐시 HTML 이 iframe 으로 보인다(전제)
-    await page.goto('/ai-insights/reports?from=list');
-    await page.getByText(report.title).click();
-    await expect(page.locator('iframe')).toHaveCount(1);
-
-    // 뒤로 목록으로 나간다 — 앱 안 이동이라 캐시가 남아 재진입 때 재조회가 일어난다(새로 읽기면 캐시가 비어 403 이 첫 응답이 된다)
-    await page.getByRole('button', { name: '뒤로' }).click();
-    await expect(page).toHaveURL(/\/ai-insights\/reports\?from=list$/);
+    // 캐시 HTML 확보 → 뒤로 나가기 — 목록→뷰어 준비는 공용 도우미를 쓴다(복붙 제거, WD-1177 리뷰 후속 ③)
+    await openViewerThenLeave(page, report);
 
     // 같은 html 경로를 403 으로 다시 등록 — 나중에 등록한 목이 이긴다
     await mockApi(
