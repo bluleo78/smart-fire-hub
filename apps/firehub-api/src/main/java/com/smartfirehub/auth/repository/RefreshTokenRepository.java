@@ -28,9 +28,9 @@ public interface RefreshTokenRepository {
    * 잰다. 두 노드의 기본 시간대가 어긋나면 5초 유예가 몇 시간씩 벌어져, 유예 밖의 재사용(탈취)까지 관용하거나 그 반대가 된다. 이 열을 쓰고 읽는
    * 자리가 **여기 하나**로 모여 있으니 기준을 한 곳에 고정한다.
    *
-   * <p>왜 DB 시각(CURRENT_TIMESTAMP) 대신 UTC 인스턴트인가: 네 폐기 경로(jOOQ 1 · MyBatis 3)가 전부 애플리케이션에서 값을 만들어
-   * 바인딩하고, DB 는 이 열을 스스로 쓰지 않는다. 값을 만드는 쪽을 한 곳으로 모으는 편이 문장별 {@code CURRENT_TIMESTAMP} 를 넣는 것보다
-   * 적다. UTC 로 두면 배포 환경의 시간대·서머타임에도 값이 그대로이고, JDBC 는 {@code LocalDateTime} 를 벽시계 그대로 왕복한다
+   * <p>왜 DB 시각(CURRENT_TIMESTAMP) 대신 UTC 인스턴트인가: 폐기 경로는 구현마다 넷(jOOQ 4 · MyBatis 4 — 회전·패밀리·웹 평면·전체 폐기)이고
+   * 전부 애플리케이션에서 값을 만들어 바인딩하며, DB 는 이 열을 스스로 쓰지 않는다. 값을 만드는 쪽을 한 곳으로 모으는 편이 문장별
+   * {@code CURRENT_TIMESTAMP} 를 넣는 것보다 적다. UTC 로 두면 배포 환경의 시간대·서머타임에도 값이 그대로이고, JDBC 는 {@code LocalDateTime} 를 벽시계 그대로 왕복한다
    * ({@code RefreshTokenRepositoryContractTest#expiresAt_roundTripsAsWallClock}).
    *
    * <p>**이 값을 쓰는 자리와 유예를 잴 자리({@code RefreshTokenRotation#withinGrace})는 항상 이것을 써야 한다** — 한쪽만 바꾸면 유예

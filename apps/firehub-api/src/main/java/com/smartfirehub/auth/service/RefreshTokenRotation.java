@@ -99,16 +99,20 @@ public class RefreshTokenRotation {
    * <p>비교 기준은 {@link RefreshTokenRepository#revokedAtNow()} — 폐기를 찍는 시각과 같은 시계다(WD-1141 반려 3차 5). 노드마다 기본
    * 시간대가 다르면 5초 유예가 몇 시간씩 벌어진다.
    *
-   * <p>아래 한도({@code revokedAt <= now})는 **위쪽**도 막는다: 폐기 시각이 미래로 찍혀 있으면(시계 어긋남·잘못 적힌 값) 유예 밖 재사용까지
-   * 무한히 관용해 패밀리 폐기가 영원히 미뤄진다. 유예는 "방금 전에 폐기됐는지"만 묻는 창이므로 미래 값은 애초에 유예로 세지 않는다.
+   * <p>아래 한도({@code revokedAt <= now + GRACE_WINDOW})는 **위쪽**도 막는다: 폐기 시각이 크게 미래로 찍혀 있으면(잘못 적힌 값) 유예 밖
+   * 재사용까지 무한히 관용해 패밀리 폐기가 영원히 미뤄진다. 다만 유예를 잴 때와 폐기를 찍을 때가 다른 노드의 시계라 {@code now} 에 바로 대면, 시계가
+   * 앞선 쪽이 찍은 폐기 시각이 유예 밖으로 밀려 정상 재제시까지 탈취로 몰린다 — 그래서 한도에 {@link #GRACE_WINDOW} 만큼의 시계 여유를 둔다.
+   * 여유까지 넘는 미래 값은 애초에 유예로 세지 않는다.
    */
   private boolean withinGrace(String tokenHash) {
     LocalDateTime now = RefreshTokenRepository.revokedAtNow();
     LocalDateTime windowStart = now.minus(GRACE_WINDOW);
+    // 시계 여유: 폐기를 찍은 노드의 시계가 이쪽보다 앞서 있어도 유예로 세지 않게 막지 않는다(5초를 넘는 미래 값은 그대로 밖).
+    LocalDateTime windowEnd = now.plus(GRACE_WINDOW);
     return refreshTokenRepository
         .findRevokedAt(tokenHash)
         .filter(revokedAt -> !revokedAt.isBefore(windowStart))
-        .filter(revokedAt -> !revokedAt.isAfter(now))
+        .filter(revokedAt -> !revokedAt.isAfter(windowEnd))
         .isPresent();
   }
 
