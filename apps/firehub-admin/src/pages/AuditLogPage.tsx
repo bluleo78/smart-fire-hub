@@ -51,6 +51,14 @@ const ACTION_LABELS: Record<string, string> = {
 };
 
 /**
+ * 테넌트 표기 한 곳(WD-1180) — 이름이 있으면 "이름 (slug)", 이름 키가 없는 옛 행은 slug 만.
+ * 저장소 확인·재발급, 멤버 추가·역할 부여, 소유권 이전이 모두 이 표기를 쓴다.
+ */
+function tenantLabelOf(m: { tenantSlug: string; tenantName?: unknown }): string {
+  return typeof m.tenantName === 'string' ? `${m.tenantName} (${m.tenantSlug})` : m.tenantSlug;
+}
+
+/**
  * 대상: 계정 조치는 metadata.targetUsername, 테넌트 생명주기는 "이름 (slug)"(WD-12 — 숫자 id 는 운영자에게 의미가 없다),
  * 둘 다 없으면 resourceId, 그것도 없으면 '-'.
  * WD-1158: 소유권 이전(OWNER_TRANSFER)은 "옛1, 옛2 → 새 · 테넌트", 옛 소유자가 없던 테넌트의 복구 지정은 "→ 새 · 테넌트",
@@ -60,14 +68,6 @@ const ACTION_LABELS: Record<string, string> = {
  * tenantName 이 없는 옛 행은 slug 만 보인다.
  * 해당 키가 없는 옛 행은 기존 표기(resourceId 등) 그대로.
  */
-/**
- * 테넌트 표기 한 곳(WD-1180) — 이름이 있으면 "이름 (slug)", 이름 키가 없는 옛 행은 slug 만.
- * 저장소 확인·재발급, 멤버 추가·역할 부여, 소유권 이전이 모두 이 표기를 쓴다.
- */
-function tenantLabelOf(m: { tenantSlug: string; tenantName?: unknown }): string {
-  return typeof m.tenantName === 'string' ? `${m.tenantName} (${m.tenantSlug})` : m.tenantSlug;
-}
-
 function targetOf(log: PlatformAuditLogResponse): string {
   const m = log.metadata;
   if (typeof m?.targetUsername === 'string') return m.targetUsername;
