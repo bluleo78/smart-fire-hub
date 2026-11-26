@@ -20,38 +20,47 @@ async function openReportModal(
   execution: ReturnType<typeof createJobExecution>,
   htmlStatus: number,
   htmlMessage: string,
+  code?: string,
 ) {
-  await setupNotificationPanelMocks(page, [
-    createMessage({ jobId: 1, executionId: 3, title: '오류 안내 리포트', read: false }),
-  ]);
-  await setupJobListMocks(page);
   await mockApi(page, 'GET', '/api/v1/proactive/jobs/1/executions/3', execution);
   await mockApi(
     page,
     'GET',
     '/api/v1/proactive/jobs/1/executions/3/html',
-    { status: htmlStatus, error: 'Error', message: htmlMessage },
+    { status: htmlStatus, error: 'Error', message: htmlMessage, ...(code ? { code } : {}) },
     { status: htmlStatus },
   );
+  await openModalViaNotification(page);
+}
 
+/**
+ * 알림 목·작업 목록 목을 건 뒤 알림 패널 → 메시지 → 「리포트 보기」로 모달을 연다.
+ * execution·html 응답은 부르는 쪽이 먼저 건다(오류 응답 모양이 시험마다 달라서).
+ */
+async function openModalViaNotification(page: Page) {
+  await setupNotificationPanelMocks(page, [
+    createMessage({ jobId: 1, executionId: 3, title: '오류 안내 리포트', read: false }),
+  ]);
+  await setupJobListMocks(page);
   await page.goto('/ai-insights/jobs');
   await page.getByRole('button', { name: /AI 인사이트 알림/ }).click();
   await page.getByRole('button', { name: /오류 안내 리포트/ }).click();
   await page.getByRole('button', { name: '리포트 보기' }).click();
 }
 
-/** 실행 상세 페이지용 목 — execution 과 html 오류 응답을 건다. */
+/** 실행 상세 페이지용 목 — execution 과 html 오류 응답을 건다. result 기본값은 섹션이 없는 {} 다. */
 async function mockDetail(
   page: Page,
   htmlStatus: number,
   htmlMessage: string,
   code?: string,
+  result: Record<string, unknown> | null = {},
 ) {
   await mockApi(
     page,
     'GET',
     '/api/v1/proactive/jobs/1/executions/5',
-    createJobExecution({ id: 5, jobId: 1, status: 'COMPLETED', result: {} }),
+    createJobExecution({ id: 5, jobId: 1, status: 'COMPLETED', result }),
   );
   await mockApi(
     page,
@@ -158,5 +167,80 @@ test.describe('리포트 HTML 조회 오류 안내 (WD-1098)', () => {
     await page.goto('/ai-insights/jobs/1/executions/5');
     await expect(page.getByTestId('execution-report-forbidden')).toBeVisible();
     await expect(page.getByText(LOAD_ERROR)).toHaveCount(0);
+  });
+
+  // ── 리뷰 후속 (PR #1436) ──
+  test('모달 — HTML 403(등급 코드 없음)이면 결과가 있어도 마크다운 폴백 없이 권한 안내만 보인다', async ({ authenticatedPage: page }) => {
+    await openReportModal(
+      page,
+      createJobExecution({ id: 3, jobId: 1, status: 'COMPLETED', result: { summary: '이번 주 화재 출동 12건' } }),
+      403,
+      'Forbidden',
+    );
+    const dialog = page.getByRole('dialog').last();
+    await expect(dialog.getByTestId('report-modal-forbidden')).toBeVisible();
+    await expect(dialog.getByText('이번 주 화재 출동 12건')).toHaveCount(0);
+  });
+
+  test('모달 — HTML 403 등급 차단이면 결과가 있어도 마크다운 폴백 없이 등급 안내만 보인다', async ({ authenticatedPage: page }) => {
+    await openReportModal(
+      page,
+      createJobExecution({ id: 3, jobId: 1, status: 'COMPLETED', result: { summary: '이번 주 화재 출동 12건' } }),
+      403,
+      '현재 보안 등급으로 열 수 없는 리포트입니다',
+      'REPORT_SECURITY_LEVEL_BLOCKED',
+    );
+    const dialog = page.getByRole('dialog').last();
+    await expect(dialog.getByTestId('report-modal-level-blocked')).toBeVisible();
+    await expect(dialog.getByText('이번 주 화재 출동 12건')).toHaveCount(0);
+  });
+
+  test('모달 — 실행 조회가 500 이면 HTML 없음 404 보다 실행 조회 오류(고정 문구)를 먼저 보인다', async ({ authenticatedPage: page }) => {
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/proactive/jobs/1/executions/3',
+      { status: 500, error: 'Internal Server Error', message: 'NullPointerException at Y' },
+      { status: 500 },
+    );
+    // HTML 은 없음 404 — 실행(섹션)을 못 읽었으니 「HTML 리포트가 없습니다」로 단정하지 않고 실행 조회 오류를 보여야 한다
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/proactive/jobs/1/executions/3/html',
+      { status: 404, error: 'Not Found', message: HTML_MISSING },
+      { status: 404 },
+    );
+    await openModalViaNotification(page);
+
+    const dialog = page.getByRole('dialog').last();
+    await expect(dialog.getByText(LOAD_ERROR)).toBeVisible({ timeout: 15000 });
+    await expect(dialog.getByText(HTML_MISSING)).toHaveCount(0);
+    await expect(page.getByText('NullPointerException')).toHaveCount(0);
+  });
+
+  test('실행 상세 — 결과가 없는(result null) 완료 실행도 HTML 을 조회해 서버 문구를 보인다', async ({ authenticatedPage: page }) => {
+    // 서버는 결과 없는 실행의 HTML 을 400 「이 실행에는 리포트 결과가 없습니다.」로 거절한다(ProactiveJobController MSG_NO_RESULT)
+    const noResult = '이 실행에는 리포트 결과가 없습니다.';
+    await mockDetail(page, 400, noResult, undefined, null);
+    await page.goto('/ai-insights/jobs/1/executions/5');
+    await expect(page.getByTestId('execution-report-html-error')).toHaveText(noResult);
+  });
+
+  test('모달 — 실행 조회가 등급 차단이면 HTML 이 읽혀도 리포트 없이 등급 안내만 보인다', async ({ authenticatedPage: page }) => {
+    await mockApi(
+      page,
+      'GET',
+      '/api/v1/proactive/jobs/1/executions/3',
+      { status: 403, error: 'Forbidden', message: '현재 보안 등급으로 열 수 없는 리포트입니다', code: 'REPORT_SECURITY_LEVEL_BLOCKED' },
+      { status: 403 },
+    );
+    // HTML 은 (예: 등급이 낮아지기 전 캐시처럼) 읽힌다 — 등급 차단이 먼저라 리포트 본문을 보이지 않아야 한다
+    await mockApi(page, 'GET', '/api/v1/proactive/jobs/1/executions/3/html', '<html><body>기밀 리포트 본문</body></html>');
+    await openModalViaNotification(page);
+
+    const dialog = page.getByRole('dialog').last();
+    await expect(dialog.getByTestId('report-modal-level-blocked')).toBeVisible();
+    await expect(dialog.locator('iframe')).toHaveCount(0);
   });
 });
