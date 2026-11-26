@@ -8,7 +8,7 @@ import path from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
-import { describeProblems, findMigrationProblems, MIGRATION_DIR, migrationVersion } from './check-migration-versions.mjs'
+import { compareTuples, describeProblems, findMigrationProblems, MIGRATION_DIR, MIGRATION_GROUPS, migrationVersion, migrationVersionTuple } from './check-migration-versions.mjs'
 
 const script = path.join(path.dirname(fileURLToPath(import.meta.url)), 'check-migration-versions.mjs')
 
@@ -19,6 +19,14 @@ test('버전 마이그레이션 이름에서만 번호를 꺼낸다', () => {
   assert.equal(migrationVersion('V12_missing_double_underscore.sql'), null)
   assert.equal(migrationVersion('README.md'), null)
   assert.equal(migrationVersion('sub/V230__x.sql'), 230)
+  assert.equal(migrationVersion('V172__blank.java'), 172)
+  assert.equal(migrationVersion('java/V3__x.java'), 3)
+})
+
+test('PG 의 SQL 과 Java 가 같은 번호면 중복, Java 의 정수 아닌 버전도 잡는다', () => {
+  const dup = findMigrationProblems({ head: ['V1__a.sql', 'java/V1__b.java'], fork: [], base: [] })
+  assert.deepEqual(dup.duplicates, [{ version: 1, files: ['V1__a.sql', 'java/V1__b.java'] }])
+  assert.deepEqual(findMigrationProblems({ head: ['java/V2_1__x.java'], fork: [], base: [] }).nonInteger, ['java/V2_1__x.java'])
 })
 
 test('더한 번호가 main 의 최대보다 크고 겹치지 않으면 문제가 없다', () => {
@@ -92,9 +100,10 @@ function repo(t) {
   run('init', '-q', '-b', 'main')
   run('config', 'user.email', 't@t')
   run('config', 'user.name', 't')
-  const add = (name) => {
-    fs.mkdirSync(path.dirname(path.join(dir, MIGRATION_DIR, name)), { recursive: true })
-    fs.writeFileSync(path.join(dir, MIGRATION_DIR, name), 'select 1;\n')
+  // folder 로 다른 묶음의 폴더(Java·Tibero)에도 파일을 더한다 — .java 는 자바 내용으로
+  const add = (name, folder = MIGRATION_DIR) => {
+    fs.mkdirSync(path.dirname(path.join(dir, folder, name)), { recursive: true })
+    fs.writeFileSync(path.join(dir, folder, name), name.endsWith('.java') ? 'class X {}\n' : 'select 1;\n')
     run('add', '-A')
     run('commit', '-qm', name)
   }
@@ -157,4 +166,159 @@ test('CLI: base 가 없거나 읽을 수 없으면 종료 코드 2', (t) => {
   r.add('V1__a.sql')
   assert.equal(r.check().status, 2)
   assert.equal(r.check('nope').status, 2)
+})
+
+const JAVA_DIR = MIGRATION_GROUPS[0].dirs[1].dir
+const TIBERO_DIR = MIGRATION_GROUPS[1].dirs[0].dir
+
+test('CLI: Java 마이그레이션이 main 에 먼저 들어간 같은 번호를 PR 의 SQL 이 더하면 잡는다(WD-1171 재현)', (t) => {
+  const r = repo(t)
+  r.add('V1__a.sql')
+  r.run('checkout', '-q', '-b', 'pr')
+  r.add('V2__pr.sql')
+  r.run('checkout', '-q', 'main')
+  r.add('V2__main.java', JAVA_DIR)
+
+  const bad = r.check('main', 'pr')
+  assert.equal(bad.status, 1)
+  assert.match(bad.stderr, /\[PG\] main 의 최대 번호 V2 이하: V2__pr\.sql/)
+
+  r.run('merge', '-q', '--no-edit', 'pr')
+  const merged = r.check('HEAD^1')
+  assert.equal(merged.status, 1)
+  assert.match(merged.stderr, /\[PG\] 번호 중복 V2: V2__pr\.sql, java\/V2__main\.java/)
+})
+
+test('CLI: Tibero 폴더의 같은 번호도 잡는다', (t) => {
+  const r = repo(t)
+  r.add('V1__a.sql', TIBERO_DIR)
+  r.run('checkout', '-q', '-b', 'pr')
+  r.add('V2__pr.sql', TIBERO_DIR)
+  r.run('checkout', '-q', 'main')
+  r.add('V2__main.sql', TIBERO_DIR)
+
+  const bad = r.check('main', 'pr')
+  assert.equal(bad.status, 1)
+  assert.match(bad.stderr, /\[Tibero\] main 의 최대 번호 V2 이하: V2__pr\.sql/)
+})
+
+test('CLI: PG 와 Tibero 의 같은 번호(짝)는 통과한다', (t) => {
+  const r = repo(t)
+  r.add('V1__a.sql')
+  r.run('checkout', '-q', '-b', 'pr')
+  r.add('V2__x.sql')
+  r.add('V2__x.sql', TIBERO_DIR)
+  const ok = r.check('main', 'pr')
+  assert.equal(ok.status, 0, ok.stderr)
+})
+
+test('CLI: base 에 Java 폴더가 없어도 PR 이 더한 Java 마이그레이션은 통과한다', (t) => {
+  const r = repo(t)
+  r.add('V1__a.sql')
+  r.run('checkout', '-q', '-b', 'pr')
+  r.add('V2__a.java', JAVA_DIR)
+  const ok = r.check('main', 'pr')
+  assert.equal(ok.status, 0, ok.stderr)
+})
+
+const DATASTORE_DIR = MIGRATION_GROUPS[2].dirs[0].dir
+
+test('소수점 버전 튜플 파서·비교(Tibero)', () => {
+  assert.deepEqual(migrationVersionTuple('V173.1__x.sql'), [173, 1])
+  assert.deepEqual(migrationVersionTuple('V2__x.java'), [2])
+  assert.equal(migrationVersionTuple('V1_2__x.sql'), null)
+  assert.equal(migrationVersionTuple('V1.x__x.sql'), null)
+  assert.ok(compareTuples([173, 1], [173]) > 0)
+  assert.ok(compareTuples([173, 1], [173, 2]) < 0)
+  const r = findMigrationProblems({ head: ['V2__a.sql', 'V2.1__b.sql', 'V1_2__c.sql'], fork: [], base: [] }, true)
+  assert.deepEqual(r.nonInteger, ['V1_2__c.sql'])
+})
+
+test('PG 의 V3.1 은 여전히 정수가 아닌 버전으로 거절한다', () => {
+  assert.deepEqual(findMigrationProblems({ head: ['V3.1__x.sql'], fork: [], base: [] }).nonInteger, ['V3.1__x.sql'])
+})
+
+test('CLI: Tibero 의 V2.1 후속은 base 의 V2 위에 더하면 통과한다', (t) => {
+  const r = repo(t)
+  r.add('V2__a.sql', TIBERO_DIR)
+  r.run('checkout', '-q', '-b', 'pr')
+  r.add('V2.1__x.sql', TIBERO_DIR)
+  const ok = r.check('main', 'pr')
+  assert.equal(ok.status, 0, ok.stderr)
+})
+
+test('CLI: 두 브랜치가 같은 Tibero V2.1 을 더하면 머지 전엔 최대 이하, 머지 뒤엔 중복으로 잡는다', (t) => {
+  const r = repo(t)
+  r.add('V2__a.sql', TIBERO_DIR)
+  r.run('checkout', '-q', '-b', 'pr')
+  r.add('sub/V2.1__pr.sql', TIBERO_DIR)
+  r.run('checkout', '-q', 'main')
+  r.add('V2.1__main.sql', TIBERO_DIR)
+  const bad = r.check('main', 'pr')
+  assert.equal(bad.status, 1)
+  assert.match(bad.stderr, /\[Tibero\] main 의 최대 번호 V2\.1 이하: sub\/V2\.1__pr\.sql/)
+  r.run('merge', '-q', '--no-edit', 'pr')
+  const merged = r.check('HEAD^1')
+  assert.equal(merged.status, 1)
+  assert.match(merged.stderr, /\[Tibero\] 번호 중복 V2\.1: /)
+})
+
+test('CLI: base 최대가 V2 인데 Tibero V1.1 을 더하면 최대 이하로 잡는다', (t) => {
+  const r = repo(t)
+  r.add('V1__a.sql', TIBERO_DIR)
+  r.run('checkout', '-q', '-b', 'pr')
+  r.add('V1.1__x.sql', TIBERO_DIR)
+  r.run('checkout', '-q', 'main')
+  r.add('V2__b.sql', TIBERO_DIR)
+  const bad = r.check('main', 'pr')
+  assert.equal(bad.status, 1)
+  assert.match(bad.stderr, /\[Tibero\] main 의 최대 번호 V2 이하: V1\.1__x\.sql \(V1\.1\)/)
+})
+
+test('CLI: DataStore 폴더의 같은 번호도 잡는다', (t) => {
+  const r = repo(t)
+  r.add('V1__a.sql', DATASTORE_DIR)
+  r.run('checkout', '-q', '-b', 'pr')
+  r.add('V2__pr.sql', DATASTORE_DIR)
+  r.run('checkout', '-q', 'main')
+  r.add('V2__main.sql', DATASTORE_DIR)
+  const bad = r.check('main', 'pr')
+  assert.equal(bad.status, 1)
+  assert.match(bad.stderr, /\[DataStore\] main 의 최대 번호 V2 이하: V2__pr\.sql/)
+})
+
+test('CLI: Java 하위 패키지의 마이그레이션이 SQL 과 같은 번호면 잡는다(재귀 스캔)', (t) => {
+  const r = repo(t)
+  r.add('V1__a.sql')
+  r.add('V3__x.sql')
+  r.add('sub/V3__x.java', JAVA_DIR)
+  const bad = r.check('HEAD')
+  assert.equal(bad.status, 1)
+  assert.match(bad.stderr, /\[PG\] 번호 중복 V3: V3__x\.sql, java\/sub\/V3__x\.java/)
+})
+
+test('CLI: Tibero V173.0 은 V173 과 같은 버전이라 base 최대 이하로 잡고, V2 와 V2.0 은 중복이다', (t) => {
+  const r = repo(t)
+  r.add('V173__a.sql', TIBERO_DIR)
+  r.run('checkout', '-q', '-b', 'pr')
+  r.add('V173.0__x.sql', TIBERO_DIR)
+  const bad = r.check('main', 'pr')
+  assert.equal(bad.status, 1)
+  assert.match(bad.stderr, /\[Tibero\] main 의 최대 번호 V173 이하: V173\.0__x\.sql/)
+  const dup = findMigrationProblems({ head: ['V2__a.sql', 'V2.0__b.sql'], fork: [], base: [] }, true)
+  assert.deepEqual(dup.duplicates, [{ version: '2', files: ['V2.0__b.sql', 'V2__a.sql'] }])
+})
+
+test('CLI: Tibero 폴더의 .java 는 Flyway 가 실행하지 않으니 세지 않는다', (t) => {
+  const r = repo(t)
+  r.add('V5__a.sql', TIBERO_DIR)
+  r.run('checkout', '-q', '-b', 'pr')
+  r.add('V5__x.java', TIBERO_DIR)
+  const ok = r.check('main', 'pr')
+  assert.equal(ok.status, 0, ok.stderr)
+})
+
+test('Tibero 의 정수 아닌 버전 안내는 허용 형식(소수점)을 말한다', () => {
+  const r = findMigrationProblems({ head: ['V1_2__x.sql'], fork: [], base: [] }, true)
+  assert.deepEqual(describeProblems(r, 'main', true), ['정수가 아닌 버전(V<정수>(.<정수>)__ 만 쓴다): V1_2__x.sql'])
 })
