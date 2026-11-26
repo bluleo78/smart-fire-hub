@@ -693,12 +693,55 @@ test.describe('홈 페이지', () => {
       const header = await card.locator('[data-slot="card-header"]').boundingBox();
       expect(header!.height).toBeLessThanOrEqual(30);
     }
-    // 눌렀을 때 제 주소로 이동한다
+    // 눌렀을 때 제 주소로 이동한다 — 가운데뿐 아니라 32px 박스의 위·아래 끝 가까이를 눌러도 이동해야
+    // 「박스는 컸는데 끝은 안 눌린다」 회귀(글자 줄만 눌리는 경우)를 잡는다
     for (const { link, href } of targets) {
+      // (WD-1115 후속) 앞 대상의 마지막 클릭으로 다른 주소에 와 있으므로, 박스를 재기 전에 홈으로 돌아와 링크가 보이길 기다린다
       await page.goto('/');
-      await link.click();
-      await expect(page).toHaveURL(new RegExp(`${href}$`));
+      await expect(link).toBeVisible();
+      const box = (await link.boundingBox())!;
+      const positions = [
+        { x: box.width / 2, y: box.height / 2 },
+        { x: box.width / 2, y: 2 },
+        { x: box.width / 2, y: box.height - 2 },
+      ];
+      for (const position of positions) {
+        await page.goto('/');
+        await expect(link).toBeVisible();
+        await link.click({ position });
+        await expect(page).toHaveURL(new RegExp(`${href}$`));
+      }
     }
+  });
+
+  /**
+   * 회귀: WD-1115 후속 — 카드 머리줄이 줄바꿈(제목 아래로 「총 N개 · 전체 보기」가 내려옴)될 때
+   * 늘린 클릭 영역(-my-1.5)이 윗줄 제목 위로 2px 겹쳤다(줄 사이 간격 4px < 늘어난 6px).
+   * 두 칸 그리드가 좁아지는 폭을 훑어 줄바꿈이 실제로 일어난 폭에서 링크 박스가 제목 박스와 겹치지 않는지 본다.
+   */
+  test('머리줄이 줄바꿈돼도 「전체 보기」 클릭 영역이 제목과 겹치지 않는다 (WD-1115 후속)', async ({
+    authenticatedPage: page,
+  }) => {
+    let wrappedSeen = 0;
+    for (const width of [640, 700, 760, 820, 900, 1024, 1100]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto('/');
+      for (const name of ['최근 대시보드', '최근 데이터셋']) {
+        const card = page.locator('[data-slot="card"]').filter({ has: page.getByRole('heading', { name }) });
+        const link = card.getByRole('link', { name: '전체 보기' });
+        await expect(link).toBeVisible();
+        const title = (await card.getByRole('heading', { name }).boundingBox())!;
+        const box = (await link.boundingBox())!;
+        // 링크가 제목보다 아래 줄로 내려갔으면 줄바꿈된 것
+        if (box.y + box.height / 2 > title.y + title.height) {
+          wrappedSeen += 1;
+          // 링크 박스 윗변이 제목 아랫변 이상이어야 한다(겹침 0) — 소수 픽셀 반올림 오차로 흔들리지 않게 0.5px 여유
+          expect(box.y).toBeGreaterThanOrEqual(title.y + title.height - 0.5);
+        }
+      }
+    }
+    // 줄바꿈 폭을 하나도 못 만났다면 이 시험이 아무것도 검사하지 않은 것이다
+    expect(wrappedSeen).toBeGreaterThan(0);
   });
 
   /**

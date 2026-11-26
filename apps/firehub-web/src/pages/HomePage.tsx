@@ -55,6 +55,8 @@ const HEALTH_METRIC_BUTTON_CLASS =
  * 글자 크기 그대로면 박스 높이가 16~17px 뿐이라 디자인 가이드의 최소 클릭 타깃 32×32 에 못 미친다.
  * min-h-8/min-w-8 로 박스 자체를 32px 이상으로 키우고(글자 크기·색은 그대로, 가운데 정렬),
  * -my-1.5 음수 세로 여백으로 늘어난 만큼(위·아래 6px)을 되돌려 카드 머리줄·빈 상태 문장의 줄 높이는 늘지 않게 한다.
+ * 머리줄이 줄바꿈되면 링크 박스가 윗줄 제목 위로 6px 파고드므로, 머리줄 행 간격(gap-y)을 같은 6px(gap-y-1.5)로 둬
+ * 겹침을 없앤다 — 한 줄일 때는 행 간격이 쓰이지 않아 머리줄 높이는 그대로다.
  */
 const HOME_LINK_HIT_AREA = 'inline-flex min-h-8 min-w-8 items-center justify-center -my-1.5';
 
@@ -467,7 +469,7 @@ export default function HomePage() {
           {/* 최근 대시보드 */}
           <Card className="py-2 gap-1 flex flex-col card-hover">
             <CardHeader className="px-3 pb-0">
-              <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+              <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5">
                 <CardTitle className="text-sm font-semibold flex items-center gap-2">
                   <LayoutDashboard className="h-4 w-4 text-muted-foreground" />
                   {/* h3: 최근 사용(h2) 아래 하위 섹션 헤딩 (WD-1071) */}
@@ -521,7 +523,7 @@ export default function HomePage() {
           {/* 최근 데이터셋 */}
           <Card className="py-2 gap-1 flex flex-col card-hover">
             <CardHeader className="px-3 pb-0">
-              <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+              <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5">
                 <CardTitle className="text-sm font-semibold flex items-center gap-2">
                   <Database className="h-4 w-4 text-muted-foreground" />
                   <h3 className="text-sm font-semibold m-0">최근 데이터셋</h3>
