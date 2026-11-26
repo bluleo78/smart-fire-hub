@@ -75,6 +75,16 @@ public final class TextRules {
    */
   public static final String HAS_TEXT_OR_EMPTY = "(?U)(?s)(\\A\\z|" + HAS_VISIBLE + ")";
 
+  /**
+   * NUL(U+0000)이 하나도 없는 값(WD-1125) — {@code @Pattern(regexp = NO_NUL, message = NUL_MESSAGE)} 로 쓴다(null 은 통과).
+   * PostgreSQL text 는 0x00 을 거부해, 막지 않으면 DB 까지 가서야 어느 칸인지 모르는 400 이 났다. 검증 단계에서 칸 오류({@code
+   * errors.<칸>})로 막고 서비스는 부르지 않는다. 탭·줄바꿈·CRLF 는 정상 값이라 통과한다. 백슬래시+u+16진수 표기는 정규식 엔진이 해석한다.
+   */
+  public static final String NO_NUL = "[^\\u0000]*";
+
+  /** {@link #NO_NUL} 을 어겼을 때의 문구(WD-1125) — 모든 DTO 가 같은 문구를 쓰게 한 곳에 둔다. */
+  public static final String NUL_MESSAGE = "보이지 않는 NUL 문자(U+0000)는 넣을 수 없습니다.";
+
   /** {@link #HAS_TEXT} 를 한 번 컴파일한 정규식 — 매번 컴파일하지 않도록 static final 로 둔다. */
   private static final Pattern HAS_TEXT_PATTERN = Pattern.compile(HAS_TEXT);
 

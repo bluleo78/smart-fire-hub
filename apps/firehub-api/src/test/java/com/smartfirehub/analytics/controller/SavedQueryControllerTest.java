@@ -16,6 +16,7 @@ import com.smartfirehub.global.security.JwtAuthenticationFilter;
 import com.smartfirehub.global.security.JwtProperties;
 import com.smartfirehub.global.security.JwtTokenProvider;
 import com.smartfirehub.global.validation.DescriptionLimits;
+import com.smartfirehub.global.validation.TextRules;
 import com.smartfirehub.permission.service.PermissionService;
 import com.smartfirehub.securitylevel.access.Clearance;
 import com.smartfirehub.securitylevel.access.ClearanceResolver;
@@ -861,5 +862,94 @@ class SavedQueryControllerTest {
         org.mockito.ArgumentCaptor.forClass(UpdateSavedQueryRequest.class);
     verify(savedQueryService).update(eq(1L), captor.capture(), eq(1L));
     assertThat(captor.getValue().folder()).isEmpty();
+  }
+
+  /**
+   * WD-1125: 이름·폴더·SQL 에 NUL(U+0000)이 섞이면 400 필드 오류이고 서비스는 부르지 않는다. 칸이 둘 이상이면 각 칸 키가 모두 errors 에
+   * 있다. 수정은 NUL 칸만 보내도(나머지 null) 그 칸이 걸린다.
+   */
+  @Test
+  void savedQuery_nulInFields_returns400FieldErrors() throws Exception {
+    String nul = TextRules.NUL_MESSAGE;
+    // 이름·폴더 동시
+    mockMvc
+        .perform(
+            post("/api/v1/analytics/queries")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"name\":\"a\\u0000\",\"sqlText\":\"select 1\",\"folder\":\"f\\u0000\"}"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.name").value(nul))
+        .andExpect(jsonPath("$.errors.folder").value(nul));
+    // 칸마다 하나만 걸리는 경우
+    String[][] createCases = {
+      {"description", "{\"name\":\"쿼리\",\"description\":\"설\\u0000명\",\"sqlText\":\"select 1\"}"},
+      {"sqlText", "{\"name\":\"쿼리\",\"sqlText\":\"select 1\\u0000\"}"},
+    };
+    for (String[] c : createCases) {
+      mockMvc
+          .perform(
+              post("/api/v1/analytics/queries")
+                  .header("Authorization", "Bearer test-token")
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(c[1]))
+          .andExpect(status().isBadRequest())
+          .andExpect(jsonPath("$.errors." + c[0]).value(nul));
+    }
+    verify(savedQueryService, never()).create(any(), anyLong());
+
+    // 수정: 칸마다 하나만 보내도 그 칸 키로 걸린다
+    String[][] updateCases = {
+      {"name", "{\"name\":\"a\\u0000\"}"},
+      {"description", "{\"description\":\"a\\u0000\"}"},
+      {"sqlText", "{\"sqlText\":\"select 1\\u0000\"}"},
+      {"folder", "{\"folder\":\"f\\u0000\"}"},
+    };
+    for (String[] c : updateCases) {
+      mockMvc
+          .perform(
+              put("/api/v1/analytics/queries/1")
+                  .header("Authorization", "Bearer test-token")
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(c[1]))
+          .andExpect(status().isBadRequest())
+          .andExpect(jsonPath("$.errors." + c[0]).value(nul));
+    }
+    verify(savedQueryService, never()).update(anyLong(), any(), anyLong());
+  }
+
+  /**
+   * WD-1125: NUL 만인 이름은 HAS_TEXT 와 NO_NUL 을 둘 다 어긴다. ValidationErrorCollector 가 문구 순서로 하나를 고르므로, 어느 문구가 이기는지
+   * 여기서 고정한다(NUL_MESSAGE).
+   */
+  @Test
+  void savedQuery_nulOnlyName_returnsNulMessage() throws Exception {
+    mockMvc
+        .perform(
+            post("/api/v1/analytics/queries")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"name\":\"\\u0000\",\"sqlText\":\"select 1\"}"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errors.name").value(TextRules.NUL_MESSAGE));
+    verify(savedQueryService, never()).create(any(), anyLong());
+  }
+
+  /** WD-1125 반-목표: 탭·CRLF 가 든 정상 SQL 은 NO_NUL 에 걸리지 않고 기존처럼 201 이다. */
+  @Test
+  void savedQuery_tabAndCrlfSql_stillCreated() throws Exception {
+    when(savedQueryService.create(any(CreateSavedQueryRequest.class), anyLong()))
+        .thenReturn(sampleQuery());
+    mockMvc
+        .perform(
+            post("/api/v1/analytics/queries")
+                .header("Authorization", "Bearer test-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    objectMapper.writeValueAsString(
+                        new CreateSavedQueryRequest(
+                            "쿼리", "설명", "select\t1\r\nfrom t", null, null, false))))
+        .andExpect(status().isCreated());
   }
 }

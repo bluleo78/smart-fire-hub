@@ -150,4 +150,16 @@ class TextRulesTest {
     assertThat(TextRules.textOrNull(" 설명 ")).isEqualTo(" 설명 "); // 글자가 있으면 다듬지 않고 그대로
     assertThat(TextRules.textOrNull("a\u200B")).isEqualTo("a\u200B");
   }
+
+  /** WD-1125 — NO_NUL 은 NUL 이 끝·단독·가운데 어디에 있든 거절하고, 탭·CRLF·한글·빈 문자열은 통과시킨다. */
+  @Test
+  void noNul_rejectsNulAnywhere_allowsOthers() {
+    Pattern p = Pattern.compile(TextRules.NO_NUL);
+    for (String bad : new String[] {"a\u0000", "\u0000", "a\u0000b"}) {
+      assertThat(p.matcher(bad).matches()).as("거절: %s", bad.replace("\u0000", "<NUL>")).isFalse();
+    }
+    for (String ok : new String[] {"", "select\t1\r\nfrom t", "한글 이름"}) {
+      assertThat(p.matcher(ok).matches()).as("통과: %s", ok).isTrue();
+    }
+  }
 }

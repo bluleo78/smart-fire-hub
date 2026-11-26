@@ -8,12 +8,15 @@ import jakarta.validation.constraints.Size;
 
 /** 저장 쿼리 생성 요청. */
 public record CreateSavedQueryRequest(
+    // WD-1125: NUL(U+0000) 문자는 검증 단계에서 칸 오류로 막는다(이유는 TextRules.NO_NUL)
     // WD-1081: @NotBlank 가 못 거르는 NBSP 류를 HAS_TEXT 로 막아 수정 DTO 와 같은 판정(이유는 TextRules)
     @NotBlank(message = TextRules.NAME_BLANK_MESSAGE)
         @Size(max = 200)
         @Pattern(regexp = TextRules.HAS_TEXT, message = TextRules.NAME_BLANK_MESSAGE)
+        @Pattern(regexp = TextRules.NO_NUL, message = TextRules.NUL_MESSAGE)
         String name,
     @Size(max = DescriptionLimits.MAX_LENGTH, message = DescriptionLimits.QUERY_TOO_LONG)
+        @Pattern(regexp = TextRules.NO_NUL, message = TextRules.NUL_MESSAGE)
         String description,
     // WD-1081: SQL 도 같다 — @NotBlank 는 NBSP 류를 못 거르므로 @Pattern(HAS_TEXT) 가 메운다
     @NotBlank(message = TextRules.SQL_BLANK_MESSAGE)
@@ -21,11 +24,13 @@ public record CreateSavedQueryRequest(
         @Size(
             max = CreateSavedQueryRequest.SQL_MAX_LENGTH,
             message = CreateSavedQueryRequest.SQL_TOO_LONG_MESSAGE)
+        @Pattern(regexp = TextRules.NO_NUL, message = TextRules.NUL_MESSAGE)
         String sqlText,
     Long datasetId,
     // WD-1086: 선택 필드라 null·"" 은 그대로("" 는 「폴더 없음」 신호, WD-197) — 공백만·NBSP·Cf 만인 값만 거절한다
     @Size(max = 100)
         @Pattern(regexp = TextRules.HAS_TEXT_OR_EMPTY, message = TextRules.FOLDER_BLANK_MESSAGE)
+        @Pattern(regexp = TextRules.NO_NUL, message = TextRules.NUL_MESSAGE)
         String folder,
     boolean isShared) {
 
