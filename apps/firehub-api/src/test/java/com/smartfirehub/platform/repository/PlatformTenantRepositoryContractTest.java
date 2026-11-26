@@ -60,6 +60,18 @@ public abstract class PlatformTenantRepositoryContractTest extends AccessContrac
   }
 
   @Test
+  @DisplayName("findLabelById 는 멤버 수 집계 없이 slug·이름만 읽고, 없으면 empty (WD-1180)")
+  void findLabelById_readsSlugAndName() {
+    String slug = prefix + "-lb";
+    long id = insertTenant(slug, prefix + " 이름");
+
+    var label = call(() -> repository().findLabelById(id)).orElseThrow();
+    assertThat(label.slug()).isEqualTo(slug);
+    assertThat(label.name()).isEqualTo(prefix + " 이름");
+    assertThat(call(() -> repository().findLabelById(-1L))).isEmpty();
+  }
+
+  @Test
   @DisplayName("같은 slug 를 다시 넣으면 두 DB 모두 DuplicateKeyException")
   void insertTenant_duplicateSlug() {
     String slug = prefix + "-dup";

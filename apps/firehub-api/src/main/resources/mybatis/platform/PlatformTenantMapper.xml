@@ -68,6 +68,18 @@
     SELECT COUNT(*) FROM tenant WHERE id = #{tenantId}
   </select>
 
+  <!-- 감사 details 용 가벼운 조회(WD-1180) — 멤버 수 서브쿼리 없이 slug·이름만. -->
+  <resultMap id="tenantLabel" type="com.smartfirehub.platform.dto.TenantLabel">
+    <constructor>
+      <arg column="slug" javaType="java.lang.String"/>
+      <arg column="name" javaType="java.lang.String"/>
+    </constructor>
+  </resultMap>
+
+  <select id="selectLabelById" resultMap="tenantLabel">
+    SELECT t.slug, t.name FROM tenant t WHERE t.id = #{tenantId}
+  </select>
+
   <select id="selectAll" resultMap="tenantSummary">
     SELECT <include refid="summaryColumns"/> FROM tenant t ORDER BY t.id
   </select>

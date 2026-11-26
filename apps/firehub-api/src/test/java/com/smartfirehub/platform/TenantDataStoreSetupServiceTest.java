@@ -629,11 +629,8 @@ class TenantDataStoreSetupServiceTest {
 
   /** WD-1180: 콘솔 「대상」 열이 숫자 id 대신 "이름 (slug)" 를 보이고 대상 필터가 slug·이름으로 찾도록 감사 details 에 둘을 싣는다. */
   private void givenTenantSummary() {
-    when(tenantRepository.findById(TID))
-        .thenReturn(
-            Optional.of(
-                new com.smartfirehub.platform.dto.TenantSummaryResponse(
-                    TID, "acme", "에이콤", "ACTIVE", 1, java.time.LocalDateTime.now())));
+    when(tenantRepository.findLabelById(TID))
+        .thenReturn(Optional.of(new com.smartfirehub.platform.dto.TenantLabel("acme", "에이콤")));
   }
 
   @Test
@@ -655,6 +652,55 @@ class TenantDataStoreSetupServiceTest {
         .containsEntry("tenantSlug", "acme")
         .containsEntry("tenantName", "에이콤")
         .containsEntry("result", "READY");
+    // 멤버 수까지 세는 무거운 findById 는 쓰지 않는다 — 가벼운 slug·이름 조회만.
+    verify(tenantRepository, never()).findById(anyLong());
+  }
+
+  /** WD-1180 리뷰: 테넌트 조회는 저장소 행 잠금 전에 끝나야 한다(잠금 안에서 쿼리를 늘리지 않는다). */
+  @Test
+  void verify_tenantLookup_happensBeforeRowLock_wd1180() {
+    givenStore(DataStoreProvisionMode.SCRIPT, TenantDataStoreStatus.PENDING);
+    givenTenantSummary();
+    givenReversibleDecrypt();
+    when(repository.findAccounts(TID)).thenReturn(storedAccounts());
+    when(tester.verifyAccounts(any(), any(), any())).thenReturn(checks());
+
+    service.verify(TID, 9L);
+
+    InOrder order = Mockito.inOrder(tenantRepository, repository);
+    order.verify(tenantRepository).findLabelById(TID);
+    order.verify(repository).lockForUpdate(TID);
+  }
+
+  @Test
+  void reissueScript_tenantLookup_happensBeforeRowLock_wd1180() {
+    givenStore(DataStoreProvisionMode.SCRIPT, TenantDataStoreStatus.PENDING);
+    givenTenantSummary();
+    givenFakeEncryption();
+
+    service.reissueScript(TID, 9L);
+
+    InOrder order = Mockito.inOrder(tenantRepository, repository);
+    order.verify(tenantRepository).findLabelById(TID);
+    order.verify(repository).lockForUpdate(TID);
+    verify(tenantRepository, never()).findById(anyLong());
+  }
+
+  /** 테넌트를 못 찾아도 감사는 막지 않는다 — tenantId 만 싣는다. */
+  @Test
+  void reissueScript_tenantNotFoundByLabel_detailsCarryOnlyTenantId_wd1180() {
+    givenStore(DataStoreProvisionMode.SCRIPT, TenantDataStoreStatus.PENDING);
+    when(tenantRepository.findLabelById(TID)).thenReturn(Optional.empty());
+    givenFakeEncryption();
+
+    service.reissueScript(TID, 9L);
+
+    @SuppressWarnings("unchecked")
+    ArgumentCaptor<Map<String, Object>> details = ArgumentCaptor.forClass(Map.class);
+    verify(auditRecorder)
+        .record(
+            eq(9L), eq("TENANT_DATA_STORE_SCRIPT_REISSUE"), any(), any(), any(), details.capture());
+    assertThat(details.getValue()).containsEntry("tenantId", TID).doesNotContainKey("tenantSlug");
   }
 
   @Test

@@ -58,13 +58,19 @@ public class PlatformAuditRecorder {
   }
 
   /**
-   * 테넌트 대상 감사가 공유하는 details 의 앞머리(테넌트 id·slug)를 새 맵으로 만든다(WD-1132 — 멤버 추가·소유자 지정이 같은 모양을 쓴다). 키 순서
-   * 유지를 위해 LinkedHashMap.
+   * 테넌트 대상 감사가 공유하는 details 의 앞머리(테넌트 id·slug·이름)를 새 맵으로 만든다(WD-1132 — 멤버 추가·소유자 지정이 같은 모양을 쓴다).
+   * 이름(WD-1180)을 함께 남겨 콘솔 「대상」 열이 「이름 (slug)」로 보이고 대상 필터가 이름으로도 찾게 한다. 키 순서 유지를 위해 LinkedHashMap.
    */
   static Map<String, Object> tenantAuditDetails(long tenantId, TenantSummaryResponse tenant) {
+    return tenantAuditDetails(tenantId, tenant.slug(), tenant.name());
+  }
+
+  /** slug·이름만 아는 호출처(저장소 감사의 가벼운 조회, WD-1180)용 — 요약 DTO 판과 같은 모양을 만든다. */
+  static Map<String, Object> tenantAuditDetails(long tenantId, String slug, String name) {
     Map<String, Object> details = new LinkedHashMap<>();
     details.put("tenantId", tenantId);
-    details.put("tenantSlug", tenant.slug());
+    details.put("tenantSlug", slug);
+    details.put("tenantName", name);
     return details;
   }
 }

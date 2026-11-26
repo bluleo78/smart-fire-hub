@@ -1,6 +1,7 @@
 package com.smartfirehub.platform.repository.mybatis;
 
 import com.smartfirehub.global.platformdb.mybatis.PlatformMyBatisRepository;
+import com.smartfirehub.platform.dto.TenantLabel;
 import com.smartfirehub.platform.dto.TenantMemberResponse;
 import com.smartfirehub.platform.dto.TenantSummaryResponse;
 import com.smartfirehub.platform.repository.PlatformTenantRepository;
@@ -56,6 +57,12 @@ public class MyBatisPlatformTenantRepository implements PlatformTenantRepository
   @Override
   public boolean existsById(long tenantId) {
     return mapper.countById(tenantId) > 0;
+  }
+
+  /** slug·이름만 읽는다(멤버 수 집계 없음, WD-1180). */
+  @Override
+  public Optional<TenantLabel> findLabelById(long tenantId) {
+    return Optional.ofNullable(mapper.selectLabelById(tenantId));
   }
 
   @Override
