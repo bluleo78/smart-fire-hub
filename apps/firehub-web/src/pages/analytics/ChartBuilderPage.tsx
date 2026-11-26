@@ -838,13 +838,9 @@ export default function ChartBuilderPage() {
   // 「대시보드에 추가」가 끝난 뒤 가려던 대시보드 경로 — 가드 확인 창에서 「취소」하면(onStay) 추가는 이미 끝났는데
   // 화면만 그대로라 사용자가 결과를 못 본다. 그래서 그 경우에만 「대시보드로 가기」 토스트로 길을 다시 열어 준다.
   // 대시보드 이동이 아닌 가드 취소(뒤로가기 등)에는 경로가 없어 토스트를 띄우지 않는다. 한 번 쓰면 비운다.
+  // (WD-1166) 뒤로가기 창이 열린 중 추가가 끝나면 경로를 기억해 두었다가 「취소」 때 토스트를 띄우고, 「이탈」하면 onLeave 로 지운다
+  // (이탈한 뒤 남은 경로가 나중의 무관한 취소에 토스트를 띄우지 않게).
   const pendingDashboardPathRef = useRef<string | null>(null);
-  // 최신 isDirty — 대화상자는 클릭 때 받은 onNavigate 를 응답(await) 뒤에 부르므로, 클로저의 낡은 isDirty 가 아니라
-  // 그 시점의 값으로 가드가 가로챌지 판정해야 한다(가드 훅도 ref 로 최신 값을 본다). 커밋 직후 갱신해 버려진 렌더가 앞서 바꾸지 않게 한다
-  const isDirtyRef = useRef(false);
-  useLayoutEffect(() => {
-    isDirtyRef.current = isDirty;
-  }, [isDirty]);
   // 아래 requestNavigate 는 훅 반환값이라 onStay 보다 늦게 선언된다 — 토스트 클릭 시점에 최신 래퍼를 부르도록 ref 로 잇는다
   const requestDashboardNavigateRef = useRef<(to: string) => void>(() => {});
   // 「대시보드로 가기」 토스트는 고정 id 를 쓴다 — 다시 띄우면 이전 것을 대체해 하나만 남는다.
@@ -858,6 +854,10 @@ export default function ChartBuilderPage() {
     };
   }, [chartId]);
   const { dialog: unsavedChangesDialog, requestNavigate } = useUnsavedChangesGuard(isDirty, {
+    // (WD-1166) 「이탈」 확정 — 기억해 둔 대시보드 경로를 지운다
+    onLeave: () => {
+      pendingDashboardPathRef.current = null;
+    },
     onStay: () => {
       const path = pendingDashboardPathRef.current;
       pendingDashboardPathRef.current = null;
@@ -873,15 +873,11 @@ export default function ChartBuilderPage() {
       });
     },
   });
-  // 대화상자의 이동 요청 — 경로를 기억한 뒤 가드를 지난다(가드가 꺼져 있으면 경로를 기억하지 않고 바로 이동한다)
+  // 대화상자의 이동 요청 — 먼저 가드를 지나고(requestNavigate), 가로챘을 때(true)만 그 결과로 경로를 기억한다(가드가 꺼져 있으면 기억하지 않고 바로 이동한다)
   const requestDashboardNavigate = useCallback(
     (to: string) => {
-      // 이동을 요청하는 지금의 dirty 로 판단한다(isDirtyRef) — 가드가 꺼져 있으면(미저장 변경 없음) 확인 창 없이 바로
-      // 이동하므로 경로를 기억하지 않는다. 남으면 나중의 무관한 취소에 토스트가 뜬다.
-      // 한계: isDirty 인데 가드가 가로채지 않은 경우(이미 이탈 확정 등)는 훅이 가로챔 여부를 알려 주지 않아 경로가 남을 수 있다.
-      // 훅은 바꾸지 않으므로, 그 경로는 다음 onStay(가드 취소)에서만 쓰이고 한 번 쓰면 비워진다
-      pendingDashboardPathRef.current = isDirtyRef.current ? to : null;
-      requestNavigate(to);
+      // (WD-1166) 가드가 가로챘을 때(true)만 기억한다 — dirty 사본으로 따로 추측하지 않는다. 이미 열린 창이면 훅이 대상을 바꾸지 않는다.
+      pendingDashboardPathRef.current = requestNavigate(to) ? to : null;
     },
     [requestNavigate],
   );
