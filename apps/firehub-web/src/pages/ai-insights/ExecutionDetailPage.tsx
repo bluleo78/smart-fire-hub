@@ -28,7 +28,7 @@ import { isForbiddenError, isNotFoundError, isReportLevelBlocked } from '@/lib/a
 import { classifyExecutionOutcome, getExecutionDisplayStatus } from '@/lib/error-classifier';
 import { formatDuration, getStatusBadgeVariant, getStatusLabel, timeAgo } from '@/lib/formatters';
 import { formatExecutionStartInZone } from '@/lib/next-run';
-import { EXECUTION_NOT_FOUND_NOTICE, getSections, reportHtmlErrorKind } from '@/lib/proactive-utils';
+import { EXECUTION_NOT_FOUND_NOTICE, getSections, reportBodyState } from '@/lib/proactive-utils';
 import { parseRouteId } from '@/lib/route-id';
 
 import { BackButton } from './components/BackButton';
@@ -96,7 +96,7 @@ function ExecutionDetailContent({ jobIdNum, executionIdNum }: { jobIdNum: number
 
   // HTML 리포트 조회 — COMPLETED 상태일 때 활성화. 리포트 보기·모달과 같은 훅·캐시를 쓴다(WD-661)
   // result 가 없어도 조회한다(WD-1098) — 서버의 400 「이 실행에는 리포트 결과가 없습니다.」를 받아 빈 영역 대신 안내를 보인다.
-  const { data: htmlResponse, error: htmlError } = useExecutionHtml(jobIdNum, executionIdNum, {
+  const { data: htmlResponse, error: htmlError, isPending: htmlPending } = useExecutionHtml(jobIdNum, executionIdNum, {
     enabled: execution?.status === 'COMPLETED',
   });
 
@@ -160,15 +160,24 @@ function ExecutionDetailContent({ jobIdNum, executionIdNum }: { jobIdNum: number
   const checkResult = execution.status === 'COMPLETED' ? getNumberCheck(execution.result) : null;
   const numberCheck = checkResult?.checked && checkResult.unverifiedTotal > 0 ? checkResult : null;
 
-  // HTML이 없을 때 마크다운 섹션 폴백용
-  const sections = execution.status === 'COMPLETED' && execution.result && !rawHtml
+  // 마크다운 섹션 폴백용 — 「폴백 내용이 있는가」만 보고 HTML 유무·오류는 섞지 않는다(WD-1177).
+  // html > 폴백 우선순위는 reportBodyState 가 판정하므로 여기서 rawHtml 조건을 뺀다.
+  const sections = execution.status === 'COMPLETED' && execution.result
     ? getSections(execution.result)
     : [];
 
-  // COMPLETED 인데 HTML 도 섹션도 없고 HTML 조회가 오류일 때만 안내 갈래를 정한다 (WD-1098) — 갈래 규칙은 공용 함수 한곳.
-  const htmlErrorKind = execution.status === 'COMPLETED' && !rawHtml && sections.length === 0
-    ? reportHtmlErrorKind(htmlError)
+  // 리포트 본문 표시 상태를 한 곳에서 판정한다 (WD-1177) — 등급 차단 403 → 권한 403 → 내용(html > 폴백 > 문구).
+  // 403(등급 차단·권한)이 캐시된 HTML·요약보다 앞서게 해, 한 화면에서 한 상태만 보이게 한다.
+  // 비완료 실행은 HTML 조회가 켜지지 않으므로 본문 상태를 정하지 않는다 — 스피너 아래에 안내 카드가 뜨지 않게.
+  // HTML 조회가 끝나기 전(로딩 중·조회 꺼짐)에도 정하지 않는다 — 오류도 본문도 없는 시점에
+  // reportBodyState 가 「리포트가 없습니다」 를 내어, 아직 안 나온 결과를 없다고 단정하는 카드가 잠깐 떴다(WD-1177 리뷰).
+  const bodyState = execution.status === 'COMPLETED' && !htmlPending
+    ? reportBodyState(htmlError, rawHtml, sections.length > 0)
     : null;
+
+  // 차단 403(등급 차단·권한) 여부 — 요약 카드와 수치 출처 경고 배너를 함께 감춘다(WD-1177 「안내만」).
+  // 둘 다 result 에서 나온 리포트 내용이라, 열 수 없다는 안내만 남기고 403 앞에서 감춰야 한다.
+  const isBlocked403 = bodyState?.state === 'level-blocked' || bodyState?.state === 'forbidden';
 
   // 실패·건너뜀 카드 분류 (WD-191) — 서버는 의도된 건너뜀(작업 주인 정지·권한 없음·워크스페이스 정지)도 FAILED 로 남기므로
   // 사유 문구로 가려낸다. 건너뜀이면 상태 뱃지도 「실패」(빨강) 대신 「건너뜀」(중립)으로 보여 카드와 어긋나지 않게 한다.
@@ -287,8 +296,10 @@ function ExecutionDetailContent({ jobIdNum, executionIdNum }: { jobIdNum: number
       )}
 
       {/* 출처를 확인하지 못한 수치 경고 — 요약 카드 위에 둔다(WD-767).
-          정적 안내이므로 InlineBanner 기본 role=status/aria-live 를 role=note 로 덮어쓴다. */}
-      {numberCheck && (
+          정적 안내이므로 InlineBanner 기본 role=status/aria-live 를 role=note 로 덮어쓴다.
+          차단 403 때는 요약과 함께 감춘다 — 배너가 담는 수치·문맥도 result 의 리포트 내용이라
+          「열 수 없습니다」 안내만 남기는 완료 기준(WD-1177 「안내만」)을 넘기면 안 된다. */}
+      {!isBlocked403 && numberCheck && (
         <InlineBanner
           variant="warning"
           role="note"
@@ -320,8 +331,9 @@ function ExecutionDetailContent({ jobIdNum, executionIdNum }: { jobIdNum: number
       {/* COMPLETED 요약 섹션 — 마크다운으로 렌더링.
           HTML 리포트(rawHtml) 유무와 무관하게 항상 렌더한다 (#363).
           이전에는 rawHtml 분기 안에만 있어서, htmlContent 없이 sections만 있는
-          폴백 경로에서는 AI가 만든 총평이 화면 어디에도 나오지 않았다. */}
-      {execution.status === 'COMPLETED' && summary && (
+          폴백 경로에서는 AI가 만든 총평이 화면 어디에도 나오지 않았다.
+          단, 차단 403(등급 차단·권한)일 때는 수치 경고 배너와 함께 요약까지 감춘다 — 안내만 보이는 완료 기준(WD-1177). */}
+      {execution.status === 'COMPLETED' && summary && !isBlocked403 && (
         // WD-755: 요약은 아래 리포트와 갈라지는 영역 면이라 알파 없는 단색 bg-muted(§1-7 — /50 은 상태 표시에만)
         <div className="rounded-lg border bg-muted p-6" data-testid="execution-summary">
           <h2 className="text-sm font-semibold mb-3">요약</h2>
@@ -331,8 +343,9 @@ function ExecutionDetailContent({ jobIdNum, executionIdNum }: { jobIdNum: number
         </div>
       )}
 
-      {/* COMPLETED + HTML: HTML 리포트 iframe */}
-      {execution.status === 'COMPLETED' && rawHtml && (
+      {/* 본문 상태가 html — HTML 리포트 iframe (차단 403 이 아닐 때만 들어온다, WD-1177).
+          rawHtml 은 TS 를 위해 다시 좁힌다 — 상태가 html 이면 값이 반드시 있으므로 렌더는 바뀌지 않는다. */}
+      {bodyState?.state === 'html' && rawHtml && (
         <>
           {/* HTML 리포트 영역 — 상단 바에 인쇄/PDF 버튼 + iframe */}
           <div className="rounded-lg border overflow-hidden">
@@ -374,8 +387,8 @@ function ExecutionDetailContent({ jobIdNum, executionIdNum }: { jobIdNum: number
         </>
       )}
 
-      {/* COMPLETED + HTML 없음: 마크다운 섹션 폴백 */}
-      {execution.status === 'COMPLETED' && !rawHtml && sections.length > 0 && (
+      {/* 본문 상태가 fallback — 마크다운 섹션 폴백 (html 보다 우선순위가 낮아 html 이 없을 때만 이 블록이 그려진다, WD-1177) */}
+      {bodyState?.state === 'fallback' && (
         <div className="space-y-4">
           {/* PDF 다운로드 버튼 */}
           <div className="flex justify-end">
@@ -407,20 +420,21 @@ function ExecutionDetailContent({ jobIdNum, executionIdNum }: { jobIdNum: number
         </div>
       )}
 
-      {/* COMPLETED + HTML 도 섹션도 없고 HTML 조회가 오류 — 빈 영역 대신 뷰어와 같은 규칙의 안내 (WD-1098).
-          등급 차단·권한 부족(403)은 전용 안내가 먼저고, 그 밖의 오류만 공용 문구를 쓴다. */}
-      {htmlErrorKind?.kind === 'level-blocked' && (
+      {/* 본문 상태가 안내·문구 — 빈 영역 대신 뷰어와 같은 규칙의 카드 (WD-1098·WD-1177).
+          등급 차단·권한 부족(403)은 전용 안내가 먼저고, 그 밖의 오류만 공용 문구를 쓴다.
+          위 요약·iframe·폴백과 중복으로 그려지지 않는다 — reportBodyState 가 한 상태로 갈랐기 때문이다. */}
+      {bodyState?.state === 'level-blocked' && (
         <ReportLevelBlockedNotice testId="execution-report-level-blocked" />
       )}
-      {htmlErrorKind?.kind === 'forbidden' && (
+      {bodyState?.state === 'forbidden' && (
         <ProactiveReadForbiddenNotice subject="리포트" testId="execution-report-forbidden" />
       )}
-      {htmlErrorKind?.kind === 'message' && (
+      {bodyState?.state === 'message' && (
         <div
           className="rounded-lg border bg-card p-6 text-center"
           data-testid="execution-report-html-error"
         >
-          <p className="text-sm text-muted-foreground">{htmlErrorKind.text}</p>
+          <p className="text-sm text-muted-foreground">{bodyState.text}</p>
         </div>
       )}
     </div>

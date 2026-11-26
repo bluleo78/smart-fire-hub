@@ -17,7 +17,7 @@ import { useExecutionHtml } from '@/hooks/queries/useProactiveMessages';
 import { useJobGoBack } from '@/hooks/useGoBack';
 import { useReportActions } from '@/hooks/useReportActions';
 import { isNotFoundError } from '@/lib/api-error';
-import { reportHtmlErrorKind, reportHtmlErrorText } from '@/lib/proactive-utils';
+import { reportBodyState } from '@/lib/proactive-utils';
 import { parseRouteId } from '@/lib/route-id';
 
 import { BackButton } from './components/BackButton';
@@ -43,22 +43,23 @@ export default function ReportViewerPage() {
   // 목적지는 실행 상세와 같은 규칙(jobBackFallback, WD-671)이다 — 이 화면의 HTML 조회가 성공했으면 작업을 읽을 수 있으니
   // 작업 상세, 아직 모르거나(조회 중·멈춘 요청) 403·404·다른 오류면 리포트 목록. 목적지를 정하려고 작업을 따로 조회하지 않고
   // 버튼도 잠그지 않는다 — 요청이 멈춰도 언제든 리포트 목록으로 돌아갈 수 있다.
+  // 오류가 있으면 캐시 데이터를 목적지 판단에 쓰지 않는다(WD-1177) — 재조회가 403·404 로 실패해 화면이 권한·오류 안내인 동안
+  // 캐시 HTML 을 보고 「작업 상세」로 알리면, 그 안내 화면으로 되돌아가게 된다. 데이터는 남아 있으니 뒤로가기는 여전히 눌린다.
   // 이름은 조회가 끝나지 않은 동안 「리포트 목록」 그대로이고, 성공했을 때만 「작업 상세」로 바뀐다(조회 중에 뒤집히지 않음).
   // 뒤로 가기는 여기서 한 번만 만들고 안내 화면의 「돌아가기」 버튼들에도 넘긴다(WD-667).
-  const { goBack, label: backLabel } = useJobGoBack(parsedJobId, htmlResponse !== undefined);
+  const { goBack, label: backLabel } = useJobGoBack(parsedJobId, htmlResponse !== undefined && !isError);
 
   const rawHtml = htmlResponse?.data ?? null;
-  // 조회 권한 부족(403) — 「리포트를 불러올 수 없습니다」 대신 권한 안내를 보이는 기준 (WD-137). 다시 시도해도 같다.
-  // 리포트 등급 차단(WD-198)은 같은 403 이지만 권한 요청 안내가 아니라 등급 안내다 — 먼저 가른다.
-  const errorKind = isError ? reportHtmlErrorKind(error) : null;
-  const isLevelBlocked = errorKind?.kind === 'level-blocked';
-  const isForbidden = errorKind?.kind === 'forbidden';
   // 404 — 서버는 리포트가 없을 때와 작업 작성자가 아닐 때(받은 사람이 주소로 직접 연 경우)를 똑같이 404 로 숨긴다.
   // 「불러올 수 없습니다」는 일시 오류처럼 읽혀 다시 시도하게 만들므로, 두 경우를 함께 말하는 안내를 보인다 (WD-162).
   const isNotFound = isError && isNotFoundError(error);
-  // 404 화면·오류 화면의 안내 문구 — 규칙은 공용 함수 한 곳에 있다(WD-1098, 모달·실행 상세와 같은 규칙).
-  // 404 는 HTML 없는 실행이면 서버 문구, 그 밖은 WD-162 안내, 400 은 서버 문구, 5xx 등은 고정 문구다 (WD-1088·WD-1096).
-  const errorText = reportHtmlErrorText(error);
+  // 본문에 그릴 것 하나를 한곳에서 고른다(WD-1098·WD-1177) — reportBodyState 한 곳의 판정만 쓴다.
+  // 우선순위: 로딩 > 등급 차단 > 권한 부족(403) > 캐시 HTML > 문구. 403 밖 오류(404·500)는 캐시 HTML 이 이겨,
+  // 이 화면은 마크다운 폴백을 그리지 않으니 hasFallback 은 늘 false 다.
+  // 로딩 중에는 상태를 정하지 않는다 — 오류도 본문도 없는 시점에 「리포트가 없습니다」 가 잠깐 뜨지 않게.
+  const bodyState = isLoading ? null : reportBodyState(isError ? error : null, rawHtml, false);
+  // 인쇄·PDF 를 위한 본문이 있는가 — 안내·오류·빈 상태에서는 누를 내용이 없어 두 버튼을 함께 잠군다(WD-1177).
+  const hasBodyToPrint = bodyState?.state === 'html';
 
   // PDF 다운로드 + 인쇄 공통 훅
   const { handleDownloadPdf, handlePrint, downloading } = useReportActions({
@@ -95,7 +96,7 @@ export default function ReportViewerPage() {
             variant="outline"
             size="sm"
             onClick={handlePrint}
-            disabled={isError || isLoading || !rawHtml}
+            disabled={!hasBodyToPrint}
             className="gap-1.5"
           >
             <Printer className="h-3.5 w-3.5" />
@@ -105,7 +106,7 @@ export default function ReportViewerPage() {
             variant="outline"
             size="sm"
             onClick={handleDownloadPdf}
-            disabled={downloading || isError || isLoading || !rawHtml}
+            disabled={downloading || !hasBodyToPrint}
             className="gap-1.5"
           >
             {downloading ? (
@@ -118,7 +119,7 @@ export default function ReportViewerPage() {
         </div>
       </div>
 
-      {/* 본문 영역 — 상태에 따라 잘못된 요청/로딩/에러/빈 상태/리포트를 렌더링 */}
+      {/* 본문 영역 — bodyState 하나만 그린다(잘못된 요청 / 로딩 / 등급 차단 / 권한 부족 / HTML / 문구) */}
       <div className="flex-1 overflow-hidden">
         {isInvalidParams && (
           <div className="flex flex-col items-center justify-center h-full gap-4 text-muted-foreground">
@@ -135,46 +136,42 @@ export default function ReportViewerPage() {
           </div>
         )}
 
-        {!isInvalidParams && isLevelBlocked && !isLoading && (
+        {/* 본문 상태가 level-blocked — 등급 차단 안내 (WD-198) — 캐시 HTML 과 겹치지 않게 이 안내만 그린다(WD-1177) */}
+        {!isInvalidParams && bodyState?.state === 'level-blocked' && (
           <ReportLevelBlockedNotice testId="report-level-blocked" />
         )}
 
-        {!isInvalidParams && isForbidden && !isLoading && (
+        {/* 본문 상태가 forbidden — 권한 부족(403) 안내 (WD-137·WD-1098) — 캐시 HTML 이 이겨도 안내가 먼저다(WD-1177) */}
+        {!isInvalidParams && bodyState?.state === 'forbidden' && (
           <ProactiveReadForbiddenNotice subject="리포트" testId="report-forbidden" />
         )}
 
-        {!isInvalidParams && isNotFound && !isLoading && (
+        {/* 본문 상태가 html — HTML 리포트 iframe.
+            403(등급 차단·권한)만 이 상태를 막는다 — 404·500 은 캐시 HTML 이 이기므로 오류 블록과 함께 그려지지 않는다(WD-1177). */}
+        {!isInvalidParams && bodyState?.state === 'html' && rawHtml && (
+          <ReportIframe ref={iframeRef} html={rawHtml} />
+        )}
+
+        {/* 본문 상태가 message — 조회 오류 안내 또는 빈 상태 (WD-1096·WD-1098·WD-1177).
+            문구는 reportBodyState 가 정한 값이다(404 서버 문구·WD-162 안내·400 서버 문구·5xx 고정 문구).
+            오류면 돌아가기, 오류가 없는 빈 상태만 「작업 상세 보기」 링크를 보인다. */}
+        {!isInvalidParams && bodyState?.state === 'message' && (
           <div
             className="flex flex-col items-center justify-center h-full gap-4 text-muted-foreground"
-            data-testid="report-not-found"
+            data-testid={isNotFound ? 'report-not-found' : undefined}
           >
-            <p className="text-sm text-center break-keep px-4">{errorText}</p>
-            <BackButton onBack={goBack} />
+            <p className="text-sm text-center break-keep px-4">{bodyState.text}</p>
+            {isError ? (
+              <BackButton onBack={goBack} />
+            ) : (
+              <Button variant="outline" size="sm" asChild>
+                <Link to={`/ai-insights/jobs/${parsedJobId}`}>
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  작업 상세 보기
+                </Link>
+              </Button>
+            )}
           </div>
-        )}
-
-        {!isInvalidParams && isError && !isForbidden && !isLevelBlocked && !isNotFound && !isLoading && (
-          <div className="flex flex-col items-center justify-center h-full gap-4 text-muted-foreground">
-            <p className="text-sm">{errorText}</p>
-            <BackButton onBack={goBack} />
-          </div>
-        )}
-
-        {!isInvalidParams && !isLoading && !isError && !rawHtml && (
-          <div className="flex flex-col items-center justify-center h-full gap-4 text-muted-foreground">
-            <p className="text-sm">리포트가 없습니다.</p>
-            <Button variant="outline" size="sm" asChild>
-              <Link to={`/ai-insights/jobs/${parsedJobId}`}>
-                <ExternalLink className="h-3.5 w-3.5" />
-                작업 상세 보기
-              </Link>
-            </Button>
-          </div>
-        )}
-
-        {/* HTML 리포트를 공통 ReportIframe 컴포넌트로 렌더링 */}
-        {rawHtml && (
-          <ReportIframe ref={iframeRef} html={rawHtml} />
         )}
       </div>
     </div>

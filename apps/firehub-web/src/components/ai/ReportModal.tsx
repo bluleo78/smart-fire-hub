@@ -28,7 +28,7 @@ import { useExecution, useExecutionHtml } from '@/hooks/queries/useProactiveMess
 import { useReportActions } from '@/hooks/useReportActions';
 import { REPORT_LEVEL_BLOCKED_MESSAGE } from '@/lib/api-error';
 import { getStatusBadgeVariant, getStatusLabel, timeAgo } from '@/lib/formatters';
-import { getSections, reportHtmlErrorKind } from '@/lib/proactive-utils';
+import { getSections, reportBodyState } from '@/lib/proactive-utils';
 import { ProactiveReadForbiddenNotice } from '@/pages/ai-insights/components/ProactiveReadForbiddenNotice';
 
 /** ReactMarkdown remark 플러그인 — GFM(테이블, 취소선 등) 지원 */
@@ -68,43 +68,23 @@ export default function ReportModal({ open, onClose, jobId, executionId }: Repor
   const { data: execution, isLoading: metaLoading, error: metaError } = useExecution(jobId, executionId, {
     enabled: open,
   });
-  // 리포트 등급이 작성자의 현재 보안 등급보다 높아 서버가 403 으로 막았는가(WD-198) — 「리포트가 없습니다」 대신 등급 안내를 보인다.
-  // 갈래 우선순위(등급 차단 > 권한 부족)는 공용 분류 함수 한곳에 있다(WD-1098). HTML·메타 어느 쪽 오류든 해당된다.
-  const htmlErrorKind = reportHtmlErrorKind(htmlError);
-  const metaErrorKind = reportHtmlErrorKind(metaError);
-  const levelBlocked = htmlErrorKind?.kind === 'level-blocked' || metaErrorKind?.kind === 'level-blocked';
-
-  // 조회 권한 부족(403, 등급 차단 아님) — 일시 오류처럼 읽히는 「불러올 수 없습니다」 대신 권한 안내를 보인다(WD-137·WD-1098).
-  const forbidden = !levelBlocked && (htmlErrorKind?.kind === 'forbidden' || metaErrorKind?.kind === 'forbidden');
-
   const rawHtml = htmlResponse?.data ?? null;
   // 마크다운 폴백에 보일 섹션 — result 가 있어도 섹션이 없으면(예: {}) 폴백은 그려지지 않으므로 빈 상태 판단은 섹션 기준이다(WD-1098).
   const sections = execution?.result ? getSections(execution.result) : [];
   const isLoading = htmlLoading || metaLoading;
 
-  // 본문에 그릴 것 하나를 한곳에서 고른다(WD-1098) — 블록마다 조건을 따로 두면 안내와 리포트·폴백이 한 본문에 겹쳤다.
-  // 우선순위: 로딩 > 등급 차단(캐시된 HTML 이 있어도) > HTML 리포트 > 권한 부족 > 마크다운 폴백 > 빈 상태.
-  const bodyKind: 'loading' | 'level-blocked' | 'html' | 'forbidden' | 'fallback' | 'empty' = isLoading
-    ? 'loading'
-    : levelBlocked
-      ? 'level-blocked'
-      : rawHtml
-        ? 'html'
-        : forbidden
-          ? 'forbidden'
-          : sections.length > 0
-            ? 'fallback'
-            : 'empty';
-
-  // 빈 상태 문구 — 실행 조회가 403 밖 오류로 실패해 실행(곧 마크다운 섹션)을 모르면 그 문구가 먼저다.
-  // HTML 없음 404 를 먼저 보이면 섹션을 못 읽었을 뿐인 실행도 「리포트가 없다」로 읽힌다.
-  // 실행을 읽었으면 HTML 조회 오류 문구(뷰어와 같은 규칙), 둘 다 없으면 기본 문구.
-  const emptyStateText =
-    !execution && metaErrorKind?.kind === 'message'
-      ? metaErrorKind.text
-      : htmlErrorKind?.kind === 'message'
-        ? htmlErrorKind.text
-        : '리포트가 없습니다.';
+  // 본문에 그릴 것 하나를 한곳에서 고른다(WD-1098·WD-1177) — reportBodyState 한 곳의 판정만 쓴다.
+  // 우선순위: 로딩 > 등급 차단 > 권한 부족(403) > 캐시 HTML > 마크다운 폴백 > 문구.
+  // 실행(메타) 조회 오류를 함께 넘긴다 — 실행을 못 읽었으면 그 문구가 HTML 오류 문구보다 먼저다(WD-1098).
+  // 로딩 중에는 상태를 정하지 않는다 — 오류도 본문도 없는 시점에 「리포트가 없습니다」 가 잠깐 뜨지 않게.
+  const bodyState = isLoading
+    ? null
+    : reportBodyState(htmlError, rawHtml, sections.length > 0, {
+        error: metaError,
+        executionLoaded: execution !== undefined,
+      });
+  // 인쇄·PDF 를 위한 본문이 있는가 — 차단 403·오류·빈 상태에서는 누를 내용이 없어 두 버튼을 함께 잠군다(WD-1177).
+  const hasBodyToPrint = bodyState?.state === 'html' || bodyState?.state === 'fallback';
 
   // PDF 다운로드 + 인쇄 공통 훅
   const { handleDownloadPdf, handlePrint, downloading } = useReportActions({
@@ -176,7 +156,7 @@ export default function ReportModal({ open, onClose, jobId, executionId }: Repor
               variant="ghost"
               size="icon"
               onClick={handlePrint}
-              disabled={isLoading}
+              disabled={isLoading || !hasBodyToPrint}
               title="인쇄"
               className="h-8 w-8"
             >
@@ -186,7 +166,7 @@ export default function ReportModal({ open, onClose, jobId, executionId }: Repor
               variant="ghost"
               size="icon"
               onClick={handleDownloadPdf}
-              disabled={downloading}
+              disabled={downloading || isLoading || !hasBodyToPrint}
               title="PDF 다운로드"
               className="h-8 w-8"
             >
@@ -219,16 +199,17 @@ export default function ReportModal({ open, onClose, jobId, executionId }: Repor
           </div>
         </DialogHeader>
 
-        {/* 본문 — bodyKind 하나만 그린다(로딩 / 등급 차단 / HTML 리포트 / 권한 부족 / 마크다운 폴백 / 빈 상태) */}
+        {/* 본문 — bodyState 하나만 그린다(로딩 / 등급 차단 / HTML 리포트 / 권한 부족 / 마크다운 폴백 / 빈 상태) */}
         <div className="relative min-h-24 flex-1 overflow-hidden">
-          {bodyKind === 'loading' && (
+          {isLoading && (
             <div className="flex items-center justify-center h-full gap-2 text-muted-foreground">
               <Loader2 className="h-5 w-5 animate-spin" />
               <span className="text-sm">리포트를 불러오는 중...</span>
             </div>
           )}
 
-          {bodyKind === 'level-blocked' && (
+          {/* 본문 상태가 level-blocked — 등급 차단 안내 (WD-198) — 요약·폴백·본문과 겹치지 않게 이 안내만 그린다(WD-1177) */}
+          {bodyState?.state === 'level-blocked' && (
             <div className="flex items-center justify-center h-full px-6">
               <RestrictedNotice
                 message={REPORT_LEVEL_BLOCKED_MESSAGE}
@@ -238,26 +219,29 @@ export default function ReportModal({ open, onClose, jobId, executionId }: Repor
             </div>
           )}
 
-          {/* HTML 리포트가 있으면 iframe으로 렌더링 */}
-          {bodyKind === 'html' && rawHtml && (
+          {/* 본문 상태가 html — HTML 리포트 iframe (차단 403 이 아닐 때만 이 상태가 된다, WD-1177).
+              rawHtml 은 TS 를 위해 다시 좁힌다 — 상태가 html 이면 값이 반드시 있으므로 렌더는 바뀌지 않는다. */}
+          {bodyState?.state === 'html' && rawHtml && (
             <div className="h-full bg-white">
               <ReportIframe ref={iframeRef} html={rawHtml} />
             </div>
           )}
 
-          {/* 권한 부족(403) — 오류 문구 대신 권한 안내 (WD-137·WD-1098) */}
-          {bodyKind === 'forbidden' && (
+          {/* 권한 부족(403) — 오류 문구 대신 권한 안내 (WD-137·WD-1098).
+              `!rawHtml` 을 뺐다 — 캐시된 HTML 이 있어도 권한 403 이 본문을 이겨 안내가 먼저다(WD-1177). */}
+          {bodyState?.state === 'forbidden' && (
             <ProactiveReadForbiddenNotice subject="리포트" testId="report-modal-forbidden" />
           )}
 
-          {/* HTML이 없고 마크다운 섹션이 있으면 마크다운 폴백 */}
-          {bodyKind === 'fallback' && renderMarkdownFallback()}
+          {/* 본문 상태가 fallback — 마크다운 섹션 폴백 (html 상태가 아닐 때만 이 상태가 된다, WD-1177) */}
+          {bodyState?.state === 'fallback' && renderMarkdownFallback()}
 
-          {/* 리포트도 섹션도 없는 빈 상태 — 문구 규칙은 emptyStateText.
-              result 가 있어도 섹션이 없으면(예: {}) 폴백이 비므로 이 블록이 맡는다. */}
-          {bodyKind === 'empty' && (
+          {/* 본문 상태가 message — 리포트도 결과도 없는 빈 상태 (WD-1098·WD-1177).
+              문구는 reportBodyState 가 정한 값이다 — 실행 조회가 실패해 실행을 못 읽었으면 그 문구가 먼저고,
+              그 다음이 HTML 조회 오류 문구, 둘 다 없으면 「리포트가 없습니다.」. */}
+          {bodyState?.state === 'message' && (
             <div className="flex items-center justify-center h-full text-muted-foreground">
-              <p className="text-sm">{emptyStateText}</p>
+              <p className="text-sm">{bodyState.text}</p>
             </div>
           )}
         </div>

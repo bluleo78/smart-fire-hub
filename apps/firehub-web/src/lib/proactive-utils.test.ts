@@ -6,7 +6,12 @@ import {
   USER_SWITCHED_MESSAGE,
   UserSwitchedError,
 } from './api-error';
-import { REPORT_NOT_FOUND_NOTICE, reportHtmlErrorKind, reportHtmlErrorText } from './proactive-utils';
+import {
+  REPORT_NOT_FOUND_NOTICE,
+  reportBodyState,
+  reportHtmlErrorKind,
+  reportHtmlErrorText,
+} from './proactive-utils';
 
 /** axios.isAxiosError 는 isAxiosError === true 인 객체를 인정한다 — 응답 모양만 재현한다. */
 function axiosError(status: number, data: unknown) {
@@ -74,5 +79,71 @@ describe('reportHtmlErrorKind', () => {
       kind: 'message',
       text: REPORT_LOAD_ERROR_MESSAGE,
     });
+  });
+});
+
+// 리포트 본문 표시 상태 판정 — 실행 상세·리포트 모달·리포트 뷰어 공통 우선순위 (WD-1177)
+describe('reportBodyState (WD-1177)', () => {
+  it('level-blocked 403 + html 있음 + 폴백 있음 → level-blocked', () => {
+    const err = axiosError(403, { code: 'REPORT_SECURITY_LEVEL_BLOCKED' });
+    expect(reportBodyState(err, '<html>cached</html>', true)).toEqual({ state: 'level-blocked' });
+  });
+
+  it('일반 403 + html 있음 + 폴백 있음 → forbidden', () => {
+    expect(reportBodyState(axiosError(403, {}), '<html>cached</html>', true)).toEqual({ state: 'forbidden' });
+  });
+
+  it('500 + html 있음 → html (캐시 HTML 이 이긴다 — 403 아님)', () => {
+    expect(reportBodyState(axiosError(500, {}), '<html>cached</html>', true)).toEqual({ state: 'html' });
+  });
+
+  it('오류 없음 + html 없음 + 폴백 있음 → fallback', () => {
+    expect(reportBodyState(null, null, true)).toEqual({ state: 'fallback' });
+  });
+
+  it('404(HTML 없음) + html 없음 + 폴백 없음 → message(서버 HTML 없음 문구)', () => {
+    expect(reportBodyState(axiosError(404, { message: REPORT_HTML_MISSING_MESSAGE }), null, false)).toEqual({
+      state: 'message',
+      text: '이 실행에는 HTML 리포트가 없습니다.',
+    });
+  });
+
+  it('오류 없음 + html 없음 + 폴백 없음 → message(리포트가 없습니다.)', () => {
+    expect(reportBodyState(null, null, false)).toEqual({ state: 'message', text: '리포트가 없습니다.' });
+  });
+
+  it('실행을 못 읽었을 때(실행 조회 오류) → 그 문구가 HTML 오류 문구보다 먼저다 (WD-1098)', () => {
+    // HTML 쪽은 404(HTML 없음) 문구, 실행 쪽은 500 로 두어 어느 쪽이 이기는지 가르는 문구를 비교한다.
+    expect(
+      reportBodyState(axiosError(404, { message: REPORT_HTML_MISSING_MESSAGE }), null, false, {
+        error: axiosError(500, {}),
+        executionLoaded: false,
+      }),
+    ).toEqual({ state: 'message', text: REPORT_LOAD_ERROR_MESSAGE });
+  });
+
+  it('실행을 읽었는데 html 오류만 있으면 → html 오류 문구가 나온다 (WD-1098)', () => {
+    expect(
+      reportBodyState(axiosError(404, { message: REPORT_HTML_MISSING_MESSAGE }), null, false, {
+        executionLoaded: true,
+      }),
+    ).toEqual({ state: 'message', text: REPORT_HTML_MISSING_MESSAGE });
+  });
+
+  it('실행 조회 403(권한) + html 성공 → forbidden — 한 화면에서 한 상태만 보인다 (WD-1177)', () => {
+    expect(
+      reportBodyState(null, '<html>cached</html>', true, { error: axiosError(403, {}), executionLoaded: true }),
+    ).toEqual({ state: 'forbidden' });
+  });
+
+  it('실행 조회 등급 차단 403 → level-blocked 가 가장 먼저다 (WD-198)', () => {
+    expect(
+      reportBodyState(
+        axiosError(403, {}),
+        '<html>cached</html>',
+        true,
+        { error: axiosError(403, { code: 'REPORT_SECURITY_LEVEL_BLOCKED' }), executionLoaded: false },
+      ),
+    ).toEqual({ state: 'level-blocked' });
   });
 });
