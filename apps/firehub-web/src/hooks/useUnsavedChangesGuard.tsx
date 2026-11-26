@@ -107,21 +107,13 @@ export function useUnsavedChangesGuard(
     if (isSameLocationPath(currentPath(), pathname + search + hash)) leavingRef.current = false;
   }, [currentPath]);
 
-  // (WD-673) popstate 경로 「이탈」의 뒤로 가기 대기(popstate 리스너·제한 시간 타이머) 정리 함수 — 언마운트 때도 부른다.
-  // (WD-1160) clear 는 대기만 치우고 재무장은 하지 않는다(새 확정이 앞선 대기를 치울 때 쓴다). rearmAll 은 함께 떠나는 중으로
-  // 돌린 다른 가드를 다시 켜는 함수로, 언마운트 때만 clear 뒤에 따로 부른다.
-  const pendingBackCleanupRef = useRef<{ clear: () => void; rearmAll: () => void } | null>(null);
-  useEffect(
-    () => () => {
-      // 언마운트로 정리될 때 아직 popstate 가 안 온(뒤로 가기가 일어났는지 모르는) 상태면 다른 가드를 다시 켠다.
-      // popstate 가 오면 ref 가 비워지므로 이 경로로 오지 않는다.
-      const pending = pendingBackCleanupRef.current;
-      if (!pending) return;
-      pending.clear();
-      pending.rearmAll();
-    },
-    [],
-  );
+  // (WD-673) popstate 경로 「이탈」의 뒤로 가기 대기(popstate 리스너·제한 시간 타이머) 정리 함수.
+  // (WD-1160) 새 확정이 앞선 대기를 치울 때만 쓴다(clear 는 재무장하지 않는다). 언마운트 때는 부르지 않는다 — 대기는 window 수준이라
+  // 컴포넌트가 필요 없고, 가장 흔한 언마운트가 바로 이 뒤로 가기가 일으킨 것이다(라우터가 popstate 디스패치 중 페이지를 언마운트해
+  // 뒤에 등록된 우리 finish 보다 먼저 정리가 돈다). 그때 대기를 치우고 다른 가드를 다시 켜면 이동이 일어났는데도 영속 레이아웃의
+  // 가드가 되살아난다. 그래서 대기를 그대로 살려 두면 스스로 끝난다 — popstate 가 오면 finish(재무장 없음), 제한 시간 안에 없으면
+  // 우회 표시를 거두고 rearmAll.
+  const pendingBackCleanupRef = useRef<{ clear: () => void } | null>(null);
 
   useEffect(() => {
     isDirtyRef.current = isDirty;
@@ -148,7 +140,7 @@ export function useUnsavedChangesGuard(
     settleLeaving();
   }, [location, settleLeaving]);
 
-  // (WD-651) 가드 세 곳(popstate 레지스트리·click 캡처·beforeunload)과 requestNavigate 가 함께 쓰는 판정.
+  // (WD-651) 가드 세 곳(popstate 레지스트리·click 캡처·beforeunload)가 함께 쓰는 판정.
   // dirty 이면서 아직 「이탈」을 확정하지 않았을 때만 가로챈다. dirty 는 readDirty 로 읽어 판정 함수도 지원한다 (WD-642).
   // (WD-651·WD-642) 판정 시점에 폼이 깨끗하면 이탈 중 상태도 함께 끝낸다 — 판정 함수를 넘긴 경우엔 [isDirty] effect 가
   // 폼이 깨끗해진 것을 알 수 없으므로, 가드가 실제로 쓰이는 순간(이동 시도·beforeunload·popstate)에 재무장해 둔다.
@@ -266,14 +258,20 @@ export function useUnsavedChangesGuard(
   // <a> 탐지 사각지대를 우회하지 않는다.
   const requestNavigate = useCallback(
     (to: string) => {
-      if (!guardActive()) {
+      // (WD-1160) click·popstate 와 같은 규칙으로 막을 가드가 있는지 본다. navigate() 는 click 캡처·popstate 를 거치지 않아
+      // 내 폼이 깨끗해도 다른 등록 가드(dirty)를 모르고 지나가면 그 폼의 변경이 조용히 유실된다.
+      // 막을 가드가 없으면 바로 이동한다.
+      if (!pickInterceptingGuard()) {
         navigate(to);
         return;
       }
+      // 내 폼이 dirty 이든 다른 가드가 dirty 이든 호출한 쪽의 확인 창을 연다 — 문구(「저장하지 않은 변경사항이 있습니다」)가 어느 쪽이어도 참이고,
+      // 호출한 화면이 자기 isDialogOpen()·onStay 로 판단하므로(남기·재제출 등) 다른 가드의 창에 넘기면 호출자가 열림·취소를 알 수 없다.
+      // 확정하면 이 훅의 handleConfirm 이 이동하고 markAllGuardsLeaving 으로 다른 dirty 폼도 함께 버린다.
       setPendingTo(to);
       setOpenState(true);
     },
-    [navigate, guardActive, setOpenState],
+    [navigate, setOpenState],
   );
 
   const handleCancel = useCallback(() => {
@@ -326,15 +324,13 @@ export function useUnsavedChangesGuard(
           rearmAll();
         }, BACK_NOOP_REARM_MS);
         window.addEventListener('popstate', finish);
-        // 확인한 가드가 타이머 전에 언마운트되면 타이머도 함께 지워지므로 언마운트 정리가 rearmAll 을 대신 불러야
-        // 남은 dirty 가드가 떠나는 중으로 영영 남지 않는다. 새 확정이 앞선 대기를 치우는 clear 는
-        // 새 확정이 막 건 떠남 표시를 되돌리면 안 되므로 재무장하지 않는다.
+        // 새 확정이 앞선 대기를 치우는 clear 는 새 확정이 막 건 떠남 표시를 되돌리면 안 되므로 재무장하지 않는다.
+        // 언마운트돼도 이 대기는 치우지 않는다(위 pendingBackCleanupRef 설명) — 타이머가 rearmAll 을 대신 부른다.
         pendingBackCleanupRef.current = {
           clear: () => {
             finish();
             cancelBypass();
           },
-          rearmAll,
         };
         window.history.back();
       }, 0);
