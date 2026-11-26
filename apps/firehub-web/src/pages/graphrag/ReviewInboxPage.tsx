@@ -29,6 +29,7 @@ import { offlineListMessage, useOfflinePaused } from '@/hooks/useOnlineStatus';
 import { handleApiError, isForbiddenError, listLoadErrorProps } from '@/lib/api-error';
 import { isFocusLost } from '@/lib/focus-lost';
 import { validatePropertyCorrection } from '@/lib/property-correction';
+import { eulReul, euroRo, waGwa } from '@/lib/utils';
 import type {
   EntityPayload, PropertyPayload, RelationPayload, ReviewItemResponse, ReviewItemType, SynonymPayload,
 } from '@/types/reviewItem';
@@ -144,15 +145,18 @@ function buildConfirmCopy(target: ConfirmTarget): {
       const p = row.payload as SynonymPayload;
       return {
         title: '동의어를 병합합니다',
-        body: `“${p.nameA}”와 “${p.nameB}”를 같은 ${p.entityType}로 병합합니다. 그래프의 두 노드가 하나로 합쳐지며, 이 작업은 되돌릴 수 없습니다.`,
+        // WD-1135: 조사는 이름·유형의 마지막 글자 받침에 따라 고른다(고정 "와/를/로"는 받침 있는 이름에서 어색했다).
+        body: `“${p.nameA}”${waGwa(p.nameA)} “${p.nameB}”${eulReul(p.nameB)} 같은 ${p.entityType}${euroRo(p.entityType)} 병합합니다. 그래프의 두 노드가 하나로 합쳐지며, 이 작업은 되돌릴 수 없습니다.`,
         summary: null, confirmLabel, destructive: true,
       };
     }
     case 'property_normalization': {
       const p = row.payload as PropertyPayload;
+      // WD-1135: 정정값 끝소리에 맞춰 "로/으로"를 고르고, 조사는 따옴표 바로 뒤에 붙인다.
+      const v = target.correctedValue ?? '';
       return {
         title: '속성 정정값을 반영합니다',
-        body: `${p.entityType}.${p.propertyName} 속성을 원문 “${p.rawText}” 에서 “${target.correctedValue ?? ''}” 로 정정해 그래프에 기록합니다.`,
+        body: `${p.entityType}.${p.propertyName} 속성을 원문 “${p.rawText}”에서 “${v}”${euroRo(v)} 정정해 그래프에 기록합니다.`,
         summary: null, confirmLabel, destructive: false,
       };
     }

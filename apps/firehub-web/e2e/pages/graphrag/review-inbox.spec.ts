@@ -957,11 +957,25 @@ test.describe('AI 검수 인박스', () => {
       const dialog = page.getByTestId('review-decide-confirm');
       await expect(dialog).toHaveAttribute('data-item-type', 'synonym_merge');
       await expect(dialog).toContainText('동의어를 병합합니다');
-      await expect(dialog).toContainText('“전기적 요인”와 “분전반의 누전”를 같은 Cause로 병합합니다');
+      await expect(dialog).toContainText('“전기적 요인”과 “분전반의 누전”을 같은 Cause(으)로 병합합니다');
       await expect(dialog).toContainText('되돌릴 수 없습니다');
       // 확인 라벨은 행에서 누른 동사를 그대로 재사용한다.
       await expect(page.getByTestId('review-decide-confirm-action')).toHaveText('승인');
       await expect(page.getByTestId('review-decide-confirm-action')).toHaveClass(/bg-destructive/);
+    });
+
+    test('동의어 승인 문구의 조사가 받침에 따라 바뀐다 (WD-1135)', async ({ authenticatedPage: page }) => {
+      const cases = [
+        { payload: { entityType: '지역', nameA: '서울역', nameB: '서울역사' }, text: '“서울역”과 “서울역사”를 같은 지역으로 병합합니다' },
+        { payload: { entityType: '고객사', nameA: '서울시', nameB: '서울' }, text: '“서울시”와 “서울”을 같은 고객사로 병합합니다' },
+      ];
+      for (const c of cases) {
+        await mockApi(page, 'GET', '/api/v1/graphrag/review-items', [createSynonymReviewItem({ payload: c.payload })]);
+        await gotoUntilReady(page, '/knowledge-graph/review', page.getByRole('button', { name: '승인' }));
+        await page.getByRole('button', { name: '승인' }).click();
+        await expect(page.getByTestId('review-decide-confirm')).toContainText(c.text);
+        await page.getByTestId('review-decide-confirm-cancel').click();
+      }
     });
 
     test('속성 정정 다이얼로그는 원문과 입력한 정정값을 그대로 에코한다', async ({ authenticatedPage: page }) => {
@@ -975,6 +989,8 @@ test.describe('AI 검수 인박스', () => {
       await expect(dialog).toContainText('Incident.피해액');
       await expect(dialog).toContainText('“수천만원대”');
       await expect(dialog).toContainText('“30000000”');
+      // WD-1135: 조사는 따옴표 바로 뒤에 붙고 정정값 끝소리(영)에 맞춰 "으로"가 된다.
+      await expect(dialog).toContainText('원문 “수천만원대”에서 “30000000”으로 정정해');
       await expect(page.getByTestId('review-decide-confirm-action')).toHaveText('정정 적용');
       // 되돌리기 난이도가 낮은 조치까지 빨강이면 경고가 무의미해진다.
       await expect(page.getByTestId('review-decide-confirm-action')).not.toHaveClass(/bg-destructive/);
