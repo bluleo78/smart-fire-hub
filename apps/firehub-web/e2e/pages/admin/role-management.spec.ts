@@ -812,6 +812,179 @@ test.describe('역할 관리 페이지', () => {
     await expect(page.getByText('이미 존재하는 역할 이름입니다: ADMIN')).toBeVisible();
   });
 
+  test('역할 상세 — 중복 이름 400 은 이름 칸 오류(alert·aria-invalid·포커스)로 보인다 (WD-1102)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupRoleDetailMocks(page, 3, false);
+    // 필드 errors 없는 400 — 서버의 이름 중복 응답
+    await mockApi(
+      page,
+      'PUT',
+      '/api/v1/roles/3',
+      { status: 400, message: '이미 존재하는 역할 이름입니다: ADMIN' },
+      { status: 400 },
+    );
+
+    await page.goto('/admin/roles/3');
+    const nameInput = page.getByLabel('역할 이름');
+    await nameInput.fill('ADMIN');
+    await saveRoleInfo(page);
+
+    await expect(nameInput).toHaveAttribute('aria-invalid', 'true');
+    await expect(nameInput).toBeFocused();
+    const alert = page.locator('#role-name-error');
+    await expect(alert).toHaveAttribute('role', 'alert');
+    await expect(alert).toHaveText('이미 존재하는 역할 이름입니다: ADMIN');
+    await expect(nameInput).toHaveAttribute('aria-describedby', /role-name-error/);
+    // 공통 오류 영역에 같은 문구가 겹쳐 나오지 않는다
+    await expect(page.getByText('이미 존재하는 역할 이름입니다: ADMIN')).toHaveCount(1);
+
+    // 설명 칸을 고쳐도 이름 칸 오류는 남는다
+    await page.getByLabel('설명').fill('설명 추가');
+    await expect(alert).toBeVisible();
+
+    // 이름을 고치면 오류가 지워진다
+    await nameInput.fill('ADMIN2');
+    await expect(page.locator('#role-name-error')).toHaveCount(0);
+    await expect(nameInput).not.toHaveAttribute('aria-invalid', 'true');
+
+    // 오류 뒤 다시 저장이 성공하면 이름 칸 오류가 남지 않는다 (WD-1102)
+    await mockApi(page, 'PUT', '/api/v1/roles/3', { id: 3, name: 'ADMIN2', description: '편집자 역할', isSystem: false, permissions: [] });
+    await saveRoleInfo(page);
+    await expect(page.getByText('역할 정보가 업데이트되었습니다.')).toBeVisible({ timeout: 3000 });
+    await expect(page.locator('#role-name-error')).toHaveCount(0);
+    await expect(nameInput).not.toHaveAttribute('aria-invalid', 'true');
+  });
+
+  test('역할 상세 — 400 에 name 필드 오류가 실리면 이름 칸에 붙는다 (WD-1102)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupRoleDetailMocks(page, 3, false);
+    await mockApi(
+      page,
+      'PUT',
+      '/api/v1/roles/3',
+      {
+        status: 400,
+        message: '입력값 검증 실패',
+        errors: { name: '역할 이름 형식이 올바르지 않습니다' },
+      },
+      { status: 400 },
+    );
+
+    await page.goto('/admin/roles/3');
+    const nameInput = page.getByLabel('역할 이름');
+    await nameInput.fill('BAD_NAME');
+    await saveRoleInfo(page);
+
+    const alert = page.locator('#role-name-error');
+    await expect(alert).toHaveText('역할 이름 형식이 올바르지 않습니다');
+    await expect(alert).toHaveAttribute('role', 'alert');
+    await expect(nameInput).toHaveAttribute('aria-invalid', 'true');
+    await expect(nameInput).toBeFocused();
+    await expect(page.getByText('입력값 검증 실패')).toHaveCount(0);
+  });
+
+  test('역할 상세 — 이름을 바꾸지 않은 저장의 필드 없는 400 은 공통 오류로 (WD-1102)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupRoleDetailMocks(page, 3, false);
+    await mockApi(
+      page,
+      'PUT',
+      '/api/v1/roles/3',
+      { status: 400, message: '시스템 역할의 이름·설명은 바꿀 수 없습니다' },
+      { status: 400 },
+    );
+
+    await page.goto('/admin/roles/3');
+    const nameInput = page.getByLabel('역할 이름');
+    await expect(nameInput).toBeVisible();
+    // 설명만 고친다 — 이름은 저장된 값 그대로
+    await page.getByLabel('설명').fill('설명만 바꿈');
+    await saveRoleInfo(page);
+
+    const text = '시스템 역할의 이름·설명은 바꿀 수 없습니다';
+    await expect(page.getByRole('alert').filter({ hasText: text })).toBeVisible();
+    await expect(nameInput).not.toHaveAttribute('aria-invalid', 'true');
+    await expect(page.locator('#role-name-error')).toHaveCount(0);
+
+    // 공통 오류는 이름·설명 편집 시 지워진다
+    await page.getByLabel('설명').fill('설명만 바꿈 2');
+    await expect(page.getByText(text)).toHaveCount(0);
+  });
+
+  test('역할 상세 — 메시지 없는 400 은 이름 칸이 아니라 공통 오류로 (WD-1102)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupRoleDetailMocks(page, 3, false);
+    await mockApi(page, 'PUT', '/api/v1/roles/3', { status: 400 }, { status: 400 });
+
+    await page.goto('/admin/roles/3');
+    const nameInput = page.getByLabel('역할 이름');
+    await nameInput.fill('NEWNAME');
+    await saveRoleInfo(page);
+
+    await expect(page.getByRole('alert').filter({ hasText: '역할 업데이트에 실패했습니다.' })).toBeVisible();
+    await expect(page.locator('#role-name-error')).toHaveCount(0);
+  });
+
+  test('역할 상세 — 덮어쓰기 저장이 중복 이름 400 이면 충돌 창을 닫고 이름 칸 오류 (WD-1102)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupRoleDetailMocks(page, 3, false);
+    // 첫 PUT 은 409 편집 충돌, 덮어쓰기(두 번째) PUT 은 중복 이름 400
+    let puts = 0;
+    await page.route(
+      (url) => url.pathname === '/api/v1/roles/3',
+      (route) => {
+        if (route.request().method() !== 'PUT') return route.fallback();
+        puts += 1;
+        if (puts === 1) {
+          return route.fulfill({
+            status: 409,
+            contentType: 'application/json',
+            body: JSON.stringify({ status: 409, code: 'EDIT_CONFLICT', message: '다른 관리자가 먼저 바꿨습니다' }),
+          });
+        }
+        return route.fulfill({
+          status: 400,
+          contentType: 'application/json',
+          body: JSON.stringify({ status: 400, message: '이미 존재하는 역할 이름입니다: ADMIN' }),
+        });
+      },
+    );
+
+    await page.goto('/admin/roles/3');
+    const nameInput = page.getByLabel('역할 이름');
+    await nameInput.fill('ADMIN');
+    await saveRoleInfo(page);
+
+    const dialog = page.getByRole('alertdialog', { name: '다른 곳에서 먼저 변경되었습니다' });
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole('button', { name: '내 변경으로 덮어쓰기' }).click();
+
+    await expect(dialog).toBeHidden();
+    await expect(page.locator('#role-name-error')).toHaveText('이미 존재하는 역할 이름입니다: ADMIN');
+    await expect(nameInput).toBeFocused();
+  });
+
+  test('역할 상세 — 저장 500 은 공통 오류(alert)로, 이름 칸은 오류 아님 (WD-1102)', async ({
+    authenticatedPage: page,
+  }) => {
+    await setupRoleDetailMocks(page, 3, false);
+    await mockApi(page, 'PUT', '/api/v1/roles/3', { status: 500, message: '서버 오류' }, { status: 500 });
+
+    await page.goto('/admin/roles/3');
+    const nameInput = page.getByLabel('역할 이름');
+    await nameInput.fill('NEWNAME');
+    await saveRoleInfo(page);
+
+    await expect(page.getByRole('alert').filter({ hasText: '서버 오류' })).toBeVisible();
+    await expect(nameInput).not.toHaveAttribute('aria-invalid', 'true');
+    await expect(page.locator('#role-name-error')).toHaveCount(0);
+  });
+
   test('역할 정보 로드 실패 시 에러 토스트가 표시된다', async ({ authenticatedPage: page }) => {
     // 역할 API 500 에러 → fetchData catch 분기 (lines 61-62)
     await mockApi(page, 'GET', '/api/v1/roles/1', { message: '서버 오류' }, { status: 500 });
