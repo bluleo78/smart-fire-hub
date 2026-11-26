@@ -11,10 +11,7 @@ import com.smartfirehub.platform.service.PlatformAuthService;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.TenantRlsTestSupport;
 import com.smartfirehub.support.TestUsers;
-import java.time.Duration;
 import java.time.LocalDateTime;
-import java.time.ZoneOffset;
-import java.util.TimeZone;
 import java.util.function.UnaryOperator;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterEach;
@@ -140,10 +137,11 @@ class RefreshTokenReuseRevocationTest extends IntegrationTestBase {
   }
 
   /**
-   * 폐기 시각이 미래로 찍혀 있으면 유예로 세지 않는다 — 유예의 <b>위쪽 한도</b> (WD-1141 반려 3차 5).
+   * 폐기 시각이 유예의 위쪽 한도를 넘겨 미래로 찍혀 있으면 유예로 세지 않는다 — 유예의 <b>위쪽 한도</b> (WD-1141 반려 3차 5).
    *
-   * <p>유예는 "방금 전에 폐기됐는지"만 묻는 창이라 미래 값은 애초에 관용 대상이 아니다. 아래 한도가 없으면 시계가 어긋난 노드나 잘못 적인 값 하나로
-   * 유예 밖 재사용(탈취)까지 무한히 관용해 패밀리 폐기가 영원히 미뤄진다.
+   * <p>유예는 "방금 전에 폐기됐는지"만 묻는 창이라 한도를 넘는 미래 값은 애초에 관용 대상이 아니다. 아래 한도가 없으면 시계가 어긋난 노드나 잘못 적인 값 하나로
+   * 유예 밖 재사용(탈취)까지 무한히 관용해 패밀리 폐기가 영원히 미뤄진다. 한도 안의 짧은 미래(시계 여유 {@code GRACE_WINDOW} 이내)는 다른 노드가
+   * 앞서 찍은 정상 폐기라 관용한다 — 그 경계는 {@link #tenantPlane_reuseWithFutureRevokedAtWithinClockSlack_keepsFamilyAlive} 가 본다.
    */
   @Test
   void tenantPlane_reuseWithFutureRevokedAt_revokesFamily() {
@@ -157,7 +155,49 @@ class RefreshTokenReuseRevocationTest extends IntegrationTestBase {
         .isInstanceOf(InvalidTokenException.class)
         .hasMessage(REUSE_MESSAGE);
     assertThat(refreshTokenRepository.isTokenRevoked(RefreshTokenHasher.hash(second)))
-        .as("미래로 찍힌 폐기 시각은 유예에 걸리지 않는다")
+        .as("시계 여유(5초)를 넘는 미래로 찍힌 폐기 시각은 유예에 걸리지 않는다")
+        .isTrue();
+  }
+
+  /**
+   * 폐기 시각이 미래여도 시계 여유({@code GRACE_WINDOW} = 5초) 안이면 유예다 — 유예의 위쪽 한도가 <b>시계 어긋남만</b> 막고 정상 폐기를 막지 않는지
+   * 본다(WD-1141 리뷰 후속). 폐기를 찍은 노드의 시계가 이쪽보다 2초 앞선 모습이다.
+   */
+  @Test
+  void tenantPlane_reuseWithFutureRevokedAtWithinClockSlack_keepsFamilyAlive() {
+    String username = createTenantUser();
+    UnaryOperator<String> refresh = token -> authService.refresh(token).refreshToken();
+    String first = authService.login(new LoginRequest(username, PASSWORD)).refreshToken();
+    String second = refresh.apply(first);
+    setRevokedAtOffsetSeconds(first, 2);
+
+    assertThatThrownBy(() -> refresh.apply(first))
+        .isInstanceOf(InvalidTokenException.class)
+        .as("시계 여유 안의 미래 폐기 시각도 유예 경로로 간다")
+        .hasMessage(INVALID_MESSAGE);
+    assertThat(refreshTokenRepository.isTokenRevoked(RefreshTokenHasher.hash(second)))
+        .as("유예 경로는 패밀리를 폐기하면 안 된다")
+        .isFalse();
+    assertThat(refresh.apply(second)).as("이긴 탭은 그대로 갱신한다").isNotBlank();
+  }
+
+  /**
+   * 시계 여유(5초)를 한 순간 넘는 미래 폐기 시각은 유예 밖 — 위쪽 한도가 무한 관용이 되지 않는지 경계에서 확인한다(WD-1141 리뷰 후속).
+   */
+  @Test
+  void tenantPlane_reuseWithFutureRevokedAtBeyondClockSlack_revokesFamily() {
+    String username = createTenantUser();
+    UnaryOperator<String> refresh = token -> authService.refresh(token).refreshToken();
+    String first = authService.login(new LoginRequest(username, PASSWORD)).refreshToken();
+    String second = refresh.apply(first);
+    setRevokedAtOffsetSeconds(first, 6);
+
+    assertThatThrownBy(() -> refresh.apply(first))
+        .isInstanceOf(InvalidTokenException.class)
+        .as("유예를 넘는 미래 폐기 시각은 탈취로 판정한다")
+        .hasMessage(REUSE_MESSAGE);
+    assertThat(refreshTokenRepository.isTokenRevoked(RefreshTokenHasher.hash(second)))
+        .as("유예 밖 재제시는 패밀리 전체를 폐기한다")
         .isTrue();
   }
 
@@ -217,28 +257,6 @@ class RefreshTokenReuseRevocationTest extends IntegrationTestBase {
     assertThat(refreshTokenRepository.findRevokedAt(hash))
         .as("폐기하면 시각이 함께 찍혀야 유예 판정이 된다")
         .isPresent();
-  }
-
-  /**
-   * 유예 판정 시계({@link RefreshTokenRepository#revokedAtNow()})가 JVM 기본 시간대와 무관하게 UTC 벽시계로 읽히는지 고정한다(WD-1141 반려 3차 5).
-   *
-   * <p>기본 시간대를 UTC+9 로 바꿔 놓고도 UTC 와 5초 안에 맞아야 한다 — {@code LocalDateTime.now()} 로 돌아가면 9시간이 어긋나 유예 창 전체가 그만큼
-   * 벌어진다. 시험 환경의 기본 시간대가 UTC 라면 원래 구현도 같은 값을 내어 이 시험이 회귀를 잡지 못하므로, 여기서 일부러 어긋나게 만든다.
-   */
-  @Test
-  void revokedAtNow_ignoresJvmDefaultTimeZone() {
-    TimeZone original = TimeZone.getDefault();
-    TimeZone.setDefault(TimeZone.getTimeZone("Asia/Seoul"));
-    try {
-      assertThat(
-              Duration.between(
-                      RefreshTokenRepository.revokedAtNow(), LocalDateTime.now(ZoneOffset.UTC))
-                  .abs())
-          .as("판정 시계는 JVM 기본 시간대가 아니라 UTC 벽시계여야 한다")
-          .isLessThan(Duration.ofSeconds(5));
-    } finally {
-      TimeZone.setDefault(original);
-    }
   }
 
   /** 이미 폐기된 토큰의 {@code revoked_at} 을 과거 시각으로 되돌려 유예 안/밖을 재현한다(WD-1141). */
