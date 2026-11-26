@@ -155,6 +155,20 @@ test.describe('영역 경계 단계 — 데이터셋 목록 (WD-755)', () => {
         expect(surfaceBg).toBe(vars['--card']);
         expect(surfaceBg).not.toBe(pageBg);
       });
+
+      await test.step('머리 띠 — 공용 표 thead 는 알파 없는 단색 --muted 라 본문(카드 면)과 갈라진다 (WD-1121, §1-7 배경 3단)', async () => {
+        const table = page.getByRole('table', { name: '데이터셋 목록' });
+        const thead = table.locator('thead[data-slot="table-header"]');
+        // 표 면 = <table> 을 감싼 스크롤 상자의 바깥 상자(위 단계와 같다)
+        const surface = table.locator('xpath=../..');
+        const headBg = await thead.evaluate((el) => getComputedStyle(el).backgroundColor);
+        const surfaceBg = await surface.evaluate((el) => getComputedStyle(el).backgroundColor);
+        const vars = await resolvedVars(thead, ['--muted']);
+        expect(headBg).toBe(vars['--muted']);
+        expect(headBg).not.toBe(surfaceBg);
+        // 클래스에 /50 같은 알파를 덧대지 않는다(§1-7) — 라이트는 불투명 토큰 그대로(다크 --muted 는 토큰 자체가 반투명이라 칠한 알파는 재지 않는다)
+        if (theme === 'light') expect(await paintedAlpha(thead)).toBe(255);
+      });
     });
   }
 });
