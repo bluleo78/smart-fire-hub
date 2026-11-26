@@ -564,10 +564,11 @@ export default function DatasetListPage() {
             }}
           >
             <SelectTrigger className="w-[140px]" aria-label="보안 등급 필터">
-              <SelectValue placeholder="보안 등급: 전체" />
+              {/* 다른 필터처럼 「전체 ○○」 문구 (WD-1119) */}
+              <SelectValue placeholder="전체 보안 등급" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="__all__">보안 등급: 전체</SelectItem>
+              <SelectItem value="__all__">전체 보안 등급</SelectItem>
               {(levels ?? []).map((l) => (
                 <SelectItem key={l.id} value={String(l.id)}>
                   {l.name}
