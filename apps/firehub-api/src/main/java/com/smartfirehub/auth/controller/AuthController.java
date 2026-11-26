@@ -1,6 +1,7 @@
 package com.smartfirehub.auth.controller;
 
 import com.smartfirehub.auth.dto.LoginRequest;
+import com.smartfirehub.auth.dto.LogoutSessionRequest;
 import com.smartfirehub.auth.dto.SelectTenantRequest;
 import com.smartfirehub.auth.dto.SignupRequest;
 import com.smartfirehub.auth.dto.SignupStatusResponse;
@@ -91,6 +92,24 @@ public class AuthController {
     Long userId = (Long) authentication.getPrincipal();
     authService.logout(userId);
     refreshTokenCookies.clear(response);
+    return ResponseEntity.noContent().build();
+  }
+
+  /**
+   * 이 브라우저의 세션만 끝낸다(WD-1176). 액세스 토큰 없이 HttpOnly 리프레시 쿠키만으로 인증하므로 SecurityConfig 에서 permitAll 이다.
+   * 쿠키가 없거나 무효여도 204 로 응답해 화면이 같은 흐름을 타게 한다. 본문의 expectedUserId 가 쿠키 행의 사용자와 다르면(다른 탭이 같은 브라우저에서 다른
+   * 사용자로 로그인한 경우) 아무것도 폐기하지 않고 쿠키도 지우지 않는다 — 지우면 그 사용자가 로그아웃되기 때문이다.
+   */
+  @PostMapping("/logout/session")
+  @AllowedDuringPasswordChange
+  public ResponseEntity<Void> logoutSession(
+      @CookieValue(name = REFRESH_TOKEN_COOKIE, required = false) String refreshToken,
+      @RequestBody(required = false) LogoutSessionRequest request,
+      HttpServletResponse response) {
+    Long expectedUserId = request == null ? null : request.expectedUserId();
+    if (authService.logoutSession(refreshToken, expectedUserId)) {
+      refreshTokenCookies.clear(response);
+    }
     return ResponseEntity.noContent().build();
   }
 

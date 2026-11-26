@@ -1,3 +1,5 @@
+import axios from 'axios';
+
 import type { LoginRequest, SignupRequest, TokenResponse, UserResponse } from '../types/auth';
 import type { MembershipResponse } from '../types/tenant';
 import { client, postRefresh } from './client';
@@ -9,6 +11,17 @@ export const authApi = {
   // 잠금 없는 환경의 401 은 회전 표식을 확인한 재확인을 거친 뒤에만 세션 종료로 넘긴다(WD-1141).
   refresh: () => postRefresh(),
   logout: () => client.post<void>('/auth/logout'),
+  /**
+   * 이 브라우저의 세션(리프레시 토큰 패밀리)만 서버에서 끝낸다(WD-1176). 다른 기기는 건드리지 않는다.
+   * HttpOnly 리프레시 쿠키로 인증하므로 액세스 토큰이 필요 없다 — 공용 `client` 가 아닌 bare axios 를 써서
+   * Bearer 주입·401→갱신 인터셉터를 타지 않게 한다(postRefreshOnce 와 같은 이유). 호출부는 실패를 삼킨다.
+   * expectedUserId 는 화면이 아는 현재 사용자 — 공유 쿠키가 다른 사용자 것이면 서버가 아무것도 끊지 않는다.
+   * 응답이 매달려도 로그인 화면 이동이 늦어지지 않게 5초에서 끊는다(호출부가 await 하므로).
+   */
+  logoutSession: (expectedUserId: number) =>
+    axios
+      .post('/api/v1/auth/logout/session', { expectedUserId }, { withCredentials: true, timeout: 5000 })
+      .then(() => undefined),
   me: () => client.get<UserResponse>('/auth/me'),
   /**
    * 전환 UI 용 테넌트 목록. 테넌트 미선택 토큰으로도 호출할 수 있는 두 엔드포인트 중 하나다.

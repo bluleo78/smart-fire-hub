@@ -71,7 +71,9 @@ public class SecurityConfig {
                         "/api/v1/auth/signup",
                         "/api/v1/auth/signup-status",
                         "/api/v1/auth/login",
-                        "/api/v1/auth/refresh")
+                        "/api/v1/auth/refresh",
+                        // 리프레시 쿠키만으로 이 브라우저 세션을 끝낸다(WD-1176) — 일반 /logout 은 인증이 필요하다.
+                        "/api/v1/auth/logout/session")
                     .permitAll()
                     .requestMatchers("/api/v1/triggers/api/**", "/api/v1/triggers/webhook/**")
                     .permitAll()

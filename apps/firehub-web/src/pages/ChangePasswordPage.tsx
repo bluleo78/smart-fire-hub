@@ -5,6 +5,7 @@ import { useForm } from 'react-hook-form';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
+import { authApi } from '../api/auth';
 import { usersApi } from '../api/users';
 import { PendingSubmitButton } from '../components/PendingSubmitButton';
 import { Button } from '../components/ui/button';
@@ -33,7 +34,7 @@ import { forcedPasswordChangeSchema } from '../lib/validations/user';
  * 워크스페이스 선택 화면을 보여 준다. 화면에서 벗어나는 길은 로그아웃 링크 하나뿐이다.
  */
 export default function ChangePasswordPage() {
-  const { isLoading, isAuthenticated, mustChangePassword, completePasswordChange, logout } = useAuth();
+  const { isLoading, isAuthenticated, user, mustChangePassword, completePasswordChange, logout } = useAuth();
   const navigate = useNavigate();
   // 사용자 바뀜으로 `/` 이동 중이면 폼을 잠가 둔다 — 이동이 취소(떠나기 확인 거부)돼도 이미 바뀐 비밀번호를 다시 제출하지 않게(WD-1122)
   const [switchedAway, setSwitchedAway] = useState(false);
@@ -83,6 +84,12 @@ export default function ChangePasswordPage() {
       // 지우지 못하며, 되려 다른 기기의 세션까지 한꺼번에 끊는다(WD-1141 반려 2차 2·반려 3차 3).
       // 세션 종료 표식(sessionEndStarted)은 갱신 실패로 세션을 끝내는 자리에서만 401 자리에 켜지므로, 이 호출이 표식에 기대지 않는다 —
       // 갱신 실패 자리에서도 여기서 표식 읽기·POST 판단을 새로 하지 않고 위 옵션으로 한 번에 가른다.
+      // 다만 이 브라우저에 남은 리프레시 쿠키·토큰 패밀리는 서버에서 끝내야 한다 — 그대로 두면 다음 사람이 이 브라우저에서
+      // 세션을 되살릴 수 있다. 이 세션 전용 엔드포인트라 다른 기기는 건드리지 않고(WD-1176), 실패해도 로그인 화면 이동은 막지 않는다.
+      // 현재 사용자 id 를 함께 보내, 다른 탭의 다른 사용자 로그인으로 공유 쿠키가 바뀌었으면 서버가 아무것도 끊지 않게 한다.
+      if (user) {
+        await authApi.logoutSession(user.id).catch(() => {});
+      }
       await logout({
         notice: '비밀번호가 변경되어 새 비밀번호로 다시 로그인해야 합니다',
         serverLogout: false,

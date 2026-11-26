@@ -60,6 +60,14 @@ public class MyBatisRefreshTokenRepository implements RefreshTokenRepository {
   }
 
   @Override
+  public Optional<TokenOwner> findOwnerByTokenHash(String tokenHash) {
+    return Optional.ofNullable(mapper.selectOwner(EmptyKeys.key(tokenHash)))
+        .map(
+            row ->
+                new TokenOwner(UUID.fromString(row.getFamilyId()), row.getUserId(), row.getPlane()));
+  }
+
+  @Override
   public Optional<LocalDateTime> findRevokedAt(String tokenHash) {
     return Optional.ofNullable(mapper.selectRevokedAt(EmptyKeys.key(tokenHash)));
   }

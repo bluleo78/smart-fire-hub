@@ -297,4 +297,82 @@ class AuthControllerTest {
         .andExpect(jsonPath("$").isArray())
         .andExpect(jsonPath("$.length()").value(2));
   }
+
+  /** 이 브라우저 세션 로그아웃(WD-1176) — 액세스 토큰 없이 리프레시 쿠키만으로 패밀리를 끝내고 쿠키를 지운다. */
+  @Test
+  void logoutSession_withCookie_revokesFamilyAndClearsCookie() throws Exception {
+    when(authService.logoutSession("raw-1", null)).thenReturn(true);
+
+    mockMvc
+        .perform(post("/api/v1/auth/logout/session").cookie(new Cookie("refreshToken", "raw-1")))
+        .andExpect(status().isNoContent())
+        .andExpect(
+            header().string("Set-Cookie", org.hamcrest.Matchers.containsString("refreshToken=")))
+        .andExpect(
+            header().string("Set-Cookie", org.hamcrest.Matchers.containsString("Max-Age=0")));
+
+    verify(authService).logoutSession("raw-1", null);
+  }
+
+  /** 쿠키가 없어도 204 — 이미 끝난 세션이거나 쿠키가 만료된 경우에도 화면이 같은 흐름을 탄다. */
+  @Test
+  void logoutSession_withoutCookie_returnsNoContent() throws Exception {
+    when(authService.logoutSession(null, null)).thenReturn(true);
+
+    mockMvc
+        .perform(post("/api/v1/auth/logout/session"))
+        .andExpect(status().isNoContent())
+        .andExpect(
+            header().string("Set-Cookie", org.hamcrest.Matchers.containsString("Max-Age=0")));
+
+    verify(authService).logoutSession(null, null);
+  }
+
+  /** 만료·깨진 Bearer 가 붙어 와도 막히지 않는다 — 이 엔드포인트는 쿠키만 본다. */
+  @Test
+  void logoutSession_withInvalidBearer_stillNoContent() throws Exception {
+    when(jwtTokenProvider.parseAccessToken("not-a-jwt")).thenReturn(Optional.empty());
+
+    mockMvc
+        .perform(
+            post("/api/v1/auth/logout/session")
+                .header("Authorization", "Bearer not-a-jwt")
+                .cookie(new Cookie("refreshToken", "raw-1")))
+        .andExpect(status().isNoContent());
+
+    verify(authService).logoutSession("raw-1", null);
+  }
+
+  /** 본문의 expectedUserId 가 서비스로 그대로 전달된다. */
+  @Test
+  void logoutSession_passesExpectedUserIdToService() throws Exception {
+    when(authService.logoutSession("raw-1", 7L)).thenReturn(true);
+
+    mockMvc
+        .perform(
+            post("/api/v1/auth/logout/session")
+                .contentType("application/json")
+                .content("{\"expectedUserId\":7}")
+                .cookie(new Cookie("refreshToken", "raw-1")))
+        .andExpect(status().isNoContent())
+        .andExpect(
+            header().string("Set-Cookie", org.hamcrest.Matchers.containsString("Max-Age=0")));
+
+    verify(authService).logoutSession("raw-1", 7L);
+  }
+
+  /** 서비스가 false(다른 사용자의 쿠키) 면 쿠키 삭제 헤더 없이 204 — 같은 브라우저의 다른 사용자를 로그아웃시키지 않는다. */
+  @Test
+  void logoutSession_serviceFalse_doesNotClearCookie() throws Exception {
+    when(authService.logoutSession("raw-1", 7L)).thenReturn(false);
+
+    mockMvc
+        .perform(
+            post("/api/v1/auth/logout/session")
+                .contentType("application/json")
+                .content("{\"expectedUserId\":7}")
+                .cookie(new Cookie("refreshToken", "raw-1")))
+        .andExpect(status().isNoContent())
+        .andExpect(header().doesNotExist("Set-Cookie"));
+  }
 }

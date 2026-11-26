@@ -263,6 +263,51 @@ public class AuthService {
     // 웹 평면 토큰만 폐기한다(WD-314) — 사용자 단위 전체 폐기는 같은 사람의 운영자 콘솔 세션까지 끊었다.
     refreshTokenRepository.revokeAllWebByUserId(userId);
     // 로그아웃 감사 로그 (#60/#92)
+    auditLogout(userId, "로그아웃");
+  }
+
+  /**
+   * 이 브라우저 세션(리프레시 토큰 패밀리) 하나만 끝낸다(WD-1176).
+   *
+   * <p>비밀번호 변경 뒤 세션 갱신이 서버 오류로 실패해 화면이 로그인으로 넘어갈 때, 액세스 토큰 없이 HttpOnly 쿠키의 리프레시 토큰만으로 호출된다. 쿠키·
+   * 패밀리가 살아 남으면 공용 PC 에서 세션이 되살아날 수 있어서다. 같은 사용자의 다른 기기 세션은 건드리지 않는다.
+   *
+   * <p>판단은 JWT 가 아니라 저장소 행으로 한다 — 만료된 토큰은 JWT 파싱이 실패하지만 행은 남아 있고, 평면·사용자도 행 값이 진실이다. 토큰이 없거나
+   * 모르는 값이거나 운영자(PLATFORM) 평면 행이면 아무것도 하지 않는다(호출자에게 토큰 존재 여부를 드러내지 않는다).
+   *
+   * <p>{@code expectedUserId} 는 호출한 화면이 알고 있는 현재 사용자다. 다른 탭이 같은 브라우저(공유 쿠키)에서 다른 사용자로 로그인했다면 쿠키
+   * 행의 사용자와 달라지는데, 그때는 남의 세션을 끊지 않도록 폐기도 쿠키 삭제도 하지 않는다. null 이면(본문 없는 옛 호출) 검사를 건너뛴다.
+   *
+   * @return 컨트롤러가 쿠키를 지워도 되는가. 폐기했거나 폐기할 것이 없으면 true, 운영자 행·사용자 불일치처럼 남의 세션일 수 있으면 false.
+   */
+  @Transactional
+  public boolean logoutSession(String rawRefreshToken, Long expectedUserId) {
+    // 쿠키가 없거나 모르는 값이면 폐기할 것이 없다 — 쓸모없는 쿠키는 지워도 누구의 세션도 끊기지 않으므로 true.
+    if (rawRefreshToken == null || rawRefreshToken.isBlank()) {
+      return true;
+    }
+    RefreshTokenRepository.TokenOwner owner =
+        refreshTokenRepository.findOwnerByTokenHash(hashToken(rawRefreshToken)).orElse(null);
+    if (owner == null) {
+      return true;
+    }
+    // 웹 평면이 아닌(운영자) 행은 이 경로로 끝내지 않고 쿠키도 건드리지 않는다(운영자 로그아웃은 자기 엔드포인트가 맡는다).
+    if (!RefreshTokenRepository.PLANE_WEB.equals(owner.plane())) {
+      return false;
+    }
+    Long userId = owner.userId();
+    if (expectedUserId != null && !expectedUserId.equals(userId)) {
+      return false;
+    }
+    refreshTokenRepository.revokeByFamilyId(owner.familyId());
+
+    // 감사 로그용 사용자는 같은 행의 user_id 로 찾는다 — 토큰이 만료돼도 감사가 빠지지 않는다.
+    auditLogout(userId, "로그아웃(이 기기 세션)");
+    return true;
+  }
+
+  /** 로그아웃 감사 로그 한 줄 — 전체 로그아웃·이 기기 세션 로그아웃이 설명만 달리해 함께 쓴다. 사용자가 없으면 남기지 않는다. */
+  private void auditLogout(Long userId, String description) {
     userRepository
         .findById(userId)
         .ifPresent(
@@ -274,7 +319,7 @@ public class AuthService {
                   "LOGOUT",
                   "auth",
                   null,
-                  "로그아웃",
+                  description,
                   requestInfo[0],
                   requestInfo[1],
                   "SUCCESS",
