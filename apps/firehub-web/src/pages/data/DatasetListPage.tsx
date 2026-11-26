@@ -409,6 +409,20 @@ export default function DatasetListPage() {
   );
   const noFiltersActive = !search && !filtersActive;
 
+  /**
+   * 빈 목록 안내 뒤에 붙는 임시 데이터셋 안내. 임시가 숨겨진 상태면 0건이어도 임시는 있을 수 있어 어디서 보는지 알린다(WD-754).
+   *  - 보기 옵션이 이미 켜져 있거나(showTemp), 출처 필터로 토글이 비활성이면(WD-776) 따를 수 없는 안내라 뺀다.
+   *  - 필터가 없으면 「켜면 보입니다」로 안내한다.
+   *  - 필터가 있고 토글을 쓸 수 있으면 켜도 그 필터가 그대로라 결과를 약속할 수 없다 —
+   *    임시가 결과에서 빠졌다는 사실과 켜면 함께 찾는다는 말만 한다(WD-1118).
+   */
+  let emptyTempHint = '';
+  if (!showTemp && !tempToggleBlocked) {
+    emptyTempHint = filtersActive
+      ? ' 임시 데이터셋은 결과에 포함되지 않았습니다. 「임시 데이터셋 보기」를 켜면 함께 찾습니다.'
+      : ' 임시 데이터셋은 「임시 데이터셋 보기」를 켜면 보입니다.';
+  }
+
   // 여섯 필터와 page 만 지운다 — 정렬·페이지 크기·임시 보기·검색어는 필터가 아니라 보기 설정이라 남긴다 (WD-879).
   const resetFilters = () => {
     patchParams({ ...Object.fromEntries(DATASET_FILTER_PARAM_KEYS.map((key) => [key, null])), page: null });
@@ -850,13 +864,10 @@ export default function DatasetListPage() {
                 colSpan={8}
                 resetFocusRef={searchInputRef}
                 // 임시가 숨겨진 상태면 0건이어도 임시 데이터셋은 있을 수 있다 — 어디서 보는지 함께 알린다(WD-754).
-                // 출처 필터가 골라져 있으면 토글이 비활성이라 「켜면 보입니다」는 따를 수 없는 안내다 — 빼고 그대로 둔다(WD-776).
                 // 필터로 걸러져 0건이면 「조건에 맞는」 문구를 쓴다 — 데이터가 없는 게 아니라 조건에 맞는 게 없다는 뜻이다(WD-879).
+                // 임시 안내(emptyTempHint)는 상황별로 달라 위에서 따로 만든다 — 규칙은 그쪽 주석 참고.
                 // 검색어가 있으면 TableEmptyRow 가 검색 결과 안내를 대신 보이므로 이 문구는 쓰이지 않는다.
-                message={
-                  (filtersActive ? '조건에 맞는 데이터셋이 없습니다.' : '데이터셋이 없습니다.') +
-                  (showTemp || tempToggleBlocked ? '' : ' 임시 데이터셋은 「임시 데이터셋 보기」를 켜면 보입니다.')
-                }
+                message={(filtersActive ? '조건에 맞는 데이터셋이 없습니다.' : '데이터셋이 없습니다.') + emptyTempHint}
                 searchKeyword={search || undefined}
                 onResetSearch={search ? () => { patchParams({ q: null, page: null }); } : undefined}
                 // 만들 권한이 없으면 안내 문구만 둔다 — "데이터셋이 없습니다." 는 버튼 없이도 그대로 읽힌다(WD-144)

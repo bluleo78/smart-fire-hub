@@ -3,6 +3,11 @@ import { createPageResponse, mockApi } from '../../fixtures/api-mock';
 import { expect, test } from '../../fixtures/auth.fixture';
 import { grantDatasetPermissions } from '../../fixtures/dataset.fixture';
 
+/** 필터 없는 빈 목록의 임시 안내(WD-754) */
+const TEMP_HINT = '임시 데이터셋은 「임시 데이터셋 보기」를 켜면 보입니다.';
+/** 필터가 걸린 빈 목록의 임시 안내 — 결과를 약속하지 않는다(WD-1118) */
+const TEMP_HINT_FILTERED = '임시 데이터셋은 결과에 포함되지 않았습니다. 「임시 데이터셋 보기」를 켜면 함께 찾습니다.';
+
 /**
  * 데이터셋 목록 — 필터/미리보기 E2E 테스트
  *
@@ -649,7 +654,7 @@ test.describe('데이터셋 목록 — 임시 데이터셋 보기 (WD-754)', () 
     await page.goto('/data/datasets');
     const toggle = page.getByRole('button', { name: SHOW_TEMP });
     await expect(toggle).toBeEnabled();
-    const toggleHint = page.getByText('임시 데이터셋은 「임시 데이터셋 보기」를 켜면 보입니다.');
+    const toggleHint = page.getByText(TEMP_HINT);
     await expect(toggleHint).toBeVisible();
 
     await page.getByRole('combobox', { name: '출처 필터' }).click();
@@ -671,6 +676,8 @@ test.describe('데이터셋 목록 — 임시 데이터셋 보기 (WD-754)', () 
     // 따를 수 없는 「켜면 보입니다」 임시 안내 문장은 없다
     await expect(page.getByText('조건에 맞는 데이터셋이 없습니다.', { exact: true })).toBeVisible();
     await expect(toggleHint).toHaveCount(0);
+    // 토글이 막혀 있으니 「켜면 함께 찾습니다」 문장도 없다(WD-1118)
+    await expect(page.getByText(TEMP_HINT_FILTERED, { exact: false })).toHaveCount(0);
 
     // 출처를 「전체」로 되돌리면 토글이 살아나고 안내 문장도 돌아온다
     await page.getByRole('combobox', { name: '출처 필터' }).click();
@@ -692,7 +699,7 @@ test.describe('데이터셋 목록 — 임시 데이터셋 보기 (WD-754)', () 
     );
 
     await page.goto('/data/datasets');
-    const hint = page.getByText('임시 데이터셋은 「임시 데이터셋 보기」를 켜면 보입니다.');
+    const hint = page.getByText(TEMP_HINT);
     await expect(hint).toBeVisible();
 
     await page.getByRole('button', { name: SHOW_TEMP }).click();
@@ -755,6 +762,9 @@ test.describe('필터 결과 0건 (WD-879)', () => {
     await expect(page.getByRole('status').getByText(FILTER_ZERO, { exact: false })).toBeVisible();
     await expect(page.getByRole('button', { name: '필터 초기화' })).toBeVisible();
     await expect(page.getByRole('button', { name: '새 데이터셋 만들기' })).toHaveCount(0);
+    // WD-1118 — 필터가 걸린 0건에서는 결과를 약속하지 않는 임시 안내를 보인다(기존 문장은 없다)
+    await expect(page.getByText(TEMP_HINT, { exact: false })).toHaveCount(0);
+    await expect(page.getByText(TEMP_HINT_FILTERED, { exact: false })).toBeVisible();
 
     await page.getByRole('button', { name: '필터 초기화' }).click();
 
@@ -773,12 +783,49 @@ test.describe('필터 결과 0건 (WD-879)', () => {
     await expect(page.getByText(FILTER_ZERO, { exact: false })).toBeVisible();
     await expect(page.getByRole('button', { name: '필터 초기화' })).toBeVisible();
     await expect(page.getByRole('button', { name: '새 데이터셋 만들기' })).toHaveCount(0);
+    // WD-1118 — 필터가 걸린 0건에서는 결과를 약속하지 않는 임시 안내를 보인다
+    await expect(page.getByText(TEMP_HINT, { exact: false })).toHaveCount(0);
+    await expect(page.getByText(TEMP_HINT_FILTERED, { exact: false })).toBeVisible();
 
     // 필터 없는 목록이 이미 캐시에 있는 실제 흐름 — 초기화하면 (재요청 없이도) 목록이 돌아온다
     await page.getByRole('button', { name: '필터 초기화' }).click();
     await expect(page).not.toHaveURL(/favorite=/);
     await expect(page.getByRole('link', { name: '화재 출동 원본', exact: true })).toBeVisible();
     await expect(page.getByText(FILTER_ZERO, { exact: false })).toHaveCount(0);
+  });
+
+  test('필터 0건에서 임시 안내는 결과를 약속하지 않고, 토글을 켜면 임시 데이터셋이 찾아져 안내가 사라진다 (WD-1118)', async ({
+    authenticatedPage: page,
+  }) => {
+    const tempRow = createDataset({ id: 31, name: '임시 단계 산출물', originType: 'TEMP', tags: [] });
+    const urls: URL[] = [];
+    await page.route(
+      (url) => url.pathname === '/api/v1/datasets',
+      (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        const url = new URL(route.request().url());
+        urls.push(url);
+        // 빈 카테고리에는 임시 데이터셋만 있다 — includeTemp=true 일 때만 내려준다
+        const rows = url.searchParams.get('includeTemp') === 'true' ? [tempRow] : [];
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(createPageResponse(rows)),
+        });
+      },
+    );
+
+    await page.goto(`/data/datasets?categoryId=${EMPTY_CAT}`);
+    await expect(page.getByText(FILTER_ZERO, { exact: false })).toBeVisible();
+    await expect(page.getByText(TEMP_HINT_FILTERED, { exact: false })).toBeVisible();
+    await expect(page.getByText(TEMP_HINT, { exact: false })).toHaveCount(0);
+
+    await page.getByRole('button', { name: '임시 데이터셋 보기' }).click();
+
+    await expect.poll(() => urls.at(-1)?.searchParams.get('includeTemp')).toBe('true');
+    expect(urls.at(-1)?.searchParams.get('categoryId')).toBe(String(EMPTY_CAT));
+    await expect(page.getByRole('link', { name: '임시 단계 산출물', exact: true })).toBeVisible();
+    await expect(page.getByText(TEMP_HINT_FILTERED, { exact: false })).toHaveCount(0);
   });
 
   test('필터 초기화는 여섯 필터를 지우고 정렬·페이지 크기·임시 보기는 남긴다', async ({ authenticatedPage: page }) => {
