@@ -65,7 +65,15 @@ class PlatformMapperLoadTest {
           "postgresql:com.smartfirehub.pipeline.repository.mybatis.TriggerTenantResolverMapper.selectTriggerIdByTokenHash",
           "Tibero 재조회 전용 — PG 는 함수가 트리거 id 까지 준다",
           "postgresql:com.smartfirehub.pipeline.repository.mybatis.TriggerTenantResolverMapper.selectTriggerIdByWebhookId",
-          "Tibero 재조회 전용 — PG 는 함수가 트리거 id 까지 준다");
+          "Tibero 재조회 전용 — PG 는 함수가 트리거 id 까지 준다",
+          // WD-1172: Tibero 는 이름 중복을 유니코드 바인딩 없는 이름 목록(selectNamesExcludingId·selectNamesByOwner) + Java 비교로
+          // 판정하므로 아래 PG 전용 COUNT 문을 부르지 않는다 — 비 UTF-8 문자셋에서 '?' 거짓 중복을 피하려는 것.
+          "tibero:com.smartfirehub.apiconnection.repository.mybatis.ApiConnectionMapper.countByName",
+          "PG 전용 — Tibero 는 selectNamesExcludingId + Java 비교(WD-1172)",
+          "tibero:com.smartfirehub.apiconnection.repository.mybatis.ApiConnectionMapper.countByNameExcludingId",
+          "PG 전용 — Tibero 는 selectNamesExcludingId + Java 비교(WD-1172)",
+          "tibero:com.smartfirehub.proactive.repository.mybatis.ProactiveJobMapper.countByOwnerAndName",
+          "PG 전용 — Tibero 는 selectNamesByOwner + Java 비교(WD-1172)");
 
   /** {@code @PlatformMapper} 인터페이스(운영 {@code @MapperScan} 과 같은 기준). 한 번만 스캔한다. */
   private static final List<Class<?>> MAPPERS = scanPlatformMappers();
