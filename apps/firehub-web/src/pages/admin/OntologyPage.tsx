@@ -290,6 +290,8 @@ export default function OntologyPage() {
   // 타입 삭제 확인 다이얼로그의 포커스 복귀 대상(M-2, Task 6 리뷰) — ModelOutline의 "타입 추가"
   // 버튼에 붙는다(DeleteTypeConfirm.tsx 주석 참고). 선택이 바뀌어도 리마운트되지 않는 안정적인
   // 대상이어야 하므로 훅 최상단에서 한 번만 만든다.
+  // (WD-1127) 그래프 0건 오버레이의 「검색 초기화」 뒤 초점을 돌려줄 「이름 검색」 입력.
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const addEntityTypeButtonRef = useRef<HTMLButtonElement>(null);
   // 좁은 본문의 목록 접기 막대 「목록 펼치기」 버튼(WD-130) — 아래 editorFocusRestoreRef의 대체 대상.
   const outlineRailButtonRef = useRef<HTMLButtonElement>(null);
@@ -557,6 +559,9 @@ export default function OntologyPage() {
         focusKey={focusKey}
         grouped={grouped}
         palette={typePalette}
+        onResetSearch={() => setSearch('')}
+        onResetTypes={() => setActiveTypes(new Set())}
+        resetFocusRef={searchInputRef}
       />
     );
   };
@@ -664,7 +669,7 @@ export default function OntologyPage() {
                   md~xl 은 192px(w-48)로 두고 2xl 부터 256px — 1280px(사이드바 펼침, 툴바 약 992px)에서
                   w-64 면 여유가 18px 뿐이라 글꼴 메트릭이 조금만 넓어도 오른쪽 묶음이 둘째 줄로 내려갔다.
                   64px 를 줄여 그 폭에서도 한 줄을 실제로 보장한다(WD-840). */}
-              <SearchInput placeholder="이름 검색" value={search} onChange={setSearch} className="min-w-48 md:w-48 2xl:w-64" />
+              <SearchInput placeholder="이름 검색" value={search} onChange={setSearch} inputRef={searchInputRef} className="min-w-48 md:w-48 2xl:w-64" />
               {/* 타입 묶기 토글 — 타입별 compound 번들로 접어 밀집을 줄인다. */}
               <Button
                 variant={grouped ? 'secondary' : 'ghost'}

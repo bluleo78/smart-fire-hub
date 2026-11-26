@@ -7,6 +7,7 @@ import { useTheme } from 'next-themes';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 
+import { DelayedStatus, ResetButton, SearchNoResult, type SearchResetProps } from '@/components/ui/table-empty';
 import { useCanvasBackground } from '@/hooks/useCanvasBackground';
 import { filterGraphByNode } from '@/lib/graph-scope';
 import type { TypePalette } from '@/lib/ontology-colors';
@@ -27,7 +28,7 @@ type CyWithExpandCollapse = cytoscape.Core & {
   expandCollapse(opts: Record<string, unknown>): ExpandCollapseApi;
 };
 
-interface Props {
+type Props = SearchResetProps & {
   graph: GraphData;
   activeTypes: Set<string>;
   search: string;
@@ -38,7 +39,9 @@ interface Props {
   grouped?: boolean;
   // (#396) 타입 색 팔레트 — OntologyPage가 현재 온톨로지 타입 목록으로 한 번 만들어 내려준다.
   palette: TypePalette;
-}
+  // (WD-1127) 0건 오버레이의 타입 필터 되돌리기(「타입 필터 초기화」). 검색 쪽은 SearchResetProps(초점 ref 는 둘이 함께 쓴다).
+  onResetTypes?: () => void;
+};
 
 // 평탄(묶기 OFF) 모드의 레이아웃 옵션 — 코어 타입에 euler 옵션이 없어 단언(cast)으로 전달한다.
 //
@@ -264,7 +267,14 @@ const FIT_PADDING = 40;
 // 노드가 GROUPED_FULL_LAYOUT_MAX_NODES를 넘으면 자식 없이 타입별 요약 노드만 원 위에 그린다.
 // activeTypes(빈 Set이면 전체)·search(이름 부분일치, 대소문자 무시)로 필터링하며, 노드 tap 시 상세 드로어 오픈을 위임한다.
 // 캔버스는 DOM 노드가 없으므로 테스트/디버그를 위해 컨테이너에 data-node-count를 노출하고, dev에서 cy 인스턴스를 window에 싣는다.
-export default function InstanceGraph({ graph, activeTypes, search, onNodeSelect, focusKey, grouped, palette }: Props) {
+export default function InstanceGraph(props: Props) {
+  const { graph, activeTypes, search, onNodeSelect, focusKey, grouped, palette, onResetTypes, resetFocusRef } = props;
+  // 검색어 앞뒤 공백을 한 번만 걷어 필터·0건 안내가 같이 쓴다(WD-1127)
+  const q = search.trim();
+  // 「검색 초기화」 콜백과 초점 ref 는 타입상 짝이라 갈라 넘기지 않고 한 객체로 묶는다(WD-1127)
+  const resetProps: SearchResetProps = props.onResetSearch
+    ? { onResetSearch: props.onResetSearch, resetFocusRef: props.resetFocusRef }
+    : {};
   const { resolvedTheme } = useTheme();
   // (#507) 실제 페이지 배경(--background)을 읽어 엣지 라벨 배경(text-background-color)에 반영 —
   // 테마 컬러(indigo/ocean/sunset)마다 다른 실제 배경과 리터럴 크롬 색이 어긋나던 문제 수정.
@@ -304,16 +314,21 @@ export default function InstanceGraph({ graph, activeTypes, search, onNodeSelect
   const [layingOut, setLayingOut] = useState(false);
 
   // 타입 토글·검색 필터 적용(activeTypes 비어 있으면 전체 표시).
-  const { filteredNodes, filteredEdges } = useMemo(() => {
-    const q = search.trim().toLowerCase();
+  // (WD-1127) searchHasMatch — 검색어가 타입 필터와 무관하게 전체 노드 중 하나라도 맞는지(검색어가 비면 true).
+  // 같은 부분일치 판정을 한 번만 돌려 얻는다: 검색어가 맞는 노드가 있는데 타입 필터가 숨겨 0건이 된 경우
+  // 검색어를 탓하면 안 되므로(오해 유발) 0건 안내 갈래를 이걸로 가른다.
+  const { filteredNodes, filteredEdges, searchHasMatch } = useMemo(() => {
+    const lower = q.toLowerCase();
+    let hasMatch = lower === '';
     // 노드 필터 → 양끝 생존 엣지만 유지하는 공용 규칙은 filterGraphByNode에 있다(OntologyPage의
     // 온톨로지 스코프 필터와 동일한 패턴을 여기서도 재사용).
-    const { nodes, edges } = filterGraphByNode(
-      graph,
-      (n) => (activeTypes.size === 0 || activeTypes.has(n.type)) && (q === '' || n.name.toLowerCase().includes(q)),
-    );
-    return { filteredNodes: nodes, filteredEdges: edges };
-  }, [graph, activeTypes, search]);
+    const { nodes, edges } = filterGraphByNode(graph, (n) => {
+      const nameMatches = lower === '' || n.name.toLowerCase().includes(lower);
+      if (nameMatches) hasMatch = true;
+      return (activeTypes.size === 0 || activeTypes.has(n.type)) && nameMatches;
+    });
+    return { filteredNodes: nodes, filteredEdges: edges, searchHasMatch: hasMatch };
+  }, [graph, activeTypes, q]);
 
   const nodeMap = useMemo(() => new Map(filteredNodes.map((n) => [n.key, n])), [filteredNodes]);
 
@@ -708,8 +723,26 @@ export default function InstanceGraph({ graph, activeTypes, search, onNodeSelect
           className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-background text-center"
           data-testid="instance-graph-no-results"
         >
-          <SearchX className="h-10 w-10 text-muted-foreground" />
-          <p className="text-sm font-medium">조건에 맞는 노드가 없습니다.</p>
+          {/* (WD-1127) 검색어가 전체 노드 어디에도 안 맞을 때만 목록 표준의 검색 0건 안내(검색어 인용·초기화, 표 칸처럼 흐린 글자색으로 감쌈).
+              검색어가 맞는 노드가 있는데 타입 필터가 숨긴 경우·검색어 없는 경우는 타입 필터 0건 안내 — 검색어를 탓하지 않는다. */}
+          {q !== '' && !searchHasMatch ? (
+            <div className="flex max-w-full flex-col items-center gap-3 px-4 text-muted-foreground">
+              {/* onResetSearch 와 초점 ref 는 타입상 짝이라 한 객체로 묶어 한 번에 넘긴다 */}
+              <SearchNoResult {...resetProps} searchKeyword={q} iconClassName="h-10 w-10 text-muted-foreground" />
+            </div>
+          ) : (
+            <>
+              <SearchX className="h-10 w-10 text-muted-foreground" />
+              {/* 0건인 채 다른 타입 조합으로 바뀌어도 다시 낭독되도록 선택 타입 집합을 key 로 */}
+              <DelayedStatus announceKey={[...activeTypes].sort().join(',')}>
+                <p className="text-sm font-medium">선택한 타입에 맞는 노드가 없습니다.</p>
+              </DelayedStatus>
+              {onResetTypes && (
+                // 노드가 돌아오면 오버레이·버튼이 사라져 초점이 body 로 떨어지므로 검색 입력으로 옮긴다(WD-985 와 같은 이유)
+                <ResetButton label="타입 필터 초기화" onReset={onResetTypes} focusRef={resetFocusRef} />
+              )}
+            </>
+          )}
         </div>
       )}
     </div>
