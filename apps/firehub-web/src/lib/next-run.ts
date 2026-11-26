@@ -157,9 +157,12 @@ export function formatNextRunWithZone(date: Date, timezone: string | null | unde
  * 「지남」은 서버가 갱신하지 못한 낡은 시각이 곧 실행될 것처럼 읽히지 않게 목록에서만 붙인다(상세·편집 표기에는 없음).
  * 시간대 대체 경로를 거친 결과에도 붙도록 withZoneFallback 뒤에서 판정한다.
  */
-export function formatNextRunShortWithZone(date: Date, timezone: string | null | undefined): string {
-  // 시계를 한 번만 읽어 날짜 문구(오늘/내일)와 「지남」 판정이 어긋나지 않게 한다
-  const now = new Date();
+export function formatNextRunShortWithZone(
+  date: Date,
+  timezone: string | null | undefined,
+  now: Date = new Date(),
+): string {
+  // now 는 목록이 1분마다 갱신해 넘긴다(useMinuteNow, WD-1167). 하나의 now 로 오늘/내일 문구와 「지남」 판정이 어긋나지 않게 한다
   const text = withZoneFallback(date, timezone, (d, tz) => formatNextRunShort(d, tz, now));
   // 잘못된 시각은 NaN 비교가 false 라 「지남」이 붙지 않는다
   return date.getTime() < now.getTime() ? `${text} · 지남` : text;

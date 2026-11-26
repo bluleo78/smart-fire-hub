@@ -25,6 +25,7 @@ import com.smartfirehub.proactive.service.ProactiveOwnerEligibility;
 import com.smartfirehub.support.IntegrationTestBase;
 import com.smartfirehub.support.SecurityFixture;
 import com.smartfirehub.support.TenantRlsTestSupport;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -292,6 +293,11 @@ class ProactiveJobOwnershipTest extends IntegrationTestBase {
   }
 
   private long createEnabledJob(String token) throws Exception {
+    return createEnabledJob(token, "활성_작업");
+  }
+
+  /** 이름을 지정해 만든다 — 한 사용자가 같은 이름을 두 번 만들 수 없다(DUPLICATE_NAME). */
+  private long createEnabledJob(String token, String name) throws Exception {
     MockHttpServletResponse res =
         mockMvc
             .perform(
@@ -299,7 +305,7 @@ class ProactiveJobOwnershipTest extends IntegrationTestBase {
                     .header("Authorization", token)
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(
-                        "{\"name\":\"활성_작업\",\"prompt\":\"비밀 프롬프트\",\"enabled\":true,"
+                        "{\"name\":\"" + name + "\",\"prompt\":\"비밀 프롬프트\",\"enabled\":true,"
                             + "\"cronExpression\":\"0 0 9 * * *\",\"config\":{}}"))
             .andReturn()
             .getResponse();
@@ -383,6 +389,45 @@ class ProactiveJobOwnershipTest extends IntegrationTestBase {
                 .getResponse()
                 .getStatus())
         .isEqualTo(404);
+  }
+
+  /** 작업의 트리거·주기·다음 실행 시각을 DB 로 직접 맞춘다(API 는 공백 cron·null 트리거를 만들 수 없다). */
+  private void forceSchedule(long id, String trigger, String cron, LocalDateTime next) {
+    TenantRlsTestSupport.runInTenantTransaction(
+        fixtureTransactionTemplate,
+        DEFAULT_TEST_TENANT_ID,
+        () ->
+            dsl.update(table(name("proactive_job")))
+                .set(field(name("trigger_type"), String.class), trigger)
+                .set(field(name("cron_expression"), String.class), cron)
+                .set(field(name("next_execute_at"), LocalDateTime.class), next)
+                .where(field(name("id"), Long.class).eq(id))
+                .execute());
+  }
+
+  /**
+   * WD-1167 — 관리자 목록의 nextExecuteAt 은 정기 실행 작업만 값이 있다. 배포 전부터 남은 낡은 시각이 비정기 작업에서 놓친 실행처럼 보이면 안
+   * 된다.
+   */
+  @Test
+  void adminList_hidesNextExecuteAt_forNonScheduledJobs() throws Exception {
+    String adminToken = token(adminUser());
+    LocalDateTime past = LocalDateTime.of(2020, 1, 2, 3, 4, 5);
+    long anomaly = createEnabledJob(ownerToken, "비정기_a");
+    long blankCron = createEnabledJob(ownerToken, "비정기_b");
+    long both = createEnabledJob(ownerToken, "비정기_c");
+    long nullTrigger = createEnabledJob(ownerToken, "비정기_d");
+    forceSchedule(anomaly, "ANOMALY", "0 0 9 * * *", past);
+    forceSchedule(blankCron, "SCHEDULE", "  ", past);
+    forceSchedule(both, "BOTH", "0 0 9 * * *", past);
+    forceSchedule(nullTrigger, null, "0 0 9 * * *", past);
+
+    // (a) ANOMALY 전용, (b) 공백 cron — 비운다
+    assertThat(adminRow(adminToken, anomaly).path("nextExecuteAt").isNull()).isTrue();
+    assertThat(adminRow(adminToken, blankCron).path("nextExecuteAt").isNull()).isTrue();
+    // (c) BOTH, (d) 트리거 null(옛 행은 SCHEDULE 로 본다) — 그대로 싣는다
+    assertThat(adminRow(adminToken, both).path("nextExecuteAt").isNull()).isFalse();
+    assertThat(adminRow(adminToken, nullTrigger).path("nextExecuteAt").isNull()).isFalse();
   }
 
   @Test

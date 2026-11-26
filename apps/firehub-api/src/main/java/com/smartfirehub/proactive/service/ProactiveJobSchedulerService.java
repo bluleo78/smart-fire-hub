@@ -307,9 +307,7 @@ public class ProactiveJobSchedulerService {
     unregisterSchedule(job.id());
     // 이상 탐지 전용은 cron 이 있어도 정기 실행이 아니다(WD-993) — 해제는 그대로 두어 예약이 없으면 무해하다.
     if (Boolean.TRUE.equals(job.enabled())
-        && job.cronExpression() != null
-        && !job.cronExpression().isBlank()
-        && ProactiveJobService.isScheduledTrigger(job.triggerType())) {
+        && ProactiveJobService.isScheduledJob(job.triggerType(), job.cronExpression())) {
       registerSchedule(job.id(), job.cronExpression(), job.timezone());
     }
   }

@@ -337,7 +337,15 @@ public class JooqProactiveJobRepository implements ProactiveJobRepository {
   @Override
   public List<WorkspaceJobRow> findWorkspaceRows(long tenantId) {
     return dsl.select(
-            PJ_ID, PJ_NAME, PJ_USER_ID, U_NAME, PJ_ENABLED, PJ_NEXT_EXECUTE_AT, PJ_TIMEZONE)
+            PJ_ID,
+            PJ_NAME,
+            PJ_USER_ID,
+            U_NAME,
+            PJ_ENABLED,
+            PJ_NEXT_EXECUTE_AT,
+            PJ_TIMEZONE,
+            PJ_CRON_EXPRESSION,
+            PJ_TRIGGER_TYPE)
         .from(PROACTIVE_JOB)
         .leftJoin(USER_TABLE)
         .on(U_ID.eq(PJ_USER_ID))
@@ -352,14 +360,24 @@ public class JooqProactiveJobRepository implements ProactiveJobRepository {
                     r.get(U_NAME),
                     r.get(PJ_ENABLED),
                     r.get(PJ_NEXT_EXECUTE_AT),
-                    r.get(PJ_TIMEZONE)));
+                    r.get(PJ_TIMEZONE),
+                    r.get(PJ_CRON_EXPRESSION),
+                    r.get(PJ_TRIGGER_TYPE)));
   }
 
   /** 이 워크스페이스의 작업 한 건(최소 행). 다른 워크스페이스·없는 작업이면 빈 값 — 호출자가 404 로 바꾼다. */
   @Override
   public Optional<WorkspaceJobRow> findWorkspaceRow(Long id, long tenantId) {
     return dsl.select(
-            PJ_ID, PJ_NAME, PJ_USER_ID, U_NAME, PJ_ENABLED, PJ_NEXT_EXECUTE_AT, PJ_TIMEZONE)
+            PJ_ID,
+            PJ_NAME,
+            PJ_USER_ID,
+            U_NAME,
+            PJ_ENABLED,
+            PJ_NEXT_EXECUTE_AT,
+            PJ_TIMEZONE,
+            PJ_CRON_EXPRESSION,
+            PJ_TRIGGER_TYPE)
         .from(PROACTIVE_JOB)
         .leftJoin(USER_TABLE)
         .on(U_ID.eq(PJ_USER_ID))
@@ -373,7 +391,9 @@ public class JooqProactiveJobRepository implements ProactiveJobRepository {
                     r.get(U_NAME),
                     r.get(PJ_ENABLED),
                     r.get(PJ_NEXT_EXECUTE_AT),
-                    r.get(PJ_TIMEZONE)));
+                    r.get(PJ_TIMEZONE),
+                    r.get(PJ_CRON_EXPRESSION),
+                    r.get(PJ_TRIGGER_TYPE)));
   }
 
   /** 관리자 끄기 — enabled 만 false 로 바꾼다. 켜기는 이 경로로 하지 않는다(자격 없는 사람이 자동 실행을 늘리면 안 된다). */

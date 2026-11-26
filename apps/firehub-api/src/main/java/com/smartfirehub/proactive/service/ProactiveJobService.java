@@ -154,6 +154,17 @@ public class ProactiveJobService {
   }
 
   /**
+   * 스케줄러에 정기 예약되는 작업인지 — 정기 실행 트리거(SCHEDULE·BOTH·null)이고 cron 이 비어 있지 않다.
+   * 스케줄러 재예약과 관리자 목록(다음 실행 표시, WD-1167)이 같은 기준을 쓰도록 한곳에 둔다.
+   *
+   * @param triggerType 트리거 문자열(null 은 정기 실행)
+   * @param cronExpression cron 식(null·공백이면 예약하지 않는다)
+   */
+  static boolean isScheduledJob(String triggerType, String cronExpression) {
+    return isScheduledTrigger(triggerType) && cronExpression != null && !cronExpression.isBlank();
+  }
+
+  /**
    * cronExpression / timezone 값을 Spring 스케줄러가 실제로 사용하는 파서로 사전 검증한다.
    *
    * <p>cron 형식 검사는 트리거와 무관하게 한다(WD-993 반려) — 파서가 읽지 못하는 값을 그대로 DB 에 넣으면 정기 실행으로
@@ -427,9 +438,7 @@ public class ProactiveJobService {
     // job.enabled()는 DB에서 다시 읽어온 값이므로 null이 아니다.
     // 이상 탐지 전용은 cron 이 있어도 정기 실행이 아니다(WD-993).
     if (Boolean.TRUE.equals(job.enabled())
-        && job.cronExpression() != null
-        && !job.cronExpression().isBlank()
-        && isScheduledTrigger(job.triggerType())) {
+        && isScheduledJob(job.triggerType(), job.cronExpression())) {
       schedulerService.registerSchedule(job.id(), job.cronExpression(), job.timezone());
     }
     // 감사(WD-464) — 검증·저장이 끝난 뒤 같은 트랜잭션에서 남긴다. 이름·켜짐 여부만 싣고 프롬프트·설정은 싣지 않는다.
@@ -611,10 +620,7 @@ public class ProactiveJobService {
         id, userId, null, null, null, false, null, null, enabled, null, null);
     if (job != null) {
       // 이상 탐지 전용은 cron 이 있어도 정기 실행이 아니다(WD-993) — 켜도 예약하지 않는다.
-      if (enabled
-          && job.cronExpression() != null
-          && !job.cronExpression().isBlank()
-          && isScheduledTrigger(job.triggerType())) {
+      if (enabled && isScheduledJob(job.triggerType(), job.cronExpression())) {
         schedulerService.registerSchedule(job.id(), job.cronExpression(), job.timezone());
       } else {
         schedulerService.unregisterSchedule(id);

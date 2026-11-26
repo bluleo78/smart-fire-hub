@@ -256,3 +256,28 @@ describe('formatExecutionStartInZone', () => {
     );
   });
 });
+
+// 인자 now 로 「지남」·오늘/내일을 재판정한다 — 열어 둔 목록이 1분마다 새 now 를 넘기는 기반(WD-1167)
+describe('formatNextRunShortWithZone — now 인자 (WD-1167)', () => {
+  const date = new Date('2026-04-11T09:00:00Z'); // KST 18:00
+
+  it('실행 시각 전이면 「지남」 없음', () => {
+    expect(formatNextRunShortWithZone(date, 'Asia/Seoul', new Date('2026-04-11T08:59:00Z'))).toBe('오늘 18:00 KST');
+  });
+
+  it('now 가 실행 시각을 넘으면 「· 지남」', () => {
+    expect(formatNextRunShortWithZone(date, 'Asia/Seoul', new Date('2026-04-11T09:01:00Z'))).toBe(
+      '오늘 18:00 KST · 지남',
+    );
+  });
+
+  it('자정을 넘기면 「내일」이 「오늘」로 바뀐다', () => {
+    const midnight = new Date('2026-04-11T15:30:00Z'); // KST 4/12 00:30
+    expect(formatNextRunShortWithZone(midnight, 'Asia/Seoul', new Date('2026-04-11T14:00:00Z'))).toBe(
+      '내일 00:30 KST',
+    );
+    expect(formatNextRunShortWithZone(midnight, 'Asia/Seoul', new Date('2026-04-11T15:10:00Z'))).toBe(
+      '오늘 00:30 KST',
+    );
+  });
+});

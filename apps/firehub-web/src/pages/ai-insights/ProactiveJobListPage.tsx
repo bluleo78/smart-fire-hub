@@ -24,6 +24,7 @@ import {
 } from '@/components/ui/tooltip';
 import { cloneBlockedReason, cloneSuccessMessage, useCanWriteProactive,useCloneProactiveJob, useDisableProactiveJob, useExecuteProactiveJob, useProactiveJobs, useUpdateProactiveJob } from '@/hooks/queries/useProactiveMessages';
 import { useJobToggleLock } from '@/hooks/useJobToggleLock';
+import { useMinuteNow } from '@/hooks/useNowMs';
 import { offlineListMessage, useOfflinePaused } from '@/hooks/useOnlineStatus';
 import { extractApiError, handleApiError, isForbiddenError, isJobAlreadyRunning } from '@/lib/api-error';
 import { cronToLabel } from '@/lib/cron-label';
@@ -80,6 +81,8 @@ export default function ProactiveJobListPage() {
   const navigate = useNavigate();
   const { data: jobsData, isLoading, isError, error, isPaused } = useProactiveJobs();
   const jobs = jobsData ?? [];
+  // 행이 있으면 1분마다 「지남」을 다시 판정한다(WD-1167) — 훅이라 early return 보다 앞에서 부른다
+  const now = useMinuteNow(jobs.length > 0);
   // 데이터 없이 paused(오프라인·재시도 멈춤)면 「스마트 작업 없음」 빈 화면 대신 표 안에서 연결 대기로 그린다(WD-971).
   const { waiting, offline } = useOfflinePaused({ data: jobsData, isPaused });
   const updateMutation = useUpdateProactiveJob();
@@ -323,7 +326,7 @@ export default function ProactiveJobListPage() {
                       '-'
                     ) : job.nextExecuteAt ? (
                       /* 작업 시간대 기준임을 약어로 밝힌다(WD-1077) — 모르는 시간대여도 던지지 않는 공용 함수. */
-                      formatNextRunShortWithZone(parseUtcDate(job.nextExecuteAt), job.timezone)
+                      formatNextRunShortWithZone(parseUtcDate(job.nextExecuteAt), job.timezone, now)
                     ) : (
                       /* 활성인데 다음 실행 시각이 없다 = 스케줄러에 등록되지 못한 상태 (#354).
                          next_execute_at은 등록 성공 시에만 채워지므로 미등록의 관측 가능한 신호가 된다.

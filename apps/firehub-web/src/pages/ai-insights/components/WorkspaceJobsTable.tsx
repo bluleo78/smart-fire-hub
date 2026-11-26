@@ -20,6 +20,7 @@ import {
   useAdminDisableProactiveJob,
   useWorkspaceProactiveJobs,
 } from '@/hooks/queries/useProactiveMessages';
+import { useMinuteNow } from '@/hooks/useNowMs';
 import { offlineListMessage, useOfflinePaused } from '@/hooks/useOnlineStatus';
 import { handleApiError } from '@/lib/api-error';
 import { parseUtcDate } from '@/lib/formatters';
@@ -46,6 +47,8 @@ const LAST_STATUS_LABELS: Record<NonNullable<ProactiveJobAdminSummary['lastExecu
 export function WorkspaceJobsTable() {
   const { data: jobsData, isLoading, isError, isPaused } = useWorkspaceProactiveJobs();
   const jobs = jobsData ?? [];
+  // 행이 있으면 1분마다 「지남」을 다시 판정한다(WD-1167) — 훅이라 early return 보다 앞에서 부른다
+  const now = useMinuteNow(jobs.length > 0);
   // 데이터 없이 paused(오프라인·재시도 멈춤)면 「스마트 작업이 없습니다」 대신 연결 대기로 그린다(WD-971)
   const { waiting, offline } = useOfflinePaused({ data: jobsData, isPaused });
   const disableMutation = useAdminDisableProactiveJob();
@@ -130,7 +133,7 @@ export function WorkspaceJobsTable() {
                         WD-1092: 시각 뒤에 작업 시간대 이름표(KST 등)를 붙여 다른 시간대 작업과 헷갈리지 않게 하고,
                         Intl 이 거부하는 시간대 값이 와도 표 전체가 깨지지 않도록 공용 포매터(브라우저 시간대로 대체)를 쓴다 */}
                     {job.enabled && job.nextExecuteAt
-                      ? formatNextRunShortWithZone(parseUtcDate(job.nextExecuteAt), job.timezone ?? 'Asia/Seoul')
+                      ? formatNextRunShortWithZone(parseUtcDate(job.nextExecuteAt), job.timezone ?? 'Asia/Seoul', now)
                       : '-'}
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
