@@ -690,10 +690,14 @@ function ApiConnectionDetailView({ connectionId }: { connectionId: number | null
       ) {
         toast.info(`같은 이름의 연결이 있어 앞뒤 공백을 다듬지 않고 저장된 이름 「${saved.name}」을 유지했습니다.`);
       }
-      // 저장 성공 시 dirty 기준 스냅샷을 현재 입력값으로 갱신 (#551)
-      // trim() 전 원본 상태값을 그대로 기준으로 삼아야 이후 dirty 비교가 실제 입력창 값과 어긋나지 않는다.
-      // WD-1162: 서버가 이름을 유지해도 dirty 가 안 남는다 — 재조회가 손대지 않은 칸을 서버 값으로 맞춘다(mergeField).
-      setInitialInfo({ name, description, baseUrl, healthCheckPath });
+      // 저장 성공 시 dirty 기준 스냅샷을 갱신한다 (#551)
+      // 설명·baseUrl·healthCheckPath 는 trim() 전 원본 상태값을 그대로 기준으로 삼아야 이후 dirty 비교가 실제 입력창 값과 어긋나지 않는다.
+      // WD-1162 리뷰 후속: 이름은 입력값이 아니라 서버가 저장한 이름(saved.name)을 기준·칸 값으로 둔다 — 입력값을 기준으로 두면
+      //   재조회 전(또는 재조회 실패) 다시 저장할 때 다듬지 않은 이름을 「고침」으로 보고 다듬어 보내, 겹침이 없어도 서버가 돌려준
+      //   이름과 달라 유지 안내가 잘못 뜬다. 저장 중 사용자가 이름을 또 고쳤으면(칸 값이 보낸 때와 다름) 그 입력은 덮지 않는다.
+      const savedName = saved?.name ?? sentName;
+      setName((current) => (current === name ? savedName : current));
+      setInitialInfo({ name: savedName, description, baseUrl, healthCheckPath });
     } catch (error) {
       handleApiError(error, '연결 정보 업데이트에 실패했습니다.');
     } finally {
