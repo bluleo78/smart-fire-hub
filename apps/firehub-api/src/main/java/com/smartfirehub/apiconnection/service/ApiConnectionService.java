@@ -1050,9 +1050,9 @@ public class ApiConnectionService {
   }
 
   /**
-   * 이름 잠금을 잡는다(WD-1107·WD-1129·WD-1145). 잠금 키는 중복 SQL 이 같다고 보는 이름이면 반드시 같은 키가 되어야 한다. 중복 SQL 은 DB
-   * 마다 다르다 — PG 는 유니코드 공백을 ASCII 로 바꾼 뒤 {@code lower(trim)}, Tibero 는 {@code lower(trim)} 만 한다. 가드의
-   * {@code ResourceNameGuard.normalize}(유니코드 공백→ASCII + strip + 소문자)는 두 규칙 모두의 상위 집합이라 어느 DB 에서도
+   * 이름 잠금을 잡는다(WD-1107·WD-1129·WD-1145). 잠금 키는 중복 검사가 같다고 보는 이름이면 반드시 같은 키가 되어야 한다. 중복 검사는
+   * 두 DB 모두 유니코드 공백을 ASCII 로 바꾼 뒤 {@code lower(trim)} 한다 — PG 는 SQL 로, Tibero 는 이름 목록을 읽어 Java 로(WD-1172).
+   * 가드의 {@code ResourceNameGuard.normalize}(유니코드 공백→ASCII + strip + 소문자)는 그 규칙의 상위 집합이라 어느 DB 에서도
    * 안전하다. 그래서 이름을 그대로 넘긴다. create()·update() 가 같은 키를 쓰도록 잠금은 모두 이 메서드로 잡는다.
    */
   private void lockName(String name) {
@@ -1074,10 +1074,10 @@ public class ApiConnectionService {
    * <p>자바는 DB 중복 규칙을 흉내 내지 않는다. 같은 이름 판정은 DB 에 맡기고, 요청 이름은 다른 행을 못 찾았을 때만 저장하므로 유니크 인덱스 (tenant_id,
    * name) 를 어기지 않는다.
    *
-   * <p>「앞뒤 공백만 다름」 판정은 자바 {@code TextRules.strip}(유니코드 공백, {@code (?U)\s})이라 두 DB 모두 같다. 하지만 겹침 판정
-   * SQL 은 DB 마다 다르다 — PG 는 유니코드 공백을 ASCII 로 바꾼 뒤 {@code lower(trim)}(비 UTF8 폴백은 PgEdgeSpaceChars 참고),
-   * Tibero 는 ASCII 공백만 걷는 {@code lower(trim)} 이다. 그래서 Tibero 에서는 NBSP 로 감싼 이름이 겹침으로 잡히지 않아 다듬은 이름으로
-   * 저장될 수 있다(유니크 인덱스는 정확 일치라 안전, WD-1162).
+   * <p>「앞뒤 공백만 다름」 판정은 자바 {@code TextRules.strip}(유니코드 공백, {@code (?U)\s})이고, 겹침 판정도 두 DB 가 같은 규칙이다
+   * — PG 는 유니코드 공백을 ASCII 로 바꾼 뒤 {@code lower(trim)} SQL(비 UTF8 폴백은 PgEdgeSpaceChars 참고), Tibero 는
+   * 이름 목록을 읽어 자바에서 같은 비교값({@code ResourceNameGuard.comparisonKey}, UNICODE_TRIM)으로 비교한다(WD-1172).
+   * 유니크 인덱스는 정확 일치라 어느 경우든 안전하다(WD-1162).
    */
   private String resolveUpdatedName(Long id, String before, String rawRequestedName) {
     if (before.equals(rawRequestedName)) {
@@ -1103,9 +1103,9 @@ public class ApiConnectionService {
 
   /**
    * 동일 테넌트 내 이름 중복을 막는다(#647) — 이름 잠금 아래에서 부른다(WD-1107). 비교는 PostgreSQL 에서는 유니코드 공백(탭·NBSP·전각 등)을
-   * ASCII 공백으로 바꾼 뒤 {@code lower(trim)} 하고(WD-1129), Tibero 는 ASCII 공백만 걷는 {@code lower(trim)} 이다
-   * (비 UTF-8 문자셋에서 유니코드 바인딩이 '?' 로 바뀌면 거짓 중복이 날 수 있어 의도적으로 뺐다, WD-1145). 두 DB 의 규칙이 다르므로 잠금 키는 두
-   * 규칙의 상위 집합이다 ({@link #lockName}). 테넌트 경계는 RLS 가 건다.
+   * ASCII 공백으로 바꾼 뒤 {@code lower(trim)} 하고(WD-1129), Tibero 는 이름 목록을 읽어 자바에서 같은 규칙(UNICODE_TRIM)으로
+   * 비교한다(비 UTF-8 문자셋에서 유니코드 바인딩이 '?' 로 바뀌어 생기는 거짓 중복을 피한다, WD-1145·WD-1172). 잠금 키는 이 규칙의 상위 집합이다
+   * ({@link #lockName}). 테넌트 경계는 RLS 가 건다.
    */
   private void validateNameNotDuplicated(String name) {
     if (repository.existsByName(name)) {

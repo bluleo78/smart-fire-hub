@@ -134,10 +134,9 @@
   <!--
     이름 중복 비교(WD-1129): PostgreSQL 은 유니코드 공백(탭·NBSP·전각 등, ws)을 ASCII 공백(sp)으로 바꾼 뒤 TRIM·LOWER 한다.
     PG 의 TRIM 은 U+0020 만 걷기 때문이다. 이름 가운데의 공백 종류도 같게 본다.
-    Tibero 는 이전 비교(LOWER(TRIM))를 그대로 둔다 — 유니코드 바인드 문자가 비 UTF-8 문자셋에서 '?' 로 바뀌면 이름 속 모든 '?' 가
-    공백으로 매핑돼 거짓 중복이 날 수 있어 검증 전에는 넣지 않는다(V168 의 Tibero 와 같은 미검증 상태). ws/sp 파라미터는 무시한다.
-    그래서 두 DB 의 중복 규칙은 같지 않다 — PG: 유니코드 공백→ASCII 후 lower(trim), Tibero: ASCII 공백만 걷는 lower(trim)(WD-1145).
-    서비스의 잠금 키(ResourceNameGuard.normalize)는 두 규칙 모두의 상위 집합이라 안전하다.
+    Tibero(비 PG)는 이 두 문을 쓰지 않는다 — 유니코드 바인드 문자가 비 UTF-8 문자셋에서 '?' 로 바뀌면 이름 속 모든 '?' 가
+    공백으로 매핑돼 거짓 중복이 나므로, 이름 목록(selectNamesExcludingId)을 읽어 Java 에서 같은 기준(UNICODE_TRIM)으로 비교한다(WD-1172).
+    PG 의 TRANSLATE 문과 Java 비교는 같은 규칙이다. 서비스의 잠금 키(ResourceNameGuard.normalize)는 그 상위 집합이라 안전하다.
     PG 의 ws 는 U+1680·U+2028 등 비 Latin-1 문자를 바인딩하므로 PG 서버 인코딩 UTF8 이 전제다(이 플랫폼 DB 는 UTF8 로 만든다) —
     다른 인코딩이면 바인딩이 실패한다(WD-1145).
   -->
@@ -146,21 +145,21 @@
      WHERE LOWER(TRIM(TRANSLATE(ac.name, #{ws}, #{sp}))) = LOWER(TRIM(TRANSLATE(#{name}, #{ws}, #{sp})))
   </select>
 
-  <select id="countByName" resultType="java.lang.Long" databaseId="tibero">
-    SELECT COUNT(*) FROM api_connection ac
-     WHERE LOWER(TRIM(ac.name)) = LOWER(TRIM(#{name}))
-  </select>
-
   <select id="countByNameExcludingId" resultType="java.lang.Long" databaseId="postgresql">
     SELECT COUNT(*) FROM api_connection ac
      WHERE LOWER(TRIM(TRANSLATE(ac.name, #{ws}, #{sp}))) = LOWER(TRIM(TRANSLATE(#{name}, #{ws}, #{sp})))
        AND ac.id &lt;&gt; #{excludeId}
   </select>
 
-  <select id="countByNameExcludingId" resultType="java.lang.Long" databaseId="tibero">
-    SELECT COUNT(*) FROM api_connection ac
-     WHERE LOWER(TRIM(ac.name)) = LOWER(TRIM(#{name}))
-       AND ac.id &lt;&gt; #{excludeId}
+  <!--
+    비 PG(Tibero) 이름 중복 판정용 이름 목록(WD-1172) — 유니코드 값을 바인딩하지 않는 단순 SELECT 이고 정수 id 만 바인딩한다.
+    비교는 저장소가 ResourceNameGuard.comparisonKey(UNICODE_TRIM)로 Java 에서 한다.
+  -->
+  <select id="selectNamesExcludingId" resultType="java.lang.String">
+    SELECT ac.name FROM api_connection ac
+    <if test="excludeId != null">
+     WHERE ac.id &lt;&gt; #{excludeId}
+    </if>
   </select>
 
   <!-- 행 잠금으로 저장된 이름 그대로(WD-1107) — 개명 판정을 잠금 아래 최신 값으로 하려고 읽는다. -->

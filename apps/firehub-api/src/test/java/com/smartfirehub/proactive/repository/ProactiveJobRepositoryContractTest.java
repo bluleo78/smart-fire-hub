@@ -502,8 +502,8 @@ abstract class ProactiveJobRepositoryContractTest extends TenantPairContractBase
   }
 
   /**
-   * 이름 중복 SQL 의 기준을 실행해 본다(WD-1108) — 앞뒤 전각 공백이 붙은 옛 행은 PG(jOOQ·MyBatis) 에서 같은 이름이고, Tibero 의 lower(trim) 은 ASCII
-   * 만 걷으므로 다른 이름이다. 구현이 알리는 {@code nameComparison()} 이 이 결과와 일치해야 개명 판정이 SQL 과 어긋나지 않는다.
+   * 이름 중복 SQL 의 기준을 실행해 본다(WD-1108) — 앞뒤 전각 공백이 붙은 옛 행은 모든 구현에서 같은 이름이다(WD-1172 부터 Tibero 도 이름 목록을 읽어
+   * Java 에서 UNICODE_TRIM 으로 비교한다). 구현이 알리는 {@code nameComparison()} 이 이 결과와 일치해야 개명 판정이 SQL 과 어긋나지 않는다.
    */
   @Test
   @DisplayName("existsByOwnerAndName 은 대소문자·ASCII 공백을 무시하고 유니코드 공백은 nameComparison 기준으로 비교한다")

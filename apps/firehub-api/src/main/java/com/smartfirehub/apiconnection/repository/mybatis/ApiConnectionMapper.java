@@ -70,6 +70,12 @@ public interface ApiConnectionMapper {
       @Param("ws") String ws,
       @Param("sp") String sp);
 
+  /**
+   * 모든 연결의 이름 목록(excludeId 가 있으면 그 행 제외, WD-1172). 비 PG(Tibero)의 이름 중복 판정용 — 유니코드 값을 바인딩하지 않고 Java
+   * 에서 비교한다.
+   */
+  List<String> selectNamesExcludingId(@Param("excludeId") Long excludeId);
+
   /** 행 잠금(FOR UPDATE)으로 저장된 이름을 읽는다 — 없으면 null(WD-1107). */
   String selectNameForUpdate(@Param("id") Long id);
 

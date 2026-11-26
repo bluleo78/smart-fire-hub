@@ -2,7 +2,6 @@ package com.smartfirehub.proactive.service;
 
 import com.smartfirehub.global.exception.CodedApiException;
 import com.smartfirehub.global.exception.EditConflictException;
-import com.smartfirehub.global.naming.NameComparison;
 import com.smartfirehub.global.naming.ResourceKind;
 import com.smartfirehub.global.naming.ResourceNameGuard;
 import com.smartfirehub.global.tenant.TenantContext;
@@ -505,7 +504,7 @@ public class ProactiveJobService {
         userId,
         before.name(),
         name,
-        // 개명 판정은 저장소 SQL 이 실제로 쓰는 비교 기준을 따른다(WD-1108) — PG 는 유니코드 공백까지, Tibero 는 ASCII 만.
+        // 개명 판정은 저장소의 비교 기준을 따른다(WD-1108) — PG·Tibero 모두 유니코드 공백까지(WD-1172).
         proactiveJobRepository.nameComparison(),
         () -> proactiveJobRepository.existsByOwnerAndName(userId, name, id));
 

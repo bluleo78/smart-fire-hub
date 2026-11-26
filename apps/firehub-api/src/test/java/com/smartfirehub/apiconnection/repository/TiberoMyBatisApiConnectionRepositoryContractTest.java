@@ -26,18 +26,13 @@ class TiberoMyBatisApiConnectionRepositoryContractTest extends ApiConnectionRepo
     repository =
         poc.transactional(
             ApiConnectionRepository.class,
-            new MyBatisApiConnectionRepository(poc.mapper(ApiConnectionMapper.class)));
+            new MyBatisApiConnectionRepository(
+                poc.mapper(ApiConnectionMapper.class), poc.sqlSessionFactory()));
   }
 
   @Override
   protected ApiConnectionRepository repository() {
     return repository;
-  }
-
-  /** Tibero 는 이전 LOWER(TRIM) 비교를 유지한다(WD-1129) — 유니코드 공백 정규화 시험은 건너뛴다. */
-  @Override
-  protected boolean supportsUnicodeSpaceNormalization() {
-    return false;
   }
 
   @Override

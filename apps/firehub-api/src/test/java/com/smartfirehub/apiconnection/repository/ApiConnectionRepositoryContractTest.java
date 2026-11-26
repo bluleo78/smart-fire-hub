@@ -2,7 +2,6 @@ package com.smartfirehub.apiconnection.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import com.smartfirehub.apiconnection.repository.ApiConnectionRepository.ApiConnectionRow;
 import com.smartfirehub.apiconnection.repository.ApiConnectionRepository.HealthCheckTarget;
@@ -524,7 +523,6 @@ abstract class ApiConnectionRepositoryContractTest extends TenantPairContractBas
   @Test
   @DisplayName("existsByName 은 탭·전각 등 유니코드 앞뒤 공백도 무시하고 비교한다 (WD-1129)")
   void existsByName_ignoresUnicodeEdgeSpaces() {
-    assumeTrue(supportsUnicodeSpaceNormalization());
     long sales = rawSaveA("\t" + prefix + "-Sales ");
     rawSaveA("\u3000" + prefix + "-Ops\u3000");
 
@@ -537,18 +535,19 @@ abstract class ApiConnectionRepositoryContractTest extends TenantPairContractBas
   @Test
   @DisplayName("existsByName 은 이름 가운데 NBSP 를 ASCII 공백과 같게 본다 (WD-1129)")
   void existsByName_middleNbspCountsAsSpace() {
-    assumeTrue(supportsUnicodeSpaceNormalization());
     rawSaveA(prefix + "-a\u00A0b");
 
     assertThat(inA(() -> repository().existsByName(prefix + "-a b"))).isTrue();
   }
 
-  /**
-   * 유니코드 공백 정규화 비교를 지원하는 구현인지(WD-1129). Tibero 는 비 UTF-8 문자셋에서 유니코드 바인드가 깨질 수 있어 이전 LOWER(TRIM) 비교를 유지하므로
-   * 서브클래스가 false 로 재정의해 해당 시험을 건너뛴다.
-   */
-  protected boolean supportsUnicodeSpaceNormalization() {
-    return true;
+  /** 이슈 예(WD-1172) — 앞쪽·뒤쪽 공백이 다른 두 행이 서로 같은 이름이다. 모든 변형(PG·Tibero)에서 성립해야 한다. */
+  @Test
+  @DisplayName("existsByNameExcludingId 는 앞쪽 공백 행과 뒤쪽 공백 행을 같은 이름으로 본다 (WD-1172)")
+  void existsByNameExcludingId_leadingVsTrailingSpace() {
+    rawSaveA(" 결제 API");
+    long b = rawSaveA("결제 API ");
+
+    assertThat(inA(() -> repository().existsByNameExcludingId("결제 API", b))).isTrue();
   }
 
   /** 이름을 가공 없이 그대로 저장한다(WD-1129). */
